@@ -1,0 +1,100 @@
+name: 2. 動画をつくって投稿する
+
+# 動画を1本つくって YouTube にアップロードします。これが本番です。
+#
+# 公開設定(visibility)の意味:
+#   private  … 非公開のままアップロードし、その日の19時(JST)に自動で公開されます。
+#               config/channel.yaml の publish_hour_jst で時刻を変えられます。
+#               まだ様子を見たいならこれ。19時になる前に Studio から取り消せます。
+#   unlisted … リンクを知っている人だけ見られます。自動公開はされません。
+#   public   … すぐ全体公開します。
+#
+# 実行が終わると、使ったテーマに used: true が付いて自動で commit されます。
+# 同じテーマが二度選ばれないようにするためです。
+#
+# 【止めたくなったら】YouTube Studio の「コンテンツ」から削除するか、
+# 非公開に戻してください。GitHub 側には動画は残りません。
+
+on:
+  workflow_dispatch:
+    inputs:
+      visibility:
+        description: '公開設定'
+        type: choice
+        required: true
+        default: 'private'
+        options:
+          - private
+          - unlisted
+          - public
+      topic_id:
+        description: 'テーマID。空ならスコアが一番高い未使用テーマ'
+        required: false
+        default: ''
+
+concurrency:
+  group: publish
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: 必要なソフトを入れる
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends ffmpeg fonts-noto-cjk fonts-noto-cjk-extra
+          npm install -g @anthropic-ai/claude-code
+          pip install -r requirements.txt
+
+      - name: つくって投稿する
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
+          YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
+          YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
+          GOOGLE_TTS_API_KEY: ${{ secrets.GOOGLE_TTS_API_KEY }}
+          PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
+          VISIBILITY: ${{ inputs.visibility }}
+          TOPIC_ID: ${{ inputs.topic_id }}
+        run: python -m src.pipeline
+
+      - name: 投稿済みテーマを記録する
+        run: |
+          git config user.name  "youtube-bot"
+          git config user.email "youtube-bot@users.noreply.github.com"
+          git add config/topics.yaml state/
+          if git diff --cached --quiet; then
+            echo "変更なし"
+          else
+            git commit -m "chore: 投稿済みテーマを記録"
+            git push
+          fi
+
+      - name: あとから確認できるように成果物を残す
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: published
+          path: |
+            build/**/thumbnail.jpg
+            build/**/title.txt
+            build/**/description.txt
+            build/**/script.json
+          retention-days: 30
+          if-no-files-found: warn

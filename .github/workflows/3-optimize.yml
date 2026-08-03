@@ -1,9 +1,15 @@
-name: optimize
+name: 3. テーマを実績から入れ替える
+
+# 直近28日の YouTube アナリティクスを読んで、伸びたテーマの近くに寄せた
+# 新しい企画を config/topics.yaml に足します。
+#
+# いつ押すか: 週に1回くらい。動画が4本以上たまってからでないと、
+# 比べる相手がいないので意味のある判断ができません。
+# それまでは config/topics.yaml を自分で編集して足すほうが早いです。
+#
+# 実績が足りないときは何も足さずに終わります。空振りしても害はありません。
 
 on:
-  schedule:
-    # 毎週月曜 10:00 JST（= 01:00 UTC）。先週の実績を見てトピックを入れ替える。
-    - cron: "0 1 * * 1"
   workflow_dispatch:
 
 permissions:
@@ -12,7 +18,7 @@ permissions:
 jobs:
   optimize:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
@@ -25,12 +31,12 @@ jobs:
         with:
           node-version: "22"
 
-      - name: Install Claude Code CLI
-        run: npm install -g @anthropic-ai/claude-code
+      - name: 必要なソフトを入れる
+        run: |
+          npm install -g @anthropic-ai/claude-code
+          pip install -r requirements.txt
 
-      - run: pip install -r requirements.txt
-
-      - name: Analyze and refresh topic pool
+      - name: 実績を読んでテーマを更新
         env:
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
@@ -38,7 +44,7 @@ jobs:
           YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
         run: python -m src.analytics
 
-      - name: Commit topics
+      - name: 更新を記録する
         run: |
           git config user.name  "youtube-bot"
           git config user.email "youtube-bot@users.noreply.github.com"
@@ -46,6 +52,6 @@ jobs:
           if git diff --cached --quiet; then
             echo "変更なし"
           else
-            git commit -m "chore: 実績に基づきトピックを更新"
+            git commit -m "chore: 実績に基づきテーマを更新"
             git push
           fi

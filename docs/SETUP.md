@@ -112,16 +112,16 @@ STEP 2-7 のクライアントID / シークレットを聞かれるので貼り
 
 ## STEP 7. 動作確認（10分）
 
-1. [**→ Actions を開く**](https://github.com/bachikoljunior-blip/youtube/actions/workflows/publish.yml)
-2. 「Run workflow」→ **dry_run にチェックを入れて** 実行
-   - 投稿せずに、台本・音声・動画の生成までを試します
-3. 緑になったら、もう一度「Run workflow」を **dry_run なしで** 実行
+1. [**→ 0. 設定をチェックする**](https://github.com/bachikoljunior-blip/youtube/actions/workflows/0-check.yml)
+   → 「Run workflow」。足りないものが一覧で出るので全部潰す
+2. [**→ 1. 動画をつくる（投稿しない）**](https://github.com/bachikoljunior-blip/youtube/actions/workflows/1-preview.yml)
+   → 実行し、終わったら **Artifacts** から中身を落として確認
+3. [**→ 2. 動画をつくって投稿する**](https://github.com/bachikoljunior-blip/youtube/actions/workflows/2-publish.yml)
+   → visibility を `private` のまま実行
 4. [YouTube Studio のコンテンツ](https://studio.youtube.com/) に **非公開** で1本上がっているのを確認
 
-`config/channel.yaml` の `visibility` は最初 `private`（予約公開）にしてあります。
-中身を数本チェックして納得できたら `public` に変えてください。
-
-以降は **毎朝8時（JST）に自動で1本** 作られ、その日の19時に公開されます。
+**スケジュール実行はしません。** 毎日「2」を押すのが運用です。
+日々の押し方と調整方法は [RUNBOOK.md](RUNBOOK.md) にまとめてあります。
 
 ---
 

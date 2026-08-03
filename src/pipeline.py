@@ -1,6 +1,7 @@
 """1本ぶんの動画を作って投稿する。GitHub Actions から日次で呼ばれる。"""
 from __future__ import annotations
 
+import json
 import shutil
 import sys
 
@@ -12,8 +13,20 @@ from .tts import synthesize_segments
 from .util import fmt_timestamp
 
 
-def pick_topic(pool: dict) -> dict:
-    """スコアが最も高い未使用トピック。同点なら先に書かれているものを選ぶ。"""
+def pick_topic(pool: dict, topic_id: str = "") -> dict:
+    """スコアが最も高い未使用トピック。同点なら先に書かれているものを選ぶ。
+
+    topic_id を指定すると、used かどうかに関わらずそれを使う（撮り直し用）。
+    """
+    if topic_id:
+        for topic in pool["topics"]:
+            if topic["id"] == topic_id:
+                return topic
+        raise RuntimeError(
+            f"トピック '{topic_id}' が config/topics.yaml にありません。"
+            f"使えるID: {', '.join(t['id'] for t in pool['topics'][:20])}"
+        )
+
     candidates = [(i, t) for i, t in enumerate(pool["topics"]) if not t.get("used")]
     if not candidates:
         raise RuntimeError(
@@ -48,7 +61,14 @@ def build_description(script: VideoScript, spans: list[tuple[float, float]], cha
 def main() -> int:
     channel = config.load_channel()
     pool = config.load_topics()
-    topic = pick_topic(pool)
+
+    # 手動実行のときだけ、ワークフローの入力で上書きできるようにしておく
+    override = config.env("VISIBILITY", required=False)
+    if override:
+        channel["publish"]["visibility"] = override
+        print(f"[pipeline] 公開設定を {override} で上書き")
+
+    topic = pick_topic(pool, config.env("TOPIC_ID", required=False))
     print(f"=== テーマ: {topic['title_seed']} ({topic['id']}) ===")
 
     work = config.BUILD_DIR / topic["id"]
@@ -111,10 +131,21 @@ def main() -> int:
 
     description = build_description(script, spans, channel, fetcher.credit_line())
 
+    # スマホから中身を確認できるように、成果物と一緒に落とせる形で残す
+    (work / "title.txt").write_text(
+        script.title + "\n\n[別案]\n" + "\n".join(script.title_alternatives) + "\n",
+        encoding="utf-8",
+    )
+    (work / "description.txt").write_text(description + "\n", encoding="utf-8")
+    (work / "script.json").write_text(
+        json.dumps(script.model_dump(), ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
+
     if config.dry_run():
         print("[pipeline] DRY_RUN のためアップロードしません。")
         print(f"  動画: {video_path}")
         print(f"  サムネ: {thumb_path}")
+        print(f"\n  タイトル: {script.title}")
         print(f"  説明欄:\n{description}")
         return 0
 
