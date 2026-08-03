@@ -65,8 +65,10 @@ publish:
 # 生成系の設定
 # ---------------------------------------------------------------------------
 generation:
-  model: "claude-opus-5"
-  effort: "high"
+  # Claude Code CLI に渡すモデル。サブスクの契約内で動く。
+  # opus / sonnet / haiku のエイリアスが使える。台本の質が収益に直結するので opus 推奨。
+  # 利用上限に当たりやすい場合は sonnet に落とす。
+  model: "opus"
 
   tts:
     # ja-JP-Neural2-D(男性) / -B(女性) など。Chirp3-HD 系も可。

@@ -39,12 +39,24 @@
 
 ---
 
-## STEP 3. Anthropic の API キー（5分）
+## STEP 3. Claude Code のサブスク認証トークン（5分）
 
-| | やること | リンク |
-|---|---|---|
-| 3-1 | 支払い情報を登録（従量課金。この用途なら **月 $15〜25 程度**） | [Billing](https://platform.claude.com/settings/billing) |
-| 3-2 | API キーを発行して控える | [API キー](https://platform.claude.com/settings/keys) |
+台本生成は **API 従量課金を使いません**。あなたの Claude サブスクリプション
+（Pro / Max）の枠内で、Claude Code のセッションとして動きます。追加課金は発生しません。
+
+あなたのPCで、Claude Code にログイン済みの状態で以下を実行します。
+
+```bash
+npm install -g @anthropic-ai/claude-code   # 未インストールなら
+claude setup-token
+```
+
+ブラウザで認証すると `sk-ant-oat01-...` で始まる長期トークンが表示されます。
+これが `CLAUDE_CODE_OAUTH_TOKEN` です。控えてください。
+
+> このトークンはサブスクの利用枠を消費します。1日1本の台本生成なら
+> 通常の利用上限に対してごく僅かですが、普段の Claude Code 作業と同じ枠を共有します。
+> 上限に当たりやすいなら `config/channel.yaml` の `generation.model` を `sonnet` に変えてください。
 
 ---
 
@@ -84,7 +96,7 @@ STEP 2-7 のクライアントID / シークレットを聞かれるので貼り
 
 | Name | 値の出どころ |
 |---|---|
-| `ANTHROPIC_API_KEY` | STEP 3-2 |
+| `CLAUDE_CODE_OAUTH_TOKEN` | STEP 3 |
 | `YT_CLIENT_ID` | STEP 2-7 |
 | `YT_CLIENT_SECRET` | STEP 2-7 |
 | `YT_REFRESH_TOKEN` | STEP 5 |
@@ -145,4 +157,6 @@ python scripts/preflight.py
 | サムネだけ設定されない | STEP 1-3 の電話番号確認が未了 |
 | `invalid_grant` | OAuth 同意画面が「テスト」のまま7日経過。STEP 5 をやり直すか、アプリを公開する |
 | TTS が 403 | STEP 2-2 の請求先未設定、または 2-5 の API 未有効化 |
+| `claude が異常終了しました` | `CLAUDE_CODE_OAUTH_TOKEN` の期限切れ。`claude setup-token` を再実行して secret を更新 |
+| 利用上限に当たる | `config/channel.yaml` の `generation.model` を `sonnet` に、または cron を隔日に |
 | 動画が8分未満になる | `config/channel.yaml` の `target_minutes` を上げる |

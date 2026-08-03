@@ -3,6 +3,9 @@
 台本生成 → 音声合成 → 映像合成 → サムネ生成 → YouTube 投稿 → 実績を見てテーマ更新、
 までを GitHub Actions で毎日自動実行します。
 
+台本の生成は **Anthropic API（従量課金）を使いません**。Claude Code CLI を
+サブスクリプションの OAuth トークンで動かし、思考はそのセッション内で完結します。
+
 - **まず読む → [docs/SETUP.md](docs/SETUP.md)** … あなたがやる作業（リンク付き・40〜60分）
 - **方針と見通し → [docs/STRATEGY.md](docs/STRATEGY.md)** … RPM の話、月20万に必要な数字、リスク
 
@@ -18,7 +21,8 @@
 ```
 config/channel.yaml    チャンネル設定（ニッチ・尺・投稿時刻・声）
 config/topics.yaml     トピックプール（週次で自動更新される）
-src/script_writer.py   Claude で台本＋メタデータを構造化生成
+src/claude_cli.py      Claude Code CLI をヘッドレスで叩き、JSON を検証して返す
+src/script_writer.py   台本＋メタデータを生成（pydantic で構造を担保）
 src/tts.py             Google Cloud TTS で読み上げ
 src/assets.py          Pexels から背景素材
 src/subtitles.py       ASS 字幕を生成（音声の実尺に合わせる）
@@ -35,6 +39,7 @@ scripts/preflight.py          環境チェック
 
 ```bash
 pip install -r requirements.txt
+npm install -g @anthropic-ai/claude-code   # 台本生成に使う
 cp .env.example .env      # 値を埋める
 sudo apt-get install -y ffmpeg fonts-noto-cjk
 
@@ -51,5 +56,6 @@ DRY_RUN=true python -m src.pipeline    # 投稿せず build/ に出力
 | 声を変える | `config/channel.yaml` の `generation.tts.voice` |
 | 公開時刻を変える | `config/channel.yaml` の `publish.publish_hour_jst` |
 | 非公開→公開に切り替える | `config/channel.yaml` の `publish.visibility` を `public` に |
-| 台本の書き方 | `src/script_writer.py` の `SYSTEM` |
+| 台本の書き方 | `src/script_writer.py` の `ROLE` |
+| 生成モデル | `config/channel.yaml` の `generation.model`（`opus` / `sonnet`） |
 | 投稿頻度 | `.github/workflows/publish.yml` の `cron` |

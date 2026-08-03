@@ -1,16 +1,13 @@
-"""Claude で動画台本とメタデータを生成する。
+"""Claude Code CLI で動画台本とメタデータを生成する。
 
-出力は JSON スキーマで固定しているので、後工程はパース失敗を心配しなくていい。
+Anthropic API は使わない。サブスクリプションのセッション内で思考させ、
+結果を JSON で受け取って pydantic で検証する。
 """
 from __future__ import annotations
 
-import json
-from typing import Any
-
-import anthropic
 from pydantic import BaseModel, Field
 
-from . import config
+from .claude_cli import ask, follow_up
 
 # 日本語 TTS の実測。speaking_rate=1.0 でおよそこのくらい進む。
 CHARS_PER_MINUTE = 360.0
@@ -38,7 +35,7 @@ class VideoScript(BaseModel):
     chapters: list[Chapter] = Field(description="チャプター4〜7個")
 
 
-SYSTEM = """あなたは日本語YouTubeの解説動画の構成作家です。
+ROLE = """あなたは日本語YouTubeの解説動画の構成作家です。
 
 守ること:
 - 視聴維持率がすべて。冒頭の1セグメント目で「この動画で分かる結論」を数字ごと言い切る。前置き・自己紹介・チャンネル登録の依頼は書かない。
@@ -54,7 +51,7 @@ SYSTEM = """あなたは日本語YouTubeの解説動画の構成作家です。
 - 全角32文字以内。「」や【】は使わない。
 """
 
-USER_TEMPLATE = """次の条件で動画1本ぶんの台本を作ってください。
+TASK = """次の条件で動画1本ぶんの台本を作ってください。
 
 # チャンネル
 名前: {channel_name}
@@ -78,34 +75,21 @@ narration の合計を {min_chars}〜{max_chars} 文字にしてください。
 """
 
 
-def _strict(schema: dict[str, Any]) -> dict[str, Any]:
-    """Structured Outputs の要求に合わせて object を閉じ、全プロパティを required にする。"""
-    if schema.get("type") == "object" and "properties" in schema:
-        schema["additionalProperties"] = False
-        schema["required"] = list(schema["properties"].keys())
-    for key in ("properties", "$defs"):
-        for child in schema.get(key, {}).values():
-            _strict(child)
-    if "items" in schema:
-        _strict(schema["items"])
-    return schema
-
-
 def _total_chars(script: VideoScript) -> int:
     return sum(len(s.narration) for s in script.segments)
 
 
 def generate(channel: dict, topic: dict) -> VideoScript:
-    """台本を1本生成する。尺が足りなければ一度だけ書き足させる。"""
+    """台本を1本生成する。尺が足りなければ同じセッションで書き足させる。"""
     cfg = channel["channel"]
     vid = channel["video"]
-    gen = channel["generation"]
+    model = channel["generation"]["model"]
 
     target = float(vid["target_minutes"])
     min_chars = int(float(vid["min_minutes"]) * CHARS_PER_MINUTE)
     max_chars = int((target + 1.5) * CHARS_PER_MINUTE)
 
-    prompt = USER_TEMPLATE.format(
+    prompt = ROLE + "\n" + TASK.format(
         channel_name=cfg["name"],
         niche=cfg["niche"],
         audience=cfg["audience"],
@@ -120,50 +104,25 @@ def generate(channel: dict, topic: dict) -> VideoScript:
         max_segments=int(max_chars / 80),
     )
 
-    client = anthropic.Anthropic(api_key=config.env("ANTHROPIC_API_KEY"))
-    schema = _strict(VideoScript.model_json_schema())
-    messages: list[dict[str, Any]] = [{"role": "user", "content": prompt}]
+    script, session = ask(VideoScript, prompt, model=model)
+    chars = _total_chars(script)
+    print(f"[script] 初稿: {len(script.segments)}セグメント / {chars}文字")
 
-    for attempt in range(2):
-        with client.messages.stream(
-            model=gen["model"],
-            max_tokens=32000,
-            system=SYSTEM,
-            output_config={
-                "effort": gen.get("effort", "high"),
-                "format": {"type": "json_schema", "schema": schema},
-            },
-            messages=messages,
-        ) as stream:
-            message = stream.get_final_message()
-
-        if message.stop_reason == "refusal":
-            raise RuntimeError(
-                "台本生成が安全性の判定で停止しました。トピックの切り口を見直してください: "
-                f"{getattr(message.stop_details, 'category', None)}"
-            )
-
-        text = next(b.text for b in message.content if b.type == "text")
-        script = VideoScript.model_validate(json.loads(text))
+    if chars < min_chars and session:
+        script, _ = follow_up(
+            VideoScript,
+            session,
+            (
+                f"narration の合計が{chars}文字しかなく、目標の{min_chars}文字に届いていません。"
+                "内容を薄めずに、具体例・数値・手順・よくある間違いを足してセグメントを増やし、"
+                "同じ JSON 形式で全体を出し直してください。"
+            ),
+            model=model,
+        )
         chars = _total_chars(script)
-        print(f"[script] 試行{attempt + 1}: {len(script.segments)}セグメント / {chars}文字")
+        print(f"[script] 加筆後: {len(script.segments)}セグメント / {chars}文字")
 
-        if chars >= min_chars or attempt == 1:
-            if chars < min_chars:
-                print(f"[script] 警告: 目標{min_chars}文字に届きませんでした（{chars}文字）")
-            return script
+    if chars < min_chars:
+        print(f"[script] 警告: 目標{min_chars}文字に届きませんでした（{chars}文字）")
 
-        # 短すぎた場合だけ、同じ会話を続けて書き足させる
-        messages += [
-            {"role": "assistant", "content": text},
-            {
-                "role": "user",
-                "content": (
-                    f"narration の合計が{chars}文字しかなく、目標の{min_chars}文字に届いていません。"
-                    "内容を薄めずに、具体例・数値・手順・よくある間違いを足してセグメントを増やし、"
-                    "同じJSON形式で全体を出し直してください。"
-                ),
-            },
-        ]
-
-    raise RuntimeError("unreachable")
+    return script

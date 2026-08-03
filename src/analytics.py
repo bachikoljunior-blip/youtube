@@ -5,18 +5,17 @@
 """
 from __future__ import annotations
 
-import json
 import statistics
 from datetime import date, timedelta
 from typing import Any
 
-import anthropic
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 from pydantic import BaseModel, Field
 
 from . import config, state
 from .auth import credentials
+from .claude_cli import ClaudeCliError, ask
 
 
 class TopicIdea(BaseModel):
@@ -81,7 +80,6 @@ def _summarize(rows: list[dict[str, Any]]) -> tuple[list[str], list[str]]:
 
 
 def propose_topics(channel: dict, winners: list[str], losers: list[str], existing: list[str]) -> list[dict]:
-    client = anthropic.Anthropic(api_key=config.env("ANTHROPIC_API_KEY"))
     cfg = channel["channel"]
 
     prompt = f"""YouTubeチャンネルの次の企画を5本考えてください。
@@ -103,25 +101,12 @@ def propose_topics(channel: dict, winners: list[str], losers: list[str], existin
 同じ話の焼き直しは避け、視聴者が検索しそうな実務的な悩みを選んでください。
 """
 
-    from .script_writer import _strict  # スキーマ整形は同じルールを使う
-
-    with client.messages.stream(
-        model=channel["generation"]["model"],
-        max_tokens=8000,
-        output_config={
-            "effort": "medium",
-            "format": {"type": "json_schema", "schema": _strict(TopicIdeas.model_json_schema())},
-        },
-        messages=[{"role": "user", "content": prompt}],
-    ) as stream:
-        message = stream.get_final_message()
-
-    if message.stop_reason == "refusal":
-        print("[analytics] 企画生成が停止しました。スキップします。")
+    try:
+        ideas, _ = ask(TopicIdeas, prompt, model=channel["generation"]["model"])
+    except ClaudeCliError as exc:
+        print(f"[analytics] 企画生成に失敗しました。今週はスキップします: {exc}")
         return []
 
-    text = next(b.text for b in message.content if b.type == "text")
-    ideas = TopicIdeas.model_validate(json.loads(text))
     # 実績に基づく提案なので、初期スコアを少し高くして先に消化させる
     return [{**idea.model_dump(), "score": 1.4, "used": False} for idea in ideas.topics]
 

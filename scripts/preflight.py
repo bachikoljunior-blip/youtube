@@ -30,7 +30,6 @@ def main() -> int:
     print("=== 環境チェック ===\n")
 
     for name, hint in [
-        ("ANTHROPIC_API_KEY", "https://platform.claude.com/settings/keys で発行"),
         ("YT_CLIENT_ID", "scripts/get_refresh_token.py の出力を登録"),
         ("YT_CLIENT_SECRET", "同上"),
         ("YT_REFRESH_TOKEN", "同上"),
@@ -41,6 +40,29 @@ def main() -> int:
 
     check("ffmpeg", bool(shutil.which("ffmpeg")), "apt-get install -y ffmpeg")
     check("ffprobe", bool(shutil.which("ffprobe")), "ffmpeg に同梱")
+    check(
+        "claude CLI",
+        bool(shutil.which("claude")),
+        "npm install -g @anthropic-ai/claude-code",
+    )
+
+    if os.environ.get("ANTHROPIC_API_KEY", "").strip():
+        print("[ 注意 ] ANTHROPIC_API_KEY が設定されていますが、実行時に無視します（サブスクを使うため）")
+
+    if shutil.which("claude"):
+        # 実際に1往復させて、サブスク認証が通っているかまで見る
+        from src.claude_cli import ClaudeCliError, ask
+        from pydantic import BaseModel, Field
+
+        class Ping(BaseModel):
+            ok: bool = Field(description="常に true")
+
+        try:
+            ask(Ping, "疎通確認です。ok を true にした JSON を返してください。",
+                model=config.load_channel()["generation"]["model"], max_attempts=1, timeout=180)
+            check("Claude Code 認証", True)
+        except ClaudeCliError as exc:
+            check("Claude Code 認証", False, f"`claude setup-token` を実行 ({str(exc)[:160]})")
 
     try:
         from src.thumbnail import _font
