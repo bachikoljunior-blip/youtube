@@ -34,9 +34,12 @@ jobs:
       - name: 必要なソフトを入れる
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends ffmpeg fonts-noto-cjk
+          sudo apt-get install -y --no-install-recommends \
+            ffmpeg fonts-noto-cjk fonts-noto-cjk-extra \
+            open-jtalk open-jtalk-mecab-naist-jdic hts-voice-nitech-jp-atr503-m001
           npm install -g @anthropic-ai/claude-code
           pip install -r requirements.txt
+          python -m playwright install --with-deps chromium
 
       - name: チェックを実行
         env:
@@ -45,5 +48,4 @@ jobs:
           YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
           YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
           GOOGLE_TTS_API_KEY: ${{ secrets.GOOGLE_TTS_API_KEY }}
-          PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
         run: python scripts/preflight.py

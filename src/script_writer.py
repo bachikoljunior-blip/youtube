@@ -13,10 +13,28 @@ from .claude_cli import ask, follow_up
 CHARS_PER_MINUTE = 360.0
 
 
+class Visual(BaseModel):
+    """このセグメントで画面に出す図解。フリー素材ではなく自前で描く。"""
+
+    kind: str = Field(description="stat / table / steps / compare のいずれか")
+    headline: str = Field(description="画面上部の見出し。全角18文字以内")
+    stat: str = Field(default="", description="kind=stat のとき中央に大きく出す数字。例『約7万7千円』。他の kind では空")
+    note: str = Field(default="", description="kind=stat のとき数字に添える条件。例『年収600万・扶養なし』")
+    items: list[str] = Field(
+        default_factory=list,
+        description="kind=steps は手順を3〜4個、kind=compare は対比を2〜4個。各全角24文字以内。他の kind では空",
+    )
+    headers: list[str] = Field(default_factory=list, description="kind=table の列名を2〜3個。他の kind では空")
+    rows: list[list[str]] = Field(
+        default_factory=list,
+        description="kind=table の行を2〜4個。各セルは全角12文字以内。他の kind では空",
+    )
+
+
 class Segment(BaseModel):
     narration: str = Field(description="読み上げる文章。1〜3文。話し言葉。記号や箇条書き記号は使わない")
     on_screen: str = Field(description="画面に大きく出す要約テキスト。18文字以内。数字を優先して残す")
-    visual_query: str = Field(description="背景映像を探すための英語の検索語。2〜4語。例: 'japanese office desk'")
+    visual: Visual = Field(description="このセグメントで表示する図解")
 
 
 class Chapter(BaseModel):
@@ -45,6 +63,13 @@ ROLE = """あなたは日本語YouTubeの解説動画の構成作家です。
 - 読み上げ用なので、括弧書き・箇条書き記号・URL・英数字の羅列は narration に入れない。数字は「およそ48万円」のように読める形で書く。
 - 各セグメントの narration は 60〜160文字。短く切ってテンポを作る。
 - 最後のセグメントは「明日やること」を3つ、手順として言う。
+
+画面（visual）:
+- ナレーションの内容を図解にする。ナレーションの繰り返しにしない。
+- 数字を1つ言い切る場面は kind=stat、条件で答えが変わる場面は kind=table、
+  やることを並べる場面は kind=steps、二択を比べる場面は kind=compare を使う。
+- 全部を stat にしない。10本のうち table と steps が合わせて半分は欲しい。
+- table は視聴者が一時停止して読む場所になる。行と列を絞り、数字を入れる。
 
 タイトル:
 - 検索されそうな語を前半に置く。クリックベイトにしない。

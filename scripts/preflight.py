@@ -12,47 +12,84 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-import requests  # noqa: E402
-
 from src import config  # noqa: E402
 
-OK, NG = "  OK  ", "  NG  "
+OK, NG, WARN = "  OK  ", "  NG  ", " 任意 "
 problems: list[str] = []
 
 
-def check(label: str, ok: bool, hint: str = "") -> None:
-    print(f"[{OK if ok else NG}] {label}")
-    if not ok:
+def check(label: str, ok: bool, hint: str = "", required: bool = True) -> None:
+    print(f"[{OK if ok else (NG if required else WARN)}] {label}")
+    if not ok and required:
         problems.append(f"{label} — {hint}")
+    elif not ok:
+        print(f"        → {hint}")
 
 
 def main() -> int:
     print("=== 環境チェック ===\n")
 
     for name, hint in [
-        ("YT_CLIENT_ID", "scripts/get_refresh_token.py の出力を登録"),
+        ("CLAUDE_CODE_OAUTH_TOKEN", "手元で `claude setup-token`"),
+        ("YT_CLIENT_ID", "OAuth 2.0 Playground で取得（docs/SETUP.md）"),
         ("YT_CLIENT_SECRET", "同上"),
         ("YT_REFRESH_TOKEN", "同上"),
-        ("GOOGLE_TTS_API_KEY", "GCP のAPIキー。Cloud Text-to-Speech API の有効化も必要"),
-        ("PEXELS_API_KEY", "https://www.pexels.com/api/new/ で無料発行"),
     ]:
         check(f"環境変数 {name}", bool(os.environ.get(name, "").strip()), hint)
 
-    check("ffmpeg", bool(shutil.which("ffmpeg")), "apt-get install -y ffmpeg")
-    check("ffprobe", bool(shutil.which("ffprobe")), "ffmpeg に同梱")
+    has_google_tts = bool(os.environ.get("GOOGLE_TTS_API_KEY", "").strip())
     check(
-        "claude CLI",
-        bool(shutil.which("claude")),
-        "npm install -g @anthropic-ai/claude-code",
+        "環境変数 GOOGLE_TTS_API_KEY",
+        has_google_tts,
+        "未設定なら open-jtalk（無料）を使います。声の自然さは落ちます",
+        required=False,
     )
 
     if os.environ.get("ANTHROPIC_API_KEY", "").strip():
-        print("[ 注意 ] ANTHROPIC_API_KEY が設定されていますが、実行時に無視します（サブスクを使うため）")
+        print("[ 注意 ] ANTHROPIC_API_KEY は実行時に無視します（サブスクを使うため）")
+
+    check("ffmpeg", bool(shutil.which("ffmpeg")), "apt-get install -y ffmpeg")
+    check("ffprobe", bool(shutil.which("ffprobe")), "ffmpeg に同梱")
+    check("claude CLI", bool(shutil.which("claude")), "npm install -g @anthropic-ai/claude-code")
+
+    tts_cfg = config.load_channel()["generation"]["tts"]
+    from src.tts import choose_engine
+
+    engine = choose_engine(tts_cfg)
+    if engine == "open-jtalk":
+        check(
+            "open_jtalk",
+            bool(shutil.which("open_jtalk")),
+            "apt-get install -y open-jtalk open-jtalk-mecab-naist-jdic "
+            "hts-voice-nitech-jp-atr503-m001",
+        )
+
+    try:
+        from src.thumbnail import _font
+
+        _font(40)
+        check("日本語フォント", True)
+    except Exception as exc:
+        check("日本語フォント", False, f"apt-get install -y fonts-noto-cjk ({exc})")
+
+    # 図解の描画。ここが通れば映像素材は自前で全部まかなえる。
+    try:
+        from src import visuals
+
+        out = visuals.render(
+            [{"kind": "stat", "headline": "疎通確認", "stat": "OK", "note": "テスト"}],
+            config.BUILD_DIR / "_preflight",
+        )
+        size = out[0].stat().st_size
+        check("図解の描画 (Playwright)", size > 5000, f"PNG が {size} バイトしかありません")
+    except Exception as exc:
+        check("図解の描画 (Playwright)", False,
+              f"python -m playwright install --with-deps chromium ({str(exc)[:160]})")
 
     if shutil.which("claude"):
-        # 実際に1往復させて、サブスク認証が通っているかまで見る
-        from src.claude_cli import ClaudeCliError, ask
         from pydantic import BaseModel, Field
+
+        from src.claude_cli import ClaudeCliError, ask
 
         class Ping(BaseModel):
             ok: bool = Field(description="常に true")
@@ -64,56 +101,30 @@ def main() -> int:
         except ClaudeCliError as exc:
             check("Claude Code 認証", False, f"`claude setup-token` を実行 ({str(exc)[:160]})")
 
-    try:
-        from src.thumbnail import _font
-        _font(40)
-        check("日本語フォント", True)
-    except Exception as exc:
-        check("日本語フォント", False, f"apt-get install -y fonts-noto-cjk ({exc})")
-
-    if os.environ.get("GOOGLE_TTS_API_KEY", "").strip():
-        response = requests.post(
-            "https://texttospeech.googleapis.com/v1/text:synthesize",
-            params={"key": os.environ["GOOGLE_TTS_API_KEY"]},
-            json={
-                "input": {"text": "テスト"},
-                "voice": {"languageCode": "ja-JP", "name": "ja-JP-Neural2-D"},
-                "audioConfig": {"audioEncoding": "MP3"},
-            },
-            timeout=45,
-        )
-        check(
-            "Cloud Text-to-Speech API",
-            response.status_code == 200,
-            f"HTTP {response.status_code}: {response.text[:200]}",
-        )
-
-    if os.environ.get("PEXELS_API_KEY", "").strip():
-        response = requests.get(
-            "https://api.pexels.com/videos/search",
-            headers={"Authorization": os.environ["PEXELS_API_KEY"]},
-            params={"query": "office", "per_page": 1},
-            timeout=45,
-        )
-        check("Pexels API", response.status_code == 200, f"HTTP {response.status_code}")
-
     if all(os.environ.get(k, "").strip() for k in ("YT_CLIENT_ID", "YT_CLIENT_SECRET", "YT_REFRESH_TOKEN")):
         try:
             from googleapiclient.discovery import build
-            from src.auth import credentials
+
+            from src.auth import credentials, explain
 
             youtube = build("youtube", "v3", credentials=credentials(), cache_discovery=False)
-            channels = youtube.channels().list(part="snippet,status", mine=True).execute()
-            items = channels.get("items", [])
+            items = youtube.channels().list(part="snippet,statistics", mine=True).execute().get("items", [])
             check("YouTube 認証", bool(items), "リフレッシュトークンを取り直してください")
             if items:
-                snippet = items[0]["snippet"]
-                print(f"        → チャンネル: {snippet['title']} ({items[0]['id']})")
+                snippet, stats = items[0]["snippet"], items[0]["statistics"]
+                print(f"        → {snippet['title']}｜登録者 {stats.get('subscriberCount', '?')}人"
+                      f"／動画 {stats.get('videoCount', '?')}本")
         except Exception as exc:
-            check("YouTube 認証", False, str(exc)[:200])
+            check("YouTube 認証", False, explain(exc)[:300])
 
-    unused = [t for t in config.load_topics()["topics"] if not t.get("used")]
-    check(f"未使用トピック {len(unused)} 件", len(unused) > 0, "config/topics.yaml に追加")
+    try:
+        from src.history import posted_topic_ids
+
+        posted = posted_topic_ids() if not problems else set()
+    except Exception:
+        posted = set()
+    unused = [t for t in config.load_topics()["topics"] if t["id"] not in posted]
+    check(f"未投稿テーマ {len(unused)} 件", len(unused) > 0, "config/topics.yaml に追加")
 
     print()
     if problems:

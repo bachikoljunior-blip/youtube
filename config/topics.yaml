@@ -1,7 +1,8 @@
 # =============================================================================
 # トピックプール
 #
-# pipeline は「未使用 × スコアが高い」ものから順に選ぶ。
+# pipeline は未投稿のものから選ぶ。投稿済みかどうかは YouTube 側の
+# 説明欄に埋めた [t:ID] を読んで判断するので、ここには持たない。
 # score は optimize ワークフロー（週1）が YouTube Analytics の実績を見て
 # 自動で更新する。手で足すのも歓迎 — 手で足したネタのほうが強いことが多い。
 #
@@ -13,58 +14,48 @@ topics:
     title_seed: "ふるさと納税の上限額を1円単位で出す方法"
     angle: "シミュレーターごとに答えが違う理由と、給与明細のどの数字を見ればいいか"
     score: 1.0
-    used: false
 
   - id: ideco-vs-nisa
     title_seed: "iDeCoと新NISA、先に埋めるべきはどっちか"
     angle: "年収と勤務先の企業年金の有無で結論が変わる。分岐条件を表で整理する"
     score: 1.0
-    used: false
 
   - id: nenmatsu-chosei
     title_seed: "年末調整で申告し忘れると損する控除5つ"
     angle: "還付額の実額を出す。間に合わなかった場合の確定申告での取り返し方も"
     score: 1.0
-    used: false
 
   - id: taishoku-hoken
     title_seed: "退職後の健康保険、任意継続と国保はどちらが安いか"
     angle: "前年所得と扶養人数で逆転する。計算式と自治体サイトの見方"
     score: 1.0
-    used: false
 
   - id: zangyo-dai
     title_seed: "残業代の正しい計算方法と、会社の計算が違うときの手順"
     angle: "基礎賃金から除外できる手当は限定列挙。労基署に行く前の証拠の揃え方"
     score: 1.0
-    used: false
 
   - id: fukugyo-zeikin
     title_seed: "副業20万円ルールの本当の意味"
     angle: "所得税は不要でも住民税は必要。会社バレの実際の経路と回避手順"
     score: 1.0
-    used: false
 
   - id: jutaku-loan-kojo
     title_seed: "住宅ローン控除、初年度にやることの全手順"
     angle: "必要書類7点と入手先。2年目以降が自動になる条件"
     score: 1.0
-    used: false
 
   - id: shitsugyo-kyufu
     title_seed: "失業給付を最大化する退職日の決め方"
     angle: "離職理由・被保険者期間・年齢で給付日数が変わる。1日ずれると損する境界"
     score: 1.0
-    used: false
 
   - id: tenshoku-nenshu
     title_seed: "転職の年収交渉で通る言い方、通らない言い方"
     angle: "オファー面談のどの段階で出すか。実績の数値化テンプレート"
     score: 1.0
-    used: false
 
   - id: kojin-jigyo-keihi
     title_seed: "個人事業主が経費にできる線引き"
     angle: "家事按分の合理的な根拠の作り方。税務調査で見られる順番"
     score: 1.0
-    used: false

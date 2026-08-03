@@ -40,15 +40,17 @@ jobs:
       - name: 必要なソフトを入れる
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends ffmpeg fonts-noto-cjk fonts-noto-cjk-extra
+          sudo apt-get install -y --no-install-recommends \
+            ffmpeg fonts-noto-cjk fonts-noto-cjk-extra \
+            open-jtalk open-jtalk-mecab-naist-jdic hts-voice-nitech-jp-atr503-m001
           npm install -g @anthropic-ai/claude-code
           pip install -r requirements.txt
+          python -m playwright install --with-deps chromium
 
       - name: 動画をつくる
         env:
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           GOOGLE_TTS_API_KEY: ${{ secrets.GOOGLE_TTS_API_KEY }}
-          PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
           TOPIC_ID: ${{ inputs.topic_id }}
           DRY_RUN: "true"
         run: python -m src.pipeline

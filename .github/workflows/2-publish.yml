@@ -26,8 +26,8 @@ name: 2. 動画をつくって投稿する
 #   unlisted … リンクを知っている人だけ見られます。自動公開はされません。
 #   public   … すぐ全体公開します。
 #
-# 実行が終わると、使ったテーマに used: true が付いて自動で commit されます。
-# 同じテーマが二度選ばれないようにするためです。
+# 投稿済みの記録はリポジトリに持ちません。説明欄の末尾に [t:テーマID] を入れておき、
+# 毎回チャンネルから読み直します。動画を消せば記録も消え、そのテーマはまた作れます。
 #
 # 【止めたくなったら】YouTube Studio の「コンテンツ」から削除するか、
 # 非公開に戻してください。GitHub 側には動画は残りません。
@@ -49,7 +49,7 @@ on:
           - unlisted
           - public
       topic_id:
-        description: 'テーマID。空ならスコアが一番高い未使用テーマ'
+        description: 'テーマID。空なら未投稿のものから自動で選ぶ'
         required: false
         default: ''
 
@@ -79,9 +79,12 @@ jobs:
       - name: 必要なソフトを入れる
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends ffmpeg fonts-noto-cjk fonts-noto-cjk-extra
+          sudo apt-get install -y --no-install-recommends \
+            ffmpeg fonts-noto-cjk fonts-noto-cjk-extra \
+            open-jtalk open-jtalk-mecab-naist-jdic hts-voice-nitech-jp-atr503-m001
           npm install -g @anthropic-ai/claude-code
           pip install -r requirements.txt
+          python -m playwright install --with-deps chromium
 
       - name: つくって投稿する
         env:
@@ -90,20 +93,21 @@ jobs:
           YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
           YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
           GOOGLE_TTS_API_KEY: ${{ secrets.GOOGLE_TTS_API_KEY }}
-          PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
           VISIBILITY: ${{ inputs.visibility }}
           TOPIC_ID: ${{ inputs.topic_id }}
         run: python -m src.pipeline
 
-      - name: 投稿済みテーマを記録する
+      # 投稿済みの記録はチャンネル側（説明欄の [t:...]）が持つので commit しない。
+      # 変わりうるのはテーマが補充されたときの topics.yaml だけ。
+      - name: 補充されたテーマを記録する
         run: |
           git config user.name  "youtube-bot"
           git config user.email "youtube-bot@users.noreply.github.com"
-          git add config/topics.yaml state/
+          git add config/topics.yaml
           if git diff --cached --quiet; then
             echo "変更なし"
           else
-            git commit -m "chore: 投稿済みテーマを記録"
+            git commit -m "chore: テーマを補充"
             git push
           fi
 

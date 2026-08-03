@@ -71,12 +71,11 @@ generation:
   model: "opus"
 
   tts:
-    # ja-JP-Neural2-D(男性) / -B(女性) など。Chirp3-HD 系も可。
-    voice: "ja-JP-Neural2-D"
-    speaking_rate: 1.08      # 少し速いほうが視聴維持率が上がる
+    # google     … Cloud Text-to-Speech。GOOGLE_TTS_API_KEY が要るが、声は明確に自然。
+    # open-jtalk … apt で入る。鍵も課金設定も不要。声はやや機械的。
+    # google を指定してキーが無ければ、自動で open-jtalk に落ちる。
+    # 声は視聴維持率を通して収益に効くので、続ける気があるならキーを足す価値がある。
+    engine: "google"
+    voice: "ja-JP-Neural2-D"   # google のときだけ使う。-B は女性
+    speaking_rate: 1.08        # 少し速いほうが視聴維持率が上がる
     pitch: 0.0
-
-  visuals:
-    # Pexels から引く素材の言語（日本語クエリはヒットしないので英語で投げる）
-    query_language: "en"
-    clip_seconds: 6.0        # 1カットの長さ。短すぎると散漫、長すぎると飽きる

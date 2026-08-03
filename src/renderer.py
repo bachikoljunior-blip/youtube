@@ -8,7 +8,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from .assets import Asset
 from .util import require, run
 
 SILENCE_SECONDS = 0.35
@@ -53,35 +52,28 @@ def segment_timeline(durations: list[float]) -> list[tuple[float, float]]:
     return spans
 
 
-def _clip_from_video(src: Path, duration: float, dest: Path, fps: int, w: int, h: int) -> None:
-    run([
-        "ffmpeg", "-y", "-stream_loop", "-1", "-i", str(src),
-        "-t", f"{duration:.3f}", "-an",
-        "-vf", (
-            f"scale={w}:{h}:force_original_aspect_ratio=increase,"
-            f"crop={w}:{h},fps={fps},setsar=1,eq=brightness=-0.06:saturation=0.92"
-        ),
-        *V_ARGS, "-r", str(fps), str(dest),
-    ])
+def _clip_from_slide(src: Path, duration: float, dest: Path, fps: int, w: int, h: int) -> None:
+    """図解1枚から、ゆっくり寄っていくクリップを作る。
 
-
-def _clip_from_image(src: Path, duration: float, dest: Path, fps: int, w: int, h: int) -> None:
+    元の PNG は出力より大きい（2560x1440 → 1920x1080）。大きいまま寄ってから
+    縮小するので、文字が甘くならない。動きを完全に止めると10分は退屈なので、
+    気づかない程度だけ動かす。
+    """
     frames = max(2, int(duration * fps))
     run([
         "ffmpeg", "-y", "-loop", "1", "-i", str(src),
         "-t", f"{duration:.3f}", "-an",
         "-vf", (
-            f"scale={w * 2}:-2,"
-            f"zoompan=z='min(zoom+0.0007,1.18)':d={frames}"
+            f"zoompan=z='min(zoom+0.00035,1.06)':d={frames}"
             f":x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s={w}x{h}:fps={fps},"
-            "setsar=1,eq=brightness=-0.06:saturation=0.92"
+            "setsar=1"
         ),
         *V_ARGS, "-r", str(fps), str(dest),
     ])
 
 
 def build_video(
-    assets: list[Asset],
+    slides: list[Path],
     durations: list[float],
     narration: Path,
     subtitles: Path,
@@ -96,16 +88,12 @@ def build_video(
     clips_dir.mkdir(parents=True, exist_ok=True)
 
     clips: list[Path] = []
-    for i, (asset, duration) in enumerate(zip(assets, durations)):
+    for i, (slide, duration) in enumerate(zip(slides, durations)):
         # 無音の分だけクリップを伸ばして、カットの切れ目と発話の切れ目をずらす
-        clip_len = duration + SILENCE_SECONDS
         dest = clips_dir / f"clip_{i:03d}.mp4"
-        if asset.is_video:
-            _clip_from_video(asset.path, clip_len, dest, fps, width, height)
-        else:
-            _clip_from_image(asset.path, clip_len, dest, fps, width, height)
+        _clip_from_slide(slide, duration + SILENCE_SECONDS, dest, fps, width, height)
         clips.append(dest)
-        print(f"[render] クリップ {i + 1}/{len(assets)}")
+        print(f"[render] クリップ {i + 1}/{len(slides)}")
 
     listing = work / "video_concat.txt"
     listing.write_text(

@@ -47,23 +47,22 @@
 
 [**→ Secrets の登録ページ**](https://github.com/bachikoljunior-blip/youtube/settings/secrets/actions)
 
-`New repository secret` から5つ登録します。取り方は [SETUP.md](SETUP.md) を見てください。
+`New repository secret` から4つ登録します（5つ目は任意）。取り方は [SETUP.md](SETUP.md) を見てください。
 
 | Name | 出どころ |
 |---|---|
 | `CLAUDE_CODE_OAUTH_TOKEN` | 手元で `claude setup-token` |
 | `YT_CLIENT_ID` | Google Cloud の OAuth クライアント |
 | `YT_CLIENT_SECRET` | 同上 |
-| `YT_REFRESH_TOKEN` | `python scripts/get_refresh_token.py` の出力 |
-| `GOOGLE_TTS_API_KEY` | Google Cloud の API キー |
-| `PEXELS_API_KEY` | [Pexels](https://www.pexels.com/api/new/) |
+| `YT_REFRESH_TOKEN` | [OAuth 2.0 Playground](https://developers.google.com/oauthplayground/) |
+| `GOOGLE_TTS_API_KEY` | 任意。無ければ無料の open-jtalk を使う |
 
 ### 2. Actions に書き込み権限を与える
 
 [**→ Actions の設定ページ**](https://github.com/bachikoljunior-blip/youtube/settings/actions)
 
 一番下の **Workflow permissions** を **Read and write permissions** にして Save。
-これがないと「投稿済みテーマの記録」で失敗します。
+これがないと「テーマの補充」で失敗します。
 
 ### 3. チェックを通す
 
@@ -79,7 +78,7 @@ zip の中に入っているもの:
 
 | ファイル | 見るところ |
 |---|---|
-| `final.mp4` | 長さが8分半を超えているか。字幕がズレていないか |
+| `final.mp4` | 図解と字幕がズレていないか（尺は投稿前の検査が自動で見ます） |
 | `thumbnail.jpg` | スマホサイズに縮めても文字が読めるか |
 | `title.txt` | タイトルと別案2つ |
 | `description.txt` | 説明欄。チャプターの時刻が合っているか |
@@ -92,7 +91,7 @@ zip の中に入っているもの:
 ## テーマの補充
 
 初期プールは10件なので、日次だと10日で尽きます。
-そこで **未使用が6件を切ったら、投稿の直後に自動で5件足す** ようにしてあります。
+そこで **未投稿が6件を切ったら、投稿の直後に自動で5件足す** ようにしてあります。
 補充に失敗しても投稿は成功扱いで、次の回にまた試します。
 
 つまり放っておいても止まりませんが、自動生成のネタは無難になりがちです。
@@ -107,7 +106,6 @@ zip の中に入っているもの:
     title_seed: "確定申告、freeeとやよいでどちらが早いか"
     angle: "入力項目数と連携できる口座の違い。乗り換え時のデータ移行の手順まで"
     score: 2.0      # 先に使いたいので高めにする
-    used: false
 ```
 
 自分で思いついたネタのほうが強いことが多いので、遠慮なく足してください。
@@ -122,7 +120,7 @@ zip の中に入っているもの:
 | 公開時刻を19時から変える | [channel.yaml](https://github.com/bachikoljunior-blip/youtube/edit/main/config/channel.yaml) の `publish_hour_jst` |
 | ジャンルを変える | 同 `channel.niche` と `persona` |
 | 動画を長くする | 同 `video.target_minutes` |
-| 声を変える | 同 `generation.tts.voice` |
+| 声を変える | 同 `generation.tts`（`engine` を `google` にすると自然になる） |
 | 利用枠を節約する | 同 `generation.model` を `opus` → `sonnet` |
 
 ---

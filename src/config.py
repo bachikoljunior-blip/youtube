@@ -9,7 +9,6 @@ import yaml
 ROOT = Path(__file__).resolve().parent.parent
 CONFIG_DIR = ROOT / "config"
 BUILD_DIR = ROOT / "build"
-ASSETS_DIR = ROOT / "assets"
 
 
 def _load_dotenv() -> None:

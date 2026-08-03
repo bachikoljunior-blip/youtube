@@ -1,97 +1,105 @@
-"""1本ぶんの動画を作って投稿する。GitHub Actions から日次で呼ばれる。"""
+"""1本ぶんの動画を作って投稿する。
+
+流れ:
+  チャンネルから投稿済みを読む → テーマを選ぶ → 台本 → 音声 → 図解 → 合成
+  → 検査 → 投稿 → テーマが減っていれば補充
+"""
 from __future__ import annotations
 
 import json
+import random
 import shutil
 import sys
 
-from . import config, state, subtitles, thumbnail, uploader
-from .assets import AssetFetcher
+from . import config, history, subtitles, thumbnail, uploader, verify, visuals
 from .renderer import build_narration, build_video, segment_timeline
 from .script_writer import VideoScript, generate
 from .tts import synthesize_segments
 from .util import fmt_timestamp
 
+LOW_WATER_MARK = 6
+EXPLORE_RATE = 0.3
 
-def pick_topic(pool: dict, topic_id: str = "") -> dict:
-    """スコアが最も高い未使用トピック。同点なら先に書かれているものを選ぶ。
 
-    topic_id を指定すると、used かどうかに関わらずそれを使う（撮り直し用）。
+def pick_topic(pool: dict, posted: set[str], topic_id: str = "") -> dict:
+    """次に作るテーマを選ぶ。
+
+    基本はスコア最大。ただし3割の確率で、未投稿のものから無作為に選ぶ。
+    スコアはあくまで推測なので、常に最大を取ると、推測が外れていたときに
+    そこから抜け出せない。たまに違うものを試して確かめる。
     """
     if topic_id:
         for topic in pool["topics"]:
             if topic["id"] == topic_id:
                 return topic
         raise RuntimeError(
-            f"トピック '{topic_id}' が config/topics.yaml にありません。"
+            f"テーマ '{topic_id}' が config/topics.yaml にありません。"
             f"使えるID: {', '.join(t['id'] for t in pool['topics'][:20])}"
         )
 
-    candidates = [(i, t) for i, t in enumerate(pool["topics"]) if not t.get("used")]
+    candidates = [t for t in pool["topics"] if t["id"] not in posted]
     if not candidates:
         raise RuntimeError(
-            "未使用のトピックがありません。config/topics.yaml に追加するか、"
-            "optimize ワークフローを手動実行してください。"
+            "未投稿のテーマがありません。config/topics.yaml に追加するか、"
+            "「3. テーマを実績から入れ替える」を実行してください。"
         )
-    _, topic = max(candidates, key=lambda pair: (float(pair[1].get("score", 1.0)), -pair[0]))
-    return topic
+
+    if len(candidates) > 1 and random.random() < EXPLORE_RATE:
+        topic = random.choice(candidates)
+        print(f"[pipeline] 探索: 無作為に選びました（{int(EXPLORE_RATE * 100)}%の確率）")
+        return topic
+    return max(candidates, key=lambda t: float(t.get("score", 1.0)))
 
 
-def build_description(script: VideoScript, spans: list[tuple[float, float]], channel: dict, credits: str) -> str:
+def build_description(script: VideoScript, spans: list[tuple[float, float]],
+                      channel: dict, topic_id: str) -> str:
     parts = [script.description_body.strip(), "", "▼ 目次"]
 
-    seen_zero = False
     lines = []
     for chapter in sorted(script.chapters, key=lambda c: c.segment_index):
         index = max(0, min(chapter.segment_index, len(spans) - 1))
-        start = spans[index][0]
-        if not lines:
-            start, seen_zero = 0.0, True
+        start = 0.0 if not lines else spans[index][0]
         lines.append(f"{fmt_timestamp(start)} {chapter.label}")
-    if not seen_zero and lines:
-        lines.insert(0, "0:00 はじめに")
+    if not lines:
+        lines = ["0:00 はじめに"]
     parts += lines
 
-    if credits:
-        parts += ["", credits]
     parts.append(channel["publish"]["footer"].rstrip())
+    # 投稿済みの印。次回このテーマが選ばれないための唯一の記録で、
+    # 動画を消せばこの記録も一緒に消える（＝また作れるようになる）。
+    parts += ["", history.marker(topic_id)]
     return "\n".join(parts)
 
 
-LOW_WATER_MARK = 6
-
-
-def refill_topics_if_low() -> None:
-    """未使用テーマが減ってきたら補充する。
-
-    毎日投稿すると初期プールは10日で尽きる。投稿が止まる前に自動で足しておく。
-    ここで失敗しても投稿自体は成功しているので、握りつぶして次回に回す。
-    """
-    unused = [t for t in config.load_topics()["topics"] if not t.get("used")]
+def refill_topics_if_low(posted: set[str]) -> None:
+    """未投稿のテーマが減ってきたら補充する。投稿自体は失敗させない。"""
+    unused = [t for t in config.load_topics()["topics"] if t["id"] not in posted]
     if len(unused) > LOW_WATER_MARK:
-        print(f"[pipeline] 未使用テーマ {len(unused)} 件。補充は不要。")
+        print(f"[pipeline] 未投稿テーマ {len(unused)} 件。補充は不要。")
         return
 
-    print(f"[pipeline] 未使用テーマが {len(unused)} 件まで減ったので補充します。")
+    print(f"[pipeline] 未投稿テーマが {len(unused)} 件まで減ったので補充します。")
     try:
         from . import analytics
 
-        analytics.optimize()
-    except Exception as exc:  # 補充の失敗で投稿済みの回を失敗扱いにしない
+        analytics.optimize(posted)
+    except Exception as exc:
         print(f"[pipeline] テーマの補充に失敗しました（投稿は成功しています）: {exc}")
 
 
 def main() -> int:
     channel = config.load_channel()
     pool = config.load_topics()
+    dry = config.dry_run()
 
-    # 手動実行のときだけ、ワークフローの入力で上書きできるようにしておく
     override = config.env("VISIBILITY", required=False)
     if override:
         channel["publish"]["visibility"] = override
         print(f"[pipeline] 公開設定を {override} で上書き")
 
-    topic = pick_topic(pool, config.env("TOPIC_ID", required=False))
+    # 投稿済みはチャンネルから読む。ファイルには持たない。
+    posted: set[str] = set() if dry else history.posted_topic_ids()
+    topic = pick_topic(pool, posted, config.env("TOPIC_ID", required=False))
     print(f"=== テーマ: {topic['title_seed']} ({topic['id']}) ===")
 
     work = config.BUILD_DIR / topic["id"]
@@ -110,25 +118,15 @@ def main() -> int:
         work / "audio",
     )
     if not audios:
-        raise RuntimeError("台本のセグメントが空でした。トピックを変えて再実行してください。")
+        raise RuntimeError("台本のセグメントが空でした。テーマを変えて再実行してください。")
 
     segment_paths = [p for p, _ in audios]
     durations = [d for _, d in audios]
     spans = segment_timeline(durations)
-    total = spans[-1][1]
-    print(f"[pipeline] 想定尺: {total / 60:.1f} 分")
+    print(f"[pipeline] 想定尺: {spans[-1][1] / 60:.1f} 分")
 
-    if total < float(channel["video"]["min_minutes"]) * 60:
-        print(
-            f"[pipeline] 警告: {total / 60:.1f}分しかありません。"
-            "8分未満だとミッドロール広告を入れられず収益が大きく落ちます。"
-        )
-
-    # 3. 映像素材
-    fetcher = AssetFetcher(work / "assets")
-    assets = [
-        fetcher.fetch(seg.visual_query, i) for i, seg in enumerate(script.segments)
-    ]
+    # 3. 図解を自前で描いて撮る
+    slides = visuals.render([s.visual.model_dump() for s in script.segments], work / "slides")
 
     # 4. 字幕
     ass_path = subtitles.build(
@@ -142,19 +140,18 @@ def main() -> int:
     # 5. 合成
     narration = build_narration(segment_paths, work)
     video_path = build_video(
-        assets, durations, narration, ass_path,
+        slides, durations, narration, ass_path,
         work / "final.mp4", work, channel["video"],
     )
 
     # 6. サムネイル
     thumb_path = thumbnail.create(
-        assets[0].path, script.thumbnail_line1, script.thumbnail_line2,
+        slides[0], script.thumbnail_line1, script.thumbnail_line2,
         work / "thumbnail.jpg", work,
     )
 
-    description = build_description(script, spans, channel, fetcher.credit_line())
+    description = build_description(script, spans, channel, topic["id"])
 
-    # スマホから中身を確認できるように、成果物と一緒に落とせる形で残す
     (work / "title.txt").write_text(
         script.title + "\n\n[別案]\n" + "\n".join(script.title_alternatives) + "\n",
         encoding="utf-8",
@@ -164,26 +161,22 @@ def main() -> int:
         json.dumps(script.model_dump(), ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
     )
 
-    if config.dry_run():
+    # 7. 投稿前の検査。ここで落ちたら投稿しない。
+    verify.check(video_path, channel["video"], float(channel["video"]["min_minutes"]), work)
+
+    if dry:
         print("[pipeline] DRY_RUN のためアップロードしません。")
-        print(f"  動画: {video_path}")
-        print(f"  サムネ: {thumb_path}")
-        print(f"\n  タイトル: {script.title}")
-        print(f"  説明欄:\n{description}")
+        print(f"  動画: {video_path}\n  サムネ: {thumb_path}")
+        print(f"\n  タイトル: {script.title}\n  説明欄:\n{description}")
         return 0
 
-    # 7. 投稿
+    # 8. 投稿
     video_id = uploader.upload(
         video_path, thumb_path, script.title, description,
         script.tags, channel["publish"],
     )
 
-    # 8. 記録（次回以降このテーマは選ばれない）
-    topic["used"] = True
-    config.save_topics(pool)
-    state.record(video_id, topic["id"], script.title)
-
-    refill_topics_if_low()
+    refill_topics_if_low(posted | {topic["id"]})
     print("=== 完了 ===")
     return 0
 

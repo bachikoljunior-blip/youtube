@@ -13,7 +13,7 @@ from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 from pydantic import BaseModel, Field
 
-from . import config, state
+from . import config
 from .auth import credentials
 from .claude_cli import ClaudeCliError, ask
 
@@ -29,53 +29,60 @@ class TopicIdeas(BaseModel):
 
 
 def fetch_report(days: int = 28) -> list[dict[str, Any]]:
-    """直近 N 日の動画別実績。収益は取れれば取る。"""
+    """直近 N 日の動画別実績。タイトルは Data API 側から引く。
+
+    分析APIは動画IDしか返さないので、タイトルは別で取る。
+    ファイルに投稿履歴を持たないので、ここがタイトルの唯一の出どころになる。
+    """
     analytics = build("youtubeAnalytics", "v2", credentials=credentials(), cache_discovery=False)
     end = date.today()
     start = end - timedelta(days=days)
 
-    metric_sets = [
-        "views,estimatedMinutesWatched,averageViewPercentage,estimatedRevenue",
-        "views,estimatedMinutesWatched,averageViewPercentage",
-    ]
-    for metrics in metric_sets:
-        try:
-            response = analytics.reports().query(
-                ids="channel==MINE",
-                startDate=start.isoformat(),
-                endDate=end.isoformat(),
-                metrics=metrics,
-                dimensions="video",
-                sort="-estimatedMinutesWatched",
-                maxResults=50,
-            ).execute()
-        except HttpError as exc:
-            # 収益メトリクスは YPP 承認前だと弾かれる。落として再挑戦。
-            print(f"[analytics] {metrics} は取得できず: {exc.resp.status}")
-            continue
+    try:
+        response = analytics.reports().query(
+            ids="channel==MINE",
+            startDate=start.isoformat(),
+            endDate=end.isoformat(),
+            metrics="views,estimatedMinutesWatched,averageViewPercentage",
+            dimensions="video",
+            sort="-views",
+            maxResults=50,
+        ).execute()
+    except HttpError as exc:
+        print(f"[analytics] 実績を取得できませんでした: {exc.resp.status}")
+        return []
 
-        headers = [h["name"] for h in response.get("columnHeaders", [])]
-        return [dict(zip(headers, row)) for row in response.get("rows", [])]
+    headers = [h["name"] for h in response.get("columnHeaders", [])]
+    rows = [dict(zip(headers, row)) for row in response.get("rows", [])]
+    if not rows:
+        return []
 
-    return []
+    youtube = build("youtube", "v3", credentials=credentials(), cache_discovery=False)
+    ids = [r["video"] for r in rows][:50]
+    meta = youtube.videos().list(part="snippet", id=",".join(ids)).execute()
+    titles = {v["id"]: v["snippet"]["title"] for v in meta.get("items", [])}
+    for row in rows:
+        row["title"] = titles.get(row["video"], "(取得できず)")
+    return rows
 
 
 def _summarize(rows: list[dict[str, Any]]) -> tuple[list[str], list[str]]:
-    """視聴時間の中央値を基準に、勝ち筋と負け筋のタイトルを分ける。"""
-    history = {entry["video_id"]: entry for entry in state.load()}
-    scored = []
-    for row in rows:
-        entry = history.get(row.get("video"))
-        if not entry:
-            continue
-        scored.append((row.get("estimatedMinutesWatched", 0), entry["title"], row))
+    """勝ち筋と負け筋を分ける。
 
+    再生回数ではなく **視聴維持率** で見る。再生回数は単に古い動画ほど積み上がるので、
+    「どの切り口が効いたか」を測る物差しにならない。
+    """
+    scored = [
+        (float(r.get("averageViewPercentage") or 0), r.get("title", ""))
+        for r in rows
+        if r.get("title")
+    ]
     if len(scored) < 4:
         return [], []
 
-    median = statistics.median(v for v, _, _ in scored)
-    winners = [title for value, title, _ in scored if value >= median * 1.3]
-    losers = [title for value, title, _ in scored if value <= median * 0.6]
+    median = statistics.median(value for value, _ in scored)
+    winners = [title for value, title in scored if value >= median * 1.15]
+    losers = [title for value, title in scored if value <= median * 0.8]
     return winners[:8], losers[:8]
 
 
@@ -108,24 +115,28 @@ def propose_topics(channel: dict, winners: list[str], losers: list[str], existin
         return []
 
     # 実績に基づく提案なので、初期スコアを少し高くして先に消化させる
-    return [{**idea.model_dump(), "score": 1.4, "used": False} for idea in ideas.topics]
+    return [{**idea.model_dump(), "score": 1.4} for idea in ideas.topics]
 
 
-def optimize() -> None:
+def optimize(posted: set[str] | None = None) -> None:
+    from .history import posted_topic_ids
+
     channel = config.load_channel()
     pool = config.load_topics()
     existing_ids = [t["id"] for t in pool["topics"]]
+    if posted is None:
+        posted = posted_topic_ids()
 
     rows = fetch_report()
     print(f"[analytics] {len(rows)} 本ぶんの実績を取得")
     winners, losers = _summarize(rows)
     if winners:
-        print(f"[analytics] 伸びた: {winners}")
+        print(f"[analytics] 維持率が高い: {winners}")
     if losers:
-        print(f"[analytics] 伸びなかった: {losers}")
+        print(f"[analytics] 維持率が低い: {losers}")
 
     # 未消化のトピックが十分あるなら、無理に増やさない
-    unused = [t for t in pool["topics"] if not t.get("used")]
+    unused = [t for t in pool["topics"] if t["id"] not in posted]
     if len(unused) >= 12 and not winners:
         print("[analytics] 未消化トピックが十分あるため追加しません。")
         return

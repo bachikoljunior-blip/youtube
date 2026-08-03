@@ -9,7 +9,7 @@ from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 from googleapiclient.http import MediaFileUpload
 
-from .auth import credentials
+from .auth import credentials, explain
 
 JST = timezone(timedelta(hours=9))
 RETRYABLE = {500, 502, 503, 504}
@@ -64,6 +64,8 @@ def upload(
         "status": status,
     }
 
+    # 分割アップロード。20MB超を一発で送ると、途中で切れたときに
+    # 上がったのかどうかも分からなくなる。
     media = MediaFileUpload(str(video_path), chunksize=8 * 1024 * 1024, resumable=True)
     request = youtube.videos().insert(part="snippet,status", body=body, media_body=media)
 
@@ -81,7 +83,9 @@ def upload(
                 print(f"[upload] {exc.resp.status} のため {wait}s 後に再試行")
                 time.sleep(wait)
                 continue
-            raise
+            raise RuntimeError(explain(exc)) from exc
+        except Exception as exc:
+            raise RuntimeError(explain(exc)) from exc
 
     video_id = response["id"]
     print(f"[upload] 完了: https://youtu.be/{video_id}")
