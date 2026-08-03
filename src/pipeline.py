@@ -58,6 +58,29 @@ def build_description(script: VideoScript, spans: list[tuple[float, float]], cha
     return "\n".join(parts)
 
 
+LOW_WATER_MARK = 6
+
+
+def refill_topics_if_low() -> None:
+    """未使用テーマが減ってきたら補充する。
+
+    毎日投稿すると初期プールは10日で尽きる。投稿が止まる前に自動で足しておく。
+    ここで失敗しても投稿自体は成功しているので、握りつぶして次回に回す。
+    """
+    unused = [t for t in config.load_topics()["topics"] if not t.get("used")]
+    if len(unused) > LOW_WATER_MARK:
+        print(f"[pipeline] 未使用テーマ {len(unused)} 件。補充は不要。")
+        return
+
+    print(f"[pipeline] 未使用テーマが {len(unused)} 件まで減ったので補充します。")
+    try:
+        from . import analytics
+
+        analytics.optimize()
+    except Exception as exc:  # 補充の失敗で投稿済みの回を失敗扱いにしない
+        print(f"[pipeline] テーマの補充に失敗しました（投稿は成功しています）: {exc}")
+
+
 def main() -> int:
     channel = config.load_channel()
     pool = config.load_topics()
@@ -159,6 +182,8 @@ def main() -> int:
     topic["used"] = True
     config.save_topics(pool)
     state.record(video_id, topic["id"], script.title)
+
+    refill_topics_if_low()
     print("=== 完了 ===")
     return 0
 

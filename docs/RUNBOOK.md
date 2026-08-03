@@ -1,33 +1,43 @@
-# 運用手順（スケジュール実行なし・全部手押し）
+# 運用手順
 
-cron は使いません。GitHub の画面から番号順にボタンを押すだけです。
-PC は不要で、スマホのブラウザからでも全部できます。
+**投稿だけ自動、あとは手押し**です。
 
-ワークフローは4つ。**普段使うのは「2」だけ**です。
-
-| | ワークフロー | いつ押すか | リンク |
+| | ワークフロー | 実行 | リンク |
 |---|---|---|---|
-| 0 | 設定をチェックする | 初回と、失敗したとき | [開く](https://github.com/bachikoljunior-blip/youtube/actions/workflows/0-check.yml) |
-| 1 | 動画をつくる（投稿しない） | 中身を先に見たいとき | [開く](https://github.com/bachikoljunior-blip/youtube/actions/workflows/1-preview.yml) |
-| 2 | 動画をつくって投稿する | **毎日これ** | [開く](https://github.com/bachikoljunior-blip/youtube/actions/workflows/2-publish.yml) |
-| 3 | テーマを実績から入れ替える | 週1回・4本たまってから | [開く](https://github.com/bachikoljunior-blip/youtube/actions/workflows/3-optimize.yml) |
+| 0 | 設定をチェックする | 手動（初回と、失敗したとき） | [開く](https://github.com/bachikoljunior-blip/youtube/actions/workflows/0-check.yml) |
+| 1 | 動画をつくる（投稿しない） | 手動（中身を先に見たいとき） | [開く](https://github.com/bachikoljunior-blip/youtube/actions/workflows/1-preview.yml) |
+| 2 | 動画をつくって投稿する | **毎日 05:17 JST に自動** | [開く](https://github.com/bachikoljunior-blip/youtube/actions/workflows/2-publish.yml) |
+| 3 | テーマを実績から入れ替える | 手動（週1回・4本たまってから） | [開く](https://github.com/bachikoljunior-blip/youtube/actions/workflows/3-optimize.yml) |
 
-押し方はどれも同じです。リンクを開く → 右上の **Run workflow** → 内容を選ぶ → 緑の **Run workflow**。
+手で押すときは、リンクを開く → 右上の **Run workflow** → 内容を選ぶ → 緑の **Run workflow**。
 
 ---
 
-## 毎日やること（30秒）
+## 普段やること
 
-1. [**2. 動画をつくって投稿する**](https://github.com/bachikoljunior-blip/youtube/actions/workflows/2-publish.yml) を開く
-2. **Run workflow** → visibility は `private` のまま → **Run workflow**
-3. 終わり。40〜60分後にアップロードが完了し、その日の19時（JST）に自動公開されます
+**何もありません。** 毎朝 05:17（JST）に1本作られ、その日の19時に公開されます。
 
-進み具合は同じページで見られます。緑のチェックが付けば成功です。
-できた動画は [YouTube Studio のコンテンツ](https://studio.youtube.com/) に並びます。
+やるとしたら、週に何度か次のどれかです。
 
-> `private` は「非公開でアップして19時に自動公開」です。放っておけば公開されます。
+- [公開待ちの動画を見る](https://studio.youtube.com/) — 19時前なら差し替えも取り消しもできます
+- [実行が失敗していないか見る](https://github.com/bachikoljunior-blip/youtube/actions/workflows/2-publish.yml) — 赤いバツが付いていたら下の「失敗したとき」へ
+- [テーマを自分で足す](https://github.com/bachikoljunior-blip/youtube/edit/main/config/topics.yaml) — 自分で思いついたネタが一番強いです
+
+> 公開設定は `private`（非公開でアップして19時に自動公開）が既定です。放っておけば公開されます。
 > やめたくなったら19時までに Studio から削除するか、下書きに戻してください。
-> 確認せずすぐ出したくなったら visibility を `public` にします。
+
+### 今すぐもう1本ほしいとき
+
+[**2. 動画をつくって投稿する**](https://github.com/bachikoljunior-blip/youtube/actions/workflows/2-publish.yml)
+を手で実行してください。スケジュールとは別に、その回のぶんが増えます。
+
+### 失敗したとき
+
+赤いバツの回を開くと、どのステップで落ちたか出ます。よくあるのは
+`CLAUDE_CODE_OAUTH_TOKEN` の期限切れです。手元で `claude setup-token` を実行し直して
+[Secrets](https://github.com/bachikoljunior-blip/youtube/settings/secrets/actions) を更新してください。
+
+自動リトライはしません。直したあと、手で「2」を1回押せばその日のぶんが埋まります。
 
 ---
 
@@ -79,7 +89,14 @@ zip の中に入っているもの:
 
 ---
 
-## テーマを自分で足す
+## テーマの補充
+
+初期プールは10件なので、日次だと10日で尽きます。
+そこで **未使用が6件を切ったら、投稿の直後に自動で5件足す** ようにしてあります。
+補充に失敗しても投稿は成功扱いで、次の回にまた試します。
+
+つまり放っておいても止まりませんが、自動生成のネタは無難になりがちです。
+思いついたものは自分で足してください。
 
 [**→ config/topics.yaml を編集する**](https://github.com/bachikoljunior-blip/youtube/edit/main/config/topics.yaml)
 
@@ -110,23 +127,22 @@ zip の中に入っているもの:
 
 ---
 
-## 手押しにした代償と、戻し方
+## 投稿頻度を変える
 
-手動なので、**押し忘れた日は動画が増えません**。伸びるかどうかは投稿を切らさないことで
-だいたい決まるので、ここだけは自分で担保する必要があります。
-スマホのリマインダーを毎朝8時にセットしておくのが現実的です。
+[**→ 2-publish.yml を編集する**](https://github.com/bachikoljunior-blip/youtube/edit/main/.github/workflows/2-publish.yml)
 
-あとで自動に戻したくなったら、
-[2-publish.yml](https://github.com/bachikoljunior-blip/youtube/edit/main/.github/workflows/2-publish.yml)
-の `on:` の下に3行足すだけです。
+`cron:` の行を書き換えるだけです。**UTC で書く**ので、JST から9時間引きます。
 
-```yaml
-on:
-  schedule:
-    - cron: "0 23 * * *"   # 毎朝8時(JST)。UTC で書く点に注意
-  workflow_dispatch:
-    ...
-```
+| したいこと | cron |
+|---|---|
+| 毎日 05:17 JST（既定） | `"17 20 * * *"` |
+| 隔日 | `"17 20 */2 * *"` |
+| 平日だけ | `"17 20 * * 1-5"` |
+| 自動投稿を止める | `schedule:` と `- cron:` の2行を消す |
 
-ただし **スケジュール実行はデフォルトブランチ（main）にあるファイルしか動きません**。
-手押しのままなら関係ありませんが、自動に戻すときは main にマージされているか確認してください。
+**上げるより下げるほうが安全です。** 1日2本にすると Actions の無料枠（private リポジトリは
+月2,000分）を超えます。増やしたいなら先に1週間ぶんの実行時間を
+[Billing の使用状況](https://github.com/settings/billing) で確認してください。
+
+> **スケジュール実行はデフォルトブランチ（main）のファイルしか動きません。**
+> 別ブランチで cron を書き換えても反映されないので、必ず main にマージしてください。
