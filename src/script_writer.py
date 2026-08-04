@@ -13,10 +13,18 @@ from .claude_cli import ask, follow_up
 CHARS_PER_MINUTE = 360.0
 
 
+class Bar(BaseModel):
+    """kind=chart の棒1本。src/calc の計算結果から作る。"""
+
+    label: str = Field(description="棒の左に出す見出し。全角10文字以内")
+    value: float = Field(description="棒の長さを決める数値。最大値が全幅になる")
+    display: str = Field(description="棒の上に出す文字。『12万6千円』のように読める形で")
+
+
 class Visual(BaseModel):
     """このセグメントで画面に出す図解。フリー素材ではなく自前で描く。"""
 
-    kind: str = Field(description="stat / table / steps / compare のいずれか")
+    kind: str = Field(description="stat / table / steps / compare / chart のいずれか")
     headline: str = Field(description="画面上部の見出し。全角18文字以内")
     stat: str = Field(default="", description="kind=stat のとき中央に大きく出す数字。例『約7万7千円』。他の kind では空")
     note: str = Field(default="", description="kind=stat のとき数字に添える条件。例『年収600万・扶養なし』")
@@ -28,6 +36,10 @@ class Visual(BaseModel):
     rows: list[list[str]] = Field(
         default_factory=list,
         description="kind=table の行を2〜4個。各セルは全角12文字以内。他の kind では空",
+    )
+    bars: list[Bar] = Field(
+        default_factory=list,
+        description="kind=chart の棒を2〜6本。src/calc で計算した結果をそのまま入れる。他の kind では空",
     )
 
 
@@ -55,7 +67,25 @@ class VideoScript(BaseModel):
     chapters: list[Chapter] = Field(description="チャプター4〜7個")
 
 
-ROLE = """あなたは日本語YouTubeの解説動画の構成作家です。
+ROLE = """あなたは日本語YouTubeの動画の構成作家です。
+
+この動画は「制度の解説」ではありません。**自分で計算した結果を発表する動画**です。
+ここを取り違えないでください。
+
+なぜか。YouTube は「クリエイターならではの率直な洞察や視点が追加されておらず、
+汎用的または独創性のないテンプレートを使用して作成され、大量生産されたような印象を
+与える AI 生成コンテンツ」と「自分で作成していない他の資料の内容を読み上げただけの
+コンテンツ」を収益化の対象外にしています。制度をまとめ直した解説は、どれだけ丁寧でも
+後者に落ちます。収益化されなければ、この動画の価値はゼロです。
+
+だから毎回、src/calc に計算を実装し、**どこにも公開されていない数字**を出してください。
+その数字が動画の主役です。解説は、その数字を理解させるための補助です。
+
+必ず入れること:
+- 冒頭で、計算して分かったことを数字ごと言い切る。「調べてみました」ではなく「計算しました」。
+- 途中で一度、**計算の前提**を画面と音声の両方で明示する。src/calc の ASSUMPTIONS をそのまま使う。
+  前提を隠さないことが、この動画の信頼の全部です。
+- 終盤で、その数字が視聴者自身の場合にどう変わるかを言う。
 
 守ること:
 - 視聴維持率がすべて。冒頭の1セグメント目で「この動画で分かる結論」を数字ごと言い切る。前置き・自己紹介・チャンネル登録の依頼は書かない。
@@ -69,8 +99,12 @@ ROLE = """あなたは日本語YouTubeの解説動画の構成作家です。
 画面（visual）:
 - ナレーションの内容を図解にする。ナレーションの繰り返しにしない。
 - 数字を1つ言い切る場面は kind=stat、条件で答えが変わる場面は kind=table、
-  やることを並べる場面は kind=steps、二択を比べる場面は kind=compare を使う。
-- 全部を stat にしない。10本のうち table と steps が合わせて半分は欲しい。
+  やることを並べる場面は kind=steps、二択を比べる場面は kind=compare、
+  **計算結果の大小を見せる場面は kind=chart** を使う。
+- chart は計算した数字から作る。棒の長さが結果そのものになるので、回ごとに図の形が変わる。
+  **1本の動画に chart を最低3枚は入れてください。** これが「テンプレートの繰り返し」との
+  分かれ目になります。
+- 全部を stat にしない。table と steps と chart が合わせて半分は欲しい。
 - table は視聴者が一時停止して読む場所になる。行と列を絞り、数字を入れる。
 
 タイトル:

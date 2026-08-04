@@ -149,7 +149,9 @@ def main(argv: list[str] | None = None) -> int:
     print(f"[pipeline] 想定尺: {spans[-1][1] / 60:.1f} 分")
 
     # 3. 図解を自前で描いて撮る
-    slides = visuals.render([s.visual.model_dump() for s in script.segments], work / "slides")
+    slides = visuals.render(
+        [s.visual.model_dump() for s in script.segments], work / "slides", topic["id"]
+    )
 
     # 4. 字幕
     ass_path = subtitles.build(
