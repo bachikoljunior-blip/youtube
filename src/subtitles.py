@@ -15,6 +15,11 @@ MAX_LINE_CHARS = 22
 # 縦向き（ショート）は画面が狭いので1行を短くする
 MAX_LINE_CHARS_PORTRAIT = 13
 
+# 数字と単位のかたまり。この中では改行しない。
+# 「23万」「6250円」のように割れると読めなくなる。
+# このチャンネルは数字が主役なので、ここは崩さない。
+_NUM_TOKEN = set("0123456789円日年月時分秒人回倍万千億％%割点")
+
 HEADER = """[Script Info]
 ScriptType: v4.00+
 PlayResX: {res_x}
@@ -62,10 +67,17 @@ def _chunk(narration: str, limit: int = MAX_LINE_CHARS) -> list[str]:
         else:
             if buf:
                 lines.append(buf)
-            # 1片で長すぎる場合は機械的に割る
+            # 1片で長すぎる場合は機械的に割る。ただし数字の途中では割らない。
+            # このチャンネルは数字が主役なので、「1875円か1687」で改行されると読めない。
             while len(piece) > limit:
-                lines.append(piece[:limit])
-                piece = piece[limit:]
+                cut = limit
+                # 数字と単位のかたまりの途中では割らない
+                while cut > 1 and piece[cut - 1] in _NUM_TOKEN and piece[cut] in _NUM_TOKEN:
+                    cut -= 1
+                if cut <= 1:            # 数字だけで埋まっているなら諦めて機械的に割る
+                    cut = limit
+                lines.append(piece[:cut])
+                piece = piece[cut:]
             buf = piece
     if buf:
         lines.append(buf)

@@ -153,7 +153,7 @@ ol, ul { gap: 16px; }
 table { font-size: 28px; }
 th { font-size: 22px; }
 th, td { padding: 12px 12px; }
-.bar-label { flex: 0 0 130px; font-size: 24px; }
+.bar-label { flex: 0 0 168px; font-size: 22px; line-height: 1.15; }
 .bar-track { height: 44px; }
 .bar-value { font-size: 24px; }
 .chart { gap: 16px; }
