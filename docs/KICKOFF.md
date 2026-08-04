@@ -42,11 +42,19 @@ GOOGLE_TTS_API_KEY
 **設定したあとに始まるセッション**にしか入らないので、立ち上げてから直すことは
 できません — 作り直すしかありません。
 
-見分け方は、そのセッションでこれを実行するだけです。
+見分け方は、そのセッションで**認証情報が入っているかを直接見る**ことです。
 
 ```sh
-echo $CLAUDE_CODE_REMOTE_ENVIRONMENT_TYPE   # cloud_default なら環境を間違えている
+for v in YT_CLIENT_ID YT_CLIENT_SECRET YT_REFRESH_TOKEN GOOGLE_TTS_API_KEY; do
+  val="${!v}"; [ -n "$val" ] && echo "$v: あり (${#val}字)" || echo "$v: なし"
+done
 ```
+
+上3つが「あり」なら環境は合っています。「なし」が出たら環境の選び間違いです。
+
+> `echo $CLAUDE_CODE_REMOTE_ENVIRONMENT_TYPE` では判定できません。この値は
+> 「Anthropic のクラウドで動いている」ことを表すだけで、**どの環境を選んだかとは
+> 無関係**です。「Youtube」環境でも `cloud_default` が出ます。
 
 ## 2. 下の文面をそのまま貼る
 

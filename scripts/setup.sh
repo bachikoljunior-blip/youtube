@@ -28,7 +28,10 @@ command -v open_jtalk >/dev/null || { echo "open_jtalk が入りませんでし�
 # cffi を入れ直すと直る。先に入れておく。
 python3 -c "import _cffi_backend" 2>/dev/null || pip install -q --upgrade cffi
 
-pip install -q -r requirements.txt
+# ディストリが入れたパッケージは pip から消せない（RECORD が無い）ので、
+# 上書きが要るときは --ignore-installed で新しいほうを上に置く。
+pip install -q -r requirements.txt \
+  || pip install -q --ignore-installed -r requirements.txt
 
 # 同梱の Chromium は playwright の期待するビルド番号と一致しないことがある。
 # その場合は実体を直接指す。src/visuals.py が PLAYWRIGHT_CHROMIUM_PATH を見る。

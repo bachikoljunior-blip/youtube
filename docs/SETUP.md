@@ -141,7 +141,7 @@ YT_REFRESH_TOKEN
 
 | 症状 | 原因 |
 |---|---|
-| 認証が通らない | 環境を間違えている。セッションで `echo $CLAUDE_CODE_REMOTE_ENVIRONMENT_TYPE` が `cloud_default` なら「Youtube」環境で作り直す |
+| 認証が通らない | 環境を間違えている。セッションで `echo "${YT_CLIENT_ID:-なし}"` が「なし」なら「Youtube」環境で作り直す（`CLAUDE_CODE_REMOTE_ENVIRONMENT_TYPE` は判定に使えません。どの環境でも `cloud_default` が出ます） |
 | サムネイルだけ設定されない | STEP 1-3 の電話番号確認が未了 |
 | `invalid_grant` | 同意画面が「テスト」のまま7日経過。STEP 2-4 で公開してから STEP 4 をやり直す |
 | `invalid_client` | クライアントIDの貼り間違い。値が二重になっていないか確認 |
