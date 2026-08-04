@@ -10,7 +10,16 @@ from pydantic import BaseModel, Field
 from .claude_cli import ask, follow_up
 
 # 日本語 TTS の実測。speaking_rate=1.0 でおよそこのくらい進む。
-CHARS_PER_MINUTE = 360.0
+#
+# 公開・生成した11本を実測したところ **平均 322 字/分・最も遅いもので 297 字/分** だった。
+# 数字が主役のチャンネルなので「163万9800円」のような並びが多く、字数のわりに遅い。
+#
+# ここで1つの値を使うと、下限と上限のどちらかで必ず危険側に外れる。
+#   下限（長尺の8.5分）… 速いほうで見積もる → 字数が多くなる → 尺は確実に足りる
+#   上限（ショートの60秒）… 遅いほうで見積もる → 字数が少なくなる → 確実に収まる
+# だから向きごとに分ける。実際に 360 の一本値でショートが 84秒・66秒と溢れた。
+CHARS_PER_MINUTE = 360.0        # 下限を決めるとき（速い側）
+CHARS_PER_MINUTE_SLOW = 297.0   # 上限を決めるとき（遅い側・実測の最遅）
 
 
 class Bar(BaseModel):
@@ -223,7 +232,12 @@ def generate(channel: dict, topic: dict) -> VideoScript:
     # max_minutes を明示できるようにして、ショート側から渡す。
     max_minutes = float(vid.get("max_minutes") or (target + 1.5))
     min_chars = int(float(vid["min_minutes"]) * CHARS_PER_MINUTE)
-    max_chars = int(max_minutes * CHARS_PER_MINUTE)
+    max_chars = int(max_minutes * CHARS_PER_MINUTE_SLOW)
+    if max_chars <= min_chars:
+        raise RuntimeError(
+            f"尺の上限({max_minutes}分)が下限({vid['min_minutes']}分)を下回っています。"
+            "config/channel.yaml の max_minutes を見直してください"
+        )
 
     prompt = ROLE + "\n" + TASK.format(
         channel_name=cfg["name"],
