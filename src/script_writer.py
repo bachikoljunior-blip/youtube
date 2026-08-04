@@ -144,6 +144,7 @@ TASK = """次の条件で動画1本ぶんの台本を作ってください。
 # 今回のテーマ
 {topic_title}
 切り口: {topic_angle}
+{calc_block}
 
 # 尺
 narration の合計を {min_chars}〜{max_chars} 文字にしてください。
@@ -154,6 +155,59 @@ narration の合計を {min_chars}〜{max_chars} 文字にしてください。
 
 def _total_chars(script: VideoScript) -> int:
     return sum(len(s.narration) for s in script.segments)
+
+
+def calc_block(topic: dict) -> str:
+    """テーマに紐づいた計算を実行して、その出力をそのまま台本の材料にする。
+
+    これが無いと台本を書く側は数字を**発明する**しかない。裏の取れない数字を
+    動画に入れないという方針に対して、これは致命的な穴だった。実際これまでは
+    常駐セッションが手で台本を書くことで塞いでいたが、それでは自動で回らない。
+
+    topics.yaml に `calc: モジュール名` を書いておくと、`python -m src.calc.<名前>`
+    を実行して、標準出力と ASSUMPTIONS を丸ごとプロンプトに入れる。
+    台本を書く側は**そこにある数字しか使えない**。
+    """
+    name = str(topic.get("calc", "")).strip()
+    if not name:
+        return ""
+
+    import importlib
+    import subprocess
+    import sys
+
+    try:
+        module = importlib.import_module(f".calc.{name}", package="src")
+    except ImportError as exc:
+        raise RuntimeError(f"テーマ {topic['id']} の calc: {name} が読み込めません: {exc}") from exc
+
+    # 表の取り違えはここで止める。壊れた数字で台本を書かせない。
+    if hasattr(module, "check_tables"):
+        module.check_tables()
+
+    proc = subprocess.run(
+        [sys.executable, "-m", f"src.calc.{name}"],
+        capture_output=True, text=True, timeout=300,
+    )
+    if proc.returncode != 0:
+        raise RuntimeError(f"src.calc.{name} が失敗しました: {proc.stderr[-500:]}")
+
+    assumptions = getattr(module, "ASSUMPTIONS", [])
+    return f"""
+# この動画で使う数字（計算済み）
+
+**ここに出ている数字だけを使ってください。** 数字を自分で作らないこと。
+足し算や割り算で新しい数字を導くのも禁止です。ここに無い数字が必要になったら、
+その話題自体を落としてください。裏の取れない数字を動画に入れないためです。
+
+```
+{proc.stdout.strip()}
+```
+
+# 計算の前提（そのまま画面と音声に出すこと）
+
+{chr(10).join(f"- {a}" for a in assumptions)}
+"""
 
 
 def generate(channel: dict, topic: dict) -> VideoScript:
@@ -174,6 +228,7 @@ def generate(channel: dict, topic: dict) -> VideoScript:
         avoid="\n".join(f"- {a}" for a in cfg["avoid"]),
         topic_title=topic["title_seed"],
         topic_angle=topic["angle"],
+        calc_block=calc_block(topic),
         min_chars=min_chars,
         max_chars=max_chars,
         target_minutes=target,
