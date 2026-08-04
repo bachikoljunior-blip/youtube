@@ -118,17 +118,40 @@ def build_html(visual: dict) -> str:
     )
 
 
-def render(visuals: list[dict], out_dir: Path) -> list[Path]:
-    """図解を1枚ずつ PNG にする。"""
+def _chromium_path() -> str | None:
+    """使える Chromium の実体を探す。
+
+    この環境には Chromium が同梱されているが、ビルド番号が playwright の
+    期待するものと一致しないことがあり、そのままだと launch が落ちる。
+    環境変数で指し直せるようにしてあるが、**それに頼らない。**
+    毎日無人で回るので、シェルをまたいで変数が消えた時点で止まる作りは避ける。
+    見つからなければ None を返し、playwright の既定に任せる。
+    """
     import os
 
+    explicit = os.environ.get("PLAYWRIGHT_CHROMIUM_PATH", "").strip()
+    if explicit and Path(explicit).exists():
+        return explicit
+
+    root = Path(os.environ.get("PLAYWRIGHT_BROWSERS_PATH", "/opt/pw-browsers"))
+    if not root.is_dir():
+        return None
+    for name in ("chrome", "headless_shell", "chrome-headless-shell"):
+        for found in sorted(root.glob(f"*/chrome-linux*/{name}")):
+            if found.is_file():
+                return str(found)
+    return None
+
+
+def render(visuals: list[dict], out_dir: Path) -> list[Path]:
+    """図解を1枚ずつ PNG にする。"""
     from playwright.sync_api import sync_playwright
 
     out_dir.mkdir(parents=True, exist_ok=True)
     paths: list[Path] = []
-    # Chromium が同梱済みで、playwright のビルド番号と合わない環境向けの逃げ道。
-    # CI では playwright install が合うものを入れるので、ここは空のままになる。
-    executable = os.environ.get("PLAYWRIGHT_CHROMIUM_PATH", "").strip() or None
+    executable = _chromium_path()
+    if executable:
+        print(f"[visuals] chromium: {executable}")
 
     with sync_playwright() as pw:
         browser = pw.chromium.launch(
