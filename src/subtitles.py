@@ -69,7 +69,16 @@ def _chunk(narration: str, limit: int = MAX_LINE_CHARS) -> list[str]:
             buf = piece
     if buf:
         lines.append(buf)
-    return lines or [narration]
+
+    # 「。」だけの行のような、短すぎる余りは前の行に戻す。
+    # 縦向きは1行が13字と短いので、句点だけが1行に取り残されやすい。
+    merged: list[str] = []
+    for line in lines:
+        if merged and len(line) <= 2:
+            merged[-1] += line
+        else:
+            merged.append(line)
+    return merged or [narration]
 
 
 def build(segments: list[dict], out_path: Path, portrait: bool = False) -> Path:
