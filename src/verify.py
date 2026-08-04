@@ -107,6 +107,31 @@ def _check_subtitles(work: Path) -> list[str]:
     return problems
 
 
+def _check_short_opening(script: dict | None) -> list[str]:
+    """ショートの1枚目は stat（大きい数字1つ）であること。
+
+    ショートは最初の1画面で離脱が決まるので、GOAL.md は「冒頭2秒で数字を出す」と
+    決めてある。ところが自動生成した1本は chart で始まっていた。棒グラフは
+    読むのに時間がかかるので、2秒では入ってこない。
+
+    これは「壊れてはいないが、決めたことを黙って外している」たぐいの外れ方で、
+    いちばん見つけにくい。だから機械に見せる。ショートの作り直しは5分で済み、
+    毎日の投稿義務は長尺のほうなので、ここは落として作り直させてよい。
+    """
+    if not script:
+        return []
+    segments = script.get("segments") or []
+    if not segments:
+        return ["台本にセグメントがない"]
+    kind = (segments[0].get("visual") or {}).get("kind")
+    if kind != "stat":
+        return [
+            f"ショートの1枚目が {kind} になっている（stat であること）。"
+            "最初の1画面で離脱が決まるので、冒頭は大きい数字1つにする"
+        ]
+    return []
+
+
 def _check_slides(work: Path, script: dict | None) -> list[str]:
     """同じ絵が続くこと自体がポリシー上の risk。chart の枚数もここで数える。
 
@@ -177,7 +202,11 @@ def check(path: Path, video_cfg: dict, min_minutes: float, work: Path) -> float:
         except json.JSONDecodeError as exc:
             problems.append(f"script.json が読めない: {exc}")
     # ショート（縦画面）は1本＝1つの計算結果なので chart の下限は当てない。
-    problems += _check_slides(work, None if height > width else script)
+    # 代わりに、冒頭が大きい数字1つで始まっているかを見る。
+    portrait = height > width
+    problems += _check_slides(work, None if portrait else script)
+    if portrait:
+        problems += _check_short_opening(script)
 
     if problems:
         raise VerificationError("投稿前の検査に落ちました: " + " / ".join(problems))
