@@ -29,6 +29,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from src.uploader import _service  # noqa: E402
 
 JST = timezone(timedelta(hours=9))
+LOOKAHEAD_DAYS = 3      # 何日先まで予約の空きを見るか
 
 
 def _fmt(iso: str) -> str:
@@ -120,6 +121,20 @@ def main(days: int = 7) -> int:
         print("\n[予約中]")
         for s in scheduled:
             print("  " + s)
+
+    # 予約が埋まっていない日を出す。**背後の生成はコンテナ再起動で消える**ので、
+    # 「走らせたはず」は当てにならない。実際に 8/7 が空になっていたのを見落としかけた。
+    # 投稿が途切れるのが最大の損失なので、空きは目立たせる。
+    covered = {s.split()[1].split("/")[0] + "/" + s.split()[1].split("/")[1] for s in scheduled}
+    gaps = []
+    for ahead in range(1, LOOKAHEAD_DAYS + 1):
+        day = (datetime.now(JST) + timedelta(days=ahead)).strftime("%m/%d")
+        if day not in covered:
+            gaps.append(day)
+    if gaps:
+        print(f"\n[!] 予約が入っていない日: {', '.join(gaps)}")
+        print("    投稿が途切れるのが最大の損失。生成を撃ち直すこと。")
+        print("    背後の生成はコンテナ再起動で消えるので、ログが残っていてもプロセスは死んでいる。")
 
     if stranded:
         print("\n[!] 公開されないまま止まっている動画があります:")
