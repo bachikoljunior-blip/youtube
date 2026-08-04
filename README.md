@@ -6,6 +6,7 @@
 台本の思考はセッションの中で完結します。だから Anthropic の API キーも Claude のトークンも
 要りません。必要な秘密情報は **YouTube の3つだけ**です。
 
+- **目標と動き方 → [CLAUDE.md](CLAUDE.md)** … セッション開始時に自動で読まれる。最優先
 - **立ち上げ・引き継ぎ → [docs/KICKOFF.md](docs/KICKOFF.md)**
 - **判断の記録 → [docs/JOURNAL.md](docs/JOURNAL.md)** … 毎回ここから読む
 - **初回セットアップ → [docs/SETUP.md](docs/SETUP.md)** … 鍵の取り方（30〜40分・スマホ可）
