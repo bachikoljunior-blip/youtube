@@ -23,7 +23,7 @@ from src import config, uploader  # noqa: E402
 FORBIDDEN = ("github", "GitHub", "リポジトリ", "コードを公開", "ソースコード")
 
 
-def main(topic: str) -> int:
+def main(topic: str, visibility: str | None = None) -> int:
     work = Path("build") / topic
     if not (work / "final.mp4").exists():
         print(f"{work}/final.mp4 がありません。先に --dry-run で作ってください")
@@ -35,6 +35,12 @@ def main(topic: str) -> int:
     title = script["title"].strip()
     description = (work / "description.txt").read_text(encoding="utf-8")
     channel = config.load_channel()
+    if visibility:
+        # ショートは即時公開のほうがフィード配信に乗りやすく、数字も早く取れる。
+        # 予約公開は private のときしか効かないので、public を指定したら即時になる。
+        channel["publish"] = dict(channel["publish"])
+        channel["publish"]["visibility"] = visibility
+        print(f"[check] 公開設定を {visibility} で上書き")
 
     if "[t:" not in description:
         print("説明欄にテーマ印がありません。投稿済みの記録が残らないので中止します")
@@ -63,7 +69,7 @@ def main(topic: str) -> int:
 
 
 if __name__ == "__main__":
-    if len(sys.argv) != 2:
+    if len(sys.argv) not in (2, 3):
         print(__doc__)
         raise SystemExit(2)
-    raise SystemExit(main(sys.argv[1]))
+    raise SystemExit(main(sys.argv[1], sys.argv[2] if len(sys.argv) == 3 else None))
