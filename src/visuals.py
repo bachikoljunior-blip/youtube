@@ -195,22 +195,42 @@ def _css(theme: dict, portrait: bool = False) -> str:
     )
 
 
-def _chart_html(visual: dict) -> str:
+def _em_width(text: str) -> float:
+    """文字列の幅を em で見積もる。半角は全角のおよそ 0.55 倍。"""
+    return sum(0.55 if ord(c) < 0x2E80 else 1.0 for c in text)
+
+
+def _chart_html(visual: dict, portrait: bool = False) -> str:
     """計算結果を棒グラフにする。
 
     bars は [{"label": ..., "value": 数値, "display": "12万6千円"}] の形。
     value は棒の長さを決めるためだけに使い、画面に出す文字は display。
     最大値を 100% として引き伸ばすので、**どこにも同じ形の図が出ない**。
+
+    数字を棒の中に入れるか外に出すかは、**実際の幅で決める**。
+    以前は「32%未満なら外」と割合で決めていたが、入るかどうかは
+    文字数と画面の幅で決まるので、割合では判定できない。
+    実際に縦向きで、43.8%の棒に「7万7949円」が入りきらず
+    「万7949円」と頭が欠けた。**数字が主役のチャンネルで数字が欠けるのは致命的。**
     """
     bars = [b for b in (visual.get("bars") or [])[:6] if b.get("label")]
     if not bars:
         return ""
+
+    # CSS と揃える。ここがずれると判定もずれるので、変えるときは両方直すこと。
+    if portrait:
+        content, label_px, font_px, gap = CONTENT_WIDTH_PORTRAIT, 168, 24, 16
+    else:
+        content, label_px, font_px, gap = CONTENT_WIDTH, 240, 30, 22
+    track_px = max(content - label_px - gap, 1)
+
     top = max(float(b.get("value", 0)) for b in bars) or 1.0
     rows = []
     for b in bars:
         pct = max(float(b.get("value", 0)) / top * 100.0, 1.0)
-        # 棒が短いと中に数字が入らないので、外側に出す
-        thin = " thin" if pct < 32 else ""
+        # 棒の中に数字が収まるか、実寸で判定する。padding-right 16px と余白を見る。
+        need_px = _em_width(str(b.get("display", ""))) * font_px + 16 * 2
+        thin = " thin" if track_px * pct / 100.0 < need_px else ""
         rows.append(
             f'<div class="bar-row">'
             f'<div class="bar-label">{_esc(b["label"])}</div>'
@@ -226,7 +246,7 @@ def _body_html(visual: dict, portrait: bool = False) -> str:
     kind = (visual.get("kind") or "stat").strip()
 
     if kind == "chart" and visual.get("bars"):
-        return _chart_html(visual)
+        return _chart_html(visual, portrait)
 
     if kind == "table" and visual.get("headers") and visual.get("rows"):
         head = "".join(f"<th>{_esc(h)}</th>" for h in visual["headers"][:3])
