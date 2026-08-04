@@ -28,6 +28,68 @@ class TopicIdeas(BaseModel):
     topics: list[TopicIdea] = Field(description="新しいトピック案を5件")
 
 
+def fetch_traffic(days: int = 28) -> list[dict[str, Any]]:
+    """流入経路べつの再生数。**表示されているのかどうかを見る唯一の手段。**
+
+    インプレッションと CTR は YouTube Analytics API では取れない（Studio だけ）。
+    実際に metrics="impressions" を投げると Unknown identifier で 400 が返る。
+    Studio を開くのはオーナーの作業になり、「人手に依存する計画を立てるな」に反する。
+
+    代わりに流入経路を見る。同じ問い——検索に出ているのか、ショートのフィードに
+    乗っているのか、関連動画から来ているのか——には、こちらで答えられる。
+
+    主な値：
+      YT_SEARCH        YouTube 検索
+      RELATED_VIDEO    関連動画
+      SHORTS           ショートのフィード
+      BROWSE_FEATURES  ホームや登録チャンネルのフィード
+      NO_LINK_OTHER    直接・不明
+    """
+    analytics = build("youtubeAnalytics", "v2", credentials=credentials(), cache_discovery=False)
+    end = date.today()
+    start = end - timedelta(days=days)
+    try:
+        response = analytics.reports().query(
+            ids="channel==MINE",
+            startDate=start.isoformat(),
+            endDate=end.isoformat(),
+            metrics="views,estimatedMinutesWatched",
+            dimensions="insightTrafficSourceType",
+            sort="-views",
+        ).execute()
+    except HttpError as exc:
+        print(f"[analytics] 流入経路を取得できませんでした: {exc.resp.status}")
+        return []
+    headers = [h["name"] for h in response.get("columnHeaders", [])]
+    return [dict(zip(headers, row)) for row in response.get("rows", [])]
+
+
+def fetch_subscribers(days: int = 28) -> list[dict[str, Any]]:
+    """動画べつの登録者の増減。**律速は登録者なので、ここが本丸。**"""
+    analytics = build("youtubeAnalytics", "v2", credentials=credentials(), cache_discovery=False)
+    end = date.today()
+    start = end - timedelta(days=days)
+    try:
+        response = analytics.reports().query(
+            ids="channel==MINE",
+            startDate=start.isoformat(),
+            endDate=end.isoformat(),
+            metrics="views,subscribersGained,subscribersLost",
+            dimensions="video",
+            sort="-subscribersGained",
+            maxResults=50,
+        ).execute()
+    except HttpError as exc:
+        print(f"[analytics] 登録者の増減を取得できませんでした: {exc.resp.status}")
+        return []
+    headers = [h["name"] for h in response.get("columnHeaders", [])]
+    rows = [dict(zip(headers, row)) for row in response.get("rows", [])]
+    for row in rows:
+        views = row.get("views") or 0
+        row["subscribeRate"] = (row.get("subscribersGained", 0) / views) if views else 0.0
+    return rows
+
+
 def fetch_report(days: int = 28) -> list[dict[str, Any]]:
     """直近 N 日の動画別実績。タイトルは Data API 側から引く。
 
