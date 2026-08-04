@@ -217,8 +217,13 @@ def generate(channel: dict, topic: dict) -> VideoScript:
     model = channel["generation"]["model"]
 
     target = float(vid["target_minutes"])
+    # 上限は「目標＋1.5分」を既定にするが、ショートではこの足し算が効かない。
+    # 目標50秒に1.5分を足すと上限が2分22秒になり、**上限が無いのと同じ**になる。
+    # 実際それで、60秒のつもりのショートが1.4分で出てきた。
+    # max_minutes を明示できるようにして、ショート側から渡す。
+    max_minutes = float(vid.get("max_minutes") or (target + 1.5))
     min_chars = int(float(vid["min_minutes"]) * CHARS_PER_MINUTE)
-    max_chars = int((target + 1.5) * CHARS_PER_MINUTE)
+    max_chars = int(max_minutes * CHARS_PER_MINUTE)
 
     prompt = ROLE + "\n" + TASK.format(
         channel_name=cfg["name"],
