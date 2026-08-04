@@ -108,6 +108,37 @@ def annual_shortfall(
     return (correct - mistaken) * 12
 
 
+def hours_error_shortfall(
+    monthly_pay: int,
+    annual_days_off: int,
+    hours_per_day: float,
+    assumed_hours: float,
+    overtime_hours: float,
+) -> dict:
+    """所定労働時間を多く見積もられている場合の、年間の差額。
+
+    もう一つのよくある誤り。1か月の平均所定労働時間は
+    (365 - 年間所定休日) × 1日の所定労働時間 ÷ 12 で出すが、
+    ここに実態より大きい数字（月21.7日×8時間＝173.3時間など）を使うと、
+    時給が小さく出るので残業代も小さくなる。
+
+    年間所定休日が多い会社ほど、正しい所定労働時間は小さくなり、
+    差は大きくなる。
+    """
+    correct_hours = monthly_scheduled_hours(annual_days_off, hours_per_day)
+    correct_rate = monthly_pay / correct_hours
+    assumed_rate = monthly_pay / assumed_hours
+    under = min(overtime_hours, OVER_60_THRESHOLD)
+    over = max(overtime_hours - OVER_60_THRESHOLD, 0.0)
+    weighted = under * (1 + RATE_OVERTIME) + over * (1 + RATE_OVERTIME_OVER_60)
+    return {
+        "correct_hours": correct_hours,
+        "correct_rate": correct_rate,
+        "assumed_rate": assumed_rate,
+        "annual_shortfall": (correct_rate - assumed_rate) * weighted * 12,
+    }
+
+
 def shortfall_grid(
     wage: Wage,
     scheduled_hours: float,
