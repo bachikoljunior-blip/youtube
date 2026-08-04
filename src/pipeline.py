@@ -34,6 +34,10 @@ def pick_topic(pool: dict, posted: set[str], topic_id: str = "") -> dict:
         for topic in pool["topics"]:
             if topic["id"] == topic_id:
                 return topic
+        if topic_id.startswith("s-"):
+            # ショートは長尺のテーマ枠を消費しない。s- で始まるIDは
+            # topics.yaml に置かず、その場で作る。長尺のプールを汚さないため。
+            return {"id": topic_id, "title_seed": topic_id, "angle": "ショート", "score": 1.0}
         raise RuntimeError(
             f"テーマ '{topic_id}' が config/topics.yaml にありません。"
             f"使えるID: {', '.join(t['id'] for t in pool['topics'][:20])}"
@@ -99,6 +103,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--topic", help="テーマID。--script を使うときは必須")
     parser.add_argument("--visibility", choices=["private", "unlisted", "public"])
     parser.add_argument("--dry-run", action="store_true", help="投稿せず build/ に出すだけ")
+    parser.add_argument(
+        "--short", action="store_true",
+        help="ショート（縦1080x1920・60秒以内）として作る。長尺の尺の下限は適用しない",
+    )
     return parser.parse_args(argv)
 
 
@@ -107,6 +115,14 @@ def main(argv: list[str] | None = None) -> int:
     channel = config.load_channel()
     pool = config.load_topics()
     dry = args.dry_run or config.dry_run()
+
+    # ショートは縦画面で、尺の下限も別。長尺の 8.5 分はミッドロール広告のための
+    # 下限なので、ショートには意味がない。
+    if args.short:
+        channel["video"] = dict(channel["video"])
+        channel["video"]["resolution"] = [1080, 1920]
+        channel["video"]["min_minutes"] = 0.25
+        print("[pipeline] ショートとして作ります（1080x1920・尺の下限0.25分）")
 
     override = args.visibility or config.env("VISIBILITY", required=False)
     if override:
@@ -158,7 +174,7 @@ def main(argv: list[str] | None = None) -> int:
     # 配色は投稿済みの本数から順番に回す。連続する回が同じ色にならないように。
     slides = visuals.render(
         [s.visual.model_dump() for s in script.segments], work / "slides", topic["id"],
-        theme_index=theme_index,
+        theme_index=theme_index, portrait=args.short,
     )
 
     # 4. 字幕
@@ -168,6 +184,7 @@ def main(argv: list[str] | None = None) -> int:
             for seg, (start, end) in zip(script.segments, spans)
         ],
         work / "subtitles.ass",
+        portrait=args.short,
     )
 
     # 5. 合成
