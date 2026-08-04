@@ -95,17 +95,32 @@ def _open_jtalk(text: str, dest: Path, cfg: dict) -> None:
 
 
 def synthesize_segments(narrations: list[str], tts_cfg: dict, out_dir: Path) -> list[tuple[Path, float]]:
-    """セグメントごとに音声を作り、(ファイル, 秒数) を返す。"""
+    """セグメントごとに音声を作り、(ファイル, 秒数) を返す。
+
+    google が途中で失敗したら open-jtalk に切り替えて全部作り直す。
+    無人で毎日回るので、声が少し落ちることより、その日1本落ちるほうが損。
+    請求先の紐付け漏れ・APIキーの制限ミス・無料枠超過は、どれもここに出る。
+
+    声は途中で変えない。1本の中で話者が変わるのは、機械的な声より不快。
+    """
     engine = choose_engine(tts_cfg)
-    synth = _google if engine == "google" else _open_jtalk
     out_dir.mkdir(parents=True, exist_ok=True)
-    results: list[tuple[Path, float]] = []
 
-    for i, text in enumerate(narrations):
-        path = out_dir / f"seg_{i:03d}.wav"
-        synth(text, path, tts_cfg)
-        duration = probe_duration(path)
-        results.append((path, duration))
-        print(f"[tts:{engine}] {i + 1}/{len(narrations)} {duration:5.2f}s  {text[:26]}…")
+    for attempt_engine in (engine, "open-jtalk"):
+        synth = _google if attempt_engine == "google" else _open_jtalk
+        results: list[tuple[Path, float]] = []
+        try:
+            for i, text in enumerate(narrations):
+                path = out_dir / f"seg_{i:03d}.wav"
+                synth(text, path, tts_cfg)
+                duration = probe_duration(path)
+                results.append((path, duration))
+                print(f"[tts:{attempt_engine}] {i + 1}/{len(narrations)} {duration:5.2f}s  {text[:26]}…")
+            return results
+        except Exception as exc:
+            if attempt_engine != "google":
+                raise
+            print(f"[tts] google が失敗しました: {str(exc)[:300]}")
+            print("[tts] open-jtalk に切り替えて作り直します（声は機械的になります）")
 
-    return results
+    raise RuntimeError("unreachable")
