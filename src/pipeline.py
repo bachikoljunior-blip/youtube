@@ -57,6 +57,23 @@ def pick_topic(pool: dict, posted: set[str], topic_id: str = "") -> dict:
     return max(candidates, key=lambda t: float(t.get("score", 1.0)))
 
 
+def pick_thumbnail_slide(script: VideoScript) -> int:
+    """サムネイルの背景に使うスライドの番号を返す。
+
+    1枚目は使わない。冒頭の結論——サムネに重ねるのと同じ数字——が書いてあるため。
+    「真ん中を取る」にしたら真ん中が stat（巨大な数字1つ）に当たって、また
+    同じ数字が背後に透けた。位置で選ぶかぎり運任せになる。
+
+    だから**種類で選ぶ**。chart と table は細かい要素が散っていて、潰したときに
+    色の面として残る。stat は要素が1つしかないので、何をしても形が残る。
+    """
+    for wanted in ("chart", "table", "steps", "compare"):
+        for i, seg in enumerate(script.segments):
+            if i > 0 and seg.visual.kind == wanted:
+                return i
+    return min(len(script.segments) - 1, max(1, len(script.segments) // 2))
+
+
 def build_description(script: VideoScript, spans: list[tuple[float, float]],
                       channel: dict, topic_id: str) -> str:
     parts = [script.description_body.strip(), "", "▼ 目次"]
@@ -195,12 +212,10 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     # 6. サムネイル
-    # 素材に1枚目を使わない。1枚目には冒頭の結論——サムネに重ねるのと同じ数字——が
-    # 書いてあるので、ぼかしても二重に見える。真ん中あたりの図から取る。
     theme = visuals.theme_for(topic["id"], theme_index)
     accent = tuple(int(theme["accent"].lstrip("#")[i:i + 2], 16) for i in (0, 2, 4))
     thumb_path = thumbnail.create(
-        slides[len(slides) // 2], script.thumbnail_line1, script.thumbnail_line2,
+        slides[pick_thumbnail_slide(script)], script.thumbnail_line1, script.thumbnail_line2,
         work / "thumbnail.jpg", work, accent=accent,
     )
 
