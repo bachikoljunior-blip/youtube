@@ -66,7 +66,13 @@
    https://www.googleapis.com/auth/youtube.upload
    https://www.googleapis.com/auth/youtube.readonly
    https://www.googleapis.com/auth/yt-analytics.readonly
+   https://www.googleapis.com/auth/youtube.force-ssl
    ```
+
+   > 4つ目の `force-ssl` は**再生リストへの追加**と**コメントの投稿**に要ります。
+   > スコープは refresh token に焼き込まれるので、後から足すとこの STEP をやり直しに
+   > なります。使わないつもりでも入れておくのが安全です。
+   > （なお**コメントの「固定」は API に存在せず**、Studio での手作業になります）
 3. **Authorize APIs** → 1-1 のアカウントでログイン → 許可
    （「確認されていないアプリ」と出たら「詳細」→「（アプリ名）に移動」）
 4. 「Step 2」の **Exchange authorization code for tokens** を押す

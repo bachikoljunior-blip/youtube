@@ -40,7 +40,7 @@ src/renderer.py        ffmpeg で合成
 src/thumbnail.py       Pillow でサムネイル
 src/verify.py          投稿前の検査。1つでも外れたら投稿しない
 src/history.py         投稿済みをチャンネルから復元（説明欄の [t:...] を読む）
-src/uploader.py        YouTube Data API v3 で投稿
+src/uploader.py        投稿・再生リストへの追加・最初のコメント
 src/analytics.py       維持率 → 次のテーマ
 src/pipeline.py        以上を1本ぶん通す
 scripts/preflight.py   環境チェック

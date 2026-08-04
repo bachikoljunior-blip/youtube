@@ -49,6 +49,9 @@ class VideoScript(BaseModel):
     tags: list[str] = Field(description="検索タグを10〜15個。日本語中心。1語あたり全角20文字以内")
     thumbnail_line1: str = Field(description="サムネ1行目。全角9文字以内。一番強い数字か結論")
     thumbnail_line2: str = Field(description="サムネ2行目。全角9文字以内")
+    first_comment: str = Field(
+        description="投稿直後に自分で書き込むコメント。本編の要点を数字ごと3行でまとめ、最後に視聴者へ問いかけを1つ。200文字以内。宣伝や依頼は書かない"
+    )
     segments: list[Segment] = Field(description="本編。冒頭は結論、次に条件、最後に手順の順で並べる")
     chapters: list[Chapter] = Field(description="チャプター4〜7個")
 

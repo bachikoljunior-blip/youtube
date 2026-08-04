@@ -20,6 +20,8 @@
 やるとしたら、週に何度か次のどれかです。
 
 - [公開待ちの動画を見る](https://studio.youtube.com/) — 19時前なら差し替えも取り消しもできます
+- **コメントを固定する** — 自動でコメントは投稿されますが、**固定だけは API に無い**ので
+  Studio で「固定」を1タップしてください（実行ログに動画ごとの直リンクが出ます）
 - [実行が失敗していないか見る](https://github.com/bachikoljunior-blip/youtube/actions/workflows/2-publish.yml) — 赤いバツが付いていたら下の「失敗したとき」へ
 - [テーマを自分で足す](https://github.com/bachikoljunior-blip/youtube/edit/main/config/topics.yaml) — 自分で思いついたネタが一番強いです
 

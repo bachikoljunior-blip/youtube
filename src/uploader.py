@@ -28,6 +28,70 @@ def _service():
     return build("youtube", "v3", credentials=credentials(), cache_discovery=False)
 
 
+def _find_or_create_playlist(youtube, title: str) -> str:
+    """同名の再生リストを探し、無ければ作る。"""
+    page_token = ""
+    while True:
+        response = youtube.playlists().list(
+            part="snippet", mine=True, maxResults=50, pageToken=page_token or None
+        ).execute()
+        for item in response.get("items", []):
+            if item["snippet"]["title"] == title:
+                return item["id"]
+        page_token = response.get("nextPageToken", "")
+        if not page_token:
+            break
+
+    created = youtube.playlists().insert(
+        part="snippet,status",
+        body={
+            "snippet": {"title": title, "description": ""},
+            "status": {"privacyStatus": "public"},
+        },
+    ).execute()
+    print(f"[upload] 再生リストを新規作成: {title}")
+    return created["id"]
+
+
+def _post_actions(youtube, video_id: str, publish_cfg: dict) -> None:
+    """投稿後の付随処理。ここで失敗しても動画は既に上がっているので落とさない。"""
+    playlist = (publish_cfg.get("playlist") or "").strip()
+    if playlist:
+        try:
+            playlist_id = _find_or_create_playlist(youtube, playlist)
+            youtube.playlistItems().insert(
+                part="snippet",
+                body={
+                    "snippet": {
+                        "playlistId": playlist_id,
+                        "resourceId": {"kind": "youtube#video", "videoId": video_id},
+                    }
+                },
+            ).execute()
+            print(f"[upload] 再生リストに追加: {playlist}")
+        except HttpError as exc:
+            print(f"[upload] 再生リストへの追加に失敗（動画は投稿済み）: {exc}")
+
+    comment = (publish_cfg.get("first_comment") or "").strip()
+    if comment:
+        try:
+            youtube.commentThreads().insert(
+                part="snippet",
+                body={
+                    "snippet": {
+                        "videoId": video_id,
+                        "topLevelComment": {"snippet": {"textOriginal": comment[:9000]}},
+                    }
+                },
+            ).execute()
+            # 固定だけは API に無い。Studio で1タップしてもらう。
+            print("[upload] 最初のコメントを投稿しました。"
+                  "固定はAPIでできないので、Studioで「固定」を押してください:")
+            print(f"         https://studio.youtube.com/video/{video_id}/comments")
+        except HttpError as exc:
+            print(f"[upload] コメント投稿に失敗（動画は投稿済み）: {exc}")
+
+
 def upload(
     video_path: Path,
     thumbnail_path: Path,
@@ -89,6 +153,8 @@ def upload(
 
     video_id = response["id"]
     print(f"[upload] 完了: https://youtu.be/{video_id}")
+
+    _post_actions(youtube, video_id, publish_cfg)
 
     if thumbnail_path.exists():
         try:

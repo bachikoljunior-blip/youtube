@@ -12,11 +12,14 @@ from . import config
 
 TOKEN_URI = "https://oauth2.googleapis.com/token"
 
-# 投稿・読み取り・分析。チャンネルの編集権限は要らないので取らない。
+# force-ssl は再生リストへの追加とコメント投稿に要る。upload/readonly だけでは
+# どちらもできない。スコープは refresh token に焼き込まれるので、後から足すと
+# トークンの取り直しになる。最初から入れておく。
 SCOPES = [
     "https://www.googleapis.com/auth/youtube.upload",
     "https://www.googleapis.com/auth/youtube.readonly",
     "https://www.googleapis.com/auth/yt-analytics.readonly",
+    "https://www.googleapis.com/auth/youtube.force-ssl",
 ]
 
 

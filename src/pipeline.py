@@ -170,7 +170,8 @@ def main() -> int:
         print(f"\n  タイトル: {script.title}\n  説明欄:\n{description}")
         return 0
 
-    # 8. 投稿
+    # 8. 投稿。最初のコメントは台本と一緒に生成させたものを使う。
+    channel["publish"]["first_comment"] = script.first_comment
     video_id = uploader.upload(
         video_path, thumb_path, script.title, description,
         script.tags, channel["publish"],
