@@ -26,8 +26,30 @@ def check(label: str, ok: bool, hint: str = "", required: bool = True) -> None:
         print(f"        → {hint}")
 
 
+def check_script_names() -> None:
+    """scripts/ に標準ライブラリと同じ名前のファイルを置いていないか。
+
+    `python scripts/upload_only.py` は scripts/ を sys.path の先頭に置く。
+    そこに標準ライブラリと同名のファイルがあると、そのディレクトリから起動した
+    **全部のスクリプト**が黙って壊れる。実際に scripts/inspect.py を足した直後、
+    投稿が `module 'inspect' has no attribute 'signature'` で落ちた。
+
+    壊れ方が原因から遠いので、気づくのに時間がかかる。機械に見せておく。
+    """
+    shadowed = sorted(
+        p.stem for p in Path(__file__).resolve().parent.glob("*.py")
+        if p.stem in sys.stdlib_module_names
+    )
+    check(
+        "scripts/ の名前が標準ライブラリと衝突していない",
+        not shadowed,
+        f"{', '.join(f'scripts/{s}.py' for s in shadowed)} の名前を変えてください",
+    )
+
+
 def main() -> int:
     print("=== 環境チェック ===\n")
+    check_script_names()
 
     for name, hint in [
         ("CLAUDE_CODE_OAUTH_TOKEN", "手元で `claude setup-token`"),

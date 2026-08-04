@@ -1,6 +1,6 @@
 """投稿前の目視を1枚にまとめる。
 
-    python scripts/inspect.py <テーマID>
+    python scripts/inspect_build.py <テーマID>
 
 なぜ要るか。**verify.py が見ていないものは、これまで例外なく壊れていた。**
 字幕と図解の重なり、stat の折り返し、句点だけの字幕行、数字の途中での改行、
