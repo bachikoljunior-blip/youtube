@@ -1,0 +1,11 @@
+.env
+build/
+out/
+__pycache__/
+*.pyc
+*.mp4
+*.mp3
+*.wav
+*.png
+!assets/**/*.png
+.venv/
