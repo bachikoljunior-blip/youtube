@@ -13,7 +13,8 @@ from __future__ import annotations
 import html
 from pathlib import Path
 
-VIEWPORT = (1280, 720)   # deviceScaleFactor=2 で 2560x1440 になる
+VIEWPORT = (1280, 720)            # deviceScaleFactor=2 で 2560x1440 になる
+VIEWPORT_PORTRAIT = (540, 960)    # 同 1080x1920。ショート向け
 SCALE = 2
 
 # 動画ごとに見た目を変えるための配色。テーマIDから決めるので、同じ回は毎回同じ、
@@ -136,12 +137,36 @@ td:first-child { color: #9fb0cc; }
 CONTENT_WIDTH = VIEWPORT[0] - 84 - 72   # 左右の padding を引いた実効幅
 STAT_MAX_PX = 172
 
+# 縦向き（ショート）の上書き。横向きの CSS のあとに足して勝たせる。
+#
+# ショートは画面の下側に UI（タイトル・チャンネル名・ボタン）が重なるので、
+# そこには何も置かない。字幕も subtitles.py 側で MarginV=420 まで上げてある。
+PORTRAIT_CSS = """
+html, body { width: 540px; height: 960px; }
+body { padding: 56px 40px 300px 52px; }
+body::before { width: 8px; }
+.headline { font-size: 40px; margin-bottom: 28px; }
+.note { font-size: 28px; margin-top: 20px; }
+li { font-size: 34px; gap: 16px; }
+li .marker { min-width: 44px; height: 44px; font-size: 24px; border-radius: 10px; }
+ol, ul { gap: 16px; }
+table { font-size: 28px; }
+th { font-size: 22px; }
+th, td { padding: 12px 12px; }
+.bar-label { flex: 0 0 130px; font-size: 24px; }
+.bar-track { height: 44px; }
+.bar-value { font-size: 24px; }
+.chart { gap: 16px; }
+"""
+CONTENT_WIDTH_PORTRAIT = VIEWPORT_PORTRAIT[0] - 52 - 40
+STAT_MAX_PX_PORTRAIT = 96
+
 
 def _esc(text: str) -> str:
     return html.escape(str(text), quote=False)
 
 
-def _stat_font_px(text: str) -> int:
+def _stat_font_px(text: str, portrait: bool = False) -> int:
     """stat が1行に収まる font-size を返す。
 
     台本の書き手は「およそ1万7千円」のような短い数字を想定しているが、
@@ -151,17 +176,20 @@ def _stat_font_px(text: str) -> int:
 
     半角は全角のおよそ 0.55 倍の幅として数える。
     """
+    width = CONTENT_WIDTH_PORTRAIT if portrait else CONTENT_WIDTH
+    cap = STAT_MAX_PX_PORTRAIT if portrait else STAT_MAX_PX
+    floor = 34 if portrait else 56
     if not text:
-        return STAT_MAX_PX
+        return cap
     width_em = sum(0.55 if ord(c) < 0x2E80 else 1.0 for c in text)
-    fitted = int(CONTENT_WIDTH / max(width_em, 0.5))
-    return max(56, min(STAT_MAX_PX, fitted))
+    return max(floor, min(cap, int(width / max(width_em, 0.5))))
 
 
-def _css(theme: dict) -> str:
+def _css(theme: dict, portrait: bool = False) -> str:
     """配色を差し込んだ CSS。CSS 側に波括弧があるので format は使えない。"""
+    css = BASE_CSS + (PORTRAIT_CSS if portrait else "")
     return (
-        BASE_CSS.replace("{ACCENT}", theme["accent"])
+        css.replace("{ACCENT}", theme["accent"])
         .replace("{BG}", theme["bg"])
         .replace("{GLOW}", theme["glow"])
     )
@@ -194,7 +222,7 @@ def _chart_html(visual: dict) -> str:
     return f'<div class="chart">{"".join(rows)}</div>'
 
 
-def _body_html(visual: dict) -> str:
+def _body_html(visual: dict, portrait: bool = False) -> str:
     kind = (visual.get("kind") or "stat").strip()
 
     if kind == "chart" and visual.get("bars"):
@@ -222,19 +250,19 @@ def _body_html(visual: dict) -> str:
     note = visual.get("note") or ""
     parts = []
     if stat:
-        size = _stat_font_px(stat)
+        size = _stat_font_px(stat, portrait)
         parts.append(f'<div class="stat" style="font-size:{size}px">{_esc(stat)}</div>')
     if note:
         parts.append(f'<div class="note">{_esc(note)}</div>')
     return "".join(parts)
 
 
-def build_html(visual: dict, theme: dict | None = None) -> str:
+def build_html(visual: dict, theme: dict | None = None, portrait: bool = False) -> str:
     return (
         "<!doctype html><html lang=ja><head><meta charset=utf-8>"
-        f"<style>{_css(theme or THEMES[0])}</style></head><body>"
+        f"<style>{_css(theme or THEMES[0], portrait)}</style></head><body>"
         f'<div class="headline">{_esc(visual.get("headline", ""))}</div>'
-        f'<div class="body">{_body_html(visual)}</div>'
+        f'<div class="body">{_body_html(visual, portrait)}</div>'
         "</body></html>"
     )
 
@@ -265,8 +293,11 @@ def _chromium_path() -> str | None:
 
 
 def render(visuals: list[dict], out_dir: Path, topic_id: str = "",
-           theme_index: int | None = None) -> list[Path]:
-    """図解を1枚ずつ PNG にする。配色は theme_index があれば順番に回す。"""
+           theme_index: int | None = None, portrait: bool = False) -> list[Path]:
+    """図解を1枚ずつ PNG にする。配色は theme_index があれば順番に回す。
+
+    portrait=True でショート向けの縦画面（1080x1920）にする。
+    """
     from playwright.sync_api import sync_playwright
 
     theme = theme_for(topic_id, theme_index)
@@ -280,13 +311,14 @@ def render(visuals: list[dict], out_dir: Path, topic_id: str = "",
         browser = pw.chromium.launch(
             executable_path=executable, args=["--font-render-hinting=none"]
         )
+        size = VIEWPORT_PORTRAIT if portrait else VIEWPORT
         page = browser.new_page(
-            viewport={"width": VIEWPORT[0], "height": VIEWPORT[1]},
+            viewport={"width": size[0], "height": size[1]},
             device_scale_factor=SCALE,
         )
         for i, visual in enumerate(visuals):
             path = out_dir / f"slide_{i:03d}.png"
-            page.set_content(build_html(visual, theme), wait_until="load")
+            page.set_content(build_html(visual, theme, portrait), wait_until="load")
             page.screenshot(path=str(path))
             paths.append(path)
             print(f"[visuals] {i + 1}/{len(visuals)} {visual.get('kind', 'stat')}")
