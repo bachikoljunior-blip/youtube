@@ -22,7 +22,7 @@ FONT_CANDIDATES = [
     "/usr/share/fonts/truetype/fonts-japanese-gothic.ttf",
     "/usr/share/fonts/opentype/ipafont-gothic/ipag.ttf",
 ]
-ACCENT = (255, 204, 0)
+ACCENT = (255, 204, 0)   # 既定。動画のテーマ色を渡せばそちらを使う
 
 
 def _font(size: int) -> ImageFont.FreeTypeFont:
@@ -38,10 +38,21 @@ def _font(size: int) -> ImageFont.FreeTypeFont:
 
 
 def _base_image(source: Path, work: Path) -> Image.Image:
-    """素材が動画ならフレームを1枚抜く。"""
+    """素材が動画ならフレームを1枚抜き、読めなくなるまでぼかす。
+
+    ここは**背景**であって、情報を載せる場所ではない。
+    以前は 1.5 秒の位置から抜いてぼかしも弱く、1枚目のスライドの文字が
+    そのまま読めていた。1枚目には冒頭の結論——つまりサムネに重ねるのと
+    同じ数字——が書いてあるので、二重に見えて事故のような絵になっていた。
+
+    抜く位置を後ろにずらし、ぼかしと減光を強くして、色の面だけを残す。
+    """
     if source.suffix.lower() in (".mp4", ".mov", ".webm"):
         frame = work / "thumb_frame.jpg"
-        run(["ffmpeg", "-y", "-ss", "1.5", "-i", str(source), "-frames:v", "1", str(frame)])
+        # 1枚目を避ける。冒頭の結論と文字がぶつかるため。
+        run(["ffmpeg", "-y", "-ss", "25", "-i", str(source), "-frames:v", "1", str(frame)])
+        if not frame.exists():   # ショートなど短いものは冒頭から
+            run(["ffmpeg", "-y", "-ss", "3", "-i", str(source), "-frames:v", "1", str(frame)])
         source = frame
 
     img = Image.open(source).convert("RGB")
@@ -51,9 +62,10 @@ def _base_image(source: Path, work: Path) -> Image.Image:
     left, top = (img.width - W) // 2, (img.height - H) // 2
     img = img.crop((left, top, left + W, top + H))
 
-    img = img.filter(ImageFilter.GaussianBlur(2.5))
-    img = ImageEnhance.Brightness(img).enhance(0.55)
-    img = ImageEnhance.Color(img).enhance(0.75)
+    # 文字が一切読めない強さまでぼかす。背景は色の面であればよい。
+    img = img.filter(ImageFilter.GaussianBlur(22))
+    img = ImageEnhance.Brightness(img).enhance(0.42)
+    img = ImageEnhance.Color(img).enhance(1.15)
     return img
 
 
@@ -61,12 +73,15 @@ def _draw_outlined(draw: ImageDraw.ImageDraw, xy, text: str, font, fill, stroke=
     draw.text(xy, text, font=font, fill=fill, stroke_width=stroke, stroke_fill=(12, 12, 16))
 
 
-def create(source: Path, line1: str, line2: str, out_path: Path, work: Path) -> Path:
+def create(source: Path, line1: str, line2: str, out_path: Path, work: Path,
+           accent: tuple[int, int, int] | None = None) -> Path:
+    """accent には動画のテーマ色を渡す。渡さないと本文と色が食い違う。"""
+    accent = accent or ACCENT
     img = _base_image(source, work)
     draw = ImageDraw.Draw(img)
 
     # 左端のアクセントバー
-    draw.rectangle([(0, 0), (18, H)], fill=ACCENT)
+    draw.rectangle([(0, 0), (18, H)], fill=accent)
 
     size1 = 150 if len(line1) <= 7 else 120
     size2 = 150 if len(line2) <= 7 else 120
@@ -78,7 +93,7 @@ def create(source: Path, line1: str, line2: str, out_path: Path, work: Path) -> 
     top = (H - (h1 + h2 + gap)) // 2 - 10
 
     if line1:
-        _draw_outlined(draw, (72, top), line1, f1, ACCENT)
+        _draw_outlined(draw, (72, top), line1, f1, accent)
     if line2:
         _draw_outlined(draw, (72, top + h1 + gap), line2, f2, (255, 255, 255))
 

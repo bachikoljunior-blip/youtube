@@ -195,9 +195,13 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     # 6. サムネイル
+    # 素材に1枚目を使わない。1枚目には冒頭の結論——サムネに重ねるのと同じ数字——が
+    # 書いてあるので、ぼかしても二重に見える。真ん中あたりの図から取る。
+    theme = visuals.theme_for(topic["id"], theme_index)
+    accent = tuple(int(theme["accent"].lstrip("#")[i:i + 2], 16) for i in (0, 2, 4))
     thumb_path = thumbnail.create(
-        slides[0], script.thumbnail_line1, script.thumbnail_line2,
-        work / "thumbnail.jpg", work,
+        slides[len(slides) // 2], script.thumbnail_line1, script.thumbnail_line2,
+        work / "thumbnail.jpg", work, accent=accent,
     )
 
     description = build_description(script, spans, channel, topic["id"])
