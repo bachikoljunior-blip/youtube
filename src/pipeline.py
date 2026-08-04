@@ -37,7 +37,24 @@ def pick_topic(pool: dict, posted: set[str], topic_id: str = "") -> dict:
         if topic_id.startswith("s-"):
             # ショートは長尺のテーマ枠を消費しない。s- で始まるIDは
             # topics.yaml に置かず、その場で作る。長尺のプールを汚さないため。
-            return {"id": topic_id, "title_seed": topic_id, "angle": "ショート", "score": 1.0}
+            #
+            # ただし calc は引き継ぐ。引き継がないと台本を書く側に数字が渡らず、
+            # **発明するしかなくなる**。
+            #
+            # `s-<計算モジュール名>-<連番>` と名付ける。s-nenkin-1 なら src/calc/nenkin.py。
+            # これまで実際にそう名付けてきた（s-zangyo-1 / s-kojo-1 / s-shitsugyo-1）ので、
+            # 規則を後から合わせるのではなく、その規則をそのまま使う。
+            stem = topic_id[2:].rsplit("-", 1)[0]
+            calc = stem if (config.ROOT / "src" / "calc" / f"{stem}.py").exists() else ""
+            if not calc:
+                base = next(
+                    (t for t in pool["topics"] if t["id"].startswith(stem) and t.get("calc")), None
+                )
+                calc = base["calc"] if base else ""
+            return {
+                "id": topic_id, "title_seed": topic_id, "angle": "ショート", "score": 1.0,
+                **({"calc": calc} if calc else {}),
+            }
         raise RuntimeError(
             f"テーマ '{topic_id}' が config/topics.yaml にありません。"
             f"使えるID: {', '.join(t['id'] for t in pool['topics'][:20])}"
@@ -118,6 +135,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
              "常駐セッションが自分で書いた台本を使うときはこれ",
     )
     parser.add_argument("--topic", help="テーマID。--script を使うときは必須")
+    parser.add_argument(
+        "--calc",
+        help="使う計算モジュール名（src/calc/<名前>.py）。テーマ側の calc を上書きする。"
+             "台本を書く側にはここで出た数字しか渡らない",
+    )
     parser.add_argument("--visibility", choices=["private", "unlisted", "public"])
     parser.add_argument("--dry-run", action="store_true", help="投稿せず build/ に出すだけ")
     parser.add_argument(
@@ -158,7 +180,17 @@ def main(argv: list[str] | None = None) -> int:
     if args.script and not topic_id:
         raise RuntimeError("--script を使うときは --topic でテーマIDを指定してください")
     topic = pick_topic(pool, posted, topic_id)
+    if args.calc:
+        topic = {**topic, "calc": args.calc}
     print(f"=== テーマ: {topic['title_seed']} ({topic['id']}) ===")
+    if not args.script and not topic.get("calc"):
+        # 台本を生成させるのに計算が無いと、数字を発明させることになる。
+        # 「裏の取れない数字は動画に入れない」はここで守らないと守れない。
+        raise RuntimeError(
+            f"テーマ {topic['id']} に calc がありません。"
+            "config/topics.yaml に calc: <モジュール名> を書くか、--calc で渡すか、"
+            "--script で自分の書いた台本を渡してください"
+        )
 
     work = config.BUILD_DIR / topic["id"]
     if work.exists():

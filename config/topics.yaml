@@ -28,6 +28,7 @@ topics:
   - id: nenmatsu-chosei
     title_seed: "年末調整で申告し忘れると損する控除5つ"
     angle: "還付額の実額を出す。間に合わなかった場合の確定申告での取り返し方も"
+    calc: kojo
     score: 1.0
 
   - id: taishoku-hoken
@@ -38,6 +39,7 @@ topics:
   - id: zangyo-dai
     title_seed: "残業代の正しい計算方法と、会社の計算が違うときの手順"
     angle: "基礎賃金から除外できる手当は限定列挙。労基署に行く前の証拠の揃え方"
+    calc: zangyo
     score: 1.0
 
   - id: fukugyo-zeikin
@@ -53,6 +55,7 @@ topics:
   - id: shitsugyo-kyufu
     title_seed: "失業給付を最大化する退職日の決め方"
     angle: "離職理由・被保険者期間・年齢で給付日数が変わる。1日ずれると損する境界"
+    calc: shitsugyo
     score: 1.0
 
   - id: tenshoku-nenshu
