@@ -35,6 +35,36 @@ def _fmt(iso: str) -> str:
     return datetime.fromisoformat(iso.replace("Z", "+00:00")).astimezone(JST).strftime("%m/%d %H:%M")
 
 
+def print_hypotheses() -> None:
+    """検証していない前提と、その期限を毎回出す。
+
+    **推測は、期限を切らないと永久に推測のまま残る。** JOURNAL に書くだけでは
+    読み飛ばされるので、状態を見るたびに目に入る場所に出す。
+    期限を過ぎたものは目立たせる。そこで必ず判定させる。
+    """
+    import yaml
+
+    path = Path(__file__).resolve().parent.parent / "config" / "hypotheses.yaml"
+    if not path.exists():
+        return
+    items = yaml.safe_load(path.read_text(encoding="utf-8")).get("hypotheses", [])
+    if not items:
+        return
+
+    today = datetime.now(JST).date()
+    print("\n=== まだ検証していない前提 ===")
+    for h in items:
+        due = datetime.strptime(str(h["deadline"]), "%Y-%m-%d").date()
+        left = (due - today).days
+        mark = "[!] 期限切れ" if left < 0 else ("[!] 今日が期限" if left == 0 else f"あと{left}日")
+        print(f"  {mark}  {h['claim']}")
+        print(f"        外れとみなす条件: {h['falsified_if']}")
+        if left <= 0:
+            print("        → いま判定すること。外れていたら次を順に試す:")
+            for nxt in h.get("next_if_false", []):
+                print(f"           - {nxt}")
+
+
 def main(days: int = 7) -> int:
     youtube = _service()
     channel = youtube.channels().list(part="snippet,contentDetails,statistics", mine=True).execute()["items"][0]
@@ -110,6 +140,8 @@ def main(days: int = 7) -> int:
                   f"  視聴{r.get('estimatedMinutesWatched', 0):5d}分")
     except Exception as exc:
         print(f"  読めませんでした: {str(exc)[:120]}")
+
+    print_hypotheses()
 
     # 収益化の門。律速がどちらかを毎回見せる（docs/GOAL.md の掛け算）。
     subs = int(stats.get("subscriberCount", 0) or 0)
