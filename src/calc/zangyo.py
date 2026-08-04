@@ -76,6 +76,49 @@ class Wage:
         return total
 
 
+def check_tables() -> None:
+    """法令で決まっている割増率と、計算の向きを確かめる。
+
+    このモジュールは表ではなく式でできているが、**式でも取り違えは起きる**。
+    60時間超の率を通常の率と入れ替える、所定労働時間の分母を取り違える、
+    一律手当を足すべきところで引く。どれも結果は一見それらしい数字になる。
+
+    他の calc と同じく、法令が名指ししている値だけを不変条件に置く。
+    calc_block() は台本を書かせる前にこれを呼ぶので、ここで止まれば
+    壊れた数字で動画が作られることはない。
+    """
+    if RATE_OVERTIME != 0.25:
+        raise ValueError(f"時間外の割増率が {RATE_OVERTIME}。労働基準法の値は 0.25")
+    if RATE_OVERTIME_OVER_60 != 0.50:
+        raise ValueError(f"月60時間超の割増率が {RATE_OVERTIME_OVER_60}。法定は 0.50")
+    if OVER_60_THRESHOLD != 60.0:
+        raise ValueError(f"割増率が上がる境目が {OVER_60_THRESHOLD} 時間。法定は 60 時間")
+    if RATE_OVERTIME_OVER_60 <= RATE_OVERTIME:
+        raise ValueError("60時間超の割増率が通常以下になっている")
+
+    # 休日が多いほど所定労働時間は短くなり、単価は上がる
+    a = monthly_scheduled_hours(105, 8.0)
+    b = monthly_scheduled_hours(125, 8.0)
+    if not b < a:
+        raise ValueError("年間休日を増やしたのに所定労働時間が減っていない")
+
+    # 一律手当を基礎に入れたほうが、残業代は必ず多くなる
+    wage = Wage(base=250_000, family_flat=20_000, housing_flat=10_000)
+    hours = monthly_scheduled_hours(120, 8.0)
+    correct = monthly_overtime_pay(wage, hours, 30.0, mistaken=False)
+    mistaken = monthly_overtime_pay(wage, hours, 30.0, mistaken=True)
+    if not correct > mistaken:
+        raise ValueError("一律手当を基礎に入れたのに残業代が増えていない")
+
+    # 60時間を超えた1時間は、超える前の1時間より高い
+    just_under = monthly_overtime_pay(wage, hours, 60.0, mistaken=False)
+    just_over = monthly_overtime_pay(wage, hours, 61.0, mistaken=False)
+    step_over = just_over - just_under
+    step_under = just_under - monthly_overtime_pay(wage, hours, 59.0, mistaken=False)
+    if not step_over > step_under:
+        raise ValueError("60時間を超えた1時間の単価が上がっていない")
+
+
 def monthly_scheduled_hours(annual_days_off: int, hours_per_day: float) -> float:
     """1か月の平均所定労働時間。
 
