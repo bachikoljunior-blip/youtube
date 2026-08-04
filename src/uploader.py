@@ -15,13 +15,42 @@ JST = timezone(timedelta(hours=9))
 RETRYABLE = {500, 502, 503, 504}
 
 
-def next_publish_at(hour_jst: int, minute_jst: int) -> str:
-    """次に来る指定時刻（JST）を RFC3339(UTC) で返す。"""
+def scheduled_publish_times(youtube) -> set[str]:
+    """すでに予約済みの公開時刻を集める。RFC3339(UTC) の文字列で返す。"""
+    channel = youtube.channels().list(part="contentDetails", mine=True).execute()["items"][0]
+    uploads = channel["contentDetails"]["relatedPlaylists"]["uploads"]
+    items = youtube.playlistItems().list(
+        part="contentDetails", playlistId=uploads, maxResults=50
+    ).execute().get("items", [])
+    ids = [i["contentDetails"]["videoId"] for i in items]
+    if not ids:
+        return set()
+    videos = youtube.videos().list(part="status", id=",".join(ids)).execute().get("items", [])
+    return {v["status"]["publishAt"] for v in videos if v["status"].get("publishAt")}
+
+
+def next_publish_at(hour_jst: int, minute_jst: int, taken: set[str] | None = None) -> str:
+    """次に空いている指定時刻（JST）を RFC3339(UTC) で返す。
+
+    taken にすでに予約済みの時刻を渡すと、その日を飛ばして次の日を返す。
+
+    これが無いと、作り置きを続けたときに**同じ時刻へ2本重なる**。
+    重なると2本が食い合ううえ、翌日が空になる。投稿が途切れるのが最大の損失
+    なので、間隔を空けるほうが常に良い。実際に P5yRTOMRulc の予約がある状態で
+    次の1本を積もうとして、同じ 8/5 19:00 に当たった。
+    """
     now = datetime.now(JST)
     target = now.replace(hour=hour_jst, minute=minute_jst, second=0, microsecond=0)
     if target <= now + timedelta(minutes=20):
         target += timedelta(days=1)
-    return target.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    taken = taken or set()
+    for _ in range(60):     # 2か月ぶんまで探せば十分。無限には回さない。
+        stamp = target.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        if stamp not in taken:
+            return stamp
+        target += timedelta(days=1)
+    raise RuntimeError("空いている公開枠が2か月先まで見つかりませんでした")
 
 
 def _service():
@@ -111,10 +140,13 @@ def upload(
     }
     # private のときだけ予約公開できる。public 指定なら即時公開。
     if visibility == "private":
+        # すでに埋まっている枠は飛ばす。作り置きを積むと同じ時刻に重なるため。
         status["publishAt"] = next_publish_at(
             int(publish_cfg.get("publish_hour_jst", 19)),
             int(publish_cfg.get("publish_minute_jst", 0)),
+            taken=scheduled_publish_times(youtube),
         )
+        print(f"[upload] 公開予定: {status['publishAt']}")
 
     body = {
         "snippet": {
