@@ -24,7 +24,10 @@ body {
   background: #10141c;
   color: #f2f4f8;
   display: flex; flex-direction: column;
-  padding: 64px 72px 72px 84px;
+  /* 下は字幕の帯を空ける。字幕は下端から 72px の位置に 64px の文字で焼かれる
+     （subtitles.py の MarginV と Fontsize）。1080 換算で下 190px ぶんが字幕の
+     領域なので、720 換算の 127px より下には何も置かない。 */
+  padding: 64px 72px 136px 84px;
   position: relative;
 }
 body::before {
@@ -41,8 +44,8 @@ body::after {
 }
 .body { flex: 1; display: flex; flex-direction: column; justify-content: center; }
 
-/* kind=stat */
-.stat { font-size: 172px; font-weight: 900; line-height: 1.02; letter-spacing: -.02em; }
+/* kind=stat — font-size は文字数から算出して差し込む（_stat_font_px）*/
+.stat { font-weight: 900; line-height: 1.02; letter-spacing: -.02em; white-space: nowrap; }
 .note { margin-top: 26px; font-size: 34px; font-weight: 700; color: #9fb0cc; }
 
 /* kind=steps / compare */
@@ -73,8 +76,29 @@ td:first-child { color: #9fb0cc; }
 """
 
 
+CONTENT_WIDTH = VIEWPORT[0] - 84 - 72   # 左右の padding を引いた実効幅
+STAT_MAX_PX = 172
+
+
 def _esc(text: str) -> str:
     return html.escape(str(text), quote=False)
+
+
+def _stat_font_px(text: str) -> int:
+    """stat が1行に収まる font-size を返す。
+
+    台本の書き手は「およそ1万7千円」のような短い数字を想定しているが、
+    「15万円と15万円で30万円」のように長くなることがある。固定サイズだと
+    そこで2行に折り返し、下の note が字幕の帯に押し出されて重なる。
+    折り返させないために、文字数から先に縮めておく。
+
+    半角は全角のおよそ 0.55 倍の幅として数える。
+    """
+    if not text:
+        return STAT_MAX_PX
+    width_em = sum(0.55 if ord(c) < 0x2E80 else 1.0 for c in text)
+    fitted = int(CONTENT_WIDTH / max(width_em, 0.5))
+    return max(56, min(STAT_MAX_PX, fitted))
 
 
 def _body_html(visual: dict) -> str:
@@ -102,7 +126,8 @@ def _body_html(visual: dict) -> str:
     note = visual.get("note") or ""
     parts = []
     if stat:
-        parts.append(f'<div class="stat">{_esc(stat)}</div>')
+        size = _stat_font_px(stat)
+        parts.append(f'<div class="stat" style="font-size:{size}px">{_esc(stat)}</div>')
     if note:
         parts.append(f'<div class="note">{_esc(note)}</div>')
     return "".join(parts)
