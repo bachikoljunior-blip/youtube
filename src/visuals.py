@@ -32,11 +32,24 @@ THEMES = [
 ]
 
 
-def theme_for(topic_id: str) -> dict:
-    """テーマIDから配色を決める。決め打ちなので再現する。"""
+def theme_for(topic_id: str, index: int | None = None) -> dict:
+    """配色を決める。
+
+    index を渡すと、そこから順番に回す。**連続する回が必ず違う色になる**ので、
+    こちらを使うこと。パイプラインは投稿済みの本数を渡している。
+
+    index が無いときはテーマIDのハッシュで決める。ただしハッシュは偶然重なるので、
+    連続が同じ色にならない保証はない。実際、最初は文字コードの和で割っていて、
+    続けて出す2本が同じ緑になった。**「同じ絵を続けない」は保証が要る性質**なので、
+    ハッシュは呼び出し側が本数を知らない場合の予備でしかない。
+    """
+    import hashlib
+
+    if index is not None:
+        return THEMES[index % len(THEMES)]
     if not topic_id:
         return THEMES[0]
-    return THEMES[sum(ord(c) for c in topic_id) % len(THEMES)]
+    return THEMES[hashlib.md5(topic_id.encode("utf-8")).digest()[0] % len(THEMES)]
 
 
 BASE_CSS = """
@@ -251,11 +264,12 @@ def _chromium_path() -> str | None:
     return None
 
 
-def render(visuals: list[dict], out_dir: Path, topic_id: str = "") -> list[Path]:
-    """図解を1枚ずつ PNG にする。配色はテーマIDから決まる。"""
+def render(visuals: list[dict], out_dir: Path, topic_id: str = "",
+           theme_index: int | None = None) -> list[Path]:
+    """図解を1枚ずつ PNG にする。配色は theme_index があれば順番に回す。"""
     from playwright.sync_api import sync_playwright
 
-    theme = theme_for(topic_id)
+    theme = theme_for(topic_id, theme_index)
     out_dir.mkdir(parents=True, exist_ok=True)
     paths: list[Path] = []
     executable = _chromium_path()

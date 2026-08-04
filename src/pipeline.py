@@ -114,7 +114,13 @@ def main(argv: list[str] | None = None) -> int:
         print(f"[pipeline] 公開設定を {override} で上書き")
 
     # 投稿済みはチャンネルから読む。ファイルには持たない。
-    posted: set[str] = set() if dry else history.posted_topic_ids()
+    # --dry-run でも本数だけは実際に数える。配色を投稿済み本数で回しているので、
+    # ここを 0 にすると dry-run と本番で色が変わってしまう。
+    # dry-run で作った final.mp4 をそのまま投稿する運用（scripts/upload_only.py）
+    # なので、dry-run 側が本番の色でなければ意味がない。
+    already = history.posted_topic_ids()
+    posted: set[str] = set() if dry else already
+    theme_index = len(already)
     topic_id = args.topic or config.env("TOPIC_ID", required=False)
     if args.script and not topic_id:
         raise RuntimeError("--script を使うときは --topic でテーマIDを指定してください")
@@ -149,8 +155,10 @@ def main(argv: list[str] | None = None) -> int:
     print(f"[pipeline] 想定尺: {spans[-1][1] / 60:.1f} 分")
 
     # 3. 図解を自前で描いて撮る
+    # 配色は投稿済みの本数から順番に回す。連続する回が同じ色にならないように。
     slides = visuals.render(
-        [s.visual.model_dump() for s in script.segments], work / "slides", topic["id"]
+        [s.visual.model_dump() for s in script.segments], work / "slides", topic["id"],
+        theme_index=theme_index,
     )
 
     # 4. 字幕
