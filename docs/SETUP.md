@@ -1,7 +1,8 @@
 # セットアップ — あなたがやること
 
 **所要 30〜40分。PC は要りません。スマホのブラウザだけで最後まで行けます。**
-登録する秘密情報は4つです（5つ目は任意）。
+登録する秘密情報は**3つだけ**です（4つ目は任意）。
+GitHub の Secrets は使いません。Claude Code の環境変数に置きます。
 
 各ステップのリンクは、押せばそのページに直接飛びます。
 
@@ -82,65 +83,52 @@
 
 ---
 
-## STEP 5. 台本生成用のトークン（3分）
+## STEP 5. 認証情報を環境変数に入れる
 
-台本は **API 従量課金ではなく、あなたの Claude サブスクの枠内**で生成します。
-Claude Code にログイン済みの端末で、次を1回だけ実行してください。
+**GitHub の Secrets ではありません。** 投稿は GitHub Actions ではなく、Claude Code の
+常駐セッションから行うので、値は**環境**に置きます。リポジトリにも会話にも残りません。
 
-```bash
-npm install -g @anthropic-ai/claude-code
-claude setup-token
+Claude Code の **Environments → 「Youtube」→ Environment variables** を開き、
+次の3つを登録します。
+
+```
+YT_CLIENT_ID
+```
+```
+YT_CLIENT_SECRET
+```
+```
+YT_REFRESH_TOKEN
 ```
 
-`sk-ant-oat01-...` が出ます。これが `CLAUDE_CODE_OAUTH_TOKEN` です。
+**任意（4つ目）**：`GOOGLE_TTS_API_KEY` を足すとナレーションの声が機械的なものから
+自然な読み上げに変わります。無ければ無料の open-jtalk を使うので動作はします。
+取り方は末尾の「補足」。
+
+> ⚠️ **環境変数は、設定したあとに始まるセッションにしか入りません。**
+> 既に動いているセッションには反映されないので、登録してから新しいセッションを作ります。
 
 ---
 
-## STEP 6. GitHub に登録する（5分）
+## STEP 6. 常駐セッションを立ち上げる
 
-[**→ Secrets の登録ページを開く**](https://github.com/bachikoljunior-blip/youtube/settings/secrets/actions)
+[`KICKOFF.md`](KICKOFF.md) の手順どおりに進めます。要点だけ:
 
-`New repository secret` から**4つ**登録します。
+1. 「+ 新規セッション」→ リポジトリ `youtube` → **環境に「Youtube」を選ぶ**
+2. KICKOFF.md の中のコードブロックをそのまま貼る
+3. セッションが疎通確認 → 1本目の生成 → 投稿 → 自分を定期実行に登録、まで自分で行います
 
-| Name | 値の出どころ |
-|---|---|
-| `CLAUDE_CODE_OAUTH_TOKEN` | STEP 5 |
-| `YT_CLIENT_ID` | STEP 3 |
-| `YT_CLIENT_SECRET` | STEP 3 |
-| `YT_REFRESH_TOKEN` | STEP 4 |
-
-**任意（5つ目）**：`GOOGLE_TTS_API_KEY` を足すとナレーションの声が明確に自然になります。
-無ければ無料の open-jtalk を使うので、動作はします。声は視聴維持率を通して収益に効くので、
-続ける気があるなら後から足す価値があります（取り方は末尾の「補足」）。
-
-続けて、Actions がコミットを push できるようにします。
-
-[**→ Actions の権限設定を開く**](https://github.com/bachikoljunior-blip/youtube/settings/actions)
-→ 「Workflow permissions」を **Read and write permissions** にして Save。
+以降は毎日 12:10（JST）に定期実行が撃ち込まれ、その日のぶんが作られて
+19時（JST）に公開されます。
 
 ---
 
-## STEP 7. 動かす（10分）
+## STEP 7. 収益化の申請（条件を満たしてから）
 
 | | やること | リンク |
 |---|---|---|
-| 7-1 | 設定チェック。足りないものが一覧で出る | [**0. 設定をチェックする**](https://github.com/bachikoljunior-blip/youtube/actions/workflows/0-check.yml) |
-| 7-2 | 投稿せず1本作る。終わったら **Artifacts** から中身を確認 | [**1. 動画をつくる（投稿しない）**](https://github.com/bachikoljunior-blip/youtube/actions/workflows/1-preview.yml) |
-| 7-3 | 本番投稿。visibility は `private` のまま | [**2. 動画をつくって投稿する**](https://github.com/bachikoljunior-blip/youtube/actions/workflows/2-publish.yml) |
-| 7-4 | 非公開で1本上がっているのを確認 | [YouTube Studio](https://studio.youtube.com/) |
-
-どのワークフローも、リンクを開く → 右上の **Run workflow** → 緑の **Run workflow** です。
-
-ここまで通れば、以降は **毎日 05:17（JST）に自動で1本**作られ、その日の19時に公開されます。
-
----
-
-## STEP 8. 収益化の申請（条件を満たしてから）
-
-| | やること | リンク |
-|---|---|---|
-| 8-1 | AdSense を作る（審査に時間がかかるので先に） | [AdSense](https://www.google.com/adsense/start/) |
-| 8-2 | 条件達成後に申請 | [YouTube Studio → 収益化](https://studio.youtube.com/) |
+| 7-1 | AdSense を作る（審査に時間がかかるので先に） | [AdSense](https://www.google.com/adsense/start/) |
+| 7-2 | 条件達成後に申請 | [YouTube Studio → 収益化](https://studio.youtube.com/) |
 
 **条件**：チャンネル登録者 1,000人 ＋ 直近12か月の総再生時間 4,000時間。
 
@@ -151,15 +139,14 @@ claude setup-token
 
 ## トラブル時
 
-まず [**0. 設定をチェックする**](https://github.com/bachikoljunior-blip/youtube/actions/workflows/0-check.yml) を実行してください。
-
 | 症状 | 原因 |
 |---|---|
+| 認証が通らない | 環境を間違えている。セッションで `echo $CLAUDE_CODE_REMOTE_ENVIRONMENT_TYPE` が `cloud_default` なら「Youtube」環境で作り直す |
 | サムネイルだけ設定されない | STEP 1-3 の電話番号確認が未了 |
 | `invalid_grant` | 同意画面が「テスト」のまま7日経過。STEP 2-4 で公開してから STEP 4 をやり直す |
-| `invalid_client` | クライアントIDの貼り間違い。値が二重になっていないか確認（前後の空白と二重ペーストは自動で直します） |
+| `invalid_client` | クライアントIDの貼り間違い。値が二重になっていないか確認 |
 | STEP 4 で Playground が使えない | STEP 3 で「デスクトップ」を選んでいる。ウェブアプリケーションで作り直す |
-| 動画が8分未満で投稿されない | 検査ゲートが正しく止めています。`config/channel.yaml` の `target_minutes` を上げる |
+| 動画が8分未満で投稿されない | 投稿前の検査が正しく止めています。台本の文字数を増やす |
 
 ---
 
@@ -171,4 +158,5 @@ claude setup-token
 2. [お支払い情報を登録](https://console.cloud.google.com/billing)（月100万文字まで無料。使用量は約12万文字なので **$0** ですが、登録自体は必要です）
 3. [認証情報](https://console.cloud.google.com/apis/credentials) →「認証情報を作成」→ **API キー**
    → 作成後「キーを制限」で Cloud Text-to-Speech API のみに絞る
-4. [Secrets](https://github.com/bachikoljunior-blip/youtube/settings/secrets/actions) に `GOOGLE_TTS_API_KEY` として登録
+4. 環境「Youtube」の Environment variables に `GOOGLE_TTS_API_KEY` として登録
+   （反映にはセッションの作り直しが要ります）

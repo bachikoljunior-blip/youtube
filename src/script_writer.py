@@ -33,7 +33,6 @@ class Visual(BaseModel):
 
 class Segment(BaseModel):
     narration: str = Field(description="読み上げる文章。1〜3文。話し言葉。記号や箇条書き記号は使わない")
-    on_screen: str = Field(description="画面に大きく出す要約テキスト。18文字以内。数字を優先して残す")
     visual: Visual = Field(description="このセグメントで表示する図解")
 
 
@@ -154,3 +153,11 @@ def generate(channel: dict, topic: dict) -> VideoScript:
         print(f"[script] 警告: 目標{min_chars}文字に届きませんでした（{chars}文字）")
 
     return script
+
+
+if __name__ == "__main__":
+    # 常駐セッションが台本を書くときに、この JSON スキーマに従わせる。
+    #   python -m src.script_writer
+    import json
+
+    print(json.dumps(VideoScript.model_json_schema(), ensure_ascii=False, indent=2))

@@ -6,10 +6,12 @@
 """
 from __future__ import annotations
 
+import argparse
 import json
 import random
 import shutil
 import sys
+from pathlib import Path
 
 from . import config, history, subtitles, thumbnail, uploader, verify, visuals
 from .renderer import build_narration, build_video, segment_timeline
@@ -87,19 +89,36 @@ def refill_topics_if_low(posted: set[str]) -> None:
         print(f"[pipeline] テーマの補充に失敗しました（投稿は成功しています）: {exc}")
 
 
-def main() -> int:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="動画を1本作って投稿する")
+    parser.add_argument(
+        "--script",
+        help="台本JSONのパス。渡すと台本生成を飛ばす。"
+             "常駐セッションが自分で書いた台本を使うときはこれ",
+    )
+    parser.add_argument("--topic", help="テーマID。--script を使うときは必須")
+    parser.add_argument("--visibility", choices=["private", "unlisted", "public"])
+    parser.add_argument("--dry-run", action="store_true", help="投稿せず build/ に出すだけ")
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
     channel = config.load_channel()
     pool = config.load_topics()
-    dry = config.dry_run()
+    dry = args.dry_run or config.dry_run()
 
-    override = config.env("VISIBILITY", required=False)
+    override = args.visibility or config.env("VISIBILITY", required=False)
     if override:
         channel["publish"]["visibility"] = override
         print(f"[pipeline] 公開設定を {override} で上書き")
 
     # 投稿済みはチャンネルから読む。ファイルには持たない。
     posted: set[str] = set() if dry else history.posted_topic_ids()
-    topic = pick_topic(pool, posted, config.env("TOPIC_ID", required=False))
+    topic_id = args.topic or config.env("TOPIC_ID", required=False)
+    if args.script and not topic_id:
+        raise RuntimeError("--script を使うときは --topic でテーマIDを指定してください")
+    topic = pick_topic(pool, posted, topic_id)
     print(f"=== テーマ: {topic['title_seed']} ({topic['id']}) ===")
 
     work = config.BUILD_DIR / topic["id"]
@@ -107,8 +126,12 @@ def main() -> int:
         shutil.rmtree(work)
     work.mkdir(parents=True, exist_ok=True)
 
-    # 1. 台本
-    script = generate(channel, topic)
+    # 1. 台本。セッションが自分で書いたものがあればそれを使い、無ければ生成する。
+    if args.script:
+        script = VideoScript.model_validate_json(Path(args.script).read_text(encoding="utf-8"))
+        print(f"[pipeline] 台本を読み込みました: {args.script}")
+    else:
+        script = generate(channel, topic)
     print(f"[pipeline] タイトル: {script.title}")
 
     # 2. 音声（ここで各セグメントの実尺が確定する）
@@ -131,7 +154,7 @@ def main() -> int:
     # 4. 字幕
     ass_path = subtitles.build(
         [
-            {"narration": seg.narration, "on_screen": seg.on_screen, "start": start, "end": end}
+            {"narration": seg.narration, "start": start, "end": end}
             for seg, (start, end) in zip(script.segments, spans)
         ],
         work / "subtitles.ass",
