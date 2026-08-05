@@ -20,6 +20,7 @@
 """
 from __future__ import annotations
 
+import re
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -46,6 +47,15 @@ PCT_PER_REPLY = 0.0107   # 実測: 161応答の対話セッションで1〜2%
 # 週の区切り（土曜07:00 JST）を過ぎたら自動で無視され、定常に戻る。
 # 次に指示が来たらこの2つの値だけ差し替えること。
 ALLOWANCE = ("2026-08-05T19:11+09:00", 1.5)
+
+
+def _is_short(video: dict) -> bool:
+    """ショートかどうか。**尺で見る。** 題の #Shorts は付け忘れがある。"""
+    dur = video["contentDetails"]["duration"]
+    m = re.fullmatch(r"PT(?:(\d+)M)?(?:(\d+)S)?", dur)
+    if not m:
+        return False
+    return int(m.group(1) or 0) * 60 + int(m.group(2) or 0) <= 180
 
 
 def _fmt(iso: str) -> str:
@@ -174,6 +184,7 @@ def main(days: int = 7) -> int:
     ours = 0
     stranded: list[str] = []
     scheduled: list[str] = []
+    short_days: set[str] = set()      # ショートが予約されている日（MM/DD）
 
     print(f"{'ID':13s} {'状態':16s} {'尺':>7s} {'再生':>5s} {'高評価':>4s}  題")
     for v in videos:
@@ -189,6 +200,8 @@ def main(days: int = 7) -> int:
             hours = (datetime.fromisoformat(publish_at.replace("Z", "+00:00")) - now).total_seconds() / 3600
             state = f"予約 {_fmt(publish_at)}"
             scheduled.append(f"{v['id']} {_fmt(publish_at)}（あと{hours:.1f}時間）")
+            if _is_short(v):
+                short_days.add(_fmt(publish_at).split()[0])
         else:
             state = f"{st['privacyStatus']} 予約なし"
             stranded.append(f"{v['id']} {sn['title'][:34]}")
@@ -206,15 +219,20 @@ def main(days: int = 7) -> int:
     # 予約が埋まっていない日を出す。**背後の生成はコンテナ再起動で消える**ので、
     # 「走らせたはず」は当てにならない。実際に 8/7 が空になっていたのを見落としかけた。
     # 投稿が途切れるのが最大の損失なので、空きは目立たせる。
-    covered = {s.split()[1].split("/")[0] + "/" + s.split()[1].split("/")[1] for s in scheduled}
+    # **日付だけ見てはいけない。形式ごとに見る。**
+    # 2026-08-05、8/6 と 8/7 は「予約あり」と出ていたが、どちらも長尺だった。
+    # 長尺は4本すべて0〜1回で、**露出が出ているのはショートだけ。**
+    # 「予約が入っている日」を空きでないと数えたせいで、唯一効いている形式が
+    # 翌日から途切れる状態を見落としかけた。**効いている形式で数える。**
     gaps = []
     for ahead in range(1, LOOKAHEAD_DAYS + 1):
         day = (datetime.now(JST) + timedelta(days=ahead)).strftime("%m/%d")
-        if day not in covered:
+        if day not in short_days:
             gaps.append(day)
     if gaps:
-        print(f"\n[!] 予約が入っていない日: {', '.join(gaps)}")
+        print(f"\n[!] **ショート**の予約が入っていない日: {', '.join(gaps)}")
         print("    投稿が途切れるのが最大の損失。生成を撃ち直すこと。")
+        print("    長尺が入っていても空きとみなす。露出が出ているのはショートだけだから。")
         print("    背後の生成はコンテナ再起動で消えるので、ログが残っていてもプロセスは死んでいる。")
 
     if stranded:
