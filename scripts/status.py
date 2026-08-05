@@ -32,6 +32,12 @@ JST = timezone(timedelta(hours=9))
 LOOKAHEAD_DAYS = 3      # 何日先まで予約の空きを見るか
 WEEKLY_BUDGET = "300ドル"   # 土曜07:00 JST 区切り。オーナーが決めた上限（2026-08-05）
 
+# その週だけの割り当て。オーナーが上限より絞ることがある。
+#   (リセット日, クレジット)
+# **リセット日を過ぎたら自動で無視される。** 古い数字が残って誤解を招かないように、
+# 期限つきにしてある。次に指示があったらこの2つの値だけ差し替えること。
+WEEK_OVERRIDE = ("2026-08-08", 20)
+
 
 def _fmt(iso: str) -> str:
     return datetime.fromisoformat(iso.replace("Z", "+00:00")).astimezone(JST).strftime("%m/%d %H:%M")
@@ -84,10 +90,22 @@ def print_budget() -> None:
         end += timedelta(days=1)
     hours = (end - now).total_seconds() / 3600
 
+    wakes = max(1, round(hours / 6))
     print("\n=== トークン予算 ===")
     print(f"  今週のリセット: {end.strftime('%m/%d %H:%M JST')}（あと {hours:.0f} 時間）")
-    print(f"  上限は週 {WEEKLY_BUDGET}。残量はクレジットで示される（この画面には出ない）")
-    print(f"  6時間おきなら残り約 {hours / 6:.0f} 回。残クレジット ÷ これ = 1回あたりの目安")
+    print(f"  上限は週 {WEEKLY_BUDGET}")
+
+    # 期限つきの割り当て。リセット日を過ぎたものは黙って無視する。
+    due, credits = WEEK_OVERRIDE
+    if datetime.strptime(due, "%Y-%m-%d").date() == end.date():
+        per = credits / wakes
+        print(f"  **今週の割り当ては {credits} クレジット**（オーナーの指示。上限より絞っている）")
+        print(f"  6時間おきなら残り約 {wakes} 回 → 1回あたり {per:.1f} クレジット")
+        if per < 1:
+            print("  [!] 1回1クレジットを下回る。日次（cron `0 23 * * *`）に落とすこと")
+            print("      落とすときは戻す仕組みも一緒に用意する（docs/TRIGGER.md）")
+    else:
+        print(f"  6時間おきなら残り約 {wakes} 回。残クレジット ÷ これ = 1回あたりの目安")
     print("  高いもの: 画像(contact sheet)の Read／長い生成を待つこと／同じ確認の繰り返し")
     print("  **投稿は予約済みなら起きなくても公開される。** 無理に起きないこと")
 
