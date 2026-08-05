@@ -27,6 +27,26 @@ src = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
 
 # A の表（| A1 | 内容 | 日 | 効いている場所 |）を抜く
 rows = re.findall(r"^\| (A\d+) \| (.+?) \| [^|]* \| [^|]* \|$", src, re.M)
+
+# **抜き出しが壊れたら黙るのではなく、大声で言う。**
+# 表の書式に依存しているので、列を増減すると 0 件になる。0 件のまま静かに
+# 通すと A4（恒久指示を忘れないように設計する）が誰にも気づかれず破れる。
+if not rows:
+    print(json.dumps({
+        "hookSpecificOutput": {
+            "hookEventName": "UserPromptSubmit",
+            "additionalContext": (
+                "**[!] 恒久指示の抜き出しが壊れています。**\n"
+                "`docs/CONSTRAINTS.md` の A の表から1件も取れませんでした。\n"
+                "表の書式（`| A番号 | 内容 | 日 | 場所 |`）が変わった可能性が高い。\n"
+                "**他の作業より先に `scripts/goal_reminder.sh` の正規表現を直すこと。**\n"
+                "直るまで、恒久指示は `docs/CONSTRAINTS.md` を直接読むこと。"
+            ),
+        },
+        "suppressOutput": True,
+    }, ensure_ascii=False))
+    raise SystemExit(0)
+
 items = "\n".join(
     "- **{}** {}".format(n, re.sub(r"（下に全文。書き換え厳禁）", "", b).strip())
     for n, b in rows
