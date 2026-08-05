@@ -225,11 +225,32 @@ def _chart_html(visual: dict, portrait: bool = False) -> str:
     track_px = max(content - label_px - gap, 1)
 
     top = max(float(b.get("value", 0)) for b in bars) or 1.0
+    pcts = [max(float(b.get("value", 0)) / top * 100.0, 1.0) for b in bars]
+    # padding-right 16px と余白を見た、数字1つに要る幅。
+    needs = [_em_width(str(b.get("display", ""))) * font_px + 16 * 2 for b in bars]
+
+    # **中に入らないとき外に出すが、外に出しても入らない場合を見ていなかった。**
+    # 2026-08-05、税率べつの図で「約10万9千円」が右端で切れた。棒が57%あり、
+    # 中には入らず（棒157px < 必要168px）、外に出すと 157+168=325px で
+    # 枠の276pxを超える。**どちらでも入らない棒があり得る。**
+    #
+    # 棒の長さは計算結果そのものなので、1本だけ縮めると図が嘘になる。
+    # **全部に同じ倍率をかけて縮める。** 相対の長さは保たれるので、図は正しいまま。
+    # 満幅を使わなくなるだけ。
+    def fits(k: float) -> bool:
+        for pct, need in zip(pcts, needs):
+            bar = track_px * pct * k / 100.0
+            if bar < need and bar + need > track_px:   # 中にも外にも入らない
+                return False
+        return True
+
+    scale = 1.0
+    while scale > 0.30 and not fits(scale):
+        scale -= 0.01
+
     rows = []
-    for b in bars:
-        pct = max(float(b.get("value", 0)) / top * 100.0, 1.0)
-        # 棒の中に数字が収まるか、実寸で判定する。padding-right 16px と余白を見る。
-        need_px = _em_width(str(b.get("display", ""))) * font_px + 16 * 2
+    for b, pct0, need_px in zip(bars, pcts, needs):
+        pct = pct0 * scale
         thin = " thin" if track_px * pct / 100.0 < need_px else ""
         rows.append(
             f'<div class="bar-row">'
