@@ -54,6 +54,9 @@ def _is_kana(ch: str) -> bool:
 # 1文字で語を区切れるひらがな（助詞）。ここに無い1文字のひらがなは送り仮名とみなす。
 _PARTICLES = "のはをにがとでもやへ"
 
+# 元号。直後の年数と切り離すと読めなくなる。
+_ERA = ("令和", "平成", "昭和", "大正", "明治")
+
 
 def _is_okurigana(piece: str, cut: int) -> bool:
     """cut の直前のひらがなが、送り仮名の途中か。
@@ -93,7 +96,14 @@ def _best_cut(piece: str, limit: int) -> int:
 
     def ok(cut: int) -> bool:
         # 数字と単位のかたまりの途中では割らない
-        return not (piece[cut - 1] in _NUM_TOKEN and piece[cut] in _NUM_TOKEN)
+        if piece[cut - 1] in _NUM_TOKEN and piece[cut] in _NUM_TOKEN:
+            return False
+        # 元号と年数のあいだでも割らない。「日額は令和」／「8年8月1日改定」と
+        # 割れて読めなかった（2026-08-05）。元号は _NUM_TOKEN に入っていないので
+        # 上の規則に引っかからない。**数字のかたまりは数字だけでできていない。**
+        if piece[max(0, cut - 2):cut] in _ERA and piece[cut].isdigit():
+            return False
+        return True
 
     # 1. 句読点の直後
     for cut in range(limit, floor - 1, -1):

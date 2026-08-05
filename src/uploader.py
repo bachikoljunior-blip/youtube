@@ -121,6 +121,38 @@ def _post_actions(youtube, video_id: str, publish_cfg: dict) -> None:
             print(f"[upload] コメント投稿に失敗（動画は投稿済み）: {exc}")
 
 
+def _set_thumbnail(youtube, video_id: str, path: Path, tries: int = 4) -> bool:
+    """サムネイルを設定する。**失敗したら待って撃ち直す。**
+
+    2026-08-05、`SsUYduA1dpg` で 403 forbidden が返った。直前の4本は成功して
+    いたので権限の問題ではなく、**アップロード直後で動画側の処理が終わって
+    いなかった**のが原因。手で撃ち直したら一発で通った。
+
+    これまでは失敗を print するだけで先へ進んでいた。**黙って通す**のと同じで、
+    サムネイルの無い動画がそのまま公開予約に入る。ショートでも検索結果や
+    関連動画には出るので、自動生成のフレームのままにする理由が無い。
+
+    権限（チャンネル未確認）なら何度撃っても通らないので、回数で打ち切る。
+    """
+    for attempt in range(1, tries + 1):
+        try:
+            youtube.thumbnails().set(
+                videoId=video_id, media_body=MediaFileUpload(str(path))
+            ).execute()
+            print(f"[upload] サムネイル設定完了{'（%d回目）' % attempt if attempt > 1 else ''}")
+            return True
+        except HttpError as exc:
+            if attempt == tries:
+                print(f"[upload] **サムネイルを設定できませんでした**（{tries}回試行）: {exc}")
+                print("[upload] 自動生成のフレームのまま公開されます。"
+                      "チャンネルの電話番号確認が済んでいるか確かめること。")
+                return False
+            wait = 5 * attempt
+            print(f"[upload] サムネイル設定に失敗。{wait}秒待って撃ち直します（{attempt}/{tries}）")
+            time.sleep(wait)
+    return False
+
+
 def upload(
     video_path: Path,
     thumbnail_path: Path,
@@ -189,13 +221,6 @@ def upload(
     _post_actions(youtube, video_id, publish_cfg)
 
     if thumbnail_path.exists():
-        try:
-            youtube.thumbnails().set(
-                videoId=video_id, media_body=MediaFileUpload(str(thumbnail_path))
-            ).execute()
-            print("[upload] サムネイル設定完了")
-        except HttpError as exc:
-            # チャンネル未確認だとサムネ設定だけ失敗する。動画自体は上がっているので続行。
-            print(f"[upload] サムネイル設定に失敗（チャンネルの電話番号確認が必要かも）: {exc}")
+        _set_thumbnail(youtube, video_id, thumbnail_path)
 
     return video_id
