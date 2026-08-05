@@ -47,6 +47,46 @@ def _escape(text: str) -> str:
     return text.replace("\\", "").replace("{", "(").replace("}", ")").replace("\n", " ")
 
 
+def _is_kana(ch: str) -> bool:
+    return "ぁ" <= ch <= "ゟ"
+
+
+def _best_cut(piece: str, limit: int) -> int:
+    """1行に収まらない文から、**どこで割るか**を選ぶ。
+
+    機械的に limit 文字目で割ると、単語の途中で切れる。実際に
+    「額面と手／取りで」「1年き／ざみの」「在職老齢年金は入／れていません」
+    のように読めない字幕が出た。
+
+    日本語には空白が無いので語の切れ目は自明ではないが、
+    **ひらがなの次に漢字・カタカナ・数字が来る位置は、ほぼ語の頭**になる。
+    形態素解析を持ち込まなくても、この一点だけでほとんどの事故が消える。
+
+    優先順位は、句読点の直後 → ひらがなから他種への変わり目 → 諦めて limit。
+    数字と単位のかたまりの中では、どの規則より優先して割らない
+    （このチャンネルは数字が主役なので「1875円か1687」で切れると読めない）。
+    """
+    floor = max(2, limit // 2)      # これ以上戻ると行が短くなりすぎる
+
+    def ok(cut: int) -> bool:
+        # 数字と単位のかたまりの途中では割らない
+        return not (piece[cut - 1] in _NUM_TOKEN and piece[cut] in _NUM_TOKEN)
+
+    # 1. 句読点の直後
+    for cut in range(limit, floor - 1, -1):
+        if piece[cut - 1] in "、。！？" and ok(cut):
+            return cut
+    # 2. ひらがな → 漢字・カタカナ・数字の変わり目（ほぼ語の頭）
+    for cut in range(limit, floor - 1, -1):
+        if _is_kana(piece[cut - 1]) and not _is_kana(piece[cut]) and ok(cut):
+            return cut
+    # 3. 少なくとも数字は割らない
+    cut = limit
+    while cut > floor and not ok(cut):
+        cut -= 1
+    return cut if ok(cut) else limit
+
+
 def _chunk(narration: str, limit: int = MAX_LINE_CHARS) -> list[str]:
     """読点・句点で切って、1行に収まる長さに束ねる。"""
     pieces: list[str] = []
@@ -67,20 +107,27 @@ def _chunk(narration: str, limit: int = MAX_LINE_CHARS) -> list[str]:
         else:
             if buf:
                 lines.append(buf)
-            # 1片で長すぎる場合は機械的に割る。ただし数字の途中では割らない。
-            # このチャンネルは数字が主役なので、「1875円か1687」で改行されると読めない。
+            # 1片で長すぎる場合は割る。**どこで割るかを選ぶ。**
             while len(piece) > limit:
-                cut = limit
-                # 数字と単位のかたまりの途中では割らない
-                while cut > 1 and piece[cut - 1] in _NUM_TOKEN and piece[cut] in _NUM_TOKEN:
-                    cut -= 1
-                if cut <= 1:            # 数字だけで埋まっているなら諦めて機械的に割る
-                    cut = limit
+                cut = _best_cut(piece, limit)
                 lines.append(piece[:cut])
                 piece = piece[cut:]
             buf = piece
     if buf:
         lines.append(buf)
+
+    # 行頭に句読点を残さない。前の行に戻す。
+    # 「75歳開始なら1.84倍で」「、年331万2千円。」のように、
+    # 読点が次の行の先頭に来ると読みにくい。
+    fixed: list[str] = []
+    for line in lines:
+        # 空文字は "、。！？" の部分文字列とみなされるので、必ず長さを見ること
+        while fixed and line and line[0] in "、。！？":
+            fixed[-1] += line[0]
+            line = line[1:]
+        if line:
+            fixed.append(line)
+    lines = fixed
 
     # 「。」だけの行のような、短すぎる余りは前の行に戻す。
     # 縦向きは1行が13字と短いので、句点だけが1行に取り残されやすい。
