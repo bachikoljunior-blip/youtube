@@ -35,11 +35,17 @@ LOOKAHEAD_DAYS = 3      # 何日先まで予約の空きを見るか
 WEEKLY_PCT = 30          # 定常。土曜07:00 JST 区切り
 PCT_PER_REPLY = 0.0107   # 実測: 161応答の対話セッションで1〜2%
 
-# その週だけの割り当て（%）。オーナーが定常より絞ることがある。
-#   (リセット日, %)
-# **リセット日を過ぎたら自動で無視される。** 古い数字が残って誤解を招かないように、
-# 期限つきにしてある。次に指示があったらこの2つの値だけ差し替えること。
-WEEK_OVERRIDE = ("2026-08-08", 2)
+# オーナーが個別に出した割り当て。**「この時刻から、この%まで」** と読む。
+#   (開始時刻 ISO8601, %)
+# 定常（WEEKLY_PCT）より絞ることも緩めることもある。
+#
+# **累計ではなく「そこから先」で数えること。** 2026-08-05 に「今から1.5%」と
+# 言われた。その時点で今週の累計は6.7%あり、累計で測ると指示の意味が変わる。
+# **区切りの時刻を持たないと、この2つを区別できない。**
+#
+# 週の区切り（土曜07:00 JST）を過ぎたら自動で無視され、定常に戻る。
+# 次に指示が来たらこの2つの値だけ差し替えること。
+ALLOWANCE = ("2026-08-05T19:11+09:00", 1.5)
 
 
 def _fmt(iso: str) -> str:
@@ -94,31 +100,44 @@ def print_budget() -> None:
     while end.weekday() != 5 or end <= now:      # 5 = 土曜
         end += timedelta(days=1)
     hours = (end - now).total_seconds() / 3600
-
     wakes = max(1, round(hours / 6))
-    due, pct = WEEK_OVERRIDE
-    limited = datetime.strptime(due, "%Y-%m-%d").date() == end.date()
-    budget = pct if limited else WEEKLY_PCT
-    per = budget / wakes
+
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from usage import summary, week_start
+
+    since, pct = ALLOWANCE
+    start = datetime.fromisoformat(since)
+    active = start >= week_start(now)        # 週をまたいだら失効し、定常に戻る
+    budget = pct if active else WEEKLY_PCT
 
     print("\n=== トークン予算（単位は週間使用量の%）===")
     print(f"  今週のリセット: {end.strftime('%m/%d %H:%M JST')}（あと {hours:.0f} 時間）")
-    if limited:
-        print(f"  **今週の残りは {pct}%**（定常は {WEEKLY_PCT}%。オーナーが絞っている）")
-    else:
-        print(f"  定常 {WEEKLY_PCT}%")
-    print(f"  6時間おきなら残り約 {wakes} 回 → 1回あたり {per:.2f}%（≒{per / PCT_PER_REPLY:.0f}応答）")
 
     # **実測。** これまでオーナーに教えてもらうしかなかったが、セッション記録から数えられる。
     try:
-        from usage import summary
-        s = summary()
-        print(f"  実測: 今週これまで {s['replies']:,}応答 / {s['tokens']/1e6:.0f}M トークン"
-              f" → **{s['pct']:.1f}%**（楽観側 {s['pct_optimistic']:.1f}%）")
-        if s["pct"] > budget:
-            print(f"  [!] 割り当て {budget}% を超えている可能性がある。**この回は短く切ること。**")
+        if active:
+            s = summary(start)
+            left = budget - s["pct"]
+            print(f"  **{start:%m/%d %H:%M JST} から {pct}%** の割り当て（定常は {WEEKLY_PCT}%）")
+            print(f"  実測: それ以降 {s['replies']:,}応答 / {s['tokens']/1e6:.0f}M トークン"
+                  f" → **{s['pct']:.2f}%**（楽観側 {s['pct_optimistic']:.2f}%）")
+            print(f"  残り **{left:.2f}%**（≒{max(0, left) / PCT_PER_REPLY:.0f}応答）")
+            if left <= 0:
+                print("  [!] 割り当てを使い切った可能性がある。**いま切ること。**")
+            w = summary()
+            print(f"  参考: 今週の累計は {w['pct']:.1f}%（割り当てとは別の量。混ぜないこと）")
+        else:
+            print(f"  定常 {WEEKLY_PCT}%")
+            s = summary()
+            print(f"  実測: 今週これまで {s['replies']:,}応答 / {s['tokens']/1e6:.0f}M トークン"
+                  f" → **{s['pct']:.1f}%**（楽観側 {s['pct_optimistic']:.1f}%）")
+            if s["pct"] > budget:
+                print(f"  [!] 割り当て {budget}% を超えている可能性がある。**この回は短く切ること。**")
     except Exception as exc:
         print(f"  実測できませんでした: {str(exc)[:70]}")
+
+    per = budget / wakes
+    print(f"  6時間おきなら残り約 {wakes} 回 → 1回あたり {per:.2f}%（≒{per / PCT_PER_REPLY:.0f}応答）")
     if per / PCT_PER_REPLY < 10:
         print("  [!] 1回10応答を下回る。日次（cron `0 23 * * *`）に落とすことを検討")
         print("      落とすときは戻す仕組みも一緒に用意する（docs/TRIGGER.md）")

@@ -80,8 +80,14 @@ def tokens_since(since: datetime) -> tuple[int, int]:
     return total, replies
 
 
-def summary() -> dict:
-    since = week_start()
+def summary(since: datetime | None = None) -> dict:
+    """since 以降の使用量。省略したら週の区切りから。
+
+    **「今週これまで何%」と「この時点から何%」は別の量。**
+    オーナーの割り当ては後者で来ることがある（2026-08-05「今から1.5%」）。
+    累計で測ると、すでに使ったぶんが混ざって指示の意味が変わってしまう。
+    """
+    since = since or week_start()
     total, replies = tokens_since(since)
     return {
         "since": since,
