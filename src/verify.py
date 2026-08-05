@@ -107,6 +107,37 @@ def _check_subtitles(work: Path) -> list[str]:
     return problems
 
 
+# ショートで、1枚の絵が画面に出ていてよい秒数の上限。
+# 2026-08-05、53秒のショートが**絵3枚**で、1枚あたり16〜20秒静止していた。
+# 長尺には chart 3枚の下限があるが、ショートには枚数の規定が無く素通りしていた。
+# 「同じ絵が続く」ことがポリシー上の反復判定に当たるのは、尺に関係なく同じ。
+MAX_SECONDS_PER_SLIDE = 12.0
+
+
+def _check_short_pace(script: dict | None, duration: float) -> list[str]:
+    """ショートで同じ絵が長く止まりすぎていないか。
+
+    **枚数ではなく「1枚あたり何秒か」で見る。** 枚数の下限を置くと尺が変わった
+    ときにずれる。見たいのは「見ている側にとって画が止まって見えるか」なので、
+    秒で持つほうが素直。
+
+    落ちたら作り直し。ショートの作り直しは数分で済む。
+    """
+    if not script or duration <= 0:
+        return []
+    segments = script.get("segments") or []
+    if not segments:
+        return []
+    per = duration / len(segments)
+    if per > MAX_SECONDS_PER_SLIDE:
+        return [
+            f"1枚あたり {per:.0f}秒 で絵が止まりすぎている"
+            f"（{duration:.0f}秒 / {len(segments)}枚、上限 {MAX_SECONDS_PER_SLIDE:.0f}秒）。"
+            "セグメントを増やして画を動かすこと"
+        ]
+    return []
+
+
 def _check_headline_from_calc(work: Path, script: dict | None) -> list[str]:
     """**冒頭に出す数字が、こちらの計算から出たものであること。**
 
@@ -321,6 +352,7 @@ def check(path: Path, video_cfg: dict, min_minutes: float, work: Path) -> float:
     if portrait:
         problems += _check_short_opening(script)
         problems += _check_headline_from_calc(work, script)
+        problems += _check_short_pace(script, duration)
 
     if problems:
         raise VerificationError("投稿前の検査に落ちました: " + " / ".join(problems))

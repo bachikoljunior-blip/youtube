@@ -51,6 +51,29 @@ def _is_kana(ch: str) -> bool:
     return "ぁ" <= ch <= "ゟ"
 
 
+# 1文字で語を区切れるひらがな（助詞）。ここに無い1文字のひらがなは送り仮名とみなす。
+_PARTICLES = "のはをにがとでもやへ"
+
+
+def _is_okurigana(piece: str, cut: int) -> bool:
+    """cut の直前のひらがなが、送り仮名の途中か。
+
+    規則2（ひらがなの次は語の頭）は**複合語で誤爆する**。
+    「組**み**合わせ」の「み」を語尾と見て「組み／合わせ」と割った
+    （2026-08-05、失業給付のショート）。「読み書き」「取り組み」も同じ形。
+
+    見分け方は**ひらがなが1文字しか挟まっていないか**。
+    漢字＋ひらがな1文字＋漢字 は、ほぼ送り仮名の入った複合語。
+    ただし助詞（の・は・を…）は1文字でも正当な切れ目なので、そこは除く。
+    「制度**の**内容」は割ってよい。
+    """
+    if cut < 2:
+        return False
+    if piece[cut - 1] in _PARTICLES:
+        return False                      # 助詞なら切ってよい
+    return not _is_kana(piece[cut - 2])   # 漢字＋かな1文字＋漢字 → 送り仮名
+
+
 def _best_cut(piece: str, limit: int) -> int:
     """1行に収まらない文から、**どこで割るか**を選ぶ。
 
@@ -78,7 +101,8 @@ def _best_cut(piece: str, limit: int) -> int:
             return cut
     # 2. ひらがな → 漢字・カタカナ・数字の変わり目（ほぼ語の頭）
     for cut in range(limit, floor - 1, -1):
-        if _is_kana(piece[cut - 1]) and not _is_kana(piece[cut]) and ok(cut):
+        if (_is_kana(piece[cut - 1]) and not _is_kana(piece[cut])
+                and ok(cut) and not _is_okurigana(piece, cut)):
             return cut
     # 3. 少なくとも数字は割らない
     cut = limit
