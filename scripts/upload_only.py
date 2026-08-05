@@ -23,7 +23,15 @@ from src import config, uploader  # noqa: E402
 FORBIDDEN = ("github", "GitHub", "リポジトリ", "コードを公開", "ソースコード")
 
 
-def main(topic: str, visibility: str | None = None) -> int:
+def main(topic: str, visibility: str | None = None, hour: int | None = None) -> int:
+    """hour を渡すと、その時刻（JST）で予約する。
+
+    **ショートは朝のほうが強い**（2026-08-05 の実測）。09:21 公開の1本が1245回、
+    18:29〜19:55 に固めて出した5本が最良で558回・後発3本は0回。
+    `config/channel.yaml` の 19:00 は長尺（視聴ピーク）に合わせた値なので、
+    ショートはここで上書きする。**まだ n=1 なので、時刻の効果と本数の効果は
+    分離できていない。** 毎日1本を続けて確かめること。
+    """
     work = Path("build") / topic
     if not (work / "final.mp4").exists():
         print(f"{work}/final.mp4 がありません。先に --dry-run で作ってください")
@@ -41,6 +49,10 @@ def main(topic: str, visibility: str | None = None) -> int:
         channel["publish"] = dict(channel["publish"])
         channel["publish"]["visibility"] = visibility
         print(f"[check] 公開設定を {visibility} で上書き")
+    if hour is not None:
+        channel["publish"] = dict(channel["publish"])
+        channel["publish"]["publish_hour_jst"] = hour
+        print(f"[check] 予約時刻を {hour}:00 JST で上書き")
 
     if "[t:" not in description:
         print("説明欄にテーマ印がありません。投稿済みの記録が残らないので中止します")
@@ -69,7 +81,11 @@ def main(topic: str, visibility: str | None = None) -> int:
 
 
 if __name__ == "__main__":
-    if len(sys.argv) not in (2, 3):
+    if len(sys.argv) not in (2, 3, 4):
         print(__doc__)
         raise SystemExit(2)
-    raise SystemExit(main(sys.argv[1], sys.argv[2] if len(sys.argv) == 3 else None))
+    raise SystemExit(main(
+        sys.argv[1],
+        sys.argv[2] if len(sys.argv) >= 3 and sys.argv[2] else None,
+        int(sys.argv[3]) if len(sys.argv) == 4 else None,
+    ))
