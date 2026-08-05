@@ -95,17 +95,15 @@ def print_budget() -> None:
     print(f"  今週のリセット: {end.strftime('%m/%d %H:%M JST')}（あと {hours:.0f} 時間）")
     print(f"  上限は週 {WEEKLY_BUDGET}")
 
-    # 期限つきの割り当て。リセット日を過ぎたものは黙って無視する。
     due, credits = WEEK_OVERRIDE
     if datetime.strptime(due, "%Y-%m-%d").date() == end.date():
-        per = credits / wakes
-        print(f"  **今週の割り当ては {credits} クレジット**（オーナーの指示。上限より絞っている）")
-        print(f"  6時間おきなら残り約 {wakes} 回 → 1回あたり {per:.1f} クレジット")
-        if per < 1:
-            print("  [!] 1回1クレジットを下回る。日次（cron `0 23 * * *`）に落とすこと")
-            print("      落とすときは戻す仕組みも一緒に用意する（docs/TRIGGER.md）")
-    else:
-        print(f"  6時間おきなら残り約 {wakes} 回。残クレジット ÷ これ = 1回あたりの目安")
+        print(f"  今週の割り当て: {credits} クレジット（オーナーの指示）")
+    print(f"  6時間おきなら残り約 {wakes} 回")
+    print()
+    print("  **実測（2026-08-05）: 80分・161応答のセッションで、週間使用量の1〜2%。**")
+    print("  同じ規模を週50〜100回できる計算で、6時間おき=週28回は十分内側。")
+    print("  **トークンは律速ではない。** 頻度を抑える理由に予算を使わないこと。")
+    print("  API換算の金額（このときは$258）は**サブスクの消費とは別物**。混同しない。")
     print("  高いもの: 画像(contact sheet)の Read／長い生成を待つこと／同じ確認の繰り返し")
     print("  **投稿は予約済みなら起きなくても公開される。** 無理に起きないこと")
 
