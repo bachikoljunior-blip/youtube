@@ -30,13 +30,16 @@ from src.uploader import _service  # noqa: E402
 
 JST = timezone(timedelta(hours=9))
 LOOKAHEAD_DAYS = 3      # 何日先まで予約の空きを見るか
-WEEKLY_BUDGET = "300ドル"   # 土曜07:00 JST 区切り。オーナーが決めた上限（2026-08-05）
+# 予算の単位は **週間使用量の%**。API換算のドルは実際の消費と対応しないので使わない
+# （2026-08-05 に $258 と見積もって大きく外した。実測では1〜2%だった）。
+WEEKLY_PCT = 30          # 定常。土曜07:00 JST 区切り
+PCT_PER_REPLY = 0.0107   # 実測: 161応答の対話セッションで1〜2%
 
-# その週だけの割り当て。オーナーが上限より絞ることがある。
-#   (リセット日, クレジット)
+# その週だけの割り当て（%）。オーナーが定常より絞ることがある。
+#   (リセット日, %)
 # **リセット日を過ぎたら自動で無視される。** 古い数字が残って誤解を招かないように、
 # 期限つきにしてある。次に指示があったらこの2つの値だけ差し替えること。
-WEEK_OVERRIDE = ("2026-08-08", 20)
+WEEK_OVERRIDE = ("2026-08-08", 2)
 
 
 def _fmt(iso: str) -> str:
@@ -74,15 +77,17 @@ def print_hypotheses() -> None:
 
 
 def print_budget() -> None:
-    """トークン予算の残り時間を出す。
+    """トークン予算を出す。**単位は週間使用量の%。**
 
-    **土曜07:00 JST から翌土曜07:00 JST までで API換算100クレジット**
-    （2026-08-05 にオーナーが決めた）。使い切ると次のリセットまで何もできない。
-    投稿が止まるのが最大の損失なので、**予算は投稿の予約を切らさない側に使う。**
+    土曜07:00 JST 区切り。定常は30%、週ごとに絞ることがある。
 
-    クレジットの実消費はここからは読めないので、出せるのは「残り時間」と
-    「1日あたりいくら使える計算か」まで。**残り時間に対して自分が何回起きるかを
-    数えて、1回の重さを決めること。**
+    **API換算のドルで見積もらないこと。** 2026-08-05 にセッション記録から
+    トークン数を集計して「$258 使った」と報告したが、実際のサブスク消費は
+    週間使用量の1〜2%だった。**計算は合っていたが、比べる相手が違った。**
+    数字を出す前に「これは何と比較できる量か」を問うこと。
+
+    較正: 161応答の対話セッションで1〜2% → 1応答あたり約0.01%。
+    **律速は頻度ではなく、1回が長引くこと。** 通常の自動起動は10〜20応答で収まる。
     """
     now = datetime.now(JST)
     end = now.replace(hour=7, minute=0, second=0, microsecond=0)
@@ -91,19 +96,23 @@ def print_budget() -> None:
     hours = (end - now).total_seconds() / 3600
 
     wakes = max(1, round(hours / 6))
-    print("\n=== トークン予算 ===")
-    print(f"  今週のリセット: {end.strftime('%m/%d %H:%M JST')}（あと {hours:.0f} 時間）")
-    print(f"  上限は週 {WEEKLY_BUDGET}")
+    due, pct = WEEK_OVERRIDE
+    limited = datetime.strptime(due, "%Y-%m-%d").date() == end.date()
+    budget = pct if limited else WEEKLY_PCT
+    per = budget / wakes
 
-    due, credits = WEEK_OVERRIDE
-    if datetime.strptime(due, "%Y-%m-%d").date() == end.date():
-        print(f"  今週の割り当て: {credits} クレジット（オーナーの指示）")
-    print(f"  6時間おきなら残り約 {wakes} 回")
-    print()
-    print("  **実測（2026-08-05）: 80分・161応答のセッションで、週間使用量の1〜2%。**")
-    print("  同じ規模を週50〜100回できる計算で、6時間おき=週28回は十分内側。")
-    print("  **トークンは律速ではない。** 頻度を抑える理由に予算を使わないこと。")
-    print("  API換算の金額（このときは$258）は**サブスクの消費とは別物**。混同しない。")
+    print("\n=== トークン予算（単位は週間使用量の%）===")
+    print(f"  今週のリセット: {end.strftime('%m/%d %H:%M JST')}（あと {hours:.0f} 時間）")
+    if limited:
+        print(f"  **今週の残りは {pct}%**（定常は {WEEKLY_PCT}%。オーナーが絞っている）")
+    else:
+        print(f"  定常 {WEEKLY_PCT}%")
+    print(f"  6時間おきなら残り約 {wakes} 回 → 1回あたり {per:.2f}%（≒{per / PCT_PER_REPLY:.0f}応答）")
+    if per / PCT_PER_REPLY < 10:
+        print("  [!] 1回10応答を下回る。日次（cron `0 23 * * *`）に落とすことを検討")
+        print("      落とすときは戻す仕組みも一緒に用意する（docs/TRIGGER.md）")
+    print("  **律速は頻度ではなく、1回が長引くこと。** 通常の自動起動は10〜20応答で収まる。")
+    print("  API換算のドルはサブスクの消費と対応しない。混同しないこと。")
     print("  高いもの: 画像(contact sheet)の Read／長い生成を待つこと／同じ確認の繰り返し")
     print("  **投稿は予約済みなら起きなくても公開される。** 無理に起きないこと")
 
