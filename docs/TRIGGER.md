@@ -71,8 +71,14 @@
 **作成と公開予定は任意。** 予約に空きがある／切り口を変えるべきと判断した、ときだけ。
 
     python -m src.pipeline --topic <ID> --dry-run       # ショートは --short
-    python scripts/inspect_build.py <ID>                # ショートのみ Read で確認
-    python scripts/upload_only.py <ID>                  # ショートは第2引数に public
+    python scripts/inspect_build.py <ID>                # contact sheet を作る
+    python scripts/upload_only.py <ID>                  # 予約時刻は第3引数（ショートは 9）
+
+**contact sheet の目視は Agent ツールの子エージェントに任せること。本流で Read しない。**
+画像は本流に入れると以後の全応答で再読され続ける（常駐セッションでは約10倍高い。
+2026-08-05 実測: 子エージェント35Kトークン vs 本流300K超）。検査の質は落ちない
+（判定一致・検算までやった）。子エージェントには6点の確認と「投稿可/作り直し」の
+判定を7行で返させる。
 
 `calc:` の無いテーマは台本生成が止まります（数字を発明させないため）。
 生成は待たなくてよい。「生成中」と書いて終わり、次の回で拾う。
