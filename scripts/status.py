@@ -108,6 +108,17 @@ def print_budget() -> None:
     else:
         print(f"  定常 {WEEKLY_PCT}%")
     print(f"  6時間おきなら残り約 {wakes} 回 → 1回あたり {per:.2f}%（≒{per / PCT_PER_REPLY:.0f}応答）")
+
+    # **実測。** これまでオーナーに教えてもらうしかなかったが、セッション記録から数えられる。
+    try:
+        from usage import summary
+        s = summary()
+        print(f"  実測: 今週これまで {s['replies']:,}応答 / {s['tokens']/1e6:.0f}M トークン"
+              f" → **{s['pct']:.1f}%**（楽観側 {s['pct_optimistic']:.1f}%）")
+        if s["pct"] > budget:
+            print(f"  [!] 割り当て {budget}% を超えている可能性がある。**この回は短く切ること。**")
+    except Exception as exc:
+        print(f"  実測できませんでした: {str(exc)[:70]}")
     if per / PCT_PER_REPLY < 10:
         print("  [!] 1回10応答を下回る。日次（cron `0 23 * * *`）に落とすことを検討")
         print("      落とすときは戻す仕組みも一緒に用意する（docs/TRIGGER.md）")
