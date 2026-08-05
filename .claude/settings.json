@@ -21,6 +21,17 @@
           }
         ]
       }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash scripts/stop_check.sh",
+            "timeout": 15
+          }
+        ]
+      }
     ]
   },
   "permissions": {
