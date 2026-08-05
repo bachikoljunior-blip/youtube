@@ -30,6 +30,7 @@ from src.uploader import _service  # noqa: E402
 
 JST = timezone(timedelta(hours=9))
 LOOKAHEAD_DAYS = 3      # 何日先まで予約の空きを見るか
+WEEKLY_CREDITS = 100    # 土曜07:00 JST 区切り。オーナーが決めた上限
 
 
 def _fmt(iso: str) -> str:
@@ -64,6 +65,30 @@ def print_hypotheses() -> None:
             print("        → いま判定すること。外れていたら次を順に試す:")
             for nxt in h.get("next_if_false", []):
                 print(f"           - {nxt}")
+
+
+def print_budget() -> None:
+    """トークン予算の残り時間を出す。
+
+    **土曜07:00 JST から翌土曜07:00 JST までで API換算100クレジット**
+    （2026-08-05 にオーナーが決めた）。使い切ると次のリセットまで何もできない。
+    投稿が止まるのが最大の損失なので、**予算は投稿の予約を切らさない側に使う。**
+
+    クレジットの実消費はここからは読めないので、出せるのは「残り時間」と
+    「1日あたりいくら使える計算か」まで。**残り時間に対して自分が何回起きるかを
+    数えて、1回の重さを決めること。**
+    """
+    now = datetime.now(JST)
+    end = now.replace(hour=7, minute=0, second=0, microsecond=0)
+    while end.weekday() != 5 or end <= now:      # 5 = 土曜
+        end += timedelta(days=1)
+    hours = (end - now).total_seconds() / 3600
+
+    print("\n=== トークン予算 ===")
+    print(f"  今週のリセット: {end.strftime('%m/%d %H:%M JST')}（あと {hours:.0f} 時間）")
+    print(f"  週 {WEEKLY_CREDITS} クレジット。1日あたり約 {WEEKLY_CREDITS / 7:.0f}")
+    print("  高いもの: 画像(contact sheet)の Read／長い生成を待つこと／同じ確認の繰り返し")
+    print("  **投稿は予約済みなら起きなくても公開される。** 無理に起きないこと")
 
 
 def main(days: int = 7) -> int:
@@ -157,6 +182,7 @@ def main(days: int = 7) -> int:
         print(f"  読めませんでした: {str(exc)[:120]}")
 
     print_hypotheses()
+    print_budget()
 
     # 収益化の門。律速がどちらかを毎回見せる（docs/GOAL.md の掛け算）。
     subs = int(stats.get("subscriberCount", 0) or 0)
