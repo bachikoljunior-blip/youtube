@@ -159,6 +159,8 @@ th, td { padding: 12px 12px; }
 .chart { gap: 16px; }
 """
 CONTENT_WIDTH_PORTRAIT = VIEWPORT_PORTRAIT[0] - 52 - 40
+# ショートの右端に重なる UI を避けるための余白（CSS px）
+SAFE_RIGHT_PORTRAIT = 40
 STAT_MAX_PX_PORTRAIT = 96
 
 
@@ -222,7 +224,10 @@ def _chart_html(visual: dict, portrait: bool = False) -> str:
         content, label_px, font_px, gap = CONTENT_WIDTH_PORTRAIT, 168, 24, 16
     else:
         content, label_px, font_px, gap = CONTENT_WIDTH, 240, 30, 22
-    track_px = max(content - label_px - gap, 1)
+    # **ショートは右端に UI（いいね・コメント・共有）が縦に重なる。**
+    # 2026-08-05、外に出した棒ラベルが右端 20px まで達していた。切れては
+    # いなかったが、実機では UI の下に入って読めない。**枠に収まるだけでは足りない。**
+    track_px = max(content - label_px - gap - (SAFE_RIGHT_PORTRAIT if portrait else 0), 1)
 
     top = max(float(b.get("value", 0)) for b in bars) or 1.0
     pcts = [max(float(b.get("value", 0)) / top * 100.0, 1.0) for b in bars]
@@ -237,16 +242,34 @@ def _chart_html(visual: dict, portrait: bool = False) -> str:
     # 棒の長さは計算結果そのものなので、1本だけ縮めると図が嘘になる。
     # **全部に同じ倍率をかけて縮める。** 相対の長さは保たれるので、図は正しいまま。
     # 満幅を使わなくなるだけ。
-    def fits(k: float) -> bool:
-        for pct, need in zip(pcts, needs):
+    def fits(k: float, ns: list[float]) -> bool:
+        for pct, need in zip(pcts, ns):
             bar = track_px * pct * k / 100.0
             if bar < need and bar + need > track_px:   # 中にも外にも入らない
                 return False
         return True
 
-    scale = 1.0
-    while scale > 0.30 and not fits(scale):
-        scale -= 0.01
+    # **縮尺だけでは収まらないことがある。**
+    # 2026-08-05、縮尺が下限 0.30 に張り付いたまま `fits` が偽で、79px の棒に
+    # 229px のラベルを外置きしていた（合計308px > 枠264px）。
+    # **収まらないのに、収まらないまま出していた。** 下限に当たったら諦める、
+    # という書き方がそうさせた。
+    #
+    # 縮尺と文字の大きさを**一緒に**探す。図が極端に小さくなるほうが読めないので、
+    # 縮尺の下限は 0.5 に上げ、代わりに文字を段階的に落とす。
+    scale, size = 1.0, font_px
+    for fpx in (font_px, font_px - 3, font_px - 5, font_px - 7):
+        ns = [_em_width(str(b.get("display", ""))) * fpx + 16 * 2 for b in bars]
+        k = 1.0
+        while k > 0.5 and not fits(k, ns):
+            k -= 0.01
+        if fits(k, ns):
+            scale, size, needs = k, fpx, ns
+            break
+    else:
+        # どの大きさでも収まらない。**黙って出さない。** 一番小さい字で最善を尽くす。
+        scale, size = 0.5, font_px - 7
+        needs = [_em_width(str(b.get("display", ""))) * size + 16 * 2 for b in bars]
 
     rows = []
     for b, pct0, need_px in zip(bars, pcts, needs):
@@ -257,7 +280,8 @@ def _chart_html(visual: dict, portrait: bool = False) -> str:
             f'<div class="bar-label">{_esc(b["label"])}</div>'
             f'<div class="bar-track">'
             f'<div class="bar-fill{thin}" style="width:{pct:.1f}%">'
-            f'<span class="bar-value">{_esc(b.get("display", ""))}</span>'
+            f'<span class="bar-value" style="font-size:{size}px">'
+            f'{_esc(b.get("display", ""))}</span>'
             f"</div></div></div>"
         )
     return f'<div class="chart">{"".join(rows)}</div>'

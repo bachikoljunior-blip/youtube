@@ -132,8 +132,14 @@ def _chunk(narration: str, limit: int = MAX_LINE_CHARS) -> list[str]:
             if buf:
                 lines.append(buf)
             # 1片で長すぎる場合は割る。**どこで割るかを選ぶ。**
+            #
+            # **残りが極端に短い行として孤立しないようにする。**
+            # 2026-08-05、「最大およそ136万円変わり」／「ます。」と割れ、
+            # 3文字の行が0.6秒だけ映った。limit いっぱいまで詰めてから割ると、
+            # 端数が最後の行に落ちる。**2行に収まるなら、真ん中寄りで割る。**
             while len(piece) > limit:
-                cut = _best_cut(piece, limit)
+                hi = limit if len(piece) > limit * 2 else (len(piece) + 1) // 2
+                cut = _best_cut(piece, max(2, min(hi, limit)))
                 lines.append(piece[:cut])
                 piece = piece[cut:]
             buf = piece
