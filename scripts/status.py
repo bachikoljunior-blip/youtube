@@ -30,7 +30,7 @@ from src.uploader import _service  # noqa: E402
 
 JST = timezone(timedelta(hours=9))
 LOOKAHEAD_DAYS = 3      # 何日先まで予約の空きを見るか
-WEEKLY_CREDITS = 100    # 土曜07:00 JST 区切り。オーナーが決めた上限
+WEEKLY_BUDGET = "300ドル"   # 土曜07:00 JST 区切り。オーナーが決めた上限（2026-08-05）
 
 
 def _fmt(iso: str) -> str:
@@ -86,7 +86,8 @@ def print_budget() -> None:
 
     print("\n=== トークン予算 ===")
     print(f"  今週のリセット: {end.strftime('%m/%d %H:%M JST')}（あと {hours:.0f} 時間）")
-    print(f"  週 {WEEKLY_CREDITS} クレジット。1日あたり約 {WEEKLY_CREDITS / 7:.0f}")
+    print(f"  上限は週 {WEEKLY_BUDGET}。残量はクレジットで示される（この画面には出ない）")
+    print(f"  6時間おきなら残り約 {hours / 6:.0f} 回。残クレジット ÷ これ = 1回あたりの目安")
     print("  高いもの: 画像(contact sheet)の Read／長い生成を待つこと／同じ確認の繰り返し")
     print("  **投稿は予約済みなら起きなくても公開される。** 無理に起きないこと")
 
