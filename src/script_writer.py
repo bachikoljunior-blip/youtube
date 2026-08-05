@@ -5,6 +5,8 @@ Anthropic API は使わない。サブスクリプションのセッション内
 """
 from __future__ import annotations
 
+import re
+
 from pydantic import BaseModel, Field
 
 from .claude_cli import ask, follow_up
@@ -37,6 +39,15 @@ class Visual(BaseModel):
     headline: str = Field(description="画面上部の見出し。全角18文字以内")
     stat: str = Field(default="", description="kind=stat のとき中央に大きく出す数字。例『約7万7千円』。他の kind では空")
     note: str = Field(default="", description="kind=stat のとき数字に添える条件。例『年収600万・扶養なし』")
+    stat_source: str = Field(
+        default="",
+        description=(
+            "kind=stat のとき、その数字の出どころ。**上の計算結果から該当箇所をそのまま写す**"
+            "（例『ずれ 31か月』『123,980円』）。言い換えず、表示されているとおりに写すこと。"
+            "計算結果に無い数字（制度の項目数・条文番号など）を stat に出してはいけません。"
+            "他の kind では空"
+        ),
+    )
     items: list[str] = Field(
         default_factory=list,
         description="kind=steps は手順を3〜4個、kind=compare は対比を2〜4個。各全角24文字以内。他の kind では空",
@@ -203,6 +214,19 @@ def calc_block(topic: dict) -> str:
     )
     if proc.returncode != 0:
         raise RuntimeError(f"src.calc.{name} が失敗しました: {proc.stderr[-500:]}")
+
+    # **数字が1つも出ていないなら、この仕組みは何も守っていない。**
+    # 2026-08-05 に発覚: kojo・shitsugyo・zangyo は関数を定義するだけで
+    # `__main__` が無く、標準出力が空だった。calc_block は空のコードブロックを
+    # 返し、台本を書く側は「使ってよい数字」がゼロの状態で書いていた。
+    # つまり**数字を発明させないために作った仕組みが、半分のテーマで開いていた。**
+    # 静かに通すのが一番悪い。ここで止める。
+    if not re.search(r"\d", proc.stdout):
+        raise RuntimeError(
+            f"src.calc.{name} が数字を1つも出力していません。"
+            f"`python -m src.calc.{name}` で表が出るように `__main__` を書くこと。"
+            "空のまま台本を書かせると、数字を発明させることになります"
+        )
 
     assumptions = getattr(module, "ASSUMPTIONS", [])
     return f"""

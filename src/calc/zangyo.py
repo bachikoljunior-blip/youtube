@@ -212,3 +212,34 @@ def shortfall_grid(
                 }
             )
     return rows
+
+
+if __name__ == "__main__":
+    # **ここが無かった（2026-08-05 に発覚）。** 関数を定義するだけで何も出力せず、
+    # `calc_block` は空のコードブロックを返していた。台本を書く側は「使ってよい
+    # 数字」がゼロの状態で書くことになり、**数字を発明させる状態だった。**
+    # 数字を発明させないために作った仕組みが、このテーマでは開いていた。
+    check_tables()
+    print("制度の値の検査: 通過")
+
+    # 前提の値はここに置く。ASSUMPTIONS と食い違わせないこと。
+    days_off, per_day = 120, 8.0
+    hours = monthly_scheduled_hours(days_off, per_day)
+    print("\n=== 1か月の平均所定労働時間 ===")
+    print(f"  年間所定休日{days_off}日・1日{per_day}時間 → {hours:.1f}時間")
+
+    base = Wage(base=250_000, role_allowance=20_000)
+    print("\n=== 一律手当を誤って除外された場合の年間の差額 ===")
+    print(f"{'一律手当':>8s} {'残業':>6s} {'正しい時給':>10s} {'誤った時給':>10s} {'年間の差':>10s}")
+    for row in shortfall_grid(base, hours, [10_000, 20_000, 30_000, 50_000], [10.0, 20.0, 45.0, 80.0]):
+        print(f"{row['allowance']:8,d}円 {row['overtime_hours']:5.0f}h "
+              f"{row['hourly_correct']:9,.0f}円 {row['hourly_mistaken']:9,.0f}円 "
+              f"{row['annual_shortfall']:9,.0f}円")
+
+    print("\n=== 所定労働時間を多く見積もられている場合の年間の差額 ===")
+    print(f"{'月給':>9s} {'年間休日':>6s} {'誤った所定':>8s} {'正しい所定':>8s} {'残業':>5s} {'年間の差':>10s}")
+    for off in (105, 120, 125):
+        for assumed in (173.3, 180.0):
+            r = hours_error_shortfall(300_000, off, per_day, assumed, 20.0)
+            print(f"{300_000:8,d}円 {off:5d}日 {assumed:7.1f}h "
+                  f"{r['correct_hours']:7.1f}h {20:4.0f}h {r['annual_shortfall']:9,.0f}円")

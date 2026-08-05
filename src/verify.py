@@ -107,6 +107,90 @@ def _check_subtitles(work: Path) -> list[str]:
     return problems
 
 
+def _check_headline_from_calc(work: Path, script: dict | None) -> list[str]:
+    """**冒頭に出す数字が、こちらの計算から出たものであること。**
+
+    この作りの根幹は「制度を解説するのではなく、自分で計算した結果を発表する」。
+    制度のまとめ直しは、どれだけ丁寧でも「自分で作成していない資料の読み上げ」の側に
+    落ち、収益化されない。**収益化されなければ収入はゼロ**なので、これは
+    見栄えではなく到達可能性の話。
+
+    ところが 2026-08-05 の残業代ショートは、冒頭が「除外できる手当は7つだけ」だった。
+    7 は労基法37条5項の列挙の数であって、`src/calc/` が計算した数字ではない。
+    **機械の検査は全部通った。** `_check_short_opening` は「1枚目が stat か」しか
+    見ておらず、**その数字の出どころは誰も見ていなかった。**
+
+    ここで見る。計算をもう一度走らせ、冒頭 stat の数字が出力に含まれるか確かめる。
+    キャッシュではなく実行するのは、保存した値と台本がずれる余地を作らないため。
+
+    数字が1つも入っていない stat（「7つだけ」の「7」も拾う）も落とす。
+    **落ちたら作り直し。** ショートの作り直しは数分で済む。
+    """
+    if not script:
+        return []
+    segments = script.get("segments") or []
+    if not segments:
+        return []
+    visual = segments[0].get("visual") or {}
+    stat = str(visual.get("stat") or "")
+    source = str(visual.get("stat_source") or "")
+    if not re.search(r"\d", stat):
+        return [f"冒頭の数字に数値が入っていない（『{stat}』）。"
+                "ショートの冒頭は計算結果の数字1つにする"]
+
+    # テーマ ID は build ディレクトリ名。そこから calc モジュールを引く。
+    try:
+        import yaml
+        topics = yaml.safe_load(
+            (Path(__file__).resolve().parent.parent / "config" / "topics.yaml").read_text(encoding="utf-8")
+        )["topics"]
+    except Exception as exc:                       # 設定が読めないだけで投稿を止めない
+        return [f"topics.yaml が読めず、冒頭の数字の出どころを確かめられません: {str(exc)[:60]}"]
+
+    name = ""
+    for t in topics:
+        if str(t.get("id")) == work.name:
+            name = str(t.get("calc") or "").strip()
+            break
+    if not name:
+        return []                                  # calc の無いテーマは対象外
+
+    import subprocess
+    import sys as _sys
+
+    try:
+        proc = subprocess.run([_sys.executable, "-m", f"src.calc.{name}"],
+                              capture_output=True, text=True, timeout=300,
+                              cwd=str(Path(__file__).resolve().parent.parent))
+    except Exception as exc:
+        return [f"src.calc.{name} を実行できず、冒頭の数字を確かめられません: {str(exc)[:60]}"]
+    if proc.returncode != 0:
+        return [f"src.calc.{name} が失敗して、冒頭の数字を確かめられません"]
+
+    # **申告された出どころを、計算の出力と突き合わせる。**
+    #
+    # 最初は stat の数字そのものを出力から探した。**それでは効かない。**
+    # 台本は計算結果を言い換える（「ずれ 31か月」→「最大2年7か月」）ので、
+    # 正しい動画まで落ちた。逆に「7つだけ」の 7 は1桁なので、どんな出力にも
+    # たまたま現れる。**桁数でしきいを置いたのも勘だった。**
+    #
+    # 数字の見た目からは出どころを判定できない。だから**台本に申告させる**。
+    # 言い換える前の値を写させて、それが出力にあるかを見る。
+    # 写せない＝計算に無い数字、ということになる。
+    if not source:
+        return [f"冒頭の数字『{stat}』に出どころ（stat_source）の申告が無い。"
+                "計算結果のどの行から取ったのかを写させること"]
+
+    def norm(s: str) -> str:
+        return re.sub(r"[\s,、　]", "", s)
+
+    if norm(source) not in norm(proc.stdout):
+        return [f"冒頭の数字の出どころ『{source}』が src.calc.{name} の出力に無い。"
+                "**計算していない数字を冒頭に出している。** 制度の項目数や条文番号を"
+                "大きく出していないか確かめること"]
+    return []
+
+
 def _check_short_opening(script: dict | None) -> list[str]:
     """ショートの1枚目は stat（大きい数字1つ）であること。
 
@@ -207,6 +291,7 @@ def check(path: Path, video_cfg: dict, min_minutes: float, work: Path) -> float:
     problems += _check_slides(work, None if portrait else script)
     if portrait:
         problems += _check_short_opening(script)
+        problems += _check_headline_from_calc(work, script)
 
     if problems:
         raise VerificationError("投稿前の検査に落ちました: " + " / ".join(problems))

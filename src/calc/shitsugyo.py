@@ -186,3 +186,27 @@ def age_boundaries(band: str) -> list[dict]:
             "yen_high": hi,
         })
     return out
+
+
+if __name__ == "__main__":
+    # **ここが無かった（2026-08-05 に発覚）。** kojo・zangyo と同じ穴。
+    # 標準出力が空のまま台本を書かせると、数字を発明させることになる。
+    check_tables()
+    print("制度の値の検査: 通過")
+
+    for age in DAILY_CAP:
+        print(f"\n=== {age} / 勤続年数の境界（あと少し在籍していたら） ===")
+        print(f"{'離職理由':>12s} {'境界':>6s} {'前':>4s} {'後':>4s} {'増える日数':>6s} {'金額の幅':>20s}")
+        for r in tenure_boundaries(age):
+            print(f"{r['reason']:>12s} {r['boundary']:>6s} {r['days_before']:3d}日 "
+                  f"{r['days_after']:3d}日 {r['days_gained']:5d}日 "
+                  f"{r['yen_low']:9,d}円〜{r['yen_high']:9,d}円")
+
+        print(f"\n=== {age} / 離職理由の境界（同じ勤続年数で自己都合と倒産・解雇） ===")
+        for r in reason_boundary(age):
+            print("  " + " ".join(f"{k}={v}" for k, v in r.items()))
+
+    print("\n=== 年齢の境界（倒産・解雇の場合） ===")
+    for band in TENURE_BANDS:
+        for r in age_boundaries(band):
+            print("  " + " ".join(f"{k}={v}" for k, v in r.items()))
