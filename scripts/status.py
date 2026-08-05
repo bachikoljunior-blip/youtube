@@ -235,11 +235,24 @@ def main(days: int = 7) -> int:
         print("    長尺が入っていても空きとみなす。露出が出ているのはショートだけだから。")
         print("    背後の生成はコンテナ再起動で消えるので、ログが残っていてもプロセスは死んでいる。")
 
-    if stranded:
+    # **意図して伏せたものは警告しない。** 毎回鳴る警告は無視されるようになり、
+    # 本当に予約し忘れたときに効かなくなる（2026-08-05）。理由は withheld.yaml に。
+    withheld = {}
+    wpath = Path(__file__).resolve().parent.parent / "config" / "withheld.yaml"
+    if wpath.exists():
+        import yaml
+        withheld = {w["id"]: w.get("why", "") for w in
+                    (yaml.safe_load(wpath.read_text(encoding="utf-8")) or {}).get("withheld", [])}
+
+    unexpected = [s for s in stranded if s.split()[0] not in withheld]
+    if unexpected:
         print("\n[!] 公開されないまま止まっている動画があります:")
-        for s in stranded:
+        for s in unexpected:
             print("  " + s)
-        print("  意図的に伏せているものか確認すること。予約し忘れならこのまま永久に出ません。")
+        print("  予約し忘れならこのまま永久に出ません。意図的なら config/withheld.yaml に理由ごと書くこと。")
+    on_purpose = [s for s in stranded if s.split()[0] in withheld]
+    if on_purpose:
+        print(f"\n（意図して伏せている動画 {len(on_purpose)}本。理由は config/withheld.yaml）")
 
     # 流入経路。表示されているのかどうかが、他の全部の前提になる。
     print(f"\n=== 流入経路（直近{days}日） ===")
