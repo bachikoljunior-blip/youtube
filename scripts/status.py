@@ -211,6 +211,16 @@ def main(days: int = 7) -> int:
 
     print(f"\nこちらの動画の再生 合計 {ours}回（{len(videos)}本）")
 
+    # **公開後の伸び方を毎回残す。** 総再生数だけ見ていると、当たり外れが
+    # 決まる最初の数時間が抜ける（2026-08-06）。人が思い出す前提にしない。
+    try:
+        from snapshot import print_curves, record
+        record(videos)
+        print_curves([v["id"] for v in videos],
+                     {v["id"]: v["snippet"]["title"] for v in videos})
+    except Exception as exc:
+        print(f"  伸び方を記録できませんでした: {str(exc)[:70]}")
+
     if scheduled:
         print("\n[予約中]")
         for s in scheduled:
