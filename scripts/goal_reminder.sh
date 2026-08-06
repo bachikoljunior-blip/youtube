@@ -17,6 +17,12 @@
 # docs/CONSTRAINTS.md にあり、必要なときに読めばよい。短いほうが確実に読まれる。
 set -uo pipefail
 
+# **台本生成の子プロセスでは黙る。**
+# 注入が子プロセスに入ると、台本ではなく「確認項目への回答」が返ってきて
+# 生成が失敗する（2026-08-07 に実際に起きた）。恒久指示を思い出すのは
+# 判断する側の話で、台本を書く側には要らない。
+[ -n "${YOUTUBE_PIPELINE_CHILD:-}" ] && exit 0
+
 ROOT="$(dirname "$0")/.."
 [ -f "$ROOT/docs/CONSTRAINTS.md" ] || exit 0
 

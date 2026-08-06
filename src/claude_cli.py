@@ -49,6 +49,13 @@ def _child_env() -> dict[str, str]:
                 "手元で `claude setup-token` を実行し、GitHub の secrets に登録してください。"
             )
     env["CLAUDE_CODE_NONINTERACTIVE"] = "1"
+    # **フックを子プロセスに効かせない。**
+    # 2026-08-07、`goal_reminder.sh`（UserPromptSubmit フック）の注入が
+    # 台本生成の子プロセスにも入り、**台本ではなく「確認項目への回答」を
+    # 返してきた**（JSON が含まれず生成失敗）。
+    # 恒久指示を思い出すのは判断する側の話で、台本を書く側には要らない。
+    # `scripts/goal_reminder.sh` がこの変数を見て黙る。
+    env["YOUTUBE_PIPELINE_CHILD"] = "1"
     return env
 
 

@@ -61,6 +61,11 @@ _PARTICLES = "のはをにがとでもやへ"
 _ERA = ("令和", "平成", "昭和", "大正", "明治")
 
 
+def _is_kanji(ch: str) -> bool:
+    """漢字か。送り仮名の判定に使う（数字やカタカナと区別するため）。"""
+    return "\u4e00" <= ch <= "\u9fff" or ch == "\u3005"
+
+
 def _is_okurigana(piece: str, cut: int) -> bool:
     """cut の直前のひらがなが、送り仮名の途中か。
 
@@ -77,10 +82,12 @@ def _is_okurigana(piece: str, cut: int) -> bool:
         return False
     if piece[cut - 1] in _PARTICLES:
         return False                      # 助詞なら切ってよい
-    return not _is_kana(piece[cut - 2])   # 漢字＋かな1文字＋漢字 → 送り仮名
+    # **前が漢字のときだけ。** 「60歳0か月」の「か」を送り仮名と誤判定して、
+    # 正しい切れ目を却下していた（2026-08-07）。数字の後のかなは送り仮名ではない。
+    return _is_kanji(piece[cut - 2])      # 漢字＋かな1文字＋漢字 → 送り仮名
 
 
-def _best_cut(piece: str, limit: int) -> int:
+def _best_cut(piece: str, limit: int, strict: bool = False) -> int:
     """1行に収まらない文から、**どこで割るか**を選ぶ。
 
     機械的に limit 文字目で割ると、単語の途中で切れる。実際に
@@ -101,6 +108,11 @@ def _best_cut(piece: str, limit: int) -> int:
         # 数字と単位のかたまりの途中では割らない
         if piece[cut - 1] in _NUM_TOKEN and piece[cut] in _NUM_TOKEN:
             return False
+        # 「か月」「か国」「か所」の途中でも割らない（2026-08-07、「0か／月から」）。
+        # **「か」を _NUM_TOKEN に入れると助詞の「か」まで巻き込む**ので、
+        # 単位としての並びだけを見る。
+        if piece[cut - 1] in "かヶケ箇" and piece[cut] in "月年国所":
+            return False
         # 元号と年数のあいだでも割らない。「日額は令和」／「8年8月1日改定」と
         # 割れて読めなかった（2026-08-05）。元号は _NUM_TOKEN に入っていないので
         # 上の規則に引っかからない。**数字のかたまりは数字だけでできていない。**
@@ -117,7 +129,19 @@ def _best_cut(piece: str, limit: int) -> int:
         if (_is_kana(piece[cut - 1]) and not _is_kana(piece[cut])
                 and ok(cut) and not _is_okurigana(piece, cut)):
             return cut
-    # 3. 少なくとも数字は割らない
+    # 3. ひらがなの連続の途中では割らない。
+    #    「60歳0か月か」／「ら受け取ると」、「自分の場合はねんき」／「ん定期便」
+    #    のように、行頭に「ら」「ん」が来ると読めない（2026-08-07）。
+    #    規則2は「かな→漢字」しか見ていないので、かな同士の境目が素通りしていた。
+    for cut in range(limit, floor - 1, -1):
+        if not (_is_kana(piece[cut - 1]) and _is_kana(piece[cut])) and ok(cut):
+            return cut
+    # 4. どの規則にも当てはまらない。**strict なら「見つからなかった」と返す。**
+    #    呼び出し側が limit いっぱいで探し直せるようにするため。
+    #    2026-08-07、真ん中寄りで割ろうとして数字のかたまりに入り、
+    #    「令和8年8月1」「60歳0か」と妥協していた。**妥協する前に、もう一度探す。**
+    if strict:
+        return 0
     cut = limit
     while cut > floor and not ok(cut):
         cut -= 1
@@ -152,7 +176,12 @@ def _chunk(narration: str, limit: int = MAX_LINE_CHARS) -> list[str]:
             # 端数が最後の行に落ちる。**2行に収まるなら、真ん中寄りで割る。**
             while len(piece) > limit:
                 hi = limit if len(piece) > limit * 2 else (len(piece) + 1) // 2
-                cut = _best_cut(piece, max(2, min(hi, limit)))
+                cut = 0
+                if hi < limit:
+                    # まず真ん中寄りで、良い切れ目だけを探す（端数の孤立を避ける）
+                    cut = _best_cut(piece, max(2, hi), strict=True)
+                if not cut:
+                    cut = _best_cut(piece, limit)
                 lines.append(piece[:cut])
                 piece = piece[cut:]
             buf = piece
