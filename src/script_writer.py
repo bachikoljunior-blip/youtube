@@ -183,8 +183,13 @@ def _total_chars(script: VideoScript) -> int:
     return sum(len(s.narration) for s in script.segments)
 
 
-def used_bars() -> list[str]:
+def used_bars(exclude: str = "") -> list[str]:
     """これまでの動画で chart に出した数値を集める。
+
+    `exclude` に自分のテーマIDを渡すこと。**作り直しで捨てた自分の台本まで
+    禁止してしまう**（2026-08-07、繰上げを撃ち直したら前回案の「43万2千円」が
+    使用済み扱いになり、訴求の弱い「0.76倍」に逃げた）。
+    見たいのは**他の動画と被っていないか**であって、自分の過去案ではない。
 
     **台本を書く側は過去の動画を知らない。** だから同じ calc を使うと、
     同じ行を選んで同じ図を出す。2026-08-07、年金の繰上げが繰下げと
@@ -201,6 +206,8 @@ def used_bars() -> list[str]:
     if not build.exists():
         return []
     for path in sorted(build.glob("*/script.json")):
+        if exclude and path.parent.name == exclude:
+            continue
         try:
             script = json.loads(path.read_text(encoding="utf-8"))
         except Exception:
@@ -263,7 +270,7 @@ def calc_block(topic: dict) -> str:
         )
 
     assumptions = getattr(module, "ASSUMPTIONS", [])
-    used = used_bars()
+    used = used_bars(exclude=str(topic.get("id", "")))
     used_block = ""
     if used:
         used_block = (
