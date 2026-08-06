@@ -10,20 +10,30 @@
 測り方。Claude Code はセッションの記録を `~/.claude/projects/**/*.jsonl` に残していて、
 1応答ごとの `usage`（入力・出力・キャッシュ）が入っている。**そこを数える。**
 
-換算の較正（オーナーの実測）:
+**単純なトークン数では合わない。** 種類ごとに重みが違う。
 
-    2026-08-05 16:00以降の 94M トークン ＝ 1〜2%   → 1% は 47M〜94M
-    2026-08-06 09:00以降の 5.5M トークン ＝ 0.2%   → 1% は **27M**（Opus 5）
+オーナーの実測が2点ある。どちらも claude-opus-5 なので、モデル差では説明できない。
 
-**2つ目が範囲の外に出た。** モデルが変わると換算も変わる、という予想どおり。
-新しいほうを採る（同じモデル・同じ日・応答数も分かっている）。
+    期間A  2026-08-05 16:00〜19:00   209応答  1〜2%
+    期間B  2026-08-06 09:00〜09:40    35応答   0.2%
 
-**「安全側」の向きを取り違えていた。** 1%あたりのトークン数が**大きい**ほど、
-同じトークン数を少ない%に換算する。つまり 47M は**消費を少なく見せる＝危険側**。
-47M を「安全側」と書いて使っていたせいで、**今週の累計を 8.3% と見ていたが
-実際は 14.4% だった。** 定常15%をほぼ使い切っている。
+何に比例するかを、2点のずれの小ささで選んだ:
 
-**残量を多めに見せるほうが危険。** 迷ったら小さい値を使うこと。
+    キャッシュ読み込み   82.5M/%  vs 52.5M/%   → **1.57倍ずれる**（合わない）
+    応答数            0.0072%  vs 0.0057%   → 1.26倍
+    出力トークン        4.70%/M  vs 4.27%/M   → 1.10倍
+    **重み付き和**      10.6〜21.2M/% vs 14.2M/% → **範囲に収まる**
+
+重みは API の価格体系に倣った（出力5・キャッシュ書1.25・入力1・キャッシュ読0.1）。
+**期間Bの値が期間Aの幅の中に入るのは、この置き方だけだった。**
+
+**私が主に数えていたキャッシュ読み込みが、いちばん説明力が低かった。**
+文脈が積もるとキャッシュ読みは膨らむが、そこは安い。**高いのは出力。**
+つまり律速は「文脈の長さ」より **「どれだけ書いたか」**。
+
+**「安全側」の向きに注意。** 1%あたりの値が**大きい**ほど消費を**少なく**見せる。
+2026-08-06 に 47M を「安全側」と書いて使い、残量を倍近く多く見ていた。
+**迷ったら小さい値**（期間Aの下限 11M）を使うこと。
 
 **この換算は推測混じりです。** 桁を掴むためのもので、正確な残量ではありません。
 オーナーから実際の%を聞けたら、`TOKENS_PER_PCT` を較正し直すこと。
@@ -43,10 +53,17 @@ from pathlib import Path
 
 JST = timezone(timedelta(hours=9))
 
-# 1% あたりのトークン数。較正は上の docstring。
-# **小さいほうが安全側**（消費を多めに見積もる）。2026-08-06 の実測が 27M。
-TOKENS_PER_PCT = 27_000_000
-TOKENS_PER_PCT_OPTIMISTIC = 47_000_000
+# 種類ごとの重み。API の価格体系に倣う。**出力が一番高い。**
+WEIGHTS = {
+    "input_tokens": 1.0,
+    "cache_creation_input_tokens": 1.25,
+    "cache_read_input_tokens": 0.1,
+    "output_tokens": 5.0,
+}
+# 1% あたりの重み付き合計。**小さいほうが安全側**（消費を多めに見積もる）。
+# 11M = 期間Aの下限（＝Aが2%だった場合）。14M = 期間Bの実測。
+TOKENS_PER_PCT = 11_000_000
+TOKENS_PER_PCT_OPTIMISTIC = 14_000_000
 
 TRANSCRIPTS = Path.home() / ".claude" / "projects"
 
@@ -60,14 +77,14 @@ def week_start(now: datetime | None = None) -> datetime:
     return start
 
 
-def tokens_since(since: datetime) -> tuple[int, int]:
+def tokens_since(since: datetime) -> tuple[float, int]:
     """since 以降のトークン数と応答数を返す。
 
     **セッションをまたいで数える。** 記録は複数ファイルに分かれるので全部見る。
-    数え方は較正時と揃えること（入力＋キャッシュ書き込み＋キャッシュ読み込み）。
-    出力は較正時で0.3%未満だったので入れていない。
+    **種類ごとに重みを掛けて足す。** 単純な合計では2つの実測点が
+    1.57倍ずれた（docstring 参照）。出力が一番高く、キャッシュ読みが一番安い。
     """
-    total = replies = 0
+    total, replies = 0.0, 0
     if not TRANSCRIPTS.exists():
         return 0, 0
     for path in TRANSCRIPTS.rglob("*.jsonl"):
@@ -86,9 +103,7 @@ def tokens_since(since: datetime) -> tuple[int, int]:
                     if t < since:
                         continue
                     replies += 1
-                    total += (u.get("input_tokens", 0)
-                              + u.get("cache_creation_input_tokens", 0)
-                              + u.get("cache_read_input_tokens", 0))
+                    total += sum(u.get(k, 0) * w for k, w in WEIGHTS.items())
         except OSError:
             continue
     return total, replies
@@ -118,5 +133,5 @@ if __name__ == "__main__":
     print(f"  応答 {s['replies']:,} 回 / {s['tokens'] / 1e6:.0f}M トークン")
     print(f"  週間使用量に換算して **{s['pct']:.1f}%**（楽観側なら {s['pct_optimistic']:.1f}%）")
     print()
-    print("  換算は較正済みだが幅がある（94M = 1〜2%）。桁を掴む用。")
+    print("  重み付き合計。出力5・キャッシュ書1.25・入力1・キャッシュ読0.1。")
     sys.exit(0)
