@@ -159,8 +159,10 @@ th, td { padding: 12px 12px; }
 .chart { gap: 16px; }
 """
 CONTENT_WIDTH_PORTRAIT = VIEWPORT_PORTRAIT[0] - 52 - 40
-# ショートの右端に重なる UI を避けるための余白（CSS px）
-SAFE_RIGHT_PORTRAIT = 40
+# ショートの右端に重なる UI（いいね・コメント・共有・音源）を避ける余白（CSS px）。
+# **40px では足りなかった**（2026-08-07、ラベルが画面幅の94%まで届いてボタン列に
+# 被った）。実機のボタン列は幅の12〜15%を占めるので、540px 幅に対して 80px 取る。
+SAFE_RIGHT_PORTRAIT = 80
 STAT_MAX_PX_PORTRAIT = 96
 
 

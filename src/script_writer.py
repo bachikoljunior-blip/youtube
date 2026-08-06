@@ -9,6 +9,7 @@ import re
 
 from pydantic import BaseModel, Field
 
+from . import config
 from .claude_cli import ask, follow_up
 
 # 日本語 TTS の実測。speaking_rate=1.0 でおよそこのくらい進む。
@@ -182,6 +183,37 @@ def _total_chars(script: VideoScript) -> int:
     return sum(len(s.narration) for s in script.segments)
 
 
+def used_bars() -> list[str]:
+    """これまでの動画で chart に出した数値を集める。
+
+    **台本を書く側は過去の動画を知らない。** だから同じ calc を使うと、
+    同じ行を選んで同じ図を出す。2026-08-07、年金の繰上げが繰下げと
+    3本同じ棒を出した（`180万円・255万6千円・331万2千円`）。
+    違いは配色だけで、**ポリシーの「繰り返しのように感じられるコンテンツ」**に当たる。
+
+    `verify.py` が投稿前に止めるが、**止めるだけでは作り直しが繰り返される。**
+    先に「これは使用済み」と伝えて、別の行を選ばせる。
+    """
+    import json
+
+    seen: set[str] = set()
+    build = config.ROOT / "build"
+    if not build.exists():
+        return []
+    for path in sorted(build.glob("*/script.json")):
+        try:
+            script = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        for seg in script.get("segments") or []:
+            v = seg.get("visual") or {}
+            if v.get("kind") == "chart":
+                for b in v.get("bars") or []:
+                    if b.get("display"):
+                        seen.add(str(b["display"]))
+    return sorted(seen)
+
+
 def calc_block(topic: dict) -> str:
     """テーマに紐づいた計算を実行して、その出力をそのまま台本の材料にする。
 
@@ -231,6 +263,16 @@ def calc_block(topic: dict) -> str:
         )
 
     assumptions = getattr(module, "ASSUMPTIONS", [])
+    used = used_bars()
+    used_block = ""
+    if used:
+        used_block = (
+            "\n# すでに他の動画で出した数値（**これらを chart に使わないこと**）\n\n"
+            "同じ数値の棒を並べると、チャンネルを続けて見た人に「繰り返し」と映ります。\n"
+            "YouTube はそれを収益化の対象外にしています。**別の行を選んでください。**\n"
+            "2本以上が一致すると投稿前の検査で落ちて、作り直しになります。\n\n"
+            "```\n" + "・".join(used[:60]) + "\n```\n"
+        )
     return f"""
 # この動画で使う数字（計算済み）
 
@@ -245,7 +287,7 @@ def calc_block(topic: dict) -> str:
 # 計算の前提（そのまま画面と音声に出すこと）
 
 {chr(10).join(f"- {a}" for a in assumptions)}
-"""
+{used_block}"""
 
 
 def generate(channel: dict, topic: dict) -> VideoScript:

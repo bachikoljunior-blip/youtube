@@ -29,6 +29,9 @@ THUMB_SIZE = (1280, 720)
 THUMB_MIN_STDDEV = 12.0
 # 量産テンプレート判定を避けるための下限。CLAUDE.md「この作りの根幹」より。
 MIN_CHARTS = 3
+# 過去の動画と何本の棒が共通なら「同じ図」とみなすか。
+# 切り口が違えば共通は0〜1本（同じ金額の偶然はある）。実例で2本以上に置いた。
+REPEAT_BARS = 2
 
 
 class VerificationError(RuntimeError):
@@ -136,6 +139,70 @@ def _check_short_pace(script: dict | None, duration: float) -> list[str]:
             "セグメントを増やして画を動かすこと"
         ]
     return []
+
+
+
+def _check_not_repeat(work: Path, script: dict | None) -> list[str]:
+    """**過去の動画と同じ図を出していないか。**
+
+    2026-08-07、年金の繰上げショートが、2日前の繰下げショートと
+    「ぼかし背景＋2行タイトル → 巨大数字 → 開始年齢べつの横棒 → この計算の前提
+    → 横棒 → リスト」という構成まで同じで、**見出しの文言も一致**していた。
+    さらに末尾の chart は **180万/255万6千円/331万2千円 と前回と同じ数値の再掲**。
+    違いは配色だけだった。
+
+    YouTube は「同じチャンネルの動画を続けて数本視聴した後、繰り返しのように
+    感じられる可能性のあるコンテンツ」を収益化の対象外にしている。
+    **収益化されなければ収入はゼロ**なので、これは見栄えの話ではない。
+
+    見るのは **chart の数値の集合**。見出しの文言は「この計算の前提」のように
+    毎回入れるべき定型があるので、そこで判定すると本末転倒になる。
+    chart は計算結果そのものなので、**切り口が本当に違えば数値も変わる。**
+
+    **「丸ごと一致」では捕まらなかった。** 実際の繰上げの図は
+    `['136万8千円','180万円','255万6千円','331万2千円']` で、前回の
+    `['180万円','255万6千円','331万2千円']` に**1本足しただけ**。
+    タプルの完全一致では通り抜ける。**棒の集合の重なりで見る。**
+
+    しきい値は実例で決めた。切り口が本当に違えば共通の棒は0〜1本
+    （同じ金額がたまたま出ることはある）。**2本以上共通なら同じ図。**
+    """
+    if not script:
+        return []
+    def charts(sc: dict) -> list[tuple]:
+        out = []
+        for seg in sc.get("segments") or []:
+            v = seg.get("visual") or {}
+            if v.get("kind") == "chart" and v.get("bars"):
+                out.append(tuple(str(b.get("display", "")) for b in v["bars"]))
+        return out
+
+    mine = charts(script)
+    if not mine:
+        return []
+
+    problems = []
+    for other in sorted((work.parent).glob("*/script.json")):
+        if other.parent.name == work.name:
+            continue
+        try:
+            past = json.loads(other.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        for a in mine:
+            for b in charts(past):
+                shared = set(a) & set(b)
+                if len(shared) >= REPEAT_BARS:
+                    problems.append(
+                        f"図の棒が `{other.parent.name}` と {len(shared)}本 共通"
+                        f"（{'・'.join(sorted(shared)[:3])}…）。"
+                        "**同じ図を出している。** 切り口を変えるか、別の計算結果を出すこと"
+                    )
+                    break
+            else:
+                continue
+            break
+    return problems
 
 
 def _check_headline_from_calc(work: Path, script: dict | None) -> list[str]:
@@ -353,6 +420,7 @@ def check(path: Path, video_cfg: dict, min_minutes: float, work: Path) -> float:
         problems += _check_short_opening(script)
         problems += _check_headline_from_calc(work, script)
         problems += _check_short_pace(script, duration)
+    problems += _check_not_repeat(work, script)
 
     if problems:
         raise VerificationError("投稿前の検査に落ちました: " + " / ".join(problems))
