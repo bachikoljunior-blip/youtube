@@ -34,7 +34,27 @@ LOOKAHEAD_DAYS = 3      # 何日先まで予約の空きを見るか
 # 予算の単位は **週間使用量の%**。API換算のドルは実際の消費と対応しないので使わない
 # （2026-08-05 に $258 と見積もって大きく外した。実測では1〜2%だった）。
 WEEKLY_PCT = 15          # 定常。土曜07:00 JST 区切り（2026-08-05 30%→15% オーナー指示）
-PCT_PER_REPLY = 0.0072   # 実測の高いほう（期間A 209応答で1.5%）
+# 1応答あたりの%。**固定値をやめた**（2026-08-07）。
+# 消費は出力が支配的で、長い JOURNAL を書く回と status.py を読むだけの回では
+# 桁が違う。**平均を固定で持つと、どちらの場面でも外れる。**
+# 直近の実績から毎回計算し、取れないときだけこの値に落ちる。
+PCT_PER_REPLY_FALLBACK = 0.0072
+
+
+def _pct_per_reply() -> float:
+    """直近の実績から「1応答あたり何%か」を出す。
+
+    **場面によって桁が違うので、平均でしか語れない。** それでも固定値より
+    実態に近い。今週ぶんで平均するのは、短い窓だと直前の1回に引きずられるから。
+    """
+    try:
+        from usage import summary
+        s = summary()
+        if s["replies"] >= 20:
+            return max(s["pct"] / s["replies"], 1e-5)
+    except Exception:
+        pass
+    return PCT_PER_REPLY_FALLBACK
 
 # オーナーが個別に出した割り当て。**「この時刻から、この%まで」** と読む。
 #   (開始時刻 ISO8601, %)
@@ -115,6 +135,8 @@ def print_budget() -> None:
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     from usage import summary, week_start
 
+    ppr = _pct_per_reply()      # 1応答あたりの%。実測から出す
+
     since, pct = ALLOWANCE
     start = datetime.fromisoformat(since)
     active = start >= week_start(now)        # 週をまたいだら失効し、定常に戻る
@@ -131,7 +153,7 @@ def print_budget() -> None:
             print(f"  **{start:%m/%d %H:%M JST} から {pct}%** の割り当て（定常は {WEEKLY_PCT}%）")
             print(f"  実測: それ以降 {s['replies']:,}応答 / {s['tokens']/1e6:.0f}M トークン"
                   f" → **{s['pct']:.2f}%**（楽観側 {s['pct_optimistic']:.2f}%）")
-            print(f"  残り **{left:.2f}%**（≒{max(0, left) / PCT_PER_REPLY:.0f}応答）")
+            print(f"  残り **{left:.2f}%**（≒{max(0, left) / ppr:.0f}応答）")
             if left <= 0:
                 print("  [!] 割り当てを使い切った可能性がある。**いま切ること。**")
             w = summary()
@@ -161,8 +183,8 @@ def print_budget() -> None:
         for label, used in (("安全側", w2["pct"]), ("楽観側", w2["pct_optimistic"])):
             per = (WEEKLY_PCT - used) / wakes
             print(f"  週の枠 {WEEKLY_PCT}% 基準（{label}）: 残り {WEEKLY_PCT - used:.1f}%"
-                  f" ÷ 残り{wakes}回 = 1回 {per:.2f}%（≒{max(0, per) / PCT_PER_REPLY:.0f}応答）")
-        tight = [(WEEKLY_PCT - u) / wakes / PCT_PER_REPLY < 10
+                  f" ÷ 残り{wakes}回 = 1回 {per:.2f}%（≒{max(0, per) / ppr:.0f}応答）")
+        tight = [(WEEKLY_PCT - u) / wakes / ppr < 10
                  for u in (w2["pct"], w2["pct_optimistic"])]
         if all(tight):
             print("  [!] **安全側でも楽観側でも1回10応答を下回る。** 日次（`0 23 * * *`）へ落とすこと")
