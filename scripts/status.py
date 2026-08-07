@@ -112,6 +112,45 @@ def print_hypotheses() -> None:
                 print(f"           - {nxt}")
 
 
+
+def _print_real_usage() -> bool:
+    """statusLine が保存した実測の使用量を出す。出せたら True。
+
+    **これが本物。** 下の換算は、これが取れないときの予備でしかない。
+    セッションが動いていないと更新されないので、古い値なら古いと言う。
+    """
+    import json
+
+    path = Path(__file__).resolve().parent.parent / "data" / "rate_limits.json"
+    if not path.exists():
+        return False
+    try:
+        rec = json.loads(path.read_text(encoding="utf-8"))
+        seen = datetime.fromisoformat(rec["at"].replace("Z", "+00:00")).astimezone(JST)
+        limits = rec["rate_limits"]
+    except Exception:
+        return False
+
+    age = (datetime.now(JST) - seen).total_seconds() / 3600
+    shown = False
+    print(f"  **実測（statusLine 経由・{seen:%m/%d %H:%M} 時点"
+          f"{'／%.0f時間前' % age if age >= 1 else ''}）**")
+    for key, label in (("seven_day", "週間"), ("five_hour", "5時間")):
+        w = limits.get(key) or {}
+        pct = w.get("used_percentage")
+        if pct is None:
+            continue
+        shown = True
+        left = ""
+        if w.get("resets_at"):
+            hrs = (datetime.fromtimestamp(w["resets_at"], JST) - datetime.now(JST)).total_seconds() / 3600
+            left = f"／リセットまで {hrs:.0f} 時間" if hrs > 0 else "／リセット済み"
+        print(f"    {label}: **{pct:.1f}% 使用**{left}")
+    if age > 6:
+        print("    [!] 6時間以上前の値。**セッションが動いていない間は更新されない。**")
+    return shown
+
+
 def print_budget() -> None:
     """トークン予算を出す。**単位は週間使用量の%。**
 
@@ -144,6 +183,13 @@ def print_budget() -> None:
 
     print("\n=== トークン予算（単位は週間使用量の%）===")
     print(f"  今週のリセット: {end.strftime('%m/%d %H:%M JST')}（あと {hours:.0f} 時間）")
+
+    # **実測が取れていればそれを最優先で出す。**（2026-08-08）
+    # statusLine フックが `/usage` と同じ値を横取りして保存している。
+    # 下の換算（トークン数→%）は推測混じりで幅が1.7倍あるので、
+    # **本物があるならそちらを見ること。**
+    if _print_real_usage():
+        print("  ↓ 以下はトークン数からの換算（推測混じり）。上と食い違ったら**上を信じる**")
 
     # **実測。** これまでオーナーに教えてもらうしかなかったが、セッション記録から数えられる。
     try:

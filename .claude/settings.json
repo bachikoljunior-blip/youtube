@@ -77,5 +77,10 @@
       "Bash(printenv*)",
       "Bash(sudo *)"
     ]
+  },
+  "statusLine": {
+    "type": "command",
+    "command": "python3 scripts/statusline_usage.py",
+    "padding": 0
   }
 }
