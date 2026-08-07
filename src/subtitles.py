@@ -21,7 +21,15 @@ MAX_LINE_CHARS_PORTRAIT = 13
 # 数字のかたまりを作る文字。**ここで割ると読めなくなる。**
 # 小数点（. ．）は 2026-08-07 に追加。「1か月0.」／「4パーセント、」と割れた。
 # **数字のかたまりは数字だけでできていない**（元号は _ERA、小数点はここ）。
-_NUM_TOKEN = set("0123456789．.円日日年月時分秒人回倍万千億％%割点")
+# **漢数字も数字。** 2026-08-07、「三年で六十一万九」／「千円戻ります。」と割れた。
+# 読み上げ用の narration では漢数字が普通に出る（TTS が読みやすいため）。
+# 元号（_ERA）・小数点に続いて3回目。**数字のかたまりは数字だけでできていない。**
+# これ以下の長さの行は、隣に寄せる（単独で映すと短すぎる）。
+MIN_LINE_CHARS = 4
+
+_NUM_TOKEN = set("0123456789．."
+                 "〇一二三四五六七八九十百千万億兆"
+                 "円日年月時分秒人回倍％%割点歳")
 
 HEADER = """[Script Info]
 ScriptType: v4.00+
@@ -187,6 +195,25 @@ def _chunk(narration: str, limit: int = MAX_LINE_CHARS) -> list[str]:
             buf = piece
     if buf:
         lines.append(buf)
+
+    # **短すぎる行を隣に寄せる。** 読点で切った断片がそのまま1行になると、
+    # 「手当が」のような3文字が0.6秒だけ映る（2026-08-07）。
+    # 割る側（_best_cut）をいくら直しても、**束ねる側で出る**ので別に処理する。
+    # 前に寄せられなければ後ろへ。どちらも溢れるならそのまま残す。
+    if len(lines) > 1:
+        packed: list[str] = []
+        i = 0
+        while i < len(lines):
+            cur = lines[i]
+            if len(cur) <= MIN_LINE_CHARS and packed and len(packed[-1]) + len(cur) <= limit + 2:
+                packed[-1] += cur
+            elif (len(cur) <= MIN_LINE_CHARS and i + 1 < len(lines)
+                    and len(cur) + len(lines[i + 1]) <= limit + 2):
+                lines[i + 1] = cur + lines[i + 1]
+            else:
+                packed.append(cur)
+            i += 1
+        lines = packed
 
     # 行頭に句読点を残さない。前の行に戻す。
     # 「75歳開始なら1.84倍で」「、年331万2千円。」のように、

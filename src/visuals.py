@@ -143,7 +143,10 @@ STAT_MAX_PX = 172
 # そこには何も置かない。字幕も subtitles.py 側で MarginV=420 まで上げてある。
 PORTRAIT_CSS = """
 html, body { width: 540px; height: 960px; }
-body { padding: 56px 40px 300px 52px; }
+/* 右は 96px。ショートのボタン列（いいね・コメント・共有・音源）が
+   画面幅の12〜15%を占めるので、そこには何も置かない。
+   2026-08-07、箇条書きが右端94%まで達して「比べ／る」と1文字落ちた。 */
+body { padding: 56px 96px 300px 52px; }
 body::before { width: 8px; }
 .headline { font-size: 40px; margin-bottom: 28px; }
 .note { font-size: 28px; margin-top: 20px; }
@@ -158,11 +161,12 @@ th, td { padding: 12px 12px; }
 .bar-value { font-size: 24px; }
 .chart { gap: 16px; }
 """
-CONTENT_WIDTH_PORTRAIT = VIEWPORT_PORTRAIT[0] - 52 - 40
+CONTENT_WIDTH_PORTRAIT = VIEWPORT_PORTRAIT[0] - 52 - 96
 # ショートの右端に重なる UI（いいね・コメント・共有・音源）を避ける余白（CSS px）。
 # **40px では足りなかった**（2026-08-07、ラベルが画面幅の94%まで届いてボタン列に
 # 被った）。実機のボタン列は幅の12〜15%を占めるので、540px 幅に対して 80px 取る。
-SAFE_RIGHT_PORTRAIT = 80
+# body の padding-right で 96px 確保したので、ここは仕上げの余白だけ。
+SAFE_RIGHT_PORTRAIT = 24
 STAT_MAX_PX_PORTRAIT = 96
 
 
