@@ -46,7 +46,12 @@ ASSUMPTIONS = [
     "一律支給の家族手当・住宅手当は、名称にかかわらず除外できないものとして扱っています",
     "1か月の平均所定労働時間は、年間所定休日から計算しています",
     "深夜割増と法定休日労働は含めていません。含めれば差はさらに広がります",
+    "さかのぼれる期間は3年で計算しています（労働基準法115条の賃金請求権の時効）",
 ]
+
+# 賃金請求権の時効。2020年4月の改正で2年→5年になったが、当分のあいだ3年。
+# **改正が続く数字なので、変わったらここだけ直す**（docs/CONSTRAINTS.md B4）。
+RECLAIM_YEARS = 3
 
 # 法定の下限。これを下回る取り決めは無効になる。
 RATE_OVERTIME = 0.25
@@ -182,6 +187,26 @@ def hours_error_shortfall(
     }
 
 
+def reclaimable(
+    wage: Wage, scheduled_hours: float, overtime_hours: float
+) -> dict:
+    """**さかのぼって請求できる額。**
+
+    `annual_shortfall` は「1年でいくら失うか」を出す。こちらは
+    **「いま請求すればいくら戻るか」**。同じ計算だが、視聴者から見ると別の話。
+
+    2026-08-07 の実測で、「戻せる」と言う動画が「差がある」と言う動画より
+    2倍伸びた（年末調整の還付が13時間で1510回、残業代の差額が37時間で764回）。
+    **同じ数字でも、取り返せる側から見せるほうが効くかもしれない**（検証中）。
+    """
+    per_year = annual_shortfall(wage, scheduled_hours, overtime_hours)
+    return {
+        "per_year": per_year,
+        "years": RECLAIM_YEARS,
+        "total": per_year * RECLAIM_YEARS,
+    }
+
+
 def shortfall_grid(
     wage: Wage,
     scheduled_hours: float,
@@ -235,6 +260,14 @@ if __name__ == "__main__":
         print(f"{row['allowance']:8,d}円 {row['overtime_hours']:5.0f}h "
               f"{row['hourly_correct']:9,.0f}円 {row['hourly_mistaken']:9,.0f}円 "
               f"{row['annual_shortfall']:9,.0f}円")
+
+    print(f"\n=== さかのぼって請求できる額（時効{RECLAIM_YEARS}年） ===")
+    print(f"{'一律手当':>8s} {'残業':>6s} {'1年ぶん':>10s} {'3年ぶん':>11s}")
+    for allowance in (10_000, 20_000, 30_000, 50_000):
+        w = Wage(base=base.base + base.role_allowance - allowance, family_flat=allowance)
+        for ot in (20.0, 45.0):
+            r = reclaimable(w, hours, ot)
+            print(f"{allowance:8,d}円 {ot:5.0f}h {r['per_year']:9,.0f}円 {r['total']:10,.0f}円")
 
     print("\n=== 所定労働時間を多く見積もられている場合の年間の差額 ===")
     print(f"{'月給':>9s} {'年間休日':>6s} {'誤った所定':>8s} {'正しい所定':>8s} {'残業':>5s} {'年間の差':>10s}")
