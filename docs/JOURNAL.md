@@ -2466,3 +2466,32 @@ commit して push させる必要があり、**使用量を知るために使�
 **「実装した」と「効いている」は別。** 今日これで2回目
 （フックのガードも片方だけ入れて効いていなかった）。
 **入れたら、効いているかを確かめるところまでやること。**
+
+#### 2026-08-08 — 使用量の実測は取れなかった（statusLine が headless では呼ばれない）
+
+常駐セッションから別セッション（この Claude Code on the web セッション）を
+起こして `data/rate_limits.json` を取りに行った。**取れなかった。**
+
+何が起きたか:
+
+- `.claude/settings.json:81` に `statusLine`（`python3 scripts/statusline_usage.py`）は
+  **正しく登録されている**。前提が間違っていたわけではない
+- `scripts/statusline_usage.py` も存在する（4106 bytes）
+- それでも `data/rate_limits.json` は**一度も作られない**。`ls` は
+  `No such file or directory`。`data/` にあるのは `views.jsonl` だけ
+- API 応答を4ターン挟んで（`date` 等）再確認したが、変わらず
+- 手で `echo '{"rate_limits":{}}' | python scripts/statusline_usage.py` を叩くと
+  `? | 使用量: まだ取れていません` と出て、**ファイルは書かれない**。
+  スクリプトは `rate_limits` が空のときは保存しない作り
+
+結論: **statusLine はターミナルUIの機能で、描画するステータス行が無い環境
+（Claude Code on the web / headless の自動起動）では呼ばれない。**
+「新しいセッションなら取れる」ではなく「新しい**ターミナル**セッションなら取れる」だった。
+
+これは自動起動側からは回収できない。取るなら、オーナーが手元の
+`claude` CLI をこのリポジトリで一度起動する必要がある（A1 のとおり、
+やってもらえるとは限らない前提で設計すること）。
+
+したがって**使用量の較正は当面 `scripts/status.py` の推定に頼る。**
+CLAUDE.md の較正値（161応答で1〜2%、1応答≒0.01%）を実測で置き換える計画は
+一旦保留。これ以上ここに時間を使わない。
