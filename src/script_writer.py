@@ -28,7 +28,15 @@ CHARS_PER_MINUTE_SLOW = 297.0   # 上限を決めるとき（遅い側・実測�
 class Bar(BaseModel):
     """kind=chart の棒1本。src/calc の計算結果から作る。"""
 
-    label: str = Field(description="棒の左に出す見出し。全角10文字以内")
+    label: str = Field(
+        description=(
+            "棒の左に出す見出し。全角7文字以内。"
+            "**語を途中で切らないこと。** 入りきらないなら短い別の言い方にする。"
+            "2026-08-08、『同居特別障害者控除』を『同居特別障害』と切って書き、"
+            "画面に日本語として成立しない文字列が出た。"
+            "『同居特別』『同居の親族』のように、短くても完結した語にすること"
+        )
+    )
     value: float = Field(description="棒の長さを決める数値。最大値が全幅になる")
     display: str = Field(description="棒の上に出す文字。『12万6千円』のように読める形で")
 

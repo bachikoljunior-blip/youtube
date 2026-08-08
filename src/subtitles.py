@@ -63,7 +63,25 @@ def _escape(text: str) -> str:
 
 
 def _is_kana(ch: str) -> bool:
+    """**ひらがなだけ。** カタカナを入れてはいけない。
+
+    規則2は「ひらがな→ひらがな以外」を語の頭とみなす。
+    ここにカタカナを入れると「の｜パーセント」が境目でなくなり、
+    **一番良い切れ目を自分で潰す。**
+    カタカナの連続を守るのは `_is_katakana`（別物）。
+    """
     return "ぁ" <= ch <= "ゟ"
+
+
+def _is_katakana(ch: str) -> bool:
+    """カタカナ（長音符を含む）。**「・」は入れない**（あれは良い切れ目）。
+
+    2026-08-08、「税率20パーセン」／「ト で計算します」と割れた。
+    規則3は「かなの連続の途中で割らない」と書いてあったのに、
+    `_is_kana` がひらがなしか見ておらず、**カタカナは素通りしていた。**
+    ひらがな・漢字と塞いできて、**3つ目の文字種を数え落としていた。**
+    """
+    return "ァ" <= ch <= "ヺ" or ch == "ー"
 
 
 # 1文字で語を区切れるひらがな（助詞）。ここに無い1文字のひらがなは送り仮名とみなす。
@@ -147,6 +165,9 @@ def _best_cut(piece: str, limit: int, strict: bool = False) -> int:
         a, b = piece[cut - 1], piece[cut]
         num_end = a in _NUM_TOKEN and cut >= 2 and piece[cut - 2] in _NUM_TOKEN
         if _is_kanji(a) and _is_kanji(b) and not num_end and b not in _NUM_TOKEN:
+            return False
+        # カタカナの連続の途中でも割らない（「パーセン」／「ト」）。
+        if _is_katakana(a) and _is_katakana(b):
             return False
         return True
 
