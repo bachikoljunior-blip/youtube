@@ -120,6 +120,18 @@ def _print_real_usage() -> bool:
     **枠はアカウント単位で効く。** 自分のぶんだけ数えても残量は分からない。
     """
     import json
+    import subprocess
+
+    # **読む前に取り直す。** 2026-08-09 まで、ここはローカルのクローンを
+    # そのまま読んでいた。**更新しているのは向こうの GitHub Actions**（毎時22分）で、
+    # こちらが `git pull` しない限りローカルは古いまま。
+    # 「実測」と書いてあるのに何時間も前の値を出していた。
+    # `show-usage.mjs` も同じで、**表示するだけで取り直さない**（8/8 に確認）。
+    try:
+        subprocess.run(["git", "-C", str(USAGE_REPO), "pull", "-q", "--ff-only"],
+                       capture_output=True, text=True, timeout=120)
+    except Exception:
+        pass                          # 取り直せなくても、あるものを読む
 
     path = USAGE_REPO / "state" / "claude-usage.json"
     if not path.exists():
@@ -145,8 +157,14 @@ def _print_real_usage() -> bool:
     if gov.get("remaining_percent") is not None:
         print(f"  **いま効いている枠: {gov.get('window_name')} "
               f"／残り {gov['remaining_percent']}%**")
-    if age > 3:
-        print("    [!] 3時間以上前の値。`node show-usage.mjs` で取り直すこと。")
+    # 向こうの Actions は毎時22分なので、pull しても最大1時間ぶんは古い。
+    # **それ以上ならワークフローが止まっている**ので、こちらから叩く。
+    if age > 1.4:
+        print(f"    [!] {age:.1f}時間前の値です（pull 済み）。**向こうの毎時更新が"
+              "止まっている可能性があります。**")
+        print("        取り直す: mcp__github__actions_run_trigger で")
+        print("        bachikoljunior-blip/-chatgpt-usage-monitorPrivate の")
+        print("        claude-usage-monitor.yml を workflow_dispatch（ref: main）")
     return True
 
 
@@ -167,8 +185,6 @@ def print_budget() -> None:
         return
     print("  **全部使ってよい**（恒久指示 A15）。残すこと自体に価値は無い。")
     print("  絞る理由にしないこと。使い切りそうなときだけ、短く切る。")
-    print("  取り直すには:")
-    print(f"    node {USAGE_REPO}/scripts/show-usage.mjs")
 
 
 def main(days: int = 7) -> int:
