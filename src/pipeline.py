@@ -15,7 +15,8 @@ from pathlib import Path
 
 from . import config, history, subtitles, thumbnail, uploader, verify, visuals
 from .renderer import build_narration, build_video, segment_timeline
-from .script_writer import SHORT_SEGMENT_CHARS, VideoScript, generate
+from .script_writer import (SHORT_SEGMENT_CHARS, VideoScript, generate,
+                            short_script_problems)
 from .tts import synthesize_segments
 from .util import fmt_timestamp
 
@@ -170,22 +171,7 @@ def _check_short_script(script) -> None:
     1秒あたり約5.2文字なので、文字数を見れば秒数が分かる。
     `verify` を弱めるのではなく、**同じ条件を前倒しで当てる。**
     """
-    problems = []
-    for i, seg in enumerate(script.segments):
-        n = len(seg.narration)
-        if n > MAX_SHORT_SEGMENT_CHARS:
-            problems.append(
-                f"  セグメント{i}: {n}文字（上限 {MAX_SHORT_SEGMENT_CHARS}）"
-                f" ≒ {n / CHARS_PER_SECOND:.0f}秒。1枚が{MAX_SLIDE_SECONDS:.0f}秒を超える"
-            )
-    # 「明日やること3つ」は**長尺だけ**の型。ショートの最後は
-    # 「このチャンネルが何をする場所か」だけにする、と指示してあるのに
-    # 2026-08-09 に混ざった。**指示だけでは守られないので機械で見る。**
-    if script.segments and "明日やること" in script.segments[-1].narration:
-        problems.append(
-            "  最後のセグメントに「明日やること」が入っている。"
-            "これは長尺だけの型で、ショートでは使わない"
-        )
+    problems = [f"  {p}" for p in short_script_problems(script)]
     if problems:
         raise RuntimeError(
             "ショートの台本が条件を満たしていません（音声合成の前に止めました）:\n"

@@ -31,6 +31,36 @@ CHARS_PER_MINUTE_SLOW = 297.0   # 上限を決めるとき（遅い側・実測�
 SHORT_SEGMENT_CHARS = 62
 
 
+def short_script_problems(script) -> list[str]:
+    """ショートの台本の不備を並べる。空なら合格。
+
+    **ここが唯一の正本。** `generate()` は生成中にこれを見て直させ、
+    `src/pipeline.py` は音声合成の前にこれを見て落とす。
+    **2つの場所に同じ規則を書かない**（片方だけ直す形を 2026-08-08〜09 に
+    5回やっている）。
+
+    直させる側と落とす側で条件がずれると、**生成側が通したものを
+    パイプラインが落とし続ける**。実際 2026-08-09、長さだけを直させていて
+    「明日やること」を返していなかったため、長さが直った台本が
+    別の理由で落ち続けた。
+    """
+    problems = []
+    for i, seg in enumerate(script.segments):
+        n = len(seg.narration)
+        if n > SHORT_SEGMENT_CHARS:
+            problems.append(
+                f"{i}番目のセグメントが{n}文字（上限{SHORT_SEGMENT_CHARS}）。"
+                f"読み上げ約{n / 5.2:.0f}秒で、1枚の絵が12秒以上止まります"
+            )
+    if script.segments and "明日やること" in script.segments[-1].narration:
+        problems.append(
+            "最後のセグメントに「明日やること」が入っています。"
+            "これは長尺だけの型です。ショートの最後は手順ではなく、"
+            "**この場所で毎回何が手に入るか**を1つ言うだけにしてください"
+        )
+    return problems
+
+
 class Bar(BaseModel):
     """kind=chart の棒1本。src/calc の計算結果から作る。"""
 
@@ -395,34 +425,30 @@ def generate(channel: dict, topic: dict) -> VideoScript:
     # 前倒し検査に3回続けて落ちた。**文章での指示は守られない。**
     # 落ちた事実を渡して、同じセッションで直させる。
     if max_minutes <= 1.5 and session:
-        for attempt in range(2):
-            over = [(i, len(s.narration)) for i, s in enumerate(script.segments)
-                    if len(s.narration) > SHORT_SEGMENT_CHARS]
-            if not over:
+        for attempt in range(3):
+            problems = short_script_problems(script)
+            if not problems:
                 break
-            detail = "、".join(f"{i}番目が{n}文字" for i, n in over)
-            print(f"[script] セグメントが長すぎます（{detail}）。詰めさせます"
-                  f"（{attempt + 1}回目）")
+            print(f"[script] ショートの条件を満たしていません（{attempt + 1}回目）:")
+            for p in problems:
+                print(f"  - {p}")
             script, _ = follow_up(
                 VideoScript,
                 session,
                 (
-                    f"**1セグメントの narration が{SHORT_SEGMENT_CHARS}文字を超えています"
-                    f"（{detail}）。** 読み上げ1秒あたり約5.2文字なので、"
-                    f"{SHORT_SEGMENT_CHARS}文字を超えると1枚の絵が12秒以上止まり、"
-                    "投稿前の検査で落ちます。\n"
-                    "**内容を削るのではなく、セグメントを分けてください。**"
-                    f"長いセグメントを2つに割り、それぞれ{SHORT_SEGMENT_CHARS}文字以内にする。"
+                    "**この台本は投稿前の検査に落ちます。** 直してください:\n"
+                    + "\n".join(f"- {p}" for p in problems)
+                    + "\n\n長すぎるセグメントは、**内容を削るのではなく分けてください。**"
+                    f"2つに割り、それぞれ{SHORT_SEGMENT_CHARS}文字以内にする。"
                     "**割ったほうの visual は別のものにすること**"
                     "（同じ絵が2枚続くと、これも検査で落ちます）。\n"
                     "同じ JSON 形式で全体を出し直してください。"
                 ),
                 model=model,
             )
-        still = [i for i, s in enumerate(script.segments)
-                 if len(s.narration) > SHORT_SEGMENT_CHARS]
-        if still:
-            print(f"[script] 警告: {len(still)}個のセグメントがまだ長いです。"
+        remaining = short_script_problems(script)
+        if remaining:
+            print(f"[script] 警告: {len(remaining)}件がまだ残っています。"
                   "パイプラインが合成前に止めます")
 
     return script
