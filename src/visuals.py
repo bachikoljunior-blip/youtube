@@ -212,6 +212,32 @@ def _em_width(text: str) -> float:
     return sum(0.55 if ord(c) < 0x2E80 else 1.0 for c in text)
 
 
+# 箇条書き1行あたりの文字数。実効幅 ÷ 文字サイズ から出す。
+# 縦向き: (392 - marker 44 - gap 16) / 34px ≒ 9.8 → 余裕を見て 9
+LIST_CHARS_PORTRAIT = 9
+LIST_CHARS = 22
+
+
+def _wrap_item(text: str, portrait: bool) -> str:
+    """箇条書きの1項目を、**語の途中で折らずに**改行する。
+
+    2026-08-08、「復興特別所／得税2.1%」「10万円と総／所得5%」と
+    **語の途中で折れた。** 日本語には空白が無いので、ブラウザは任意の位置で折る。
+    項目を短くしても限界がある（実効332px・34pxで1行9.8文字、
+    実際の項目は最長20文字なので必ず2行になる）。
+
+    **折り返すこと自体は避けられない。避けたいのは折る位置。**
+    字幕で作った規則（送り仮名・数字・元号・か月を割らない）をそのまま使い、
+    `<br>` で明示的に改行する。**同じ問題は同じ道具で解く。**
+    """
+    from .subtitles import _chunk
+
+    limit = LIST_CHARS_PORTRAIT if portrait else LIST_CHARS
+    if len(text) <= limit:
+        return _esc(text)
+    return "<br>".join(_esc(line) for line in _chunk(text, limit))
+
+
 def _chart_html(visual: dict, portrait: bool = False) -> str:
     """計算結果を棒グラフにする。
 
@@ -315,7 +341,8 @@ def _body_html(visual: dict, portrait: bool = False) -> str:
         cls = "compare" if kind == "compare" else "steps"
         markers = ("A", "B", "C", "D") if kind == "compare" else ("1", "2", "3", "4")
         items = "".join(
-            f'<li><span class="marker">{markers[i]}</span><span>{_esc(text)}</span></li>'
+            f'<li><span class="marker">{markers[i]}</span>'
+            f'<span>{_wrap_item(text, portrait)}</span></li>'
             for i, text in enumerate(visual["items"][:4])
         )
         return f'<ul class="{cls}">{items}</ul>'
