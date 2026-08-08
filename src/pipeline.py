@@ -15,7 +15,7 @@ from pathlib import Path
 
 from . import config, history, subtitles, thumbnail, uploader, verify, visuals
 from .renderer import build_narration, build_video, segment_timeline
-from .script_writer import VideoScript, generate
+from .script_writer import SHORT_SEGMENT_CHARS, VideoScript, generate
 from .tts import synthesize_segments
 from .util import fmt_timestamp
 
@@ -151,10 +151,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 # 読み上げの速さ（文字/秒）。2026-08-09 実測: 465文字が89秒。
 CHARS_PER_SECOND = 5.2
-# 1枚の絵が止まってよい秒数（`src/verify.py` の MAX_SECONDS_PER_SLIDE と揃える）。
-# ここがずれると片方だけ通るので、変えるときは両方直すこと。
-MAX_SLIDE_SECONDS = 12.0
-MAX_SHORT_SEGMENT_CHARS = int(MAX_SLIDE_SECONDS * CHARS_PER_SECOND)   # = 62
+# 1枚の絵が止まってよい秒数。`src/verify.py` が同じ値で最終検査する。
+MAX_SLIDE_SECONDS = verify.MAX_SECONDS_PER_SLIDE
+# **同じ値を2か所に書かない。** 生成側（script_writer）が守るべき上限と、
+# ここで落とす上限がずれたら、片方が通したものをもう片方が落とす。
+# 「片方だけ直す」形は 2026-08-08〜09 に5回やっている。**import で1つにする。**
+MAX_SHORT_SEGMENT_CHARS = SHORT_SEGMENT_CHARS
 
 
 def _check_short_script(script) -> None:

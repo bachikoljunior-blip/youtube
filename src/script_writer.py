@@ -24,6 +24,12 @@ from .claude_cli import ask, follow_up
 CHARS_PER_MINUTE = 360.0        # 下限を決めるとき（速い側）
 CHARS_PER_MINUTE_SLOW = 297.0   # 上限を決めるとき（遅い側・実測の最遅）
 
+# ショートの1セグメントの上限（文字）。**`src/pipeline.py` の
+# MAX_SHORT_SEGMENT_CHARS と同じ値にすること。** ずれると、生成側が通した
+# ものをパイプラインが落とす（またはその逆）。
+# 12秒 × 5.2文字/秒 = 62文字。読み上げの速さは 2026-08-09 の実測。
+SHORT_SEGMENT_CHARS = 62
+
 
 class Bar(BaseModel):
     """kind=chart の棒1本。src/calc の計算結果から作る。"""
@@ -382,6 +388,42 @@ def generate(channel: dict, topic: dict) -> VideoScript:
 
     if chars < min_chars:
         print(f"[script] 警告: 目標{min_chars}文字に届きませんでした（{chars}文字）")
+
+    # **ショートは1セグメントが長すぎると落ちる。** 短すぎる側には
+    # 書き足させる仕組みがあるのに、**長すぎる側には無かった**（片方だけ）。
+    # 2026-08-09、指示に「60文字以内」と書いても 86〜93文字で返ってきて、
+    # 前倒し検査に3回続けて落ちた。**文章での指示は守られない。**
+    # 落ちた事実を渡して、同じセッションで直させる。
+    if max_minutes <= 1.5 and session:
+        for attempt in range(2):
+            over = [(i, len(s.narration)) for i, s in enumerate(script.segments)
+                    if len(s.narration) > SHORT_SEGMENT_CHARS]
+            if not over:
+                break
+            detail = "、".join(f"{i}番目が{n}文字" for i, n in over)
+            print(f"[script] セグメントが長すぎます（{detail}）。詰めさせます"
+                  f"（{attempt + 1}回目）")
+            script, _ = follow_up(
+                VideoScript,
+                session,
+                (
+                    f"**1セグメントの narration が{SHORT_SEGMENT_CHARS}文字を超えています"
+                    f"（{detail}）。** 読み上げ1秒あたり約5.2文字なので、"
+                    f"{SHORT_SEGMENT_CHARS}文字を超えると1枚の絵が12秒以上止まり、"
+                    "投稿前の検査で落ちます。\n"
+                    "**内容を削るのではなく、セグメントを分けてください。**"
+                    f"長いセグメントを2つに割り、それぞれ{SHORT_SEGMENT_CHARS}文字以内にする。"
+                    "**割ったほうの visual は別のものにすること**"
+                    "（同じ絵が2枚続くと、これも検査で落ちます）。\n"
+                    "同じ JSON 形式で全体を出し直してください。"
+                ),
+                model=model,
+            )
+        still = [i for i, s in enumerate(script.segments)
+                 if len(s.narration) > SHORT_SEGMENT_CHARS]
+        if still:
+            print(f"[script] 警告: {len(still)}個のセグメントがまだ長いです。"
+                  "パイプラインが合成前に止めます")
 
     return script
 
