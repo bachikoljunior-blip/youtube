@@ -149,6 +149,49 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
+# 読み上げの速さ（文字/秒）。2026-08-09 実測: 465文字が89秒。
+CHARS_PER_SECOND = 5.2
+# 1枚の絵が止まってよい秒数（`src/verify.py` の MAX_SECONDS_PER_SLIDE と揃える）。
+# ここがずれると片方だけ通るので、変えるときは両方直すこと。
+MAX_SLIDE_SECONDS = 12.0
+MAX_SHORT_SEGMENT_CHARS = int(MAX_SLIDE_SECONDS * CHARS_PER_SECOND)   # = 62
+
+
+def _check_short_script(script) -> None:
+    """ショートの台本を、**音声合成の前に**落とす。
+
+    2026-08-09、6セグメントのショートが合計465文字＝89秒になり、
+    1枚15秒で `verify` に落ちた。**落ちたのはレンダリングまで終わったあと**で、
+    15分ぶんの合成と描画が捨てになった。
+
+    **同じことを、始まる前に judge できる。** 読み上げの速さは実測で
+    1秒あたり約5.2文字なので、文字数を見れば秒数が分かる。
+    `verify` を弱めるのではなく、**同じ条件を前倒しで当てる。**
+    """
+    problems = []
+    for i, seg in enumerate(script.segments):
+        n = len(seg.narration)
+        if n > MAX_SHORT_SEGMENT_CHARS:
+            problems.append(
+                f"  セグメント{i}: {n}文字（上限 {MAX_SHORT_SEGMENT_CHARS}）"
+                f" ≒ {n / CHARS_PER_SECOND:.0f}秒。1枚が{MAX_SLIDE_SECONDS:.0f}秒を超える"
+            )
+    # 「明日やること3つ」は**長尺だけ**の型。ショートの最後は
+    # 「このチャンネルが何をする場所か」だけにする、と指示してあるのに
+    # 2026-08-09 に混ざった。**指示だけでは守られないので機械で見る。**
+    if script.segments and "明日やること" in script.segments[-1].narration:
+        problems.append(
+            "  最後のセグメントに「明日やること」が入っている。"
+            "これは長尺だけの型で、ショートでは使わない"
+        )
+    if problems:
+        raise RuntimeError(
+            "ショートの台本が条件を満たしていません（音声合成の前に止めました）:\n"
+            + "\n".join(problems)
+            + "\n**テーマの angle を短く刻むよう直すか、そのまま再実行してください。**"
+        )
+
+
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     channel = config.load_channel()
@@ -218,6 +261,9 @@ def main(argv: list[str] | None = None) -> int:
     else:
         script = generate(channel, topic)
     print(f"[pipeline] タイトル: {script.title}")
+
+    if args.short:
+        _check_short_script(script)
 
     # 2. 音声（ここで各セグメントの実尺が確定する）
     audios = synthesize_segments(
