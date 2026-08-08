@@ -100,6 +100,10 @@ def print_hypotheses() -> None:
 # 使用量の正本。**実メーターを読んでいる唯一の場所**（2026-08-08）。
 # チェックアウトが無ければ GitHub 経由で `state/claude-usage.json` を読む。
 USAGE_REPO = Path("/workspace/-chatgpt-usage-monitorprivate")
+# 使用量がこれより古かったら取り直す（時間）。向こうの Actions は毎時なので、
+# **pull だけでは最大1時間古い。** 5時間枠は数時間で 29%→77% と動くので、
+# 30分を超えたら判断に効く。
+STALE_USAGE_HOURS = 0.5
 
 
 def _print_real_usage() -> bool:
@@ -157,14 +161,20 @@ def _print_real_usage() -> bool:
     if gov.get("remaining_percent") is not None:
         print(f"  **いま効いている枠: {gov.get('window_name')} "
               f"／残り {gov['remaining_percent']}%**")
-    # 向こうの Actions は毎時22分なので、pull しても最大1時間ぶんは古い。
-    # **それ以上ならワークフローが止まっている**ので、こちらから叩く。
-    if age > 1.4:
-        print(f"    [!] {age:.1f}時間前の値です（pull 済み）。**向こうの毎時更新が"
-              "止まっている可能性があります。**")
-        print("        取り直す: mcp__github__actions_run_trigger で")
-        print("        bachikoljunior-blip/-chatgpt-usage-monitorPrivate の")
-        print("        claude-usage-monitor.yml を workflow_dispatch（ref: main）")
+    # **pull しても、向こうの毎時更新より新しくはならない。**
+    # 5時間枠は数時間で 29%→77% と動くので、1時間の遅れは判断に効く。
+    # 本当に「いまの値」が要るときは workflow_dispatch を投げる（約1分で反映）。
+    # 2026-08-09 に実測: dispatch → 1分後にコミット → pull で最新になった。
+    #
+    # **この判定はスクリプトからは叩けない**（資格情報は GitHub の secret 側にあり、
+    # ローカルで `read-claude-usage.mjs` を実行すると token_missing で落ちる）。
+    # MCP を持っているのは呼び出し側なので、ここでは指示を出すだけ。
+    if age > STALE_USAGE_HOURS:
+        print(f"    [!] {age * 60:.0f}分前の値です。**取り直してください:**")
+        print("        mcp__github__actions_run_trigger / run_workflow")
+        print("        owner=bachikoljunior-blip repo=-chatgpt-usage-monitorPrivate")
+        print("        workflow_id=claude-usage-monitor.yml ref=main")
+        print("        → 約1分で反映。もう一度 status.py を実行する")
     return True
 
 
