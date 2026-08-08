@@ -1,0 +1,42 @@
+{
+ "analytics": {
+  "checked_at": "2026-08-09T07:36:02+09:00",
+  "metrics": [
+   "views",
+   "redViews",
+   "engagedViews",
+   "comments",
+   "likes",
+   "dislikes",
+   "shares",
+   "videosAddedToPlaylists",
+   "videosRemovedFromPlaylists",
+   "estimatedMinutesWatched",
+   "estimatedRedMinutesWatched",
+   "averageViewDuration",
+   "averageViewPercentage",
+   "subscribersGained",
+   "subscribersLost",
+   "cardImpressions",
+   "cardClickRate",
+   "cardTeaserImpressions",
+   "cardTeaserClickRate",
+   "annotationImpressions",
+   "annotationClickThroughRate",
+   "annotationCloseRate"
+  ],
+  "dimensions": [
+   "day",
+   "country",
+   "deviceType",
+   "operatingSystem",
+   "youtubeProduct",
+   "insightTrafficSourceType",
+   "insightPlaybackLocationType",
+   "liveOrOnDemand",
+   "creatorContentType"
+  ]
+ },
+ "last_run": "2026-08-09T07:37:30+09:00",
+ "last_gap_count": 37
+}

@@ -213,6 +213,24 @@ def print_means() -> None:
         state = m.group(1).strip() if m else "?"
         if "未着手" in state or "未検討" in state:
             untried.append((code, name, state))
+    # 棚卸しからの経過。**視界の外は、定期的に数え直さないと戻る。**
+    import json as _json
+    st = Path(__file__).resolve().parent.parent / "data" / "audit.json"
+    if st.exists():
+        try:
+            d = _json.loads(st.read_text(encoding="utf-8"))
+            last = datetime.fromisoformat(d["last_run"])
+            days = (datetime.now(JST) - last).days
+            mark = "  **[!] 7日以上たっています。走らせること**" if days >= 7 else ""
+            print(f"\n=== 棚卸し（scripts/audit.py）===")
+            print(f"  前回 {last:%m/%d %H:%M}（{days}日前）"
+                  f" / 見つかった見落とし {d.get('last_gap_count', '?')}件{mark}")
+        except Exception:
+            pass
+    else:
+        print("\n=== 棚卸し（scripts/audit.py）===")
+        print("  **一度も走らせていません。** `python scripts/audit.py`")
+
     print(f"\n=== 手段の台帳（docs/MEANS.md）===")
     print(f"  未着手 {len(untried)}件 / 全{len(entries)}件")
     for code, name, state in untried:
@@ -247,14 +265,17 @@ def print_retention(top: int = 4) -> None:
             title = r["title"][:22]
             avg = r.get("averageViewPercentage", 0)
             if not curve:
-                print(f"  {title:<22} {r['views']:>5}再生  平均{avg:5.1f}%")
+                print(f"  {title:<22} {r['views']:>5}再生  平均{avg:5.1f}%"
+                      f"  共有{r.get('shares',0)} コメント{r.get('comments',0)}")
                 continue
             # 冒頭・4分の1・半分の3点で十分。全部出すと読まない。
             def at(pos: float) -> tuple[float, float]:
                 i = min(range(len(curve)), key=lambda k: abs(curve[k][0] - pos))
                 return curve[i][1], curve[i][2]
             (w1, r1), (w25, r25), (w50, r50) = at(0.05), at(0.25), at(0.50)
-            print(f"  {title:<22} {r['views']:>5}再生  平均{avg:5.1f}%")
+            print(f"  {title:<22} {r['views']:>5}再生  平均{avg:5.1f}%"
+                  f"  共有{r.get('shares',0)} 高評価{r.get('likes',0)}"
+                  f" コメント{r.get('comments',0)}")
             print(f"      5%地点 維持{w1:.2f} 相対{r1:.2f}"
                   f" │ 25%地点 維持{w25:.2f} 相対{r25:.2f}"
                   f" │ 50%地点 維持{w50:.2f} 相対{r50:.2f}")
@@ -264,6 +285,8 @@ def print_retention(top: int = 4) -> None:
           "狙いから外れた視聴者に当たる）。")
     print("  実測 8/9: 537再生で相対0.50、1506再生で相対0.25。"
           "**因果を決めつけないこと。**")
+    print("  **共有とコメントはショートの配信に効く信号。** 2026-08-09 実測は")
+    print("  4,383再生に対し共有1・コメント0。**動画が何も問いかけていない。**")
 
 
 def main(days: int = 7) -> int:

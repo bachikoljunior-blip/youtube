@@ -105,7 +105,7 @@ def fetch_report(days: int = 28) -> list[dict[str, Any]]:
             ids="channel==MINE",
             startDate=start.isoformat(),
             endDate=end.isoformat(),
-            metrics="views,estimatedMinutesWatched,averageViewPercentage",
+            metrics="views,estimatedMinutesWatched,averageViewPercentage,averageViewDuration,shares,likes,comments",
             dimensions="video",
             sort="-views",
             maxResults=50,
