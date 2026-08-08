@@ -1,6 +1,19 @@
 #!/usr/bin/env python3
 """今週これまでに使ったトークンを数え、週間使用量の%に換算する。
 
+**2026-08-08: これは使用量の測定ではない。オーナーが「なんの当てにもならない」と
+明言した。残量を根拠に何かを決めるときに、この数字を使わないこと。**
+
+正本は `bachikoljunior-blip/-chatgpt-usage-monitorPrivate` の
+`state/claude-usage.json`（実トークンで実メーターを読む）。読み方:
+
+    node <checkout>/-chatgpt-usage-monitorPrivate/scripts/show-usage.mjs
+
+理由は下に元から書いてあるとおり ——— オーナーの実測2点が約10倍食い違っていて、
+換算レートが決まらない。**下の説明は「なぜ決まらないか」の記録として残すが、
+出てくる数字を残量として扱ってはいけない。**
+登録簿は note の `state/watchdogs.json`（`claude_usage` の `not_a_source`）。
+
     python scripts/usage.py
 
 なぜ要るか。**予算はこれまでオーナーに教えてもらうしかなかった。**
