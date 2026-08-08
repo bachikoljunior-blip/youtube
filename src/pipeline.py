@@ -160,7 +160,7 @@ MAX_SLIDE_SECONDS = verify.MAX_SECONDS_PER_SLIDE
 MAX_SHORT_SEGMENT_CHARS = SHORT_SEGMENT_CHARS
 
 
-def _check_short_script(script) -> None:
+def _check_short_script(script, topic_id: str = "") -> None:
     """ショートの台本を、**音声合成の前に**落とす。
 
     2026-08-09、6セグメントのショートが合計465文字＝89秒になり、
@@ -171,7 +171,7 @@ def _check_short_script(script) -> None:
     1秒あたり約5.2文字なので、文字数を見れば秒数が分かる。
     `verify` を弱めるのではなく、**同じ条件を前倒しで当てる。**
     """
-    problems = [f"  {p}" for p in short_script_problems(script)]
+    problems = [f"  {p}" for p in short_script_problems(script, topic_id)]
     if problems:
         raise RuntimeError(
             "ショートの台本が条件を満たしていません（音声合成の前に止めました）:\n"
@@ -251,7 +251,7 @@ def main(argv: list[str] | None = None) -> int:
     print(f"[pipeline] タイトル: {script.title}")
 
     if args.short:
-        _check_short_script(script)
+        _check_short_script(script, topic["id"])
 
     # 2. 音声（ここで各セグメントの実尺が確定する）
     audios = synthesize_segments(

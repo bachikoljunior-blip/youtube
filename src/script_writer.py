@@ -31,7 +31,7 @@ CHARS_PER_MINUTE_SLOW = 297.0   # 上限を決めるとき（遅い側・実測�
 SHORT_SEGMENT_CHARS = 62
 
 
-def short_script_problems(script) -> list[str]:
+def short_script_problems(script, topic_id: str = "") -> list[str]:
     """ショートの台本の不備を並べる。空なら合格。
 
     **ここが唯一の正本。** `generate()` は生成中にこれを見て直させ、
@@ -43,6 +43,12 @@ def short_script_problems(script) -> list[str]:
     パイプラインが落とし続ける**。実際 2026-08-09、長さだけを直させていて
     「明日やること」を返していなかったため、長さが直った台本が
     別の理由で落ち続けた。
+
+    **さらに `verify` との間にも同じずれがあった。** ここは長さしか見ず、
+    `verify` は「1枚目が stat か」「過去の図と重なっていないか」まで見る。
+    そのため長さの直った台本が**レンダリングまで終わってから**落ちた。
+    **台本だけで判定できるものは、全部ここに集める。**
+    `verify` は最後の砦として残す（音声や画像が絡むものはあちらでしか見えない）。
     """
     problems = []
     for i, seg in enumerate(script.segments):
@@ -58,6 +64,16 @@ def short_script_problems(script) -> list[str]:
             "これは長尺だけの型です。ショートの最後は手順ではなく、"
             "**この場所で毎回何が手に入るか**を1つ言うだけにしてください"
         )
+
+    # `verify` が持っている検査のうち、**台本だけで判定できるもの**をここでも当てる。
+    # 関数はあちらから借りる（同じ規則を2か所に書かない）。
+    from . import config, verify
+
+    data = script.model_dump()
+    problems += [p.strip() for p in verify._check_short_opening(data)]
+    if topic_id:
+        problems += [p.strip() for p in
+                     verify._check_not_repeat(config.BUILD_DIR / topic_id, data)]
     return problems
 
 
@@ -426,7 +442,7 @@ def generate(channel: dict, topic: dict) -> VideoScript:
     # 落ちた事実を渡して、同じセッションで直させる。
     if max_minutes <= 1.5 and session:
         for attempt in range(3):
-            problems = short_script_problems(script)
+            problems = short_script_problems(script, topic.get('id', ''))
             if not problems:
                 break
             print(f"[script] ショートの条件を満たしていません（{attempt + 1}回目）:")
@@ -446,7 +462,7 @@ def generate(channel: dict, topic: dict) -> VideoScript:
                 ),
                 model=model,
             )
-        remaining = short_script_problems(script)
+        remaining = short_script_problems(script, topic.get('id', ''))
         if remaining:
             print(f"[script] 警告: {len(remaining)}件がまだ残っています。"
                   "パイプラインが合成前に止めます")
