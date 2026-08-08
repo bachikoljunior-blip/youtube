@@ -219,13 +219,26 @@ LIST_CHARS = 22
 
 # 見出し1行あたりの文字数。実効幅 ÷ font-size。
 # 縦向き: 392 / 40px ≒ 9.8 → 余裕を見て 9。横向き: 1124 / 46px ≒ 24
-# **見出しも折り返す。** 2026-08-08、「5年で戻／る額」「やってい／ること」と
-# 語の途中で折れた。文字を置く場所を数えたとき**見出しを数え落としていた。**
 HEAD_CHARS_PORTRAIT = 9
 HEAD_CHARS = 24
 
+# 補足（.note）1行あたりの文字数。縦向き 392/28px ≒ 14、横向き 1124/34px ≒ 33。
+#
+# **2026-08-08、`.note` を数え落としていた。** 前日に「文字を置く場所は
+# stat・table・steps・chart の4つ」と数え、翌日に見出しを足して5つにしたが、
+# **まだ足りなかった。** 実測（ブラウザに行数を数えさせた）で
+# 「課税所得150万円・控除／率0.7％」「労働基準法37条5項・施／行規則21条」と
+# 語中で折れていた。**数えて確かめるのをやめて、機械に数えさせる形にした**
+# （下の `_LINE_PROBE_JS` と `render()`）。
+NOTE_CHARS_PORTRAIT = 14
+NOTE_CHARS = 33
 
-def _wrap_item(text: str, portrait: bool) -> str:
+# 棒ラベル。CSS の flex 幅 ÷ font-size（縦 168/22 ≒ 7.6、横 240/30 = 8）。
+LABEL_CHARS_PORTRAIT = 7
+LABEL_CHARS = 8
+
+
+def _wrap_item(text: str, portrait: bool, tighten: int = 0) -> str:
     """箇条書きの1項目を、**語の途中で折らずに**改行する。
 
     2026-08-08、「復興特別所／得税2.1%」「10万円と総／所得5%」と
@@ -237,33 +250,50 @@ def _wrap_item(text: str, portrait: bool) -> str:
     字幕で作った規則（送り仮名・数字・元号・か月を割らない）をそのまま使い、
     `<br>` で明示的に改行する。**同じ問題は同じ道具で解く。**
     """
-    from .subtitles import _chunk
-
-    limit = LIST_CHARS_PORTRAIT if portrait else LIST_CHARS
-    return _wrap(text, limit)
+    return _wrap(text, LIST_CHARS_PORTRAIT if portrait else LIST_CHARS, tighten)
 
 
-def _wrap_head(text: str, portrait: bool) -> str:
+def _wrap_head(text: str, portrait: bool, tighten: int = 0) -> str:
     """見出しを、語の途中で折らずに改行する。
 
     **箇条書きと同じ問題が見出しにもあった**（2026-08-08）。
-    「総所得300万 5年で戻る額」は14文字で、9.8文字の枠に入らない。
-    直前に「文字を置く場所は stat・table・steps・chart の4つ」と数えたが、
-    **見出しを数え落としていた。** 数え漏らしたぶんだけ再発する。
+    「繰下げると年額はこうなる」は12文字で、9.8文字の枠に入らない。
+
+    この関数は一度**書いただけで呼ばれていなかった。**（同日、実測で発覚。
+    「直した」と JOURNAL に書いた時点で、画面はまだ何も変わっていなかった。）
+    **書いたら呼び出し側を必ず確かめること。** 片方だけ直す形は4回目。
     """
-    return _wrap(text, HEAD_CHARS_PORTRAIT if portrait else HEAD_CHARS)
+    return _wrap(text, HEAD_CHARS_PORTRAIT if portrait else HEAD_CHARS, tighten)
 
 
-def _wrap(text: str, limit: int) -> str:
-    """字幕の改行規則で折り、`<br>` を入れる。**画面側に折らせない。**"""
+def _wrap_note(text: str, portrait: bool, tighten: int = 0) -> str:
+    """stat の下の補足を、語の途中で折らずに改行する。"""
+    return _wrap(text, NOTE_CHARS_PORTRAIT if portrait else NOTE_CHARS, tighten)
+
+
+def _wrap_label(text: str, portrait: bool, tighten: int = 0) -> str:
+    """棒グラフのラベルを、語の途中で折らずに改行する。"""
+    return _wrap(text, LABEL_CHARS_PORTRAIT if portrait else LABEL_CHARS, tighten)
+
+
+def _wrap(text: str, limit: int, tighten: int = 0) -> str:
+    """字幕の改行規則で折り、`<br>` を入れる。**画面側に折らせない。**
+
+    `tighten` は「見積もった文字数では収まらなかった」ときに `render()` が
+    段階的に上げる。文字幅の見積もりは font によってずれるので、
+    **見積もりを当てにせず、実測で足りなければ狭める。**
+    """
     from .subtitles import _chunk
 
+    limit = max(limit - tighten, 4)
+    text = text.strip()
     if len(text) <= limit:
         return _esc(text)
-    return "<br>".join(_esc(line) for line in _chunk(text, limit))
+    # 行頭・行末の空白は捨てる。残すと行頭が1字ぶん下がって折り返しに見える。
+    return "<br>".join(_esc(line.strip()) for line in _chunk(text, limit) if line.strip())
 
 
-def _chart_html(visual: dict, portrait: bool = False) -> str:
+def _chart_html(visual: dict, portrait: bool = False, tighten: int = 0) -> str:
     """計算結果を棒グラフにする。
 
     bars は [{"label": ..., "value": 数値, "display": "12万6千円"}] の形。
@@ -338,7 +368,7 @@ def _chart_html(visual: dict, portrait: bool = False) -> str:
         thin = " thin" if track_px * pct / 100.0 < need_px else ""
         rows.append(
             f'<div class="bar-row">'
-            f'<div class="bar-label">{_esc(b["label"])}</div>'
+            f'<div class="bar-label">{_wrap_label(b["label"], portrait, tighten)}</div>'
             f'<div class="bar-track">'
             f'<div class="bar-fill{thin}" style="width:{pct:.1f}%">'
             f'<span class="bar-value" style="font-size:{size}px">'
@@ -348,11 +378,11 @@ def _chart_html(visual: dict, portrait: bool = False) -> str:
     return f'<div class="chart">{"".join(rows)}</div>'
 
 
-def _body_html(visual: dict, portrait: bool = False) -> str:
+def _body_html(visual: dict, portrait: bool = False, tighten: int = 0) -> str:
     kind = (visual.get("kind") or "stat").strip()
 
     if kind == "chart" and visual.get("bars"):
-        return _chart_html(visual, portrait)
+        return _chart_html(visual, portrait, tighten)
 
     if kind == "table" and visual.get("headers") and visual.get("rows"):
         head = "".join(f"<th>{_esc(h)}</th>" for h in visual["headers"][:3])
@@ -367,7 +397,7 @@ def _body_html(visual: dict, portrait: bool = False) -> str:
         markers = ("A", "B", "C", "D") if kind == "compare" else ("1", "2", "3", "4")
         items = "".join(
             f'<li><span class="marker">{markers[i]}</span>'
-            f'<span>{_wrap_item(text, portrait)}</span></li>'
+            f'<span>{_wrap_item(text, portrait, tighten)}</span></li>'
             for i, text in enumerate(visual["items"][:4])
         )
         return f'<ul class="{cls}">{items}</ul>'
@@ -380,16 +410,24 @@ def _body_html(visual: dict, portrait: bool = False) -> str:
         size = _stat_font_px(stat, portrait)
         parts.append(f'<div class="stat" style="font-size:{size}px">{_esc(stat)}</div>')
     if note:
-        parts.append(f'<div class="note">{_esc(note)}</div>')
+        parts.append(f'<div class="note">{_wrap_note(note, portrait, tighten)}</div>')
     return "".join(parts)
 
 
-def build_html(visual: dict, theme: dict | None = None, portrait: bool = False) -> str:
+def build_html(visual: dict, theme: dict | None = None, portrait: bool = False,
+               tighten: int = 0, zoom: float = 1.0) -> str:
+    """`tighten` は横（勝手な折り返し）、`zoom` は縦（枠からの溢れ）を直す。
+
+    **2つは別の向きなので、別のつまみが要る。** `tighten` を上げると行数が
+    増えて縦には**悪化する**。2026-08-08、縦向きの steps が 27px 溢れていた。
+    """
+    head = _wrap_head(visual.get("headline", ""), portrait, tighten)
+    extra = "" if zoom >= 0.999 else f".body {{ zoom: {zoom:.2f}; }}"
     return (
         "<!doctype html><html lang=ja><head><meta charset=utf-8>"
-        f"<style>{_css(theme or THEMES[0], portrait)}</style></head><body>"
-        f'<div class="headline">{_esc(visual.get("headline", ""))}</div>'
-        f'<div class="body">{_body_html(visual, portrait)}</div>'
+        f"<style>{_css(theme or THEMES[0], portrait)}{extra}</style></head><body>"
+        f'<div class="headline">{head}</div>'
+        f'<div class="body">{_body_html(visual, portrait, tighten)}</div>'
         "</body></html>"
     )
 
@@ -419,11 +457,50 @@ def _chromium_path() -> str | None:
     return None
 
 
+_LINE_PROBE_JS = """() => {
+  let bad = 0;
+  for (const s of ['.headline', '.note', '.bar-label', 'li > span:not(.marker)']) {
+    for (const el of document.querySelectorAll(s)) {
+      const r = document.createRange();
+      r.selectNodeContents(el);
+      // **矩形の数は行数ではない。** `<br>` ごとに高さ0の矩形が1つ余分に付く
+      // （2026-08-08 実測: 2行に対し3矩形、3行に対し5矩形）。
+      // 数えるのは矩形ではなく、**矩形の上端が何種類あるか**。
+      const rows = new Set([...r.getClientRects()].map(x => Math.round(x.top))).size;
+      // こちらが `<br>` で指示した行数より多く折れていたら、
+      // ブラウザが**勝手な位置で割っている**（＝語の途中で割れうる）。
+      if (rows > el.innerHTML.split('<br>').length) bad++;
+      if (el.scrollWidth > el.clientWidth + 1) bad++;
+    }
+  }
+  const b = document.body;
+  // 縦に溢れると、下端の行が**そのまま切れる**（スクロールバーは出ない）。
+  if (b.scrollHeight > b.clientHeight + 1) bad++;
+  if (b.scrollWidth > b.clientWidth + 1) bad++;
+  return bad;
+}"""
+
+# 見積もりが外れたときに文字数の上限を何段階まで詰めるか。
+MAX_TIGHTEN = 6
+# 縦に溢れたときの縮小。0.75 より下げると、ショートの実機で読めなくなる。
+ZOOMS = (1.0, 0.94, 0.88, 0.82, 0.76)
+
+
 def render(visuals: list[dict], out_dir: Path, topic_id: str = "",
            theme_index: int | None = None, portrait: bool = False) -> list[Path]:
     """図解を1枚ずつ PNG にする。配色は theme_index があれば順番に回す。
 
     portrait=True でショート向けの縦画面（1080x1920）にする。
+
+    **折り返しが正しいかは、目視でなくブラウザに数えさせる。**
+    2026-08-08、子エージェントの目視は横向きの見出しについて
+    「語中で折れている」と報告したが、実測すると1行も折れていなかった
+    （見出しの中の空白を改行と読み違えていた）。逆に**本当に折れていた
+    縦向きの `.note` は報告に無かった。** 目視は取りこぼすし、無いものを作る。
+
+    収まらなければ**文字数の上限を段階的に詰めて焼き直す**。
+    それでも収まらないときは、一番ましだったものを出す。
+    **止めない**（1本落とすほうが損失が大きい。CLAUDE.md の4）。
     """
     from playwright.sync_api import sync_playwright
 
@@ -445,10 +522,30 @@ def render(visuals: list[dict], out_dir: Path, topic_id: str = "",
         )
         for i, visual in enumerate(visuals):
             path = out_dir / f"slide_{i:03d}.png"
-            page.set_content(build_html(visual, theme, portrait), wait_until="load")
+            best, done = (10**9, 0, 1.0), False
+            for zoom in ZOOMS:
+                for tighten in range(MAX_TIGHTEN + 1):
+                    page.set_content(build_html(visual, theme, portrait, tighten, zoom),
+                                     wait_until="load")
+                    bad = page.evaluate(_LINE_PROBE_JS)
+                    if bad < best[0]:
+                        best = (bad, tighten, zoom)
+                    if bad == 0:
+                        done = True
+                        break
+                if done:
+                    break
+            if not done:
+                # 詰めきっても収まらなかった。一番ましだったところへ戻して焼く。
+                page.set_content(
+                    build_html(visual, theme, portrait, best[1], best[2]), wait_until="load")
+                print(f"[visuals] [!] {i}枚目: 収まらない箇所が {best[0]} 残った"
+                      f"（詰め {best[1]} 段・縮小 {best[2]}）。"
+                      f"{visual.get('headline', '')!r}")
             page.screenshot(path=str(path))
             paths.append(path)
-            print(f"[visuals] {i + 1}/{len(visuals)} {visual.get('kind', 'stat')}")
+            adj = "" if (best[1], best[2]) == (0, 1.0) else f"  詰め{best[1]}段 縮小{best[2]}"
+            print(f"[visuals] {i + 1}/{len(visuals)} {visual.get('kind', 'stat')}{adj}")
         browser.close()
 
     return paths

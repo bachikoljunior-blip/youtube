@@ -198,14 +198,23 @@ def main(argv: list[str] | None = None) -> int:
         )
 
     work = config.BUILD_DIR / topic["id"]
+
+    # **作業ディレクトリを消す前に台本を読む。**
+    # 2026-08-08、`--script build/iryohi-kojo/script.json` を渡したら、
+    # `rmtree` が**その台本ごと消してから**読みに行って落ちた。
+    # 前回の生成物を作り直すのは普通の使い方で、置き場所も build/ の中。
+    # **自分の入力を消す作りになっていた。** 順序を入れ替えれば起きない。
+    raw = Path(args.script).read_text(encoding="utf-8") if args.script else None
+
     if work.exists():
         shutil.rmtree(work)
     work.mkdir(parents=True, exist_ok=True)
 
     # 1. 台本。セッションが自分で書いたものがあればそれを使い、無ければ生成する。
-    if args.script:
-        script = VideoScript.model_validate_json(Path(args.script).read_text(encoding="utf-8"))
+    if raw is not None:
+        script = VideoScript.model_validate_json(raw)
         print(f"[pipeline] 台本を読み込みました: {args.script}")
+        (work / "script.json").write_text(raw, encoding="utf-8")
     else:
         script = generate(channel, topic)
     print(f"[pipeline] タイトル: {script.title}")
