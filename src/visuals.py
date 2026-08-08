@@ -153,9 +153,13 @@ body::before { width: 8px; }
 li { font-size: 34px; gap: 16px; }
 li .marker { min-width: 44px; height: 44px; font-size: 24px; border-radius: 10px; }
 ol, ul { gap: 16px; }
-table { font-size: 28px; }
-th { font-size: 22px; }
-th, td { padding: 12px 12px; }
+/* 表のセルは縦向きで狭い（実効幅392px を2〜3列で割る）。
+   2026-08-08、「160万／円」「10万／円」と**単位1文字が次行に落ちた。**
+   文字を詰め、折り返しそのものを止める。溢れるより1行に収めるほうがまし。 */
+table { font-size: 22px; }
+th { font-size: 19px; }
+th, td { padding: 10px 8px; white-space: nowrap; }
+td:first-child, th:first-child { white-space: normal; }
 .bar-label { flex: 0 0 168px; font-size: 22px; line-height: 1.15; }
 .bar-track { height: 44px; }
 .bar-value { font-size: 24px; }
