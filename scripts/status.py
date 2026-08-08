@@ -113,139 +113,70 @@ def print_hypotheses() -> None:
 
 
 
-def _print_real_usage() -> bool:
-    """statusLine が保存した実測の使用量を出す。出せたら True。
+# 使用量の正本。**実メーターを読んでいる唯一の場所**（2026-08-08）。
+# チェックアウトが無ければ GitHub 経由で `state/claude-usage.json` を読む。
+USAGE_REPO = Path("/workspace/-chatgpt-usage-monitorprivate")
 
-    **これが本物。** 下の換算は、これが取れないときの予備でしかない。
-    セッションが動いていないと更新されないので、古い値なら古いと言う。
+
+def _print_real_usage() -> bool:
+    """**本物の使用量**を出す。出せたら True。
+
+    `-chatgpt-usage-monitorPrivate` が Anthropic の OAuth usage を実際に叩いて
+    `state/claude-usage.json` に保存している。**これが正本。**
+
+    `scripts/usage.py` の換算は当てにならない。2026-08-08 に突き合わせたら、
+    換算が「今週0.8%」と出しているとき**実際は26%使っていた**（30倍以上の過小評価）。
+    オーナーが「なんの当てにもならない」と明言したとおりだった。
     """
     import json
 
-    path = Path(__file__).resolve().parent.parent / "data" / "rate_limits.json"
+    path = USAGE_REPO / "state" / "claude-usage.json"
     if not path.exists():
         return False
     try:
-        rec = json.loads(path.read_text(encoding="utf-8"))
-        seen = datetime.fromisoformat(rec["at"].replace("Z", "+00:00")).astimezone(JST)
-        limits = rec["rate_limits"]
-    except Exception:
+        d = json.loads(path.read_text(encoding="utf-8"))
+        fetched = datetime.fromisoformat(d["fetched_at"].replace("Z", "+00:00")).astimezone(JST)
+        windows = d["quota_windows"]
+    except Exception as exc:
+        print(f"  使用量の正本が読めません: {str(exc)[:60]}")
         return False
 
-    age = (datetime.now(JST) - seen).total_seconds() / 3600
-    shown = False
-    print(f"  **実測（statusLine 経由・{seen:%m/%d %H:%M} 時点"
-          f"{'／%.0f時間前' % age if age >= 1 else ''}）**")
-    for key, label in (("seven_day", "週間"), ("five_hour", "5時間")):
-        w = limits.get(key) or {}
-        pct = w.get("used_percentage")
-        if pct is None:
-            continue
-        shown = True
-        left = ""
-        if w.get("resets_at"):
-            hrs = (datetime.fromtimestamp(w["resets_at"], JST) - datetime.now(JST)).total_seconds() / 3600
-            left = f"／リセットまで {hrs:.0f} 時間" if hrs > 0 else "／リセット済み"
-        print(f"    {label}: **{pct:.1f}% 使用**{left}")
-    if age > 6:
-        print("    [!] 6時間以上前の値。**セッションが動いていない間は更新されない。**")
-    return shown
+    age = (datetime.now(JST) - fetched).total_seconds() / 3600
+    print(f"  **実測（{fetched:%m/%d %H:%M} 時点"
+          f"{'／%.0f時間前' % age if age >= 1 else '／さきほど'}）**")
+    for w in windows:
+        hrs = (datetime.fromisoformat(w["resets_at_iso"].replace("Z", "+00:00")).astimezone(JST)
+               - datetime.now(JST)).total_seconds() / 3600
+        print(f"    {w['window_name']}: **{w['used_percent']}% 使用"
+              f"（残り {w['remaining_percent']}%）**"
+              f"／リセットまで {hrs:.0f} 時間")
+    gov = d.get("governing_window") or {}
+    if gov.get("remaining_percent") is not None:
+        print(f"  **いま効いている枠: {gov.get('window_name')} "
+              f"／残り {gov['remaining_percent']}%**")
+    if age > 3:
+        print("    [!] 3時間以上前の値。`node show-usage.mjs` で取り直すこと。")
+    return True
 
 
 def print_budget() -> None:
-    """トークン予算を出す。**単位は週間使用量の%。**
+    """使用量を出す。**正本は実メーターだけ。**
 
-    土曜07:00 JST 区切り。定常は30%、週ごとに絞ることがある。
+    2026-08-08 に恒久指示が変わり、**予算制限は無くなった**（A15）。
+    「どちらの使用量もチャットgptsparkの使用量も全てあなたが使っていい」。
+    だから**残量は「使い切りそうか」を見るためだけ**に読む。絞る理由にはしない。
 
-    **API換算のドルで見積もらないこと。** 2026-08-05 にセッション記録から
-    トークン数を集計して「$258 使った」と報告したが、実際のサブスク消費は
-    週間使用量の1〜2%だった。**計算は合っていたが、比べる相手が違った。**
-    数字を出す前に「これは何と比較できる量か」を問うこと。
-
-    較正: 161応答の対話セッションで1〜2% → 1応答あたり約0.01%。
-    **律速は頻度ではなく、1回が長引くこと。** 通常の自動起動は10〜20応答で収まる。
+    **`scripts/usage.py` の換算はここから外した。** 実メーターと突き合わせたら
+    「今週0.8%」と出しているとき**実際は26%**で、30倍以上ずれていた。
+    並べて出すと、どちらを信じるか迷う分だけ判断が鈍る。**正本だけ出す。**
     """
-    now = datetime.now(JST)
-    end = now.replace(hour=7, minute=0, second=0, microsecond=0)
-    while end.weekday() != 5 or end <= now:      # 5 = 土曜
-        end += timedelta(days=1)
-    hours = (end - now).total_seconds() / 3600
-    wakes = max(1, round(hours / 6))
-
-    sys.path.insert(0, str(Path(__file__).resolve().parent))
-    from usage import summary, week_start
-
-    ppr = _pct_per_reply()      # 1応答あたりの%。実測から出す
-
-    since, pct = ALLOWANCE
-    start = datetime.fromisoformat(since)
-    active = start >= week_start(now)        # 週をまたいだら失効し、定常に戻る
-    budget = pct if active else WEEKLY_PCT
-
-    print("\n=== トークン予算（単位は週間使用量の%）===")
-    print(f"  今週のリセット: {end.strftime('%m/%d %H:%M JST')}（あと {hours:.0f} 時間）")
-
-    # **実測が取れていればそれを最優先で出す。**（2026-08-08）
-    # statusLine フックが `/usage` と同じ値を横取りして保存している。
-    # 下の換算（トークン数→%）は推測混じりで幅が1.7倍あるので、
-    # **本物があるならそちらを見ること。**
-    if _print_real_usage():
-        print("  ↓ 以下はトークン数からの換算（推測混じり）。上と食い違ったら**上を信じる**")
-    else:
-        print("  （実測は取れません。**statusLine はヘッドレスでは呼ばれない**ことを")
-        print("    2026-08-08 に別セッションを立てて確認済み。下の換算を使う）")
-
-    # **実測。** これまでオーナーに教えてもらうしかなかったが、セッション記録から数えられる。
-    try:
-        if active:
-            s = summary(start)
-            left = budget - s["pct"]
-            print(f"  **{start:%m/%d %H:%M JST} から {pct}%** の割り当て（定常は {WEEKLY_PCT}%）")
-            print(f"  実測: それ以降 {s['replies']:,}応答 / {s['tokens']/1e6:.0f}M トークン"
-                  f" → **{s['pct']:.2f}%**（楽観側 {s['pct_optimistic']:.2f}%）")
-            print(f"  残り **{left:.2f}%**（≒{max(0, left) / ppr:.0f}応答）")
-            if left <= 0:
-                print("  [!] 割り当てを使い切った可能性がある。**いま切ること。**")
-            w = summary()
-            print(f"  参考: 今週の累計は {w['pct']:.1f}%（割り当てとは別の量。混ぜないこと）")
-        else:
-            print(f"  定常 {WEEKLY_PCT}%")
-            s = summary()
-            print(f"  実測: 今週これまで {s['replies']:,}応答 / {s['tokens']/1e6:.0f}M トークン"
-                  f" → **{s['pct']:.1f}%**（楽観側 {s['pct_optimistic']:.1f}%）")
-            if s["pct"] > budget:
-                print(f"  [!] 割り当て {budget}% を超えている可能性がある。**この回は短く切ること。**")
-    except Exception as exc:
-        print(f"  実測できませんでした: {str(exc)[:70]}")
-
-    # **頻度の判断は「週の枠」に対して行う。割り当てに対してではない。**
-    # 2026-08-06、20:48起点の割り当て（残り0.14%）を週の枠と混ぜて、
-    # 「1回10応答を下回るから日次へ」と出していた。**別の量を混ぜていた。**
-    #   割り当て … この回をいま切るかどうか
-    #   週の枠   … 頻度を落とすかどうか
-    #
-    # そして**較正の幅に埋もれる判断は、しないほうがまし。**
-    # 換算のずれだけで日次へ降格し同日中に戻したことがある。往復が無駄で、
-    # その間ずっと判断も鈍る。オーナーの実測自体に幅がある（1% は 11M〜19M）ので、
-    # **安全側と楽観側の両方で同じ結論が出たときだけ動かす。**
-    try:
-        w2 = summary()
-        for label, used in (("安全側", w2["pct"]), ("楽観側", w2["pct_optimistic"])):
-            per = (WEEKLY_PCT - used) / wakes
-            print(f"  週の枠 {WEEKLY_PCT}% 基準（{label}）: 残り {WEEKLY_PCT - used:.1f}%"
-                  f" ÷ 残り{wakes}回 = 1回 {per:.2f}%（≒{max(0, per) / ppr:.0f}応答）")
-        tight = [(WEEKLY_PCT - u) / wakes / ppr < 10
-                 for u in (w2["pct"], w2["pct_optimistic"])]
-        if all(tight):
-            print("  [!] **安全側でも楽観側でも1回10応答を下回る。** 日次（`0 23 * * *`）へ落とすこと")
-            print("      落とすときは戻す仕組みも一緒に用意する（docs/TRIGGER.md）")
-        elif any(tight):
-            print("  （安全側と楽観側で結論が割れている＝**較正の幅に埋もれている。動かさないこと**）")
-    except Exception as exc:
-        print(f"  頻度の判断ができませんでした: {str(exc)[:60]}")
-    print("  **高いのは出力。** 消費の大半は「どれだけ書いたか」で決まる（2026-08-06 実測）。")
-    print("  文脈が積もるとキャッシュ読みは膨らむが、そこは安い（重み0.1）。")
-    print("  効く節約: 長い説明を書かない／同じ確認を繰り返さない／画像は子エージェントに任せる")
-    print("  **投稿は予約済みなら起きなくても公開される。** 無理に起きないこと")
+    print("\n=== 使用量（実メーター）===")
+    if not _print_real_usage():
+        return
+    print("  **全部使ってよい**（恒久指示 A15）。残すこと自体に価値は無い。")
+    print("  絞る理由にしないこと。使い切りそうなときだけ、短く切る。")
+    print("  取り直すには:")
+    print(f"    node {USAGE_REPO}/scripts/show-usage.mjs")
 
 
 def main(days: int = 7) -> int:
