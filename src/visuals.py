@@ -217,6 +217,13 @@ def _em_width(text: str) -> float:
 LIST_CHARS_PORTRAIT = 9
 LIST_CHARS = 22
 
+# 見出し1行あたりの文字数。実効幅 ÷ font-size。
+# 縦向き: 392 / 40px ≒ 9.8 → 余裕を見て 9。横向き: 1124 / 46px ≒ 24
+# **見出しも折り返す。** 2026-08-08、「5年で戻／る額」「やってい／ること」と
+# 語の途中で折れた。文字を置く場所を数えたとき**見出しを数え落としていた。**
+HEAD_CHARS_PORTRAIT = 9
+HEAD_CHARS = 24
+
 
 def _wrap_item(text: str, portrait: bool) -> str:
     """箇条書きの1項目を、**語の途中で折らずに**改行する。
@@ -233,6 +240,24 @@ def _wrap_item(text: str, portrait: bool) -> str:
     from .subtitles import _chunk
 
     limit = LIST_CHARS_PORTRAIT if portrait else LIST_CHARS
+    return _wrap(text, limit)
+
+
+def _wrap_head(text: str, portrait: bool) -> str:
+    """見出しを、語の途中で折らずに改行する。
+
+    **箇条書きと同じ問題が見出しにもあった**（2026-08-08）。
+    「総所得300万 5年で戻る額」は14文字で、9.8文字の枠に入らない。
+    直前に「文字を置く場所は stat・table・steps・chart の4つ」と数えたが、
+    **見出しを数え落としていた。** 数え漏らしたぶんだけ再発する。
+    """
+    return _wrap(text, HEAD_CHARS_PORTRAIT if portrait else HEAD_CHARS)
+
+
+def _wrap(text: str, limit: int) -> str:
+    """字幕の改行規則で折り、`<br>` を入れる。**画面側に折らせない。**"""
+    from .subtitles import _chunk
+
     if len(text) <= limit:
         return _esc(text)
     return "<br>".join(_esc(line) for line in _chunk(text, limit))

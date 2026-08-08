@@ -25,7 +25,8 @@ MAX_LINE_CHARS_PORTRAIT = 13
 # 読み上げ用の narration では漢数字が普通に出る（TTS が読みやすいため）。
 # 元号（_ERA）・小数点に続いて3回目。**数字のかたまりは数字だけでできていない。**
 # これ以下の長さの行は、隣に寄せる（単独で映すと短すぎる）。
-MIN_LINE_CHARS = 4
+# **4 だと寄せすぎる。** 「所得税は」(4文字) を寄せて枠を超えた（2026-08-08）。
+MIN_LINE_CHARS = 3
 
 _NUM_TOKEN = set("0123456789．."
                  "〇一二三四五六七八九十百千万億兆"
@@ -205,10 +206,14 @@ def _chunk(narration: str, limit: int = MAX_LINE_CHARS) -> list[str]:
         i = 0
         while i < len(lines):
             cur = lines[i]
-            if len(cur) <= MIN_LINE_CHARS and packed and len(packed[-1]) + len(cur) <= limit + 2:
+            # **寄せた結果が limit を超えてはいけない。** 以前 `limit + 2` まで
+            # 許していたら、「所得税は」(4) ＋「復興特別所得税」(7) = 11文字が
+            # 9文字の枠に入らず、**画面側でさらに折られた**（2026-08-08）。
+            # 字幕は溢れないが、同じ関数を使う箇条書き・見出しでは溢れる。
+            if len(cur) <= MIN_LINE_CHARS and packed and len(packed[-1]) + len(cur) <= limit:
                 packed[-1] += cur
             elif (len(cur) <= MIN_LINE_CHARS and i + 1 < len(lines)
-                    and len(cur) + len(lines[i + 1]) <= limit + 2):
+                    and len(cur) + len(lines[i + 1]) <= limit):
                 lines[i + 1] = cur + lines[i + 1]
             else:
                 packed.append(cur)
