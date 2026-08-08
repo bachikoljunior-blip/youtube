@@ -30,7 +30,10 @@ MIN_LINE_CHARS = 3
 
 _NUM_TOKEN = set("0123456789．."
                  "〇一二三四五六七八九十百千万億兆"
-                 "円日年月時分秒人回倍％%割点歳")
+                 "円日年月時分秒人回倍％%割点歳"
+                 # 条文の番号。「労働基準法37条5」／「項・施行規則21条」と
+                 # 割れた（2026-08-08）。**これも数字のかたまりの一部。**
+                 "条項号")
 
 HEADER = """[Script Info]
 ScriptType: v4.00+
@@ -127,6 +130,24 @@ def _best_cut(piece: str, limit: int, strict: bool = False) -> int:
         # 上の規則に引っかからない。**数字のかたまりは数字だけでできていない。**
         if piece[max(0, cut - 2):cut] in _ERA and piece[cut].isdigit():
             return False
+        # **漢字が続いているところでも割らない。**
+        # 2026-08-08、「総所得300万円・医療」／「費が毎年30万円の場合」と
+        # **「医療費」が「医療」＋「費」に割れた。** 規則3は「かなの連続の
+        # 途中で割らない」だけを見ていて、**漢字の連続は素通りしていた。**
+        # 日本語の複合語は漢字が続くところで作られる。
+        # かな側だけ塞いで漢字側を忘れる形は、これで4回目。
+        #
+        # **ただし数字の終わりは別。** 「千円／戻ります」の「円｜戻」は
+        # 語の境目そのもので、ここを塞ぐと逃げ場が無くなって
+        # 「戻／ります」（送り仮名の途中）に落ちる。**塞ぎすぎると悪化する。**
+        #
+        # 見るのは「単位の字か」ではなく「**その手前も数字か**」。
+        # 「年」を単位というだけで通すと、「全額戻る年／末残高」のように
+        # 数字と関係ない「年末」まで割れた。手前が数字のときだけ通す。
+        a, b = piece[cut - 1], piece[cut]
+        num_end = a in _NUM_TOKEN and cut >= 2 and piece[cut - 2] in _NUM_TOKEN
+        if _is_kanji(a) and _is_kanji(b) and not num_end and b not in _NUM_TOKEN:
+            return False
         return True
 
     # 1. 句読点の直後
@@ -142,9 +163,20 @@ def _best_cut(piece: str, limit: int, strict: bool = False) -> int:
     #    「60歳0か月か」／「ら受け取ると」、「自分の場合はねんき」／「ん定期便」
     #    のように、行頭に「ら」「ん」が来ると読めない（2026-08-07）。
     #    規則2は「かな→漢字」しか見ていないので、かな同士の境目が素通りしていた。
-    for cut in range(limit, floor - 1, -1):
-        if not (_is_kana(piece[cut - 1]) and _is_kana(piece[cut])) and ok(cut):
-            return cut
+    #
+    #    **漢字→かなも、できれば避ける。** 送り仮名（「戻／ります」）か
+    #    助詞（「時給／がいくら」）のどちらかで、どちらも行頭が読みにくい。
+    #    ただし**避けられないことがある**ので、まず避けて探し、
+    #    見つからなければ許す。**禁止にすると、もっと悪い所へ落ちる。**
+    for avoid_okurigana in (True, False):
+        for cut in range(limit, floor - 1, -1):
+            a, b = piece[cut - 1], piece[cut]
+            if _is_kana(a) and _is_kana(b):
+                continue
+            if avoid_okurigana and _is_kanji(a) and _is_kana(b):
+                continue
+            if ok(cut):
+                return cut
     # 4. どの規則にも当てはまらない。**strict なら「見つからなかった」と返す。**
     #    呼び出し側が limit いっぱいで探し直せるようにするため。
     #    2026-08-07、真ん中寄りで割ろうとして数字のかたまりに入り、
@@ -189,6 +221,12 @@ def _chunk(narration: str, limit: int = MAX_LINE_CHARS) -> list[str]:
                 if hi < limit:
                     # まず真ん中寄りで、良い切れ目だけを探す（端数の孤立を避ける）
                     cut = _best_cut(piece, max(2, hi), strict=True)
+                    # **端数が頭に来ることもある。** 「時給」／「がいくら変わるか」と
+                    # 2文字の行が出た（2026-08-08）。真ん中寄りの探索は
+                    # **尻の孤立しか見ていなかった。** 頭が短すぎたら、
+                    # 妥協せず limit いっぱいで探し直す。
+                    if cut and cut < MIN_LINE_CHARS:
+                        cut = 0
                 if not cut:
                     cut = _best_cut(piece, limit)
                 lines.append(piece[:cut])
