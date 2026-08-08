@@ -283,7 +283,10 @@ def print_retention(top: int = 4) -> None:
                 i = min(range(len(curve)), key=lambda k: abs(curve[k][0] - pos))
                 return curve[i][1], curve[i][2]
             (w1, r1), (w25, r25), (w50, r50) = at(0.05), at(0.25), at(0.50)
-            print(f"  {title:<22} {r['views']:>5}再生  平均{avg:5.1f}%"
+            ev = r.get("engagedViews", 0)
+            rate = ev / r["views"] * 100 if r.get("views") else 0
+            print(f"  {title:<22} {r['views']:>5}再生  "
+                  f"**engaged {rate:4.1f}%**  平均{avg:5.1f}%"
                   f"  共有{r.get('shares',0)} 高評価{r.get('likes',0)}"
                   f" コメント{r.get('comments',0)}")
             print(f"      5%地点 維持{w1:.2f} 相対{r1:.2f}"
@@ -295,8 +298,11 @@ def print_retention(top: int = 4) -> None:
           "狙いから外れた視聴者に当たる）。")
     print("  実測 8/9: 537再生で相対0.50、1506再生で相対0.25。"
           "**因果を決めつけないこと。**")
-    print("  **共有とコメントはショートの配信に効く信号。** 2026-08-09 実測は")
-    print("  4,383再生に対し共有1・コメント0。**動画が何も問いかけていない。**")
+    print("  **engaged はすぐスワイプされなかった再生の割合。**")
+    print("  平均視聴率は配信が広がると下がる（交絡）が、**engaged は再生数と同じ向きに動く。**")
+    print("  実測 8/9: 43.9%→1263再生、11.8%→313再生。**ここが配信の駆動輪。**")
+    print("  共有とコメントも配信に効くが、4,383再生に対し共有1・コメント0。")
+    print("  **動画が視聴者に何も問いかけていない。**")
 
 
 def main(days: int = 7) -> int:
