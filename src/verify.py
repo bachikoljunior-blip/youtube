@@ -115,6 +115,10 @@ def _check_subtitles(work: Path) -> list[str]:
 # 長尺には chart 3枚の下限があるが、ショートには枚数の規定が無く素通りしていた。
 # 「同じ絵が続く」ことがポリシー上の反復判定に当たるのは、尺に関係なく同じ。
 MAX_SECONDS_PER_SLIDE = 12.0
+# ショート全体の上限（秒）。**1枚あたりの上限だけでは全体を縛れない。**
+# 2026-08-09、12枚に分かれた2分0秒のショートが「合格」で通った。
+# 1枚ずつは12秒以内だったので、どの検査にも引っかからなかった。
+MAX_SHORT_SECONDS = 70.0
 
 
 def _check_short_pace(script: dict | None, duration: float) -> list[str]:
@@ -131,14 +135,20 @@ def _check_short_pace(script: dict | None, duration: float) -> list[str]:
     segments = script.get("segments") or []
     if not segments:
         return []
+    problems = []
+    if duration > MAX_SHORT_SECONDS:
+        problems.append(
+            f"ショートが {duration:.0f}秒 で長すぎる"
+            f"（上限 {MAX_SHORT_SECONDS:.0f}秒）。**1本＝1つの計算結果に絞ること**"
+        )
     per = duration / len(segments)
     if per > MAX_SECONDS_PER_SLIDE:
-        return [
+        return problems + [
             f"1枚あたり {per:.0f}秒 で絵が止まりすぎている"
             f"（{duration:.0f}秒 / {len(segments)}枚、上限 {MAX_SECONDS_PER_SLIDE:.0f}秒）。"
             "セグメントを増やして画を動かすこと"
         ]
-    return []
+    return problems
 
 
 
