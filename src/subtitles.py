@@ -154,6 +154,12 @@ def _best_cut(piece: str, limit: int, strict: bool = False) -> int:
         # 「日｜本」のような、数字と関係ない組み合わせまで巻き込む。
         if piece[cut - 1] in _NUM_TOKEN and piece[cut] in _COUNTERS:
             return False
+        # **単位はカタカナでも書かれる。** 「社会保険料率15」／「パーセントの仮定」と
+        # 割れた（2026-08-09）。助数詞を漢字（_COUNTERS）だけで塞いでいて、
+        # パーセント・ポイント・メートルのようなカタカナの単位が抜けていた。
+        # **数字の直後のカタカナは、単位とみなして切らない。**
+        if piece[cut - 1] in _NUM_TOKEN and _is_katakana(piece[cut]):
+            return False
         # 元号と年数のあいだでも割らない。「日額は令和」／「8年8月1日改定」と
         # 割れて読めなかった（2026-08-05）。元号は _NUM_TOKEN に入っていないので
         # 上の規則に引っかからない。**数字のかたまりは数字だけでできていない。**
@@ -300,6 +306,11 @@ def _chunk(narration: str, limit: int = MAX_LINE_CHARS) -> list[str]:
     # 行頭に句読点を残さない。前の行に戻す。
     # 「75歳開始なら1.84倍で」「、年331万2千円。」のように、
     # 読点が次の行の先頭に来ると読みにくい。
+    #
+    # **ここは limit を見ない。意図的。** 句読点1文字だけの行が残るほうが、
+    # 1文字ぶん溢れるより悪い。図解側は `render()` が文字数を詰めて焼き直すので
+    # 溢れは吸収される。**下の「短すぎる余りを戻す」処理とは判断が逆**だが、
+    # あちらは最大2文字ぶん溢れうるので線を引いた。
     fixed: list[str] = []
     for line in lines:
         # 空文字は "、。！？" の部分文字列とみなされるので、必ず長さを見ること
@@ -312,9 +323,15 @@ def _chunk(narration: str, limit: int = MAX_LINE_CHARS) -> list[str]:
 
     # 「。」だけの行のような、短すぎる余りは前の行に戻す。
     # 縦向きは1行が13字と短いので、句点だけが1行に取り残されやすい。
+    #
+    # **戻した結果が limit を超えてはいけない。** 2026-08-09、ここだけ
+    # 長さを見ておらず、`扶養1人ぶんで下がる`(10) ＋ `額`(1) を繋いで
+    # 11文字にしていた（limit 10）。`15パーセントの`(8) ＋ `仮定`(2) も同じ。
+    # **上の「短すぎる行を寄せる」処理には同じ検査があるのに、ここだけ無かった。**
+    # 片方だけ直す形。溢れるくらいなら、短い行のまま残すほうがまし。
     merged: list[str] = []
     for line in lines:
-        if merged and len(line) <= 2:
+        if merged and len(line) <= 2 and len(merged[-1]) + len(line) <= limit:
             merged[-1] += line
         else:
             merged.append(line)
