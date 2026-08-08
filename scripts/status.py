@@ -61,17 +61,39 @@ def print_hypotheses() -> None:
         return
 
     today = datetime.now(JST).date()
-    print("\n=== まだ検証していない前提 ===")
+
+    # **判定済みのものを「まだ検証していない」に混ぜない。**
+    # `verdict` が書かれた時点でその問いは終わっている。混ぜると、
+    # 期限切れの表示が毎回出続けて**本当に期限が来たものが埋もれる。**
+    open_, judged = [], []
     for h in items:
-        due = datetime.strptime(str(h["deadline"]), "%Y-%m-%d").date()
-        left = (due - today).days
-        mark = "[!] 期限切れ" if left < 0 else ("[!] 今日が期限" if left == 0 else f"あと{left}日")
-        print(f"  {mark}  {h['claim']}")
-        print(f"        外れとみなす条件: {h['falsified_if']}")
+        (judged if h.get("verdict") else open_).append(h)
+
+    print("\n=== まだ検証していない前提 ===")
+    if not open_:
+        print("  （ありません）")
+    for h in open_:
+        try:
+            due = datetime.strptime(str(h["deadline"]), "%Y-%m-%d").date()
+            left = (due - today).days
+            mark = ("[!] 期限切れ" if left < 0
+                    else "[!] 今日が期限" if left == 0 else f"あと{left}日")
+        except (KeyError, ValueError):
+            left, mark = 0, "[!] 期限が読めない"
+        print(f"  {mark}  {h.get('claim', '(claim なし)')}")
+        # **鍵が欠けても落とさない。** 2026-08-08、判定を書いたときに
+        # `falsified_if` を消してしまい、status.py 全体が
+        # KeyError で止まった。**状態を見る道具が、状態のせいで死んではいけない。**
+        cond = h.get("falsified_if")
+        print(f"        外れとみなす条件: {cond}" if cond
+              else "        [!] 外れとみなす条件が書かれていません。**書くこと。**")
         if left <= 0:
             print("        → いま判定すること。外れていたら次を順に試す:")
             for nxt in h.get("next_if_false", []):
                 print(f"           - {nxt}")
+
+    if judged:
+        print(f"\n  判定済み {len(judged)}件（config/hypotheses.yaml の verdict）")
 
 
 
