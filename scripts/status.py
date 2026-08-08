@@ -187,6 +187,42 @@ def print_budget() -> None:
     print("  絞る理由にしないこと。使い切りそうなときだけ、短く切る。")
 
 
+def print_means() -> None:
+    """**手段の台帳（docs/MEANS.md）の未着手を毎回出す。**
+
+    2026-08-09、オーナーに「あらゆる手段を使ってが効いていない」と指摘された。
+    確かめると `config/hypotheses.yaml` の9件が**全部「ショートの改善」**で、
+    **乗り物そのものを問うものが1つも無かった。**
+
+    つまりループが「いまの機械を磨く」ことしかできない形になっていた。
+    A13 は文書にあっても、**実行に移す仕組みが無ければ効かない。**
+    だからここで毎回、未着手の手段を目に入れる。
+    """
+    path = Path(__file__).resolve().parent.parent / "docs" / "MEANS.md"
+    if not path.exists():
+        return
+    text = path.read_text(encoding="utf-8")
+    # 「### M1. 名前」と、その節の「- **状態**: ...」を拾う
+    import re
+
+    entries = re.findall(r"^### (M\d+)\. (.+?)$\n(.*?)(?=^### |\Z)",
+                         text, re.M | re.S)
+    untried = []
+    for code, name, body in entries:
+        m = re.search(r"\*\*状態\*\*: (.+)", body)
+        state = m.group(1).strip() if m else "?"
+        if "未着手" in state or "未検討" in state:
+            untried.append((code, name, state))
+    print(f"\n=== 手段の台帳（docs/MEANS.md）===")
+    print(f"  未着手 {len(untried)}件 / 全{len(entries)}件")
+    for code, name, state in untried:
+        mark = " ←★" if "見落とし" in state else ""
+        print(f"    {code} {name}{mark}")
+    if untried:
+        print("  **目標の数字が2週間動いていないなら、いまの機械の改善ではなく")
+        print("  ここから1つ選ぶこと。** それが A13 を実行に移す唯一の経路です。")
+
+
 def print_retention(top: int = 4) -> None:
     """**維持率を毎回出す。** 2026-08-09 まで一度も見ていなかった。
 
@@ -352,6 +388,7 @@ def main(days: int = 7) -> int:
         print(f"  読めませんでした: {str(exc)[:120]}")
 
     print_retention()
+    print_means()
     print_hypotheses()
     print_budget()
 
