@@ -257,7 +257,14 @@ def _chunk(narration: str, limit: int = MAX_LINE_CHARS) -> list[str]:
                     # 2文字の行が出た（2026-08-08）。真ん中寄りの探索は
                     # **尻の孤立しか見ていなかった。** 頭が短すぎたら、
                     # 妥協せず limit いっぱいで探し直す。
-                    if cut and cut < MIN_LINE_CHARS:
+                    #
+                    # **切れ目の質でも見る。** 2026-08-09、「扶養1人」／「ぶんで下がる額」と
+                    # 割れた。真ん中寄り（limit 6）では漢字→かなしか無く、
+                    # そこで妥協していた。**limit 9 まで広げれば「扶養1人ぶんで」／
+                    # 「下がる額」という助詞区切りがある。**
+                    # 端数の孤立を避けるための探索が、**もっと悪い切れ目を選んでいた。**
+                    if cut and (cut < MIN_LINE_CHARS
+                                or (_is_kanji(piece[cut - 1]) and _is_kana(piece[cut]))):
                         cut = 0
                 if not cut:
                     cut = _best_cut(piece, limit)
