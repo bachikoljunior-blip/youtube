@@ -187,6 +187,49 @@ def print_budget() -> None:
     print("  絞る理由にしないこと。使い切りそうなときだけ、短く切る。")
 
 
+def print_retention(top: int = 4) -> None:
+    """**維持率を毎回出す。** 2026-08-09 まで一度も見ていなかった。
+
+    `averageViewPercentage` は `fetch_report` が**ずっと取っていたのに、
+    どこにも表示していなかった。** そのため「平均視聴率51〜102%で最後まで
+    見られている＝動画の問題ではない」という **8/7 時点の数字にもとづく判断を、
+    何日も持ち越していた。** 実際にはいまの主力は約30%まで落ちている。
+
+    **取っているのに見ていない数字は、無いのと同じどころか害になる。**
+    古い結論が更新されないまま生き残るため。だから毎回出す。
+    """
+    print("\n=== 視聴の維持（相対 0.5 が同種の動画の中央値）===")
+    try:
+        from src.analytics import fetch_report, fetch_retention
+
+        rows = [r for r in fetch_report(28) if r.get("views", 0) >= 100][:top]
+        if not rows:
+            print("  100再生を超えた動画がまだありません")
+            return
+        for r in rows:
+            curve = fetch_retention(r["video"])
+            title = r["title"][:22]
+            avg = r.get("averageViewPercentage", 0)
+            if not curve:
+                print(f"  {title:<22} {r['views']:>5}再生  平均{avg:5.1f}%")
+                continue
+            # 冒頭・4分の1・半分の3点で十分。全部出すと読まない。
+            def at(pos: float) -> tuple[float, float]:
+                i = min(range(len(curve)), key=lambda k: abs(curve[k][0] - pos))
+                return curve[i][1], curve[i][2]
+            (w1, r1), (w25, r25), (w50, r50) = at(0.05), at(0.25), at(0.50)
+            print(f"  {title:<22} {r['views']:>5}再生  平均{avg:5.1f}%")
+            print(f"      5%地点 維持{w1:.2f} 相対{r1:.2f}"
+                  f" │ 25%地点 維持{w25:.2f} 相対{r25:.2f}"
+                  f" │ 50%地点 維持{w50:.2f} 相対{r50:.2f}")
+    except Exception as exc:
+        print(f"  読めませんでした: {str(exc)[:120]}")
+    print("  **維持率と再生数は逆相関することがある**（配信が広がるほど"
+          "狙いから外れた視聴者に当たる）。")
+    print("  実測 8/9: 537再生で相対0.50、1506再生で相対0.25。"
+          "**因果を決めつけないこと。**")
+
+
 def main(days: int = 7) -> int:
     youtube = _service()
     channel = youtube.channels().list(part="snippet,contentDetails,statistics", mine=True).execute()["items"][0]
@@ -308,6 +351,7 @@ def main(days: int = 7) -> int:
     except Exception as exc:
         print(f"  読めませんでした: {str(exc)[:120]}")
 
+    print_retention()
     print_hypotheses()
     print_budget()
 

@@ -216,3 +216,39 @@ def optimize(posted: set[str] | None = None) -> None:
 
 if __name__ == "__main__":
     optimize()
+
+
+def fetch_retention(video_id: str, days: int = 28) -> list[tuple[float, float, float]]:
+    """1本の維持率カーブ。`[(位置0〜1, 維持, 相対), ...]`。
+
+    **これは 2026-08-09 まで一度も取っていなかった。** `fetch_report` の
+    `averageViewPercentage` すら画面に出しておらず、「最後まで見られている」という
+    **古い数字にもとづく思い込みを何日も持ち越していた。**
+
+    `relativeRetentionPerformance` は YouTube 側が「同じ長さの他の動画と比べて
+    どうか」を返す値で、**0.5 が中央値**。これがあるので「うちのショートは
+    平均と比べてどうか」を推測ではなく実測で言える。
+
+    **注意: 維持率と再生数は逆相関することがある。** 配信が広がるほど狙いから
+    外れた視聴者に当たるため。実測（8/9）では
+    537再生で相対0.50、1506再生で相対0.25 だった。
+    **維持率が低いから伸びないのか、伸びたから維持率が下がったのかは、
+    この数字だけでは決まらない。** 因果を決めつけないこと。
+    """
+    analytics = build("youtubeAnalytics", "v2", credentials=credentials(), cache_discovery=False)
+    end = date.today()
+    start = end - timedelta(days=days)
+    try:
+        response = analytics.reports().query(
+            ids="channel==MINE",
+            startDate=start.isoformat(),
+            endDate=end.isoformat(),
+            metrics="audienceWatchRatio,relativeRetentionPerformance",
+            dimensions="elapsedVideoTimeRatio",
+            filters=f"video=={video_id}",
+            sort="elapsedVideoTimeRatio",
+        ).execute()
+    except HttpError as exc:
+        print(f"[analytics] 維持率を取得できませんでした: {exc.resp.status}")
+        return []
+    return [(r[0], r[1], r[2]) for r in response.get("rows", [])]
