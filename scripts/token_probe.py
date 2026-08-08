@@ -271,14 +271,83 @@ def record() -> int:
 
 # ------------------------------------------------------------------ 換算する
 
+def lower_bound() -> int:
+    """**J が無くても言えること。** 自分のトークンだけで下限を出す。
+
+    総使用 ＝ 自分 ＋ J なので、**自分だけで割ると必ず小さく出る**:
+
+        %あたりのトークン = (自分 + J) / Δ%  ≧  自分 / Δ%
+
+    つまりこれは**下限**。そして下限は**安全な向き**に外れる。
+    %あたりのトークンを小さく見積もる ＝ 同じ作業量が食う%を**多めに**見る、
+    ということなので、残量を使い切る側の事故が起きない。
+
+    2026-08-06 に逆をやって外した。あのときの 47M/% は消費を**少なく**見せる
+    向きで、残量を倍近く多く見ていた。**向きを取り違えないこと。**
+
+    J の記録が来たら `solve()` が本物の値を出す。それまではこれを使う。
+    """
+    hist = meter_history()
+    recs = []
+    if OUT.exists():
+        for line in OUT.read_text(encoding="utf-8").splitlines():
+            try:
+                recs.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+    if len(recs) < 2:
+        print("自分の記録がまだ2件ありません。")
+        return 0
+
+    # 記録の並びから、EPOCH 以降の連続した区間をつなぐ。
+    start = None
+    tot = {k: 0 for k in FIELDS}
+    for r in recs:
+        at = datetime.fromisoformat(r["at"].replace("Z", "+00:00"))
+        if at.astimezone(JST) < EPOCH:
+            continue
+        if start is None:
+            start = datetime.fromisoformat(r["since"].replace("Z", "+00:00"))
+        for v in (r.get("mine") or {}).values():
+            for k in FIELDS:
+                tot[k] += v.get(k, 0) or 0
+        end = at
+    if start is None:
+        print(f"{EPOCH:%m/%d %H:%M} JST 以降の記録がまだありません。")
+        return 0
+
+    a, b = meter_at(hist, start), meter_at(hist, end)
+    if not (a and b):
+        print("**両端にメーターの観測がありません。** 下限も出せません。")
+        return 0
+    d_week = b[1].get("seven_day", 0) - a[1].get("seven_day", 0)
+
+    hours = (end - start).total_seconds() / 3600
+    print(f"J 抜きの**下限**（{start.astimezone(JST):%m/%d %H:%M} 〜 "
+          f"{end.astimezone(JST):%m/%d %H:%M} JST・{hours:.1f}時間）")
+    print(f"  週 {a[1].get('seven_day')}% → {b[1].get('seven_day')}%  （+{d_week}）")
+    if d_week < MIN_SPAN_PCT:
+        print(f"  **まだ出しません。** +{d_week}% では丸め（±1）が効きすぎます"
+              f"（+{MIN_SPAN_PCT}% から）。")
+        return 0
+    print("  総使用 = 自分 + J なので、自分だけで割った値は**必ず小さく出ます**。")
+    print("  小さく出るのは**安全な向き**（同じ作業が食う%を多めに見る）。")
+    for k in FIELDS:
+        print(f"  {k:<30} ≧ {tot[k] / d_week:>14,.0f} /%")
+    return 0
+
+
 def solve() -> int:
     """J の区間ごとに、メーター増分と（自分＋J）のトークンを並べる。"""
     jw = j_windows()
     if not jw:
         print("J 側の記録がまだありません。")
         print(f"  {JREPO} の {JBRANCH}:{JLOG}")
-        print("  **23:00 JST は基準スナップショットなので、記録は 00:00 から。**")
-        return 0
+        last = _git(JREPO, "log", "--format=%cI", "-1", JBRANCH).strip()
+        if last:
+            print(f"  ブランチの最終コミット: {last}")
+        print()
+        return lower_bound()
 
     hist = meter_history()
     print(f"J の区間 {len(jw)}件 / メーターの観測 {len(hist)}件\n")
