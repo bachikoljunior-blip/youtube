@@ -72,6 +72,11 @@ TRAPS = {
         "こちらの Analytics 側は数えない（8/9 に確認）",
     "day":
         "**日次は2〜3日遅れる。**「24時間で〇再生」の判定にはここを使わないこと",
+    "動画.":
+        "**Data API と Analytics で到着時刻が違う。** `status.py` の一覧は "
+        "`videos.statistics`（早い）、ここは Analytics（2〜3日遅い）。"
+        "同じ動画で数字が食い違っても、**どちらかが壊れているのではない**"
+        "（8/10 に `8rXlUhkfMEU` が Data 側439・Analytics 側は行すら無い状態で確認）",
 }
 
 
@@ -157,7 +162,7 @@ def collect(start: date = ERA_START) -> dict:
            if m in avail["per_video"]]
     if per:
         try:
-            for row in query(per, dimensions="video", sort="-views", limit=30):
+            for row in query(per, dimensions="video", sort="-views", limit=200):
                 vid = row["video"]
                 for k, v in row.items():
                     if k != "video":
@@ -264,8 +269,29 @@ def report(snap: dict, prev: dict | None, full: bool = False) -> None:
         appeared = [k for k in cur if k not in old]
         gone = [k for k in old if k not in cur]
 
+        # **遅れて届いたデータを「増えた」と読まないこと。**
+        #
+        # 2026-08-10 04:12、合計が +466 になった。伸びたのではなく、
+        # **2〜3日遅れていた 8/7 のぶんが届いただけ**だった
+        # （`day.2026-08-07` が新しく現れ、その値が466で増加分と完全に一致）。
+        #
+        # 累計で見ている以上、**後追いの到着と本物の伸びは同じ形で出る。**
+        # 見分ける手がかりは `day.*` の新出。ここで名指ししておく。
+        backfill = sum(cur[k] for k in appeared
+                       if k.startswith("day.") and isinstance(cur[k], (int, float)))
+        grew = cur.get("合計.views", 0) - old.get("合計.views", 0)
+
         print(f"  前回 {prev['at'][:16]} と比べて **動いた {len(moved)}件"
               f" / 増えた {len(appeared)}件 / 消えた {len(gone)}件**")
+        if backfill:
+            days = [k[4:] for k in appeared if k.startswith("day.")]
+            if grew and abs(grew - backfill) <= max(2, grew * 0.05):
+                print(f"  [!] **この増加は新しい視聴ではありません。**"
+                      f" {'・'.join(days)} のデータが遅れて届いたぶん（{backfill}）で、"
+                      f"合計の増加（{grew:+d}）とほぼ一致します")
+            else:
+                print(f"  [!] {'・'.join(days)} のデータが遅れて届いています（{backfill}）。"
+                      f"合計の増加 {grew:+d} のうち、**そのぶんは新しい視聴ではありません**")
         if not moved and not appeared:
             print("  **何も動いていません。**")
         # **割合と平均は「無効再生の除外」で説明できない。**
