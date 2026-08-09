@@ -200,9 +200,9 @@ def main(argv: list[str] | None = None) -> int:
         # 実測の engaged は 11.8〜44.2%、中央値34.8%。競合調査でも
         # 「25〜35秒に圧縮」「1画面1情報」と指摘された。
         # **これは実験。** `config/hypotheses.yaml` に反証条件を書いてある。
-        channel["video"]["target_minutes"] = 0.50   # 読み上げて約30秒
-        channel["video"]["max_minutes"] = 0.63      # 約190文字。38秒に収める
-        print("[pipeline] ショートとして作ります（1080x1920・約30秒・上限38秒）")
+        channel["video"]["target_minutes"] = 0.50   # 約30秒（140文字 ÷ 4.63文字/秒）
+        channel["video"]["max_minutes"] = 0.60      # 36秒。無音込みの実効速度で引いた
+        print("[pipeline] ショートとして作ります（1080x1920・約30秒・上限36秒）")
 
     override = args.visibility or config.env("VISIBILITY", required=False)
     if override:

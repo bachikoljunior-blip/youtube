@@ -354,15 +354,28 @@ def _to_yen(text: str) -> set[int]:
     **表記が違うだけで見逃す**のを防ぐため。
     """
     out: set[int] = set()
+
+    # **万の式を先に食い、読んだところは消してから素の数字を拾う。**
+    #
+    # 2026-08-09、これをやっていなかったので「35万9318円」から
+    # 359,318 と **9,318 の両方**が出ていた。9,318 は計算出力に出てこないので、
+    # `_check_title_from_calc` が正しいタイトルを誤って落とした。
+    # **検査そのものの偽陽性で、作り直させていた。**
+    rest_text = []
+    last = 0
     for m in re.finditer(r"(\d[\d,]*)\s*万\s*(\d[\d,]*)?\s*千?", text):
         man = int(m.group(1).replace(",", ""))
-        rest = m.group(2)
+        tail = m.group(2)
         val = man * 10_000
-        if rest:
-            r = int(rest.replace(",", ""))
+        if tail:
+            r = int(tail.replace(",", ""))
             val += r * 1_000 if m.group(0).rstrip().endswith("千") else r
         out.add(val)
-    for m in re.finditer(r"(\d[\d,]{2,})", text):
+        rest_text.append(text[last:m.start()])
+        last = m.end()
+    rest_text.append(text[last:])
+
+    for m in re.finditer(r"(\d[\d,]{2,})", " ".join(rest_text)):
         out.add(int(m.group(1).replace(",", "")))
     return out
 
