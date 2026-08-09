@@ -328,6 +328,39 @@ def _check_headline_from_calc(work: Path, script: dict | None) -> list[str]:
     return []
 
 
+def _check_count_matches(script: dict | None) -> list[str]:
+    """**「3つ」と言いながら4項目出していないか。**
+
+    2026-08-09、長尺の最後で音声が「明日やることを3つ」、画面が4項目だった。
+    目視で見つかったが、**これは機械で見える種類**（数字と個数の突き合わせ）。
+
+    数が主役のチャンネルで画面と音声が食い違うのは、内容の正しさとは別に
+    **信頼を落とす。** 前提を全部画面に出すことで検証可能性を担保している以上、
+    画面と音声のずれは根幹に触る。
+
+    見るのは narration の「Nつ」と、同じセグメントの items の数だけ。
+    **広げないこと。** 「3種類」「3パターン」まで拾うと誤検出が出る
+    （別のものを数えている場合がある）。
+    """
+    if not script:
+        return []
+    problems = []
+    for i, seg in enumerate(script.get("segments") or []):
+        items = (seg.get("visual") or {}).get("items") or []
+        if not items:
+            continue
+        m = re.search(r"([1-9１-９])\s*つ", seg.get("narration") or "")
+        if not m:
+            continue
+        said = int(m.group(1).translate(str.maketrans("１２３４５６７８９", "123456789")))
+        if said != len(items):
+            problems.append(
+                f"{i}番目で音声が「{said}つ」と言っているのに、画面の項目は{len(items)}個。"
+                "**数が合っていない。** どちらかに揃えること"
+            )
+    return problems
+
+
 def _check_short_opening(script: dict | None) -> list[str]:
     """ショートの1枚目は stat（大きい数字1つ）であること。
 
@@ -413,6 +446,7 @@ def check(path: Path, video_cfg: dict, min_minutes: float, work: Path) -> float:
             problems.append(f"冒頭のフレームが真っ白か真っ黒に見える（{size} バイト）")
 
     problems += _check_thumbnail(work)
+    problems += _check_count_matches(script)
     problems += _check_subtitles(work)
 
     script = None
