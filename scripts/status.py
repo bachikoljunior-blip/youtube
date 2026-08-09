@@ -550,6 +550,17 @@ def main(days: int = 7) -> int:
     print_retention()
     print_channel_signals()
     print_where_watched()
+    # **取れるものを全部引いて、前回との差を出す。**
+    # ここを「毎回」にしたのが要点。手で選んでいる限り、選ばなかったものは
+    # 永久に視界に入らない（2026-08-09、8次元を何日も見落としていた）。
+    try:
+        from src import scan as _scan
+        _snap = _scan.collect()
+        _scan.report(_snap, _scan._previous())
+        _scan.save(_snap)
+    except Exception as exc:                 # 走査が落ちても状態表示は続ける
+        print(f"\n=== 全走査 ===\n  [!] 走査に失敗: {str(exc)[:150]}")
+        print("      **これを放置しないこと。** 落ちている間は見落としが数えられない")
     print_means()
     print_hypotheses()
     print_budget()

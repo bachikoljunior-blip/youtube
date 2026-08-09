@@ -1,6 +1,6 @@
 {
  "analytics": {
-  "checked_at": "2026-08-09T14:18:02+09:00",
+  "checked_at": "2026-08-09T22:25:29+09:00",
   "metrics": [
    "views",
    "redViews",
@@ -27,6 +27,7 @@
   ],
   "dimensions": [
    "day",
+   "video",
    "country",
    "deviceType",
    "operatingSystem",
@@ -36,8 +37,31 @@
    "liveOrOnDemand",
    "creatorContentType"
   ],
-  "per_video_metrics": []
+  "per_video_metrics": [
+   "views",
+   "redViews",
+   "engagedViews",
+   "comments",
+   "likes",
+   "dislikes",
+   "shares",
+   "videosAddedToPlaylists",
+   "videosRemovedFromPlaylists",
+   "estimatedMinutesWatched",
+   "estimatedRedMinutesWatched",
+   "averageViewDuration",
+   "averageViewPercentage",
+   "subscribersGained",
+   "subscribersLost",
+   "cardImpressions",
+   "cardClickRate",
+   "cardTeaserImpressions",
+   "cardTeaserClickRate",
+   "annotationImpressions",
+   "annotationClickThroughRate",
+   "annotationCloseRate"
+  ]
  },
- "last_run": "2026-08-09T22:15:46+09:00",
- "last_gap_count": 21
+ "last_run": "2026-08-09T22:28:49+09:00",
+ "last_gap_count": 13
 }

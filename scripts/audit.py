@@ -89,15 +89,40 @@ def _save(d: dict) -> None:
 
 
 def _used_in_source() -> set[str]:
-    """`src/` が実際に使っている指標・次元を、ソースから拾う。
+    """**実際に引いているもの**を集める。ソースの文字列と、直近の走査の両方から。
 
     **記憶に頼らない。** 「使っているつもり」と「使っている」はずれる。
+
+    2026-08-09 に出どころを1つ足した。`src/scan.py` は
+    「棚卸しが使えると言ったもの」を**動的に**組み立てて引くので、
+    ソースを文字列で grep しても名前が出てこない。
+    そのままだと**実際は毎回引いているのに「使っていない」と数え続ける。**
+    だから `data/scan.jsonl` の最後の走査が何を引いたかを見る。
+    **文字列の一致ではなく、実際に引けたかどうかで数える。**
     """
     used: set[str] = set()
     for path in (ROOT / "src").rglob("*.py"):
         text = path.read_text(encoding="utf-8", errors="replace")
         for m in re.finditer(r'(?:metrics|dimensions)\s*=\s*"([^"]+)"', text):
             used |= {x.strip() for x in m.group(1).split(",") if x.strip()}
+
+    snap = ROOT / "data" / "scan.jsonl"
+    if snap.exists():
+        lines = [ln for ln in snap.read_text(encoding="utf-8").splitlines() if ln.strip()]
+        if lines:
+            try:
+                values = json.loads(lines[-1]).get("values", {})
+            except json.JSONDecodeError:
+                values = {}
+            for key in values:
+                parts = key.split(".")
+                if parts[0] == "合計":                 # 合計.views
+                    used.add(parts[-1])
+                elif parts[0] == "動画":               # 動画.<id>.engagedViews
+                    used.add(parts[-1])
+                    used.add("video")
+                else:                                  # deviceType.MOBILE
+                    used.add(parts[0])
     return used
 
 
@@ -124,22 +149,40 @@ def probe_analytics(force: bool = False) -> dict:
     end, start = date.today(), date.today() - timedelta(days=28)
 
     def works(metrics: str, dimensions: str = "day") -> bool:
+        """**`dimensions=video` は `sort` が無いと必ず 400 になる。**
+
+        2026-08-09、これを付けずに判定して**18指標を「動画べつには取れない」と
+        誤って分類した。** しかも「day では200、video では400」という
+        もっともらしい説明まで書いた。**API の制約ではなく、こちらの投げ方の穴。**
+        取れないと決める前に、**投げ方のほうを疑うこと。**
+        """
+        kw = {"metrics": metrics, "dimensions": dimensions, "maxResults": 1}
+        if dimensions == "video":
+            kw["sort"] = "-views" if "views" in metrics.split(",") else f"-{metrics}"
         try:
             api.reports().query(
                 ids="channel==MINE", startDate=start.isoformat(), endDate=end.isoformat(),
-                metrics=metrics, dimensions=dimensions, maxResults=1,
+                **kw,
             ).execute()
             return True
         except Exception:
-            return False
+            if dimensions != "video":
+                return False
+            try:            # その指標で並べられないものは views で並べ直す
+                api.reports().query(
+                    ids="channel==MINE", startDate=start.isoformat(), endDate=end.isoformat(),
+                    metrics=f"views,{metrics}", dimensions="video", sort="-views", maxResults=1,
+                ).execute()
+                return True
+            except Exception:
+                return False
 
     print("API に問い合わせています（指標と次元を1つずつ）…")
-    # **`day` で通っても `video` で通るとは限らない。**
-    # 2026-08-09 に判明: `videosAddedToPlaylists`・`dislikes`・`redViews`・
-    # card 系・annotation 系は **`day` では 200、`video` では 400**。
-    # 以前はここを `day` だけで試して「使えるのに使っていない」と数えていたので、
-    # **動画べつに使えないものを12件、毎回「見落とし」として並べていた。**
-    # 棚卸しの数を水増しするだけでなく、**手をつけようとした回を1回無駄にする。**
+    # **一度ここで誤った結論を出している（2026-08-09）。**
+    # 「`videosAddedToPlaylists` などは day では200、video では400」と分類したが、
+    # **原因は `sort` を付けていなかったこと**で、付ければ全部取れた。
+    # API の制約だと思い込んで**12指標を見なくてよいものに分類しかけた。**
+    # 取れないと決める前に、**投げ方のほうを疑うこと**（`works` の説明参照）。
     ok_metrics = [m for m in CANDIDATE_METRICS if works(m)]
     per_video = [m for m in ok_metrics if works(m, "video")]
     # 次元は views と組み合わせて試す
@@ -173,9 +216,9 @@ def report_analytics(quick: bool, force: bool = False) -> list[str]:
         print(f"  {kind}: 使える {len(data[key])} / 使っている {len(set(data[key]) & used)}")
         if not unused:
             continue
-        # **動画べつに取れないものは、別枠にして見落としに数えない。**
-        # チャンネル日次でしか取れず（`dimensions=day`）、本ごとの比較に使えない。
-        # 数えると毎回12件が居座り、**棚卸しの件数が意味を持たなくなる。**
+        # 動画べつに取れないものは別枠にする（本ごとの比較に使えないため）。
+        # **いまのところ該当は audienceWatchRatio と relativeRetentionPerformance だけ。**
+        # ここが12件に膨らんでいたら、それは `works` の投げ方の穴を疑うこと。
         per_video = data.get("per_video_metrics")
         if key == "metrics" and per_video is not None:
             day_only = [x for x in unused if x not in per_video]
