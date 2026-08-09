@@ -123,6 +123,51 @@ def social_rate_grid(income: int = 5_000_000,
     return [dict(marginal(income, RAISE, r), 率=r) for r in rates]
 
 
+def knee_grid(incomes=(6_200_000, 6_400_000, 6_500_000, 6_800_000),
+              step: int = 100_000,
+              social_rate: float = TYPICAL_SOCIAL_RATE) -> list[dict]:
+    """**段差は1つではなく、2つが20万円のあいだに続けて来る。**
+
+    `marginal_grid()` は50万円刻みなので、**この2つを平均してならしてしまう。**
+    10万円刻みにすると分かれて見える。
+
+        年収 約645万円  所得税率が 10% → 20%（課税所得が330万円を超える）
+        年収   660万円  給与所得控除の伸びが 10万円あたり2万円 → 1万円
+
+        残る割合 71.9% →（645万）→ 65.2% →（660万）→ 62.2%
+
+    **これを取り違えないこと。** 「660万円の壁」で説明できるのは
+    **落差の半分だけ**で、大きいほうの段は**その手前の所得税率**です。
+    2026-08-09、10万円刻みで引き直して初めて分かれた。
+    50万円刻みの表だけを見ていたら、**全部を給与所得控除のせいにしていた。**
+
+    `driver` にどちらの段かを入れて返す。**数字と原因を離さない。**
+    """
+    out = []
+    for i in incomes:
+        r = marginal(i, step, social_rate)
+        before = salary_deduction(i)
+        after = salary_deduction(i + step)
+        soc = int(i * social_rate)
+        taxable = i - before - soc - BASIC_INCOME
+        taxable_after = (i + step) - after - int((i + step) * social_rate) - BASIC_INCOME
+        drivers = []
+        if _bracket(taxable) != _bracket(taxable_after):
+            drivers.append(f"所得税率が{_bracket(taxable):.0%}から{_bracket(taxable_after):.0%}へ")
+        if after - before < step * 0.2 - 1:
+            drivers.append("給与所得控除の伸びが半分に")
+        out.append(dict(r, driver=("・".join(drivers) if drivers else "段差なし")))
+    return out
+
+
+def _bracket(taxable: int) -> float:
+    rate = INCOME_TAX_BRACKETS[0][1]
+    for floor, r in INCOME_TAX_BRACKETS:
+        if taxable >= floor:
+            rate = r
+    return rate
+
+
 def check_tables() -> None:
     """**取り違えても、それらしい数字が出てしまう計算です。**
 
@@ -180,6 +225,34 @@ def check_tables() -> None:
             raise AssertionError(f"課税所得 {taxable:,}円 で所得税が減りました")
         prev = now
 
+    # **段差は2つある。** 片方だけを見て「660万円の壁」と言わないための固定。
+    # 2026-08-09、50万円刻みの表しか見ていなかったので、**大きいほうの段
+    # （所得税率 10%→20%、年収およそ645万円）を給与所得控除のせいにしかけた。**
+    steps = {r["年収"]: round(r["残る割合"], 3) for r in knee_grid()}
+    want = {6_200_000: 0.719, 6_400_000: 0.714, 6_500_000: 0.652, 6_800_000: 0.622}
+    for income, ratio in want.items():
+        if steps.get(income) != ratio:
+            raise AssertionError(
+                f"年収{income:,}円 からの10万円昇給で残る割合が {steps.get(income)}。"
+                f"{ratio} のはずです。**2つの段差のどちらかが動いています**"
+            )
+    # 原因の割り当てそのものも固定する（数字が合っていても説明が入れ替わりうる）。
+    # **ここで一度間違えた。** 所得税率が変わるのは 650万→660万 ではなく
+    # **640万→650万**（課税所得が330万を超えるのがこの区間）。
+    # 650万の行はすでに20%帯に入っていて、控除の伸びもまだ2万円なので**段は無い**。
+    # 残る割合は 71.9%（10%帯・控除2万）→ 65.2%（20%帯・控除2万）
+    # → 62.2%（20%帯・控除1万）の3段。
+    drivers = {r["年収"]: r["driver"] for r in knee_grid()}
+    if "所得税率" not in drivers[6_400_000]:
+        raise AssertionError("640万→650万 の段が所得税率だと出ていません")
+    if "給与所得控除" not in drivers[6_800_000]:
+        raise AssertionError("660万円より上の段が給与所得控除だと出ていません")
+    if drivers[6_500_000] != "段差なし":
+        raise AssertionError(
+            f"650万→660万 に段があることになっています（{drivers[6_500_000]}）。"
+            "**この区間は20%帯のままで、控除の伸びも2万円のままです**"
+        )
+
     # **上げたぶんが全部消えることはない。** 逆転していたら計算違い。
     for row in marginal_grid():
         if not 0.0 < row["残る割合"] < 1.0:
@@ -199,6 +272,14 @@ def main() -> None:
     for r in marginal_grid():
         print(f"{r['年収']//10_000:>8}万{r['上げた後']//10_000:>9}万"
               f"{r['手取り増']:>11,}円{r['残る割合']:>9.1%}{r['消えた額']:>11,}円")
+
+    print("\n=== 段差は2つ。10万円の昇給がいくら残るか ===")
+    print("（**「660万円の壁」で説明できるのは落差の半分だけ。**"
+          "大きいほうは手前の所得税率です）")
+    print(f"{'年収':>10}{'上げた後':>10}{'手取り増':>12}{'残る割合':>10}  原因")
+    for r in knee_grid():
+        print(f"{r['年収']//10_000:>8}万{r['上げた後']//10_000:>9}万"
+              f"{r['手取り増']:>11,}円{r['残る割合']:>9.1%}  {r['driver']}")
 
     print("\n=== 年収べつの手取り ===")
     print(f"{'年収':>10}{'社会保険料':>12}{'所得税':>11}{'住民税':>11}{'手取り':>12}")
