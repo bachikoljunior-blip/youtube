@@ -167,6 +167,42 @@ def collect(start: date = ERA_START) -> dict:
         except Exception:
             out["動画.（取れず）"] = None
 
+    # 4. **チャンネルそのものの状態。Analytics ではないので走査から漏れていた。**
+    #
+    # 2026-08-10 に気づいた。棚卸しは Analytics の指標しか数えていないので、
+    # **`isChannelMonetizationEnabled`（このプロジェクトの目標そのもの）が
+    # 一度も視界に入っていなかった。** 登録者の実数も同じ
+    # （Analytics にあるのは `subscribersGained` という増分だけ）。
+    #
+    # **目標の数字が差分に乗っていないのは、走査として穴。**
+    # ここが True に変わる日が来たら、その回の差分に必ず出る。
+    try:
+        ch = build("youtube", "v3", credentials=credentials(),
+                   cache_discovery=False).channels().list(
+            part="statistics,status", mine=True).execute()["items"][0]
+        st, stat = ch.get("statistics", {}), ch.get("status", {})
+        out["チャンネル.登録者"] = int(st.get("subscriberCount", 0))
+        out["チャンネル.動画数"] = int(st.get("videoCount", 0))
+        # **収益化されたか。これが True になるのが目標の門。**
+        out["チャンネル.収益化"] = 1 if stat.get("isChannelMonetizationEnabled") else 0
+        out["チャンネル.長尺投稿可"] = 1 if stat.get("longUploadsStatus") == "allowed" else 0
+        out["チャンネル.公開"] = 1 if stat.get("privacyStatus") == "public" else 0
+        # **前身の再生を含む総計。** こちらの成果ではないので、
+        # 単体で読まないこと（`status.py` にも同じ注意がある）。
+        # それでも入れるのは、**動いたら何かが起きた合図**になるから。
+        out["チャンネル.総再生（前身込み）"] = int(st.get("viewCount", 0))
+        # **再生リストに実際に入っているか。** パイプラインが毎回
+        # 「再生リストに追加」と出しているが、**本数を確かめたことが一度も無かった。**
+        # 追加に失敗しても投稿は成功するので、静かにずれうる。
+        y3 = build("youtube", "v3", credentials=credentials(), cache_discovery=False)
+        pls = y3.playlists().list(part="snippet,contentDetails", mine=True,
+                                  maxResults=25).execute().get("items", [])
+        for pl in pls:
+            name = pl["snippet"]["title"]
+            out[f"再生リスト.{name}"] = pl["contentDetails"]["itemCount"]
+    except Exception:
+        out["チャンネル.（取れず）"] = None
+
     missed = sorted(
         set(avail["metrics"] + avail["dimensions"]) - covered - {"video"}
     )

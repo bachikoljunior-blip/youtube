@@ -23,6 +23,8 @@ JOURNAL に「気をつける」と書いても、次の回には視界の外に
 ## 何を数えるか
 
 1. **持っているのに見ていない** … API が返す指標のうち、こちらが使っていないもの
+   （**Analytics 以外**も。2026-08-10 まで Analytics しか数えておらず、
+   `isChannelMonetizationEnabled` が視界の外にあった）
 2. **できるのに並べていない** … `docs/MEANS.md` の未着手
 3. **根拠が消えたのに守っている** … `docs/CONSTRAINTS.md` の B項目で、長く見直していないもの
 4. **期限が来たのに判定していない** … `config/hypotheses.yaml`
@@ -231,6 +233,69 @@ def report_analytics(quick: bool, force: bool = False) -> list[str]:
     return gaps
 
 
+# **Analytics 以外で取れるもの。** 2026-08-10 に足した分類。
+# それまで棚卸しは Analytics の指標・次元しか数えておらず、
+# **`isChannelMonetizationEnabled`（このプロジェクトの目標そのもの）が
+# 一度も視界に入っていなかった。** 「候補リストが短いことを疑う」を
+# 棚卸し自身に当てたら、分類そのものが足りていなかった。
+CANDIDATE_CHANNEL_FIELDS = [
+    ("statistics", "subscriberCount"),
+    ("statistics", "videoCount"),
+    ("statistics", "viewCount"),
+    ("status", "isChannelMonetizationEnabled"),
+    ("status", "longUploadsStatus"),
+    ("status", "privacyStatus"),
+    ("brandingSettings", "keywords"),
+    ("contentDetails", "relatedPlaylists"),
+]
+
+
+def report_channel_state() -> list[str]:
+    """**Analytics ではない側で、取れるのに見ていないもの。**"""
+    print("\n=== 5. Analytics 以外で取れるのに見ていない ===")
+    try:
+        from googleapiclient.discovery import build
+
+        from src.auth import credentials
+
+        y = build("youtube", "v3", credentials=credentials(), cache_discovery=False)
+        parts = sorted({p for p, _ in CANDIDATE_CHANNEL_FIELDS})
+        ch = y.channels().list(part=",".join(parts), mine=True).execute()["items"][0]
+    except Exception as exc:
+        print(f"  読めませんでした: {str(exc)[:100]}")
+        return []
+
+    # 直近の走査が何を出したか
+    seen = set()
+    snap = ROOT / "data" / "scan.jsonl"
+    if snap.exists():
+        lines = [ln for ln in snap.read_text(encoding="utf-8").splitlines() if ln.strip()]
+        if lines:
+            try:
+                seen = set(json.loads(lines[-1]).get("values", {}))
+            except json.JSONDecodeError:
+                pass
+    blob = " ".join(seen)
+
+    gaps = []
+    for part, field in CANDIDATE_CHANNEL_FIELDS:
+        if field not in (ch.get(part) or {}):
+            continue                        # そもそも返ってこない
+        # 走査の鍵に日本語名で入れているので、対応表で照合する
+        alias = {"subscriberCount": "登録者", "videoCount": "動画数",
+                 "viewCount": "総再生", "privacyStatus": "公開",
+                 "isChannelMonetizationEnabled": "収益化",
+                 "longUploadsStatus": "長尺投稿可",
+                 "relatedPlaylists": "再生リスト"}.get(field, field)
+        if alias in blob or field in blob:
+            continue
+        print(f"  {part}.{field} を走査に入れていない")
+        gaps.append(f"チャンネルの {part}.{field} を見ていない")
+    if not gaps:
+        print("  なし（取れるものは走査に入っている）")
+    return gaps
+
+
 def report_means() -> list[str]:
     print("\n=== 2. できるのに並べていない（手段）===")
     path = ROOT / "docs" / "MEANS.md"
@@ -314,7 +379,7 @@ def main() -> int:
     print("=== 棚卸し: 視界の外にあるものを数える ===")
     print("**数えるだけで終わらせないこと。** 必ず1件は手をつける。")
 
-    gaps = (report_analytics(quick, force) + report_means()
+    gaps = (report_analytics(quick, force) + report_channel_state() + report_means()
             + report_constraints() + report_hypotheses())
 
     print(f"\n=== 合計 {len(gaps)} 件 ===")
