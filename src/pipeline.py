@@ -267,6 +267,22 @@ def main(argv: list[str] | None = None) -> int:
     if args.short:
         _check_short_script(script, topic["id"])
 
+    # **「同じ図」は台本だけで分かる。動画を作り終えてから見るのは遅い。**
+    #
+    # `verify._check_not_repeat` は chart の `display` しか見ていないのに、
+    # 呼ばれるのは音声合成と全スライドのレンダリングが終わったあと（下の 7.）。
+    # 2026-08-09、`tenshoku-nenshu` が `s-tedori-1` と 71.9%・62.2% で重なり、
+    # **15分かけて作ってから落ちるところだった**（気づいたのは手で照合したから）。
+    #
+    # `short_script_problems` に書いた原則と同じ:
+    # **台本だけで判定できるものは、全部ここに集める。**
+    repeats = verify._check_not_repeat(work, script.model_dump())
+    if repeats:
+        raise RuntimeError(
+            "台本の時点で過去の図と重なっています（レンダリング前に止めました）: "
+            + " / ".join(repeats)
+        )
+
     # 2. 音声（ここで各セグメントの実尺が確定する）
     audios = synthesize_segments(
         [s.narration for s in script.segments],
