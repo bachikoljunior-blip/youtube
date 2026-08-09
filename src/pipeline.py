@@ -316,7 +316,7 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     # 7. 投稿前の検査。ここで落ちたら投稿しない。
-    verify.check(video_path, channel["video"], float(channel["video"]["min_minutes"]), work)
+    verify.check(video_path, channel["video"], float(channel["video"]["min_minutes"]), work, topic)
 
     if dry:
         print("[pipeline] DRY_RUN のためアップロードしません。")

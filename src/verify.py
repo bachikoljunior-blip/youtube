@@ -328,6 +328,65 @@ def _check_headline_from_calc(work: Path, script: dict | None) -> list[str]:
     return []
 
 
+def _to_yen(text: str) -> set[int]:
+    """文中の金額を、桁の揃った整数にして取り出す。
+
+    「30万」「30万円」「1万6544円」「287,000円」を同じ土俵に載せる。
+    **表記が違うだけで見逃す**のを防ぐため。
+    """
+    out: set[int] = set()
+    for m in re.finditer(r"(\d[\d,]*)\s*万\s*(\d[\d,]*)?\s*千?", text):
+        man = int(m.group(1).replace(",", ""))
+        rest = m.group(2)
+        val = man * 10_000
+        if rest:
+            r = int(rest.replace(",", ""))
+            val += r * 1_000 if m.group(0).rstrip().endswith("千") else r
+        out.add(val)
+    for m in re.finditer(r"(\d[\d,]{2,})", text):
+        out.add(int(m.group(1).replace(",", "")))
+    return out
+
+
+def _check_title_from_calc(work: Path, script: dict | None, topic: dict | None) -> list[str]:
+    """**タイトルの金額が、渡した計算出力に実在するか。**
+
+    2026-08-09、長尺のタイトルが「売上30万でも申告不要の条件」だった。
+    **30万円は計算出力に無い**（実際の売上は 28万7千・34万2千・43万5千）。
+    モデルが丸めて書いた。
+
+    `_check_headline_from_calc` は**縦向き（ショート）にしか当たっていなかった**ので、
+    長尺のタイトルは誰も見ていなかった。**裏の取れない数字を動画に入れない**のは
+    この作りの根幹で、尺で例外を作る理由はない。
+
+    見るのは**1000以上の整数**だけ。パーセントや条文番号は別の規則
+    （`_check_headline_from_calc`）が見る。
+    """
+    if not script or not topic:
+        return []
+    from .script_writer import calc_block
+
+    try:
+        block = calc_block(topic)
+    except Exception:
+        return []                      # 計算が引けないテーマは対象外
+    if not block:
+        return []
+
+    have = _to_yen(block)
+    problems = []
+    for label, text in (("タイトル", script.get("title", "")),
+                        ("サムネ", str(script.get("thumbnail_line1", ""))
+                         + " " + str(script.get("thumbnail_line2", "")))):
+        for n in sorted(_to_yen(text)):
+            if n >= 1000 and n not in have:
+                problems.append(
+                    f"{label}の「{n:,}」が計算出力にありません。"
+                    "**裏の取れない数字を出さないこと。** 丸めるのも駄目"
+                )
+    return problems
+
+
 def _check_count_matches(script: dict | None) -> list[str]:
     """**「3つ」と言いながら4項目出していないか。**
 
@@ -412,7 +471,8 @@ def _check_slides(work: Path, script: dict | None) -> list[str]:
     return problems
 
 
-def check(path: Path, video_cfg: dict, min_minutes: float, work: Path) -> float:
+def check(path: Path, video_cfg: dict, min_minutes: float, work: Path,
+          topic: dict | None = None) -> float:
     """問題があれば VerificationError。無ければ尺（秒）を返す。"""
     probe = _probe(path)
     streams = probe.get("streams", [])
@@ -464,6 +524,7 @@ def check(path: Path, video_cfg: dict, min_minutes: float, work: Path) -> float:
         problems += _check_headline_from_calc(work, script)
         problems += _check_short_pace(script, duration)
     problems += _check_count_matches(script)
+    problems += _check_title_from_calc(work, script, topic)
     problems += _check_not_repeat(work, script)
 
     if problems:
