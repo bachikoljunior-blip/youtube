@@ -361,12 +361,18 @@ def _to_yen(text: str) -> set[int]:
     # 359,318 と **9,318 の両方**が出ていた。9,318 は計算出力に出てこないので、
     # `_check_title_from_calc` が正しいタイトルを誤って落とした。
     # **検査そのものの偽陽性で、作り直させていた。**
+    #
+    # **小数の「万」を取りこぼさないこと。** `35.9万` を素直に書くと
+    # 正規表現が **`9万` のほうに食いついて 90,000** を返す（2026-08-09 に発生）。
+    # 90,000 は計算出力に無いので検査は落ちるが、**理由が嘘になる。**
+    # 「35.9万」の正体は 359,318円 を丸めたもので、落とすべきなのは
+    # **丸め**のほう。数字を直せと言われた側は 90,000 を探しに行ってしまう。
     rest_text = []
     last = 0
-    for m in re.finditer(r"(\d[\d,]*)\s*万\s*(\d[\d,]*)?\s*千?", text):
-        man = int(m.group(1).replace(",", ""))
+    for m in re.finditer(r"(\d[\d,]*(?:\.\d+)?)\s*万\s*(\d[\d,]*)?\s*千?", text):
+        man = float(m.group(1).replace(",", ""))
         tail = m.group(2)
-        val = man * 10_000
+        val = int(round(man * 10_000))   # man は小数のことがある（35.9万）
         if tail:
             r = int(tail.replace(",", ""))
             val += r * 1_000 if m.group(0).rstrip().endswith("千") else r
