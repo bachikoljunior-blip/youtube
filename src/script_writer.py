@@ -400,6 +400,42 @@ def calc_block(topic: dict) -> str:
             "空のまま台本を書かせると、数字を発明させることになります"
         )
 
+    stdout = proc.stdout
+    # **渡さない表は、そもそもプロンプトに入れない。**
+    #
+    # 2026-08-09、長尺の angle に「cliff() と grid() は使うな。ショートで
+    # 既に出している」と書いた。**6回作り直して6回とも使われた。**
+    # 理由は単純で、(1) 禁止した表だけが標準出力に入っており、
+    # (2) 代わりに使えと書いた表を `main()` が印字していなかった。
+    # **モデルは従いようがなかった。**
+    #
+    # 「使うな」は、目の前に置いたまま言っても効かない。**取り除くこと。**
+    # topics.yaml に `calc_sections: ["売上と経費"]` と書くと、
+    # `=== ... ===` の見出しがその語を含む節だけを残す。
+    wanted = topic.get("calc_sections") or []
+    if wanted:
+        blocks, current = [], []
+        for line in stdout.splitlines():
+            if line.startswith("==="):
+                if current:
+                    blocks.append(current)
+                current = [line]
+            elif current:
+                current.append(line)
+            # 見出しより前の行（検査の通過表示など）は捨てる
+        if current:
+            blocks.append(current)
+        kept = ["\n".join(b) for b in blocks
+                if any(w in b[0] for w in wanted)]
+        if not kept:
+            raise RuntimeError(
+                f"calc_sections {wanted} に当たる節が src.calc.{name} の出力にありません。"
+                f"見出しは {[b[0] for b in blocks]}。"
+                "**`main()` がその表を印字しているか確かめること。**"
+                "印字していない表を angle で指定しても、モデルには渡りません"
+            )
+        stdout = "\n\n".join(kept)
+
     assumptions = getattr(module, "ASSUMPTIONS", [])
     used = used_bars(exclude=str(topic.get("id", "")))
     used_block = ""
@@ -419,7 +455,7 @@ def calc_block(topic: dict) -> str:
 その話題自体を落としてください。裏の取れない数字を動画に入れないためです。
 
 ```
-{proc.stdout.strip()}
+{stdout.strip()}
 ```
 
 # 計算の前提（そのまま画面と音声に出すこと）

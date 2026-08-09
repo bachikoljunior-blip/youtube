@@ -245,6 +245,17 @@ def main() -> None:
         print(f"  副業所得 {profit:>7,}円  所得税 {income_tax(profit, 0.10):>6,}円"
               f"  住民税 {resident_tax(profit):>6,}円")
 
+    print("\n=== 売上と経費べつ 20万円ルールに当たるか（所得税率10%） ===")
+    print(f"{'売上':>9}{'経費':>9}{'所得':>9}{'申告':>6}{'所得税':>9}{'住民税':>9}{'手取り':>10}")
+    for row in sales_expense_grid():
+        print(f"{row['sales']:>8,}円{row['expense']:>8,}円{row['profit']:>8,}円"
+              f"{'  要' if row['needs_filing'] else ' 不要':>6}"
+              f"{row['income_tax']:>8,}円{row['resident_tax']:>8,}円{row['take_home']:>9,}円")
+
+    print("\n=== 申告不要にするために必要な経費 ===")
+    for sales in (287_000, 342_000, 435_000):
+        print(f"  売上 {sales:>7,}円 → 経費 {expense_to_clear(sales):>7,}円 以上で申告不要")
+
     for r in (0.05, 0.10, 0.20):
         print(f"\n=== 所得税率 {r:.0%} のときの内訳 ===")
         print(f"{'副業の所得':>10}{'所得税':>9}{'住民税':>9}{'合計':>9}{'手取り':>10}")
