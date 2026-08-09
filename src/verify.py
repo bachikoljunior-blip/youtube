@@ -446,7 +446,6 @@ def check(path: Path, video_cfg: dict, min_minutes: float, work: Path) -> float:
             problems.append(f"冒頭のフレームが真っ白か真っ黒に見える（{size} バイト）")
 
     problems += _check_thumbnail(work)
-    problems += _check_count_matches(script)
     problems += _check_subtitles(work)
 
     script = None
@@ -464,6 +463,7 @@ def check(path: Path, video_cfg: dict, min_minutes: float, work: Path) -> float:
         problems += _check_short_opening(script)
         problems += _check_headline_from_calc(work, script)
         problems += _check_short_pace(script, duration)
+    problems += _check_count_matches(script)
     problems += _check_not_repeat(work, script)
 
     if problems:
