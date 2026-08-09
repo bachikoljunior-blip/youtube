@@ -332,6 +332,23 @@ def report(snap: dict, prev: dict | None, full: bool = False) -> None:
         for k in sorted(cur):
             print(f"    {k:46} {cur[k]}")
 
+    # **走査そのものの整合を確かめる。**
+    #
+    # 2026-08-10、`合計.views` と `day.*` の和が **47 ずれていた**。
+    # 1時間後に一致した。**集計値が先に修正され、日次の内訳が遅れて追いつく。**
+    # ずれている間は、どちらの差分も「いつ起きたか」を取り違える
+    # （この日、内訳が追いついただけの −47 を「無効再生の除外」と読みかけた）。
+    #
+    # **2つの経路で同じものを数えているので、合わなければどちらかが途中。**
+    total = cur.get("合計.views")
+    day_sum = sum(v for k, v in cur.items()
+                  if k.startswith("day.") and isinstance(v, (int, float)))
+    if isinstance(total, (int, float)) and day_sum and total != day_sum:
+        print(f"  [!] **走査の中で数字が合っていません**"
+              f"（合計 {total} / 日次の和 {day_sum}、差 {day_sum - total:+d}）。")
+        print("      集計値と日次の内訳は**別々に修正される**ので、"
+              "合うまでは差分の時点を信用しないこと")
+
     for name, note in TRAPS.items():
         if any(name in k for k in cur):
             print(f"  [注] {name}: {note}")
