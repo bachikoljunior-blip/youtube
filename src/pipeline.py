@@ -195,9 +195,14 @@ def main(argv: list[str] | None = None) -> int:
         # 尺の上限も渡さないと、台本を書く側が長尺の分量で書いてくる。
         # target_minutes だけ据え置くと上限が「目標＋1.5分」のままになり、
         # 60秒のつもりが1.4分で出てくる（実際に起きた）。
-        channel["video"]["target_minutes"] = 0.83   # 読み上げて約50秒
-        channel["video"]["max_minutes"] = 0.95      # 約340文字。60秒に収める
-        print("[pipeline] ショートとして作ります（1080x1920・約50秒・上限60秒）")
+        # **2026-08-09、50秒 → 30秒に縮めた。** engaged 比率（すぐスワイプ
+        # されなかった再生の割合）が配信の駆動輪だと分かったため。
+        # 実測の engaged は 11.8〜44.2%、中央値34.8%。競合調査でも
+        # 「25〜35秒に圧縮」「1画面1情報」と指摘された。
+        # **これは実験。** `config/hypotheses.yaml` に反証条件を書いてある。
+        channel["video"]["target_minutes"] = 0.50   # 読み上げて約30秒
+        channel["video"]["max_minutes"] = 0.63      # 約190文字。38秒に収める
+        print("[pipeline] ショートとして作ります（1080x1920・約30秒・上限38秒）")
 
     override = args.visibility or config.env("VISIBILITY", required=False)
     if override:
