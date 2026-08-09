@@ -43,7 +43,22 @@ from .auth import credentials
 JST = timezone(timedelta(hours=9))
 SNAPSHOTS = config.ROOT / "data" / "scan.jsonl"
 PROBE = config.ROOT / "data" / "audit.json"
-WINDOW_DAYS = 28
+
+# **窓を動かさない。ここが差分の要。**
+#
+# 最初は「直近28日」で引いていた。1回目の実データ差分で**全項目が一律 −16**
+# になり、設計の穴が見えた。移動窓だと、差分が3つを混ぜてしまう。
+#
+#     (1) 本当に増えた       … 見たいもの
+#     (2) 無効再生の除外     … YouTube が後から引く。正常（8/8 に確認済み）
+#     (3) 窓から古い日が抜けた … **こちらの引き方の都合。中身と無関係**
+#
+# (3) が混ざると、伸びているのに減って見える日が出る。
+# 開始日を固定すれば (3) は消え、**増えたら本物・減ったら無効再生の除外**になる。
+#
+# 2026-08-04 はこの中身で出し始めた日。前身の動画はこれより前なので、
+# 固定するとついでに**前身のぶんが混ざらなくなる**（チャンネル合計の罠）。
+ERA_START = date(2026, 8, 4)
 
 # **読み違えたことのある組み合わせを、ここに残す。**
 # 該当する数字を出すときに必ず並べる。忘れたころに同じ間違いをするので、
@@ -79,14 +94,14 @@ def _api():
     return build("youtubeAnalytics", "v2", credentials=credentials(), cache_discovery=False)
 
 
-def collect(days: int = WINDOW_DAYS) -> dict:
+def collect(start: date = ERA_START) -> dict:
     """**使えると分かっているものを、全部引く。**
 
     返すのは平らな辞書（鍵 → 数値）。前回と引き算できる形にしておく。
+    **開始日は固定**（`ERA_START` の説明を読むこと）。
     """
     api = _api()
     end = date.today()
-    start = end - timedelta(days=days)
     avail = _available()
     out: dict[str, float] = {}
     covered: set[str] = set()
@@ -157,7 +172,7 @@ def collect(days: int = WINDOW_DAYS) -> dict:
     )
     return {
         "at": datetime.now(JST).isoformat(timespec="seconds"),
-        "days": days,
+        "since": start.isoformat(),
         "values": out,
         "missed": missed,
     }
@@ -189,11 +204,20 @@ def save(snap: dict) -> None:
 
 
 def report(snap: dict, prev: dict | None, full: bool = False) -> None:
-    print(f"\n=== 全走査（直近{snap['days']}日 / {snap['at'][:16]}）===")
+    since = snap.get("since") or f"直近{snap.get('days', '?')}日"
+    print(f"\n=== 全走査（{since} 以降の累計 / {snap['at'][:16]}）===")
     cur = snap["values"]
 
     if prev is None:
         print("  前回の走査がありません。**この回が基準になります。**")
+    elif prev.get("since") != snap.get("since"):
+        # **窓が変わったら、差は中身の変化ではない。**
+        # 2026-08-09、移動窓から固定窓に変えた直後に一律 −16 が出た。
+        # 引き方が変わっただけなのに「減った」と読める形で出ていた。
+        # **測り方を変えた回の差分を、実績として読まないこと。**
+        print(f"  [!] 前回と**引く範囲が違う**"
+              f"（前回 {prev.get('since') or '移動窓'} / 今回 {snap.get('since')}）。")
+        print("      **この差分は中身の変化ではありません。** 比較は次の回から。")
     else:
         old = prev["values"]
         moved = []
@@ -208,8 +232,19 @@ def report(snap: dict, prev: dict | None, full: bool = False) -> None:
               f" / 増えた {len(appeared)}件 / 消えた {len(gone)}件**")
         if not moved and not appeared:
             print("  **何も動いていません。**")
+        ups = [x for x in moved if x[2] > x[1]]
+        downs = [x for x in moved if x[2] < x[1]]
         for k, o, v in sorted(moved, key=lambda x: -abs(x[2] - x[1]))[:25]:
             print(f"    {k:46} {o} → {v}  ({v - o:+g})")
+        # **開始日を固定してあるので、減ったら中身の話ではない。**
+        # YouTube が後から無効な再生を引いている（8/8 に確認済み。正常）。
+        # ここを「伸びが止まった」と読み違えないための1行。
+        if downs and not ups:
+            print(f"  **{len(downs)}件すべてが減少。開始日は固定なので、"
+                  "これは無効再生の除外です**（正常。伸びが止まったのではない）")
+        elif downs:
+            print(f"  （増えた {len(ups)}件 / 減った {len(downs)}件。"
+                  "減少は無効再生の除外。開始日を固定してあるので窓の影響ではない）")
         for k in appeared[:10]:
             print(f"    [新] {k:42} {cur[k]}")
         for k in gone[:10]:
