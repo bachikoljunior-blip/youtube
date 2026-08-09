@@ -566,6 +566,32 @@ def main(days: int = 7) -> int:
     print_budget()
 
     # 収益化の門。律速がどちらかを毎回見せる（docs/GOAL.md の掛け算）。
+    def _short_median() -> float | None:
+        """公開済みショート1本あたりの再生（中央値）。
+
+        **28日窓で割らないこと。** この中身を出し始めたのは 8/4 で、
+        前の22日はほぼ0。28で割ると1日173再生になり、**実際の4分の1**に見える。
+        到達速度は「1日1本 × 1本あたり」で測る。
+        """
+        try:
+            from src import scan as _s
+
+            v = (_s._previous() or {}).get("values", {})
+            rows: dict[str, dict] = {}
+            for k, x in v.items():
+                if k.startswith("動画.") and k.count(".") >= 2:
+                    _, vid, m = k.split(".", 2)
+                    rows.setdefault(vid, {})[m] = x
+            ns = sorted(r["views"] for r in rows.values()
+                        if r.get("views", 0) >= 30 and (r.get("尺") or 0) <= 180)
+            if not ns:
+                return None
+            h = len(ns) // 2
+            return ns[h] if len(ns) % 2 else (ns[h - 1] + ns[h]) / 2
+        except Exception:
+            return None
+
+
     subs = int(stats.get("subscriberCount", 0) or 0)
     print("\n=== 収益化の門まで ===")
     print(f"  登録者     {subs:6d} / 1000   あと {max(0, 1000 - subs)}人")
@@ -629,6 +655,38 @@ def main(days: int = 7) -> int:
                   " 90日で1000万ショート再生）**。**登録者は迂回できません**")
             print("  **この2つが数百万再生を指しているなら、"
                   "1本ずつ良くする道では届きません**（`docs/MEANS.md` を見ること）")
+
+            # **門の先を掛ける。2026-08-10 まで一度もやっていなかった。**
+            #
+            # ここはずっと「門まであと何再生か」しか出していなかった。
+            # **門を通ったあといくらになるのかを、誰も掛けていない。**
+            # `docs/STRATEGY.md` はショートの RPM を ¥50〜150 と最初から
+            # 書いていて、2026-08-04 に「収益化前は RPM の比較に意味がない」と
+            # 正しく注記してある。**注記はそこで止まり、門の先に進まなかった。**
+            #
+            # 掛けたら **月990〜2,970円**。門が無料で消えても、この機械は
+            # 月1000円台しか作らない。**20万には67〜202倍足りない。**
+            # 長尺なら同じ20万円が月10〜25万再生で作れる（**40倍の差**）。
+            #
+            # **「門さえ通れば」という言い方をこれ以上させないための3行。**
+            SHORT_RPM, LONG_RPM = (50, 150), (800, 2000)
+            per = _short_median()
+            if per:
+                mv = per * 30                    # 1日1本
+                lo, hi = (mv / 1000 * r for r in SHORT_RPM)
+                print(f"\n  **門を無料で通れたとして、いまの収入: "
+                      f"月 ¥{lo:,.0f}〜¥{hi:,.0f}**"
+                      f"（ショート1日1本 {mv / 10000:.1f}万再生 × RPM ¥50〜150）")
+                print(f"    20万に要るショート再生 "
+                      f"**{200000 / SHORT_RPM[1] * 1000 / 10000:.0f}万〜"
+                      f"{200000 / SHORT_RPM[0] * 1000 / 10000:.0f}万/月"
+                      f"（いまの {200000 / hi:.0f}〜{200000 / lo:.0f}倍）**")
+                print(f"    長尺なら同じ20万円が "
+                      f"**月{200000 / LONG_RPM[1] * 1000 / 10000:.0f}〜"
+                      f"{200000 / LONG_RPM[0] * 1000 / 10000:.0f}万再生**"
+                      f"（RPM ¥800〜2000）。**要る再生数が40倍ちがう**")
+                print("  **ショートは収入源ではありません。**登録者を取る道具です"
+                      "（そちらも実測 0.021% で足りていない）")
     except Exception as exc:
         print(f"  [!] 実測の登録率が出せません: {str(exc)[:120]}")
     return 0
