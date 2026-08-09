@@ -80,6 +80,48 @@ TRAPS = {
 }
 
 
+def _iso_seconds(iso: str) -> int:
+    """`PT1M2S` → 62。**動画の尺。分より上は来ない前提にしない。**"""
+    import re
+
+    m = re.fullmatch(r"P(?:(\d+)D)?T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?", iso or "")
+    if not m:
+        return 0
+    d, h, mi, s = (int(x) if x else 0 for x in m.groups())
+    return ((d * 24 + h) * 60 + mi) * 60 + s
+
+
+def _rank(xs: list[float]) -> list[float]:
+    """同順位は平均順位。**同じ値が並ぶと順位相関が壊れるので必要。**"""
+    order = sorted(range(len(xs)), key=lambda i: xs[i])
+    out = [0.0] * len(xs)
+    i = 0
+    while i < len(order):
+        j = i
+        while j + 1 < len(order) and xs[order[j + 1]] == xs[order[i]]:
+            j += 1
+        avg = (i + j) / 2 + 1
+        for k in range(i, j + 1):
+            out[order[k]] = avg
+        i = j + 1
+    return out
+
+
+def _spearman(xs: list[float], ys: list[float]) -> float | None:
+    """順位相関。**本数が少ないので、値の大小ではなく向きだけを読むこと。**"""
+    if len(xs) < 4 or len(xs) != len(ys):
+        return None
+    rx, ry = _rank(xs), _rank(ys)
+    n = len(xs)
+    mx, my = sum(rx) / n, sum(ry) / n
+    num = sum((a - mx) * (b - my) for a, b in zip(rx, ry))
+    dx = sum((a - mx) ** 2 for a in rx) ** 0.5
+    dy = sum((b - my) ** 2 for b in ry) ** 0.5
+    if not dx or not dy:
+        return None
+    return num / (dx * dy)
+
+
 def _available() -> dict:
     """棚卸しが測った「使えるもの」を読む。**こちらが選ばない。**"""
     if not PROBE.exists():
@@ -172,6 +214,27 @@ def collect(start: date = ERA_START) -> dict:
         except Exception:
             out["動画.（取れず）"] = None
 
+    # 3.5. **尺と題。** Analytics には無いので、Data API から足す。
+    #
+    # 動画べつの指標を並べても、**尺が無いと「短くしたら効いたのか」が読めない。**
+    # 題は人が見るためだけのもの（IDだけ並べても、どの回か分からない）。
+    vids = sorted({k.split(".")[1] for k in out
+                   if k.startswith("動画.") and k.count(".") >= 2})
+    if vids:
+        try:
+            y3 = build("youtube", "v3", credentials=credentials(),
+                       cache_discovery=False)
+            for i in range(0, len(vids), 50):
+                items = y3.videos().list(
+                    part="contentDetails,snippet",
+                    id=",".join(vids[i:i + 50])).execute().get("items", [])
+                for it in items:
+                    out[f"動画.{it['id']}.尺"] = _iso_seconds(
+                        it["contentDetails"]["duration"])
+                    out[f"動画.{it['id']}.題"] = it["snippet"]["title"]
+        except Exception:
+            out["動画.（尺と題が取れず）"] = None
+
     # 4. **チャンネルそのものの状態。Analytics ではないので走査から漏れていた。**
     #
     # 2026-08-10 に気づいた。棚卸しは Analytics の指標しか数えていないので、
@@ -233,6 +296,9 @@ def _previous() -> dict | None:
 
 KEEP = 240          # 1時間ごとなら10日ぶん。差分に要るのは直近だけ
 
+# 率の分母の下限。**これ未満は「向き」の計算に入れない**（`_videos` の中の理由）。
+ROBUST_MIN = 30
+
 
 def save(snap: dict) -> None:
     """追記して、古いものを落とす。**放っておくと毎時伸びる。**"""
@@ -242,6 +308,102 @@ def save(snap: dict) -> None:
         lines = [ln for ln in SNAPSHOTS.read_text(encoding="utf-8").splitlines() if ln.strip()]
     lines.append(json.dumps(snap, ensure_ascii=False))
     SNAPSHOTS.write_text("\n".join(lines[-KEEP:]) + "\n", encoding="utf-8")
+
+
+def _videos(cur: dict) -> None:
+    """**動画べつを、毎回かならず横に並べて出す。**
+
+    2026-08-10 に気づいた穴。走査は動画べつの `averageViewDuration` を
+    数時間前から取っていたが、**`--full` の後ろの生の羅列にしか出ておらず、
+    一度も読んでいなかった。** 読んだら、完視率と再生数が**逆相関**していた
+    （完視102%が311再生、完視31%が1512再生）。
+
+    **引いたのに読まない、は被覆の穴とは別の穴。**
+    `src/scan.py` は前者だけを塞いでいた。差分は「前回と何が動いたか」しか
+    言わないので、**動いていない本どうしの差**は永久に出てこない。
+
+    だから縦の差分とは別に、**横（本どうし）を毎回出す。**
+    向きは順位相関で機械に出させる。目で見て気づくのを当てにしない。
+
+    **出すのは向きだけ。理由は言わせないこと**（8/10 に、割合の変化へ
+    「無効再生の除外です」と断言して外している。同じ壊れ方をする）。
+    """
+    rows: dict[str, dict] = {}
+    for k, v in cur.items():
+        if not k.startswith("動画.") or k.count(".") < 2:
+            continue
+        _, vid, metric = k.split(".", 2)
+        rows.setdefault(vid, {})[metric] = v
+    rows = {v: r for v, r in rows.items() if r.get("views")}
+    if not rows:
+        return
+
+    order = sorted(rows, key=lambda v: -rows[v]["views"])
+    print(f"\n  --- 動画べつ（{len(order)}本 / この窓で再生のあったものだけ）---")
+    print(f"    {'再生':>5} {'engaged':>8} {'平均秒':>6} {'完視率':>6} "
+          f"{'尺':>4}  題")
+    for vid in order:
+        r = rows[vid]
+        eng = r.get("engagedViews")
+        eng_s = f"{eng / r['views'] * 100:.1f}%" if eng else "-"
+        dur = r.get("averageViewDuration")
+        pct = r.get("averageViewPercentage")
+        length = r.get("尺")
+        print(f"    {r['views']:>5} {eng_s:>8} "
+              f"{(str(int(dur)) + 's') if dur else '-':>6} "
+              f"{(f'{pct:.0f}%') if pct else '-':>6} "
+              f"{(str(length) + 's') if length else '-':>4}  "
+              f"{str(r.get('題', vid))[:26]}")
+
+    # **再生数との向き。** 実数どうしを比べると「再生が多い本は
+    # いいねも多い」と当たり前のことしか出ないので、**率に直してから**比べる。
+    # **再生1回の本を率の計算に入れないこと。**
+    #
+    # 入れた1回目で分かった。再生1の本は engaged が必ず 100%（1/1）になり、
+    # **`engaged／再生` の向きが +0.9 相当から −0.25「無関係」に反転した。**
+    # 中身が変わったのではなく、**分母1の率が2件混ざっただけ。**
+    # 表には残す（本数は事実）。向きの計算からだけ外す。
+    used = [v for v in order if rows[v]["views"] >= ROBUST_MIN]
+    dropped = len(order) - len(used)
+    if len(used) < 4:
+        print(f"    [!] **{ROBUST_MIN}再生を超える本が {len(used)}本しかなく、"
+              "向きは出せません**（分母の小さい率は当てにならない）")
+        return
+
+    views = [rows[v]["views"] for v in used]
+    lines = []
+    for metric in sorted({m for r in rows.values() for m in r
+                          if m not in ("views", "題")}):
+        vals, ok = [], True
+        for vid in used:
+            x = rows[vid].get(metric)
+            if not isinstance(x, (int, float)):
+                ok = False
+                break
+            ratio = any(w in metric for w in ("average", "Rate", "Percentage"))
+            vals.append(x if (ratio or metric == "尺")
+                        else x / rows[vid]["views"])
+        if not ok:
+            continue
+        rho = _spearman(vals, views)
+        if rho is None:
+            continue
+        label = metric if (any(w in metric for w in ("average", "Percentage"))
+                           or metric == "尺") else f"{metric}／再生"
+        lines.append((rho, label))
+    if lines:
+        tail = (f" / 再生{ROBUST_MIN}未満の {dropped}本は除外"
+                "（分母が小さいと率が壊れる）") if dropped else ""
+        print(f"  **再生数との向き**（順位相関 / n={len(used)}{tail}）")
+        for rho, label in sorted(lines, key=lambda x: -x[0]):
+            way = "同じ向き" if rho > 0.3 else ("逆向き" if rho < -0.3 else "無関係")
+            print(f"    {label:26} {rho:+.2f}  {way}")
+        print("    **出しているのは向きだけです。理由はここからは分かりません**"
+              "（題材・公開時刻・配信の広さと交絡しています）")
+    if len(used) < 8:
+        print(f"    [!] **{len(used)}本しかありません。**"
+              "1本入れ替わるだけで向きが反転しうる段階です"
+              "（実際に反転を見ている。この関数の中の注意を読むこと）")
 
 
 def report(snap: dict, prev: dict | None, full: bool = False) -> None:
@@ -326,6 +488,8 @@ def report(snap: dict, prev: dict | None, full: bool = False) -> None:
             print(f"    [新] {k:42} {cur[k]}")
         for k in gone[:10]:
             print(f"    [消] {k:42} （前回 {old[k]}）")
+
+    _videos(cur)
 
     if full:
         print("\n  --- 全部の値 ---")
