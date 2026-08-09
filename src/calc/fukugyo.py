@@ -126,6 +126,45 @@ def grid(rate: float) -> list[dict]:
     return rows
 
 
+def sales_expense_grid(rate: float = 0.10) -> list[dict]:
+    """**売上と経費の組み合わせ**べつに、20万円ルールに当たるかを判定する。
+
+    検索語「副業 20万円 経費 含む」に答えるための表。
+    **20万円は売上ではなく所得（売上−経費）で判定する。**
+    同じ売上30万円でも、経費が12万円なら所得18万円で申告不要、
+    経費が5万円なら所得25万円で申告が要る。
+
+    `grid()` とは別に持つ。あちらは**所得**べつで、こちらは**売上と経費**べつ。
+    2026-08-09、長尺がショートと同じ棒を5本出して反復検査に落ちた。
+    **同じ計算モジュールでも、切り口が同じなら同じ図になる。**
+    """
+    rows = []
+    for sales in (250_000, 300_000, 400_000):
+        for expense in (0, 50_000, 100_000, 150_000):
+            profit = max(sales - expense, 0)
+            it, rt = income_tax(profit, rate), resident_tax(profit)
+            rows.append({
+                "sales": sales,
+                "expense": expense,
+                "profit": profit,
+                "needs_filing": profit > THRESHOLD,
+                "income_tax": it,
+                "resident_tax": rt,
+                "take_home": profit - it - rt,
+            })
+    return rows
+
+
+def expense_to_clear(sales: int) -> int:
+    """その売上で**申告不要にするために必要な経費**。
+
+    「売上いくらまでなら大丈夫か」ではなく「あといくら経費があれば」を出す。
+    **経費を作れと言っているのではない。** 既にある経費を計上し忘れると
+    判定が変わる、という話。
+    """
+    return max(sales - THRESHOLD, 0)
+
+
 def check_tables() -> None:
     """**制度の値がずれていないかを、計算そのもので確かめる。**
 
@@ -160,6 +199,16 @@ def check_tables() -> None:
         got = be - income_tax(be, r) - resident_tax(be)
         want = THRESHOLD - resident_tax(THRESHOLD)
         assert got >= want, f"追いつく所得で手取りが戻っていない（税率{r}）"
+
+    # 売上×経費の表。**20万円は所得で判定する**ことが崩れていないか。
+    for row in sales_expense_grid():
+        assert row["profit"] == max(row["sales"] - row["expense"], 0), "所得の出し方が違う"
+        assert row["needs_filing"] == (row["profit"] > THRESHOLD), "判定が所得と食い違う"
+    # 売上30万・経費12万 → 所得18万 → 申告不要。ここが動画の要点。
+    assert expense_to_clear(300_000) == 100_000, "30万円で必要な経費が10万円でない"
+    assert expense_to_clear(200_000) == 0, "20万円ちょうどで経費が要ることになっている"
+    assert not income_tax(180_000, 0.10), "所得18万円で所得税が出ている"
+    assert resident_tax(180_000) == 18_000, "所得18万円の住民税が1万8000円でない"
 
     print("制度の値の検査: 通過")
 
