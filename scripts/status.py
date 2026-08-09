@@ -569,8 +569,68 @@ def main(days: int = 7) -> int:
     subs = int(stats.get("subscriberCount", 0) or 0)
     print("\n=== 収益化の門まで ===")
     print(f"  登録者     {subs:6d} / 1000   あと {max(0, 1000 - subs)}人")
-    print("  総再生時間 は Analytics 側。登録率0.3%なら1000人は約33万再生で、")
-    print("  4000時間ぶん（約6万再生）の5倍以上。**律速は登録者のほう。**")
+
+    # **仮定の登録率で割らないこと。実測がある。**
+    #
+    # 2026-08-10 まで、ここは「登録率0.3%なら1000人は約33万再生」と出していた。
+    # **0.3% はどこから来たのか誰も知らない数字で、実測は 14分の1 だった。**
+    # 到達できるかを決める掛け算なので、仮定で置いてよい場所ではない。
+    #
+    # 1件しか起きていないので点推定は当てにならない。**上振れ側も出す**
+    # （ポアソンで1件観測の95%上限はおよそ4.7件ぶん）。**楽観側で見ても届くか**
+    # を毎回見るためで、悲観側を強調するためではない。
+    try:
+        from src import scan as _scan
+
+        vals = (_scan._previous() or {}).get("values", {})
+        gained = vals.get("合計.subscribersGained")
+        views = vals.get("合計.views")
+        if gained is not None and views:
+            rate = gained / views
+            hi = 4.744 / views                       # 1件観測の楽観側
+            print(f"  **実測の登録率 {rate * 100:.3f}%**"
+                  f"（{gained}人 / {views}再生。**仮定ではない**）")
+            need = int((1000 - subs) / rate) if rate else None
+            need_hi = int((1000 - subs) / hi) if hi else None
+            if need:
+                print(f"    あと1000人に必要な再生: **{need / 10000:.0f}万**"
+                      f"（楽観側 {need_hi / 10000:.0f}万）")
+            # **4000時間の門を、チャンネル合計の視聴時間で割らないこと。**
+            #
+            # 一度そう書いて、すぐ消した。2つ間違っている。
+            #
+            # 1. **ショートの視聴時間は4000時間に数えない。** 再生の99.95%が
+            #    ショートのフィード内なので、合計で割ると**数えない時間で門を
+            #    通る絵**が出る（174万再生で届く、と出た。届かない）
+            # 2. `estimatedMinutesWatched ÷ 再生数` は `averageViewDuration` と
+            #    2.6倍ずれる（走査の罠に書いてある）。**割って作らないこと**
+            #
+            # なので長尺だけで測る。ショート側は別の門（90日で1000万再生）。
+            longs = {}
+            for k, v in vals.items():
+                if k.startswith("動画.") and k.count(".") >= 2:
+                    _, vid, m = k.split(".", 2)
+                    longs.setdefault(vid, {})[m] = v
+            lf = [r for r in longs.values() if (r.get("尺") or 0) > 180]
+            lf_views = sum(r.get("views", 0) for r in lf)
+            lf_sec = sum(r.get("views", 0) * (r.get("averageViewDuration") or 0)
+                         for r in lf)
+            print(f"  長尺の視聴時間 **{lf_sec / 3600:.2f}時間** / 4000時間"
+                  f"（長尺 {len(lf)}本・{lf_views}再生。"
+                  "**ショートの視聴時間はこの門に数えません**）")
+            if lf_views and lf_sec:
+                per = lf_sec / lf_views
+                print(f"    あと4000時間に必要な長尺の再生: "
+                      f"**{int(4000 * 3600 / per) / 10000:.0f}万**"
+                      f"（実測 1再生 {per:.0f}秒。**n={lf_views}**）")
+            # **門の形を毎回書く。** 「どちらか一方」が登録者にも掛かると
+            # 読めてしまうので、掛け算の形のまま出す。
+            print("  門の形: **登録者1000人 かつ（4000時間 または"
+                  " 90日で1000万ショート再生）**。**登録者は迂回できません**")
+            print("  **この2つが数百万再生を指しているなら、"
+                  "1本ずつ良くする道では届きません**（`docs/MEANS.md` を見ること）")
+    except Exception as exc:
+        print(f"  [!] 実測の登録率が出せません: {str(exc)[:120]}")
     return 0
 
 
