@@ -400,20 +400,28 @@ def print_where_watched(days: int = 28) -> None:
             print("  説明欄・目次・裏取りの手順・再生リストは**ほぼ読まれていない。**")
             print("  長尺（M4）はこの WATCH をゼロから作る賭けだと理解すること。")
 
+        # **1再生あたりの秒数は、API が直接返すものを使う。**
+        # 2026-08-09、`estimatedMinutesWatched ÷ views` で 8.5秒と出して
+        # 「大半が1〜2枚で離れている」と報告した。**誤り。**
+        # 同じ期間で API の `averageViewDuration` は **22秒**。
+        # 627分 × 60 ÷ 4432 = 8.5 だが、views × 22秒 = 1,625分 で**合わない**
+        # （`estimatedMinutesWatched` は総視聴時間そのものではない）。
+        # **直接その問いに答える指標があるのに、割り算で別の数字を作っていた。**
         dev = pull("deviceType")
-        print("  端末べつ（1再生あたりの秒数つき）:")
+        print("  端末べつ:")
         for name, v, m in dev:
-            print(f"    {name:9} {v:>5}再生 {m:>4}分  1再生 {m * 60 / max(v, 1):5.1f}秒")
+            print(f"    {name:9} {v:>5}再生")
 
-        allv = sum(x[1] for x in dev) or 1
-        allm = sum(x[2] for x in dev)
-        sec = allm * 60 / allv
-        print(f"  **全体で1再生あたり {sec:.1f}秒。**")
-        print("  ショートの尺は27〜69秒なので、**大半が最初の1〜2枚で離れている。**")
-        print("  維持率の曲線とは別の経路（総視聴分÷再生数）から出た数字で、"
-              "**5秒の崖と一致する。**")
-        print("  **末尾に置いたものは、ほとんど誰にも届いていない**"
-              "（問いかけ・明日やること・チャンネルの説明）。")
+        r = api.reports().query(
+            ids="channel==MINE", startDate=start.isoformat(), endDate=end.isoformat(),
+            metrics="views,averageViewDuration,averageViewPercentage",
+        ).execute()
+        head = [h["name"] for h in r.get("columnHeaders", [])]
+        d = dict(zip(head, r.get("rows", [[0, 0, 0]])[0]))
+        print(f"  **1再生あたり {d['averageViewDuration']}秒"
+              f"（尺の {d['averageViewPercentage']:.0f}%）**  ← API の averageViewDuration")
+        print("  **`estimatedMinutesWatched ÷ 再生数` で出さないこと。**"
+              "2.6倍ずれる（8/9 に間違えた）。")
     except Exception as exc:
         print(f"  途中で読めませんでした: {str(exc)[:120]}")
 
