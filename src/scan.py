@@ -268,19 +268,34 @@ def report(snap: dict, prev: dict | None, full: bool = False) -> None:
               f" / 増えた {len(appeared)}件 / 消えた {len(gone)}件**")
         if not moved and not appeared:
             print("  **何も動いていません。**")
-        ups = [x for x in moved if x[2] > x[1]]
-        downs = [x for x in moved if x[2] < x[1]]
+        # **割合と平均は「無効再生の除外」で説明できない。**
+        # 2026-08-10、`averageViewPercentage` が 29.59→29.51 と動いたとき、
+        # 下の一括ラベルが**「無効再生の除外です」と断言した。** 割合は
+        # 分母と分子の両方が動くので、減った理由は1つに決まらない。
+        # **もっともらしい説明を機械に言わせてはいけない**（今日の教訓そのもの）。
+        def _is_count(key: str) -> bool:
+            tail = key.split(".")[-1]
+            return not any(w in tail for w in
+                           ("average", "Rate", "Percentage", "cpm", "Cpm"))
+
+        counts = [x for x in moved if _is_count(x[0])]
+        ratios = [x for x in moved if not _is_count(x[0])]
+        ups = [x for x in counts if x[2] > x[1]]
+        downs = [x for x in counts if x[2] < x[1]]
         for k, o, v in sorted(moved, key=lambda x: -abs(x[2] - x[1]))[:25]:
             print(f"    {k:46} {o} → {v}  ({v - o:+g})")
         # **開始日を固定してあるので、減ったら中身の話ではない。**
         # YouTube が後から無効な再生を引いている（8/8 に確認済み。正常）。
         # ここを「伸びが止まった」と読み違えないための1行。
         if downs and not ups:
-            print(f"  **{len(downs)}件すべてが減少。開始日は固定なので、"
+            print(f"  **実数 {len(downs)}件がすべて減少。開始日は固定なので、"
                   "これは無効再生の除外です**（正常。伸びが止まったのではない）")
         elif downs:
-            print(f"  （増えた {len(ups)}件 / 減った {len(downs)}件。"
+            print(f"  （実数: 増えた {len(ups)}件 / 減った {len(downs)}件。"
                   "減少は無効再生の除外。開始日を固定してあるので窓の影響ではない）")
+        if ratios:
+            print(f"  （割合・平均が {len(ratios)}件 動いた。**理由は1つに決まらない**"
+                  "ので、実数のほうを見て判断すること）")
         for k in appeared[:10]:
             print(f"    [新] {k:42} {cur[k]}")
         for k in gone[:10]:
