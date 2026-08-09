@@ -13,7 +13,7 @@ import shutil
 import sys
 from pathlib import Path
 
-from . import config, history, subtitles, thumbnail, uploader, verify, visuals
+from . import bars, config, history, subtitles, thumbnail, uploader, verify, visuals
 from .renderer import build_narration, build_video, segment_timeline
 from .script_writer import (SHORT_SEGMENT_CHARS, VideoScript, generate,
                             short_script_problems)
@@ -253,6 +253,15 @@ def main(argv: list[str] | None = None) -> int:
         (work / "script.json").write_text(raw, encoding="utf-8")
     else:
         script = generate(channel, topic)
+        # **生成した直後に置く。** 台本を書かせるのが一番高い工程なのに、
+        # これまで `script.json` を書くのは動画を作り終えた後（下の 6.）だけだった。
+        # レンダリングや検査で落ちると**台本ごと消えて、また書かせ直していた。**
+        # `used_bars()` もこのファイルを読むので、落ちた回の数値は
+        # 「使用済み」として数えられず、次の回が同じ棒を選びうる。
+        (work / "script.json").write_text(
+            json.dumps(script.model_dump(), ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
     print(f"[pipeline] タイトル: {script.title}")
 
     if args.short:
@@ -330,6 +339,10 @@ def main(argv: list[str] | None = None) -> int:
         video_path, thumb_path, script.title, description,
         script.tags, channel["publish"],
     )
+
+    # 公開した棒を残す。`build/` は .gitignore なので、これをやらないと
+    # 次のコンテナで「同じ図」検査の比較対象がゼロになる（`src/bars.py`）。
+    bars.record(topic["id"], video_id, script.model_dump())
 
     refill_topics_if_low(posted | {topic["id"]})
     print("=== 完了 ===")

@@ -81,6 +81,62 @@ class Wage:
         return total
 
 
+# 労基法37条5項と施行規則21条が挙げる、割増賃金の算定基礎から除外できる手当。
+# **ただし「個人ごとの事情に応じて支給される場合」に限る。**
+# 一律定額で配っているものは、名前が家族手当でも除外できない。
+EXCLUDABLE_NAMES = (
+    "家族手当", "通勤手当", "別居手当", "子女教育手当", "住宅手当",
+    "臨時に支払われた賃金", "1か月を超える期間ごとに支払われる賃金",
+)
+
+
+def allowance_grid(base: int = 268_000, scheduled: float = 163.3,
+                   overtime_hours: float = 22.0) -> list[dict]:
+    """**手当の種類べつに、一律支給だといくら変わるか。**
+
+    検索語「残業代 計算 手当 含まれないもの」に答えるための表。
+
+    除外できるかどうかは**名前では決まらない。**
+    家族手当・住宅手当は、扶養人数や家賃に応じて変わるなら除外できるが、
+    **全員に同額を配っているなら除外できない。**
+    通勤手当は距離に応じるのが通常なので除外できる。
+    役職手当は最初から除外の対象外。
+
+    ここで出すのは「一律で配っているのに除外された場合、
+    残業代が年いくら少なくなるか」。
+
+    `shortfall_grid()` とは別の切り口。あちらは**手当の合計額**べつで、
+    こちらは**手当の種類**べつ。
+    2026-08-09、同じモジュールでも切り口が同じだと同じ図になると分かったので、
+    数値が既存と重ならないことを確かめて額を選んである。
+    """
+    cases = [
+        ("家族手当（一律）", 18_000, False),
+        ("住宅手当（一律）", 23_000, False),
+        ("役職手当", 31_000, False),
+        ("通勤手当（実費）", 14_000, True),
+        ("家族手当（扶養数で変動）", 18_000, True),
+    ]
+    rows = []
+    for name, amount, excludable in cases:
+        full = Wage(base=base, role_allowance=amount)
+        correct = hourly_rate(full, scheduled, mistaken=False)
+        # 除外できないものを除外した場合の単価
+        wrong = hourly_rate(Wage(base=base), scheduled, mistaken=False)
+        legal = excludable          # 法律上、除外してよいか
+        diff_hour = 0.0 if legal else correct - wrong
+        rows.append({
+            "name": name,
+            "amount": amount,
+            "excludable": legal,
+            "hourly_correct": round(correct),
+            "hourly_if_excluded": round(wrong),
+            "diff_per_hour": round(diff_hour),
+            "annual_diff": round(diff_hour * RATE_OVERTIME * overtime_hours * 12),
+        })
+    return rows
+
+
 def check_tables() -> None:
     """法令で決まっている割増率と、計算の向きを確かめる。
 
@@ -122,6 +178,21 @@ def check_tables() -> None:
     step_under = just_under - monthly_overtime_pay(wage, hours, 59.0, mistaken=False)
     if not step_over > step_under:
         raise ValueError("60時間を超えた1時間の単価が上がっていない")
+
+    # 手当の種類べつの表。**除外できるかは名前ではなく支給の仕方で決まる。**
+    rows = allowance_grid()
+    by = {r["name"]: r for r in rows}
+    assert not by["家族手当（一律）"]["excludable"], "一律の家族手当が除外可になっている"
+    assert by["家族手当（扶養数で変動）"]["excludable"], "変動する家族手当が除外不可になっている"
+    assert by["通勤手当（実費）"]["excludable"], "通勤手当が除外不可になっている"
+    assert not by["役職手当"]["excludable"], "役職手当が除外可になっている"
+    # 除外できないものを除外すると、必ず単価が下がる（差が正）。
+    for r in rows:
+        if not r["excludable"]:
+            assert r["diff_per_hour"] > 0, f"{r['name']}で差が出ていない"
+            assert r["annual_diff"] > 0, f"{r['name']}の年間差が0"
+        else:
+            assert r["annual_diff"] == 0, f"{r['name']}は除外してよいので差は0のはず"
 
 
 def monthly_scheduled_hours(annual_days_off: int, hours_per_day: float) -> float:
@@ -276,3 +347,12 @@ if __name__ == "__main__":
             r = hours_error_shortfall(300_000, off, per_day, assumed, 20.0)
             print(f"{300_000:8,d}円 {off:5d}日 {assumed:7.1f}h "
                   f"{r['correct_hours']:7.1f}h {20:4.0f}h {r['annual_shortfall']:9,.0f}円")
+
+    print("\n=== 手当の種類べつ 一律だと除外できない ===")
+    print(f"{'手当':>26}{'月額':>9}{'除外':>6}{'正しい単価':>11}{'除外した単価':>13}{'年間の差':>11}")
+    for r in allowance_grid():
+        print(f"{r['name']:>26}{r['amount']:>8,}円{'  可' if r['excludable'] else ' 不可':>6}"
+              f"{r['hourly_correct']:>10,}円{r['hourly_if_excluded']:>12,}円"
+              f"{r['annual_diff']:>10,}円")
+    print("  ※ 除外できるかは名前ではなく支給の仕方で決まる。")
+    print("     扶養人数や家賃に応じて変わるなら除外できる。全員一律なら除外できない。")

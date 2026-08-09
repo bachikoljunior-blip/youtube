@@ -191,7 +191,18 @@ def _check_not_repeat(work: Path, script: dict | None) -> list[str]:
     if not mine:
         return []
 
-    problems = []
+    # 比較する相手を2つの出どころから集める。
+    #
+    # **`build/` だけでは足りない。** `.gitignore` に入っているので
+    # 新しいコンテナでは空になり、**この検査は比較0件で黙って通る**
+    # （2026-08-09 に気づいた。詳しくは `src/bars.py` の冒頭）。
+    # 公開済みのぶんは `data/published_bars.json` から取る。こちらが本命で、
+    # `build/` は「まだ公開していないが今日作ったもの」を捕まえるための補助。
+    from . import bars
+
+    past_charts: list[tuple[str, list[list[str]]]] = [
+        (f"{tid}（公開済み）", ch) for tid, ch in bars.published_charts(exclude=work.name).items()
+    ]
     for other in sorted((work.parent).glob("*/script.json")):
         if other.parent.name == work.name:
             continue
@@ -199,19 +210,27 @@ def _check_not_repeat(work: Path, script: dict | None) -> list[str]:
             past = json.loads(other.read_text(encoding="utf-8"))
         except Exception:
             continue
-        for a in mine:
-            for b in charts(past):
-                shared = set(a) & set(b)
-                if len(shared) >= REPEAT_BARS:
-                    problems.append(
-                        f"図の棒が `{other.parent.name}` と {len(shared)}本 共通"
-                        f"（{'・'.join(sorted(shared)[:3])}…）。"
-                        "**同じ図を出している。** 切り口を変えるか、別の計算結果を出すこと"
-                    )
-                    break
-            else:
-                continue
-            break
+        past_charts.append((other.parent.name, [list(c) for c in charts(past)]))
+
+    problems = []
+    for name, other_charts in past_charts:
+        # 1つの相手につき1件だけ報告する。同じ相手で何枚も当たっても、
+        # 直すべきことは「切り口を変える」の1つなので、並べても長くなるだけ。
+        hit = next(
+            (
+                set(a) & set(b)
+                for a in mine
+                for b in other_charts
+                if len(set(a) & set(b)) >= REPEAT_BARS
+            ),
+            None,
+        )
+        if hit:
+            problems.append(
+                f"図の棒が `{name}` と {len(hit)}本 共通"
+                f"（{'・'.join(sorted(hit)[:3])}…）。"
+                "**同じ図を出している。** 切り口を変えるか、別の計算結果を出すこと"
+            )
     return problems
 
 

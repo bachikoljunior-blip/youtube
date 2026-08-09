@@ -17,7 +17,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from src import config, uploader  # noqa: E402
+from src import bars, config, uploader  # noqa: E402
 
 # 動画に出してはいけない語。オーナーの指示でリポジトリの存在を伏せている。
 FORBIDDEN = ("github", "GitHub", "リポジトリ", "コードを公開", "ソースコード")
@@ -76,6 +76,10 @@ def main(topic: str, visibility: str | None = None, hour: int | None = None) -> 
         script["tags"],
         channel["publish"],
     )
+    # 公開した棒を残す。`build/` は .gitignore なので、これをやらないと
+    # 次のコンテナで「同じ図」検査の比較対象がゼロになる（`src/bars.py`）。
+    bars.record(topic, video_id, script)
+
     print(f"VIDEO_ID {video_id}")
     return 0
 

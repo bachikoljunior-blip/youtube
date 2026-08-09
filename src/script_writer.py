@@ -332,10 +332,16 @@ def used_bars(exclude: str = "") -> list[str]:
     """
     import json
 
-    seen: set[str] = set()
+    from . import bars
+
+    # **`build/` は .gitignore に入っていて、コンテナをまたがない。**
+    # ここだけを見ていると、新しい実行環境では比較対象がゼロになり、
+    # 「使用済み」を1件も伝えないまま黙って通る（`src/bars.py` の冒頭）。
+    # 公開済みの棒は `data/published_bars.json` から取る。
+    seen: set[str] = set(bars.published_displays(exclude=exclude))
     build = config.ROOT / "build"
     if not build.exists():
-        return []
+        return sorted(seen)
     for path in sorted(build.glob("*/script.json")):
         if exclude and path.parent.name == exclude:
             continue
