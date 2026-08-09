@@ -358,6 +358,66 @@ def print_channel_signals(days: int = 28) -> None:
               "ここでは判定できないので、`data/views.jsonl` か動画べつの数字を使うこと。")
 
 
+def print_where_watched(days: int = 28) -> None:
+    """**どこで・何秒見られているか。**
+
+    2026-08-09 にオーナーから「毎回取得できる情報の全て踏まえて分析してる?」と
+    聞かれて確かめたら、**していなかった。** 棚卸しが「使っていない次元が8個」と
+    出し続けていたのに、一度も中身を見ていなかった。引いたら設計に関わる事実が出た。
+
+    **目に入らないものは無くなる。** だから毎回出す。
+    """
+    from datetime import date, timedelta
+
+    from googleapiclient.discovery import build
+
+    from src.auth import credentials
+
+    print(f"\n=== どこで・何秒見られているか（直近{days}日）===")
+    try:
+        api = build("youtubeAnalytics", "v2", credentials=credentials(), cache_discovery=False)
+        end, start = date.today(), date.today() - timedelta(days=days)
+
+        def pull(dim):
+            r = api.reports().query(
+                ids="channel==MINE", startDate=start.isoformat(), endDate=end.isoformat(),
+                metrics="views,estimatedMinutesWatched", dimensions=dim,
+                sort="-views", maxResults=10,
+            ).execute()
+            return r.get("rows", [])
+    except Exception as exc:
+        print(f"  読めませんでした: {str(exc)[:120]}")
+        return
+
+    try:
+        loc = pull("insightPlaybackLocationType")
+        total_v = sum(x[1] for x in loc) or 1
+        shorts = next((x[1] for x in loc if x[0] == "SHORTS_FEED"), 0)
+        watch = next((x[1] for x in loc if x[0] == "WATCH"), 0)
+        print(f"  再生場所: SHORTS_FEED {shorts}（{shorts / total_v:.1%}） / WATCH {watch}")
+        if watch < total_v * 0.05:
+            print("  **視聴ページにはほぼ誰も来ていない。**")
+            print("  説明欄・目次・裏取りの手順・再生リストは**ほぼ読まれていない。**")
+            print("  長尺（M4）はこの WATCH をゼロから作る賭けだと理解すること。")
+
+        dev = pull("deviceType")
+        print("  端末べつ（1再生あたりの秒数つき）:")
+        for name, v, m in dev:
+            print(f"    {name:9} {v:>5}再生 {m:>4}分  1再生 {m * 60 / max(v, 1):5.1f}秒")
+
+        allv = sum(x[1] for x in dev) or 1
+        allm = sum(x[2] for x in dev)
+        sec = allm * 60 / allv
+        print(f"  **全体で1再生あたり {sec:.1f}秒。**")
+        print("  ショートの尺は27〜69秒なので、**大半が最初の1〜2枚で離れている。**")
+        print("  維持率の曲線とは別の経路（総視聴分÷再生数）から出た数字で、"
+              "**5秒の崖と一致する。**")
+        print("  **末尾に置いたものは、ほとんど誰にも届いていない**"
+              "（問いかけ・明日やること・チャンネルの説明）。")
+    except Exception as exc:
+        print(f"  途中で読めませんでした: {str(exc)[:120]}")
+
+
 def main(days: int = 7) -> int:
     youtube = _service()
     channel = youtube.channels().list(part="snippet,contentDetails,statistics", mine=True).execute()["items"][0]
@@ -481,6 +541,7 @@ def main(days: int = 7) -> int:
 
     print_retention()
     print_channel_signals()
+    print_where_watched()
     print_means()
     print_hypotheses()
     print_budget()
