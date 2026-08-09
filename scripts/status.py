@@ -305,6 +305,59 @@ def print_retention(top: int = 4) -> None:
     print("  **動画が視聴者に何も問いかけていない。**")
 
 
+def print_channel_signals(days: int = 28) -> None:
+    """**チャンネル日次でしか取れない指標。**
+
+    `videosAddedToPlaylists`（保存）・`dislikes`・`redViews` は
+    **`dimensions=video` では 400 になる**（2026-08-09 に確認）。
+    動画べつには比べられないが、**チャンネル全体で0かどうかは分かる。**
+    棚卸しが12件ぶん「使っていない」と言い続けていたのはこれらのこと。
+
+    保存を見る理由: 8/22 の仮説（問いかけでコメントを取りにいく）を立てたとき、
+    **「コメントより保存のほうが取りやすいのでは」を確かめていなかった。**
+    """
+    from datetime import date, timedelta
+
+    from googleapiclient.discovery import build
+
+    from src.auth import credentials
+
+    print(f"\n=== チャンネル日次の信号（直近{days}日・動画べつには取れない）===")
+    try:
+        api = build("youtubeAnalytics", "v2", credentials=credentials(), cache_discovery=False)
+        end, start = date.today(), date.today() - timedelta(days=days)
+        r = api.reports().query(
+            ids="channel==MINE", startDate=start.isoformat(), endDate=end.isoformat(),
+            metrics="views,videosAddedToPlaylists,shares,comments,likes,dislikes,redViews",
+            dimensions="day", maxResults=90,
+        ).execute()
+    except Exception as exc:
+        print(f"  読めませんでした: {str(exc)[:120]}")
+        return
+
+    head = [h["name"] for h in r.get("columnHeaders", [])]
+    rows = [dict(zip(head, x)) for x in r.get("rows", [])]
+    if not rows:
+        print("  データがありません")
+        return
+    tot = {k: sum(row[k] for row in rows) for k in head if k != "day"}
+    v = tot["views"] or 1
+    print(f"  再生 {tot['views']}  保存 {tot['videosAddedToPlaylists']}"
+          f"  共有 {tot['shares']}  コメント {tot['comments']}"
+          f"  高評価 {tot['likes']}  低評価 {tot['dislikes']}")
+    print(f"  Premium 再生 {tot['redViews']}（全体の {tot['redViews'] / v:.0%}）")
+    print("  **保存も共有もコメントも、ほぼ0。** 取りやすい信号がある、という話ではない。")
+    print("  問いかけでコメントを取りにいく実験（8/22）は、**低いところから始まる。**")
+
+    # **鮮度。** ここが古いと「24時間で何再生」の判定に使えない。
+    last = rows[-1]["day"]
+    lag = (date.today() - date.fromisoformat(last)).days
+    print(f"  日次データの最終日 {last}（{lag}日前）")
+    if lag >= 2:
+        print("  **この表は当日ぶんを含みません。** 「24時間で〇再生」の反証条件は"
+              "ここでは判定できないので、`data/views.jsonl` か動画べつの数字を使うこと。")
+
+
 def main(days: int = 7) -> int:
     youtube = _service()
     channel = youtube.channels().list(part="snippet,contentDetails,statistics", mine=True).execute()["items"][0]
@@ -427,6 +480,7 @@ def main(days: int = 7) -> int:
         print(f"  読めませんでした: {str(exc)[:120]}")
 
     print_retention()
+    print_channel_signals()
     print_means()
     print_hypotheses()
     print_budget()

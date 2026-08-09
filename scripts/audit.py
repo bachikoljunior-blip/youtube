@@ -3,6 +3,7 @@
 
     python scripts/audit.py            # 全部
     python scripts/audit.py --quick    # API を叩かない（速い）
+    python scripts/audit.py --force    # 保存した測定を捨てて測り直す
 
 ## なぜ要るか
 
@@ -109,7 +110,10 @@ def probe_analytics(force: bool = False) -> dict:
     """
     state = _load()
     cached = state.get("analytics")
-    if cached and not force:
+    # **鍵が増えたら測り直す。** 2026-08-09 に `per_video_metrics` を足したとき、
+    # 古いキャッシュがそのまま返って**新しい判定が一度も走らなかった。**
+    # 「保存してあるから速い」は、保存の中身が古い形だと**ただの嘘**になる。
+    if cached and not force and "per_video_metrics" in cached:
         return cached
 
     from googleapiclient.discovery import build
@@ -130,19 +134,27 @@ def probe_analytics(force: bool = False) -> dict:
             return False
 
     print("API に問い合わせています（指標と次元を1つずつ）…")
+    # **`day` で通っても `video` で通るとは限らない。**
+    # 2026-08-09 に判明: `videosAddedToPlaylists`・`dislikes`・`redViews`・
+    # card 系・annotation 系は **`day` では 200、`video` では 400**。
+    # 以前はここを `day` だけで試して「使えるのに使っていない」と数えていたので、
+    # **動画べつに使えないものを12件、毎回「見落とし」として並べていた。**
+    # 棚卸しの数を水増しするだけでなく、**手をつけようとした回を1回無駄にする。**
     ok_metrics = [m for m in CANDIDATE_METRICS if works(m)]
+    per_video = [m for m in ok_metrics if works(m, "video")]
     # 次元は views と組み合わせて試す
     ok_dims = [d for d in CANDIDATE_DIMENSIONS if works("views", d)]
     result = {
         "checked_at": datetime.now(JST).isoformat(timespec="seconds"),
         "metrics": ok_metrics, "dimensions": ok_dims,
+        "per_video_metrics": per_video,
     }
     state["analytics"] = result
     _save(state)
     return result
 
 
-def report_analytics(quick: bool) -> list[str]:
+def report_analytics(quick: bool, force: bool = False) -> list[str]:
     print("\n=== 1. 持っているのに見ていない（Analytics）===")
     if quick:
         cached = _load().get("analytics")
@@ -152,13 +164,24 @@ def report_analytics(quick: bool) -> list[str]:
         data = cached
         print(f"  （前回の計測 {data['checked_at'][:16]} を使用）")
     else:
-        data = probe_analytics()
+        data = probe_analytics(force=force)
 
     used = _used_in_source()
     gaps = []
     for kind, key in (("指標", "metrics"), ("次元", "dimensions")):
         unused = [x for x in data[key] if x not in used]
         print(f"  {kind}: 使える {len(data[key])} / 使っている {len(set(data[key]) & used)}")
+        if not unused:
+            continue
+        # **動画べつに取れないものは、別枠にして見落としに数えない。**
+        # チャンネル日次でしか取れず（`dimensions=day`）、本ごとの比較に使えない。
+        # 数えると毎回12件が居座り、**棚卸しの件数が意味を持たなくなる。**
+        per_video = data.get("per_video_metrics")
+        if key == "metrics" and per_video is not None:
+            day_only = [x for x in unused if x not in per_video]
+            unused = [x for x in unused if x in per_video]
+            if day_only:
+                print(f"    （チャンネル日次のみ・動画べつには 400 になる: {', '.join(day_only)}）")
         if unused:
             print(f"    **使っていない**: {', '.join(unused)}")
             gaps += [f"Analytics の{kind} `{x}` を使っていない" for x in unused]
@@ -243,10 +266,12 @@ def report_hypotheses() -> list[str]:
 
 def main() -> int:
     quick = "--quick" in sys.argv
+    # **測り直す道を残しておくこと。** 保存した結果は放っておくと永久に古い。
+    force = "--force" in sys.argv
     print("=== 棚卸し: 視界の外にあるものを数える ===")
     print("**数えるだけで終わらせないこと。** 必ず1件は手をつける。")
 
-    gaps = (report_analytics(quick) + report_means()
+    gaps = (report_analytics(quick, force) + report_means()
             + report_constraints() + report_hypotheses())
 
     print(f"\n=== 合計 {len(gaps)} 件 ===")
