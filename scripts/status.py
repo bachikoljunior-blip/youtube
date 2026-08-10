@@ -139,6 +139,18 @@ def _print_real_usage() -> bool:
 
     path = USAGE_REPO / "state" / "claude-usage.json"
     if not path.exists():
+        # **子は毎回まっさらなコンテナで立つ。クローンは残らない。**
+        # 2026-08-10（親子方式の1回目）、ここが黙って False を返し、
+        # 「=== 使用量（実メーター）===」の下に**何も出ない**状態になっていた。
+        # 空欄は「読んだが枠に余裕がある」と見分けがつかない。
+        # **見えていないことを、見えるように言うこと**（恒久指示 A15）。
+        print("  **正本のクローンがありません**"
+              f"（{USAGE_REPO}）。この回はまだ使用量を見ていません。")
+        print("  取り方（MCP が要る。シェルだけでは資格情報に届かない）:")
+        print("    1. add_repo owner=bachikoljunior-blip "
+              "repo=-chatgpt-usage-monitorPrivate")
+        print(f"    2. git clone --depth 1 {USAGE_REPO.name} → {USAGE_REPO}")
+        print("    3. status.py をもう一度実行する")
         return False
     try:
         d = json.loads(path.read_text(encoding="utf-8"))
