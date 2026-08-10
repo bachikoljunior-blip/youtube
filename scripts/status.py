@@ -471,6 +471,8 @@ def main(days: int = 7) -> int:
     stranded: list[str] = []
     scheduled: list[str] = []
     short_days: set[str] = set()      # ショートが予約されている日（MM/DD）
+    # **公開済みショートの再生（Data API・遅れなし）。** 門の先の掛け算に使う。
+    short_views: list[int] = []
 
     print(f"{'ID':13s} {'状態':16s} {'尺':>7s} {'再生':>5s} {'高評価':>4s}  題")
     for v in videos:
@@ -482,6 +484,8 @@ def main(days: int = 7) -> int:
         publish_at = st.get("publishAt")
         if st["privacyStatus"] == "public":
             state = f"公開 {_fmt(sn['publishedAt'])}"
+            if _is_short(v):
+                short_views.append(views)
         elif publish_at:
             hours = (datetime.fromisoformat(publish_at.replace("Z", "+00:00")) - now).total_seconds() / 3600
             state = f"予約 {_fmt(publish_at)}"
@@ -589,24 +593,24 @@ def main(days: int = 7) -> int:
         **28日窓で割らないこと。** この中身を出し始めたのは 8/4 で、
         前の22日はほぼ0。28で割ると1日173再生になり、**実際の4分の1**に見える。
         到達速度は「1日1本 × 1本あたり」で測る。
-        """
-        try:
-            from src import scan as _s
 
-            v = (_s._previous() or {}).get("values", {})
-            rows: dict[str, dict] = {}
-            for k, x in v.items():
-                if k.startswith("動画.") and k.count(".") >= 2:
-                    _, vid, m = k.split(".", 2)
-                    rows.setdefault(vid, {})[m] = x
-            ns = sorted(r["views"] for r in rows.values()
-                        if r.get("views", 0) >= 30 and (r.get("尺") or 0) <= 180)
-            if not ns:
-                return None
-            h = len(ns) // 2
-            return ns[h] if len(ns) % 2 else (ns[h - 1] + ns[h]) / 2
-        except Exception:
+        **2026-08-10 に直した。ここは Analytics を読んでいた。**
+        Analytics は2〜3日遅れるので、**新しい本ほど落ちる。**
+        実際この日は 8/9 の934再生が入らず、中央値が 660 になっていた。
+        **同じ数字が `videos.statistics`（遅れなし）に既にあり、
+        `main()` がその場で引いている。** 遅いほうを読む理由が無かった。
+
+        気づいたのは姉妹ループ（`docs/FROM_THE_ETA_LOOP.md`）の指摘から。
+        向こうは「窓は6日ではなく4日」と書いてきた。**それ自体は当たっていて**
+        （`day.*` は 8/4〜8/7 の4件しか無い）、こちらは日数で割っていないので
+        直接は効かなかったが、**同じ遅れがこちらの別の場所を汚していた。**
+        **指摘の結論ではなく、指摘の原因のほうが効くことがある。**
+        """
+        ns = sorted(v for v in short_views if v >= 30)
+        if not ns:
             return None
+        h = len(ns) // 2
+        return ns[h] if len(ns) % 2 else (ns[h - 1] + ns[h]) / 2
 
 
     subs = int(stats.get("subscriberCount", 0) or 0)
