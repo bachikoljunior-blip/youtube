@@ -96,8 +96,24 @@ def print_hypotheses() -> None:
             for nxt in h.get("next_if_false", []):
                 print(f"           - {nxt}")
 
+    # **判定済みも中身を出す（2026-08-10 に直した）。**
+    # ここは長らく件数だけだった。その結果、**もう外れたと分かっている手を
+    # 何度でも提案できる状態**になっていた。実際この日の回で、
+    # 「ショートの登録率を上げる手段が台帳に無い」と考えて M11 を書きかけ、
+    # `hypotheses.yaml` を直接開いて初めて、**同じものが2回試されて
+    # 2回とも0人だった**ことに気づいている（3,576再生で登録0人）。
+    #
+    # `MEANS.md` と `status.py` だけを読む回は、この否定結果に一度も触れません。
+    # **却下の理由は、未検証の前提と同じくらい毎回目に入る必要があります。**
     if judged:
-        print(f"\n  判定済み {len(judged)}件（config/hypotheses.yaml の verdict）")
+        print(f"\n  --- 判定済み {len(judged)}件 ---")
+        print("  **ここはもう試した手です。同じものを「未着手の手段」として出し直さないこと。**")
+        for h in judged:
+            verdict = " ".join(str(h.get("verdict", "")).split())
+            if len(verdict) > 140:
+                verdict = verdict[:140] + "…"
+            print(f"    {h.get('claim', '(claim なし)')}")
+            print(f"      → {verdict}")
 
 
 
