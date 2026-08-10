@@ -133,6 +133,28 @@ STALE_USAGE_HOURS = 0.5
 USAGE_LOG = Path(__file__).resolve().parent.parent / "data" / "usage.jsonl"
 
 
+def _window_key(resets_iso):
+    """同じ枠の読みかどうかを比べるための鍵。**分まで丸めた文字列。**
+
+    **文字列そのままで比べてはいけません**（2026-08-11 に判明）。
+    実メーターが返す `resets_at_iso` は**秒未満がその都度ちがいます**:
+
+        2026-08-14T22:00:00.886Z / ...189Z / ...865Z / ...684Z / ...957Z
+
+    同じ週の枠なのに5件が5件とも別物と判定され、`_print_burn_rate` は
+    **1件も溜まっていないことになって、7日ぶん一度も速さを出しませんでした。**
+    「2件たまると出ます」と出続けるので、**壊れているように見えません。**
+    間隔を決める唯一の数字がこれで、その間ずっと**残量だけで判断していました。**
+    """
+    if not resets_iso:
+        return None
+    try:
+        dt = datetime.fromisoformat(str(resets_iso).replace("Z", "+00:00"))
+    except Exception:
+        return str(resets_iso)          # 読めなければ元の文字列で比べる
+    return dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%MZ")
+
+
 def _record_usage(gov: dict, fetched) -> None:
     """効いている枠の読みを `data/usage.jsonl` に1行足す（同じ読みは重複させない）。"""
     import json
@@ -177,6 +199,7 @@ def _print_burn_rate(gov: dict) -> None:
     resets = gov.get("resets_at_iso")
     if not resets or gov.get("remaining_percent") is None or not USAGE_LOG.exists():
         return
+    want = _window_key(resets)
     rows = []
     for line in USAGE_LOG.read_text(encoding="utf-8").splitlines():
         if not line.strip():
@@ -187,7 +210,9 @@ def _print_burn_rate(gov: dict) -> None:
             continue
         # **同じ枠の読みだけを比べる。** リセットをまたぐと残量が跳ね上がり、
         # 「消費が負」という嘘の速さが出る。
-        if r.get("resets_at_iso") == resets and r.get("remaining_percent") is not None:
+        # **比べるのは分まで丸めた鍵。** 生の文字列は秒未満が毎回ちがうので
+        # 一致しません（`_window_key` の説明を読むこと）。
+        if _window_key(r.get("resets_at_iso")) == want and r.get("remaining_percent") is not None:
             rows.append(r)
     if len(rows) < 2:
         print("  消費の速さ: **まだ出せません**（この枠の読みが"
