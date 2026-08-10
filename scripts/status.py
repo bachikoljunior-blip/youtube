@@ -350,11 +350,17 @@ def print_means() -> None:
     entries = re.findall(r"^### (M\d+)\. (.+?)$\n(.*?)(?=^### |\Z)",
                          text, re.M | re.S)
     untried = []
+    held = []
     for code, name, body in entries:
         m = re.search(r"\*\*状態\*\*: (.+)", body)
         state = m.group(1).strip() if m else "?"
         if "未着手" in state or "未検討" in state:
             untried.append((code, name, state))
+        elif "保留" in state:
+            # **保留は「消えた手」ではありません。**
+            # 着手条件を数字で書いてあるのに、その条件を毎回出していなかったので
+            # M3 が3日間だれの目にも入らなかった（2026-08-10）。
+            held.append((code, name, state))
     # 棚卸しからの経過。**視界の外は、定期的に数え直さないと戻る。**
     import json as _json
     st = Path(__file__).resolve().parent.parent / "data" / "audit.json"
@@ -378,6 +384,12 @@ def print_means() -> None:
     for code, name, state in untried:
         mark = " ←★" if "見落とし" in state else ""
         print(f"    {code} {name}{mark}")
+    if held:
+        print(f"  --- 保留 {len(held)}件（**着手条件を毎回見ること。条件は数字で書いてあります**）---")
+        for code, name, state in held:
+            cond = state.split("着手条件")[-1].lstrip("はがのを:： ") if "着手条件" in state else state
+            print(f"    {code} {name}")
+            print(f"        条件: {cond[:90]}")
     if untried:
         print("  **目標の数字が2週間動いていないなら、いまの機械の改善ではなく")
         print("  ここから1つ選ぶこと。** それが A13 を実行に移す唯一の経路です。")
@@ -507,6 +519,50 @@ def print_channel_signals(days: int = 28) -> None:
               "ここでは判定できないので、`data/views.jsonl` か動画べつの数字を使うこと。")
 
 
+WATCH_LOG = Path(__file__).resolve().parent.parent / "data" / "watch.jsonl"
+
+
+def _record_watch(days: int, watch: int, total: int, search: int) -> None:
+    """**WATCH の推移を積む。** 1点では「動いたか」が言えないから。
+
+    2026-08-10 に足した。理由は `docs/MEANS.md` の M3 と M12 で、
+    **どちらも着手条件が「WATCH が2桁になったら」**なのに、
+    その数字を時系列で持っていなかった。
+    **条件を書いても、発火を見る手が無ければ発火しません。**
+    """
+    import json
+
+    row = {"at": datetime.now(JST).isoformat(timespec="seconds"), "days": days,
+           "watch": watch, "total": total, "yt_search": search}
+    try:
+        WATCH_LOG.parent.mkdir(parents=True, exist_ok=True)
+        with WATCH_LOG.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(row, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+
+
+def _print_watch_trend(days: int) -> None:
+    """同じ窓（days）の過去の読みと比べて、WATCH が動いたかを出す。"""
+    import json
+
+    try:
+        lines = [json.loads(x) for x in WATCH_LOG.read_text(encoding="utf-8").splitlines() if x.strip()]
+    except Exception:
+        return
+    same = [r for r in lines if r.get("days") == days]
+    if len(same) < 2:
+        print("  推移: **まだ出せません**（同じ窓の読みが1件。2件たまると出ます）")
+        return
+    first, last = same[0], same[-1]
+    d = last["watch"] - first["watch"]
+    print(f"  推移: {first['at'][:16]} の {first['watch']} → いま {last['watch']}"
+          f"（**{d:+d}** / 読み {len(same)}件）")
+    if last["watch"] < 10:
+        print("  **WATCH が2桁になるまで M3（AdSense以外の収益）も M12（推薦面）も着手できません。**")
+        print("  ここを動かせるのは M4（検索→長尺）と M8（フィードから出口）だけです。")
+
+
 def print_where_watched(days: int = 28) -> None:
     """**どこで・何秒見られているか。**
 
@@ -544,6 +600,14 @@ def print_where_watched(days: int = 28) -> None:
         shorts = next((x[1] for x in loc if x[0] == "SHORTS_FEED"), 0)
         watch = next((x[1] for x in loc if x[0] == "WATCH"), 0)
         print(f"  再生場所: SHORTS_FEED {shorts}（{shorts / total_v:.1%}） / WATCH {watch}")
+        _search = 0
+        try:
+            _search = next((x[1] for x in pull("insightTrafficSourceType")
+                            if x[0] == "YT_SEARCH"), 0)
+        except Exception:
+            pass
+        _record_watch(days, watch, total_v, _search)
+        _print_watch_trend(days)
         if watch < total_v * 0.05:
             print("  **視聴ページにはほぼ誰も来ていない。**")
             print("  説明欄・目次・裏取りの手順・再生リストは**ほぼ読まれていない。**")
