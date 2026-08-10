@@ -16,8 +16,10 @@
 
 ## 0. 枝を確かめる
 
-親は `source_revision` で作業枝を指定して立てているので、**普通は既に合っています。**
-それでも1回だけ確かめること。**違っていたら合わせる。**
+**「普通は既に合っている」と書いてありましたが、違いました**（2026-08-10、親子方式の1回目）。
+`source_revision` で立てても **HEAD は detached で来ます。** `rev-parse --abbrev-ref HEAD`
+が `HEAD` と返ったら、それが detached です。**枝名と読み違えないこと。**
+そのままコミットすると、どこの枝にも乗りません。**毎回いちど確かめて、合わせること。**
 
     git -C /home/user/youtube rev-parse --abbrev-ref HEAD
 
@@ -42,10 +44,32 @@
 
 ## 2. 使用量を取り直す
 
-`mcp__github__actions_run_trigger` / `run_workflow` で
-owner=`bachikoljunior-blip` repo=`-chatgpt-usage-monitorPrivate`
+**まず `add_repo` が要ります**（2026-08-10 に判明）。子のセッションは
+**`bachikoljunior-blip/youtube` しか GitHub スコープに持たずに立ちます。**
+先に投げると `Access denied ... not configured for this session` で弾かれます。
+
+    add_repo owner=bachikoljunior-blip repo=-chatgpt-usage-monitorPrivate
+
+そのあと `mcp__github__actions_run_trigger` / `run_workflow` で
+owner=`bachikoljunior-blip` repo=`-chatgpt-usage-monitorprivate`（**小文字**）
 workflow_id=`claude-usage-monitor.yml` ref=`main` を投げる。**投げるだけで待たない。**
 ローカルでは取れません（資格情報は GitHub の secret 側）。
+
+**投げただけでは読めません。** `status.py` が読むのは
+`/workspace/-chatgpt-usage-monitorprivate` のクローンで、
+**子はまっさらなコンテナなので毎回ありません。** 1回だけクローンすること:
+
+    git clone --depth 1 https://github.com/bachikoljunior-blip/-chatgpt-usage-monitorprivate /workspace/-chatgpt-usage-monitorprivate
+
+クローンしないと「使用量」の欄が**黙って空になります**（8/10 の1回目がそれ）。
+空欄と「枠に余裕がある」は見分けがつきません。
+
+## 2.5 依存を入れる（**まっさらなコンテナなので毎回要る**）
+
+    bash /home/user/youtube/scripts/setup.sh
+
+**入れずに `status.py` を叩くと `ModuleNotFoundError: googleapiclient` で落ちます**
+（8/10 の1回目がそれ）。3〜4分かかるので、**タイムアウトを長めに取ること。**
 
 ## 3. 状態を見る
 
