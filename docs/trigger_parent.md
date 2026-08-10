@@ -1,6 +1,6 @@
 # 親トリガーの本文
 
-`trig_01S5mtxkjiBp6hsttmDvdzgw` / cron `9 * * * *` /
+`trig_01S5mtxkjiBp6hsttmDvdzgw` / cron `9 */6 * * *`（8/10 に毎時から変更）/
 常駐セッション `session_01PXy8TiBxL1SM7AUc6XAMML` / 環境 `env_01QMJaP2yRCzw4tY5VpJeM1m`
 
 **全文はここに写しません。** 一度写して、そのあと本文を2回直して、

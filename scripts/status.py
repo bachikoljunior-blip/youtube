@@ -125,6 +125,104 @@ USAGE_REPO = Path("/workspace/-chatgpt-usage-monitorprivate")
 # 30分を超えたら判断に効く。
 STALE_USAGE_HOURS = 0.5
 
+# 使用量の読みを1行ずつ残す先。**残量そのものより、消費の速さのほうが効く。**
+# 2026-08-10、週77%・残り23%・リセットまで113時間という状態を見て、
+# 「絞る理由にしない」（A15）とだけ書いてある表示のまま素通りしかけた。
+# **残量は「いま何%か」しか言わない。「いつ尽きるか」は言わない。**
+# 速さは2点の差でしか出ないので、毎回ここに1行ずつ積む。
+USAGE_LOG = Path(__file__).resolve().parent.parent / "data" / "usage.jsonl"
+
+
+def _record_usage(gov: dict, fetched) -> None:
+    """効いている枠の読みを `data/usage.jsonl` に1行足す（同じ読みは重複させない）。"""
+    import json
+
+    if not gov.get("resets_at_iso"):
+        return
+    row = {
+        "fetched_at": fetched.isoformat(),
+        "window_id": gov.get("window_id"),
+        "used_percent": gov.get("used_percent"),
+        "remaining_percent": gov.get("remaining_percent"),
+        "resets_at_iso": gov.get("resets_at_iso"),
+    }
+    try:
+        USAGE_LOG.parent.mkdir(parents=True, exist_ok=True)
+        if USAGE_LOG.exists():
+            for line in USAGE_LOG.read_text(encoding="utf-8").splitlines():
+                if not line.strip():
+                    continue
+                try:
+                    if json.loads(line).get("fetched_at") == row["fetched_at"]:
+                        return          # 同じ読みを二度積まない
+                except Exception:
+                    continue
+        with USAGE_LOG.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(row, ensure_ascii=False) + "\n")
+    except Exception:
+        pass                            # 記録に失敗しても表示は続ける
+
+
+def _print_burn_rate(gov: dict) -> None:
+    """**実測の消費速度と、尽きる時刻と、許される間隔**を出す。
+
+    **推測しないこと。** ここが出すのは `data/usage.jsonl` の2点の差だけで、
+    1回あたりの費用も、姉妹ループのぶんも、分けては出せない
+    （枠はアカウント単位なので、**この速さには他のループのぶんも入っている**）。
+
+    間隔の判断はこの3つ目の数字でやる。**残量では決まらない。**
+    """
+    import json
+
+    resets = gov.get("resets_at_iso")
+    if not resets or gov.get("remaining_percent") is None or not USAGE_LOG.exists():
+        return
+    rows = []
+    for line in USAGE_LOG.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        try:
+            r = json.loads(line)
+        except Exception:
+            continue
+        # **同じ枠の読みだけを比べる。** リセットをまたぐと残量が跳ね上がり、
+        # 「消費が負」という嘘の速さが出る。
+        if r.get("resets_at_iso") == resets and r.get("remaining_percent") is not None:
+            rows.append(r)
+    if len(rows) < 2:
+        print("  消費の速さ: **まだ出せません**（この枠の読みが"
+              f"{len(rows)}件。2件たまると出ます）")
+        return
+    first, last = rows[0], rows[-1]
+    t0 = datetime.fromisoformat(first["fetched_at"])
+    t1 = datetime.fromisoformat(last["fetched_at"])
+    span_h = (t1 - t0).total_seconds() / 3600
+    spent = first["remaining_percent"] - last["remaining_percent"]
+    if span_h < 0.5:
+        print(f"  消費の速さ: **まだ出せません**（読みの間隔が {span_h:.1f} 時間）")
+        return
+    rate = spent / span_h
+    left = gov["remaining_percent"]
+    hrs_to_reset = (datetime.fromisoformat(resets.replace("Z", "+00:00")).astimezone(JST)
+                    - datetime.now(JST)).total_seconds() / 3600
+    print(f"  **実測の消費 {rate:+.2f}%/時**"
+          f"（{len(rows)}件・{span_h:.1f}時間で {spent:+d}%。**姉妹ループのぶんも入っています**）")
+    if rate <= 0:
+        print("    この区間では減っていません。**尽きる時刻は出せません。**")
+        return
+    dry_h = left / rate
+    dry_at = datetime.now(JST) + timedelta(hours=dry_h)
+    print(f"    このままなら **{dry_h:.0f}時間後（{dry_at:%m/%d %H:%M}）に尽きます。**"
+          f" リセットは {hrs_to_reset:.0f}時間後")
+    if dry_h < hrs_to_reset:
+        print(f"    **リセットまで {hrs_to_reset - dry_h:.0f}時間、"
+              "1回も起きられない状態になります。**")
+        print(f"    持たせるのに許される速さは **{left / hrs_to_reset:.2f}%/時**"
+              f"（いまの {rate / (left / hrs_to_reset):.1f}分の1）。"
+              "**間隔を延ばすのはここで決める**（`docs/TRIGGER.md`）")
+    else:
+        print("    **リセットまで持ちます。**間隔を縮めてよい余地があります")
+
 
 def _print_real_usage() -> bool:
     """**本物の使用量**を出す。出せたら True。
@@ -193,6 +291,8 @@ def _print_real_usage() -> bool:
     if gov.get("remaining_percent") is not None:
         print(f"  **いま効いている枠: {gov.get('window_name')} "
               f"／残り {gov['remaining_percent']}%**")
+        _record_usage(gov, fetched)
+        _print_burn_rate(gov)
     # **pull しても、向こうの毎時更新より新しくはならない。**
     # 5時間枠は数時間で 29%→77% と動くので、1時間の遅れは判断に効く。
     # 本当に「いまの値」が要るときは workflow_dispatch を投げる（約1分で反映）。

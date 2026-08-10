@@ -53,6 +53,10 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 JST = timezone(timedelta(hours=9))
+
+# 定期実行の間隔（分）。**正本は `docs/TRIGGER.md` の cron `9 */6 * * *`。**
+# ここは空きを警告するしきい値を出すためだけに持っています。
+INTERVAL_MIN = 360
 MARKS = Path(__file__).resolve().parent.parent / "data" / "runs.jsonl"
 KEEP = 500
 
@@ -129,7 +133,11 @@ def show() -> int:
         gap = (now - datetime.fromisoformat(recs[-1]["at"])).total_seconds() / 60
     except (KeyError, ValueError):
         return 1
-    if gap > 180:
+    # **しきい値は間隔の2周ぶん。** 1周ぶんだと、正常に動いていても毎回鳴ります
+    # （2026-08-10 に毎時→6時間おきへ変えたとき、180分のままだと**必ず鳴る**状態になった）。
+    # **鳴りっぱなしの警告は、無い警告と同じです。**
+    # 間隔を変えたら、ここも変えること（正本は `docs/TRIGGER.md` の cron）。
+    if gap > INTERVAL_MIN * 2:
         print(f"  [!] **{gap:.0f}分（{gap / 60:.1f}時間）どの子も走り終えていません。**")
         print("      親から見ると子は立っているので、ここでしか気づけません。")
         print("      **なぜ止まったかを JOURNAL に書くこと。**")
