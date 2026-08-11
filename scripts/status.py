@@ -218,20 +218,46 @@ def _print_burn_rate(gov: dict) -> None:
         print("  消費の速さ: **まだ出せません**（この枠の読みが"
               f"{len(rows)}件。2件たまると出ます）")
         return
-    first, last = rows[0], rows[-1]
-    t0 = datetime.fromisoformat(first["fetched_at"])
-    t1 = datetime.fromisoformat(last["fetched_at"])
-    span_h = (t1 - t0).total_seconds() / 3600
-    spent = first["remaining_percent"] - last["remaining_percent"]
-    if span_h < 0.5:
+    def _seg(sub: list) -> tuple:
+        """区間の (速さ, 時間, 減った%) を返す。時間が足りなければ速さは None。"""
+        a, b = sub[0], sub[-1]
+        h = (datetime.fromisoformat(b["fetched_at"])
+             - datetime.fromisoformat(a["fetched_at"])).total_seconds() / 3600
+        d = a["remaining_percent"] - b["remaining_percent"]
+        return (d / h if h >= 0.5 else None), h, d
+
+    span_rate, span_h, spent = _seg(rows)
+    if span_rate is None:
         print(f"  消費の速さ: **まだ出せません**（読みの間隔が {span_h:.1f} 時間）")
         return
-    rate = spent / span_h
+
+    # **週ぜんぶを平均しないこと。** 途中で他のループの回し方が変わると、
+    # 平均は「もう終わった régime」を今の速さとして出します。
+    # 実際 2026-08-11 に 0.64%/時 と出しましたが、直近12時間は 0.249 でした（2.6倍）。
+    # **いま何をするかの判断は、いまの区間で決める。**
+    # 直近から遡って6時間以上になった時点で切る（1点だけの跳ねを拾わないため）。
+    recent = rows[-2:]
+    while len(recent) < len(rows) and (
+            datetime.fromisoformat(recent[-1]["fetched_at"])
+            - datetime.fromisoformat(recent[0]["fetched_at"])).total_seconds() / 3600 < 6:
+        recent = rows[-(len(recent) + 1):]
+    rec_rate, rec_h, rec_spent = _seg(recent)
+
     left = gov["remaining_percent"]
     hrs_to_reset = (datetime.fromisoformat(resets.replace("Z", "+00:00")).astimezone(JST)
                     - datetime.now(JST)).total_seconds() / 3600
-    print(f"  **実測の消費 {rate:+.2f}%/時**"
+    print(f"  **実測の消費 {span_rate:+.2f}%/時**"
           f"（{len(rows)}件・{span_h:.1f}時間で {spent:+d}%。**姉妹ループのぶんも入っています**）")
+
+    # 直近が全体と食い違うなら、**そちらで判断する。**
+    rate = span_rate
+    if rec_rate is not None and len(recent) < len(rows):
+        print(f"    **直近だけなら {rec_rate:+.2f}%/時**"
+              f"（{len(recent)}件・{rec_h:.1f}時間で {rec_spent:+d}%）")
+        if span_rate > 0 and abs(rec_rate - span_rate) / span_rate >= 0.3:
+            print("    **2つが3割以上ちがいます。回し方が途中で変わった証拠です。**"
+                  "下の見立ては**直近のほう**で出しています")
+        rate = rec_rate
     if rate <= 0:
         print("    この区間では減っていません。**尽きる時刻は出せません。**")
         return
