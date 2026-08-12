@@ -54,6 +54,19 @@
 
     add_repo owner=bachikoljunior-blip repo=-chatgpt-usage-monitorPrivate
 
+**`add_repo` は弾かれることがあります**（2026-08-12 に初めて踏んだ）。
+`Permission for this action was denied by the Claude Code auto mode classifier` が返り、
+**access=push でも access=read でも同じでした。** 承認待ちにはならず即座に返るので、
+**止まりはしません。使用量が読めないだけです。**
+
+弾かれたら:
+
+- `git clone` も落ちます（`could not read Username` ＝ 資格情報が無い）
+- `mcp__github__get_file_contents` も落ちます（`not configured for this session`）
+- **この回は使用量を読めません。JOURNAL に「読めなかった」と書いて先へ進むこと。**
+  **空欄を「余裕がある」とも「尽きた」とも読まないこと**（区別がつきません）
+- **弾かれたことを理由に回を止めないこと。** 予約が埋まっていれば投稿は続きます
+
 そのあと `mcp__github__actions_run_trigger` / `run_workflow` で
 owner=`bachikoljunior-blip` repo=`-chatgpt-usage-monitorprivate`（**小文字**）
 workflow_id=`claude-usage-monitor.yml` ref=`main` を投げる。**投げるだけで待たない。**
