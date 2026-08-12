@@ -67,6 +67,18 @@
   **空欄を「余裕がある」とも「尽きた」とも読まないこと**（区別がつきません）
 - **弾かれたことを理由に回を止めないこと。** 予約が埋まっていれば投稿は続きます
 
+**代わりに読める場所があります**（2026-08-12 に見つけた）。
+`get_session` と `set_session_title` の**返り**に `rate_limit_info` が入っています。
+
+    "rate_limit_info": {"rateLimitType":"seven_day",
+                        "resetsAt":1786744800,        # ＝ 2026-08-15 07:00 JST
+                        "status":"allowed_warning"}
+
+**`add_repo` が要りません。** ただし `status` は3値
+（`allowed` / `allowed_warning` / たぶん停止）で、**%は入っていません。**
+**「消費の速さ」は出せない**ので、間隔を決める根拠には足りません。
+**リセット時刻と「警告に入っているか」だけは、これで必ず取れます。**
+
 そのあと `mcp__github__actions_run_trigger` / `run_workflow` で
 owner=`bachikoljunior-blip` repo=`-chatgpt-usage-monitorprivate`（**小文字**）
 workflow_id=`claude-usage-monitor.yml` ref=`main` を投げる。**投げるだけで待たない。**
