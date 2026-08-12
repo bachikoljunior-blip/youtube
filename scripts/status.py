@@ -185,6 +185,52 @@ def _record_usage(gov: dict, fetched) -> None:
         pass                            # 記録に失敗しても表示は続ける
 
 
+def _print_last_known(fetched_failed) -> None:
+    """メーターが死んでいる回に、**最後に取れた本物の値**を出す。
+
+    2026-08-12 に足した。メーターが `reauthentication_required` を返しはじめると、
+    ここは何も言わずに空欄になっていた。**空欄は「余裕がある」と読まれます。**
+
+    最後の実測は残しておく価値がある —— 「いつの時点で何%だったか」が分かれば、
+    **そこから何時間ぶん走ったか**は数えられるので、
+    「余っている／もう危ない」の当たりだけは付く（速さは出せない）。
+    **これは実測ではなく、古い実測です。字面を分けること。**
+    """
+    import json
+
+    if not USAGE_LOG.exists():
+        return
+    rows = []
+    for line in USAGE_LOG.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        try:
+            rows.append(json.loads(line))
+        except Exception:
+            continue
+    if not rows:
+        return
+    last = rows[-1]
+    try:
+        at = datetime.fromisoformat(last["fetched_at"])
+    except Exception:
+        return
+    hrs = (datetime.now(JST) - at).total_seconds() / 3600
+    print(f"    --- 最後に取れた本物の値（**{hrs:.0f}時間前**。いまの値ではありません）---")
+    print(f"      {at:%m/%d %H:%M}  {last.get('window_id')}: "
+          f"**{last.get('used_percent')}% 使用（残り {last.get('remaining_percent')}%）**")
+    resets = last.get("resets_at_iso")
+    if resets:
+        try:
+            r = datetime.fromisoformat(resets.replace("Z", "+00:00")).astimezone(JST)
+            print(f"      リセット {r:%m/%d %H:%M}"
+                  f"（あと {(r - datetime.now(JST)).total_seconds() / 3600:.0f} 時間）")
+        except Exception:
+            pass
+    print("      **この間の消費は測れていません。** 差を取る2点目が無いので、"
+          "速さも尽きる時刻も出せません。")
+
+
 def _print_burn_rate(gov: dict) -> None:
     """**実測の消費速度と、尽きる時刻と、許される間隔**を出す。
 
@@ -330,6 +376,39 @@ def _print_real_usage() -> bool:
         return False
 
     age = (datetime.now(JST) - fetched).total_seconds() / 3600
+
+    # **失敗を「実測」と同じ字面で出さないこと**（2026-08-12 21:40 に踏んだ）。
+    # ここは `status` を見ずに `quota_windows` を回していたので、
+    # メーターが `{"status":"error","error":{"code":"reauthentication_required"},
+    # "quota_windows":[]}` を返しているとき、
+    #
+    #     **実測（08/12 19:28 時点／2時間前）**      ← 数字が1行も出ない
+    #     [!] 115分前の値です。**取り直してください**  ← 古いのが原因だと言う
+    #
+    # と出していた。**原因は古さではなく認証切れで、取り直しても直りません。**
+    # 前の回（8/12 09:45）は同じ状態を見て「`add_repo` が弾かれたから読めない」と
+    # 書いている。**クローンはできていて、壊れていたのはメーターの側でした。**
+    # 空欄を「余裕がある」とも「尽きた」とも読まないこと。
+    #
+    # `search_terms.py` が 8/12 09:45 に踏んだのと**同じ壊れ方**（失敗と正常が
+    # 同じ字面になる）。**数を出す口では、失敗を必ず別の字面にすること。**
+    if d.get("status") == "error" or not windows:
+        code = (d.get("error") or {}).get("code") or "不明"
+        print(f"  **メーターが値を返していません（これは実測ではありません）。**")
+        print(f"    最後に取りにいったのは {fetched:%m/%d %H:%M}"
+              f"{'（%.0f時間前）' % age if age >= 1 else '（さきほど）'}"
+              f" / 失敗の理由 `{code}`")
+        if code == "reauthentication_required":
+            print("    **取り直しても直りません。**"
+                  "向こうの OAuth が切れています（workflow_dispatch も無駄）。")
+        print("    **この回は消費の速さを出せません。**"
+              "空欄を「余裕がある」とも「尽きた」とも読まないこと。")
+        print("    代わりに取れるもの（`add_repo` が要らない）:")
+        print("      `get_session` / `set_session_title` の返りの `rate_limit_info`")
+        print("      → リセット時刻と、警告帯に入っているかだけは必ず取れる。**%は入らない**")
+        _print_last_known(fetched)
+        return False
+
     print(f"  **実測（{fetched:%m/%d %H:%M} 時点"
           f"{'／%.0f時間前' % age if age >= 1 else '／さきほど'}）**")
     for w in windows:
@@ -374,10 +453,16 @@ def print_budget() -> None:
     並べて出すと、どちらを信じるか迷う分だけ判断が鈍る。**正本だけ出す。**
     """
     print("\n=== 使用量（実メーター）===")
-    if not _print_real_usage():
-        return
+    ok = _print_real_usage()
+    # **A15 は、メーターが読めない回ほど要る**（2026-08-12 に順序を直した）。
+    # 以前は `return` の向こう側にあったので、**読めなかった回だけ消えていました。**
+    # 数字が出ない回に「全部使ってよい」まで消えると、
+    # 子は空欄を見て勝手に絞ります（8/12 09:45 の日誌が同じことを書いている）。
     print("  **全部使ってよい**（恒久指示 A15）。残すこと自体に価値は無い。")
     print("  絞る理由にしないこと。使い切りそうなときだけ、短く切る。")
+    if not ok:
+        print("  **メーターが読めないことは、絞る理由になりません。**"
+              "見えないだけで、枠が減ったわけではない。")
 
 
 def print_means() -> None:
