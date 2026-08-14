@@ -117,351 +117,69 @@ def print_hypotheses() -> None:
 
 
 
-# 使用量の正本。**実メーターを読んでいる唯一の場所**（2026-08-08）。
-# チェックアウトが無ければ GitHub 経由で `state/claude-usage.json` を読む。
-USAGE_REPO = Path("/workspace/-chatgpt-usage-monitorprivate")
-# 使用量がこれより古かったら取り直す（時間）。向こうの Actions は毎時なので、
-# **pull だけでは最大1時間古い。** 5時間枠は数時間で 29%→77% と動くので、
-# 30分を超えたら判断に効く。
-STALE_USAGE_HOURS = 0.5
-
-# 使用量の読みを1行ずつ残す先。**残量そのものより、消費の速さのほうが効く。**
-# 2026-08-10、週77%・残り23%・リセットまで113時間という状態を見て、
-# 「絞る理由にしない」（A15）とだけ書いてある表示のまま素通りしかけた。
-# **残量は「いま何%か」しか言わない。「いつ尽きるか」は言わない。**
-# 速さは2点の差でしか出ないので、毎回ここに1行ずつ積む。
-USAGE_LOG = Path(__file__).resolve().parent.parent / "data" / "usage.jsonl"
-
-
-def _window_key(resets_iso):
-    """同じ枠の読みかどうかを比べるための鍵。**分まで丸めた文字列。**
-
-    **文字列そのままで比べてはいけません**（2026-08-11 に判明）。
-    実メーターが返す `resets_at_iso` は**秒未満がその都度ちがいます**:
-
-        2026-08-14T22:00:00.886Z / ...189Z / ...865Z / ...684Z / ...957Z
-
-    同じ週の枠なのに5件が5件とも別物と判定され、`_print_burn_rate` は
-    **1件も溜まっていないことになって、7日ぶん一度も速さを出しませんでした。**
-    「2件たまると出ます」と出続けるので、**壊れているように見えません。**
-    間隔を決める唯一の数字がこれで、その間ずっと**残量だけで判断していました。**
-    """
-    if not resets_iso:
-        return None
-    try:
-        dt = datetime.fromisoformat(str(resets_iso).replace("Z", "+00:00"))
-    except Exception:
-        return str(resets_iso)          # 読めなければ元の文字列で比べる
-    return dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%MZ")
-
-
-def _record_usage(gov: dict, fetched) -> None:
-    """効いている枠の読みを `data/usage.jsonl` に1行足す（同じ読みは重複させない）。"""
-    import json
-
-    if not gov.get("resets_at_iso"):
-        return
-    row = {
-        "fetched_at": fetched.isoformat(),
-        "window_id": gov.get("window_id"),
-        "used_percent": gov.get("used_percent"),
-        "remaining_percent": gov.get("remaining_percent"),
-        "resets_at_iso": gov.get("resets_at_iso"),
-    }
-    try:
-        USAGE_LOG.parent.mkdir(parents=True, exist_ok=True)
-        if USAGE_LOG.exists():
-            for line in USAGE_LOG.read_text(encoding="utf-8").splitlines():
-                if not line.strip():
-                    continue
-                try:
-                    if json.loads(line).get("fetched_at") == row["fetched_at"]:
-                        return          # 同じ読みを二度積まない
-                except Exception:
-                    continue
-        with USAGE_LOG.open("a", encoding="utf-8") as fh:
-            fh.write(json.dumps(row, ensure_ascii=False) + "\n")
-    except Exception:
-        pass                            # 記録に失敗しても表示は続ける
-
-
-def _print_last_known(fetched_failed) -> None:
-    """メーターが死んでいる回に、**最後に取れた本物の値**を出す。
-
-    2026-08-12 に足した。メーターが `reauthentication_required` を返しはじめると、
-    ここは何も言わずに空欄になっていた。**空欄は「余裕がある」と読まれます。**
-
-    最後の実測は残しておく価値がある —— 「いつの時点で何%だったか」が分かれば、
-    **そこから何時間ぶん走ったか**は数えられるので、
-    「余っている／もう危ない」の当たりだけは付く（速さは出せない）。
-    **これは実測ではなく、古い実測です。字面を分けること。**
-    """
-    import json
-
-    if not USAGE_LOG.exists():
-        return
-    rows = []
-    for line in USAGE_LOG.read_text(encoding="utf-8").splitlines():
-        if not line.strip():
-            continue
-        try:
-            rows.append(json.loads(line))
-        except Exception:
-            continue
-    if not rows:
-        return
-    last = rows[-1]
-    try:
-        at = datetime.fromisoformat(last["fetched_at"])
-    except Exception:
-        return
-    hrs = (datetime.now(JST) - at).total_seconds() / 3600
-    print(f"    --- 最後に取れた本物の値（**{hrs:.0f}時間前**。いまの値ではありません）---")
-    print(f"      {at:%m/%d %H:%M}  {last.get('window_id')}: "
-          f"**{last.get('used_percent')}% 使用（残り {last.get('remaining_percent')}%）**")
-    resets = last.get("resets_at_iso")
-    if resets:
-        try:
-            r = datetime.fromisoformat(resets.replace("Z", "+00:00")).astimezone(JST)
-            print(f"      リセット {r:%m/%d %H:%M}"
-                  f"（あと {(r - datetime.now(JST)).total_seconds() / 3600:.0f} 時間）")
-        except Exception:
-            pass
-    print("      **この間の消費は測れていません。** 差を取る2点目が無いので、"
-          "速さも尽きる時刻も出せません。")
-
-
-def _print_burn_rate(gov: dict) -> None:
-    """**実測の消費速度と、尽きる時刻と、許される間隔**を出す。
-
-    **推測しないこと。** ここが出すのは `data/usage.jsonl` の2点の差だけで、
-    1回あたりの費用も、姉妹ループのぶんも、分けては出せない
-    （枠はアカウント単位なので、**この速さには他のループのぶんも入っている**）。
-
-    間隔の判断はこの3つ目の数字でやる。**残量では決まらない。**
-    """
-    import json
-
-    resets = gov.get("resets_at_iso")
-    if not resets or gov.get("remaining_percent") is None or not USAGE_LOG.exists():
-        return
-    want = _window_key(resets)
-    rows = []
-    for line in USAGE_LOG.read_text(encoding="utf-8").splitlines():
-        if not line.strip():
-            continue
-        try:
-            r = json.loads(line)
-        except Exception:
-            continue
-        # **同じ枠の読みだけを比べる。** リセットをまたぐと残量が跳ね上がり、
-        # 「消費が負」という嘘の速さが出る。
-        # **比べるのは分まで丸めた鍵。** 生の文字列は秒未満が毎回ちがうので
-        # 一致しません（`_window_key` の説明を読むこと）。
-        if _window_key(r.get("resets_at_iso")) == want and r.get("remaining_percent") is not None:
-            rows.append(r)
-    if len(rows) < 2:
-        print("  消費の速さ: **まだ出せません**（この枠の読みが"
-              f"{len(rows)}件。2件たまると出ます）")
-        return
-    def _seg(sub: list) -> tuple:
-        """区間の (速さ, 時間, 減った%) を返す。時間が足りなければ速さは None。"""
-        a, b = sub[0], sub[-1]
-        h = (datetime.fromisoformat(b["fetched_at"])
-             - datetime.fromisoformat(a["fetched_at"])).total_seconds() / 3600
-        d = a["remaining_percent"] - b["remaining_percent"]
-        return (d / h if h >= 0.5 else None), h, d
-
-    span_rate, span_h, spent = _seg(rows)
-    if span_rate is None:
-        print(f"  消費の速さ: **まだ出せません**（読みの間隔が {span_h:.1f} 時間）")
-        return
-
-    # **週ぜんぶを平均しないこと。** 途中で他のループの回し方が変わると、
-    # 平均は「もう終わった régime」を今の速さとして出します。
-    # 実際 2026-08-11 に 0.64%/時 と出しましたが、直近12時間は 0.249 でした（2.6倍）。
-    # **いま何をするかの判断は、いまの区間で決める。**
-    # 直近から遡って6時間以上になった時点で切る（1点だけの跳ねを拾わないため）。
-    recent = rows[-2:]
-    while len(recent) < len(rows) and (
-            datetime.fromisoformat(recent[-1]["fetched_at"])
-            - datetime.fromisoformat(recent[0]["fetched_at"])).total_seconds() / 3600 < 6:
-        recent = rows[-(len(recent) + 1):]
-    rec_rate, rec_h, rec_spent = _seg(recent)
-
-    left = gov["remaining_percent"]
-    hrs_to_reset = (datetime.fromisoformat(resets.replace("Z", "+00:00")).astimezone(JST)
-                    - datetime.now(JST)).total_seconds() / 3600
-    print(f"  **実測の消費 {span_rate:+.2f}%/時**"
-          f"（{len(rows)}件・{span_h:.1f}時間で {spent:+d}%。**姉妹ループのぶんも入っています**）")
-
-    # 直近が全体と食い違うなら、**そちらで判断する。**
-    rate = span_rate
-    if rec_rate is not None and len(recent) < len(rows):
-        print(f"    **直近だけなら {rec_rate:+.2f}%/時**"
-              f"（{len(recent)}件・{rec_h:.1f}時間で {rec_spent:+d}%）")
-        if span_rate > 0 and abs(rec_rate - span_rate) / span_rate >= 0.3:
-            print("    **2つが3割以上ちがいます。回し方が途中で変わった証拠です。**"
-                  "下の見立ては**直近のほう**で出しています")
-        rate = rec_rate
-    if rate <= 0:
-        print("    この区間では減っていません。**尽きる時刻は出せません。**")
-        return
-    dry_h = left / rate
-    dry_at = datetime.now(JST) + timedelta(hours=dry_h)
-    print(f"    このままなら **{dry_h:.0f}時間後（{dry_at:%m/%d %H:%M}）に尽きます。**"
-          f" リセットは {hrs_to_reset:.0f}時間後")
-    if dry_h < hrs_to_reset:
-        print(f"    **リセットまで {hrs_to_reset - dry_h:.0f}時間、"
-              "1回も起きられない状態になります。**")
-        print(f"    持たせるのに許される速さは **{left / hrs_to_reset:.2f}%/時**"
-              f"（いまの {rate / (left / hrs_to_reset):.1f}分の1）。"
-              "**間隔を延ばすのはここで決める**（`docs/TRIGGER.md`）")
-    else:
-        print("    **リセットまで持ちます。**間隔を縮めてよい余地があります")
-
-
-def _print_real_usage() -> bool:
-    """**本物の使用量**を出す。出せたら True。
-
-    `-chatgpt-usage-monitorPrivate` が Anthropic の OAuth usage を実際に叩いて
-    `state/claude-usage.json` に保存している。**これが正本。**
-
-    **`scripts/usage.py` は枠の判断に使えない。** 見ている範囲が違うため。
-
-        実メーター … **アカウント全体**（別セッションの消費も含む）
-        usage.py  … **このコンテナのセッション記録**だけ
-
-    2026-08-08、換算が「今週0.8%」のとき実メーターは26%だった。
-    最初これを「換算が30倍外れている」と書いたが**誤り**で、
-    オーナーの指摘どおり**別セッションが動いていたぶん**だった。
-
-    **枠はアカウント単位で効く。** 自分のぶんだけ数えても残量は分からない。
-    """
-    import json
-    import subprocess
-
-    # **読む前に取り直す。** 2026-08-09 まで、ここはローカルのクローンを
-    # そのまま読んでいた。**更新しているのは向こうの GitHub Actions**（毎時22分）で、
-    # こちらが `git pull` しない限りローカルは古いまま。
-    # 「実測」と書いてあるのに何時間も前の値を出していた。
-    # `show-usage.mjs` も同じで、**表示するだけで取り直さない**（8/8 に確認）。
-    try:
-        subprocess.run(["git", "-C", str(USAGE_REPO), "pull", "-q", "--ff-only"],
-                       capture_output=True, text=True, timeout=120)
-    except Exception:
-        pass                          # 取り直せなくても、あるものを読む
-
-    path = USAGE_REPO / "state" / "claude-usage.json"
-    if not path.exists():
-        # **子は毎回まっさらなコンテナで立つ。クローンは残らない。**
-        # 2026-08-10（親子方式の1回目）、ここが黙って False を返し、
-        # 「=== 使用量（実メーター）===」の下に**何も出ない**状態になっていた。
-        # 空欄は「読んだが枠に余裕がある」と見分けがつかない。
-        # **見えていないことを、見えるように言うこと**（恒久指示 A15）。
-        print("  **正本のクローンがありません**"
-              f"（{USAGE_REPO}）。この回はまだ使用量を見ていません。")
-        print("  取り方（MCP が要る。シェルだけでは資格情報に届かない）:")
-        print("    1. add_repo owner=bachikoljunior-blip "
-              "repo=-chatgpt-usage-monitorPrivate")
-        print(f"    2. git clone --depth 1 {USAGE_REPO.name} → {USAGE_REPO}")
-        print("    3. status.py をもう一度実行する")
-        return False
-    try:
-        d = json.loads(path.read_text(encoding="utf-8"))
-        fetched = datetime.fromisoformat(d["fetched_at"].replace("Z", "+00:00")).astimezone(JST)
-        windows = d["quota_windows"]
-    except Exception as exc:
-        print(f"  使用量の正本が読めません: {str(exc)[:60]}")
-        return False
-
-    age = (datetime.now(JST) - fetched).total_seconds() / 3600
-
-    # **失敗を「実測」と同じ字面で出さないこと**（2026-08-12 21:40 に踏んだ）。
-    # ここは `status` を見ずに `quota_windows` を回していたので、
-    # メーターが `{"status":"error","error":{"code":"reauthentication_required"},
-    # "quota_windows":[]}` を返しているとき、
-    #
-    #     **実測（08/12 19:28 時点／2時間前）**      ← 数字が1行も出ない
-    #     [!] 115分前の値です。**取り直してください**  ← 古いのが原因だと言う
-    #
-    # と出していた。**原因は古さではなく認証切れで、取り直しても直りません。**
-    # 前の回（8/12 09:45）は同じ状態を見て「`add_repo` が弾かれたから読めない」と
-    # 書いている。**クローンはできていて、壊れていたのはメーターの側でした。**
-    # 空欄を「余裕がある」とも「尽きた」とも読まないこと。
-    #
-    # `search_terms.py` が 8/12 09:45 に踏んだのと**同じ壊れ方**（失敗と正常が
-    # 同じ字面になる）。**数を出す口では、失敗を必ず別の字面にすること。**
-    if d.get("status") == "error" or not windows:
-        code = (d.get("error") or {}).get("code") or "不明"
-        print(f"  **メーターが値を返していません（これは実測ではありません）。**")
-        print(f"    最後に取りにいったのは {fetched:%m/%d %H:%M}"
-              f"{'（%.0f時間前）' % age if age >= 1 else '（さきほど）'}"
-              f" / 失敗の理由 `{code}`")
-        if code == "reauthentication_required":
-            print("    **取り直しても直りません。**"
-                  "向こうの OAuth が切れています（workflow_dispatch も無駄）。")
-        print("    **この回は消費の速さを出せません。**"
-              "空欄を「余裕がある」とも「尽きた」とも読まないこと。")
-        print("    代わりに取れるもの（`add_repo` が要らない）:")
-        print("      `get_session` / `set_session_title` の返りの `rate_limit_info`")
-        print("      → リセット時刻と、警告帯に入っているかだけは必ず取れる。**%は入らない**")
-        _print_last_known(fetched)
-        return False
-
-    print(f"  **実測（{fetched:%m/%d %H:%M} 時点"
-          f"{'／%.0f時間前' % age if age >= 1 else '／さきほど'}）**")
-    for w in windows:
-        hrs = (datetime.fromisoformat(w["resets_at_iso"].replace("Z", "+00:00")).astimezone(JST)
-               - datetime.now(JST)).total_seconds() / 3600
-        print(f"    {w['window_name']}: **{w['used_percent']}% 使用"
-              f"（残り {w['remaining_percent']}%）**"
-              f"／リセットまで {hrs:.0f} 時間")
-    gov = d.get("governing_window") or {}
-    if gov.get("remaining_percent") is not None:
-        print(f"  **いま効いている枠: {gov.get('window_name')} "
-              f"／残り {gov['remaining_percent']}%**")
-        _record_usage(gov, fetched)
-        _print_burn_rate(gov)
-    # **pull しても、向こうの毎時更新より新しくはならない。**
-    # 5時間枠は数時間で 29%→77% と動くので、1時間の遅れは判断に効く。
-    # 本当に「いまの値」が要るときは workflow_dispatch を投げる（約1分で反映）。
-    # 2026-08-09 に実測: dispatch → 1分後にコミット → pull で最新になった。
-    #
-    # **この判定はスクリプトからは叩けない**（資格情報は GitHub の secret 側にあり、
-    # ローカルで `read-claude-usage.mjs` を実行すると token_missing で落ちる）。
-    # MCP を持っているのは呼び出し側なので、ここでは指示を出すだけ。
-    if age > STALE_USAGE_HOURS:
-        print(f"    [!] {age * 60:.0f}分前の値です。**取り直してください:**")
-        print("        mcp__github__actions_run_trigger / run_workflow")
-        print("        owner=bachikoljunior-blip repo=-chatgpt-usage-monitorPrivate")
-        print("        workflow_id=claude-usage-monitor.yml ref=main")
-        print("        → 約1分で反映。もう一度 status.py を実行する")
-    return True
+# 使用量の正本。**2026-08-14 に読む先を丸ごと変えた。**
+#
+# 8/12 まで、ここは `-chatgpt-usage-monitorPrivate` の
+# `state/claude-usage.json` を読んでいた。あれは唯一「残り何%」を返す口だった。
+# **もう返さない。** 8/11 に OAuth が切れ（`reauthentication_required`）、
+# 8/12 09:39 JST には向こうの GitHub Actions ごと止まった。
+# **直すにはオーナーがブラウザで認証し直すしかない。**
+# A1 は「私側への指示をしてもいいが、必ず読むとは限らない」と言っている。
+# **人待ちの計器は計器ではない。**
+#
+# それでも `docs/trigger_main.md` §2 は毎回 `add_repo` → Actions → clone を
+# 踏ませ続けた。**3つとも失敗する経路に、毎回3〜4分と数千トークンを捨てていた。**
+#
+# 代わりに読むのは **CCR の MCP の返りそのもの**。`list_sessions` の
+# `external_metadata` に `rate_limit_info`（効いている枠・状態・リセット時刻）と
+# `usage`（実トークン数）が入っている。**`add_repo` も Actions も要らず、遅れもない。**
+#
+# **%は返ってこない。** だから `scripts/quota.py` が状態の遷移を積んで、
+# 目盛りを後から決める。読み方はあちらの docstring にある。
+QUOTA_LOG = Path(__file__).resolve().parent.parent / "data" / "quota.jsonl"
 
 
 def print_budget() -> None:
-    """使用量を出す。**正本は実メーターだけ。**
+    """使用量を出す。**正本は `data/quota.jsonl`（CCR の MCP の返り）。**
 
     2026-08-08 に恒久指示が変わり、**予算制限は無くなった**（A15）。
     「どちらの使用量もチャットgptsparkの使用量も全てあなたが使っていい」。
     だから**残量は「使い切りそうか」を見るためだけ**に読む。絞る理由にはしない。
 
-    **`scripts/usage.py` の換算はここから外した。** あれが数えているのは
+    **`scripts/usage.py` の換算はここに出さない。** あれが数えているのは
     **このコンテナのセッション記録だけ**で、枠はアカウント単位で効く。
     別セッションが動けば、自分のぶんが少なくても枠は減る。
     並べて出すと、どちらを信じるか迷う分だけ判断が鈍る。**正本だけ出す。**
     """
-    print("\n=== 使用量（実メーター）===")
-    ok = _print_real_usage()
-    # **A15 は、メーターが読めない回ほど要る**（2026-08-12 に順序を直した）。
+    print("\n=== 使用量（CCR の枠情報）===")
+    ok = False
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        import quota                                    # noqa: PLC0415
+        quota.report()
+        ok = QUOTA_LOG.exists()
+    except Exception as exc:
+        # **失敗を「実測」と同じ字面で出さないこと**（2026-08-12 に踏んだ）。
+        # 数を出す口では、失敗を必ず別の字面にする。
+        print(f"  **計器が動きませんでした（これは実測ではありません）: "
+              f"{str(exc)[:70]}**")
+
+    # **取り直し方を、読めた回にも出す。** 積むのは呼び出し側（MCP を持つ側）に
+    # しかできない。ここに書いておかないと、誰も積まないまま古い点を読み続ける。
+    print("\n  **取り直す・積み増す**（シェルからは資格情報に届かない。MCP が要る）:")
+    print("    1. `list_sessions` を叩く（limit=25。**1回で25点ぶん返る**）")
+    print("    2. 返りをそのまま保存して "
+          "`python scripts/quota.py --ingest <file>`")
+    print("    **毎回やること。** 点が増えるほど「いつ閉じるか」が絞れる。")
+
+    # **A15 は、計器が読めない回ほど要る**（2026-08-12 に順序を直した）。
     # 以前は `return` の向こう側にあったので、**読めなかった回だけ消えていました。**
     # 数字が出ない回に「全部使ってよい」まで消えると、
     # 子は空欄を見て勝手に絞ります（8/12 09:45 の日誌が同じことを書いている）。
-    print("  **全部使ってよい**（恒久指示 A15）。残すこと自体に価値は無い。")
+    print("\n  **全部使ってよい**（恒久指示 A15）。残すこと自体に価値は無い。")
     print("  絞る理由にしないこと。使い切りそうなときだけ、短く切る。")
     if not ok:
-        print("  **メーターが読めないことは、絞る理由になりません。**"
+        print("  **計器が読めないことは、絞る理由になりません。**"
               "見えないだけで、枠が減ったわけではない。")
 
 

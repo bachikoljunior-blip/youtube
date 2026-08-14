@@ -48,52 +48,60 @@
 子が自分で残したこの印でしか分かりません。** 打ち忘れないこと。
 `python scripts/run_marker.py`（引数なし）が3時間以上の空きを警告します。
 
-## 2. 使用量を取り直す
+## 2. 使用量を積む（**2手。1分もかかりません**）
 
-**まず `add_repo` が要ります**（2026-08-10 に判明）。子のセッションは
-**`bachikoljunior-blip/youtube` しか GitHub スコープに持たずに立ちます。**
-先に投げると `Access denied ... not configured for this session` で弾かれます。
+    list_sessions limit=25 mine=true          ← MCP。返りをまるごと保存する
+    python scripts/quota.py --ingest <file>   ← 積んで、いまの姿を出す
 
-    add_repo owner=bachikoljunior-blip repo=-chatgpt-usage-monitorPrivate
+これだけです。**`add_repo` も GitHub Actions も clone も要りません。**
 
-**`add_repo` は弾かれることがあります**（2026-08-12 に初めて踏んだ）。
-`Permission for this action was denied by the Claude Code auto mode classifier` が返り、
-**access=push でも access=read でも同じでした。** 承認待ちにはならず即座に返るので、
-**止まりはしません。使用量が読めないだけです。**
+理由。CCR の MCP の返り（`list_sessions` / `get_session` / `create_session`）の
+`external_metadata` に、枠の情報が最初から入っています。
 
-弾かれたら:
+    "rate_limit_info": {"rateLimitType":"seven_day",   # five_hour と2種類ある
+                        "resetsAt":1786744800,          # ＝ 2026-08-15 07:00 JST
+                        "status":"rejected"}            # allowed / allowed_warning / rejected
 
-- `git clone` も落ちます（`could not read Username` ＝ 資格情報が無い）
-- `mcp__github__get_file_contents` も落ちます（`not configured for this session`）
-- **この回は使用量を読めません。JOURNAL に「読めなかった」と書いて先へ進むこと。**
-  **空欄を「余裕がある」とも「尽きた」とも読まないこと**（区別がつきません）
-- **弾かれたことを理由に回を止めないこと。** 予約が埋まっていれば投稿は続きます
+    "usage": {"cache_read_tokens":767141, "cache_write_tokens":142437,
+              "input_tokens":19, "output_tokens":3072}
 
-**代わりに読める場所があります**（2026-08-12 に見つけた）。
-`get_session` と `set_session_title` の**返り**に `rate_limit_info` が入っています。
+**`list_sessions` は1回で25件ぶん返します。** 1件が1点なので、
+**1回叩くだけで25点の時系列が入ります。** 遅れもありません。
 
-    "rate_limit_info": {"rateLimitType":"seven_day",
-                        "resetsAt":1786744800,        # ＝ 2026-08-15 07:00 JST
-                        "status":"allowed_warning"}
+### なぜ前のやり方をやめたか（2026-08-14）
 
-**`add_repo` が要りません。** ただし `status` は3値
-（`allowed` / `allowed_warning` / たぶん停止）で、**%は入っていません。**
-**「消費の速さ」は出せない**ので、間隔を決める根拠には足りません。
-**リセット時刻と「警告に入っているか」だけは、これで必ず取れます。**
+ここは 8/12 まで `add_repo` → `actions_run_trigger` → `git clone` を踏ませていました。
+**3つとも、もう必ず失敗します。**
 
-そのあと `mcp__github__actions_run_trigger` / `run_workflow` で
-owner=`bachikoljunior-blip` repo=`-chatgpt-usage-monitorprivate`（**小文字**）
-workflow_id=`claude-usage-monitor.yml` ref=`main` を投げる。**投げるだけで待たない。**
-ローカルでは取れません（資格情報は GitHub の secret 側）。
+- `-chatgpt-usage-monitorPrivate` の OAuth は **8/11 に切れた**
+  （`reauthentication_required`）。**dispatch を投げても直りません**
+- 向こうの GitHub Actions は **8/12 09:39 JST から止まっている**
+- `add_repo` 自体も auto mode classifier に弾かれる（access=read でも同じ）
 
-**投げただけでは読めません。** `status.py` が読むのは
-`/workspace/-chatgpt-usage-monitorprivate` のクローンで、
-**子はまっさらなコンテナなので毎回ありません。** 1回だけクローンすること:
+**毎回3〜4分と数千トークンを、必ず失敗する経路に捨てていました。**
+直すにはオーナーがブラウザで認証し直すしかなく、A1 は「私側への指示をしても
+よいが、必ず読むとは限らない」と言っています。**人待ちの計器は計器ではありません。**
 
-    git clone --depth 1 https://github.com/bachikoljunior-blip/-chatgpt-usage-monitorprivate /workspace/-chatgpt-usage-monitorprivate
+### この計器が言えること・言えないこと
 
-クローンしないと「使用量」の欄が**黙って空になります**（8/10 の1回目がそれ）。
-空欄と「枠に余裕がある」は見分けがつきません。
+**言える。** いまどちらの枠が効いているか。警告帯に入っているか。閉じているか。
+いつリセットされるか。**判断に要るのはほぼこれで足ります。**
+
+**言えない。** **残り何%か。返り値に%は入っていません。** 分母（何トークンで
+閉じるか）も返りません。だから `quota.py` は
+**`status` が切り替わった時刻と、そこまでに見えた消費量**を枠ごとに積みます。
+**1点では目盛りは決まりません。積み続けることに意味があります。**
+
+**だから、読めた回も必ず `--ingest` すること。** 読むだけで積まないと、
+次の回が古い点を見ることになります。
+
+### 割り引いて読むこと
+
+- **`usage` は全部の行には入りません**（規則は未特定）。
+  消費量の合計は**必ず過小**。「少なくともこれだけは使った」としてだけ読む
+- **5時間枠と7日枠は別物。混ぜないこと**
+- 空欄を「余裕がある」とも「尽きた」とも読まないこと。**区別がつきません**
+- **読めなかったことを理由に回を止めないこと。** 予約が埋まっていれば投稿は続きます
 
 ## 2.5 依存を入れる（**まっさらなコンテナなので毎回要る**）
 

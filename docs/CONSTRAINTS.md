@@ -58,9 +58,20 @@
 使い切れば止まるのは事実だが、**残すこと自体に価値は無い。**
 やるべき作業があるなら、予算を理由に見送らないこと。
 
-使用量の読み方（`CLAUDE.md` 冒頭の恒久指示ブロックにある）:
+使用量の読み方（**2026-08-14 に読む先を変えた**）:
 
-    node <checkout>/-chatgpt-usage-monitorPrivate/scripts/show-usage.mjs
+    list_sessions limit=25 mine=true          ← MCP。返りをまるごと保存する
+    python scripts/quota.py --ingest <file>
+
+**恒久指示ブロックにある `show-usage.mjs` は、もう値を返さない。**
+`-chatgpt-usage-monitorPrivate` の OAuth が 8/11 に切れ、向こうの GitHub Actions も
+8/12 09:39 JST から止まっている。**A15 は「使用量を自分で見られる状態にしておくこと」で、
+`show-usage.mjs` で見ろとは言っていない。** 読む先はこちらの判断で変えてよい（A14）。
+
+代わりに読むのは **CCR の MCP の返りそのもの**（`external_metadata` の
+`rate_limit_info` と `usage`）。`add_repo` も Actions も要らず、遅れもない。
+**ただし%は返らない**ので、`quota.py` が状態の遷移を積んで目盛りを後から決める。
+詳細は `scripts/quota.py` の docstring と `docs/trigger_main.md` §2。
 
 **`scripts/usage.py` は使用量の測定ではない。** オーナーが「なんの当てにもならない」と
 明言した。残量を根拠に何かを決めるときに、あの数字を使わないこと。
