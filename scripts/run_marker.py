@@ -14,7 +14,7 @@
 > 毎回新しいセッション立ててそこで実行、終わったらアーカイブ
 > **ここでしてた作業を全部子セッションにやらせる**
 
-長いセッションで判断が雑になるのを避けるため（恒久指示 A12）。
+長いセッションで判断が雑になるのを避けるため。
 
 **このファイルは「回が本当に周っているか」の記録です。**
 親は使いません（親はリポジトリを触らない）。**読むのは子と、人。**
@@ -54,9 +54,10 @@ from pathlib import Path
 
 JST = timezone(timedelta(hours=9))
 
-# 定期実行の間隔（分）。**正本は `docs/TRIGGER.md` の cron `9 */6 * * *`。**
+# 定期実行の間隔（分）。**実物は `list_triggers` で見ること。**
 # ここは空きを警告するしきい値を出すためだけに持っています。
-INTERVAL_MIN = 360
+# 2026-08-15: 親が毎時（cron `9 * * * *`）になったので 60。
+INTERVAL_MIN = 60
 MARKS = Path(__file__).resolve().parent.parent / "data" / "runs.jsonl"
 KEEP = 500
 
@@ -65,7 +66,12 @@ KEEP = 500
 # 親は普段リポジトリを触らないので打つ機会が無いはずだが、
 # 打てば「周が回っている」に見えてしまう。**異常を隠す方向の間違いなので、
 # 規律ではなく機械で外す。**
-PARENT_SESSION = "session_01PXy8TiBxL1SM7AUc6XAMML"
+#
+# **親は交代します**（重くなったら新しい親に移す）。古いIDを消さずに足すこと。
+PARENT_SESSIONS = {
+    "session_01PXy8TiBxL1SM7AUc6XAMML",   # 〜2026-08-15
+    "session_016PyeT6Afj5KzKQ9xkKE3Kx",   # 2026-08-15〜
+}
 
 
 def session_id() -> str:
@@ -89,27 +95,67 @@ def _records() -> list[dict]:
             rec = json.loads(ln)
         except json.JSONDecodeError:
             continue
-        if rec.get("session") == PARENT_SESSION:
+        if rec.get("session") in PARENT_SESSIONS:
             continue
         out.append(rec)
     return out
 
 
-def write() -> int:
-    me = session_id() or "(不明)"
-    if me == PARENT_SESSION:
-        print("[marker] **親からは印を付けません。**"
-              " 親が周を回すのは設計の否定なので、平常の心音として数えません。")
-        return 0
+def _append(rec: dict) -> str:
     MARKS.parent.mkdir(parents=True, exist_ok=True)
-    line = json.dumps({
-        "at": datetime.now(JST).isoformat(timespec="seconds"),
-        "session": me,
-    }, ensure_ascii=False)
+    line = json.dumps(rec, ensure_ascii=False)
     old = [x for x in (MARKS.read_text(encoding="utf-8").splitlines()
                        if MARKS.exists() else []) if x.strip()]
     MARKS.write_text("\n".join((old + [line])[-KEEP:]) + "\n", encoding="utf-8")
+    return line
+
+
+def write() -> int:
+    me = session_id() or "(不明)"
+    if me in PARENT_SESSIONS:
+        print("[marker] **親からは印を付けません。**"
+              " 親が周を回すのは設計の否定なので、平常の心音として数えません。")
+        return 0
+    line = _append({
+        "at": datetime.now(JST).isoformat(timespec="seconds"),
+        "session": me,
+        "kind": "start",
+    })
     print(f"[marker] 走った印を付けました: {line}")
+    return 0
+
+
+def ship(what: str) -> int:
+    """**この回が「出したもの」を1行残す。**（2026-08-15 追加）
+
+    オーナーの指示（原文）: **「子が、少しの作業で終わるの直して」**
+
+    分析して日誌を書いて終わる回が続いていました（8/12〜8/15 の全部）。
+    **文書に「小さくてよい」と書いてあったのが原因**なので、まず文書を直し、
+    そのうえで**機械で確かめられる形**にしたのがこの印です。
+
+    `scripts/stop_check.sh` が、start はあるのに ship が無いまま終わろうと
+    したときに引き止めます。**引き止めるだけで、最後は通します**
+    （止まったまま死ぬほうが、目標に対して確実に悪いため）。
+
+    **何を ship と呼ぶか**（`docs/trigger_main.md` §4 の最低ライン）:
+
+        upload   動画を1本、予約まで入れた
+        means    手段の台帳（docs/MEANS.md）の1件を、実際に動かした
+        verdict  期限の来た前提を、実データで判定した
+        fix      実測で見つかった欠陥を塞いだ（道具・生成・投稿のどれか）
+
+    **分析・日誌・文書の整理だけは ship ではありません。** それは前提であって、
+    出したものではない。
+    """
+    me = session_id() or "(不明)"
+    line = _append({
+        "at": datetime.now(JST).isoformat(timespec="seconds"),
+        "session": me,
+        "kind": "ship",
+        "what": what,
+    })
+    print(f"[marker] 出したものを記録しました: {line}")
     return 0
 
 
@@ -122,13 +168,28 @@ def show() -> int:
               "（`source_url` と `source_revision` を確かめること）。")
         return 1
     now = datetime.now(JST)
-    print(f"[marker] 直近 {min(5, len(recs))}件:")
-    for r in recs[-5:]:
+    print(f"[marker] 直近 {min(8, len(recs))}件:")
+    for r in recs[-8:]:
         try:
             age = (now - datetime.fromisoformat(r["at"])).total_seconds() / 60
-            print(f"    {r['at']}  {age:>5.0f}分前  {r['session']}")
+            kind = r.get("kind", "start")
+            tail = f"  ← **出した**: {r['what']}" if kind == "ship" else ""
+            print(f"    {r['at']}  {age:>5.0f}分前  {kind:<5} {r['session']}{tail}")
         except (KeyError, ValueError):
             print(f"    （読めない行）{r}")
+
+    # **走った回のうち、何も出さずに終わった割合。**
+    # ここが高いままなら、直すのは間隔ではなく1回の中身です。
+    starts = [r for r in recs if r.get("kind", "start") == "start"]
+    shipped = {r.get("session") for r in recs if r.get("kind") == "ship"}
+    recent = starts[-10:]
+    empty = [r for r in recent if r.get("session") not in shipped]
+    if recent:
+        print(f"  直近 {len(recent)}回のうち、**何も出さずに終わった回: {len(empty)}**")
+        if len(empty) > len(recent) / 2:
+            print("  [!] **半分以上が空回りです。** 分析だけで終える回が既定に"
+                  "なっていないか疑うこと（`docs/trigger_main.md` §4 の最低ライン）。")
+
     try:
         gap = (now - datetime.fromisoformat(recs[-1]["at"])).total_seconds() / 60
     except (KeyError, ValueError):
@@ -148,8 +209,12 @@ def show() -> int:
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--write", action="store_true", help="子: 走った印を付ける")
+    ap.add_argument("--write", action="store_true", help="子: 走った印を付ける（最初に）")
+    ap.add_argument("--ship", metavar="内容",
+                    help="子: この回で出したものを記録する（最低ラインの1件）")
     args = ap.parse_args(argv)
+    if args.ship:
+        return ship(args.ship)
     return write() if args.write else show()
 
 

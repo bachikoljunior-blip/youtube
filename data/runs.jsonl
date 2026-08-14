@@ -12,3 +12,5 @@
 {"at": "2026-08-12T21:20:48+09:00", "session": "session_01XdZyQhdvyZ9TecXpMwpyRk"}
 {"at": "2026-08-15T07:41:52+09:00", "session": "session_01Qx6UBQEg8FLdtqdbEcD2g3"}
 {"at": "2026-08-15T08:10:52+09:00", "session": "session_013a8YfZfFe55Ya8YSWCshDK"}
+{"at": "2026-08-15T08:42:53+09:00", "session": "session_01MVSsBLCAnjcmTkw2X7o2cd", "kind": "start"}
+{"at": "2026-08-15T08:42:53+09:00", "session": "session_01MVSsBLCAnjcmTkw2X7o2cd", "kind": "ship", "what": "fix: 恒久指示9件の枠組みを外して目標だけにした／子の最低ライン（ship印＋Stopフック）／親の出力をFOR_OWNER.mdだけに絞った"}
