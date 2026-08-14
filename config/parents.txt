@@ -1,0 +1,11 @@
+# 常駐の「親」セッションID。1行に1つ。#で始まる行は無視。
+#
+# **これを読む側が3つあります**（増やしたら全部に効きます）:
+#   scripts/stop_check.sh     親では黙る（親の出力は「オーナーへの指示」だけなので）
+#   scripts/goal_reminder.sh  親では黙る（親は判断しない。文脈を軽く保つ）
+#   scripts/run_marker.py     親の印は「周が回った」に数えない
+#
+# **親は交代します**（重くなったら新しい親へ移す）。**古いIDを消さずに足すこと。**
+# 消すと、古い親が生き残っていたときに黙らせられません。
+session_01PXy8TiBxL1SM7AUc6XAMML
+session_016PyeT6Afj5KzKQ9xkKE3Kx

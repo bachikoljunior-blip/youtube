@@ -68,10 +68,21 @@ KEEP = 500
 # 規律ではなく機械で外す。**
 #
 # **親は交代します**（重くなったら新しい親に移す）。古いIDを消さずに足すこと。
-PARENT_SESSIONS = {
-    "session_01PXy8TiBxL1SM7AUc6XAMML",   # 〜2026-08-15
-    "session_016PyeT6Afj5KzKQ9xkKE3Kx",   # 2026-08-15〜
-}
+# 名簿は `config/parents.txt`（`stop_check.sh` と `goal_reminder.sh` も同じものを読む）。
+# **1か所にしてあるのは、増えたときに片方だけ直す事故を避けるため**です。
+_PARENTS_FILE = Path(__file__).resolve().parent.parent / "config" / "parents.txt"
+
+
+def _parents() -> set[str]:
+    if not _PARENTS_FILE.exists():
+        return set()
+    return {
+        ln.strip() for ln in _PARENTS_FILE.read_text(encoding="utf-8").splitlines()
+        if ln.strip() and not ln.startswith("#")
+    }
+
+
+PARENT_SESSIONS = _parents()
 
 
 def session_id() -> str:

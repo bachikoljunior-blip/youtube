@@ -30,6 +30,18 @@ set -u
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
+# **親では黙る**（2026-08-15）。
+# オーナー指示「親セッションは私への指示だけ表示して」と、このフックは衝突します
+# —— 親が引き止められると、フックへの応答（＝指示以外の文字）を出すしかない。
+# **どちらを直すかは選べて、フック側を黙らせるほうを選びました。**
+# 親は分析も生成もしないので、「終わるのが最善か」を問う相手ではありません。
+# 名簿は `config/parents.txt`（`run_marker.py` と `goal_reminder.sh` も同じものを読む）。
+RAW="${CLAUDE_CODE_REMOTE_SESSION_ID:-}"
+ME="${RAW/#cse_/session_}"
+if [ -n "$ME" ] && grep -qxF "$ME" "$ROOT/config/parents.txt" 2>/dev/null; then
+  exit 0
+fi
+
 # --- いまの状態を集める（ネットワークは使わない。フックは速いこと） ---
 if pgrep -f "src.pipeline" > /dev/null 2>&1; then
   RUNNING="あり（src.pipeline が動いている。**畳めばコンテナごと消えるので、待つこと**）"
@@ -45,8 +57,6 @@ fi
 
 # --- この回はもう「出した」か（定期の回だけ効く） ---
 # **オーナーと会話している回には効かせません。** 印を打っていない回＝定期ではない。
-RAW="${CLAUDE_CODE_REMOTE_SESSION_ID:-}"
-ME="${RAW/#cse_/session_}"
 SHIP_STATE=$(python3 - "$ROOT/data/runs.jsonl" "$ME" <<'PY' 2>/dev/null || echo unknown
 import json, sys, pathlib
 path, me = pathlib.Path(sys.argv[1]), sys.argv[2]

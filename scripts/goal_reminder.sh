@@ -35,6 +35,14 @@ set -uo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 [ -f "$ROOT/docs/GOAL.md" ] || exit 0
 
+# **親では黙る**（2026-08-15）。親は判断も生成もしないので、目標の注入が要りません。
+# 常駐で文脈が溜まる側なので、毎ターン差し込むと**一番高い部品をさらに重くします。**
+RAW="${CLAUDE_CODE_REMOTE_SESSION_ID:-}"
+ME="${RAW/#cse_/session_}"
+if [ -n "$ME" ] && grep -qxF "$ME" "$ROOT/config/parents.txt" 2>/dev/null; then
+  exit 0
+fi
+
 python3 - "$ROOT" <<'PY' 2>/dev/null || exit 0
 import json, re, sys, pathlib
 
