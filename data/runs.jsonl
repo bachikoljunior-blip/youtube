@@ -120,3 +120,4 @@
 {"at": "2026-08-16T07:40:49+09:00", "session": "session_01Ewd7UbEd2xFUxbZLhg8acb", "kind": "ship", "what": "fix: pick が古い在庫を渡し、作った8本のうち2本(25%)が投稿直前で捨てになっていた。控え(uploaded.jsonl)を選ぶ側にも通した（動画を消す道が無いので、控えが嘘になる経路が存在しない）"}
 {"at": "2026-08-16T07:40:55+09:00", "session": "session_01Ewd7UbEd2xFUxbZLhg8acb", "kind": "ship", "what": "fix: 画面の式が答えの行より先に出ていた（4200万円のコマに『4800万円＝…』）。reveal_variants が式を全コマに配っていた。独立評価3体中2体が同じ回に外から当てた"}
 {"at": "2026-08-16T07:41:01+09:00", "session": "session_01Ewd7UbEd2xFUxbZLhg8acb", "kind": "ship", "what": "fix: 9回運ばれた『usage が入る条件』を159点で測って閉じた（42分説は外れ＝見えた年齢はこちらの spawn 間隔そのもの）。あわせて手順 §0 の『git diff で判断』が共通の祖先が無いとき逆を指す件を書き換え"}
+{"at": "2026-08-16T07:43:27+09:00", "session": "session_01Ewd7UbEd2xFUxbZLhg8acb", "kind": "ship", "what": "upload: 8/26 の8本目（E5i0YfIkmnA）まで通し、8本の日を2つめとして完成させた。同じ calc が3本つづいたので reschedule --move で離した"}
