@@ -399,32 +399,21 @@ def _check_formula_shown(script: dict | None) -> list[str]:
     return problems
 
 
-#: 「量」を指す語の**語尾**。前に付く語は問わない（`手取り率` `支給率` `保険料率`）。
-#: 語そのものの一覧にしないのは、次に出てくる量を数え上げられないから。
-#: **語尾なら、まだ書かれていない calc の量にも当たります。**
-_QUANTITY_TAILS = ("率", "割合", "単価", "日数", "月数", "年数", "上限", "下限", "係数")
-
-#: 「これは前提だ」と画面が名乗っている印。ここに当たったコマだけを見る。
-#: 全部のコマに当てると、結論の数字を言い換えただけの行まで拾ってしまう。
-_ASSUMPTION_MARKERS = ("仮定", "前提", "として置", "としています", "とみなし", "と置い")
-
-#: 量の名前と数字が、どれだけ離れていたら「その量の値ではない」とみなすか（文字数）。
-#: `手取り率は85パーセント` は 4字、`手取り率　85%` は 1字。
-#: 離すほど通りやすくなるので、**同じ行の中に収まる程度**に置く。
-_VALUE_NEAR_CHARS = 14
-
-#: 量の名前の**手前で切る**字。助詞なので、ここより前は別の語。
-#: 2026-08-16 の初回生成で `前提は所得税率` と拾い、直し方の例が
-#: 『前提は所得税率 ＝ 〇〇』という日本語にならない形で出た。
-#: **落とす判定は当たっていたが、渡す直し方が壊れていた。**
-_PARTICLES = "はがをにでもとやのへか、。 　"
-
-
-def _trim_particles(word: str) -> str:
-    """`前提は所得税率` → `所得税率`。最後の助詞より後ろだけを残す。"""
-    cut = max((word.rfind(p) for p in _PARTICLES), default=-1)
-    tail = word[cut + 1:] if cut >= 0 else word
-    return tail if tail.endswith(_QUANTITY_TAILS) else word
+#: 語彙と規則は `src/calc/_checks.py` に**1つだけ**置いてあります。
+#: **ここで定義し直さないこと**（2026-08-16）。
+#:
+#: この検査（画面に前提の値が出ているか）は 01:3x に入りましたが、
+#: **渡す側（`ASSUMPTIONS`）が空の calc がある**という同じ穴が、
+#: そのあと申し送りを8回運んでも閉じませんでした。閉じなかった理由は
+#: **片側にしか検査が無かったから**です。いまは calc 側の
+#: `_checks.assumption_values()` が同じ語彙・同じ近さで先に見ます。
+#: **定義を2つ持つと、その日から片方だけ育ちます。**
+from .calc._checks import (  # noqa: E402
+    ASSUMPTION_MARKERS as _ASSUMPTION_MARKERS,
+    QUANTITY_TAILS as _QUANTITY_TAILS,
+    VALUE_NEAR_CHARS as _VALUE_NEAR_CHARS,
+    trim_particles as _trim_particles,
+)
 
 
 def _visual_texts(seg: dict) -> list[str]:

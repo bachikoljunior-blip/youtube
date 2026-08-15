@@ -11,6 +11,7 @@ import re
 from pydantic import BaseModel, Field
 
 from . import config
+from .calc import _checks
 from .claude_cli import ask, follow_up
 
 # 日本語 TTS の実測。speaking_rate=1.0 でおよそこのくらい進む。
@@ -817,6 +818,13 @@ def calc_block(topic: dict) -> str:
         stdout = "\n\n".join(kept)
 
     assumptions = getattr(module, "ASSUMPTIONS", [])
+    if isinstance(assumptions, str):
+        assumptions = [assumptions]
+    # **前提に値が入っていないまま、書き手に渡さないこと**（2026-08-16。8回持ち越し）。
+    # ここが渡すのは `ASSUMPTIONS` の文だけで、表は渡りません。値の無い前提を渡すと、
+    # 書き手は黙って落とす（→ verify が1本まるごと捨てる）か、自分で数字を作る
+    # （→ 裏の取れない数字が動画に入る）しかありません。**生成に入る前に止めます。**
+    _checks.assumption_values(assumptions, name=name)
     used = used_bars(exclude=str(topic.get("id", "")))
     used_block = ""
     if used:

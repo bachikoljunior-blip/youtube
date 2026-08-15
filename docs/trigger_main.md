@@ -50,8 +50,28 @@
 は、**チェックアウトせずに手元の参照を早送りします**（枝が既にあっても通る）。
 そのあと `switch` は「同じ内容へ移るだけ」なので、破壊的な操作になりません。
 
-- 手元の枝に**独自のコミットがある**ときは fetch が early-update を拒みます。
+- 手元の枝に**独自のコミットがある**ときは fetch が early-update を拒みます
+  （`! [rejected] ... (non-fast-forward)`）。
   そのときは `git log origin/<枝>..<枝>` を読んでから統合すること（**捨てない**）
+
+#### **読んだ結果「手元が丸ごと古い」ときの道**（2026-08-16 06:3x に実際に踏んだ）
+
+上の行はここまでしか言っていませんでした。**この回の手元の枝は、`origin` と
+50コミット分ずれた古い系譜**で（`git diff` は **+269 / −15,895 行** ＝
+手元にしか無い中身は1行も無い）、統合するものが何もありません。
+**detached の HEAD のほうが `origin` の系譜に乗っていました。**
+
+`checkout -B` も `branch -f` も弾かれるので、**通る道は改名**です:
+
+    git -C /home/user/youtube branch -m claude/youtube-auto-post-revenue-ggedij stale-clone-<日付>
+    git -C /home/user/youtube switch claude/youtube-auto-post-revenue-ggedij
+
+改名は**何も捨てません**（退避名で残るので、後から読めます）。
+名前が空けば `switch` が `origin` から新しく作り、追跡も付きます。
+
+**「古いほうを捨てる」判断は、必ず数字でやること** ——
+`git diff --stat origin/<枝> <枝>` を見て、**手元にしか無い追加が0行**であること。
+1行でもあれば、それは統合する中身です。
 - `data/runs.jsonl` を §1 より先に書くと `switch` が「上書きになる」と止まります。
   **§0 を §1 より先にやること**（この順で書いてあるのはそのためです）
 

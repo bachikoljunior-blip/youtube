@@ -214,6 +214,16 @@ def upload(
             date_jst=publish_cfg.get("publish_date_jst") or None,
         )
         print(f"[upload] 公開予定: {status['publishAt']}")
+        # **決めた時刻を、呼んだ側にも返すこと**（2026-08-16）。
+        # `scripts/upload_only.py` は `channel["publish"]["publish_at"]` を読んで
+        # `data/uploaded.jsonl` に控えます。ところがこの時刻は**ここで初めて決まる**ので、
+        # 書き戻さないと控えの `at` が**必ず null** になります。
+        # 実測: 控えを入れた 8/16 02:5x 以降に上げた予約7本が、**7本とも null**。
+        # 埋め戻した48本には時刻が入っていたので、**壊れて見えませんでした**
+        # （新しい行だけが空で、一覧の見た目は変わらない）。
+        # これが効く先は2つ —— `dupes.ledger_rows()` の `scheduled` と、
+        # `sibling_check` の在庫（＝予約が何日先まで埋まっているか）。
+        publish_cfg["publish_at"] = status["publishAt"]
 
     body = {
         "snippet": {

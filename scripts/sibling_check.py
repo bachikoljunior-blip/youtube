@@ -88,6 +88,50 @@ LIVE = ("PENDING", "RUNNING", "IDLE")
 WINDOWS = ("five_hour", "seven_day")
 OK = "allowed"
 
+#: **予約の在庫がこの日数を切ったら、間隔の下限より生成を優先する**
+#: （`docs/TRIGGER.md` の「覆る条件②」。2026-08-16 に機械へ入れた）。
+#:
+#: この文は 8/15 から `docs/TRIGGER.md` に2か所書いてあり、
+#: **申し送りも8回運びました。文書にしか無いものは、読み飛ばせば効きません。**
+#: 実際、この間ずっと `--phase spawn` は在庫を1度も見ていません。
+#:
+#: 止まるのと出せなくなるのとでは、**出せなくなるほうが痛い** ——
+#: 間隔を詰めて枠を早く使い切っても、**予約が埋まっていれば公開は続きます**。
+#: 逆に在庫が尽きると、枠がいくら余っていても投稿が途切れます。
+RUNWAY_FLOOR_DAYS = 14
+
+
+def runway_days(now: datetime) -> float | None:
+    """**予約が何日先まで埋まっているか。** 読めなければ `None`。
+
+    見るのは `data/uploaded.jsonl`（上げた瞬間に1行。2026-08-16 02:5x に入った控え）。
+    **API を叩きません** —— この検査は archive の直前に走るので、
+    ここで口を叩くと、429 で読めなかった回に鎖が止まります。
+
+    **ずれる向きを選んであります。** 控えは「上げたときの予約時刻」なので、
+    あとで外した本（`reschedule.py --unschedule`）が残り、**在庫は多めに出ます。**
+    多めに出れば「まだ余裕がある」＝**いままでどおり待つ**になるので、
+    読み違えても悪化しません。少なめに出るほうが危ない（枠を余計に食う）ので、
+    この向きでよい。
+    """
+    path = Path(__file__).resolve().parent.parent / "data" / "uploaded.jsonl"
+    if not path.exists():
+        return None
+    latest = None
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            at = parse_iso(json.loads(line).get("at"))
+        except Exception:
+            continue
+        if at and (latest is None or at > latest):
+            latest = at
+    if latest is None:
+        return None
+    return (latest - now).total_seconds() / 86400
+
 
 def my_session_id() -> str | None:
     raw = os.environ.get("CLAUDE_CODE_REMOTE_SESSION_ID") or ""
@@ -241,8 +285,22 @@ def main() -> int:
             floor = recommended_floor_minutes()
         except Exception as exc:                 # 計器が壊れても鎖は止めない
             print(f"速さ: **測れませんでした**（{exc}）。間隔は空けません")
+        now = datetime.now(timezone.utc)
+        runway = runway_days(now)
+        # **在庫が薄いときは、間隔の下限より生成を優先する**（`docs/TRIGGER.md` 覆る条件②）。
+        # 枠を早く使い切っても、予約が埋まっていれば公開は続きます。
+        # 在庫が尽きたら、枠がいくら余っていても投稿が途切れます。**痛みの大きさが違う。**
+        if runway is None:
+            print("在庫: **読めませんでした**（`data/uploaded.jsonl`）。下限はそのまま効かせます")
+        else:
+            print(f"在庫: 予約は **{runway:.1f}日先**まで（下限を外す境目は {RUNWAY_FLOOR_DAYS}日）")
+            if runway < RUNWAY_FLOOR_DAYS and floor:
+                print(f"  → **間隔の下限 {floor:.0f}分を外します。**"
+                      "在庫が薄いので、生成の回数のほうが目標に近い。")
+                floor = None
+
         if floor and born:
-            waited = (datetime.now(timezone.utc) - born).total_seconds() / 60
+            waited = (now - born).total_seconds() / 60
             if waited < floor:
                 left = floor - waited
                 print()
