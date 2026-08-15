@@ -90,7 +90,8 @@ def _check_subtitles(work: Path) -> list[str]:
         for row in ass.read_text(encoding="utf-8").splitlines()
         if row.startswith("Dialogue:")
     ]
-    lines = [r[9].strip() for r in rows if len(r) == 10]
+    rows = [r for r in rows if len(r) == 10]
+    lines = [r[9].strip() for r in rows]
     if not lines:
         return ["字幕に1行も入っていない"]
 
@@ -100,9 +101,23 @@ def _check_subtitles(work: Path) -> list[str]:
         problems.append(f"記号だけの字幕行が {len(orphans)} 行ある（例『{orphans[0]}』）")
 
     # 行末と次の行頭が両方とも数字・単位なら、かたまりの途中で割れている。
+    #
+    # **ただし、隣り合う2行が同じ文から折れたものであるときだけ。**
+    # 2026-08-15、『手取り増は35万9318円』→『13%なら』で止まりました。
+    # **これは折り返しではなく、文の終わりと次の文の始まりです。**
+    # 別々の数字が並んでいるだけで、画面上は何も壊れていません。
+    # それでも検査は落とし、その回は投稿を1本ぶん失いました
+    # （生成し直しても、文の並びが同じなら**必ず再発します**）。
+    #
+    # 文の切れ目は `subtitles.build` が Name の欄（`seg<番号>`）に刷ります。
+    # **欄が空なら、繋げて読む昔のふるまいに戻す**（見落とすより止めるほうを選ぶ）。
+    names = [r[4].strip() for r in rows]
+    same_sentence = [
+        (not x) or (not y) or x == y for x, y in zip(names, names[1:])
+    ]
     split_nums = [
-        (a, b) for a, b in zip(lines, lines[1:])
-        if a and b and a[-1] in _NUM_TOKEN and b[0] in _NUM_TOKEN
+        (a, b) for a, b, same in zip(lines, lines[1:], same_sentence)
+        if same and a and b and a[-1] in _NUM_TOKEN and b[0] in _NUM_TOKEN
     ]
     if split_nums:
         a, b = split_nums[0]

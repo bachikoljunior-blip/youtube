@@ -28,6 +28,10 @@ MAX_LINE_CHARS_PORTRAIT = 13
 # **4 だと寄せすぎる。** 「所得税は」(4文字) を寄せて枠を超えた（2026-08-08）。
 MIN_LINE_CHARS = 3
 
+# Dialogue の Name 欄に刷る、文の通し番号の頭。**カンマを含めないこと**
+# （.ass は行をカンマで割るので、混ざると本文がずれる）。
+SEGMENT_NAME_PREFIX = "seg"
+
 _NUM_TOKEN = set("0123456789．."
                  "〇一二三四五六七八九十百千万億兆"
                  "円日年月時分秒人回倍％%割点歳"
@@ -347,7 +351,13 @@ def build(segments: list[dict], out_path: Path, portrait: bool = False) -> Path:
     events: list[str] = []
     limit = MAX_LINE_CHARS_PORTRAIT if portrait else MAX_LINE_CHARS
 
-    for seg in segments:
+    # **どの文から折れた行かを、Name の欄に刷る。**
+    # 2026-08-15、`_check_subtitles`（投稿前の検査）が
+    # 『手取り増は35万9318円』→『13%なら』を「数字の途中で改行」と読んで
+    # **投稿を止めました。** この2行は別の文の末尾と先頭で、折り返しではありません。
+    # .ass だけを見ると文の切れ目が分からないので、検査は繋げて読んでいました。
+    # Name はどの描画も使わない欄なので、ここに文の番号を置けば区別できます。
+    for idx, seg in enumerate(segments):
         start, end = float(seg["start"]), float(seg["end"])
         span = max(0.1, end - start)
 
@@ -357,7 +367,8 @@ def build(segments: list[dict], out_path: Path, portrait: bool = False) -> Path:
         for line in lines:
             share = span * (len(line) / total)
             events.append(
-                f"Dialogue: 1,{_ts(cursor)},{_ts(min(cursor + share, end))},Caption,,0,0,0,,"
+                f"Dialogue: 1,{_ts(cursor)},{_ts(min(cursor + share, end))},Caption,"
+                f"{SEGMENT_NAME_PREFIX}{idx},0,0,0,,"
                 f"{_escape(line)}"
             )
             cursor += share
