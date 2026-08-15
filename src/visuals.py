@@ -320,7 +320,12 @@ def _chart_html(visual: dict, portrait: bool = False, tighten: int = 0) -> str:
     # いなかったが、実機では UI の下に入って読めない。**枠に収まるだけでは足りない。**
     track_px = max(content - label_px - gap - (SAFE_RIGHT_PORTRAIT if portrait else 0), 1)
 
-    top = max(float(b.get("value", 0)) for b in bars) or 1.0
+    # **`scale_max` があればそれを目盛りにする**（2026-08-15）。
+    # 棒を1本ずつ出していく「めくり」を作るとき、`bars` を先頭から切ると
+    # ここの `max` が変わり、**同じ棒の長さが枚ごとに伸び縮みします。**
+    # 図が嘘になるので、めくりの側から全体の最大値を渡して固定する。
+    top = float(visual.get("scale_max") or 0) or \
+        max(float(b.get("value", 0)) for b in bars) or 1.0
     pcts = [max(float(b.get("value", 0)) / top * 100.0, 1.0) for b in bars]
     # padding-right 16px と余白を見た、数字1つに要る幅。
     needs = [_em_width(str(b.get("display", ""))) * font_px + 16 * 2 for b in bars]
@@ -484,6 +489,51 @@ _LINE_PROBE_JS = """() => {
 MAX_TIGHTEN = 6
 # 縦に溢れたときの縮小。0.75 より下げると、ショートの実機で読めなくなる。
 ZOOMS = (1.0, 0.94, 0.88, 0.82, 0.76)
+
+
+def reveal_variants(visual: dict, want: int) -> list[dict]:
+    """図解1枚を、要素を1つずつ足していく複数枚に割る（2026-08-15）。
+
+    **なぜ要るか。** 独立評価（M13）は3体そろって
+    「同じ絵が2コマ続く」「9コマ中の実質4〜5画面」と書いてきました。
+    絵と読み上げの文が**1対1で結ばれていた**ので、1つの文が5〜6秒あると
+    その間ずっと画面が止まります。
+
+    **文を短くする道は 2026-08-09 に既に潰れています**（140文字を8枚に割ると
+    1枚17文字で文にならない。`src/script_writer.py` の定数のコメント）。
+    **だから割るのは文ではなく絵のほうです。**
+
+    字幕は文の側（`segment_timeline`）に付くので、**ここで絵を増やしても
+    字幕はずれません。** そこがこの直し方の効くところです。
+
+    `want` は欲しい枚数。要素がそれより少なければ、あるだけしか返しません
+    （**水増ししない**。同じ絵を2回出したら、直したことになりません）。
+    """
+    if want <= 1:
+        return [visual]
+    for key in ("bars", "rows", "items"):
+        seq = visual.get(key)
+        if not isinstance(seq, list) or len(seq) < 2:
+            continue
+        n = len(seq)
+        k = min(want, n)
+        out = []
+        for i in range(k):
+            cut = max(1, round(n * (i + 1) / k))
+            v = dict(visual)
+            v[key] = seq[:cut]
+            if key == "bars":
+                # 目盛りを全体の最大値で固定する。切っても棒が伸び縮みしない。
+                values = [float(b.get("value", 0) or 0) for b in seq]
+                v["scale_max"] = max(values) if values else 0
+            out.append(v)
+        # 末尾は必ず「全部出ている」状態にする
+        out[-1] = dict(visual)
+        if key == "bars":
+            values = [float(b.get("value", 0) or 0) for b in seq]
+            out[-1]["scale_max"] = max(values) if values else 0
+        return out
+    return [visual]
 
 
 def render(visuals: list[dict], out_dir: Path, topic_id: str = "",

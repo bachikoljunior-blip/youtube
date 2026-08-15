@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import random
 import shutil
 import sys
@@ -159,6 +160,11 @@ MAX_SLIDE_SECONDS = verify.MAX_SECONDS_PER_SLIDE
 # 「片方だけ直す」形は 2026-08-08〜09 に5回やっている。**import で1つにする。**
 MAX_SHORT_SEGMENT_CHARS = SHORT_SEGMENT_CHARS
 
+# ショートで、絵1枚が画面に残ってよい秒数。**文の長さではなく絵の話。**
+# 独立評価が繰り返し指摘してきたのは「1〜2秒ごとの視覚変化」なので、
+# その上限側に置いた。1文（5〜6秒）はこれで2〜3枚に割れる。
+SHORT_SLIDE_SECONDS = 2.5
+
 
 def _check_short_script(script, topic_id: str = "") -> None:
     """ショートの台本を、**音声合成の前に**落とす。
@@ -299,8 +305,36 @@ def main(argv: list[str] | None = None) -> int:
 
     # 3. 図解を自前で描いて撮る
     # 配色は投稿済みの本数から順番に回す。連続する回が同じ色にならないように。
+    # **1つの読み上げ文に、絵を複数枚あてる**（2026-08-15。ショートだけ）。
+    #
+    # ここは長く「1文＝1枚」でした。ショートは1文が5〜6秒あるので、
+    # **その間ずっと画面が止まります。** 独立評価（M13）は3体そろって
+    # 「同じ絵が2コマ続く」「実質4〜5画面しかない」と書き、中央値4で落ちました。
+    #
+    # 文を短くする道は 2026-08-09 に潰れています（140文字÷8枚＝17文字で文にならない）。
+    # **だから割るのは絵のほう。** 字幕は `spans`（文の側）から作るので、
+    # ここで絵を増やしても**字幕はずれません。**
+    plan = [s.visual.model_dump() for s in script.segments]
+    if args.short:
+        expanded: list[dict] = []
+        expanded_durations: list[float] = []
+        slide_index_of_segment: list[int] = []
+        for visual, dur in zip(plan, durations):
+            slide_index_of_segment.append(len(expanded))
+            want = max(1, math.ceil(dur / SHORT_SLIDE_SECONDS))
+            parts = visuals.reveal_variants(visual, want)
+            expanded.extend(parts)
+            # その文の尺を、割れた枚数で等分する。合計は変わらない。
+            expanded_durations.extend([dur / len(parts)] * len(parts))
+        held = max(d for d in expanded_durations)
+        print(f"[pipeline] 絵を {len(plan)} 枚 → {len(expanded)} 枚に割りました"
+              f"（1枚の最長 {held:.1f}秒 / 目標 {SHORT_SLIDE_SECONDS}秒）")
+        plan, durations = expanded, expanded_durations
+    else:
+        slide_index_of_segment = list(range(len(plan)))
+
     slides = visuals.render(
-        [s.visual.model_dump() for s in script.segments], work / "slides", topic["id"],
+        plan, work / "slides", topic["id"],
         theme_index=theme_index, portrait=args.short,
     )
 
@@ -325,7 +359,10 @@ def main(argv: list[str] | None = None) -> int:
     theme = visuals.theme_for(topic["id"], theme_index)
     accent = tuple(int(theme["accent"].lstrip("#")[i:i + 2], 16) for i in (0, 2, 4))
     thumb_path = thumbnail.create(
-        slides[pick_thumbnail_slide(script)], script.thumbnail_line1, script.thumbnail_line2,
+        # **絵を割ったので、文の番号をそのまま使えません。**
+        # 割る前の番号を、割ったあとの先頭の番号へ引き直す。
+        slides[slide_index_of_segment[pick_thumbnail_slide(script)]],
+        script.thumbnail_line1, script.thumbnail_line2,
         work / "thumbnail.jpg", work, accent=accent,
     )
 

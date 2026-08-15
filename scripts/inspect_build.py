@@ -44,7 +44,7 @@ def _frame(video: Path, at: float, dest: Path) -> Path | None:
     return dest if dest.exists() else None
 
 
-def main(topic: str, count: int = 8) -> int:
+def main(topic: str, count: int = 8, with_thumb: bool = False) -> int:
     work = Path("build") / topic
     video = work / "final.mp4"
     if not video.exists():
@@ -54,17 +54,47 @@ def main(topic: str, count: int = 8) -> int:
     total = _duration(video)
     tiles: list[Image.Image] = []
 
-    thumb = work / "thumbnail.jpg"
-    if thumb.exists():
-        tiles.append(Image.open(thumb).convert("RGB"))
-    else:
-        print("[inspect] サムネイルがありません")
+    # **サムネイルは既定では入れません**（2026-08-15 に変えた）。
+    #
+    # ここは無条件に1枚目へサムネイル（16:9）を差していました。動画のコマは
+    # 縦（9:16）なので、**同じ行に置くと行の高さが縦のコマに合わせて伸び、
+    # サムネイルの下が地の色で埋まります。**
+    # 独立評価の6体（2本×3体）が全員「**1コマ目は下2/3が真っ黒**」と書いたのは
+    # **これ**です。動画にはそんな絵は1枚もありません。
+    #
+    # しかも `docs/CRITIQUE.md` の投げ文は「最初の1.5秒（**左上の1〜2コマ**）」と
+    # 言っています。**左上はサムネイルで、動画の一部ですらありませんでした。**
+    # **評価者は、存在しない冒頭を採点していました。**
+    #
+    # サムネイル自体の検査（背景に文字が透けていないか）は要るので、
+    # `--with-thumb` で今までどおり入れられるようにしてあります。
+    # **独立評価に渡すのは、既定の「動画のコマだけ」のほうを使うこと。**
+    if with_thumb:
+        thumb = work / "thumbnail.jpg"
+        if thumb.exists():
+            tiles.append(Image.open(thumb).convert("RGB"))
+        else:
+            print("[inspect] サムネイルがありません")
 
     with tempfile.TemporaryDirectory() as tmp:
         tmpdir = Path(tmp)
-        # 冒頭と末尾は避ける。無音や暗転で判断材料にならないことがある。
+        # **冒頭を必ず1枚入れること**（2026-08-15 に直した）。
+        #
+        # ここは `total * (i + 0.5) / count` で抜いていました。count=8・30秒なら
+        # **1枚目が 1.9秒**で、**最初の1.9秒からは1枚も入りません。**
+        # いっぽう独立評価（`docs/CRITIQUE.md`）は
+        # 「**最初の1.5秒**で親指が止まりますか」と聞いています。
+        # **聞いている区間の絵を、1枚も渡していませんでした。**
+        #
+        # 8/15 の6体（2本×3体）は全員「冒頭で止まらない」と答えています。
+        # **その判断の材料が無かった**ので、この点は評価として成立していません。
+        #
+        # 0.0秒ちょうどは暗転や無音を拾うことがあるので 0.25秒から始め、
+        # 残りは末尾まで均す。
+        head = 0.25
         for i in range(count):
-            at = total * (i + 0.5) / count
+            at = head + (total - head) * i / max(count - 1, 1)
+            at = min(at, max(total - 0.2, 0.0))
             got = _frame(video, at, tmpdir / f"f{i}.jpg")
             if got:
                 tiles.append(Image.open(got).convert("RGB"))
@@ -95,7 +125,12 @@ def main(topic: str, count: int = 8) -> int:
 
     print(f"[inspect] {len(tiles)}枚を1枚にまとめました: {out}")
     print("[inspect] Read で開いて、次を見ること:")
-    print("  - サムネイルの背景に元スライドの文字が透けていないか")
+    if with_thumb:
+        print("  - サムネイルの背景に元スライドの文字が透けていないか")
+    else:
+        print("  ※ サムネイルは入れていません（縦のコマと並べると下が地の色で埋まり、"
+              "**動画に無い『真っ黒な冒頭』**として採点されるため）。"
+              "サムネイルを見るときは `--with-thumb` を付けること")
     print("  - 図解と字幕が重なっていないか")
     print("  - 字幕が数字の途中や句点だけで割れていないか")
     print("  - 文字がはみ出したり折り返したりしていないか")
@@ -104,7 +139,9 @@ def main(topic: str, count: int = 8) -> int:
 
 
 if __name__ == "__main__":
-    if len(sys.argv) not in (2, 3):
+    argv = [a for a in sys.argv[1:] if a != "--with-thumb"]
+    with_thumb = "--with-thumb" in sys.argv
+    if len(argv) not in (1, 2):
         print(__doc__)
         raise SystemExit(2)
-    raise SystemExit(main(sys.argv[1], int(sys.argv[2]) if len(sys.argv) == 3 else 8))
+    raise SystemExit(main(argv[0], int(argv[1]) if len(argv) == 2 else 8, with_thumb))
