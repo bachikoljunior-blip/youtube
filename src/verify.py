@@ -330,6 +330,140 @@ def _check_not_repeat(work: Path, script: dict | None) -> list[str]:
     return problems
 
 
+#: 式に使える演算子。`-` と `−`（U+2212）と `ー`（長音）は見分けが付かない場面が
+#: あるので全部受ける。`=` は別に必須なので、ここには入れない。
+_OPS = "×÷+*/-−ー―"
+
+
+def _check_formula_shown(script: dict | None) -> list[str]:
+    """**計算式が画面に出ているか。**
+
+    `CLAUDE.md` の根幹は「**前提と計算式を、画面と説明欄に全部出す**」で、
+    前提の置き方そのものが独自の視点であり、**視聴者が自分で追試できること**が
+    テンプレート量産との違いになる、と書いてある。
+
+    ところが 2026-08-15 の独立評価で、意図を渡していない3体が独立に
+    「**計算式が画面に出ていない**」と書いた。実際そのとおりで、
+    画面に出ていたのは**前提だけ**だった。**根拠が半分欠けていた。**
+
+    前提だけでは追試できない。「年収600万・扶養なし」を見せられても、
+    そこから 35万9318円 がどう出たかは分からない。
+    **式が無いと、こちらが計算した証拠が画面のどこにも無い。**
+    それは「自分で作成していない資料の読み上げ」と、画面上は区別が付かない。
+
+    見るのは3つ。**式であることだけを見て、値の正しさは見ない**
+    （値の出どころは `_check_headline_from_calc` が calc を実行して見る。
+    こちらは台本だけで判定できるので `short_script_problems` からも呼べる ——
+    落とすのがレンダリングの後ではなく**生成中**になる）。
+
+    1. `formula` を持つ画面が**1本に最低1枚**
+    2. その式に `=` がある（`800万円` と数字を再掲しただけのものを落とす）
+    3. 演算子が1つ以上ある（`合計 = 35万9318円` は式ではなく言い換え）
+    """
+    if not script:
+        return []
+    segs = script.get("segments") or []
+    if not segs:
+        return []
+
+    found: list[tuple[int, str]] = []
+    problems: list[str] = []
+    for i, seg in enumerate(segs):
+        f = str(((seg.get("visual") or {}).get("formula") or "")).strip()
+        if not f:
+            continue
+        found.append((i, f))
+        if "=" not in f and "＝" not in f:
+            problems.append(
+                f"{i}枚目の formula に `=` が無い（『{f}』）。"
+                "**数字の再掲は式ではありません。** 左辺と右辺のある形で書くこと"
+            )
+        elif not any(op in f for op in _OPS):
+            problems.append(
+                f"{i}枚目の formula に演算子が無い（『{f}』）。"
+                "**言い換えではなく、どう計算したかを書くこと**（× ÷ + −）"
+            )
+        elif len(re.findall(r"\d", f)) < 2:
+            problems.append(
+                f"{i}枚目の formula に数字がほとんど無い（『{f}』）。"
+                "**視聴者が同じ数を入れて追試できる形にすること**"
+            )
+
+    if not found:
+        problems.append(
+            "**計算式が1枚も画面に出ていません**（visual.formula が全部空）。"
+            "この動画の根幹は「前提と計算式を画面に全部出す」ことで、"
+            "**前提だけでは追試できず、こちらが計算した証拠が画面に残りません。**"
+            "最低1枚に `800万円 = 40万円 × 20年` の形で入れること"
+        )
+    return problems
+
+
+def _check_adjacent_repeat(script: dict | None) -> list[str]:
+    """**1本の中で、隣り合う2枚が同じ画に見えていないか。**
+
+    `_check_not_repeat` は**過去の動画との**重複だけを見ている。
+    **同じ動画の中で隣り合う2枚**は、どこも見ていなかった。
+
+    2026-08-15、独立評価の3体が、意図を渡していないのに独立に
+    「隣り合う2枚が、見出しも同じで棒が1本増えるだけ」と書いた。
+    8/15 16:0x の回は6体が同じことを言っている。**通算9体・2回の持ち越し。**
+    それでも機械の検査は全部通っていた —— **見ている場所が無かったから。**
+
+    YouTube は「同じチャンネルの動画を続けて数本視聴した後、繰り返しのように
+    感じられる可能性のあるコンテンツ」を収益化の対象外にしている。
+    1本の中で同じ画が続くのは、その**もっと手前**の状態で、
+    engaged（すぐスワイプされなかった割合）にも直接効く。
+
+    見るのは2つ。**どちらも「隣り合う」ときだけ**当てる。
+    離れた位置に同じ見出しが再登場するのは、まとめや対比として成立する。
+
+    1. **見出しが同一**（空白と全半角の差は無視）。1枚めくって同じ文字が
+       上に出ていれば、視聴者から見て画面は変わっていない
+    2. **chart の棒が包含関係**。`{A,B}` の次が `{A,B,C}` なら、
+       それは「棒が1本増えるだけ」そのもの。`_check_not_repeat` は
+       **共通2本以上**で落とすが、あれは*別の動画*が相手のときだけ働く
+
+    2 の「片方が空」は包含に数えない（0本の chart は 1 の対象外の別問題で、
+    `_check_not_repeat` が chart 0枚として別に落とす）。
+    """
+    if not script:
+        return []
+    segs = script.get("segments") or []
+
+    def norm(text: str) -> str:
+        # 全角空白・半角空白・改行を落とすだけ。文言そのものは変えない。
+        return "".join(str(text or "").split()).replace("　", "")
+
+    def bars_of(seg: dict) -> set[str]:
+        v = seg.get("visual") or {}
+        if v.get("kind") != "chart":
+            return set()
+        return {str(b.get("display", "")) for b in (v.get("bars") or [])}
+
+    problems: list[str] = []
+    for i in range(len(segs) - 1):
+        a, b = segs[i], segs[i + 1]
+        va = (a.get("visual") or {})
+        vb = (b.get("visual") or {})
+        ha, hb = norm(va.get("headline")), norm(vb.get("headline"))
+        if ha and ha == hb:
+            problems.append(
+                f"{i}枚目と{i + 1}枚目の見出しが同一（{va.get('headline')!r}）。"
+                "**隣り合う2枚で画面が変わっていない。** どちらかの見出しを、"
+                "そのコマで新しく分かることに変えること"
+            )
+        ba, bb = bars_of(a), bars_of(b)
+        if ba and bb and (ba <= bb or bb <= ba):
+            grew = sorted(bb - ba) or sorted(ba - bb)
+            problems.append(
+                f"{i}枚目と{i + 1}枚目の chart が包含関係"
+                f"（棒が{len(grew)}本増えるだけ: {'・'.join(grew[:3])}…）。"
+                "**同じ図の描き直しになっている。** 軸か切り口を変えるか、1枚にまとめること"
+            )
+    return problems
+
+
 def _check_headline_from_calc(work: Path, script: dict | None) -> list[str]:
     """**冒頭に出す数字が、こちらの計算から出たものであること。**
 
@@ -783,6 +917,8 @@ def check(path: Path, video_cfg: dict, min_minutes: float, work: Path,
     problems += _check_count_matches(script)
     problems += _check_title_from_calc(work, script, topic)
     problems += _check_not_repeat(work, script)
+    problems += _check_adjacent_repeat(script)
+    problems += _check_formula_shown(script)
 
     if problems:
         raise VerificationError("投稿前の検査に落ちました: " + " / ".join(problems))

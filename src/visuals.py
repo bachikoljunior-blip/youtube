@@ -142,6 +142,16 @@ td:first-child { color: #9fb0cc; }
 .chart-base {
   margin-top: 18px; font-size: 26px; font-weight: 700; color: #9fb0cc;
 }
+/* 計算式。**この動画の根拠の半分がここ。** 前提だけでは視聴者が追試できず、
+   式が画面に無いと「自分で計算した」証拠が画面のどこにも残らない
+   （2026-08-15、独立評価の3体が独立に「計算式が画面に出ていない」と指摘）。
+   本文の下・字幕の帯の上に、1行で置く。 */
+.formula {
+  margin-top: 24px; padding-left: 18px;
+  border-left: 6px solid {ACCENT};
+  font-size: 28px; font-weight: 700; line-height: 1.3;
+  color: #cdd8ea; letter-spacing: .01em;
+}
 """
 
 
@@ -177,6 +187,9 @@ td:first-child, th:first-child { white-space: normal; }
 .chart { gap: 16px; }
 .bar-fill.broken::before { width: 12px; }
 .chart-base { margin-top: 14px; font-size: 21px; }
+/* 縦向きは実効幅 392px しかない。式は折り返すと読めなくなるので、
+   横向きより一段落として1行に収める。 */
+.formula { margin-top: 16px; padding-left: 12px; border-left-width: 4px; font-size: 21px; }
 """
 CONTENT_WIDTH_PORTRAIT = VIEWPORT_PORTRAIT[0] - 52 - 96
 # ショートの右端に重なる UI（いいね・コメント・共有・音源）を避ける余白（CSS px）。
@@ -553,11 +566,17 @@ def build_html(visual: dict, theme: dict | None = None, portrait: bool = False,
     """
     head = _wrap_head(visual.get("headline", ""), portrait, tighten)
     extra = "" if zoom >= 0.999 else f".body {{ zoom: {zoom:.2f}; }}"
+    # 式は `.body`（flex:1 で中央寄せ）の**外**に置く。中に入れると、
+    # 中央寄せの一部として本文と一緒に上下に動き、コマごとに位置が変わる。
+    # 根拠は毎コマ同じ場所にあるほうが読める。
+    formula = str(visual.get("formula") or "").strip()
+    formula_html = f'<div class="formula">{_esc(formula)}</div>' if formula else ""
     return (
         "<!doctype html><html lang=ja><head><meta charset=utf-8>"
         f"<style>{_css(theme or THEMES[0], portrait)}{extra}</style></head><body>"
         f'<div class="headline">{head}</div>'
         f'<div class="body">{_body_html(visual, portrait, tighten)}</div>'
+        f"{formula_html}"
         "</body></html>"
     )
 
@@ -589,7 +608,7 @@ def _chromium_path() -> str | None:
 
 _LINE_PROBE_JS = """() => {
   let bad = 0;
-  for (const s of ['.headline', '.note', '.bar-label', '.chart-base',
+  for (const s of ['.headline', '.note', '.bar-label', '.chart-base', '.formula',
                    'li > span:not(.marker)']) {
     for (const el of document.querySelectorAll(s)) {
       const r = document.createRange();
@@ -615,6 +634,61 @@ _LINE_PROBE_JS = """() => {
 MAX_TIGHTEN = 6
 # 縦に溢れたときの縮小。0.75 より下げると、ショートの実機で読めなくなる。
 ZOOMS = (1.0, 0.94, 0.88, 0.82, 0.76)
+
+
+#: めくりの見出しに足す「いま増えた分」の上限。**どちらも「切る」ためではなく、
+#: 「入らなければ足さない」ためのしきい値です**（下の `_reveal_headline`）。
+REVEAL_LABEL_MAX = 10
+REVEAL_HEAD_MAX = 20
+
+
+def _reveal_label(key: str, item) -> str:
+    """めくりで新しく出た要素を、見出しに足せる短い語にする。
+
+    **長すぎるものは切らずに捨てる。** 2026-08-15、ここを `text[:8]` で
+    切ったら、実物の画面に **「＋自己都合などの離」**（「離職」の途中）が出た。
+    `src/script_writer.py` の `Bar.label` が
+    「『同居特別障害者控除』を『同居特別障害』と切って画面に日本語として
+    成立しない文字列が出た」と書いているのと**同じ間違いを、別の場所で
+    もう一度やった**ことになる。日本語は語の切れ目が字面に出ないので、
+    **機械が安全に切れる位置は無い。**
+    """
+    if key == "bars":
+        text = str((item or {}).get("label", ""))
+    elif key == "rows":
+        text = str(item[0]) if isinstance(item, list) and item else str(item)
+    else:
+        text = str(item)
+    text = " ".join(text.split())
+    return text if len(text) <= REVEAL_LABEL_MAX else ""
+
+
+def _reveal_headline(head: str, label: str) -> str:
+    """めくりの各コマに「いま何が増えたか」を出す見出しを作る。
+
+    **なぜ要るか**（2026-08-15）。`reveal_variants` は1枚を複数コマに割って
+    画面を動かすが、**見出しは全コマで同じ文字列のまま**だった。
+    独立評価の3体が「隣り合う2枚が、見出しも同じで棒が1本増えるだけ」と書き、
+    8/15 16:0x の回では6体が同じことを書いている。**通算9体・2回の持ち越し。**
+
+    絵が動いていても、**上に出ている文字が同じなら視聴者から見て画面は変わらない。**
+    だから増えた要素の名前を見出しに出す。読み上げはこのコマの間ずっと同じ文なので、
+    **字幕とはずれない**（割っているのは絵だけ。`reveal_variants` の説明のとおり）。
+
+    **どちらの側も切らない。** 元の見出しを削るのも同じ間違いになる
+    （「10年の境界でふえる日数」→「10年の境界でふえる」）。
+    入らなければ**足さずに元のまま出す**。marker が付かないコマが混じるのは、
+    画面に壊れた日本語が出るより、はるかにましです。
+    """
+    head = " ".join(str(head or "").split())
+    if not label:
+        return head
+    if not head:
+        return label
+    tail = f"　＋{label}"
+    if len(head) + len(tail) > REVEAL_HEAD_MAX:
+        return head
+    return head + tail
 
 
 def reveal_variants(visual: dict, want: int) -> list[dict]:
@@ -644,10 +718,19 @@ def reveal_variants(visual: dict, want: int) -> list[dict]:
         n = len(seq)
         k = min(want, n)
         out = []
+        prev_cut = 0
         for i in range(k):
             cut = max(1, round(n * (i + 1) / k))
             v = dict(visual)
             v[key] = seq[:cut]
+            # **1コマ目以外は、いま増えた要素を見出しに出す。**
+            # 見出しが全コマ同じだと、絵が動いていても画面は変わって見えない
+            # （`_reveal_headline` の説明）。
+            if i and cut > prev_cut:
+                v["headline"] = _reveal_headline(
+                    visual.get("headline", ""), _reveal_label(key, seq[cut - 1])
+                )
+            prev_cut = cut
             if key == "bars":
                 # 目盛りを全体の最大値で固定する。切っても棒が伸び縮みしない。
                 values = [float(b.get("value", 0) or 0) for b in seq]
@@ -659,8 +742,12 @@ def reveal_variants(visual: dict, want: int) -> list[dict]:
                 # 走らせると、1枚目 100% → 2枚目 86% と同じ棒が縮みます。
                 v["scale_bars"] = seq
             out.append(v)
-        # 末尾は必ず「全部出ている」状態にする
+        # 末尾は必ず「全部出ている」状態にする。
+        # **見出しだけは戻さない。** 戻すと最後の2コマで同じ文字列が並び、
+        # ここで直したはずのものがそこだけ再発します（k=2 のときは全部）。
+        last_head = out[-1].get("headline", visual.get("headline", ""))
         out[-1] = dict(visual)
+        out[-1]["headline"] = last_head
         if key == "bars":
             values = [float(b.get("value", 0) or 0) for b in seq]
             out[-1]["scale_max"] = max(values) if values else 0

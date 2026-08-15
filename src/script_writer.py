@@ -307,6 +307,11 @@ def short_script_problems(script, topic_id: str = "") -> list[str]:
 
     data = script.model_dump()
     problems += [p.strip() for p in verify._check_short_opening(data)]
+    # **この2つは 2026-08-15 に足した。生成中に直させるのが本命です。**
+    # どちらも「独立評価の3体が独立に書いたのに、機械の検査はどこも見ていなかった」もの。
+    # レンダリングまで待つ理由が無い（台本だけで判定できる）ので、ここで当てる。
+    problems += [p.strip() for p in verify._check_adjacent_repeat(data)]
+    problems += [p.strip() for p in verify._check_formula_shown(data)]
     if topic_id:
         problems += [p.strip() for p in
                      verify._check_not_repeat(config.BUILD_DIR / topic_id, data)]
@@ -343,6 +348,19 @@ class Visual(BaseModel):
             "（例『ずれ 31か月』『123,980円』）。言い換えず、表示されているとおりに写すこと。"
             "計算結果に無い数字（制度の項目数・条文番号など）を stat に出してはいけません。"
             "他の kind では空"
+        ),
+    )
+    formula: str = Field(
+        default="",
+        description=(
+            "**この画面の数字が、どの式から出たか。** 全角30文字以内。"
+            "例『800万円 ＝ 40万円 × 20年』『足切り ＝ 総所得160万 × 5%』。"
+            "**1本につき最低1枚には必ず入れること**（空のまま出すと投稿前の検査で落ちます）。"
+            "前提だけでは視聴者が追試できません。**式が画面に無いと、"
+            "こちらが計算した証拠が画面のどこにも残らず、他人の資料の読み上げと区別が付きません。**"
+            "左辺と右辺を `＝` でつなぎ、`× ÷ ＋ −` のどれかを必ず使うこと。"
+            "数字は上の計算結果に出ているとおりに書き、丸めないこと。"
+            "**どの kind でも入れてよい**（stat の画面に入れるのが一番効きます）"
         ),
     )
     items: list[str] = Field(
