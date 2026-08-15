@@ -122,3 +122,5 @@
 {"at": "2026-08-16T07:41:01+09:00", "session": "session_01Ewd7UbEd2xFUxbZLhg8acb", "kind": "ship", "what": "fix: 9回運ばれた『usage が入る条件』を159点で測って閉じた（42分説は外れ＝見えた年齢はこちらの spawn 間隔そのもの）。あわせて手順 §0 の『git diff で判断』が共通の祖先が無いとき逆を指す件を書き換え"}
 {"at": "2026-08-16T07:43:27+09:00", "session": "session_01Ewd7UbEd2xFUxbZLhg8acb", "kind": "ship", "what": "upload: 8/26 の8本目（E5i0YfIkmnA）まで通し、8本の日を2つめとして完成させた。同じ calc が3本つづいたので reschedule --move で離した"}
 {"at": "2026-08-16T07:51:37+09:00", "session": "session_012e5C7kCuVi2AWaBWvHHmEW", "kind": "ship", "what": "fix: 親が同じ依頼を毎時くり返していた欠陥を塞いだ（FOR_OWNER.md に1時間の「窓」を導入。scripts/for_owner.py 新設、trigger_parent.md (1) 書き換え）"}
+{"at": "2026-08-16T08:10:49+09:00", "session": "session_01PrWYQuAgYJ5FxmrJLjoFRz", "kind": "start"}
+{"at": "2026-08-16T08:21:40+09:00", "session": "session_01PrWYQuAgYJ5FxmrJLjoFRz", "kind": "ship", "what": "fix: 「公開されないまま止まっている」警告が12件まで育って腐っていた（当たり0件）。理由を手書きの withheld.yaml でなく dupes.why_stranded に出させ、相手が見つからない本だけ鳴らす形にした"}

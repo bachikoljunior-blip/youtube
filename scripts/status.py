@@ -722,12 +722,50 @@ def main(days: int = 7) -> int:
         withheld = {w["id"]: w.get("why", "") for w in
                     (yaml.safe_load(wpath.read_text(encoding="utf-8")) or {}).get("withheld", [])}
 
-    unexpected = [s for s in stranded if s.split()[0] not in withheld]
+    # **理由は機械に出させる**（2026-08-16。**この警告はもう腐っていました**）。
+    #
+    # ここは長く「`withheld.yaml` に書いてあれば黙る、無ければ鳴る」でした。
+    # **理由は手で書きます。** ところが予約を外す側（`reschedule.py`）は
+    # **外すだけで理由を書かない**ので、外した本はそのまま警告に積まれます。
+    #
+    # この回の実測: **暗い18本のうち、理由が書いてあるのは6本。残り12本**が
+    # 毎回並んでいて、**12本とも公開済み・予約済みと強く重なっていました**
+    # （＝出さないのが正しい本。当たりは0件）。上の 2026-08-05 の註が
+    # 「毎回鳴る警告は無視されるようになる」と言っている状態に、既に入っています。
+    #
+    # **欄を増やしても次の回がまた書き忘れます**（6回そうなった）。
+    # `dupes.why_stranded` に理由を出させ、**出せなかったものだけ鳴らす。**
+    try:
+        from src import config as _cfg
+        from src import dupes as _dp
+        _topics = {t["id"]: t.get("calc", "") for t in _cfg.load_topics()["topics"]}
+        _by_id = {v["id"]: v for v in videos}
+        _live = [v for v in videos
+                 if v["status"]["privacyStatus"] == "public" or v["status"].get("publishAt")]
+        _found = {}
+        for s in stranded:
+            vid = s.split()[0]
+            if vid in withheld or vid not in _by_id:
+                continue
+            r = _dp.why_stranded(_by_id[vid], _live, _topics)
+            if r:
+                _found[vid] = r
+    except Exception as exc:
+        _found = {}
+        print(f"\n  重なりから理由を出せませんでした（続行）: {str(exc)[:90]}")
+
+    unexpected = [s for s in stranded
+                  if s.split()[0] not in withheld and s.split()[0] not in _found]
     if unexpected:
         print("\n[!] 公開されないまま止まっている動画があります:")
         for s in unexpected:
             print("  " + s)
-        print("  予約し忘れならこのまま永久に出ません。意図的なら config/withheld.yaml に理由ごと書くこと。")
+        print("  **重なる相手は見つかりませんでした。** 予約し忘れならこのまま永久に出ません。")
+        print("  出せるなら scripts/upload_only.py で予約を入れること（生成の要らない在庫です）。")
+    if _found:
+        print(f"\n（重なりがあるので出さない動画 {len(_found)}本。**機械が突き合わせた結果**）")
+        for vid, r in _found.items():
+            print(f"  {vid} ← {r['other']['id']} {r['other']['title'][:30]}（{r['why'][:44]}）")
     on_purpose = [s for s in stranded if s.split()[0] in withheld]
     if on_purpose:
         print(f"\n（意図して伏せている動画 {len(on_purpose)}本。理由は config/withheld.yaml）")

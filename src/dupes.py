@@ -346,6 +346,56 @@ def remember(video_id: str, topic_id: str, title: str, at: str | None) -> None:
                              "title": title, "at": at}, ensure_ascii=False) + "\n")
 
 
+def why_stranded(video: dict, videos: list[dict],
+                 topics: dict[str, str] | None = None) -> dict | None:
+    """**暗いまま止まっている1本に、機械が言える理由があるか**（2026-08-16）。
+
+    `blocking` と向きが逆です。あちらは「これから上げる本」を止めますが、
+    こちらは**既に上がっていて公開されない本**に、後から理由を付けます。
+
+    ## なぜ要るか（**この回に実測しています**）
+
+    `scripts/status.py` は publishAt を持たない private を
+    「**公開されないまま止まっている**」と鳴らし、`config/withheld.yaml` に
+    理由が書いてある本だけを黙らせます。**理由は手で書きます。**
+
+    ところが、重なりを外す側（`scripts/reschedule.py`）は
+    **予約を外すだけで、理由をどこにも書きません。** 8/15 02:5x の回が
+    重なり7本を private に戻していますが、`withheld.yaml` は6件のままです。
+
+    この回の実測: **暗い18本のうち、理由が書いてあるのは6本。残り12本**が
+    毎回この警告に並んでいました。そして12本を突き合わせると
+    **12本とも、公開済みか予約済みの本と強く重なっています**（0本が誤検出）。
+    つまり**全部「出さないのが正しい」本**で、警告は1件も当たっていません。
+
+    `status.py` 自身がその危険をこう書いています ——
+    **「毎回鳴る警告は無視されるようになり、本当に予約し忘れたときに効かなくなる」**。
+    12件まで育っていたので、**その状態にもう入っていました。**
+
+    **手で書く欄を増やしても、次の回がまた書き忘れます**（6回そうなった）。
+    だから理由のほうを**機械に出させます。** 重なりが見つかればそれが理由で、
+    見つからないときだけ「予約し忘れ」として鳴らす。**警告は腐りません。**
+
+    自分自身とは突き合わせません（控えにも載っているので、
+    除かないと「テーマIDが同じ」で必ず自分と重なります）。
+    """
+    vid = video.get("id", "")
+    rows = [r for r in rows_from_videos(videos, topics) if r["id"] != vid]
+    have = {r["id"] for r in rows}
+    rows += [r for r in ledger_rows(topics)
+             if r["id"] not in have and r["id"] != vid]
+    me = rows_from_videos([video], topics)
+    if not me:
+        return None
+    hits = [i for i in find(rows + [me[0]])
+            if i["strong"] and vid in (i["a"]["id"], i["b"]["id"])]
+    if not hits:
+        return None
+    it = hits[0]
+    other = it["b"] if it["a"]["id"] == vid else it["a"]
+    return {"kind": it["kind"], "why": it["why"], "other": other}
+
+
 def blocking(title: str, topic_id: str, videos: list[dict],
              topics: dict[str, str] | None = None) -> list[dict]:
     """**投稿の直前に呼ぶ。** これから上げる1本が、既にある本と強く重なるか。
