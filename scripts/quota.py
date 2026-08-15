@@ -79,6 +79,18 @@ LOG = ROOT / "data" / "quota.jsonl"
 # 枠の長さ。`resetsAt` から逆算して「枠のどのへんにいるか」を出すのに使う。
 WINDOW_SPAN = {"five_hour": timedelta(hours=5), "seven_day": timedelta(days=7)}
 
+# **外から入る「%」の置き場**（2026-08-15）。
+# `rate_limit_info` に % は入らないので、この計器だけでは「速すぎるか」を言えない。
+# オーナーが手で測った値をここに積み、**誕生数で割って目盛りにする。**
+USAGE_LOG = ROOT / "data" / "usage.jsonl"
+
+# 週枠を均して使い切る速さ。**これが「速すぎる／遅すぎる」の基準線。**
+WEEK_HOURS = 168.0
+SUSTAIN_PCT_PER_HOUR = 100.0 / WEEK_HOURS      # ＝ 0.595 %/時
+
+# 間隔の下限に置く上下の歯止め。**計器が壊れても鎖を止めない／暴走させない。**
+FLOOR_MIN_CLAMP, FLOOR_MAX_CLAMP = 10.0, 90.0
+
 # 弱いほうから順に。遷移の向きを判定するのに使う。
 STATUS_ORDER = ["allowed", "allowed_warning", "rejected"]
 
@@ -295,6 +307,144 @@ def _fmt_span(delta: timedelta) -> str:
     return f"{hrs * 60:.0f}分"
 
 
+# --------------------------------------------------------------------------
+# 速さ（2026-08-15）
+# --------------------------------------------------------------------------
+# **なぜ要るか。** `rate_limit_info` は「閉じたか」しか言わない。閉じてから
+# 気づくのでは遅い —— 8/12〜8/14 はそれで58時間止まった。**先に使い切ると、
+# リセットまで1回も起きられない。** 読むのは残量ではなく「尽きる時刻」。
+#
+# **どう測るか。** %は外からしか入らない（`data/usage.jsonl`）。だが
+# **誕生数はこちらで数えられる。** 1点でも%が入れば `% ÷ 誕生数` で
+# 「1周いくら」が出て、そこから**持続できる間隔**が決まる。
+#
+# **穴**（読むときに割り引くこと）:
+#   - 1周の重さは一定ではない。記録だけの回と、生成まで回した回が混ざる。
+#     **出るのは平均**で、生成回だけを見れば1周はもっと高い
+#   - `quota.jsonl` に積んでいない誕生は数に入らない。数え落とせば
+#     「1周いくら」は**過大**に出て、間隔は**安全側（長め）**に振れる
+#   - 他のループ（eta改善・クッキー）が混ざれば、その消費もこちらの
+#     誕生数で割られる。**「ほぼこの作業だけ」と言える日の点だけを使うこと**
+
+
+def _anchors() -> list[dict]:
+    """外から入った「%」の点。新しい順。"""
+    if not USAGE_LOG.exists():
+        return []
+    out = []
+    for line in USAGE_LOG.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            row = json.loads(line)
+        except Exception:
+            continue
+        if row.get("used_percent") is None or not row.get("fetched_at"):
+            continue
+        if row.get("window_id") != "seven_day":
+            continue
+        out.append(row)
+    out.sort(key=lambda r: r.get("fetched_at") or "", reverse=True)
+    return out
+
+
+def _births_between(rows: list[dict], start: datetime, end: datetime) -> int:
+    """`start`〜`end` に生まれたセッションの数。**セッションごとに1回だけ数える。**"""
+    seen = {}
+    for r in rows:
+        sid, born = r.get("session_id"), _parse_iso(r.get("born_at"))
+        if sid and born and sid not in seen:
+            seen[sid] = born
+    return sum(1 for b in seen.values() if start <= b <= end)
+
+
+def pace(now: datetime | None = None) -> dict | None:
+    """いまの速さと、持続できる1周の間隔。目盛りが無ければ None。"""
+    now = now or datetime.now(timezone.utc)
+    anchors = _anchors()
+    if not anchors:
+        return None
+    a = anchors[0]
+    resets = _parse_iso(a.get("resets_at_iso"))
+    at = _parse_iso(a.get("fetched_at"))
+    if not resets or not at:
+        return None
+    start = resets - WINDOW_SPAN["seven_day"]
+    hours = (at - start).total_seconds() / 3600
+    if hours <= 0:
+        return None
+    used = float(a["used_percent"])
+    rows = _load()
+    births = _births_between(rows, start, at)
+
+    rate = used / hours                       # %/時（実測）
+    per_lap = used / births if births else None
+    floor = None
+    if per_lap:
+        floor = max(FLOOR_MIN_CLAMP,
+                    min(FLOOR_MAX_CLAMP, per_lap / SUSTAIN_PCT_PER_HOUR * 60))
+    exhaust = start + timedelta(hours=100.0 / rate) if rate > 0 else None
+    return {
+        "anchor_at": at, "anchor_used": used, "anchor_source": a.get("source", ""),
+        "window_start": start, "window_reset": resets,
+        "hours": hours, "births": births,
+        "rate": rate, "per_lap": per_lap, "floor_min": floor,
+        "exhaust_at": exhaust,
+        "dead_hours": ((resets - exhaust).total_seconds() / 3600
+                       if exhaust and exhaust < resets else 0.0),
+        "over": rate / SUSTAIN_PCT_PER_HOUR - 1.0,
+        "stale_hours": (now - at).total_seconds() / 3600,
+    }
+
+
+def recommended_floor_minutes(now: datetime | None = None) -> float | None:
+    """次の子を立ててよくなるまでの、誕生から誕生までの最短間隔（分）。
+
+    **`sibling_check.py` がこれを読んで §6 (f) を止める。**
+    目盛りが無ければ None を返す —— **そのときは止めない。**
+    測れないことを理由に鎖を止めるのは、8/12 の58時間と同じ損失になる。
+    """
+    p = pace(now)
+    return p["floor_min"] if p else None
+
+
+def pace_report(now: datetime | None = None) -> None:
+    now = now or datetime.now(timezone.utc)
+    p = pace(now)
+    print("  **速さ**（尽きる時刻で読む。残量では読まない）")
+    if not p:
+        print("    **目盛りがありません。** `data/usage.jsonl` に %の点が要ります。")
+        print("    `rate_limit_info` に % は入らないので、**外から入れるしかない**。")
+        print("    形式: {\"fetched_at\":ISO,\"window_id\":\"seven_day\","
+              "\"used_percent\":N,\"resets_at_iso\":ISO}")
+        return
+    print(f"    目盛り: {p['anchor_at'].astimezone(JST):%m/%d %H:%M} JST で "
+          f"**{p['anchor_used']:.0f}%**"
+          f"{'（' + p['anchor_source'] + '）' if p['anchor_source'] else ''}")
+    if p["stale_hours"] > 24:
+        print(f"    [!] **この目盛りは {p['stale_hours'] / 24:.1f}日前です。**"
+              "新しい%が入るまで、下の数字は古い前提で動いています")
+    print(f"    枠: {p['window_start'].astimezone(JST):%m/%d %H:%M} → "
+          f"{p['window_reset'].astimezone(JST):%m/%d %H:%M} JST")
+    print(f"    実測 {p['rate']:.3f} %/時   持続できる速さ "
+          f"{SUSTAIN_PCT_PER_HOUR:.3f} %/時   → **{p['over']:+.0%}**")
+    if p["births"]:
+        print(f"    {p['hours']:.1f}時間で誕生 {p['births']} 件 "
+              f"→ **1周 {p['per_lap']:.3f}%**")
+        print(f"    持続できる間隔（誕生から誕生）: **{p['floor_min']:.0f}分**")
+    else:
+        print("    **誕生を1件も数えられていません。**`quota.jsonl` が薄すぎます")
+    if p["exhaust_at"]:
+        if p["dead_hours"] > 0:
+            print(f"    このままなら 100% は "
+                  f"{p['exhaust_at'].astimezone(JST):%m/%d %H:%M} JST"
+                  f" → **リセットまで {p['dead_hours']:.0f}時間、鎖が止まります**")
+        else:
+            print(f"    このままならリセットまで届きます"
+                  f"（100% 到達は {p['exhaust_at'].astimezone(JST):%m/%d %H:%M} JST）")
+
+
 def report(now: datetime | None = None) -> None:
     now = now or datetime.now(timezone.utc)
     rows = _load()
@@ -393,12 +543,21 @@ def report(now: datetime | None = None) -> None:
         print("    **`usage` は全部の行には入りません。**"
               "消費量の合計は必ず過小。下限として読むこと。")
 
+    print()
+    pace_report(now)
+
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--ingest", metavar="FILE",
                     help="MCP の返り（list_sessions / get_session）を読んで積む。- で標準入力")
+    ap.add_argument("--pace", action="store_true",
+                    help="速さだけを出す（§6 (f) の間隔を決めるとき）")
     args = ap.parse_args()
+
+    if args.pace and not args.ingest:
+        pace_report()
+        return 0
 
     if args.ingest:
         text = (sys.stdin.read() if args.ingest == "-"

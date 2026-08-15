@@ -47,6 +47,25 @@
 孫の親IDが親ではなく子になるため、親IDで絞ると兄弟の半分が見えない）。
 ここでやっているのは**絞り込みではなく、1件の除外**です。向きが逆なので両立します。
 
+## 終了コード
+
+    0  進んでよい
+    1  返りの中に自分がいない ＝ ファイルが古い。取り直すこと
+    2  （`--phase start`）自分より古い兄弟が走っている。この場で畳む
+    3  （`--phase spawn`）立てない。兄弟が生きているか、枠が警告帯／閉じている
+    4  （`--phase start`）続けてよい。ただし upload は選ばない
+    5  （`--phase spawn`）**まだ早い。**表示された秒数だけ待って、
+       `list_sessions` を取り直して**この検査からやり直す**（2026-08-15）
+
+## 速さも見ます（2026-08-15 に足した）
+
+**`--phase spawn` は、枠より先に「速すぎないか」を見ます。** 目盛りは
+`scripts/quota.py --pace`（`data/usage.jsonl` の%を誕生数で割ったもの）。
+
+**枠が `allowed` でも速すぎることはあります。** `allowed` は「まだ閉じていない」
+としか言っていません。閉じてから気づくのでは遅く、8/12〜8/14 はそれで58時間
+止まりました。**閉じる前に均すのがここの仕事です。**
+
 ## この道具が答えないこと
 
 **「向こうが本当に畳んだか」は見ていません。** 待たない作りです（§2 の
@@ -208,6 +227,37 @@ def main() -> int:
             print(f"  {s.get('id')}  生 {s.get('created_at')}  {s.get('session_status')}")
 
     if args.phase == "spawn":
+        # --- 速すぎないか（2026-08-15） --------------------------------
+        # **これを一番先に見る。** 待っているあいだに兄弟も枠も変わるので、
+        # 先に枠を調べても答えが古くなる。**待ってから調べ直すのが正しい順。**
+        #
+        # 見ているのは「誕生から誕生まで」。§6 (f) はここで撃つので、
+        # **`now - 自分の誕生` が、そのまま次の間隔**になる。
+        # 1周が長かった回は待たない（もう間隔が空いている）。
+        floor = None
+        try:
+            sys.path.insert(0, str(Path(__file__).resolve().parent))
+            from quota import recommended_floor_minutes
+            floor = recommended_floor_minutes()
+        except Exception as exc:                 # 計器が壊れても鎖は止めない
+            print(f"速さ: **測れませんでした**（{exc}）。間隔は空けません")
+        if floor and born:
+            waited = (datetime.now(timezone.utc) - born).total_seconds() / 60
+            if waited < floor:
+                left = floor - waited
+                print()
+                print(f"**まだ立てないこと。** 誕生から {waited:.0f}分 / "
+                      f"持続できる間隔は **{floor:.0f}分**（`quota.py --pace`）")
+                print(f"  **{left * 60:.0f}秒 待ってから、"
+                      "`list_sessions` を取り直して、この検査をやり直すこと。**")
+                print(f"      Bash(run_in_background=True): sleep {left * 60:.0f}")
+                print("  **前倒しに意味はありません。** 速く回しても週の枠は増えず、"
+                      "先に使い切ればリセットまで1回も起きられません"
+                      "（8/12〜8/14 の58時間）。**待ちは投稿を減らしません** —— "
+                      "予約が埋まっていれば、起きなくても公開されます。")
+                return 5
+            print(f"速さ: 誕生から {waited:.0f}分 ≥ 下限 {floor:.0f}分 —— 待ち不要")
+
         limits = rate_limits(sessions)
         bad, seen_windows, blind = [], [], []
         for window in WINDOWS:
