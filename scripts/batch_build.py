@@ -5,6 +5,24 @@
     python scripts/batch_build.py --count 3 --hour 11
     python scripts/batch_build.py --topics s-fukugyo-3,s-iryohi-3
     python scripts/batch_build.py --count 2 --skip-upload   # 作るだけ（予約しない）
+    python scripts/batch_build.py --count 8 --date 2026-08-30 --jobs 3   # 同時に3本ずつ
+
+## 律速は「作る速さ」でした（2026-08-15 に測って直した）
+
+8/15 に7本を通したとき **80分＝1本11分**でした。この11分がどこに行っているかを
+`ps` で見たら、**生成中の python は CPU を 2〜4% しか使っていません。**
+内訳はほぼ全部が `claude -p`（`src/claude_cli.py`）の**待ち時間**です。
+台本を書かせるのが一番高い工程で、そこは**こちらの CPU では何も起きていない。**
+
+**待ち時間は重ねられます。** 直列で待っていたのは、そう書いてあったからで、
+理由はありませんでした。`--jobs`（既定 3）で同時に走らせます。
+
+    直列   8本 × 11分 = 88分   ← 1周に収まらない
+    同時3  8本 ÷ 3 × 11分 ≒ 30分
+
+**予約だけは直列のまま**です（`upload_only.py` は `next_publish_at` と
+待ち行列という共有の状態を触るので、同時に走らせると予約時刻がぶつかる）。
+段を分けてあるのはそのためで、**作る段と予約の段を混ぜないこと。**
 
 ## なぜ要るか（2026-08-15）
 
@@ -45,6 +63,7 @@ import argparse
 import json
 import subprocess
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -68,6 +87,16 @@ M14_WINDOW = ("2026-08-16", "2026-08-23")
 # 台本生成〜レンダリングの実測は5〜10分。倍を上限に取る（無限には待たない）。
 BUILD_TIMEOUT = 1800
 UPLOAD_TIMEOUT = 600
+
+# **同時に走らせる本数の既定**（2026-08-15 に足した。理由は下）。
+#
+# 1本11分の内訳は、ほぼ全部が `claude -p`（`src/claude_cli.py`）の**待ち時間**です。
+# 生成中の python は **CPU 2〜4%** しか使っていません（実測、`ps` で確認）。
+# **CPU が空いているのに直列で待っていた**ので、ここは待ち時間を重ねるだけで縮みます。
+#
+# 4 にしていないのは、レンダリング（ffmpeg・open-jtalk）だけは CPU を使うからで、
+# 4コアに対して 3 なら、山が重なっても 1コア残ります。**`--jobs` で変えられます。**
+DEFAULT_JOBS = 3
 
 
 def pick(count: int, explicit: list[str]) -> list[dict]:
@@ -156,19 +185,61 @@ def check_window(date_jst: str, force: bool) -> None:
     )
 
 
-def run(cmd: list[str], timeout: int) -> tuple[int, str]:
-    """出力をそのまま流しながら、末尾も返す（VIDEO_ID を拾うため）。"""
-    print(f"[batch] $ {' '.join(cmd)}", flush=True)
+def run(cmd: list[str], timeout: int, label: str = "") -> tuple[int, str]:
+    """出力をそのまま流しながら、末尾も返す（VIDEO_ID を拾うため）。
+
+    **並列で呼ばれます。** 途中経過を流すと複数本の行が混ざって読めなくなるので、
+    1本ぶんを**1回の `print` にまとめて**出す（行の途中で割り込まれない）。
+    """
+    tag = f"[{label}] " if label else ""
+    print(f"[batch] {tag}$ {' '.join(cmd)}", flush=True)
     try:
         proc = subprocess.run(
             cmd, cwd=ROOT, timeout=timeout,
             capture_output=True, text=True,
         )
     except subprocess.TimeoutExpired:
+        print(f"[batch] {tag}**{timeout}秒を超えたので打ち切りました**", flush=True)
         return 124, f"{timeout}秒を超えたので打ち切りました"
     out = (proc.stdout or "") + (proc.stderr or "")
-    print(out[-4000:], flush=True)
+    body = "\n".join(f"{tag}{line}" for line in out[-4000:].splitlines())
+    print(body, flush=True)
     return proc.returncode, out
+
+
+def build_one(topic: dict, long_form: bool) -> dict:
+    """**作るところまで**を1本ぶん。予約はしない（呼ぶ側が直列でやる）。
+
+    ここが並列に走る部分です。**予約を混ぜないこと** —— `upload_only.py` は
+    `next_publish_at` と待ち行列（`critique_queue`）という**共有の状態**を触るので、
+    同時に走らせると予約時刻がぶつかります（8/15 03:48 の二重起動と同じ壊れ方）。
+    """
+    tid = topic["id"]
+    row: dict = {"topic": tid, "calc": topic["calc"], "video_id": "", "error": ""}
+
+    cmd = [sys.executable, "-m", "src.pipeline", "--topic", tid, "--dry-run"]
+    if not long_form:
+        cmd.append("--short")
+    code, _ = run(cmd, BUILD_TIMEOUT, tid)
+    if code != 0:
+        row["error"] = f"生成が失敗（exit {code}）"
+        row["built"] = False
+        return row
+
+    # **contact sheet は投稿の前に作る。**
+    #
+    # 最初に書いたときここを飛ばしていて、**1本目の投稿でそのまま踏みました**
+    # （2026-08-15、`H28qfOxuJF0`）。`critique_queue.stash()` は
+    # `inspect.jpg` が無いと材料を残さないので、**その動画は独立評価を
+    # 永久に回せなくなります**（`build/` はコンテナと一緒に消える）。
+    # `docs/CRITIQUE.md` が「投稿の時点から残る」と書いているのはこの1枚のことです。
+    code, _ = run([sys.executable, "scripts/inspect_build.py", tid], UPLOAD_TIMEOUT, tid)
+    if code != 0:
+        # **止めません。**contact sheet は評価の材料で、動画そのものではない。
+        # 投稿が途切れるほうが損なので、印だけ残して先へ進みます。
+        row["error"] = "contact sheet を作れず、独立評価の材料が残りません"
+    row["built"] = True
+    return row
 
 
 def video_id_of(out: str) -> str:
@@ -197,8 +268,11 @@ def main(argv: list[str] | None = None) -> int:
                     help="長尺で作る（既定はショート）")
     ap.add_argument("--skip-upload", action="store_true",
                     help="作るだけで予約しない。**この場合コンテナと一緒に消えます**")
+    ap.add_argument("--jobs", type=int, default=DEFAULT_JOBS,
+                    help=f"同時に作る本数（既定 {DEFAULT_JOBS}）。**予約はいつも1本ずつ**")
     ap.add_argument("--stop-on-error", action="store_true",
-                    help="1本落ちたらそこで止める（既定は次のテーマへ進む）")
+                    help="1本落ちたらそこで止める（**予約の段だけ**。"
+                         "作る段は並列なので、落ちた1本の巻き添えで他を捨てません）")
     args = ap.parse_args(argv)
 
     explicit = [i.strip() for i in args.topics.split(",") if i.strip()]
@@ -220,46 +294,41 @@ def main(argv: list[str] | None = None) -> int:
     for t in topics:
         print(f"        {t['id']}  calc={t['calc']}  {t['title_seed'][:38]}")
 
-    results: list[dict] = []
-    for n, topic in enumerate(topics, 1):
-        tid = topic["id"]
-        print(f"\n=== [{n}/{len(topics)}] {tid} ===", flush=True)
-        row: dict = {"topic": tid, "calc": topic["calc"], "video_id": "", "error": ""}
+    # ---- 1. 作る（**ここだけ並列**）----------------------------------------
+    #
+    # 1本の11分は、ほぼ全部が `claude -p` の待ち時間です（生成中の CPU は 2〜4%）。
+    # **待ち時間は重ねられます。** 直列だと 8本で90分、3本ずつなら30分台。
+    # M14 が測ろうとしている「1日あたりの本数」は、ここが律速でした。
+    jobs = max(1, min(args.jobs, len(topics)))
+    began = datetime.now(JST)
+    if jobs > 1:
+        print(f"\n[batch] **{jobs} 本ずつ同時に作ります**"
+              f"（待ち時間を重ねるだけなので、予約は下で1本ずつやります）", flush=True)
+    with ThreadPoolExecutor(max_workers=jobs) as pool:
+        results = list(pool.map(lambda t: build_one(t, args.long), topics))
+    built = sum(1 for r in results if r.get("built"))
+    spent = (datetime.now(JST) - began).total_seconds() / 60
+    print(f"\n[batch] 作れたのは {built} / {len(topics)} 本（{spent:.1f}分・同時 {jobs}）",
+          flush=True)
 
-        cmd = [sys.executable, "-m", "src.pipeline", "--topic", tid, "--dry-run"]
-        if not args.long:
-            cmd.append("--short")
-        code, out = run(cmd, BUILD_TIMEOUT)
-        if code != 0:
-            row["error"] = f"生成が失敗（exit {code}）"
-            results.append(row)
-            print(f"[batch] **{tid} は作れませんでした。** 次へ進みます。", flush=True)
-            if args.stop_on_error:
-                break
+    # ---- 2. 予約する（**必ず直列**）----------------------------------------
+    #
+    # `upload_only.py` は `next_publish_at` と待ち行列という共有の状態を触るので、
+    # 同時に走らせると予約時刻がぶつかります。**ここを並列にしないこと。**
+    # 順番も `topics` のまま＝`when[n-1]` の対応が崩れません。
+    for n, row in enumerate(results, 1):
+        tid = row["topic"]
+        if not row.get("built"):
+            print(f"[batch] **{tid} は作れませんでした。** 予約しません。", flush=True)
             continue
-
-        # **contact sheet は投稿の前に作る。**
-        #
-        # 最初に書いたときここを飛ばしていて、**1本目の投稿でそのまま踏みました**
-        # （2026-08-15、`H28qfOxuJF0`）。`critique_queue.stash()` は
-        # `inspect.jpg` が無いと材料を残さないので、**その動画は独立評価を
-        # 永久に回せなくなります**（`build/` はコンテナと一緒に消える）。
-        # `docs/CRITIQUE.md` が「投稿の時点から残る」と書いているのはこの1枚のことです。
-        code, _ = run([sys.executable, "scripts/inspect_build.py", tid], UPLOAD_TIMEOUT)
-        if code != 0:
-            # **止めません。**contact sheet は評価の材料で、動画そのものではない。
-            # 投稿が途切れるほうが損なので、印だけ残して先へ進みます。
-            row["error"] = "contact sheet を作れず、独立評価の材料が残りません"
-
         if args.skip_upload:
             row["error"] = (row["error"] + " / " if row["error"] else "") \
                 + "予約していません（--skip-upload）"
-            results.append(row)
             continue
 
         code, out = run(
             [sys.executable, "scripts/upload_only.py", tid, "", when[n - 1]],
-            UPLOAD_TIMEOUT,
+            UPLOAD_TIMEOUT, tid,
         )
         vid = video_id_of(out)
         row["video_id"] = vid
@@ -268,9 +337,11 @@ def main(argv: list[str] | None = None) -> int:
         elif code != 0:
             # 投稿は済んでいるが材料を残せなかった場合（upload_only.py の 1）。
             row["error"] = "投稿済み。ただし独立評価の材料を残せていない"
-        results.append(row)
         if code != 0 and not vid and args.stop_on_error:
             break
+
+    for row in results:
+        row.pop("built", None)
 
     stamp = datetime.now(JST).isoformat(timespec="seconds")
     LOG.parent.mkdir(parents=True, exist_ok=True)

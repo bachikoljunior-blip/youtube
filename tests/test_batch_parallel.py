@@ -1,0 +1,176 @@
+"""**作る段は並列・予約の段は直列**、そして順番が崩れないことを検査する。
+
+## なぜ要るか（2026-08-15）
+
+`batch_build.py` は1本ずつ直列に作っていました。8/15 に7本を通したとき **80分＝1本11分**。
+その11分の中身を `ps` で見たら、**生成中の python は CPU を 2〜4% しか使っていません** ——
+ほぼ全部が `claude -p`（`src/claude_cli.py`）の**待ち時間**でした。
+**待ち時間は重ねられます。** M14（1日あたりの本数）の律速はここでした。
+
+並列にすると、直列では起きなかった壊れ方が2つ出ます。**どちらも黙って壊れます。**
+
+1. **予約時刻の取り違え。** `when[n-1]` は `topics` の並び順に対応しています。
+   完了順に結果を積むと、**速く出来た本が他の本の枠を取ります。**
+   画面には「予約できました」としか出ないので、**一覧を見るまで気づきません**
+2. **予約の同時実行。** `upload_only.py` は `next_publish_at` と待ち行列という
+   **共有の状態**を触るので、同時に走らせると同じ時刻を2本に割り当てます
+   （8/15 03:48 の二重起動と同じ壊れ方）
+
+だから検査するのは「速くなったか」ではなく、**この2つが起きないこと**です。
+"""
+from __future__ import annotations
+
+import sys
+import threading
+import time
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(ROOT / "scripts"))
+
+from scripts import batch_build  # noqa: E402
+
+
+class _Recorder:
+    """`run()` の代わり。誰がいつ呼ばれたかと、**同時に何本走ったか**を残す。"""
+
+    def __init__(self, delays: dict[str, float] | None = None,
+                 fail_build: set[str] | None = None):
+        self.delays = delays or {}
+        self.fail_build = fail_build or set()
+        self.calls: list[tuple[str, str]] = []      # (種類, テーマID)
+        self.max_concurrent_upload = 0
+        self._uploads_now = 0
+        self._lock = threading.Lock()
+
+    def __call__(self, cmd, timeout, label=""):
+        kind = ("build" if "src.pipeline" in cmd else
+                "inspect" if "inspect_build.py" in " ".join(cmd) else "upload")
+        tid = label or "?"
+        if kind == "upload":
+            with self._lock:
+                self._uploads_now += 1
+                self.max_concurrent_upload = max(
+                    self.max_concurrent_upload, self._uploads_now)
+        with self._lock:
+            self.calls.append((kind, tid))
+        time.sleep(self.delays.get(tid, 0.0) if kind == "build" else 0.0)
+        if kind == "upload":
+            with self._lock:
+                self._uploads_now -= 1
+            # 予約時刻をそのまま動画IDに焼き込んで返す（対応を検査で読むため）
+            return 0, f"VIDEO_ID vid-{tid}-{cmd[-1]}\n"
+        if kind == "build" and tid in self.fail_build:
+            return 1, "生成に失敗しました"
+        return 0, ""
+
+
+def _topics(ids):
+    return [{"id": i, "calc": "dummy", "title_seed": i} for i in ids]
+
+
+def _run(monkeypatch, ids, delays=None, fail_build=None, jobs=3):
+    rec = _Recorder(delays, fail_build)
+    monkeypatch.setattr(batch_build, "run", rec)
+    monkeypatch.setattr(batch_build, "pick", lambda c, e: _topics(ids))
+    monkeypatch.setattr(batch_build, "check_window", lambda d, f: None)
+    written: list[dict] = []
+    monkeypatch.setattr(batch_build.Path, "open",
+                        lambda self, *a, **k: _Sink(written))
+    code = batch_build.main([
+        "--count", str(len(ids)), "--date", "2026-08-30", "--jobs", str(jobs),
+    ])
+    return code, rec, written
+
+
+class _Sink:
+    """`data/batch_runs.jsonl` を実際には書かない（検査で本番の記録を汚さない）。"""
+
+    def __init__(self, sink):
+        self.sink = sink
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+    def write(self, text):
+        self.sink.append(text)
+
+
+# --- 1. 順番が崩れないこと -------------------------------------------------
+
+def test_slow_first_video_does_not_lose_its_slot(monkeypatch):
+    """**1本目がいちばん遅くても、1本目の枠は1本目のもの。**
+
+    完了順に積む実装だと、ここで `a` が `c` の 12:00 を取ります。
+    """
+    _, rec, _ = _run(
+        monkeypatch, ["a", "b", "c"],
+        delays={"a": 0.25, "b": 0.05, "c": 0.0},
+    )
+    uploads = [(t, ) for k, t in rec.calls if k == "upload"]
+    assert uploads == [("a",), ("b",), ("c",)]
+
+
+def test_slot_hour_matches_topic_order(monkeypatch):
+    """予約時刻そのものが、テーマの並び順どおりに割り当たること。"""
+    _, rec, written = _run(
+        monkeypatch, ["a", "b", "c"], delays={"a": 0.2, "b": 0.1},
+    )
+    row = written[0]
+    assert "vid-a-2026-08-30@9" in row
+    assert "vid-b-2026-08-30@10" in row
+    assert "vid-c-2026-08-30@11" in row
+
+
+# --- 2. 予約は同時に走らないこと -------------------------------------------
+
+def test_uploads_never_overlap(monkeypatch):
+    """**予約は1本ずつ。** ここが2以上になったら共有状態がぶつかります。"""
+    _, rec, _ = _run(monkeypatch, ["a", "b", "c", "d"], jobs=4)
+    assert rec.max_concurrent_upload == 1
+
+
+# --- 3. 作る段は本当に並んでいること ---------------------------------------
+
+def test_builds_actually_overlap(monkeypatch):
+    """直列に戻っていないこと。**3本 × 0.2秒が、0.6秒かからない。**"""
+    began = time.monotonic()
+    _run(monkeypatch, ["a", "b", "c"],
+         delays={"a": 0.2, "b": 0.2, "c": 0.2}, jobs=3)
+    assert time.monotonic() - began < 0.5
+
+
+def test_jobs_1_is_the_old_behaviour(monkeypatch):
+    """`--jobs 1` なら直列。**逃げ道を残しておく**（並列で壊れたとき用）。"""
+    began = time.monotonic()
+    _run(monkeypatch, ["a", "b", "c"],
+         delays={"a": 0.15, "b": 0.15, "c": 0.15}, jobs=1)
+    assert time.monotonic() - began >= 0.45
+
+
+# --- 4. 落ちた1本が、他の本を巻き添えにしないこと ---------------------------
+
+def test_failed_build_is_not_uploaded_and_others_survive(monkeypatch):
+    """**作れなかった本は予約しない。** 残りはそのまま出る。
+
+    直列版は `continue` で枠を飛ばしていました。並列版でも同じであること。
+    """
+    _, rec, written = _run(monkeypatch, ["a", "b", "c"], fail_build={"b"})
+    uploaded = [t for k, t in rec.calls if k == "upload"]
+    assert uploaded == ["a", "c"]
+    # **b の枠（10時）は誰も取らない。** c は自分の 11時 のまま。
+    # 記録の `slots` には 10時 が残るので、見るのは**動画IDのほう**です。
+    assert "vid-c-2026-08-30@11" in written[0]
+    assert "vid-c-2026-08-30@10" not in written[0]
+    assert "vid-a-2026-08-30@10" not in written[0]
+
+
+def test_failed_build_skips_its_contact_sheet(monkeypatch):
+    """生成が落ちた本の contact sheet は作らない（材料が無いので）。"""
+    _, rec, _ = _run(monkeypatch, ["a", "b"], fail_build={"a"})
+    inspected = [t for k, t in rec.calls if k == "inspect"]
+    assert inspected == ["b"]
