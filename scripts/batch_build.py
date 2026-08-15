@@ -20,6 +20,13 @@
     直列   8本 × 11分 = 88分   ← 1周に収まらない
     同時3  8本 ÷ 3 × 11分 ≒ 30分
 
+**【2026-08-15 22:3x】この「11分」は、もう本当ではありません。**
+実測は **1本 1.7分**（同時1）／**2.7分**（同時6）です。11.4分だったのは
+8/15 18:xx の7本で、**そのあと台本の作り方が変わりました。**
+この数字は文書に3回引用され、**誰も測り直していませんでした。**
+**上の掛け算は当時の記録として残しますが、根拠に使わないこと。**
+いまの値は `python scripts/batch_build.py --report` が出します。
+
 **予約だけは直列のまま**です（`upload_only.py` は `next_publish_at` と
 待ち行列という共有の状態を触るので、同時に走らせると予約時刻がぶつかる）。
 段を分けてあるのはそのためで、**作る段と予約の段を混ぜないこと。**
@@ -49,6 +56,40 @@
   連続で呼ぶと1日ずつ後ろに積まれます。**実験の窓を踏まないよう、時刻で選ぶこと**
 - **結果は `data/batch_runs.jsonl` に残す。** `build/` は gitignore なので、
   セッションが畳まれた後に「何が出て何が落ちたか」を読めるのはここだけです
+- **かかった時間も残す**（2026-08-15 22:3x に足した。下の節が理由）
+
+## 「`--jobs` の上限を測る」が4回持ち越された理由（2026-08-15 22:3x）
+
+`retro.py` の持ち越しで **`--jobs` が4回**（19:0x / 19:2x / 20:5x / 22:0x）出ています。
+**4回とも「次の回で測る」と書かれ、4回とも測られませんでした。**
+「忙しかったから」ではありません。**測れなかったからです。**
+
+    data/batch_runs.jsonl に入っていたもの   at / hour / date / slots / results[topic,calc,video_id,error]
+    入っていなかったもの                     **`jobs` も、かかった秒数も**
+
+**この台帳を後から読んでも、何本ずつ走らせたのかすら分かりません。**
+19:0x の「6本を4.7分」は**その回の画面にしか無く**、次の回には残っていない。
+だから毎回「まず測り直すところから」になり、10分かかるので後回しになる ——
+**それが4回くり返されました。**
+
+そして、持ち越しの文言が**測り方そのものを高くしていました。**
+「`--jobs` の上限」を **jobs=3 の回と jobs=6 の回を別々に走らせて比べる**と読むと、
+1回10分の生成が2回要り、**しかも題材が違うので条件が揃いません**（台本の長さも
+落ちる本数も毎回ちがう）。**1周に収まらない測定は、永久に後回しになります。**
+
+**1本ずつの所要時間を記録すれば、1回の走りで答えが出ます。**
+
+    直列に要る時間 ＝ 1本ずつの秒数の合計
+    実際にかかった時間 ＝ 壁時計
+    **速くなった倍率 ＝ 合計 ÷ 壁時計**（jobs に近ければ、待ち時間は素直に重なっている）
+
+    **1本あたりの秒数が jobs を上げるほど伸びていたら、そこが上限です**
+    （待ち時間ではなく、こちらの CPU かメモリを取り合い始めている）
+
+**上限は「速くならなくなる点」ではなく「1本あたりが太り始める点」で出ます。**
+前者は本数と題材に左右されますが、後者は**同じ走りの中で比べられます。**
+
+    python scripts/batch_build.py --report    # 台帳を jobs 別に並べる（生成しない・数秒）
 
 ## この道具が答えないこと
 
@@ -286,10 +327,15 @@ def build_one(topic: dict, long_form: bool) -> dict:
     tid = topic["id"]
     row: dict = {"topic": tid, "calc": topic["calc"], "video_id": "", "error": ""}
 
+    # **1本ぶんの秒数を残す。** これが無かったので「`--jobs` の上限」が
+    # 4回持ち越されました（上の節）。**落ちた本も測ります** ——
+    # 落ちるまでに使った時間も、他の本を待たせているからです。
+    started = datetime.now(JST)
     cmd = [sys.executable, "-m", "src.pipeline", "--topic", tid, "--dry-run"]
     if not long_form:
         cmd.append("--short")
     code, _ = run(cmd, BUILD_TIMEOUT, tid)
+    row["build_sec"] = round((datetime.now(JST) - started).total_seconds(), 1)
     if code != 0:
         row["error"] = f"生成が失敗（exit {code}）"
         row["built"] = False
@@ -308,6 +354,7 @@ def build_one(topic: dict, long_form: bool) -> dict:
         # 投稿が途切れるほうが損なので、印だけ残して先へ進みます。
         row["error"] = "contact sheet を作れず、独立評価の材料が残りません"
     row["built"] = True
+    row["make_sec"] = round((datetime.now(JST) - started).total_seconds(), 1)
     return row
 
 
@@ -316,6 +363,115 @@ def video_id_of(out: str) -> str:
         if line.startswith("VIDEO_ID "):
             return line.split(None, 1)[1].strip()
     return ""
+
+
+def _median(xs: list[float]) -> float:
+    xs = sorted(xs)
+    n = len(xs)
+    if not n:
+        return 0.0
+    return xs[n // 2] if n % 2 else (xs[n // 2 - 1] + xs[n // 2]) / 2
+
+
+def report() -> int:
+    """台帳を `jobs` 別に並べる。**生成しません**（数秒で終わります）。
+
+    見るのは2つだけ。
+
+        速くなった倍率   直列の合計 ÷ 壁時計。**jobs に近いほど、待ち時間が素直に重なっている**
+        1本あたりの中央値 **jobs を上げるほど伸びていたら、そこが上限**
+
+    倍率だけでは上限が出ません（本数と題材で動くので）。
+    **太り始めたかどうかが、同じ走りの中で比べられる唯一の量**です。
+    """
+    if not LOG.exists():
+        print("まだ1回も走っていません（data/batch_runs.jsonl が空）。")
+        return 1
+    rows = []
+    for line in LOG.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            rows.append(json.loads(line))
+        except json.JSONDecodeError:
+            continue
+
+    timed = [r for r in rows if r.get("jobs") and r.get("wall_sec")]
+    print(f"=== batch の走り {len(rows)} 回（うち時間が入っているのは {len(timed)} 回）===")
+    if not timed:
+        print("\n  **時間の入った走りがまだありません。**")
+        print("  2026-08-15 22:3x より前の走りには `jobs` も秒数も入っていません")
+        print("  （入れていなかったので、`--jobs` の上限が4回持ち越されました）。")
+        print("  次に `batch_build.py` を走らせた回から、ここに並びます。")
+        return 1
+
+    by_jobs: dict[int, list[float]] = {}
+    print("\n  日時              同時 本数  壁時計   直列なら  倍率  1本あたりの中央値")
+    for r in timed:
+        per = [float(x["build_sec"]) for x in r.get("results", [])
+               if x.get("build_sec")]
+        med = _median(per)
+        by_jobs.setdefault(int(r["jobs"]), []).extend(per)
+        print(f"  {r['at'][5:16]:<16} {r['jobs']:>3} {r.get('count', len(per)):>4}"
+              f" {r['wall_sec']/60:>7.1f}分 {(r.get('serial_sec') or 0)/60:>8.1f}分"
+              f" {str(r.get('speedup') or '—'):>5}  {med/60:>6.1f}分")
+
+    # **1回の走りの中で出した「倍率」は、自分に甘い。**
+    #
+    # `speedup` は「1本ずつの秒数の合計 ÷ 壁時計」ですが、その1本ずつの秒数は
+    # **既に混雑で太った後の値**です。太るほど分子も大きくなるので、
+    # **混雑しているときほど倍率が良く見えます**（8/15 22:3x の実測で 4.2倍と出た。
+    # 本当は 2.6倍）。**割る相手は、いちばん空いている走りの1本あたり**です。
+    per_run_thru = {}
+    for r in timed:
+        per = [float(x["build_sec"]) for x in r.get("results", []) if x.get("build_sec")]
+        if per and r.get("wall_sec"):
+            per_run_thru.setdefault(int(r["jobs"]), []).append(
+                len(per) / float(r["wall_sec"]))
+
+    js = sorted(by_jobs)
+    base = _median(by_jobs[js[0]])
+    base_thru = max(per_run_thru.get(js[0], [0.0]))
+
+    print("\n  **jobs 別**（1本あたりが太り始めた点と、実際に出た本数）")
+    print("    同時  本数  1本あたり  太り方   1時間あたり  空いているときの何倍")
+    for j in js:
+        med = _median(by_jobs[j])
+        swell = med / base if base else 0.0
+        thru = max(per_run_thru.get(j, [0.0])) * 3600.0
+        gain = (thru / (base_thru * 3600.0)) if base_thru else 0.0
+        print(f"    {j:>3} {len(by_jobs[j]):>5}本 {med/60:>8.1f}分 {swell:>7.2f}倍"
+              f" {thru:>10.1f}本 {gain:>13.2f}倍")
+
+    if len(js) < 2:
+        print("\n  **まだ1種類の `jobs` しか走っていません。** 上限は言えません。")
+        print("  別の `--jobs` で1回走らせると、上の行が2行になって比べられます。")
+        return 0
+
+    top = max(js, key=lambda j: max(per_run_thru.get(j, [0.0])))
+    worst = max(js, key=lambda j: _median(by_jobs[j]))
+    swell = _median(by_jobs[worst]) / base if base else 0.0
+
+    if swell >= 1.3:
+        print(f"\n  **同時 {worst} で1本あたりが {swell:.2f}倍に太っています。**"
+              " 待ち時間だけでなく、こちらの資源も取り合い始めています。")
+    else:
+        print(f"\n  1本あたりは最大でも {swell:.2f}倍で、**まだ太っていません。**")
+
+    # **太り始めた ≠ 上限。** 1本あたりが遅くなっても、同時に走る本数が
+    # それ以上に増えていれば、**1時間あたりに出る本数は増え続けます。**
+    # 止めるのは「太ったから」ではなく「**出る本数が増えなくなったから**」。
+    if top == max(js):
+        print(f"  それでも**いちばん出たのは同時 {top}**です"
+              f"（1時間あたり {max(per_run_thru[top])*3600:.1f}本）。"
+              " **太り始めた点は上限ではありません。**")
+        print(f"  まだ上げられます。次は同時 {max(js)*2} を1回。"
+              " **出る本数が増えなくなったところが上限**です。")
+    else:
+        print(f"  **出る本数がいちばん多いのは同時 {top}** で、それより上げると"
+              "減っています。**そこが上限です。**")
+    return 0
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -346,7 +502,12 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--stop-on-error", action="store_true",
                     help="1本落ちたらそこで止める（**予約の段だけ**。"
                          "作る段は並列なので、落ちた1本の巻き添えで他を捨てません）")
+    ap.add_argument("--report", action="store_true",
+                    help="台帳を jobs 別に並べるだけ（**生成も予約もしません**・数秒）")
     args = ap.parse_args(argv)
+
+    if args.report:
+        return report()
 
     explicit = [i.strip() for i in args.topics.split(",") if i.strip()]
     topics = pick(args.count if not explicit else len(explicit), explicit,
@@ -381,9 +542,23 @@ def main(argv: list[str] | None = None) -> int:
     with ThreadPoolExecutor(max_workers=jobs) as pool:
         results = list(pool.map(lambda t: build_one(t, args.long), topics))
     built = sum(1 for r in results if r.get("built"))
-    spent = (datetime.now(JST) - began).total_seconds() / 60
+    wall_sec = round((datetime.now(JST) - began).total_seconds(), 1)
+    spent = wall_sec / 60
     print(f"\n[batch] 作れたのは {built} / {len(topics)} 本（{spent:.1f}分・同時 {jobs}）",
           flush=True)
+
+    # **重なりを、その場で出す。** 台帳に残すだけだと誰も読みません
+    # （`--jobs` が4回持ち越されたのは、まさにそれです）。
+    serial_sec = round(sum(float(r.get("make_sec") or r.get("build_sec") or 0.0)
+                           for r in results), 1)
+    speedup = round(serial_sec / wall_sec, 2) if wall_sec > 0 else None
+    per_book = [float(r["build_sec"]) for r in results if r.get("build_sec")]
+    if per_book and jobs > 1:
+        mean = sum(per_book) / len(per_book)
+        print(f"[batch] 直列なら {serial_sec/60:.1f}分 → **{speedup} 倍**"
+              f"（同時 {jobs}）／1本あたり {mean/60:.1f}分", flush=True)
+        print("[batch] **1本あたりが jobs を上げるほど伸びていたら、そこが上限です**"
+              "（`--report` で並べて見ること）", flush=True)
 
     # ---- 2. 予約する（**必ず直列**）----------------------------------------
     #
@@ -422,7 +597,13 @@ def main(argv: list[str] | None = None) -> int:
     with LOG.open("a", encoding="utf-8") as fh:
         fh.write(json.dumps(
             {"at": stamp, "hour": args.hour, "date": args.date or None,
-             "slots": when, "results": results},
+             "slots": when,
+             # **`jobs` と秒数は、この台帳にしか残りません。**
+             # `build/` もセッションの画面も、次の回には無い。
+             "jobs": jobs, "count": len(topics),
+             "wall_sec": wall_sec, "serial_sec": serial_sec, "speedup": speedup,
+             "long": bool(args.long),
+             "results": results},
             ensure_ascii=False) + "\n")
 
     ok = [r for r in results if r["video_id"]]
