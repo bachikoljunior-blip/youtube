@@ -124,9 +124,21 @@ def check() -> None:
               "テーマIDで積んだぶんは突き合わせられません。")
         topic_to_video = {}
 
+    # **同じ動画が2回入っていることがあります。** `critique_queue.py` の
+    # `_scored()` が `video_id` というキーを読んでいて（積む側は `video`）、
+    # **点を付けても待ち行列から消えなかった**ため、同じものに3体を投げ直した回が
+    # あります（`s-kojo-4` と `s-iryohi-2` が2回ずつ）。
+    # 実績は動画ごとに1つなので、**そのまま並べると同じ点が2票ぶん効きます。**
+    # 待ち行列のほうは直しましたが、**既に積まれた行は消せません**
+    # （記録を書き換えないこと）。ここで**動画ごとに最後の1件だけ**を使います。
+    latest = {r["video"]: r for r in sorted(rows, key=lambda r: r["at"])}
+    if len(latest) < len(rows):
+        print(f"  [注] 同じ動画の記録が {len(rows) - len(latest)} 件ありました。"
+              "**動画ごとに最後の1件だけ**を突き合わせに使います")
+
     xs, ys, used = [], [], []
     unresolved: list[str] = []
-    for r in rows:
+    for r in latest.values():
         key = r["video"]
         if key not in perf and key in topic_to_video:
             key = topic_to_video[key]             # テーマID → 動画ID

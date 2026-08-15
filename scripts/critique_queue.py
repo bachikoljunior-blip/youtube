@@ -93,6 +93,22 @@ def stash(topic: str, video_id: str, script: dict, work: Path) -> Path | None:
 
 
 def _scored() -> set[str]:
+    """点の付いたもの（テーマID・動画IDのどちらでも）。
+
+    **2026-08-15 まで、この関数は常に空集合と同じものを返していました。**
+    `critique_record.py` が積む行のキーは **`video`** で、ここは `video_id` を
+    読んでいました。**綴りが違うだけで、どの行にも当たりません。**
+
+    結果、**一度点を付けたものが待ち行列から消えませんでした。**
+    `data/critique.jsonl` に `s-kojo-4` と `s-iryohi-2` が2回ずつ入っているのは
+    これです（同じ動画を2回評価して2回積んだ）。**待ちは減らないので、
+    毎回おなじ動画に3体を投げ続け、点が二重に積まれます。**
+    順位相関を出す側から見ると、同じ動画が2票ぶん効きます。
+
+    **落ちも警告も出ません。**「待ちが3件ある」は正しく見えていました。
+    `.get()` が黙って空を返す形で踏むのは、8/15 に入れた `stash()` の
+    `scenes`/`segments` に続いて2回目です。**両方のキーを読むようにします。**
+    """
     if not LEDGER.exists():
         return set()
     out = set()
@@ -101,9 +117,12 @@ def _scored() -> set[str]:
         if not line:
             continue
         try:
-            out.add(json.loads(line).get("video_id", ""))
+            row = json.loads(line)
         except json.JSONDecodeError:
             continue
+        for key in ("video", "video_id", "topic"):
+            if row.get(key):
+                out.add(row[key])
     return out
 
 
