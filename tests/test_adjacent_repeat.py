@@ -285,11 +285,101 @@ def test_statの2コマも見出しが同じにならない():
     assert len(frames) == 2
     assert frames[0]["headline"] != frames[1]["headline"], frames
     assert frames[1]["headline"].startswith("副業20万円ルールの段差")
-    # 数字そのものは動かさない（読み上げとずれない、が割り方の前提）
-    assert frames[0]["stat"] == frames[1]["stat"] == "6万7386円"
-    assert frames[0]["note"] == "" and frames[1]["note"]
+    # **ここは 2026-08-15 22:0x に逆になりました。**
+    #
+    # 元は「数字そのものは動かさない（読み上げとずれない、が割り方の前提）」で、
+    # `frames[0]["stat"] == frames[1]["stat"]` を要求していました。
+    # **その契約のせいで、2枚は主役が同じままになります。**
+    # 実物を測ると画面の 7.06% しか変わっておらず（`scripts/bake_slides.py`）、
+    # `0MC_rlov7Ng` の独立評価3体が3体とも「実質同じ絵」と書きました。
+    # **前提を先に出し、数字を後から出す。** 主役が「無い→ある」に変わります。
+    assert frames[0]["stat"] == "" and frames[1]["stat"] == "6万7386円"
+    assert frames[0]["note"] == frames[1]["note"] == "1円超えるだけで税額がこう動きます"
 
 
 def test_補足の無いstatは割らない():
     v = {"kind": "stat", "headline": "枠", "stat": "800万円"}
     assert visuals.reveal_variants(v, 2) == [v]
+
+
+# --------------------------------------------- 主役が同じまま（2026-08-15 22:0x）
+#
+# **画素では捕まりませんでした。** `scripts/bake_slides.py` で実物を測ると
+# 偽物（stat の2枚・注記が1行増えるだけ）が **7.06%**、
+# 本物（chart の2枚・棒が1本ふえる）が **6.02%** で、**偽物のほうが大きい。**
+# `verify.NEAR_DUPE_RATIO` をどこに置いても線が引けないので、構造で見る。
+
+
+def _plan(tmp_path, frames):
+    import json
+    (tmp_path / "slides_plan.json").write_text(
+        json.dumps(frames, ensure_ascii=False), encoding="utf-8")
+    return tmp_path
+
+
+def test_主役が同じで注記だけ増えた2枚は落ちる(tmp_path):
+    """`0MC_rlov7Ng` で3体が3体とも指摘した形。"""
+    work = _plan(tmp_path, [
+        {"kind": "stat", "headline": "年収500万で50万昇給", "stat": "35万9318円",
+         "note": ""},
+        {"kind": "stat", "headline": "年収500万で50万昇給　2/2", "stat": "35万9318円",
+         "note": "給与収入のみ・扶養なし"},
+    ])
+    problems = verify._check_adjacent_frames(work)
+    assert any("主役が同じまま" in p for p in problems), problems
+
+
+def test_主役が変われば通す(tmp_path):
+    """いまの割り方（前提を先・数字を後）。**これが落ちたら直しが無意味になる。**"""
+    work = _plan(tmp_path, [
+        {"kind": "stat", "headline": "年収500万で50万昇給", "stat": "",
+         "note": "給与収入のみ・扶養なし", "note_lead": True},
+        {"kind": "stat", "headline": "年収500万で50万昇給　2/2", "stat": "35万9318円",
+         "note": "給与収入のみ・扶養なし"},
+    ])
+    assert verify._check_adjacent_frames(work) == []
+
+
+def test_棒が1本ふえる本物の段階表示は通す(tmp_path):
+    """実測 6.02%。**偽物の 7.06% より小さい**ので、画素では区別できない側。"""
+    work = _plan(tmp_path, [
+        {"kind": "chart", "headline": "50万上げて残る手取り",
+         "bars": [{"label": "年収500万", "value": 359318}]},
+        {"kind": "chart", "headline": "50万上げて残る手取り　＋年収700万",
+         "bars": [{"label": "年収500万", "value": 359318},
+                  {"label": "年収700万", "value": 311000}]},
+    ])
+    assert verify._check_adjacent_frames(work) == []
+
+
+def test_式だけ増えても据え置き扱い(tmp_path):
+    """脇の1行は、注記でも式でも同じ。**主役が動いていない。**"""
+    work = _plan(tmp_path, [
+        {"kind": "stat", "headline": "退職金の無税枠", "stat": "800万円", "formula": ""},
+        {"kind": "stat", "headline": "退職金の無税枠　2/2", "stat": "800万円",
+         "formula": "800万円 ＝ 40万円 × 20年"},
+    ])
+    problems = verify._check_adjacent_frames(work)
+    assert any("主役が同じまま" in p for p in problems), problems
+
+
+# ------------------------------------------- stat の割り方（前提を先・数字を後）
+
+
+def test_statは数字を伏せた1枚目から始まる():
+    v = {"kind": "stat", "headline": "年収500万で50万昇給", "stat": "35万9318円",
+         "note": "給与収入のみ・扶養なし", "formula": "消えた額 ＝ 50万円 − 35万9318円"}
+    a, b = visuals.reveal_variants(v, 2)
+    assert a["stat"] == "" and a["note"] == v["note"], a
+    assert a["formula"] == "", "式には答えが入っている。1枚目で出すと数字を伏せた意味が無い"
+    assert a["note_lead"] is True, "数字が無い1枚目は、補足が主役として大きく出る"
+    assert b["stat"] == v["stat"] and b["formula"] == v["formula"], b
+
+
+def test_数字を伏せた1枚目は補足を大きく出す():
+    v = {"kind": "stat", "headline": "年収500万で50万昇給", "stat": "35万9318円",
+         "note": "給与収入のみ・扶養なし"}
+    a, b = visuals.reveal_variants(v, 2)
+    assert 'class="note lead"' in visuals.build_html(a, portrait=True)
+    assert 'class="note"' in visuals.build_html(b, portrait=True)
+    assert 'class="note lead"' not in visuals.build_html(b, portrait=True)

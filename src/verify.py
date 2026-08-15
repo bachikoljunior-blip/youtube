@@ -517,7 +517,72 @@ def _check_adjacent_frames(work: Path) -> list[str]:
                 "**絵が増えても、上の文字が同じなら画面は変わって見えません。**"
                 "めくりなら `_reveal_headline` が『＋増えた要素』か『2/3』を足すはず"
             )
+            continue
+        if _same_lead(a, b):
+            problems.append(
+                f"{i + 1}コマめと{i + 2}コマめで、**画面の主役が同じまま**です"
+                f"（{_lead_of(a)!r}）。"
+                "変わったのは注記や式のような小さい1行だけで、"
+                "**視聴者から見て画面は据え置きに見えます。**"
+                "めくるなら、主役そのもの（数字・棒・行・項目）を変えること"
+            )
     return problems
+
+
+# 「主役」＝そのコマで面積をいちばん食っている要素。
+# 種類ごとに、どのキーがそれに当たるかを持つ。ここに無い種類は stat 扱い。
+LEAD_KEYS = {
+    "chart": "bars",
+    "table": "rows",
+    "steps": "items",
+    "compare": "items",
+    "stat": "stat",
+}
+# 主役の外側にある、小さい1行たち。**ここだけが変わっても「変わった」とは言えません。**
+SIDE_KEYS = {"headline", "note", "formula", "note_lead", "stat_source",
+             "scale_max", "scale_base", "scale_bars"}
+
+
+def _lead_of(visual: dict):
+    """そのコマの主役を返す。"""
+    kind = (visual.get("kind") or "stat").strip()
+    return visual.get(LEAD_KEYS.get(kind, "stat"))
+
+
+def _same_lead(a: dict, b: dict) -> bool:
+    """**主役が同じままで、脇の小さい行だけが変わった2枚**か（2026-08-15 22:0x）。
+
+    ## なぜ画素で見ないのか（**測ってから決めています**）
+
+    `slide_change_ratios` は既にあり、`NEAR_DUPE_RATIO`（1%）を下回る組を
+    落とします。**それでも `0MC_rlov7Ng` は通り、独立評価の3体が3体とも
+    「1コマ目と2コマ目が実質同じ絵」と書きました**（通算4回目の持ち越し）。
+
+    `scripts/bake_slides.py` で実物（`s-tedori-1`・13枚）を測ると、こうです。
+
+        0→1  **7.06%**  stat の2枚（数字も見出しも式も同じ・21字の注記が増えるだけ）
+        4→5    6.02%    chart の2枚（**棒が1本ふえる**。本物の段階表示）
+
+    **偽物のほうが、本物より大きく出ています。** 順序が逆転しているので、
+    `NEAR_DUPE_RATIO` をどこに置いても「偽物だけ落として本物を通す」線は引けません。
+    **しきい値の調整では直りません。**
+
+    理由は測ってみれば単純で、`.body` が中央寄せだからです。注記が1行入ると
+    **その下に入るぶん、大きな数字が上へずれます。** 画素はごっそり変わりますが、
+    **増えた情報はゼロ**です。画素は「動いたか」を測っていて、
+    見たいのは**「新しいものが出たか」**でした。**測る対象が違っていました。**
+
+    だから、画面に出る側の構造（`slides_plan.json`）で見ます。
+    **主役が同じで、脇の小さい行しか変わっていなければ、据え置きです。**
+    """
+    if (a.get("kind") or "stat").strip() != (b.get("kind") or "stat").strip():
+        return False
+    if _lead_of(a) != _lead_of(b):
+        return False
+    # 主役の外で「本当に何も変わっていない」組は上の `a == b` が拾うので、
+    # ここに来るのは必ず脇のどれかが違う組。
+    changed = {k for k in set(a) | set(b) if a.get(k) != b.get(k)}
+    return bool(changed) and changed <= SIDE_KEYS
 
 
 def _check_headline_from_calc(work: Path, script: dict | None) -> list[str]:

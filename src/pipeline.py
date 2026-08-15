@@ -320,10 +320,20 @@ def main(argv: list[str] | None = None) -> int:
         expanded_durations: list[float] = []
         slide_index_of_segment: list[int] = []
         for visual, dur in zip(plan, durations):
-            slide_index_of_segment.append(len(expanded))
             want = max(1, math.ceil(dur / SHORT_SLIDE_SECONDS))
             parts = visuals.reveal_variants(visual, want)
             expanded.extend(parts)
+            # **その文の「全部出ている」コマを指す**（2026-08-15 22:2x に先頭から変更）。
+            #
+            # ここは長く「その文の**先頭**のコマ」でした。めくりが
+            # 「要素を1つずつ足していく」形だったので、先頭は**いちばん中身が少ない**
+            # コマです。使い道はサムネ1つ（下の `thumbnail.create`）で、
+            # **サムネにいちばん空の絵を渡していました。**
+            #
+            # 同じ回に `reveal_variants` の stat を「前提を先・数字を後」に変えたので、
+            # 先頭のままだと**サムネから数字が消えます。**（気づいたのは、
+            # この行を読んだからです。実物を作る前に見つかりました）
+            slide_index_of_segment.append(len(expanded) - 1)
             # その文の尺を、割れた枚数で等分する。合計は変わらない。
             expanded_durations.extend([dur / len(parts)] * len(parts))
         held = max(d for d in expanded_durations)

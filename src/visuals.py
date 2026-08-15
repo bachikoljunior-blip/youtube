@@ -85,6 +85,10 @@ body::after {
 /* kind=stat — font-size は文字数から算出して差し込む（_stat_font_px）*/
 .stat { font-weight: 900; line-height: 1.02; letter-spacing: -.02em; white-space: nowrap; }
 .note { margin-top: 26px; font-size: 34px; font-weight: 700; color: #9fb0cc; }
+/* 数字を伏せた1枚目だけ、補足が主役になる（`reveal_variants` の stat）。
+   色も本文側へ寄せる —— 薄い灰色のままだと「注釈が1つ浮いている」画になる。 */
+.note.lead { margin-top: 0; font-size: 66px; font-weight: 900; line-height: 1.35;
+              color: inherit; letter-spacing: -.01em; }
 
 /* kind=steps / compare */
 ol, ul { list-style: none; display: flex; flex-direction: column; gap: 22px; }
@@ -171,6 +175,7 @@ body { padding: 56px 96px 300px 52px; }
 body::before { width: 8px; }
 .headline { font-size: 40px; margin-bottom: 28px; }
 .note { font-size: 28px; margin-top: 20px; }
+.note.lead { margin-top: 0; font-size: 58px; line-height: 1.35; }
 li { font-size: 34px; gap: 16px; }
 li .marker { min-width: 44px; height: 44px; font-size: 24px; border-radius: 10px; }
 ol, ul { gap: 16px; }
@@ -258,6 +263,10 @@ HEAD_CHARS = 24
 # （下の `_LINE_PROBE_JS` と `render()`）。
 NOTE_CHARS_PORTRAIT = 14
 NOTE_CHARS = 33
+# 数字を伏せた1枚目だけ、補足が主役になって大きくなる（`.note.lead`）。
+# 縦 392/66px ≒ 6、横 1124/58px ≒ 19。
+NOTE_LEAD_CHARS_PORTRAIT = 6
+NOTE_LEAD_CHARS = 19
 
 # 棒ラベル。CSS の flex 幅 ÷ font-size（縦 168/22 ≒ 7.6、横 240/30 = 8）。
 LABEL_CHARS_PORTRAIT = 7
@@ -292,9 +301,19 @@ def _wrap_head(text: str, portrait: bool, tighten: int = 0) -> str:
     return _wrap(text, HEAD_CHARS_PORTRAIT if portrait else HEAD_CHARS, tighten)
 
 
-def _wrap_note(text: str, portrait: bool, tighten: int = 0) -> str:
-    """stat の下の補足を、語の途中で折らずに改行する。"""
-    return _wrap(text, NOTE_CHARS_PORTRAIT if portrait else NOTE_CHARS, tighten)
+def _wrap_note(text: str, portrait: bool, tighten: int = 0, lead: bool = False) -> str:
+    """stat の下の補足を、語の途中で折らずに改行する。
+
+    `lead=True` は**数字を伏せた1枚目**（`reveal_variants` の stat）。
+    そこだけ文字が大きい（縦 48px・横 40px）ので、**1行に入る字数も減ります。**
+    実効幅 ÷ font-size で 392/48 ≒ 8、1124/40 ≒ 28。
+    **ここを分けないと、`render()` が溢れを見つけて何段も詰めることになります。**
+    """
+    if lead:
+        limit = NOTE_LEAD_CHARS_PORTRAIT if portrait else NOTE_LEAD_CHARS
+    else:
+        limit = NOTE_CHARS_PORTRAIT if portrait else NOTE_CHARS
+    return _wrap(text, limit, tighten)
 
 
 def _wrap_label(text: str, portrait: bool, tighten: int = 0) -> str:
@@ -553,7 +572,15 @@ def _body_html(visual: dict, portrait: bool = False, tighten: int = 0) -> str:
         size = _stat_font_px(stat, portrait)
         parts.append(f'<div class="stat" style="font-size:{size}px">{_esc(stat)}</div>')
     if note:
-        parts.append(f'<div class="note">{_wrap_note(note, portrait, tighten)}</div>')
+        # 数字を伏せた1枚目（`reveal_variants` の stat）は、補足しか出るものが
+        # ありません。**そのままの大きさだと画面がすかすかに見える**ので、
+        # ここだけ主役として大きく出します。数字が出た2枚目では元の大きさに戻り、
+        # **主役が入れ替わったことが、そのまま見た目の変化になります。**
+        lead = bool(visual.get("note_lead")) and not stat
+        cls = "note lead" if lead else "note"
+        parts.append(
+            f'<div class="{cls}">{_wrap_note(note, portrait, tighten, lead)}</div>'
+        )
     return "".join(parts)
 
 
@@ -811,8 +838,41 @@ def reveal_variants(visual: dict, want: int) -> list[dict]:
     # 足すのは名前ではなく `2/2`（補足は文なので、名前として短く出せません）。
     if (visual.get("kind") or "stat").strip() == "stat":
         if visual.get("stat") and visual.get("note"):
+            # **向きを逆にしました**（2026-08-15 22:0x。**実測で決めています**）。
+            #
+            # ここは長く「数字を先に出し、補足をあとから足す」でした。
+            # `scripts/bake_slides.py` で実物を測ったら、**その2枚は
+            # 画面の 7.06% しか塗り替えていません。** 数字も見出しも式も同じで、
+            # 増えるのは 21字 の注記1行だけ。しかも変わって見えた 7% の中身は
+            # **`.body` が中央寄せなので、注記が入ったぶん数字が上へずれた**ぶんです。
+            # **情報は増えず、位置だけ動いていました。**
+            #
+            # `0MC_rlov7Ng` の独立評価3体が3体とも
+            # 「1コマ目と2コマ目が実質同じ絵（大見出しが据え置きで小さい注記が
+            # 足されるだけ）」と書いたのはこれです（**通算4回目の持ち越し**）。
+            #
+            # **画素のしきい値では捕まりません。** 同じ本で、棒が1本ふえる
+            # 本物の段階表示が **6.02%** でした。**偽物 7.06% > 本物 6.02%** で
+            # 順序が逆転しているので、`NEAR_DUPE_RATIO` をどこに置いても
+            # 「偽物だけ落として本物を通す」線は引けません（`verify.py` の同名の定数）。
+            #
+            # **だから、いちばん大きい要素そのものを動かします。** 前提を先に出し、
+            # **数字を後から出す。** 画面の主役が「無い→ある」に変わるので、
+            # これ以上大きい変化はありません。読み上げとも合います ——
+            # 実物の1文目は「50万の昇給。手取りは35万9318円だけ。」で、
+            # **数字は後半の文に来ます。**
+            #
+            # ついでに、同じ回の独立評価が3体中2体で言った
+            # 「**前提が数字より後ろにあり、金額を見ている最中は検証できない**」も
+            # ここで裏返ります。前提が先に出るので。
+            #
+            # **危ないところ**（承知のうえで採っています）: 読み上げが1文目の
+            # **前半で**数字を言う本では、0.5〜1.5秒だけ画面に数字が無い状態になります。
+            # 音と画がずれるのはここだけで、**逆側（同じ絵が2回）は毎本起きていました。**
             first = dict(visual)
-            first["note"] = ""
+            first["stat"] = ""
+            first["formula"] = ""
+            first["note_lead"] = True
             second = dict(visual)
             second["headline"] = _reveal_headline(
                 visual.get("headline", ""), "", step=2, total=2
