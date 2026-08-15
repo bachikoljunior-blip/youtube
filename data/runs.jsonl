@@ -25,3 +25,5 @@
 {"at": "2026-08-15T13:07:00+09:00", "session": "session_01LLoMHVnDyzCD1JU2iMhurs", "kind": "ship", "what": "verdict: 長尺は「押されていない」ではなく「載っていない」と確定（インプレッション76/56・ホーム面ゼロ）→ 題の仮説を前倒しで外れに / fix: critique_queue.py で独立評価の材料がコンテナと一緒に消える穴を塞いだ"}
 {"at": "2026-08-15T13:10:08+09:00", "session": "session_017PmZdYdhAXhjB31DswWfoy", "kind": "start"}
 {"at": "2026-08-15T13:36:12+09:00", "session": "session_017PmZdYdhAXhjB31DswWfoy", "kind": "ship", "what": "fix: 親子の同時起動を塞いだ(trigger_parent (3)に生死判定・trigger_main に自衛)／script_writer のショート規則の自己矛盾(62文字↔1〜2秒・ROLE未format・計算値0〜2)／M13ゲートが自分を検証できない作りだったので較正期間へ／upload: s-kojo-4 (NHKylqsNfTw) を 8/16 11:00 に予約"}
+{"at": "2026-08-15T14:07:11+09:00", "session": "session_011yzJvVEYhQto91XgnLqZXL", "kind": "start"}
+{"at": "2026-08-15T14:07:44+09:00", "session": "session_011yzJvVEYhQto91XgnLqZXL", "kind": "ship", "what": "fix: 待ちをやめた。子が終わる前に自分で次を立てる。二重起動はタグ+created_at古いほうが勝つで塞ぎ、枠allowed時のみ自走。実測48%の空転を閉じた"}
