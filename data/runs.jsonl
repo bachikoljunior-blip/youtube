@@ -124,3 +124,4 @@
 {"at": "2026-08-16T07:51:37+09:00", "session": "session_012e5C7kCuVi2AWaBWvHHmEW", "kind": "ship", "what": "fix: 親が同じ依頼を毎時くり返していた欠陥を塞いだ（FOR_OWNER.md に1時間の「窓」を導入。scripts/for_owner.py 新設、trigger_parent.md (1) 書き換え）"}
 {"at": "2026-08-16T08:10:49+09:00", "session": "session_01PrWYQuAgYJ5FxmrJLjoFRz", "kind": "start"}
 {"at": "2026-08-16T08:21:40+09:00", "session": "session_01PrWYQuAgYJ5FxmrJLjoFRz", "kind": "ship", "what": "fix: 「公開されないまま止まっている」警告が12件まで育って腐っていた（当たり0件）。理由を手書きの withheld.yaml でなく dupes.why_stranded に出させ、相手が見つからない本だけ鳴らす形にした"}
+{"at": "2026-08-16T08:32:44+09:00", "session": "session_01PrWYQuAgYJ5FxmrJLjoFRz", "kind": "ship", "what": "fix: アナリティクスの節が出力の真ん中にあり、head/tail で読む子に丸ごと読み飛ばされていた（この回が実際に落とした）。目標に直結する4行を末尾に固定した"}

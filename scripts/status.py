@@ -946,7 +946,73 @@ def main(days: int = 7) -> int:
                       "（そちらも実測 0.021% で足りていない）")
     except Exception as exc:
         print(f"  [!] 実測の登録率が出せません: {str(exc)[:120]}")
+
+    _print_analytics_recap()
     return 0
+
+
+def _print_analytics_recap() -> None:
+    """**アナリティクスの要点を、出力のいちばん最後に置き直す**（2026-08-16）。
+
+    ## なぜ末尾なのか（**この回のオーナー指摘が理由です**）
+
+    手順 `docs/trigger_main.md` §3 は
+    **「`status.py` が出すものに全部目を通すこと」**と書いてあります。
+    ところがこの出力は **250行**あり、子は毎回 `head` と `tail` で拾います。
+    **アナリティクスの節（流入経路・維持・日次・視聴位置）はちょうど真ん中**にあり、
+    8/16 08:1x の回は `head -70` / `sed 70,140p` / `tail -120` で読んで、
+    **その隙間に丸ごと落としました。** オーナーに
+    「アナリティクスから分析しないのはなぜ？」と聞かれて気づいています。
+
+    **「全部読め」は、覚えていれば守れる規則です。だから守られません。**
+    同じ回に直した `withheld.yaml` の欠陥と**同じ型**なので、同じ直し方をします ——
+    **人に頼むのをやめて、構造で当てる。**
+
+    `tail` は必ず末尾に当たります。だから**目標に直結する数字だけ**を、
+    ここでもう一度出す。上の節は消していません（詳細はそちらにあります）。
+    **ここにあるのは「どれを見て決めるか」の1画面**です。
+
+    **足す条件**: 数字を1つ足すなら、**それで手が変わるものだけ**。
+    「見ておくとよい」で増やすと、この節も250行になって同じことが起きます。
+    """
+    try:
+        from src import scan as _scan
+        vals = (_scan._previous() or {}).get("values", {})
+        if not vals:
+            return
+        v = vals.get("合計.views") or 0
+        if not v:
+            return
+
+        print("\n=== アナリティクスの要点（**この節は末尾に固定**）===")
+        print("  上の各節の再掲です。`tail` で拾っても落ちないように置いてあります。")
+
+        eng = vals.get("合計.engagedViews") or 0
+        print(f"  **engaged {eng / v * 100:.1f}%**（{eng} / {v}）"
+              "  ← 配信の駆動輪。維持率・尺・平均視聴秒は再生数と無関係")
+
+        shorts_feed = vals.get("insightPlaybackLocationType.SHORTS_FEED") or 0
+        watch = vals.get("insightPlaybackLocationType.WATCH") or 0
+        if shorts_feed or watch:
+            print(f"  **視聴ページ {watch}再生（{watch / v * 100:.2f}%）**"
+                  f" / ショートのフィード {shorts_feed}"
+                  "  ← 説明欄・再生リスト・長尺への導線は**読まれていません**")
+
+        sh = vals.get("合計.shares") or 0
+        cm = vals.get("合計.comments") or 0
+        sv = vals.get("合計.videosAddedToPlaylists") or 0
+        print(f"  共有 {sh} / コメント {cm} / 保存 {sv}（{v}再生に対して）"
+              "  ← **動画が視聴者に何も問いかけていない**")
+
+        red = vals.get("合計.redViews") or 0
+        if red:
+            print(f"  Premium 再生 {red}（{red / v * 100:.0f}%）"
+                  "  ← RPM の内訳が広告だけではないことの実測")
+
+        print("  **この4行で手が変わらないなら、変えるのは手ではなく台帳のほう**"
+              "（`docs/MEANS.md`）。")
+    except Exception as exc:
+        print(f"\n=== アナリティクスの要点 ===\n  [!] 出せません: {str(exc)[:100]}")
 
 
 if __name__ == "__main__":
