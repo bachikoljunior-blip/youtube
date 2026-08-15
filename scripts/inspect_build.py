@@ -119,6 +119,43 @@ def main(topic: str, count: int = 8, with_thumb: bool = False) -> int:
                 sheet.paste(s, (x, y))
                 x += CELL_W
             y += row_h[r]
+        # **余った枠を「動画の最後のコマ」と読ませないこと**（2026-08-16 に実測して直した）。
+        #
+        # 3列に並べるので、枚数が3の倍数でないと**最後の行に余りが出ます。**
+        # 余った枠は `Image.new` の地の色（20,20,24）のまま残るので、
+        # **ほぼ真っ黒な、平らな1枚**に見えます。
+        #
+        # 実測（`8PMLfjjCe4w`・タイル8枚 → 3×3 で1枠余り）: 右下の枠の輝度が
+        # **extrema (20,20)** ＝ 完全に平ら。**画像として地の色そのもの**でした。
+        #
+        # これを独立評価の3体が **「最後のコマが空（真っ黒）で終わる」** と読み、
+        # **点を引いていました**（8/16 03:0x で2体、この回で2体。計4体）。
+        # 前の回の申し送りは、これを**生成側の欠陥**として
+        # 「問いに対する答えの画面が用意されていない」と書いています ——
+        # **誤診です。** `slides_plan.json` を見ると最後のコマは問いかけの絵で、
+        # **空の枠は1枚もありません。** 直しに行けば、無い穴を埋めることになりました。
+        #
+        # **計器がうそをついていたので、計器を直します。** 余りには
+        # 「動画のコマではない」と書き込む。**地の色のままにしないこと。**
+        blanks = rows * COLS - len(scaled)
+        if blanks:
+            from PIL import ImageDraw
+
+            draw = ImageDraw.Draw(sheet)
+            top = sum(row_h[:-1])
+            for i in range(blanks):
+                x0 = CELL_W * (COLS - blanks + i)
+                box = (x0, top, x0 + CELL_W - 1, top + row_h[-1] - 1)
+                # 地の色と混ざらない色で塗り、斜線と文字を置く
+                draw.rectangle(box, fill=(96, 32, 32), outline=(220, 180, 180), width=6)
+                draw.line((x0, top, x0 + CELL_W, top + row_h[-1]),
+                          fill=(220, 180, 180), width=4)
+                draw.line((x0, top + row_h[-1], x0 + CELL_W, top),
+                          fill=(220, 180, 180), width=4)
+                draw.text((x0 + 24, top + 24),
+                          "この枠は動画のコマではありません\n"
+                          "（3列に並べた余り。動画はここで終わっていません）",
+                          fill=(255, 240, 240))
 
         out = work / "inspect.jpg"
         sheet.save(out, "JPEG", quality=88, optimize=True)
