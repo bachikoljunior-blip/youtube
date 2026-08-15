@@ -16,3 +16,4 @@
 {"at": "2026-08-15T08:42:53+09:00", "session": "session_01MVSsBLCAnjcmTkw2X7o2cd", "kind": "ship", "what": "fix: 恒久指示9件の枠組みを外して目標だけにした／子の最低ライン（ship印＋Stopフック）／親の出力をFOR_OWNER.mdだけに絞った"}
 {"at": "2026-08-15T08:52:23+09:00", "session": "session_01MVSsBLCAnjcmTkw2X7o2cd", "kind": "ship", "what": "upload: s-nenkin-2 (sbm6RwDmxAs) を 8/15 21:00 JST に予約。1日2本目の n=2 サンプル"}
 {"at": "2026-08-15T09:03:15+09:00", "session": "session_01MVSsBLCAnjcmTkw2X7o2cd", "kind": "ship", "what": "means/fix: Reporting API の channel_reach_basic_a1 を発見してジョブ作成＋scripts/reach.py（インプレッション/CTR を自分で取る道）。親を質疑応答窓口に。間隔を毎時へ戻す"}
+{"at": "2026-08-15T09:19:12+09:00", "session": "session_01MVSsBLCAnjcmTkw2X7o2cd", "kind": "ship", "what": "fix: 独立評価3体×3周を実施。s-nenkin-2 は中央値3で削除、s-nenkin-3 は 4→5 まで直したが基準未達で保留。残る指摘は形式（冒頭1.5秒・静止スライド）と特定"}
