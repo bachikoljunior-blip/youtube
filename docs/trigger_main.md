@@ -180,6 +180,34 @@ PENDING / RUNNING / IDLE があるか。いたら `created_at` を比べて、
 **入れずに `status.py` を叩くと `ModuleNotFoundError: googleapiclient` で落ちます**
 （8/10 の1回目がそれ）。3〜4分かかるので、**タイムアウトを長めに取ること。**
 
+#### そのあと、**外に出られるかを確かめること**（2026-08-15 21:4x に足した）
+
+    python -m src.netcerts     # 数秒。API を叩かないので枠を食わない
+
+**ここには「依存が入るか」しか無く、「外に出られるか」が1つもありませんでした。**
+8/15 21:4x の回は、そのまま `batch_build --count 8` に入って **0/8** を踏んでいます。
+
+    ssl.SSLCertVerificationError: certificate verify failed:
+    unable to get local issuer certificate
+
+**`curl` は Google のホスト全部に通ります。** 環境が立てている
+`SSL_CERT_FILE` / `REQUESTS_CA_BUNDLE`（`/root/.ccr/ca-bundle.crt`・証明書24枚）に
+代理サーバの CA が入っておらず、**`curl` はその変数を見ないので成功し、
+Python だけが死ぬ**という形で出ます。**いちばん読み違えやすい壊れ方**で、
+その回は最初「作る側の不具合」と読みかけました。
+
+直し（`src/netcerts.py`）は `src/__init__.py` から自動で掛かるので、**普通は何も要りません。**
+上の1行は**掛かっていることを目で見るため**です。落ちていたら、その回は
+**生成に入る前に**直すこと（生成を1本捨ててから気づくと10分損します）。
+
+#### **`batch_build` が「全滅」したら、テーマ側を疑わないこと**（同日）
+
+**0/N は環境側の合図です。** 1本ずつ理由が違うなら中身の話ですが、
+**全部落ちるのは共通の土台が壊れています。** ログを全部読む前に、
+まず1本だけ単体で走らせて理由を出すこと（`--jobs 1` 相当）。
+
+    python -m src.pipeline --topic <ID> --dry-run --short
+
 ## 2.7 **前の回の申し送りを受け取る**（2026-08-15 に足した。**§3 より先**）
 
     python /home/user/youtube/scripts/retro.py

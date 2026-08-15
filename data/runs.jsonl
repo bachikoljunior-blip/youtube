@@ -64,3 +64,5 @@
 {"at": "2026-08-15T20:11:10+09:00", "session": "session_01AvwxjiBJ8QqgxBFHvC5nag", "kind": "ship", "what": "upload: c6aVwaF08-I（傷病手当金 40歳以上の住民税込み手元比46.8%）を 2026-09-01 15:00 に予約。M14 の窓外"}
 {"at": "2026-08-15T20:29:40+09:00", "session": "session_01Uo6kT6yQiyiLcFTvRxvHJT", "kind": "ship", "what": "fix: 週枠の速さを測る目盛り(quota.py --pace)を作り、1周の下限31分を門(sibling_check 終了コード5)に入れた"}
 {"at": "2026-08-15T21:16:33+09:00", "session": "session_01ToFh9w44itqQz5V7qYL3Qf", "kind": "start"}
+{"at": "2026-08-15T21:32:10+09:00", "session": "session_01ToFh9w44itqQz5V7qYL3Qf", "kind": "ship", "what": "fix: Python だけが TLS 検証で落ちていた（環境が立てる /root/.ccr/ca-bundle.crt に代理サーバの CA が無く証明書24枚。curl は SSL_CERT_FILE を見ないので通り、Python の API 呼び出しだけが死ぬ形で出ていた）→ src/netcerts.py で /etc/ssl/certs と繋いだ114枚を作り src/__init__.py で差し替え（httplib2 は import 時に焼くので、そこが唯一の置き場所）。検証は切らない。tests 85→98"}
+{"at": "2026-08-15T21:32:17+09:00", "session": "session_01ToFh9w44itqQz5V7qYL3Qf", "kind": "ship", "what": "means: 在庫の天井（topic_forge の未使用の節が 0件）を src/calc/souzoku.py で開けた。相続税を法定相続分課税方式のとおりに最後まで計算＝54→59節・pick(8) が 7→8件。一次相続と二次相続の合計はどこにも表になっておらず、3億円・子2人で『全部配偶者に寄せる』が4904万3334円高い。topic_forge で5件をテーマ在庫へ"}
