@@ -127,3 +127,28 @@ def test_subject():
 
 if __name__ == "__main__":
     sys.exit(main())
+
+
+def test_calc_を足したら_SUBJECT_WORDS_にも足していること():
+    """**足し忘れは、通算4件起きています**（taishoku・shobyo・souzoku・ikuji）。
+
+    `_subject_missing` は語を持たない calc を**黙って通します**。
+    その設計は変えません（投稿が止まるほうが損なので正しい）。
+    ただし、**素通りしていることに誰も気づけない**のが問題でした。
+    ここで数えれば、calc を足した回の `pytest` が落ちます。
+    """
+    import re
+    from pathlib import Path
+
+    from src.script_writer import SUBJECT_WORDS
+
+    calc_dir = Path(__file__).resolve().parent.parent / "src" / "calc"
+    modules = {p.stem for p in calc_dir.glob("*.py")
+               if not p.stem.startswith("_")}
+    missing = sorted(modules - set(SUBJECT_WORDS))
+    assert not missing, (
+        f"src/calc/ にあるのに SUBJECT_WORDS に無い: {missing}。"
+        "冒頭で主語が立たない動画が、検査を素通りして出ます")
+
+    stale = sorted(set(SUBJECT_WORDS) - modules)
+    assert not stale, f"SUBJECT_WORDS にあるのに src/calc/ に無い: {stale}"
