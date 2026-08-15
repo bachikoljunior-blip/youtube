@@ -560,13 +560,68 @@ def _check_short_opening(script: dict | None) -> list[str]:
     segments = script.get("segments") or []
     if not segments:
         return ["台本にセグメントがない"]
+    problems = []
     kind = (segments[0].get("visual") or {}).get("kind")
     if kind != "stat":
-        return [
+        problems.append(
             f"ショートの1枚目が {kind} になっている（stat であること）。"
             "最初の1画面で離脱が決まるので、冒頭は大きい数字1つにする"
-        ]
-    return []
+        )
+    problems += _check_opening_fragment(segments[0].get("narration") or "")
+    return problems
+
+
+# 冒頭で「中身の無い言い残し」とみなす文の長さ（句点を除く）。
+# 「動きます」は4字。実際に出たのはこれ（2026-08-15）。
+OPENING_FRAGMENT_CHARS = 6
+
+
+def _check_opening_fragment(narration: str) -> list[str]:
+    """冒頭に、数字も語も持たない**短い言い残しの文**が付いていないか。
+
+    2026-08-15、`s-tedori-2` の冒頭が
+
+        料率15なら35万9318円。動きます。
+
+    で出ました。**「動きます。」は人が言う日本語ではありません。**
+    前の文の述語だけが千切れて残った形です。
+
+    **どの機械検査も通りました。** `_check_short_opening` は
+    「1枚目が stat か」しか見ておらず、`_check_headline_from_calc` は
+    「その数字が計算から出ているか」しか見ていません。
+    **どちらも、文として読めるかを見ていません。**
+
+    冒頭は 0.9〜2秒 で、離脱は 4.7〜5.7秒 に来ます（`src/script_writer.py` の実測）。
+    **いちばん効く場所に、意味の無い1文を置いていました。**
+
+    **冒頭のセグメントだけを見ます。** 途中の文にも同じことは起こりえますが、
+    ここを広く取ると正しい言い切り（「年収500万円。」のような体言止め）まで
+    落として**投稿を止めます**。止めるのが最大の損失なので、狭く取ること。
+    数字・英数字・カタカナのどれかを含む文は、内容があるとみなして通します。
+
+    **「短くて数字が無い」だけでは足りませんでした**（この回に実際に誤爆した）。
+    投稿済み `7b2-Z6Jw5DQ` の冒頭「月給30万で年6万2500円。休日次第です」の
+    **「休日次第です」を落としました。これは千切れた述語ではなく、中身のある節です。**
+    分けているのは漢字の数です。**言い残しは述語だけなので漢字が1字**
+    （動きます・下がります・戻ります・ご覧ください）。
+    中身のある短い節は名詞を持つので2字以上になります（休日次第です・税は別です）。
+    """
+    sentences = [s for s in re.split(r"(?<=[。！？])", narration) if s.strip()]
+    if len(sentences) < 2:
+        return []
+    bad = [
+        s for s in sentences
+        if len(s.rstrip("。！？")) <= OPENING_FRAGMENT_CHARS
+        and not re.search(r"[0-9０-９A-Za-z゠-ヿ]", s)
+        and len(re.findall(r"[一-鿿]", s)) <= 1
+    ]
+    if not bad:
+        return []
+    return [
+        f"冒頭に中身の無い短い文がある（『{bad[0]}』）。"
+        "前の文の述語だけが千切れて残った形で、人が言う日本語になっていない。"
+        "**冒頭は離脱がいちばん多い場所です。**1文で言い切ること"
+    ]
 
 
 # 「見た目には変わっていない」と言える差の上限。
