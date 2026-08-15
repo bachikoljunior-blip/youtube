@@ -19,7 +19,7 @@ import re
 import subprocess
 from pathlib import Path
 
-from .subtitles import _NUM_TOKEN
+from .subtitles import _NUM_TOKEN, _is_katakana
 from .util import require, run
 
 # サムネイルの上限（YouTube）と、いつも作っている寸法
@@ -122,6 +122,22 @@ def _check_subtitles(work: Path) -> list[str]:
     if split_nums:
         a, b = split_nums[0]
         problems.append(f"数字の途中で改行している箇所が {len(split_nums)} 件（『{a}』→『{b}』）")
+
+    # **カタカナの語の途中でも割れる。** 2026-08-15、
+    # 『残る割合は73.5パーセン』→『トから70.3パーセントへ』が出ました。
+    # `subtitles._best_cut` は「カタカナの連続の途中では割らない」と書いてあるのに、
+    # **良い切れ目が1つも無いときの最後の1行が、その規則を踏み越えていました。**
+    # 直しても、ここで見ていなければ次に同じ形で戻ってきます
+    # （数字の割れは見ていたのに、カタカナだけ抜けていた）。
+    split_kata = [
+        (a, b) for a, b, same in zip(lines, lines[1:], same_sentence)
+        if same and a and b and _is_katakana(a[-1]) and _is_katakana(b[0])
+    ]
+    if split_kata:
+        a, b = split_kata[0]
+        problems.append(
+            f"カタカナの語の途中で改行している箇所が {len(split_kata)} 件（『{a}』→『{b}』）"
+        )
     return problems
 
 

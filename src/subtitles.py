@@ -228,7 +228,24 @@ def _best_cut(piece: str, limit: int, strict: bool = False) -> int:
     cut = limit
     while cut > floor and not ok(cut):
         cut -= 1
-    return cut if ok(cut) else limit
+    if ok(cut):
+        return cut
+    # **floor まで戻っても無いなら、floor より手前も見る。**
+    # 2026-08-15、『残る割合は73.5パーセントから70.3パーセントへ』が
+    # **『残る割合は73.5パーセン』／『トから70.3パーセントへ』**と割れました
+    # （独立評価の3体のうち2体と、目視の1体が別々に指摘）。
+    # limit 13 に対して floor は 6 で、**6〜13 のどこにも良い切れ目がありません**
+    #  6〜8 は数字の中、9 は数字と単位のあいだ、10〜13 はカタカナの中。
+    # そこで `ok()` を捨てて limit で割っていました。**「カタカナの途中では
+    # 割らない」と書いた規則を、最後の1行が黙って踏み越えていた。**
+    #
+    # 5文字目（『残る割合は』／『73.5…』）は、かな→数字で規則2そのものです。
+    # **短い行が1本できるだけで、読めない行は消えます。**
+    # 短すぎる行は、この後の「短すぎる行を隣に寄せる」処理が拾います。
+    for cut in range(floor - 1, 1, -1):
+        if ok(cut):
+            return cut
+    return limit
 
 
 def _chunk(narration: str, limit: int = MAX_LINE_CHARS) -> list[str]:
