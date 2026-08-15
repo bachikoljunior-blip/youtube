@@ -84,9 +84,21 @@ WINDOW_SPAN = {"five_hour": timedelta(hours=5), "seven_day": timedelta(days=7)}
 # オーナーが手で測った値をここに積み、**誕生数で割って目盛りにする。**
 USAGE_LOG = ROOT / "data" / "usage.jsonl"
 
-# 週枠を均して使い切る速さ。**これが「速すぎる／遅すぎる」の基準線。**
+# 週枠を均して使い切る速さ。**枠の頭から見たときの基準線。**
 WEEK_HOURS = 168.0
 SUSTAIN_PCT_PER_HOUR = 100.0 / WEEK_HOURS      # ＝ 0.595 %/時
+
+# **判断に使うのはこちらではなく「残りを残り時間で割った速さ」（2026-08-15 夜）。**
+# 上の 0.595 は「いま 0% から始めるなら」の値で、**すでに使ったぶんを見ていない。**
+# 8/15 23:33 の時点で 16.6時間・13% ＝ 基準線（9.9%）を 3.1% 追い越しており、
+# **この先に許される速さは 0.595 ではなく (100-13)/151.45 = 0.574 %/時。**
+# 先行しているのに 0.595 を基準にすると、**追い越したぶんを取り返せないまま
+# 「ほぼ基準どおり」と読めてしまう。** 遅れているときは逆に締めすぎる。
+
+# %は整数でしか読めない（オーナーが画面を見て報告する）。1点あたり ±0.5%、
+# **2点の差では ±1.0%。** 区間の Δ% がこの何倍あるかが、区間推定の信頼度そのもの。
+# Δ% がこの値に達したら区間だけで決める。足りないぶんは通算のほうへ寄せる。
+QUANT_FULL_PCT = 8.0
 
 # 間隔の下限に置く上下の歯止め。**計器が壊れても鎖を止めない／暴走させない。**
 FLOOR_MIN_CLAMP, FLOOR_MAX_CLAMP = 10.0, 90.0
@@ -360,7 +372,14 @@ def _births_between(rows: list[dict], start: datetime, end: datetime) -> int:
 
 
 def pace(now: datetime | None = None) -> dict | None:
-    """いまの速さと、持続できる1周の間隔。目盛りが無ければ None。"""
+    """いまの速さと、持続できる1周の間隔。目盛りが無ければ None。
+
+    **2点以上あれば「区間」を見る**（2026-08-15 夜）。枠の頭からの通算は、
+    鎖が止まっていた時間と、軽い回と重い回を全部ならしてしまう。
+    **これから先を決めるのに要るのは、直近の1周がいくらか**のほう。
+    ただし%は整数でしか読めないので、区間が短いと差の誤差が大きい
+    （`QUANT_FULL_PCT`）。**信頼できるぶんだけ区間へ寄せ、残りは通算に置く。**
+    """
     now = now or datetime.now(timezone.utc)
     anchors = _anchors()
     if not anchors:
@@ -378,22 +397,66 @@ def pace(now: datetime | None = None) -> dict | None:
     rows = _load()
     births = _births_between(rows, start, at)
 
-    rate = used / hours                       # %/時（実測）
-    per_lap = used / births if births else None
+    rate = used / hours                       # %/時（枠の頭からの通算）
+    per_lap_cum = used / births if births else None
+
+    # --- 直近の区間（同じ枠の中の、1つ前の点との差） --------------------
+    seg = None
+    for prev in anchors[1:]:
+        p_at, p_reset = _parse_iso(prev.get("fetched_at")), _parse_iso(prev.get("resets_at_iso"))
+        if not p_at or p_reset != resets or p_at >= at:
+            continue                          # 別の枠／同時刻の点は使えない
+        s_hours = (at - p_at).total_seconds() / 3600
+        s_used = used - float(prev["used_percent"])
+        s_births = _births_between(rows, p_at, at)
+        if s_hours <= 0 or s_used < 0:
+            continue
+        seg = {
+            "from_at": p_at, "from_used": float(prev["used_percent"]),
+            "hours": s_hours, "used": s_used, "births": s_births,
+            "rate": s_used / s_hours,
+            "per_lap": (s_used / s_births) if s_births else None,
+            # %が整数 ＝ 2点の差は ±1.0%。区間の見立てが取りうる幅。
+            "rate_lo": max(0.0, s_used - 1.0) / s_hours,
+            "rate_hi": (s_used + 1.0) / s_hours,
+        }
+        break
+
+    # --- この先に許される速さ（残りを残り時間で割る） --------------------
+    # **ここが基準線。** 0.595（枠の頭から見た値）ではない。
+    left_hours = (resets - at).total_seconds() / 3600
+    forward_rate = ((100.0 - used) / left_hours) if left_hours > 0 else 0.0
+
+    # --- 1周いくらか（区間へ寄せる。寄せる量は Δ% の大きさで決める） -----
+    weight, per_lap = 0.0, per_lap_cum
+    if seg and seg["per_lap"] and per_lap_cum:
+        weight = max(0.0, min(1.0, seg["used"] / QUANT_FULL_PCT))
+        per_lap = weight * seg["per_lap"] + (1.0 - weight) * per_lap_cum
+
     floor = None
     if per_lap:
-        floor = max(FLOOR_MIN_CLAMP,
-                    min(FLOOR_MAX_CLAMP, per_lap / SUSTAIN_PCT_PER_HOUR * 60))
+        if forward_rate <= 0:
+            # **枠を使い切っている。** ここで None（＝待たない）を返すと、
+            # 閉じた枠に鎖を突っ込み続けることになる。天井まで空ける。
+            floor = FLOOR_MAX_CLAMP
+        else:
+            floor = max(FLOOR_MIN_CLAMP,
+                        min(FLOOR_MAX_CLAMP, per_lap / forward_rate * 60))
+
     exhaust = start + timedelta(hours=100.0 / rate) if rate > 0 else None
     return {
         "anchor_at": at, "anchor_used": used, "anchor_source": a.get("source", ""),
         "window_start": start, "window_reset": resets,
         "hours": hours, "births": births,
-        "rate": rate, "per_lap": per_lap, "floor_min": floor,
+        "rate": rate, "per_lap": per_lap, "per_lap_cum": per_lap_cum,
+        "seg": seg, "seg_weight": weight,
+        "forward_rate": forward_rate, "left_hours": left_hours,
+        "floor_min": floor,
         "exhaust_at": exhaust,
         "dead_hours": ((resets - exhaust).total_seconds() / 3600
                        if exhaust and exhaust < resets else 0.0),
-        "over": rate / SUSTAIN_PCT_PER_HOUR - 1.0,
+        "over": (rate / forward_rate - 1.0) if forward_rate > 0 else 0.0,
+        "over_flat": rate / SUSTAIN_PCT_PER_HOUR - 1.0,
         "stale_hours": (now - at).total_seconds() / 3600,
     }
 
@@ -427,11 +490,31 @@ def pace_report(now: datetime | None = None) -> None:
               "新しい%が入るまで、下の数字は古い前提で動いています")
     print(f"    枠: {p['window_start'].astimezone(JST):%m/%d %H:%M} → "
           f"{p['window_reset'].astimezone(JST):%m/%d %H:%M} JST")
-    print(f"    実測 {p['rate']:.3f} %/時   持続できる速さ "
-          f"{SUSTAIN_PCT_PER_HOUR:.3f} %/時   → **{p['over']:+.0%}**")
+    print(f"    通算 {p['rate']:.3f} %/時（{p['hours']:.1f}時間で {p['anchor_used']:.0f}%）")
+    seg = p["seg"]
+    if seg:
+        print(f"    直近の区間 {seg['from_at'].astimezone(JST):%m/%d %H:%M}→"
+              f"{p['anchor_at'].astimezone(JST):%H:%M}: "
+              f"{seg['used']:+.0f}% / {seg['hours']:.2f}時間 = "
+              f"**{seg['rate']:.3f} %/時**")
+        print(f"      **%は整数でしか読めないので差は ±1%** → 区間の幅は "
+              f"[{seg['rate_lo']:.3f}, {seg['rate_hi']:.3f}] %/時。"
+              f"{'**この幅では通算と区別がつきません**' if seg['rate_lo'] <= p['rate'] <= seg['rate_hi'] else '通算とは別の値です'}")
+    else:
+        print("    **区間が引けません**（同じ枠の中に2点目がない）。通算だけで決めています")
+    print(f"    この先に許される速さ: **{p['forward_rate']:.3f} %/時**"
+          f"（残り {100 - p['anchor_used']:.0f}% ÷ 残り {p['left_hours']:.0f}時間）"
+          f"   → 通算は **{p['over']:+.0%}**")
+    print(f"      ＊枠の頭から見た 0.595 %/時ではなく、**すでに使ったぶんを引いた線**を"
+          f"基準にしています（追い越したぶんは取り返せない）")
     if p["births"]:
-        print(f"    {p['hours']:.1f}時間で誕生 {p['births']} 件 "
-              f"→ **1周 {p['per_lap']:.3f}%**")
+        if seg and seg["per_lap"]:
+            print(f"    1周いくらか: 通算 {p['per_lap_cum']:.3f}%（{p['births']}周）／"
+                  f"区間 {seg['per_lap']:.3f}%（{seg['births']}周）"
+                  f" → 区間に **{p['seg_weight']:.0%}** 寄せて **{p['per_lap']:.3f}%**")
+        else:
+            print(f"    {p['hours']:.1f}時間で誕生 {p['births']} 件 "
+                  f"→ **1周 {p['per_lap']:.3f}%**")
         print(f"    持続できる間隔（誕生から誕生）: **{p['floor_min']:.0f}分**")
     else:
         print("    **誕生を1件も数えられていません。**`quota.jsonl` が薄すぎます")

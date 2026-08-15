@@ -42,13 +42,27 @@ START = datetime(2026, 8, 14, 22, 0, tzinfo=UTC)
 ANCHOR_AT = "2026-08-15T20:12:00+09:00"
 
 
-def _write(tmp_path, used_percent, births, *, window="seven_day", anchor_at=ANCHOR_AT):
-    """%の点1つと、`births` 件の誕生を持つ計器を作る。"""
-    usage = tmp_path / "usage.jsonl"
-    usage.write_text(json.dumps({
+def _write(tmp_path, used_percent, births, *, window="seven_day", anchor_at=ANCHOR_AT,
+           extra_anchors=(), extra_births=()):
+    """%の点と、誕生を持つ計器を作る。
+
+    `births` は枠の頭から10分おきに並べる。`extra_anchors` は
+    `(fetched_at, used_percent[, window])` の並びで、2点目以降を足す。
+    `extra_births` は `(born_at, 件数)` の並びで、区間の中の誕生を足す。
+    """
+    lines = [json.dumps({
         "fetched_at": anchor_at, "window_id": window,
         "used_percent": used_percent, "resets_at_iso": RESET,
-    }) + "\n", encoding="utf-8")
+    })]
+    for spec in extra_anchors:
+        at, used = spec[0], spec[1]
+        win = spec[2] if len(spec) > 2 else "seven_day"
+        lines.append(json.dumps({
+            "fetched_at": at, "window_id": win,
+            "used_percent": used, "resets_at_iso": RESET,
+        }))
+    usage = tmp_path / "usage.jsonl"
+    usage.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
     rows = []
     for i in range(births):
@@ -57,6 +71,14 @@ def _write(tmp_path, used_percent, births, *, window="seven_day", anchor_at=ANCH
             "seen_at": born.isoformat(), "born_at": born.isoformat(),
             "session_id": f"session_{i:03d}", "tags": ["youtube-hourly"],
         })
+    for j, (at, count) in enumerate(extra_births):
+        base = datetime.fromisoformat(at)
+        for i in range(count):
+            born = base + timedelta(minutes=i)
+            rows.append({
+                "seen_at": born.isoformat(), "born_at": born.isoformat(),
+                "session_id": f"session_x{j}_{i:03d}", "tags": ["youtube-hourly"],
+            })
     log = tmp_path / "quota.jsonl"
     log.write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
 
@@ -80,12 +102,41 @@ def test_算術は実測を再現する(tmp_path):
     assert p["hours"] == pytest.approx(13.2, abs=0.05)
     assert p["rate"] == pytest.approx(0.758, abs=0.005)      # %/時
     assert p["per_lap"] == pytest.approx(0.303, abs=0.005)   # 1周いくら
-    assert p["over"] == pytest.approx(0.27, abs=0.02)        # +27%
-    assert p["floor_min"] == pytest.approx(30.5, abs=0.6)    # → 31分
+    assert p["over_flat"] == pytest.approx(0.27, abs=0.02)   # 枠の頭から見れば +27%
+    assert p["seg"] is None                                  # 点が1つ ＝ 区間は引けない
 
     # 100% は 8/20 19時ごろ。リセット（8/22 07:00）まで36時間死ぬ。
     assert p["exhaust_at"].astimezone(JST).strftime("%m/%d %H") == "08/20 19"
     assert p["dead_hours"] == pytest.approx(36, abs=1)
+
+
+def test_基準線は残りを残り時間で割ったもの(tmp_path):
+    """**すでに使ったぶんを引いてから割ること**（2026-08-15 夜に直した）。
+
+    枠の頭から見た 0.595 %/時 は「いま 0% から始めるなら」の値で、
+    **追い越したぶんを見ていない。** 13.2時間で 10% は基準線（7.9%）を
+    2.1% 追い越しており、**この先に許されるのは 0.595 ではなく 0.581 %/時。**
+    ここを直さないと、先行しているのに「ほぼ基準どおり」と読めてしまう。
+    """
+    _write(tmp_path, 10, 33)
+    p = quota.pace()
+    assert p["left_hours"] == pytest.approx(154.8, abs=0.1)
+    assert p["forward_rate"] == pytest.approx(90 / 154.8, abs=0.001)   # 0.581
+    assert p["forward_rate"] < quota.SUSTAIN_PCT_PER_HOUR              # 先行 → 厳しくなる
+    assert p["over"] == pytest.approx(0.304, abs=0.01)                 # +30%（+27% ではない）
+    assert p["floor_min"] == pytest.approx(31.3, abs=0.6)
+
+
+def test_遅れているときは基準線がゆるむ(tmp_path):
+    """**逆向きにも効くこと。** 締めるだけの仕掛けなら、いずれ枠を余らせる。
+
+    余らせるのは「安全」ではありません。**回せたはずの周を捨てています。**
+    """
+    _write(tmp_path, 4, 33)                    # 13.2時間で4% ＝ 基準線より遅い
+    p = quota.pace()
+    assert p["forward_rate"] > quota.SUSTAIN_PCT_PER_HOUR
+    assert p["over"] < 0
+    assert p["floor_min"] < 31                 # 遅れているぶん、詰めてよい
 
 
 def test_持続できる速さなら死なない(tmp_path):
@@ -100,6 +151,108 @@ def test_持続できる速さなら死なない(tmp_path):
     assert p["rate"] == pytest.approx(0.568, abs=0.005)
     assert p["over"] < 0                     # 持続線より遅い
     assert p["dead_hours"] == 0              # リセットまで届く
+
+
+# --------------------------------------------------------------------------
+# 2点目が入ってから（2026-08-15 23:33、オーナーの実測）
+# --------------------------------------------------------------------------
+
+SECOND_AT = "2026-08-15T23:33:00+09:00"
+
+
+def _two_point(tmp_path):
+    """実物と同じ形: 20:12 で10%（誕生33件）→ 23:33 で13%（区間に6件）。"""
+    return _write(tmp_path, 13, 33, anchor_at=SECOND_AT,
+                  extra_anchors=[(ANCHOR_AT, 10)],
+                  extra_births=[("2026-08-15T11:20:00+00:00", 6)])
+
+
+def test_2点目で区間が引ける(tmp_path):
+    """**通算は「ならした値」で、これから先を決めるには鈍い。**
+
+    枠の頭からの通算には、鎖が止まっていた3.8時間と、記録だけの軽い回が
+    全部ならして入っています。**次の1周がいくらかを言っていません。**
+    """
+    _two_point(tmp_path)
+    p = quota.pace()
+
+    assert p["rate"] == pytest.approx(0.785, abs=0.005)          # 通算
+    seg = p["seg"]
+    assert seg is not None
+    assert seg["used"] == pytest.approx(3.0)
+    assert seg["hours"] == pytest.approx(3.35, abs=0.02)
+    assert seg["rate"] == pytest.approx(0.896, abs=0.005)        # 区間
+    assert seg["births"] == 6
+    assert seg["per_lap"] == pytest.approx(0.500, abs=0.005)     # 1周は通算の1.5倍
+
+
+def test_区間の幅は通算を含む(tmp_path):
+    """**「区間のほうが速い」は、この2点からは言えません。**
+
+    オーナーが読めるのは整数の%だけなので、**2点の差は ±1%** です。
+    3% の差は [2%, 4%] のどこでもよく、区間の速さは [0.597, 1.194] %/時。
+    **通算 0.785 はその中に入っており、区別がつきません。**
+    ここを「速くなった」と読むと、無い変化を追いかけて間隔を動かし続けます。
+    """
+    _two_point(tmp_path)
+    seg = quota.pace()["seg"]
+
+    assert seg["rate_lo"] == pytest.approx(0.597, abs=0.005)
+    assert seg["rate_hi"] == pytest.approx(1.194, abs=0.005)
+    assert seg["rate_lo"] <= 0.785 <= seg["rate_hi"]     # 通算と区別がつかない
+
+
+def test_区間が短いほど通算へ寄せる(tmp_path):
+    """**細い区間に全部を賭けないこと。** Δ% が量子化幅（±1%）の何倍あるか
+    で寄せる量を決める。3% なら 3/8 ＝ 38% だけ区間へ。
+
+    全部を区間に賭けると、**1周ぶんの読み取り誤差で間隔が倍半分に振れます。**
+    """
+    _two_point(tmp_path)
+    p = quota.pace()
+
+    assert p["per_lap_cum"] == pytest.approx(13 / 39, abs=0.005)   # 0.333
+    assert p["seg_weight"] == pytest.approx(3.0 / quota.QUANT_FULL_PCT, abs=0.01)
+    assert p["per_lap"] == pytest.approx(0.396, abs=0.005)         # 0.333 と 0.500 の間
+    assert p["per_lap_cum"] < p["per_lap"] < p["seg"]["per_lap"]
+    assert p["floor_min"] == pytest.approx(41, abs=1)              # 31分 → 41分
+
+
+def test_区間が太れば区間だけで決める(tmp_path):
+    """Δ% が量子化幅に対して十分大きくなったら、通算はもう混ぜない。
+
+    **通算は古い区間を引きずるので、混ぜ続けると変化に追随できません。**
+    """
+    _write(tmp_path, 20, 33, anchor_at=SECOND_AT,
+           extra_anchors=[(ANCHOR_AT, 10)],
+           extra_births=[("2026-08-15T11:20:00+00:00", 6)])
+    p = quota.pace()
+    assert p["seg"]["used"] == pytest.approx(10.0)      # 8% を超えた
+    assert p["seg_weight"] == pytest.approx(1.0)
+    assert p["per_lap"] == pytest.approx(p["seg"]["per_lap"])
+
+
+def test_別の枠の点では区間を引かない(tmp_path):
+    """**リセットをまたいだ2点の差は、消費量ではありません。**
+
+    またいだ先で%は0へ戻るので、差を取ると符号ごと無意味になります。
+    """
+    _write(tmp_path, 13, 33, anchor_at=SECOND_AT,
+           extra_anchors=[(ANCHOR_AT, 10, "five_hour")])   # 5時間枠は拾わない
+    p = quota.pace()
+    assert p["seg"] is None
+    assert p["per_lap"] == pytest.approx(p["per_lap_cum"])
+
+
+def test_枠を使い切っていたら天井まで空ける(tmp_path):
+    """**閉じた枠に鎖を突っ込み続けないこと。**
+
+    ここで None（＝待たない）を返すと、`sibling_check` は素通りさせます。
+    """
+    _write(tmp_path, 100, 33)
+    p = quota.pace()
+    assert p["forward_rate"] == 0
+    assert p["floor_min"] == quota.FLOOR_MAX_CLAMP
 
 
 def test_目盛りが無ければ止めない(tmp_path):
