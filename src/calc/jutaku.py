@@ -48,6 +48,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from . import _checks
+
 ASSUMPTIONS = [
     "控除率は0.7パーセントで計算しています。令和4年に入居した分からの率です",
     "課税総所得金額は源泉徴収票の「課税される所得金額」です。年収ではありません",
@@ -130,16 +132,12 @@ def check_tables() -> None:
         if got != want:
             raise ValueError(f"課税所得{taxable:,}円の所得税が {got:,}円。速算表では {want:,}円")
 
-    # 境目をまたいで税額が飛ばない（速算表の控除額が正しければ連続する）
-    for cap, _, _ in BRACKETS[:-1]:
-        if income_tax(cap + 1) - income_tax(cap) > 100:
-            raise ValueError(f"課税所得{cap:,}円の前後で税額が飛んでいる。控除額の写し間違い")
-
-    # 課税所得が増えれば税額も増える
-    tax = [income_tax(t) for t in range(0, 20_000_000, 250_000)]
-    for a, b in zip(tax, tax[1:]):
-        if b < a:
-            raise ValueError("課税所得が増えたのに所得税額が減っている")
+    # 速算表の形・境目の連続・全体の向きは `_checks` にまとめてある
+    # （12本が同じものを別々に書いていた）。上の「手で解いた値」は残すこと ——
+    # あちらは**写し間違いそのもの**を捕まえていて、形の検査では代わりにならない。
+    _checks.bracket_table(BRACKETS, income_tax, name="所得税の速算表")
+    _checks.never_decreases(income_tax, range(0, 20_000_000, 250_000),
+                            "課税所得に対する所得税額")
 
     # 所得税が控除可能額を上回るなら、取りこぼしは出ない
     rich = compute(30_000_000, 20_000_000)

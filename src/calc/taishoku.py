@@ -45,6 +45,8 @@ from __future__ import annotations
 
 import math
 
+from . import _checks
+
 ASSUMPTIONS = [
     "勤続年数は1年未満を切り上げて数えています",
     "退職所得控除は、勤続20年までが1年あたり40万円、20年を超える部分が1年あたり70万円です",
@@ -88,15 +90,8 @@ def check_tables() -> None:
     if DEDUCTION_FLOOR != RATE_UNDER * 2:
         raise ValueError("控除の下限が2年分と一致していない（80万円）")
 
-    # 速算表が昇順で、境目で連続していること（不連続なら税額が飛ぶ＝表が壊れている）
-    edges = [e for e, _, _ in TAX_TABLE if e is not None]
-    if edges != sorted(edges):
-        raise ValueError("速算表が昇順に並んでいない")
-    for edge in edges:
-        below = income_tax_raw(edge)
-        above = income_tax_raw(edge + 1)
-        if not below <= above <= below + 1:
-            raise ValueError(f"速算表が{edge:,}円の境目で連続していない: {below} → {above}")
+    # 速算表の形と連続性は `_checks` にまとめてある（12本が同じものを書いていた）。
+    _checks.bracket_table(TAX_TABLE, income_tax_raw, name="所得税の速算表")
 
     # 控除の式の境目（20年ちょうど）で連続していること
     if deduction(20) != 8_000_000:
@@ -243,17 +238,18 @@ if __name__ == "__main__":
     check_tables()
     print("制度の値の検査: 通過")
 
+    # **行は5年とびで並んでいます。** 2026-08-15 の最初の版は、この列に
+    # 前の行との差そのものを出しながら見出しを「1年あたり」と書いていました
+    # （200万円/年に見える）。値は合っていて、嘘をついていたのは見出しです。
+    # `per_unit_steps` は見出しの単位で実際に割るので、同じ間違いは書けません。
+    LABEL = "1年あたりの伸び"
     print("\n=== 税金が1円もかからない退職金の上限（勤続年数べつ）===")
-    print(f"{'勤続年数':>8s} {'ここまで無税':>12s}  {'1年あたりの伸び'}")
-    prev = None
-    for r in free_line():
-        if prev:
-            span = r["years"] - prev["years"]
-            step = f"{(r['free'] - prev['free']) // span:,}円/年"
-        else:
-            step = "—"
-        print(f"{r['years']:6d}年 {r['free']:11,d}円  {step}")
-        prev = r
+    print(f"{'勤続年数':>8s} {'ここまで無税':>12s}  {LABEL}")
+    rows = free_line()
+    for r, step in zip(rows, _checks.per_unit_steps(
+            rows, "years", "free", label=LABEL, x_unit="年")):
+        cell = "—" if step is None else f"{step:,.0f}円/年"
+        print(f"{r['years']:6d}年 {r['free']:11,d}円  {cell}")
 
     print("\n=== 勤続20年の前後で、あと1年ぶんの手取りがどれだけ変わるか（退職金2000万円）===")
     print(f"{'勤続年数':>8s} {'控除':>11s} {'課税退職所得':>11s} {'税金合計':>10s} {'手取り':>12s} {'前年からの増え'}")

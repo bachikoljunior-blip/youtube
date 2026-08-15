@@ -40,6 +40,8 @@
 """
 from __future__ import annotations
 
+from . import _checks
+
 ASSUMPTIONS = [
     "法定相続人は配偶者と子だけとして計算しています",
     "基礎控除は3000万円に法定相続人1人あたり600万円を足した額です",
@@ -75,22 +77,8 @@ SPOUSE_SHARE = 0.5  # 配偶者と子が相続人のときの、配偶者の法�
 
 def check_tables() -> None:
     """制度の値と計算の向きを確かめる。**壊れた数字で台本を書かせない。**"""
-    caps = [c for c, _, _ in TAX_TABLE[:-1]]
-    if caps != sorted(caps):
-        raise ValueError("速算表の区分が昇順に並んでいない")
-    if TAX_TABLE[-1][0] is not None:
-        raise ValueError("速算表の最上段に上限が入っている")
-    rates = [r for _, r, _ in TAX_TABLE]
-    if rates != sorted(rates):
-        raise ValueError("速算表の税率が昇順に並んでいない")
-    subs = [s for _, _, s in TAX_TABLE]
-    if subs != sorted(subs):
-        raise ValueError("速算表の控除額が昇順に並んでいない")
-
-    # 区分の境目で税額が飛ばないこと（速算表の控除額は、そのために置かれている）
-    for cap, _, _ in TAX_TABLE[:-1]:
-        if abs(tax_of(cap) - tax_of(cap + 1)) > 1:
-            raise ValueError(f"速算表の境目 {cap:,} で税額が飛んでいる")
+    # 速算表の形と連続性は `_checks` にまとめてある（12本が同じものを書いていた）。
+    _checks.bracket_table(TAX_TABLE, tax_of, name="相続税の速算表")
 
     if BASE_DEDUCTION <= 0 or PER_HEIR_DEDUCTION <= 0:
         raise ValueError("基礎控除の値が正でない")

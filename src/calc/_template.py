@@ -1,0 +1,100 @@
+"""**新しい calc を書くときの、写して埋めるひな型。**
+
+    cp src/calc/_template.py src/calc/<名前>.py
+
+**動画の題材にはなりません。** `_` で始まるので `topic_forge.py` は拾わず、
+`PLACEHOLDER` が残っているあいだは `check_tables()` が必ず落ちます。
+**埋め忘れたまま台本を書かせる道はありません。**
+
+---
+
+## なぜこれがあるか
+
+calc を1本書くのに20分かかっていて、大半が `check_tables()` でした
+（`docs/JOURNAL.md` 2026-08-15 の §6 (a2) 見直し3。**6回持ち越し**）。
+在庫の律速は calc の本数なので（`docs/MEANS.md` M14）、ここが遅いと8本/日に乗れません。
+
+## 埋める順番（**この順が速い**）
+
+    1. 上の docstring —— 「一般の解説はここで止まる」を1行で書く。
+       **書けないなら、その題材はやめること。** 独自性はここで決まります
+    2. ASSUMPTIONS —— 前提と根拠。**画面と説明欄にそのまま出ます**
+    3. 制度の値 —— 条文か公表資料に当たって書く。**思い出しで書かない**
+    4. 計算 —— 値を返す関数。表は dict のリストで返す（図解がそのまま食える）
+    5. check_tables() —— 下の枠を埋める。**形は `_checks` が持っています**
+    6. __main__ —— `=== 見出し ===` の節に分けて印刷する。
+       **節が topic_forge のテーマ単位**なので、節を切るほど在庫が増えます
+
+## 書き終えたら、必ず1回実行して表を目で読むこと
+
+`check_tables()` が見ているのは**値**で、**見出しと値の対応は見ていません。**
+2026-08-15 に `taishoku.py` が5年とびの行に「1年あたり」と書いて素通りしました。
+1行ぶんの差を出す列は `_checks.per_unit_steps()` を通すこと（割り忘れができません）。
+"""
+from __future__ import annotations
+
+from . import _checks
+
+PLACEHOLDER = -1  # **埋めるまで check_tables() が落ちます。消さないこと**
+
+ASSUMPTIONS = [
+    "＜前提を1文ずつ。読み上げられるので、記号ではなく言葉で書く＞",
+    "＜率や上限は「〜パーセント」「〜円」と書き、適用条件を必ず添える＞",
+    "＜入れなかったものも1行書く。前提の置き方そのものが独自の視点＞",
+]
+
+# ---- 制度の値。**長く動いていないものだけをここに置く** ----------------
+RATE = PLACEHOLDER          # 例: 0.05（率は 0〜1 で。5 と書くと _checks.ratio が落ちる）
+CAP = PLACEHOLDER           # 例: 1_950_000
+
+# 速算表があるなら (区分の上限, 税率, 控除額)。最上段の上限は None
+TAX_TABLE: list[tuple[int | None, float, int]] = []
+
+
+def tax_of(base: float) -> float:
+    """速算表を引く。**表が無い題材ならこの関数ごと消すこと。**"""
+    for cap, rate, sub in TAX_TABLE:
+        if cap is None or base <= cap:
+            return base * rate - sub
+    raise ValueError(f"速算表に当たらない: {base}")
+
+
+def grid() -> list[dict]:
+    """図解の元になる表。**dict のリストで返すこと**（`src/visual` がそのまま食える）。"""
+    return []
+
+
+def check_tables() -> None:
+    """制度の値と計算の向きを確かめる。**壊れた数字で台本を書かせない。**
+
+    **形は `_checks` が持っています。値は条文を見て自分で書くこと。**
+    """
+    if PLACEHOLDER in (RATE, CAP):
+        raise _checks.TableError(
+            "_template.py のまま呼ばれています。制度の値を埋めること")
+
+    # 1. 法令が名指ししている値（`source` に条文名を書く。外れたとき迷わないため）
+    _checks.statutory(RATE, 0.05, "＜値の名前＞", source="＜条文・公表資料＞")
+    _checks.ratio(RATE, "＜率の名前＞")
+
+    # 2. 速算表があるなら、形と境目の連続はこの1行で済む
+    if TAX_TABLE:
+        _checks.bracket_table(TAX_TABLE, tax_of, name="＜表の名前＞")
+
+    # 3. 計算の向き（**この計算の主題そのものを書くこと。**汎用の検査では守れない）
+    # _checks.increases_with(lambda x: ..., [100, 200, 300], "＜X＞が増えたのに＜Y＞が増えていない")
+    # _checks.decreases_with(lambda x: ..., [0.13, 0.15, 0.17], "＜X＞が増えたのに＜Y＞が減っていない")
+    # _checks.greater(a, b, "＜大きいはずのもの＞が＜小さいはずのもの＞以下")
+    # _checks.rounding(daily(300_000), 6_667, "標準報酬30万円の日額")
+    # _checks.unique_by(ROWS, lambda r: r["name"], "＜表の名前＞")
+
+
+if __name__ == "__main__":
+    check_tables()
+    print("制度の値の検査: 通過")
+
+    # **`=== 見出し ===` の節が、そのまま1本の動画のテーマになります**
+    # （`scripts/topic_forge.py`）。節を細かく切るほど在庫が増えます。
+    print("\n=== ＜この節が1本の動画になる。何を出した表かを書く＞ ===")
+    for row in grid():
+        print(row)
