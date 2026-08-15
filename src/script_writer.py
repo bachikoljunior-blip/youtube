@@ -141,6 +141,96 @@ SHORT_FIRST_SEGMENT_CHARS = 22
 SHORT_SECOND_SEGMENT_CHARS = 26
 
 
+# 画面に出ていてほしい「主語」。**calc モジュールごとに1つ以上。**
+#
+# 2026-08-15、`s-furusato-5`（`b3ZewNvalXc`）で見つけました。
+# 意図を知らない3体に見せたところ、**3体とも 2 番の設問に「言えない」**と答え、
+# 3体とも SCORE 3 を付けています。理由も3体で一致していました——
+# **「ふるさと納税」という語が、8コマのどこにも出ていない。**
+#
+#     見出し: 目安表どおりだと / 上限額のずれ / 自分の率で出した上限
+#             計算の前提 / 自分の率の確かめ方 / この計算で置いた率
+#
+# **どれも「何の」上限なのかを言っていません。** タイトルには入っているので、
+# 作った側には主語があるように見えます。**フィードでタイトルは読まれません。**
+#
+# engaged 比率（すぐスワイプされなかった再生の割合）が配信の駆動輪だと
+# 実測で分かっている以上（`status.py`）、**冒頭で主語が立たないのは
+# 見栄えの問題ではなく、配信そのものが止まる側の話**です。
+#
+# **語そのものを持つのは、ここが唯一の場所にすること。** タイトルから
+# 機械的に切り出す案は捨てました——このチャンネルの題は
+# 「社会保険料率で手取り増は35万9318円」のように**区切りが無い形**も多く、
+# 先頭の語を取る規則が当たりません（実物の題で確かめた）。
+SUBJECT_WORDS: dict[str, tuple[str, ...]] = {
+    "furusato": ("ふるさと納税", "寄付", "寄附"),
+    "jutaku": ("住宅ローン", "住宅ローン控除"),
+    "iryohi": ("医療費",),
+    "kojo": ("控除", "扶養", "所得控除"),
+    "nenkin": ("年金",),
+    "shitsugyo": ("失業", "雇用保険", "失業給付", "失業保険"),
+    "zangyo": ("残業", "残業代", "割増賃金"),
+    "tedori": ("手取り", "社会保険料"),
+    "fukugyo": ("副業",),
+}
+
+# 主語が出ていてよい最後の枚数。**4枚目に出ても遅い**（離脱は4.7〜5.7秒）。
+SUBJECT_WITHIN_SLIDES = 3
+
+
+def _visual_text(seg) -> str:
+    """1枚の画面に出る文字を全部つなぐ（見出し・表・棒の名前・箇条書き）。"""
+    v = seg.visual.model_dump() if hasattr(seg.visual, "model_dump") else dict(seg.visual)
+    out: list[str] = []
+
+    def walk(node) -> None:
+        if isinstance(node, str):
+            out.append(node)
+        elif isinstance(node, dict):
+            for x in node.values():
+                walk(x)
+        elif isinstance(node, (list, tuple)):
+            for x in node:
+                walk(x)
+
+    walk(v)
+    return "".join(out)
+
+
+def _subject_missing(script, topic_id: str) -> list[str]:
+    """最初の数枚のどこにも「何の話か」が書かれていなければ、それを言う。
+
+    **語を持っていないテーマは、黙って通します。** 知らない calc に対して
+    当てずっぽうの語で落とすと、**投稿が止まるほうの損が大きい**からです
+    （投稿が途切れるのが最大の損失）。`SUBJECT_WORDS` に足せば効きます。
+    """
+    if not topic_id or not script.segments:
+        return []
+    from . import config
+
+    topic = next((t for t in config.load_topics()["topics"]
+                  if t["id"] == topic_id), None)
+    words = SUBJECT_WORDS.get((topic or {}).get("calc") or "")
+    if not words:
+        return []
+
+    head = script.segments[:SUBJECT_WITHIN_SLIDES]
+    shown = "".join(_visual_text(s) for s in head)
+    if any(w in shown for w in words):
+        return []
+
+    said = "".join(s.narration for s in head)
+    voiced = "（声では言っています）" if any(w in said for w in words) else ""
+    return [
+        f"最初の{len(head)}枚の**画面に**「{words[0]}」が1度も出ていません{voiced}。"
+        "見出し・表の行・棒の名前のどこでもよいので、**制度名をそのまま書くこと。**"
+        "2026-08-15、これを欠いた1本に、意図を知らない3体が3体とも"
+        "「何の動画か言えない」と答え、3体とも0〜10の3を付けました。"
+        "**フィードではタイトルは読まれません。**金額だけが並ぶと、"
+        "数字は読めるのに主語が無い動画になります"
+    ]
+
+
 def short_script_problems(script, topic_id: str = "") -> list[str]:
     """ショートの台本の不備を並べる。空なら合格。
 
@@ -202,6 +292,8 @@ def short_script_problems(script, topic_id: str = "") -> list[str]:
                 "5秒地点で離脱します**（2026-08-09 実測、3本とも4.7〜5.7秒で最大の落差）。"
                 "前提は残したまま**後ろへ移し**、2枚目は結論の内訳や次の疑問にすること"
             )
+    problems += _subject_missing(script, topic_id)
+
     if script.segments and "明日やること" in script.segments[-1].narration:
         problems.append(
             "最後のセグメントに「明日やること」が入っています。"
@@ -437,6 +529,15 @@ ROLE = """あなたは日本語YouTubeの動画の構成作家です。
 
 - **「チャンネル登録お願いします」とは書かない。** 依頼しても取れないことは
   測って分かっている。上の問いかけ1つで終える。
+- **何の話かを、最初の3枚のどれかの画面に書くこと**（見出し・表の行・棒の名前の
+  どこでもよい）。**声だけで言っても駄目で、画面に文字として要ります。**
+  2026-08-15、`ふるさと納税` の回で「ふるさと納税」という語が**8コマのどこにも
+  出ておらず**、意図を知らない3体が3体とも「**これが何の動画か言えない**」と答え、
+  3人とも 0〜10 の 3 を付けました（`data/critique.jsonl`）。
+  金額だけが並ぶと、**数字は読めるのに主語が無い**動画になります。
+  見出しが「目安表どおりだと」「上限額のずれ」のように**制度名を省いた言い方**に
+  なりがちなので、**最初の3枚のどれかには制度名をそのまま書くこと。**
+  検査で落ちるので、守らないと作り直しになる。
 - **1つ目のセグメントの visual は必ず kind=stat にすること。** ここは例外なし。
   ショートは最初の1画面で離脱が決まるので、冒頭は大きい数字1つだけを出す。
   chart や table で始めない。棒グラフは読むのに時間がかかり、2秒では入らない。
