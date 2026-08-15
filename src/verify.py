@@ -464,6 +464,62 @@ def _check_adjacent_repeat(script: dict | None) -> list[str]:
     return problems
 
 
+def _check_adjacent_frames(work: Path) -> list[str]:
+    """**画面に出るコマの側で、隣り合う2枚が同じに見えていないか**（2026-08-15 20:5x）。
+
+    `_check_adjacent_repeat` は **script.json（文の側）** を見ています。
+    ところが `pipeline` は1つの文の絵を `visuals.reveal_variants` で複数コマに割り、
+    **視聴者と独立評価が見ているのは割った後のほう**です。
+
+    **だから「隣り合う2枚が同じ見出し」は、割った後にしか存在しません。**
+    8/15 18:5x の回はこの検査を script 側に足して**0件**で通し、
+    3体は同じ回の実物を見て同じ指摘を書いています（**通算3回の持ち越し**）。
+    実物 `OePniwSIcTE` は8コマ中4コマが該当し、機械の検査は全部通っていました。
+
+    見るのは2つだけ。**割った後のコマの列**（`slides_plan.json`）に当てます。
+
+    1. **隣り合う2枚の見出しが同一** —— 上に出ている文字が同じなら、
+       絵が1行増えても視聴者から見て画面は変わっていない
+    2. **隣り合う2枚が完全に同じ辞書** —— めくりが水増しになっている
+
+    **無ければ何も言いません。** 長尺と、この直しより前に作った build が
+    落ちても意味がないからです（`slide_seconds.json` と同じ扱い）。
+    """
+    path = work / "slides_plan.json"
+    if not path.exists():
+        return []
+    try:
+        plan = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        return [f"slides_plan.json が読めない: {exc}"]
+    if not isinstance(plan, list):
+        return []
+
+    def norm(text: str) -> str:
+        return "".join(str(text or "").split()).replace("　", "")
+
+    problems: list[str] = []
+    for i in range(len(plan) - 1):
+        a, b = plan[i], plan[i + 1]
+        if not isinstance(a, dict) or not isinstance(b, dict):
+            continue
+        if a == b:
+            problems.append(
+                f"{i + 1}コマめと{i + 2}コマめが完全に同じ絵です。"
+                "**めくりが水増しになっている。** 割る要素が足りないなら割らないこと"
+            )
+            continue
+        ha, hb = norm(a.get("headline")), norm(b.get("headline"))
+        if ha and ha == hb:
+            problems.append(
+                f"{i + 1}コマめと{i + 2}コマめの見出しが画面上で同一"
+                f"（{a.get('headline')!r}）。"
+                "**絵が増えても、上の文字が同じなら画面は変わって見えません。**"
+                "めくりなら `_reveal_headline` が『＋増えた要素』か『2/3』を足すはず"
+            )
+    return problems
+
+
 def _check_headline_from_calc(work: Path, script: dict | None) -> list[str]:
     """**冒頭に出す数字が、こちらの計算から出たものであること。**
 
@@ -918,6 +974,7 @@ def check(path: Path, video_cfg: dict, min_minutes: float, work: Path,
     problems += _check_title_from_calc(work, script, topic)
     problems += _check_not_repeat(work, script)
     problems += _check_adjacent_repeat(script)
+    problems += _check_adjacent_frames(work)
     problems += _check_formula_shown(script)
 
     if problems:

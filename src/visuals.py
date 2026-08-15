@@ -640,6 +640,9 @@ ZOOMS = (1.0, 0.94, 0.88, 0.82, 0.76)
 #: 「入らなければ足さない」ためのしきい値です**（下の `_reveal_headline`）。
 REVEAL_LABEL_MAX = 10
 REVEAL_HEAD_MAX = 20
+#: 要素の名前が入らないときに足す「2/3」の側の上限。**こちらは4文字しか足さない**ので、
+#: 名前を足すときより長い見出しまで許せる（`_wrap_head` が2行に折る範囲）。
+REVEAL_STEP_MAX = 24
 
 
 def _reveal_label(key: str, item) -> str:
@@ -663,7 +666,7 @@ def _reveal_label(key: str, item) -> str:
     return text if len(text) <= REVEAL_LABEL_MAX else ""
 
 
-def _reveal_headline(head: str, label: str) -> str:
+def _reveal_headline(head: str, label: str, step: int = 0, total: int = 0) -> str:
     """めくりの各コマに「いま何が増えたか」を出す見出しを作る。
 
     **なぜ要るか**（2026-08-15）。`reveal_variants` は1枚を複数コマに割って
@@ -677,18 +680,43 @@ def _reveal_headline(head: str, label: str) -> str:
 
     **どちらの側も切らない。** 元の見出しを削るのも同じ間違いになる
     （「10年の境界でふえる日数」→「10年の境界でふえる」）。
-    入らなければ**足さずに元のまま出す**。marker が付かないコマが混じるのは、
-    画面に壊れた日本語が出るより、はるかにましです。
+
+    ## **「入らなければ足さない」は、直したはずの欠陥をそのまま出していました**
+    （2026-08-15 20:5x。**通算3回目の持ち越し**。実物 `OePniwSIcTE`）
+
+    上の「足さずに元のまま出す」を実画面で確かめたら、**その逃げ道のほうが
+    既定になっていました。** 8コマ中4コマがそれです。
+
+        2コマめ「60歳以上65歳未満 倒産解雇」 ＋「1年以上」→ 21字 > 20 → **足さない**
+        3コマめ  同じ見出し                                     ← **画面が変わらない**
+        6コマめ「この計算の前提」 ＋「日額は令和8年8月1日改定の上下限」
+                                    → 労働は 10字超 → label が空 → **足さない**
+        7コマめ 同じ見出し                                       ← **同じことが2回**
+
+    **つまり、見出しが長い本と、要素の名前が長い本では、この直しは一度も効きません。**
+    そして長い見出し・長い項目は珍しくないので、**効かない側が多数派**でした。
+
+    **直し方は「切る」ではありません**（切ると 8/15 に2回やった壊れた日本語に戻る）。
+    **足す語を短い側に替えます。** 増えた要素の名前が入らないときは、
+    **いま何コマ目かを出す**（`2/3`）。4文字で、日本語を壊さず、必ず入り、
+    **視聴者には「まだ続きがある」ことが伝わります**（名前ほどの情報は無いが、
+    **同じ見出しが2枚続くよりは確実に良い**）。
+
+    **どちらも入らないほど見出しが長いなら、それは見出しのほうが長すぎます。**
+    その場合だけ元のまま返します（`_wrap_head` が折り、`render` が縮めるので
+    実害は「marker が出ない」ことだけ）。
     """
     head = " ".join(str(head or "").split())
-    if not label:
-        return head
     if not head:
         return label
-    tail = f"　＋{label}"
-    if len(head) + len(tail) > REVEAL_HEAD_MAX:
-        return head
-    return head + tail
+    tail = f"　＋{label}" if label else ""
+    if tail and len(head) + len(tail) <= REVEAL_HEAD_MAX:
+        return head + tail
+    if step and total:
+        mark = f"　{step}/{total}"
+        if len(head) + len(mark) <= REVEAL_STEP_MAX:
+            return head + mark
+    return head
 
 
 def reveal_variants(visual: dict, want: int) -> list[dict]:
@@ -728,7 +756,8 @@ def reveal_variants(visual: dict, want: int) -> list[dict]:
             # （`_reveal_headline` の説明）。
             if i and cut > prev_cut:
                 v["headline"] = _reveal_headline(
-                    visual.get("headline", ""), _reveal_label(key, seq[cut - 1])
+                    visual.get("headline", ""), _reveal_label(key, seq[cut - 1]),
+                    step=i + 1, total=k,
                 )
             prev_cut = cut
             if key == "bars":
@@ -772,11 +801,23 @@ def reveal_variants(visual: dict, want: int) -> list[dict]:
     # 割り方は「数字を先に出し、補足をあとから足す」。数字は動かさないので、
     # **読み上げと画面がずれません**（補足は読み上げの後半に当たる）。
     # 補足が無ければ割れないので、そのまま1枚を返します（**水増ししない**）。
+    #
+    # **この割り方も、見出しを2コマとも同じにしていました**（2026-08-15 20:5x）。
+    # 上のループには `_reveal_headline` が入っているのに、ここだけ素通りで、
+    # **しかも stat が来るのは冒頭**です（`_check_short_opening` が1枚目を縛る）。
+    # つまり**いちばん見られる2コマが、同じ文字を出していた。**
+    # 新しく足した `_check_adjacent_frames` が、実際の生成の1本目で
+    # 「1コマめと2コマめの見出しが画面上で同一」と落として見つけました。
+    # 足すのは名前ではなく `2/2`（補足は文なので、名前として短く出せません）。
     if (visual.get("kind") or "stat").strip() == "stat":
         if visual.get("stat") and visual.get("note"):
             first = dict(visual)
             first["note"] = ""
-            return [first, dict(visual)]
+            second = dict(visual)
+            second["headline"] = _reveal_headline(
+                visual.get("headline", ""), "", step=2, total=2
+            )
+            return [first, second]
     return [visual]
 
 

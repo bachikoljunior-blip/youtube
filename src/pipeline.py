@@ -341,6 +341,19 @@ def main(argv: list[str] | None = None) -> int:
     else:
         slide_index_of_segment = list(range(len(plan)))
 
+    # **画面に出る側を、そのまま残す**（2026-08-15 20:5x）。
+    #
+    # `verify.py` は script.json（＝文の側）しか持っていませんでした。
+    # ところが独立評価の3体が見ているのは**割った後のコマ**で、
+    # 「見出しが同じで表の行数だけ増える」は**割った後にしか存在しません。**
+    # だから「隣り合う2枚が同じ」の検査を script に足しても**永久に0件**で、
+    # 同じ指摘が3回持ち越されました（`docs/JOURNAL.md`「見た層と直す層のずれ」）。
+    #
+    # **見る層を、見られている層に合わせる。** これがその1行です。
+    (work / "slides_plan.json").write_text(
+        json.dumps(plan, ensure_ascii=False), encoding="utf-8"
+    )
+
     slides = visuals.render(
         plan, work / "slides", topic["id"],
         theme_index=theme_index, portrait=args.short,
