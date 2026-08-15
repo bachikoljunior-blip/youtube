@@ -117,11 +117,27 @@ def parse_iso(value):
         return None
 
 
-def rate_limits(sessions: list[dict]) -> dict[str, dict]:
-    """窓ごとに**いちばん新しい観測**を取る。
+def rate_limits(sessions: list[dict], now: datetime | None = None) -> dict[str, dict]:
+    """窓ごとに**いちばん新しい観測**を取る。**ただし切れた観測は捨てる。**
 
-    古い行には 8/13 の `rejected` が残っている。混ぜると永久に自走できない。
+    2つ、実データで踏んだ穴があります（2026-08-15）。
+
+    **1. 窓を混ぜない。** `list_sessions` は行ごとに、そのとき効いていた窓を返します。
+    8月12日の行には `seven_day`、いまの行には `five_hour` が入っています。
+    まとめて見ると「閉じている」が永久に残ります。
+
+    **2. `resetsAt` が過ぎた観測は、いまについて何も言っていません。**
+    ここが本題です。1 だけ直して実データに掛けたら、**まだ止まりました。**
+    いちばん新しい `seven_day` の観測が 8/12 22:53 の `rejected` で、
+    その `resetsAt` は **8/15 07:00 —— すでに過ぎています。**
+    枠はそこで回復しており、**あの行は3日前の、しかも別の期間の話**です。
+    捨てないと、`seven_day` の新しい観測が返ってくるまで
+    （＝週枠が再び効き始めるまで）**二度と自走できません。**
+
+    切れた観測しか無い窓は「観測なし」として扱います。
+    **「閉じている」とも「余裕がある」とも読みません。**
     """
+    now = now or datetime.now(timezone.utc)
     latest: dict[str, tuple[datetime, dict]] = {}
     for sess in sessions:
         rli = (sess.get("external_metadata") or {}).get("rate_limit_info") or {}
@@ -129,6 +145,10 @@ def rate_limits(sessions: list[dict]) -> dict[str, dict]:
         seen = parse_iso(sess.get("updated_at"))
         if not window or not seen:
             continue
+        resets = rli.get("resetsAt")
+        if isinstance(resets, (int, float)):
+            if datetime.fromtimestamp(resets, timezone.utc) <= now:
+                continue                  # その期間はもう終わっている
         if window not in latest or seen > latest[window][0]:
             latest[window] = (seen, rli)
     return {w: rli for w, (_, rli) in latest.items()}
