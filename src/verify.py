@@ -510,6 +510,144 @@ def _check_assumption_value_shown(script: dict | None) -> list[str]:
     return problems
 
 
+#: 法令の引用の形。`雇用保険法22条・23条` `労働基準法37条5項` `雇用保険法61条の7第5項`。
+#: **緩く取ること。** ここで拾い損ねた引用は、下の照合にも掛かりません。
+_LAW_CITATION_RE = re.compile(
+    r"[一-龥ぁ-んァ-ヶー]{2,12}法"                                  # 法令名（〜法）
+    r"(?:施行(?:令|規則))?"                                          # 施行令・施行規則
+    r"\s*第?\s*[0-9０-９]+\s*条"                                     # 第22条
+    r"(?:\s*の\s*[0-9０-９]+)?"                                      # 61条の7
+    r"(?:\s*[・、,]?\s*第?\s*[0-9０-９]+\s*[条項号](?:\s*の\s*[0-9０-９]+)?)*"
+)
+
+
+def _trim_law_citation(text: str) -> str:
+    """`所定給付日数は雇用保険法22条・23条` → `雇用保険法22条・23条`。
+
+    法令名は漢字だけなので、`法` より前にある**最後のひらがな・カタカナ**で切る。
+    **判定には使いません**（緩いまま拾うほうが安全）。**直し方を見せるときだけ**
+    使います —— 助詞ごと見せると「この形のまま写せ」の形が壊れます
+    （2026-08-16、`_check_assumption_value_shown` が同じ形の間違いをしています）。
+    """
+    head = text.split("法", 1)[0]
+    cut = max((i for i, c in enumerate(head) if "ぁ" <= c <= "ヿ"), default=-1)
+    return text[cut + 1:] if cut >= 0 else text
+
+
+def _normalize_citation(text: str) -> str:
+    """照合用に均す。全角数字を半角へ、空白を落とす。**中黒は落とさない。**
+
+    **中黒を落とすと、この検査が捕まえるべきものを自分で通します** ——
+    実際に画面に出た欠陥が「`22条・23条` の中黒が消えて `22条23条` になった」
+    だからです。区切りの有無こそが、条番号が壊れているかどうかの境目。
+    """
+    return re.sub(r"\s", "", text.translate(str.maketrans("０１２３４５６７８９", "0123456789")))
+
+
+def _calc_module_path(work: Path) -> Path | None:
+    """テーマ（＝ build のディレクトリ名）から `src/calc/<名前>.py` を引く。
+
+    引けなければ `None`。**引けないことを欠陥として報告しないこと** ——
+    `calc` の無いテーマは正常に存在します。
+    """
+    root = Path(__file__).resolve().parent.parent
+    try:
+        import yaml
+        topics = yaml.safe_load(
+            (root / "config" / "topics.yaml").read_text(encoding="utf-8")
+        )["topics"]
+    except Exception:
+        return None
+    for t in topics:
+        if str(t.get("id")) == work.name:
+            name = str(t.get("calc") or "").strip()
+            path = root / "src" / "calc" / f"{name}.py"
+            return path if name and path.exists() else None
+    return None
+
+
+def _check_law_citation_verbatim(work: Path, script: dict | None) -> list[str]:
+    """**画面と読み上げに出る条文の引用が、calc が書いている引用と一字一句同じか。**
+
+    2026-08-16、独立評価の3体が `8PMLfjjCe4w` について
+    「**`雇用保険法22条23条` の条番号が壊れている**」と独立に書きました
+    （1体は「読み上げは『別表』なのに画面は条番号で、一致しない」とも）。
+
+    **出どころを測ったら、生成側でも描画側でもありませんでした。**
+
+        src/calc/shitsugyo.py  「所定給付日数は雇用保険法22条・23条の別表どおり」
+        画面（表の1行）          「雇用保険法22条23条」          ← 中黒が消えている
+        読み上げ                「日数は雇用保険法の別表」        ← 条番号を言っていない
+
+    折り返し（`_wrap`）を実物の文で走らせても中黒は残ります。**落としたのは
+    台本の書き手**で、`ASSUMPTIONS` を表の1行に詰めるときに区切りごと消えました。
+    `雇用保険法22条23条` は法令の引用として**存在しない形**です。
+
+    これは見栄えの話ではありません。`CLAUDE.md` は
+    「**制度や金額には必ず適用条件を添える。裏の取れない数字は動画に入れない**」と
+    書いています。**書き手が引用を言い換えられる限り、裏取りは毎回ここで壊れます。**
+    数字（`_check_headline_from_calc`）と式（`_check_formula_shown`）と
+    前提の値（`_check_assumption_value_shown`）は突き合わせているのに、
+    **条文の引用だけ、誰も突き合わせていませんでした。**
+
+    だからここで見るのは1つ ——
+    **引用は写すものであって、書き直すものではない。**
+
+    照合の相手は calc の**モジュールの本文**（docstring の「根拠」と `ASSUMPTIONS`）で、
+    実行の出力ではありません。`python -m src.calc.shitsugyo` の 70行に条番号は
+    1つも出てきません（出るのは表と金額です）。**裏を取った記録が置いてあるのは
+    モジュールの側**なので、そちらを正本にします。
+
+    **射程の外**（承知のうえ）:
+
+    - **calc が書いている引用そのものが間違っている場合は捕まりません。**
+      ここが見るのは「写したか」だけです。裏取りは題材を選ぶ段の仕事
+      （`docs/trigger_main.md` §4）
+    - `calc` の無いテーマ・`topics.yaml` が読めない回は**素通しにします。**
+      引用の照合ができないことを理由に投稿を止めるのは割に合いません
+    """
+    if not script:
+        return []
+    segs = script.get("segments") or []
+    if not segs:
+        return []
+
+    path = _calc_module_path(work)
+    if path is None:
+        return []
+    try:
+        source = _normalize_citation(path.read_text(encoding="utf-8"))
+    except Exception:
+        return []
+
+    allowed = [_trim_law_citation(c) for c in _LAW_CITATION_RE.findall(path.read_text(encoding="utf-8"))]
+    problems: list[str] = []
+    seen: set[str] = set()
+    for seg in segs:
+        texts = _visual_texts(seg) + [str(seg.get("narration") or "")]
+        where = "画面"
+        for i, text in enumerate(texts):
+            if i == len(texts) - 1:
+                where = "読み上げ"
+            for m in _LAW_CITATION_RE.finditer(text):
+                cited = _trim_law_citation(m.group(0))
+                key = _normalize_citation(cited)
+                if key in source or key in seen:
+                    continue
+                seen.add(key)
+                near = "／".join(dict.fromkeys(allowed)) or "（この calc は条文を1つも引いていません）"
+                problems.append(
+                    f"**{where}の『{cited}』が、`{path.name}` の書いている引用と一致しません。**"
+                    "条文の引用は**写すもので、書き直すものではありません**"
+                    "（2026-08-16、`雇用保険法22条・23条` の中黒が落ちて"
+                    "`雇用保険法22条23条` という存在しない条番号が画面に出ました。"
+                    "独立評価の3体が別々に指しています）。"
+                    f"`{path.name}` にあるのは: {near}。"
+                    "**この形のまま写すか、条番号を出さずに『別表』とだけ書くこと**"
+                )
+    return problems
+
+
 def _check_adjacent_repeat(script: dict | None) -> list[str]:
     """**1本の中で、隣り合う2枚が同じ画に見えていないか。**
 
@@ -1153,6 +1291,7 @@ def check(path: Path, video_cfg: dict, min_minutes: float, work: Path,
     problems += _check_adjacent_frames(work)
     problems += _check_formula_shown(script)
     problems += _check_assumption_value_shown(script)
+    problems += _check_law_citation_verbatim(work, script)
 
     if problems:
         raise VerificationError("投稿前の検査に落ちました: " + " / ".join(problems))

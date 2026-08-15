@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """独立評価を、**この環境で実際に回せる形**で回す（`docs/CRITIQUE.md` の実装）。
 
-    python scripts/critique_run.py <動画ID>        # 3体に投げて、点まで記録する
-    python scripts/critique_run.py --next          # 待ち行列の先頭を1本
-    python scripts/critique_run.py <動画ID> --dry  # 投げるだけで記録しない
+    python scripts/critique_run.py <動画ID>            # 3体に投げて、点まで記録する
+    python scripts/critique_run.py --next              # 待ち行列の先頭を1本
+    python scripts/critique_run.py --count 4 --jobs 4  # 先頭から4本を同時に
+    python scripts/critique_run.py <動画ID> --dry      # 投げるだけで記録しない
 
 ## なぜ要るか（2026-08-15）
 
@@ -50,6 +51,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -136,72 +138,179 @@ def score_of(body: str) -> float | None:
     return value if 0 <= value <= 10 else None
 
 
-def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(description="独立評価を3体に投げて記録する")
-    ap.add_argument("video_id", nargs="?", default="", help="動画ID")
-    ap.add_argument("--next", action="store_true", help="待ち行列の先頭を1本")
-    ap.add_argument("--dry", action="store_true", help="投げるが記録しない")
-    args = ap.parse_args(argv)
+def scored_ids() -> set[str]:
+    """既に点の付いた動画。`data/critique.jsonl` から拾う。"""
+    out: set[str] = set()
+    log = ROOT / "data" / "critique.jsonl"
+    if not log.exists():
+        return out
+    for line in log.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        rec = json.loads(line)
+        if isinstance(rec, dict):
+            out.add(rec.get("video") or rec.get("topic"))
+    return out
 
-    video_id = args.video_id
-    if not video_id and args.next:
-        scored = set()
-        log = ROOT / "data" / "critique.jsonl"
-        if log.exists():
-            for line in log.read_text(encoding="utf-8").splitlines():
-                if line.strip():
-                    scored.add(json.loads(line).get("video") or
-                               json.loads(line).get("topic"))
-        pending = sorted(p.stem for p in QUEUE.glob("*.json") if p.stem not in scored)
-        if not pending:
-            print("[critique] 待ち行列は空です。")
-            return 0
-        video_id = pending[0]
-        print(f"[critique] 待ち行列の先頭: {video_id}")
-    if not video_id:
-        ap.error("動画IDか --next のどちらかが要ります")
 
+def pending_ids() -> list[str]:
+    """まだ点の付いていない動画。**古い順**（投稿した順）に返す。
+
+    #### `*.plan.json` を数に入れないこと（2026-08-16 に、まだ残っていた）
+
+    待ち行列には1本につき2つのファイルが入ります ——
+    `<ID>.json`（読み上げ文）と `<ID>.plan.json`（コマの列）。
+    `glob("*.json")` は**両方**返し、`Path.stem` は後者から
+    **`<ID>.plan` という、点の付けようがない名前**を作ります。
+
+    8/15 23:4x の回がこの穴を見つけて `scripts/critique_queue.py`（一覧）を
+    直しましたが、**点を付ける側（ここ）は直っていませんでした。**
+    実測で **52件中13件**が `.plan` の偽物です。`<ID>.plan` は `<ID>` の
+    すぐ後ろに並ぶので、**本物に点が付いた次の回で必ず先頭に来て、
+    `load()` が SystemExit で止まります**（＝待ち行列がそこで永久に詰まる）。
+
+    **片方だけ直す形は、このリポジトリで通算5回目です。**
+    """
+    scored = scored_ids()
+    ids = []
+    for p in sorted(QUEUE.glob("*.json")):
+        if p.name.endswith(".plan.json"):
+            continue
+        if p.stem in scored:
+            continue
+        ids.append(p.stem)
+    return ids
+
+
+def critique_one(video_id: str, pool: ThreadPoolExecutor) -> list:
+    """1本ぶんの3体を `pool` に積んで、Future の一覧を返す。
+
+    **作業場（リポジトリの外）は本ごとに別**です。同じ場所に2本ぶんの
+    contact sheet を置くと、3体が隣の本の画像を開けてしまいます
+    （2026-08-15 に、生成側の `claude -p` が cwd 共有で隣の題を出した件と同じ形）。
+    """
     meta, sheet = load(video_id)
     narration = "\n".join(f"{i}. {t}" for i, t in enumerate(meta["narration"], 1))
+    tmp = tempfile.mkdtemp(prefix=f"critique-{video_id}-")
+    work = Path(tmp)
+    shutil.copy2(sheet, work / sheet.name)
+    prompt = PROMPT.format(
+        sheet=sheet.name,
+        orient=meta.get("orientation", "縦"),
+        narration=narration,
+    )
+    print(f"[critique] {video_id} を {CRITICS}体に**同時に**投げます"
+          f"（互いの答えは見えません・cwd={work}）", flush=True)
+    return [pool.submit(ask_one, n, prompt, work) for n in range(1, CRITICS + 1)]
 
-    # **リポジトリの外に作業場を作る。** ここが独立の担保です。
-    with tempfile.TemporaryDirectory(prefix="critique-") as tmp:
-        work = Path(tmp)
-        shutil.copy2(sheet, work / sheet.name)
-        prompt = PROMPT.format(
-            sheet=sheet.name,
-            orient=meta.get("orientation", "縦"),
-            narration=narration,
-        )
-        print(f"[critique] {video_id} を {CRITICS}体に**同時に**投げます"
-              f"（互いの答えは見えません・cwd={work}）", flush=True)
-        with ThreadPoolExecutor(max_workers=CRITICS) as pool:
-            answers = list(pool.map(
-                lambda n: ask_one(n, prompt, work), range(1, CRITICS + 1)))
 
+def report(video_id: str, answers: list[tuple[int, str]]) -> list[float]:
     scores: list[float] = []
     for n, body in answers:
-        print(f"\n===== {n}体目 =====")
+        print(f"\n===== {video_id} / {n}体目 =====")
         print(body.strip() if body else "（返りなし）")
         s = score_of(body)
         if s is None:
             print(f"[critique] **{n}体目の点が読めません。**")
         else:
             scores.append(s)
+    print(f"\n[critique] {video_id} 取れた点: {scores}")
+    return scores
 
-    print(f"\n[critique] 取れた点: {scores}")
-    if len(scores) < CRITICS:
-        print(f"**{CRITICS}体そろっていないので記録しません**"
-              "（`critique_record.py` に嘘の点を入れると検査そのものが死にます）。")
-        return 1
-    if args.dry:
-        print("[critique] --dry なので記録しません。")
-        return 0
 
-    cmd = [sys.executable, str(ROOT / "scripts" / "critique_record.py"), video_id]
-    cmd += [str(s) for s in scores]
-    print(f"[critique] $ {' '.join(cmd)}", flush=True)
-    return subprocess.run(cmd, cwd=ROOT).returncode
+def main(argv: list[str] | None = None) -> int:
+    ap = argparse.ArgumentParser(description="独立評価を3体に投げて記録する")
+    ap.add_argument("video_id", nargs="?", default="", help="動画ID")
+    ap.add_argument("--next", action="store_true", help="待ち行列の先頭を1本")
+    ap.add_argument("--count", type=int, default=0,
+                    help="待ち行列の先頭から N 本を**同時に**回す（--next の複数版）")
+    ap.add_argument("--jobs", type=int, default=3,
+                    help="同時に走らせる本数。1体あたり claude -p が1つ立つので、"
+                         f"実際のプロセス数は jobs×{CRITICS}")
+    ap.add_argument("--dry", action="store_true", help="投げるが記録しない")
+    args = ap.parse_args(argv)
+
+    # **`--count` を足した理由**（2026-08-16。前の回の (a2) 問い3）。
+    #
+    # 待ち行列は37本まで伸びていて、`--next` は**1回に1本**しか回しません。
+    # 3体が同時に走るのはその1本ぶんだけで、**残りは積まれるほうが速い**状態でした。
+    # 生成の段では `--jobs` の実測（同時6で2.66倍）を取ってあるのに、
+    # **評価の段では取っていませんでした。**
+    # 材料（`.jpg` と `.plan.json`）はディスクにあるので、**生成は0回**です。
+    if args.count and args.video_id:
+        ap.error("--count と動画IDは一緒に使えません")
+    # **`want` は「回したい本数」であって、待ち行列の先頭N本ではありません。**
+    # 材料の欠けた本（読み上げ文0行）は永久に評価できないので、
+    # **先頭N本を切り取る形にすると、その本が毎回1枠ずつ食い続けます**
+    # （2026-08-16 の実測で、未評価36本のうち2本がこれ）。**足りるまで繰り上げます。**
+    if args.count:
+        queue = pending_ids()
+        want = args.count
+        if not queue:
+            print("[critique] 待ち行列は空です。")
+            return 0
+        print(f"[critique] 待ち行列 {len(queue)}本のうち {min(want, len(queue))}本を回します"
+              f"（同時 {args.jobs}本 ＝ claude -p は最大 {args.jobs * CRITICS} 個）")
+    elif args.video_id:
+        queue, want = [args.video_id], 1
+    elif args.next:
+        queue, want = pending_ids()[:1], 1
+        if not queue:
+            print("[critique] 待ち行列は空です。")
+            return 0
+        print(f"[critique] 待ち行列の先頭: {queue[0]}")
+    else:
+        ap.error("動画ID か --next か --count のどれかが要ります")
+
+    started = time.monotonic()
+    futures: dict[str, list] = {}
+    skipped: list[str] = []
+    with ThreadPoolExecutor(max_workers=max(1, args.jobs) * CRITICS) as pool:
+        for vid in queue:
+            if len(futures) >= want:
+                break
+            try:
+                futures[vid] = critique_one(vid, pool)
+            except SystemExit as exc:
+                # **1本の材料が欠けただけで、残りを落とさないこと。**
+                print(f"[critique] {vid} は飛ばします: {exc}")
+                skipped.append(vid)
+        results = {vid: [f.result() for f in fs] for vid, fs in futures.items()}
+    elapsed = time.monotonic() - started
+    ids = list(futures)
+
+    # **点を付けるのは1本ずつ。** `critique_record.py` は共有の台帳
+    # （`data/critique.jsonl`）に書くので、ここを並列にすると行が壊れます。
+    # **並列にしてよいのは「訊く段」だけ**（`batch_build.py` の予約と同じ理由）。
+    rc = 0
+    done = 0
+    for vid in ids:
+        if vid not in results:
+            continue
+        scores = report(vid, results[vid])
+        if len(scores) < CRITICS:
+            print(f"**{CRITICS}体そろっていないので {vid} は記録しません**"
+                  "（`critique_record.py` に嘘の点を入れると検査そのものが死にます）。")
+            rc = 1
+            continue
+        if args.dry:
+            print(f"[critique] --dry なので {vid} は記録しません。")
+            continue
+        cmd = [sys.executable, str(ROOT / "scripts" / "critique_record.py"), vid]
+        cmd += [str(s) for s in scores]
+        print(f"[critique] $ {' '.join(cmd)}", flush=True)
+        rc = subprocess.run(cmd, cwd=ROOT).returncode or rc
+        done += 1
+
+    if len(ids) > 1:
+        # **速さを実測で残す。** 「速くなったはず」で終えないこと
+        # （生成側の `--jobs` はここを測らなかったせいで4回持ち越されました）。
+        per = elapsed / max(len(results), 1)
+        print(f"\n[critique] {len(results)}本を {elapsed / 60:.1f}分"
+              f"（1本あたり {per / 60:.1f}分・同時 {args.jobs}本）"
+              f" 記録 {done}本／飛ばし {len(skipped)}本")
+        print(f"[critique] 残り {len(pending_ids())}本")
+    return rc
 
 
 if __name__ == "__main__":

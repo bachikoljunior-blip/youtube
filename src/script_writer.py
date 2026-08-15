@@ -375,6 +375,10 @@ def _calc_source_problems(topic_id: str, data: dict) -> list[str]:
 
     work = config.BUILD_DIR / topic_id
     problems = [p.strip() for p in verify._check_headline_from_calc(work, data)]
+    # 条文の引用は、書き手が言い換えると壊れる（2026-08-16、`雇用保険法22条23条`）。
+    # **ここに置くのは、直せる場所がここだけだから** —— レンダリング後に落とすと
+    # 1本まるごと捨てになるが、輪の中なら同じセッションが calc を見たまま写し直す。
+    problems += [p.strip() for p in verify._check_law_citation_verbatim(work, data)]
 
     topic = None
     try:

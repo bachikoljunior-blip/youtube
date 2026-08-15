@@ -44,7 +44,36 @@ def _frame(video: Path, at: float, dest: Path) -> Path | None:
     return dest if dest.exists() else None
 
 
-def main(topic: str, count: int = 8, with_thumb: bool = False) -> int:
+def planned_frames(work: Path) -> int:
+    """`slides_plan.json` が言っているコマ数。無ければ 0。"""
+    plan = work / "slides_plan.json"
+    if not plan.exists():
+        return 0
+    try:
+        import json
+        data = json.loads(plan.read_text(encoding="utf-8"))
+    except Exception:
+        return 0
+    return len(data) if isinstance(data, list) else 0
+
+
+#: sheet の枚数の上下。上は「Read 1回で全部見える」大きさ、下は等間隔が粗くなりすぎない数。
+TILES_MIN, TILES_MAX = 6, 18
+
+
+def tile_count(planned: int, given: int = 0) -> int:
+    """何枚抜くか。**明示された枚数が最優先**、次に計画のコマ数、無ければ 8。
+
+    **関数にしてあるのは、検査が同じ式を書き写さないため**です。
+    書き写すと、片方だけ直したときに**検査は緑のまま**になります
+    （このリポジトリで通算5回起きています）。
+    """
+    if given > 0:
+        return given
+    return min(max(planned or 8, TILES_MIN), TILES_MAX)
+
+
+def main(topic: str, count: int = 0, with_thumb: bool = False) -> int:
     work = Path("build") / topic
     video = work / "final.mp4"
     if not video.exists():
@@ -53,6 +82,34 @@ def main(topic: str, count: int = 8, with_thumb: bool = False) -> int:
 
     total = _duration(video)
     tiles: list[Image.Image] = []
+
+    # **枚数は、動画のコマ数に合わせること**（2026-08-16 に実測して直した）。
+    #
+    # ここは長らく **8枚固定**でした。ところが1本のコマ数は8ではありません ——
+    # `9hqzUxqBjBE` の `slides_plan.json` は **13コマ**で、
+    # **8枚の等間隔サンプルは5コマを飛ばしていました。**
+    #
+    # 飛ばされた中に**最後のコマ**が入ります。実測:
+    #
+    #     計画の12番目  「あなたはどちら側　2/2」  A と B の両方
+    #     sheet の最後  「あなたはどちら側」      **A だけ**
+    #
+    # そして独立評価の2体が、別々の本について
+    # **「最後のコマは選択肢Aだけで、Bが出ないまま終わる」**と書いて減点しました。
+    # **動画には B が出ています。** 評価者が見ていたのは、
+    # **終わりのコマを落とした sheet** です。
+    #
+    # これは 8/15 の「左上がサムネイルで、動画の一部ですらなかった」・
+    # 8/16 の「余った枠を最後のコマと読ませていた」と**同じ種類**で、
+    # **3件とも『計器が、動画に無いものを見せた／あるものを隠した』**です。
+    # 独立評価の点は `config/hypotheses.yaml` の反証にかかっているので、
+    # **計器のうそで引かれた点は、その予測をそのまま濁します。**
+    #
+    # **等間隔のままなのは承知のうえ**です。コマの長さは揃っていない
+    # （`reveal_variants` が1枚を2つに割る）ので、枚数を合わせても
+    # 取りこぼしは残りえます。**残るなら、残ったと言わせること** —— 下で数えます。
+    planned = planned_frames(work)
+    count = tile_count(planned, count)
 
     # **サムネイルは既定では入れません**（2026-08-15 に変えた）。
     #
@@ -161,6 +218,16 @@ def main(topic: str, count: int = 8, with_thumb: bool = False) -> int:
         sheet.save(out, "JPEG", quality=88, optimize=True)
 
     print(f"[inspect] {len(tiles)}枚を1枚にまとめました: {out}")
+    # **計器に、自分の見落としを言わせる。**
+    # 黙って足りない sheet は「全部見た」として読まれます（8/15〜8/16 に3回）。
+    if planned:
+        if len(tiles) < planned:
+            print(f"[inspect] **この sheet は {planned}コマ中 {len(tiles)}枚しか見ていません。**"
+                  f" 落ちたコマは採点されません（`inspect_build.py <ID> {planned}` で全部見えます）")
+        else:
+            print(f"[inspect] 計画は {planned}コマ。{len(tiles)}枚で全部に届いています")
+    else:
+        print("[inspect] `slides_plan.json` が無いので、コマ数と突き合わせていません")
     print("[inspect] Read で開いて、次を見ること:")
     if with_thumb:
         print("  - サムネイルの背景に元スライドの文字が透けていないか")
@@ -181,4 +248,4 @@ if __name__ == "__main__":
     if len(argv) not in (1, 2):
         print(__doc__)
         raise SystemExit(2)
-    raise SystemExit(main(argv[0], int(argv[1]) if len(argv) == 2 else 8, with_thumb))
+    raise SystemExit(main(argv[0], int(argv[1]) if len(argv) == 2 else 0, with_thumb))
