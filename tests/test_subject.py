@@ -115,5 +115,15 @@ def main() -> int:
     return 1 if bad else 0
 
 
+def test_subject():
+    """pytest から呼ばれたときの入口。
+
+    これが無いと、`pytest tests/` はこのファイルを import するだけで
+    **0件のまま黙って通ります**（`def test_` が1つも無いため）。
+    検査があるのに数に入らない、という形は素通りと同じです。
+    """
+    assert main() == 0
+
+
 if __name__ == "__main__":
     sys.exit(main())

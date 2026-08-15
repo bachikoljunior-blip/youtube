@@ -29,7 +29,8 @@ def scheduled_publish_times(youtube) -> set[str]:
     return {v["status"]["publishAt"] for v in videos if v["status"].get("publishAt")}
 
 
-def next_publish_at(hour_jst: int, minute_jst: int, taken: set[str] | None = None) -> str:
+def next_publish_at(hour_jst: int, minute_jst: int, taken: set[str] | None = None,
+                    date_jst: str | None = None) -> str:
     """次に空いている指定時刻（JST）を RFC3339(UTC) で返す。
 
     taken にすでに予約済みの時刻を渡すと、その日を飛ばして次の日を返す。
@@ -38,8 +39,41 @@ def next_publish_at(hour_jst: int, minute_jst: int, taken: set[str] | None = Non
     重なると2本が食い合ううえ、翌日が空になる。投稿が途切れるのが最大の損失
     なので、間隔を空けるほうが常に良い。実際に P5yRTOMRulc の予約がある状態で
     次の1本を積もうとして、同じ 8/5 19:00 に当たった。
+
+    ## `date_jst` を足した理由（2026-08-15）
+
+    **日を飛ばす既定の動きは、「1日にN本」を作れません。**
+    M14（`docs/MEANS.md`）は本数の段を 2 → 4 → 8 と上げて1本あたりが崩れる点を
+    探す手ですが、**同じ日に8本置く道が無い**ので 8 の段に上がれませんでした。
+    `--hour 10` は「10:00 で最初に空いている**日**」を返すので、
+    8本ぶん呼ぶと**8日にばらけます**（それは1日1本の実験です）。
+
+    `date_jst`（`YYYY-MM-DD`）を渡すと**その日に釘づけ**します。
+    埋まっていたら**翌日へ送らずに例外**を上げます —— 送ってしまうと
+    「1日8本のつもりが7本＋翌日1本」になり、**測っている数字のほうが壊れる**ためです。
     """
     now = datetime.now(JST)
+
+    if date_jst:
+        try:
+            day = datetime.strptime(date_jst, "%Y-%m-%d")
+        except ValueError as exc:
+            raise ValueError(f"日付は YYYY-MM-DD で渡すこと: {date_jst!r}") from exc
+        target = datetime(day.year, day.month, day.day,
+                          hour_jst, minute_jst, tzinfo=JST)
+        if target <= now + timedelta(minutes=20):
+            raise ValueError(
+                f"{date_jst} {hour_jst:02d}:{minute_jst:02d} JST は過去か直近すぎます"
+                "（予約は20分先から）"
+            )
+        stamp = target.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        if stamp in (taken or set()):
+            raise ValueError(
+                f"{date_jst} {hour_jst:02d}:{minute_jst:02d} JST はすでに埋まっています。"
+                "**翌日へは送りません**（1日あたりの本数を測っているため）"
+            )
+        return stamp
+
     target = now.replace(hour=hour_jst, minute=minute_jst, second=0, microsecond=0)
     if target <= now + timedelta(minutes=20):
         target += timedelta(days=1)
@@ -177,6 +211,7 @@ def upload(
             int(publish_cfg.get("publish_hour_jst", 19)),
             int(publish_cfg.get("publish_minute_jst", 0)),
             taken=scheduled_publish_times(youtube),
+            date_jst=publish_cfg.get("publish_date_jst") or None,
         )
         print(f"[upload] 公開予定: {status['publishAt']}")
 

@@ -26,8 +26,26 @@ from src import bars, config, uploader  # noqa: E402
 FORBIDDEN = ("github", "GitHub", "リポジトリ", "コードを公開", "ソースコード")
 
 
-def main(topic: str, visibility: str | None = None, hour: int | None = None) -> int:
+def split_when(when: str) -> tuple[int, str | None]:
+    """予約時刻の指定を `(時, 日付 or None)` に分ける。
+
+        "9"                 → (9, None)          最初に空いている日の 09:00
+        "2026-08-24@10"     → (10, "2026-08-24")  **その日に釘づけ**
+
+    日付を釘づけできないと「1日にN本」が作れません（`src/uploader.py`
+    `next_publish_at` の docstring）。M14 の 8 の段はこれが無くて止まっていました。
+    """
+    text = when.strip()
+    if "@" in text:
+        date_part, _, hour_part = text.partition("@")
+        return int(hour_part), date_part
+    return int(text), None
+
+
+def main(topic: str, visibility: str | None = None, hour: int | None = None,
+         date_jst: str | None = None) -> int:
     """hour を渡すと、その時刻（JST）で予約する。
+    date_jst（`YYYY-MM-DD`）も渡すと、**その日に釘づけ**する（埋まっていれば失敗）。
 
     **ショートは朝のほうが強い**（2026-08-05 の実測）。09:21 公開の1本が1245回、
     18:29〜19:55 に固めて出した5本が最良で558回・後発3本は0回。
@@ -56,6 +74,10 @@ def main(topic: str, visibility: str | None = None, hour: int | None = None) -> 
         channel["publish"] = dict(channel["publish"])
         channel["publish"]["publish_hour_jst"] = hour
         print(f"[check] 予約時刻を {hour}:00 JST で上書き")
+    if date_jst:
+        channel["publish"] = dict(channel["publish"])
+        channel["publish"]["publish_date_jst"] = date_jst
+        print(f"[check] 予約日を {date_jst} に釘づけ（埋まっていれば翌日へ送らず失敗）")
 
     if "[t:" not in description:
         print("説明欄にテーマ印がありません。投稿済みの記録が残らないので中止します")
@@ -107,8 +129,12 @@ if __name__ == "__main__":
     if len(sys.argv) not in (2, 3, 4):
         print(__doc__)
         raise SystemExit(2)
+    _hour, _date = (None, None)
+    if len(sys.argv) == 4:
+        _hour, _date = split_when(sys.argv[3])
     raise SystemExit(main(
         sys.argv[1],
         sys.argv[2] if len(sys.argv) >= 3 and sys.argv[2] else None,
-        int(sys.argv[3]) if len(sys.argv) == 4 else None,
+        _hour,
+        _date,
     ))

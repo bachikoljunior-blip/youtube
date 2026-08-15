@@ -46,3 +46,5 @@
 {"at": "2026-08-15T17:22:34+09:00", "session": "session_01CrgyLG6ZQ2qenQZxL97qEH", "kind": "ship", "what": "means: scripts/topic_forge.py（テーマ在庫の機械化）を実装し、実行して未投稿テーマを 8→16件に倍増。M14 が3回名指ししていた律速『在庫の作り方を機械化する』を、手作業から外した"}
 {"at": "2026-08-15T17:42:01+09:00", "session": "session_019o6m7aLkp3XsGHAKhojYV5", "kind": "start"}
 {"at": "2026-08-15T17:54:58+09:00", "session": "session_019o6m7aLkp3XsGHAKhojYV5", "kind": "ship", "what": "means: src/calc を9→11本（taishoku 退職金・shobyo 傷病手当金）。節 45→54、未投稿テーマ 16→24件。在庫の律速だった calc の天井を上げた／upload: s-taishoku-muzei-joogen-20 (xBY-DtMhSdg) を 8/27 09:00 に予約"}
+{"at": "2026-08-15T17:59:23+09:00", "session": "session_01UHJxx2XSqMs9pydHkyka6p", "kind": "start"}
+{"at": "2026-08-15T18:10:30+09:00", "session": "session_01UHJxx2XSqMs9pydHkyka6p", "kind": "ship", "what": "means: batch_build.py --date（1日にN本を置く道）＋ uploader の日付釘づけ。M14 の8の段が「同じ日に置けない」ので上がれなかったのを塞ぎ、8/24 を8本の日として生成中／fix: pytest tests/ が収集エラーで1件も走っていなかった（30件に）／独立評価 xBY-DtMhSdg 中央値5.0 を記録"}

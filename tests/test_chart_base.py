@@ -127,4 +127,17 @@ check("率はそのまま", _fmt_axis(68, "73.5%"), "68%")
 check("人も単位を引き継ぐ", _fmt_axis(1200, "1350人"), "1,200人")
 
 print(f"\n{'すべて通りました' if not BAD else f'{BAD}件の問題'}")
-sys.exit(1 if BAD else 0)
+
+
+def test_chart_base():
+    """pytest から呼ばれたときの入口。
+
+    ここが無いと、**`sys.exit()` が import の途中で飛んで `pytest tests/` が
+    ディレクトリごと収集に失敗します**（2026-08-15 に踏んだ）。
+    この1本が落ちるだけで済むように、終了は `__main__` のときだけにしてあります。
+    """
+    assert not BAD, f"{BAD}件の問題"
+
+
+if __name__ == "__main__":
+    sys.exit(1 if BAD else 0)

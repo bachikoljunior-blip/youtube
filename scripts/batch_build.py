@@ -56,6 +56,15 @@ from src import config, history  # noqa: E402
 JST = timezone(timedelta(hours=9))
 LOG = ROOT / "data" / "batch_runs.jsonl"
 
+# **M14 の比較の窓**（`docs/MEANS.md` M14）。8/16 が4本・8/17〜8/23 が各1本で、
+# 「1日あたりの本数」を測っています。**ここへ足すと測定そのものが壊れます。**
+#
+# 文書には「実験の窓を踏まないこと」と3か所に書いてありましたが、
+# **守るのは毎回こちらの記憶でした。** 8/15 の日誌が4回続けて言っている
+# 「人が見れば一目で分かる欠陥を、機械検査が素通りさせた」と同じ形なので、
+# **窓を機械に持たせます。** 窓が終わったらこの2行を消すこと（判定は M14 に書く）。
+M14_WINDOW = ("2026-08-16", "2026-08-23")
+
 # 台本生成〜レンダリングの実測は5〜10分。倍を上限に取る（無限には待たない）。
 BUILD_TIMEOUT = 1800
 UPLOAD_TIMEOUT = 600
@@ -101,6 +110,52 @@ def pick(count: int, explicit: list[str]) -> list[dict]:
     return chosen
 
 
+def slots(count: int, hour: int, date_jst: str | None, hours: list[int]) -> list[str]:
+    """各本の予約時刻の指定を返す（`upload_only.py` の第3引数の形）。
+
+    `date_jst` が無ければ従来どおり全部同じ時刻 —— `next_publish_at` が
+    埋まった日を飛ばすので、**結果として1日ずつ後ろに積まれます**（1日1本）。
+
+    `date_jst` があると**その日に釘づけ**して、時刻のほうをずらします。
+    これが「1日にN本」です。M14 の 8 の段はこの道が無くて止まっていました。
+    """
+    if not date_jst:
+        return [str(hour)] * count
+    if hours:
+        picked = hours
+    else:
+        picked = [hour + i for i in range(count)]
+    if len(picked) < count:
+        raise SystemExit(
+            f"--hours が {len(picked)} 個しかありません（{count} 本ぶん要ります）"
+        )
+    bad = [h for h in picked[:count] if not 0 <= h <= 23]
+    if bad:
+        raise SystemExit(f"時刻が 0〜23 の外です: {bad}")
+    if len(set(picked[:count])) != count:
+        raise SystemExit(f"同じ時刻が2本以上あります: {picked[:count]}")
+    return [f"{date_jst}@{h}" for h in picked[:count]]
+
+
+def check_window(date_jst: str, force: bool) -> None:
+    """M14 の比較の窓に置こうとしていないかを見る。**記憶に任せない。**"""
+    lo, hi = M14_WINDOW
+    if not (lo <= date_jst <= hi):
+        return
+    if force:
+        print(f"[batch] **{date_jst} は M14 の比較の窓（{lo}〜{hi}）です。**"
+              " --force-window が付いているので続けます。", flush=True)
+        return
+    raise SystemExit(
+        f"[batch] **{date_jst} は M14 の比較の窓（{lo}〜{hi}）です。**\n"
+        "        ここは「8/16 が4本・8/17〜8/23 が各1本」で1日あたりの本数を\n"
+        "        測っている最中で、足すと測定そのものが壊れます。\n"
+        "        窓の外（8/24 以降）へ置くか、窓が終わったなら\n"
+        "        scripts/batch_build.py の M14_WINDOW を消すこと。\n"
+        "        どうしても足すなら --force-window。"
+    )
+
+
 def run(cmd: list[str], timeout: int) -> tuple[int, str]:
     """出力をそのまま流しながら、末尾も返す（VIDEO_ID を拾うため）。"""
     print(f"[batch] $ {' '.join(cmd)}", flush=True)
@@ -128,6 +183,14 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--count", type=int, default=2, help="作る本数（既定 2）")
     ap.add_argument("--hour", type=int, default=9,
                     help="予約時刻（JST の時。既定 9）。埋まっていれば翌日へ送られる")
+    ap.add_argument("--date", default="",
+                    help="YYYY-MM-DD。**その日に釘づけして時刻をずらす**＝1日にN本。"
+                         "無ければ従来どおり1日ずつ後ろへ積む（1日1本）")
+    ap.add_argument("--hours", default="",
+                    help="--date と一緒に使う。時刻をカンマ区切りで明示"
+                         "（既定は --hour から1時間ずつ）")
+    ap.add_argument("--force-window", action="store_true",
+                    help="M14 の比較の窓に置くことを承知で続ける（測定が壊れます）")
     ap.add_argument("--topics", default="",
                     help="テーマIDをカンマ区切りで明示する（--count より優先）")
     ap.add_argument("--long", action="store_true",
@@ -144,7 +207,16 @@ def main(argv: list[str] | None = None) -> int:
         print("[batch] 作れるテーマがありません。config/topics.yaml を足すこと。")
         return 1
 
-    print(f"[batch] {len(topics)} 本を作ります（予約は {args.hour}:00 JST の空き枠へ）")
+    if args.date:
+        check_window(args.date, args.force_window)
+    hours = [int(h) for h in args.hours.split(",") if h.strip()]
+    when = slots(len(topics), args.hour, args.date or None, hours)
+
+    if args.date:
+        print(f"[batch] {len(topics)} 本を **{args.date} の1日に**入れます"
+              f"（{', '.join(w.split('@')[1] + ':00' for w in when)} JST）")
+    else:
+        print(f"[batch] {len(topics)} 本を作ります（予約は {args.hour}:00 JST の空き枠へ）")
     for t in topics:
         print(f"        {t['id']}  calc={t['calc']}  {t['title_seed'][:38]}")
 
@@ -186,7 +258,7 @@ def main(argv: list[str] | None = None) -> int:
             continue
 
         code, out = run(
-            [sys.executable, "scripts/upload_only.py", tid, "", str(args.hour)],
+            [sys.executable, "scripts/upload_only.py", tid, "", when[n - 1]],
             UPLOAD_TIMEOUT,
         )
         vid = video_id_of(out)
@@ -204,7 +276,8 @@ def main(argv: list[str] | None = None) -> int:
     LOG.parent.mkdir(parents=True, exist_ok=True)
     with LOG.open("a", encoding="utf-8") as fh:
         fh.write(json.dumps(
-            {"at": stamp, "hour": args.hour, "results": results},
+            {"at": stamp, "hour": args.hour, "date": args.date or None,
+             "slots": when, "results": results},
             ensure_ascii=False) + "\n")
 
     ok = [r for r in results if r["video_id"]]
