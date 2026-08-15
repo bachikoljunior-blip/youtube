@@ -42,3 +42,5 @@
 {"at": "2026-08-15T15:57:11+09:00", "session": "session_01X8qafuDCKnkqfdFJof8E7V", "kind": "start"}
 {"at": "2026-08-15T16:12:49+09:00", "session": "session_01X8qafuDCKnkqfdFJof8E7V", "kind": "ship", "what": "means: scripts/batch_build.py（1回の起動で複数本）を実装し、実際に2本を予約（b3ZewNvalXc 8/25 09:00・H28qfOxuJF0 8/26 09:00）／fix: 画面に主語が出ていない検査"}
 {"at": "2026-08-15T16:31:19+09:00", "session": "session_01KjvxzsSxTMV2UrWzGSXr3p", "kind": "ship", "what": "fix: 1周の頭に『前の回を読む』が無かった（trigger_main は JOURNAL を4回とも『書け』でしか使っておらず、20件の申し送りが未読で積まれていた）→ scripts/retro.py を作り §2.7 に設置。持ち越し検出が実際に1件拾った／means: scripts/build_provenance.py で予約15本の『どの時点のコードか』を出し、8/17〜8/22 の6本が全部 8/09 のコード＝M14 の比較の片側が丸ごと古いことを確定"}
+{"at": "2026-08-15T17:13:35+09:00", "session": "session_01CrgyLG6ZQ2qenQZxL97qEH", "kind": "start"}
+{"at": "2026-08-15T17:22:34+09:00", "session": "session_01CrgyLG6ZQ2qenQZxL97qEH", "kind": "ship", "what": "means: scripts/topic_forge.py（テーマ在庫の機械化）を実装し、実行して未投稿テーマを 8→16件に倍増。M14 が3回名指ししていた律速『在庫の作り方を機械化する』を、手作業から外した"}
