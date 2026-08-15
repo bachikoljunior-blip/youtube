@@ -1,0 +1,357 @@
+"""**自分で作った「繰り返し」を、公開される前に見つける。**
+
+    from src import dupes
+    dupes.report(videos)        # scripts/status.py が毎回叩く
+
+## なぜ要るか（2026-08-16。**申し送りに6回出て、6回とも潰れていない項目です**）
+
+YouTube のチャンネル収益化ポリシーは、これを**収益化の対象外**と書いています。
+
+> テンプレートを使用して作成されたと思われるコンテンツや、**同じチャンネルの動画を
+> 続けて数本視聴した後、繰り返しのように感じられる**可能性のあるコンテンツ
+
+**収益化されなければ RPM がいくつでも収入はゼロ**なので、これは見栄えではなく
+到達可能性そのものの条件です（`CLAUDE.md`「この作りの根幹」）。
+
+8/15 23:0x に**同じテーマIDが2本ずつ予約に入る**事故があり、
+`scripts/reschedule.py --list` が「同じテーマID」を印で出すようになりました。
+**しかし、それでは足りません。** この回に実物46本を突き合わせると、
+**テーマIDが違うのに中身が重なっている組が、予約の中に残っていました** ——
+
+    _4zhMy-VIyg 08/16 09:00  年収500万から50万アップで手取りは35万9318円
+    a1b2Nm6jN_0 08/24 09:00  社会保険料率で手取り増は**35万9318円**      ← 同じ金額
+    8Yb181bZvU4 （予約なし）  年収50万アップで手取りは**35万9318円**増
+
+    crO3FUvL2NI 08/17 09:00  医療費控除の足切りは10万円ではない 総所得160万で8万円
+    LpgNOanBc-k 08/24 13:00  医療費控除 総所得160万なら**足切りは8万円**  ← 同じ前提・同じ答え
+
+**テーマIDが違うので、既存の検出は1件も鳴りません。** そして
+**視聴者が見るのはテーマIDではなく、画面に出る金額**です。
+
+## 何を「重なり」と呼ぶか（**しきい値は掛け算してから置く**）
+
+    強い  同じテーマID
+    強い  同じ calc ＋ 片方の金額が**もう片方に全部入っている**（下の「包含」）
+    弱い  同じ calc ＋ 金額が1つ以上ぶつかる（包含にはならない）
+    弱い  同じ calc ＋ 同じ「答えの数」（日・か月・%・倍）が一致
+    弱い  同じ calc の本が、**同じ日**に予約されている
+
+### なぜ「1つでもぶつかったら強い」ではないのか（**最初そう書いて、実物で外れた**）
+
+金額の一致だけを強いことにすると、**制度の名前に入っている数**で全部つながります。
+実測では `fukugyo` の6本が、**全部 `20万円`**（＝「副業20万円ルール」という制度名）
+で結ばれ、**32組のうち15組がこれ**でした。**本当の重なりが埋もれます。**
+
+見たいのは「金額がぶつかったか」ではなく、
+**「この本の数字は、もう一方の本が言っていないことを何か言っているか」**です。
+だから**包含**で見ます —— 少ないほうの金額が全部、多いほうにも入っているとき。
+
+    _4zhMy-VIyg  年収500万から50万アップで手取りは35万9318円   {500万, 50万, 35万9318}
+    a1b2Nm6jN_0  社会保険料率で手取り増は35万9318円             {35万9318}   ← 全部入っている
+
+    nK2SRMIqEF8  副業20万円 1円こえて手取り139,161円            {20万, 139161}
+    IkGaQv1fQQA  副業20万1円で手取り15万9581円                  {20万1, 159581} ← 入っていない
+
+包含でも、**共通が「丸い数1つだけ」なら弱いほうへ落とします**（有効数字2桁以下）。
+`YHiigJ3Zpj4`（題の数字が `20万円` だけの長尺）が、`20万` を含む全部の本と
+組になってしまうためです。**丸い数1つは、制度の名前でしかありません。**
+
+### 相対差 0.5% を許す理由（実測）
+
+    Vpjbt0XofmQ 一律手当と残業代 3年で **61万9898円**
+    drkKm9fHW2M 残業代 一律手当の除外 3年で **61万9千円**   ← 差 0.14%
+    8PMLfjjCe4w 失業給付 離職理由で **136万6500円** の差
+    SsUYduA1dpg 失業給付 離職理由だけで **136万円** 差       ← 差 0.48%
+
+**厳密一致だけにすると、この2組は永久に見つかりません。**
+逆に 0.5% より広げると、同じ calc の中の別の事例まで巻き込みます
+（傷病手当金の 286万7592円 と 46.8% のように、**本当に別の計算**が並ぶため）。
+
+## 分かっている穴
+
+- **題に出ていない重なりは見えません。** 見ているのは題の数字だけで、
+  画面の中身は見ていません。**題は「その本の答え」なので、いちばん濃い1点**
+  ではありますが、**全部ではありません**
+- **calc が同じでも中身が別**の組は、弱いほうで鳴ります（傷病手当金の5本など）。
+  **弱いほうは「止める」ではなく「並べて見る」ためのもの**です
+- 数の読み取りは**題の書き方に依存します**（`35万9318円` は読めますが、
+  `三十五万` は読めません）。実物の題は全部アラビア数字なので、いまは足ります
+"""
+from __future__ import annotations
+
+import re
+from collections import defaultdict
+from datetime import datetime, timedelta, timezone
+
+JST = timezone(timedelta(hours=9))
+MARKER_RE = re.compile(r"\[t:([a-z0-9\-]+)\]")
+
+# 数字＋桁（`35万9318` のように続けて書かれる）。小数も読む（`46.8%`）。
+_TOKEN = re.compile(r"(\d[\d,]*(?:\.\d+)?)\s*(億|万|千)?")
+_SCALE = {"億": 10 ** 8, "万": 10 ** 4, "千": 10 ** 3, None: 1}
+# **単位は長いものから見ること。** `か月` より先に `月` を見ると `31か月` を取り逃す。
+_UNITS = ("円", "か月", "ヶ月", "カ月", "箇月", "%", "％", "日", "年", "歳", "人", "倍", "回", "割")
+
+# 「答えの数」として突き合わせる単位。**歳と年は前提のほうなので入れません**
+# （`45歳` `勤続10年` は条件であって、その本が出した答えではない）。
+ANSWER_UNITS = {"か月", "%", "日", "倍"}
+
+# 金額をこの額から下は見ない。**下を見ると `1円` `3日で1万` のような
+# 前提側の端数が全部ぶつかります**（`20万1円` の `1` など）。
+MIN_YEN = 10_000
+# 丸めて書かれた題を拾うための相対差（上の docstring に実測がある）。
+YEN_TOLERANCE = 0.005
+# 有効数字がこれ以下の金額は「制度の名前に入っている丸い数」として扱う
+# （`20万` `10万` `160万`）。**計算の答えは実測で6桁前後**（`35万9318`）。
+ROUND_SIGDIGITS = 2
+
+
+def numbers(text: str) -> list[tuple[float, str]]:
+    """題から `(値, 単位)` を全部取り出す。単位が無ければ空文字。
+
+    `35万9318円` は **1つの数**として読みます（`35` と `9318` ではない）。
+    続けて書かれた桁は、**桁が小さくなる方向にだけ**つながります ——
+    `年収500万から50万アップ` は 500万 と 50万 の2つで、5,500,000 ではありません。
+    """
+    out: list[tuple[float, str]] = []
+    i = 0
+    while i < len(text):
+        if not _TOKEN.match(text, i):
+            i += 1
+            continue
+        total = 0.0
+        end = i
+        last: float | None = None
+        while True:
+            m = _TOKEN.match(text, end)
+            if not m:
+                break
+            scale = _SCALE[m.group(2)]
+            if last is not None and scale >= last:
+                break
+            total += float(m.group(1).replace(",", "")) * scale
+            last = scale
+            end = m.end()
+            if m.group(2) is None:
+                break
+        unit = ""
+        for u in _UNITS:
+            if text.startswith(u, end):
+                unit, end = u, end + len(u)
+                break
+        out.append((total, {"ヶ月": "か月", "カ月": "か月", "箇月": "か月",
+                            "％": "%"}.get(unit, unit)))
+        i = max(end, i + 1)
+    return out
+
+
+def _yen(text: str) -> set[float]:
+    """金額とみなす数。**`円` が付いていないものも数えます。**
+
+    実物の題は `総所得160万で8万円` `年収500万から50万アップ` のように
+    **途中の金額から `円` を落とします。** `円` を必須にすると、
+    `crO3FUvL2NI` と `LpgNOanBc-k`（総所得160万・足切り8万円が両方一致）が
+    **共通1つに見えて弱いほうへ落ちました。**
+    単位が付いているもの（`日` `歳` `%` …）は金額ではないので除きます。
+    """
+    return {v for v, u in numbers(text) if u in ("円", "") and v >= MIN_YEN}
+
+
+def _answers(text: str) -> set[tuple[float, str]]:
+    return {(v, u) for v, u in numbers(text) if u in ANSWER_UNITS}
+
+
+def _yen_close(a: float, b: float) -> bool:
+    return abs(a - b) <= max(a, b) * YEN_TOLERANCE
+
+
+def sigdigits(v: float) -> int:
+    """末尾の 0 を落とした桁数。`200000` は 1、`1600000` は 2、`359318` は 6。"""
+    n = int(round(v))
+    if n == 0:
+        return 0
+    s = str(abs(n)).rstrip("0")
+    return len(s) or 1
+
+
+def _contained(small: set[float], big: set[float]) -> list[tuple[float, float]]:
+    """`small` の全部が `big` に入っていれば、当たった組を返す（無ければ空）。
+
+    **「1つでもぶつかったら」ではありません。** 少ないほうが**何も足していない**
+    ときだけを重なりと呼びます（docstring の `fukugyo` 15組が理由）。
+
+    **組で返すのは、丸さを両側で見るため**です。`20万円` と `20万1円` は
+    0.5% の中に入りますが、**片方が丸ければ制度側の数**とみなします
+    （`YHiigJ3Zpj4` の題の数字は `20万円` だけで、これを答えと読むと
+    `20万1円` の本すべてと組になります）。
+    """
+    hits = []
+    for a in small:
+        m = [b for b in big if _yen_close(a, b)]
+        if not m:
+            return []
+        hits.append((a, min(m)))
+    return hits
+
+
+def _calc_of(topic_id: str, topics: dict[str, str]) -> str:
+    return topics.get(topic_id, "")
+
+
+def rows_from_videos(videos: list[dict], topics: dict[str, str] | None = None) -> list[dict]:
+    """`videos.list` の返り（または同じ形の dict）を、突き合わせる形に直す。"""
+    topics = topics or {}
+    rows = []
+    for v in videos:
+        sn = v.get("snippet", v)
+        st = v.get("status", v)
+        desc = sn.get("description", "") or ""
+        m = MARKER_RE.search(desc)
+        topic = m.group(1) if m else ""
+        at = st.get("publishAt") or (
+            sn.get("publishedAt") if st.get("privacyStatus") == "public" else None)
+        rows.append({
+            "id": v.get("id", ""),
+            "title": sn.get("title", ""),
+            "topic": topic,
+            "calc": _calc_of(topic, topics),
+            "at": at,
+            "scheduled": bool(st.get("publishAt")),
+        })
+    return rows
+
+
+def find(rows: list[dict]) -> list[dict]:
+    """重なりの組を返す。**強いほうを先に**、それぞれ `kind` と理由つき。"""
+    issues: list[dict] = []
+    seen: set[tuple[str, str, str]] = set()
+
+    def add(kind: str, strong: bool, a: dict, b: dict, why: str) -> None:
+        key = (kind, *sorted((a["id"], b["id"])))
+        if key in seen:
+            return
+        seen.add(key)
+        issues.append({"kind": kind, "strong": strong, "a": a, "b": b, "why": why})
+
+    by_topic: dict[str, list[dict]] = defaultdict(list)
+    for r in rows:
+        if r["topic"]:
+            by_topic[r["topic"]].append(r)
+    for topic, group in by_topic.items():
+        for i, a in enumerate(group):
+            for b in group[i + 1:]:
+                add("same-topic", True, a, b, f"テーマID `{topic}` が同じ")
+
+    by_calc: dict[str, list[dict]] = defaultdict(list)
+    for r in rows:
+        if r["calc"]:
+            by_calc[r["calc"]].append(r)
+
+    for calc, group in by_calc.items():
+        cache = [(r, _yen(r["title"]), _answers(r["title"])) for r in group]
+        for i, (a, ay, aa) in enumerate(cache):
+            for b, by, ba in cache[i + 1:]:
+                small, big = (ay, by) if len(ay) <= len(by) else (by, ay)
+                hit = _contained(small, big) if small else []
+                # 共通が「丸い数1つだけ」なら制度の名前でしかない（`20万円ルール`）。
+                if hit and (len(hit) > 1 or
+                            min(sigdigits(x) for x in hit[0]) > ROUND_SIGDIGITS):
+                    shown = '・'.join(f"{int(min(p)):,}円" for p in sorted(hit))
+                    add("same-yen", True, a, b, f"`{calc}` で金額が入れ子（{shown}）")
+                    continue
+                loose = [x for x in ay for y in by if _yen_close(x, y)]
+                if loose:
+                    add("same-yen-loose", False, a, b,
+                        f"`{calc}` で金額が1つぶつかる（{int(min(loose)):,}円ほど）")
+                    continue
+                shared = aa & ba
+                if shared:
+                    v, u = sorted(shared)[0]
+                    add("same-answer", False, a, b,
+                        f"`{calc}` で答えの数が同じ（{v:g}{u}）")
+
+        by_day: dict[str, list[dict]] = defaultdict(list)
+        for r in group:
+            if r["scheduled"] and r["at"]:
+                day = datetime.fromisoformat(
+                    r["at"].replace("Z", "+00:00")).astimezone(JST).strftime("%m/%d")
+                by_day[day].append(r)
+        for day, same in by_day.items():
+            for i, a in enumerate(same):
+                for b in same[i + 1:]:
+                    add("same-day", False, a, b, f"`{calc}` が {day} に2本")
+
+    issues.sort(key=lambda x: (not x["strong"], x["kind"]))
+    return issues
+
+
+def blocking(title: str, topic_id: str, videos: list[dict],
+             topics: dict[str, str] | None = None) -> list[dict]:
+    """**投稿の直前に呼ぶ。** これから上げる1本が、既にある本と強く重なるか。
+
+    重なっていれば、その組を返します（**空なら通してよい**）。
+
+    ここに置く理由: **予約は `scripts/upload_only.py` の1か所しか通りません。**
+    生成の段に置くと、`batch_build` 以外の道（手で `--dry-run` してから上げる）が
+    素通りします。**投稿前の検査は、迂回できない場所に置くこと**（`src/verify.py` と同じ）。
+
+    **作ったあとに止めるので、その1本は捨てになります。** それでも
+    **公開してしまうより安い** —— 収益化の対象外になると収入はゼロなので。
+    """
+    rows = rows_from_videos(videos, topics)
+    me = {"id": "＜これから上げる本＞", "title": title, "topic": topic_id,
+          "calc": (topics or {}).get(topic_id, ""), "at": None, "scheduled": False}
+    return [i for i in find(rows + [me])
+            if i["strong"] and me["id"] in (i["a"]["id"], i["b"]["id"])]
+
+
+def _when(r: dict) -> str:
+    if not r["at"]:
+        return "予約なし"
+    at = datetime.fromisoformat(r["at"].replace("Z", "+00:00")).astimezone(JST)
+    return ("予約 " if r["scheduled"] else "公開 ") + at.strftime("%m/%d %H:%M")
+
+
+def report(videos: list[dict], topics: dict[str, str] | None = None) -> list[dict]:
+    """`status.py` から毎回呼ぶ。**印刷して、見つけた組を返す。**"""
+    issues = find(rows_from_videos(videos, topics))
+    strong = [i for i in issues if i["strong"]]
+    weak = [i for i in issues if not i["strong"]]
+
+    print("\n=== 自分で作った「繰り返し」（src/dupes.py）===")
+    if not issues:
+        print("  重なりは見つかりませんでした。")
+        return issues
+
+    print(f"  **強い {len(strong)}組** ／ 弱い {len(weak)}組")
+
+    if strong:
+        print(f"\n  --- 強い {len(strong)}組（**片方を外すこと**）---")
+        for it in strong:
+            a, b = it["a"], it["b"]
+            print(f"  [{it['kind']}] {it['why']}")
+            print(f"      {a['id']}  {_when(a):<14s} {a['title'][:38]}")
+            print(f"      {b['id']}  {_when(b):<14s} {b['title'][:38]}")
+        print("    `scripts/reschedule.py --unschedule <id>`。"
+              "**先に代わりを作ってから外すこと** —— 投稿が途切れるほうが高い。")
+
+    # **弱いほうは1組ずつ出しません。** 実測で「答えの数が同じ」だけで20組出て、
+    # そのうち16組が `shitsugyo` の `90日`（給付日数は制度側の刻みなので、
+    # 別の事例でも必ず一致する）。**組を並べると強いほうが埋もれます。**
+    # 見たいのは「どの calc に、どれだけ固まっているか」なので、束ねて出します。
+    if weak:
+        print(f"\n  --- 弱い {len(weak)}組（**止めるためではなく、並べて見るため**）---")
+        bundles: dict[tuple[str, str], set[str]] = defaultdict(set)
+        for it in weak:
+            calc = it["a"]["calc"] or it["b"]["calc"]
+            bundles[(calc, it["kind"])].update((it["a"]["id"], it["b"]["id"]))
+        for (calc, kind), ids in sorted(bundles.items(),
+                                        key=lambda kv: -len(kv[1])):
+            print(f"  [{kind}] `{calc}` に {len(ids)}本: {' '.join(sorted(ids))}")
+        print("    続けて見たときに繰り返しに映るかは、**自分で判断すること。**")
+
+    print("\n  **これは収益化の条件です。**「同じチャンネルの動画を続けて数本視聴した後、"
+          "繰り返しのように感じられる可能性のあるコンテンツ」は収益化の対象外と"
+          "明記されています。**収益化されなければ収入はゼロ**なので、"
+          "見栄えの話ではありません。")
+    return issues

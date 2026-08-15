@@ -625,6 +625,23 @@ def main(days: int = 7) -> int:
     if on_purpose:
         print(f"\n（意図して伏せている動画 {len(on_purpose)}本。理由は config/withheld.yaml）")
 
+    # **自分で作った「繰り返し」を毎回ここで見る**（2026-08-16 に足した）。
+    # 申し送りに **6回**「`status.py` に二重予約の検出を入れる」と書かれ、
+    # 6回とも潰れていませんでした。**溜まる側の欠陥**で、いまは
+    # `scripts/reschedule.py --list` を**手で叩かないと出ません。**
+    #
+    # そして、そちらが見ているのは**テーマIDの一致だけ**です。
+    # この回に実物76本を突き合わせると、**テーマIDが違うのに中身が重なる組**が
+    # 予約の中に残っていました（`35万9318円` が2本、`61万9千円` が公開済と2本目）。
+    # **視聴者が見るのはテーマIDではなく、画面に出る金額**です。
+    try:
+        from src import config as _config
+        from src import dupes as _dupes
+        _dupes.report(videos, {t["id"]: t.get("calc", "")
+                               for t in _config.load_topics()["topics"]})
+    except Exception as exc:
+        print(f"\n=== 自分で作った「繰り返し」===\n  [!] 見られませんでした: {str(exc)[:120]}")
+
     # 流入経路。表示されているのかどうかが、他の全部の前提になる。
     print(f"\n=== 流入経路（直近{days}日） ===")
     try:

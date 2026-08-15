@@ -43,7 +43,7 @@ def split_when(when: str) -> tuple[int, str | None]:
 
 
 def main(topic: str, visibility: str | None = None, hour: int | None = None,
-         date_jst: str | None = None) -> int:
+         date_jst: str | None = None, skip_dupe_check: bool = False) -> int:
     """hour を渡すと、その時刻（JST）で予約する。
     date_jst（`YYYY-MM-DD`）も渡すと、**その日に釘づけ**する（埋まっていれば失敗）。
 
@@ -93,6 +93,44 @@ def main(topic: str, visibility: str | None = None, hour: int | None = None,
                 return 1
     print("[check] リポジトリへの言及なし")
 
+    # **自分で作った「繰り返し」を、公開される前に止める**（2026-08-16 に足した）。
+    # ここに置くのは、**予約がこの1か所しか通らない**からです。生成の段に置くと、
+    # 手で `--dry-run` してから上げる道が素通りします（`src/verify.py` と同じ考え）。
+    #
+    # 8/15 23:0x は「同じテーマIDが2本」を直しましたが、**それでは足りません。**
+    # 8/16 に実物76本を突き合わせると、**テーマIDが違うのに同じ金額**の組が
+    # 予約の中に4本残っていました（`35万9318円` `61万9千円` `136万円` `足切り8万円`）。
+    # 見ているのは題の数字なので、**calc も台本も別でも、答えが同じなら鳴ります。**
+    if not skip_dupe_check:
+        try:
+            from src import dupes, history
+            svc = uploader._service()
+            ch = svc.channels().list(part="contentDetails", mine=True).execute()["items"][0]
+            ids = history.channel_video_ids(
+                svc, ch["contentDetails"]["relatedPlaylists"]["uploads"])
+            existing: list[dict] = []
+            for i in range(0, len(ids), 50):
+                existing += svc.videos().list(
+                    part="snippet,status", id=",".join(ids[i:i + 50])).execute()["items"]
+            hits = dupes.blocking(
+                title, topic, existing,
+                {t["id"]: t.get("calc", "") for t in config.load_topics()["topics"]})
+            if hits:
+                print("\n[!] **既にある本と強く重なります。投稿を中止します。**")
+                for h in hits:
+                    other = h["b"] if h["a"]["id"].startswith("＜") else h["a"]
+                    print(f"  [{h['kind']}] {h['why']}")
+                    print(f"      これから: {title[:44]}")
+                    print(f"      既にある: {other['id']}  {other['title'][:44]}")
+                print("  「同じチャンネルの動画を続けて数本視聴した後、繰り返しのように"
+                      "感じられる可能性のあるコンテンツ」は**収益化の対象外**です。")
+                print("  どうしても上げるなら `--allow-dupe`。**理由を JOURNAL に書くこと。**")
+                return 1
+            print("[check] 既存の本との強い重なりなし")
+        except Exception as exc:
+            # **落ちても投稿は止めない。** 途切れるほうが高い（CLAUDE.md）。
+            print(f"[check] 重なりを見られませんでした（続行）: {str(exc)[:100]}")
+
     video_id = uploader.upload(
         work / "final.mp4",
         work / "thumbnail.jpg",
@@ -126,15 +164,21 @@ def main(topic: str, visibility: str | None = None, hour: int | None = None,
 
 
 if __name__ == "__main__":
-    if len(sys.argv) not in (2, 3, 4):
+    _argv = sys.argv[1:]
+    # **重なりの門を越える札**（`src/dupes.py`）。位置引数の数を変えないよう、
+    # 先に抜いておく。**使ったら理由を JOURNAL に書くこと。**
+    _allow = "--allow-dupe" in _argv
+    _argv = [a for a in _argv if a != "--allow-dupe"]
+    if len(_argv) not in (1, 2, 3):
         print(__doc__)
         raise SystemExit(2)
     _hour, _date = (None, None)
-    if len(sys.argv) == 4:
-        _hour, _date = split_when(sys.argv[3])
+    if len(_argv) == 3:
+        _hour, _date = split_when(_argv[2])
     raise SystemExit(main(
-        sys.argv[1],
-        sys.argv[2] if len(sys.argv) >= 3 and sys.argv[2] else None,
+        _argv[0],
+        _argv[1] if len(_argv) >= 2 and _argv[1] else None,
         _hour,
         _date,
+        _allow,
     ))
