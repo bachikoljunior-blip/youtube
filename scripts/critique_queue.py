@@ -74,6 +74,28 @@ def stash(topic: str, video_id: str, script: dict, work: Path) -> Path | None:
     # 相方の json が無い .jpg だけが残ります。
     STASH.mkdir(parents=True, exist_ok=True)
     shutil.copy2(sheet, STASH / f"{video_id}.jpg")
+
+    # **`slides_plan.json` も一緒に残します**（2026-08-15。5回持ち越された項目）。
+    #
+    # ここには contact sheet と読み上げ文しか入っていませんでした。
+    # **どちらも焼き上がった絵で、焼き直せません。** 描画を直したときに
+    # 「直る前と後で絵がどう変わったか」を測るには、`visuals.render` に
+    # 食わせられる入力そのもの（＝**割った後のコマの列**）が要ります。
+    #
+    # 実際に詰まりました。8/15 22:0x の回は「実質同じ絵か」を測るために
+    # **動画を2本生成しています**（11分×2）。`slides_plan.json` さえあれば
+    # `scripts/bake_slides.py --plan` で **30秒**、生成0回で済みました。
+    # 材料が21本ぶん積んであったのに、**測れる形で積んでいなかった**ということです。
+    #
+    # **1本あたり数KB。** 独立評価の子には渡しません（渡してよいのは
+    # contact sheet と読み上げ文の2つ＝`docs/CRITIQUE.md`）。これは
+    # **こちら側が過去の本を焼き直すための入力**で、用途が別です。
+    plan_src = work / "slides_plan.json"
+    plan_kept = False
+    if plan_src.exists():
+        shutil.copy2(plan_src, STASH / f"{video_id}.plan.json")
+        plan_kept = True
+
     (STASH / f"{video_id}.json").write_text(
         json.dumps(
             {
@@ -82,6 +104,7 @@ def stash(topic: str, video_id: str, script: dict, work: Path) -> Path | None:
                 "stashed_at": datetime.now(JST).isoformat(timespec="seconds"),
                 "orientation": "縦" if script.get("short", True) else "横",
                 "narration": [ln for ln in lines if ln],
+                "slides_plan": plan_kept,
             },
             ensure_ascii=False,
             indent=1,
@@ -89,6 +112,11 @@ def stash(topic: str, video_id: str, script: dict, work: Path) -> Path | None:
         encoding="utf-8",
     )
     print(f"[queue] 独立評価の材料を残しました: data/critique_queue/{video_id}.jpg")
+    if plan_kept:
+        print(f"[queue] 焼き直せる入力も残しました: data/critique_queue/{video_id}.plan.json")
+    else:
+        # **黙って落とさない。** 無いことに気づけないのが、この項目が5回持ち越された理由です。
+        print(f"[queue] **{plan_src} がありません** —— この本は後から焼き直せません")
     return STASH / f"{video_id}.jpg"
 
 
@@ -132,9 +160,22 @@ def pending() -> list[dict]:
     done = _scored()
     out = []
     for meta in sorted(STASH.glob("*.json")):
+        # **`*.plan.json` を拾わないこと**（2026-08-15）。焼き直し用の入力を
+        # 隣に置いた瞬間、この glob が**1本につき2件**返すようになります。
+        # 中身は台本ではないので `video_id` が無く、`meta.stem` から
+        # **`"<ID>.plan"` という架空の待ち**が生えます（点の付けようが無いので
+        # 永久に消えない）。
+        #
+        # 名前と型の**両方**で弾いています。いま実際に効いているのは型のほう
+        # （`slides_plan.json` は配列なので `isinstance` で落ちる）ですが、
+        # **中身の形が変わった日に、名前のほうだけが残ります。**
+        if meta.name.endswith(".plan.json"):
+            continue
         try:
             d = json.loads(meta.read_text(encoding="utf-8"))
         except json.JSONDecodeError:
+            continue
+        if not isinstance(d, dict):
             continue
         vid = d.get("video_id", meta.stem)
         # `critique_record.py` は topic でも動画IDでも積めるので、両方で照合する。
@@ -156,6 +197,15 @@ def main(argv: list[str]) -> int:
         d = json.loads(meta.read_text(encoding="utf-8"))
         print(f"contact sheet : {sheet}")
         print(f"動画の向き    : {d['orientation']}")
+        plan = STASH / f"{vid}.plan.json"
+        if plan.exists():
+            # **独立評価の子に渡すものではありません**（渡してよいのは
+            # contact sheet と読み上げ文の2つ）。こちらが絵を焼き直すための入力です。
+            print(f"焼き直す入力  : {plan}")
+            print(f"  python scripts/bake_slides.py --plan {plan}"
+                  f"{' --short' if d['orientation'] == '縦' else ''}")
+        else:
+            print("焼き直す入力  : **ありません**（この本は絵を測り直せません）")
         print("読み上げ文:")
         for ln in d["narration"]:
             print(f"  {ln}")
@@ -169,8 +219,15 @@ def main(argv: list[str]) -> int:
         print("  ここに出ません（2026-08-15 より前の投稿が全部そうです）。")
         return 0
     for d in rows:
-        print(f"  {d['video_id']}  {d['orientation']}  {len(d['narration'])}行  投稿 {d['stashed_at'][:16]}")
+        # **焼き直せるかを一覧に出す。** 出さないと、次の回は「材料はある」と読み、
+        # 焼き直せない本を測ろうとして**生成（11分）に戻ります。**
+        bakeable = "焼直可" if (STASH / f"{d['video_id']}.plan.json").exists() else "焼直不可"
+        print(f"  {d['video_id']}  {d['orientation']}  {len(d['narration'])}行  "
+              f"{bakeable}  投稿 {d['stashed_at'][:16]}")
+    n_bakeable = sum(1 for d in rows if (STASH / f"{d['video_id']}.plan.json").exists())
     print()
+    print(f"  焼き直せるのは {n_bakeable}/{len(rows)} 本"
+          f"（`slides_plan.json` を残し始めたのは 2026-08-15 23:xx から）")
     print("  手順は docs/CRITIQUE.md。材料の中身は:")
     print("    python scripts/critique_queue.py <動画ID>")
     print("  積むのは:")
