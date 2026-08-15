@@ -139,14 +139,28 @@ def main() -> int:
         except Exception as exc:
             check("YouTube 認証", False, explain(exc)[:300])
 
+    # 在庫は「全テーマ − 投稿済み」でしか出せない。投稿済みはチャンネルから引く。
+    # ここを `if not problems` で飛ばしていたので、**他の項目が1つでも落ちていると
+    # posted が空になり、在庫が「全件」に化けていました**（2026-08-15 に実測で発覚。
+    # CLAUDE_CODE_OAUTH_TOKEN がコンテナに無いだけで毎回そうなり、
+    # 真の12件が **40件** と出ていた）。在庫切れは M14 の律速そのもの
+    # （`docs/MEANS.md`「着手して分かった律速 —— 手段ではなく在庫でした」）なので、
+    # **多いほうに間違える計器は、いちばん見たいときに黙る。**
+    #
+    # 直し: 引けたときだけ数える。**引けなかったら数を出さない。**
+    # 「分からない」を「たくさんある」と書かないこと。
+    total = len(config.load_topics()["topics"])
     try:
         from src.history import posted_topic_ids
 
-        posted = posted_topic_ids() if not problems else set()
-    except Exception:
-        posted = set()
-    unused = [t for t in config.load_topics()["topics"] if t["id"] not in posted]
-    check(f"未投稿テーマ {len(unused)} 件", len(unused) > 0, "config/topics.yaml に追加")
+        posted = posted_topic_ids()
+    except Exception as exc:
+        check(f"未投稿テーマ ?件 / 全{total}件 — 投稿済みを引けませんでした",
+              False, f"チャンネルに繋がりません（{str(exc)[:120]}）。在庫は判定できていません")
+    else:
+        unused = [t for t in config.load_topics()["topics"] if t["id"] not in posted]
+        check(f"未投稿テーマ {len(unused)} 件 / 全{total}件",
+              len(unused) > 0, "config/topics.yaml に追加")
 
     print()
     if problems:

@@ -73,11 +73,25 @@ def record(video_id: str, scores: list[float], note: str = "") -> None:
     with LEDGER.open("a", encoding="utf-8") as fh:
         fh.write(json.dumps(row, ensure_ascii=False) + "\n")
 
-    verdict = "**作り直す**" if median < 6 else "そのまま投稿してよい"
-    print(f"[critique] {video_id} スコア {scores} → 中央値 {median} → {verdict}")
+    # **較正期間なので、ここで生産を止めません**（2026-08-15、`docs/CRITIQUE.md`）。
+    # ここは 8/15 まで「中央値6未満 → **作り直す**」と出していました。
+    # ところが同じ日に、その門は**自分を検証できない作り**だと分かっています——
+    # engaged は公開しないと付かないのに、門は低い点を公開させないので、
+    # **低い点の engaged が原理的に手に入らず、順位相関が永久に出せません。**
+    # 実績も通過率0%（中央値 3・5・4・4）で、**未検証の計器が M14 を塞いでいました。**
+    #
+    # 文書だけ較正期間に変えて**この出力を直し忘れると**、次に来た側は
+    # 画面の「作り直す」に従い、同じ塞ぎ方が戻ります。**基準は下げていません**
+    # （下の「本来の決め方」は `docs/CRITIQUE.md` にそのまま残してあります）。
     if median < 6:
-        print("  `docs/CRITIQUE.md` の決め方は**先に決めてあります。**"
-              "ここで基準を下げないこと（下げたら計器ではなくなります）。")
+        print(f"[critique] {video_id} スコア {scores} → 中央値 {median} "
+              "→ **較正期間なので公開は止めない**（点は必ず記録する）")
+        print("  基準を下げたのではありません。`docs/CRITIQUE.md` の"
+              "「本来の決め方」（中央値6未満は作り直す）は保留中です。")
+        print("  低い点のものを公開しないと、**低い点が本当に伸びないのかが分かりません。**")
+    else:
+        print(f"[critique] {video_id} スコア {scores} → 中央値 {median} "
+              "→ そのまま投稿してよい")
 
 
 def check() -> None:
@@ -98,10 +112,27 @@ def check() -> None:
         print(f"  [!] 実績を取れませんでした（{exc}）。積んだぶんだけ出しました。")
         return
 
+    # **記録はテーマID、Analytics は動画ID。**そのまま `perf.get()` すると
+    # 必ず None になり、突き合わせが**永久に0件**のまま
+    # 「2〜3日遅れます」と出続けます（2026-08-15 に発覚。詳細は
+    # `src/history.py` の `topic_video_map`）。ここで橋を掛けます。
+    try:
+        from src.history import topic_video_map
+        topic_to_video = topic_video_map()
+    except Exception as exc:
+        print(f"  [!] テーマ→動画の対応を引けませんでした（{exc}）。"
+              "テーマIDで積んだぶんは突き合わせられません。")
+        topic_to_video = {}
+
     xs, ys, used = [], [], []
+    unresolved: list[str] = []
     for r in rows:
-        p = perf.get(r["video"])
+        key = r["video"]
+        if key not in perf and key in topic_to_video:
+            key = topic_to_video[key]             # テーマID → 動画ID
+        p = perf.get(key)
         if not p:
+            unresolved.append(r["video"])
             continue
         views = p.get("views", 0)
         # **30再生未満は入れない。**分母が小さいと比率が壊れます
@@ -117,6 +148,14 @@ def check() -> None:
     print(f"  engaged と突き合わせられたもの {len(used)}件 / 必要 {NEEDED}件")
     for vid, med, eng, views in used:
         print(f"    {vid:12s} 中央値 {med:4.1f}  engaged {eng:5.1f}%  ({views}再生)")
+
+    if unresolved:
+        # **「まだ来ていない」と「そもそも結びつかない」を混ぜないこと。**
+        # 混ぜていたせいで、構造的な穴が「待てば埋まる」に見えていました。
+        print(f"  突き合わせられなかったもの {len(unresolved)}件: "
+              f"{', '.join(sorted(set(unresolved)))}")
+        print("    未公開・30再生未満・Analytics 未到着のどれかです。"
+              "**テーマIDが引けないのが理由なら、それは待っても埋まりません。**")
 
     if len(used) < NEEDED:
         print(f"  **まだ判定できません。**あと {NEEDED - len(used)}本。")
