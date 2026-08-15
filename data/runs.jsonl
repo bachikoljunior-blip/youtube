@@ -27,3 +27,6 @@
 {"at": "2026-08-15T13:36:12+09:00", "session": "session_017PmZdYdhAXhjB31DswWfoy", "kind": "ship", "what": "fix: 親子の同時起動を塞いだ(trigger_parent (3)に生死判定・trigger_main に自衛)／script_writer のショート規則の自己矛盾(62文字↔1〜2秒・ROLE未format・計算値0〜2)／M13ゲートが自分を検証できない作りだったので較正期間へ／upload: s-kojo-4 (NHKylqsNfTw) を 8/16 11:00 に予約"}
 {"at": "2026-08-15T14:07:11+09:00", "session": "session_011yzJvVEYhQto91XgnLqZXL", "kind": "start"}
 {"at": "2026-08-15T14:07:44+09:00", "session": "session_011yzJvVEYhQto91XgnLqZXL", "kind": "ship", "what": "fix: 待ちをやめた。子が終わる前に自分で次を立てる。二重起動はタグ+created_at古いほうが勝つで塞ぎ、枠allowed時のみ自走。実測48%の空転を閉じた"}
+{"at": "2026-08-15T14:09:52+09:00", "session": "session_01YSEnL65KdyAQN3FunND5vp", "kind": "start"}
+{"at": "2026-08-15T14:16:32+09:00", "session": "session_01YSEnL65KdyAQN3FunND5vp", "kind": "ship", "what": "fix: 自走の1周目が自分の重複防止で畳んで鎖が終わる穴を塞いだ（sibling_check.py・立てた相手を除外／枠は窓ごとに最新の観測）"}
+{"at": "2026-08-15T14:19:12+09:00", "session": "session_01YSEnL65KdyAQN3FunND5vp", "kind": "ship", "what": "fix: 独立評価の材料が読み上げ文0行で積まれていた（scenes→segments・黙って空を返す .get を例外化・VIDEO_ID を先に刷る）"}

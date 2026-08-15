@@ -50,12 +50,30 @@ def stash(topic: str, video_id: str, script: dict, work: Path) -> Path | None:
         print("[queue] inspect.jpg が無いので材料を残せません（inspect_build.py を通してください）")
         return None
 
-    STASH.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(sheet, STASH / f"{video_id}.jpg")
-
     # 読み上げ文だけを取る。**題材も狙いも渡さない**のが独立評価の条件なので、
     # ここで topic 名や calc の種類まで書くと、次の回がそのまま子に渡してしまう。
-    lines = [str(s.get("narration", "")).strip() for s in script.get("scenes", [])]
+    #
+    # **鍵は `segments` です。`scenes` ではありません**（2026-08-15 に直した）。
+    # 8/15 に材料を残す仕組みを入れたとき、ここを `scenes` と書いていました。
+    # 台本にその鍵は無いので **`.get()` が黙って空を返し、読み上げ文が
+    # 毎回0行で積まれていました**（`NHKylqsNfTw` `CdX2oIb7BG8` の2本が実際にそれ）。
+    # `docs/CRITIQUE.md` は「渡してよいものは contact sheet と読み上げ文の2つ」と
+    # 書いているので、**材料が半分だけ残る = 検査が半分死ぬ**形でした。
+    # 落ちずに空で通るのが最悪なので、**取れなかったら声を上げます。**
+    segments = script.get("segments")
+    if not isinstance(segments, list) or not segments:
+        raise ValueError(
+            "台本に `segments` がありません（読み上げ文を残せません）。"
+            f" 実際の鍵: {sorted(script)}"
+        )
+    lines = [str(s.get("narration", "")).strip() for s in segments]
+    if not any(lines):
+        raise ValueError("`segments` はありますが `narration` が全部空です。")
+
+    # **確かめてから写す。** 先に写すと、上で上げたときに
+    # 相方の json が無い .jpg だけが残ります。
+    STASH.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(sheet, STASH / f"{video_id}.jpg")
     (STASH / f"{video_id}.json").write_text(
         json.dumps(
             {

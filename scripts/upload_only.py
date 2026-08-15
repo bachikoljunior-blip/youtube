@@ -82,11 +82,24 @@ def main(topic: str, visibility: str | None = None, hour: int | None = None) -> 
     # 公開した棒を残す。`build/` は .gitignore なので、これをやらないと
     # 次のコンテナで「同じ図」検査の比較対象がゼロになる（`src/bars.py`）。
     bars.record(topic, video_id, script)
+    # **投稿は済んでいます。ここから先で落ちても動画IDを失わないこと。**
+    # 先に出しておく（2026-08-15。材料を残す処理が例外を上げるようにしたため）。
+    print(f"VIDEO_ID {video_id}")
+
     # 独立評価（M13）の材料も同じ理由で残す。**残さないと、投稿した回で評価を
     # 回せなかった時点で永久に評価できません**（`scripts/critique_queue.py`）。
-    critique_queue.stash(topic, video_id, script, work)
+    #
+    # **投稿そのものは終わっているので、ここで止めません。** ただし黙って
+    # 素通りさせると 8/15 の再発（読み上げ文が0行のまま2本積まれた）になるので、
+    # **見落とせない形で出して、終了コードにも出します。**
+    try:
+        critique_queue.stash(topic, video_id, script, work)
+    except Exception as exc:
+        print(f"[queue] **材料を残せませんでした: {exc}**")
+        print("[queue] **投稿は済んでいます。** この動画は独立評価を回せません。")
+        print("[queue] 公開前なら予約を外せます（docs/CRITIQUE.md）。")
+        return 1
 
-    print(f"VIDEO_ID {video_id}")
     return 0
 
 
