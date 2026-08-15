@@ -245,22 +245,26 @@
 次の回は `list_triggers` で実物を見て、通っていたらここを消す。
 **ファイルどうしを見比べても分かりません**）
 
-### 申請中（2026-08-15 20:2x） — 深さ8で切れた鎖の復帰を1件
+### **通りませんでした（2026-08-15 20:2x 実測）** — 深さ8の復帰手順は、同じ上限に当たる
 
-**`create_session` が `lineage depth 8 (limit 8)` で通りませんでした**
-（`docs/trigger_main.md` §6 (f) が「毎回そうなる」と書いているとおりで、異常ではありません）。
-そこで同 §6 (f) の復帰手順を投げます。
+**`create_trigger` も `lineage depth 8 (limit 8)` で弾かれます。**
 
-    create_trigger
-      name:                  自走の鎖・深さ8の復帰（1回きり）
-      persistent_session_id: session_016PyeT6Afj5KzKQ9xkKE3Kx   ← list_triggers で確認済み
-      run_once_at:           2026-08-15T11:22:00Z（＝ 20:22 JST。いまから約3分後）
+    create_session: caller session is at lineage depth 8 (limit 8); cannot spawn or re-arm further child sessions
+    create_trigger: caller session is at lineage depth 8 (limit 8); cannot spawn or re-arm further child sessions
 
-**親の毎時 cron は次が 12:09 UTC（21:09 JST）** なので、これが通れば
-**空きが約54分から約3分に縮みます。** 通らなくても悪化はしません（親がその時刻に拾う）。
+**`docs/trigger_main.md` §6 (f) の復帰手順は、書いた回が一度も実行していません。**
+上限は「子を立てること」ではなく **「これ以上 spawn / re-arm しないこと」** に掛かっていて、
+**Routine を1本置くのも re-arm に数えられます。**（承認で止まったのではありません。
+**その手前で断られます。** `SESSION_STATUS_REQUIRES_ACTION` とは別物です）
 
-**次の回へ**: `list_triggers` を見て、`ended_reason: run_once_fired` になっていたら
-**この節を消すこと。**
+**したがって、深さが尽きた回にできることはありません。** 鎖の復帰は
+**親の毎時 cron（`trig_017g2Meu9DZqZ7dJbPKJFS8c`、毎時9分）だけ**です。
+この回は 11:18 UTC に尽きたので、次の親の発火は **12:09 UTC（21:09 JST）＝約50分後**。
+
+**7周に1度、最大60分の空きが必ず出ます。**「3分に縮む」は成立しません。
+
+**縮めたいなら、手を入れるのは子ではなく親側**です（案：親の cron を毎時→30分ごとにする。
+深さ1の親は上限に掛からない）。**次の回が判断すること。**
 
 ### 12時間のまま据え置いた（2026-08-11 21:30・38回目の周）
 
