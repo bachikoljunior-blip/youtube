@@ -34,7 +34,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from src.uploader import _service  # noqa: E402
 
 JST = timezone(timedelta(hours=9))
-LOOKAHEAD_DAYS = 3      # 何日先まで予約の空きを見るか
+# 何日先まで予約の空きを見るか。
+# **3 では短すぎました**（2026-08-15 23:0x）。M14 の比較の窓は 8/16〜8/23 の8日で、
+# 3日先までしか見ないと**窓の内側の穴が、3日前になるまで見えません。**
+# 実際 8/18・8/19・8/20 のうち報告されたのは 8/18 だけでした。
+# 1周30分で回っているので、7日先まで出しても「まだ埋めなくてよい日」が
+# 並ぶだけで害はありません。**見えない穴のほうが高い。**
+LOOKAHEAD_DAYS = 7
 def _is_short(video: dict) -> bool:
     """ショートかどうか。**尺で見る。** 題の #Shorts は付け忘れがある。"""
     dur = video["contentDetails"]["duration"]
@@ -509,15 +515,27 @@ def main(days: int = 7) -> int:
     )
 
     uploads = channel["contentDetails"]["relatedPlaylists"]["uploads"]
-    items = youtube.playlistItems().list(part="contentDetails", playlistId=uploads, maxResults=50).execute()
-    ids = [i["contentDetails"]["videoId"] for i in items.get("items", [])]
+    # **1ページ50本で切っていました。** チャンネルは既に76本あるので、
+    # この表も、下の「予約が入っていない日」も、**古いほうから黙って欠けます。**
+    # さらに uploads プレイリストは**予約中（private）の動画を落とす**ので、
+    # 欠けるのは「これから公開されるぶん」のほうでした（`src/history.py` の実測）。
+    #
+    # 2026-08-15 23:0x、この2つが重なって **「08/18 はショートの予約が無い」と
+    # 誤報**しました。8/18 には `SbZjiakY--g` が入っており、それを信じて3本作った
+    # 結果、8/18 が3本になっています。**空きの誤報は、投稿の欠けと同じくらい高い**
+    # （同じ計算の重複を自分で作る）。**取り口は `history` と1つにします。**
+    from src.history import channel_video_ids
+
+    ids = channel_video_ids(youtube, uploads)
     if not ids:
         print("動画がありません")
         return 0
 
-    videos = youtube.videos().list(
-        part="snippet,status,statistics,contentDetails", id=",".join(ids)
-    ).execute()["items"]
+    videos = []
+    for i in range(0, len(ids), 50):
+        videos += youtube.videos().list(
+            part="snippet,status,statistics,contentDetails", id=",".join(ids[i:i + 50])
+        ).execute()["items"]
 
     now = datetime.now(timezone.utc)
     ours = 0
