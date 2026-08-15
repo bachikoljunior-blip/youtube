@@ -272,6 +272,94 @@ def print_means() -> None:
               "`hypotheses.yaml` が9件ぜんぶショート改善だったのと同じ壊れ方をします。")
 
 
+def print_topic_stock() -> None:
+    """**この回に `upload` が選べるか**を、掛け算した1つの数で出す（2026-08-16 に足した）。
+
+    ## なぜ要るか（**尽きてから気づいていた**）
+
+    前の回の (a2) 問い3 がこう書き残しています ——
+
+    > 在庫が0になったのは**この回に分かった**ことで、`status.py` は
+    > 「手段の台帳 未着手0件」としか言っていませんでした。
+    > **在庫の底は、尽きてから気づくとその回の `upload` が選べなくなります。**
+
+    実際そのとおりで、`status.py` の出力は**73行ぶんの動画一覧と、予約の一覧と、
+    重なり66組と、前提と、門の掛け算**を出しますが、
+    **「次に何本作れるか」だけがどこにも出ていませんでした。**
+    `python scripts/topic_forge.py --list` も `pick` も、手で叩かないと出ません。
+
+    ## 出すのは在庫そのものではなく、**律速のほう**
+
+    在庫は2段になっていて、**細いほうでしか作れません。**
+
+        (1) 未投稿テーマ  … `config/topics.yaml` にあって、まだ上げていない本
+        (2) 未使用の節    … `src/calc/` の `=== 見出し ===` のうち、
+                             どのテーマも指していないもの ＝ (1) を**増やせる余地**
+
+    そして **`pick` が返す本数は (1) より小さい**（同じ節・同じ calc を並べない規則が
+    上から掛かる）。**judgement に要るのはその最終値**なので、`pick` を実際に呼びます。
+    8/16 03:4x の実測で **未投稿7件 → `pick` は6件**でした（1件が規則で落ちる）。
+
+    (2) が 0 のときは `topic_forge` を回しても1件も増えません
+    （**あれは節を掘る道具で、節を作りません**）。だから
+    **`src/calc/` に表を足す以外に道が無い**ことを、ここで名指しします。
+
+    ## しきい値は掛け算してから置く
+
+    1周あたり `upload` は最低1本、出せる回は複数。**1日の周回数は 24h ÷ 41分 ≒ 35** ですが、
+    実際に生成に入る回は半分もありません。**`pick` が 8 を割ったら
+    `batch_build --count 8`（M14 の8の段）が測れなくなる**ので、そこを警告線にします。
+    """
+    root = Path(__file__).resolve().parent.parent
+    print("\n=== テーマ在庫（次に何本作れるか）===")
+    try:
+        sys.path.insert(0, str(root / "scripts"))
+        import topic_forge  # noqa: E402
+        import batch_build  # noqa: E402
+
+        _all, free, _known = topic_forge.survey()
+        n_sections = sum(len(v) for v in _all.values())
+        n_free = sum(len(v) for v in free.values())
+        got = batch_build.pick(8, [])
+        n_pick = len(got)
+    except (Exception, SystemExit) as exc:
+        # **`SystemExit` を明示して捕まえること**（2026-08-16、この検査が見つけた）。
+        # `topic_forge.sections()` は calc が落ちたとき `raise SystemExit(...)` します。
+        # `SystemExit` は `BaseException` 側なので **`except Exception` を素通りします** ——
+        # つまり **`src/calc/` を1本壊すと `status.py` が丸ごと止まる**形でした。
+        # そのとき登録者も予約も重なりも見えなくなるので、明らかに割に合いません。
+        print(f"  読めませんでした（続行）: {str(exc)[:160]}")
+        return
+
+    # **律速は `pick` の返り**。ここが 0 なら、この回は upload を選べません。
+    mark = ""
+    if n_pick == 0:
+        mark = "  ← **[!] この回は `upload` を選べません**"
+    elif n_pick < 8:
+        mark = "  ← **[!] 8本の日（M14 の段）が作れません**"
+    print(f"  `pick(8)` が返す本数: **{n_pick}本**{mark}")
+    print(f"  未使用の節: {n_free}件 / 全{n_sections}件"
+          f"（`src/calc/` {len(_all)}本）")
+
+    if n_free == 0:
+        print("  **未使用の節が0件 ＝ テーマを増やす余地がありません。**")
+        print("  `topic_forge` は節を掘る道具で、**節そのものは作りません。**")
+        print("  増やす道は1つだけ: **`src/calc/` に新しい表を足す**"
+              "（`src/calc/_template.py` から。実測3.1分/本）。")
+    elif n_free < 5:
+        print(f"  **未使用の節が残り{n_free}件です。** 次の `topic_forge` で尽きます。")
+        print("  **尽きてから気づくと、その回の `upload` が空振りします。**"
+              "先に `src/calc/` へ表を足すこと。")
+    else:
+        per = {m: len(v) for m, v in free.items() if v}
+        print("  余地のある calc: "
+              + " ".join(f"{m}:{n}" for m, n in sorted(per.items(), key=lambda x: -x[1])))
+
+    if n_pick < 8 and n_free > 0:
+        print(f"  → いま打つ手: `python scripts/topic_forge.py`"
+              f"（未使用の節 {n_free}件からテーマを起こす）")
+
+
 def print_retention(top: int = 4) -> None:
     """**維持率を毎回出す。** 2026-08-09 まで一度も見ていなかった。
 
@@ -690,6 +778,9 @@ def main(days: int = 7) -> int:
         print(f"\n=== 全走査 ===\n  [!] 走査に失敗: {str(exc)[:150]}")
         print("      **これを放置しないこと。** 落ちている間は見落としが数えられない")
     print_means()
+    # **`print_means` の隣に置いています。** あちらは「手段が尽きたか」、
+    # こちらは「材料が尽きたか」で、**§4 でどれを選べるかを決めるのは両方**です。
+    print_topic_stock()
     print_hypotheses()
     print_budget()
 
