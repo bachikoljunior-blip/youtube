@@ -321,6 +321,12 @@ def short_script_problems(script, topic_id: str = "") -> list[str]:
     # レンダリングまで待つ理由が無い（台本だけで判定できる）ので、ここで当てる。
     problems += [p.strip() for p in verify._check_adjacent_repeat(data)]
     problems += [p.strip() for p in verify._check_formula_shown(data)]
+    # **前提の値が画面に届いているか**（2026-08-16 に足した）。
+    # 独立評価の3体が**2本続けて**「手取り率が何パーセントか最後まで画面に出ない
+    # ＝検算できない」と書いた。式の形は上の検査が見ているが、
+    # **その式に入れる値が画面に無い**ことは誰も見ていなかった。
+    # 台本だけで判定できるので、レンダリングを待たずここで直させる。
+    problems += [p.strip() for p in verify._check_assumption_value_shown(data)]
     if topic_id:
         problems += [p.strip() for p in
                      verify._check_not_repeat(config.BUILD_DIR / topic_id, data)]
@@ -489,6 +495,10 @@ ROLE = """あなたは日本語YouTubeの動画の構成作家です。
 - 冒頭で、計算して分かったことを数字ごと言い切る。「調べてみました」ではなく「計算しました」。
 - 途中で一度、**計算の前提**を画面と音声の両方で明示する。src/calc の ASSUMPTIONS をそのまま使う。
   前提を隠さないことが、この動画の信頼の全部です。
+  **前提に出てくる量は、必ず値を画面に出すこと。**「手取り率は仮定です」とだけ書いて
+  その率が何パーセントなのかを画面に出さないと、**視聴者は結論を検算できません。**
+  ASSUMPTIONS に値が書かれていない量は、上の計算結果の表から実際に使われている値を
+  拾って、`手取り率 ＝ 83.7%` のように画面へ出してください（投稿前の検査で落ちます）。
 - 終盤で、その数字が視聴者自身の場合にどう変わるかを言う。
 
 守ること:

@@ -1,0 +1,139 @@
+#!/usr/bin/env python3
+"""`list_sessions` の返りを、**道具が読む列だけ**写して組み立てる。
+
+    python scripts/sessions_compact.py <出力file> < <compact.txt>
+    python scripts/sessions_compact.py <出力file> --rows <compact.txt>
+
+出したファイルは、そのまま両方に渡せます（`docs/trigger_main.md` §2 と §6 (f)）:
+
+    python scripts/quota.py --ingest <出力file>
+    python scripts/sibling_check.py --sessions <出力file>
+
+## なぜ要るか（2026-08-16。**測ってから足しています**）
+
+前の回の設計の見直し（§6 (a2) 問い1）が、この回の**いちばんの時間食い**として
+こう書き残しました ——
+
+> **いちばん時間を食ったのは、`list_sessions` の返りをファイルに落とすところ**（約6分）。
+
+手順は「**返りをまるごと保存する**」です。ところが MCP の返りはこちらの文脈の中にしか
+無いので、**保存する ＝ 全部を手で書き写す**ことになります。25件ぶんの返りには
+`title`（1件が数百字あります）や `task_summary` や `post_turn_summary` が入っていて、
+**そのどれも `quota.py` と `sibling_check.py` は読みません。**
+
+実際に読まれる列は、両方あわせて次だけです（2026-08-16 に実物で確かめました）:
+
+    id / created_at / updated_at / session_status / tags / parent_session_id
+    external_metadata.rate_limit_info{rateLimitType, resetsAt, status}
+    external_metadata.usage{cache_read, cache_write, input, output}
+
+`title` は `quota.py` が行に持つだけで、**判断にも計算にも使われません。**
+
+**毎周6分は、1日にすると2時間以上です。** 1周の下限が41分（`quota.py --pace`）
+なので、**6分は1周の15%**にあたります。
+
+## 書き方
+
+1行1セッション。空白区切り。**`#` から行末は註**。
+
+    <id> <status> <created> <updated> <parent> <resetsAt> <rlstatus> [<cr>,<cw>,<in>,<out>]
+
+- `<id>` `<parent>` は `session_` を外した接尾辞。**頭の `0` は省いてよい**
+  （接尾辞は必ず24字で `01` 始まりなので、こちらで補います）
+- `<created>` `<updated>` は `HH:MM:SS` だけ。日付は `--date`（既定は今日 UTC）
+  **日をまたいだ行だけ** `MM-DD/HH:MM:SS` と書く
+- `<status>` は `RUNNING` / `ARCHIVED` / `PENDING` / `IDLE` …（`SESSION_STATUS_` は不要）
+- 最後の4つ組は `external_metadata.usage` がある行だけ。**無い行は省く**
+  （**省くことと 0 は違います。** `usage` は全部の行には入らないので、
+  0 と書くと「使っていない」という嘘の点が積まれます）
+
+## 割り引いて読むこと
+
+**これは返りの完全な写しではありません。** `title` などを落としています。
+`quota.py` の行の `title` が空になりますが、**あれは表示だけの列**です。
+**新しい列を読む道具を足したら、ここも足すこと**（落ちていることに気づけません）。
+"""
+import argparse
+import json
+import re
+import sys
+from datetime import datetime, timezone
+
+TAG = "youtube-hourly"
+
+
+def full_id(s: str) -> str:
+    """接尾辞は24字で必ず `01` 始まり。省いた頭を補う。"""
+    s = s.strip()
+    if len(s) < 24:
+        s = ("01" if len(s) == 22 else "0" * (24 - len(s))) + s
+    return "session_" + s
+
+
+def stamp(text: str, base: str) -> str:
+    """`14:21:56` か `08-15/14:21:56` を ISO へ。"""
+    if "/" in text:
+        day, clock = text.split("/", 1)
+        base = f"{base[:4]}-{day}"
+    else:
+        clock = text
+    return f"{base}T{clock}.000000Z"
+
+
+def parse(rows: str, base: str, tag: str) -> list[dict]:
+    out = []
+    for raw in rows.splitlines():
+        line = raw.split("#", 1)[0].strip()
+        if not line:
+            continue
+        f = line.split()
+        if len(f) < 7:
+            raise SystemExit(f"列が足りません（7つ以上要ります）: {raw!r}")
+        sid, status, born, seen, parent, resets, rls = f[:7]
+        meta = {"rate_limit_info": {
+            "rateLimitType": "seven_day" if len(f) > 7 and f[7] == "seven_day" else "five_hour",
+            "resetsAt": int(resets), "status": rls}}
+        tokens = [x for x in f[7:] if re.fullmatch(r"\d+(,\d+){3}", x)]
+        if tokens:
+            cr, cw, i, o = (int(x) for x in tokens[0].split(","))
+            meta["usage"] = {"cache_read_tokens": cr, "cache_write_tokens": cw,
+                             "input_tokens": i, "output_tokens": o}
+        out.append({
+            "id": full_id(sid),
+            "session_status": status if status.startswith("SESSION_STATUS_")
+            else "SESSION_STATUS_" + status,
+            "created_at": stamp(born, base),
+            "updated_at": stamp(seen, base),
+            "tags": [tag],
+            "parent_session_id": full_id(parent),
+            "external_metadata": meta,
+        })
+    return out
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("out", help="組み立てた JSON の書き出し先")
+    ap.add_argument("--rows", help="compact な行を書いたファイル（既定は標準入力）")
+    ap.add_argument("--date", help="時刻に付ける日付（UTC の YYYY-MM-DD）。既定は今日")
+    ap.add_argument("--tag", default=TAG, help=f"全行に付けるタグ（既定 {TAG}）")
+    args = ap.parse_args()
+
+    base = args.date or datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    rows = open(args.rows, encoding="utf-8").read() if args.rows else sys.stdin.read()
+    data = parse(rows, base, args.tag)
+    if not data:
+        raise SystemExit("1件も読めませんでした")
+    with open(args.out, "w", encoding="utf-8") as fh:
+        json.dump({"ccr": {"data": data}}, fh, ensure_ascii=False)
+
+    has_usage = sum(1 for r in data if "usage" in r["external_metadata"])
+    print(f"{len(data)} 件を {args.out} へ（うち usage あり {has_usage} 件）")
+    print("  python scripts/quota.py --ingest " + args.out)
+    print("  python scripts/sibling_check.py --sessions " + args.out)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

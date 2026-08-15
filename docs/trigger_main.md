@@ -68,10 +68,38 @@
 
 ## 2. 使用量を積む（**2手。1分もかかりません**）
 
-    list_sessions limit=25 mine=true          ← MCP。返りをまるごと保存する
+    list_sessions limit=25 mine=true          ← MCP
+    python scripts/sessions_compact.py <file> --rows -   ← 読まれる列だけ写す（下）
     python scripts/quota.py --ingest <file>   ← 積んで、いまの姿を出す
 
 これだけです。**`add_repo` も GitHub Actions も clone も要りません。**
+
+#### **返りを「まるごと」写さないこと**（2026-08-16 に測って直した）
+
+ここには長らく「**返りをまるごと保存する**」と書いてありました。
+MCP の返りはこちらの文脈の中にしか無いので、**保存する ＝ 全部を手で書き写す**です。
+前の回の (a2) 問い1 が、それをこの回いちばんの時間食いとして測っています ——
+**約6分。1周の下限41分に対して15%**です。
+
+**そして写した字のほとんどは、誰も読みません。** 実際に読まれる列は
+`quota.py` と `sibling_check.py` を合わせて次だけです（8/16 に実物で確認）:
+
+    id / created_at / updated_at / session_status / tags / parent_session_id
+    rate_limit_info{rateLimitType, resetsAt, status} / usage{4つ}
+
+`title` は1件が数百字ありますが、**`quota.py` が行に持つだけで判断に使いません。**
+
+1行1セッション、空白区切りで書いて `sessions_compact.py` に渡します
+（`session_` と頭の `0` は省いてよい。日付も省いてよい）:
+
+    V8pXxeMp4GXXCB1A6949Sg RUNNING  16:37:26 16:38:05 WDiJ3WSwCDkHTyWTG7Dnbc 1786817400 allowed
+    WDiJ3WSwCDkHTyWTG7Dnbc ARCHIVED 15:54:23 16:37:40 Cox9GMhpv6ag9qgg9ggKK7 1786817400 allowed 8355581,247119,610,40735
+
+出したファイルは **§2 の `--ingest` にも §6 (f) の `--sessions` にもそのまま渡せます。**
+
+- **`usage` の無い行は、4つ組を省くこと。`0,0,0,0` と書かない。**
+  `usage` は全部の行には入らないので、0 は「使っていない」という**嘘の点**になります
+- **新しい列を読む道具を足したら、ここにも足すこと。** 落ちていることに気づけません
 
 ### ついでに、**自分以外に生きている子がいないか**を見ること（2026-08-15 に足した）
 

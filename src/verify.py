@@ -399,6 +399,117 @@ def _check_formula_shown(script: dict | None) -> list[str]:
     return problems
 
 
+#: 「量」を指す語の**語尾**。前に付く語は問わない（`手取り率` `支給率` `保険料率`）。
+#: 語そのものの一覧にしないのは、次に出てくる量を数え上げられないから。
+#: **語尾なら、まだ書かれていない calc の量にも当たります。**
+_QUANTITY_TAILS = ("率", "割合", "単価", "日数", "月数", "年数", "上限", "下限", "係数")
+
+#: 「これは前提だ」と画面が名乗っている印。ここに当たったコマだけを見る。
+#: 全部のコマに当てると、結論の数字を言い換えただけの行まで拾ってしまう。
+_ASSUMPTION_MARKERS = ("仮定", "前提", "として置", "としています", "とみなし", "と置い")
+
+#: 量の名前と数字が、どれだけ離れていたら「その量の値ではない」とみなすか（文字数）。
+#: `手取り率は85パーセント` は 4字、`手取り率　85%` は 1字。
+#: 離すほど通りやすくなるので、**同じ行の中に収まる程度**に置く。
+_VALUE_NEAR_CHARS = 14
+
+#: 量の名前の**手前で切る**字。助詞なので、ここより前は別の語。
+#: 2026-08-16 の初回生成で `前提は所得税率` と拾い、直し方の例が
+#: 『前提は所得税率 ＝ 〇〇』という日本語にならない形で出た。
+#: **落とす判定は当たっていたが、渡す直し方が壊れていた。**
+_PARTICLES = "はがをにでもとやのへか、。 　"
+
+
+def _trim_particles(word: str) -> str:
+    """`前提は所得税率` → `所得税率`。最後の助詞より後ろだけを残す。"""
+    cut = max((word.rfind(p) for p in _PARTICLES), default=-1)
+    tail = word[cut + 1:] if cut >= 0 else word
+    return tail if tail.endswith(_QUANTITY_TAILS) else word
+
+
+def _visual_texts(seg: dict) -> list[str]:
+    """1コマの**画面に出る文字**を全部集める。読み上げは含めない。"""
+    v = seg.get("visual") or {}
+    out: list[str] = []
+    for key in ("headline", "stat", "note", "stat_source", "formula"):
+        out.append(str(v.get(key) or ""))
+    out += [str(x) for x in (v.get("items") or [])]
+    out += [str(x) for x in (v.get("headers") or [])]
+    for row in v.get("rows") or []:
+        out += [str(c) for c in (row or [])]
+    for bar in v.get("bars") or []:
+        if isinstance(bar, dict):
+            out += [str(bar.get("label") or ""), str(bar.get("value_label") or "")]
+    return [t for t in out if t]
+
+
+def _check_assumption_value_shown(script: dict | None) -> list[str]:
+    """**前提として名前を出した量の値が、画面のどこかに出ているか。**
+
+    2026-08-15 の独立評価が、**2本続けて同じ欠け**を指した。3体とも独立に:
+
+    > 手取り率が何パーセントなのか、最後まで画面に出ない。だから31か月を検算できない。
+
+    実物（`5SEWUmEzxcs`）の読み上げは
+    「手取り率は制度の値ではなく、**この計算での仮定です**」で、
+    **その仮定の値はどのコマにも出ていなかった。** 前の本（`2sEAxqibFIM`）も
+    「1万210円の210円がどこから来るのか画面にない」で、**同じ種類**。
+
+    `CLAUDE.md` の根幹は「**前提と計算式を、画面と説明欄に全部出す**」で、
+    **視聴者が自分で追試できること**がテンプレート量産との違いだと書いてある。
+    結論の数字は `_check_headline_from_calc` が calc と突き合わせ、
+    式の形は `_check_formula_shown` が見る。**入力の値だけ、誰も見ていなかった。**
+
+    ここで見るのは1つだけ ——
+    **前提だと名乗っているコマが量の名前を出したなら、その量の値が画面にあること。**
+
+    - 見るのは `visual`（＝画面）。読み上げに数字があっても、
+      **画面に無ければ視聴者は止めて確かめられない**（3体はそこを突いた）
+    - 名乗りの印（`仮定` `前提` …）が無いコマは見ない。
+      **結論の言い換えまで拾うと、直しようのない指摘が増える**
+    - 量は**語尾**で拾う（`〜率` `〜日数`）。一覧にすると、
+      次に書かれる calc の量に当たらない
+
+    **射程の外**（承知のうえ）: 「1万210円の**210円**」のような、
+    前提ではなく**途中の導出**が落ちている形はここでは捕まらない。
+    別の壊れ方なので、見たらそのとき足すこと。
+    """
+    if not script:
+        return []
+    segs = script.get("segments") or []
+    if not segs:
+        return []
+
+    screen = "".join(t for seg in segs for t in _visual_texts(seg))
+    named: list[str] = []
+    for seg in segs:
+        text = str(seg.get("narration") or "") + "".join(_visual_texts(seg))
+        if not any(m in text for m in _ASSUMPTION_MARKERS):
+            continue
+        for m in re.finditer(r"[一-龥ぁ-んァ-ヶー]{1,8}?(?:" + "|".join(_QUANTITY_TAILS) + ")", text):
+            word = _trim_particles(m.group(0))
+            if word not in named:
+                named.append(word)
+
+    problems = []
+    for word in named:
+        shown = False
+        for m in re.finditer(re.escape(word), screen):
+            near = screen[max(0, m.start() - _VALUE_NEAR_CHARS):m.end() + _VALUE_NEAR_CHARS]
+            if re.search(r"\d", near):
+                shown = True
+                break
+        if not shown:
+            problems.append(
+                f"**前提として『{word}』を出しているのに、その値が画面のどこにもありません。**"
+                "視聴者は結論を検算できず、**画面には「計算した」と書いてあるだけ**になります"
+                "（独立評価の3体が2本続けてここを突きました）。"
+                f"どこかのコマに『{word} ＝ 〇〇』の形で、"
+                "**calc の出力に出ているとおりの値**を出すこと"
+            )
+    return problems
+
+
 def _check_adjacent_repeat(script: dict | None) -> list[str]:
     """**1本の中で、隣り合う2枚が同じ画に見えていないか。**
 
@@ -1041,6 +1152,7 @@ def check(path: Path, video_cfg: dict, min_minutes: float, work: Path,
     problems += _check_adjacent_repeat(script)
     problems += _check_adjacent_frames(work)
     problems += _check_formula_shown(script)
+    problems += _check_assumption_value_shown(script)
 
     if problems:
         raise VerificationError("投稿前の検査に落ちました: " + " / ".join(problems))
