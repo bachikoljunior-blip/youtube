@@ -330,6 +330,14 @@ def main(argv: list[str] | None = None) -> int:
         print(f"[pipeline] 絵を {len(plan)} 枚 → {len(expanded)} 枚に割りました"
               f"（1枚の最長 {held:.1f}秒 / 目標 {SHORT_SLIDE_SECONDS}秒）")
         plan, durations = expanded, expanded_durations
+        # **1枚あたり何秒かは、ここでしか分かりません。**
+        # `verify.py` は script.json（＝文の数）しか持っていないので、
+        # `尺 ÷ 文の数` という**平均**でしか見られず、割れなかった1枚が
+        # 平均に埋もれます（2026-08-15、stat の1枚が 5.8秒 止まっていたのに
+        # 平均 5.0秒 で上限12秒を通った）。**実際の割り当てを渡す。**
+        (work / "slide_seconds.json").write_text(
+            json.dumps([round(d, 3) for d in durations]), encoding="utf-8"
+        )
     else:
         slide_index_of_segment = list(range(len(plan)))
 

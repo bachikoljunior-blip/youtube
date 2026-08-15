@@ -33,3 +33,5 @@
 {"at": "2026-08-15T14:22:49+09:00", "session": "session_01YGBuxRP3ShdkqiaowEQK3S", "kind": "start"}
 {"at": "2026-08-15T14:46:14+09:00", "session": "session_01YGBuxRP3ShdkqiaowEQK3S", "kind": "ship", "what": "upload: s-zangyo-2 (7b2-Z6Jw5DQ) を 8/16 15:00 に予約。8/16 を4本の日にして M14 の『4本』段を作った"}
 {"at": "2026-08-15T14:48:41+09:00", "session": "session_01YGBuxRP3ShdkqiaowEQK3S", "kind": "ship", "what": "fix: 独立評価のスコアが実績と永久に突き合わない穴（記録はテーマID/Analyticsは動画ID→perf.getが必ずNone）。history.topic_video_map() で橋を架け、実データで18件が結びつくのを確認。M13の較正が完了しうる状態になった"}
+{"at": "2026-08-15T14:54:21+09:00", "session": "session_0193hN8BBXh2K6KD56TT8zTf", "kind": "start"}
+{"at": "2026-08-15T15:07:58+09:00", "session": "session_0193hN8BBXh2K6KD56TT8zTf", "kind": "ship", "what": "fix: ショートの冒頭だけが動いていなかった（kind=stat は reveal_variants に割る列が無く1枚のまま5.8秒静止＝離脱帯4.7〜5.7秒を丸ごと据え置き）。stat＋note を2段に割り、実測で 12枚/最長5.8秒 → 15枚/最長2.7秒。素通りさせていた検査2つも塞いだ（バイト一致しか見ない重複検査→縮小灰色画像の画素差／平均に埋もれる pace→pipeline が書く実秒数で1枚ずつ）"}

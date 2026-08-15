@@ -119,6 +119,54 @@ MAX_SECONDS_PER_SLIDE = 12.0
 # 2026-08-09、12枚に分かれた2分0秒のショートが「合格」で通った。
 # 1枚ずつは12秒以内だったので、どの検査にも引っかからなかった。
 MAX_SHORT_SECONDS = 70.0
+# **1枚の絵が、変わらないまま画面に出ていてよい秒数**（ショート）。
+# 上の MAX_SECONDS_PER_SLIDE（12秒）とは別のつまみです。あちらは
+# `尺 ÷ 文の数` という平均で、**割れなかった1枚は平均に埋もれます。**
+#
+# 置き方: `src/script_writer.py` の実測で **離脱は 4.7〜5.7秒**に来ます。
+# その帯より前に画面が変わっていなければ、変わった意味がありません。
+# いっぽう `pipeline.SHORT_SLIDE_SECONDS` は 2.5秒 を狙っていて、
+# stat を割れるようにした後の実測は **最長 2.9秒**（`s-tedori-2`）。
+# 5.0 は「狙いの倍あっても通る」「離脱の帯には届かせない」の あいだ。
+# **投稿を止めるための数字ではありません**（止まるのが最大の損失）。
+MAX_SECONDS_PER_PICTURE = 5.0
+
+
+def _check_slide_hold(work: Path, duration: float) -> list[str]:
+    """**1枚ずつ**、変わらないまま何秒出ているかを見る。
+
+    2026-08-15、`s-tedori-2` の `kind=stat` は割る列が無くて1枚のまま
+    **5.8秒**止まっていました。`_check_short_pace` は 30秒 ÷ 6文 = 5.0秒 と読み、
+    上限12秒を悠々と通しています。**平均は、いちばん悪い1枚を隠します。**
+
+    しかも止まっていたのは**冒頭**でした（`_check_short_opening` が
+    1枚目を stat に縛っているので、stat はたいてい先頭に来る）。
+    離脱が 4.7〜5.7秒 に来るなら、**動かしたい区間だけが動いていなかった**ことになります。
+
+    秒数は `pipeline` が `slide_seconds.json` に書きます。**無ければ何も言いません**
+    （長尺や、古い build を後から検査する場合）。
+    """
+    path = work / "slide_seconds.json"
+    if not path.exists() or duration <= 0:
+        return []
+    try:
+        seconds = [float(x) for x in json.loads(path.read_text(encoding="utf-8"))]
+    except (json.JSONDecodeError, TypeError, ValueError) as exc:
+        return [f"slide_seconds.json が読めない: {exc}"]
+    if not seconds:
+        return []
+    worst = max(seconds)
+    if worst <= MAX_SECONDS_PER_PICTURE:
+        return []
+    where = seconds.index(worst)
+    head = "**冒頭の**" if where == 0 else f"{where + 1}枚目の"
+    return [
+        f"{head}絵が {worst:.1f}秒 変わらないまま出ている"
+        f"（上限 {MAX_SECONDS_PER_PICTURE:.1f}秒 / 全{len(seconds)}枚）。"
+        "**離脱は 4.7〜5.7秒 に来ます。**"
+        "`visuals.reveal_variants` が割れる形（bars・rows・items、"
+        "または stat＋note）にすること"
+    ]
 
 
 def _check_short_pace(script: dict | None, duration: float) -> list[str]:
@@ -506,6 +554,51 @@ def _check_short_opening(script: dict | None) -> list[str]:
     return []
 
 
+# 「見た目には変わっていない」と言える差の上限。
+# 小さく縮めた灰色画像どうしを比べ、値が NEAR_DUPE_LEVEL 以上ちがう画素が
+# 全体の何割あるか。この割合を下回ったら、視聴者には同じ絵に見えているとみなす。
+# **しきい値は実測で置くこと**（下の `slide_change_ratios` を実物に掛ける）。
+NEAR_DUPE_RATIO = 0.010
+NEAR_DUPE_LEVEL = 24
+# 比べる前に縮める大きさ。細部（アンチエイリアスの揺れ・1文字の差）を落として、
+# **離れて見たときに気づくかどうか**に近づける。
+NEAR_DUPE_THUMB = 128
+
+
+def slide_change_ratios(slides: list[Path]) -> list[float]:
+    """隣り合う図解が、画面のどれだけを塗り替えているか（0〜1）を順に返す。
+
+    **バイト一致では捕まらないものを見るためにある。** 2026-08-15、独立評価の
+    3体が独立に「同じ絵が2コマ続く」「実質3枚」と書いてきた回で、
+    `_check_slides` のバイト比較は**1件も見つけませんでした。**
+    段階表示（`visuals.reveal_variants`）は表に1行足すだけでも
+    別のバイト列になるので、**ハッシュが違うことは「絵が変わった」の証拠になりません。**
+
+    縮めて灰色にしてから比べるのは、見たいのが「画素が違うか」ではなく
+    **「視聴者が変化に気づくか」**だからです。原寸で比べると、
+    影や縁のわずかな差だけで「変わった」ことになってしまいます。
+    """
+    from PIL import Image, ImageChops
+
+    def small(path: Path):
+        im = Image.open(path).convert("L")
+        im.thumbnail((NEAR_DUPE_THUMB, NEAR_DUPE_THUMB))
+        return im
+
+    out: list[float] = []
+    prev = small(slides[0]) if slides else None
+    for path in slides[1:]:
+        cur = small(path)
+        if cur.size != prev.size:          # 寸法が違えば別の絵
+            out.append(1.0)
+        else:
+            hist = ImageChops.difference(prev, cur).histogram()
+            total = sum(hist) or 1
+            out.append(sum(hist[NEAR_DUPE_LEVEL:]) / total)
+        prev = cur
+    return out
+
+
 def _check_slides(work: Path, script: dict | None) -> list[str]:
     """同じ絵が続くこと自体がポリシー上の risk。chart の枚数もここで数える。
 
@@ -520,6 +613,22 @@ def _check_slides(work: Path, script: dict | None) -> list[str]:
         dupes = sum(1 for a, b in zip(digests, digests[1:]) if a == b)
         if dupes:
             problems.append(f"隣り合う図解が同じ画像になっている箇所が {dupes} 件")
+
+        # バイトは違うが、見た目は変わっていない組。
+        # **バイト一致のぶんは上で出しているので、ここでは除きます**
+        # （同じ1組を2行で報告しても、直すことは1つしかない）。
+        ratios = slide_change_ratios(slides)
+        near = [i for i, r in enumerate(ratios)
+                if r < NEAR_DUPE_RATIO and digests[i] != digests[i + 1]]
+        if near:
+            worst = min(ratios[i] for i in near)
+            problems.append(
+                f"隣り合う図解が**見た目には変わっていない**箇所が {len(near)} 件"
+                f"（{len(slides)}枚中。いちばん小さい差は画面の {worst * 100:.1f}%）。"
+                f"実質 {len(slides) - len(near)} 枚に見えている。"
+                "**段階表示は、足した要素が離れて見て分かる大きさでなければ"
+                "『同じ絵の据え置き』です**"
+            )
 
     if script:
         kinds = [s.get("visual", {}).get("kind") for s in script.get("segments", [])]
@@ -584,6 +693,7 @@ def check(path: Path, video_cfg: dict, min_minutes: float, work: Path,
         problems += _check_short_opening(script)
         problems += _check_headline_from_calc(work, script)
         problems += _check_short_pace(script, duration)
+        problems += _check_slide_hold(work, duration)
     problems += _check_count_matches(script)
     problems += _check_title_from_calc(work, script, topic)
     problems += _check_not_repeat(work, script)

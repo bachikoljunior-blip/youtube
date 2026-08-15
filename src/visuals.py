@@ -533,6 +533,29 @@ def reveal_variants(visual: dict, want: int) -> list[dict]:
             values = [float(b.get("value", 0) or 0) for b in seq]
             out[-1]["scale_max"] = max(values) if values else 0
         return out
+
+    # ここから下は `kind=stat`（数字1つと補足1行）。**割る列が無い唯一の種類です。**
+    #
+    # 2026-08-15 に上のループを足したとき、stat だけ `[visual]` のまま
+    # **1枚に落ちていました。** そして stat が来るのは**たいてい冒頭**です
+    # （`_check_short_opening` が1枚目を stat に縛っている）。
+    # 実測: 8/15 に作った `s-tedori-2` は6文→12枚に割れたが、
+    # **stat の2文だけは1枚ずつで、1枚あたり 5.8秒 止まっていました。**
+    # `src/script_writer.py` の言うとおり **離脱は 4.7〜5.7秒** に来ます。
+    # **いちばん動かしたい区間だけが、唯一動いていませんでした。**
+    #
+    # 独立評価の3体が独立に「冒頭2コマが同一」と書いたのはこれです。
+    # `_check_short_pace` は `尺 ÷ 文の数` で見ているので（30秒 ÷ 6文 = 5秒 < 上限12秒）、
+    # **平均に埋もれて1枚も引っかかりません。**
+    #
+    # 割り方は「数字を先に出し、補足をあとから足す」。数字は動かさないので、
+    # **読み上げと画面がずれません**（補足は読み上げの後半に当たる）。
+    # 補足が無ければ割れないので、そのまま1枚を返します（**水増ししない**）。
+    if (visual.get("kind") or "stat").strip() == "stat":
+        if visual.get("stat") and visual.get("note"):
+            first = dict(visual)
+            first["note"] = ""
+            return [first, dict(visual)]
     return [visual]
 
 
