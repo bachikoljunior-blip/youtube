@@ -163,6 +163,48 @@ def _section_key(topic: dict) -> tuple:
     return (topic["calc"], sections)
 
 
+def _posted_including_ledger() -> set[str]:
+    """投稿済みのテーマIDを、**チャンネルと手元の控えの和**で返す（2026-08-16 07:5x）。
+
+    ## 何が起きていたか（この回が2回踏み、2本ぶんの生成を捨てた）
+
+    `pick` はチャンネルの説明欄からだけ「投稿済み」を復元していました。
+    ところが復元の口は**両方とも欠けます** —— uploads プレイリストは予約中を落とし、
+    `search` は**この日1日枠を使い切っています**（HTTP 429。`src/history.py` の実測）。
+    欠けたぶんは**未投稿として選び直され**、11分かけて動画を作った後、
+    投稿の直前の門（`src/dupes.blocking`）が止めます。
+
+        s-furusato-5   作った → 却下（既にある b3ZewNvalXc と同じテーマID）
+        s-shitsugyo-6  作った → 却下（既にある 8PMLfjjCe4w と同じテーマID）
+
+    **この回に作った8本のうち2本、25%が捨てになりました。**
+    **門は正しく働いています。**間違っていたのは、**門の位置ではなく選ぶ側**です。
+
+    ## なぜ控えを混ぜてよいか（前は、意図してやっていませんでした）
+
+    `src/dupes.ledger_rows` はこう書いています ——「どのテーマを次に作るか（`pick`）は
+    **今もチャンネルから決めます**。動画を消したときにファイルが嘘になるからです」。
+
+    **その心配は、いまのこちらには当たりません。** 動画を消す道が1本もないからです
+    （`docs/FOR_OWNER.md` の済み3。`videos().delete` も、private に落とす
+    `videos().update` も、環境の判定に弾かれます）。**控えは増えるだけで、
+    嘘になる経路が存在しません。** 一方、混ぜない費用は**実測で生成の25%**です。
+
+    **覆る条件**: 動画を消せるようになったら、ここは生存確認（`videos.list`）を
+    通すか、チャンネルだけに戻すこと。**消した動画のテーマが永久に選べなくなります。**
+    """
+    posted = set(history.posted_topic_ids())
+    from src import dupes
+
+    extra = {r["topic"] for r in dupes.ledger_rows() if r.get("topic")} - posted
+    if extra:
+        # **黙って足さないこと。** 差は「口が欠けた量」そのもので、読める唯一の場所です。
+        print(f"[pick] 控えにしか無い投稿済みテーマ {len(extra)}件を足しました"
+              f"（口が欠けたぶん）: {', '.join(sorted(extra)[:6])}"
+              f"{' …' if len(extra) > 6 else ''}")
+    return posted | extra
+
+
 def pick(count: int, explicit: list[str], per_calc: int = DEFAULT_PER_CALC) -> list[dict]:
     """未投稿・`calc` あり・**計算の節が全部ちがう** テーマを score の高い順に取る。
 
@@ -205,7 +247,7 @@ def pick(count: int, explicit: list[str], per_calc: int = DEFAULT_PER_CALC) -> l
             )
         return chosen
 
-    posted = history.posted_topic_ids()
+    posted = _posted_including_ledger()
     usable = [t for t in pool if t["id"] not in posted and t.get("calc")]
     usable.sort(key=lambda t: -float(t.get("score", 1.0)))
 

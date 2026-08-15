@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import html
 import math
+import re
 from pathlib import Path
 
 VIEWPORT = (1280, 720)            # deviceScaleFactor=2 で 2560x1440 になる
@@ -693,6 +694,52 @@ def _reveal_label(key: str, item) -> str:
     return text if len(text) <= REVEAL_LABEL_MAX else ""
 
 
+def _formula_is_answerable(visual: dict) -> bool:
+    """**その式の答えが、いまのコマに出ているか。**
+
+    2026-08-16、`s-souzoku-kosuu-1nin-sa-345` の実画面に、こう並びました:
+
+        A 子1人 基礎控除 4200万円          ← 見えている唯一の行
+        4800万円 ＝ 3000万円 ＋ 600万円 × 3人   ← 式
+
+    **台本は正しい**（`items` は「子1人…4200万円」「子2人…4800万円」の2行で、
+    式はその2行目のこと）。**壊したのは、めくりで割ったこちらです。**
+    下のループが `dict(visual)` で式ごと全コマに配り、
+    **答えの行が出る前のコマにも同じ式を置いていました。**
+
+    画面だけを見ると **4200 と 4800 が矛盾して見えます。** 動画の根幹は
+    「視聴者が自分で追試できること」なので、**追試すると合わない画面**は
+    ただの欠陥ではなく、根幹そのものを崩します。
+
+    `kind=stat` の側は 2026-08-15 に `first["formula"] = ""` で塞いであり、
+    **こちらのループにだけ無い**という、片側だけ直した形でした（通算6回目）。
+
+    見るのは1つだけ —— **式の左辺の数が、そのコマのどこかに出ているか。**
+    出ていなければ、そのコマでは式を消します（末尾のコマは必ず全部入りなので、
+    `_check_formula_shown` の「1本に最低1枚」は保たれます）。
+    """
+    formula = str(visual.get("formula") or "").strip()
+    if not formula:
+        return True
+    lhs = re.split(r"[=＝]", formula)[0]
+    digits = re.findall(r"\d[\d,]*", lhs)
+    if not digits:
+        return True                      # 数の無い左辺は判定しない（通す）
+    parts: list[str] = [str(visual.get(k) or "") for k in
+                        ("headline", "stat", "note", "stat_source")]
+    for item in visual.get("items") or []:
+        parts.append(str(item))
+    for row in visual.get("rows") or []:
+        parts.extend(str(c) for c in (row if isinstance(row, list) else [row]))
+    for bar in visual.get("bars") or []:
+        if isinstance(bar, dict):
+            parts.extend(str(bar.get(k, "")) for k in ("label", "value", "value_text"))
+        else:
+            parts.append(str(bar))
+    shown = re.sub(r"[,\s]", "", " ".join(parts))
+    return all(re.sub(r"[,\s]", "", d) in shown for d in digits)
+
+
 def _reveal_headline(head: str, label: str, step: int = 0, total: int = 0) -> str:
     """めくりの各コマに「いま何が増えたか」を出す見出しを作る。
 
@@ -797,6 +844,10 @@ def reveal_variants(visual: dict, want: int) -> list[dict]:
                 # **縮尺も同じ。** 収まるかどうかの判定を見えている棒だけで
                 # 走らせると、1枚目 100% → 2枚目 86% と同じ棒が縮みます。
                 v["scale_bars"] = seq
+            # **答えの行がまだ出ていないコマからは、式を外す**（2026-08-16）。
+            # `kind=stat` の側にしか無かった守りを、こちらにも入れます。
+            if not _formula_is_answerable(v):
+                v["formula"] = ""
             out.append(v)
         # 末尾は必ず「全部出ている」状態にする。
         # **見出しだけは戻さない。** 戻すと最後の2コマで同じ文字列が並び、
