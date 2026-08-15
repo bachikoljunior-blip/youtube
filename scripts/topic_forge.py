@@ -188,11 +188,19 @@ def build_prompt(picked: list[tuple[str, str]], all_sections, topics) -> str:
 _NUM = re.compile(r"(\d[\d,]*)\s*万\s*(\d[\d,]*)?|(\d[\d,]*)")
 
 
-def numbers(text: str) -> set[int]:
-    """文中の金額らしい整数を集める。**「80万円」も「800,000円」も同じ 800000 にする。**
+MONEY_FLOOR = 1000   # 金額の表を持つ calc で捨てる下限（年数・回数を当てにしない）
+SMALL_FLOOR = 10     # 金額を1つも持たない calc（日数・時間の表）で使う下限
+
+
+def numbers(text: str, floor: int = MONEY_FLOOR) -> set[int]:
+    """文中の整数を集める。**「80万円」も「800,000円」も同じ 800000 にする。**
 
     表は `800,000円` と印字し、`angle` は `80万円` と書きます。
     **書き方が違うだけで同じ数**なので、揃えないと突き合わせになりません。
+
+    `floor` より小さい数は捨てます。既定の1000は「年数や桁の小さい語は
+    当てにしない」ためですが、**その calc が金額を扱っている場合にだけ正しい**
+    仮定です（下の `section_floor` を見ること）。
     """
     out: set[int] = set()
     for man, rest, plain in _NUM.findall(text):
@@ -204,13 +212,42 @@ def numbers(text: str) -> set[int]:
             out.add(int(man.replace(",", "")))   # 「1000万」の 1000 単体も拾う
         elif plain:
             out.add(int(plain.replace(",", "")))
-    return {n for n in out if n >= 1000}          # 年数や桁の小さい語は当てにしない
+    return {n for n in out if n >= floor}
+
+
+def section_floor(sections: dict[str, str]) -> int:
+    """その calc の表に合わせて、捨てる下限を決める。
+
+    **2026-08-16 に、実際に踏んで足しました。** ここは長らく 1000 固定で、
+    理由は「年数や桁の小さい語を当てにしない」でした。**その仮定は、
+    表に載っているのが金額のときだけ成り立ちます。**
+
+    同日に足した `yukyu`（有給の日数）と `jikangai`（残業時間の上限）は、
+    **表の数字が全部3桁以下**です。1000で切ると `numbers()` が空集合を返し、
+    `best_section` の一致数が全節で0になって、**`realign` が
+    「表の外の数字を使っています」と誤って止めます。**
+    実際に2回連続で止まりました（`s-jikangai-6month-480h-cap` /
+    `s-jikangai-6month-114h-gap`。どちらの数字も、表にちゃんと載っています）。
+
+    **これは「新しい題材を足すと止まる」形の欠陥です。** 金額の calc 16本では
+    一度も出ないので、在庫の幅を広げるまで誰も踏みません。
+
+    直し方は、**下限を表から決めること**。金額らしい数（1000以上）が1つでも
+    あれば、これまでどおり1000で切ります（**既存16本は挙動が変わりません**）。
+    1つも無ければ、その calc は金額の表を持っていないので10まで下げます。
+    """
+    for body in sections.values():
+        if numbers(body, MONEY_FLOOR):
+            return MONEY_FLOOR
+    return SMALL_FLOOR
 
 
 def best_section(text: str, sections: dict[str, str]) -> list[tuple[int, str]]:
     """`text` の数字が、どの節の表にいちばん多く載っているか。多い順に返す。"""
-    want = numbers(text)
-    scored = [(len(want & numbers(body)), head) for head, body in sections.items()]
+    floor = section_floor(sections)
+    want = numbers(text, floor)
+    scored = [(len(want & numbers(body, floor)), head)
+              for head, body in sections.items()]
     return sorted(scored, key=lambda x: -x[0])
 
 
@@ -238,11 +275,21 @@ def realign(forged: ForgedSet, picked, all_sections) -> list[tuple[str, str]]:
             raise SystemExit(
                 f"{item.id}: 題と狙いの数字が、この calc のどの節の表にも載っていません。"
                 f"表の外の数字を使っています")
-        if best != head:
+        # **同点では動かさない**（2026-08-16 に足した）。ここは長らく
+        # 「一致数が最大の節」を無条件に採っていましたが、**同点のときに
+        # 勝つのは dict の順で、根拠がありません。** 節をまたいで同じ数字が
+        # 出るのはむしろ普通で（制度の定数・同じ日額）、実際に
+        # `s-yukyu-shukikan-shitei-5-5nen` が同点1で隣の節へ飛び、
+        # そのあと「同じ節に2件」で回ごと落ちました。
+        # **貼り直すのは、割り当て先より厳密に強い証拠があるときだけです。**
+        assigned = next((n for n, h in ranked if h == head), 0)
+        if top > assigned:
             print(f"  [貼り直し] {item.id}\n"
-                  f"      書かせた順の節: {head}\n"
+                  f"      書かせた順の節: {head}（一致 {assigned} 個）\n"
                   f"      数字が載っている節: {best}（一致 {top} 個）")
-        fixed.append((mod, best))
+            fixed.append((mod, best))
+        else:
+            fixed.append((mod, head))
 
     if len(set(fixed)) != len(fixed):
         dup = [x for x in fixed if fixed.count(x) > 1]
