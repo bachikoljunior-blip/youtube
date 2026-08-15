@@ -63,3 +63,4 @@
 {"at": "2026-08-15T20:11:10+09:00", "session": "session_01AvwxjiBJ8QqgxBFHvC5nag", "kind": "ship", "what": "fix: 3回持ち越された『隣り合う2枚が同じ見出し』を、見ている層ごと直した。台本側の検査は割った後のコマを見ていないので永久に0件だった（pipeline が slides_plan.json を残し、verify._check_adjacent_frames が実画面の列に当たる）。原因は2つとも『足さない』側の逃げ道: ①見出し+要素名が21字>20で marker を捨てる ②stat の2分割だけ _reveal_headline を通っておらず冒頭2コマが同一。実生成4本中4本がこれで落ち、直して再走したら0本になった。tests 73→81"}
 {"at": "2026-08-15T20:11:10+09:00", "session": "session_01AvwxjiBJ8QqgxBFHvC5nag", "kind": "ship", "what": "upload: c6aVwaF08-I（傷病手当金 40歳以上の住民税込み手元比46.8%）を 2026-09-01 15:00 に予約。M14 の窓外"}
 {"at": "2026-08-15T20:29:40+09:00", "session": "session_01Uo6kT6yQiyiLcFTvRxvHJT", "kind": "ship", "what": "fix: 週枠の速さを測る目盛り(quota.py --pace)を作り、1周の下限31分を門(sibling_check 終了コード5)に入れた"}
+{"at": "2026-08-15T21:16:33+09:00", "session": "session_01ToFh9w44itqQz5V7qYL3Qf", "kind": "start"}
