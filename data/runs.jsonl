@@ -21,3 +21,5 @@
 {"at": "2026-08-15T11:25:39+09:00", "session": "session_01Txbu5DZrYTmoTovEtYJ4Ke", "kind": "ship", "what": "fix+upload: 冒頭0.9秒に絵の動き（1.10倍からの引き）を実装。字幕と重ならない上限を実測で確定。s-jutaku-2 (yd4DRcRfZE8) を 8/23 09:00 に予約"}
 {"at": "2026-08-15T12:12:44+09:00", "session": "session_01QqKaxNa1CCNDppXtxjxfbF", "kind": "start"}
 {"at": "2026-08-15T12:22:20+09:00", "session": "session_01QqKaxNa1CCNDppXtxjxfbF", "kind": "ship", "what": "upload: s-shitsugyo-5 (W54m_JDnSHM) を 8/15 21:00 に予約。1日2本目を常態化する1本目"}
+{"at": "2026-08-15T12:54:02+09:00", "session": "session_01LLoMHVnDyzCD1JU2iMhurs", "kind": "start"}
+{"at": "2026-08-15T13:07:00+09:00", "session": "session_01LLoMHVnDyzCD1JU2iMhurs", "kind": "ship", "what": "verdict: 長尺は「押されていない」ではなく「載っていない」と確定（インプレッション76/56・ホーム面ゼロ）→ 題の仮説を前倒しで外れに / fix: critique_queue.py で独立評価の材料がコンテナと一緒に消える穴を塞いだ"}

@@ -16,6 +16,9 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import critique_queue  # noqa: E402  scripts/ 直下。独立評価の材料を残す
 
 from src import bars, config, uploader  # noqa: E402
 
@@ -79,6 +82,9 @@ def main(topic: str, visibility: str | None = None, hour: int | None = None) -> 
     # 公開した棒を残す。`build/` は .gitignore なので、これをやらないと
     # 次のコンテナで「同じ図」検査の比較対象がゼロになる（`src/bars.py`）。
     bars.record(topic, video_id, script)
+    # 独立評価（M13）の材料も同じ理由で残す。**残さないと、投稿した回で評価を
+    # 回せなかった時点で永久に評価できません**（`scripts/critique_queue.py`）。
+    critique_queue.stash(topic, video_id, script, work)
 
     print(f"VIDEO_ID {video_id}")
     return 0
