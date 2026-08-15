@@ -12,6 +12,8 @@ import json
 import os
 import shutil
 import subprocess
+import tempfile
+from pathlib import Path
 from typing import Any, TypeVar
 
 from pydantic import BaseModel, ValidationError
@@ -33,6 +35,47 @@ def _binary() -> str:
             "claude コマンドが見つかりません。`npm install -g @anthropic-ai/claude-code` を実行してください。"
         )
     return path
+
+
+_CLI_CWD: Path | None = None
+
+
+def _cli_cwd() -> Path:
+    """`claude -p` を、**このプロセス専用の作業ディレクトリ**で走らせる。
+
+    ## なぜ要るか（2026-08-15 20:0x に実測で見つけた。**混線していました**）
+
+    `--jobs 5` で10本まとめて作ったら **3本しか通りませんでした**（`--jobs 3` では
+    6本中5本）。落ちた本のログを読んだら、落ちていたのは並列の負荷ではなく
+    **中身の取り違え**でした。
+
+        テーマ s-shitsugyo-60dai-kaiko-1nen-60nichi（失業給付・60代）
+        → 出てきた題は「**同居特別障害者控除** 5年で179万6500円」
+
+    その題は、**同時に走っていた** `s-kojo-zeiritsu40-dokyo` の出力です
+    （向こうの題は「同居特別障害者控除は5年で179万6500円」で、助詞1つしか違わない）。
+    4本を同時に走らせて再現し、落ちた2本のうち1本がこれでした。
+
+    `claude` の CLI はセッションを **作業ディレクトリごと**に持ちます。
+    `ask()` は形式が崩れると `--resume <session>` で同じ会話を続けるので、
+    **同じディレクトリで並走すると、やり直しが隣の会話に着くことがあります。**
+    実際、混ざったのは**やり直しに入った本**でした（ログに「2回目」「3回目」）。
+
+    **これは「落ちた」より悪い種類の欠陥です。** 今回は `verify.py` の主語検査が
+    たまたま止めましたが（画面に「失業」が無い）、**取り違えた中身が検査を
+    すり抜ければ、題と中身の合わない動画がそのまま公開されます。**
+    誤情報であり、収益化の条件そのものに当たります。
+
+    直し方は `scripts/critique_run.py` が独立性のために既にやっていることと同じで、
+    **cwd を分ける**こと。プロセスごとに1つ作って使い回します
+    （やり直しは同じプロセスなので、`--resume` は同じ場所を見ます）。
+    リポジトリの外に出るので、`CLAUDE.md` が台本のプロンプトに混ざらない
+    という効き目もあります（台本を書く側に目的も合格基準も要りません）。
+    """
+    global _CLI_CWD
+    if _CLI_CWD is None or not _CLI_CWD.exists():
+        _CLI_CWD = Path(tempfile.mkdtemp(prefix=f"claude-cli-{os.getpid()}-"))
+    return _CLI_CWD
 
 
 def _child_env() -> dict[str, str]:
@@ -126,7 +169,8 @@ def _invoke(prompt: str, model: str, resume: str | None, timeout: int) -> tuple[
 
     try:
         proc = subprocess.run(
-            args, capture_output=True, text=True, timeout=timeout, env=_child_env()
+            args, capture_output=True, text=True, timeout=timeout,
+            env=_child_env(), cwd=str(_cli_cwd()),
         )
     except subprocess.TimeoutExpired as exc:
         raise ClaudeCliError(f"claude が {timeout} 秒で応答しませんでした") from exc

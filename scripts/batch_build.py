@@ -98,9 +98,57 @@ UPLOAD_TIMEOUT = 600
 # 4コアに対して 3 なら、山が重なっても 1コア残ります。**`--jobs` で変えられます。**
 DEFAULT_JOBS = 3
 
+# 1つの `calc` から、1回の batch で取ってよい本数。
+#
+# **天井の話です**（2026-08-15 19:5x）。それまでは「calc が全部ちがう」＝実質 1 で、
+# `calc` は11本しかないので **1回 11本が上限**でした。M14 の段はその先を狙う手なのに、
+# 上限がどこにも書いてありません。**節（`calc_sections`）で見れば 54 件あります。**
+# 2 にしているのは、同じ制度の本が並ぶと題も似て「繰り返しのように感じられる」側に
+# 寄るからで、**根拠のあるぶんだけ（11 → 22）上げています。**
+DEFAULT_PER_CALC = 2
 
-def pick(count: int, explicit: list[str]) -> list[dict]:
-    """未投稿・`calc` あり・**calc が全部ちがう** テーマを score の高い順に取る。"""
+
+def _section_key(topic: dict) -> tuple:
+    """その本が**実際に見せる計算**を指す鍵。
+
+    テーマは `calc`（モジュール）と `calc_sections`（その中のどの節を出すか）を
+    持ちます。**画面に出る数字も棒の形も決めているのは節のほう**なので、
+    「同じものが続くか」を見るときに見るべきなのはここです。
+
+    節の指定が無い古いテーマは**モジュール全体**を指しているとみなします
+    （どの節とも重なるので、その calc を1本で使い切る扱い）。
+    """
+    sections = tuple(sorted(topic.get("calc_sections") or ()))
+    return (topic["calc"], sections)
+
+
+def pick(count: int, explicit: list[str], per_calc: int = DEFAULT_PER_CALC) -> list[dict]:
+    """未投稿・`calc` あり・**計算の節が全部ちがう** テーマを score の高い順に取る。
+
+    ## ここが 2026-08-15 19:5x に変わりました（天井の測り違い）
+
+    それまでの規則は「**calc が全部ちがう**」でした。`calc` は11本しかないので、
+    **1回の batch は最大11本**です。M14（本数の段）は 8 → その先を狙う手なのに、
+    **11 で頭打ちになることが、どこにも書いてありませんでした。**
+
+    実測（この回）: 未投稿テーマ7件のうち calc は5種類で、`pick(8)` は
+    **5件しか返しませんでした。** 前の回が次の宿題に置いた「`--jobs` の上限を測る」は、
+    **`pick` が5件しか返さない状態では意味がありません**（同時に作る相手がいない）。
+    **律速は並列度ではなく、取れるテーマの数のほうでした。**
+
+    節で見ると 54 件あります。**節がちがえば、前提も数字も棒の形もちがう** ——
+    `calc_sections` は「モジュールのどの節を出すか」を指していて、
+    画面に出るものを決めているのはこちらです。つまり
+    **「同じ計算を2回出さない」を守ったまま、天井は 11 から上げられます。**
+
+    ただし**節だけにはしません。** 同じ制度の本が1日に何本も並ぶと、
+    題も似るので「繰り返しのように感じられる」側に寄ります（収益化の条件）。
+    だから **1つの calc から取るのは既定で2本まで**（`per_calc`）。
+    天井は 11 → 22 で、**根拠のあるぶんだけ上げています。**
+
+    **覆る条件**: 同じ calc の2本を並べた日の engaged 比率の中央値が、
+    全部ちがう calc の日を下回ったら、`per_calc` を 1 に戻すこと。
+    """
     pool = config.load_topics()["topics"]
     by_id = {t["id"]: t for t in pool}
 
@@ -120,20 +168,41 @@ def pick(count: int, explicit: list[str]) -> list[dict]:
     usable = [t for t in pool if t["id"] not in posted and t.get("calc")]
     usable.sort(key=lambda t: -float(t.get("score", 1.0)))
 
+    if per_calc < 1:
+        raise SystemExit(f"--per-calc は1以上です: {per_calc}")
+
     chosen: list[dict] = []
-    used_calc: set[str] = set()
+    used_sections: set[tuple] = set()
+    per_calc_taken: dict[str, int] = {}
+    whole_module: set[str] = set()   # 節の指定が無いテーマを取った calc
+
     for topic in usable:
-        if topic["calc"] in used_calc:
-            continue
+        calc = topic["calc"]
+        key = _section_key(topic)
+        sections = key[1]
+
+        if key in used_sections:
+            continue                      # **同じ計算は2回出さない**
+        if per_calc_taken.get(calc, 0) >= per_calc:
+            continue                      # 同じ制度が並びすぎないように
+        if calc in whole_module:
+            continue                      # モジュール全体のテーマと必ず重なる
+        if not sections and per_calc_taken.get(calc, 0):
+            continue                      # 逆向きも同じ
+
         chosen.append(topic)
-        used_calc.add(topic["calc"])
+        used_sections.add(key)
+        per_calc_taken[calc] = per_calc_taken.get(calc, 0) + 1
+        if not sections:
+            whole_module.add(calc)
         if len(chosen) == count:
             break
 
     if len(chosen) < count:
         print(
-            f"[batch] **calc のちがう未投稿テーマが {len(chosen)} 件しかありません**"
-            f"（要求 {count} 件）。在庫のほうが先に尽きています。",
+            f"[batch] **計算の節がちがう未投稿テーマが {len(chosen)} 件しかありません**"
+            f"（要求 {count} 件 / 1つの calc から最大 {per_calc} 本）。"
+            f"在庫のほうが先に尽きています。",
             flush=True,
         )
     return chosen
@@ -270,13 +339,18 @@ def main(argv: list[str] | None = None) -> int:
                     help="作るだけで予約しない。**この場合コンテナと一緒に消えます**")
     ap.add_argument("--jobs", type=int, default=DEFAULT_JOBS,
                     help=f"同時に作る本数（既定 {DEFAULT_JOBS}）。**予約はいつも1本ずつ**")
+    ap.add_argument("--per-calc", type=int, default=DEFAULT_PER_CALC,
+                    help=f"1つの calc から取ってよい本数（既定 {DEFAULT_PER_CALC}）。"
+                         "**節はいつも全部ちがいます。**1 にすると昔の"
+                         "「calc が全部ちがう」に戻り、1回の上限が calc の本数になります")
     ap.add_argument("--stop-on-error", action="store_true",
                     help="1本落ちたらそこで止める（**予約の段だけ**。"
                          "作る段は並列なので、落ちた1本の巻き添えで他を捨てません）")
     args = ap.parse_args(argv)
 
     explicit = [i.strip() for i in args.topics.split(",") if i.strip()]
-    topics = pick(args.count if not explicit else len(explicit), explicit)
+    topics = pick(args.count if not explicit else len(explicit), explicit,
+                  per_calc=args.per_calc)
     if not topics:
         print("[batch] 作れるテーマがありません。config/topics.yaml を足すこと。")
         return 1

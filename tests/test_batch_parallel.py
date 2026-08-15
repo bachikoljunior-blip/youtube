@@ -73,7 +73,8 @@ def _topics(ids):
 def _run(monkeypatch, ids, delays=None, fail_build=None, jobs=3):
     rec = _Recorder(delays, fail_build)
     monkeypatch.setattr(batch_build, "run", rec)
-    monkeypatch.setattr(batch_build, "pick", lambda c, e: _topics(ids))
+    monkeypatch.setattr(batch_build, "pick",
+                        lambda c, e, per_calc=None: _topics(ids))
     monkeypatch.setattr(batch_build, "check_window", lambda d, f: None)
     written: list[dict] = []
     monkeypatch.setattr(batch_build.Path, "open",

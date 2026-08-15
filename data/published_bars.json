@@ -450,6 +450,16 @@
     ],
     "video_id": "NHKylqsNfTw"
   },
+  "s-kojo-zeiritsu40-dokyo": {
+    "charts": [
+      [
+        "30万6300円",
+        "5万3000円",
+        "35万9300円"
+      ]
+    ],
+    "video_id": "lHW4IV-O2OA"
+  },
   "s-nenkin-1": {
     "charts": [
       [
@@ -483,6 +493,15 @@
       ]
     ],
     "video_id": "5SEWUmEzxcs"
+  },
+  "s-nenkin-kuriage-60sai-43man": {
+    "charts": [
+      [
+        "180.0万円",
+        "136.8万円"
+      ]
+    ],
+    "video_id": "WIj04aFYW6Q"
   },
   "s-shitsugyo-1": {
     "charts": [
@@ -553,6 +572,17 @@
     ],
     "video_id": "aUYYSN4pLMw"
   },
+  "s-shitsugyo-45sai-kaiko-1nen": {
+    "charts": [
+      [
+        "23万580円",
+        "15万3720円",
+        "7万6860円",
+        "15万3720円"
+      ]
+    ],
+    "video_id": "myshNgE4aro"
+  },
   "s-shitsugyo-5": {
     "charts": [
       [
@@ -570,6 +600,19 @@
       ]
     ],
     "video_id": "8PMLfjjCe4w"
+  },
+  "s-shitsugyo-60dai-kaiko-1nen-60nichi": {
+    "charts": [
+      [
+        "60日",
+        "30日"
+      ],
+      [
+        "46万9800円",
+        "23万4900円"
+      ]
+    ],
+    "video_id": "OePniwSIcTE"
   },
   "s-shitsugyo-u30-kinzoku-30days": {
     "charts": [
@@ -589,6 +632,26 @@
       ]
     ],
     "video_id": "66ErsT9OUrI"
+  },
+  "s-shobyo-teate-tedori-52-percent": {
+    "charts": [
+      [
+        "200,010円",
+        "42,450円",
+        "157,560円"
+      ]
+    ],
+    "video_id": "KdlvGxloIg4"
+  },
+  "s-taishoku-20nen-6man-10man": {
+    "charts": [
+      [
+        "6万840円",
+        "10万6470円",
+        "10万6470円"
+      ]
+    ],
+    "video_id": "2FSAM7FYftY"
   },
   "s-taishoku-muzei-joogen-20": {
     "charts": [
@@ -652,6 +715,20 @@
       ]
     ],
     "video_id": "7b2-Z6Jw5DQ"
+  },
+  "s-zangyo-5man-45h-3nen": {
+    "charts": [
+      [
+        "20万6633円",
+        "61万9898円"
+      ],
+      [
+        "4万1327円",
+        "8万2653円",
+        "20万6633円"
+      ]
+    ],
+    "video_id": "Vpjbt0XofmQ"
   },
   "s-zangyo-ichiritsu-3man-45h": {
     "charts": [
