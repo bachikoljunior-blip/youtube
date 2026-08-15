@@ -79,6 +79,7 @@ YouTube のチャンネル収益化ポリシーは、これを**収益化の対�
 """
 from __future__ import annotations
 
+import json
 import re
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
@@ -285,6 +286,66 @@ def find(rows: list[dict]) -> list[dict]:
     return issues
 
 
+LEDGER = "data/uploaded.jsonl"
+
+
+def ledger_rows(topics: dict[str, str] | None = None) -> list[dict]:
+    """**手元の控え**（`data/uploaded.jsonl`）を、突き合わせる形で返す。
+
+    ## なぜ手元に持つのか（2026-08-16 に、この門が実際にすり抜けられた）
+
+    CLAUDE.md は「投稿済みは説明欄の `[t:テーマID]` から**チャンネル越しに
+    復元する。ファイルに持たない**」と言っています。**そこは変えていません** ——
+    どのテーマを次に作るか（`pick`）は今もチャンネルから決めます。理由も同じで、
+    動画を消したときにファイルが嘘になるからです。
+
+    **変えたのは、投稿の直前の門が見る先だけ**です。この回の実測:
+
+        1本目  s-fukugyo-2 を止めた（既にある iTrogWVf4Eg と同じテーマID・同じ15万2100円）
+        5分後  同じ s-fukugyo-2 が**通ってしまい**、Prw6AB9hOsY として予約に入った
+
+    `iTrogWVf4Eg` は 8/22 09:00 に予約済みで**確かに存在します**。それでも
+    通ったのは、この門が見ている口が**その5分のあいだに落としたから**です ——
+    uploads プレイリストは予約中の動画を落とすことがあり（`src/history.py` の実測）、
+    もう一方の `search` は **この日 API の1日枠を使い切っていました**（HTTP 429）。
+    **両方の口が同時に欠けると、門は何も知らない状態で「重なりなし」と言います。**
+
+    **自分が上げたものを自分で忘れるのは、外の口の都合とは関係ありません。**
+    だから上げた瞬間に1行足します。**消えた動画で誤って止めないよう、
+    使う側は必ず生存を確かめること**（`upload_only.py` が `videos.list` で引き直す）。
+    """
+    from . import config
+
+    path = config.ROOT / LEDGER
+    if not path.exists():
+        return []
+    rows = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            rec = json.loads(line)
+        except Exception:
+            continue
+        topic = rec.get("topic", "")
+        rows.append({"id": rec.get("video_id", ""), "title": rec.get("title", ""),
+                     "topic": topic, "calc": (topics or {}).get(topic, ""),
+                     "at": rec.get("at"), "scheduled": bool(rec.get("at"))})
+    return [r for r in rows if r["id"] and r["title"]]
+
+
+def remember(video_id: str, topic_id: str, title: str, at: str | None) -> None:
+    """上げた1本を手元に控える。**`upload_only.py` が投稿の直後に呼ぶ。**"""
+    from . import config
+
+    path = config.ROOT / LEDGER
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps({"video_id": video_id, "topic": topic_id,
+                             "title": title, "at": at}, ensure_ascii=False) + "\n")
+
+
 def blocking(title: str, topic_id: str, videos: list[dict],
              topics: dict[str, str] | None = None) -> list[dict]:
     """**投稿の直前に呼ぶ。** これから上げる1本が、既にある本と強く重なるか。
@@ -299,6 +360,8 @@ def blocking(title: str, topic_id: str, videos: list[dict],
     **公開してしまうより安い** —— 収益化の対象外になると収入はゼロなので。
     """
     rows = rows_from_videos(videos, topics)
+    have = {r["id"] for r in rows}
+    rows += [r for r in ledger_rows(topics) if r["id"] not in have]
     me = {"id": "＜これから上げる本＞", "title": title, "topic": topic_id,
           "calc": (topics or {}).get(topic_id, ""), "at": None, "scheduled": False}
     return [i for i in find(rows + [me])

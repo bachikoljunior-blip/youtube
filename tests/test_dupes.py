@@ -237,3 +237,29 @@ def test_blocking_ignores_pairs_that_do_not_involve_me():
         _v("o2", "社会保険料率で手取り増は35万9318円", "a2"),
     ]
     assert not dupes.blocking("残業代 一律手当で3年61万9898円", "c1", existing, TOPICS)
+
+
+def test_blocking_uses_the_local_ledger(tmp_path, monkeypatch):
+    """**口が落としても、手元の控えで止まること**（2026-08-16 に実際にすり抜けた）。
+
+    同じ `s-fukugyo-2` を5分の間に「止めて、そのあと通して」います。
+    落ちていたのは実在する予約済みの本で、uploads プレイリストが落とし、
+    `search` は当日の API 枠を使い切っていました。**videos を空で渡しても止まること。**
+    """
+    from src import config
+
+    monkeypatch.setattr(config, "ROOT", tmp_path)
+    (tmp_path / "data").mkdir()
+    dupes.remember("old1", "a1", "年収500万から50万アップで手取りは35万9318円", None)
+    assert dupes.blocking("社会保険料率で手取り増は35万9318円", "a2", [], TOPICS)
+    assert not dupes.blocking("年収700万で手取りは28万4102円", "a2", [], TOPICS)
+
+
+def test_ledger_ignores_broken_lines(tmp_path, monkeypatch):
+    from src import config
+
+    monkeypatch.setattr(config, "ROOT", tmp_path)
+    (tmp_path / "data").mkdir()
+    (tmp_path / dupes.LEDGER).write_text(
+        '{"video_id":"a","topic":"a1","title":"題"}\nこわれた行\n\n', encoding="utf-8")
+    assert [r["id"] for r in dupes.ledger_rows(TOPICS)] == ["a"]

@@ -531,6 +531,25 @@ def main(days: int = 7) -> int:
         print("動画がありません")
         return 0
 
+    # **手元の控えに載っているのに、口から返らなかった本を足す**（2026-08-16）。
+    # `channel_video_ids` は2つの口の和ですが、**両方が同時に欠けることがあります** ——
+    # uploads プレイリストは予約中を落とし、`search` は API の1日枠を使い切ると
+    # 429 で落ちます（この回がそう。8/22 に予約済みの `iTrogWVf4Eg` が消え、
+    # **この表からも「予約が入っていない日」からも落ちていました**）。
+    #
+    # **空きの誤報は、投稿の欠けと同じくらい高い**（8/15 23:0x に同じ形で
+    # 3本を余計に作っています）。控えは自分が上げたときに書いた行なので、
+    # 外の口の都合では欠けません（`src/dupes.ledger_rows`）。
+    try:
+        from src import dupes as _dupes
+        _missing = [r["id"] for r in _dupes.ledger_rows() if r["id"] not in set(ids)]
+        if _missing:
+            print(f"[控え] 口から返らなかった {len(_missing)}本を足しました"
+                  f"（{' '.join(_missing[:6])}{' …' if len(_missing) > 6 else ''}）")
+            ids += _missing
+    except Exception as exc:
+        print(f"[控え] 読めませんでした（続行）: {str(exc)[:80]}")
+
     videos = []
     for i in range(0, len(ids), 50):
         videos += youtube.videos().list(

@@ -112,6 +112,19 @@ def main(topic: str, visibility: str | None = None, hour: int | None = None,
             for i in range(0, len(ids), 50):
                 existing += svc.videos().list(
                     part="snippet,status", id=",".join(ids[i:i + 50])).execute()["items"]
+            # **手元の控えに載っているが、口から返らなかった本を引き直す。**
+            # 2026-08-16 に、まさにここがすり抜けました —— 同じ `s-fukugyo-2` を
+            # 5分の間に**止めて、そのあと通して**います。落ちていたのは
+            # `iTrogWVf4Eg`（8/22 予約済み・実在）で、uploads プレイリストが
+            # 落とし、search は当日の API 枠を使い切って 429 でした（`src/dupes.py`）。
+            # **消した本で誤って止めないよう、生きているものだけを足します。**
+            seen_ids = {v["id"] for v in existing}
+            missing = [r["id"] for r in dupes.ledger_rows() if r["id"] not in seen_ids]
+            for i in range(0, len(missing), 50):
+                existing += svc.videos().list(
+                    part="snippet,status", id=",".join(missing[i:i + 50])).execute()["items"]
+            if missing:
+                print(f"[check] 口から返らなかった控え {len(missing)}本を引き直しました")
             hits = dupes.blocking(
                 title, topic, existing,
                 {t["id"]: t.get("calc", "") for t in config.load_topics()["topics"]})
@@ -145,6 +158,15 @@ def main(topic: str, visibility: str | None = None, hour: int | None = None,
     # **投稿は済んでいます。ここから先で落ちても動画IDを失わないこと。**
     # 先に出しておく（2026-08-15。材料を残す処理が例外を上げるようにしたため）。
     print(f"VIDEO_ID {video_id}")
+
+    # **自分が上げたものを、自分で控える**（2026-08-16）。上の門が見る先です。
+    # 口が落としても、こちらは落ちません（理由は `src/dupes.ledger_rows`）。
+    try:
+        from src import dupes as _dupes
+        _dupes.remember(video_id, topic, title,
+                        channel["publish"].get("publish_at") or None)
+    except Exception as exc:
+        print(f"[dupes] **控えを残せませんでした: {str(exc)[:80]}**")
 
     # 独立評価（M13）の材料も同じ理由で残す。**残さないと、投稿した回で評価を
     # 回せなかった時点で永久に評価できません**（`scripts/critique_queue.py`）。
