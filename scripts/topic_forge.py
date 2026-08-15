@@ -185,10 +185,78 @@ def build_prompt(picked: list[tuple[str, str]], all_sections, topics) -> str:
 
 # ---------------------------------------------------------------- 検証して書く
 
+_NUM = re.compile(r"(\d[\d,]*)\s*万\s*(\d[\d,]*)?|(\d[\d,]*)")
+
+
+def numbers(text: str) -> set[int]:
+    """文中の金額らしい整数を集める。**「80万円」も「800,000円」も同じ 800000 にする。**
+
+    表は `800,000円` と印字し、`angle` は `80万円` と書きます。
+    **書き方が違うだけで同じ数**なので、揃えないと突き合わせになりません。
+    """
+    out: set[int] = set()
+    for man, rest, plain in _NUM.findall(text):
+        if man:
+            value = int(man.replace(",", "")) * 10_000
+            if rest:
+                value += int(rest.replace(",", ""))
+            out.add(value)
+            out.add(int(man.replace(",", "")))   # 「1000万」の 1000 単体も拾う
+        elif plain:
+            out.add(int(plain.replace(",", "")))
+    return {n for n in out if n >= 1000}          # 年数や桁の小さい語は当てにしない
+
+
+def best_section(text: str, sections: dict[str, str]) -> list[tuple[int, str]]:
+    """`text` の数字が、どの節の表にいちばん多く載っているか。多い順に返す。"""
+    want = numbers(text)
+    scored = [(len(want & numbers(body)), head) for head, body in sections.items()]
+    return sorted(scored, key=lambda x: -x[0])
+
+
+def realign(forged: ForgedSet, picked, all_sections) -> list[tuple[str, str]]:
+    """**書かせた順に節を貼らない。**中身の数字が載っている節へ貼り直す。
+
+    2026-08-16 に実際に踏んだ穴です。`zoyo` の4件を頼んだところ、
+    書き手は**1つめの節から2件**書き、残りが1つずつ後ろへずれました。
+    ところが `zip` は順番だけで貼るので、
+    **「1年から2年で80万円浮く」に「誰から誰への贈与か」の表**が付きました。
+    `calc_sections` は**画面に出す表そのものを選ぶ鍵**なので、
+    ずれたまま作ると**語っている数字と、画面の表が別物になります。**
+    8/15 の「題と中身の取り違え」（`docs/MEANS.md` M14）と同じ壊れ方で、
+    すり抜ければ**誤情報のまま公開**されます。
+
+    貼り直しても**節がぶつかったら失敗させます**。同じ節から2本作ると
+    在庫の数え方が崩れ、「同じ絵を続けない」にも当たるためです。
+    """
+    fixed: list[tuple[str, str]] = []
+    for item, (mod, head) in zip(forged.topics, picked):
+        text = f"{item.title_seed} {item.angle}"
+        ranked = best_section(text, all_sections[mod])
+        top, best = ranked[0][0], ranked[0][1]
+        if top == 0:
+            raise SystemExit(
+                f"{item.id}: 題と狙いの数字が、この calc のどの節の表にも載っていません。"
+                f"表の外の数字を使っています")
+        if best != head:
+            print(f"  [貼り直し] {item.id}\n"
+                  f"      書かせた順の節: {head}\n"
+                  f"      数字が載っている節: {best}（一致 {top} 個）")
+        fixed.append((mod, best))
+
+    if len(set(fixed)) != len(fixed):
+        dup = [x for x in fixed if fixed.count(x) > 1]
+        raise SystemExit(
+            f"同じ節に2件以上が当たりました: {dup}。"
+            f"書き手が同じ表から複数書いています。件数を減らして呼び直すこと")
+    return fixed
+
+
 def validate(forged: ForgedSet, picked, all_sections, known_ids) -> list[dict]:
     if len(forged.topics) != len(picked):
         raise SystemExit(f"{len(picked)}件 頼んで {len(forged.topics)}件 返りました")
 
+    picked = realign(forged, picked, all_sections)
     rows, used = [], set(known_ids)
     for item, (mod, head) in zip(forged.topics, picked):
         tid = item.id.strip()
