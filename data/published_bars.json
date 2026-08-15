@@ -513,6 +513,47 @@
     ],
     "video_id": "lHW4IV-O2OA"
   },
+  "s-kosei-nenkin-24tokyu-29999en-onaji": {
+    "charts": [
+      [
+        "9,999円",
+        "14,999円",
+        "24,999円",
+        "29,999円"
+      ],
+      [
+        "34,770円",
+        "37,515円",
+        "40,260円"
+      ]
+    ],
+    "video_id": "YBZFmrsL_kk"
+  },
+  "s-kosei-nenkin-395000en-nen32940en": {
+    "charts": [
+      [
+        "1万980円",
+        "2万1960円",
+        "3万2940円"
+      ]
+    ],
+    "video_id": "9hqzUxqBjBE"
+  },
+  "s-kosei-nenkin-torikaesu-16nen7": {
+    "charts": [
+      [
+        "32,940円",
+        "1,973.2円"
+      ],
+      [
+        "16.7年",
+        "16.7年",
+        "16.7年",
+        "16.7年"
+      ]
+    ],
+    "video_id": "cJTGM3x3yaM"
+  },
   "s-nenkin-1": {
     "charts": [
       [
@@ -737,6 +778,19 @@
       ]
     ],
     "video_id": "KdlvGxloIg4"
+  },
+  "s-shoukyuu-nano-ni-nen20940en-mainasu": {
+    "charts": [
+      [
+        "1万2千円",
+        "3万2940円"
+      ],
+      [
+        "9,960円マイナス",
+        "20,940円マイナス"
+      ]
+    ],
+    "video_id": "f-eqkNfiPFQ"
   },
   "s-souzoku-1oku-sougaku-630": {
     "charts": [
