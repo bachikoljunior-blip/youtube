@@ -323,6 +323,50 @@ def short_script_problems(script, topic_id: str = "") -> list[str]:
     if topic_id:
         problems += [p.strip() for p in
                      verify._check_not_repeat(config.BUILD_DIR / topic_id, data)]
+        # **数字の出どころの2件は 2026-08-15 22:5x に足した。歩留まりのためです。**
+        #
+        # 8/15 22:2x の batch は 6本中2本しか予約できず、**落ちた4本のうち3本が
+        # これ**だった（タイトル・サムネ・冒頭 stat の数字が計算出力に無い）。
+        # どちらも `verify` にしか無く、**当たるのはレンダリングが全部終わったあと。**
+        # そこには直す口が無いので、その1本は丸ごと捨てになっていました。
+        # 1本2.7分（同時6の実測）なので、**3本＝8分がここで消えていた。**
+        #
+        # **2つとも台本だけで判定できます**（calc を走らせて突き合わせるだけで、
+        # 音声も画像も要らない）。この関数の冒頭に「台本だけで判定できるものは
+        # 全部ここに集める」と書いてあるのに、この2件だけ集め忘れていました。
+        # ここに置けば `generate()` の作り直しの輪に入り、**同じセッションが
+        # 計算出力を見たまま書き直します**（丸めた数字を戻すのはその場が一番安い）。
+        problems += _calc_source_problems(topic_id, data)
+    return problems
+
+
+def _calc_source_problems(topic_id: str, data: dict) -> list[str]:
+    """**タイトル・サムネ・冒頭 stat の数字が、計算出力に実在するか。**
+
+    `verify._check_headline_from_calc` と `verify._check_title_from_calc` を
+    そのまま借りる（同じ規則を2か所に書かない）。calc は数十ミリ秒で走るので、
+    作り直しの輪の中で毎回当てても費用にならない。
+
+    **落とさないこと。** ここは生成中に呼ばれるので、calc が引けない・
+    テーマが見つからないといった事情で例外を投げると、
+    **数字とは関係のない理由で台本作りごと止まります。**
+    最後の砦は `verify` 側に残っているので、ここは「見つかったら言う」だけでよい。
+    """
+    from . import config, verify
+
+    work = config.BUILD_DIR / topic_id
+    problems = [p.strip() for p in verify._check_headline_from_calc(work, data)]
+
+    topic = None
+    try:
+        for t in config.load_topics().get("topics") or []:
+            if str(t.get("id")) == topic_id:
+                topic = t
+                break
+    except Exception:
+        topic = None
+    if topic is not None:
+        problems += [p.strip() for p in verify._check_title_from_calc(work, data, topic)]
     return problems
 
 
@@ -867,6 +911,15 @@ def generate(channel: dict, topic: dict) -> VideoScript:
                     f"2つに割り、それぞれ{SHORT_SEGMENT_CHARS}文字以内にする。"
                     "**割ったほうの visual は別のものにすること**"
                     "（同じ絵が2枚続くと、これも検査で落ちます）。\n"
+                    # **「計算出力にありません」に、直し方を1行付ける。**
+                    # 上の文はどれも長さの話なので、数字の指摘に対して
+                    # 読める指示が1つも無かった（2026-08-15 22:5x）。
+                    # 落ちた3本は全部この種類で、**丸めた数字を丸め直す**のが直し方。
+                    "\n**「計算出力にありません」と言われた数字は、丸めた値です。**\n"
+                    "その数字を、上の計算結果に**出ているとおりの桁で**書き直してください"
+                    "（『約30万円』→『287,000円』）。近い値に置き換えるのではなく、"
+                    "**計算結果の行から写すこと。** 写せる行が無いなら、"
+                    "その数字はタイトルにもサムネにも出さず、写せる別の数字に変えてください。\n"
                     "同じ JSON 形式で全体を出し直してください。"
                 ),
                 model=model,
