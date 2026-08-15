@@ -37,3 +37,5 @@
 {"at": "2026-08-15T15:07:58+09:00", "session": "session_0193hN8BBXh2K6KD56TT8zTf", "kind": "ship", "what": "fix: ショートの冒頭だけが動いていなかった（kind=stat は reveal_variants に割る列が無く1枚のまま5.8秒静止＝離脱帯4.7〜5.7秒を丸ごと据え置き）。stat＋note を2段に割り、実測で 12枚/最長5.8秒 → 15枚/最長2.7秒。素通りさせていた検査2つも塞いだ（バイト一致しか見ない重複検査→縮小灰色画像の画素差／平均に埋もれる pace→pipeline が書く実秒数で1枚ずつ）"}
 {"at": "2026-08-15T15:11:23+09:00", "session": "session_01NXRCyvhEFix5rYzUqgjNAa", "kind": "start"}
 {"at": "2026-08-15T15:39:54+09:00", "session": "session_01NXRCyvhEFix5rYzUqgjNAa", "kind": "ship", "what": "upload: s-tedori-2 (a1b2Nm6jN_0) を 8/24 09:00 に予約／fix×4: 字幕検査の誤爆・冒頭の千切れた述語・カタカナの語中改行・評価待ちが消えない穴"}
+{"at": "2026-08-15T15:43:22+09:00", "session": "session_013e4wy2qHsu1jMx9kbAXQYZ", "kind": "start"}
+{"at": "2026-08-15T15:53:34+09:00", "session": "session_013e4wy2qHsu1jMx9kbAXQYZ", "kind": "ship", "what": "fix: 棒グラフの目盛り（起点0で差が1.6%に潰れる／めくりで縮尺が枚ごとに動く）"}

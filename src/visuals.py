@@ -11,6 +11,7 @@ Simple のプロモ動画は自分のゲームを Playwright で録画して素�
 from __future__ import annotations
 
 import html
+import math
 from pathlib import Path
 
 VIEWPORT = (1280, 720)            # deviceScaleFactor=2 で 2560x1440 になる
@@ -131,6 +132,16 @@ td:first-child { color: #9fb0cc; }
 .bar-fill.thin .bar-value {
   color: #f2f4f8; position: absolute; left: calc(100% + 16px);
 }
+/* 目盛りの起点が0でないときの「途中を省いた」印。斜線の帯は図の作法そのもの。
+   これを消すと、縮めた棒が0起点に見える＝誤解を与える図になる。 */
+.bar-fill.broken::before {
+  content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 16px;
+  border-radius: 8px 0 0 8px;
+  background: repeating-linear-gradient(114deg, {BG} 0 5px, {ACCENT} 5px 10px);
+}
+.chart-base {
+  margin-top: 18px; font-size: 26px; font-weight: 700; color: #9fb0cc;
+}
 """
 
 
@@ -164,6 +175,8 @@ td:first-child, th:first-child { white-space: normal; }
 .bar-track { height: 44px; }
 .bar-value { font-size: 24px; }
 .chart { gap: 16px; }
+.bar-fill.broken::before { width: 12px; }
+.chart-base { margin-top: 14px; font-size: 21px; }
 """
 CONTENT_WIDTH_PORTRAIT = VIEWPORT_PORTRAIT[0] - 52 - 96
 # ショートの右端に重なる UI（いいね・コメント・共有・音源）を避ける余白（CSS px）。
@@ -293,6 +306,83 @@ def _wrap(text: str, limit: int, tighten: int = 0) -> str:
     return "<br>".join(_esc(line.strip()) for line in _chunk(text, limit) if line.strip())
 
 
+# 棒を0起点で描いてよいかの境目。**いちばん短い棒がいちばん長い棒の
+# 何割か**で見る。0.65 は実測から置いた（2026-08-15、`s-tedori-2` の3コマ目で
+# 率13%→244px・率15%→240px、**長さの差 1.6%**。目視では同じ長さの棒が2本
+# 並んでいるだけで、読み上げが言う差が図から読み取れなかった）。
+# 0.65 なら短いほうが65%＝目で見て明らかに短い。ここを上げると誤爆が増える。
+ZERO_BASE_MIN_RATIO = 0.65
+# 起点をずらしたとき、いちばん短い棒に残す長さの目安（軌道に対する割合）。
+# 0 に近づけると「消えた棒」に見え、1 に近づけると差がまた潰れる。
+SHORT_BAR_TARGET = 0.30
+
+
+def _nice_floor(x: float, span: float) -> float:
+    """`x` 以下でいちばん近い「きりのいい数」。刻みは span の桁で決める。
+
+    起点の数字は**画面に出す**ので、35万283円のような数では読めない。
+    span=6318 なら刻み1000 → 35万円、span=3.2 なら刻み1 → 68% になる。
+    """
+    if span <= 0:
+        return 0.0
+    step = 10.0 ** math.floor(math.log10(span))
+    # 刻みが細かすぎると起点がほぼ x のままになり、短い棒が消える。
+    # 逆に粗すぎると起点が0まで落ちる。span の 1/10〜1/2 に収める。
+    while step * 5 < span:
+        step *= 2 if step * 2 * 5 >= span else 10
+    return math.floor(x / step) * step
+
+
+def chart_base(values: list[float]) -> float:
+    """棒の目盛りの起点。0 なら従来どおり0起点で描く（2026-08-15）。
+
+    **0起点は「正しい」が、常に「読める」わけではありません。**
+    35万9318円と35万3000円を0から描けば、棒の長さの差は1.6%になり、
+    **読み上げが言っている差が図に出ません。** 図が言っていないことを
+    声だけが言っている状態で、これは図が無いのと変わらない。
+
+    かといって黙って起点をずらすと、**縮めた棒が0起点に見えて誤解を招きます**
+    （収益化ポリシーの「誤解を与える内容」の側）。だから、ずらしたときは
+    必ず (1) 棒の頭に斜線の帯を出し、(2) 起点の数字を画面に書く。
+    **印と数字を出さないなら、ずらしてはいけません。**
+    """
+    vals = [v for v in values if v is not None]
+    if len(vals) < 2 or min(vals) <= 0:
+        return 0.0
+    lo, hi = min(vals), max(vals)
+    if lo / hi < ZERO_BASE_MIN_RATIO:      # 目で見て差が分かる。触らない
+        return 0.0
+    span = hi - lo
+    if span <= 0:                          # 全部同じ値。ずらしても差は出ない
+        return 0.0
+    # いちばん短い棒が軌道の SHORT_BAR_TARGET になる起点
+    raw = lo - span * SHORT_BAR_TARGET / (1.0 - SHORT_BAR_TARGET)
+    base = _nice_floor(raw, span)
+    if base <= 0 or base >= lo:            # 0まで落ちた／短い棒が消える
+        return 0.0
+    return float(base)
+
+
+def _axis_unit(display: str) -> str:
+    """表示文字列の末尾から単位を取る。`35万9318円` → `円`、`73.5%` → `%`。"""
+    i = len(display)
+    while i > 0 and not display[i - 1].isdigit():
+        i -= 1
+    unit = display[i:].strip()
+    return unit if len(unit) <= 3 else ""
+
+
+def _fmt_axis(base: float, display: str) -> str:
+    """起点の数字を、棒に出ている表示と同じ単位で書く。"""
+    unit = _axis_unit(display)
+    n = round(base, 2)
+    if unit.endswith("円") and n >= 10000 and abs(n / 10000 - round(n / 10000)) < 1e-9:
+        return f"{round(n / 10000):,.0f}万{unit}"
+    if abs(n - round(n)) < 1e-9:
+        return f"{round(n):,.0f}{unit}"
+    return f"{n:,.1f}{unit}"
+
+
 def _chart_html(visual: dict, portrait: bool = False, tighten: int = 0) -> str:
     """計算結果を棒グラフにする。
 
@@ -326,7 +416,31 @@ def _chart_html(visual: dict, portrait: bool = False, tighten: int = 0) -> str:
     # 図が嘘になるので、めくりの側から全体の最大値を渡して固定する。
     top = float(visual.get("scale_max") or 0) or \
         max(float(b.get("value", 0)) for b in bars) or 1.0
-    pcts = [max(float(b.get("value", 0)) / top * 100.0, 1.0) for b in bars]
+
+    # **起点も同じ理由で外から渡せる**（2026-08-15）。めくりの1枚目は棒が1本
+    # しか無いので、そこから起点を決めると枚ごとに目盛りが変わります。
+    # `scale_base` が来ていればそれを使い、無ければ見えている棒から決める。
+    raw_base = visual.get("scale_base")
+    base = float(raw_base) if raw_base is not None else \
+        chart_base([float(b.get("value", 0)) for b in bars])
+    if base >= top:            # 目盛りが壊れる。0起点に戻す
+        base = 0.0
+    span = top - base or 1.0
+
+    # **縮尺（下の `scale`）も、めくりで枚ごとに動いていました**（2026-08-15、
+    # `tests/test_chart_base.py` が見つけた）。`scale_max` と `scale_base` を
+    # 固定しても、**収まるかどうかの判定は「見えている棒」だけで走っていた**ので、
+    # 1枚目（棒1本）は 100%、2枚目（棒2本）は 86% と、**同じ棒が縮みました。**
+    # `scale_max` を入れた回に見落としたのはここです。**目盛りは3つある**
+    # （最大値・起点・縮尺）。1つでも見えている棒から決めると図が動きます。
+    #
+    # だから縮尺と文字の大きさは、**常に全体の棒**（`scale_bars`）から決める。
+    ref = [b for b in (visual.get("scale_bars") or bars) if b.get("label")][:6]
+
+    def pct_of(bs: list[dict]) -> list[float]:
+        return [max((float(b.get("value", 0)) - base) / span * 100.0, 1.0) for b in bs]
+
+    pcts, ref_pcts = pct_of(bars), pct_of(ref)
     # padding-right 16px と余白を見た、数字1つに要る幅。
     needs = [_em_width(str(b.get("display", ""))) * font_px + 16 * 2 for b in bars]
 
@@ -339,7 +453,9 @@ def _chart_html(visual: dict, portrait: bool = False, tighten: int = 0) -> str:
     # **全部に同じ倍率をかけて縮める。** 相対の長さは保たれるので、図は正しいまま。
     # 満幅を使わなくなるだけ。
     def fits(k: float, ns: list[float]) -> bool:
-        for pct, need in zip(pcts, ns):
+        # **見えている棒ではなく `ref`（全体）で判定する。** めくりの途中でも
+        # 最後の1枚と同じ縮尺が出るようにするため。
+        for pct, need in zip(ref_pcts, ns):
             bar = track_px * pct * k / 100.0
             if bar < need and bar + need > track_px:   # 中にも外にも入らない
                 return False
@@ -355,12 +471,14 @@ def _chart_html(visual: dict, portrait: bool = False, tighten: int = 0) -> str:
     # 縮尺の下限は 0.5 に上げ、代わりに文字を段階的に落とす。
     scale, size = 1.0, font_px
     for fpx in (font_px, font_px - 3, font_px - 5, font_px - 7):
-        ns = [_em_width(str(b.get("display", ""))) * fpx + 16 * 2 for b in bars]
+        # 判定に使う幅は `ref`（全体）ぶん、描くのに使う幅は見えている棒ぶん。
+        ns = [_em_width(str(b.get("display", ""))) * fpx + 16 * 2 for b in ref]
         k = 1.0
         while k > 0.5 and not fits(k, ns):
             k -= 0.01
         if fits(k, ns):
-            scale, size, needs = k, fpx, ns
+            scale, size = k, fpx
+            needs = [_em_width(str(b.get("display", ""))) * fpx + 16 * 2 for b in bars]
             break
     else:
         # どの大きさでも収まらない。**黙って出さない。** 一番小さい字で最善を尽くす。
@@ -370,17 +488,24 @@ def _chart_html(visual: dict, portrait: bool = False, tighten: int = 0) -> str:
     rows = []
     for b, pct0, need_px in zip(bars, pcts, needs):
         pct = pct0 * scale
-        thin = " thin" if track_px * pct / 100.0 < need_px else ""
+        cls = " thin" if track_px * pct / 100.0 < need_px else ""
+        if base > 0:
+            cls += " broken"
         rows.append(
             f'<div class="bar-row">'
             f'<div class="bar-label">{_wrap_label(b["label"], portrait, tighten)}</div>'
             f'<div class="bar-track">'
-            f'<div class="bar-fill{thin}" style="width:{pct:.1f}%">'
+            f'<div class="bar-fill{cls}" style="width:{pct:.1f}%">'
             f'<span class="bar-value" style="font-size:{size}px">'
             f'{_esc(b.get("display", ""))}</span>'
             f"</div></div></div>"
         )
-    return f'<div class="chart">{"".join(rows)}</div>'
+    chart = f'<div class="chart">{"".join(rows)}</div>'
+    if base > 0:
+        # **黙ってずらさない。** 起点を画面に書かないと、縮めた棒が0起点に見える。
+        label = _fmt_axis(base, str(bars[0].get("display", "")))
+        chart += f'<div class="chart-base">※ 棒の起点は0ではなく {_esc(label)}</div>'
+    return chart
 
 
 def _body_html(visual: dict, portrait: bool = False, tighten: int = 0) -> str:
@@ -464,7 +589,8 @@ def _chromium_path() -> str | None:
 
 _LINE_PROBE_JS = """() => {
   let bad = 0;
-  for (const s of ['.headline', '.note', '.bar-label', 'li > span:not(.marker)']) {
+  for (const s of ['.headline', '.note', '.bar-label', '.chart-base',
+                   'li > span:not(.marker)']) {
     for (const el of document.querySelectorAll(s)) {
       const r = document.createRange();
       r.selectNodeContents(el);
@@ -526,12 +652,20 @@ def reveal_variants(visual: dict, want: int) -> list[dict]:
                 # 目盛りを全体の最大値で固定する。切っても棒が伸び縮みしない。
                 values = [float(b.get("value", 0) or 0) for b in seq]
                 v["scale_max"] = max(values) if values else 0
+                # **起点も同じ。** 1枚目は棒が1本しか無いので、そこから
+                # 決めさせると枚ごとに目盛りが動く（＝図が嘘になる）。
+                v["scale_base"] = chart_base(values)
+                # **縮尺も同じ。** 収まるかどうかの判定を見えている棒だけで
+                # 走らせると、1枚目 100% → 2枚目 86% と同じ棒が縮みます。
+                v["scale_bars"] = seq
             out.append(v)
         # 末尾は必ず「全部出ている」状態にする
         out[-1] = dict(visual)
         if key == "bars":
             values = [float(b.get("value", 0) or 0) for b in seq]
             out[-1]["scale_max"] = max(values) if values else 0
+            out[-1]["scale_base"] = chart_base(values)
+            out[-1]["scale_bars"] = seq
         return out
 
     # ここから下は `kind=stat`（数字1つと補足1行）。**割る列が無い唯一の種類です。**
