@@ -19,3 +19,5 @@
 {"at": "2026-08-15T09:19:12+09:00", "session": "session_01MVSsBLCAnjcmTkw2X7o2cd", "kind": "ship", "what": "fix: 独立評価3体×3周を実施。s-nenkin-2 は中央値3で削除、s-nenkin-3 は 4→5 まで直したが基準未達で保留。残る指摘は形式（冒頭1.5秒・静止スライド）と特定"}
 {"at": "2026-08-15T11:11:38+09:00", "session": "session_01Txbu5DZrYTmoTovEtYJ4Ke", "kind": "start"}
 {"at": "2026-08-15T11:25:39+09:00", "session": "session_01Txbu5DZrYTmoTovEtYJ4Ke", "kind": "ship", "what": "fix+upload: 冒頭0.9秒に絵の動き（1.10倍からの引き）を実装。字幕と重ならない上限を実測で確定。s-jutaku-2 (yd4DRcRfZE8) を 8/23 09:00 に予約"}
+{"at": "2026-08-15T12:12:44+09:00", "session": "session_01QqKaxNa1CCNDppXtxjxfbF", "kind": "start"}
+{"at": "2026-08-15T12:22:20+09:00", "session": "session_01QqKaxNa1CCNDppXtxjxfbF", "kind": "ship", "what": "upload: s-shitsugyo-5 (W54m_JDnSHM) を 8/15 21:00 に予約。1日2本目を常態化する1本目"}
