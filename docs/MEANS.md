@@ -1059,9 +1059,17 @@ A1 より、依頼はしてよいが**読まれる前提で計画を立てては
   守っていたのは毎回こちらの記憶でした。検査は `tests/test_batch_slots.py`（19件）。
 - **8 の段を置きました（2026-08-15 18:xx）**: **8/24 を8本の日にします。**
 
-      8/24 09:00  a1b2Nm6jN_0  calc=tedori   ← 先に入っていた1本
-      8/24 11:00〜17:00  7本   calc=fukugyo / furusato / iryohi / shitsugyo /
-                               jutaku / kojo / nenkin
+      8/24 09:00  a1b2Nm6jN_0  calc=tedori      ← 先に入っていた1本
+      8/24 11:00  jECLINqGDsQ  calc=fukugyo
+      8/24 12:00  _8CEOayY3UY  calc=furusato
+      8/24 13:00  LpgNOanBc-k  calc=iryohi
+      8/24 14:00  8PMLfjjCe4w  calc=shitsugyo
+      8/24 15:00  n2xdLoIv4XU  calc=jutaku
+      8/24 16:00  SWy-pgM2Obs  calc=kojo
+      8/24 17:00  J3OuVORRxPo  calc=nenkin
+
+  **7本とも1回の起動で作って予約しました**（実測 約80分・7/7 成功・`verify.py` 全通）。
+  1周＝1本だった頃なら**7周ぶん**です。
 
   **calc は8本とも別。** 比較の相手は 8/17〜8/23 の各1本と、8/16 の4本です。
   **測るのは1本あたりの再生の中央値**（8/26 ごろに読める）。

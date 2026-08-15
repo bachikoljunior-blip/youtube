@@ -224,6 +224,15 @@
     ],
     "video_id": "iTrogWVf4Eg"
   },
+  "s-fukugyo-3": {
+    "charts": [
+      [
+        "3万210円",
+        "8万7386円"
+      ]
+    ],
+    "video_id": "jECLINqGDsQ"
+  },
   "s-furusato-3": {
     "charts": [
       [
@@ -264,6 +273,15 @@
     ],
     "video_id": "b3ZewNvalXc"
   },
+  "s-furusato-6": {
+    "charts": [
+      [
+        "7万9453円",
+        "7万6445円"
+      ]
+    ],
+    "video_id": "_8CEOayY3UY"
+  },
   "s-iryohi-1": {
     "charts": [
       [
@@ -289,6 +307,16 @@
       ]
     ],
     "video_id": "CdX2oIb7BG8"
+  },
+  "s-iryohi-3": {
+    "charts": [
+      [
+        "7万円",
+        "12万円",
+        "22万円"
+      ]
+    ],
+    "video_id": "LpgNOanBc-k"
   },
   "s-jutaku-1": {
     "charts": [
@@ -331,6 +359,15 @@
     ],
     "video_id": "H28qfOxuJF0"
   },
+  "s-jutaku-4": {
+    "charts": [
+      [
+        "224万7758円",
+        "4963円"
+      ]
+    ],
+    "video_id": "n2xdLoIv4XU"
+  },
   "s-kojo-1": {
     "charts": [
       [
@@ -343,6 +380,21 @@
       ]
     ],
     "video_id": ""
+  },
+  "s-kojo-10pct-doukyo-5nen": {
+    "charts": [
+      [
+        "7万6575円",
+        "5万3000円",
+        "12万9575円"
+      ],
+      [
+        "26万7830円",
+        "35万4195円",
+        "64万7875円"
+      ]
+    ],
+    "video_id": "SWy-pgM2Obs"
   },
   "s-kojo-2": {
     "charts": [
@@ -397,6 +449,21 @@
       ]
     ],
     "video_id": ""
+  },
+  "s-nenkin-70sai-zure-27": {
+    "charts": [
+      [
+        "22か月",
+        "26か月",
+        "27か月"
+      ],
+      [
+        "195.1万",
+        "225.4万",
+        "255.6万"
+      ]
+    ],
+    "video_id": "J3OuVORRxPo"
   },
   "s-shitsugyo-1": {
     "charts": [
@@ -462,6 +529,15 @@
       ]
     ],
     "video_id": "W54m_JDnSHM"
+  },
+  "s-shitsugyo-6": {
+    "charts": [
+      [
+        "38万4300円",
+        "136万6500円"
+      ]
+    ],
+    "video_id": "8PMLfjjCe4w"
   },
   "s-taishoku-muzei-joogen-20": {
     "charts": [
