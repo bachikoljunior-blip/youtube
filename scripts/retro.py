@@ -28,6 +28,10 @@
 1. 直近の `ship`（`data/runs.jsonl`）を種類別に。**偏っていたら、それが設計の癖**
 2. 直近 N 回の「**次の回へ**」を全文
 3. **2回以上の申し送りに出てくる語** ＝ 持ち越し。潰れていない証拠
+   （**潰したと宣言された語は落とします。** 宣言の正本は
+   `run_marker.py --ship --closes` が構造で残したほう ＝ `data/runs.jsonl`。
+   散文からの読み取りも残してありますが、**あれは3回誤読しています**。
+   詳しくは `recorded_closures()`）
 4. **§6 (a2) の問い1を、縦に**（2026-08-15 に足した）
 5. **前に「道筋」を見てから何回か。** 8回で1度、(a2) の問い4を出す
 
@@ -159,6 +163,62 @@ def closures(text: str) -> dict[str, int]:
     return found
 
 
+def recorded_closures() -> dict[str, int]:
+    """**`data/runs.jsonl` に構造で残された宣言。**（2026-08-16 に足した）
+
+    返りの形は `closures()` と同じ `語 → 日誌の行番号`。
+    こちらの行番号は `run_marker.py --ship --closes` が
+    **宣言した時点の日誌の行数**を書いたものです（あちらの `journal_lines()`）。
+
+    ## なぜ散文と別にするか
+
+    上の `CLOSED_RE` / `REOPEN_RE` / `CODE_SPAN_RE` の3段は、**全部あとから足した
+    継ぎ足し**です。**同じ穴を3回踏んでいます**（09:5x・10:3x と、`_template.py` の
+    書き忘れ）。**踏み方が「書きすぎ」と「書き忘れ」で逆なのに、原因は1つ** ——
+    **宣言が人の散文の中にしかなく、機械が文意を当てにいっていた**ことです。
+
+    語彙を足す限り、日誌が新しい言い回しをすれば戻ります（3回戻りました）。
+    **だから読む場所を増やしました。** 構造の側には解釈が要りません。
+
+    **散文の側は消していません。** 過去の日誌はそれでしか読めず、
+    消すと 8/16 以前の宣言が全部よみがえります。**これから先の正本は構造の側**で、
+    同じ語が両方にあるときは**後に宣言されたほう**を採ります。
+    """
+    found: dict[str, int] = {}
+    if not RUNS.exists():
+        return found
+    for line in RUNS.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        try:
+            rec = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if rec.get("kind") != "ship":
+            continue
+        at = rec.get("journal_lines")
+        if not isinstance(at, int):
+            continue
+        for tok in rec.get("closes") or []:
+            tok = str(tok).strip()
+            if tok:
+                found[tok] = max(found.get(tok, 0), at)
+    return found
+
+
+def all_closures(text: str) -> tuple[dict[str, int], set[str]]:
+    """散文と記録を合わせた宣言と、**そのうち記録から来た語**。
+
+    どちらから来たかを返すのは、**出す側で分けて見せるため**です
+    （記録は裏が取れる／散文は取れない。混ぜて出すと同じ強さに見えます）。
+    """
+    merged = dict(closures(text))
+    rec = recorded_closures()
+    for tok, at in rec.items():
+        merged[tok] = max(merged.get(tok, 0), at)
+    return merged, set(rec)
+
+
 def first_lines(body: list[str], want: str) -> str:
     """(a2) の節から、番号 `want` の項目の**1行目だけ**を返す。
 
@@ -228,7 +288,7 @@ def main() -> int:
         print("  記録がありません。")
 
     journal = JOURNAL.read_text(encoding="utf-8")
-    closed = closures(journal)
+    closed, from_record = all_closures(journal)
     blocks = handoff_blocks(journal)[-args.n:]
     print(f"\n\n## 「次の回へ」（{len(blocks)} 件）\n")
     for date, body, _ in blocks:
@@ -259,10 +319,15 @@ def main() -> int:
               "か、書き方が毎回違って機械では追えていない）")
     # **落としたものは必ず言うこと。** 黙って削ると「全部見た」に見えます。
     if muted:
-        print("\n  --- **閉じたと日誌が宣言しているので、上から外したもの** ---")
+        print("\n  --- **閉じたと宣言されているので、上から外したもの** ---")
         for tok, n in sorted(muted.items(), key=lambda kv: -kv[1]):
-            print(f"  {n}回ぶん  {tok}")
-        print("  **宣言のほうが間違っていることもあります**（閉じたつもりで閉じていない）。"
+            # **出どころを分けて出す。** 記録は裏が取れ、散文は取れません。
+            src = ("記録" if tok in from_record else "日誌の文")
+            print(f"  {n}回ぶん  {tok}  ［{src}］")
+        print("  ［記録］は `run_marker.py --ship --closes` が構造で残したもの"
+              "（`data/runs.jsonl`）。**出したものと対になっているので裏が取れます。**")
+        print("  ［日誌の文］は散文から読み取ったもの。**宣言のほうが間違っている"
+              "ことがあります**（閉じたつもりで閉じていない）。"
               "\n  疑うなら日誌の宣言を読み、実物に当たること。**言及の回数は証拠になりません。**")
 
     review_all = blocks_under(journal, REVIEW_RE)

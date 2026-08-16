@@ -60,6 +60,10 @@ JST = timezone(timedelta(hours=9))
 INTERVAL_MIN = 60
 MARKS = Path(__file__).resolve().parent.parent / "data" / "runs.jsonl"
 KEEP = 500
+# **潰した宣言の位置合わせに使う目盛り。**（2026-08-16 に足した。理由は `ship()`）
+# 宣言した時点で日誌が何行あったかを一緒に残すと、`retro.py` の
+# 「宣言より前の言及だけ落とす」がそのまま効きます（あちらは行番号で見ています）。
+JOURNAL = Path(__file__).resolve().parent.parent / "docs" / "JOURNAL.md"
 
 # **常駐の親。ここからの印は数えない。**
 #
@@ -136,7 +140,15 @@ def write() -> int:
     return 0
 
 
-def ship(what: str) -> int:
+def journal_lines() -> int:
+    """いまの `docs/JOURNAL.md` の行数。**読めなければ 0**（＝何も黙らせない）。"""
+    try:
+        return len(JOURNAL.read_text(encoding="utf-8").split("\n"))
+    except OSError:
+        return 0
+
+
+def ship(what: str, closes: list[str] | None = None) -> int:
     """**この回が「出したもの」を1行残す。**（2026-08-15 追加）
 
     オーナーの指示（原文）: **「子が、少しの作業で終わるの直して」**
@@ -158,15 +170,49 @@ def ship(what: str) -> int:
 
     **分析・日誌・文書の整理だけは ship ではありません。** それは前提であって、
     出したものではない。
+
+    ## `--closes`（2026-08-16 に足した。**4回運ばれた申し送り**）
+
+    `retro.py` の持ち越しは「潰したと日誌が宣言した語」を落とします。
+    **その宣言は、いままで散文でした** ——「〜はこの回で閉じました」と手で書く約束。
+    **約束は3回破れ、そのたびに読む側を直しています**:
+
+        09:5x  「**一度閉じた後の再発**」を宣言と誤読 → `critique_queue` が黙った
+        10:3x  引用符の中の「`閉じました`」を宣言と誤読 → **同じ穴の3枚目**
+        06:3x  `_template.py` は閉じたのに**宣言が書かれず**、4回運ばれた
+
+    **前2つは「書きすぎ」、3つめは「書き忘れ」で、向きが逆なのに原因は同じ**です ——
+    **宣言が、人の書いた散文の中にしかありませんでした。** 語彙を足しても、
+    次に日誌が新しい言い回しをすれば戻ります（実際3回戻りました）。
+
+    だから**出したものと一緒に、機械が構造で残します。** 散文の読み取りは
+    残してあります（過去の日誌はそれでしか読めないため）が、
+    **これから先は、こちらが正本です。**
+
+        python scripts/run_marker.py --ship "fix: ..." --closes critique_queue
+
+    一緒に**そのときの日誌の行数**を残すのは、`retro.py` が
+    「宣言より前の言及だけ落とす」を行番号でやっているからです。
+    行数を渡せば、**そのとき既にあった申し送りだけが黙り、
+    この後に書かれた言及は「一度閉じた後の再発」として残ります**（意図どおり）。
     """
     me = session_id() or "(不明)"
-    line = _append({
+    rec = {
         "at": datetime.now(JST).isoformat(timespec="seconds"),
         "session": me,
         "kind": "ship",
         "what": what,
-    })
+    }
+    closes = [c.strip() for c in (closes or []) if c.strip()]
+    if closes:
+        rec["closes"] = closes
+        rec["journal_lines"] = journal_lines()
+    line = _append(rec)
     print(f"[marker] 出したものを記録しました: {line}")
+    if closes:
+        print(f"[marker] **潰した宣言を {len(closes)} 件、構造で残しました**"
+              f"（{' / '.join(closes)}）。")
+        print("         `retro.py` の持ち越しから、この語より前の言及が落ちます。")
     return 0
 
 
@@ -223,9 +269,19 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--write", action="store_true", help="子: 走った印を付ける（最初に）")
     ap.add_argument("--ship", metavar="内容",
                     help="子: この回で出したものを記録する（最低ラインの1件）")
+    ap.add_argument("--closes", metavar="語", action="append", default=[],
+                    help="この ship で潰した持ち越しの語（`retro.py` の一覧に出る形で。"
+                         "何度でも書ける）。**語が `-` で始まるときは "
+                         "`--closes=--closes` と等号で書くこと**"
+                         "（argparse が次の旗と読みます。持ち越しには "
+                         "`--closes` `--next` のような旗の名前が実際に載ります）")
     args = ap.parse_args(argv)
     if args.ship:
-        return ship(args.ship)
+        return ship(args.ship, args.closes)
+    if args.closes:
+        # **単独では受けない。** 宣言は「何を出して閉じたか」と一緒でなければ、
+        # 散文の約束と同じで、後から裏が取れません。
+        ap.error("--closes は --ship と一緒に使ってください（出したものと対で残します）")
     return write() if args.write else show()
 
 

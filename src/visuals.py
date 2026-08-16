@@ -117,6 +117,27 @@ td { font-weight: 700; border-bottom: 2px solid rgba(255,255,255,.10); }
 tr:last-child td { border-bottom: none; }
 td:first-child { color: #9fb0cc; }
 
+/* **このコマで増えたぶん**（`fresh_flags`）。印は次のコマで前の行から外れて
+   下へ移るので、画面の中で強調が1つ動きます。増えたのが見出しの文字だけだと
+   「実質同じ画面」に見える、という独立評価9体ぶんの実測から。 */
+tr.fresh td { background: rgba({GLOW},.30); color: #f2f4f8; }
+tr.fresh td:first-child {
+  color: {ACCENT}; border-radius: 8px 0 0 8px;
+  box-shadow: inset 6px 0 0 {ACCENT};
+}
+tr.fresh td:last-child { border-radius: 0 8px 8px 0; }
+/* 箇条書きは字だけなので、色を変えても塗り替わる面積がほとんどありません
+   （実測 5.87% → 5.96%。表は 4.49% → 13.51% で効いていた）。**帯を敷きます。** */
+li.fresh {
+  color: {ACCENT};
+  background: rgba({GLOW},.30);
+  border-radius: 12px; margin: -10px -16px; padding: 10px 16px;
+  box-shadow: inset 6px 0 0 {ACCENT};
+}
+li.fresh .marker { box-shadow: 0 0 0 6px rgba({GLOW},.45); }
+.bar-row.fresh .bar-label { color: {ACCENT}; font-weight: 900; }
+.bar-row.fresh .bar-track { box-shadow: 0 0 0 4px rgba({GLOW},.40); border-radius: 10px; }
+
 /* kind=chart — 棒の長さは計算結果から決まるので、回ごとに形が変わる */
 .chart { display: flex; flex-direction: column; gap: 20px; }
 .bar-row { display: flex; align-items: center; gap: 20px; }
@@ -519,13 +540,14 @@ def _chart_html(visual: dict, portrait: bool = False, tighten: int = 0) -> str:
         needs = [_em_width(str(b.get("display", ""))) * size + 16 * 2 for b in bars]
 
     rows = []
-    for b, pct0, need_px in zip(bars, pcts, needs):
+    fresh = fresh_flags(visual, len(bars))
+    for i, (b, pct0, need_px) in enumerate(zip(bars, pcts, needs)):
         pct = pct0 * scale
         cls = " thin" if track_px * pct / 100.0 < need_px else ""
         if base > 0:
             cls += " broken"
         rows.append(
-            f'<div class="bar-row">'
+            f'<div class="bar-row{" fresh" if fresh[i] else ""}">'
             f'<div class="bar-label">{_wrap_label(b["label"], portrait, tighten)}</div>'
             f'<div class="bar-track">'
             f'<div class="bar-fill{cls}" style="width:{pct:.1f}%">'
@@ -541,6 +563,46 @@ def _chart_html(visual: dict, portrait: bool = False, tighten: int = 0) -> str:
     return chart
 
 
+# **このコマで増えた要素に付ける印**（`fresh_flags`）。f-string の中に
+# バックスラッシュを書けない（3.11）ので、開きタグは定数で持つ。
+FRESH_TR = '<tr class="fresh">'
+FRESH_LI = '<li class="fresh">'
+
+
+def fresh_flags(visual: dict, shown: int) -> list[bool]:
+    """`shown` 個のうち、**このコマで増えたぶん**を後ろから数えて True にする。
+
+    **なぜ要るか**（2026-08-16。**独立評価9体ぶんの実測から**）。
+
+    `reveal_variants` は表・棒・箇条書きを1つずつ足していく複数コマに割ります。
+    増えた要素は**見出し**に出していました（`_reveal_headline` の「＋600万」）。
+    **それでは足りませんでした。** 同日に回した3本 × 3体 ＝ **9体が全員**、
+    別々の本について同じ言い方をしています:
+
+        「同じ表に600万の行が1行足されるだけ。表以外は完全に同じ画面」
+        「同じ表に3行足しただけで、これも実質同じ画面」
+        「差分を積み上げる作りなので、画面は『切り替わる』より『増える』で、
+          スクロール中の目には止まって見えます」
+
+    `YhHeqMKql7U` は3体そろって **4/4/3点**（記録した中で最低）。13コマのうち
+    **6組が「前のコマ＋1行」**でした。engaged 比率は配信の駆動輪なので、
+    ここが止まって見えることは目標に直接効きます。
+
+    **直し方の向き。** 割るのをやめる道は採りません —— 割る前は
+    「1枚が5.8秒止まる」で、**そちらのほうが悪いと実測済み**です
+    （`reveal_variants` の stat の節）。だから
+    **割ったまま、増えた要素そのものを目立たせます。**
+    印は最後の要素**だけ**に付き、次のコマでは前の印が消えて次へ移るので、
+    画面の中で**位置の変わる強調が1つ動く**ことになります。
+
+    **`kind=stat`（冒頭）には掛かりません。** あちらは 9/5 判定の実験中で、
+    触らないことになっています（`config/hypotheses.yaml`）。
+    """
+    n = int(visual.get("reveal_new") or 0)
+    n = max(0, min(n, shown))
+    return [i >= shown - n for i in range(shown)] if n else [False] * shown
+
+
 def _body_html(visual: dict, portrait: bool = False, tighten: int = 0) -> str:
     kind = (visual.get("kind") or "stat").strip()
 
@@ -549,19 +611,25 @@ def _body_html(visual: dict, portrait: bool = False, tighten: int = 0) -> str:
 
     if kind == "table" and visual.get("headers") and visual.get("rows"):
         head = "".join(f"<th>{_esc(h)}</th>" for h in visual["headers"][:3])
+        shown = visual["rows"][:4]
+        fresh = fresh_flags(visual, len(shown))
         rows = "".join(
-            "<tr>" + "".join(f"<td>{_esc(c)}</td>" for c in row[:3]) + "</tr>"
-            for row in visual["rows"][:4]
+            (FRESH_TR if fresh[i] else "<tr>")
+            + "".join(f"<td>{_esc(c)}</td>" for c in row[:3]) + "</tr>"
+            for i, row in enumerate(shown)
         )
         return f"<table><thead><tr>{head}</tr></thead><tbody>{rows}</tbody></table>"
 
     if kind in ("steps", "compare") and visual.get("items"):
         cls = "compare" if kind == "compare" else "steps"
         markers = ("A", "B", "C", "D") if kind == "compare" else ("1", "2", "3", "4")
+        shown = visual["items"][:4]
+        fresh = fresh_flags(visual, len(shown))
         items = "".join(
-            f'<li><span class="marker">{markers[i]}</span>'
-            f'<span>{_wrap_item(text, portrait, tighten)}</span></li>'
-            for i, text in enumerate(visual["items"][:4])
+            (FRESH_LI if fresh[i] else "<li>")
+            + f'<span class="marker">{markers[i]}</span>'
+            + f'<span>{_wrap_item(text, portrait, tighten)}</span></li>'
+            for i, text in enumerate(shown)
         )
         return f'<ul class="{cls}">{items}</ul>'
 
@@ -833,6 +901,10 @@ def reveal_variants(visual: dict, want: int) -> list[dict]:
                     visual.get("headline", ""), _reveal_label(key, seq[cut - 1]),
                     step=i + 1, total=k,
                 )
+            # **いま増えた要素そのものに、印を付ける**（2026-08-16）。
+            # 見出しだけを変えても、独立評価の9体は「同じ表に1行足されるだけ」
+            # 「実質同じ画面」と書き続けました（下の `reveal_new` の説明）。
+            v["reveal_new"] = (cut - prev_cut) if i else 0
             prev_cut = cut
             if key == "bars":
                 # 目盛りを全体の最大値で固定する。切っても棒が伸び縮みしない。
@@ -853,8 +925,12 @@ def reveal_variants(visual: dict, want: int) -> list[dict]:
         # **見出しだけは戻さない。** 戻すと最後の2コマで同じ文字列が並び、
         # ここで直したはずのものがそこだけ再発します（k=2 のときは全部）。
         last_head = out[-1].get("headline", visual.get("headline", ""))
+        last_new = out[-1].get("reveal_new", 0)
         out[-1] = dict(visual)
         out[-1]["headline"] = last_head
+        # **印も戻さない。** ここで落とすと、最後の1コマだけ「何が増えたか」が
+        # 消えます（`k=2` のときは、割った2枚のうち片方が素のまま）。
+        out[-1]["reveal_new"] = last_new
         if key == "bars":
             values = [float(b.get("value", 0) or 0) for b in seq]
             out[-1]["scale_max"] = max(values) if values else 0

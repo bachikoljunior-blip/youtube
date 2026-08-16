@@ -153,12 +153,34 @@ def test_引用の中に閉じましたがあっても地の文にあれば宣�
     assert "critique_queue" in got and "closures()" in got
 
 
-def test_実物の日誌で_critique_queue_は黙らない():
-    """**実データ。** 04:2x に閉じて、そのあと戻っている語。**再発として残ること。**"""
+def test_実物の日誌で最後の宣言が効く():
+    """**実データ。** 日誌のいちばん新しい宣言が、それより前の言及を黙らせること。
+
+    ## この検査は、何を測っていたか（2026-08-16 12:1x に**書き換えました**）
+
+    ここは長く `test_実物の日誌で_critique_queue_は黙らない` で、
+    **「`critique_queue` は 04:2x に閉じて、そのあと戻っているので再発として残る」**
+    を実データで固定していました。**12:1x の回が `critique_queue` を実際に閉じた**
+    ので、その言明はもう成り立ちません。
+
+    **これは検査の敗北ではありません。** 「このバグはまだ開いている」を留める検査は、
+    **閉じたら退役させるもの**です。回避（対象を別の語に差し替える、しきい値を緩める）は
+    **検査そのものを嘘にします。**
+
+    **落としたぶんの守りは残っています** ——
+    「宣言より後の言及は残る」は `test_宣言より前の言及は落ち_後の言及は残る`
+    （散文）と `tests/test_closes_record.py::test_宣言より後の言及は残る`（記録）が
+    故障注入つきで持っています。**実データでしか言えないのは、
+    「日誌にある宣言が、実際に読めているか」のほう**なので、そちらへ寄せました。
+    """
     journal = (ROOT / "docs" / "JOURNAL.md").read_text(encoding="utf-8")
     closed = retro.closures(journal)
-    blocks = retro.handoff_blocks(journal)[-8:]
-    kept = [d for d, body, start in blocks
-            if "critique_queue" in retro.tokens(body)
-            and not ("critique_queue" in closed and start <= closed["critique_queue"])]
-    assert len(kept) >= 2, kept
+    assert closed, "実物の日誌から宣言が1つも読めていません（読む側が壊れています）"
+    # いちばん後ろで宣言された語を取り、**その宣言より前の言及が黙ること**を見る
+    tok = max(closed, key=lambda t: closed[t])
+    before = [d for d, body, start in retro.handoff_blocks(journal)
+              if tok in retro.tokens(body) and start <= closed[tok]]
+    assert before, f"{tok} は宣言だけで、黙らせる相手がいません"
+    kept = [d for d, body, start in retro.handoff_blocks(journal)
+            if tok in retro.tokens(body) and start > closed[tok]]
+    assert not kept, (tok, kept)
