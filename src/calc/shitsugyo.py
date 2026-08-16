@@ -127,6 +127,23 @@ def check_tables() -> None:
             "60歳以上の上限額が45歳以上60歳未満を下回っていません。"
             "改定で向きが変わったなら age_cap_cliff() の文言ごと見直すこと")
 
+    # 8. **`double_boundary()` の主題そのもの。** 2つの区分を同時にまたぐと、
+    #    「もう少し在籍したのに総額が減る」組み合わせが出ること。ここが全部プラスに
+    #    なる表に差し替わったら、あの節の答えは消えます。**黙って逆を出させない。**
+    #    （`_double_boundary_rows()` は検査を呼ばないので、ここから呼んでも再帰しません）
+    rows = _double_boundary_rows()
+    if not any(r["cap_yen_gained"] < 0 for r in rows):
+        raise TableError(
+            "2つの区分を同時にまたいで総額が減る組み合わせが1つもありません。"
+            "double_boundary() の節は『損をする側がある』ことが主題なので、"
+            "表が変わったなら節の文言ごと見直すこと")
+    # 日数が1日も減っていないのに金額が減る行があること（**日数だけ見る計器では
+    # 見えない**という、この節のいちばんの点）
+    if not any(r["days_gained"] >= 0 > r["cap_yen_gained"] for r in rows):
+        raise TableError(
+            "日数が減らないのに総額が減る行がありません。"
+            "上限額の段差が日数の差に埋もれたなら、節の文言を見直すこと")
+
 
 def yen_range(days: int, age: str) -> tuple[int, int]:
     """日数を、下限額と上限額で挟んだ金額の幅にする。"""
@@ -196,6 +213,55 @@ def age_boundaries(band: str) -> list[dict]:
             "yen_high": hi,
         })
     return out
+
+
+AGE_ORDER = ["30歳未満", "30歳以上45歳未満", "45歳以上60歳未満", "60歳以上65歳未満"]
+
+
+def double_boundary() -> list[dict]:
+    """**年齢と勤続年数を同時にまたぐと、いくら変わるか**（倒産・解雇）。
+
+    既存の節は、年齢の境界と勤続年数の境界を**別々に**出している。
+    ところが実際の離職では、この2つは同じ日に近づく —— 誕生日の直前に
+    入社記念日が来る人は、**1つの区分ではなく2つを同時にまたぐ。**
+    その組み合わせの表は、どこにも無い。
+
+    **並べると、増えるほうだけではないことが出てくる。** 60歳の境目では
+    日数の表が下がり（`DAYS_INVOLUNTARY`）、上限額も 9,110円 → 7,830円 に下がる。
+    だから**「もう少し在籍してから辞めた」ほうが総額で損になる組み合わせがある。**
+
+    金額は上限額に当たる人のもの（`DAILY_CAP` は年齢で変わるので、
+    またいだ**後**の年齢の上限額を使う）。下限額に当たる人は
+    `DAILY_FLOOR` が全年齢共通なので、日数の差がそのまま効く。
+    """
+    check_tables()
+    return _double_boundary_rows()
+
+
+def _double_boundary_rows() -> list[dict]:
+    """`double_boundary()` の中身。**検査を呼ばない**ので `check_tables()` から使える。"""
+    out = []
+    for i in range(len(AGE_ORDER) - 1):
+        a_before, a_after = AGE_ORDER[i], AGE_ORDER[i + 1]
+        for j in range(len(TENURE_BANDS) - 1):
+            t_before, t_after = TENURE_BANDS[j], TENURE_BANDS[j + 1]
+            d_before = DAYS_INVOLUNTARY[a_before][t_before]
+            d_after = DAYS_INVOLUNTARY[a_after][t_after]
+            if d_before is None or d_after is None:
+                continue
+            yen_before = d_before * DAILY_CAP[a_before]
+            yen_after = d_after * DAILY_CAP[a_after]
+            out.append({
+                "age_before": a_before, "age_after": a_after,
+                "tenure_before": t_before, "tenure_after": t_after,
+                "days_before": d_before, "days_after": d_after,
+                "days_gained": d_after - d_before,
+                "cap_yen_before": yen_before,
+                "cap_yen_after": yen_after,
+                "cap_yen_gained": yen_after - yen_before,
+                "floor_yen_gained": (d_after - d_before) * DAILY_FLOOR,
+            })
+    return sorted(out, key=lambda r: r["cap_yen_gained"], reverse=True)
 
 
 def age_cap_cliff(reason: str = "倒産・解雇など") -> list[dict]:
@@ -278,3 +344,16 @@ if __name__ == "__main__":
               f"{r['cap_yen_before']:11,d}円→{r['cap_yen_after']:11,d}円 "
               f"{r['cap_yen_gained']:11,d}円 {r['days_only_yen']:13,d}円 "
               f"{r['floor_yen_gained']:11,d}円")
+
+    print("\n=== 年齢と勤続年数を同時にまたぐ（倒産・解雇。上限額に当たる人）===")
+    print("  誕生日の直前に入社記念日が来る人は、2つの区分を**同じ日に**またぎます。")
+    print("  日数の表だけを見ていると、金額が減る組み合わせに気づけません。")
+    print(f"{'年齢':>16s} → {'年齢':<16s} {'勤続':>10s} → {'勤続':<12s}"
+          f"{'前':>5s} {'後':>5s} {'日数':>6s} {'総額の差':>13s}")
+    for r in double_boundary():
+        print(f"{r['age_before']:>16s} → {r['age_after']:<16s} "
+              f"{r['tenure_before']:>10s} → {r['tenure_after']:<12s}"
+              f"{r['days_before']:4d}日 {r['days_after']:4d}日 "
+              f"{r['days_gained']:+5d}日 {r['cap_yen_gained']:+12,d}円"
+              + ("  ← 日数は変わらないのに減る" if r["days_gained"] >= 0 > r["cap_yen_gained"]
+                 else "  ← 在籍を延ばしたのに減る" if r["cap_yen_gained"] < 0 else ""))

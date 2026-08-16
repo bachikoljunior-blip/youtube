@@ -34,6 +34,10 @@ ASSUMPTIONS = [
     "保険金や高額療養費で補填された額は、支払った医療費から引いています",
     "更正の請求ができる5年をさかのぼれる期間としています",
     "セルフメディケーション税制は含めていません（選択制で条件が別立てのため）",
+    "生計を一にする家族の医療費は、まとめて1人が申告できるものとしています",
+    "所得税率は仮定です。共働きの比較では、高いほうを総所得500万円で所得税率20パーセント、"
+    "低いほうを所得税率5パーセントとして置いています。"
+    "税率は課税所得で決まるもので、足切りを決める総所得金額等から計算したものではありません",
 ]
 
 # 制度の値。**改正が続くものは入力に逃がす**（docs/CONSTRAINTS.md B4）が、
@@ -75,6 +79,38 @@ def check_tables() -> None:
     if not refund(200_000, 0, 3_000_000, 0.20)["total"] > refund(200_000, 0, 3_000_000, 0.05)["total"]:
         raise ValueError("税率が高いのに戻る額が増えていない")
 
+    # --- 共働きの入れ替わり（crossover_paid の主題そのもの）-------------
+    # 足切りが同じなら入れ替わらない。**この向きが変わったら節の答えが逆になる**
+    if crossover_paid(5_000_000, 0.20, 3_000_000, 0.05) is not None:
+        raise ValueError("足切りが同じ（どちらも総所得200万円以上）なのに入れ替わりが出ている")
+    x = crossover_paid(5_000_000, 0.20, 1_600_000, 0.05)
+    if x is None:
+        raise ValueError("足切りが下がる側があるのに入れ替わりが出ていない")
+    if not floor_amount(5_000_000) < x:
+        raise ValueError("入れ替わりの額が高いほうの足切り以下")
+    # 境目の両側で、勝つ側が実際に入れ替わること（式を解いた結果の裏取り）
+    below = (refund(x - 10_000, 0, 1_600_000, 0.05)["total"]
+             > refund(x - 10_000, 0, 5_000_000, 0.20)["total"])
+    above = (refund(x + 10_000, 0, 5_000_000, 0.20)["total"]
+             > refund(x + 10_000, 0, 1_600_000, 0.05)["total"])
+    if not (below and above):
+        raise ValueError(f"境目 {x} 円の前後で勝つ側が入れ替わっていない")
+
+    # --- 分けると損する（split_loss の主題そのもの）---------------------
+    floor = floor_amount(3_000_000)
+    # 小さいほうが足切り以上なら、損失は足切りぶんで頭打ち（医療費に依らず一定）
+    a = split_loss(400_000, floor, 3_000_000, 0.20)["lost_deduction"]
+    b = split_loss(600_000, 200_000, 3_000_000, 0.20)["lost_deduction"]
+    if not a == b == floor:
+        raise ValueError(f"足切り以上の分担で損失が一定になっていない: {a} {b} {floor}")
+    # 小さいほうが足切り未満なら、その全額が消える
+    c = split_loss(400_000, 60_000, 3_000_000, 0.20)["lost_deduction"]
+    if c != 60_000:
+        raise ValueError(f"足切り未満の分担で、全額が消えていない: {c}")
+    # 分けて得になることは無い
+    if split_loss(400_000, 0, 3_000_000, 0.20)["lost_deduction"] != 0:
+        raise ValueError("分担0なのに損失が出ている")
+
 
 def floor_amount(total_income: int) -> int:
     """足切り。**10万円と総所得の5%の、少ないほう。**
@@ -104,6 +140,88 @@ def refund(paid: int, reimbursed: int, total_income: int, rate: float) -> dict:
         "total": income_tax + resident,
         "five_years": (income_tax + resident) * RECLAIM_YEARS,
     }
+
+
+def coefficient(rate: float) -> float:
+    """控除額1円あたり、実際に戻る額。**所得税ぶん＋住民税ぶん。**
+
+    所得税は復興特別所得税を上乗せ、住民税は標準税率。
+    `refund()` は円未満を切り捨てるが、こちらは境目を解くために丸めない。
+    """
+    return rate * (1 + RECONSTRUCTION) + RESIDENT_RATE
+
+
+def crossover_paid(
+    high_income: int, high_rate: float, low_income: int, low_rate: float
+) -> int | None:
+    """**共働きで、どちらが申告すると得か**が入れ替わる医療費の額。
+
+    一般の解説はここで止まる ——「税率の高いほうが申告するのが得」。
+    **足切りが総所得の5パーセントで決まることを併せて考えると、そうならない範囲がある。**
+    総所得200万円未満の側は足切りが10万円より下がるので、控除額が大きくなる。
+    医療費が小さいうちは、その差のほうが税率の差より大きい。
+
+    戻り値は「これを**超えたら**税率の高いほうが得になる」医療費（円）。
+    入れ替わりが起きないときは None（＝どの額でも税率の高いほうが得）。
+    """
+    fh, fl = floor_amount(high_income), floor_amount(low_income)
+    ch, cl = coefficient(high_rate), coefficient(low_rate)
+    if ch <= cl or fh <= fl:
+        return None  # 足切りが同じか、税率の高い側が有利なまま。入れ替わらない
+    paid = (fh * ch - fl * cl) / (ch - cl)
+    return int(-(-paid // 1))  # 「超えたら」なので切り上げ
+
+
+def split_loss(total_paid: int, smaller_share: int, income: int, rate: float) -> dict:
+    """**世帯の医療費を2人に分けて申告すると、足切りがもう1回引かれる。**
+
+    医療費控除は生計を一にする親族の分をまとめて1人が申告できる。
+    分けると足切りが人数分だけ引かれるので、**同じ医療費でも戻る額が減る。**
+    減り方は2つの帯に分かれ、境目は足切りそのもの:
+
+        小さいほうが足切り未満  → **その全額が消える**（控除に1円も乗らない）
+        小さいほうが足切り以上  → 損失は**足切りぶんで頭打ち**（医療費が増えても一定）
+
+    どちらも2人の総所得が同じ場合の話（足切りが同じ）。
+    """
+    if not 0 <= smaller_share <= total_paid / 2:
+        raise ValueError(f"小さいほうの分担が範囲外: {smaller_share}")
+    larger = total_paid - smaller_share
+    together = deduction(total_paid, 0, income)
+    apart = deduction(larger, 0, income) + deduction(smaller_share, 0, income)
+    lost_deduction = together - apart
+    return {
+        "smaller_share": smaller_share,
+        "deduction_together": together,
+        "deduction_apart": apart,
+        "lost_deduction": lost_deduction,
+        "lost_yen": int(lost_deduction * coefficient(rate)),
+        "capped": smaller_share >= floor_amount(income),
+    }
+
+
+def claimant_grid(
+    high_income: int, high_rate: float, low_rate: float
+) -> list[dict]:
+    """低いほうの総所得べつに、入れ替わりが起きる医療費。"""
+    check_tables()
+    rows = []
+    for li in (800_000, 1_200_000, 1_600_000, 2_000_000, 3_000_000):
+        rows.append({
+            "low_income": li,
+            "low_floor": floor_amount(li),
+            "crossover": crossover_paid(high_income, high_rate, li, low_rate),
+        })
+    return rows
+
+
+def split_grid(total_paid: int, income: int, rate: float) -> list[dict]:
+    """分担べつの損失。**足切りで折れる。**"""
+    check_tables()
+    floor = floor_amount(income)
+    shares = sorted({0, 30_000, 60_000, floor, 90_000, 120_000, total_paid // 2})
+    return [split_loss(total_paid, s, income, rate)
+            for s in shares if 0 <= s <= total_paid / 2]
 
 
 def floor_grid() -> list[dict]:
@@ -139,3 +257,23 @@ if __name__ == "__main__":
         for r in refund_grid(ti, rate):
             print(f"{r['paid']:11,d}円 {r['deduction']:8,d}円 {r['income_tax_refund']:9,d}円 "
                   f"{r['resident_tax_cut']:9,d}円 {r['total']:8,d}円 {r['five_years']:9,d}円")
+
+    HI, HR, LR = 5_000_000, 0.20, 0.05
+    print(f"\n=== 共働き 税率{HR:.0%}の側が申告して損になる医療費（相手の総所得べつ）===")
+    print(f"  高いほう: 総所得{HI:,}円・所得税率{HR:.0%}・足切り{floor_amount(HI):,}円")
+    print(f"  低いほう: 所得税率{LR:.0%}")
+    print(f"{'低いほうの総所得':>14s} {'低いほうの足切り':>15s}  {'どちらが申告すると得か'}")
+    for r in claimant_grid(HI, HR, LR):
+        x = r["crossover"]
+        print(f"{r['low_income']:13,d}円 {r['low_floor']:14,d}円  "
+              + (f"医療費 {x:,}円 以下なら**低いほう**が得（超えたら高いほう）" if x
+                 else "どの医療費でも高いほうが得（足切りが同じ）"))
+
+    TOTAL, TI2, RATE2 = 400_000, 3_000_000, 0.20
+    print(f"\n=== 医療費{TOTAL:,}円を夫婦で分けて申告すると、いくら捨てるか ===")
+    print(f"  総所得はどちらも{TI2:,}円・所得税率{RATE2:.0%}・足切り{floor_amount(TI2):,}円")
+    print(f"{'小さいほうの分担':>14s} {'まとめた控除':>11s} {'分けた控除':>10s} {'消えた控除':>10s} {'捨てた額':>9s}")
+    for r in split_grid(TOTAL, TI2, RATE2):
+        print(f"{r['smaller_share']:13,d}円 {r['deduction_together']:10,d}円 "
+              f"{r['deduction_apart']:9,d}円 {r['lost_deduction']:9,d}円 {r['lost_yen']:8,d}円"
+              + ("  ← 足切りぶんで頭打ち" if r["capped"] else ""))
