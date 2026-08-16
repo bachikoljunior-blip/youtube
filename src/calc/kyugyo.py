@@ -111,6 +111,42 @@ def season_grid(monthly: int = 300_000, days_off: int = 20) -> list[dict]:
     return out
 
 
+def calendar_span_cost(monthly: int = 300_000, days_off: int = 20) -> dict:
+    """**暦日数のぶれが、いくらの差になるか**を1つの金額にして返す。
+
+    ## この関数を足した理由（2026-08-16）
+
+    「連続する3か月の暦日数（分母は最大4日ぶれる）」の節は、**日数しか
+    出していませんでした**（`1月〜3月 90日` …）。そのせいで `topic_forge` が
+    この節を**2回連続で落としています** —— 書き手は「◯◯円変わる」という題を
+    立てるのに、**その金額が節のどこにも載っていない**からです。
+    節は在庫として数えられているのに、**実際には一度も動画にできませんでした。**
+
+    `season_grid` は窓ごとの額を出しますが、**この節の主題は窓どうしの「差」**で、
+    差そのものはどの表にも載っていませんでした。**主題の数字を表に載せます。**
+
+    差が出る理屈は分母だけです。平均賃金は `3か月の賃金 ÷ 暦日数` なので、
+    **月給が同じでも、休業が始まる月で分母が 89〜92日 に動きます。**
+    有利なのは**暦日の短い窓**（2月をまたぐ側）で、不利なのは 92日 の窓です。
+    """
+    total = monthly * LOOKBACK_MONTHS
+    rows = [(label, span, daily_allowance(total, span))
+            for label, span in calendar_day_spans()]
+    best = min(rows, key=lambda r: r[1])     # 暦日が短い＝分母が小さい＝手当が高い
+    worst = max(rows, key=lambda r: r[1])
+    return {
+        "月給": monthly,
+        "休んだ日数": days_off,
+        "有利な窓": best[0], "有利な暦日": best[1],
+        "有利な日額": best[2], "有利な総額": best[2] * days_off,
+        "不利な窓": worst[0], "不利な暦日": worst[1],
+        "不利な日額": worst[2], "不利な総額": worst[2] * days_off,
+        "日額の差": best[2] - worst[2],
+        "総額の差": (best[2] - worst[2]) * days_off,
+        "暦日の差": worst[1] - best[1],
+    }
+
+
 def boundary_worked_days(calendar_days: int = 91) -> float:
     """最低保障が暦日割を上回る境目の労働日数。
 
@@ -234,5 +270,18 @@ if __name__ == "__main__":
               f"  月給の {row['月給に対する率'] * 100:4.1f}%")
 
     print("\n=== 連続する3か月の暦日数（分母は最大4日ぶれる） ===")
+    _gap = calendar_span_cost()
+    print(f"  前提: 月給{_gap['月給']:,}円 / {_gap['休んだ日数']}日休んだ場合")
+    _total = _gap["月給"] * LOOKBACK_MONTHS
     for label, span in calendar_day_spans():
-        print(f"  {label:>8}  {span}日")
+        _d = daily_allowance(_total, span)
+        print(f"  {label:>8}  {span}日  日額 {_d:>6,}円"
+              f"  {_gap['休んだ日数']}日で {_d * _gap['休んだ日数']:>8,}円")
+    print(f"  **暦日が {_gap['暦日の差']}日ちがうだけで、"
+          f"{_gap['休んだ日数']}日ぶんの休業手当は {_gap['総額の差']:,}円 変わります**"
+          f"（日額の差 {_gap['日額の差']:,}円）")
+    print(f"    有利 {_gap['有利な窓']}（{_gap['有利な暦日']}日）"
+          f" {_gap['有利な総額']:,}円  ／  "
+          f"不利 {_gap['不利な窓']}（{_gap['不利な暦日']}日）"
+          f" {_gap['不利な総額']:,}円")
+    print("    **月給は同じです。**変わっているのは平均賃金の分母（暦日数）だけ。")

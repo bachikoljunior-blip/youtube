@@ -379,33 +379,71 @@ def catch_up_grid(base_annual_man: float = 180.0, step_months: int = 12) -> list
     return rows
 
 
-def net_tilt(base_annual_man: float = 180.0) -> list[dict]:
+def lifetime_net(months_from_65: int, base_annual_man: float,
+                 until_age: int = 85) -> float:
+    """受給開始から `until_age` の誕生日までに受け取る**手取りの総額**（万円）。
+
+    倍率は終身なので、開始を遅らせると「もらえる年数」と「1年あたりの額」が
+    逆向きに動きます。**その掛け算の答えが、ここで出る1つの金額**です。
+
+    手取り率は年額から補間する**こちらの前提**（`NET_RATE_POINTS`）なので、
+    画面には必ず前提として出すこと。繰下げると年額が上がり、手取り率は下がります
+    —— 額面の倍率がそのまま手取りの倍率にならないのは、これが理由です。
+    """
+    start_months = BASE_AGE * 12 + months_from_65
+    end_months = until_age * 12
+    if end_months <= start_months:
+        return 0.0
+    annual = base_annual_man * rate_for(months_from_65)
+    return annual * _clamp_rate(annual) * (end_months - start_months) / 12
+
+
+def net_tilt(base_annual_man: float = 180.0, until_age: int = 85) -> list[dict]:
     """手取りで計算したとき、天秤がどちらへ何か月ぶん傾くかを出す。
 
     繰下げも繰上げも分岐点は後ろへ動くが、**得か損かの向きは逆**。
     そこを1つの表にして並べる。
+
+    ## 金額の列を足した理由（2026-08-16）
+
+    ここは長らく**年齢しか出していませんでした**（`81歳10か月 → 84歳1か月`）。
+    そのせいで `topic_forge` がこの節を **2回連続で落としています** ——
+    書き手は「◯◯円得する」という題を立てるのに、**その金額がこの表のどこにも
+    載っていない**ので、`realign` が「裏の取れない数字」として弾いていました。
+    節は在庫として数えられているのに、**実際には一度も動画にできない**状態です。
+
+    確率のぶれではありません。**表に金額が無いことが原因**なので、
+    `until_age` まで生きた場合の**手取り総額と、65歳受給との差**を列に足します。
+    分岐点（年齢）と総額（金額）は同じ計算の表と裏で、どちらも終身の倍率から出ます。
     """
     rows = []
+    at65 = lifetime_net(0, base_annual_man, until_age)
     for m, label in ((60, "70歳まで繰下げ"), (120, "75歳まで繰下げ")):
         gross = break_even(m, base_annual_man, net=False)
         netbe = break_even(m, base_annual_man, net=True)
         gap = (netbe[0] * 12 + netbe[1]) - (gross[0] * 12 + gross[1])
+        total = lifetime_net(m, base_annual_man, until_age)
         rows.append({
             "選択": label,
             "分岐点_額面": f"{gross[0]}歳{gross[1]}か月",
             "分岐点_手取り": f"{netbe[0]}歳{netbe[1]}か月",
             "後ろへ_月": gap,
+            "生涯手取り_円": round(total * 10_000),
+            "65歳受給との差_円": round((total - at65) * 10_000),
             "手取りで見ると": "不利になる（追いつくのが遅い）",
         })
     for m, label in ((60, "60歳まで繰上げ"), (24, "63歳まで繰上げ")):
         gross = catch_up(m, base_annual_man, net=False)
         netbe = catch_up(m, base_annual_man, net=True)
         gap = (netbe[0] * 12 + netbe[1]) - (gross[0] * 12 + gross[1])
+        total = lifetime_net(-m, base_annual_man, until_age)
         rows.append({
             "選択": label,
             "分岐点_額面": f"{gross[0]}歳{gross[1]}か月",
             "分岐点_手取り": f"{netbe[0]}歳{netbe[1]}か月",
             "後ろへ_月": gap,
+            "生涯手取り_円": round(total * 10_000),
+            "65歳受給との差_円": round((total - at65) * 10_000),
             "手取りで見ると": "有利になる（逃げ切れる期間が伸びる）",
         })
     return rows
@@ -454,7 +492,13 @@ if __name__ == "__main__":
               f"ずれ{row['ずれ_月']:>3d}か月")
 
     print("\n=== 手取りで計算すると、天秤は繰上げ側に傾く ===")
+    print(f"  前提: 65歳で年{base}万円 / 85歳の誕生日まで生きた場合 / "
+          f"手取り率は年額から補間（**制度の値ではなくこちらの前提**）")
+    print(f"  {'65歳から受給':>12s}  生涯手取り "
+          f"{round(lifetime_net(0, base) * 10_000):>10,d}円  ← 比べる相手")
     for row in net_tilt(base):
         print(f"  {row['選択']:>12s}  額面{row['分岐点_額面']:>10s} → "
               f"手取り{row['分岐点_手取り']:>10s}（{row['後ろへ_月']:>2d}か月うしろ）  "
+              f"生涯手取り {row['生涯手取り_円']:>10,d}円"
+              f"（65歳受給との差 {row['65歳受給との差_円']:>+11,d}円）  "
               f"{row['手取りで見ると']}")

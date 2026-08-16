@@ -602,7 +602,12 @@ def print_where_watched(days: int = 28) -> None:
         print(f"  途中で読めませんでした: {str(exc)[:120]}")
 
 
-def main(days: int = 7) -> int:
+def _channel_main(days: int = 7) -> int:
+    """**外の口（YouTube Data API / Analytics）に依存する側。**
+
+    ここは 2026-08-16 まで `main` そのものでした。**分けたのは、この関数の
+    1行目が落ちると出力が丸ごと消えるから**です（下の `main` の註）。
+    """
     youtube = _service()
     channel = youtube.channels().list(part="snippet,contentDetails,statistics", mine=True).execute()["items"][0]
     stats = channel["statistics"]
@@ -830,12 +835,7 @@ def main(days: int = 7) -> int:
     except Exception as exc:                 # 走査が落ちても状態表示は続ける
         print(f"\n=== 全走査 ===\n  [!] 走査に失敗: {str(exc)[:150]}")
         print("      **これを放置しないこと。** 落ちている間は見落としが数えられない")
-    print_means()
-    # **`print_means` の隣に置いています。** あちらは「手段が尽きたか」、
-    # こちらは「材料が尽きたか」で、**§4 でどれを選べるかを決めるのは両方**です。
-    print_topic_stock()
-    print_hypotheses()
-    print_budget()
+    print_local_sections(inventory=False)
 
     # 収益化の門。律速がどちらかを毎回見せる（docs/GOAL.md の掛け算）。
     def _short_median() -> float | None:
@@ -1028,6 +1028,102 @@ def _print_analytics_recap() -> None:
               "（`docs/MEANS.md`）。")
     except Exception as exc:
         print(f"\n=== アナリティクスの要点 ===\n  [!] 出せません: {str(exc)[:100]}")
+
+
+def print_local_sections(inventory: bool = True) -> None:
+    """**外の口を1つも叩かない節だけ**をまとめて出す。
+
+    中身（手段の台帳・テーマ在庫・前提・使用量）は、以前から
+    `_channel_main` の途中で呼ばれていました。**関数に括り出したのは、
+    API が落ちた回にも同じものを出すため**です（下の `main` の註）。
+
+    `inventory=True` のときだけ、**手元の控えから予約の先を数えます** ——
+    普段は API 側の「[予約中]」の表が同じことを言うので、二重に出しません。
+    """
+    if inventory:
+        _print_inventory_from_ledger()
+    print_means()
+    # **`print_means` の隣に置いています。** あちらは「手段が尽きたか」、
+    # こちらは「材料が尽きたか」で、**§4 でどれを選べるかを決めるのは両方**です。
+    print_topic_stock()
+    print_hypotheses()
+    print_budget()
+
+
+def _print_inventory_from_ledger() -> None:
+    """**予約がどこまで埋まっているかを、手元の控えだけで出す**（2026-08-16）。
+
+    §4 の選び方の1番目は「**予約が5日先を切っている → `upload`**」です。
+    その判断に要る数字が、いままで **API の返りの中にしかありませんでした。**
+    口が閉じた回は、いちばん最初に見るべき数字が消えます。
+
+    控え（`data/uploaded.jsonl`）は**自分が上げたときに書いた行**なので、
+    外の口の都合では欠けません。**取り消した本は載ったまま**なので、
+    ここが出すのは上限側の見積りです（API が読める回はそちらが正）。
+    """
+    try:
+        from src import dupes as _dupes
+        rows = [r for r in _dupes.ledger_rows() if r.get("at")]
+        if not rows:
+            return
+        now = datetime.now(timezone.utc)
+        future = sorted(datetime.fromisoformat(r["at"].replace("Z", "+00:00")) for r in rows)
+        ahead = [t for t in future if t > now]
+        print("\n=== 予約の先（**手元の控えだけで数えた**）===")
+        if not ahead:
+            print("  [!] **先の予約が1本もありません。** この回は `upload` を選ぶこと")
+            return
+        days = (ahead[-1] - now).total_seconds() / 86400
+        mark = "" if days >= 5 else "  ← **5日を切っています。§4 は `upload`**"
+        print(f"  控えの最後 {_fmt(ahead[-1].isoformat())}"
+              f"（**あと {days:.1f}日** / {len(ahead)}本）{mark}")
+        print("  **上限側の見積りです**（取り消した本も控えには残ります）。"
+              "API が読める回は上の「[予約中]」のほうが正。")
+    except Exception as exc:
+        print(f"\n=== 予約の先 ===\n  [!] 控えが読めません: {str(exc)[:100]}")
+
+
+def main(days: int = 7) -> int:
+    """**外の口が落ちても、手元で分かることは全部出す**（2026-08-16 に分けた）。
+
+    ## なぜ分けたか（**この回が実際に踏んでいます**）
+
+    `_channel_main` の1行目は `youtube.channels().list(...)` で、
+    **`try` の外にありました。** 2026-08-16 11:5x の回はここが
+    `403 quotaExceeded` で落ち、**出力が1行も出ませんでした。**
+
+    落ちたのは外の口だけです。**手段の台帳・テーマ在庫・期限の来た前提・
+    使用量の速さ・予約の先は、全部この機械の中にあって、無事でした。**
+    それでも手順 §3 の「`status.py` が出すものに全部目を通すこと」は
+    **達成率0**になり、その回は何も見ないまま §4 を選ぶことになります。
+
+    **Data API の枠は太平洋時間の0時に戻ります（＝ JST 16:00〜17:00）。**
+    つまり枯れた回は1回ではなく、**戻るまでの全部の子**が同じ目に遭います。
+
+    ## 直し方を、この形にした理由
+
+    成功する回の**出力の並びを1文字も変えていません** —— `print_local_sections`
+    は元の位置（`_channel_main` の中）で呼ばれ、`_print_analytics_recap` は
+    末尾に固定されたままです（あの節は `tail` で拾えることが存在理由なので、
+    後ろに何かを足すと壊れます）。**落ちた回だけ、ここで拾い直します。**
+    """
+    try:
+        return _channel_main(days)
+    except Exception as exc:
+        print("\n" + "=" * 66)
+        print("[!] **外の口が落ちました。チャンネル側の数字はこの回では出ません。**")
+        print(f"    {type(exc).__name__}: {str(exc)[:220]}")
+        if "quotaExceeded" in str(exc) or "quota" in str(exc).lower():
+            print("    **Data API の1日枠（10,000単位）です。**"
+                  "戻るのは太平洋時間の0時＝**JST 16:00 ごろ**。")
+            print("    枠が戻るまで **`upload` は選べません**"
+                  "（投稿1本で1,600単位。生成してから落ちると10分捨てます）。")
+            print("    §4 は `means` / `verdict` / `fix` から選ぶこと。")
+        print("    **この回を止めないこと。** 以下は手元だけで出しています。")
+        print("=" * 66)
+        print_local_sections()
+        _print_analytics_recap()
+        return 0
 
 
 if __name__ == "__main__":
