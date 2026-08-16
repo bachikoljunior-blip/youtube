@@ -502,14 +502,22 @@ def report(videos: list[dict], topics: dict[str, str] | None = None) -> list[dic
     # **`--unschedule` できる組は0件**でした。全部並べると、当たった1件が埋もれます。
     tri = triage(strong)
     if tri["actionable"]:
-        print(f"\n  --- **止められる {len(tri['actionable'])}組（片方を外すこと）** ---")
-        for it in tri["actionable"]:
-            a, b = it["a"], it["b"]
-            print(f"  [{it['kind']}] {it['why']}")
-            print(f"      {a['id']}  {_when(a):<14s} {a['title'][:38]}")
-            print(f"      {b['id']}  {_when(b):<14s} {b['title'][:38]}")
-        print("    `scripts/reschedule.py --unschedule <id>`。"
-              "**先に代わりを作ってから外すこと** —— 投稿が途切れるほうが高い。")
+        # **この一覧にも自分の当たり率を測らせます**（`src/alerts.py`）。
+        # 22組が当たり0件だったのは「triage が無かった」からですが、
+        # triage を通した後の一覧も、当たらないまま育ちうる（同じ形の4件目）。
+        from src import alerts as _alerts
+        _r = _alerts.ring("dupes_actionable", len(tri["actionable"]))
+        if _r.folded:
+            print("\n" + _r.line)
+        else:
+            print(f"\n  --- **止められる {len(tri['actionable'])}組（片方を外すこと）** ---")
+            for it in tri["actionable"]:
+                a, b = it["a"], it["b"]
+                print(f"  [{it['kind']}] {it['why']}")
+                print(f"      {a['id']}  {_when(a):<14s} {a['title'][:38]}")
+                print(f"      {b['id']}  {_when(b):<14s} {b['title'][:38]}")
+            print("    `scripts/reschedule.py --unschedule <id>`。"
+                  "**先に代わりを作ってから外すこと** —— 投稿が途切れるほうが高い。")
     elif strong:
         print("\n  --- 止められる 0組 ---")
         print("    **強い組はありますが、どれも外す相手がいません。**"

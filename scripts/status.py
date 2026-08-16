@@ -31,6 +31,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from src import alerts as _alerts  # noqa: E402
 from src.uploader import _service  # noqa: E402
 
 JST = timezone(timedelta(hours=9))
@@ -728,10 +729,14 @@ def _channel_main(days: int = 7) -> int:
         if day not in short_days:
             gaps.append(day)
     if gaps:
-        print(f"\n[!] **ショート**の予約が入っていない日: {', '.join(gaps)}")
-        print("    投稿が途切れるのが最大の損失。生成を撃ち直すこと。")
-        print("    長尺が入っていても空きとみなす。露出が出ているのはショートだけだから。")
-        print("    背後の生成はコンテナ再起動で消えるので、ログが残っていてもプロセスは死んでいる。")
+        _r = _alerts.ring("schedule_gaps", len(gaps))
+        if _r.folded:
+            print("\n" + _r.line)
+        else:
+            print(f"\n[!] **ショート**の予約が入っていない日: {', '.join(gaps)}")
+            print("    投稿が途切れるのが最大の損失。生成を撃ち直すこと。")
+            print("    長尺が入っていても空きとみなす。露出が出ているのはショートだけだから。")
+            print("    背後の生成はコンテナ再起動で消えるので、ログが残っていてもプロセスは死んでいる。")
 
     # **意図して伏せたものは警告しない。** 毎回鳴る警告は無視されるようになり、
     # 本当に予約し忘れたときに効かなくなる（2026-08-05）。理由は withheld.yaml に。
@@ -777,11 +782,15 @@ def _channel_main(days: int = 7) -> int:
     unexpected = [s for s in stranded
                   if s.split()[0] not in withheld and s.split()[0] not in _found]
     if unexpected:
-        print("\n[!] 公開されないまま止まっている動画があります:")
-        for s in unexpected:
-            print("  " + s)
-        print("  **重なる相手は見つかりませんでした。** 予約し忘れならこのまま永久に出ません。")
-        print("  出せるなら scripts/upload_only.py で予約を入れること（生成の要らない在庫です）。")
+        _r = _alerts.ring("stranded", len(unexpected))
+        if _r.folded:
+            print("\n" + _r.line)
+        else:
+            print("\n[!] 公開されないまま止まっている動画があります:")
+            for s in unexpected:
+                print("  " + s)
+            print("  **重なる相手は見つかりませんでした。** 予約し忘れならこのまま永久に出ません。")
+            print("  出せるなら scripts/upload_only.py で予約を入れること（生成の要らない在庫です）。")
     if _found:
         print(f"\n（重なりがあるので出さない動画 {len(_found)}本。**機械が突き合わせた結果**）")
         for vid, r in _found.items():
@@ -1047,7 +1056,28 @@ def print_local_sections(inventory: bool = True) -> None:
     # こちらは「材料が尽きたか」で、**§4 でどれを選べるかを決めるのは両方**です。
     print_topic_stock()
     print_hypotheses()
+    print_alert_hit_rate()
     print_budget()
+
+
+def print_alert_hit_rate() -> None:
+    """**機械が出す一覧に、自分の当たり率を出させる**（2026-08-16 に足した）。
+
+    ## なぜ要るか（**同じ形が3件出てから足しています**）
+
+        8/16 09:5x  持ち越しの上位が「既に潰れたもの」で埋まっていた   当たり率 低
+        8/16 08:2x  「予約し忘れ」警告が12件まで育ち               **当たり0件**
+        8/16 13:0x  「強い重なり」警告が22組まで育ち               **当たり0件**
+
+    **3件とも「機械が出す一覧が、当たりを含まないまま育っていた」**です。
+    1件ずつ潰しても、`status.py` は一覧を増やし続けます（4件目が出ます）。
+    **だから潰す先を、個別の節から「節を出す枠組み」へ移しました。**
+
+    ここは表を出すだけで、畳む判断は `src/alerts.py` が各一覧の中でやります。
+    **表が要るのは、畳まれた一覧が黙って消えたように見えないため**です ——
+    どの一覧が何回鳴って何回当たったかが、毎回1画面に出ます。
+    """
+    print("\n" + _alerts.render_table(_alerts.table()))
 
 
 def _print_inventory_from_ledger() -> None:
@@ -1127,4 +1157,9 @@ def main(days: int = 7) -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main(int(sys.argv[1]) if len(sys.argv) > 1 else 7))
+    # `--alerts-all` は、畳んだ一覧を全文で出す（`src/alerts.py`）。
+    # **旗はここだけ。** 各節は `alerts.ring()` の返り値しか見ません
+    # （call site に条件を書かせると、一覧を足した回が片方だけ書き忘れます）。
+    _argv = [a for a in sys.argv[1:] if a != "--alerts-all"]
+    _alerts.set_show_all("--alerts-all" in sys.argv[1:])
+    raise SystemExit(main(int(_argv[0]) if _argv else 7))
