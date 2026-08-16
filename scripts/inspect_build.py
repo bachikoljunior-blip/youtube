@@ -22,8 +22,22 @@ from pathlib import Path
 
 from PIL import Image
 
+# **`python scripts/inspect_build.py <ID>` で呼ばれます**（`batch_build` がそう呼ぶ）。
+# その形だと `sys.path[0]` は `scripts/` で、**cwd は入りません** ——
+# つまり `from src.thumbnail import _font` が `ModuleNotFoundError` になります。
+# 2026-08-16 21:5x に実際に踏みました（`pytest` は根を入れるので緑のまま通り、
+# **走らせて初めて落ちた**）。**道具は `-m` でも直接でも通ること。**
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+# **読み込みは頭でやること。** 関数の中に置くと、動画が無い回は素通りするので
+# 「走らせたのに落ちなかった」が起きます（2026-08-16 21:5x に、まさにそれで
+# 検査を1つ書き損ねました）。**頭に置けば、呼んだ瞬間に落ちます。**
+from src.thumbnail import _font  # noqa: E402
+
 COLS = 3
 CELL_W = 640
+SHEET_BG = (20, 20, 24)      # 並べたときの地の色
+BLANK_LABEL = "空き枠"       # 余った枠の見出し（検査もこれを見る）
 
 
 def _duration(path: Path) -> float:
@@ -71,6 +85,77 @@ def tile_count(planned: int, given: int = 0) -> int:
     if given > 0:
         return given
     return min(max(planned or 8, TILES_MIN), TILES_MAX)
+
+
+def compose(tiles: list) -> "Image.Image":
+    """コマを3列に並べて1枚にする。**余った枠には「空き枠」と書き込む。**
+
+    **`main` から切り出してあるのは、検査が並べ方を書き写さないため**です
+    （`tile_count` と同じ理由。書き写すと片方だけ直したときに検査は緑のまま残り、
+    このリポジトリで通算7回起きています）。実際、8/16 21:0x まで
+    `tests/test_contact_sheet_padding.py` は**この処理を丸ごと写していました。**
+
+    ## 余った枠の意匠（**2回直しています。2回目は1回目が裏目に出たから**）
+
+    3列に並べるので、枚数が3の倍数でないと最後の行に余りが出ます。
+
+    **1回目（8/16）**: 余りは `Image.new` の地の色（20,20,24）のまま残るので、
+    **ほぼ真っ黒な平らな1枚**に見えていました（実測 extrema (20,20) ＝ 完全に平ら）。
+    これを独立評価が「最後のコマが空（真っ黒）で終わる」と読み、**4体が点を引いた。**
+    さらに前の回はこれを**生成側の欠陥**と誤診して申し送っています
+    （`slides_plan.json` の最後のコマは問いかけの絵で、空のコマは1枚もありません）。
+    そこで **赤地（96,32,32）＋×＋日本語の註**を描き込みました。
+
+    **2回目（8/16 21:4x。これが現行）**: 1回目は `draw.text` に**フォントを渡していません**。
+    PIL の既定はビットマップフォントなので**日本語が1字も出ず**（□□□＝豆腐）、
+    しかも約11px で、640px 幅の枠では縮めた sheet の上でほぼ消えます。
+
+    結果、この回の目視3体のうち **2体が「赤地に×＋豆腐文字＝描画失敗のフレーム」**と読み、
+    **両方が `VERDICT: 作り直し`** を返しました（実物の動画は無傷。
+    `s-kyugyo-shu4-saitei-hosho` は 14コマ+余り1、`s-jikangai-futsu-6kagetsu-126` は
+    11コマ+余り1、**余りの無い `s-yukyu-shu2-shogai-jogen-7` だけが `投稿可`**）。
+
+    **黒いままより悪くなっています。** 前は「点を引かれる」で済んでいたものが、
+    いまは**作り直しの判定**です。素直に従えば、無傷の2本を消して上げ直し、
+    そのあいだ予約に穴が空きました。だから直しは2つ ——
+    **日本語の出るフォントを渡す**ことと、**「失敗」に見える意匠（赤・×）をやめる**こと。
+    """
+    from PIL import ImageDraw
+
+    # 縦横比はまちまち（縦動画とサムネが混ざる）。幅を揃えて高さは成り行き。
+    scaled = []
+    for t in tiles:
+        h = round(t.height * CELL_W / t.width)
+        scaled.append(t.resize((CELL_W, h), Image.LANCZOS))
+
+    rows = (len(scaled) + COLS - 1) // COLS
+    row_h = [max(s.height for s in scaled[r * COLS:(r + 1) * COLS]) for r in range(rows)]
+    sheet = Image.new("RGB", (CELL_W * COLS, sum(row_h)), SHEET_BG)
+    y = 0
+    for r in range(rows):
+        x = 0
+        for s in scaled[r * COLS:(r + 1) * COLS]:
+            sheet.paste(s, (x, y))
+            x += CELL_W
+        y += row_h[r]
+
+    blanks = rows * COLS - len(scaled)
+    if blanks:
+        draw = ImageDraw.Draw(sheet)
+        top = sum(row_h[:-1])
+        f_big, f_small = _font(56), _font(34)
+        for i in range(blanks):
+            x0 = CELL_W * (COLS - blanks + i)
+            box = (x0, top, x0 + CELL_W - 1, top + row_h[-1] - 1)
+            # 落ち着いた灰色。**赤も×も使わない**（どちらも「壊れた」と読まれる）
+            draw.rectangle(box, fill=(56, 56, 62), outline=(150, 150, 158), width=6)
+            draw.text((x0 + 40, top + 40), BLANK_LABEL, font=f_big, fill=(240, 240, 244))
+            draw.text((x0 + 40, top + 130),
+                      "動画のコマでは\nありません\n\n"
+                      "3列に並べたときの\n余りです。\n"
+                      "動画はここで\n終わっていません",
+                      font=f_small, fill=(215, 215, 222), spacing=10)
+    return sheet
 
 
 def main(topic: str, count: int = 0, with_thumb: bool = False) -> int:
@@ -160,59 +245,7 @@ def main(topic: str, count: int = 0, with_thumb: bool = False) -> int:
             print("[inspect] フレームを抜けませんでした")
             return 1
 
-        # 縦横比はまちまち（縦動画とサムネが混ざる）。幅を揃えて高さは成り行き。
-        scaled = []
-        for t in tiles:
-            h = round(t.height * CELL_W / t.width)
-            scaled.append(t.resize((CELL_W, h), Image.LANCZOS))
-
-        rows = (len(scaled) + COLS - 1) // COLS
-        row_h = [max(s.height for s in scaled[r * COLS:(r + 1) * COLS]) for r in range(rows)]
-        sheet = Image.new("RGB", (CELL_W * COLS, sum(row_h)), (20, 20, 24))
-        y = 0
-        for r in range(rows):
-            x = 0
-            for s in scaled[r * COLS:(r + 1) * COLS]:
-                sheet.paste(s, (x, y))
-                x += CELL_W
-            y += row_h[r]
-        # **余った枠を「動画の最後のコマ」と読ませないこと**（2026-08-16 に実測して直した）。
-        #
-        # 3列に並べるので、枚数が3の倍数でないと**最後の行に余りが出ます。**
-        # 余った枠は `Image.new` の地の色（20,20,24）のまま残るので、
-        # **ほぼ真っ黒な、平らな1枚**に見えます。
-        #
-        # 実測（`8PMLfjjCe4w`・タイル8枚 → 3×3 で1枠余り）: 右下の枠の輝度が
-        # **extrema (20,20)** ＝ 完全に平ら。**画像として地の色そのもの**でした。
-        #
-        # これを独立評価の3体が **「最後のコマが空（真っ黒）で終わる」** と読み、
-        # **点を引いていました**（8/16 03:0x で2体、この回で2体。計4体）。
-        # 前の回の申し送りは、これを**生成側の欠陥**として
-        # 「問いに対する答えの画面が用意されていない」と書いています ——
-        # **誤診です。** `slides_plan.json` を見ると最後のコマは問いかけの絵で、
-        # **空の枠は1枚もありません。** 直しに行けば、無い穴を埋めることになりました。
-        #
-        # **計器がうそをついていたので、計器を直します。** 余りには
-        # 「動画のコマではない」と書き込む。**地の色のままにしないこと。**
-        blanks = rows * COLS - len(scaled)
-        if blanks:
-            from PIL import ImageDraw
-
-            draw = ImageDraw.Draw(sheet)
-            top = sum(row_h[:-1])
-            for i in range(blanks):
-                x0 = CELL_W * (COLS - blanks + i)
-                box = (x0, top, x0 + CELL_W - 1, top + row_h[-1] - 1)
-                # 地の色と混ざらない色で塗り、斜線と文字を置く
-                draw.rectangle(box, fill=(96, 32, 32), outline=(220, 180, 180), width=6)
-                draw.line((x0, top, x0 + CELL_W, top + row_h[-1]),
-                          fill=(220, 180, 180), width=4)
-                draw.line((x0, top + row_h[-1], x0 + CELL_W, top),
-                          fill=(220, 180, 180), width=4)
-                draw.text((x0 + 24, top + 24),
-                          "この枠は動画のコマではありません\n"
-                          "（3列に並べた余り。動画はここで終わっていません）",
-                          fill=(255, 240, 240))
+        sheet = compose(tiles)
 
         out = work / "inspect.jpg"
         sheet.save(out, "JPEG", quality=88, optimize=True)
