@@ -39,6 +39,29 @@
 
 **main で作業すると、成果がどこにも残りません。**
 
+#### **`fetch` が `(non-fast-forward)` で弾かれたら、まず `merge-base`**（2026-08-17。**これが既定の道です**）
+
+**7回続けて、この下の「改名」に着いています**（8/16 06:3x 以降、例外なし）。
+下の節は起きた順に積んであって**実態と逆**なので、**結論を先に置きます。**
+
+    git -C /home/user/youtube merge-base origin/<枝> <枝>
+
+- **空が返る**（＝共通の祖先が無い。**実測7/7がこれ**） → 手元は**別系譜の古いクローン**です。
+  **`git diff` の行数を見ないこと**（下の 07:2x の節。別物どうしの差なので、
+  古い本文が全部「手元にしか無い追加」に見えます）。**そのまま改名で乗り換える**:
+
+      git -C /home/user/youtube branch -m claude/youtube-auto-post-revenue-ggedij stale-clone-<日付>
+      git -C /home/user/youtube switch claude/youtube-auto-post-revenue-ggedij
+
+  **改名は何も捨てません**（退避名で残るので後から読めます）。
+- **`origin` の先端が返る** → 手元が本当に進んでいる。**統合する中身があります**（捨てない）
+- **それ以外** → 普通の分岐。`git log origin/<枝>..<枝>` を読んでから決める
+
+**裏取りが要るなら**、`git rev-parse HEAD` と `git rev-parse origin/<枝>` を比べること。
+**detached の HEAD のほうが `origin` の先端と一致していれば**、手元の枝に用はありません。
+
+以下は、この結論に着くまでに踏んだ順の記録です。**上の3行で足りるなら読まなくてよい。**
+
 #### **`checkout -B` を使わないこと**（2026-08-15 17:1x。ここで1セッション死にました）
 
 ここには長らく `git checkout -B <枝> origin/<枝>` と書いてありました。

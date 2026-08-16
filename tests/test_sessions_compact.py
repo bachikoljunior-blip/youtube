@@ -28,6 +28,38 @@ def test_頭の0を省いても実物のIDに戻る():
     assert sc.full_id("01WDiJ3WSwCDkHTyWTG7Dnbc") == "session_01WDiJ3WSwCDkHTyWTG7Dnbc"
 
 
+def test_session_を付けたまま渡しても二重にならない():
+    """**手順は「省いてよい」と書いています ＝ 省かない形も来ます**（2026-08-17 に踏んだ）。
+
+    付いたまま渡すと `session_session_01...` を組み立てていました。
+    **落ち方が静かなほうへ倒れます** —— `sibling_check` は
+    「返りの中に自分がいません」と言い（**ファイルが古い、と誤診させる**）、
+    `quota.py` は**何も言わずに積みます**（偽の点が25件入りました）。
+    """
+    got = sc.full_id("session_01CCcGxNatooVnbDCXDJvn4K")
+    assert got == "session_01CCcGxNatooVnbDCXDJvn4K"
+    assert not got.startswith("session_session_")
+    # 省いた形と、省かない形が、同じ1つに落ちること（両方が来るので）
+    assert sc.full_id("CCcGxNatooVnbDCXDJvn4K") == got
+
+
+def test_形の違うIDは黙って通さない():
+    """**黙って組み立てるほうが高くつきます**（計器が汚れ、次の回が引き継ぐ）。"""
+    import pytest
+    for bad in ["session_session_01CCcGxNatooVnbDCXDJvn4K", "01CCcGxNatooVnbDCXDJvn4K@"]:
+        with pytest.raises(SystemExit):
+            sc.full_id(bad)
+
+
+def test_行から組み立てても二重にならない():
+    """`full_id` 単体ではなく、**実際に渡す道**（`parse`）で見ること。"""
+    row = ("session_01CCcGxNatooVnbDCXDJvn4K RUNNING 22:46:52 22:49:12 "
+           "session_01PHh5iD1HcBzMUxG6kPj3gt 1786925400 allowed")
+    (got,) = sc.parse(row, "2026-08-16", sc.TAG)
+    assert got["id"] == "session_01CCcGxNatooVnbDCXDJvn4K"
+    assert got["parent_session_id"] == "session_01PHh5iD1HcBzMUxG6kPj3gt"
+
+
 def test_日付は既定で補い_またいだ行だけ書く():
     assert sc.stamp("14:21:56", "2026-08-15") == "2026-08-15T14:21:56.000000Z"
     assert sc.stamp("08-14/23:59:00", "2026-08-15") == "2026-08-14T23:59:00.000000Z"
