@@ -281,7 +281,8 @@ def best_section(text: str, sections: dict[str, str]) -> list[tuple[int, str]]:
     return sorted(scored, key=lambda x: -x[0])
 
 
-def realign(forged: ForgedSet, picked, all_sections) -> list[tuple[str, str]]:
+def realign(forged: ForgedSet, picked, all_sections,
+            dropped: list[str]) -> list[tuple[str, str] | None]:
     """**書かせた順に節を貼らない。**中身の数字が載っている節へ貼り直す。
 
     2026-08-16 に実際に踏んだ穴です。`zoyo` の4件を頼んだところ、
@@ -293,18 +294,36 @@ def realign(forged: ForgedSet, picked, all_sections) -> list[tuple[str, str]]:
     8/15 の「題と中身の取り違え」（`docs/MEANS.md` M14）と同じ壊れ方で、
     すり抜ければ**誤情報のまま公開**されます。
 
-    貼り直しても**節がぶつかったら失敗させます**。同じ節から2本作ると
+    貼り直しても**節がぶつかったら、ぶつかった側だけ落とします**。同じ節から2本作ると
     在庫の数え方が崩れ、「同じ絵を続けない」にも当たるためです。
+
+    ## **落とすのは1件ずつ。回ごと殺さないこと**（2026-08-16 10:5x に実測して直した）
+
+    ここは長らく、**1件でも当たらなければ `SystemExit` で回ごと落として**いました。
+    その回の実測 ——
+
+        --count 4 → nenkin ✓ / jikangai ✓（貼り直しも通った）/ kyugyo ✗ / yukyu ?
+        → **通った2件ごと捨てて exit 1。** 同じことが2回起きて約7分。
+
+    そして `kyugyo` の失敗は**確率のぶれではありませんでした**（2回とも同じ節・
+    同じ理由）。つまり**この節が残っているかぎり、`--count` を3以上にすると
+    今後もずっと回ごと死にます。** 件数を減らして呼び直す道しかなく、
+    §5 が言う「同じ `--count` で何回か回す」も効きません。
+
+    落とすほうが安全側でもあります。**落ちた1件は動画になりません**。
+    回ごと殺しても同じで、違うのは**通った件まで消えるかどうか**だけです。
     """
-    fixed: list[tuple[str, str]] = []
+    fixed: list[tuple[str, str] | None] = []
     for item, (mod, head) in zip(forged.topics, picked):
         text = f"{item.title_seed} {item.angle}"
         ranked = best_section(text, all_sections[mod])
         top, best = ranked[0][0], ranked[0][1]
         if top == 0:
-            raise SystemExit(
-                f"{item.id}: 題と狙いの数字が、この calc のどの節の表にも載っていません。"
-                f"表の外の数字を使っています")
+            dropped.append(
+                f"{item.id}: 題と狙いの数字が、この calc のどの節の表にも載っていません"
+                f"（表の外の数字を使っています）")
+            fixed.append(None)
+            continue
         # **同点では動かさない**（2026-08-16 に足した）。ここは長らく
         # 「一致数が最大の節」を無条件に採っていましたが、**同点のときに
         # 勝つのは dict の順で、根拠がありません。** 節をまたいで同じ数字が
@@ -321,45 +340,69 @@ def realign(forged: ForgedSet, picked, all_sections) -> list[tuple[str, str]]:
         else:
             fixed.append((mod, head))
 
-    if len(set(fixed)) != len(fixed):
-        dup = [x for x in fixed if fixed.count(x) > 1]
-        raise SystemExit(
-            f"同じ節に2件以上が当たりました: {dup}。"
-            f"書き手が同じ表から複数書いています。件数を減らして呼び直すこと")
+    # 同じ節に2件以上が当たったら、**先に来たほうを残して後を落とす。**
+    # 回ごと殺していたのをやめた（上）。順番は `picked` の順で決まるので、
+    # 同じ入力なら同じ結果になります。
+    seen: set[tuple[str, str]] = set()
+    for i, slot in enumerate(fixed):
+        if slot is None:
+            continue
+        if slot in seen:
+            dropped.append(
+                f"{forged.topics[i].id}: 節 `{slot[1].strip('= ').strip()}` に"
+                f"すでに1件が当たっています（書き手が同じ表から複数書いた）")
+            fixed[i] = None
+            continue
+        seen.add(slot)
     return fixed
 
 
-def validate(forged: ForgedSet, picked, all_sections, known_ids) -> list[dict]:
+def validate(forged: ForgedSet, picked, all_sections,
+             known_ids) -> tuple[list[dict], list[str]]:
+    """通った件だけを返す。**落ちた件は理由と一緒に、第2の返りで報せる。**
+
+    件数の食い違いだけは、いまも回ごと落とします —— **どの節がどれに当たるかが
+    決まらない**ので、1件ずつ落とす判断そのものができません。
+    """
     if len(forged.topics) != len(picked):
         raise SystemExit(f"{len(picked)}件 頼んで {len(forged.topics)}件 返りました")
 
-    picked = realign(forged, picked, all_sections)
+    dropped: list[str] = []
+    slots = realign(forged, picked, all_sections, dropped)
     rows, used = [], set(known_ids)
-    for item, (mod, head) in zip(forged.topics, picked):
+    for item, slot in zip(forged.topics, slots):
+        if slot is None:
+            continue
+        mod, head = slot
         tid = item.id.strip()
         if not ID_RE.match(tid):
-            raise SystemExit(f"id の形が不正: {tid!r}")
+            dropped.append(f"id の形が不正: {tid!r}")
+            continue
         if tid in used:
-            raise SystemExit(f"id が重複: {tid!r}")
-        used.add(tid)
+            dropped.append(f"id が重複: {tid!r}")
+            continue
 
         title = item.title_seed.strip()
         if not 8 <= len(title) <= 48:
-            raise SystemExit(f"title_seed の長さが範囲外（{len(title)}文字）: {title!r}")
+            dropped.append(f"{tid}: title_seed の長さが範囲外（{len(title)}文字）")
+            continue
 
         # `calc_sections` は見出しそのものではなく、**見出しに含まれる語**で持つ。
         # `===` と装飾を落として、`script_writer` の包含判定に必ず当たる形にする。
         key = head.strip("= ").strip()
         if not any(key in h for h in all_sections[mod]):
-            raise SystemExit(f"節の指定が実際の見出しに当たりません: {key!r}")
+            dropped.append(f"{tid}: 節の指定が実際の見出しに当たりません: {key!r}")
+            continue
 
         angle = item.angle.strip()
         if len(angle) < 40:
-            raise SystemExit(f"angle が短すぎます（{len(angle)}文字）: {tid}")
+            dropped.append(f"{tid}: angle が短すぎます（{len(angle)}文字）")
+            continue
 
+        used.add(tid)
         rows.append({"id": tid, "title_seed": title, "angle": angle,
                      "calc": mod, "calc_sections": [key]})
-    return rows
+    return rows, dropped
 
 
 def to_yaml(rows: list[dict]) -> str:
@@ -422,7 +465,19 @@ def main() -> int:
     prompt = build_prompt(picked, all_sections, topics)
     print("\n[forge] 書かせています…")
     forged, _ = ask(ForgedSet, prompt, model=args.model)
-    rows = validate(forged, picked, all_sections, known_ids)
+    rows, dropped = validate(forged, picked, all_sections, known_ids)
+
+    # **黙って減らさないこと**（`docs/trigger_main.md`「no silent caps」）。
+    # 落ちた件を出さないと、`--count 4` で2件しか増えなかったときに
+    # 「そういうものだ」と読めてしまいます。
+    if dropped:
+        print(f"\n=== 落ちたもの {len(dropped)}件（**残りは通っています**）===")
+        for why in dropped:
+            print(f"  - {why}")
+
+    if not rows:
+        print("\n**1件も通りませんでした。**")
+        return 1
 
     block = to_yaml(rows)
     print("\n=== できたもの ===")

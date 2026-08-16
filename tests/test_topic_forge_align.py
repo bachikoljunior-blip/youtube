@@ -89,27 +89,49 @@ def test_ずれた割り当てを中身の数字で貼り直す():
     # **書かせた順に貼った**状態（実物がこうなっていた）
     picked = [("zoyo", h) for h in heads]
     fixed = forge.realign(_Set(items[:1] + items[2:]), picked[:1] + picked[2:],
-                          {"zoyo": sections()})
+                          {"zoyo": sections()}, [])
     want = [REAL[0][3], REAL[2][3], REAL[3][3]]
     assert [h for _, h in fixed] == want
 
 
-def test_同じ節に2件当たったら失敗させる():
-    """1件目と2件目は**どちらも同じ節**から書かれている。在庫の数え方が崩れる。"""
+def test_同じ節に2件当たったら後のほうだけ落とす():
+    """1件目と2件目は**どちらも同じ節**から書かれている。在庫の数え方が崩れる。
+
+    **落とすのは後のほう1件だけ。**（2026-08-16 10:5x に回ごと殺すのをやめた）
+    """
     items = [_Item(tid, title, angle) for tid, title, angle, _ in REAL[:2]]
     picked = [("zoyo", h) for h in list(sections())[:2]]
-    with pytest.raises(SystemExit) as e:
-        forge.realign(_Set(items), picked, {"zoyo": sections()})
-    assert "同じ節" in str(e.value)
+    dropped = []
+    got = forge.realign(_Set(items), picked, {"zoyo": sections()}, dropped)
+    assert got[0] is not None and got[1] is None
+    assert len(dropped) == 1 and "すでに1件" in dropped[0]
 
 
 def test_表に無い数字だけの題は落とす():
     item = _Item("s-zoyo-nise", "贈与税は年間7,654,321円まで無税",
                  "主役の数字は7,654,321円。表のどこにも無い数字を使っている")
-    with pytest.raises(SystemExit) as e:
-        forge.realign(_Set([item]), [("zoyo", list(sections())[0])],
-                      {"zoyo": sections()})
-    assert "どの節の表にも載っていません" in str(e.value)
+    dropped = []
+    got = forge.realign(_Set([item]), [("zoyo", list(sections())[0])],
+                        {"zoyo": sections()}, dropped)
+    assert got == [None]
+    assert "どの節の表にも載っていません" in dropped[0]
+
+
+def test_落ちた1件は通った件を巻き添えにしない():
+    """**実測から**（2026-08-16 10:5x）。`--count 4` で `kyugyo` だけが2回とも
+    落ち、**通っていた2件ごと捨てて exit 1** になっていました。約7分。
+    落ちた1件は動画になりませんが、**通った件まで消す理由はありません。**
+    """
+    ok = _Item(*[REAL[0][0], REAL[0][1], REAL[0][2]])
+    ng = _Item("s-zoyo-nise", "贈与税は年間7,654,321円まで無税",
+               "主役の数字は7,654,321円。表のどこにも無い数字を使っている")
+    dropped = []
+    got = forge.realign(_Set([ng, ok]),
+                        [("zoyo", list(sections())[0]), ("zoyo", REAL[0][3])],
+                        {"zoyo": sections()}, dropped)
+    assert got[0] is None                      # 落ちた
+    assert got[1] == ("zoyo", REAL[0][3])      # **通った件は残る**
+    assert len(dropped) == 1
 
 
 def test_万と桁区切りを同じ数として読む():
@@ -171,12 +193,12 @@ def _two_sections():
 def test_同点なら割り当て先のまま動かさない():
     item = _Item("s-x-40", "40日で決まる", "主役は40日。どちらの節にも出る数")
     got = forge.realign(_Set([item]), [("m", "=== B ===")],
-                        {"m": _two_sections()})
+                        {"m": _two_sections()}, [])
     assert got == [("m", "=== B ===")]
 
 
 def test_厳密に強ければ貼り直す():
     item = _Item("s-x-250", "40日と250時間", "主役は250時間。片方の節にしか出ない")
     got = forge.realign(_Set([item]), [("m", "=== A ===")],
-                        {"m": _two_sections()})
+                        {"m": _two_sections()}, [])
     assert got == [("m", "=== B ===")]

@@ -36,6 +36,43 @@
 一律の率で計算すると分岐点は動かず、それでは何も言っていないのと同じになる。
 
 --------------------------------------------------------------------------
+繰上げ側には、そもそも分岐点の表が無い
+--------------------------------------------------------------------------
+繰下げの損益分岐点は「81歳11か月」という形で出回っている。**繰上げの側には、
+それに当たる数字がほとんど出ていない。** 出ていても「60歳で受け取ると
+80歳10か月で逆転する」の一点だけで、繰下げと同じく60通りのうち1つしか見ていない。
+
+繰上げは「先に受け取ってしまう」ので、しばらくは繰上げた側が勝っている。
+65歳開始が**追い抜くのはいつか**が、繰上げ側の分岐点にあたる。
+ここではそれを1か月きざみで全部出す。
+
+そして額面で見ると、この分岐点には短い式がある。
+
+    追い抜かれる年齢 ＝ 65歳 ＋ （1 − 0.004 × 繰上げ月数）÷ 0.048 年
+
+先に受け取った累計は「倍率 × 繰上げ年数」、65歳以降に開く差は年あたり
+「1 − 倍率」なので、割ると月額も年額も約分されて消える。**もらう額がいくらでも、
+額面の分岐点は同じ**ということ。ここは繰上げ側にだけ現れる性質で、
+繰下げ側は「増えた額に重い率が掛かる」ぶん、こうきれいには消えない。
+
+**手取りで見ると、この式は成り立たなくなる。** 繰上げると年額が下がり、
+手取り率は逆に**上がる**。だから繰上げた側の目減りは額面ほどではなく、
+追い抜かれるのはもっと後ろになる。
+
+--------------------------------------------------------------------------
+ずれの向きが、繰上げと繰下げで逆を向く
+--------------------------------------------------------------------------
+繰下げも繰上げも、手取りで計算すると分岐点は**後ろへ**動く。同じ向きに動くのに、
+**判断としては逆を向く。**
+
+  繰下げ  追いつくのが遅くなる → 繰下げは **不利** になる
+  繰上げ  追い抜かれるのが遅くなる → 繰上げは **有利** になる
+
+つまり手取りを入れた瞬間、天秤は繰上げ側に傾く。「繰下げたほうが得」という
+広く出回っている結論は、額面で計算したときのものにすぎない。
+どちらへどれだけ傾くかは、この計算でしか出ない。
+
+--------------------------------------------------------------------------
 根拠
 --------------------------------------------------------------------------
 国民年金法・厚生年金保険法の繰上げ・繰下げの規定。
@@ -70,6 +107,8 @@ ASSUMPTIONS = [
     "分岐点は月単位で、累計が追い抜いた最初の月を書いています",
     "70歳繰下げの分岐点はよく81歳11か月と紹介されます。ここでは81歳10か月になりますが、"
     "これは月の数えはじめをどちらに置くかの違いで、1か月ずれます。どちらも間違いではありません",
+    "繰上げ側の分岐点は、65歳から受け取った累計が繰上げた累計を追い抜いた最初の月です。"
+    "基準にした年額は180万円で、額面の分岐点はこの年額を変えても動きません",
 ]
 
 # 制度の値
@@ -162,6 +201,54 @@ def check_tables() -> None:
     if nets[0] <= nets[-1]:
         raise ValueError("手取り率が額によらず一定になっている。これでは分岐点が動かない")
 
+    # --- 繰上げ側の分岐点 -------------------------------------------------
+    # 額面では、年額が約分されて消える（冒頭の説明の式）。**これが崩れたら、
+    # どこかで年額が残っている**ので、金額を変えて2回引き、一致を要求する。
+    for m in (12, 36, 60):
+        a = catch_up(m, 180.0)
+        b = catch_up(m, 90.0)
+        if a is None or b is None:
+            raise ValueError(f"{m}か月の繰上げで、額面の分岐点が出ていない")
+        if a != b:
+            raise ValueError(
+                f"{m}か月の繰上げで、額面の分岐点が年額によって変わっている"
+                f"（180万で{a}、90万で{b}）。式の上では消えるはず")
+        want = BASE_AGE * 12 + round(rate_for(-m) / (RATE_DOWN_PER_MONTH * 12) * 12)
+        got = a[0] * 12 + a[1]
+        if abs(got - want) > 1:      # 累計は月きざみなので1か月ぶれる
+            raise ValueError(
+                f"{m}か月の繰上げの分岐点が式と合わない（計算 {got}か月 / 式 {want}か月）")
+
+    # 深く繰り上げるほど、追い抜かれるのは早い（単調）
+    grosses = [catch_up(m, 180.0) for m in range(1, (BASE_AGE - MIN_ADVANCE_AGE) * 12 + 1)]
+    if any(g is None for g in grosses):
+        raise ValueError("繰上げのどこかで、額面の分岐点が出ていない")
+    months = [g[0] * 12 + g[1] for g in grosses]
+    for a, b in zip(months, months[1:]):
+        if b > a:
+            raise ValueError("深く繰り上げたのに、追い抜かれるのが遅くなっている")
+
+    # 手取りで見ると、繰上げ側は必ず後ろへ動く（＝繰上げが有利になる向き）
+    for m in (12, 24, 36, 48, 60):
+        g = catch_up(m, 180.0)
+        n = catch_up(m, 180.0, net=True)
+        if n is None or g is None:
+            raise ValueError(f"{m}か月の繰上げで、手取りの分岐点が出ていない")
+        if (n[0] * 12 + n[1]) <= (g[0] * 12 + g[1]):
+            raise ValueError(
+                f"{m}か月の繰上げで、手取りの分岐点が額面より後ろになっていない。"
+                "繰上げると年額が下がり手取り率は上がるので、必ず後ろへ動くはず")
+
+    # 繰下げ側は「不利になる向き」、繰上げ側は「有利になる向き」。
+    # **同じ『後ろへ』なので、符号だけを見ていると取り違える。**ここで固定する。
+    tilt = net_tilt(180.0)
+    if len(tilt) != 4:
+        raise ValueError("天秤の表の行数が変わっている")
+    if not all(r["後ろへ_月"] > 0 for r in tilt):
+        raise ValueError("手取りで分岐点が後ろへ動いていない行がある")
+    if len({r["手取りで見ると"] for r in tilt}) != 2:
+        raise ValueError("繰下げと繰上げで、有利・不利の向きが分かれていない")
+
 
 def break_even(months_from_65: int, base_annual_man: float, net: bool = False) -> tuple[int, int] | None:
     """繰り下げたぶんを取り返し終わる年齢を (歳, 月) で返す。
@@ -238,6 +325,92 @@ def worst_gap(base_annual_man: float = 180.0) -> dict:
     return best
 
 
+def catch_up(months_before_65: int, base_annual_man: float, net: bool = False) -> tuple[int, int] | None:
+    """繰り上げた人が、65歳開始に **追い抜かれる** 年齢を (歳, 月) で返す。
+
+    繰上げは先に受け取りはじめるので、しばらくは繰上げた側の累計が上にいる。
+    65歳開始の累計が上回った最初の月が、繰上げ側の損益分岐点。
+
+    `break_even()` と対になる関数で、向きだけが逆。追い抜かれないなら None。
+    """
+    if months_before_65 <= 0:
+        return None
+
+    early_year = base_annual_man * rate_for(-months_before_65)
+    base_year = base_annual_man * rate_for(0)
+    if net:
+        early_year *= _clamp_rate(early_year)
+        base_year *= _clamp_rate(base_year)
+
+    early_month = early_year / 12.0
+    base_month = base_year / 12.0
+
+    # t=0 は繰上げ開始の月。65歳開始はそこから months_before_65 か月おくれる。
+    total_early = 0.0
+    total_base = 0.0
+    start = BASE_AGE * 12 - months_before_65
+    for t in range(0, (120 * 12) - start + 1):
+        total_early += early_month
+        if t >= months_before_65:
+            total_base += base_month
+        if total_base > total_early:
+            age = start + t
+            return age // 12, age % 12
+    return None
+
+
+def catch_up_grid(base_annual_man: float = 180.0, step_months: int = 12) -> list[dict]:
+    """繰上げの月数ごとに、65歳開始に追い抜かれる年齢を額面・手取りで出す。"""
+    rows = []
+    for m in range(step_months, (BASE_AGE - MIN_ADVANCE_AGE) * 12 + 1, step_months):
+        gross = catch_up(m, base_annual_man, net=False)
+        netbe = catch_up(m, base_annual_man, net=True)
+        rows.append({
+            "開始": Plan(-m, rate_for(-m)).age_text,
+            "倍率": round(rate_for(-m), 3),
+            "年額": round(base_annual_man * rate_for(-m), 1),
+            "分岐点_額面": f"{gross[0]}歳{gross[1]}か月" if gross else "追い抜かれない",
+            "分岐点_手取り": f"{netbe[0]}歳{netbe[1]}か月" if netbe else "追い抜かれない",
+            "ずれ_月": (
+                (netbe[0] * 12 + netbe[1]) - (gross[0] * 12 + gross[1])
+                if gross and netbe else None
+            ),
+        })
+    return rows
+
+
+def net_tilt(base_annual_man: float = 180.0) -> list[dict]:
+    """手取りで計算したとき、天秤がどちらへ何か月ぶん傾くかを出す。
+
+    繰下げも繰上げも分岐点は後ろへ動くが、**得か損かの向きは逆**。
+    そこを1つの表にして並べる。
+    """
+    rows = []
+    for m, label in ((60, "70歳まで繰下げ"), (120, "75歳まで繰下げ")):
+        gross = break_even(m, base_annual_man, net=False)
+        netbe = break_even(m, base_annual_man, net=True)
+        gap = (netbe[0] * 12 + netbe[1]) - (gross[0] * 12 + gross[1])
+        rows.append({
+            "選択": label,
+            "分岐点_額面": f"{gross[0]}歳{gross[1]}か月",
+            "分岐点_手取り": f"{netbe[0]}歳{netbe[1]}か月",
+            "後ろへ_月": gap,
+            "手取りで見ると": "不利になる（追いつくのが遅い）",
+        })
+    for m, label in ((60, "60歳まで繰上げ"), (24, "63歳まで繰上げ")):
+        gross = catch_up(m, base_annual_man, net=False)
+        netbe = catch_up(m, base_annual_man, net=True)
+        gap = (netbe[0] * 12 + netbe[1]) - (gross[0] * 12 + gross[1])
+        rows.append({
+            "選択": label,
+            "分岐点_額面": f"{gross[0]}歳{gross[1]}か月",
+            "分岐点_手取り": f"{netbe[0]}歳{netbe[1]}か月",
+            "後ろへ_月": gap,
+            "手取りで見ると": "有利になる（逃げ切れる期間が伸びる）",
+        })
+    return rows
+
+
 def advance_grid(base_annual_man: float = 180.0, step_months: int = 12) -> list[dict]:
     """繰上げの月数ごとに、倍率と年額の減り方を出す。"""
     rows = []
@@ -273,3 +446,15 @@ if __name__ == "__main__":
     for row in advance_grid(base):
         print(f"  {row['開始']:>9s}  倍率{row['倍率']:.3f}  年額{row['年額']:6.1f}万  "
               f"減る額{row['減る額']:5.1f}万")
+
+    print(f"\n=== 繰上げを65歳開始が追い抜く年齢（65歳で年{base}万円の場合）===")
+    for row in catch_up_grid(base):
+        print(f"  {row['開始']:>9s}  倍率{row['倍率']:.3f}  年額{row['年額']:6.1f}万  "
+              f"額面{row['分岐点_額面']:>10s}  手取り{row['分岐点_手取り']:>10s}  "
+              f"ずれ{row['ずれ_月']:>3d}か月")
+
+    print("\n=== 手取りで計算すると、天秤は繰上げ側に傾く ===")
+    for row in net_tilt(base):
+        print(f"  {row['選択']:>12s}  額面{row['分岐点_額面']:>10s} → "
+              f"手取り{row['分岐点_手取り']:>10s}（{row['後ろへ_月']:>2d}か月うしろ）  "
+              f"{row['手取りで見ると']}")

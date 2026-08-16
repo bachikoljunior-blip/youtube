@@ -83,6 +83,26 @@ TOKEN_RE = re.compile(r"`([^`\n]{3,40})`|「([^」\n]{3,30})」")
 CLOSED_RE = re.compile(r"閉じました")
 # 宣言の形をしていても、**閉じていないことを言っている行**は数えない。
 REOPEN_RE = re.compile(r"再発|閉じていない|閉じたつもり|閉じられていない")
+# **引用符の中の「閉じました」は、宣言ではなく“その文字列の名前”です**
+# （2026-08-16 10:xx。**同じ穴の3枚目**を実物で踏みました）。
+#
+# 09:5x の回が、自分の踏んだ穴をこう書き残しました ——
+#
+#     `closures()` を「`閉じました` か `閉じた`」で書いて回したら、`critique_queue` が
+#
+# **この行そのものが宣言として読まれ、`critique_queue` がまた丸ごと黙りました。**
+# 09:5x が足した `REOPEN_RE` は効きません（この行に `再発` が無い）。
+# **偽の宣言を説明する文が、次の偽の宣言になっています。**
+#
+# 直すのは語彙の足し算ではなく、**どこを読むか**のほう。バッククォートの中は
+# 「その語を名指ししている」ので、**動詞として読まない。**
+# 語（`TOKEN_RE`）は逆に中からしか拾わないので、両者は同じ行を別々に見ます。
+CODE_SPAN_RE = re.compile(r"`[^`\n]*`")
+
+
+def prose_only(line: str) -> str:
+    """バッククォートで囲った部分を落とし、**地の文だけ**を返す。"""
+    return CODE_SPAN_RE.sub("　", line)
 
 
 def blocks_under(text: str,
@@ -128,7 +148,9 @@ def closures(text: str) -> dict[str, int]:
     """
     found: dict[str, int] = {}
     for i, line in enumerate(text.split("\n")):
-        if not CLOSED_RE.search(line) or REOPEN_RE.search(line):
+        # **宣言かどうかは地の文で見る。語は元の行から拾う**（`prose_only`）。
+        bare = prose_only(line)
+        if not CLOSED_RE.search(bare) or REOPEN_RE.search(bare):
             continue
         for m in TOKEN_RE.finditer(line):
             tok = (m.group(1) or m.group(2)).strip()

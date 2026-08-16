@@ -125,6 +125,34 @@ def test_連体形は宣言に数えない():
     assert "nenkin" in retro.closures("`nenkin` はこの回で閉じました\n")
 
 
+def test_引用符の中の閉じましたは宣言に数えない():
+    """**同じ穴の3枚目**（2026-08-16 10:xx。実物で踏みました）。
+
+    09:5x の回が「偽の宣言を踏んだ」ことを日誌に書いた、**その説明文そのもの**が
+    次の偽の宣言になりました。`REOPEN_RE` は効きません（`再発` が無い）。
+
+        `closures()` を「`閉じました` か `閉じた`」で書いて回したら、`critique_queue` が
+
+    バッククォートの中は **その語を名指ししている**ので、動詞として読まない。
+    """
+    doc = ("`closures()` を「`閉じました` か `閉じた`」で書いて回したら、"
+           "**`critique_queue` が丸ごと黙りました。**\n")
+    assert retro.closures(doc) == {}
+
+
+def test_地の文の閉じましたは宣言のまま():
+    """**片側だけ締めないこと。** 引用の外にある宣言は、今までどおり効く。"""
+    got = retro.closures("**`_template.py`（7回）はこの回で閉じました**（実物で確認）。\n")
+    assert "_template.py" in got
+
+
+def test_引用の中に閉じましたがあっても地の文にあれば宣言():
+    """1行に両方あるとき。**地の文が勝つ。**"""
+    doc = "`closures()` の「`閉じました`」の判定を直し、`critique_queue` はこの回で閉じました\n"
+    got = retro.closures(doc)
+    assert "critique_queue" in got and "closures()" in got
+
+
 def test_実物の日誌で_critique_queue_は黙らない():
     """**実データ。** 04:2x に閉じて、そのあと戻っている語。**再発として残ること。**"""
     journal = (ROOT / "docs" / "JOURNAL.md").read_text(encoding="utf-8")
