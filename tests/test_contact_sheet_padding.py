@@ -211,6 +211,32 @@ def test_直接呼びでも読み込みが通る():
     assert "がありません" in r.stdout, (r.stdout, r.stderr[-400:])
 
 
+def test_余り枠の枚数を出力で言う():
+    """**目視の判定を照合できるようにする**（この回の25分がここに消えた）。
+
+    `作り直し` の理由が「最終コマが壊れている」で、出力に「空き枠 1枚」と
+    あるなら、**それは枠の話**です。無ければ本物です。
+    式は本体と同じ `(-枚数) % 3` を使うこと（写すと片方だけ直る）。
+    """
+    import subprocess
+
+    src = (ROOT / "scripts" / "inspect_build.py").read_text(encoding="utf-8")
+    assert "(-len(tiles)) % COLS" in src, "余りの枚数を数えていません"
+    assert "動画のコマではありません" in src
+
+    # 実物で1回通す（動画のある build が無い回は飛ばす）
+    builds = sorted((ROOT / "build").glob("*/final.mp4")) if (ROOT / "build").exists() else []
+    if not builds:
+        pytest.skip("build/ に動画がありません（コンテナが新しい回）")
+    topic = builds[0].parent.name
+    r = subprocess.run([sys.executable, "scripts/inspect_build.py", topic],
+                       cwd=ROOT, capture_output=True, text=True)
+    n = int([ln for ln in r.stdout.splitlines() if "枚を1枚にまとめました" in ln][0]
+            .split("]")[1].split("枚")[0])
+    said = inspect_build.BLANK_LABEL in r.stdout
+    assert said == bool((-n) % inspect_build.COLS), (n, r.stdout[:300])
+
+
 def test_本体が並べ方を持っている():
     """**写しに戻さないこと。** 並べ方の正本は `compose()` の側です。"""
     src = (ROOT / "scripts" / "inspect_build.py").read_text(encoding="utf-8")
