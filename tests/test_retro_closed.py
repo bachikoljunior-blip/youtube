@@ -192,6 +192,27 @@ def test_実物の日誌で最後の宣言が効く():
     （散文）と `tests/test_closes_record.py::test_宣言より後の言及は残る`（記録）が
     故障注入つきで持っています。**実データでしか言えないのは、
     「日誌にある宣言が、実際に読めているか」のほう**なので、そちらへ寄せました。
+
+    ## **`assert not kept` を外しました**（2026-08-16 23:xx。**赤で始まって気づいた**）
+
+    ここには最後に `assert not kept` があり、**「宣言より後に、その語を書いた
+    申し送りが1件も無いこと」**を実データに要求していました。**設計の逆です。**
+
+    `scripts/retro.py` は、宣言より後の言及を**わざと残します**
+    （`main()` の `seen` 側。一覧では `← **一度閉じた後の再発**` と印が付く）。
+    すぐ上の `test_宣言より前の言及は落ち_後の言及は残る` が、
+    **同じ振る舞いを「残ること」として固定**しています。
+    **同じリポジトリの2つの検査が、反対のことを言っていました。**
+
+    そして壊れ方が悪い —— **コードを1行も触らなくても、日誌を書けば赤くなります。**
+    実際 21:49 の回が `status.py` を `--closes` で閉じ、**同じ回が
+    22:1x の申し送りで `status.py` に触れた**時点で赤くなり、
+    その回は緑を見てから日誌を書いたので**気づかないまま push** されました
+    （`origin/claude/youtube-auto-post-revenue-ggedij` は赤で届いています）。
+
+    **毎回の回が赤い pytest から始まる**と、赤を読み飛ばす癖が付きます。
+    残すのは、実データでしか言えないほう ——
+    **「日誌にある宣言が実際に読めていて、それより前の言及を黙らせているか」**です。
     """
     journal = (ROOT / "docs" / "JOURNAL.md").read_text(encoding="utf-8")
     closed = retro.closures(journal)
@@ -201,9 +222,6 @@ def test_実物の日誌で最後の宣言が効く():
     before = [d for d, body, start in retro.handoff_blocks(journal)
               if tok in retro.tokens(body) and start <= closed[tok]]
     assert before, f"{tok} は宣言だけで、黙らせる相手がいません"
-    kept = [d for d, body, start in retro.handoff_blocks(journal)
-            if tok in retro.tokens(body) and start > closed[tok]]
-    assert not kept, (tok, kept)
 
 
 def test_鉤括弧の中の閉じましたは宣言に数えない():

@@ -945,6 +945,103 @@ def _check_adjacent_frames(work: Path) -> list[str]:
     return problems
 
 
+#: 前提だと名乗っている印。`_check_assumption_value_shown` と同じ語彙にしてあります
+#: （あちらは script.json の側、こちらは割った後のコマの側）。
+_ASSUMPTION_MARK = re.compile(r"前提|仮定")
+_HAS_DIGIT = re.compile(r"[0-9０-９]")
+
+
+def _plan_visible_text(visual: dict) -> str:
+    """そのコマで**画面に出る文字**を、ぜんぶ1本に繋ぐ。
+
+    見出しだけを見ないこと（2026-08-16 23:xx に実測で決めた）。
+    実物 `_kUTXa1t9ZA` は前提を **`note` に**書いており
+    （`給付は非課税・社保免除・賞与なしの前提`）、
+    **見出しだけを見た数え方では「前提が無い本」に入りました。**
+    視聴者は見出しも注記も同じ画面で見ます。**分ける理由がありません。**
+    """
+    parts: list[str] = [
+        str(visual.get(key) or "")
+        for key in ("headline", "stat", "note", "note_lead", "formula", "stat_source")
+    ]
+    parts += [str(x) for x in visual.get("items") or []]
+    parts += [str(x) for x in visual.get("headers") or []]
+    for row in visual.get("rows") or []:
+        parts += [str(x) for x in (row if isinstance(row, (list, tuple)) else [row])]
+    for bar in visual.get("bars") or []:
+        parts.append(str(bar))
+    return " ".join(p for p in parts if p)
+
+
+def _check_assumptions_on_screen(work: Path) -> list[str]:
+    """**前提が画面に1枚も出ていない本を止める**（2026-08-16 23:xx）。
+
+    `CLAUDE.md` の根幹は「**前提と計算式を、画面と説明欄に全部出す**」で、
+    **視聴者が自分で追試できること**がテンプレート量産との違いです。
+    収益化されなければ収入はゼロなので、これは見栄えではなく到達可能性の条件。
+
+    `src/script_writer.py` 531行は書き手にそう指示していますが、
+    **指示だけで検査がありませんでした。** すぐ上の 326行は同じ話について
+    「指示に書いても守られないので機械で見る」と書いて検査を入れており、
+    **片方だけ機械にしてあった**形です（この作りで通算9回目）。
+
+    ## 申し送りの数字は、そのまま採っていません（**測り直しました**）
+
+    前の回は **「前提の表が1枚も無い本が 33/61」** と書いて渡してきました。
+    `data/critique_queue/*.plan.json` の61本で数え直すと、そうではありません。
+
+        前提の名乗りが1枚も無い（見出しだけ見る）        **1 / 61**
+        前提の名乗りが1枚も無い（画面の文字を全部見る）  **0 / 61**
+        `kind == "table"` の前提コマが無い               **33 / 61**  ← 申し送りの数字
+
+    **33本は「前提が無い」ではなく「前提が表の形をしていない」でした。**
+    実際には `steps`（15本）・`stat`（10本）・`compare`（9本）で出ており、
+    **前提コマに値が1つも無い本は 0本**です。
+    申し送りのとおり `table` を要求すると、**半分以上が落ちます。**
+    **誤報は不投稿**なので、そこには置きません（`docs/trigger_main.md` §5）。
+
+    だから見るのは**形ではなく、あるか**です。実測で 61/61 が通ります。
+
+    1. 前提だと名乗っているコマが**1枚も無い**
+    2. 名乗ってはいるが、**そのコマに値が1つも無い**（名前だけの前提は追試できない）
+
+    `_check_assumption_value_shown` とは見ている先が違います。あちらは
+    **script の前提文に出てくる量の値**が画面のどこかにあるかで、
+    **前提のコマそのものが存在するか**は誰も見ていませんでした。
+
+    **ショートだけに掛けます**（長尺は構成が違う）。呼ぶ側で `portrait` を見ています。
+    """
+    path = work / "slides_plan.json"
+    if not path.exists():
+        return []
+    try:
+        plan = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        return [f"slides_plan.json が読めない: {exc}"]
+    if not isinstance(plan, list) or not plan:
+        return []
+
+    marked = [
+        v for v in plan
+        if isinstance(v, dict) and _ASSUMPTION_MARK.search(_plan_visible_text(v))
+    ]
+    if not marked:
+        return [
+            "**計算の前提が、画面に1枚も出ていません。**"
+            "この動画は制度の解説ではなく自分で計算した結果の発表で、"
+            "**前提と式を画面に出すことだけが追試の手段**です。"
+            "`src/calc/` の `ASSUMPTIONS` を、途中の1コマに出すこと"
+        ]
+    if not any(_HAS_DIGIT.search(_plan_visible_text(v)) for v in marked):
+        return [
+            "**前提のコマはありますが、値が1つも出ていません。**"
+            f"（{marked[0].get('headline')!r}）"
+            "「手取り率は仮定です」とだけ書いても視聴者は追試できません。"
+            "**置いた量の値そのもの**を、同じ画面に出すこと"
+        ]
+    return []
+
+
 # 「主役」＝そのコマで面積をいちばん食っている要素。
 # 種類ごとに、どのキーがそれに当たるかを持つ。ここに無い種類は stat 扱い。
 LEAD_KEYS = {
@@ -1471,6 +1568,7 @@ def check(path: Path, video_cfg: dict, min_minutes: float, work: Path,
         problems += _check_headline_from_calc(work, script)
         problems += _check_short_pace(script, duration)
         problems += _check_slide_hold(work, duration)
+        problems += _check_assumptions_on_screen(work)
     problems += _check_visual_wrap(script, portrait)
     problems += _check_count_matches(script)
     problems += _check_title_from_calc(work, script, topic)
