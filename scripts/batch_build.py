@@ -205,6 +205,47 @@ def _posted_including_ledger() -> set[str]:
     return posted | extra
 
 
+def _drop_doomed(usable: list[dict], pool: list[dict]) -> list[dict]:
+    """**投稿の門が必ず止めるテーマを、作る前に外す**（2026-08-17 に足した）。
+
+    `s-menjo-hangaku-10200` は3回続けて申し送りに出ています ——
+    `pick` が上位で返し、11分かけて作り、`upload_only.py` の
+    `dupes.blocking()` が **毎回** 止める。**作った1本はそのたび捨てになります。**
+    そのあいだ手順は `--topics` で手で避けていましたが、
+    **手で避けている限り、避け忘れた回が必ず出ます。**
+
+    ここで見るのは**控え（`data/` のローカル）だけ**で、API は1単位も使いません
+    （`dupes.blocking(title, id, [], topics)` は videos が空でも控えを読みます）。
+    見ているのは `title_seed` なので、門と同じではありません:
+
+    - **同じテーマID**（`same-topic`）は、これで確実に当たります
+    - **金額の入れ子**（`same-yen`）は、種に主役の数字が出ていれば当たります。
+      台本が別の数字を主役にしたら当たりません。**そのぶんは門が受けます**
+
+    逆に「門は通すのに、ここで落とす」ことはあり得ます（種にだけ数字がある場合）。
+    **だから落としたものは必ず名前を出し**、`--topics` で明示すれば
+    この関門は通りません（`explicit` は上で先に返っています）。
+    """
+    from src import dupes
+
+    # **投稿済みのぶんも含めて、テーマ全部の calc を渡すこと。**
+    # 控えの1行は「どの calc の本か」をテーマID経由でしか知りません。
+    # 未投稿ぶんだけ渡すと、**既にある本の calc が空になり、`same-yen` が
+    # 1組も当たりません**（最初にそう書いて、s-menjo-hangaku-10200 が素通りしました）。
+    topics_calc = {t["id"]: t.get("calc", "") for t in pool}
+    kept, dropped = [], []
+    for t in usable:
+        seed = t.get("title_seed") or ""
+        hits = dupes.blocking(seed, t["id"], [], topics_calc) if seed else []
+        if hits:
+            dropped.append((t["id"], hits[0]["why"]))
+        else:
+            kept.append(t)
+    for tid, why in dropped:
+        print(f"[pick] **門が必ず止めるので外します**: {tid} — {why}")
+    return kept
+
+
 def pick(count: int, explicit: list[str], per_calc: int = DEFAULT_PER_CALC) -> list[dict]:
     """未投稿・`calc` あり・**計算の節が全部ちがう** テーマを score の高い順に取る。
 
@@ -249,6 +290,7 @@ def pick(count: int, explicit: list[str], per_calc: int = DEFAULT_PER_CALC) -> l
 
     posted = _posted_including_ledger()
     usable = [t for t in pool if t["id"] not in posted and t.get("calc")]
+    usable = _drop_doomed(usable, pool)
 
     # **順番は実績で決める**（2026-08-16 に測って変えた。それまでは手書きの
     # `score` だけで、実績を1つも見ていませんでした ＝ 91件中64件が `1.0`）。

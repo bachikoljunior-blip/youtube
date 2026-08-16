@@ -214,6 +214,16 @@
     ],
     "video_id": ""
   },
+  "s-fuka-200yen-45nen-jishitsu-82en": {
+    "charts": [
+      [
+        "200.0円",
+        "127.8円",
+        "82.0円"
+      ]
+    ],
+    "video_id": "-5n5vwfePoY"
+  },
   "s-fuka-ideco-waku-1000en": {
     "charts": [
       [
@@ -248,6 +258,19 @@
       ]
     ],
     "video_id": "XMIlJgHssAA"
+  },
+  "s-fuka-uwanose-228": {
+    "charts": [
+      [
+        "1万7510円",
+        "1万7910円"
+      ],
+      [
+        "2.36%",
+        "2.28%"
+      ]
+    ],
+    "video_id": "F179rBqytVQ"
   },
   "s-fuka-waku-sute-45": {
     "charts": [
@@ -677,6 +700,17 @@
     ],
     "video_id": "n2xdLoIv4XU"
   },
+  "s-kogaku-atono-iryohi-koujo-ku-e-todokanai": {
+    "charts": [
+      [
+        "25万2600円",
+        "8万100円",
+        "5万7600円",
+        "3万5400円"
+      ]
+    ],
+    "video_id": "78ssJSwULTg"
+  },
   "s-kogaku-danchigai-500-530": {
     "charts": [
       [
@@ -872,6 +906,16 @@
     ],
     "video_id": "cJTGM3x3yaM"
   },
+  "s-kugan-u-1000man-jikofutan-177430": {
+    "charts": [
+      [
+        "8万3430円",
+        "12万1887円",
+        "16万1782円"
+      ]
+    ],
+    "video_id": "470i0hhnRx0"
+  },
   "s-kyugyo-2gatsu-4gatsu-89nichi-121340": {
     "charts": [
       [
@@ -1019,6 +1063,15 @@
       ]
     ],
     "video_id": "2h1gT8f5XKU"
+  },
+  "s-nenkinmenjo-kasan-10-2nen": {
+    "charts": [
+      [
+        "19.98年",
+        "21.97年"
+      ]
+    ],
+    "video_id": "utZAUxymQLw"
   },
   "s-nenkinmenjo-zengaku-10200": {
     "charts": [
@@ -1485,6 +1538,15 @@
       ]
     ],
     "video_id": "PZli3GKY848"
+  },
+  "s-zaishoku-chosei-1man-modori-5sen": {
+    "charts": [
+      [
+        "5万円",
+        "4万5千円"
+      ]
+    ],
+    "video_id": "SvOyN1BOdQ4"
   },
   "s-zaishoku-hyojun-620000-nenkin-zero": {
     "charts": [

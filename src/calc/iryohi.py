@@ -26,6 +26,8 @@
 """
 from __future__ import annotations
 
+from . import kogaku
+
 ASSUMPTIONS = [
     "足切りは「10万円」と「総所得金額等の5パーセント」の少ないほうで計算しています",
     "控除の上限は200万円です",
@@ -38,6 +40,12 @@ ASSUMPTIONS = [
     "所得税率は仮定です。共働きの比較では、高いほうを総所得500万円で所得税率20パーセント、"
     "低いほうを所得税率5パーセントとして置いています。"
     "税率は課税所得で決まるもので、足切りを決める総所得金額等から計算したものではありません",
+    "高額療養費と合わせる計算は、70歳未満・窓口3割・同じ月の同じ医療機関にかかった医療費として置いています",
+    "高額療養費の区分は標準報酬月額で決まります。区分ウは28万円から50万円までで、限度額は8万100円に"
+    "医療費が26万7000円を超えた分の1パーセントを足した額です",
+    "高額療養費で戻る額は「保険で補填された額」なので、医療費控除の対象からは差し引いています",
+    "高額療養費と合わせる計算では、その月にかかった医療費だけを1年分の医療費とみなしています。"
+    "同じ年に別の月の医療費があれば、控除はその分だけ増えます",
 ]
 
 # 制度の値。**改正が続くものは入力に逃がす**（docs/CONSTRAINTS.md B4）が、
@@ -110,6 +118,35 @@ def check_tables() -> None:
     # 分けて得になることは無い
     if split_loss(400_000, 0, 3_000_000, 0.20)["lost_deduction"] != 0:
         raise ValueError("分担0なのに損失が出ている")
+
+    # --- 高額療養費と重ねたとき（`tier_thresholds` 以下の主題そのもの）-----
+    # 1. **限度額が低い区分ほど、控除に届くのが遅い。** ここが逆になったら節の答えが逆になる
+    hi = deduction_start_cost("ア", 3_000_000)
+    mid = deduction_start_cost("ウ", 3_000_000)
+    if hi is None or mid is None or not mid > hi:
+        raise ValueError(f"区分ウが区分アより早く控除に届いている: ウ={mid} ア={hi}")
+    # 2. 定額で頭打ちの区分（エ・オ）は、足切り10万円には**1か月では永久に届かない**
+    for name in ("エ", "オ"):
+        if deduction_start_cost(name, 3_000_000) is not None:
+            raise ValueError(f"区分{name} が1か月で足切りに届いている（限度額は定額のはず）")
+    # 3. 届く額のところで、自己負担がちょうど足切りに一致すること（式を解いた結果の裏取り）
+    if self_pay(mid, "ウ") != floor_amount(3_000_000):
+        raise ValueError(f"区分ウ {mid:,}円 の自己負担が足切りに一致しない: {self_pay(mid, 'ウ')}")
+    # 4. **月をまたいで増えた自己負担は、どの税率でも全額は戻らない**
+    #    （戻る係数は最大でも 0.45×1.021＋0.10 ＝ 0.5595）。ここが1を超える表に
+    #    差し替わったら「分けたほうが得」になり、`split_recovery()` の節は逆になる
+    for r in split_recovery():
+        if not 0 < r["recovered_ratio"] < 1:
+            raise ValueError(f"税率{r['rate']} で取り返し率が範囲外: {r['recovered_ratio']}")
+    # 5. 区分オの限度額 35,400円 と、足切りが一致する総所得（708,000円 × 5%）
+    if floor_amount(708_000) != kogaku.tier("オ")[3]:
+        raise ValueError("区分オの限度額と、総所得708,000円の足切りが一致しない")
+    # 6. **その一致する点では、控除は出ません**（自己負担は足切りに並ぶだけで、
+    #    定額なのでそこから先も動かない）。`deduction_start_cost` の `<` はこのため
+    if deduction_start_cost("オ", 708_000) is not None:
+        raise ValueError("足切りと限度額がちょうど一致する総所得で、控除が出ることになっている")
+    if deduction_start_cost("オ", 700_000) is None:
+        raise ValueError("足切りが限度額より低い総所得で、控除が出ないことになっている")
 
 
 def floor_amount(total_income: int) -> int:
@@ -242,6 +279,156 @@ def refund_grid(total_income: int, rate: float) -> list[dict]:
     ]
 
 
+# ---- 高額療養費のあとの自己負担で、医療費控除がどこから出るか -------------
+#
+# 医療費控除の対象は「保険で補填された額を差し引いた後」＝**高額療養費で戻った後**
+# の自己負担です。ところが高額療養費の限度額は、医療費が増えても1%ずつしか増えません。
+# だから **窓口の医療費が10倍になっても、控除の対象になる自己負担はほとんど増えない。**
+#
+# 一般の解説は2つの制度を別々に説明して終わります。重ねると、
+# **「限度額が低い区分（＝所得が低い側）ほど、医療費控除に届くのが遅い」**
+# という、どこにも書かれていない向きが出てきます。
+
+
+def self_pay(cost: int, tier_name: str = "ウ") -> int:
+    """高額療養費のあとで、その月に実際に払う額（円）。"""
+    return round(kogaku.paid(tier_name, cost))
+
+
+def deduction_start_cost(tier_name: str, total_income: int) -> int | None:
+    """**1か月の医療費がいくらを超えると、医療費控除が1円でも出るか。**
+
+    自己負担が足切りを超えて初めて控除が乗ります。自己負担は
+    「3割」と「限度額」の低いほうなので、境目は2通りの解き方に分かれます。
+
+        3割の帯にあるうち   … 足切り ÷ 0.3
+        限度額の帯に入った後 … 差引く医療費 ＋ (足切り − 定額) ÷ 1%
+
+    定額で頭打ちの区分（エ・オ）は、限度額が医療費で増えないので **None**
+    ＝ その月の医療費だけでは、いくら払っても足切りに届きません。
+    """
+    floor = floor_amount(total_income)
+    _, _, _, flat, cost_floor, rate, _ = kogaku.tier(tier_name)
+    x = floor / kogaku.COPAY_RATE
+    # **ここは `<=` ではありません**（2026-08-17 に実データで踏んだ）。ちょうど一致する
+    # とき（足切り＝限度額の定額。区分オなら総所得708,000円）、その額でようやく自己負担が
+    # 足切りに**並ぶ**だけで、そこから先は定額で頭打ちなので **1円も超えません。**
+    # `<=` だと「118,000円を超えたら控除が出る」と、出ないものを出ると言います。
+    if x < kogaku.crossing_cost(tier_name):
+        return int(-(-x // 1))          # まだ3割の帯。切り上げ（「超えたら」なので）
+    if cost_floor is None or rate == 0:
+        return None                     # 限度額が定額。**1か月では永久に届かない**
+    return int(-(-(cost_floor + (floor - flat) / rate) // 1))
+
+
+def tier_thresholds(total_income: int = 3_000_000) -> list[dict]:
+    """区分べつの境目。**限度額が低い区分ほど、控除に届くのが遅い。**"""
+    check_tables()
+    out = []
+    for name, *_ in kogaku.TIERS:
+        start = deduction_start_cost(name, total_income)
+        out.append({
+            "tier": name,
+            "flat": kogaku.tier(name)[3],
+            "floor": floor_amount(total_income),
+            "start_cost": start,
+            "copay_at_start": None if start is None else int(start * kogaku.COPAY_RATE),
+            "monthly_max_pay": None if start is not None else kogaku.tier(name)[3],
+        })
+    return out
+
+
+def kogaku_grid(total_income: int, rate: float, tier_name: str = "ウ") -> list[dict]:
+    """医療費べつに、窓口・高額療養費・医療費控除・戻る税金を1行に並べる。"""
+    check_tables()
+    out = []
+    for cost in (300_000, 600_000, 1_000_000, 2_257_000, 5_000_000, 10_000_000):
+        pay = self_pay(cost, tier_name)
+        r = refund(pay, 0, total_income, rate)
+        out.append({
+            "cost": cost,
+            "copay_30": int(cost * kogaku.COPAY_RATE),
+            "self_pay": pay,
+            "kogaku_back": int(cost * kogaku.COPAY_RATE) - pay,
+            "deduction": r["deduction"],
+            "tax_back": r["total"],
+            "net_burden": pay - r["total"],
+            "net_rate": (pay - r["total"]) / cost * 100,
+        })
+    return out
+
+
+def split_months_tax(cost: int, parts: int, total_income: int, rate: float,
+                     tier_name: str = "ウ") -> dict:
+    """**同じ治療を1か月にまとめるか、月をまたいで分けるか。**
+
+    高額療養費の限度額は月ごとに1回ずつかかるので、月をまたぐと自己負担は増えます。
+    増えた自己負担は医療費控除に乗るので、**税金でいくらか戻ります。**
+    「まとめたほうが得」は変わりませんが、**差は税金の分だけ縮みます。**
+    """
+    if parts < 1:
+        raise ValueError(f"分ける月数が範囲外: {parts}")
+    together = self_pay(cost, tier_name)
+    each = cost // parts
+    apart = sum(self_pay(each + (cost - each * parts if i == 0 else 0), tier_name)
+                for i in range(parts))
+    r_together = refund(together, 0, total_income, rate)
+    r_apart = refund(apart, 0, total_income, rate)
+    return {
+        "cost": cost,
+        "parts": parts,
+        "pay_together": together,
+        "pay_apart": apart,
+        "pay_gap": apart - together,
+        "tax_back_together": r_together["total"],
+        "tax_back_apart": r_apart["total"],
+        "net_together": together - r_together["total"],
+        "net_apart": apart - r_apart["total"],
+        "net_gap": (apart - r_apart["total"]) - (together - r_together["total"]),
+    }
+
+
+def split_recovery(cost: int = 600_000, total_income: int = 3_000_000,
+                   tier_name: str = "ウ") -> list[dict]:
+    """月をまたいで増えた自己負担のうち、税金で戻る割合（所得税率べつ）。
+
+    **1を超えることはありません。** 戻る係数は控除額1円あたり
+    `税率 × 1.021 ＋ 住民税10%` で、最高税率45%でも 0.5595 だからです。
+    だから「医療費控除があるから月をまたいでもいい」は成り立ちません。
+    """
+    out = []
+    for rate in INCOME_TAX_RATES:
+        s = split_months_tax(cost, 2, total_income, rate, tier_name)
+        out.append({
+            "rate": rate,
+            "pay_gap": s["pay_gap"],
+            "tax_gain": s["tax_back_apart"] - s["tax_back_together"],
+            "net_gap": s["net_gap"],
+            "recovered_ratio": (s["tax_back_apart"] - s["tax_back_together"]) / s["pay_gap"],
+        })
+    return out
+
+
+def low_income_grid(tier_name: str) -> list[dict]:
+    """総所得べつ。**足切りが5%に下がる帯なら、定額の区分でも控除が出る。**
+
+    足切りは総所得の5パーセント（上限10万円）なので、所得が低いほど下がります。
+    ところが高額療養費の限度額も、所得が低い区分ほど下がる。
+    **どちらが先に下がるかで、控除が出るかどうかが決まります。**
+    """
+    check_tables()
+    out = []
+    for ti in (600_000, 708_000, 900_000, 1_152_000, 1_600_000, 3_000_000):
+        start = deduction_start_cost(tier_name, ti)
+        out.append({
+            "total_income": ti,
+            "floor": floor_amount(ti),
+            "flat": kogaku.tier(tier_name)[3],
+            "start_cost": start,
+        })
+    return out
+
+
 if __name__ == "__main__":
     check_tables()
     print("制度の値の検査: 通過")
@@ -277,3 +464,57 @@ if __name__ == "__main__":
         print(f"{r['smaller_share']:13,d}円 {r['deduction_together']:10,d}円 "
               f"{r['deduction_apart']:9,d}円 {r['lost_deduction']:9,d}円 {r['lost_yen']:8,d}円"
               + ("  ← 足切りぶんで頭打ち" if r["capped"] else ""))
+
+    print("\n=== 高額療養費のあと、医療費控除が1円でも出る医療費（総所得3,000,000円）===")
+    print(f"  足切り {floor_amount(3_000_000):,}円（総所得3,000,000円）。"
+          "自己負担がこれを超えて、初めて控除が1円乗ります。")
+    print(f"{'区分':>4s} {'限度額の定額':>11s} {'控除が出る医療費':>17s} "
+          f"{'そのときの窓口3割':>17s}")
+    for r in tier_thresholds(3_000_000):
+        if r["start_cost"] is None:
+            print(f"{r['tier']:>4s} {r['flat']:10,d}円 "
+                  f"{'届きません':>17s}  ← 限度額が定額なので、"
+                  f"その月にいくら払っても自己負担は{r['monthly_max_pay']:,}円で頭打ち")
+        else:
+            print(f"{r['tier']:>4s} {r['flat']:10,d}円 {r['start_cost']:16,d}円 "
+                  f"{r['copay_at_start']:16,d}円")
+    print("  **限度額が低い区分ほど、控除に届くのが遅くなります**"
+          "（自己負担そのものが小さいので、足切りに届かない）。")
+
+    print("\n=== 区分ウ / 医療費べつ 窓口・高額療養費・医療費控除"
+          "（総所得3,000,000円・所得税率10%）===")
+    print(f"{'医療費':>12s} {'窓口3割':>11s} {'実際に払う':>10s} {'高額療養費で戻る':>13s} "
+          f"{'控除額':>9s} {'税金で戻る':>10s} {'最後に残る負担':>12s} {'負担率':>7s}")
+    for r in kogaku_grid(3_000_000, 0.10):
+        print(f"{r['cost']:11,d}円 {r['copay_30']:10,d}円 {r['self_pay']:9,d}円 "
+              f"{r['kogaku_back']:12,d}円 {r['deduction']:8,d}円 {r['tax_back']:9,d}円 "
+              f"{r['net_burden']:11,d}円 {r['net_rate']:6.2f}%")
+    print("  **医療費が10倍になっても、最後に残る負担はほとんど動きません。**")
+
+    print("\n=== 月をまたぐと自己負担は増えるが、戻る税金では取り返せない"
+          "（区分ウ・医療費600,000円）===")
+    s = split_months_tax(600_000, 2, 3_000_000, 0.10)
+    print(f"  1か月にまとめる: 自己負担 {s['pay_together']:,}円 → "
+          f"税金で {s['tax_back_together']:,}円戻り、残る負担 {s['net_together']:,}円")
+    print(f"  2か月に分ける  : 自己負担 {s['pay_apart']:,}円 → "
+          f"税金で {s['tax_back_apart']:,}円戻り、残る負担 {s['net_apart']:,}円")
+    print(f"  自己負担の差 {s['pay_gap']:,}円 が、税金を入れると {s['net_gap']:,}円 まで縮みます"
+          f"（総所得3,000,000円・所得税率10%）")
+    print(f"{'所得税率':>7s} {'増える自己負担':>12s} {'増える還付':>10s} "
+          f"{'差し引き':>10s} {'取り返せる割合':>12s}")
+    for r in split_recovery():
+        print(f"{r['rate']:6.0%} {r['pay_gap']:11,d}円 {r['tax_gain']:9,d}円 "
+              f"{r['net_gap']:9,d}円 {r['recovered_ratio']:11.1%}")
+    print("  **どの税率でも1を超えません。**戻る係数は「税率×1.021＋住民税10%」で、"
+          "最高税率45%でも 0.5595 だからです。")
+
+    for t in ("エ", "オ"):
+        print(f"\n=== 区分{t}（限度額が定額）で、医療費控除が出る総所得 ===")
+        print(f"  限度額は {kogaku.tier(t)[3]:,}円。その月にいくら医療費がかかっても、"
+              "自己負担はここで頭打ちです。")
+        print(f"{'総所得':>11s} {'足切り':>9s}  {'控除が出る医療費'}")
+        for r in low_income_grid(t):
+            print(f"{r['total_income']:10,d}円 {r['floor']:8,d}円  "
+                  + (f"{r['start_cost']:,}円 を超えたら" if r["start_cost"]
+                     else f"届きません（自己負担は{r['flat']:,}円で頭打ちなので、"
+                          f"足切り{r['floor']:,}円を超えられません）"))
