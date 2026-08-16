@@ -56,6 +56,77 @@ def _fmt(iso: str) -> str:
     return datetime.fromisoformat(iso.replace("Z", "+00:00")).astimezone(JST).strftime("%m/%d %H:%M")
 
 
+# === 8本の日（M11 の段）====================================================
+#
+# **これは警告ではないので `alerts.ring()` を通していません**（2026-08-16 に足した）。
+# `alerts` が畳むのは「鳴り続けて当たりを含まない一覧」で、判定は
+# `run_marker.py --closes` の宣言で入ります。ここが出すのは**毎回使う計器**——
+# 「次にどの日へ何本入れれば段が1日ふえるか」——で、**閉じる対象がありません。**
+# 畳まれると、次の回がまた予約一覧を目で数えることになります。
+#
+# なぜ足したか。前の回（8/16 21:0x）の設計の見直し（§6 (a2) 問い3）がこう残しました:
+#
+#   > `pick(8)` が8件返るのに、5件で1日を閉じて3件を余らせています。
+#   > 次の1手: **`status.py` に「あと何本で8本の日が1日増えるか」を日ごとに出させる。**
+#   > いまは毎回、予約一覧を目で数えていて、**3回続けて同じ数え方をしています。**
+#
+# 実際、8/16 の 19:0x・19:5x・21:0x の3回とも、**70本超の `[予約中]` を目で数えて**
+# 「次に安い日」を決めていました。数え間違えれば `--hours` が既存の予約とぶつかります。
+STEP_SIZE = 8            # M14「8本の日」の1日ぶん
+STEP_TARGET_DAYS = 14    # M11 の覆る条件（8本/日 の段に14日乗る）
+STEP_SLOT_HOURS = tuple(range(9, 20))   # 実績のある置き場所（JST 9時〜19時）
+
+
+def print_step_days(short_hours: dict[str, set[int]], top: int = 4) -> None:
+    """日ごとに「あと何本で8本になるか」と、**空いている時刻**を出す。
+
+    `short_hours` は `YYYY-MM-DD`（JST）→ 予約済みショートが埋めている時（JST）。
+    """
+    if not short_hours:
+        return
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        from batch_build import M14_WINDOW
+    except Exception:
+        M14_WINDOW = ("", "")
+
+    today = datetime.now(JST).strftime("%Y-%m-%d")
+    future = {d: h for d, h in short_hours.items() if d >= today}
+    full = sorted(d for d, h in future.items() if len(h) >= STEP_SIZE)
+
+    print(f"\n=== 8本の日（M11 の段。**あと何本で1日ふえるか**）===")
+    shown = " ".join(d[5:] for d in full) if full else "（まだありません）"
+    print(f"  いま **{len(full)}日** / {STEP_TARGET_DAYS}日: {shown}")
+    print(f"  **あと {max(0, STEP_TARGET_DAYS - len(full))}日**"
+          f"（M11 の覆る条件。`docs/MEANS.md`）")
+
+    partial = sorted((d for d, h in future.items() if 0 < len(h) < STEP_SIZE),
+                     key=lambda d: (STEP_SIZE - len(future[d]), d))
+    if not partial:
+        print("  **足せる日がありません**（未来の予約が全部8本）。新しい日を立てること。")
+        return
+
+    print("  --- 安い順（**この表の `空き` をそのまま `--hours` に渡せます**）---")
+    lo, hi = M14_WINDOW
+    for d in partial[:top]:
+        have = len(future[d])
+        free = [h for h in STEP_SLOT_HOURS if h not in future[d]]
+        need = STEP_SIZE - have
+        # **窓の中の日は候補から外さず、印を付ける。** 外すと理由が見えなくなり、
+        # 窓が終わったあとも「なぜかこの日だけ出ない」に見えます。
+        warn = "  ← **M14 の比較の窓。置かないこと**" if lo <= d <= hi else ""
+        print(f"    {d[5:]}  {have}本 → **あと{need}本**"
+              f"  空き {','.join(str(h) for h in free[:need])}{warn}")
+
+    best = partial[0]
+    if not (lo <= best <= hi):
+        need = STEP_SIZE - len(future[best])
+        free = [h for h in STEP_SLOT_HOURS if h not in future[best]][:need]
+        print(f"  そのまま打てます（在庫が {need}本 あるとき）:")
+        print(f"    python scripts/batch_build.py --count {need} --date {best} "
+              f"--hours {','.join(str(h) for h in free)} --jobs 3 --per-calc 1")
+
+
 def print_hypotheses() -> None:
     """検証していない前提と、その期限を毎回出す。
 
@@ -754,6 +825,9 @@ def _channel_main(days: int = 7) -> int:
     stranded: list[str] = []
     scheduled: list[str] = []
     short_days: set[str] = set()      # ショートが予約されている日（MM/DD）
+    # 日ごとの「予約済みショートが埋めている時刻（JST の時）」。
+    # 鍵は `YYYY-MM-DD`（`batch_build.py --date` にそのまま渡せる形）。
+    short_hours: dict[str, set[int]] = {}
     # **公開済みショートの再生（Data API・遅れなし）。** 門の先の掛け算に使う。
     short_views: list[int] = []
 
@@ -775,6 +849,8 @@ def _channel_main(days: int = 7) -> int:
             scheduled.append(f"{v['id']} {_fmt(publish_at)}（あと{hours:.1f}時間）")
             if _is_short(v):
                 short_days.add(_fmt(publish_at).split()[0])
+                _jst = datetime.fromisoformat(publish_at.replace("Z", "+00:00")).astimezone(JST)
+                short_hours.setdefault(_jst.strftime("%Y-%m-%d"), set()).add(_jst.hour)
         else:
             state = f"{st['privacyStatus']} 予約なし"
             stranded.append(f"{v['id']} {sn['title'][:34]}")
@@ -798,6 +874,8 @@ def _channel_main(days: int = 7) -> int:
         print("\n[予約中]")
         for s in scheduled:
             print("  " + s)
+
+    print_step_days(short_hours)
 
     # 予約が埋まっていない日を出す。**背後の生成はコンテナ再起動で消える**ので、
     # 「走らせたはず」は当てにならない。実際に 8/7 が空になっていたのを見落としかけた。
