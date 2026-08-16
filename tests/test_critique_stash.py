@@ -100,7 +100,7 @@ def test_plan_file_is_not_counted_as_a_pending_video(tmp_path, stash_dir):
     work = _work(tmp_path, with_plan=True)
     critique_queue.stash("s-fukugyo-1", "VID0000003", SCRIPT, work)
 
-    rows = critique_queue.pending()
+    rows = critique_queue.pending(deadline={})
     ids = [r["video_id"] for r in rows]
     assert ids == ["VID0000003"], f"待ちが増えています: {ids}"
     assert not any(i.endswith(".plan") for i in ids)
@@ -116,4 +116,98 @@ def test_plan_that_is_a_bare_list_does_not_crash(tmp_path, stash_dir):
     work = _work(tmp_path, with_plan=True)
     critique_queue.stash("s-fukugyo-1", "VID0000004", SCRIPT, work)
     assert isinstance(json.loads((stash_dir / "VID0000004.plan.json").read_text()), list)
-    critique_queue.pending()  # 落ちなければよい
+    critique_queue.pending(deadline={})  # 落ちなければよい
+
+
+# ---------------------------------------------------------------------------
+# 待ち行列の**並び**（2026-08-16。持ち越し7回目を、原因のほうから閉じた）
+#
+# 1周で回せるのは1〜3本、待ちは38本。**つまり順番が選択そのものです。**
+# それまでの並びは `sorted(glob("*.json"))` ＝ **動画IDのアルファベット順**で、
+# 評価の値打ちと何の関係もありませんでした。実測（8/16 11:2x・待ち38本）:
+#
+#     `--next` の先頭    J0QK59pUg-4  公開まで **あと244時間**
+#     いちばん近い本     crO3FUvL2NI  あと **22時間** なのに **24番目**
+#     上位10件のうち4件  **予約なし**（重なりで外した本＝二度と公開されない）
+#
+# **予約なしを評価しても直す先がありません。** engaged も付かないので M13 の
+# 較正にも入らない ＝ `claude -p` 3体ぶんが丸ごと捨てになります。
+# ---------------------------------------------------------------------------
+
+
+def _stash_many(tmp_path: Path, ids: list[str]) -> None:
+    for i, vid in enumerate(ids):
+        work = tmp_path / "build" / f"t{i}"
+        work.mkdir(parents=True)
+        (work / "inspect.jpg").write_bytes(b"\xff\xd8\xff\xe0x")
+        critique_queue.stash(f"s-topic-{i}", vid, SCRIPT, work)
+
+
+def test_queue_is_ordered_by_deadline_not_by_video_id(tmp_path, stash_dir):
+    """**締切の近い順**に返すこと。動画IDの綴りは値打ちと無関係です。"""
+    _stash_many(tmp_path, ["AAA0000001", "BBB0000002", "CCC0000003"])
+    # AAA が一番遠く、CCC が一番近い ＝ **アルファベット順とちょうど逆**
+    dl = {"AAA0000001": (0, 500.0), "BBB0000002": (0, 200.0), "CCC0000003": (0, 22.0)}
+
+    ids = [d["video_id"] for d in critique_queue.pending(deadline=dl)]
+    assert ids == ["CCC0000003", "BBB0000002", "AAA0000001"], ids
+
+
+def test_stranded_videos_are_not_offered(tmp_path, stash_dir):
+    """**予約なしは既定で出さない。** 直す先も engaged も無いので捨てになります。"""
+    _stash_many(tmp_path, ["AAA0000001", "BBB0000002"])
+    dl = {"AAA0000001": (2, 0.0), "BBB0000002": (0, 100.0)}
+
+    ids = [d["video_id"] for d in critique_queue.pending(deadline=dl)]
+    assert ids == ["BBB0000002"], ids
+
+    # **黙って消さないこと。** 見たいときは出せる。
+    both = [d["video_id"] for d in critique_queue.pending(include_stranded=True, deadline=dl)]
+    assert sorted(both) == ["AAA0000001", "BBB0000002"], both
+
+
+def test_published_ranks_after_scheduled_but_before_stranded(tmp_path, stash_dir):
+    """公開済みは**直せません**が、engaged が付くので M13 の較正には使えます。
+
+    だから「予約あり（＝まだ直せる）→ 公開済み（＝計器になる）」の順。
+    """
+    _stash_many(tmp_path, ["AAA0000001", "BBB0000002", "CCC0000003"])
+    dl = {
+        "AAA0000001": (1, 0.0),      # 公開済み
+        "BBB0000002": (0, 400.0),    # 予約あり（遠い）
+        "CCC0000003": (2, 0.0),      # 予約なし
+    }
+    ids = [d["video_id"] for d in critique_queue.pending(include_stranded=True, deadline=dl)]
+    assert ids == ["BBB0000002", "AAA0000001", "CCC0000003"], ids
+
+
+def test_unknown_deadline_is_not_treated_as_disposable(tmp_path, stash_dir):
+    """締切が**分からない**本を「捨ててよい」と読まないこと。
+
+    口が落ちた回や、控えにも無い本がこれに当たります。段0の末尾
+    （＝予約ありの一番後ろ）に置き、**予約なしと同じ扱いにはしません。**
+    """
+    _stash_many(tmp_path, ["AAA0000001", "BBB0000002"])
+    dl = {"BBB0000002": (2, 0.0)}   # AAA は口に無い
+
+    ids = [d["video_id"] for d in critique_queue.pending(deadline=dl)]
+    assert ids == ["AAA0000001"], f"締切不明が消えています: {ids}"
+
+
+def test_critique_run_uses_the_same_queue(tmp_path, stash_dir, monkeypatch):
+    """**待ち行列の定義は1か所だけ。**
+
+    `critique_run.pending_ids()` は長らく `glob` を自前でもう一度書いており、
+    直しが片方にしか入らない形が**通算7回**続きました（`*.plan.json` の偽物・
+    `--next` の `[:1]`・この並び）。**数えるのをやめて、片方を消しています。**
+    ここが自前の実装に戻っていたら、この検査が落ちます。
+    """
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
+    import critique_run
+    assert critique_run.pending_ids.__module__ == "critique_run"
+
+    _stash_many(tmp_path, ["AAA0000001", "BBB0000002"])
+    monkeypatch.setattr(critique_queue, "deadlines",
+                        lambda *a, **k: ({"AAA0000001": (0, 500.0),
+                                          "BBB0000002": (0, 20.0)}, "test"))
+    assert critique_run.pending_ids() == ["BBB0000002", "AAA0000001"]

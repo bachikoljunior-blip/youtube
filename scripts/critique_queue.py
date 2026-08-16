@@ -34,6 +34,11 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+if str(ROOT) not in sys.path:
+    # **`deadlines()` が `src.uploader` / `src.dupes` を読みます。**
+    # 入れずに呼ぶと `No module named 'src'` で控えにも落ちられず、
+    # 並びが**黙って動画ID順のまま**になります（2026-08-16 に実際に踏んだ）。
+    sys.path.insert(0, str(ROOT))
 STASH = ROOT / "data" / "critique_queue"
 LEDGER = ROOT / "data" / "critique.jsonl"
 JST = timezone(timedelta(hours=9))
@@ -111,9 +116,9 @@ def stash(topic: str, video_id: str, script: dict, work: Path) -> Path | None:
         ),
         encoding="utf-8",
     )
-    print(f"[queue] 独立評価の材料を残しました: data/critique_queue/{video_id}.jpg")
+    print(f"[queue] 独立評価の材料を残しました: {STASH / f'{video_id}.jpg'}")
     if plan_kept:
-        print(f"[queue] 焼き直せる入力も残しました: data/critique_queue/{video_id}.plan.json")
+        print(f"[queue] 焼き直せる入力も残しました: {STASH / f'{video_id}.plan.json'}")
     else:
         # **黙って落とさない。** 無いことに気づけないのが、この項目が5回持ち越された理由です。
         print(f"[queue] **{plan_src} がありません** —— この本は後から焼き直せません")
@@ -154,7 +159,105 @@ def _scored() -> set[str]:
     return out
 
 
-def pending() -> list[dict]:
+def deadlines(offline_only: bool = False) -> tuple[dict[str, tuple[int, float]], str]:
+    """各動画の**締切**（＝直せる猶予）を返す。`{動画ID: (段, 時間)}` と、取れた口の名前。
+
+    段は小さいほど先に評価すべきもの:
+
+        0  予約あり  → 公開まで**あと何時間**。**ここだけが「評価して直せる」窓**です
+        1  公開済み  → もう直せませんが engaged が付くので M13 の較正には使えます
+        2  予約なし  → **直す先も較正の材料も無い。**既定では待ち行列に出しません
+
+    口が落ちても止まりません（`data/uploaded.jsonl` の控えへ落ちる）。
+    **控えは「上げたときの予約時刻」なので、あとから外した本を予約ありと読みます。**
+    どちらの口で読んだかを返すのは、そのためです。
+    """
+    if not offline_only:
+        try:
+            from src.uploader import _service
+            from src.history import channel_video_ids
+
+            yt = _service()
+            ch = yt.channels().list(part="contentDetails", mine=True).execute()["items"][0]
+            ids = channel_video_ids(yt, ch["contentDetails"]["relatedPlaylists"]["uploads"])
+            # **口は同時に欠けます**（uploads は予約中を落とし、search は 429）。
+            # `status.py` と同じく、手元の控えで埋め戻す。
+            try:
+                from src import dupes as _dupes
+                ids += [r["id"] for r in _dupes.ledger_rows() if r["id"] not in set(ids)]
+            except Exception:
+                pass
+            items = []
+            for i in range(0, len(ids), 50):
+                items += yt.videos().list(
+                    part="status", id=",".join(ids[i:i + 50])).execute()["items"]
+            now = datetime.now(timezone.utc)
+            out: dict[str, tuple[int, float]] = {}
+            for v in items:
+                st = v["status"]
+                if st["privacyStatus"] == "public":
+                    out[v["id"]] = (1, 0.0)
+                elif st.get("publishAt"):
+                    hours = (datetime.fromisoformat(st["publishAt"].replace("Z", "+00:00"))
+                             - now).total_seconds() / 3600
+                    out[v["id"]] = (0, hours)
+                else:
+                    out[v["id"]] = (2, 0.0)
+            return out, "API"
+        except Exception as exc:  # 口が落ちても待ち行列は出す
+            print(f"[queue] 締切を口から取れませんでした（控えへ落ちます）: {str(exc)[:90]}")
+
+    try:
+        from src import dupes as _dupes
+        now = datetime.now(timezone.utc)
+        out = {}
+        for r in _dupes.ledger_rows():
+            at = r.get("at")
+            if not at:
+                out[r["id"]] = (2, 0.0)
+                continue
+            hours = (datetime.fromisoformat(str(at).replace("Z", "+00:00"))
+                     - now).total_seconds() / 3600
+            out[r["id"]] = (0, hours) if hours >= 0 else (1, 0.0)
+        return out, "控え（data/uploaded.jsonl・外した本を予約ありと読みます）"
+    except Exception as exc:
+        print(f"[queue] 控えも読めませんでした（並びは動画ID順のまま）: {str(exc)[:90]}")
+        return {}, "なし"
+
+
+def pending(include_stranded: bool = False,
+            order: bool = True,
+            deadline: dict[str, tuple[int, float]] | None = None) -> list[dict]:
+    """未評価の材料を、**締切の近い順**に返す。
+
+    ## なぜ並べ替えるのか（2026-08-16 に実測して直した。**持ち越し7回目**）
+
+    ここは長らく `sorted(STASH.glob("*.json"))` ＝ **動画IDのアルファベット順**でした。
+    **その順番は、評価の値打ちと何の関係もありません。**
+
+    1周で回せるのは1〜3本、待ちは38本。**つまり順番が選択そのものです。**
+    実測（2026-08-16 11:2x、待ち38本）:
+
+        `--next` が選ぶ先頭   J0QK59pUg-4 ＝ 公開まで **あと244時間**
+        いちばん近い本       crO3FUvL2NI ＝ あと **22時間** なのに **24番目**
+        上位10件のうち4件    **予約なし**（重なりで外した本。**二度と公開されません**）
+
+    **予約なしの本を評価しても、直す先がありません**（もう外してある）。
+    engaged も付かないので M13 の較正にも入りません。**`claude -p` 3体ぶんが丸ごと捨てです。**
+    そして公開24時間前の本には、`--next` を何回叩いても当たりません ——
+    **評価が間に合った本だけが「予約を外す」判断に使える**のに、
+    そこへ一度も届かない並びでした。
+
+    前の回（09:1x）が直したのは「先頭で止まる」＝空振りのほうで、
+    **先頭が何であるべきかは誰も見ていませんでした。**
+
+    ## 割り引いて読むこと
+
+    - 締切は外の口から取ります。**落ちたら控えへ落ち、控えは外した本を予約ありと読みます**
+      （`deadlines()`）。並びが少し鈍るだけで、止まりはしません
+    - **口にも控えにも無い本は、段0の末尾**（＝予約ありの一番後ろ）に置きます。
+      「分からない」を「捨ててよい」と読まないため
+    """
     if not STASH.exists():
         return []
     done = _scored()
@@ -184,10 +287,23 @@ def pending() -> list[dict]:
         if not (STASH / f"{vid}.jpg").exists():
             continue
         out.append(d)
-    return out
+
+    if not order:
+        return out
+
+    if deadline is None:
+        deadline, _ = deadlines()
+    # **口にも控えにも無い本は段0の末尾**（`inf`）。「分からない」を「捨ててよい」と読まない。
+    ranked = [(deadline.get(d["video_id"], (0, float("inf"))), d) for d in out]
+    if not include_stranded:
+        ranked = [(k, d) for k, d in ranked if k[0] != 2]
+    ranked.sort(key=lambda kd: (kd[0][0], kd[0][1], kd[1]["video_id"]))
+    return [d for _, d in ranked]
 
 
 def main(argv: list[str]) -> int:
+    include_stranded = "--include-stranded" in argv
+    argv = [a for a in argv if a != "--include-stranded"]
     if argv:
         vid = argv[0]
         sheet, meta = STASH / f"{vid}.jpg", STASH / f"{vid}.json"
@@ -211,8 +327,13 @@ def main(argv: list[str]) -> int:
             print(f"  {ln}")
         return 0
 
-    rows = pending()
+    dl, source = deadlines()
+    rows = pending(include_stranded=include_stranded, deadline=dl)
+    hidden = [] if include_stranded else [
+        d for d in pending(include_stranded=True, deadline=dl)
+        if dl.get(d["video_id"], (0, 0.0))[0] == 2]
     print(f"=== 独立評価の待ち（data/critique_queue）===")
+    print(f"  **締切の近い順**（＝直せる猶予が短い順）。締切の口: {source}")
     if not rows:
         print("  待ちはありません。")
         print("  **これは「全部評価した」とは限りません。**材料が残る前に投稿したものは、")
@@ -222,10 +343,23 @@ def main(argv: list[str]) -> int:
         # **焼き直せるかを一覧に出す。** 出さないと、次の回は「材料はある」と読み、
         # 焼き直せない本を測ろうとして**生成（11分）に戻ります。**
         bakeable = "焼直可" if (STASH / f"{d['video_id']}.plan.json").exists() else "焼直不可"
-        print(f"  {d['video_id']}  {d['orientation']}  {len(d['narration'])}行  "
+        rank, hours = dl.get(d["video_id"], (0, float("inf")))
+        if rank == 1:
+            when = "公開済み  "
+        elif hours == float("inf"):
+            when = "締切不明  "
+        else:
+            when = f"あと{hours:5.0f}h"
+        print(f"  {d['video_id']}  {when}  {d['orientation']}  {len(d['narration'])}行  "
               f"{bakeable}  投稿 {d['stashed_at'][:16]}")
     n_bakeable = sum(1 for d in rows if (STASH / f"{d['video_id']}.plan.json").exists())
     print()
+    if hidden:
+        # **黙って減らさないこと。** 数だけ減ると「評価が進んだ」に見えます。
+        print(f"  出していない {len(hidden)}本: **予約なし**（重なりで外した本）。"
+              f"直す先も engaged も無いので評価しても捨てになります")
+        print(f"    {' '.join(d['video_id'] for d in hidden)}")
+        print("    見るなら `python scripts/critique_queue.py --include-stranded`")
     print(f"  焼き直せるのは {n_bakeable}/{len(rows)} 本"
           f"（`slides_plan.json` を残し始めたのは 2026-08-15 23:xx から）")
     print("  手順は docs/CRITIQUE.md。材料の中身は:")

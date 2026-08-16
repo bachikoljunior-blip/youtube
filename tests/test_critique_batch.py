@@ -41,6 +41,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import critique_run  # noqa: E402
+from scripts import critique_queue  # noqa: E402
 
 
 def _queue(tmp_path: Path, ids: list[str], plans: list[str] = ()) -> Path:
@@ -67,9 +68,16 @@ def _log(tmp_path: Path, scored: list[str]) -> Path:
 
 def _patch(monkeypatch, tmp_path, ids, plans=(), scored=()):
     q = _queue(tmp_path, ids, plans)
-    _log(tmp_path, list(scored))
+    log = _log(tmp_path, list(scored))
     monkeypatch.setattr(critique_run, "QUEUE", q)
     monkeypatch.setattr(critique_run, "ROOT", tmp_path)
+    # **待ち行列の定義は `critique_queue.pending()` の1か所だけ**（2026-08-16）。
+    # `critique_run` が自前で `glob` していた版を消したので、差し替えるのもそちら。
+    # **ここが `critique_run.QUEUE` だけに戻っていたら、2か所ある状態に戻っています。**
+    monkeypatch.setattr(critique_queue, "STASH", q)
+    monkeypatch.setattr(critique_queue, "LEDGER", log)
+    # 締切は外の口から取るので、検査では固定する（**並びは動画ID順に落ちる**）。
+    monkeypatch.setattr(critique_queue, "deadlines", lambda *a, **k: ({}, "test"))
     return q
 
 

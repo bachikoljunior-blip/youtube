@@ -158,32 +158,33 @@ def scored_ids() -> set[str]:
 
 
 def pending_ids() -> list[str]:
-    """まだ点の付いていない動画。**古い順**（投稿した順）に返す。
+    """まだ点の付いていない動画を、**締切の近い順**に返す。
 
-    #### `*.plan.json` を数に入れないこと（2026-08-16 に、まだ残っていた）
+    #### **ここは待ち行列を自分で組み立てないこと**（2026-08-16。**原因のほうを消した**）
 
-    待ち行列には1本につき2つのファイルが入ります ——
-    `<ID>.json`（読み上げ文）と `<ID>.plan.json`（コマの列）。
-    `glob("*.json")` は**両方**返し、`Path.stem` は後者から
-    **`<ID>.plan` という、点の付けようがない名前**を作ります。
+    ここには `sorted(QUEUE.glob("*.json"))` を**自前でもう一度書いた**版があり、
+    `scripts/critique_queue.py` の `pending()` と**同じ仕事を2か所でしていました。**
+    そして直しは片方にしか入らない ——
 
-    8/15 23:4x の回がこの穴を見つけて `scripts/critique_queue.py`（一覧）を
-    直しましたが、**点を付ける側（ここ）は直っていませんでした。**
-    実測で **52件中13件**が `.plan` の偽物です。`<ID>.plan` は `<ID>` の
-    すぐ後ろに並ぶので、**本物に点が付いた次の回で必ず先頭に来て、
-    `load()` が SystemExit で止まります**（＝待ち行列がそこで永久に詰まる）。
+        8/15 23:4x  `*.plan.json` の偽物を一覧側だけ直した（点を付ける側は52件中13件が偽物のまま）
+        8/16 09:1x  `--count` の繰り上げだけ直した（`--next` は `[:1]` のまま空振り）
+        8/16 11:2x  **並びが動画IDのアルファベット順**だと分かったのが、この2つ目の実装
 
-    **片方だけ直す形は、このリポジトリで通算5回目です。**
+    **「片方だけ直す」は通算7回目です。数え続けても減りませんでした。**
+    数えるのをやめて、**片方を消します。** いま待ち行列の定義は
+    `critique_queue.pending()` の1か所だけで、ここはそれを呼ぶだけです。
+
+    docstring も嘘をついていました（「**古い順**（投稿した順）」と書いてあるのに、
+    実際は動画IDのアルファベット順）。**2つあると、註のほうも別々に古くなります。**
     """
-    scored = scored_ids()
-    ids = []
-    for p in sorted(QUEUE.glob("*.json")):
-        if p.name.endswith(".plan.json"):
-            continue
-        if p.stem in scored:
-            continue
-        ids.append(p.stem)
-    return ids
+    # **`from critique_queue import ...` と書かないこと**（2026-08-16 に踏んだ）。
+    # `scripts/` は sys.path にも入るので、そう書くと `critique_queue` と
+    # `scripts.critique_queue` の **2つのモジュール実体**ができます。
+    # 片方に当てた差し替えがもう片方に効かず、**「2か所ある」を消したつもりで
+    # 種類を変えて作り直す**ことになります（検査が実際にそれを捕まえました）。
+    from scripts import critique_queue
+
+    return [d["video_id"] for d in critique_queue.pending()]
 
 
 def critique_one(video_id: str, pool: ThreadPoolExecutor) -> list:
