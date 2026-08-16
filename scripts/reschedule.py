@@ -41,10 +41,29 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from googleapiclient.errors import HttpError  # noqa: E402
+
 from src import history, uploader  # noqa: E402
 
 JST = timezone(timedelta(hours=9))
 MARKER = re.compile(r"\[t:([a-z0-9\-]+)\]")
+
+
+def _is_quota(exc: Exception) -> bool:
+    """日枠切れ（403 quotaExceeded）かどうか。
+
+    **本文で見ています。** `resp.status` だけだと、権限が無い 403 と
+    区別が付かず、**直し方が正反対**（待てば直る／待っても直らない）になります。
+    """
+    if not isinstance(exc, HttpError) or getattr(exc.resp, "status", None) != 403:
+        return False
+    # **`str(exc)` だけを見ないこと。** `HttpError.__str__` が出すのは
+    # 解釈できた `reason` の1行で、`errors[].reason` はそこに載りません
+    # （解釈に失敗すると `Forbidden` とだけ出ます）。**中身のほうを読みます。**
+    body = getattr(exc, "content", b"") or b""
+    if isinstance(body, bytes):
+        body = body.decode("utf-8", "replace")
+    return "quotaExceeded" in (str(exc) + body)
 
 
 def _scheduled(svc) -> list[dict]:
@@ -122,7 +141,23 @@ def _update(svc, video_id: str, publish_at: str | None,
         status["publishAt"] = publish_at
     else:
         status.pop("publishAt", None)
-    svc.videos().update(part="status", body={"id": video_id, "status": status}).execute()
+    try:
+        svc.videos().update(part="status",
+                            body={"id": video_id, "status": status}).execute()
+    except HttpError as exc:
+        if not _is_quota(exc):
+            raise
+        raise SystemExit(
+            f"[reschedule] **{video_id} の予約は、いま外せません（日枠切れ）。**\n"
+            "  `videos.update` は日枠に当たります。**`videos.insert` とは違います** ——\n"
+            "  投稿（insert・1600単位）は日枠が切れていても通るのに、\n"
+            "  差し替え（update・50単位）は 403 で止まります。**安いほうが先に閉じます。**\n"
+            "  読みを控えで代えても、**書き込みの側は代えられません**\n"
+            "  （控えは手元にありますが、YouTube 側の状態を変えるのは口だけです）。\n"
+            "  → **JST 16:00 以降にやり直すこと**（日枠は太平洋時間の0時に戻ります）。\n"
+            "  **まだ作り直さないこと。** §5「外す → 作る → 上げ直す」の順は、\n"
+            "  ここで止まれば1本も捨てないためにあります"
+        ) from exc
 
 
 def main(argv: list[str] | None = None) -> int:

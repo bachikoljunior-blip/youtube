@@ -553,9 +553,22 @@ else:
 `status.py` も同じことを言います。**両方とも直しました。**
 
     videos.insert（投稿そのもの）   **日枠が切れていても通ります** ← 03:5x に実測
+    videos.update（差し替え・50単位） **403 quotaExceeded** ← 05:2x に実測
     videos.list / playlistItems /
     channels.list / search         403 quotaExceeded
     thumbnails.set / playlists     403 quotaExceeded
+
+**`insert` が通るのに `update` が通らないので、順番を取り違えないこと**
+（2026-08-17 05:2x に実測）。**安いほう（50単位）が先に閉じます。**
+つまり日枠の切れている13時間は、**新しく出すことはできるのに、
+既に出したものを差し替えることはできません。**
+
+**控えでは代えられません。** 前の回（04:1x）が `unschedule.py` に控えの道を入れて
+「差し替えの道を開けた」と書きましたが、**開いたのは読みの側だけ**です ——
+控えは手元にありますが、**YouTube 側の状態を変えられるのは口だけ**なので、
+`videos.update` の 403 はどうやっても迂回できません。
+**予約を外す・時刻を動かすのは、JST 16:00 以降の回の仕事です。**
+`reschedule.py` はそう言って止まります（生の traceback ではなくなりました）。
 
 **この確認は3回運ばれて、3回とも実行されていません。**
 申し送りの文はこうでした ——「枯れているのは `search` と `videos.list` で
