@@ -19,6 +19,7 @@ import re
 import subprocess
 from pathlib import Path
 
+from . import narrated
 from .subtitles import _NUM_TOKEN, _is_katakana
 from .util import require, run
 from .yomi import remaining_risks
@@ -880,6 +881,47 @@ def _check_adjacent_repeat(script: dict | None) -> list[str]:
     return problems
 
 
+def _check_narrated_shown(work: Path, script: dict | None) -> list[str]:
+    """**読み上げが言った数が、絵に1つも出ていないか**（2026-08-17）。
+
+    独立評価で2体が「図解の棒に、読み上げが言った行が無い」と書き、
+    申し送りが3回運ばれました。中身と実測は `src/narrated.py` の冒頭にあります。
+
+    **`_check_assumption_value_shown` とは向きが逆です。** あちらは
+    「計算の入力が画面にあるか」で、こちらは「**耳で言った答えが目に出ているか**」。
+    実物84本で、両者が同時に当たる本は**1本もありません**。
+
+    **見るのは動画ぜんたいです**（文ごとではありません）。文ごとに当てると
+    実測 15件/13本 になりますが、そのうち抜き取った2件はどちらも
+    **隣の文の絵に出ていました**（`78ssJSwULTg` の足切り10万円、
+    `E5i0YfIkmnA` の課税価格3億円）。**誤報は不投稿**なので、
+    確かめていない厳しさをここに置きません。ぜんたいで見ると
+    **84本中3本・4件で、抜き取った全部が本物**でした。
+
+    **ショートだけに掛けます**（長尺は構成が違う）。呼ぶ側で `portrait` を見ています。
+    """
+    path = work / "slides_plan.json"
+    if not path.exists() or not script:
+        return []
+    try:
+        plan = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        return [f"slides_plan.json が読めない: {exc}"]
+    if not isinstance(plan, list) or not plan:
+        return []
+
+    frames = [v for v in plan if isinstance(v, dict)]
+    problems: list[str] = []
+    for seg in script.get("segments", []):
+        line = str(seg.get("narration") or "")
+        for tok in narrated.unshown(line, frames):
+            problems.append(
+                f"読み上げ「{line}」の {tok} が、画面のどこにも出ていません。"
+                "**耳で言って目に出していない数です。** 棒か行か見出しに足すこと"
+            )
+    return problems
+
+
 def _check_adjacent_frames(work: Path) -> list[str]:
     """**画面に出るコマの側で、隣り合う2枚が同じに見えていないか**（2026-08-15 20:5x）。
 
@@ -1569,6 +1611,7 @@ def check(path: Path, video_cfg: dict, min_minutes: float, work: Path,
         problems += _check_short_pace(script, duration)
         problems += _check_slide_hold(work, duration)
         problems += _check_assumptions_on_screen(work)
+        problems += _check_narrated_shown(work, script)
     problems += _check_visual_wrap(script, portrait)
     problems += _check_count_matches(script)
     problems += _check_title_from_calc(work, script, topic)
