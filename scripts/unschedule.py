@@ -43,7 +43,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from src import auth
+import reschedule  # noqa: E402  （書き込みの実装は1か所だけ）
+from src import uploader  # noqa: E402
 
 
 def main() -> int:
@@ -58,7 +59,7 @@ def main() -> int:
                     help="公開済みでも実行する。**視聴者から見えなくなります**")
     args = ap.parse_args()
 
-    yt = auth.youtube()
+    yt = uploader._service()
     resp = yt.videos().list(part="status,snippet,statistics", id=args.video_id).execute()
     items = resp.get("items") or []
     if not items:
@@ -98,14 +99,13 @@ def main() -> int:
         print("[unschedule] **すでに予約なしの private です。** 何もしません")
         return 0
 
-    # status パートは「送らなかった項目が既定値に戻る」ので、いまの値を写して送る。
-    # publishAt だけを落とすことが目的で、他を巻き添えにしない。
-    body_status = {"privacyStatus": "private"}
-    for key in ("embeddable", "license", "publicStatsViewable", "selfDeclaredMadeForKids"):
-        if key in status:
-            body_status[key] = status[key]
-    yt.videos().update(part="status",
-                       body={"id": args.video_id, "status": body_status}).execute()
+    # **書き込みは `reschedule._update` に任せること**（2026-08-16 18:5x）。
+    # ここには同じ書き込みが**もう1つ**あり、`status` のうち4つの欄しか写して
+    # いませんでした（あちらは読み取り専用の欄だけ落として全部写す）。
+    # **同じことをする実装が2つある**のは、この repo が7回踏んだ「片方だけ直す」形
+    # そのものです。実際この道具は `auth.youtube()`（**存在しない関数**）で
+    # 落ちたまま放置されていて、気づいたのは 18:5x に実際に呼んだときでした。
+    reschedule._update(yt, args.video_id, None)
 
     after = yt.videos().list(part="status", id=args.video_id).execute()
     a_status = ((after.get("items") or [{}])[0].get("status") or {})

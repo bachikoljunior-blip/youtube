@@ -77,3 +77,48 @@ def test_図の注記に単位ちがいが出ない():
     note = html.split("棒の起点は0ではなく", 1)[1].split("<", 1)[0]
     assert "%" not in note, note
     assert "円" in note, note
+
+
+def test_空白なしで数が2つ並ぶ表示_年金の歳とか月():
+    """**16:0x の直しが届かなかった形**（2026-08-16 18:5x に実物で踏んだ）。
+
+    `AoBABYXSUas`（8/31 13:00 予約）の実データそのもの ——
+    棒は `82歳10か月` / `86歳3か月`、`value` は年の小数、`scale_base` は 81.0。
+    `display.split()[0]` は**空白が無いので display 全体**を返し、
+    末尾から拾って **「※ 棒の起点は0ではなく 81か月」** になっていました。
+    棒が83歳あたりなのに、起点だけ6年9か月です。
+    """
+    assert visuals._fmt_axis(81.0, "82歳10か月") == "81歳"
+    assert visuals._fmt_axis(81.0, "86歳3か月") == "81歳"
+    # 空白のある形（16:0x の本命）も、同じ道で通り続けること
+    assert visuals._fmt_axis(50000.0, "6万2927円 実効22.8%") == "5万円"
+
+
+def test_最初の数の単位を取る_単体():
+    assert visuals._first_unit("35万9318円") == "円"
+    assert visuals._first_unit("82歳10か月") == "歳"
+    assert visuals._first_unit("73.5%") == "%"
+    assert visuals._first_unit("1,234円") == "円"
+    assert visuals._first_unit("6万2927円 実効22.8%") == "円"
+    assert visuals._first_unit("0.856") == ""
+    # 桁の字は、**うしろに数が続くときだけ**数の一部
+    assert visuals._first_unit("12万円").lstrip("万億千") == "円"
+
+
+def test_図の注記に歳とか月が混ざらない():
+    """通しで見る（**呼ぶ側で組み直していないこと**）。上の単体だけだと素通りします。"""
+    html = visuals._chart_html(
+        {
+            "kind": "chart",
+            "bars": [
+                {"label": "額面", "value": 82.83, "display": "82歳10か月"},
+                {"label": "手取り", "value": 86.25, "display": "86歳3か月"},
+            ],
+            "scale_base": 81.0,
+        },
+        portrait=True,
+    )
+    assert "棒の起点は0ではなく" in html
+    note = html.split("棒の起点は0ではなく", 1)[1].split("<", 1)[0]
+    assert "か月" not in note, note
+    assert "歳" in note, note
