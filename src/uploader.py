@@ -238,6 +238,27 @@ def _set_thumbnail(youtube, video_id: str, path: Path, tries: int = 4) -> bool:
     return False
 
 
+def base_status(publish_cfg: dict | None = None) -> dict:
+    """**投稿のときにこちらが立てる `status` の欄**（`publishAt` は含みません）。
+
+    2026-08-17 に切り出しました。理由は `videos().update` の側にあります ——
+    あれは部分更新ではないので、**書き込む前に現状を読む**必要があり、
+    日枠が切れている13時間は `reschedule._update` ごと落ちていました。
+
+    **ここに出てくる4つは、全部こちらが投稿のときに決めた値です。**
+    自分で立てた値なら、外の口が落ちていても分かります
+    （`src/history.py`・`src/dupes.py` と同じ切り分け。
+    **読めないときに困るのは「他人が変えたかもしれない欄」だけ**）。
+    """
+    cfg = publish_cfg or {}
+    return {
+        "privacyStatus": cfg.get("visibility", "private"),
+        "selfDeclaredMadeForKids": bool(cfg.get("made_for_kids", False)),
+        "license": "youtube",
+        "embeddable": True,
+    }
+
+
 def upload(
     video_path: Path,
     thumbnail_path: Path,
@@ -249,12 +270,7 @@ def upload(
     youtube = _service()
 
     visibility = publish_cfg.get("visibility", "private")
-    status: dict = {
-        "privacyStatus": visibility,
-        "selfDeclaredMadeForKids": bool(publish_cfg.get("made_for_kids", False)),
-        "license": "youtube",
-        "embeddable": True,
-    }
+    status: dict = base_status(publish_cfg)
     # private のときだけ予約公開できる。public 指定なら即時公開。
     if visibility == "private":
         # すでに埋まっている枠は飛ばす。作り置きを積むと同じ時刻に重なるため。

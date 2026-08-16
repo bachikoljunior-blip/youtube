@@ -89,11 +89,29 @@ def _show(rows: list[dict]) -> None:
         print("\n二重予約はありません。")
 
 
-def _update(svc, video_id: str, publish_at: str | None) -> None:
+def _update(svc, video_id: str, publish_at: str | None,
+            fallback_status: dict | None = None) -> None:
     """`status` だけを差し替える。**snippet を触らないこと** —— 部分更新なので、
     渡さなかった欄は消えます（題名や説明欄を巻き添えで空にしない）。
+
+    `fallback_status` を渡すと、**現状を読めなかった回だけ**それで代えます
+    （2026-08-17 に足した）。**既定は None ＝ これまでどおり読めなければ落ちる**：
+    呼ぶ側が「この本は自分が上げた予約中の本だ」と**示せたときだけ**渡すこと
+    （`unschedule.py` は手元の控えで示しています）。
+
+    **黙って代えないのはわざとです。** ここで読んでいるのは
+    「他人が変えたかもしれない欄」で、示せないまま既定値で上書きすると、
+    **`videos().update` は部分更新ではない**ので他の欄が巻き添えになります。
     """
-    cur = svc.videos().list(part="status", id=video_id).execute()["items"]
+    try:
+        cur = svc.videos().list(part="status", id=video_id).execute()["items"]
+    except Exception as exc:                                  # noqa: BLE001
+        if fallback_status is None:
+            raise
+        print(f"[reschedule] **現状を読めません**: {str(exc)[:90]}")
+        print("[reschedule] 呼ぶ側が渡した `status` で代えます"
+              "（投稿のときにこちらが立てた4欄）")
+        cur = [{"status": dict(fallback_status)}]
     if not cur:
         raise SystemExit(f"動画が見つかりません: {video_id}")
     status = dict(cur[0]["status"])
