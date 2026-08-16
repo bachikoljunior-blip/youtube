@@ -185,3 +185,4 @@
 {"at": "2026-08-16T21:49:40+09:00", "session": "session_01HFRWHprPNpcVRC9GZDykRk", "kind": "ship", "what": "fix: contact sheet の余り枠が赤×＋豆腐文字で、目視2体に無傷の本を「作り直し」と誤判定させていた"}
 {"at": "2026-08-16T21:49:40+09:00", "session": "session_01HFRWHprPNpcVRC9GZDykRk", "kind": "ship", "what": "fix: 2字の単位（時間）が真ん中で割れる／検査が note の狭いほうの幅（.note.lead）を見ていなかった"}
 {"at": "2026-08-16T21:55:43+09:00", "session": "session_01HFRWHprPNpcVRC9GZDykRk", "kind": "ship", "what": "fix: inspect_build が「空き枠 N枚」を出力で言う（目視の誤報を1手で照合できる）／手順§5に照合の道を足した"}
+{"at": "2026-08-16T21:58:13+09:00", "session": "session_01HFRWHprPNpcVRC9GZDykRk", "kind": "ship", "what": "verdict(独立評価): UoeAfg16_aw を3体で評価し中央値6.0（合格）。3体が独立に『前提表 11→12 が完全に同一』を指した＝reveal_variants の table 側の疑い"}
