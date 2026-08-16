@@ -109,6 +109,9 @@ ASSUMPTIONS = [
     "これは月の数えはじめをどちらに置くかの違いで、1か月ずれます。どちらも間違いではありません",
     "繰上げ側の分岐点は、65歳から受け取った累計が繰上げた累計を追い抜いた最初の月です。"
     "基準にした年額は180万円で、額面の分岐点はこの年額を変えても動きません",
+    "年金額べつの表は、繰り下げた後の年額が350万円までの人だけを出しています。"
+    "手取り率の仮定が年額500万円までしか無く、それを超えると率が平らになって"
+    "手取りと額面の差が消えてしまうためです",
 ]
 
 # 制度の値
@@ -248,6 +251,22 @@ def check_tables() -> None:
         raise ValueError("手取りで分岐点が後ろへ動いていない行がある")
     if len({r["手取りで見ると"] for r in tilt}) != 2:
         raise ValueError("繰下げと繰上げで、有利・不利の向きが分かれていない")
+
+    # 年金額べつの表。**この節の主張そのもの**を不変条件にする。
+    by_base = by_base_grid()
+    if not by_base:
+        raise ValueError("年金額べつの表が空になっている")
+    top = NET_RATE_POINTS[-1][0]
+    if any(r["繰下げ後の年額_万"] > top for r in by_base):
+        raise ValueError("手取り率の前提の外（年額500万円超）の行が残っている")
+    if len({r["分岐点_額面"] for r in by_base}) != 1:
+        raise ValueError("額面の分岐点が年額で動いている。ASSUMPTIONS の記述と食い違う")
+    if len({r["分岐点_手取り"] for r in by_base}) < 2:
+        raise ValueError("手取りの分岐点が年額で動いていない。この節が何も言っていない")
+    if any(r["ずれ_月"] <= 0 for r in by_base):
+        raise ValueError("手取りの分岐点が額面より前に来ている行がある")
+    if any(r["差_円"] <= 0 for r in by_base):
+        raise ValueError("85歳まで生きて繰下げの生涯手取りが増えていない行がある")
 
 
 def break_even(months_from_65: int, base_annual_man: float, net: bool = False) -> tuple[int, int] | None:
@@ -449,6 +468,59 @@ def net_tilt(base_annual_man: float = 180.0, until_age: int = 85) -> list[dict]:
     return rows
 
 
+def by_base_grid(months_from_65: int = 60, until_age: int = 85) -> list[dict]:
+    """**年金額べつ**に、額面と手取りの分岐点、そして生涯手取りの差を出す。
+
+    ## なぜ足したか（2026-08-16）
+
+    既存の5つの節は、**どれも年額180万円の1人ぶん**しか出していません。
+    `ASSUMPTIONS` には「額面の分岐点はこの年額を変えても動きません」と書いてあり、
+    それは正しいのですが、**手取りの側は動きます** ——
+    そこを誰も表にしていませんでした。「年金がいくらの人ほど繰下げが不利か」は、
+    この計算からしか出ません（`_clamp_rate` の折れ線が非線形なので、
+    比の交点が年額によってずれる）。
+
+    出てくる形は直感に反します。**ずれ幅は単調に増えて頭打ちになり、
+    生涯手取りの差のほうは途中で逆転します** ——
+    年額78万円の人は繰下げても手取り率がほぼ1.000 のままなので、
+    **120万円の人より増える額が大きい**。表を作るまで分かりませんでした。
+
+    ## 出さない組がある理由（**前提の外は空欄にしない。行ごと出さない**）
+
+    繰り下げた後の年額が `NET_RATE_POINTS` の上端（500万円）を超えると、
+    `_clamp_rate` は端の値で平らになります。すると 65歳受給と繰下げに
+    **同じ手取り率が掛かり、分岐点のずれが 0 か月**になります。
+    これは「差が無い」ではなく **「こちらの前提が届いていない」** です。
+    見分けが付かない数字を画面に出すと、視聴者が追試できません。
+    だから該当する組は**行ごと落とします**（`check_tables` で固定）。
+    """
+    top = NET_RATE_POINTS[-1][0]
+    rate = rate_for(months_from_65)
+    rows = []
+    for base, _ in NET_RATE_POINTS:
+        if base * rate > top:
+            continue                      # 前提の外（上の説明）
+        gross = break_even(months_from_65, base, net=False)
+        netbe = break_even(months_from_65, base, net=True)
+        if not gross or not netbe:
+            continue
+        at65 = lifetime_net(0, base, until_age)
+        after = lifetime_net(months_from_65, base, until_age)
+        rows.append({
+            "65歳の年額_万": base,
+            "繰下げ後の年額_万": round(base * rate, 1),
+            "手取り率_65歳": round(_clamp_rate(base), 3),
+            "手取り率_繰下げ後": round(_clamp_rate(base * rate), 3),
+            "分岐点_額面": f"{gross[0]}歳{gross[1]}か月",
+            "分岐点_手取り": f"{netbe[0]}歳{netbe[1]}か月",
+            "ずれ_月": (netbe[0] * 12 + netbe[1]) - (gross[0] * 12 + gross[1]),
+            "生涯手取り_65歳受給_円": round(at65 * 10_000),
+            "生涯手取り_繰下げ_円": round(after * 10_000),
+            "差_円": round((after - at65) * 10_000),
+        })
+    return rows
+
+
 def advance_grid(base_annual_man: float = 180.0, step_months: int = 12) -> list[dict]:
     """繰上げの月数ごとに、倍率と年額の減り方を出す。"""
     rows = []
@@ -490,6 +562,17 @@ if __name__ == "__main__":
         print(f"  {row['開始']:>9s}  倍率{row['倍率']:.3f}  年額{row['年額']:6.1f}万  "
               f"額面{row['分岐点_額面']:>10s}  手取り{row['分岐点_手取り']:>10s}  "
               f"ずれ{row['ずれ_月']:>3d}か月")
+
+    print("\n=== 年金額べつ / 額面の分岐点は全員おなじ、手取りの分岐点だけが動く ===")
+    print("  前提: 70歳まで繰下げ（倍率1.420）/ 85歳の誕生日まで生きた場合 / "
+          "手取り率は年額から補間（**制度の値ではなくこちらの前提**）")
+    for row in by_base_grid():
+        print(f"  65歳で年{row['65歳の年額_万']:5.1f}万 → 繰下げ後 {row['繰下げ後の年額_万']:5.1f}万  "
+              f"手取り率 {row['手取り率_65歳']:.3f}→{row['手取り率_繰下げ後']:.3f}  "
+              f"額面{row['分岐点_額面']:>10s}  手取り{row['分岐点_手取り']:>10s}"
+              f"（{row['ずれ_月']:>2d}か月うしろ）  "
+              f"85歳までの手取り {row['生涯手取り_65歳受給_円']:>11,d}円 → "
+              f"{row['生涯手取り_繰下げ_円']:>11,d}円（差 {row['差_円']:>+10,d}円）")
 
     print("\n=== 手取りで計算すると、天秤は繰上げ側に傾く ===")
     print(f"  前提: 65歳で年{base}万円 / 85歳の誕生日まで生きた場合 / "

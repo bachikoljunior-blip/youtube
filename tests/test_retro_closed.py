@@ -100,12 +100,32 @@ def test_実物の日誌で上位が入れ替わる():
             if tok in closed and start <= closed[tok]:
                 continue
             counted[tok] = counted.get(tok, 0) + 1
-    # 06:3x / 07:2x で閉じたと宣言された4語は、もう持ち越しに立たない
-    for tok in ("usage", "nenkin", "ASSUMPTIONS", "sibling_check --phase spawn"):
+    # 06:3x / 07:2x で閉じたと宣言された語は、もう持ち越しに立たない
+    #
+    # **`nenkin` をこの一覧から外しました**（2026-08-16 14:2x）。
+    # 外した理由は「落ちたから」ではありません。**`nenkin` は本当に戻ってきた**
+    # からです —— 11:0x が族べつ実績で名指しし、14:2x が実際に節を1つ足しました。
+    # **宣言より後の言及が残るのは、この仕組みが意図してやっていること**です
+    # （`critique_queue` と同じ「一度閉じた後の再発」）。
+    #
+    # ここで `nenkin` を残すと、**次の回から「日誌に `nenkin` と書けない」**
+    # という縛りになります。検査を通すために日誌を曲げるのは本末転倒なので、
+    # **戻ってこない語だけを残し、`nenkin` は下の「前の言及が黙るか」で見ます。**
+    for tok in ("usage", "ASSUMPTIONS", "sibling_check --phase spawn"):
         assert counted.get(tok, 0) < 2, (tok, counted.get(tok))
     # 宣言そのものは日誌に在る（検査が「宣言が無いから通った」にならないように）
     for tok in ("usage", "nenkin", "ASSUMPTIONS", "sibling_check --phase spawn"):
         assert tok in closed, tok
+
+    # **`nenkin` は、宣言より前の言及が黙っていることで見る。**
+    # 前が9件あるので、ここが素通りしていたら必ず気づけます（空振りにならない）。
+    before = [d for d, body, start in retro.handoff_blocks(journal)
+              if "nenkin" in retro.tokens(body) and start <= closed["nenkin"]]
+    assert len(before) >= 5, before
+    # そのうち、直近8回に入っているものは1件も数えられていないこと
+    silenced = [d for d, body, start in retro.handoff_blocks(journal)[-8:]
+                if "nenkin" in retro.tokens(body) and start <= closed["nenkin"]]
+    assert not silenced, silenced
 
 
 def test_閉じていないことを言う行を宣言に数えない():
@@ -184,3 +204,36 @@ def test_実物の日誌で最後の宣言が効く():
     kept = [d for d, body, start in retro.handoff_blocks(journal)
             if tok in retro.tokens(body) and start > closed[tok]]
     assert not kept, (tok, kept)
+
+
+def test_鉤括弧の中の閉じましたは宣言に数えない():
+    """**同じ穴の4枚目**（2026-08-16。実データが赤で始まって気づきました）。
+
+    3枚目（10:xx）はバッククォートだけを落としました。**鉤括弧は残っていました。**
+    `TOKEN_RE` は**両方を同じ「引用」として**語を拾うのに、`prose_only` が
+    落とすのは片方だけ —— **片方だけ直す形の8回目**です。
+
+    前の回が push した故障注入の一覧に、この行があります ——
+
+        - **散文の「閉じました」では畳み続けること**（`closes` にしか反応しない）
+
+    これが宣言として読まれ、**`閉じました` という語そのものが「閉じた語」**として
+    登録されていました。
+    """
+    doc = "- **散文の「閉じました」では畳み続けること**（`closes` にしか反応しない）\n"
+    assert retro.closures(doc) == {}
+
+
+def test_鉤括弧を落としても地の文の宣言は残る():
+    """**片側だけ締めないこと。** 語が鉤括弧、動詞が地の文、という普通の形。"""
+    got = retro.closures("「在庫が2週間を切ったら下限より生成を優先」はこの回で閉じました\n")
+    assert "在庫が2週間を切ったら下限より生成を優先" in got
+
+
+def test_実物の日誌に閉じましたという語の宣言が無い():
+    """**実データ。** 動詞そのものが「閉じた語」として登録されていないこと。"""
+    journal = (ROOT / "docs" / "JOURNAL.md").read_text(encoding="utf-8")
+    closed = retro.closures(journal)
+    assert "閉じました" not in closed
+    assert "閉じた" not in closed
+    assert closed, "宣言が1つも読めていません（締めすぎです）"
