@@ -214,6 +214,20 @@
     ],
     "video_id": ""
   },
+  "s-fuka-ideco-waku-1000en": {
+    "charts": [
+      [
+        "1,000円",
+        "600円",
+        "400円"
+      ],
+      [
+        "年1,440円",
+        "年960円"
+      ]
+    ],
+    "video_id": "QKvpHbRfdb0"
+  },
   "s-fuka-kaishu-24kagetsu": {
     "charts": [
       [
@@ -642,6 +656,19 @@
       ]
     ],
     "video_id": "v6gZIFynjpc"
+  },
+  "s-kogaku-gassan-21000-mikan": {
+    "charts": [
+      [
+        "105,430円",
+        "105,430円"
+      ],
+      [
+        "0円",
+        "77,430円"
+      ]
+    ],
+    "video_id": "qFaWlft1CVs"
   },
   "s-kogaku-jikofutan-1-percent": {
     "charts": [
@@ -1388,6 +1415,16 @@
       ]
     ],
     "video_id": "PZli3GKY848"
+  },
+  "s-zaishoku-hyojun-620000-nenkin-zero": {
+    "charts": [
+      [
+        "169,308円",
+        "124,308円",
+        "69,308円"
+      ]
+    ],
+    "video_id": "AUNctVhpBLc"
   },
   "s-zangyo-1": {
     "charts": [

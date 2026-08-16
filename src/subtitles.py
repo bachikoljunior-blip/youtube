@@ -377,7 +377,20 @@ def _best_cut(piece: str, limit: int, strict: bool = False) -> int:
     # （検査 `verify._check_visual_wrap` と同じ判定式。**片側だけ機械にしない**）。
     # ほかの理由で切れ目が無い場合は、今までどおり `limit` で割ります ——
     # そちらは行が短くなるだけで、読めなくなるわけではありません。
-    if limit < len(piece) and piece[limit - 1] in _NUM_TOKEN and piece[limit].isdigit():
+    #
+    # **同じことがカタカナでも起きます**（2026-08-17。**足した在庫が1周で詰まった**）。
+    # `s-serufu-88000-uwanose` は `セルフメディケーション税制` が
+    # **『セルフメディケーショ』／『ン税制』** で落ちました（`verify` が止めた）。
+    # `セルフメディケーション` は11字で、狭い欄の限度より長い。
+    # **数のかたまりとまったく同じ形で、前を向いて探すかぎり全部カタカナの中**です。
+    #
+    # 上の節は「数のかたまり」しか見ていませんでした。**塞ぐのは1件ではなく、
+    # 『1つのかたまりが限度より長い』という形のほう**です（数・カタカナの2種類）。
+    # 検査 `verify._check_visual_wrap` は最初から両方を見ています
+    # （`bad_num` と `bad_kata`）。**折る側だけが片方しか持っていなかった。**
+    if limit < len(piece) and (
+            (piece[limit - 1] in _NUM_TOKEN and piece[limit].isdigit())
+            or (_is_katakana(piece[limit - 1]) and _is_katakana(piece[limit]))):
         for cut in range(limit + 1, len(piece)):
             if ok(cut, True):
                 return cut

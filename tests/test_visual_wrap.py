@@ -149,6 +149,30 @@ def test_限度より長い数のかたまりは割らずにはみ出す():
     assert max(len(x) for x in lines) > 6
 
 
+def test_限度より長いカタカナの語も割らずにはみ出す():
+    """**同じ形の2件目**（2026-08-17）。数のかたまりだけを見ていた最後の節を、
+    「1つのかたまりが限度より長い」という形のほうに広げた。
+
+    `s-serufu-88000-uwanose` は `セルフメディケーション税制` が
+    **『セルフメディケーショ』／『ン税制』**で `verify` に止められ、
+    **足したばかりの在庫6件が丸ごと作れない**ところだった
+    （`セルフメディケーション` は11字で、狭い欄の限度より長い）。
+
+    実データ 6,064件 × 限度17通り・36,112組で、カタカナの割れは **138 → 0**
+    （数の割れは 0 → 0 のまま・悪化0・総行数は 139,291 → 139,200 と減る）。
+    """
+    from src import subtitles
+    from src.verify import _is_katakana
+    lines = subtitles._chunk("セルフメディケーション税制", 6)
+    assert not any(_is_katakana(a[-1]) and _is_katakana(b[0])
+                   for a, b in zip(lines, lines[1:])), lines
+    assert "".join(lines) == "セルフメディケーション税制", lines
+    # はみ出してよい。**読めない行を作るよりまし**（数のかたまりと同じ判断）
+    assert max(len(x) for x in lines) > 6
+    # 短い単位（パーセント）でも、割らずに1行で出る
+    assert subtitles._chunk("87パーセント", 5) == ["87パーセント"]
+
+
 def test_棒のラベルと見出しも見ている():
     """**欄を1つ足したときに落ちること。** 一覧が片肺になるのを止める。"""
     from src import verify as v
