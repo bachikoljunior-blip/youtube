@@ -509,6 +509,15 @@
     ],
     "video_id": "dsXQTODZbT0"
   },
+  "s-jikangai-2kagetsu-160-de-38jikan-otosu": {
+    "charts": [
+      [
+        "99時間",
+        "160時間"
+      ]
+    ],
+    "video_id": "aeTyTdXcyPc"
+  },
   "s-jikangai-6months-480-vs-594": {
     "charts": [
       [
@@ -605,6 +614,15 @@
       ]
     ],
     "video_id": "n2xdLoIv4XU"
+  },
+  "s-kogaku-danchigai-500-530": {
+    "charts": [
+      [
+        "87,430円",
+        "171,820円"
+      ]
+    ],
+    "video_id": "v6gZIFynjpc"
   },
   "s-kogaku-jikofutan-1-percent": {
     "charts": [
@@ -756,6 +774,17 @@
     ],
     "video_id": "cJTGM3x3yaM"
   },
+  "s-kyugyo-2gatsu-4gatsu-89nichi-121340": {
+    "charts": [
+      [
+        "89日",
+        "90日",
+        "91日",
+        "92日"
+      ]
+    ],
+    "video_id": "ukaxLVBTWg0"
+  },
   "s-kyugyo-rekijitsu92-39-1": {
     "charts": [
       [
@@ -860,6 +889,15 @@
     ],
     "video_id": "WSJAjK1Xo-I"
   },
+  "s-nenkin-menjo-mino-102000": {
+    "charts": [
+      [
+        "204万円",
+        "0円"
+      ]
+    ],
+    "video_id": "VdYZ7l8VV6c"
+  },
   "s-nenkin-tsuinou-kaishu-2bai": {
     "charts": [
       [
@@ -942,11 +980,11 @@
   "s-shitsugyo-4": {
     "charts": [
       [
-        "7万6860円",
-        "24万8100円"
+        "76,860円",
+        "248,100円"
       ]
     ],
-    "video_id": "aUYYSN4pLMw"
+    "video_id": "FaLqCd-z1QU"
   },
   "s-shitsugyo-45-60-zaiseki-nobashite-heru": {
     "charts": [
@@ -1265,6 +1303,20 @@
       ]
     ],
     "video_id": "C4oBjBsxmOU"
+  },
+  "s-yukyu-shukei-20nen-shu4-92nichi": {
+    "charts": [
+      [
+        "361日",
+        "269日"
+      ],
+      [
+        "198日",
+        "126日",
+        "55日"
+      ]
+    ],
+    "video_id": "rsDpBwd5Pm4"
   },
   "s-zangyo-1": {
     "charts": [

@@ -220,7 +220,63 @@ def report(video_id: str, answers: list[tuple[int, str]]) -> list[float]:
         else:
             scores.append(s)
     print(f"\n[critique] {video_id} 取れた点: {scores}")
+    print(_measured_changes(video_id))
     return scores
+
+
+# **「画面が変わっていない」という指摘は、必ずこの数字と突き合わせること**
+# （下限は `verify.NEAR_DUPE_RATIO` と同じ 1.0%。実測で置いた値です）
+CHANGE_FLOOR = 0.01
+
+
+def _measured_changes(video_id: str) -> str:
+    """評価の直後に、**隣り合うコマの実測差**を並べる（2026-08-16 22:3x）。
+
+    ## なぜ要るか —— 同じ空振りが3回続いた
+
+    評価する体も目視する体も、見ているのは **contact sheet の縮んだタイル**です。
+    そこでは「1行増えた」「数字が現れた」が読めないので、
+    **3回続けて「画面が変わっていない」と報告し、3回とも誤報**でした
+    （21:5x 余り枠／22:0x 前提表 実測 16.10%／22:3x 冒頭2コマ 実測 12.24%）。
+
+    **誤報そのものは止められません。** タイルが小さいのは材料の作りだからです。
+    止められるのは**こちら側が真に受けて調べ直すこと**で、
+    後の2件は**焼き直して初めて**否定できました（毎回10〜25分）。
+
+    測る道具は最初からありました（`verify.slide_change_ratios`）。
+    足りなかったのは、**その値が報告のとなりに出ていないこと**だけです。
+
+    **数字が指摘を打ち消すわけではありません。** 12% 塗り替わっていても
+    「見て気づかない」ことはあり得ます。ここが言えるのは
+    **「同一ではない」という一点だけ**で、そう書いてあります。
+    """
+    meta = QUEUE / f"{video_id}.json"
+    if not meta.exists():
+        return ""
+    try:
+        ratios = json.loads(meta.read_text(encoding="utf-8")).get("change_ratios")
+    except (json.JSONDecodeError, OSError):
+        return ""
+    if not ratios:
+        # **黙って何も出さないこと**（2026-08-16 22:3x より前の本には入っていません）。
+        # 出さないと、次の回は「測っていない」と「差が無い」を区別できません。
+        return (f"[critique] {video_id} には隣との実測がありません"
+                f"（8/16 22:3x より前の投稿）。測るには:\n"
+                f"    python scripts/bake_slides.py "
+                f"--plan data/critique_queue/{video_id}.plan.json --short")
+    low = [(i + 1, i + 2, r) for i, r in enumerate(ratios) if r < CHANGE_FLOOR]
+    head = (f"[critique] {video_id} の隣り合うコマの実測差"
+            f"（最小 {min(ratios):.2%} / 最大 {max(ratios):.2%} / {len(ratios)}組）")
+    if not low:
+        return (f"{head}\n"
+                f"  **同じ絵の組は0件です。**「コマNとN+1が同一」という指摘が"
+                f"上にあるなら、それは**縮んだタイルの見え方**であって、"
+                f"実物は同一ではありません（3回続けて誤報。`_measured_changes` の説明）。\n"
+                f"  **ただし「同一ではない」までしか言えません。**"
+                f"「変わったが気づかない」は、この数字では否定できません")
+    return (f"{head}\n  **下限 {CHANGE_FLOOR:.0%} を下回った組が {len(low)} 件**"
+            f"（{'・'.join(f'{a}→{b} {r:.2%}' for a, b, r in low[:5])}）"
+            f" ← **こちらは本物です。**")
 
 
 def main(argv: list[str] | None = None) -> int:

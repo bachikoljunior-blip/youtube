@@ -44,6 +44,44 @@ LEDGER = ROOT / "data" / "critique.jsonl"
 JST = timezone(timedelta(hours=9))
 
 
+def _change_ratios(work: Path) -> list[float] | None:
+    """隣り合うコマが画面のどれだけを塗り替えているか、**焼いた実物**から測る。
+
+    ## なぜここで測るのか（2026-08-16 22:3x。**同じ空振りが3回続いてから**）
+
+    独立評価と目視は、**contact sheet（縮んだタイル）しか見ていません。**
+    そして3回続けて「画面が変わっていない」と報告し、**3回とも誤報**でした:
+
+        08/16 21:5x  目視3体中2体「最終コマが描画失敗＝作り直し」   正体はこちらが描いた余り枠
+        08/16 22:0x  独立評価3体「前提表 11→12 が完全に同一」      実測 **16.10%** が違う
+        08/16 22:3x  独立評価3体「冒頭2コマが完全に同一」          実測 **12.24%** が違う
+
+    **後の2件は、この回が `bake_slides.py --plan` で焼き直して初めて分かりました。**
+    1本あたり 30秒〜1分、読み解きを入れると**毎回10〜25分**が、
+    「起きていないこと」の確認に消えています。**種類が同じなので、次も出ます。**
+
+    塞ぐ先は報告のほうではありません。**測った数字が、報告のとなりに無いこと**です。
+    `verify.slide_change_ratios` は投稿の時点で既に走れる状態にあり
+    （`work/slides/*.png` がまだある）、**値を捨てていただけ**でした。
+
+    ここで積んでおけば、次の回は `critique_run.py` の出力で
+    **その場で突き合わせられます**（焼き直し 0回・追加費用 0）。
+
+    **測れなくても止めません。** これは材料の付録で、本体（sheet と読み上げ文）
+    ではありません。長尺や、slides を消したあとの再投稿でも stash は通すこと。
+    """
+    slides = sorted((work / "slides").glob("*.png"))
+    if len(slides) < 2:
+        return None
+    try:
+        from src import verify
+
+        return [round(r, 4) for r in verify.slide_change_ratios(slides)]
+    except Exception as exc:                       # 付録なので、落ちても投稿は通す
+        print(f"[queue] 隣との差を測れませんでした（続行）: {exc}")
+        return None
+
+
 def stash(topic: str, video_id: str, script: dict, work: Path) -> Path | None:
     """contact sheet と読み上げ文を、動画IDで引ける場所へ写す。
 
@@ -110,6 +148,7 @@ def stash(topic: str, video_id: str, script: dict, work: Path) -> Path | None:
                 "orientation": "縦" if script.get("short", True) else "横",
                 "narration": [ln for ln in lines if ln],
                 "slides_plan": plan_kept,
+                "change_ratios": _change_ratios(work),
             },
             ensure_ascii=False,
             indent=1,

@@ -186,3 +186,6 @@
 {"at": "2026-08-16T21:49:40+09:00", "session": "session_01HFRWHprPNpcVRC9GZDykRk", "kind": "ship", "what": "fix: 2字の単位（時間）が真ん中で割れる／検査が note の狭いほうの幅（.note.lead）を見ていなかった"}
 {"at": "2026-08-16T21:55:43+09:00", "session": "session_01HFRWHprPNpcVRC9GZDykRk", "kind": "ship", "what": "fix: inspect_build が「空き枠 N枚」を出力で言う（目視の誤報を1手で照合できる）／手順§5に照合の道を足した"}
 {"at": "2026-08-16T21:58:13+09:00", "session": "session_01HFRWHprPNpcVRC9GZDykRk", "kind": "ship", "what": "verdict(独立評価): UoeAfg16_aw を3体で評価し中央値6.0（合格）。3体が独立に『前提表 11→12 が完全に同一』を指した＝reveal_variants の table 側の疑い"}
+{"at": "2026-08-16T22:16:42+09:00", "session": "session_018g71d9vQrzccaUMBnf1KdL", "kind": "start"}
+{"at": "2026-08-16T22:29:56+09:00", "session": "session_018g71d9vQrzccaUMBnf1KdL", "kind": "ship", "what": "upload×6: 09-04 を6本埋めて9つめの「8本の日」に（M11 の段 8→9日／14日まであと5日）"}
+{"at": "2026-08-16T22:36:05+09:00", "session": "session_018g71d9vQrzccaUMBnf1KdL", "kind": "ship", "what": "fix: 独立評価の報告のとなりに「隣り合うコマの実測差」を出す（縮んだタイル由来の『画面が同一』誤報が3回続き、毎回10〜25分を焼き直しに溶かしていた）"}
