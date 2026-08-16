@@ -73,12 +73,28 @@ ROUTE_EVERY = 8
 # 申し送りの中で「同じものを指している」と機械で言える語だけを拾う。
 # 散文の名詞を拾うと何もかも一致するので、**識別子と鉤括弧に限る。**
 TOKEN_RE = re.compile(r"`([^`\n]{3,40})`|「([^」\n]{3,30})」")
+# **潰した宣言**。日誌は「〜はこの回で閉じました」と、毎回この形で書いています
+# （実測7件・2026-08-16）。**書く側はあったのに、読む側がありませんでした**（下）。
+#
+# **「閉じた」まで拾わないこと**（2026-08-16 09:5x に、入れた直後の実物で踏みました）。
+# 「**一度閉じた後の再発**」という、**閉じていないことを言うための行**が
+# 宣言として読まれ、`critique_queue` が丸ごと黙りました。**言葉の向きが逆です。**
+# 丁寧形（「閉じました」）だけが宣言で、連体形は文中の言及に出ます。
+CLOSED_RE = re.compile(r"閉じました")
+# 宣言の形をしていても、**閉じていないことを言っている行**は数えない。
+REOPEN_RE = re.compile(r"再発|閉じていない|閉じたつもり|閉じられていない")
 
 
-def blocks_under(text: str, head_re: re.Pattern[str]) -> list[tuple[str, list[str]]]:
-    """`head_re` に当たる見出しの中身を、直前の `## 日付` と一緒に返す。"""
+def blocks_under(text: str,
+                 head_re: re.Pattern[str]) -> list[tuple[str, list[str], int]]:
+    """`head_re` に当たる見出しの中身を、直前の `## 日付` と**行番号**と一緒に返す。
+
+    行番号を返すのは、**「潰したと宣言された後の言及か」を時系列で見るため**です
+    （`carry_over()`）。日付だけだと、同じ回の中で「閉じました」と書いた行そのものが
+    持ち越しの1回として数えられます。
+    """
     lines = text.split("\n")
-    blocks: list[tuple[str, list[str]]] = []
+    blocks: list[tuple[str, list[str], int]] = []
     for i, line in enumerate(lines):
         if not head_re.match(line):
             continue
@@ -95,12 +111,30 @@ def blocks_under(text: str, head_re: re.Pattern[str]) -> list[tuple[str, list[st
             body.append(lines[k])
         while body and not body[-1].strip():
             body.pop()
-        blocks.append((date, body))
+        blocks.append((date, body, i))
     return blocks
 
 
-def handoff_blocks(text: str) -> list[tuple[str, list[str]]]:
+def handoff_blocks(text: str) -> list[tuple[str, list[str], int]]:
     return blocks_under(text, HANDOFF_RE)
+
+
+def closures(text: str) -> dict[str, int]:
+    """**「この語はこの回で閉じました」を、日誌から拾う。**
+
+    返すのは `語 → 宣言された行番号`（同じ語が何度も閉じられていたら**最後の1回**）。
+    行番号で持つのは、**閉じた後にまた出てきたら、それは本当の再発**だからです
+    （`critique_queue` は 04:2x に閉じて、そのあと別の理由で戻っています）。
+    """
+    found: dict[str, int] = {}
+    for i, line in enumerate(text.split("\n")):
+        if not CLOSED_RE.search(line) or REOPEN_RE.search(line):
+            continue
+        for m in TOKEN_RE.finditer(line):
+            tok = (m.group(1) or m.group(2)).strip()
+            if tok:
+                found[tok] = i
+    return found
 
 
 def first_lines(body: list[str], want: str) -> str:
@@ -171,37 +205,51 @@ def main() -> int:
     else:
         print("  記録がありません。")
 
-    blocks = handoff_blocks(JOURNAL.read_text(encoding="utf-8"))[-args.n:]
+    journal = JOURNAL.read_text(encoding="utf-8")
+    closed = closures(journal)
+    blocks = handoff_blocks(journal)[-args.n:]
     print(f"\n\n## 「次の回へ」（{len(blocks)} 件）\n")
-    for date, body in blocks:
+    for date, body, _ in blocks:
         print(f"── {date}")
         for line in body:
             print(f"  {line}")
         print()
 
     seen: defaultdict[str, list[str]] = defaultdict(list)
-    for date, body in blocks:
+    muted: defaultdict[str, int] = defaultdict(int)
+    for date, body, start in blocks:
         for tok in tokens(body):
+            if tok in closed and start <= closed[tok]:
+                muted[tok] += 1      # **潰したと宣言された後より前の言及**
+                continue
             seen[tok].append(date[:16])
     carried = {t: ds for t, ds in seen.items() if len(ds) >= 2}
     print("\n## 持ち越し（2回以上の申し送りに出てくる語）\n")
     if carried:
         for tok, dates in sorted(carried.items(), key=lambda kv: -len(kv[1])):
-            print(f"  {len(dates)}回  {tok}")
+            tail = "  ← **一度閉じた後の再発**" if tok in closed else ""
+            print(f"  {len(dates)}回  {tok}{tail}")
             print(f"        {' / '.join(dates)}")
         print("\n  **これは「毎回言っているのに、まだ潰れていない」ものの候補です。**")
         print("  この回で1件は潰すこと。潰せないなら、なぜ潰さないかを JOURNAL に書く。")
     else:
         print("  ありません。（申し送りが毎回すべて片づいている、"
               "か、書き方が毎回違って機械では追えていない）")
+    # **落としたものは必ず言うこと。** 黙って削ると「全部見た」に見えます。
+    if muted:
+        print("\n  --- **閉じたと日誌が宣言しているので、上から外したもの** ---")
+        for tok, n in sorted(muted.items(), key=lambda kv: -kv[1]):
+            print(f"  {n}回ぶん  {tok}")
+        print("  **宣言のほうが間違っていることもあります**（閉じたつもりで閉じていない）。"
+              "\n  疑うなら日誌の宣言を読み、実物に当たること。**言及の回数は証拠になりません。**")
 
-    review_all = blocks_under(JOURNAL.read_text(encoding="utf-8"), REVIEW_RE)
+    review_all = blocks_under(journal, REVIEW_RE)
     reviews = review_all[-args.n:]
     print(f"\n\n## 設計の見直し（§6 (a2)）を**縦に読む**（{len(reviews)} 件）\n")
     if reviews:
         print("  1回ぶんでは何も言いませんが、**並べると癖が出ます。**")
         print("  （問い1の1行目だけ。全文は日誌に）\n")
-        for date, body in reviews:
+        for date, body, _ in reviews:
             q1 = first_lines(body, "1")
             print(f"  {date[:16]:<18} {q1[:88] if q1 else '（問い1に答えていない回）'}")
     else:
@@ -209,7 +257,7 @@ def main() -> int:
 
     # 問い4（いまの道筋）は判断で決めない。前の [道筋] から数えて機械が言う。
     since = None
-    for i, (_, body) in enumerate(reversed(review_all)):
+    for i, (_, body, _s) in enumerate(reversed(review_all)):
         if any(ROUTE_MARK in line for line in body):
             since = i
             break

@@ -128,8 +128,38 @@ def assign(free: dict[str, list[str]], count: int) -> list[tuple[str, str]]:
     """calc を1つずつ回りながら (モジュール, 見出し) を count 件とる。
 
     **回すのが本体です。** まとめ取りすると同じ calc が並び、量産判定に当たります。
+
+    ## 並べる順（2026-08-16 に入れ替えた。**前は「余りの多い順」でした**）
+
+    ここは長らく `-len(free[m])` ＝ **未使用の節が多い calc から**でした。
+    **それは実績と何の関係もありません。** むしろ逆に効きます ——
+    節をよく使っている calc ほど余りが減るので、**当たっている族ほど後ろに回ります。**
+
+    実測（同日 09:5x）。上位3族は engaged 45.6 / 45.5 / 38.7% で未使用は 0〜1件、
+    いっぽう未測定の労基法系（`yukyu` 4件・`jikangai` 2件）が余りを持っていました。
+    その状態で3回まわすと、**3件とも `yukyu`・`jikangai` に行き、
+    実績2位の `shitsugyo` はこの回で足した節を1つも取れませんでした。**
+
+    **これは M15 を空回りさせます。** M15 は「作る題材の順番を実績で決める」手ですが、
+    順番を付ける相手（＝在庫）が全部未測定の族なら、**順番は何も選べません。**
+    前の回の申し送り1件目が、まさにここを指しています ——
+    「`status.py` の族べつの実績を `topic_forge` 側にも通すこと。いま名指しはするが、
+    **節を書く先を機械が選んではいない**」。
+
+    だから `pick` と**同じ物差し**（`src/family_perf.scorer`）で並べます。
+    余りの数は順番から外し、**在庫が有るかどうか**だけに使います
+    （`pool` が空の calc は回り番から自然に落ちます）。
+
+    **未知の calc は全体平均**が返るので（`family_perf`）、**探索は殺しません。**
+    実績が取れない回は、前と同じ「余りの多い順」に落ちます。
     """
-    order = sorted(free, key=lambda m: (-len(free[m]), m))
+    try:
+        from src import family_perf
+        score = family_perf.scorer()
+        order = sorted(free, key=lambda m: (-score(m), m))
+    except Exception as exc:      # 実績が読めない回でも、在庫づくりは止めない
+        print(f"[forge] 族べつの実績が読めないので余りの多い順に落とします: {exc}")
+        order = sorted(free, key=lambda m: (-len(free[m]), m))
     pool = {m: list(free[m]) for m in order}
     picked: list[tuple[str, str]] = []
     while len(picked) < count and any(pool.values()):

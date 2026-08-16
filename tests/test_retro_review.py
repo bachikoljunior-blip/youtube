@@ -69,8 +69,8 @@ def test_次の回へと取り違えない():
 
 def test_道筋の印を見つける():
     doc = _doc(HEADINGS[2], "1. 何か\n4. いまの道筋は最短ではない。 `[道筋]`")
-    (_, body), = retro.blocks_under(doc, retro.REVIEW_RE)
+    (_, body, _s), = retro.blocks_under(doc, retro.REVIEW_RE)
     assert any(retro.ROUTE_MARK in line for line in body)
     plain = _doc(HEADINGS[2], "1. 何か")
-    (_, body2), = retro.blocks_under(plain, retro.REVIEW_RE)
+    (_, body2, _s2), = retro.blocks_under(plain, retro.REVIEW_RE)
     assert not any(retro.ROUTE_MARK in line for line in body2)
