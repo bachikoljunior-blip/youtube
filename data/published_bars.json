@@ -214,6 +214,17 @@
     ],
     "video_id": ""
   },
+  "s-fuka-kaishu-24kagetsu": {
+    "charts": [
+      [
+        "2万4千円",
+        "1万2千円",
+        "19万2千円",
+        "9万6千円"
+      ]
+    ],
+    "video_id": "usfip9ssGZM"
+  },
   "s-fukugyo-10pct-1en": {
     "charts": [
       [
@@ -513,6 +524,19 @@
     ],
     "video_id": "2cDEdN5At04"
   },
+  "s-jikangai-720-nurashi-99to75": {
+    "charts": [
+      [
+        "99時間",
+        "21時間"
+      ],
+      [
+        "720時間",
+        "720時間"
+      ]
+    ],
+    "video_id": "okapNxhHI0E"
+  },
   "s-jikangai-99h-tsugitsuki-61h": {
     "charts": [
       [
@@ -522,6 +546,15 @@
       ]
     ],
     "video_id": "PWtcOQLTvO4"
+  },
+  "s-jikangai-futsu-6kagetsu-126": {
+    "charts": [
+      [
+        "720時間",
+        "594時間"
+      ]
+    ],
+    "video_id": "YKDUgyIa8Bw"
   },
   "s-jutaku-1": {
     "charts": [
@@ -572,6 +605,20 @@
       ]
     ],
     "video_id": "n2xdLoIv4XU"
+  },
+  "s-kogaku-jikofutan-1-percent": {
+    "charts": [
+      [
+        "300万円",
+        "17万7430円"
+      ],
+      [
+        "30.00%",
+        "8.74%",
+        "1.77%"
+      ]
+    ],
+    "video_id": "Om7cAayaH-Q"
   },
   "s-kogaku-kuni-267000-itchi": {
     "charts": [
@@ -709,6 +756,16 @@
     ],
     "video_id": "cJTGM3x3yaM"
   },
+  "s-kyugyo-rekijitsu92-39-1": {
+    "charts": [
+      [
+        "6,067円",
+        "5,934円",
+        "5,869円"
+      ]
+    ],
+    "video_id": "9RNhzUfMPDE"
+  },
   "s-kyugyo-season-121340-vs-117380": {
     "charts": [
       [
@@ -718,6 +775,16 @@
       ]
     ],
     "video_id": "E_aR0JoRauw"
+  },
+  "s-kyugyo-shu4-saitei-hosho": {
+    "charts": [
+      [
+        "4,114円",
+        "3,456円",
+        "3,456円"
+      ]
+    ],
+    "video_id": "SJNQdqcN_IY"
   },
   "s-nenkin-1": {
     "charts": [
@@ -792,6 +859,21 @@
       ]
     ],
     "video_id": "WSJAjK1Xo-I"
+  },
+  "s-nenkin-tsuinou-kaishu-2bai": {
+    "charts": [
+      [
+        "9.99年",
+        "19.98年"
+      ],
+      [
+        "212.5円",
+        "425.0円",
+        "637.5円",
+        "850.0円"
+      ]
+    ],
+    "video_id": "2h1gT8f5XKU"
   },
   "s-nenkinmenjo-zengaku-10200": {
     "charts": [
@@ -1155,6 +1237,25 @@
       ]
     ],
     "video_id": "pDxXU-A4xpo"
+  },
+  "s-yukyu-shitei-shu4-3nen6kagetsu": {
+    "charts": [
+      [
+        "34日",
+        "44日"
+      ]
+    ],
+    "video_id": "vKEaTyoC4ZM"
+  },
+  "s-yukyu-shu2-shogai-jogen-7": {
+    "charts": [
+      [
+        "20日",
+        "10日",
+        "7日"
+      ]
+    ],
+    "video_id": "EYxhnLT8vJA"
   },
   "s-yukyu-shu4-3nen6kagetsu": {
     "charts": [
