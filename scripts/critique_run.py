@@ -258,11 +258,18 @@ def main(argv: list[str] | None = None) -> int:
     elif args.video_id:
         queue, want = [args.video_id], 1
     elif args.next:
-        queue, want = pending_ids()[:1], 1
+        # **`--next` も繰り上げること**（2026-08-16 に実際に踏んだ）。
+        # 上の `--count` は「材料の欠けた本が枠を食い続ける」を直してあるのに、
+        # **`--next` は `[:1]` のままでした**（片方だけ直した形。通算6回目）。
+        # この回の `--next` は先頭 `CdX2oIb7BG8`（読み上げ文0行＝永久に評価不能）を
+        # 飛ばし、**そこで終わって1本も評価していません。** 待ち行列は37本あるのに、
+        # 手順（§5）が毎回すすめる `--next` が**空振りし続ける**形でした。
+        queue, want = pending_ids(), 1
         if not queue:
             print("[critique] 待ち行列は空です。")
             return 0
-        print(f"[critique] 待ち行列の先頭: {queue[0]}")
+        print(f"[critique] 待ち行列 {len(queue)}本の先頭から1本"
+              f"（材料の欠けた本は飛ばして繰り上げます）")
     else:
         ap.error("動画ID か --next か --count のどれかが要ります")
 

@@ -169,3 +169,36 @@ def test_dryは記録しない(monkeypatch, tmp_path):
                         lambda cmd, **kw: recorded.append(cmd) or type("P", (), {"returncode": 0})())
     assert critique_run.main(["--count", "2", "--dry"]) == 0
     assert not recorded
+
+
+def test_nextも材料の欠けた本を繰り上げる(monkeypatch, tmp_path):
+    """**`--next` が空振りしないこと**（2026-08-16 に実際に踏んだ）。
+
+    `--count` 側だけ「先頭N本ではなくN本回す」に直してあり、`--next` は
+    `[:1]` のままでした。先頭が永久に評価できない本（読み上げ文0行）だと、
+    **手順（§5）が毎回すすめる `--next` が1本も評価しないまま終わります。**
+    """
+    q = _patch(monkeypatch, tmp_path, ids=["aaa", "bbb", "ccc"])
+    (q / "aaa.jpg").unlink()          # 材料の欠けた本が先頭
+
+    monkeypatch.setattr(critique_run, "ask_one",
+                        lambda n, prompt, workdir: (n, "SCORE: 6"))
+    recorded: list[list[str]] = []
+    monkeypatch.setattr(critique_run.subprocess, "run",
+                        lambda cmd, **kw: recorded.append(cmd) or type("P", (), {"returncode": 0})())
+
+    critique_run.main(["--next"])
+    assert [c[2] for c in recorded] == ["bbb"], "--next が先頭で止まった"
+
+
+def test_nextは1本だけ回す(monkeypatch, tmp_path):
+    """繰り上げても**1本まで**。待ち行列ぜんぶを回さないこと。"""
+    _patch(monkeypatch, tmp_path, ids=["aaa", "bbb", "ccc"])
+    monkeypatch.setattr(critique_run, "ask_one",
+                        lambda n, prompt, workdir: (n, "SCORE: 6"))
+    recorded: list[list[str]] = []
+    monkeypatch.setattr(critique_run.subprocess, "run",
+                        lambda cmd, **kw: recorded.append(cmd) or type("P", (), {"returncode": 0})())
+
+    critique_run.main(["--next"])
+    assert [c[2] for c in recorded] == ["aaa"]
