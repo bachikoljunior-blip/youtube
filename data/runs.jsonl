@@ -184,3 +184,4 @@
 {"at": "2026-08-16T21:49:40+09:00", "session": "session_01HFRWHprPNpcVRC9GZDykRk", "kind": "ship", "what": "fix: status.py が「あと何本で8本の日が1日ふえるか」を日ごとに出す（3回続けて予約一覧を目で数えていた）", "closes": ["status.py"], "journal_lines": 15613}
 {"at": "2026-08-16T21:49:40+09:00", "session": "session_01HFRWHprPNpcVRC9GZDykRk", "kind": "ship", "what": "fix: contact sheet の余り枠が赤×＋豆腐文字で、目視2体に無傷の本を「作り直し」と誤判定させていた"}
 {"at": "2026-08-16T21:49:40+09:00", "session": "session_01HFRWHprPNpcVRC9GZDykRk", "kind": "ship", "what": "fix: 2字の単位（時間）が真ん中で割れる／検査が note の狭いほうの幅（.note.lead）を見ていなかった"}
+{"at": "2026-08-16T21:55:43+09:00", "session": "session_01HFRWHprPNpcVRC9GZDykRk", "kind": "ship", "what": "fix: inspect_build が「空き枠 N枚」を出力で言う（目視の誤報を1手で照合できる）／手順§5に照合の道を足した"}
