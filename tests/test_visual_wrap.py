@@ -191,6 +191,32 @@ def test_台本が無い回は黙る():
     assert verify._check_visual_wrap(None, True) == []
     assert verify._check_visual_wrap({}, True) == []
 
+def test_限度より長い行が残ったら見出しを縮める():
+    """**折る側を直したら、こんどは画面側に縮むつまみが無かった**（2026-08-17）。
+
+    `_best_cut` が「限度の外まで出て切る」ようになったので、
+    折った結果が限度より長い行は**正規に起きます**。ところが見出しには
+    `tighten`（折り直すだけ）しか無く、`zoom` は `.body` にしか掛からない。
+    結果 `セルフメディケーション税制` は**ブラウザが勝手に割り**、
+    実物の1コマ目が『セルフメディケーシ』『ョン』『税制』になりました
+    （`verify` は `<br>` の折り目しか見ないので素通り。目視で発見）。
+    """
+    from src import visuals as v
+    head = v._wrap_head("セルフメディケーション税制", True, 0)
+    assert head == "セルフメディケーション<br>税制", head
+    ratio = v._fit_ratio(head, v.HEAD_CHARS_PORTRAIT)
+    assert v.HEAD_FIT_MIN <= ratio < 1.0, ratio
+    assert abs(ratio - v.HEAD_CHARS_PORTRAIT / len("セルフメディケーション")) < 1e-9
+    html = v.build_html({"headline": "セルフメディケーション税制", "kind": "stat",
+                         "stat": "8万8000円"}, v.THEMES[0], True)
+    assert "--head-fit:" in html and "var(--head-fit, 1)" in html
+    # **限度に収まっている見出し（＝ほとんど全部）には何も足さない**
+    plain = v.build_html({"headline": "足切りの差が上限になる", "kind": "stat",
+                          "stat": "8万8000円"}, v.THEMES[0], True)
+    assert "--head-fit:" not in plain
+    assert v._fit_ratio(v._wrap_head("足切りの差が上限になる", True, 0),
+                        v.HEAD_CHARS_PORTRAIT) == 1.0
+
 
 if __name__ == "__main__":
     for name, fn in sorted(globals().items()):

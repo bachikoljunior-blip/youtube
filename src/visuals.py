@@ -77,8 +77,12 @@ body::after {
   content: ""; position: absolute; inset: 0; pointer-events: none;
   background: radial-gradient(120% 90% at 78% 8%, rgba({GLOW},.22), transparent 60%);
 }
+/* `--head-fit` は「1行が限度より長いときだけ」入る縮小率（`_fit_ratio`）。
+   **見出しには縮むつまみが1つも無かった**（2026-08-17）——
+   `tighten` は折り直すだけ、`zoom` は `.body` にしか掛からないので、
+   **限度より長い語が1つあると、どの段でも収まらないまま焼いていました。** */
 .headline {
-  font-size: 46px; font-weight: 900; letter-spacing: .01em;
+  font-size: calc(46px * var(--head-fit, 1)); font-weight: 900; letter-spacing: .01em;
   color: {ACCENT}; line-height: 1.25; margin-bottom: 34px;
 }
 .body { flex: 1; display: flex; flex-direction: column; justify-content: center; }
@@ -195,7 +199,7 @@ html, body { width: 540px; height: 960px; }
    2026-08-07、箇条書きが右端94%まで達して「比べ／る」と1文字落ちた。 */
 body { padding: 56px 96px 300px 52px; }
 body::before { width: 8px; }
-.headline { font-size: 40px; margin-bottom: 28px; }
+.headline { font-size: calc(40px * var(--head-fit, 1)); margin-bottom: 28px; }
 .note { font-size: 28px; margin-top: 20px; }
 .note.lead { margin-top: 0; font-size: 58px; line-height: 1.35; }
 li { font-size: 34px; gap: 16px; }
@@ -321,6 +325,35 @@ def _wrap_head(text: str, portrait: bool, tighten: int = 0) -> str:
     **書いたら呼び出し側を必ず確かめること。** 片方だけ直す形は4回目。
     """
     return _wrap(text, HEAD_CHARS_PORTRAIT if portrait else HEAD_CHARS, tighten)
+
+
+#: 見出しをここより小さくしない。**読めないほど縮めるくらいなら、溢れたと言うこと**
+#: （収まらなかった回は `render()` が `[!]` を出すので、次の回が気づけます）。
+HEAD_FIT_MIN = 0.62
+
+
+def _fit_ratio(wrapped: str, limit: int) -> float:
+    """折ったあとの行が限度より長いとき、見出しをどれだけ縮めるか。
+
+    **`_best_cut` が「限度の外まで出て切る」ようになったので、
+    折った結果が限度より長いことが正規に起きます**（2026-08-16 に数、
+    2026-08-17 にカタカナ。どちらも「1つのかたまりが限度より長い」形）。
+
+    そのとき折る側は正しいのに、**画面側に縮むつまみが1つもありませんでした。**
+    `tighten` は折り直すだけなので何段上げても同じ行が出て、
+    `zoom` は `.body` にしか掛かりません。結果、
+    `セルフメディケーション税制` は**ブラウザが勝手な位置で割り**、
+    『セルフメディケーシ』『ョン』になりました（`verify` は
+    `<br>` で指示した折り目しか見ないので素通り。実物の目視で発見）。
+
+    **縮小はブラウザに割らせないためだけのもの**で、
+    限度に収まっている見出し（＝ほとんど全部）には 1.0 が返ります。
+    """
+    lines = [x for x in wrapped.split("<br>") if x]
+    longest = max((len(x) for x in lines), default=0)
+    if longest <= limit or longest == 0:
+        return 1.0
+    return max(HEAD_FIT_MIN, limit / longest)
 
 
 def _wrap_note(text: str, portrait: bool, tighten: int = 0, lead: bool = False) -> str:
@@ -727,6 +760,9 @@ def build_html(visual: dict, theme: dict | None = None, portrait: bool = False,
     増えて縦には**悪化する**。2026-08-08、縦向きの steps が 27px 溢れていた。
     """
     head = _wrap_head(visual.get("headline", ""), portrait, tighten)
+    head_limit = max((HEAD_CHARS_PORTRAIT if portrait else HEAD_CHARS) - tighten, 4)
+    fit = _fit_ratio(head, head_limit)
+    head_style = "" if fit >= 0.999 else f' style="--head-fit:{fit:.3f}"'
     extra = "" if zoom >= 0.999 else f".body {{ zoom: {zoom:.2f}; }}"
     # 式は `.body`（flex:1 で中央寄せ）の**外**に置く。中に入れると、
     # 中央寄せの一部として本文と一緒に上下に動き、コマごとに位置が変わる。
@@ -736,7 +772,7 @@ def build_html(visual: dict, theme: dict | None = None, portrait: bool = False,
     return (
         "<!doctype html><html lang=ja><head><meta charset=utf-8>"
         f"<style>{_css(theme or THEMES[0], portrait)}{extra}</style></head><body>"
-        f'<div class="headline">{head}</div>'
+        f'<div class="headline"{head_style}>{head}</div>'
         f'<div class="body">{_body_html(visual, portrait, tighten)}</div>'
         f"{formula_html}"
         "</body></html>"

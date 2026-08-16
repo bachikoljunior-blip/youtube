@@ -196,3 +196,4 @@
 {"at": "2026-08-16T23:35:19+09:00", "session": "session_01RmL2VZRs1mSd8tjF7ZEYsL", "kind": "ship", "what": "fix: 数のかたまりが行の限度より長いと、_best_cut の最後の1行が ok() を見ずに割っていた（在庫 s-zaishoku-1man-hanbun が台本を書き直しても2回とも『410,00』／『0円から』で不投稿＝永久に作れないテーマ）。限度で切ると数が割れるときだけ、かたまりの外まで出て切る＝はみ出した行は読めるが割れた数は読めない。実データ13,125組で数の途中の割れ 319→0・悪化0・総行数は減る。7本目のビルドで通り 09-06 10:00 に予約"}
 {"at": "2026-08-16T23:42:00+09:00", "session": "session_01B1iMkE19MEY19csmfJnVL7", "kind": "start"}
 {"at": "2026-08-16T23:52:34+09:00", "session": "session_01B1iMkE19MEY19csmfJnVL7", "kind": "ship", "what": "means: 在庫の律速（未使用の節0件）に calc を1本足した — セルフメディケーション税制 vs 医療費控除の分岐点。節6件＝在庫 0→6、tests 621→622", "closes": ["src/calc/"], "journal_lines": 16088}
+{"at": "2026-08-17T00:03:41+09:00", "session": "session_01B1iMkE19MEY19csmfJnVL7", "kind": "ship", "what": "fix: 限度より長いカタカナの語も割らずにはみ出す（実データ36,112組で 138→0・悪化0）。足したばかりの serufu 6テーマが全部これで作れなかった"}
