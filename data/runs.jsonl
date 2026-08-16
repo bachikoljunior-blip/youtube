@@ -232,3 +232,5 @@
 {"at": "2026-08-17T06:34:52+09:00", "session": "session_01UhzNyouPo7jCmFLcxSDfdz", "kind": "ship", "what": "fix: 落ちた2本の節を直した（前提のコマ・声で言った70,000円）＋ SUBJECT_WORDS に juminzei。tests 757→759", "closes": ["s-kubun-e-shoutokujougen-115man"], "journal_lines": 17203}
 {"at": "2026-08-17T06:39:30+09:00", "session": "session_01PHh5iD1HcBzMUxG6kPj3gt", "kind": "start"}
 {"at": "2026-08-17T06:44:41+09:00", "session": "session_01PHh5iD1HcBzMUxG6kPj3gt", "kind": "ship", "what": "fix: status.py が「口も控えも空」で黙って0を返し、手元の節を丸ごと落としていた（191行→10行）。控えを判定の前へ移し、空なら例外にして main の既存経路に入れる", "closes": ["carry_over"], "journal_lines": 17318}
+{"at": "2026-08-17T07:28:59+09:00", "session": "session_01PHh5iD1HcBzMUxG6kPj3gt", "kind": "ship", "what": "means: src/calc/haiguusha.py（配偶者特別控除の9段）。未使用の節0件・pick(8)=6本の律速に表1本。節7件→topic_forge で6テーマ（170→176）→ pick(8)=8本"}
+{"at": "2026-08-17T07:43:34+09:00", "session": "session_01PHh5iD1HcBzMUxG6kPj3gt", "kind": "ship", "what": "upload×4: 09-10 に rijRUdHwDzk / 4Ousy5slV7A / GQyF2JiGnsQ / de3U-feVycs を予約（8本中4本。落ちた4本は全部 verify が正しく止めた）"}
