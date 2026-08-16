@@ -190,6 +190,57 @@ def print_budget() -> None:
               "見えないだけで、枠が減ったわけではない。")
 
 
+def reversal_conditions(body: str, width: int = 110, limit: int = 1) -> list[str]:
+    """却下・待ちの項から「覆る条件」を抜く（2026-08-16 に足した）。
+
+    **取り消し線（`~~...~~`）の中は落とします。** M11 の条件1 は
+    「1本あたりの再生が1桁上がる」で、8/15 に取り消し線つきで閉じられ、
+    その下に「**その閉じ方が間違っていました（取り消し）**」が続いています。
+    取り消された本文をそのまま出すと、**もう死んだ条件のほうが先に目に入ります。**
+
+    見出しの行に条件が書いていない項（M11 の「2つ。どちらでもよい」）は、
+    **続く番号つきの行**を条件として拾います。
+    """
+    import re
+
+    out: list[str] = []
+    lines = body.splitlines()
+    for i, line in enumerate(lines):
+        if not re.match(r"^- \*\*(これが)?覆る条件", line):
+            continue
+        chunk = [line]
+        for nxt in lines[i + 1:]:
+            if re.match(r"^- \*\*", nxt) or nxt.startswith("#"):
+                break
+            chunk.append(nxt)
+        text = "\n".join(chunk)
+        # 取り消し線の中身は落とす（**死んだ条件を先に見せない**）
+        text = re.sub(r"~~.*?~~", "", text, flags=re.S)
+        text = re.sub(r"\*\*|`", "", text)
+        # 見出しの行の後ろに本文があればそれ、無ければ続きの行から
+        head, _, rest = text.partition("\n")
+        head = re.sub(r"^- (これが)?覆る条件", "", head).strip()
+        # 見出しの「（いつ書き直したか）」は註であって条件ではないので落とす。
+        # **落としたあとに本文が続くことがあります**（同じ行に書かれた回）。
+        # 2026-08-16 の最初の実装は註を見つけた時点で行ごと捨てており、
+        # **同じ行に条件を書いた項が黙りました**（検査で落ちて気づいた）。
+        head = re.sub(r"^（[^）]*）", "", head).lstrip(":： ").strip()
+        pieces = [head] if head else []
+        for raw in rest.splitlines():
+            s = raw.strip(" →")
+            if not s or s.startswith("→"):
+                continue
+            pieces.append(s)
+        joined = " ".join(pieces)
+        joined = re.sub(r"\s+", " ", joined).strip()
+        if joined:
+            out.append(joined[:width])
+    # **後ろのものを採ります。** この台帳は追記式で、訂正は必ず下に足されます
+    # （M11 の条件1 は 8/15 に閉じられ、同日 16:0x にその閉じ方ごと取り消された）。
+    # **上から採ると、取り消された側が先に出ます。**
+    return out[-limit:]
+
+
 def print_means() -> None:
     """**手段の台帳（docs/MEANS.md）の未着手を毎回出す。**
 
@@ -212,6 +263,7 @@ def print_means() -> None:
                          text, re.M | re.S)
     untried = []
     held = []
+    rejected = []
     for code, name, body in entries:
         m = re.search(r"\*\*状態\*\*: (.+)", body)
         state = m.group(1).strip() if m else "?"
@@ -222,6 +274,30 @@ def print_means() -> None:
             # 着手条件を数字で書いてあるのに、その条件を毎回出していなかったので
             # M3 が3日間だれの目にも入らなかった（2026-08-10）。
             held.append((code, name, state))
+        elif "却下" in state or "待ち" in state:
+            # **却下も「消えた手」ではありません**（2026-08-16 に足した）。
+            #
+            # 却下した項には全部「これが覆る条件」が書いてあります。
+            # ところがこの節は 未着手 と 保留 しか出しておらず、
+            # **却下した4件（M5・M7・M10・M11）は毎回どこにも出ていませんでした。**
+            #
+            # 実害が出ています。**M11 は「ショートの登録率そのものを上げる」**で、
+            # 登録率 0.038% は 1,000人の門に **259万再生**を要求している律速そのもの。
+            # M11 の本文はその乗数を「**単独で M1 を不可能から1年台に動かしうる
+            # 唯一の乗数**」と書き、覆る条件も「**M14 の8の段に乗ること**」まで
+            # 特定されています。**それが目に入らないので、**
+            # 8/16 11:4x と 12:2x の回は申し送りにこう書きました ——
+            #
+            #     「`docs/MEANS.md` に、登録率を直接動かす手段を足すこと。
+            #       未着手0件・保留2件で、**台帳が律速を1つも持っていません**」
+            #
+            # **台帳は持っていました。この節が見せていなかっただけです。**
+            # 2回とも、次の回が M11 を書き直すところだった（M11 自身が
+            # 「この却下は毎回もう一度提案されかけます」と警告しているとおり）。
+            #
+            # **覆る条件のほうを出します。** 状態の一行ではなく、
+            # 「何が起きたら復活するか」が判断に要る側だからです。
+            rejected.append((code, name, state, body))
     # 棚卸しからの経過。**視界の外は、定期的に数え直さないと戻る。**
     import json as _json
     st = Path(__file__).resolve().parent.parent / "data" / "audit.json"
@@ -251,6 +327,13 @@ def print_means() -> None:
             cond = state.split("着手条件")[-1].lstrip("はがのを:： ") if "着手条件" in state else state
             print(f"    {code} {name}")
             print(f"        条件: {cond[:90]}")
+    if rejected:
+        print(f"  --- 却下・待ち {len(rejected)}件"
+              f"（**覆る条件を毎回見ること。ここに律速そのものが入っています**）---")
+        for code, name, state, body in rejected:
+            print(f"    {code} {name}")
+            for line in reversal_conditions(body):
+                print(f"        覆る条件: {line}")
     if untried:
         print("  **目標の数字が2週間動いていないなら、いまの機械の改善ではなく")
         print("  ここから1つ選ぶこと。** それが A13 を実行に移す唯一の経路です。")

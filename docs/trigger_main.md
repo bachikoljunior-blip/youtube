@@ -117,8 +117,13 @@
 ## 2. 使用量を積む（**2手。1分もかかりません**）
 
     list_sessions limit=25 mine=true          ← MCP
-    python scripts/sessions_compact.py <file> --rows -   ← 読まれる列だけ写す（下）
-    python scripts/quota.py --ingest <file>   ← 積んで、いまの姿を出す
+    python scripts/sessions_compact.py <出力file> --rows <写したfile>   ← 読まれる列だけ（下）
+    python scripts/quota.py --ingest <出力file>   ← 積んで、いまの姿を出す
+
+**`--rows -` と書かないこと**（2026-08-16 16:0x に踏んだ）。ここは長らく
+`--rows -` でしたが、**`-` は標準入力の意味では通りません**（`FileNotFoundError: '-'`）。
+道具が受けるのは **`--rows <実在するfile>`** か、**引数なしの標準入力**の2つだけです。
+**1つめの引数は出力先**で、写したものではありません（`--help` にそう書いてあります）。
 
 これだけです。**`add_repo` も GitHub Actions も clone も要りません。**
 
@@ -491,6 +496,27 @@ else:
     python -m src.pipeline --topic <ID> --dry-run       # ショートは --short
     python scripts/inspect_build.py <ID>                # contact sheet
     python scripts/upload_only.py <ID> "" <時>          # 第3引数が予約時刻（JST）
+
+#### **日枠が切れていても、16:00 の20分前から作り始めること**（2026-08-16 16:0x に測って足した）
+
+`status.py` は日枠が枯れていると「**枠が戻るまで `upload` は選べません**」と言います。
+**それは予約の話であって、作る段の話ではありません。**
+
+    作る段（台本・図解・音声・ffmpeg・verify）  Data API を **1単位も使わない**
+    予約（upload_only.py）                     **1本 1,600単位**
+
+日枠が戻るのは **JST 16:00**（太平洋時間の0時）。**生成は3本で約6分**なので、
+**15:40 から作り始めれば、16:0x にはそのまま予約まで入ります。**
+
+16:00 前の回は、これまで全部あきらめていました（`upload` 0件が8回続いた理由がこれです）。
+16:0x の回は実際にこうしています:
+
+    15:5x  batch_build ... → 生成 3/3 合格・予約 0/3（403 quotaExceeded）
+    16:01  upload_only.py ×3 → 3/3 予約
+
+**予約が落ちても、作ったものは `build/` に残ります。**
+`upload_only.py <ID> "" <日付>@<時>` で打ち直せば、作り直しはゼロです
+（**この回で実測**。`batch_build` の予約の段が落ちても同じ）。
 
 **2本以上まとめて出すなら `scripts/batch_build.py`**（2026-08-15 に足した）。
 
