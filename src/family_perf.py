@@ -31,6 +31,46 @@
 **覆る条件**: この順番で作った本の engaged 比率の中央値が、
 `config/hypotheses.yaml` の期限（2026-08-30）に、それ以前の中央値を
 **下回っていたら、`pick` を手書き `score` だけに戻すこと。**
+
+## 2026-08-16 追記 —— **登録は測っていたのに、順番に一度も効かせていなかった**
+
+`Family.subs` は最初からここにあり、`status.py` の表にも出ています。
+**それを読む側が、どこにもありませんでした。** 順番は engaged だけで決まっており、
+登録の列は**眺めるためだけ**に並んでいた。
+
+**門は登録者です**（`status.py`「登録者は迂回できません」。あと995人）。
+engaged は**再生を増やす**率（順位相関 +0.51）で、**再生を登録に変える**率では
+ありません。実物では、この2つは順番が食い違います（8/16・再生30以上の12本）:
+
+    nenkin     2573再生  engaged 45.5%  登録2人  0.0777%
+    shitsugyo  1099再生  engaged 45.6%  登録1人  0.0910%
+    iryohi     1795再生  engaged 27.9%  登録1人  0.0557%   ← engaged 6位・登録3位
+    furusato   1433再生  engaged 38.7%  登録0人  0%        ← engaged 3位・登録0
+    zangyo     1916再生  engaged 33.6%  登録0人  0%
+    kojo       2424再生  engaged 28.2%  登録0人  0%
+    jutaku      440再生  engaged 19.1%  登録0人  0%
+
+**4人/5467再生（0.073%）対 0人/6213再生。** 全体は 0.0342% なので、
+登録0の側の期待値は **2.13人**。0人が出る確率は e^-2.13 ＝ **約12%**。
+**強い証拠ではありません**（だから下の縮めと上下限が要ります）。
+それでも、**門そのものの率について手元にある唯一の信号**です。
+
+**掛け方**: 「1本あたりの登録者」＝（1本あたりの再生）×（再生あたりの登録）。
+engaged は前者の代理、登録率は後者そのものなので、**掛ける**のが形として合います。
+
+    順番の値 ＝ 縮めた engaged 比率 × （縮めた登録率 ÷ 全体の登録率）
+
+**登録は事象が4件しかありません。** 生の率を掛けると n=1 で順番が決まるので、
+engaged より**強く縮め**（`SHRINK_VIEWS_SUBS`）、そのうえで倍率に**上下限**を置きます。
+
+- **上限 2.0** —— 1人入っただけの族が、順番を独占しないため
+- **下限 0.5** —— **登録0が続く族を、順番から消さないため**（探索を殺さない）。
+  0人はまだ「悪い」ではなく「まだ出ていない」でしかありません
+- **登録が1人も無いときは、倍率を全部 1.0 にする**（信号が無い ＝ 掛けない）
+
+**覆る条件**: `config/hypotheses.yaml`（期限 2026-09-20）。**期限が遠いのは
+費用ではなく構造**です —— 予約は 9/7 まで埋まっており、**この順番で選ばれた本が
+公開されるのは 9/8 以降**なので、それより早くは測れません。
 """
 from __future__ import annotations
 
@@ -51,6 +91,15 @@ SHRINK_VIEWS = 1500
 #: 率が壊れるので、分母の小さい本は数えない（`status.py` の全走査と同じ線）
 MIN_VIEWS = 30
 
+#: 登録率を全体平均へ寄せる強さ。**engaged より強く縮めています** ——
+#: 登録は 8/16 時点で**事象が4件**しかなく、engaged（4,677件）とは桁が3つ違うため。
+SHRINK_VIEWS_SUBS = 3000
+
+#: 登録率の倍率の上下限。**上は n=1 の跳ね上がりを抑え、下は登録0の族を
+#: 順番から消さないため**（0人は「悪い」ではなく「まだ出ていない」）。
+SUB_MULT_MIN = 0.5
+SUB_MULT_MAX = 2.0
+
 
 @dataclass(frozen=True)
 class Family:
@@ -63,6 +112,10 @@ class Family:
     @property
     def raw_rate(self) -> float:
         return self.engaged / self.views if self.views else 0.0
+
+    @property
+    def raw_sub_rate(self) -> float:
+        return self.subs / self.views if self.views else 0.0
 
 
 def _latest_scan(path: Path | None = None) -> dict[str, dict]:
@@ -187,12 +240,61 @@ def score_map(rows: list[Family] | None = None,
     }
 
 
+def sub_baseline(rows: list[Family]) -> float:
+    """全体の登録率（登録者 ÷ 再生）。**測った登録が0なら 0.0 を返す。**
+
+    0 を返すのは意図です。**信号が無いときに倍率を掛けない**ための目印で、
+    `sub_multiplier_map` がそこで全部 1.0 に落とします。
+    """
+    views = sum(f.views for f in rows)
+    subs = sum(f.subs for f in rows)
+    return subs / views if views else 0.0
+
+
+def sub_multiplier_map(rows: list[Family] | None = None,
+                       shrink_views: int = SHRINK_VIEWS_SUBS
+                       ) -> dict[str, float]:
+    """calc → **縮めた登録率 ÷ 全体の登録率**。台帳に無い族は 1.0。
+
+    **登録が1件も無いあいだは、全部 1.0 になります**（信号が無いので掛けない）。
+    上下限は `SUB_MULT_MIN` / `SUB_MULT_MAX`（理由はモジュール冒頭）。
+    """
+    rows = families() if rows is None else rows
+    base = sub_baseline(rows)
+    if base <= 0:
+        return {f.calc: 1.0 for f in rows}
+    out = {}
+    for f in rows:
+        shrunk = (f.subs + base * shrink_views) / (f.views + shrink_views)
+        out[f.calc] = min(SUB_MULT_MAX, max(SUB_MULT_MIN, shrunk / base))
+    return out
+
+
+def combined_map(rows: list[Family] | None = None,
+                 shrink_views: int = SHRINK_VIEWS,
+                 shrink_views_subs: int = SHRINK_VIEWS_SUBS
+                 ) -> dict[str, float]:
+    """`pick` が実際に並べ替えに使う値。**engaged × 登録の倍率。**
+
+    engaged は「再生が伸びるか」、登録率は「その再生が門に効くか」。
+    **門は登録者なので、後者を掛けないと順番が門を向きません。**
+    """
+    rows = families() if rows is None else rows
+    engaged = score_map(rows, shrink_views)
+    mult = sub_multiplier_map(rows, shrink_views_subs)
+    return {c: v * mult.get(c, 1.0) for c, v in engaged.items()}
+
+
 def scorer(rows: list[Family] | None = None,
-           shrink_views: int = SHRINK_VIEWS):
-    """`pick` が使う関数を返す。**未知の calc は全体平均**（探索を殺さない）。"""
+           shrink_views: int = SHRINK_VIEWS,
+           shrink_views_subs: int = SHRINK_VIEWS_SUBS):
+    """`pick` が使う関数を返す。**未知の calc は全体平均**（探索を殺さない）。
+
+    未知の族の倍率は 1.0 なので、**返るのは engaged の全体平均そのもの**です。
+    """
     rows = families() if rows is None else rows
     base = baseline(rows)
-    table = score_map(rows, shrink_views)
+    table = combined_map(rows, shrink_views, shrink_views_subs)
 
     def score(calc: str) -> float:
         return table.get(calc, base)
@@ -208,17 +310,25 @@ def report_lines(rows: list[Family] | None = None,
         return ["  （実績が取れていません。`data/scan.jsonl` が空か、"
                 "テーマと動画の対応が付いていません）"]
     table = score_map(rows)
+    mult = sub_multiplier_map(rows)
+    final = combined_map(rows)
     base = baseline(rows)
-    out = [f"  全体 {base * 100:.1f}%（縮め方: 族の再生が {SHRINK_VIEWS} で半々）",
+    sub_base = sub_baseline(rows)
+    out = [f"  全体 engaged {base * 100:.1f}% ／ 登録 {sub_base * 100:.4f}%"
+           f"（縮め方: 族の再生が engaged {SHRINK_VIEWS} ・"
+           f"登録 {SHRINK_VIEWS_SUBS} で半々）",
            f"  {'calc':10} {'本':>2} {'再生':>6} {'engaged':>8} "
-           f"{'縮めた値':>8} {'登録':>4}"]
-    for f in sorted(rows, key=lambda f: -table[f.calc]):
+           f"{'縮めた値':>8} {'登録':>4} {'登録の倍率':>8} {'順番の値':>8}"]
+    for f in sorted(rows, key=lambda f: -final[f.calc]):
         out.append(f"  {f.calc:10} {f.videos:2d} {f.views:6d} "
                    f"{f.raw_rate * 100:7.1f}% {table[f.calc] * 100:7.1f}% "
-                   f"{f.subs:4d}")
+                   f"{f.subs:4d} {mult[f.calc]:11.2f}倍 "
+                   f"{final[f.calc] * 100:7.1f}")
+    out.append("  **順番は「順番の値」で決まります**（engaged × 登録の倍率）。"
+               "engaged は再生が伸びるか、登録の倍率は**その再生が門に効くか**。")
     if unused is not None:
-        starved = [f.calc for f in sorted(rows, key=lambda f: -table[f.calc])
-                   if table[f.calc] > base and not unused.get(f.calc)]
+        starved = [f.calc for f in sorted(rows, key=lambda f: -final[f.calc])
+                   if final[f.calc] > base and not unused.get(f.calc)]
         if starved:
             out.append("  **次に節を書くならここ**（実績が上位なのに未使用の節が0）: "
                        + " ".join(starved))

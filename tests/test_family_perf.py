@@ -132,3 +132,62 @@ def test_pick_survives_missing_history(monkeypatch):
 
     monkeypatch.setattr(fp, "scorer", boom)
     assert [t["id"] for t in batch_build.pick(1, [])] == ["t-a"]
+
+
+# --- 登録率を順番に掛ける（2026-08-16 に足した。**門は登録者なので**）---
+#
+# ここで守りたいのは4つで、どれも「入れた当日にすり抜けうる」形です:
+#
+#   1. **登録が1件も無いあいだは、倍率を掛けない**（信号が無いのに順番が動く）
+#   2. **登録0の族が、順番から消えない**（探索を殺す向き）
+#   3. **1人だけ入った族が、順番を独占しない**（n=1 で決まる向き）
+#   4. **engaged と登録で順番が食い違うとき、登録の側が効く**（掛けていない向き）
+
+
+def test_no_multiplier_while_no_subscriber_has_been_measured():
+    """**登録0件のあいだは倍率を全部 1.0 に。** 信号が無いのに順番を動かさない。"""
+    scan = _scan({"a": (2000, 1000, 0), "b": (2000, 200, 0)})
+    rows = fp.families(scan, {"a": "good", "b": "bad"})
+    assert fp.sub_baseline(rows) == 0.0
+    assert set(fp.sub_multiplier_map(rows).values()) == {1.0}
+    # 順番の値は engaged そのもの（掛ける前と同じ）
+    assert fp.combined_map(rows) == fp.score_map(rows)
+
+
+def test_zero_subscriber_family_is_not_erased():
+    """**登録0は「悪い」ではなく「まだ出ていない」。** 下限で守る。"""
+    scan = _scan({"a": (2000, 800, 4), "b": (8000, 3200, 0)})
+    rows = fp.families(scan, {"a": "converts", "b": "never"})
+    mult = fp.sub_multiplier_map(rows)
+    assert mult["never"] == fp.SUB_MULT_MIN      # 0人でも 0 にはしない
+    assert fp.combined_map(rows)["never"] > 0
+
+
+def test_one_subscriber_on_a_tiny_family_is_capped():
+    """**n=1 の跳ね上がりを、上限で止める。** 事象が数件しかないため。"""
+    scan = _scan({"a": (40, 20, 1), "b": (20000, 8000, 1)})
+    rows = fp.families(scan, {"a": "lucky", "b": "big"})
+    assert fp.sub_multiplier_map(rows)["lucky"] == fp.SUB_MULT_MAX
+
+
+def test_subscriber_rate_can_outrank_engaged():
+    """**engaged と登録が食い違うとき、登録の側が順番を動かす。**
+
+    これが 8/16 の実物の形です（`iryohi` は engaged 6位・登録3位）。
+    掛けていなければ、この検査は落ちます。
+    """
+    scan = _scan({"a": (2000, 900, 0),     # engaged 45% ・登録0
+                  "b": (2000, 600, 4)})    # engaged 30% ・登録4人
+    rows = fp.families(scan, {"a": "showy", "b": "converts"})
+    assert fp.score_map(rows)["showy"] > fp.score_map(rows)["converts"]
+    score = fp.scorer(rows)
+    assert score("converts") > score("showy")
+
+
+def test_unknown_family_still_scores_at_the_engaged_mean():
+    """未知の族の倍率は 1.0 ＝ **engaged の全体平均そのもの**（探索を殺さない）。"""
+    scan = _scan({"a": (2000, 900, 3), "b": (2000, 600, 0)})
+    rows = fp.families(scan, {"a": "converts", "b": "never"})
+    score = fp.scorer(rows)
+    assert abs(score("never-seen") - fp.baseline(rows)) < 1e-12
+    assert score("never") < score("never-seen") < score("converts")
