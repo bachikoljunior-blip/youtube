@@ -111,7 +111,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from src import config, history  # noqa: E402
+from src import config, dupes, history  # noqa: E402
 
 JST = timezone(timedelta(hours=9))
 LOG = ROOT / "data" / "batch_runs.jsonl"
@@ -347,7 +347,41 @@ def pick(count: int, explicit: list[str], per_calc: int = DEFAULT_PER_CALC) -> l
     return chosen
 
 
-def slots(count: int, hour: int, date_jst: str | None, hours: list[int]) -> list[str]:
+def ledger_hours(date_jst: str) -> set[int]:
+    """その日に**もう置いてある**時刻（JST の時）を、手元の控えから読む。
+
+    読むのは `data/uploaded.jsonl`（`src.dupes.ledger_rows`）で、**API は叩きません。**
+    予約の一覧を口から取ると channels + playlistItems + videos で数単位かかるうえ、
+    **Data API の日枠が切れている回では、そもそも読めません**
+    （日枠が戻るのは JST 16:00。それ以前の回はここが唯一の手がかりです）。
+
+    **控えは上限側の見積りです**（`scripts/status.py` の「予約の先」と同じ性質）。
+    取り消した本の行も残るので、**空いているのに「埋まっている」と読むことがあります。**
+    外す向きは安全です —— 空き枠を1つ余計に飛ばすだけで、**ぶつけて1本捨てるより安い。**
+    逆向き（埋まっているのに空きと読む）は起きません。控えは投稿した本人が書くので、
+    **置いた本が控えから落ちることはない**からです。
+
+    読めなかったら空集合を返します。**この道具のために回を止めないこと。**
+    """
+    try:
+        rows = [r for r in dupes.ledger_rows() if r.get("at")]
+    except Exception as exc:                                  # noqa: BLE001
+        print(f"[batch] 控えが読めませんでした（続行）: {str(exc)[:80]}", flush=True)
+        return set()
+    taken: set[int] = set()
+    for row in rows:
+        try:
+            when = datetime.fromisoformat(str(row["at"]).replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        when = when.astimezone(JST)
+        if when.strftime("%Y-%m-%d") == date_jst:
+            taken.add(when.hour)
+    return taken
+
+
+def slots(count: int, hour: int, date_jst: str | None, hours: list[int],
+          taken: set[int] | None = None) -> list[str]:
     """各本の予約時刻の指定を返す（`upload_only.py` の第3引数の形）。
 
     `date_jst` が無ければ従来どおり全部同じ時刻 —— `next_publish_at` が
@@ -355,13 +389,52 @@ def slots(count: int, hour: int, date_jst: str | None, hours: list[int]) -> list
 
     `date_jst` があると**その日に釘づけ**して、時刻のほうをずらします。
     これが「1日にN本」です。M14 の 8 の段はこの道が無くて止まっていました。
+
+    ## 空き時刻を自分で読みます（2026-08-17。**3回持ち越された穴**）
+
+    ここは長らく `hour + i` で、**その日に何が置いてあるかを一度も見ていませんでした。**
+    埋まっている時刻に当たると `upload_only.py` が
+    「すでに埋まっています。**翌日へは送りません**」で落ちるので、
+    **作った1本がそのまま捨てられます**（`build/` はコンテナと一緒に消えるため）。
+
+    避ける道は「**人が予約一覧を見て `--hours` に手で写す**」しかありませんでした。
+    申し送りは3回とも同じことを言っています ——
+    「手で `--hours` を写している限り、埋まっている時刻とぶつけて1本捨てる回が出る」。
+    **人の記憶と手写しに依存する門は、この輪では毎回落ちる側**です。
+
+    `taken` を渡さなければ `ledger_hours()` が控えから読みます（**API 0単位**）。
+    実測（2026-08-17 の控え）: 09-01 は 9,10,12〜16 が埋まりで **空きは 11 だけ** ——
+    前の回が API を叩いて手で出した答えと一致しました。
+    既定の `hour + i` なら 9,10 とぶつけて**先頭2本を捨てていた**ところです。
+
+    `--hours` を明示したときは**そちらを通します**（控えは上限側なので、
+    取り消し済みの枠へ置き直す道を塞がない）。ただし**重なっていれば必ず言います。**
     """
     if not date_jst:
         return [str(hour)] * count
+    if taken is None:
+        taken = ledger_hours(date_jst)
     if hours:
         picked = hours
+        clash = sorted(set(hours[:count]) & taken)
+        if clash:
+            print(f"[batch] **{date_jst} の {clash} は控えでは埋まっています。**"
+                  " --hours が明示されているので続けますが、"
+                  "取り消し済みの枠でなければ `upload_only.py` が落とします。",
+                  flush=True)
     else:
-        picked = [hour + i for i in range(count)]
+        picked = [h for h in range(hour, 24) if h not in taken]
+        if len(picked) < count:
+            raise SystemExit(
+                f"{date_jst} は {hour}時以降の空きが {len(picked)} 個しかありません"
+                f"（{count} 本ぶん要ります／控えでの埋まり {sorted(taken)}）。\n"
+                "        **別の日にするか、--hour を早めるか、本数を減らすこと。**\n"
+                "        控えは上限側の見積りなので、取り消した本の枠も埋まりに数えます。\n"
+                "        そこへ置き直すなら --hours で明示すること。"
+            )
+        if picked[:count] != list(range(hour, hour + count)):
+            print(f"[batch] {date_jst} の埋まり {sorted(taken)} を避けて"
+                  f" {picked[:count]} 時に置きます（控えから。API 0単位）", flush=True)
     if len(picked) < count:
         raise SystemExit(
             f"--hours が {len(picked)} 個しかありません（{count} 本ぶん要ります）"

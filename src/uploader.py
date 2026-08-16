@@ -29,6 +29,57 @@ def scheduled_publish_times(youtube) -> set[str]:
     return {v["status"]["publishAt"] for v in videos if v["status"].get("publishAt")}
 
 
+def ledger_publish_times() -> set[str]:
+    """予約済みの公開時刻を、**手元の控えから**返す（RFC3339(UTC) の文字列）。
+
+    `scheduled_publish_times()` と同じ形を返しますが、**API を1単位も使いません。**
+    使う先は下の `taken_publish_times()` ——「口が読めない回の代わり」です。
+
+    **上限側の見積りです。** 取り消した本の行も残るので、空いている枠を
+    「埋まっている」と読むことがあります。**外す向きは安全**で、
+    日付を釘づけしている回は1本ぶん置けずに止まるだけ、
+    釘づけしていない回は1日後ろへ送られるだけです。
+    """
+    from . import dupes
+
+    return {str(r["at"]) for r in dupes.ledger_rows() if r.get("at")}
+
+
+def taken_publish_times(youtube) -> set[str]:
+    """予約済みの時刻を口から読み、**日枠切れなら控えに落ちる**（2026-08-17）。
+
+    ## なぜ要るか（**この形で1件、実際に止まっていました**）
+
+    Data API の1日枠（10,000単位）が切れると、`scheduled_publish_times()` の
+    `channels.list` が 403 で落ちます。ここは `upload()` の中から素通しで
+    呼ばれていたので、**例外がそのまま上がって投稿ごと死にます。**
+
+    ところが**枯れているのは読みだけかもしれません。** 申し送りはこう言っています ——
+    「枯れているのは `search` と `videos.list` で観測しただけで、
+    **`videos.insert` を実際に叩いた回は1つも無い**」。3回運ばれて、
+    3回とも確かめられていません。**確かめる道が塞がっていたから**です。
+
+    `taken` の使い道は2つしかありません。日付を釘づけした回は
+    「その時刻が埋まっていないか」、していない回は「何日ぶん後ろへ送るか」。
+    **どちらも控え（`data/uploaded.jsonl`）で答えが出ます** ——
+    控えは投稿した本人が書くので、**置いた本が落ちることはありません。**
+
+    だから、読めない回は控えで代えて**先へ進みます。**
+    そこで `videos.insert` が 403 なら、**それは初めて測った事実**です。
+    通れば、日枠が戻る JST 16:00 までの十数周が投稿できるようになります。
+    """
+    try:
+        return scheduled_publish_times(youtube)
+    except HttpError as exc:
+        if getattr(exc, "resp", None) is not None and exc.resp.status not in (403, 429):
+            raise
+        rows = ledger_publish_times()
+        print(f"[upload] **予約一覧が口から読めません**（HTTP "
+              f"{getattr(exc.resp, 'status', '?')}）。手元の控え {len(rows)}本で代えます。"
+              " **上限側の見積り**なので、空きを1つ余計に飛ばすことがあります。")
+        return rows
+
+
 def next_publish_at(hour_jst: int, minute_jst: int, taken: set[str] | None = None,
                     date_jst: str | None = None) -> str:
     """次に空いている指定時刻（JST）を RFC3339(UTC) で返す。
@@ -210,7 +261,7 @@ def upload(
         status["publishAt"] = next_publish_at(
             int(publish_cfg.get("publish_hour_jst", 19)),
             int(publish_cfg.get("publish_minute_jst", 0)),
-            taken=scheduled_publish_times(youtube),
+            taken=taken_publish_times(youtube),
             date_jst=publish_cfg.get("publish_date_jst") or None,
         )
         print(f"[upload] 公開予定: {status['publishAt']}")

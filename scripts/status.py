@@ -1312,9 +1312,15 @@ def main(days: int = 7) -> int:
         if "quotaExceeded" in str(exc) or "quota" in str(exc).lower():
             print("    **Data API の1日枠（10,000単位）です。**"
                   "戻るのは太平洋時間の0時＝**JST 16:00 ごろ**。")
-            print("    枠が戻るまで **`upload` は選べません**"
-                  "（投稿1本で1,600単位。生成してから落ちると10分捨てます）。")
-            print("    §4 は `means` / `verdict` / `fix` から選ぶこと。")
+            # **ここは「枠が戻るまで `upload` は選べません」と言っていました。嘘です。**
+            # 2026-08-17 03:5x に実際に `videos.insert` を叩いて、**通りました**
+            # （`fLENot-5oKM`）。落ちるのは読みの側（`videos.list` / `playlistItems` /
+            # `channels.list` / `search`）と `thumbnails.set` / `playlists` だけです。
+            # **この1行が、1日13時間ぶんの `upload` を止めていました。**
+            print("    **それでも `upload` は選べます**（2026-08-17 に実測）。"
+                  "落ちるのは**読みの側**で、`videos.insert` は通ります。")
+            print("    サムネイルだけ載りません（`thumbnails.set` も 403）。"
+                  "**公開前に `scripts/refresh_thumbnail.py` で載せ直すこと。**")
         print("    **この回を止めないこと。** 以下は手元だけで出しています。")
         print("=" * 66)
         print_local_sections()

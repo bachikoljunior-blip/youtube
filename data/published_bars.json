@@ -594,6 +594,22 @@
     ],
     "video_id": "dsXQTODZbT0"
   },
+  "s-iryohi-tsukimatagi-torikaesenai": {
+    "charts": [
+      [
+        "77,430円",
+        "12,299円",
+        "65,131円"
+      ],
+      [
+        "11.9%",
+        "23.9%",
+        "34.3%",
+        "44.0%"
+      ]
+    ],
+    "video_id": "Ry37GWVfn48"
+  },
   "s-jikangai-2kagetsu-160-de-38jikan-otosu": {
     "charts": [
       [
@@ -916,6 +932,20 @@
     ],
     "video_id": "470i0hhnRx0"
   },
+  "s-kurisage-1kagetsu-nedan-77sai": {
+    "charts": [
+      [
+        "15万円",
+        "1万2600円"
+      ],
+      [
+        "12.0年",
+        "17.0年",
+        "21.0年"
+      ]
+    ],
+    "video_id": "kk57OJ0zVT4"
+  },
   "s-kyugyo-2gatsu-4gatsu-89nichi-121340": {
     "charts": [
       [
@@ -1009,6 +1039,16 @@
     ],
     "video_id": "5SEWUmEzxcs"
   },
+  "s-nenkin-95sai-136950-yen": {
+    "charts": [
+      [
+        "535万6950円",
+        "180万1950円",
+        "13万6950円"
+      ]
+    ],
+    "video_id": "fLENot-5oKM"
+  },
   "s-nenkin-kuriage-60sai-43man": {
     "charts": [
       [
@@ -1083,6 +1123,16 @@
     ],
     "video_id": "Nrg_-t5dNUw"
   },
+  "s-serufu-30000-5475": {
+    "charts": [
+      [
+        "5,475円",
+        "14,601円",
+        "23,119円"
+      ]
+    ],
+    "video_id": "lsxehx1ISTo"
+  },
   "s-serufu-88000-uwanose": {
     "charts": [
       [
@@ -1092,6 +1142,16 @@
       ]
     ],
     "video_id": "x2agstHS8m0"
+  },
+  "s-serufu-hoka-iryohi-88000-irekawari": {
+    "charts": [
+      [
+        "38,000円",
+        "88,000円",
+        "88,000円"
+      ]
+    ],
+    "video_id": "PqnO-T8dQbs"
   },
   "s-serufu-joutokugaku-ue-188000": {
     "charts": [
@@ -1254,6 +1314,28 @@
       ]
     ],
     "video_id": "UoeAfg16_aw"
+  },
+  "s-shitsugyo-90nichi-nenrei-sa": {
+    "charts": [
+      [
+        "81万9900円",
+        "67万500円"
+      ],
+      [
+        "14万9400円",
+        "58万9320円"
+      ]
+    ],
+    "video_id": "_zD84TTiBbE"
+  },
+  "s-shitsugyo-9nen-fueru-30nichi": {
+    "charts": [
+      [
+        "273,300円",
+        "76,860円"
+      ]
+    ],
+    "video_id": "Ra_Z2XKgg28"
   },
   "s-shitsugyo-u30-kinzoku-30days": {
     "charts": [

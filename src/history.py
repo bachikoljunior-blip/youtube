@@ -101,17 +101,36 @@ def channel_video_ids(youtube, uploads: str, cap: int = 400) -> list[str]:
             seen.add(vid)
             ids.append(vid)
 
-    token = ""
-    while len(ids) < cap:
-        response = youtube.playlistItems().list(
-            part="contentDetails", playlistId=uploads, maxResults=50,
-            pageToken=token or None,
-        ).execute()
-        for item in response.get("items", []):
-            _add(item["contentDetails"]["videoId"])
-        token = response.get("nextPageToken", "")
-        if not token:
-            break
+    # **こちらも落ちても止めない**（2026-08-17 に足した。**片方だけ守っていた**）。
+    #
+    # 下の `search` には「落ちても止めない（プレイリスト側だけで続けるほうが、
+    # 何も返さないより良い）」と書いてあり、**上のこちらには何もありませんでした。**
+    # 同じ節の中に、守る側と素通しの側が並んでいた形です。
+    #
+    # 2026-08-17 03:5x に実際に踏んでいます —— Data API の1日枠が切れた回で、
+    # **2ページ目**（`pageToken=EAAaBlBUOkNESQ`）が 403 で落ち、例外が
+    # `posted_topic_ids()` → `pipeline.main` まで上がって**生成ごと死にました。**
+    # 1ページ目は通っていたので、**手元には50本ぶんの答えが既にあった**のに、
+    # 全部捨てています。
+    #
+    # これが塞いでいたもの: 日枠が戻るのは JST 16:00 で、それ以前の十数周は
+    # **作る段にすら入れません。** `docs/trigger_main.md` §5 は
+    # 「作る段は Data API を1単位も使わない」と書いていますが、**使っています。**
+    try:
+        token = ""
+        while len(ids) < cap:
+            response = youtube.playlistItems().list(
+                part="contentDetails", playlistId=uploads, maxResults=50,
+                pageToken=token or None,
+            ).execute()
+            for item in response.get("items", []):
+                _add(item["contentDetails"]["videoId"])
+            token = response.get("nextPageToken", "")
+            if not token:
+                break
+    except HttpError as exc:
+        print(f"[history] uploads プレイリストを最後まで読めませんでした"
+              f"（{len(ids)}本まで／続行）: {str(exc)[:90]}")
 
     # **予約中の動画は、こちらにしか出てこないことがある。**
     # 落ちても止めない（プレイリスト側だけで続けるほうが、何も返さないより良い）。
@@ -133,28 +152,65 @@ def channel_video_ids(youtube, uploads: str, cap: int = 400) -> list[str]:
     return ids
 
 
+def ledger_topics() -> dict[str, str]:
+    """**手元の控え**から テーマID → 動画ID を返す（`data/uploaded.jsonl`）。
+
+    口が欠けた回の埋め合わせ用です。**API を1単位も使いません。**
+    理由は `_scan` の中の註にあります（要約すると、投稿済みが「未投稿」に見えると
+    同じ計算のショートをもう一度作ってしまい、それは**収益化の対象外**そのもの）。
+    """
+    from . import dupes
+
+    return {r["topic"]: r["id"] for r in dupes.ledger_rows() if r.get("topic")}
+
+
+def _only_ledger(want_map: bool, why: str):
+    """口がまったく読めなかった回の答え。**「全テーマ未使用」で返さないこと。**
+
+    ここは長らく `{}` / `set()` を返していました（「全テーマ未使用として続行」）。
+    **それは、投稿済みのテーマを全部もう一度作ってよいと言うのと同じ**です。
+    控えがあるなら、空より控えのほうが必ず近い。
+    """
+    try:
+        extra = ledger_topics()
+    except Exception as exc:                                  # noqa: BLE001
+        print(f"[history] {why}／控えも読めませんでした: {str(exc)[:80]}")
+        return {} if want_map else set()
+    print(f"[history] {why}／**控えの {len(extra)}件だけで続けます**"
+          "（口が欠けた回。二重に作らないため）")
+    return extra if want_map else set(extra)
+
+
 def _scan(want_map: bool):
     youtube = build("youtube", "v3", credentials=credentials(), cache_discovery=False)
     try:
         channels = youtube.channels().list(part="contentDetails", mine=True).execute()
     except HttpError as exc:
-        print(f"[history] チャンネルを読めませんでした（全テーマ未使用として続行）: {exc}")
-        return {} if want_map else set()
+        return _only_ledger(want_map, f"チャンネルを読めませんでした: {str(exc)[:70]}")
 
     items = channels.get("items", [])
     if not items:
-        return {} if want_map else set()
+        return _only_ledger(want_map, "チャンネルが1件も返りませんでした")
     uploads = items[0]["contentDetails"]["relatedPlaylists"].get("uploads")
     if not uploads:
-        return {} if want_map else set()
+        return _only_ledger(want_map, "uploads プレイリストがありません")
 
     video_ids = channel_video_ids(youtube, uploads)
 
     found: set[str] = set()
     mapping: dict[str, str] = {}
+    partial = False
     for i in range(0, len(video_ids), 50):
         chunk = video_ids[i : i + 50]
-        response = youtube.videos().list(part="snippet", id=",".join(chunk)).execute()
+        try:
+            response = youtube.videos().list(
+                part="snippet", id=",".join(chunk)).execute()
+        except HttpError as exc:
+            # ここも素通しでした（同上）。**取れたところまでで続けます。**
+            print(f"[history] 説明欄を最後まで読めませんでした"
+                  f"（{i}本まで／続行）: {str(exc)[:90]}")
+            partial = True
+            break
         for video in response.get("items", []):
             topics = MARKER_RE.findall(video["snippet"].get("description", ""))
             found.update(topics)
@@ -162,6 +218,31 @@ def _scan(want_map: bool):
                 # uploads プレイリストは新しい順。**先に見たほうが新しい**ので、
                 # 同じテーマを撮り直していたら新しい動画を残す。
                 mapping.setdefault(topic_id, video["id"])
+
+    # **欠けた回は、手元の控えで埋める**（2026-08-17）。
+    #
+    # 上の3か所は「落ちても続行」になりましたが、**続行した先が危ない**のは
+    # ここです —— 投稿済みのテーマが「未投稿」に見えると、`batch_build.pick` が
+    # 同じ計算・同じ金額のショートをもう一度作ります。それは
+    # 「繰り返しのように感じられるコンテンツ」＝**収益化の対象外**そのものです
+    # （`channel_video_ids` の「何が起きたか」が、まさにその事故の記録）。
+    #
+    # 控え（`data/uploaded.jsonl`）は**自分が上げたときに書いた行**なので、
+    # 外の口の都合では欠けません。**CLAUDE.md の「ファイルに持たない」は
+    # 変えていません** —— 健全な回はこれまでどおりチャンネルから復元し、
+    # ここが効くのは**口が欠けた回だけ**です（`src/dupes.py` と同じ切り分け）。
+    if partial or not video_ids:
+        try:
+            extra = ledger_topics()
+            new = set(extra) - found
+            if new:
+                print(f"[history] 控えから {len(new)}件のテーマを足しました"
+                      "（口が欠けた回だけ。二重に作らないため）")
+            found.update(extra)
+            for topic_id, video_id in extra.items():
+                mapping.setdefault(topic_id, video_id)
+        except Exception as exc:                              # noqa: BLE001
+            print(f"[history] 控えを読めませんでした（続行）: {str(exc)[:80]}")
 
     if want_map:
         print(f"[history] チャンネルの動画 {len(video_ids)}本 / テーマ→動画 {len(mapping)}件")
