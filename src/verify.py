@@ -21,6 +21,7 @@ from pathlib import Path
 
 from .subtitles import _NUM_TOKEN, _is_katakana
 from .util import require, run
+from .yomi import remaining_risks
 
 # サムネイルの上限（YouTube）と、いつも作っている寸法
 THUMB_MAX_BYTES = 2_000_000
@@ -1220,6 +1221,26 @@ def _check_slides(work: Path, script: dict | None) -> list[str]:
     return problems
 
 
+def _check_yomi(script: dict | None) -> list[str]:
+    """合成音声が確実に読み違える形が、TTS に渡る文字列に残っていないか。
+
+    2026-08-16 に「額」が「ひたい」と読まれていたのを、オーナーが動画を聞いて
+    見つけた。ここには音の検査が1つも無かったので6日間残った。
+
+    見ているのは音そのものではない。`src/yomi.py` の置換を通したあとに、
+    **既知の壊れる形が1文字でも残っていないか**だけ。残っていなければ、
+    その字はエンジンに届かないので誤読しようがない。音の実測は
+    `scripts/probe_yomi.py`（Google TTS の出力を直接比べる）が担当する。
+    """
+    if not script:
+        return []
+    problems = []
+    for i, seg in enumerate(script.get("segments", [])):
+        for why in remaining_risks(str(seg.get("narration") or "")):
+            problems.append(f"セグメント{i + 1} の読みが直っていない（{why}）")
+    return problems
+
+
 def check(path: Path, video_cfg: dict, min_minutes: float, work: Path,
           topic: dict | None = None) -> float:
     """問題があれば VerificationError。無ければ尺（秒）を返す。"""
@@ -1281,6 +1302,7 @@ def check(path: Path, video_cfg: dict, min_minutes: float, work: Path,
     problems += _check_formula_shown(script)
     problems += _check_assumption_value_shown(script)
     problems += _check_law_citation_verbatim(work, script)
+    problems += _check_yomi(script)
 
     if problems:
         raise VerificationError("投稿前の検査に落ちました: " + " / ".join(problems))
