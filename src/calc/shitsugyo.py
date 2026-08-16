@@ -309,6 +309,118 @@ def age_cap_cliff(reason: str = "倒産・解雇など") -> list[dict]:
     return out
 
 
+# 帯の長さ（年）。`20年以上` は上が開いているので None。
+TENURE_SPAN = {
+    "1年未満": 1,
+    "1年以上5年未満": 4,
+    "5年以上10年未満": 5,
+    "10年以上20年未満": 10,
+    "20年以上": None,
+}
+
+
+def flat_stretch(age: str, reason: str = "自己都合など") -> list[dict]:
+    """**在籍を延ばしても、給付日数が1日も増えない期間はどれだけ長いか。**
+
+    既存の節は全部「境界で何日増えるか」を見ています（`tenure_boundaries`・
+    `age_boundaries`・`double_boundary`）。**境界の側しか見ていません。**
+    ところが人が居るのはたいてい**境界と境界のあいだ**で、
+    そこでは在籍が1日も効きません。**その平らな区間の長さは、どこにも表になっていない。**
+
+    自己都合の表は `1年以上5年未満` と `5年以上10年未満` がどちらも90日なので、
+    **勤続1年から10年直前までの9年間、給付日数はまったく動きません。**
+    そして 10年の1日で +30日 跳びます。
+    「長く勤めたぶんは戻る」という感覚と、表の形が食い違っている場所です。
+
+    返すのは平らな区間ごとに1行。**区間の終わりで跳ぶ額**まで付けます
+    （跳ぶ額は上限額に当たる人と下限額に当たる人で違うので、両方）。
+    `20年以上` は上が開いているので「跳ばない（最後の帯）」として出します。
+    """
+    check_tables()
+    table = DAYS_GENERAL if reason == "自己都合など" else DAYS_INVOLUNTARY[age]
+    # 受給資格の無い帯（None）は、そもそも在籍の価値の話にならないので外す。
+    bands = [b for b in TENURE_BANDS if table[b] is not None]
+    if not bands:
+        return []
+
+    out: list[dict] = []
+    i = 0
+    while i < len(bands):
+        j = i
+        while j + 1 < len(bands) and table[bands[j + 1]] == table[bands[i]]:
+            j += 1
+        spans = [TENURE_SPAN[b] for b in bands[i:j + 1]]
+        open_end = None in spans
+        years = None if open_end else sum(spans)
+        # 平らな区間の入口は、いちばん手前の帯の下端。
+        start = 0 if bands[i] == "1年未満" else int(bands[i].split("年")[0])
+        nxt = bands[j + 1] if j + 1 < len(bands) else None
+        gained = None if nxt is None else table[nxt] - table[bands[i]]
+        out.append({
+            "reason": reason,
+            "age": age,
+            "from_year": start,
+            "to_year": None if years is None else start + years,
+            "flat_years": years,
+            "days": table[bands[i]],
+            "next_days": None if nxt is None else table[nxt],
+            "days_gained": gained,
+            "cap_yen_gained": None if gained is None else gained * DAILY_CAP[age],
+            "floor_yen_gained": None if gained is None else gained * DAILY_FLOOR,
+        })
+        i = j + 1
+    return out
+
+
+def same_days_spread() -> list[dict]:
+    """**所定給付日数が同じでも、総額はここまで開く。**
+
+    日数の表は年齢と勤続で決まりますが、**1日あたりの上限額も年齢で変わります**
+    （`DAILY_CAP`）。だから **同じ日数でも、年齢がちがえば総額がちがう。**
+    日数の表と上限額の表は別々にしか公表されていないので、
+    **「同じ240日」を横に並べた表はどこにも無い。**
+
+    もう1つ、同じ日数の中でも**上限に当たる人と下限に当たる人**で開きます。
+    下限額（`DAILY_FLOOR`）は全年齢共通なので、こちらの開きは日数だけで決まります。
+
+    だから1つの日数について、開きが2種類出ます。
+
+        年齢のせいの開き  同じ240日で 45〜60歳 と 60歳以上 の差
+        日額のせいの開き  同じ240日で 上限の人 と 下限の人 の差
+
+    **どちらが大きいかは日数によって変わりません**（比が一定なので）。
+    出るのは「どの日数がいちばん開くか」と、その実額です。
+    """
+    check_tables()
+    seen: dict[int, set[str]] = {}
+    for age in DAILY_CAP:
+        for band in TENURE_BANDS:
+            for table in (DAYS_GENERAL, DAYS_INVOLUNTARY[age]):
+                days = table[band]
+                if days is not None:
+                    seen.setdefault(days, set()).add(age)
+
+    out = []
+    for days in sorted(seen):
+        ages = sorted(seen[days], key=AGE_ORDER.index)
+        caps = {a: days * DAILY_CAP[a] for a in ages}
+        hi_age = max(caps, key=lambda a: caps[a])
+        lo_age = min(caps, key=lambda a: caps[a])
+        out.append({
+            "days": days,
+            "ages": ages,
+            "cap_high_age": hi_age,
+            "cap_high_yen": caps[hi_age],
+            "cap_low_age": lo_age,
+            "cap_low_yen": caps[lo_age],
+            "age_gap_yen": caps[hi_age] - caps[lo_age],
+            "floor_yen": days * DAILY_FLOOR,
+            # 同じ日数の中で、上限に当たる人と下限に当たる人の開き（いちばん高い年齢で）
+            "rate_gap_yen": caps[hi_age] - days * DAILY_FLOOR,
+        })
+    return out
+
+
 if __name__ == "__main__":
     # **ここが無かった（2026-08-05 に発覚）。** kojo・zangyo と同じ穴。
     # 標準出力が空のまま台本を書かせると、数字を発明させることになる。
@@ -357,3 +469,29 @@ if __name__ == "__main__":
               f"{r['days_gained']:+5d}日 {r['cap_yen_gained']:+12,d}円"
               + ("  ← 日数は変わらないのに減る" if r["days_gained"] >= 0 > r["cap_yen_gained"]
                  else "  ← 在籍を延ばしたのに減る" if r["cap_yen_gained"] < 0 else ""))
+
+    print("\n=== 在籍しても給付日数が1日も増えない期間（自己都合・45歳以上60歳未満）===")
+    print("  境界の話は上でやりました。**ここは境界と境界のあいだ**です。")
+    print(f"  上限額 {DAILY_CAP['45歳以上60歳未満']:,d}円 / 下限額 {DAILY_FLOOR:,d}円 で挟んでいます。")
+    print(f"{'勤続':>14s} {'この間の日数':>10s} {'増えない年数':>10s} "
+          f"{'次の1日で':>10s} {'上限の人':>13s} {'下限の人':>13s}")
+    for r in flat_stretch("45歳以上60歳未満", "自己都合など"):
+        span = "この先ずっと" if r["flat_years"] is None else f"{r['flat_years']}年"
+        edge = f"{r['from_year']}年〜" + ("" if r["to_year"] is None else f"{r['to_year']}年")
+        if r["days_gained"] is None:
+            print(f"{edge:>14s} {r['days']:8d}日 {span:>12s} "
+                  f"{'（最後の帯）':>12s} {'—':>13s} {'—':>13s}")
+        else:
+            print(f"{edge:>14s} {r['days']:8d}日 {span:>12s} "
+                  f"{r['days_gained']:+8d}日 {r['cap_yen_gained']:11,d}円 "
+                  f"{r['floor_yen_gained']:11,d}円")
+
+    print("\n=== 所定給付日数が同じでも、総額はここまで開く ===")
+    print("  日数の表と上限額の表は別々にしか出ていません。**同じ日数を横に並べます。**")
+    print(f"{'日数':>6s} {'年齢の数':>6s} {'上限がいちばん高い年齢':>24s} "
+          f"{'いちばん低い年齢':>22s} {'年齢のせいの差':>12s} {'下限の人':>12s} {'日額のせいの差':>12s}")
+    for r in same_days_spread():
+        print(f"{r['days']:4d}日 {len(r['ages']):5d}区分 "
+              f"{r['cap_high_age']:>16s} {r['cap_high_yen']:9,d}円 "
+              f"{r['cap_low_age']:>16s} {r['cap_low_yen']:9,d}円 "
+              f"{r['age_gap_yen']:10,d}円 {r['floor_yen']:10,d}円 {r['rate_gap_yen']:10,d}円")
