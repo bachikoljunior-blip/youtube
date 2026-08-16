@@ -197,3 +197,5 @@
 {"at": "2026-08-16T23:42:00+09:00", "session": "session_01B1iMkE19MEY19csmfJnVL7", "kind": "start"}
 {"at": "2026-08-16T23:52:34+09:00", "session": "session_01B1iMkE19MEY19csmfJnVL7", "kind": "ship", "what": "means: 在庫の律速（未使用の節0件）に calc を1本足した — セルフメディケーション税制 vs 医療費控除の分岐点。節6件＝在庫 0→6、tests 621→622", "closes": ["src/calc/"], "journal_lines": 16088}
 {"at": "2026-08-17T00:03:41+09:00", "session": "session_01B1iMkE19MEY19csmfJnVL7", "kind": "ship", "what": "fix: 限度より長いカタカナの語も割らずにはみ出す（実データ36,112組で 138→0・悪化0）。足したばかりの serufu 6テーマが全部これで作れなかった"}
+{"at": "2026-08-17T00:16:26+09:00", "session": "session_01B1iMkE19MEY19csmfJnVL7", "kind": "ship", "what": "upload×4: 09-06 を8本の日に（M11 の段 10→11日／14日まであと3日）。うち2本は新しい calc(serufu) の初出"}
+{"at": "2026-08-17T00:16:26+09:00", "session": "session_01B1iMkE19MEY19csmfJnVL7", "kind": "ship", "what": "fix: 見出しに縮むつまみを付けた（tighten は折り直すだけ・zoom は .body のみで、限度より長い語をブラウザが勝手に割っていた）。tests 624→625"}
