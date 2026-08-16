@@ -633,8 +633,26 @@ pipeline と同じ割り方（`visuals.reveal_variants`）をその場で掛け�
 
 ##### **作り直しは `--skip-upload` を付けること**（2026-08-16 18:5x に踏んだ）
 
-    python -m src.pipeline --topic <ID> --short --skip-upload   # 作るだけ
-    python scripts/upload_only.py <ID> "" <日付>@<時>            # 置き場所は自分で決める
+    python scripts/batch_build.py --topics <ID> --skip-upload --jobs 1   # 作るだけ
+    python scripts/upload_only.py <ID> "" <日付>@<時>                     # 置き場所は自分で決める
+
+###### **`--skip-upload` は `pipeline` には無い**（2026-08-16 19:3x に踏んだ）
+
+ここは 18:5x の回が **`python -m src.pipeline --topic <ID> --short --skip-upload`**
+と書きました。**そんな旗はありません。**
+
+    pipeline.py: error: unrecognized arguments: --skip-upload
+
+`--skip-upload` は **`batch_build.py` の旗**で、`pipeline` の `--help` には
+`--script / --topic / --calc / --visibility / --dry-run / --short` しかない。
+**書いた回は一度も打っていません**（あの回は `reschedule --move` で出しており、
+作り直しの道そのものは通っていない）。
+
+**これは `bake_slides.py --resplit` と同じ形の3回目です** ——
+**手順の文言だけが実装に追いついていない。** §2.7 の
+「申し送りの『なぜか』は一度疑う」は**道具の名前にも掛けること**:
+**手順に書いてあるコマンドは、打つ前に `--help` で実在を確かめる。**
+`batch_build` は1本でも通り、`--jobs 1` で直列になります。
 
 **ここには長らく「先に作る」としか書いてありませんでした。**
 素直に `pipeline --topic <ID> --short` と打つと、**その場で予約まで入ります。**
@@ -649,6 +667,22 @@ pipeline と同じ割り方（`visuals.reveal_variants`）をその場で掛け�
 外すのは `scripts/reschedule.py --unschedule <video_id>`、
 または `scripts/unschedule.py <video_id> --why "<理由>"`（**公開済みと再生>0 を守る門つき**。
 こちらが既定）。
+
+**そのあと `upload_only.py` は重なりの門で止まります**（2026-08-16 19:4x）。
+外した本は private のまま残り、**テーマIDが同じ**なので `same-topic` に当たります:
+
+    [!] **既にある本と強く重なります。投稿を中止します。**
+
+**ここは `--allow-dupe` で通してよい場面です。** 門が守っているのは
+「続けて数本見たときに繰り返しに見えること」で、**外した本は二度と公開されません**
+（private・予約なし・再生0）。`status.py` の重なりの節も、この形を
+**「片方が既に外れている ← 処理済み」**として数えています。
+**理由は JOURNAL に書くこと**（門を黙らせた回は、必ず跡を残す）。
+
+**`unschedule.py` の最後の1行は当てにしないこと**（同日 19:4x）。
+外した直後に **「予約が残っています。落ちていません」** と出ましたが、
+`videos().list(part='status')` を叩くと `publishAt` の欄そのものが消えており、
+**実際には外れています。** 確かめるのは道具の言い分ではなく API の返り。
 
 `build_provenance.py` は各本について「上げた時刻」以前で最後のコミットを出し、
 **その後に入った、絵と音を変える直し**を並べます。

@@ -433,6 +433,136 @@ def _visual_texts(seg: dict) -> list[str]:
     return [t for t in out if t]
 
 
+#: 折り返しを検査する画面の欄と、`visuals` のどの関数が折るか。
+#: **実際に描く関数と同じものを呼ぶこと。** 限界文字数は欄ごとに違うので
+#: （見出し9・箇条書き9・ラベル7・注記はさらに別）、
+#: こちらで数字を持つと、片方だけ古くなります。
+_WRAPPED_FIELDS = (
+    ("headline", "_wrap_head"),
+    ("note", "_wrap_note"),
+    ("stat_source", "_wrap_note"),
+)
+
+
+def _wrapped_visual_lines(seg: dict, portrait: bool) -> list[tuple[str, list[str]]]:
+    """1コマの画面の文字を、**描くときと同じ関数で折って**行に割る。
+
+    返すのは `(元の文, 折れた行)` の組。呼ぶ側が隣り合う行の境目を見ます。
+    """
+    import html
+
+    from . import visuals
+
+    v = seg.get("visual") or {}
+    jobs: list[tuple[str, str]] = []
+    for key, fn in _WRAPPED_FIELDS:
+        if v.get(key):
+            jobs.append((str(v[key]), fn))
+    jobs += [(str(x), "_wrap_item") for x in (v.get("items") or []) if x]
+    for bar in v.get("bars") or []:
+        if isinstance(bar, dict) and bar.get("label"):
+            jobs.append((str(bar["label"]), "_wrap_label"))
+
+    out: list[tuple[str, list[str]]] = []
+    for text, fn in jobs:
+        wrapped = getattr(visuals, fn)(text, portrait)
+        lines = [html.unescape(x) for x in wrapped.split("<br>") if x]
+        if len(lines) > 1:
+            out.append((text, lines))
+    return out
+
+
+def _glued(text: str, lines: list[str]) -> list[bool]:
+    """行の境目ごとに「**元の文で地続きだったか**」を返す（長さは行数−1）。
+
+    **空白のところで折れたのは、欠陥ではありません。**
+    `_wrap` は行頭・行末の空白を捨てるので、折れた行だけを見ると
+    `25%` ／ `11,212,500円` と `9589万3334` ／ `円` の区別がつきません。
+    **前者は元から空白で区切られた別々の値**で、画面上は何も壊れていない。
+
+    実測（2026-08-16、待ち行列の34本）: この区別を入れる前は 4本が鳴り、
+    **そのうち3本が空白での折れ＝誤報**でした。
+    """
+    pos = 0
+    ends: list[int] = []
+    starts: list[int] = []
+    for line in lines:
+        i = text.find(line, pos)
+        if i < 0:            # 見つからない（想定外）。地続き扱いで甘くしない
+            return [True] * (len(lines) - 1)
+        starts.append(i)
+        pos = i + len(line)
+        ends.append(pos)
+    return [text[ends[i]:starts[i + 1]] == "" for i in range(len(lines) - 1)]
+
+
+#: **数の桁が割れた**とみなす、行末の字。次の行頭が数字のときだけ見ます。
+#:
+#: 字幕側（`_check_subtitles`）は `_NUM_TOKEN` の両側一致という**広い**規則です。
+#: こちらは狭くしてあります。**外し方の損が違うから**です ——
+#: 字幕側は生成のやり直しで済みますが、**こちらが誤報を出すと1本が投稿されません**
+#: （`verify` は落ちたら上げない）。**投稿が途切れるのが最大の損失**なので、
+#: 誤報の側に倒さない。
+#:
+#: 実測（2026-08-16、待ち行列の34本）。両側 `_NUM_TOKEN` だと 1本が鳴り、
+#: それは `9589万3334` ／ `円` ＝ **単位1字が次の行に残る形**でした。
+#: 読みにくいが**数としては読める**ので、ここでは鳴らしません
+#: （直す先は `_best_cut` の側で、まだ直っていません。`docs/JOURNAL.md` に残す）。
+#: 狭めた結果、34本で **0件**。桁の割れだけが鳴ります。
+_DIGIT_RUN = set("0123456789,，．.")
+
+
+def _check_visual_wrap(script: dict | None, portrait: bool) -> list[str]:
+    """**画面の文字の折り返し**を、字幕と同じ目で見る（2026-08-16 に足した）。
+
+    `_check_subtitles` は**読み上げの字幕（.ass）だけ**を見ていました。
+    ところが折っているのは同じ `subtitles._chunk` で、
+    `visuals._wrap` が**見出し・箇条書き・注記・棒のラベルの全部**を
+    そこへ委ねています。**折り方は共通なのに、検査は片側にしか無かった。**
+
+    実物 kLJ2Wsi3gQM（8/25 12:00 予定）の箇条書きが
+    **『上限額 9,』／『110円→7,830円』** と割れ、
+    **機械検査は緑のまま通しました**（目視で見つけています）。
+    字幕側なら `数字の途中で改行している` で落ちていた形です。
+
+    **だから塞ぐのは桁区切りの1件ではなく、片側しか見ていなかったこと**の
+    ほうです。ここを足しておけば、次に `_best_cut` が別の理由で
+    踏み越えたときも、画面側で止まります。
+
+    **割り引いて読むこと**: ここは `tighten=0`（＝見積もりどおり収まった場合）で
+    折ります。`visuals.render()` は入りきらないときに `tighten` を上げて
+    **もっと狭く折り直す**ので、そちらで新しく出る割れ目は見えません。
+    """
+    if not script:
+        return []
+    bad_num: list[tuple[str, str, str]] = []
+    bad_kata: list[tuple[str, str, str]] = []
+    for seg in script.get("segments") or []:
+        for text, lines in _wrapped_visual_lines(seg, portrait):
+            for (a, b), glued in zip(zip(lines, lines[1:]), _glued(text, lines)):
+                if not glued:
+                    continue      # 空白のところで折れただけ（別々の値）
+                if a[-1] in _DIGIT_RUN and b[0].isdigit():
+                    bad_num.append((text, a, b))
+                elif _is_katakana(a[-1]) and _is_katakana(b[0]):
+                    bad_kata.append((text, a, b))
+
+    problems = []
+    if bad_num:
+        text, a, b = bad_num[0]
+        problems.append(
+            f"画面の文字が数字の途中で折れている箇所が {len(bad_num)} 件"
+            f"（『{text}』→『{a}』『{b}』）"
+        )
+    if bad_kata:
+        text, a, b = bad_kata[0]
+        problems.append(
+            f"画面の文字がカタカナの語の途中で折れている箇所が {len(bad_kata)} 件"
+            f"（『{text}』→『{a}』『{b}』）"
+        )
+    return problems
+
+
 def _check_assumption_value_shown(script: dict | None) -> list[str]:
     """**前提として名前を出した量の値が、画面のどこかに出ているか。**
 
@@ -1294,6 +1424,7 @@ def check(path: Path, video_cfg: dict, min_minutes: float, work: Path,
         problems += _check_headline_from_calc(work, script)
         problems += _check_short_pace(script, duration)
         problems += _check_slide_hold(work, duration)
+    problems += _check_visual_wrap(script, portrait)
     problems += _check_count_matches(script)
     problems += _check_title_from_calc(work, script, topic)
     problems += _check_not_repeat(work, script)
