@@ -425,6 +425,65 @@ def _when(r: dict) -> str:
     return ("予約 " if r["scheduled"] else "公開 ") + at.strftime("%m/%d %H:%M")
 
 
+def reaches(r: dict) -> str:
+    """**この1本は、これから視聴者に届くのか。**
+
+    - `予約` … まだ届いていない。**外せる**
+    - `公開` … もう届いた。**取り消せない**
+    - `外し` … 予約が無い private。**もう届かない**
+    """
+    if r["scheduled"]:
+        return "予約"
+    return "公開" if r["at"] else "外し"
+
+
+def triage(issues: list[dict]) -> dict[str, list[dict]]:
+    """強い組を、**いま手が打てるか**で3つに分ける（2026-08-16 に足した）。
+
+    ## なぜ要るか（**この回に実測してから足しています**）
+
+    `report` は強い組を全部 **「片方を外すこと」** として並べ、
+    `scripts/reschedule.py --unschedule <id>` を添えていました。
+    ところが実物22組を数えると:
+
+        予約 + 外し    11組   相手はもう外れている ＝ **外すものが無い**
+        公開 + 外し     6組   同上
+        公開 + 公開     3組   両方とも公開済み ＝ **取り消せない**
+        外し + 外し     2組   どちらも届かない
+        **予約 + 予約    0組**
+        **予約 + 公開    0組**
+
+    **22組すべてが「打つ手なし」で、当たりは0件**でした。60行を毎回並べて、
+    そのどれにも `--unschedule` できる相手がいません。
+
+    `status.py` 自身がこの危険を書いています ——
+    **「毎回鳴る警告は無視されるようになり、本当に予約し忘れたときに効かなくなる」**。
+    8/16 08:2x が「予約し忘れ」の警告を同じ理由で作り直しており（12件まで育って
+    当たり0件）、**これはその2件目**です。塞ぐ場所が違うだけで、穴の種類は同じ。
+
+    ## 見つける側は一切変えていません
+
+    `find()` はそのままです。**組は全部本物**で、消したのは「並べ方」だけ。
+    だから `blocking()`（これから上げる本を止める）と
+    `why_stranded()`（暗い本に理由を付ける）は影響を受けません
+    —— どちらも `find()` を直に読み、`report` を通りません。
+
+    **黙らせたぶんは件数で残します。** 外した側がうっかり予約し直されたら、
+    その組は `actionable` に**移って鳴ります**（`tests/test_dupes_triage.py`
+    の故障注入がそこを見ています）。数を消すと、その復活に気づけません。
+    """
+    out: dict[str, list[dict]] = {"actionable": [], "already": [], "parked": []}
+    for it in issues:
+        pair = {reaches(it["a"]), reaches(it["b"])}
+        if "外し" in pair:
+            out["parked"].append(it)      # 片方（か両方）がもう届かない
+        elif "予約" in pair:
+            out["actionable"].append(it)  # 予約+予約 か 予約+公開 ＝ **外せる**
+        else:
+            out["already"].append(it)     # 公開+公開 ＝ 取り消せない
+    return out
+
+
 def report(videos: list[dict], topics: dict[str, str] | None = None) -> list[dict]:
     """`status.py` から毎回呼ぶ。**印刷して、見つけた組を返す。**"""
     issues = find(rows_from_videos(videos, topics))
@@ -438,15 +497,37 @@ def report(videos: list[dict], topics: dict[str, str] | None = None) -> list[dic
 
     print(f"  **強い {len(strong)}組** ／ 弱い {len(weak)}組")
 
-    if strong:
-        print(f"\n  --- 強い {len(strong)}組（**片方を外すこと**）---")
-        for it in strong:
+    # **強いほうを、いま手が打てるかで割ります**（2026-08-16。理由は `triage`）。
+    # 実測22組すべてが「相手はもう外れている／もう公開済み」で、
+    # **`--unschedule` できる組は0件**でした。全部並べると、当たった1件が埋もれます。
+    tri = triage(strong)
+    if tri["actionable"]:
+        print(f"\n  --- **止められる {len(tri['actionable'])}組（片方を外すこと）** ---")
+        for it in tri["actionable"]:
             a, b = it["a"], it["b"]
             print(f"  [{it['kind']}] {it['why']}")
             print(f"      {a['id']}  {_when(a):<14s} {a['title'][:38]}")
             print(f"      {b['id']}  {_when(b):<14s} {b['title'][:38]}")
         print("    `scripts/reschedule.py --unschedule <id>`。"
               "**先に代わりを作ってから外すこと** —— 投稿が途切れるほうが高い。")
+    elif strong:
+        print("\n  --- 止められる 0組 ---")
+        print("    **強い組はありますが、どれも外す相手がいません。**"
+              "手を打つことは何もありません。")
+
+    # **黙らせたぶんは、件数だけ残します。** 消すと、外した側が予約し直された
+    # ときに気づけません（そのときは上の「止められる」に移って鳴ります）。
+    if tri["parked"]:
+        ids = sorted({r["id"] for it in tri["parked"] for r in (it["a"], it["b"])
+                      if reaches(r) == "外し"})
+        print(f"  片方が既に外れている {len(tri['parked'])}組"
+              f"（外れているのは {len(ids)}本: {' '.join(ids)}）"
+              " ← **処理済み。手を打つ必要はありません**")
+    if tri["already"]:
+        ids = sorted({r["id"] for it in tri["already"] for r in (it["a"], it["b"])})
+        print(f"  両方とも公開済み {len(tri['already'])}組"
+              f"（{' '.join(ids)}） ← **取り消せません。**"
+              "同じ組み合わせを次に作らないためだけの記録")
 
     # **弱いほうは1組ずつ出しません。** 実測で「答えの数が同じ」だけで20組出て、
     # そのうち16組が `shitsugyo` の `90日`（給付日数は制度側の刻みなので、
