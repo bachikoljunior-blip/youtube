@@ -326,6 +326,12 @@ if __name__ == "__main__":
 
     base = Wage(base=250_000, role_allowance=20_000)
     print("\n=== 一律手当を誤って除外された場合の年間の差額 ===")
+    # **基本給を必ず印字すること**（2026-08-17。`src/premise.py` が落とします）。
+    # 時給1,653円はこの基本給と役職手当で決まっているので、
+    # **出さないと表の全部が「どこから来たか分からない数字」になります。**
+    print(f"  前提の月給総額 {base.base + base.role_allowance:,}円"
+          f"＝基本給{base.base:,}円＋役職手当{base.role_allowance:,}円"
+          f"（総額は変えず、一律手当だけを動かします・所定 {hours:.1f}時間）")
     print(f"{'一律手当':>8s} {'残業':>6s} {'正しい時給':>10s} {'誤った時給':>10s} {'年間の差':>10s}")
     for row in shortfall_grid(base, hours, [10_000, 20_000, 30_000, 50_000], [10.0, 20.0, 45.0, 80.0]):
         print(f"{row['allowance']:8,d}円 {row['overtime_hours']:5.0f}h "
@@ -349,6 +355,9 @@ if __name__ == "__main__":
                   f"{r['correct_hours']:7.1f}h {20:4.0f}h {r['annual_shortfall']:9,.0f}円")
 
     print("\n=== 手当の種類べつ 一律だと除外できない ===")
+    # **基本給を必ず印字すること。** `allowance_grid()` の既定値で計算しています
+    # （既定値は `premise.py` からは見えないので、ここは人が合わせること）。
+    print(f"  前提の基本給 268,000円（所定 163.3時間・残業22時間）")
     print(f"{'手当':>26}{'月額':>9}{'除外':>6}{'正しい単価':>11}{'除外した単価':>13}{'年間の差':>11}")
     for r in allowance_grid():
         print(f"{r['name']:>26}{r['amount']:>8,}円{'  可' if r['excludable'] else ' 不可':>6}"

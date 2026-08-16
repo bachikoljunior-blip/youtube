@@ -799,6 +799,20 @@ def calc_block(topic: dict) -> str:
         )
 
     stdout = proc.stdout
+
+    # **答えを決めている値が、その節に1度も出ていないなら止める**（2026-08-17）。
+    # 独立評価の1体が `J0QK59pUg-4` について「肝心の年収が一度も画面に出ていない
+    # ので検証できない」と書き、実物を見ると**書き手は出しようが無かった** ——
+    # `last_step(4_600_000)` の 4,600,000 がどの行にも入っていなかった。
+    # **前提と計算式を全部画面に出すのがこの作りの根幹**（`CLAUDE.md`）なので、
+    # ここは「作ってから直す」ではなく生成の前で止めます。実測 91節中3件。
+    from . import premise
+    holes = premise.scan(module.__file__, stdout)
+    if holes:
+        raise RuntimeError(
+            f"src.calc.{name} に、画面に出しようがない前提があります:\n  "
+            + "\n  ".join(holes))
+
     # **渡さない表は、そもそもプロンプトに入れない。**
     #
     # 2026-08-09、長尺の angle に「cliff() と grid() は使うな。ショートで
