@@ -32,6 +32,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src import alerts as _alerts  # noqa: E402
+from src import inbox as _inbox  # noqa: E402
 from src.uploader import _service  # noqa: E402
 
 JST = timezone(timedelta(hours=9))
@@ -1132,6 +1133,10 @@ def print_local_sections(inventory: bool = True) -> None:
     `inventory=True` のときだけ、**手元の控えから予約の先を数えます** ——
     普段は API 側の「[予約中]」の表が同じことを言うので、二重に出しません。
     """
+    # **いちばん上に置いています。** ここに残っているのは
+    # 「**運ばれてきたのに、まだ閉じていない依頼**」で、
+    # 途中で死んだ回の申し送りが唯一残る場所です（`src/inbox.py`）。
+    print(_inbox.render())
     if inventory:
         _print_inventory_from_ledger()
     print_means()
