@@ -175,7 +175,8 @@ def main(topic: str, visibility: str | None = None, hour: int | None = None,
     # 素通りさせると 8/15 の再発（読み上げ文が0行のまま2本積まれた）になるので、
     # **見落とせない形で出して、終了コードにも出します。**
     try:
-        critique_queue.stash(topic, video_id, script, work)
+        critique_queue.stash(topic, video_id, script, work,
+                             thumbnail_set=channel["publish"].get("thumbnail_set"))
     except Exception as exc:
         print(f"[queue] **材料を残せませんでした: {exc}**")
         print("[queue] **投稿は済んでいます。** この動画は独立評価を回せません。")

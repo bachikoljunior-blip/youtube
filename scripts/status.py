@@ -1278,6 +1278,45 @@ def _print_inventory_from_ledger() -> None:
     except Exception as exc:
         print(f"\n=== 予約の先 ===\n  [!] 控えが読めません: {str(exc)[:100]}")
 
+    _print_missing_thumbnails()
+
+
+def _print_missing_thumbnails() -> None:
+    """**サムネイルの載っていない予約**（2026-08-17 に足した。**3回持ち越された項目**）。
+
+    日枠が切れている13時間は `thumbnails.set` だけが 403 になり、
+    `videos.insert` は通ります。**投稿は済んでサムネイルだけ無い予約**が積まれる。
+
+    ここに出す前は、どの本が載っていないかを持っていたのは**日誌の散文だけ**でした。
+    散文は次の回の「次の回へ」数行にしか残らないので、3回運ばれて3回とも
+    実行されていません。**しかも頼まれていた手順は実行不可能でした**
+    （`refresh_thumbnail.py` は `build/` を読むが、`build/` は毎周消える）。
+    **控えの側に印を持たせたので、以後は機械が数えます。**
+    """
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        import critique_queue
+
+        rows = critique_queue.missing_thumbnail()
+    except Exception as exc:
+        print(f"\n=== サムネイル ===\n  [!] 控えが読めません: {str(exc)[:100]}")
+        return
+    if not rows:
+        return
+    _r = _alerts.ring("missing_thumbnail", len(rows))
+    if _r.folded:
+        print("\n" + _r.line)
+        return
+    print(f"\n=== サムネイルの載っていない予約（**{len(rows)}本**）===")
+    for row in rows[:12]:
+        print(f"  {row['video_id']}  {row['topic']}")
+    if len(rows) > 12:
+        print(f"  ほか {len(rows) - 12}本")
+    print("  **押し直すのは1行です**（`build/` は要りません。bytes は控えにあります）:")
+    print("      python scripts/refresh_thumbnail.py --missing")
+    print("  **日枠が戻ってから**（JST 16:00 ごろ）。それより前は 403 で落ちます。")
+    print("  潰したら `run_marker.py --ship ... --closes missing_thumbnail`。")
+
 
 def main(days: int = 7) -> int:
     """**外の口が落ちても、手元で分かることは全部出す**（2026-08-16 に分けた）。

@@ -333,6 +333,15 @@ def upload(
     _post_actions(youtube, video_id, publish_cfg)
 
     if thumbnail_path.exists():
-        _set_thumbnail(youtube, video_id, thumbnail_path)
+        # **載ったかどうかを、呼んだ側にも返すこと**（2026-08-17）。
+        # `publish_at` と同じ書き戻しです。理由も同じで、**ここでしか分からない**。
+        #
+        # 日枠が切れている13時間は `thumbnails.set` だけが 403 になり、
+        # **投稿は成功してサムネイルだけ無い予約**が積まれます。この結果を
+        # 落とすと、あとから「どの本が載っていないか」を言えるのは
+        # **日誌の散文だけ**になり、実際に3回持ち越されました
+        # （`scripts/critique_queue.missing_thumbnail`）。
+        publish_cfg["thumbnail_set"] = _set_thumbnail(
+            youtube, video_id, thumbnail_path)
 
     return video_id

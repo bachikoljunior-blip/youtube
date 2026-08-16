@@ -82,7 +82,8 @@ def _change_ratios(work: Path) -> list[float] | None:
         return None
 
 
-def stash(topic: str, video_id: str, script: dict, work: Path) -> Path | None:
+def stash(topic: str, video_id: str, script: dict, work: Path,
+          thumbnail_set: bool | None = None) -> Path | None:
     """contact sheet と読み上げ文を、動画IDで引ける場所へ写す。
 
     **contact sheet が無ければ何もしません。** `inspect_build.py` を通していない
@@ -139,6 +140,28 @@ def stash(topic: str, video_id: str, script: dict, work: Path) -> Path | None:
         shutil.copy2(plan_src, STASH / f"{video_id}.plan.json")
         plan_kept = True
 
+    # **サムネイルそのものを残します**（2026-08-17。**3回持ち越された項目**）。
+    #
+    # 日枠が切れている13時間、`thumbnails.set` は 403 で落ちます
+    # （`videos.insert` は通るので、投稿だけが済んで**サムネイルの無い予約**が積まれる）。
+    # 申し送りは3回とも「枠が戻った回に `scripts/refresh_thumbnail.py` を回すこと」
+    # と書いていました。**その手順は実行できません。**
+    #
+    # `refresh_thumbnail.py` が読むのは `build/<テーマID>/` ですが、
+    # **`build/` は .gitignore で、1周ごとにコンテナごと消えます。**
+    # 枠が戻る JST 16:00 には、03時台に上げた本の `build/` はとっくにありません。
+    # **3回の申し送りは、構造として不可能なことを頼み続けていました**
+    # （`docs/trigger_main.md` §2.7「申し送りの『なぜか』は一度疑う」）。
+    #
+    # 焼き直す必要はありません。**サムネイルは投稿の時点でもう出来ています。**
+    # YouTube に載らなかっただけなので、**bytes を残せば、後の回が押すだけで済みます。**
+    # 1本 約70KB —— 同じ場所に既にある contact sheet の 10分の1 です。
+    thumb_src = work / "thumbnail.jpg"
+    thumb_kept = False
+    if thumb_src.exists():
+        shutil.copy2(thumb_src, STASH / f"{video_id}.thumb.jpg")
+        thumb_kept = True
+
     (STASH / f"{video_id}.json").write_text(
         json.dumps(
             {
@@ -149,6 +172,12 @@ def stash(topic: str, video_id: str, script: dict, work: Path) -> Path | None:
                 "narration": [ln for ln in lines if ln],
                 "slides_plan": plan_kept,
                 "change_ratios": _change_ratios(work),
+                "thumbnail_stashed": thumb_kept,
+                # **投稿の時点で YouTube に載ったかどうか。**
+                # `None` は「呼ぶ側が渡さなかった」＝分からない、です。
+                # **`False` と混ぜないこと** —— 分からないものを「載っていない」と
+                # 読むと、載っている本にも押し直しにいきます（無害だが枠を食う）。
+                "thumbnail_set": thumbnail_set,
             },
             ensure_ascii=False,
             indent=1,
@@ -161,7 +190,60 @@ def stash(topic: str, video_id: str, script: dict, work: Path) -> Path | None:
     else:
         # **黙って落とさない。** 無いことに気づけないのが、この項目が5回持ち越された理由です。
         print(f"[queue] **{plan_src} がありません** —— この本は後から焼き直せません")
+    if thumbnail_set is False:
+        if thumb_kept:
+            print("[queue] **サムネイルが YouTube に載っていません。** "
+                  f"bytes は残したので、枠の戻った回に "
+                  f"`python scripts/refresh_thumbnail.py --missing` で押し直せます")
+        else:
+            print(f"[queue] **{thumb_src} がありません** —— "
+                  "この本のサムネイルは後から載せ直せません")
     return STASH / f"{video_id}.jpg"
+
+
+def missing_thumbnail() -> list[dict]:
+    """**サムネイルが載っていないまま予約に入っている本**（2026-08-17）。
+
+    `thumbnail_set is False` かつ bytes が残っているものだけを返します。
+    **`None`（分からない）は返しません** —— この印より前に上げた本は
+    区別がつかないので、押し直しの対象にすると全部を押しにいきます。
+    """
+    out = []
+    for meta_path in sorted(STASH.glob("*.json")):
+        if meta_path.name.endswith(".plan.json"):
+            continue
+        try:
+            meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if meta.get("thumbnail_set") is not False:
+            continue
+        video_id = meta.get("video_id") or meta_path.stem
+        thumb = STASH / f"{video_id}.thumb.jpg"
+        if not thumb.exists():
+            continue
+        out.append({"video_id": video_id, "topic": meta.get("topic"),
+                    "thumb": thumb, "stashed_at": meta.get("stashed_at")})
+    return out
+
+
+def mark_thumbnail_set(video_id: str) -> bool:
+    """**押せた本の印を消す。** 消さないと、次の回も同じ本を押しにいきます。
+
+    呼ぶのは `scripts/refresh_thumbnail.py --missing` が**実際に載せたあと**だけ。
+    先に消すと、落ちた本が一覧から消えて**二度と拾われません。**
+    """
+    meta_path = STASH / f"{video_id}.json"
+    if not meta_path.exists():
+        return False
+    try:
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    meta["thumbnail_set"] = True
+    meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=1),
+                         encoding="utf-8")
+    return True
 
 
 def _scored() -> set[str]:
