@@ -463,11 +463,40 @@ def _wrapped_visual_lines(seg: dict, portrait: bool) -> list[tuple[str, list[str
         if isinstance(bar, dict) and bar.get("label"):
             jobs.append((str(bar["label"]), "_wrap_label"))
 
+    # **`note` は2つの幅で描かれます**（2026-08-16 21:5x に、この穴を実物で踏んだ）。
+    #
+    # `reveal_variants` が1枚を2つに割ると、**数字を伏せた1枚目では
+    # 補足が主役になって大きくなります**（`.note.lead`）。
+    # 縦向きの1行は **14字 → 6字**。**折れ目が増えるのは狭いほう**なのに、
+    # ここは長らく `_wrap_note(text, portrait)`（＝ `lead=False`）しか見ていませんでした。
+    #
+    # 実物 `s-jikangai-futsu-6kagetsu-126` の注記「45時間以内で回す月の最低ライン」:
+    #
+    #     lead=False（検査が見ていた）  45時間以内で ／ 回す月の最低ライン   ← 問題なし
+    #     lead=True （画面に出たほう）  **45時** ／ **間以内で** ／ 回す月の ／ 最低ライン
+    #
+    # **検査は緑で通り、目視だけが見つけました。** 広いほうだけ見る検査は、
+    # 「いちばん割れやすい描かれ方」を構造的に素通りします。
+    # **狭いほうを当てるのは、実際に lead で描かれうる欄だけ**にすること。
+    # `visuals.reveal_variants` が `note_lead` を立てるのは
+    # **`kind` が `stat` で `stat` と `note` の両方がある**コマだけです
+    # （そこだけが2枚に割れて、1枚目の `stat` が空になる）。
+    # 全部の `note` に狭い幅を当てると、**描かれない折れ方で鳴ります** ——
+    # この回の実測で、`stat_source` に当てた2件が誤報でした（誤報は不投稿）。
+    if (v.get("kind") or "stat").strip() == "stat" and v.get("stat") and v.get("note"):
+        jobs.append((str(v["note"]), "_wrap_note_lead"))
+
     out: list[tuple[str, list[str]]] = []
+    seen: set[tuple[str, tuple[str, ...]]] = set()
     for text, fn in jobs:
-        wrapped = getattr(visuals, fn)(text, portrait)
+        if fn == "_wrap_note_lead":
+            wrapped = visuals._wrap_note(text, portrait, 0, True)
+        else:
+            wrapped = getattr(visuals, fn)(text, portrait)
         lines = [html.unescape(x) for x in wrapped.split("<br>") if x]
-        if len(lines) > 1:
+        key = (text, tuple(lines))
+        if len(lines) > 1 and key not in seen:
+            seen.add(key)
             out.append((text, lines))
     return out
 
@@ -511,6 +540,14 @@ def _glued(text: str, lines: list[str]) -> list[bool]:
 #: 狭めた結果、34本で **0件**。桁の割れだけが鳴ります。
 _DIGIT_RUN = set("0123456789,，．.")
 
+#: **2字でひとつの単位**（`時間` `年間` `月間` `日間` `週間` `秒間`）。
+#: 前の字は `_NUM_TOKEN` にあるのに後ろの字は無いので、
+#: 「両側とも数字のかたまり」の規則をすり抜けます（2026-08-16 に実物で見つけた）。
+#: 実物 `s-jikangai-futsu-6kagetsu-126` の注記が **『45時』／『間以内で』**。
+#: 折る側（`subtitles._best_cut`）で塞いでありますが、**検査も持たせます** ——
+#: 逃げ場が無いときの最後の1行は規則を踏み越えるので（カタカナで実際に起きた）。
+_UNIT_HEAD = set("時年月日週秒")
+
 
 def _check_visual_wrap(script: dict | None, portrait: bool) -> list[str]:
     """**画面の文字の折り返し**を、字幕と同じ目で見る（2026-08-16 に足した）。
@@ -537,6 +574,7 @@ def _check_visual_wrap(script: dict | None, portrait: bool) -> list[str]:
         return []
     bad_num: list[tuple[str, str, str]] = []
     bad_kata: list[tuple[str, str, str]] = []
+    bad_unit: list[tuple[str, str, str]] = []
     for seg in script.get("segments") or []:
         for text, lines in _wrapped_visual_lines(seg, portrait):
             for (a, b), glued in zip(zip(lines, lines[1:]), _glued(text, lines)):
@@ -546,6 +584,9 @@ def _check_visual_wrap(script: dict | None, portrait: bool) -> list[str]:
                     bad_num.append((text, a, b))
                 elif _is_katakana(a[-1]) and _is_katakana(b[0]):
                     bad_kata.append((text, a, b))
+                elif a[-1] in _UNIT_HEAD and b[0] == "間" and len(a) >= 2 \
+                        and a[-2] in _NUM_TOKEN:
+                    bad_unit.append((text, a, b))
 
     problems = []
     if bad_num:
@@ -558,6 +599,12 @@ def _check_visual_wrap(script: dict | None, portrait: bool) -> list[str]:
         text, a, b = bad_kata[0]
         problems.append(
             f"画面の文字がカタカナの語の途中で折れている箇所が {len(bad_kata)} 件"
+            f"（『{text}』→『{a}』『{b}』）"
+        )
+    if bad_unit:
+        text, a, b = bad_unit[0]
+        problems.append(
+            f"画面の文字が2字の単位の途中で折れている箇所が {len(bad_unit)} 件"
             f"（『{text}』→『{a}』『{b}』）"
         )
     return problems
