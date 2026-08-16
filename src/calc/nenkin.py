@@ -93,6 +93,7 @@
 """
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 
 ASSUMPTIONS = [
@@ -109,6 +110,12 @@ ASSUMPTIONS = [
     "これは月の数えはじめをどちらに置くかの違いで、1か月ずれます。どちらも間違いではありません",
     "繰上げ側の分岐点は、65歳から受け取った累計が繰上げた累計を追い抜いた最初の月です。"
     "基準にした年額は180万円で、額面の分岐点はこの年額を変えても動きません",
+    "いちばん多くもらえる開始年齢は、60歳0か月から75歳0か月までの181通りを"
+    "全部計算して選んだものです。同じ額なら早いほうを採っています",
+    "何歳まで生きるかは誰にも分かりません。ここでは「その年齢まで生きたら」という"
+    "仮定を置いて計算しています。仮定が変われば答えも変わります",
+    "あと1か月待つ・早めるの取り返しは、その1か月ぶんの累計が入れ替わる最初の月です。"
+    "取り返しの月数は、繰下げが倍率÷0.007＋1、繰上げが倍率÷0.004＋1で、年額は約分で消えます",
     "年金額べつの表は、繰り下げた後の年額が350万円までの人だけを出しています。"
     "手取り率の仮定が年額500万円までしか無く、それを超えると率が平らになって"
     "手取りと額面の差が消えてしまうためです",
@@ -203,6 +210,47 @@ def check_tables() -> None:
             raise ValueError("年額が上がったのに手取り率が上がっている")
     if nets[0] <= nets[-1]:
         raise ValueError("手取り率が額によらず一定になっている。これでは分岐点が動かない")
+
+    # --- 最適な開始月（`best_start` 以下の3節の主題）-----------------------
+    # 1. **75歳まで繰り下げるのが最適になるのは、うんと長生きする場合だけ**。
+    #    ここが「85歳で最適」に変わる表になったら、節の文言ごと逆になります。
+    #    数え上げ（`best_start`）と、限界の1か月の式（`defer_one_more_month`）は
+    #    **独立に書いてあるので、一致することが両方の裏取り**になります。
+    last = rate_for((MAX_DEFER_AGE - BASE_AGE) * 12 - 1)
+    want_full = (BASE_AGE * 12 + (MAX_DEFER_AGE - BASE_AGE) * 12 - 1
+                 + math.ceil(last / RATE_UP_PER_MONTH + 1))
+    got_full = next(um for um in range(BASE_AGE * 12, 120 * 12)
+                    if best_start(um) == (MAX_DEFER_AGE - BASE_AGE) * 12)
+    if got_full != want_full:
+        raise ValueError(
+            f"75歳0か月が最適になる寿命が、数え上げ({got_full}か月)と"
+            f"式({want_full}か月)で食い違っています")
+    if got_full < 90 * 12:
+        raise ValueError(
+            "75歳まで繰り下げるのが、90歳前で最適になっています。"
+            "best_start() の節は『端はめったに最適にならない』が主題なので、"
+            "表が変わったなら節の文言ごと見直すこと")
+
+    # 2. **最適は連続に動かない**（倍率が65歳で折れているので山が2つある）。
+    #    飛びが消えたら、`optimum_jumps()` の節そのものが無くなります。
+    jumps = optimum_jumps()
+    if not jumps:
+        raise ValueError(
+            "最適な開始が飛ぶところが1つもありません。"
+            "optimum_jumps() の節は『1か月の見込み違いで最適が飛ぶ』が主題です")
+    if max(j["飛ぶ幅_月"] for j in jumps) < 12:
+        raise ValueError("飛び幅が1年未満です。節の主題（4年半飛ぶ）と合いません")
+
+    # 3. 見込む寿命が延びて、最適な開始が**早くなる**ことはない（単調）
+    bests = [best_start(um) for um in range(BASE_AGE * 12, 100 * 12, 3)]
+    for a, b in zip(bests, bests[1:]):
+        if b < a:
+            raise ValueError("寿命を長く見たのに、最適な開始が早くなっています")
+
+    # 4. **繰上げの1か月のほうが、繰下げの1か月より高くつく**（0.004 対 0.007）。
+    #    ここが逆転する表になったら、advance_one_more_month() の文言が嘘になります。
+    if (1.0 / RATE_DOWN_PER_MONTH) <= (1.0 / RATE_UP_PER_MONTH):
+        raise ValueError("繰上げの1か月の回収が、繰下げより早くなっています")
 
     # --- 繰上げ側の分岐点 -------------------------------------------------
     # 額面では、年額が約分されて消える（冒頭の説明の式）。**これが崩れたら、
@@ -398,6 +446,24 @@ def catch_up_grid(base_annual_man: float = 180.0, step_months: int = 12) -> list
     return rows
 
 
+def lifetime(months_from_65: int, base_annual_man: float,
+             until_months: int, net: bool = False) -> float:
+    """受給開始から `until_months`（65歳を780として数えた月齢）までの総額（万円）。
+
+    `lifetime_net` は「年」でしか受け取れませんが、**最適な開始月がどこで
+    切り替わるか**は1か月きざみで見ないと出ません（実際、切り替わりは
+    1か月の差で4年半飛びます）。だから月で受ける入口をこちらに置き、
+    `lifetime_net` はここを呼ぶだけにしてあります（式は1か所）。
+    """
+    start_months = BASE_AGE * 12 + months_from_65
+    if until_months <= start_months:
+        return 0.0
+    annual = base_annual_man * rate_for(months_from_65)
+    if net:
+        annual *= _clamp_rate(annual)
+    return annual * (until_months - start_months) / 12
+
+
 def lifetime_net(months_from_65: int, base_annual_man: float,
                  until_age: int = 85) -> float:
     """受給開始から `until_age` の誕生日までに受け取る**手取りの総額**（万円）。
@@ -409,12 +475,7 @@ def lifetime_net(months_from_65: int, base_annual_man: float,
     画面には必ず前提として出すこと。繰下げると年額が上がり、手取り率は下がります
     —— 額面の倍率がそのまま手取りの倍率にならないのは、これが理由です。
     """
-    start_months = BASE_AGE * 12 + months_from_65
-    end_months = until_age * 12
-    if end_months <= start_months:
-        return 0.0
-    annual = base_annual_man * rate_for(months_from_65)
-    return annual * _clamp_rate(annual) * (end_months - start_months) / 12
+    return lifetime(months_from_65, base_annual_man, until_age * 12, net=True)
 
 
 def net_tilt(base_annual_man: float = 180.0, until_age: int = 85) -> list[dict]:
@@ -537,6 +598,179 @@ def advance_grid(base_annual_man: float = 180.0, step_months: int = 12) -> list[
     return rows
 
 
+def _age_text(months: int) -> str:
+    return f"{months // 12}歳{months % 12}か月"
+
+
+def best_start(until_months: int, base_annual_man: float = 180.0,
+               net: bool = False) -> int:
+    """`until_months` まで生きたとき、生涯の受取総額がいちばん多くなる開始月。
+
+    返すのは 65歳からの月数（負は繰上げ）。同点なら**早いほう**を返します
+    （受け取りが早いほうが手元の自由度が高いので、迷ったら前を採る）。
+
+    ## この問いが、既存の5つの節と違うところ（2026-08-17）
+
+    既存の節は全部「**65歳受給と比べて**、いつ追いつくか／追い抜かれるか」です。
+    比べる相手が65歳に固定されている。**ここでは相手を固定しません** ——
+    60歳0か月から75歳0か月までの**181通りを全部評価して、いちばん多い1つ**を出します。
+
+    出てくる形は直感に反します。
+
+    1. **75歳まで繰り下げるのが最適になることは、ほとんどありません。**
+       待つあいだ1円も受け取らない代償が、0.7パーセントの増額を上回るからです。
+    2. **最適は連続に動きません。** 倍率の傾きが65歳で 0.4→0.7 に折れているので、
+       総額は**山が2つある形**になります。見込む寿命が1か月ずれただけで、
+       最適が繰上げ側の山から繰下げ側の山へ**飛びます**。
+       この飛びは「損益分岐点」を見ているかぎり絶対に見えません。
+    """
+    best_m, best_v = None, None
+    for m in range(-(BASE_AGE - MIN_ADVANCE_AGE) * 12, (MAX_DEFER_AGE - BASE_AGE) * 12 + 1):
+        v = lifetime(m, base_annual_man, until_months, net=net)
+        if best_v is None or v > best_v + 1e-12:
+            best_m, best_v = m, v
+    return best_m
+
+
+def best_start_grid(base_annual_man: float = 180.0,
+                    until_ages: tuple[int, ...] = (75, 80, 82, 85, 88, 90, 95, 100)) -> list[dict]:
+    """何歳まで生きるかべつに、最適な開始年齢と、そのときの総額を出す。"""
+    rows = []
+    for age in until_ages:
+        um = age * 12
+        g = best_start(um, base_annual_man, net=False)
+        n = best_start(um, base_annual_man, net=True)
+        rows.append({
+            "何歳まで": age,
+            "最適な開始_額面": _age_text(BASE_AGE * 12 + g),
+            "最適な開始_手取り": _age_text(BASE_AGE * 12 + n),
+            "手取りで_月": n - g,
+            "総額_最適_円": round(lifetime(g, base_annual_man, um) * 10_000),
+            "総額_65歳開始_円": round(lifetime(0, base_annual_man, um) * 10_000),
+            "総額_75歳開始_円": round(lifetime(120, base_annual_man, um) * 10_000),
+            "65歳開始との差_円": round((lifetime(g, base_annual_man, um)
+                                  - lifetime(0, base_annual_man, um)) * 10_000),
+            "75歳開始との差_円": round((lifetime(g, base_annual_man, um)
+                                  - lifetime(120, base_annual_man, um)) * 10_000),
+        })
+    return rows
+
+
+def optimum_jumps(base_annual_man: float = 180.0, net: bool = False,
+                  span_ages: tuple[int, int] = (65, 105)) -> list[dict]:
+    """最適な開始が**1か月より大きく動く**ところ（＝飛ぶところ）だけを出す。
+
+    切り替わり自体は130か所ありますが、そのほとんどは「1か月ずれる」だけで、
+    表にすると読めません。**表に値打ちがあるのは、飛ぶ1か所と、両端**です。
+    """
+    lo, hi = span_ages
+    rows, prev_m, prev_um = [], None, None
+    for um in range(lo * 12, hi * 12 + 1):
+        m = best_start(um, base_annual_man, net=net)
+        if prev_m is not None and m - prev_m > 1:
+            rows.append({
+                "見込む寿命_手前": _age_text(prev_um),
+                "見込む寿命_ここから": _age_text(um),
+                "最適な開始_手前": _age_text(BASE_AGE * 12 + prev_m),
+                "最適な開始_ここから": _age_text(BASE_AGE * 12 + m),
+                "飛ぶ幅_月": m - prev_m,
+                "寿命の差_月": 1,
+                "総額_手前の選択_円": round(lifetime(prev_m, base_annual_man, um, net) * 10_000),
+                "総額_ここからの選択_円": round(lifetime(m, base_annual_man, um, net) * 10_000),
+            })
+        prev_m, prev_um = m, um
+    return rows
+
+
+def optimum_edges(base_annual_man: float = 180.0) -> list[dict]:
+    """端（60歳0か月・75歳0か月）が最適でいられる範囲を、額面と手取りで出す。"""
+    rows = []
+    for net in (False, True):
+        low = high = None
+        for um in range(BASE_AGE * 12, 110 * 12 + 1):
+            m = best_start(um, base_annual_man, net=net)
+            if low is None and m > -(BASE_AGE - MIN_ADVANCE_AGE) * 12:
+                low = um                              # 60歳0か月が最適でなくなる
+            if high is None and m == (MAX_DEFER_AGE - BASE_AGE) * 12:
+                high = um                             # 75歳0か月が最適になる
+        rows.append({
+            "見方": "手取り" if net else "額面",
+            "60歳0か月が最適なのは": f"{_age_text(low - 1)}まで",
+            "75歳0か月が最適になるのは": f"{_age_text(high)}から" if high else "この範囲では無い",
+            "そのあいだの幅_年": round((high - low) / 12, 1) if high else None,
+        })
+    return rows
+
+
+def defer_one_more_month(base_annual_man: float = 180.0,
+                         step_months: int = 12) -> list[dict]:
+    """「**あと1か月だけ**待つ」ことの値段と、それを取り返し終わる年齢。
+
+    ## なぜ既存の分岐点の節と別物か
+
+    既存の節が出しているのは**累計の分岐点**（65歳開始と比べて、いつ追いつくか）です。
+    ここで出すのは**限界の分岐点** —— いま立っている月から、もう1か月だけ待つかどうか。
+    判断は常にこちらの形で来ます。「70歳まで待つか」ではなく「今月受け取り始めるか」です。
+
+    式は短く、**年額が約分で消えます**（もらう額がいくらでも同じ）。
+
+        取り返し終わるまでの月数 ＝ 倍率 ÷ 0.007 ＋ 1
+
+    だから**待てば待つほど、その1か月の回収は遅くなります**（倍率が上がるので）。
+    65歳での1か月は約12年で取り返せますが、74歳11か月での1か月は**約22年**かかる。
+    **これが「75歳まで繰り下げるのが最適になりにくい」ことの正体**で、
+    `best_start()` の飛びも `optimum_edges()` の端も、全部この1本の式から出ています。
+    """
+    rows = []
+    for m in range(0, (MAX_DEFER_AGE - BASE_AGE) * 12, step_months):
+        r = rate_for(m)
+        forgone = base_annual_man * r / 12            # 見送る1か月ぶん（万円）
+        gained_year = base_annual_man * RATE_UP_PER_MONTH   # 増える年額（万円）
+        months = r / RATE_UP_PER_MONTH + 1
+        done = BASE_AGE * 12 + m + math.ceil(months)
+        rows.append({
+            "いま": _age_text(BASE_AGE * 12 + m),
+            "あと1か月待つと年額_円": round(gained_year * 10_000),
+            "見送る1か月ぶん_円": round(forgone * 10_000),
+            "取り返すのに_月": math.ceil(months),
+            "取り返し終わる年齢": _age_text(done),
+            "取り返すのに_年": round(months / 12, 1),
+        })
+    return rows
+
+
+def advance_one_more_month(base_annual_man: float = 180.0,
+                           step_months: int = 12) -> list[dict]:
+    """「**あと1か月だけ**早める」ことの値段と、その代償を払い終わる年齢。
+
+    繰下げと同じ形の式ですが、**分母が 0.004 なので回収は 1.75倍ずるずる後ろへ**動きます。
+
+        払い終わるまでの月数 ＝ 倍率 ÷ 0.004 ＋ 1
+
+    繰下げの1か月は約12年で取り返せるのに、繰上げの1か月の代償を払い終わるのは
+    **約21年後**。**同じ「1か月」なのに、向きによって値段が倍近く違う。**
+    ここが、額面で見たときに繰上げが長く有利でいられる理由です。
+    """
+    rows = []
+    for m in range(0, (BASE_AGE - MIN_ADVANCE_AGE) * 12, step_months):
+        r = rate_for(-m)
+        gained = base_annual_man * rate_for(-m - 1) / 12   # 先に受け取る1か月ぶん
+        lost_year = base_annual_man * RATE_DOWN_PER_MONTH  # 減る年額
+        months = r / RATE_DOWN_PER_MONTH + 1
+        done = BASE_AGE * 12 - m - 1 + math.ceil(months)
+        rows.append({
+            "いま": _age_text(BASE_AGE * 12 - m),
+            # **減る側なので負で持つ**（繰下げの表と並ぶので、符号を落とすと
+            # 「早めても年額が増える」と読めてしまう）
+            "1か月早めると年額_円": -round(lost_year * 10_000),
+            "先に受け取る1か月ぶん_円": round(gained * 10_000),
+            "払い終わるまで_月": math.ceil(months),
+            "払い終わる年齢": _age_text(done),
+            "払い終わるまで_年": round(months / 12, 1),
+        })
+    return rows
+
+
 if __name__ == "__main__":
     check_tables()
     print("制度の値の検査: 通過\n")
@@ -573,6 +807,51 @@ if __name__ == "__main__":
               f"（{row['ずれ_月']:>2d}か月うしろ）  "
               f"85歳までの手取り {row['生涯手取り_65歳受給_円']:>11,d}円 → "
               f"{row['生涯手取り_繰下げ_円']:>11,d}円（差 {row['差_円']:>+10,d}円）")
+
+    print(f"\n=== 何歳まで生きるかべつ / 181通りから選んだ、いちばん多くもらえる開始年齢"
+          f"（65歳で年{base}万円の場合）===")
+    print("  前提: 60歳0か月〜75歳0か月の181通りを全部計算して、総額がいちばん多い1つ / "
+          "手取り率は年額から補間（**制度の値ではなくこちらの前提**）")
+    for row in best_start_grid(base):
+        print(f"  {row['何歳まで']:>3d}歳まで生きるなら  額面の最適 {row['最適な開始_額面']:>9s}  "
+              f"手取りの最適 {row['最適な開始_手取り']:>9s}（{row['手取りで_月']:>+3d}か月）  "
+              f"総額 {row['総額_最適_円']:>12,d}円  "
+              f"65歳開始との差 {row['65歳開始との差_円']:>+11,d}円  "
+              f"75歳開始との差 {row['75歳開始との差_円']:>+11,d}円")
+
+    print(f"\n=== 見込む寿命が1か月ちがうだけで、最適な開始が4年半飛ぶところ"
+          f"（65歳で年{base}万円の場合）===")
+    print("  前提: 総額は「もらえる年数 × 倍率」で、倍率の傾きが65歳で 0.4→0.7 に折れる / "
+          "だから山が2つあり、どちらの山が高いかが入れ替わる")
+    for row in optimum_jumps(base):
+        print(f"  {row['見込む寿命_手前']}まで → 最適は {row['最適な開始_手前']}   "
+              f"{row['見込む寿命_ここから']}から → 最適は {row['最適な開始_ここから']}   "
+              f"**寿命の見込みが1か月ちがうだけで {row['飛ぶ幅_月']}か月ぶん飛ぶ**  "
+              f"（そのときの総額 {row['総額_手前の選択_円']:,d}円 → "
+              f"{row['総額_ここからの選択_円']:,d}円）")
+    for row in optimum_edges(base):
+        print(f"  {row['見方']:>3s}で見たとき  60歳0か月が最適なのは {row['60歳0か月が最適なのは']}  "
+              f"75歳0か月が最適になるのは {row['75歳0か月が最適になるのは']}")
+
+    print(f"\n=== 繰下げ「あと1か月だけ待つ」の値段（65歳で年{base}万円の場合）===")
+    print("  前提: 取り返し終わるまでの月数 ＝ 倍率 ÷ 0.007 ＋ 1（**年額は約分で消えるので、"
+          "もらう額がいくらでも同じ**）")
+    for row in defer_one_more_month(base):
+        print(f"  {row['いま']:>9s}に立っているとき  1か月待つと年額 "
+              f"{row['あと1か月待つと年額_円']:>+9,d}円  見送るのは "
+              f"{row['見送る1か月ぶん_円']:>9,d}円  "
+              f"取り返すのに {row['取り返すのに_月']:>3d}か月（{row['取り返すのに_年']:>4.1f}年）  "
+              f"→ {row['取り返し終わる年齢']}")
+
+    print(f"\n=== 繰上げ「あと1か月だけ早める」の値段（65歳で年{base}万円の場合）===")
+    print("  前提: 払い終わるまでの月数 ＝ 倍率 ÷ 0.004 ＋ 1 / "
+          "**繰下げと同じ形の式で、分母だけが 0.007 から 0.004 に変わる**")
+    for row in advance_one_more_month(base):
+        print(f"  {row['いま']:>9s}に立っているとき  1か月早めると年額は生涯 "
+              f"{row['1か月早めると年額_円']:>+9,d}円  先に受け取れるのは "
+              f"{row['先に受け取る1か月ぶん_円']:>9,d}円  "
+              f"払い終わるまで {row['払い終わるまで_月']:>3d}か月（{row['払い終わるまで_年']:>4.1f}年）  "
+              f"→ {row['払い終わる年齢']}")
 
     print("\n=== 手取りで計算すると、天秤は繰上げ側に傾く ===")
     print(f"  前提: 65歳で年{base}万円 / 85歳の誕生日まで生きた場合 / "

@@ -92,9 +92,16 @@ def test_節が_main_の出力に出ている():
     with contextlib.redirect_stdout(buf):
         runpy.run_module("src.calc.nenkin", run_name="__main__")
     heads = [ln for ln in buf.getvalue().splitlines() if ln.startswith("=== ")]
-    assert any("年金額べつ" in h for h in heads), heads
-    # `topic_forge` が節として数えるのは `=== 見出し ===` の行だけ
-    assert len(heads) == 6, heads
+    # `topic_forge` が節として数えるのは `=== 見出し ===` の行だけ。
+    # **件数の一致では書かない**（2026-08-17 に直した）。ここは長らく
+    # `len(heads) == 6` で、節を4つ足した回がこれで落ちています。
+    # 落ちる向きが逆で、**節が消えたときではなく増えたときに落ちていました。**
+    # 見たいのは「この節が出ているか」なので、名前で見ます。
+    for want in ("年金額べつ", "いちばん多くもらえる開始年齢", "4年半飛ぶ",
+                 "あと1か月だけ待つ", "あと1か月だけ早める"):
+        assert any(want in h for h in heads), (want, heads)
+    # 見出しが重なると `topic_forge` が節を取り違えるので、そこだけは件数で見る
+    assert len(set(heads)) == len(heads), heads
 
 
 # --------------------------------------------------------------------------

@@ -206,3 +206,4 @@
 {"at": "2026-08-17T01:39:44+09:00", "session": "session_01P5dmceJwr9YGus1gVd1E97", "kind": "ship", "what": "means: iryohi に高額療養費と重ねた5節（区分べつの控除の入口・医療費10倍でも負担は動かない・月またぎは税で取り返せない・区分エ/オの総所得べつ）→ テーマ 142→147"}
 {"at": "2026-08-17T01:39:44+09:00", "session": "session_01P5dmceJwr9YGus1gVd1E97", "kind": "ship", "what": "fix: pick が「門が必ず止めるテーマ」を作る前に外す（batch_build._drop_doomed。s-menjo-hangaku-10200 が3回運ばれ毎回1本捨てていた）", "closes": ["pick", "s-menjo-hangaku-10200"], "journal_lines": 16335}
 {"at": "2026-08-17T01:39:44+09:00", "session": "session_01P5dmceJwr9YGus1gVd1E97", "kind": "ship", "what": "upload×6: 09-01 を 9/10/12/13/14/16時で埋めた（7本目・8本目の11時は API 日枠切れ）"}
+{"at": "2026-08-17T01:47:04+09:00", "session": "session_015n2tNqACJan8rY8pRfXKmy", "kind": "start"}
