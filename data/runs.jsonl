@@ -207,3 +207,4 @@
 {"at": "2026-08-17T01:39:44+09:00", "session": "session_01P5dmceJwr9YGus1gVd1E97", "kind": "ship", "what": "fix: pick が「門が必ず止めるテーマ」を作る前に外す（batch_build._drop_doomed。s-menjo-hangaku-10200 が3回運ばれ毎回1本捨てていた）", "closes": ["pick", "s-menjo-hangaku-10200"], "journal_lines": 16335}
 {"at": "2026-08-17T01:39:44+09:00", "session": "session_01P5dmceJwr9YGus1gVd1E97", "kind": "ship", "what": "upload×6: 09-01 を 9/10/12/13/14/16時で埋めた（7本目・8本目の11時は API 日枠切れ）"}
 {"at": "2026-08-17T01:47:04+09:00", "session": "session_015n2tNqACJan8rY8pRfXKmy", "kind": "start"}
+{"at": "2026-08-17T02:03:33+09:00", "session": "session_015n2tNqACJan8rY8pRfXKmy", "kind": "ship", "what": "means: nenkin に「比べる相手を65歳に固定しない」4節（181通りから最大を選ぶ）。最適は端に張り付かず85歳→69歳1か月・75歳0か月が最適になるのは96歳10か月から。倍率が65歳で折れるので山が2つあり、寿命の見込み1か月差（80歳8→9か月）で最適が54か月飛ぶ。限界の1か月＝倍率÷0.007＋1（年額は約分で消える）で数え上げと式が独立に一致。テーマ147→151・pick(8) 4→6本・tests 664→677", "closes": ["src/calc/"], "journal_lines": 16439}

@@ -57,10 +57,18 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import sys
 from collections import Counter, defaultdict
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+# **直に呼ばれると `sys.path` の頭は `scripts/` になります**（2026-08-16 に
+# `batch_build` が6本まるごと ModuleNotFound で落ちた形）。根を先に通すこと。
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from src import alerts  # noqa: E402  （`sys.path` を通した後でないと読めません）
+
 JOURNAL = ROOT / "docs" / "JOURNAL.md"
 RUNS = ROOT / "data" / "runs.jsonl"
 
@@ -253,6 +261,54 @@ def first_lines(body: list[str], want: str) -> str:
     return ""
 
 
+SHIP_KINDS = {"upload", "means", "verdict", "fix"}
+
+
+def noise_tokens() -> dict[str, set[str]]:
+    """**問題の名前ではなく、物の名前**である語を、リポジトリ自身から集める。
+
+    ## なぜ要るか（2026-08-17。**「一覧が当たりを含まないまま育つ」の4件目**）
+
+    持ち越しは「2回以上の申し送りに出てくる語」を**素の出現数**で並べています。
+    ところが申し送りは毎回「どの族に節を書いたか」「何を出したか（upload/fix）」
+    「どの動画を評価したか」を書くので、**上位がその語で埋まります。** 実測（この回）:
+
+        17件のうち 8件 が 族名（iryohi・nenkin・shitsugyo）・
+        種類（upload・means・fix）・動画ID（Y3JUjFLrORY・x2agstHS8m0）
+
+    そして `docs/trigger_main.md` §2.7 は **「持ち越しが出ていたら、そこから選ぶのが既定」**
+    と言っています。**上位が物の名前で埋まった一覧は、次の回の選択を積極的に誤らせます。**
+    `status.py` の同じ形（`src/alerts.py` の説明）と揃えて、ここでも塞ぎます。
+
+    ## 手で並べた語彙にしないこと
+
+    停止語を書き並べると、**calc を足した回が必ず書き忘れます**（この作りで通算8回）。
+    だから3つとも**実物から引きます** —— 族名は `src/calc/*.py`、
+    動画IDは `data/critique_queue/` の実ファイル名、種類は §4 の4語。
+    **`[A-Za-z0-9_-]{11}` のような形での判定はしないこと**（この回に一度書いて、
+    `batch_build` と `topic_forge` がちょうど11字で巻き込まれました）。
+    """
+    calcs = {p.stem for p in (ROOT / "src" / "calc").glob("*.py")
+             if not p.stem.startswith("_")}
+    vids = {p.name.split(".")[0]
+            for p in (ROOT / "data" / "critique_queue").glob("*.plan.json")}
+    # **待ち行列だけでは足りません**（2026-08-17 に実物で踏んだ）。
+    # `x2agstHS8m0` は上げた直後で `.plan.json` がまだ無く、外れずに残りました。
+    # **上げた本の正本は `data/uploaded.jsonl`** なので、そちらも読みます。
+    up = ROOT / "data" / "uploaded.jsonl"
+    if up.exists():
+        for line in up.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            try:
+                vid = json.loads(line).get("video_id")
+            except json.JSONDecodeError:
+                continue
+            if vid:
+                vids.add(str(vid))
+    return {"族名": calcs, "種類": set(SHIP_KINDS), "動画ID": vids}
+
+
 def tokens(body: list[str]) -> set[str]:
     found = set()
     for m in TOKEN_RE.finditer("\n".join(body)):
@@ -326,19 +382,46 @@ def main() -> int:
                 muted[tok] += 1      # **潰したと宣言された後より前の言及**
                 continue
             seen[tok].append(date[:16])
-    carried = {t: ds for t, ds in seen.items() if len(ds) >= 2}
+    raw = {t: ds for t, ds in seen.items() if len(ds) >= 2}
+    # **物の名前は外す**（`noise_tokens()`。族名・種類・動画ID）
+    noise = noise_tokens()
+    dropped: defaultdict[str, list[str]] = defaultdict(list)
+    carried = {}
+    for tok, ds in raw.items():
+        for label, words in noise.items():
+            if tok in words:
+                dropped[label].append(tok)
+                break
+        else:
+            carried[tok] = ds
     print("\n## 持ち越し（2回以上の申し送りに出てくる語）\n")
-    if carried:
+    # **この一覧も、自分の当たり率で畳まれます**（`src/alerts.py`）。
+    # 08:2x の「予約し忘れ」12件・13:0x の「強い重なり」22組と同じ形で、
+    # ここも **当たりを含まないまま育っていました**（4件目）。
+    r = alerts.ring("carry_over", len(carried))
+    if carried and r.folded:
+        print(f"  {r.line}")
+        print("  （全文は `python scripts/retro.py --alerts-all`）")
+    elif carried:
         for tok, dates in sorted(carried.items(), key=lambda kv: -len(kv[1])):
             tail = "  ← **一度閉じた後の再発**" if tok in closed else ""
             print(f"  {len(dates)}回  {tok}{tail}")
             print(f"        {' / '.join(dates)}")
         print("\n  **これは「毎回言っているのに、まだ潰れていない」ものの候補です。**")
         print("  この回で1件は潰すこと。潰せないなら、なぜ潰さないかを JOURNAL に書く。")
+        print("  潰したら **`run_marker.py --ship ... --closes carry_over`** と、"
+              "潰した語そのものを両方書くこと（前者がこの一覧の当たり率になります）。")
     else:
         print("  ありません。（申し送りが毎回すべて片づいている、"
               "か、書き方が毎回違って機械では追えていない）")
     # **落としたものは必ず言うこと。** 黙って削ると「全部見た」に見えます。
+    if dropped:
+        total = sum(len(v) for v in dropped.values())
+        print(f"\n  --- **物の名前なので外したもの（{total}件）** ---")
+        for label, toks in sorted(dropped.items(), key=lambda kv: -len(kv[1])):
+            print(f"  {label:>6s}  {' / '.join(sorted(toks))}")
+        print("  **問題の名前ではなく物の名前**です（`noise_tokens()`）。"
+              "族名は `src/calc/`、動画IDは `data/critique_queue/` の実物から引いています。")
     if muted:
         print("\n  --- **閉じたと宣言されているので、上から外したもの** ---")
         for tok, n in sorted(muted.items(), key=lambda kv: -kv[1]):
@@ -391,4 +474,10 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    # `--alerts-all` は、畳んだ一覧を全文で出す（`src/alerts.py`）。
+    # **旗はここだけ**で、持ち越しの節は `alerts.ring()` の返り値しか見ません
+    # （`status.py` と同じ形。call site に条件を書くと、次に一覧を足した回が
+    # 片方だけ書き忘れます —— この作りで通算7回）。
+    alerts.set_show_all("--alerts-all" in sys.argv[1:])
+    sys.argv = [a for a in sys.argv if a != "--alerts-all"]
     raise SystemExit(main())
