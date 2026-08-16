@@ -30,6 +30,7 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "scripts"))
 
 from scripts import batch_build  # noqa: E402
+from src import family_perf  # noqa: E402
 
 
 def _topic(tid: str, calc: str, section: str | None, score: float = 1.0) -> dict:
@@ -50,6 +51,13 @@ def pool(monkeypatch):
                             lambda: {"topics": holder["topics"]})
         monkeypatch.setattr(batch_build.history, "posted_topic_ids",
                             lambda: set(posted))
+        # **族べつの実績を平らにしてから測ること**（2026-08-16 に足した）。
+        # `pick` は 2026-08-16 から順番を実績で決めます（`src/family_perf.py`）。
+        # ここで見たいのは**何本取れるか（天井）**であって順番ではないので、
+        # 実データが入ると `nenkin` が先に来るだけで落ちます ——
+        # **実際に落ちました**（`a`, `c` を期待して `c`, `a`）。
+        # 順番のほうは `tests/test_family_perf.py` が別に見ています。
+        monkeypatch.setattr(family_perf, "scorer", lambda *a, **k: (lambda calc: 1.0))
 
     return _install
 

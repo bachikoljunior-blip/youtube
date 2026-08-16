@@ -359,6 +359,21 @@ def print_topic_stock() -> None:
         print(f"  → いま打つ手: `python scripts/topic_forge.py`"
               f"（未使用の節 {n_free}件からテーマを起こす）")
 
+    # **どの族を作るかを、実績で並べる**（2026-08-16 に足した）。
+    # ここが無かったあいだ、`pick` は手書きの `score` だけで選んでいました ——
+    # **公開した実績が、次に何を作るかに一度も戻っていなかった。**
+    print("\n=== 族べつの実績（`pick` の順番はこれで決まる）===")
+    try:
+        from src import family_perf
+
+        unused = {m: len(v) for m, v in free.items()}
+        for line in family_perf.report_lines(unused=unused):
+            print(line)
+        print("  **交絡は残ります**（公開時刻・尺・配信の広さ）。これは因果ではなく"
+              "**事前分布**で、外れたら `hypotheses.yaml`（2026-08-30）で戻します。")
+    except Exception as exc:
+        print(f"  読めませんでした（続行）: {str(exc)[:160]}")
+
 
 def print_retention(top: int = 4) -> None:
     """**維持率を毎回出す。** 2026-08-09 まで一度も見ていなかった。

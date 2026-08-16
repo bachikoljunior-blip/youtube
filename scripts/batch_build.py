@@ -249,7 +249,21 @@ def pick(count: int, explicit: list[str], per_calc: int = DEFAULT_PER_CALC) -> l
 
     posted = _posted_including_ledger()
     usable = [t for t in pool if t["id"] not in posted and t.get("calc")]
-    usable.sort(key=lambda t: -float(t.get("score", 1.0)))
+
+    # **順番は実績で決める**（2026-08-16 に測って変えた。それまでは手書きの
+    # `score` だけで、実績を1つも見ていませんでした ＝ 91件中64件が `1.0`）。
+    # 族ごとの engaged 比率は実物で **4倍ちがい**、登録も上位の族からしか
+    # 入っていません（`src/family_perf.py` に測り方と割り引き方）。
+    # 手書きの見立ては捨てず、**掛ける**（実績は事前分布、`score` は狙い）。
+    # 測っていない族は全体平均になるので、**真ん中の順位から試されます。**
+    from src import family_perf
+
+    try:
+        family_score = family_perf.scorer()
+    except Exception as exc:              # 実績が読めなくても止めない
+        print(f"[pick] 実績が読めませんでした（手書きの score だけで並べます）: {exc}")
+        family_score = lambda calc: 1.0   # noqa: E731
+    usable.sort(key=lambda t: -float(t.get("score", 1.0)) * family_score(t["calc"]))
 
     if per_calc < 1:
         raise SystemExit(f"--per-calc は1以上です: {per_calc}")
