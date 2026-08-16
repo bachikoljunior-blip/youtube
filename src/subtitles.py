@@ -209,7 +209,15 @@ def _best_cut(piece: str, limit: int, strict: bool = False) -> int:
     """
     floor = max(2, limit // 2)      # これ以上戻ると行が短くなりすぎる
 
-    def ok(cut: int) -> bool:
+    def ok(cut: int, lenient: bool = False) -> bool:
+        """`lenient=True` は**最後の手段**（下の規則3の2周目・規則4）。
+
+        ゆるめるのは「漢字＋単位の漢字」の1点だけです（2026-08-16 に分けた）。
+        **禁止にすると、逃げ場が無くなって数のかたまりが割れます** ——
+        実データで `所得割78万2000円で上限23万7127円` が
+        **`所得割78万200`／`0円で上限`** に落ちました（限度9）。
+        **順位を下げるのと、禁じるのは別です。**
+        """
         # 数字と単位のかたまりの途中では割らない
         if piece[cut - 1] in _NUM_TOKEN and piece[cut] in _NUM_TOKEN:
             return False
@@ -249,10 +257,25 @@ def _best_cut(piece: str, limit: int, strict: bool = False) -> int:
         # 見るのは「単位の字か」ではなく「**その手前も数字か**」。
         # 「年」を単位というだけで通すと、「全額戻る年／末残高」のように
         # 数字と関係ない「年末」まで割れた。手前が数字のときだけ通す。
+        #
+        # **`b not in _NUM_TOKEN` は穴でした**（2026-08-16、実物の画面で見つけた）。
+        # `dhvcWNwA-6o` の見出しが **「高額療養費 区」／「分ウの境目　2/2」**。
+        # **同じ題の1コマ目は正しく折れていて、段数の `2/2` が付いた2コマ目だけ**が
+        # 語を割っています。`分` は `_NUM_TOKEN` にあるので、
+        # **「区｜分」がこの行を素通りしていました。**
+        #
+        # 単位の漢字は普通の語の頭にもなります —— `区分` `休日` `繁忙月`
+        # `在職老齢年金` `基本手当日額` `暦年課税` `本人`（実データで7語）。
+        # **`b` が単位かどうかは、語の切れ目とは何の関係もありません。**
+        # 手前が数字かどうか（`num_end`）だけが根拠で、それは上の行が見ています。
+        #
+        # **ただし禁じません。順位を下げます**（`lenient`）。禁じたら、
+        # 逃げ場を失った2件が**数のかたまりのほうを割りました**（`ok` の説明）。
         a, b = piece[cut - 1], piece[cut]
         num_end = a in _NUM_TOKEN and cut >= 2 and piece[cut - 2] in _NUM_TOKEN
-        if _is_kanji(a) and _is_kanji(b) and not num_end and b not in _NUM_TOKEN:
-            return False
+        if _is_kanji(a) and _is_kanji(b) and not num_end:
+            if not (lenient and b in _NUM_TOKEN):
+                return False
         # カタカナの連続の途中でも割らない（「パーセン」／「ト」）。
         if _is_katakana(a) and _is_katakana(b):
             return False
@@ -276,15 +299,20 @@ def _best_cut(piece: str, limit: int, strict: bool = False) -> int:
     #    助詞（「時給／がいくら」）のどちらかで、どちらも行頭が読みにくい。
     #    ただし**避けられないことがある**ので、まず避けて探し、
     #    見つからなければ許す。**禁止にすると、もっと悪い所へ落ちる。**
-    for avoid_okurigana in (True, False):
-        for cut in range(limit, floor - 1, -1):
-            a, b = piece[cut - 1], piece[cut]
-            if _is_kana(a) and _is_kana(b):
-                continue
-            if avoid_okurigana and _is_kanji(a) and _is_kana(b):
-                continue
-            if ok(cut):
-                return cut
+    #
+    #    **`lenient` は必ずいちばん外**（2026-08-16）。「漢字＋単位の漢字」で割るのは
+    #    `所得｜割` `休｜日` `区｜分` を作る手なので、**ほかに切れ目があるなら選ばない。**
+    #    それでも候補として残すのは、**禁じると数のかたまりが割れるから**です（`ok`）。
+    for lenient in (False, True):
+        for avoid_okurigana in (True, False):
+            for cut in range(limit, floor - 1, -1):
+                a, b = piece[cut - 1], piece[cut]
+                if _is_kana(a) and _is_kana(b):
+                    continue
+                if avoid_okurigana and _is_kanji(a) and _is_kana(b):
+                    continue
+                if ok(cut, lenient):
+                    return cut
     # 4. どの規則にも当てはまらない。**strict なら「見つからなかった」と返す。**
     #    呼び出し側が limit いっぱいで探し直せるようにするため。
     #    2026-08-07、真ん中寄りで割ろうとして数字のかたまりに入り、
@@ -292,9 +320,9 @@ def _best_cut(piece: str, limit: int, strict: bool = False) -> int:
     if strict:
         return 0
     cut = limit
-    while cut > floor and not ok(cut):
+    while cut > floor and not ok(cut, True):
         cut -= 1
-    if ok(cut):
+    if ok(cut, True):
         return cut
     # **floor まで戻っても無いなら、floor より手前も見る。**
     # 2026-08-15、『残る割合は73.5パーセントから70.3パーセントへ』が
@@ -309,7 +337,7 @@ def _best_cut(piece: str, limit: int, strict: bool = False) -> int:
     # **短い行が1本できるだけで、読めない行は消えます。**
     # 短すぎる行は、この後の「短すぎる行を隣に寄せる」処理が拾います。
     for cut in range(floor - 1, 1, -1):
-        if ok(cut):
+        if ok(cut, True):
             return cut
     return limit
 
