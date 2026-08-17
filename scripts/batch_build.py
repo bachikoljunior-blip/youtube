@@ -111,7 +111,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from src import config, dupes, history  # noqa: E402
+from src import auth, config, dupes, history  # noqa: E402
 
 JST = timezone(timedelta(hours=9))
 LOG = ROOT / "data" / "batch_runs.jsonl"
@@ -757,6 +757,30 @@ def main(argv: list[str] | None = None) -> int:
         elif code != 0:
             # 投稿は済んでいるが材料を残せなかった場合（upload_only.py の 1）。
             row["error"] = "投稿済み。ただし独立評価の材料を残せていない"
+
+        # **1日の投稿本数の枠に当たったら、そこで止めること**（2026-08-17 に踏んだ）。
+        #
+        # この枠は Data API の10,000単位とは別で、**当たったら残り全部が必ず落ちます。**
+        # ところがここは1本ずつ独立に撃つので、**6本を撃って6本とも同じ429**で捨てました。
+        # `--stop-on-error` は既定で off なので、旗に頼ると次も同じことが起きます。
+        # **「次も必ず落ちる」と分かっている失敗だけは、旗によらず止めます。**
+        if not vid and auth.is_upload_cap(RuntimeError(out)):
+            rest = [r["topic"] for r in results[n:] if r.get("built")]
+            print(f"[batch] **1日の投稿本数の枠に当たりました**（HTTP 429・"
+                  "Data API の10,000単位とは別の枠）。"
+                  "**残りを撃っても全部落ちるので、ここで止めます。**", flush=True)
+            print(f"[batch] 戻るのは **JST 16:00 ごろ**（太平洋時間の0時）。", flush=True)
+            if rest:
+                print(f"[batch] **作ってあるのに predicate できていない本が {len(rest)}本**"
+                      "。`build/` に残っているので、枠の戻った回に打ち直せます:", flush=True)
+                for tid in rest:
+                    print(f"[batch]     python scripts/upload_only.py {tid} "
+                          f'"" <日付>@<時>', flush=True)
+            for r in results[n:]:
+                if r.get("built") and not r.get("video_id"):
+                    r["error"] = "投稿本数の枠で撃っていません（build/ に残っています）"
+            break
+
         if code != 0 and not vid and args.stop_on_error:
             break
 

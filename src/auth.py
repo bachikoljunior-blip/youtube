@@ -62,4 +62,39 @@ def explain(error: Exception) -> str:
             f"{text}\n"
             "→ YT_CLIENT_ID / YT_CLIENT_SECRET の貼り間違いです。値が二重になっていないか確認を。"
         )
+    if is_upload_cap(error):
+        return (
+            f"{text}\n"
+            "→ **1日に投稿できる本数の枠です**（Data API の10,000単位とは別の枠）。\n"
+            "   2026-08-17 の実測で、**92本目までは通り、93本目でここに当たりました。**\n"
+            "   戻るのは太平洋時間の0時＝**JST 16:00 ごろ**。\n"
+            "   **この回でこれ以上は投稿できません。**作った本は build/ に残るので、\n"
+            "   枠の戻った回に `scripts/upload_only.py <ID> \"\" <日付>@<時>` で打ち直せます。"
+        )
     return text
+
+
+# **投稿の本数枠（Video Uploads per day）に当たったか。**
+#
+# 2026-08-17 10:5x にこの環境で初めて踏みました。**Data API の日枠とは別物です。**
+#
+#     Data API の日枠   10,000単位   **403 quotaExceeded**    読み・thumbnails.set が落ちる
+#     投稿の本数枠      1日92本      **429 rateLimitExceeded** **videos.insert そのものが落ちる**
+#
+# `docs/trigger_main.md` §5 は 03:5x の実測から
+# 「**日枠が切れていても `upload` は選べます**」と書いていました。
+# **その回は正しかった** —— あの時点で、この日の投稿はまだ62本でした。
+# **1つの枠を測って、もう1つの枠が無いことにしていた**だけです。
+#
+# 見分けが要るのは、**当たったら残り全部が必ず落ちる**からです。
+# この回は最初の1本が通ったあと6本を撃ち、**6本とも同じ429**で捨てました。
+def is_upload_cap(error: Exception) -> bool:
+    """**1日の投稿本数の枠**に当たったか（HTTP 429・Video Uploads）。
+
+    枠が戻るまで、**この回のこれ以降の投稿はすべて落ちます。**
+    呼ぶ側は、次の1本を撃つのではなく**止まること。**
+    """
+    text = str(error)
+    if "rateLimitExceeded" not in text and "429" not in text:
+        return False
+    return "Video Uploads" in text or "uploadLimitExceeded" in text

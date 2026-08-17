@@ -36,6 +36,10 @@ from src import inbox as _inbox  # noqa: E402
 from src.uploader import _service  # noqa: E402
 
 JST = timezone(timedelta(hours=9))
+
+# **外れたときの次の手を、期限の何日前から出すか。**
+# 期限が来てから探すと、その回が丸ごと分析で終わります（2026-08-17）。
+NEXT_MOVE_WINDOW = 14
 # 何日先まで予約の空きを見るか。
 # **3 では短すぎました**（2026-08-15 23:0x）。M14 の比較の窓は 8/16〜8/23 の8日で、
 # 3日先までしか見ないと**窓の内側の穴が、3日前になるまで見えません。**
@@ -155,6 +159,7 @@ def print_hypotheses() -> None:
     print("\n=== まだ検証していない前提 ===")
     if not open_:
         print("  （ありません）")
+    no_next: list[tuple[int, str]] = []
     for h in open_:
         try:
             due = datetime.strptime(str(h["deadline"]), "%Y-%m-%d").date()
@@ -170,10 +175,53 @@ def print_hypotheses() -> None:
         cond = h.get("falsified_if")
         print(f"        外れとみなす条件: {cond}" if cond
               else "        [!] 外れとみなす条件が書かれていません。**書くこと。**")
+
+        # **次の手は、期限が来る前から見えていること**（2026-08-17 に直した）。
+        #
+        # ここは長らく `if left <= 0:` でした。つまり**期限が来るまで
+        # `next_if_false` は一度も印字されません。** 15件が全部「あと N日」なので、
+        # **実際には一度も出ていませんでした。**
+        #
+        # そのあいだ「**M11 が外れたときの次の手が台帳に無い**」という申し送りが
+        # **4回**運ばれ、4回とも未着手のまま持ち越されています。
+        # **書いてありました。**`hypotheses.yaml` の `next_if_false` に、
+        # 「長尺が1,000再生に届かなければ M4 ごと外れ、M3 へ移る」まで含めて。
+        # **道具が、期限が来るまで隠していただけです。**
+        #
+        # これは `bake_slides.py --resplit` と同じ形（`docs/trigger_main.md` §5）——
+        # **無いものを作れという申し送りの、実物は既にある。**
+        # ちがうのは、あちらが「手順の文言が実装に追いついていない」だったのに対し、
+        # こちらは **実装のほうが、持っているものを見せていない**ことです。
+        #
+        # **準備が要るのは期限の前**なので、近いものは先に出します。
+        # 全部出すと15件ぶんで埋まるので、`NEXT_MOVE_WINDOW` 日で切ります。
+        nexts = h.get("next_if_false") or []
         if left <= 0:
             print("        → いま判定すること。外れていたら次を順に試す:")
-            for nxt in h.get("next_if_false", []):
+            for nxt in nexts:
                 print(f"           - {nxt}")
+        elif left <= NEXT_MOVE_WINDOW:
+            if nexts:
+                print(f"        → **外れたときの次の手**（あと{left}日。"
+                      "期限が来てから探さないこと）:")
+                for nxt in nexts:
+                    print(f"           - {nxt}")
+            else:
+                no_next.append((left, h.get("claim", "(claim なし)")))
+
+    # **期限が近いのに、外れたときの次の手が書かれていない前提。**
+    # 判定日に「で、どうする」を考え始めることになるので、その回が丸ごと分析で終わります。
+    if no_next:
+        r = _alerts.ring("no_next_move", len(no_next))
+        if r.folded:
+            print(f"\n  {r.line}")
+        else:
+            print(f"\n  --- [!] 次の手が書かれていない前提 {len(no_next)}件"
+                  f"（期限まで{NEXT_MOVE_WINDOW}日以内）---")
+            print("  **判定日に考え始めると、その回は分析だけで終わります。**"
+                  "`next_if_false` を先に書くこと。")
+            for left, claim in sorted(no_next):
+                print(f"    あと{left}日  {claim}")
 
     # **判定済みも中身を出す（2026-08-10 に直した）。**
     # ここは長らく件数だけだった。その結果、**もう外れたと分かっている手を
