@@ -65,3 +65,4 @@
 {"at": "2026-08-17T22:25:12+09:00", "key": "carry_over", "n": 12, "session": "session_018aManAtcfJYsDBm1vVWDUp", "by": "retro.py"}
 {"at": "2026-08-17T22:25:45+09:00", "key": "stranded", "n": 1, "session": "session_018aManAtcfJYsDBm1vVWDUp", "by": "status.py"}
 {"at": "2026-08-17T22:26:37+09:00", "key": "missing_thumbnail", "n": 5, "session": "session_018aManAtcfJYsDBm1vVWDUp", "by": "status.py"}
+{"at": "2026-08-17T22:53:15+09:00", "key": "undeclared_close", "n": 1, "session": "session_018aManAtcfJYsDBm1vVWDUp", "by": "run_marker.py"}

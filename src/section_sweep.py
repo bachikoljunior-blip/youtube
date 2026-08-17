@@ -73,7 +73,7 @@ FLAT_TOL = 1e-4
 # `jidou` の本物の崖は残る）
 MEANINGFUL = 0.01
 
-SHAPES = ("不変", "頭打ち", "崖", "逆転")
+SHAPES = ("不変", "頭打ち", "崖", "逆転", "片効き")
 
 
 def _grid(default: float) -> list[float]:
@@ -247,7 +247,64 @@ def sweep_function(fn: Callable, *, name: str = "") -> list[dict]:
                               "動かした引数": pname, "見た値": key or "返り値",
                               "形": shape, "詳しく": detail,
                               "x の幅": (xs[0], xs[-1])})
+        found.extend(_one_sided(xs, rows, sorted(keys), defaults,
+                                name or getattr(fn, "__name__", "?"), pname))
     return found
+
+
+def _one_sided(xs: list[float], rows: list[dict], keys: list[str],
+               defaults: list[float], name: str, pname: str) -> list[dict]:
+    """**同じ引数が、隣り合う欄の片方だけを動かしている**ところを拾う。
+
+    ## なぜ要るか（2026-08-17 22:4x。**3回続けて申し送りに載っていた**）
+
+    ここまでの4つの形（崖・逆転・頭打ち・不変）は、**1本の列の中の値の並び**しか
+    見ていません。ところが 21:3x の回の5節は**1つも掃引から出ておらず**、
+    その回の主題はこうでした ——
+
+    > **調整支給率が、式の2つの項のうち片方にしか掛からない**
+
+    **これはどの行にも、数として現れません。** 現れるのは
+    「`x` を動かすと A は動くのに B は1円も動かない」という**欄どうしの対比**で、
+    列を1本ずつ見ているかぎり、B は「不変」として単独で出るだけです。
+    **単独の「不変」は退屈で、対比になって初めて節になります**
+    （8/17 の実物: `koureikoyou` の「上限は片方の帯にしか効かない」、
+    `kyoiku` の「下限4,000円は定額で逆向き」も同じ形）。
+
+    **`不変` を消していないこと。** 片方だけが動かない事実は残るので、
+    **対比のほうを1件足しています**（形が2つ出るのは重複ではなく、
+    「B は動かない」と「x は A だけを動かす」が別の主張だからです）。
+    """
+    if len(keys) < 2:
+        return []
+    moving, frozen = [], []
+    for key in keys:
+        ys = [r[key] for r in rows]
+        lo, hi = min(ys), max(ys)
+        scale = max(abs(lo), abs(hi))
+        if scale == 0:
+            continue
+        if (hi - lo) / scale <= FLAT_TOL:
+            # **入力の再掲は数えない**（`_is_echo` と同じ理由。動かないのは当たり前）
+            if not _is_echo(ys[0], defaults, xs):
+                frozen.append(key)
+        elif (hi - lo) / scale >= MEANINGFUL:
+            # **動く側の再掲も数えないこと**（検査が捕まえた。**両側に要ります**）。
+            # 掃引しているのが `months` なら、返りの `months` 欄は当然そのまま動きます。
+            # それを「動く」に数えると **「months を動かすと months が動く」**という
+            # 同語反復が出ます（17:5x の `_row_label` と同じ形。**片方だけの11件目**）。
+            if all(abs(y - x) < FLAT_TOL * max(1.0, abs(x))
+                   for y, x in zip(ys, xs)):
+                continue
+            moving.append(key)
+    if not moving or not frozen:
+        return []
+    return [{"関数": name, "動かした引数": pname,
+             "見た値": "／".join(frozen),
+             "形": "片効き",
+             "詳しく": {"動く": moving, "動かない": frozen,
+                     "動かない値": rows[0][frozen[0]]},
+             "x の幅": (xs[0], xs[-1])}]
 
 
 def _rows(value: Any) -> list[dict] | None:
@@ -355,7 +412,7 @@ def _cast(default: float, x: float) -> Any:
 
 
 #: 出す順。**珍しいほど前**（崖と逆転は、そのまま節の主題になります）
-SHAPE_ORDER = {"崖": 0, "逆転": 1, "頭打ち": 2, "不変": 3, "読めない": 4}
+SHAPE_ORDER = {"崖": 0, "片効き": 1, "逆転": 2, "頭打ち": 3, "不変": 4, "読めない": 5}
 
 
 def dedupe(hits: list[dict]) -> list[dict]:
@@ -599,6 +656,9 @@ def line_of(hit: dict) -> str:
     elif hit["形"] == "逆転":
         tail = (f"{d['どこ']}のは端ではなく {hit['動かした引数']}="
                 f"{_fmt(d['x'])} のとき（{_fmt(d['値'])}／端では {_fmt(d['端では'])}）")
+    elif hit["形"] == "片効き":
+        tail = (f"{hit['動かした引数']} は {'・'.join(d['動く'])} を動かすのに "
+                f"{'・'.join(d['動かない'])} は {_fmt(d['動かない値'])} のまま")
     else:
         tail = str(d)
     return (f"  {hit['形']:<4} {hit['表']}.{hit['関数']}"

@@ -363,3 +363,67 @@ def test_実物で_新しい候補が全部は消えていない():
     total, novel = ss.novel_counts(ss.sweep_all(), all_sections)
     assert sum(novel.values()) > 0, novel
     assert sum(novel.values()) < sum(total.values()), (total, novel)
+
+
+# --- 片効き（2026-08-17 22:4x に足した）-------------------------------------
+#
+# **3回続けて申し送りに載っていた穴です。** ここまでの4つの形は
+# **1本の列の中の値の並び**しか見ておらず、21:3x の回の5節は1つも掃引から
+# 出ていませんでした。その回の主題は「調整支給率が式の片方の項にしか掛からない」＝
+# **どの行にも数として現れない、欄どうしの対比**です。
+
+def test_片効き_は動く欄と動かない欄の対比を出す():
+    def fn(rate: float = 0.5):
+        # `part_a` は rate で動くが、`part_b` は定額（＝片方の項にしか掛からない）
+        return {"part_a": 100_000 * rate, "part_b": 5_000}
+
+    hits = ss.sweep_function(fn, name="t")
+    one = [h for h in hits if h["形"] == "片効き"]
+    assert len(one) == 1, hits
+    assert one[0]["詳しく"]["動く"] == ["part_a"]
+    assert one[0]["詳しく"]["動かない"] == ["part_b"]
+
+
+def test_片効き_は全部動くときには出ない():
+    def fn(rate: float = 0.5):
+        return {"a": 100_000 * rate, "b": 200_000 * rate}
+
+    assert not [h for h in ss.sweep_function(fn, name="t") if h["形"] == "片効き"]
+
+
+def test_片効き_は全部止まっているときには出ない():
+    """**対比が無ければ出さないこと。** 全部不変は「片効き」ではありません。"""
+    def fn(rate: float = 0.5):
+        return {"a": 5_000, "b": 3_000}
+
+    assert not [h for h in ss.sweep_function(fn, name="t") if h["形"] == "片効き"]
+
+
+def test_片効き_は入力の再掲を動かない側に数えない():
+    """**入力がそのまま返る欄は、動かなくて当たり前**（`_is_echo` と同じ理由）。
+
+    ここを数えると、引数を1つ返しているだけの表が全部「片効き」になります。
+    """
+    def fn(rate: float = 0.5, months: int = 12):
+        return {"amount": 100_000 * rate, "months": months}   # months は再掲
+
+    hits = [h for h in ss.sweep_function(fn, name="t") if h["形"] == "片効き"]
+    assert hits == [], hits
+
+
+def test_片効き_は不変を消さない():
+    """**2つは別の主張です。** 「B は動かない」と「x は A だけを動かす」。"""
+    def fn(rate: float = 0.5):
+        return {"part_a": 100_000 * rate, "part_b": 5_000}
+
+    shapes = {h["形"] for h in ss.sweep_function(fn, name="t")}
+    assert "片効き" in shapes and "不変" in shapes
+
+
+def test_片効き_が実物の表から出る():
+    """**実データでの回帰。** 手で作った例だけだと、実装が変わったとき黙ります。"""
+    hits = [h for h in ss.sweep_all() if h["形"] == "片効き"]
+    assert hits, "実物の表から1件も出ていません"
+    for h in hits:
+        assert h["詳しく"]["動く"] and h["詳しく"]["動かない"]
+        assert ss.line_of(dict(h, 表="x"))          # 印字できること
