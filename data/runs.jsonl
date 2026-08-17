@@ -313,3 +313,4 @@
 {"at": "2026-08-17T21:20:37+09:00", "session": "session_01L9fiiyqNs5VYupo9ddrrmj", "kind": "ship", "what": "fix: 2回続けて verify に落ちた s-kyoiku-jougen-atari-2-suuji の、落としていた側は角度だった — 書き手の規則には既に『narration で個数を言うなら items の数と一致させること』が入っていて、angle の『6つ並べて見せる』と『主役は2つ』が衝突していた（縦画面に6行が載らないと必ず食い違う）。数を口で言うコマはその数だけ項目を出す・載らないなら数を口に出さない・畳んだコマは画面も口も2つ、へ角度を直した。同じ本を3回撃つのがいちばん高い"}
 {"at": "2026-08-17T21:36:45+09:00", "session": "session_01BCdS6Ccuz2QpL6ffjHpVUN", "kind": "start"}
 {"at": "2026-08-17T21:50:24+09:00", "session": "session_01BCdS6Ccuz2QpL6ffjHpVUN", "kind": "ship", "what": "means: (A) 新しい表 src/calc/shienkyufu.py（年金生活者支援給付金）5節・テーマ259→264。補足的給付金の調整支給率は納付済分にしか掛からず、崖は基準額909,000円ではなく帯の入口809,000円にある"}
+{"at": "2026-08-17T21:54:51+09:00", "session": "session_01BCdS6Ccuz2QpL6ffjHpVUN", "kind": "ship", "what": "upload: 09-16 を新しい8本の日に（8/8 作成・8/8 予約・落ち0本）。2回続けて verify に落ちていた s-kyoiku-jougen-atari-2-suuji が、前の回の角度の直しで通った"}

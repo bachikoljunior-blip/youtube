@@ -1497,6 +1497,30 @@
     ],
     "video_id": "Qj48l3z0lA4"
   },
+  "s-koureikoyou-436-oritkaeshi": {
+    "charts": [
+      [
+        "43.6%",
+        "43.6%",
+        "27.5%",
+        "20.0%"
+      ]
+    ],
+    "video_id": "bvuDdkY7TKs"
+  },
+  "s-koureikoyou-61-percent-loss-5years": {
+    "charts": [
+      [
+        "1125万円",
+        "1006万5000円"
+      ],
+      [
+        "＋91万5000円",
+        "−210万円"
+      ]
+    ],
+    "video_id": "h9x3bpu8o3M"
+  },
   "s-koureikoyou-gendogaku-kikanai": {
     "charts": [
       [
@@ -1562,6 +1586,27 @@
       ]
     ],
     "video_id": "7DVnurYJGME"
+  },
+  "s-kyoiku-jougen-atari-2-suuji": {
+    "charts": [
+      [
+        "20万円",
+        "40万円",
+        "56万円",
+        "64万円"
+      ]
+    ],
+    "video_id": "PB0Wz3TiPw4"
+  },
+  "s-kyoiku-shita-no-sakaime-5en": {
+    "charts": [
+      [
+        "20,005円",
+        "10,003円",
+        "8,002円"
+      ]
+    ],
+    "video_id": "1-1JxtLcXCI"
   },
   "s-kyufu-1nichi-165bai": {
     "charts": [
@@ -1834,6 +1879,35 @@
       ]
     ],
     "video_id": "yQajMrdshr8"
+  },
+  "s-sankyu-14days-no-route": {
+    "charts": [
+      [
+        "0か月",
+        "1か月"
+      ],
+      [
+        "0円",
+        "27,450円",
+        "27,450円"
+      ]
+    ],
+    "video_id": "N7uZU66JniI"
+  },
+  "s-sankyu-98days-3-4months-split": {
+    "charts": [
+      [
+        "82,350円",
+        "109,800円"
+      ],
+      [
+        "82,350円",
+        "109,800円",
+        "109,800円",
+        "82,350円"
+      ]
+    ],
+    "video_id": "atRW56Y-CZY"
   },
   "s-serufu-30000-5475": {
     "charts": [
