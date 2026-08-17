@@ -594,14 +594,33 @@ def _near(a: float, b: float) -> bool:
 _LONE_NUMBER_MIN = 1000
 
 
+def _written_forms(num: float) -> list[float]:
+    """**同じ量を、節が書きうる形**に開く（2026-08-18。実測で3つ出た）。
+
+    照合が外れていた候補を追跡すると、値そのものは**印字されているのに
+    書き方だけが違う**、という形が2つありました。
+
+        跳ぶ幅 **-800,000**  ← 節は「1年のばすと浮く額 **800,000円**」
+        所得税率 **0.33**    ← 節は「**33%**へ」
+
+    **どちらも「まだ誰も言っていない」に倒れます。** 符号は「どちらから見た差か」
+    でしかなく、率は書き方の流儀でしかないので、**別の事実ではありません。**
+    """
+    out = [num, -num] if num else [num]
+    if 0 < abs(num) < 1:                      # 率は百分率でも書かれる
+        out += [num * 100, -num * 100]
+    return out
+
+
 def _found_in(num: float | None, lines: list[str]) -> bool:
     """その数が、渡した行のどれかに印字されているか（帯に入っていてもよい）。"""
     if num is None:
         return False
+    wanted = _written_forms(num)
     for ln in lines:
         for m in _NUM_RE.finditer(ln):
             got = _to_number(m.group())
-            if got is not None and _near(got, num):
+            if got is not None and any(_near(got, w) for w in wanted):
                 return True
         for lo, hi in _RANGE_RE.findall(ln):
             a, b = _to_number(lo), _to_number(hi)
@@ -623,7 +642,25 @@ def _point_printed(raw: Any, lines: list[str]) -> bool | None:
     axis, shown, num = _point_of(raw)
     axis_lines = [ln for ln in lines if axis and axis in ln] if axis else []
     if axis and axis_lines:
-        return _found_in(num, axis_lines)
+        if _found_in(num, axis_lines):
+            return True
+        # **軸と値が同じ行に並ぶのは、散文の節だけです**（2026-08-18）。
+        # 節の多くは**表**で、そこでは軸は見出し行・値は行データにあり、
+        # **構造上いちども同じ行に来ません**:
+        #
+        #     ...  月給       標準報酬月額   保険料の増(年) ...   ← 軸はここ
+        #     3   104,000円   101,000円      6,588円        ← 値はここ
+        #
+        # ここは長らく、その場合に `False`（＝**まだ誰も言っていない**）を
+        # 返していました。`is_covered` は `False` を見た時点で打ち切るので、
+        # **結果の値のほうを見にいく控えの道に、一度も入れません。**
+        # 実測（8/18）: 「新しい」と数えられた `shahoken` の6件は6件とも
+        # **値が本文に印字されていました**（`月給=101,000` は3か所）。
+        #
+        # **軸が本文にあるのに、その行では見つからない**は、
+        # 「無い」ではなく**「この見方では言えない」**です。`None` を返して
+        # 控えの道へ渡します（**判定できないものを断定しない**）。
+        return None
     # 単位つきの表記（`40%` など）は、そのまま出ていれば既出
     if shown and shown.strip("-0123456789.,"):
         return any(shown in ln for ln in lines)
@@ -837,6 +874,12 @@ def report_lines(hits: list[dict], *, top: int = 40) -> list[str]:
         tail = f"・**新しい {n_new_here}件**" if n_new_here is not None else ""
         lines.append(f"  --- {name}（{len(group)}件{tail}・族の順番の値 "
                      f"{order.get(name, 0.0):.1f}）---")
+        # **印の無いほうを先に出すこと**（2026-08-18）。表ごとに6件で切るので、
+        # 並べ替えないと**「新しい」が `…ほか N件` の中に隠れます** ——
+        # すぐ上の行で「印の無いほうから選べ」と言いながら、選べる所に
+        # 出していませんでした（実測: 新しい8件のうち4件が隠れていた）。
+        if covered:
+            group = sorted(group, key=lambda h: covered.get(id(h)) is not False)
         for hit in group[:per_group]:
             mark = "[既]" if covered.get(id(hit)) else "   "
             lines.append(f"{mark}{line_of(hit)}" if covered else line_of(hit))

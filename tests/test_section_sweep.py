@@ -625,3 +625,71 @@ def test_1本に絞ったときは全部出す():
     # **2本以上あるときは、これまでどおり表ごとに6件で切ること**
     many = hits + [_hit(calc="u", fn="g", 値=1.0)]
     assert "ほか 3件" in "\n".join(ss.report_lines(many, top=10_000))
+
+
+# ---------------------------------------------------------------------------
+# **既出判定が、表の節では構造上いちども当たらなかった**（2026-08-18 に実測）
+#
+# 「新しい」と数えられた17件を実物に当たると、**9件は値が本文に印字されていた**。
+# 原因は3つ。どれも「別の事実」ではなく**書き方の違い**です。
+# ---------------------------------------------------------------------------
+
+def test_軸が見出し行にある表では断定しない():
+    """節の多くは表で、**軸は見出し行・値は行データ**。同じ行に来ません。
+
+    ここは `False`（＝まだ誰も言っていない）を返しており、`is_covered` は
+    `False` を見た時点で打ち切るので、**結果の値を見る控えの道に入れません。**
+    """
+    from src import section_sweep as ss
+
+    lines = ["  段  月給       標準報酬月額   保険料の増(年)",
+             "  3   104,000円   101,000円      6,588円"]
+    assert ss._point_printed("月給=101,000", lines) is None, \
+        "軸が本文にあるのに値がその行に無いのを「新しい」と断定しています"
+    # **同じ行に並んでいれば、これまでどおり True**
+    assert ss._point_printed("月給=101,000", ["月給 101,000円 のとき"]) is True
+    # **払った代金**: 軸のある道は、もう `False`（新しい）を返しません。
+    # 値が本文のどこにも無くても `None` で、新しさは**結果の値のほう**で決まります
+    # （`is_covered`）。**落とす向きの誤りは黙って効く**ので、ここに書いておきます ——
+    # x が本物に新しいのに、結果の値がたまたま印字されている候補は、既出に倒れます。
+    assert ss._point_printed("月給=999,999", ["月給 101,000円 のとき"]) is None
+    # **軸そのものが本文に無ければ、これまでどおり**（大きい数は本文ぜんぶで見る）
+    assert ss._point_printed("賞与=999,999", ["月給 101,000円 のとき"]) is False
+
+
+def test_符号のちがいを別の事実として数えない():
+    """`跳ぶ幅 -800,000` は、節では「浮く額 800,000円」と書かれます。"""
+    from src import section_sweep as ss
+
+    assert ss._found_in(-800000.0, ["1年のばすと浮く額 800,000円"])
+    assert ss._found_in(800000.0, ["差は -800,000円"])
+    assert not ss._found_in(-800000.0, ["浮く額 12,345円"])
+
+
+def test_率は百分率で書かれていても同じ量():
+    """`所得税率=0.33` と本文の `33%へ` は、別の事実ではありません。"""
+    from src import section_sweep as ss
+
+    assert ss._found_in(0.33, ["課税所得 9,000,000円で 33%へ"])
+    assert ss._written_forms(0.33) == [0.33, -0.33, 33.0, -33.0]
+    # **1 以上の数は百分率に開かないこと**（金額が無関係な行に当たります）
+    assert 660000.0 not in ss._written_forms(6600.0)
+
+
+def test_印の無い候補を先に出す():
+    """表ごとに6件で切るので、並べ替えないと**新しいが省略の中に隠れます。**"""
+    from src import section_sweep as ss
+
+    old = [_hit(fn=f"o{i}", 値=float(i)) for i in range(6)]
+    new = _hit(fn="new1", 値=99.0)
+    cov = {id(h): True for h in old}
+    cov[id(new)] = False
+    ss_covered = old + [new]
+    import pytest as _pytest
+    monkey = _pytest.MonkeyPatch()
+    monkey.setattr(ss, "_covered_map", lambda hits: cov)
+    try:
+        out = "\n".join(ss.report_lines(ss_covered + [_hit(calc="u", fn="g", 値=1.0)]))
+    finally:
+        monkey.undo()
+    assert ".new1" in out, "新しい候補が `…ほか N件` に隠れています"
