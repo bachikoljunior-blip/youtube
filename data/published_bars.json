@@ -1300,6 +1300,15 @@
     ],
     "video_id": "TRgPwUWRQi4"
   },
+  "s-kokuho-2wari-cliff-6nin-92570": {
+    "charts": [
+      [
+        "9万2570円",
+        "9万9120円"
+      ]
+    ],
+    "video_id": "17H_GxEFs4U"
+  },
   "s-kokuho-4-sections-limit-gap": {
     "charts": [
       [
@@ -1333,6 +1342,20 @@
       ]
     ],
     "video_id": "VYBAWzrxkQQ"
+  },
+  "s-kokuho-keigen-gake-mannaka-24780": {
+    "charts": [
+      [
+        "1万6520円",
+        "2万4780円",
+        "1万6520円"
+      ],
+      [
+        "8万1445円",
+        "10万6225円"
+      ]
+    ],
+    "video_id": "ejZd3m41-k0"
   },
   "s-kokuho-marginal-step-1295-to-30": {
     "charts": [
@@ -1709,6 +1732,17 @@
     ],
     "video_id": "9RNhzUfMPDE"
   },
+  "s-kyugyo-saitei-hosho-shuu-4-2-nichi": {
+    "charts": [
+      [
+        "53.4日",
+        "54.0日",
+        "54.6日",
+        "55.2日"
+      ]
+    ],
+    "video_id": "GJSbJSqTzik"
+  },
   "s-kyugyo-season-121340-vs-117380": {
     "charts": [
       [
@@ -2073,6 +2107,31 @@
       ]
     ],
     "video_id": "pCLe8SS6u3w"
+  },
+  "s-shahoken-3tokyu-5999": {
+    "charts": [
+      [
+        "7,999円",
+        "5,999円",
+        "6,999円"
+      ]
+    ],
+    "video_id": "5cVINtVaA_g"
+  },
+  "s-shahoken-shoukyu-6000-30000": {
+    "charts": [
+      [
+        "1段",
+        "2段",
+        "7段"
+      ],
+      [
+        "1段",
+        "21段",
+        "30段"
+      ]
+    ],
+    "video_id": "n0xfyfZZL8g"
   },
   "s-shakyu-menjo-1nichi-14nichi": {
     "charts": [
