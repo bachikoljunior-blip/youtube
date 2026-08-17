@@ -825,6 +825,26 @@ def print_topic_stock() -> None:
         print(f"  → いま打つ手: `python scripts/topic_forge.py`"
               f"（未使用の節 {n_free}件からテーマを起こす）")
 
+    # **`calc:` が繋がっていないテーマを名指しする**（2026-08-18 に足した）。
+    # 前の回が `topics.yaml` に「表を書いた回がこの行を書き換え忘れると
+    # 永久に使えないままになります」と警告を書き置いていて、**その時点で
+    # 既に2件当たっていました**（`ideco` も `fukugyo` も表は在る）。
+    # `pick` は `calc` の無いテーマをプールから丸ごと外すので、
+    # **在庫の2段（未投稿テーマ／未使用の節）のどちらにも現れません。**
+    try:
+        from src import config as _cfg_topics
+        from src import topic_gaps
+
+        lines = topic_gaps.report_lines(
+            _cfg_topics.load_topics()["topics"],
+            posted=batch_build._posted_including_ledger())
+        if lines:
+            print("  --- **`calc:` の繋がっていないテーマ** ---")
+            for line in lines:
+                print(line)
+    except Exception as exc:                       # 在庫の本体を止めない
+        print(f"  （`calc:` の突き合わせは読めませんでした: {str(exc)[:80]}）")
+
     # **どの族を作るかを、実績で並べる**（2026-08-16 に足した）。
     # ここが無かったあいだ、`pick` は手書きの `score` だけで選んでいました ——
     # **公開した実績が、次に何を作るかに一度も戻っていなかった。**
