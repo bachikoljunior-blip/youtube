@@ -362,3 +362,4 @@
 {"at": "2026-08-18T05:23:14+09:00", "session": "session_01ETpuZeNdt4jVdA65YQSuYc", "kind": "ship", "what": "means: iryohi に節を2つ（best_claimants / refund_timing_grid）— 控除の上限200万円に当たると「1人にまとめる」が逆転する。境目は220万円＝上限＋足切り×2で、そこから210万円ごと。既存の split_loss は「分けて得になることは無い」と書いていたが上限を見ておらず嘘だった"}
 {"at": "2026-08-18T05:23:22+09:00", "session": "session_01ETpuZeNdt4jVdA65YQSuYc", "kind": "ship", "what": "fix: split_loss の docstring と検査が「分けて得になることは無い」を1点（400,000円）でしか見ておらず、控除の上限200万円を超える帯で符号が逆になるのを素通ししていた（src/calc/iryohi.py）"}
 {"at": "2026-08-18T05:23:22+09:00", "session": "session_01ETpuZeNdt4jVdA65YQSuYc", "kind": "ship", "what": "topic_forge×2: 新しい節2件をテーマへ（281→283件）"}
+{"at": "2026-08-18T05:34:14+09:00", "session": "session_01ETpuZeNdt4jVdA65YQSuYc", "kind": "ship", "what": "upload×9: 09-27 に9本を予約まで（新しい iryohi の節2本を含む / shienkyufu / ninikeizoku×2 / kafunenkin×2 / jutaku×2）。9/9・落ち0。この窓の本数枠を使い切った"}

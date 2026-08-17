@@ -664,6 +664,21 @@
     ],
     "video_id": "CdX2oIb7BG8"
   },
+  "s-iryohi-2200000-bunkatsu-sakaime": {
+    "charts": [
+      [
+        "200万円",
+        "201万円",
+        "191万円"
+      ],
+      [
+        "3,042円",
+        "243,360円",
+        "547,560円"
+      ]
+    ],
+    "video_id": "YKVMTd6fOmg"
+  },
   "s-iryohi-3": {
     "charts": [
       [
@@ -684,6 +699,21 @@
       ]
     ],
     "video_id": "ZCaH46geCtk"
+  },
+  "s-iryohi-kojo-200000-genkin-wariai": {
+    "charts": [
+      [
+        "1万209円",
+        "2万円",
+        "3万209円"
+      ],
+      [
+        "1万209円",
+        "2万419円",
+        "4万839円"
+      ]
+    ],
+    "video_id": "n0biLiZFCiI"
   },
   "s-iryohi-tomobataraki-159178": {
     "charts": [
@@ -1025,6 +1055,27 @@
     ],
     "video_id": "n2xdLoIv4XU"
   },
+  "s-jutaku-hensai-kikan-20nen-sa": {
+    "charts": [
+      [
+        "225万2721円",
+        "215万8317円",
+        "202万5814円",
+        "182万6653円"
+      ]
+    ],
+    "video_id": "QZmFprLmQeY"
+  },
+  "s-jutaku-jyuminzei-jogen-195man": {
+    "charts": [
+      [
+        "5万円",
+        "9万5千円",
+        "9万7500円"
+      ]
+    ],
+    "video_id": "12V-kHrKzIg"
+  },
   "s-kabe-150man-4084en": {
     "charts": [
       [
@@ -1042,6 +1093,25 @@
       ]
     ],
     "video_id": "KZ6uXiZt4yI"
+  },
+  "s-kafu-chouten-240tsuki": {
+    "charts": [
+      [
+        "12万円",
+        "17万円",
+        "32万円"
+      ]
+    ],
+    "video_id": "YR1Z18HV8KQ"
+  },
+  "s-kafu-sakaime-64-22sai": {
+    "charts": [
+      [
+        "120,000円",
+        "年153,000円"
+      ]
+    ],
+    "video_id": "BzvH0iCzrzo"
   },
   "s-kaigo-3wari-2-65bai": {
     "charts": [
@@ -2024,6 +2094,20 @@
     ],
     "video_id": "Nrg_-t5dNUw"
   },
+  "s-nini-2nen-me-16-84bai": {
+    "charts": [
+      [
+        "417,240円",
+        "24,780円"
+      ],
+      [
+        "834,480円",
+        "491,995円",
+        "442,020円"
+      ]
+    ],
+    "video_id": "SE0V5vXQuM8"
+  },
   "s-nini-keizoku-600000-tokka": {
     "charts": [
       [
@@ -2034,6 +2118,16 @@
       ]
     ],
     "video_id": "XYKBemKX8eg"
+  },
+  "s-ninikeizoku-2nin-1601000-cliff": {
+    "charts": [
+      [
+        "16万2890円",
+        "18万5556円",
+        "21万2579円"
+      ]
+    ],
+    "video_id": "yun7OQaI1T4"
   },
   "s-ninikeizoku-setai-ninzu-gyakuten": {
     "charts": [
@@ -2301,6 +2395,16 @@
       ]
     ],
     "video_id": "JbjojnAZe2Q"
+  },
+  "s-shienkyufu-shogai-obi-nashi": {
+    "charts": [
+      [
+        "年84,300円",
+        "年67,440円",
+        "年67,440円"
+      ]
+    ],
+    "video_id": "qBHJaKOl1hM"
   },
   "s-shienkyufu-torikaeshi-104328": {
     "charts": [
