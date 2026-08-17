@@ -270,3 +270,5 @@
 {"at": "2026-08-17T14:29:43+09:00", "session": "session_01SNMbqzEUFQQcJz3LEkKFpQ", "kind": "ship", "what": "fix: リポジトリが赤い pytest で届いていた（前の回が push した日誌の1行）。引用の入れ子で、外側の 「 が内側の 」 で閉じ、引用の残り『の5は…閉じました。』が地の文に漏れて偽の宣言になる。語のほうも存在しない語 `「次の回へ を拾い、それが『最後に閉じられた語』の座を奪っていた。直したのは語彙でも例外表でもなく順序 —— バッククォートを先に確定してから鉤括弧を当てる（quote_spans に1本化）。同じ穴の5枚目。tests +3"}
 {"at": "2026-08-17T14:36:47+09:00", "session": "session_01SNMbqzEUFQQcJz3LEkKFpQ", "kind": "ship", "what": "fix: silent_run の名指しが、受け取り帳へ落とした後も鳴り続けていた（入れた回に自分で踏んだ）。list_sessions の窓が持っているあいだ毎回鳴るので、次の子が同じ題名をもう一度 --open して依頼が二重に開く。印の代わりは受け取り帳の本文（§0 が『題名を --open に落とせ』と言うのでIDが本文に入る）。tests +1", "closes": ["silent_run"], "journal_lines": 18672}
 {"at": "2026-08-17T14:53:38+09:00", "session": "session_01CdKcTnYZ7SUXBMHdFKpmRi", "kind": "start"}
+{"at": "2026-08-17T15:06:43+09:00", "session": "session_01CdKcTnYZ7SUXBMHdFKpmRi", "kind": "ship", "what": "means: calc/koureikoyou（高年齢雇用継続給付）節6・テーマ+6。支給限度額は構造上いちども効かず、最低限度額だけが崖を作る"}
+{"at": "2026-08-17T15:06:43+09:00", "session": "session_01CdKcTnYZ7SUXBMHdFKpmRi", "kind": "ship", "what": "fix: _checks.close（率を突き合わせる道具が無く、1本の中で3回 rounding に落とされた）"}
