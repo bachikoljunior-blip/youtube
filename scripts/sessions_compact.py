@@ -88,13 +88,57 @@ def full_id(s: str) -> str:
 
 
 def stamp(text: str, base: str) -> str:
-    """`14:21:56` か `08-15/14:21:56` を ISO へ。"""
+    """`14:21:56` / `08-15/14:21:56` / **まるごとの ISO** を ISO へ。
+
+    ## 3つめを足した理由（2026-08-17 11:3x。**この道具の2度目の同じ壊れ方**）
+
+    ここは `HH:MM:SS` だけを想定していて、**`2026-08-17T02:07:34Z` を渡すと
+    黙って `2026-08-17T2026-08-17T02:07:34Z.000000Z` を返していました。**
+    形が違うと言わず、**読めない字を作って通します。**
+
+    落ちる先は2つで、**どちらも黙ります**:
+
+        `sibling_check --phase spawn`  `born` が None になり、
+                                      **間隔の下限（41分）が丸ごと効かない**
+        `quota.py --ingest`           読めない時刻の点を25件積む
+
+    実際この回は、誕生から25分で `立ててよい` と言われました（下限は41分）。
+    **速く回すほど枠を先に使い切るので、これは鎖を止める向きの故障です。**
+
+    **8/17 07:4x に、同じ道具が同じ形で壊れていました** ——
+    あのときは `session_` を無条件に前置していて、**手順が「省いてよい」と
+    書いている＝省かない形も来る**のに、片方しか受けていなかった。
+    ここも同じで、手順は「日付も省いてよい」＝**省かない形も来ます。**
+
+    **だから、受けるか落とすかの2つにします。読めない字を作らないこと。**
+    """
+    text = text.strip()
+    if "T" in text or text.count("-") >= 2:
+        # まるごとの ISO。**そのまま通す**（`Z` は UTC のまま）
+        try:
+            when = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        except ValueError:
+            raise SystemExit(
+                f"時刻が読めません: {text!r}\n"
+                "  受けるのは `HH:MM:SS` / `MM-DD/HH:MM:SS` / まるごとの ISO の3つです。")
+        if when.tzinfo is None:
+            when = when.replace(tzinfo=timezone.utc)
+        return when.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f") + "Z"
     if "/" in text:
         day, clock = text.split("/", 1)
         base = f"{base[:4]}-{day}"
     else:
         clock = text
-    return f"{base}T{clock}.000000Z"
+    out = f"{base}T{clock}.000000Z"
+    # **作った字が読めることを、その場で確かめる。**
+    # 黙って壊れた字を返すのが、この関数のいちばん高い故障でした。
+    try:
+        datetime.fromisoformat(out.replace("Z", "+00:00"))
+    except ValueError:
+        raise SystemExit(
+            f"時刻が読めません: {text!r} → {out!r}\n"
+            "  受けるのは `HH:MM:SS` / `MM-DD/HH:MM:SS` / まるごとの ISO の3つです。")
+    return out
 
 
 def parse(rows: str, base: str, tag: str) -> list[dict]:

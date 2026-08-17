@@ -209,19 +209,54 @@ def _normalize(sess: dict):
     return row
 
 
-def _load() -> list[dict]:
+#: **未来の観測は「あり得ない点」です**（2026-08-17 11:3x に23件見つけた）。
+#: 少しの時計ずれで落とさないよう、余裕を持たせています。
+FUTURE_SLACK_MIN = 30
+
+
+def _load(*, keep_impossible: bool = False) -> list[dict]:
+    """積んだ点を読む。**未来の点は落とします。**
+
+    ## なぜ落とすか（2026-08-17 11:3x）
+
+    `sessions_compact.stamp()` が、まるごとの ISO を渡されたときに
+    **`2026-08-17T2026-08-16T22:46:52Z.000000Z`** を作っていました。
+    ここはそれを読んで**日付だけ拾う**ので、**8/16 の観測が 8/17 として積まれます。**
+    実測23件。**1日ずれた点は、`--pace` の「いつ尽きるか」を丸ごと狂わせます。**
+
+    この回の `status.py` は、その症状を出していました ——
+    **「この読みは -21時間前の観測（08/18 08:28 JST）」**。
+    **負の「〜前」と、明日の日付**が並んでいたのに、素通りしていました。
+
+    **作った側は直しました**（`scripts/sessions_compact.py`）。ここで落とすのは、
+    **既に積んだぶんと、次に別の道から入るぶん**のためです。
+    **ファイルからは消しません** —— 追記のみの台帳なので、
+    読む側で外すほうが安全です（`docs/trigger_main.md` §6 (b)）。
+    """
     if not LOG.exists():
         return []
     out = []
+    limit = (datetime.now(timezone.utc) + timedelta(minutes=FUTURE_SLACK_MIN)).isoformat()
     for line in LOG.read_text(encoding="utf-8").splitlines():
         line = line.strip()
         if not line:
             continue
         try:
-            out.append(json.loads(line))
+            rec = json.loads(line)
         except Exception:
             continue                  # 壊れた行は捨てる。積むほうを止めない
+        seen = str(rec.get("seen_at") or "")
+        if not keep_impossible and seen and seen > limit:
+            continue                  # **未来の点。** 上の註のとおり読み飛ばす
+        out.append(rec)
     return out
+
+
+def impossible_rows() -> list[dict]:
+    """未来の点だけを返す（**落としたことを目で見るため**）。"""
+    kept = {(r.get("session_id"), r.get("seen_at")) for r in _load()}
+    return [r for r in _load(keep_impossible=True)
+            if (r.get("session_id"), r.get("seen_at")) not in kept]
 
 
 def _key(row: dict):

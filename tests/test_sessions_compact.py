@@ -134,3 +134,92 @@ def test_七日枠も書ける():
     rli = data[0]["external_metadata"]["rate_limit_info"]
     assert rli["rateLimitType"] == "seven_day"
     assert rli["status"] == "rejected"
+
+
+# ---- **まるごとの ISO を渡されたとき**（2026-08-17 11:3x に踏んだ）--------
+#
+# 手順（§2）は「日付も省いてよい」と書いています。**省かない形も来る**のに、
+# `stamp()` は `HH:MM:SS` しか想定しておらず、
+# **`2026-08-17T2026-08-16T22:46:52Z.000000Z`** を黙って返していました。
+#
+# 落ちる先は2つで、**どちらも黙ります**:
+#   sibling_check --phase spawn → `born` が None ＝ **間隔の下限が効かない**
+#   quota.py --ingest           → 日付だけ拾われ、**1日ずれた点**が積まれる（実測23件）
+#
+# **同じ道具の、同じ形の2度目です**（8/17 07:4x は `session_` の無条件の前置）。
+# **受けるか落とすかの2つにすること。読めない字を作らない。**
+
+def test_まるごとのISOをそのまま受ける():
+    from datetime import datetime, timezone
+
+    got = sc.stamp("2026-08-16T22:46:52Z", "2026-08-17")
+    when = datetime.fromisoformat(got.replace("Z", "+00:00"))
+    assert when == datetime(2026, 8, 16, 22, 46, 52, tzinfo=timezone.utc)
+    # **`--date` に引きずられないこと。** ここがずれると1日ずれた点が積まれます
+    assert got.startswith("2026-08-16")
+
+
+def test_まるごとのISOでも行として組み立つ():
+    from datetime import datetime
+
+    rows = ("017ntNgwXa7YLwyDR36eVvHG RUNNING 2026-08-17T02:07:34Z "
+            "2026-08-17T02:31:42Z 016jWC8S3TD6BVafqJJ12cxC 1786943400 allowed\n")
+    data = sc.parse(rows, "2026-08-17", "youtube-hourly")
+    # **読める字であること**（`born` が None になると間隔の下限が丸ごと外れます）
+    datetime.fromisoformat(data[0]["created_at"].replace("Z", "+00:00"))
+    datetime.fromisoformat(data[0]["updated_at"].replace("Z", "+00:00"))
+
+
+def test_読めない時刻は黙って通さない():
+    """**壊れた字を作って返さないこと。** これが本体の故障でした。"""
+    import pytest
+    with pytest.raises(SystemExit):
+        sc.stamp("25:99:99", "2026-08-17")
+
+
+def test_省いた形は今までどおり():
+    """**両方受けること。** 片方だけにすると、これまでの書き方が落ちます。"""
+    assert sc.stamp("16:37:26", "2026-08-15") == "2026-08-15T16:37:26.000000Z"
+    assert sc.stamp("08-14/16:37:26", "2026-08-15") == "2026-08-14T16:37:26.000000Z"
+
+
+# ---- 読む側の受け（**積んでしまった点は、読むときに外す**）----------------
+
+def test_quota_は未来の点を読まない(tmp_path, monkeypatch):
+    """未来の観測は**あり得ない点**です。1日ずれた点が `--pace` を狂わせます。"""
+    import json
+    import sys
+    from datetime import datetime, timedelta, timezone
+    from pathlib import Path
+
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
+    import quota
+
+    now = datetime.now(timezone.utc)
+    log = tmp_path / "quota.jsonl"
+    log.write_text("".join(json.dumps(r) + "\n" for r in [
+        {"session_id": "a", "seen_at": (now - timedelta(hours=1)).isoformat()},
+        {"session_id": "b", "seen_at": (now + timedelta(days=1)).isoformat()},
+    ]), encoding="utf-8")
+    monkeypatch.setattr(quota, "LOG", log)
+    assert [r["session_id"] for r in quota._load()] == ["a"]
+    assert [r["session_id"] for r in quota.impossible_rows()] == ["b"]
+
+
+def test_quota_は少しの時計ずれで落とさない(tmp_path, monkeypatch):
+    """**外す向きに寄せすぎないこと。** 直近の点は判断のいちばん重い材料です。"""
+    import json
+    import sys
+    from datetime import datetime, timedelta, timezone
+    from pathlib import Path
+
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
+    import quota
+
+    now = datetime.now(timezone.utc)
+    log = tmp_path / "quota.jsonl"
+    log.write_text(json.dumps(
+        {"session_id": "a", "seen_at": (now + timedelta(minutes=5)).isoformat()}) + "\n",
+        encoding="utf-8")
+    monkeypatch.setattr(quota, "LOG", log)
+    assert len(quota._load()) == 1
