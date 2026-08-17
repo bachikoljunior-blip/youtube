@@ -839,9 +839,15 @@ def print_topic_stock() -> None:
             _cfg_topics.load_topics()["topics"],
             posted=batch_build._posted_including_ledger())
         if lines:
-            print("  --- **`calc:` の繋がっていないテーマ** ---")
-            for line in lines:
-                print(line)
+            # **一覧は `alerts` に通すこと**（`docs/trigger_main.md` §3）。
+            # 通さないと当たり率が測れず、当たらないまま育ちます（通算7件そうなった）。
+            r = _alerts.ring("calc_gap", len(lines))
+            if r.folded:
+                print(r.line)
+            else:
+                print("  --- **`calc:` の繋がっていないテーマ** ---")
+                for line in lines:
+                    print(line)
     except Exception as exc:                       # 在庫の本体を止めない
         print(f"  （`calc:` の突き合わせは読めませんでした: {str(exc)[:80]}）")
 

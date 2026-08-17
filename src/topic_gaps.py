@@ -111,7 +111,11 @@ def report_lines(topics: list[dict], posted: set[str] | None = None,
 
     lines: list[str] = []
     if stale:
-        lines.append(f"  [!] **表が在るのに `calc:` が繋がっていないテーマ {len(stale)}件**"
+        # **`[!]` を使わないこと**（2026-08-18）。あの印は在庫の段
+        # （`pick` の返りが8を割った）に予約されていて、`tests/test_topic_stock.py`
+        # が「pick が8以上なら `[!]` を出さない」を見ています。
+        # **こちらは pick の多寡と無関係に鳴るので、同じ印を使うと嘘になります。**
+        lines.append(f"  [gap] **表が在るのに `calc:` が繋がっていないテーマ {len(stale)}件**"
                      "（`pick` のプールから丸ごと外れています）:")
         for r in stale:
             mark = "  ← **投稿済み**（繋いでも在庫は増えません）" if r["id"] in posted else ""
