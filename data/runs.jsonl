@@ -368,3 +368,4 @@
 {"at": "2026-08-18T06:11:45+09:00", "session": "session_013JaWm5QAxXey4FUcesnRCx", "kind": "ship", "what": "means: (A) の題材を5件補充（status.py の「まだ表の無いテーマ」0件→5件。次に (A) を選ぶ回の題材決めが0分になる）"}
 {"at": "2026-08-18T06:24:02+09:00", "session": "session_01BQpQwxCFvC9vkcjkFvYtTH", "kind": "start"}
 {"at": "2026-08-18T06:42:14+09:00", "session": "session_01BQpQwxCFvC9vkcjkFvYtTH", "kind": "ship", "what": "means: 労災の休業補償（src/calc/rousai.py 新設6節・テーマ+6・在庫の未使用0→6→0）"}
+{"at": "2026-08-18T06:54:12+09:00", "session": "session_01BQpQwxCFvC9vkcjkFvYtTH", "kind": "ship", "what": "means: インボイスの2割特例（src/calc/invoice.py 新設7節・テーマ300→306）"}
