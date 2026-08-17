@@ -750,6 +750,16 @@
     ],
     "video_id": "B3U4GDrQRwY"
   },
+  "s-jidou-3rd-gap-4years": {
+    "charts": [
+      [
+        "0円",
+        "240,000円",
+        "480,000円"
+      ]
+    ],
+    "video_id": "Pvu_weiPYH0"
+  },
   "s-jikangai-2kagetsu-160-de-38jikan-otosu": {
     "charts": [
       [
@@ -977,6 +987,19 @@
     ],
     "video_id": "od3UZc8RevQ"
   },
+  "s-kakyu-240kagetsu-kabe": {
+    "charts": [
+      [
+        "年1,644円",
+        "年3,563円"
+      ],
+      [
+        "257.7年",
+        "118.9年"
+      ]
+    ],
+    "video_id": "NDlCpYO1sFk"
+  },
   "s-kakyu-nenreisa-souryou": {
     "charts": [
       [
@@ -1162,6 +1185,21 @@
     ],
     "video_id": "lyqNRWPouck"
   },
+  "s-kokuho-7wari-43man-koteikei": {
+    "charts": [
+      [
+        "74万円",
+        "136万円",
+        "198万円"
+      ],
+      [
+        "31万円",
+        "93万円",
+        "155万円"
+      ]
+    ],
+    "video_id": "PqpBWgqZnck"
+  },
   "s-kokuho-marginal-step-1295-to-30": {
     "charts": [
       [
@@ -1222,6 +1260,19 @@
       ]
     ],
     "video_id": "3vMIgqJYQAQ"
+  },
+  "s-kouki-hifuyousha-3nenme-64038": {
+    "charts": [
+      [
+        "2万7300円",
+        "9万1338円"
+      ],
+      [
+        "1万6380円",
+        "9万1338円"
+      ]
+    ],
+    "video_id": "oqJ7WybRZDE"
   },
   "s-kouki-nenkin-kyuuyo-onaji-shotoku-16380": {
     "charts": [
@@ -1518,6 +1569,20 @@
     ],
     "video_id": "Nrg_-t5dNUw"
   },
+  "s-saishushoku-330-nichi-66-nichibun": {
+    "charts": [
+      [
+        "66.0日分",
+        "0日分"
+      ],
+      [
+        "66.0日分",
+        "54.0日分",
+        "48.0日分"
+      ]
+    ],
+    "video_id": "W7duxrcu9Ms"
+  },
   "s-serufu-30000-5475": {
     "charts": [
       [
@@ -1813,6 +1878,24 @@
       ]
     ],
     "video_id": "KdlvGxloIg4"
+  },
+  "s-shougai-1-25bai-kazoku": {
+    "charts": [
+      [
+        "23万4800円",
+        "46万9600円",
+        "70万4400円",
+        "78万2700円"
+      ],
+      [
+        "1.2500倍",
+        "1.2120倍",
+        "1.1840倍",
+        "1.1625倍",
+        "1.1565倍"
+      ]
+    ],
+    "video_id": "JoXs1fwZxNM"
   },
   "s-shougai-1kyu-2kyu-baisu-kazoku": {
     "charts": [

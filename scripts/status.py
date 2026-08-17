@@ -525,6 +525,29 @@ def print_means() -> None:
 PASS_RATE_RUNS = 5
 
 
+def _print_deepening(all_sections: dict[str, dict[str, str]]) -> None:
+    """在庫が尽きたときに、**道を2つとも**出す（2026-08-17 に足した）。
+
+    理由と並べ方は `src/section_depth.py` にあります。短く言うと、
+    ここは長らく **「増やす道は1つだけ ＝ 新しい表を書く」** と言っていて、
+    **その1つが2つのうち高いほう**でした（直近8回のうち7回の最大の時間食い）。
+    """
+    from src import section_depth
+
+    scores: dict[str, float] = {}
+    base = 1.0
+    try:
+        from src import family_perf
+
+        rows = family_perf.families()
+        scores = family_perf.combined_map(rows)
+        base = family_perf.baseline(rows)
+    except Exception as exc:  # 実績が読めなくても、浅い順は出す（**止めない**）
+        print(f"  （族べつの実績が読めないので、浅い順で出します: {str(exc)[:80]}）")
+    for line in section_depth.report_lines(all_sections, scores, base):
+        print(line)
+
+
 def _print_pass_rate(root: Path, n_pick: int) -> None:
     """**`pick(8)` はテーマの数であって、verify を通る本数ではない。**
 
@@ -660,8 +683,11 @@ def print_topic_stock() -> None:
     if n_free == 0:
         print("  **未使用の節が0件 ＝ テーマを増やす余地がありません。**")
         print("  `topic_forge` は節を掘る道具で、**節そのものは作りません。**")
-        print("  増やす道は1つだけ: **`src/calc/` に新しい表を足す**"
-              "（`src/calc/_template.py` から。実測3.1分/本）。")
+        # **ここは長らく「増やす道は1つだけ」と言っていました**（2026-08-17 に直した）。
+        # 嘘です。既にある表に節を足す道があり、**そちらは題材の作り直しが要りません。**
+        # 直近8回のうち7回で、この回いちばんの時間食いが (A) の「中身を決めるところ」
+        # （約20〜25分）でした。**名指ししていた1つが、高いほうでした。**
+        _print_deepening(_all)
     elif n_free < 5:
         print(f"  **未使用の節が残り{n_free}件です。** 次の `topic_forge` で尽きます。")
         print("  **尽きてから気づくと、その回の `upload` が空振りします。**"

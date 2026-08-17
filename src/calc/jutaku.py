@@ -59,6 +59,8 @@ ASSUMPTIONS = [
     "所得税の速算表は平成27年分以降のものです",
     "復興特別所得税は、住宅ローン控除を差し引いたあとの所得税額に2.1パーセント掛かるものとしています",
     "ふるさと納税や医療費控除など、他の控除は入れていません",
+    "返済は元利均等返済で、返済期間は35年、金利は年1.0パーセントとして置いています。期間と金利を変えた節では、その値を表に書いています",
+    "繰り上げ返済は期間短縮型（毎月の返済額は変えず、残高だけを減らす形）で置いています。返済額軽減型なら、失う控除はこれより小さくなります",
 ]
 
 CREDIT_RATE = 0.007            # 控除率 0.7%
@@ -154,6 +156,46 @@ def check_tables() -> None:
     if mid.from_resident > RESIDENT_CAP_YEN:
         raise ValueError(f"住民税からの控除が上限を超えている: {mid.from_resident}")
 
+    # --- 2026-08-17 に足した節ぶん（`docs/JOURNAL.md`）------------------
+    # **主張そのものを検査に置くこと。**「上限が入れ替わる点」「期間が短いほど減る」
+    # 「利息の2%」は、どれも汎用の検査では守れません。
+    sw = resident_cap_switch()
+    _checks.close(sw, 1_950_000, "住民税の上限が入れ替わる課税所得")
+    # **ここが節の主張です** —— 入れ替わる点が、所得税5%の区分の上限と同じ1点であること
+    if sw != BRACKETS[0][0]:
+        raise _checks.TableError(
+            f"住民税の上限が入れ替わる点 {sw:,}円 が、所得税の第1区分の上限 "
+            f"{BRACKETS[0][0]:,}円 と違います。**節の主張はこの一致そのもの**です")
+    for taxable, want in ((1_000_000, "5パーセント"), (3_000_000, "97,500円")):
+        if resident_cap_of(taxable)[1] != want:
+            raise _checks.TableError(f"課税所得{taxable:,}円で効く上限が {want} ではない")
+
+    # 返済期間が短いほど、13年で戻る額は小さい（残高が早く減るので）
+    _checks.increases_with(
+        lambda term: thirteen_years(30_000_000, 3_000_000,
+                                    term_years=int(term))["実際に戻る合計"],
+        [20, 25, 30, 35],
+        "返済期間が長いのに、13年で戻る額が増えていない")
+
+    # 金利が高いほど利息も控除も増える。**ただし控除の増えは利息の増えの一部**
+    lo_c = thirteen_years(30_000_000, 6_000_000, annual_rate=0.005)["実際に戻る合計"]
+    hi_c = thirteen_years(30_000_000, 6_000_000, annual_rate=0.030)["実際に戻る合計"]
+    lo_i, hi_i = interest_paid(30_000_000, 0.005), interest_paid(30_000_000, 0.030)
+    _checks.greater(hi_i - lo_i, hi_c - lo_c,
+                    "増えた利息が、増えた控除より小さい（金利で得をすることになる）")
+    if not 0.01 <= (hi_c - lo_c) / (hi_i - lo_i) <= 0.05:
+        raise _checks.TableError(
+            "取り返し率が1〜5パーセントの外に出ました。**節の主張が『2パーセント前後』**"
+            "なので、印字より先にここで止めます")
+
+    # 繰上げ返済は控除を減らす。**早い年ほど大きく減る**（残る年数が多いので）
+    _checks.decreases_with(
+        lambda y: prepay_loss(30_000_000, 6_000_000, 5_000_000, int(y))["失う控除"],
+        [1, 3, 5, 8, 11],
+        "繰上げが遅いのに、失う控除が減っていない")
+    if prepay_loss(30_000_000, 6_000_000, 5_000_000, 1)["失う控除"] <= 0:
+        raise _checks.TableError("繰上げ返済で失う控除が0以下。**節の主張と符号が逆**です")
+
 
 def compute(balance: int, taxable: int) -> Result:
     """年末残高と課税総所得金額から、その年に実際に戻る額と取りこぼしを出す。"""
@@ -236,6 +278,76 @@ def thirteen_years(balance: int, taxable: int, annual_rate: float = 0.01,
     }
 
 
+def resident_cap_switch() -> int:
+    """住民税の上限が「5パーセント」から「97,500円」へ切り替わる課税総所得を返す。
+
+    **上限は2つあって、低いほうが効きます**（`compute` の `min`）。
+    切り替わる点は 97,500 ÷ 0.05 で決まるので、**残高にはよりません。**
+    """
+    return int(RESIDENT_CAP_YEN / RESIDENT_CAP_RATE)
+
+
+def resident_cap_of(taxable: int) -> tuple[int, str]:
+    """その課税総所得で、住民税から引ける上限と、**どちらの上限が効いたか**。"""
+    five = int(taxable * RESIDENT_CAP_RATE)
+    return (five, "5パーセント") if five < RESIDENT_CAP_YEN else (RESIDENT_CAP_YEN, "97,500円")
+
+
+def interest_paid(balance: int, annual_rate: float,
+                  years: int = 13, term_years: int = 35) -> int:
+    """元利均等返済で、`years` 年のあいだに払う利息の合計。
+
+    **控除の側だけを見ると金利は「得」に見えます**（残高が減りにくいので控除可能額が増える）。
+    払った側を同じ土俵に出すために置いています。
+    """
+    monthly_rate = annual_rate / 12
+    months = term_years * 12
+    if monthly_rate > 0:
+        factor = (1 + monthly_rate) ** months
+        payment = balance * monthly_rate * factor / (factor - 1)
+    else:
+        payment = balance / months
+    remaining, total = float(balance), 0.0
+    for _ in range(years * 12):
+        interest = remaining * monthly_rate
+        total += interest
+        remaining = max(0.0, remaining - (payment - interest))
+    return int(total)
+
+
+def prepay_loss(balance: int, taxable: int, prepay: int, at_year: int,
+                annual_rate: float = 0.01, years: int = 13,
+                term_years: int = 35) -> dict:
+    """`at_year` 年目の末に `prepay` 円を繰り上げ返済したとき、13年で失う控除。
+
+    **期間短縮型**（毎月の返済額は変えず、残高だけを減らす）で置いています。
+    返済額を下げる型（返済額軽減型）だと残高の減りが遅くなるので、
+    **失う控除はこれより小さくなります。** きつい側を出しています。
+    """
+    monthly_rate = annual_rate / 12
+    months = term_years * 12
+    if monthly_rate > 0:
+        factor = (1 + monthly_rate) ** months
+        payment = balance * monthly_rate * factor / (factor - 1)
+    else:
+        payment = balance / months
+
+    remaining, total = float(balance), 0
+    for year in range(1, years + 1):
+        for _ in range(12):
+            interest = remaining * monthly_rate
+            remaining = max(0.0, remaining - (payment - interest))
+        if year == at_year:
+            remaining = max(0.0, remaining - prepay)
+        total += compute(int(remaining), taxable).recovered
+
+    plain = thirteen_years(balance, taxable, annual_rate, years, term_years)
+    lost = plain["実際に戻る合計"] - total
+    return {"繰上げ": prepay, "年": at_year, "戻る合計": total,
+            "繰上げなし": plain["実際に戻る合計"], "失う控除": lost,
+            "繰上げ額に対する割合": lost / prepay if prepay else 0.0}
+
+
 if __name__ == "__main__":
     check_tables()
     print("速算表と上限の検査: 通過\n")
@@ -257,3 +369,50 @@ if __name__ == "__main__":
         print(f"  課税所得{taxable // 10_000:>4d}万  控除可能{t['控除可能額の合計']:>9,}円  "
               f"戻る{t['実際に戻る合計']:>9,}円  "
               f"取りこぼし{t['取りこぼしの合計']:>9,}円（{t['取りこぼしの割合'] * 100:4.1f}%）")
+
+    sw = resident_cap_switch()
+    print(f"\n=== 住民税の上限は2つあり、切り替わるのは課税所得{sw // 10_000}万円"
+          f"（所得税5パーセントの区分の上限と同じ点）===")
+    for taxable in (1_000_000, 1_500_000, 1_900_000, sw, 2_000_000, 3_000_000):
+        cap, which = resident_cap_of(taxable)
+        mark = "  ← **ここで入れ替わる**" if taxable == sw else ""
+        print(f"  課税所得{taxable // 10_000:>4d}万  住民税から引ける上限{cap:>7,}円"
+              f"（効いているのは {which}）{mark}")
+    print(f"  → 上限の 97,500円 は {sw:,}円 の5パーセントちょうどで、"
+          f"**{sw:,}円 は所得税が5パーセントで済む区分の上限そのもの**です。"
+          "2つの上限は別々の場所に書かれていますが、**同じ1点で入れ替わるように置かれています**")
+
+    print("\n=== 同じ3000万円を借りても、返済期間が短いほど控除は減る（課税所得300万・金利1.0%）===")
+    base_term = thirteen_years(30_000_000, 3_000_000, term_years=35)["実際に戻る合計"]
+    for term in (20, 25, 30, 35):
+        t = thirteen_years(30_000_000, 3_000_000, term_years=term)
+        got = t["実際に戻る合計"]
+        print(f"  返済期間{term:>3d}年  13年で戻る{got:>9,}円  "
+              f"35年との差 {got - base_term:>9,}円")
+    print(f"  → **借りた額も金利も同じ**なのに、20年で組むと13年で戻る額は "
+          f"{base_term - thirteen_years(30_000_000, 3_000_000, term_years=20)['実際に戻る合計']:,}円 少なくなります。"
+          "控除は残高に掛かるので、**早く減らすほど掛ける相手が小さくなる**ためです")
+
+    print("\n=== 金利が高いほど控除は増えるが、増えた利息の2パーセントしか取り返せない"
+          "（3000万円・35年・課税所得600万）===")
+    ref_credit = thirteen_years(30_000_000, 6_000_000, annual_rate=0.005)["実際に戻る合計"]
+    ref_interest = interest_paid(30_000_000, 0.005)
+    for rate in (0.005, 0.01, 0.015, 0.02, 0.03):
+        got = thirteen_years(30_000_000, 6_000_000, annual_rate=rate)["実際に戻る合計"]
+        paid = interest_paid(30_000_000, rate)
+        d_credit, d_interest = got - ref_credit, paid - ref_interest
+        ratio = f"{d_credit / d_interest * 100:5.1f}%" if d_interest else "    —"
+        print(f"  金利{rate * 100:4.1f}%  13年で戻る{got:>9,}円  払う利息{paid:>10,}円  "
+              f"控除の増{d_credit:>8,}円 / 利息の増{d_interest:>10,}円 ＝ {ratio}")
+    print("  → **金利が上がると控除は確かに増えます。**"
+          "ただし増えるのは、**余計に払った利息の2パーセント前後**だけです"
+          "（金利が上がっても、この割合はほとんど動きません）")
+
+    print("\n=== 繰り上げ返済で消える控除（3000万円・35年・金利1.0%・課税所得600万）===")
+    for at_year in (1, 3, 5, 8, 11):
+        p = prepay_loss(30_000_000, 6_000_000, 5_000_000, at_year)
+        print(f"  {at_year:>2d}年目の末に500万円  13年で戻る{p['戻る合計']:>9,}円  "
+              f"**失う控除{p['失う控除']:>8,}円**（繰上げ額の"
+              f"{p['繰上げ額に対する割合'] * 100:4.2f}パーセント）")
+    print("  → 繰上げ返済は利息を減らしますが、**同時に控除の掛ける相手も減らします。**"
+          "早い年ほど残る年数が多いので、**失う控除も早いほど大きくなります**")
