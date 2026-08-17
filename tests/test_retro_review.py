@@ -74,3 +74,41 @@ def test_道筋の印を見つける():
     plain = _doc(HEADINGS[2], "1. 何か")
     (_, body2, _s2), = retro.blocks_under(plain, retro.REVIEW_RE)
     assert not any(retro.ROUTE_MARK in line for line in body2)
+
+
+# ---------------------------------------------------------------------------
+# **太字の始まる位置で項目を落とさないこと**（2026-08-18。申し送り9）
+#
+# 日誌の項目は2通りで書かれています。`ITEM_RE` は長らく後者を
+# 項目として認識せず、前の回を「問い1に答えていない回」と数えました。
+# **中身ではなく、`**` が番号の前か後かだけの違いです。**
+# ---------------------------------------------------------------------------
+
+
+def test_item_re_reads_bold_before_the_number() -> None:
+    body = ["**1. いちばん重かったのは題材決め**", "つづき"]
+    # **`*` は落としません。** 落とすと、既に通っている `1. **…**` の側の
+    # 表示が変わります（`test_問い1の1行目だけを返す` が固定している形）。
+    # 直したいのは「項目として見えるか」だけで、見た目はそのまま。
+    assert retro.first_lines(body, "1") == "いちばん重かったのは題材決め**"
+
+
+def test_item_re_reads_bold_after_the_number() -> None:
+    """**こちらは前から通っていました。** 直した回が壊していないこと。"""
+    body = ["1. **いちばん重かったのは検査**"]
+    assert retro.first_lines(body, "1") == "**いちばん重かったのは検査**"
+
+
+def test_item_re_keeps_plain_items() -> None:
+    assert retro.first_lines(["3. ただの文"], "3") == "ただの文"
+    assert retro.first_lines(["3. ただの文"], "1") == ""
+
+
+def test_bold_item_starts_a_new_item() -> None:
+    """切り出しの側も同じ穴です —— **前の項目の続きとして飲み込みます。**"""
+    body = ["1. さいしょ", "  つづき", "**2. つぎ**", "3. みっつめ"]
+    got = retro._items(body) if hasattr(retro, "_items") else None
+    if got is None:                      # 名前が変わったら、拾える形だけ見る
+        assert retro.first_lines(body, "2") == "つぎ**"
+    else:
+        assert len(got) == 3
