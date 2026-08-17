@@ -217,3 +217,54 @@ def test_前提に健康保険を外した理由が入っている():
     assert "都道府県" in joined              # 外した理由
     assert "9.15" in joined                  # 本人負担の率
     assert "賞与" in joined                  # 入れていないもの
+
+
+# ---- 幅は下から順に広がらない（2026-08-17。掃引が拾った形）---------------
+
+def test_いちばん狭い幅は端ではなく3等級():
+    """**下ほど狭い、ではありません。** 2等級より3等級のほうが狭い。"""
+    t = shahoken.crossing_thresholds()
+    assert t["いちばん狭い段"] == 3
+    assert t["いちばん狭い幅"] == 5_999
+
+
+def test_幅は単調に広がらない():
+    ws = [r["同じ保険料の幅"] for r in shahoken.flat_bands()]
+    assert not all(b >= a for a, b in zip(ws, ws[1:])), ws
+
+
+def test_いちばん広い幅は8段で同点():
+    """**1段だけ名指すと嘘になります。**節の文はここを数で言っています。"""
+    bands = shahoken.flat_bands()
+    widest = max(r["同じ保険料の幅"] for r in bands)
+    tie = [r["等級"] for r in bands if r["同じ保険料の幅"] == widest]
+    assert widest == 29_999
+    assert tie == list(range(24, 32)), tie
+
+
+def test_幅は上下の跳びの平均から1円引いた値():
+    """幅が「隣との中点どうしの差」であることの、独立な言い換え。"""
+    for i, r in enumerate(shahoken.flat_bands(), start=1):
+        want = (shahoken.GRADES[i + 1] - shahoken.GRADES[i - 1]) // 2 - 1
+        assert r["同じ保険料の幅"] == want, r
+
+
+def test_昇給が幅をこえた段だけが必ずまたぐ():
+    for amount in (6_000, 10_000, 30_000):
+        got = shahoken.always_crosses(amount)
+        assert all(r["同じ保険料の幅"] < amount for r in got)
+        assert len(got) == len([r for r in shahoken.flat_bands()
+                                if r["同じ保険料の幅"] < amount])
+
+
+def test_必ずまたぐ昇給の下限と上限は5倍はなれている():
+    t = shahoken.crossing_thresholds()
+    assert t["1段でも必ずまたぐ昇給"] == 6_000
+    assert t["全段で必ずまたぐ昇給"] == 30_000
+    assert t["比"] == pytest.approx(5.0)
+
+
+def test_全段で必ずまたぐ昇給なら1段も取りこぼさない():
+    t = shahoken.crossing_thresholds()
+    assert len(shahoken.always_crosses(t["全段で必ずまたぐ昇給"])) == len(shahoken.flat_bands())
+    assert len(shahoken.always_crosses(t["全段で必ずまたぐ昇給"] - 1)) < len(shahoken.flat_bands())

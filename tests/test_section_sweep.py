@@ -155,3 +155,54 @@ def test_壊れた表があっても全体は止まらない(monkeypatch):
 def test_掃引の途中で表がprintしても出力を汚さない(capsys):
     ss.sweep_calc("kyugyo")
     assert capsys.readouterr().out == ""
+
+
+# ---- 行を名指す欄（2026-08-17。**候補の 13% が同語反復でした**）-----------
+
+def _行の見出し(hits, 見た値):
+    h = next(h for h in hits if h["見た値"] == 見た値)
+    d = h["詳しく"]
+    return next(str(d[k]) for k in ("止まる x", "x", "x の手前", "x の先") if k in d)
+
+
+def test_文字の見出しが無い表は_表じしんの目盛りで行を名指す():
+    """**外すのと、名指すのは別の仕事です。**
+
+    `_axis_keys` が x 軸を「見た値」から外した結果、`_row_label` からも
+    見えなくなり、**行の名前が結果の欄になっていました** ——
+    `月給=101,000` と言うべきところで `標準報酬月額の跳び=6,000` と言う。
+    """
+    rows = [{"月給": 93_000, "跳び": 10_000, "増": 10_980},
+            {"月給": 101_000, "跳び": 6_000, "増": 6_588},
+            {"月給": 107_000, "跳び": 6_000, "増": 6_588},
+            {"月給": 114_000, "跳び": 8_000, "増": 8_784},
+            {"月給": 122_000, "跳び": 8_000, "増": 8_784}]
+    hits = ss.sweep_rows(lambda: rows, name="t")
+    assert hits, "1件も出ていない"
+    for h in hits:
+        assert _行の見出し(hits, h["見た値"]).startswith("月給="), h
+
+
+def test_行を名指す欄そのものは見た値にしない():
+    """「いちばん低い跳びは、跳びが 6,000 の行」は**何も言っていません。**"""
+    rows = [{"帯": v, "額": 10} for v in (3, 1, 2, 4)]     # 先頭が単調でない
+    hits = ss.sweep_rows(lambda: rows, name="t")
+    assert not [h for h in hits if h["見た値"] == "帯"], hits
+
+
+def test_文字の見出しがあるほうを優先する():
+    rows = [{"区分": f"第{i}種", "額": v} for i, v in enumerate((5, 1, 2, 3, 4))]
+    hits = ss.sweep_rows(lambda: rows, name="t")
+    assert hits
+    assert _行の見出し(hits, "額").startswith("第"), hits
+
+
+def test_実物に同語反復が1件も残っていない():
+    for h in ss.sweep_all():
+        if h["動かした引数"] != "（表の行）":
+            continue
+        d = h["詳しく"]
+        for k in ("止まる x", "x", "x の手前", "x の先"):
+            if k in d:
+                assert not str(d[k]).startswith(h["見た値"] + "="), \
+                    f"{h['表']}.{h['関数']}: {ss.line_of(h)}"

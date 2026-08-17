@@ -291,3 +291,4 @@
 {"at": "2026-08-17T17:30:44+09:00", "session": "session_014fpCTFJBXL6iRVFKPtNx8X", "kind": "ship", "what": "means: (B) の4本目 — calc/kyugyo を 4節 → 7節（節だけなら約3分半・+3節）。境目は週4.2日で暦日が約分で消える／賃金も日数も同じで時給制と月給制が逆転／率は月給では動かず37.17〜46.51%。tests 909→926"}
 {"at": "2026-08-17T17:30:51+09:00", "session": "session_014fpCTFJBXL6iRVFKPtNx8X", "kind": "ship", "what": "means: 節の思いつき方を機械に寄せた — src/section_sweep.py（崖・逆転・頭打ち・不変を掃引）。候補91件/22本を status.py の在庫の節に (C) として出す。3回運ばれた「掃引で拾える形だ」の実装。tests 926→945"}
 {"at": "2026-08-17T17:39:41+09:00", "session": "session_014fpCTFJBXL6iRVFKPtNx8X", "kind": "ship", "what": "means: 待ちの856秒で (C) を1回最後まで通した — 掃引の候補は棄却（段の置き方のartifact）、その隣から calc/furusato に1節: いちばん深い崖は33%の境目18.00%で最上段45%(11.57%)より深い。節2分半・forge 30秒。tests 945→957"}
+{"at": "2026-08-17T17:52:01+09:00", "session": "session_01PHDiTYCdFLu6DGgXKaQX2F", "kind": "start"}

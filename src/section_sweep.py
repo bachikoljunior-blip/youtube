@@ -242,9 +242,16 @@ def sweep_rows(fn: Callable, *, name: str = "") -> list[dict]:
         keys &= set(_scalars(r))
     label_key = next((k for k, v in rows[0].items()
                       if isinstance(v, str)), None)
-    keys -= _axis_keys(rows, keys)
+    axis = _axis_keys(rows, keys)
+    keys -= axis
+    # 行を名指す欄そのものは、見た値にしない。**同語反復にしかなりません** ——
+    # 「いちばん低い跳びは、跳びが 6,000 の行」。2026-08-17 に 12件ありました。
+    label_col = (None if label_key
+                 else next((k for k in rows[0] if k in (axis or keys)), None))
     found = []
     for key in sorted(keys):
+        if key == label_col:
+            continue
         ys = [float(r[key]) for r in rows]
         hit = _classify(list(range(len(rows))), ys)
         if not hit:
@@ -256,7 +263,7 @@ def sweep_rows(fn: Callable, *, name: str = "") -> list[dict]:
             if k in detail:                       # 行番号を、読める見出しに直す
                 i = int(detail[k])
                 detail[k] = (rows[i].get(label_key) if label_key
-                             else _row_label(rows[i], keys)) or f"{i}行目"
+                             else _row_label(rows[i], axis or keys)) or f"{i}行目"
         found.append({"関数": name or getattr(fn, "__name__", "?"),
                       "動かした引数": "（表の行）", "見た値": key,
                       "形": shape, "詳しく": detail,
