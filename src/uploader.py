@@ -9,7 +9,7 @@ from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 from googleapiclient.http import MediaFileUpload
 
-from .auth import credentials, explain
+from .auth import credentials, explain, is_upload_cap
 
 JST = timezone(timedelta(hours=9))
 RETRYABLE = {500, 502, 503, 504}
@@ -259,6 +259,31 @@ def base_status(publish_cfg: dict | None = None) -> dict:
     }
 
 
+def _note_cap(exc: Exception) -> None:
+    """**1日の投稿本数の枠に当たったら、その観測を残す**（2026-08-17）。
+
+    置き場所を `videos.insert` が落ちるこの1か所にしているのは、**呼ぶ側が
+    2つある**からです（`scripts/upload_only.py` と、それを叩く
+    `scripts/batch_build.py`）。呼ぶ側に書くと、この repo で通算9回出ている
+    **「片方だけ」**になります —— 実際 `upload_only.py` を手で叩いた回は、
+    どこにも記録が残りませんでした。
+
+    **残さないと、次の回に伝わる経路は日誌の散文だけです。**
+    11:0x の回は 10:5x の日誌を読んで「たぶん今も閉じている」と**推測**しました。
+    残せば `src/upload_cap.state()` が**確実に**「閉じている」と言えます。
+
+    **ここで例外を出さないこと。** 記録できないことより、投稿の失敗の理由が
+    呼ぶ側に返らないほうが高くつきます。
+    """
+    if not is_upload_cap(exc):
+        return
+    try:
+        from . import upload_cap
+        upload_cap.note_hit(detail=str(exc)[:160])
+    except Exception as note_exc:                              # noqa: BLE001
+        print(f"[upload] 枠の観測を残せませんでした（続行）: {str(note_exc)[:80]}")
+
+
 def upload(
     video_path: Path,
     thumbnail_path: Path,
@@ -323,8 +348,10 @@ def upload(
                 print(f"[upload] {exc.resp.status} のため {wait}s 後に再試行")
                 time.sleep(wait)
                 continue
+            _note_cap(exc)
             raise RuntimeError(explain(exc)) from exc
         except Exception as exc:
+            _note_cap(exc)
             raise RuntimeError(explain(exc)) from exc
 
     video_id = response["id"]

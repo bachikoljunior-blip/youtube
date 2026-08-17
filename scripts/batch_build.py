@@ -111,7 +111,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from src import auth, config, dupes, history  # noqa: E402
+from src import auth, config, dupes, history, upload_cap  # noqa: E402
 
 JST = timezone(timedelta(hours=9))
 LOG = ROOT / "data" / "batch_runs.jsonl"
@@ -680,7 +680,34 @@ def main(argv: list[str] | None = None) -> int:
     if args.report:
         return report()
 
+    # ---- 0. **撃つ前に、1日の投稿本数の枠を見る**（2026-08-17 に足した）----
+    #
+    # 下の「2. 予約する」には、429 に当たったら止まる門が既にあります。
+    # **あれは作り終えたあとにしか効きません。** 10:5x の回は6本を作ってから当たり、
+    # **6本とも `build/` ごと捨てました**（コンテナが畳まれると消えます）。
+    #
+    # ここは **API を1単位も使いません**（控えと観測の記録だけ）。だから
+    # **Data API の日枠が切れている回でも効きます** —— そういう回は1日13時間あり、
+    # 撃てるかどうかを口に訊く道がそもそもありません。
     explicit = [i.strip() for i in args.topics.split(",") if i.strip()]
+    if not args.skip_upload:
+        cap = upload_cap.state()
+        print(f"[batch] {cap.line}", flush=True)
+        if cap.remaining <= 0:
+            print("[batch] **作りません。**（予約せずに作るだけなら "
+                  "`--skip-upload`。枠が戻ってから "
+                  '`upload_only.py <ID> "" <日付>@<時>` で打てます）', flush=True)
+            return 1
+        want = len(explicit) if explicit else args.count
+        if cap.remaining < want:
+            print(f"[batch] 要求 {want} 本を **{cap.remaining} 本に縮めます**"
+                  "（残りは作っても撃てず、`build/` ごと消えるだけなので）。",
+                  flush=True)
+            if explicit:
+                explicit = explicit[:cap.remaining]
+            else:
+                args.count = cap.remaining
+
     topics = pick(args.count if not explicit else len(explicit), explicit,
                   per_calc=args.per_calc)
     if not topics:
@@ -765,6 +792,10 @@ def main(argv: list[str] | None = None) -> int:
         # `--stop-on-error` は既定で off なので、旗に頼ると次も同じことが起きます。
         # **「次も必ず落ちる」と分かっている失敗だけは、旗によらず止めます。**
         if not vid and auth.is_upload_cap(RuntimeError(out)):
+            # **観測は `src/uploader._note_cap` が既に残しています**（2026-08-17）。
+            # ここで重ねて書かないこと —— 予約は `upload_only.py` を**子プロセス**で
+            # 叩くので、向こうの中で `videos.insert` が落ちた時点で記録されています。
+            # 両方で書くと、1回の 429 が「2回観測した」に見えます。
             rest = [r["topic"] for r in results[n:] if r.get("built")]
             print(f"[batch] **1日の投稿本数の枠に当たりました**（HTTP 429・"
                   "Data API の10,000単位とは別の枠）。"

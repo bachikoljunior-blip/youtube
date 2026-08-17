@@ -39,6 +39,12 @@ def _run(monkeypatch, ids, delays=None, fail_build=None, jobs=3):
     monkeypatch.setattr(batch_build, "pick",
                         lambda c, e, per_calc=None: _topics(ids))
     monkeypatch.setattr(batch_build, "check_window", lambda d, f: None)
+    # **本数枠の門を、実物の控えから切り離す**（2026-08-17 に足した）。
+    # `batch_build` は撃つ前に `src/upload_cap.state()` を見ます。素通しにすると
+    # **`data/uploaded.jsonl` の中身で検査の答えが変わり**、いつか
+    # 「今日はもう92本上げた」だけで並列の検査が赤くなります
+    # （`test_batch_slots.py` が `taken=` で同じことを塞いでいます）。
+    monkeypatch.setattr(batch_build.upload_cap, "state", lambda: _open_window())
     written: list[str] = []
     monkeypatch.setattr(batch_build.Path, "open",
                         lambda self, *a, **k: _Sink(written))
@@ -237,3 +243,14 @@ def test_report_does_not_build_anything(monkeypatch, capsys):
     batch_build.main(["--report"])
     assert called == []
     assert time.monotonic() - began < 2.0
+
+
+def _open_window():
+    """「まだ 92本ぶん撃てる」＝門を素通り。**枠そのものの検査は
+    `tests/test_upload_cap.py`** にあります。"""
+    from datetime import datetime, timezone
+
+    from src import upload_cap
+
+    return upload_cap.State(False, 0, upload_cap.CAP_PER_DAY,
+                            datetime.now(timezone.utc), "検査（枠は開いている）")

@@ -331,19 +331,37 @@ def ledger_rows(topics: dict[str, str] | None = None) -> list[dict]:
         topic = rec.get("topic", "")
         rows.append({"id": rec.get("video_id", ""), "title": rec.get("title", ""),
                      "topic": topic, "calc": (topics or {}).get(topic, ""),
-                     "at": rec.get("at"), "scheduled": bool(rec.get("at"))})
+                     "at": rec.get("at"), "scheduled": bool(rec.get("at")),
+                     # **`at` は公開予定、`uploaded_at` は投稿した時刻**（別物です）。
+                     # 前者しか無かったので「この枠の日にあと何本撃てるか」を
+                     # 撃つ前に言えず、6本を作ってから捨てました（`src/upload_cap.py`）。
+                     "uploaded_at": rec.get("uploaded_at")})
     return [r for r in rows if r["id"] and r["title"]]
 
 
-def remember(video_id: str, topic_id: str, title: str, at: str | None) -> None:
-    """上げた1本を手元に控える。**`upload_only.py` が投稿の直後に呼ぶ。**"""
+def remember(video_id: str, topic_id: str, title: str, at: str | None,
+             uploaded_at: str | None = None) -> None:
+    """上げた1本を手元に控える。**`upload_only.py` が投稿の直後に呼ぶ。**
+
+    `at` は**公開予定時刻**、`uploaded_at` は**投稿した時刻**です。**別物で、
+    どちらも要ります** —— 前者は「その日の何時が埋まっているか」（`batch_build --date`）、
+    後者は「**1日の投稿本数の枠**を、この窓であと何本残しているか」（`src/upload_cap.py`）。
+
+    後者が無かったので、10:5x の回は**6本を作ってから 429 に当たり、6本とも捨てました。**
+    既定は「いま」です（呼ぶ側は、投稿の直後にしか呼びません）。
+    """
+    from datetime import datetime, timezone
+
     from . import config
 
+    if uploaded_at is None:
+        uploaded_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
     path = config.ROOT / LEDGER
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as fh:
         fh.write(json.dumps({"video_id": video_id, "topic": topic_id,
-                             "title": title, "at": at}, ensure_ascii=False) + "\n")
+                             "title": title, "at": at,
+                             "uploaded_at": uploaded_at}, ensure_ascii=False) + "\n")
 
 
 def why_stranded(video: dict, videos: list[dict],

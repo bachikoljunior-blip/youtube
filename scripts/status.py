@@ -1287,6 +1287,7 @@ def print_local_sections(inventory: bool = True) -> None:
     # 「**運ばれてきたのに、まだ閉じていない依頼**」で、
     # 途中で死んだ回の申し送りが唯一残る場所です（`src/inbox.py`）。
     print(_inbox.render())
+    print_upload_cap()
     if inventory:
         _print_inventory_from_ledger()
     print_means()
@@ -1296,6 +1297,31 @@ def print_local_sections(inventory: bool = True) -> None:
     print_hypotheses()
     print_alert_hit_rate()
     print_budget()
+
+
+def print_upload_cap() -> None:
+    """**この窓で、あと何本撃てるか**（2026-08-17 に足した。API は 0単位）。
+
+    §4 で `upload` を選べるかどうかを決めるのはここです。**日枠（403）とは
+    別の枠**で、当たると `videos.insert` そのものが 429 で落ちます。
+
+    **受け取り帳のすぐ下に置いています。** 10:5x → 11:0x の2回は、この事実が
+    **日誌の散文にしかなく**、次の回は「たぶんまだ閉じている」と推測していました。
+    推測は §4 の選択を丸ごと決めるので、**構造で見えるところに出します。**
+    """
+    try:
+        from src import upload_cap
+        st = upload_cap.state()
+    except Exception as exc:                                   # noqa: BLE001
+        print(f"\n=== 投稿の本数枠 ===\n  読めませんでした（続行）: {str(exc)[:80]}")
+        return
+    print("\n=== 投稿の本数枠（1日92本・**日枠とは別**）===")
+    print(f"  {st.line}")
+    if st.remaining <= 0:
+        print("  **この回で `upload` は選べません。**§4 は means / verdict / fix から。")
+    else:
+        print("  `batch_build` は撃つ前にここを見て、**残りより多くは作りません**"
+              "（作っても `build/` ごと消えるだけなので）。")
 
 
 def print_alert_hit_rate() -> None:
@@ -1428,8 +1454,18 @@ def main(days: int = 7) -> int:
             # （`fLENot-5oKM`）。落ちるのは読みの側（`videos.list` / `playlistItems` /
             # `channels.list` / `search`）と `thumbnails.set` / `playlists` だけです。
             # **この1行が、1日13時間ぶんの `upload` を止めていました。**
-            print("    **それでも `upload` は選べます**（2026-08-17 に実測）。"
-                  "落ちるのは**読みの側**で、`videos.insert` は通ります。")
+            # **ただし「選べる」と言い切らないこと**（2026-08-17 11:0x に足した）。
+            # 投稿を止める枠は**2つ**あり、この 403 は片方（Data API の10,000単位）
+            # でしかありません。もう片方（**1日92本**・429）に当たっていれば、
+            # 日枠と関係なく `videos.insert` そのものが落ちます。
+            # **どちらなのかは `src/upload_cap.py` が API 0単位で言えます。**
+            print("    **`videos.insert` は日枠では落ちません**（2026-08-17 に実測）。"
+                  "落ちるのは**読みの側**です。")
+            try:
+                from src import upload_cap as _cap
+                print(f"    ただし**本数枠は別**: {_cap.state().line}")
+            except Exception as _exc:                          # noqa: BLE001
+                print(f"    （本数枠を読めませんでした: {str(_exc)[:60]}）")
             print("    サムネイルだけ載りません（`thumbnails.set` も 403）。"
                   "**公開前に `scripts/refresh_thumbnail.py` で載せ直すこと。**")
         print("    **この回を止めないこと。** 以下は手元だけで出しています。")
