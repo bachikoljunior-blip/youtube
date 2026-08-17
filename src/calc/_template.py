@@ -110,7 +110,11 @@ def check_tables() -> None:
     # _checks.increases_with(lambda x: ..., [100, 200, 300], "＜X＞が増えたのに＜Y＞が増えていない")
     # _checks.decreases_with(lambda x: ..., [0.13, 0.15, 0.17], "＜X＞が増えたのに＜Y＞が減っていない")
     # _checks.greater(a, b, "＜大きいはずのもの＞が＜小さいはずのもの＞以下")
-    # _checks.rounding(daily(300_000), 6_667, "標準報酬30万円の日額")
+    # _checks.rounding(daily(300_000), 6_667, "標準報酬30万円の日額")  ← **円の額**
+    # _checks.close(slope(), 183 / 280, "公表されている係数")          ← **率・比・係数**
+    #   `rounding` は `!=` で見るので、率には使えません
+    #   （`0.15*0.61/0.14` と `183/280` は最後の1桁だけ違う）。
+    #   **同じ数を2通りで出して突き合わせる**ときは `close` のほう。
     # _checks.unique_by(ROWS, lambda r: r["name"], "＜表の名前＞")
 
 

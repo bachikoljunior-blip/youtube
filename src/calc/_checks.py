@@ -212,7 +212,26 @@ def rounding(got: float, want: float, what: str) -> None:
     **円の額に使うこと。**率や比には `close()` のほうを使います（下）。
     """
     if got != want:
-        raise TableError(f"{what}: {got:,} になった。{want:,} のはず（丸めの順番）")
+        raise TableError(f"{what}: {got:,} になった。{want:,} のはず（丸めの順番）"
+                         + _float_hint(got, want))
+
+
+def _float_hint(got: float, want: float) -> str:
+    """**浮動小数の最後の1桁で落ちたなら、そう言うこと。**
+
+    2026-08-17 に足しました。`koureikoyou.py` を書いた回が
+    `0.6535714285714285 になった。0.6535714285714286 のはず` を3回読み、
+    **計算のほうを疑って約6分を溶かしています。** 落としていたのは道具でした。
+    **メッセージが「丸めの順番」としか言わないので、そう読むしかありません。**
+    """
+    if got == want or not isinstance(got, float) or not isinstance(want, float):
+        return ""
+    scale = max(abs(got), abs(want))
+    if scale == 0 or abs(got - want) > scale * 1e-9:
+        return ""
+    return ("\n    **差は浮動小数の最後の1桁だけです。計算は合っています。**"
+            "\n    率や比を突き合わせているなら、`rounding` ではなく "
+            "`_checks.close(got, want, what)` を使うこと。")
 
 
 def close(got: float, want: float, what: str, *, tol: float = 1e-9) -> None:

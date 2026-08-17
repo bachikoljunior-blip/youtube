@@ -272,3 +272,4 @@
 {"at": "2026-08-17T14:53:38+09:00", "session": "session_01CdKcTnYZ7SUXBMHdFKpmRi", "kind": "start"}
 {"at": "2026-08-17T15:06:43+09:00", "session": "session_01CdKcTnYZ7SUXBMHdFKpmRi", "kind": "ship", "what": "means: calc/koureikoyou（高年齢雇用継続給付）節6・テーマ+6。支給限度額は構造上いちども効かず、最低限度額だけが崖を作る"}
 {"at": "2026-08-17T15:06:43+09:00", "session": "session_01CdKcTnYZ7SUXBMHdFKpmRi", "kind": "ship", "what": "fix: _checks.close（率を突き合わせる道具が無く、1本の中で3回 rounding に落とされた）"}
+{"at": "2026-08-17T15:11:22+09:00", "session": "session_01CdKcTnYZ7SUXBMHdFKpmRi", "kind": "ship", "what": "fix: rounding のメッセージが「最後の1桁だけ」を言わず、計算のほうを疑わせていた（実測6分）→ close() を指す"}

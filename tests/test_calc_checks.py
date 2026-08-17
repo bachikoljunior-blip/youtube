@@ -170,6 +170,22 @@ def test_close_accepts_the_last_bit_but_not_a_real_gap():
         C.close(0.0305, 0.0306, "減額の比", tol=1e-6)
 
 
+def test_rounding_says_when_it_is_only_the_last_bit():
+    """**`rounding` のメッセージは「丸めの順番」としか言いませんでした。**
+
+    最後の1桁で落ちた回は、そこから計算のほうを疑いにいきます（実測6分）。
+    近すぎるときは `close` を指す1行が出ること。**遠いときは出ないこと**
+    （出すと本物の食い違いのときに読み手を迷わせます）。
+    """
+    with pytest.raises(C.TableError) as near:
+        C.rounding(0.15 * 0.61 / (0.75 - 0.61), 183 / 280, "改正前の傾き")
+    assert "close" in str(near.value)
+
+    with pytest.raises(C.TableError) as far:
+        C.rounding(6_666, 6_667, "標準報酬30万円の日額")
+    assert "close" not in str(far.value)
+
+
 # -------------------------------------------- ラベルと値（実際に素通りした欠陥）
 
 ROWS_5Y = [{"years": y, "free": f} for y, f in
