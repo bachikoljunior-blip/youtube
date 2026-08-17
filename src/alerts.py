@@ -206,6 +206,33 @@ def _dedupe_token() -> str:
     return "local:" + datetime.now(JST).strftime("%Y-%m-%d")
 
 
+def _rung_by() -> str:
+    """**誰が鳴らしたか**（2026-08-17 に足した）。`status.py` / `pytest` / …
+
+    この欄がありませんでした。台帳は「鳴った」ことしか持っていないので、
+    **本物の鳴りと検査の鳴りが、行の上では区別できません。**
+
+    実測（同日）: `pytest tests/` は **3つの鍵**を鳴らしていました ——
+    `status_lines` / `dupes_actionable` / `silent_run`。書き先は
+    `tests/conftest.py` で塞ぎましたが、**塞ぐ前に積まれた行は分離できません。**
+
+    分離できたのは `status_lines` だけで、それは
+    **`data/status_lines.jsonl` という独立した記録があった**からです
+    （出力の行数が中央値の1.5倍を超えた時刻と突き合わせて、本物は1回と分かった）。
+    `dupes_actionable`（9回・当たり0で**既に畳んだ**）と `silent_run` には
+    その2つめの記録がないので、**何回が本物だったのか、もう分かりません。**
+
+    **一覧を畳む判断が、遡って検算できないのが本体でした。**
+    これから積む行には、鳴らした入口を書きます。
+    """
+    import sys
+
+    argv0 = Path(sys.argv[0]).name if sys.argv and sys.argv[0] else ""
+    if "pytest" in argv0 or "pytest" in sys.modules:
+        return "pytest"
+    return argv0 or "?"
+
+
 def ring(key: str, n: int, *, foldable: bool = True, record: bool = True,
          ledger: Path | None = None, runs: Path | None = None,
          fold_after: int = FOLD_AFTER) -> Ring:
@@ -222,7 +249,8 @@ def ring(key: str, n: int, *, foldable: bool = True, record: bool = True,
         if not already:
             path.parent.mkdir(parents=True, exist_ok=True)
             rec = {"at": datetime.now(JST).isoformat(timespec="seconds"),
-                   "key": key, "n": int(n), "session": token}
+                   "key": key, "n": int(n), "session": token,
+                   "by": _rung_by()}
             with path.open("a", encoding="utf-8") as fh:
                 fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
     return state(key, ledger=path, runs=runs, n=n, foldable=foldable,

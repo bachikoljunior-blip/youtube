@@ -301,3 +301,19 @@ def test_故障注入_差し替えを外すと本物を指す():
         importlib.reload(a)
         a.LEDGER = Path(os.environ["YT_ALERTS_LEDGER"])
         a.RUNS = Path(os.environ["YT_ALERTS_RUNS"])
+
+
+def test_鳴らした入口が行に残る():
+    """**「誰が鳴らしたか」が無いと、畳む判断を遡って検算できません。**
+
+    実測（2026-08-17）: `pytest` は3つの鍵を鳴らしていましたが、
+    分離できたのは `status_lines` だけ —— `data/status_lines.jsonl` という
+    **独立した2つめの記録**があったからです。
+    `dupes_actionable`（9回・当たり0で既に畳んだ）と `silent_run` には無いので、
+    **何回が本物だったのか、もう分かりません。**
+    """
+    from src import alerts
+
+    alerts.ring("入口の検査", 2)
+    rows = alerts.rings("入口の検査")
+    assert rows and rows[-1].get("by") == "pytest", rows
