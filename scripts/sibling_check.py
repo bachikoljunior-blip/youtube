@@ -100,6 +100,106 @@ OK = "allowed"
 #: 逆に在庫が尽きると、枠がいくら余っていても投稿が途切れます。
 RUNWAY_FLOOR_DAYS = 14
 
+#: **リポジトリに1行も残さずに終わった回**を見つける（2026-08-17 に足した）。
+#:
+#: 2026-08-17 04:1x の子は `sources` を渡されずに立ち、
+#: **`/home/user/youtube` そのものが無い**まま終わりました。
+#: そういう回は `run_marker.py --write` を打てず、`inbox.py --open` も押せず、
+#: **`data/` に1バイトも残せません。** つまり:
+#:
+#:   - `retro.py` は日誌を読むので拾えません（日誌を書けていない）
+#:   - **受け取り帳も拾えません**（`inbox.py` は repo への commit で残すので）
+#:   - `run_marker.py` の空き警告も鳴りません（次の子が普通に走れば間隔は空かない）
+#:
+#: **残る経路は1つだけです —— `set_session_title`（§6 (d)）。**
+#: 題名は repo を触らずに書けて、`list_sessions` の返りに載ります。
+#: 実際 04:1x の回は、見つけたことを全部題名に書いていました。
+#:
+#: **ところが §2 は題名を写さないと決めています**（`sessions_compact.py`。
+#: 25件ぶん写すのに約6分かかり、`quota.py` も `sibling_check` も読まないため）。
+#: **唯一生き残る経路を、こちらが手順で捨てていた**わけです。
+#:
+#: だから題名を写させるのではなく、**「題名を読みにいくべき回がある」ことだけを
+#: 機械で言います。** 材料は既に手元にあります ——
+#: `list_sessions` の一覧と `data/runs.jsonl` の印。
+#: **印の無いセッションは、repo を一度も触っていません。**
+SILENT_KEY = "silent_run"
+
+
+def silent_runs(sessions: list[dict], me: str | None) -> list[dict]:
+    """**印を1つも残していない兄弟**を、新しい順に返す。
+
+    数えないもの（どれも「異常ではない」側）:
+
+    - 自分（まだ打っていない段階で呼ばれることがある）
+    - 常駐の親（`config/parents.txt`。repo を触らない設計なので印が無くて当然）
+    - `youtube-hourly` タグの無いセッション（オーナーとの会話・姉妹ループ）
+    - **いま生きているセッション**（これから打つかもしれない）
+    - **印の記録より古い回**（`data/runs.jsonl` は直近500行しか持たないので、
+      それより前は「印が無い」ではなく「もう覚えていない」）
+    """
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        import run_marker
+        recs = run_marker._records()
+        parents = run_marker.PARENT_SESSIONS
+    except Exception:
+        return []
+    if not recs:
+        return []
+    marked = {r.get("session") for r in recs}
+    oldest = None
+    for r in recs:
+        got = parse_iso(r.get("at"))
+        if got and (oldest is None or got < oldest):
+            oldest = got
+    out = []
+    for sess in sessions:
+        sid = sess.get("id")
+        if not sid or sid == me or sid in parents or sid in marked:
+            continue
+        if TAG not in (sess.get("tags") or []):
+            continue
+        if is_live(sess):
+            continue
+        born = parse_iso(sess.get("created_at"))
+        if not born or (oldest and born < oldest):
+            continue
+        out.append(sess)
+    return sorted(out, key=lambda s: str(s.get("created_at")), reverse=True)
+
+
+def report_silent(sessions: list[dict], me: str | None) -> None:
+    """見つけたら、**題名を読みにいけ**と言う。件数だけでは何も伝わらない。
+
+    `alerts.ring` は同じ回の中で何度叩いても1回しか記録しないので、
+    §2（`--phase start`）と §6 (f)（`--phase spawn`）の両方から呼んで構いません。
+    """
+    found = silent_runs(sessions, me)
+    if not found:
+        return
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+        from src import alerts
+        r = alerts.ring(SILENT_KEY, len(found))
+        if r.folded:
+            print()
+            print(r.line)
+            return
+    except Exception:
+        pass                      # 一覧の台帳が読めなくても、警告そのものは出す
+    print()
+    print(f"[!] **repo に1行も残さずに終わった回が {len(found)}件あります。**")
+    for sess in found:
+        print(f"    {sess.get('id')}  生 {sess.get('created_at')}")
+    print("    **`run_marker.py --write` すら打てていません** ＝ その回は")
+    print("    `/home/user/youtube` に触れていない（`sources` が渡らなかった疑い）。")
+    print("    **日誌にも受け取り帳にも何も残っていません。**")
+    print("    → **いま手元にある `list_sessions` の返りで、その `title` を読むこと。**")
+    print("      §6 (d) の題名だけが、その回の唯一の記録です。")
+    print("      読んだら `python scripts/inbox.py --open \"<題名>\"` で受け取り帳へ落とし、")
+    print("      潰したら `run_marker.py --ship ... --closes silent_run`。")
+
 
 def runway_days(now: datetime) -> float | None:
     """**予約が何日先まで埋まっているか。** 読めなければ `None`。
@@ -269,6 +369,10 @@ def main() -> int:
         print(f"生きている兄弟: **{len(rivals)}件**（{TAG}）")
         for s in rivals:
             print(f"  {s.get('id')}  生 {s.get('created_at')}  {s.get('session_status')}")
+
+    # **呼ぶ側に条件を書かないこと。** 畳む判定は `report_silent` の中にあります
+    # （`src/alerts.py` の註と同じ理由。呼ぶ側に置くと片方だけ書き忘れます）。
+    report_silent(sessions, me)
 
     if args.phase == "spawn":
         # --- 速すぎないか（2026-08-15） --------------------------------

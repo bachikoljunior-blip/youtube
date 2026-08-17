@@ -137,18 +137,105 @@ REOPEN_RE = re.compile(r"再発|閉じていない|閉じたつもり|閉じら�
 #
 # **引用の形が2つあるなら、2つとも落とすこと。** 語を拾う側と、
 # 動詞を読む側は、**同じ範囲を裏返しに見ていなければ噛み合いません。**
+#
+# **同じ穴の5枚目（2026-08-17）。今度は「引用の入れ子」でした。**
+# **リポジトリが赤い pytest で届いています**（前の回が押した日誌のこの行）——
+#
+#     上の追記で「`「次の回へ」の5は**この回で閉じました。**`」と書いたら、
+#
+# **前の回が、自分の踏んだ偽の宣言を説明した文が、また偽の宣言になっています**
+# （09:5x とまったく同じ形の再来。あのときはバッククォート、今度は入れ子）。
+#
+# 理由は**優先順位**です。`QUOTE_RE` は左から順に当てるので、
+# 外側の `「` の位置で鉤括弧の側が先に当たり、**内側の `」` で閉じてしまいます** ——
+# `「\`「次の回へ」` までを落とし、**残った `の5は…閉じました。` が地の文になる。**
+# 語のほうも同じ理由で ``「`「次の回へ」`` を拾い、**`` `「次の回へ `` という
+# 存在しない語が「最後に閉じられた語」の座を奪います**（黙らせる相手がいないので、
+# 本当の宣言が押し出される。`SECTION_NAMES` では防げません ——
+# 語が `「` を含んでいて、節の名前と字が違うからです）。
+#
+# **直すのは語彙でも例外表でもなく、順序のほう。**
+# **バッククォートを先に確定させてから、残りに鉤括弧を当てます**
+# （markdown のコードスパンのほうが強い区切りなので、これが本来の読み）。
+# `prose_only` と `tokens` が**同じ範囲**を使うのは前と同じで、
+# 範囲を作るところを1か所（`quote_spans`）にまとめました ——
+# **片方だけ直す形を、このリポジトリは通算8回踏んでいます。**
+_BACKTICK_RE = re.compile(r"`([^`\n]*)`")
+_BRACKET_RE = re.compile(r"「([^」\n]*)」")
 QUOTE_RE = re.compile(r"`[^`\n]*`|「[^」\n]*」")
 CODE_SPAN_RE = QUOTE_RE          # 旧名。呼んでいる側があるので残す
+
+
+def quote_spans(line: str) -> list[tuple[int, int, str, str]]:
+    """引用の範囲を `(始まり, 終わり, 中身, 種類)` で返す。**重なりは無し。**
+
+    **バッククォートを先に取ります。** 入れ子（`「\\`x\\`」`）のとき、
+    位置の早い順に当てると外側の `「` が内側の `」` で閉じ、
+    **引用の残りが地の文に漏れます**（上の註）。
+    """
+    spans: list[tuple[int, int, str, str]] = []
+    taken = bytearray(len(line))
+    for m in _BACKTICK_RE.finditer(line):
+        spans.append((m.start(), m.end(), m.group(1), "`"))
+        taken[m.start():m.end()] = b"\x01" * (m.end() - m.start())
+    for m in _BRACKET_RE.finditer(line):
+        if any(taken[m.start():m.end()]):
+            continue                      # コードスパンに食われている
+        spans.append((m.start(), m.end(), m.group(1), "「"))
+    return sorted(spans)
+
+
+def ambiguous_quotes(line: str) -> bool:
+    """**引用の対応が取れていない行**か（2026-08-17。**同じ穴の6枚目**）。
+
+    5枚目を直した直後、**この回の日誌がまた赤くしました。** 書いたのはこの行です ——
+
+        落ちるのは `「\\`「次の回へ」` までで、**残った `の5は…閉じました。` が…
+
+    バックスラッシュで逃がしたバッククォートが**数を狂わせ**、対を組み替えます。
+    結果 `の5は…閉じました。` が地の文へ漏れ、**`までで、**残った` という
+    存在しない語**が「最後に閉じられた語」になりました。
+
+    **5回とも、直し方は「その形をもう1つ知る」でした。** 6回目にして、
+    形を数えるのをやめます —— **markdown の inline code は対でなければ成立しません。**
+    奇数個なら、**どこが引用でどこが地の文かを、こちらは決められない。**
+    決められない行から宣言を読むのが、この穴の再発そのものです。
+
+    **黙って落とすのは宣言だけ**（`closures()`）。語のほうは落としません ——
+    持ち越しは2回以上で初めて出るので、偽の語は自然に沈みます。
+    宣言は**1回で効く**ので、曖昧な行を読ませないほうが安全です。
+    """
+    return line.count("`") % 2 == 1
 
 
 def prose_only(line: str) -> str:
     """**引用（バッククォート・鉤括弧）を落とし、地の文だけ**を返す。
 
-    落とす範囲は `TOKEN_RE` が語を拾う範囲と**同じ**です。裏返しに見ています ——
+    落とす範囲は `tokens` が語を拾う範囲と**同じ**です。裏返しに見ています ——
     引用の中は「その語を名指ししている」ので**動詞として読まない**、
     引用の外は語ではないので**語として拾わない**。
     """
-    return QUOTE_RE.sub("　", line)
+    out, at = [], 0
+    for start, end, _, _ in quote_spans(line):
+        out.append(line[at:start])
+        out.append("　")
+        at = end
+    out.append(line[at:])
+    return "".join(out)
+
+
+def quoted_tokens(line: str) -> list[str]:
+    """1行から**語**を拾う。`prose_only` と同じ範囲を、中身の側から見る。
+
+    長さの下限・上限は種類ごとに違います（識別子のほうが長い）。
+    """
+    out = []
+    for _, _, body, kind in quote_spans(line):
+        body = body.strip()
+        lo, hi = (3, 40) if kind == "`" else (3, 30)
+        if lo <= len(body) <= hi:
+            out.append(body)
+    return out
 
 
 def blocks_under(text: str,
@@ -194,13 +281,15 @@ def closures(text: str) -> dict[str, int]:
     """
     found: dict[str, int] = {}
     for i, line in enumerate(text.split("\n")):
+        # **引用の対応が取れない行からは、宣言を読まない**（`ambiguous_quotes`）。
+        if ambiguous_quotes(line):
+            continue
         # **宣言かどうかは地の文で見る。語は元の行から拾う**（`prose_only`）。
         bare = prose_only(line)
         if not CLOSED_RE.search(bare) or REOPEN_RE.search(bare):
             continue
-        for m in TOKEN_RE.finditer(line):
-            tok = (m.group(1) or m.group(2)).strip()
-            if tok and tok not in SECTION_NAMES:
+        for tok in quoted_tokens(line):
+            if tok not in SECTION_NAMES:
                 found[tok] = i
     return found
 
@@ -417,11 +506,11 @@ def hours_to_quota(now: datetime | None = None) -> float:
 
 
 def tokens(body: list[str]) -> set[str]:
+    # **1行ずつ見ること。** 引用は行をまたがない（`quote_spans` は `\n` を含めない）ので、
+    # 繋いでから当てると、行末と次の行頭が1つの引用に見えることがあります。
     found = set()
-    for m in TOKEN_RE.finditer("\n".join(body)):
-        tok = (m.group(1) or m.group(2)).strip()
-        if tok:
-            found.add(tok)
+    for line in body:
+        found.update(quoted_tokens(line))
     return found
 
 

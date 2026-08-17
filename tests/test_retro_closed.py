@@ -282,3 +282,75 @@ def test_SECTION_NAMES_は実物の見出しに当たる():
     assert retro.HANDOFF_RE.match("### 次の回へ")
     assert retro.REVIEW_RE.match("### 設計の見直し（§6 (a2)）")
     assert retro.SECTION_NAMES == {"次の回へ", "設計の見直し"}
+
+
+def test_引用の入れ子は宣言に数えない():
+    """**同じ穴の5枚目**（2026-08-17。**リポジトリが赤い pytest で届きました**）。
+
+    前の回が、自分の踏んだ偽の宣言を**説明した文**が、また偽の宣言になりました
+    （09:5x とまったく同じ形。あのときはバッククォート、今度は入れ子）。
+
+        上の追記で「`「次の回へ」の5は**この回で閉じました。**`」と書いたら、
+
+    原因は**優先順位**です。左から順に当てると、外側の `「` が**内側の `」`**で
+    閉じてしまい、**引用の残り（`の5は…閉じました。`）が地の文に漏れます。**
+    語のほうも同じ理由で `` `「次の回へ `` という**存在しない語**を拾い、
+    それが「最後に閉じられた語」の座を奪っていました（`SECTION_NAMES` では
+    防げません —— 語が `「` を含んでいて、節の名前と字が違うため）。
+    """
+    line = "上の追記で「`「次の回へ」の5は**この回で閉じました。**`」と書いたら、\n"
+    assert retro.closures(line) == {}
+    assert "　" in retro.prose_only(line)
+    assert "閉じました" not in retro.prose_only(line), "引用の残りが地の文に漏れています"
+
+
+def test_故障注入_入れ子でない宣言は今も読める():
+    """**締めすぎていないこと。** 5枚目の直しで、普通の宣言まで黙ったら本末転倒。"""
+    assert "carry_over" in retro.closures("`carry_over` は**この回で閉じました。**\n")
+    assert "在庫の下限" in retro.closures("「在庫の下限」はこの回で閉じました\n")
+
+
+def test_コードスパンの中の鉤括弧は語にしない():
+    """`` `「x」` `` は**1つの引用**です。中の鉤括弧を別の語として数えないこと。
+
+    数えると、**コードスパンの一部が独立した語**として持ち越しに載り、
+    一覧が当たりを含まないまま育ちます（`src/alerts.py` が4回踏んだ形）。
+    """
+    toks = retro.quoted_tokens("説明は `foo「bar」baz` にあります")
+    assert toks == ["foo「bar」baz"]
+
+
+def test_引用の対応が取れない行から宣言を読まない():
+    """**同じ穴の6枚目**（2026-08-17。**5枚目を直した直後に、その回の日誌が赤くした**）。
+
+    バックスラッシュで逃がしたバッククォートが**数を狂わせ**、対を組み替えます。
+    結果、引用のはずの `閉じました` が地の文へ漏れ、
+    **存在しない語**が「最後に閉じられた語」になりました。
+
+    **5回とも、直し方は「その形をもう1つ知る」でした。** 6回目で形を数えるのをやめ、
+    **対になっていない行は読まない**ことにしています —— markdown の inline code は
+    対でなければ成立せず、**どこが引用かをこちらが決められない**からです。
+    """
+    line = "落ちるのは `「\\`「次の回へ」` までで、**残った `の5は…閉じました。` が地の文\n"
+    assert retro.ambiguous_quotes(line)
+    assert retro.closures(line) == {}
+
+
+def test_故障注入_対が取れていれば今までどおり読む():
+    """**締めすぎていないこと。** 偶数個なら、これまでどおり宣言として読む。"""
+    line = "`carry_over` は**この回で閉じました。**\n"
+    assert not retro.ambiguous_quotes(line)
+    assert "carry_over" in retro.closures(line)
+
+
+def test_実物の日誌に対の取れない宣言が残っていない():
+    """**実データ。** この検査は「日誌を書いただけで赤くなる」形で3回赤くしています。
+
+    赤いまま届くことのほうが、拾えない宣言1件より重い ——
+    **毎回の回が赤い pytest から始まると、赤を読み飛ばす癖が付きます。**
+    """
+    journal = (ROOT / "docs" / "JOURNAL.md").read_text(encoding="utf-8")
+    closed = retro.closures(journal)
+    assert closed
+    tok = max(closed, key=lambda t: closed[t])
+    assert "`" not in tok and "「" not in tok, f"引用の切れ端が語になっています: {tok!r}"
