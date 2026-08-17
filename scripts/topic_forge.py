@@ -345,11 +345,23 @@ def realign(forged: ForgedSet, picked, all_sections,
     落とすほうが安全側でもあります。**落ちた1件は動画になりません**。
     回ごと殺しても同じで、違うのは**通った件まで消えるかどうか**だけです。
     """
+    # 割り当て先の無い件（頼んだ数より多く返ってきたぶん）は、
+    # **どの calc から選ぶか**をここで決めます。候補は「この回で頼んだ calc」だけ。
+    mods = [m for m, _ in picked if m]
+
     fixed: list[tuple[str, str] | None] = []
     for item, (mod, head) in zip(forged.topics, picked):
         text = f"{item.title_seed} {item.angle}"
-        ranked = best_section(text, all_sections[mod])
-        top, best = ranked[0][0], ranked[0][1]
+        if mod is None:
+            # **余りの件。** 割り当てが無いので、中身がいちばん当たる節を置き先にする。
+            # `assigned` は 0 —— 「割り当て先より強い証拠があるときだけ動かす」の
+            # 規則はそのままで、比べる相手が無いだけです。
+            cand = [(best_section(text, all_sections[m])[0], m) for m in mods]
+            (top, best), mod = max(cand, key=lambda c: c[0][0])
+            ranked = []
+        else:
+            ranked = best_section(text, all_sections[mod])
+            top, best = ranked[0][0], ranked[0][1]
         if top == 0:
             dropped.append(
                 f"{item.id}: 題と狙いの数字が、この calc のどの節の表にも載っていません"
@@ -363,7 +375,7 @@ def realign(forged: ForgedSet, picked, all_sections,
         # `s-yukyu-shukikan-shitei-5-5nen` が同点1で隣の節へ飛び、
         # そのあと「同じ節に2件」で回ごと落ちました。
         # **貼り直すのは、割り当て先より厳密に強い証拠があるときだけです。**
-        assigned = next((n for n, h in ranked if h == head), 0)
+        assigned = next((n for n, h in ranked if h == head), 0) if ranked else 0
         if top > assigned:
             print(f"  [貼り直し] {item.id}\n"
                   f"      書かせた順の節: {head}（一致 {assigned} 個）\n"
@@ -393,13 +405,43 @@ def validate(forged: ForgedSet, picked, all_sections,
              known_ids) -> tuple[list[dict], list[str]]:
     """通った件だけを返す。**落ちた件は理由と一緒に、第2の返りで報せる。**
 
-    件数の食い違いだけは、いまも回ごと落とします —— **どの節がどれに当たるかが
-    決まらない**ので、1件ずつ落とす判断そのものができません。
-    """
-    if len(forged.topics) != len(picked):
-        raise SystemExit(f"{len(picked)}件 頼んで {len(forged.topics)}件 返りました")
+    ## **件数の食い違いでも、回ごと落とさない**（2026-08-17 11:5x に実測して直した）
 
+    ここは長らく、こう書いて `SystemExit` していました ——
+    「**どの節がどれに当たるかが決まらない**ので、1件ずつ落とす判断そのものが
+    できません」。**決まります。`realign()` がやっていることそのものです。**
+
+    §5 は「`--count` を calc の種類数まで抑えれば衝突しない」と言っていましたが、
+    11:5x の回は **`--count 1`**（未使用の節を持つ calc は1種類）で踏んでいます:
+
+        === 割り当て 1件（calc は 1種類）===
+          saishushoku === 早く決めるほど、雇用保険からの受取は必ず減る ===
+        [forge] 書かせています…
+        **1件 頼んで 5件 返りました**      ← 書かせた5件を全部捨てて exit
+
+    **件数は原因ではありません。** 節の見出しが並んでいる族だと、書き手が
+    **割り当てられた1節ではなく族ごと書く**ことがある。`--count` を1まで
+    下げても起きるので、**下げる方向に直しはありませんでした。**
+
+    余った件には割り当て先が無いだけなので、**中身で置き先を決めさせ**、
+    節がぶつかったぶんは既にある「先に来たほうを残す」で落ちます。
+    これは 8/16 10:5x に「1件ずつ落とす。回ごと殺さない」へ直したのと**同じ形**で、
+    **その回が塞ぎ残していた最後の1本**です。
+
+    足りない側（頼んだより少ない）は、余った割り当てを使わないだけです。
+    """
     dropped: list[str] = []
+    picked = list(picked)
+    if len(forged.topics) != len(picked):
+        dropped.append(
+            f"（{len(picked)}件 頼んで {len(forged.topics)}件 返りました。"
+            "**回ごとは落としません** —— 余りは中身で置き先を決め、"
+            "節がぶつかったものだけ落とします）")
+        if len(forged.topics) > len(picked):
+            picked += [(None, None)] * (len(forged.topics) - len(picked))
+        else:
+            picked = picked[:len(forged.topics)]
+
     slots = realign(forged, picked, all_sections, dropped)
     rows, used = [], set(known_ids)
     for item, slot in zip(forged.topics, slots):

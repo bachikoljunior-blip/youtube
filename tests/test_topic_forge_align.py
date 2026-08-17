@@ -202,3 +202,50 @@ def test_厳密に強ければ貼り直す():
     got = forge.realign(_Set([item]), [("m", "=== A ===")],
                         {"m": _two_sections()}, [])
     assert got == [("m", "=== B ===")]
+
+
+# ---- **頼んだ数より多く返ってきた回**（2026-08-17 11:5x。`--count 1` で実測）
+#
+# 手順 §5 は「`--count` を calc の種類数まで抑えれば衝突しない」と言っていましたが、
+# **`--count 1` で踏みました**（未使用の節を持つ calc は `saishushoku` 1種類だけ）。
+#
+#     1件 頼んで 5件 返りました   ← 書かせた5件を全部捨てて exit
+#
+# 件数は原因ではありません。節の見出しが並んでいる族だと、書き手が
+# **割り当てられた1節ではなく族ごと書く**ことがある。**下げる方向に直しはない。**
+#
+# 8/16 10:5x に「1件ずつ落とす。回ごと殺さない」へ直したときの、**塞ぎ残し**でした。
+
+
+def test_頼んだ数より多く返っても回ごと落とさない():
+    """1件だけ頼んだのに4件返る。**割り当ての無い3件は、中身で置き先を決める。**"""
+    items = [_Item(tid, title, angle) for tid, title, angle, _ in REAL]
+    # 頼んだのは1件だけ（1つめの節）
+    picked = [("zoyo", list(sections())[0])]
+    rows, dropped = forge.validate(
+        _Set(items), picked, {"zoyo": sections()}, set())
+
+    # **回ごと落ちていない**（以前はここで SystemExit していた）
+    assert rows, "頼んだ数より多く返っただけで、通った件まで捨てている"
+
+    # 置き先は、書かせた順ではなく**中身の数字が載っている節**
+    got = {r["id"]: r["calc_sections"][0] for r in rows}
+    for tid, _, _, want in REAL:
+        if tid in got:
+            assert want in got[tid], f"{tid} が別の節に貼られている"
+
+    # REAL の1件目と2件目は同じ節なので、**片方だけが落ちる**
+    assert len(rows) == 3, f"通った件数が合わない: {[r['id'] for r in rows]}"
+    assert any("すでに1件" in d for d in dropped)
+    assert any("回ごとは落としません" in d for d in dropped)
+
+
+def test_頼んだ数より少なく返っても回ごと落とさない():
+    """4件頼んで2件しか返らない。**余った割り当てを使わないだけ。**"""
+    items = [_Item(tid, title, angle) for tid, title, angle, _ in REAL[2:]]
+    picked = [("zoyo", h) for h in sections()]
+    rows, dropped = forge.validate(
+        _Set(items), picked, {"zoyo": sections()}, set())
+
+    assert len(rows) == 2, f"通った件数が合わない: {[r['id'] for r in rows]}"
+    assert any("回ごとは落としません" in d for d in dropped)
