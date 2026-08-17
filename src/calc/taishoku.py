@@ -120,6 +120,33 @@ def check_tables() -> None:
     if not short["total"] > long_["total"]:
         raise ValueError("短期退職手当等のほうが税金が軽くなっている")
 
+    # --- 2026-08-17 に足した節ぶん（`docs/JOURNAL.md` M17）------------------
+    # **主張そのものを検査に置くこと。** 汎用の検査では守れません。
+    # 1. 役員のほうが必ず重い（全額 対 300万円を超える部分だけ）
+    for row in officer_grid():
+        if row["diff"] <= 0:
+            raise _checks.TableError(
+                f"退職金{row['payout']:,}円で、役員のほうが軽い（{row['diff']:,}円）。"
+                "**節の主張と符号が逆**です")
+    # 2. 1日で21年になり、控除が RATE_OVER だけ増える
+    if deduction(YEARS_BORDER + 0.01) - deduction(YEARS_BORDER) != RATE_OVER:
+        raise ValueError("20年と1日で、控除が70万円ふえていない")
+    for row in one_day_grid():
+        if row["gain"] <= 0:
+            raise _checks.TableError(
+                f"退職金{row['payout']:,}円で、1日長く勤めたのに手取りが増えていない")
+    # 3. 実効の負担率は天井を超えない。**天井は率から独立に出す**
+    ceiling = effective_rate_ceiling()
+    _checks.close(ceiling, (0.45 * 1.021 + 0.10) / 2, "実効の負担率の天井")
+    for row in effective_rate_grid():
+        if row["rate"] >= ceiling:
+            raise _checks.TableError(
+                f"退職金{row['payout']:,}円の実効 {row['rate']:.4f} が"
+                f"天井 {ceiling:.4f} 以上。**2分の1課税が効いていません**")
+    _checks.increases_with(
+        lambda p: tax(int(p), 30)["total"] / p, [20_000_000, 80_000_000, 200_000_000],
+        "退職金が増えたのに、実効の負担率が上がっていない")
+
 
 def years_counted(years: float) -> int:
     """勤続年数。**1年未満は切り上げ。** 10年1か月は11年で数える。"""
@@ -234,6 +261,58 @@ def free_line() -> list[dict]:
             (5, 10, 15, 20, 21, 25, 30, 35, 38, 40)]
 
 
+
+def officer_grid(payouts: list[int] | None = None, years: float = 5) -> list[dict]:
+    """勤続5年以下で、**役員か役員以外か**だけを変えたときの税金。
+
+    2つの例外は同じ2022年改正で入りましたが、**効き方が違います** ——
+    役員は全額、役員以外は300万円を超える部分だけが2分の1になりません。
+    """
+    payouts = payouts or [5_000_000, 10_000_000, 15_000_000, 20_000_000, 30_000_000]
+    out = []
+    for p in payouts:
+        o = tax(p, years, officer=True)["total"]
+        e = tax(p, years, short_term=True)["total"]
+        out.append({"payout": p, "officer": o, "employee": e, "diff": o - e})
+    return out
+
+
+def one_day_grid(payouts: list[int] | None = None) -> list[dict]:
+    """**20年ちょうど**と**20年と1日**で、手取りがどれだけ変わるか。
+
+    勤続年数は1年未満を切り上げるので、1日でも超えれば21年で数えます。
+    控除の単価が跳ねる境目（`YEARS_BORDER`）と重なるので、**1日が効きます。**
+    """
+    payouts = payouts or [10_000_000, 20_000_000, 30_000_000, 40_000_000]
+    out = []
+    for p in payouts:
+        a = tax(p, YEARS_BORDER)["net"]
+        b = tax(p, YEARS_BORDER + 0.01)["net"]
+        out.append({"payout": p, "net_20": a, "net_21": b, "gain": b - a})
+    return out
+
+
+def effective_rate_ceiling() -> float:
+    """退職金をいくら増やしても超えない、実効の負担率。
+
+    課税されるのが**控除を引いた額の2分の1**なので、
+    いちばん高い税率の組み合わせを半分にした値が上限になります。
+    """
+    top_rate = TAX_TABLE[-1][1]
+    return (top_rate * (1 + RECONSTRUCTION) + RESIDENT_RATE) / 2
+
+
+def effective_rate_grid(years: float = 30, payouts: list[int] | None = None) -> list[dict]:
+    """退職金べつの実効の負担率。**天井に近づくが、超えない。**"""
+    payouts = payouts or [10_000_000, 20_000_000, 40_000_000, 80_000_000,
+                          200_000_000, 1_000_000_000]
+    out = []
+    for p in payouts:
+        t = tax(p, years)["total"]
+        out.append({"payout": p, "total": t, "rate": t / p})
+    return out
+
+
 if __name__ == "__main__":
     check_tables()
     print("制度の値の検査: 通過")
@@ -270,3 +349,30 @@ if __name__ == "__main__":
         mark = "短期になる" if r["applies"] else "ならない"
         print(f"{r['years']:6d}年 {mark:>12s} {r['normal']:10,d}円 {r['short']:10,d}円  "
               f"{r['diff']:,}円")
+
+    print("\n=== 同じ勤続5年・同じ退職金でも、「役員」かどうかで税金が変わる ===")
+    print(f"{'退職金':>12s} {'役員の税金':>12s} {'役員以外の税金':>13s} {'差'}")
+    for r in officer_grid():
+        print(f"{r['payout']:11,d}円 {r['officer']:11,d}円 {r['employee']:12,d}円  "
+              f"**{r['diff']:,}円**")
+    print("  → 役員は**全額が課税対象**、役員以外は**300万円を超える部分だけ**が"
+          "2分の1になりません（どちらも勤続5年以下）。"
+          "**勤めた年数も受け取った額も同じ**なのに、肩書きだけで変わります")
+
+    print("\n=== 20年ちょうどで辞めるか、1日だけ長く勤めるかで、手取りが変わる ===")
+    print(f"{'退職金':>12s} {'20年ちょうど':>13s} {'20年と1日':>13s} {'手取りの差'}")
+    for r in one_day_grid():
+        print(f"{r['payout']:11,d}円 {r['net_20']:12,d}円 {r['net_21']:12,d}円  "
+              f"**+{r['gain']:,}円**")
+    print(f"  → 勤続年数は**1年未満を切り上げ**て数えるので、"
+          f"20年と1日は**21年**として扱われます。控除が {RATE_OVER:,}円 増え、"
+          "その半分が課税から外れます。**1日で決まります**")
+
+    print("\n=== 退職金がいくら高くても、実効の負担率は27パーセント台で頭打ちになる ===")
+    print(f"{'退職金':>15s} {'税金合計':>15s} {'実効の負担率'}")
+    for r in effective_rate_grid():
+        print(f"{r['payout']:14,d}円 {r['total']:14,d}円  {r['rate'] * 100:6.2f}%")
+    print(f"  → 課税されるのが**控除を引いた額の2分の1**なので、"
+          f"いちばん高い税率でも実効はその半分に落ちます。"
+          f"上限は **{effective_rate_ceiling() * 100:.2f}パーセント**で、"
+          "これは退職金をいくら増やしても超えません")
