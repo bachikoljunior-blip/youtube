@@ -415,6 +415,168 @@ def sweep_all(names: Iterable[str] | None = None) -> list[dict]:
     return out
 
 
+# --- 既に節が言っている候補を落とす（2026-08-17 20:5x に足した） -------------
+#
+# **候補の件数は、`src/section_depth.py` の同点破りに使われています**（(B) の1位）。
+# ところが数えていたのは**拾えた形の数**で、**まだ誰も言っていない形の数**では
+# ありませんでした。前の回の実測（申し送りの1件目）:
+#
+#     ideco  掃引 3件 → **3件とも既存の節がもう言っていること**。それでも (B) の1位
+#
+# **1位は「掘れば節が出る表」のつもりで読まれます**（手順 §4 の既定）。
+# 既出で水増しされた数で破ると、**掘っても0節の表を1位に出します** ——
+# `critique_queue --next` → 同点のモジュール名 に続く、**同じ形の3度目**です。
+#
+# 判定は**節の本文にその点が印字されているか**だけで見ます（意味は読みません）。
+# 落とす向きに外れると候補が過小に出るので、**確実な形だけ**を既出と呼びます:
+#
+#     1. 点の表記がそのまま出てくる（`40%` / `年収=11,100,000` の右辺）
+#     2. 軸の名前が出ている行に、その数が出てくる（桁区切りの有無は問わない）
+#     3. 同じ行に印字された帯（`6,500,000〜6,800,000`）が、その点を含む
+#
+# 3 が要るのは、節が**点ではなく帯**で書かれることがあるからです（実測:
+# ideco の `grid` は 6,600,000 で止まり、節は「帯 年収 6,500,000〜6,800,000円」）。
+# **`不変` は x を持たない**ので、止まっている値そのもので見ます。
+_NUM_RE = re.compile(r"-?\d[\d,]*(?:\.\d+)?")
+_RANGE_RE = re.compile(r"(-?\d[\d,]*(?:\.\d+)?)\s*[〜~ー–—-]\s*(-?\d[\d,]*(?:\.\d+)?)")
+# 印字は円未満を切り捨てるので、完全一致では拾えません（`_classify` と同じ考え）。
+_COVER_TOL = 1e-6
+
+
+def _to_number(s: str) -> float | None:
+    try:
+        return float(s.replace(",", ""))
+    except ValueError:
+        return None
+
+
+def _point_of(raw: Any) -> tuple[str | None, str, float | None]:
+    """掃引の点を (軸の名前, 表記, 数) に割る。**`年収=11,100,000` の形。**"""
+    if isinstance(raw, str):
+        axis, _, rest = raw.partition("=")
+        if rest:
+            return axis.strip(), rest.strip(), _to_number(_NUM_RE.search(rest).group()
+                                                          if _NUM_RE.search(rest) else "")
+        m = _NUM_RE.search(raw)
+        return None, raw.strip(), _to_number(m.group()) if m else None
+    if isinstance(raw, (int, float)):
+        return None, _fmt(float(raw)), float(raw)
+    return None, str(raw), None
+
+
+def _near(a: float, b: float) -> bool:
+    return abs(a - b) <= _COVER_TOL * max(1.0, abs(a), abs(b))
+
+
+# 軸の名前が本文に1度も出てこない点で、「数だけ」で既出と呼んでよい下限。
+# **`years=1` や `等級=3` を既出と呼ばないため**（2026-08-17 20:5x に踏んだ）。
+# 入れた直後の実測は 94件→新しい6件で、中を見ると `years=1` が既出でした ——
+# 節の本文に `years` は1度も出てきません（引数名は英語、節は日本語）。
+# 当たっていたのは**表記の `1` が、どこかの行に含まれる**という照合です。
+# **短い数は、どの表の本文にも必ず出てきます。**
+_LONE_NUMBER_MIN = 1000
+
+
+def _found_in(num: float | None, lines: list[str]) -> bool:
+    """その数が、渡した行のどれかに印字されているか（帯に入っていてもよい）。"""
+    if num is None:
+        return False
+    for ln in lines:
+        for m in _NUM_RE.finditer(ln):
+            got = _to_number(m.group())
+            if got is not None and _near(got, num):
+                return True
+        for lo, hi in _RANGE_RE.findall(ln):
+            a, b = _to_number(lo), _to_number(hi)
+            if a is not None and b is not None and min(a, b) <= num <= max(a, b):
+                return True
+    return False
+
+
+def _point_printed(raw: Any, lines: list[str]) -> bool | None:
+    """その1点が、節の本文に印字されているか。**`None` は「判定できない」。**
+
+    **軸の名前が本文にある点だけを、その行の中で照合します。**
+    軸が本文に1度も出てこない（＝引数名が英語・節は日本語）点は、
+    **その行に絞れないので照合できません** —— 小さい数は本文のどこかに
+    必ず出てくるので、`True` と読むと全部が既出になります。
+    そこは `False`（新しい）でもなく **`None`（判定不能）** を返し、
+    呼ぶ側が**結果の値のほうで**見ます（`is_covered`）。
+    """
+    axis, shown, num = _point_of(raw)
+    axis_lines = [ln for ln in lines if axis and axis in ln] if axis else []
+    if axis and axis_lines:
+        return _found_in(num, axis_lines)
+    # 単位つきの表記（`40%` など）は、そのまま出ていれば既出
+    if shown and shown.strip("-0123456789.,"):
+        return any(shown in ln for ln in lines)
+    if num is not None and abs(num) >= _LONE_NUMBER_MIN:
+        return _found_in(num, lines)
+    return None
+
+
+def _hit_points(hit: dict) -> list[Any]:
+    """その候補を名指ししている **x の点**。**無ければ空**（判定しない）。"""
+    d = hit.get("詳しく") or {}
+    if hit.get("形") == "不変":
+        return []
+    keys = ("止まる x", "x", "x の手前", "x の先")
+    return [d[k] for k in keys if k in d]
+
+
+def _hit_outcome(hit: dict) -> Any:
+    """その候補が言っている **結果の値**（x が照合できないときの控え）。"""
+    d = hit.get("詳しく") or {}
+    for k in ("止まった値", "値", "跳ぶ幅"):
+        if k in d:
+            return d[k]
+    return None
+
+
+def is_covered(hit: dict, sections: dict[str, str] | None) -> bool:
+    """その候補を、いまの節がもう言っているか。
+
+    **意味は読みません。**「この点は、もう画面に出ている」だけを見ます。
+
+    - x の点が1つでも**印字されていない**と分かったら → **新しい**
+    - x の点が照合できて、全部印字されていれば → **既出**
+    - x が1つも照合できない（軸の名前が本文に無い）ときだけ、
+      **結果の値**が印字されているかで見ます（`kokuho.cliff_by_members` の
+      「6人で 92,570円」は、軸 `被保険者数` が本文に無く、額は出ている）
+    """
+    if not sections:
+        return False
+    lines = [ln for body in sections.values() for ln in str(body).splitlines()]
+    judged = [_point_printed(p, lines) for p in _hit_points(hit)]
+    if any(v is False for v in judged):
+        return False
+    if any(v is True for v in judged):
+        return True
+    out = _hit_outcome(hit)
+    return _point_printed(out, lines) is True if out is not None else False
+
+
+def novel_counts(hits: list[dict],
+                 all_sections: dict[str, dict[str, str]] | None,
+                 ) -> tuple[dict[str, int], dict[str, int]]:
+    """表ごとの (拾えた件数, まだ誰も言っていない件数) を返す。
+
+    **同点を破るのに使うのは2つめ**です（`src/section_depth.py`）。
+    1つめも返すのは、**行に両方出して人が検算できるようにするため** ——
+    落とす向きの誤りは「候補が少なく見える」なので、**黙って落とさないこと。**
+    """
+    total: dict[str, int] = {}
+    novel: dict[str, int] = {}
+    for hit in dedupe(hits):
+        name = hit.get("表", "?")
+        total[name] = total.get(name, 0) + 1
+        if not is_covered(hit, (all_sections or {}).get(name)):
+            novel[name] = novel.get(name, 0) + 1
+    for name in total:
+        novel.setdefault(name, 0)
+    return total, novel
+
+
 def _fmt(v: float) -> str:
     if isinstance(v, str):
         return v

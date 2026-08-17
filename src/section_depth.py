@@ -75,6 +75,23 @@
 - **掃引が読めない回は、今までどおりモジュール名で破ります**（止めない）
 - 候補数は行に出します。**0件の表が1位に出たら、それは (A) に戻る合図**です
 
+## その候補数が、既に節が言っているぶんで水増しされていた（2026-08-17 20:5x）
+
+上の直しは「同点を**測っていない順**で破るな」でした。**測る先が違いました。**
+数えていたのは**拾えた形の数**で、**まだ誰も言っていない形の数**ではありません。
+前の回の実測（申し送りの1件目）:
+
+    ideco  掃引 3件 → **3件とも既存の節がもう言っていること**。それでも (B) の1位
+
+**1位は「掘れば節が出る表」のつもりで読まれます**（手順 §4 の既定）。
+既出で水増しされた数で破ると、**掘っても0節の表を1位に出します。**
+`critique_queue --next` → 同点のモジュール名 に続く、**同じ形の3度目**です。
+
+だから破るのは `section_sweep.novel_counts()` の2つめ（**新しい候補の数**）。
+全体では **94件 → 新しい 23件**（同日の実測。`ideco` は 3→0）。
+**拾えた数も行に残します** —— 落とす向きの誤りは「候補が少なく見える」なので、
+**黙って落とさないこと**（人が両方見て検算できるようにしてあります）。
+
 ## この道具が言わないこと
 
 **「掘れば必ず節が出る」とは言っていません。** 題材によっては
@@ -122,6 +139,7 @@ def candidates(all_sections: dict[str, dict[str, str]],
                base: float = 1.0,
                limit: int = 5,
                sweep_counts: dict[str, int] | None = None,
+               novel_counts: dict[str, int] | None = None,
                ) -> list[tuple[str, int, int, float]]:
     """掘り甲斐の順に (モジュール, いまの節数, 中央値まであと何節, 値) を返す。
 
@@ -129,12 +147,15 @@ def candidates(all_sections: dict[str, dict[str, str]],
     （＝ 浅い順そのもの）。**中央値に届いている表は返りません。**
 
     `sweep_counts` は `src/section_sweep.py` が表ごとに拾った候補の数。
+    `novel_counts` はそのうち **まだどの節も言っていない**数
+    （`section_sweep.novel_counts()` の2つめ）。
     **同点を破るためだけに使います**（第1キーは掘り甲斐のまま）。
     渡さなければ、今までどおりモジュール名で破ります —— 上の節の理由により、
     **それは「測っていない順」なので、渡せるなら渡すこと。**
     """
     scores = scores or {}
     counts = sweep_counts or {}
+    novel = novel_counts or {}
     tgt = target_depth(all_sections)
     out = []
     for mod, n in depths(all_sections).items():
@@ -142,7 +163,10 @@ def candidates(all_sections: dict[str, dict[str, str]],
         if room <= 0:
             continue
         out.append((mod, n, room, room * scores.get(mod, base)))
-    out.sort(key=lambda r: (-r[3], -counts.get(r[0], 0), r[0]))
+    # **破る順は「新しい候補 → 拾えた候補 → 名前」**。
+    # 新しい数だけで破ると、掃引が読めない回に全部 0 で並んで名前順に戻るので、
+    # 拾えた数を控えに残してあります（`novel` を渡さない呼び方も今までどおり通る）。
+    out.sort(key=lambda r: (-r[3], -novel.get(r[0], 0), -counts.get(r[0], 0), r[0]))
     return out[:limit]
 
 
@@ -163,7 +187,8 @@ def report_lines(all_sections: dict[str, dict[str, str]],
                  scores: dict[str, float] | None = None,
                  base: float = 1.0,
                  limit: int = 5,
-                 sweep_counts: dict[str, int] | None = None) -> list[str]:
+                 sweep_counts: dict[str, int] | None = None,
+                 novel_counts: dict[str, int] | None = None) -> list[str]:
     """`status.py` がそのまま印刷する行。**空のリストを返すことがあります。**"""
     med = median_depth(all_sections)
     tgt = target_depth(all_sections)
@@ -171,8 +196,9 @@ def report_lines(all_sections: dict[str, dict[str, str]],
     got = depths(all_sections)
     deep = max(got.items(), key=lambda kv: kv[1]) if got else ("—", 0)
     counts = sweep_counts or {}
-    rows = candidates(all_sections, scores, base, limit, counts)
-    whole = candidates(all_sections, scores, base, len(all_sections), counts)
+    novel = novel_counts or {}
+    rows = candidates(all_sections, scores, base, limit, counts, novel)
+    whole = candidates(all_sections, scores, base, len(all_sections), counts, novel)
     total = sum(len(v) for v in all_sections.values())
     out = [
         f"  **道は2つあります。**（いま {total}節 / {len(all_sections)}本・"
@@ -192,12 +218,20 @@ def report_lines(all_sections: dict[str, dict[str, str]],
     if tied > 1:
         out.append(f"       [!] **上位 {tied}本が掘り甲斐で同点です。"
                    "1位は値打ちの1位ではありません** —— "
-                   "同点は「掃引」（機械が拾えた形の数）で破っています")
+                   "同点は「掃引の**新しい**候補の数」で破っています"
+                   "（既に節が言っているぶんは数えません）")
     for mod, n, gap, val in rows:
         line = f"       {mod:<12} いま{n:2d}節 → **あと{gap}節**（掘り甲斐 {val:.1f}"
         if counts:
             c = counts.get(mod, 0)
-            line += f" ・掃引 {c}件" + ("" if c else " ← **機械には1つも見えていません**")
+            if novel:
+                nv = novel.get(mod, 0)
+                line += f" ・掃引 {c}件のうち**新しい {nv}件**"
+                if not nv:
+                    line += (" ← **全部、いまの節がもう言っています**"
+                             if c else " ← **機械には1つも見えていません**")
+            else:
+                line += f" ・掃引 {c}件" + ("" if c else " ← **機械には1つも見えていません**")
         out.append(line + "）")
     out.append("    **掘って出なければ (A) に戻る合図です。**"
                "そのときは「この族は尽きた」と `docs/JOURNAL.md` に書くこと"

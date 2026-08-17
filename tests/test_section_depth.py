@@ -169,3 +169,40 @@ def test_ties_at_top_は同点の本数を数える():
     rows = [("a", 5, 2, 0.7), ("b", 5, 2, 0.7), ("c", 6, 1, 0.35)]
     assert section_depth.ties_at_top(rows) == 2
     assert section_depth.ties_at_top([]) == 0
+
+
+# --- 同点は「新しい候補の数」で破る（2026-08-17 20:5x） ----------------------
+
+def test_同点は新しい候補の数で破る():
+    """**掃引の件数は既出で水増しされます**（`ideco` は3件が3件とも既出で1位）。"""
+    mods = _mods({"aaa": 5, "zzz": 5, "target": 8})
+    rows = section_depth.candidates(mods,
+                                    sweep_counts={"aaa": 9, "zzz": 2},
+                                    novel_counts={"aaa": 0, "zzz": 2})
+    assert rows[0][0] == "zzz", rows
+
+
+def test_新しい数を渡さない呼び方は今までどおり():
+    """**呼ぶ側に約束させないこと**（片方だけ忘れる形を作らない）。"""
+    mods = _mods({"aaa": 5, "zzz": 5, "target": 8})
+    rows = section_depth.candidates(mods, sweep_counts={"aaa": 9, "zzz": 2})
+    assert rows[0][0] == "aaa", rows
+
+
+def test_新しい数が同じなら拾えた数で破る():
+    """掃引が読めない回は全部0で並ぶので、控えを残してあります。"""
+    mods = _mods({"aaa": 5, "zzz": 5, "target": 8})
+    rows = section_depth.candidates(mods,
+                                    sweep_counts={"aaa": 1, "zzz": 4},
+                                    novel_counts={"aaa": 0, "zzz": 0})
+    assert rows[0][0] == "zzz", rows
+
+
+def test_全部既出の表はそう言う():
+    """**0件を黙らせないこと。**「掘っても節は出ない」は (A) に戻る合図です。"""
+    mods = _mods({"aaa": 5, "target": 8})
+    lines = "\n".join(section_depth.report_lines(mods,
+                                                 sweep_counts={"aaa": 3},
+                                                 novel_counts={"aaa": 0}))
+    assert "全部、いまの節がもう言っています" in lines
+    assert "新しい 0件" in lines

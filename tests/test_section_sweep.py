@@ -269,3 +269,97 @@ def test_文字列を足しても表が1本も落ちていない():
     hits = ss.sweep_all()
     unreadable = [h for h in hits if h["形"] == "読めない"]
     assert not unreadable, unreadable
+
+
+# --- 既に節が言っている候補を落とす（2026-08-17 20:5x に足した） --------------
+#
+# **候補の件数は (B) の同点破りに使われています**（`src/section_depth.py`）。
+# 数えていたのが「拾えた形」で「まだ誰も言っていない形」ではなかったため、
+# `ideco`（3件が3件とも既出）が (B) の1位に出ていました。
+# **ここの検査は落とす側にかけます** —— 落としすぎると候補が過小に見え、
+# 落とさなすぎると元の水増しに戻ります。**両方向を固定すること。**
+
+def _sections(*bodies: str) -> dict[str, str]:
+    return {f"=== 節{i} ===": b for i, b in enumerate(bodies)}
+
+
+def test_止まる点が本文に出ていれば既出():
+    hit = {"表": "t", "形": "頭打ち",
+           "詳しく": {"止まる x": "年収=11,100,000", "止まった値": 0.33}}
+    assert ss.is_covered(hit, _sections("年収11,100,000円 最初の1段 4,018円"))
+
+
+def test_止まる点が出ていなければ新しい():
+    hit = {"表": "t", "形": "頭打ち",
+           "詳しく": {"止まる x": "年収=9,900,000", "止まった値": 0.33}}
+    assert not ss.is_covered(hit, _sections("年収11,100,000円 最初の1段 4,018円"))
+
+
+def test_節が帯で書いてあっても既出():
+    """**節は点ではなく帯で書かれることがあります**（実測 `ideco.grid`）。"""
+    hit = {"表": "t", "形": "頭打ち",
+           "詳しく": {"止まる x": "年収=6,600,000", "止まった値": 83959.0}}
+    assert ss.is_covered(hit, _sections("帯 年収 6,500,000〜6,800,000円（4点）"))
+
+
+def test_軸の名前が本文に無い小さい数を既出と読まない():
+    """**これを入れた直後に踏んだ**（`years=1` が既出になった）。
+
+    引数名は英語・節は日本語なので、軸で行を絞れません。
+    そこで表記の `1` を本文から探すと、**どの表でも必ず当たります。**
+    """
+    hit = {"表": "t", "形": "崖",
+           "詳しく": {"x の手前": "years=1", "x の先": "years=2",
+                    "跳ぶ幅": 5.0, "中央の段差": 1.0}}
+    assert not ss.is_covered(hit, _sections("1年目は 2 割、3年目から 1 割です"))
+
+
+def test_軸が無くても結果の値が出ていれば既出():
+    """`kokuho.cliff_by_members` の「6人で 92,570円」がこの形。"""
+    hit = {"表": "t", "形": "逆転",
+           "詳しく": {"どこ": "いちばん高い", "x": "被保険者数=6",
+                    "値": 92570.0, "端では": 16520.0}}
+    assert ss.is_covered(hit, _sections("6人で折れ（92,570円が頂点）"))
+    assert not ss.is_covered(hit, _sections("5人までは比例します"))
+
+
+def test_節が読めない回は既出と呼ばない():
+    """**落とす向きに倒れないこと。**節が空なら判定できません。"""
+    hit = {"表": "t", "形": "頭打ち", "詳しく": {"止まる x": "年収=1,000,000",
+                                            "止まった値": 1.0}}
+    assert not ss.is_covered(hit, None)
+    assert not ss.is_covered(hit, {})
+
+
+def test_novel_counts_は拾えた数と新しい数を両方返す():
+    hits = [{"表": "t", "関数": "f", "見た値": "a", "形": "頭打ち",
+             "詳しく": {"止まる x": "年収=1,000,000", "止まった値": 1.0}},
+            {"表": "t", "関数": "g", "見た値": "b", "形": "頭打ち",
+             "詳しく": {"止まる x": "年収=2,000,000", "止まった値": 2.0}}]
+    total, novel = ss.novel_counts(hits, {"t": _sections("年収1,000,000円")})
+    assert total == {"t": 2}
+    assert novel == {"t": 1}
+
+
+def test_実物で_ideco_の3件は全部既出():
+    """**前の回が手で確かめた1件**（申し送り）。ここが緑でなければ直しは効いていません。"""
+    import sys
+    sys.path.insert(0, "scripts")
+    import topic_forge as tf
+
+    all_sections, _, _ = tf.survey()
+    total, novel = ss.novel_counts(ss.sweep_all(["ideco"]), all_sections)
+    assert total["ideco"] == 3, total
+    assert novel["ideco"] == 0, novel
+
+
+def test_実物で_新しい候補が全部は消えていない():
+    """**落としすぎの検出。**全部0になったら、この道具は候補を出しません。"""
+    import sys
+    sys.path.insert(0, "scripts")
+    import topic_forge as tf
+
+    all_sections, _, _ = tf.survey()
+    total, novel = ss.novel_counts(ss.sweep_all(), all_sections)
+    assert sum(novel.values()) > 0, novel
+    assert sum(novel.values()) < sum(total.values()), (total, novel)

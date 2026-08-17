@@ -547,12 +547,22 @@ def _print_deepening(all_sections: dict[str, dict[str, str]]) -> None:
     # **掃引は (B) の同点を破る目盛りでもあります**（2026-08-17）。
     # 13族が同点で、破っていたのはモジュール名でした（`src/section_depth.py` の節）。
     # **1回叩いて両方に使います**（1.2秒・API 0単位）。
+    # **数えるのは「拾えた形」ではなく「まだ誰も言っていない形」**（2026-08-17 20:5x）。
+    # 前の回の実測で `ideco` は掃引3件が3件とも既出なのに (B) の1位でした。
     hits = _sweep_hits()
     counts: dict[str, int] = {}
-    for h in hits:
-        counts[h["表"]] = counts.get(h["表"], 0) + 1
+    novel: dict[str, int] = {}
+    try:
+        from src import section_sweep
+
+        counts, novel = section_sweep.novel_counts(hits, all_sections)
+    except Exception as exc:                    # 既出の判定が壊れても順番は出す
+        print(f"    （掃引の既出判定が読めません: {str(exc)[:80]}）")
+        for h in hits:
+            counts[h["表"]] = counts.get(h["表"], 0) + 1
     for line in section_depth.report_lines(all_sections, scores, base,
-                                           sweep_counts=counts):
+                                           sweep_counts=counts,
+                                           novel_counts=novel):
         print(line)
     _print_sweep_hint(hits)
 
