@@ -111,3 +111,4 @@
 {"at": "2026-08-18T07:57:07+09:00", "key": "missing_thumbnail", "n": 49, "session": "session_01SyKKCUByyoULGYJTqQET3d", "by": "status.py"}
 {"at": "2026-08-18T07:58:23+09:00", "key": "topic_material_low", "n": 3, "session": "session_01SyKKCUByyoULGYJTqQET3d", "by": "status.py"}
 {"at": "2026-08-18T07:58:23+09:00", "key": "calc_gap", "n": 10, "session": "session_01SyKKCUByyoULGYJTqQET3d", "by": "status.py"}
+{"at": "2026-08-18T08:16:58+09:00", "key": "undeclared_close", "n": 2, "session": "session_01SyKKCUByyoULGYJTqQET3d", "by": "run_marker.py"}
