@@ -1164,7 +1164,20 @@ calc を3本書いたのが約20分なので、**同じ桁の時間が、件数�
 
       nohup python scripts/batch_build.py --count 5 --date <日> --jobs 3 > <log> 2>&1 &
       ...そのあいだに §4 の fix / means を進める...
-      until ! pgrep -f batch_build.py > /dev/null; do sleep 15; done   ← **前面の sleep は止められます**
+      until ! pgrep -f "python.*batch_build" > /dev/null; do sleep 15; done   ← **前面の sleep は止められます**
+
+  ##### **`pgrep -f batch_build.py` と書かないこと**（2026-08-17 18:5x に踏んだ）
+
+  **`-f` はコマンド行ぜんぶを見ます。** この待ち合わせを走らせている
+  シェル自身の行に `batch_build.py` という字が入っているので、
+  **自分に当たって永久に抜けません**（背景に投げていたので、`kill` するまで残りました）。
+
+  `python.*batch_build` にすると、シェルの行（`until ! pgrep …` で始まる）には
+  当たらず、**`/usr/local/bin/python … batch_build.py` にだけ当たります。**
+
+  **抜けたかどうかは `pgrep` ではなく、ログの `=== まとめ ===` で見ること。**
+  待ち合わせの道具が自分を数えている、は形として気づきにくい ——
+  **ログには既に「予約できたのは 7 / 8 本」が出ていました。**
 
   この回の実測: batch が **13分**（作る 6.6分 ＋ 予約 6分）走っているあいだに
   `--closes` の fix を1件仕上げ、**そのうえで自分の穴を踏んで直すところまで**入りました。

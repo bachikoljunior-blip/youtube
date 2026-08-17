@@ -240,3 +240,64 @@ def test_dupesの一覧が実際に畳まれる(tmp_path, monkeypatch, capsys):
     monkeypatch.setenv("CLAUDE_CODE_REMOTE_SESSION_ID", "cse_after_act")
     dupes.report(videos, topics)
     assert "（片方を外すこと）" in capsys.readouterr().out
+
+
+# --- 検査が本物の台帳に書かないこと（2026-08-17 に踏んで足した）-----------------
+#
+# `status_lines` は 8回鳴って当たり0で畳まれ、`status.py` の表にもそう出ていました。
+# 実物を `data/status_lines.jsonl` と突き合わせると、**本物の鳴りは1回だけ**
+# （16:31。出力が 216→800行に伸びた回）で、**残り7回は `pytest`** です。
+# `_dedupe_token()` はセッションIDなので、1周につき1行きっかり積まれていました。
+#
+#     当たり率という計器が、測っていたのは **検査の実行回数** でした。
+#
+# しかも8回目で畳まれた瞬間、**その畳みを見にいく検査が赤くなります。**
+# 放っておくと、次の子は毎回**赤い pytest で始まります。**
+#
+# 塞ぎは `tests/conftest.py`（全部の検査に自動で掛かる）。
+# **呼ぶ側に「検査では ledger= を渡す」を約束させないこと** ——
+# 一覧を足した回が必ず片方だけ忘れます（通算7回踏んだ形）。
+
+
+def test_検査の中では本物の台帳を触らない():
+    """**これが本体。** `conftest.py` が効いていれば、書き先は repo の外。"""
+    from src import alerts
+
+    real = alerts.ROOT / "data" / "alerts.jsonl"
+    assert alerts.LEDGER != real, "検査が data/alerts.jsonl に書いています"
+    assert alerts.RUNS != alerts.ROOT / "data" / "runs.jsonl"
+
+
+def test_鳴らしても本物の台帳の行数が増えない():
+    """**属性を見るだけでは足りません**（差し替え漏れは実際に書いて分かる）。"""
+    from src import alerts
+
+    real = alerts.ROOT / "data" / "alerts.jsonl"
+    before = real.read_text(encoding="utf-8") if real.exists() else ""
+    alerts.ring("検査用のにせの鍵", 3)
+    after = real.read_text(encoding="utf-8") if real.exists() else ""
+    assert before == after, "検査が本物の台帳を書き換えました"
+
+
+def test_故障注入_差し替えを外すと本物を指す():
+    """**壊れていたときの姿**を検査が名指しで持っていること。
+
+    環境変数も属性も無ければ、`alerts` は repo の `data/` を指します ——
+    **それが7回ぶんの偽の点を積んだ経路**です。
+    """
+    import importlib
+    import os
+
+    from src import alerts as a
+
+    keep = {k: os.environ.pop(k, None) for k in ("YT_ALERTS_LEDGER", "YT_ALERTS_RUNS")}
+    try:
+        fresh = importlib.reload(a)
+        assert fresh.LEDGER == fresh.ROOT / "data" / "alerts.jsonl"
+    finally:
+        for k, v in keep.items():
+            if v is not None:
+                os.environ[k] = v
+        importlib.reload(a)
+        a.LEDGER = Path(os.environ["YT_ALERTS_LEDGER"])
+        a.RUNS = Path(os.environ["YT_ALERTS_RUNS"])

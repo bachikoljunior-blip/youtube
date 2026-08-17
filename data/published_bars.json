@@ -750,6 +750,16 @@
     ],
     "video_id": "B3U4GDrQRwY"
   },
+  "s-jidou-3rd-child-2-77x": {
+    "charts": [
+      [
+        "234万円",
+        "234万円",
+        "648万円"
+      ]
+    ],
+    "video_id": "jzkRozkWbAM"
+  },
   "s-jidou-3rd-gap-4years": {
     "charts": [
       [
@@ -759,6 +769,15 @@
       ]
     ],
     "video_id": "Pvu_weiPYH0"
+  },
+  "s-jidou-3sai-dansa-5000en": {
+    "charts": [
+      [
+        "5千円",
+        "1万円"
+      ]
+    ],
+    "video_id": "anLKkadODp8"
   },
   "s-jidou-choushi-nuke-suekko-dake": {
     "charts": [
@@ -1022,6 +1041,16 @@
       ]
     ],
     "video_id": "NDlCpYO1sFk"
+  },
+  "s-kakyu-bunkiten-zure": {
+    "charts": [
+      [
+        "71.0歳",
+        "75.0歳",
+        "77.5歳"
+      ]
+    ],
+    "video_id": "E1AV3fsum7E"
   },
   "s-kakyu-ko-kasan-3ninme": {
     "charts": [
@@ -1708,6 +1737,25 @@
     ],
     "video_id": "W7duxrcu9Ms"
   },
+  "s-saishushoku-40percent-hayaku": {
+    "charts": [
+      [
+        "24.0日分",
+        "36.0日分",
+        "48.0日分"
+      ]
+    ],
+    "video_id": "nY9VICHEUh8"
+  },
+  "s-saishushoku-yokka-4wari-nichigigyu": {
+    "charts": [
+      [
+        "30パーセント",
+        "40パーセント"
+      ]
+    ],
+    "video_id": "gNNvQQhdEQo"
+  },
   "s-serufu-30000-5475": {
     "charts": [
       [
@@ -2033,6 +2081,17 @@
     ],
     "video_id": "cdKMFCFjiuA"
   },
+  "s-shougai-20mae-gake-kodomo3": {
+    "charts": [
+      [
+        "407,999円",
+        "525,399円",
+        "642,799円",
+        "681,949円"
+      ]
+    ],
+    "video_id": "AW_3Bnk-Cu0"
+  },
   "s-shougai-20saimae-shotoku-gake": {
     "charts": [
       [
@@ -2068,6 +2127,20 @@
       ]
     ],
     "video_id": "laMTkmhldy4"
+  },
+  "s-shougai-3kyu-seido-sa-612000": {
+    "charts": [
+      [
+        "612,000円",
+        "0円"
+      ],
+      [
+        "851,412円",
+        "728,090円",
+        "612,000円"
+      ]
+    ],
+    "video_id": "N9Mc3VJu92g"
   },
   "s-shougai-teatekin-3kyu-2nen": {
     "charts": [

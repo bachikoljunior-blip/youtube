@@ -68,8 +68,23 @@ from pathlib import Path
 JST = timezone(timedelta(hours=9))
 
 ROOT = Path(__file__).resolve().parent.parent
-LEDGER = ROOT / "data" / "alerts.jsonl"
-RUNS = ROOT / "data" / "runs.jsonl"
+
+# **検査から呼ばれたときに、本物の台帳へ書かないこと**（2026-08-17 に踏んだ）。
+#
+# `status_lines` は 8回鳴って当たり0で畳まれ、`status.py` の表にもそう出ていました。
+# **8回とも、鳴らしたのは `pytest` です。**（`data/alerts.jsonl` の実物を数えた。
+# `_dedupe_token()` はセッションIDなので、1周につき1行きっかり積まれる）
+# **`status.py` の出力が中央値の1.5倍を超えたことは、一度もありません。**
+#
+# つまり **当たり率という計器が、測っていたのは検査の実行回数**でした。
+# しかも8回目で畳まれた瞬間、**その畳みを見た検査そのものが赤くなります**
+# （`tests/test_status_lines.py`）。次の回は毎回、赤い pytest で始まることになる。
+#
+# `tests/conftest.py` がここを tmp へ向けます。**呼ぶ側には何も書かせません** ——
+# 一覧を足した回が「検査では ledger= を渡す」を忘れる形（通算7回の「片方だけ」）を、
+# 構造で外すためです。
+LEDGER = Path(os.environ.get("YT_ALERTS_LEDGER") or (ROOT / "data" / "alerts.jsonl"))
+RUNS = Path(os.environ.get("YT_ALERTS_RUNS") or (ROOT / "data" / "runs.jsonl"))
 
 # 8回続けて鳴って当たり0なら畳む。理由と覆る条件は上の docstring。
 FOLD_AFTER = 8
