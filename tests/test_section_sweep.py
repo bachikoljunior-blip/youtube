@@ -953,3 +953,44 @@ def test_実物の段階表が既出のまま残ること():
     assert covered, "節が読めていない（読めない回はこの検査が空を通してしまう）"
     bad = [ss.line_of(h) for h in hits if not covered.get(id(h))]
     assert not bad, bad
+
+
+def test_詳しくの欄は全部_x_か_y_のどちらかに宣言されている():
+    """**形を足した回に、新しい欄が x か y かを宣言させる検査**（2026-08-18）。
+
+    宣言しないと、行を歩く掃引で **その欄だけ行番号のまま印字されます** ——
+    実際 `帯` の `帯の入口` / `帯の出口` がそうでした。
+    「名前に `x` を含む欄」という規約でも拾えません（`帯` に `x` の字が無い）。
+    だから `X_KEYS` と `Y_KEYS` の**和が、実物に出る欄を全部覆う**ことで見ます。
+    """
+    known = set(ss.X_KEYS) | set(ss.Y_KEYS)
+    unknown: dict[str, set[str]] = {}
+    for hit in ss.sweep_all():
+        for k in (hit.get("詳しく") or {}):
+            if k not in known:
+                unknown.setdefault(hit["形"], set()).add(k)
+    assert not unknown, (
+        f"x とも y とも宣言されていない欄があります: {unknown}。"
+        " x 軸の値なら X_KEYS へ（行を歩く掃引で見出しに直します）、"
+        " 結果の値や註なら Y_KEYS へ足すこと。")
+
+
+def test_帯の入口と出口も見出しに直る():
+    """**`帯` は `x` の字を持たないので、名前の規約では拾えません。**"""
+    def 表():
+        return [{"帯": f"{i}段", "額": y}
+                for i, y in enumerate([100, 100, 100, 250, 250, 100, 100, 100])]
+
+    hit = next(h for h in ss.sweep_rows(表, name="表") if h["形"] == "帯")
+    for k in ("帯の入口", "帯の出口"):
+        assert isinstance(hit["詳しく"][k], str) and hit["詳しく"][k].endswith("段"), \
+            f"{k} が行番号のまま: {hit['詳しく'][k]!r}"
+
+
+def test_名指しの点は共有の並びから引く():
+    """`_hit_points` と見出し直しが、**同じ並び**を読んでいること。
+
+    別々の手書きの並びだったころ、**片方だけに欄を足す**のが4回起きています。
+    """
+    assert set(ss.NAMING_X_KEYS) <= set(ss.X_KEYS)
+    assert "並ぶ x" not in ss.NAMING_X_KEYS
