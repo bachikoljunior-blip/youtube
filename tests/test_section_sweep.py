@@ -464,3 +464,56 @@ def test_実物の片効きが全部新しいと出ていたら疑うこと():
     probe = dict(hits[0])
     val = probe["詳しく"]["動かない値"]
     assert ss.is_covered(probe, {"s": f"{val:,.0f}"}) is True
+
+
+# ---------------------------------------------------------------------------
+# **一覧と、数えた数が、別のものを見せていた**（2026-08-17 23:5x に、誤読してから足した）
+#
+# `--calc <表>` は候補を全部並べるのに、**どれが既出かを1文字も出していなかった。**
+# その回は上から6件を読み、`topics.yaml` に対応するテーマがあることを確かめて
+# 「新しいと数えた6件が6件とも既出だ」と書いた。**計器はそう言っていない**
+# （追跡すると `is_covered` は `True`）。**印が出ていれば起きなかった。**
+# ---------------------------------------------------------------------------
+
+def _hit(calc="t", fn="f", shape="不変", **detail):
+    return {"表": calc, "関数": fn, "形": shape, "見た値": "v",
+            "動かした引数": "x", "x の幅": (1, 9), "詳しく": detail}
+
+
+def test_既出の候補に印が出る(monkeypatch):
+    from src import section_sweep as ss
+
+    a, b = _hit(fn="fa", 値=111), _hit(fn="fb", 値=222)
+    monkeypatch.setattr(ss, "_covered_map",
+                        lambda hits: {id(a): True, id(b): False})
+    out = "\n".join(ss.report_lines([a, b]))
+    assert "[既]" in out, "既出の印が出ていません"
+    assert "111" in out and "222" in out
+    # **印は既出の側にだけ付くこと**（逆に付いたら、選ぶ側が正反対に動きます）
+    for line in out.splitlines():
+        if "222" in line:
+            assert not line.startswith("[既]"), "新しい側に印が付いています"
+        if "111" in line:
+            assert line.startswith("[既]"), "既出の側に印がありません"
+
+
+def test_見出しに新しい件数が出る(monkeypatch):
+    """**一覧の件数だけを読むと、この回のように誤読します。**"""
+    from src import section_sweep as ss
+
+    a, b = _hit(fn="fa", 値=111), _hit(fn="fb", 値=222)
+    monkeypatch.setattr(ss, "_covered_map",
+                        lambda hits: {id(a): True, id(b): False})
+    out = "\n".join(ss.report_lines([a, b]))
+    assert "まだ節が言っていない 1件" in out
+    assert "新しい 1件" in out, "表ごとの行にも出ること"
+
+
+def test_既出が読めない回は印を出さない(monkeypatch):
+    """**読めないことを「新しい」と読ませないこと。** 印ごと消すのが正しい。"""
+    from src import section_sweep as ss
+
+    monkeypatch.setattr(ss, "_covered_map", lambda hits: {})
+    out = "\n".join(ss.report_lines([_hit(値=111)]))
+    assert "[既]" not in out
+    assert "まだ節が言っていない" not in out

@@ -678,6 +678,42 @@ def line_of(hit: dict) -> str:
             f"（{hit['見た値']}）… {tail}")
 
 
+def _covered_map(hits: list[dict]) -> dict[int, bool]:
+    """候補ごとに「もう節が言っているか」。**読めなければ空**（印は出さない）。
+
+    ## なぜ要るか（2026-08-17 23:5x に、**自分が誤読してから**足した）
+
+    ここは長らく**候補を全部並べる**だけで、**どれが既出かを1文字も出していませんでした。**
+    ところが `novel_counts()` は同じ候補を既出／新しいに分けており、
+    **`status.py` はその「新しい M件」のほうで (B) の順番を決めています。**
+
+    **一覧と、数えた数が、別のものを見せていました。**
+
+    23:5x の回は `--calc kokuho` の上から6件を読み、`config/topics.yaml` に
+    対応するテーマがあることを確かめて **「新しいと数えた6件が6件とも既出だ」**と
+    書きました。**計器はその6件を「新しい」とは一度も言っていません**
+    （追跡すると `is_covered` は `True` を返していた）。
+    **突き合わせずに、計器のせいにする向きへ倒れています。**
+
+    **人はこの一覧を見て節を選びます。**だから印を出すほうを直します。
+    """
+    try:
+        import importlib
+
+        sections: dict[str, dict[str, str]] = {}
+        forge = importlib.import_module("topic_forge")
+        sections, _free, _known = forge.survey()
+    except Exception:
+        return {}
+    out: dict[int, bool] = {}
+    for hit in hits:
+        try:
+            out[id(hit)] = is_covered(hit, sections.get(hit.get("表", "?")))
+        except Exception:
+            pass
+    return out
+
+
 def report_lines(hits: list[dict], *, top: int = 40) -> list[str]:
     """族の順番の値で並べて出す。**浅い順でも、出た順でもない。**"""
     try:
@@ -686,23 +722,36 @@ def report_lines(hits: list[dict], *, top: int = 40) -> list[str]:
     except Exception:
         order = {}
     hits = dedupe(hits)
+    covered = _covered_map(hits)
     by_calc: dict[str, list[dict]] = {}
     for h in hits:
         by_calc.setdefault(h["表"], []).append(h)
     ranked = sorted(by_calc.items(),
                     key=lambda kv: (-order.get(kv[0], 0.0), -len(kv[1]), kv[0]))
-    lines = [f"=== 機械が拾った節の候補 {len(hits)}件 / 表 {len(by_calc)}本 ===",
+    n_new = sum(1 for h in hits if covered.get(id(h)) is False) if covered else None
+    head = f"=== 機械が拾った節の候補 {len(hits)}件 / 表 {len(by_calc)}本 ==="
+    if n_new is not None:
+        head += f"（うち **まだ節が言っていない {n_new}件**）"
+    lines = [head,
              "  **候補です。節ではありません。**意味と正しさは人が決めること"
              "（数字の出どころにしない）。"]
+    if covered:
+        lines.append("  **[既]** は、いまの節がもう言っているもの"
+                     "（`status.py` の「新しい M件」はこれを除いた数です）。"
+                     "**印の無いほうから選ぶこと。**")
     shown = 0
     for name, group in ranked:
         if shown >= top:
             lines.append(f"  …ほか {len(hits) - shown}件（`--calc <表>` で全文）")
             break
-        lines.append(f"  --- {name}（{len(group)}件・族の順番の値 "
+        n_new_here = (sum(1 for h in group if covered.get(id(h)) is False)
+                      if covered else None)
+        tail = f"・**新しい {n_new_here}件**" if n_new_here is not None else ""
+        lines.append(f"  --- {name}（{len(group)}件{tail}・族の順番の値 "
                      f"{order.get(name, 0.0):.1f}）---")
         for hit in group[:6]:
-            lines.append(line_of(hit))
+            mark = "[既]" if covered.get(id(hit)) else "   "
+            lines.append(f"{mark}{line_of(hit)}" if covered else line_of(hit))
             shown += 1
         if len(group) > 6:
             lines.append(f"    …ほか {len(group) - 6}件")
