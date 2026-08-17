@@ -141,3 +141,32 @@ def test_出力が題名を読めと言う(marks, capsys, monkeypatch, tmp_path)
 def test_実物の返りでも例外を投げない():
     """**実データ。** 形が変わっても落ちないこと（落ちると §2 が止まります）。"""
     assert sibling_check.silent_runs([], None) == []
+
+
+def test_受け取り帳に入っている回は二度と名指ししない(marks, tmp_path, monkeypatch):
+    """**入れた回に自分で踏みました。**
+
+    名指しは `list_sessions` の窓（25件）が持っているあいだ**毎回鳴ります。**
+    受け取り帳へ落としても消えないので、**次の子が同じ題名をもう一度 `--open`** し、
+    同じ依頼が二重に開きます。印の代わりになるのは受け取り帳の本文で、
+    §0 が「題名を `inbox.py --open` に落とせ」と言うので**IDが本文に入ります。**
+    """
+    marks([{"at": "2026-08-17T09:00:00+09:00", "session": "session_ok", "kind": "start"}])
+    sessions = [
+        _sess(ME, NOW, status="SESSION_STATUS_RUNNING"),
+        _sess("session_silent", "2026-08-17T04:11:50.000000Z"),
+    ]
+    inbox = ROOT / "data" / "inbox.jsonl"
+    assert sibling_check.silent_runs(sessions, ME), "落とす前から黙っています"
+
+    monkeypatch.setattr(Path, "read_text", Path.read_text)   # 実物は触らない
+    box = tmp_path / "inbox.jsonl"
+    box.write_text('{"kind":"open","text":"前の回 session_silent の題名"}\n',
+                   encoding="utf-8")
+    real = Path.read_text
+
+    def fake(self, *a, **kw):
+        return box.read_text(encoding="utf-8") if self == inbox else real(self, *a, **kw)
+
+    monkeypatch.setattr(Path, "read_text", fake)
+    assert sibling_check.silent_runs(sessions, ME) == [], "落とした後も鳴っています"

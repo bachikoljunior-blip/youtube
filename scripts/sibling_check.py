@@ -148,6 +148,17 @@ def silent_runs(sessions: list[dict], me: str | None) -> list[dict]:
     if not recs:
         return []
     marked = {r.get("session") for r in recs}
+    # **もう受け取った回は、二度と名指ししない**（入れた回に自分で踏みました）。
+    # 名指しは `list_sessions` の窓（25件）が持っているあいだ**毎回鳴ります** ——
+    # 受け取り帳へ落としても消えないので、**次の子が同じ題名をもう一度 `--open` します。**
+    # 印の代わりになるのは、そのとき書いた**受け取り帳の本文**です
+    # （§0 が「題名を `inbox.py --open` に落とせ」と言うので、IDが本文に入ります）。
+    picked = ""
+    try:
+        inbox = Path(__file__).resolve().parent.parent / "data" / "inbox.jsonl"
+        picked = inbox.read_text(encoding="utf-8")
+    except OSError:
+        picked = ""
     oldest = None
     for r in recs:
         got = parse_iso(r.get("at"))
@@ -157,6 +168,8 @@ def silent_runs(sessions: list[dict], me: str | None) -> list[dict]:
     for sess in sessions:
         sid = sess.get("id")
         if not sid or sid == me or sid in parents or sid in marked:
+            continue
+        if sid in picked:               # 受け取り帳に本文ごと入っている
             continue
         if TAG not in (sess.get("tags") or []):
             continue
