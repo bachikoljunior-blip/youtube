@@ -70,3 +70,6 @@
 {"at": "2026-08-17T23:21:22+09:00", "key": "missing_thumbnail", "n": 8, "session": "session_013vjqD5non7FF19WFa8J5dZ", "by": "status.py"}
 {"at": "2026-08-17T23:32:20+09:00", "key": "silent_run", "n": 2, "session": "session_013vjqD5non7FF19WFa8J5dZ", "by": "diag2.py"}
 {"at": "2026-08-17T23:36:47+09:00", "key": "undeclared_close", "n": 2, "session": "session_013vjqD5non7FF19WFa8J5dZ", "by": "run_marker.py"}
+{"at": "2026-08-18T00:01:47+09:00", "key": "carry_over", "n": 16, "session": "session_01HzBQ37P2HREqfcmZ3shYvG", "by": "retro.py"}
+{"at": "2026-08-18T00:02:19+09:00", "key": "missing_thumbnail", "n": 17, "session": "session_01HzBQ37P2HREqfcmZ3shYvG", "by": "status.py"}
+{"at": "2026-08-18T00:12:36+09:00", "key": "undeclared_close", "n": 3, "session": "session_01HzBQ37P2HREqfcmZ3shYvG", "by": "run_marker.py"}
