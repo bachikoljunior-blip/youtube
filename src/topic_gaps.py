@@ -46,6 +46,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from . import alerts
+
 # `src/calc/` のうち、表ではないもの。実物から引くときに落とす。
 _NOT_A_TABLE = {"__init__", "_checks", "_template"}
 
@@ -129,4 +131,29 @@ def report_lines(topics: list[dict], posted: set[str] | None = None,
         for r in todo:
             mark = "  ← 投稿済み" if r["id"] in posted else ""
             lines.append(f"      {r['id']}  {r['title_seed'][:38]}{mark}")
+    lines += material_low(len(todo))
     return lines
+
+
+# **題材が尽きると、(A) の題材決めが 0分 → 20分 に戻ります**（8/17 16:2x の実測）。
+# 補充は約2分/件（8/18 06:1x の実測）で **(A) 1本より1桁安い**のに、
+# **減っていることを誰も警告していませんでした**（2026-08-18 に足した）。
+# 一覧そのものは前からあります。**足りないのは「残りが少ない」と言う側**でした。
+MATERIAL_FLOOR = 5
+
+
+def material_low(remaining: int) -> list[str]:
+    """題材の残りが床を割ったら1行言う。**尽きてからでは遅い。**"""
+    short = max(0, MATERIAL_FLOOR - remaining)
+    r = alerts.ring("topic_material_low", short)
+    if short == 0:
+        return []
+    if r.folded:
+        return [f"  {r.line}"]
+    return [
+        f"  [材料] **(A) の題材が残り {remaining}件**（床は {MATERIAL_FLOOR}件）。"
+        f"**尽きると題材決めが 0分 → 20分 に戻ります。**",
+        "      補充は `config/topics.yaml` に `calc:` の無いテーマを足すだけ"
+        "（約2分/件・**(A) 1本より1桁安い**）。"
+        "潰したら `run_marker.py --ship ... --closes topic_material_low`",
+    ]
