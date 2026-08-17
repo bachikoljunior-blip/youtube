@@ -206,3 +206,66 @@ def test_実物に同語反復が1件も残っていない():
             if k in d:
                 assert not str(d[k]).startswith(h["見た値"] + "="), \
                     f"{h['表']}.{h['関数']}: {ss.line_of(h)}"
+
+
+# ---- 単位つきの文字列で持っている欄（2026-08-17。**率がそこにしか無い表がある**）----
+
+@pytest.mark.parametrize("text,want", [
+    ("12.3%", 12.3), ("1,234円", 1234.0), ("16.7年", 16.7),
+    ("6か月", 6.0), ("2.5倍", 2.5), ("-3.0%", -3.0), (" 40 ", 40.0),
+])
+def test_単位つきの文字列を数として読む(text, want):
+    assert ss._as_number(text) == pytest.approx(want)
+
+
+@pytest.mark.parametrize("text", ["第3種", "2026-08-17", "ア", "", "1/2", "20〜30"])
+def test_数でない文字列は読まない(text):
+    assert ss._as_number(text) is None
+
+
+def test_真偽値は数として読まない():
+    """`True` は `int` の仲間なので、素通しすると 1.0 になります。"""
+    assert ss._as_number(True) is None
+    assert ss._as_number(False) is None
+
+
+def test_単位は落とすだけで換算しない():
+    """`%` を 0.01 倍すると、単位が混ざった欄で黙って桁が狂います。"""
+    assert ss._as_number("33%") == 33.0
+
+
+def test_文字列の率の欄が掃引に載る():
+    """**この欄に、いちばん深い崖がありました**（2026-08-17 に人が手で見つけた）。
+
+    `furusato.bracket_jumps` の `はね上がる率` は `f"{...:.1f}%"` なので、
+    直す前は `_scalars()` が1件も拾っていませんでした。
+    """
+    hits = ss.sweep_calc("furusato")
+    got = [h for h in hits if h["見た値"] == "はね上がる率"]
+    assert got, [h["見た値"] for h in hits]
+    assert got[0]["形"] == "逆転", got[0]
+
+
+def test_行の見出しは単位を残す():
+    """`所得税率=33%` を `33` に落とさないこと。"""
+    rows = [{"税率": f"{v}%", "額": a}
+            for v, a in ((5, 10), (10, 90), (20, 20), (23, 30), (33, 40))]
+    hits = ss.sweep_rows(lambda: rows, name="t")
+    assert hits
+    d = hits[0]["詳しく"]
+    label = next(str(d[k]) for k in ("止まる x", "x", "x の手前", "x の先") if k in d)
+    assert label.endswith("%"), label
+
+
+def test_途中の行だけ単位がちがう欄は比べない():
+    rows = [{"区分": f"第{i}", "値": v}
+            for i, v in enumerate(("1%", "5%", "こえる", "9%", "2%"))]
+    hits = ss.sweep_rows(lambda: rows, name="t")
+    assert not [h for h in hits if h["見た値"] == "値"], hits
+
+
+def test_文字列を足しても表が1本も落ちていない():
+    """**片方だけ直すと、`float()` が投げて表ごと消えます**（この回に踏んだ）。"""
+    hits = ss.sweep_all()
+    unreadable = [h for h in hits if h["形"] == "読めない"]
+    assert not unreadable, unreadable

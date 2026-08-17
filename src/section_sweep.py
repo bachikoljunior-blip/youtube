@@ -57,6 +57,7 @@ import inspect
 import io
 import math
 import pkgutil
+import re
 from statistics import median
 from typing import Any, Callable, Iterable
 
@@ -94,6 +95,38 @@ def _grid(default: float) -> list[float]:
     return [int(lo * ratio ** i) for i in range(GRID)]
 
 
+#: **数字を文字列で持っている欄**を拾うための形（2026-08-17）。
+#: `f"{x:.1f}%"` / `f"{x:,}円"` / `"16.7年"` のように、**印字のために
+#: 単位を付けた瞬間、掃引から消えていました。** `src/calc/` にいくつもあります。
+_NUMERIC_TEXT = re.compile(r"^\s*[-+]?[\d,]+(?:\.\d+)?\s*(?:%|円|年|か月|日|倍|人|回)?\s*$")
+
+
+def _as_number(v: Any) -> float | None:
+    """数値、または**単位つきの文字列**なら float にする。それ以外は None。
+
+    **文字列を拾うのは、率がそこにしか無い表があるから**です ——
+    `furusato.bracket_jumps` の `はね上がる率` は `f"{...:.1f}%"` で、
+    2026-08-17 の回はこの欄に**いちばん深い崖**があったのに、
+    掃引は1件も見ていませんでした（人が手で並べて気づいた）。
+
+    **単位は落とすだけで、換算はしません。** `%` を 0.01 倍したりすると、
+    同じ欄の中で単位が混ざったときに黙って桁が狂います。
+    掃引が見るのは**形（崖・逆転・頭打ち）だけ**なので、
+    **1つの欄の中で単位が揃っていれば、換算は要りません。**
+    """
+    if isinstance(v, bool):
+        return None
+    if isinstance(v, (int, float)):
+        return float(v)
+    if isinstance(v, str) and _NUMERIC_TEXT.match(v):
+        body = re.sub(r"[,\s%円年倍人回]|か月|日", "", v)
+        try:
+            return float(body)
+        except ValueError:
+            return None
+    return None
+
+
 def _scalars(value: Any) -> dict[str, float]:
     """返り値から、掃引で比べられる数字だけ取り出す。"""
     if isinstance(value, bool):
@@ -101,8 +134,12 @@ def _scalars(value: Any) -> dict[str, float]:
     if isinstance(value, (int, float)):
         return {"": float(value)}
     if isinstance(value, dict):
-        return {str(k): float(v) for k, v in value.items()
-                if isinstance(v, (int, float)) and not isinstance(v, bool)}
+        out = {}
+        for k, v in value.items():
+            n = _as_number(v)
+            if n is not None:
+                out[str(k)] = n
+        return out
     return {}
 
 
@@ -252,7 +289,9 @@ def sweep_rows(fn: Callable, *, name: str = "") -> list[dict]:
     for key in sorted(keys):
         if key == label_col:
             continue
-        ys = [float(r[key]) for r in rows]
+        ys = [_as_number(r[key]) for r in rows]
+        if any(y is None for y in ys):
+            continue          # 途中の行だけ単位がちがう欄。**混ぜて比べない**
         hit = _classify(list(range(len(rows))), ys)
         if not hit:
             continue
@@ -286,17 +325,27 @@ def _axis_keys(rows: list[dict], keys: set[str]) -> set[str]:
     first = next((k for k in rows[0] if k in keys), None)
     if first is None:
         return set()
-    xs = [float(r[first]) for r in rows]
+    xs = [_as_number(r[first]) for r in rows]
+    if any(x is None for x in xs):
+        return set()
     up = all(b > a for a, b in zip(xs, xs[1:]))
     down = all(b < a for a, b in zip(xs, xs[1:]))
     return {first} if (up or down) else set()
 
 
 def _row_label(row: dict, numeric_keys: set[str]) -> str | None:
-    """文字の見出しが無い表で、行を指す言葉を作る。**最初の数値欄を使う。**"""
+    """文字の見出しが無い表で、行を指す言葉を作る。**最初の数値欄を使う。**
+
+    **単位つきの文字列は、そのまま見せること**（`所得税率=33%`）。
+    `float` に落として `_fmt` に通すと `33` になり、**単位が消えます。**
+    """
     for k, v in row.items():
-        if k in numeric_keys:
-            return f"{k}={_fmt(float(v))}"
+        if k not in numeric_keys:
+            continue
+        if isinstance(v, str):
+            return f"{k}={v.strip()}"
+        n = _as_number(v)
+        return f"{k}={_fmt(n)}" if n is not None else None
     return None
 
 
