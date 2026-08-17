@@ -24,6 +24,8 @@
 """
 from __future__ import annotations
 
+import json
+import math
 import re
 import sys
 from datetime import datetime, timedelta, timezone
@@ -518,6 +520,73 @@ def print_means() -> None:
               "`hypotheses.yaml` が9件ぜんぶショート改善だったのと同じ壊れ方をします。")
 
 
+# 通過率を何回ぶんの batch から見るか。
+# **1回では何も言いません**（3/4 と 6/6 が隣り合う）。5回で 25〜35本になります。
+PASS_RATE_RUNS = 5
+
+
+def _print_pass_rate(root: Path, n_pick: int) -> None:
+    """**`pick(8)` はテーマの数であって、verify を通る本数ではない。**
+
+    3回運ばれて3回とも未着手だった申し送りです（`retro.py` 09:1x の3）。
+    直近5回は 4/8・6/7・5/6・6/6・3/4 で、**在庫の見積りは構造的に上振れします** ——
+    `pick` が返した本のうち、台本が verify で落ちたぶんは動画になりません。
+
+    上振れしたまま「8本の日が作れます」と読むと、その回は
+    **8本を狙って6本で終わり、M14 の8の段が1日ぶん立たない**（実際 8/16 以降に
+    2回起きています）。材料は `data/batch_runs.jsonl` に最初から入っていて、
+    **数えていなかっただけ**です。
+
+    **落ち方を2つに分けて数えます。** 混ぜると使えません ——
+
+        生成が失敗   台本が `verify` に落ちた。**テーマ1件を消費して0本**。
+                     何本を作りに入れるかは、この率だけで決まります
+        予約が失敗   本は出来ている。**枠（403/429）や時刻の重なりで置けなかっただけ**で、
+                     テーマの質とは関係がない（`docs/trigger_main.md` §5）
+
+    実際 8/17 10:4x の1回は7本中5本が「予約が失敗」＝**投稿の本数枠 429**でした。
+    混ぜて数えると通過率が 62パーセントに落ち、「8本の日には13本を作れ」と言い出します。
+    **枠のせいで作る量を増やすのは、まっすぐ無駄です**（1本 12,800単位・約11分）。
+    """
+    path = root / "data" / "batch_runs.jsonl"
+    if not path.exists():
+        return
+    runs = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            runs.append(json.loads(line))
+        except json.JSONDecodeError:
+            continue
+    runs = [r for r in runs if r.get("results")][-PASS_RATE_RUNS:]
+    if not runs:
+        return
+    def _built(x: dict) -> bool:
+        """作りを通ったか。**予約で落ちた本は、出来ている。**"""
+        return bool(x.get("video_id")) or "生成" not in str(x.get("error", ""))
+
+    tried = sum(len(r["results"]) for r in runs)
+    if not tried:
+        return
+    built = sum(1 for r in runs for x in r["results"] if _built(x))
+    scheduled = sum(1 for r in runs for x in r["results"] if x.get("video_id"))
+    rate = built / tried
+    each = " ".join(
+        f"{sum(1 for x in r['results'] if _built(x))}/{len(r['results'])}"
+        for r in runs)
+    print(f"  直近{len(runs)}回、作りを通ったのは {built}/{tried}本"
+          f"（**{rate*100:.0f}パーセント**）  {each}")
+    if scheduled < built:
+        print(f"  （うち予約まで入ったのは {scheduled}本。"
+              f"落ちた{built - scheduled}本は**枠か時刻の重なり**で、テーマの数とは無関係）")
+    if n_pick and rate:
+        print(f"  → `pick({n_pick})` の{n_pick}本は、作りの通過率で割り引くと "
+              f"**約{n_pick * rate:.1f}本**。"
+              f"8本の日を狙うなら **{math.ceil(8 / rate)}本**を作りに入れること")
+
+
 def print_topic_stock() -> None:
     """**この回に `upload` が選べるか**を、掛け算した1つの数で出す（2026-08-16 に足した）。
 
@@ -584,6 +653,7 @@ def print_topic_stock() -> None:
     elif n_pick < 8:
         mark = "  ← **[!] 8本の日（M14 の段）が作れません**"
     print(f"  `pick(8)` が返す本数: **{n_pick}本**{mark}")
+    _print_pass_rate(root, n_pick)
     print(f"  未使用の節: {n_free}件 / 全{n_sections}件"
           f"（`src/calc/` {len(_all)}本）")
 
