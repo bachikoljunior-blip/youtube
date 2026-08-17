@@ -274,3 +274,5 @@
 {"at": "2026-08-17T15:06:43+09:00", "session": "session_01CdKcTnYZ7SUXBMHdFKpmRi", "kind": "ship", "what": "fix: _checks.close（率を突き合わせる道具が無く、1本の中で3回 rounding に落とされた）"}
 {"at": "2026-08-17T15:11:22+09:00", "session": "session_01CdKcTnYZ7SUXBMHdFKpmRi", "kind": "ship", "what": "fix: rounding のメッセージが「最後の1桁だけ」を言わず、計算のほうを疑わせていた（実測6分）→ close() を指す"}
 {"at": "2026-08-17T15:13:40+09:00", "session": "session_01CdKcTnYZ7SUXBMHdFKpmRi", "kind": "ship", "what": "fix: CONSTRAINTS に「repo を触らずにできること」の節（3回持ち越し。効かない回には永久に着手されない構造ごと書いた）", "closes": ["carry_over"], "journal_lines": 18831}
+{"at": "2026-08-17T15:35:21+09:00", "session": "session_013DXeWrjcJygjxhemeacW15", "kind": "start"}
+{"at": "2026-08-17T15:41:47+09:00", "session": "session_013DXeWrjcJygjxhemeacW15", "kind": "ship", "what": "fix: 潰した語を宣言し忘れた回に、run_marker が何も言わなかった（一覧に当たりが無いまま育つの逆向き）", "closes": ["carry_over", "repo を触らずにできること", "docs/CONSTRAINTS.md"], "journal_lines": 18831}

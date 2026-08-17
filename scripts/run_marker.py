@@ -209,7 +209,8 @@ def ship(what: str, closes: list[str] | None = None) -> int:
     # **たった今書いた宣言そのものがその語を黙らせ、一覧から消えます。**
     # 結果、正しい語を書いた回にかぎって「一覧に無い」と言われる ——
     # **警告が、当たりでだけ鳴らない**という向きの壊れ方でした。
-    known = _known_vocab() if closes else None
+    # **`--closes` が無い回でも読みます**（2026-08-17。`_suggest_undeclared` の理由）。
+    known = _known_vocab()
     if closes:
         rec["closes"] = closes
         rec["journal_lines"] = journal_lines()
@@ -220,6 +221,7 @@ def ship(what: str, closes: list[str] | None = None) -> int:
               f"（{' / '.join(closes)}）。")
         print("         `retro.py` の持ち越しから、この語より前の言及が落ちます。")
         _warn_unknown(closes, known)
+    _suggest_undeclared(what, closes, known)
     return 0
 
 
@@ -281,6 +283,77 @@ def _warn_unknown(closes: list[str],
           "（記録は残したので、正しい語でもう一度打ち直せます）。")
     if carried:
         print(f"      いま出ている持ち越し: {' / '.join(sorted(carried)[:8])}")
+
+
+def _mentions(text: str, token: str) -> bool:
+    """出したものの1行が、その語に触れているか。
+
+    **パスの形の語だけ、見出しでも拾います。** 日誌もコミットも
+    `docs/CONSTRAINTS.md` を「**CONSTRAINTS に節を足した**」と書くので、
+    完全一致だけでは実際に潰した回を取りこぼします（下の実例がまさにこれ）。
+
+    **拡げるのはここまで。** `status.py` のような語を `status` まで緩めると、
+    `session_status` に当たります —— **当たりを含まないまま育つ一覧**が
+    6件目になるので、`/` を含む語（＝パス）に限っています。
+    """
+    if token in text:
+        return True
+    if "/" not in token:
+        return False
+    stem = token.rsplit("/", 1)[-1]
+    stem = stem.rsplit(".", 1)[0] if "." in stem else stem
+    return len(stem) >= 4 and stem in text
+
+
+def _suggest_undeclared(what: str, closes: list[str],
+                        known: tuple[set[str], dict[str, list[str]]] | None) -> None:
+    """**逆向きの穴**: 一覧に載っている語を潰したのに、宣言しなかった回。
+    （2026-08-17 に足した。**この節を書いた回が、その実例に当たっています**）
+
+    `_warn_unknown` は「**載っていない語を宣言した**」を見ます。
+    その逆 ——「**載っている語を潰したのに、宣言しなかった**」—— は誰も見ていません。
+    `docs/trigger_main.md` §4 は「`--closes carry_over` と、**潰した語そのものの両方**」と
+    書いてありますが、**約束は散文なので、片方だけ書いても何も起きません。**
+
+    実例（8/17 15:1x）:
+
+        --ship "fix: CONSTRAINTS に「repo を触らずにできること」の節（3回持ち越し…）"
+        --closes carry_over            ← **語そのものが無い**
+
+    結果、`docs/CONSTRAINTS.md` と `repo を触らずにできること` は
+    **潰れているのに一覧に残り**、次の回（15:3x）は §2.7 の
+    「持ち越しから選ぶのが既定」に従って**それを選びかけました**
+    （`CONSTRAINTS.md` を開いて、既に節があることに気づいた）。
+    **一覧が当たりを含まないまま育つ**の、5件目と同じ形です。
+
+    **止めません。言うだけです**（`_warn_unknown` と同じ理由。
+    出したものの記録が、語の綴りで落ちるほうが確実に悪い）。
+    そして**この一覧自身も当たり率で畳まれます**（鍵 `undeclared_close`）。
+    """
+    if known is None:
+        return
+    _, carried = known
+    hits = [t for t in carried
+            if t not in closes and _mentions(what, t)]
+    if not hits:
+        return
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+        from src import alerts
+        r = alerts.ring("undeclared_close", len(hits))
+    except Exception:
+        r = None
+    if r is not None and r.folded:
+        print(r.line)
+        return
+    print(f"  [!] **出したものが、持ち越しの語に {len(hits)} 件触れています**"
+          f"（宣言はされていません）: {' / '.join(hits)}")
+    print("      潰したのなら、**語そのものも宣言すること**"
+          "（`carry_over` だけでは一覧から落ちません）:")
+    args = " ".join(f'--closes "{t}"' for t in hits)
+    print(f"      python scripts/run_marker.py --ship \"{what[:40]}…\" "
+          f"--closes carry_over {args}")
+    print("      **触れただけで潰していないなら、何もしなくてよい。**")
 
 
 def show() -> int:

@@ -140,3 +140,87 @@ def test_書き込む前の一覧で見ること(tmp_path, capsys, monkeypatch):
     assert "一覧に無い語" not in out, (
         f"いま出ている持ち越し `{word}` を宣言したのに「一覧に無い」と言っています。"
         "**記録を書いた後に一覧を読んでいます**（順番が逆）")
+
+
+# ======================================================================
+# **逆向き**: 一覧に載っている語を潰したのに、宣言しなかった回
+#   （2026-08-17 15:3x。上の警告と対になります。**この回が実例に当たった**）
+# ======================================================================
+
+
+def _suggest(what, closes, carried, monkeypatch, tmp_path, capsys):
+    """`data/alerts.jsonl` を汚さずに `_suggest_undeclared` を呼ぶ。"""
+    from src import alerts
+    monkeypatch.setattr(alerts, "LEDGER", tmp_path / "alerts.jsonl")
+    monkeypatch.setattr(alerts, "RUNS", tmp_path / "runs.jsonl", raising=False)
+    run_marker._suggest_undeclared(what, list(closes),
+                                   (set(carried), {t: [] for t in carried}))
+    return capsys.readouterr().out
+
+
+def test_潰した語に触れているのに宣言が無ければ言う(monkeypatch, tmp_path, capsys):
+    """**実例そのもの**（8/17 15:1x の ship を、そのまま入れています）。"""
+    what = ("fix: CONSTRAINTS に「repo を触らずにできること」の節"
+            "（3回持ち越し。効かない回には永久に着手されない構造ごと書いた）")
+    out = _suggest(what, ["carry_over"],
+                   ["repo を触らずにできること", "docs/CONSTRAINTS.md"],
+                   monkeypatch, tmp_path, capsys)
+    assert "持ち越しの語に" in out, f"逆向きの穴を見ていません: {out}"
+    assert "repo を触らずにできること" in out
+    # **パスの形の語は、見出しだけで書かれる。** ここが落ちると実例を取りこぼします
+    assert "docs/CONSTRAINTS.md" in out, (
+        "`docs/CONSTRAINTS.md` を「CONSTRAINTS に」から拾えていません")
+
+
+def test_宣言済みの語は言わない(monkeypatch, tmp_path, capsys):
+    what = "fix: CONSTRAINTS に「repo を触らずにできること」の節"
+    out = _suggest(what, ["carry_over", "repo を触らずにできること",
+                          "docs/CONSTRAINTS.md"],
+                   ["repo を触らずにできること", "docs/CONSTRAINTS.md"],
+                   monkeypatch, tmp_path, capsys)
+    assert out.strip() == "", f"宣言済みの語をもう一度言っています: {out}"
+
+
+def test_触れていない回は黙る(monkeypatch, tmp_path, capsys):
+    """**鳴らないのが普通**です。ここが鳴ると、毎回の ship が一覧まみれになります。"""
+    what = "means: calc/koureikoyou 節6・テーマ+6"
+    out = _suggest(what, [], ["repo を触らずにできること", "docs/CONSTRAINTS.md"],
+                   monkeypatch, tmp_path, capsys)
+    assert out.strip() == "", f"触れていないのに鳴りました: {out}"
+
+
+def test_パスでない語は語幹まで緩めない():
+    """`status.py` を `status` まで緩めると `session_status` に当たります。
+
+    **当たりを含まないまま育つ一覧**を、こちらから作らないための境目です。
+    """
+    assert run_marker._mentions("fix: status.py が10行で終わった", "status.py")
+    assert not run_marker._mentions("post_turn_summary の session_status を読む",
+                                    "status.py")
+    # `/` を含む語（パス）だけ、見出しでも拾う
+    assert run_marker._mentions("CONSTRAINTS に節を足した", "docs/CONSTRAINTS.md")
+    assert not run_marker._mentions("節を足した", "docs/CONSTRAINTS.md")
+
+
+def test_語彙が読めない回は黙って通す(capsys):
+    """**読めないことを理由に、記録を止めないこと**（`_warn_unknown` と同じ）。"""
+    run_marker._suggest_undeclared("fix: なんでも", [], None)
+    assert capsys.readouterr().out == ""
+
+
+def test_ship_の道でも鳴る(monkeypatch, tmp_path, capsys):
+    """**呼び出しが繋がっていること。** 関数だけ緑で、誰も呼んでいない形を防ぐ。"""
+    import retro
+    from src import alerts
+    carried, _dropped = retro.carry_over()
+    if not carried:
+        return
+    word = sorted(carried, key=len, reverse=True)[0]
+    marks = tmp_path / "runs.jsonl"
+    monkeypatch.setattr(run_marker, "MARKS", marks)
+    monkeypatch.setattr(retro, "RUNS", marks)
+    monkeypatch.setattr(alerts, "LEDGER", tmp_path / "alerts.jsonl")
+    run_marker.ship(f"fix: {word} を潰した", [])
+    out = capsys.readouterr().out
+    assert "持ち越しの語に" in out, (
+        f"`ship()` から `_suggest_undeclared` が呼ばれていません（語 `{word}`）: {out}")
