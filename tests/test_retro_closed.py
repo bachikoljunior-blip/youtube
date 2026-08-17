@@ -255,3 +255,30 @@ def test_実物の日誌に閉じましたという語の宣言が無い():
     assert "閉じました" not in closed
     assert "閉じた" not in closed
     assert closed, "宣言が1つも読めていません（締めすぎです）"
+
+
+def test_節の名前は宣言として読まない():
+    """**日誌そのものの節の名前は、持ち越しの語ではありません**（2026-08-17 12:5x）。
+
+    「`「次の回へ」の5は**この回で閉じました。**`」という、ごく普通の書き方が
+    `closures()` に「次の回へ を閉じた」と読ませていました。節の名前なので
+    **黙らせる相手がどこにもなく**、そのぶん**本当の宣言が
+    「最後の宣言」の座から押し出されます**（実際この検査が赤くなって見つかりました）。
+    `noise_tokens()`（族名・種類・動画ID）と同じ形の5件目です。
+    """
+    text = ("「次の回へ」の5は**この回で閉じました。**\n"
+            "`carry_over` は**この回で閉じました。**\n")
+    got = retro.closures(text)
+    assert "次の回へ" not in got
+    assert "carry_over" in got
+
+
+def test_SECTION_NAMES_は実物の見出しに当たる():
+    """**語彙を手で並べたぶん、実物と繋いでおくこと。**
+
+    引ける実物は `src/` ではなく**日誌の見出し**で、それを持っているのは
+    `HANDOFF_RE` / `REVIEW_RE` です。見出しの言い方を変えた回は、ここが落ちます。
+    """
+    assert retro.HANDOFF_RE.match("### 次の回へ")
+    assert retro.REVIEW_RE.match("### 設計の見直し（§6 (a2)）")
+    assert retro.SECTION_NAMES == {"次の回へ", "設計の見直し"}

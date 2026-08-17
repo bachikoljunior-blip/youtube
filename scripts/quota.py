@@ -280,6 +280,74 @@ def _merge(old: dict, new: dict) -> dict:
     return merged
 
 
+def _all_ids(blob) -> set[str]:
+    """入れ子のどこにあっても `id` を集める。**丸ごと一致で比べるため。**"""
+    found: set[str] = set()
+    if isinstance(blob, dict):
+        v = blob.get("id")
+        if isinstance(v, str):
+            found.add(v)
+        for value in blob.values():
+            found |= _all_ids(value)
+    elif isinstance(blob, list):
+        for item in blob:
+            found |= _all_ids(item)
+    return found
+
+
+def self_check(text: str) -> str:
+    """**飲む前に、自分がその中にいるかを見る**（2026-08-17 12:5x に足した）。
+
+    3回運ばれて3回とも未着手だった申し送りです。
+
+    8/17 07:4x の回は、`sessions_compact` が `session_` を二重に付けた
+    **偽のIDを25件そのまま積みました。** 落ち方が2つに割れています ——
+
+        `sibling_check`  「返りの中に自分がいません」と**言った**（誤診だが、鳴った）
+        `quota.py`       **何も言わずに積んだ**
+
+    **気づけたのは、片方が exit 1 したからで偶然です。** こちらが黙るのは、
+    積んだ点が `--pace` の「1周いくら」を薄め、**次の回が間隔を詰める**方向に効きます。
+    計器の汚れは次の回が引き継ぐので、**気づけないほうの落ち方**です。
+
+    判定は `sibling_check` にもう書いてあるので、そちらを使い回します。
+    **止めません。** 自分のIDが環境から取れない回（人との会話の回など）もあり、
+    そこで積めなくなるほうが損だからです。**言うだけ。**
+
+    **文字列として探さないこと**（2026-08-17、書いた直後に検査が捕まえました）。
+    `"session_" in text` で書くと、**この穴そのものを見逃します** ——
+    二重に付いた `session_session_01CX...` は、正しいIDを**部分文字列として含む**ので、
+    素の `in` では「いる」と答えます。**IDに割ってから、丸ごと一致で比べること。**
+    """
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        import sibling_check  # noqa: PLC0415
+    except Exception:
+        return ""
+    me = sibling_check.my_session_id()
+    if not me:
+        return ""
+    try:
+        blob = json.loads(text)
+    except Exception:
+        m = re.search(r"\{.*\}", text, re.S)
+        if not m:
+            return ""
+        try:
+            blob = json.loads(m.group(0))
+        except Exception:
+            return ""
+    # **`sibling_check.iter_sessions` は使いません。** あれは `created_at` を
+    # 持つ dict しか拾わないので（生死を測る道具なので正しい）、
+    # 欄の欠けた返りでは**「いない」に倒れます**。ここが見たいのはIDだけです。
+    if me in _all_ids(blob):
+        return ""
+    return (f"[!] **この返りの中に自分（{me}）がいません。**\n"
+            "    ファイルが古いか、IDの写し方が壊れています。"
+            "**積んだ点は次の回の間隔を決めます**（`--pace`）。\n"
+            "    `list_sessions` を取り直して、`sessions_compact.py` からやり直すこと。")
+
+
 def ingest(text: str) -> tuple[int, int]:
     """MCP の返りを読んで `data/quota.jsonl` に足す。(新規, 更新) を返す。"""
     blob = None
@@ -710,8 +778,11 @@ def main() -> int:
     if args.ingest:
         text = (sys.stdin.read() if args.ingest == "-"
                 else Path(args.ingest).read_text(encoding="utf-8"))
+        warn = self_check(text)
         added, updated = ingest(text)
         print(f"積みました: 新規 {added} 件 / 更新 {updated} 件 → {LOG}")
+        if warn:
+            print(warn)
         print()
 
     report()
