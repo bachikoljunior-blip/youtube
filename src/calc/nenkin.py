@@ -392,6 +392,59 @@ def worst_gap(base_annual_man: float = 180.0) -> dict:
     return best
 
 
+def worst_gap_by_base(step_man: int = 20,
+                      low_man: int = 60,
+                      high_man: int = 300) -> list[dict]:
+    """年金額べつに「ずれの最大値」を出す。**額面が増えてもずれは増え続けない。**
+
+    `worst_gap` は年額を1つ決めて、その中でずれが最大になる開始月を返す。
+    ここはその外側を回して、**年額そのものを動かしたときにずれがどう動くか**を見る。
+
+    掃引の道具はここを「189万で最大（32か月）」と拾ったが、**それは違う。**
+    32か月は 276万でも出るし、131万から上は 30〜32か月を行き来するだけの
+    のこぎりで、189 という数字に意味は無い（月きざみで数えているので、
+    ±1か月は丸めの幅の中）。**形は「山」ではなく「頭打ち」。**
+
+    動いているのは下の端のほうで、60万 → 131万 で 11 → 31か月と **約3倍**。
+    そこから先は年額をいくら増やしても、ずれは 1か月ぶんも動かない。
+    """
+    rows = []
+    for man in range(low_man, high_man + 1, step_man):
+        w = worst_gap(float(man))
+        rows.append({
+            "65歳の年額_万": float(man),
+            "開始": w["開始"],
+            "分岐点_額面": w["分岐点_額面"],
+            "分岐点_手取り": w["分岐点_手取り"],
+            "ずれ_月": w["ずれ_月"],
+        })
+    return rows
+
+
+def worst_gap_plateau(step_man: int = 1,
+                      low_man: int = 60,
+                      high_man: int = 300) -> dict:
+    """頭打ちの入口（ずれが最大帯に初めて入る年額）と、その先の幅を返す。
+
+    「最大は 189万」と名指しさせないための道具。**最大値そのものではなく、
+    最大帯の入口と、入ってからの振れ幅**を出す（振れ幅が小さいことが主張）。
+    """
+    gaps = {man: worst_gap(float(man))["ずれ_月"]
+            for man in range(low_man, high_man + 1, step_man)}
+    top = max(gaps.values())
+    entry = min(man for man, g in gaps.items() if g >= top - 1)
+    after = [g for man, g in gaps.items() if man >= entry]
+    return {
+        "最大のずれ_月": top,
+        "頭打ちの入口_万": float(entry),
+        "入口でのずれ_月": gaps[entry],
+        "入口より上の振れ幅_月": max(after) - min(after),
+        "下の端_万": float(low_man),
+        "下の端でのずれ_月": gaps[low_man],
+        "入口までの倍率": round(gaps[entry] / gaps[low_man], 2),
+    }
+
+
 def catch_up(months_before_65: int, base_annual_man: float, net: bool = False) -> tuple[int, int] | None:
     """繰り上げた人が、65歳開始に **追い抜かれる** 年齢を (歳, 月) で返す。
 
@@ -785,6 +838,23 @@ if __name__ == "__main__":
     print("\n=== 額面と手取りで分岐点が一番開くところ ===")
     for k, v in worst_gap(base).items():
         print(f"  {k}: {v}")
+
+    print("\n=== 年金額を増やしても、ずれはある所から先へ広がらない ===")
+    pl = worst_gap_plateau()
+    print(f"  前提: 65歳の年額を {pl['下の端_万']:.0f}万〜300万で1万きざみに動かし、"
+          f"各年額でずれが最大になる開始月を探した / 手取り率は年額から補間"
+          f"（**制度の値ではなくこちらの前提**）")
+    print(f"  下の端 年{pl['下の端_万']:.0f}万 → ずれ {pl['下の端でのずれ_月']}か月")
+    print(f"  頭打ちの入口 年{pl['頭打ちの入口_万']:.0f}万 → ずれ "
+          f"{pl['入口でのずれ_月']}か月（**{pl['入口までの倍率']}倍**）")
+    print(f"  入口より上は、300万まで振れ幅 {pl['入口より上の振れ幅_月']}か月だけ"
+          f"（最大 {pl['最大のずれ_月']}か月）")
+    print("  **「年金が多い人ほど手取りの分岐点が後ろへずれる」は、"
+          "入口までの話。そこから上は年額を倍にしても1〜2か月しか動かない。**")
+    for row in worst_gap_by_base():
+        print(f"  65歳で年{row['65歳の年額_万']:5.1f}万  開始{row['開始']:>9s}  "
+              f"額面{row['分岐点_額面']:>10s}  手取り{row['分岐点_手取り']:>10s}  "
+              f"ずれ{row['ずれ_月']:>3d}か月")
 
     print(f"\n=== 繰上げ（65歳で年{base}万円の場合）===")
     for row in advance_grid(base):
