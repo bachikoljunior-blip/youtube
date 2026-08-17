@@ -126,3 +126,66 @@ def test_またぐ年収が消えると検査が落ちる(monkeypatch):
     monkeypatch.setattr(ideco, "cliff_incomes", lambda premium=None: [])
     with pytest.raises(_checks.TableError):
         ideco.check_tables()
+
+
+# --- 帯（`straddle_bands`）— 2026-08-17 に足した -------------------------------
+#
+# 掃引が ideco に出した候補3件は、**3件とも既存の節（`cliff_incomes` の表）が
+# もう言っていること**でした。掃引の件数を (B) の順番の同点破りに使っているので、
+# **「既に節がある候補」で件数が水増しされます。**
+# ここで足したのは、その表の**まだ誰も言っていない側**です ——
+# 「またぐ年収がどれだけ狭いか」と「落ち幅が何で決まるか」。
+
+
+def test_またぐ年収は3つの島に分かれる():
+    """連続した1本の帯ではありません。**離れた島です。**"""
+    bands = ideco.straddle_bands()
+    assert len(bands) == 3
+    for band in bands:
+        assert band["帯の下端"] <= band["いちばん深い年収"] <= band["帯の上端"]
+
+
+def test_落ち幅は所得税率の段差に還元できる():
+    """**住民税10%は定率なので、差では消えます。**
+
+    数え上げ（`last_step` の実額）と、式（段差 × 1.021）が独立に一致すること。
+    """
+    for band in ideco.straddle_bands():
+        implied = band["またいだ所得税率の段差"] * 100
+        assert min(abs(implied - r) for r in (3.0, 5.0, 10.0)) < 0.02
+
+
+def test_いちばん深い帯は端ではなく真ん中():
+    """所得税でいちばん大きい段差は 10→20% の10ポイント。**上端ではありません。**"""
+    bands = ideco.straddle_bands()
+    depths = [b["落ち幅"] for b in bands]
+    assert depths.index(max(depths)) == 1
+    assert bands[-1]["落ち幅"] < bands[0]["落ち幅"]     # 高い年収ほど軽い
+
+
+def test_帯の端は途中までなので最大で見る():
+    """端は掛金の一部しか境目を越えないので、落ち幅が浅く出ます。
+
+    **端で帯を代表させると、10.21pt の帯を 4.17pt と言うことになります。**
+    """
+    rows = {r["年収"]: r for r in ideco.cliff_incomes()}
+    edge = rows[6_500_000]["最初の1段"] - rows[6_500_000]["最後の1段"]
+    deep = rows[6_700_000]["最初の1段"] - rows[6_700_000]["最後の1段"]
+    assert edge < deep
+    band = [b for b in ideco.straddle_bands() if b["帯の下端"] == 6_500_000][0]
+    assert band["いちばん深い年収"] != 6_500_000
+
+
+def test_いちばん深い帯が端へ移ったら検査が落ちる(monkeypatch):
+    """この節の主題は「端ではない」ことなので、崩れたら台本を書かせない。"""
+    real = ideco.straddle_bands
+
+    def flattened(*a, **k):
+        bands = [dict(b) for b in real(*a, **k)]
+        bands[0]["落ち幅"] = 1.0                      # 端をいちばん深くする
+        bands[0]["またいだ所得税率の段差"] = 0.05
+        return bands
+
+    monkeypatch.setattr(ideco, "straddle_bands", flattened)
+    with pytest.raises(_checks.TableError):
+        ideco.check_tables()

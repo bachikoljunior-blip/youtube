@@ -54,3 +54,5 @@
 {"at": "2026-08-17T18:36:38+09:00", "key": "carry_over", "n": 8, "session": "session_01Rhk8mE7Kdkg4S2iwBMxmno"}
 {"at": "2026-08-17T18:49:52+09:00", "key": "silent_run", "n": 1, "session": "session_01Rhk8mE7Kdkg4S2iwBMxmno"}
 {"at": "2026-08-17T19:04:38+09:00", "key": "undeclared_close", "n": 1, "session": "session_01Rhk8mE7Kdkg4S2iwBMxmno", "by": "run_marker.py"}
+{"at": "2026-08-17T20:15:57+09:00", "key": "carry_over", "n": 8, "session": "session_01DZZv9NWPj4qiskxuNz8GmU", "by": "retro.py"}
+{"at": "2026-08-17T20:17:00+09:00", "key": "dupes_actionable", "n": 1, "session": "session_01DZZv9NWPj4qiskxuNz8GmU", "by": "status.py"}

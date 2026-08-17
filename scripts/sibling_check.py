@@ -79,7 +79,7 @@ import json
 import os
 import re
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 TAG = "youtube-hourly"
@@ -124,6 +124,133 @@ RUNWAY_FLOOR_DAYS = 14
 #: `list_sessions` の一覧と `data/runs.jsonl` の印。
 #: **印の無いセッションは、repo を一度も触っていません。**
 SILENT_KEY = "silent_run"
+
+#: **代の上限**（`create_session: caller session is at lineage depth 8 (limit 8)`）。
+#: 親が深さ1、その子が2 …と進み、**8代目は次を立てられません。**
+DEPTH_LIMIT = 8
+
+#: **親の cron が撃つ分**（`trig_017g2Meu9DZqZ7dJbPKJFS8c` ＝ `9 * * * *`）。
+#: **実物は `list_triggers` で見ること**（写した瞬間に古くなります）。
+#: 違っていたら `--cron-minute` で渡せます。ここは既定値でしかありません。
+PARENT_CRON_MINUTE = 9
+
+#: 親の発火に間に合わせるための余白（archive が効くまでの分）。
+ARCHIVE_MARGIN_MIN = 2
+
+JST = timezone(timedelta(hours=9))
+
+
+def spawn_roots(sessions: list[dict]) -> set[str]:
+    """**常駐の親**（鎖の根）を、鎖の形そのものから見つける。
+
+    根は「一覧の中に**自分の行は無い**のに、**2件以上の行の親になっている**」ID です。
+    親は毎時ひとつ子を立てるので、25件の窓には普通ふくまれます。
+
+    **1件しか親になっていない ID を根と読まないこと。** それは
+    「25件の窓からこぼれ落ちただけの、ふつうの子」です（実測: 8/16 16:04 の行の
+    親 `session_016Gas…` がこれで、根と読むと深さが4代ぶん過小に出ます）。
+    """
+    ids = {s.get("id") for s in sessions}
+    counts: dict[str, int] = {}
+    for sess in sessions:
+        parent = sess.get("parent_session_id")
+        if parent and parent not in ids:
+            counts[parent] = counts.get(parent, 0) + 1
+    return {pid for pid, n in counts.items() if n >= 2}
+
+
+def lineage_depth(sessions: list[dict], me: str,
+                  root: str | None = None) -> tuple[int, bool]:
+    """`parent_session_id` の鎖をさかのぼって、**自分が何代目か**を返す。
+
+    返り `(depth, exact)`。**`exact=False` のとき `depth` は下限**です
+    （鎖が一覧の外へ出た ＝ 本当はもっと深いかもしれない）。
+    **下限を「深さ」と言い切らないこと** —— 8代目を7代目と読むと、
+    `create_session` を呼んでから初めて気づくことになります。
+    """
+    by_id = {s.get("id"): s for s in sessions}
+    roots = {root} if root else spawn_roots(sessions)
+    cur, depth, seen = me, 1, set()
+    while True:
+        if cur in seen:                      # 環。起きないはずだが、回らないほうが悪い
+            return depth, False
+        seen.add(cur)
+        parent = (by_id.get(cur) or {}).get("parent_session_id")
+        if not parent:
+            return depth, False
+        depth += 1
+        if parent in roots:
+            return depth, True
+        if parent not in by_id:
+            return depth, False
+        cur = parent
+
+
+def next_parent_fire(now: datetime, minute: int = PARENT_CRON_MINUTE) -> datetime:
+    """**次に親の cron が撃つ時刻。**"""
+    fire = now.replace(minute=minute % 60, second=0, microsecond=0)
+    if fire <= now:
+        fire += timedelta(hours=1)
+    return fire
+
+
+def report_depth(sessions: list[dict], me: str, now: datetime,
+                 minute: int = PARENT_CRON_MINUTE,
+                 root: str | None = None) -> bool:
+    """代の深さを出す。**壁に当たっている回は True** を返す。
+
+    ## なぜ、いちばん最初に出すのか（2026-08-17 に測って足した）
+
+    深さ8は §6 (f) で分かっていました。**遅すぎます。**
+    §6 (f) は1周の**終わりぎわ**なので、そこで知っても手の打ちようがありません。
+
+    鎖の実測（8/16 16:04〜8/17 20:12・25件。**間は全部 41〜43分**）:
+
+        深さ8が終わった時刻   次の子が生まれた時刻   空き
+        23:28                00:13                **45分**
+        04:18                05:10                **52分**
+        10:16                11:12                **56分**
+
+    **親は毎時 9分に撃ちますが、走っている子を見つけると立てません。**
+    1周が42分なので、**:09 は 7割の確率で「まだ走っている最中」に当たり**、
+    そこで見送られると**まるまる1時間あきます。** 上の3件はどれもこれです。
+
+    **7周に1回、およそ40分**（＝ ほぼ1周ぶん）が、ここで消えていました。
+
+    深さは §2 の時点で分かります —— **材料は `list_sessions` の返りだけ**で、
+    追加の呼び出しも API も要りません。**先に知れば、間に合わせられます。**
+    """
+    depth, exact = lineage_depth(sessions, me, root)
+    at_wall = depth >= DEPTH_LIMIT
+    about = "" if exact else " **以上**（鎖が一覧の外へ出たので下限です）"
+    if not at_wall:
+        left = DEPTH_LIMIT - depth
+        print(f"代の深さ: **{depth} / {DEPTH_LIMIT}**{about}"
+              f" —— あと {left}代で親待ちになります")
+        if not exact:
+            print("  **下限なので、`create_session` が深さで弾かれることはあり得ます。**"
+                  "弾かれても異常ではありません（§6 (f)）")
+        return False
+
+    fire = next_parent_fire(now, minute)
+    deadline = fire - timedelta(minutes=ARCHIVE_MARGIN_MIN)
+    if deadline <= now:                       # もう間に合わない。次の発火に合わせる
+        fire += timedelta(hours=1)
+        deadline = fire - timedelta(minutes=ARCHIVE_MARGIN_MIN)
+    left_min = (deadline - now).total_seconds() / 60
+
+    print(f"代の深さ: **{depth} / {DEPTH_LIMIT}**{about}"
+          "  ← **この回は次の子を立てられません**")
+    print("  `create_session` は必ず `lineage depth 8 (limit 8)` で落ちます。"
+          "**§6 (f) で呼ばないこと**（`create_trigger` も同じ上限です）")
+    print(f"  復帰は親の毎時 cron（毎時 {minute:02d}分）。"
+          "**親は走っている子を見つけると立てません。**")
+    print(f"  → **{deadline.astimezone(JST):%H:%M} JST までに archive すること**"
+          f"（次の発火 {fire.astimezone(JST):%H:%M}）。"
+          f"いま {now.astimezone(JST):%H:%M} ／ **残り {left_min:.0f}分**")
+    print("  間に合わないと次の発火まで見送られます。**実測の空きは 45 / 52 / 56分** ——"
+          "ほぼ1周ぶんです。**この回だけは、間隔の下限ではなく締切で終わりを決めること。**")
+    return True
 
 
 def silent_runs(sessions: list[dict], me: str | None) -> list[dict]:
@@ -338,6 +465,11 @@ def main() -> int:
     ap.add_argument("--me", default=None, help="自分の session_id（既定は環境変数から）")
     ap.add_argument("--phase", choices=("start", "spawn"), default="start",
                     help="start=回の最初（§2） / spawn=次の子を立てる直前（§6 (f)）")
+    ap.add_argument("--cron-minute", type=int, default=PARENT_CRON_MINUTE,
+                    help=f"親の cron が撃つ分（既定 {PARENT_CRON_MINUTE}）。"
+                         "**実物は `list_triggers` で見ること**")
+    ap.add_argument("--root", default=None,
+                    help="常駐の親の session_id（既定は鎖の形から自動で見つけます）")
     args = ap.parse_args()
 
     me = args.me or my_session_id()
@@ -387,7 +519,18 @@ def main() -> int:
     # （`src/alerts.py` の註と同じ理由。呼ぶ側に置くと片方だけ書き忘れます）。
     report_silent(sessions, me)
 
+    # **代の深さは、両方の段で出します。** 効くのは `start`（締切に間に合わせられる
+    # のはそちらだけ）で、`spawn` は必ず失敗する呼び出しを1つ減らすためです。
+    at_wall = report_depth(sessions, me, datetime.now(timezone.utc),
+                           args.cron_minute, args.root)
+
     if args.phase == "spawn":
+        if at_wall:
+            print()
+            print("**立てないこと。** 代の上限です（`create_session` は必ず落ちます）。")
+            print("  異常ではありません（§6 (f)）。**そのまま (h) で archive すること。**")
+            return 3
+
         # --- 速すぎないか（2026-08-15） --------------------------------
         # **これを一番先に見る。** 待っているあいだに兄弟も枠も変わるので、
         # 先に枠を調べても答えが古くなる。**待ってから調べ直すのが正しい順。**
