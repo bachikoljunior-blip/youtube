@@ -131,6 +131,50 @@ def print_step_days(short_hours: dict[str, set[int]], top: int = 4) -> None:
               f"--hours {','.join(str(h) for h in free)} --jobs 3 --per-calc 1")
 
 
+def next_moves(h: dict) -> list[str]:
+    """`next_if_false` を、**書かれ方によらず**「手の一覧」にして返す。
+
+    **欄は2つの形で書かれています。** 一覧（YAML の `- ...`）と、
+    まるごとの文字列（`|` のブロック）です。実物は 20件中 4件が文字列で、
+    どちらも人が読めば同じ意味に見えます。
+
+    ところが読む側は長らく `h.get("next_if_false") or []` だけで、
+    **文字列をそのまま `for` に渡していました。** Python の文字列は
+    **1字ずつ回る**ので、1件の手が「- あ」「- な」…と数百行に散ります。
+
+        2026-08-17 12:3x の実測: `status.py` の出力 644行のうち **480行が1字**。
+        埋もれたのは前提・警告の当たり率・使用量 —— つまり
+        **§3「`status.py` が出すものに全部目を通すこと」が、読めない状態**でした。
+
+    **穴は前の回（12:05）の直しの隣にあります。** あの回は
+    「期限が来るまで `next_if_false` を一度も出さない」門（`if left <= 0:`）を
+    直しましたが、**欄の中身の形は見ていません。**
+    門が閉じているあいだ、この行は一度も実行されていませんでした ——
+    **隠していたものを見せた瞬間に、見せ方のほうが壊れていた。**
+
+    直す先を**印字の側ではなく読む側**にしてあるのは、印字が2か所
+    （期限切れ／期限前）にあるからです。**片方だけ直す**形は、
+    このリポジトリで通算9回出ています（`docs/JOURNAL.md`）。
+    """
+    raw = h.get("next_if_false")
+    if not raw:
+        return []
+    if isinstance(raw, str):
+        # **段落は割らない。** ブロックで書かれた1件は1件です
+        # （空行で区切られていれば、そこだけ割る）。
+        return [p.strip() for p in raw.split("\n\n") if p.strip()]
+    return [str(x) for x in raw]
+
+
+def _print_moves(nexts: list[str]) -> None:
+    """手を1件1行で出す。**複数行の手は、2行目以降を字下げして続ける。**"""
+    for nxt in nexts:
+        lines = str(nxt).splitlines() or [""]
+        print(f"           - {lines[0]}")
+        for cont in lines[1:]:
+            print(f"             {cont}")
+
+
 def print_hypotheses() -> None:
     """検証していない前提と、その期限を毎回出す。
 
@@ -195,17 +239,15 @@ def print_hypotheses() -> None:
         #
         # **準備が要るのは期限の前**なので、近いものは先に出します。
         # 全部出すと15件ぶんで埋まるので、`NEXT_MOVE_WINDOW` 日で切ります。
-        nexts = h.get("next_if_false") or []
+        nexts = next_moves(h)
         if left <= 0:
             print("        → いま判定すること。外れていたら次を順に試す:")
-            for nxt in nexts:
-                print(f"           - {nxt}")
+            _print_moves(nexts)
         elif left <= NEXT_MOVE_WINDOW:
             if nexts:
                 print(f"        → **外れたときの次の手**（あと{left}日。"
                       "期限が来てから探さないこと）:")
-                for nxt in nexts:
-                    print(f"           - {nxt}")
+                _print_moves(nexts)
             else:
                 no_next.append((left, h.get("claim", "(claim なし)")))
 
