@@ -760,6 +760,29 @@
     ],
     "video_id": "Pvu_weiPYH0"
   },
+  "s-jidou-choushi-nuke-suekko-dake": {
+    "charts": [
+      [
+        "30,000円",
+        "10,000円"
+      ],
+      [
+        "−20,000円",
+        "−20,000円",
+        "−20,000円"
+      ]
+    ],
+    "video_id": "ofPvQqfsC5g"
+  },
+  "s-jidou-eldest-48months": {
+    "charts": [
+      [
+        "216か月",
+        "264か月"
+      ]
+    ],
+    "video_id": "ioPzkN-XxLs"
+  },
   "s-jikangai-2kagetsu-160-de-38jikan-otosu": {
     "charts": [
       [
@@ -999,6 +1022,21 @@
       ]
     ],
     "video_id": "NDlCpYO1sFk"
+  },
+  "s-kakyu-ko-kasan-3ninme": {
+    "charts": [
+      [
+        "24万3800円",
+        "24万3800円",
+        "8万1300円"
+      ],
+      [
+        "24万3800円",
+        "48万7600円",
+        "56万8900円"
+      ]
+    ],
+    "video_id": "PwXnB_AlzRQ"
   },
   "s-kakyu-kurisage-kieru": {
     "charts": [
@@ -1437,6 +1475,15 @@
     ],
     "video_id": "kk57OJ0zVT4"
   },
+  "s-kyufu-nokori-gake-273bai": {
+    "charts": [
+      [
+        "6.6日分",
+        "18.0日分"
+      ]
+    ],
+    "video_id": "UJB3hrfxpfQ"
+  },
   "s-kyugyo-2gatsu-4gatsu-89nichi-121340": {
     "charts": [
       [
@@ -1632,6 +1679,20 @@
       ]
     ],
     "video_id": "Nrg_-t5dNUw"
+  },
+  "s-saishushoku-330-66-nichibun": {
+    "charts": [
+      [
+        "330.0日分",
+        "264.0日分",
+        "286.0日分"
+      ],
+      [
+        "0.3日分",
+        "0.4日分"
+      ]
+    ],
+    "video_id": "jP9RWO2Gs7Y"
   },
   "s-saishushoku-330-nichi-66-nichibun": {
     "charts": [
@@ -1972,6 +2033,19 @@
     ],
     "video_id": "cdKMFCFjiuA"
   },
+  "s-shougai-20saimae-shotoku-gake": {
+    "charts": [
+      [
+        "452万円",
+        "411万2001円"
+      ],
+      [
+        "512万9千円",
+        "472万1001円"
+      ]
+    ],
+    "video_id": "ajP5wUBStVY"
+  },
   "s-shougai-2kyu-3kyu-gake-kazoku": {
     "charts": [
       [
@@ -1985,6 +2059,15 @@
       ]
     ],
     "video_id": "u3V1PFBC20c"
+  },
+  "s-shougai-300month-minashi-25bai": {
+    "charts": [
+      [
+        "1万9732円",
+        "49万3290円"
+      ]
+    ],
+    "video_id": "laMTkmhldy4"
   },
   "s-shougai-teatekin-3kyu-2nen": {
     "charts": [
