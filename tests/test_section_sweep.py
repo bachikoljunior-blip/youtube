@@ -815,3 +815,141 @@ def test_status_の内訳が形を1つも落としていない():
     parts = sum(int(re.search(r"(\d+)$", p.strip()).group(1))
                 for p in m.group(2).split("・"))
     assert parts == total, f"内訳の合計 {parts} が候補 {total}件 と合わない: {line}"
+
+
+# ---- 同点の頂上は、軸によって意味が逆になる（2026-08-18）-----------------
+
+def test_連続量の軸では同点の頂上を名指しさせない():
+    """引数を刻んだ掃引の同点は、**目盛りが粗いだけ**かもしれません。
+
+    `nenkin.worst_gap` の「189万で最大(32か月)」は、1万きざみに直すと
+    276万でも 32 になりました。**細かくすると頂上そのものが動く**ので、
+    その x を名指しした節は追試で再現しません。
+    """
+    shape, d = ss._classify(list(range(7)), [10, 12, 20, 19, 20, 13, 11])
+    assert shape == "逆転"
+    assert d["並ぶ点"] > 1
+    assert d["数え上げ"] is False
+    line = ss.line_of({"表": "t", "関数": "f", "見た値": "v", "形": shape,
+                       "詳しく": d, "動かした引数": "x", "x の幅": (0, 6)})
+    assert "書けません" in line
+
+
+def test_数え上げの軸では同点でも節は書ける():
+    """表の行を歩くときの同点は、**それが全部**です。
+
+    行の集合は完全なので細かくする余地がありません。段階表では同値が
+    並ぶのが正常で、前の回の印は `shitsugyo.double_boundary`
+    （**既に節になっている本物**）にも「節は書けません」と鳴っていました。
+    壊れるのは「1つだけ」と言うほうなので、**全部書けと言わせます。**
+    """
+    shape, d = ss._classify(list(range(7)), [10, 12, 20, 19, 20, 13, 11],
+                            enumerated=True)
+    assert shape == "逆転"
+    assert d["並ぶ点"] > 1
+    assert d["数え上げ"] is True
+    line = ss.line_of({"表": "t", "関数": "f", "見た値": "v", "形": shape,
+                       "詳しく": d, "動かした引数": "（表の行）", "x の幅": (0, 6)})
+    assert "書けません" not in line
+    assert "全部書くこと" in line
+
+
+def test_行を歩く掃引は数え上げとして判定される():
+    """`sweep_rows` から来た候補は、必ず `数え上げ` 側であること。"""
+    def 表():
+        return [{"帯": f"{i}段", "額": y}
+                for i, y in enumerate([10, 12, 20, 19, 20, 13, 11])]
+
+    hits = [h for h in ss.sweep_rows(表, name="表") if h["形"] == "逆転"]
+    assert hits, "逆転が拾えていない"
+    assert all(h["詳しく"]["数え上げ"] is True for h in hits)
+
+
+# ---- 行の見出しは、行を一意に指すこと（2026-08-18）-----------------------
+
+def test_見出しが1欄で足りないときは欄を足す():
+    """**行が4つ組で決まる表で、見出しが1欄しか使われていませんでした。**
+
+    `shitsugyo.double_boundary` は 12行のうち4行が `age_before='30歳未満'` で、
+    印字は `（表の行）が 30歳未満→45歳以上60歳未満 で -552,300 跳ぶ` ——
+    実際は行8→行9で、**勤続のほうも動いています。**
+    読みにくいのではなく、**節にすると事実と違うことを言います。**
+    """
+    from src.calc import shitsugyo
+    rows = shitsugyo.double_boundary()
+    keys = ss._label_keys(rows)
+    labels = [ss._join_label(r, keys) for r in rows]
+    assert len(set(labels)) == len(rows), f"見出しが行を指していない: {labels}"
+
+
+def test_見出しは一意になった時点で止める():
+    """**欄は少ないほうが読めます。**一意なら1欄で止めること。"""
+    rows = [{"帯": f"{i}段", "別名": "同じ", "額": i} for i in range(5)]
+    assert ss._label_keys(rows) == ["帯"]
+
+
+def test_x_のキーは名前で拾う_手書きの並びにしない():
+    """**`並ぶ x` が、行番号のまま出ていました**（2026-08-18）。
+
+    見出しに直す欄は `("止まる x", "x", "x の手前", "x の先")` と手書きで、
+    前の回が `並ぶ x` を足したときに、この並びのほうを書き忘れています
+    （名指した x は `30歳未満`、同点のほうは `7・8`）。
+    **手書きである限り、次に x のキーを足す回も同じことをします。**
+    いまは `x` を名前に含む欄を全部拾うので、**この検査は名前の規約のほうを見ます。**
+    """
+    def 表():
+        return [{"帯": f"{i}段", "額": y}
+                for i, y in enumerate([10, 12, 20, 19, 20, 13, 11])]
+
+    hit = next(h for h in ss.sweep_rows(表, name="表") if h["形"] == "逆転")
+    for k, v in hit["詳しく"].items():
+        if "x" not in k:
+            continue
+        vals = v if isinstance(v, list) else [v]
+        for one in vals:
+            assert isinstance(one, str) and one.endswith("段"), \
+                f"{k} が見出しに直っていない: {one!r}"
+
+
+# ---- 繋いだ見出しの既出判定（2026-08-18）--------------------------------
+
+def test_繋いだ見出しは部品ごとに照合する():
+    """`30歳未満・1年未満` は、まるごとでは本文に出ません。
+
+    節はその組を散文で書くので、**繋いだ形の文字列照合は必ず外れます。**
+    直前に `_label_keys` を入れた時点で、`shitsugyo` の6件が6件とも
+    「新しい」に化けました（節はどれも前からあります）。
+    """
+    body = ["30歳未満で勤続1年未満なら、給付は 992,400円 で止まります"]
+    assert ss._point_printed("30歳未満・1年未満", body) is True
+
+
+def test_繋いだ見出しは1つも出ていなければ新しい():
+    body = ["60歳以上の話しか書いていない節"]
+    assert ss._point_printed("30歳未満・1年未満", body) is False
+
+
+def test_繋いだ見出しは片方だけなら断定しない():
+    """**片方だけを `False` にしないこと。**
+
+    `is_covered` は `False` を見た時点で打ち切るので、
+    **結果の値を見る控えの道に一度も入れなくなります**（8/18 に踏んだ穴と同じ形）。
+    """
+    body = ["30歳未満の人は、ここでは扱いません"]
+    assert ss._point_printed("30歳未満・1年未満", body) is None
+
+
+def test_実物の段階表が既出のまま残ること():
+    """**見出しを一意にした直しが、既出の判定を壊していないこと。**
+
+    `shitsugyo` の候補は 6件とも、いまの節がもう言っています。
+    ここが「新しい」に化けると、(B) の同点破りが
+    **見出しを長くした表だけ**を上位へ上げます。
+    """
+    from src.calc import shitsugyo
+    hits = [h for h in ss.sweep_all() if h.get("表") == "shitsugyo"]
+    assert hits, "shitsugyo の候補が拾えていない"
+    covered = ss._covered_map(hits)
+    assert covered, "節が読めていない（読めない回はこの検査が空を通してしまう）"
+    bad = [ss.line_of(h) for h in hits if not covered.get(id(h))]
+    assert not bad, bad

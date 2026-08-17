@@ -185,8 +185,14 @@ def _level_runs(ys: list[float], scale: float) -> list[tuple[int, int, float]]:
     return runs
 
 
-def _classify(xs: list[float], ys: list[float]) -> tuple[str, dict] | None:
-    """点の並びから形を1つ決める。**当てはまらなければ None。**"""
+def _classify(xs: list[float], ys: list[float],
+              *, enumerated: bool = False) -> tuple[str, dict] | None:
+    """点の並びから形を1つ決める。**当てはまらなければ None。**
+
+    `enumerated` は **x 軸が数え上げか**（＝表の行を歩いている）。
+    連続量をこちらが選んだ目盛りで刻んだ掃引と、**同点の意味が逆になります**
+    （理由は下の「逆転」の節）。
+    """
     if len(ys) < 4 or any(map(lambda v: math.isnan(v) or math.isinf(v), ys)):
         return None
     lo, hi = min(ys), max(ys)
@@ -244,11 +250,26 @@ def _classify(xs: list[float], ys: list[float]) -> tuple[str, dict] | None:
             # 1万きざみで回すと 276 も 32 になる ＝ **粗い目盛りが一意に見せていた**。
             # だから見るのは一致ではなく **頂上の平らさ**: 端からの高さの
             # 1/4 以内に他の内点が並んでいたら、その x は名指しに耐えません。
+            #
+            # **ただし「名指しに耐えない」のは連続量の軸だけです**（2026-08-18）。
+            # 前の回はこの印を全部の軸に出し、**`shitsugyo.double_boundary`
+            # （既に節になっている本物）にも「節は書けません」と鳴りました。**
+            # 同点の意味が、軸によって逆になります:
+            #
+            #   連続量（引数を刻んだ掃引） 同点 ＝ **目盛りが粗いだけ**かもしれない。
+            #       `nenkin.worst_gap` の 189万は 1万きざみに直すと 276万でも同値で、
+            #       **細かくすると頂上そのものが動きます。名指しは追試で壊れます。**
+            #   数え上げ（表の行を歩く） 同点 ＝ **それが全部**。行の集合は完全なので、
+            #       細かくする余地がありません。**壊れるのは「1つだけ」と言うこと**で、
+            #       同点の行を全部挙げれば、その節は追試に耐えます。
+            #
+            # だから止めるのではなく、**書くべき文のほうを変えます。**
             band = abs(ys[idx] - edge) * FLAT_TOP_BAND
             flat = [x for j, (x, y) in enumerate(zip(xs, ys))
                     if 0 < j < len(ys) - 1 and abs(y - ys[idx]) <= band]
             return "逆転", {"どこ": kind, "x": xs[idx], "値": ys[idx],
                           "端では": edge, "並ぶ点": len(flat),
+                          "数え上げ": enumerated,
                           "並ぶ x": flat if len(flat) > 1 else []}
 
     # 崖: 1つの段差だけが中央の5倍以上（**跳ぶ幅そのものが屑でないこと**）
@@ -453,8 +474,8 @@ def sweep_rows(fn: Callable, *, name: str = "") -> list[dict]:
     keys = set(_scalars(rows[0]))
     for r in rows[1:]:
         keys &= set(_scalars(r))
-    label_key = next((k for k, v in rows[0].items()
-                      if isinstance(v, str)), None)
+    label_keys = _label_keys(rows)
+    label_key = label_keys[0] if label_keys else None
     axis = _axis_keys(rows, keys)
     keys -= axis
     # 行を名指す欄そのものは、見た値にしない。**同語反復にしかなりません** ——
@@ -468,17 +489,34 @@ def sweep_rows(fn: Callable, *, name: str = "") -> list[dict]:
         ys = [_as_number(r[key]) for r in rows]
         if any(y is None for y in ys):
             continue          # 途中の行だけ単位がちがう欄。**混ぜて比べない**
-        hit = _classify(list(range(len(rows))), ys)
+        hit = _classify(list(range(len(rows))), ys, enumerated=True)
         if not hit:
             continue
         shape, detail = hit
         if shape == "不変":
             continue          # 表の中で動かない欄は、たいてい前提の再掲
-        for k in ("止まる x", "x", "x の手前", "x の先"):
-            if k in detail:                       # 行番号を、読める見出しに直す
-                i = int(detail[k])
-                detail[k] = (rows[i].get(label_key) if label_key
-                             else _row_label(rows[i], axis or keys)) or f"{i}行目"
+
+        def _label(i: int) -> str:
+            return (_join_label(rows[i], label_keys) if label_keys
+                    else _row_label(rows[i], axis or keys)) or f"{i}行目"
+
+        # 行番号を、読める見出しに直す。
+        #
+        # **ここは長らく `("止まる x", "x", "x の手前", "x の先")` という
+        # 手書きの並びでした。** 前の回が `並ぶ x` を足したとき、この並びのほうを
+        # 書き忘れ、同じ軸なのに名指した x は `30歳未満`、同点のほうは `7・8` と
+        # **行番号のまま**出ていました（読む側には、その 7 が何の 7 か分かりません）。
+        # 「形を足すと写し先を忘れる」（8/18 00:4x に3か所）の4か所目です。
+        # **手書きの並びである限り、次に x のキーを足す回も同じことをします。**
+        # だから並びをやめて、**キーの名前そのもの**（`x` を含む欄 ＝ x 軸の値）で
+        # 拾います。新しい x のキーは、名前に `x` を入れれば黙って通ります。
+        for k, v in list(detail.items()):
+            if "x" not in k:
+                continue
+            if isinstance(v, list):
+                detail[k] = [_label(int(i)) for i in v]
+            else:
+                detail[k] = _label(int(v))
         found.append({"関数": name or getattr(fn, "__name__", "?"),
                       "動かした引数": "（表の行）", "見た値": key,
                       "形": shape, "詳しく": detail,
@@ -507,6 +545,50 @@ def _axis_keys(rows: list[dict], keys: set[str]) -> set[str]:
     up = all(b > a for a, b in zip(xs, xs[1:]))
     down = all(b < a for a, b in zip(xs, xs[1:]))
     return {first} if (up or down) else set()
+
+
+def _label_keys(rows: list[dict]) -> list[str]:
+    """行を**一意に**名指すのに要る、文字の欄の組。
+
+    ## なぜ1欄では足りないか（2026-08-18 に実物で踏んだ）
+
+    ここは長らく **`next(k for k, v in rows[0].items() if isinstance(v, str))`** ——
+    **最初の文字の欄を1つ**でした。`shitsugyo.double_boundary` の行は
+    `age_before / age_after / tenure_before / tenure_after` の**4つ組**で決まるのに、
+    名前は `age_before` だけから作られ、**12行のうち4行が `30歳未満` になっていました。**
+
+    実害は「読みにくい」ではありません。**印字が嘘になります** ——
+
+        崖 … （表の行）が **30歳未満→45歳以上60歳未満** で -552,300 跳ぶ
+
+    これは行8→行9で、実際には
+    `(30歳未満・1年未満→1年以上5年未満)` から `(45歳以上60歳未満・1年以上5年未満→5年以上10年未満)`
+    への跳びです。**年齢だけが動いたように読めますが、勤続のほうも動いています。**
+    この行から節を書けば、**画面に出る数字の説明が事実と違う**ことになります。
+
+    見つかったのは、同点の一覧（`並ぶ x`）を行の見出しに直した直後です ——
+    **同じ名前が2つ並んで初めて、名前が行を指していないと分かりました。**
+    1点しか印字しないあいだは、**壊れていても壊れて見えません。**
+
+    欄は**少ないほうが読みやすい**ので、順に足して**一意になった時点で止めます**
+    （足しても重なりが減らない欄は飛ばす）。それでも一意にならなければ、
+    取れる全部を返します（`_join_label` が最後に行番号を付けます）。
+    """
+    str_keys = [k for k, v in rows[0].items()
+                if isinstance(v, str) and all(isinstance(r.get(k), str) for r in rows)]
+    chosen: list[str] = []
+    for k in str_keys:
+        if len({_join_label(r, chosen) for r in rows}) == len(rows):
+            break
+        before = len({_join_label(r, chosen) for r in rows})
+        if len({_join_label(r, chosen + [k]) for r in rows}) > before:
+            chosen.append(k)
+    return chosen
+
+
+def _join_label(row: dict, keys: list[str]) -> str:
+    """行の見出しを1つの言葉にする。**欄が複数なら「・」で繋ぐ。**"""
+    return "・".join(str(row.get(k, "")).strip() for k in keys)
 
 
 def _row_label(row: dict, numeric_keys: set[str]) -> str | None:
@@ -720,6 +802,21 @@ def _point_printed(raw: Any, lines: list[str]) -> bool | None:
         # 「無い」ではなく**「この見方では言えない」**です。`None` を返して
         # 控えの道へ渡します（**判定できないものを断定しない**）。
         return None
+    # **行の見出しが複数の欄でできているとき**（`30歳未満・1年未満`）は、
+    # まるごとの文字列では照合できません（2026-08-18）。節はその4つ組を
+    # 「30歳未満で勤続1年未満なら」と散文で書くので、**繋いだ形は本文に出ません。**
+    #
+    # `_label_keys` を入れて見出しを一意にした直後、`shitsugyo` の
+    # **6件が6件とも「新しい」に化けました** —— 節はどれも前からあります。
+    # ここを直さないと、(B) の同点破りが**見出しを長くした表だけ**を上位に上げます。
+    #
+    # 部品ごとに見て、**全部あれば既出・1つも無ければ新しい・途中なら判定しない。**
+    # 途中を `False` にしないのは、`is_covered` が `False` で打ち切るからです
+    # （結果の値を見る控えの道に、一度も入れなくなる。すぐ上の註と同じ穴）。
+    if shown and "・" in shown:
+        parts = [p for p in shown.split("・") if p.strip()]
+        hits = sum(any(p in ln for ln in lines) for p in parts)
+        return True if hits == len(parts) else (False if hits == 0 else None)
     # 単位つきの表記（`40%` など）は、そのまま出ていれば既出
     if shown and shown.strip("-0123456789.,"):
         return any(shown in ln for ln in lines)
@@ -838,10 +935,19 @@ def line_of(hit: dict) -> str:
         tail = (f"{d['どこ']}のは端ではなく {hit['動かした引数']}="
                 f"{_fmt(d['x'])} のとき（{_fmt(d['値'])}／端では {_fmt(d['端では'])}）")
         if d.get("並ぶ点", 1) > 1:
-            xs_txt = "・".join(_fmt(x) for x in d["並ぶ x"][:4])
+            # **区切りは `／`。`・` にしないこと**（2026-08-18）。
+            # 行の見出しそのものが `30歳未満・1年未満` と `・` で繋がっているので、
+            # 一覧まで `・` で繋ぐと **2件なのか4件なのか読めません。**
+            xs_txt = "／".join(_fmt(x) for x in d["並ぶ x"][:4])
             more = "ほか" if len(d["並ぶ x"]) > 4 else ""
-            tail += (f"  **[並 {d['並ぶ点']}点]** 同じ高さが {xs_txt}{more} にもあります"
-                     f" —— **この x を名指しする節は書けません**")
+            if d.get("数え上げ"):
+                # 行は数え上げなので、同点は「それが全部」。**節は書けます。**
+                tail += (f"  **[並 {d['並ぶ点']}点]** 同じ高さが {xs_txt}{more} にもあります"
+                         f" —— **1つだけ名指さず、{d['並ぶ点']}件を全部書くこと**")
+            else:
+                tail += (f"  **[並 {d['並ぶ点']}点]** 同じ高さが {xs_txt}{more} にもあります"
+                         f" —— **目盛りが粗いだけかもしれません。"
+                         f"細かく刻み直すまで、この x を名指しする節は書けません**")
     elif hit["形"] == "片効き":
         tail = (f"{hit['動かした引数']} は {'・'.join(d['動く'])} を動かすのに "
                 f"{'・'.join(d['動かない'])} は {_fmt(d['動かない値'])} のまま")
