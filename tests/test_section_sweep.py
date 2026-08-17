@@ -427,3 +427,40 @@ def test_片効き_が実物の表から出る():
     for h in hits:
         assert h["詳しく"]["動く"] and h["詳しく"]["動かない"]
         assert ss.line_of(dict(h, 表="x"))          # 印字できること
+
+
+def test_片効き_も既出の判定にかかる():
+    """**判定できないものを「新しい」に数えないこと**（2026-08-17 22:5x に踏んだ）。
+
+    `片効き` は `x の点` を持たないので、`_hit_outcome` に欄を足すまで
+    `is_covered` は**構造上いつも False**でした。`status.py` は `novel_counts` で
+    (B) の同点を破るので、**新しい形を足した表だけが、中身と無関係に上位へ**上がります。
+    """
+    hit = {"表": "x", "関数": "f", "動かした引数": "a", "見た値": "b", "形": "片効き",
+           "詳しく": {"動く": ["A"], "動かない": ["B"], "動かない値": 5000},
+           "x の幅": (1, 9)}
+    assert ss._hit_outcome(hit) == 5000
+    assert ss.is_covered(hit, {"s": "均等割は 5,000円 のまま動きません"}) is True
+    assert ss.is_covered(hit, {"s": "ここには何の数字もありません"}) is False
+
+
+def test_実物の片効きが全部新しいと出ていたら疑うこと():
+    """**全部が「新しい」なら、判定が効いていない可能性のほうが高い。**
+
+    これは値そのものを固定する検査ではありません（節は毎回ふえます）。
+    **「1件も既出にならない」＝ 判定が構造上素通りしている**ことだけを見ます。
+    """
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
+    import topic_forge
+
+    hits = [h for h in ss.sweep_all() if h["形"] == "片効き"]
+    if not hits:
+        return
+    alls, _free, _known = topic_forge.survey()
+    # 判定が**動いている**こと（例外なく False を返す実装ではない）を、
+    # 節に値を混ぜた写しで確かめる。
+    probe = dict(hits[0])
+    val = probe["詳しく"]["動かない値"]
+    assert ss.is_covered(probe, {"s": f"{val:,.0f}"}) is True
