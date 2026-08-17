@@ -1587,10 +1587,89 @@ def main(days: int = 7) -> int:
         return 0
 
 
+# 出力がこの倍率を超えて伸びたら鳴らす。
+# **1.5 は「節を1つ足しても鳴らない／壊れたら必ず鳴る」の間**に置いています
+# （節1つはおおよそ5〜15行＝1.1倍未満。12:3x の壊れ方は 3.1倍）。
+LINES_ALARM_RATIO = 1.5
+
+
+class _LineCounter:
+    """自分の出力の行数を数えるだけの `sys.stdout` の皮。"""
+
+    def __init__(self, inner):
+        self._inner, self.lines = inner, 0
+
+    def write(self, s: str) -> int:
+        self.lines += s.count("\n")
+        return self._inner.write(s)
+
+    def __getattr__(self, name):
+        return getattr(self._inner, name)
+
+
+def check_output_length(lines: int, root: Path) -> str:
+    """**出力そのものに目盛りを置く**（2026-08-17 12:3x に足した）。
+
+    この回、`status.py` の出力 644行のうち **480行が1字**でした
+    （`next_if_false` の文字列を `for` が1字ずつ回していた）。
+    埋もれたのは前提・警告の当たり率・使用量 —— §3 が読めない状態です。
+
+    **検査は 855件あり、全部通ったうえで壊れていました。**
+    増やしてきたのは「中身が正しいか」の検査だけで、
+    **「出したものが読めるか」を見るものが1つも無かった**からです。
+
+    人が気づくのを待たない目盛りとして、**行数**を積みます。
+    中身の正しさは分かりませんが、**この形の壊れ方は必ず行数に出ます**
+    （1件が数百行に散る／同じ節が繰り返される／一覧が畳まれずに育つ）。
+
+    **鳴っても止めません**（`status.py` が状態のせいで死んではいけない）。
+    当たり率は `alerts` が自分で測るので、外れ続ければ機械のほうから畳まれます。
+    """
+    path = root / "data" / "status_lines.jsonl"
+    prev = []
+    if path.exists():
+        for line in path.read_text(encoding="utf-8").splitlines():
+            try:
+                prev.append(int(json.loads(line)["lines"]))
+            except (json.JSONDecodeError, KeyError, TypeError, ValueError):
+                continue
+    msg = ""
+    if prev:
+        base = sorted(prev[-5:])[len(prev[-5:]) // 2]  # 直近5回の中央値
+        if base and lines > base * LINES_ALARM_RATIO:
+            r = _alerts.ring("status_lines", 1)
+            msg = (f"\n  {r.line}" if r.folded else
+                   f"\n[!] **出力が {lines}行。直近の中央値 {base}行の "
+                   f"{lines / base:.1f}倍です。**\n"
+                   "    伸びた節を見ること。**中身の検査は全部通ったうえで\n"
+                   "    読めなくなることがあります**（2026-08-17 12:3x は 480行が1字）。")
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(
+                {"at": datetime.now(JST).isoformat(timespec="seconds"),
+                 "lines": lines}, ensure_ascii=False) + "\n")
+    except OSError:
+        pass
+    return msg
+
+
 if __name__ == "__main__":
     # `--alerts-all` は、畳んだ一覧を全文で出す（`src/alerts.py`）。
     # **旗はここだけ。** 各節は `alerts.ring()` の返り値しか見ません
     # （call site に条件を書かせると、一覧を足した回が片方だけ書き忘れます）。
     _argv = [a for a in sys.argv[1:] if a != "--alerts-all"]
     _alerts.set_show_all("--alerts-all" in sys.argv[1:])
-    raise SystemExit(main(int(_argv[0]) if _argv else 7))
+    _counter = _LineCounter(sys.stdout)
+    sys.stdout = _counter
+    try:
+        _code = main(int(_argv[0]) if _argv else 7)
+    finally:
+        sys.stdout = _counter._inner
+        # **`_print_analytics_recap` の後ろに何かを足さないこと**（あの節は
+        # `tail` で拾えることが存在理由）。だから鳴るときだけ、**stderr へ**出します。
+        _warn = check_output_length(
+            _counter.lines, Path(__file__).resolve().parent.parent)
+        if _warn:
+            print(_warn, file=sys.stderr)
+    raise SystemExit(_code)
