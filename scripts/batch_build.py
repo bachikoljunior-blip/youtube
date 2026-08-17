@@ -385,8 +385,87 @@ def ledger_hours(date_jst: str) -> set[int]:
     return taken
 
 
+def ledger_minutes(date_jst: str) -> set[int]:
+    """その日に埋まっている時刻を**0時からの分**で返す（API 0単位）。
+
+    `ledger_hours()` は同じ控えを**時だけ**に落として読んでいました。
+    落とすと 10:00 の1本が 10:30 まで塞ぎます —— **1時間に1本しか置けない**
+    のは制度でも枠でもなく、**この読み方**でした（2026-08-18 に測った:
+    予約262本の分は**全部 :00**、公開は 1日6.4本、置ける枠は 9〜19時の11個）。
+
+    投稿の本数枠は1日92本あります。**律速は置く場所のほうです。**
+    """
+    try:
+        rows = [r for r in dupes.ledger_rows() if r.get("at")]
+    except Exception as exc:                                  # noqa: BLE001
+        print(f"[batch] 控えが読めませんでした（続行）: {str(exc)[:80]}", flush=True)
+        return set()
+    taken: set[int] = set()
+    for row in rows:
+        try:
+            when = datetime.fromisoformat(str(row["at"]).replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        when = when.astimezone(JST)
+        if when.strftime("%Y-%m-%d") == date_jst:
+            taken.add(when.hour * 60 + when.minute)
+    return taken
+
+
+def _show_slot(spec: str) -> str:
+    """`slots()` が返した指定を、人が読む `H:MM` にする。
+
+    `2026-08-24@10` → `10:00` ／ `2026-08-24@10:30` → `10:30`
+    """
+    text = spec.partition("@")[2] or spec
+    return text if ":" in text else f"{text}:00"
+
+
+def _slots_fine(count: int, hour: int, date_jst: str, hours: list[int],
+                step_min: int, taken: set[int] | None,
+                taken_min: set[int] | None) -> list[str]:
+    """`step_min` が 60 未満のときの割り当て（0時からの分で数える）。
+
+    **`slots()` から呼ばれる前提**です。単体で呼ばないこと（`date_jst` を必須にしてある）。
+    """
+    if not 1 <= step_min < 60 or 60 % step_min:
+        raise SystemExit(
+            f"--step-min は 60 の約数で 1〜59 のどれか: {step_min}\n"
+            "        （1時間を割り切らないと、日をまたぐ所で目盛りがずれます）"
+        )
+    if hours:
+        raise SystemExit(
+            "--hours と --step-min は同時に使えません。\n"
+            "        `--hours` は**時だけ**の指定なので、分の目盛りを打ち消します。"
+        )
+    if taken_min is None:
+        if taken is not None:
+            raise SystemExit(
+                "step_min が 60 未満のときは taken（時）ではなく taken_min"
+                "（0時からの分）を渡すこと。\n"
+                "        時に落として読むと 10:00 の1本が 10:30 まで塞ぎます —— "
+                "**それがこの目盛りの相手そのもの**です。"
+            )
+        taken_min = ledger_minutes(date_jst)
+    grid = [m for m in range(hour * 60, 24 * 60, step_min) if m not in taken_min]
+    if len(grid) < count:
+        busy = sorted(f"{m // 60}:{m % 60:02d}" for m in taken_min)
+        raise SystemExit(
+            f"{date_jst} は {hour}時以降の空きが {len(grid)} 個しかありません"
+            f"（{count} 本ぶん要ります／{step_min}分きざみ／控えでの埋まり {busy}）。\n"
+            "        **別の日にするか、--hour を早めるか、--step-min を細かくすること。**"
+        )
+    picked = grid[:count]
+    if picked != list(range(hour * 60, hour * 60 + step_min * count, step_min)):
+        shown = ", ".join(f"{m // 60}:{m % 60:02d}" for m in picked)
+        print(f"[batch] {date_jst} の埋まりを避けて {shown} に置きます"
+              "（控えから。API 0単位）", flush=True)
+    return [f"{date_jst}@{m // 60}:{m % 60:02d}" for m in picked]
+
+
 def slots(count: int, hour: int, date_jst: str | None, hours: list[int],
-          taken: set[int] | None = None) -> list[str]:
+          taken: set[int] | None = None, step_min: int = 60,
+          taken_min: set[int] | None = None) -> list[str]:
     """各本の予約時刻の指定を返す（`upload_only.py` の第3引数の形）。
 
     `date_jst` が無ければ従来どおり全部同じ時刻 —— `next_publish_at` が
@@ -414,9 +493,33 @@ def slots(count: int, hour: int, date_jst: str | None, hours: list[int],
 
     `--hours` を明示したときは**そちらを通します**（控えは上限側なので、
     取り消し済みの枠へ置き直す道を塞がない）。ただし**重なっていれば必ず言います。**
+
+    ## `step_min` を足した理由（2026-08-18。**律速は投稿でも作りでもなかった**）
+
+    ここは長らく**時の目盛りしか持っていませんでした**（`range(hour, 24)`）。
+    だから1日に置けるのは最大24枠、実際に使う 9〜19時では **11枠**です。
+    ところが投稿の本数枠は **1日92本**あり、作る側も1日118本まで出ています。
+    **4倍以上足りないのは、置く場所の目盛りのほうでした**（予約262本の分は全部 `:00`）。
+
+    実測（2026-08-18 の控え）: 予約257本が **09/27 まで40日ぶん**に伸びていて、
+    公開は **1日6.4本**。同じ在庫を 30分きざみ（1日22枠）で置けば
+    **13日ぶん**に縮みます。**追加の生成も、追加の投稿枠も要りません。**
+
+    `next_publish_at` は最初から分を受け取ります（`minute_jst`）。
+    **受け取る側はできていて、渡す側が時しか持っていなかった**だけです。
+
+    **控えを時に落として読まないこと**（`ledger_minutes`）。落とすと
+    10:00 の1本が 10:30 まで塞ぎ、目盛りを細かくした意味が消えます。
+    だから `step_min < 60` では `taken`（時）を受け取りません ——
+    **黙って粗く読むより、止まるほうがよい**（この輪では「片方だけ」が7回起きています）。
+
+    **効きは前提として登録済みです**（`config/hypotheses.yaml`・9/05 判定）。
+    1本あたりの再生が半分未満に落ちるなら、この道は間違いです。
     """
     if not date_jst:
         return [str(hour)] * count
+    if step_min != 60:
+        return _slots_fine(count, hour, date_jst, hours, step_min, taken, taken_min)
     if taken is None:
         taken = ledger_hours(date_jst)
     if hours:
@@ -668,6 +771,10 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--hours", default="",
                     help="--date と一緒に使う。時刻をカンマ区切りで明示"
                          "（既定は --hour から1時間ずつ）")
+    ap.add_argument("--step-min", type=int, default=60,
+                    help="--date と一緒に使う。予約の間隔（分・60の約数）。"
+                         "既定の60は1日11枠まで（9〜19時）＝投稿枠92本の1/8。"
+                         "30 にすると1日22枠。--hours とは併用できません")
     ap.add_argument("--force-window", action="store_true",
                     help="M14 の比較の窓に置くことを承知で続ける（測定が壊れます）")
     ap.add_argument("--topics", default="",
@@ -744,11 +851,15 @@ def main(argv: list[str] | None = None) -> int:
     if args.date:
         check_window(args.date, args.force_window)
     hours = [int(h) for h in args.hours.split(",") if h.strip()]
-    when = slots(len(topics), args.hour, args.date or None, hours)
+    when = slots(len(topics), args.hour, args.date or None, hours,
+                 step_min=args.step_min)
 
     if args.date:
+        # **`+ ':00'` と書かないこと**（2026-08-18 に直した）。`--step-min` を
+        # 足すまで時しか無かったので足していましたが、いまは `10:30` が来ます。
+        shown = ", ".join(_show_slot(w) for w in when)
         print(f"[batch] {len(topics)} 本を **{args.date} の1日に**入れます"
-              f"（{', '.join(w.split('@')[1] + ':00' for w in when)} JST）")
+              f"（{shown} JST）")
     else:
         print(f"[batch] {len(topics)} 本を作ります（予約は {args.hour}:00 JST の空き枠へ）")
     for t in topics:

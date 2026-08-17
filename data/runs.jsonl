@@ -376,3 +376,5 @@
 {"at": "2026-08-18T08:12:56+09:00", "session": "session_01SyKKCUByyoULGYJTqQET3d", "kind": "ship", "what": "fix: 測定の窓の門が4つの予約経路のうち1つにしかなかった（src/measure_window.py 新設・next_publish_at と reschedule.py --move へ・tests 1410→1429）"}
 {"at": "2026-08-18T08:16:58+09:00", "session": "session_01SyKKCUByyoULGYJTqQET3d", "kind": "ship", "what": "means: (A) の題材を5件補充（config/topics.yaml・まだ表の無いテーマ 2件→7件・床5件を回復）", "closes": ["topic_material_low", "まだ表の無いテーマ"], "journal_lines": 22476}
 {"at": "2026-08-18T08:33:59+09:00", "session": "session_01SyKKCUByyoULGYJTqQET3d", "kind": "ship", "what": "fix: nosrc と apifail は同じ軸に無く、両方起きた回に「題名を読め」と言っていた（sibling_check.DEFAULT_TITLE・tests 1429→1431）", "closes": ["silent_run"], "journal_lines": 22670}
+{"at": "2026-08-18T08:35:46+09:00", "session": "session_01WKQtwtQjPpmifYBdE5MMMY", "kind": "start"}
+{"at": "2026-08-18T08:45:52+09:00", "session": "session_01WKQtwtQjPpmifYBdE5MMMY", "kind": "ship", "what": "fix: 1日の公開枠が11個だったのは制度でなく時の目盛り（batch_build.slots --step-min／ledger_minutes／split_when が分を読む・1日22枠・tests 1431→1443）"}

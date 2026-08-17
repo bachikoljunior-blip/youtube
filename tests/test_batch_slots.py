@@ -191,3 +191,125 @@ def test_unpinned_still_slides_a_day():
     a = datetime.strptime(first, "%Y-%m-%dT%H:%M:%SZ")
     b = datetime.strptime(second, "%Y-%m-%dT%H:%M:%SZ")
     assert (b - a) == timedelta(days=1)
+
+
+# ---------------------------------------------------------------------------
+# `--step-min`（2026-08-18）
+#
+# **時の目盛りしか無かったので、1日に置ける枠が11個（9〜19時）でした。**
+# 投稿の本数枠は1日92本、作る側も1日118本まで出ています。
+# **足りていなかったのは置く場所のほうです**（予約262本の分は全部 `:00`）。
+# ---------------------------------------------------------------------------
+
+
+def test_step_min_30_packs_twice_per_hour() -> None:
+    got = slots(6, 9, "2026-09-30", [], step_min=30, taken_min=set())
+    assert got == [
+        "2026-09-30@9:00", "2026-09-30@9:30",
+        "2026-09-30@10:00", "2026-09-30@10:30",
+        "2026-09-30@11:00", "2026-09-30@11:30",
+    ]
+
+
+def test_step_min_60_is_unchanged() -> None:
+    """**既定は1文字も変えていないこと。** 変えると既存の予約とぶつかります。"""
+    assert slots(3, 9, "2026-09-30", [], taken=set()) == [
+        "2026-09-30@9", "2026-09-30@10", "2026-09-30@11",
+    ]
+
+
+def test_step_min_skips_taken_minutes() -> None:
+    """**埋まりは分で数える。** 9:00 が埋まっていても 9:30 は空きです。"""
+    got = slots(4, 9, "2026-09-30", [], step_min=30,
+                taken_min={9 * 60, 10 * 60 + 30})
+    assert got == [
+        "2026-09-30@9:30", "2026-09-30@10:00",
+        "2026-09-30@11:00", "2026-09-30@11:30",
+    ]
+
+
+def test_step_min_refuses_hour_granular_taken() -> None:
+    """**時の集合を黙って受けないこと。**
+
+    受けると 10:00 の1本が 10:30 まで塞ぎ、細かくした意味が消えます
+    （この輪では「片方だけ直す」が7回起きています）。
+    """
+    with pytest.raises(SystemExit) as err:
+        slots(2, 9, "2026-09-30", [], taken={10}, step_min=30)
+    assert "taken_min" in str(err.value)
+
+
+def test_step_min_refuses_hours_flag() -> None:
+    """`--hours` は**時だけ**の指定なので、分の目盛りを打ち消します。"""
+    with pytest.raises(SystemExit):
+        slots(2, 9, "2026-09-30", [10, 11], step_min=30, taken_min=set())
+
+
+def test_step_min_must_divide_an_hour() -> None:
+    """**60 はここに入れないこと。** 60 は既定＝時の目盛りで、正しい値です。"""
+    for bad in (0, 7, 90):
+        with pytest.raises(SystemExit):
+            slots(2, 9, "2026-09-30", [], step_min=bad, taken_min=set())
+
+
+def test_step_min_runs_out_of_room() -> None:
+    """**足りないときは黙って翌日へ送らない**（1日あたりの本数を測っているため）。"""
+    with pytest.raises(SystemExit) as err:
+        slots(4, 23, "2026-09-30", [], step_min=30, taken_min=set())
+    assert "30分きざみ" in str(err.value)
+
+
+def test_ledger_minutes_keeps_the_minute(tmp_path, monkeypatch) -> None:
+    """`ledger_hours` は同じ行を**時に落として**読んでいました。"""
+    from scripts import batch_build
+
+    rows = [
+        {"at": "2026-09-30T00:00:00Z"},   # JST 09:00
+        {"at": "2026-09-30T00:30:00Z"},   # JST 09:30
+        {"at": "2026-09-29T00:00:00Z"},   # 別の日
+    ]
+    monkeypatch.setattr(batch_build.dupes, "ledger_rows", lambda: rows)
+    assert batch_build.ledger_minutes("2026-09-30") == {9 * 60, 9 * 60 + 30}
+    assert batch_build.ledger_hours("2026-09-30") == {9}
+
+
+def test_show_slot_reads_both_forms() -> None:
+    from scripts.batch_build import _show_slot
+
+    assert _show_slot("2026-09-30@10") == "10:00"
+    assert _show_slot("2026-09-30@10:30") == "10:30"
+
+
+# ---------------------------------------------------------------------------
+# `upload_only.split_when`（同じ 2026-08-18 の直しの、受け取る側）
+#
+# **`next_publish_at` は最初から `minute_jst` を受け取ります。**
+# 渡す側（ここ）が時しか持っていませんでした。片方だけ直すと、
+# `slots()` が `10:30` を返しても `10:00` に置かれます。
+# ---------------------------------------------------------------------------
+
+
+def test_split_when_reads_minutes() -> None:
+    from scripts.upload_only import split_when
+
+    assert split_when("9") == (9, 0, None)
+    assert split_when("9:30") == (9, 30, None)
+    assert split_when("2026-08-24@10") == (10, 0, "2026-08-24")
+    assert split_when("2026-08-24@10:30") == (10, 30, "2026-08-24")
+
+
+def test_split_when_rejects_bad_minute() -> None:
+    from scripts.upload_only import split_when
+
+    with pytest.raises(ValueError):
+        split_when("2026-08-24@10:60")
+
+
+def test_slots_output_is_parsed_by_split_when() -> None:
+    """**両端を1つの検査で結ぶこと。** 形を変えた回が読む側を忘れます。"""
+    from scripts.upload_only import split_when
+
+    for spec in slots(3, 9, "2026-09-30", [], step_min=30, taken_min=set()):
+        hour, minute, date = split_when(spec)
+        assert date == "2026-09-30"
+        assert 0 <= hour <= 23 and minute in (0, 30)

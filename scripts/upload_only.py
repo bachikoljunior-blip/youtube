@@ -26,24 +26,36 @@ from src import bars, config, uploader  # noqa: E402
 FORBIDDEN = ("github", "GitHub", "リポジトリ", "コードを公開", "ソースコード")
 
 
-def split_when(when: str) -> tuple[int, str | None]:
-    """予約時刻の指定を `(時, 日付 or None)` に分ける。
+def split_when(when: str) -> tuple[int, int, str | None]:
+    """予約時刻の指定を `(時, 分, 日付 or None)` に分ける。
 
-        "9"                 → (9, None)          最初に空いている日の 09:00
-        "2026-08-24@10"     → (10, "2026-08-24")  **その日に釘づけ**
+        "9"                  → (9, 0, None)           最初に空いている日の 09:00
+        "9:30"               → (9, 30, None)          同じく 09:30
+        "2026-08-24@10"      → (10, 0, "2026-08-24")  **その日に釘づけ**
+        "2026-08-24@10:30"   → (10, 30, "2026-08-24")
 
     日付を釘づけできないと「1日にN本」が作れません（`src/uploader.py`
     `next_publish_at` の docstring）。M14 の 8 の段はこれが無くて止まっていました。
+
+    **分を足したのは 2026-08-18 です。** `next_publish_at` は最初から
+    `minute_jst` を受け取るのに、**ここが時しか渡していませんでした。**
+    そのぶん1日に置ける枠が11個で止まり（9〜19時）、投稿の本数枠 92本に対して
+    **8倍以上足りていません**でした（`batch_build.slots` の `step_min`）。
     """
     text = when.strip()
+    date_part: str | None = None
     if "@" in text:
-        date_part, _, hour_part = text.partition("@")
-        return int(hour_part), date_part
-    return int(text), None
+        date_part, _, text = text.partition("@")
+    hour_part, _, minute_part = text.partition(":")
+    minute = int(minute_part) if minute_part else 0
+    if not 0 <= minute <= 59:
+        raise ValueError(f"分は 0〜59 で渡すこと: {when!r}")
+    return int(hour_part), minute, date_part
 
 
 def main(topic: str, visibility: str | None = None, hour: int | None = None,
-         date_jst: str | None = None, skip_dupe_check: bool = False) -> int:
+         date_jst: str | None = None, skip_dupe_check: bool = False,
+         minute: int | None = None) -> int:
     """hour を渡すと、その時刻（JST）で予約する。
     date_jst（`YYYY-MM-DD`）も渡すと、**その日に釘づけ**する（埋まっていれば失敗）。
 
@@ -73,6 +85,11 @@ def main(topic: str, visibility: str | None = None, hour: int | None = None,
     if hour is not None:
         channel["publish"] = dict(channel["publish"])
         channel["publish"]["publish_hour_jst"] = hour
+    if minute is not None:
+        # **時と別に上書きすること。** `channel.yaml` の既定は :00 なので、
+        # 分だけ渡された回（`"9:30"`）でここを飛ばすと、黙って :00 に戻ります。
+        channel["publish"] = dict(channel["publish"])
+        channel["publish"]["publish_minute_jst"] = minute
         print(f"[check] 予約時刻を {hour}:00 JST で上書き")
     if date_jst:
         channel["publish"] = dict(channel["publish"])
@@ -195,13 +212,14 @@ if __name__ == "__main__":
     if len(_argv) not in (1, 2, 3):
         print(__doc__)
         raise SystemExit(2)
-    _hour, _date = (None, None)
+    _hour, _minute, _date = (None, None, None)
     if len(_argv) == 3:
-        _hour, _date = split_when(_argv[2])
+        _hour, _minute, _date = split_when(_argv[2])
     raise SystemExit(main(
         _argv[0],
         _argv[1] if len(_argv) >= 2 and _argv[1] else None,
         _hour,
         _date,
         _allow,
+        _minute,
     ))
