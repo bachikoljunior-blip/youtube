@@ -111,3 +111,32 @@ def test_ship_が警告を通す(tmp_path, capsys, monkeypatch):
     out = capsys.readouterr().out
     assert "潰した宣言を 1 件" in out
     assert "一覧に無い語" in out, "`ship()` から `_warn_unknown` が呼ばれていません"
+
+
+def test_書き込む前の一覧で見ること(tmp_path, capsys, monkeypatch):
+    """**入れた直後に自分で踏んだ形。**（2026-08-17）
+
+    `carry_over()` は `recorded_closures()`（＝ `data/runs.jsonl`）を読みます。
+    だから **先に記録してから見にいくと、たった今書いた宣言が自分の語を黙らせ**、
+    一覧から消えます。結果、**正しい語を書いた回にかぎって「一覧に無い」と鳴る** ——
+    **当たりのときだけ鳴らない**という、いちばん質の悪い向きの壊れ方でした。
+
+    ここでは実データの持ち越しから1語を取り、`ship()` の道で宣言してみます。
+    **書き込む前に語彙を読んでいれば、警告は出ません。**
+    """
+    import retro
+    carried, _dropped = retro.carry_over()
+    if not carried:
+        return
+    word = sorted(carried)[0]
+    marks = tmp_path / "runs.jsonl"
+    monkeypatch.setattr(run_marker, "MARKS", marks)
+    # **`retro` にも同じファイルを見せること。** 別の口を見せると、
+    # 「書いた記録が自分を黙らせる」という肝心の道が再現されません
+    # （検査が緑のまま、直す前のコードも通ります）。
+    monkeypatch.setattr(retro, "RUNS", marks)
+    run_marker.ship("fix: 検査用", [word])
+    out = capsys.readouterr().out
+    assert "一覧に無い語" not in out, (
+        f"いま出ている持ち越し `{word}` を宣言したのに「一覧に無い」と言っています。"
+        "**記録を書いた後に一覧を読んでいます**（順番が逆）")

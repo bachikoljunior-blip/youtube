@@ -204,6 +204,12 @@ def ship(what: str, closes: list[str] | None = None) -> int:
         "what": what,
     }
     closes = [c.strip() for c in (closes or []) if c.strip()]
+    # **語彙は、書き込む前に読むこと**（2026-08-17。**入れた直後に自分で踏みました**）。
+    # `carry_over()` は `recorded_closures()` を読むので、先に `_append` すると
+    # **たった今書いた宣言そのものがその語を黙らせ、一覧から消えます。**
+    # 結果、正しい語を書いた回にかぎって「一覧に無い」と言われる ——
+    # **警告が、当たりでだけ鳴らない**という向きの壊れ方でした。
+    known = _known_vocab() if closes else None
     if closes:
         rec["closes"] = closes
         rec["journal_lines"] = journal_lines()
@@ -213,11 +219,40 @@ def ship(what: str, closes: list[str] | None = None) -> int:
         print(f"[marker] **潰した宣言を {len(closes)} 件、構造で残しました**"
               f"（{' / '.join(closes)}）。")
         print("         `retro.py` の持ち越しから、この語より前の言及が落ちます。")
-        _warn_unknown(closes)
+        _warn_unknown(closes, known)
     return 0
 
 
-def _warn_unknown(closes: list[str]) -> None:
+def _known_vocab() -> tuple[set[str], dict[str, list[str]]] | None:
+    """**いま「潰した」と言ってよい語**を、実物から集める。
+
+    **`ship()` が `_append` する前に呼ぶこと。** あとから呼ぶと、
+    たった今書いた宣言が `recorded_closures()` 経由で自分の語を黙らせ、
+    **正しい語のときだけ「一覧に無い」と鳴ります**（入れた回に実際に踏みました）。
+
+    読めなければ `None`。**その回は黙って通します**（記録は落とさない）。
+    """
+    root = Path(__file__).resolve().parent.parent
+    try:
+        for p in (str(root), str(root / "scripts")):
+            if p not in sys.path:
+                sys.path.insert(0, p)
+        from retro import carry_over
+        from src import alerts
+
+        carried, dropped = carry_over()
+        known = set(carried) | {r.key for r in alerts.table()}
+        # 物の名前として沈めた語は「一覧に無い」と言わない（**外したのはこちら側の都合**）
+        for toks in dropped.values():
+            known.update(toks)
+        return known, carried
+    except Exception as exc:                      # 読めないなら黙って通す
+        print(f"         （持ち越しの一覧を読めませんでした: {exc}）")
+        return None
+
+
+def _warn_unknown(closes: list[str],
+                  known: tuple[set[str], dict[str, list[str]]] | None = None) -> None:
     """**その語が、本当に一覧に載っているか。**（2026-08-17。3回運ばれた申し送り）
 
     `--closes` は**どんな語でも黙って受け取ります。** 書き間違えても、
@@ -233,23 +268,11 @@ def _warn_unknown(closes: list[str]) -> None:
     - `retro.py` の持ち越し（`carry_over()`。**同じ計算を呼びます**）
     - `src/alerts.py` の一覧の鍵（`data/alerts.jsonl` に鳴った記録があるもの）
     """
-    root = Path(__file__).resolve().parent.parent
-    try:
-        for p in (str(root), str(root / "scripts")):
-            if p not in sys.path:
-                sys.path.insert(0, p)
-        from retro import carry_over
-        from src import alerts
-
-        carried, dropped = carry_over()
-        known = set(carried) | {r.key for r in alerts.table()}
-        # 物の名前として沈めた語は「一覧に無い」と言わない（**外したのはこちら側の都合**）
-        for toks in dropped.values():
-            known.update(toks)
-    except Exception as exc:                      # 読めないなら黙って通す
-        print(f"         （持ち越しの一覧を読めませんでした: {exc}）")
+    pair = known if known is not None else _known_vocab()
+    if pair is None:
         return
-    unknown = [c for c in closes if c not in known]
+    vocab, carried = pair
+    unknown = [c for c in closes if c not in vocab]
     if not unknown:
         return
     print(f"  [!] **一覧に無い語が {len(unknown)} 件あります**: {' / '.join(unknown)}")
