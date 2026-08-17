@@ -525,10 +525,10 @@ def check_tables() -> None:
         edge = row["年金収入の上限"]
         if keigen_rate(hantei_shotoku(nenkin=edge), 1) < pct:
             raise _checks.TableError(
-                f"年金収入{edge:,}円で{pct}割軽減が当たっていない")
+                f"年金収入{edge:,}円で{pct // 10}割軽減が当たっていない")
         if keigen_rate(hantei_shotoku(nenkin=edge + 1), 1) >= pct:
             raise _checks.TableError(
-                f"年金収入{edge:,}円を1円こえても{pct}割軽減が残っている")
+                f"年金収入{edge:,}円を1円こえても{pct // 10}割軽減が残っている")
     # 境目は軽減が薄くなるほど高いこと
     _checks.ascending([keigen_border_nenkin(p, 1)["年金収入の上限"]
                        for p in (70, 50, 20)], "軽減の境目（年金収入）", strict=True)

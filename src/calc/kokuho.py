@@ -465,7 +465,7 @@ def check_tables() -> None:
             edge = keigen_threshold(pct, members)
             if keigen_rate(edge, members) < pct:
                 raise _checks.TableError(
-                    f"被保険者{members}人・所得{edge:,}円で{pct}割軽減が当たらない")
+                    f"被保険者{members}人・所得{edge:,}円で{pct // 10}割軽減が当たらない")
         top = keigen_threshold(20, members)
         if keigen_rate(top + 1, members) != 0:
             raise _checks.TableError(
