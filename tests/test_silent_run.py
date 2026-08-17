@@ -231,3 +231,41 @@ def test_名指しの行に落ち方が出る(marks):
         [_sess(ME, NOW, status="SESSION_STATUS_RUNNING"), dead], ME)
     assert found and found[0].get("ending") == "apifail"
     assert "API 一時失敗" in sibling_check.ENDING_LABEL["apifail"]
+
+
+# --- nosrc でも「読むものが無い」ことがある（2026-08-18 に踏んだ）-----------
+
+def test_nosrc_でも既定の題名なら止めさせる():
+    """**`nosrc` と `apifail` は同じ軸に並んでいません。**
+
+    `nosrc` は「sources が渡ったか」、`apifail` は「§6 (d) まで届いたか」で、
+    **両方が同時に起きます。** `session_01CbJXLKu2La79BPj66zTyre` は
+    **sources が空で、かつ34秒で死んで題名は既定のまま**でした。
+
+    素直に「題名を読め」と言うと、次の子は中身ゼロの既定題名を受け取り帳へ
+    落とします —— **`apifail` の側で塞いだ穴に、`nosrc` の側から入ります。**
+    """
+    got = _adv("nosrc")
+    assert sibling_check.DEFAULT_TITLE in got, "既定の題名を名指ししていない"
+    assert "そこで止めること" in got
+    assert "`inbox.py --open` に落とさないこと" in got
+
+
+def test_既定の題名は手順書と同じ文字列():
+    """**手で書き写した文字列が古くなると、この門は黙って開きます。**
+
+    この題名は repo の中の誰も付けていません —— `create_session` を
+    `title` 無しで呼んだときに**プラットフォーム側が付ける**ものです。
+    だから「正本」はコードにはありません。**repo の中にある写しは2つ**で、
+    `docs/trigger_main.md`（§0 の 529 の節）と、この定数です。
+    **片方だけ直すと、門は落ちずに開きます。**
+
+    最初に書いた版は `docs/trigger_parent.md` を見にいって落ちました。
+    **親は題名を付けていません**（付けないからこそ既定のままになります）。
+    """
+    from pathlib import Path
+    doc = Path(__file__).resolve().parent.parent / "docs" / "trigger_main.md"
+    assert sibling_check.DEFAULT_TITLE in doc.read_text(encoding="utf-8"), (
+        f"{sibling_check.DEFAULT_TITLE!r} が docs/trigger_main.md に見つかりません。"
+        " プラットフォームが付ける既定の題名が変わったなら、両方を直すこと。"
+    )

@@ -310,8 +310,12 @@ def silent_runs(sessions: list[dict], me: str | None) -> list[dict]:
 
 
 #: 名指しした回の**落ち方**（`sessions_compact.ENDINGS`）。行に1語足したときだけ入ります。
+#: §6 (d) に届かなかった回の題名（`docs/trigger_parent.md` が付ける既定）。
+#: **これと同じなら、中身は1行もありません。**
+DEFAULT_TITLE = "YouTube 定期の回（子）"
+
 ENDING_LABEL = {
-    "nosrc": "← **repo が渡らなかった回**（題名が唯一の記録）",
+    "nosrc": "← **repo が渡らなかった回**（題名が唯一の記録。**既定のままなら中身ゼロ**）",
     "apifail": "← **立ち上がりの API 一時失敗**（題名は既定のまま＝中身ゼロ）",
 }
 
@@ -328,6 +332,23 @@ def silent_advice(found: list[dict]) -> list[str]:
                    落ちた回。**§6 (d) に到達していないので題名は既定のまま**
                    （「YouTube 定期の回（子）」）で、**中身は1行もありません。**
 
+    ## **2つは同じ軸に並んでいません**（2026-08-18 に踏んだ）
+
+    上の2語は「どちらか」に見えますが、**測っているものが別**です:
+
+        `nosrc`    **sources が渡ったか**（repo に書けたか）
+        `apifail`  **§6 (d) まで届いたか**（題名に中身があるか）
+
+    **両方が同時に起きます。** `session_01CbJXLKu2La79BPj66zTyre` がそれで、
+    **`sources` は空、かつ 34秒で死んで題名は既定のまま**でした
+    （22:52:13 → 22:52:47）。`nosrc` と印を付けると、この関数は
+    **「題名を読め」と言います。読むものはありません。**
+
+    **`apifail` の側で塞いだ穴に、`nosrc` の側から入れました。**
+    だから分岐を落ち方の語ではなく、**題名が既定かどうか**で切ります ——
+    そちらが「読むものがあるか」を直接言っているからです
+    （落ち方の語は、そこへの遠回りな代理でしかありません）。
+
     23:0x の `session_01JBEBXm3FijEVuXTFeynLAU` が後者です（出力2行・push なし）。
     **前者の文言のまま名指しすると、次の子は中身ゼロの既定題名を読みにいき、
     それを「申し送り」として受け取り帳に落とします** —— 空の依頼が1件増えて、
@@ -339,7 +360,12 @@ def silent_advice(found: list[dict]) -> list[str]:
         out.append("    → **`session_context.sources` が空だった回なら、`title` を読むこと。**")
         out.append("      §6 (d) の題名だけが、その回の唯一の記録です"
                    "（`list_sessions` の返りは、いま手元にあります）。")
-        out.append("      読んだら `python scripts/inbox.py --open \"<題名>\"` で受け取り帳へ。")
+        out.append(f"      **ただし、題名が既定（「{DEFAULT_TITLE}」）のままなら、"
+                   "そこで止めること** ——")
+        out.append("      その回は §6 (d) に届いていないので、**中身は1行もありません。**"
+                   "`inbox.py --open` に落とさないこと。")
+        out.append("      読んで中身があったときだけ "
+                   "`python scripts/inbox.py --open \"<題名>\"` で受け取り帳へ。")
     if "apifail" in kinds:
         out.append("    → **`apifail` の回は、拾い直すものがありません。**"
                    "§6 (d) まで届いていないので")
