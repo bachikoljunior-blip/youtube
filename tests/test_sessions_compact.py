@@ -223,3 +223,50 @@ def test_quota_は少しの時計ずれで落とさない(tmp_path, monkeypatch)
         encoding="utf-8")
     monkeypatch.setattr(quota, "LOG", log)
     assert len(quota._load()) == 1
+
+
+def test_落ち方の印は普通の行には要らない():
+    """**25件ぶん写す手を増やさないこと。** 足すのは名指しされた1件だけです。"""
+    rows = "a AR 2026-08-17T01:00:00 2026-08-17T02:00:00 p 1786979400 allowed"
+    got = sc.parse(rows, "2026-08-17", "youtube-hourly")[0]
+    assert "ending" not in got, "普通の行に欄ができています"
+    assert "session_context" not in got, "見ていないものを「空」と書いています"
+
+
+def test_apifail_は_sources_を空と書かない():
+    """**`apifail` の回は `sources` が入っていた回**です。混ぜると次の子が誤診します。"""
+    rows = "a AR 2026-08-17T01:00:00 2026-08-17T02:00:00 p 1786979400 allowed apifail"
+    got = sc.parse(rows, "2026-08-17", "youtube-hourly")[0]
+    assert got["ending"] == "apifail"
+    assert "session_context" not in got
+
+
+def test_nosrc_は_sources_を空にする():
+    rows = "a AR 2026-08-17T01:00:00 2026-08-17T02:00:00 p 1786979400 allowed nosrc"
+    got = sc.parse(rows, "2026-08-17", "youtube-hourly")[0]
+    assert got["ending"] == "nosrc"
+    assert got["session_context"] == {"sources": []}
+
+
+def test_落ち方の印と使用量は同じ行に並べられる():
+    """**4つ組の走査に食われないこと**（`f[7:]` を2つの規則が見ています）。"""
+    rows = ("a AR 2026-08-17T01:00:00 2026-08-17T02:00:00 p 1786979400 allowed "
+            "apifail 0,44911,2,202")
+    got = sc.parse(rows, "2026-08-17", "youtube-hourly")[0]
+    assert got["ending"] == "apifail"
+    assert got["external_metadata"]["usage"]["cache_write_tokens"] == 44911
+
+
+def test_seven_day_は並び順で消えない():
+    """**位置で見ていた**（`f[7]` 決め打ち）ので、印を先に書くと枠の種類が化けました。
+
+    5時間枠と7日枠は別物で、混ぜると `quota.py` の目盛りが狂います
+    （`docs/trigger_main.md` §2「割り引いて読むこと」）。**黙って化けるほうの壊れ方**です。
+    """
+    base = "a AR 2026-08-17T01:00:00 2026-08-17T02:00:00 p 1786979400 allowed"
+    for tail in ("seven_day", "apifail seven_day", "seven_day apifail"):
+        got = sc.parse(f"{base} {tail}", "2026-08-17", "youtube-hourly")[0]
+        kind = got["external_metadata"]["rate_limit_info"]["rateLimitType"]
+        assert kind == "seven_day", f"{tail!r} で {kind} に化けています"
+    got = sc.parse(base, "2026-08-17", "youtube-hourly")[0]
+    assert got["external_metadata"]["rate_limit_info"]["rateLimitType"] == "five_hour"

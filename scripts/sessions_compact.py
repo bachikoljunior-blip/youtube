@@ -141,6 +141,24 @@ def stamp(text: str, base: str) -> str:
     return out
 
 
+#: **終わり方の印**（2026-08-17 に足した。**足すのは「1行も残さずに死んだ回」だけ**）。
+#:
+#: 25件ぶん写す手を増やさないため、**普通の回には1語も要りません。**
+#: 書くのは `sibling_check` が名指しする回、つまり
+#: **`run_marker` の印を1つも残していない回**についてだけです。
+#: その1件を返りから読むとき、次のどちらかを最後に足します:
+#:
+#:     nosrc    `session_context.sources` が**空**だった
+#:              ＝ repo が渡らなかった回（2026-08-17 04:1x）
+#:     apifail  `sources` は入っているのに `post_turn_summary.status_detail` が
+#:              API 側の一時失敗（`API Error: 529 Overloaded` など。2026-08-17 23:0x）
+#:
+#: **この2つは、次の子のやることが正反対です**（`sibling_check.report_silent`）。
+#: 印が無いと道具は「`sources` が渡らなかった疑い」と**断定して**しまい、
+#: 既定のままの題名（中身ゼロ）を読みにいかせます。
+ENDINGS = {"nosrc", "apifail"}
+
+
 def parse(rows: str, base: str, tag: str) -> list[dict]:
     out = []
     for raw in rows.splitlines():
@@ -151,15 +169,18 @@ def parse(rows: str, base: str, tag: str) -> list[dict]:
         if len(f) < 7:
             raise SystemExit(f"列が足りません（7つ以上要ります）: {raw!r}")
         sid, status, born, seen, parent, resets, rls = f[:7]
+        # **位置ではなく中身で見ること**（2026-08-17 23:2x）。`f[7]` 決め打ちだと、
+        # 落ち方の印を先に書いた行で `seven_day` が黙って `five_hour` に化けます
+        # （このファイルが3度目の「片方だけ」です）。
         meta = {"rate_limit_info": {
-            "rateLimitType": "seven_day" if len(f) > 7 and f[7] == "seven_day" else "five_hour",
+            "rateLimitType": "seven_day" if "seven_day" in f[7:] else "five_hour",
             "resetsAt": int(resets), "status": rls}}
         tokens = [x for x in f[7:] if re.fullmatch(r"\d+(,\d+){3}", x)]
         if tokens:
             cr, cw, i, o = (int(x) for x in tokens[0].split(","))
             meta["usage"] = {"cache_read_tokens": cr, "cache_write_tokens": cw,
                              "input_tokens": i, "output_tokens": o}
-        out.append({
+        row = {
             "id": full_id(sid),
             "session_status": status if status.startswith("SESSION_STATUS_")
             else "SESSION_STATUS_" + status,
@@ -168,7 +189,15 @@ def parse(rows: str, base: str, tag: str) -> list[dict]:
             "tags": [tag],
             "parent_session_id": full_id(parent),
             "external_metadata": meta,
-        })
+        }
+        ending = [x for x in f[7:] if x in ENDINGS]
+        if ending:
+            # **書かれていないことを「無かった」と読まないため**、印のある行にだけ
+            # 欄を作ります（`sources` の欄そのものが無い ＝ 見ていない、です）。
+            row["ending"] = ending[0]
+            if ending[0] == "nosrc":
+                row["session_context"] = {"sources": []}
+        out.append(row)
     return out
 
 

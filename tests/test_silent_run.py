@@ -170,3 +170,64 @@ def test_受け取り帳に入っている回は二度と名指ししない(mark
 
     monkeypatch.setattr(Path, "read_text", fake)
     assert sibling_check.silent_runs(sessions, ME) == [], "落とした後も鳴っています"
+
+
+# ---------------------------------------------------------------------------
+# **同じ「印ゼロ」に、やることが正反対の落ち方が2つある**（2026-08-17 23:2x に足した）
+#
+# `session_01JBEBXm3FijEVuXTFeynLAU` は `sources` を渡されて立ったのに、
+# **1ターン目で `API Error: 529 Overloaded` に当たって死にました**（出力2行・push なし）。
+# 印はゼロなので `silent_runs` は正しく名指ししますが、**言う中身が間違っていました** ——
+# 「`sources` が渡らなかった疑い ＝ 題名を読め」。
+# その回の題名は **§6 (d) に届いていないので既定のまま**（中身ゼロ）です。
+# ---------------------------------------------------------------------------
+
+def _adv(*endings):
+    found = [{"id": f"session_{i}", "created_at": NOW, "ending": e}
+             for i, e in enumerate(endings)]
+    return "\n".join(sibling_check.silent_advice(found))
+
+
+def test_apifail_の回には題名を読みにいかせない():
+    """**拾えないものを拾わせないのが、ここの仕事です。**
+
+    読ませると、次の子は中身ゼロの既定題名を「申し送り」として受け取り帳に落とし、
+    **さらに次の回がそれを閉じる仕事をします**（空の依頼が1件ふえるだけ）。
+    """
+    got = _adv("apifail")
+    assert "拾い直すものがありません" in got
+    assert "`inbox.py --open` に落とさないこと" in got
+    assert "title` を読むこと" not in got, "題名を読みにいかせています"
+
+
+def test_nosrc_の回には題名を読ませる():
+    """**こちらは題名だけが記録です**（2026-08-17 04:1x）。両向きで見ること。"""
+    got = _adv("nosrc")
+    assert "`title` を読むこと" in got
+    assert "inbox.py --open" in got
+    assert "拾い直すものがありません" not in got
+
+
+def test_落ち方が混ざったら両方言う():
+    """1件が `apifail` でも、**もう1件の `nosrc` を黙らせないこと。**"""
+    got = _adv("apifail", "nosrc")
+    assert "`title` を読むこと" in got
+    assert "拾い直すものがありません" in got
+
+
+def test_落ち方が書かれていなければ_見る場所を言う():
+    """**書かれていないことを「repo が無かった」と断定しないこと**（直す前はしていた）。"""
+    got = _adv(None)
+    assert "落ち方が書かれていません" in got
+    assert "post_turn_summary" in got and "sources" in got
+
+
+def test_名指しの行に落ち方が出る(marks):
+    """一覧の行そのものにも出ること（`silent_advice` だけ直しても片効きになる）。"""
+    marks([{"at": "2026-08-17T09:00:00+09:00", "session": "session_ok", "kind": "start"}])
+    dead = _sess("session_dead", "2026-08-17T14:02:13.000000Z")
+    dead["ending"] = "apifail"
+    found = sibling_check.silent_runs(
+        [_sess(ME, NOW, status="SESSION_STATUS_RUNNING"), dead], ME)
+    assert found and found[0].get("ending") == "apifail"
+    assert "API 一時失敗" in sibling_check.ENDING_LABEL["apifail"]

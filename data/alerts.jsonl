@@ -66,3 +66,6 @@
 {"at": "2026-08-17T22:25:45+09:00", "key": "stranded", "n": 1, "session": "session_018aManAtcfJYsDBm1vVWDUp", "by": "status.py"}
 {"at": "2026-08-17T22:26:37+09:00", "key": "missing_thumbnail", "n": 5, "session": "session_018aManAtcfJYsDBm1vVWDUp", "by": "status.py"}
 {"at": "2026-08-17T22:53:15+09:00", "key": "undeclared_close", "n": 1, "session": "session_018aManAtcfJYsDBm1vVWDUp", "by": "run_marker.py"}
+{"at": "2026-08-17T23:20:54+09:00", "key": "carry_over", "n": 13, "session": "session_013vjqD5non7FF19WFa8J5dZ", "by": "retro.py"}
+{"at": "2026-08-17T23:21:22+09:00", "key": "missing_thumbnail", "n": 8, "session": "session_013vjqD5non7FF19WFa8J5dZ", "by": "status.py"}
+{"at": "2026-08-17T23:32:20+09:00", "key": "silent_run", "n": 2, "session": "session_013vjqD5non7FF19WFa8J5dZ", "by": "diag2.py"}

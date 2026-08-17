@@ -309,6 +309,53 @@ def silent_runs(sessions: list[dict], me: str | None) -> list[dict]:
     return sorted(out, key=lambda s: str(s.get("created_at")), reverse=True)
 
 
+#: 名指しした回の**落ち方**（`sessions_compact.ENDINGS`）。行に1語足したときだけ入ります。
+ENDING_LABEL = {
+    "nosrc": "← **repo が渡らなかった回**（題名が唯一の記録）",
+    "apifail": "← **立ち上がりの API 一時失敗**（題名は既定のまま＝中身ゼロ）",
+}
+
+
+def silent_advice(found: list[dict]) -> list[str]:
+    """名指しした回に対して、**やることを落ち方べつに**返す。
+
+    **ここは長らく「`sources` が渡らなかった疑い」と断定していました**
+    （2026-08-17 23:2x に直した）。断定できるのは 04:1x の1件しか見ていなかったからで、
+    **同じ「印ゼロ」に、やることが正反対の落ち方がもう1つあります。**
+
+        `nosrc`    repo が渡らなかった回。**題名だけが記録**なので読みにいく値打ちがある
+        `apifail`  立ち上がりの1ターン目が API 側の一時失敗（`529 Overloaded` など）で
+                   落ちた回。**§6 (d) に到達していないので題名は既定のまま**
+                   （「YouTube 定期の回（子）」）で、**中身は1行もありません。**
+
+    23:0x の `session_01JBEBXm3FijEVuXTFeynLAU` が後者です（出力2行・push なし）。
+    **前者の文言のまま名指しすると、次の子は中身ゼロの既定題名を読みにいき、
+    それを「申し送り」として受け取り帳に落とします** —— 空の依頼が1件増えて、
+    さらに次の回がそれを閉じる仕事をします。**拾えないものを拾わせないのが、ここの仕事です。**
+    """
+    kinds = {str(s.get("ending") or "") for s in found}
+    out: list[str] = []
+    if kinds - {"apifail"}:                  # nosrc か、落ち方の分からない回がある
+        out.append("    → **`session_context.sources` が空だった回なら、`title` を読むこと。**")
+        out.append("      §6 (d) の題名だけが、その回の唯一の記録です"
+                   "（`list_sessions` の返りは、いま手元にあります）。")
+        out.append("      読んだら `python scripts/inbox.py --open \"<題名>\"` で受け取り帳へ。")
+    if "apifail" in kinds:
+        out.append("    → **`apifail` の回は、拾い直すものがありません。**"
+                   "§6 (d) まで届いていないので")
+        out.append("      題名は既定のまま（中身ゼロ）です。"
+                   "**`inbox.py --open` に落とさないこと** ——")
+        out.append("      空の依頼が1件ふえ、次の回がそれを閉じる仕事をするだけです。")
+        out.append("      **失ったのは1周ぶんの時間だけで、鎖は切れていません**"
+                   "（親の毎時 cron が拾います）。")
+    if not kinds - {""}:                     # 1件も印が無い ＝ どちらか分からない
+        out.append("    **落ち方が書かれていません。**"
+                   "返りの2つを目で見て、行に1語足すこと（`sessions_compact.ENDINGS`）:")
+        out.append("      `session_context.sources` が空 → `nosrc` ／"
+                   "`post_turn_summary.status_detail` が API エラー → `apifail`")
+    return out
+
+
 def report_silent(sessions: list[dict], me: str | None) -> None:
     """見つけたら、**題名を読みにいけ**と言う。件数だけでは何も伝わらない。
 
@@ -331,14 +378,13 @@ def report_silent(sessions: list[dict], me: str | None) -> None:
     print()
     print(f"[!] **repo に1行も残さずに終わった回が {len(found)}件あります。**")
     for sess in found:
-        print(f"    {sess.get('id')}  生 {sess.get('created_at')}")
+        print(f"    {sess.get('id')}  生 {sess.get('created_at')}"
+              f"  {ENDING_LABEL.get(str(sess.get('ending')), '（落ち方は未確認）')}")
     print("    **`run_marker.py --write` すら打てていません** ＝ その回は")
-    print("    `/home/user/youtube` に触れていない（`sources` が渡らなかった疑い）。")
-    print("    **日誌にも受け取り帳にも何も残っていません。**")
-    print("    → **いま手元にある `list_sessions` の返りで、その `title` を読むこと。**")
-    print("      §6 (d) の題名だけが、その回の唯一の記録です。")
-    print("      読んだら `python scripts/inbox.py --open \"<題名>\"` で受け取り帳へ落とし、")
-    print("      潰したら `run_marker.py --ship ... --closes silent_run`。")
+    print("    `/home/user/youtube` に1バイトも書けていません。")
+    for line in silent_advice(found):
+        print(line)
+    print("    潰したら `run_marker.py --ship ... --closes silent_run`。")
 
 
 def runway_days(now: datetime) -> float | None:
