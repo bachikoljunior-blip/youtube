@@ -369,3 +369,4 @@
 {"at": "2026-08-18T06:24:02+09:00", "session": "session_01BQpQwxCFvC9vkcjkFvYtTH", "kind": "start"}
 {"at": "2026-08-18T06:42:14+09:00", "session": "session_01BQpQwxCFvC9vkcjkFvYtTH", "kind": "ship", "what": "means: 労災の休業補償（src/calc/rousai.py 新設6節・テーマ+6・在庫の未使用0→6→0）"}
 {"at": "2026-08-18T06:54:12+09:00", "session": "session_01BQpQwxCFvC9vkcjkFvYtTH", "kind": "ship", "what": "means: インボイスの2割特例（src/calc/invoice.py 新設7節・テーマ300→306）"}
+{"at": "2026-08-18T07:10:31+09:00", "session": "session_01Re3Qy8JtPiZZ4GV4aCYTxa", "kind": "start"}
