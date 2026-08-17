@@ -59,6 +59,7 @@ import json
 import re
 import sys
 from collections import Counter, defaultdict
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -309,6 +310,100 @@ def noise_tokens() -> dict[str, set[str]]:
     return {"族名": calcs, "種類": set(SHIP_KINDS), "動画ID": vids}
 
 
+JST = timezone(timedelta(hours=9))
+# Data API の1日枠が戻る時刻（太平洋時間の0時 ＝ JST 16:00 ごろ）。
+# `status.py` と `docs/trigger_main.md` §5 が同じ時刻を言っています。
+QUOTA_BACK_HOUR = 16
+# 申し送りの本文が「この項目は日枠が戻らないと動かせない」と言っている印。
+# **手で語彙を並べていません** —— 日誌の実物から引いた4つの形だけです
+# （`noise_tokens()` の教訓と同じ。ただしこちらは語ではなく**文の印**なので、
+# `src/` から引ける実物がありません。増えたらここに足すこと）。
+QUOTA_MARK_RE = re.compile(r"JST\s*16:00|16:00\s*(?:以降|より前)|日枠|403")
+
+
+def items_of(body: list[str]) -> list[list[str]]:
+    """申し送りの本文を、番号つきの項目ごとに切る。
+
+    **節ぜんぶを1つの文字列として見ないこと。** 申し送りは1回に5〜6件あり、
+    そのうち1件だけが日枠がらみ、ということが普通に起きます。
+    節で見ると、その1件の「JST 16:00」が**同じ回の他の5件を全部巻き込みます。**
+    """
+    items: list[list[str]] = []
+    cur: list[str] = []
+    for line in body:
+        if ITEM_RE.match(line):
+            if cur:
+                items.append(cur)
+            cur = [line]
+        elif cur:
+            cur.append(line)
+    if cur:
+        items.append(cur)
+    return items
+
+
+def quota_blocked(blocks: list[tuple[str, list[str], int]], tok: str) -> bool:
+    """その語を言っている項目が、**1つ残らず**日枠がらみか。
+
+    ## なぜ要るか（2026-08-17。**「一覧が当たりを含まないまま育つ」の5件目**）
+
+    `docs/trigger_main.md` §2.7 は **「持ち越しが出ていたら、そこから選ぶのが既定」**
+    と言っています。ところが日枠は **JST 03:00〜16:00 の13時間ずっと切れていて**、
+    そのあいだの回は `videos.update` も `thumbnails.set` も **403 で必ず落ちます。**
+    この回（09:1x）の実測:
+
+        4回  videos.update                  項目 4/4 が日枠がらみ
+        4回  --closes missing_thumbnail     項目 4/4 が日枠がらみ
+        3回  scripts/refresh_thumbnail.py   項目 3/3 が日枠がらみ
+        3回  topic_forge                    項目 0/3
+        3回  status.py                      項目 1/3
+
+    **上位3件が全部、その回には物理的に潰せないものでした。** 1日13時間ぶんの回が、
+    既定の選び先として**必ず不可能な3件**を読まされていたことになります。
+    （だから `missing_thumbnail` の当たり率は 5回鳴って1回、`carry_over` は 10回で7回。
+    **鳴っている一覧のほうが、時刻によって当たらなくなる**という形です。）
+
+    ## 「全部」で見る理由（多数決にしないこと）
+
+    上の実測は **4/4・4/4・3/3 対 0/3・1/3** で、真ん中がありません。
+    **しきい値を置く必要がない分かれ方**なので、置いていません。
+    比率で切ると、次に 2/3 の語が出たときに**その語の潰せる側の項目まで沈みます。**
+    項目が1つしかない語（`tot == 1`）も沈めません —— 1件では癖と言えないからです。
+
+    ## 消さないこと
+
+    沈めるだけで、**一覧からは落としません**（件数も理由も印字します）。
+    16:00 以降の回では逆に **「いまなら潰せます」** と印を付けて上に残します。
+    落とすと、16:00 以降の回が「もう無い」と読んで永久に潰れなくなります。
+    """
+    total = 0
+    marked = 0
+    for _date, body, _start in blocks:
+        for item in items_of(body):
+            if tok not in tokens(item):
+                continue
+            total += 1
+            if QUOTA_MARK_RE.search("\n".join(item)):
+                marked += 1
+    return total >= 2 and marked == total
+
+
+def quota_is_back(now: datetime | None = None) -> bool:
+    """いま日枠が生きているか（JST 16:00 以降なら戻っている）。"""
+    now = now or datetime.now(timezone.utc)
+    return now.astimezone(JST).hour >= QUOTA_BACK_HOUR
+
+
+def hours_to_quota(now: datetime | None = None) -> float:
+    """日枠が戻るまで何時間か。**戻っていれば 0.0**。"""
+    now = now or datetime.now(timezone.utc)
+    jst = now.astimezone(JST)
+    if jst.hour >= QUOTA_BACK_HOUR:
+        return 0.0
+    back = jst.replace(hour=QUOTA_BACK_HOUR, minute=0, second=0, microsecond=0)
+    return (back - jst).total_seconds() / 3600
+
+
 def tokens(body: list[str]) -> set[str]:
     found = set()
     for m in TOKEN_RE.finditer("\n".join(body)):
@@ -403,10 +498,29 @@ def main() -> int:
         print(f"  {r.line}")
         print("  （全文は `python scripts/retro.py --alerts-all`）")
     elif carried:
-        for tok, dates in sorted(carried.items(), key=lambda kv: -len(kv[1])):
+        # **いまの時刻で潰せないものを、下へ沈める**（2026-08-17。`quota_blocked()`）。
+        # 消しません。§2.7 が「持ち越しから選ぶのが既定」と言っている以上、
+        # **上位が必ず 403 で落ちる語で埋まっていると、選択そのものを誤らせます。**
+        back = quota_is_back()
+        blocked = {t for t in carried if quota_blocked(blocks, t)}
+        order = sorted(carried.items(),
+                       key=lambda kv: ((kv[0] in blocked) and not back, -len(kv[1])))
+        for tok, dates in order:
             tail = "  ← **一度閉じた後の再発**" if tok in closed else ""
+            if tok in blocked:
+                tail += ("  ← **いまなら潰せます**（日枠は戻っています）" if back else
+                         f"  ← **いまは潰せません**（日枠が戻るまであと {hours_to_quota():.1f} 時間）")
             print(f"  {len(dates)}回  {tok}{tail}")
             print(f"        {' / '.join(dates)}")
+        if blocked and not back:
+            print(f"\n  **下の {len(blocked)}件 は日枠（`videos.update` / `thumbnails.set`）待ちで、"
+                  f"この回では 403 になります。**")
+            print(f"  戻るのは **JST {QUOTA_BACK_HOUR}:00 ごろ**（あと {hours_to_quota():.1f} 時間）。"
+                  "**この回で選ぶのは、その上にあるものから。**")
+            print("  **消していません。**16:00 以降の回では逆に上へ戻り、"
+                  "「いまなら潰せます」と出ます。")
+        elif blocked and back:
+            print(f"\n  **日枠は戻っています。上の {len(blocked)}件 は、いまなら潰せる回です。**")
         print("\n  **これは「毎回言っているのに、まだ潰れていない」ものの候補です。**")
         print("  この回で1件は潰すこと。潰せないなら、なぜ潰さないかを JOURNAL に書く。")
         print("  潰したら **`run_marker.py --ship ... --closes carry_over`** と、"
