@@ -594,7 +594,17 @@ def _print_sweep_hint(hits: list[dict] | None = None) -> None:
     shapes: dict[str, int] = {}
     for h in hits:
         shapes[h["形"]] = shapes.get(h["形"], 0) + 1
-    order = [f"{k} {shapes[k]}" for k in ("崖", "逆転", "頭打ち", "不変") if k in shapes]
+    # **形の一覧を、ここに写さないこと**（2026-08-18 に直した）。
+    # 長らく `("崖", "逆転", "頭打ち", "不変")` と書いてあり、`片効き` と `帯` が
+    # 足されたあとも4つのままでした。**内訳の合計が候補の件数に届かない**
+    # （実測 14+52+15+5 = 86 に対して候補 98件）のに、**どこにも赤が出ません。**
+    # `section_sweep.SHAPES` が正本なので、そちらから引きます。
+    # 載っていない形も落とさない（末尾に回す）—— **黙って消えるほうが悪い。**
+    from src import section_sweep
+    known = list(section_sweep.SHAPES)
+    order = [f"{k} {shapes[k]}"
+             for k in known + [k for k in shapes if k not in known]
+             if k in shapes]
     tables = len({h["表"] for h in hits})
     print(f"    (C) **機械で掃引して形を拾う** … 候補 **{len(hits)}件** / 表 {tables}本"
           f"（{' ・ '.join(order)}）")

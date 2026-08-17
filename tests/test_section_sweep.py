@@ -786,3 +786,32 @@ def test_どの形も既出の判定に材料を渡している():
     # `不変` だけは x を持たない設計（`_hit_points` が空を返す）なので除きます
     for shape in ss.SHAPES:
         assert shape in seen, f"形 {shape} が実物から1件も出ていない（上の検査が素通り）"
+
+
+def test_status_の内訳が形を1つも落としていない():
+    """**形の一覧を写した3か所目**（2026-08-18）。
+
+    `scripts/status.py` の (C) の行は `("崖", "逆転", "頭打ち", "不変")` と
+    写してあり、`片効き` と `帯` が足されたあとも4つのままでした。
+    **内訳の合計が候補の件数に届かない**（実測 86 対 98）のに、
+    **どこにも赤が出ません。** 合計が一致することで見ます。
+    """
+    import re
+    import runpy
+    import io
+    import contextlib
+
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
+    import status as st  # noqa: E402
+
+    hits = ss.sweep_all()
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        st._print_sweep_hint(hits)
+    line = buf.getvalue()
+    m = re.search(r"候補 \*\*(\d+)件\*\*.*?（(.+?)）", line, re.S)
+    assert m, line
+    total = int(m.group(1))
+    parts = sum(int(re.search(r"(\d+)$", p.strip()).group(1))
+                for p in m.group(2).split("・"))
+    assert parts == total, f"内訳の合計 {parts} が候補 {total}件 と合わない: {line}"
