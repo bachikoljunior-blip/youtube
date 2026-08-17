@@ -858,6 +858,20 @@
     ],
     "video_id": "YKDUgyIa8Bw"
   },
+  "s-jikotugou-kaikotugou-gake-3-67bai": {
+    "charts": [
+      [
+        "18.0日分",
+        "30.0日分",
+        "66.0日分"
+      ],
+      [
+        "2.20倍",
+        "3.67倍"
+      ]
+    ],
+    "video_id": "-15HcNgcv6M"
+  },
   "s-juminzei-1yen-koeru-6000": {
     "charts": [
       [
@@ -1051,6 +1065,16 @@
       ]
     ],
     "video_id": "E1AV3fsum7E"
+  },
+  "s-kakyu-furikae-taisyougai": {
+    "charts": [
+      [
+        "24万3800円",
+        "17万9900円",
+        "42万3700円"
+      ]
+    ],
+    "video_id": "T0HKLLw-RI8"
   },
   "s-kakyu-ko-kasan-3ninme": {
     "charts": [
@@ -1459,6 +1483,30 @@
     ],
     "video_id": "PTbe-1loo3M"
   },
+  "s-koureikoyou-2295-cliff": {
+    "charts": [
+      [
+        "2,295円",
+        "0円"
+      ],
+      [
+        "219,732円",
+        "294,732円",
+        "359,457円"
+      ]
+    ],
+    "video_id": "Qj48l3z0lA4"
+  },
+  "s-koureikoyou-gendogaku-kikanai": {
+    "charts": [
+      [
+        "37万452円",
+        "36万4725円",
+        "5727円"
+      ]
+    ],
+    "video_id": "gMPJti2PDis"
+  },
   "s-kubun-e-shoutokujougen-115man": {
     "charts": [
       [
@@ -1503,6 +1551,17 @@
       ]
     ],
     "video_id": "kk57OJ0zVT4"
+  },
+  "s-kyoiku-jitsushitsu-ritsu-hangen": {
+    "charts": [
+      [
+        "80.0%",
+        "53.3%",
+        "40.0%",
+        "20.0%"
+      ]
+    ],
+    "video_id": "7DVnurYJGME"
   },
   "s-kyufu-nokori-gake-273bai": {
     "charts": [
@@ -1756,6 +1815,16 @@
     ],
     "video_id": "gNNvQQhdEQo"
   },
+  "s-saishushoku-yonwari-nichigyu": {
+    "charts": [
+      [
+        "18日分",
+        "24日分",
+        "30日分"
+      ]
+    ],
+    "video_id": "yQajMrdshr8"
+  },
   "s-serufu-30000-5475": {
     "charts": [
       [
@@ -1821,6 +1890,16 @@
       ]
     ],
     "video_id": "pCLe8SS6u3w"
+  },
+  "s-shakyu-menjo-1nichi-14nichi": {
+    "charts": [
+      [
+        "1日",
+        "13日 免除なし",
+        "14日 育休のみ"
+      ]
+    ],
+    "video_id": "PJvZp1B_faM"
   },
   "s-shitsugyo-1": {
     "charts": [
