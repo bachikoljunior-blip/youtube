@@ -45,6 +45,36 @@
 - **足りている表（中央値以上）は出しません。** 0以下になるので自然に落ちます
 - **実績の無い族は全体平均**（`family_perf.scorer` と同じ扱い。探索を殺さない）
 
+## 同点を、アルファベット順で破らないこと（2026-08-17 に測って直した）
+
+**掘り甲斐は、ほとんどの表で同じ値になります。** 実測（同日）:
+
+    13族が **ぴったり 0.704 で同点**（節5・あと2節・実績が無いので全部 base）
+
+同点は `sort` の第2キー（**モジュール名**）で破られていました。つまり
+`status.py` が出す「(B) の候補」の1位は、**値打ちの1位ではなく、
+あ行の1位**です。そして手順（`docs/trigger_main.md` §4）は
+**「(B) の1位を見ること」**を既定にしています。
+
+    出ていた5件   ideco(3) ikuji(**0**) jidou(**0**) jikangai(2) juminzei(2)
+    出ていない    kokuho(**9**) ← 同点なのに7番目なので、一度も出ません
+
+括弧は `src/section_sweep.py` が**その表から機械で拾えた形の数**です。
+**0件の表を1位として出し、9件の表を隠していました。**
+
+**これは `critique_queue --next` と同じ形の2度目です**（2026-08-16 11:3x
+「待ち行列は動画IDのアルファベット順で、**並びが選択そのものだったのに、
+その並びは値打ちと何の関係もなかった**」）。**別の道具で、同じ壊れ方。**
+
+だから同点は**掃引の候補数**で破ります（`sweep_counts`）。
+
+- **掘り甲斐そのものは変えていません。** 第1キーは今までどおりです ——
+  「候補1件がいくらの節になるか」は **n=2 で割れています**
+  （17:3x は棄却・18:09 は 4→6節）。**値に混ぜるとその未検証の係数が主キーに乗ります。**
+  破るのは**同点のときだけ**で、そこは今まで**測っていない順**でした
+- **掃引が読めない回は、今までどおりモジュール名で破ります**（止めない）
+- 候補数は行に出します。**0件の表が1位に出たら、それは (A) に戻る合図**です
+
 ## この道具が言わないこと
 
 **「掘れば必ず節が出る」とは言っていません。** 題材によっては
@@ -90,13 +120,21 @@ def target_depth(all_sections: dict[str, dict[str, str]],
 def candidates(all_sections: dict[str, dict[str, str]],
                scores: dict[str, float] | None = None,
                base: float = 1.0,
-               limit: int = 5) -> list[tuple[str, int, int, float]]:
+               limit: int = 5,
+               sweep_counts: dict[str, int] | None = None,
+               ) -> list[tuple[str, int, int, float]]:
     """掘り甲斐の順に (モジュール, いまの節数, 中央値まであと何節, 値) を返す。
 
     `scores` は `family_perf.combined_map()`。無ければ全部 `base` で並べます
     （＝ 浅い順そのもの）。**中央値に届いている表は返りません。**
+
+    `sweep_counts` は `src/section_sweep.py` が表ごとに拾った候補の数。
+    **同点を破るためだけに使います**（第1キーは掘り甲斐のまま）。
+    渡さなければ、今までどおりモジュール名で破ります —— 上の節の理由により、
+    **それは「測っていない順」なので、渡せるなら渡すこと。**
     """
     scores = scores or {}
+    counts = sweep_counts or {}
     tgt = target_depth(all_sections)
     out = []
     for mod, n in depths(all_sections).items():
@@ -104,22 +142,37 @@ def candidates(all_sections: dict[str, dict[str, str]],
         if room <= 0:
             continue
         out.append((mod, n, room, room * scores.get(mod, base)))
-    out.sort(key=lambda r: (-r[3], r[0]))
+    out.sort(key=lambda r: (-r[3], -counts.get(r[0], 0), r[0]))
     return out[:limit]
+
+
+def ties_at_top(rows: list[tuple[str, int, int, float]]) -> int:
+    """先頭と**同じ掘り甲斐**の表が何本あるか。
+
+    **1 より大きければ、1位は「1位」ではありません** —— 同点の中から
+    掃引の候補数で選んだものです。`report_lines` がそれを行に出します。
+    **黙って1位として出すと、次の回が値打ちの順だと読みます**（実測13本が同点）。
+    """
+    if not rows:
+        return 0
+    top = rows[0][3]
+    return sum(1 for r in rows if r[3] == top)
 
 
 def report_lines(all_sections: dict[str, dict[str, str]],
                  scores: dict[str, float] | None = None,
                  base: float = 1.0,
-                 limit: int = 5) -> list[str]:
+                 limit: int = 5,
+                 sweep_counts: dict[str, int] | None = None) -> list[str]:
     """`status.py` がそのまま印刷する行。**空のリストを返すことがあります。**"""
     med = median_depth(all_sections)
     tgt = target_depth(all_sections)
     # **`max()` を素で呼ばないこと**（検査が見つけた。`src/calc/` が読めない回は空で来る）。
     got = depths(all_sections)
     deep = max(got.items(), key=lambda kv: kv[1]) if got else ("—", 0)
-    rows = candidates(all_sections, scores, base, limit)
-    whole = candidates(all_sections, scores, base, limit=len(all_sections))
+    counts = sweep_counts or {}
+    rows = candidates(all_sections, scores, base, limit, counts)
+    whole = candidates(all_sections, scores, base, len(all_sections), counts)
     total = sum(len(v) for v in all_sections.values())
     out = [
         f"  **道は2つあります。**（いま {total}節 / {len(all_sections)}本・"
@@ -135,8 +188,17 @@ def report_lines(all_sections: dict[str, dict[str, str]],
                f"掘り甲斐 ＝ あと何節 × 族の順番の値）")
     out.append(f"       **全部を {tgt}節まで掘るだけで +{sum(r[2] for r in whole)}節**"
                f"（新しい題材は1つも増やさずに）:")
+    tied = ties_at_top(whole)
+    if tied > 1:
+        out.append(f"       [!] **上位 {tied}本が掘り甲斐で同点です。"
+                   "1位は値打ちの1位ではありません** —— "
+                   "同点は「掃引」（機械が拾えた形の数）で破っています")
     for mod, n, gap, val in rows:
-        out.append(f"       {mod:<12} いま{n:2d}節 → **あと{gap}節**（掘り甲斐 {val:.1f}）")
+        line = f"       {mod:<12} いま{n:2d}節 → **あと{gap}節**（掘り甲斐 {val:.1f}"
+        if counts:
+            c = counts.get(mod, 0)
+            line += f" ・掃引 {c}件" + ("" if c else " ← **機械には1つも見えていません**")
+        out.append(line + "）")
     out.append("    **掘って出なければ (A) に戻る合図です。**"
                "そのときは「この族は尽きた」と `docs/JOURNAL.md` に書くこと"
                "（書かないと次の回が同じ表を掘ります）。")

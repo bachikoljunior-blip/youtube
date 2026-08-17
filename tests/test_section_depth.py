@@ -86,3 +86,86 @@ def test_故障注入_目標を最大に置くと余地が水増しされる():
     tgt = section_depth.target_depth(mods)
     biggest = max(section_depth.depths(mods).values())
     assert tgt < biggest, "目標が最大に張り付いている＝余地を水増ししている"
+
+
+# --- 同点をアルファベット順で破らないこと（2026-08-17 に測って足した）-------------
+#
+# 実測: **13族が掘り甲斐 0.704 でぴったり同点**（節5・あと2節・実績が無いので全部 base）。
+# 同点は `sort` の第2キー＝**モジュール名**で破られていました。
+# `docs/trigger_main.md` §4 は「(B) の1位を見ること」を既定にしているので、
+# **次の回はあ行の1位を値打ちの1位として読みます。**
+#
+#     出ていた5件  ideco(3) ikuji(**0**) jidou(**0**) jikangai(2) juminzei(2)
+#     出ていない   kokuho(**9**)  ← 同点なのに7番目
+#
+# 括弧は `src/section_sweep.py` が機械で拾えた形の数。
+# **0件の表を1位に出し、9件の表を隠していました。**
+# `critique_queue --next`（2026-08-16 11:3x）と同じ形の2度目です。
+
+
+def test_同点は掃引の候補数で破る():
+    """**これが本体。** 節数も実績も同じなら、機械に形が見えている表を先に出す。"""
+    mods = _mods({"aaa": 5, "zzz": 5, "mmm": 5,
+                  "t1": 8, "t2": 8, "t3": 8, "t4": 8})
+    rows = section_depth.candidates(mods, sweep_counts={"zzz": 9, "aaa": 0, "mmm": 2})
+    assert [r[0] for r in rows] == ["zzz", "mmm", "aaa"]
+
+
+def test_故障注入_掃引を渡さないとアルファベット順に戻る():
+    """**壊れていたときの並び**を、検査が名指しで持っていること。
+
+    渡さない道は残してあります（掃引が読めない回は止めない）。
+    **だからこそ「渡さないと値打ちと無関係な順になる」ことを書いておく** ——
+    書いておかないと、次の回が「どちらでも同じ」と読みます。
+    """
+    mods = _mods({"aaa": 5, "zzz": 5, "mmm": 5,
+                  "t1": 8, "t2": 8, "t3": 8, "t4": 8})
+    rows = section_depth.candidates(mods)
+    assert [r[0] for r in rows] == ["aaa", "mmm", "zzz"], "アルファベット順のまま"
+
+
+def test_掘り甲斐そのものは掃引で動かない():
+    """**第1キーを汚さないこと。** 候補1件がいくらの節になるかは n=2 で割れています
+    （17:3x は棄却・18:09 は 4→6節）。**値に混ぜると未検証の係数が主キーに乗ります。**
+    """
+    mods = _mods({"a": 5, "b": 6, "target": 8})
+    plain = {r[0]: r[3] for r in section_depth.candidates(mods)}
+    swept = {r[0]: r[3] for r in
+             section_depth.candidates(mods, sweep_counts={"b": 99, "a": 0})}
+    assert plain == swept
+    # 実績が効いているほうは、掃引が何件でも順番が変わらないこと
+    rows = section_depth.candidates(mods, scores={"a": 0.1, "b": 9.0}, base=1.0,
+                                    sweep_counts={"a": 99, "b": 0})
+    assert rows[0][0] == "b", "掃引が実績を追い越している＝第1キーが汚れている"
+
+
+def test_同点の本数を必ず言う():
+    """**黙って1位として出さないこと。** 同点なら、そう書いてある行が要ります。"""
+    mods = _mods({"aaa": 5, "zzz": 5, "mmm": 5,
+                  "t1": 8, "t2": 8, "t3": 8, "t4": 8})
+    lines = "\n".join(section_depth.report_lines(mods, sweep_counts={"zzz": 9}))
+    assert "3本が掘り甲斐で同点" in lines
+    assert "1位は値打ちの1位ではありません" in lines
+
+
+def test_同点が無い回は余計な行を出さない():
+    """一覧を増やさないこと（`src/alerts.py` の4件と同じ形になる）。"""
+    mods = _mods({"a": 5, "b": 6, "target": 8})
+    lines = "\n".join(section_depth.report_lines(mods, scores={"a": 2.0, "b": 1.0},
+                                                 sweep_counts={"a": 1, "b": 1}))
+    assert "同点です" not in lines
+
+
+def test_掃引が0件の表はそう言う():
+    """**0件は「掘っても機械には何も見えていない」**＝ (A) に戻る合図。
+    件数だけ出して 0 を黙らせると、次の回が同点の中から選べません。
+    """
+    mods = _mods({"aaa": 5, "target": 8})
+    lines = "\n".join(section_depth.report_lines(mods, sweep_counts={"aaa": 0}))
+    assert "機械には1つも見えていません" in lines
+
+
+def test_ties_at_top_は同点の本数を数える():
+    rows = [("a", 5, 2, 0.7), ("b", 5, 2, 0.7), ("c", 6, 1, 0.35)]
+    assert section_depth.ties_at_top(rows) == 2
+    assert section_depth.ties_at_top([]) == 0

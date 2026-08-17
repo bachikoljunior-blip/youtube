@@ -544,12 +544,31 @@ def _print_deepening(all_sections: dict[str, dict[str, str]]) -> None:
         base = family_perf.baseline(rows)
     except Exception as exc:  # 実績が読めなくても、浅い順は出す（**止めない**）
         print(f"  （族べつの実績が読めないので、浅い順で出します: {str(exc)[:80]}）")
-    for line in section_depth.report_lines(all_sections, scores, base):
+    # **掃引は (B) の同点を破る目盛りでもあります**（2026-08-17）。
+    # 13族が同点で、破っていたのはモジュール名でした（`src/section_depth.py` の節）。
+    # **1回叩いて両方に使います**（1.2秒・API 0単位）。
+    hits = _sweep_hits()
+    counts: dict[str, int] = {}
+    for h in hits:
+        counts[h["表"]] = counts.get(h["表"], 0) + 1
+    for line in section_depth.report_lines(all_sections, scores, base,
+                                           sweep_counts=counts):
         print(line)
-    _print_sweep_hint()
+    _print_sweep_hint(hits)
 
 
-def _print_sweep_hint() -> None:
+def _sweep_hits() -> list[dict]:
+    """掃引の結果。**読めなければ空**（在庫の節は止めない）。"""
+    try:
+        from src import section_sweep
+
+        return section_sweep.sweep_all()
+    except Exception as exc:                    # 掃引が壊れても在庫の節は出す
+        print(f"    （(C) 掃引が読めません: {str(exc)[:80]}）")
+        return []
+
+
+def _print_sweep_hint(hits: list[dict] | None = None) -> None:
     """**(C) 機械で掃引する。**件数の1行だけ出す（全文は道具のほうで）。
 
     (A) 新しい表 / (B) 既にある表に節を足す —— **どちらも「人が中身を思いつく」**
@@ -558,13 +577,8 @@ def _print_sweep_hint() -> None:
     ここでは**件数と入口だけ**出します（全文を毎回出すと、当たりを含まないまま
     育つ一覧がもう1つ増えます —— `src/alerts.py` の4件と同じ形）。
     """
-    try:
-        from src import section_sweep
-
-        hits = section_sweep.sweep_all()
-    except Exception as exc:                    # 掃引が壊れても在庫の節は出す
-        print(f"    （(C) 掃引が読めません: {str(exc)[:80]}）")
-        return
+    if hits is None:                            # 単体で呼ばれたとき（呼ぶ側は使い回す）
+        hits = _sweep_hits()
     if not hits:
         return
     shapes: dict[str, int] = {}
