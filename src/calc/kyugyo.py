@@ -45,6 +45,7 @@ ASSUMPTIONS = [
 KYUGYO_RATE = 0.6          # 休業手当の率（26条）
 MINIMUM_RATE = 0.6         # 最低保障の率（12条1項但書）
 LOOKBACK_MONTHS = 3        # 平均賃金の算定期間（12条1項）
+DAYS_PER_WEEK = 7          # 暦の値。制度の値ではない（週あたりに直すときだけ使う）
 
 # 直前3か月の暦日数として取りうる値。**連続する3か月の日数の和**
 # 最短は2月・3月・4月の 28+31+30＝89（うるう年は90）
@@ -199,6 +200,122 @@ def ratio_to_monthly(monthly: int = 300_000) -> list[dict]:
     return out
 
 
+def weekly_boundary() -> list[dict]:
+    """最低保障が勝つ境目を、**週あたりの勤務日数**に直す。
+
+    ## この節を足した理由（2026-08-17）
+
+    `boundary_worked_days()` は「3か月で54.6日」を出しますが、**印字しているのは
+    暦日91日の1点だけ**でした。暦日は 89〜92日 に動くので、境目の労働日数も
+    **53.4日〜55.2日** と動きます。「54.6日」を覚えて帰った人は、
+    2月をまたぐ期間では**間違えます。**
+
+    ところが**週あたりに直すと、動きません。**
+    境目は `暦日 × 0.6`、1週間は7日なので、週あたりでは
+
+        暦日 × 0.6 ÷ (暦日 ÷ 7) = 0.6 × 7 = **4.2日**
+
+    **暦日が約分で消えます。** 時給も賃金総額も先に消えているので
+    （`boundary_worked_days` の説明）、**残るのは率と曜日だけ**です。
+    だから境目は、誰にとっても・いつ休んでも **週4.2日**。
+    """
+    out = []
+    for _, span in [(None, s) for s in (CALENDAR_DAYS_MIN, 90, 91, CALENDAR_DAYS_MAX)]:
+        days = boundary_worked_days(span)
+        out.append({
+            "3か月の暦日": span,
+            "境目の労働日数": days,
+            "週あたりに直すと": days / (span / DAYS_PER_WEEK),
+        })
+    return out
+
+
+def pay_form_gap(hourly: int = 1_200, hours_per_day: int = 8,
+                 calendar_days: int = 91, days_off: int = 20) -> list[dict]:
+    """**賃金も労働日数もまったく同じで、給与の形だけが違う2人**を並べる。
+
+    ## この節を足した理由（2026-08-17）
+
+    `average_wage()` は `worked_days` を渡さなければ最低保障を使いません。
+    これは条文どおりで、**12条1項但書は日給・時間給・出来高払にしか掛かりません。**
+    ところが `shift_grid()` は時給制の側しか印字しておらず、
+    **月給制の同じ人がいくらになるかは、どの表にも出ていませんでした。**
+
+    並べると、最低保障は「安全網」ではなく**支給額そのものを分ける線**です ——
+    週4日以下では、**同じ賃金・同じ勤務日数でも、時給制のほうが高くなります。**
+    しかも時給制の側は `日給 × 0.6 × 0.6` なので、
+    **勤務日数を減らしても日額が1円も動きません**（週4日も週2日も同額）。
+    月給制は暦日で割るだけなので、**減らしたぶんだけ下がり続けます。**
+    """
+    weeks = calendar_days / DAYS_PER_WEEK
+    daily_wage = hourly * hours_per_day
+    out = []
+    for weekly_days in (5, 4, 3, 2):
+        worked = round(weeks * weekly_days)
+        total = int(daily_wage * worked)
+        by_hour = int(average_wage(total, calendar_days, worked)["採る額"] * KYUGYO_RATE)
+        by_month = int(average_wage(total, calendar_days)["採る額"] * KYUGYO_RATE)
+        out.append({
+            "週の勤務日数": weekly_days,
+            "3か月の労働日数": worked,
+            "賃金総額": total,
+            "時給制の日額": by_hour,
+            "月給制の日額": by_month,
+            "日額の差": by_hour - by_month,
+            f"{days_off}日休んだときの差": (by_hour - by_month) * days_off,
+            "倍率": by_hour / by_month,
+        })
+    return out
+
+
+def ratio_span(monthly: int = 300_000) -> dict:
+    """**月給に対する率を決めているのは、金額ではなくカレンダーだけ。**
+
+    ## この節を足した理由（2026-08-17）
+
+    `ratio_to_monthly()` は月給30万円の1点しか印字していませんでした。
+    **月給は引数として書いてあるのに、一度も動かしていません。**
+
+    動かすと、率は**変わりません**（円未満の切り捨てのぶれだけ）。
+    平均賃金も休業手当も賃金に比例するので、**月給が約分で消えます。**
+    代わりに率を動かしているのは `暦日` と `その月の労働日数` の2つで、
+    その組み合わせだけで **37.17% から 46.51% まで、9.3ポイント**開きます。
+
+    つまり「6割もらえる」の実質は月給では決まらず、
+    **休んだのが何月か・その月に何日出勤日があったか**で決まります。
+    """
+    total = monthly * LOOKBACK_MONTHS
+    rows = []
+    for span in range(CALENDAR_DAYS_MIN, CALENDAR_DAYS_MAX + 1):
+        for work_days in (19, 20, 21, 22, 23):
+            d = daily_allowance(total, span)
+            rows.append({"3か月の暦日": span, "その月の労働日数": work_days,
+                         "休業手当の日額": d, "その月の休業手当": d * work_days,
+                         "月給に対する率": d * work_days / monthly})
+    best = max(rows, key=lambda r: r["月給に対する率"])
+    worst = min(rows, key=lambda r: r["月給に対する率"])
+    return {
+        "月給": monthly,
+        "いちばん高い率": best, "いちばん低い率": worst,
+        "率の幅": best["月給に対する率"] - worst["月給に対する率"],
+        "率の倍率": best["月給に対する率"] / worst["月給に対する率"],
+        "組み合わせ": rows,
+    }
+
+
+def ratio_by_monthly(monthlies: tuple[int, ...] = (150_000, 300_000, 600_000,
+                                                   1_000_000),
+                     calendar_days: int = 91, work_days: int = 20) -> list[dict]:
+    """同じ暦日・同じ労働日数で、月給だけを動かす。**率は動きません。**"""
+    out = []
+    for m in monthlies:
+        d = daily_allowance(m * LOOKBACK_MONTHS, calendar_days)
+        out.append({"月給": m, "休業手当の日額": d,
+                    "その月の休業手当": d * work_days,
+                    "月給に対する率": d * work_days / m})
+    return out
+
+
 def check_tables() -> None:
     """制度の値と計算の向きを確かめる。**壊れた数字で台本を書かせない。**"""
     # 1. 法令が名指ししている値
@@ -243,6 +360,48 @@ def check_tables() -> None:
                 f"月給に対する率が {row['月給に対する率']:.3f}。"
                 f"暦日で割って労働日だけ払うので、6割には届かないはず")
 
+    #    (f) **主題**: 境目を週あたりに直すと、暦日が約分で消えて 4.2日 で一定
+    for row in weekly_boundary():
+        _checks.close(row["週あたりに直すと"], MINIMUM_RATE * DAYS_PER_WEEK,
+                      f"暦日{row['3か月の暦日']}日での境目（週あたり）", tol=1e-9)
+    #    (g) **主題**: 賃金も労働日数も同じで、給与の形だけが違うとどうなるか
+    gap = pay_form_gap()
+    by_week = {r["週の勤務日数"]: r for r in gap}
+    if by_week[5]["日額の差"] != 0:
+        raise _checks.TableError(
+            f"週5日で時給制と月給制の差が {by_week[5]['日額の差']}円。"
+            f"暦日割が勝つ側なので、同額のはず")
+    for wd in (4, 3, 2):
+        _checks.greater(by_week[wd]["時給制の日額"], by_week[wd]["月給制の日額"],
+                        f"週{wd}日で、時給制が月給制を上回っていない")
+    #        時給制の側は 日給 × 0.6 × 0.6 なので、勤務日数を減らしても動かない
+    fixed = {by_week[wd]["時給制の日額"] for wd in (4, 3, 2)}
+    if len(fixed) != 1:
+        raise _checks.TableError(
+            f"週4日以下で時給制の日額が {sorted(fixed)} と割れています。"
+            f"最低保障は日給に率を掛けるだけなので、勤務日数では動かないはず")
+    _checks.rounding(fixed.pop(), int(1_200 * 8 * MINIMUM_RATE * KYUGYO_RATE),
+                     "最低保障で決まる日額（日給の36パーセント）")
+    #        月給制の側は暦日で割るだけなので、勤務日数を減らせば下がり続ける
+    _checks.increases_with(lambda wd: by_week[wd]["月給制の日額"], (2, 3, 4, 5),
+                           "月給制の日額が、勤務日数を増やしても増えていない")
+    #    (h) **主題**: 率を動かしているのは月給ではなく暦日と労働日数
+    ratios = [r["月給に対する率"] for r in ratio_by_monthly()]
+    for r in ratios:
+        _checks.close(r, ratios[0], "月給を変えたのに率が動いた", tol=1e-4)
+    span = ratio_span()
+    if (span["いちばん高い率"]["3か月の暦日"], span["いちばん高い率"]["その月の労働日数"]) \
+            != (CALENDAR_DAYS_MIN, 23):
+        raise _checks.TableError(
+            "率がいちばん高いのは「暦日が最短・労働日数が最多」のはず。"
+            f"出たのは {span['いちばん高い率']}")
+    if (span["いちばん低い率"]["3か月の暦日"], span["いちばん低い率"]["その月の労働日数"]) \
+            != (CALENDAR_DAYS_MAX, 19):
+        raise _checks.TableError(
+            "率がいちばん低いのは「暦日が最長・労働日数が最少」のはず。"
+            f"出たのは {span['いちばん低い率']}")
+    _checks.ratio(span["率の幅"], "率の幅")
+
 
 if __name__ == "__main__":
     check_tables()
@@ -285,3 +444,52 @@ if __name__ == "__main__":
           f"不利 {_gap['不利な窓']}（{_gap['不利な暦日']}日）"
           f" {_gap['不利な総額']:,}円")
     print("    **月給は同じです。**変わっているのは平均賃金の分母（暦日数）だけ。")
+
+    print("\n=== 最低保障が勝つ境目は、暦日が何日でも「週4.2日」 ===")
+    for row in weekly_boundary():
+        print(f"  3か月の暦日 {row['3か月の暦日']}日"
+              f"  境目の労働日数 {row['境目の労働日数']:>5.1f}日"
+              f"  → 週あたり {row['週あたりに直すと']:.1f}日")
+    print(f"  **労働日数のほうは {weekly_boundary()[0]['境目の労働日数']:.1f}日〜"
+          f"{weekly_boundary()[-1]['境目の労働日数']:.1f}日 と動きます。**"
+          f"週あたりに直すと暦日が約分で消え、"
+          f"{MINIMUM_RATE} × {DAYS_PER_WEEK}日 = "
+          f"{MINIMUM_RATE * DAYS_PER_WEEK:.1f}日 だけが残ります。")
+    print("    だから週5日勤務は暦日割、**週4日以下は最低保障**。"
+          "時給にも、休んだ季節にもよりません。")
+
+    print("\n=== 賃金も勤務日数も同じ。ちがうのは時給制か月給制かだけ ===")
+    _gapf = pay_form_gap()
+    print(f"  前提: 時給1,200円 × 1日8時間（日給9,600円） / 暦日91日 / 20日休んだ場合")
+    for row in _gapf:
+        print(f"  週{row['週の勤務日数']}日  労働{row['3か月の労働日数']:>2}日"
+              f"  賃金総額 {row['賃金総額']:>9,}円"
+              f"  時給制 {row['時給制の日額']:>6,}円"
+              f"  月給制 {row['月給制の日額']:>6,}円"
+              f"  差 {row['日額の差']:>6,}円"
+              f"（20日で {row['20日休んだときの差']:>7,}円・{row['倍率']:.2f}倍）")
+    print("  **週5日では1円も違いません**（どちらも暦日割が勝つ）。"
+          "**週4日から下は、時給制のほうが高くなります。**")
+    print(f"  時給制の日額は週4日でも週2日でも "
+          f"{_gapf[-1]['時給制の日額']:,}円 のまま ——"
+          f" 最低保障は「日給 × {MINIMUM_RATE} × {KYUGYO_RATE}」で、"
+          f"**勤務日数が式に入っていないから**です。")
+    print("    月給制の側は暦日で割るだけなので、**働く日を減らしたぶん下がり続けます。**")
+
+    print("\n=== 月給に対する率を決めているのは、金額ではなくカレンダー ===")
+    for row in ratio_by_monthly():
+        print(f"  月給 {row['月給']:>9,}円  日額 {row['休業手当の日額']:>7,}円"
+              f"  その月 {row['その月の休業手当']:>9,}円"
+              f"  月給の {row['月給に対する率'] * 100:5.2f}%")
+    _span = ratio_span()
+    _hi, _lo = _span["いちばん高い率"], _span["いちばん低い率"]
+    print(f"  **月給を{ratio_by_monthly()[0]['月給']:,}円から"
+          f"{ratio_by_monthly()[-1]['月給']:,}円まで動かしても率は同じ**"
+          f"（円未満の切り捨てのぶれだけ）。賃金は約分で消えます。")
+    print(f"  代わりに率を動かすのは暦日と労働日数の2つで、"
+          f"**{_lo['月給に対する率'] * 100:.2f}% 〜 {_hi['月給に対する率'] * 100:.2f}%"
+          f"（{_span['率の幅'] * 100:.2f}ポイント・{_span['率の倍率']:.2f}倍）**:")
+    print(f"    いちばん高い  暦日{_hi['3か月の暦日']}日 × 労働{_hi['その月の労働日数']}日"
+          f"  → {_hi['月給に対する率'] * 100:.2f}%")
+    print(f"    いちばん低い  暦日{_lo['3か月の暦日']}日 × 労働{_lo['その月の労働日数']}日"
+          f"  → {_lo['月給に対する率'] * 100:.2f}%")

@@ -1000,6 +1000,15 @@
     ],
     "video_id": "NDlCpYO1sFk"
   },
+  "s-kakyu-kurisage-kieru": {
+    "charts": [
+      [
+        "0円",
+        "2,118,500円"
+      ]
+    ],
+    "video_id": "Y27_ofu-pCY"
+  },
   "s-kakyu-nenreisa-souryou": {
     "charts": [
       [
@@ -1010,6 +1019,16 @@
       ]
     ],
     "video_id": "ZUO6bFJRsRY"
+  },
+  "s-kakyu-yakubun-nenreisa": {
+    "charts": [
+      [
+        "515.4年",
+        "773.0年",
+        "1288.4年"
+      ]
+    ],
+    "video_id": "GXrtaUFHK3Q"
   },
   "s-kogaku-atono-iryohi-koujo-ku-e-todokanai": {
     "charts": [
@@ -1176,6 +1195,20 @@
     ],
     "video_id": "lHW4IV-O2OA"
   },
+  "s-kokuho-2wari-cliff-16520": {
+    "charts": [
+      [
+        "13万9895円",
+        "15万6415円"
+      ],
+      [
+        "1万6520円",
+        "4万9560円",
+        "8万2600円"
+      ]
+    ],
+    "video_id": "TRgPwUWRQi4"
+  },
   "s-kokuho-4-sections-limit-gap": {
     "charts": [
       [
@@ -1199,6 +1232,16 @@
       ]
     ],
     "video_id": "PqpBWgqZnck"
+  },
+  "s-kokuho-kaigo-40sai-noseru": {
+    "charts": [
+      [
+        "9,875円",
+        "51,925円",
+        "170,000円"
+      ]
+    ],
+    "video_id": "VYBAWzrxkQQ"
   },
   "s-kokuho-marginal-step-1295-to-30": {
     "charts": [
@@ -1261,6 +1304,16 @@
     ],
     "video_id": "3vMIgqJYQAQ"
   },
+  "s-kouki-hifuyousha-1990001": {
+    "charts": [
+      [
+        "1万5210円",
+        "4万6644円",
+        "6万3024円"
+      ]
+    ],
+    "video_id": "xkQXdmIoa8I"
+  },
   "s-kouki-hifuyousha-3nenme-64038": {
     "charts": [
       [
@@ -1273,6 +1326,17 @@
       ]
     ],
     "video_id": "oqJ7WybRZDE"
+  },
+  "s-kouki-kosodate-shienkin-2-5-percent": {
+    "charts": [
+      [
+        "780円",
+        "3,562円",
+        "7,267円",
+        "16,159円"
+      ]
+    ],
+    "video_id": "HTsLo6BhTPM"
   },
   "s-kouki-nenkin-kyuuyo-onaji-shotoku-16380": {
     "charts": [
@@ -1907,6 +1971,29 @@
       ]
     ],
     "video_id": "cdKMFCFjiuA"
+  },
+  "s-shougai-2kyu-3kyu-gake-kazoku": {
+    "charts": [
+      [
+        "61万2000円",
+        "130万9290円"
+      ],
+      [
+        "69万7290円",
+        "93万2090円",
+        "116万6890円"
+      ]
+    ],
+    "video_id": "u3V1PFBC20c"
+  },
+  "s-shougai-teatekin-3kyu-2nen": {
+    "charts": [
+      [
+        "82万2150円",
+        "164万4300円"
+      ]
+    ],
+    "video_id": "PdJ0ltnIvkw"
   },
   "s-shoukyuu-nano-ni-nen20940en-mainasu": {
     "charts": [

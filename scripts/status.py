@@ -546,6 +546,36 @@ def _print_deepening(all_sections: dict[str, dict[str, str]]) -> None:
         print(f"  （族べつの実績が読めないので、浅い順で出します: {str(exc)[:80]}）")
     for line in section_depth.report_lines(all_sections, scores, base):
         print(line)
+    _print_sweep_hint()
+
+
+def _print_sweep_hint() -> None:
+    """**(C) 機械で掃引する。**件数の1行だけ出す（全文は道具のほうで）。
+
+    (A) 新しい表 / (B) 既にある表に節を足す —— **どちらも「人が中身を思いつく」**
+    ところが律速でした（(a2) の問い1が直近8回のうち7回でそこを名指し）。
+    (C) は思いつく側を機械に寄せます。**候補であって節ではない**ので、
+    ここでは**件数と入口だけ**出します（全文を毎回出すと、当たりを含まないまま
+    育つ一覧がもう1つ増えます —— `src/alerts.py` の4件と同じ形）。
+    """
+    try:
+        from src import section_sweep
+
+        hits = section_sweep.sweep_all()
+    except Exception as exc:                    # 掃引が壊れても在庫の節は出す
+        print(f"    （(C) 掃引が読めません: {str(exc)[:80]}）")
+        return
+    if not hits:
+        return
+    shapes: dict[str, int] = {}
+    for h in hits:
+        shapes[h["形"]] = shapes.get(h["形"], 0) + 1
+    order = [f"{k} {shapes[k]}" for k in ("崖", "逆転", "頭打ち", "不変") if k in shapes]
+    tables = len({h["表"] for h in hits})
+    print(f"    (C) **機械で掃引して形を拾う** … 候補 **{len(hits)}件** / 表 {tables}本"
+          f"（{' ・ '.join(order)}）")
+    print("        `python -m src.section_sweep [--calc <表>] [--shape 崖]`"
+          "  **候補です。意味と正しさは人が決める**（数字の出どころにしない）")
 
 
 def _print_pass_rate(root: Path, n_pick: int) -> None:
