@@ -95,3 +95,7 @@
 {"at": "2026-08-18T05:07:48+09:00", "key": "missing_thumbnail", "n": 40, "session": "session_01ETpuZeNdt4jVdA65YQSuYc", "by": "status.py"}
 {"at": "2026-08-18T05:08:15+09:00", "key": "calc_gap", "n": 6, "session": "session_01ETpuZeNdt4jVdA65YQSuYc", "by": "status.py"}
 {"at": "2026-08-18T05:23:22+09:00", "key": "undeclared_close", "n": 1, "session": "session_01ETpuZeNdt4jVdA65YQSuYc", "by": "run_marker.py"}
+{"at": "2026-08-18T05:41:03+09:00", "key": "carry_over", "n": 17, "session": "session_013JaWm5QAxXey4FUcesnRCx", "by": "retro.py"}
+{"at": "2026-08-18T05:41:35+09:00", "key": "missing_thumbnail", "n": 49, "session": "session_013JaWm5QAxXey4FUcesnRCx", "by": "status.py"}
+{"at": "2026-08-18T05:43:13+09:00", "key": "calc_gap", "n": 6, "session": "session_013JaWm5QAxXey4FUcesnRCx", "by": "status.py"}
+{"at": "2026-08-18T06:02:36+09:00", "key": "undeclared_close", "n": 1, "session": "session_013JaWm5QAxXey4FUcesnRCx", "by": "run_marker.py"}

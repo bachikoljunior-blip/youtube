@@ -313,6 +313,48 @@ def best_section(text: str, sections: dict[str, str]) -> list[tuple[int, str]]:
     return sorted(scored, key=lambda x: -x[0])
 
 
+def swallows(sections: dict[str, str], candidate: str, assigned: str) -> bool:
+    """`candidate` が `assigned` の数字を**丸ごと含む**か（＝総覧の節か）。
+
+    ## なぜ要るか（2026-08-18 に実測して足した。**同じ題を6件つくった**）
+
+    `realign` は「一致数が厳密に多い節へ貼り直す」。**その比べ方は、
+    全部の行を1つの表に並べた「総覧の節」があると必ず壊れます** ——
+    総覧は他の節の数字を全部持っているので、**どの題に対しても一致数が最大**になり、
+    **割り当てがどこであっても、そこへ吸い込まれます。**
+
+    実測（`src/calc/keihi.py` を足した回）:
+
+        1節目 === 経費1万円の値打ちは…（所得10段の総覧）===   数字 40個
+        2節目 === 経費の値打ちは、所得が上がるほど…ではない === 数字 2個（総覧の部分集合）
+
+        --count 1 を6回 → **6回とも2節目に割り当てられ、6件とも1節目へ貼り直された**
+        → `calc_sections` が6件とも1節目を指す
+        → `survey()` は2節目を「未使用」のまま数える
+        → 次の回もまた2節目を割り当てる …… **同じ題が無限に増えます**
+
+    **6件のうち5件が、言っていることまで同じでした**（700万と900万の逆転）。
+    これは「続けて数本見たときに繰り返しに感じられる」判定に**そのまま当たります**。
+
+    ## 判定は「一致数」ではなく「節どうしの包含」で
+
+    貼り直しの根拠は **「割り当て先には無い数字が、候補にはある」**ことです。
+    候補が割り当て先の数字を**丸ごと含んでいる**なら、一致数が多いのは
+    **候補の表が大きいから**であって、題がそちらを語っている証拠ではありません。
+
+    - 部分的に重なっているだけなら、これまでどおり貼り直します
+      （`zoyo` の4件のずれ・`=== A ===`/`=== B ===` の検査は挙動が変わりません）
+    - **割り当ての無い件（余り）には掛けません。** 比べる相手が無いので、
+      総覧へ落ちるのがむしろ正しい
+    """
+    if assigned not in sections or candidate not in sections:
+        return False
+    floor = section_floor(sections)
+    mine = numbers(sections[assigned], floor)
+    theirs = numbers(sections[candidate], floor)
+    return bool(mine) and mine <= theirs
+
+
 def realign(forged: ForgedSet, picked, all_sections,
             dropped: list[str]) -> list[tuple[str, str] | None]:
     """**書かせた順に節を貼らない。**中身の数字が載っている節へ貼り直す。
@@ -376,6 +418,13 @@ def realign(forged: ForgedSet, picked, all_sections,
         # そのあと「同じ節に2件」で回ごと落ちました。
         # **貼り直すのは、割り当て先より厳密に強い証拠があるときだけです。**
         assigned = next((n for n, h in ranked if h == head), 0) if ranked else 0
+        if top > assigned and swallows(all_sections[mod], best, head):
+            # **総覧の節は、いつでも一致数で勝ちます。** 下の節を見ること
+            print(f"  [動かしません] {item.id}\n"
+                  f"      割り当て: {head}（一致 {assigned} 個）\n"
+                  f"      一致は多いが、{best} は割り当て先の数字を丸ごと含む総覧です")
+            fixed.append((mod, head))
+            continue
         if top > assigned:
             print(f"  [貼り直し] {item.id}\n"
                   f"      書かせた順の節: {head}（一致 {assigned} 個）\n"

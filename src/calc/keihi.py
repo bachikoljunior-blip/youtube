@@ -1,0 +1,465 @@
+"""個人事業主の経費 —— **「経費は税率ぶんだけ得」は、6分の1しか数えていません。**
+
+一般の解説はこう言います ——「経費を1万円増やしても、戻ってくるのは税率ぶん。
+税率5パーセントの人なら500円だけ。だから節税のために無駄な物を買うのは損」。
+
+**税率5パーセントの人が実際に取り戻すのは 3,155円です**（事業所得300万円・本人1人・
+45歳・青色申告特別控除65万円）。**速算表の税率の6.3倍**で、
+経費1万円の正味の費用は 10,000円ではなく **6,845円**です。
+
+数えていないものが3つあります。**住民税10パーセント・国民健康保険料・個人事業税。**
+どれも「経費を引いたあとの所得」から計算されるので、経費と一緒に減ります。
+
+    事業所得（青色控除前）   速算表   経費1万円の値打ち   正味の費用
+      200万円               5%        2,654円          7,346円
+      300万円               5%        3,155円          6,845円
+      500万円              10%        3,614円          6,386円
+      700万円              20%        4,533円          5,467円
+      900万円              20%        4,308円          5,692円
+    1,200万円              33%        4,869円          5,131円
+
+## 所得が上がるほど値打ちが大きい、ではありません
+
+**700万円の人（45.33パーセント）は、900万円の人（43.08パーセント）より
+経費の値打ちが大きい。** 同じ速算表20パーセントの帯にいるのにです。
+
+国民健康保険料には賦課限度額があり、**医療分67万円・後期高齢者支援金分26万円・
+介護納付金分17万円・子ども子育て支援金分3万円が、区分ごとに別々に頭を打ちます。**
+上から順に消えていくので、値打ちは**所得税の階段を上がりながら、
+国保の階段を下りる**という形になります。900万円は、下りたほうが勝っている点です。
+
+## 経費1万円で、負担が2万4千円減る所得があります
+
+事業所得（青色控除前）**140万円**のところで、経費1万円の値打ちは **24,475円**。
+**払った額より多く戻ります**（正味の費用がマイナス14,475円）。
+
+国民健康保険の軽減の判定が、青色申告特別控除を引いたあとの所得
+**74万円**（43万円 ＋ 31万円×1人）をまたぐためです。**2割軽減が5割軽減に変わり、
+均等割が一段で落ちます。** 150万円まで上がると、値打ちは 26.54パーセントに戻ります。
+
+## 事業税の290万円は、青色申告特別控除を引く「前」で判定されます
+
+個人事業税の事業主控除は年290万円ですが、**個人事業税では青色申告特別控除が引けません。**
+だから事業税がかかり始める人の事業所得（青色控除後）は **225万円**です。
+所得税・住民税の側から見ると、**65万円ずれた位置に段があります。**
+
+    青色控除前 290万円のすぐ下   26.55%
+    青色控除前 290万円のすぐ上   31.55%   ← **5ポイント上がる**
+
+## 率をそのまま足すと、必ず多すぎます
+
+「所得税20.42パーセント ＋ 住民税10 ＋ 国保12.95 ＋ 事業税5 ＝ 48.37パーセント」
+と足したくなりますが、**実際は45.33パーセント**です（事業所得700万円）。
+
+**国民健康保険料が減ると、社会保険料控除も同じだけ減る**ので、
+そのぶん所得税と住民税が増えて戻ってきます。差は 304円 ＝ **足し算の6.3パーセント**。
+
+    300万円  足し算 33.05% → 実際 31.55%（4.5%が戻る）
+    500万円  足し算 38.16% → 実際 36.14%（5.3%が戻る）
+    700万円  足し算 48.37% → 実際 45.33%（6.3%が戻る）
+    900万円  足し算 46.12% → 実際 43.08%（6.6%が戻る）
+  1,200万円  足し算 48.69% → 実際 48.69%（**0%**）
+
+**1,200万円で戻りが消えるのは、国保が限度額に当たって1円も動かないから**です。
+戻る道が無ければ、二重勘定も起きません。
+
+## 青色申告特別控除を10万円から65万円にしても、事業税は1円も減りません
+
+事業所得500万円（青色控除前）で並べると:
+
+    簡易簿記10万円   所得税 288,024円  住民税 364,800円  事業税 105,000円  国保 661,465円  計 1,419,289円
+    複式簿記55万円   所得税 222,680円  住民税 325,600円  事業税 105,000円  国保 603,190円  計 1,256,470円
+    e-Tax 65万円     所得税 213,797円  住民税 316,900円  事業税 105,000円  国保 590,240円  計 1,225,937円
+
+**55万円ぶん増やして減るのは 193,352円**（うち国保が 71,225円）。
+**事業税の列だけが、3行とも同じ 105,000円**です。
+"""
+from __future__ import annotations
+
+from . import _checks, kokuho
+from .jutaku import BRACKETS, income_tax as _income_tax_bracket
+
+# ---- 制度の値 -----------------------------------------------------------
+# 青色申告特別控除（租税特別措置法25条の2）。e-Tax による申告か電子帳簿保存で65万円、
+# 複式簿記で55万円、簡易簿記（現金主義など）で10万円。
+AOIRO_ETAX = 650_000
+AOIRO_FUKUSHIKI = 550_000
+AOIRO_KANI = 100_000
+
+# 基礎控除。所得税は48万円（所得税法86条・合計所得金額2,400万円以下）、
+# 住民税は43万円（地方税法314条の2第1項の2）。**同じ人に2つの額が使われます。**
+KISO_SHOTOKU = 480_000
+KISO_JUMIN = 430_000
+
+JUMIN_RATE = 0.10              # 住民税の所得割（市町村6% ＋ 道府県4%）
+JUMIN_KINTOWARI = 5_000        # 住民税の均等割（森林環境税1,000円を含む）
+FUKKO_RATE = 0.021             # 復興特別所得税（所得税額の2.1%）
+
+# 個人事業税（地方税法72条の49の14ほか）。事業主控除は年290万円。
+# 税率は業種で3〜5%。第1種事業（物品販売業・請負業など37業種）が5%。
+JIGYOZEI_KOJO = 2_900_000
+JIGYOZEI_RATE = 0.05
+
+# 国民年金保険料（令和7年度）。月額17,510円。**全額が社会保険料控除**。
+NENKIN_MONTH = 17_510
+NENKIN_YEAR = NENKIN_MONTH * 12
+
+STEP = 10_000                  # 「経費1万円」の1万円
+
+ASSUMPTIONS = [
+    "個人事業主が、経費を1万円増やしたときに、税と保険料がいくら減るかを計算しています。"
+    "収入は事業所得だけで、給与も年金も他の所得もないものとしています",
+    "青色申告特別控除は65万円として置いています。"
+    "e-Taxによる申告か電子帳簿保存をしている場合の額で、複式簿記だけなら55万円、"
+    "簡易簿記なら10万円になります。節によっては3つを並べています",
+    "所得控除は、基礎控除と社会保険料控除だけを入れています。"
+    "基礎控除は所得税で48万円、住民税で43万円です。"
+    "配偶者控除、扶養控除、生命保険料控除、小規模企業共済等掛金控除は入れていません",
+    "社会保険料控除には、国民健康保険料と国民年金保険料を入れています。"
+    "国民年金保険料は仮定で、月額1万7,510円の年額21万120円として置いています",
+    "国民健康保険料は市町村ごとに率が違います。ここでは医療分の所得割7.71パーセント・"
+    "均等割4万7,300円、後期高齢者支援金分の所得割2.69パーセント・均等割1万6,800円、"
+    "介護納付金分の所得割2.25パーセント・均等割1万6,600円、"
+    "子ども・子育て支援金分の所得割0.30パーセント・均等割1,900円を例として置いています。"
+    "賦課限度額は合計113万円です",
+    "世帯は本人1人、年齢は45歳として置いています。"
+    "40歳から64歳なので、国民健康保険料に介護納付金分がかかります",
+    "個人事業税は第1種事業の5パーセントとして置いています。"
+    "事業主控除は年290万円です。業種によっては3パーセントや4パーセント、"
+    "また課税されない業種もあります",
+    "個人事業税は、青色申告特別控除を引く前の所得で計算します。"
+    "所得税と住民税では引けますが、事業税では引けません",
+    "支払った個人事業税は、翌年の必要経費になります。この計算には入れていません",
+    "住民税の調整控除と、所得税の予定納税は入れていません",
+    "消費税は入れていません。免税事業者として置いています",
+]
+
+
+# ---- 1年ぶんの負担 ------------------------------------------------------
+def after_aoiro(profit: int, aoiro: int = AOIRO_ETAX) -> int:
+    """青色申告特別控除を引いたあとの事業所得。**マイナスにはしません。**"""
+    return max(0, profit - aoiro)
+
+
+def kokuho_premium(profit: int, aoiro: int = AOIRO_ETAX,
+                   members: int = 1, age: int = 45) -> int:
+    """国民健康保険料。**総所得金額等は青色申告特別控除を引いたあとの額です。**"""
+    return int(kokuho.premium(after_aoiro(profit, aoiro), members, age)["保険料"])
+
+
+def social_insurance(profit: int, aoiro: int = AOIRO_ETAX,
+                     members: int = 1, age: int = 45) -> int:
+    """社会保険料控除に入る額（国民健康保険料 ＋ 国民年金保険料）。"""
+    return kokuho_premium(profit, aoiro, members, age) + NENKIN_YEAR
+
+
+def income_tax(profit: int, aoiro: int = AOIRO_ETAX,
+               members: int = 1, age: int = 45) -> int:
+    """所得税（復興特別所得税を含む）。"""
+    base = after_aoiro(profit, aoiro) - social_insurance(profit, aoiro, members, age)
+    taxable = max(0, int(base) - KISO_SHOTOKU) // 1_000 * 1_000
+    return int(_income_tax_bracket(taxable) * (1 + FUKKO_RATE))
+
+
+def resident_tax(profit: int, aoiro: int = AOIRO_ETAX,
+                 members: int = 1, age: int = 45) -> int:
+    """住民税（所得割 ＋ 均等割）。**基礎控除が所得税と5万円ちがいます。**"""
+    base = after_aoiro(profit, aoiro) - social_insurance(profit, aoiro, members, age)
+    taxable = max(0, int(base) - KISO_JUMIN) // 1_000 * 1_000
+    return int(taxable * JUMIN_RATE) + JUMIN_KINTOWARI
+
+
+def business_tax(profit: int) -> int:
+    """個人事業税。**青色申告特別控除を引く前の所得**から事業主控除290万円を引きます。"""
+    base = max(0, profit - JIGYOZEI_KOJO)
+    return int(base * JIGYOZEI_RATE) // 100 * 100
+
+
+def burden(profit: int, aoiro: int = AOIRO_ETAX,
+           members: int = 1, age: int = 45) -> dict:
+    """その年の税と保険料の合計。**4本の内訳つき。**"""
+    it = income_tax(profit, aoiro, members, age)
+    rt = resident_tax(profit, aoiro, members, age)
+    bt = business_tax(profit)
+    kh = kokuho_premium(profit, aoiro, members, age)
+    return {
+        "所得（青色控除前）": profit,
+        "所得税": it,
+        "住民税": rt,
+        "事業税": bt,
+        "国民健康保険料": kh,
+        "国民年金保険料": NENKIN_YEAR,
+        "合計": it + rt + bt + kh + NENKIN_YEAR,
+        "年金を除く合計": it + rt + bt + kh,
+    }
+
+
+def marginal(profit: int, step: int = STEP, aoiro: int = AOIRO_ETAX,
+             members: int = 1, age: int = 45) -> dict:
+    """経費を `step` 円ふやしたときに、負担がいくら減るか。
+
+    **これがこの表の主題です。** 返す「値打ち」は減った負担の合計で、
+    「実効率」はそれを `step` で割ったもの。**所得税の税率とは別物です。**
+    """
+    a = burden(profit, aoiro, members, age)
+    b = burden(profit - step, aoiro, members, age)
+    got = {k: a[k] - b[k] for k in ("所得税", "住民税", "事業税", "国民健康保険料")}
+    value = sum(got.values())
+    return {
+        "所得（青色控除前）": profit,
+        "経費": step,
+        "所得税の減り": got["所得税"],
+        "住民税の減り": got["住民税"],
+        "事業税の減り": got["事業税"],
+        "国保の減り": got["国民健康保険料"],
+        "値打ち": value,
+        "実効率": value / step,
+        "正味の費用": step - value,
+    }
+
+
+def bracket_rate(profit: int, aoiro: int = AOIRO_ETAX,
+                 members: int = 1, age: int = 45) -> float:
+    """その人が乗っている所得税の速算表の税率。**一般の解説はこれで止まります。**"""
+    base = after_aoiro(profit, aoiro) - social_insurance(profit, aoiro, members, age)
+    taxable = max(0, int(base) - KISO_SHOTOKU) // 1_000 * 1_000
+    for cap, rate, _ in BRACKETS:
+        if taxable <= cap:
+            return rate
+    return BRACKETS[-1][1]
+
+
+def naive_rate(profit: int, aoiro: int = AOIRO_ETAX,
+               members: int = 1, age: int = 45) -> float:
+    """「税率ぶんだけ得をする」と言うときの率（所得税の税率だけ）。"""
+    return bracket_rate(profit, aoiro, members, age)
+
+
+# ---- 表 -----------------------------------------------------------------
+PROFITS = [1_000_000, 2_000_000, 3_000_000, 4_000_000, 5_000_000,
+           7_000_000, 9_000_000, 12_000_000, 16_000_000, 20_000_000]
+
+
+def grid(profits: list[int] | None = None) -> list[dict]:
+    """図解の元になる表。所得ごとの「経費1万円の値打ち」。"""
+    rows = []
+    for p in (profits or PROFITS):
+        m = marginal(p)
+        rows.append({
+            "所得": p,
+            "速算表の税率": round(bracket_rate(p) * 100, 1),
+            "値打ち": m["値打ち"],
+            "実効率": round(m["実効率"] * 100, 2),
+            "正味の費用": m["正味の費用"],
+        })
+    return rows
+
+
+def rate_curve(low: int = 1_000_000, high: int = 20_000_000,
+               step: int = 100_000) -> list[dict]:
+    """所得を刻んで実効率を出す。**山と谷を探すための細かい表。**"""
+    out = []
+    p = low
+    while p <= high:
+        m = marginal(p)
+        out.append({"所得": p, "実効率": m["実効率"], "値打ち": m["値打ち"]})
+        p += step
+    return out
+
+
+def peak() -> dict:
+    """実効率がいちばん高くなる所得。**上に行くほど高い、ではありません。**"""
+    return max(rate_curve(), key=lambda r: r["実効率"])
+
+
+def drops(min_point: float = 0.001) -> list[dict]:
+    """所得が1段上がったのに、実効率が**下がった**点。
+
+    `min_point` より小さい落ちは出しません。**千円未満の切り捨てが作る
+    0.01ポイントの揺れ**が、本物の段と同じ顔で並ぶためです
+    （既定は0.1ポイント ＝ 経費1万円あたり10円）。
+    """
+    curve = rate_curve()
+    out = []
+    for a, b in zip(curve, curve[1:]):
+        fall = a["実効率"] - b["実効率"]
+        if fall > min_point:
+            out.append({"所得": b["所得"], "前の実効率": a["実効率"],
+                        "実効率": b["実効率"], "落ち幅": fall})
+    return out
+
+
+def kokuho_rate(profit: int, aoiro: int = AOIRO_ETAX,
+                members: int = 1, age: int = 45) -> float:
+    """国民健康保険の所得割の合計率。**限度額に当たっている区分は0%です。**"""
+    got = kokuho.premium(after_aoiro(profit, aoiro), members, age)
+    return sum(float(kokuho.RATES[r["区分"]]["所得割"])
+               for r in got["内訳"] if not r["頭打ちか"])
+
+
+def naive_sum(profit: int, aoiro: int = AOIRO_ETAX,
+              members: int = 1, age: int = 45) -> dict:
+    """**率をそのまま足したらいくらか。** 実際の値打ちとの差が二重勘定です。"""
+    rates = {
+        "所得税": bracket_rate(profit, aoiro, members, age) * (1 + FUKKO_RATE),
+        "住民税": JUMIN_RATE,
+        "国保": kokuho_rate(profit, aoiro, members, age),
+        "事業税": JIGYOZEI_RATE if profit > JIGYOZEI_KOJO else 0.0,
+    }
+    return {"率": rates, "合計率": sum(rates.values()),
+            "足し算": int(sum(rates.values()) * STEP)}
+
+
+def chain_loss(profit: int = 5_000_000) -> dict:
+    """**足し算では出ないぶん。** 国保が減ると社会保険料控除も減り、税が戻ります。"""
+    m = marginal(profit)
+    n = naive_sum(profit)
+    return {
+        "所得": profit,
+        "素直な足し算": n["足し算"],
+        "合計率": n["合計率"],
+        "実際の値打ち": m["値打ち"],
+        "実効率": m["実効率"],
+        "差": n["足し算"] - m["値打ち"],
+        "取り返される割合": (n["足し算"] - m["値打ち"]) / n["足し算"] if n["足し算"] else 0.0,
+    }
+
+
+def cliff() -> dict:
+    """実効率がいちばん跳ねる点。**国民健康保険の軽減の判定をまたぐところ。**"""
+    return max(rate_curve(), key=lambda r: r["実効率"])
+
+
+def reversals(rows: list[dict] | None = None) -> list[dict]:
+    """**所得が多いほうが、経費1万円の値打ちが小さい**組。表の行どうしで見ます。"""
+    rows = rows or grid()
+    out = []
+    for i, a in enumerate(rows):
+        for b in rows[i + 1:]:
+            if b["実効率"] < a["実効率"]:
+                out.append({"低いほうの所得": a["所得"], "低いほうの実効率": a["実効率"],
+                            "高いほうの所得": b["所得"], "高いほうの実効率": b["実効率"],
+                            "差": round(a["実効率"] - b["実効率"], 2)})
+    return out
+
+
+def aoiro_rows(profit: int = 5_000_000) -> list[dict]:
+    """青色申告特別控除の3つの額を並べる。**事業税は1円も動きません。**"""
+    rows = []
+    for a, name in ((AOIRO_KANI, "簡易簿記10万円"),
+                    (AOIRO_FUKUSHIKI, "複式簿記55万円"),
+                    (AOIRO_ETAX, "e-Tax65万円")):
+        b = burden(profit, a)
+        rows.append({"青色申告特別控除": name, "所得税": b["所得税"],
+                     "住民税": b["住民税"], "事業税": b["事業税"],
+                     "国民健康保険料": b["国民健康保険料"],
+                     "合計": b["年金を除く合計"]})
+    return rows
+
+
+def jigyozei_edge() -> dict:
+    """事業税の入口と、所得税から見たその位置。**65万円ずれます。**"""
+    return {
+        "事業税の入口（青色控除前）": JIGYOZEI_KOJO,
+        "そのときの事業所得（青色控除後）": after_aoiro(JIGYOZEI_KOJO),
+        "青色申告特別控除": AOIRO_ETAX,
+        "入口の下の実効率": marginal(JIGYOZEI_KOJO)["実効率"],
+        "入口の上の実効率": marginal(JIGYOZEI_KOJO + 100_000)["実効率"],
+    }
+
+
+def check_tables() -> None:
+    """制度の値と、この計算の主題そのものを確かめる。"""
+    _checks.statutory(AOIRO_ETAX, 650_000, "青色申告特別控除（e-Tax等）",
+                      source="租税特別措置法25条の2")
+    _checks.statutory(AOIRO_FUKUSHIKI, 550_000, "青色申告特別控除（複式簿記）",
+                      source="租税特別措置法25条の2")
+    _checks.statutory(AOIRO_KANI, 100_000, "青色申告特別控除（簡易簿記）",
+                      source="租税特別措置法25条の2")
+    _checks.statutory(KISO_SHOTOKU, 480_000, "所得税の基礎控除",
+                      source="所得税法86条")
+    _checks.statutory(KISO_JUMIN, 430_000, "住民税の基礎控除",
+                      source="地方税法314条の2第1項の2")
+    _checks.statutory(JIGYOZEI_KOJO, 2_900_000, "個人事業税の事業主控除",
+                      source="地方税法72条の49の14")
+    _checks.ratio(JIGYOZEI_RATE, "個人事業税の税率")
+    _checks.ratio(JUMIN_RATE, "住民税の所得割")
+    _checks.ratio(FUKKO_RATE, "復興特別所得税")
+    _checks.assumption_values(ASSUMPTIONS, name="keihi")
+
+    # 1. 負担は所得とともに増える（**向きが逆なら、どこかで符号を落としています**）
+    _checks.increases_with(lambda p: burden(p)["合計"], PROFITS,
+                           "所得が増えたのに負担の合計が増えていない")
+
+    # 2. **この表の主題。**「税率ぶんだけ得をする」は必ず小さすぎる
+    for p in (3_000_000, 5_000_000, 9_000_000):
+        _checks.greater(marginal(p)["実効率"], naive_rate(p),
+                        f"所得{p:,}円で、経費の実効率が速算表の税率以下")
+
+    # 3. **事業税の入口は、青色申告特別控除を引く前**。引いた額とは65万円ずれる
+    edge = jigyozei_edge()
+    _checks.rounding(edge["そのときの事業所得（青色控除後）"],
+                     JIGYOZEI_KOJO - AOIRO_ETAX,
+                     "事業税の入口に立つ人の、青色控除後の事業所得")
+
+    # 4. **単調ではありません。** 上に行くほど値打ちが上がる、が嘘であること
+    if not drops():
+        raise _checks.TableError(
+            "実効率が下がる点が1つもありません。"
+            "国保の賦課限度額を越える所得が表に入っていないか、限度額が効いていません")
+
+    # 5. 青色申告特別控除を増やしても、事業税は1円も動かない
+    rows = aoiro_rows()
+    if len({r["事業税"] for r in rows}) != 1:
+        raise _checks.TableError(
+            f"青色申告特別控除で事業税が動いています: "
+            f"{[r['事業税'] for r in rows]}")
+    _checks.unique_by(rows, lambda r: r["青色申告特別控除"], "青色申告特別控除の表")
+
+
+if __name__ == "__main__":
+    check_tables()
+    print("制度の値の検査: 通過")
+
+    print("\n=== 経費1万円の値打ちは、所得税の税率の2倍以上ある ===")
+    for row in grid():
+        print(f"  所得 {row['所得']:>10,}円  速算表 {row['速算表の税率']:>4}%  "
+              f"→ 値打ち {row['値打ち']:>7,}円（実効率 {row['実効率']:>5}%）  "
+              f"正味の費用 {row['正味の費用']:>6,}円")
+
+    print("\n=== 経費の値打ちは、所得が上がるほど大きい、ではない ===")
+    for r in reversals():
+        print(f"  所得 {r['低いほうの所得']:>10,}円 {r['低いほうの実効率']:>5}%  ＞  "
+              f"所得 {r['高いほうの所得']:>10,}円 {r['高いほうの実効率']:>5}%"
+              f"（{r['差']}ポイント低い）")
+
+    print("\n=== 経費1万円で保険料が2万円以上下がる所得がある ===")
+    c = cliff()
+    print(f"  いちばん高いのは 所得 {c['所得']:,}円 の {c['実効率'] * 100:.2f}%"
+          f"（値打ち {c['値打ち']:,}円）")
+    for d in drops(0.005):
+        print(f"  所得 {d['所得']:>10,}円 で "
+              f"{d['前の実効率'] * 100:.2f}% → {d['実効率'] * 100:.2f}% "
+              f"（{d['落ち幅'] * 100:.2f}ポイント下がる）")
+
+    print("\n=== 事業税の290万円は、青色申告特別控除を引く前で判定される ===")
+    e = jigyozei_edge()
+    print(f"  事業税がかかり始めるのは 青色控除前 {e['事業税の入口（青色控除前）']:,}円")
+    print(f"  そのときの事業所得（青色控除後）は "
+          f"{e['そのときの事業所得（青色控除後）']:,}円")
+    print(f"  入口の下 {e['入口の下の実効率'] * 100:.2f}% → "
+          f"上 {e['入口の上の実効率'] * 100:.2f}%")
+
+    print("\n=== 国保が減ると税が増える。差し引きは足し算より小さい ===")
+    for pr in (3_000_000, 5_000_000, 7_000_000, 9_000_000, 12_000_000):
+        c = chain_loss(pr)
+        print(f"  所得 {c['所得']:>10,}円  率の足し算 {c['合計率'] * 100:>5.2f}%"
+              f"（{c['素直な足し算']:>6,}円）  実際 {c['実効率'] * 100:>5.2f}%"
+              f"（{c['実際の値打ち']:>6,}円）  差 {c['差']:>5,}円"
+              f"＝{c['取り返される割合'] * 100:.1f}%が戻る")
+
+    print("\n=== 青色申告特別控除を55万円から65万円にしても、事業税は1円も減らない ===")
+    for row in aoiro_rows():
+        print(f"  {row['青色申告特別控除']:<12} 所得税 {row['所得税']:>8,}円  "
+              f"住民税 {row['住民税']:>8,}円  事業税 {row['事業税']:>8,}円  "
+              f"国保 {row['国民健康保険料']:>8,}円  合計 {row['合計']:>9,}円")
