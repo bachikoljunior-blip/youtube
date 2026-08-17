@@ -365,3 +365,4 @@
 {"at": "2026-08-18T05:34:14+09:00", "session": "session_01ETpuZeNdt4jVdA65YQSuYc", "kind": "ship", "what": "upload×9: 09-27 に9本を予約まで（新しい iryohi の節2本を含む / shienkyufu / ninikeizoku×2 / kafunenkin×2 / jutaku×2）。9/9・落ち0。この窓の本数枠を使い切った"}
 {"at": "2026-08-18T05:39:38+09:00", "session": "session_013JaWm5QAxXey4FUcesnRCx", "kind": "start"}
 {"at": "2026-08-18T06:02:36+09:00", "session": "session_013JaWm5QAxXey4FUcesnRCx", "kind": "ship", "what": "means+fix: 個人事業主の経費1万円の値打ち（src/calc/keihi.py 新設6節・テーマ283→289・pick 7→8本）／topic_forge の総覧吸い込み（realign が一致数で比べるので、全部の数字を持つ総覧の節が割り当てを全部奪い、同じ題が6件できていた）を swallows() で塞いだ", "closes": ["carry_over", "topic_forge"], "journal_lines": 22006}
+{"at": "2026-08-18T06:11:45+09:00", "session": "session_013JaWm5QAxXey4FUcesnRCx", "kind": "ship", "what": "means: (A) の題材を5件補充（status.py の「まだ表の無いテーマ」0件→5件。次に (A) を選ぶ回の題材決めが0分になる）"}
