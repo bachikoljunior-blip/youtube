@@ -231,3 +231,77 @@ def test_出どころが分かれて返る(paths):
     closed, from_record = retro.all_closures("**`sanbun` はこの回で閉じました**\n")
     assert from_record == {"kikai"}
     assert set(closed) == {"kikai", "sanbun"}
+
+
+# ---------------------------------------------------------------------------
+# **直し方のほうが帳簿を壊していた**（2026-08-18。`undeclared_close` 鳴った4回・当たり0）
+#
+# `_suggest_undeclared` は正しく「語そのものも宣言せよ」と言いますが、
+# 直し方として **`--ship` をもう一度打て**と案内していました。`--ship` は追記なので
+# **同じ成果が2行**入り、`retro.py` の種類別も `status.py` の件数も二重に数えます。
+# **従うと悪くなるので、4回とも従われていません。**畳んでも直らない側でした。
+# ---------------------------------------------------------------------------
+
+def test_closes_add_は_ship_を増やさない(paths):
+    runs, _ = paths
+    run_marker.main(["--ship", "fix: なにか", "--closes", "carry_over"])
+    assert run_marker.main(["--closes-add", "critique_queue"]) == 0
+    recs = rows(runs)
+    assert len([r for r in recs if r["kind"] == "ship"]) == 1, \
+        "**同じ成果が2行**入っています（帳簿が二重に数えます）"
+    assert recs[-1]["closes"] == ["carry_over", "critique_queue"]
+
+
+def test_closes_add_は同じ語を二重に足さない(paths):
+    runs, _ = paths
+    run_marker.main(["--ship", "fix: なにか", "--closes", "aaa"])
+    run_marker.main(["--closes-add", "aaa"])
+    assert rows(runs)[-1]["closes"] == ["aaa"]
+
+
+def test_closes_add_は前の回の記録を触らない(paths, monkeypatch):
+    """前の回の宣言は、**その回の判断の記録**です。足す先はこの回だけ。"""
+    runs, _ = paths
+    monkeypatch.setattr(run_marker, "session_id", lambda: "前の回")
+    run_marker.main(["--ship", "fix: 前の回", "--closes", "aaa"])
+    monkeypatch.setattr(run_marker, "session_id", lambda: "この回")
+    run_marker.main(["--ship", "fix: この回"])
+    run_marker.main(["--closes-add", "bbb"])
+    old, new = rows(runs)
+    assert old["closes"] == ["aaa"], "前の回の記録が書き換わっています"
+    assert new["closes"] == ["bbb"]
+
+
+def test_ship_が無いまま_closes_add_しても壊さない(paths):
+    runs, _ = paths
+    assert run_marker.main(["--closes-add", "aaa"]) == 1
+    assert not runs.exists() or rows(runs) == []
+
+
+def test_closes_add_は_ship_と一緒には使わない(paths):
+    with pytest.raises(SystemExit):
+        run_marker.main(["--ship", "fix: x", "--closes-add", "aaa"])
+
+
+def test_closes_add_の語彙は書き込む前に読む(paths, capsys, monkeypatch):
+    """**足した宣言が、その語を一覧から消してから読む**と、
+    **正しい語を足した回にかぎって「一覧に無い」**と言われます
+    （`ship()` には註があるのに、新しく足した道には無かった —— **片方だけ**）。
+    """
+    runs, journal = paths
+    # `_known_vocab()` は `from retro import carry_over` で**そのとき**の
+    # `sys.modules["retro"]` を引きます。他の検査が同じ名前で別の実体を
+    # 積み直すので、**この1本だけ実体を留めます**（単独では通り、
+    # 全体で走らせると落ちる、という形で1度踏みました）。
+    monkeypatch.setitem(sys.modules, "retro", retro)
+    monkeypatch.setattr(retro, "JOURNAL", journal)
+    journal.write_text(
+        "\n".join(f"## 2026-08-1{i} の回\n\n### 次の回へ\n\n"
+                  f"1. **`critique_queue` が残っています。**\n" for i in range(3)),
+        encoding="utf-8")
+    assert "critique_queue" in retro.carry_over()[0], "検査の前提が崩れています"
+    run_marker.main(["--ship", "fix: なにか"])
+    capsys.readouterr()
+    run_marker.main(["--closes-add", "critique_queue"])
+    out = capsys.readouterr().out
+    assert "一覧に無い語" not in out, f"正しい語が「一覧に無い」と言われています:\n{out}"

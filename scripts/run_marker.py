@@ -351,9 +351,67 @@ def _suggest_undeclared(what: str, closes: list[str],
     print("      潰したのなら、**語そのものも宣言すること**"
           "（`carry_over` だけでは一覧から落ちません）:")
     args = " ".join(f'--closes "{t}"' for t in hits)
-    print(f"      python scripts/run_marker.py --ship \"{what[:40]}…\" "
-          f"--closes carry_over {args}")
+    print(f"      python scripts/run_marker.py --closes-add {args}")
     print("      **触れただけで潰していないなら、何もしなくてよい。**")
+
+
+def closes_add(words: list[str]) -> int:
+    """**この回の直近の ship に、宣言を足す。** 新しい ship は作らない。
+
+    ## なぜ要るか（2026-08-18。**`undeclared_close` が 4回鳴って当たり0**）
+
+    `_suggest_undeclared` は「潰した語そのものも宣言せよ」と正しく言いますが、
+    直し方として **`--ship` をもう一度打て**と案内していました。
+    **`--ship` は追記なので、同じ成果が `data/runs.jsonl` に2行**入ります ——
+    `retro.py` の「出したもの」の種類別も、`status.py` の件数も、二重に数える。
+
+    **つまり、言われたとおりにすると帳簿が壊れます。** だから直前の4回は
+    どれも従われず、**鳴った4回・当たり0**でこの一覧は畳まれる寸前でした。
+    **当たらない理由が「気づかない」ではなく「従うと悪くなる」**なので、
+    畳んでも直りません。**直すのは直し方のほうです。**
+
+    足す先は**この回（同じ `session`）の最後の ship** に限ります。
+    前の回の記録は、その回の判断の記録なので触りません。
+    """
+    words = [w.strip() for w in words if w.strip()]
+    if not words:
+        return 0
+    me = session_id()
+    lines = [x for x in (MARKS.read_text(encoding="utf-8").splitlines()
+                         if MARKS.exists() else []) if x.strip()]
+    target = None
+    for i in range(len(lines) - 1, -1, -1):
+        try:
+            rec = json.loads(lines[i])
+        except json.JSONDecodeError:
+            continue
+        if rec.get("kind") == "ship" and (not me or rec.get("session") == me):
+            target = (i, rec)
+            break
+    if target is None:
+        print("[marker] **この回の ship がまだありません。**"
+              "`--ship` を先に打つこと（`--closes-add` は足すだけです）。")
+        return 1
+    i, rec = target
+    # **語彙は、書き込む前に読むこと**（`ship()` と同じ理由。書いてから読むと
+    # **たった今足した宣言が、その語を持ち越し一覧から消す** ——
+    # 結果、正しい語を足した回にかぎって「一覧に無い」と言われます。
+    # `ship()` にはこの註があるのに、**新しく足した道には無かった**。
+    # **片方だけ**の、また1件）。
+    known = _known_vocab()
+    before = list(rec.get("closes") or [])
+    rec["closes"] = before + [w for w in words if w not in before]
+    added = [w for w in rec["closes"] if w not in before]
+    rec.setdefault("journal_lines", journal_lines())
+    lines[i] = json.dumps(rec, ensure_ascii=False)
+    MARKS.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    if not added:
+        print(f"[marker] もう宣言されています（{' / '.join(words)}）。")
+        return 0
+    print(f"[marker] 直近の ship に宣言を {len(added)} 件足しました"
+          f"（{' / '.join(added)}）。**新しい ship は作っていません。**")
+    _warn_unknown(added, known)
+    return 0
 
 
 def show() -> int:
@@ -415,7 +473,17 @@ def main(argv: list[str] | None = None) -> int:
                          "`--closes=--closes` と等号で書くこと**"
                          "（argparse が次の旗と読みます。持ち越しには "
                          "`--closes` `--next` のような旗の名前が実際に載ります）")
+    ap.add_argument("--closes-add", metavar="語", action="append", default=[],
+                    help="**この回の直近の ship に**宣言を足す（新しい ship は "
+                         "作らない）。`--ship` を打った後で「語そのものも宣言せよ」と"
+                         "言われたときの直し方。**`--ship` を打ち直すと同じ成果が"
+                         "2行入り、帳簿が二重に数えます。**")
     args = ap.parse_args(argv)
+    if args.closes_add:
+        if args.ship:
+            ap.error("--closes-add は --ship と一緒に使いません"
+                     "（--ship のほうは --closes で書けます）")
+        return closes_add(args.closes_add)
     if args.ship:
         return ship(args.ship, args.closes)
     if args.closes:
