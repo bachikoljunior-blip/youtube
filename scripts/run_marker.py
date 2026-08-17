@@ -213,7 +213,51 @@ def ship(what: str, closes: list[str] | None = None) -> int:
         print(f"[marker] **潰した宣言を {len(closes)} 件、構造で残しました**"
               f"（{' / '.join(closes)}）。")
         print("         `retro.py` の持ち越しから、この語より前の言及が落ちます。")
+        _warn_unknown(closes)
     return 0
+
+
+def _warn_unknown(closes: list[str]) -> None:
+    """**その語が、本当に一覧に載っているか。**（2026-08-17。3回運ばれた申し送り）
+
+    `--closes` は**どんな語でも黙って受け取ります。** 書き間違えても、
+    もう潰れている語を書いても、何も言いません。**気づく口がどこにもない**ので、
+    宣言だけが `data/runs.jsonl` に残り、**持ち越しは一覧に残ったまま**になります
+    （散文の宣言を構造へ移した理由がこれなのに、構造の側に同じ穴がありました）。
+
+    **止めません。** 出したものの記録が、語の綴りで落ちるほうが確実に悪い
+    （投稿が途切れるのと同じ形で、記録が欠けます）。**言うだけです。**
+
+    見る先は2つ。**どちらも実物から引きます**（手で語彙を並べない）:
+
+    - `retro.py` の持ち越し（`carry_over()`。**同じ計算を呼びます**）
+    - `src/alerts.py` の一覧の鍵（`data/alerts.jsonl` に鳴った記録があるもの）
+    """
+    root = Path(__file__).resolve().parent.parent
+    try:
+        for p in (str(root), str(root / "scripts")):
+            if p not in sys.path:
+                sys.path.insert(0, p)
+        from retro import carry_over
+        from src import alerts
+
+        carried, dropped = carry_over()
+        known = set(carried) | {r.key for r in alerts.table()}
+        # 物の名前として沈めた語は「一覧に無い」と言わない（**外したのはこちら側の都合**）
+        for toks in dropped.values():
+            known.update(toks)
+    except Exception as exc:                      # 読めないなら黙って通す
+        print(f"         （持ち越しの一覧を読めませんでした: {exc}）")
+        return
+    unknown = [c for c in closes if c not in known]
+    if not unknown:
+        return
+    print(f"  [!] **一覧に無い語が {len(unknown)} 件あります**: {' / '.join(unknown)}")
+    print("      `retro.py` の持ち越しにも `src/alerts.py` の鍵にも載っていません。")
+    print("      **書き間違いなら、この宣言は何も黙らせません**"
+          "（記録は残したので、正しい語でもう一度打ち直せます）。")
+    if carried:
+        print(f"      いま出ている持ち越し: {' / '.join(sorted(carried)[:8])}")
 
 
 def show() -> int:

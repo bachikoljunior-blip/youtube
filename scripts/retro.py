@@ -435,6 +435,41 @@ def ship_summary(n: int) -> tuple[Counter, list[str]]:
     return kinds, recent
 
 
+def carry_over(n: int = 8) -> tuple[dict[str, list[str]], dict[str, list[str]]]:
+    """**いま持ち越しに出ている語**と、**物の名前として外した語**を返す。
+
+    `main()` が画面に出しているものと**同じ計算**です（下の呼び出しに切り出しました）。
+    切り出したのは、**`run_marker.py --ship --closes` に、その語が実在するかを
+    確かめさせるため**です（2026-08-17。3回運ばれた申し送り）。
+
+    **判定を呼ぶ側に写さないこと。** 写した瞬間に、
+    `noise_tokens()` や「宣言より前だけ落とす」の直しが片方に入りません
+    （`src/alerts.py` の「呼ぶ側に条件を置くと片方だけ書き忘れる」と同じ形です）。
+    """
+    journal = JOURNAL.read_text(encoding="utf-8")
+    closed, _from_record = all_closures(journal)
+    blocks = handoff_blocks(journal)[-n:]
+    seen: defaultdict[str, list[str]] = defaultdict(list)
+    for date, body, start in blocks:
+        for tok in tokens(body):
+            if tok in closed and start <= closed[tok]:
+                continue
+            seen[tok].append(date[:16])
+    noise = noise_tokens()
+    out: dict[str, list[str]] = {}
+    dropped: dict[str, list[str]] = {}
+    for tok, ds in seen.items():
+        if len(ds) < 2:
+            continue
+        for label, words in noise.items():
+            if tok in words:
+                dropped.setdefault(label, []).append(tok)
+                break
+        else:
+            out[tok] = ds
+    return out, dropped
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--n", type=int, default=8, help="さかのぼる回数。既定8")
@@ -469,26 +504,14 @@ def main() -> int:
             print(f"  {line}")
         print()
 
-    seen: defaultdict[str, list[str]] = defaultdict(list)
     muted: defaultdict[str, int] = defaultdict(int)
-    for date, body, start in blocks:
+    for _date, body, start in blocks:
         for tok in tokens(body):
             if tok in closed and start <= closed[tok]:
                 muted[tok] += 1      # **潰したと宣言された後より前の言及**
-                continue
-            seen[tok].append(date[:16])
-    raw = {t: ds for t, ds in seen.items() if len(ds) >= 2}
-    # **物の名前は外す**（`noise_tokens()`。族名・種類・動画ID）
-    noise = noise_tokens()
-    dropped: defaultdict[str, list[str]] = defaultdict(list)
-    carried = {}
-    for tok, ds in raw.items():
-        for label, words in noise.items():
-            if tok in words:
-                dropped[label].append(tok)
-                break
-        else:
-            carried[tok] = ds
+    # **一覧そのものは `carried()` が作ります**（`run_marker.py` も同じものを見ます）。
+    # ここで作り直さないこと —— 2か所に置くと、次の直しが片方だけに入ります。
+    carried, dropped = carry_over(args.n)
     print("\n## 持ち越し（2回以上の申し送りに出てくる語）\n")
     # **この一覧も、自分の当たり率で畳まれます**（`src/alerts.py`）。
     # 08:2x の「予約し忘れ」12件・13:0x の「強い重なり」22組と同じ形で、
