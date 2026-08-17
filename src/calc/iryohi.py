@@ -46,6 +46,13 @@ ASSUMPTIONS = [
     "高額療養費で戻る額は「保険で補填された額」なので、医療費控除の対象からは差し引いています",
     "高額療養費と合わせる計算では、その月にかかった医療費だけを1年分の医療費とみなしています。"
     "同じ年に別の月の医療費があれば、控除はその分だけ増えます",
+    "何人で分けて申告するかの計算では、分ける相手の総所得も同じとしています"
+    "（足切りが同じになります）。相手の総所得が200万円未満なら足切りはさらに下がるので、"
+    "分けたほうが有利になる額はもっと小さくなります",
+    "何人で分けて申告するかの計算では、それぞれが控除を使い切るだけの課税所得があるものとしています。"
+    "医療費控除は所得控除なので、その人の所得を超えた分は戻りません",
+    "医療費を分けて申告できるのは、その医療費を実際に負担した人の分だけです。"
+    "誰が払ったかを動かせない医療費は、この計算の対象になりません",
 ]
 
 # 制度の値。**改正が続くものは入力に逃がす**（docs/CONSTRAINTS.md B4）が、
@@ -148,6 +155,51 @@ def check_tables() -> None:
     if deduction_start_cost("オ", 700_000) is None:
         raise ValueError("足切りが限度額より低い総所得で、控除が出ないことになっている")
 
+    # --- 上限200万円に当たると「まとめる」が逆転する（best_claimants の主題）---
+    # **`split_loss` の「分けると必ず損」は、上限に当たらない範囲でだけ正しい。**
+    # 2026-08-18 まで、この向きはどの節も言っておらず、
+    # 「分けて得になることは無い」という**誤った註が docstring に残っていました**
+    # （検査も 400,000円 の1点でしか見ておらず、素通りしていた）。
+    f3 = floor_amount(3_000_000)
+    if split_loss(3_000_000, 1_500_000, 3_000_000, 0.20)["lost_deduction"] >= 0:
+        raise ValueError("上限を超える医療費でも、分けると損のままになっている")
+    # 逆転はちょうど「上限 ＋ 足切り × 2」で起きる（＝この表では 2,200,000円）
+    tip = DEDUCTION_CAP + f3 * 2
+    if together_deduction(tip, 3_000_000) != split_deduction(tip, 2, 3_000_000):
+        raise ValueError(f"逆転の境目 {tip:,}円 で、まとめと2人分けが並んでいない")
+    if together_deduction(tip - 20_000, 3_000_000) <= split_deduction(tip - 20_000, 2, 3_000_000):
+        raise ValueError("境目の手前で、まとめが勝っていない")
+    if together_deduction(tip + 20_000, 3_000_000) >= split_deduction(tip + 20_000, 2, 3_000_000):
+        raise ValueError("境目の先で、2人に分けたほうが勝っていない")
+    # 最適な人数は「上限に当たらない最小の人数」の前後1つに必ず収まる
+    for paid in (1_000_000, 2_200_000, 3_000_000, 5_000_000, 9_000_000):
+        n = best_claimants(paid, 3_000_000)["claimants"]
+        best = split_deduction(paid, n, 3_000_000)
+        for m in range(1, 8):
+            if split_deduction(paid, m, 3_000_000) > best:
+                raise ValueError(f"{paid:,}円 で {m}人 のほうが多い（{n}人 を最適と言っている）")
+    # 境目の間隔は「上限 ＋ 足切り」で一定（＝この表では 2,100,000円ごと）
+    tips = claimant_tips(3, 3_000_000)
+    gaps = {b - a for a, b in zip(tips, tips[1:])}
+    if gaps != {DEDUCTION_CAP + f3}:
+        raise ValueError(f"人数が増える境目の間隔が一定でない: {gaps}")
+
+    # --- 現金と翌年の負担減の主客が入れ替わる（refund_timing_grid の主題）---
+    # 入れ替わる率は速算表に**無い**（5% と 10% のあいだに落ちる）。
+    # ここが速算表の率と一致するようになったら、節の「誰もその点に立たない」は嘘になる
+    tip_rate = cash_share_tipping_rate()
+    if tip_rate in INCOME_TAX_RATES:
+        raise ValueError(f"入れ替わりの率 {tip_rate} が速算表の率と一致している")
+    if not INCOME_TAX_RATES[0] < tip_rate < INCOME_TAX_RATES[1]:
+        raise ValueError(f"入れ替わりの率 {tip_rate} が速算表の 5% と 10% のあいだにない")
+    # 5%の帯では住民税ぶんのほうが多く、10%以上では所得税ぶんのほうが多い
+    # **`refund_timing_grid()` を呼ばないこと**（あちらが check_tables() を呼ぶので
+    # 無限再帰になります。2026-08-18 に踏んだ）。部品のほうを直に回す
+    for r in [refund_split(200_000, rate) for rate in INCOME_TAX_RATES]:
+        bigger_cash = r["cash_now"] > r["next_year"]
+        if bigger_cash != (r["rate"] > tip_rate):
+            raise ValueError(f"税率{r['rate']} で内訳の大小が向きと合っていない: {r}")
+
 
 def floor_amount(total_income: int) -> int:
     """足切り。**10万円と総所得の5%の、少ないほう。**
@@ -220,6 +272,11 @@ def split_loss(total_paid: int, smaller_share: int, income: int, rate: float) ->
         小さいほうが足切り以上  → 損失は**足切りぶんで頭打ち**（医療費が増えても一定）
 
     どちらも2人の総所得が同じ場合の話（足切りが同じ）。
+
+    **ここには「分けて得になることは無い」と書いてありました。嘘です**（2026-08-18 に直した）。
+    上の2つの帯は、**まとめた側が控除の上限200万円に当たらない範囲**でしか成り立ちません。
+    上限に当たると `lost_deduction` は**負**になります（＝分けたほうが多く乗る）。
+    向きが変わる額と、そこから先の最適な人数は `best_claimants()` を見ること。
     """
     if not 0 <= smaller_share <= total_paid / 2:
         raise ValueError(f"小さいほうの分担が範囲外: {smaller_share}")
@@ -235,6 +292,147 @@ def split_loss(total_paid: int, smaller_share: int, income: int, rate: float) ->
         "lost_yen": int(lost_deduction * coefficient(rate)),
         "capped": smaller_share >= floor_amount(income),
     }
+
+
+# ---- 控除の上限200万円に当たると、「1人にまとめる」が逆転する ----------------
+#
+# `split_loss()` は「分けると足切りがもう1回引かれるので損」と言います。**足りません。**
+# 控除には**上限200万円**があり、1人にまとめるとそこで切られます。
+# 分けた側は上限が人数ぶんあるので、**支払額が大きいほど分けたほうが多く乗る。**
+#
+#     まとめ（1人）  min(支払額 − 足切り, 200万円)
+#     n人に等分      min(支払額 − 足切り × n, 200万円 × n)
+#
+# 前者は増えなくなり、後者は足切りを n回ぶん引かれるかわりに天井が n倍。
+# **どちらも「支払額」の関数として折れるので、交わる点が1つずつ出ます。**
+
+
+def together_deduction(paid: int, total_income: int) -> int:
+    """1人にまとめて申告したときの控除額。**上限で頭打ち。**"""
+    return deduction(paid, 0, total_income)
+
+
+def split_deduction(paid: int, claimants: int, total_income: int) -> int:
+    """n人に等分して申告したときの控除額の合計。
+
+    **全員の総所得が同じ**（＝足切りが同じ）としています。端数は1人目に寄せます。
+    """
+    if claimants < 1:
+        raise ValueError(f"申告する人数が範囲外: {claimants}")
+    each = paid // claimants
+    return sum(deduction(each + (paid - each * claimants if i == 0 else 0),
+                         0, total_income)
+               for i in range(claimants))
+
+
+def claimant_tips(count: int, total_income: int) -> list[int]:
+    """人数が1人増える境目の医療費（円）を、小さいほうから `count` 件。
+
+    k人と (k+1)人が並ぶのは `k × 上限 ＝ 支払額 − (k+1) × 足切り` のとき:
+
+        支払額 = k × 上限 ＋ (k+1) × 足切り
+
+    **隣り合う境目の差は、k に依らず「上限 ＋ 足切り」で一定です**
+    （この表では 2,100,000円ごと）。
+    """
+    if count < 1:
+        raise ValueError(f"件数が範囲外: {count}")
+    f = floor_amount(total_income)
+    return [k * DEDUCTION_CAP + (k + 1) * f for k in range(1, count + 1)]
+
+
+def best_claimants(paid: int, total_income: int) -> dict:
+    """**控除額がいちばん大きくなる申告人数。**
+
+    上限に当たらない最小の人数 `paid / (上限 + 足切り)` の**前後1つ**が候補です
+    （下は天井で切られ、上は足切りを1回多く引かれるので、必ずこの2つのどちらか）。
+    同点のときは、手続きが1つで済む**少ないほう**を返します。
+    """
+    f = floor_amount(total_income)
+    lo = max(1, int(paid // (DEDUCTION_CAP + f)))
+    best_n, best_d = 1, together_deduction(paid, total_income)
+    for n in (lo, lo + 1):
+        d = split_deduction(paid, n, total_income)
+        if d > best_d:
+            best_n, best_d = n, d
+    return {
+        "paid": paid,
+        "claimants": best_n,
+        "deduction": best_d,
+        "together": together_deduction(paid, total_income),
+        "gain": best_d - together_deduction(paid, total_income),
+    }
+
+
+def claimant_grid_by_paid(total_income: int, rate: float) -> list[dict]:
+    """医療費べつに、まとめた場合と分けた場合を1行に並べる。
+
+    **境目の両側を必ず含めます**（`claimant_tips` の ±1万円）。
+    1点だけ印字すると、折れているのか頭打ちなのかが読めないためです。
+    """
+    check_tables()
+    tips = claimant_tips(2, total_income)
+    paids = sorted({1_000_000, 2_000_000,
+                    tips[0] - 10_000, tips[0], tips[0] + 10_000,
+                    3_000_000, 4_000_000,
+                    tips[1] - 10_000, tips[1], tips[1] + 10_000,
+                    6_000_000})
+    out = []
+    for p in paids:
+        b = best_claimants(p, total_income)
+        out.append({
+            "paid": p,
+            "together": b["together"],
+            "split2": split_deduction(p, 2, total_income),
+            "split3": split_deduction(p, 3, total_income),
+            "best_claimants": b["claimants"],
+            "best_deduction": b["deduction"],
+            "gain": b["gain"],
+            "gain_yen": int(b["gain"] * coefficient(rate)),
+            "at_tip": p in tips,
+        })
+    return out
+
+
+# ---- 戻る額の内訳。**現金で戻るのは所得税ぶんだけ** -------------------------
+#
+# 医療費控除で戻る額は2つに分かれます。
+#
+#     所得税ぶん  税率 × 1.021   … 申告して数週間で**振り込まれる**
+#     住民税ぶん  一律 10%        … **翌年6月からの1年間、毎月の天引きが減る**
+#
+# 住民税は税率が一律なので、**所得税率が低い人ほど、戻りに占める住民税の割合が高い。**
+# 入れ替わるのは `税率 × 1.021 ＝ 10%` の点、つまり **所得税率 9.79%** です。
+# 速算表の税率は 5% の次が 10% なので、**5%の帯にいる人は必ず住民税のほうが多く**、
+# 10%以上の帯では必ず所得税のほうが多い。**境目は税率の段のあいだに落ちていて、
+# どの納税者もその点には立ちません。**
+
+
+def cash_share_tipping_rate() -> float:
+    """所得税ぶんと住民税ぶんが並ぶ所得税率。**速算表には無い率です。**"""
+    return RESIDENT_RATE / (1 + RECONSTRUCTION)
+
+
+def refund_split(deduction_amount: int, rate: float) -> dict:
+    """戻る額を「現金（所得税）」と「翌年の負担減（住民税）」に割る。"""
+    income_tax = int(deduction_amount * rate * (1 + RECONSTRUCTION))
+    resident = int(deduction_amount * RESIDENT_RATE)
+    total = income_tax + resident
+    return {
+        "rate": rate,
+        "deduction": deduction_amount,
+        "cash_now": income_tax,
+        "next_year": resident,
+        "total": total,
+        "cash_share": income_tax / total,
+        "resident_over_cash": resident / income_tax,
+    }
+
+
+def refund_timing_grid(deduction_amount: int = 200_000) -> list[dict]:
+    """所得税率べつに、戻る額の内訳。**5%と10%のあいだで主客が入れ替わる。**"""
+    check_tables()
+    return [refund_split(deduction_amount, r) for r in INCOME_TAX_RATES]
 
 
 def claimant_grid(
@@ -464,6 +662,29 @@ if __name__ == "__main__":
         print(f"{r['smaller_share']:13,d}円 {r['deduction_together']:10,d}円 "
               f"{r['deduction_apart']:9,d}円 {r['lost_deduction']:9,d}円 {r['lost_yen']:8,d}円"
               + ("  ← 足切りぶんで頭打ち" if r["capped"] else ""))
+
+    print(f"\n=== 「1人にまとめる」が逆になる医療費（総所得{TI2:,}円・所得税率{RATE2:.0%}）===")
+    tips = claimant_tips(2, TI2)
+    print(f"  控除の上限 {DEDUCTION_CAP:,}円 ・ 足切り {floor_amount(TI2):,}円。"
+          f"逆転は {tips[0]:,}円 ＝ 上限 ＋ 足切り×2。")
+    print(f"  そこから先の境目は {DEDUCTION_CAP + floor_amount(TI2):,}円ごと（次は {tips[1]:,}円）。")
+    print(f"{'支払った医療費':>13s} {'1人':>10s} {'2人で分ける':>11s} {'3人で分ける':>11s} "
+          f"{'最善':>5s} {'まとめとの差':>11s}")
+    for r in claimant_grid_by_paid(TI2, RATE2):
+        mark = "  ← 境目（並ぶ）" if r["at_tip"] else ""
+        print(f"{r['paid']:12,d}円 {r['together']:9,d}円 {r['split2']:10,d}円 "
+              f"{r['split3']:10,d}円 {r['best_claimants']:4d}人 {r['gain_yen']:10,d}円" + mark)
+
+    D = 200_000
+    print(f"\n=== 控除{D:,}円で戻る額の内訳（現金は所得税ぶんだけ）===")
+    print(f"  入れ替わるのは所得税率 {cash_share_tipping_rate():.4%}。"
+          "速算表は 5% の次が 10% なので、**その率の人はいません。**")
+    print(f"{'所得税率':>7s} {'現金（所得税）':>13s} {'翌年6月から（住民税）':>19s} "
+          f"{'合計':>9s} {'現金の割合':>9s}")
+    for r in refund_timing_grid(D):
+        mark = "  ← 住民税のほうが多い" if r["cash_now"] < r["next_year"] else ""
+        print(f"{r['rate']:6.0%} {r['cash_now']:12,d}円 {r['next_year']:18,d}円 "
+              f"{r['total']:8,d}円 {r['cash_share']:9.1%}" + mark)
 
     print("\n=== 高額療養費のあと、医療費控除が1円でも出る医療費（総所得3,000,000円）===")
     print(f"  足切り {floor_amount(3_000_000):,}円（総所得3,000,000円）。"
