@@ -28,7 +28,7 @@ import json
 import math
 import re
 import sys
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -177,12 +177,65 @@ def _print_moves(nexts: list[str]) -> None:
             print(f"             {cont}")
 
 
+_LAG_PATH = Path(__file__).resolve().parent.parent / "data" / "analytics_lag.jsonl"
+
+
+def _save_analytics_lag(last_day: str) -> None:
+    """Analytics の日次がどこまで届いているかを、点として積む。"""
+    try:
+        _LAG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with _LAG_PATH.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps({"at": datetime.now(JST).isoformat(timespec="seconds"),
+                                 "last_day": last_day}, ensure_ascii=False) + "\n")
+    except Exception:                                          # noqa: BLE001
+        pass                                                   # 計器が落ちても回は止めない
+
+
+def _lag_days(last_day: str) -> int:
+    """**遅れの日数は、ここだけで数えること。**
+
+    2026-08-18 に、同じ出力の中に **3日前と4日遅れ**が並びました。
+    `print_channel_signals` が `date.today()`（＝ UTC）で、こちらが JST
+    だったためです。**JST 01:4x は UTC ではまだ前日**なので、1日ずれます。
+
+    **期限は JST で書かれています**（`hypotheses.yaml`）。だから JST に揃え、
+    **数える場所を1つにしました。** 2つ置くと、次に触った回が片方だけ直します。
+    """
+    return (datetime.now(JST).date() - date.fromisoformat(last_day)).days
+
+
+def _analytics_lag() -> tuple[str, int] | None:
+    """**いちばん新しい「最終日」と、そこから今日までの日数。**
+
+    API を叩きません（日枠の閉じている回でも出るため）。
+    """
+    try:
+        rows = [json.loads(x) for x in _LAG_PATH.read_text(encoding="utf-8").splitlines() if x.strip()]
+        last = max(r["last_day"] for r in rows)
+        return last, _lag_days(last)
+    except Exception:                                          # noqa: BLE001
+        return None
+
+
 def print_hypotheses() -> None:
     """検証していない前提と、その期限を毎回出す。
 
     **推測は、期限を切らないと永久に推測のまま残る。** JOURNAL に書くだけでは
     読み飛ばされるので、状態を見るたびに目に入る場所に出す。
     期限を過ぎたものは目立たせる。そこで必ず判定させる。
+
+    ## 「あと1日」は、実データが1日後に在るという意味ではありません
+
+    **2026-08-18 に足しました。同じ読み違えが、申し送りで2回続けて起きています。**
+    8/19 の前提（尺を30秒に）は根拠が **8/16〜18 に公開した3本**ですが、
+    **Analytics の日次はこの時点で 8/14 までしか届いていません**（3日遅れ）。
+    つまり **8/19 に判定しようとしても、3本とも再生0行のまま**です
+    （この回、6本を1本ずつ問い合わせて全部 `NO ROWS` を確認しました）。
+
+    それでも節は「あと1日」とだけ出していたので、**2回の申し送りが
+    「次の回が判定できます」と書き、2回とも実データはありませんでした。**
+    期限は日付の引き算で出ますが、**判定できるかどうかは遅れとの引き算**です。
+    だから遅れを、期限のすぐ隣に置きます。
     """
     import yaml
 
@@ -203,6 +256,13 @@ def print_hypotheses() -> None:
         (judged if h.get("verdict") else open_).append(h)
 
     print("\n=== まだ検証していない前提 ===")
+    _lag = _analytics_lag()
+    if _lag:
+        _last, _days = _lag
+        print(f"  **実データは {_days}日 遅れています**（Analytics の日次の最終日 {_last}）。"
+              "  ← **「あと N日」から必ず引くこと**")
+        print(f"      根拠の本が {_last} より後に公開されているなら、"
+              "**その期限には、まだ1行も出ていません。**")
     if not open_:
         print("  （ありません）")
     no_next: list[tuple[int, str]] = []
@@ -881,8 +941,14 @@ def print_channel_signals(days: int = 28) -> None:
 
     # **鮮度。** ここが古いと「24時間で何再生」の判定に使えない。
     last = rows[-1]["day"]
-    lag = (date.today() - date.fromisoformat(last)).days
+    # **`date.today()` で数えないこと**（2026-08-18 に踏んだ）。あれは UTC なので、
+    # JST の未明はまだ前日＝**同じ出力の中で「3日前」と「4日遅れ」が並びました。**
+    lag = _lag_days(last)
     print(f"  日次データの最終日 {last}（{lag}日前）")
+    # **点として残す**（2026-08-18 に足した）。ここでしか測れないのに、
+    # **要るのは前提の節のほう**です（下の `_analytics_lag`）。
+    # 前提の節は日枠が閉じた回にも出るので、その回は API を叩けません。
+    _save_analytics_lag(last)
     if lag >= 2:
         print("  **この表は当日ぶんを含みません。** 「24時間で〇再生」の反証条件は"
               "ここでは判定できないので、`data/views.jsonl` か動画べつの数字を使うこと。")
@@ -1252,34 +1318,7 @@ def _channel_main(days: int = 7) -> int:
     except Exception as exc:
         print(f"\n=== 自分で作った「繰り返し」===\n  [!] 見られませんでした: {str(exc)[:120]}")
 
-    # 流入経路。表示されているのかどうかが、他の全部の前提になる。
-    print(f"\n=== 流入経路（直近{days}日） ===")
-    try:
-        from src.analytics import fetch_traffic
-
-        rows = fetch_traffic(days)
-        if not rows or sum(r.get("views", 0) for r in rows) == 0:
-            print("  まだ数字が返りません（Analytics は当日ぶんが遅れます）")
-        for r in rows:
-            print(f"  {r.get('insightTrafficSourceType', '?'):18s} 再生{r.get('views', 0):5d}"
-                  f"  視聴{r.get('estimatedMinutesWatched', 0):5d}分")
-    except Exception as exc:
-        print(f"  読めませんでした: {str(exc)[:120]}")
-
-    print_retention()
-    print_channel_signals()
-    print_where_watched()
-    # **取れるものを全部引いて、前回との差を出す。**
-    # ここを「毎回」にしたのが要点。手で選んでいる限り、選ばなかったものは
-    # 永久に視界に入らない（2026-08-09、8次元を何日も見落としていた）。
-    try:
-        from src import scan as _scan
-        _snap = _scan.collect()
-        _scan.report(_snap, _scan._previous())
-        _scan.save(_snap)
-    except Exception as exc:                 # 走査が落ちても状態表示は続ける
-        print(f"\n=== 全走査 ===\n  [!] 走査に失敗: {str(exc)[:150]}")
-        print("      **これを放置しないこと。** 落ちている間は見落としが数えられない")
+    print_analytics_sections(days)
     print_local_sections(inventory=False)
 
     # 収益化の門。律速がどちらかを毎回見せる（docs/GOAL.md の掛け算）。
@@ -1475,6 +1514,80 @@ def _print_analytics_recap() -> None:
         print(f"\n=== アナリティクスの要点 ===\n  [!] 出せません: {str(exc)[:100]}")
 
 
+def print_analytics_sections(days: int = 7) -> None:
+    """**Analytics API だけで出る節**（Data API を1回も叩かない）。
+
+    ## なぜ括り出したか（2026-08-18 01:3x に実測して足した）
+
+    **枠は2つあり、別々に閉じます。**
+
+        Data API（`youtube/v3`）        10,000単位/日  → 読みが 403 になる
+        YouTube Analytics（`v2`）      **別枠**       → **403 のあいだも生きている**
+
+    ところが `main` の受け皿は、**Data API が落ちた回に
+    「チャンネル側の数字はこの回では出ません」**と言って、
+    `print_local_sections` だけを呼んでいました。
+    **`print_analytics_sections` にあたるものが無かった**ので、
+    流入経路・維持率・チャンネル日次・視聴場所・全走査が**まるごと落ちます。**
+
+    日枠は太平洋時間の0時に戻る＝**1日のうち十数時間がこの状態**で、
+    その間の子は全部「チャンネルは読めない」と信じて回っていました。
+    実測（この回、日枠が 403 の最中）:
+
+        fetch_traffic(7)      **通る**
+        scan.collect()        **通る**
+        fetch_subscribers(7)  **通る**
+
+    **落ちるのは `fetch_report` だけ**で、理由は中身ではなく**題名**です
+    （`videos.list` で引いている＝Data API）。だから `print_retention` は
+    このなかで落ちますが、**自分の `try` で受けるので他を巻き込みません。**
+
+    ## 一覧を2か所に書かないこと
+
+    **この関数が節の一覧の正本です。** `_channel_main` も `main` の受け皿も、
+    **ここを呼ぶだけ**にしてあります。写すと、次に節を足した回が
+    片方だけ書き忘れます（このリポジトリで通算11回起きている形）。
+    """
+    # 流入経路。表示されているのかどうかが、他の全部の前提になる。
+    print(f"\n=== 流入経路（直近{days}日） ===")
+    try:
+        from src.analytics import fetch_traffic
+
+        rows = fetch_traffic(days)
+        if not rows or sum(r.get("views", 0) for r in rows) == 0:
+            print("  まだ数字が返りません（Analytics は当日ぶんが遅れます）")
+        for r in rows:
+            print(f"  {r.get('insightTrafficSourceType', '?'):18s} 再生{r.get('views', 0):5d}"
+                  f"  視聴{r.get('estimatedMinutesWatched', 0):5d}分")
+    except Exception as exc:
+        print(f"  読めませんでした: {str(exc)[:120]}")
+
+    # **1本ずつ受けること。** `print_retention` は `fetch_report` ＝
+    # **題名を `videos.list`（Data API）で引く**ので、日枠が閉じている回は
+    # ここだけ落ちます。中は自分の `try` で受けていますが、**それに頼らない** ——
+    # 頼ると、次に節を足した回が「中で受けているはず」で通してしまいます
+    # （このリポジトリの「片方だけ」は通算11回。**構造で持つほうが安い**）。
+    for _name, _fn in (("維持率", print_retention),
+                       ("チャンネル日次", print_channel_signals),
+                       ("視聴場所", print_where_watched)):
+        try:
+            _fn()
+        except Exception as exc:                               # noqa: BLE001
+            print(f"  [!] {_name}が落ちました（他の節は続けます）: {str(exc)[:120]}")
+
+    # **取れるものを全部引いて、前回との差を出す。**
+    # ここを「毎回」にしたのが要点。手で選んでいる限り、選ばなかったものは
+    # 永久に視界に入らない（2026-08-09、8次元を何日も見落としていた）。
+    try:
+        from src import scan as _scan
+        _snap = _scan.collect()
+        _scan.report(_snap, _scan._previous())
+        _scan.save(_snap)
+    except Exception as exc:                 # 走査が落ちても状態表示は続ける
+        print(f"\n=== 全走査 ===\n  [!] 走査に失敗: {str(exc)[:150]}")
+        print("      **これを放置しないこと。** 落ちている間は見落としが数えられない")
+
+
 def print_local_sections(inventory: bool = True) -> None:
     """**外の口を1つも叩かない節だけ**をまとめて出す。
 
@@ -1658,7 +1771,12 @@ def main(days: int = 7) -> int:
         return _channel_main(days)
     except Exception as exc:
         print("\n" + "=" * 66)
-        print("[!] **外の口が落ちました。チャンネル側の数字はこの回では出ません。**")
+        # **「チャンネル側の数字はこの回では出ません」と書いてありました。嘘です**
+        # （2026-08-18 01:3x に、日枠が 403 の最中に実際に叩いて確かめた）。
+        # 落ちたのは **Data API（読み）だけ**で、**YouTube Analytics は別枠**です。
+        # `print_analytics_sections` の註に実測が書いてあります。
+        print("[!] **Data API（読みの側）が落ちました。**"
+              "**YouTube Analytics は別枠なので、チャンネルの数字はこの下に出ます。**")
         print(f"    {type(exc).__name__}: {str(exc)[:220]}")
         if "quotaExceeded" in str(exc) or "quota" in str(exc).lower():
             print("    **Data API の1日枠（10,000単位）です。**"
@@ -1682,8 +1800,12 @@ def main(days: int = 7) -> int:
                 print(f"    （本数枠を読めませんでした: {str(_exc)[:60]}）")
             print("    サムネイルだけ載りません（`thumbnails.set` も 403）。"
                   "**公開前に `scripts/refresh_thumbnail.py` で載せ直すこと。**")
-        print("    **この回を止めないこと。** 以下は手元だけで出しています。")
+        print("    **この回を止めないこと。** 以下は、手元と **Analytics（別枠）** で出しています。")
         print("=" * 66)
+        # **ここに `print_analytics_sections` が無いことが、この直しの本体です。**
+        # 無いあいだ、日枠の閉じている十数時間の子は全部
+        # 「チャンネルは読めない回」として回っていました（実際は読めます）。
+        print_analytics_sections()
         print_local_sections()
         _print_analytics_recap()
         return 0
