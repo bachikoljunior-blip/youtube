@@ -68,7 +68,7 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from src import alerts  # noqa: E402  （`sys.path` を通した後でないと読めません）
+from src import alerts, upload_cap  # noqa: E402  （`sys.path` を通した後でないと読めません）
 
 JOURNAL = ROOT / "docs" / "JOURNAL.md"
 RUNS = ROOT / "data" / "runs.jsonl"
@@ -412,9 +412,10 @@ def noise_tokens() -> dict[str, set[str]]:
 
 
 JST = timezone(timedelta(hours=9))
-# Data API の1日枠が戻る時刻（太平洋時間の0時 ＝ JST 16:00 ごろ）。
-# `status.py` と `docs/trigger_main.md` §5 が同じ時刻を言っています。
-QUOTA_BACK_HOUR = 16
+# **窓の頭はここに持ちません**（2026-08-17 22:4x に外した）。
+# `QUOTA_BACK_HOUR = 16` と固定で持っていましたが、枠の頭は**太平洋時間の0時**なので
+# **冬は JST 17:00** です。正本は `src.upload_cap`（`PT` を tz 名で持っている）。
+# **同じ数を2か所に置かないこと** —— この repo の「片方だけ」は通算10件です。
 # 申し送りの本文が「この項目は日枠が戻らないと動かせない」と言っている印。
 # **手で語彙を並べていません** —— 日誌の実物から引いた4つの形だけです
 # （`noise_tokens()` の教訓と同じ。ただしこちらは語ではなく**文の印**なので、
@@ -490,19 +491,33 @@ def quota_blocked(blocks: list[tuple[str, list[str], int]], tok: str) -> bool:
 
 
 def quota_is_back(now: datetime | None = None) -> bool:
-    """いま日枠が生きているか（JST 16:00 以降なら戻っている）。"""
+    """いま日枠（単位）で押せるか。
+
+    **時計では決まりません**（2026-08-17 22:4x に実測して直した）。ここは長らく
+    「JST 16時を回っていれば戻っている」でしたが、**単位枠は窓の中で、
+    こちらの `videos.insert` が使い切ります**（1本 1,600単位・1周 7〜8本）。
+    22:41 JST（窓が開いて 6.7時間後）の実測は、**時計が True・実物は 5本とも 403**。
+
+    **窓が開いていること**と**単位が残っていること**は別の事実なので、両方見ます。
+    観測した 403 は確実な事実で、`src.upload_cap` が窓ごとに持っています。
+    """
     now = now or datetime.now(timezone.utc)
-    return now.astimezone(JST).hour >= QUOTA_BACK_HOUR
+    if now < upload_cap.window_start(now) or now >= upload_cap.window_end(now):
+        return False                       # 窓の外（起こりませんが、印として）
+    return upload_cap.day_quota(now).open
 
 
 def hours_to_quota(now: datetime | None = None) -> float:
-    """日枠が戻るまで何時間か。**戻っていれば 0.0**。"""
+    """次に押せるようになるまで何時間か。**押せるなら 0.0**。
+
+    窓の頭は**太平洋時間の0時**なので、`upload_cap` から引きます。
+    **固定の時差（JST 16:00）で書かないこと** —— 冬は 17:00 です
+    （`upload_cap.PT` がそう書いてあるのに、ここが書き直していました）。
+    """
     now = now or datetime.now(timezone.utc)
-    jst = now.astimezone(JST)
-    if jst.hour >= QUOTA_BACK_HOUR:
+    if quota_is_back(now):
         return 0.0
-    back = jst.replace(hour=QUOTA_BACK_HOUR, minute=0, second=0, microsecond=0)
-    return (back - jst).total_seconds() / 3600
+    return max(0.0, (upload_cap.window_end(now) - now).total_seconds() / 3600)
 
 
 def tokens(body: list[str]) -> set[str]:
@@ -632,19 +647,23 @@ def main() -> int:
         for tok, dates in order:
             tail = "  ← **一度閉じた後の再発**" if tok in closed else ""
             if tok in blocked:
-                tail += ("  ← **いまなら潰せます**（日枠は戻っています）" if back else
-                         f"  ← **いまは潰せません**（日枠が戻るまであと {hours_to_quota():.1f} 時間）")
+                tail += ("  ← **いまなら潰せます**（403 をまだ観測していません）" if back else
+                         f"  ← **いまは潰せません**（単位枠。窓が変わるまであと {hours_to_quota():.1f} 時間）")
             print(f"  {len(dates)}回  {tok}{tail}")
             print(f"        {' / '.join(dates)}")
         if blocked and not back:
             print(f"\n  **下の {len(blocked)}件 は日枠（`videos.update` / `thumbnails.set`）待ちで、"
                   f"この回では 403 になります。**")
-            print(f"  戻るのは **JST {QUOTA_BACK_HOUR}:00 ごろ**（あと {hours_to_quota():.1f} 時間）。"
-                  "**この回で選ぶのは、その上にあるものから。**")
-            print("  **消していません。**16:00 以降の回では逆に上へ戻り、"
+            print(f"  {upload_cap.day_quota().line}")
+            print("  **この回で選ぶのは、その上にあるものから。**")
+            print("  **消していません。**単位が戻った回では逆に上へ戻り、"
                   "「いまなら潰せます」と出ます。")
         elif blocked and back:
-            print(f"\n  **日枠は戻っています。上の {len(blocked)}件 は、いまなら潰せる回です。**")
+            print(f"\n  **上の {len(blocked)}件 は、いまなら潰せるかもしれません。**")
+            # **「戻っている」と言い切らないこと**（2026-08-17 22:4x）。
+            # 観測していないのは「残っている」ことの証拠ではありません ——
+            # 単位はこちらの投稿が窓の中で使い切ります。
+            print(f"  {upload_cap.day_quota().line}")
         print("\n  **これは「毎回言っているのに、まだ潰れていない」ものの候補です。**")
         print("  この回で1件は潰すこと。潰せないなら、なぜ潰さないかを JOURNAL に書く。")
         print("  潰したら **`run_marker.py --ship ... --closes carry_over`** と、"

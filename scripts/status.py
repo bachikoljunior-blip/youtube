@@ -1604,7 +1604,19 @@ def _print_missing_thumbnails() -> None:
         print(f"  ほか {len(rows) - 12}本")
     print("  **押し直すのは1行です**（`build/` は要りません。bytes は控えにあります）:")
     print("      python scripts/refresh_thumbnail.py --missing")
-    print("  **日枠が戻ってから**（JST 16:00 ごろ）。それより前は 403 で落ちます。")
+    # **「JST 16:00 以降なら押せる」と書いてありました。嘘です**（2026-08-17 22:4x に実測）。
+    # 窓は 16:00 に開きますが、**単位はその窓の中でこちらの `videos.insert` が
+    # 使い切ります**（1本 1,600単位・1周 7〜8本 ＝ **窓が開いた直後の1周で尽きる**）。
+    # 22:41 JST にこの行に従って押し、**5本とも 403**でした。
+    try:
+        from src import upload_cap as _uc
+
+        print(f"  {_uc.day_quota().line}")
+        if _uc.day_quota().open:
+            print("  **窓が変わった直後の回は、投稿より先にこれを押すこと。**"
+                  " 順番が逆だと、投稿が単位を使い切って**この一覧は永久に減りません。**")
+    except Exception as exc:                                   # noqa: BLE001
+        print(f"  （単位枠の状態が読めません: {str(exc)[:60]}）")
     print("  潰したら `run_marker.py --ship ... --closes missing_thumbnail`。")
 
 

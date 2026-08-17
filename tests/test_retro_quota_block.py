@@ -94,17 +94,61 @@ def test_一部だけ日枠がらみなら沈めない():
     assert not retro.quota_blocked(mixed, "status.py")
 
 
-def test_16時の前後で向きが変わる():
-    assert not retro.quota_is_back(datetime(2026, 8, 17, 0, 30, tzinfo=UTC))   # JST 09:30
-    assert retro.quota_is_back(datetime(2026, 8, 17, 7, 30, tzinfo=UTC))       # JST 16:30
-    assert retro.quota_is_back(datetime(2026, 8, 17, 14, 0, tzinfo=UTC))       # JST 23:00
+def _isolate(tmp_path, monkeypatch):
+    """**実物の `data/` を読ませないこと**（2026-08-17 22:4x に足した）。
+
+    この2件は長らく `config.ROOT` を差し替えずに書いてありました。判定が
+    時計だけだったころは何も読まないので通っていましたが、**観測を見るように
+    なった瞬間、検査が repo の実データを読みます** —— 8/17 の実測5件が
+    入った途端に落ちました。`conftest.py` が `data/alerts.jsonl` に対して
+    やったのと**同じ汚染**です（18:3x の回。「計器が自分の検査を測っていた」）。
+    """
+    from src import config
+
+    monkeypatch.setattr(config, "ROOT", tmp_path)
+    return tmp_path
 
 
-def test_戻るまでの時間():
-    # JST 09:00 → あと7.0時間
-    assert retro.hours_to_quota(datetime(2026, 8, 17, 0, 0, tzinfo=UTC)) == 7.0
-    # 戻っていれば 0.0（負の数を出さないこと）
-    assert retro.hours_to_quota(datetime(2026, 8, 17, 8, 0, tzinfo=UTC)) == 0.0
+def test_観測が無ければ窓の中では押してよい(tmp_path, monkeypatch):
+    """**窓の内と外**で向きが変わる。**時計の16時ではありません。**
+
+    ここは長らく「JST 16時を回っていれば戻っている」を固定していました。
+    **その模型が間違いです**（2026-08-17 22:41 に実測 —— 時計は True、
+    実物は `thumbnails.set` が 5本とも 403）。単位枠は窓の中で、
+    こちらの `videos.insert` が使い切ります（1本 1,600単位）。
+    """
+    _isolate(tmp_path, monkeypatch)
+    # 窓は PT 0時（この季節は JST 16:00）から。観測が無ければ、窓の中はどこでも押してよい。
+    assert retro.quota_is_back(datetime(2026, 8, 17, 0, 30, tzinfo=UTC))   # JST 09:30
+    assert retro.quota_is_back(datetime(2026, 8, 17, 7, 30, tzinfo=UTC))   # JST 16:30
+    assert retro.quota_is_back(datetime(2026, 8, 17, 14, 0, tzinfo=UTC))   # JST 23:00
+
+
+def test_観測があればその窓は閉じる(tmp_path, monkeypatch):
+    """**この回が実際に踏んだ形。** 16時を回っていても、403 を見ていれば閉じています。"""
+    from src import upload_cap
+
+    _isolate(tmp_path, monkeypatch)
+    late = datetime(2026, 8, 17, 13, 41, tzinfo=UTC)          # JST 22:41
+    upload_cap.note_quota_hit(datetime(2026, 8, 17, 12, 52, tzinfo=UTC),
+                              detail="thumbnails.set X")
+    assert not retro.quota_is_back(late)
+    # 次の窓（JST 8/18 16:00）を回れば、また押せる
+    assert retro.quota_is_back(datetime(2026, 8, 18, 7, 30, tzinfo=UTC))
+
+
+def test_戻るまでの時間(tmp_path, monkeypatch):
+    from src import upload_cap
+
+    _isolate(tmp_path, monkeypatch)
+    # 押せるなら 0.0（負の数を出さないこと）
+    assert retro.hours_to_quota(datetime(2026, 8, 17, 0, 0, tzinfo=UTC)) == 0.0
+
+    # 閉じているなら、**窓が変わるまで**（時計の16時までではない）
+    upload_cap.note_quota_hit(datetime(2026, 8, 17, 12, 52, tzinfo=UTC), detail="x")
+    # JST 22:41 → 次の窓の頭 JST 8/18 16:00 まで 17.3時間
+    got = retro.hours_to_quota(datetime(2026, 8, 17, 13, 41, tzinfo=UTC))
+    assert 17.0 < got < 17.5, got
 
 
 def test_実物の日誌で_上位が日枠で埋まっていることを固定する():

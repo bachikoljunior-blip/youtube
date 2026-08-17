@@ -645,6 +645,22 @@ def report() -> int:
     return 0
 
 
+def _push_thumbnails_first() -> None:
+    """溜まったサムネイルを、**この回の投稿が単位を使い切る前に**押す。
+
+    **落ちても投稿は続けます。** ここで止めると、サムネイル（あれば良いもの）の
+    ために投稿（途切れるのが最大の損失）を止めることになります。**順番が逆です。**
+    """
+    try:
+        import refresh_thumbnail
+
+        if not upload_cap.day_quota().open:
+            return                      # 観測済みで閉じている。撃つだけ無駄
+        refresh_thumbnail.push_missing()
+    except Exception as exc:                                   # noqa: BLE001
+        print(f"[batch] サムネイルの押し直しは飛ばします: {str(exc)[:120]}", flush=True)
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="複数本をまとめて作って予約する")
     ap.add_argument("--count", type=int, default=2, help="作る本数（既定 2）")
@@ -707,6 +723,21 @@ def main(argv: list[str] | None = None) -> int:
                 explicit = explicit[:cap.remaining]
             else:
                 args.count = cap.remaining
+
+    # ---- 0.5 **溜まったサムネイルを、投稿より先に押す**（2026-08-17 22:4x に足した）--
+    #
+    # **順番がすべてです。** Data API の単位枠は 10,000単位で、
+    # `videos.insert` は 1本 1,600単位 —— **7本で 11,200単位**。1周で7〜8本
+    # 上げているので、**窓が開いた直後の1周が、その窓の単位を丸ごと使い切ります。**
+    # `thumbnails.set` は 50単位しか要らないのに、**いつも投稿の後ろに並んでいた**ので
+    # 一度も順番が回ってきませんでした。
+    #
+    #     待ち行列は 8/17 の1日で 28 → 33本にふえ、
+    #     `missing_thumbnail` は **15回鳴って当たり2回**
+    #
+    # 一覧が悪いのではありません。**押せる時刻に、押す手順が無かった**だけです。
+    # 5本ぶんで 250単位（投稿0.16本ぶん）なので、**投稿の本数は減りません。**
+    _push_thumbnails_first()
 
     topics = pick(args.count if not explicit else len(explicit), explicit,
                   per_calc=args.per_calc)

@@ -98,3 +98,27 @@ def is_upload_cap(error: Exception) -> bool:
     if "rateLimitExceeded" not in text and "429" not in text:
         return False
     return "Video Uploads" in text or "uploadLimitExceeded" in text
+
+
+# **Data API の単位枠（10,000単位）に当たったか。**
+#
+# `is_upload_cap`（上・429）と**対**です。2つは**別々に閉じます**
+# （8/17 05:2x の実測 —— `insert`(1600) が通るのに `update`(50) が 403。
+# **安いほうが先に閉じます**）。
+#
+# 見分けが要る理由は上と同じで、**当たったらこの窓の残り全部が落ちる**からです。
+# ただし**止め方は逆**です —— 429 は投稿そのものを止めますが、403 は
+# **読みと `thumbnails.set` / `videos.update` だけ**を止めるので、
+# **投稿は続けること**（`docs/trigger_main.md` §5）。
+def is_day_quota(error: Exception) -> bool:
+    """**Data API の単位枠**に当たったか（HTTP 403・quotaExceeded）。
+
+    当たったら `src.upload_cap.note_quota_hit()` に残すこと。**残さないと、
+    次の回は時計で推測するしかありません**（それが 15回鳴って当たり2回の
+    `missing_thumbnail` でした）。
+    """
+    text = str(error)
+    if "403" not in text:
+        return False
+    low = text.lower()
+    return "quotaexceeded" in low or ("quota" in low and "exceeded" in low)

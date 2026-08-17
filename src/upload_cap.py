@@ -72,6 +72,35 @@ JST = timezone(timedelta(hours=9))
 
 HITS = "data/upload_cap.jsonl"
 
+# **Data API の単位枠（10,000単位）を観測した記録**（2026-08-17 22:4x に足した）。
+#
+# 本数枠（上）と**同じ窓・同じ形**ですが、**別々に閉じます**。だから帳面も別です。
+#
+# ## なぜ要るか（この回に実際に踏んだ）
+#
+# `retro.py` の `quota_is_back()` は **「JST 16時を回っていれば戻っている」**
+# という**時計だけの模型**でした。ところが単位枠は、**こちらの投稿そのものが
+# 使い切ります** —— `videos.insert` は 1回 1,600単位なので、**7本で 11,200単位**。
+# **窓の中で誰が使うかを、模型が持っていませんでした。**
+# 1周ごとに7〜8本上げているので、**窓が開いた直後の1周で使い切ります。**
+#
+# この回の実測（22:41 JST ＝ 窓が開いて 6.7時間後）:
+#
+#     quota_is_back()                    → True（「いまなら潰せます」と出た）
+#     refresh_thumbnail.py --missing      → **5本とも 403**
+#
+# 時計は「戻っている」と言い、実物は閉じていました。`missing_thumbnail` が
+# **15回鳴って当たり2回**なのはこれで、一覧が悪いのではなく
+# **「潰せる」と言う側が、確かめずに言っていた**わけです。
+# （`docs/trigger_main.md` の「一覧が当たりを含まないまま育つ」の7件目。
+# ただし向きが逆で、**育っているのではなく、潰せない回に潰せと言っていた**。）
+#
+# もう1つ、`retro.py` は窓の頭を **`QUOTA_BACK_HOUR = 16` と固定で**持っていました。
+# 枠の頭は太平洋時間の0時なので、**冬は JST 17:00 です。** 上の `PT` が
+# 「固定の時差で書き直さないこと」と書いているのに、**呼ぶ側が書き直していた** ——
+# この repo で通算9回出ている「**片方だけ**」の10件目です。
+DAY_QUOTA_HITS = "data/day_quota.jsonl"
+
 
 def _root():
     from . import config
@@ -106,15 +135,9 @@ def _parse(value) -> datetime | None:
     return when
 
 
-def note_hit(now: datetime | None = None, detail: str = "") -> None:
-    """**429 に当たったことを残す**（次の回が、撃つ前に確実に知るため）。
-
-    残さないと、次の回に伝わる経路が**日誌の散文しかありません。**
-    10:5x の回はそう書きましたが、11:0x の回はそれを読んで
-    「たぶん今も閉じている」と**推測する**しかありませんでした。
-    """
+def _note(name: str, now: datetime | None, detail: str) -> None:
     now = now or datetime.now(timezone.utc)
-    path = _root() / HITS
+    path = _root() / name
     path.parent.mkdir(parents=True, exist_ok=True)
     rec = {"at": now.astimezone(timezone.utc).isoformat(timespec="seconds"),
            "detail": detail[:200]}
@@ -122,11 +145,10 @@ def note_hit(now: datetime | None = None, detail: str = "") -> None:
         fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
 
 
-def hits_in_window(now: datetime | None = None) -> list[dict]:
-    """いまの枠の中で観測した 429 を返す。**あれば、その窓はもう閉じています。**"""
+def _in_window(name: str, now: datetime | None) -> list[dict]:
     now = now or datetime.now(timezone.utc)
     head, tail = window_start(now), window_end(now)
-    path = _root() / HITS
+    path = _root() / name
     if not path.exists():
         return []
     out = []
@@ -142,6 +164,36 @@ def hits_in_window(now: datetime | None = None) -> list[dict]:
         if when and head <= when < tail:
             out.append(rec)
     return out
+
+
+def note_hit(now: datetime | None = None, detail: str = "") -> None:
+    """**429 に当たったことを残す**（次の回が、撃つ前に確実に知るため）。
+
+    残さないと、次の回に伝わる経路が**日誌の散文しかありません。**
+    10:5x の回はそう書きましたが、11:0x の回はそれを読んで
+    「たぶん今も閉じている」と**推測する**しかありませんでした。
+    """
+    _note(HITS, now, detail)
+
+
+def hits_in_window(now: datetime | None = None) -> list[dict]:
+    """いまの枠の中で観測した 429 を返す。**あれば、その窓はもう閉じています。**"""
+    return _in_window(HITS, now)
+
+
+def note_quota_hit(now: datetime | None = None, detail: str = "") -> None:
+    """**403 quotaExceeded に当たったことを残す**（Data API の単位枠）。
+
+    `note_hit`（429・本数枠）と**同じ形・同じ窓**です。別の帳面にするのは、
+    2つが**別々に閉じる**からです（8/17 05:2x の実測 —— `insert` が通るのに
+    `update` が 403）。混ぜると、片方の観測がもう片方を閉じたことにします。
+    """
+    _note(DAY_QUOTA_HITS, now, detail)
+
+
+def quota_hits_in_window(now: datetime | None = None) -> list[dict]:
+    """いまの枠の中で観測した 403 quotaExceeded。**あれば単位枠は尽きています。**"""
+    return _in_window(DAY_QUOTA_HITS, now)
 
 
 def counted(now: datetime | None = None) -> int:
@@ -208,3 +260,52 @@ def state(now: datetime | None = None) -> State:
             f"**あと {rest}本**）。窓が変わるのは {back}。"
             f" **控えは下限**なので、残りは上限側の見積りです。")
     return State(False, n, rest, tail, line)
+
+
+@dataclass
+class DayQuota:
+    """**Data API の単位枠（10,000単位）**の、いまの姿。
+
+    `State`（本数枠）と対になります。**2つは別々に閉じるので、混ぜないこと。**
+    """
+    open: bool            # 押してよいか（**観測した 403 が無い**）
+    observed: bool        # この窓で 403 を観測したか（**確実な事実**）
+    hits: int             # 観測した回数
+    resets_at: datetime   # 窓が変わる時刻（UTC）
+    line: str             # そのまま印字して読める1行
+
+
+def day_quota(now: datetime | None = None) -> DayQuota:
+    """**`thumbnails.set` / `videos.update` を押す前に読む1か所。**
+
+    `retro.py` と `status.py` の両方がここを見ます。**時計で判断しないこと** ——
+    窓が開いていることと、単位が残っていることは**別の事実**です
+    （窓の中でこちらの `videos.insert` が使い切ります）。
+
+    **読めなかったときは「開いている」と答えます。** 読めないことを
+    「閉じている」と読むと、押せる回まで押さなくなります。外す向きは
+    今までどおり 403 を見るだけで、**悪化しません**（`state()` と同じ考え方）。
+    """
+    now = now or datetime.now(timezone.utc)
+    tail = window_end(now)
+    back = tail.astimezone(JST).strftime("%m/%d %H:%M JST")
+    hours = (tail - now).total_seconds() / 3600
+
+    try:
+        hits = quota_hits_in_window(now)
+    except Exception as exc:                                   # noqa: BLE001
+        return DayQuota(True, False, 0, tail,
+                        f"日枠（単位）: **読めませんでした**（{str(exc)[:60]}）。"
+                        f" 押してみて 403 が返れば、そこで分かります。")
+
+    if hits:
+        line = (f"**日枠（単位）は、この窓ではもう尽きています**"
+                f"（{len(hits)}回の 403 を観測）。戻るのは **{back}**"
+                f"（あと {hours:.1f}時間）。"
+                f" **`thumbnails.set` も `videos.update` も、この窓では通りません。**")
+        return DayQuota(False, True, len(hits), tail, line)
+
+    line = (f"日枠（単位）: この窓ではまだ 403 を観測していません（窓が変わるのは {back}）。"
+            f" **観測していないだけで、残量を見たわけではありません** ——"
+            f" `videos.insert` 1本 1,600単位なので、7本上げた後はまず尽きています。")
+    return DayQuota(True, False, 0, tail, line)

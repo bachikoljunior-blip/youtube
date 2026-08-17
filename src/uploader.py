@@ -9,7 +9,8 @@ from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 from googleapiclient.http import MediaFileUpload
 
-from .auth import credentials, explain, is_upload_cap
+from . import upload_cap
+from .auth import credentials, explain, is_day_quota, is_upload_cap
 
 JST = timezone(timedelta(hours=9))
 RETRYABLE = {500, 502, 503, 504}
@@ -227,6 +228,17 @@ def _set_thumbnail(youtube, video_id: str, path: Path, tries: int = 4) -> bool:
             print(f"[upload] サムネイル設定完了{'（%d回目）' % attempt if attempt > 1 else ''}")
             return True
         except HttpError as exc:
+            # **単位枠の 403 は、待っても戻りません**（2026-08-17 22:4x に足した）。
+            # この関数が想定していた 403 は「投稿直後で動画側の処理が未了」で、
+            # そちらは待てば通ります。**枠切れは窓が変わるまで通りません。**
+            # 見分けずに撃ち直すと、1本あたり 30秒（5+10+15）を捨てます ——
+            # 8本の回で **4分**、しかも4回とも同じ理由で落ちます。
+            if is_day_quota(exc):
+                upload_cap.note_quota_hit(detail=f"thumbnails.set {video_id}")
+                print(f"[upload] **サムネイルは日枠（単位）切れで載りません**: {str(exc)[:120]}")
+                print("[upload] **投稿は続けます。** 控えに bytes は残るので、"
+                      "窓が変わった回に `refresh_thumbnail.py --missing` で押せます。")
+                return False
             if attempt == tries:
                 print(f"[upload] **サムネイルを設定できませんでした**（{tries}回試行）: {exc}")
                 print("[upload] 自動生成のフレームのまま公開されます。"

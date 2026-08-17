@@ -35,7 +35,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from googleapiclient.discovery import build  # noqa: E402
 from googleapiclient.http import MediaFileUpload  # noqa: E402
 
-from src import thumbnail, visuals  # noqa: E402
+from src import auth, thumbnail, upload_cap, visuals  # noqa: E402
 from src.auth import credentials  # noqa: E402
 
 
@@ -79,6 +79,16 @@ def push_missing(dry_run: bool = False) -> int:
         print("[thumb] --dry-run なので押していません")
         return 0
 
+    # **押す前に、観測した事実のほうを見る**（2026-08-17 22:4x に足した）。
+    # 時計ではありません —— 単位枠は窓の中でこちらの `videos.insert` が
+    # 使い切るので、**「窓が開いている」と「単位が残っている」は別の事実**です。
+    q = upload_cap.day_quota()
+    if not q.open:
+        print(f"[thumb] {q.line}")
+        print("[thumb] **押しません**（この窓では 5本とも 403 になるだけです）。"
+              " 窓が変わってから、**投稿より先に**この1行を回すこと。")
+        return 1
+
     y = build("youtube", "v3", credentials=credentials(), cache_discovery=False)
     ok = 0
     for row in rows:
@@ -91,6 +101,11 @@ def push_missing(dry_run: bool = False) -> int:
             # **1本落ちても止めない。** 日枠がまだ戻っていないだけのことがあり、
             # そこで抜けると、押せるはずの残りまで押さずに終わります。
             print(f"[thumb] ✗ {row['video_id']}: {str(exc)[:160]}")
+            # **403 は残すこと**（2026-08-17 22:4x に足した）。残さないと、
+            # 次の回は「JST 16時を回ったから戻っているはず」と**時計で推測**します。
+            # この回はそれで「いまなら潰せます」と言われ、**5本とも 403**でした。
+            if auth.is_day_quota(exc):
+                upload_cap.note_quota_hit(detail=f"thumbnails.set {row['video_id']}")
             continue
         # **押せた本だけ印を消す。** 消してから押すと、落ちた本が
         # 一覧から消えて二度と拾われません
