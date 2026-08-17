@@ -58,6 +58,8 @@ import io
 import math
 import pkgutil
 import re
+import sys
+from pathlib import Path
 from statistics import median
 from typing import Any, Callable, Iterable
 
@@ -214,11 +216,60 @@ def _is_echo(value: float, defaults: list[float], xs: list[float]) -> bool:
     return any(abs(value - x) < FLAT_TOL * max(1.0, abs(x)) for x in xs)
 
 
+def _moves(ys: list[float]) -> bool:
+    """その欄は、この掃引で少しでも動いたか。"""
+    lo, hi = min(ys), max(ys)
+    scale = max(abs(lo), abs(hi))
+    return scale != 0 and (hi - lo) / scale > FLAT_TOL
+
+
+def table_constants(swept: list[tuple[str, list[float], list[dict]]]) -> set[str]:
+    """**どの引数を動かしても1度も動かなかった欄** ＝ その表の定数。
+
+    ## なぜ要るか（2026-08-18。**申し送りに名指しで残っていた**）
+
+    `_is_echo` が落とすのは**入力の再掲**だけです（`{"月給": monthly}` のように
+    引数がそのまま返りに入っている欄）。**表の中の定数は落としていません。**
+    前の回が「新しい」と数えた中身を実際に並べると、そこが屑で埋まっていました:
+
+        片効き  kokuho.keigen_cliff … members を動かしても 境目での軽減 は **20 のまま**
+        片効き  kyugyo.calendar_span_cost … 不利な暦日・暦日の差・有利な暦日 は **92 のまま**
+
+    **`20` は2割軽減の 20、`92` は3か月の暦日**で、どちらも引数ではないので
+    `_is_echo` を素通りします。**kyugyo は「新しい5件」のうち4件がこれ**でした。
+
+    **判定は意味ではなく構造でやります** —— その関数の**掃引できる引数を
+    全部動かしてもなお動かない**なら、それは関係ではなく定数です。
+    1本の列だけ見ていては区別がつかず（`不変` として正しく出てしまう）、
+    **横に並べて初めて「これは定数だ」と言えます。**
+
+    **引数が1つしかない関数には掛けません。** そのときは「動かない」と
+    「定数」が同じものになり、**`不変` の形を丸ごと消してしまいます**
+    （`不変` は本物の節になったことがあります ——「上限は片方の帯にしか効かない」）。
+    **落とす向きの誤りは黙って効くので、区別がつかない場面では落とさないこと。**
+    """
+    if len(swept) < 2:
+        return set()
+    seen: set[str] = set()
+    moved: set[str] = set()
+    for _pname, _xs, rows in swept:
+        for key in rows[0]:
+            if any(key not in r for r in rows):
+                continue
+            seen.add(key)
+            if _moves([r[key] for r in rows]):
+                moved.add(key)
+    return seen - moved
+
+
 def sweep_function(fn: Callable, *, name: str = "") -> list[dict]:
     """1つの関数を掃引して、出た形を並べる。"""
     found = []
     params = _sweepable_params(fn)
     defaults = [d for _, d in params]
+
+    # **先に全部の引数を掃引します**（`table_constants` が横に並べて見るため）。
+    swept: list[tuple[str, list[float], list[dict]]] = []
     for pname, default in params:
         xs, rows = [], []
         for x in _grid(default):
@@ -233,6 +284,10 @@ def sweep_function(fn: Callable, *, name: str = "") -> list[dict]:
             rows.append(scal)
         if len(xs) < 4:
             continue
+        swept.append((pname, xs, rows))
+
+    consts = table_constants(swept)
+    for pname, xs, rows in swept:
         keys = set(rows[0])
         for r in rows[1:]:
             keys &= set(r)
@@ -241,19 +296,22 @@ def sweep_function(fn: Callable, *, name: str = "") -> list[dict]:
             hit = _classify(xs, ys)
             if hit:
                 shape, detail = hit
-                if shape == "不変" and _is_echo(ys[0], defaults, xs):
+                if shape == "不変" and (key in consts
+                                      or _is_echo(ys[0], defaults, xs)):
                     continue
                 found.append({"関数": name or getattr(fn, "__name__", "?"),
                               "動かした引数": pname, "見た値": key or "返り値",
                               "形": shape, "詳しく": detail,
                               "x の幅": (xs[0], xs[-1])})
         found.extend(_one_sided(xs, rows, sorted(keys), defaults,
-                                name or getattr(fn, "__name__", "?"), pname))
+                                name or getattr(fn, "__name__", "?"), pname,
+                                consts))
     return found
 
 
 def _one_sided(xs: list[float], rows: list[dict], keys: list[str],
-               defaults: list[float], name: str, pname: str) -> list[dict]:
+               defaults: list[float], name: str, pname: str,
+               consts: set[str] | None = None) -> list[dict]:
     """**同じ引数が、隣り合う欄の片方だけを動かしている**ところを拾う。
 
     ## なぜ要るか（2026-08-17 22:4x。**3回続けて申し送りに載っていた**）
@@ -286,7 +344,9 @@ def _one_sided(xs: list[float], rows: list[dict], keys: list[str],
             continue
         if (hi - lo) / scale <= FLAT_TOL:
             # **入力の再掲は数えない**（`_is_echo` と同じ理由。動かないのは当たり前）
-            if not _is_echo(ys[0], defaults, xs):
+            # **表の定数も数えない**（`table_constants`。どの引数でも動かない欄は
+            # 関係ではなく定数で、「片効き」の対比が成り立ちません）
+            if key not in (consts or set()) and not _is_echo(ys[0], defaults, xs):
                 frozen.append(key)
         elif (hi - lo) / scale >= MEANINGFUL:
             # **動く側の再掲も数えないこと**（検査が捕まえた。**両側に要ります**）。
@@ -696,10 +756,28 @@ def _covered_map(hits: list[dict]) -> dict[int, bool]:
     **突き合わせずに、計器のせいにする向きへ倒れています。**
 
     **人はこの一覧を見て節を選びます。**だから印を出すほうを直します。
+
+    ## **印が1つも出ない回がありました**（2026-08-18。**入れた次の回に見つけた**）
+
+    ここは `import_module("topic_forge")` だけでした。`topic_forge` は
+    **`scripts/` の中**にあるので、`sys.path` にそこが入っている呼び方
+    （`scripts/status.py` は自分で入れます）でしか読めません。
+
+        python -m src.section_sweep --calc kokuho   → ModuleNotFoundError → **{} → 印ゼロ**
+
+    **この道具の一覧は、人が読むためのものです。** つまり
+    **人が読む唯一の経路でだけ、印が出ていませんでした**（`status.py` の
+    「新しい M件」は同じ判定で正しく出ているので、**数字と一覧がまた別のものを
+    見せている** —— 直したはずの形の、そのままの再発です）。
+    **`except` が黙って握りつぶすので、緑のまま気づけません。**
+    だから `scripts/` を自分で通し、**読めなかったことは `report_lines` が言います。**
     """
     try:
         import importlib
 
+        scripts = Path(__file__).resolve().parent.parent / "scripts"
+        if str(scripts) not in sys.path:
+            sys.path.insert(0, str(scripts))
         sections: dict[str, dict[str, str]] = {}
         forge = importlib.import_module("topic_forge")
         sections, _free, _known = forge.survey()
@@ -739,6 +817,16 @@ def report_lines(hits: list[dict], *, top: int = 40) -> list[str]:
         lines.append("  **[既]** は、いまの節がもう言っているもの"
                      "（`status.py` の「新しい M件」はこれを除いた数です）。"
                      "**印の無いほうから選ぶこと。**")
+    else:
+        # **黙って印を消さないこと**（2026-08-18）。印が無い一覧は
+        # 「全部が新しい」に見えます。**読めなかったと言うほうが安全です。**
+        lines.append("  [!] **既出の印は出せません**（節を読めませんでした）。"
+                     "**この一覧には既出が混ざっています。**"
+                     "「新しい M件」は `python scripts/status.py` のほうで見ること。")
+    # **1つの表に絞ったときは、その表を全部出します。**
+    # ここは長らく `group[:6]` の決め打ちで、`--calc <表>` でも6件で切れたまま
+    # 「`--calc <表>` で全文」と案内していました（**行き先が自分自身**）。
+    per_group = top if len(ranked) == 1 else 6
     shown = 0
     for name, group in ranked:
         if shown >= top:
@@ -749,12 +837,12 @@ def report_lines(hits: list[dict], *, top: int = 40) -> list[str]:
         tail = f"・**新しい {n_new_here}件**" if n_new_here is not None else ""
         lines.append(f"  --- {name}（{len(group)}件{tail}・族の順番の値 "
                      f"{order.get(name, 0.0):.1f}）---")
-        for hit in group[:6]:
+        for hit in group[:per_group]:
             mark = "[既]" if covered.get(id(hit)) else "   "
             lines.append(f"{mark}{line_of(hit)}" if covered else line_of(hit))
             shown += 1
-        if len(group) > 6:
-            lines.append(f"    …ほか {len(group) - 6}件")
+        if len(group) > per_group:
+            lines.append(f"    …ほか {len(group) - per_group}件")
     return lines
 
 

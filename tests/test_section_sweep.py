@@ -517,3 +517,111 @@ def test_既出が読めない回は印を出さない(monkeypatch):
     out = "\n".join(ss.report_lines([_hit(値=111)]))
     assert "[既]" not in out
     assert "まだ節が言っていない" not in out
+
+
+# ---------------------------------------------------------------------------
+# **表の定数を「新しい」に数えていた**（2026-08-18。申し送りに名指しで残っていた）
+#
+# `_is_echo` が落とすのは**入力の再掲**だけで、**表の中の定数**は素通りでした。
+# 実測: `kyugyo` の「新しい5件」のうち **4件**が `暦日の差は3のまま` の類。
+# ---------------------------------------------------------------------------
+
+def test_どの引数でも動かない欄は定数として落とす():
+    """**横に並べて初めて「定数だ」と言えます。**1本の列では区別がつきません。"""
+    from src import section_sweep as ss
+
+    def f(a: float = 100.0, b: float = 200.0) -> dict:
+        return {"合計": min(a, 108.0) + b, "軽減の割合": 20.0}
+
+    hits = ss.sweep_function(f, name="f")
+    frozen = [h for h in hits if "軽減の割合" in str(h["見た値"])]
+    assert frozen == [], f"表の定数が候補に残っています: {frozen}"
+    # **合計のほうは残ること**（落とす向きの誤りは黙って効きます）
+    assert any("合計" in str(h["見た値"]) for h in hits), "動く欄まで落ちています"
+
+
+def test_引数が1つの関数には定数の判定を掛けない():
+    """区別がつかない場面では落とさない ——「不変」を丸ごと消してしまう。"""
+    from src import section_sweep as ss
+
+    def f(a: float = 100.0) -> dict:
+        return {"動く": min(a, 108.0) * 2, "止まっている": 3.5}
+
+    assert ss.table_constants([("a", [1, 2, 3, 4], [{"x": 1}] * 4)]) == set()
+    hits = ss.sweep_function(f, name="f")
+    assert any(h["形"] == "不変" for h in hits), "1引数の不変まで消えています"
+
+
+def test_片効きの動かない側からも定数を外す():
+    """定数どうしの対比は「片効き」になりません（`kyugyo` の4件がこれ）。"""
+    from src import section_sweep as ss
+
+    def f(a: float = 100.0, b: float = 200.0) -> dict:
+        return {"動く": a + b, "定数": 92.0}
+
+    # **直す前は出ていたこと**を、同じ材料で押さえておく（`consts` を渡さない道）。
+    xs = list(range(4))
+    rows = [{"動く": 100.0 + 40 * i, "定数": 92.0} for i in range(4)]
+    assert ss._one_sided(xs, rows, ["動く", "定数"], [100.0, 200.0], "f", "a")
+    assert ss._one_sided(xs, rows, ["動く", "定数"], [100.0, 200.0], "f", "a",
+                         {"定数"}) == []
+
+    hits = ss.sweep_function(f, name="f")
+    assert [h for h in hits if h["形"] == "片効き"] == [], \
+        "定数しか動かない側に無いのに「片効き」が出ています"
+
+
+def test_table_constants_は動いた欄を定数と呼ばない():
+    from src import section_sweep as ss
+
+    swept = [("a", [1, 2, 3, 4], [{"p": 1.0, "q": 5.0} for _ in range(4)]),
+             ("b", [1, 2, 3, 4], [{"p": float(i), "q": 5.0} for i in range(4)])]
+    assert ss.table_constants(swept) == {"q"}
+
+
+# ---------------------------------------------------------------------------
+# **人が読む唯一の経路でだけ、印が出ていなかった**（2026-08-18）
+#
+# `_covered_map` は `topic_forge`（`scripts/` の中）を `sys.path` 無しで import
+# しており、`python -m src.section_sweep` からは必ず `{}` に落ちていました。
+# **入れた回は `status.py` で見て「出た」と書いています**（別の経路）。
+# ---------------------------------------------------------------------------
+
+def test_covered_mapはCLIの呼び方でも節を読める():
+    """**`sys.path` に `scripts/` が無い状態**で呼んで、空でないこと。"""
+    import subprocess
+    import sys as _sys
+
+    code = ("import sys; from src import section_sweep as ss;"
+            "h={'表':'kokuho','関数':'f','形':'不変','見た値':'v',"
+            "'動かした引数':'x','x の幅':(1,9),'詳しく':{'値':1.0}};"
+            "print(len(ss._covered_map([h])))")
+    root = Path(__file__).resolve().parent.parent
+    r = subprocess.run([_sys.executable, "-c", code],
+                       capture_output=True, text=True, cwd=str(root))
+    assert r.returncode == 0, r.stderr[-800:]
+    assert r.stdout.strip() == "1", \
+        f"CLI の経路で節が読めていません（印が1つも出ません）: {r.stdout!r}"
+
+
+def test_読めなかったときは黙らずに言う(monkeypatch):
+    """**印の無い一覧は「全部が新しい」に見えます。**読めなかったと言うこと。"""
+    from src import section_sweep as ss
+
+    monkeypatch.setattr(ss, "_covered_map", lambda hits: {})
+    out = "\n".join(ss.report_lines([_hit(値=111)]))
+    assert "既出の印は出せません" in out
+
+
+def test_1本に絞ったときは全部出す():
+    """`--calc <表> で全文` の行き先が、6件で切れる自分自身でした。"""
+    from src import section_sweep as ss
+
+    hits = [_hit(fn=f"f{i}", 値=float(i)) for i in range(9)]
+    out = "\n".join(ss.report_lines(hits, top=10_000))
+    assert "ほか" not in out, "1本だけなのに省略されています"
+    for i in range(9):
+        assert f".f{i}" in out
+    # **2本以上あるときは、これまでどおり表ごとに6件で切ること**
+    many = hits + [_hit(calc="u", fn="g", 値=1.0)]
+    assert "ほか 3件" in "\n".join(ss.report_lines(many, top=10_000))
