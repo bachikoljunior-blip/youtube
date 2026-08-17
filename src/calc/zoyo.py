@@ -156,8 +156,64 @@ def rate_gap_grid(amounts: tuple[int, ...] = (
     return rows
 
 
+
+def special_gap_grid(amounts: tuple[int, ...] = (
+        3_000_000, 6_000_000, 10_000_000, 15_000_000, 30_000_000,
+        45_000_000, 46_100_000, 60_000_000, 100_000_000)) -> list[dict]:
+    """一般税率と特例税率の**差**。**この差は途中で頭打ちになります。**
+
+    どちらの表も最上段は同じ55パーセントなので、**両方が最上段に入ったところで
+    差が増えなくなります**（上に行くほど得、ではありません）。
+    """
+    out = []
+    for a in amounts:
+        g = gift_tax(a, special=False)
+        sp = gift_tax(a, special=True)
+        out.append({"amount": a, "general": g, "special": sp, "gap": g - sp})
+    return out
+
+
+def special_gap_ceiling(step: int = 1_000, upto: int = 200_000_000) -> tuple[int, int]:
+    """差が頭打ちになる**最初の贈与額**と、そのときの差を返す。
+
+    **刻みは1000円**（1万円刻みで探すと、境目を1万円ぶん取り違えます）。
+    """
+    best_gap, first_at = 0, 0
+    for a in range(BASIC, upto + step, step):
+        gap = gift_tax(a, special=False) - gift_tax(a, special=True)
+        if gap > best_gap:
+            best_gap, first_at = gap, a
+    return first_at, best_gap
+
+
+def effective_rate_grid(amounts: tuple[int, ...] = (
+        5_000_000, 10_000_000, 50_000_000, 100_000_000, 1_000_000_000),
+        special: bool = True) -> list[dict]:
+    """贈与額べつの実効の税率。**最高税率に近づきますが、届きません。**"""
+    return [{"amount": a, "tax": gift_tax(a, special=special),
+             "rate": gift_tax(a, special=special) / a} for a in amounts]
+
+
 def check_tables() -> None:
     """制度の値と計算の向きを確かめる。**壊れた数字で台本を書かせない。**"""
+
+    # --- 2026-08-17 に足した節ぶん（`docs/JOURNAL.md` M17）------------------
+    # **主張そのものを検査に置くこと。**
+    at, gap = special_gap_ceiling()
+    if gap != 2_400_000:
+        raise ValueError(f"特例税率で得する額の頭打ちが {gap:,}円。表からは 2,400,000円")
+    # **頭打ちであること** —— そこから上でいくら増やしても差が変わらない
+    for a in (at, at + 10_000_000, at + 100_000_000):
+        if gift_tax(a, special=False) - gift_tax(a, special=True) != gap:
+            raise ValueError(f"贈与{a:,}円で差が {gap:,}円 から動いた。**節の主張は頭打ち**")
+    # **その1000円手前ではまだ小さいこと**（頭打ちの「最初の点」であること）
+    if gift_tax(at - 1_000, special=False) - gift_tax(at - 1_000, special=True) >= gap:
+        raise ValueError("頭打ちの手前で、もう差が最大になっている")
+    # 実効の税率は最高税率に届かない
+    top = SPECIAL[-1][1]
+    for r in effective_rate_grid():
+        if r["rate"] >= top:
+            raise ValueError(f"実効 {r['rate']:.4f} が最高税率 {top} 以上。速算表の控除が効いていない")
     _checks.statutory(BASIC, 1_100_000, "暦年課税の基礎控除",
                       source="相続税法21条の5・租税特別措置法70条の2の4")
 
@@ -258,3 +314,23 @@ if __name__ == "__main__":
         n = years_to_zero(amount)
         print(f"{amount:>11,}円  0円になる年数 {n:>3d}年  "
               f"1年で渡した場合の税額 {gift_tax(amount):>10,}円")
+
+    at, gap = special_gap_ceiling()
+    print(f"\n=== 特例税率で得する額は{gap // 10_000}万円で頭打ち"
+          f"（贈与{at // 10_000}万円から上は、いくら増えても変わらない）===")
+    print(f"{'贈与額':>13s} {'一般税率の税':>13s} {'特例税率の税':>13s} {'差'}")
+    for r in special_gap_grid():
+        mark = "  ← **ここから増えない**" if r["amount"] == at else ""
+        print(f"{r['amount']:12,d}円 {r['general']:12,d}円 {r['special']:12,d}円  "
+              f"**{r['gap']:,}円**{mark}")
+    print("  → どちらの表も最上段は**同じ55パーセント**なので、"
+          "**両方が最上段に入った時点で差が増えなくなります。**"
+          "「親から子への贈与は得」は本当ですが、**得する額には上限があります**")
+
+    print("\n=== 贈与税の実効の税率は、55パーセントに近づくが届かない（特例税率）===")
+    print(f"{'贈与額':>15s} {'税額':>15s} {'実効の税率'}")
+    for r in effective_rate_grid():
+        print(f"{r['amount']:14,d}円 {r['tax']:14,d}円  {r['rate'] * 100:6.2f}%")
+    print("  → 速算表の控除額が効くので、**最高税率の55パーセントは名目です。**"
+          "10億円を一度に贈与しても実効は54.30パーセントで、"
+          "**額を増やすほど55に近づきますが、超えることはありません**")
