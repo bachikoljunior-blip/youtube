@@ -501,10 +501,7 @@ def quota_is_back(now: datetime | None = None) -> bool:
     **窓が開いていること**と**単位が残っていること**は別の事実なので、両方見ます。
     観測した 403 は確実な事実で、`src.upload_cap` が窓ごとに持っています。
     """
-    now = now or datetime.now(timezone.utc)
-    if now < upload_cap.window_start(now) or now >= upload_cap.window_end(now):
-        return False                       # 窓の外（起こりませんが、印として）
-    return upload_cap.day_quota(now).open
+    return upload_cap.day_quota(now or datetime.now(timezone.utc)).open
 
 
 def hours_to_quota(now: datetime | None = None) -> float:
