@@ -1567,12 +1567,18 @@ calc を3本書いたのが約20分なので、**同じ桁の時間が、件数�
 立て方は `docs/trigger_parent.md`「子の立て方」と同じ。**タグを必ず付けること**
 （付け忘れると、次の子から見て**自分が見えなくなり**、二重に走ります）:
 
-    source_url:      https://github.com/bachikoljunior-blip/youtube
-    source_revision: claude/youtube-auto-post-revenue-ggedij
+    source_url:      https://github.com/bachikoljunior-blip/youtube   ← **省略不可**
+    source_revision: claude/youtube-auto-post-revenue-ggedij          ← **省略不可**
     environment_id:  env_01QMJaP2yRCzw4tY5VpJeM1m
     tags:            ["youtube-hourly"]
     prompt:          【定期の回】`docs/trigger_main.md` を読んで、そのとおりに1周してください。
                      **最低1件は出してから終わること**（同 §4）。最後に自分を archive すること。
+
+**上の4つは「渡せる値の一覧」ではありません。`source_url` と `source_revision` は
+省略できません**（2026-08-18 に踏んだ）。`environment_id` は継がれるので省いても通り、
+**そこから「repo も継がれる」と読めてしまいます。継がれません。**
+省くと `session_context.sources` が空の子が立ち、**8/17 04:1x と同じ、
+repo の無い回**になります（その回は1件も出せずに終わっています）。
 
 #### **立てたら、返りに `sources` が入っているかを見ること**（2026-08-17 に足した）
 
