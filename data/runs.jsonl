@@ -335,3 +335,4 @@
 {"at": "2026-08-18T00:55:49+09:00", "session": "session_01QwmHyXmjzF94Smpevbo8Pg", "kind": "ship", "what": "verdict: 前の回の申し送り「(C) の新しい8件から節を通せ。通れば (C) の初の当たり」を実データで判定 — 当たり。kokuho の新しい2件が2節になり、掃引の新しいは 2→0件。ただし掃引は形を取り違えていた（頭打ちと言ったが実際は台形）"}
 {"at": "2026-08-18T01:00:47+09:00", "session": "session_01QwmHyXmjzF94Smpevbo8Pg", "kind": "ship", "what": "upload×2: tI07k9hQWKY（08-30 09:00）・pNf3XYeCp8g（08-31 09:00）を予約まで。2/2 通過・落ち0本。日枠切れなのでサムネは載っていない（控えに bytes あり）"}
 {"at": "2026-08-18T01:13:35+09:00", "session": "session_01QwmHyXmjzF94Smpevbo8Pg", "kind": "ship", "what": "fix: 掃引に5つ目の形「帯」（上がって戻る）。4形は右端しか見ず、kokuho の age を頭打ちと誤って名づけていた。あわせて is_covered へ材料を渡す欄を足し、SHAPES 全部について検査で固定"}
+{"at": "2026-08-18T01:18:47+09:00", "session": "session_01QwmHyXmjzF94Smpevbo8Pg", "kind": "ship", "what": "fix: status.py の (C) の内訳が形を2つ落としていた（片効き・帯）。形の一覧を写した3か所目で、合計が候補件数に届かないのに赤が出なかった。SHAPES から引き、合計の一致を検査に"}
