@@ -152,6 +152,24 @@ def test_rounding_fixes_the_order():
         C.rounding(6_666, 6_667, "標準報酬30万円の日額")
 
 
+def test_close_accepts_the_last_bit_but_not_a_real_gap():
+    """**`rounding` は率には使えません**（浮動小数の最後の1桁で落ちる）。
+
+    実物は `koureikoyou.py` の傾き —— 率と境目から出した `0.15*0.61/0.14` と、
+    公表されている `183/280` は、数学的には同じで最後の1桁だけ違います。
+    """
+    derived = 0.15 * 0.61 / (0.75 - 0.61)
+    published = 183 / 280
+    assert derived != published            # ← `rounding` はこれで落ちていた
+    C.close(derived, published, "改正前の傾き")
+
+    # 本物の食い違いは、ちゃんと止まること
+    with pytest.raises(C.TableError):
+        C.close(0.10 * 0.61 / (0.75 - 0.61), published, "改正後の傾き")
+    with pytest.raises(C.TableError):
+        C.close(0.0305, 0.0306, "減額の比", tol=1e-6)
+
+
 # -------------------------------------------- ラベルと値（実際に素通りした欠陥）
 
 ROWS_5Y = [{"years": y, "free": f} for y, f in
