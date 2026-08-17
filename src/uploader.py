@@ -9,7 +9,7 @@ from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 from googleapiclient.http import MediaFileUpload
 
-from . import upload_cap
+from . import measure_window, upload_cap
 from .auth import credentials, explain, is_day_quota, is_upload_cap
 
 JST = timezone(timedelta(hours=9))
@@ -82,7 +82,7 @@ def taken_publish_times(youtube) -> set[str]:
 
 
 def next_publish_at(hour_jst: int, minute_jst: int, taken: set[str] | None = None,
-                    date_jst: str | None = None) -> str:
+                    date_jst: str | None = None, force_window: bool = False) -> str:
     """次に空いている指定時刻（JST）を RFC3339(UTC) で返す。
 
     taken にすでに予約済みの時刻を渡すと、その日を飛ばして次の日を返す。
@@ -103,6 +103,19 @@ def next_publish_at(hour_jst: int, minute_jst: int, taken: set[str] | None = Non
     `date_jst`（`YYYY-MM-DD`）を渡すと**その日に釘づけ**します。
     埋まっていたら**翌日へ送らずに例外**を上げます —— 送ってしまうと
     「1日8本のつもりが7本＋翌日1本」になり、**測っている数字のほうが壊れる**ためです。
+
+    ## 測定の窓（2026-08-18 に足した）
+
+    **予約時刻を決めているのは、この関数だけです。** `batch_build.py` も
+    `upload_only.py` も `pipeline` も、最後はここへ来ます。だから
+    `src/measure_window.py` の門はここに置いてあります（入口ごとに置くと、
+    **次に入口を足した回が書き忘れます** —— 実際 `batch_build.py` にしか
+    無く、しかも `--date` を渡した時だけ呼ばれていました）。
+
+    **2つの道で、止め方が違います**（理由は `measure_window` の docstring）:
+
+        自動で探す（`date_jst` なし） → **窓の日を飛ばす。** 投稿は止めない
+        釘づけ（`date_jst` あり）     → **例外。** `force_window=True` で通せる
     """
     now = datetime.now(JST)
 
@@ -118,6 +131,12 @@ def next_publish_at(hour_jst: int, minute_jst: int, taken: set[str] | None = Non
                 f"{date_jst} {hour_jst:02d}:{minute_jst:02d} JST は過去か直近すぎます"
                 "（予約は20分先から）"
             )
+        # **窓を見るのは、形と過去を弾いたあと。** 窓は「置けるが置きたくない日」で、
+        # 形の誤りや過去の日は「そもそも置けない日」です。**先に窓で止めると、
+        # 直し方が違うものに同じ札が付きます** —— 実際 `--date <昨日>` が
+        # 「M14 の窓です」と答えました（昨日はたまたま窓の中だった）。
+        measure_window.check(date_jst, force=force_window,
+                             tool="uploader.next_publish_at(date_jst=…)")
         stamp = target.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         if stamp in (taken or set()):
             raise ValueError(
@@ -131,9 +150,21 @@ def next_publish_at(hour_jst: int, minute_jst: int, taken: set[str] | None = Non
         target += timedelta(days=1)
 
     taken = taken or set()
+    skipped: list[str] = []
     for _ in range(60):     # 2か月ぶんまで探せば十分。無限には回さない。
         stamp = target.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        day_jst = target.strftime("%Y-%m-%d")
+        # **窓の中は飛ばす（止めない）。** ここで例外を上げると、窓のあいだ
+        # 投稿が丸ごと止まります。**投稿が途切れるのが最大の損失**なので、
+        # 測定を守る安いほうの手（先へ送る）を取ります。
+        if not force_window and measure_window.inside(day_jst):
+            skipped.append(day_jst)
+            target += timedelta(days=1)
+            continue
         if stamp not in taken:
+            if skipped:
+                print(f"[window] M14 の比較の窓を飛ばしました: {', '.join(skipped)}"
+                      f" → {day_jst} {hour_jst:02d}:00 JST", flush=True)
             return stamp
         target += timedelta(days=1)
     raise RuntimeError("空いている公開枠が2か月先まで見つかりませんでした")

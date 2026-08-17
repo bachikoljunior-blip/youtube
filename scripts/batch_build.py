@@ -111,7 +111,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from src import auth, config, dupes, history, upload_cap  # noqa: E402
+from src import auth, config, dupes, history, measure_window, upload_cap  # noqa: E402
 
 JST = timezone(timedelta(hours=9))
 LOG = ROOT / "data" / "batch_runs.jsonl"
@@ -122,8 +122,13 @@ LOG = ROOT / "data" / "batch_runs.jsonl"
 # 文書には「実験の窓を踏まないこと」と3か所に書いてありましたが、
 # **守るのは毎回こちらの記憶でした。** 8/15 の日誌が4回続けて言っている
 # 「人が見れば一目で分かる欠陥を、機械検査が素通りさせた」と同じ形なので、
-# **窓を機械に持たせます。** 窓が終わったらこの2行を消すこと（判定は M14 に書く）。
-M14_WINDOW = ("2026-08-16", "2026-08-23")
+# **窓を機械に持たせます。**
+#
+# **正本は `src/measure_window.py` に移しました**（2026-08-18）。ここに
+# 置いてあったあいだ、門は**この道具の `--date` を渡した時にしか**効かず、
+# `--hour` も `upload_only.py` も `reschedule.py` も素通りでした。
+# ここは別名です。**窓を終わらせるときは `src/measure_window.py` を直すこと。**
+M14_WINDOW = measure_window.WINDOW
 
 # 台本生成〜レンダリングの実測は5〜10分。倍を上限に取る（無限には待たない）。
 BUILD_TIMEOUT = 1800
@@ -448,22 +453,13 @@ def slots(count: int, hour: int, date_jst: str | None, hours: list[int],
 
 
 def check_window(date_jst: str, force: bool) -> None:
-    """M14 の比較の窓に置こうとしていないかを見る。**記憶に任せない。**"""
-    lo, hi = M14_WINDOW
-    if not (lo <= date_jst <= hi):
-        return
-    if force:
-        print(f"[batch] **{date_jst} は M14 の比較の窓（{lo}〜{hi}）です。**"
-              " --force-window が付いているので続けます。", flush=True)
-        return
-    raise SystemExit(
-        f"[batch] **{date_jst} は M14 の比較の窓（{lo}〜{hi}）です。**\n"
-        "        ここは「8/16 が4本・8/17〜8/23 が各1本」で1日あたりの本数を\n"
-        "        測っている最中で、足すと測定そのものが壊れます。\n"
-        "        窓の外（8/24 以降）へ置くか、窓が終わったなら\n"
-        "        scripts/batch_build.py の M14_WINDOW を消すこと。\n"
-        "        どうしても足すなら --force-window。"
-    )
+    """M14 の比較の窓に置こうとしていないかを見る。**記憶に任せない。**
+
+    中身は `src/measure_window.check` です。**窓を読むのは呼ばれた時**なので、
+    検査が `M14_WINDOW` を差し替える手はそのまま効きます。
+    """
+    measure_window.check(date_jst, force=force, tool="batch_build.py --date",
+                         window=M14_WINDOW)
 
 
 def run(cmd: list[str], timeout: int, label: str = "") -> tuple[int, str]:

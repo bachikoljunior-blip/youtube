@@ -43,7 +43,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from googleapiclient.errors import HttpError  # noqa: E402
 
-from src import history, uploader  # noqa: E402
+from src import history, measure_window, uploader  # noqa: E402
 
 JST = timezone(timedelta(hours=9))
 MARKER = re.compile(r"\[t:([a-z0-9\-]+)\]")
@@ -167,7 +167,15 @@ def main(argv: list[str] | None = None) -> int:
                     help="公開時刻を動かす。例: --move abc123 2026-09-04T09:00")
     ap.add_argument("--unschedule", metavar="VIDEO_ID",
                     help="予約を外す（private のまま残るので、時刻を入れ直せば戻ります）")
+    ap.add_argument("--force-window", action="store_true",
+                    help="M14 の比較の窓の中へ動かす（**理由を JOURNAL に書くこと**）")
     args = ap.parse_args(argv)
+
+    if args.move:
+        # **API を呼ぶ前に見ること。** 窓の門は認証も枠も要らないので、
+        # 通らない移動で単位（50単位）を捨てないため。
+        measure_window.check(args.move[1][:10], force=args.force_window,
+                             tool="reschedule.py --move")
 
     svc = uploader._service()
 

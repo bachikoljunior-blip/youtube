@@ -1,0 +1,110 @@
+"""**測っている最中の日を、1か所で持つ。**
+
+    from src import measure_window
+    measure_window.inside("2026-08-20")           # True
+    measure_window.check("2026-08-20", tool="…")  # SystemExit
+
+## なぜ要るか（2026-08-18）
+
+窓そのものは 2026-08-15 に `scripts/batch_build.py` へ入りました。理由も
+そこに書いてあります —— **「文書には『実験の窓を踏まないこと』と3か所に
+書いてあったが、守るのは毎回こちらの記憶だった」**ので、窓を機械に持たせた。
+
+**その機械が、3つある入口の1つにしか付いていませんでした。**
+2026-08-18 07:5x に実物を数えて分かったことです:
+
+    scripts/batch_build.py --date <窓の中>    → 止まる（`check_window`）
+    scripts/batch_build.py --hour 11          → **素通り**（`--date` が無いと呼ばれない）
+    scripts/upload_only.py <題> "" 11         → **素通り**
+    scripts/reschedule.py --move <id> <窓の中> → **素通り**
+
+しかも `batch_build.py` の呼び出しは `if args.date:` の中にあり、
+**日付を釘づけしない既定の道は一度も見ていません。**
+
+いまそれが効いていないのは偶然です。窓の6日（08/18〜08/23）は
+**たまたま6日とも 09:00 の1本だけ**で埋まっているので、
+`next_publish_at(9)` が「埋まっている」と読んで飛ばします。
+**`--hour 11` なら 08/18 11:00 が返ります**（`--hour` は
+`batch_build.py` の使い方の2行目に載っている旗です）。
+
+そして**この回の申し送りが、まさにその道を通れと言っていました** ——
+「`reschedule.py` で予約の一部を前に詰めるだけで、公開ペースを
+6.4 → 20本/日 に上げられます（追加の生成は0）」。
+**前に詰める先は、いちばん空いている日** ＝ 08/18〜08/23 ＝ 窓の中です。
+そのとおりに動くと、**測定を壊したことに誰も気づきません**
+（`reschedule.py` は何も言わずに成功します）。
+
+## 直す先を「入口」ではなく「合流点」にした理由
+
+入口は3つですが、**予約時刻を決めているのは1か所**です
+（`src.uploader.next_publish_at`）。入口ごとに門を足すと、
+**次に入口を足した回が書き忘れます** —— このリポジトリでは
+その形の落ち方が通算8件あり（`src/alerts.py` の「一覧が当たりを含まないまま育つ」、
+`scripts/status.py` の「片方だけ」3件、`_covered_map` の import 漏れ）、
+**毎回「規則を足す」ではなく「構造を1つにする」で直しています。**
+
+`reschedule.py` だけは合流点を通りません（`publishAt` を直接書く）ので、
+そこには明示的に置いてあります。**入口が2つになったのは、
+道具の性質が違うから**です（作って予約する／既にある予約を動かす）。
+
+## 止め方が2通りあるのは、投稿を止めないためです
+
+**投稿が途切れるのが最大の損失**（`CLAUDE.md`）なので、
+**自動で日を選ぶ道では例外を上げません。窓を飛ばして先へ進みます。**
+止めるのは「その日だ」と名指ししたときだけ ——
+名指しは意図なので、意図を確かめる価値があります。
+
+    自動で探す（`--hour` だけ）      → **窓を飛ばす。** 投稿は続く
+    日を釘づけ（`--date` / `--move`） → **止める。** `force` で通せる
+
+## 窓が終わったら
+
+**`WINDOW` を `("", "")` にすること**（消さない）。空の窓はどの日にも
+当たらないので、門は全部素通りになります。判定は `docs/MEANS.md` M14 へ。
+"""
+from __future__ import annotations
+
+# **測っている最中の日**（JST・両端を含む）。`docs/MEANS.md` M14。
+# 8/16 が4本・8/17〜8/23 が各1本で「1日あたりの本数」を測っています。
+# **ここへ足すと測定そのものが壊れます。**
+# 窓が終わったら `("", "")` にすること（下の `inside` がどの日にも当たらなくなる）。
+WINDOW = ("2026-08-16", "2026-08-23")
+
+
+def inside(date_jst: str, window: tuple[str, str] | None = None) -> bool:
+    """`YYYY-MM-DD`（JST）が測定の窓の中か。
+
+    **空の窓 `("", "")` はどの日にも当たりません。** 窓が終わったときに
+    `WINDOW` を空にするだけで全部の門が開くように、ここで吸収しています
+    （呼ぶ側に `if WINDOW:` を書かせると、**次に呼ぶ側を足した回が書き忘れます**）。
+    """
+    lo, hi = window if window is not None else WINDOW
+    if not lo or not hi:
+        return False
+    return lo <= date_jst <= hi
+
+
+def check(date_jst: str, *, force: bool = False, tool: str = "",
+          window: tuple[str, str] | None = None) -> None:
+    """**その日だと名指しした**ときだけ止める。`force` なら通す（言い残す）。
+
+    自動で日を選ぶ道は、ここではなく `inside()` で**飛ばして**ください。
+    止めると投稿が途切れます（module docstring）。
+    """
+    lo, hi = window if window is not None else WINDOW
+    if not inside(date_jst, window):
+        return
+    where = f"{tool} " if tool else ""
+    if force:
+        print(f"[window] **{date_jst} は M14 の比較の窓（{lo}〜{hi}）です。**"
+              f" {where}は force が付いているので続けます。"
+              " **理由を docs/JOURNAL.md に書くこと。**", flush=True)
+        return
+    raise SystemExit(
+        f"[window] **{date_jst} は M14 の比較の窓（{lo}〜{hi}）です。**\n"
+        f"        ここは「8/16 が4本・8/17〜8/23 が各1本」で1日あたりの本数を\n"
+        f"        測っている最中で、{where}で足すと測定そのものが壊れます。\n"
+        "        窓の外（8/24 以降）へ置くか、窓が終わったなら\n"
+        "        src/measure_window.py の WINDOW を ('', '') にすること。\n"
+        "        どうしても足すなら force（旗の名前は道具ごとに違います）。"
+    )
