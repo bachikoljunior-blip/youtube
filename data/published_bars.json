@@ -1563,6 +1563,16 @@
     ],
     "video_id": "7DVnurYJGME"
   },
+  "s-kyufu-1nichi-165bai": {
+    "charts": [
+      [
+        "45.0倍",
+        "90.0倍",
+        "165.0倍"
+      ]
+    ],
+    "video_id": "cTXgM62_8FY"
+  },
   "s-kyufu-nokori-gake-273bai": {
     "charts": [
       [
@@ -2242,6 +2252,20 @@
       ]
     ],
     "video_id": "f-eqkNfiPFQ"
+  },
+  "s-shukatsu-nikkyu-4wari-line": {
+    "charts": [
+      [
+        "10.6日分",
+        "30.0日分"
+      ],
+      [
+        "2.79倍",
+        "2.83倍",
+        "2.89倍"
+      ]
+    ],
+    "video_id": "IbZ3JfYouwE"
   },
   "s-souzoku-1oku-sougaku-630": {
     "charts": [
