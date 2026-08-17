@@ -38,6 +38,7 @@
     頭打ち 途中から動かなくなる                  → 「◯◯から上は同じ」節になる
     崖     1点だけ跳ぶ（中央の段差の5倍以上）      → 「1円こえると◯◯円」節になる
     逆転   最大・最小が端ではなく途中にある        → 「いちばん得なのは端ではない」節になる
+    帯     途中の一続きだけ値が違い、両端は同じ    → 「◯◯から◯◯までだけ」の節になる
 
 **拾わないもの**（この道具は候補を出すだけで、節にはしません）:
 
@@ -75,7 +76,7 @@ FLAT_TOL = 1e-4
 # `jidou` の本物の崖は残る）
 MEANINGFUL = 0.01
 
-SHAPES = ("不変", "頭打ち", "崖", "逆転", "片効き")
+SHAPES = ("不変", "帯", "頭打ち", "崖", "逆転", "片効き")
 
 
 def _grid(default: float) -> list[float]:
@@ -161,6 +162,22 @@ def _sweepable_params(fn: Callable) -> list[tuple[str, float]]:
     return out
 
 
+def _level_runs(ys: list[float], scale: float) -> list[tuple[int, int, float]]:
+    """並びを**平らな区間**に切って `(始まり, 終わり, その値)` で返す。
+
+    隣どうしの差が `FLAT_TOL` 以下なら同じ段とみなします。
+    段が3つで、1つめと3つめの値が同じなら **帯**（`_classify`）。
+    """
+    runs: list[tuple[int, int, float]] = []
+    start = 0
+    for i in range(1, len(ys)):
+        if abs(ys[i] - ys[start]) / scale > FLAT_TOL:
+            runs.append((start, i - 1, ys[start]))
+            start = i
+    runs.append((start, len(ys) - 1, ys[start]))
+    return runs
+
+
 def _classify(xs: list[float], ys: list[float]) -> tuple[str, dict] | None:
     """点の並びから形を1つ決める。**当てはまらなければ None。**"""
     if len(ys) < 4 or any(map(lambda v: math.isnan(v) or math.isinf(v), ys)):
@@ -174,6 +191,26 @@ def _classify(xs: list[float], ys: list[float]) -> tuple[str, dict] | None:
 
     steps = [ys[i + 1] - ys[i] for i in range(len(ys) - 1)]
     moving = [abs(s) for s in steps if abs(s) / scale > FLAT_TOL]
+
+    # 帯: **途中の一続きだけ値が違い、両端は同じ値に戻る**（2026-08-18 に足した）
+    #
+    # **この形が無かったので、`kokuho.keigen_cliff` の `age` は「頭打ち」として
+    # 出ていました** —— 後ろの3分の1が平らで、動く段が2つあるので条件に当たります。
+    # 右端だけを見れば確かに止まって見えますが、**左端も同じ値**でした。
+    # 本当の形は「70歳から上は 13,200円 で止まる」ではなく
+    # **「40〜64歳だけ 16,520円 で、その前後は 13,200円」**です
+    # （介護納付金分の均等割が乗る帯）。
+    #
+    # **頭打ちより先に見ること。** 帯は頭打ちの条件も満たすので、順番が本体です。
+    # 逆転（最大が途中にある）にも当たりますが、そちらはもっと後ろにあります。
+    runs = _level_runs(ys, scale)
+    if len(runs) == 3:
+        (_, _, outer), (b0, b1, inner), (_, _, back) = runs
+        if (abs(outer - back) / scale <= FLAT_TOL
+                and abs(inner - outer) / scale >= MEANINGFUL):
+            return "帯", {"帯の入口": xs[b0], "帯の出口": xs[b1],
+                         "帯の中": inner, "帯の外": outer,
+                         "差": inner - outer}
 
     # 頭打ち: 後ろの3分の1が動かない（前は動いている）
     tail = ys[-max(3, len(ys) // 3):]
@@ -472,7 +509,7 @@ def _cast(default: float, x: float) -> Any:
 
 
 #: 出す順。**珍しいほど前**（崖と逆転は、そのまま節の主題になります）
-SHAPE_ORDER = {"崖": 0, "片効き": 1, "逆転": 2, "頭打ち": 3, "不変": 4, "読めない": 5}
+SHAPE_ORDER = {"崖": 0, "帯": 1, "片効き": 2, "逆転": 3, "頭打ち": 4, "不変": 5, "読めない": 6}
 
 
 def dedupe(hits: list[dict]) -> list[dict]:
@@ -674,7 +711,7 @@ def _hit_points(hit: dict) -> list[Any]:
     d = hit.get("詳しく") or {}
     if hit.get("形") == "不変":
         return []
-    keys = ("止まる x", "x", "x の手前", "x の先")
+    keys = ("止まる x", "x", "x の手前", "x の先", "帯の入口", "帯の出口")
     return [d[k] for k in keys if k in d]
 
 
@@ -692,9 +729,17 @@ def _hit_outcome(hit: dict) -> Any:
     育つのではなく、**判定できないものを「当たり」に数えていました。**
     `片効き` が言っているのは「この欄は動かない」なので、**動かない値**を
     結果として渡します（x が無いときの控えの道は、もう書いてあります）。
+
+    **`帯` を足した回（2026-08-18）は、この註を読んだうえで踏みました。**
+    足した直後の掃引で `kokuho.cliff_by_age` の4件が全部「新しい」と出ています ——
+    **その表は、その回に書いた節そのもの**です。註が名指ししているのは
+    `片効き` 1件だけなので、**「自分の形も同じ穴に落ちる」とは読まれませんでした。**
+    形を足すときは、**`_hit_points` と `_hit_outcome` の両方に欄を足すこと。**
+    `tests/test_section_sweep.py` が、`SHAPES` の全部について
+    **どちらか一方は必ず埋まる**ことを見ています。
     """
     d = hit.get("詳しく") or {}
-    for k in ("止まった値", "値", "跳ぶ幅", "動かない値"):
+    for k in ("止まった値", "値", "跳ぶ幅", "動かない値", "帯の中"):
         if k in d:
             return d[k]
     return None
@@ -757,6 +802,10 @@ def line_of(hit: dict) -> str:
     if hit["形"] == "不変":
         tail = (f"{hit['動かした引数']} を {_fmt(hit['x の幅'][0])}→"
                 f"{_fmt(hit['x の幅'][1])} と動かしても {_fmt(d['値'])} のまま")
+    elif hit["形"] == "帯":
+        tail = (f"{hit['動かした引数']} が {_fmt(d['帯の入口'])}〜{_fmt(d['帯の出口'])} "
+                f"のあいだだけ {_fmt(d['帯の中'])}、その前後は {_fmt(d['帯の外'])}"
+                f"（差 {_fmt(d['差'])}）")
     elif hit["形"] == "頭打ち":
         tail = (f"{hit['動かした引数']} が {_fmt(d['止まる x'])} から上は "
                 f"{_fmt(d['止まった値'])} で止まる")
