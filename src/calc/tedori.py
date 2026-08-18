@@ -161,6 +161,38 @@ def knee_grid(incomes=(6_200_000, 6_400_000, 6_500_000, 6_800_000),
     return out
 
 
+def raise_size_grid(income: int = 6_400_000,
+                    raises=(100_000, 200_000, 300_000, 500_000,
+                            800_000, 1_000_000, 1_500_000),
+                    social_rate: float = TYPICAL_SOCIAL_RATE) -> list[dict]:
+    """**同じ年収からでも、昇給額を変えると「残る割合」が変わる。**
+
+    `marginal_grid()` は 50万円、`knee_grid()` は 10万円で固定していて、
+    **昇給額そのものを動かした節がありませんでした。** 段は年収の側に立っているので、
+    昇給がまたぐ段の数は昇給額で変わり、**残る割合は昇給額に対して単調ではありません。**
+
+    残る割合は昇給額に対して**必ず下がる**（1円ずつの残りが弱く減る平均なので単調非増加）。
+    **値打ちは下がることではなく、下がり幅のほうにある** —— 幅は「段からの距離」で決まり、
+    **段から遠い年収では、昇給額をいくら変えても1円も動きません。**
+
+        年収640万（段のすぐ手前）  +10万 71.35% → +150万 **63.00%**（**8.35ポイント**）
+        年収500万（段から遠い）    +10万 71.86% → +150万 **71.83%**（**0.03ポイント**）
+    """
+    rows = []
+    for up in raises:
+        r = marginal(income, up, social_rate)
+        rows.append({
+            "年収": income,
+            "昇給額": up,
+            "上げた後": r["上げた後"],
+            "手取り増": r["手取り増"],
+            "消えた額": r["消えた額"],
+            "残る割合": round(r["残る割合"], 4),
+            "1万円あたり手取り増": round(r["手取り増"] / up * 10_000),
+        })
+    return rows
+
+
 def _bracket(taxable: int) -> float:
     rate = INCOME_TAX_BRACKETS[0][1]
     for floor, r in INCOME_TAX_BRACKETS:
@@ -294,9 +326,43 @@ def main() -> None:
     for r in social_rate_grid():
         print(f"{r['率']:>7.0%}{r['手取り増']:>11,}円{r['残る割合']:>9.1%}")
 
+    print("\n=== 昇給額を変えて残る割合が動くのは、段のすぐ手前にいる人だけ ===")
+    print(f"  前提: 社会保険料率は年収に対する一定率{TYPICAL_SOCIAL_RATE:.0%} / "
+          f"所得控除は基礎控除だけ / 住民税の所得割は標準税率{RESIDENT_RATE:.0%} / "
+          f"所得税は復興特別所得税を含む（{RECONSTRUCTION}倍）")
+    for base in (6_400_000, 5_000_000):
+        rows = raise_size_grid(base)
+        width = rows[0]["残る割合"] - rows[-1]["残る割合"]
+        print(f"  --- 年収{base:,}円から（昇給{rows[0]['昇給額']:,}円と"
+              f"{rows[-1]['昇給額']:,}円で {width * 100:.2f}ポイントの差）---")
+        for row in rows:
+            print(f"    昇給{row['昇給額']:>9,d}円  手取り増{row['手取り増']:>9,d}円  "
+                  f"消えた{row['消えた額']:>9,d}円  残る割合 {row['残る割合']:.2%}  "
+                  f"1万円あたり手取り+{row['1万円あたり手取り増']:>5,d}円")
+
     print("\n=== この計算の前提 ===")
     for a in ASSUMPTIONS:
         print(f"- {a}")
+
+
+    # **昇給額を動かしたときの残る割合は、単調に下がる**（1円ずつの残りの平均だから）。
+    for start in (5_000_000, 6_400_000):
+        ratios = [r["残る割合"] for r in raise_size_grid(start)]
+        for a, b in zip(ratios, ratios[1:]):
+            if b > a + 1e-9:
+                raise AssertionError(
+                    f"年収{start:,}円で、昇給額を増やしたのに残る割合が上がりました "
+                    f"（{a} → {b}）。1円ずつの残りは弱く減るので、平均は下がるはずです")
+    # **下がり幅は「段からの距離」で決まる。** 段のすぐ手前と、段から遠い年収で桁が違うこと。
+    near = [r["残る割合"] for r in raise_size_grid(6_400_000)]
+    far = [r["残る割合"] for r in raise_size_grid(5_000_000)]
+    if not (near[0] - near[-1] > 0.08):
+        raise AssertionError(
+            f"年収640万円の下がり幅が {near[0] - near[-1]:.4f}。8ポイントを超えるはずです")
+    if not (far[0] - far[-1] < 0.001):
+        raise AssertionError(
+            f"年収500万円の下がり幅が {far[0] - far[-1]:.4f}。"
+            "段から遠いので、ほとんど動かないはずです")
 
 
 if __name__ == "__main__":
