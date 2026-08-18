@@ -111,7 +111,14 @@ def test_実物の日誌で上位が入れ替わる():
     # ここで `nenkin` を残すと、**次の回から「日誌に `nenkin` と書けない」**
     # という縛りになります。検査を通すために日誌を曲げるのは本末転倒なので、
     # **戻ってこない語だけを残し、`nenkin` は下の「前の言及が黙るか」で見ます。**
-    for tok in ("usage", "ASSUMPTIONS", "sibling_check --phase spawn"):
+    #
+    # **`ASSUMPTIONS` も、同じ理由でこの一覧から外しました**（2026-08-18 23:0x）。
+    # 08-16 06:3x に閉じた語ですが、**08-18 22:1x が別のものとして持ち込みました** ——
+    # 「`ASSUMPTIONS` に書いてあるのに計算していない軸を探す」という**節の掘り方**で、
+    # 閉じたときの「前提の値が画面に届いていない」とは**別の話**です。
+    # 22:1x と 23:0x の2回で立ち、**ここで残すと「日誌にこの語を書けない」縛りになります。**
+    # `nenkin` と同じく、**宣言より前の10件が黙っているか**で見ます（下）。
+    for tok in ("usage", "sibling_check --phase spawn"):
         assert counted.get(tok, 0) < 2, (tok, counted.get(tok))
     # 宣言そのものは日誌に在る（検査が「宣言が無いから通った」にならないように）
     for tok in ("usage", "nenkin", "ASSUMPTIONS", "sibling_check --phase spawn"):
@@ -126,6 +133,24 @@ def test_実物の日誌で上位が入れ替わる():
     silenced = [d for d, body, start in retro.handoff_blocks(journal)[-8:]
                 if "nenkin" in retro.tokens(body) and start <= closed["nenkin"]]
     assert not silenced, silenced
+
+    # **`ASSUMPTIONS` は、宣言より前の全部が黙っていることで見る。**
+    # 直近8回に前の言及が1件も残っていない時期があるので、
+    # **窓の中だけを見ると空振りになります。** 日誌の全部で数えること。
+    blocks_all = retro.handoff_blocks(journal)
+    before_a = [d for d, body, start in blocks_all
+                if "ASSUMPTIONS" in retro.tokens(body)
+                and start <= closed["ASSUMPTIONS"]]
+    after_a = [d for d, body, start in blocks_all
+               if "ASSUMPTIONS" in retro.tokens(body)
+               and start > closed["ASSUMPTIONS"]]
+    assert len(before_a) >= 5, before_a          # 空振りにならないこと
+    assert after_a, "閉じたあとに立ち直った回が1つも無い（この検査が意味を持たない）"
+    # 宣言より前のものは、直近8回の窓に入っていても1件も数えられない
+    counted_before = [d for d, body, start in blocks_all[-8:]
+                      if "ASSUMPTIONS" in retro.tokens(body)
+                      and start <= closed["ASSUMPTIONS"]]
+    assert not counted_before, counted_before
 
 
 def test_閉じていないことを言う行を宣言に数えない():

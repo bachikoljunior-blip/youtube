@@ -42,6 +42,8 @@
 """
 from __future__ import annotations
 
+from fractions import Fraction
+
 ASSUMPTIONS = [
     "1日あたりの額は、支給開始日以前12か月の標準報酬月額の平均を30で割り、3分の2をかけて計算しています",
     "30で割った額は10円未満を四捨五入し、3分の2をかけた額は1円未満を四捨五入しています",
@@ -54,6 +56,9 @@ ASSUMPTIONS = [
     "雇用保険料は賃金が支払われないため、かからないものとしています",
     "住民税は前年の所得で決まるため休んでも減りませんが、金額は人によって違うので入力として扱っています",
     "労災、退職後の継続給付、障害年金や老齢年金との調整は含めていません",
+    "標準報酬月額は1,000円きざみの値だけを入れています（実際の等級もそうなっています）",
+    "健康保険料率は都道府県ごとに違うため、率そのものを入力として動かせるようにしています",
+    "余りの表に出てくる月額は、その余りになる1,000円きざみの値の例であって、実在する等級とは限りません",
 ]
 
 # 制度の値。**長く動いていないもの**だけをここに置く。
@@ -65,6 +70,7 @@ MAX_DAYS = 546            # 通算1年6か月
 HEALTH_RATE = 0.05        # 健康保険（協会けんぽ 約10% の半分。都道府県で違う）
 PENSION_RATE = 0.0915     # 厚生年金（18.3% の半分。固定）
 CARE_RATE = 0.008         # 介護保険（40歳以上。約1.6% の半分）
+RATE_DIGITS = 6           # 率をここまで丸めてから分数にする（`premiums`）
 
 
 def check_tables() -> None:
@@ -121,22 +127,44 @@ def paid_days(absent_days: int) -> int:
 def premiums(standard_pay: int, care: bool = False,
              health_rate: float = HEALTH_RATE,
              pension_rate: float = PENSION_RATE) -> dict:
-    """休んでいるあいだも引かれる、社会保険料の本人負担（1か月ぶん）。"""
-    health = int(standard_pay * health_rate)
-    pension = int(standard_pay * pension_rate)
-    nursing = int(standard_pay * CARE_RATE) if care else 0
+    """休んでいるあいだも引かれる、社会保険料の本人負担（1か月ぶん）。
+
+    **率は「小数第6位まで」に丸めてから分数に直して掛ける**（2026-08-18 に直した）。
+    `int(標準報酬 × 率)` は float の掛け算を切り捨てるので、
+    **率を足して渡した瞬間に1円ずれる** —— `0.0915 + 0.01` は float では
+    0.10149999999999999 になり、30万円に掛けると 30,449.999… で、
+    切り捨てると **30,450 が 30,449** になる。
+    `str()` で分数に直すだけでは足りない（**壊れた率をそのまま写すため**）。
+    保険料率は百分率で小数第2位までしか動かないので、
+    **10のマイナス6乗まで丸めれば、実在する率は1つも変わらない。**
+    既定の3つの率では1件も変わらない（58,000〜1,400,000円の1,000円きざみ全部で確認）。
+    **変わるのは、呼ぶ側が率を動かしたときだけ**で、動かせるようにしたのが上の
+    `net_month` の直し。片方だけ直すと、そこで1円が消える。
+    """
+    def cut(rate: float) -> int:
+        return int(Fraction(standard_pay) * Fraction(str(round(rate, RATE_DIGITS))))
+
+    health = cut(health_rate)
+    pension = cut(pension_rate)
+    nursing = cut(CARE_RATE) if care else 0
     return {"health": health, "pension": pension, "care": nursing,
             "total": health + pension + nursing}
 
 
 def net_month(standard_pay: int, care: bool = False, resident_tax: int = 0,
-              days: int = 30) -> dict:
+              days: int = 30, health_rate: float = HEALTH_RATE,
+              pension_rate: float = PENSION_RATE) -> dict:
     """1か月まるごと休んだときに、**手元に残る額**。
 
     傷病手当金は非課税だが、社会保険料と住民税は休んでも減らない。
+
+    **率はここまで通す。** `premiums()` は `health_rate` と `pension_rate` を
+    受け取れるのに、ここが渡していなかったので、**呼ぶ側から率を動かす道が
+    塞がっていた**（2026-08-18 に直した）。健康保険料率は都道府県ごとに違い、
+    モジュールの docstring も「率は入力に逃がしている」と書いている。
     """
     benefit = daily(standard_pay) * days
-    prem = premiums(standard_pay, care)
+    prem = premiums(standard_pay, care, health_rate, pension_rate)
     net = benefit - prem["total"] - resident_tax
     return {
         "standard_pay": standard_pay,
@@ -190,6 +218,124 @@ def limit_grid() -> list[dict]:
     return out
 
 
+# **日額の丸めの周期。** `daily()` は 標準報酬月額 ÷ 30 を10円未満四捨五入し、
+# そのあと 2/3 をかけて1円未満四捨五入する。前の段は 900 で、後ろの段は 3 で
+# 効くので、**得か損かは標準報酬月額を 900 で割った余りだけで決まる**（9通り）。
+ROUND_MOD = 900
+PAY_STEP = 1_000          # 標準報酬月額のきざみ（`ASSUMPTIONS`）
+
+
+def daily_exact(standard_pay: int) -> Fraction:
+    """**丸めを1つも入れない**1日あたり。分数のまま返す（float にしない）。"""
+    return Fraction(standard_pay, 30) * Fraction(2, 3)
+
+
+def rounding_gain(standard_pay: int) -> Fraction:
+    """丸めで**増えた（減った）**1日あたりの額。プラスなら得、マイナスなら損。"""
+    return Fraction(daily(standard_pay)) - daily_exact(standard_pay)
+
+
+def example_pay(remainder: int, floor: int = 200_000) -> int:
+    """その余りを持つ、`floor` 以上でいちばん小さい標準報酬月額（1,000円きざみ）。"""
+    pay = floor - floor % PAY_STEP
+    while pay % ROUND_MOD != remainder % ROUND_MOD:
+        pay += PAY_STEP
+    return pay
+
+
+def rounding_grid() -> list[dict]:
+    """**丸めの得損は9通りしかない。** 標準報酬月額を900で割った余りで決まる。
+
+    1,000円きざみの標準報酬月額は、900で割った余りが
+    0・100・200 …… 800 の**9つのどれか**にしかならない。
+    """
+    check_tables()
+    out = []
+    for r in range(0, ROUND_MOD, PAY_STEP % ROUND_MOD):
+        pay = example_pay(r)
+        g = rounding_gain(pay)
+        out.append({"remainder": r, "example_pay": pay, "daily": daily(pay),
+                    "per_day": g, "per_month": g * 30, "per_limit": g * MAX_DAYS})
+    return out
+
+
+def rounding_spread() -> dict:
+    """**上と下の差**。546日ぶんで何円ひらくか。"""
+    rows = rounding_grid()
+    hi = max(rows, key=lambda r: r["per_day"])
+    lo = min(rows, key=lambda r: r["per_day"])
+    return {"best": hi, "worst": lo,
+            "spread_day": hi["per_day"] - lo["per_day"],
+            "spread_limit": hi["per_limit"] - lo["per_limit"]}
+
+
+def premium_ratio(care: bool = False, health_rate: float = HEALTH_RATE,
+                  pension_rate: float = PENSION_RATE) -> float:
+    """**標準報酬月額に対する保険料の割合。** 額ではなく率なので、金額によらない。"""
+    return health_rate + pension_rate + (CARE_RATE if care else 0.0)
+
+
+def drop_grid(care: bool = False) -> list[dict]:
+    """**「3分の2」から手元までの落ち幅**を、標準報酬月額べつに並べる。
+
+    落ち幅（額面比 − 手元比）は**保険料の割合そのもの**なので、
+    標準報酬月額がいくらでも同じになる。手元比が行ごとに動いて見えるのは、
+    **日額の丸めだけ**が理由。
+    """
+    check_tables()
+    out = []
+    for p in (200_000, 260_000, 300_000, 380_000, 440_000, 500_000, 650_000):
+        r = net_month(p, care=care)
+        pr = premiums(p, care)["total"] / p
+        out.append({"standard_pay": p, "benefit_ratio": r["benefit_ratio"],
+                    "premium_ratio": pr, "net_ratio": r["net_ratio"],
+                    "drop": r["benefit_ratio"] - r["net_ratio"]})
+    return out
+
+
+def net_ratio_spread(care: bool = False) -> dict:
+    """手元比が、上の行と下の行でどれだけしかひらかないか（＝丸めのぶんだけ）。"""
+    rows = drop_grid(care=care)
+    hi = max(rows, key=lambda r: r["net_ratio"])
+    lo = min(rows, key=lambda r: r["net_ratio"])
+    return {"high": hi, "low": lo, "spread": hi["net_ratio"] - lo["net_ratio"],
+            "drop": rows[0]["drop"]}
+
+
+def resident_tax_edges(care: bool = False) -> list[dict]:
+    """**住民税がいくらを超えると、手元が額面の半分を割るか。**
+
+    傷病手当金そのものは非課税でも、住民税は前年の所得で決まるので休んでも減らない。
+    「半分を割る住民税」＝ 手元（住民税ゼロ） − 標準報酬月額の半分。
+    """
+    check_tables()
+    out = []
+    for p in (200_000, 260_000, 300_000, 380_000, 440_000, 500_000):
+        r = net_month(p, care=care)
+        half = r["net"] - p // 2
+        out.append({"standard_pay": p, "net": r["net"], "half_edge": half,
+                    "zero_edge": r["net"], "half_edge_ratio": half / p})
+    return out
+
+
+def rate_step(point: float = 0.01, care: bool = False) -> list[dict]:
+    """**健康保険料率が1ポイント違うと、546日ぶんでいくら変わるか。**
+
+    率は都道府県ごとに違うので、この計算では入力にしている（モジュールの docstring）。
+    **額は標準報酬月額に比例して開くが、比で見ればどこでも同じ1ポイント。**
+    """
+    check_tables()
+    out = []
+    for p in (200_000, 300_000, 440_000, 650_000):
+        base = net_month(p, care=care)
+        up = net_month(p, care=care, health_rate=HEALTH_RATE + point)
+        out.append({"standard_pay": p, "net": base["net"], "net_up": up["net"],
+                    "diff_month": base["net"] - up["net"],
+                    "diff_limit": (base["net"] - up["net"]) * MAX_DAYS / 30,
+                    "diff_ratio": base["net_ratio"] - up["net_ratio"]})
+    return out
+
+
 if __name__ == "__main__":
     check_tables()
     print("制度の値の検査: 通過")
@@ -222,3 +368,40 @@ if __name__ == "__main__":
     for r in limit_grid():
         print(f"{r['standard_pay']:11,d}円 {r['daily']:8,d}円 {r['total']:12,d}円 "
               f"{r['premiums']:14,d}円 {r['net']:,}円")
+
+    print("\n=== 日額の10円未満四捨五入で得か損かは、標準報酬月額を900で割った余りだけで決まる ===")
+    print(f"{'900で割った余り':>14s} {'余りがこうなる月額の例':>22s} {'1日あたり':>9s} "
+          f"{'丸めの差／日':>12s} {'30日ぶん':>10s}  {'546日ぶん'}")
+    for r in rounding_grid():
+        print(f"{r['remainder']:13d} {r['example_pay']:20,d}円 {r['daily']:8,d}円 "
+              f"{float(r['per_day']):+11.3f}円 {float(r['per_month']):+9.1f}円  "
+              f"{float(r['per_limit']):+,.1f}円")
+    sp = rounding_spread()
+    print(f"  上と下の差: 1日 {float(sp['spread_day']):.3f}円 / "
+          f"546日 {float(sp['spread_limit']):,.1f}円"
+          f"（得の最大は余り{sp['best']['remainder']}、損の最大は余り{sp['worst']['remainder']}）")
+
+    print("\n=== 「3分の2」から手元までの落ち幅は、標準報酬月額がいくらでも変わらない（40歳未満）===")
+    print(f"{'標準報酬月額':>12s} {'額面比':>8s} {'保険料の比':>10s} {'手元比':>8s}  {'落ち幅'}")
+    for r in drop_grid():
+        print(f"{r['standard_pay']:11,d}円 {r['benefit_ratio']:7.4%} {r['premium_ratio']:9.4%} "
+              f"{r['net_ratio']:7.4%}  {r['drop'] * 100:.4f}ポイント")
+    ns = net_ratio_spread()
+    print(f"  手元比の幅は {ns['spread'] * 100:.4f}ポイントしかない"
+          f"（{ns['high']['standard_pay']:,}円 と {ns['low']['standard_pay']:,}円）。"
+          f"**動かしているのは保険料ではなく日額の丸めだけ。**")
+
+    print("\n=== 住民税が月いくらを超えると、手元は標準報酬月額の半分を割るか（40歳未満）===")
+    print(f"{'標準報酬月額':>12s} {'住民税0の手元':>13s} {'半分を割る住民税':>16s} "
+          f"{'手元が0になる住民税':>18s}  {'標準報酬に対する割合'}")
+    for r in resident_tax_edges():
+        print(f"{r['standard_pay']:11,d}円 {r['net']:12,d}円 {r['half_edge']:15,d}円 "
+              f"{r['zero_edge']:17,d}円  {r['half_edge_ratio']:.4%}")
+
+    print("\n=== 健康保険料率が1ポイント違うと、546日ぶんでいくら変わるか（40歳未満）===")
+    print(f"{'標準報酬月額':>12s} {f'率{HEALTH_RATE:.0%}の手元':>11s} "
+          f"{f'率{HEALTH_RATE + 0.01:.0%}の手元':>11s} {'差／月':>9s} "
+          f"{'546日ぶんの差':>13s}  {'比の差'}")
+    for r in rate_step():
+        print(f"{r['standard_pay']:11,d}円 {r['net']:10,d}円 {r['net_up']:10,d}円 "
+              f"{r['diff_month']:8,d}円 {r['diff_limit']:12,.0f}円  {r['diff_ratio'] * 100:.4f}ポイント")

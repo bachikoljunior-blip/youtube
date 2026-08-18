@@ -436,3 +436,7 @@
 {"at": "2026-08-18T22:16:33+09:00", "session": "session_01Wqets6soJRgG1xTrAt8aXV", "kind": "start"}
 {"at": "2026-08-18T22:31:42+09:00", "session": "session_01Wqets6soJRgG1xTrAt8aXV", "kind": "ship", "what": "means(B): iryohi に年またぎの3節（消える控除は医療費の額によらない＝またぎ回数×足切り／5年に分けると50万円以下は還付0円）。節366・テーマ400・検査12件"}
 {"at": "2026-08-18T22:51:44+09:00", "session": "session_01Wqets6soJRgG1xTrAt8aXV", "kind": "ship", "what": "means(B)+fix: nenkin に生年で減額率が変わる2節（1日違いで生涯270万円・比は1.25倍で一定）／catch_up は毎回厳密な同点に着地しており float が返す月を1か月ずらしていた（額面を Fraction 化）。節368・テーマ402・検査8件・全体1881緑"}
+{"at": "2026-08-18T22:57:43+09:00", "session": "session_01X5dUGmYKAoHw3E3htcazps", "kind": "start"}
+{"at": "2026-08-18T23:09:59+09:00", "session": "session_01X5dUGmYKAoHw3E3htcazps", "kind": "ship", "what": "means(B): shobyo 5→9節 —— 日額の丸めの得損は標準報酬月額を900で割った余りだけで決まる（9通り・546日で幅2,790.67円）／落ち幅は金額によらずきっかり14.1500ポイント"}
+{"at": "2026-08-18T23:10:09+09:00", "session": "session_01X5dUGmYKAoHw3E3htcazps", "kind": "ship", "what": "fix: premiums() が率を float のまま int() で切り捨てており、呼ぶ側が率を足して渡すと1円消えていた（0.0915+0.01 が 0.10149999999999999）。率を小数第6位で丸めてから Fraction に。既定の3率では 58,000〜1,400,000 の全域で変化0件。あわせて net_month が premiums へ率を渡していなかった口も塞いだ"}
+{"at": "2026-08-18T23:18:29+09:00", "session": "session_01X5dUGmYKAoHw3E3htcazps", "kind": "ship", "what": "fix: 閉じた語が別物として立ち直ったときに実データ検査が落ちる（ASSUMPTIONS）。nenkin と同じ扱いへ移し、宣言前10件が黙ることで見る形にした"}
