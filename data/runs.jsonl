@@ -418,3 +418,5 @@
 {"at": "2026-08-18T18:19:27+09:00", "session": "session_01MhYTbSaQbqdJX7MFCJgz2c", "kind": "start"}
 {"at": "2026-08-18T18:28:04+09:00", "session": "session_01MhYTbSaQbqdJX7MFCJgz2c", "kind": "seen", "saw": "session_01CbJXLKu2La79BPj66zTyre", "why": "nosrc（sources 無し）で題名は既定のまま＝§6(d) に届いておらず中身ゼロ。08/18 14:5x と 17:0x が同じ結論に着いている"}
 {"at": "2026-08-18T18:50:43+09:00", "session": "session_01MhYTbSaQbqdJX7MFCJgz2c", "kind": "ship", "what": "means(A): src/calc/gassan.py 新設7節（高額介護合算療養費・節330→337・テーマ364→371・1日の天井30→32本）／fix: run_marker --seen で「見にいって拾うものが無かった」を残せるように（同じ1件を3回見にいっていた）／fix: nanajussai に差の列（angle の30,000円が未裏取りだった。しきい値は上げていない）", "closes": ["silent_run"], "journal_lines": 25003}
+{"at": "2026-08-18T19:02:42+09:00", "session": "session_019aB9Ds9EV9Kqo3FNswvDGG", "kind": "start"}
+{"at": "2026-08-18T19:18:05+09:00", "session": "session_019aB9Ds9EV9Kqo3FNswvDGG", "kind": "ship", "what": "means(A): src/calc/yoteinozei.py 新設7節（予定納税・節337→344・テーマ371→378・1日の天井32→34本）／fix: 浅いクローンで merge-base と ahead/behind が嘘になる分岐を §0 に足した（この回は手順どおりに switch して3日前の作業木へ降りた）"}
