@@ -93,6 +93,8 @@
 """
 from __future__ import annotations
 
+from fractions import Fraction
+
 import math
 from dataclasses import dataclass
 
@@ -445,7 +447,8 @@ def worst_gap_plateau(step_man: int = 1,
     }
 
 
-def catch_up(months_before_65: int, base_annual_man: float, net: bool = False) -> tuple[int, int] | None:
+def catch_up(months_before_65: int, base_annual_man: float, net: bool = False,
+             born_before_s37: bool = False) -> tuple[int, int] | None:
     """繰り上げた人が、65歳開始に **追い抜かれる** 年齢を (歳, 月) で返す。
 
     繰上げは先に受け取りはじめるので、しばらくは繰上げた側の累計が上にいる。
@@ -456,18 +459,33 @@ def catch_up(months_before_65: int, base_annual_man: float, net: bool = False) -
     if months_before_65 <= 0:
         return None
 
-    early_year = base_annual_man * rate_for(-months_before_65)
-    base_year = base_annual_man * rate_for(0)
+    # **額面はここを厳密にやること**（2026-08-18 に測って直した）。
+    # 累計が入れ替わる月は **必ず厳密な同点**に着きます —— 解くと
+    # `t = (m + 倍率 - 1) / (1 - 倍率)` で、繰上げ月数 m が約分で消えて
+    # **新率は 249、旧率は 199 の一定値**。つまりこの関数は毎回、
+    # 「ちょうど並ぶ月」の隣を返しています。
+    # `1 - 0.005 * 60` が `0.7` にならない（`0.6999999999999999`）ので、
+    # **浮動小数の最後の1桁が、返す月を1か月ずらしていました**（実測4/5行）。
+    # 手取り側は `_clamp_rate` が補間なので同点には着きません（float のまま）。
     if net:
+        early_year = base_annual_man * rate_for(-months_before_65, born_before_s37)
+        base_year = base_annual_man * rate_for(0)
         early_year *= _clamp_rate(early_year)
         base_year *= _clamp_rate(base_year)
-
-    early_month = early_year / 12.0
-    base_month = base_year / 12.0
+        early_month = early_year / 12.0
+        base_month = base_year / 12.0
+    else:
+        down = (Fraction(RATE_DOWN_PER_MONTH_OLD).limit_denominator(10_000)
+                if born_before_s37
+                else Fraction(RATE_DOWN_PER_MONTH).limit_denominator(10_000))
+        rate = 1 - down * months_before_65
+        base = Fraction(str(base_annual_man))
+        early_month = base * rate / 12
+        base_month = base / 12
 
     # t=0 は繰上げ開始の月。65歳開始はそこから months_before_65 か月おくれる。
-    total_early = 0.0
-    total_base = 0.0
+    total_early = early_month * 0
+    total_base = base_month * 0
     start = BASE_AGE * 12 - months_before_65
     for t in range(0, (120 * 12) - start + 1):
         total_early += early_month
@@ -824,6 +842,57 @@ def advance_one_more_month(base_annual_man: float = 180.0,
     return rows
 
 
+# ------------------------------- 生まれた日で減額率が変わる（昭和37年4月2日）
+
+def birth_gap(months_before_65: int, base_annual_man: float = 180.0,
+              until_age: int = 85) -> dict:
+    """**繰上げの減額率は、生まれた日で 0.4% と 0.5% に分かれます。**
+
+    昭和37年4月1日以前に生まれた人は 0.5%、翌日以降は 0.4%。
+    **1日ちがうだけで、生涯そのままの倍率が変わります。**
+
+    `advance_grid()` は倍率の列までしか出していませんでした。
+    ここで出すのはその先 —— **65歳開始に追い抜かれる年齢が何か月ずれるか**と、
+    **`until_age` まで生きたときの生涯の差**です。
+    """
+    new_rate = rate_for(-months_before_65)
+    old_rate = rate_for(-months_before_65, born_before_s37=True)
+    new_year = base_annual_man * new_rate
+    old_year = base_annual_man * old_rate
+    # 受け取る月数 ＝ 繰上げ開始（65歳の months_before_65 か月前）から until_age まで
+    months_paid = (until_age - BASE_AGE) * 12 + months_before_65
+    new_be = catch_up(months_before_65, base_annual_man)
+    old_be = catch_up(months_before_65, base_annual_man, born_before_s37=True)
+    return {
+        "開始": Plan(-months_before_65, new_rate).age_text,
+        "倍率_新": round(new_rate, 3),
+        "倍率_旧": round(old_rate, 3),
+        "年額_新": round(new_year, 1),
+        "年額_旧": round(old_year, 1),
+        "年の差": round(new_year - old_year, 1),
+        "生涯の差": round((new_year - old_year) / 12.0 * months_paid, 1),
+        "分岐点_新": f"{new_be[0]}歳{new_be[1]}か月" if new_be else "追い抜かれない",
+        "分岐点_旧": f"{old_be[0]}歳{old_be[1]}か月" if old_be else "追い抜かれない",
+        "ずれ_月": ((new_be[0] * 12 + new_be[1]) - (old_be[0] * 12 + old_be[1])
+                    if new_be and old_be else None),
+    }
+
+
+def birth_gap_grid(base_annual_man: float = 180.0, step_months: int = 12,
+                   until_age: int = 85) -> list[dict]:
+    """繰上げの月数ごとに、生まれた日の差でつく開きを出す。"""
+    check_tables()
+    return [birth_gap(m, base_annual_man, until_age)
+            for m in range(step_months, (BASE_AGE - MIN_ADVANCE_AGE) * 12 + 1,
+                           step_months)]
+
+
+def birth_gap_ratio(months_before_65: int) -> float:
+    """**減る額の比。** 0.005 ÷ 0.004 で、繰り上げた月数によりません。"""
+    return ((1 - rate_for(-months_before_65, born_before_s37=True))
+            / (1 - rate_for(-months_before_65)))
+
+
 if __name__ == "__main__":
     check_tables()
     print("制度の値の検査: 通過\n")
@@ -934,3 +1003,29 @@ if __name__ == "__main__":
               f"生涯手取り {row['生涯手取り_円']:>10,d}円"
               f"（65歳受給との差 {row['65歳受給との差_円']:>+11,d}円）  "
               f"{row['手取りで見ると']}")
+
+    print(f"\n=== 生まれた日が1日ちがうと、繰上げの年額はいくら変わるか"
+          f"（65歳で年{base:.1f}万円の場合）===")
+    print("  減額率は**昭和37年4月1日以前に生まれた人が0.5%、翌日以降が0.4%**。"
+          "1日ちがうだけで、**生涯そのままの倍率**が変わります。")
+    print(f"{'開始':>9s} {'倍率(4月2日以降)':>16s} {'倍率(4月1日以前)':>16s} "
+          f"{'年額の差':>9s} {'85歳まで生きたときの差':>21s}")
+    for r in birth_gap_grid(base):
+        print(f"{r['開始']:>9s} {r['倍率_新']:15.3f} {r['倍率_旧']:15.3f} "
+              f"{r['年の差']:8.1f}万 {r['生涯の差']:20.1f}万")
+    print(f"  **減る額の比は、繰り上げた月数によりません** —— "
+          f"0.5% ÷ 0.4% ＝ {birth_gap_ratio(60):.2f}倍で、"
+          f"1か月でも60か月でも同じです。")
+
+    print(f"\n=== 生まれた日が1日ちがうと、65歳開始に追い抜かれる年齢が何年ずれるか"
+          f"（65歳で年{base:.1f}万円の場合）===")
+    print("  繰り上げた人は先に受け取りはじめますが、いつかは65歳開始に追い抜かれます。"
+          "**減額が深いほど、追い抜かれるのが早い。**")
+    print(f"{'開始':>9s} {'追い抜かれる(4月2日以降)':>24s} {'追い抜かれる(4月1日以前)':>24s} "
+          f"{'ずれ':>7s}")
+    for r in birth_gap_grid(base):
+        print(f"{r['開始']:>9s} {r['分岐点_新']:>24s} {r['分岐点_旧']:>24s} "
+              f"{r['ずれ_月']:5d}か月")
+    print("  **ずれは、繰り上げた月数によらず ちょうど50か月（4年2か月）です。**"
+          "厳密に解くと追い抜かれる月齢は「1030 − 繰上げ月数」と「980 − 繰上げ月数」で、"
+          "**繰上げ月数が引き算で消えます。**")
