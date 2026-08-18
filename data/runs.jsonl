@@ -379,3 +379,4 @@
 {"at": "2026-08-18T08:35:46+09:00", "session": "session_01WKQtwtQjPpmifYBdE5MMMY", "kind": "start"}
 {"at": "2026-08-18T08:45:52+09:00", "session": "session_01WKQtwtQjPpmifYBdE5MMMY", "kind": "ship", "what": "fix: 1日の公開枠が11個だったのは制度でなく時の目盛り（batch_build.slots --step-min／ledger_minutes／split_when が分を読む・1日22枠・tests 1431→1443）"}
 {"at": "2026-08-18T08:50:29+09:00", "session": "session_01WKQtwtQjPpmifYBdE5MMMY", "kind": "ship", "what": "fix: retro.py が太字で始まる項目（**1. …）を項目として見ておらず、前の回を「問い1に答えていない回」と数えていた（ITEM_RE・first_lines と _items の2か所・tests 1443→1447）", "closes": ["問い1を縦に"], "journal_lines": 22773}
+{"at": "2026-08-18T09:12:31+09:00", "session": "session_018pgkQAty6578bmzni2okU3", "kind": "start"}
