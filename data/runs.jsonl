@@ -404,3 +404,4 @@
 {"at": "2026-08-18T14:14:53+09:00", "session": "session_01JUG6rzSBpi4HCaKoTuBEd3", "kind": "start"}
 {"at": "2026-08-18T14:29:17+09:00", "session": "session_01JUG6rzSBpi4HCaKoTuBEd3", "kind": "ship", "what": "fix×2: 掃引の数え上げの軸が部分集合の入れ物を採り、6つ中3つだけ振った結果を候補にしていた（kyoiku.cap_of は 6.4倍を2.5倍と誤報）。名前と値を1行にまとめた並び（(名前,率,上限)）からも軸を採り、通った入れ物のうち一番広いものを選ぶ。候補218→222・倍率7→11（kaigo/kogaku は丸ごと不可視だった）。fix2 分類が返す倍率が SHAPES に無く --shape 倍率 が弾かれていた"}
 {"at": "2026-08-18T14:56:26+09:00", "session": "session_01ERTo9vzgHD7SngQMhVatgU", "kind": "start"}
+{"at": "2026-08-18T15:12:28+09:00", "session": "session_01ERTo9vzgHD7SngQMhVatgU", "kind": "ship", "what": "means(B): kaigo に2節（5→7節・テーマ348→350）。限度額は7.20倍に開くのに、上限が上の段にしか当たらないので支払いの開きは 1割7.20倍→2割4.41倍→3割2.94倍と縮む／実効の負担率は3割の人で30.0%→12.26%（1割との差2.26pt）／上限の区分は5段あり、非課税世帯24,600円は1割でも要介護3から効き、690万円以上140,100円は3割でもどこにも当たらない。tests 1655→1677", "closes": ["silent_run"], "journal_lines": 24185}
