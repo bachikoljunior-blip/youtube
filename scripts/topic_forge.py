@@ -50,6 +50,7 @@ import argparse
 import re
 import subprocess
 import sys
+from collections.abc import Callable
 from pathlib import Path
 
 from pydantic import BaseModel, Field
@@ -215,15 +216,30 @@ def build_prompt(picked: list[tuple[str, str]], all_sections, topics) -> str:
 
 # ---------------------------------------------------------------- 検証して書く
 
-_NUM = re.compile(r"(\d[\d,]*)\s*万\s*(\d[\d,]*)?|(\d[\d,]*)")
+_NUM = re.compile(r"(\d[\d,]*(?:\.\d+)?)\s*万\s*(\d[\d,]*)?|(\d[\d,]*(?:\.\d+)?)")
 
 
 MONEY_FLOOR = 1000   # 金額の表を持つ calc で捨てる下限（年数・回数を当てにしない）
 SMALL_FLOOR = 10     # 金額を1つも持たない calc（日数・時間の表）で使う下限
 
 
-def numbers(text: str, floor: int = MONEY_FLOOR) -> set[int]:
-    """文中の整数を集める。**「80万円」も「800,000円」も同じ 800000 にする。**
+def _value(digits: str) -> int | float:
+    """`"1,655"` → 1655 ／ `"1.636"` → 1.636。**整数になる小数は整数に戻す。**
+
+    戻すのは、`2.0` と `2` を**別の数として数えないため**です
+    （`src/_checks._as_keys` が同じ理由で `77.0` と `77` を揃えています）。
+    Python では `2.0 == 2` かつ `hash(2.0) == hash(2)` なので集合演算は
+    どちらでも通りますが、**印字したときに別物に見える**ので揃えておきます。
+    """
+    plain = digits.replace(",", "")
+    if "." not in plain:
+        return int(plain)
+    value = float(plain)
+    return int(value) if value.is_integer() else value
+
+
+def numbers(text: str, floor: float = MONEY_FLOOR) -> set[int | float]:
+    r"""文中の数を集める。**「80万円」も「800,000円」も同じ 800000 にする。**
 
     表は `800,000円` と印字し、`angle` は `80万円` と書きます。
     **書き方が違うだけで同じ数**なので、揃えないと突き合わせになりません。
@@ -231,17 +247,36 @@ def numbers(text: str, floor: int = MONEY_FLOOR) -> set[int]:
     `floor` より小さい数は捨てます。既定の1000は「年数や桁の小さい語は
     当てにしない」ためですが、**その calc が金額を扱っている場合にだけ正しい**
     仮定です（下の `section_floor` を見ること）。
+
+    ## **小数を拾うこと**（2026-08-18 20:1x に実測して直した）
+
+    ここは長らく整数だけを見ていました。**そのせいで2つ壊れていました。**
+
+    1. **倍率と率だけで成り立つ節は、突き合わせに1つも参加できません。**
+       `koyouhoken` の「業種の差は労働者側では同じ0.1ポイント、建設だけ
+       事業主で2倍」は、表に `0.1` `0.2` `2.0` しか持っていません。
+       整数だけを見ると全部が消えるので、**この節からは4回頼んで4回とも
+       落ちました**（門の文言は「表の外の数字を使っています」。**嘘です**）。
+    2. **`43.2万円` が 20,000 になっていました。** 旧の正規表現は
+       `(\d[\d,]*)\s*万` なので、`43.2万` の中の **`2万` だけ**に当たります。
+       正しい 432,000 はどこにも出ず、代わりに実在しない 20,000 が出て、
+       **同じ誤りを含む節と偶然に一致していました**（`s-nenkin-kuriage-…` の
+       3件が、繰上げの題なのに**繰下げの節**に貼られていたのはこれです）。
+
+    実測（`config/topics.yaml` の352件に当て直した）: 一致0で落ちる題が
+    **3件 → 0件**、貼り先が変わったのが15件。**変わった側は繰上げ↔繰下げの
+    取り違えなど、こちらが正しい側**でした。
     """
-    out: set[int] = set()
+    out: set[int | float] = set()
     for man, rest, plain in _NUM.findall(text):
         if man:
-            value = int(man.replace(",", "")) * 10_000
+            value = _value(man) * 10_000
             if rest:
                 value += int(rest.replace(",", ""))
-            out.add(value)
-            out.add(int(man.replace(",", "")))   # 「1000万」の 1000 単体も拾う
+            out.add(int(value) if float(value).is_integer() else value)
+            out.add(_value(man))   # 「1000万」の 1000 単体も拾う
         elif plain:
-            out.add(int(plain.replace(",", "")))
+            out.add(_value(plain))
     return {n for n in out if n >= floor}
 
 
@@ -303,17 +338,103 @@ def best_section(text: str, sections: dict[str, str]) -> list[tuple[int, str]]:
 
     **`section_floor` を節ごとにしても、これは直りません。** この節は金額の列も
     持っているので、節ごとに測っても下限は1000のままです。**効くのは題の側です。**
+
+    ## **「空か」ではなく「当たったか」で降りること**（2026-08-18 20:1x に直した）
+
+    上の直しは **`numbers(text, floor)` が空のときだけ**降ります。
+    **空でなければ降りないので、1個でも余計な数があると効きません。**
+
+    実測（`s-koyouhoken-jigyounushi-1636bai`）—— 題の中身は
+    `1.636倍` `0.55パーセント` `0.9パーセント` `1.45パーセント` で、
+    **どれも1000にも10にも届きません**。ところが `angle` には
+    **「1枚目は…（22文字以内）」という書き方の指示**が入っていて、
+    その **22** だけが 10 を超えます。だから「空ではない」と判定され、
+    **降りずに一致0で落ちます。** 主張の数字は1つも見ていないのに、です。
+
+    **降りる条件は「一致したか」のほうです。** 下限を 1000 → 10 → 0 と
+    順に下げ、**どこかで1つでも当たったらそこで止める。**
+
+    - **当たっている題は、これまでどおり最初の下限で止まります**（大多数）。
+      挙動が変わりようがありません
+    - 降りるのは、**これまで無条件に落ちていた題だけ**です
+    - **下限0は「何でも通る」ではありません。** 表に無い数は、0まで下げても
+      当たりません（`分岐点は92歳7か月まで動く` は下限0でも一致0のまま）
+    - ただし **1桁の数はどの表にも出やすい**ので、下限0まで降りた題の
+      一致は弱い証拠です。**降りたことは呼び出し側に返します**（`match_floor`）
     """
-    floor = section_floor(sections)
-    if floor > SMALL_FLOOR and not numbers(text, floor):
-        floor = SMALL_FLOOR
-    want = numbers(text, floor)
-    scored = [(len(want & numbers(body, floor)), head)
-              for head, body in sections.items()]
-    return sorted(scored, key=lambda x: -x[0])
+    scored: list[tuple[int, str]] = []
+    for rung in rungs(sections):
+        want = rung(text)
+        scored = sorted([(len(want & rung(body)), head)
+                         for head, body in sections.items()], key=lambda x: -x[0])
+        if scored and scored[0][0] > 0:
+            return scored
+    return scored
 
 
-def swallows(sections: dict[str, str], candidate: str, assigned: str) -> bool:
+def rungs(sections: dict[str, str]) -> list[Callable[[str], set]]:
+    """`best_section` が上から順に試す物差し。**必ず厳しいほうから。**
+
+    最後の段が `decimals` で、**下限0（全部の整数）ではありません。**
+    そこは 2026-08-18 20:1x に1回書いて、**その場で自分の検査に落とされた**所です:
+
+        tests/test_forge_floor_fallback.py::test_実物の_nenkin_で作り話は落ちたまま
+        「分岐点は92歳7か月まで動く」→ 下限0だと **一致1**（表のどこかに 7 か 92 がある）
+
+    **1桁の整数は、どの表にも出ます。** 下限を0にすると門が
+    「表に無い数字を使っていないか」を見なくなり、**誤情報がそのまま通ります。**
+    通したいのは倍率と率だけで成り立つ節なので、**見るのは小数のほうです** ——
+    `0.1` `1.636` `2.0` は表を名指しできますが、`7` は名指しできません。
+    """
+    out: list[Callable[[str], set]] = []
+    for floor in (section_floor(sections), SMALL_FLOOR):
+        if not out or floor < _floor_of(out[-1]):
+            out.append(_by_floor(floor))
+    out.append(decimals)
+    return out
+
+
+def _by_floor(floor: float) -> Callable[[str], set]:
+    def rung(text: str) -> set[int | float]:
+        return numbers(text, floor)
+    rung.floor = floor          # `match_scale` が段を名前で返せるように
+    return rung
+
+
+def _floor_of(rung) -> float:
+    return getattr(rung, "floor", 0)
+
+
+_DECIMAL = re.compile(r"\d[\d,]*\.\d+")
+
+
+def decimals(text: str) -> set[float]:
+    """文中の**小数だけ**を集める（`0.1` `1.636` `2.0`）。整数は1つも拾わない。
+
+    倍率・率・ポイントだけで成り立つ節を突き合わせるための物差しです。
+    `2.0` は `numbers()` では整数 2 に丸めますが、**ここでは丸めません** ——
+    丸めると「表が小数として印字した」という情報が消え、
+    `2倍` と書いた散文の `2` と区別できなくなります。
+    """
+    return {float(m.replace(",", "")) for m in _DECIMAL.findall(text)}
+
+
+def match_scale(text: str, sections: dict[str, str]):
+    """`best_section` が実際に当たりを出した段。当たらなければ最後の段。
+
+    `swallows` が同じ物差しで節どうしを比べるために要ります。**ここが食い違うと、
+    「一致数で勝ったのは総覧だから」の判定が別の目盛りで行われます。**
+    """
+    ladder = rungs(sections)
+    for rung in ladder:
+        want = rung(text)
+        if any(want & rung(body) for body in sections.values()):
+            return rung
+    return ladder[-1]
+
+
+def swallows(sections: dict[str, str], candidate: str, assigned: str,
+             rung=None) -> bool:
     """`candidate` が `assigned` の数字を**丸ごと含む**か（＝総覧の節か）。
 
     ## なぜ要るか（2026-08-18 に実測して足した。**同じ題を6件つくった**）
@@ -349,9 +470,15 @@ def swallows(sections: dict[str, str], candidate: str, assigned: str) -> bool:
     """
     if assigned not in sections or candidate not in sections:
         return False
-    floor = section_floor(sections)
-    mine = numbers(sections[assigned], floor)
-    theirs = numbers(sections[candidate], floor)
+    # **`best_section` が当たりを出した段で比べること**（2026-08-18 20:1x）。
+    # 既定の `section_floor` のままだと、小数の段で選ばれた節を
+    # **1000 の目盛りで**「総覧かどうか」判定することになります。
+    # 倍率と率だけの節は 1000 では両側とも空集合になり、`mine` が空 →
+    # 常に False ＝ 総覧の吸い込みを**素通りさせます。**
+    if rung is None:
+        rung = _by_floor(section_floor(sections))
+    mine = rung(sections[assigned])
+    theirs = rung(sections[candidate])
     return bool(mine) and mine <= theirs
 
 
@@ -404,6 +531,7 @@ def realign(forged: ForgedSet, picked, all_sections,
         else:
             ranked = best_section(text, all_sections[mod])
             top, best = ranked[0][0], ranked[0][1]
+        used_rung = match_scale(text, all_sections[mod])
         if top == 0:
             dropped.append(
                 f"{item.id}: 題と狙いの数字が、この calc のどの節の表にも載っていません"
@@ -418,7 +546,7 @@ def realign(forged: ForgedSet, picked, all_sections,
         # そのあと「同じ節に2件」で回ごと落ちました。
         # **貼り直すのは、割り当て先より厳密に強い証拠があるときだけです。**
         assigned = next((n for n, h in ranked if h == head), 0) if ranked else 0
-        if top > assigned and swallows(all_sections[mod], best, head):
+        if top > assigned and swallows(all_sections[mod], best, head, used_rung):
             # **総覧の節は、いつでも一致数で勝ちます。** 下の節を見ること
             print(f"  [動かしません] {item.id}\n"
                   f"      割り当て: {head}（一致 {assigned} 個）\n"

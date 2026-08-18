@@ -422,3 +422,6 @@
 {"at": "2026-08-18T19:18:05+09:00", "session": "session_019aB9Ds9EV9Kqo3FNswvDGG", "kind": "ship", "what": "means(A): src/calc/yoteinozei.py 新設7節（予定納税・節337→344・テーマ371→378・1日の天井32→34本）／fix: 浅いクローンで merge-base と ahead/behind が嘘になる分岐を §0 に足した（この回は手順どおりに switch して3日前の作業木へ降りた）"}
 {"at": "2026-08-18T19:31:47+09:00", "session": "session_019aB9Ds9EV9Kqo3FNswvDGG", "kind": "ship", "what": "means(A) 2本目: src/calc/koyouhoken.py 新設7節（雇用保険料率・テーマ378→384・1日の天井34→36本）／fix: 表に印字していない数を主張にするとテーマの門が落とす（gyoshu_sa に倍率の列）／fix: 77.0 と 77 が別の数として数えられ topics.yaml の未裏取りが13件になっていた"}
 {"at": "2026-08-18T19:38:25+09:00", "session": "session_019aB9Ds9EV9Kqo3FNswvDGG", "kind": "ship", "what": "fix: _checks._as_keys が 77.0 と 77 を同じ鍵にする（検査2件・値がちがえば落ちる側は不変）／topic_forge の下限が calc ごとなので1桁と小数しか持たない節は構造的にテーマにできない、を特定して次の回の1手に落とした"}
+{"at": "2026-08-18T20:11:20+09:00", "session": "session_01XWwX1f732t4ZpCHnqEojPt", "kind": "start"}
+{"at": "2026-08-18T20:40:16+09:00", "session": "session_01XWwX1f732t4ZpCHnqEojPt", "kind": "ship", "what": "fix: topic_forge が小数を1つも拾わず、倍率と率だけの節が構造的に通れなかった（下限0ではなく小数の段を足した。43.2万円→20,000円の取り違えも直した）", "closes": ["topic_forge"], "journal_lines": 25220}
+{"at": "2026-08-18T20:40:22+09:00", "session": "session_01XWwX1f732t4ZpCHnqEojPt", "kind": "ship", "what": "means(A): src/calc/jidoushazei.py 新設7節（自動車税の13年超重課・節351→358・テーマ385→389）。同じ「重課」で上がり方が5.3554倍ちがう"}
