@@ -173,3 +173,55 @@ def test_base_statusは投稿のときに立てる4欄と同じ():
     s2 = uploader.base_status({"visibility": "public", "made_for_kids": True})
     assert s2["privacyStatus"] == "public"
     assert s2["selfDeclaredMadeForKids"] is True
+
+
+# --------------------------------------------------------------------------
+# **外したら控えにも書き戻すこと**（2026-08-18 16:0x に、実物で10本ぶん踏んだ）
+# --------------------------------------------------------------------------
+# 外した本の `at` が控えに残っていると、`reschedule.py --compact` が
+# **控えだけを見て割り当てを作る**ので（API 0単位で計画を出すための設計）、
+# 外したばかりの本に新しい publishAt を書き戻します。
+# 実測: 重複10本を外した直後の `--compact --apply` で**8本が予約に戻り**、
+# うち2本は前の回から外れていた本＝**外れていたものが新たに予約に入りました。**
+#
+# **同じ形が2回出ています** —— 「片方だけ直す」。書き戻す口（`dupes.retime`）は
+# 既にあって、`--compact` は自分の書き換えを控えへ反映していました。
+# **足りなかったのは `unschedule` 側の呼び出しだけ**です。
+
+
+def test_外した本は控えの予約から落ちる(tmp_path, monkeypatch):
+    """`dupes.retime(id, None)` が控えの `at` を消し、`--compact` の対象から外れること。"""
+    import json
+
+    from src import config, dupes
+
+    ledger = tmp_path / "data" / "uploaded.jsonl"
+    ledger.parent.mkdir(parents=True)
+    at = _iso(timedelta(days=20))
+    ledger.write_text(
+        json.dumps({"video_id": "vid1", "topic": "s-x", "title": "題",
+                    "at": at, "uploaded_at": "2026-08-18T00:00:00"}) + "\n"
+        + json.dumps({"video_id": "vid2", "topic": "s-y", "title": "題2",
+                      "at": at, "uploaded_at": "2026-08-18T00:00:00"}) + "\n",
+        encoding="utf-8")
+    monkeypatch.setattr(config, "ROOT", tmp_path)
+
+    before = {r["id"] for r in dupes.ledger_rows() if r.get("at")}
+    assert before == {"vid1", "vid2"}
+
+    assert dupes.retime("vid1", None) is True
+
+    after = {r["id"] for r in dupes.ledger_rows() if r.get("at")}
+    assert after == {"vid2"}, "外した本が控えの予約に残っている（--compact が書き戻す）"
+    # 本体の行は消さないこと（**なぜ予約が1本減ったか**を次の回が追えなくなる）
+    assert {r["id"] for r in dupes.ledger_rows()} == {"vid1", "vid2"}
+
+
+def test_外したあと控えへの書き戻しを呼んでいる():
+    """**呼び出しそのもの**を見る。口があっても呼ばなければ同じことが起きる。"""
+    src = (Path(__file__).resolve().parent.parent
+           / "scripts" / "unschedule.py").read_text(encoding="utf-8")
+
+    assert "dupes.retime(args.video_id, None)" in src, (
+        "外したあと控えに書き戻していない。"
+        "`reschedule.py --compact` が控えを見て予約を書き戻します")

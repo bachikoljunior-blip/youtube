@@ -61,13 +61,14 @@ from __future__ import annotations
 
 import argparse
 import sys
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import reschedule  # noqa: E402  （書き込みの実装は1か所だけ）
-from src import uploader  # noqa: E402
+from src import dupes, uploader  # noqa: E402
 
 #: 控えの予約時刻が「いまより先」と言うために要る余白。
 #: ちょうど境目の行を「まだ公開されていない」と読まないための幅です。
@@ -201,6 +202,18 @@ def main() -> int:
     reschedule._update(yt, args.video_id, None,
                        fallback_status=uploader.base_status() if from_ledger else None)
 
+    # **控えにも書き戻すこと**（2026-08-18 16:0x に、実物で10本ぶん踏んだ）。
+    # ここには長らくこの1行がありませんでした。控え（`data/uploaded.jsonl`）は
+    # `at` を持ったままなので、**外した本が「予約中」のまま残ります。**
+    # そして `reschedule.py --compact` は**控えだけを見て割り当てを作る**
+    # （API 0単位で計画を出すための設計です）ので、
+    # **外したばかりの本に新しい publishAt を書き戻します。**
+    # 実測: この回は重複10本を外した直後に `--compact --apply` を撃ち、
+    # **8本が予約に戻りました**（うち2本は前の回から外れていた本で、
+    # **外れていたものが新たに予約に入った**）。もう一度10本を外し直しています。
+    # 書き戻す口は既にあります —— `dupes.retime(id, None)`。**足りなかったのは呼び出しです。**
+    dupes.retime(args.video_id, None)
+
     try:
         after = yt.videos().list(part="status", id=args.video_id).execute()
     except Exception as exc:                                  # noqa: BLE001
@@ -219,9 +232,23 @@ def main() -> int:
     print(f"             いま 公開状態 {a_privacy} / 予約 {a_publish or 'なし'}")
     print(f"[unschedule] 理由: {args.why}")
     if a_publish:
-        print("[unschedule] **予約が残っています。落ちていません。** "
-              "この日時に公開されるので、確かめ直すこと")
-        return 3
+        # **1回目の読みは、書き込みに追いついていないことがあります**
+        # （2026-08-18 16:0x の実測。**10本すべてがここで「残っている」と出て、
+        # 数秒後に読み直すと10本とも消えていました** ＝ 当たり 0/10）。
+        # ここが誤報を出すと、次の回が「確かめ直す」ために1周を使います。
+        # **読み直してから言うこと。**（`videos.list` は1単位）
+        time.sleep(3)
+        try:
+            again = yt.videos().list(part="status", id=args.video_id).execute()
+            a_publish = (((again.get("items") or [{}])[0].get("status") or {})
+                         .get("publishAt"))
+        except Exception as exc:                              # noqa: BLE001
+            print(f"[unschedule] 読み直せません: {str(exc)[:90]}")
+        if a_publish:
+            print("[unschedule] **予約が残っています。落ちていません。** "
+                  "この日時に公開されるので、確かめ直すこと")
+            return 3
+        print("             読み直したら消えていました（1回目は書き込みに追いついていない）")
     print("[unschedule] **`docs/JOURNAL.md` に理由を書くこと。** "
           "記録が残らないと、次の回が『なぜ予約が1本減ったか』を追えません")
     print("[unschedule] 本体は残っています（private）。"
