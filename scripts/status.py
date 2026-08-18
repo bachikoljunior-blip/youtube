@@ -35,6 +35,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src import alerts as _alerts  # noqa: E402
 from src import inbox as _inbox  # noqa: E402
+from src.auth import note_day_quota as _note_day_quota  # noqa: E402
 from src.uploader import _service  # noqa: E402
 
 JST = timezone(timedelta(hours=9))
@@ -1817,6 +1818,9 @@ def main(days: int = 7) -> int:
               "**YouTube Analytics は別枠なので、チャンネルの数字はこの下に出ます。**")
         print(f"    {type(exc).__name__}: {str(exc)[:220]}")
         if "quotaExceeded" in str(exc) or "quota" in str(exc).lower():
+            # **見たことを残す**（2026-08-19 に足した）。ここは 403 を毎回
+            # 印字していましたが、帳面には1行も残していませんでした。
+            _note_day_quota(exc, "status: Data API 読み")
             print("    **Data API の1日枠（10,000単位）です。**"
                   "戻るのは太平洋時間の0時＝**JST 16:00 ごろ**。")
             # **ここは「枠が戻るまで `upload` は選べません」と言っていました。嘘です。**

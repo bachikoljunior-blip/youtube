@@ -12,6 +12,7 @@ import re
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 
+from . import auth
 from .auth import credentials
 
 MARKER = "[t:{}]"
@@ -129,6 +130,7 @@ def channel_video_ids(youtube, uploads: str, cap: int = 400) -> list[str]:
             if not token:
                 break
     except HttpError as exc:
+        auth.note_day_quota(exc, "playlistItems.list uploads")
         print(f"[history] uploads プレイリストを最後まで読めませんでした"
               f"（{len(ids)}本まで／続行）: {str(exc)[:90]}")
 
@@ -147,6 +149,7 @@ def channel_video_ids(youtube, uploads: str, cap: int = 400) -> list[str]:
             if not token:
                 break
     except HttpError as exc:
+        auth.note_day_quota(exc, "search.list forMine")
         print(f"[history] 予約中の動画を search で拾えませんでした（続行）: {exc}")
 
     return ids
@@ -186,6 +189,7 @@ def _scan(want_map: bool):
     try:
         channels = youtube.channels().list(part="contentDetails", mine=True).execute()
     except HttpError as exc:
+        auth.note_day_quota(exc, "channels.list mine")
         return _only_ledger(want_map, f"チャンネルを読めませんでした: {str(exc)[:70]}")
 
     items = channels.get("items", [])
@@ -206,6 +210,7 @@ def _scan(want_map: bool):
             response = youtube.videos().list(
                 part="snippet", id=",".join(chunk)).execute()
         except HttpError as exc:
+            auth.note_day_quota(exc, "videos.list snippet")
             # ここも素通しでした（同上）。**取れたところまでで続けます。**
             print(f"[history] 説明欄を最後まで読めませんでした"
                   f"（{i}本まで／続行）: {str(exc)[:90]}")

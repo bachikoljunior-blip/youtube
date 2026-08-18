@@ -10,7 +10,7 @@ from googleapiclient.errors import HttpError
 from googleapiclient.http import MediaFileUpload
 
 from . import measure_window, upload_cap
-from .auth import credentials, explain, is_day_quota, is_upload_cap
+from .auth import credentials, explain, is_upload_cap, note_day_quota
 
 JST = timezone(timedelta(hours=9))
 RETRYABLE = {500, 502, 503, 504}
@@ -72,6 +72,7 @@ def taken_publish_times(youtube) -> set[str]:
     try:
         return scheduled_publish_times(youtube)
     except HttpError as exc:
+        note_day_quota(exc, "scheduled_publish_times")
         if getattr(exc, "resp", None) is not None and exc.resp.status not in (403, 429):
             raise
         rows = ledger_publish_times()
@@ -216,6 +217,7 @@ def _post_actions(youtube, video_id: str, publish_cfg: dict) -> None:
             ).execute()
             print(f"[upload] 再生リストに追加: {playlist}")
         except HttpError as exc:
+            note_day_quota(exc, "playlistItems.insert")
             print(f"[upload] 再生リストへの追加に失敗（動画は投稿済み）: {exc}")
 
     comment = (publish_cfg.get("first_comment") or "").strip()
@@ -235,6 +237,7 @@ def _post_actions(youtube, video_id: str, publish_cfg: dict) -> None:
                   "固定はAPIでできないので、Studioで「固定」を押してください:")
             print(f"         https://studio.youtube.com/video/{video_id}/comments")
         except HttpError as exc:
+            note_day_quota(exc, "commentThreads.insert")
             print(f"[upload] コメント投稿に失敗（動画は投稿済み）: {exc}")
 
 
@@ -264,8 +267,7 @@ def _set_thumbnail(youtube, video_id: str, path: Path, tries: int = 4) -> bool:
             # そちらは待てば通ります。**枠切れは窓が変わるまで通りません。**
             # 見分けずに撃ち直すと、1本あたり 30秒（5+10+15）を捨てます ——
             # 8本の回で **4分**、しかも4回とも同じ理由で落ちます。
-            if is_day_quota(exc):
-                upload_cap.note_quota_hit(detail=f"thumbnails.set {video_id}")
+            if note_day_quota(exc, f"thumbnails.set {video_id}"):
                 print(f"[upload] **サムネイルは日枠（単位）切れで載りません**: {str(exc)[:120]}")
                 print("[upload] **投稿は続けます。** 控えに bytes は残るので、"
                       "窓が変わった回に `refresh_thumbnail.py --missing` で押せます。")
@@ -318,6 +320,7 @@ def _note_cap(exc: Exception) -> None:
     **ここで例外を出さないこと。** 記録できないことより、投稿の失敗の理由が
     呼ぶ側に返らないほうが高くつきます。
     """
+    note_day_quota(exc, "videos.insert")
     if not is_upload_cap(exc):
         return
     try:

@@ -45,7 +45,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from googleapiclient.errors import HttpError  # noqa: E402
 
-from src import dupes, history, measure_window, uploader  # noqa: E402
+from src import auth, dupes, history, measure_window, uploader  # noqa: E402
 
 JST = timezone(timedelta(hours=9))
 MARKER = re.compile(r"\[t:([a-z0-9\-]+)\]")
@@ -149,6 +149,11 @@ def _update(svc, video_id: str, publish_at: str | None,
     except HttpError as exc:
         if not _is_quota(exc):
             raise
+        # **観測を残してから止まること**（2026-08-19 に足した）。ここは長らく
+        # `SystemExit` を投げるだけで、`data/day_quota.jsonl` に1行も残していません
+        # でした。残さないと `upload_cap.day_quota()` が **open=True**（＝まだ押せる）
+        # と答え続け、次の回が同じ 403 をもう一度買います。
+        auth.note_day_quota(exc, f"videos.update {video_id}")
         raise SystemExit(
             f"[reschedule] **{video_id} の予約は、いま外せません（日枠切れ）。**\n"
             "  `videos.update` は日枠に当たります。**`videos.insert` とは違います** ——\n"

@@ -199,3 +199,7 @@
 {"at": "2026-08-19T03:21:43+09:00", "key": "calc_gap", "n": 12, "session": "session_01PmMmDe3Es8Tn1wiEJYWytL", "by": "status.py"}
 {"at": "2026-08-19T03:33:59+09:00", "key": "undeclared_close", "n": 1, "session": "session_01PmMmDe3Es8Tn1wiEJYWytL", "by": "run_marker.py"}
 {"at": "2026-08-19T03:47:22+09:00", "key": "stale_scheduled", "n": 1, "session": "session_01PmMmDe3Es8Tn1wiEJYWytL", "by": "stale_scheduled.py"}
+{"at": "2026-08-19T04:00:24+09:00", "key": "carry_over", "n": 13, "session": "session_01Cp4xVFeAViTsUhj7A72Ppa", "by": "retro.py"}
+{"at": "2026-08-19T04:02:01+09:00", "key": "calc_gap", "n": 12, "session": "session_01Cp4xVFeAViTsUhj7A72Ppa", "by": "status.py"}
+{"at": "2026-08-19T04:13:57+09:00", "key": "stale_scheduled", "n": 1, "session": "session_01Cp4xVFeAViTsUhj7A72Ppa", "by": "stale_scheduled.py"}
+{"at": "2026-08-19T04:29:27+09:00", "key": "undeclared_close", "n": 1, "session": "session_01Cp4xVFeAViTsUhj7A72Ppa", "by": "run_marker.py"}

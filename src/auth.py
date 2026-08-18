@@ -122,3 +122,48 @@ def is_day_quota(error: Exception) -> bool:
         return False
     low = text.lower()
     return "quotaexceeded" in low or ("quota" in low and "exceeded" in low)
+
+
+# **見分けるだけでは、次の回に何も残りません**（2026-08-19 に実測して足した）。
+#
+# `is_day_quota` の docstring は「当たったら `note_quota_hit()` に残すこと」と
+# **約束の形**で書いてありました。**約束は破れます** —— 実際に残していたのは
+# `thumbnails.set` の2か所だけで、`history` 4件・`uploader` 4件・
+# `reschedule` 1件・`status` 1件は**1行も残していませんでした**。
+#
+# **`src/analytics.py` はここに数えません。** あちらは **YouTube Analytics（別枠）**で、
+# その 403 をこの帳面に書くと、**尽きていない日枠を「尽きた」と言わせます**
+# （外す向きが逆で、そちらのほうが高い）。**混ぜないこと。**
+#
+# 実害は測れます。2026-08-19 03:5x（窓は 08/18 07:00Z→08/19 07:00Z）の実測:
+#
+#     status.py が channels.list / videos.list で **403 を4回**受けた
+#     前の回の `videos.update` も **403**（受け取り帳 556dd42d）
+#     それでも `data/day_quota.jsonl` の**この窓の行は 0件**
+#     → `upload_cap.day_quota()` は **open=True**（＝「まだ押してよい」）と答える
+#
+# つまり **`retro.py` と `status.py` が読む「単位が残っているか」が、
+# 事実と逆を向いていました。** この repo が通算10回踏んでいる「片方だけ」の11件目です。
+#
+# **だから、見分ける所と残す所を1つにします。** 呼ぶ側は `is_day_quota` ではなく
+# こちらを呼ぶこと（`tests/test_day_quota_recorded.py` が、忘れた呼び出し側を
+# AST で名指しします —— **約束ではなく検査で持たせる**）。
+def note_day_quota(error: Exception, detail: str = "") -> bool:
+    """日枠（単位）の 403 か。**そうなら、その場で帳面に残してから True を返す。**
+
+    `is_day_quota` は**純粋な述語のまま**にしてあります（検査や表示から
+    呼ばれる所で、副作用に帳面が汚れると、窓を「閉じている」と誤らせます）。
+    **残す責任はこちらが持ちます。**
+
+    帳面に書けなくても、**判定は返します** —— 書けないことを理由に
+    呼ぶ側の分岐を変えないこと（`upload_cap.state()` と同じ考え方）。
+    """
+    if not is_day_quota(error):
+        return False
+    try:
+        from . import upload_cap
+
+        upload_cap.note_quota_hit(detail=(detail or str(error))[:200])
+    except Exception:                                          # noqa: BLE001
+        pass
+    return True
