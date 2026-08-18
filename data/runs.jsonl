@@ -394,3 +394,4 @@
 {"at": "2026-08-18T11:48:16+09:00", "session": "session_01Wsv55auFv7xLGXXqcbNnS8", "kind": "ship", "what": "fix: reschedule.py --compact — 予約262本が全部 :00 で置ける枠の4割しか使っていない。控えだけ(API 0単位)で30分きざみの割り当てを出し、videos.update で前に詰める。既定4日ぶん99本・新しい時刻は必ず今より前か同じ(途中で止まっても同じ割り当てが出る)。dupes.retime で控えを足さずに書き換え"}
 {"at": "2026-08-18T12:02:52+09:00", "session": "session_01CJHcXw5CbUTfJNZL8EnLxt", "kind": "start"}
 {"at": "2026-08-18T12:23:36+09:00", "session": "session_01CJHcXw5CbUTfJNZL8EnLxt", "kind": "ship", "what": "means(A): 特定支出控除の表を新設（src/calc/tokutei.py・7節・テーマ329→336・敷居＝給与所得控除の半分を年収の関数として出して初めて見える6件）"}
+{"at": "2026-08-18T12:30:27+09:00", "session": "session_01CJHcXw5CbUTfJNZL8EnLxt", "kind": "ship", "what": "fix: status.py が在庫の天井を出す（pick(8) の 8 は要求を満たした数で上限ではない。直近4回の申し送りが在庫8本と誤読。いま21本・実測2.0秒）"}
