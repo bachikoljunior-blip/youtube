@@ -467,3 +467,4 @@
 {"at": "2026-08-19T06:09:53+09:00", "session": "session_01XwZSsPLahkWPbPjQkEzssN", "kind": "start"}
 {"at": "2026-08-19T06:23:53+09:00", "session": "session_01XwZSsPLahkWPbPjQkEzssN", "kind": "ship", "what": "upload: 8本を 08/20 09:30〜13:30 JST に予約（1日1本だった薄い日を9本に。1本は検査が正しく止めた＝前提が画面に無い）"}
 {"at": "2026-08-19T06:23:54+09:00", "session": "session_01XwZSsPLahkWPbPjQkEzssN", "kind": "ship", "what": "means: M19『在庫の供給を、表の本数に比例する形から表の組み合わせに変える』を中身つきで立て、1手目 src/calc_axes.py を入れて走らせた（53表・1,144組／既知の当たり gassan が入力の軸では繋がらないことを実測して検査に固定）"}
+{"at": "2026-08-19T06:39:15+09:00", "session": "session_01XwZSsPLahkWPbPjQkEzssN", "kind": "ship", "what": "verdict: 「同じモジュールで本体が一致する関数の組」を検査にしないと決めた（src/全体で1組・invoice の別々の事実が同じ0.80に着いているだけ＝当たり率 0/1）"}
