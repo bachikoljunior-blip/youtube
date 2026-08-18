@@ -208,5 +208,14 @@ def test_過去の日は_窓ではなく過去として断られる():
 
 
 def test_形の誤りも_窓より先に断られる():
-    with pytest.raises(ValueError):
-        uploader.next_publish_at(10, 0, taken=set(), date_jst="8/20")
+    """**例を差し替えた**（2026-08-19）。`"8/20"` はもう「形の誤り」ではありません。
+
+    `batch_build.py --date 08/23` が**9本の生成（約20分）を全部やってから**
+    予約の段で9本とも落ちたので、`MM/DD` を読めるようにしました
+    （`uploader.normalize_date_jst`。**本体は入口で通すこと**のほう）。
+    この検査が見ているのは**順番**（形の誤りは窓の門より先）なので、
+    **消さずに、いまでも読めない形へ差し替えます。**
+    """
+    for bad in ("8月20日", "20/8/2026", "あした"):
+        with pytest.raises(ValueError):
+            uploader.next_publish_at(10, 0, taken=set(), date_jst=bad)
