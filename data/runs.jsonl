@@ -387,3 +387,5 @@
 {"at": "2026-08-18T10:25:15+09:00", "session": "session_01RZEpWFPuWBhSQUB7VSEqmd", "kind": "ship", "what": "verdict: session_01CbJXLKu2La79BPj66zTyre は nosrc（sources 空）で題名も既定のまま ＝ 拾い直す中身はゼロ。§0 の分岐どおり読んで止めた", "closes": ["silent_run"], "journal_lines": 23032}
 {"at": "2026-08-18T10:35:22+09:00", "session": "session_01845PXmHX4aRyQH6fKyT9JR", "kind": "start"}
 {"at": "2026-08-18T10:55:33+09:00", "session": "session_01845PXmHX4aRyQH6fKyT9JR", "kind": "ship", "what": "means(A): 小規模企業共済の表を新設（src/calc/shokibo.py・6節・テーマ323→329・掛金の全額所得控除と20年未満の元本割れを同じ表に並べて出る7件）"}
+{"at": "2026-08-18T11:07:34+09:00", "session": "session_01845PXmHX4aRyQH6fKyT9JR", "kind": "ship", "what": "fix: pick が「節の指定が無い題材テーマ」に族ごと飲み込まれていた（直近8回の5表が1本ずつ・pick(30) 14→19本）"}
+{"at": "2026-08-18T11:07:34+09:00", "session": "session_01845PXmHX4aRyQH6fKyT9JR", "kind": "ship", "what": "fix: verify._OPS が全角の演算子を演算子と見ていなかった（＝は両方の幅を見るのに ＋ は半角だけ。実物の書き直し1回ぶん）"}

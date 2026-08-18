@@ -107,6 +107,17 @@ def test_演算子の無い言い換えは落ちる():
     assert any("演算子が無い" in p for p in problems), problems
 
 
+def test_全角の演算子も演算子として通る():
+    """**`=` の検査が両方の幅を見るのに、演算子は半角だけを見ていました**（2026-08-18）。
+
+    書き手は `＝` と書くので、隣に置く記号も全角になります。
+    実物 `59万7200円 ＝ 5万8200円 ＋ 53万9000円` が弾かれ、書き直しを1回使いました。
+    """
+    for op in ("＋", "－", "×", "÷", "＊", "／"):
+        v = dict(_ok_formula(), formula=f"59万7200円 ＝ 5万8200円 {op} 53万9000円")
+        assert verify._check_formula_shown(_script(v)) == [], op
+
+
 def test_数字がほとんど無い式は落ちる():
     v = dict(_ok_formula(), formula="控除額 ＝ 単価 × 年数")
     problems = verify._check_formula_shown(_script(v))

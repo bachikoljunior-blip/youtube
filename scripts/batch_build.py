@@ -315,6 +315,24 @@ def pick(count: int, explicit: list[str], per_calc: int = DEFAULT_PER_CALC) -> l
     if per_calc < 1:
         raise SystemExit(f"--per-calc は1以上です: {per_calc}")
 
+    # **節を指定したテーマが1つでもある calc では、節の指定が無いテーマを取りません**
+    # （2026-08-18 に測って足した）。`calc_sections` の無いテーマは
+    # **表を書くと決めた回の「題材」**で、`calc:` を繋いだ時点から
+    # 「モジュール全体を1本にする」テーマとして `usable` に残ります。
+    # 下の `whole_module` は「全体の1本」と「節の1本」が並ばないようにする規則ですが、
+    # **どちらが勝つかは並び順まかせ**で、実測では**題材のほうが勝っていました。**
+    #
+    # 実測（2026-08-18・`per_calc=2`）: 直近8回で書いた5本の表
+    # （`shokibo` `invoice` `rousai` `tsukin` `seimeihoken`）が、**どれも1本ずつ**しか
+    # 出していません。節は6件ずつあるのに、**題材の1件が全部を飲み込んでいた**からです。
+    # **`pick` の返り 14本 → 19本**（5族 × 1本）。表を1本書いても
+    # 「桁が変わらない」ように見えていた原因の一つが、ここでした。
+    #
+    # **題材のほうを捨てるのが正しい向き**です —— 節を指定しないテーマは
+    # 表ぜんぶを1本に詰める形になり、「テンプレートで大量生産された」と
+    # 判定される側に寄ります（収益化の条件。`CLAUDE.md`）。
+    has_sections = {t["calc"] for t in usable if t.get("calc_sections")}
+
     chosen: list[dict] = []
     used_sections: set[tuple] = set()
     per_calc_taken: dict[str, int] = {}
@@ -325,6 +343,8 @@ def pick(count: int, explicit: list[str], per_calc: int = DEFAULT_PER_CALC) -> l
         key = _section_key(topic)
         sections = key[1]
 
+        if not sections and calc in has_sections:
+            continue                      # 題材のテーマは、節があるあいだ取らない
         if key in used_sections:
             continue                      # **同じ計算は2回出さない**
         if per_calc_taken.get(calc, 0) >= per_calc:
