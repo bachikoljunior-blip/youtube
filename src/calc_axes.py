@@ -53,7 +53,10 @@ SEMANTIC_AXES: dict[str, tuple[str, ...]] = {
              "years_since", "start", "end", "duration", "year", "hours"),
     "率": ("rate", "social_rate", "rate_max", "percent", "ritsu", "waricho"),
     "面積": ("floor_area", "land_area", "area", "menseki", "km", "distance"),
-    "回数": ("count", "times", "kaisu"),
+    # `units` は 2026-08-19 に足した（`kaigo.used_units`）。**寄せられなかった名前**
+    # として出ていて、そのせいで `kaigo` の主役の引数が軸を持たず、
+    # `pair_sweep` が既知の当たり（gassan の元の2本）を組にできなかった。
+    "回数": ("count", "times", "kaisu", "units"),
     "帯": ("low", "high", "upto", "min_point", "cap", "limit"),
 }
 

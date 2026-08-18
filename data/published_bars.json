@@ -642,6 +642,21 @@
     ],
     "video_id": "uhR8msMW9k4"
   },
+  "s-invoice-1000man-1en": {
+    "charts": [
+      [
+        "10万円",
+        "20万円",
+        "60万円"
+      ],
+      [
+        "30万円",
+        "40万円",
+        "50万円"
+      ]
+    ],
+    "video_id": "Fq-RGVyWDBM"
+  },
   "s-invoice-2wari-shogyo-same": {
     "charts": [
       [
@@ -933,6 +948,15 @@
       ]
     ],
     "video_id": "ioPzkN-XxLs"
+  },
+  "s-jigyozei-290man-aoiro-mae": {
+    "charts": [
+      [
+        "290万円",
+        "225万円"
+      ]
+    ],
+    "video_id": "Wr52bP0ln2M"
   },
   "s-jikangai-2kagetsu-160-de-38jikan-otosu": {
     "charts": [
@@ -1357,6 +1381,19 @@
       ]
     ],
     "video_id": "GXrtaUFHK3Q"
+  },
+  "s-keihi-1en-22980": {
+    "charts": [
+      [
+        "2,195円",
+        "25,175円"
+      ],
+      [
+        "21.95%",
+        "251.75%"
+      ]
+    ],
+    "video_id": "3THhuKoOVPU"
   },
   "s-keihi-700-vs-900": {
     "charts": [
@@ -2361,6 +2398,27 @@
     ],
     "video_id": "L2fqMA7Xh-k"
   },
+  "s-rousai-hachiwari-taihi-1213": {
+    "charts": [
+      [
+        "1.2133倍",
+        "1.1999倍",
+        "1.1867倍",
+        "1.1737倍"
+      ]
+    ],
+    "video_id": "wO9fh-czxBA"
+  },
+  "s-rousai-hannichi-genkai-20": {
+    "charts": [
+      [
+        "7,912円",
+        "8,901円",
+        "9,891円"
+      ]
+    ],
+    "video_id": "5OKWBWM_Qus"
+  },
   "s-rousai-kyugyo-kaishi-5gatsu": {
     "charts": [
       [
@@ -2519,6 +2577,19 @@
       ]
     ],
     "video_id": "jFYrezqN0C4"
+  },
+  "s-seimeihoken-tedori-6dan": {
+    "charts": [
+      [
+        "0.3000円",
+        "0.2500円",
+        "0.1500円",
+        "0.1250円",
+        "0.0750円",
+        "0.0500円"
+      ]
+    ],
+    "video_id": "7lV40I13Rls"
   },
   "s-serufu-30000-5475": {
     "charts": [
@@ -3185,6 +3256,36 @@
       ]
     ],
     "video_id": "a1b2Nm6jN_0"
+  },
+  "s-tsukin-cliff-tie-15km-25km": {
+    "charts": [
+      [
+        "+2,900円",
+        "+5,800円",
+        "+5,800円",
+        "+5,700円"
+      ],
+      [
+        "1.69倍",
+        "1.82倍",
+        "1.45倍"
+      ]
+    ],
+    "video_id": "-Vel9pFFX7E"
+  },
+  "s-tsukin-per-km-5x": {
+    "charts": [
+      [
+        "2,100.0円/km",
+        "420.0円/km"
+      ],
+      [
+        "710.0円/km",
+        "473.4円/km",
+        "860.0円/km"
+      ]
+    ],
+    "video_id": "HZPK3XHBl7Q"
   },
   "s-yukyu-11years-121days": {
     "charts": [
