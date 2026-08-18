@@ -26144,5 +26144,17 @@ Data API の日枠は **08/19 16:00 JST** まで戻らないので、`reschedule
    `tedori.marginal_grid(incomes, social_rate)` `tedori.knee_grid(...)` `tedori.social_rate_grid(...)`
    （**`tedori` は5件と、いちばん多く出ています**）
 3. **同じ形はまだあります**: 「`check_tables` が値を確かめるだけで、どの節も使っていない定数」。
-   `arg_gaps` は**引数**を見ますが、**モジュール定数の死に**は見ていません。次の道具はここ
+   `arg_gaps` は**引数**を見ますが、**モジュール定数の死に**は見ていません。次の道具はここ。
+   **この回のうちに当たり率を測りました**（§4「一覧は足す前に測る」。道具はまだ足していません）——
+   AST で `src/calc/*.py` の大文字定数を拾い、参照元が `check_tables` だけ／参照0 のものを数えると
+   **22本・39件**:
+
+       zaishoku    GRADE_MIN / GRADE_MAX          ← **当たり**（第1〜19等級を出す節が無い）
+       juminzei    KINTOWARI_CITY / _PREF / FOREST_TAX  ← **外れ**（均等割は前提で意図的に除外）
+       tsukin      FUEL_YEN_PER_LITER / KM_PER_LITER / WORK_DAYS（参照0）  ← 要確認
+       invoice     TAX_RATE（参照0）               ← たぶん置き忘れ（節の種にはならない）
+
+   **「参照0」と「`check_tables` だけ」は別物**で、前者は置き忘れ、後者が節の種です。
+   **均等割のような「前提で意図的に外したもの」が誤検知の主な類**になります。
+   **39件を1件ずつ目で見てから足すこと。** 見ないで足すと `alerts.py` の8件目になります
 4. 予約は **09/27 まで（246本）**。持続できる間隔は **41分**。**詰める方向の判断はしないこと**
