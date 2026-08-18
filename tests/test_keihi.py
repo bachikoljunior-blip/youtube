@@ -98,11 +98,56 @@ def test_docstringの表が実際の計算と合っている(profit, value, net)
     assert f"{value:,}円" in keihi.__doc__
 
 
-def test_docstringに書いた崖の額が実際と合っている():
+def test_山は格子の上に乗っていない():
+    """**刻みが答えを決める形**（2026-08-19 に見つけた）。
+
+    `peak()` は 10万円きざみの `rate_curve()` の上を `max` で取るだけで、
+    山が幅1円しかないため**一度も本当の山を見ていませんでした**。
+    """
+    p = keihi.peak()
+    assert p["所得"] == 1_390_200
+    assert p["値打ち"] == 25_176
+    assert f'{p["値打ち"]:,}円' in keihi.__doc__
+
+    # 粗い格子は必ず低いほうを返す（＝この検査が守っているもの）
+    coarse = max(keihi.rate_curve(step=100_000), key=lambda r: r["実効率"])
+    assert coarse["所得"] == 1_400_000 and coarse["値打ち"] == 24_475
+    assert coarse["値打ち"] < p["値打ち"]
+    assert p["値打ち"] - coarse["値打ち"] == 701
+
+    # 山は1円幅（両隣は必ず低い）
+    for d in (-1, 1):
+        assert keihi.marginal(p["所得"] + d)["実効率"] < p["実効率"]
+
+
+def test_cliffはpeakの複製ではない():
+    """2026-08-19 まで `cliff()` は `peak()` と1文字ちがわない複製でした。"""
     c = keihi.cliff()
-    assert c["所得"] == 1_400_000
-    assert c["値打ち"] == 24_475
-    assert "24,475円" in keihi.__doc__
+    assert c["所得"] != keihi.peak()["所得"]
+    assert c["所得"] - c["1円下の所得"] == 1          # 跳びは1円の中で起きる
+    assert c["1円下の所得"] == 1_390_000
+    assert c["値打ち"] - c["前の値打ち"] == 22_980
+    assert round(c["上がり幅"] * 100, 1) == 229.8
+    assert "22,980円" in keihi.__doc__
+
+
+@pytest.mark.parametrize("shotoku, value, haba", [
+    (1_089_994, 17_815, 7),
+    (1_390_200, 25_176, 1),
+    (1_651_800, 16_758, 1),
+])
+def test_軽減の段ごとの山は全部10円未満の幅(shotoku, value, haba):
+    m = keihi.marginal(shotoku)
+    assert m["値打ち"] == value
+    n = 1
+    while keihi.marginal(shotoku - n)["実効率"] == m["実効率"]:
+        n += 1
+    lo = shotoku - n + 1
+    n = 1
+    while keihi.marginal(shotoku + n)["実効率"] == m["実効率"]:
+        n += 1
+    assert shotoku + n - lo == haba
+    assert f"{value:,}円" in keihi.__doc__
 
 
 def test_docstringに書いた青色の差が実際と合っている():

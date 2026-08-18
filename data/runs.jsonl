@@ -444,3 +444,5 @@
 {"at": "2026-08-18T23:52:16+09:00", "session": "session_01Ae3eDnbGRGSV2d9Weyp2WQ", "kind": "ship", "what": "means(B): zaishoku 5→8節（賞与の回数・納付月数・平均の目減り率）／テーマ406→409"}
 {"at": "2026-08-19T00:02:14+09:00", "session": "session_01Ae3eDnbGRGSV2d9Weyp2WQ", "kind": "ship", "what": "means(B): tedori 5→6節（昇給額を動かすと残る割合はどう変わるか）／テーマ409→410"}
 {"at": "2026-08-19T00:07:48+09:00", "session": "session_01Ae3eDnbGRGSV2d9Weyp2WQ", "kind": "ship", "what": "fix+means(B): souzoku の best_ratio が粗い格子で最小を外していた（最大109.8万円）。1%きざみへ＋節1つ"}
+{"at": "2026-08-19T00:24:07+09:00", "session": "session_01W9Dty6ZrUtQmfoadcjTFdp", "kind": "start"}
+{"at": "2026-08-19T00:25:54+09:00", "session": "session_01W9Dty6ZrUtQmfoadcjTFdp", "kind": "seen", "saw": "session_0123B3jr7v3kfgnKrhicipET", "why": "題名は既定のまま＝§6(d)に届いていない。前の回が source_url 無しで立てて30秒で畳んだ子（申し送りに記載済み）"}
