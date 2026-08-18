@@ -392,3 +392,4 @@
 {"at": "2026-08-18T11:10:55+09:00", "session": "session_01845PXmHX4aRyQH6fKyT9JR", "kind": "ship", "what": "fix: _template.py の手順1に「その1行に数字を入れない」を足した（手順1で決めた 58,333円 が実測 45,833円 で、言い換えに12分）"}
 {"at": "2026-08-18T11:17:35+09:00", "session": "session_01Wsv55auFv7xLGXXqcbNnS8", "kind": "start"}
 {"at": "2026-08-18T11:48:16+09:00", "session": "session_01Wsv55auFv7xLGXXqcbNnS8", "kind": "ship", "what": "fix: reschedule.py --compact — 予約262本が全部 :00 で置ける枠の4割しか使っていない。控えだけ(API 0単位)で30分きざみの割り当てを出し、videos.update で前に詰める。既定4日ぶん99本・新しい時刻は必ず今より前か同じ(途中で止まっても同じ割り当てが出る)。dupes.retime で控えを足さずに書き換え"}
+{"at": "2026-08-18T12:02:52+09:00", "session": "session_01CJHcXw5CbUTfJNZL8EnLxt", "kind": "start"}
