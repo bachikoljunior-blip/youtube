@@ -56,6 +56,8 @@ ASSUMPTIONS = [
     "老齢基礎年金は在職老齢年金では止まりません",
     "総報酬月額相当額は、その月の標準報酬月額に、その月以前1年間の標準賞与額の合計を"
     "12で割った額を足したものです",
+    "標準賞与額は、賞与の額から1000円未満を切り捨て、1回あたり150万円を上限として"
+    "います。上限を超えたぶんは総報酬月額相当額に載りません",
     "標準報酬月額は厚生年金の第1等級8万8千円から第32等級65万円までで計算しています",
     "老齢基礎年金は満額の年額83万1700円、月額6万9308円として置いています。"
     "これは令和7年度の満額で、納付月数が480か月に満たない人はこれより少なくなります",
@@ -88,9 +90,36 @@ GRADES_HIGH = [
 ]
 
 
+# 老齢基礎年金が満額になる納付月数（40年）。
+FULL_MONTHS = 480
+
+
+def kiso_monthly(months: int = FULL_MONTHS) -> int:
+    """納付月数から老齢基礎年金の月額（円）を出す。**480か月で満額**。
+
+    `ASSUMPTIONS` は「納付月数が480か月に満たない人はこれより少なくなります」と
+    言っているのに、**それを入力として動かした節が1つもありませんでした**。
+    基礎年金は在職老齢年金では止まらないので、ここは停止額とは独立に手元を動かす。
+    """
+    return round(BASIC_ANNUAL * min(months, FULL_MONTHS) / FULL_MONTHS / 12)
+
+
 def basic_monthly() -> int:
     """老齢基礎年金の月額（満額・円）。**止まらない側**。"""
-    return round(BASIC_ANNUAL / 12)
+    return kiso_monthly(FULL_MONTHS)
+
+
+def standard_bonus(amount: float) -> int:
+    """標準賞与額（円）。1000円未満を切り捨て、**1回あたり150万円が上限**。"""
+    return min(int(amount // 1000) * 1000, BONUS_CAP_PER_TIME)
+
+
+def counted_annual_bonus(annual_bonus: float, times: int) -> int:
+    """年間の賞与を `times` 回に分けて受け取ったとき、総報酬に載る合計（円）。
+
+    **1回あたりの上限があるので、同じ年額でも回数で載る額が変わる。**
+    """
+    return standard_bonus(annual_bonus / times) * times
 
 
 def total_monthly(grade: int, annual_bonus: int = 0) -> float:
@@ -231,6 +260,87 @@ def year_change_grid(kihon_monthly: float, annual_bonus: int = 0) -> list[dict]:
     return rows
 
 
+def bonus_times_grid(kihon_monthly: float, grade: int = 380_000,
+                     annual_bonus: int = 3_000_000,
+                     stop_base: int = STOP_BASE_R7) -> list[dict]:
+    """**同じ年間賞与でも、何回に分けて受け取るかで止まる額が変わる。**
+
+    モジュールの冒頭は「賞与で受け取るか月給で受け取るかで、止まる額は変わらない」と
+    書いている。それは正しいが、**1回あたり150万円の上限を無視したときだけ**である。
+    まとめて受け取れば上限で切り捨てられ、総報酬月額相当額に載らない。
+    """
+    rows = []
+    for times in (1, 2, 3, 4, 6, 12):
+        per = annual_bonus / times
+        counted = counted_annual_bonus(annual_bonus, times)
+        stop = stopped(kihon_monthly, grade, counted, stop_base)
+        rows.append({
+            "受け取る回数": times,
+            "年間の賞与": annual_bonus,
+            "1回あたり": round(per),
+            "標準賞与額_1回": standard_bonus(per),
+            "総報酬に載る年間合計": counted,
+            "切り捨てられた額": annual_bonus - counted,
+            "標準報酬月額": grade,
+            "総報酬月額相当額": round(total_monthly(grade, counted)),
+            "止まる年金_月": round(stop),
+            "受け取る厚生年金_月": round(paid(kihon_monthly, grade, counted, stop_base)),
+            "止まる年金_年": round(stop * 12),
+        })
+    return rows
+
+
+def months_grid(kihon_monthly: float, grade: int = 500_000,
+                annual_bonus: int = 0,
+                stop_base: int = STOP_BASE_R7) -> list[dict]:
+    """**納付月数ごとに、停止が年金の手元の何割を持っていくか。**
+
+    止まるのは報酬比例部分だけで、基礎年金は止まらない。だから納付月数が短い人ほど
+    「止まらない側」が小さく、**同じ給与・同じ停止額でも打撃の割合は大きくなる**。
+    """
+    rows = []
+    stop = stopped(kihon_monthly, grade, annual_bonus, stop_base)
+    kosei = paid(kihon_monthly, grade, annual_bonus, stop_base)
+    for months in (FULL_MONTHS, 420, 360, 300, 240, 180, 120):
+        kiso = kiso_monthly(months)
+        before = kihon_monthly + kiso
+        after = kosei + kiso
+        rows.append({
+            "納付月数": months,
+            "納付年数": round(months / 12, 1),
+            "基礎年金_月": kiso,
+            "止まらなければ年金の手元_月": round(before),
+            "止まったあと年金の手元_月": round(after),
+            "止まる年金_月": round(stop),
+            "手元が減る割合": round(stop / before, 4),
+            "標準報酬月額": grade,
+        })
+    return rows
+
+
+def average_rate_grid(kihon_monthly: float, annual_bonus: int = 0,
+                      stop_base: int = STOP_BASE_R7) -> list[dict]:
+    """**給与に対する目減り率は、途中で頭打ちになって下がりはじめる。**
+
+    限界（等級を1つ上げたぶん）は帯の中で 50%（`marginal_grid`）だが、
+    給与の総額に対する平均の率は別物である。止まる額が基本月額で頭打ちになるので、
+    **率の山は「全額止まるさかい目」にあり、そこから上は給与で薄まって下がる**。
+    """
+    rows = []
+    for g in GRADES_HIGH:
+        stop = stopped(kihon_monthly, g, annual_bonus, stop_base)
+        rows.append({
+            "標準報酬月額": g,
+            "総報酬月額相当額": round(total_monthly(g, annual_bonus)),
+            "止まる年金_月": round(stop),
+            "受け取る厚生年金_月": round(paid(kihon_monthly, g, annual_bonus, stop_base)),
+            "給与に対する目減り率": round(stop / g, 4),
+            "年金に対する目減り率": round(stop / kihon_monthly, 4),
+            "給与と年金の合計_月": round(g + paid(kihon_monthly, g, annual_bonus, stop_base)),
+        })
+    return rows
+
+
 def check_tables() -> None:
     """制度の値と計算の向きを確かめる。**壊れた数字で台本を書かせない。**"""
     # 1. 法令が名指ししている値
@@ -301,6 +411,57 @@ def check_tables() -> None:
     # 表の行が等級で重複していないこと
     _checks.unique_by(grade_grid(100_000), lambda r: r["標準報酬月額"],
                       "等級べつの表")
+
+    # 4. 標準賞与額（1000円未満の切り捨てと、1回あたり150万円の上限）
+    _checks.rounding(standard_bonus(999), 0, "賞与999円の標準賞与額")
+    _checks.rounding(standard_bonus(150_999), 150_000, "1000円未満の切り捨て")
+    _checks.rounding(standard_bonus(1_500_000), BONUS_CAP_PER_TIME, "上限ちょうど")
+    _checks.rounding(standard_bonus(3_000_000), BONUS_CAP_PER_TIME, "上限を超えた賞与")
+    # 年300万を1回で受け取ると半分しか載らない。2回に分ければ全額載る
+    _checks.rounding(counted_annual_bonus(3_000_000, 1), 1_500_000,
+                     "年300万を1回で受け取ったときに載る額")
+    _checks.rounding(counted_annual_bonus(3_000_000, 2), 3_000_000,
+                     "年300万を2回に分けたときに載る額")
+    # 分けたあとは、これ以上分けても1円も変わらない（上限に当たらなくなるから）
+    for t in (3, 4, 6, 12):
+        if counted_annual_bonus(3_000_000, t) != counted_annual_bonus(3_000_000, 2):
+            raise _checks.TableError(
+                f"年300万を{t}回に分けた載る額が、2回のときと違う。"
+                "上限に当たらなくなった後は回数で変わらないはず")
+    # 回数を増やすほど載る額は減らない（＝止まる額は減らない）
+    _checks.increases_with(lambda t: counted_annual_bonus(3_000_000, t),
+                           [1, 2], "分けるほど載る額が増えていない")
+
+    # 5. 納付月数（基礎年金は止まらない側）
+    _checks.rounding(kiso_monthly(FULL_MONTHS), basic_monthly(),
+                     "480か月の基礎年金は満額")
+    _checks.rounding(kiso_monthly(240) * 2, basic_monthly(),
+                     "240か月は満額のちょうど半分")
+    _checks.rounding(kiso_monthly(600), basic_monthly(),
+                     "480か月を超えても満額どまり")
+    # 納付月数が短いほど、同じ停止額が手元に占める割合は大きい
+    _checks.decreases_with(
+        lambda m: stopped(100_000, 500_000) / (100_000 + kiso_monthly(m)),
+        [120, 180, 240, 300, 360, 420, FULL_MONTHS],
+        "納付月数が伸びたのに、手元が減る割合が下がっていない")
+    # 停止額そのものは納付月数で1円も変わらない（基礎年金は止まらない）
+    rows_m = months_grid(100_000)
+    if len({r["止まる年金_月"] for r in rows_m}) != 1:
+        raise _checks.TableError("納付月数で止まる額が変わっている。基礎年金は止まらないはず")
+
+    # 6. 給与に対する目減り率は単調でない（全額止まるさかい目に山がある）
+    rate = {r["標準報酬月額"]: r["給与に対する目減り率"] for r in average_rate_grid(100_000)}
+    if rate[650_000] >= rate[620_000]:
+        raise _checks.TableError(
+            "給与に対する目減り率が最後まで上がり続けている。"
+            "止まる額は基本月額で頭打ちなので、そこから上は薄まって下がるはず")
+    peak = max(rate, key=lambda g: rate[g])
+    if peak != 620_000:
+        raise _checks.TableError(f"目減り率の山が{peak:,}円にある。62万円のはず")
+    # 限界（50%）と平均は別物。平均はどこでも50%に届かない
+    for g, r in rate.items():
+        if r >= STOP_SHARE:
+            raise _checks.TableError(f"総報酬{g:,}円で平均の目減り率が50%以上になっている")
     # 1等級あたりの手元の増えを、割り忘れずに出していること
     _checks.assumption_values(ASSUMPTIONS, name="zaishoku")
 
@@ -344,6 +505,40 @@ if __name__ == "__main__":
               f"止まりはじめる総報酬{row['止まりはじめる総報酬']:>7,d}円  "
               f"全額止まる総報酬{row['全額止まる総報酬']:>7,d}円  "
               f"帯の幅{row['帯の幅']:>7,d}円（基本月額の{row['帯の幅は基本月額の何倍']}倍）")
+
+    print("\n=== 同じ年300万円の賞与でも、1回でもらうと止まる額が年63万円ちがう ===")
+    print(f"  前提: 標準報酬月額38万円 / 報酬比例部分は月{KIHON:,}円 / "
+          f"年間の賞与300万円 / 標準賞与額は1000円未満を切り捨て、"
+          f"**1回あたり{BONUS_CAP_PER_TIME:,}円が上限**（別々の月に受け取るものとします）")
+    for row in bonus_times_grid(KIHON):
+        print(f"  {row['受け取る回数']:>2d}回に分ける  1回{row['1回あたり']:>9,d}円  "
+              f"標準賞与額{row['標準賞与額_1回']:>9,d}円  "
+              f"年に載る{row['総報酬に載る年間合計']:>9,d}円"
+              f"（切り捨て{row['切り捨てられた額']:>9,d}円）  "
+              f"総報酬月額相当額{row['総報酬月額相当額']:>7,d}円  "
+              f"止まる{row['止まる年金_月']:>7,d}円/月（年{row['止まる年金_年']:>9,d}円）")
+
+    print("\n=== 納付月数が短い人ほど、同じ停止額が手元の大きな割合を持っていく ===")
+    print(f"  前提: 標準報酬月額50万円 / 報酬比例部分は月{KIHON:,}円 / 賞与なし / "
+          f"老齢基礎年金は{FULL_MONTHS}か月で満額の年{BASIC_ANNUAL:,}円。"
+          f"**基礎年金は止まりません**")
+    for row in months_grid(KIHON):
+        print(f"  納付{row['納付月数']:>3d}か月（{row['納付年数']:>4.1f}年）  "
+              f"基礎年金{row['基礎年金_月']:>6,d}円/月  "
+              f"止まらなければ{row['止まらなければ年金の手元_月']:>7,d}円/月  "
+              f"止まったあと{row['止まったあと年金の手元_月']:>7,d}円/月  "
+              f"止まる{row['止まる年金_月']:>6,d}円/月  "
+              f"手元が減る割合 {row['手元が減る割合']:.2%}")
+
+    print("\n=== 限界は50%でも、給与に対する平均の目減り率は16%で頭を打って下がる ===")
+    print(f"  前提: 報酬比例部分は月{KIHON:,}円 / 賞与なし / "
+          f"支給停止調整額{STOP_BASE_R7:,}円。"
+          f"**止まる額は基本月額で頭打ちなので、そこから上は給与で薄まります**")
+    for row in average_rate_grid(KIHON):
+        print(f"  標準報酬{row['標準報酬月額']:>7,d}円  止まる{row['止まる年金_月']:>7,d}円/月  "
+              f"給与に対する目減り率 {row['給与に対する目減り率']:>6.2%}  "
+              f"年金に対する目減り率 {row['年金に対する目減り率']:>7.2%}  "
+              f"給与と年金の合計{row['給与と年金の合計_月']:>8,d}円")
 
     print("\n=== 支給停止調整額が1万円上がっても、戻るのは5千円 ===")
     print(f"  前提: 報酬比例部分は月{KIHON:,}円 / 賞与なし / "
