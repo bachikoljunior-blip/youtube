@@ -140,6 +140,67 @@ def write() -> int:
     return 0
 
 
+SEEN_KIND = "seen"
+
+
+def seen(target: str, why: str) -> int:
+    """**「見にいった。拾うものは無かった」を残す。**（2026-08-18 に足した）
+
+    ## なぜ要るか（この回が2回目の支払いです）
+
+    `sibling_check.silent_runs()` は「repo に1行も残さずに終わった回」を
+    名指しします。名指しされた側を**見にいって、中身がゼロだった**とき ——
+    `nosrc` で題名が既定のまま、あるいは `apifail` で1ターン目に死んだ回 ——
+    **その判定を残す場所がどこにもありませんでした。**
+
+    黙らせる道は1本だけ（`data/inbox.jsonl` に本文ごと入っていること）で、
+    そこへ落とすのは §0 が**禁じています**。中身がゼロの題名を受け取り帳へ
+    落とすと、**次の回がそれを閉じる仕事をする**からです。
+
+    結果、**判定済みの1件が、25件の窓から落ちるまで毎回鳴り続けます。**
+
+        08/18 14:5x  見にいった → 「拾うものはありません」と日誌に書いた
+        08/18 17:0x  同じ1件がまた鳴る → もう一度見にいった（同じ結論）
+        08/18 18:2x  **また鳴った**（この回）
+
+    **日誌は機械が読みません。** 判定は残っているのに、名指しする側からは
+    見えない。だから**印の側に置きます** —— `data/runs.jsonl` は
+    `silent_runs()` がもともと読んでいるファイルで、追加の口が要りません。
+
+    ## 何を黙らせて、何を黙らせないか
+
+    黙らせるのは**名指しそのもの**だけです。**その回が印を残していない事実は
+    変わりません**（`kind` が別なので `marked` には入らない）。
+    `--closes silent_run` の当たり率も動きません（あちらは ship に付く宣言）。
+
+    `why` は必須です。**理由の書いていない黙らせ方は、次に来た側が
+    判断できず惰性で残ります。**
+    """
+    me = session_id() or "(不明)"
+    if not target.startswith("session_"):
+        print(f"[marker] **セッションIDに見えません**: {target}")
+        return 2
+    why = (why or "").strip()
+    if not why:
+        print("[marker] **理由が要ります。** 見にいって何が無かったのかを1行で。")
+        return 2
+    for rec in _records():
+        if rec.get("kind") == SEEN_KIND and rec.get("saw") == target:
+            print(f"[marker] **もう見た印が付いています**: {target}"
+                  f"（{rec.get('at')} / {rec.get('why')}）")
+            return 0
+    line = _append({
+        "at": datetime.now(JST).isoformat(timespec="seconds"),
+        "session": me,
+        "kind": SEEN_KIND,
+        "saw": target,
+        "why": why,
+    })
+    print(f"[marker] 見にいった印を付けました: {line}")
+    print("    **この1件は、もう名指しされません**（`sibling_check`）。")
+    return 0
+
+
 def journal_lines() -> int:
     """いまの `docs/JOURNAL.md` の行数。**読めなければ 0**（＝何も黙らせない）。"""
     try:
@@ -473,12 +534,24 @@ def main(argv: list[str] | None = None) -> int:
                          "`--closes=--closes` と等号で書くこと**"
                          "（argparse が次の旗と読みます。持ち越しには "
                          "`--closes` `--next` のような旗の名前が実際に載ります）")
+    ap.add_argument("--seen", metavar="ID",
+                    help="**名指しされた回を見にいって、拾うものが無かった**ことを"
+                         "残す（`sibling_check` がもう名指ししません）。"
+                         "`--why` と対で書くこと")
+    ap.add_argument("--why", metavar="理由",
+                    help="`--seen` の理由（1行）。**必須**")
     ap.add_argument("--closes-add", metavar="語", action="append", default=[],
                     help="**この回の直近の ship に**宣言を足す（新しい ship は "
                          "作らない）。`--ship` を打った後で「語そのものも宣言せよ」と"
                          "言われたときの直し方。**`--ship` を打ち直すと同じ成果が"
                          "2行入り、帳簿が二重に数えます。**")
     args = ap.parse_args(argv)
+    if args.seen:
+        if args.ship or args.write:
+            ap.error("--seen は単独で打ちます（出したものとは別の記録です）")
+        return seen(args.seen, args.why or "")
+    if args.why:
+        ap.error("--why は --seen と一緒に使ってください")
     if args.closes_add:
         if args.ship:
             ap.error("--closes-add は --ship と一緒に使いません"

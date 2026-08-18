@@ -415,3 +415,6 @@
 {"at": "2026-08-18T17:43:24+09:00", "session": "session_019hejRJ6bdAn8hexvMcgmKN", "kind": "ship", "what": "fix: 自分でこの回に書いた zeinuki_limit が1円ずつ数え上げ、第17号の10億円の境目で約1億回まわって検査全体を900秒で殺していた（値は全部正しく check_tables は緑＝_checks は速さを見ない）。閉じた式へ。test_topic_stock 560秒超→91.5秒・全体7分19秒で1686緑"}
 {"at": "2026-08-18T17:00:50+09:00", "session": "session_01E3nBrZUx4xDjtFEwHFoinZ", "kind": "start"}
 {"at": "2026-08-18T18:03:22+09:00", "session": "session_01E3nBrZUx4xDjtFEwHFoinZ", "kind": "ship", "what": "means(A)+fix×2: 不動産取得税の表を新設（fudosanshutoku・7節、テーマ351→364）／pytest 全体を26分止めていた inshi.zeinuki_limit の走査を閉じた式に（5億回→1回）／angle の未裏取り 13件目を、しきい値でなく表の側（keigen_shapes に段の合計）で塞いだ"}
+{"at": "2026-08-18T18:19:27+09:00", "session": "session_01MhYTbSaQbqdJX7MFCJgz2c", "kind": "start"}
+{"at": "2026-08-18T18:28:04+09:00", "session": "session_01MhYTbSaQbqdJX7MFCJgz2c", "kind": "seen", "saw": "session_01CbJXLKu2La79BPj66zTyre", "why": "nosrc（sources 無し）で題名は既定のまま＝§6(d) に届いておらず中身ゼロ。08/18 14:5x と 17:0x が同じ結論に着いている"}
+{"at": "2026-08-18T18:50:43+09:00", "session": "session_01MhYTbSaQbqdJX7MFCJgz2c", "kind": "ship", "what": "means(A): src/calc/gassan.py 新設7節（高額介護合算療養費・節330→337・テーマ364→371・1日の天井30→32本）／fix: run_marker --seen で「見にいって拾うものが無かった」を残せるように（同じ1件を3回見にいっていた）／fix: nanajussai に差の列（angle の30,000円が未裏取りだった。しきい値は上げていない）", "closes": ["silent_run"], "journal_lines": 25003}

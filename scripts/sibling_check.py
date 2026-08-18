@@ -264,6 +264,7 @@ def silent_runs(sessions: list[dict], me: str | None) -> list[dict]:
     - **いま生きているセッション**（これから打つかもしれない）
     - **印の記録より古い回**（`data/runs.jsonl` は直近500行しか持たないので、
       それより前は「印が無い」ではなく「もう覚えていない」）
+    - **見にいって、拾うものが無かったと残された回**（`run_marker --seen`）
     """
     try:
         sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -275,6 +276,14 @@ def silent_runs(sessions: list[dict], me: str | None) -> list[dict]:
     if not recs:
         return []
     marked = {r.get("session") for r in recs}
+    # **「見にいった。拾うものは無かった」と残された回**（`run_marker --seen`）。
+    # 2026-08-18 に足しました。**判定済みの1件が毎回鳴っていた**からです ——
+    # `nosrc` で題名が既定のまま／`apifail` で1ターン目に死んだ回は、中身がゼロなので
+    # `inbox.py --open` に落とすことを §0 が禁じており、**黙らせる道が1本も無い。**
+    # 08/18 の 14:5x・17:0x・18:2x が、同じ1件を3回見にいっています。
+    # **黙らせるのは名指しだけで、印が無い事実は消しません**（`kind` が別なので
+    # `marked` には入らない ＝ `--closes silent_run` の当たり率も動きません）。
+    seen = {r.get("saw") for r in recs if r.get("kind") == "seen" and r.get("saw")}
     # **もう受け取った回は、二度と名指ししない**（入れた回に自分で踏みました）。
     # 名指しは `list_sessions` の窓（25件）が持っているあいだ**毎回鳴ります** ——
     # 受け取り帳へ落としても消えないので、**次の子が同じ題名をもう一度 `--open` します。**
@@ -297,6 +306,8 @@ def silent_runs(sessions: list[dict], me: str | None) -> list[dict]:
         if not sid or sid == me or sid in parents or sid in marked:
             continue
         if sid in picked:               # 受け取り帳に本文ごと入っている
+            continue
+        if sid in seen:                 # 見にいって、拾うものが無かったと残っている
             continue
         if TAG not in (sess.get("tags") or []):
             continue
@@ -411,6 +422,11 @@ def report_silent(sessions: list[dict], me: str | None) -> None:
     for line in silent_advice(found):
         print(line)
     print("    潰したら `run_marker.py --ship ... --closes silent_run`。")
+    print("    **見にいって中身がゼロだったときは、そこで終わりにすること**"
+          "（2026-08-18 に足した）:")
+    print("      python scripts/run_marker.py --seen <ID> --why \"<何が無かったか1行>\"")
+    print("    これを打たないと、**同じ1件が 25件の窓から落ちるまで毎回鳴ります** ——"
+          "08/18 に3回、同じ回を見にいきました。")
 
 
 def runway_days(now: datetime) -> float | None:
