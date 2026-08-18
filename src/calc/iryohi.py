@@ -627,6 +627,122 @@ def low_income_grid(tier_name: str) -> list[dict]:
     return out
 
 
+# ------------------------------------------------- 年をまたいで払ったとき
+
+def year_split_shares(paid: int, years: int) -> list[int]:
+    """総額を年ごとに等分する。**1円の端数は前の年から1円ずつ。**
+
+    合計は必ず `paid` に一致する（捨てない）。
+    """
+    if years < 1:
+        raise ValueError(f"分ける年数は1以上: {years}")
+    base, rest = divmod(paid, years)
+    return [base + (1 if i < rest else 0) for i in range(years)]
+
+
+def year_split_deduction(paid: int, years: int, total_income: int) -> int:
+    """`paid` を `years` 年に分けて払ったときの、控除額の合計。
+
+    **医療費控除は年ごとに締めます。** 足切りも年ごとに引かれるので、
+    「5年さかのぼれる」は「5年分をまとめて1回で申告できる」ではありません。
+    """
+    return sum(deduction(x, 0, total_income)
+               for x in year_split_shares(paid, years))
+
+
+def year_split_loss(paid: int, years: int, total_income: int, rate: float) -> dict:
+    """年をまたいで払ったせいで消える控除と、消える還付。
+
+    **消える控除は、医療費の額によりません** ——
+    またぎ1回につき足切り1回ぶんで、`(years - 1) × 足切り`。
+    ただし控除そのものが尽きたところで頭打ちになります。
+    """
+    together = deduction(paid, 0, total_income)
+    apart = year_split_deduction(paid, years, total_income)
+    floor = floor_amount(total_income)
+    return {
+        "paid": paid,
+        "years": years,
+        "per_year": paid // years,
+        "deduction_together": together,
+        "deduction_apart": apart,
+        "lost_deduction": together - apart,
+        "refund_together": refund(paid, 0, total_income, rate)["total"],
+        "refund_apart": int(apart * coefficient(rate)),
+        "lost_yen": int((together - apart) * coefficient(rate)),
+        # **頭打ち ＝ 控除が尽きて、それ以上は消えようがない**
+        "capped": apart == 0 and together < (years - 1) * floor,
+    }
+
+
+def year_split_grid(paid: int, total_income: int, rate: float,
+                    upto: int = RECLAIM_YEARS) -> list[dict]:
+    """1年に集中させた場合から、`upto` 年に分けた場合まで。"""
+    check_tables()
+    return [year_split_loss(paid, n, total_income, rate)
+            for n in range(1, upto + 1)]
+
+
+def cross_year_cost(total_income: int, rate: float) -> int:
+    """**年を1回またぐごとに消える還付。** 医療費の額によらない。
+
+    足切り1回ぶんの控除が消えるので、`足切り × 係数`。
+    """
+    return int(floor_amount(total_income) * coefficient(rate))
+
+
+def cross_year_grid(rate: float, small_paid: int = 150_000) -> list[dict]:
+    """総所得べつ。**またぎ1回の値段**と、頭打ちになる例を並べる。"""
+    check_tables()
+    out = []
+    for ti in (600_000, 1_000_000, 1_600_000, 1_999_980, 2_000_000, 3_000_000,
+               5_000_000):
+        small = year_split_loss(small_paid, 2, ti, rate)
+        out.append({
+            "total_income": ti,
+            "floor": floor_amount(ti),
+            "lost_deduction": floor_amount(ti),
+            "lost_yen": cross_year_cost(ti, rate),
+            "capped_at": ti,
+            "small_lost_yen": small["lost_yen"],
+            "small_capped": small["capped"],
+        })
+    return out
+
+
+def zero_years(paid: int, total_income: int) -> int:
+    """**何年に分けたら、還付が1円も残らなくなるか。**
+
+    1年あたりが足切り以下になった時点で控除は0。
+    `-(-paid // floor)` ＝ 切り上げ。
+    """
+    floor = floor_amount(total_income)
+    if paid <= floor:
+        return 1
+    return -(-paid // floor)
+
+
+def zero_years_grid(total_income: int, rate: float) -> list[dict]:
+    """医療費べつ。**5年に分けると何割が消えるか**と、0円になる年数。"""
+    check_tables()
+    out = []
+    floor = floor_amount(total_income)
+    for paid in (200_000, 300_000, floor * RECLAIM_YEARS,
+                 floor * RECLAIM_YEARS + 1, 600_000, 1_000_000, 2_000_000):
+        one = year_split_loss(paid, 1, total_income, rate)
+        five = year_split_loss(paid, RECLAIM_YEARS, total_income, rate)
+        out.append({
+            "paid": paid,
+            "refund_one": one["refund_together"],
+            "deduction_five": five["deduction_apart"],
+            "refund_five": five["refund_apart"],
+            "lost_share": (1.0 if one["refund_together"] == 0
+                           else 1 - five["refund_apart"] / one["refund_together"]),
+            "zero_years": zero_years(paid, total_income),
+        })
+    return out
+
+
 if __name__ == "__main__":
     check_tables()
     print("制度の値の検査: 通過")
@@ -739,3 +855,48 @@ if __name__ == "__main__":
                   + (f"{r['start_cost']:,}円 を超えたら" if r["start_cost"]
                      else f"届きません（自己負担は{r['flat']:,}円で頭打ちなので、"
                           f"足切り{r['floor']:,}円を超えられません）"))
+
+    PAID_Y, TI_Y, RATE_Y = 600_000, 3_000_000, 0.10
+    print(f"\n=== 医療費{PAID_Y:,}円を、何年に分けて払うかべつ"
+          f"（総所得{TI_Y:,}円・所得税率{RATE_Y:.0%}）===")
+    print(f"  足切り {floor_amount(TI_Y):,}円は**年ごとに引かれます。**"
+          "「5年さかのぼれる」は「5年分をまとめて1回で申告できる」ではありません。")
+    print(f"{'分けた年数':>9s} {'1年あたり':>10s} {'控除の合計':>10s} "
+          f"{'戻る額の合計':>11s} {'まとめて払った場合との差':>20s}")
+    for r in year_split_grid(PAID_Y, TI_Y, RATE_Y):
+        mark = "  ← 1年あたりが足切り以下。1円も戻りません" if r["deduction_apart"] == 0 else ""
+        print(f"{r['years']:8d}年 {r['per_year']:9,d}円 {r['deduction_apart']:9,d}円 "
+              f"{r['refund_apart']:10,d}円 {r['lost_yen']:19,d}円" + mark)
+    print(f"  **消える控除は、医療費の額によりません。**またぎ1回につき"
+          f"足切り1回ぶん（{floor_amount(TI_Y):,}円）で、"
+          f"還付にすると {cross_year_cost(TI_Y, RATE_Y):,}円です。")
+
+    print("\n=== 総所得べつ / 年を1回またぐごとに消える還付"
+          "（医療費の額によらない）===")
+    print(f"  所得税率{RATE_Y:.0%}。足切りは「10万円と総所得の5%の少ないほう」なので、"
+          "**またぎの値段も総所得200万円で頭打ち**になります。")
+    print(f"{'総所得':>11s} {'足切り':>9s} {'消える控除':>10s} {'消える還付':>10s}  "
+          f"{'医療費150,000円を2年に分けた実際の損'}")
+    for r in cross_year_grid(RATE_Y):
+        note = (f"{r['small_lost_yen']:,}円  ← 控除が尽きて頭打ち"
+                if r["small_capped"] else f"{r['small_lost_yen']:,}円")
+        print(f"{r['total_income']:10,d}円 {r['floor']:8,d}円 "
+              f"{r['lost_deduction']:9,d}円 {r['lost_yen']:9,d}円  {note}")
+    print("  **医療費が小さい人ほど、またぎの損は「消える還付」より小さくなります。**"
+          "控除そのものが先に尽きるからです。")
+
+    print(f"\n=== 医療費べつ / 何年に分けると1円も戻らなくなるか"
+          f"（総所得{TI_Y:,}円・所得税率{RATE_Y:.0%}）===")
+    print(f"  1年あたりが足切り{floor_amount(TI_Y):,}円以下になった時点で、控除は0です。")
+    print(f"{'医療費の総額':>12s} {'1年で払った還付':>14s} {'5年に分けた控除':>14s} "
+          f"{'5年に分けた還付':>14s} {'消える割合':>9s} {'控除が0になる分割年数':>19s}")
+    for r in zero_years_grid(TI_Y, RATE_Y):
+        mark = "  ← 5年に分けたら0円" if r["refund_five"] == 0 else ""
+        print(f"{r['paid']:11,d}円 {r['refund_one']:13,d}円 {r['deduction_five']:13,d}円 "
+              f"{r['refund_five']:13,d}円 {r['lost_share']:8.1%} "
+              f"{r['zero_years']:18d}年" + mark)
+    print("  **控除が1円残っても、還付は円未満を切り捨てるので0円になります**"
+          f"（医療費{floor_amount(TI_Y) * RECLAIM_YEARS + 1:,}円の行）。")
+    print(f"  **「5年さかのぼれる」を効かせようと5年に分けると、"
+          f"医療費{floor_amount(TI_Y) * RECLAIM_YEARS:,}円以下では1円も戻りません**"
+          f"（総所得{TI_Y:,}円のとき）。")
