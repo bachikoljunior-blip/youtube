@@ -121,3 +121,8 @@
 {"at": "2026-08-18T09:15:15+09:00", "key": "carry_over", "n": 22, "session": "session_018pgkQAty6578bmzni2okU3", "by": "retro.py"}
 {"at": "2026-08-18T09:15:40+09:00", "key": "missing_thumbnail", "n": 49, "session": "session_018pgkQAty6578bmzni2okU3", "by": "status.py"}
 {"at": "2026-08-18T09:16:21+09:00", "key": "calc_gap", "n": 13, "session": "session_018pgkQAty6578bmzni2okU3", "by": "status.py"}
+{"at": "2026-08-18T09:57:20+09:00", "key": "silent_run", "n": 1, "session": "session_01RZEpWFPuWBhSQUB7VSEqmd", "by": "sibling_check.py"}
+{"at": "2026-08-18T09:57:28+09:00", "key": "carry_over", "n": 25, "session": "session_01RZEpWFPuWBhSQUB7VSEqmd", "by": "retro.py"}
+{"at": "2026-08-18T09:57:50+09:00", "key": "missing_thumbnail", "n": 49, "session": "session_01RZEpWFPuWBhSQUB7VSEqmd", "by": "status.py"}
+{"at": "2026-08-18T09:58:43+09:00", "key": "calc_gap", "n": 12, "session": "session_01RZEpWFPuWBhSQUB7VSEqmd", "by": "status.py"}
+{"at": "2026-08-18T10:15:45+09:00", "key": "undeclared_close", "n": 1, "session": "session_01RZEpWFPuWBhSQUB7VSEqmd", "by": "run_marker.py"}

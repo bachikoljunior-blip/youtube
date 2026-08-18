@@ -381,3 +381,6 @@
 {"at": "2026-08-18T08:50:29+09:00", "session": "session_01WKQtwtQjPpmifYBdE5MMMY", "kind": "ship", "what": "fix: retro.py が太字で始まる項目（**1. …）を項目として見ておらず、前の回を「問い1に答えていない回」と数えていた（ITEM_RE・first_lines と _items の2か所・tests 1443→1447）", "closes": ["問い1を縦に"], "journal_lines": 22773}
 {"at": "2026-08-18T09:12:31+09:00", "session": "session_018pgkQAty6578bmzni2okU3", "kind": "start"}
 {"at": "2026-08-18T09:37:01+09:00", "session": "session_018pgkQAty6578bmzni2okU3", "kind": "ship", "what": "means: 生命保険料控除の表を新設（src/calc/seimeihoken.py・6節・テーマ312→323・所得税と住民税を同時に動かして初めて出る6段/24,000円の空白帯/14,000円のはみ出し/払い方で16,000円・tests 1447→1478）"}
+{"at": "2026-08-18T09:54:40+09:00", "session": "session_01RZEpWFPuWBhSQUB7VSEqmd", "kind": "start"}
+{"at": "2026-08-18T10:15:38+09:00", "session": "session_01RZEpWFPuWBhSQUB7VSEqmd", "kind": "ship", "what": "fix: _checks.numbers_backed — 45本の calc の docstring の数(1,403件)を __main__ 出力とソースで裏取り。tests/test_doc_numbers.py 52件"}
+{"at": "2026-08-18T10:15:45+09:00", "session": "session_01RZEpWFPuWBhSQUB7VSEqmd", "kind": "ship", "what": "fix: quota.py _is_impossible — resets_at < seen_at の点を捨てる。sessions_compact の MM-DD 付け忘れで通算38件が静かに積まれ --pace を汚していた"}

@@ -348,6 +348,29 @@ def self_check(text: str) -> str:
             "    `list_sessions` を取り直して、`sessions_compact.py` からやり直すこと。")
 
 
+def _is_impossible(row: dict) -> bool:
+    """**リセット時刻が観測時刻より前の点は、積まないこと**（2026-08-18 に足した）。
+
+    枠は「まだ来ていないリセット」までの残りを言うので、`resets_at < seen_at` は
+    **時間の向きとして起こりえません。** 起きるのは写し違いだけです。
+
+    ## 何が起きたか
+
+    `sessions_compact.py` は `HH:MM:SS` だけの行を **その日（既定は今日 UTC）** として読み、
+    **日をまたいだ行にだけ `MM-DD/` を付けろ**と言っています（あちらの docstring）。
+    **付け忘れると、前日の25件が丸ごと今日として積まれます。**
+
+    実測: 2026-08-18 09:1x の回が **24件**、08-16 の回が **14件**。通算38件。
+    **どちらも静かに通り**、`--pace`（1周いくらか・持続できる間隔）の分母を汚しました。
+    **この計器が決めているのは、次の子を立てる間隔そのもの**です。
+
+    捨てるだけで直しません。**正しい日付はこちらには分からない**ので、
+    直せるのは写した側だけです（だから件数と直し方を印字します）。
+    """
+    seen, resets = row.get("seen_at"), row.get("resets_at")
+    return bool(seen and resets and resets < seen)
+
+
 def ingest(text: str) -> tuple[int, int]:
     """MCP の返りを読んで `data/quota.jsonl` に足す。(新規, 更新) を返す。"""
     blob = None
@@ -365,10 +388,13 @@ def ingest(text: str) -> tuple[int, int]:
         raise SystemExit("JSON として読めませんでした。MCP の返りをそのまま渡すこと。")
 
     table = {_key(r): r for r in _load()}
-    added = updated = 0
+    added = updated = skipped = 0
     for sess in _iter_sessions(blob):
         row = _normalize(sess)
         if not row:
+            continue
+        if _is_impossible(row):
+            skipped += 1
             continue
         k = _key(row)
         if k in table:
@@ -380,6 +406,10 @@ def ingest(text: str) -> tuple[int, int]:
             table[k] = row
             added += 1
 
+    if skipped:
+        print(f"[quota] **{skipped}件を捨てました**（リセット時刻が観測時刻より前）。"
+              "日をまたいだ行に `MM-DD/` を付け忘れていないか、"
+              "`sessions_compact.py --date` を確かめること。")
     rows = sorted(table.values(), key=lambda r: (r.get("seen_at") or ""))
     LOG.parent.mkdir(parents=True, exist_ok=True)
     LOG.write_text("".join(json.dumps(r, ensure_ascii=False) + "\n" for r in rows),
