@@ -61,3 +61,64 @@
 {"at": "2026-08-18T19:25:06+00:00", "detail": "channels.list mine"}
 {"at": "2026-08-18T19:25:07+00:00", "detail": "channels.list mine"}
 {"at": "2026-08-18T19:25:09+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-18T19:44:46+00:00", "detail": "status: Data API 読み"}
+{"at": "2026-08-18T19:45:11+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-18T19:45:14+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-18T19:45:53+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-18T19:49:44+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-18T19:49:47+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-18T19:49:47+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-18T19:49:47+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-18T19:49:49+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-18T19:49:50+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-18T19:49:50+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-18T19:52:34+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-18T19:52:36+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-18T19:52:38+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-18T19:52:38+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-18T19:54:15+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-18T19:54:17+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-18T19:56:35+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-18T19:57:06+00:00", "detail": "scheduled_publish_times"}
+{"at": "2026-08-18T19:57:08+00:00", "detail": "playlistItems.insert"}
+{"at": "2026-08-18T19:57:09+00:00", "detail": "thumbnails.set c2zJ4bnavh4"}
+{"at": "2026-08-18T19:57:12+00:00", "detail": "scheduled_publish_times"}
+{"at": "2026-08-18T19:57:13+00:00", "detail": "playlistItems.insert"}
+{"at": "2026-08-18T19:57:14+00:00", "detail": "thumbnails.set ogtEaVgmdQM"}
+{"at": "2026-08-18T19:57:17+00:00", "detail": "scheduled_publish_times"}
+{"at": "2026-08-18T19:57:18+00:00", "detail": "playlistItems.insert"}
+{"at": "2026-08-18T19:57:18+00:00", "detail": "thumbnails.set 4ZAd1WWoiOg"}
+{"at": "2026-08-18T19:57:22+00:00", "detail": "scheduled_publish_times"}
+{"at": "2026-08-18T19:57:24+00:00", "detail": "playlistItems.insert"}
+{"at": "2026-08-18T19:57:24+00:00", "detail": "thumbnails.set 3kXKmyQfTAM"}
+{"at": "2026-08-18T19:57:27+00:00", "detail": "scheduled_publish_times"}
+{"at": "2026-08-18T19:57:29+00:00", "detail": "playlistItems.insert"}
+{"at": "2026-08-18T19:57:30+00:00", "detail": "thumbnails.set XXUdcTq7psQ"}
+{"at": "2026-08-18T19:57:31+00:00", "detail": "status: Data API 読み"}
+{"at": "2026-08-18T19:57:33+00:00", "detail": "scheduled_publish_times"}
+{"at": "2026-08-18T19:57:35+00:00", "detail": "playlistItems.insert"}
+{"at": "2026-08-18T19:57:35+00:00", "detail": "thumbnails.set FNR61l5Q4pk"}
+{"at": "2026-08-18T19:57:56+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-18T19:57:59+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-18T19:58:37+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-18T20:06:35+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-18T20:07:14+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-18T20:07:16+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-18T20:07:18+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-18T20:07:56+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-18T20:07:57+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-18T20:07:59+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-18T20:08:00+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-18T20:10:55+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-18T20:11:50+00:00", "detail": "status: Data API 読み"}
+{"at": "2026-08-18T20:12:14+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-18T20:12:17+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-18T20:12:56+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-18T20:21:39+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-18T20:22:21+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-18T20:22:22+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-18T20:22:24+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-18T20:23:06+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-18T20:23:07+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-18T20:23:09+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-18T20:23:11+00:00", "detail": "channels.list mine"}

@@ -1727,10 +1727,47 @@ def _print_inventory_from_ledger() -> None:
               f"（**あと {days:.1f}日** / {len(ahead)}本）{mark}")
         print("  **上限側の見積りです**（取り消した本も控えには残ります）。"
               "API が読める回は上の「[予約中]」のほうが正。")
+        _print_per_day(ahead)
     except Exception as exc:
         print(f"\n=== 予約の先 ===\n  [!] 控えが読めません: {str(exc)[:100]}")
 
     _print_missing_thumbnails()
+
+
+# **「あと何日 / 何本」だけでは、日ごとの穴が見えません**（2026-08-19 に踏んだ）。
+#
+# この節は長らく「控えの最後 09/27（あと39.3日 / 246本）」の1行だけでした。
+# その1行から読めるのは平均 6.4本/日 で、**実際は今日から5日が1本/日、
+# 08/24〜08/27 が22〜25本/日**という形でした。**平均は、その形を消します。**
+# 見つけたのは、この回が手で日ごとに数え直したからです。**毎回やる手ではありません。**
+#
+# `dupes.ledger_rows()` は既に読んであるので、**API は1単位も増えません。**
+PER_DAY_SPAN = 12          # 何日ぶん出すか。これ以上は横に長くなって読まれない
+
+
+def _print_per_day(ahead: list) -> None:
+    """予約の**日ごとの本数**を、直近 `PER_DAY_SPAN` 日ぶん1行で出す。
+
+    **薄い日を名指しします** —— 平均が足りていても、
+    「今日から5日が1本ずつ」は投稿が途切れているのと同じ形です。
+    """
+    from collections import Counter
+
+    jst = timezone(timedelta(hours=9))
+    per = Counter(t.astimezone(jst).date() for t in ahead)
+    days = sorted(per)[:PER_DAY_SPAN]
+    if not days:
+        return
+    cells = " ".join(f"{d:%m/%d}={per[d]}" for d in days)
+    print(f"  日ごと（直近{len(days)}日）: {cells}")
+    thin = [d for d in days if per[d] <= 2]
+    if thin:
+        head = " ".join(f"{d:%m/%d}" for d in thin)
+        print(f"  [!] **1日2本以下の日が {len(thin)}日あります**: {head}")
+        print("      **平均では見えません。**空けてあるなら "
+              "`src/measure_window.py` の窓を見ること。"
+              "そうでなければ、そこは詰められます"
+              "（`python scripts/reschedule.py --compact`）")
 
 
 def _print_missing_thumbnails() -> None:

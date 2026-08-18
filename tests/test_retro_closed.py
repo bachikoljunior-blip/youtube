@@ -198,6 +198,29 @@ def test_引用の中に閉じましたがあっても地の文にあれば宣�
     assert "critique_queue" in got and "closures()" in got
 
 
+def test_式は語として拾わない():
+    """**同じ穴の5枚目**（2026-08-19）。`WINDOW = ("", "")` は名前ではありません。
+
+    地の文に「閉じました」があり、バッククォートの中に**式**があると、
+    `closures()` はその式を「閉じられた語」として登録します。その語は
+    どの申し送りにも出てこないので、すぐ下の実データ検査が
+    **「宣言だけで、黙らせる相手がいません」**で赤くなります。
+
+    **これは日誌を書いただけで赤くなる形**です（コードは1行も触っていない）。
+    """
+    line = 'そのうえで窓を**閉じました**（`WINDOW = ("", "")`）。'
+    assert 'WINDOW = ("", "")' not in retro.quoted_tokens(line)
+    assert not retro.closures(line), retro.closures(line)
+
+
+def test_名前は落とさない():
+    """**語彙の足し算にしないこと。** 落ちるのは式だけで、名前は全部残る。"""
+    keep = ["check_tables()", "--closes", "data/runs.jsonl", "_template.py",
+            "critique_queue", "sibling_check --phase spawn", "status.py"]
+    for tok in keep:
+        assert tok in retro.quoted_tokens(f"`{tok}` を**閉じました**"), tok
+
+
 def test_実物の日誌で最後の宣言が効く():
     """**実データ。** 日誌のいちばん新しい宣言が、それより前の言及を黙らせること。
 

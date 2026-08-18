@@ -55,10 +55,28 @@ def test_一覧に無い語は言う(capsys):
 
 
 def test_alerts_の鍵は通す(capsys):
-    """`carry_over` / `missing_thumbnail` は持ち越しの語ではなく**一覧の鍵**です。"""
+    """`carry_over` / `missing_thumbnail` は持ち越しの語ではなく**一覧の鍵**です。
+
+    ## **鍵は自分で鳴らすこと**（2026-08-19 に踏んだ）
+
+    ここは長らく `alerts.table()` をそのまま読んでいました。ところが
+    `tests/conftest.py` が**全部の検査で `alerts.LEDGER` を空の tmp へ向けます**
+    （実物の帳面を汚さないため）。だから `table()` は**この検査の中では常に空**で、
+    `assert keys` は「先に走った別の検査が、たまたま鳴らしてくれたか」だけを見ていました。
+
+    **全体で走ると緑・単体で走ると赤**という形です。実際 04:4x の回が
+    `tests/test_closes_vocab.py` だけを叩いて赤を踏み、**自分の直しのせいだと
+    読みかけました**（`scripts/retro.py` を退避して同じ赤が出て、初めて分かった）。
+
+    **順番に頼る検査は、頼っている相手が消えた回に嘘をつきます。**
+    鳴らす相手はこの検査が自分で作ること。
+    """
     from src import alerts
+
+    for key in ("carry_over", "missing_thumbnail"):
+        alerts.ring(key, 1)
     keys = [r.key for r in alerts.table()]
-    assert keys, "鍵が1つも無い（`data/alerts.jsonl` が空。ここが空なら検査になりません）"
+    assert keys, "鍵が1つも無い（自分で鳴らしたのに読めない ＝ 読む側が壊れています）"
     out = _say(keys, capsys)
     assert "一覧に無い語" not in out, f"鍵を知らない語と言っています: {out}"
 

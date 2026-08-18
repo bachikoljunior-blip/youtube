@@ -135,19 +135,61 @@ def test_ledger_failure_does_not_stop_the_round(monkeypatch, capsys):
 
 # --- check_window: 測定の窓を機械に持たせる -------------------------------
 
+# **生きている窓の日付を検査に書かないこと**（2026-08-19 に踏んだ）。
+# ここは長らく `M14_WINDOW` の実物（8/16〜8/23）をそのまま並べていました。
+# ところが `src/measure_window.py` の約束は **「窓を終わらせる手は
+# `WINDOW = ("", "")` の1行だけ」**です。窓を閉じた回は、その1行のせいで
+# **この3件が赤くなります** —— 検査が、閉じる手順のほうを縛っていました。
+# 見たいのは「門が効くか」であって「いまの窓がいつか」ではないので、
+# **窓は検査が自分で作ります**（`tests/test_measure_window.py` と同じ形）。
+_WIN = ("2026-08-16", "2026-08-23")
+
+
+def _check(date: str, force: bool = False) -> None:
+    from src import measure_window
+
+    measure_window.check(date, force=force, tool="てすと", window=_WIN)
+
+
 @pytest.mark.parametrize("date", ["2026-08-16", "2026-08-20", "2026-08-23"])
 def test_window_blocks(date):
     with pytest.raises(SystemExit):
-        check_window(date, force=False)
+        _check(date)
 
 
 @pytest.mark.parametrize("date", ["2026-08-15", "2026-08-24", "2026-09-01"])
 def test_outside_window_passes(date):
-    check_window(date, force=False)
+    _check(date)
 
 
 def test_force_window_passes():
-    check_window("2026-08-20", force=True)
+    _check("2026-08-20", force=True)
+
+
+def test_窓が空なら門は素通りする():
+    """**閉じ方が1行で済むこと**を、こちら側からも押さえる。"""
+    from src import measure_window
+
+    measure_window.check("2026-08-20", tool="てすと", window=("", ""))
+
+
+def test_check_window_は_measure_window_を呼んでいる():
+    """`_check` は本体を直接呼ぶので、**道具側の配線が外れても緑になります。**
+
+    配線そのものは `check_window` にしか無いので、ここで1回だけ見ます。
+    差し替えるのは `batch_build.M14_WINDOW` のほう —— `check_window` は
+    それを**明示で渡す**ので、`measure_window.WINDOW` を触っても届きません。
+    """
+    from scripts import batch_build as bb
+
+    old = bb.M14_WINDOW
+    bb.M14_WINDOW = _WIN
+    try:
+        with pytest.raises(SystemExit):
+            check_window("2026-08-20", force=False)
+        check_window("2026-08-24", force=False)      # 窓の外は通る
+    finally:
+        bb.M14_WINDOW = old
 
 
 # --- next_publish_at: 日付の釘づけ ---------------------------------------
