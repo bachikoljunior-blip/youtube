@@ -485,10 +485,21 @@ def doc_numbers(text: str) -> list[str]:
 
 
 def _as_keys(nums: Iterable[str]) -> set[str]:
+    """突き合わせ用の鍵。**`77.0` と `77` は同じ数として扱う**（2026-08-18 に踏んだ）。
+
+    表の列が `77.0` と印字していて、文のほうが `77%` と書くと、
+    文字列の鍵では別物になって「表のどこにも無い」と鳴っていました。
+    実物で2件（`s-yoteinozei-3gatsu-77` と、`koyouhoken` の「2倍」の節）。
+    **後者は、そのせいでテーマが3回続けて作れませんでした。**
+    """
     out: set[str] = set()
     for n in nums:
-        out.add(n)
-        out.add(n.replace(",", ""))
+        for v in (n, n.replace(",", "")):
+            out.add(v)
+            if v.endswith(".0"):
+                out.add(v[:-2])
+            elif "." not in v:
+                out.add(v + ".0")
     return out
 
 

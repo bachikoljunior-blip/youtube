@@ -153,3 +153,26 @@ def test_topics_yamlには掛けない():
         "**この検査を angle に掛ける根拠にはなりません** —— 10件は全部、"
         "calc が1つの数として印字しない導出値でした。増えた中身を目で見ること。"
     )
+
+
+# ---- `77.0` と `77` は同じ数（2026-08-18 に足した）----------------------
+
+def test_小数点以下が0の数は整数と同じ鍵になる():
+    """**表が `77.0` と印字し、文が `77%` と書いても通ること。**
+
+    ここが分かれていたせいで `koyouhoken` の1節はテーマが3回作れず、
+    `s-yoteinozei-3gatsu-77` は全体を1件赤にしました。
+    """
+    _checks.numbers_backed("3月は77%ふえる", "77.0", name="t")
+    _checks.numbers_backed("倍率は2.0倍", "2", name="t")
+    _checks.numbers_backed("1,655円", "1655", name="t")
+
+
+def test_ちがう数はいままでどおり落ちる():
+    """**緩めたのは表記だけ。値がちがえば落ちる側は動かしていません。**"""
+    with pytest.raises(_checks.TableError):
+        _checks.numbers_backed("3月は78%ふえる", "77.0", name="t")
+    with pytest.raises(_checks.TableError):
+        _checks.numbers_backed("倍率は2.5倍", "2", name="t")
+    with pytest.raises(_checks.TableError):
+        _checks.numbers_backed("77.5%", "77.0", name="t")
