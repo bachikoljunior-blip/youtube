@@ -1121,6 +1121,19 @@
     ],
     "video_id": "KZ6uXiZt4yI"
   },
+  "s-kafu-25000en-vs-6375en": {
+    "charts": [
+      [
+        "5万円",
+        "6,375円"
+      ],
+      [
+        "2万5,000円",
+        "6,375円"
+      ]
+    ],
+    "video_id": "0GdstSOGWVw"
+  },
   "s-kafu-chouten-240tsuki": {
     "charts": [
       [
@@ -1130,6 +1143,16 @@
       ]
     ],
     "video_id": "YR1Z18HV8KQ"
+  },
+  "s-kafu-kubun-matagi-1tsuki": {
+    "charts": [
+      [
+        "0.96か月ぶん",
+        "1.55か月ぶん",
+        "1.29か月ぶん"
+      ]
+    ],
+    "video_id": "Un9Tlod-Vdw"
   },
   "s-kafu-sakaime-64-22sai": {
     "charts": [
@@ -1275,6 +1298,26 @@
       ]
     ],
     "video_id": "GXrtaUFHK3Q"
+  },
+  "s-keihi-700-vs-900": {
+    "charts": [
+      [
+        "45.33%",
+        "43.08%"
+      ]
+    ],
+    "video_id": "ZjBu0fEDy_E"
+  },
+  "s-keihi-jitsuritsu-shotoku700man-4533": {
+    "charts": [
+      [
+        "3,155円",
+        "3,614円",
+        "4,533円",
+        "4,869円"
+      ]
+    ],
+    "video_id": "g2fnGkUlTNE"
   },
   "s-kogaku-atono-iryohi-koujo-ku-e-todokanai": {
     "charts": [
@@ -2185,6 +2228,16 @@
     ],
     "video_id": "XYKBemKX8eg"
   },
+  "s-ninikeizoku-20ka-mon": {
+    "charts": [
+      [
+        "2か月以上",
+        "20日以内",
+        "2年"
+      ]
+    ],
+    "video_id": "quiaZxn7tes"
+  },
   "s-ninikeizoku-2nin-1601000-cliff": {
     "charts": [
       [
@@ -2218,6 +2271,32 @@
       ]
     ],
     "video_id": "L2fqMA7Xh-k"
+  },
+  "s-rousai-kyugyo-kaishi-5gatsu": {
+    "charts": [
+      [
+        "295万2485円",
+        "288万7880円",
+        "285万6125円"
+      ]
+    ],
+    "video_id": "K2ICyL-Z99U"
+  },
+  "s-rousai-shoyo-zero-8wari": {
+    "charts": [
+      [
+        "80.22%",
+        "64.18%",
+        "53.48%"
+      ],
+      [
+        "74.05%",
+        "68.76%",
+        "60.16%",
+        "56.63%"
+      ]
+    ],
+    "video_id": "3g2LdB4zqFU"
   },
   "s-saishushoku-330-66-nichibun": {
     "charts": [
