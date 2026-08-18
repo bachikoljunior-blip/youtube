@@ -1476,7 +1476,22 @@ calc を3本書いたのが約20分なので、**同じ桁の時間が、件数�
 
 **(b) commit して push。**
 
-    git -C /home/user/youtube push -u origin claude/youtube-auto-post-revenue-ggedij
+    git -C /home/user/youtube push origin HEAD:claude/youtube-auto-post-revenue-ggedij
+
+#### **`-u origin <枝>` と書かないこと**（2026-08-18 11:5x に踏んだ）
+
+ここは長らく `push -u origin claude/youtube-auto-post-revenue-ggedij` でした。
+**この回はそれで弾かれました**（`Updates were rejected because a pushed branch
+tip is behind its remote counterpart`）。
+
+**中身の話ではありません。** コンテナは `revision` を指してクローンするので、
+**`HEAD` は枝に乗っていません**（`git rev-parse --abbrev-ref HEAD` が `HEAD` を返す）。
+枝名だけを渡すと、git は**同じ名前のローカル枝**を探しにいって、
+`FETCH_HEAD` の古い位置を押そうとします。**進んでいるのはこちらなのに「遅れている」と出る**
+ので、**`git pull` したくなるのが罠**です（追う先が無いので何も直りません）。
+
+`HEAD:<枝>` と**押す元を明示すれば**、分離していても通ります。
+`git log --oneline HEAD..FETCH_HEAD` が空なら、**遅れているのはこちらではありません。**
 
 #### **メッセージは `-F -` とヒアドキュメントで渡すこと**（2026-08-17 に足した）
 
