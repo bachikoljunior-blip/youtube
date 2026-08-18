@@ -23496,6 +23496,8 @@ docstring・節の見出し・`check_tables` の3か所を直しました。
    **`pick` の天井は 19 → 21本**（`status.py` がこの回から出します）。
    `per_calc=2` なので、**この表から1日に出るのは2本まで**です。
    **16本を置くなら、いまの21本で足ります。**
+   **`s-tokutei-shikii-975000-tomaru` は `--dry-run --short` で verify 合格まで確認済み**
+   （0.5分・1080x1920・chart 2枚）。**残り6本は未確認です。**
 3. **(A) の題材は残り4件**（`kounai-shugaku-shienkin` / `kuruma-zei-juka` /
    `kotei-shisan-zei` / `hitorioya-teate`）。**題材決めは0分。**
    **4件を切ったので、題材の補充そのものを means として出す回が、遅くとも4回後に要ります**
