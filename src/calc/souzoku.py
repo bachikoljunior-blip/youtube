@@ -102,6 +102,27 @@ def check_tables() -> None:
     if first_estate(200_000_000, 2, 1.0)["paid"] <= 0:
         raise ValueError("1億6000万を超えて寄せたのに一次相続の納税が0になっている")
 
+    # **刻みが答えを決める。** 細かい格子は粗い格子より必ず小さいか等しい
+    # （粗い格子は細かい格子の部分集合なので、これが破れたら探索が壊れている）。
+    for e in (80_000_000, 150_000_000, 300_000_000):
+        coarse = best_ratio(e, 2, COARSE_STEPS)["best"]["total"]
+        fine = best_ratio(e, 2, FINE_STEPS)["best"]["total"]
+        if fine > coarse:
+            raise ValueError(
+                f"課税価格{e:,}円で、細かい刻みの最良({fine:,}円)が"
+                f"粗い刻み({coarse:,}円)より高い。粗いほうは細かいほうの部分集合のはず")
+    # **粗い格子の上に最適比が1つも無いこと**が、この節の主張そのもの。
+    for e in (80_000_000, 100_000_000, 150_000_000, 200_000_000, 300_000_000):
+        r = best_ratio(e, 2, FINE_STEPS)["best"]["spouse_ratio"]
+        if any(abs(r - c) < 1e-9 for c in COARSE_STEPS):
+            raise ValueError(
+                f"課税価格{e:,}円の最適比 {r} が粗い格子の上にある。"
+                "格子の上に無いことが `grid_error_grid()` の主張です")
+    # 取り逃しは0にならない（0なら粗い格子で足りていたことになる）
+    for row in grid_error_grid():
+        if row["取り逃し"] <= 0:
+            raise ValueError(f"課税価格{row['estate']:,}円の取り逃しが0。粗い格子で足りている")
+
 
 def basic_deduction(heirs: int) -> int:
     """基礎控除。**法定相続人の数だけで決まる。** 財産額とは無関係。"""
@@ -214,9 +235,20 @@ def two_step(estate: int, children: int, spouse_ratio: float) -> dict:
     }
 
 
+# 寄せ方を探す刻み。**0.25きざみの5点では、最小に当たりません**（2026-08-19 に測った）。
+# 実測の最適比は 0.28 / 0.31 / 0.34 / 0.42 / 0.52 で、**5点の格子の上に1つもありません。**
+COARSE_STEPS = (0.0, 0.25, 0.5, 0.75, 1.0)
+FINE_STEPS = tuple(i / 100 for i in range(101))
+
+
 def best_ratio(estate: int, children: int,
-               steps: tuple[float, ...] = (0.0, 0.25, 0.5, 0.75, 1.0)) -> dict:
-    """合計がいちばん小さくなる寄せ方と、いちばん大きい寄せ方の差。"""
+               steps: tuple[float, ...] = FINE_STEPS) -> dict:
+    """合計がいちばん小さくなる寄せ方と、いちばん大きい寄せ方の差。
+
+    **刻みが答えを決めます。** ここは長らく `COARSE_STEPS`（0.25きざみの5点）が既定で、
+    `gap_grid()` の「いちばん安い寄せ方」は**最小ではありませんでした** ——
+    課税価格3億円・子2人で **1,098,000円**を取り逃していた（`grid_error_grid()`）。
+    """
     rows = [two_step(estate, children, r) for r in steps]
     best = min(rows, key=lambda r: r["total"])
     worst = max(rows, key=lambda r: r["total"])
@@ -276,6 +308,32 @@ def gap_grid(children: int = 2) -> list[dict]:
     return out
 
 
+def grid_error_grid(children: int = 2) -> list[dict]:
+    """**刻みを粗くすると、いくら取り逃すか。**
+
+    `best_ratio()` は格子の上を探すだけなので、**格子が答えを決めます。**
+    0.25きざみの5点と、0.01きざみの101点で、同じ財産を探し直した差。
+
+    **`check_tables()` を呼びません。** `check_tables()` がこの関数を呼ぶので、
+    ここから呼び返すと無限再帰になります（2026-08-19 にその場で踏んだ）。
+    """
+    out = []
+    for e in (80_000_000, 100_000_000, 150_000_000,
+              200_000_000, 300_000_000, 500_000_000):
+        coarse = best_ratio(e, children, COARSE_STEPS)["best"]
+        fine = best_ratio(e, children, FINE_STEPS)["best"]
+        out.append({
+            "estate": e,
+            "粗い刻みの最良比": coarse["spouse_ratio"],
+            "粗い刻みの合計": coarse["total"],
+            "細かい刻みの最良比": fine["spouse_ratio"],
+            "細かい刻みの合計": fine["total"],
+            "取り逃し": coarse["total"] - fine["total"],
+            "取り逃しの割合": round((coarse["total"] - fine["total"]) / coarse["total"], 4),
+        })
+    return out
+
+
 def _man(yen: int) -> str:
     """円を万円で読む（画面に出す桁を1つにするため）。"""
     return f"{yen / 10_000:,.1f}万円"
@@ -307,6 +365,15 @@ if __name__ == "__main__":
     for r in two_step_grid(150_000_000, 2):
         print(f"{r['spouse_ratio']:11.0%} {r['first_paid']:11,d}円 "
               f"{r['second_paid']:11,d}円 {r['total']:11,d}円")
+
+    print("\n=== 25%きざみで探した「いちばん安い寄せ方」は、最小ではなかった（子2人）===")
+    print("  前提: 法定相続人は配偶者と子2人 / 二次相続では配偶者が一次で取得した財産だけが残る / "
+          "小規模宅地等の特例と生命保険金の非課税枠は含めない")
+    for row in grid_error_grid():
+        print(f"  課税価格{_man(row['estate']):>10s}  "
+              f"25%きざみ 配偶者{row['粗い刻みの最良比']:.0%} → 合計{_man(row['粗い刻みの合計']):>9s}  "
+              f"1%きざみ 配偶者{row['細かい刻みの最良比']:.0%} → 合計{_man(row['細かい刻みの合計']):>9s}  "
+              f"**取り逃し{_man(row['取り逃し']):>7s}**（{row['取り逃しの割合']:.2%}）")
 
     print("\n=== 「全部配偶者に寄せる」が、いくら高くつくか（子2人）===")
     print(f"{'課税価格':>12s} {'いちばん安い寄せ方':>16s} {'その合計':>12s} "
