@@ -399,3 +399,4 @@
 {"at": "2026-08-18T13:03:37+09:00", "session": "session_01KET5rrimk1GrCTruYVTWK6", "kind": "ship", "what": "means(A): 固定資産税の表を新設（src/calc/koteishisan.py・7節・テーマ336→343・「200㎡までが6分の1」の外側にある3つめの帯＝家屋の床面積の10倍を出して初めて見える5件）"}
 {"at": "2026-08-18T13:08:23+09:00", "session": "session_01KET5rrimk1GrCTruYVTWK6", "kind": "ship", "what": "means: (A) の題材を3件→8件に補充（fudosanshutoku-zei / inshizei-kaidan / koyouhokenryo-ritsu / yoteinozei-15man / kogakukaigo-jogen。5件とも id の語を将来の表の名前に一致させた）"}
 {"at": "2026-08-18T13:25:05+09:00", "session": "session_01L79hePJNkGeWSPR2hFAH65", "kind": "start"}
+{"at": "2026-08-18T13:36:23+09:00", "session": "session_01L79hePJNkGeWSPR2hFAH65", "kind": "ship", "what": "fix: 掃引が文字列で場合分けする引数を軸として振る（4回続けて持ち越し。既定値が無い引数がいると関数ごと対象外だった・48表中16関数・候補210→211）", "closes": ["carry_over"], "journal_lines": 23851}

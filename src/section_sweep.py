@@ -83,6 +83,10 @@ MEANINGFUL = 0.01
 #: かつ `shitsugyo.double_boundary` のような**本物の逆転**を落とさない幅だから。
 FLAT_TOP_BAND = 0.25
 
+#: `倍率` の形を採る下限（いちばん高い段 ÷ いちばん低い段）。
+#: **2倍を切る比は「少し違う」であって、節にはなりません。**
+RATIO_MIN = 2.0
+
 SHAPES = ("不変", "帯", "頭打ち", "崖", "逆転", "片効き")
 
 #: `詳しく` のうち、**x 軸の値**を持つ欄。行を歩く掃引では、ここだけを
@@ -93,7 +97,8 @@ SHAPES = ("不変", "帯", "頭打ち", "崖", "逆転", "片効き")
 #: 規約で拾うつもりが、既にある形1つを取りこぼしていました。
 #: だから並びは1つに集約して、**読む側を2か所とも、ここから引きます**
 #: （`_hit_points` と、`sweep_rows` の見出し直し）。
-X_KEYS = ("止まる x", "x", "x の手前", "x の先", "帯の入口", "帯の出口", "並ぶ x")
+X_KEYS = ("止まる x", "x", "x の手前", "x の先", "帯の入口", "帯の出口", "並ぶ x",
+          "いちばん低い", "いちばん高い")
 
 #: そのうち「**この候補を名指ししている**点」。同点の一覧は、名指しの点ではない
 #: （既出の判定を厳しくすると意味が変わるので、`_hit_points` からは外す）。
@@ -104,7 +109,7 @@ NAMING_X_KEYS = tuple(k for k in X_KEYS if k != "並ぶ x")
 #: x なのか y なのかを宣言させるため**（宣言しないと、行番号のまま印字されます）。
 Y_KEYS = ("止まった値", "値", "跳ぶ幅", "動かない値", "帯の中", "帯の外",
           "端では", "差", "中央の段差", "並ぶ点", "数え上げ", "動く", "動かない",
-          "どこ")
+          "どこ", "倍率", "並び")
 
 
 def _grid(default: float) -> list[float]:
@@ -319,7 +324,8 @@ def _level_runs(ys: list[float], scale: float) -> list[tuple[int, int, float]]:
 
 def _classify(xs: list[float], ys: list[float],
               *, enumerated: bool = False,
-              min_points: int = 4) -> tuple[str, dict] | None:
+              min_points: int = 4,
+              ratio: bool = False) -> tuple[str, dict] | None:
     """点の並びから形を1つ決める。**当てはまらなければ None。**
 
     `enumerated` は **x 軸が数え上げか**（＝表の行を歩いている）。
@@ -413,6 +419,29 @@ def _classify(xs: list[float], ys: list[float],
             i = [abs(s) for s in steps].index(biggest)
             return "崖", {"x の手前": xs[i], "x の先": xs[i + 1],
                          "跳ぶ幅": steps[i], "中央の段差": mid}
+
+    # 倍率: **段どうしの比そのものが節**（2026-08-18 に足した。**軸を開けた直後**）
+    #
+    # 同じ日に `sweep_enums` で文字列の軸を開けたところ、**16関数ぶんの軸に対して
+    # 候補は +1件**でした。理由は形の語彙のほうにありました —— 3点の数え上げで
+    # 鳴りうるのは「帯」と「逆転」だけで（頭打ちは tail が全体になり、崖は段が
+    # 2つしかないので構造上あり得ない）、**単調に増えるだけの並びは、どの形にも
+    # 当たりません。** ところが `koteishisan.unit_tax` の
+    #
+    #     小規模 116.67 ／ 一般 233.33 ／ 特例なし 700.0  ＝ **1 : 2 : 6**
+    #
+    # は、その回いちばんの発見でした。**数え上げの軸では、比が形です。**
+    #
+    # **`ratio` は `sweep_enums` だけが渡します。** `sweep_rows`（表の行）にも
+    # 掛けると、単調な表がほぼ全部ここに落ちて**候補が一覧ごと膨らみます**
+    # （`src/alerts.py` の「一覧が当たりを含まないまま育つ」の5件目になる）。
+    # **場合分けの軸は要素が数個で、比を「1:2:6」と読み上げられる**ところが違います。
+    # **広げるなら、先に当たり率を測ること**（手順 §4）。
+    if ratio and lo > 0 and hi / lo >= RATIO_MIN:
+        return "倍率", {"いちばん低い": xs[ys.index(lo)],
+                      "いちばん高い": xs[ys.index(hi)],
+                      "倍率": hi / lo, "値": lo,
+                      "並び": [round(y / lo, 3) for y in ys]}
     return None
 
 
@@ -821,7 +850,7 @@ def sweep_enums(fn: Callable, *, name: str = "") -> list[dict]:
         for key in sorted(keys):
             ys = [r[key] for r in rows]
             hit = _classify(list(range(len(rows))), ys,
-                            enumerated=True, min_points=3)
+                            enumerated=True, min_points=3, ratio=True)
             if not hit:
                 continue
             shape, detail = hit
