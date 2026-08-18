@@ -148,3 +148,5 @@
 {"at": "2026-08-18T12:46:15+09:00", "key": "topic_material_low", "n": 1, "session": "session_01KET5rrimk1GrCTruYVTWK6", "by": "status.py"}
 {"at": "2026-08-18T12:46:15+09:00", "key": "calc_gap", "n": 12, "session": "session_01KET5rrimk1GrCTruYVTWK6", "by": "status.py"}
 {"at": "2026-08-18T13:03:37+09:00", "key": "undeclared_close", "n": 1, "session": "session_01KET5rrimk1GrCTruYVTWK6", "by": "run_marker.py"}
+{"at": "2026-08-18T13:26:20+09:00", "key": "silent_run", "n": 3, "session": "session_01L79hePJNkGeWSPR2hFAH65", "by": "sibling_check.py"}
+{"at": "2026-08-18T13:27:10+09:00", "key": "carry_over", "n": 25, "session": "session_01L79hePJNkGeWSPR2hFAH65", "by": "retro.py"}

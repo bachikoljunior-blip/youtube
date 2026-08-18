@@ -398,3 +398,4 @@
 {"at": "2026-08-18T12:43:46+09:00", "session": "session_01KET5rrimk1GrCTruYVTWK6", "kind": "start"}
 {"at": "2026-08-18T13:03:37+09:00", "session": "session_01KET5rrimk1GrCTruYVTWK6", "kind": "ship", "what": "means(A): 固定資産税の表を新設（src/calc/koteishisan.py・7節・テーマ336→343・「200㎡までが6分の1」の外側にある3つめの帯＝家屋の床面積の10倍を出して初めて見える5件）"}
 {"at": "2026-08-18T13:08:23+09:00", "session": "session_01KET5rrimk1GrCTruYVTWK6", "kind": "ship", "what": "means: (A) の題材を3件→8件に補充（fudosanshutoku-zei / inshizei-kaidan / koyouhokenryo-ritsu / yoteinozei-15man / kogakukaigo-jogen。5件とも id の語を将来の表の名前に一致させた）"}
+{"at": "2026-08-18T13:25:05+09:00", "session": "session_01L79hePJNkGeWSPR2hFAH65", "kind": "start"}

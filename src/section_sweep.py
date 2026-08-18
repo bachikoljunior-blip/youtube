@@ -174,19 +174,130 @@ def _scalars(value: Any) -> dict[str, float]:
     return {}
 
 
-def _sweepable_params(fn: Callable) -> list[tuple[str, float]]:
-    """既定値が数値で、他の引数を触らずに動かせるものだけ返す。"""
+def _sweepable_params(fn: Callable,
+                      skip: Iterable[str] = ()) -> list[tuple[str, float]]:
+    """既定値が数値で、他の引数を触らずに動かせるものだけ返す。
+
+    `skip` は**こちらが値を埋める引数**（数え上げの軸。`_enum_params`）。
+    既定値が無くても呼べるので、**そこで降りないこと** —— 降りていたために
+    `koteishisan.unit_tax` のような関数が丸ごと対象外でした。
+    """
+    try:
+        sig = inspect.signature(fn)
+    except (TypeError, ValueError):
+        return []
+    skip = set(skip)
+    out = []
+    for name, p in sig.parameters.items():
+        if name in skip:
+            continue
+        if p.default is inspect.Parameter.empty:
+            return []          # 既定値の無い引数があると、そのまま呼べない
+        if isinstance(p.default, bool) or not isinstance(p.default, (int, float)):
+            continue
+        out.append((name, float(p.default)))
+    return out
+
+
+#: 数え上げの軸として振る候補の、要素数の上限。**これより多い並びは軸ではなく
+#: 表そのもの**なので、`sweep_rows` の側で歩きます（1つの表に2度当てない）。
+ENUM_MAX = 12
+
+
+def _enum_containers(fn: Callable) -> list[tuple[str, list[str]]]:
+    """`fn` と同じモジュールの中にある、**文字列を並べた入れ物**を返す。
+
+    `list` / `tuple` の要素、または `dict` の鍵です。`fn.__module__` から引くので、
+    **手で語彙を並べません**（次に表を足した回が書き忘れる形を作らないため）。
+    """
+    mod = sys.modules.get(getattr(fn, "__module__", ""))
+    if mod is None:
+        return []
+    out: list[tuple[str, list[str]]] = []
+    for cname, v in vars(mod).items():
+        if cname.startswith("_"):
+            continue
+        if isinstance(v, (list, tuple)):
+            items = list(v)
+        elif isinstance(v, dict):
+            items = list(v)
+        else:
+            continue
+        if not (2 <= len(items) <= ENUM_MAX):
+            continue
+        if not all(isinstance(e, str) for e in items):
+            continue
+        out.append((cname, items))
+    return out
+
+
+def _enum_axis(fn: Callable, pname: str, default: Any) -> list[str]:
+    """`pname` を**数え上げの軸**として振れるなら、その並びを返す。
+
+    ## なぜ要るか（2026-08-18 に足した。**4回続けて申し送りに載っていた**）
+
+    `_sweepable_params` は「既定値が数値」の引数しか見ません。ところが
+    `src/calc/` には **文字列で場合分けする引数**があり、そこがいちばん深い節に
+    なっていました ——
+
+        koteishisan.unit_tax(part: str, unit: float = LAND_UNIT)
+            PARTS = ["小規模", "一般", "特例なし"] で **1㎡単価が 1:2:6**
+
+    この `part` には**既定値がありません**。`_sweepable_params` は既定値の無い
+    引数を1つでも見つけると `[]` を返して降りるので、**この関数は丸ごと掃引の
+    対象外**でした（`unit` すら振られていない）。`invoice.kind`・
+    `tsukin.CAR_BANDS` に続く**3族目**で、申し送りは4回とも同じことを言っています。
+
+    **選び方は名前ではなく、実際に呼べるかどうかで決めます。** 名前で選ぶと、
+    表を足した回が語彙を書き忘れたときに黙って落ちます（`noise_tokens` と
+    同じ形の穴）。ここでやるのは:
+
+    1. 既定値が文字列なら、**その値を含む入れ物**を先に試す
+    2. 入れ物の要素を全部入れてみて、**全部が例外なく数字を返す**ものだけ通す
+
+    **2 が本体です。** 関係のない入れ物（たとえば見出しの並び）は、
+    途中の要素で必ず落ちるか、数字を返しません。
+    """
+    conts = _enum_containers(fn)
+    if not conts:
+        return []
+    if isinstance(default, str):
+        conts.sort(key=lambda kv: default not in kv[1])
+    for _cname, items in conts:
+        ok = True
+        for e in items:
+            try:
+                with contextlib.redirect_stdout(io.StringIO()):
+                    value = fn(**{pname: e})
+            except Exception:
+                ok = False
+                break
+            if not _scalars(value):
+                ok = False
+                break
+        if ok:
+            return items
+    return []
+
+
+def _enum_params(fn: Callable) -> list[tuple[str, list[str]]]:
+    """**数え上げの軸として振れる引数**を、`(名前, 並び)` で返す。
+
+    対象は「既定値が文字列」と「既定値が無く、文字列を入れると通る」の2つ。
+    **後者を入れているのが、この直しの本体です**（`_enum_axis` の docstring）。
+    """
     try:
         sig = inspect.signature(fn)
     except (TypeError, ValueError):
         return []
     out = []
     for name, p in sig.parameters.items():
-        if p.default is inspect.Parameter.empty:
-            return []          # 既定値の無い引数があると、そのまま呼べない
-        if isinstance(p.default, bool) or not isinstance(p.default, (int, float)):
+        default = p.default
+        if default is not inspect.Parameter.empty and not isinstance(default, str):
             continue
-        out.append((name, float(p.default)))
+        items = _enum_axis(fn, name, default)
+        if items:
+            out.append((name, items))
     return out
 
 
@@ -207,14 +318,15 @@ def _level_runs(ys: list[float], scale: float) -> list[tuple[int, int, float]]:
 
 
 def _classify(xs: list[float], ys: list[float],
-              *, enumerated: bool = False) -> tuple[str, dict] | None:
+              *, enumerated: bool = False,
+              min_points: int = 4) -> tuple[str, dict] | None:
     """点の並びから形を1つ決める。**当てはまらなければ None。**
 
     `enumerated` は **x 軸が数え上げか**（＝表の行を歩いている）。
     連続量をこちらが選んだ目盛りで刻んだ掃引と、**同点の意味が逆になります**
     （理由は下の「逆転」の節）。
     """
-    if len(ys) < 4 or any(map(lambda v: math.isnan(v) or math.isinf(v), ys)):
+    if len(ys) < min_points or any(map(lambda v: math.isnan(v) or math.isinf(v), ys)):
         return None
     lo, hi = min(ys), max(ys)
     scale = max(abs(lo), abs(hi))
@@ -366,7 +478,9 @@ def table_constants(swept: list[tuple[str, list[float], list[dict]]]) -> set[str
 def sweep_function(fn: Callable, *, name: str = "") -> list[dict]:
     """1つの関数を掃引して、出た形を並べる。"""
     found = []
-    params = _sweepable_params(fn)
+    enums = _enum_params(fn)
+    base = {pn: items[0] for pn, items in enums}
+    params = _sweepable_params(fn, skip=base)
     defaults = [d for _, d in params]
 
     # **先に全部の引数を掃引します**（`table_constants` が横に並べて見るため）。
@@ -375,7 +489,7 @@ def sweep_function(fn: Callable, *, name: str = "") -> list[dict]:
         xs, rows = [], []
         for x in _grid(default):
             try:
-                value = fn(**{pname: _cast(default, x)})
+                value = fn(**base, **{pname: _cast(default, x)})
             except Exception:
                 continue
             scal = _scalars(value)
@@ -665,6 +779,70 @@ def calc_modules() -> list[str]:
                   if not m.name.startswith("_"))
 
 
+def sweep_enums(fn: Callable, *, name: str = "") -> list[dict]:
+    """**文字列の軸を歩く。**`part` / `kind` のような場合分けを x にする。
+
+    x は数え上げ（表の行と同じ）なので `enumerated=True` です。
+    **`min_points=3` を渡しているのがここだけである理由**:
+    連続量は目盛りをこちらが選ぶので3点は少なすぎますが、
+    **数え上げの軸は「それが全部」**です（`PARTS` は3つしかありません）。
+    4点を要求すると、**3つの帯で場合分けする制度が1件も出ません** ——
+    そしてそれが、この直しが拾いにきた当のものでした
+    （`koteishisan` の 1㎡単価 1:2:6）。
+
+    **他の掃引の下限は動かしていません。** `sweep_rows` は4点のままです
+    （表の行が3つしかない表は、まだ実物にありません）。
+    """
+    found = []
+    enums = _enum_params(fn)
+    if not enums:
+        return []
+    for pname, items in enums:
+        # 他の数え上げの軸は、先頭で固定する（1度に1つだけ動かす）
+        base = {pn: v[0] for pn, v in enums if pn != pname}
+        rows: list[dict] = []
+        labels: list[str] = []
+        for e in items:
+            try:
+                with contextlib.redirect_stdout(io.StringIO()):
+                    value = fn(**base, **{pname: e})
+            except Exception:
+                continue
+            scal = _scalars(value)
+            if not scal:
+                continue
+            rows.append(scal)
+            labels.append(e)
+        if len(rows) < 3:
+            continue
+        keys = set(rows[0])
+        for r in rows[1:]:
+            keys &= set(r)
+        for key in sorted(keys):
+            ys = [r[key] for r in rows]
+            hit = _classify(list(range(len(rows))), ys,
+                            enumerated=True, min_points=3)
+            if not hit:
+                continue
+            shape, detail = hit
+            if shape == "不変":
+                continue      # 場合分けで動かない欄は、たいてい前提の再掲
+            # 行番号を、読める見出しに直す（`sweep_rows` と同じ `X_KEYS` を読む）
+            for k in X_KEYS:
+                if k not in detail:
+                    continue
+                v = detail[k]
+                if isinstance(v, list):
+                    detail[k] = [labels[int(i)] for i in v]
+                else:
+                    detail[k] = labels[int(v)]
+            found.append({"関数": name or getattr(fn, "__name__", "?"),
+                          "動かした引数": pname, "見た値": key or "返り値",
+                          "形": shape, "詳しく": detail,
+                          "x の幅": (labels[0], labels[-1])})
+    return found
+
+
 def sweep_calc(name: str) -> list[dict]:
     """1本の表を丸ごと掃引する。"""
     mod = importlib.import_module(f"src.calc.{name}")
@@ -679,7 +857,8 @@ def sweep_calc(name: str) -> list[dict]:
         # **掃引中は stdout を捨てる。**表の中には説明を print する関数があり、
         # そのまま流すと候補の一覧が本文で埋まります（2026-08-17 に踏んだ）
         with contextlib.redirect_stdout(io.StringIO()):
-            hits = sweep_function(fn, name=fname) + sweep_rows(fn, name=fname)
+            hits = (sweep_function(fn, name=fname) + sweep_rows(fn, name=fname)
+                    + sweep_enums(fn, name=fname))
         for hit in hits:
             hit["表"] = name
             out.append(hit)
