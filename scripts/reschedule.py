@@ -379,12 +379,18 @@ def main(argv: list[str] | None = None) -> int:
         at = datetime.fromisoformat(when).replace(tzinfo=JST).astimezone(timezone.utc)
         if at <= datetime.now(timezone.utc):
             raise SystemExit(f"過去の時刻です: {when} JST")
-        _update(svc, vid, at.strftime("%Y-%m-%dT%H:%M:%SZ"))
+        iso = at.strftime("%Y-%m-%dT%H:%M:%SZ")
+        _update(svc, vid, iso)
+        # **控えにも書き戻すこと**（2026-08-18 に実測で見つけた）。
+        # `--compact` は控えだけを見るので、ここを飛ばすと
+        # **実物は動いたのに、次の回は古い時刻のまま割り当てを組みます。**
+        dupes.retime(vid, iso)
         print(f"[reschedule] {vid} を {when} JST へ移しました")
         return 0
 
     if args.unschedule:
         _update(svc, args.unschedule, None)
+        dupes.retime(args.unschedule, None)
         print(f"[reschedule] {args.unschedule} の予約を外しました（private のまま残っています）")
         return 0
 

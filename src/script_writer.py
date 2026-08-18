@@ -165,6 +165,7 @@ SHORT_SECOND_SEGMENT_CHARS = 26
 # 先頭の語を取る規則が当たりません（実物の題で確かめた）。
 SUBJECT_WORDS: dict[str, tuple[str, ...]] = {
     "furusato": ("ふるさと納税", "寄付", "寄附"),
+    "inshi": ("印紙", "印紙税", "収入印紙"),
     "jutaku": ("住宅ローン", "住宅ローン控除"),
     "iryohi": ("医療費",),
     "kojo": ("控除", "扶養", "所得控除"),
