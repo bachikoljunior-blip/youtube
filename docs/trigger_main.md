@@ -1719,6 +1719,17 @@ tip is behind its remote counterpart`）。
    （古い行には 8/13 の `rejected` が残っていて、混ぜると永久に立てられません）。
    **観測が無い窓を「閉じている」と読みません**（余裕があるとも読みません）
 3. **(a)〜(e) が全部終わっていること。** 立てるのは archive の直前
+4. **`source_url` と `source_revision` を渡すこと**（2026-08-18 23:5x に踏んだ）。
+
+       source_url:      https://github.com/bachikoljunior-blip/youtube
+       source_revision: claude/youtube-auto-post-revenue-ggedij
+
+   **環境（`environment_id`）は省くと受け継がれますが、`sources` は受け継がれません。**
+   ここには長らく1〜3しか無く、実物の書式は**この節から遠く離れた §6 の下のほう**にあります。
+   23:5x の回はそれを読まないまま立て、**repo の無い子を起動させました**
+   （30秒で `get_session` の `session_context` に `sources` が無いのを見て畳み、立て直した）。
+   **`create_session` の返りの `session_context.sources` を必ず目で見ること。**
+   無ければ**その場で archive して立て直す** —— repo の無い子は §0 のとおり何も出せません
 
 **2 は「予算を絞る」ではありません。** 1回の中身は削らない。削るのは間隔だけです。
 警告帯で倍速に回すと枠が閉じ、**8/12〜8/14 のように58時間まるごと止まります。**
