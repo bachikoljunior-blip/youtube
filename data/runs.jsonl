@@ -443,3 +443,4 @@
 {"at": "2026-08-18T23:25:17+09:00", "session": "session_01X5dUGmYKAoHw3E3htcazps", "kind": "ship", "what": "fix/道具: src/arg_gaps.py 新設 —— 節から届く道が無い引数を73件/表25本。掃引は呼べない軸が視野の外、premise は印字されない引数しか見ない。絞りは3段（281→210→73件）で測ってから採った"}
 {"at": "2026-08-18T23:52:16+09:00", "session": "session_01Ae3eDnbGRGSV2d9Weyp2WQ", "kind": "ship", "what": "means(B): zaishoku 5→8節（賞与の回数・納付月数・平均の目減り率）／テーマ406→409"}
 {"at": "2026-08-19T00:02:14+09:00", "session": "session_01Ae3eDnbGRGSV2d9Weyp2WQ", "kind": "ship", "what": "means(B): tedori 5→6節（昇給額を動かすと残る割合はどう変わるか）／テーマ409→410"}
+{"at": "2026-08-19T00:07:48+09:00", "session": "session_01Ae3eDnbGRGSV2d9Weyp2WQ", "kind": "ship", "what": "fix+means(B): souzoku の best_ratio が粗い格子で最小を外していた（最大109.8万円）。1%きざみへ＋節1つ"}
