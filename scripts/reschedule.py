@@ -4,6 +4,8 @@
     python scripts/reschedule.py --list                     # 予約の一覧（同じテーマの二重予約に印）
     python scripts/reschedule.py --move <videoId> 2026-09-04T09:00
     python scripts/reschedule.py --unschedule <videoId>     # 予約を外す（private のまま残る）
+    python scripts/reschedule.py --compact                  # 予約を前に詰める割り当て（API 0単位）
+    python scripts/reschedule.py --compact --apply          # そのとおりに撃つ（1本50単位）
 
 ## なぜ要るか（2026-08-15 23:0x）
 
@@ -43,7 +45,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from googleapiclient.errors import HttpError  # noqa: E402
 
-from src import history, measure_window, uploader  # noqa: E402
+from src import dupes, history, measure_window, uploader  # noqa: E402
 
 JST = timezone(timedelta(hours=9))
 MARKER = re.compile(r"\[t:([a-z0-9\-]+)\]")
@@ -160,6 +162,181 @@ def _update(svc, video_id: str, publish_at: str | None,
         ) from exc
 
 
+def compact_plan(rows: list[dict], *, now: datetime, step_min: int = 30,
+                 hour: int = 9, until_hour: int = 21, max_days: int = 4,
+                 lead_min: int = 60,
+                 window: tuple[str, str] | None = None) -> list[dict]:
+    """**予約を前に詰める割り当てを作る**（API 0単位・純関数）。
+
+    `rows` は控え（`src.dupes.ledger_rows`）の形。返すのは
+    `{"id", "topic", "title", "old", "new"}` の並びで、**動かす本だけ**です。
+
+    ## なぜ要るか（2026-08-18 に控えで数えた）
+
+    予約 256本の分は **全部 `:00`**、公開は **1日 8〜13本**、最後は **09/27**。
+    置ける枠は 30分きざみなら 9〜21時で **1日25個**あります。
+    **足りていないのは在庫でも投稿枠でもなく、目盛りでした**
+    （`scripts/batch_build.slots` の `step_min` は同じ穴を作る側で塞いであります。
+    こちらは**既に予約に入っている本**の側で、そちらの直しは効きません）。
+
+    ## 全部は詰めません（既定 `max_days=4`）
+
+    「1時間より詰めても1本あたりの再生は落ちない」は**まだ前提**です
+    （`config/hypotheses.yaml`・9/05 判定・**該当日が0日なので判定できません**）。
+    落ちるなら、全部詰めた時点で在庫を1本あたり半額で売ったことになります。
+    **判定に要るのは3日**なので、既定は4日ぶんだけ詰めます。
+    残りは触りません。**判定してから決めること。**
+
+    ## 守っている不変条件 —— **新しい時刻は必ず今より前か同じ**
+
+    これは「早めるため」だけの規則ではありません。**途中で止まっても、
+    もう一度走らせれば同じ割り当てになる**ための条件です。
+    `at` の昇順に詰めるので、`new_i <= old_i` なら、k本目まで動かした後に
+    並べ直しても順番は変わりません（`new_k <= old_k <= old_(k+1)`）。
+    **`videos.update` は1日の単位枠（10,000）で 190本ぶんしか撃てない**ので、
+    途中で止まる回が必ず出ます。破れたら例外にします（黙って別の割り当てにしない）。
+
+    測定の窓（`src.measure_window`）の日は、**置き先からも、動かす対象からも外します。**
+
+    ## 置き先は「いちばん早い予約の日」から。**それより前へは出しません**
+
+    今日や明日へ出せば、もっと詰まります。**やりません** —— その手前にあるのは
+    測定の窓（M14）か、**もう手元で確かめようがないほど目前の日**だからです。
+    いちばん早い予約の日から後ろへ埋めるだけなら、**公開の順番も間隔の意図も壊れません。**
+    `lead_min` より手前の枠も落とします（YouTube は直前の予約を受けません）。
+    """
+    if not 1 <= step_min <= 60 or 60 % step_min:
+        raise SystemExit(f"--step-min は 60 の約数で 1〜60 のどれか: {step_min}")
+    if not 0 <= hour <= until_hour <= 23:
+        raise SystemExit(f"時刻の範囲がおかしい: {hour}〜{until_hour}")
+
+    floor = now + timedelta(minutes=lead_min)
+    live = []
+    for r in rows:
+        if not r.get("at"):
+            continue
+        try:
+            at = datetime.fromisoformat(str(r["at"]).replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        if at <= floor:
+            continue
+        jst = at.astimezone(JST)
+        if measure_window.inside(jst.strftime("%Y-%m-%d"), window):
+            continue          # 測定中の日は動かさない（M14）
+        live.append((at, r))
+    live.sort(key=lambda t: (t[0], t[1].get("id", "")))
+    if not live:
+        return []
+
+    day = live[0][0].astimezone(JST).date()
+    grid: list[datetime] = []
+    days_used = 0
+    while days_used < max_days:
+        if not measure_window.inside(day.isoformat(), window):
+            for m in range(hour * 60, until_hour * 60 + 1, step_min):
+                slot = datetime(day.year, day.month, day.day,
+                                m // 60, m % 60, tzinfo=JST)
+                if slot > floor:
+                    grid.append(slot)
+            days_used += 1
+        day += timedelta(days=1)
+
+    plan = []
+    for slot, (old, row) in zip(grid, live):
+        new = slot.astimezone(timezone.utc)
+        if new > old:
+            raise SystemExit(
+                f"[compact] **{row.get('id')} を後ろへ動かす割り当てになりました**"
+                f"（{old.astimezone(JST):%m/%d %H:%M} → {slot:%m/%d %H:%M} JST）。\n"
+                "        前に詰める道具なので、これは割り当ての誤りです。\n"
+                "        **--hour を早めるか --step-min を細かくすること。**\n"
+                "        （後ろへ動かすと、途中で止まった回をやり直せなくなります）"
+            )
+        if new == old:
+            continue
+        plan.append({"id": row.get("id", ""), "topic": row.get("topic", ""),
+                     "title": row.get("title", ""),
+                     "old": old.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                     "new": new.strftime("%Y-%m-%dT%H:%M:%SZ")})
+    return plan
+
+
+def _horizon(rows: list[dict], plan: list[dict], now: datetime) -> tuple[str, float]:
+    """詰めた後の「予約の最後」を JST の日付と、いまからの日数で返す。"""
+    moved = {p["id"]: p["new"] for p in plan}
+    last = None
+    for r in rows:
+        at = moved.get(r.get("id", "")) or r.get("at")
+        if not at:
+            continue
+        try:
+            when = datetime.fromisoformat(str(at).replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        if when > now and (last is None or when > last):
+            last = when
+    if last is None:
+        return "（予約なし）", 0.0
+    return last.astimezone(JST).strftime("%m/%d %H:%M"), (last - now).total_seconds() / 86400
+
+
+def _compact(args) -> int:
+    """`--compact`。**既定は割り当てを出すだけ**で、`--apply` で初めて撃ちます。"""
+    rows = [r for r in dupes.ledger_rows() if r.get("at")]
+    if not rows:
+        raise SystemExit("控え（data/uploaded.jsonl）に予約の行がありません")
+    now = datetime.now(timezone.utc)
+    plan = compact_plan(rows, now=now, step_min=args.step_min, hour=args.hour,
+                        until_hour=args.until_hour, max_days=args.max_days,
+                        lead_min=args.lead_min)
+    where, days = _horizon(rows, plan, now)
+    per_day: dict[str, int] = defaultdict(int)
+    for p in plan:
+        jst = datetime.fromisoformat(p["new"].replace("Z", "+00:00")).astimezone(JST)
+        per_day[jst.strftime("%m/%d")] += 1
+
+    print(f"[compact] 控えの予約 {len(rows)}本のうち、**動かすのは {len(plan)}本**"
+          f"（{args.step_min}分きざみ・{args.hour}〜{args.until_hour}時・{args.max_days}日ぶん）")
+    for p in plan:
+        o = datetime.fromisoformat(p["old"].replace("Z", "+00:00")).astimezone(JST)
+        n = datetime.fromisoformat(p["new"].replace("Z", "+00:00")).astimezone(JST)
+        print(f"  {o:%m/%d %H:%M} → {n:%m/%d %H:%M}  {p['id']}  {p['topic'][:26]}")
+    if per_day:
+        print("[compact] 詰めたあとの本数/日: "
+              + " ".join(f"{d}={n}" for d, n in sorted(per_day.items())))
+    print(f"[compact] 予約の最後: {where}（あと {days:.1f}日）")
+    if days < args.min_days:
+        raise SystemExit(
+            f"[compact] **予約の先が {days:.1f}日しか残りません**"
+            f"（下限 {args.min_days}日）。\n"
+            "        **投稿が途切れるのが最大の損失**なので、ここは止めます。\n"
+            "        --max-days を減らすか、--min-days を下げること（理由を JOURNAL に）。"
+        )
+    if not plan:
+        print("[compact] 動かすものはありません。")
+        return 0
+    if not args.apply:
+        print("[compact] **これは割り当てだけです。**撃つには --apply を付けること"
+              f"（`videos.update` は1本 50単位・日枠 10,000 ＝ {args.max}本で止めます）")
+        return 0
+
+    svc = uploader._service()
+    done = 0
+    for p in plan[:args.max]:
+        _update(svc, p["id"], p["new"], fallback_status=uploader.base_status())
+        dupes.retime(p["id"], p["new"])
+        done += 1
+        n = datetime.fromisoformat(p["new"].replace("Z", "+00:00")).astimezone(JST)
+        print(f"[compact] {p['id']} → {n:%m/%d %H:%M} JST（{done}/{min(len(plan), args.max)}）",
+              flush=True)
+    left = len(plan) - done
+    print(f"[compact] **{done}本を動かしました。**残り {left}本"
+          + ("（もう一度 --compact --apply を走らせること。割り当ては同じに出ます）"
+             if left else ""))
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="予約中の動画の公開時刻を動かす／外す")
     ap.add_argument("--list", action="store_true", help="予約の一覧を出す（二重予約に印）")
@@ -169,7 +346,25 @@ def main(argv: list[str] | None = None) -> int:
                     help="予約を外す（private のまま残るので、時刻を入れ直せば戻ります）")
     ap.add_argument("--force-window", action="store_true",
                     help="M14 の比較の窓の中へ動かす（**理由を JOURNAL に書くこと**）")
+    ap.add_argument("--compact", action="store_true",
+                    help="予約を前に詰める割り当てを出す（**API 0単位**。撃つには --apply）")
+    ap.add_argument("--apply", action="store_true",
+                    help="--compact の割り当てを実際に撃つ（`videos.update`・1本50単位）")
+    ap.add_argument("--step-min", type=int, default=30, help="--compact の目盛り（分・既定30）")
+    ap.add_argument("--hour", type=int, default=9, help="--compact の1日の始まり（既定9時）")
+    ap.add_argument("--until-hour", type=int, default=21, help="--compact の1日の終わり（既定21時）")
+    ap.add_argument("--max-days", type=int, default=4,
+                    help="--compact で詰める日数（既定4。**全部は詰めません**）")
+    ap.add_argument("--min-days", type=float, default=8.0,
+                    help="詰めた後に残す予約の先（日・既定8）。下回ったら止めます")
+    ap.add_argument("--lead-min", type=int, default=60, help="いまから何分後より先に置くか（既定60）")
+    ap.add_argument("--max", type=int, default=100,
+                    help="1回で撃つ本数の上限（既定100 ＝ 約5,100単位。"
+                         "日枠 10,000 はサムネイル 49件 2,450単位と分け合います）")
     args = ap.parse_args(argv)
+
+    if args.compact:
+        return _compact(args)
 
     if args.move:
         # **API を呼ぶ前に見ること。** 窓の門は認証も枠も要らないので、

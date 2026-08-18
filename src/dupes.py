@@ -575,3 +575,52 @@ def report(videos: list[dict], topics: dict[str, str] | None = None) -> list[dic
           "明記されています。**収益化されなければ収入はゼロ**なので、"
           "見栄えの話ではありません。")
     return issues
+
+
+def retime(video_id: str, at: str | None) -> bool:
+    """控えの1行の `at`（公開予定）を書き換える。**足すのではなく、書き換える。**
+
+    ## なぜ足してはいけないか（2026-08-18）
+
+    `ledger_rows()` は**行を全部返します**。同じ `video_id` の行が2つあると、
+    `batch_build.ledger_minutes()` は**古いほうの時刻も「埋まっている」と読みます。**
+    予約を前に詰める道具（`reschedule.py --compact`）は 251本を動かすので、
+    足す作りだと**251個の幻の埋まり**を残し、次の回が置き場所を失います。
+
+    **控えが上限側の見積りなのは「外した本が残る」からで、
+    それは取り消しに書き戻す口が無かったからです。**ここは口があります ——
+    `videos().update` が通った本だけを書き換えるので、**控えは実物に近づきます。**
+
+    書き換えるのは `at` だけです（`uploaded_at` は投稿した時刻なので動きません）。
+    同じ `video_id` が複数行あれば**全部**書き換えます（そのほうが幻が残らない）。
+
+    返り値は「1行でも書き換えたか」。**書き込みは一時ファイル経由で入れ替えます**
+    （途中で落ちても控えが半分になりません）。
+    """
+    from . import config
+
+    path = config.ROOT / LEDGER
+    if not path.exists():
+        return False
+    lines = path.read_text(encoding="utf-8").splitlines()
+    out, hit = [], False
+    for line in lines:
+        stripped = line.strip()
+        if stripped:
+            try:
+                rec = json.loads(stripped)
+            except Exception:
+                out.append(line)
+                continue
+            if rec.get("video_id") == video_id and rec.get("at") != at:
+                rec["at"] = at
+                out.append(json.dumps(rec, ensure_ascii=False))
+                hit = True
+                continue
+        out.append(line)
+    if not hit:
+        return False
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text("\n".join(out) + "\n", encoding="utf-8")
+    tmp.replace(path)
+    return True
