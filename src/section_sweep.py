@@ -218,13 +218,30 @@ def _sweepable_params(fn: Callable,
 def _axis_fill(param: str) -> float | None:
     """既定値の無い数値の引数に置く代表値。寄せられなければ `None`。
 
-    **正本は `calc_axes.AXIS_FILL`**（2026-08-19 に `pair_sweep` から移した）。
+    **正本は `calc_axes`**（2026-08-19 に `pair_sweep` から移した）。
     ここで写しを持たないこと —— 次に軸を足した回が、片方だけ書きます。
+
+    引くのは3つ。**この順です**（2026-08-19 に足した）:
+
+        `PARAM_FILL`   名前ごとの値。**軸の代表値では桁が合わない引数**
+                       （`estate` を所得の 3,000,000 で埋めると税額が全行 0）
+        `SEMANTIC_AXES` → `AXIS_FILL`   意味の軸の代表値
+        `FILL_ONLY`    **埋めるためだけの語彙**。`axis_of` からは見えないので、
+                       `pair_sweep` の組は増えません（`grade` などの格子のつまみ）
+
+    **`FILL_ONLY` を `SEMANTIC_AXES` に足して済ませないこと。** あちらは
+    表どうしを繋ぐ軸で、つまみを入れると母数だけが膨らみます。
     """
+    for name, value in calc_axes.PARAM_FILL.items():
+        if name == param or name in param:
+            return float(value)
     axis = calc_axes.axis_of(param)
-    if axis is None:
-        return None
-    return calc_axes.AXIS_FILL.get(axis)
+    if axis is not None:
+        return calc_axes.AXIS_FILL.get(axis)
+    for name, value in calc_axes.FILL_ONLY.items():
+        if name == param or name in param:
+            return float(value)
+    return None
 
 
 #: **呼べなかった関数**（表名, 関数名, 埋められなかった引数）。
@@ -1494,7 +1511,10 @@ def report_lines(hits: list[dict], *, top: int = 40) -> list[str]:
         lines.append(f"  [!] **呼べなかった関数 {len(UNCALLABLE)}件**"
                      f"（この一覧には最初から入っていません）。"
                      f"**埋められなかった引数**: {worst}"
-                     f"  → 寄せられる名前なら `calc_axes.SEMANTIC_AXES` に1語足すこと")
+                     f"  → **意味のある量なら `calc_axes.SEMANTIC_AXES`**"
+                     f"（組にも効く）、**格子のつまみなら `calc_axes.FILL_ONLY`**"
+                     f"（埋めるだけ・組は増えない）、"
+                     f"**軸の代表値では桁が合わないなら `calc_axes.PARAM_FILL`**")
     if covered:
         lines.append("  **[既]** は、いまの節がもう言っているもの"
                      "（`status.py` の「新しい M件」はこれを除いた数です）。"

@@ -43,14 +43,23 @@ SEMANTIC_AXES: dict[str, tuple[str, ...]] = {
              "deduction_amount", "resident_tax", "tax", "shunyu", "jikofutan",
              "sou_iryohi", "paid", "reimbursed", "withheld", "total",
              "purchase", "balance", "jogen", "hyoujun", "surcharge", "credit",
-             "hourly", "deduction", "flat"),
+             "hourly", "deduction", "flat",
+             # 2026-08-19 に足した（計器 UNCALLABLE から）。**どちらも金額です** ——
+             # `estate` は相続財産、`base` は課税標準（`tokutei.tax_of` /
+             # `zoyo.tax_of` / `yoteinozei.with_fukko` / `shokibo.income_tax`）。
+             # 寄せていなかったので、この 11関数が掃引から丸ごと落ちていました。
+             "estate", "base"),
     "年齢": ("age", "start_age", "wife_age", "months_from_65", "age_gap_years",
              "birth"),
     "世帯": ("members", "children", "heads", "earners", "setainushi",
              "max_children", "dependents", "kazoku", "spouse", "heirs",
              "people", "claimants"),
     "期間": ("months", "years", "days", "period", "kikan", "fuka_months",
-             "years_since", "start", "end", "duration", "year", "hours"),
+             "years_since", "start", "end", "duration", "year", "hours",
+             # 2026-08-19 に足した。`saishushoku` の所定給付日数と支給残日数＝
+             # **どちらも日数**。7関数がここで落ちていた（`rate_of` は2つとも
+             # 必須なので、**片方だけ足しても戻りません**）。
+             "prescribed", "remaining"),
     "率": ("rate", "social_rate", "rate_max", "percent", "ritsu", "waricho"),
     "面積": ("floor_area", "land_area", "area", "menseki", "km", "distance"),
     # `units` は 2026-08-19 に足した（`kaigo.used_units`）。**寄せられなかった名前**
@@ -80,6 +89,37 @@ AXIS_FILL: dict[str, float] = {
     "面積": 100,
     "回数": 10_000,
     "帯": 44_400,
+}
+
+
+#: **軸の代表値では合わない引数に、名前で置く値**（2026-08-19 に足した）。
+#: `AXIS_FILL` は軸ごとに1つの値しか持てないので、同じ軸でも桁の違う引数は
+#: そこで壊れます —— `estate`（相続財産）を所得の代表値 3,000,000 で埋めると
+#: **基礎控除（3,600万〜）に届かず税額がどの行でも 0** になり、掃引は
+#: 「不変」を返して落とします。**呼べるようになっても、中身が空になる**わけです。
+#: ここに書いた名前は `AXIS_FILL` より**先に**引きます。
+PARAM_FILL: dict[str, float] = {
+    "estate": 100_000_000,     # 1億円。基礎控除を超え、税率の段が何段も乗る
+    "prescribed": 90,          # 所定給付日数の下限（`saishushoku`）
+    "remaining": 45,           # 支給残日数。1/3 と 2/3 の崖のあいだに置く
+}
+
+#: **埋めるためだけの語彙**（2026-08-19 に足した）。
+#:
+#: `SEMANTIC_AXES` には消費者が2つあり、**要求が正反対**でした:
+#:
+#:   `axis_of`（`pair_sweep`）  … 表どうしを繋ぐ意味の軸。
+#:                                **格子のつまみを入れると母数だけ膨らむ**
+#:   `_axis_fill`（`section_sweep`）… 既定値の無い引数に置く値。
+#:                                **寄せられない名前は関数ごと消える**
+#:
+#: 上の docstring は「`step` `points` `grade` はわざと入れていない」と言い、
+#: それは `axis_of` の側では正しいのですが、そのせいで **`grade` を必須に持つ
+#: 8関数が掃引から丸ごと落ちて**いました（`shougai` 5本・`zaishoku` 3本）。
+#: **どちらか一方を選ぶ話ではありません。表を分ければ両方立ちます。**
+#: ここに置いた名前は **`axis_of` からは見えません**（＝組は増えません）。
+FILL_ONLY: dict[str, float] = {
+    "grade": 1,       # 障害等級／標準報酬の等級。どちらも 1 は必ず在る
 }
 
 

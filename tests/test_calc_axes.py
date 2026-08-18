@@ -23,12 +23,24 @@ def test_名前は意味の軸へ寄る(param, axis):
     assert axis_of(param) == axis
 
 
-@pytest.mark.parametrize("param", ["step", "steps", "grade", "point", "base"])
+@pytest.mark.parametrize("param", ["step", "steps", "grade", "point"])
 def test_格子のつまみは軸に入れない(param):
     """`step` は6本の表に出るが、**走査の刻み**であって意味の軸ではない。
 
     ここが軸に入ると、意味の繋がっていない組が母数を膨らませます
     （名前の一致で数えたとき、いちばん多い軸が `step` の15組でした）。
+
+    **`base` は 2026-08-19 にここから外しました。**（消さずに向きを変える）
+    `src/calc/` に出る `base*` は**全部が金額**です ——
+    `shokibo.income_tax` / `tokutei.tax_of` / `zoyo.tax_of` /
+    `yoteinozei.with_fukko` の課税標準、`nenkin.base_annual_man` の基礎年額、
+    `zaishoku.stop_base` の停止基準額。**つまみは1つもありません。**
+    しかも `base_annual_man` は `annual` で**もともと所得へ寄っていた**ので、
+    この行は同じ族を2通りに扱っていました。
+
+    **落とした代償のほうが大きかった** —— `base` が寄らないせいで、
+    既定値の無い `base` を持つ **6関数が掃引から丸ごと消えていました**
+    （計器 `UNCALLABLE` で 2026-08-19 に見えた）。
     """
     assert axis_of(param) is None
 
@@ -97,3 +109,76 @@ def test_軸の共有はふるいになっていない():
     axes, _unmapped = axes_by_calc()
     total = len(axes) * (len(axes) - 1) // 2
     assert len(shared_pairs(axes)) / total > 0.5
+
+
+# --- 埋める語彙と、繋ぐ語彙を分けた（2026-08-19）---------------------------
+#
+# `SEMANTIC_AXES` には消費者が2つあり、要求が正反対でした。
+# `axis_of`（`pair_sweep`）は格子のつまみを入れたくない。
+# `_axis_fill`（`section_sweep`）は寄せられない名前を関数ごと落とす。
+# **どちらか一方を選ぶ話ではなく、表を分ければ両方立ちます。**
+#
+# ここに固定するのは**向き**だけです（件数ではありません）。
+
+def test_grade_は埋められるが組の軸にはならない():
+    """`grade`（障害等級・標準報酬の等級）は**格子のつまみ**。
+
+    埋められないと `shougai` 5本・`zaishoku` 3本が掃引から丸ごと消えます。
+    かといって意味の軸にすると、**等級を持つ表どうしが全部組になり**
+    母数だけが膨らみます（`SEMANTIC_AXES` の docstring がそう言っている）。
+
+    **この検査が赤くなったら、どちらの側が壊れたかを先に見ること。**
+    """
+    from src.section_sweep import _axis_fill
+
+    assert axis_of("grade") is None, "grade が組の軸に入った（母数が膨らむ）"
+    assert _axis_fill("grade") is not None, "grade が埋められない（8関数が消える）"
+
+
+@pytest.mark.parametrize("param,axis", [
+    ("estate", "所得"),       # 相続財産＝金額
+    ("base", "所得"),         # 課税標準＝金額
+    ("prescribed", "期間"),   # 所定給付日数
+    ("remaining", "期間"),    # 支給残日数
+])
+def test_2026_08_19に足した軸(param, axis):
+    assert axis_of(param) == axis
+
+
+def test_estate_は所得の代表値では埋めない():
+    """**呼べるようになっても、中身が空なら意味がありません。**
+
+    `estate` を所得の代表値 3,000,000 で埋めると、基礎控除（3,600万〜）に
+    届かず税額がどの行でも 0 になり、掃引は「不変」で落とします。
+    `PARAM_FILL` は `AXIS_FILL` より先に引くこと。
+    """
+    from src.calc.souzoku import total_tax
+    from src.section_sweep import _axis_fill
+
+    fill = _axis_fill("estate")
+    assert fill is not None
+    assert total_tax(int(fill), heirs=2) > 0, "埋めた額が基礎控除に届いていない"
+
+
+@pytest.mark.parametrize("mod,fname", [
+    ("shougai", "grade_rate"), ("shougai", "kiso"), ("shougai", "nenkin"),
+    ("zaishoku", "total_monthly"), ("zaishoku", "paid"),
+    ("saishushoku", "rate_of"), ("saishushoku", "benefit_days"),
+    ("saishushoku", "cliff_low"),
+    ("souzoku", "total_tax"), ("souzoku", "spouse_relief"),
+    ("tokutei", "tax_of"), ("shokibo", "income_tax"),
+    ("yoteinozei", "with_fukko"),
+])
+def test_呼べるようになった関数(mod, fname):
+    """**消えた側を固定する。** 件数ではなく、名指しで。
+
+    `_enum_axis` の穴（07:3x）も `_sweepable_params` の穴（06:1x）も、
+    「候補が何件出たか」しか見ていなかったので気づけませんでした。
+    **落ちた関数を名前で押さえておけば、次に同じ形で消えたとき赤くなります。**
+    """
+    import importlib
+
+    from src.section_sweep import unreachable
+
+    fn = getattr(importlib.import_module(f"src.calc.{mod}"), fname)
+    assert unreachable(fn) == "", f"{mod}.{fname} が掃引から落ちている"

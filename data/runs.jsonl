@@ -475,3 +475,4 @@
 {"at": "2026-08-19T07:35:29+09:00", "session": "session_01Eag5kdTppTPdNPbTnNSZQW", "kind": "start"}
 {"at": "2026-08-19T07:53:03+09:00", "session": "session_01Eag5kdTppTPdNPbTnNSZQW", "kind": "ship", "what": "upload: 9本を 08/22 09:30〜13:30 JST に予約（薄い日1本→10本・9/9成功）"}
 {"at": "2026-08-19T07:53:03+09:00", "session": "session_01Eag5kdTppTPdNPbTnNSZQW", "kind": "ship", "what": "fix: section_sweep が既定値の無い引数で降りていた——埋めてから呼ぶ。候補 308→724件・表 39→50本。あわせて『呼べなかった関数』の計器を足した（72件）"}
+{"at": "2026-08-19T08:15:00+09:00", "session": "session_01J5oqPfAhuoygM9WTfuLfPW", "kind": "start"}
