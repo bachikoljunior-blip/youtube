@@ -446,3 +446,4 @@
 {"at": "2026-08-19T00:07:48+09:00", "session": "session_01Ae3eDnbGRGSV2d9Weyp2WQ", "kind": "ship", "what": "fix+means(B): souzoku の best_ratio が粗い格子で最小を外していた（最大109.8万円）。1%きざみへ＋節1つ"}
 {"at": "2026-08-19T00:24:07+09:00", "session": "session_01W9Dty6ZrUtQmfoadcjTFdp", "kind": "start"}
 {"at": "2026-08-19T00:25:54+09:00", "session": "session_01W9Dty6ZrUtQmfoadcjTFdp", "kind": "seen", "saw": "session_0123B3jr7v3kfgnKrhicipET", "why": "題名は既定のまま＝§6(d)に届いていない。前の回が source_url 無しで立てて30秒で畳んだ子（申し送りに記載済み）"}
+{"at": "2026-08-19T00:31:36+09:00", "session": "session_01W9Dty6ZrUtQmfoadcjTFdp", "kind": "ship", "what": "fix×2+means(B)×2: keihi の山は幅1円で格子の上に1つも乗っていなかった（peak は10万円きざみの max・cliff はその複製）。1,390,200円/25,176円 対 格子の1,400,000円/24,475円＝701円低い。1円で22,980円跳ぶ。節2本・テーマ411→413。未投稿テーマの誤った主役数字を投稿前に差し替え"}
