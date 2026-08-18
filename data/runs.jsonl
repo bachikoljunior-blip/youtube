@@ -452,3 +452,4 @@
 {"at": "2026-08-19T03:33:45+09:00", "session": "session_01PmMmDe3Es8Tn1wiEJYWytL", "kind": "ship", "what": "fix: topic_forge.numbers() が 万 の後ろで隣の語の数字を吸い、千 を読まなかった（2000万 1日→20,000,001／431万8千→4,310,008）。413件中8件の数が変わり8件とも新しい側が正しい。+検査6件"}
 {"at": "2026-08-19T03:33:59+09:00", "session": "session_01PmMmDe3Es8Tn1wiEJYWytL", "kind": "ship", "what": "verdict: 申し送りの「残る刻み候補 tsukin.per_km_extremes」は欠陥ではない（法定の帯の端点で、帯内は単調。EDGE_EPS を1e-9〜0.1で振っても極値の位置は動かず値は4桁目以降のみ）。刻みの候補は尽きた"}
 {"at": "2026-08-19T03:33:59+09:00", "session": "session_01PmMmDe3Es8Tn1wiEJYWytL", "kind": "ship", "what": "fix: 予約済み2本（E5i0YfIkmnA / KPGuqj5v1Qs）が souzoku の粗い格子の答えを「いちばん安い」と言っていることを確認。日枠切れで外せないため受け取り帳 556dd42d に落とし、config/topics.yaml の2件を正しい数字と言い方へ直した"}
+{"at": "2026-08-19T03:49:02+09:00", "session": "session_01PmMmDe3Es8Tn1wiEJYWytL", "kind": "ship", "what": "fix/道具: scripts/stale_scheduled.py 新設 —— 予約本の題の主役の数字が、いまの calc の表に在るか。足す前に3通り測り、精密な数だけに絞る形で当たり率 1/1（246本中）"}
