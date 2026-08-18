@@ -441,3 +441,4 @@
 {"at": "2026-08-18T23:10:09+09:00", "session": "session_01X5dUGmYKAoHw3E3htcazps", "kind": "ship", "what": "fix: premiums() が率を float のまま int() で切り捨てており、呼ぶ側が率を足して渡すと1円消えていた（0.0915+0.01 が 0.10149999999999999）。率を小数第6位で丸めてから Fraction に。既定の3率では 58,000〜1,400,000 の全域で変化0件。あわせて net_month が premiums へ率を渡していなかった口も塞いだ"}
 {"at": "2026-08-18T23:18:29+09:00", "session": "session_01X5dUGmYKAoHw3E3htcazps", "kind": "ship", "what": "fix: 閉じた語が別物として立ち直ったときに実データ検査が落ちる（ASSUMPTIONS）。nenkin と同じ扱いへ移し、宣言前10件が黙ることで見る形にした"}
 {"at": "2026-08-18T23:25:17+09:00", "session": "session_01X5dUGmYKAoHw3E3htcazps", "kind": "ship", "what": "fix/道具: src/arg_gaps.py 新設 —— 節から届く道が無い引数を73件/表25本。掃引は呼べない軸が視野の外、premise は印字されない引数しか見ない。絞りは3段（281→210→73件）で測ってから採った"}
+{"at": "2026-08-18T23:52:16+09:00", "session": "session_01Ae3eDnbGRGSV2d9Weyp2WQ", "kind": "ship", "what": "means(B): zaishoku 5→8節（賞与の回数・納付月数・平均の目減り率）／テーマ406→409"}
