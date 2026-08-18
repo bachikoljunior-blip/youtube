@@ -229,6 +229,21 @@
     ],
     "video_id": ""
   },
+  "s-aoiro-65man-jigyouzei-zero": {
+    "charts": [
+      [
+        "288,024円",
+        "222,680円",
+        "213,797円"
+      ],
+      [
+        "105,000円",
+        "105,000円",
+        "105,000円"
+      ]
+    ],
+    "video_id": "nNt2_3fiWzE"
+  },
   "s-fuka-200yen-45nen-jishitsu-82en": {
     "charts": [
       [
@@ -668,6 +683,15 @@
     ],
     "video_id": "Tvm988Z4aHc"
   },
+  "s-invoice-3nen-uriage-hi": {
+    "charts": [
+      [
+        "144万円",
+        "48万円"
+      ]
+    ],
+    "video_id": "JpTJlmJBDm0"
+  },
   "s-invoice-bunkiten-80": {
     "charts": [
       [
@@ -678,6 +702,19 @@
       ]
     ],
     "video_id": "ZMCObTcW5FM"
+  },
+  "s-invoice-hachiraba-1ten": {
+    "charts": [
+      [
+        "90%",
+        "80%",
+        "70%",
+        "60%",
+        "50%",
+        "40%"
+      ]
+    ],
+    "video_id": "yy7wFYJOz88"
   },
   "s-iryohi-1": {
     "charts": [
@@ -2454,6 +2491,22 @@
     ],
     "video_id": "pS18Gr3lyvU"
   },
+  "s-rousai-taiki-sa-365nichi": {
+    "charts": [
+      [
+        "6.00ポイント",
+        "3.00ポイント",
+        "2.00ポイント",
+        "1.00ポイント",
+        "0.49ポイント"
+      ],
+      [
+        "79.83%",
+        "79.33%"
+      ]
+    ],
+    "video_id": "s20h15d9GtA"
+  },
   "s-saishushoku-330-66-nichibun": {
     "charts": [
       [
@@ -2577,6 +2630,24 @@
       ]
     ],
     "video_id": "jFYrezqN0C4"
+  },
+  "s-seimeihoken-24000-zure": {
+    "charts": [
+      [
+        "56,000円",
+        "80,000円"
+      ]
+    ],
+    "video_id": "oWGs84pIHWg"
+  },
+  "s-seimeihoken-jumin-hamidashi": {
+    "charts": [
+      [
+        "4万円",
+        "2万8千円"
+      ]
+    ],
+    "video_id": "kf798uLNh7E"
   },
   "s-seimeihoken-tedori-6dan": {
     "charts": [
@@ -2975,6 +3046,20 @@
     ],
     "video_id": "KdlvGxloIg4"
   },
+  "s-shokibo-zetsuzei-ritsu-3-67": {
+    "charts": [
+      [
+        "12万6000円",
+        "25万2000円",
+        "46万2000円"
+      ],
+      [
+        "71万4000円",
+        "37万7999円"
+      ]
+    ],
+    "video_id": "LiUDEzA2cFk"
+  },
   "s-shougai-1-25bai-kazoku": {
     "charts": [
       [
@@ -3272,6 +3357,30 @@
       ]
     ],
     "video_id": "-Vel9pFFX7E"
+  },
+  "s-tsukin-densha-mycar-475": {
+    "charts": [
+      [
+        "15万円",
+        "3万1600円"
+      ],
+      [
+        "4,200円",
+        "12,900円",
+        "24,400円",
+        "31,600円"
+      ]
+    ],
+    "video_id": "dLDoFEVHn5s"
+  },
+  "s-tsukin-hoshu-11-58": {
+    "charts": [
+      [
+        "200,000円",
+        "240,000円"
+      ]
+    ],
+    "video_id": "to_gWbvDhrU"
   },
   "s-tsukin-per-km-5x": {
     "charts": [

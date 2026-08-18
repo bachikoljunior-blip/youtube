@@ -341,16 +341,31 @@ def test_novel_counts_は拾えた数と新しい数を両方返す():
     assert novel == {"t": 1}
 
 
-def test_実物で_ideco_の3件は全部既出():
-    """**前の回が手で確かめた1件**（申し送り）。ここが緑でなければ直しは効いていません。"""
+def test_実物で_ideco_は既定値の無い引数を埋めてから掃引される():
+    """**この検査は 2026-08-19 07:5x に書き換えました。消していません。**
+
+    元は `total["ideco"] == 3` / `novel["ideco"] == 0` で、
+    「前の回が手で確かめた3件は全部既出」を固定していました。**その3件は、
+    掃引が `ideco` の関数の大半を呼べていなかったときの数**です ——
+    `_enum_axis` が候補を「その引数だけ」で呼び、`_sweepable_params` が
+    既定値の無い引数で降りていたので、**引数の多い関数が丸ごと消えていました。**
+
+    埋めるようにしたら **3 → 21件**になり、うち **18件は節が言っていません。**
+    **「既出0件」は表が尽きた証拠ではなく、表がほとんど見えていなかった証拠**でした。
+
+    だから固定し直すのは件数ではなく**向き**です:
+
+    - 候補は、前に見えていた3件より**確かに多い**（呼べるようになった）
+    - `novel_counts` は**全部を新しいとは言わない**（既出の判定は生きている）
+    """
     import sys
     sys.path.insert(0, "scripts")
     import topic_forge as tf
 
     all_sections, _, _ = tf.survey()
     total, novel = ss.novel_counts(ss.sweep_all(["ideco"]), all_sections)
-    assert total["ideco"] == 3, total
-    assert novel["ideco"] == 0, novel
+    assert total["ideco"] > 3, total
+    assert 0 < novel["ideco"] < total["ideco"], (total, novel)
 
 
 def test_実物で_新しい候補が全部は消えていない():

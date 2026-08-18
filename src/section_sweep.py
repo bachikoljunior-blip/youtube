@@ -64,6 +64,8 @@ from pathlib import Path
 from statistics import median
 from typing import Any, Callable, Iterable
 
+from src import calc_axes
+
 # 掃引で使う点の数。**増やすほど遅くなり、形の出方は変わりません**（実測 9 で十分）
 GRID = 9
 # 崖と呼ぶ段差。**中央の段差の何倍か**。5倍は 2026-08-17 に実物で合わせた値で、
@@ -202,11 +204,55 @@ def _sweepable_params(fn: Callable,
         if name in skip:
             continue
         if p.default is inspect.Parameter.empty:
-            return []          # 既定値の無い引数があると、そのまま呼べない
+            fill = _axis_fill(name)
+            if fill is None:
+                return []      # 埋めようのない引数は、そのまま呼べない
+            out.append((name, fill))
+            continue
         if isinstance(p.default, bool) or not isinstance(p.default, (int, float)):
             continue
         out.append((name, float(p.default)))
     return out
+
+
+def _axis_fill(param: str) -> float | None:
+    """既定値の無い数値の引数に置く代表値。寄せられなければ `None`。
+
+    **正本は `calc_axes.AXIS_FILL`**（2026-08-19 に `pair_sweep` から移した）。
+    ここで写しを持たないこと —— 次に軸を足した回が、片方だけ書きます。
+    """
+    axis = calc_axes.axis_of(param)
+    if axis is None:
+        return None
+    return calc_axes.AXIS_FILL.get(axis)
+
+
+#: **呼べなかった関数**（表名, 関数名, 埋められなかった引数）。
+#: `sweep_all` が回すたびに積み直します。**計器です** ——
+#: この族は3回続けて「呼べる形が狭くて、いちばん深い表が丸ごと消える」で
+#: 穴を出しました（08/18 14:1x の部分集合・08/19 06:1x の `_sweepable_params`・
+#: 08/19 07:1x の `_enum_axis`）。**どれも「候補が何件出たか」しか出ないので、
+#: 消えたことに気づけませんでした。** 件数が出ていれば、3回とも最初に見えます。
+UNCALLABLE: list[tuple[str, str, str]] = []
+
+
+def unreachable(fn: Callable, *, calc: str = "", name: str = "") -> str:
+    """`fn` を掃引できない理由（引数名）。掃引できるなら空文字。
+
+    見るのは1点だけ —— **既定値が無く、数え上げにも意味の軸にも寄らない引数**。
+    そこが1つでもあれば、この関数はどう呼んでも落ちます。
+    """
+    try:
+        sig = inspect.signature(fn)
+    except (TypeError, ValueError):
+        return "(signature)"
+    enums = {pn for pn, _ in _enum_params(fn)}
+    for pname, p in sig.parameters.items():
+        if pname in enums or p.default is not inspect.Parameter.empty:
+            continue
+        if _axis_fill(pname) is None:
+            return pname
+    return ""
 
 
 #: 数え上げの軸として振る候補の、要素数の上限。**これより多い並びは軸ではなく
@@ -277,6 +323,41 @@ def _names_of(items: list) -> list[str] | None:
     return None
 
 
+def _required_others(fn: Callable, pname: str) -> dict[str, Any] | None:
+    """`pname` 以外の**既定値の無い引数**を埋めた辞書。埋まらなければ `None`。
+
+    ## なぜ要るか（2026-08-19 07:3x に足した。**この族の穴の4件目**）
+
+    `_enum_axis` は候補を `fn(**{pname: e})` と、**その引数だけで**呼んで
+    試していました。**他にも必須の引数がある関数では、必ず TypeError です**:
+
+        kogaku.limit(name, cost)                  → limit(name='ウ') は落ちる
+        kaigo.pay(level, used_units, rate, cap=…) → pay(level='要介護3') も落ちる
+
+    落ちると数え上げの軸が見つからず、`_sweepable_params` も `skip` が空のまま
+    必須引数に当たるので、**この2本は掃引から丸ごと消えていました。**
+    そしてその2本が、`gassan`（7節）の元になった表です ——
+    **いちばん深い表ほど、引数が多くて消えやすい**という向きの穴です。
+
+    `pair_sweep._enum_with` が同じ穴を先に塞いでいます（08/19 06:5x）。
+    **あちらは `sweep` の軸を一緒に渡す形なので、そのままは持ってこられません。**
+    共通なのは埋め方（`calc_axes.AXIS_FILL`）のほうなので、そちらを正本にしました。
+    """
+    try:
+        sig = inspect.signature(fn)
+    except (TypeError, ValueError):
+        return None
+    out: dict[str, Any] = {}
+    for name, p in sig.parameters.items():
+        if name == pname or p.default is not inspect.Parameter.empty:
+            continue
+        fill = _axis_fill(name)
+        if fill is None:
+            return None        # 文字列の場合分けが2つある形。まだ見ていない
+        out[name] = fill
+    return out
+
+
 def _enum_axis(fn: Callable, pname: str, default: Any) -> list[str]:
     """`pname` を**数え上げの軸**として振れるなら、その並びを返す。
 
@@ -307,6 +388,9 @@ def _enum_axis(fn: Callable, pname: str, default: Any) -> list[str]:
     conts = _enum_containers(fn)
     if not conts:
         return []
+    rest = _required_others(fn, pname)
+    if rest is None:
+        return []
     if isinstance(default, str):
         conts.sort(key=lambda kv: default not in kv[1])
     passed: list[list[str]] = []
@@ -315,7 +399,7 @@ def _enum_axis(fn: Callable, pname: str, default: Any) -> list[str]:
         for e in items:
             try:
                 with contextlib.redirect_stdout(io.StringIO()):
-                    value = fn(**{pname: e})
+                    value = fn(**{pname: e}, **rest)
             except Exception:
                 ok = False
                 break
@@ -571,6 +655,11 @@ def sweep_function(fn: Callable, *, name: str = "") -> list[dict]:
     base = {pn: items[0] for pn, items in enums}
     params = _sweepable_params(fn, skip=base)
     defaults = [d for _, d in params]
+    # **振っていない引数にも値を渡すこと**（2026-08-19）。`params` には
+    # 既定値の無い引数（`kogaku.limit(cost)` など）が入るようになったので、
+    # 「渡さなければ既定値が入る」がもう成り立ちません。同じ値を明示的に
+    # 渡すだけなので、既定値のある引数にとっては何も変わりません。
+    base = {**{pn: d for pn, d in params}, **base}
 
     # **先に全部の引数を掃引します**（`table_constants` が横に並べて見るため）。
     swept: list[tuple[str, list[float], list[dict]]] = []
@@ -578,7 +667,7 @@ def sweep_function(fn: Callable, *, name: str = "") -> list[dict]:
         xs, rows = [], []
         for x in _grid(default):
             try:
-                value = fn(**base, **{pname: _cast(default, x)})
+                value = fn(**{**base, pname: _cast(default, x)})
             except Exception:
                 continue
             scal = _scalars(value)
@@ -889,6 +978,10 @@ def sweep_enums(fn: Callable, *, name: str = "") -> list[dict]:
     for pname, items in enums:
         # 他の数え上げの軸は、先頭で固定する（1度に1つだけ動かす）
         base = {pn: v[0] for pn, v in enums if pn != pname}
+        rest = _required_others(fn, pname)
+        if rest is None:
+            continue
+        base = {**rest, **base}
         rows: list[dict] = []
         labels: list[str] = []
         for e in items:
@@ -943,6 +1036,9 @@ def sweep_calc(name: str) -> list[dict]:
             continue
         if not inspect.isfunction(fn):
             continue
+        why = unreachable(fn)
+        if why:
+            UNCALLABLE.append((name, fname, why))
         # **掃引中は stdout を捨てる。**表の中には説明を print する関数があり、
         # そのまま流すと候補の一覧が本文で埋まります（2026-08-17 に踏んだ）
         with contextlib.redirect_stdout(io.StringIO()):
@@ -956,6 +1052,7 @@ def sweep_calc(name: str) -> list[dict]:
 
 def sweep_all(names: Iterable[str] | None = None) -> list[dict]:
     out = []
+    UNCALLABLE.clear()
     for name in (names if names is not None else calc_modules()):
         try:
             out.extend(sweep_calc(name))
@@ -1384,6 +1481,20 @@ def report_lines(hits: list[dict], *, top: int = 40) -> list[str]:
     lines = [head,
              "  **候補です。節ではありません。**意味と正しさは人が決めること"
              "（数字の出どころにしない）。"]
+    if UNCALLABLE:
+        # **消えた側を出す**（2026-08-19 07:3x に足した）。この一覧は長らく
+        # 「拾えた件数」しか言わず、**呼べずに丸ごと落ちた関数は無音**でした。
+        # そのせいで同じ穴を3回踏んでいます（部分集合・`_sweepable_params`・
+        # `_enum_axis`）。**件数が出ていれば、3回とも最初に見えます。**
+        by_arg: dict[str, int] = {}
+        for _c, _f, why in UNCALLABLE:
+            by_arg[why] = by_arg.get(why, 0) + 1
+        worst = ", ".join(f"{a}({n})" for a, n
+                          in sorted(by_arg.items(), key=lambda kv: -kv[1])[:6])
+        lines.append(f"  [!] **呼べなかった関数 {len(UNCALLABLE)}件**"
+                     f"（この一覧には最初から入っていません）。"
+                     f"**埋められなかった引数**: {worst}"
+                     f"  → 寄せられる名前なら `calc_axes.SEMANTIC_AXES` に1語足すこと")
     if covered:
         lines.append("  **[既]** は、いまの節がもう言っているもの"
                      "（`status.py` の「新しい M件」はこれを除いた数です）。"
