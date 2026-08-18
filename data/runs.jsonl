@@ -428,3 +428,4 @@
 {"at": "2026-08-18T20:53:17+09:00", "session": "session_011yWmSMgStWbUpfFJpR6BqQ", "kind": "start"}
 {"at": "2026-08-18T21:00:42+09:00", "session": "session_011yWmSMgStWbUpfFJpR6BqQ", "kind": "ship", "what": "fix: numbers_backed が落ちるとき、表の側の「丸めた元の数」を候補で出す（5.36 → 5.3554）。当たり率 2,761/2,840＝97.2%"}
 {"at": "2026-08-18T21:06:19+09:00", "session": "session_011yWmSMgStWbUpfFJpR6BqQ", "kind": "ship", "what": "means(B): ikuji に2節（賞与のある人の実質手取り比・181日目の崖の月給べつ）＝節358→360、テーマ389→393"}
+{"at": "2026-08-18T21:16:36+09:00", "session": "session_011yWmSMgStWbUpfFJpR6BqQ", "kind": "ship", "what": "means(B) 2本目: jidou に1節（1人あたりの総額は 6,480,000円 に永久に届かない）＋この表に初めての検査ファイル。節360→361、テーマ→394"}

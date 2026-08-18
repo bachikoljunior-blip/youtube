@@ -25,6 +25,10 @@
   3人きょうだいの世帯月額は 60,000円 → 50,000円 と、**10,000円しか下がりません**
 - 総額は 第1子 **2,340,000円** に対し 3人目 **6,480,000円** で **2.77倍**。
   「3人目は2倍」ではありません
+- **1人あたりの総額は、何人産んでも 6,480,000円 には届きません**（2026-08-18 に足した節）。
+  3人目から先は**1人増やすたびに必ず 6,480,000円**が足されるのに、
+  1人あたりは 3人で **3,720,000円**、5人で **4,824,000円**、8人で **5,445,000円** と
+  **上から近づくだけ**です。第1子・第2子の 2,340,000円 を2人ぶん引きずるから
 """
 from __future__ import annotations
 
@@ -189,6 +193,39 @@ def order_table() -> list[dict]:
     return rows
 
 
+def household_total(children: int) -> int:
+    """きょうだい `children` 人の世帯が、生涯で受け取る合計。
+
+    **順位は最後まで変わらない前提**（年齢差による取りこぼしは別の表）。
+    第1子と第2子は同額なので、3人目から先だけが `THIRD_ON` の側に乗ります。
+    """
+    if children <= 0:
+        return 0
+    if children <= 2:
+        return total_for(1) * children
+    return total_for(1) * 2 + total_for(3) * (children - 2)
+
+
+def per_child_table(counts: tuple[int, ...] = (1, 2, 3, 4, 5, 6, 7, 8)) -> list[dict]:
+    """**1人あたりの総額は、何人産んでも第3子の総額には届かない。**
+
+    増える額は3人目から先ずっと `total_for(3)` で**一定**なのに、
+    1人あたりは 第1子ぶん2人を割り算に引きずるので、**上から近づくだけ**です
+    （漸近線 ＝ 第3子1人ぶんの総額）。
+    """
+    check_tables()
+    rows = []
+    prev = None
+    for n in counts:
+        total = household_total(n)
+        rows.append({"人数": n, "世帯の総額": total,
+                     "1人あたり": total // n,
+                     "1人増やしたときの増分": None if prev is None else total - prev,
+                     "漸近線との差": total_for(3) - total // n})
+        prev = total
+    return rows
+
+
 def grid() -> list[dict]:
     """図解の元になる表。**年齢差の表がこの計算の主題です。**"""
     return gap_table()
@@ -260,7 +297,28 @@ def check_tables() -> None:
                     "3人目が1人目の2.9倍以上（2.77倍のはず）")
     _checks.unique_by(gap_table(), lambda r: r["年齢差"], "年齢差の表")
 
+    # (e) 1人あたり（2026-08-18 に足した節の主題）
+    _check_per_child()
+
     _checks.assumption_values(ASSUMPTIONS, name="jidou")
+
+
+def _check_per_child() -> None:
+    """**足した節の主題そのもの**（2026-08-18）。壊したらここで落ちる。"""
+    # 1人増やしたときの増分は、3人目から先ずっと同じ
+    steps = [household_total(n + 1) - household_total(n) for n in range(3, 12)]
+    if len(set(steps)) != 1 or steps[0] != total_for(3):
+        raise _checks.TableError(
+            f"3人目から先の増分が一定でない: {sorted(set(steps))}")
+    # それでも1人あたりは第3子1人ぶんに届かない（上から近づくだけ）
+    for n in (3, 5, 10, 50, 200):
+        per = household_total(n) // n
+        if per >= total_for(3):
+            raise _checks.TableError(
+                f"{n}人で1人あたりが第3子の総額に届いてしまった: {per:,}円")
+    # 近づく向きであること（人数が増えるほど1人あたりは増える）
+    _checks.increases_with(lambda n: household_total(n) // n, [2, 3, 4, 5, 10],
+                           "人数を増やしたのに1人あたりが増えていない")
 
 
 def main() -> None:
@@ -317,6 +375,19 @@ def main() -> None:
     print(f"  → 段差は**第1子・第2子の{UNDER3_1_2 - OVER3_1_2:,}円ぶんだけ**です。"
           "3人きょうだいでも4人きょうだいでも段差は同じ10,000円で、"
           "**3人目から先を何人足しても増えません**")
+
+    print("\n=== 1人あたりの総額は、何人産んでも第3子1人ぶんには届かない ===")
+    print(f"{'人数':>6s} {'世帯の総額':>12s} {'1人あたり':>11s} "
+          f"{'1人増やした増分':>13s}  {'漸近線との差'}")
+    for r in per_child_table():
+        step = "—" if r["1人増やしたときの増分"] is None \
+            else f"{r['1人増やしたときの増分']:,}円"
+        print(f"{r['人数']:5d}人 {r['世帯の総額']:11,d}円 {r['1人あたり']:10,d}円 "
+              f"{step:>13s}  {r['漸近線との差']:,}円")
+    print(f"  → 3人目から先は**1人増やすたびに必ず {total_for(3):,}円**が足されます。"
+          f"それでも1人あたりは、第1子・第2子の {total_for(1):,}円を2人ぶん"
+          f"引きずるので、**{total_for(3):,}円には永久に届きません**"
+          "（上から近づくだけ）")
 
     print("\n=== 順位ごとの総額（3人目は1人目の2倍ではない）===")
     for r in order_table():
