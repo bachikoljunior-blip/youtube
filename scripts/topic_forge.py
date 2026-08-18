@@ -203,14 +203,37 @@ YouTube ショート（縦・30秒前後）の企画を {n} 件つくります�
 
 
 def build_prompt(picked: list[tuple[str, str]], all_sections, topics) -> str:
+    """割り当てた節ごとに、表と **「主役にしてはいけない金額」** を貼る。
+
+    後者は 2026-08-18 に足しました。**同じ calc で既に題に出した金額**を
+    もう一度主役にすると、`upload_only.py` の門（`dupes.blocking` の
+    `same-yen`）が**必ず**止めます。止まった本は捨てになり、
+    **その節は使用済みのまま二度と戻りません。**
+
+    実測（この回。未投稿125件を実際に門へ通した）: **4件が該当**。
+    4件とも節そのものは新しく、**題の主役に選んだ数だけが既出**でした ——
+
+        s-jidou-hitori-atari-6480000-todokanai  6,480,000円
+          ← `児童手当 第3子は648万円 第1子の2.77倍`（09/14 予約）と同じ数
+
+    **表には他にも数字があります。** 塞ぐのは節ではなく、数の選び方です。
+    """
+    from src import dupes
+
     seen = "\n".join(f"  - {t['title_seed']}" for t in topics)
     parts = [PROMPT_HEAD.format(n=len(picked), seen=seen)]
+    used = dupes.used_amounts({t["id"]: t.get("calc", "") for t in topics})
     for i, (mod, head) in enumerate(picked, 1):
         body = all_sections[mod][head]
-        parts.append(
-            f"\n--- {i} 件目 / calc={mod} / 節={head}\n"
-            f"この節の表（**ここに無い数字は使わない**）:\n```\n{body[:2400]}\n```\n"
-        )
+        block = (f"\n--- {i} 件目 / calc={mod} / 節={head}\n"
+                 f"この節の表（**ここに無い数字は使わない**）:\n```\n{body[:2400]}\n```\n")
+        taken = used.get(mod, [])
+        if taken:
+            shown = "・".join(f"{int(v):,}円" for v in taken[:12])
+            block += (f"**この calc で既に題に出した金額**: {shown}\n"
+                      f"→ **この数を title_seed の主役に選ばないこと。**"
+                      f"投稿の門が必ず止めます（表の別の数字を使う）\n")
+        parts.append(block)
     return "\n".join(parts)
 
 
@@ -656,6 +679,36 @@ def validate(forged: ForgedSet, picked, all_sections,
     return rows, dropped
 
 
+def drop_doomed(rows: list[dict], topics: list[dict]) -> tuple[list[dict], list[str]]:
+    """**投稿の門が必ず止める種を、`topics.yaml` に書く前に外す**（2026-08-18）。
+
+    `scripts/batch_build._drop_doomed` は同じことを**作る前**にやっていますが、
+    そちらは**もう `topics.yaml` に入ってしまったもの**を毎回よけるだけです。
+    **よけられたテーマは節を握ったまま残る**ので（`survey()` の `claimed`）、
+    **その節は二度と割り当てられません。** 実測: 未投稿125件のうち4件がこれで、
+    **4件とも節は新しく、題の主役に選んだ数だけが既出**でした。
+
+    ここで落とせば、`topics.yaml` に1行も書かないので**節は未使用のまま残り**、
+    次の回が同じ節を別の数字で書き直せます。
+
+    **同じ回の中で作った2件どうしの衝突は見ません**（控えにまだ載っていないため）。
+    そこは門が受けます。**節がぶつかるほうは `realign()` が既に落としています。**
+    """
+    from src import dupes
+
+    calc_of = {t["id"]: t.get("calc", "") for t in topics}
+    calc_of.update({r["id"]: r.get("calc", "") for r in rows})
+    kept, dropped = [], []
+    for r in rows:
+        hits = dupes.blocking(r["title_seed"], r["id"], [], calc_of)
+        if hits:
+            dropped.append(f"{r['id']}: **投稿の門が必ず止めます** — {hits[0]['why']}"
+                           f"（節は未使用のまま残すので、次の回が別の数字で書けます）")
+        else:
+            kept.append(r)
+    return kept, dropped
+
+
 def to_yaml(rows: list[dict]) -> str:
     out = []
     for r in rows:
@@ -717,6 +770,8 @@ def main() -> int:
     print("\n[forge] 書かせています…")
     forged, _ = ask(ForgedSet, prompt, model=args.model)
     rows, dropped = validate(forged, picked, all_sections, known_ids)
+    rows, doomed = drop_doomed(rows, topics)
+    dropped += doomed
 
     # **黙って減らさないこと**（`docs/trigger_main.md`「no silent caps」）。
     # 落ちた件を出さないと、`--count 4` で2件しか増えなかったときに

@@ -141,3 +141,46 @@ def test_月給に対する率は6割に届かない():
     """暦日で割ってから労働日だけ払うので、**26条の6割は月給の6割ではありません。**"""
     for row in kyugyo.ratio_to_monthly():
         assert row["月給に対する率"] < kyugyo.KYUGYO_RATE
+
+
+# ------------------------------------------- jikangai の原則側（2026-08-18 に足した）
+
+def test_月45時間を12か月続けると原則の年上限を180時間こえる():
+    """**この節の主題。** 「月45時間・年360時間」は並べて説明されますが、
+    12か月ぶん置くと540時間で、年の上限を180時間こえます。
+    """
+    grid = {r["45時間の月数"]: r for r in jikangai.plain_year_grid()}
+    assert grid[12]["年の合計"] == 540
+    assert grid[12]["年360時間との差"] == 180
+    assert grid[12]["通るか"] is False
+
+
+def test_原則で45時間を置けるのは8か月まで():
+    """8か月ちょうどで年360時間。**9か月目で必ず落ちます。**"""
+    grid = {r["45時間の月数"]: r for r in jikangai.plain_year_grid()}
+    assert grid[8]["年の合計"] == jikangai.LIMIT_YEAR_PLAIN
+    assert grid[8]["通るか"] is True
+    assert grid[9]["通るか"] is False
+
+
+def test_月の上限と年ならしは同じ倍率で伸びない():
+    """月の上限は 45→99 で 2.2倍。**年ならしは 30→60 の 2.0倍どまり。**"""
+    v = jikangai.plain_vs_special()
+    assert v["月上限の倍率"] == pytest.approx(2.2)
+    assert v["月ならしの倍率"] == pytest.approx(2.0)
+    assert v["原則の月ならし"] == pytest.approx(30.0)
+    assert v["特別条項の月ならし"] == pytest.approx(60.0)
+    assert v["月上限の倍率"] > v["月ならしの倍率"]
+
+
+def test_原則の年上限を書き換えると落ちる(monkeypatch):
+    """**故障注入。** 360 を写し間違えると、この節の数字は全部ずれます。"""
+    monkeypatch.setattr(jikangai, "LIMIT_YEAR_PLAIN", 480)
+    with pytest.raises(_checks.TableError):
+        jikangai.check_tables()
+
+
+def test_原則の月ならしが月の上限の3分の2であること():
+    """30 ÷ 45 ＝ 66.6667%。**「月45時間まで」と読むと1.5倍に見積もります。**"""
+    v = jikangai.plain_vs_special()
+    assert v["原則の月ならしが月上限に占める割合"] == pytest.approx(2 / 3)

@@ -414,6 +414,35 @@ def why_stranded(video: dict, videos: list[dict],
     return {"kind": it["kind"], "why": it["why"], "other": other}
 
 
+def used_amounts(topics: dict[str, str] | None = None) -> dict[str, list[float]]:
+    """calc ごとに、**もう題に出してしまった金額**を返す（2026-08-18 に足した）。
+
+    `blocking()` は「作った1本」を止めます。**止めるのは正しいのですが、
+    そこまでに作る費用は全部払ったあと**です。この関数は同じ判定の材料を
+    **作る前**に渡すためのもので、`scripts/topic_forge.py` が題を書かせる
+    プロンプトに「この数を主役にするな」と貼ります。
+
+    出すのは `same-yen`（強い重なり）が実際に見る数だけです:
+
+    - `_yen()` が金額とみなしたもの（`円` が付いていないものも入る）
+    - **丸い数は外す。** `sigdigits <= ROUND_SIGDIGITS` は制度の名前でしかなく
+      （`20万円ルール`）、それ1つでは `find()` も止めません
+
+    **これは門ではありません。** 門は `blocking()` の側で、こちらを
+    すり抜けた種はそちらが受けます（台本が別の数字を主役にした場合など）。
+    """
+    rows = ledger_rows(topics)
+    out: dict[str, set[float]] = defaultdict(set)
+    for r in rows:
+        calc = r.get("calc") or ""
+        if not calc:
+            continue
+        for v in _yen(r["title"]):
+            if sigdigits(v) > ROUND_SIGDIGITS:
+                out[calc].add(v)
+    return {k: sorted(v) for k, v in sorted(out.items())}
+
+
 def blocking(title: str, topic_id: str, videos: list[dict],
              topics: dict[str, str] | None = None) -> list[dict]:
     """**投稿の直前に呼ぶ。** これから上げる1本が、既にある本と強く重なるか。
