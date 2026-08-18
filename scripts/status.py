@@ -784,6 +784,12 @@ def print_topic_stock() -> None:
         n_free = sum(len(v) for v in free.values())
         got = batch_build.pick(8, [])
         n_pick = len(got)
+        # **天井のほうも出すこと**（2026-08-18 12:3x に足した。**測って 2.0秒**）。
+        # `pick(8)` が 8 を返すのは「要求を満たした」という意味で、**上限ではありません。**
+        # 直近4回の申し送りが、これを在庫8本と読み違えています
+        # （8/18 10:3x の回が数え直して 19本 と分かった）。
+        # **要求を大きくして呼び直すのが、天井を知る唯一の道**です（`per_calc` で頭打ちになる）。
+        n_ceil = len(batch_build.pick(60, []))
     except (Exception, SystemExit) as exc:
         # **`SystemExit` を明示して捕まえること**（2026-08-16、この検査が見つけた）。
         # `topic_forge.sections()` は calc が落ちたとき `raise SystemExit(...)` します。
@@ -800,6 +806,12 @@ def print_topic_stock() -> None:
     elif n_pick < 8:
         mark = "  ← **[!] 8本の日（M14 の段）が作れません**"
     print(f"  `pick(8)` が返す本数: **{n_pick}本**{mark}")
+    if n_pick >= 8:
+        print(f"    ↑ これは**要求の8を満たした数で、天井ではありません。** "
+              f"**いま出せる上限は {n_ceil}本**（`pick(60)`）")
+    print(f"  **1日に置ける本数の上限: {n_ceil}本**"
+          f"（`per_calc=2`。`--per-calc 3` にすると増えますが、"
+          f"**同じ制度が1日に3本並びます**）")
     _print_pass_rate(root, n_pick)
     print(f"  未使用の節: {n_free}件 / 全{n_sections}件"
           f"（`src/calc/` {len(_all)}本）")
