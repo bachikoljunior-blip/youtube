@@ -389,3 +389,4 @@
 {"at": "2026-08-18T10:55:33+09:00", "session": "session_01845PXmHX4aRyQH6fKyT9JR", "kind": "ship", "what": "means(A): 小規模企業共済の表を新設（src/calc/shokibo.py・6節・テーマ323→329・掛金の全額所得控除と20年未満の元本割れを同じ表に並べて出る7件）"}
 {"at": "2026-08-18T11:07:34+09:00", "session": "session_01845PXmHX4aRyQH6fKyT9JR", "kind": "ship", "what": "fix: pick が「節の指定が無い題材テーマ」に族ごと飲み込まれていた（直近8回の5表が1本ずつ・pick(30) 14→19本）"}
 {"at": "2026-08-18T11:07:34+09:00", "session": "session_01845PXmHX4aRyQH6fKyT9JR", "kind": "ship", "what": "fix: verify._OPS が全角の演算子を演算子と見ていなかった（＝は両方の幅を見るのに ＋ は半角だけ。実物の書き直し1回ぶん）"}
+{"at": "2026-08-18T11:10:55+09:00", "session": "session_01845PXmHX4aRyQH6fKyT9JR", "kind": "ship", "what": "fix: _template.py の手順1に「その1行に数字を入れない」を足した（手順1で決めた 58,333円 が実測 45,833円 で、言い換えに12分）"}
