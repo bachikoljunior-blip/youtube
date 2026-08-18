@@ -87,7 +87,12 @@ FLAT_TOP_BAND = 0.25
 #: **2倍を切る比は「少し違う」であって、節にはなりません。**
 RATIO_MIN = 2.0
 
-SHAPES = ("不変", "帯", "頭打ち", "崖", "逆転", "片効き")
+#: **形を足したら、必ずここに足すこと。**`status.py` の内訳も `--shape` の
+#: 選択肢も、`tests/test_section_sweep.py` の全形テストも、ここを正本にしています。
+#: 2026-08-18 に `倍率` を足したとき、**分類は返るのに一覧に載っていませんでした** ——
+#: `--shape 倍率` が「そんな形は無い」と弾き、拾いにいった当の候補を絞れません
+#: （`status.py` は「載っていない形は末尾に回す」ので、そこだけは出ていました）。
+SHAPES = ("不変", "帯", "頭打ち", "崖", "逆転", "片効き", "倍率")
 
 #: `詳しく` のうち、**x 軸の値**を持つ欄。行を歩く掃引では、ここだけを
 #: 行番号から見出しに直します。**形を足したら、ここに足すこと。**
@@ -223,17 +228,53 @@ def _enum_containers(fn: Callable) -> list[tuple[str, list[str]]]:
         if cname.startswith("_"):
             continue
         if isinstance(v, (list, tuple)):
-            items = list(v)
+            items = _names_of(list(v))
         elif isinstance(v, dict):
-            items = list(v)
+            items = _names_of(list(v))
         else:
             continue
-        if not (2 <= len(items) <= ENUM_MAX):
-            continue
-        if not all(isinstance(e, str) for e in items):
+        if items is None or not (2 <= len(items) <= ENUM_MAX):
             continue
         out.append((cname, items))
     return out
+
+
+def _names_of(items: list) -> list[str] | None:
+    """入れ物の要素から、**軸として振る文字列**を取り出す。無ければ `None`。
+
+    受けるのは2つの形です。
+
+        ["小規模", "一般", "特例なし"]                    → そのまま
+        [("一般", 0.20, 100_000), ("特定一般", ...), …]   → **各行の先頭**
+
+    ## 2つめを足した理由（2026-08-18。**黙って間違った答えを出していた**）
+
+    制度の表は「名前と値を1行にまとめた並び」で持つのが普通です
+    （`kyoiku.PROGRAMS` は `(名前, 給付率, 上限額)` の6行）。ところがここは
+    **要素が全部 `str` の入れ物しか見ていなかった**ので、その6つの名前は
+    **軸の候補にすら入りませんでした。**
+
+    落ちる先が「振られない」なら、ただの取りこぼしです。**そうではありません** ——
+    同じモジュールに `FLOOR_PROGRAMS`（下限のある3つだけを並べた**部分集合**）が
+    あり、`_enum_axis` が**先に通ったほうを返す**ので、`kyoiku.cap_of` は
+    **6つ中3つだけを振った結果**を候補として出していました:
+
+        いちばん高い: 特定一般＋資格取得・就職 ／ 倍率 2.5   ← **嘘**
+        実際は        専門実践＋賃金5パーセント上昇 ／ 倍率 6.4
+
+    **節に書けば、そのまま動画の中の誤りになります。** 取りこぼしではなく
+    誤答なので、`_enum_axis` の選び方（いちばん広い入れ物を採る）と対で直しています。
+    """
+    if not items:
+        return None
+    if all(isinstance(e, str) for e in items):
+        return list(items)
+    if all(isinstance(e, (list, tuple)) and e and isinstance(e[0], str)
+           for e in items):
+        names = [e[0] for e in items]
+        # 同じ名前が2度出る並びは、行の見出しではない（軸にならない）
+        return names if len(set(names)) == len(names) else None
+    return None
 
 
 def _enum_axis(fn: Callable, pname: str, default: Any) -> list[str]:
@@ -268,6 +309,7 @@ def _enum_axis(fn: Callable, pname: str, default: Any) -> list[str]:
         return []
     if isinstance(default, str):
         conts.sort(key=lambda kv: default not in kv[1])
+    passed: list[list[str]] = []
     for _cname, items in conts:
         ok = True
         for e in items:
@@ -281,8 +323,26 @@ def _enum_axis(fn: Callable, pname: str, default: Any) -> list[str]:
                 ok = False
                 break
         if ok:
-            return items
-    return []
+            passed.append(items)
+    if not passed:
+        return []
+    # **いちばん広い入れ物を採る**（2026-08-18 に直した）。
+    #
+    # ここは長らく「先に通ったほうを返す」でした。**部分集合が先に来ると、
+    # 半分だけ振った結果を候補として出します** —— `kyoiku` は
+    # `PROGRAMS`（6つ）と `FLOOR_PROGRAMS`（下限のある3つ）を両方持っていて、
+    # `cap_of` の倍率を **2.5倍（実際は 6.4倍）**と報告していました。
+    #
+    # 広いほうが常に正しいわけではありません。**「全部が例外なく数字を返す」を
+    # 通った入れ物どうし**の比較なので、通らない値を含む並びは既に落ちています ——
+    # `min_cost_paid` は下限のある3つでしか定義されていないので、6つの並びは
+    # ここに来ません（`FLOOR_PROGRAMS` が残り、正しく3点で振られます）。
+    #
+    # **覆る条件**: 関係のない入れ物が「たまたま全部通る」ほうが広かったとき。
+    # そのときは候補の `x の幅` に、その表と関係のない語が出ます。
+    # 出たら、広さではなく**引数名との一致**で選び直すこと。
+    passed.sort(key=len, reverse=True)
+    return passed[0]
 
 
 def _enum_params(fn: Callable) -> list[tuple[str, list[str]]]:
@@ -1096,6 +1156,41 @@ def _hit_outcome(hit: dict) -> Any:
     return None
 
 
+#: 本文に書かれた比。**`7.2倍` と `1:2:6` の2つの書き方だけを見ます。**
+#: 素の数（`_found_in`）で見ないのは、**小さい数はどの節にも出てくる**からです
+#: （`6` は「6分の1」でも当たってしまう）。
+_RATIO_RE = re.compile(r"([0-9]+(?:\.[0-9]+)?)\s*倍")
+_COLON_RE = re.compile(r"[0-9]+(?:\.[0-9]+)?(?::[0-9]+(?:\.[0-9]+)?)+")
+
+
+def _normalized(seq: list[float]) -> list[float] | None:
+    """いちばん小さい段を 1 にそろえた並び。**0 や負が混じれば `None`。**"""
+    if not seq or min(seq) <= 0:
+        return None
+    lo = min(seq)
+    return sorted(v / lo for v in seq)
+
+
+def _ratio_printed(hit: dict, lines: list[str]) -> bool:
+    """その比が、節の本文に書かれているか。"""
+    d = hit.get("詳しく") or {}
+    ratio = d.get("倍率")
+    seq = _normalized([float(v) for v in d.get("並び") or []])
+    for ln in lines:
+        for m in _RATIO_RE.finditer(ln):
+            got = _to_number(m.group(1))
+            if got is not None and ratio is not None and _near(got, float(ratio)):
+                return True
+        if seq is None:
+            continue
+        for m in _COLON_RE.finditer(ln):
+            written = _normalized([float(x) for x in m.group().split(":")])
+            if written is not None and len(written) == len(seq) \
+                    and all(_near(a, b) for a, b in zip(written, seq)):
+                return True
+    return False
+
+
 def is_covered(hit: dict, sections: dict[str, str] | None) -> bool:
     """その候補を、いまの節がもう言っているか。
 
@@ -1110,6 +1205,18 @@ def is_covered(hit: dict, sections: dict[str, str] | None) -> bool:
     if not sections:
         return False
     lines = [ln for body in sections.values() for ln in str(body).splitlines()]
+    if hit.get("形") == "倍率":
+        # **`倍率` が言っているのは比そのものです。端の名前ではありません。**
+        #
+        # 2026-08-18 に足した形で、既定の道を通すと **11件が11件とも既出**でした ——
+        # `いちばん低い` / `いちばん高い` は `要支援1` `要介護5` のような**区分の名前**で、
+        # どの節にも普通に出てくるからです。**「7.2倍」はどこにも書いていないのに、
+        # 端の名前が出ているというだけで既出**になります。
+        #
+        # 落ちる先は `status.py` の「新しい M件」で、**この形を足した意味が消えます**
+        # （(B) の同点破りも、`倍率` からは1件も入りません）。
+        # だから比の側で見ます —— **`7.2倍` か `1:2:6` が本文にあるか。**
+        return _ratio_printed(hit, lines)
     judged = [_point_printed(p, lines) for p in _hit_points(hit)]
     if any(v is False for v in judged):
         return False

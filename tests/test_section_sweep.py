@@ -994,3 +994,106 @@ def test_名指しの点は共有の並びから引く():
     """
     assert set(ss.NAMING_X_KEYS) <= set(ss.X_KEYS)
     assert "並ぶ x" not in ss.NAMING_X_KEYS
+
+
+# ---- 数え上げの軸を、どの入れ物から採るか（2026-08-18） ------------------
+
+def test_名前と値を1行にまとめた並びからも軸を採る():
+    """制度の表は `(名前, 率, 上限)` の並びで持つのが普通です。
+
+    要素が全部 `str` の入れ物しか見ていなかったので、**その形の表は
+    軸の候補にすら入っていませんでした**（`kyoiku.PROGRAMS` の6つ）。
+    """
+    assert ss._names_of(["あ", "い"]) == ["あ", "い"]
+    assert ss._names_of([("一般", 0.2, 100), ("特定", 0.4, 200)]) == ["一般", "特定"]
+    assert ss._names_of([(0.2, "一般"), (0.4, "特定")]) is None
+    assert ss._names_of([("一般", 1), ("一般", 2)]) is None, "同じ名前が2度出る並びは軸ではない"
+    assert ss._names_of([]) is None
+
+
+def test_数え上げの軸はいちばん広い入れ物から採る():
+    """**部分集合が先に通ると、半分だけ振った結果を候補として出します。**
+
+    `kyoiku` は `PROGRAMS`（6つ）と `FLOOR_PROGRAMS`（下限のある3つ）を
+    両方持っていて、直す前の `cap_of` は **6.4倍を 2.5倍**と報告していました。
+    取りこぼしではなく**誤答**なので、検査に固定します。
+    """
+    import inspect
+
+    from src.calc import kyoiku
+
+    empty = inspect.Parameter.empty
+    axis = ss._enum_axis(kyoiku.cap_of, "name", empty)
+    assert len(axis) == len(kyoiku.PROGRAMS), f"6つ中 {len(axis)} つしか振っていない: {axis}"
+    assert axis[-1] == kyoiku.PROGRAMS[-1][0]
+
+
+def test_広い入れ物で落ちる関数は狭いほうへ降りる():
+    """**広ければよい、ではありません。**
+
+    `min_cost_paid` は下限のある3つでしか定義されていない（他は `ValueError`）。
+    「全部が例外なく数字を返す」を通った入れ物どうしの比較なので、
+    6つの並びはそもそも候補に残りません。
+    """
+    import inspect
+
+    from src.calc import kyoiku
+
+    axis = ss._enum_axis(kyoiku.min_cost_paid, "name", inspect.Parameter.empty)
+    assert axis == list(kyoiku.FLOOR_PROGRAMS)
+
+
+def test_分類が返す形は全部_SHAPES_に載っている():
+    """**形を足して `SHAPES` に写し忘れる**のを、実物を回さずに捕まえる。
+
+    2026-08-18 に `倍率` を足した回が、まさにこれを踏みました ——
+    分類は返るのに一覧に無く、`--shape 倍率` が「そんな形は無い」と弾きます。
+    既にある `test_どの形も既出の判定に材料を渡している` は逆向き
+    （`SHAPES` の形が実物から出るか）なので、**写し忘れは捕まえません。**
+    """
+    import re
+
+    src = Path(ss.__file__).read_text(encoding="utf-8")
+    body = src[src.index("def _classify("):src.index("def _is_echo(")]
+    returned = set(re.findall(r'return "([^"]+)",', body))
+    assert returned, "分類の本体が読めていません（切り出しの目印が動いた）"
+    assert returned <= set(ss.SHAPES), \
+        f"分類は返すのに SHAPES に無い形があります: {sorted(returned - set(ss.SHAPES))}"
+
+
+# ---- 倍率の既出は、比が書かれているかで見る（2026-08-18） ----------------
+
+def _ratio_hit(ratio: float, seq: list[float]) -> dict:
+    return {"形": "倍率", "表": "t", "関数": "f", "動かした引数": "part",
+            "見た値": "返り値", "x の幅": ["低", "高"],
+            "詳しく": {"いちばん低い": "低", "いちばん高い": "高",
+                     "倍率": ratio, "値": 1.0, "並び": seq}}
+
+
+def test_比は倍でも並びでも読む():
+    hit = _ratio_hit(6.0, [1.0, 2.0, 6.0])
+    assert ss._ratio_printed(hit, ["1㎡あたりは 6.0倍 になります"])
+    assert ss._ratio_printed(hit, ["帯ごとの単価は 1:2:6"])
+    assert not ss._ratio_printed(hit, ["200㎡までは6分の1に減ります"]), \
+        "素の 6 で当たると、どの節にも書いてある数字で既出になります"
+    assert not ss._ratio_printed(hit, ["いちばん高いのは 3.0倍"])
+
+
+def test_倍率の既出は端の名前では決まらない():
+    """**端の名前は、どの節にも普通に出てきます。**
+
+    足した直後の実測は **11件が11件とも既出**でした（`要介護5` や `一般` が
+    本文にあるだけ）。比そのものはどこにも書かれていないのに、です。
+    """
+    hit = _ratio_hit(7.2, [1.0, 3.3, 7.2])
+    sections = {"s1": "要支援1から要介護5まで、区分ごとに限度額が決まっています"}
+    hit["詳しく"]["いちばん低い"] = "要支援1"
+    hit["詳しく"]["いちばん高い"] = "要介護5"
+    assert ss.is_covered(hit, sections) is False
+    assert ss.is_covered(hit, {"s1": "要支援1と要介護5では 7.2倍 ちがいます"}) is True
+
+
+def test_比の並びは順番によらない():
+    """向きが逆に出る候補があります（`menzei_limit` は 6:3:1）。"""
+    hit = _ratio_hit(6.0, [6.0, 3.0, 1.0])
+    assert ss._ratio_printed(hit, ["1:3:6 の順で効きます"])
