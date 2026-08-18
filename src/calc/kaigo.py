@@ -228,6 +228,66 @@ def household(level: str, people: int, rate: float,
     }
 
 
+
+def level_spread(rate: float, cap: int = GENERAL_CAP) -> dict:
+    """限度額いっぱいに使ったとき、**7段の支払いがどれだけ開くか**。
+
+    限度額そのものは 要支援1 → 要介護5 で **7.20倍**に開きます。
+    ところが上限は**上の段にしか当たらない**ので、割合が重いほど
+    上が先に頭打ちになり、**開きは縮みます**（1割 7.20倍・3割 2.94倍）。
+    同じことを実効の負担率の側から見ると、**「3割負担」の人が実際に払う
+    割合は、段が上がるほど下がります**（30.0% → 12.26%）。
+    """
+    rows = []
+    for name, units in LIMIT_UNITS:
+        p = pay(name, units, rate, cap)
+        rows.append({
+            "要介護度": name,
+            "限度額": units * UNIT_YEN,
+            "上限が無ければ": round(units * UNIT_YEN * rate),
+            "1か月に払う額": p["1か月に払う額"],
+            "実効の負担率": p["実効の負担率"],
+        })
+    lo = rows[0]["1か月に払う額"]
+    hi = rows[-1]["1か月に払う額"]
+    for row in rows:
+        row["いちばん低い段の何倍"] = row["1か月に払う額"] / lo
+    return {
+        "負担割合": rate,
+        "行": rows,
+        "いちばん低い段": rows[0]["要介護度"],
+        "いちばん高い段": rows[-1]["要介護度"],
+        "倍率": hi / lo,
+        "限度額の倍率": rows[-1]["限度額"] / rows[0]["限度額"],
+        "同額で並ぶ段": [r["要介護度"] for r in rows
+                         if r["1か月に払う額"] == hi],
+    }
+
+
+def cap_class_bites(rate: float) -> list[dict]:
+    """上限の**区分**（`CAPS`）を変えると、上限が効き始める段が動く。
+
+    表の主役は一般区分の44,400円ですが、上限は所得で5段あり、
+    いちばん低い**住民税非課税の世帯（24,600円）は1割負担でも効きます**。
+    逆にいちばん高い**課税所得690万円以上（140,100円）は、3割負担でも
+    どの要介護度にも当たりません**（届くのに46,700単位が要り、
+    限度額の最大 36,217単位を超えているため）。
+    """
+    rows = []
+    for name, cap in CAPS:
+        need = cap_reach_units(rate, cap)
+        first = first_biting_level(rate, cap)
+        rows.append({
+            "上限の区分": name,
+            "上限": cap,
+            "上限に届く単位": need,
+            "効き始める要介護度": first,
+            "どこにも効かない": first is None,
+            "いちばん高い段でも足りない単位":
+                max(0, round(need - LIMIT_UNITS[-1][1])),
+        })
+    return rows
+
 def check_tables() -> None:
     """制度の値と計算の向きを確かめる。**壊れた数字で台本を書かせない。**"""
     # 1. 法令が名指ししている値
@@ -337,6 +397,67 @@ def check_tables() -> None:
     _checks.greater(pay("要介護3", round(limit_units("要介護3") * 1.5), 0.1)["実効の負担率"],
                     10.0, "限度額の1.5倍まで使ったのに実効の負担率が1割のまま")
 
+
+    # 9. **主題その5**: 上限は上の段にしか当たらないので、
+    #    負担割合が重いほど「7段の開き」は縮む
+    spreads = {r: level_spread(r) for r, _lb, _w in COPAY_RATES}
+    _checks.rounding(spreads[0.1]["限度額の倍率"], 36_217 / 5_032,
+                     "限度額の 要支援1 → 要介護5 の倍率")
+    if abs(spreads[0.1]["倍率"] - spreads[0.1]["限度額の倍率"]) > 1e-9:
+        raise _checks.TableError(
+            "1割では上限がどこにも効かないので、支払いの倍率は"
+            "限度額の倍率と同じはず")
+    if not (spreads[0.1]["倍率"] > spreads[0.2]["倍率"] > spreads[0.3]["倍率"]):
+        raise _checks.TableError(
+            "負担割合が重いほど開きが縮んでいない（上限は上の段にしか当たらない）")
+    # **上が同じ44,400円で止まっているので、2割と3割の倍率の比は
+    #   下の端の比＝負担割合の比そのもの（ちょうど1.5倍）になります。**
+    if abs(spreads[0.2]["倍率"] / spreads[0.3]["倍率"] - 0.3 / 0.2) > 1e-9:
+        raise _checks.TableError(
+            "2割と3割の倍率の比が、負担割合の比（1.5倍）と違う")
+    # 同額で並ぶ段の数：1割は0段（上限が効かないので最上段だけ）
+    if len(spreads[0.1]["同額で並ぶ段"]) != 1:
+        raise _checks.TableError("1割で上限に当たっている段がある")
+    if spreads[0.2]["同額で並ぶ段"] != ["要介護3", "要介護4", "要介護5"]:
+        raise _checks.TableError("2割で同額に並ぶのは要介護3以上のはず")
+    if spreads[0.3]["同額で並ぶ段"] != ["要介護1", "要介護2", "要介護3",
+                                        "要介護4", "要介護5"]:
+        raise _checks.TableError("3割で同額に並ぶのは要介護1以上のはず")
+    # 実効の負担率は、上限に当たった段から**下がっていく**
+    eff = [row["実効の負担率"] for row in spreads[0.3]["行"]]
+    _checks.rounding(eff[0], 30.0, "3割・要支援1の実効の負担率")
+    if not all(a >= b for a, b in zip(eff, eff[1:])):
+        raise _checks.TableError(
+            "3割の実効の負担率が段の上で上がっている（上限があるので下がるはず）")
+    _checks.greater(eff[0] - eff[-1], 15.0,
+                    "3割の実効の負担率が、7段で15ポイントも下がっていない")
+
+    # 10. **主題その6**: 上限の区分を変えると、効き始める段が動く。
+    #     一般区分だけを見ていると「1割には効かない」で終わる
+    # **区分の名前で引くこと。**額で引くと、額を壊した検査が
+    # `IndexError` で落ちて「制度の値が違う」と言えなくなります
+    _checks.statutory(dict(CAPS)["住民税非課税の世帯"], 24_600,
+                      "高額介護サービス費の上限（住民税非課税の世帯）",
+                      source="介護保険法施行令22条の2の2（2021年8月から）")
+    _checks.statutory(dict(CAPS)["課税所得690万円以上"], 140_100,
+                      "高額介護サービス費の上限（課税所得690万円以上）",
+                      source="介護保険法施行令22条の2の2（2021年8月から）")
+    by_class = {r["上限の区分"]: r for r in cap_class_bites(0.1)}
+    low = by_class["住民税非課税の世帯"]
+    if low["効き始める要介護度"] != "要介護3":
+        raise _checks.TableError(
+            "住民税非課税の世帯（24,600円）は、1割負担でも要介護3から"
+            "上限が効くはず")
+    _checks.rounding(low["上限に届く単位"], 24_600, "1割・非課税世帯で上限に届く単位数")
+    high = {r["上限の区分"]: r
+            for r in cap_class_bites(0.3)}["課税所得690万円以上"]
+    if not high["どこにも効かない"]:
+        raise _checks.TableError(
+            "課税所得690万円以上（140,100円）は、3割負担でも"
+            "どの要介護度にも当たらないはず")
+    _checks.greater(high["いちばん高い段でも足りない単位"], 0,
+                    "140,100円の上限に、要介護5の限度額で届いてしまっている")
+
     _checks.assumption_values(ASSUMPTIONS, name="kaigo")
 
 
@@ -393,3 +514,32 @@ if __name__ == "__main__":
               f"  戻る {h['戻る額']:>8,}円"
               f"  2人目以降の実質負担 {h['2人目以降の実質負担']:>8,}円"
               f"（1人目の {h['1人目に対する割合']:>5.1f}%）")
+
+    print("\n=== 7段の開きは、負担割合が重いほど縮む（1割 7.20倍 → 3割 2.94倍）===")
+    for rate, label, _who in COPAY_RATES:
+        sp = level_spread(rate)
+        print(f"  {label}負担  {sp['いちばん低い段']} → {sp['いちばん高い段']} で "
+              f"**{sp['倍率']:.2f}倍**"
+              f"（限度額そのものは {sp['限度額の倍率']:.2f}倍）"
+              f"  同額で並ぶ段 {len(sp['同額で並ぶ段'])}個")
+        for row in sp["行"]:
+            print(f"    {row['要介護度']}  限度額 {row['限度額']:>9,}円"
+                  f"  上限が無ければ {row['上限が無ければ']:>8,}円"
+                  f"  → 実際は {row['1か月に払う額']:>8,}円"
+                  f"  {row['いちばん低い段の何倍']:>5.2f}倍"
+                  f"  実効 {row['実効の負担率']:>5.2f}%")
+    print(f"  → 上が同じ {GENERAL_CAP:,}円 で止まるので、"
+          f"2割と3割の倍率の比は下の端の比＝負担割合の比そのもの（1.50倍）です")
+
+    print("\n=== 上限の区分を変えると、効き始める段が動く"
+          "（非課税世帯は1割でも効き、690万円以上は3割でも効かない）===")
+    for rate, label, _who in COPAY_RATES:
+        print(f"  {label}負担")
+        for row in cap_class_bites(rate):
+            where = ("**どの要介護度でも効かない**"
+                     f"（あと {row['いちばん高い段でも足りない単位']:,}単位）"
+                     if row["どこにも効かない"] else
+                     f"{row['効き始める要介護度']} から")
+            print(f"    上限 {row['上限']:>7,}円（{row['上限の区分']}）"
+                  f"  届くのに {row['上限に届く単位']:>8,.0f}単位"
+                  f"  → {where}")
