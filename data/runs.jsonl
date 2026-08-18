@@ -408,4 +408,4 @@
 {"at": "2026-08-18T15:36:54+09:00", "session": "session_01Jzo2HjgJ5UXK4JUd4CdGRX", "kind": "start"}
 {"at": "2026-08-18T15:49:09+09:00", "session": "session_01Jzo2HjgJ5UXK4JUd4CdGRX", "kind": "ship", "what": "means(B): 教育訓練給付に1節（率の差4.0倍と上限の差6.4倍の食い違いは、授業料50万〜80万円の帯にしかない）", "closes": ["carry_over"], "journal_lines": 24244}
 {"at": "2026-08-18T16:08:56+09:00", "session": "session_01Jzo2HjgJ5UXK4JUd4CdGRX", "kind": "ship", "what": "upload: 16:00の窓で3件（重複10本を予約から外す／サムネイル49/49を押す／予約99本を前に詰めて08/24-27を1日25本にする）", "closes": ["missing_thumbnail"], "journal_lines": 24244}
-{"at": "2026-08-18T16:09:04+09:00", "session": "session_01Jzo2HjgJ5UXK4JUd4CdGRX", "kind": "ship", "what": "fix×2: 外した予約を --compact が控えから書き戻していた（実測8/10が復活）／外れたのに「残っている」と誤報していた（当たり0/10）", "closes": ["dupes_actionable"], "journal_lines": 24244}
+{"at": "2026-08-18T16:09:04+09:00", "session": "session_01Jzo2HjgJ5UXK4JUd4CdGRX", "kind": "ship", "what": "fix×2: 外した予約を --compact が控えから書き戻していた（実測8/10が復活）／外れたのに「残っている」と誤報していた（当たり0/10）", "closes": ["dupes_actionable", "silent_run"], "journal_lines": 24244}
