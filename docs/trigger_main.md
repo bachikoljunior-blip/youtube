@@ -121,10 +121,30 @@
 
     git -C /home/user/youtube rev-parse --abbrev-ref HEAD
 
+**この1行を、`ls` などと `&&` で繋がないこと**（2026-08-19 08:1x に踏んだ）。
+detached のとき `git branch --show-current` は**空行を出して終了コード 0** を返します。
+他の出力と繋げると**行が1本消えただけ**に見えて、**枝が合っていると読み違えます。**
+08:1x の回は `ls && git branch --show-current && wc -l …` と繋いで読み違え、
+**commit まで detached のまま進んで push が非 fast-forward で落ちました。**
+`rev-parse --abbrev-ref HEAD` なら detached でも `HEAD` という**字が出ます。**
+
+
 `claude/youtube-auto-post-revenue-ggedij` でなければ、**次の2手で合わせること**:
 
     git -C /home/user/youtube fetch origin claude/youtube-auto-post-revenue-ggedij:claude/youtube-auto-post-revenue-ggedij
     git -C /home/user/youtube switch claude/youtube-auto-post-revenue-ggedij
+
+**`fetch` を飛ばして `switch` だけ打たないこと。** 手元の同名の枝は**古い**ことが
+あります（08/19 08:1x の実測: HEAD は 90fb39c なのに、手元の `claude/…` は
+**08-15 の 4e8bd76**）。そのまま `switch` すると**4日前の作業木へ降ります**
+（8/18 19:0x が同じ穴で3日ぶん降りている。**2件目**）。
+
+**もう commit してしまってから気づいたときは、`switch` しないこと**（降りて消えます）。
+親が origin の先端と同じことを見てから、**枝のほうを動かす**:
+
+    git -C /home/user/youtube rev-parse HEAD^        # ＝ origin の先端なら安全
+    git -C /home/user/youtube branch -f claude/youtube-auto-post-revenue-ggedij HEAD
+    git -C /home/user/youtube checkout claude/youtube-auto-post-revenue-ggedij
 
 **main で作業すると、成果がどこにも残りません。**
 

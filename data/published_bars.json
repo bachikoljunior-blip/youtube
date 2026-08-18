@@ -672,6 +672,15 @@
     ],
     "video_id": "Fq-RGVyWDBM"
   },
+  "s-invoice-100en-kirisute-0": {
+    "charts": [
+      [
+        "5,000万円",
+        "1,000万円"
+      ]
+    ],
+    "video_id": "aft4DcEkkE0"
+  },
   "s-invoice-2wari-shogyo-same": {
     "charts": [
       [
@@ -2662,6 +2671,19 @@
     ],
     "video_id": "7lV40I13Rls"
   },
+  "s-seimeihoken-yosekata-16000": {
+    "charts": [
+      [
+        "11万2千円",
+        "12万8千円"
+      ],
+      [
+        "24万円",
+        "24万円"
+      ]
+    ],
+    "video_id": "Mg1gVnroO4s"
+  },
   "s-serufu-30000-5475": {
     "charts": [
       [
@@ -3046,6 +3068,27 @@
     ],
     "video_id": "KdlvGxloIg4"
   },
+  "s-shokibo-80percent-wakareme": {
+    "charts": [
+      [
+        "84万円",
+        "67万2000円",
+        "89万8200円"
+      ]
+    ],
+    "video_id": "C-OqP3mBeGo"
+  },
+  "s-shokibo-hikazei-getsugaku-33333": {
+    "charts": [
+      [
+        "3万3333円",
+        "4万1666円",
+        "4万5833円",
+        "7万円"
+      ]
+    ],
+    "video_id": "UgU5jekMYtw"
+  },
   "s-shokibo-zetsuzei-ritsu-3-67": {
     "charts": [
       [
@@ -3342,6 +3385,18 @@
     ],
     "video_id": "a1b2Nm6jN_0"
   },
+  "s-tokutei-fueru-20man-yon-dan": {
+    "charts": [
+      [
+        "162万5千円",
+        "180万円",
+        "360万円",
+        "660万円",
+        "850万円"
+      ]
+    ],
+    "video_id": "4e7wnELSCzY"
+  },
   "s-tsukin-cliff-tie-15km-25km": {
     "charts": [
       [
@@ -3381,6 +3436,20 @@
       ]
     ],
     "video_id": "to_gWbvDhrU"
+  },
+  "s-tsukin-jibara-9km-dai": {
+    "charts": [
+      [
+        "4,200円",
+        "4,433円"
+      ],
+      [
+        "180.0%",
+        "94.7%",
+        "152.1%"
+      ]
+    ],
+    "video_id": "Gr5vBRcfxD8"
   },
   "s-tsukin-per-km-5x": {
     "charts": [

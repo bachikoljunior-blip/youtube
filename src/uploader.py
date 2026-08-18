@@ -82,6 +82,52 @@ def taken_publish_times(youtube) -> set[str]:
         return rows
 
 
+def _parse_date_jst(date_jst: str) -> datetime:
+    """予約日を読む。**`MM/DD` も受けます**（2026-08-19 08:1x に9本ぶん捨てて足した）。
+
+    ここは長らく `%Y-%m-%d` だけで、それ以外は `ValueError` でした。
+    **落ちる場所が悪い** —— この関数は `videos.insert` の直前にあるので、
+    `batch_build.py --date 08/23` は**9本ぶんの生成（約20分）を全部やってから**
+    予約の段で9本とも落ちました（`予約できたのは 0 / 9 本`）。
+    しかも `batch_build` は自分の表示では `08/23` をそのまま受けて
+    「**08/23 の1日に入れます**」と印字するので、**渡した側からは正しく見えます。**
+
+    **形を増やすのが直しの本体ではありません。** 本体は
+    `batch_build` が**撃つ前にこれを通すこと**（`normalize_date_jst`）。
+    ここだけ直しても、次に別の形を渡した回はまた20分を捨てます。
+
+    年の無い `MM/DD` は**今年**として読みます。過ぎていても来年へは送りません
+    （打ち間違いが11か月先の予約に化けるので、下の「過去か直近すぎます」に任せる）。
+    """
+    text = date_jst.strip()
+    for fmt in ("%Y-%m-%d", "%Y/%m/%d"):
+        try:
+            return datetime.strptime(text, fmt)
+        except ValueError:
+            pass
+    for fmt in ("%m/%d", "%m-%d"):
+        try:
+            bare = datetime.strptime(text, fmt)
+        except ValueError:
+            continue
+        # **年は今年に固定します。過ぎていても来年へ送らないこと**（2026-08-19）。
+        # 送ると `--date 07/23` のような打ち間違いが**11か月先の予約**に化けて、
+        # 静かに通ります。過ぎた日は下の「過去か直近すぎます」で落ちるほうが安全。
+        return datetime(datetime.now(JST).year, bare.month, bare.day)
+    raise ValueError(
+        f"日付は YYYY-MM-DD か MM/DD で渡すこと: {date_jst!r}")
+
+
+def normalize_date_jst(date_jst: str) -> str:
+    """`--date` を `YYYY-MM-DD` に直す。**撃つ前に、入口で通すこと。**
+
+    空文字はそのまま返します（`--date` を渡さない道は従来どおり）。
+    """
+    if not date_jst:
+        return ""
+    return _parse_date_jst(date_jst).strftime("%Y-%m-%d")
+
+
 def next_publish_at(hour_jst: int, minute_jst: int, taken: set[str] | None = None,
                     date_jst: str | None = None, force_window: bool = False) -> str:
     """次に空いている指定時刻（JST）を RFC3339(UTC) で返す。
@@ -121,10 +167,7 @@ def next_publish_at(hour_jst: int, minute_jst: int, taken: set[str] | None = Non
     now = datetime.now(JST)
 
     if date_jst:
-        try:
-            day = datetime.strptime(date_jst, "%Y-%m-%d")
-        except ValueError as exc:
-            raise ValueError(f"日付は YYYY-MM-DD で渡すこと: {date_jst!r}") from exc
+        day = _parse_date_jst(date_jst)
         target = datetime(day.year, day.month, day.day,
                           hour_jst, minute_jst, tzinfo=JST)
         if target <= now + timedelta(minutes=20):

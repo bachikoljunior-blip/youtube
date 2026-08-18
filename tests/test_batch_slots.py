@@ -221,8 +221,30 @@ def test_pinned_past_date_is_refused():
 
 
 def test_pinned_bad_date_is_refused():
-    with pytest.raises(ValueError):
-        next_publish_at(10, 0, taken=set(), date_jst="8/24")
+    """**読めない形は落とす。** ただし `MM/DD` は 2026-08-19 から読めます。
+
+    ここは長らく `"8/24"` を「読めない形」の例にしていました。**外しました。**
+    `batch_build.py --date 08/23` は、この道具の中では最後まで通り
+    （`slots()` は文字を組み立てるだけ、印字も `08/23 の1日に入れます`）、
+    形を見るのは `videos.insert` の直前だけ ——
+    **9本の生成（約20分）を全部やってから9本とも落ちました**（`0 / 9 本`）。
+
+    落とすこと自体は正しかった。**落ちる場所が20分先だった**のが欠陥なので、
+    直しは対で入れてあります: `MM/DD` を読めるようにし、
+    かつ `batch_build` が**撃つ前に**通す（`tests/test_date_normalize.py`）。
+    """
+    for bad in ("8月24日", "24/8/2026", "らいしゅう"):
+        with pytest.raises(ValueError):
+            next_publish_at(10, 0, taken=set(), date_jst=bad)
+
+
+def test_pinned_bare_mmdd_is_read_as_this_year():
+    """`MM/DD` は**今年**。過ぎていても来年へ送らない（打ち間違いを通さない）。"""
+    from datetime import datetime as _dt
+
+    from src.uploader import normalize_date_jst
+
+    assert normalize_date_jst("8/24") == f"{_dt.now(JST).year}-08-24"
 
 
 def test_unpinned_still_slides_a_day():

@@ -111,7 +111,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from src import auth, config, dupes, history, measure_window, upload_cap  # noqa: E402
+from src import auth, config, dupes, history, measure_window, upload_cap, uploader  # noqa: E402
 
 JST = timezone(timedelta(hours=9))
 LOG = ROOT / "data" / "batch_runs.jsonl"
@@ -818,6 +818,22 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.report:
         return report()
+
+    # ---- 0. **日付は、生成の前にここで正す**（2026-08-19 08:1x に9本ぶん捨てて足した）----
+    #
+    # `--date 08/23` は、この道具の中では**最後まで通ります** ——
+    # `slots()` は文字を組み立てるだけ、印字も `08/23 の1日に入れます` と出るので、
+    # **渡した側からは正しく動いているように見えます。** 形を見るのは
+    # `uploader.next_publish_at`（`videos.insert` の直前）だけで、そこは
+    # **9本の生成が全部終わったあと**です。実測: 約20分ぶんを作ってから
+    # **9本とも予約で落ちました**（`予約できたのは 0 / 9 本`）。
+    #
+    # **落ちること自体は正しい。落ちる場所が20分先だったのが欠陥です。**
+    try:
+        args.date = uploader.normalize_date_jst(args.date)
+    except ValueError as exc:
+        print(f"[batch] {exc}")
+        return 2
 
     # ---- 0. **撃つ前に、1日の投稿本数の枠を見る**（2026-08-17 に足した）----
     #
