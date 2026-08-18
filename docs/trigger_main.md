@@ -649,7 +649,11 @@ else:
 
 #### **`calc` を足した回は、全体の前に `tests/test_subject.py` を叩くこと**（2026-08-18 に測って足した）
 
-    python -m pytest tests/test_subject.py tests/test_<足したもの>.py -q   # **0.8秒**
+    python -m pytest tests/test_subject.py tests/test_premise.py tests/test_<足したもの>.py -q   # **数秒**
+
+**`test_premise.py` も一緒に叩くこと**（2026-08-18 12:0x に踏んだ）。ここには長らく `test_subject.py` しかなく、**`calc` を足すたびに効く検査がもう1つあることが、手順のどこにも書いてありませんでした。**
+12:0x の回は `tokutei` の新しい節が「その節が使っている引数の値」を行の列に持っておらず（＝**画面に出しようがない前提**）、**それを 6分35秒の全体実行で**知りました。
+`-k tokutei` なら **2.5秒**で同じことを言います。**落ちる場所が6分先**でした。
 
 **`pytest tests/` の全体は5分かかります。** 09:1x の回は `seimeihoken` を足して
 **`SUBJECT_WORDS` への追加を忘れ**、それを**5分の全体実行で**知りました。
