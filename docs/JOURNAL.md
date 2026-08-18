@@ -23582,7 +23582,31 @@ docstring・節の見出し・`check_tables` の3か所を直しました。
    （日枠 10,000）:
 
        (i)   `scripts/unschedule.py <video_id> --why "同じテーマIDの重複"` で
-             **重複10本を外す**（500単位）。**外すのが先、詰めるのが後**
+             **重複を外す**（1本50単位）。**外すのが先、詰めるのが後**
+
+             **この回で候補を洗い出しました**（`data/uploaded.jsonl` から。**API は要りません**）。
+             同じテーマIDが2本あるのは **20件**。**そのまま20本外さないこと** ——
+             `_4zhMy-VIyg`（s-tedori-1）と `qm-w6nVwMhY`（zangyo-dai）は
+             **もう公開済み**で、`8rXlUhkfMEU` `YmJ7psxW3co` `SsUYduA1dpg` `FSAN9tjIX10`
+             も同じです。**公開済みに触ると視聴者から見えなくなります。**
+
+             **迷いのない8本は、対の予約時刻が1秒までまったく同じ**もの
+             （＝同じ枠に2本置いた事故。どちらを残しても同じ）:
+
+                 okapNxhHI0E  s-jikangai-720-nurashi-99to75   09-03 03:00Z
+                 PWtcOQLTvO4  s-jikangai-99h-tsugitsuki-61h   09-02 03:00Z
+                 YKDUgyIa8Bw  s-jikangai-futsu-6kagetsu-126   08-28 07:00Z
+                 40luLbPnYUA  s-kogaku-kuni-267000-itchi      08-28 03:00Z
+                 utyVkMmMMho  s-serufu-88000-uwanose          09-06 07:00Z
+                 pCLe8SS6u3w  s-serufu-tenjo-zeiritsu-33      09-06 02:00Z
+                 UoeAfg16_aw  s-shitsugyo-60sai-tanjobi-jogen 08-25 03:00Z
+                 C4oBjBsxmOU  s-yukyu-shu4-3nen6kagetsu       09-02 06:00Z
+
+             残る4本（`Prw6AB9hOsY` / `YhHeqMKql7U` / `z1F28gUcaoA` / `zUDaYS5Acgo`）は
+             **対の時刻が違う**ので、**どちらが後か**を見てから決めること。
+             **`at` が空の行を「いちばん古い」と読まないこと** —— この回は
+             並べ替えでそうなりかけました（空は不明であって、古いではありません）。
+             **16:00 以降は API が読めるので、`videos.list` で公開済みかを確かめてから外すこと。**
              （外した枠は控えに残るので、先に詰めると幻の埋まりを10個抱えます）
        (ii)  `batch_build` を打つ ＝ サムネイル **49件**が投稿より先に押される（2,450単位）。
              押せたら **`--closes missing_thumbnail`**（19回続けて鳴っています）
