@@ -397,3 +397,4 @@
 {"at": "2026-08-18T12:30:27+09:00", "session": "session_01CJHcXw5CbUTfJNZL8EnLxt", "kind": "ship", "what": "fix: status.py が在庫の天井を出す（pick(8) の 8 は要求を満たした数で上限ではない。直近4回の申し送りが在庫8本と誤読。いま21本・実測2.0秒）"}
 {"at": "2026-08-18T12:43:46+09:00", "session": "session_01KET5rrimk1GrCTruYVTWK6", "kind": "start"}
 {"at": "2026-08-18T13:03:37+09:00", "session": "session_01KET5rrimk1GrCTruYVTWK6", "kind": "ship", "what": "means(A): 固定資産税の表を新設（src/calc/koteishisan.py・7節・テーマ336→343・「200㎡までが6分の1」の外側にある3つめの帯＝家屋の床面積の10倍を出して初めて見える5件）"}
+{"at": "2026-08-18T13:08:23+09:00", "session": "session_01KET5rrimk1GrCTruYVTWK6", "kind": "ship", "what": "means: (A) の題材を3件→8件に補充（fudosanshutoku-zei / inshizei-kaidan / koyouhokenryo-ritsu / yoteinozei-15man / kogakukaigo-jogen。5件とも id の語を将来の表の名前に一致させた）"}
