@@ -23338,12 +23338,27 @@ k本目まで動かした後に並べ直しても順番は変わりません（`
             ＝ **99本を前に詰める**（約5,050単位）。**合わせて 7,500/10,000**
        (iii) 残りがあれば翌日。`--compact` は2回目も同じ割り当てを出します
 
-2. **同じ形の予約 11本**（`saishushoku` 6本・`yukyu` 3本ほか）は、まだ外せていません
-   （8回続けて持ち越し）。**`--compact` の出力に、その姿がそのまま出ました** ——
-   `s-jikangai-99h-tsugitsuki-` と `s-yukyu-shu4-3nen6kagetsu` は
-   **2本が同じ時刻（09/02 12:00・15:00）に並んでいます。**
-   16:00 以降の回が `scripts/unschedule.py <video_id> --why` で外し、**残すのは1本**。
-   **詰める前に外すこと** —— 外した本の枠は控えに残るので、先に詰めると幻が1つ増えます。
+2. **同じテーマIDが2本ずつ予約に入っています。控えで数え直しました ——
+   10組・余分は10本。うち8組は「同じ時刻」に2本並んでいます。**
+
+       s-fukugyo-2                    iTrogWVf4Eg 08/22 09:00 ／ Prw6AB9hOsY 08/24 18:00
+       s-furusato-4                   UI5P9jvchc4 08/21 09:00 ／ YhHeqMKql7U 08/24 10:00
+       s-jikangai-720-nurashi-99to75  Jb_LsPk2FZA ／ okapNxhHI0E   **どちらも 09/03 12:00**
+       s-jikangai-99h-tsugitsuki-61h  ILc4ZVqr0zw ／ PWtcOQLTvO4   **どちらも 09/02 12:00**
+       s-jikangai-futsu-6kagetsu-126  xd7xIkt_Qwc ／ YKDUgyIa8Bw   **どちらも 08/28 16:00**
+       s-kogaku-kuni-267000-itchi     dhvcWNwA-6o ／ 40luLbPnYUA   **どちらも 08/28 12:00**
+       s-serufu-88000-uwanose         x2agstHS8m0 ／ utyVkMmMMho   **どちらも 09/06 16:00**
+       s-serufu-tenjo-zeiritsu-33     Y3JUjFLrORY ／ pCLe8SS6u3w   **どちらも 09/06 11:00**
+       s-shitsugyo-60sai-tanjobi-jogen kLJ2Wsi3gQM ／ UoeAfg16_aw  **どちらも 08/25 12:00**
+       s-yukyu-shu4-3nen6kagetsu      z7ECpN4YaiQ ／ C4oBjBsxmOU   **どちらも 09/02 15:00**
+
+   **同じ時刻に2本というのは、置き場所の門が効いていない証拠**です
+   （`upload_only.py` の「すでに埋まっています」は控えを見て止めるはずのもの）。
+   **「続けて数本視聴した後、繰り返しのように感じられる」の、いちばん近い形**でもあります。
+   16:00 以降の回が `scripts/unschedule.py <video_id> --why "同じテーマIDの重複"`
+   で**後ろの1本ずつ**を外すこと（10本 × 50単位 ＝ 500単位）。
+   **外すのが先、詰めるのが後** —— 外した本の枠は控えに残るので、
+   先に詰めると幻の埋まりを10個ぶん抱えたまま割り当てることになります。
 3. **`--max-days 40` を撃つかどうかは、9/05 の判定を見てから。**
    4日ぶんが公開されて7日たてば（＝ 09/03 ごろ）、
    `hypotheses.yaml` の「30分きざみでも1本あたりが落ちない」が判定できます。
