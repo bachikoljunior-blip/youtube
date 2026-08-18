@@ -425,3 +425,6 @@
 {"at": "2026-08-18T20:11:20+09:00", "session": "session_01XWwX1f732t4ZpCHnqEojPt", "kind": "start"}
 {"at": "2026-08-18T20:40:16+09:00", "session": "session_01XWwX1f732t4ZpCHnqEojPt", "kind": "ship", "what": "fix: topic_forge が小数を1つも拾わず、倍率と率だけの節が構造的に通れなかった（下限0ではなく小数の段を足した。43.2万円→20,000円の取り違えも直した）", "closes": ["topic_forge"], "journal_lines": 25220}
 {"at": "2026-08-18T20:40:22+09:00", "session": "session_01XWwX1f732t4ZpCHnqEojPt", "kind": "ship", "what": "means(A): src/calc/jidoushazei.py 新設7節（自動車税の13年超重課・節351→358・テーマ385→389）。同じ「重課」で上がり方が5.3554倍ちがう"}
+{"at": "2026-08-18T20:53:17+09:00", "session": "session_011yWmSMgStWbUpfFJpR6BqQ", "kind": "start"}
+{"at": "2026-08-18T21:00:42+09:00", "session": "session_011yWmSMgStWbUpfFJpR6BqQ", "kind": "ship", "what": "fix: numbers_backed が落ちるとき、表の側の「丸めた元の数」を候補で出す（5.36 → 5.3554）。当たり率 2,761/2,840＝97.2%"}
+{"at": "2026-08-18T21:06:19+09:00", "session": "session_011yWmSMgStWbUpfFJpR6BqQ", "kind": "ship", "what": "means(B): ikuji に2節（賞与のある人の実質手取り比・181日目の崖の月給べつ）＝節358→360、テーマ389→393"}

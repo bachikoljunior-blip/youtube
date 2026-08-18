@@ -66,6 +66,7 @@
 from __future__ import annotations
 
 import re
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from typing import Any, Callable, Iterable, Sequence
 
 
@@ -503,12 +504,92 @@ def _as_keys(nums: Iterable[str]) -> set[str]:
     return out
 
 
+def _to_decimal(raw: str) -> "Decimal | None":
+    """`1,234.5` → `Decimal('1234.5')`。読めない字は `None`。"""
+    try:
+        return Decimal(raw.replace(",", ""))
+    except (InvalidOperation, ValueError):
+        return None
+
+
+def _rounding_step(missing: str) -> "Decimal | None":
+    """その書き方が「どの位で丸めた形か」。**丸めようのない字は `None`。**
+
+        5.36    → 0.01（小数第2位）
+        66,000  → 1000（末尾の0が3つ）
+        86,001  → None（末尾に0が無い ＝ 丸めた形ではない）
+    """
+    digits = missing.replace(",", "")
+    if "." in digits:
+        return Decimal(1).scaleb(-len(digits.split(".")[1]))
+    zeros = len(digits) - len(digits.rstrip("0"))
+    return Decimal(1).scaleb(zeros) if zeros else None
+
+
+def near_candidates(missing: str, backing: str, *, limit: int = 3) -> list[str]:
+    """`missing` を**その位で丸めた形**と見て、表の側の元の数を挙げる。
+
+    `numbers_backed` は「この表のどこにも無い」としか言いません。
+    **鳴った3回とも中身は同じで、全部「丸めた形」でした**
+    （`docs/JOURNAL.md` 2026-08-18 20:1x の見直し3。当たり 3/3）。
+    そのたびに `python -m src.calc.<表>` を撃って**目で**元の数を探しています。
+
+    ## 当たり率（**足す前に測った**。`docs/trigger_main.md` §4）
+
+    54本ぜんぶの裏（出力＋ソース）から数を取り、人が書きそうな丸め方を当てて
+    **2,840件**の「丸めた形」を作り、この関数に元の数を当てさせました。
+
+        真の値を候補に含む   **2,761件（97.2%）**
+        候補が2件以上         692件（24%）  ← 3件まで出すので、目で選べます
+
+    外れる 79件は、`4,531` を `5000` と丸めたような**位の粗い形**で、
+    同じ位に丸まる数が表に4つ以上あって上位3件から溢れたものです。
+
+    ## 射程の外（**狭いほうへ倒しています**）
+
+    - **末尾に0の無い整数には、何も出しません**（`86,001` に対して `66,000` を
+      出しにいく形です）。丸めた形でない数のずれは、こちらでは名指しできません
+    - 単位は見ません。`70割` のような単位だけの誤りは、元から射程の外です
+    """
+    want = _to_decimal(missing)
+    step = _rounding_step(missing)
+    if want is None or step is None:
+        return []
+    already = _as_keys([missing])
+    found: list[tuple[Decimal, str]] = []
+    for raw in dict.fromkeys(_ANY_NUM_RE.findall(backing)):
+        if _as_keys([raw]) & already:
+            continue
+        value = _to_decimal(raw)
+        if value is None:
+            continue
+        rounded = (value / step).quantize(Decimal(1), rounding=ROUND_HALF_UP) * step
+        if rounded == want:
+            found.append((abs(value - want), raw))
+    found.sort(key=lambda t: (t[0], len(t[1])))
+    out: list[str] = []
+    seen: set[str] = set()
+    for _, raw in found:
+        key = raw.replace(",", "")
+        if key in seen:
+            continue
+        seen.add(key)
+        # `_ANY_NUM_RE` はソースの `66400,` のような**末尾のカンマごと**拾います。
+        # 桁区切りは中に残すので、落とすのは端だけ。
+        out.append(raw.strip(","))
+        if len(out) >= limit:
+            break
+    return out
+
+
 def numbers_backed(text: str, backing: str, *, name: str = "",
                    where: str = "docstring") -> None:
     """`text` の単位つきの数が、全部 `backing` の中に在ること。
 
     **値そのものはここに置きません**（この道具が持つのは形だけ）。
     何が正しいかは `backing` ＝ その表の出力とソースが決めます。
+
+    落ちるときは、**表の側の近い数を一緒に出します**（`near_candidates`）。
     """
     truth = _as_keys(_ANY_NUM_RE.findall(backing))
     missing = [n for n in doc_numbers(text) if not _as_keys([n]) & truth]
@@ -516,9 +597,24 @@ def numbers_backed(text: str, backing: str, *, name: str = "",
         return
     head = f"src/calc/{name}.py の " if name else ""
     seen = list(dict.fromkeys(missing))
+    hints = []
+    for n in seen:
+        near = near_candidates(n, backing)
+        if near:
+            hints.append(f"    {n} → **{'** / **'.join(near)}**")
+    hint_block = ""
+    if hints:
+        hint_block = (
+            "  **表の側に、その数を丸めた元があります**"
+            "（丸めた瞬間に、どの表にも無い数になります）:\n"
+            + "\n".join(hints) + "\n"
+            "  丸めた形を出したいなら、**その形を表にも印字すること**"
+            "（`src/calc/_template.py` の手順7）。\n"
+        )
     raise TableError(
         f"{head}{where} が書いている数のうち、**この表のどこにも無いもの**が "
         f"{len(seen)}件あります: {'・'.join(seen)}\n"
+        + hint_block +
         "  探した先は、この表の `__main__` の出力と、ソースの数値リテラルの両方です。\n"
         "  **値のほうは check_tables() が守っているので、ずれているのは文のほうです。**\n"
         f"  → `python -m src.calc.{name or '<表>'}` を走らせ、出た数字を見てから書き直すこと"

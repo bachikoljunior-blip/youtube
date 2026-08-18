@@ -176,3 +176,60 @@ def test_ちがう数はいままでどおり落ちる():
         _checks.numbers_backed("倍率は2.5倍", "2", name="t")
     with pytest.raises(_checks.TableError):
         _checks.numbers_backed("77.5%", "77.0", name="t")
+
+
+# ---- 近い数の候補（`near_candidates`）-----------------------------------
+#
+# `numbers_backed` は長らく「この表のどこにも無い」としか言いませんでした。
+# **鳴った3回とも中身は同じで、全部「丸めた形」**でした
+# （`docs/JOURNAL.md` 2026-08-18 20:1x の見直し3。当たり 3/3、直すのに約6分）。
+# 当たり率は足す前に測っています —— 54本の裏から作った**丸めた形 2,840件**に対し、
+# **真の値を候補に含むもの 2,761件（97.2%）**、候補が2件以上 692件（24%）。
+
+
+def test_丸めた形から表の側の元の数を出す():
+    """`5.36` → `5.3554`（**この検査を書かせた実物**）。"""
+    assert _checks.near_candidates("5.36", backing("jidoushazei")) == ["5.3554"]
+
+
+def test_落ちたときの文に近い数が出る():
+    from src.calc import jidoushazei as jz
+    bad = (jz.__doc__ or "").replace("5.3554", "5.36")
+    assert bad != jz.__doc__, "注入元の 5.3554 が docstring から消えています"
+    with pytest.raises(_checks.TableError) as e:
+        _checks.numbers_backed(bad, backing("jidoushazei"), name="jidoushazei")
+    msg = str(e.value)
+    assert "5.36" in msg and "5.3554" in msg
+    assert "丸めた" in msg
+
+
+def test_末尾に0の無い整数には候補を出さない():
+    """**丸めた形でない数には、何も出さない**（射程を狭いほうへ倒している）。
+
+    `86,001` に対して `66,000` を出しにいく形を、ここで塞いでいます。
+    """
+    assert _checks.near_candidates("86,001", backing("seimeihoken")) == []
+
+
+def test_候補は多くても3件():
+    got = _checks.near_candidates("5000", backing("haiguusha"))
+    assert len(got) <= 3
+
+
+def test_末尾のカンマは候補に混ぜない():
+    r"""`_ANY_NUM_RE` はソースの `66400,` を**カンマごと**拾います。
+
+    桁区切りは中に残すので、落とすのは端だけ。
+    """
+    for got in _checks.near_candidates("66,000", backing("jidoushazei")):
+        assert not got.endswith(",")
+
+
+def test_候補は近い順に並ぶ():
+    got = _checks.near_candidates("79.17", backing("jidoushazei"))
+    assert got and got[0] == "79.1667"
+
+
+def test_単位のつかない字には何も出さない():
+    assert _checks.near_candidates("いくらか", "1.2345") == []
+    assert _checks.near_candidates("", "1.2345") == []

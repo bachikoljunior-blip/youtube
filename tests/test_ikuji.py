@@ -88,8 +88,71 @@ def test_月給の帯が上限の見えない範囲に収まっている():
     assert max(ikuji.MONTHLY_PAYS) <= 450_000
 
 
-def test_節の見出しが5つとも残っている():
-    """節が `topic_forge.py` のテーマ単位。**減らすと在庫が減ります。**"""
+def test_節の見出しが7つとも残っている():
+    """節が `topic_forge.py` のテーマ単位。**減らすと在庫が減ります。**
+
+    2026-08-18 に 5 → 7（賞与のある人の実質・181日目の崖の月給べつ）。
+    """
     src = Path(__file__).resolve().parent.parent / "src" / "calc" / "ikuji.py"
     text = src.read_text(encoding="utf-8")
-    assert text.count('print("\\n=== ') == 5
+    assert text.count('print("\\n=== ') == 7
+
+
+# ---- 足した2節の主張（**故障注入で、壊したら落ちることを見る**）----------
+
+
+def test_賞与が増えると手取り比は必ず下がる():
+    """給付の分子は賞与で1円も動かず、分母だけが増えるので。"""
+    ratios = [r["net_ratio"] for r in ikuji.bonus_grid()]
+    assert ratios == sorted(ratios, reverse=True)
+    assert len({r["benefit"] for r in ikuji.bonus_grid()}) == 1, "給付が賞与で動いている"
+
+
+def test_賞与5か月の67パーセント期は賞与なしの50パーセント期より低い():
+    """**この節の主題そのもの。** 数字は `python -m src.calc.ikuji` の印字のまま。"""
+    rows = {r["bonus_months"]: r for r in ikuji.bonus_grid()}
+    assert round(rows[0]["net_ratio"] * 100, 4) == 84.9144
+    assert round(rows[5]["net_ratio"] * 100, 4) == 61.1327
+    later = ikuji.compare(300_000, ikuji.RATE_LATER)["net_ratio"]
+    assert round(later * 100, 4) == 63.3689
+    assert rows[5]["net_ratio"] < later
+
+
+def test_賞与を給付の基礎に入れてしまうと落ちる(monkeypatch):
+    """**壊す向きの検査。** 賞与を分子にも入れたら、主題が消える。"""
+    真 = ikuji.benefit_month
+
+    def 賞与こみ(monthly_pay, rate=ikuji.RATE_FIRST):
+        return int(真(monthly_pay, rate) * 17 / 12)
+
+    monkeypatch.setattr(ikuji, "benefit_month", 賞与こみ)
+    with pytest.raises(_checks.TableError):
+        ikuji.check_tables()
+
+
+def test_181日目の崖はポイントで見ると月給が上がるほど深い():
+    rows = ikuji.cliff_grid()
+    drops = [r["drop_pt"] for r in rows]
+    assert drops == sorted(drops)
+    assert round(drops[0], 4) == 21.2454 and round(drops[-1], 4) == 22.0614
+
+
+def test_崖の額のほうは月給に比例する():
+    """**落差（ポイント）と額の差は、別の動き方をする。** ここが節の主題。"""
+    shares = [r["gap_share"] for r in ikuji.cliff_grid()]
+    assert max(shares) - min(shares) <= 0.0005
+    assert round(max(shares) * 100, 5) == 17.00000
+
+
+def test_崖の落差を月給で一定にすると落ちる(monkeypatch):
+    真 = ikuji.compare
+
+    def 平ら(monthly_pay, rate=ikuji.RATE_FIRST, resident_tax=0,
+             social_rate=ikuji.SOCIAL_RATE):
+        r = dict(真(monthly_pay, rate, resident_tax, social_rate))
+        r["net_ratio"] = 0.85 if rate == ikuji.RATE_FIRST else 0.85 - 0.21
+        return r
+
+    monkeypatch.setattr(ikuji, "compare", 平ら)
+    with pytest.raises(_checks.TableError):
+        ikuji.check_tables()
