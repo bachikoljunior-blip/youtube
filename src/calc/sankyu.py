@@ -74,6 +74,7 @@ AFTER_DAYS = 56         # 産後
 IKUJI_DAYS = 14         # 育休の「同一月内に14日以上」（令和4年10月から）
 
 REF_STD = 300_000       # 説明に使う標準報酬月額
+REF_YEAR = 2026         # 表を作る年（**うるう年で数が変わるので添えて読む**）
 
 
 def premium(std: int) -> int:
@@ -226,6 +227,57 @@ def grade_grid() -> list[dict]:
     return rows
 
 
+def birth_month_grid(year: int = REF_YEAR) -> list[dict]:
+    """**1年ぶん**、出産日を1日ずつ動かして「4か月免除」になる日を数える。
+
+    既にある `birth_day_grid()` は 2026年9月の30日だけを見ています。
+    **9月は6日**（09/05〜09/10）でしたが、**これが月によって変わるかは
+    どの節も見ていませんでした。** 産休の長さ98日は動かないのに、
+    その98日がいくつの月末をまたぐかは**月の日数の並び**で決まるからです。
+
+    **年をまたぐと数が変わります**（2026年は81日／2028年は78日）ので、
+    `year` を必ず添えて読むこと。
+    """
+    rows = []
+    for m in range(1, 13):
+        days = monthrange(year, m)[1]
+        four = sum(
+            1 for d in range(1, days + 1)
+            if len(exempt_months(*sankyu_range(date(year, m, d)), ikuji=False)) == 4)
+        rows.append({
+            "出産月": m,
+            "その月の日数": days,
+            "4か月になる日": four,
+            "3か月になる日": days - four,
+            "割合": four / days,
+        })
+    return rows
+
+
+def birth_month_summary(year: int = REF_YEAR) -> dict:
+    """`birth_month_grid()` を1年でまとめる。**当たりの少なさと、月の差。**"""
+    rows = birth_month_grid(year)
+    total_days = sum(r["その月の日数"] for r in rows)
+    four = sum(r["4か月になる日"] for r in rows)
+    hi = max(rows, key=lambda r: r["割合"])
+    lo = min(rows, key=lambda r: r["割合"])
+    return {
+        "年": year,
+        "その年の日数": total_days,
+        "4か月になる日": four,
+        "3か月になる日": total_days - four,
+        "年間の割合": four / total_days,
+        "いちばん高い月": hi["出産月"],
+        "いちばん高い割合": hi["割合"],
+        "いちばん低い月": lo["出産月"],
+        "いちばん低い割合": lo["割合"],
+        "月の開き": hi["割合"] / lo["割合"],
+        "3か月の額": 3 * premium(REF_STD),
+        "4か月の額": 4 * premium(REF_STD),
+        "差の額": premium(REF_STD),
+    }
+
+
 def grid() -> list[dict]:
     return need_days_grid()
 
@@ -283,6 +335,25 @@ def check_tables() -> None:
                         len(exempt_months(s, e, ikuji=False)),
                         f"育休の免除月数が産休を下回りました（{d}日）")
 
+    # **主題（2026-08-18 に足した節）**: 4か月になる出産日は、1年でも少数派
+    summ = birth_month_summary(REF_YEAR)
+    _checks.rounding(summ["その年の日数"], 365, "2026年の日数")
+    _checks.rounding(summ["4か月になる日"], 81, "4か月免除になる出産日の数（2026年）")
+    _checks.greater(summ["3か月になる日"], summ["4か月になる日"],
+                    "3か月になる日が4か月になる日より多い（4か月が多数派になっている）")
+    _checks.greater(summ["月の開き"], 1, "出産月による割合の開きが1倍以下（月差が消えている）")
+    _checks.close(summ["月の開き"], 1.5, "いちばん高い月といちばん低い月の比（2026年）")
+    _checks.rounding(summ["差の額"], premium(REF_STD), "3か月と4か月の差の額")
+    # 月ごとの合計は、その年の日数と合うこと（数え落としがあると静かにずれる）
+    rows = birth_month_grid(REF_YEAR)
+    for r in rows:
+        if r["4か月になる日"] + r["3か月になる日"] != r["その月の日数"]:
+            raise _checks.TableError(
+                f"{r['出産月']}月の日数が合いません: "
+                f"{r['4か月になる日']}+{r['3か月になる日']}≠{r['その月の日数']}")
+        if not 0 <= r["4か月になる日"] <= r["その月の日数"]:
+            raise _checks.TableError(f"{r['出産月']}月の4か月の日数が範囲の外です")
+
     # 産前産後の日数は、出産日をどこに置いても同じ（変わるのは免除月数だけ）
     lens = {r["休んだ日数"] for r in birth_day_grid()}
     if len(lens) != 1:
@@ -317,6 +388,21 @@ if __name__ == "__main__":
     print("\n=== 多胎（154日）だと、6か月になる出産日は30日のうち1日だけ ===")
     for row in birth_day_grid(multi=True):
         print(row)
+
+    print("\n=== 4か月ぶん免除される出産日は、2026年の365日のうち81日しかない ===")
+    summ = birth_month_summary(REF_YEAR)
+    for row in birth_month_grid(REF_YEAR):
+        print(f"  {row['出産月']:>2}月（{row['その月の日数']}日）  "
+              f"4か月になる日 {row['4か月になる日']}日  "
+              f"3か月になる日 {row['3か月になる日']:>2}日  "
+              f"割合 {row['割合'] * 100:.4f}%")
+    print(f"  年間  4か月 {summ['4か月になる日']}日 / {summ['その年の日数']}日"
+          f"（{summ['年間の割合'] * 100:.4f}%）  3か月 {summ['3か月になる日']}日")
+    print(f"  いちばん高い月 {summ['いちばん高い月']}月 {summ['いちばん高い割合'] * 100:.4f}%"
+          f"  いちばん低い月 {summ['いちばん低い月']}月 {summ['いちばん低い割合'] * 100:.4f}%"
+          f"  開き {summ['月の開き']:.4f}倍")
+    print(f"  額（標準報酬月額{REF_STD:,}円）  3か月 {summ['3か月の額']:,}円"
+          f"  4か月 {summ['4か月の額']:,}円  差 {summ['差の額']:,}円")
 
     print("\n=== 1日ずれて消える額は、等級で8,052円から59,475円まで開く ===")
     for row in grade_grid():
