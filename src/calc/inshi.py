@@ -446,11 +446,24 @@ def zeinuki_limit(edge: int) -> int:
     """税込でいくらまでなら、区分記載で1つ下の帯に落ちるか。
 
     **税抜き ＝ 税込 ÷ 1.1 の切り捨て**で判定します。
+
+    ## **1円ずつ数え上げないこと**（2026-08-18 に踏んだ）
+
+    ここは最初 `while` で1円ずつ上げていました。**答えは合っていましたが、
+    第17号の10億円の境目で約1億回まわり**、`tests/test_topic_stock.py`
+    （節を数えるので、この関数を実際に呼びます）が **9分を超えました。**
+    掃引を抜いた検査ですら 900秒で終わらなくなっています。
+
+    閉じた式で出ます。税抜きは `X × den ÷ num` の切り捨て（`num/den` ＝ 1＋税率）なので、
+
+        税抜き < edge  ⟺  X × den < edge × num  ⟺  X ≤ (edge × num − 1) ÷ den
+
+    **`_checks` は速さを見ません。** 見ているのは値だけなので、
+    **この種の遅さは検査を全部通ったうえで残ります。**
     """
-    x = edge
-    while (x + 1) * 100 // 110 < edge:
-        x += 1
-    return x
+    step = 1 + SHOHIZEI
+    num, den = step.numerator, step.denominator
+    return (edge * num - 1) // den
 
 
 def zeinuki_grid(kind: str = "17号") -> list[dict]:

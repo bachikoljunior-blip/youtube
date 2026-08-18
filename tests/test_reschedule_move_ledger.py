@@ -68,3 +68,44 @@ def test_move_と_unschedule_の両方に書き戻しがある():
         "--move が控えに書き戻していない"
     assert "dupes.retime(args.unschedule, None)" in src, \
         "reschedule.py --unschedule が控えに書き戻していない"
+
+
+# --- **検査は速さを見ません**（2026-08-18 に踏んだ） -----------------------
+#
+# `src/calc/inshi.py` の `zeinuki_limit()` を1円ずつの数え上げで書いたところ、
+# **答えは全部合っていて `check_tables()` も緑**でしたが、第17号の10億円の境目で
+# 約1億回まわり、**節を数える `tests/test_topic_stock.py` が9分を超え**、
+# 掃引を抜いた検査全体が 900秒で終わらなくなりました。
+#
+# **値の検査（`_checks`）は、この壊れ方を1つも捕まえません。**
+# だから、節を数える側の入口に「速さ」の検査を1つ置きます。
+
+def test_節を数えるのに使う関数が速いこと():
+    """`src/calc/` の表を1回ずつ回すのに、目に見える時間がかからないこと。
+
+    **上限は「人が待てる時間」ではなく、`test_topic_stock` が回る前提**です。
+    1本あたり1秒を超える表があると、48本で1分を超え、
+    それを何度も呼ぶ検査が分単位になります。
+    """
+    import importlib
+    import time
+    from pathlib import Path
+
+    calc_dir = Path(__file__).resolve().parent.parent / "src" / "calc"
+    slow = []
+    for path in sorted(calc_dir.glob("*.py")):
+        if path.stem.startswith("_"):
+            continue
+        mod = importlib.import_module(f"src.calc.{path.stem}")
+        check = getattr(mod, "check_tables", None)
+        if check is None:
+            continue
+        start = time.monotonic()
+        check()
+        took = time.monotonic() - start
+        if took > 1.0:
+            slow.append((path.stem, round(took, 2)))
+    assert not slow, (
+        f"check_tables() に1秒より長くかかる表があります: {slow}。"
+        "値は合っていても、節を数える検査が分単位になります"
+    )
