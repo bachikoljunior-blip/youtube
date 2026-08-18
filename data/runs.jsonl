@@ -413,3 +413,5 @@
 {"at": "2026-08-18T16:37:15+09:00", "session": "session_019hejRJ6bdAn8hexvMcgmKN", "kind": "ship", "what": "means(A): 印紙税の表を新設（inshi・6節）。未使用の節 0 → 6。跳ぶ額の1位は10億円と50億円の同額200,000円で、倍率の1位は500万円の5.00倍と別の金額"}
 {"at": "2026-08-18T16:39:50+09:00", "session": "session_019hejRJ6bdAn8hexvMcgmKN", "kind": "ship", "what": "fix: reschedule.py --move / --unschedule が控えに書き戻していなかった（実物だけ動き、--compact は古い時刻で割り当てを組む）。6本を実測で踏んで発見。_update() を呼ぶブロックは必ず dupes.retime() も呼ぶ、という形そのものを検査に"}
 {"at": "2026-08-18T17:43:24+09:00", "session": "session_019hejRJ6bdAn8hexvMcgmKN", "kind": "ship", "what": "fix: 自分でこの回に書いた zeinuki_limit が1円ずつ数え上げ、第17号の10億円の境目で約1億回まわって検査全体を900秒で殺していた（値は全部正しく check_tables は緑＝_checks は速さを見ない）。閉じた式へ。test_topic_stock 560秒超→91.5秒・全体7分19秒で1686緑"}
+{"at": "2026-08-18T17:00:50+09:00", "session": "session_01E3nBrZUx4xDjtFEwHFoinZ", "kind": "start"}
+{"at": "2026-08-18T18:03:22+09:00", "session": "session_01E3nBrZUx4xDjtFEwHFoinZ", "kind": "ship", "what": "means(A)+fix×2: 不動産取得税の表を新設（fudosanshutoku・7節、テーマ351→364）／pytest 全体を26分止めていた inshi.zeinuki_limit の走査を閉じた式に（5億回→1回）／angle の未裏取り 13件目を、しきい値でなく表の側（keigen_shapes に段の合計）で塞いだ"}

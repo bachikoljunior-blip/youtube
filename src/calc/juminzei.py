@@ -249,9 +249,17 @@ def recovery(grade: str = "1級地", heads: int = 1) -> dict:
     limit = min(kintowari_limit(grade, heads), shotokuwari_limit(heads))
     base = tax(limit, grade, heads)["手取り"]
     extra = 0
+    bottom: float | None = None
+    # **谷の底は、この走査の中で一緒に取ること**（2026-08-18 17:5x に測って直した）。
+    # ここは長らく、走査で `extra` を出したあと `min(... for d in range(1, extra+1))`
+    # で**同じ `tax()` をもう一度ぜんぶ引き直して**いました。値は同じで、回数だけ2倍です。
+    # `check_tables()` が 1.07秒かかり、`tests/test_reschedule_move_ledger.py` の
+    # 「表ごとに1秒まで」を超えていました（`tax()` の呼び出しは 672,709回）。
     while extra < 200_000:
         extra += 1
-        if tax(limit + extra, grade, heads)["手取り"] >= base:
+        take_home = tax(limit + extra, grade, heads)["手取り"]
+        bottom = take_home if bottom is None else min(bottom, take_home)
+        if take_home >= base:
             break
     return {
         "級地": grade,
@@ -260,8 +268,7 @@ def recovery(grade: str = "1級地", heads: int = 1) -> dict:
         "限度額での手取り": base,
         "戻るのに要る増収": extra,
         "戻る点の合計所得": limit + extra,
-        "谷の底": min(tax(limit + d, grade, heads)["手取り"]
-                     for d in range(1, extra + 1)),
+        "谷の底": bottom,
         "年収での谷の幅": income_of(limit + extra) - income_of(limit),
     }
 

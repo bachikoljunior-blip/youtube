@@ -379,6 +379,10 @@ def keigen_shapes(honsoku: str = "1号本則", keigen: str = "1号軽減") -> di
         counts[r["減る割合"]] = counts.get(r["減る割合"], 0) + 1
     max_yen = max(r["減る額"] for r in rows)
     return {
+        # **合計も返すこと**（2026-08-18 17:5x に足した）。テーマの angle は
+        # 「11段のうち6段」と書きますが、**11 はどこにも印字されていませんでした。**
+        # 割った内訳だけ出して合計を出さないと、**画面に出せない数**が1つ増えます。
+        "段の合計": sum(counts.values()),
         "割合べつの段数": dict(sorted(counts.items())),
         "額の1位": [(r["帯の出口"] if r["帯の出口"] is not None else "50億円超")
                   for r in rows if r["減る額"] == max_yen],
@@ -457,6 +461,11 @@ def zeinuki_limit(edge: int) -> int:
     閉じた式で出ます。税抜きは `X × den ÷ num` の切り捨て（`num/den` ＝ 1＋税率）なので、
 
         税抜き < edge  ⟺  X × den < edge × num  ⟺  X ≤ (edge × num − 1) ÷ den
+
+    **境目はもっと大きいものがあります**（2026-08-18 17:5x に別の回が測った）。
+    上の 10億円は第17号のもので、**第1号・第2号文書の最大の境目は 5,000,000,001円**。
+    掃引（`src/section_sweep.py`）は `kind` の全部の値で呼ぶので、
+    数え上げのままだと**1回あたり約5億回**でした。
 
     **`_checks` は速さを見ません。** 見ているのは値だけなので、
     **この種の遅さは検査を全部通ったうえで残ります。**
