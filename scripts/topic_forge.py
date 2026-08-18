@@ -104,6 +104,26 @@ def sections(module: str) -> dict[str, str]:
     return out
 
 
+def sections_for(topic: dict, secs: dict[str, str]) -> str:
+    """テーマの `calc_sections` に当たる節の本文をつなげて返す。
+
+    **`calc_sections` は見出しそのものではありません。見出しに含まれる語です。**
+    引く側は `any(語 in 見出し for 語 in calc_sections)` の**部分一致**で、
+    正本は `src/script_writer.py`（生成のときに実際にこれで絞っています）。
+
+    **2026-08-19 に、これを知らずに完全一致で引いて12分払いました。**
+    予約246本を今の表と突き合わせる測定が、**246件とも「節が無い」**になり、
+    測り直しになっています。手順にも `sections()` の docstring にも
+    部分一致だと書いた行が1つも無く、**写す側が毎回間違えます。**
+    だから、引き方のほうをここに1つ置きました。
+    """
+    words = topic.get("calc_sections") or []
+    if not words:
+        return "\n".join(secs.values())
+    return "\n".join(body for head, body in secs.items()
+                     if any(w in head for w in words))
+
+
 def survey() -> tuple[dict[str, dict[str, str]], dict[str, list[str]], set[str]]:
     """(モジュール→節, モジュール→未使用の見出し, 既存のテーマID) を返す。"""
     topics = config.load_topics()["topics"]
@@ -239,7 +259,16 @@ def build_prompt(picked: list[tuple[str, str]], all_sections, topics) -> str:
 
 # ---------------------------------------------------------------- 検証して書く
 
-_NUM = re.compile(r"(\d[\d,]*(?:\.\d+)?)\s*万\s*(\d[\d,]*)?|(\d[\d,]*(?:\.\d+)?)")
+# **`万` の後ろは、空けないこと・`千` を捨てないこと**（2026-08-19 に実測して直した）。
+# 旧: `(\d[\d,]*)\s*万\s*(\d[\d,]*)?`。`\s*` があるので
+# **`2000万 1日で106,470円` の「1日」の 1 を万の下に吸って 20,000,001** を作り、
+# **`431万8千円` は「千」を読まずに 4,310,008**（正しくは 4,318,000）にしていました。
+# どちらも**実在しない数**なので、`best_section` の突き合わせでは当たらず、
+# `validate` では「表の外の数字」に見えます（`43.2万円`→20,000 と同じ形。3件目）。
+# 実測: `config/topics.yaml` 413件のうち **8件**の数が変わり、8件とも新しい側が正しい。
+_NUM = re.compile(
+    r"(\d[\d,]*(?:\.\d+)?)万(?:(\d[\d,]*)千|(\d[\d,]*))?"
+    r"|(\d[\d,]*(?:\.\d+)?)")
 
 
 MONEY_FLOOR = 1000   # 金額の表を持つ calc で捨てる下限（年数・回数を当てにしない）
@@ -291,10 +320,12 @@ def numbers(text: str, floor: float = MONEY_FLOOR) -> set[int | float]:
     取り違えなど、こちらが正しい側**でした。
     """
     out: set[int | float] = set()
-    for man, rest, plain in _NUM.findall(text):
+    for man, sen, rest, plain in _NUM.findall(text):
         if man:
             value = _value(man) * 10_000
-            if rest:
+            if sen:                                     # 「431万8千円」の 8千
+                value += int(sen.replace(",", "")) * 1_000
+            elif rest:                                  # 「1121万2500円」の 2500
                 value += int(rest.replace(",", ""))
             out.add(int(value) if float(value).is_integer() else value)
             out.add(_value(man))   # 「1000万」の 1000 単体も拾う

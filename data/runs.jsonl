@@ -447,3 +447,8 @@
 {"at": "2026-08-19T00:24:07+09:00", "session": "session_01W9Dty6ZrUtQmfoadcjTFdp", "kind": "start"}
 {"at": "2026-08-19T00:25:54+09:00", "session": "session_01W9Dty6ZrUtQmfoadcjTFdp", "kind": "seen", "saw": "session_0123B3jr7v3kfgnKrhicipET", "why": "題名は既定のまま＝§6(d)に届いていない。前の回が source_url 無しで立てて30秒で畳んだ子（申し送りに記載済み）"}
 {"at": "2026-08-19T00:31:36+09:00", "session": "session_01W9Dty6ZrUtQmfoadcjTFdp", "kind": "ship", "what": "fix×2+means(B)×2: keihi の山は幅1円で格子の上に1つも乗っていなかった（peak は10万円きざみの max・cliff はその複製）。1,390,200円/25,176円 対 格子の1,400,000円/24,475円＝701円低い。1円で22,980円跳ぶ。節2本・テーマ411→413。未投稿テーマの誤った主役数字を投稿前に差し替え"}
+{"at": "2026-08-19T03:16:47+09:00", "session": "session_01PmMmDe3Es8Tn1wiEJYWytL", "kind": "start"}
+{"at": "2026-08-19T03:18:22+09:00", "session": "session_01PmMmDe3Es8Tn1wiEJYWytL", "kind": "seen", "saw": "session_01BnRtVkk73xZui1hqtnmiLX", "why": "apifail(529)＝§6(d)未到達で題名も中身ゼロ。拾うものなし"}
+{"at": "2026-08-19T03:33:45+09:00", "session": "session_01PmMmDe3Es8Tn1wiEJYWytL", "kind": "ship", "what": "fix: topic_forge.numbers() が 万 の後ろで隣の語の数字を吸い、千 を読まなかった（2000万 1日→20,000,001／431万8千→4,310,008）。413件中8件の数が変わり8件とも新しい側が正しい。+検査6件"}
+{"at": "2026-08-19T03:33:59+09:00", "session": "session_01PmMmDe3Es8Tn1wiEJYWytL", "kind": "ship", "what": "verdict: 申し送りの「残る刻み候補 tsukin.per_km_extremes」は欠陥ではない（法定の帯の端点で、帯内は単調。EDGE_EPS を1e-9〜0.1で振っても極値の位置は動かず値は4桁目以降のみ）。刻みの候補は尽きた"}
+{"at": "2026-08-19T03:33:59+09:00", "session": "session_01PmMmDe3Es8Tn1wiEJYWytL", "kind": "ship", "what": "fix: 予約済み2本（E5i0YfIkmnA / KPGuqj5v1Qs）が souzoku の粗い格子の答えを「いちばん安い」と言っていることを確認。日枠切れで外せないため受け取り帳 556dd42d に落とし、config/topics.yaml の2件を正しい数字と言い方へ直した"}
