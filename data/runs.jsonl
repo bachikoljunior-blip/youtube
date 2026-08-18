@@ -463,3 +463,4 @@
 {"at": "2026-08-19T05:10:49+09:00", "session": "session_01MvG7aRRoMuS7UcdnrjAzZM", "kind": "ship", "what": "fix: status.py の「予約の先」が平均しか出さず、今日から5日が1本/日の形が見えなかった → 日ごとの本数と薄い日の名指しを追加（API 0単位）"}
 {"at": "2026-08-19T05:27:52+09:00", "session": "session_01Apvk71DVAfva1KR1W754j2", "kind": "start"}
 {"at": "2026-08-19T05:45:06+09:00", "session": "session_01Apvk71DVAfva1KR1W754j2", "kind": "ship", "what": "upload: 7本を 08/19 09:30〜13:00 JST に予約（日枠が死んでいる窓に videos.insert だけを寄せた）"}
+{"at": "2026-08-19T05:49:30+09:00", "session": "session_01Apvk71DVAfva1KR1W754j2", "kind": "ship", "what": "fix: --jobs の上限を実測（nproc=4・1本70秒）＝計算側は1日1,200本。在庫が律速だと確定"}
