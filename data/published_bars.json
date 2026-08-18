@@ -642,6 +642,28 @@
     ],
     "video_id": "uhR8msMW9k4"
   },
+  "s-invoice-2wari-shogyo-same": {
+    "charts": [
+      [
+        "16万円",
+        "8万円",
+        "16万円",
+        "40万円"
+      ]
+    ],
+    "video_id": "Tvm988Z4aHc"
+  },
+  "s-invoice-bunkiten-80": {
+    "charts": [
+      [
+        "20万円",
+        "16万円",
+        "12万円",
+        "16万円"
+      ]
+    ],
+    "video_id": "ZMCObTcW5FM"
+  },
   "s-iryohi-1": {
     "charts": [
       [
@@ -688,6 +710,20 @@
       ]
     ],
     "video_id": "LpgNOanBc-k"
+  },
+  "s-iryohi-5nen-wakeru-zero": {
+    "charts": [
+      [
+        "8万839円",
+        "0円"
+      ],
+      [
+        "100.0%",
+        "80.0%",
+        "44.4%"
+      ]
+    ],
+    "video_id": "7q_i9BWL1e4"
   },
   "s-iryohi-bunkatsu-30420": {
     "charts": [
@@ -1154,6 +1190,20 @@
     ],
     "video_id": "Un9Tlod-Vdw"
   },
+  "s-kafu-kuriage-1kagetsu": {
+    "charts": [
+      [
+        "51,680円",
+        "3,060,000円"
+      ],
+      [
+        "-2,688,320円",
+        "-2,119,840円",
+        "-879,520円"
+      ]
+    ],
+    "video_id": "x9idbNKZpqw"
+  },
   "s-kafu-sakaime-64-22sai": {
     "charts": [
       [
@@ -1162,6 +1212,15 @@
       ]
     ],
     "video_id": "BzvH0iCzrzo"
+  },
+  "s-kafunenkin-64-5sai-gyakuten": {
+    "charts": [
+      [
+        "30万6000円",
+        "32万円"
+      ]
+    ],
+    "video_id": "r05mkYIsLXM"
   },
   "s-kaigo-3wari-2-65bai": {
     "charts": [
@@ -1318,6 +1377,36 @@
       ]
     ],
     "video_id": "g2fnGkUlTNE"
+  },
+  "s-keihi-shotoku-1390200-25176": {
+    "charts": [
+      [
+        "251.76%",
+        "244.75%",
+        "26.54%"
+      ],
+      [
+        "31.54%",
+        "36.14%",
+        "45.32%"
+      ]
+    ],
+    "video_id": "alc8Oakxj-8"
+  },
+  "s-keihi-yama-haba-1en": {
+    "charts": [
+      [
+        "2万4475円",
+        "2万5076円",
+        "2万5176円"
+      ],
+      [
+        "1万7815円",
+        "2万5176円",
+        "1万6758円"
+      ]
+    ],
+    "video_id": "lges32AtBC0"
   },
   "s-kogaku-atono-iryohi-koujo-ku-e-todokanai": {
     "charts": [
@@ -2297,6 +2386,15 @@
       ]
     ],
     "video_id": "3g2LdB4zqFU"
+  },
+  "s-rousai-taiki-3ka-tsukin-zero": {
+    "charts": [
+      [
+        "17,802円",
+        "0円"
+      ]
+    ],
+    "video_id": "pS18Gr3lyvU"
   },
   "s-saishushoku-330-66-nichibun": {
     "charts": [

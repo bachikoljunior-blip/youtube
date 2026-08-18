@@ -464,3 +464,6 @@
 {"at": "2026-08-19T05:27:52+09:00", "session": "session_01Apvk71DVAfva1KR1W754j2", "kind": "start"}
 {"at": "2026-08-19T05:45:06+09:00", "session": "session_01Apvk71DVAfva1KR1W754j2", "kind": "ship", "what": "upload: 7本を 08/19 09:30〜13:00 JST に予約（日枠が死んでいる窓に videos.insert だけを寄せた）"}
 {"at": "2026-08-19T05:49:30+09:00", "session": "session_01Apvk71DVAfva1KR1W754j2", "kind": "ship", "what": "fix: --jobs の上限を実測（nproc=4・1本70秒）＝計算側は1日1,200本。在庫が律速だと確定"}
+{"at": "2026-08-19T06:09:53+09:00", "session": "session_01XwZSsPLahkWPbPjQkEzssN", "kind": "start"}
+{"at": "2026-08-19T06:23:53+09:00", "session": "session_01XwZSsPLahkWPbPjQkEzssN", "kind": "ship", "what": "upload: 8本を 08/20 09:30〜13:30 JST に予約（1日1本だった薄い日を9本に。1本は検査が正しく止めた＝前提が画面に無い）"}
+{"at": "2026-08-19T06:23:54+09:00", "session": "session_01XwZSsPLahkWPbPjQkEzssN", "kind": "ship", "what": "means: M19『在庫の供給を、表の本数に比例する形から表の組み合わせに変える』を中身つきで立て、1手目 src/calc_axes.py を入れて走らせた（53表・1,144組／既知の当たり gassan が入力の軸では繋がらないことを実測して検査に固定）"}
