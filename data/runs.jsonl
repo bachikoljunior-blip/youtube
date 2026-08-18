@@ -395,3 +395,5 @@
 {"at": "2026-08-18T12:02:52+09:00", "session": "session_01CJHcXw5CbUTfJNZL8EnLxt", "kind": "start"}
 {"at": "2026-08-18T12:23:36+09:00", "session": "session_01CJHcXw5CbUTfJNZL8EnLxt", "kind": "ship", "what": "means(A): 特定支出控除の表を新設（src/calc/tokutei.py・7節・テーマ329→336・敷居＝給与所得控除の半分を年収の関数として出して初めて見える6件）"}
 {"at": "2026-08-18T12:30:27+09:00", "session": "session_01CJHcXw5CbUTfJNZL8EnLxt", "kind": "ship", "what": "fix: status.py が在庫の天井を出す（pick(8) の 8 は要求を満たした数で上限ではない。直近4回の申し送りが在庫8本と誤読。いま21本・実測2.0秒）"}
+{"at": "2026-08-18T12:43:46+09:00", "session": "session_01KET5rrimk1GrCTruYVTWK6", "kind": "start"}
+{"at": "2026-08-18T13:03:37+09:00", "session": "session_01KET5rrimk1GrCTruYVTWK6", "kind": "ship", "what": "means(A): 固定資産税の表を新設（src/calc/koteishisan.py・7節・テーマ336→343・「200㎡までが6分の1」の外側にある3つめの帯＝家屋の床面積の10倍を出して初めて見える5件）"}
