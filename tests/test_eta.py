@@ -173,3 +173,25 @@ def test_門2aの節は例外を出さずに出る():
         m = _measured(**over)
         lines = eta.report(m, eta.analyse(m))
         assert any("門2a" in l for l in lines), over
+
+
+def test_測定になっていない無限と_遠いだけの無限を見分ける():
+    """**同じ「届きません」でも意味が正反対**。返り値だけでは区別がつかない。
+
+    しきい値は手で決めていません。**延ばした先が100年より遠い＝伸び率が0と
+    区別がつかない**、を境にしています（`_days_to` が畳む線と同じ）。
+    """
+    for h in (0.0, 0.1, 10.0):                            # 実測は 0.1 時間/365日
+        a = eta.analyse(_measured(long_hours_365=h))
+        assert a["long_untried"] is True, h
+    伸びている = eta.analyse(_measured(long_hours_365=400.0))   # 400h/365日
+    assert 伸びている["days_long_hours"] < eta.NEVER
+    assert 伸びている["long_untried"] is False
+
+
+def test_未着手のときだけ_長尺の実力ではないと断る():
+    出た = eta.report(_measured(long_hours_365=0.0), eta.analyse(_measured(long_hours_365=0.0)))
+    assert any("長尺の実力ではありません" in l for l in 出た)
+    m = _measured(long_hours_365=400.0)
+    出た2 = eta.report(m, eta.analyse(m))
+    assert not any("長尺の実力ではありません" in l for l in 出た2)

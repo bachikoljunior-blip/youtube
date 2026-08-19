@@ -239,6 +239,17 @@ def analyse(m: dict) -> dict:
     long_hours_per_day = m["long_hours_365"] / 365
     a["days_long_hours"] = _days_to(LONG_HOURS_GATE - m["long_hours_365"], long_hours_per_day)
 
+    # **その無限は「遠い」ではなく「測定になっていない」。**
+    #
+    # `days_long_hours` は伸び率を先へ延ばした数なので、伸びが実質ゼロなら
+    # 必ず無限になります。**そのとき無限が言っているのは長尺の実力ではなく、
+    # 長尺をまだ出していないこと**です。しきい値を手で決めずに済む言い方はこれ:
+    # **延ばした先が100年より遠いなら、その伸び率は0と区別がつかない**
+    # ＝ 測定として成立していない（`_days_to` が100年で NEVER に畳むのと同じ線）。
+    # 実測 0.1時間/365日 は、まさにこの帯です。
+    a["long_untried"] = a["days_long_hours"] >= NEVER
+    a["long_hours_365_seen"] = m["long_hours_365"]
+
     # --- 門2b: ショート 直近90日で1,000万再生 ---
     a["shorts_needed_per_day"] = SHORTS_VIEWS_GATE / 90
     a["days_shorts_gate"] = 0.0 if views_day >= a["shorts_needed_per_day"] else NEVER
@@ -296,6 +307,13 @@ def report(m: dict, a: dict) -> list[str]:
     P(f"  [門1] 登録者 {SUBS_GATE:,}人      {_fmt_days(a['days_subs'])}")
     P(f"        いまの速さ ＝ 1日 {a['subs_per_day']:.2f} 人（再生 {a['views_per_day']:,.0f}／日 × 登録率 {a['sub_rate']*100:.4f}%）")
     P(f"  [門2a] 長尺 {LONG_HOURS_GATE:,}時間    {_fmt_days(a['days_long_hours'])}")
+    if a["long_untried"]:
+        # **「遠い」と「分母が0」は別。** ここを同じ字で出していたので、
+        # 2回とも「長尺では開かない」と読まれかけました（下の逆算の節が答えです）。
+        P(f"         ↑ **これは長尺の実力ではありません。** 直近365日の長尺の視聴時間が"
+          f" {a['long_hours_365_seen']:,.1f}時間 ＝ **伸び率が0と区別がつきません**。")
+        P("         延ばした数が無限なのは、長尺が弱いからではなく**まだ出していない**から。")
+        P("         **「開かない」ではなく「まだ試していない」です。** 合格点は下の節に出します。")
     if a["days_shorts_gate"] == 0:
         shorts_line = "**通っています**"
     else:
@@ -303,6 +321,9 @@ def report(m: dict, a: dict) -> list[str]:
                        f"／いま {a['views_per_day']:,.0f}回）")
     P(f"  [門2b] ショート90日で{SHORTS_VIEWS_GATE:,}回    {shorts_line}")
     P(f"  → **収益化そのもの: {_fmt_days(a['days_monetized'])}**")
+    if a["long_untried"] and a["days_monetized"] >= NEVER:
+        P("       **この「届きません」を、諦める理由に使わないこと。** 門2a の無限が"
+          "そのまま出ているだけで、**未着手を測った数ではありません**。")
     P("")
     P("--- 天井（**ここが本体**）---")
     P(f"  1日に出せる上限 {UPLOAD_CAP_PER_DAY}本 × 1本 {a['per_video_now']:,}回 × 30日 = 月 {a['ceiling_views_month']:,.0f} 再生")
