@@ -220,3 +220,15 @@ def test_穴の空かない詰め方を道具の側が名指しする():
     plan = reschedule.compact_plan(rows, now=NOW, step_min=60, hour=9, until_hour=11,
                                    max_days=hint, window=EMPTY)
     assert reschedule.hole_days(rows, plan, NOW) == []
+
+
+def test_撃ち切れない回は途中の姿の穴も数えられる():
+    """`--max` で切ると、前に詰めた本が抜けた跡が**翌日の窓まで空いたまま**残る。
+
+    穴が0件の割り当てでも、**途中の姿は別に数える**こと。
+    """
+    rows = [_row(f"v{i}", f"2026-08-{19 + i:02d}T09:00") for i in range(12)]
+    plan = reschedule.compact_plan(rows, now=NOW, step_min=60, hour=9, until_hour=11,
+                                   max_days=12, window=EMPTY)
+    assert reschedule.hole_days(rows, plan, NOW) == []      # 撃ち切れば穴は無い
+    assert reschedule.hole_days(rows, plan[:3], NOW), "途中で止めた姿の穴を数えていない"

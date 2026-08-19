@@ -423,6 +423,20 @@ def _compact(args) -> int:
               f"（`videos.update` は1本 50単位・日枠 10,000 ＝ {args.max}本で止めます）")
         return 0
 
+    # **1日で撃ち切れないときは、途中の姿にも穴が空きます**（2026-08-19 12:5x）。
+    # `videos.update` は50単位・日枠 10,000 ＝ **1日195本まで**なので、
+    # 318本の割り当ては必ず2日に割れます。前に詰めた本が抜けた跡は
+    # **翌日の窓で埋まるまで空いたまま**なので、いつまでに続きを撃つかが要ります。
+    if len(plan) > args.max:
+        mid = hole_days(rows, plan[:args.max], now)
+        print(f"[compact] **1回では撃ち切れません**（{len(plan)}本 / 1回 {args.max}本）。"
+              f"残り {len(plan) - args.max}本は次の窓（JST 16:00）で。")
+        if mid:
+            print(f"[compact] [!] **途中の姿には {len(mid)}日ぶんの穴が残ります**: "
+                  + " ".join(mid))
+            print(f"[compact] [!] **{mid[0]} が来る前に、続きを撃ち切ること。**"
+                  "  撃ち切れなければ、その日は公開が0本になります")
+
     svc = uploader._service()
     done = 0
     for p in plan[:args.max]:
