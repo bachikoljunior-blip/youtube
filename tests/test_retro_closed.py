@@ -265,11 +265,23 @@ def test_実物の日誌で最後の宣言が効く():
     journal = (ROOT / "docs" / "JOURNAL.md").read_text(encoding="utf-8")
     closed = retro.closures(journal)
     assert closed, "実物の日誌から宣言が1つも読めていません（読む側が壊れています）"
-    # いちばん後ろで宣言された語を取り、**その宣言より前の言及が黙ること**を見る
-    tok = max(closed, key=lambda t: closed[t])
-    before = [d for d, body, start in retro.handoff_blocks(journal)
-              if tok in retro.tokens(body) and start <= closed[tok]]
-    assert before, f"{tok} は宣言だけで、黙らせる相手がいません"
+    # **「いちばん後ろの1語」で見ないこと**（2026-08-19 16:1x に直した。**同じ穴の9枚目**）。
+    # ここは長らく `max(closed, ...)` で最後に宣言された語だけを見ていました。
+    # ところが宣言は `--closes` で好きな語を書けるので、**その語がたまたま
+    # 申し送りに一度も出ていないだけで赤くなります**（実測: `video_id`。
+    # 15:1x の回が閉じたが、`### 次の回へ` の側には一度も出ていなかった）。
+    # **コードを1行も触らずに赤くなる**という、この検査自身が上で名指ししている
+    # 壊れ方そのものです。見るべきは「**宣言という仕組みが実データで効いているか**」なので、
+    # **1語でも黙らせていれば足ります。**
+    effective = [
+        tok for tok, at in closed.items()
+        if any(tok in retro.tokens(body)
+               for _d, body, start in retro.handoff_blocks(journal) if start <= at)
+    ]
+    assert effective, (
+        f"宣言は {len(closed)}件あるのに、**どれ1つ前の言及を黙らせていません。**"
+        "読む側（retro.closures / handoff_blocks / tokens）が壊れています"
+    )
 
 
 def test_鉤括弧の中の閉じましたは宣言に数えない():

@@ -1,4 +1,3 @@
-{"at": "2026-08-15T08:42:53+09:00", "session": "session_01MVSsBLCAnjcmTkw2X7o2cd", "kind": "start"}
 {"at": "2026-08-15T08:42:53+09:00", "session": "session_01MVSsBLCAnjcmTkw2X7o2cd", "kind": "ship", "what": "fix: 恒久指示9件の枠組みを外して目標だけにした／子の最低ライン（ship印＋Stopフック）／親の出力をFOR_OWNER.mdだけに絞った"}
 {"at": "2026-08-15T08:52:23+09:00", "session": "session_01MVSsBLCAnjcmTkw2X7o2cd", "kind": "ship", "what": "upload: s-nenkin-2 (sbm6RwDmxAs) を 8/15 21:00 JST に予約。1日2本目の n=2 サンプル"}
 {"at": "2026-08-15T09:03:15+09:00", "session": "session_01MVSsBLCAnjcmTkw2X7o2cd", "kind": "ship", "what": "means/fix: Reporting API の channel_reach_basic_a1 を発見してジョブ作成＋scripts/reach.py（インプレッション/CTR を自分で取る道）。親を質疑応答窓口に。間隔を毎時へ戻す"}
@@ -498,3 +497,4 @@
 {"at": "2026-08-19T16:03:43+09:00", "session": "session_0114aRDd9KvCDDBTZREY5MY9", "kind": "ship", "what": "fix: 予約の詰め直しを撃った（reschedule --compact --apply --max-days 14 --max 190）。190本を移動し、公開が 1日6.4本 → 1日25本 に。--max-days 10 は真ん中に11日の穴が空くと道具が止めたので、道具の言う 14 を採った。21周持ち越しの決着。残り134本は次の窓"}
 {"at": "2026-08-19T16:03:44+09:00", "session": "session_0114aRDd9KvCDDBTZREY5MY9", "kind": "ship", "what": "fix: 誤数字の予約を2本外した（E5i0YfIkmnA＝粗い格子由来で主役の額が誤り／KPGuqj5v1Qs＝数字は正しいが angle『一番安い』が偽）。受け取り帳 556dd42d を閉じた"}
 {"at": "2026-08-19T16:03:44+09:00", "session": "session_0114aRDd9KvCDDBTZREY5MY9", "kind": "ship", "what": "means(M21): 動画の作りの特徴 × engaged を測る道具（src/build_perf.py・API 0単位）。1回目は5特徴とも無関係（|ρ|≤0.18）＝ engaged の3.8倍の幅は、いま測れている作りでは説明できない"}
+{"at": "2026-08-19T16:11:09+09:00", "session": "session_0114aRDd9KvCDDBTZREY5MY9", "kind": "ship", "what": "fix: test_retro_closed の実データ検査が『いちばん後ろに宣言された1語』だけを見ていた。--closes は好きな語を書けるので、その語が申し送りに一度も出ていないだけで赤くなる（実測 video_id）。コードを1行も触らず赤くなる形で、この検査自身が上で名指ししている壊れ方。1語でも黙らせていれば足りる形へ"}
