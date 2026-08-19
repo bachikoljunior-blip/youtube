@@ -134,6 +134,30 @@ detached のとき `git branch --show-current` は**空行を出して終了コ�
     git -C /home/user/youtube fetch origin claude/youtube-auto-post-revenue-ggedij:claude/youtube-auto-post-revenue-ggedij
     git -C /home/user/youtube switch claude/youtube-auto-post-revenue-ggedij
 
+#### **その `switch` が正しいのは「origin のほうが先」のときだけです**（2026-08-19 20:4x に足した）
+
+**detached には向きが2つあり、上の2手はその片方にしか当たりません。**
+
+    git -C /home/user/youtube fetch origin claude/youtube-auto-post-revenue-ggedij
+    git -C /home/user/youtube log --oneline HEAD..FETCH_HEAD
+
+    行が出る   → **origin のほうが先。** 上の2手（`switch`）でよい
+    空          → **HEAD のほうが先か、同じ。** `switch` すると**自分の commit を置いて降ります**
+
+空だったときは、こちら（`docs/trigger_main.md` §6 (a) と同じ手）:
+
+    git -C /home/user/youtube branch -f claude/youtube-auto-post-revenue-ggedij HEAD
+    git -C /home/user/youtube checkout claude/youtube-auto-post-revenue-ggedij
+
+**この向きの分岐は §6 (a) にしかありませんでした。** そこは「**push が
+`non-fast-forward` で弾かれ続けたら**」から始まる節なので、**3回押して弾かれてから**
+たどり着きます（2026-08-19 20:0x の回が実測で3回）。
+**`git status -sb` の1行（`## HEAD (no branch)`）は、§0 の時点でタダで読めます。**
+20:4x の回はここで読んで、**push の前に直しました**（弾かれた回数は0）。
+
+- **`git status -sb` を1回見ること。** `rev-parse --abbrev-ref HEAD` は
+  `HEAD` としか言わず、**どちらの向きかを言いません**
+
 #### **`fetch` が弾かれた同じコマンドで `switch` まで打たないこと**（2026-08-19 17:0x に踏んだ）
 
 **上の2手を `;` や改行で1つの Bash に繋ぐと、`fetch` の `(non-fast-forward)` を
@@ -971,6 +995,13 @@ else:
   **何度も叩き直すことになります**（2026-08-19 の回は同じ log を**11回**読み、
   そのたびに `.........` が数個増えただけでした）。
   **待ち合わせは、待つ側が止まって初めて待ち合わせです。**
+- **`nohup … &` を足さないこと**（2026-08-19 20:4x に踏んだ。**上の `sleep` に `&` を
+  付けない**のと同じ形です）。`run_in_background=True` は**それ自体が背景**なので、
+  中で `&` を打つと**外側の shell がその場で終了コード 0 で返り、子は道連れで死にます。**
+  20:4x の回は `pipeline --dry-run` をこの形で撃ち、**`[script] 冒頭1枚目の形: 問い` まで
+  印字して止まりました**（`build/<テーマ>/` は空のディレクトリだけ）。
+  **成功と見分けが付きません** —— 終了コードは 0、log には途中までの正常な行が並びます。
+  **背景に投げるときは、素のコマンドと `> log 2>&1` だけを書くこと。**
 - **`git add` は log を読んでから。** 赤いまま commit しないこと
 - **投げるのは「もう直す所が無い」と決めてから**（2026-08-19 17:0x に踏んだ）。
   この節は「最後に1回だけ」としか言っておらず、**それがいつかを言っていません。**

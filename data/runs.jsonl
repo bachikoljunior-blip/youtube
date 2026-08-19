@@ -1,5 +1,3 @@
-{"at": "2026-08-15T14:16:32+09:00", "session": "session_01YSEnL65KdyAQN3FunND5vp", "kind": "ship", "what": "fix: 自走の1周目が自分の重複防止で畳んで鎖が終わる穴を塞いだ（sibling_check.py・立てた相手を除外／枠は窓ごとに最新の観測）"}
-{"at": "2026-08-15T14:19:12+09:00", "session": "session_01YSEnL65KdyAQN3FunND5vp", "kind": "ship", "what": "fix: 独立評価の材料が読み上げ文0行で積まれていた（scenes→segments・黙って空を返す .get を例外化・VIDEO_ID を先に刷る）"}
 {"at": "2026-08-15T14:22:49+09:00", "session": "session_01YGBuxRP3ShdkqiaowEQK3S", "kind": "start"}
 {"at": "2026-08-15T14:46:14+09:00", "session": "session_01YGBuxRP3ShdkqiaowEQK3S", "kind": "ship", "what": "upload: s-zangyo-2 (7b2-Z6Jw5DQ) を 8/16 15:00 に予約。8/16 を4本の日にして M14 の『4本』段を作った"}
 {"at": "2026-08-15T14:48:41+09:00", "session": "session_01YGBuxRP3ShdkqiaowEQK3S", "kind": "ship", "what": "fix: 独立評価のスコアが実績と永久に突き合わない穴（記録はテーマID/Analyticsは動画ID→perf.getが必ずNone）。history.topic_video_map() で橋を架け、実データで18件が結びつくのを確認。M13の較正が完了しうる状態になった"}
@@ -498,3 +496,5 @@
 {"at": "2026-08-19T19:45:12+09:00", "session": "session_01XhATejL7VD5fye4twce8wu", "kind": "ship", "what": "fix: build_perf に1枚目の見出しの特徴2つ（幅・数字があるか）。冒頭の1〜2秒を占めている当のものが特徴に1つも無かった。控えは narration と別に欠けるので受け口を分けた"}
 {"at": "2026-08-19T19:53:49+09:00", "session": "session_011cpY99H7mPuQkFDiCVCEAt", "kind": "start"}
 {"at": "2026-08-19T20:04:41+09:00", "session": "session_011cpY99H7mPuQkFDiCVCEAt", "kind": "ship", "what": "fix: 1枚目の特徴が『見出しだけ』を見ていた。実物の主役は note（reveal_variants が数字を伏せた97%の本）で、申し送りの『1枚目に数字 51%』は画面ぜんぶで数えると96%＝幅が無い。主役の幅（14.5倍）と画面の数字の個数（12倍）へ"}
+{"at": "2026-08-19T20:35:50+09:00", "session": "session_01NZ5DFVvm8ou2Qj5gaJQVJt", "kind": "start"}
+{"at": "2026-08-19T20:49:17+09:00", "session": "session_01NZ5DFVvm8ou2Qj5gaJQVJt", "kind": "ship", "what": "fix: 冒頭1枚目の主役(kind=stat の note)を問いかけに振り分ける A/B を実装（hook_form + ASK_HOOK_RULE・判定 09/16・dry-run で出力が変わることと検査合格まで確認）"}
