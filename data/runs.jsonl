@@ -495,3 +495,5 @@
 {"at": "2026-08-19T11:51:21+09:00", "session": "session_01EJaJtaUMCUwxdMEv9LRTBy", "kind": "ship", "what": "upload: 09/01 に9本を予約（薄い日 1→10本。9/9 成功）"}
 {"at": "2026-08-19T11:51:22+09:00", "session": "session_01EJaJtaUMCUwxdMEv9LRTBy", "kind": "ship", "what": "fix: 背景生成と同時に検査を走らせると test_余り枠の枚数を出力で言う が必ず落ちる競合を塞いだ（手順が勧める形なので、赤は次の回の時間を食う）"}
 {"at": "2026-08-19T11:56:05+09:00", "session": "session_01EJaJtaUMCUwxdMEv9LRTBy", "kind": "ship", "what": "fix: inbox.py の push が分離HEADで必ず落ちていた（§0 が勧める形＝依頼が消える経路）。押す先の枝を origin から決めて HEAD:<枝> で押す。検査3件"}
+{"at": "2026-08-19T12:06:04+09:00", "session": "session_011XgX5TWKy3fMin654u7yq9", "kind": "start"}
+{"at": "2026-08-19T12:14:44+09:00", "session": "session_011XgX5TWKy3fMin654u7yq9", "kind": "ship", "what": "fix: eta.py の門2a『届きません』は長尺の実力でなく『まだ1本も出していない』の言い換えだった（分母0の無限）。開けるのに要る長尺1本あたり再生を逆算して出す形にした（L=4本/日・尺7分維持40% で **266回** ＝ショート実測1,092回の1/4）。公開密度の行を同じ days_subs_at へ寄せ、差の節に門1の行を追加。tests 8→14"}

@@ -39,6 +39,10 @@
   だから幅で出します。**この幅の中で結論が変わるなら、結論は出ていません**
 - 登録率・1本あたり再生は**実測**（YouTube Analytics）。ここは推測ではありません
 - ショートの視聴時間は 4,000時間の門に**入りません**。長尺の視聴時間だけが入ります
+- **門2の「届きません」は、長尺の実力ではありません**（2026-08-19 12:0x に直した）。
+  `days_long_hours` は直近365日の伸びを延ばした数なので、**長尺を1本も出していない限り
+  必ず無限**になります。「長尺では開かない」と「まだ試していない」は別の命題です。
+  だから最後の節が、**開けるのに要る「長尺1本あたり再生」**を逆算して出します
 """
 from __future__ import annotations
 
@@ -67,6 +71,10 @@ UPLOAD_CAP_PER_DAY = 92
 #     いまの予約は 246本が39.5日に散って 1日6.4本。詰めれば25本（受け取り帳 3c7e12a3）
 PUBLISH_SCENARIOS = (4, 10, 25, 92)
 
+# --- いま計画している密度（受け取り帳 3c7e12a3 の詰め直しが着地する所）---
+#     門2a の逆算は「門1 が通る日まで」で割るので、この1つを正本にします
+PLAN_PUBLISH_PER_DAY = 25
+
 # --- RPM の幅（**実測ではない**。収益化前なので自分の数字が無い）---
 RPM_SCENARIOS = {
     "ショート 低": 20,
@@ -76,6 +84,19 @@ RPM_SCENARIOS = {
     "長尺 お金 中": 1_000,
     "長尺 お金 高": 2_000,
 }
+
+# --- 長尺1本が生む視聴分（**推測**。長尺の実測が無いので、尺×維持率で置く）---
+#     ショートの実測は「1再生あたり22秒 ＝ 尺の49%」（2026-08-19 status.py）。
+#     長尺は WATCH が通算13回しかないので、維持率を測れません。
+#     **だから幅で置きます。** 低いほう（20%）で足りるなら、幅の中のどこでも足ります。
+LONG_SHAPES = (
+    ("尺4分・維持20%", 4, 0.20),
+    ("尺5分・維持40%", 5, 0.40),
+    ("尺7分・維持40%", 7, 0.40),
+)
+
+# --- 門2a を長尺で開けるとき、1日に何本の長尺を足すか ---
+LONG_PER_DAY_SCENARIOS = (1, 2, 4)
 
 NEVER = 10 ** 9  # 「届かない」を日数で表すときの番人
 
@@ -160,6 +181,31 @@ def _fmt_days(days: float) -> str:
     return f"**{math.ceil(days):,}日後（{when.isoformat()}）**"
 
 
+def _long_break_even(a: dict) -> list[dict]:
+    """**門1 が通る日までに門2a も開けるには、長尺1本あたり何回の再生が要るか。**
+
+    返すのは形（尺×維持率）ごとの1行で、`views` は「長尺を1日L本足したとき」の
+    必要な1本あたり再生を L べつに持ちます。
+
+    **なぜ「本数」ではなく「1本あたり再生」を解くか。** 本数はこちらで決められます
+    （在庫と日枠の話で、`upload_cap` が上限を知っている）。決められないのは
+    **長尺が何回再生されるか**のほうで、そこだけが未知です。
+    未知の側を解いて出せば、**段2 に入った瞬間に当たり外れが判定できます**
+    （M20 の「推測を測れる形にする」と同じ形）。
+    """
+    days = a["days_subs_at"].get(PLAN_PUBLISH_PER_DAY, NEVER)
+    minutes = a["long_minutes_needed"]
+    rows = []
+    for label, length_min, retention in LONG_SHAPES:
+        per_view = length_min * retention
+        views = {}
+        for per_day in LONG_PER_DAY_SCENARIOS:
+            slots = per_day * days
+            views[per_day] = (minutes / (slots * per_view)) if slots > 0 and per_view > 0 else float("inf")
+        rows.append({"label": label, "min_per_view": per_view, "views": views})
+    return rows
+
+
 def analyse(m: dict) -> dict:
     """実測から、門ごとの日数と天井を出す。"""
     views_day_7 = m["views_7d"] / 7
@@ -182,6 +228,13 @@ def analyse(m: dict) -> dict:
     # --- 門1: 登録者1,000人 ---
     a["days_subs"] = _days_to(a["subs_remaining"], subs_per_day)
 
+    # 公開の密度べつの門1（report のループが手で計算していたものをここへ寄せた。
+    # **門2a の逆算がこの日数を要る**ので、2か所で別々に計算すると必ずずれます）
+    a["days_subs_at"] = {
+        n: _days_to(a["subs_remaining"], n * m["median_views_per_video"] * sub_rate)
+        for n in sorted(set(PUBLISH_SCENARIOS) | {PLAN_PUBLISH_PER_DAY})
+    }
+
     # --- 門2a: 長尺4,000時間（ショートは入らない）---
     long_hours_per_day = m["long_hours_365"] / 365
     a["days_long_hours"] = _days_to(LONG_HOURS_GATE - m["long_hours_365"], long_hours_per_day)
@@ -192,6 +245,21 @@ def analyse(m: dict) -> dict:
 
     # 収益化はどちらかの門2 ＋ 門1
     a["days_monetized"] = max(a["days_subs"], min(a["days_long_hours"], a["days_shorts_gate"]))
+
+    # --- 門2a を「長尺を足して」開けるなら、長尺1本に何回の再生が要るか ---
+    #
+    # **これが無かったので、この道具は 8/19 の初回から「届きません」しか言えず、
+    # 段2（M20）が要求している数字を一度も出していませんでした。**
+    # `days_long_hours` は「直近365日の長尺の伸び」をそのまま延ばした数で、
+    # 長尺を1本も出していない以上、**必ず「届かない」になります**（0で割る）。
+    # それは「長尺では開かない」ではなく「**まだ試していない**」です。
+    #
+    # 開けるかどうかは、次の1本の式で決まります:
+    #     残り視聴分 = 長尺の本数 × 長尺1本あたり再生 × 1再生あたり視聴分
+    # 門1 が通る日までに開けたいので、本数は「1日L本 × 門1の日数」で埋まります。
+    # **未知は「長尺1本あたり再生」だけ**なので、そこを解いて出します。
+    a["long_minutes_needed"] = max(0.0, (LONG_HOURS_GATE - m["long_hours_365"]) * 60)
+    a["long_break_even"] = _long_break_even(a)
 
     # --- 天井: いまの構成で出せる最大の月収 ---
     per_video = m["median_views_per_video"]
@@ -267,10 +335,44 @@ def report(m: dict, a: dict) -> list[str]:
     P(f"    ＝ 1日に公開する本数 × {a['per_video_now']:,}回 × 登録率 {a['sub_rate']*100:.4f}%")
     for n in PUBLISH_SCENARIOS:
         v = n * a["per_video_now"]
-        d = _days_to(a["subs_remaining"], v * a["sub_rate"])
-        P(f"    1日 {n:>3}本 公開 → 再生 {v:>9,.0f}／日 → 門1 {_fmt_days(d)}")
+        P(f"    1日 {n:>3}本 公開 → 再生 {v:>9,.0f}／日 → 門1 {_fmt_days(a['days_subs_at'][n])}")
     P("    **これは推測です**（1日N本でも1本あたりが保つかは未測定＝M14 の「配信の壁」）。")
     P("    ただし 4本/日 までは崩れないことが実測済み（2026-08-19 04:4x・中央値 +50.5%）。")
+    out.extend(_report_long_gate(m, a))
+    return out
+
+
+def _report_long_gate(m: dict, a: dict) -> list[str]:
+    """**門2a を長尺で開けるなら、長尺1本に何回の再生が要るか。**
+
+    ここが無い間、この道具は門2について「届きません」しか言えませんでした。
+    **その「届きません」は、長尺の実力ではなく「長尺を1本も出していない」ことの
+    言い換え**です（`days_long_hours` は直近365日の伸びを延ばした数なので、
+    伸びが0なら必ず無限になる）。**別の命題を同じ字で書いていました。**
+    """
+    out: list[str] = []
+    P = out.append
+    days = a["days_subs_at"][PLAN_PUBLISH_PER_DAY]
+    P("")
+    P("--- **門2a（長尺4,000時間）を、長尺を足して開けるなら** ---")
+    P(f"    門2b（ショート90日1,000万）は、**1日92本の上限まで出しても"
+      f"{a['shorts_needed_per_day']:,.0f}回/日に対し {a['per_video_now'] * UPLOAD_CAP_PER_DAY:,.0f}回/日"
+      f" ＝ {a['per_video_now'] * UPLOAD_CAP_PER_DAY / a['shorts_needed_per_day']:.2f}倍**。門2a のほうを見ます。")
+    P(f"    残り {a['long_minutes_needed']:,.0f}分（{a['long_minutes_needed']/60:,.0f}時間）を、"
+      f"**門1 が通る日（1日{PLAN_PUBLISH_PER_DAY}本公開で {_fmt_days(days)}）までに**埋める。")
+    P("")
+    P("    **要る「長尺1本あたり再生」**（長尺を1日L本足したとき。**これだけが未知**）:")
+    P(f"      {'形（推測）':<18}{'1再生の視聴分':>12}" + "".join(f"{'L=' + str(n) + '本/日':>12}" for n in LONG_PER_DAY_SCENARIOS))
+    for r in a["long_break_even"]:
+        cells = "".join(
+            (f"{r['views'][n]:>11,.0f}回" if r["views"][n] < 10 ** 6 else f"{'届かない':>12}")
+            for n in LONG_PER_DAY_SCENARIOS
+        )
+        P(f"      {r['label']:<18}{r['min_per_view']:>10.1f}分" + cells)
+    P("")
+    P(f"    いまショートは **1本 {a['per_video_now']:,}回**（実測）。長尺の1本あたり再生は**未測定**です")
+    P("    （WATCH は通算13回・M20 段2 が測る所）。**上の数字は、その未知に対する合格点です。**")
+    P("    **段2 に入った時点で、この表の1行と突き合わせること。** 下回るなら長尺では開きません。")
     return out
 
 
@@ -328,6 +430,14 @@ def _drift(current: dict) -> list[str]:
         out.append(f"    収益化まで: {pd_:,.0f}日 → {cd:,.0f}日（{elapsed:.2f}日 経過）")
         out.append(f"    **作業で縮んだぶん: {gained:+,.1f}日**"
                    + ("  ← 効いています" if gained > 0.5 else "  ← **効いていません**"))
+    # **収益化が「届かない」のままだと、上の3行は何周でも同じ字を出します。**
+    # 動いている所が見えないので、門1（いまの律速）の日数も並べます。
+    if prev.get("days_subs") and current.get("days_subs"):
+        pds, cds = prev["days_subs"], current["days_subs"]
+        if pds < NEVER and cds < NEVER:
+            gained = (pds - cds) - elapsed
+            out.append(f"    門1（登録者1,000人）: {pds:,.0f}日 → {cds:,.0f}日"
+                       f"  **作業で縮んだぶん {gained:+,.1f}日**")
     for key, label in (("views_per_day", "再生／日"), ("sub_rate", "登録率"), ("per_video_now", "1本あたり再生")):
         if key in prev and prev[key]:
             now = current.get(key, 0)
