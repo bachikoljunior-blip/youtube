@@ -1742,28 +1742,97 @@ def _print_inventory_from_ledger() -> None:
 # 見つけたのは、この回が手で日ごとに数え直したからです。**毎回やる手ではありません。**
 #
 # `dupes.ledger_rows()` は既に読んであるので、**API は1単位も増えません。**
+#
+# ## **そして、その日ごとの表が「0本の日」を1日も見ていませんでした**（2026-08-19 17:xx）
+#
+# 直した版は `Counter` の鍵を並べていました:
+#
+#     per  = Counter(...)                 # ← 予約のある日しか鍵にならない
+#     days = sorted(per)[:PER_DAY_SPAN]   # ← **0本の日は、ここに存在しない**
+#     thin = [d for d in days if per[d] <= 2]
+#
+# **`thin` に 0本の日が入る道がありません。** 薄い日を名指しするための一覧が、
+# **いちばん薄い日（＝1本も無い日）だけを構造的に見落とします。**
+# しかも「直近12日」は暦の12日ではなく**予約のある12日**なので、
+# 実測では 08/20〜09/07（**19日**）を「直近12日」と印字していました。
+#
+# 実測（2026-08-19 17:00 JST・控え345本）:
+#
+#     08/20〜08/27  22〜25本/日
+#     **08/28〜09/03  0本 ＝ 7日連続で投稿が途切れる**
+#     09/04 2本 … 09/20〜09/26 1本/日
+#
+# 名指しできていたのは **09/04 の1日だけ**でした（7日の断絶と、
+# 09/20 以降の7日は、どちらも窓の外か鍵の外）。
+# **投稿が途切れるのが最大の損失**（`CLAUDE.md`）なのに、
+# **それを見つけるために置いた一覧が、それだけを見られない形**でした。
+#
+# だから暦のほうを歩きます。**鍵ではなく日付を進める。**
+# 明日から始めるのは、**今日の枠は半分が過ぎているから**です
+# （17時に数えると、9〜13時に公開済みの本は `ahead` に居ません。
+#  今日を入れると「今日が0本＝断絶」と毎回鳴ります。**誤検知になります**）。
 PER_DAY_SPAN = 12          # 何日ぶん出すか。これ以上は横に長くなって読まれない
+THIN_PER_DAY = 2           # これ以下を「薄い日」と呼ぶ。**0本は別物として先に出す**
 
 
-def _print_per_day(ahead: list) -> None:
-    """予約の**日ごとの本数**を、直近 `PER_DAY_SPAN` 日ぶん1行で出す。
+def per_day_counts(ahead: list) -> dict:
+    """予約を **JST の暦日ごと**に数える。`{date: 本数}`（予約のある日だけ）。
 
-    **薄い日を名指しします** —— 平均が足りていても、
-    「今日から5日が1本ずつ」は投稿が途切れているのと同じ形です。
+    **この返りを「日の一覧」として使わないこと。** 鍵は予約のある日しか持たず、
+    **0本の日は最初から入っていません**（それを一覧の元にしたのが、この節の欠陥でした）。
     """
     from collections import Counter
 
     jst = timezone(timedelta(hours=9))
-    per = Counter(t.astimezone(jst).date() for t in ahead)
-    days = sorted(per)[:PER_DAY_SPAN]
-    if not days:
+    return Counter(t.astimezone(jst).date() for t in ahead)
+
+
+def _walk(start, n: int) -> list:
+    """`start` から `n` 日ぶんの**暦日**（0本の日も抜けない）。"""
+    return [start + timedelta(days=i) for i in range(n)]
+
+
+def _print_per_day(ahead: list, today=None) -> None:
+    """予約の**日ごとの本数**を、明日から `PER_DAY_SPAN` 日ぶん1行で出す。
+
+    **0本の日を先に名指しします** —— そこは投稿が途切れる日で、
+    薄い日（1〜2本）とは損失の大きさが違います。
+    **鍵ではなく暦を歩くこと**（この節の上のコメントに理由）。
+    """
+    if not ahead:
         return
-    cells = " ".join(f"{d:%m/%d}={per[d]}" for d in days)
-    print(f"  日ごと（直近{len(days)}日）: {cells}")
-    thin = [d for d in days if per[d] <= 2]
+    jst = timezone(timedelta(hours=9))
+    today = today or datetime.now(jst).date()
+    per = per_day_counts(ahead)
+    if not per:
+        return
+
+    days = _walk(today + timedelta(days=1), PER_DAY_SPAN)
+    cells = " ".join(f"{d:%m/%d}={per.get(d, 0)}" for d in days)
+    print(f"  日ごと（明日から{len(days)}日）: {cells}")
+
+    # **0本の日は、印字の窓ではなく予約の最後まで見ること。**
+    # 窓を出た所で途切れていても、途切れていることに変わりはありません。
+    last = max(per)
+    span = _walk(today + timedelta(days=1), (last - today).days)
+    gap = [d for d in span if per.get(d, 0) == 0]
+    if gap:
+        head = " ".join(f"{d:%m/%d}" for d in gap[:14])
+        more = f" ほか{len(gap) - 14}日" if len(gap) > 14 else ""
+        print(f"  [!] **予約が1本も無い日が {len(gap)}日あります**（＝その日は投稿が途切れます）: "
+              f"{head}{more}")
+        print("      **投稿が途切れるのが最大の損失です**（`CLAUDE.md`）。"
+              "空けてあるなら `src/measure_window.py` の窓を見ること。"
+              "そうでなければ **`python scripts/reschedule.py --compact`** で詰めること")
+
+    # **薄い日も、印字の窓ではなく予約の最後まで見ること**（同じ理由）。
+    # 実測では 09/20〜09/26 の7日が 1本/日 なのに、印字の12日から外れて
+    # **1日も名指しされていませんでした**（名指しできていたのは 09/04 の1日だけ）。
+    thin = [d for d in span if 0 < per.get(d, 0) <= THIN_PER_DAY]
     if thin:
-        head = " ".join(f"{d:%m/%d}" for d in thin)
-        print(f"  [!] **1日2本以下の日が {len(thin)}日あります**: {head}")
+        head = " ".join(f"{d:%m/%d}" for d in thin[:14])
+        more = f" ほか{len(thin) - 14}日" if len(thin) > 14 else ""
+        print(f"  [!] **1日{THIN_PER_DAY}本以下の日が {len(thin)}日あります**: {head}{more}")
         print("      **平均では見えません。**空けてあるなら "
               "`src/measure_window.py` の窓を見ること。"
               "そうでなければ、そこは詰められます"

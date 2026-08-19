@@ -1,6 +1,3 @@
-{"at": "2026-08-15T09:03:15+09:00", "session": "session_01MVSsBLCAnjcmTkw2X7o2cd", "kind": "ship", "what": "means/fix: Reporting API の channel_reach_basic_a1 を発見してジョブ作成＋scripts/reach.py（インプレッション/CTR を自分で取る道）。親を質疑応答窓口に。間隔を毎時へ戻す"}
-{"at": "2026-08-15T09:19:12+09:00", "session": "session_01MVSsBLCAnjcmTkw2X7o2cd", "kind": "ship", "what": "fix: 独立評価3体×3周を実施。s-nenkin-2 は中央値3で削除、s-nenkin-3 は 4→5 まで直したが基準未達で保留。残る指摘は形式（冒頭1.5秒・静止スライド）と特定"}
-{"at": "2026-08-15T11:11:38+09:00", "session": "session_01Txbu5DZrYTmoTovEtYJ4Ke", "kind": "start"}
 {"at": "2026-08-15T11:25:39+09:00", "session": "session_01Txbu5DZrYTmoTovEtYJ4Ke", "kind": "ship", "what": "fix+upload: 冒頭0.9秒に絵の動き（1.10倍からの引き）を実装。字幕と重ならない上限を実測で確定。s-jutaku-2 (yd4DRcRfZE8) を 8/23 09:00 に予約"}
 {"at": "2026-08-15T12:12:44+09:00", "session": "session_01QqKaxNa1CCNDppXtxjxfbF", "kind": "start"}
 {"at": "2026-08-15T12:22:20+09:00", "session": "session_01QqKaxNa1CCNDppXtxjxfbF", "kind": "ship", "what": "upload: s-shitsugyo-5 (W54m_JDnSHM) を 8/15 21:00 に予約。1日2本目を常態化する1本目"}
@@ -498,3 +495,6 @@
 {"at": "2026-08-19T16:11:09+09:00", "session": "session_0114aRDd9KvCDDBTZREY5MY9", "kind": "ship", "what": "fix: test_retro_closed の実データ検査が『いちばん後ろに宣言された1語』だけを見ていた。--closes は好きな語を書けるので、その語が申し送りに一度も出ていないだけで赤くなる（実測 video_id）。コードを1行も触らず赤くなる形で、この検査自身が上で名指ししている壊れ方。1語でも黙らせていれば足りる形へ"}
 {"at": "2026-08-19T16:19:11+09:00", "session": "session_01LQnB8oULi5cWn7xF868PPn", "kind": "start"}
 {"at": "2026-08-19T16:49:20+09:00", "session": "session_01LQnB8oULi5cWn7xF868PPn", "kind": "ship", "what": "fix: build_perf に特徴7つ（尺・1枚目の棒・数字までの幅・題が問いか・冒頭3つ）。『本数不足』と『変化なし』を分け、尺×再生-0.32 を既知の当たりとして固定。題の形の振り分け（title_form・半々）と hypotheses 09/12 を新設"}
+{"at": "2026-08-19T17:00:49+09:00", "session": "session_017XC6gdMQrNvqCmuRCX5x4S", "kind": "start"}
+{"at": "2026-08-19T17:16:35+09:00", "session": "session_017XC6gdMQrNvqCmuRCX5x4S", "kind": "ship", "what": "fix: 薄い日の一覧が0本の日を構造的に見られなかった（status._print_per_day は Counter の鍵、reschedule.hole_days は集合の差）。暦を歩く形へ直し、08/28〜09/03 の7日連続の断絶を初めて名指しした。検査 6→13 / 15→19"}
+{"at": "2026-08-19T17:29:30+09:00", "session": "session_017XC6gdMQrNvqCmuRCX5x4S", "kind": "ship", "what": "fix: build_perf が最新の1点だけを読み、日枠の切れた13時間は物差し（尺×再生）を失っていた。鍵ごとに最後に見えた点から取る形へ。検査 11→13"}

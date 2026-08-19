@@ -54,6 +54,14 @@ def main(argv: list[str] | None = None) -> int:
         print(f"  {d['name']:<14}{_rho(d, 'eng'):<40}{_rho(d, 'views')}")
     print()
     print("  **理由はここからは分かりません**（公開時刻・族・配信の広さ・題材の人気と交絡）。")
+    stale = build_perf.stale_keys()
+    if stale:
+        print(f"  [!] **最新の点に無く、古い点から拾った値が {stale}件あります**"
+              "（＝いま Data API の日枠が切れています）。")
+        print("      `尺` と `題` は `videos.list`（日枠）から来ます。**枠が切れた回の点には入りません。**")
+        print("      **鍵ごとに最後に見えた値**を使っています（`尺` は動画の長さなので時間で変わりません）。")
+        print("      **`views` にも同じ扱いが効きます。**その回に読めていないなら、"
+              "1〜2周ぶん古い再生数を見ている可能性があります。")
 
     measured = [d for d in cors if not d["why"]]
     strong = [d["name"] for d in measured if d["eng"] is not None and abs(d["eng"]) >= 0.3]

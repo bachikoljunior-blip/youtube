@@ -167,3 +167,33 @@ def test_bars_file_is_readable():
     data = json.loads(build_perf.BARS.read_text(encoding="utf-8"))
     assert isinstance(data, dict) and data
     assert any("charts" in v for v in data.values())
+
+
+def test_日枠の切れた点だけで測らない():
+    """**最新の1点に `尺` が無くても、向きが消えないこと**（2026-08-19 17:2x に踏んだ）。
+
+    `videos.list`（日枠）が 403 の13時間は、その回の点に `尺` も `題` も入りません
+    （`views` は Analytics ＝ 別枠なので入る）。実測は3点続けて **動画キー253・尺0**。
+    最新の1点だけを読む版は `尺` が **n=0** になり、
+    **この道具の唯一の物差し（既知の当たり 尺 × 再生）が落ちました。**
+
+    **特徴が消えても件数は減らない**ので、口は「本数不足」と印字します ——
+    「まだ待て」と読めますが、**枠が戻るまで永久に0**です。
+    """
+    stats = build_perf.per_video()
+    with_len = [v for v in stats.values() if "尺" in v]
+    assert with_len, "**古い点から `尺` を拾えていません**"
+
+    # 最新の1点だけを渡したら、**その1点しか読まないこと**（検査が形を固定できる）
+    latest = build_perf._scans()[-1]
+    only_latest = build_perf.per_video(latest)
+    assert set(only_latest) <= set(stats)
+    for vid, m in only_latest.items():
+        assert set(m) <= set(stats[vid])
+
+
+def test_古い点から拾った件数を言う():
+    """**黙って古い値を使わないこと。** 使ったなら、いくつ使ったかを出す。"""
+    n = build_perf.stale_keys()
+    assert isinstance(n, int) and n >= 0
+    assert build_perf.stale_keys(build_perf._scans()[-1]) == 0   # 1点だけなら拾いようがない

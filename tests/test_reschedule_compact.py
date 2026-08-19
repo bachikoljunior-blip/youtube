@@ -186,9 +186,53 @@ def test_全部を詰め切ったときは穴と数えない():
     assert reschedule.hole_days(rows, plan, NOW) == []
 
 
-def test_動かすものが無ければ穴も無い():
+def test_動かすものが無くても連続していれば穴は無い():
+    """**「動かさないから穴も無い」ではありません**（下の検査を見ること）。
+
+    ここが見ているのは「連続して埋まっているなら0件」のほうです。
+    """
     rows = [_row("v0", "2026-08-19T09:00")]
     assert reschedule.hole_days(rows, [], NOW) == []
+
+
+def test_もともと空いていた日も穴に数える():
+    """**これが落ちていた1件です**（2026-08-19 17:0x）。
+
+    ここは長らく `before - after` を返していました ——
+    **「本があったのに、動かしたせいで無くなった日」**しか数えない形です。
+    **もともと1本も無い日は `before` に居ないので、永久に映りません。**
+
+    実測: 控え345本の **08/28〜09/03 が0本**（7日連続）なのに、
+    既定の `--max-days 4` は `plan` が空 ＝ `before == after` で
+    **穴0件で静かに通っていました。**
+    """
+    rows = [_row("v0", "2026-08-19T09:00"), _row("v1", "2026-08-23T09:00")]
+    holes = reschedule.hole_days(rows, [], NOW)      # **1本も動かさない**
+    assert holes == ["08/20", "08/21", "08/22"], holes
+
+
+def test_もともと空いていた日を道具が名指しして詰め方まで出す():
+    """**見つけるだけでは、次の回が同じ既定で撃ちます。**
+
+    `suggest_max_days` は `hole_days` の返りを見ているので、
+    見えていなければ「いまの `--max-days` で穴は空きません」と答えます。
+    """
+    rows = [_row(f"v{i}", f"2026-08-{19 + i * 4:02d}T09:00") for i in range(3)]
+    assert reschedule.hole_days(rows, [], NOW), "穴があるのに0件"
+    hint = reschedule.suggest_max_days(rows, NOW, _Args(1), ceiling=20)
+    assert hint is not None, "**詰め方を名指しできていない**"
+    plan = reschedule.compact_plan(rows, now=NOW, step_min=60, hour=9, until_hour=11,
+                                   max_days=hint, window=EMPTY)
+    assert reschedule.hole_days(rows, plan, NOW) == []
+
+
+def test_今日は穴に数えない():
+    """今日の枠は半分が過ぎています（`old <= now` の本は既に公開済み）。
+
+    今日を入れると「今日が0本＝穴」と**毎回鳴ります**。
+    """
+    rows = [_row("v0", "2026-08-19T09:00"), _row("v1", "2026-08-20T09:00")]
+    assert "08/18" not in reschedule.hole_days(rows, [], NOW)   # NOW は 08/18 11:00 JST
 
 
 def test_予約の最後より後ろの0本の日は穴ではない():

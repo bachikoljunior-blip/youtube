@@ -95,26 +95,75 @@ _NUM = re.compile(r"[0-9０-９]+")
 _ASK = re.compile(r"[?？]|(?:か|かも|のか|ですか|ますか)$|いくら|どっち|どちら|何[円日歳月年%％]|なぜ")
 
 
-def _latest_scan() -> dict[str, Any]:
-    last = None
+def _scans() -> list[dict[str, Any]]:
+    """`data/scan.jsonl` の点を**古い順に全部**返す。"""
+    out = []
     for line in SCAN.read_text(encoding="utf-8").splitlines():
         if line.strip():
-            last = line
-    if last is None:
+            out.append(json.loads(line))
+    if not out:
         raise RuntimeError(f"{SCAN} が空です")
-    return json.loads(last)
+    return out
+
+
+def _latest_scan() -> dict[str, Any]:
+    return _scans()[-1]
 
 
 def per_video(snap: dict[str, Any] | None = None) -> dict[str, dict[str, float]]:
-    """`data/scan.jsonl` の最新点から、動画べつの数字を取り出す。"""
-    snap = snap or _latest_scan()
+    """動画べつの数字。**鍵ごとに、その鍵が入っている最新の点**から取ります。
+
+    ## なぜ最新の1点ではないのか（2026-08-19 17:2x に、赤い検査から見つけた）
+
+    ここは長らく**最新の1点だけ**を読んでいました。**Data API の日枠が切れている
+    13時間のあいだ、その1点には `尺` も `題` も入りません**（`videos.list` が 403。
+    `views` / `engagedViews` は Analytics ＝ **別枠**なので入ります）。
+
+    実測（08/19 17:03 / 17:11 / 17:15 の3点とも）:
+
+        動画キー 253 ／ **尺 0** ／ views 28
+
+    結果、`尺（秒）` の特徴が **n=0** になり、この道具の**唯一の物差し**
+    （既知の当たり 尺 × 再生 = -0.33）が落ちました。
+    **特徴が消えても件数は減らない**ので、口は「本数不足」と印字します ——
+    **「まだ待て」と読めますが、待っても入りません。**枠が戻るまで永久に0です。
+
+    **`尺` は動画の長さなので、時間で変わりません。** 古い点の値は今も正しい。
+    **落ちているのは事実ではなく、その回の読みだけ**です。
+
+    ## 混ぜても嘘にならない理由
+
+    **鍵ごとに独立して「最後に観測された値」を取ります**（点をまたいで混ぜます）。
+    伸びる数（`views`）も同じ扱いですが、**それが古くなるのは
+    「その回に読めなかったとき」だけ**で、そのとき代わりに入る値はありません。
+    **0 で埋めるのでも、`None` にするのでもなく、最後に見えた値を使う** ——
+    これは「無い」と「0」を分ける方針（`features()` の docstring）と同じ側です。
+
+    `snap` を渡したときは、**その1点だけ**を読みます（検査が形を固定するため）。
+    """
+    snaps = [snap] if snap is not None else _scans()
     out: dict[str, dict[str, float]] = {}
-    for key, val in snap.get("values", {}).items():
-        parts = key.split(".")
-        if len(parts) != 3 or parts[0] != "動画":
-            continue
-        out.setdefault(parts[1], {})[parts[2]] = val
+    for one in snaps:                      # 古い順。**後の点が上書きする**
+        for key, val in (one.get("values") or {}).items():
+            parts = key.split(".")
+            if len(parts) != 3 or parts[0] != "動画":
+                continue
+            if val is None:
+                continue
+            out.setdefault(parts[1], {})[parts[2]] = val
     return out
+
+
+def stale_keys(snap: dict[str, Any] | None = None) -> int:
+    """**最新の点に無くて、古い点から拾った鍵**の数（＝いま読めていない量）。
+
+    0 でないときは、その回に日枠が切れています。**黙って古い値を使わないこと。**
+    """
+    if snap is not None:
+        return 0
+    latest = {k for k, v in (_scans()[-1].get("values") or {}).items() if v is not None}
+    return sum(1 for vid, m in per_video().items()
+               for name in m if f"動画.{vid}.{name}" not in latest)
 
 
 def ledger() -> dict[str, dict[str, Any]]:

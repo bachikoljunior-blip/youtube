@@ -38,7 +38,7 @@ import argparse
 import re
 import sys
 from collections import defaultdict
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -287,7 +287,9 @@ def _horizon(rows: list[dict], plan: list[dict], now: datetime) -> tuple[str, fl
 
 
 def hole_days(rows: list[dict], plan: list[dict], now: datetime) -> list[str]:
-    """**詰めたあと、公開が1本も無くなる日**（JST の `MM/DD`）を返す。
+    """**詰めたあと、公開が1本も無い日**（JST の `MM/DD`）を返す。
+
+    **「無くなる日」ではありません**（下の「もともと空いていた日も、穴です」）。
 
     ## なぜ要るか（2026-08-19 12:5x に、撃つ直前の空撃ちで見つけた）
 
@@ -309,10 +311,31 @@ def hole_days(rows: list[dict], plan: list[dict], now: datetime) -> list[str]:
     全部を前に詰め切ると、後ろは当然からになります（それは**地平線が縮んだ**
     だけで、`--min-days` がすでに見ている側です）。**数えるのは、新しい
     「予約の最後」より手前で0本になる日だけ**にします。
+
+    ## **もともと空いていた日も、穴です**（2026-08-19 17:0x に直した）
+
+    ここは長らく `before - after` を返していました ——
+    **「本があったのに、動かしたせいで無くなった日」**しか数えない形です。
+    だから **もともと1本も無かった日は、`before` に居ないので永久に映りません。**
+
+    実測でこうなりました。控え345本の実物は **08/28〜09/03 が0本**（7日連続）で、
+    既定の `--max-days 4` は「動かすのは 0本」＝ `plan` が空なので
+    `before == after`。**穴0件で静かに通ります。**
+    `suggest_max_days` も同じ返りを見ているので、**「4 で穴は空きません」と答えます。**
+
+    **守っていたのは「これ以上ひどくしないこと」だけで、
+    「いま途切れているか」は一度も見ていませんでした。**
+    これは `scripts/status.py` の `_print_per_day` が同じ日に踏んだのと**同じ形**です ——
+    **「本のある日」の集合からは、「本の無い日」は原理的に出てきません。**
+    どちらも直し方は1つで、**集合ではなく暦を歩くこと。**
+
+    ## 今日は数えません
+
+    今日の枠は半分が過ぎています（`old <= now` の本は既に公開済み）。
+    今日を入れると「今日が0本＝穴」と**毎回鳴ります**。数えるのは**明日から**。
     """
     moved = {p["id"]: p["new"] for p in plan}
-    before: set[str] = set()
-    after: set[str] = set()
+    after: set[date] = set()
     last: datetime | None = None
     for r in rows:
         at = r.get("at")
@@ -324,19 +347,27 @@ def hole_days(rows: list[dict], plan: list[dict], now: datetime) -> list[str]:
             continue
         if old <= now:
             continue                       # もう公開済み／直前のものは対象外
-        before.add(old.astimezone(JST).strftime("%m/%d"))
         try:
             new = datetime.fromisoformat(
                 str(moved.get(r.get("id", ""), at)).replace("Z", "+00:00"))
         except ValueError:
             continue
-        after.add(new.astimezone(JST).strftime("%m/%d"))
+        after.add(new.astimezone(JST).date())
         if last is None or new > last:
             last = new
     if last is None:
         return []
-    edge = last.astimezone(JST).strftime("%m/%d")
-    return sorted(d for d in before - after if d < edge)
+    # **集合の差ではなく、暦を歩くこと**（docstring の理由）。
+    # `before` はもう作りません —— あれを引き算に使うと、
+    # **もともと空いていた日が構造的に落ちます。**
+    edge = last.astimezone(JST).date()
+    day = now.astimezone(JST).date() + timedelta(days=1)   # 今日は数えない
+    holes: list[str] = []
+    while day < edge:
+        if day not in after:
+            holes.append(day.strftime("%m/%d"))
+        day += timedelta(days=1)
+    return holes
 
 
 def suggest_max_days(rows: list[dict], now: datetime, args, *, ceiling: int = 40) -> int | None:
@@ -396,7 +427,8 @@ def _compact(args) -> int:
 
     holes = hole_days(rows, plan, now)
     if holes:
-        print(f"[compact] [!] **詰めたあと、公開が0本になる日が {len(holes)}日**: "
+        print(f"[compact] [!] **詰めたあと、公開が0本の日が {len(holes)}日**"
+              f"（**もともと空いていた日も含みます**）: "
               + " ".join(holes))
     if holes and not args.allow_gap:
         hint = suggest_max_days(rows, now, args)
@@ -406,7 +438,7 @@ def _compact(args) -> int:
                "        → `--max-days` をどれだけ増やしても埋まりません。"
                "**在庫を足してから詰めること。**\n")
         raise SystemExit(
-            f"[compact] **真ん中に {len(holes)}日ぶんの穴が空きます**"
+            f"[compact] **真ん中に {len(holes)}日ぶんの穴が残ります**"
             f"（{holes[0]}〜{holes[-1]}）。\n"
             "        **投稿が途切れるのが最大の損失**なので、ここは止めます。\n"
             "        `--min-days` は「予約の最後」しか見ないので、**この穴は映りません**\n"
