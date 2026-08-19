@@ -559,3 +559,111 @@ def test_標本を取り替えた点も_差を実績と読ませない(tmp_path,
     # 揃った2点では出ません（毎回出ると意味が薄れます）
     log.write_text(json.dumps(cur, ensure_ascii=False) + "\n", encoding="utf-8")
     assert "標本が、この点から変わりました" not in "\n".join(eta._drift(cur))
+
+
+# ======================================================================
+# **段取り**（オーナー指示 2026-08-20 06:2x）
+#
+# > 「予測は達成できないで終わらせず、達成できるまでのプランを決めるようにして」
+#
+# ここが守っているのは「良い計画が出ること」ではありません。守っているのは
+# **どんな入力でも、日付の入った段取りが必ず1つ返ること**と、
+# **その段取りが上振れ側の数字に乗っていないこと**の2つです。
+#
+# **既知の当たりは、実データではなく手で作った行に置いています**
+# （`docs/trigger_main.md` §4「その既知の当たりを、実データの偶然に置かないこと」）。
+# 実測が動いても意味が変わらないのは、この2つが**算術の不変量**だからです。
+# ======================================================================
+
+
+def _analysed(**over):
+    m = _measured(**over)
+    return m, eta.analyse(m)
+
+
+def test_段取りは_どの帯も届かない入力でも空で返らない():
+    """**これがこの節の本体です。**
+
+    2026-08-20 まで、この道具は `data/eta.jsonl` の29点すべてで
+    「どの帯でも届きません」で終わっていて、**日付が1つも出ていませんでした。**
+    """
+    # 2026-08-20 の実測と同じ側に置く: 長尺は n=5・1本 2回（登録者9人の頃の標本）。
+    # これが入ると天井の表は**6行とも「届かない」**になります。
+    m, a = _analysed(long_per_video=2.2, long_videos_28d=5, long_views_28d=11)
+    # 前提: この入力は「どの帯でも届かない」側（ここが変わったら検査の意味が変わる）
+    assert all(a["ceiling"][k] < eta.TARGET_YEN for k in eta.RPM_SCENARIOS)
+
+    pl = eta.plan(m, a)
+    assert pl["stages"], "段取りが空で返った"
+    assert pl["stages"][-1]["when"] < eta.NEVER, "最後の段に日付が入っていない"
+    assert pl["blocking"]["what"], "止めている入力が名指しされていない"
+
+
+def test_段取りは_出せる密度で解く_APIの日枠では解かない():
+    """92本/日 は API の日枠であって、出せる本数ではありません。
+
+    ここが 92 に戻ると、要る1本あたり再生が 1/3.7 になって
+    **実際には出せない計画が「届く」に見えます。**
+    """
+    m, a = _analysed()
+    pl = eta.plan(m, a)
+    assert pl["density"] == eta.PLAN_PUBLISH_PER_DAY
+    assert pl["density"] < eta.UPLOAD_CAP_PER_DAY
+
+    band = pl["spine_band"]
+    need_month = a["views_needed_month"][band]
+    assert pl["forms"][pl["spine"]]["per_video_needed"] == pytest.approx(
+        need_month / (pl["density"] * 30)
+    )
+
+
+def test_段取りは_その形のいちばん低いRPMで立てる():
+    """低/中/高 は「別の道」ではなく**同じニッチの幅**です。
+
+    倍率の小さい帯を選ぶ論法をそのまま当てると、**必ず「高」が出ます** ——
+    計画そのものが上振れ側に乗ります。
+    """
+    m, a = _analysed()
+    pl = eta.plan(m, a)
+    for form, f in pl["forms"].items():
+        same_form = [k for k in eta.RPM_SCENARIOS if k.startswith(form)]
+        assert f["rpm"] == min(eta.RPM_SCENARIOS[k] for k in same_form), form
+
+
+def test_段取りの物差しは_ショートの実測であって長尺の古い標本ではない():
+    """長尺の実測 2回 は「登録者9人の頃に出した5本」で、長尺の実力ではありません（M20）。
+
+    ここで割ると、**長尺の段が必ず数十倍に見えて、計画から落ちます。**
+    """
+    m, a = _analysed()
+    pl = eta.plan(m, a)
+    per_video = a["per_video_now"]
+    for f in pl["forms"].values():
+        assert f["ratio_vs_shorts"] == pytest.approx(f["per_video_needed"] / per_video)
+
+
+def test_段取りの日付は_門1から審査ぶんだけ後ろにある():
+    m, a = _analysed()
+    pl = eta.plan(m, a)
+    d1 = next(s for s in pl["stages"] if s["no"] == 1)["when"]
+    assert pl["days_to_target"] == pytest.approx(d1 + eta.MONETIZE_REVIEW_DAYS)
+
+
+def test_段取りは例外を出さずに全部の行を出す():
+    m, a = _analysed()
+    lines = eta._report_plan(m, a)
+    assert lines
+    assert any("段取り" in l for l in lines)
+    assert any("この回の一手" in l for l in lines)
+
+
+def test_長尺の実測が十分に増えたら_止めている入力が入れ替わる():
+    """**未知が消えたのに同じ1手を言い続けないこと。**
+
+    `long_videos_28d` が 20本を超えたら、長尺の1本あたりはもう推測ではありません。
+    """
+    m, a = _analysed()
+    a["long_per_video"] = 800.0
+    a["long_videos_28d"] = 25
+    pl = eta.plan(m, a)
+    assert pl["blocking"]["what"] != "長尺の1本あたり再生"

@@ -77,6 +77,15 @@ PUBLISH_SCENARIOS = (4, 10, 25, 92)
 #     門2a の逆算は「門1 が通る日まで」で割るので、この1つを正本にします
 PLAN_PUBLISH_PER_DAY = 25
 
+# --- 収益化の審査にかかる日数（YouTube 公表「通常1か月以内」。**実測ではない**）---
+MONETIZE_REVIEW_DAYS = 30
+
+# --- 段取りを立てるときに使う RPM は、その形の**いちばん低い帯** ---
+#     `RPM_SCENARIOS` の 低/中/高 は「別の道」ではなく**同じニッチの幅**です。
+#     いちばん高い帯で段取りを立てると、**計画そのものが上振れ側に乗ります**
+#     （倍率の小さい帯を選ぶ `nearest` の論法をそのまま使うと、必ず「高」が出ます）。
+PLAN_BAND_BY_FORM = {"ショート": "ショート 低", "長尺 お金": "長尺 お金 低"}
+
 # --- RPM の幅（**実測ではない**。収益化前なので自分の数字が無い）---
 RPM_SCENARIOS = {
     "ショート 低": 20,
@@ -732,6 +741,185 @@ def report(m: dict, a: dict) -> list[str]:
     return out
 
 
+def plan(m: dict, a: dict, density: int = PLAN_PUBLISH_PER_DAY) -> dict:
+    """**月20万に届くまでの段取りを、必ず1つ返す。**
+
+    2026-08-20 06:2x・オーナー指示（原文）——
+
+    > 「毎回の実行の最初にいつ20万の達成できるかを予測して、それを早めるには
+    >   どうしたらいいかを考えてから進めて。**予測は達成できないで終わらせず、
+    >   達成できるまでのプランを決めるようにして。**」
+
+    **この道具は「どの帯でも届きません」で終わっていました。**
+    `data/eta.jsonl` の29点とも同じ行で終わっていて、**日付が1つも出ていません。**
+    それは診断であって予測ではありません。そして診断で終わるので、
+    次の回は「では何をするか」を毎回いちから決め直していました
+    （`retro.py` の縦読み: 直近5回とも「何を出すか決めるところ」が最大の時間食い）。
+
+    **なぜ「届かない」が出ていたか。** 天井の表は
+    `1本あたり再生 × 92本/日 × 30日` で、この 92 は **API の日枠**であって
+    出せる本数ではありません（08/19 の実測は 28本で閉じた）。そして長尺の帯は
+    **実測 2回/本**（n=5・登録者9人・配信ゼロの頃）で割っていました。
+    **上振れの本数と、下振れの1本あたりを、同時に当てていた**わけです。
+
+    ここは逆に組みます。**出せる密度（既定 25本/日）で、目標に要る
+    「1本あたり再生」を解き、それをショートの実測で割る。**
+    ショートの1本あたりは、この機械が持つ**唯一の当てになる実測**です。
+
+    返すのは段の並びで、**最後の段には必ず日付が入ります。**
+    未測定の入力があるときは、その1つを `blocking` に名指しして
+    「これを測れば期日が決まる」と言う形にします（**空で返さない**）。
+    """
+    per_video = a["per_video_now"]
+    monthly_slots = density * 30
+
+    # --- どの形で月20万を取りに行くか（**下振れの RPM で比べる**）---
+    forms: dict[str, dict] = {}
+    for form, band in PLAN_BAND_BY_FORM.items():
+        need_month = a["views_needed_month"][band]
+        need_per_video = need_month / monthly_slots if monthly_slots else float("inf")
+        forms[form] = {
+            "band": band,
+            "rpm": RPM_SCENARIOS[band],
+            "views_needed_month": need_month,
+            "per_video_needed": need_per_video,
+            # **物差しはショートの実測**。長尺の実測（2回）で割ると、
+            # 「登録者9人の頃に出した5本」が計画の分母になります（M20）。
+            "ratio_vs_shorts": (need_per_video / per_video) if per_video else float("inf"),
+        }
+    spine = min(forms, key=lambda f: forms[f]["ratio_vs_shorts"])
+    sp = forms[spine]
+
+    # --- 段1: 門1（登録者1,000人）。**実測のあるショートで開ける** ---
+    d_gate1 = a["days_subs_at"].get(density, NEVER)
+
+    # --- 段2: 門2a（長尺4,000時間）。段1と**並行**。合格点は1本あたり再生 ---
+    #     いちばん甘い形（尺が長く維持率が高い）を取る。**本数は決められる／
+    #     決められないのは1本あたり再生のほう**なので、そちらを解いて出す。
+    rows = _long_break_even(a)
+    per_day_long = max(LONG_PER_DAY_SCENARIOS)
+    best = min(rows, key=lambda r: r["views"][per_day_long])
+    gate2_bar = best["views"][per_day_long]
+
+    # --- 段3: 収益化の審査 ---
+    d_monetized = d_gate1 + MONETIZE_REVIEW_DAYS if d_gate1 < NEVER else NEVER
+
+    # --- 段4: 月20万 ---
+    #     収益化した時点で段4の合格点を満たしていれば、その日が到達日。
+    d_target = d_monetized
+
+    stages = [
+        {
+            "no": 1, "lever": "density", "when": d_gate1,
+            "title": f"門1（登録者1,000人）を、実測のあるショートで開ける",
+            "bar": (f"1日{density}本 公開 ＝ 再生 {density * per_video:,.0f}／日"
+                    f" × 登録率 {a['sub_rate'] * 100:.4f}% ＝ 1日 {density * per_video * a['sub_rate']:,.1f}人"),
+            "measured": True,
+        },
+        {
+            "no": 2, "lever": "rpm", "when": d_gate1,
+            "title": f"門2a（長尺4,000時間）を、段1と並行で開ける",
+            "bar": (f"長尺を1日{per_day_long}本・{best['label']} で出し、"
+                    f"**1本あたり {gate2_bar:,.0f}回**（ショート実測の {gate2_bar / per_video:.2f}倍）"),
+            "measured": False,
+        },
+        {
+            "no": 3, "lever": "none", "when": d_monetized,
+            "title": f"収益化の審査（公表「通常1か月以内」＝ {MONETIZE_REVIEW_DAYS}日と置く）",
+            "bar": "門1・門2a の両方を満たしたら申請。**待つだけの段**",
+            "measured": False,
+        },
+        {
+            "no": 4, "lever": "rpm", "when": d_target,
+            "title": f"月20万に到達（{sp['band']}・RPM ¥{sp['rpm']:,}）",
+            "bar": (f"1日{density}本 × **1本あたり {sp['per_video_needed']:,.0f}回**"
+                    f" ＝ 月 {sp['views_needed_month']:,.0f}回"
+                    f"（ショート実測 {per_video:,.0f}回 の **{sp['ratio_vs_shorts']:.2f}倍**）"),
+            "measured": False,
+        },
+    ]
+
+    # --- 段取り全体を止めている「まだ測っていない入力」を1つ名指しする ---
+    #     **計画を空にしない**ための欄です。ここが埋まっていれば、
+    #     次の回は「何をするか」を決め直さずに、この1手から始められます。
+    lpv = a.get("long_per_video")
+    n_long = a.get("long_videos_28d", 0)
+    if spine.startswith("長尺") and (lpv is None or n_long < 20):
+        blocking = {
+            "what": "長尺の1本あたり再生",
+            "now": (f"{lpv:,.0f}回（n={n_long}・登録者が9人だった頃の標本）"
+                    if lpv is not None else "測っていない"),
+            "need": f"{sp['per_video_needed']:,.0f}回（段4）／{gate2_bar:,.0f}回（段2）",
+            "how": "長尺を出して、公開から48時間おいた本で測り直す",
+            "why": ("段2・段4 の期日がこの1つに乗っている。"
+                    "ショートは952回出ているので、要るのはその"
+                    f"{sp['ratio_vs_shorts']:.2f}倍。**まだ一度も測り直していない**"),
+        }
+    else:
+        blocking = {
+            "what": "段1の登録率",
+            "now": f"{a['sub_rate'] * 100:.4f}%",
+            "need": "据え置きでよい（段1は実測だけで立っている）",
+            "how": "1日25本の公開を保つ",
+            "why": "段取りの入力に、未測定のものが無い",
+        }
+
+    return {
+        "density": density, "spine": spine, "spine_band": sp["band"],
+        "forms": forms, "stages": stages, "blocking": blocking,
+        "days_to_target": d_target,
+    }
+
+
+def _report_plan(m: dict, a: dict) -> list[str]:
+    """**この節を、いちばん最後に出すこと**（`main()` が `_drift` / `levers` の後に呼ぶ）。
+
+    ここより後ろに「届きません」を置かないこと —— 読み手が最後に見るものが
+    そのまま次の回の入口になります（オーナー指示 2026-08-20 06:2x）。
+    """
+    out: list[str] = []
+    P = out.append
+    pl = plan(m, a)
+    d = pl["density"]
+
+    P("")
+    P("=" * 66)
+    P("=== **月20万に到達するまでの段取り**（予測を「届きません」で終わらせない）===")
+    P("=" * 66)
+    P(f"  **出せる密度で解いています: 1日 {d}本 公開**（92本は API の日枠であって、"
+      "出せる本数ではありません）")
+    P(f"  **物差しはショートの実測 {a['per_video_now']:,.0f}回/本**"
+      "（この機械が持つ唯一の当てになる1本あたり）")
+    P("")
+    P("--- どの形で取りに行くか（**その形のいちばん低い RPM で比べる**）---")
+    for form, f in pl["forms"].items():
+        mark = " ← **これで立てる**" if form == pl["spine"] else ""
+        P(f"    {form:<8} RPM ¥{f['rpm']:>5,}  月 {f['views_needed_month']:>10,.0f}回 要る"
+          f"  → 1本あたり **{f['per_video_needed']:>7,.0f}回**"
+          f"（ショート実測の {f['ratio_vs_shorts']:>5.2f}倍）{mark}")
+    P("")
+    P("--- 段取り（**最後の段に日付が入るまでが1つの予測**）---")
+    for st in pl["stages"]:
+        P(f"    段{st['no']}［腕 {st['lever']}］{st['title']}")
+        P(f"        期日: {_fmt_days(st['when'])}")
+        P(f"        合格点: {st['bar']}")
+    P("")
+    P(f"  → 月20万の到達見込み: {_fmt_days(pl['days_to_target'])}")
+    P(f"     （{pl['spine_band']}・1日{d}本・審査{MONETIZE_REVIEW_DAYS}日を置いた線）")
+    P("")
+    b = pl["blocking"]
+    P("--- **この段取りを止めている、まだ測っていない入力は1つです** ---")
+    P(f"    {b['what']}")
+    P(f"      いま: {b['now']}")
+    P(f"      要る: {b['need']}")
+    P(f"      測り方: {b['how']}")
+    P(f"      なぜここか: {b['why']}")
+    P("")
+    P("  **この回の一手は、上の1行を測ることです。** 測れない窓（日枠が閉じている等）なら、")
+    P("  **測れる窓に入ってすぐ撃てる形まで用意してから畳むこと。**")
+    return out
+
+
 def _report_long_gate(m: dict, a: dict) -> list[str]:
     """**門2a を長尺で開けるなら、長尺1本に何回の再生が要るか。**
 
@@ -972,6 +1160,11 @@ def main() -> int:
     # **「予測 → 腕を選ぶ → 進む」の、選んだ側の実績**（オーナー指示 2026-08-19 21:2x）。
     # 1周ごとに動くのは日付ではなく**ここ**です（`src/levers.py` の説明）。
     for line in levers.report(ROOT / "data" / "runs.jsonl"):
+        print(line)
+    # **段取りは、いちばん最後に出すこと**（オーナー指示 2026-08-20 06:2x）。
+    # 読み手が最後に見たものが、そのまま次の回の入口になります。
+    # ここより後ろに「届きません」を置かないこと。
+    for line in _report_plan(m, a):
         print(line)
 
     if not args.no_record:
