@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import json
 from collections import Counter
+from datetime import date
 from pathlib import Path
 
 #: **腕の語彙。`scripts/eta.py` が印字するものと1対1にすること。**
@@ -78,6 +79,65 @@ def tally(rows: list[dict]) -> Counter:
     return Counter(r.get("lever") or "未宣言" for r in rows)
 
 
+def reconcile(rows: list[dict]) -> list[str]:
+    """**宣言（`--moves`）と、実際に動いた日数を並べる。**（2026-08-20 08:0x）
+
+    オーナー指示（原文・3回目）——
+
+    > 「20万達成までのプランを作って達成日時を予測して、
+    >   **毎回達成日時を早めることを考えてから進める**ようにして」
+
+    **「考えてから進めた」は、外から見えません。** 見えるようにする道は1つで、
+    **先に言って、後で突き合わせる**ことです。だから ship は
+    「この作業で予測日が何日動く見込みか」（`--moves`）と、
+    **そのとき出ていた予測日**（`eta_target`）を一緒に残します。
+
+    実際に動いた日数は、**次の ship が残した予測日との差**です
+    （予測の入力は Analytics 由来で1日1回しか動かないので、
+    回ごとではなく ship ごとに見るのがいちばん細かい目盛りになります）。
+
+    **当てることが目的ではありません。** 外れたと分かることのほうが、
+    何も言わずに進むより速い —— 外した回は、その腕の効き目を1つ潰したことになります。
+    """
+    chrono = list(reversed(rows))  # 古い順
+    lines: list[str] = []
+    sum_declared = sum_actual = 0
+    hits = 0
+    for i, r in enumerate(chrono):
+        mv = r.get("moves")
+        if mv is None:
+            continue
+        cur = r.get("eta_target")
+        nxt = next((c.get("eta_target") for c in chrono[i + 1:] if c.get("eta_target")), None)
+        act = None
+        if cur and nxt:
+            try:
+                act = (date.fromisoformat(str(nxt)) - date.fromisoformat(str(cur))).days
+            except ValueError:
+                act = None
+        when = str(r.get("at", ""))[5:16].replace("T", " ")
+        if act is None:
+            lines.append(f"    {when}  {r.get('lever', '?'):<9} 宣言 {mv:+3d}日   実際 —（次の ship がまだ）")
+        else:
+            sum_declared += mv
+            sum_actual += act
+            hits += 1
+            mark = "" if mv == act else ("  ← **外した**" if abs(act - mv) >= 3 else "")
+            lines.append(f"    {when}  {r.get('lever', '?'):<9} 宣言 {mv:+3d}日   実際 {act:+3d}日{mark}")
+    if not lines:
+        return ["", "  （`--moves` つきの ship がまだありません。"
+                "**次の ship から、宣言と実際が並びます**）"]
+    out = ["", "--- **宣言と実際**（`--moves` で先に言った日数と、次の ship までに動いた日数）---"]
+    out += lines[-10:]
+    if hits:
+        out.append(f"    → 宣言の合計 {sum_declared:+d}日 ／ **実際の合計 {sum_actual:+d}日**"
+                   f"（{hits}件）")
+        if sum_actual > sum_declared + 2:
+            out.append("      [!] **言ったより遠のいています。** 選んでいる腕が効いていないか、"
+                       "予測の前提のほうが動いています。")
+    return out
+
+
 def report(path: Path, limit: int = 10) -> list[str]:
     """`eta.py` の末尾に出す数行。**予測のすぐ下に置くこと。**
 
@@ -96,4 +156,5 @@ def report(path: Path, limit: int = 10) -> list[str]:
     if moving == 0:
         out.append("      [!] **1回もありません。** 予測は、動かす腕を選ばないかぎり動きません。")
         out.append("          **この回で選ぶこと。** 何を選ぶかは、上の「早めるには、どれを何倍にするか」から。")
+    out.extend(reconcile(rows))
     return out

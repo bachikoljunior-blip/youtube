@@ -214,7 +214,25 @@ def journal_lines() -> int:
         return 0
 
 
-def ship(what: str, closes: list[str] | None = None, lever: str | None = None) -> int:
+ETA_LOG = Path(__file__).resolve().parent.parent / "data" / "eta.jsonl"
+
+
+def _eta_target() -> tuple[str | None, float | None]:
+    """**いま出ている予測日**（`data/eta.jsonl` の最後の点）。
+
+    読めなければ `(None, None)`。**回を止めないこと** —— この印は記録であって
+    門ではありません。予測が撃てていない回でも、出したものは残します。
+    """
+    try:
+        lines = [ln for ln in ETA_LOG.read_text(encoding="utf-8").splitlines() if ln.strip()]
+        row = json.loads(lines[-1])
+    except (OSError, IndexError, json.JSONDecodeError):
+        return None, None
+    return row.get("target_date"), row.get("days_to_target")
+
+
+def ship(what: str, closes: list[str] | None = None, lever: str | None = None,
+         moves: int | None = None) -> int:
     """**この回が「出したもの」を1行残す。**（2026-08-15 追加）
 
     オーナーの指示（原文）: **「子が、少しの作業で終わるの直して」**
@@ -286,6 +304,22 @@ def ship(what: str, closes: list[str] | None = None, lever: str | None = None) -
     # **腕は `what` より先に置きません**（読む側が `what` の頭で見分けているため）。
     if lever:
         rec["lever"] = lever
+    # **「何日ぶん早める見込みか」を、出した時点で残す**（2026-08-20 08:0x・オーナー指示3回目）。
+    # 原文: 「毎回**達成日時を早めることを考えてから**進めるようにして」
+    #
+    # **考えたことは、外から見えません。** 見えるようにする方法は1つで、
+    # **先に言って、後で突き合わせる**ことです。だから ship には
+    # 「この作業で予測日が何日動く見込みか」と、**そのとき出ていた予測日**を添えます。
+    # 次の回の `levers.report()` が、宣言と実際の差を並べます ——
+    # **当たっていなくてよい。** 当たらないと分かることのほうが、
+    # 何も言わずに進むより速い（外した回は、その腕の効き目を1つ潰したことになる）。
+    if moves is not None:
+        rec["moves"] = moves
+    target, days = _eta_target()
+    if target is not None:
+        rec["eta_target"] = target
+    if days is not None:
+        rec["eta_days"] = days
     closes = [c.strip() for c in (closes or []) if c.strip()]
     # **語彙は、書き込む前に読むこと**（2026-08-17。**入れた直後に自分で踏みました**）。
     # `carry_over()` は `recorded_closures()` を読むので、先に `_append` すると
@@ -308,6 +342,13 @@ def ship(what: str, closes: list[str] | None = None, lever: str | None = None) -
         print(f"[marker] 腕: **{lever}** —— {levers.LEVERS[lever]}")
         if lever == "none":
             print("         **この回は予測日を動かしません。** 理由を docs/JOURNAL.md に1行書くこと。")
+    if moves is not None:
+        print(f"[marker] 予測日の見込み: **{moves:+d}日**"
+              + (f"（いまの予測 {rec.get('eta_target')}）" if rec.get("eta_target") else "")
+              + " —— 次の回が、実際に動いた日数と突き合わせます。")
+        if moves == 0 and lever in levers.MOVING:
+            print("         [!] **動かす腕を選んで 0日** と言っています。"
+                  " 効くまでに時差があるなら、それを JOURNAL に1行書くこと。")
     _suggest_undeclared(what, closes, known)
     return 0
 
@@ -558,6 +599,11 @@ def main(argv: list[str] | None = None) -> int:
                     help="**この成果が動かす腕**（`--ship` と対。オーナー指示 2026-08-19 21:2x）。"
                          + levers.vocab_help()
                          + "。**`none` も正しい答え**だが、理由を JOURNAL に書くこと")
+    ap.add_argument("--moves", metavar="日数", type=int,
+                    help="**この成果が予測日を何日動かす見込みか**（`--ship` と対。"
+                         "早まるなら負、遠のくなら正、動かさないなら 0）。"
+                         "オーナー指示 2026-08-20 08:0x「毎回達成日時を早めることを"
+                         "考えてから進めるようにして」。**次の回が実際の差と突き合わせます**")
     ap.add_argument("--closes", metavar="語", action="append", default=[],
                     help="この ship で潰した持ち越しの語（`retro.py` の一覧に出る形で。"
                          "何度でも書ける）。**語が `-` で始まるときは "
@@ -596,7 +642,19 @@ def main(argv: list[str] | None = None) -> int:
             ap.error("--lever が要ります（--ship と対）。"
                      + levers.vocab_help()
                      + "。**道具・手順の整備なら `--lever none`**（理由を JOURNAL に1行）")
-        return ship(args.ship, args.closes, args.lever)
+        # **見込みも書かせる。** 「どの腕を選んだか」だけでは、
+        # **早めることを考えたかどうか**が記録に残りません
+        # （オーナー指示 2026-08-20 08:0x。同じ趣旨の指示はこれで3回目）。
+        # **0 は正しい答えです**（`--lever none` と対）。外れてもかまいません ——
+        # 数えたいのは当たり率ではなく、**先に言ってから出したかどうか**です。
+        if args.moves is None:
+            ap.error("--moves が要ります（--ship と対）。"
+                     "**この成果で予測日が何日動く見込みか**を、"
+                     "出す前に言うこと（早まるなら負・遠のくなら正・動かさないなら 0）。"
+                     "予測日は `python scripts/eta.py` の先頭3行に出ています")
+        return ship(args.ship, args.closes, args.lever, args.moves)
+    if args.moves is not None:
+        ap.error("--moves は --ship と一緒に使ってください（出したものと対で残します）")
     if args.lever:
         ap.error("--lever は --ship と一緒に使ってください（出したものと対で残します）")
     if args.closes:

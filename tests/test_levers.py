@@ -87,3 +87,67 @@ def test_report_says_zero_when_nothing_moves_the_date(tmp_path: Path):
     text = "\n".join(levers.report(p))
     assert "0 / 1" in text
     assert "1回もありません" in text
+
+
+# --- `--moves`（2026-08-20 08:0x・オーナー指示3回目） -----------------------------
+#
+# > 「20万達成までのプランを作って達成日時を予測して、
+# >   **毎回達成日時を早めることを考えてから進める**ようにして」
+#
+# **「考えてから進めた」は、外から見えません。** 見えるようにする道は
+# 「先に言って、後で突き合わせる」の1つだけです。だから ship に
+# **見込みの日数**を書かせ、次の回が実際の差と並べます。
+
+
+def test_ship_without_moves_is_refused():
+    """**見込みの無い `--ship` は通らないこと。**（`--lever` と同じ形で虫食いを作らない）"""
+    r = subprocess.run(
+        [sys.executable, str(ROOT / "scripts" / "run_marker.py"),
+         "--ship", "検査用", "--lever", "rpm"],
+        capture_output=True, text=True,
+    )
+    assert r.returncode != 0
+    assert "--moves" in r.stderr
+
+
+def test_moves_alone_is_refused():
+    """出したものと対でなければ、後から裏が取れません（`--closes` と同じ扱い）。"""
+    r = subprocess.run(
+        [sys.executable, str(ROOT / "scripts" / "run_marker.py"), "--moves", "-3"],
+        capture_output=True, text=True,
+    )
+    assert r.returncode != 0
+    assert "--moves" in r.stderr
+
+
+def test_reconcile_lines_up_declared_against_actual():
+    """**宣言と実際を並べること。** 実際は「次の ship が残した予測日との差」。"""
+    rows = [  # `recent()` は新しい順に返すので、その向きで渡す
+        {"kind": "ship", "at": "2026-08-21T09:00:00+09:00", "lever": "density",
+         "moves": -2, "eta_target": "2026-12-13"},
+        {"kind": "ship", "at": "2026-08-20T09:00:00+09:00", "lever": "rpm",
+         "moves": -10, "eta_target": "2026-12-23"},
+    ]
+    text = "\n".join(levers.reconcile(rows))
+    assert "宣言 -10日" in text
+    assert "実際 -10日" in text          # 12-23 → 12-13 で 10日 早まった
+    assert "実際 —" in text              # 新しいほうは、まだ次の ship がない
+
+
+def test_reconcile_marks_a_miss():
+    """**外したと分かることが目的です。** 当たり率を上げるための欄ではありません。"""
+    rows = [
+        {"kind": "ship", "at": "2026-08-21T09:00:00+09:00", "lever": "rpm",
+         "moves": 0, "eta_target": "2026-12-30"},
+        {"kind": "ship", "at": "2026-08-20T09:00:00+09:00", "lever": "rpm",
+         "moves": -30, "eta_target": "2026-12-23"},
+    ]
+    text = "\n".join(levers.reconcile(rows))
+    assert "外した" in text
+    assert "言ったより遠のいています" in text
+
+
+def test_reconcile_is_quiet_before_the_first_declaration():
+    rows = [{"kind": "ship", "at": "2026-08-19T09:00:00+09:00", "lever": "none"}]
+    text = "\n".join(levers.reconcile(rows))
+    assert "まだありません" in text
