@@ -33,6 +33,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from src import ab_split as _ab  # noqa: E402
 from src import alerts as _alerts  # noqa: E402
 from src import inbox as _inbox  # noqa: E402
 from src.auth import note_day_quota as _note_day_quota  # noqa: E402
@@ -282,6 +283,36 @@ def print_hypotheses() -> None:
         cond = h.get("falsified_if")
         print(f"        外れとみなす条件: {cond}" if cond
               else "        [!] 外れとみなす条件が書かれていません。**書くこと。**")
+
+        # **走っている A/B は、件数を必ず横に出すこと**（2026-08-19 22:2x に足した）。
+        #
+        # 群はテーマIDから引き直します。**IDから引けるのは「どちらの群か」だけで、
+        # 「その指示が入ったか」ではありません。** 指示（`ASK_*_RULE`）は後から
+        # 足したものなので、それより前に作った本は、IDが「問い」と言っていても
+        # 題も冒頭も問いになっていません。
+        #
+        # 実測（`src/ab_split.py`）: `hook_form` は判定日までに公開する
+        # **両群とも指示入り0本**でした。**中身の同じ2群**を突き合わせるので
+        # 差は出ず、「同点も外れ」の条件により**外れが確定する形**です。
+        # そして `next_if_false` は「両方空振りなら題材の側」＝ M20 へ進みます ——
+        # `eta.py` が名指しする唯一の近い腕（1本あたり 1.4倍）を、
+        # **一度も試さないまま畳む**ところでした。
+        #
+        # **件数が正常に見えるのが、この壊れ方の本体です。**だからここに出します。
+        for _exp in _ab.EXPERIMENTS.values():
+            if not cond or _exp.name not in str(cond):
+                continue
+            try:
+                _c = _ab.split_counts(_exp)
+            except Exception as e:  # 状態を見る道具が、状態のせいで死んではいけない
+                print(f"        [!] {_exp.name} の群を数えられませんでした: {e}")
+                continue
+            print(f"        {_c.short()}")
+            _stale = sum(_c.stale.values())
+            if _stale:
+                print(f"        [!] **指示より前に作った本が {_stale}本、"
+                      f"IDだけでこの2群に振り分けられています。混ぜて判定しないこと**"
+                      f"（指示が入ったのは {_exp.landed:%m/%d %H:%M}・{_exp.commit}）")
 
         # **次の手は、期限が来る前から見えていること**（2026-08-17 に直した）。
         #

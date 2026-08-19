@@ -1,0 +1,209 @@
+"""`src/ab_split.py` —— **指示が入った本だけで群を割る**ところを見る検査。
+
+ここが落ちると、件数も見た目も正常なまま「どちらが効いたか」だけが壊れます
+（2026-08-19 22:2x の実測: `hook_form` は判定日までに公開する本が
+両群とも**指示入り0本**で、外れが確定する形になっていました）。
+"""
+
+from __future__ import annotations
+
+import json
+import re
+from datetime import date, datetime, timedelta
+from pathlib import Path
+
+import pytest
+import yaml
+
+from src import ab_split
+from src.ab_split import (
+    EXPERIMENTS,
+    MIN_PER_GROUP,
+    SETTLE_DAYS,
+    Experiment,
+    build_times,
+    published,
+    report,
+    split_counts,
+)
+
+ROOT = Path(__file__).resolve().parent.parent
+
+
+def _fake(tmp_path: Path, rows: list[tuple[str, str, str]]) -> tuple[Path, Path]:
+    """(topic, 作った時刻, 公開日) から控え2つを組み立てる。"""
+    batch, ledger = tmp_path / "batch.jsonl", tmp_path / "up.jsonl"
+    batch.write_text(
+        "\n".join(
+            json.dumps({"at": built, "results": [{"topic": t, "video_id": "v" + t, "error": ""}]})
+            for t, built, _ in rows
+        ),
+        encoding="utf-8",
+    )
+    ledger.write_text(
+        "\n".join(
+            json.dumps({"topic": t, "video_id": "v" + t, "at": pub + "T09:00:00Z"})
+            for t, _, pub in rows
+        ),
+        encoding="utf-8",
+    )
+    return batch, ledger
+
+
+def _exp(**kw) -> Experiment:
+    base = dict(
+        name="t",
+        split=lambda tid: "問い" if tid.endswith("a") else "断定",
+        treated="問い",
+        control="断定",
+        landed=datetime.fromisoformat("2026-08-19T16:50:00+09:00"),
+        deadline=date(2026, 9, 12),
+    )
+    base.update(kw)
+    return Experiment(**base)
+
+
+def test_指示より前に作った本は群から外れる(tmp_path):
+    """**これがこの道具の本体です。** IDが「問い」でも、指示より前なら数えない。"""
+    b, l = _fake(
+        tmp_path,
+        [("old-a", "2026-08-19T10:00:00+09:00", "2026-08-25"),
+         ("new-a", "2026-08-19T20:00:00+09:00", "2026-08-25")],
+    )
+    c = split_counts(_exp(), builds=build_times(b), ledger=published(l))
+    assert c.treated_ready["問い"] == 1, "指示の後に作った1本だけが数えられること"
+    assert c.stale["問い"] == 1, "指示より前の本は stale に出ること（黙って落とさない）"
+
+
+def test_控えに作った記録が無い本は指示なし側に数える(tmp_path):
+    """記録の無い本は**古い本**なので、安全側（stale）へ。"""
+    b, l = _fake(tmp_path, [("x-a", "2026-08-19T20:00:00+09:00", "2026-08-25")])
+    b.write_text("", encoding="utf-8")  # 作った記録だけ消す
+    c = split_counts(_exp(), builds=build_times(b), ledger=published(l))
+    assert c.treated_ready["問い"] == 0
+    assert c.stale["問い"] == 1
+
+
+def test_公開から7日たっていない本はまだ数えない(tmp_path):
+    """`SETTLE_DAYS`。初速だけを見ないための床。"""
+    when = date(2026, 9, 12)
+    late = (when - timedelta(days=SETTLE_DAYS - 1)).isoformat()
+    ok = (when - timedelta(days=SETTLE_DAYS)).isoformat()
+    b, l = _fake(
+        tmp_path,
+        [("late-a", "2026-08-19T20:00:00+09:00", late),
+         ("ok-a", "2026-08-19T20:00:00+09:00", ok)],
+    )
+    c = split_counts(_exp(), as_of=when, builds=build_times(b), ledger=published(l))
+    assert c.treated_ready["問い"] == 1
+    assert c.treated_all["問い"] == 2, "判定日までに公開する本は all のほうに出ること"
+
+
+def test_判定日より後に公開する本は入らない(tmp_path):
+    b, l = _fake(tmp_path, [("far-a", "2026-08-19T20:00:00+09:00", "2026-09-27")])
+    c = split_counts(_exp(), as_of=date(2026, 9, 12), builds=build_times(b), ledger=published(l))
+    assert c.treated_all["問い"] == 0 and c.stale["問い"] == 0
+
+
+def test_公開日の無い行は数に入れず件数だけ出す(tmp_path):
+    b, l = _fake(tmp_path, [("x-a", "2026-08-19T20:00:00+09:00", "2026-08-25")])
+    l.write_text(json.dumps({"topic": "x-a", "video_id": "v", "at": None}), encoding="utf-8")
+    c = split_counts(_exp(), builds=build_times(b), ledger=published(l))
+    assert c.unknown_publish == 1
+    assert c.treated_ready["問い"] == 0
+
+
+def test_両群が床に届いて初めて判定できる(tmp_path):
+    rows = [(f"a{i}-a", "2026-08-19T20:00:00+09:00", "2026-08-25") for i in range(MIN_PER_GROUP)]
+    b, l = _fake(tmp_path, rows)
+    c = split_counts(_exp(), builds=build_times(b), ledger=published(l))
+    assert c.treated_ready["問い"] == MIN_PER_GROUP
+    assert not c.judgeable, "片群だけ届いても判定できないこと"
+    rows += [(f"b{i}-x", "2026-08-19T20:00:00+09:00", "2026-08-25") for i in range(MIN_PER_GROUP)]
+    b, l = _fake(tmp_path, rows)
+    assert split_counts(_exp(), builds=build_times(b), ledger=published(l)).judgeable
+
+
+def test_撃ち直した本はいちばん早い作成時刻で見る(tmp_path):
+    """指示より前に一度作られているなら、その本は指示より前の作り。"""
+    batch = tmp_path / "b.jsonl"
+    batch.write_text(
+        "\n".join([
+            json.dumps({"at": "2026-08-19T10:00:00+09:00",
+                        "results": [{"topic": "r-a", "video_id": "v", "error": ""}]}),
+            json.dumps({"at": "2026-08-19T20:00:00+09:00",
+                        "results": [{"topic": "r-a", "video_id": "v", "error": ""}]}),
+        ]),
+        encoding="utf-8",
+    )
+    assert build_times(batch)["r-a"].hour == 10
+
+
+def test_落ちた本は作った記録に数えない(tmp_path):
+    batch = tmp_path / "b.jsonl"
+    batch.write_text(
+        json.dumps({"at": "2026-08-19T20:00:00+09:00",
+                    "results": [{"topic": "e-a", "video_id": "", "error": "boom"}]}),
+        encoding="utf-8",
+    )
+    assert build_times(batch) == {}
+
+
+# --- 実物との突き合わせ（**ここが本番の配線**）-------------------------------
+
+def test_走っている実験は全部_hypotheses_から引ける():
+    """`EXPERIMENTS` に足したのに yaml に無い（またはその逆）を止める。"""
+    text = (ROOT / "config" / "hypotheses.yaml").read_text(encoding="utf-8")
+    for name in EXPERIMENTS:
+        assert f"script_writer.{name}" in text, f"{name} が hypotheses.yaml に居ません"
+    for name in re.findall(r"script_writer\.(\w+)` が", text):
+        assert name in EXPERIMENTS, f"{name} が EXPERIMENTS に登録されていません"
+
+
+def test_期限は_yaml_と同じ():
+    """`deadline` を2か所で持っているので、ずれたら止める。"""
+    data = yaml.safe_load((ROOT / "config" / "hypotheses.yaml").read_text(encoding="utf-8"))
+    for exp in EXPERIMENTS.values():
+        hit = [h for h in data["hypotheses"]
+               if f"script_writer.{exp.name}" in str(h.get("falsified_if", ""))]
+        assert len(hit) == 1, f"{exp.name} の前提が {len(hit)}件"
+        assert str(hit[0]["deadline"]) == exp.deadline.isoformat()
+
+
+def test_床は_yaml_の文言と同じ数():
+    """`MIN_PER_GROUP` / `SETTLE_DAYS` を勝手に緩めていないか。"""
+    text = (ROOT / "config" / "hypotheses.yaml").read_text(encoding="utf-8")
+    for exp in EXPERIMENTS.values():
+        assert f"どちらの群も {MIN_PER_GROUP}本に満たなければ判定しない" in text
+    assert f"公開から{SETTLE_DAYS}日以上たっていること" in text
+
+
+def test_yaml_の条件に作った時刻の縛りが書いてある():
+    """**母集団の直しが消えたら止める。** これが無いと元の壊れ方に戻ります。"""
+    data = yaml.safe_load((ROOT / "config" / "hypotheses.yaml").read_text(encoding="utf-8"))
+    for exp in EXPERIMENTS.values():
+        hit = [h for h in data["hypotheses"]
+               if f"script_writer.{exp.name}" in str(h.get("falsified_if", ""))][0]
+        cond = str(hit["falsified_if"])
+        assert f"{exp.landed:%Y-%m-%d}" in cond or "より後に作った本だけ" in cond, exp.name
+        assert "より後に作った本だけで数えること" in cond, exp.name
+
+
+def test_実物で走って報告が出る():
+    """控えが読めること（API を1単位も使わないこと込み）。"""
+    out = report()
+    for exp in EXPERIMENTS.values():
+        assert exp.name in out
+    assert "指示が入って落ち着いた本" in out
+
+
+def test_hook_form_はいま判定できない():
+    """**この検査が緑のうちは、hook_form を判定してはいけません。**
+
+    指示が入ったのは 2026-08-19 21:00 で、それ以降に作った本はまだ公開されていません。
+    緑でなくなったら（＝両群8本そろったら）、そのとき初めて判定します。
+    """
+    c = split_counts(EXPERIMENTS["hook_form"])
+    if c.judgeable:
+        pytest.skip("指示入りが両群そろいました。判定してよい段です")
+    assert sum(c.stale.values()) > 0, "混ざっている本が居るなら、必ず数えて出すこと"
