@@ -1,5 +1,3 @@
-{"at": "2026-08-11T01:18:26+09:00", "session": "session_01AiKeuqs22BZgd7BPA9jG8m"}
-{"at": "2026-08-11T09:16:35+09:00", "session": "session_01L1ym2pqn8SMVjRX5Cshpc2"}
 {"at": "2026-08-11T21:20:35+09:00", "session": "session_019UGRiVt3nz14fKgL3Z2Ztj"}
 {"at": "2026-08-12T09:16:43+09:00", "session": "session_018TNJbvDyy6aAxxFxars9ns"}
 {"at": "2026-08-12T21:20:48+09:00", "session": "session_01XdZyQhdvyZ9TecXpMwpyRk"}
@@ -498,3 +496,5 @@
 {"at": "2026-08-19T13:19:45+09:00", "session": "session_01GJsRiAogz4TNQ39T43CLnW", "kind": "ship", "what": "fix: 詰め直しは日枠で必ず2日に割れる（318本 / 1日195本）。撃ち切った姿が穴0日でも、195本で止めた姿には8日空く。--apply の直前に切った側も数えて、いちばん早い穴の日を締切として出す"}
 {"at": "2026-08-19T14:14:48+09:00", "session": "session_01HCgniha8NR6JwpE4dVYJaP", "kind": "start"}
 {"at": "2026-08-19T14:44:13+09:00", "session": "session_01HCgniha8NR6JwpE4dVYJaP", "kind": "ship", "what": "fix: eta.py の 1本あたり再生の 30本の床が長尺を5本とも落としていた（帯ごとに形の実測で割る・いちばん近い帯を名指し）"}
+{"at": "2026-08-19T14:53:12+09:00", "session": "session_01P6hnvvYNSLKouFLM6YEgZw", "kind": "start"}
+{"at": "2026-08-19T15:13:18+09:00", "session": "session_01P6hnvvYNSLKouFLM6YEgZw", "kind": "ship", "what": "fix: 天井が『本数 × 中央値』だった。合計は 本数 × 平均。さらに 30再生の床が標本からは落として 92本 からは落とさず、落ちた本まで『通った本と同じだけ回る』ことになっていた。床を外し平均へ → 1本あたり 1,092→869回・いちばん近い帯 1.1倍→1.4倍・公開密度25本/日の門1 81日→102日。tests 21→26"}

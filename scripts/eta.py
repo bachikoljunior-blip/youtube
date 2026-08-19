@@ -135,6 +135,24 @@ def split_per_video(rows) -> tuple[list[int], list[int]]:
 
     **長尺には 30再生の床を当てません。** 当てると1本も残らず、
     「測っていない」と「0だった」の区別がつかなくなります。
+
+    ## **ショートの床も外しました**（2026-08-19 15:0x）
+
+    ここは `elif views >= 30` でした。**床は標本からは落としますが、
+    天井の掛け算からは落としません。** 天井は
+
+        1本あたり再生 × **92本/日** × 30日
+
+    で、この 92 は「作った本数」です。**床を通った本だけの数字を、
+    落ちた本まで含む本数に掛けている**ので、
+    **落ちた本が全部「通った本と同じだけ回る」ことになっていました。**
+
+    実測（直近28日・ショート22本）: 床を通ったのは20本で、
+    落ちた2本は**1回ずつ**。**床は「まだ伸びていない本」を落とすつもりの道具でしたが、
+    見ているのは年齢ではなく再生数**なので、伸びなかった本と区別がつきません。
+
+    落とすなら**本数のほうも同じ割合で削る**必要があり、それは結局
+    **全部を平均する**のと同じです（`_measure` の平均）。
     """
     shorts: list[int] = []
     longs: list[int] = []
@@ -145,7 +163,7 @@ def split_per_video(rows) -> tuple[list[int], list[int]]:
         seconds = (avg_sec / (avg_pct / 100)) if avg_pct else 0.0
         if seconds >= LONG_FORM_SECONDS:
             longs.append(views)
-        elif views >= 30:
+        else:
             shorts.append(views)
     return sorted(shorts), sorted(longs)
 
@@ -195,6 +213,13 @@ def _measure() -> dict:
     vals, long_sorted = split_per_video(per_video)
     median_views = vals[len(vals) // 2] if vals else 0
     long_median = long_sorted[len(long_sorted) // 2] if long_sorted else None
+    # **天井が要るのは中央値ではなく平均です**（2026-08-19 15:0x に直した）。
+    # 天井は「N本ぶんの**合計**」なので、合計 ＝ N × **平均**。
+    # 中央値を掛けてよいのは分布が対称なときだけで、ショートの再生は必ず右に歪みます。
+    # 実測（直近28日・ショート22本）: 中央値 1,092 に対し **平均 909**（**17%の差**）。
+    # そして「いちばん近い帯」の倍率は **1.1倍 → 1.33倍** に変わります。
+    mean_views = round(sum(vals) / len(vals)) if vals else 0
+    long_mean = round(sum(long_sorted) / len(long_sorted)) if long_sorted else None
 
     def row(rows, i):
         return rows[0][i] if rows else 0
@@ -210,13 +235,28 @@ def _measure() -> dict:
         "subs_gained_90d": row(d90, 2),
         "long_hours_365": round(long_minutes_365 / 60, 1),
         "shorts_views_90d": shorts_views_90,
+        # **天井を動かすのはこちら**（平均）。中央値は「典型的な1本」用に残します。
+        "views_per_video": mean_views,
         "median_views_per_video": median_views,
         "videos_with_views_28d": len(vals),
         # **長尺だけの1本あたり再生**（`None` ＝ 直近28日に長尺の再生が1本も無い）
-        "long_per_video": long_median,
+        "long_per_video": long_mean,
+        "long_median_per_video": long_median,
         "long_videos_28d": len(long_sorted),
         "long_views_28d": sum(long_sorted),
     }
+
+
+def _per_video(m: dict) -> float:
+    """1本あたり再生（ショート）。**天井を動かす数なので、平均のほうを使います。**
+
+    `data/eta.jsonl` の古い点には `views_per_video` がありません（8点目まで）。
+    **無い点を 0 と読むと、差の節が「1,092 → 0」＝ -100% と印字します**ので、
+    落ちる先を中央値に置いています。**中央値は上振れ側**なので、
+    古い点との差は「縮んだ」側に寄って見えることに注意すること。
+    """
+    v = m.get("views_per_video")
+    return v if v is not None else m.get("median_views_per_video", 0)
 
 
 def _days_to(need: float, per_day: float) -> float:
@@ -296,7 +336,7 @@ def analyse(m: dict) -> dict:
     # 公開の密度べつの門1（report のループが手で計算していたものをここへ寄せた。
     # **門2a の逆算がこの日数を要る**ので、2か所で別々に計算すると必ずずれます）
     a["days_subs_at"] = {
-        n: _days_to(a["subs_remaining"], n * m["median_views_per_video"] * sub_rate)
+        n: _days_to(a["subs_remaining"], n * _per_video(m) * sub_rate)
         for n in sorted(set(PUBLISH_SCENARIOS) | {PLAN_PUBLISH_PER_DAY})
     }
 
@@ -344,7 +384,7 @@ def analyse(m: dict) -> dict:
     # 長尺の帯に「**届く**」と印字していました。**長尺の実測は 1本 2回**（n=5）で、
     # ショートの 1,092回 とは**546倍ちがいます。** 混ぜると、
     # 「長尺をまだ出していない」が「長尺なら届く」に化けます。
-    per_video = m["median_views_per_video"]
+    per_video = _per_video(m)
     long_per_video = m.get("long_per_video")
     a["long_per_video"] = long_per_video
     a["long_videos_28d"] = m.get("long_videos_28d", 0)
@@ -405,11 +445,14 @@ def report(m: dict, a: dict) -> list[str]:
     P(f"  登録率            {a['sub_rate']*100:>10.4f} %   ＝ 再生 {1/a['sub_rate']:,.0f} 回につき1人" if a["sub_rate"] else "  登録率            **0** ＝ 何回再生されても増えていない")
     P(f"  長尺の視聴時間    {m['long_hours_365']:>10,.1f} 時間（直近365日。門は {LONG_HOURS_GATE:,}）")
     P(f"  ショート90日      {m['shorts_views_90d']:>10,} 回（門は {SHORTS_VIEWS_GATE:,}）")
-    P(f"  1本あたり再生     {m['per_video_now'] if 'per_video_now' in m else a['per_video_now']:>10,} 回（**ショート**・中央値・直近28日に再生のあった {m['videos_with_views_28d']} 本）")
+    P(f"  1本あたり再生     {a['per_video_now']:>10,} 回（**ショート**・**平均**・直近28日に再生のあった {m['videos_with_views_28d']} 本）")
+    if m.get("median_views_per_video") and m["median_views_per_video"] != a["per_video_now"]:
+        P(f"    （中央値は {m['median_views_per_video']:,} 回 ＝ **典型的な1本**。"
+          "**天井には平均のほうを使います** —— 天井は N本ぶんの合計で、合計 ＝ N × 平均）")
     if a.get("long_per_video") is None:
         P("  1本あたり再生（長尺）    **測れていません**（直近28日に長尺の再生が0本）")
     else:
-        P(f"  1本あたり再生（長尺）{a['long_per_video']:>10,} 回（中央値・n={a['long_videos_28d']}・合計 {a['long_views_28d']:,}回）"
+        P(f"  1本あたり再生（長尺）{a['long_per_video']:>10,} 回（平均・n={a['long_videos_28d']}・合計 {a['long_views_28d']:,}回）"
           f"  ← ショートの **1/{(a['per_video_now'] / a['long_per_video']):,.0f}**")
     P("")
     P("--- 門を1つずつ当てる（**最初に落ちるものが、いまの律速**）---")
@@ -437,12 +480,16 @@ def report(m: dict, a: dict) -> list[str]:
     P("--- 天井（**ここが本体**）---")
     lpv = a.get("long_per_video")
     P(f"  1本あたり再生は**形ごとに別の実測**です（直近28日。混ぜると長尺が「もう届く」に見えます）:")
-    P(f"    ショート  **{a['per_video_now']:,}回**／本（n={m.get('videos_with_views_28d', 0)}・30再生未満は除外）")
+    P(f"    ショート  **{a['per_video_now']:,}回**／本（**平均**・n={m.get('videos_with_views_28d', 0)}・**床は当てていません**）")
+    P("      **床（30再生未満は除外）を外しました**（2026-08-19 15:0x）。床は標本からは落としますが、")
+    P(f"      **下の {UPLOAD_CAP_PER_DAY}本 からは落としません。** 落ちた本まで「通った本と同じだけ回る」ことになっていました。")
+    P("      **下振れ側で読むこと** —— 直近数日に公開した本はまだ伸びきっていないので、平均はその分だけ低く出ます。")
+    P("      **天井は「本数を増やす意味があるか」を決める数**なので、上振れ側で読むと『届く』を作ります。")
     if lpv is None:
         P("    長尺      **測れていません**（直近28日に長尺の再生が1本もない）"
           " → 下の長尺の行は**ショートの数で代用**しています。**実測ではありません。**")
     else:
-        P(f"    長尺      **{lpv:,}回**／本（n={a['long_videos_28d']}・合計 {a['long_views_28d']:,}回・"
+        P(f"    長尺      **{lpv:,}回**／本（**平均**・n={a['long_videos_28d']}・合計 {a['long_views_28d']:,}回・"
           "**30再生の床は当てていません**。当てると1本も残りません）")
     P(f"  1日に出せる上限 {UPLOAD_CAP_PER_DAY}本 × 30日 に、**その形の実測**を当てた上限:")
     for k in RPM_SCENARIOS:
@@ -640,6 +687,15 @@ def _drift(current: dict) -> list[str]:
             now = current.get(key, 0)
             if now:
                 out.append(f"    {label}: {prev[key]:,.4g} → {now:,.4g}（{(now/prev[key]-1)*100:+.1f}%）")
+    # **物差しを取り替えた回は、その差を「悪くなった」と読まないこと**（2026-08-19 15:0x）。
+    # 9点目までの `per_video_now` は「30再生の床つきの中央値」、10点目からは
+    # 「床なしの平均」です。**チャンネルは何も変わっていないのに 1,092 → 869 と出ます。**
+    # 差の節は「作業が効いたか」を見る所なので、ここで断らないと
+    # **物差しの取り替えが、実績の悪化として next の判断に入ります。**
+    if prev.get("views_per_video") is None and current.get("views_per_video") is not None:
+        out.append("    [!] **1本あたり再生の物差しが、この点から変わりました**"
+                   "（床つきの中央値 → 床なしの平均）。")
+        out.append("        **上の変化は実績ではありません。** 実績として読めるのは、次の点からです。")
     return out
 
 

@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 from pathlib import Path
 
 import pytest
@@ -206,12 +207,12 @@ def test_30再生の床は長尺に当てない():
     rows = [
         ["short_a", 1_092, 22, 45.0],   # 尺 ~49秒
         ["short_b", 821, 20, 40.0],     # 尺 ~50秒
-        ["short_c", 29, 20, 40.0],      # 30未満 → ショート側では落とす
+        ["short_c", 29, 20, 40.0],      # 30未満。**床を外したので残ります**（15:0x）
         ["long_a", 4, 16, 4.6],         # 尺 ~348秒
         ["long_b", 1, 113, 17.0],       # 尺 ~665秒
     ]
     shorts, longs = eta.split_per_video(rows)
-    assert shorts == [821, 1_092], "ショートは30の床のまま"
+    assert shorts == [29, 821, 1_092], "ショートの床は外した（合計を本数で割るため）"
     assert longs == [1, 4], "**長尺に30の床を当てると1本も残らない**"
 
 
@@ -252,3 +253,84 @@ def test_長尺の実測があるときは_合格点と突き合わせて出す(
     assert "測れています" in line, "**「未測定」と書き続けると、誰とも突き合わせません**"
     assert "未測定" not in line.split("--- **門2a")[1]
     assert "133倍" in line or "倍**" in line
+
+
+# ---------------------------------------------------------------------------
+# **天井は中央値ではなく平均で出す**（2026-08-19 15:0x）
+#
+# 天井は「N本ぶんの**合計**」なので、合計 ＝ N × **平均**。
+# 中央値を掛けてよいのは分布が対称なときだけで、ショートの再生は必ず右に歪みます。
+# ---------------------------------------------------------------------------
+
+
+def test_ショートの床は外れている_落ちた本も本数に数えるから():
+    """`>= 30` は標本からは落とすが、天井の 92本 からは落とさない。
+
+    **落ちた本まで「通った本と同じだけ回る」ことになっていた**のが穴です。
+    """
+    rows = [
+        ["a", 1_000, 20, 40.0],
+        ["b", 1, 20, 40.0],      # 伸びなかった本。**天井の92本には入っている**
+    ]
+    shorts, longs = eta.split_per_video(rows)
+    assert shorts == [1, 1_000]
+    assert longs == []
+
+
+def test_天井は平均で出す_中央値だと歪んだぶんだけ上振れする():
+    a_mean = eta.analyse(_measured(views_per_video=909, median_views_per_video=1_092))
+    a_median = eta.analyse(_measured(views_per_video=1_092, median_views_per_video=1_092))
+    assert a_mean["per_video_now"] == 909
+    assert a_mean["ceiling"]["ショート 高"] < a_median["ceiling"]["ショート 高"]
+    # **倍率は 1.1倍 → 1.33倍**。ここが「どの帯がいちばん近いか」を決めます。
+    assert a_mean["per_video_ratio"]["ショート 高"] > a_median["per_video_ratio"]["ショート 高"]
+    assert round(a_mean["per_video_ratio"]["ショート 高"], 2) == 1.33
+
+
+def test_公開密度の段も平均で出す_門1の日付が変わる():
+    """`days_subs_at` が中央値のままだと、門1だけ上振れした日付になります。"""
+    a_mean = eta.analyse(_measured(views_per_video=909, median_views_per_video=1_092))
+    a_median = eta.analyse(_measured(views_per_video=1_092, median_views_per_video=1_092))
+    assert a_mean["days_subs_at"][25] > a_median["days_subs_at"][25]
+
+
+def test_古い点には平均が無い_中央値へ落ちる():
+    """`data/eta.jsonl` の8点目までに `views_per_video` はありません。
+
+    **無い点を 0 と読むと、差の節が -100% と印字します。**
+    """
+    old_point = _measured()
+    old_point.pop("views_per_video", None)
+    assert eta._per_video(old_point) == old_point["median_views_per_video"]
+    a = eta.analyse(old_point)
+    assert a["per_video_now"] == 1_092
+
+
+def test_物差しを取り替えた点は_差の節が実績と読ませない(tmp_path, monkeypatch):
+    """9点目までは「床つきの中央値」、10点目からは「床なしの平均」。
+
+    **チャンネルが何も変わっていないのに 1,092 → 869 と出ます。**
+    差の節は「作業が効いたか」を見る所なので、断らないと
+    **物差しの取り替えが、実績の悪化として次の回の判断に入ります。**
+    """
+    log = tmp_path / "eta.jsonl"
+    old = _measured(median_views_per_video=1_092)
+    old.pop("views_per_video", None)
+    old["per_video_now"] = 1_092
+    old["days_subs"] = 1_402
+    old["days_monetized"] = eta.NEVER
+    log.write_text(json.dumps(old, ensure_ascii=False) + "\n", encoding="utf-8")
+    monkeypatch.setattr(eta, "LOG", log)
+
+    cur = _measured(views_per_video=869, median_views_per_video=821)
+    cur["per_video_now"] = 869
+    cur["days_subs"] = 1_402
+    cur["days_monetized"] = eta.NEVER
+    lines = "\n".join(eta._drift(cur))
+    assert "物差しが、この点から変わりました" in lines
+    assert "上の変化は実績ではありません" in lines
+
+    # 物差しが揃っている2点では、断りは出ません（毎回出ると意味が薄れます）
+    log.write_text(json.dumps(cur, ensure_ascii=False) + "\n", encoding="utf-8")
+    lines2 = "\n".join(eta._drift(cur))
+    assert "物差しが、この点から変わりました" not in lines2
