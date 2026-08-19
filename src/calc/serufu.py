@@ -142,6 +142,45 @@ def ceiling_refund(rate: float) -> int:
     return refund(SELF_CAP, rate)
 
 
+
+def discount_rate(purchase: int, rate: float) -> float:
+    """購入費に対して、実際に戻る額の割合。**「何パーセント引きで買えたか」。**"""
+    if purchase <= 0:
+        return 0.0
+    return refund(self_deduction(purchase), rate) / purchase
+
+
+def discount_curve(rate: float, purchases: tuple[int, ...] = (
+        12_000, 20_000, 50_000, 88_000, 100_000, 120_000,
+        150_000, 200_000, 300_000)) -> list[dict]:
+    """購入費べつの「実効の割引率」。**山があります。**"""
+    return [{"rate": rate, "purchase": x,
+             "deduction": self_deduction(x),
+             "refund": refund(self_deduction(x), rate),
+             "discount": discount_rate(x, rate)} for x in purchases]
+
+
+def best_purchase() -> int:
+    """割引率がいちばん高くなる購入費。**足切り＋上限のちょうど。**"""
+    return SELF_FLOOR + SELF_CAP
+
+
+def dead_money(purchase: int) -> dict:
+    """**買っても1円も戻らない額。**足切りぶんと、上限を超えたぶんの合計。"""
+    below = min(purchase, SELF_FLOOR)
+    above = max(0, purchase - (SELF_FLOOR + SELF_CAP))
+    dead = below + above
+    return {"purchase": purchase, "under_floor": below, "over_cap": above,
+            "dead": dead, "live": purchase - dead,
+            "dead_ratio": dead / purchase if purchase else 0.0}
+
+
+def dead_money_grid(purchases: tuple[int, ...] = (
+        10_000, 12_000, 30_000, 100_000, 150_000, 200_000, 300_000)) -> list[dict]:
+    """購入費べつ、**戻る計算に一切入らない額**が占める割合。"""
+    return [dead_money(x) for x in purchases]
+
+
 def check_tables() -> None:
     """制度の値と計算の向きを確かめる。**壊れた数字で台本を書かせない。**"""
     # 1. 法令が名指ししている値
@@ -206,6 +245,45 @@ def check_tables() -> None:
     _checks.increases_with(ceiling_refund, list(RATES), "税率が上がったのに天井が上がっていない")
     if refund(self_deduction(500_000), 0.20) != ceiling_refund(0.20):
         raise _checks.TableError("購入費を増やすと天井を超えている")
+
+
+    # --- 2026-08-20 に足した節ぶん ------------------------------------------
+    # (n) **主題**: 実効の割引率には山があり、頂点は足切り＋上限のちょうど
+    peak = best_purchase()
+    if peak != SELF_FLOOR + SELF_CAP:
+        raise _checks.TableError("頂点の定義が足切り＋上限とずれている")
+    for r in RATES:
+        top = discount_rate(peak, r)
+        for x in (peak - 1_000, peak - 10_000, peak + 1_000, peak + 50_000):
+            if discount_rate(x, r) >= top:
+                raise _checks.TableError(
+                    f"税率{r:.0%}・購入費{x:,}円 の割引率が、頂点{peak:,}円 以上になっている")
+        # 頂点の割引率は、控除1円あたりの効きに 88,000/100,000 を掛けたもの
+        want = coefficient(r) * SELF_CAP / peak
+        if abs(top - want) > 1e-4:
+            raise _checks.TableError(
+                f"頂点の割引率 {top:.5f} が {want:.5f} と違う（式の取り違え）")
+    # 頂点より手前は上がり続け、頂点より先は下がり続ける
+    up = [d["discount"] for d in discount_curve(0.20) if d["purchase"] <= peak]
+    _checks.never_decreases(lambda i: up[int(i)], list(range(len(up))),
+                            "頂点までの割引率が上がっていない")
+    down = [d["discount"] for d in discount_curve(0.20) if d["purchase"] >= peak]
+    _checks.never_decreases(lambda i: -down[int(i)], list(range(len(down))),
+                            "頂点から先の割引率が下がっていない")
+    # (o) **主題**: 戻る計算に入らない額（死に金）は、上限を超えると増え続ける
+    d = dead_money(SELF_FLOOR + SELF_CAP)
+    if d["dead"] != SELF_FLOOR or d["over_cap"] != 0:
+        raise _checks.TableError(f"頂点の死に金が {d['dead']:,}円。足切りぶんだけのはず")
+    if dead_money(SELF_FLOOR)["live"] != 0:
+        raise _checks.TableError("足切りちょうどで、戻る計算に入る額が0でない")
+    _checks.never_decreases(lambda i: dead_money_grid()[int(i)]["dead"],
+                            list(range(len(dead_money_grid()))),
+                            "購入費を増やしたのに死に金が減っている")
+    for row in dead_money_grid():
+        if row["live"] != self_deduction(row["purchase"]):
+            raise _checks.TableError(
+                f"購入費{row['purchase']:,}円 で、生きた額 {row['live']:,}円 が"
+                f"控除額 {self_deduction(row['purchase']):,}円 と食い違う")
 
     _checks.assumption_values(ASSUMPTIONS, name="serufu")
 
@@ -298,3 +376,29 @@ if __name__ == "__main__":
             print(f"{r['purchase']:9,d}円 {r['self_refund']:10,d}円 "
                   f"{r['medical_refund']:12,d}円 {r['diff']:9,d}円"
                   + ("  ← 医療費控除が勝つ" if r["diff"] < 0 else ""))
+
+    RATE = 0.20
+    peak = best_purchase()
+    print(f"\n=== 市販薬は「{peak // 10_000}万円ちょうど買う」ときが、いちばん割引率が高い"
+          f"（所得税率{RATE:.0%}）===")
+    print(f"{'所得税率':>7s} {'購入費':>10s} {'控除額':>10s} {'戻る額':>10s} {'実効の割引率'}")
+    for row in discount_curve(RATE):
+        mark = "  ← **ここが頂点**" if row["purchase"] == peak else ""
+        print(f"{row['rate']:6.0%} {row['purchase']:9,d}円 {row['deduction']:9,d}円 "
+              f"{row['refund']:9,d}円 {row['discount']:9.2%}{mark}")
+    print(f"  → 足切り{SELF_FLOOR:,}円 と上限{SELF_CAP:,}円 が両側から効くので、"
+          f"割引率は**{peak:,}円 で頂点になり、そこから先は下がる一方**です。"
+          "「買うほど得」でも「買わないほうが得」でもなく、**買う額に最適解があります。**"
+          "**この頂点は、制度のどの説明にも出てきません。**")
+
+    print("\n=== 買っても1円も戻らない額（足切りぶん＋上限を超えたぶん）===")
+    print(f"{'購入費':>10s} {'足切り未満':>10s} {'上限超え':>10s} {'死に金の合計':>12s} "
+          f"{'生きた額':>10s} {'死に金の割合'}")
+    for row in dead_money_grid():
+        print(f"{row['purchase']:9,d}円 {row['under_floor']:9,d}円 {row['over_cap']:9,d}円 "
+              f"{row['dead']:11,d}円 {row['live']:9,d}円 {row['dead_ratio']:9.1%}")
+    top = dead_money_grid()[-1]
+    print(f"  → 制度が言うのは「{SELF_FLOOR:,}円を超えた分」と「上限{SELF_CAP:,}円」の2つですが、"
+          "**その2つを合わせると、購入費のうち計算に入らない額がいくらかが出ます。**"
+          f"{top['purchase']:,}円 買った人は、**{top['dead']:,}円分"
+          f"（{top['dead_ratio']:.0%}）が計算のどこにも入りません。**")

@@ -161,8 +161,121 @@ def household(costs: list[int], name: str = "ウ") -> dict:
     }
 
 
+
+def household_floor_cost(name: str = "ウ") -> dict:
+    """世帯合算に入れられる自己負担 21,000円 は、**医療費でいくらか**。
+
+    窓口が3割なので `21,000 ÷ 0.3` です。**この額は制度のどこにも書かれていません**
+    —— 書いてあるのは自己負担のほうの 21,000円 だけで、
+    受診する側が見ているのは医療費（総額）のほうです。
+    """
+    cost = HOUSEHOLD_FLOOR / COPAY_RATE
+    return {"区分": name, "合算に入る自己負担の下限": HOUSEHOLD_FLOOR,
+            "窓口の割合": COPAY_RATE,
+            "医療費でいくらか": round(cost),
+            "1円下の自己負担": (cost - 1) * COPAY_RATE,
+            "1円下は合算に入るか": (cost - 1) * COPAY_RATE >= HOUSEHOLD_FLOOR}
+
+
+def household_cliff(members: tuple[int, ...] = (1, 2, 3, 4, 5),
+                    anchor: int = 1_000_000, name: str = "ウ") -> list[dict]:
+    """**あと1円で合算に入る家族**が、世帯の自己負担をいくら変えるか。
+
+    入院した人（医療費 `anchor`）がいる世帯に、
+    「合算に入る最低額ちょうど」の家族を `members` 人足した場合と、
+    **その1円下**だった場合を比べます。
+    """
+    edge = round(HOUSEHOLD_FLOOR / COPAY_RATE)
+    rows = []
+    for n in members:
+        over = household([anchor] + [edge] * n, name)
+        under = household([anchor] + [edge - 1] * n, name)
+        rows.append({
+            "区分": name,
+            "入院した人の医療費": anchor,
+            "境目の家族の人数": n,
+            "1人あたりの医療費": edge,
+            "世帯の医療費の差": n,
+            "ちょうどの世帯の自己負担": over["合算した後"],
+            "1円下の世帯の自己負担": under["合算した後"],
+            "自己負担の差": under["合算した後"] - over["合算した後"],
+        })
+    return rows
+
+
+def multi_hit_flat(costs: tuple[int, ...] = (300_000, 500_000, 1_000_000,
+                                             3_000_000, 10_000_000),
+                   name: str = "ウ") -> list[dict]:
+    """**4か月目からは、医療費がいくら増えても自己負担が1円も動きません。**
+
+    多数回該当の限度額は**定額**で、1%の上乗せがありません。
+    3か月目までは医療費に比例して増える部分があるのに、そこで完全に止まります。
+    """
+    flat = multi_hit(name)
+    return [{
+        "区分": name,
+        "医療費": c,
+        "3か月目までの自己負担": round(paid(name, c)),
+        "4か月目からの自己負担": flat,
+        "止まる額": round(paid(name, c)) - flat,
+        "4か月目の実効の負担率": flat / c * 100,
+    } for c in costs]
+
+
+def multi_hit_year(cost: int = 1_000_000, name: str = "ウ") -> list[dict]:
+    """同じ医療費が続いた1年。**何か月目から「増えない」に変わるか。**"""
+    rows = []
+    running = 0.0
+    for m in range(1, 13):
+        per = paid(name, cost) if m < MULTI_HIT_FROM else float(multi_hit(name))
+        running += per
+        rows.append({"区分": name, "医療費": cost, "月": m,
+                     "その月の自己負担": round(per),
+                     "ここまでの合計": round(running),
+                     "多数回該当か": m >= MULTI_HIT_FROM})
+    return rows
+
+
 def check_tables() -> None:
     """制度の値と計算の向きを確かめる。**壊れた数字で台本を書かせない。**"""
+
+    # --- 2026-08-20 に足した節ぶん ------------------------------------------
+    # (x) 世帯合算の 21,000円 を医療費に直すと 70,000円ちょうど
+    f = household_floor_cost()
+    if f["医療費でいくらか"] != 70_000:
+        raise _checks.TableError(
+            f"合算に入る医療費の下限が {f['医療費でいくらか']:,}円。"
+            f"{HOUSEHOLD_FLOOR:,} ÷ {COPAY_RATE} ＝ 70,000円 のはず")
+    if f["1円下は合算に入るか"]:
+        raise _checks.TableError("下限の1円下でも合算に入ってしまっている（境目が甘い）")
+    # (y) **主題**: 1人あたり1円下だと、世帯合算が丸ごと効かない
+    for row in household_cliff():
+        if row["自己負担の差"] <= 0:
+            raise _checks.TableError(
+                f"境目の家族{row['境目の家族の人数']}人の世帯で、1円下のほうが安いか同じ"
+                f"（差 {row['自己負担の差']:,}円）。**合算が効かないぶん高くなるはず**")
+    # 人数が増えるほど、落ちる額は大きくなる
+    _checks.never_decreases(lambda i: household_cliff()[int(i)]["自己負担の差"],
+                            list(range(len(household_cliff()))),
+                            "人数を増やしたのに、合算が効かない損が小さくなっている")
+    # (z) **主題**: 多数回該当の額は定額で、医療費に依らない
+    flat = {r["4か月目からの自己負担"] for r in multi_hit_flat()}
+    if len(flat) != 1:
+        raise _checks.TableError(f"4か月目からの自己負担が {sorted(flat)} と割れた。**定額のはず**")
+    if flat.pop() != multi_hit("ウ"):
+        raise _checks.TableError("多数回該当の額が TIERS と食い違う")
+    # 3か月目までは医療費とともに増える（＝止まるのは4か月目から、という主張の裏）
+    _checks.never_decreases(lambda i: multi_hit_flat()[int(i)]["3か月目までの自己負担"],
+                            list(range(len(multi_hit_flat()))),
+                            "3か月目までの自己負担が、医療費を増やしても増えていない")
+    # 1年の並びで、4か月目に段が下がってそこから一定
+    year = multi_hit_year()
+    if year[MULTI_HIT_FROM - 2]["その月の自己負担"] <= year[MULTI_HIT_FROM - 1]["その月の自己負担"]:
+        raise _checks.TableError("4か月目で自己負担が下がっていない")
+    later = {r["その月の自己負担"] for r in year[MULTI_HIT_FROM - 1:]}
+    if len(later) != 1:
+        raise _checks.TableError(f"4か月目から先が一定でない: {sorted(later)}")
+
     # 1. 法令が名指ししている値
     _checks.statutory(limit("ア", 842_000), 252_600, "区分アの定額",
                       source="健康保険法施行令42条1項1号")
@@ -297,3 +410,48 @@ if __name__ == "__main__":
               f"  → 合算後 {h['合算した後']:>8,}円"
               f"  戻る {h['戻る額']:>8,}円"
               f"（合算に入らない額 {h['合算に入れられない額']:>7,}円）")
+
+    f = household_floor_cost()
+    print(f"\n=== 世帯合算の「21,000円」は、医療費だと{f['医療費でいくらか']:,}円ちょうど（区分ウ）===")
+    print(f"  合算に入れられる自己負担の下限   {f['合算に入る自己負担の下限']:,}円")
+    print(f"  窓口の割合                       {f['窓口の割合']}")
+    print(f"  **医療費でいくらか**             {f['医療費でいくらか']:,}円"
+          f"（{f['合算に入る自己負担の下限']:,} ÷ {f['窓口の割合']}）")
+    print(f"  その1円下の自己負担              {f['1円下の自己負担']:,.1f}円 → "
+          f"合算に入る: {'はい' if f['1円下は合算に入るか'] else '**いいえ**'}")
+    print(f"{'区分':>3s} {'入院した人の医療費':>13s} {'境目の家族':>7s} {'1人の医療費':>11s} "
+          f"{'世帯の差':>7s} {'ちょうど':>10s} {'1円下':>10s} {'自己負担の差'}")
+    for row in household_cliff():
+        print(f"{row['区分']:>3s} {row['入院した人の医療費']:>12,d}円 "
+              f"{row['境目の家族の人数']:5d}人 {row['1人あたりの医療費']:>10,d}円 "
+              f"{row['世帯の医療費の差']:>6,d}円 {row['ちょうどの世帯の自己負担']:>9,d}円 "
+              f"{row['1円下の世帯の自己負担']:>9,d}円 **{row['自己負担の差']:,}円**")
+    print(f"  → 制度が書いているのは自己負担の {HOUSEHOLD_FLOOR:,}円 だけですが、"
+          f"**受診する側が見ているのは医療費のほう**です。"
+          f"{f['医療費でいくらか']:,}円 に1円届かない家族は、"
+          "**その自己負担を1円も合算に持ち込めません。**"
+          "世帯の医療費が数円ちがうだけで、返ってくる額が万単位で変わります。")
+
+    print(f"\n=== 4か月目からは、医療費がいくら増えても自己負担が1円も増えない"
+          f"（区分ウ・多数回該当 {multi_hit('ウ'):,}円）===")
+    print(f"{'区分':>3s} {'医療費':>12s} {'3か月目まで':>11s} {'4か月目から':>11s} "
+          f"{'止まる額':>10s} {'4か月目の実効の負担率'}")
+    for row in multi_hit_flat():
+        print(f"{row['区分']:>3s} {row['医療費']:>11,d}円 {row['3か月目までの自己負担']:>10,d}円 "
+              f"{row['4か月目からの自己負担']:>10,d}円 {row['止まる額']:>9,d}円 "
+              f"{row['4か月目の実効の負担率']:>8.3f}%")
+    print("  → 3か月目までの限度額には「医療費の1パーセント」が乗っていますが、"
+          "**多数回該当の限度額は定額で、1パーセントの上乗せがありません。**"
+          "だから医療費30万円の月も1000万円の月も、4か月目からは**まったく同じ額**です。"
+          "**上乗せが消えることは、式を見ても書いてありません。**")
+
+    print(f"\n=== 同じ治療が1年つづいた場合の、月ごとの自己負担（区分ウ・医療費"
+          f"{1_000_000 // 10_000}万円）===")
+    print(f"{'区分':>3s} {'医療費':>11s} {'月':>3s} {'その月':>10s} {'ここまでの合計':>12s} 多数回該当")
+    for row in multi_hit_year():
+        print(f"{row['区分']:>3s} {row['医療費']:>10,d}円 {row['月']:2d}月 "
+              f"{row['その月の自己負担']:>9,d}円 {row['ここまでの合計']:>11,d}円   "
+              f"{'**該当**' if row['多数回該当か'] else '—'}")
+    print("  → **4か月目に段が1つ下がり、そこから12月まで1円も動きません。**"
+          "「高額療養費で戻る」という話は月ごとに語られますが、"
+          "**続いた場合の1年の合計は、月額の12倍にはなりません。**")

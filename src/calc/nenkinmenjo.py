@@ -199,8 +199,133 @@ def old_period_table(months_list: tuple[int, ...] = (12, 60, 120, 240)) -> list[
     return rows
 
 
+
+def qualify_cliff(name: str = "納付", receive_years: int = 20) -> list[dict]:
+    """**受給資格期間の1か月手前と、ちょうど。**片方は生涯0円です。
+
+    資格期間（10年＝120か月）に1か月でも足りないと、
+    **それまでに納めた保険料は1円も年金にならない**という形で効きます。
+    """
+    rows = []
+    for months in (QUALIFY_MONTHS - 1, QUALIFY_MONTHS, QUALIFY_MONTHS + 1):
+        qualified = months >= QUALIFY_MONTHS
+        year = pension_for(name, months) if qualified else 0.0
+        rows.append({
+            "区分": name,
+            "月数": months,
+            "資格期間": QUALIFY_MONTHS,
+            "資格を満たすか": qualified,
+            "納めた額": round(premium_for(name, months)),
+            "年額": round(year),
+            "受け取る年数": receive_years,
+            "生涯の受取": round(year * receive_years),
+        })
+    return rows
+
+
+def qualify_by_kind(receive_years: int = 20) -> list[dict]:
+    """資格期間ちょうどの120か月を、**どの区分で埋めたか**で結果を並べる。
+
+    **免除は資格期間に入り、未納は入りません。**保険料が0円という点では同じでも、
+    申請したかどうかで生涯の受取が分かれます。
+    """
+    rows = []
+    for name, pay, reflect in KINDS:
+        qualified = COUNTS_FOR_QUALIFY[name]
+        year = pension_for(name, QUALIFY_MONTHS) if qualified else 0.0
+        rows.append({
+            "区分": name,
+            "月数": QUALIFY_MONTHS,
+            "納める割合": pay,
+            "納めた額": round(premium_for(name, QUALIFY_MONTHS)),
+            "資格期間に入るか": qualified,
+            "年額": round(year),
+            "受け取る年数": receive_years,
+            "生涯の受取": round(year * receive_years),
+        })
+    return rows
+
+
+def window_months(name: str) -> int:
+    """あとから納められる期間（月数）。**免除は10年、未納は2年しかありません。**"""
+    return (CATCHUP_YEARS if COUNTS_FOR_QUALIFY[name] and kind(name)[1] < 1.0
+            else ARREARS_YEARS) * 12
+
+
+def window_gap(receive_years: int = 20) -> list[dict]:
+    """**申請して免除を受けた人と、黙って未納にした人の、あとから直せる幅の差。**
+
+    どちらも保険料は0円ですが、免除は10年さかのぼって追納でき、
+    未納は2年しかさかのぼれません。**その差は8年ぶん＝96か月**です。
+    """
+    lost = (CATCHUP_YEARS - ARREARS_YEARS) * 12
+    rows = []
+    for name, pay, reflect in KINDS:
+        if pay >= 1.0:
+            continue
+        w = window_months(name)
+        rows.append({
+            "区分": name,
+            "あとから納められる月数": w,
+            "追納できない月数": (CATCHUP_YEARS * 12) - w,
+            "手が届かない月数": lost if w == ARREARS_YEARS * 12 else 0,
+            "その月数の年金（年額）": round(monthly_pension_unit() * lost
+                                      * (1.0 - reflect)) if w == ARREARS_YEARS * 12 else 0,
+            "受け取る年数": receive_years,
+        })
+    return rows
+
+
+def window_cost(receive_years: int = 20) -> dict:
+    """**「申請しなかった」ことの値段。**未納8年ぶんが取り返せないことの生涯の額。"""
+    lost = (CATCHUP_YEARS - ARREARS_YEARS) * 12
+    year = monthly_pension_unit() * lost * (1.0 - kind("未納")[2])
+    return {"追納できる年数": CATCHUP_YEARS, "未納で戻れる年数": ARREARS_YEARS,
+            "手が届かない月数": lost,
+            "その月数を納めたときの額": round(PREMIUM_MONTH * lost),
+            "年額の差": round(year), "受け取る年数": receive_years,
+            "生涯の差": round(year * receive_years)}
+
+
 def check_tables() -> None:
     """制度の値と計算の向きを確かめる。**壊れた数字で台本を書かせない。**"""
+
+    # --- 2026-08-20 に足した節ぶん ------------------------------------------
+    # (r) **主題**: 資格期間に1か月足りないと、納めた額があっても生涯0円
+    rows = qualify_cliff("納付")
+    short, exact = rows[0], rows[1]
+    if short["年額"] != 0:
+        raise _checks.TableError(f"{short['月数']}か月で年金が {short['年額']:,}円 出ている")
+    if exact["年額"] <= 0:
+        raise _checks.TableError("資格期間ちょうどで年金が0円")
+    if short["納めた額"] <= 0:
+        raise _checks.TableError("1か月手前でも納めた額は0でないはず（崖の前提）")
+    if exact["生涯の受取"] - short["生涯の受取"] != exact["生涯の受取"]:
+        raise _checks.TableError("崖の高さが、資格を満たしたときの生涯受取と一致しない")
+    # (s) **主題**: 保険料0円でも、免除は資格期間に入り、未納は入らない
+    by_kind = {r["区分"]: r for r in qualify_by_kind()}
+    if by_kind["未納"]["生涯の受取"] != 0:
+        raise _checks.TableError("未納120か月で生涯の受取が0でない")
+    for name in ("全額免除", "納付猶予・学生納付特例"):
+        if not by_kind[name]["資格期間に入るか"]:
+            raise _checks.TableError(f"{name} が資格期間に入らない扱いになっている")
+        if by_kind[name]["納めた額"] != by_kind["未納"]["納めた額"]:
+            raise _checks.TableError(f"{name} と未納で納めた額が違う（どちらも0円のはず）")
+    if by_kind["全額免除"]["生涯の受取"] <= by_kind["納付猶予・学生納付特例"]["生涯の受取"]:
+        raise _checks.TableError("全額免除の生涯受取が、納付猶予以下になっている")
+    # (t) **主題**: あとから納められる幅が、免除は10年・未納は2年
+    if window_months("全額免除") != CATCHUP_YEARS * 12:
+        raise _checks.TableError("免除の追納の幅が10年でない")
+    if window_months("未納") != ARREARS_YEARS * 12:
+        raise _checks.TableError("未納の幅が2年でない")
+    w = window_cost()
+    if w["手が届かない月数"] != (CATCHUP_YEARS - ARREARS_YEARS) * 12:
+        raise _checks.TableError("手が届かない月数が8年ぶんでない")
+    if w["年額の差"] <= 0 or w["生涯の差"] <= 0:
+        raise _checks.TableError("申請しなかったことの値段が0以下")
+    if abs(w["年額の差"] - monthly_pension_unit() * w["手が届かない月数"]) > 1:
+        raise _checks.TableError("未納の反映割合が0でない前提になっている")
+
     # 1. 法令が名指ししている値
     _checks.statutory(MONTHS_FULL, 480, "満額になる月数", source="国民年金法27条")
     _checks.statutory(QUALIFY_MONTHS, 120, "受給資格期間の月数", source="国民年金法26条")
@@ -330,3 +455,56 @@ if __name__ == "__main__":
         print(f"  加算 {row['加算']:>5.0%}  追納 {row['追納する額']:>7,}円"
               f"  回収 {row['回収年数']:>5.2f}年"
               f"（加算なしより {row['加算なしとの差']:>4.2f}年 長い）")
+
+    YEARS = 20
+    print(f"\n=== 受給資格の{QUALIFY_MONTHS}か月に1か月足りないと、"
+          f"納めた保険料は1円も年金にならない（納付・{YEARS}年受け取る場合）===")
+    print(f"{'区分':>4s} {'月数':>5s} {'資格期間':>6s} {'資格':>5s} {'納めた額':>11s} "
+          f"{'年額':>9s} {'受け取る年数':>7s} {'生涯の受取'}")
+    for row in qualify_cliff("納付", YEARS):
+        print(f"{row['区分']:>4s} {row['月数']:4d}月 {row['資格期間']:5d}月 "
+              f"{'満たす' if row['資格を満たすか'] else '**×**':>6s} "
+              f"{row['納めた額']:>10,d}円 {row['年額']:>8,d}円 "
+              f"{row['受け取る年数']:6d}年 {row['生涯の受取']:>11,d}円")
+    print(f"  → **1か月の差**（保険料 {PREMIUM_MONTH:,}円）で、"
+          f"生涯の受取が **0円 と {qualify_cliff('納付', YEARS)[1]['生涯の受取']:,}円** に分かれます。"
+          "制度の説明にあるのは「10年で受給資格」という一文だけで、"
+          "**その1か月手前にいる人がいくら失うかは、どこにも書かれていません。**")
+
+    print(f"\n=== 同じ{QUALIFY_MONTHS}か月を、どの区分で埋めたか（{YEARS}年受け取る場合）===")
+    print(f"{'区分':<20s} {'月数':>5s} {'納める割合':>7s} {'納めた額':>11s} "
+          f"{'資格':>5s} {'年額':>9s} {'生涯の受取'}")
+    for row in qualify_by_kind(YEARS):
+        print(f"{row['区分']:<20s} {row['月数']:4d}月 {row['納める割合']:6.0%} "
+              f"{row['納めた額']:>10,d}円 "
+              f"{'入る' if row['資格期間に入るか'] else '**×**':>6s} "
+              f"{row['年額']:>8,d}円 {row['生涯の受取']:>11,d}円")
+    zero_pay = [r for r in qualify_by_kind(YEARS) if r["納めた額"] == 0]
+    kinds_n = len({r["生涯の受取"] for r in qualify_by_kind(YEARS)})
+    print(f"  → **納めた額が0円の区分が{len(zero_pay)}つあります**"
+          f"（{'・'.join(r['区分'] for r in zero_pay)}）。"
+          "**払った額は同じ0円なのに、生涯の受取は "
+          + "・".join(f"{v:,}円" for v in sorted({r["生涯の受取"] for r in zero_pay},
+                                                reverse=True)) + " に分かれます。**"
+          "（納付猶予・学生納付特例は、年金額には1円も入りませんが"
+          "**資格期間には入る**ので、未納とも別ものです。）"
+          f"表の全体では{kinds_n}通りです。"
+          "分けているのは**申請したかどうか**と、**どの申請をしたか**だけで、"
+          "**「払えないなら申請する」の値段が、ここで初めて額になります。**")
+
+    w = window_cost(YEARS)
+    print(f"\n=== 申請して免除を受けた人は{w['追納できる年数']}年さかのぼれる。"
+          f"黙って未納にした人は{w['未納で戻れる年数']}年しか戻れない ===")
+    print(f"{'区分':<20s} {'あとから納められる':>10s} {'手が届かない':>8s} {'その月数の年金（年額）'}")
+    for row in window_gap(YEARS):
+        print(f"{row['区分']:<20s} {row['あとから納められる月数']:9d}月 "
+              f"{row['手が届かない月数']:7d}月 {row['その月数の年金（年額）']:>12,d}円")
+    print(f"  手が届かない月数            {w['手が届かない月数']}月"
+          f"（{w['追納できる年数']}年 − {w['未納で戻れる年数']}年）")
+    print(f"  その月数を納めたときの額    {w['その月数を納めたときの額']:,}円")
+    print(f"  年額の差                    {w['年額の差']:,}円")
+    print(f"  **{w['受け取る年数']}年受け取ったときの差   {w['生涯の差']:,}円**")
+    print("  → 保険料を払えない年に**申請したかどうか**が、"
+          f"**あとから直せる幅を{w['手が届かない月数']}か月ぶん**変えます。"
+          "「免除は年金が減る」という説明はよく見ますが、"
+          "**申請しないと追納の窓そのものが狭くなる**ことは、額で語られていません。")

@@ -194,8 +194,149 @@ def effective_rate_grid(amounts: tuple[int, ...] = (
              "rate": gift_tax(a, special=special) / a} for a in amounts]
 
 
+
+def donee_year_grid(amount: float = 10_000_000,
+                    donees: tuple[int, ...] = (1, 2, 3, 4),
+                    years: tuple[int, ...] = (1, 2, 3, 5, 10),
+                    *, special: bool = True) -> list[dict]:
+    """**人数 × 年数**の格子。`donees` 人へ `years` 年つづけて均等に渡した総税額。
+
+    基礎控除110万円は「**もらった人ごと・その年ごと**」に効くので、
+    渡す相手を増やすことと、年数をのばすことは**同じ形の割り算**になります。
+    """
+    rows = []
+    for d in donees:
+        for y in years:
+            per = amount / (d * y)
+            rows.append({
+                "amount": int(amount),
+                "donees": d,
+                "years": y,
+                "splits": d * y,
+                "per_gift": int(per),
+                "total_tax": gift_tax(per, special=special) * d * y,
+            })
+    return rows
+
+
+def splits_to_zero(amount: float) -> int:
+    """税額が0円になる最小の**分割数**（人数 × 年数）。"""
+    return years_to_zero(amount)
+
+
+def donee_shortcut(amount: float = 10_000_000,
+                   donees: tuple[int, ...] = (1, 2, 3, 4, 5)) -> list[dict]:
+    """無税で渡し切るのに、**相手が何人いれば何年で済むか**。
+
+    要る分割数は `splits_to_zero` で決まるので、人数で割った**切り上げ**が年数です。
+    """
+    import math
+    need = splits_to_zero(amount)
+    return [{"amount": int(amount), "donees": d, "splits_needed": need,
+             "years": math.ceil(need / d),
+             "per_gift": int(amount / (d * math.ceil(need / d)))}
+            for d in donees]
+
+
+def allocation_compare(amount: float = 10_000_000, years: int = 3,
+                       *, special: bool = True) -> list[dict]:
+    """同じ額・同じ年数でも、**毎年の配分**で総税額がいくら変わるか。
+
+    速算表は段が上がるほど率も上がるので、**均等に割るのがいちばん安くなります。**
+    「基礎控除の110万円だけは毎年きっちり使う」という配り方は、
+    **残りが最後の1年に寄るぶん、かえって高くつきます。**
+    """
+    if years < 2:
+        raise ValueError("配分を比べるので年数は2以上")
+    plans: list[tuple[str, list[float]]] = []
+    plans.append(("均等に割る", [amount / years] * years))
+    rest = amount - BASIC * (years - 1)
+    plans.append((f"基礎控除{int(BASIC / 10_000)}万円ずつ＋残りを最後に",
+                  [BASIC] * (years - 1) + [rest]))
+    half = amount / 2
+    plans.append(("半分を初年に、残りを均等に",
+                  [half] + [half / (years - 1)] * (years - 1)))
+    plans.append(("初年に全額", [amount] + [0.0] * (years - 1)))
+    out = []
+    even = sum(gift_tax(a, special=special) for a in plans[0][1])
+    for name, gifts in plans:
+        total = sum(gift_tax(a, special=special) for a in gifts)
+        out.append({"amount": int(amount), "years": years, "plan": name,
+                    "gifts": [int(a) for a in gifts], "total_tax": total,
+                    "extra_vs_even": total - even})
+    return out
+
+
+def allocation_tilt(amount: float = 10_000_000, years: int = 3,
+                    tilts: tuple[int, ...] = (0, 500_000, 1_000_000,
+                                              2_000_000, 3_000_000),
+                    *, special: bool = True) -> list[dict]:
+    """均等から**1年目だけを `tilt` 円ふやし、最終年で同額へらす**と、総税額はどうなるか。
+
+    総額も年数も動かさずに配分だけを崩すので、**均等が谷であること**がそのまま見えます。
+    """
+    if years < 2:
+        raise ValueError("傾けるので年数は2以上")
+    base = amount / years
+    out = []
+    for t in tilts:
+        gifts = [base + t] + [base] * (years - 2) + [base - t]
+        total = sum(gift_tax(a, special=special) for a in gifts)
+        out.append({"amount": int(amount), "years": years, "tilt": t,
+                    "first": int(base + t), "last": int(base - t),
+                    "total_tax": total})
+    return out
+
+
 def check_tables() -> None:
     """制度の値と計算の向きを確かめる。**壊れた数字で台本を書かせない。**"""
+
+
+    # --- 2026-08-20 に足した節ぶん ------------------------------------------
+    # (h) **主題**: 総税額は「人数 × 年数」だけで決まる（どちらで割っても同じ）。
+    for d, y in ((1, 6), (2, 3), (3, 2), (6, 1)):
+        got = gift_tax(10_000_000 / (d * y)) * (d * y)
+        want = split_total(10_000_000, d * y)
+        if got != want:
+            raise _checks.TableError(
+                f"{d}人×{y}年 の総税額 {got:,}円 が、{d * y}年に分けた {want:,}円 と違う。"
+                "**基礎控除は人ごと・年ごとに効くので、積が同じなら同額のはず**")
+    # 積が同じ組は、格子の上でも同額であること
+    by_splits: dict[int, set[int]] = {}
+    for r in donee_year_grid():
+        by_splits.setdefault(r["splits"], set()).add(r["total_tax"])
+    for n, taxes in by_splits.items():
+        if len(taxes) != 1:
+            raise _checks.TableError(
+                f"分割数 {n} で総税額が {sorted(taxes)} と割れた。**積だけで決まるはず**")
+    # (i) 人数を増やすと、無税に要る年数は必ず減るか同じ（増えることはない）
+    prev = None
+    for r in donee_shortcut():
+        if prev is not None and r["years"] > prev:
+            raise _checks.TableError(
+                f"{r['donees']}人にしたら年数が {prev}年 → {r['years']}年 と増えた")
+        prev = r["years"]
+    if donee_shortcut()[0]["years"] != years_to_zero(10_000_000):
+        raise _checks.TableError("1人のときの年数が years_to_zero と食い違う")
+    # (j) **主題**: 均等に割るのがいちばん安い。
+    # 「基礎控除だけ毎年使う」配り方は**均等より高い**（ここが直感と逆）。
+    rows = allocation_compare(10_000_000, 3)
+    even = rows[0]
+    if even["plan"] != "均等に割る":
+        raise _checks.TableError("先頭が均等の行でない（並びが変わった）")
+    for r in rows[1:]:
+        if r["total_tax"] <= even["total_tax"]:
+            raise _checks.TableError(
+                f"「{r['plan']}」が均等 {even['total_tax']:,}円 以下（{r['total_tax']:,}円）。"
+                "**速算表は上の段ほど率が高いので、均等が最小のはず**")
+    # (k) 均等から傾けるほど高くなる（谷であること）。傾き0は均等と一致。
+    tilt_rows = allocation_tilt(10_000_000, 3)
+    if tilt_rows[0]["tilt"] != 0 or tilt_rows[0]["total_tax"] != even["total_tax"]:
+        raise _checks.TableError("傾き0の総税額が、均等の総税額と一致しない")
+    _checks.never_decreases(
+        lambda i: allocation_tilt(10_000_000, 3)[int(i)]["total_tax"],
+        list(range(len(tilt_rows))),
+        "均等から傾けたのに総税額が下がっている（凸でない）")
 
     # --- 2026-08-17 に足した節ぶん（`docs/JOURNAL.md` M17）------------------
     # **主張そのものを検査に置くこと。**
@@ -334,3 +475,48 @@ if __name__ == "__main__":
     print("  → 速算表の控除額が効くので、**最高税率の55パーセントは名目です。**"
           "10億円を一度に贈与しても実効は54.30パーセントで、"
           "**額を増やすほど55に近づきますが、超えることはありません**")
+
+    print(f"\n=== 「何年に分けるか」と「何人に分けるか」は、同じ1つの数だった"
+          f"（{10_000_000 // 10_000}万円・特例税率）===")
+    print(f"{'贈与額':>11s} {'人数':>4s} {'年数':>4s} {'分割数':>5s} "
+          f"{'1回あたり':>10s} {'総税額'}")
+    for row in donee_year_grid():
+        print(f"{row['amount']:10,d}円 {row['donees']:3d}人 {row['years']:3d}年 "
+              f"{row['splits']:4d}回 {row['per_gift']:>9,d}円 {row['total_tax']:>9,d}円")
+    print("  → **人数と年数を掛けた数が同じなら、総税額は1円も変わりません。**"
+          "2人に3年でも、1人に6年でも、6人に1年でも同じです。"
+          "基礎控除110万円が**もらう人ごと・その年ごと**に効くからで、"
+          "**速算表からも「110万円ずつなら無税」からも出てきません。**")
+
+    need = splits_to_zero(10_000_000)
+    print(f"\n=== 相手が増えると、{10_000_000 // 10_000}万円を無税で渡し切る年数はこう縮む"
+          f"（要る分割は{need}回）===")
+    print(f"{'贈与額':>11s} {'人数':>4s} {'要る分割':>6s} {'かかる年数':>7s} {'1回あたり'}")
+    for row in donee_shortcut():
+        print(f"{row['amount']:10,d}円 {row['donees']:3d}人 {row['splits_needed']:5d}回 "
+              f"{row['years']:6d}年 {row['per_gift']:>10,d}円")
+    print(f"  → 1人だけなら{need}年かかりますが、"
+          f"**3人いれば{donee_shortcut()[2]['years']}年**で終わります。"
+          "**分割数は切り上げなので、人数を増やしても1年ぶんは端数として残ります。**")
+
+    print(f"\n=== 同じ{10_000_000 // 10_000}万円を3年で渡すとき、配分で総税額はここまで変わる ===")
+    print(f"{'贈与額':>11s} {'年数':>4s} {'配り方':<28s} {'毎年の額':<32s} "
+          f"{'総税額':>10s} {'均等との差'}")
+    for row in allocation_compare(10_000_000, 3):
+        gifts = "／".join(f"{g:,}" for g in row["gifts"])
+        extra = row["extra_vs_even"]
+        diff = "—" if extra == 0 else f"+{extra:,}円"
+        print(f"{row['amount']:10,d}円 {row['years']:3d}年 {row['plan']:<28s} "
+              f"{gifts:<32s} {row['total_tax']:>9,d}円 {diff}")
+    print("  → **均等がいちばん安い**、というだけではありません。"
+          "**「基礎控除の110万円だけは毎年きっちり使う」という配り方が、均等より高くつきます。**"
+          "残りが最後の1年に寄って、速算表の上の段に入ってしまうからです。"
+          "**節税の話として広く出回っている「110万円ずつ」は、渡し切る額が決まっているときには最善ではありません。**")
+
+    print(f"\n=== 均等からずらすと必ず高くなる（{10_000_000 // 10_000}万円・3年・1年目を増やして最終年を減らす）===")
+    print(f"{'贈与額':>11s} {'年数':>4s} {'ずらす額':>9s} {'1年目':>10s} {'最終年':>10s} {'総税額'}")
+    for row in allocation_tilt(10_000_000, 3):
+        print(f"{row['amount']:10,d}円 {row['years']:3d}年 {row['tilt']:>8,d}円 "
+              f"{row['first']:>9,d}円 {row['last']:>9,d}円 {row['total_tax']:>9,d}円")
+    print("  → 総額も年数も動かしていないのに、**ずらした額に応じて税額が上がり続けます。**"
+          "谷は均等のちょうど1点だけで、**「だいたい均等」では取り戻せません。**")

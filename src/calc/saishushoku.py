@@ -160,8 +160,102 @@ def day_price_multiple(prescribed: int) -> dict:
     }
 
 
+
+def same_remaining(remaining: int = 100) -> list[dict]:
+    """**支給残日数が同じでも、所定給付日数の区分がちがうと給付率が割れる。**
+
+    給付率を決めているのは残日数そのものではなく、`残日数 ÷ 所定給付日数` です。
+    だから**同じ「あと100日ある」人でも、区分が上のほうが率が低くなります。**
+    """
+    rows = []
+    for d in PRESCRIBED_DAYS:
+        if remaining > d:
+            continue
+        rows.append({
+            "支給残日数": remaining,
+            "所定給付日数": d,
+            "残日数の割合": remaining / d,
+            "給付率": rate_of(remaining, d),
+            "再就職手当": round(benefit_days(remaining, d), 1),
+            "受け取り済み": d - remaining,
+            "合計": round(total_days(remaining, d), 1),
+        })
+    return rows
+
+
+def rate_drop_points(remaining: int = 100) -> list[dict]:
+    """同じ残日数で、**率が1段下がる最初の区分**を区分ごとに並べる。"""
+    out = []
+    prev: float | None = None
+    for row in same_remaining(remaining):
+        out.append({**row, "前の区分から下がったか": prev is not None and row["給付率"] < prev})
+        prev = row["給付率"]
+    return out
+
+
+def cross_class(fast: int = 90) -> list[dict]:
+    """**区分をまたぐと、待った人のほうが再就職手当が多くなる。**
+
+    `fast` 日の区分で**1日も受給せずに決めた人**（残日数＝所定給付日数）と、
+    各区分で**下の線（3分の1）ちょうど**まで受給してから決めた人を比べます。
+    """
+    base = benefit_days(fast, fast)
+    rows = []
+    for d in PRESCRIBED_DAYS:
+        k = round(d * THRESHOLD_LOW)
+        got = benefit_days(k, d)
+        rows.append({
+            "即決の区分": fast,
+            "即決の再就職手当": round(base, 1),
+            "所定給付日数": d,
+            "下の線の残日数": k,
+            "受給してから決めた日数": d - k,
+            "再就職手当": round(got, 1),
+            "差": round(got - base, 1),
+            "追い越したか": got > base,
+        })
+    return rows
+
+
+def cross_class_first(fast: int = 90) -> int | None:
+    """`cross_class` で、**最初に追い越す所定給付日数**。"""
+    for row in cross_class(fast):
+        if row["追い越したか"]:
+            return row["所定給付日数"]
+    return None
+
+
 def check_tables() -> None:
     """制度の値と計算の向きを確かめる。**壊れた数字で台本を書かせない。**"""
+
+    # --- 2026-08-20 に足した節ぶん ------------------------------------------
+    # (p) **主題**: 同じ残日数でも、区分が上がると給付率は下がるか同じ（上がらない）
+    rows = same_remaining(100)
+    if len(rows) < 3:
+        raise _checks.TableError("残日数100日で比べられる区分が3つ未満（PRESCRIBED_DAYS が変わった）")
+    _checks.never_decreases(lambda i: -rows[int(i)]["給付率"], list(range(len(rows))),
+                            "区分が上がったのに給付率が上がっている")
+    # 実際に1段下がる区分が少なくとも1つある（＝主張が空でない）
+    if not any(r["前の区分から下がったか"] for r in rate_drop_points(100)):
+        raise _checks.TableError("残日数100日で、率が下がる区分が1つも無い（主題が成り立たない）")
+    # 率が下がっても、合計（受け取り済み＋再就職手当）は増える。**逆転するのは手当のほうだけ**
+    _checks.never_decreases(lambda i: rows[int(i)]["合計"], list(range(len(rows))),
+                            "区分が上がったのに、雇用保険からの合計が減っている")
+    # (q) **主題**: 区分をまたぐと、待った人が即決の人を追い越す
+    first = cross_class_first(90)
+    if first is None:
+        raise _checks.TableError("下の線まで待って 90日区分の即決を追い越す区分が1つも無い")
+    for row in cross_class(90):
+        want = row["再就職手当"] > row["即決の再就職手当"]
+        if row["追い越したか"] != want:
+            raise _checks.TableError(f"追い越し判定が合わない: {row}")
+        if row["所定給付日数"] >= first and not row["追い越したか"]:
+            raise _checks.TableError(
+                f"{first}日 で追い越したのに、{row['所定給付日数']}日 で追い越していない")
+    # 即決の額は「所定給付日数 × 70パーセント」そのもの
+    if abs(cross_class(90)[0]["即決の再就職手当"] - 90 * RATE_HIGH) > 0.05:
+        raise _checks.TableError("即決の再就職手当が 所定給付日数×70パーセント と違う")
+
     # 1. 法令が名指ししている値
     _checks.statutory(RATE_HIGH, 0.70, "支給残日数3分の2以上の給付率",
                       source="雇用保険法56条の3")
@@ -319,3 +413,34 @@ if __name__ == "__main__":
     print("     残りの328日は、1日あたり0.3日分か0.4日分で一定です。")
     print("     **「早く決めたほうがいい」は正しいのですが、効くのはこの2日の前後だけ**で、")
     print("     それ以外の日は、1日急いでも0.4日分しか変わりません。")
+
+    REM = 100
+    print(f"\n=== 「あと{REM}日ある」が同じでも、区分がちがえば給付率が割れる ===")
+    print(f"{'支給残日数':>8s} {'所定給付日数':>9s} {'残日数の割合':>9s} {'給付率':>6s} "
+          f"{'再就職手当':>9s} {'受け取り済み':>9s} {'合計'}")
+    for row in rate_drop_points(REM):
+        mark = "  ← **ここで1段下がる**" if row["前の区分から下がったか"] else ""
+        print(f"{row['支給残日数']:7d}日 {row['所定給付日数']:8d}日 "
+              f"{row['残日数の割合']:8.1%} {row['給付率']:5.0%} "
+              f"{row['再就職手当']:8.1f}日 {row['受け取り済み']:8d}日 "
+              f"{row['合計']:6.1f}日{mark}")
+    print("  → 給付率を決めているのは残日数ではなく、**残日数 ÷ 所定給付日数**です。"
+          f"だから**条件のよい区分（長くもらえる人）ほど、同じ「あと{REM}日」でも率が低くなります。**"
+          "**それでも雇用保険からの合計は区分が上のほうが多い**ので、"
+          "**損なのは再就職手当だけ**です。この向きの違いは、率の表からは読めません。")
+
+    first = cross_class_first(90)
+    print(f"\n=== {90}日の区分で1日も受給せず決めた人を、"
+          f"**{first}日の区分で3分の1まで受給してから決めた人**が追い越す ===")
+    print(f"{'即決の区分':>7s} {'即決の手当':>9s} {'所定給付日数':>9s} {'下の線の残日数':>10s} "
+          f"{'受給した日数':>9s} {'再就職手当':>9s} {'差'}")
+    for row in cross_class(90):
+        mark = "  ← **追い越した**" if row["追い越したか"] else ""
+        print(f"{row['即決の区分']:6d}日 {row['即決の再就職手当']:8.1f}日 "
+              f"{row['所定給付日数']:8d}日 {row['下の線の残日数']:9d}日 "
+              f"{row['受給してから決めた日数']:8d}日 {row['再就職手当']:8.1f}日 "
+              f"{row['差']:+6.1f}日{mark}")
+    print("  → 再就職手当は「早く決めた人ほど多い」と説明されますが、**それは同じ区分の中の話です。**"
+          f"区分をまたぐと、**{first}日の区分で{round(first * THRESHOLD_LOW)}日まで減らしてから決めた人**が、"
+          f"90日の区分で**1日も受給せずに決めた人**を上回ります。"
+          "**同じ「基本手当の何日分」という単位で並べないと出てこない比較です。**")
