@@ -5,6 +5,7 @@ Anthropic API は使わない。サブスクリプションのセッション内
 """
 from __future__ import annotations
 
+import hashlib
 import math
 import re
 
@@ -1010,6 +1011,63 @@ def calc_block(topic: dict) -> str:
 {used_block}"""
 
 
+#: 題を問いの形にする割合。**0 にすると振り分けが止まります**（＝ 何も測れなくなる）。
+TITLE_ASK_SHARE = 0.5
+
+
+def title_form(topic_id: str, share: float = TITLE_ASK_SHARE) -> str:
+    """この本の題を「問い」にするか「断定」にするか。**テーマIDで決まります。**
+
+    ## なぜ振り分けるのか（2026-08-19 16:2x に測って足した）
+
+    `scripts/eta.py` が名指しする律速は **1本あたりの再生**で、`scripts/status.py`
+    の実測ではそこに最も強く効く率が **engaged（すぐスワイプされなかった割合）+0.62** です。
+    `scripts/build_perf.py` に特徴を足して測り直したところ、**測れた8つの特徴は
+    どれも engaged と無関係**（|ρ| ≤ 0.23）でした。engaged の実測幅は **3.8倍**
+    あるので、効いているのは**一覧に無いもの**の側です。
+
+    そして同じ道具が、こう言いました ——
+
+        題が問いか   19本とも同じ値＝**一度も試していない**
+
+    **「効かない」ではありません。「まだ1本も出していない」です。**
+    `status.py` も別の道で「**動画が視聴者に何も問いかけていない**」と書いています。
+    向きを知る道は1つしかなく、**違う値の本を作って出すこと**です。
+
+    ## なぜ「テーマIDで決める」のか
+
+    - **乱数にしないこと。** 同じテーマを作り直すたびに形が変われば、
+      落ちて撃ち直した本が別の群に移り、比較が壊れます
+    - **日付や順番にしないこと。** `batch_build` は1日ぶんをまとめて撃つので、
+      日で分けると「その日の題材の当たり外れ」と混ざります（M14 と同じ形）
+    - IDのハッシュなら、**同じ日の中で半々に混ざり**、作り直しでも動きません
+
+    判定は `config/hypotheses.yaml`（2026-09-12）。
+    """
+    if share <= 0:
+        return "断定"
+    if share >= 1:
+        return "問い"
+    h = hashlib.sha1(str(topic_id).encode("utf-8")).digest()
+    return "問い" if (int.from_bytes(h[:4], "big") % 10_000) < share * 10_000 else "断定"
+
+
+#: 問いの側にだけ足す指示。**断定の側には1文字も足しません**（対照群を汚さない）。
+ASK_TITLE_RULE = """
+# 今回の題の形（**この動画だけの指定**）
+
+タイトルを**問いの形**にしてください。答えを題に書かず、**視聴者が自分の数字を
+当てはめたくなる問い**にすること。ここは冒頭でいちばん先に読まれる場所です。
+
+- 例:「医療費20万円で戻るのは何円か」「扶養1人で上限はいくら下がるか」
+- **前提の数字（入力の側）は題に残すこと。** 「いくら得するか」だけでは
+  何の話か分かりません。**答えの数字（計算の結果）は題に書かない**
+- 煽らない。「衝撃」「知らないと損」は禁止のままです
+- 全角32文字以内・#Shorts の規則はそのまま
+- **サムネイルと first_comment は変えないこと。** 変えると、何が効いたか分かりません
+"""
+
+
 def generate(channel: dict, topic: dict) -> VideoScript:
     """台本を1本生成する。尺が足りなければ同じセッションで書き足させる。"""
     cfg = channel["channel"]
@@ -1063,6 +1121,13 @@ def generate(channel: dict, topic: dict) -> VideoScript:
         min_segments=seg_lo,
         max_segments=seg_hi,
     )
+
+    # **題の形の振り分け**（`title_form` の docstring に理由）。
+    # 断定の側には1文字も足しません —— 足すと対照群でなくなります。
+    form = title_form(topic.get("id", ""))
+    if form == "問い":
+        prompt += ASK_TITLE_RULE
+    print(f"[script] 題の形: {form}（テーマIDで決まる。割合 {TITLE_ASK_SHARE:.0%}）")
 
     script, session = ask(VideoScript, prompt, model=model)
     chars = _total_chars(script)

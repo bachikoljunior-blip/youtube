@@ -40,10 +40,78 @@ def test_features_are_all_known_before_publishing():
     同義反復が向きとして出ます。
     """
     f = build_perf.features("nonexistent-topic", "年金の繰下げは1234円得します #Shorts", {})
-    assert set(f) == {"図の枚数", "棒の本数", "題の幅", "題の数字の桁", "題の数字の個数"}
+    assert set(f) == {
+        "尺（秒）", "図の枚数", "1枚目の棒", "棒の本数", "題の幅",
+        "数字までの幅", "題の数字の桁", "題の数字の個数", "題が問いか",
+        "冒頭の声の幅", "冒頭に数字", "冒頭の絵の変化",
+    }
     assert f["題の数字の桁"] == 4.0
     assert f["題の数字の個数"] == 1.0
     assert f["図の枚数"] == 0.0
+    # 「年金の繰下げは」＝ 全角7字 → 幅14 で最初の数字に当たる
+    assert f["数字までの幅"] == 14.0
+    assert f["題が問いか"] == 0.0
+
+
+def test_missing_features_are_none_not_zero():
+    """**測れない特徴は `None`。0 で埋めない。**
+
+    0 で埋めると「冒頭に数字が無い本」と「冒頭が分からない本」が同じ値になり、
+    向きが静かに薄まります（`usage` の 4つ組を `0,0,0,0` と書かない話と同じ形）。
+    """
+    f = build_perf.features("t", "年金 #Shorts", {})
+    assert f["尺（秒）"] is None
+    assert f["冒頭の声の幅"] is None
+    assert f["冒頭の絵の変化"] is None
+    g = build_perf.features("t", "年金 #Shorts", {}, seconds=52, head={"冒頭に数字": 0.0})
+    assert g["尺（秒）"] == 52.0
+    assert g["冒頭に数字"] == 0.0        # **0 は「無い」ではなく「数字が入っていない」**
+    assert g["冒頭の声の幅"] is None
+
+
+def test_question_titles_are_detected():
+    """`題が問いか` が末尾の「か」だけを見ていないこと。"""
+    ask = build_perf.features("t", "医療費控除でいくら戻る #Shorts", {})["題が問いか"]
+    assert ask == 1.0
+    assert build_perf.features("t", "戻る額は何円か #Shorts", {})["題が問いか"] == 1.0
+    assert build_perf.features("t", "医療費控除で2万209円戻る", {})["題が問いか"] == 0.0
+
+
+def test_known_hit_length_vs_views_is_negative():
+    """**既知の当たり**（`docs/trigger_main.md` §4「道具を足す回は当たりを先に固定する」）。
+
+    `scripts/status.py` が別の道（Analytics の一覧）で出している
+    **尺 × 再生 = -0.33**（n=20・再生30未満は除外）を、この道具でも持ちます。
+    **配線が落ちると、特徴の件数は減らないまま向きだけ消えるので、
+    ここが唯一の物差しです。**
+    """
+    rows, _ = build_perf.collect()
+    d = next(c for c in build_perf.correlations(rows) if c["name"] == "尺（秒）")
+    assert d["why"] == "", f"尺が測れていません: {d}"
+    assert d["n"] >= 15, f"測れた本が {d['n']}本 しかありません"
+    assert d["views"] is not None and d["views"] < -0.15, (
+        f"尺 × 再生 = {d['views']}。status.py の -0.33 と符号が合いません。"
+        "**特徴 → 順位相関 の配線を疑うこと**"
+    )
+
+
+def test_no_data_and_no_variation_are_told_apart():
+    """**「本数が足りない」と「一度も試していない」を混ぜないこと。**
+
+    前の版はどちらも `None` を返し、口が両方「本数が足りない」と印字していました。
+    ＝ **待っても出ないもの**（全部の本が同じ値）が、待てば出るものに見えていました。
+    """
+    rows = [
+        {"features": {"ずっと同じ": 1.0, "足りない": 5.0}, "engaged": 0.1 * i, "views": 10.0 * i}
+        for i in range(1, build_perf.MIN_N + 1)
+    ]
+    for r in rows[3:]:
+        r["features"]["足りない"] = None
+    out = {d["name"]: d for d in build_perf.correlations(rows)}
+    assert out["ずっと同じ"]["why"] == "変化なし"
+    assert out["ずっと同じ"]["n"] == build_perf.MIN_N
+    assert out["足りない"]["why"] == "本数不足"
+    assert out["足りない"]["n"] == 3
 
 
 def test_width_counts_fullwidth_as_two():
@@ -65,9 +133,33 @@ def test_min_views_floor_is_reported_not_hidden():
 
 
 def test_correlations_cover_every_feature():
+    """**測れなかった特徴を、黙って表から落とさないこと。**
+
+    落とすと「無関係だった」と「そもそも測っていない」が区別できなくなります。
+    """
     rows, _ = build_perf.collect()
     names = set(rows[0]["features"])
-    assert {n for n, _, _ in build_perf.correlations(rows)} == names
+    assert {d["name"] for d in build_perf.correlations(rows)} == names
+
+
+def test_first_seconds_is_absent_for_videos_stashed_before_0817():
+    """**冒頭の材料は、いま少数の本にしかありません**（2026-08-19 に数え直した）。
+
+    16:0x の申し送りは「`narration` は 352本ぶんある」と書きましたが、
+    **`engaged` と突き合わせられる 19本のうち、控えのあるのは数本**です
+    （控えを取り始めたのが 08/17・再生の付いている本は 08/04〜08/15 の公開）。
+    **この検査は「少ないこと」を固定するためのものではありません** ——
+    `MIN_N` に届いたら、口が向きを出し始めます。ここは
+    **「0 で埋めていないこと」**だけを見ています。
+    """
+    rows, _ = build_perf.collect()
+    have = [r for r in rows if r["features"]["冒頭の声の幅"] is not None]
+    missing = [r for r in rows if r["features"]["冒頭の声の幅"] is None]
+    assert missing, "全部の本に控えがあるなら、この節は役目を終えています"
+    for r in missing:
+        assert r["features"]["冒頭に数字"] is None, "控えの無い本を 0 で埋めています"
+    for r in have:
+        assert r["features"]["冒頭の声の幅"] > 0
 
 
 def test_bars_file_is_readable():
