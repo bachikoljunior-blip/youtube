@@ -1,5 +1,3 @@
-{"at": "2026-08-15T15:53:34+09:00", "session": "session_013e4wy2qHsu1jMx9kbAXQYZ", "kind": "ship", "what": "fix: 棒グラフの目盛り（起点0で差が1.6%に潰れる／めくりで縮尺が枚ごとに動く）"}
-{"at": "2026-08-15T15:57:11+09:00", "session": "session_01X8qafuDCKnkqfdFJof8E7V", "kind": "start"}
 {"at": "2026-08-15T16:12:49+09:00", "session": "session_01X8qafuDCKnkqfdFJof8E7V", "kind": "ship", "what": "means: scripts/batch_build.py（1回の起動で複数本）を実装し、実際に2本を予約（b3ZewNvalXc 8/25 09:00・H28qfOxuJF0 8/26 09:00）／fix: 画面に主語が出ていない検査"}
 {"at": "2026-08-15T16:31:19+09:00", "session": "session_01KjvxzsSxTMV2UrWzGSXr3p", "kind": "ship", "what": "fix: 1周の頭に『前の回を読む』が無かった（trigger_main は JOURNAL を4回とも『書け』でしか使っておらず、20件の申し送りが未読で積まれていた）→ scripts/retro.py を作り §2.7 に設置。持ち越し検出が実際に1件拾った／means: scripts/build_provenance.py で予約15本の『どの時点のコードか』を出し、8/17〜8/22 の6本が全部 8/09 のコード＝M14 の比較の片側が丸ごと古いことを確定"}
 {"at": "2026-08-15T17:13:35+09:00", "session": "session_01CrgyLG6ZQ2qenQZxL97qEH", "kind": "start"}
@@ -498,3 +496,5 @@
 {"at": "2026-08-19T23:52:02+09:00", "session": "session_015HshCP5Hbv5DCmxzLoycwh", "kind": "ship", "what": "節を7つ掘って在庫 9→16本（hook_form の両群8本に届いた）＋§6(f) の待ちで鎖が切れる形を塞いだ", "lever": "per_video"}
 {"at": "2026-08-20T00:21:14+09:00", "session": "session_01TfpEWuyenSmU2UBMk6V5GX", "kind": "start"}
 {"at": "2026-08-20T00:57:29+09:00", "session": "session_01TfpEWuyenSmU2UBMk6V5GX", "kind": "ship", "what": "節14本を5表に掘って在庫16→27本／それでも問いの腕は7本のままだった（足した11本が11本とも条件）→ scripts/ab_balance.py で未投稿IDを振り直し 問い12・条件15", "lever": "per_video"}
+{"at": "2026-08-20T01:17:00+09:00", "session": "session_01K3D1wm5VMpmn1R5gdqPJ6L", "kind": "start"}
+{"at": "2026-08-20T01:33:34+09:00", "session": "session_01K3D1wm5VMpmn1R5gdqPJ6L", "kind": "ship", "what": "掘る道具が「目標を超えた表」を落としていたのを直し（section_depth・検査+5＝25緑）、いちばん実績の良い iryohi を実際に1節掘って forge。未投稿在庫 27→28 で、pick の先頭が初めて iryohi になった", "lever": "per_video", "closes": ["calc_gap"], "journal_lines": 30682}

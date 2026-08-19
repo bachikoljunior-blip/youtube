@@ -206,3 +206,59 @@ def test_全部既出の表はそう言う():
                                                  novel_counts={"aaa": 0}))
     assert "全部、いまの節がもう言っています" in lines
     assert "新しい 0件" in lines
+
+
+# ---------------------------------------------------------------------------
+# **目標を超えた表を黙って落としていた**（2026-08-20 に測って足した）
+#
+# `status.py` の `family_perf` は「次に節を書くならここ: nenkin iryohi shitsugyo」と
+# 言い、`candidates()` は同じ3本を `room <= 0` で落としていました。
+# **候補の一覧を作っている側が勝つ**ので、在庫は実績の悪い族にしか作れません。
+# ---------------------------------------------------------------------------
+
+
+def test_目標を超えた表も新しい候補があれば出る():
+    """実測の形。**深いのは掘り尽くしたからではなく、選ばれ続けたから**です。"""
+    mods = _mods({"iryohi": 15, "nenkin": 13, "asai": 3, "x": 8, "y": 8, "z": 8})
+    novel = {"iryohi": 33, "nenkin": 14}
+    got = section_depth.candidates(mods, novel_counts=novel)
+    names = [r[0] for r in got]
+    assert "iryohi" in names, "目標を超えた表が、掃引に新しい候補があるのに出ていない"
+    assert names[0] == "iryohi", "余地33件が、余地5節の浅い表より後ろに来ている"
+
+
+def test_掃引を渡さない回は今までどおり落ちる():
+    """**掃引が読めない回の振る舞いを変えないこと。**（degradation は元のまま）"""
+    mods = _mods({"iryohi": 15, "asai": 3, "x": 8, "y": 8, "z": 8})
+    got = [r[0] for r in section_depth.candidates(mods)]
+    assert "iryohi" not in got
+
+
+def test_新しい候補が0件の表は出ない():
+    """`shitsugyo` の実測（掃引14件・新しい0件）。**ここは本当に尽きています。**"""
+    mods = _mods({"shitsugyo": 13, "asai": 3, "x": 8, "y": 8, "z": 8})
+    got = [r[0] for r in section_depth.candidates(mods, novel_counts={"shitsugyo": 0})]
+    assert "shitsugyo" not in got
+
+
+def test_故障注入_目標超の余地を足し算に混ぜない():
+    """「{目標}節まで掘るだけで +N節」の N に、掃引の件数を混ぜないこと。
+
+    混ぜると **+38節**（5 + 33）と出ますが、iryohi は既に目標を超えているので
+    「目標まで掘る」で出る節は **5節**です。**文と数字が食い違います。**
+    """
+    mods = _mods({"iryohi": 15, "asai": 3, "x": 8, "y": 8, "z": 8})
+    lines = section_depth.report_lines(mods, novel_counts={"iryohi": 33})
+    hit = [ln for ln in lines if "節まで掘るだけで" in ln]
+    assert hit, "足し算の行そのものが消えている"
+    assert "+5節" in hit[0], f"目標超の余地が足し算に混ざっている: {hit[0]}"
+
+
+def test_目標超の行は_あと何節_と書かない():
+    """3つめの意味が行ごとに違うので、**行の側で必ず言い分けること。**"""
+    mods = _mods({"iryohi": 15, "asai": 3, "x": 8, "y": 8, "z": 8})
+    lines = section_depth.report_lines(mods, novel_counts={"iryohi": 33})
+    row = [ln for ln in lines if ln.strip().startswith("iryohi")]
+    assert row, "iryohi の行が出ていない"
+    assert "あと33節" not in row[0], f"掃引の件数を節の数として書いている: {row[0]}"
+    assert "目標超" in row[0]

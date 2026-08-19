@@ -64,6 +64,10 @@ RECONSTRUCTION = 0.021       # 復興特別所得税
 RESIDENT_RATE = 0.10         # 住民税の標準税率
 RECLAIM_YEARS = 5            # 更正の請求ができる期間
 
+# 区分べつの自己負担を比べる医療費（円）。**窓口3割が限度額を追い越す前後を挟むこと** ——
+# 小さいうちは全区分とも窓口3割で同じなので、そこだけ見ると「区分は効かない」と読めます。
+TIER_GAP_COSTS = [100_000, 200_000, 300_000, 1_000_000, 3_000_000, 10_000_000]
+
 # 所得税の速算表の税率。課税所得ではなく「総所得金額等」で足切りが決まるので、
 # この2つを取り違えないこと。
 INCOME_TAX_RATES = [0.05, 0.10, 0.20, 0.23, 0.33, 0.40, 0.45]
@@ -493,6 +497,20 @@ def self_pay(cost: int, tier_name: str = "ウ") -> int:
     return round(kogaku.paid(tier_name, cost))
 
 
+def tier_gap_cost(tier_name: str, step: int = 10_000,
+                  limit: int = 12_000_000) -> int | None:
+    """その区分で、窓口3割より自己負担が小さくなる最初の医療費（円）。
+
+    **区分の差は、ここから先にしかありません。**それより手前は全区分とも
+    窓口3割そのものなので、限度額の高い低いは1円も効きません。
+    範囲内で追い越さなければ `None`。
+    """
+    for cost in range(step, limit + 1, step):
+        if self_pay(cost, tier_name) < round(cost * kogaku.COPAY_RATE):
+            return cost
+    return None
+
+
 def deduction_start_cost(tier_name: str, total_income: int) -> int | None:
     """**1か月の医療費がいくらを超えると、医療費控除が1円でも出るか。**
 
@@ -900,3 +918,23 @@ if __name__ == "__main__":
     print(f"  **「5年さかのぼれる」を効かせようと5年に分けると、"
           f"医療費{floor_amount(TI_Y) * RECLAIM_YEARS:,}円以下では1円も戻りません**"
           f"（総所得{TI_Y:,}円のとき）。")
+
+    print("\n=== 区分べつ / 同じ医療費でも、その月の自己負担は何倍ちがうか ===")
+    print("  高額療養費の限度額は標準報酬月額の区分で決まります。"
+          "**ただし窓口3割が限度額より小さいうちは、区分の差はつきません。**")
+    print("  差がつき始めるのは、窓口3割が**その区分の限度額を追い越したとき**です。")
+    print(f"{'医療費':>12s} " + " ".join(f"{t[0]:>9s}" for t in kogaku.TIERS)
+          + f" {'いちばん高い÷いちばん低い':>22s}")
+    for cost in TIER_GAP_COSTS:
+        pays = [self_pay(cost, t[0]) for t in kogaku.TIERS]
+        ratio = max(pays) / min(pays)
+        mark = "  ← まだ全員おなじ（窓口3割のまま）" if ratio == 1 else ""
+        print(f"{cost:11,d}円 " + " ".join(f"{p:8,d}円" for p in pays)
+              + f" {ratio:21.2f}倍" + mark)
+    print("  **医療費が大きいほど、区分の差は開きます。**"
+          "区分ア〜ウの限度額には「超えた分の1%」が乗るのに対し、"
+          "区分エ・オは定額で頭打ちだからです。")
+    for name in ("ア", "オ"):
+        first = tier_gap_cost(name)
+        print(f"  区分{name}が窓口3割から離れる医療費: "
+              + (f"{first:,}円" if first else "この表の範囲では離れません"))
