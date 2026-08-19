@@ -300,3 +300,6 @@
 {"at": "2026-08-20T04:15:18+09:00", "key": "calc_gap", "n": 12, "session": "session_01FLMZGoWyqyZxSEdtSUcQRY", "by": "status.py"}
 {"at": "2026-08-20T04:25:41+09:00", "key": "undeclared_close", "n": 1, "session": "session_01FLMZGoWyqyZxSEdtSUcQRY", "by": "run_marker.py"}
 {"at": "2026-08-20T04:29:04+09:00", "key": "carry_over", "n": 21, "session": "session_01FLMZGoWyqyZxSEdtSUcQRY", "by": "retro.py"}
+{"at": "2026-08-20T05:14:25+09:00", "key": "carry_over", "n": 21, "session": "session_01TLYHGrzvxp1k8YnvDcZNKN", "by": "retro.py"}
+{"at": "2026-08-20T05:14:53+09:00", "key": "missing_thumbnail", "n": 123, "session": "session_01TLYHGrzvxp1k8YnvDcZNKN", "by": "status.py"}
+{"at": "2026-08-20T05:15:46+09:00", "key": "calc_gap", "n": 12, "session": "session_01TLYHGrzvxp1k8YnvDcZNKN", "by": "status.py"}

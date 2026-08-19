@@ -54,6 +54,7 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Callable
 
+from src import ab_power
 from src.script_writer import hook_form, title_form
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -63,9 +64,15 @@ LEDGER = ROOT / "data" / "uploaded.jsonl"
 JST = timezone(timedelta(hours=9))
 
 #: 判定に要る、**片群あたりの本数**。`config/hypotheses.yaml` の
-#: 「どちらの群も 8本に満たなければ判定しない」と同じ数。**ここだけで持たないこと** ——
+#: 「どちらの群も 16本に満たなければ判定しない」と同じ数。**ここだけで持たないこと** ——
 #: 数を変えるなら yaml も同時に変える（`tests/test_ab_split.py` が突き合わせています）。
-MIN_PER_GROUP = 8
+#:
+#: **8 → 16 に上げました（2026-08-20 05:2x）。** 緩めたのでも厳しくしたのでもなく、
+#: **8本では狙っている差が見分けられない**ことを実データで測ったからです
+#: （`src/ab_power.py`。順位和を足した規則で、1.3倍を当てる率が 8本 64% → 16本 76%）。
+#: **80% に届かせるには片群 32本**要りますが、そこは在庫が尽きます —— だから
+#: yaml の「満たないときは**期限だけを延ばす**」のほうを使うこと。
+MIN_PER_GROUP = 16
 
 #: 「初速だけを見ない」ための日数。yaml の「公開から7日以上たっていること」と同じ。
 SETTLE_DAYS = 7
@@ -381,9 +388,17 @@ def report(as_of: date | None = None, stock: dict[str, dict[str, int]] | None = 
         lines.append("  " + c.short())
         if stock is not None and exp.name in stock:
             lines.extend(outlook(exp, stock[exp.name], as_of=as_of, counts=c).lines())
+        v = ab_power.verdict(MIN_PER_GROUP)
+        if v is not None:
+            lines.extend(v.lines())
         if c.unknown_publish:
             lines.append(f"  （控えに公開日が無い {c.unknown_publish}本は、どちらにも数えていません）")
         lines.append("")
+    lines.append(
+        "**判定の規則そのものが当てられるかは、`src/ab_power.py` が測っています。**"
+        "\n中央値の大小だけでは、**効きが無くても 49% で「上回った」と出ます**（コイン投げ）。"
+        "\n順位和の門（片側 p ≤ 0.20）を足したうえで、床を片群 16本にしてあります。"
+    )
     lines.append(
         "**`stale` の本を混ぜて判定しないこと。** IDが群を決めるので件数は正常に見えますが、"
         "\n中身は両群とも指示より前の作りで同じです。差が出ないのは当たり前で、"

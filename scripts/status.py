@@ -33,7 +33,19 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+import functools as _functools  # noqa: E402
+
+from src import ab_power as _ab_power  # noqa: E402
 from src import ab_split as _ab  # noqa: E402
+
+
+@_functools.lru_cache(maxsize=1)
+def _ab_power_verdict():
+    """判定規則の当てっこ。**撃つのは1回だけ**（実験ごとに同じ数が出ます）。"""
+    try:
+        return _ab_power.verdict(_ab.MIN_PER_GROUP)
+    except Exception:  # 状態を見る道具が、状態のせいで死んではいけない
+        return None
 from src import alerts as _alerts  # noqa: E402
 from src import inbox as _inbox  # noqa: E402
 from src.auth import note_day_quota as _note_day_quota  # noqa: E402
@@ -308,6 +320,14 @@ def print_hypotheses() -> None:
                 print(f"        [!] {_exp.name} の群を数えられませんでした: {e}")
                 continue
             print(f"        {_c.short()}")
+            # **床の数そのものが、当てられる大きさを決めています**（2026-08-20 05:2x に足した）。
+            # yaml には「8対8 なら倍半分の差は見分けられる」と書いてありましたが、
+            # **効きがゼロのときに何と言うか**は一度も測られていませんでした ——
+            # 中央値の大小には閾値が無いので、差がゼロなら**コイン投げ**で、
+            # **本数を増やしても 50% のままです**（`src/ab_power.py`）。
+            _v = _ab_power_verdict()
+            if _v is not None:
+                print("        " + "\n        ".join(x.strip() for x in _v.lines()[1:]))
             # **足りない本には、公開の締切があります**（2026-08-20 04:4x に足した）。
             # `short()` は「あと8本」としか言わず、**その8本をいつまでに公開すれば
             # 判定に入るか**を言いません。実測: `hook_form` の在庫は 28本 ——
