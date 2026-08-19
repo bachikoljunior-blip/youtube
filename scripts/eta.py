@@ -63,6 +63,10 @@ TARGET_YEN = 200_000             # 月収の目標
 # --- 1日に出せる本数の上限（実測。data/upload_cap.jsonl の窓と同じ）---
 UPLOAD_CAP_PER_DAY = 92
 
+# --- 公開の密度（1日に何本「公開」するか。投稿＝予約とは別物）---
+#     いまの予約は 246本が39.5日に散って 1日6.4本。詰めれば25本（受け取り帳 3c7e12a3）
+PUBLISH_SCENARIOS = (4, 10, 25, 92)
+
 # --- RPM の幅（**実測ではない**。収益化前なので自分の数字が無い）---
 RPM_SCENARIOS = {
     "ショート 低": 20,
@@ -135,7 +139,10 @@ def _days_to(need: float, per_day: float) -> float:
         return 0.0
     if per_day <= 0:
         return NEVER
-    return need / per_day
+    days = need / per_day
+    # 100年より先は「届かない」と同じに畳む。**桁の大きい数を残すと、
+    # 前の回との差（縮んだぶん）がその桁に埋もれて読めなくなります。**
+    return NEVER if days > 36_500 else days
 
 
 def _fmt_days(days: float) -> str:
@@ -255,6 +262,15 @@ def report(m: dict, a: dict) -> list[str]:
     P("--- 早めるには、どれを何倍にするか（**倍率が小さいものから手を付ける**）---")
     for label, now, need in _levers(m, a):
         P(f"    {label:<26} いま {now:<16} → 要 {need}")
+    P("")
+    P("--- **公開の密度を上げたら、門1はいつ通るか**（1本あたり再生を据え置いた見積り）---")
+    P(f"    ＝ 1日に公開する本数 × {a['per_video_now']:,}回 × 登録率 {a['sub_rate']*100:.4f}%")
+    for n in PUBLISH_SCENARIOS:
+        v = n * a["per_video_now"]
+        d = _days_to(a["subs_remaining"], v * a["sub_rate"])
+        P(f"    1日 {n:>3}本 公開 → 再生 {v:>9,.0f}／日 → 門1 {_fmt_days(d)}")
+    P("    **これは推測です**（1日N本でも1本あたりが保つかは未測定＝M14 の「配信の壁」）。")
+    P("    ただし 4本/日 までは崩れないことが実測済み（2026-08-19 04:4x・中央値 +50.5%）。")
     return out
 
 
