@@ -1,4 +1,3 @@
-{"at": "2026-08-10T15:18:55+09:00", "session": "session_01MeVmw6i7bnG6RVyxa3pSr3"}
 {"at": "2026-08-10T16:22:07+09:00", "session": "session_01AH54RzS9GVyHWvgeuBquU5"}
 {"at": "2026-08-10T20:34:31+09:00", "session": "session_01FAwqD1eSbhns9w8GDwHhwE"}
 {"at": "2026-08-11T01:18:26+09:00", "session": "session_01AiKeuqs22BZgd7BPA9jG8m"}
@@ -498,3 +497,4 @@
 {"at": "2026-08-19T12:57:32+09:00", "session": "session_01GJsRiAogz4TNQ39T43CLnW", "kind": "ship", "what": "fix: reschedule --compact の安全門が『予約の最後』しか見ておらず、受け取り帳3c7e12a3 の --max-days 10 が **08/30〜09/11 の13日を公開ゼロ**にする割り当てを無検査で通していた（--min-days 8 は 38.9日あると読む）。hole_days/suggest_max_days を足して止め、穴の空かない --max-days 13 を道具の側が名指しする。検査 10→15"}
 {"at": "2026-08-19T13:04:21+09:00", "session": "session_01GJsRiAogz4TNQ39T43CLnW", "kind": "ship", "what": "upload: 09/02（薄い日・1本だった）へ9本を予約（9/9 成功・13:30〜17:30 JST）。予約は 09/02=10 本に"}
 {"at": "2026-08-19T13:18:45+09:00", "session": "session_01GJsRiAogz4TNQ39T43CLnW", "kind": "ship", "what": "upload: 09/03（薄い日・3本だった）へ8本を予約（8/9。1本は投稿前の検査が ASSUMPTIONS 未表示で止めた＝門は効いている）。予約は 09/03=11 本に"}
+{"at": "2026-08-19T13:19:45+09:00", "session": "session_01GJsRiAogz4TNQ39T43CLnW", "kind": "ship", "what": "fix: 詰め直しは日枠で必ず2日に割れる（318本 / 1日195本）。撃ち切った姿が穴0日でも、195本で止めた姿には8日空く。--apply の直前に切った側も数えて、いちばん早い穴の日を締切として出す"}
