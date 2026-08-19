@@ -152,3 +152,71 @@ def test_同じ動画IDが2行あれば両方書き換える(tmp_path, monkeypat
     assert dupes.retime("a", "2026-08-24T00:30:00Z") is True
     ats = {json.loads(x)["at"] for x in path.read_text(encoding="utf-8").splitlines() if x.strip()}
     assert ats == {"2026-08-24T00:30:00Z"}
+
+
+# ---------------------------------------------------------------------------
+# **真ん中に空く穴**（2026-08-19 12:5x に足した）
+#
+# `--min-days` は「予約の最後」しか見ません。**全部を詰め切らない**割り当てでは、
+# 後ろの何本かが元の時刻に残るので**最後は動かず**、その手前だけが空になります。
+# 実物（317本・`--max-days 10`）で **08/30〜09/11 の13日**がこの形でした。
+# ---------------------------------------------------------------------------
+
+
+def _hole_setup(days: int):
+    """1日1本 × 12日ぶん。`max_days` を小さくすると詰め切れずに穴が空く。"""
+    rows = [_row(f"v{i}", f"2026-08-{19 + i:02d}T09:00") for i in range(12)]
+    plan = reschedule.compact_plan(rows, now=NOW, step_min=60, hour=9, until_hour=11,
+                                   max_days=days, window=EMPTY)
+    return rows, plan
+
+
+def test_詰め切らないと真ん中に穴が空くのを数える():
+    rows, plan = _hole_setup(2)          # 置き先は 08/19〜08/20 の 3枠 × 2日
+    holes = reschedule.hole_days(rows, plan, NOW)
+    assert holes, "穴が空いているのに0件を返した"
+    # 最後の本（08/30）は動かないので、その手前が空になる
+    assert "08/30" not in holes, "**予約の最後そのもの**を穴に数えている"
+    assert "08/22" in holes
+
+
+def test_全部を詰め切ったときは穴と数えない():
+    """後ろがからになるのは**地平線が縮んだ**だけ。`--min-days` が見る側です。"""
+    rows, plan = _hole_setup(12)
+    assert reschedule.hole_days(rows, plan, NOW) == []
+
+
+def test_動かすものが無ければ穴も無い():
+    rows = [_row("v0", "2026-08-19T09:00")]
+    assert reschedule.hole_days(rows, [], NOW) == []
+
+
+def test_予約の最後より後ろの0本の日は穴ではない():
+    """12本を1日ぶんに詰めると 08/19 以外は全部 0本。**穴は0件**であること。"""
+    rows = [_row(f"v{i}", f"2026-08-{19 + i:02d}T09:00") for i in range(12)]
+    plan = reschedule.compact_plan(rows, now=NOW, step_min=5, hour=9, until_hour=11,
+                                   max_days=1, window=EMPTY)
+    assert len(plan) == 11               # 08/19 09:00 の1本だけ動かない
+    assert reschedule.hole_days(rows, plan, NOW) == []
+
+
+class _Args:
+    """`suggest_max_days` が読む欄だけ。"""
+    step_min = 60
+    hour = 9
+    until_hour = 11
+    lead_min = 60
+    min_days = 0.0
+
+    def __init__(self, max_days: int):
+        self.max_days = max_days
+
+
+def test_穴の空かない詰め方を道具の側が名指しする():
+    """**増やすと消える**ので、人の直感（減らす）と逆向きです。"""
+    rows = [_row(f"v{i}", f"2026-08-{19 + i:02d}T09:00") for i in range(12)]
+    hint = reschedule.suggest_max_days(rows, NOW, _Args(2), ceiling=20)
+    assert hint is not None
+    plan = reschedule.compact_plan(rows, now=NOW, step_min=60, hour=9, until_hour=11,
+                                   max_days=hint, window=EMPTY)
+    assert reschedule.hole_days(rows, plan, NOW) == []

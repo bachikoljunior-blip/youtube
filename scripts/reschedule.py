@@ -286,6 +286,81 @@ def _horizon(rows: list[dict], plan: list[dict], now: datetime) -> tuple[str, fl
     return last.astimezone(JST).strftime("%m/%d %H:%M"), (last - now).total_seconds() / 86400
 
 
+def hole_days(rows: list[dict], plan: list[dict], now: datetime) -> list[str]:
+    """**詰めたあと、公開が1本も無くなる日**（JST の `MM/DD`）を返す。
+
+    ## なぜ要るか（2026-08-19 12:5x に、撃つ直前の空撃ちで見つけた）
+
+    `--min-days` は **「予約の最後」しか見ていません。** `--max-days 10` で
+    控えの実物（317本）を詰めると、こうなります:
+
+        08/20〜08/29  各25本（狙いどおり）
+        **08/30〜09/11  0本**  ← **13日間、1本も公開されない**
+        09/12〜09/27  そのまま（詰め切れなかったぶん）
+
+    最後は 09/27 のままなので `--min-days 8` は **38.9日ある** と読んで通します。
+    **穴は真ん中に空くので、端しか見ない門には映りません。**
+
+    `docs/CLAUDE.md` は「**投稿が途切れるのが最大の損失**」と書いています。
+    ここを通してしまうと、いちばん避けたい形をこちらから作ることになります。
+
+    ## 最後より後ろの「0本の日」は穴ではありません
+
+    全部を前に詰め切ると、後ろは当然からになります（それは**地平線が縮んだ**
+    だけで、`--min-days` がすでに見ている側です）。**数えるのは、新しい
+    「予約の最後」より手前で0本になる日だけ**にします。
+    """
+    moved = {p["id"]: p["new"] for p in plan}
+    before: set[str] = set()
+    after: set[str] = set()
+    last: datetime | None = None
+    for r in rows:
+        at = r.get("at")
+        if not at:
+            continue
+        try:
+            old = datetime.fromisoformat(str(at).replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        if old <= now:
+            continue                       # もう公開済み／直前のものは対象外
+        before.add(old.astimezone(JST).strftime("%m/%d"))
+        try:
+            new = datetime.fromisoformat(
+                str(moved.get(r.get("id", ""), at)).replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        after.add(new.astimezone(JST).strftime("%m/%d"))
+        if last is None or new > last:
+            last = new
+    if last is None:
+        return []
+    edge = last.astimezone(JST).strftime("%m/%d")
+    return sorted(d for d in before - after if d < edge)
+
+
+def suggest_max_days(rows: list[dict], now: datetime, args, *, ceiling: int = 40) -> int | None:
+    """**穴が空かない `--max-days`** を探して返す（見つからなければ None）。
+
+    純関数を回すだけなので API は 0単位です。**人に「減らすか増やすか」を
+    考えさせないため**に、道具の側で答えまで出します（穴は `--max-days` を
+    **増やして**詰め切ると消えるので、直感と逆向きです）。
+    """
+    for md in range(args.max_days, ceiling + 1):
+        try:
+            plan = compact_plan(rows, now=now, step_min=args.step_min, hour=args.hour,
+                                until_hour=args.until_hour, max_days=md,
+                                lead_min=args.lead_min)
+        except SystemExit:
+            continue
+        if hole_days(rows, plan, now):
+            continue
+        _, days = _horizon(rows, plan, now)
+        if days >= args.min_days:
+            return md
+    return None
+
+
 def _compact(args) -> int:
     """`--compact`。**既定は割り当てを出すだけ**で、`--apply` で初めて撃ちます。"""
     rows = [r for r in dupes.ledger_rows() if r.get("at")]
@@ -318,6 +393,28 @@ def _compact(args) -> int:
             "        **投稿が途切れるのが最大の損失**なので、ここは止めます。\n"
             "        --max-days を減らすか、--min-days を下げること（理由を JOURNAL に）。"
         )
+
+    holes = hole_days(rows, plan, now)
+    if holes:
+        print(f"[compact] [!] **詰めたあと、公開が0本になる日が {len(holes)}日**: "
+              + " ".join(holes))
+    if holes and not args.allow_gap:
+        hint = suggest_max_days(rows, now, args)
+        fix = (f"        → **`--max-days {hint}` なら穴は空きません**"
+               "（詰め切るので、後ろが減るぶんは `--min-days` が見ます）。\n"
+               if hint else
+               "        → `--max-days` をどれだけ増やしても埋まりません。"
+               "**在庫を足してから詰めること。**\n")
+        raise SystemExit(
+            f"[compact] **真ん中に {len(holes)}日ぶんの穴が空きます**"
+            f"（{holes[0]}〜{holes[-1]}）。\n"
+            "        **投稿が途切れるのが最大の損失**なので、ここは止めます。\n"
+            "        `--min-days` は「予約の最後」しか見ないので、**この穴は映りません**\n"
+            "        （最後は動かないまま、真ん中だけが空になる形です）。\n"
+            + fix +
+            "        承知のうえで撃つなら `--allow-gap`（**理由を JOURNAL に書くこと**）。"
+        )
+
     if not plan:
         print("[compact] 動かすものはありません。")
         return 0
@@ -363,6 +460,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--min-days", type=float, default=8.0,
                     help="詰めた後に残す予約の先（日・既定8）。下回ったら止めます")
     ap.add_argument("--lead-min", type=int, default=60, help="いまから何分後より先に置くか（既定60）")
+    ap.add_argument("--allow-gap", action="store_true",
+                    help="詰めたあと**真ん中に公開0本の日ができる**のを承知で撃つ"
+                         "（**理由を JOURNAL に書くこと**）")
     ap.add_argument("--max", type=int, default=100,
                     help="1回で撃つ本数の上限（既定100 ＝ 約5,100単位。"
                          "日枠 10,000 はサムネイル 49件 2,450単位と分け合います）")
