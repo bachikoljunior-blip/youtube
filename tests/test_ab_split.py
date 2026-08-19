@@ -207,3 +207,77 @@ def test_hook_form_はいま判定できない():
     if c.judgeable:
         pytest.skip("指示入りが両群そろいました。判定してよい段です")
     assert sum(c.stale.values()) > 0, "混ざっている本が居るなら、必ず数えて出すこと"
+
+
+# ---------------------------------------------------------------------------
+# `outlook` —— **足りない本を、残りの在庫で埋められるか**（2026-08-20 04:4x）
+#
+# `split_counts` は「あと8本」としか言いません。**その8本が作れるか**も、
+# **いつまでに公開すれば数に入るか**も言いませんでした。
+# ここは全部**手で作った行**です（実データが動いても意味が変わらないように）。
+# ---------------------------------------------------------------------------
+
+
+def _counts(**ready) -> ab_split.Counts:
+    """群 → 落ち着いた本数 だけを持つ `Counts` を手で作る。"""
+    return ab_split.Counts(experiment="t", treated_ready=dict(ready))
+
+
+def test_公開の締切は判定日の7日前():
+    """**これが outlook の本体**: 締切より後に公開する本は、1本も数に入らない。"""
+    assert ab_split.settle_by(_exp(deadline=date(2026, 9, 16))) == date(2026, 9, 9)
+    assert ab_split.settle_by(_exp(), as_of=date(2026, 9, 1)) == date(2026, 9, 1) - timedelta(
+        days=SETTLE_DAYS
+    )
+
+
+def test_足りている群にはあと0本と出る():
+    o = ab_split.outlook(_exp(), {"問い": 0, "断定": 0},
+                         counts=_counts(問い=MIN_PER_GROUP, 断定=MIN_PER_GROUP + 3))
+    assert o.need == {"問い": 0, "断定": 0}
+    assert o.reachable
+    assert "あと0本" in "\n".join(o.lines())
+
+
+def test_在庫は通過率で割り引いてから床と比べる():
+    """**在庫の本数をそのまま作れる本数と読まないこと。** 8本の在庫では 8本作れない。"""
+    o = ab_split.outlook(_exp(), {"問い": MIN_PER_GROUP, "断定": 99}, counts=_counts(問い=0, 断定=99))
+    assert o.buildable("問い") < MIN_PER_GROUP
+    assert not o.reachable, "在庫ちょうどでは床に届かないこと（落ちる本がある）"
+    o2 = ab_split.outlook(_exp(), {"問い": 20, "断定": 99}, counts=_counts(問い=0, 断定=99))
+    assert o2.reachable
+
+
+def test_床に届かないときは腕をそろえる手を名指しする():
+    o = ab_split.outlook(_exp(), {"問い": 1, "断定": 99}, counts=_counts(問い=0, 断定=99))
+    text = "\n".join(o.lines())
+    assert "足りません" in text
+    assert "ab_balance.py" in text, "**次に打つ手を言わない警告は、次の回に効きません**"
+
+
+def test_足りない群があれば置く日付の締切を必ず言う():
+    """在庫が足りていても言うこと —— **締切より後に置けば 0 になる**のは同じ。"""
+    o = ab_split.outlook(_exp(deadline=date(2026, 9, 16)), {"問い": 30, "断定": 30},
+                         counts=_counts(問い=0, 断定=0))
+    text = "\n".join(o.lines())
+    assert o.reachable
+    assert "09/09" in text and "batch_build.py --date" in text
+
+
+def test_在庫の総数を出す():
+    """**28本しかない**ことが読めなければ、締切の重さが伝わりません。"""
+    o = ab_split.outlook(_exp(), {"問い": 13, "断定": 15}, counts=_counts(問い=0, 断定=0))
+    assert o.stock_total == 28
+    assert "28本" in "\n".join(o.lines())
+
+
+def test_報告に在庫を渡さなければ見通しは出ない():
+    """**在庫を数えるのは重い**ので、既定では出さないこと。"""
+    assert "この判定には入りません" not in report()
+
+
+def test_実物_hook_form_の在庫の締切は09_09():
+    """実データ側に固定してよいのは『まだ測れていない』ことのほう ——
+    ここで固定するのは**期限の算術だけ**で、在庫の本数は固定しません。"""
+    assert ab_split.settle_by(EXPERIMENTS["hook_form"]) == date(2026, 9, 9)
+    assert ab_split.settle_by(EXPERIMENTS["title_form"]) == date(2026, 9, 5)

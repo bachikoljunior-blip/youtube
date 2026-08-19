@@ -256,7 +256,117 @@ def split_counts(
     return c
 
 
-def report(as_of: date | None = None) -> str:
+#: 作りの通過率（直近5回で 30/34 ＝ 88%。`status.py` の「直近5回、作りを通ったのは」）。
+#: **在庫の本数をそのまま「作れる本数」と読まないこと** —— 落ちる本があります。
+BUILD_PASS_RATE = 0.88
+
+
+@dataclass
+class Outlook:
+    """1つの実験が、**この先まだ判定に間に合うか**。
+
+    `Counts` は「いま何本そろっているか」しか言いません。
+    こちらは「**足りない本を、残りの在庫と残りの日数で埋められるか**」を言います。
+    """
+
+    experiment: str
+    #: この日までに**公開**しないと、判定日に `SETTLE_DAYS` を満たさない
+    settle_by: date
+    #: 群 → あと何本要るか（0 なら足りている）
+    need: dict[str, int] = field(default_factory=dict)
+    #: 群 → 未投稿の在庫が何本あるか（`batch_build.pick` が返す本）
+    stock: dict[str, int] = field(default_factory=dict)
+    #: 在庫の総数（全部の群の合計）。**0 に近いほど、この判定は一度きりの賭けです**
+    stock_total: int = 0
+
+    def buildable(self, group: str) -> float:
+        """在庫から**実際に作れる**見込み本数（通過率で割り引いた）。"""
+        return self.stock.get(group, 0) * BUILD_PASS_RATE
+
+    @property
+    def reachable(self) -> bool:
+        """全部の群が、在庫だけで床に届くか。"""
+        return all(n <= self.buildable(g) for g, n in self.need.items())
+
+    def lines(self) -> list[str]:
+        out = [
+            f"  **{self.settle_by:%m/%d} までに公開する本しか、この判定には入りません**"
+            f"（公開から {SETTLE_DAYS}日）"
+        ]
+        for g in sorted(self.need):
+            n, st = self.need[g], self.stock.get(g, 0)
+            if n == 0:
+                out.append(f"  {g:4s} 足りています（あと0本）")
+                continue
+            ok = "足ります" if n <= self.buildable(g) else "**足りません**"
+            out.append(
+                f"  {g:4s} あと {n}本 ／ 在庫 {st}本"
+                f"（通過率 {BUILD_PASS_RATE:.0%} で {self.buildable(g):.1f}本）  → {ok}"
+            )
+        if not self.reachable:
+            out.append(
+                "  [!] **在庫だけでは床に届きません。**`python scripts/ab_balance.py --target N --apply` で"
+                "\n      未投稿テーマのIDを付け替えて腕をそろえるか、節を掘って在庫を増やすこと。"
+            )
+        if any(n > 0 for n in self.need.values()):
+            out.append(
+                f"  [!] **在庫は全部で {self.stock_total}本しかありません。**"
+                f"この本を {self.settle_by:%m/%d} より後の日に置くと、**判定には入りません。**"
+                f"\n      `batch_build.py --date` は、**この日以前**を選ぶこと。"
+            )
+        return out
+
+
+def settle_by(exp: Experiment, as_of: date | None = None) -> date:
+    """判定に間に合う**公開の締切**。これより後に公開する本は数に入りません。"""
+    return (as_of or exp.deadline) - timedelta(days=SETTLE_DAYS)
+
+
+def outlook(
+    exp: Experiment,
+    stock: dict[str, int],
+    *,
+    as_of: date | None = None,
+    counts: Counts | None = None,
+) -> Outlook:
+    """`exp` が**この先まだ判定に間に合うか**を返す。
+
+    ## なぜ要るか（2026-08-20 04:4x に測って作った）
+
+    `split_counts` は **いまの本数**しか言いません。「まだ判定しない（問い あと8本,
+    条件 あと8本）」と出しますが、**その8本が作れるかどうかは一言も言いません。**
+
+    この回に測った実物:
+
+        hook_form  判定 09/16 ／ 落ち着く締切 **09/09**
+          いま      問い 0本 / 条件 0本（指示は 08/19 21:00 に入った。**それ以降の作りは0本**）
+          在庫      `pick(60)` が返すのは **28本** —— これが**在庫の全部**です
+                    （`status.py`「未使用の節: 0件 / 全402件」）
+          その割    問い 13 / 条件 15  → 通過率 88% で 11.4 / 13.2 本
+
+    **足ります。ただし余りは 3.4本と 5.2本しかなく、置く日付を間違えると 0 になります。**
+    28本を 09/09 より後（例: 予約の薄い 09/20〜09/26）に置くと、
+    **在庫は尽きているので、埋め直す手がありません。**
+
+    `next_if_false` は「問いかけの形は畳む」→「題も冒頭も空振りなら題材の側」＝
+    M20 へ進みます。**`eta.py` が名指しする唯一の近い腕（1本あたり 1.3倍）を、
+    一度も試さないまま畳む**形が、`split_counts` からは見えませんでした。
+
+    `stock` は群名 → 未投稿の在庫本数（`scripts/ab_split.py --outlook` が
+    `batch_build.pick` から数えます）。**API を1単位も使いません。**
+    """
+    c = counts or split_counts(exp, as_of=as_of)
+    need = {g: max(0, MIN_PER_GROUP - n) for g, n in c.treated_ready.items()}
+    return Outlook(
+        experiment=exp.name,
+        settle_by=settle_by(exp, as_of),
+        need=need,
+        stock={g: int(stock.get(g, 0)) for g in c.treated_ready},
+        stock_total=int(sum(stock.values())),
+    )
+
+
+def report(as_of: date | None = None, stock: dict[str, dict[str, int]] | None = None) -> str:
     """全部の実験を、人が読む形で。"""
     lines: list[str] = []
     for exp in EXPERIMENTS.values():
@@ -269,6 +379,8 @@ def report(as_of: date | None = None) -> str:
                 f" ／ **指示が入っていないのにこの群にいる {c.stale[g]:4d}本**"
             )
         lines.append("  " + c.short())
+        if stock is not None and exp.name in stock:
+            lines.extend(outlook(exp, stock[exp.name], as_of=as_of, counts=c).lines())
         if c.unknown_publish:
             lines.append(f"  （控えに公開日が無い {c.unknown_publish}本は、どちらにも数えていません）")
         lines.append("")

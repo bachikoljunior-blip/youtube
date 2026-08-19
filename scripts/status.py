@@ -308,6 +308,16 @@ def print_hypotheses() -> None:
                 print(f"        [!] {_exp.name} の群を数えられませんでした: {e}")
                 continue
             print(f"        {_c.short()}")
+            # **足りない本には、公開の締切があります**（2026-08-20 04:4x に足した）。
+            # `short()` は「あと8本」としか言わず、**その8本をいつまでに公開すれば
+            # 判定に入るか**を言いません。実測: `hook_form` の在庫は 28本 ——
+            # **在庫の全部**（`未使用の節: 0件`）で、余りは 3.4本と 5.2本しかありません。
+            # これを締切より後の日に置くと、**埋め直す手がありません。**
+            if not _c.judgeable:
+                print(f"        [!] **{_ab.settle_by(_exp):%m/%d} までに公開する本しか、"
+                      f"この判定には入りません**（公開から {_ab.SETTLE_DAYS}日）。"
+                      f"\n            `batch_build.py --date` は**この日以前**を選ぶこと。"
+                      f"在庫で足りるかは `python scripts/ab_split.py --outlook`")
             _stale = sum(_c.stale.values())
             if _stale:
                 print(f"        [!] **指示より前に作った本が {_stale}本、"
