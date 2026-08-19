@@ -164,6 +164,60 @@ def recover_income(nofu_months: int, menjo_months: int) -> int | None:
     return None
 
 
+def band_marginal(nofu_months: int, step: int = 10_000) -> float:
+    """**帯の中で、年収が `step` 円ふえると、給付金は年でいくら減るか。**
+
+    帯の中の月額は `nofu_part × 調整支給率` で、調整支給率は
+    `(909,000 − 収入) ÷ 100,000`。だから傾きは収入によらず一定で、
+    **納付済月数だけで決まります。**（免除分は帯の入口で消えているので効きません）
+    """
+    return nofu_part(nofu_months) * 12 * step / BAND_WIDTH
+
+
+def band_marginal_rate(nofu_months: int) -> float:
+    """上の傾きを率で出す。**1円ふえて、給付金が何円減るか。**
+
+    **これは実効的な目減り率です。** 0.674 なら、年収を1円ふやすと
+    給付金が0.674円減る ＝ 手元に残るのは 0.326円、という意味になります。
+    """
+    return band_marginal(nofu_months, 1)
+
+
+def cliff_as_income(nofu_months: int, menjo_months: int,
+                    kind: str = "全額免除") -> int:
+    """**入口の崖（年額）を、「年収いくらぶんか」に直す。**
+
+    帯の入口で落ちる額を、帯の中の傾きで割ります。
+    ＝ 1円の増収が、**年収なら何円ぶんの目減りに当たるか。**
+    """
+    slope = band_marginal_rate(nofu_months)
+    if slope <= 0:
+        return 0
+    return round(cliff_at_band_entry(nofu_months, menjo_months, kind) * 12 / slope)
+
+
+def lifetime_cliff(nofu_months: int, menjo_months: int, years: int,
+                   kind: str = "全額免除") -> dict:
+    """**帯の入口の1円を、受給 `years` 年ぶんに引き伸ばす。**
+
+    給付金は毎年もらうものなので、**1円の増収で失うのは1年ぶんではありません。**
+    取り返す道（`recover_income`）と並べて、はじめて大きさが分かります。
+    """
+    per_year = cliff_at_band_entry(nofu_months, menjo_months, kind) * 12
+    rec = recover_income(nofu_months, menjo_months)
+    need = None if rec is None else rec - BAND_LOW
+    return {
+        "納付済月数": nofu_months,
+        "免除月数": menjo_months,
+        "1年で失う額": per_year,
+        "受給年数": years,
+        "生涯で失う額": per_year * years,
+        "取り返すのに要る年収の増加": need,
+        "その増収を何年続ければ元が取れるか":
+            None if not need else per_year * years / need,
+    }
+
+
 def check_tables() -> None:
     """制度の値と計算の向きを確かめる。"""
     _checks.statutory(NOFU_UNIT, 5_620, "納付済期間の月額単価",
@@ -225,6 +279,34 @@ def check_tables() -> None:
     # 11. 障害1級は2級より高く、2級と遺族は同額
     _checks.greater(SHOGAI_1, SHOGAI_2, "障害1級が2級以下")
     _checks.rounding(SHOGAI_2, IZOKU, "障害2級と遺族の月額")
+
+    # 12. **帯の中の傾きは、収入によらず一定**（調整支給率が1次式だから）。
+    #     刻んだ差分と、式から出した傾きが一致すること
+    for nofu in (240, 360, 480):
+        a = monthly(BAND_LOW + 1, nofu, 0) * 12
+        b = monthly(BAND_LOW + 1 + 10_000, nofu, 0) * 12
+        _checks.close(a - b, band_marginal(nofu, 10_000),
+                      f"納付済{nofu}月の帯の傾き（実測の差と式）", tol=12)
+    # 13. **主題**: 傾きは納付済月数だけで決まる（免除月数を変えても動かない）
+    _checks.increases_with(band_marginal_rate, [120, 240, 360, 480],
+                           "納付済月数が増えたのに、帯の傾きが急になっていない")
+    # 14. **主題**: 帯の中の目減り率は、1円あたり0.5円をこえる（納付済が長い人ほど）
+    if band_marginal_rate(FULL_MONTHS) <= 0.5:
+        raise _checks.TableError(
+            f"納付済480月の目減り率が {band_marginal_rate(FULL_MONTHS):.3f}。0.5をこえるはず")
+    # 15. 崖を年収に直すと、帯の幅（100,000円）より広いことがある
+    #     ＝ **1円の増収が、10万円ぶんの増収より重い**
+    wide = cliff_as_income(120, 360)
+    if wide <= BAND_WIDTH:
+        raise _checks.TableError(f"納付済120月・免除360月の崖が年収{wide}円ぶん。帯の幅より狭い")
+    # 15b. **納付済が0月なら、帯の中の額そのものが0** ＝ 傾きも0で、年収には直せない
+    if cliff_as_income(0, FULL_MONTHS) != 0:
+        raise _checks.TableError("納付済0月なのに、崖が年収に直せている")
+    # 16. 生涯の損は、受給年数に比例する（1年ぶんの整数倍）
+    one = lifetime_cliff(240, 240, 1)
+    ten = lifetime_cliff(240, 240, 10)
+    _checks.rounding(ten["生涯で失う額"], one["生涯で失う額"] * 10,
+                     "受給10年ぶんの損が1年ぶんの10倍")
 
     _checks.assumption_values(ASSUMPTIONS, name="shienkyufu")
 
@@ -310,6 +392,53 @@ if __name__ == "__main__":
         else:
             print(f"    → 同じ合計に戻るのは 収入 **{rec:,d}円**"
                   f"（**{rec - BAND_LOW:,d}円** ふやして、やっと元通り）")
+
+    print()
+    print("=== 帯の中の目減り率は、所得税のどの帯よりも急である ===")
+    print(f"  帯の中の月額は「納付済分 × 調整支給率」で、調整支給率は"
+          f"（{BAND_HIGH:,d} − 収入）÷ {BAND_WIDTH:,d}。")
+    print("  **傾きは収入によらず一定で、納付済月数だけで決まります。**")
+    print()
+    print("    納付済月数   年収+10,000円で減る給付金   1円あたり（目減り率）")
+    for nofu in (120, 240, 360, 480):
+        print(f"    {nofu:6d}月        {band_marginal(nofu):10,.0f}円"
+              f"              **{band_marginal_rate(nofu):.3f}円**")
+    top = band_marginal_rate(FULL_MONTHS)
+    print(f"  → 納付済{FULL_MONTHS}月の人は、帯の中で年収を1円ふやすと"
+          f"**{top:.3f}円**が消えます。")
+    print(f"     手元に残るのは **{1 - top:.3f}円**。**税や社会保険料は、この上に乗ります。**")
+    print()
+    print("  そして、入口の崖はこの傾きの何円ぶんに当たるか（＝年収に直すと）:")
+    for menjo in (0, 120, 240, 360, 480):
+        nofu = FULL_MONTHS - menjo
+        as_income = cliff_as_income(nofu, menjo)
+        if nofu == 0:
+            print(f"    納付済{nofu:3d}月・免除{menjo:3d}月   "
+                  "納付済が0月なので帯の中の額そのものが0円 —— 崖しかありません")
+            continue
+        print(f"    納付済{nofu:3d}月・免除{menjo:3d}月   "
+              f"入口の崖 年{cliff_at_band_entry(nofu, menjo) * 12:6,d}円"
+              f"  ＝ 年収 **{as_income:8,d}円** ぶんの目減り"
+              f"（帯の幅の {as_income / BAND_WIDTH:.1f}倍）")
+    print("  → **1円の増収が、帯を丸ごと1本以上わたるのと同じ重さになる人がいます。**")
+
+    print()
+    print("=== その1円は、1年ぶんではない。受給する年数だけ続く ===")
+    print("入口の崖は「その年に減る額」として説明されますが、"
+          "給付金は毎年もらうものです。")
+    print()
+    for nofu, menjo in ((360, 120), (240, 240), (120, 360)):
+        base = lifetime_cliff(nofu, menjo, 1)
+        need = base["取り返すのに要る年収の増加"]
+        print(f"  納付済{nofu:3d}月・免除{menjo:3d}月  "
+              f"1年で失う {base['1年で失う額']:6,d}円")
+        for years in (10, 20, 25, 30):
+            r = lifetime_cliff(nofu, menjo, years)
+            pay = r["その増収を何年続ければ元が取れるか"]
+            tail = "" if pay is None else f"  ＝ 増収{need:,d}円を **{pay:.1f}年** 続けてやっと同じ"
+            print(f"    受給{years:>2}年  **{r['生涯で失う額']:9,d}円**{tail}")
+    print("  → **取り返す道はありますが、取り返し終わるまでに何年もかかります。**")
+    print("     そして受給が長い人ほど、失う額も、要る年数も大きくなります。")
 
     print()
     print("=== 障害・遺族には、この帯そのものが無い ===")

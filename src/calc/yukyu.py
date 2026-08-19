@@ -37,6 +37,10 @@ ASSUMPTIONS = [
     "週の所定労働日数は5日・4日・3日・2日・1日のどれかで、年間を通じて一定としています。"
     "途中で変わると付与日数も変わります",
     "時間単位年休や半日単位の取得は、日数に換算せずそのまま日でかぞえています",
+    "有給1日の賃金は「通常の賃金」を払う方式とし、月給 ÷ 1か月平均所定労働日数 で出しています。"
+    "平均賃金方式や標準報酬日額方式だと、1日あたりの額は変わります",
+    "1か月平均所定労働日数は 週の所定労働日数 × 52 ÷ 12 としています。"
+    "祝日や年末年始の休みは引いていないので、実際の日給はここより高く出ます",
 ]
 
 # ---- 制度の値。**労働基準法39条・同施行規則24条の3。1999年以降変わっていない** ----
@@ -57,6 +61,7 @@ PRORATED: dict[int, tuple[int, ...]] = {
 OBLIGATION_THRESHOLD = 10   # 39条7項。10日以上つく人に、年5日の時季指定義務
 OBLIGATION_DAYS = 5         # 同項。会社が時季を指定して取らせる日数
 CARRY_YEARS = 1             # 時効2年（115条）＝繰り越せるのは1年ぶん
+WEEKS_PER_YEAR = 52         # 1か月平均所定労働日数を出すための週数（暦の近似）
 
 
 def table_for(weekly_days: int) -> tuple[int, ...]:
@@ -146,6 +151,69 @@ def skip_one_year(years: int, skipped_nth: int, weekly_days: int = 5) -> dict:
     }
 
 
+def daily_wage(monthly_wage: int, weekly_days: int = 5) -> float:
+    """有給1日ぶんの賃金。**月給 ÷ 1か月平均所定労働日数。**
+
+    1か月平均所定労働日数 ＝ 週の所定労働日数 × 52 ÷ 12。
+    **週の日数が少ないほど、同じ月給なら1日の単価は高くなります。**
+    """
+    return monthly_wage / (weekly_days * WEEKS_PER_YEAR / 12)
+
+
+def expiry_money(monthly_wage: int, years: int, used_per_year: int,
+                 weekly_days: int = 5) -> dict:
+    """**時効で消えた日数を、円で出す。**
+
+    日数のままだと「241日」で終わりますが、賃金に直すと
+    **その人が働いて得た権利を、いくら捨てているか**が出ます。
+    どこにも公開されていない数字なので、前提（`ASSUMPTIONS`）ごと画面に出すこと。
+    """
+    run = expiry_run(years, used_per_year, weekly_days)
+    lost_days = run[-1]["消えた日数の累計"] if run else 0
+    per_day = daily_wage(monthly_wage, weekly_days)
+    return {
+        "月給": monthly_wage,
+        "週の所定労働日数": weekly_days,
+        "1か月平均所定労働日数": weekly_days * WEEKS_PER_YEAR / 12,
+        "有給1日の賃金": per_day,
+        "勤続年数": years,
+        "年の消化日数": used_per_year,
+        "時効で消えた日数": lost_days,
+        "捨てた金額": per_day * lost_days,
+        "1年あたり": per_day * lost_days / years if years else 0.0,
+    }
+
+
+def used_sensitivity(years: int, weekly_days: int = 5) -> list[dict]:
+    """**年の消化日数を0日から1日ずつ増やして、消える日数の累計を出す。**
+
+    「もう1日使う」の効きは一定ではありません。**付与日数に届いた時点で
+    0になり、そこから先は1日増やしても1日も助かりません**（頭打ち）。
+    その境目がどこかは、勤続年数と週の日数で動きます。
+    """
+    top = table_for(weekly_days)[-1]
+    out: list[dict] = []
+    prev: int | None = None
+    for used in range(0, top + 1):
+        run = expiry_run(years, used, weekly_days)
+        lost = run[-1]["消えた日数の累計"] if run else 0
+        out.append({
+            "年の消化日数": used,
+            "時効で消えた日数の累計": lost,
+            "1日増やして助かった日数": None if prev is None else prev - lost,
+        })
+        prev = lost
+    return out
+
+
+def zero_loss_at(years: int, weekly_days: int = 5) -> int | None:
+    """**1日も時効で消えなくなる、年の消化日数**（最小）。届かないなら None。"""
+    for row in used_sensitivity(years, weekly_days):
+        if row["時効で消えた日数の累計"] == 0:
+            return int(row["年の消化日数"])
+    return None
+
+
 def check_tables() -> None:
     """制度の値と計算の向きを確かめる。**壊れた数字で台本を書かせない。**"""
     # 1. 法令が名指ししている値
@@ -200,6 +268,39 @@ def check_tables() -> None:
     #    (e) 1年切っても、時計は止まらない（翌年の付与が前年と同じ段に戻らない）
     s = skip_one_year(20, 3)
     _checks.greater(s["切らなかった場合の累計"], s["切った場合の累計"], "切らなかった累計が切った累計")
+    #    (f) **主題**: 消化を増やすほど、消える日数は減る（増えることはない）
+    seq = [r["時効で消えた日数の累計"] for r in used_sensitivity(20, 5)]
+    for a, b in zip(seq, seq[1:]):
+        if b > a:
+            raise _checks.TableError("消化を1日増やしたのに、消える日数が増えた")
+    #    (g) **主題**: 「1日も捨てない線」は上限とは限らない。
+    #        繰越は1年ぶんしか無く、残りは1年に1日ずつしか積み上がらないので、
+    #        **勤続が浅いうちは、上限より少ない消化でも1日も捨てません。**
+    #        線は勤続とともに上がり、上限で止まる（超えない）。
+    for wd in (1, 2, 3, 4, 5):
+        cap = table_for(wd)[-1]
+        seq = [zero_loss_at(y, wd) for y in (5, 10, 20, 30, 40)]
+        if any(v is None for v in seq):
+            raise _checks.TableError(f"週{wd}日で、上限まで使っても捨てる年がある")
+        for a, b in zip(seq, seq[1:]):
+            if b < a:
+                raise _checks.TableError(f"週{wd}日の線が、勤続が延びたのに下がった")
+        if seq[-1] != cap:
+            raise _checks.TableError(f"週{wd}日の線が上限{cap}日に収束しない: {seq[-1]}")
+        if max(seq) > cap:
+            raise _checks.TableError(f"週{wd}日の線が上限{cap}日を超えた")
+    #        通常の労働者は、**勤続20年でもまだ上限に届かない**（19日）
+    if zero_loss_at(20, 5) >= FULL_TIME[-1]:
+        raise _checks.TableError(
+            f"勤続20年の線が上限に届いている: {zero_loss_at(20, 5)}")
+    #    (h) 金額の向き —— 週の日数が少ないほど、同じ月給なら1日の単価は高い
+    _checks.greater(daily_wage(300_000, 3), daily_wage(300_000, 5),
+                    "週3日の日給が週5日の日給")
+    m = expiry_money(300_000, 20, 5)
+    _checks.rounding(m["捨てた金額"], m["有給1日の賃金"] * m["時効で消えた日数"],
+                     "捨てた金額 ＝ 日給 × 消えた日数")
+    if expiry_money(300_000, 20, FULL_TIME[-1])["捨てた金額"] != 0:
+        raise _checks.TableError("20日つく人が20日使っているのに、捨てた金額が出ている")
 
 
 if __name__ == "__main__":
@@ -238,6 +339,39 @@ if __name__ == "__main__":
     print("\n=== 勤続ごとの付与日数と、そこまでの累計（通常の労働者） ===")
     for row in grid(5):
         print(f"  勤続{row['勤続年数']:>4}年  付与{row['付与日数']:>3}日  累計{row['累計']:>3}日")
+
+    print("\n=== 捨てている有給を、円で出す（月給30万・週5日） ===")
+    m0 = expiry_money(300_000, 20, 5)
+    print(f"  1か月平均所定労働日数 {m0['1か月平均所定労働日数']:.1f}日"
+          f"  → 有給1日 {m0['有給1日の賃金']:,.0f}円")
+    for used in (0, 3, 5, 10, 15):
+        m = expiry_money(300_000, 20, used)
+        print(f"  年{used:>2}日しか使わない  20年で{m['時効で消えた日数']:>3}日が時効"
+              f"  → **{m['捨てた金額']:>10,.0f}円**"
+              f"（1年あたり {m['1年あたり']:>8,.0f}円）")
+    print("  週の日数べつ（年5日消化・月給30万・勤続20年）:")
+    for wd in (5, 4, 3, 2, 1):
+        m = expiry_money(300_000, 20, 5, wd)
+        print(f"    週{wd}日  日給{m['有給1日の賃金']:>7,.0f}円"
+              f"  消えた{m['時効で消えた日数']:>3}日  **{m['捨てた金額']:>10,.0f}円**")
+
+    print("\n=== 「1日も捨てない線」は付与の上限ではない。勤続で動く ===")
+    print(f"  通常の労働者の付与の上限は {FULL_TIME[-1]}日。"
+          "**だが年20日使わなくても、捨てない年がある** ——")
+    print("  繰越は1年ぶんしか無く、使い残しは1年に1日ずつしか積み上がらないため。")
+    print("  勤続  週5日  週4日  週3日  週2日  週1日   （1日も捨てない、年の消化日数）")
+    for y in (5, 10, 12, 20, 25, 30, 40):
+        cells = "".join(f"{zero_loss_at(y, wd):>6}" for wd in (5, 4, 3, 2, 1))
+        print(f"  {y:>3}年{cells}")
+    caps = "".join(f"{table_for(wd)[-1]:>6}" for wd in (5, 4, 3, 2, 1))
+    print(f"  付与上限{caps}   ← **週5日だけ、勤続30年まで上限に届かない**")
+    print(f"  週5日・勤続20年で見ると、線は 年{zero_loss_at(20, 5)}日。"
+          "そこから1日増やしても、助かる日数は0日です:")
+    for row in used_sensitivity(20, 5):
+        saved = row["1日増やして助かった日数"]
+        mark = "" if saved is None else f"  1日増やして助かった {saved:>2}日"
+        print(f"    年{row['年の消化日数']:>2}日消化  消える累計"
+              f"{row['時効で消えた日数の累計']:>3}日{mark}")
 
     print("\n=== 出勤率8割を1年だけ切ると、生涯の累計は何日減るか ===")
     for nth in (0, 3, 6, 10):

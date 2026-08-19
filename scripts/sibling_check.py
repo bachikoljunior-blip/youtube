@@ -56,6 +56,24 @@
     4  （`--phase start`）続けてよい。ただし upload は選ばない
     5  （`--phase spawn`）**まだ早い。**表示された秒数だけ待って、
        `list_sessions` を取り直して**この検査からやり直す**（2026-08-15）
+    6  （`--phase spawn`）**待たずに畳む。**下限が明けるのが親の次の発火より後なので、
+       待っても親のほうが先に立てます（2026-08-19 23:1x に足した。下の「待たない待ち」）
+
+## 待つより畳んだほうが早いことがあります（2026-08-19 23:1x に足した）
+
+**2周続けて、この待ちの最中に鎖が切れました。**
+
+    8/19 21:5x  post_turn_summary "awaiting sleep timer (~35 min); next: spawn child & archive"
+    8/19 22:3x  同じ文字列。**どちらも子を立てないまま IDLE になり、親が畳んだ**
+
+**背景の `sleep` は、明ければ呼び戻されます。** 切れたのはそこではありません ——
+**親が毎時 9分に起きて、黙っている子を「詰まった」と読んで畳む**ほうが先に来ました。
+22:3x の子は 13:39 に黙り、明けるのは 14:14。**親は 14:09 に来ました。5分差です。**
+
+**待ちが親の発火をまたぐなら、その待ちは最初から成立していません。**
+またぐと分かっているなら、**待たずに畳むほうが速い** —— 親は「生きた子がいない」を
+見て、いつもの引数で立てます。**間隔は親の周期（60分）**で、下限（65分前後）と
+ほとんど同じです。**待って切れると、失うのは1時間まるごと**でした（実測2回）。
 
 ## 速さも見ます（2026-08-15 に足した）
 
@@ -651,12 +669,29 @@ def main() -> int:
             waited = (now - born).total_seconds() / 60
             if waited < floor:
                 left = floor - waited
+                gate = now + timedelta(minutes=left)
+                fire = next_parent_fire(now, args.cron_minute)
                 print()
+                if gate >= fire - timedelta(minutes=ARCHIVE_MARGIN_MIN):
+                    print(f"**待たずに畳むこと。** 下限が明けるのは "
+                          f"{gate.astimezone(JST):%H:%M} JST ですが、"
+                          f"**親はその前（{fire.astimezone(JST):%H:%M}）に起きます。**")
+                    print("  待っても親のほうが先に立てます。しかも**黙っている子は"
+                          "「詰まった」と読まれて畳まれる**ので、待ちきれません"
+                          "（8/19 に2周続けてこれで切れた）。")
+                    print("  → **`create_session` を呼ばないこと。**"
+                          "(a)〜(e) を終えて、そのまま (h) で archive すること。"
+                          f"次の子は親が {fire.astimezone(JST):%H:%M} に立てます"
+                          f"（間隔 {(fire - born).total_seconds() / 60:.0f}分）。")
+                    return 6
                 print(f"**まだ立てないこと。** 誕生から {waited:.0f}分 / "
                       f"持続できる間隔は **{floor:.0f}分**（`quota.py --pace`）")
                 print(f"  **{left * 60:.0f}秒 待ってから、"
                       "`list_sessions` を取り直して、この検査をやり直すこと。**")
                 print(f"      Bash(run_in_background=True): sleep {left * 60:.0f}")
+                print(f"  （明けるのは {gate.astimezone(JST):%H:%M} JST。"
+                      f"親の次の発火 {fire.astimezone(JST):%H:%M} より前なので、"
+                      "この待ちは親に追い越されません）")
                 print("  **前倒しに意味はありません。** 速く回しても週の枠は増えず、"
                       "先に使い切ればリセットまで1回も起きられません"
                       "（8/12〜8/14 の58時間）。**待ちは投稿を減らしません** —— "

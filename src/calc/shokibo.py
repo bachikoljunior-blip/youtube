@@ -337,6 +337,51 @@ def net_after_kaiyaku(monthly: int, months: int, income_rate: float) -> dict:
     }
 
 
+def effective_annual_rate(monthly: int, months: int, income_rate: float) -> float:
+    """**実質の年利。** 毎月の払い込みと、最後の受け取りを、1本の利回りに直す。
+
+    「元本割れしない」「節税になる」だけだと、**他に置いた場合と比べられません。**
+    毎月 `monthly` を `months` か月払い、最後に手元（`net_after_kaiyaku` の合計）を
+    受け取る、という現金の流れに対する**内部収益率**を年に直したものです。
+
+    節税は「その年に効く」ものですが、ここでは**受け取りと一緒に最後で数えます**
+    （毎年の還付を再投資しない、いちばん辛い置き方）。**上振れ側では読まないこと。**
+    """
+    net = net_after_kaiyaku(monthly, months, income_rate)["手元の合計"]
+    lo, hi = -0.99, 10.0
+    for _ in range(200):                     # 二分法。単調なので必ず1点に寄る
+        mid = (lo + hi) / 2
+        r = (1 + mid) ** (1 / 12) - 1        # 月利
+        if r == 0:
+            fv = monthly * months
+        else:
+            fv = monthly * ((1 + r) ** months - 1) / r
+        if fv < net:                     # 積み上がりが足りない ＝ 利回りが低すぎる
+            lo = mid
+        else:
+            hi = mid
+    return (lo + hi) / 2
+
+
+def rate_grid(monthly: int = KAKEKIN_MAX,
+              months_list: tuple[int, ...] = (12, 36, 60, 83, 240)) -> list[dict]:
+    """**掛けた月数 × 所得税の帯**で、実質の年利を並べる。"""
+    rows = []
+    for months in months_list:
+        for rate in (0.05, 0.10, 0.20, 0.33, 0.45):
+            net = net_after_kaiyaku(monthly, months, rate)
+            rows.append({
+                "月数": months,
+                "所得税率": rate,
+                "節税率": combined_rate(rate),
+                "掛金累計": net["掛金累計"],
+                "手元の合計": net["手元の合計"],
+                "元本との差": net["元本との差"],
+                "実質年利": effective_annual_rate(monthly, months, rate),
+            })
+    return rows
+
+
 def surplus_curve(monthly: int = KAKEKIN_MAX,
                   income_rate: float = 0.20) -> list[dict]:
     """12か月から83か月まで、任意解約したときの元本との差。
@@ -622,6 +667,34 @@ def check_tables() -> None:
     _checks.unique_by(tax_free_grid(), lambda r: r["掛けた年数"], "節3の表")
     _checks.unique_by(month_step_grid(), lambda r: r["掛けた月数"], "節4の表")
 
+    # **実質年利。** 二分法が本当に解いているかを、逆算で確かめる
+    for months in (12, 60, 240):
+        for rate in (0.10, 0.33):
+            r = effective_annual_rate(KAKEKIN_MAX, months, rate)
+            m = (1 + r) ** (1 / 12) - 1
+            fv = KAKEKIN_MAX * ((1 + m) ** months - 1) / m
+            net = net_after_kaiyaku(KAKEKIN_MAX, months, rate)["手元の合計"]
+            if abs(fv - net) > max(1.0, abs(net) * 1e-6):
+                raise ValueError(
+                    f"{months}か月・税率{rate}の年利が解けていない: {fv} ≠ {net}")
+    # 元本との差の符号と、年利の符号は必ず一致する
+    for row in rate_grid():
+        if (row["元本との差"] > 0) != (row["実質年利"] > 0):
+            raise ValueError(
+                f"{row['月数']}か月・税率{row['所得税率']}で、"
+                f"元本との差と年利の符号が違う")
+    # **主題**: 同じ月数なら、税率が高いほど年利も高い
+    for months in (12, 60, 240):
+        seq = [effective_annual_rate(KAKEKIN_MAX, months, t)
+               for t in (0.05, 0.10, 0.20, 0.33, 0.45)]
+        for a, b in zip(seq, seq[1:]):
+            if not b > a:
+                raise ValueError(f"{months}か月で、税率を上げたのに年利が上がっていない")
+    # **主題の裏**: 満額戻る240か月でも、年利は税率45%で3%に届かない
+    #   （節税は20年に薄く広がるので、率にすると小さくなる）
+    top = effective_annual_rate(KAKEKIN_MAX, KAIYAKU_PAR_MONTHS, 0.45)
+    if not 0 < top < 0.03:
+        raise ValueError(f"240か月・税率45%の年利が {top:.4f}。0〜3%の間のはず")
 
 if __name__ == "__main__":
     check_tables()
@@ -667,3 +740,29 @@ if __name__ == "__main__":
         print(row)
     print(cliff_step())
     print("掛金の何倍:", round(cliff_step()["掛金の何倍"], 2), "倍")
+
+    print("\n=== 満額戻る20年でも、実質の年利は3パーセントに届かない ===")
+    print(f"  掛金は月 {KAKEKIN_MAX:,d}円（上限）。毎月払って、最後に手元"
+          "（解約手当金＋節税累計−一時所得の税）を受け取る、")
+    print("  という現金の流れを**1本の年利に直します。**"
+          "節税は毎年効きますが、ここでは**最後にまとめて数えます**")
+    print("  （還付を再投資しない、いちばん辛い置き方。**上振れ側で読まないこと**）。")
+    print()
+    print(f"{'月数':>6} {'所得税率':>8} {'節税率':>8} {'掛金累計':>12}"
+          f" {'手元の合計':>12} {'元本との差':>12} {'実質年利':>10}")
+    for row in rate_grid():
+        print(f"{row['月数']:5d}月 {row['所得税率']:7.0%} {row['節税率']:7.0%}"
+              f" {row['掛金累計']:11,d}円 {row['手元の合計']:11,d}円"
+              f" {row['元本との差']:11,d}円 {row['実質年利']:9.2%}")
+    short = effective_annual_rate(KAKEKIN_MAX, 12, 0.45)
+    long_ = effective_annual_rate(KAKEKIN_MAX, KAIYAKU_PAR_MONTHS, 0.45)
+    print(f"  → 同じ税率45%でも、**1年で解約すると {short:.1%}、"
+          f"20年かけると {long_:.1%}**。")
+    print("     率が落ちるのは、制度が悪くなるからではありません ——"
+          "**節税は掛けた年に効くのに、**")
+    print("     **受け取りは先にあるので、年に均すと薄まる**からです。")
+    print(f"  → そして20年（{KAIYAKU_PAR_MONTHS}か月）は満額戻る点です。"
+          "**元本割れのない側でこの率**なので、")
+    print("     **『元本保証で高利回り』という読み方は、率にした時点で成り立ちません。**")
+    print("     効くのは利回りではなく、**税率の高い年に掛けて、低い年に受け取る**"
+          "という時期のずらし方です。")

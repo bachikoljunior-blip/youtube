@@ -331,11 +331,17 @@ def _sessions_file(tmp_path, born_minutes_ago):
     return path
 
 
-def _spawn_check(path):
-    return subprocess.run(
-        [sys.executable, str(ROOT / "scripts" / "sibling_check.py"),
-         "--sessions", str(path), "--me", "session_ME", "--phase", "spawn"],
-        capture_output=True, text=True, cwd=ROOT)
+def _spawn_check(path, cron_minute: int | None = None):
+    cmd = [sys.executable, str(ROOT / "scripts" / "sibling_check.py"),
+           "--sessions", str(path), "--me", "session_ME", "--phase", "spawn"]
+    if cron_minute is not None:
+        cmd += ["--cron-minute", str(cron_minute)]
+    return subprocess.run(cmd, capture_output=True, text=True, cwd=ROOT)
+
+
+def _cron_minute_in(minutes: int) -> int:
+    """**いまから `minutes` 分後に親が撃つ**ような cron の分を返す（1時間未満）。"""
+    return (datetime.now(timezone.utc) + timedelta(minutes=minutes)).minute
 
 
 def test_早すぎる子は待たされる(tmp_path):
@@ -343,11 +349,29 @@ def test_早すぎる子は待たされる(tmp_path):
 
     `allowed` は「まだ閉じていない」としか言っていない。
     ここを素通りさせると、閉じるまで気づけない。
+
+    **親の発火を明示的に遠くへ置いています**（2026-08-19 23:1x）。
+    下限が明けるのが親の発火より後なら、いまの道具は「待つ」ではなく
+    **「待たずに畳む」（6）**を返すからです（`test_早すぎても親が先に来るなら畳む`）。
+    ここが見ているのは**待つ側の枝**なので、親を遠ざけて分岐を固定します。
     """
-    r = _spawn_check(_sessions_file(tmp_path, 8))
+    r = _spawn_check(_sessions_file(tmp_path, 60), cron_minute=_cron_minute_in(50))
     assert r.returncode == 5, r.stdout
     assert "まだ立てないこと" in r.stdout
     assert "sleep " in r.stdout          # 待ち方まで出すこと（人が計算しない）
+
+
+def test_早すぎても親が先に来るなら畳む(tmp_path):
+    """**待ちが親の発火をまたぐなら、その待ちは成立していない。**
+
+    8/19 に2周続けて、この待ちの最中に IDLE になって親に畳まれました
+    （`awaiting sleep timer (~35 min); next: spawn child & archive`）。
+    待って切れると1時間まるごと失い、待たずに畳めば親が60分周期で立てます。
+    """
+    r = _spawn_check(_sessions_file(tmp_path, 8), cron_minute=_cron_minute_in(3))
+    assert r.returncode == 6, r.stdout
+    assert "待たずに畳むこと" in r.stdout
+    assert "sleep " not in r.stdout      # **両方やろうとさせない**
 
 
 def test_十分あいた子はそのまま立てられる(tmp_path):

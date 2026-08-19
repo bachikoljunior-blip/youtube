@@ -194,6 +194,43 @@ def check_tables() -> None:
         else:
             assert r["annual_diff"] == 0, f"{r['name']}は除外してよいので差は0のはず"
 
+    # **時効は窓であって、長さではない。** 1か月ずらせば1か月ぶんが落ちる
+    d1 = delay_cost(wage, hours, 30.0, months=1)
+    d6 = delay_cost(wage, hours, 30.0, months=6)
+    if abs(d6["落ちる額"] - d1["落ちる額"] * 6) > 1e-6:
+        raise ValueError("6か月ずらしたのに、1か月ぶんの6倍になっていない")
+    if not d1["ずらしたあとの総額"] < d1["いま請求できる総額"]:
+        raise ValueError("ずらしたのに請求できる総額が減っていない")
+    if abs(d1["1か月ぶん"] * 12 - annual_shortfall(wage, hours, 30.0)) > 1e-6:
+        raise ValueError("1か月ぶんの12倍が年額と合っていない")
+
+    # **本則5年は、いまの3年より必ず大きい。** 据え置きぶんは差そのもの
+    if RECLAIM_YEARS_HONSOKU <= RECLAIM_YEARS:
+        raise ValueError("本則の時効が、当分のあいだの時効以下になっている")
+    g = honsoku_gap(wage, hours, 30.0)
+    if abs(g["据え置きで消えている額"]
+           - (g["本則なら請求できる額"] - g["いま請求できる額"])) > 1e-6:
+        raise ValueError("据え置きで消えている額が、差と合っていない")
+
+    # **60時間の壁。** 61時間目は59時間目のちょうど 1.5/1.25 倍
+    m59 = marginal_hour(wage, hours, 59.0)
+    m61 = marginal_hour(wage, hours, 61.0)
+    if abs(m61 / m59 - (1 + RATE_OVERTIME_OVER_60) / (1 + RATE_OVERTIME)) > 1e-9:
+        raise ValueError(f"61時間目と59時間目の比が {m61 / m59}。1.2 のはず")
+    # 60時間までは、どの1時間も同じ値段（率が変わらない）
+    if abs(marginal_hour(wage, hours, 1.0) - marginal_hour(wage, hours, 60.0)) > 1e-6:
+        raise ValueError("60時間までのあいだで、1時間の値段が変わっている")
+    # **平均単価は 60時間まで一定で、そこから上がる。** 追い越しはしない
+    flat = average_hour(wage, hours, 30.0)
+    if abs(average_hour(wage, hours, 60.0) - flat) > 1e-6:
+        raise ValueError("60時間までの平均単価が一定でない")
+    seq = [average_hour(wage, hours, h) for h in (60.0, 80.0, 120.0, 200.0)]
+    for a2, b2 in zip(seq, seq[1:]):
+        if not b2 > a2:
+            raise ValueError("60時間より上で、平均単価が上がっていない")
+    if seq[-1] >= marginal_hour(wage, hours, 61.0):
+        raise ValueError("平均単価が、60時間超の1時間の値段を追い越した")
+
 
 def monthly_scheduled_hours(annual_days_off: int, hours_per_day: float) -> float:
     """1か月の平均所定労働時間。
@@ -276,6 +313,81 @@ def reclaimable(
         "years": RECLAIM_YEARS,
         "total": per_year * RECLAIM_YEARS,
     }
+
+
+RECLAIM_YEARS_HONSOKU = 5   # 労基法115条の本則。当分のあいだ3年（附則143条3項）
+
+
+def delay_cost(wage: Wage, scheduled_hours: float, overtime_hours: float,
+               months: int = 1) -> dict:
+    """**請求を `months` か月ずらすと、いくら時効で落ちるか。**
+
+    時効は「請求できる期間の長さ」ではなく、**古い月から順に落ちていく窓**です。
+    窓の長さが変わらないなら、**1か月待つと、いちばん古い1か月ぶんが消えます。**
+    だから「あと少し様子を見る」の値段は、月給でも年収でもなく **1か月ぶんの差額**。
+    """
+    per_year = annual_shortfall(wage, scheduled_hours, overtime_hours)
+    per_month = per_year / 12
+    return {
+        "1か月ぶん": per_month,
+        "ずらす月数": months,
+        "落ちる額": per_month * months,
+        "1日あたり": per_month * 12 / 365,
+        "1万円が消えるまでの日数": 10_000 / (per_month * 12 / 365) if per_month else None,
+        "いま請求できる総額": per_year * RECLAIM_YEARS,
+        "ずらしたあとの総額": per_year * RECLAIM_YEARS - per_month * months,
+    }
+
+
+def honsoku_gap(wage: Wage, scheduled_hours: float,
+                overtime_hours: float) -> dict:
+    """**時効が本則の5年に戻ったら、請求できる額はいくら増えるか。**
+
+    労基法115条の本則は5年ですが、附則で「当分のあいだ3年」に据え置かれています。
+    **据え置きの2年ぶんが、そのまま金額です。**
+    """
+    per_year = annual_shortfall(wage, scheduled_hours, overtime_hours)
+    return {
+        "いまの時効": RECLAIM_YEARS,
+        "本則の時効": RECLAIM_YEARS_HONSOKU,
+        "いま請求できる額": per_year * RECLAIM_YEARS,
+        "本則なら請求できる額": per_year * RECLAIM_YEARS_HONSOKU,
+        "据え置きで消えている額":
+            per_year * (RECLAIM_YEARS_HONSOKU - RECLAIM_YEARS),
+        "倍率": RECLAIM_YEARS_HONSOKU / RECLAIM_YEARS,
+    }
+
+
+def marginal_hour(wage: Wage, scheduled_hours: float, nth_hour: float, *,
+                  mistaken: bool = False) -> float:
+    """**その月の `nth_hour` 時間目の残業1時間が、いくらになるか。**
+
+    月60時間を境に割増率が 25% → 50% に上がるので、**同じ1時間でも値段が違います。**
+    """
+    prev = monthly_overtime_pay(wage, scheduled_hours, max(nth_hour - 1, 0.0),
+                                mistaken=mistaken)
+    now = monthly_overtime_pay(wage, scheduled_hours, nth_hour, mistaken=mistaken)
+    return now - prev
+
+
+def average_hour(wage: Wage, scheduled_hours: float, overtime_hours: float, *,
+                 mistaken: bool = False) -> float:
+    """その月の残業代を、残業時間で割った**平均単価**。60時間を境に上がり始める。"""
+    if overtime_hours <= 0:
+        return 0.0
+    return monthly_overtime_pay(wage, scheduled_hours, overtime_hours,
+                                mistaken=mistaken) / overtime_hours
+
+
+def hours_for_average(wage: Wage, scheduled_hours: float, target: float,
+                      cap: float = 300.0) -> float | None:
+    """**平均単価が `target` 円に届く残業時間**（0.5時間刻み）。届かないなら None。"""
+    h = OVER_60_THRESHOLD
+    while h <= cap:
+        if average_hour(wage, scheduled_hours, h) >= target:
+            return h
+        h += 0.5
+    return None
 
 
 def shortfall_grid(
@@ -365,3 +477,62 @@ if __name__ == "__main__":
               f"{r['annual_diff']:>10,}円")
     print("  ※ 除外できるかは名前ではなく支給の仕方で決まる。")
     print("     扶養人数や家賃に応じて変わるなら除外できる。全員一律なら除外できない。")
+
+    print("\n=== 「もう少し様子を見る」の値段は、1か月ぶんではなく毎日ある ===")
+    print(f"  時効は{RECLAIM_YEARS}年（労基法115条・附則143条3項）。"
+          "**長さではなく、古いほうから落ちていく窓です。**")
+    print("  だから1か月待つと、取り返せる額が増えるのではなく、"
+          "**いちばん古い1か月ぶんが消えます。**")
+    print()
+    print(f"  前提の月給総額 {base.base + base.role_allowance:,}円"
+          f"（基本給 {base.base:,}円 ＋ 役職手当 {base.role_allowance:,}円）"
+          f"・所定{hours:.1f}時間")
+    print(f"  一律手当の欄は、この総額を変えずに内訳だけ差し替えています"
+          f"（基本給から引いて、一律の家族手当へ移す）。")
+    print(f"{'一律手当':>9} {'残業':>6} {'1か月ぶん':>10} {'1日あたり':>9}"
+          f" {'1万円が消える':>12} {'いま請求できる':>13} {'半年ずらすと':>13}")
+    for allowance in (10_000, 20_000, 30_000, 50_000):
+        w = Wage(base=base.base + base.role_allowance - allowance, family_flat=allowance)
+        for ot in (20.0, 45.0):
+            d = delay_cost(w, hours, ot, months=6)
+            print(f"{allowance:8,d}円 {ot:5.0f}h {d['1か月ぶん']:9,.0f}円"
+                  f" {d['1日あたり']:8,.0f}円 {d['1万円が消えるまでの日数']:10.1f}日"
+                  f" {d['いま請求できる総額']:12,.0f}円 {d['ずらしたあとの総額']:12,.0f}円")
+    print()
+    print(f"  そして時効の本則は{RECLAIM_YEARS_HONSOKU}年です"
+          f"（{RECLAIM_YEARS}年は附則の「当分のあいだ」）。**その差も金額になります:**")
+    for allowance in (20_000, 50_000):
+        w = Wage(base=base.base + base.role_allowance - allowance, family_flat=allowance)
+        g = honsoku_gap(w, hours, 45.0)
+        print(f"    一律手当{allowance:6,d}円・残業45h  "
+              f"いま {g['いま請求できる額']:9,.0f}円 → "
+              f"本則なら {g['本則なら請求できる額']:9,.0f}円"
+              f"（**据え置きで {g['据え置きで消えている額']:8,.0f}円** が請求できない）")
+
+    print("\n=== 60時間目と61時間目は、同じ1時間ではない ===")
+    w60 = Wage(base=base.base + base.role_allowance - 20_000, family_flat=20_000)
+    print(f"  前提の月給総額 {w60.base + w60.family_flat:,}円"
+          f"（基本給 {w60.base:,}円 ＋ 一律の家族手当 {w60.family_flat:,}円。"
+          f"元は基本給 {base.base:,}円 ＋ 役職手当 {base.role_allowance:,}円）"
+          f"・所定{hours:.1f}時間"
+          f"（時給 {hourly_rate(w60, hours, mistaken=False):,.0f}円）")
+    print(f"  割増は {OVER_60_THRESHOLD:.0f}時間までが {RATE_OVERTIME:.0%}、"
+          f"こえたぶんが {RATE_OVERTIME_OVER_60:.0%}（労基法37条1項但書）。")
+    print()
+    print(f"{'その1時間':>10} {'その1時間の値段':>14} {'そこまでの平均単価':>18}")
+    for h in (1.0, 30.0, 59.0, 60.0, 61.0, 80.0, 100.0, 150.0):
+        print(f"{h:9.0f}h {marginal_hour(w60, hours, h):13,.0f}円"
+              f" {average_hour(w60, hours, h):17,.0f}円")
+    m59 = marginal_hour(w60, hours, 59.0)
+    m61 = marginal_hour(w60, hours, 61.0)
+    print(f"  → 61時間目は59時間目の **{m61 / m59:.1f}倍**"
+          f"（{m59:,.0f}円 → {m61:,.0f}円）。**率の比 1.50/1.25 そのもの**です。")
+    print("     ところが**平均単価はゆっくりしか上がりません** ——"
+          "60時間までの安いぶんが、いつまでも分母に残るからです:")
+    for target in (m59 * 1.05, m59 * 1.10, m59 * 1.15):
+        need = hours_for_average(w60, hours, target)
+        got = "届きません" if need is None else f"月 **{need:.0f}時間**"
+        print(f"    平均単価が {target:,.0f}円（59時間目の"
+              f"{target / m59:.2f}倍）に届くのは … {got}")
+    print(f"  → **61時間目を{m61 / m59:.1f}倍にする設計なのに、"
+          "月の平均でその倍率に近づくには、法定の上限をこえる残業が要ります。**")

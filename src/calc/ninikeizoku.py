@@ -308,6 +308,47 @@ def kaigo_wall(members: int = 1) -> dict:
     }
 
 
+def best_two_year(nenshu: int, members: int = 1, age: int = 45) -> dict:
+    """**2年ぶんで、いちばん安い選び方**（`two_year_total` の中の最小）。"""
+    rows = two_year_total(nenshu, members, age)
+    best = min(rows, key=lambda r: r["合計"])
+    return dict(best)
+
+
+def missed_deadline_cost(nenshu: int, members: int = 1, age: int = 45) -> dict:
+    """**申請の20日を1日過ぎると、いくら失うか。**
+
+    任意継続は「退職日の翌日から20日以内」に申請しないと選べません
+    （健康保険法37条1項）。**過ぎた人に残るのは国保だけ**です。
+    だからこの門の値段は、**2年ぶんの最安と、国保だけで通した場合の差**。
+
+    **1日の遅れが、いくらになるか。** 期限そのものは日数で書いてありますが、
+    払うのは円で、しかも2年ぶんまとめて来ます。
+    """
+    rows = {r["選び方"]: r["合計"] for r in two_year_total(nenshu, members, age)}
+    best = best_two_year(nenshu, members, age)
+    only_kokuho = rows["2年とも国保"]
+    loss = only_kokuho - best["合計"]
+    return {
+        "年収": nenshu,
+        "世帯人数": members,
+        "年齢": age,
+        "申請できる日数": NINI_APPLY_DAYS,
+        "間に合った場合の最安": best["合計"],
+        "その選び方": best["選び方"],
+        "間に合わなかった場合": only_kokuho,
+        "1日遅れて失う額": loss,
+        "1日あたりに直すと": loss / NINI_APPLY_DAYS if NINI_APPLY_DAYS else 0.0,
+    }
+
+
+def deadline_grid(members: int = 1, age: int = 45) -> list[dict]:
+    """年収べつに、20日の門の値段を並べる。**0円の帯があるのが主題です。**"""
+    return [missed_deadline_cost(n, members, age)
+            for n in (2_000_000, 3_000_000, 4_000_000, 5_000_000,
+                      6_000_000, 8_000_000, 10_000_000)]
+
+
 def check_tables() -> None:
     """制度の値と計算の向きを確かめる。"""
     _checks.ratio(KENPO_RATE, "健康保険の一般保険料率")
@@ -375,6 +416,28 @@ def check_tables() -> None:
             raise _checks.TableError(
                 f"混ぜた選び方より安い選び方があります: {r['選び方']} {r['合計']:,}円")
 
+    # **20日の門の値段。** 主題は「0円の帯がある」こと
+    for n in (2_000_000, 3_000_000, 4_000_000):
+        if missed_deadline_cost(n)["1日遅れて失う額"] != 0:
+            raise _checks.TableError(f"年収{n}円で、国保のほうが安いのに門の値段が出ている")
+    for n in (5_000_000, 8_000_000, 10_000_000):
+        if missed_deadline_cost(n)["1日遅れて失う額"] <= 0:
+            raise _checks.TableError(f"年収{n}円で、門の値段が0以下になっている")
+    # 年収が上がるほど、逃した損は大きくなる（任意継続が上限で止まるから）
+    _checks.increases_with(lambda n: missed_deadline_cost(n)["1日遅れて失う額"],
+                           [5_000_000, 6_000_000, 8_000_000, 10_000_000],
+                           "年収が上がったのに、20日を逃す損が増えていない")
+    # 最安は必ず3つの選び方の中にあり、国保だけを上回らない
+    for n in (2_000_000, 5_000_000, 10_000_000):
+        rows = two_year_total(n)
+        b = best_two_year(n)
+        if b["合計"] != min(r["合計"] for r in rows):
+            raise _checks.TableError(f"年収{n}円の最安が、3つの選び方の最小と違う")
+        if b["合計"] > [r for r in rows if r["選び方"] == "2年とも国保"][0]["合計"]:
+            raise _checks.TableError(f"年収{n}円で、最安が国保だけより高い")
+    # 上限で止まるので、**高年収ほど任意継続の2年合計は同じ額に張り付く**
+    if nini_premium(8_000_000) != nini_premium(10_000_000):
+        raise _checks.TableError("上限をこえた年収どうしで、任意継続の保険料が違う")
 
 if __name__ == "__main__":
     check_tables()
@@ -458,3 +521,24 @@ if __name__ == "__main__":
           f"（健康保険法38条1号）")
     print("  上の表がどれだけ任意継続に有利でも、"
           "**20日を過ぎた時点で選択肢は国保だけ**になる。")
+
+    print("\n=== 20日の門の値段は、年収で0円から63万円まで開く ===")
+    print(f"  任意継続は「退職日の翌日から{NINI_APPLY_DAYS}日以内」に申請しないと選べません"
+          "（健康保険法37条1項）。")
+    print("  **過ぎた人に残るのは国保だけ。** だから門の値段は、"
+          "2年ぶんの最安と、国保だけで通した場合の差です。")
+    print()
+    print(f"{'年収':>10} {'間に合えば':>28} {'2年の最安':>11} {'国保だけ':>11}"
+          f" {'逃して失う額':>12} {'1日あたり':>10}")
+    for r in deadline_grid():
+        print(f"{r['年収']:9,d}円 {r['その選び方']:>28} {r['間に合った場合の最安']:10,d}円"
+              f" {r['間に合わなかった場合']:10,d}円 {r['1日遅れて失う額']:11,d}円"
+              f" {r['1日あたりに直すと']:9,.0f}円")
+    print(f"  → **年収{4_000_000:,d}円あたりまでは 0円**です。"
+          "国保のほうが安いので、間に合っても選びません。")
+    print("     そこから上は、任意継続の標準報酬月額が"
+          f"**{NINI_CAP:,d}円で止まる**ぶんだけ差が開きます ——")
+    top = deadline_grid()[-1]
+    print(f"     年収{top['年収']:,d}円では **{top['1日遅れて失う額']:,d}円**。"
+          f"{NINI_APPLY_DAYS}日で割れば **1日 {top['1日あたりに直すと']:,.0f}円**。")
+    print("  **期限は日数で書いてありますが、払うのは円で、2年ぶんまとめて来ます。**")
