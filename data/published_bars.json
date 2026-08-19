@@ -283,6 +283,16 @@
     ],
     "video_id": "mLIs9lDXTpQ"
   },
+  "s-fudosan-45000-kagen-tanka": {
+    "charts": [
+      [
+        "3万円",
+        "2万円",
+        "1万5000円"
+      ]
+    ],
+    "video_id": "rk0hMaeKer0"
+  },
   "s-fudosan-shutoku-1223man-cliff": {
     "charts": [
       [
@@ -292,6 +302,20 @@
       ]
     ],
     "video_id": "h_1tmYxLSdo"
+  },
+  "s-fudosan-takuchi-nibun-zero": {
+    "charts": [
+      [
+        "3万6千円",
+        "9千円"
+      ],
+      [
+        "9千円",
+        "2万2500円",
+        "4万5千円"
+      ]
+    ],
+    "video_id": "WYDJwBtvBD4"
   },
   "s-fudosan-tochi-hamidashi": {
     "charts": [
@@ -517,6 +541,34 @@
       ]
     ],
     "video_id": "JQ2LgoIa-Yw"
+  },
+  "s-gassan-both-max-back": {
+    "charts": [
+      [
+        "201万8700円",
+        "168万1200円",
+        "369万9900円",
+        "212万円",
+        "157万9900円"
+      ],
+      [
+        "157万9900円",
+        "104万5200円",
+        "50万2700円",
+        "50万5200円",
+        "28万2800円"
+      ]
+    ],
+    "video_id": "GLcYZgHwNfc"
+  },
+  "s-gassan-kaigo-alone-155": {
+    "charts": [
+      [
+        "295,200円",
+        "190,000円"
+      ]
+    ],
+    "video_id": "D7jrLXinFDo"
   },
   "s-gassan-one-percent-none": {
     "charts": [
@@ -780,6 +832,21 @@
     ],
     "video_id": "8ORhweAXZ7U"
   },
+  "s-inshi-baibai-ukeoi-5bai": {
+    "charts": [
+      [
+        "200円",
+        "800円",
+        "1,600円"
+      ],
+      [
+        "2,000円",
+        "1万円",
+        "2万円"
+      ]
+    ],
+    "video_id": "M-Quvedsyv0"
+  },
   "s-inshi-keigen-han-gaku-dewanai": {
     "charts": [
       [
@@ -794,6 +861,16 @@
       ]
     ],
     "video_id": "JSSIP4f9zbY"
+  },
+  "s-inshi-zeikomi-5man-obi": {
+    "charts": [
+      [
+        "5,000円",
+        "10万1円",
+        "20万1円"
+      ]
+    ],
+    "video_id": "EszlAOjkQ2o"
   },
   "s-invoice-1000man-1en": {
     "charts": [
@@ -2032,6 +2109,20 @@
       ]
     ],
     "video_id": "sOcgSnnavRk"
+  },
+  "s-koteishisan-toshikeikaku-510": {
+    "charts": [
+      [
+        "6.00倍",
+        "5.10倍"
+      ],
+      [
+        "0.3333",
+        "0.6667",
+        "1.7"
+      ]
+    ],
+    "video_id": "w9mQca2J2I4"
   },
   "s-kouki-168man-3tsu-no-buhin": {
     "charts": [
@@ -3846,6 +3937,25 @@
       ]
     ],
     "video_id": "HZPK3XHBl7Q"
+  },
+  "s-yoteinozei-gake-2444150": {
+    "charts": [
+      [
+        "50,000円",
+        "50,000円",
+        "100,000円"
+      ]
+    ],
+    "video_id": "aalN6AHdB98"
+  },
+  "s-yoteinozei-gensen-kieru": {
+    "charts": [
+      [
+        "58万4522円",
+        "42万5586円"
+      ]
+    ],
+    "video_id": "OviZcV_PqbM"
   },
   "s-yukyu-11years-121days": {
     "charts": [

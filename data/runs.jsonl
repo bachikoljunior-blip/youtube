@@ -1,6 +1,3 @@
-{"at": "2026-08-10T11:27:51+09:00", "session": "session_01PhvkPD962EcFFze8828njw"}
-{"at": "2026-08-10T12:14:27+09:00", "session": "session_01L6Pkcm3vYgq2bKaZLcjKaH"}
-{"at": "2026-08-10T13:16:00+09:00", "session": "session_0168Hsgcjruf6cDYD1CVeVKK"}
 {"at": "2026-08-10T14:16:25+09:00", "session": "session_01RA6Ya4BuU435zAoorHeuNz"}
 {"at": "2026-08-10T15:18:55+09:00", "session": "session_01MeVmw6i7bnG6RVyxa3pSr3"}
 {"at": "2026-08-10T16:22:07+09:00", "session": "session_01AH54RzS9GVyHWvgeuBquU5"}
@@ -498,3 +495,6 @@
 {"at": "2026-08-19T12:06:04+09:00", "session": "session_011XgX5TWKy3fMin654u7yq9", "kind": "start"}
 {"at": "2026-08-19T12:14:44+09:00", "session": "session_011XgX5TWKy3fMin654u7yq9", "kind": "ship", "what": "fix: eta.py の門2a『届きません』は長尺の実力でなく『まだ1本も出していない』の言い換えだった（分母0の無限）。開けるのに要る長尺1本あたり再生を逆算して出す形にした（L=4本/日・尺7分維持40% で **266回** ＝ショート実測1,092回の1/4）。公開密度の行を同じ days_subs_at へ寄せ、差の節に門1の行を追加。tests 8→14"}
 {"at": "2026-08-19T12:39:43+09:00", "session": "session_011XgX5TWKy3fMin654u7yq9", "kind": "ship", "what": "fix: eta.py が『遠い』と『測定になっていない』を同じ字で出していた。未着手（延ばした先が100年より遠い＝伸び率が0と区別がつかない）のときだけ『長尺の実力ではありません』と断る。tests 14→16・全体2,020緑"}
+{"at": "2026-08-19T12:48:36+09:00", "session": "session_01GJsRiAogz4TNQ39T43CLnW", "kind": "start"}
+{"at": "2026-08-19T12:57:32+09:00", "session": "session_01GJsRiAogz4TNQ39T43CLnW", "kind": "ship", "what": "fix: reschedule --compact の安全門が『予約の最後』しか見ておらず、受け取り帳3c7e12a3 の --max-days 10 が **08/30〜09/11 の13日を公開ゼロ**にする割り当てを無検査で通していた（--min-days 8 は 38.9日あると読む）。hole_days/suggest_max_days を足して止め、穴の空かない --max-days 13 を道具の側が名指しする。検査 10→15"}
+{"at": "2026-08-19T13:04:21+09:00", "session": "session_01GJsRiAogz4TNQ39T43CLnW", "kind": "ship", "what": "upload: 09/02（薄い日・1本だった）へ9本を予約（9/9 成功・13:30〜17:30 JST）。予約は 09/02=10 本に"}
