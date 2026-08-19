@@ -211,18 +211,61 @@ def git_save(message: str) -> tuple[bool, str]:
         return subprocess.run(["git", "-C", str(ROOT), *argv], check=True,
                               capture_output=True, timeout=timeout)
 
+    def _target_branch() -> str | None:
+        """押す先の枝を決める。**分離 HEAD でも決まること**が要点です。
+
+        `docs/trigger_main.md` §0 は「分離 HEAD のまま1周まわしてよい」と
+        勧めています（枝名に合わせにいって3日前の作業木へ降りた事故のあと）。
+        **その形だと、引数なしの `git push` は必ず落ちます** ——
+        `You are not currently on a branch`。`git pull --rebase` も同じです。
+        **2026-08-19 に実測**: `--open` と `--close` の両方がこれで押せず、
+        「手で push すること」だけが出ていました。**依頼の受け渡し経路そのもの**なので、
+        気づかずに死ぬと依頼が消えます（この道具が塞ごうとしている穴）。
+        """
+        try:
+            name = _git("symbolic-ref", "--quiet", "--short", "HEAD").stdout
+            return name.decode("utf-8", "replace").strip() or None
+        except subprocess.CalledProcessError:
+            pass  # 分離 HEAD。origin 側から探す
+        try:
+            out = _git("for-each-ref", "--format=%(refname:short)", "refs/remotes/origin")
+        except subprocess.CalledProcessError:
+            return None
+        names = [n.strip() for n in out.stdout.decode("utf-8", "replace").splitlines() if n.strip()]
+        cands = []
+        for full in names:
+            if not full.startswith("origin/") or full == "origin/HEAD":
+                continue
+            short = full[len("origin/"):]
+            try:  # その枝が HEAD の祖先なら、HEAD はその枝の続き
+                _git("merge-base", "--is-ancestor", full, "HEAD")
+            except subprocess.CalledProcessError:
+                continue
+            cands.append(short)
+        if not cands:
+            return None
+        # **`main` は最後に見ること。** 作業枝と両方が祖先になる回があります
+        return sorted(cands, key=lambda n: (n == "main", n))[0]
+
     try:
         _git("add", rel)
         _git("commit", "-m", message, "--", rel)
+        branch = _target_branch()
+        refspec = ["origin", f"HEAD:{branch}"] if branch else []
         try:
-            out = _git("push", timeout=180)
+            out = _git("push", *refspec, timeout=180)
         except subprocess.CalledProcessError:
             # **兄弟が先に押していると、1回目は必ず弾かれます**（同じ枝を複数の子が使う）。
             # ここで諦めると「手で押してください」が残り、**そのまま死ねば消えます** ——
             # 塞ごうとしている穴そのものなので、**1回だけ乗せ直して押し直す。**
             # `--autostash` は作業中の変更を巻き込まないため（受け取りは作業の最中に来ます）。
-            _git("pull", "--rebase", "--autostash", timeout=180)
-            out = _git("push", timeout=180)
+            # **`pull` を使わないこと** —— 分離 HEAD では枝名を要求して落ちます。
+            if branch:
+                _git("fetch", "origin", branch, timeout=180)
+                _git("rebase", "--autostash", "FETCH_HEAD", timeout=180)
+            else:
+                _git("pull", "--rebase", "--autostash", timeout=180)
+            out = _git("push", *refspec, timeout=180)
         return True, out.stdout.decode("utf-8", "replace")[-400:]
     except Exception as exc:  # noqa: BLE001 —— 種類を問わず「押せなかった」で同じ
         detail = ""

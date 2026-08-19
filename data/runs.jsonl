@@ -494,3 +494,4 @@
 {"at": "2026-08-19T11:30:38+09:00", "session": "session_01EJaJtaUMCUwxdMEv9LRTBy", "kind": "ship", "what": "fix: eta.py — 月20万に届く日を毎回予測して積む（オーナー指示33699957）。初回実測でショート単独は上限が目標の下＝原理的に閉じていると判定"}
 {"at": "2026-08-19T11:51:21+09:00", "session": "session_01EJaJtaUMCUwxdMEv9LRTBy", "kind": "ship", "what": "upload: 09/01 に9本を予約（薄い日 1→10本。9/9 成功）"}
 {"at": "2026-08-19T11:51:22+09:00", "session": "session_01EJaJtaUMCUwxdMEv9LRTBy", "kind": "ship", "what": "fix: 背景生成と同時に検査を走らせると test_余り枠の枚数を出力で言う が必ず落ちる競合を塞いだ（手順が勧める形なので、赤は次の回の時間を食う）"}
+{"at": "2026-08-19T11:56:05+09:00", "session": "session_01EJaJtaUMCUwxdMEv9LRTBy", "kind": "ship", "what": "fix: inbox.py の push が分離HEADで必ず落ちていた（§0 が勧める形＝依頼が消える経路）。押す先の枝を origin から決めて HEAD:<枝> で押す。検査3件"}

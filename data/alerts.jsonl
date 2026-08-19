@@ -232,3 +232,4 @@
 {"at": "2026-08-19T10:27:54+09:00", "key": "calc_gap", "n": 12, "session": "session_013W9sVTfTCTS7gMrLHsSfGY", "by": "status.py"}
 {"at": "2026-08-19T11:23:39+09:00", "key": "missing_thumbnail", "n": 69, "session": "session_01EJaJtaUMCUwxdMEv9LRTBy", "by": "status.py"}
 {"at": "2026-08-19T11:24:37+09:00", "key": "calc_gap", "n": 12, "session": "session_01EJaJtaUMCUwxdMEv9LRTBy", "by": "status.py"}
+{"at": "2026-08-19T11:56:05+09:00", "key": "undeclared_close", "n": 2, "session": "session_01EJaJtaUMCUwxdMEv9LRTBy", "by": "run_marker.py"}
