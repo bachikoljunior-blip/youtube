@@ -309,3 +309,85 @@ def day_quota(now: datetime | None = None) -> DayQuota:
             f" **観測していないだけで、残量を見たわけではありません** ——"
             f" `videos.insert` 1本 1,600単位なので、7本上げた後はまず尽きています。")
     return DayQuota(True, False, 0, tail, line)
+
+
+# ---------------------------------------------------------------------------
+# **同じ50単位を、2つの用途が取り合っています**（2026-08-19 18:3x に測って足した）
+#
+#     thumbnails.set   50単位/本   サムネイルを載せる（待ち行列 107本）
+#     videos.update    50単位/本   予約を詰め直す（`reschedule --compact`）
+#
+# **値段は同じです。効きが違います。**
+#
+#   - `status.py` の実測: 再生の **99.9%** が `SHORTS_FEED`（19,993 / 20,006）。
+#     **ショートはフィードで自動再生され、サムネイルは出ません。**
+#     サムネイルが効く面（検索・チャンネルのタナ・視聴ページ）は合わせて 0.1% です
+#   - 詰め直しは `eta.py` が名指しした律速そのものです。
+#     公開 1日4本なら門1は 634日、**1日25本なら 102日**。
+#     0本の日を1日埋めるのは、いまの再生/日（1,572）の**十数日ぶん**にあたります
+#
+# 08/19 16:0x の回は、窓が開いた最初の1周で `--compact` に **9,602単位**を使い、
+# その窓の残りは 400単位でした。**サムネイルは1本も押せていません。**
+# 逆に、待ち行列 107本を先に押すと **5,350単位** ＝ **107本の詰め直しが消えます。**
+#
+# `batch_build._push_thumbnails_first` は「投稿より先に押す」ための門で、
+# **`reschedule` のことを知りません**（このリポジトリが何度も見つけている
+# 「同じ穴が片方にだけ居る」形です）。だから門は**押す側の中**に置きます ——
+# 呼び手が増えても落ちません。
+_THUMB_UNITS = 50
+
+
+def schedule_holes(ahead, *, today=None) -> list:
+    """予約の**暦を歩いて**、1本も予約の無い日を返す（API 0単位）。
+
+    `ahead` は**これから公開される予定時刻**（UTC aware）の並び。
+    `data/uploaded.jsonl` から作れるので、日枠が切れていても出せます。
+
+    **鍵ではなく暦を歩くこと。** `Counter` の鍵には 0本の日が最初から
+    入っていないので、そこから「無い日」は永久に出てきません
+    （`docs/trigger_main.md` の同名の節）。
+
+    明日から数えます —— 今日は既に半分公開済みのことがあり、
+    入れると毎回「今日が断絶」と鳴って誤検知になります。
+    """
+    ahead = [t for t in ahead]
+    if not ahead:
+        return []
+    today = today or datetime.now(JST).date()
+    per = {}
+    for t in ahead:
+        d = t.astimezone(JST).date()
+        per[d] = per.get(d, 0) + 1
+    last = max(per)
+    out = []
+    d = today + timedelta(days=1)
+    while d <= last:
+        if per.get(d, 0) == 0:
+            out.append(d)
+        d += timedelta(days=1)
+    return out
+
+
+def thumbnail_yield_to_schedule(ahead, queued: int, *, today=None):
+    """**サムネイルを押してよいか**を、予約の穴と突き合わせて決める。
+
+    返りは `(押してよいか, 理由の1行)`。**穴がある間は押しません。**
+    50単位は詰め直し1本ぶんと同じ値段で、そちらは律速に効きます。
+
+    **これは「サムネイルは要らない」ではありません。** 穴が無くなったら押します
+    （覆る条件: `SHORTS_FEED` 以外の面が再生の1割を超えたら、測り直すこと）。
+    """
+    holes = schedule_holes(ahead, today=today)
+    if not holes:
+        return True, f"予約に0本の日はありません。サムネイル {queued}本を押します"
+    units = queued * _THUMB_UNITS
+    head = " ".join(f"{d:%m/%d}" for d in holes[:5])
+    more = f" ほか{len(holes) - 5}日" if len(holes) > 5 else ""
+    return False, (
+        f"**押しません。** 予約に0本の日が {len(holes)}日あります（{head}{more}）。"
+        f" サムネイル {queued}本 ＝ **{units:,}単位** で、"
+        f"同じ単位で**詰め直しが {queued}本**できます。"
+        " 再生の 99.9% は SHORTS_FEED（サムネイルの出ない面）で、"
+        "0本の日を埋めるほうが `eta.py` の日付を動かします。"
+        " **穴が無くなったら自動で押します**（`--force` で今すぐ押せます）"
+    )

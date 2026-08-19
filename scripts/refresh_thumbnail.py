@@ -1,6 +1,6 @@
 """投稿済みの動画に、サムネイルを載せ直す。**入口は2つあります。**
 
-    python scripts/refresh_thumbnail.py --missing
+    python scripts/refresh_thumbnail.py --missing [--force]
         **控えに残した bytes を、載っていない本すべてに押す**（2026-08-17 に追加）。
         `build/` は要りません。ふつうはこちらです
 
@@ -63,8 +63,35 @@ def main(topic: str, video_id: str, theme_index: int) -> int:
     return 0
 
 
-def push_missing(dry_run: bool = False) -> int:
-    """控えに残した bytes を、載っていない本すべてに押す。**`build/` は要りません。**"""
+def _ledger_ahead() -> list:
+    """これから公開される予定時刻（控えだけ・**API 0単位**）。"""
+    from datetime import datetime, timezone
+
+    from src import dupes as _dupes
+
+    now = datetime.now(timezone.utc)
+    out = []
+    for r in _dupes.ledger_rows():
+        at = r.get("at")
+        if not at:
+            continue
+        try:
+            t = datetime.fromisoformat(at.replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        if t > now:
+            out.append(t)
+    return sorted(out)
+
+
+def push_missing(dry_run: bool = False, force: bool = False) -> int:
+    """控えに残した bytes を、載っていない本すべてに押す。**`build/` は要りません。**
+
+    **予約に0本の日があるあいだは押しません**（2026-08-19。理由は
+    `src/upload_cap.thumbnail_yield_to_schedule` の本文）。同じ50単位で
+    詰め直しが1本できて、そちらのほうが `eta.py` の日付を動かすからです。
+    `force=True` で今すぐ押せます。
+    """
     import critique_queue
 
     rows = critique_queue.missing_thumbnail()
@@ -88,6 +115,18 @@ def push_missing(dry_run: bool = False) -> int:
         print("[thumb] **押しません**（この窓では 5本とも 403 になるだけです）。"
               " 窓が変わってから、**投稿より先に**この1行を回すこと。")
         return 1
+
+    # **穴のほうが先です**（2026-08-19 18:3x に測って足した）。ここは長らく
+    # 「窓が開いていれば押す」でした。窓の単位は**詰め直しと取り合い**で、
+    # 値段は同じ50単位、効きは桁で違います（再生の 99.9% は
+    # サムネイルの出ない SHORTS_FEED）。**門は押す側に置いてあります** ——
+    # `batch_build` にだけ置くと、`reschedule` から見えません。
+    if not force:
+        okay, line = upload_cap.thumbnail_yield_to_schedule(_ledger_ahead(), len(rows))
+        if not okay:
+            print(f"[thumb] {line}")
+            return 3
+        print(f"[thumb] {line}")
 
     y = build("youtube", "v3", credentials=credentials(), cache_discovery=False)
     ok = 0
@@ -118,7 +157,8 @@ def push_missing(dry_run: bool = False) -> int:
 
 if __name__ == "__main__":
     if "--missing" in sys.argv:
-        raise SystemExit(push_missing(dry_run="--dry-run" in sys.argv))
+        raise SystemExit(push_missing(dry_run="--dry-run" in sys.argv,
+                                      force="--force" in sys.argv))
     if len(sys.argv) != 4:
         print(__doc__)
         raise SystemExit(2)

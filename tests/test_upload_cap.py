@@ -105,3 +105,55 @@ def test_故障注入_reasonだけを見ると足りない():
     minute_limit = "<HttpError 429 ...> 'reason': 'rateLimitExceeded'  (per minute)"
     assert "rateLimitExceeded" in minute_limit
     assert not auth.is_upload_cap(RuntimeError(minute_limit))
+
+
+# ---------------------------------------------------------------------------
+# **サムネイルと詰め直しは、同じ50単位を取り合っています**（2026-08-19）
+#
+# 既知の当たりを1件、先に固定してあります（`docs/trigger_main.md` §4）——
+# **08/19 の実測**: 控えの穴は 08/30〜09/03 の5日、サムネイル待ちは 107本。
+# この状態で押すと 5,350単位（＝詰め直し107本ぶん）が消えます。
+# **ここが「押してよい」に戻ったら赤くなります。**
+import datetime as _dt
+
+from src import upload_cap as _uc
+
+
+def _at(y, m, d, h=9):
+    return _dt.datetime(y, m, d, h, tzinfo=_uc.JST)
+
+
+def test_schedule_holes_walks_the_calendar_not_the_keys():
+    """**鍵ではなく暦を歩くこと。** 0本の日は `Counter` の鍵に居ません。"""
+    ahead = [_at(2026, 8, 20), _at(2026, 8, 21), _at(2026, 8, 24)]
+    holes = _uc.schedule_holes(ahead, today=_dt.date(2026, 8, 19))
+    assert holes == [_dt.date(2026, 8, 22), _dt.date(2026, 8, 23)]
+
+
+def test_schedule_holes_skips_today():
+    """今日は半分公開済みのことがある。入れると毎回「断絶」と鳴る（誤検知）。"""
+    ahead = [_at(2026, 8, 20)]
+    assert _uc.schedule_holes(ahead, today=_dt.date(2026, 8, 19)) == []
+
+
+def test_schedule_holes_empty_ledger():
+    assert _uc.schedule_holes([], today=_dt.date(2026, 8, 19)) == []
+
+
+def test_thumbnails_yield_while_a_day_is_empty():
+    """**08/19 の実測そのもの**（穴5日・待ち行列107本）。押さないのが正。"""
+    ahead = [_at(2026, 8, 20), _at(2026, 8, 29), _at(2026, 9, 4)]
+    okay, line = _uc.thumbnail_yield_to_schedule(
+        ahead, 107, today=_dt.date(2026, 8, 19))
+    assert okay is False
+    assert "5,350単位" in line          # 107本 × 50単位
+    assert "詰め直しが 107本" in line
+
+
+def test_thumbnails_go_when_there_is_no_hole():
+    """**「サムネイルは要らない」ではありません。** 穴が消えたら押します。"""
+    ahead = [_at(2026, 8, 20), _at(2026, 8, 21)]
+    okay, line = _uc.thumbnail_yield_to_schedule(
+        ahead, 107, today=_dt.date(2026, 8, 19))
+    assert okay is True
+    assert "107本を押します" in line
