@@ -481,3 +481,4 @@
 {"at": "2026-08-19T08:37:21+09:00", "session": "session_01J5oqPfAhuoygM9WTfuLfPW", "kind": "ship", "what": "fix: batch_build --date が MM/DD を最後まで通し、9本の生成（20分）を終えてから予約で9本とも落ちていた。入口で正す＋MM/DDを読む"}
 {"at": "2026-08-19T08:56:57+09:00", "session": "session_0145VLdvdQpTFiPBMULCFTfZ", "kind": "start"}
 {"at": "2026-08-19T09:16:22+09:00", "session": "session_0145VLdvdQpTFiPBMULCFTfZ", "kind": "ship", "what": "upload: 08/29（薄い日・1本だった）へ7本を予約（9本作って2本は検査が正しく止めた）"}
+{"at": "2026-08-19T09:27:06+09:00", "session": "session_0145VLdvdQpTFiPBMULCFTfZ", "kind": "ship", "what": "fix: 掃引の _scalars/_as_number が組・Decimal・Fraction を読めず、返り値の側で候補を落としていた。候補 760→788件・呼べなかった関数 47→42件"}

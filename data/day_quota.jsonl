@@ -450,3 +450,15 @@
 {"at": "2026-08-19T00:12:55+00:00", "detail": "playlistItems.insert"}
 {"at": "2026-08-19T00:12:55+00:00", "detail": "thumbnails.set q3XkO96bK3M"}
 {"at": "2026-08-19T00:26:38+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-19T00:27:45+00:00", "detail": "status: Data API 読み"}
+{"at": "2026-08-19T00:28:10+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-19T00:28:13+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-19T00:28:56+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-19T00:37:43+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-19T00:38:25+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-19T00:38:26+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-19T00:38:28+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-19T00:39:10+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-19T00:39:12+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-19T00:39:13+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-19T00:39:15+00:00", "detail": "channels.list mine"}
