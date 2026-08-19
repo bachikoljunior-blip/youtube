@@ -293,6 +293,28 @@
     ],
     "video_id": "h_1tmYxLSdo"
   },
+  "s-fudosan-tochi-hamidashi": {
+    "charts": [
+      [
+        "15万円",
+        "30万円",
+        "60万円"
+      ]
+    ],
+    "video_id": "BKDeHtEfP5k"
+  },
+  "s-fudosan-yuka100-uchidome": {
+    "charts": [
+      [
+        "100平米",
+        "140平米",
+        "180平米",
+        "200平米",
+        "200平米"
+      ]
+    ],
+    "video_id": "hrBimxwblQ4"
+  },
   "s-fuka-200yen-45nen-jishitsu-82en": {
     "charts": [
       [
@@ -495,6 +517,34 @@
       ]
     ],
     "video_id": "JQ2LgoIa-Yw"
+  },
+  "s-gassan-one-percent-none": {
+    "charts": [
+      [
+        "4,218,666円",
+        "2,918,000円",
+        "1,270,333円",
+        "届かない"
+      ]
+    ],
+    "video_id": "G6_KpcyNxEw"
+  },
+  "s-gassan-year-cap-95": {
+    "charts": [
+      [
+        "670,000円",
+        "639,900円",
+        "30,100円"
+      ],
+      [
+        "101,300円",
+        "70,800円",
+        "30,100円",
+        "27,600円",
+        "12,400円"
+      ]
+    ],
+    "video_id": "2_kBcQwtDIQ"
   },
   "s-hai-torikaeshi-20": {
     "charts": [
@@ -706,6 +756,16 @@
     ],
     "video_id": "uhR8msMW9k4"
   },
+  "s-inshi-1man-2percent-nokogiri": {
+    "charts": [
+      [
+        "2.00%",
+        "0.20%",
+        "0.008%"
+      ]
+    ],
+    "video_id": "gLnvf56289E"
+  },
   "s-inshi-500man-5bai-cliff": {
     "charts": [
       [
@@ -719,6 +779,21 @@
       ]
     ],
     "video_id": "8ORhweAXZ7U"
+  },
+  "s-inshi-keigen-han-gaku-dewanai": {
+    "charts": [
+      [
+        "60万円",
+        "48万円"
+      ],
+      [
+        "6段",
+        "3段",
+        "1段",
+        "1段"
+      ]
+    ],
+    "video_id": "JSSIP4f9zbY"
   },
   "s-invoice-1000man-1en": {
     "charts": [
@@ -1902,6 +1977,21 @@
     ],
     "video_id": "kWCsbrHINik"
   },
+  "s-koteishisan-4nenme-200bai": {
+    "charts": [
+      [
+        "7万円",
+        "14万円"
+      ],
+      [
+        "2.00倍",
+        "1.9836倍",
+        "1.6667倍",
+        "1.4286倍"
+      ]
+    ],
+    "video_id": "_HE9jOxq9h0"
+  },
   "s-koteishisan-menzeiten-6000": {
     "charts": [
       [
@@ -1926,6 +2016,22 @@
       ]
     ],
     "video_id": "3IFynbo4oTw"
+  },
+  "s-koteishisan-shinchiku-98-49": {
+    "charts": [
+      [
+        "6万8600円",
+        "6万8600円",
+        "13万7200円"
+      ],
+      [
+        "6万8600円",
+        "3万5000円",
+        "30万8000円",
+        "39万3400円"
+      ]
+    ],
+    "video_id": "sOcgSnnavRk"
   },
   "s-kouki-168man-3tsu-no-buhin": {
     "charts": [
@@ -4054,6 +4160,24 @@
       ]
     ],
     "video_id": "G3VqIFpBwKo"
+  },
+  "tokutei-shishutsu-waku": {
+    "charts": [
+      [
+        "58万円",
+        "72万円",
+        "88万円",
+        "97万5千円"
+      ],
+      [
+        "11万7750円",
+        "9万3千円",
+        "9万1千円",
+        "7万1千円",
+        "6万7500円"
+      ]
+    ],
+    "video_id": "-DQMQTtzsBo"
   },
   "tsukin-teate-hikazei": {
     "charts": [

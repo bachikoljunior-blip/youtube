@@ -228,11 +228,22 @@ def test_余り枠の枚数を出力で言う():
     builds = sorted((ROOT / "build").glob("*/final.mp4")) if (ROOT / "build").exists() else []
     if not builds:
         pytest.skip("build/ に動画がありません（コンテナが新しい回）")
+    # **`build/` は生成中の回では動いています。**（2026-08-19 に実測で踏んだ）
+    # この手順は「生成を背景に投げて、そのあいだに検査を走らせる」ことを勧めて
+    # いるので（`docs/trigger_main.md` §5）、**両方を同時に走らせるのが普通の形**です。
+    # そのとき `builds[0]` は読んだ次の瞬間に消えたり書き換わったりします。
+    # 実測: 9本の生成中に全体検査を回して、この1件だけが
+    # `IndexError: list index out of range` で落ちました（他 2,009件は緑）。
+    # **本物の欠陥ではないので、赤にしないこと** —— 赤は次の回の時間を食います。
     topic = builds[0].parent.name
     r = subprocess.run([sys.executable, "scripts/inspect_build.py", topic],
                        cwd=ROOT, capture_output=True, text=True)
-    n = int([ln for ln in r.stdout.splitlines() if "枚を1枚にまとめました" in ln][0]
-            .split("]")[1].split("枚")[0])
+    lines = [ln for ln in r.stdout.splitlines() if "枚を1枚にまとめました" in ln]
+    if not lines:
+        if not (ROOT / "build" / topic / "final.mp4").exists():
+            pytest.skip(f"検査中に build/{topic} が消えました（生成が同時に走っています）")
+        pytest.fail(f"まとめた枚数の行がありません: {r.stdout[:300]} / {r.stderr[:300]}")
+    n = int(lines[0].split("]")[1].split("枚")[0])
     said = inspect_build.BLANK_LABEL in r.stdout
     assert said == bool((-n) % inspect_build.COLS), (n, r.stdout[:300])
 

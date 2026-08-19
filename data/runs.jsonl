@@ -492,3 +492,5 @@
 {"at": "2026-08-19T11:06:26+09:00", "session": "session_013W9sVTfTCTS7gMrLHsSfGY", "kind": "ship", "what": "fix: 掃引が「引数を1つ取ってから表を返す関数」を3つの掃引の全部から落としていた。入れ物は import 先の表にもある＋sweep_rows が引数を埋めて場合ごとに歩く（候補 799→848・呼べなかった 34→32・sweep_all 41.5→33.1秒）"}
 {"at": "2026-08-19T11:21:46+09:00", "session": "session_01EJaJtaUMCUwxdMEv9LRTBy", "kind": "start"}
 {"at": "2026-08-19T11:30:38+09:00", "session": "session_01EJaJtaUMCUwxdMEv9LRTBy", "kind": "ship", "what": "fix: eta.py — 月20万に届く日を毎回予測して積む（オーナー指示33699957）。初回実測でショート単独は上限が目標の下＝原理的に閉じていると判定"}
+{"at": "2026-08-19T11:51:21+09:00", "session": "session_01EJaJtaUMCUwxdMEv9LRTBy", "kind": "ship", "what": "upload: 09/01 に9本を予約（薄い日 1→10本。9/9 成功）"}
+{"at": "2026-08-19T11:51:22+09:00", "session": "session_01EJaJtaUMCUwxdMEv9LRTBy", "kind": "ship", "what": "fix: 背景生成と同時に検査を走らせると test_余り枠の枚数を出力で言う が必ず落ちる競合を塞いだ（手順が勧める形なので、赤は次の回の時間を食う）"}
