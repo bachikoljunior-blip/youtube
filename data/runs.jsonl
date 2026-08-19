@@ -482,3 +482,8 @@
 {"at": "2026-08-19T08:56:57+09:00", "session": "session_0145VLdvdQpTFiPBMULCFTfZ", "kind": "start"}
 {"at": "2026-08-19T09:16:22+09:00", "session": "session_0145VLdvdQpTFiPBMULCFTfZ", "kind": "ship", "what": "upload: 08/29（薄い日・1本だった）へ7本を予約（9本作って2本は検査が正しく止めた）"}
 {"at": "2026-08-19T09:27:06+09:00", "session": "session_0145VLdvdQpTFiPBMULCFTfZ", "kind": "ship", "what": "fix: 掃引の _scalars/_as_number が組・Decimal・Fraction を読めず、返り値の側で候補を落としていた。候補 760→788件・呼べなかった関数 47→42件"}
+{"at": "2026-08-19T09:42:49+09:00", "session": "session_01Dd8fuzjCXzNkMMJVfuj2Hj", "kind": "start"}
+{"at": "2026-08-19T09:56:02+09:00", "session": "session_01Dd8fuzjCXzNkMMJVfuj2Hj", "kind": "ship", "what": "upload: 08/30（薄い日・1本だった）へ9本を予約（9/9成功・09:30〜13:30 JST）"}
+{"at": "2026-08-19T09:59:56+09:00", "session": "session_01Dd8fuzjCXzNkMMJVfuj2Hj", "kind": "ship", "what": "fix: 掃引が **kw を「必ず埋める引数」と読み、関数ごと落としていた。歩く場所4か所を calc_axes.real_params() へ寄せた（呼べなかった関数 42→40件）"}
+{"at": "2026-08-19T10:00:01+09:00", "session": "session_01Dd8fuzjCXzNkMMJVfuj2Hj", "kind": "ship", "what": "fix: データ組(dataclass)を引数に取る関数を欄で呼べる形に開いた（section_sweep.dataclass_view）。呼べなかった関数 40→34件・表51→52本・候補788→799件"}
+{"at": "2026-08-19T10:04:11+09:00", "session": "session_01Dd8fuzjCXzNkMMJVfuj2Hj", "kind": "ship", "what": "fix: 手順の待ち合わせが「背景で until sleep」で、待つ側が止まらず同じ log を11回読んでいた。tail --pid=<PID> -f /dev/null を前面で撃つ形に直した（docs/trigger_main.md）"}

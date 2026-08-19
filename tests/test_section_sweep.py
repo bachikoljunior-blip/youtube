@@ -1187,3 +1187,45 @@ def test_高額療養費の区分表は名前で振れる():
     import src.calc.kogaku as m
     assert ss.unreachable(m.tier) == "", "組を読めていない"
     assert ss._enum_axis(m.tier, "name", "ウ") == [t[0] for t in m.TIERS]
+
+
+def test_可変長引数は_必ず埋める引数ではない():
+    """`**kw` と `*args` は、**渡さなくても呼べます。**
+
+    掃引の側は「既定値が無い引数」を「必ず埋めなければならない引数」と
+    読んでいて、`inspect.signature` が `**kw` にも
+    `Parameter.empty` を入れるので、**名前 `kw` を埋めようとして
+    関数ごと落としていました。**
+
+    2026-08-19 の申し送りは、残り42件を「数値の引数に文字列を入れて
+    例外＝`PARAM_FILL` / `FILL_ONLY` に足せば戻る」と読んでいます。
+    **`kw` はそこではありません** —— 語彙に足すと、
+    **実在しない引数名が一覧に載ります。**
+    """
+    import src.calc.furusato as fu
+    import src.calc.izoku as iz
+
+    # どちらも、`**kw` を除けば埋められる引数しか残りません
+    assert ss.unreachable(fu.bracket_income) == "", "**kw を必須引数と読んでいる"
+    assert ss.unreachable(iz.cliff_grid) == "", "**kw を必須引数と読んでいる"
+
+
+def test_データ組を引数に取る関数も掃引できる():
+    """`furusato.limit(p: Person)` は、**表の本体3本がまるごと掃引の外**でした。
+
+    埋められない引数の名前は `p` です。**語彙に `p` を足しても直りません** ——
+    要るのは代表値ではなく、`Person` を**組み立てること**だからです。
+    欄（`income` / `social_rate` …）は1つずつ寄せられるので、
+    **組を開いて欄を引数にすれば、そのまま振れます。**
+    """
+    import src.calc.furusato as fu
+
+    view = ss.dataclass_view(fu.limit)
+    assert view is not None, "Person を開けていない"
+    assert ss.unreachable(view) == "", "開いた後も呼べないと言っている"
+    # 開いた側は、欄をそのまま引数に取る
+    assert view(income=5_000_000, social_rate=0.15) == fu.limit(
+        fu.Person(income=5_000_000, social_rate=0.15))
+    # そして掃引に出てくる（欄が無ければ候補は1件も出ません）
+    hits = ss.sweep_function(view, name="limit")
+    assert hits, "組を開いても候補が1件も出ていない"

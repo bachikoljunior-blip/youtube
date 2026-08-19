@@ -132,6 +132,35 @@ def axis_of(param: str) -> str | None:
     return None
 
 
+def real_params(fn) -> list:
+    """`fn` の**本当の引数**だけを `(名前, Parameter)` で返す。
+
+    除くのは `*args` と `**kw` の2つです。**どちらも渡さなくても呼べる**ので、
+    「既定値が無い ＝ 必ず埋めなければならない引数」には入りません。
+    ところが `inspect.signature` は、その2つにも
+    `Parameter.empty` を既定値として入れます。**そのまま素の
+    `sig.parameters.items()` を歩くと、名前 `kw` を埋めようとして
+    関数ごと落ちます**（2026-08-19 に実測。`furusato.bracket_income` と
+    `izoku.cliff_grid` の2本が、これだけで掃引の対象外でした）。
+
+    **語彙で直せる形ではありません。** `PARAM_FILL` に `kw` を足すと、
+    実在しない引数名に代表値を配ることになります ——
+    その回の申し送りは、残り42件をまとめて「語彙に足せば戻る」と読んでいて、
+    **2件はそこではありませんでした。**
+
+    正本をここに置くのは `AXIS_FILL` と同じ理由です（`section_sweep` にも
+    `pair_sweep` にも歩く場所があるので、写しを持つと片方だけ直ります）。
+    """
+    import inspect
+
+    try:
+        sig = inspect.signature(fn)
+    except (TypeError, ValueError):
+        return []
+    kinds = (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD)
+    return [(n, p) for n, p in sig.parameters.items() if p.kind not in kinds]
+
+
 def numeric_params(fn) -> list[str]:
     """`fn` の**数値の引数の名前**。既定値が無くても数える。
 
@@ -142,14 +171,8 @@ def numeric_params(fn) -> list[str]:
     `kaigo`（`used_units` `rate` が必須）は、あちらを使うと**軸ゼロ**になり、
     **`gassan` の元になった2本が一覧から丸ごと消えていました。**
     """
-    import inspect
-
-    try:
-        sig = inspect.signature(fn)
-    except (TypeError, ValueError):
-        return []
     out = []
-    for name, p in sig.parameters.items():
+    for name, p in real_params(fn):
         if isinstance(p.default, bool):
             continue
         numeric = isinstance(p.default, (int, float))

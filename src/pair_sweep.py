@@ -101,13 +101,9 @@ def _fill(fn: Callable, sweep: str) -> dict[str, Any] | None:
     **丸ごと対象外**になります。**この2本こそが、この手段の唯一の実例**なので、
     そこで降りると既知の当たりが構造的に出ません。
     """
-    try:
-        sig = inspect.signature(fn)
-    except (TypeError, ValueError):
-        return None
     out: dict[str, Any] = {}
     pending: list[str] = []
-    for name, p in sig.parameters.items():
+    for name, p in calc_axes.real_params(fn):
         if name == sweep:
             continue
         if p.default is not inspect.Parameter.empty:

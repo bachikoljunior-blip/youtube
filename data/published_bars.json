@@ -248,6 +248,17 @@
     ],
     "video_id": ""
   },
+  "rousai-hosho-kyufu": {
+    "charts": [
+      [
+        "2,952,485円",
+        "2,920,000円",
+        "2,887,880円",
+        "2,856,125円"
+      ]
+    ],
+    "video_id": "C8av3LvL_BM"
+  },
   "s-aoiro-65man-jigyouzei-zero": {
     "charts": [
       [
@@ -1326,6 +1337,21 @@
     ],
     "video_id": "3yQHoNetGCo"
   },
+  "s-kaigo-3wari-2-94bai": {
+    "charts": [
+      [
+        "1万5096円",
+        "3万1593円",
+        "4万4400円"
+      ],
+      [
+        "7.20倍",
+        "4.41倍",
+        "2.94倍"
+      ]
+    ],
+    "video_id": "aD6Q5WCecm0"
+  },
   "s-kaigo-choka-1wari-6bai": {
     "charts": [
       [
@@ -1348,6 +1374,18 @@
       ]
     ],
     "video_id": "IrAfSi6YF4c"
+  },
+  "s-kaigo-jougen-kukun-hi": {
+    "charts": [
+      [
+        "140,100単位",
+        "93,000単位",
+        "44,400単位",
+        "36,217単位",
+        "24,600単位"
+      ]
+    ],
+    "video_id": "D-08jR4Lzao"
   },
   "s-kaigo-setai-jougen-futarime-8183": {
     "charts": [
@@ -1811,6 +1849,30 @@
       ]
     ],
     "video_id": "cJTGM3x3yaM"
+  },
+  "s-koteishisan-2bai-433bai": {
+    "charts": [
+      [
+        "21万円",
+        "91万円"
+      ]
+    ],
+    "video_id": "kWCsbrHINik"
+  },
+  "s-koteishisan-obi-3-tsu-6bai": {
+    "charts": [
+      [
+        "116.67円",
+        "233.33円",
+        "700円"
+      ],
+      [
+        "155.56円",
+        "175円",
+        "455円"
+      ]
+    ],
+    "video_id": "3IFynbo4oTw"
   },
   "s-kouki-168man-3tsu-no-buhin": {
     "charts": [
@@ -2668,6 +2730,21 @@
     ],
     "video_id": "oWGs84pIHWg"
   },
+  "s-seimeihoken-667bai-287bai": {
+    "charts": [
+      [
+        "1万800円",
+        "2万4200円",
+        "3万1000円"
+      ],
+      [
+        "30.00%",
+        "21.61%",
+        "12.92%"
+      ]
+    ],
+    "video_id": "4C7_gciPt8c"
+  },
   "s-seimeihoken-jumin-hamidashi": {
     "charts": [
       [
@@ -3103,6 +3180,16 @@
     ],
     "video_id": "KdlvGxloIg4"
   },
+  "s-shokibo-11-12kagetsu-59man": {
+    "charts": [
+      [
+        "12万6000円",
+        "23万1000円",
+        "89万8200円"
+      ]
+    ],
+    "video_id": "DtpnSVFDtAE"
+  },
   "s-shokibo-241kagetsu-9man4500": {
     "charts": [
       [
@@ -3446,6 +3533,18 @@
     ],
     "video_id": "a1b2Nm6jN_0"
   },
+  "s-tokutei-120man-yama-2457143": {
+    "charts": [
+      [
+        "10万4750円",
+        "11万8714円",
+        "9万3000円",
+        "9万1000円",
+        "6万7500円"
+      ]
+    ],
+    "video_id": "YQykrHJiNkQ"
+  },
   "s-tokutei-275000-hikenai": {
     "charts": [
       [
@@ -3469,6 +3568,21 @@
       ]
     ],
     "video_id": "4e7wnELSCzY"
+  },
+  "s-tokutei-nenshu150man-68man-suteru": {
+    "charts": [
+      [
+        "92万5000円",
+        "24万5000円",
+        "68万円"
+      ],
+      [
+        "10万4750円",
+        "11万7750円",
+        "7万1000円"
+      ]
+    ],
+    "video_id": "sFnYjc1GyiE"
   },
   "s-tokutei-shikii-975000-tomaru": {
     "charts": [

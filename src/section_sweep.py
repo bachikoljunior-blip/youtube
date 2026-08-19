@@ -53,6 +53,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import dataclasses
 import importlib
 import inspect
 import io
@@ -243,13 +244,9 @@ def _sweepable_params(fn: Callable,
     既定値が無くても呼べるので、**そこで降りないこと** —— 降りていたために
     `koteishisan.unit_tax` のような関数が丸ごと対象外でした。
     """
-    try:
-        sig = inspect.signature(fn)
-    except (TypeError, ValueError):
-        return []
     skip = set(skip)
     out = []
-    for name, p in sig.parameters.items():
+    for name, p in calc_axes.real_params(fn):
         if name in skip:
             continue
         if p.default is inspect.Parameter.empty:
@@ -302,6 +299,72 @@ def _axis_fill(param: str) -> float | None:
 UNCALLABLE: list[tuple[str, str, str]] = []
 
 
+def dataclass_view(fn: Callable) -> Callable | None:
+    """引数に**データ組**（dataclass）を取る関数を、その欄で呼べる形に開く。
+
+    開けなければ `None`（＝もとの関数をそのまま使う）。
+
+    ## なぜ要るか（2026-08-19 に足した）
+
+    `furusato.limit(p: Person)` は、`p` を埋めようがないので
+    **「呼べなかった関数」**に落ちていました。同じ形で
+    `resident_tax_income_levy` と `taxable_income` も落ちており、
+    **ふるさと納税の表は、本体3本がまるごと掃引の外**でした。
+
+    **語彙では直りません。** `PARAM_FILL` に `p` を足すと、
+    `Person` の代わりに数を渡すことになります。要るのは代表値ではなく、
+    **組み立てること**です —— そして欄（`income` / `social_rate` …）は
+    1つずつ寄せられるので、**組を開いて欄を引数にすれば、そのまま振れます。**
+
+    返すのは、欄をキーワード引数に取る包みです。署名を作り直してあるので、
+    `_sweepable_params` も `_enum_params` も `unreachable` も、
+    **中を知らないまま今までどおり効きます。**
+    """
+    hints = getattr(fn, "__annotations__", {})
+    mod = sys.modules.get(getattr(fn, "__module__", ""))
+    news: list[inspect.Parameter] = []
+    plan: dict[str, tuple[type, list[tuple[str, str, Any]]]] = {}
+    taken = {n for n, _ in calc_axes.real_params(fn)}
+    for pname, p in calc_axes.real_params(fn):
+        anno = hints.get(pname)
+        if isinstance(anno, str) and mod is not None:
+            anno = getattr(mod, anno, None)
+        if not (dataclasses.is_dataclass(anno) and isinstance(anno, type)
+                and p.default is inspect.Parameter.empty):
+            news.append(p.replace(kind=inspect.Parameter.KEYWORD_ONLY))
+            continue
+        fields: list[tuple[str, str, Any]] = []
+        for f in dataclasses.fields(anno):
+            nn = f.name if f.name not in taken else f"{pname}_{f.name}"
+            taken.add(nn)
+            default = (inspect.Parameter.empty
+                       if f.default is dataclasses.MISSING else f.default)
+            news.append(inspect.Parameter(nn, inspect.Parameter.KEYWORD_ONLY,
+                                          default=default, annotation=f.type))
+            fields.append((nn, f.name, default))
+        plan[pname] = (anno, fields)
+    if not plan:
+        return None
+
+    def view(**kw):
+        args = dict(kw)
+        for oname, (cls, fields) in plan.items():
+            made = {}
+            for nn, fname, default in fields:
+                if nn in args:
+                    made[fname] = args.pop(nn)
+                elif default is not inspect.Parameter.empty:
+                    made[fname] = default
+            args[oname] = cls(**made)
+        return fn(**args)
+
+    view.__name__ = getattr(fn, "__name__", "view")
+    view.__doc__ = fn.__doc__
+    view.__module__ = getattr(fn, "__module__", "")
+    view.__signature__ = inspect.Signature(news)
+    return view
+
+
 def unreachable(fn: Callable, *, calc: str = "", name: str = "") -> str:
     """`fn` を掃引できない理由（引数名）。掃引できるなら空文字。
 
@@ -309,11 +372,11 @@ def unreachable(fn: Callable, *, calc: str = "", name: str = "") -> str:
     そこが1つでもあれば、この関数はどう呼んでも落ちます。
     """
     try:
-        sig = inspect.signature(fn)
+        inspect.signature(fn)
     except (TypeError, ValueError):
         return "(signature)"
     enums = {pn for pn, _ in _enum_params(fn)}
-    for pname, p in sig.parameters.items():
+    for pname, p in calc_axes.real_params(fn):
         if pname in enums or p.default is not inspect.Parameter.empty:
             continue
         if _axis_fill(pname) is None:
@@ -409,12 +472,8 @@ def _required_others(fn: Callable, pname: str) -> dict[str, Any] | None:
     **あちらは `sweep` の軸を一緒に渡す形なので、そのままは持ってこられません。**
     共通なのは埋め方（`calc_axes.AXIS_FILL`）のほうなので、そちらを正本にしました。
     """
-    try:
-        sig = inspect.signature(fn)
-    except (TypeError, ValueError):
-        return None
     out: dict[str, Any] = {}
-    for name, p in sig.parameters.items():
+    for name, p in calc_axes.real_params(fn):
         if name == pname or p.default is not inspect.Parameter.empty:
             continue
         fill = _axis_fill(name)
@@ -501,12 +560,8 @@ def _enum_params(fn: Callable) -> list[tuple[str, list[str]]]:
     対象は「既定値が文字列」と「既定値が無く、文字列を入れると通る」の2つ。
     **後者を入れているのが、この直しの本体です**（`_enum_axis` の docstring）。
     """
-    try:
-        sig = inspect.signature(fn)
-    except (TypeError, ValueError):
-        return []
     out = []
-    for name, p in sig.parameters.items():
+    for name, p in calc_axes.real_params(fn):
         default = p.default
         if default is not inspect.Parameter.empty and not isinstance(default, str):
             continue
@@ -1102,6 +1157,9 @@ def sweep_calc(name: str) -> list[dict]:
             continue
         if not inspect.isfunction(fn):
             continue
+        # **データ組を引数に取る関数は、欄で呼べる形に開いてから掃引する。**
+        # 開けなければ `None` が返るので、そのままの関数を使う
+        fn = dataclass_view(fn) or fn
         why = unreachable(fn)
         if why:
             UNCALLABLE.append((name, fname, why))
