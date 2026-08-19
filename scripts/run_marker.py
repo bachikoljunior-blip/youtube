@@ -52,6 +52,11 @@ import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+# **`src/` を読めるようにする**（`retro.py` と同じ形）。`levers` は腕の語彙だけを持つ
+# 純粋な module で、API も設定も見ません。
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from src import levers  # noqa: E402
+
 JST = timezone(timedelta(hours=9))
 
 # 定期実行の間隔（分）。**実物は `list_triggers` で見ること。**
@@ -209,7 +214,7 @@ def journal_lines() -> int:
         return 0
 
 
-def ship(what: str, closes: list[str] | None = None) -> int:
+def ship(what: str, closes: list[str] | None = None, lever: str | None = None) -> int:
     """**この回が「出したもの」を1行残す。**（2026-08-15 追加）
 
     オーナーの指示（原文）: **「子が、少しの作業で終わるの直して」**
@@ -228,6 +233,20 @@ def ship(what: str, closes: list[str] | None = None) -> int:
         means    手段の台帳（docs/MEANS.md）の1件を、実際に動かした
         verdict  期限の来た前提を、実データで判定した
         fix      実測で見つかった欠陥を塞いだ（道具・生成・投稿のどれか）
+
+    ## `--lever`（2026-08-19 21:2x に足した。**オーナー指示**）
+
+    原文: **「毎回達成までの予測して。20万の達成。それ以外のやつだけしかしてない。
+    それを早めるための行動考えてから進めるのは毎回の最初にやること」**
+
+    **上の4種は「何をしたか」しか言いません。** `fix` も `means` も、
+    予測日を動かす腕とは無関係に打てます —— 実際、直近10回の ship は
+    **1件も日付を動かす腕を選んでいません**（`src/levers.py` の説明）。
+
+    だから ship には**どの腕を動かしたか**を必ず添えます。語彙は
+    `src.levers.LEVERS` で、**`scripts/eta.py` が印字する腕と1対1**です。
+    **`none` も正しい答えです**（道具・手順の整備）。禁じると嘘の宣言が増えるだけで、
+    数えたい「10回のうち何回が動かす腕だったか」が測れなくなります。
 
     **分析・日誌・文書の整理だけは ship ではありません。** それは前提であって、
     出したものではない。
@@ -264,6 +283,9 @@ def ship(what: str, closes: list[str] | None = None) -> int:
         "kind": "ship",
         "what": what,
     }
+    # **腕は `what` より先に置きません**（読む側が `what` の頭で見分けているため）。
+    if lever:
+        rec["lever"] = lever
     closes = [c.strip() for c in (closes or []) if c.strip()]
     # **語彙は、書き込む前に読むこと**（2026-08-17。**入れた直後に自分で踏みました**）。
     # `carry_over()` は `recorded_closures()` を読むので、先に `_append` すると
@@ -282,6 +304,10 @@ def ship(what: str, closes: list[str] | None = None) -> int:
               f"（{' / '.join(closes)}）。")
         print("         `retro.py` の持ち越しから、この語より前の言及が落ちます。")
         _warn_unknown(closes, known)
+    if lever:
+        print(f"[marker] 腕: **{lever}** —— {levers.LEVERS[lever]}")
+        if lever == "none":
+            print("         **この回は予測日を動かしません。** 理由を docs/JOURNAL.md に1行書くこと。")
     _suggest_undeclared(what, closes, known)
     return 0
 
@@ -528,6 +554,10 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--write", action="store_true", help="子: 走った印を付ける（最初に）")
     ap.add_argument("--ship", metavar="内容",
                     help="子: この回で出したものを記録する（最低ラインの1件）")
+    ap.add_argument("--lever", metavar="腕", choices=sorted(levers.LEVERS),
+                    help="**この成果が動かす腕**（`--ship` と対。オーナー指示 2026-08-19 21:2x）。"
+                         + levers.vocab_help()
+                         + "。**`none` も正しい答え**だが、理由を JOURNAL に書くこと")
     ap.add_argument("--closes", metavar="語", action="append", default=[],
                     help="この ship で潰した持ち越しの語（`retro.py` の一覧に出る形で。"
                          "何度でも書ける）。**語が `-` で始まるときは "
@@ -558,7 +588,17 @@ def main(argv: list[str] | None = None) -> int:
                      "（--ship のほうは --closes で書けます）")
         return closes_add(args.closes_add)
     if args.ship:
-        return ship(args.ship, args.closes)
+        # **腕を書かせる。** 「何をしたか」だけでは、予測日を動かす作業かどうかが
+        # 記録に残りません（オーナー指示 2026-08-19 21:2x・`src/levers.py`）。
+        # **`none` を選ぶ道は開けてあります** —— 塞ぐと嘘の宣言が増えるだけで、
+        # 数えたい「10回のうち何回が動かす腕だったか」が測れなくなります。
+        if not args.lever:
+            ap.error("--lever が要ります（--ship と対）。"
+                     + levers.vocab_help()
+                     + "。**道具・手順の整備なら `--lever none`**（理由を JOURNAL に1行）")
+        return ship(args.ship, args.closes, args.lever)
+    if args.lever:
+        ap.error("--lever は --ship と一緒に使ってください（出したものと対で残します）")
     if args.closes:
         # **単独では受けない。** 宣言は「何を出して閉じたか」と一緒でなければ、
         # 散文の約束と同じで、後から裏が取れません。

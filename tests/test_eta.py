@@ -334,3 +334,69 @@ def test_物差しを取り替えた点は_差の節が実績と読ませない(
     log.write_text(json.dumps(cur, ensure_ascii=False) + "\n", encoding="utf-8")
     lines2 = "\n".join(eta._drift(cur))
     assert "物差しが、この点から変わりました" not in lines2
+
+
+def test_実データが動いていない回は_効いていないと言わない(tmp_path, monkeypatch):
+    """**18周ぶんの実測から直した**（2026-08-19 21:2x）。
+
+    Analytics は日次で3日遅れ、回は約41分ごと。**1日のうち入力は1度も動きません。**
+    `data/eta.jsonl` の18点は `views_7d` も `subs_net` も全部同値でした。
+    それでもここは毎回「**作業で縮んだぶん -0.0日 ← 効いていません**」と印字し、
+    **その回が何をしたかと無関係に、常に同じ字**を出していました。
+
+    「効いていません」は**判定**です。**測れていないものを判定にしないこと。**
+    """
+    log = tmp_path / "eta.jsonl"
+    same = _measured()
+    same["per_video_now"] = 869
+    same["days_subs"] = 1_402
+    same["days_monetized"] = eta.NEVER
+    log.write_text(json.dumps(same, ensure_ascii=False) + "\n", encoding="utf-8")
+    monkeypatch.setattr(eta, "LOG", log)
+
+    cur = dict(same, at="2026-08-19T03:10:00+00:00")
+    lines = "\n".join(eta._drift(cur))
+    assert "実データがまだ動いていません" in lines
+    assert "ここでは測れません" in lines
+    assert "効いていません" not in lines, "測れていないものを判定にしています"
+
+
+def test_実データが動いた回は_これまでどおり差を出す(tmp_path, monkeypatch):
+    """**黙らせすぎないこと。** 入力が動いた回では、差は今までどおり出ます。"""
+    log = tmp_path / "eta.jsonl"
+    old = _measured()
+    old["per_video_now"] = 869
+    old["days_subs"] = 1_402
+    old["days_monetized"] = eta.NEVER
+    log.write_text(json.dumps(old, ensure_ascii=False) + "\n", encoding="utf-8")
+    monkeypatch.setattr(eta, "LOG", log)
+
+    cur = _measured(at="2026-08-20T03:10:00+00:00", views_7d=22_004, subs_net=18)
+    cur["per_video_now"] = 869
+    cur["days_subs"] = 700
+    cur["days_monetized"] = eta.NEVER
+    lines = "\n".join(eta._drift(cur))
+    assert "実データがまだ動いていません" not in lines
+    assert "門1（登録者1,000人）" in lines
+
+
+def test_同値の点が続いても_入力が違う最後の点と比べる(tmp_path, monkeypatch):
+    """**同じ値どうしを引いても 0 しか出ません。**
+
+    18点が同値のまま積まれる形（実物）で、比べる相手が
+    「1つ前」だと永久に 0 です。**入力が実際に違う最後の点**を選ぶこと。
+    """
+    log = tmp_path / "eta.jsonl"
+    older = _measured(at="2026-08-18T02:30:00+00:00", views_7d=5_000)
+    older.update(per_video_now=869, days_subs=2_000, days_monetized=eta.NEVER)
+    same = _measured(at="2026-08-19T02:30:00+00:00")
+    same.update(per_video_now=869, days_subs=1_402, days_monetized=eta.NEVER)
+    log.write_text("\n".join(json.dumps(r, ensure_ascii=False) for r in (older, same)) + "\n",
+                   encoding="utf-8")
+    monkeypatch.setattr(eta, "LOG", log)
+
+    cur = dict(same, at="2026-08-19T03:10:00+00:00")
+    lines = "\n".join(eta._drift(cur))
+    assert "実データがまだ動いていません" in lines
+    # 比べる相手は older（2,000日）なので、門1の行が出る
+    assert "2,000日 → 1,402日" in lines

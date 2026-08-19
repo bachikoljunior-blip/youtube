@@ -56,6 +56,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
+from src import levers  # noqa: E402  （`sys.path` を通した後でないと読めません）
+
 LOG = ROOT / "data" / "eta.jsonl"
 
 # --- 門（YouTube の公表値。守るのではなく、通らないと収入が0になる事実）---
@@ -639,21 +641,73 @@ def _levers(m: dict, a: dict) -> list[tuple[str, str, str]]:
     return rows
 
 
+#: 実データが動いたかを見る鍵。**予測の入力そのものだけ**を並べること。
+#: 派生値（`days_*`・天井）を混ぜると、こちらの計算式を変えただけで「動いた」になります。
+_INPUT_KEYS = ("views_7d", "views_28d", "views_90d", "views_all",
+               "subs_net", "subs_gained_28d", "long_hours_365", "shorts_views_90d")
+
+
+def _same_inputs(a: dict, b: dict) -> bool:
+    """2つの点で、**実測の入力が1つも動いていない**か。"""
+    return all(a.get(k) == b.get(k) for k in _INPUT_KEYS)
+
+
 def _drift(current: dict) -> list[str]:
     """前の回の予測と比べる。**近づいていないなら、その回の作業は効いていない。**"""
     if not LOG.exists():
         return ["", "  （前の点がありません。次の回からは、この行に「何日ぶん縮んだか」が出ます）"]
-    prev = None
+    points = []
     for line in LOG.read_text(encoding="utf-8").splitlines():
         line = line.strip()
         if line:
             try:
-                prev = json.loads(line)
+                points.append(json.loads(line))
             except json.JSONDecodeError:
                 continue
-    if not prev:
+    if not points:
         return []
+    prev = points[-1]
+
+    # **実データが動いていない回では、差を「効いていない」と読まないこと**
+    # （2026-08-19 21:2x に、18点ぶんを数えて直した）。
+    #
+    # Analytics は**日次で、3日遅れ**です。回は約41分ごとに回るので、
+    # **1日のうちに入力は1度も動きません。** 実際 `data/eta.jsonl` の18点は
+    # `views_7d` も `subs_net` も**全部同じ値**でした。それでもここは毎回
+    # 「**作業で縮んだぶん -0.0日 ← 効いていません**」と印字していました ——
+    # **その回が何をしたかと無関係に、常に同じ字**です。
+    #
+    # 「効いていません」を毎周見せられた側が、日付を動かす作業から離れていくのは
+    # 自然です。**だから、動いていないときは「測れない」と言うこと。**
+    # 比べる相手も、**入力が実際に違う最後の点**にします（同じ値どうしを引いても
+    # 0 しか出ません）。
+    stale = _same_inputs(points[-1], current)
+    older = next((p for p in reversed(points) if not _same_inputs(p, current)), None)
+    if stale and older is not None:
+        prev = older
     out = ["", "--- 前の回からの差（**縮んでいないなら、その回の作業は日付を動かしていない**）---"]
+    if stale:
+        span = ""
+        try:
+            hours = (datetime.fromisoformat(current["at"])
+                     - datetime.fromisoformat(points[-1]["at"])).total_seconds() / 3600
+            span = f"（前の点は {hours:.1f}時間前。そこから実データは1つも動いていません）"
+        except (ValueError, KeyError):
+            pass
+        out.append(f"    [!] **実データがまだ動いていません**{span}")
+        out.append("        Analytics は**日次で3日遅れ**。回はそれよりずっと速く回るので、"
+                   "**この回の作業が効いたかは、ここでは測れません。**")
+        out.append("        **「効いていない」ではありません。** 下の差は、"
+                   + ("入力が最後に違った点との比較です。" if older is not None
+                      else "比べられる点がまだありません。"))
+        if older is None:
+            out.append("    → いま1周ごとに測れるのは、**どの腕を選んだか**のほうです（下）。")
+            # **物差しの断りは、この道でも出すこと**（2026-08-19 21:2x に検査が落ちて気づいた）。
+            # 物差しの取り替えは**実データが動かなくても起きます**（こちらの計算式の話なので）。
+            # 早い return で落とすと、**入力が同値の日にかぎって断りが消えます** ——
+            # 取り替えの直後はまさにその形（同じ日に積み直す）なので、いちばん要る回で黙ります。
+            out.extend(_scale_note(prev, current))
+            return out
     pd_ = prev.get("days_monetized")
     cd = current["days_monetized"]
     if pd_ is None:
@@ -692,11 +746,17 @@ def _drift(current: dict) -> list[str]:
     # 「床なしの平均」です。**チャンネルは何も変わっていないのに 1,092 → 869 と出ます。**
     # 差の節は「作業が効いたか」を見る所なので、ここで断らないと
     # **物差しの取り替えが、実績の悪化として next の判断に入ります。**
-    if prev.get("views_per_video") is None and current.get("views_per_video") is not None:
-        out.append("    [!] **1本あたり再生の物差しが、この点から変わりました**"
-                   "（床つきの中央値 → 床なしの平均）。")
-        out.append("        **上の変化は実績ではありません。** 実績として読めるのは、次の点からです。")
+    out.extend(_scale_note(prev, current))
     return out
+
+
+def _scale_note(prev: dict, current: dict) -> list[str]:
+    """**物差しを取り替えた回は、その差を「悪くなった」と読ませない。**"""
+    if prev.get("views_per_video") is None and current.get("views_per_video") is not None:
+        return ["    [!] **1本あたり再生の物差しが、この点から変わりました**"
+                "（床つきの中央値 → 床なしの平均）。",
+                "        **上の変化は実績ではありません。** 実績として読めるのは、次の点からです。"]
+    return []
 
 
 def main() -> int:
@@ -725,6 +785,10 @@ def main() -> int:
         print(line)
     row = {**m, **{k: v for k, v in a.items() if isinstance(v, (int, float))}}
     for line in _drift(row):
+        print(line)
+    # **「予測 → 腕を選ぶ → 進む」の、選んだ側の実績**（オーナー指示 2026-08-19 21:2x）。
+    # 1周ごとに動くのは日付ではなく**ここ**です（`src/levers.py` の説明）。
+    for line in levers.report(ROOT / "data" / "runs.jsonl"):
         print(line)
 
     if not args.no_record:
