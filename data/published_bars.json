@@ -822,6 +822,20 @@
     ],
     "video_id": "J0QK59pUg-4"
   },
+  "s-ikuji-181-450k": {
+    "charts": [
+      [
+        "86.9480%",
+        "64.8866%"
+      ],
+      [
+        "21.2454pt",
+        "21.5454pt",
+        "22.0614pt"
+      ]
+    ],
+    "video_id": "PhQ2KvuQASQ"
+  },
   "s-ikuji-181nichi-634": {
     "charts": [
       [
@@ -1327,6 +1341,31 @@
     ],
     "video_id": "bjd0APzOyDI"
   },
+  "s-jidousha-1000cc-1-356-bai": {
+    "charts": [
+      [
+        "25,000円",
+        "33,900円"
+      ],
+      [
+        "1.356倍",
+        "1.2984倍",
+        "1.2611倍",
+        "1.16倍"
+      ]
+    ],
+    "video_id": "N75-k7r6pLw"
+  },
+  "s-jidoushazei-1000cc-5nen-22000": {
+    "charts": [
+      [
+        "4,400円",
+        "2万2千円",
+        "4万4千円"
+      ]
+    ],
+    "video_id": "kLZ_TfA0Iss"
+  },
   "s-jidoushazei-15percent-not-exact": {
     "charts": [
       [
@@ -1361,6 +1400,32 @@
     ],
     "video_id": "Yy7GmcGoQ6I"
   },
+  "s-jidoushazei-kei-79-percent": {
+    "charts": [
+      [
+        "7,200円",
+        "10,800円",
+        "12,900円"
+      ],
+      [
+        "79.1667%",
+        "19.4444%",
+        "14.7826%"
+      ]
+    ],
+    "video_id": "CIPYV_r1Hdo"
+  },
+  "s-jidoushazei-kirisute-75": {
+    "charts": [
+      [
+        "25円",
+        "75円",
+        "50円",
+        "75円"
+      ]
+    ],
+    "video_id": "YyCkUk8zpXo"
+  },
   "s-jigyozei-290man-aoiro-mae": {
     "charts": [
       [
@@ -1378,6 +1443,21 @@
       ]
     ],
     "video_id": "aeTyTdXcyPc"
+  },
+  "s-jikangai-45h-12kagetsu-540": {
+    "charts": [
+      [
+        "270時間",
+        "360時間",
+        "540時間"
+      ],
+      [
+        "45時間",
+        "90時間",
+        "180時間"
+      ]
+    ],
+    "video_id": "l6yTGfjskD8"
   },
   "s-jikangai-6months-480-vs-594": {
     "charts": [
@@ -1811,6 +1891,15 @@
     ],
     "video_id": "ZUO6bFJRsRY"
   },
+  "s-kakyu-tokubetsu-kasan-36000": {
+    "charts": [
+      [
+        "38万7700円",
+        "42万3700円"
+      ]
+    ],
+    "video_id": "l6_dVdypyw8"
+  },
   "s-kakyu-yakubun-nenreisa": {
     "charts": [
       [
@@ -2080,6 +2169,16 @@
       ]
     ],
     "video_id": "lyqNRWPouck"
+  },
+  "s-kokuho-40sai-3320en": {
+    "charts": [
+      [
+        "1万3200円",
+        "1万6520円",
+        "1万3200円"
+      ]
+    ],
+    "video_id": "PfBJajph-Cc"
   },
   "s-kokuho-7wari-43man-koteikei": {
     "charts": [
@@ -2499,6 +2598,19 @@
     ],
     "video_id": "3mcrKYDJ_Mc"
   },
+  "s-koyouhoken-kensetsu-jigyonushi-0-2pt": {
+    "charts": [
+      [
+        "0.1ポイント",
+        "0.2ポイント"
+      ],
+      [
+        "0.2ポイント",
+        "0.3ポイント"
+      ]
+    ],
+    "video_id": "Jk49Cdw2f1s"
+  },
   "s-koyouhoken-nijigyou-24-1": {
     "charts": [
       [
@@ -2902,6 +3014,16 @@
     ],
     "video_id": "beFVCMO9YC4"
   },
+  "s-nenkinmenjo-hangaku-15300": {
+    "charts": [
+      [
+        "15,300円/年",
+        "10,200円/年",
+        "0円/年"
+      ]
+    ],
+    "video_id": "jbsAb5JrSjM"
+  },
   "s-nenkinmenjo-kasan-10-2nen": {
     "charts": [
       [
@@ -3151,6 +3273,19 @@
       ]
     ],
     "video_id": "N7uZU66JniI"
+  },
+  "s-sankyu-4month-81days": {
+    "charts": [
+      [
+        "284日",
+        "81日"
+      ],
+      [
+        "8万2350円",
+        "10万9800円"
+      ]
+    ],
+    "video_id": "TR09gPpgBak"
   },
   "s-sankyu-98days-3-4months-split": {
     "charts": [
@@ -3623,6 +3758,17 @@
       ]
     ],
     "video_id": "66ErsT9OUrI"
+  },
+  "s-shobyo-rounding-remainder-200": {
+    "charts": [
+      [
+        "+1,395.3円",
+        "+1,213.3円",
+        "+1,031.3円",
+        "+182.0円"
+      ]
+    ],
+    "video_id": "XHw7a_eutj0"
   },
   "s-shobyo-taiki-3nichi": {
     "charts": [

@@ -192,3 +192,102 @@ def _open_window():
 
     return upload_cap.State(False, 0, upload_cap.CAP_PER_DAY,
                             datetime.now(timezone.utc), "検査（枠は開いている）")
+
+
+# --- 5. 落ちた本を、その場でもう一度だけ作ること ---------------------------
+#
+# 2026-08-19 19:2x に `data/batch_runs.jsonl` の 449本を数えた結果:
+#
+#     直前が失敗 → 次の試行が成功   46/85 = **54%**（`生成が失敗` に絞っても 38/70）
+#     落ち2回以上のテーマ 16件のうち **13件は最後に通って投稿済み**（成功0回は1件だけ）
+#
+# ＝**「必ず落ちるテーマ」はほぼ無く、失敗の半分はその回かぎりのぶれ**でした。
+# だから `pick` から外す門は効きません。効くのは撃ち直しのほうです。
+# そして撃ち直しは**テーマ在庫を1件も減らさない**（多めに作る手との違いはここ）。
+
+
+class _FlakyRecorder(_Recorder):
+    """**1回目だけ落ちる**。2回目は通る ＝ 実測のぶれと同じ形。"""
+
+    def __init__(self, flaky: set[str], **kw):
+        super().__init__(**kw)
+        self.seen: dict[str, int] = {}
+
+    def __call__(self, cmd, timeout, label=""):
+        if "src.pipeline" in cmd:
+            tid = label or "?"
+            self.seen[tid] = self.seen.get(tid, 0) + 1
+            if tid in self.fail_build:
+                # 親も `fail_build` を見て落とすので、**ここで返しきる**こと。
+                self.calls.append(("build", tid))
+                return (1, "生成に失敗しました") if self.seen[tid] == 1 else (0, "")
+        return super().__call__(cmd, timeout, label)
+
+
+def _run_flaky(monkeypatch, ids, flaky, extra=()):
+    rec = _FlakyRecorder(flaky, fail_build=flaky)
+    monkeypatch.setattr(batch_build, "run", rec)
+    monkeypatch.setattr(batch_build, "pick",
+                        lambda c, e, per_calc=None: _topics(ids))
+    monkeypatch.setattr(batch_build, "check_window", lambda d, f: None)
+    monkeypatch.setattr(batch_build.upload_cap, "state", lambda: _open_window())
+    written: list[dict] = []
+    monkeypatch.setattr(batch_build.Path, "open",
+                        lambda self, *a, **k: _Sink(written))
+    code = batch_build.main([
+        "--count", str(len(ids)), "--date", "2026-08-30", "--jobs", "3", *extra,
+    ])
+    return code, rec, written
+
+
+def test_flaky_build_is_retried_once_and_uploaded(monkeypatch):
+    """**1回目で落ちた本が、作り直しで通って予約まで入る。**
+
+    ここが無いと、ぶれで落ちた1本ぶんの枠が毎回そのまま空きます。
+    """
+    _, rec, _ = _run_flaky(monkeypatch, ["a", "b", "c"], flaky={"b"})
+    builds = [t for k, t in rec.calls if k == "build"]
+    assert builds.count("b") == 2, "落ちた本を作り直していない"
+    uploaded = [t for k, t in rec.calls if k == "upload"]
+    assert uploaded == ["a", "b", "c"], "作り直した本が予約に載っていない"
+
+
+def test_retry_does_not_consume_another_topic(monkeypatch):
+    """**作り直しはテーマを増やさない。** 在庫が律速なので、ここが肝。"""
+    _, rec, _ = _run_flaky(monkeypatch, ["a", "b", "c"], flaky={"b"})
+    tried = {t for k, t in rec.calls if k == "build"}
+    assert tried == {"a", "b", "c"}, "作り直しで別のテーマを使っている"
+
+
+def test_retry_keeps_the_slot_order(monkeypatch):
+    """作り直した本が、**自分の枠**に戻ること（完了順に積むと枠がずれる）。"""
+    _, _, written = _run_flaky(monkeypatch, ["a", "b", "c"], flaky={"a"})
+    row = written[0]
+    assert "vid-a-2026-08-30@9" in row
+    assert "vid-b-2026-08-30@10" in row
+    assert "vid-c-2026-08-30@11" in row
+
+
+def test_no_retry_flag_restores_the_old_behaviour(monkeypatch):
+    """`--no-retry` で従来どおり。**逃げ道を残す**（時間が無い回のため）。"""
+    _, rec, _ = _run_flaky(monkeypatch, ["a", "b", "c"], flaky={"b"},
+                           extra=("--no-retry",))
+    builds = [t for k, t in rec.calls if k == "build"]
+    assert builds.count("b") == 1
+    uploaded = [t for k, t in rec.calls if k == "upload"]
+    assert uploaded == ["a", "c"]
+
+
+def test_two_failures_are_marked_in_the_ledger(monkeypatch):
+    """**2回とも落ちた本は、そう書く。** テーマ側を疑う材料はここにしか残らない。"""
+    rec = _Recorder(fail_build={"b"})          # 何度でも落ちる
+    monkeypatch.setattr(batch_build, "run", rec)
+    monkeypatch.setattr(batch_build, "pick",
+                        lambda c, e, per_calc=None: _topics(["a", "b", "c"]))
+    monkeypatch.setattr(batch_build, "check_window", lambda d, f: None)
+    monkeypatch.setattr(batch_build.upload_cap, "state", lambda: _open_window())
+    written: list[dict] = []
+    monkeypatch.setattr(batch_build.Path, "open",
+                        lambda self, *a, **k: _Sink(written))
+    batch_build.main(["--count", "3", "--date", "2026-08-30", "--jobs", "3"])
+    assert "2回とも" in written[0]

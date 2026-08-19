@@ -89,15 +89,41 @@ def explain(error: Exception) -> str:
 # 見分けが要るのは、**当たったら残り全部が必ず落ちる**からです。
 # この回は最初の1本が通ったあと6本を撃ち、**6本とも同じ429**で捨てました。
 def is_upload_cap(error: Exception) -> bool:
-    """**1日の投稿本数の枠**に当たったか（HTTP 429・Video Uploads）。
+    """**1日の投稿本数の枠**に当たったか。
 
     枠が戻るまで、**この回のこれ以降の投稿はすべて落ちます。**
     呼ぶ側は、次の1本を撃つのではなく**止まること。**
+
+    **形は2つあります**（2026-08-19 19:5x に2つ目を踏んだ）:
+
+        429 rateLimitExceeded  quota metric 'Video Uploads' …   ← 8/17 に踏んだ形
+        **400 uploadLimitExceeded**  domain=youtube.video
+        **"The user has exceeded the number of videos they may upload."**
+
+    2つ目は `videos.insert` の**再開可能アップロードの途中**で返ります
+    （`googleapiclient` の `ResumableUploadError`）。**429 でも 403 でもなく 400** です。
+
+    ここは長らく **`429` か `rateLimitExceeded` を先に要求していました。**
+    だから2つ目の形は素通りし、**2つの計器が同時に黙りました**:
+
+      - `scripts/batch_build.py` の「当たったら止まる」門が効かず、**残りを撃ち続ける**
+        （09/01 の回は残り2本を撃って2本とも捨てた。8本目でなければ7本捨てています）
+      - `src/uploader._note_cap` が観測を残さないので、`src/upload_cap.state()` が
+        **「あと81本」と言い続ける** —— `status.py` の表示がそのまま嘘になり、
+        次の回が「まだ撃てる」と読んで同じ穴に落ちます
+
+    **`uploadLimitExceeded` という語は、この枠にしか出ません。**
+    だから HTTP の番号を先に見るのをやめ、**語のほうを先に見ます。**
+    番号で絞る形は「新しい形が出たら黙る」ほうへ倒れるので、採りません。
     """
     text = str(error)
-    if "rateLimitExceeded" not in text and "429" not in text:
-        return False
-    return "Video Uploads" in text or "uploadLimitExceeded" in text
+    if "uploadLimitExceeded" in text:
+        return True
+    if "The user has exceeded the number of videos" in text:
+        return True
+    if "rateLimitExceeded" in text or "429" in text:
+        return "Video Uploads" in text
+    return False
 
 
 # **Data API の単位枠（10,000単位）に当たったか。**

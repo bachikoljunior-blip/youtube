@@ -72,6 +72,51 @@ def test_関係のないエラーを枠と読まない(text):
     assert not auth.is_upload_cap(RuntimeError(text))
 
 
+# **2つ目の形**（2026-08-19 19:5x に実際に踏んだ生の本文）。
+# `videos.insert` の再開可能アップロードの途中で返るので、**429 でも 403 でもなく 400** です。
+REAL_400 = (
+    "<HttpError 400 when requesting None returned "
+    "\"The user has exceeded the number of videos they may upload.\". "
+    "Details: \"[{'message': 'The user has exceeded the number of videos they "
+    "may upload.', 'domain': 'youtube.video', 'reason': 'uploadLimitExceeded'}]\">"
+)
+
+
+def test_400のuploadLimitExceededも枠として見分ける():
+    """**番号で絞ると、この形が丸ごと素通りします**（09/01 の回で2本捨てた）。
+
+    素通りすると2つの計器が同時に黙ります —— `batch_build` の
+    「当たったら止まる」門と、`upload_cap` の観測（＝`status.py` の「あと N本」）。
+    """
+    assert auth.is_upload_cap(RuntimeError(REAL_400))
+
+
+def test_400の側でもexplainが戻る時刻を言う():
+    got = auth.explain(RuntimeError(REAL_400))
+    assert "JST 16:00" in got
+
+
+def test_故障注入_429を先に要求すると400を落とす(monkeypatch):
+    """**直す前の実装をそのまま置いて、この検査が効くことを見る。**
+
+    ここが赤くならない書き方に戻したら、9/01 と同じ捨て方をまたやります。
+    """
+    def old(error):
+        text = str(error)
+        if "rateLimitExceeded" not in text and "429" not in text:
+            return False
+        return "Video Uploads" in text or "uploadLimitExceeded" in text
+
+    monkeypatch.setattr(auth, "is_upload_cap", old)
+    assert not auth.is_upload_cap(RuntimeError(REAL_400))   # ← これが元の穴
+
+
+def test_uploadLimitExceededの語は他の枠に出ない():
+    """語を先に見る形にした根拠。**403（単位枠）と取り違えないこと。**"""
+    assert "uploadLimitExceeded" not in REAL_403
+    assert not auth.is_upload_cap(RuntimeError(REAL_403))
+
+
 def test_explainが枠のときだけ戻る時刻を言う():
     """**explain は「いつ戻るか」を言うためにあります。**
 

@@ -1665,7 +1665,7 @@ calc を3本書いたのが約20分なので、**同じ桁の時間が、件数�
 
       nohup python scripts/batch_build.py --count 5 --date <日> --jobs 3 > <log> 2>&1 &
       ...そのあいだに §4 の fix / means を進める...
-      until ! pgrep -f "python.*batch_build" > /dev/null; do sleep 15; done   ← **前面の sleep は止められます**
+      until ! pgrep -f "[b]atch_build.py" > /dev/null; do sleep 15; done   ← **前面の sleep は止められます**
 
   ##### **`pgrep -f batch_build.py` と書かないこと**（2026-08-17 18:5x に踏んだ）
 
@@ -1673,8 +1673,20 @@ calc を3本書いたのが約20分なので、**同じ桁の時間が、件数�
   シェル自身の行に `batch_build.py` という字が入っているので、
   **自分に当たって永久に抜けません**（背景に投げていたので、`kill` するまで残りました）。
 
-  `python.*batch_build` にすると、シェルの行（`until ! pgrep …` で始まる）には
-  当たらず、**`/usr/local/bin/python … batch_build.py` にだけ当たります。**
+  ここには長らく **`python.*batch_build`** と書いてありました。
+  **同じ穴が、規定どおりに書いても再発します**（2026-08-19 19:3x に踏んだ。**5分の空振り**）——
+  そのパターン自身に `python` と `batch_build` の両方の字が入っているので、
+  **`pgrep -f` を含むシェルの行に当たります。** 18:5x の節は「`.py` を外せば逃げられる」と
+  読める書き方でしたが、**逃げているのは字面が違うときだけ**でした。
+
+  **正しいのは、パターンから1文字を外へ出すこと**です:
+
+      pgrep -f "[b]atch_build.py"
+
+  `[b]` は「b」1文字にしか当たらないので **`batch_build.py` を探しますが、
+  シェルの行に入っている字は `[b]atch_build.py` なので当たりません。**
+  **どんな書き方をしても壊れない唯一の形**です（`grep` で昔からある手）。
+  **背景の pid を控えて `kill -0 <pid>` で見る**のでもよい。
 
   **抜けたかどうかは `pgrep` ではなく、ログの `=== まとめ ===` で見ること。**
   待ち合わせの道具が自分を数えている、は形として気づきにくい ——

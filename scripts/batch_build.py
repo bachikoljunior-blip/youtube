@@ -809,6 +809,9 @@ def main(argv: list[str] | None = None) -> int:
                     help=f"1つの calc から取ってよい本数（既定 {DEFAULT_PER_CALC}）。"
                          "**節はいつも全部ちがいます。**1 にすると昔の"
                          "「calc が全部ちがう」に戻り、1回の上限が calc の本数になります")
+    ap.add_argument("--no-retry", action="store_true",
+                    help="落ちた本を作り直さない（既定は1回だけ作り直す。"
+                         "実測 54% が2回目で通り、テーマ在庫は減りません）")
     ap.add_argument("--stop-on-error", action="store_true",
                     help="1本落ちたらそこで止める（**予約の段だけ**。"
                          "作る段は並列なので、落ちた1本の巻き添えで他を捨てません）")
@@ -913,6 +916,49 @@ def main(argv: list[str] | None = None) -> int:
               f"（待ち時間を重ねるだけなので、予約は下で1本ずつやります）", flush=True)
     with ThreadPoolExecutor(max_workers=jobs) as pool:
         results = list(pool.map(lambda t: build_one(t, args.long), topics))
+
+    # ---- 1b. 落ちた本を、その場でもう一度だけ作る ---------------------------
+    #
+    # **落ちる理由は、テーマではなく回でした**（2026-08-19 19:2x に
+    # `data/batch_runs.jsonl` の 449本を数えた）:
+    #
+    #     直前が失敗 → 次の試行が成功   **46/85 = 54%**
+    #     （`生成が失敗` に絞っても 38/70 = 54%）
+    #     落ち2回以上のテーマ 16件のうち、**13件は最後に通って投稿済み**
+    #
+    # つまり「必ず落ちるテーマ」はほぼ無く（成功0回は1件）、失敗の半分は
+    # **その回かぎりのぶれ**です。だから門（`pick` から外す）は効きません ——
+    # **測ってから足すこと**、の答えがこれです。効くのは撃ち直しのほう。
+    #
+    # **在庫が律速なので、撃ち直しは「多めに作る」より強い。**
+    # 8枠に10本つっこむ手は、余った2本ぶんの**テーマを1回で使い切ります**
+    # （いま未投稿の在庫は 18件）。撃ち直しは**同じテーマを使う**ので
+    # 在庫を1件も減らしません。歩留まり 86.7% → 約 94% の見込み。
+    #
+    # **1回だけ**です（2回目の期待値は同じ54%だが、時間は線形に増える）。
+    # `--no-retry` で従来どおりになります。
+    retry_at = [n for n, r in enumerate(results)
+                if not r.get("built") and not args.no_retry]
+    if retry_at:
+        print(f"\n[batch] **{len(retry_at)} 本を、もう一度だけ作り直します**"
+              f"（実測 54% が2回目で通ります。テーマは減りません）", flush=True)
+        with ThreadPoolExecutor(max_workers=max(1, min(jobs, len(retry_at)))) as pool:
+            again = list(pool.map(lambda n: build_one(topics[n], args.long), retry_at))
+        recovered = 0
+        for n, row in zip(retry_at, again):
+            row["retried"] = True
+            # **落ちたほうの時間も残す。** 撃ち直しは只ではないので、
+            # 次の回が「割に合っているか」を数字で見られるようにしておく。
+            row["first_build_sec"] = results[n].get("build_sec")
+            if row.get("built"):
+                recovered += 1
+            else:
+                # 2回とも落ちた ＝ そのテーマ側の可能性が上がる。台帳に残す。
+                row["error"] = (row["error"] or "生成が失敗") + "（2回とも）"
+            results[n] = row      # **同じ位置に戻す**（枠の対応は並び順で決まる）
+        print(f"[batch] 作り直しで {recovered} / {len(retry_at)} 本が通りました",
+              flush=True)
+
     built = sum(1 for r in results if r.get("built"))
     wall_sec = round((datetime.now(JST) - began).total_seconds(), 1)
     spent = wall_sec / 60
@@ -921,7 +967,10 @@ def main(argv: list[str] | None = None) -> int:
 
     # **重なりを、その場で出す。** 台帳に残すだけだと誰も読みません
     # （`--jobs` が4回持ち越されたのは、まさにそれです）。
+    # **作り直した本は、落ちた1回目の時間も足すこと**（2026-08-19 に足した）。
+    # 足さないと直列相当が過少になり、`speedup` が実際より大きく出ます。
     serial_sec = round(sum(float(r.get("make_sec") or r.get("build_sec") or 0.0)
+                           + float(r.get("first_build_sec") or 0.0)
                            for r in results), 1)
     speedup = round(serial_sec / wall_sec, 2) if wall_sec > 0 else None
     per_book = [float(r["build_sec"]) for r in results if r.get("build_sec")]
