@@ -1,5 +1,3 @@
-{"at": "2026-08-15T14:07:44+09:00", "session": "session_011yzJvVEYhQto91XgnLqZXL", "kind": "ship", "what": "fix: 待ちをやめた。子が終わる前に自分で次を立てる。二重起動はタグ+created_at古いほうが勝つで塞ぎ、枠allowed時のみ自走。実測48%の空転を閉じた"}
-{"at": "2026-08-15T14:09:52+09:00", "session": "session_01YSEnL65KdyAQN3FunND5vp", "kind": "start"}
 {"at": "2026-08-15T14:16:32+09:00", "session": "session_01YSEnL65KdyAQN3FunND5vp", "kind": "ship", "what": "fix: 自走の1周目が自分の重複防止で畳んで鎖が終わる穴を塞いだ（sibling_check.py・立てた相手を除外／枠は窓ごとに最新の観測）"}
 {"at": "2026-08-15T14:19:12+09:00", "session": "session_01YSEnL65KdyAQN3FunND5vp", "kind": "ship", "what": "fix: 独立評価の材料が読み上げ文0行で積まれていた（scenes→segments・黙って空を返す .get を例外化・VIDEO_ID を先に刷る）"}
 {"at": "2026-08-15T14:22:49+09:00", "session": "session_01YGBuxRP3ShdkqiaowEQK3S", "kind": "start"}
@@ -498,3 +496,5 @@
 {"at": "2026-08-19T19:10:54+09:00", "session": "session_01XhATejL7VD5fye4twce8wu", "kind": "start"}
 {"at": "2026-08-19T19:37:27+09:00", "session": "session_01XhATejL7VD5fye4twce8wu", "kind": "ship", "what": "upload: 08/31 に6本・09/01 に6本（予約が1本も無い日 4日→2日）／fix: batch_build が落ちた本を1回だけ作り直す段（449本を数えて『直前が失敗→次が成功 54%』・在庫を減らさない）／fix: auth.is_upload_cap が 400 uploadLimitExceeded を素通しし、止める門と観測の両方が黙っていた"}
 {"at": "2026-08-19T19:45:12+09:00", "session": "session_01XhATejL7VD5fye4twce8wu", "kind": "ship", "what": "fix: build_perf に1枚目の見出しの特徴2つ（幅・数字があるか）。冒頭の1〜2秒を占めている当のものが特徴に1つも無かった。控えは narration と別に欠けるので受け口を分けた"}
+{"at": "2026-08-19T19:53:49+09:00", "session": "session_011cpY99H7mPuQkFDiCVCEAt", "kind": "start"}
+{"at": "2026-08-19T20:04:41+09:00", "session": "session_011cpY99H7mPuQkFDiCVCEAt", "kind": "ship", "what": "fix: 1枚目の特徴が『見出しだけ』を見ていた。実物の主役は note（reveal_variants が数字を伏せた97%の本）で、申し送りの『1枚目に数字 51%』は画面ぜんぶで数えると96%＝幅が無い。主役の幅（14.5倍）と画面の数字の個数（12倍）へ"}
