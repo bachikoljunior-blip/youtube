@@ -1,4 +1,3 @@
-{"at": "2026-08-10T16:22:07+09:00", "session": "session_01AH54RzS9GVyHWvgeuBquU5"}
 {"at": "2026-08-10T20:34:31+09:00", "session": "session_01FAwqD1eSbhns9w8GDwHhwE"}
 {"at": "2026-08-11T01:18:26+09:00", "session": "session_01AiKeuqs22BZgd7BPA9jG8m"}
 {"at": "2026-08-11T09:16:35+09:00", "session": "session_01L1ym2pqn8SMVjRX5Cshpc2"}
@@ -498,3 +497,4 @@
 {"at": "2026-08-19T13:04:21+09:00", "session": "session_01GJsRiAogz4TNQ39T43CLnW", "kind": "ship", "what": "upload: 09/02（薄い日・1本だった）へ9本を予約（9/9 成功・13:30〜17:30 JST）。予約は 09/02=10 本に"}
 {"at": "2026-08-19T13:18:45+09:00", "session": "session_01GJsRiAogz4TNQ39T43CLnW", "kind": "ship", "what": "upload: 09/03（薄い日・3本だった）へ8本を予約（8/9。1本は投稿前の検査が ASSUMPTIONS 未表示で止めた＝門は効いている）。予約は 09/03=11 本に"}
 {"at": "2026-08-19T13:19:45+09:00", "session": "session_01GJsRiAogz4TNQ39T43CLnW", "kind": "ship", "what": "fix: 詰め直しは日枠で必ず2日に割れる（318本 / 1日195本）。撃ち切った姿が穴0日でも、195本で止めた姿には8日空く。--apply の直前に切った側も数えて、いちばん早い穴の日を締切として出す"}
+{"at": "2026-08-19T14:14:48+09:00", "session": "session_01HCgniha8NR6JwpE4dVYJaP", "kind": "start"}

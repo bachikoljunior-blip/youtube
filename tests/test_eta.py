@@ -195,3 +195,60 @@ def test_未着手のときだけ_長尺の実力ではないと断る():
     m = _measured(long_hours_365=400.0)
     出た2 = eta.report(m, eta.analyse(m))
     assert not any("長尺の実力ではありません" in l for l in 出た2)
+
+
+def test_30再生の床は長尺に当てない():
+    """**この検査が、この回の本体です**（2026-08-19 14:2x）。
+
+    `>= 30` の1行が長尺を5本とも落とし、天井の表が
+    **ショートの中央値を長尺の帯に当てて「届く」と印字していました。**
+    """
+    rows = [
+        ["short_a", 1_092, 22, 45.0],   # 尺 ~49秒
+        ["short_b", 821, 20, 40.0],     # 尺 ~50秒
+        ["short_c", 29, 20, 40.0],      # 30未満 → ショート側では落とす
+        ["long_a", 4, 16, 4.6],         # 尺 ~348秒
+        ["long_b", 1, 113, 17.0],       # 尺 ~665秒
+    ]
+    shorts, longs = eta.split_per_video(rows)
+    assert shorts == [821, 1_092], "ショートは30の床のまま"
+    assert longs == [1, 4], "**長尺に30の床を当てると1本も残らない**"
+
+
+def test_平均視聴率が0の行は長尺に入れない():
+    """尺が割り出せない行を長尺に入れると、測れていない本が中央値を下げます。"""
+    shorts, longs = eta.split_per_video([["x", 500, 20, 0.0]])
+    assert longs == []
+    assert shorts == [500]
+
+
+def test_長尺の帯は長尺の実測で割る():
+    """**混ぜると 36倍 が 0.1倍 に見えます。**"""
+    a = eta.analyse(_measured(long_per_video=2, long_videos_28d=5, long_views_28d=11))
+    assert a["per_video_by_band"]["長尺 お金 中"] == 2
+    assert a["per_video_by_band"]["ショート 中"] == 1_092
+    assert a["band_measured"]["長尺 お金 中"] == "長尺"
+    # 要る 72回 ÷ 実測 2回 = 36倍（ショートの 1,092 で割ると 0.07倍 に見える）
+    assert a["per_video_ratio"]["長尺 お金 中"] == pytest.approx(72 / 2, rel=0.02)
+    assert a["ceiling"]["長尺 お金 中"] < eta.TARGET_YEN, \
+        "長尺の実測を当てたら、長尺の帯も上限は目標の下"
+
+
+def test_長尺の実測が無いときはショートで代用したと断る():
+    """**代用したことを黙らないこと。** 黙ると、次の回が実測だと読みます。"""
+    a = eta.analyse(_measured())          # long_per_video が無い
+    assert a["long_per_video"] is None
+    assert a["band_measured"]["長尺 お金 中"] == "ショート"
+    assert a["ceiling"]["長尺 お金 中"] > eta.TARGET_YEN
+    line = "\n".join(eta.report(_measured(), a))
+    assert "測れていません" in line and "代用" in line
+
+
+def test_長尺の実測があるときは_合格点と突き合わせて出す():
+    m = _measured(long_per_video=2, long_videos_28d=5, long_views_28d=11)
+    a = eta.analyse(m)
+    m["per_video_now"] = a["per_video_now"]
+    line = "\n".join(eta.report(m, a))
+    assert "測れています" in line, "**「未測定」と書き続けると、誰とも突き合わせません**"
+    assert "未測定" not in line.split("--- **門2a")[1]
+    assert "133倍" in line or "倍**" in line

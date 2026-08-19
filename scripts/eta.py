@@ -85,6 +85,12 @@ RPM_SCENARIOS = {
     "長尺 お金 高": 2_000,
 }
 
+# --- 「長尺」と呼ぶ尺の下限（秒）---
+#     Analytics は尺を返さないので、**平均視聴秒 ÷ 平均視聴率**で尺を復元して割ります
+#     （`averageViewDuration / (averageViewPercentage/100)`）。ショートの上限は60秒、
+#     この作りの長尺は4分以上（`src/verify.py`）なので、あいだの180秒に置いています。
+LONG_FORM_SECONDS = 180
+
 # --- 長尺1本が生む視聴分（**推測**。長尺の実測が無いので、尺×維持率で置く）---
 #     ショートの実測は「1再生あたり22秒 ＝ 尺の49%」（2026-08-19 status.py）。
 #     長尺は WATCH が通算13回しかないので、維持率を測れません。
@@ -99,6 +105,49 @@ LONG_SHAPES = (
 LONG_PER_DAY_SCENARIOS = (1, 2, 4)
 
 NEVER = 10 ** 9  # 「届かない」を日数で表すときの番人
+
+
+def split_per_video(rows) -> tuple[list[int], list[int]]:
+    """`dimensions=video` の行を、**尺で2つに割る**（2026-08-19 14:2x に足した）。
+
+    返すのは `(ショートの再生・昇順, 長尺の再生・昇順)`。
+
+    ## なぜ割るか
+
+    ここは長らく1行でした ——
+
+        vals = sorted(r[1] for r in per_video if r[1] >= 30)
+
+    **その `>= 30` が、長尺を5本とも落としていました。** 実測は 4/3/2/1/1回で、
+    **30を超える長尺は1本もありません。** 落ちた結果 `median_views_per_video` は
+    **ショートだけの中央値（1,092回）**になり、天井の表がそれを長尺の帯にも当てて
+    **「長尺 お金 中 … 届く／いまの 0.1倍」**と印字していました。
+    **長尺の実測を当てると 36倍**です。**桁が2つちがい、向きが逆になります。**
+
+    28b90d6 が門2a で塞いだのと同じ形（「まだ試していない」が
+    「もう届いている」に化ける）が、**円の側に残っていました。**
+
+    ## 尺の出し方
+
+    Analytics は尺そのものを返しません。**平均視聴秒 ÷ 平均視聴率**で復元します。
+    `averageViewPercentage` が 0 の行は割れないので、**ショート側**に置きます
+    （長尺に置くと、測れていない行が長尺の中央値を下げます）。
+
+    **長尺には 30再生の床を当てません。** 当てると1本も残らず、
+    「測っていない」と「0だった」の区別がつかなくなります。
+    """
+    shorts: list[int] = []
+    longs: list[int] = []
+    for row in rows:
+        views = row[1]
+        avg_sec = row[2] if len(row) > 2 else 0
+        avg_pct = row[3] if len(row) > 3 else 0
+        seconds = (avg_sec / (avg_pct / 100)) if avg_pct else 0.0
+        if seconds >= LONG_FORM_SECONDS:
+            longs.append(views)
+        elif views >= 30:
+            shorts.append(views)
+    return sorted(shorts), sorted(longs)
 
 
 def _measure() -> dict:
@@ -130,10 +179,22 @@ def _measure() -> dict:
     place90 = q(90, "views,estimatedMinutesWatched", dimensions="insightPlaybackLocationType")
     shorts_views_90 = sum(r[1] for r in place90 if r[0] == "SHORTS_FEED")
 
-    # 1本あたりの再生（直近28日に再生のあった本の中央値。分母の小さい本は外す）
-    per_video = q(28, "views", dimensions="video", sort="-views", maxResults=200)
-    vals = sorted(r[1] for r in per_video if r[1] >= 30)
+    # 1本あたりの再生（直近28日に再生のあった本の中央値）。
+    #
+    # **形ごとに別々に出すこと**（2026-08-19 14:2x に足した）。ここは長らく
+    # `if r[1] >= 30` の1本だけで、**その30が長尺を5本とも落としていました** ——
+    # 実測は 4/3/2/1/1再生で、**30を超える長尺は1本もありません。**
+    # 落ちた結果 `median_views_per_video` は**ショートだけの数**になり、
+    # それを天井の表が長尺の帯にも当てて **「長尺 お金 中 … 届く」** と印字していました。
+    # **「まだ試していない」を「もう届いている」と読み替える形**で、
+    # 28b90d6 が門2a で塞いだ穴と同じものが、円の側に残っていました。
+    #
+    # 尺は Analytics では取れないので、**平均視聴秒 ÷ 平均視聴率**で復元します。
+    per_video = q(28, "views,averageViewDuration,averageViewPercentage",
+                  dimensions="video", sort="-views", maxResults=200)
+    vals, long_sorted = split_per_video(per_video)
     median_views = vals[len(vals) // 2] if vals else 0
+    long_median = long_sorted[len(long_sorted) // 2] if long_sorted else None
 
     def row(rows, i):
         return rows[0][i] if rows else 0
@@ -151,6 +212,10 @@ def _measure() -> dict:
         "shorts_views_90d": shorts_views_90,
         "median_views_per_video": median_views,
         "videos_with_views_28d": len(vals),
+        # **長尺だけの1本あたり再生**（`None` ＝ 直近28日に長尺の再生が1本も無い）
+        "long_per_video": long_median,
+        "long_videos_28d": len(long_sorted),
+        "long_views_28d": sum(long_sorted),
     }
 
 
@@ -273,16 +338,55 @@ def analyse(m: dict) -> dict:
     a["long_break_even"] = _long_break_even(a)
 
     # --- 天井: いまの構成で出せる最大の月収 ---
+    #
+    # **帯ごとに、その形の実測を当てます**（2026-08-19 14:2x）。
+    # ここは長らく1つの `per_video`（＝**ショートだけ**の中央値）を全部の帯に当てていて、
+    # 長尺の帯に「**届く**」と印字していました。**長尺の実測は 1本 2回**（n=5）で、
+    # ショートの 1,092回 とは**546倍ちがいます。** 混ぜると、
+    # 「長尺をまだ出していない」が「長尺なら届く」に化けます。
     per_video = m["median_views_per_video"]
+    long_per_video = m.get("long_per_video")
+    a["long_per_video"] = long_per_video
+    a["long_videos_28d"] = m.get("long_videos_28d", 0)
+    a["long_views_28d"] = m.get("long_views_28d", 0)
+
+    def _band_per_video(key: str) -> float:
+        """その帯の1本あたり再生。**長尺の実測が無いときだけ**ショートで代用する。"""
+        if key.startswith("長尺") and long_per_video is not None:
+            return long_per_video
+        return per_video
+
+    a["per_video_by_band"] = {k: _band_per_video(k) for k in RPM_SCENARIOS}
+    a["band_measured"] = {
+        k: ("長尺" if (k.startswith("長尺") and long_per_video is not None) else "ショート")
+        for k in RPM_SCENARIOS
+    }
     ceiling_views_month = per_video * UPLOAD_CAP_PER_DAY * 30
     a["ceiling_views_month"] = ceiling_views_month
-    a["ceiling"] = {k: ceiling_views_month / 1000 * rpm for k, rpm in RPM_SCENARIOS.items()}
+    a["ceiling_views_month_by_band"] = {
+        k: a["per_video_by_band"][k] * UPLOAD_CAP_PER_DAY * 30 for k in RPM_SCENARIOS
+    }
+    a["ceiling"] = {
+        k: a["ceiling_views_month_by_band"][k] / 1000 * rpm for k, rpm in RPM_SCENARIOS.items()
+    }
+    # **「ショート並みに伸びたら」の側も残します。** 実測 2回 は
+    # 「登録者9人のチャンネルの長尺」であって「長尺の実力」ではない（M20）ので、
+    # **片方だけ出すと、こんどは逆向きに読み違えます。**
+    a["ceiling_if_shorts_rate"] = {
+        k: ceiling_views_month / 1000 * rpm for k, rpm in RPM_SCENARIOS.items()
+    }
 
     # 目標に要る月間再生数（RPM ごと）
     a["views_needed_month"] = {k: TARGET_YEN * 1000 / rpm for k, rpm in RPM_SCENARIOS.items()}
     # 1日92本の上限で、その再生数に要る「1本あたり再生」
     a["per_video_needed"] = {
         k: v / (UPLOAD_CAP_PER_DAY * 30) for k, v in a["views_needed_month"].items()
+    }
+    # **要る倍率は、その帯の形の実測で割ること**（ここが混ざると 36倍 が 0.1倍 に見える）
+    a["per_video_ratio"] = {
+        k: (a["per_video_needed"][k] / a["per_video_by_band"][k]
+            if a["per_video_by_band"][k] else float("inf"))
+        for k in RPM_SCENARIOS
     }
     a["per_video_now"] = per_video
     return a
@@ -301,7 +405,12 @@ def report(m: dict, a: dict) -> list[str]:
     P(f"  登録率            {a['sub_rate']*100:>10.4f} %   ＝ 再生 {1/a['sub_rate']:,.0f} 回につき1人" if a["sub_rate"] else "  登録率            **0** ＝ 何回再生されても増えていない")
     P(f"  長尺の視聴時間    {m['long_hours_365']:>10,.1f} 時間（直近365日。門は {LONG_HOURS_GATE:,}）")
     P(f"  ショート90日      {m['shorts_views_90d']:>10,} 回（門は {SHORTS_VIEWS_GATE:,}）")
-    P(f"  1本あたり再生     {m['per_video_now'] if 'per_video_now' in m else a['per_video_now']:>10,} 回（中央値・直近28日に再生のあった {m['videos_with_views_28d']} 本）")
+    P(f"  1本あたり再生     {m['per_video_now'] if 'per_video_now' in m else a['per_video_now']:>10,} 回（**ショート**・中央値・直近28日に再生のあった {m['videos_with_views_28d']} 本）")
+    if a.get("long_per_video") is None:
+        P("  1本あたり再生（長尺）    **測れていません**（直近28日に長尺の再生が0本）")
+    else:
+        P(f"  1本あたり再生（長尺）{a['long_per_video']:>10,} 回（中央値・n={a['long_videos_28d']}・合計 {a['long_views_28d']:,}回）"
+          f"  ← ショートの **1/{(a['per_video_now'] / a['long_per_video']):,.0f}**")
     P("")
     P("--- 門を1つずつ当てる（**最初に落ちるものが、いまの律速**）---")
     P(f"  [門1] 登録者 {SUBS_GATE:,}人      {_fmt_days(a['days_subs'])}")
@@ -326,15 +435,54 @@ def report(m: dict, a: dict) -> list[str]:
           "そのまま出ているだけで、**未着手を測った数ではありません**。")
     P("")
     P("--- 天井（**ここが本体**）---")
-    P(f"  1日に出せる上限 {UPLOAD_CAP_PER_DAY}本 × 1本 {a['per_video_now']:,}回 × 30日 = 月 {a['ceiling_views_month']:,.0f} 再生")
-    P("  その月間再生で立つ収入と、月20万に要る1本あたりの再生:")
+    lpv = a.get("long_per_video")
+    P(f"  1本あたり再生は**形ごとに別の実測**です（直近28日。混ぜると長尺が「もう届く」に見えます）:")
+    P(f"    ショート  **{a['per_video_now']:,}回**／本（n={m.get('videos_with_views_28d', 0)}・30再生未満は除外）")
+    if lpv is None:
+        P("    長尺      **測れていません**（直近28日に長尺の再生が1本もない）"
+          " → 下の長尺の行は**ショートの数で代用**しています。**実測ではありません。**")
+    else:
+        P(f"    長尺      **{lpv:,}回**／本（n={a['long_videos_28d']}・合計 {a['long_views_28d']:,}回・"
+          "**30再生の床は当てていません**。当てると1本も残りません）")
+    P(f"  1日に出せる上限 {UPLOAD_CAP_PER_DAY}本 × 30日 に、**その形の実測**を当てた上限:")
     for k in RPM_SCENARIOS:
         yen = a["ceiling"][k]
         need = a["per_video_needed"][k]
         mark = "**届く**" if yen >= TARGET_YEN else "届かない"
-        ratio = need / a["per_video_now"] if a["per_video_now"] else float("inf")
+        ratio = a["per_video_ratio"][k]
+        src = a["band_measured"][k]
         P(f"    {k:<12} RPM ¥{RPM_SCENARIOS[k]:>5,}  上限 ¥{yen:>10,.0f}  {mark:<8} "
-          f"要 1本 {need:>9,.0f}回（いまの **{ratio:,.1f}倍**）")
+          f"要 1本 {need:>9,.0f}回（{src}の実測の **{ratio:,.1f}倍**）")
+    if lpv is not None:
+        P("")
+        P("  **長尺が「ショート並み（1本 "
+          f"{a['per_video_now']:,}回）に伸びたら」の側も出します**（片方だけだと逆向きに読み違えます）:")
+        for k in RPM_SCENARIOS:
+            if not k.startswith("長尺"):
+                continue
+            yen2 = a["ceiling_if_shorts_rate"][k]
+            mark2 = "**届く**" if yen2 >= TARGET_YEN else "届かない"
+            P(f"    {k:<12} RPM ¥{RPM_SCENARIOS[k]:>5,}  上限 ¥{yen2:>10,.0f}  {mark2}")
+        P(f"  **実測 {lpv:,}回 は「長尺の実力」ではありません**（M20）。"
+          f"n={a['long_videos_28d']} で、登録者 {m['subs_net']} 人のチャンネルに出した本の数です。")
+        P("  **決まったのは1つだけ**: いまの実測を当てるかぎり、"
+          "**長尺の帯も上限が目標の下**にあります。")
+        P("  だから段2 は「長尺に替えれば届く」ではなく、"
+          f"**1本あたりを {lpv:,}回 から上げられるか**を測る段です。")
+    P("")
+    # **いちばん近い帯を名指しする**（2026-08-19 14:2x に足した）。
+    #
+    # 表は6行あって、どれも「届かない」と書いてあります。**そこで読むのをやめると、
+    # 6つが同じくらい遠いように見えます。** 実際には倍率が2桁ちがい、
+    # 前の回は「ショート単独は原理的に閉じている」と読んで長尺へ寄せました。
+    # **RPM ¥60 の帯では、要るのは 1本あたり 1.1倍です。**
+    nearest = min(RPM_SCENARIOS, key=lambda k: a["per_video_ratio"][k])
+    nr = a["per_video_ratio"][nearest]
+    npv = a["per_video_by_band"][nearest]
+    P(f"  **いちばん近い帯: {nearest}**（RPM ¥{RPM_SCENARIOS[nearest]:,}）"
+      f" ＝ 1本あたりを **{nr:,.1f}倍**（{npv:,}回 → {a['per_video_needed'][nearest]:,.0f}回）")
+    P("      **6行とも「届かない」でも、遠さは同じではありません。**"
+      "倍率の小さい帯から手を付けること。")
     P("")
     reachable = [k for k in RPM_SCENARIOS if a["ceiling"][k] >= TARGET_YEN]
     unreachable = [k for k in RPM_SCENARIOS if a["ceiling"][k] < TARGET_YEN]
@@ -382,7 +530,7 @@ def _report_long_gate(m: dict, a: dict) -> list[str]:
     P(f"    残り {a['long_minutes_needed']:,.0f}分（{a['long_minutes_needed']/60:,.0f}時間）を、"
       f"**門1 が通る日（1日{PLAN_PUBLISH_PER_DAY}本公開で {_fmt_days(days)}）までに**埋める。")
     P("")
-    P("    **要る「長尺1本あたり再生」**（長尺を1日L本足したとき。**これだけが未知**）:")
+    P("    **要る「長尺1本あたり再生」**（長尺を1日L本足したとき。**これが合格点**）:")
     P(f"      {'形（推測）':<18}{'1再生の視聴分':>12}" + "".join(f"{'L=' + str(n) + '本/日':>12}" for n in LONG_PER_DAY_SCENARIOS))
     for r in a["long_break_even"]:
         cells = "".join(
@@ -391,9 +539,37 @@ def _report_long_gate(m: dict, a: dict) -> list[str]:
         )
         P(f"      {r['label']:<18}{r['min_per_view']:>10.1f}分" + cells)
     P("")
-    P(f"    いまショートは **1本 {a['per_video_now']:,}回**（実測）。長尺の1本あたり再生は**未測定**です")
-    P("    （WATCH は通算13回・M20 段2 が測る所）。**上の数字は、その未知に対する合格点です。**")
-    P("    **段2 に入った時点で、この表の1行と突き合わせること。** 下回るなら長尺では開きません。")
+    P(f"    いまショートは **1本 {a['per_video_now']:,}回**（実測）。")
+    lpv = a.get("long_per_video")
+    if lpv is None:
+        P("    長尺の1本あたり再生は**測れていません**（直近28日に長尺の再生が0本）。"
+          "**上の数字は、その未知に対する合格点です。**")
+    else:
+        # **ここは「未測定」と書いてありました**（2026-08-19 14:2x に直した）。
+        # 実際には直近28日に長尺が n 本ぶん再生されていて、**測れています。**
+        # 「未測定」と書いてあるかぎり、この表は誰とも突き合わされません。
+        P(f"    **長尺の1本あたり再生は測れています: 1本 {lpv:,}回**"
+          f"（直近28日・n={a['long_videos_28d']}・合計 {a['long_views_28d']:,}回）。"
+          "**上の合格点と、いま突き合わせます:**")
+        worst = None
+        for shape in a["long_break_even"]:
+            for per_day in LONG_PER_DAY_SCENARIOS:
+                need = shape["views"][per_day]
+                if need == float("inf"):
+                    continue
+                short_by = need / lpv if lpv else float("inf")
+                if worst is None or short_by < worst[0]:
+                    worst = (short_by, shape["label"], per_day, need)
+        if worst:
+            short_by, label, per_day, need = worst
+            P(f"    **いちばん甘い行でも {label}・L={per_day}本/日 で {need:,.0f}回 ＝ "
+              f"実測の {short_by:,.0f}倍**。全部の行を下回っています。")
+        P(f"    **これは「長尺では開かない」ではありません**（M20）。n={a['long_videos_28d']} で、"
+          f"登録者 {m['subs_net']} 人のチャンネルに出した本の数です。"
+          "**決まったのは「いまのままでは開かない」**で、段2 が測るのは"
+          f"**1本あたりを {lpv:,}回 から何倍にできるか**のほうです。")
+    if a.get("long_per_video") is None:
+        P("    **長尺を出したら、この表の1行と突き合わせること。** 下回るなら長尺では開きません。")
     return out
 
 
