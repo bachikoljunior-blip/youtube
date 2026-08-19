@@ -928,3 +928,26 @@
 {"at": "2026-08-19T08:54:08+00:00", "detail": "playlistItems.list uploads"}
 {"at": "2026-08-19T08:54:10+00:00", "detail": "playlistItems.list uploads"}
 {"at": "2026-08-19T08:54:11+00:00", "detail": "videos.list snippet"}
+{"at": "2026-08-19T08:54:39+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-19T08:56:22+00:00", "detail": "status: Data API 読み"}
+{"at": "2026-08-19T08:57:03+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-19T08:57:06+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-19T08:58:10+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-19T08:58:47+00:00", "detail": "playlistItems.list uploads"}
+{"at": "2026-08-19T08:58:48+00:00", "detail": "scheduled_publish_times"}
+{"at": "2026-08-19T08:58:51+00:00", "detail": "playlistItems.insert"}
+{"at": "2026-08-19T08:58:51+00:00", "detail": "thumbnails.set CJxJzecM-fo"}
+{"at": "2026-08-19T08:58:54+00:00", "detail": "scheduled_publish_times"}
+{"at": "2026-08-19T08:58:57+00:00", "detail": "playlistItems.insert"}
+{"at": "2026-08-19T08:58:57+00:00", "detail": "thumbnails.set _BsmqSC4BpY"}
+{"at": "2026-08-19T08:59:00+00:00", "detail": "scheduled_publish_times"}
+{"at": "2026-08-19T08:59:04+00:00", "detail": "playlistItems.insert"}
+{"at": "2026-08-19T08:59:04+00:00", "detail": "thumbnails.set bTU5fMRttyk"}
+{"at": "2026-08-19T08:59:07+00:00", "detail": "scheduled_publish_times"}
+{"at": "2026-08-19T08:59:10+00:00", "detail": "thumbnails.set rJ9Hw04-o5U"}
+{"at": "2026-08-19T08:59:14+00:00", "detail": "scheduled_publish_times"}
+{"at": "2026-08-19T08:59:16+00:00", "detail": "playlistItems.insert"}
+{"at": "2026-08-19T08:59:16+00:00", "detail": "thumbnails.set 84KbprFxs_Q"}
+{"at": "2026-08-19T08:59:20+00:00", "detail": "scheduled_publish_times"}
+{"at": "2026-08-19T08:59:21+00:00", "detail": "playlistItems.insert"}
+{"at": "2026-08-19T08:59:22+00:00", "detail": "thumbnails.set 8Z9mRMeAjeI"}

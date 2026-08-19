@@ -1,4 +1,14 @@
 {
+  "fudosanshutoku-zei": {
+    "charts": [
+      [
+        "1200万円",
+        "1222万9999円",
+        "1322万9999円"
+      ]
+    ],
+    "video_id": "CJxJzecM-fo"
+  },
   "fukugyo-20man": {
     "charts": [
       [
@@ -74,6 +84,16 @@
       ]
     ],
     "video_id": ""
+  },
+  "inshizei-kaidan": {
+    "charts": [
+      [
+        "8千円",
+        "4万円",
+        "20万円"
+      ]
+    ],
+    "video_id": "_BsmqSC4BpY"
   },
   "invoice-2wari-tokurei": {
     "charts": [
@@ -628,6 +648,18 @@
       ]
     ],
     "video_id": "G6_KpcyNxEw"
+  },
+  "s-gassan-tasukai-1012500": {
+    "charts": [
+      [
+        "101万2500円",
+        "66万9600円",
+        "32万1300円",
+        "11万8800円",
+        "9万7200円"
+      ]
+    ],
+    "video_id": "bTU5fMRttyk"
   },
   "s-gassan-year-cap-95": {
     "charts": [
@@ -2353,6 +2385,16 @@
     ],
     "video_id": "lgeEw4f_W7w"
   },
+  "s-koyouhoken-jigyounushi-1636bai": {
+    "charts": [
+      [
+        "1.636倍",
+        "1.538倍",
+        "1.692倍"
+      ]
+    ],
+    "video_id": "8Z9mRMeAjeI"
+  },
   "s-koyouhoken-nijigyou-24-1": {
     "charts": [
       [
@@ -4006,6 +4048,31 @@
       ]
     ],
     "video_id": "HZPK3XHBl7Q"
+  },
+  "s-yoteinozei-100en-kirisute": {
+    "charts": [
+      [
+        "0円",
+        "199.33円",
+        "133.33円",
+        "132.67円"
+      ]
+    ],
+    "video_id": "84KbprFxs_Q"
+  },
+  "s-yoteinozei-3gatsu-77": {
+    "charts": [
+      [
+        "9万2822円",
+        "16万4292円"
+      ],
+      [
+        "77.0%",
+        "52.4%",
+        "45.8%"
+      ]
+    ],
+    "video_id": "rJ9Hw04-o5U"
   },
   "s-yoteinozei-gake-2444150": {
     "charts": [

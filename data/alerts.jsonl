@@ -261,3 +261,4 @@
 {"at": "2026-08-19T17:47:15+09:00", "key": "carry_over", "n": 14, "session": "session_01VKj5GX95RiuZ6zCP7oW9ws", "by": "retro.py"}
 {"at": "2026-08-19T17:47:44+09:00", "key": "missing_thumbnail", "n": 95, "session": "session_01VKj5GX95RiuZ6zCP7oW9ws", "by": "status.py"}
 {"at": "2026-08-19T17:49:07+09:00", "key": "calc_gap", "n": 12, "session": "session_01VKj5GX95RiuZ6zCP7oW9ws", "by": "status.py"}
+{"at": "2026-08-19T18:05:04+09:00", "key": "undeclared_close", "n": 1, "session": "session_01VKj5GX95RiuZ6zCP7oW9ws", "by": "run_marker.py"}
