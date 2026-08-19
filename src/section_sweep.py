@@ -60,6 +60,8 @@ import math
 import pkgutil
 import re
 import sys
+from decimal import Decimal
+from fractions import Fraction
 from pathlib import Path
 from statistics import median
 from typing import Any, Callable, Iterable
@@ -156,10 +158,25 @@ def _as_number(v: Any) -> float | None:
     同じ欄の中で単位が混ざったときに黙って桁が狂います。
     掃引が見るのは**形（崖・逆転・頭打ち）だけ**なので、
     **1つの欄の中で単位が揃っていれば、換算は要りません。**
+
+    ## `Decimal` と `Fraction`（2026-08-19 09:0x に足した）
+
+    ここは長らく `isinstance(v, (int, float))` だけを見ていました。
+    ところが `src/calc/` は **float の丸め落ちを直すたびに厳密な型へ移って**います
+    （8/18 23:0x `Decimal`・8/18 22:1x `Fraction`。いま7本）。
+    **移した瞬間、その欄は掃引から消えます** —— 例外も警告も出ません。
+
+        koyouhoken.worker_rate("一般の事業") → Decimal("0.0055")
+
+    これで `worker_rate` / `employer_rate` / `total_rate` の3本が
+    **「呼べなかった関数」に落ちていました**（数字を返しているのに、
+    数字と認められない）。`koteishisan.bands` の `小規模`（`Fraction`）と
+    `shobyo.daily_exact` / `rounding_gain` は、**関数は通るのに欄だけが消える**
+    ほうの落ち方です。**直す先は表ではなく、読む側です。**
     """
     if isinstance(v, bool):
         return None
-    if isinstance(v, (int, float)):
+    if isinstance(v, (int, float, Decimal, Fraction)):
         return float(v)
     if isinstance(v, str) and _NUMERIC_TEXT.match(v):
         body = re.sub(r"[,\s%円年倍人回]|か月|日", "", v)
@@ -171,10 +188,34 @@ def _as_number(v: Any) -> float | None:
 
 
 def _scalars(value: Any) -> dict[str, float]:
-    """返り値から、掃引で比べられる数字だけ取り出す。"""
+    """返り値から、掃引で比べられる数字だけ取り出す。
+
+    ## 組（tuple / list）を足した理由（2026-08-19 09:0x。**無音で消えていた**）
+
+    ここは `dict` と裸の数値しか見ていませんでした。**返りが組の関数は、
+    欄が1つも取れないので掃引に1件も出ません** —— そして
+    `_scalars` が `{}` を返すだけなので、**「呼べなかった関数」にも載りません。**
+    例外が出ないので、どこにも記録が残らない側の落ち方です。実測:
+
+        掃引は通るのに欄0本  7本（fuka.payback_age・izoku.widow_age_range・
+                              jutaku.resident_cap_of・kokuho.parts_for・
+                              seimeihoken.marginal_levels・tsukin.grade_widths・
+                              yukyu.table_for）
+        そのせいで丸ごと落ちた  2本（kogaku.tier・nenkinmenjo.kind）
+                              ＝ `_enum_axis` が「数字を返さない」と読んで軸を捨てる
+
+    欄の名前は **`NamedTuple` なら欄名、ふつうの組なら位置**（`[0]` `[1]` …）です。
+    位置は読みにくい名前ですが、**この一覧は候補であって節ではありません**
+    （意味は人が表を開いて決めます）。名前を手で並べる道は採りません ——
+    表を足した回が必ず書き忘れる形になるからです（`noise_tokens` と同じ穴）。
+
+    **`ENUM_MAX`（12）より長い並びは読みません。** これは数え上げの軸と同じ線で、
+    **それより長いものは「記録」ではなく「表そのもの」**です
+    （表は `sweep_rows` の側が行として歩きます。1つの表に2度当てない）。
+    """
     if isinstance(value, bool):
         return {}
-    if isinstance(value, (int, float)):
+    if isinstance(value, (int, float, Decimal, Fraction)):
         return {"": float(value)}
     if isinstance(value, dict):
         out = {}
@@ -182,6 +223,14 @@ def _scalars(value: Any) -> dict[str, float]:
             n = _as_number(v)
             if n is not None:
                 out[str(k)] = n
+        return out
+    if isinstance(value, (tuple, list)) and 2 <= len(value) <= ENUM_MAX:
+        fields = getattr(value, "_fields", None)          # NamedTuple なら欄名がある
+        out = {}
+        for i, v in enumerate(value):
+            n = _as_number(v)
+            if n is not None:
+                out[str(fields[i]) if fields else f"[{i}]"] = n
         return out
     return {}
 

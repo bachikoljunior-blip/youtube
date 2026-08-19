@@ -75,6 +75,25 @@
     ],
     "video_id": ""
   },
+  "invoice-2wari-tokurei": {
+    "charts": [
+      [
+        "0.50倍",
+        "1.50倍",
+        "2.00倍",
+        "2.50倍",
+        "3.00倍"
+      ],
+      [
+        "80万円",
+        "56万円",
+        "32万円",
+        "16万円",
+        "16万円"
+      ]
+    ],
+    "video_id": "O7ZtLuFhSq8"
+  },
   "iryohi-kojo": {
     "charts": [
       [
@@ -2658,6 +2677,22 @@
     ],
     "video_id": "kf798uLNh7E"
   },
+  "s-seimeihoken-saisho-saigo-12bai": {
+    "charts": [
+      [
+        "12.00倍",
+        "8.00倍",
+        "6.00倍",
+        "4.89倍"
+      ],
+      [
+        "5.74倍",
+        "5.21倍",
+        "5.00倍"
+      ]
+    ],
+    "video_id": "o6P0ageZd9k"
+  },
   "s-seimeihoken-tedori-6dan": {
     "charts": [
       [
@@ -3068,6 +3103,19 @@
     ],
     "video_id": "KdlvGxloIg4"
   },
+  "s-shokibo-241kagetsu-9man4500": {
+    "charts": [
+      [
+        "800万円",
+        "870万円"
+      ],
+      [
+        "1590万7500円",
+        "1607万2000円"
+      ]
+    ],
+    "video_id": "qyVdpAoT_40"
+  },
   "s-shokibo-80percent-wakareme": {
     "charts": [
       [
@@ -3088,6 +3136,19 @@
       ]
     ],
     "video_id": "UgU5jekMYtw"
+  },
+  "s-shokibo-yamekata-3-46bai": {
+    "charts": [
+      [
+        "34万2500円",
+        "118万5000円"
+      ],
+      [
+        "220万円",
+        "395万円"
+      ]
+    ],
+    "video_id": "TfetZ_qhS-E"
   },
   "s-shokibo-zetsuzei-ritsu-3-67": {
     "charts": [
@@ -3385,6 +3446,18 @@
     ],
     "video_id": "a1b2Nm6jN_0"
   },
+  "s-tokutei-275000-hikenai": {
+    "charts": [
+      [
+        "0円",
+        "175万円",
+        "306万6667円",
+        "430万円",
+        "580万円"
+      ]
+    ],
+    "video_id": "q3XkO96bK3M"
+  },
   "s-tokutei-fueru-20man-yon-dan": {
     "charts": [
       [
@@ -3396,6 +3469,16 @@
       ]
     ],
     "video_id": "4e7wnELSCzY"
+  },
+  "s-tokutei-shikii-975000-tomaru": {
+    "charts": [
+      [
+        "72万円",
+        "97万5000円",
+        "97万5000円"
+      ]
+    ],
+    "video_id": "FQAzPZxd0lQ"
   },
   "s-tsukin-cliff-tie-15km-25km": {
     "charts": [
@@ -3759,6 +3842,15 @@
       ]
     ],
     "video_id": "G3VqIFpBwKo"
+  },
+  "tsukin-teate-hikazei": {
+    "charts": [
+      [
+        "月15万円",
+        "月3万1600円"
+      ]
+    ],
+    "video_id": "1xPjpFwG8qk"
   },
   "zangyo-dai": {
     "charts": [

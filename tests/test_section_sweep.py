@@ -17,6 +17,8 @@
 from __future__ import annotations
 
 import sys
+from decimal import Decimal
+from fractions import Fraction
 from pathlib import Path
 
 import pytest
@@ -476,9 +478,19 @@ def test_実物の片効きが全部新しいと出ていたら疑うこと():
     alls, _free, _known = topic_forge.survey()
     # 判定が**動いている**こと（例外なく False を返す実装ではない）を、
     # 節に値を混ぜた写しで確かめる。
-    probe = dict(hits[0])
-    val = probe["詳しく"]["動かない値"]
-    assert ss.is_covered(probe, {"s": f"{val:,.0f}"}) is True
+    #
+    # **`hits[0]` 決め打ちにしないこと**（2026-08-19 09:0x に直した）。
+    # ここは長らく先頭の1件だけを見ていて、`_scalars` が組を読むようになった回に
+    # 先頭が `fuka.payback_age` の `[0]`（＝**67**）へ入れ替わり、赤になりました。
+    # **判定が壊れたのではありません** —— `_point_printed` は**1〜2桁の整数を
+    # わざと見ません**（2026-08-18 20:1x。「92歳7か月」のような作り話が
+    # 一致してしまうので落とした側）。**先頭が何になるかは掃引の都合**なので、
+    # **「照合できる値を持つ候補が1件でもあるか」**を見る形に変えました。
+    judged = [h for h in hits
+              if ss.is_covered(dict(h), {"s": f'{h["詳しく"]["動かない値"]:,.0f}'})]
+    assert judged, (
+        "節に値をそのまま書いても1件も既出にならない ＝ is_covered が素通りしている"
+        f"（片効き {len(hits)}件）")
 
 
 # ---------------------------------------------------------------------------
@@ -1112,3 +1124,66 @@ def test_比の並びは順番によらない():
     """向きが逆に出る候補があります（`menzei_limit` は 6:3:1）。"""
     hit = _ratio_hit(6.0, [6.0, 3.0, 1.0])
     assert ss._ratio_printed(hit, ["1:3:6 の順で効きます"])
+
+
+# ---- 数字なのに読めなかった返り値（2026-08-19 09:0x）----
+#
+# 前の回の申し送りは「残る47件は `_enum_containers` が入れ物を見つけられて
+# いない側だ」と書いていました。**開いたら違いました** —— 入れ物（`TIERS`
+# `GYOSHU`）は見つかっていて、落ちていたのは**返り値を読む側**です。
+# 47件のうち5件がこれで、さらに**7本は例外も出さずに欄0のまま**通っていました。
+
+def test_Decimal_と_Fraction_を数として読む():
+    """`src/calc/` は float の丸め落ちを直すたびに厳密な型へ移っています。
+
+    **移した瞬間、その欄は掃引から消えていました。** 例外も警告も出ません。
+    """
+    assert ss._as_number(Decimal("0.0055")) == pytest.approx(0.0055)
+    assert ss._as_number(Fraction(3, 4)) == pytest.approx(0.75)
+    assert ss._scalars({"率": Decimal("0.0055"), "額": 100}) == {
+        "率": pytest.approx(0.0055), "額": pytest.approx(100.0)}
+
+
+def test_雇用保険の率は_Decimal_で返るが掃引から見える():
+    """`koyouhoken.worker_rate` は `Decimal` を返すので**呼べない関数**に落ちていた。"""
+    import src.calc.koyouhoken as m
+    assert isinstance(m.worker_rate("一般の事業"), Decimal)
+    assert ss.unreachable(m.worker_rate) == "", "Decimal を数として読めていない"
+
+
+def test_組で返る関数は位置で欄を取る():
+    """返りが組の関数は、**欄が1つも取れないので掃引に1件も出ません。**
+
+    そして `_scalars()` は `{}` を返すだけなので、
+    **「呼べなかった関数」の一覧にも載りません**（例外が出ないため）。
+    どこにも記録の残らない側の落ち方でした。
+    """
+    assert ss._scalars((3, 5.5)) == {"[0]": 3.0, "[1]": 5.5}
+    # 先頭が行の名前の組は、名前だけ落として残りを欄にする
+    assert ss._scalars(("ウ", 280000, None, 80100)) == {
+        "[1]": 280000.0, "[3]": 80100.0}
+
+
+def test_ENUM_MAXより長い並びは組として読まない():
+    """**それは「記録」ではなく「表そのもの」**です（行は `sweep_rows` が歩く）。
+
+    数え上げの軸と同じ線を使います。1つの表に2度当てないため。
+    """
+    assert ss._scalars(tuple(range(ss.ENUM_MAX))) != {}
+    assert ss._scalars(tuple(range(ss.ENUM_MAX + 1))) == {}
+
+
+def test_行の並び_dict_の_list_は組として読まない():
+    """`sweep_rows` が行として歩く側。ここで欄に潰すと二重に当たります。"""
+    assert ss._scalars([{"a": 1}, {"a": 2}]) == {}
+
+
+def test_高額療養費の区分表は名前で振れる():
+    """`kogaku.tier` は `TIERS` を軸に振れるのに、**返りが組**なので消えていた。
+
+    `gassan`（7節）の元になった表の片割れです。
+    **いちばん深い表ほど、返り値が組になりやすい**という向きの穴でした。
+    """
+    import src.calc.kogaku as m
+    assert ss.unreachable(m.tier) == "", "組を読めていない"
+    assert ss._enum_axis(m.tier, "name", "ウ") == [t[0] for t in m.TIERS]

@@ -479,3 +479,5 @@
 {"at": "2026-08-19T08:26:42+09:00", "session": "session_01J5oqPfAhuoygM9WTfuLfPW", "kind": "ship", "what": "fix: 掃引の「埋める語彙」と「繋ぐ語彙」を分けた（PARAM_FILL/FILL_ONLY）。呼べなかった関数 72→47件・候補 724→760件・表 50→51本"}
 {"at": "2026-08-19T08:37:21+09:00", "session": "session_01J5oqPfAhuoygM9WTfuLfPW", "kind": "ship", "what": "upload: 08/23（薄い日・1本だった）へ6本を予約（9本作って3本は検査が正しく止めた）"}
 {"at": "2026-08-19T08:37:21+09:00", "session": "session_01J5oqPfAhuoygM9WTfuLfPW", "kind": "ship", "what": "fix: batch_build --date が MM/DD を最後まで通し、9本の生成（20分）を終えてから予約で9本とも落ちていた。入口で正す＋MM/DDを読む"}
+{"at": "2026-08-19T08:56:57+09:00", "session": "session_0145VLdvdQpTFiPBMULCFTfZ", "kind": "start"}
+{"at": "2026-08-19T09:16:22+09:00", "session": "session_0145VLdvdQpTFiPBMULCFTfZ", "kind": "ship", "what": "upload: 08/29（薄い日・1本だった）へ7本を予約（9本作って2本は検査が正しく止めた）"}
