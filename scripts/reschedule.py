@@ -48,6 +48,9 @@ from googleapiclient.errors import HttpError  # noqa: E402
 from src import auth, dupes, history, measure_window, uploader  # noqa: E402
 
 JST = timezone(timedelta(hours=9))
+# `--compact` で詰める日数の**床**。判定に要る3日＋1日（`compact_plan` の節）。
+# **穴が空くときは、ここから上へ自動で探します**（`_compact`）。
+DEFAULT_MAX_DAYS = 4
 MARKER = re.compile(r"\[t:([a-z0-9\-]+)\]")
 
 
@@ -168,7 +171,7 @@ def _update(svc, video_id: str, publish_at: str | None,
 
 
 def compact_plan(rows: list[dict], *, now: datetime, step_min: int = 30,
-                 hour: int = 9, until_hour: int = 21, max_days: int = 4,
+                 hour: int = 9, until_hour: int = 21, max_days: int = DEFAULT_MAX_DAYS,
                  lead_min: int = 60,
                  window: tuple[str, str] | None = None) -> list[dict]:
     """**予約を前に詰める割り当てを作る**（API 0単位・純関数）。
@@ -370,14 +373,20 @@ def hole_days(rows: list[dict], plan: list[dict], now: datetime) -> list[str]:
     return holes
 
 
-def suggest_max_days(rows: list[dict], now: datetime, args, *, ceiling: int = 40) -> int | None:
+def suggest_max_days(rows: list[dict], now: datetime, args, *,
+                     ceiling: int = 40, start: int | None = None) -> int | None:
     """**穴が空かない `--max-days`** を探して返す（見つからなければ None）。
 
     純関数を回すだけなので API は 0単位です。**人に「減らすか増やすか」を
     考えさせないため**に、道具の側で答えまで出します（穴は `--max-days` を
     **増やして**詰め切ると消えるので、直感と逆向きです）。
+
+    探しはじめる値は `start`（既定は `args.max_days`）。**下げる方向には探しません** ——
+    `DEFAULT_MAX_DAYS` は「判定に要る3日＋1日」で決めた**床**で、
+    穴を避けるために上げることはあっても、下げる理由は別の話だからです。
     """
-    for md in range(args.max_days, ceiling + 1):
+    first = args.max_days if start is None else start
+    for md in range(first, ceiling + 1):
         try:
             plan = compact_plan(rows, now=now, step_min=args.step_min, hour=args.hour,
                                 until_hour=args.until_hour, max_days=md,
@@ -393,11 +402,33 @@ def suggest_max_days(rows: list[dict], now: datetime, args, *, ceiling: int = 40
 
 
 def _compact(args) -> int:
-    """`--compact`。**既定は割り当てを出すだけ**で、`--apply` で初めて撃ちます。"""
+    """`--compact`。**既定は割り当てを出すだけ**で、`--apply` で初めて撃ちます。
+
+    ## `--max-days` を書かなかったときは、道具が決めます（2026-08-19 18:0x）
+
+    ここは長らく**既定 4 で撃って、穴が残ったら止まり、`--max-days N` を
+    名指しして終わり**でした。**答えを出せるのに、撃つのは次の手**という形です。
+    実測では、この2手ぶんの往復が**24周ぶん持ち越されています** ——
+    その間ずっと 08/28〜09/03 の7日が空いたままでした。
+
+    **床は動かしません。** 探しはじめは `DEFAULT_MAX_DAYS`（判定に要る3日＋1日）で、
+    そこから**穴が消えるまで上げるだけ**です。`--max-days N` と明示した回は
+    **その N で撃ちます**（自動で上げません。逃げ道を残すため）。
+    """
     rows = [r for r in dupes.ledger_rows() if r.get("at")]
     if not rows:
         raise SystemExit("控え（data/uploaded.jsonl）に予約の行がありません")
     now = datetime.now(timezone.utc)
+    if args.max_days is None:
+        args.max_days = DEFAULT_MAX_DAYS
+        found = suggest_max_days(rows, now, args, start=DEFAULT_MAX_DAYS)
+        if found is not None and found != DEFAULT_MAX_DAYS:
+            print(f"[compact] **--max-days を {DEFAULT_MAX_DAYS} → {found} に上げました**"
+                  f"（穴の空かない最小の日数。API 0単位で数え直した結果）")
+        if found is not None:
+            args.max_days = found
+        # 見つからなかったときは床のまま進みます。
+        # **下の穴の節が、そのまま「どれだけ増やしても埋まりません」と言います。**
     plan = compact_plan(rows, now=now, step_min=args.step_min, hour=args.hour,
                         until_hour=args.until_hour, max_days=args.max_days,
                         lead_min=args.lead_min)
@@ -485,7 +516,8 @@ def _compact(args) -> int:
     return 0
 
 
-def main(argv: list[str] | None = None) -> int:
+def build_parser() -> argparse.ArgumentParser:
+    """引数の受け口だけを組む（**既定値を検査から読むため**に分けてあります）。"""
     ap = argparse.ArgumentParser(description="予約中の動画の公開時刻を動かす／外す")
     ap.add_argument("--list", action="store_true", help="予約の一覧を出す（二重予約に印）")
     ap.add_argument("--move", nargs=2, metavar=("VIDEO_ID", "JST"),
@@ -501,8 +533,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--step-min", type=int, default=30, help="--compact の目盛り（分・既定30）")
     ap.add_argument("--hour", type=int, default=9, help="--compact の1日の始まり（既定9時）")
     ap.add_argument("--until-hour", type=int, default=21, help="--compact の1日の終わり（既定21時）")
-    ap.add_argument("--max-days", type=int, default=4,
-                    help="--compact で詰める日数（既定4。**全部は詰めません**）")
+    ap.add_argument("--max-days", type=int, default=None,
+                    help=f"--compact で詰める日数（**既定は自動**: {DEFAULT_MAX_DAYS}日から始めて、"
+                         "公開0本の日が消えるまで上げる。明示した N は上げません）")
     ap.add_argument("--min-days", type=float, default=8.0,
                     help="詰めた後に残す予約の先（日・既定8）。下回ったら止めます")
     ap.add_argument("--lead-min", type=int, default=60, help="いまから何分後より先に置くか（既定60）")
@@ -512,7 +545,11 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--max", type=int, default=100,
                     help="1回で撃つ本数の上限（既定100 ＝ 約5,100単位。"
                          "日枠 10,000 はサムネイル 49件 2,450単位と分け合います）")
-    args = ap.parse_args(argv)
+    return ap
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
 
     if args.compact:
         return _compact(args)

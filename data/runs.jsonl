@@ -1,4 +1,3 @@
-{"at": "2026-08-15T11:25:39+09:00", "session": "session_01Txbu5DZrYTmoTovEtYJ4Ke", "kind": "ship", "what": "fix+upload: 冒頭0.9秒に絵の動き（1.10倍からの引き）を実装。字幕と重ならない上限を実測で確定。s-jutaku-2 (yd4DRcRfZE8) を 8/23 09:00 に予約"}
 {"at": "2026-08-15T12:12:44+09:00", "session": "session_01QqKaxNa1CCNDppXtxjxfbF", "kind": "start"}
 {"at": "2026-08-15T12:22:20+09:00", "session": "session_01QqKaxNa1CCNDppXtxjxfbF", "kind": "ship", "what": "upload: s-shitsugyo-5 (W54m_JDnSHM) を 8/15 21:00 に予約。1日2本目を常態化する1本目"}
 {"at": "2026-08-15T12:54:02+09:00", "session": "session_01LLoMHVnDyzCD1JU2iMhurs", "kind": "start"}
@@ -498,3 +497,4 @@
 {"at": "2026-08-19T17:00:49+09:00", "session": "session_017XC6gdMQrNvqCmuRCX5x4S", "kind": "start"}
 {"at": "2026-08-19T17:16:35+09:00", "session": "session_017XC6gdMQrNvqCmuRCX5x4S", "kind": "ship", "what": "fix: 薄い日の一覧が0本の日を構造的に見られなかった（status._print_per_day は Counter の鍵、reschedule.hole_days は集合の差）。暦を歩く形へ直し、08/28〜09/03 の7日連続の断絶を初めて名指しした。検査 6→13 / 15→19"}
 {"at": "2026-08-19T17:29:30+09:00", "session": "session_017XC6gdMQrNvqCmuRCX5x4S", "kind": "ship", "what": "fix: build_perf が最新の1点だけを読み、日枠の切れた13時間は物差し（尺×再生）を失っていた。鍵ごとに最後に見えた点から取る形へ。検査 11→13"}
+{"at": "2026-08-19T17:44:34+09:00", "session": "session_01VKj5GX95RiuZ6zCP7oW9ws", "kind": "start"}

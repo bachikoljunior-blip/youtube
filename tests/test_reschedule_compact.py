@@ -276,3 +276,40 @@ def test_撃ち切れない回は途中の姿の穴も数えられる():
                                    max_days=12, window=EMPTY)
     assert reschedule.hole_days(rows, plan, NOW) == []      # 撃ち切れば穴は無い
     assert reschedule.hole_days(rows, plan[:3], NOW), "途中で止めた姿の穴を数えていない"
+
+
+def test_探しはじめる値を指定できる():
+    """`start` を渡した回は、**そこから上だけ**を探す（床は下げない）。"""
+    rows = [_row(f"v{i}", f"2026-08-{19 + i:02d}T09:00") for i in range(12)]
+    args = _Args(2)
+    low = reschedule.suggest_max_days(rows, NOW, args, ceiling=20)
+    high = reschedule.suggest_max_days(rows, NOW, args, ceiling=20, start=low + 1)
+    assert low is not None and high is not None
+    assert high > low, "start を上げても同じ値が返るなら、探しはじめが効いていない"
+    assert args.max_days == 2, "args を書き換えてはいけない"
+
+
+def test_床から上へしか探さない():
+    """穴が空かない値が床より下にあっても、**下げません**。
+
+    `DEFAULT_MAX_DAYS` は判定に要る日数で決めた床で、
+    穴を避けるために上げることはあっても、**下げる理由は別の話**です。
+    """
+    rows = [_row(f"v{i}", f"2026-08-{19 + i:02d}T09:00") for i in range(3)]
+    hint = reschedule.suggest_max_days(rows, NOW, _Args(reschedule.DEFAULT_MAX_DAYS),
+                                       ceiling=20)
+    assert hint is not None
+    assert hint >= reschedule.DEFAULT_MAX_DAYS
+
+
+def test_max_days_の既定は自動():
+    """**既定は数字ではありません。** `None` ＝「道具が床から上へ探す」の印。
+
+    ここが 4 に戻っていたら、`_compact` は**穴が残っても止まるだけ**に戻ります
+    （名指ししてから撃つまでが2手になり、実測で24周持ち越しました）。
+    """
+    ns = reschedule.build_parser().parse_args(["--compact"])
+    assert ns.max_days is None
+    assert reschedule.DEFAULT_MAX_DAYS == 4
+    assert reschedule.build_parser().parse_args(
+        ["--compact", "--max-days", "9"]).max_days == 9
