@@ -1,4 +1,3 @@
-{"at": "2026-08-15T16:31:19+09:00", "session": "session_01KjvxzsSxTMV2UrWzGSXr3p", "kind": "ship", "what": "fix: 1周の頭に『前の回を読む』が無かった（trigger_main は JOURNAL を4回とも『書け』でしか使っておらず、20件の申し送りが未読で積まれていた）→ scripts/retro.py を作り §2.7 に設置。持ち越し検出が実際に1件拾った／means: scripts/build_provenance.py で予約15本の『どの時点のコードか』を出し、8/17〜8/22 の6本が全部 8/09 のコード＝M14 の比較の片側が丸ごと古いことを確定"}
 {"at": "2026-08-15T17:13:35+09:00", "session": "session_01CrgyLG6ZQ2qenQZxL97qEH", "kind": "start"}
 {"at": "2026-08-15T17:22:34+09:00", "session": "session_01CrgyLG6ZQ2qenQZxL97qEH", "kind": "ship", "what": "means: scripts/topic_forge.py（テーマ在庫の機械化）を実装し、実行して未投稿テーマを 8→16件に倍増。M14 が3回名指ししていた律速『在庫の作り方を機械化する』を、手作業から外した"}
 {"at": "2026-08-15T17:42:01+09:00", "session": "session_019o6m7aLkp3XsGHAKhojYV5", "kind": "start"}
@@ -498,3 +497,4 @@
 {"at": "2026-08-20T01:17:00+09:00", "session": "session_01K3D1wm5VMpmn1R5gdqPJ6L", "kind": "start"}
 {"at": "2026-08-20T01:33:34+09:00", "session": "session_01K3D1wm5VMpmn1R5gdqPJ6L", "kind": "ship", "what": "掘る道具が「目標を超えた表」を落としていたのを直し（section_depth・検査+5＝25緑）、いちばん実績の良い iryohi を実際に1節掘って forge。未投稿在庫 27→28 で、pick の先頭が初めて iryohi になった", "lever": "per_video", "closes": ["calc_gap"], "journal_lines": 30682}
 {"at": "2026-08-20T02:11:43+09:00", "session": "session_01QyE17Uz3PZY1Dv5V9C4dtw", "kind": "start"}
+{"at": "2026-08-20T02:40:31+09:00", "session": "session_01QyE17Uz3PZY1Dv5V9C4dtw", "kind": "ship", "what": "fix: build_perf の唯一の物差し 尺×再生 -0.32 は 08/15 の切替の別名だった（時期で100%割れる）→ _time_split で3件伏せ、物差しを手作りの行へ取替", "lever": "none"}
