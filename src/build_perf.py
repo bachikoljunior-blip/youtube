@@ -218,6 +218,65 @@ def first_seconds(video_id: str) -> dict[str, float] | None:
     return out
 
 
+def first_slide(video_id: str) -> dict[str, float] | None:
+    """**1枚目の見出し**の特徴。控えが無い本には `None`（0 で埋めない）。
+
+    出どころは `data/critique_queue/<video_id>.plan.json` の先頭のコマです。
+
+    ## なぜ `first_seconds` と分けるのか（2026-08-19 19:4x）
+
+    `<id>.json`（`narration`）と `<id>.plan.json` は**別々に欠けます。**
+    同じ辞書に入れると、片方が無い本で丸ごと `None` になり、
+    **もう片方まで一緒に落ちます**（この repo で通算10回出ている
+    「片方が欠けると両方消える」形）。だから受け口を2つに分けています。
+
+    **在庫の数と、測れる数は別です**（2026-08-19 19:4x に、この docstring 自身で
+    踏んで直した）。最初こう書きました ——「`plan.json` は **341本ぶん**あるので
+    `narration`（3本）より2桁広い」。**数え直したら、再生の付いている本との
+    重なりは 0本**でした（`narration` は5本）。**341 は在庫の数**で、
+    `plan.json` を残し始めたのが新しいので、**再生の付いた古い本には1つも無い。**
+    §2.7 が「申し送りの件数は最初に数え直すこと」と言っているのと同じ穴です。
+
+        再生30以上の本 20本 ∩ plan.json = **0本**  ／ ∩ narration = **5本**
+
+    **それでもこの特徴を入れます。** 理由は「広いから」ではなく、
+    **1〜2秒の画面を占めている当のものを、誰も測っていなかったから**です
+    （下）。08/17 以降の本に再生が付けば、`narration` と同じ速さで増えます。
+
+    ## なぜこの2つを測るのか
+
+    engaged（＝すぐスワイプされなかった割合）は `status.py` の実測で
+    **1本あたり再生に最も強く効く率（+0.62）**で、決まるのは最初の1〜2秒 ——
+    **1枚目の見出しは、その1〜2秒に画面を占めているものそのもの**です。
+    ところが `features()` はそこから、**棒の本数しか見ていませんでした**
+    （`1枚目の棒`）。**字のほうは誰も測っていません。**
+
+    実測（2026-08-19・**在庫 341本**。上のとおり、まだ再生とは突き合わせられません）:
+
+        1枚目の幅     中央値 12字・最大 17字（上限は台本側で22字）
+        1枚目に数字   **174/341 = 51%**   ← 半々に割れている＝**向きが出せる幅がある**
+
+    台本の指示は「**1枚目は結論の数字だけ**」ですが、**半分は数字を出していません。**
+    どちらが良いのかは、この repo が一度も測っていません。**まず測ります。**
+    """
+    path = QUEUE / f"{video_id}.plan.json"
+    if not path.exists():
+        return None
+    try:
+        plan = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return None
+    if not isinstance(plan, list) or not plan or not isinstance(plan[0], dict):
+        return None
+    head = str(plan[0].get("headline") or "")
+    if not head:
+        return None
+    return {
+        "1枚目の幅": float(_width(head)),
+        "1枚目に数字": 1.0 if _NUM.search(head) else 0.0,
+    }
+
+
 def features(
     topic: str,
     title: str,
@@ -225,6 +284,7 @@ def features(
     *,
     seconds: float | None = None,
     head: dict[str, float] | None = None,
+    slide: dict[str, float] | None = None,
 ) -> dict[str, float | None]:
     """1本ぶんの「作り」の特徴。**全部、公開前に決まっているものだけ。**
 
@@ -256,6 +316,9 @@ def features(
     }
     for name in ("冒頭の声の幅", "冒頭に数字", "冒頭の絵の変化"):
         out[name] = (head or {}).get(name)
+    # **控えが別なので、辞書も別に受ける**（`first_slide` の docstring）。
+    for name in ("1枚目の幅", "1枚目に数字"):
+        out[name] = (slide or {}).get(name)
     return out
 
 
@@ -286,6 +349,7 @@ def collect() -> tuple[list[dict[str, Any]], list[tuple[str, str]]]:
             bars,
             seconds=s.get("尺"),
             head=first_seconds(vid),
+            slide=first_slide(vid),
         )
         rows.append(
             {

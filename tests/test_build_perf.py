@@ -44,6 +44,10 @@ def test_features_are_all_known_before_publishing():
         "尺（秒）", "図の枚数", "1枚目の棒", "棒の本数", "題の幅",
         "数字までの幅", "題の数字の桁", "題の数字の個数", "題が問いか",
         "冒頭の声の幅", "冒頭に数字", "冒頭の絵の変化",
+        # **1枚目の見出し**（2026-08-19 に足した）。engaged が決まるのは
+        # 最初の1〜2秒で、そこで画面を占めているのが1枚目の見出しですが、
+        # ここは長らく**棒の本数（`1枚目の棒`）しか見ていません**でした。
+        "1枚目の幅", "1枚目に数字",
     }
     assert f["題の数字の桁"] == 4.0
     assert f["題の数字の個数"] == 1.0
@@ -197,3 +201,55 @@ def test_古い点から拾った件数を言う():
     n = build_perf.stale_keys()
     assert isinstance(n, int) and n >= 0
     assert build_perf.stale_keys(build_perf._scans()[-1]) == 0   # 1点だけなら拾いようがない
+
+
+# --- 1枚目の見出し（2026-08-19 に足した）--------------------------------------
+
+
+def test_1枚目の見出しは控えが無ければNone():
+    """**0 で埋めないこと。** 「見出しに数字が無い」と区別がつかなくなります。"""
+    assert build_perf.first_slide("no-such-video-id") is None
+    f = build_perf.features("t", "題 #Shorts", {})
+    assert f["1枚目の幅"] is None
+    assert f["1枚目に数字"] is None
+
+
+def test_1枚目の見出しを控えから読む(tmp_path, monkeypatch):
+    """`<id>.plan.json` の先頭のコマの見出しを、幅と「数字があるか」で測る。"""
+    monkeypatch.setattr(build_perf, "QUEUE", tmp_path)
+    (tmp_path / "vid1.plan.json").write_text(
+        '[{"headline": "児童手当 3人目は1万5000円"}, {"headline": "次"}]',
+        encoding="utf-8")
+    got = build_perf.first_slide("vid1")
+    assert got["1枚目に数字"] == 1.0
+    assert got["1枚目の幅"] == build_perf._width("児童手当 3人目は1万5000円")
+
+    (tmp_path / "vid2.plan.json").write_text(
+        '[{"headline": "ふるさと納税の上限"}]', encoding="utf-8")
+    assert build_perf.first_slide("vid2")["1枚目に数字"] == 0.0
+
+
+def test_narrationが無くても1枚目は落ちない(tmp_path, monkeypatch):
+    """**受け口を2つに分けた理由そのもの。**
+
+    `<id>.json`（narration）と `<id>.plan.json` は別々に欠けます。
+    1つの辞書で受けると、片方が無い本で**もう片方まで消えます**。
+    """
+    monkeypatch.setattr(build_perf, "QUEUE", tmp_path)
+    (tmp_path / "v.plan.json").write_text(
+        '[{"headline": "上限は1234円"}]', encoding="utf-8")
+    assert build_perf.first_seconds("v") is None          # narration は無い
+    f = build_perf.features("t", "題 #Shorts", {},
+                            head=build_perf.first_seconds("v"),
+                            slide=build_perf.first_slide("v"))
+    assert f["冒頭に数字"] is None                          # 片方は None のまま
+    assert f["1枚目に数字"] == 1.0                          # **もう片方は生きている**
+
+
+def test_こわれた控えでも例外を出さない(tmp_path, monkeypatch):
+    monkeypatch.setattr(build_perf, "QUEUE", tmp_path)
+    (tmp_path / "a.plan.json").write_text("{", encoding="utf-8")
+    (tmp_path / "b.plan.json").write_text("[]", encoding="utf-8")
+    (tmp_path / "c.plan.json").write_text('[{"headline": ""}]', encoding="utf-8")
+    for vid in ("a", "b", "c"):
+        assert build_perf.first_slide(vid) is None
