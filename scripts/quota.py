@@ -793,13 +793,133 @@ def report(now: datetime | None = None) -> None:
     pace_report(now)
 
 
+#: 週枠のリセット曜日と時刻（JST）。**画面の「リセット: 土 7:00」がこれ。**
+#: 変わったら、ここではなく画面のほうが正です（`--resets` で上書きできます）。
+WEEKLY_RESET_WEEKDAY = 5   # 月=0 … 土=5
+WEEKLY_RESET_HOUR = 7
+
+
+def _next_weekly_reset(at: datetime) -> datetime:
+    """`at` の後に来る、最初の土曜 07:00 JST。"""
+    day = at.replace(hour=WEEKLY_RESET_HOUR, minute=0, second=0, microsecond=0)
+    ahead = (WEEKLY_RESET_WEEKDAY - at.weekday()) % 7
+    if ahead == 0 and at >= day:
+        ahead = 7
+    return day + timedelta(days=ahead)
+
+
+def record_gauge(week_pct: int, at_text: str, session_pct: int | None = None,
+                 session_in_min: int | None = None, resets_text: str | None = None,
+                 note: str = "") -> int:
+    """**オーナーの画面の%を、1行で積む**（2026-08-19 21:2x にオーナー指示で足した）。
+
+    ## なぜ要るか
+
+    **%はこの機械からは読めません。** `list_sessions` の `rate_limit_info` は
+    `allowed` / `warning` / `rejected` しか返さず、残り%も分母も入っていません
+    （このファイルの冒頭）。**唯一の目盛りは、オーナーの画面の数字**です。
+
+    ところがその1点を積む手は、**`data/usage.jsonl` に手で JSONL を書くこと**でした。
+    結果、**目盛りは 08/16 13:00 の 22% で 3.3日ぶん止まり**、そのあいだ機械は
+    「22%＋外挿」で間隔を決めていました。実測が入ったら **75%** で、
+    **持続できる間隔は 41分 → 65分**（この差のぶんだけ速く走っていた）。
+
+    **書き写す手が重いと、正しい手順でも運用が落ちます。** だから1行にします。
+
+        python scripts/quota.py --gauge 75 --at "08/19 21:21" --session 2 --session-in 288
+
+    ## 何を渡すか（**画面の字をそのまま**）
+
+        --gauge       「週間の制限 / すべてのモデル」の**使用済み%**
+        --at          画面の時刻（`MM/DD HH:MM` か `YYYY-MM-DD HH:MM`。JST）
+        --session     「現在のセッション」の%（**5時間枠**。週の判断には使いません）
+        --session-in  「N時間M分後にリセット」を**分に直した数**
+        --resets      週枠のリセット時刻を明示したいとき（既定は次の土 07:00 JST）
+
+    **`--session` を週枠と混ぜないこと。** 分母が別です（このファイルの冒頭）。
+    """
+    at_text = at_text.strip()
+    for fmt in ("%Y-%m-%d %H:%M", "%m/%d %H:%M", "%Y/%m/%d %H:%M"):
+        try:
+            at = datetime.strptime(at_text, fmt)
+            break
+        except ValueError:
+            continue
+    else:
+        print(f"[gauge] 時刻を読めません: {at_text!r}（例: '08/19 21:21' / '2026-08-19 21:21'）")
+        return 1
+    if at.year == 1900:
+        # `MM/DD` だけのときは、いまの年を当てる。**年を跨いだ回はフルで書くこと。**
+        at = at.replace(year=datetime.now(JST).year)
+    at = at.replace(tzinfo=JST)
+
+    if resets_text:
+        try:
+            resets = datetime.strptime(resets_text, "%Y-%m-%d %H:%M").replace(tzinfo=JST)
+        except ValueError:
+            print(f"[gauge] --resets は 'YYYY-MM-DD HH:MM' で: {resets_text!r}")
+            return 1
+    else:
+        resets = _next_weekly_reset(at)
+
+    rows = [{
+        "fetched_at": at.isoformat(timespec="seconds"),
+        "window_id": "seven_day",
+        "used_percent": int(week_pct),
+        "remaining_percent": 100 - int(week_pct),
+        "resets_at_iso": resets.astimezone(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "source": "owner-manual",
+        "note": note or "オーナーの画面から（`quota.py --gauge`）",
+    }]
+    if session_pct is not None:
+        row = {
+            "fetched_at": at.isoformat(timespec="seconds"),
+            "window_id": "five_hour",
+            "used_percent": int(session_pct),
+            "remaining_percent": 100 - int(session_pct),
+            "source": "owner-manual",
+            "note": "同じ画面の『現在のセッション』。**週枠の判断には使わない**（分母が別）",
+        }
+        if session_in_min is not None:
+            r5 = at + timedelta(minutes=int(session_in_min))
+            row["resets_at_iso"] = r5.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+        rows.append(row)
+
+    USAGE_LOG.parent.mkdir(parents=True, exist_ok=True)
+    with USAGE_LOG.open("a", encoding="utf-8") as fh:
+        for r in rows:
+            fh.write(json.dumps(r, ensure_ascii=False) + "\n")
+    print(f"[gauge] 積みました: {at:%m/%d %H:%M} JST で **{week_pct}%**"
+          + (f"（5時間枠 {session_pct}%）" if session_pct is not None else "")
+          + f" → {USAGE_LOG}")
+    print()
+    pace_report()
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--ingest", metavar="FILE",
                     help="MCP の返り（list_sessions / get_session）を読んで積む。- で標準入力")
     ap.add_argument("--pace", action="store_true",
                     help="速さだけを出す（§6 (f) の間隔を決めるとき）")
+    ap.add_argument("--gauge", metavar="週%", type=int,
+                    help="**オーナーの画面の%を1行で積む**（`--at` と対）。"
+                         "『週間の制限／すべてのモデル』の使用済み%")
+    ap.add_argument("--at", metavar="時刻", help="画面の時刻（`MM/DD HH:MM` か `YYYY-MM-DD HH:MM`・JST）")
+    ap.add_argument("--session", metavar="%", type=int, help="『現在のセッション』の%（5時間枠）")
+    ap.add_argument("--session-in", metavar="分", type=int, help="『N時間M分後にリセット』を分に直した数")
+    ap.add_argument("--resets", metavar="時刻", help="週枠のリセットを明示（既定は次の土 07:00 JST）")
+    ap.add_argument("--note", metavar="文", default="", help="その点に添える1行")
     args = ap.parse_args()
+
+    if args.gauge is not None:
+        if not args.at:
+            ap.error("--gauge には --at が要ります（画面の時刻。あとから積むと速さが狂います）")
+        return record_gauge(args.gauge, args.at, args.session, args.session_in,
+                            args.resets, args.note)
+    if args.at or args.session is not None:
+        ap.error("--at / --session は --gauge と一緒に使ってください")
 
     if args.pace and not args.ingest:
         pace_report()

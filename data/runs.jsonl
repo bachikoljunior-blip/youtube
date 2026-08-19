@@ -1,4 +1,3 @@
-{"at": "2026-08-15T14:46:14+09:00", "session": "session_01YGBuxRP3ShdkqiaowEQK3S", "kind": "ship", "what": "upload: s-zangyo-2 (7b2-Z6Jw5DQ) を 8/16 15:00 に予約。8/16 を4本の日にして M14 の『4本』段を作った"}
 {"at": "2026-08-15T14:48:41+09:00", "session": "session_01YGBuxRP3ShdkqiaowEQK3S", "kind": "ship", "what": "fix: 独立評価のスコアが実績と永久に突き合わない穴（記録はテーマID/Analyticsは動画ID→perf.getが必ずNone）。history.topic_video_map() で橋を架け、実データで18件が結びつくのを確認。M13の較正が完了しうる状態になった"}
 {"at": "2026-08-15T14:54:21+09:00", "session": "session_0193hN8BBXh2K6KD56TT8zTf", "kind": "start"}
 {"at": "2026-08-15T15:07:58+09:00", "session": "session_0193hN8BBXh2K6KD56TT8zTf", "kind": "ship", "what": "fix: ショートの冒頭だけが動いていなかった（kind=stat は reveal_variants に割る列が無く1枚のまま5.8秒静止＝離脱帯4.7〜5.7秒を丸ごと据え置き）。stat＋note を2段に割り、実測で 12枚/最長5.8秒 → 15枚/最長2.7秒。素通りさせていた検査2つも塞いだ（バイト一致しか見ない重複検査→縮小灰色画像の画素差／平均に埋もれる pace→pipeline が書く実秒数で1枚ずつ）"}
@@ -498,3 +497,4 @@
 {"at": "2026-08-19T20:35:50+09:00", "session": "session_01NZ5DFVvm8ou2Qj5gaJQVJt", "kind": "start"}
 {"at": "2026-08-19T20:49:17+09:00", "session": "session_01NZ5DFVvm8ou2Qj5gaJQVJt", "kind": "ship", "what": "fix: 冒頭1枚目の主役(kind=stat の note)を問いかけに振り分ける A/B を実装（hook_form + ASK_HOOK_RULE・判定 09/16・dry-run で出力が変わることと検査合格まで確認）"}
 {"at": "2026-08-19T21:29:15+09:00", "session": "session_01NZ5DFVvm8ou2Qj5gaJQVJt", "kind": "ship", "what": "fix: 予測を1周ごとの判断に噛ませる器（src/levers.py・run_marker --lever 必須・eta の差の節を判定から観測へ・手順の先頭を「予測→腕を選ぶ」に）。実測: eta.jsonl 18点とも入力が同値で、直近10回の ship は動かす腕 0/10", "lever": "none"}
+{"at": "2026-08-19T21:56:23+09:00", "session": "session_01NZ5DFVvm8ou2Qj5gaJQVJt", "kind": "ship", "what": "fix: オーナーの画面の%を1行で積む口（quota.py --gauge）。目盛りが3.3日古い22%のままで、実測は75%＝許される速さより57%速かった。間隔 41分→65分、尽きる時刻 08/21 10:08（リセットまで21時間止まる）", "lever": "none"}

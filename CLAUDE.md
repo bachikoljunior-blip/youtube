@@ -39,6 +39,15 @@
     list_sessions limit=25 mine=true          ← MCP。返りをまるごと保存する
     python scripts/quota.py --ingest <file>   ← 積んで、いまの姿を出す
 
+**オーナーの使用状況の画面が来ていたら、まずそれを積むこと**（指示 2026-08-19 21:2x
+「毎回やるようにして」）。**%はこの機械からは読めません**（`rate_limit_info` は
+`allowed`/`warning`/`rejected` だけ）。**唯一の目盛りがそれです。**
+
+    python scripts/quota.py --gauge <週%> --at "MM/DD HH:MM" [--session <%> --session-in <分>]
+
+放っておくと古くなります —— 実測で **3.3日ぶん 22% のまま**走り、
+実際は **75%** でした（**持続できる間隔 41分 → 65分**）。
+
 **`show-usage.mjs` と `ask-chatgpt.mjs` はもう動きません**
 （`-chatgpt-usage-monitorPrivate` の OAuth が 2026-08-11 に切れ、
 向こうの GitHub Actions も 8/12 から停止）。**直すには人手が要るので、
