@@ -57,12 +57,26 @@
 **待つのは日数だけ**）。`MIN_N` に届くまでは、**件数だけを出して黙ります** ——
 n=5 の順位相関を印字すると、次の回がそれを設計に使うからです。
 
-## 「既知の当たり」を1つ固定してあります
+## 「既知の当たり」を1つ固定してあります（**2026-08-20 に取り替えました**）
 
 新しい特徴を足すたびに、**配線が落ちても件数は減らない**ので気づけません。
-`scripts/status.py` が別の道で出している **尺 × 再生 = -0.33**（n=20）を、
-この道具でも特徴として持ち、`tests/test_build_perf.py` が符号ごと見ています。
-**ここが緑なら、少なくとも「特徴 → 順位相関」の配線は生きています。**
+ここは長らく **尺 × 再生 = -0.33**（n=20）を物差しにしていました。
+
+**あれは尺の効きではありませんでした。** 実測を最初に観測した順に並べると:
+
+    08/06〜08/15 02:12   47〜69秒（13本）
+    08/15 12:18〜08/17   27〜30秒（**6本**）
+
+**境目で完全に割れています。** 08/15 にパイプラインが短いショートへ一斉に
+切り替わっているので、尺は「切替の前か後か」の言い換えでしかなく、
+-0.33 は**切替の前後で再生が違ったこと**しか言っていません
+（同じ切替で `数字までの幅` 99%・`題の数字の個数` 96% も割れています）。
+**この道具の唯一の物差しが、時期の別名でした。**
+
+いまの物差しは**手で作った行**です（`tests/test_build_perf.py` の
+`test_既知の当たり_単調な特徴は向きが出る`）。実データの偶然に寄りかからず、
+**「特徴 → 順位相関」の配線だけ**を見ます。そして実データ側には、
+**尺が時期と分けられないこと自体**を固定してあります（`_time_split`）。
 """
 
 from __future__ import annotations
@@ -78,6 +92,7 @@ from src.scan import _spearman
 ROOT = Path(__file__).resolve().parent.parent
 SCAN = ROOT / "data" / "scan.jsonl"
 LEDGER = ROOT / "data" / "uploaded.jsonl"
+VIEWS = ROOT / "data" / "views.jsonl"
 BARS = ROOT / "data" / "published_bars.json"
 QUEUE = ROOT / "data" / "critique_queue"
 
@@ -88,6 +103,13 @@ MIN_VIEWS = 30
 # `_spearman` は 4本から数を返しますが、n=5 の順位相関は雑音です
 # （そして印字すると、次の回がそれを設計に使います）。
 MIN_N = 10
+
+# **その特徴が「時期」と分けられないと見なす線**（`_time_split` の値。1.0 が完全に割れる）。
+# 作りをパイプライン全体で切り替えると、切替日の前後で値が丸ごと入れ替わります。
+# そのとき特徴は「切替の前か後か」の言い換えになるので、
+# **再生との向きは、特徴の効きではなく時期の効きです**（2026-08-20 に実測）。
+# 0.95 は「割れ方が 95% 以上そろっている」＝ 1本か2本の食い違いは許す線です。
+TIME_CONFOUND = 0.95
 
 _SHORTS = re.compile(r"\s*#Shorts?\s*$", re.I)
 _NUM = re.compile(r"[0-9０-９]+")
@@ -127,8 +149,8 @@ def per_video(snap: dict[str, Any] | None = None) -> dict[str, dict[str, float]]
 
         動画キー 253 ／ **尺 0** ／ views 28
 
-    結果、`尺（秒）` の特徴が **n=0** になり、この道具の**唯一の物差し**
-    （既知の当たり 尺 × 再生 = -0.33）が落ちました。
+    結果、`尺（秒）` の特徴が **n=0** になりました
+    （当時はそれが**唯一の物差し**でした。2026-08-20 に取り替えています —— 冒頭）。
     **特徴が消えても件数は減らない**ので、口は「本数不足」と印字します ——
     **「まだ待て」と読めますが、待っても入りません。**枠が戻るまで永久に0です。
 
@@ -184,6 +206,35 @@ def ledger() -> dict[str, dict[str, Any]]:
             continue
         if row.get("video_id"):
             out[row["video_id"]] = row
+    return out
+
+
+def first_seen() -> dict[str, str]:
+    """`video_id` → **その本が最初に観測された時刻**（`data/views.jsonl`）。
+
+    **公開時刻の控えは、古い本には入っていません**（`uploaded.jsonl` の
+    `at` / `uploaded_at` は 19本中5本にしかなく、その5本は全部
+    08/15 以降に作った本です）。`uploaded.jsonl` の**行の順番も使えません**
+    —— 控えは後から埋め直されていて、古い本のほうが先頭に来ています
+    （実測: 行の順 × 尺 = +0.48。時間の順なら -1.0 になるはず）。
+
+    `views.jsonl` は**毎回の観測を追記するだけ**なので、
+    「最初に載った時刻」＝ おおよその公開時刻です。**全部の本にあります。**
+    """
+    out: dict[str, str] = {}
+    if not VIEWS.exists():
+        return out
+    for line in VIEWS.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        at = row.get("at")
+        vid = row.get("id") or row.get("video_id")
+        if vid and at:
+            out.setdefault(vid, at)
     return out
 
 
@@ -338,8 +389,9 @@ def features(
     charts = (bars.get(topic) or {}).get("charts") or []
     m = _NUM.search(plain)
     out: dict[str, float | None] = {
-        # **既知の当たり**（`status.py` が別の道で -0.33 と出している）。
-        # ここが緑なら「特徴 → 順位相関」の配線は生きています。
+        # **08/15 の切替で 47〜69秒 → 27〜30秒 と完全に割れています。**
+        # `correlations` が「時期と分けられない」として向きを伏せます（冒頭）。
+        # 向きを読みたければ、**同じ時期の本を2群に割ってから**。
         "尺（秒）": None if seconds is None else float(seconds),
         "図の枚数": float(len(charts)),
         "1枚目の棒": float(len(charts[0])) if charts else 0.0,
@@ -365,6 +417,7 @@ def collect() -> tuple[list[dict[str, Any]], list[tuple[str, str]]]:
     """測れた本と、落とした本（理由つき）を返す。"""
     stats = per_video()
     led = ledger()
+    seen = first_seen()
     bars = json.loads(BARS.read_text(encoding="utf-8")) if BARS.exists() else {}
 
     rows: list[dict[str, Any]] = []
@@ -398,6 +451,9 @@ def collect() -> tuple[list[dict[str, Any]], list[tuple[str, str]]]:
                 "views": float(views),
                 "engaged": float(s.get("engagedViews", 0)) / float(views),
                 "subs": float(s.get("subscribersGained", 0)),
+                # **いつ作ったか**（`first_seen`）。特徴と時期が分けられるかを
+                # `correlations` がこれで見ます。**無い本は None**（0 で埋めない）。
+                "first_seen": seen.get(vid),
                 "features": f,
             }
         )
@@ -405,16 +461,78 @@ def collect() -> tuple[list[dict[str, Any]], list[tuple[str, str]]]:
     return rows, dropped
 
 
+# 時期で切ったときの両側の下限。**これ未満の側では割れたと言わない**
+# （端の1本を切り出せば、どんな特徴でも「きれいに割れた」ことにできます）。
+MIN_SIDE = 3
+
+
+def _time_split(name: str, rows: list[dict[str, Any]]) -> float | None:
+    """**時期を1点で切ったとき、その特徴がどれだけきれいに割れるか**（0.5〜1.0）。
+
+    1.0 ＝ 完全に割れている。その特徴は「切替の前か後か」の言い換えでしかなく、
+    **再生との向きは時期の効きと区別がつきません。**
+
+    **順位相関では検出できません**（2026-08-20 に実測して差し替えた）。
+    尺は 08/15 の切替で 47〜69秒 → 27〜30秒 と完全に割れているのに、
+    切替より前の13本の中では尺が上下するので、**全体の順位相関は -0.48** にしかならず、
+    どんな線を引いても「無関係」の側と見分けられません。
+    見たいのは順位の一致ではなく、**1点で切れるかどうか**のほうです。
+
+    **時刻の分かる本が `MIN_N` に届かなければ `None`**（判定しない）。
+    ここで 0.5 を返すと「時期とは無関係」という嘘の点になります。
+    """
+    pairs = sorted(
+        (r["first_seen"], r["features"][name])
+        for r in rows
+        if r.get("first_seen") and r["features"][name] is not None
+    )
+    n = len(pairs)
+    if n < MIN_N:
+        return None
+    ys = [b for _, b in pairs]
+    if len(set(ys)) < 2:
+        return None
+    best = 0.5
+    for k in range(MIN_SIDE, n - MIN_SIDE + 1):
+        # **同じ時刻をまたいで切らない**（順番の付けようがないので）。
+        if pairs[k - 1][0] == pairs[k][0]:
+            continue
+        early, late = ys[:k], ys[k:]
+        wins = sum((x < y) + 0.5 * (x == y) for x in early for y in late)
+        auc = wins / (len(early) * len(late))
+        best = max(best, auc, 1.0 - auc)
+    return best
+
+
 def correlations(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """特徴ごとに、engaged との向きと 再生 との向き。**向きだけを読むこと。**
 
     返るのは1特徴1件の辞書で、`why` が空でないときは **向きを出していません**:
 
-        "本数不足"  測れた本が `MIN_N` 未満（＝ まだ待つ。控えが増えれば出ます）
-        "変化なし"  全部の本が同じ値（＝ **まだ一度も試していない**。待っても出ません）
+        "本数不足"        測れた本が `MIN_N` 未満（＝ まだ待つ。控えが増えれば出ます）
+        "変化なし"        全部の本が同じ値（＝ **まだ一度も試していない**。待っても出ません）
+        "時期と分けられない"  時期を1点で切ると特徴がきれいに割れる（`_time_split` ≥ `TIME_CONFOUND`）
 
-    **2つを混ぜないこと。** 前の版は両方 `None` を返していたので、
+    **3つを混ぜないこと。** 前の版は最初の2つを両方 `None` で返していたので、
     口が「本数が足りない」と印字し、**「1本も試していない」が待てば出るものに見えていました。**
+
+    ## 3つ目を 2026-08-20 に足した理由（**この道具の唯一の物差しが、時期の別名でした**）
+
+    ここは長らく **尺 × 再生 = -0.32** を「既知の当たり」として持ち、
+    `tests/test_build_perf.py` が符号ごと固定していました。実測を並べると:
+
+        最初に観測した順   尺
+        08/06〜08/15 02:12   47〜69秒（13本）
+        08/15 12:18〜08/17   27〜30秒（**6本**）
+
+    **境目で完全に割れています。** 08/15 にパイプラインが短いショートへ
+    切り替わっているので、**尺の順位は「いつ作ったか」の順位そのもの**です。
+    -0.32 は尺の効きではなく、**切替の前後で再生が違ったこと**しか言っていません。
+
+    **パイプライン全体で一斉に変えた作りは、全部この形になります。**
+    向きを出すには、**同じ時期の本を2つの群に割る**しかありません
+    （`script_writer.title_form` / `hook_form` がやっている、IDのハッシュで
+    半々にする形。あちらは時期と直交するので、この判定に当たりません）。
     """
     if not rows:
         return []
@@ -428,11 +546,18 @@ def correlations(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         ]
         n = len(pairs)
         if n < MIN_N:
-            out.append({"name": name, "eng": None, "views": None, "n": n, "why": "本数不足"})
+            out.append({"name": name, "eng": None, "views": None, "n": n,
+                        "time": None, "why": "本数不足"})
             continue
         xs = [a for a, _, _ in pairs]
         if len(set(xs)) < 2:
-            out.append({"name": name, "eng": None, "views": None, "n": n, "why": "変化なし"})
+            out.append({"name": name, "eng": None, "views": None, "n": n,
+                        "time": None, "why": "変化なし"})
+            continue
+        rho_t = _time_split(name, rows)
+        if rho_t is not None and rho_t >= TIME_CONFOUND:
+            out.append({"name": name, "eng": None, "views": None, "n": n,
+                        "time": rho_t, "why": "時期と分けられない"})
             continue
         out.append(
             {
@@ -440,6 +565,7 @@ def correlations(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "eng": _spearman(xs, [b for _, b, _ in pairs]),
                 "views": _spearman(xs, [c for _, _, c in pairs]),
                 "n": n,
+                "time": rho_t,
                 "why": "",
             }
         )

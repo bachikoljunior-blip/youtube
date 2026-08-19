@@ -83,22 +83,109 @@ def test_question_titles_are_detected():
     assert build_perf.features("t", "医療費控除で2万209円戻る", {})["題が問いか"] == 0.0
 
 
-def test_known_hit_length_vs_views_is_negative():
+def test_既知の当たり_単調な特徴は向きが出る():
     """**既知の当たり**（`docs/trigger_main.md` §4「道具を足す回は当たりを先に固定する」）。
 
-    `scripts/status.py` が別の道（Analytics の一覧）で出している
-    **尺 × 再生 = -0.33**（n=20・再生30未満は除外）を、この道具でも持ちます。
-    **配線が落ちると、特徴の件数は減らないまま向きだけ消えるので、
-    ここが唯一の物差しです。**
+    **2026-08-20 に、実データの 尺 × 再生 = -0.33 から取り替えました**（下の検査）。
+    あれは尺の効きではなく **08/15 の切替の前後** だったので、
+    物差しとして使うと「時期と分けられない」を直した瞬間に落ちます。
+
+    ここが見るのは **「特徴 → 順位相関」の配線だけ**です。
+    手で作った行なので、実データが動いても意味が変わりません。
+    **配線が落ちると、特徴の件数は減らないまま向きだけ消えます。**
+    """
+    # 時期はばらけさせる（**時期と分けられない側で落とさせない**）。
+    # x は時期に対して行ったり来たりするが、views とは単調に増える。
+    xs = [1.0, 12.0, 2.0, 11.0, 3.0, 10.0, 4.0, 9.0, 5.0, 8.0, 6.0, 7.0]
+    rows = [
+        {
+            "video_id": f"v{i}",
+            "topic": "t",
+            "title": "",
+            "views": float(x * 100),
+            "engaged": x / 20.0,
+            "subs": 0.0,
+            "first_seen": f"2026-08-{i + 1:02d}T00:00:00Z",
+            "features": {"手で作った特徴": x},
+        }
+        for i, x in enumerate(xs)
+    ]
+    d = next(c for c in build_perf.correlations(rows) if c["name"] == "手で作った特徴")
+    assert d["why"] == "", f"向きが出ていません: {d}"
+    assert d["views"] == 1.0 and d["eng"] == 1.0, (
+        f"完全に単調なのに {d}。**特徴 → 順位相関 の配線を疑うこと**")
+
+
+def test_既知の当たり_尺は時期と分けられない():
+    """**実データ側の当たり**（2026-08-20 に実測して固定）。
+
+    ショートの尺は 08/15 にパイプラインごと 47〜69秒 → 27〜30秒 へ切り替わっており、
+    **最初に観測した順に並べると、境目で完全に割れます。**
+    だから `尺 × 再生 = -0.32` は「短いほど回る」ではなく、
+    **「切替の前後で再生が違った」**しか言っていません。
+
+    **ここが緑でなくなったら、それは進歩です** —— 同じ時期の本で尺が割れた
+    （＝ A/B で振り分けた）ということなので、そのときは向きを読んでよい。
     """
     rows, _ = build_perf.collect()
     d = next(c for c in build_perf.correlations(rows) if c["name"] == "尺（秒）")
-    assert d["why"] == "", f"尺が測れていません: {d}"
-    assert d["n"] >= 15, f"測れた本が {d['n']}本 しかありません"
-    assert d["views"] is not None and d["views"] < -0.15, (
-        f"尺 × 再生 = {d['views']}。status.py の -0.33 と符号が合いません。"
-        "**特徴 → 順位相関 の配線を疑うこと**"
-    )
+    if d["why"] == "本数不足":
+        return  # 日枠が切れて `尺` が引けない回（`videos.list` が 403）
+    assert d["why"] == "時期と分けられない", (
+        f"尺が時期と分けられるようになりました: {d}。"
+        "**同じ時期の本で尺が割れたなら進歩です。**この検査を書き換えて、"
+        "向きのほうを読むこと")
+    assert d["eng"] is None and d["views"] is None, (
+        "時期と分けられない特徴の向きを印字してはいけません")
+
+
+def test_時期で完全に割れる特徴は向きを出さない():
+    """**切替日で丸ごと入れ替わった作りは、再生との向きを出さないこと。**
+
+    前の版は、こういう特徴も普通の順位相関として印字していました。
+    そのまま読むと「短いほど回る」に見えますが、言えるのは
+    **「切替の前後で再生が違った」**までです。
+    """
+    rows = []
+    for i in range(12):
+        late = i >= 6
+        rows.append({
+            "video_id": f"v{i}",
+            "topic": "t",
+            "title": "",
+            "views": 1000.0 if late else 500.0,
+            "engaged": 0.4 if late else 0.2,
+            "subs": 0.0,
+            "first_seen": f"2026-08-{i + 1:02d}T00:00:00Z",
+            # 前半は 50〜55、後半は 27〜32。**重なりません**
+            "features": {"尺（秒）": (27.0 + i) if late else (50.0 + i)},
+        })
+    d = next(c for c in build_perf.correlations(rows) if c["name"] == "尺（秒）")
+    assert d["why"] == "時期と分けられない", d
+    assert d["time"] == 1.0, f"完全に割れているのに {d['time']}"
+
+
+def test_時期がばらけている特徴は_割れたと言わない():
+    """**逆側**。同じ時期の中で値が割れている特徴は、そのまま向きを出すこと。
+
+    `title_form` / `hook_form` はIDのハッシュで半々に割るので、
+    **時期と直交します。**ここが誤って止まると、A/B の結果が読めなくなります。
+    """
+    rows = []
+    for i in range(12):
+        rows.append({
+            "video_id": f"v{i}",
+            "topic": "t",
+            "title": "",
+            "views": 1000.0 if i % 2 else 500.0,
+            "engaged": 0.4 if i % 2 else 0.2,
+            "subs": 0.0,
+            "first_seen": f"2026-08-{i + 1:02d}T00:00:00Z",
+            "features": {"問いか": float(i % 2)},
+        })
+    d = next(c for c in build_perf.correlations(rows) if c["name"] == "問いか")
+    assert d["why"] == "", d
+    assert d["views"] == 1.0
 
 
 def test_no_data_and_no_variation_are_told_apart():

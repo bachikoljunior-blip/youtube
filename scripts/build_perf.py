@@ -23,6 +23,8 @@ def _rho(d: dict, key: str) -> str:
         return f"（測れた本が{d['n']}本・{build_perf.MIN_N}本から出す）"
     if d["why"] == "変化なし":
         return f"（{d['n']}本とも同じ値＝**一度も試していない**）"
+    if d["why"] == "時期と分けられない":
+        return f"（時期で {d['time']:.0%} 割れる＝**時期と分けられない**）"
     v = d[key]
     if v is None:
         return "（向きが出ません）"
@@ -74,6 +76,7 @@ def main(argv: list[str] | None = None) -> int:
 
     waiting = [d for d in cors if d["why"] == "本数不足"]
     untried = [d for d in cors if d["why"] == "変化なし"]
+    confounded = [d for d in cors if d["why"] == "時期と分けられない"]
     if waiting:
         print()
         print(f"  --- **待てば出る {len(waiting)}件**（控えのある本が {build_perf.MIN_N}本 に届いていない）---")
@@ -90,6 +93,18 @@ def main(argv: list[str] | None = None) -> int:
             print(f"    {d['name']:<14} {d['n']}本とも同じ")
         print("    **これは「効かない」ではありません。「一度も試していない」です。**")
         print("    向きを知りたければ、**違う値の本を作って出すしかありません。**")
+
+    if confounded:
+        print()
+        print(f"  --- [!] **時期と分けられない {len(confounded)}件**"
+              "（特徴の順位が、作った順とほぼ一致）---")
+        for d in confounded:
+            print(f"    {d['name']:<14} 時期を1点で切ると {d['time']:.0%} 割れる（n={d['n']}）")
+        print("    **パイプライン全体で一斉に変えた作りは、必ずこの形になります。**")
+        print("    切替日の前と後で値が丸ごと入れ替わるので、**再生との向きは")
+        print("    「その作りが効いた」ではなく「切替の前後で再生が違った」しか言いません。**")
+        print("    向きを知りたければ、**同じ時期の本を2つの群に割ること**")
+        print("    （`script_writer.title_form` / `hook_form` のように、IDのハッシュで半々に）。")
 
     if dropped:
         print()
