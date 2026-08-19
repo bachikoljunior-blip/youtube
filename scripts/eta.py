@@ -108,6 +108,139 @@ LONG_PER_DAY_SCENARIOS = (1, 2, 4)
 
 NEVER = 10 ** 9  # 「届かない」を日数で表すときの番人
 
+# --- **1本あたり再生の標本に、入れてよい本の条件**（2026-08-20 03:1x に足した） ---
+#
+# **伸びきるまでに要る時間**（`data/views.jsonl` を実測。n=9 ＝ 最後の観測が
+# 168時間より後で、かつ 100再生を超えた本だけ）:
+#
+#       6時間  中央値  0.0%      36時間  中央値  98.8%
+#      12時間  中央値 77.6%      48時間  中央値 100.0%
+#      24時間  中央値 99.1%     168時間  中央値 100.0%
+#
+# **48時間で伸びが終わります。** だから「まだ48時間経っていない本」を標本に入れると、
+# その本は**一生ぶんではなく数時間ぶん**を持って平均に入り、天井を下振れさせます。
+MATURE_HOURS = 48
+
+
+def published_at(views_path: Path | None = None,
+                 uploaded_path: Path | None = None) -> dict[str, datetime]:
+    """`video_id` → **公開時刻**（UTC）。
+
+    ## 出どころは2つ。**順番に意味があります**
+
+    1. `data/views.jsonl` の `at - hours`（`hours` は公開からの経過時間）。
+       **観測のたびに追記されるので、いちばん古い行がいちばん正確**です。
+       `scripts/per_day_views.py` が同じ復元をしています
+    2. `data/uploaded.jsonl` の `at`（**予約した公開時刻**）。1 に無い本 ——
+       つまり**まだ一度も観測されていない本**は、ここでしか年齢が分かりません
+
+    **`src/build_perf.py` の `first_seen()` とは別物です。** あちらは
+    「最初に観測した時刻」で、こちらは「公開した時刻」。観測は公開の後なので、
+    `first_seen` は必ず遅れます（実測で最大 38.7時間）。
+    **年齢の門に使うなら、遅れるほうを使ってはいけません。**
+    """
+    views_path = views_path or (ROOT / "data" / "views.jsonl")
+    uploaded_path = uploaded_path or (ROOT / "data" / "uploaded.jsonl")
+    out: dict[str, datetime] = {}
+
+    def _parse(v) -> datetime | None:
+        try:
+            d = datetime.fromisoformat(str(v).replace("Z", "+00:00"))
+        except (ValueError, TypeError):
+            return None
+        return d if d.tzinfo else d.replace(tzinfo=timezone.utc)
+
+    if views_path.exists():
+        for line in views_path.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            vid = row.get("id") or row.get("video_id")
+            at = _parse(row.get("at"))
+            hours = row.get("hours")
+            if not vid or at is None or hours is None:
+                continue
+            try:
+                born = at - timedelta(hours=float(hours))
+            except (TypeError, ValueError):
+                continue
+            # いちばん古い観測が、いちばん正確（誤差は観測の間隔ぶんしか無い）
+            if vid not in out or born < out[vid]:
+                out[vid] = born
+
+    if uploaded_path.exists():
+        for line in uploaded_path.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            vid = row.get("video_id")
+            at = _parse(row.get("at"))
+            if vid and at is not None:
+                out.setdefault(vid, at)   # 1 のほうが正確なので、上書きしない
+    return out
+
+
+def drop_unripe(rows, pub: dict[str, datetime], now: datetime,
+                window_days: int = 28) -> tuple[list, dict[str, list[str]]]:
+    """**1本あたり再生の標本から、数えてはいけない本を落とす。**
+
+    返すのは `(残した行, 落とした理由 → video_id の一覧)`。
+
+    ## なぜ要るか（2026-08-20 03:1x。**実測で見つけました**）
+
+    天井は `1本あたり再生 × 92本 × 30日` です。この `1本あたり再生` は
+    **「1本が一生に集める再生数」**でなければ、掛け算が意味を持ちません。
+    ところが測っていたのは **「直近28日の窓に落ちた再生数」**で、
+    次の2つが混ざっていました。
+
+    **(1) まだ公開されていない本**（`未公開`）。実測 2本 —— `KdlvGxloIg4` は
+    `uploaded.jsonl` の `at` が **08/24**（予約）で、Analytics には
+    **1再生**の行が立っています。**予約は 359本あります。**
+    そのうち何本かが1再生ずつ漏れて標本に入るたび、平均は 0 のほうへ引かれます。
+    **本数を増やすほど天井が下がる**という、向きの逆さまな計器になります。
+
+    **(2) 公開から48時間が経っていない本**（`未熟`）。上の `MATURE_HOURS` の実測どおり、
+    48時間で伸びは終わります。**それより若い本は、一生ぶんではなく数時間ぶん**を
+    持って平均に入ります。
+
+    **(3) 窓より前に公開された本**（`窓の外`）。いまは1本もいませんが、
+    **08/22 ごろから出ます** —— 08/06 の本は、窓が動けば「28日窓の中の再生 ≒ 0」に
+    なります。伸びは48時間で終わっているので、**残っているのは尻尾だけ**です。
+    それを「1本あたり」として平均に入れると、**チャンネルが古くなるだけで
+    天井が下がり続けます。**
+
+    ## 落とし先が無くなったら、落とさない
+
+    `views.jsonl` は Data API の読みで作られるので、**日枠が閉じた窓では更新が止まります**
+    （実測: 08/18 09:08 で止まったまま 1.7日）。**年齢の出どころが全部欠けたときに
+    標本を空にすると、この道具の本体（天井）が黙って 0 になります。**
+    そのときは**落とさずに全部返し、理由に `落とし先なし` を立てます。**
+    """
+    kept: list = []
+    dropped: dict[str, list[str]] = {"未公開": [], "未熟": [], "窓の外": []}
+    ripe_before = now - timedelta(hours=MATURE_HOURS)
+    window_open = now - timedelta(days=window_days)
+    for r in rows:
+        vid = r[0]
+        born = pub.get(vid)
+        if born is None or born > now:
+            dropped["未公開"].append(vid)
+        elif born > ripe_before:
+            dropped["未熟"].append(vid)
+        elif born < window_open:
+            dropped["窓の外"].append(vid)
+        else:
+            kept.append(r)
+    if not kept:
+        return list(rows), {"落とし先なし": [r[0] for r in rows]}
+    return kept, {k: v for k, v in dropped.items() if v}
+
 
 def split_per_video(rows) -> tuple[list[int], list[int]]:
     """`dimensions=video` の行を、**尺で2つに割る**（2026-08-19 14:2x に足した）。
@@ -212,6 +345,11 @@ def _measure() -> dict:
     # 尺は Analytics では取れないので、**平均視聴秒 ÷ 平均視聴率**で復元します。
     per_video = q(28, "views,averageViewDuration,averageViewPercentage",
                   dimensions="video", sort="-views", maxResults=200)
+    # **標本に入れてよい本だけにする**（2026-08-20 03:1x。`drop_unripe` に理由）。
+    # 予約したまま公開されていない本と、公開から48時間が経っていない本は、
+    # **一生ぶんではない再生数**を持って平均に入り、天井を下振れさせます。
+    per_video, unripe = drop_unripe(per_video, published_at(),
+                                    datetime.now(timezone.utc), window_days=28)
     vals, long_sorted = split_per_video(per_video)
     median_views = vals[len(vals) // 2] if vals else 0
     long_median = long_sorted[len(long_sorted) // 2] if long_sorted else None
@@ -246,6 +384,8 @@ def _measure() -> dict:
         "long_median_per_video": long_median,
         "long_videos_28d": len(long_sorted),
         "long_views_28d": sum(long_sorted),
+        # **標本から落とした本**（理由 → 本数）。0件でも鍵は残す（黙って消えないため）
+        "per_video_dropped": {k: len(v) for k, v in unripe.items()},
     }
 
 
@@ -271,6 +411,37 @@ def _days_to(need: float, per_day: float) -> float:
     # 100年より先は「届かない」と同じに畳む。**桁の大きい数を残すと、
     # 前の回との差（縮んだぶん）がその桁に埋もれて読めなくなります。**
     return NEVER if days > 36_500 else days
+
+
+def _print_dropped(P, m: dict) -> None:
+    """**標本から何本落としたか**を、天井の行のすぐ下に出す（2026-08-20 03:1x）。
+
+    ここは長らく、こう**断って済ませて**いました ——
+
+        **下振れ側で読むこと** —— 直近数日に公開した本はまだ伸びきっていないので、
+        平均はその分だけ低く出ます。
+
+    **断りは、下振れの大きさを言いません。**（実測では 869 → 952 ＝ **+9.6%**、
+    いちばん近い帯までの倍率が **1.4倍 → 1.27倍**）。**測って落とせるものでした。**
+    """
+    dropped = m.get("per_video_dropped") or {}
+    if not dropped:
+        P("      （標本から落とした本はありません）")
+        return
+    if "落とし先なし" in dropped:
+        P(f"      [!] **年齢が1本も引けませんでした**（{dropped['落とし先なし']}本）。"
+          "`data/views.jsonl` が古い可能性 → **落とさずに全部数えています。下振れ側で読むこと。**")
+        return
+    order = ("未公開", "未熟", "窓の外")
+    why = {
+        "未公開": "**まだ公開されていない**（予約のまま Analytics に行が立つ。予約は 359本ある）",
+        "未熟": f"公開から **{MATURE_HOURS}時間**が経っていない（伸びが終わっていない）",
+        "窓の外": "**28日の窓より前**に公開（窓に落ちているのは伸びた後の尻尾だけ）",
+    }
+    P("      標本から落とした本（**一生ぶんの再生数を持っていない本**）:")
+    for k in order:
+        if dropped.get(k):
+            P(f"        {k}  {dropped[k]}本 …… {why[k]}")
 
 
 def _fmt_days(days: float) -> str:
@@ -447,7 +618,8 @@ def report(m: dict, a: dict) -> list[str]:
     P(f"  登録率            {a['sub_rate']*100:>10.4f} %   ＝ 再生 {1/a['sub_rate']:,.0f} 回につき1人" if a["sub_rate"] else "  登録率            **0** ＝ 何回再生されても増えていない")
     P(f"  長尺の視聴時間    {m['long_hours_365']:>10,.1f} 時間（直近365日。門は {LONG_HOURS_GATE:,}）")
     P(f"  ショート90日      {m['shorts_views_90d']:>10,} 回（門は {SHORTS_VIEWS_GATE:,}）")
-    P(f"  1本あたり再生     {a['per_video_now']:>10,} 回（**ショート**・**平均**・直近28日に再生のあった {m['videos_with_views_28d']} 本）")
+    P(f"  1本あたり再生     {a['per_video_now']:>10,} 回（**ショート**・**平均**・"
+      f"直近28日に再生のあった本のうち、**標本に残った {m['videos_with_views_28d']} 本**）")
     if m.get("median_views_per_video") and m["median_views_per_video"] != a["per_video_now"]:
         P(f"    （中央値は {m['median_views_per_video']:,} 回 ＝ **典型的な1本**。"
           "**天井には平均のほうを使います** —— 天井は N本ぶんの合計で、合計 ＝ N × 平均）")
@@ -485,8 +657,8 @@ def report(m: dict, a: dict) -> list[str]:
     P(f"    ショート  **{a['per_video_now']:,}回**／本（**平均**・n={m.get('videos_with_views_28d', 0)}・**床は当てていません**）")
     P("      **床（30再生未満は除外）を外しました**（2026-08-19 15:0x）。床は標本からは落としますが、")
     P(f"      **下の {UPLOAD_CAP_PER_DAY}本 からは落としません。** 落ちた本まで「通った本と同じだけ回る」ことになっていました。")
-    P("      **下振れ側で読むこと** —— 直近数日に公開した本はまだ伸びきっていないので、平均はその分だけ低く出ます。")
     P("      **天井は「本数を増やす意味があるか」を決める数**なので、上振れ側で読むと『届く』を作ります。")
+    _print_dropped(P, m)
     if lpv is None:
         P("    長尺      **測れていません**（直近28日に長尺の再生が1本もない）"
           " → 下の長尺の行は**ショートの数で代用**しています。**実測ではありません。**")
@@ -751,12 +923,23 @@ def _drift(current: dict) -> list[str]:
 
 
 def _scale_note(prev: dict, current: dict) -> list[str]:
-    """**物差しを取り替えた回は、その差を「悪くなった」と読ませない。**"""
+    """**物差しを取り替えた回は、その差を「悪くなった」と読ませない。**
+
+    **向きは両方あります**（2026-08-20 03:1x に足した）。取り替えは
+    悪くなる側にも良くなる側にも出るので、**良くなった側でも断ること** ——
+    断らないと、次の回が **+9.6% を「この回の作業が効いた」と読みます。**
+    """
+    out: list[str] = []
     if prev.get("views_per_video") is None and current.get("views_per_video") is not None:
-        return ["    [!] **1本あたり再生の物差しが、この点から変わりました**"
+        out += ["    [!] **1本あたり再生の物差しが、この点から変わりました**"
                 "（床つきの中央値 → 床なしの平均）。",
                 "        **上の変化は実績ではありません。** 実績として読めるのは、次の点からです。"]
-    return []
+    if prev.get("per_video_dropped") is None and current.get("per_video_dropped") is not None:
+        out += ["    [!] **1本あたり再生の標本が、この点から変わりました**"
+                "（予約のまま公開していない本・公開から48時間未満の本・28日の窓より前の本を落とした）。",
+                "        **上の変化は実績ではありません**（実測 869 → 952 ＝ +9.6%）。"
+                " 実績として読めるのは、次の点からです。"]
+    return out
 
 
 def main() -> int:

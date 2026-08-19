@@ -400,3 +400,162 @@ def test_同値の点が続いても_入力が違う最後の点と比べる(tmp
     assert "実データがまだ動いていません" in lines
     # 比べる相手は older（2,000日）なので、門1の行が出る
     assert "2,000日 → 1,402日" in lines
+
+
+# ======================================================================
+# **1本あたり再生の標本に、入れてよい本の条件**（2026-08-20 03:1x に足した）
+#
+# 天井は `1本あたり再生 × 92本 × 30日`。この「1本あたり再生」が
+# **一生ぶんの再生数**でなければ、掛け算そのものが意味を持ちません。
+# 実測では、まだ公開していない予約の本が **1再生の行**で標本に入っていました。
+# **予約は 359本**あるので、放っておくと**本数を増やすほど天井が下がります。**
+# ======================================================================
+
+from datetime import datetime, timedelta, timezone  # noqa: E402
+
+_NOW = datetime(2026, 8, 20, 3, 0, tzinfo=timezone.utc)
+
+
+def _pub(**kw):
+    return {k: _NOW - timedelta(hours=v) for k, v in kw.items()}
+
+
+def test_まだ公開していない本は標本から落ちる():
+    """**この検査が、この回の本体です。**
+
+    実測 `KdlvGxloIg4` は `uploaded.jsonl` の `at` が **08/24**（予約）なのに、
+    Analytics には **1再生**の行が立っていました。予約は 359本あります。
+    """
+    rows = [["done", 1_000, 20, 40.0], ["yoyaku", 1, 20, 40.0]]
+    pub = {"done": _NOW - timedelta(days=5), "yoyaku": _NOW + timedelta(days=4)}
+    kept, dropped = eta.drop_unripe(rows, pub, _NOW)
+    assert [r[0] for r in kept] == ["done"]
+    assert dropped["未公開"] == ["yoyaku"]
+
+
+def test_年齢の引けない本も未公開に入れる():
+    """**一度も観測されていない本は、公開されたことを示すものが何もありません。**"""
+    kept, dropped = eta.drop_unripe([["nazo", 1, 20, 40.0], ["ok", 900, 20, 40.0]],
+                                    {"ok": _NOW - timedelta(days=5)}, _NOW)
+    assert [r[0] for r in kept] == ["ok"]
+    assert dropped["未公開"] == ["nazo"]
+
+
+def test_48時間経っていない本は落ちる_伸びが終わっていないから():
+    """実測（`data/views.jsonl` n=9）: 24時間で中央値 99.1%・48時間で 100%。
+
+    **それより若い本は、一生ぶんではなく数時間ぶんを持って平均に入ります。**
+    """
+    rows = [["wakai", 200, 20, 40.0], ["jukusi", 1_000, 20, 40.0]]
+    kept, dropped = eta.drop_unripe(rows, _pub(wakai=10, jukusi=120), _NOW)
+    assert [r[0] for r in kept] == ["jukusi"]
+    assert dropped["未熟"] == ["wakai"]
+    assert eta.MATURE_HOURS == 48
+
+
+def test_ちょうど48時間の本は残る():
+    kept, _ = eta.drop_unripe([["x", 900, 20, 40.0]], _pub(x=48), _NOW)
+    assert [r[0] for r in kept] == ["x"]
+
+
+def test_28日の窓より前に公開した本は落ちる():
+    """**チャンネルが古くなるだけで天井が下がる**のを止める検査。
+
+    伸びは48時間で終わるので、窓に落ちているのは**尻尾だけ**です。
+    それを「1本あたり」として平均に入れると、**時間が経つほど下がり続けます。**
+    """
+    rows = [["furui", 3, 20, 40.0], ["mado", 1_000, 20, 40.0]]
+    kept, dropped = eta.drop_unripe(rows, _pub(furui=24 * 40, mado=24 * 5), _NOW,
+                                    window_days=28)
+    assert [r[0] for r in kept] == ["mado"]
+    assert dropped["窓の外"] == ["furui"]
+
+
+def test_落とし先が無くなったら落とさない():
+    """`views.jsonl` は Data API の読みで作るので、**日枠が閉じると更新が止まります**
+    （実測 08/18 09:08 で 1.7日）。**年齢が全部欠けたときに標本を空にすると、
+    天井が黙って 0 になります。**
+    """
+    rows = [["a", 900, 20, 40.0], ["b", 1_000, 20, 40.0]]
+    kept, dropped = eta.drop_unripe(rows, {}, _NOW)
+    assert len(kept) == 2, "**全部落ちるくらいなら、落とさない**"
+    assert dropped["落とし先なし"] == ["a", "b"]
+    assert "未公開" not in dropped
+
+
+def test_落とした本数は測定の返りに載る_黙って消えないため():
+    m = _measured(per_video_dropped={"未公開": 2})
+    出た = eta.report(m, eta.analyse(m))
+    assert any("未公開" in l and "2本" in l for l in 出た)
+
+
+def test_落とした本が0件でもその旨を出す():
+    m = _measured(per_video_dropped={})
+    出た = eta.report(m, eta.analyse(m))
+    assert any("落とした本はありません" in l for l in 出た)
+
+
+def test_落とし先なしは下振れ側で読めと断る():
+    m = _measured(per_video_dropped={"落とし先なし": 21})
+    出た = eta.report(m, eta.analyse(m))
+    assert any("年齢が1本も引けませんでした" in l for l in 出た)
+
+
+def test_公開時刻は観測の時刻ではない(tmp_path):
+    """`build_perf.first_seen()` は**最初に観測した時刻**で、公開より必ず後です
+    （実測で最大 38.7時間の遅れ）。**年齢の門に遅れるほうを使ってはいけません。**
+    """
+    views = tmp_path / "views.jsonl"
+    views.write_text(
+        json.dumps({"at": "2026-08-08T00:00:00Z", "id": "v", "hours": 38.7, "views": 500}) + "\n"
+        + json.dumps({"at": "2026-08-09T00:00:00Z", "id": "v", "hours": 62.7, "views": 520}) + "\n",
+        encoding="utf-8")
+    pub = eta.published_at(views_path=views, uploaded_path=tmp_path / "nai.jsonl")
+    assert pub["v"] == datetime(2026, 8, 6, 9, 18, tzinfo=timezone.utc), \
+        "**at - hours**（観測の時刻ではなく、そこから遡った公開時刻）"
+
+
+def test_控えは観測を上書きしない_観測のほうが正確():
+    """`uploaded.jsonl` の `at` は**予約した時刻**で、実際の公開とはずれます。"""
+    import tempfile
+    with tempfile.TemporaryDirectory() as d:
+        d = Path(d)
+        (d / "views.jsonl").write_text(
+            json.dumps({"at": "2026-08-08T00:00:00Z", "id": "v", "hours": 24.0, "views": 5}) + "\n",
+            encoding="utf-8")
+        (d / "uploaded.jsonl").write_text(
+            json.dumps({"video_id": "v", "at": "2026-08-01T00:00:00Z"}) + "\n"
+            + json.dumps({"video_id": "w", "at": "2026-08-24T00:00:00Z"}) + "\n",
+            encoding="utf-8")
+        pub = eta.published_at(views_path=d / "views.jsonl", uploaded_path=d / "uploaded.jsonl")
+    assert pub["v"] == datetime(2026, 8, 7, 0, 0, tzinfo=timezone.utc)
+    assert pub["w"] == datetime(2026, 8, 24, 0, 0, tzinfo=timezone.utc), \
+        "観測に無い本は、控えの予約時刻でしか年齢が分からない"
+
+
+def test_標本を取り替えた点も_差を実績と読ませない(tmp_path, monkeypatch):
+    """**取り替えは良くなる側にも出ます**（869 → 952 ＝ +9.6%）。
+
+    断らないと、次の回が**この回の作業が効いた**と読みます。
+    `views_per_day` も `sub_rate` も1つも動いていないのに、です。
+    """
+    log = tmp_path / "eta.jsonl"
+    prev = _measured(views_per_video=869, median_views_per_video=821)
+    prev["per_video_now"] = 869
+    prev["days_subs"] = 1_402
+    prev["days_monetized"] = eta.NEVER
+    log.write_text(json.dumps(prev, ensure_ascii=False) + "\n", encoding="utf-8")
+    monkeypatch.setattr(eta, "LOG", log)
+
+    cur = _measured(views_per_video=952, median_views_per_video=1_035,
+                    per_video_dropped={"未公開": 2})
+    cur["per_video_now"] = 952
+    cur["days_subs"] = 1_402
+    cur["days_monetized"] = eta.NEVER
+    lines = "\n".join(eta._drift(cur))
+    assert "標本が、この点から変わりました" in lines
+    assert "上の変化は実績ではありません" in lines
+
+    # 揃った2点では出ません（毎回出ると意味が薄れます）
+    log.write_text(json.dumps(cur, ensure_ascii=False) + "\n", encoding="utf-8")
+    assert "標本が、この点から変わりました" not in "\n".join(eta._drift(cur))
