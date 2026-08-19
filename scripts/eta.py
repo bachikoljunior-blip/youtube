@@ -131,6 +131,93 @@ NEVER = 10 ** 9  # 「届かない」を日数で表すときの番人
 MATURE_HOURS = 48
 
 
+# --- **測定が返ってくる日**（2026-08-20 07:1x に足した） ---
+#
+# `blocking`（段取りを止めている未測定の入力）は「**どう測るか**」は書きますが、
+# **「いつ答えが返るか」を1行も書いていませんでした。** そこが空いていたので、
+# 測定の的にする日は「穴の空いている日」——つまり**公開の断絶を埋める都合**——で
+# 選ばれていました（08/19 の申し送りは 3回続けて `--date 2026-09-02`）。
+#
+# **穴埋めと測定は、別の仕事です。** 穴埋めは「いつ埋めても同じ」ですが、
+# 測定は**遅らせたぶんだけ段取り全体が遅れます**。実測（`data/uploaded.jsonl`・
+# 2026-08-20 時点）では、いちばん近い穴は **09/02** で、いちばん早く予約できる日
+# （明日）との差は **12日**。答えが返るのが 12日 遅くなります。
+#
+# 答えが返るまでにかかる日数は、この2つの和です:
+#
+#     公開 → 伸びきる    MATURE_HOURS（48時間）= 2日   `drop_unripe` が標本に入れる条件
+#     伸びきる → 読める  ANALYTICS_LAG_DAYS（3日）     Analytics は日次で3日遅れ
+#
+# **覆る条件**: 日枠が朝のうちに開いている回なら「今日」も予約できるので、
+# `soonest` は1日早くなります。ここは**閉じている側に倒して**明日から数えています
+# （名指しした日に予約できないほうが損なので）。
+ANALYTICS_LAG_DAYS = 3
+
+# **予約の日付は全部 JST です。**`date.today()` はコンテナの TZ（＝UTC）を読むので、
+# **JST の 00:00〜09:00 は前日を返します。** 2026-08-20 07:1x（JST）に足したこの節が、
+# 最初の版で「いちばん早く予約できる日 ＝ 08/20」と印字しました。08/20 は
+# **その時点で既に今日**（しかも 25本 予約済み）で、明日ではありません。
+JST = timezone(timedelta(hours=9))
+
+
+def today_jst() -> date:
+    return datetime.now(JST).date()
+
+
+def answer_day(publish: date) -> date:
+    """その日に**公開**した本の1本あたり再生を、**読めるようになる日**（JST）。"""
+    return publish + timedelta(days=math.ceil(MATURE_HOURS / 24) + ANALYTICS_LAG_DAYS)
+
+
+def measure_targets(today: date, uploaded_path: Path | None = None) -> dict:
+    """測定の的にできる2つの日と、**選び方で失う日数**を出す。
+
+    - `soonest` …… いちばん早く予約できる日（**明日**。上の「覆る条件」）
+    - `hole`    …… いちばん近い「予約が0本の日」＝**穴埋めの手順が選ぶ日**
+    - `days_lost` …… `hole` を選ぶと、答えが何日遅れるか
+
+    穴が無ければ `hole` は `None`（そのときは失うものもありません）。
+    """
+    uploaded_path = uploaded_path or (ROOT / "data" / "uploaded.jsonl")
+    booked: set[date] = set()
+    if uploaded_path.exists():
+        for line in uploaded_path.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            at = row.get("at")
+            if not at:
+                continue
+            try:
+                d = datetime.fromisoformat(str(at).replace("Z", "+00:00"))
+            except (ValueError, TypeError):
+                continue
+            booked.add(d.date())
+
+    soonest = today + timedelta(days=1)
+    hole: date | None = None
+    # **予約が1件も無ければ「穴」はありません。** 空を「全部が穴」と読むと、
+    # `soonest` 自身が穴として返り、差が 0日 なのに競合しているように見えます。
+    last = max(booked) if booked else None
+    day = soonest
+    while last is not None and day <= last:
+        if day not in booked:
+            hole = day
+            break
+        day += timedelta(days=1)
+
+    ans_soon = answer_day(soonest)
+    out = {
+        "soonest": soonest, "answer_soonest": ans_soon,
+        "hole": hole, "answer_hole": answer_day(hole) if hole else None,
+        "days_lost": (hole - soonest).days if hole else 0,
+    }
+    return out
+
+
 def published_at(views_path: Path | None = None,
                  uploaded_path: Path | None = None) -> dict[str, datetime]:
     """`video_id` → **公開時刻**（UTC）。
@@ -741,7 +828,8 @@ def report(m: dict, a: dict) -> list[str]:
     return out
 
 
-def plan(m: dict, a: dict, density: int = PLAN_PUBLISH_PER_DAY) -> dict:
+def plan(m: dict, a: dict, density: int = PLAN_PUBLISH_PER_DAY,
+         today: date | None = None) -> dict:
     """**月20万に届くまでの段取りを、必ず1つ返す。**
 
     2026-08-20 06:2x・オーナー指示（原文）——
@@ -854,6 +942,7 @@ def plan(m: dict, a: dict, density: int = PLAN_PUBLISH_PER_DAY) -> dict:
             "why": ("段2・段4 の期日がこの1つに乗っている。"
                     "ショートは952回出ているので、要るのはその"
                     f"{sp['ratio_vs_shorts']:.2f}倍。**まだ一度も測り直していない**"),
+            "targets": measure_targets(today or today_jst()),
         }
     else:
         blocking = {
@@ -862,6 +951,7 @@ def plan(m: dict, a: dict, density: int = PLAN_PUBLISH_PER_DAY) -> dict:
             "need": "据え置きでよい（段1は実測だけで立っている）",
             "how": "1日25本の公開を保つ",
             "why": "段取りの入力に、未測定のものが無い",
+            "targets": None,
         }
 
     return {
@@ -914,6 +1004,24 @@ def _report_plan(m: dict, a: dict) -> list[str]:
     P(f"      要る: {b['need']}")
     P(f"      測り方: {b['how']}")
     P(f"      なぜここか: {b['why']}")
+    t = b.get("targets")
+    if t:
+        P("")
+        P("      **いつ答えが返るか**（公開 → 伸びきる 48時間 → Analytics 3日遅れ）:")
+        P(f"        いちばん早く予約できる日 **{t['soonest']}** に置く"
+          f" → 読めるのは **{t['answer_soonest']}**")
+        if t["hole"]:
+            P(f"        いちばん近い「予約0本の日」 {t['hole']} に置く"
+              f" → 読めるのは {t['answer_hole']}"
+              f"（**{t['days_lost']}日 遅い**）")
+            if t["days_lost"] > 0:
+                P("        [!] **穴埋めと測定を同じ `--date` で兼ねないこと。**"
+                  " 穴はいつ埋めても同じですが、")
+                P(f"            測定は遅らせたぶんだけ段取り全体が遅れます"
+                  f"（この差が **{t['days_lost']}日**）。")
+                P("            **穴は別の回に、ショートで埋めること。**")
+        else:
+            P("        予約0本の日はありません（穴埋めと測定が競合しません）")
     P("")
     P("  **この回の一手は、上の1行を測ることです。** 測れない窓（日枠が閉じている等）なら、")
     P("  **測れる窓に入ってすぐ撃てる形まで用意してから畳むこと。**")

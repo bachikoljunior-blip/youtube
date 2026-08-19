@@ -411,7 +411,7 @@ def test_同値の点が続いても_入力が違う最後の点と比べる(tmp
 # **予約は 359本**あるので、放っておくと**本数を増やすほど天井が下がります。**
 # ======================================================================
 
-from datetime import datetime, timedelta, timezone  # noqa: E402
+from datetime import date as _date, datetime, timedelta, timezone  # noqa: E402
 
 _NOW = datetime(2026, 8, 20, 3, 0, tzinfo=timezone.utc)
 
@@ -667,3 +667,100 @@ def test_長尺の実測が十分に増えたら_止めている入力が入れ�
     a["long_videos_28d"] = 25
     pl = eta.plan(m, a)
     assert pl["blocking"]["what"] != "長尺の1本あたり再生"
+
+
+# --- **測定が返ってくる日**（2026-08-20 07:1x に足した） -----------------------
+#
+# **既知の当たりを先に固定します**（`docs/trigger_main.md` §4）。
+# 手で数えた1件: `data/uploaded.jsonl` の実物（2026-08-20 時点）は
+# 08/20〜08/27 が埋まり、08/28〜09/01 に薄く入り、**09/02 と 09/03 が0本**。
+# 08/19 の申し送りは3回続けて `--date 2026-09-02` を指しており、
+# **それは「いちばん近い穴」であって「いちばん早く測れる日」ではありません。**
+
+def _uploaded(tmp_path, days):
+    """`{日付: 本数}` から控えを1本作る（`at` だけ見ています）。"""
+    p = tmp_path / "uploaded.jsonl"
+    rows = []
+    for d, n in days.items():
+        for i in range(n):
+            rows.append(json.dumps({"at": f"{d}T{9 + i:02d}:00:00+09:00"}))
+    p.write_text("\n".join(rows) + "\n", encoding="utf-8")
+    return p
+
+
+def test_答えが返る日は_伸びきる48時間とAnalyticsの3日遅れの和():
+    """公開から **5日**。どちらか片方を落とすと、次の回が早すぎる日に測ります。"""
+    assert eta.answer_day(_date(2026, 8, 21)) == _date(2026, 8, 26)
+
+
+def test_いちばん近い穴は_いちばん早く測れる日ではない(tmp_path):
+    """**手で数えた当たり**: 明日は 08/21、いちばん近い穴は 09/02 で **12日** 差。"""
+    up = _uploaded(tmp_path, {
+        "2026-08-20": 2, "2026-08-21": 2, "2026-08-22": 2, "2026-08-23": 2,
+        "2026-08-24": 2, "2026-08-25": 2, "2026-08-26": 2, "2026-08-27": 2,
+        "2026-08-28": 1, "2026-08-29": 1, "2026-08-30": 1, "2026-08-31": 1,
+        "2026-09-01": 1, "2026-09-04": 1, "2026-09-05": 1,
+    })
+    t = eta.measure_targets(_date(2026, 8, 20), uploaded_path=up)
+    assert t["soonest"] == _date(2026, 8, 21)
+    assert t["hole"] == _date(2026, 9, 2)
+    assert t["days_lost"] == 12
+    assert t["answer_soonest"] == _date(2026, 8, 26)
+    assert t["answer_hole"] == _date(2026, 9, 7)
+
+
+def test_穴が無ければ失うものも無い(tmp_path):
+    up = _uploaded(tmp_path, {"2026-08-20": 1, "2026-08-21": 1, "2026-08-22": 1})
+    t = eta.measure_targets(_date(2026, 8, 20), uploaded_path=up)
+    assert t["hole"] is None
+    assert t["days_lost"] == 0
+
+
+def test_控えが空でも落ちない(tmp_path):
+    up = tmp_path / "uploaded.jsonl"
+    up.write_text("", encoding="utf-8")
+    t = eta.measure_targets(_date(2026, 8, 20), uploaded_path=up)
+    assert t["soonest"] == _date(2026, 8, 21)
+    assert t["hole"] is None
+
+
+def test_止めている入力に_いつ答えが返るかが載る():
+    """**「どう測るか」だけでは、いつ測るかを決められません。**
+
+    ここが空いていた間、測定の日は「穴埋めの都合」で選ばれていました。
+    """
+    m, a = _analysed()
+    pl = eta.plan(m, a, today=_date(2026, 8, 20))
+    b = pl["blocking"]
+    assert b["what"] == "長尺の1本あたり再生"
+    assert b["targets"]["soonest"] == _date(2026, 8, 21)
+    assert b["targets"]["answer_soonest"] == _date(2026, 8, 26)
+
+
+def test_未知が消えたら_返る日の欄も消える():
+    """測るものが無い回に「いつ測るか」を出さない（読み手が的を探し始めます）。"""
+    m, a = _analysed()
+    a["long_per_video"] = 800.0
+    a["long_videos_28d"] = 25
+    pl = eta.plan(m, a, today=_date(2026, 8, 20))
+    assert pl["blocking"]["targets"] is None
+
+
+def test_遅れる日数は画面に出る_道具が知っているのに黙らない():
+    """**この repo で通算9件ある「片方だけ」**を避けます —— 計算しても出さないなら同じ。"""
+    m, a = _analysed()
+    lines = eta._report_plan(m, a)
+    assert any("いつ答えが返るか" in l for l in lines)
+
+
+def test_今日はJSTで読む_UTCの日付ではない(monkeypatch):
+    """**JST の 00:00〜09:00 は、UTC ではまだ前日です。**
+
+    最初の版は `date.today()`（＝コンテナの TZ・UTC）を読み、
+    2026-08-20 07:1x（JST）に **「いちばん早く予約できる日 ＝ 08/20」** と出しました。
+    08/20 はその時点で**今日**で、しかも 25本 予約済みです。
+    """
+    assert eta.today_jst() == datetime.now(eta.JST).date()
+    # UTC で 2026-08-19T22:30 ＝ JST では 2026-08-20T07:30
+    utc = datetime(2026, 8, 19, 22, 30, tzinfo=timezone.utc)
+    assert utc.astimezone(eta.JST).date() == _date(2026, 8, 20)
