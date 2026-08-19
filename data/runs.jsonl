@@ -490,3 +490,4 @@
 {"at": "2026-08-19T10:23:55+09:00", "session": "session_013W9sVTfTCTS7gMrLHsSfGY", "kind": "start"}
 {"at": "2026-08-19T10:47:16+09:00", "session": "session_013W9sVTfTCTS7gMrLHsSfGY", "kind": "ship", "what": "08/31（薄い日・1本だった）へ9本を予約（9/9成功・09:30〜13:30 JST）"}
 {"at": "2026-08-19T11:06:26+09:00", "session": "session_013W9sVTfTCTS7gMrLHsSfGY", "kind": "ship", "what": "fix: 掃引が「引数を1つ取ってから表を返す関数」を3つの掃引の全部から落としていた。入れ物は import 先の表にもある＋sweep_rows が引数を埋めて場合ごとに歩く（候補 799→848・呼べなかった 34→32・sweep_all 41.5→33.1秒）"}
+{"at": "2026-08-19T11:21:46+09:00", "session": "session_01EJaJtaUMCUwxdMEv9LRTBy", "kind": "start"}
