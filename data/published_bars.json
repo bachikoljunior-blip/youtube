@@ -274,6 +274,25 @@
     ],
     "video_id": "nNt2_3fiWzE"
   },
+  "s-fudosan-241heihou-36man": {
+    "charts": [
+      [
+        "90,000円",
+        "450,000円"
+      ]
+    ],
+    "video_id": "mLIs9lDXTpQ"
+  },
+  "s-fudosan-shutoku-1223man-cliff": {
+    "charts": [
+      [
+        "1200万円 税0円",
+        "1222万9999円 税0円",
+        "1223万円 税6900円"
+      ]
+    ],
+    "video_id": "h_1tmYxLSdo"
+  },
   "s-fuka-200yen-45nen-jishitsu-82en": {
     "charts": [
       [
@@ -686,6 +705,20 @@
       ]
     ],
     "video_id": "uhR8msMW9k4"
+  },
+  "s-inshi-500man-5bai-cliff": {
+    "charts": [
+      [
+        "2000円",
+        "1万円"
+      ],
+      [
+        "8000円",
+        "20万円",
+        "20万円"
+      ]
+    ],
+    "video_id": "8ORhweAXZ7U"
   },
   "s-invoice-1000man-1en": {
     "charts": [
@@ -1850,6 +1883,16 @@
     ],
     "video_id": "cJTGM3x3yaM"
   },
+  "s-koteishisan-200heibei-yuka20": {
+    "charts": [
+      [
+        "99,167円",
+        "93,333円",
+        "46,667円"
+      ]
+    ],
+    "video_id": "6l0RCUDEm5g"
+  },
   "s-koteishisan-2bai-433bai": {
     "charts": [
       [
@@ -1858,6 +1901,16 @@
       ]
     ],
     "video_id": "kWCsbrHINik"
+  },
+  "s-koteishisan-menzeiten-6000": {
+    "charts": [
+      [
+        "6,000円",
+        "6,000円",
+        "5,100円"
+      ]
+    ],
+    "video_id": "yC5BVoX64bU"
   },
   "s-koteishisan-obi-3-tsu-6bai": {
     "charts": [
@@ -3569,6 +3622,16 @@
     ],
     "video_id": "4e7wnELSCzY"
   },
+  "s-tokutei-kinmu-65man-430man": {
+    "charts": [
+      [
+        "37万5千円",
+        "23万5千円",
+        "7万円"
+      ]
+    ],
+    "video_id": "uTXFcur6VTw"
+  },
   "s-tokutei-nenshu150man-68man-suteru": {
     "charts": [
       [
@@ -3583,6 +3646,22 @@
       ]
     ],
     "video_id": "sFnYjc1GyiE"
+  },
+  "s-tokutei-omosa-1625-1800": {
+    "charts": [
+      [
+        "18.333%",
+        "16.923%",
+        "17.222%"
+      ],
+      [
+        "16.6%",
+        "14.4%",
+        "11.471%",
+        "6.5%"
+      ]
+    ],
+    "video_id": "OcAFHKW6Gtg"
   },
   "s-tokutei-shikii-975000-tomaru": {
     "charts": [
@@ -3896,6 +3975,16 @@
     ],
     "video_id": "793jUU_bRrY"
   },
+  "seimeihoken-ryou-waku": {
+    "charts": [
+      [
+        "8万4千円",
+        "7万円",
+        "1万4千円"
+      ]
+    ],
+    "video_id": "ENCe9pKoZug"
+  },
   "shitsugyo-kyufu": {
     "charts": [
       [
@@ -3914,6 +4003,15 @@
       ]
     ],
     "video_id": ""
+  },
+  "shokibo-kyosai-kakekin": {
+    "charts": [
+      [
+        "89万2500円",
+        "79万8000円"
+      ]
+    ],
+    "video_id": "B3pgxY1Xi1w"
   },
   "taishoku-hoken": {
     "charts": [

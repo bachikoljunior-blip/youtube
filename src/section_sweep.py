@@ -64,6 +64,7 @@ import sys
 from decimal import Decimal
 from fractions import Fraction
 from pathlib import Path
+from types import ModuleType
 from statistics import median
 from typing import Any, Callable, Iterable
 
@@ -390,27 +391,56 @@ ENUM_MAX = 12
 
 
 def _enum_containers(fn: Callable) -> list[tuple[str, list[str]]]:
-    """`fn` と同じモジュールの中にある、**文字列を並べた入れ物**を返す。
+    """`fn` から見える、**文字列を並べた入れ物**を返す。
 
     `list` / `tuple` の要素、または `dict` の鍵です。`fn.__module__` から引くので、
     **手で語彙を並べません**（次に表を足した回が書き忘れる形を作らないため）。
+
+    ## 隣の表も見る理由（2026-08-19 10:5x。**入れ物が別の表にありました**）
+
+    ここは長らく `fn.__module__` の中だけを見ていて、
+    「同じモジュールに入れ物が無い ＝ この引数は数え上げの軸ではない」と
+    読んでいました。**`iryohi` がその読みを外します** ——
+    `low_income_grid(tier_name)` と `deduction_start_cost(tier_name, …)` の
+    区分名（ア〜オ）は `iryohi` にはありません。高額療養費の区分表は
+    `kogaku.TIERS` にあり、`iryohi` は `from . import kogaku` で読んでいます。
+
+    **制度は、そもそも別の制度の区分を借ります。** 医療費控除が高額療養費の
+    区分を使うように、表が別の表の場合分けを引くのは普通の形なので、
+    ここは「たまたま1件」ではありません。
+
+    ありかは import の側から引けるので、**語彙を手で並べる直しは採りません** ——
+    `vars(mod)` に入っている `src.calc.*` のモジュールを1段だけ辿ります
+    （辿るのは1段。表どうしが輪で import し合う形は `src/calc/` にありません）。
+    間違った入れ物を拾う心配は要りません。`_enum_axis` が
+    **全要素を実際に入れて呼び、全部が数字を返すものだけ**通すからです。
     """
     mod = sys.modules.get(getattr(fn, "__module__", ""))
     if mod is None:
         return []
     out: list[tuple[str, list[str]]] = []
+    for m in _container_sources(mod):
+        for cname, v in vars(m).items():
+            if cname.startswith("_"):
+                continue
+            if isinstance(v, (list, tuple, dict)):
+                items = _names_of(list(v))
+            else:
+                continue
+            if items is None or not (2 <= len(items) <= ENUM_MAX):
+                continue
+            out.append((cname, items))
+    return out
+
+
+def _container_sources(mod: ModuleType) -> list[ModuleType]:
+    """入れ物を探す先。**自分の表と、そこから import している表**（1段だけ）。"""
+    out = [mod]
     for cname, v in vars(mod).items():
-        if cname.startswith("_"):
+        if cname.startswith("_") or not isinstance(v, ModuleType):
             continue
-        if isinstance(v, (list, tuple)):
-            items = _names_of(list(v))
-        elif isinstance(v, dict):
-            items = _names_of(list(v))
-        else:
-            continue
-        if items is None or not (2 <= len(items) <= ENUM_MAX):
-            continue
-        out.append((cname, items))
+        if getattr(v, "__name__", "").startswith("src.calc.") and v is not mod:
+            out.append(v)
     return out
 
 
@@ -528,7 +558,7 @@ def _enum_axis(fn: Callable, pname: str, default: Any) -> list[str]:
             except Exception:
                 ok = False
                 break
-            if not _scalars(value):
+            if not _readable(value):
                 ok = False
                 break
         if ok:
@@ -554,12 +584,27 @@ def _enum_axis(fn: Callable, pname: str, default: Any) -> list[str]:
     return passed[0]
 
 
+#: `_enum_params` の答え。**同じ関数を1周で4回聞かれます**
+#: （`unreachable` / `sweep_function` / `_row_call_cases` / `sweep_enums`）。
+#: 中身は入れ物の要素を1つずつ実際に呼んで確かめるので、**4回とも同じ計算を
+#: やり直していました。**表の中身が変わらない限り答えも変わらないので、
+#: 1周のあいだだけ覚えておきます（`sweep_all` の頭で捨てる）。
+#: 値に関数そのものを持たせています。**`id()` を鍵に混ぜているので、
+#: 持たせないと回収された関数の id を別の関数が使い回します**（`dataclass_view`
+#: は呼ぶたびに新しい包みを作るので、実際に起こりうる形です）。
+_ENUM_CACHE: dict[Any, tuple[Callable, list[tuple[str, list[str]]]]] = {}
+
+
 def _enum_params(fn: Callable) -> list[tuple[str, list[str]]]:
     """**数え上げの軸として振れる引数**を、`(名前, 並び)` で返す。
 
     対象は「既定値が文字列」と「既定値が無く、文字列を入れると通る」の2つ。
     **後者を入れているのが、この直しの本体です**（`_enum_axis` の docstring）。
     """
+    key = (getattr(fn, "__module__", ""), getattr(fn, "__qualname__", ""), id(fn))
+    if key in _ENUM_CACHE:
+        return _ENUM_CACHE[key][1]
+
     out = []
     for name, p in calc_axes.real_params(fn):
         default = p.default
@@ -568,6 +613,7 @@ def _enum_params(fn: Callable) -> list[tuple[str, list[str]]]:
         items = _enum_axis(fn, name, default)
         if items:
             out.append((name, items))
+    _ENUM_CACHE[key] = (fn, out)
     return out
 
 
@@ -888,6 +934,32 @@ def _rows(value: Any) -> list[dict] | None:
     return None
 
 
+def _readable(value: Any) -> bool:
+    """掃引が**何かの数字として読める返り**か。
+
+    ここは長らく `_scalars(value)` そのものでした。`_scalars` は
+    「1つの返りから欄を取り出す」道具なので、**行の並び（`list[dict]`）には
+    `{}` を返します** —— 表を返す関数は、行の側に数字を持っているからです。
+
+    そのため `_enum_axis` は「この引数を入れても数字が返らない」と読み、
+    **表を返す関数の場合分けの引数を、軸として1件も見つけられませんでした**
+    （`iryohi.low_income_grid` はそれで丸ごと落ちていた）。
+    行として歩けるものは `sweep_rows` が読むので、ここでも読めると数えます。
+    """
+    if _scalars(value):
+        return True
+    rows = _rows(value)
+    return bool(rows) and len(rows) >= 2 and bool(_common_number_keys(rows))
+
+
+def _common_number_keys(rows: list[dict]) -> set[str]:
+    """**全部の行にあって、全部の行で数字**の欄。行を歩けるかの下限です。"""
+    keys = set(_scalars(rows[0]))
+    for r in rows[1:]:
+        keys &= set(_scalars(r))
+    return keys
+
+
 def sweep_rows(fn: Callable, *, name: str = "") -> list[dict]:
     """**表そのものの中を歩く。**引数ではなく、行の並びを x にする。
 
@@ -898,16 +970,45 @@ def sweep_rows(fn: Callable, *, name: str = "") -> list[dict]:
 
     行を歩けば、**崖・頭打ち・逆転が表の中で見えます** ——
     そしてこの回の3節のうち2節は、実際にそういう形でした。
+
+    ## 場合分けを受け取る表は、場合ごとに歩く（2026-08-19 10:5x）
+
+    引数を1つ埋めて先頭の場合だけ歩くと、**当たりを取り逃します。**
+    `iryohi.low_income_grid` は区分ア〜オで6行の表を返しますが、
+    崖が出るのは**区分ウだけ**です（控除の出る医療費が
+    266,667円 → 2,257,000円。区分アでは1件も出ません）。
+    **場合ごとに別の表**なので、1つの表に2度当てたことにはなりません。
+
+    引数によらない欄は、同じ当たりが場合の数だけ出ます。
+    **同じ（欄・形・詳しく）は1度だけ**にして、
+    **場合によって変わったものにだけ**「固定した引数」を付けます。
     """
+    cases = _row_call_cases(fn)
+    if cases is None:
+        return []
+    found: list[dict] = []
+    seen: set[tuple] = set()
+    for fixed in cases:
+        for hit in _rows_of_case(fn, name, fixed, tag=len(cases) > 1):
+            sig = (hit["見た値"], hit["形"], repr(hit["詳しく"]))
+            if sig in seen:
+                continue
+            seen.add(sig)
+            found.append(hit)
+    return found
+
+
+def _rows_of_case(fn: Callable, name: str, fixed: dict,
+                  *, tag: bool) -> list[dict]:
+    """`fixed` で1回だけ呼んで、その表の行を歩く。"""
     try:
-        rows = _rows(fn())
+        with contextlib.redirect_stdout(io.StringIO()):
+            rows = _rows(fn(**fixed))
     except Exception:
         return []
     if not rows or len(rows) < 4:
         return []
-    keys = set(_scalars(rows[0]))
-    for r in rows[1:]:
-        keys &= set(_scalars(r))
+    keys = _common_number_keys(rows)
     label_keys = _label_keys(rows)
     label_key = label_keys[0] if label_keys else None
     axis = _axis_keys(rows, keys)
@@ -955,11 +1056,68 @@ def sweep_rows(fn: Callable, *, name: str = "") -> list[dict]:
                 detail[k] = [_label(int(i)) for i in v]
             else:
                 detail[k] = _label(int(v))
-        found.append({"関数": name or getattr(fn, "__name__", "?"),
-                      "動かした引数": "（表の行）", "見た値": key,
-                      "形": shape, "詳しく": detail,
-                      "x の幅": (0, len(rows) - 1)})
+        hit_row = {"関数": name or getattr(fn, "__name__", "?"),
+                   "動かした引数": "（表の行）", "見た値": key,
+                   "形": shape, "詳しく": detail,
+                   "x の幅": (0, len(rows) - 1)}
+        if fixed and tag:
+            # **埋めた引数は前提そのものです。**「どの区分の表か」が消えると、
+            # 画面に出せる節になりません（`docs/CONSTRAINTS.md` の「前提を全部出す」）。
+            hit_row["固定した引数"] = dict(fixed)
+        found.append(hit_row)
     return found
+
+
+def _row_call_cases(fn: Callable) -> list[dict[str, Any]] | None:
+    """`fn()` を**行の並びとして呼ぶ場合の並び**。埋まらなければ `None`。
+
+    ## なぜ要るか（2026-08-19 10:5x。**3つの掃引から同時に外れる形**）
+
+    ここは長らく `fn()` と、**引数なしでしか**呼んでいませんでした。
+    「表を返す関数は引数を取らない」という読みですが、`src/calc/` には
+    **場合分けを1つ受けてから表を返す**関数があります ——
+    `iryohi.low_income_grid(tier_name)` は区分ごとに6行の表を返します。
+
+    そういう関数は、**3つの掃引の全部から同時に落ちます**:
+
+        sweep_function  数値の引数しか振らない（`tier_name` は文字列）
+        sweep_rows      `fn()` が TypeError（この節の穴）
+        sweep_enums     返りが行の並びなので `_scalars` が `{}`
+
+    **例外はどこにも出ません。** `unreachable` が「埋められなかった引数」として
+    名前を出すだけで、理由は「入れ物が無い」と読めてしまいます。
+
+    埋め方は既にあるものを使います —— 数え上げの軸なら**その並びの全部**、
+    数の軸なら `calc_axes` の代表値（`_required_others` と同じ道）。
+    数え上げの軸を全部まわすのは、**場合ごとに別の表**だからです
+    （`sweep_rows` の docstring。区分ウにしか無い崖を取り逃さないため）。
+
+    引数の要らない関数は `[{}]` を返すので、**今までどおり1回だけ**歩きます。
+    """
+    need = [n for n, p in calc_axes.real_params(fn)
+            if p.default is inspect.Parameter.empty]
+    if not need:
+        return [{}]
+    enums = dict(_enum_params(fn))
+    base: dict[str, Any] = {}
+    spread: tuple[str, list[str]] | None = None
+    for n in need:
+        if n in enums:
+            # **振るのは1つだけ**（2つ以上あれば、残りは先頭で固定する。
+            # 掛け合わせは `sweep_enums` の仕事で、ここは行のほうを見ています）
+            if spread is None:
+                spread = (n, enums[n])
+            else:
+                base[n] = enums[n][0]
+            continue
+        fill = _axis_fill(n)
+        if fill is None:
+            return None
+        base[n] = fill
+    if spread is None:
+        return [base]
+    pname, items = spread
+    return [{**base, pname: e} for e in items]
 
 
 def _axis_keys(rows: list[dict], keys: set[str]) -> set[str]:
@@ -1177,6 +1335,7 @@ def sweep_calc(name: str) -> list[dict]:
 def sweep_all(names: Iterable[str] | None = None) -> list[dict]:
     out = []
     UNCALLABLE.clear()
+    _ENUM_CACHE.clear()
     for name in (names if names is not None else calc_modules()):
         try:
             out.extend(sweep_calc(name))
@@ -1526,6 +1685,13 @@ def line_of(hit: dict) -> str:
                 f"{'・'.join(d['動かない'])} は {_fmt(d['動かない値'])} のまま")
     else:
         tail = str(d)
+    fixed = hit.get("固定した引数")
+    if fixed:
+        # **前提が読む側に届かないと、節は書けません**（2026-08-19 10:5x）。
+        # 場合分けを受け取る表は「どの場合の表か」で当たりが変わります ——
+        # `iryohi.low_income_grid` の崖は**区分ウにしか無い**ので、
+        # ここを落とすと「低所得の表に崖がある」としか読めなくなります。
+        tail += "（" + "・".join(f"{k}={_fmt(v)}" for k, v in fixed.items()) + " のとき）"
     return (f"  {hit['形']:<4} {hit['表']}.{hit['関数']}"
             f"（{hit['見た値']}）… {tail}")
 

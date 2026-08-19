@@ -1229,3 +1229,50 @@ def test_データ組を引数に取る関数も掃引できる():
     # そして掃引に出てくる（欄が無ければ候補は1件も出ません）
     hits = ss.sweep_function(view, name="limit")
     assert hits, "組を開いても候補が1件も出ていない"
+
+
+def test_場合分けの入れ物が別の表にあっても見つける():
+    """`iryohi.low_income_grid(tier_name)` の区分名は、**`iryohi` にありません。**
+
+    `iryohi` は高額療養費の区分表を持たず、`kogaku.TIERS` を読みます
+    （`from . import kogaku`）。ところが `_enum_containers` は
+    **`fn.__module__` の中だけ**を見ていたので、`iryohi` 側からは
+    「入れ物が1つも無い」に見え、`tier_name` を取る関数が2本とも
+    掃引から落ちていました。
+
+    **語彙を手で並べる直しは採りません。** 入れ物のありかは
+    「その表が import している別の表」で、それは import の側から引けます。
+    """
+    import src.calc.iryohi as ir
+
+    names = {c for c, _ in ss._enum_containers(ir.low_income_grid)}
+    assert "TIERS" in names, "import している表の入れ物を見ていない"
+    assert ss.unreachable(ir.low_income_grid) == "", "まだ呼べないと言っている"
+
+    # **同じ表の `deduction_start_cost` は、これでも通りません。**
+    # 入れ物は見つかりますが、区分エ・オでは `None` を返します
+    # （限度額が定額なので、医療費がいくらでも足切りに届かない ＝
+    # 「その医療費は存在しない」）。**軸として振れないのが正しい**ので、
+    # ここは直す対象ではありません。理由が「入れ物が無い」から
+    # 「値の無い区分がある」へ変わったことだけを固定します。
+    assert ss._enum_containers(ir.deduction_start_cost), "入れ物は見えているはず"
+    assert ir.deduction_start_cost("エ", 3_000_000) is None
+
+
+def test_引数を取る表も行として歩ける():
+    """`sweep_rows` は `fn()` と**引数なしで**しか呼んでいませんでした。
+
+    `iryohi.low_income_grid(tier_name)` は6行の表を返しますが、
+    引数が要るので `fn()` は `TypeError` で落ち、`sweep_rows` は
+    そこで `[]` を返します。`sweep_function` は数値の引数しか見ず、
+    `sweep_enums` は返りが行の並びだと `_scalars` が `{}` を返す ——
+    **3つの掃引の全部から同時に外れる形**でした。
+
+    埋めた引数は候補に残すこと（**前提として画面に出す値**なので、
+    「どの区分の表か」が消えると節が書けません）。
+    """
+    import src.calc.iryohi as ir
+
+    hits = ss.sweep_rows(ir.low_income_grid, name="low_income_grid")
+    assert hits, "引数を埋めれば歩ける表を、1件も歩いていない"
+    assert all(h.get("固定した引数") for h in hits), "埋めた引数が候補に残っていない"
