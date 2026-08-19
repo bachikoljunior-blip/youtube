@@ -1,4 +1,3 @@
-{"at": "2026-08-15T18:30:32+09:00", "session": "session_012toHSc93GTue7zbmpbLB1b", "kind": "start"}
 {"at": "2026-08-15T18:51:33+09:00", "session": "session_012toHSc93GTue7zbmpbLB1b", "kind": "ship", "what": "fix: 独立評価の3体が独立に指摘した2件を、見ている場所ごと作った／①計算式が画面に1枚も出ていなかった（CLAUDE.md の根幹は『前提と計算式を画面に全部出す』なのに前提だけ）→ Visual.formula を新設し .formula として本文の外に描画・_check_formula_shown で『=と演算子と数字2つ』を要求／②めくり(reveal_variants)が全コマ同じ見出しを出していた＝台本には chart 1枚しか無いので台本側の検査には永久に出てこない → 増えた要素名を見出しに出す・_check_adjacent_repeat も追加。tests 30→50件"}
 {"at": "2026-08-15T18:52:07+09:00", "session": "session_012toHSc93GTue7zbmpbLB1b", "kind": "ship", "what": "upload: s-shitsugyo-u30-kinzoku-30days を2本ぶん（NeLZdfJiaDM 8/28 09:00 / zUDaYS5Acgo 8/29 09:00）。1本目で自分の直しの穴（ラベルを8字で機械的に切り『＋自己都合などの離』が実画面に出た）を目視で見つけ、切らずに捨てる規則へ直して作り直したのが2本目。予約は 8/29 まで"}
 {"at": "2026-08-15T18:57:27+09:00", "session": "session_01CBrQaSNdkoiDE38vu7WEFs", "kind": "start"}
@@ -498,3 +497,4 @@
 {"at": "2026-08-20T05:12:17+09:00", "session": "session_01TLYHGrzvxp1k8YnvDcZNKN", "kind": "start"}
 {"at": "2026-08-20T05:49:46+09:00", "session": "session_01TLYHGrzvxp1k8YnvDcZNKN", "kind": "ship", "what": "fix: A/B の判定規則そのものを実データで測り、コイン投げ（効き無しでも49%・n を増やしても下がらない）を順位和の門で塞ぎ、床を片群8→16本へ。src/ab_power.py 新設・検査21件", "lever": "per_video"}
 {"at": "2026-08-20T06:16:43+09:00", "session": "session_01KvMQouDfnzvNCGTCJFhkmd", "kind": "start"}
+{"at": "2026-08-20T06:43:57+09:00", "session": "session_01KvMQouDfnzvNCGTCJFhkmd", "kind": "ship", "what": "eta.py の予測が29点とも「届きません」で終わり日付を1つも出していなかったのを、出せる密度25本/日で解く段取り（段1〜段4・到達 2026-12-22）に直した。律速は per_video ではなく rpm と判明", "lever": "rpm"}
