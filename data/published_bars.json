@@ -175,6 +175,17 @@
     ],
     "video_id": ""
   },
+  "koteishisan-zei": {
+    "charts": [
+      [
+        "155.56円",
+        "186.67円",
+        "210.0円",
+        "455.0円"
+      ]
+    ],
+    "video_id": "kOoCPJCa1PU"
+  },
   "nenkin-kuriage": {
     "charts": [
       [
@@ -292,6 +303,23 @@
       ]
     ],
     "video_id": "rk0hMaeKer0"
+  },
+  "s-fudosan-chuko-12bai": {
+    "charts": [
+      [
+        "42万円",
+        "34万5千円",
+        "15万円",
+        "9万円"
+      ],
+      [
+        "2万4千円",
+        "9千円",
+        "16万5千円",
+        "6万円"
+      ]
+    ],
+    "video_id": "EQwt_6hjGwc"
   },
   "s-fudosan-shutoku-1223man-cliff": {
     "charts": [
@@ -541,6 +569,26 @@
       ]
     ],
     "video_id": "JQ2LgoIa-Yw"
+  },
+  "s-gassan-500en-floor": {
+    "charts": [
+      [
+        "戻らない",
+        "501円",
+        "5,000円"
+      ]
+    ],
+    "video_id": "cDgq2WaXFZA"
+  },
+  "s-gassan-70-lower-cap": {
+    "charts": [
+      [
+        "340,000円",
+        "310,000円",
+        "190,000円"
+      ]
+    ],
+    "video_id": "iwdNOasGYE4"
   },
   "s-gassan-both-max-back": {
     "charts": [
@@ -817,6 +865,17 @@
       ]
     ],
     "video_id": "gLnvf56289E"
+  },
+  "s-inshi-2tsu-wakeru-gyakuten": {
+    "charts": [
+      [
+        "1万円",
+        "4千円",
+        "2千円",
+        "4千円"
+      ]
+    ],
+    "video_id": "ix6UxGvVGwU"
   },
   "s-inshi-500man-5bai-cliff": {
     "charts": [
@@ -2293,6 +2352,16 @@
       ]
     ],
     "video_id": "lgeEw4f_W7w"
+  },
+  "s-koyouhoken-nijigyou-24-1": {
+    "charts": [
+      [
+        "25.7%",
+        "24.1%",
+        "21.2%"
+      ]
+    ],
+    "video_id": "tBI1Lml41SA"
   },
   "s-kubun-e-shoutokujougen-115man": {
     "charts": [
@@ -3948,6 +4017,21 @@
     ],
     "video_id": "aalN6AHdB98"
   },
+  "s-yoteinozei-genngaku-1percent": {
+    "charts": [
+      [
+        "54,400円",
+        "1,800円"
+      ],
+      [
+        "7.2円",
+        "13.6円",
+        "22.5円",
+        "27.2円"
+      ]
+    ],
+    "video_id": "sHj5LjTj_C0"
+  },
   "s-yoteinozei-gensen-kieru": {
     "charts": [
       [
@@ -3956,6 +4040,16 @@
       ]
     ],
     "video_id": "OviZcV_PqbM"
+  },
+  "s-yoteinozei-ochiru-haba": {
+    "charts": [
+      [
+        "19.1%",
+        "23.1%",
+        "24.2%"
+      ]
+    ],
+    "video_id": "lGEH_kU3Esk"
   },
   "s-yukyu-11years-121days": {
     "charts": [
