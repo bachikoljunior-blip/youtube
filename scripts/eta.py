@@ -767,8 +767,18 @@ def required_growth(views_day_now: float, ceiling_views_day: float,
 
 
 def double_days(growth: float) -> float:
-    """その伸び率で、再生数が2倍になるまでの日数。**%より、こちらのほうが読める。**"""
-    return math.log(2) / math.log(1 + growth) if growth and growth > 0 else float("inf")
+    """その伸び率で、再生数が2倍になるまでの日数。**%より、こちらのほうが読める。**
+
+    **`math.log(1 + growth)` は 0 を返します**（2026-08-20 23:3x に踏んだ）——
+    `growth` が 1e-16 より小さいと `1 + growth` が浮動小数で 1.0 に丸まり、
+    対数が厳密に 0 になって **`ZeroDivisionError` で回そのものが落ちます。**
+    `required_growth` は「ほとんど伸びなくても間に合う」帯で、その大きさを返します。
+    `log1p` なら丸まらず、それでも 0 なら **無限大（＝2倍にならない）**として返します。
+    """
+    if not growth or growth <= 0:
+        return float("inf")
+    denom = math.log1p(growth)
+    return math.log(2) / denom if denom > 0 else float("inf")
 
 
 #: 腕を1つだけ動かしてみるときの倍率（`lever_days`）。**1.0 が「いまのまま」**
@@ -1663,14 +1673,44 @@ def plan(m: dict, a: dict, density: int = PLAN_PUBLISH_PER_DAY,
     density_month = g1["density_sustained"]
     monthly_slots = density_month * 30
 
+    # --- **面（サムネのインプレッション）の実測を、段2と段4に当てる**（2026-08-20 23:2x）---
+    #
+    #     **段2 と段4 は、同じ1つの測り忘れに乗っていました。**
+    #
+    #     段4 は「純長尺・RPM ¥400」で立っていました。¥400 は
+    #     **再生の 100% が長尺**のときの数です。ところが長尺のサムネが
+    #     見せられている面は実測 **37.6回/日**しかなく（`src/reach_split.py`）、
+    #     **CTR 100% でも長尺は再生の 13.0% までしか取れません。**
+    #     そのときの実効 RPM の天井は **¥313**（`src/rpm_mix.py`）で、
+    #     **¥400 はその上にあります。** ＝ 段4 の合格点 500,000回/月 は
+    #     実測だと **639,000回/月**で、**1.28倍 甘い**数字でした。
+    #
+    #     段2 も同じです。合格点は「長尺を1日4本・1本あたり 221回」＝ 884回/日 ですが、
+    #     いまの面は CTR 100% でも 37.6回/日 です（**23.5倍 足りません**）。
+    #     **足りないのはインプレッションで、サムネと題（CTR）では動きません。**
+    #
+    #     **天井は固定ではありません。** 長尺を出せば面が増え、次の回の
+    #     `python -m src.rpm_mix --record` でこの天井は上がります。
+    #     **測れていないときは据え置きの帯へ落ちます**（`capped=False` で分かるようにする）。
+    mix = rpm_mix.last() or {}
+    rpm_cap = float(mix.get("rpm_max") or 0.0) or None
+    long_views_day_cap = float(mix.get("imp_day") or 0.0) or None
+
     # --- どの形で月20万を取りに行くか（**下振れの RPM で比べる**）---
     forms: dict[str, dict] = {}
     for form, band in PLAN_BAND_BY_FORM.items():
-        need_month = a["views_needed_month"][band]
+        # **帯（¥400）と、実際に出せる実効 RPM（混ざり方）は別物です。**
+        #     腕 `rpm` を何倍にしても、面が増えるまで実効 RPM は天井を越えません。
+        band_rpm = RPM_SCENARIOS[band] * sc["rpm"]
+        capped = bool(rpm_cap and band_rpm > rpm_cap)
+        rpm_plan = min(band_rpm, rpm_cap) if rpm_cap else band_rpm
+        need_month = (TARGET_YEN * 1000 / rpm_plan) if rpm_plan > 0 else float("inf")
         need_per_video = need_month / monthly_slots if monthly_slots else float("inf")
         forms[form] = {
             "band": band,
-            "rpm": RPM_SCENARIOS[band],
+            "rpm": rpm_plan,
+            "rpm_band": float(RPM_SCENARIOS[band] * sc["rpm"]),
+            "capped": capped,
             "views_needed_month": need_month,
             "per_video_needed": need_per_video,
             # **物差しはショートの実測**。長尺の実測（2回）で割ると、
@@ -1763,6 +1803,40 @@ def plan(m: dict, a: dict, density: int = PLAN_PUBLISH_PER_DAY,
     ceiling_month = ceiling_day * 30
     ceiling_short = need_month / ceiling_month if ceiling_month > 0 else float("inf")
 
+    # --- **足りない天井を、面（長尺のインプレッション）で埋めるなら何回/日 要るか** ---
+    #     「届きません」で畳まないための逆算（オーナー指示 2026-08-20 06:2x）。
+    #     **この機械が RPM を上げる道は1つだけ**です —— 長尺が再生に占める割合を上げること。
+    #     その割合の上限は面が決めます（`rpm_mix.surface_ceiling`: CTR 100% でも
+    #     `imp_day / (imp_day + ショートの再生/日)` まで）。だから逆に解けます:
+    #
+    #         要る実効RPM = 20万 × 1000 ÷ いまの天井（月の再生）
+    #         要る長尺の割合 = (要る実効RPM − ショートの帯) ÷ (長尺の帯 − ショートの帯)
+    #         要る面 = 割合 ÷ (1 − 割合) × ショートの再生/日
+    #
+    #     **帯は `高` を使います**（¥2,000 / ¥60）。上の天井 ¥313 が `高` で出ているので、
+    #     ここだけ `低` にすると、同じ画面の中で2つの物差しが混ざります。
+    #     割合が 1 を超えたら、**面だけでは埋まりません**（＝1本あたり再生か密度も要る）。
+    surface_needed: dict = {}
+    if ceiling_short > 1 and ceiling_month > 0 and long_views_day_cap:
+        r_long = float(RPM_SCENARIOS["長尺 お金 高"])
+        r_short = float(RPM_SCENARIOS["ショート 高"])
+        rpm_needed = TARGET_YEN * 1000 / ceiling_month
+        share_needed = (rpm_needed - r_short) / (r_long - r_short)
+        views_form = (mix.get("views_by_form") or {})
+        days_mix = max(1.0, float((mix.get("window") or {}).get("days") or 1))
+        short_day = float(views_form.get("ショート") or 0.0) / days_mix
+        surface_needed = {
+            "rpm_needed": rpm_needed, "rpm_long": r_long, "rpm_short": r_short,
+            "share_needed": share_needed, "imp_day_now": long_views_day_cap,
+        }
+        if share_needed >= 1.0 or short_day <= 0:
+            surface_needed.update({"impossible": True, "rpm_at_full": r_long,
+                                   "still_short": rpm_needed / r_long})
+        else:
+            imp_req = share_needed / (1 - share_needed) * short_day
+            surface_needed.update({"impossible": False, "imp_day_needed": imp_req,
+                                   "imp_factor": imp_req / long_views_day_cap})
+
     # **結論はこの1つの比較に乗っています。**
     # 「②と③で決まる床までに、再生数のほうが間に合うか」——
     # 間に合うなら到達日は門と窓で決まり（引く腕は density / sub_rate）、
@@ -1788,6 +1862,16 @@ def plan(m: dict, a: dict, density: int = PLAN_PUBLISH_PER_DAY,
         {
             "no": 2, "lever": "rpm", "when": d_gate1,
             "title": f"門2a（長尺4,000時間）を、段1と並行で開ける",
+            # **面（インプレッション）と突き合わせる。**
+            #     合格点は「1日 per_day_long 本 × 1本あたり gate2_bar 回」＝ 再生/日 です。
+            #     いまの面は CTR 100% でも `long_views_day_cap` 回/日 しか出せません。
+            "note": ((f"**いまの面（長尺のインプレッション {long_views_day_cap:,.1f}回/日・実測）は、"
+                      f"CTR 100% でも {long_views_day_cap:,.0f}回/日**。"
+                      f"合格点の {gate2_bar * per_day_long:,.0f}回/日 に "
+                      f"**{gate2_bar * per_day_long / long_views_day_cap:,.1f}倍 足りません**。"
+                      "**足りないのはインプレッションで、サムネと題（CTR）では動きません**"
+                      "（`src/reach_split.py`）")
+                     if long_views_day_cap else None),
             "bar": (f"長尺を1日{per_day_long}本・{best['label']} で出し、"
                     f"**1本あたり {gate2_bar:,.0f}回**"
                     # **0除算で回を止めないこと。** 1本あたり再生が 0 で返る日
@@ -1807,7 +1891,10 @@ def plan(m: dict, a: dict, density: int = PLAN_PUBLISH_PER_DAY,
         {
             "no": 4, "lever": ("rpm" if ceiling_short > 1 else "per_video"),
             "when": d_target,
-            "title": f"月20万に到達（{sp['band']}・RPM ¥{sp['rpm']:,}）",
+            "title": (f"月20万に到達（{sp['band']}・RPM ¥{sp['rpm']:,.0f}"
+                      + ("／**帯の ¥{:,.0f} は、実測の混ざり方の天井で頭打ち**".format(sp["rpm_band"])
+                         if sp.get("capped") else "")
+                      + "）"),
             "bar": (f"直近30日で **{sp['views_needed_month']:,.0f}回**"
                     f"（＝1日{density}本 × 1本あたり {sp['per_video_needed']:,.0f}回）を、"
                     f"**収益化の後に {REVENUE_WINDOW_DAYS}日ぶん**積む。"
@@ -1853,6 +1940,10 @@ def plan(m: dict, a: dict, density: int = PLAN_PUBLISH_PER_DAY,
         "density": density, "density_month": density_month,
         "gate1": g1, "supply": supply,
         "spine": spine, "spine_band": sp["band"],
+        # **面の実測**（段2 と段4 が、これを見ないまま立っていました）
+        "surface": {"rpm_cap": rpm_cap, "long_views_day_cap": long_views_day_cap,
+                    "capped": sp.get("capped", False),
+                    "rpm_band": sp.get("rpm_band"), "rpm_plan": sp["rpm"]},
         "forms": forms, "stages": stages, "blocking": blocking,
         "days_to_target": d_target, "target": s4,
         "target_date": (base + timedelta(days=math.ceil(d_target))) if d_target < NEVER else None,
@@ -1865,6 +1956,7 @@ def plan(m: dict, a: dict, density: int = PLAN_PUBLISH_PER_DAY,
         "ceiling_day": ceiling_day,
         "ceiling_day_long": ceiling_day_long,
         "ceiling_short": ceiling_short,
+        "surface_needed": surface_needed,
         "growth_needed_by_gate": g_needed,
         "need_month": need_month,
         "views_day_now": views_day_now,
@@ -2092,11 +2184,22 @@ def _report_plan(m: dict, a: dict, pl: dict | None = None) -> list[str]:
       "（この機械が持つ唯一の当てになる1本あたり）")
     P("")
     P("--- どの形で取りに行くか（**その形のいちばん低い RPM で比べる**）---")
+    sf = pl.get("surface") or {}
+    if sf.get("rpm_cap"):
+        P(f"    **帯（¥400 など）は「再生の100%がその形」のときの数です。**"
+          f" いまの混ざり方の天井は **¥{sf['rpm_cap']:,.0f}**（実測）")
+        P(f"      長尺の面 {sf['long_views_day_cap']:,.1f}回/日（実測）× CTR100% までしか"
+          "長尺の再生は増えません。**帯をそのまま当てると合格点が甘くなります**")
+    else:
+        P("    [!] **面（長尺のインプレッション）が測れていません。**"
+          " 帯をそのまま当てています（`python -m src.rpm_mix --record`）")
     for form, f in pl["forms"].items():
         mark = " ← **これで立てる**" if form == pl["spine"] else ""
-        P(f"    {form:<8} RPM ¥{f['rpm']:>5,}  月 {f['views_needed_month']:>10,.0f}回 要る"
+        cap = "  ← **帯 ¥{:,.0f} を、実測の混ざり方の天井で頭打ち**".format(f["rpm_band"]) \
+            if f.get("capped") else ""
+        P(f"    {form:<8} RPM ¥{f['rpm']:>5,.0f}  月 {f['views_needed_month']:>10,.0f}回 要る"
           f"  → 1本あたり **{f['per_video_needed']:>7,.0f}回**"
-          f"（ショート実測の {f['ratio_vs_shorts']:>5.2f}倍）{mark}")
+          f"（ショート実測の {f['ratio_vs_shorts']:>5.2f}倍）{mark}{cap}")
     P("")
     P("--- 段取り（**最後の段に日付が入るまでが1つの予測**）---")
     for st in pl["stages"]:
@@ -2162,8 +2265,24 @@ def _report_plan(m: dict, a: dict, pl: dict | None = None) -> list[str]:
             P(f"    {h['date']}（{h['days']:>3}日後）まで … **伸び率をいくら上げても届きません**")
     if pl["ceiling_short"] > 1:
         P(f"    → **天井が {pl['ceiling_short']:,.2f}倍 足りません。待っても届きません。**")
-        P(f"       1本あたり再生（いま {pl['ceiling_day'] / d:,.0f}回）か RPM（いま ¥{RPM_SCENARIOS[pl['spine_band']]:,}）"
+        # **「いま ¥400」と印字していました。** 帯をそのまま出していたので、
+        #     実測の混ざり方で頭打ちになった後も、画面は帯のままでした。
+        P(f"       1本あたり再生（いま {pl['ceiling_day'] / d:,.0f}回）か RPM（いま ¥{sf.get('rpm_plan', 0):,.0f}）"
           f"か 密度（いま {d}本/日）を、掛けて {pl['ceiling_short']:,.2f}倍 にすること")
+        # --- **その天井を、面（長尺のインプレッション）で埋めるなら何回/日 要るか** ---
+        #     「届きません」で畳まないための逆算です（オーナー指示 2026-08-20 06:2x）。
+        #     RPM を上げる道はこの機械では1つしかありません ——
+        #     **長尺の再生の割合を上げること**で、その割合の上限は面が決めます。
+        need_sf = pl.get("surface_needed") or {}
+        if need_sf.get("impossible"):
+            P(f"       [!] **面だけでは埋まりません。** 再生の 100% を長尺にして"
+              f"（RPM ¥{need_sf['rpm_long']:,.0f}）も 実効 ¥{need_sf['rpm_at_full']:,.0f} "
+              f"＝ 要る ¥{need_sf['rpm_needed']:,.0f} に **{need_sf['still_short']:,.2f}倍 足りません**。"
+              "**1本あたり再生か密度も、同時に動かすこと**")
+        elif need_sf.get("imp_day_needed"):
+            P(f"       **面で埋めるなら: 長尺のインプレッション {need_sf['imp_day_now']:,.1f}回/日 → "
+              f"{need_sf['imp_day_needed']:,.0f}回/日（×{need_sf['imp_factor']:,.1f}）**"
+              f"（長尺が再生の {need_sf['share_needed'] * 100:.1f}% になる面。実効 RPM ¥{need_sf['rpm_needed']:,.0f}）")
     else:
         P(f"    （天井は足りています: 1日 {pl['ceiling_day']:,.0f}回 × 30日 ＝ 月 {pl['ceiling_day'] * 30:,.0f}回"
           f" ≧ 要る {pl['need_month']:,.0f}回）")
@@ -2754,6 +2873,18 @@ def _row(m: dict, a: dict, pl: dict, tr: dict | None, sup: dict | None) -> dict:
         row["arm_rates"] = {k: a["rate"] for k, a in tr["arms"].items()}
         row["arm_hits"] = f"{tr['band']['k']}/{tr['band']['n']}"
     row["videos_needed_gate1"] = pl.get("gate1", {}).get("need_videos")
+    # --- **天井（面と混ざり方）も積む**（2026-08-20 23:3x。前の周の申し送り②）---
+    #     `--reflect` は「出発点の行」と「解き直した行」の差を取ります。
+    #     ところが行には**天井が1つも入っていなかった**ので、
+    #     22:2x の回が `rpm` の天井を ×100 → ×15.5 に**測り直したのに、
+    #     反映は「動かせる入力なし」と言いました。** 測った当人の回が、です。
+    #     天井は入力です（実測が同じでも、測り直せば動く ＝ その回の作業ぶん）。
+    _sf = pl.get("surface") or {}
+    row["rpm_cap"] = _sf.get("rpm_cap")                 # 実測の混ざり方の天井（¥）
+    row["rpm_plan"] = _sf.get("rpm_plan")               # 段4 が実際に当てている RPM
+    row["long_imp_day"] = _sf.get("long_views_day_cap")  # 長尺の面（回/日・実測）
+    row["need_month"] = pl.get("need_month")            # 段4 の合格点（月の再生）
+    row["ceiling_short"] = pl.get("ceiling_short")      # 天井が何倍 足りないか
     return row
 
 

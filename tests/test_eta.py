@@ -610,11 +610,18 @@ def test_段取りは_出せる密度で解く_APIの日枠では解かない():
     assert pl["density"] == eta.PLAN_PUBLISH_PER_DAY
     assert pl["density"] < eta.UPLOAD_CAP_PER_DAY
 
-    band = pl["spine_band"]
-    need_month = a["views_needed_month"][band]
-    assert pl["forms"][pl["spine"]]["per_video_needed"] == pytest.approx(
-        need_month / (pl["density"] * 30)
-    )
+    # **要る月間再生は、帯（`views_needed_month`）そのものではありません**
+    #     （2026-08-20 23:2x）。段4 の RPM は**実測の混ざり方の天井**で頭打ちに
+    #     なるので、帯 ¥400 のときは ¥313 が当たります（`test_eta_surface_cap.py`）。
+    #     **この検査が守っているのは分母のほう** ——「92本/日 で割っていないか」です。
+    spine = pl["forms"][pl["spine"]]
+    need_month = spine["views_needed_month"]
+    assert spine["per_video_needed"] == pytest.approx(need_month / (pl["density"] * 30))
+    assert spine["per_video_needed"] != pytest.approx(
+        need_month / (eta.UPLOAD_CAP_PER_DAY * 30)
+    ), "API の日枠 92本/日 で割っています（**出せる本数ではありません**）"
+    # 帯そのものは残っていること（頭打ちの相手が消えると、甘さを測れません）
+    assert spine["rpm_band"] == eta.RPM_SCENARIOS[pl["spine_band"]]
 
 
 def test_段取りは_その形のいちばん低いRPMで立てる():
@@ -627,7 +634,12 @@ def test_段取りは_その形のいちばん低いRPMで立てる():
     pl = eta.plan(m, a)
     for form, f in pl["forms"].items():
         same_form = [k for k in eta.RPM_SCENARIOS if k.startswith(form)]
-        assert f["rpm"] == min(eta.RPM_SCENARIOS[k] for k in same_form), form
+        low = min(eta.RPM_SCENARIOS[k] for k in same_form)
+        # **選ぶ帯は「低」のまま。** 実際に当てる RPM は、そこから
+        #     実測の混ざり方の天井で**下へ**頭打ちになります（2026-08-20 23:2x）。
+        #     **上へ動いていたら、それは上振れ側なので落とすこと。**
+        assert f["rpm_band"] == low, form
+        assert f["rpm"] <= low, form
 
 
 def test_段取りの物差しは_ショートの実測であって長尺の古い標本ではない():
