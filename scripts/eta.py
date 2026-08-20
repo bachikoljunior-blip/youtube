@@ -1903,7 +1903,7 @@ def headline(pl: dict, prev: dict | None = None,
         out.append(f"{bar} **{f:.0f}倍にしたら:** "
                    + " ／ ".join(
                        f"`{r['lever']}` → **{r['date'].isoformat()}**"
-                       + (f"（{_fmt_days(pl['days_to_target'] - r['days'])[2:-2]} 早まる）"
+                       + (f"（**{pl['days_to_target'] - r['days']:,.0f}日 早まる**）"
                           if pl["days_to_target"] < NEVER
                           else "（いまは日付が出ません → **出ます**）")
                        for r in top))
