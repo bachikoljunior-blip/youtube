@@ -93,6 +93,22 @@ watches:
     unit: 再生
     need: 15000
 
+  - id: 題の問い-両群16本
+    what: 「題を問いの形にすると engaged が上がる」の判定（期限 2026-09-12）
+    cond: 問い・断定のどちらの群も、落ち着いた本が16本（`src/ab_split.MIN_PER_GROUP`）
+    then: python scripts/ab_split.py --outlook
+    source: src/ab_split.py
+    kind: ab_group
+    experiment: title_form
+
+  - id: 冒頭の問い-両群16本
+    what: 「冒頭1枚目を問いかけにすると engaged が上がる」の判定（期限 2026-09-16）
+    cond: 問い・条件のどちらの群も、落ち着いた本が16本
+    then: python scripts/ab_split.py --outlook
+    source: src/ab_split.py
+    kind: ab_group
+    experiment: hook_form
+
 # **見張らないと決めたもの**（`tests/test_watches.py` が読みます）。
 # 「まだ判定できません」と印字するのに待ちの台帳に無いファイルは、
 # ここに理由を書くまで検査が落ちます。**黙って放置できない形にするため。**
@@ -103,8 +119,6 @@ exempt:
   src/length_verdict.py: >-
     尺30秒の仮説は 2026-08-20 に判定済み（外れ・p=0.393）。残る印字は、
     再生0の本があるときの断りです。
-  src/ab_split.py: >-
-    `scripts/status.py` が毎回 `ab_split` / `ab_power` の件数を出しています（＝すでに毎周見えている）。
   src/endcard_verdict.py: >-
     末尾の問いかけの仮説は判定済み（対照群が0本だったため、言えるのは「この枠では取れない」まで）。
   src/m8_funnel.py: >-

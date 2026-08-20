@@ -132,3 +132,93 @@ def test_免除には理由が書いてある():
     for path, why in watches.exempt().items():
         assert len(why.strip()) >= 20, f"{path} の免除に理由がありません"
         assert (ROOT / path).exists(), f"{path} はもうありません（免除も消すこと）"
+
+
+# --------------------------------------------------- 仮説の側から見張る（穴C）
+#
+# **印字を見張るだけでは足りません**（2026-08-20 に足した）。
+# 待ちが次に書かれる場所は、道具の print ではなく
+# `config/hypotheses.yaml` の `falsified_if` です。そこには
+# 「3,000再生に達した時点で」「6本たまった時点で」のような**数の門**が入ります。
+# **門を書いたのに台帳に載せないと、満ちたことは誰にも届きません。**
+
+#: `falsified_if` に「いつ測れるようになるか」が書いてある印。
+GATE_IN_YAML = re.compile(
+    r"(達した時点|たまった時点|溜まった時点|貯まった時点|満たなければ|"
+    r"届いていなければ|届かなければ)")
+
+
+def _open_hypotheses():
+    import yaml
+
+    doc = yaml.safe_load((ROOT / "config" / "hypotheses.yaml").read_text(encoding="utf-8"))
+    return [h for h in doc.get("hypotheses", []) if not h.get("verdict")]
+
+
+def test_数の門を持つ未判定の仮説は台帳を指している():
+    """**門を書いたら、見張る先も書く。** 直し方は `watch:` を1行足すだけ。"""
+    ids = {w.id for w in _registry()}
+    bad = []
+    for h in _open_hypotheses():
+        if not GATE_IN_YAML.search(str(h.get("falsified_if", ""))):
+            continue
+        w = h.get("watch")
+        if not w:
+            bad.append(f"{h.get('deadline')} {str(h.get('claim'))[:34]} → watch: が無い")
+        elif w not in ids:
+            bad.append(f"{h.get('deadline')} {str(h.get('claim'))[:34]} → watch: {w} は台帳に無い")
+    assert not bad, (
+        "数の門を書いた未判定の仮説が、待ちの台帳を指していません:\n  "
+        + "\n  ".join(bad)
+        + "\n  → config/watches.yaml に待ちを足し、仮説に watch: <id> を書くこと")
+
+
+def test_台帳が指されている仮説は判定済みでも壊れない():
+    """判定が書かれた項の `watch:` は、あってもなくてもよい（消し忘れで落とさない）。"""
+    ids = {w.id for w in _registry()}
+    for h in _open_hypotheses():
+        w = h.get("watch")
+        assert w is None or w in ids
+
+
+# --------------------------------------------------- 鳴り続けを数える（穴B）
+
+def test_鳴った回を積んで回数を出す(tmp_path):
+    ledger = tmp_path / "rings.jsonl"
+    w = watches.Watch(id="試験", what="試し", cond="0以上", then="何かする",
+                      source="tests", kind="length_spread", params={"need": 0.0})
+    old = watches.RINGS
+    try:
+        watches.RINGS = ledger
+        watches.note_rings([w], at="2026-08-20T10:00:00+09:00")
+        watches.note_rings([w], at="2026-08-20T11:00:00+09:00")
+        hist = watches.ring_history(ledger)
+        assert hist["試験"][0] == 2
+        assert hist["試験"][1].startswith("2026-08-20T10")
+        out = watches.render([w])
+        assert "2回鳴っています" in out, "放置の長さが画面に出ていません"
+    finally:
+        watches.RINGS = old
+
+
+def test_答えを書いた待ちは鳴らない():
+    w = watches.Watch(id="試験", what="試し", cond="0以上", then="何かする",
+                      source="tests", kind="length_spread", params={"need": 0.0},
+                      answered="2026-08-20 判定済み")
+    assert watches.unanswered([w]) == []
+
+
+def test_満ちて答えの無い待ちはunansweredに出る():
+    w = watches.Watch(id="試験", what="試し", cond="0以上", then="何かする",
+                      source="tests", kind="length_spread", params={"need": 0.0})
+    assert [x.id for x in watches.unanswered([w])] == ["試験"]
+
+
+def test_記録しないのが既定():
+    """検査や下見で `render` を呼んでも、帳面を汚さないこと。"""
+    w = watches.Watch(id="試験", what="試し", cond="0以上", then="何かする",
+                      source="tests", kind="length_spread", params={"need": 0.0})
+    before = watches.RINGS.read_text(encoding="utf-8") if watches.RINGS.exists() else ""
+    watches.render([w])
+    after = watches.RINGS.read_text(encoding="utf-8") if watches.RINGS.exists() else ""
+    assert before == after

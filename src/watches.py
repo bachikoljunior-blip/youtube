@@ -34,6 +34,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -46,6 +47,8 @@ SCAN = ROOT / "data" / "scan.jsonl"
 UPLOADED = ROOT / "data" / "uploaded.jsonl"
 LAG = ROOT / "data" / "analytics_lag.jsonl"
 CRITIQUE = ROOT / "data" / "critique.jsonl"
+#: **鳴った回を積む帳面。** 満ちて答えの無い待ちが、何回ぶん放置されたか。
+RINGS = ROOT / "data" / "watch_rings.jsonl"
 
 
 @dataclass
@@ -260,7 +263,27 @@ def _k_scored_pairs(p: dict) -> Gauge:
                  f"{p.get('min_views', 30)}再生以上で突き合わせ可能")
 
 
+def _k_ab_group(p: dict) -> Gauge:
+    """A/B の**少ないほうの群**が、判定に要る本数に届いたか。
+
+    数えているのは `src/ab_split.py` です（**同じ数を2箇所で持たない**）。
+    ここは「その数を毎周ここにも出す」ためだけの入口。
+    """
+    from src import ab_split
+
+    exp = ab_split.EXPERIMENTS[p["experiment"]]
+    counts = ab_split.split_counts(exp)
+    ready = counts.treated_ready
+    if not ready:
+        return Gauge(0, float(ab_split.MIN_PER_GROUP), "本",
+                     err=f"{p['experiment']}: 群が1つも立っていません")
+    low = min(ready.values())
+    note = " / ".join(f"{g} {n}本" for g, n in sorted(ready.items()))
+    return Gauge(low, float(ab_split.MIN_PER_GROUP), "本", note)
+
+
 KINDS = {
+    "ab_group": _k_ab_group,
     "length_spread": _k_length_spread,
     "published_count": _k_published_count,
     "scan_sum": _k_scan_sum,
@@ -295,12 +318,68 @@ def exempt(path: Path = CONFIG) -> dict[str, str]:
     return dict(doc.get("exempt") or {})
 
 
+def unanswered(ws: list[Watch] | None = None) -> list[Watch]:
+    """**満ちているのに、まだ答えが書かれていない待ち。**
+
+    `scripts/stop_check.sh` がこれを見て、回を引き止めます。
+    **印字だけでは、読まなかった回に届きません**（それが 8/10〜8/20 の
+    10日間に起きたことです）。
+    """
+    out = []
+    for w in (ws if ws is not None else load()):
+        if w.answered:
+            continue
+        if w.gauge().met:
+            out.append(w)
+    return out
+
+
+def note_rings(ws: list[Watch], at: str = "") -> None:
+    """**鳴った回を1行積む。** 放置の長さを、人の記憶ではなく数で持つ。"""
+    if not ws:
+        return
+    try:
+        RINGS.parent.mkdir(parents=True, exist_ok=True)
+        now = at or datetime.now(JST).isoformat(timespec="seconds")
+        with RINGS.open("a", encoding="utf-8") as fh:
+            for w in ws:
+                fh.write(json.dumps({"at": now, "id": w.id},
+                                    ensure_ascii=False) + "\n")
+    except Exception:                                          # noqa: BLE001
+        pass                                                   # 計器で回を止めない
+
+
+def ring_history(path: Path | None = None) -> dict[str, tuple[int, str]]:
+    """id → (鳴った回数, 最初に鳴った時刻)。"""
+    src = path or RINGS
+    out: dict[str, tuple[int, str]] = {}
+    if not src.exists():
+        return out
+    for line in src.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        try:
+            r = json.loads(line)
+        except ValueError:
+            continue
+        wid, at = r.get("id", ""), r.get("at", "")
+        if not wid:
+            continue
+        n, first = out.get(wid, (0, at))
+        out[wid] = (n + 1, min(first, at) if first and at else (first or at))
+    return out
+
+
 def _fmt(x: float) -> str:
     return f"{x:,.2f}".rstrip("0").rstrip(".") if x % 1 else f"{x:,.0f}"
 
 
-def render(watches: list[Watch] | None = None) -> str:
-    """`status.py` が毎回出す節。**満ちたものを上に、大きく。**"""
+def render(watches: list[Watch] | None = None, record: bool = False) -> str:
+    """`status.py` が毎回出す節。**満ちたものを上に、大きく。**
+
+    `record=True` のとき、**満ちて答えの無い待ちを1行ずつ積みます**
+    （`data/watch_rings.jsonl`）。何回ぶん放置したかを、次の回が数で読めます。
+    """
     try:
         ws = watches if watches is not None else load()
     except Exception as exc:                                   # noqa: BLE001
@@ -319,8 +398,13 @@ def render(watches: list[Watch] | None = None) -> str:
         else:
             waiting.append((w, g))
 
+    if record:
+        note_rings([w for w, _ in rung])
+    history = ring_history()
     for w, g in rung:
-        lines.append(f"  [!] **満ちました** {w.id} —— {w.what}")
+        n, first = history.get(w.id, (0, ""))
+        rang = (f"  **{n}回鳴っています**（初回 {first[:16]}）" if n > 1 else "")
+        lines.append(f"  [!] **満ちました** {w.id} —— {w.what}{rang}")
         lines.append(f"      {w.cond}: いま **{_fmt(g.now)}{g.unit}**"
                      f"（要る {_fmt(g.need)}{g.unit}）"
                      + (f" / {g.note}" if g.note else ""))
@@ -344,7 +428,13 @@ def render(watches: list[Watch] | None = None) -> str:
 
 
 def main(argv: list[str] | None = None) -> int:
-    print(render())
+    """`--pending` は `scripts/stop_check.sh` が読む形（1行1件）。"""
+    argv = list(argv if argv is not None else sys.argv[1:])
+    if "--pending" in argv:
+        for w in unanswered():
+            print(f"{w.id}\t{w.then}")
+        return 0
+    print(render(record="--record" in argv))
     return 0
 
 

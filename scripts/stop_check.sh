@@ -172,6 +172,50 @@ EOF
   exit 0
 fi
 
+# --- (1.5) **満ちた待ちに答えないまま終わらせない**（2026-08-20 に足した） ---
+#
+# オーナー指示（原文）: **「これからも同じことにならないようにするんだよ」**
+#
+# 8/10〜8/20、`scripts/retention.py` は「30秒設計の3本が出れば測れるようになります」と
+# **正しく印字していました。3本は 8/18 に出ました。誰も気づきませんでした。**
+# 印字は、その道具を走らせた回にしか届かないからです。
+#
+# だから条件は `config/watches.yaml` に移し、毎周 `status.py` が出します。
+# **しかし印字に格上げしただけでは、同じ穴です** —— 出ていても、読まずに終われる。
+# **ここで止めるのが本体です。** 満ちた待ちは、その回で判定するか、
+# **なぜ今やらないかを JOURNAL に書く**かのどちらかしかない形にします。
+#
+# 引き止めは (1) と同じく3回まで。**止まったまま死ぬほうが確実に悪い。**
+PENDING=$(cd "$ROOT" && timeout 20 python3 -m src.watches --pending 2>/dev/null || true)
+if [ -n "$PENDING" ]; then
+  WCOUNT="$STATE_DIR/claude-youtube-watch-blocks-${ME:-none}"
+  WN=$(cat "$WCOUNT" 2>/dev/null || echo 0)
+  if [ "$WN" -lt 3 ]; then
+    echo $((WN + 1)) > "$WCOUNT"
+    cat <<EOF >&2
+【満ちた待ちに、まだ答えていません】（${WN}→$((WN + 1))回目・3回で通します）
+
+**測れるようになった問いが残っています**（\`config/watches.yaml\`）:
+
+${PENDING}
+
+左が待ちの名前、右が**走らせるもの**です。**この回で判定すること。**
+
+答えが出たら \`config/watches.yaml\` の その id に \`answered:\` を1行
+（日付と答え）。**「見た」では消えません。判定するまで毎回ここで止まります。**
+
+**いま判定しないと決めるなら、理由を \`docs/JOURNAL.md\` に書いてから終わること。**
+（実データがまだ薄い・別の待ちのほうが速い、などは正しい理由になり得ます）
+
+**放置の長さは数で残ります**（\`data/watch_rings.jsonl\`。\`status.py\` に
+「N回鳴っています」と出ます）。**次の回が、それを見ます。**
+EOF
+    printf '{"decision":"block","reason":"満ちた待ちに答えてから終わってください（config/watches.yaml）"}\n'
+    exit 0
+  fi
+  rm -f "$WCOUNT"
+fi
+
 # --- (2) 普通の「終わるのが最善か」。5分以内に一度問うていれば通す ---
 if [ -f "$SENTINEL" ]; then
   LAST=$(cat "$SENTINEL" 2>/dev/null || echo 0)

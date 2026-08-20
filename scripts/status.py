@@ -1714,7 +1714,9 @@ def print_local_sections(inventory: bool = True) -> None:
     # こちらは「**測れるようになったか**」（数）で、**片方だけでは判定できません。**
     # 8/10〜8/20 の `scripts/retention.py` は、期限のほうを持っていなかったので
     # 10日間だれも気づきませんでした（`src/watches.py` の冒頭）。
-    print(_watches.render())
+    # **`record=True`**: 満ちて答えの無い待ちを1行ずつ積みます
+    # （`data/watch_rings.jsonl`）。**放置の長さを、記憶ではなく数で持つため。**
+    print(_watches.render(record=True))
     print_hypotheses()
     print_alert_hit_rate()
     print_budget()
