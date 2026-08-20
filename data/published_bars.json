@@ -2033,6 +2033,15 @@
     ],
     "video_id": "qFaWlft1CVs"
   },
+  "s-kogaku-gassan-70000": {
+    "charts": [
+      [
+        "2万1千円",
+        "7万円"
+      ]
+    ],
+    "video_id": "AaTCmolfSbo"
+  },
   "s-kogaku-jikofutan-1-percent": {
     "charts": [
       [
@@ -2883,6 +2892,16 @@
     ],
     "video_id": ""
   },
+  "s-nenkin-119-120": {
+    "charts": [
+      [
+        "2,020,620円",
+        "2,037,600円",
+        "2,054,580円"
+      ]
+    ],
+    "video_id": "t_p2q041AE0"
+  },
   "s-nenkin-63-kuriage-tedori-plus332041": {
     "charts": [
       [
@@ -3231,6 +3250,19 @@
       ]
     ],
     "video_id": "s20h15d9GtA"
+  },
+  "s-saishushoku-100nichi-wakare": {
+    "charts": [
+      [
+        "70.0日分",
+        "60.0日分"
+      ],
+      [
+        "90.0日分",
+        "140.0日分"
+      ]
+    ],
+    "video_id": "5QhqloIgSqE"
   },
   "s-saishushoku-330-66-nichibun": {
     "charts": [
@@ -3584,6 +3616,16 @@
     ],
     "video_id": "56bVLW1qwmw"
   },
+  "s-shienkyufu-jukyu30nen-3177360": {
+    "charts": [
+      [
+        "105万9120円",
+        "211万8240円",
+        "317万7360円"
+      ]
+    ],
+    "video_id": "1JrCFnaFGnY"
+  },
   "s-shienkyufu-menjo-cliff-141216": {
     "charts": [
       [
@@ -3883,6 +3925,16 @@
     ],
     "video_id": "WuTf0Z-tRJc"
   },
+  "s-shobyo-rate-1pt-546days": {
+    "charts": [
+      [
+        "3万6400円",
+        "8万80円",
+        "11万8300円"
+      ]
+    ],
+    "video_id": "Hius1_POfe4"
+  },
   "s-shobyo-rounding-remainder-200": {
     "charts": [
       [
@@ -3924,6 +3976,20 @@
       ]
     ],
     "video_id": "DtpnSVFDtAE"
+  },
+  "s-shokibo-240tsuki-jishitsu-244": {
+    "charts": [
+      [
+        "16,800,000円",
+        "21,557,500円"
+      ],
+      [
+        "70.91%",
+        "6.16%",
+        "2.44%"
+      ]
+    ],
+    "video_id": "Z0tBNDpr60o"
   },
   "s-shokibo-241kagetsu-9man4500": {
     "charts": [
@@ -4546,6 +4612,22 @@
     ],
     "video_id": "NEb3UY_LAJs"
   },
+  "s-yukyu-nen19nichi-sen-shu5": {
+    "charts": [
+      [
+        "23日",
+        "8日",
+        "0日"
+      ],
+      [
+        "年10日",
+        "年16日",
+        "年19日",
+        "年20日"
+      ]
+    ],
+    "video_id": "vj-w2BYlBcs"
+  },
   "s-yukyu-shitei-shu4-3nen6kagetsu": {
     "charts": [
       [
@@ -4607,6 +4689,16 @@
     ],
     "video_id": "PZli3GKY848"
   },
+  "s-zaishoku-bonus-1kai-63man": {
+    "charts": [
+      [
+        "年57万円",
+        "年120万円",
+        "年120万円"
+      ]
+    ],
+    "video_id": "-LBSPCCE8Aw"
+  },
   "s-zaishoku-chosei-1man-modori-5sen": {
     "charts": [
       [
@@ -4625,6 +4717,24 @@
       ]
     ],
     "video_id": "AUNctVhpBLc"
+  },
+  "s-zaishoku-kyuyo-1613-atama": {
+    "charts": [
+      [
+        "0.00%",
+        "3.41%",
+        "15.25%",
+        "16.13%",
+        "15.38%"
+      ],
+      [
+        "15,000円",
+        "90,000円",
+        "100,000円",
+        "100,000円"
+      ]
+    ],
+    "video_id": "gcC_9Y1KI4Q"
   },
   "s-zaishoku-nofu120-3835": {
     "charts": [
