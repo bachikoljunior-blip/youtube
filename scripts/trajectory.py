@@ -407,6 +407,31 @@ def subs(v: dict) -> dict:
     }
 
 
+def engagement(v: dict) -> dict:
+    """**視聴者の反応。** ショートのフィードが次に配るかどうかを決めている側の数。
+
+    V（1本あたり生涯再生）は**フィードの判断**なので、こちらから動かせるのは
+    「判断の材料」だけです。**その材料が実測でいくつあるかを、ここに出します。**
+    """
+    views = int(v.get("合計.views", 0)) or 1
+    eng = int(v.get("合計.engagedViews", 0) or 0)
+    return {
+        "views": views, "engaged": eng, "engaged_share": eng / views,
+        "likes": int(v.get("合計.likes", 0) or 0),
+        "dislikes": int(v.get("合計.dislikes", 0) or 0),
+        "comments": int(v.get("合計.comments", 0) or 0),
+        "shares": int(v.get("合計.shares", 0) or 0),
+        "playlist_adds": int(v.get("合計.videosAddedToPlaylists", 0) or 0),
+        "avg_view_sec": v.get("合計.averageViewDuration"),
+        "avg_view_pct": v.get("合計.averageViewPercentage"),
+        "like_rate": int(v.get("合計.likes", 0) or 0) / views,
+        # **年齢・性別は「取っていない」のではなく「返ってこない」**。
+        # `src/scan.py` は使える次元を毎回全部回すので、出ていない ＝ この
+        # チャンネルではまだ API が返さない（`viewerPercentage` は標本が要る）。
+        "has_demographics": any(k.startswith(("ageGroup.", "gender.")) for k in v),
+    }
+
+
 def traffic(v: dict) -> dict:
     src = {k.split(".", 1)[1]: n for k, n in v.items()
            if k.startswith("insightTrafficSourceType.")}
@@ -785,7 +810,24 @@ def render(m: dict, today: dt.date) -> list[str]:
     P("")
 
     # -- 5. 登録率 ------------------------------------------------------------
-    P("--- 5. **登録率** ---")
+    eg = m["engagement"]
+    P("--- 5. **視聴者の反応（V を決めているのはフィードで、材料はこれだけ）** ---")
+    P("")
+    P(f"  [実測] 再生 {eg['views']:,}回 に対して:")
+    P(f"           engaged（すぐスワイプされなかった）  {eg['engaged']:>7,}回  **{eg['engaged_share']*100:>5.1f}%**")
+    P(f"           高評価                              {eg['likes']:>7,}回  {eg['like_rate']*100:>5.3f}%")
+    P(f"           コメント                            {eg['comments']:>7,}件"
+      + ("  ← **0件。** 反応の中でここだけ完全に無い" if eg["comments"] == 0 else ""))
+    P(f"           共有                                {eg['shares']:>7,}回")
+    P(f"           再生リストに追加                    {eg['playlist_adds']:>7,}回")
+    P(f"           平均視聴 {eg['avg_view_sec']}秒（尺の {eg['avg_view_pct']}%）")
+    P("  → **engaged は3回に1回。** ここが V を決めている側の唯一の実測です。")
+    if not eg["has_demographics"]:
+        P("  [未測定] **年齢・性別は返ってきません**（`src/scan.py` は使える次元を毎回全部回すので、")
+        P("           出ていない ＝ **取っていないのではなく、まだ API が返さない**）。")
+        P("           **標本が増えれば勝手に出ます。取りに行く作業は要りません。**")
+    P("")
+    P("--- 6. **登録率** ---")
     P("")
     P(f"  [実測] 純増 **{sb['net']}人** / 再生 {sb['views']:,}回 → **{sb['rate']*100:.4f}%**")
     P(f"         95%区間（Poisson・k={sb['net']}）: **{sb['rate_lo']*100:.4f}% 〜 {sb['rate_hi']*100:.4f}%**"
@@ -794,7 +836,7 @@ def render(m: dict, today: dt.date) -> list[str]:
     P("")
 
     # -- 6. 未測定 ------------------------------------------------------------
-    P("--- 6. **未測定（代用も置きません）** ---")
+    P("--- 7. **未測定（代用も置きません）** ---")
     P("")
     P("  [未測定] **このチャンネルの RPM。** 収益化前なので自分の数字が1つもありません。")
     P(f"           使っているのは [代用] ショート ¥{RPM_SHORTS['低']}〜¥{RPM_SHORTS['高']} ／ "
@@ -967,11 +1009,12 @@ def measure(today: dt.date) -> dict:
     tr = trend(day)
     sb = subs(v)
     tf = traffic(v)
+    eg = engagement(v)
     rc = reach()
     rt = retention()
     st = stages(vs, day, ident, dec, pv, sup, tr, sb, tf, rc, today)
     return {"identity": ident, "decay": dec, "per_video": pv, "supply": sup,
-            "trend": tr, "subs": sb, "traffic": tf, "reach": rc,
+            "trend": tr, "subs": sb, "traffic": tf, "engagement": eg, "reach": rc,
             "retention": rt, "stages": st, "today": today.isoformat()}
 
 
