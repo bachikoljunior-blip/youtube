@@ -1009,15 +1009,6 @@
 {"at": "2026-08-19T10:43:42+00:00", "detail": "channels.list mine"}
 {"at": "2026-08-19T10:43:44+00:00", "detail": "channels.list mine"}
 {"at": "2026-08-19T10:44:14+00:00", "detail": "channels.list mine"}
-{"at": "2026-08-19T10:56:40+00:00", "detail": "status: Data API 読み"}
-{"at": "2026-08-19T10:57:10+00:00", "detail": "channels.list mine"}
-{"at": "2026-08-19T10:57:12+00:00", "detail": "playlistItems.list uploads"}
-{"at": "2026-08-19T10:58:11+00:00", "detail": "channels.list mine"}
-{"at": "2026-08-19T11:04:47+00:00", "detail": "channels.list mine"}
-{"at": "2026-08-19T11:06:10+00:00", "detail": "status: Data API 読み"}
-{"at": "2026-08-19T11:06:40+00:00", "detail": "channels.list mine"}
-{"at": "2026-08-19T11:06:42+00:00", "detail": "channels.list mine"}
-{"at": "2026-08-19T11:07:38+00:00", "detail": "channels.list mine"}
 {"at": "2026-08-19T10:48:43+00:00", "detail": "channels.list mine"}
 {"at": "2026-08-19T10:49:39+00:00", "detail": "status: Data API 読み"}
 {"at": "2026-08-19T10:50:03+00:00", "detail": "channels.list mine"}
@@ -1031,6 +1022,15 @@
 {"at": "2026-08-19T10:51:55+00:00", "detail": "channels.list mine"}
 {"at": "2026-08-19T10:51:57+00:00", "detail": "channels.list mine"}
 {"at": "2026-08-19T10:51:58+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-19T10:56:40+00:00", "detail": "status: Data API 読み"}
+{"at": "2026-08-19T10:57:10+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-19T10:57:12+00:00", "detail": "playlistItems.list uploads"}
+{"at": "2026-08-19T10:58:11+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-19T11:04:47+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-19T11:06:10+00:00", "detail": "status: Data API 読み"}
+{"at": "2026-08-19T11:06:40+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-19T11:06:42+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-19T11:07:38+00:00", "detail": "channels.list mine"}
 {"at": "2026-08-19T11:20:40+00:00", "detail": "channels.list mine"}
 {"at": "2026-08-19T11:21:30+00:00", "detail": "playlistItems.list uploads"}
 {"at": "2026-08-19T11:21:32+00:00", "detail": "channels.list mine"}
@@ -1353,16 +1353,28 @@
 {"at": "2026-08-20T00:22:19+00:00", "detail": "channels.list mine"}
 {"at": "2026-08-20T00:23:08+00:00", "detail": "channels.list mine"}
 {"at": "2026-08-20T00:26:13+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-20T00:11:45+00:00", "detail": "status: Data API 読み"}
+{"at": "2026-08-20T00:12:13+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-20T00:12:16+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-20T00:13:02+00:00", "detail": "channels.list mine"}
 {"at": "2026-08-20T00:19:29+00:00", "detail": "channels.list mine"}
 {"at": "2026-08-20T00:20:46+00:00", "detail": "status: Data API 読み"}
 {"at": "2026-08-20T00:21:14+00:00", "detail": "channels.list mine"}
 {"at": "2026-08-20T00:21:16+00:00", "detail": "channels.list mine"}
 {"at": "2026-08-20T00:22:02+00:00", "detail": "channels.list mine"}
 {"at": "2026-08-20T00:22:26+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-20T00:22:56+00:00", "detail": "channels.list mine"}
 {"at": "2026-08-20T00:23:10+00:00", "detail": "channels.list mine"}
 {"at": "2026-08-20T00:23:12+00:00", "detail": "channels.list mine"}
 {"at": "2026-08-20T00:23:14+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-20T00:23:41+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-20T00:23:43+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-20T00:23:45+00:00", "detail": "channels.list mine"}
 {"at": "2026-08-20T00:23:59+00:00", "detail": "channels.list mine"}
 {"at": "2026-08-20T00:24:00+00:00", "detail": "channels.list mine"}
 {"at": "2026-08-20T00:24:02+00:00", "detail": "channels.list mine"}
 {"at": "2026-08-20T00:24:04+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-20T00:24:30+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-20T00:24:31+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-20T00:24:33+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-20T00:24:34+00:00", "detail": "channels.list mine"}
