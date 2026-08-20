@@ -1581,3 +1581,8 @@
 {"at": "2026-08-20T16:49:01+00:00", "detail": "scheduled_publish_times"}
 {"at": "2026-08-20T16:49:03+00:00", "detail": "playlistItems.insert"}
 {"at": "2026-08-20T16:49:03+00:00", "detail": "thumbnails.set G_tklBCZJzs"}
+{"at": "2026-08-20T17:05:13+00:00", "detail": "playlistItems.list uploads"}
+{"at": "2026-08-20T17:05:14+00:00", "detail": "status: Data API 読み"}
+{"at": "2026-08-20T17:05:43+00:00", "detail": "playlistItems.list uploads"}
+{"at": "2026-08-20T17:05:45+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-20T17:06:20+00:00", "detail": "channels.list mine"}
