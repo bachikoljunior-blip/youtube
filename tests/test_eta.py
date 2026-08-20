@@ -902,16 +902,32 @@ def test_今日はJSTで読む_UTCの日付ではない(monkeypatch):
 # ---- 腕の「引き方」（2026-08-20 14:2x に足した）--------------------------
 # **腕の名前だけでは足りません。** `density` には「出す」と「作る」の2つの道が
 # あり、どちらが通るかは `upload_cap` にしかありませんでした。
-# 固定するのは**分岐そのもの**（本数枠が開いていれば「出す」・閉なら「作る」）。
+#
+# **2026-08-21 04:0x に、分岐そのものを直しました。** ここは本数枠だけを見て
+# いましたが、**本数枠は「今この窓で何本 API に通せるか」しか言っていません。**
+# `density` の腕が読む入力は `supply.make_rate`（テーマが1日に何本増えるか）で、
+# **在庫から出しても、そちらは動きません**（実測: 10本 予約して **+0日**・
+# `make_rate` は 22.85 → 21.2 と**下がった**）。
+# 在庫が密度を支えていない（`holds=False`）なら、答えは**本数枠と関係なく「作る」**。
+# その側の検査は `tests/test_eta_how_to_pull.py` にあります。
+#
+# **ここの検査は `supply` も止めます。** 止めないと、この分岐の検査が
+# **その日の在庫の実物**で通ったり落ちたりします（この直しで実際に落ちました）。
 
-def _fake_state(monkeypatch, *, closed: bool, remaining: int):
+def _fake_state(monkeypatch, *, closed: bool, remaining: int, holds: bool = True):
     from datetime import datetime, timedelta, timezone
 
+    from src import supply as supply_mod
     from src import upload_cap
 
     tail = datetime(2026, 8, 20, 7, 0, tzinfo=timezone.utc)   # 08/20 16:00 JST
     st = upload_cap.State(closed, 0, remaining, tail, "")
     monkeypatch.setattr(upload_cap, "state", lambda *a, **k: st)
+    monkeypatch.setattr(supply_mod, "sweep_novel", lambda *a, **k: {"novel": 502})
+    monkeypatch.setattr(supply_mod, "supply", lambda *a, **k: {
+        "measured": True, "holds": holds,
+        "days_covered": 40.0 if holds else 3.6,
+        "sections_per_run_needed": 1.0})
 
 
 def test_本数枠が閉なら引き方は作るになる(monkeypatch):
@@ -923,12 +939,21 @@ def test_本数枠が閉なら引き方は作るになる(monkeypatch):
     assert "出す" not in got
 
 
-def test_本数枠が開なら引き方は出すになる(monkeypatch):
-    _fake_state(monkeypatch, closed=False, remaining=12)
+def test_本数枠が開いていて在庫も足りていれば引き方は出すになる(monkeypatch):
+    _fake_state(monkeypatch, closed=False, remaining=12, holds=True)
     got = eta._how_to_pull({"lever_hint": "density", "density": 25,
                             "days_to_target": 157.0})
     assert got is not None
     assert "出す" in got and "あと 12本" in got
+
+
+def test_本数枠が開いていても在庫が支えないなら作るになる(monkeypatch):
+    """**この回（08/21 03:1x）が実際に踏んだ形です。** 本数枠は開・在庫は 0.9日ぶん。"""
+    _fake_state(monkeypatch, closed=False, remaining=12, holds=False)
+    got = eta._how_to_pull({"lever_hint": "density", "density": 25,
+                            "days_to_target": 157.0})
+    assert got is not None
+    assert "「作る」" in got and "「出す」" not in got
 
 
 def test_density以外の腕では何も足さない(monkeypatch):

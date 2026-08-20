@@ -172,12 +172,68 @@ def identity(vs: dict, day: dict[str, int]) -> dict:
     lifetime = sum(vs[k]["term"] for k in win)
     measured = sum(day[d] for d in days)
     span = (hi - lo).days + 1
+    cov = coverage(len(vs))
     return {
         "ok": True, "lo": lo, "hi": hi, "span": span,
         "n_videos": len(win), "supply": len(win) / span,
         "lifetime_sum": lifetime, "analytics_sum": measured,
         "gap": lifetime / measured - 1 if measured else None,
+        # **左辺と右辺が同じチャンネルを見ているか**（2026-08-21 04:3x に足した）。
+        # 下の `coverage()` に、足した理由をぜんぶ書いてあります。
+        "n_snapshots": len(vs), "n_channel": cov["n_channel"],
+        "coverage": cov["ratio"], "comparable": cov["comparable"],
     }
+
+
+#: **記録が何割そろっていれば、恒等式を「判定した」と言ってよいか。**
+#: 0.9 は「1割の取りこぼしなら 5% の門を割らない」の側に置いています ——
+#: 1本あたりの再生はばらつくので、**厳密な線ではありません。**
+#: **足りないときに出すのは「閉じない」ではなく「測れない」**なので、
+#: ここを緩めても、間違った結論が出るのではなく**判定が遅れる**だけです。
+IDENTITY_MIN_COVERAGE = 0.9
+
+
+def coverage(n_snapshots: int) -> dict:
+    """**この恒等式の左辺と右辺は、同じチャンネルを見ているか。**
+
+    ## なぜ足したか（2026-08-21 04:3x。**赤いまま渡すと、次が逆へ進みます**）
+
+    `test_identity_closes` が **-27.6%** で落ちました。検査の文面はこうです ——
+
+        恒等式が -27.6% ずれました。**後ろカタログが効き始めた可能性があります**
+        —— 軌跡に減衰項が要ります
+
+    **それを信じると、軌跡に減衰項を入れることになります。** 実際の中身は違いました:
+
+        左辺 `lifetime_sum`  … `data/views.jsonl` にある本の生涯再生
+                               **その台帳が知っている動画は 65本**
+        右辺 `analytics_sum` … Analytics の日次の合計
+                               **チャンネル全体**（投稿済みテーマは 424件）
+
+    **右辺だけがチャンネル全体を見ています。** 窓に入った本が 32本 しか
+    数えられていないので、**左辺は構造的に小さく出ます。**
+    そして**公開を増やすほど差は開きます** —— つまりこの赤は、
+    「後ろカタログが効き始めた」ではなく **「記録が追いつかなくなった」**の顔です。
+
+    **同じ形が `decay` の側から否定できます**: 齢12〜14日の中央値は
+    **0.0 再生/日** です。古い本がほぼ動いていないのに、
+    窓の27.6%（7,811再生）を古い本が出すことはできません。
+
+    **だから、足りないときに言うのは「閉じない」ではなく「測れない」です。**
+    `comparable=False` の回は、恒等式そのものを判定しないこと。
+    """
+    n_channel = 0
+    try:
+        from src import history
+
+        n_channel = len(history.ledger_topics())
+    except Exception:                                          # noqa: BLE001
+        n_channel = 0
+    if n_channel <= 0:                       # 台帳が読めないなら、比べようがない
+        return {"n_channel": 0, "ratio": None, "comparable": False}
+    ratio = n_snapshots / n_channel
+    return {"n_channel": n_channel, "ratio": ratio,
+            "comparable": ratio >= IDENTITY_MIN_COVERAGE}
 
 
 def decay(vs: dict) -> dict:
@@ -680,14 +736,38 @@ def render(m: dict, today: dt.date) -> list[str]:
         P(f"  [実測] 検算 {ident['lo']}〜{ident['hi']}（{ident['span']}日・Analytics が日次を返す全期間）")
         P(f"         その窓に公開した {ident['n_videos']}本の**生涯再生の合計** {ident['lifetime_sum']:,}")
         P(f"         Analytics の同じ窓の**再生合計**          {ident['analytics_sum']:,}")
-        P(f"         → 差 **{ident['gap']*100:+.1f}%**。**閉じます。**")
-        P("         （断り: 窓の縁では**外へ出る本**（窓の最後の日に公開した本の2日目）と")
-        P("           **中へ入る本**（窓の前日に公開した本の2日目）が出入りします。")
-        P("           **一致そのものは、その2つが釣り合ったぶんを含みます** —— ")
-        P("           後ろカタログが無いことの根拠は、下の齢べつの曲線のほうが直接的です）")
-        P("")
-        P("  **閉じるということは、その窓の再生が全部その窓に公開した本のものだ**ということです。")
-        P("  **後ろカタログが1回も効いていません。**")
+        gap = ident.get("gap")
+        P(f"         → 差 **{gap*100:+.1f}%**" if gap is not None
+          else "         → 差 **[測れません]**（Analytics の窓の再生が 0）")
+        # **「閉じます」を、差を見ずに印字していました**（2026-08-21 04:3x に直した）。
+        # ここは長らく `→ 差 -27.6%。**閉じます。**` と**続けて**出していて、
+        # そのすぐ下で「後ろカタログが1回も効いていません」と言い切っていました。
+        # **数字と結論が別々に印字されていたので、食い違っても誰も気づきません。**
+        if not ident.get("comparable", True):
+            cov = ident.get("coverage")
+            share = f"（{cov * 100:.0f}%）" if cov is not None else "（割合は不明）"
+            P(f"         [!] **この差は判定に使えません。** 記録は {ident['n_snapshots']}本、"
+              f"チャンネルは {ident['n_channel']}本{share}")
+            P("             **左辺だけが記録の側を見ています** —— `data/views.jsonl` に")
+            P("             載っている本しか数えないのに、右辺の Analytics は"
+              "**チャンネル全体**です。")
+            P("             **公開を増やすほど差は開きます。**"
+              "後ろカタログの話ではありません（`coverage()`）。")
+            P("             後ろカタログが効いていないことの根拠は、"
+              "**下の齢べつの曲線**のほうを読むこと。")
+        elif gap is not None and abs(gap) < 0.05:
+            P("         → **閉じます。**")
+            P("         （断り: 窓の縁では**外へ出る本**（窓の最後の日に公開した本の2日目）と")
+            P("           **中へ入る本**（窓の前日に公開した本の2日目）が出入りします。")
+            P("           **一致そのものは、その2つが釣り合ったぶんを含みます** —— ")
+            P("           後ろカタログが無いことの根拠は、下の齢べつの曲線のほうが直接的です）")
+            P("")
+            P("  **閉じるということは、その窓の再生が全部その窓に公開した本のものだ**ということです。")
+            P("  **後ろカタログが1回も効いていません。**")
+        else:
+            P("         → [!] **閉じません。** 記録はチャンネルを覆っているので、"
+              "**差は本物です。**")
+            P("             軌跡に**減衰項**が要ります（`tests/test_trajectory.py` の註）。")
     if dec.get("frac24_median") is not None:
         P(f"  [実測] 1本の生涯再生のうち、**公開24時間以内に来る割合 {dec['frac24_median']*100:.1f}%**"
           f"（中央値・n={dec['frac24_n']}）")

@@ -28,6 +28,7 @@ import json
 import math
 import re
 import sys
+import time
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
@@ -55,6 +56,83 @@ from src.auth import note_day_quota as _note_day_quota  # noqa: E402
 from src.uploader import _service  # noqa: E402
 
 JST = timezone(timedelta(hours=9))
+
+# ---- この回の時間の内訳を、推測ではなく実測で出す（2026-08-21 03:4x に足した）----
+#
+# **§6 (a2) の問い1「この回でいちばん時間を食ったのはどこか」が、直近8回のうち
+# 4回で `status.py` を名指ししています**（`retro.py` が縦に並べます: 12分・
+# 「3回続けて最大の食い」・13分50秒）。**それでも一度も直っていません。**
+# 理由は答えのほうを見れば分かります —— **どれも「`status.py` が」で止まっていて、
+# 「`status.py` の**どこ**が」を言っていません。** 誰も測っていないからです。
+#
+# 手で測ろうとすると1回まるごと（実測13分）走らせ直すことになるので、
+# **測るより推測するほうが安い**という形になっていました。**そこを逆にします。**
+# 節ごとの実測が毎回ただで出れば、次の回は名前ではなく数字で直せます。
+#
+# **入れ子は引きます**（`print_local_sections` は中で6つ呼ぶので、そのまま足すと
+# 二重に数えます）。出すのは「自分ぶん」＝ 全体 − 直下の子。
+_T0 = time.perf_counter()
+_TIMINGS: list[dict] = []
+_TIME_STACK: list[dict] = []
+
+
+def _clock(label: str):
+    """節1つの実時間を積む。**中で落ちても積みます**（`finally`）。
+
+    落ちた節こそ時間を食っていることがあるので（外の口の待ち・再試行）、
+    **例外で消えないこと**が要点です。
+    """
+    def deco(fn):
+        @_functools.wraps(fn)
+        def wrap(*a, **k):
+            t0 = time.perf_counter()
+            rec = {"label": label, "children": 0.0, "t0": t0}
+            _TIME_STACK.append(rec)
+            try:
+                return fn(*a, **k)
+            finally:
+                dt = time.perf_counter() - t0
+                _TIME_STACK.pop()
+                rec["total"] = dt
+                rec["self"] = dt - rec["children"]
+                if _TIME_STACK:
+                    _TIME_STACK[-1]["children"] += dt
+                _TIMINGS.append(rec)
+        return wrap
+    return deco
+
+
+def print_timings(top: int = 8) -> None:
+    """節ごとの実測を1つの表にして出す。**推測で答えないための目盛り**です。
+
+    **`_print_analytics_recap` より前に出します。** あの節は「`tail` で拾っても
+    落ちない」ことが存在理由なので、**後ろには何も足せません**（その註のとおり）。
+    """
+    now = time.perf_counter()
+    # **まだ終わっていない節も入れます**（2026-08-21 に踏んだ）。
+    # ここを呼ぶのは `_print_analytics_recap` の頭で、そこは `_channel_main` の
+    # **中**です。積んだぶんだけを出すと、**いちばん大きい行（外の口の待ち）が
+    # まるごと落ちます** —— 測る道具が、いちばん測りたいものを落とす形でした。
+    live = [{**r, "total": now - r["t0"], "self": now - r["t0"] - r["children"],
+             "open": True} for r in _TIME_STACK]
+    rows = sorted(_TIMINGS + live, key=lambda r: r.get("self", 0.0), reverse=True)
+    if not rows:
+        return
+    whole = now - _T0
+    print("\n=== この回の時間の内訳（**(a2) 問い1 を推測で答えないため**）===")
+    print(f"  この道具の実時間 **{whole:.0f}秒**"
+          f"（節ごとの『自分ぶん』＝ 全体 − 直下の子。**入れ子は引いてあります**）")
+    for r in rows[:top]:
+        share = 100.0 * r.get("self", 0.0) / whole if whole > 0 else 0.0
+        mark = "（まだ途中）" if r.get("open") else ""
+        print(f"    {r['label']:<28} **{r.get('self', 0.0):6.1f}秒**  ({share:4.1f}%)"
+              f"   ＜全体 {r.get('total', 0.0):.1f}秒＞{mark}")
+    rest = sum(r.get("self", 0.0) for r in rows[top:])
+    if rest > 0:
+        print(f"    {'（残り ' + str(len(rows) - top) + '節）':<28} **{rest:6.1f}秒**")
+    print("  **速くする手を打つなら、いちばん上の行から**。"
+          "名前ではなく数字で選ぶこと（`docs/JOURNAL.md` に、どれをいくら縮めたか）。")
+
 
 # **外れたときの次の手を、期限の何日前から出すか。**
 # 期限が来てから探すと、その回が丸ごと分析で終わります（2026-08-17）。
@@ -1577,6 +1655,7 @@ def _print_analytics_recap() -> None:
     **足す条件**: 数字を1つ足すなら、**それで手が変わるものだけ**。
     「見ておくとよい」で増やすと、この節も250行になって同じことが起きます。
     """
+    print_timings()          # **この節より前に出すこと**（上の註のとおり、後ろには足せない）
     try:
         from src import scan as _scan
         vals = (_scan._previous() or {}).get("values", {})
@@ -1970,6 +2049,31 @@ def _print_missing_thumbnails() -> None:
     except Exception as exc:                                   # noqa: BLE001
         print(f"  （単位枠の状態が読めません: {str(exc)[:60]}）")
     print("  潰したら `run_marker.py --ship ... --closes missing_thumbnail`。")
+
+
+# **節ごとに時計を掛ける**（2026-08-21 03:4x）。定義のあとで包むので、
+# 中身は1文字も変わりません。**出力の並びも変わりません。**
+# `_channel_main` も入れてあります —— 中の節を引いた「自分ぶん」が、
+# **外の口（Data API）に払った待ち時間**そのものになります。
+for _fn_name, _fn_label in (
+    ("_channel_main", "外の口（Data API）"),
+    ("print_analytics_sections", "アナリティクス（別枠）"),
+    ("print_local_sections", "手元だけの節（容れ物）"),
+    ("print_retention", "維持率"),
+    ("print_channel_signals", "流入経路"),
+    ("print_where_watched", "視聴位置"),
+    ("print_hypotheses", "まだ検証していない前提"),
+    ("print_means", "手段の台帳"),
+    ("print_topic_stock", "テーマ在庫（掃引を含む）"),
+    ("print_budget", "使用量"),
+    ("print_upload_cap", "投稿の本数枠"),
+    ("print_alert_hit_rate", "警告の当たり率"),
+    ("_print_inventory_from_ledger", "予約の先（控え）"),
+    ("_print_missing_thumbnails", "サムネの欠け"),
+    ("print_step_days", "予約のきざみ"),
+):
+    if _fn_name in globals():
+        globals()[_fn_name] = _clock(_fn_label)(globals()[_fn_name])
 
 
 def main(days: int = 7) -> int:

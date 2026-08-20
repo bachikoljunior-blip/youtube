@@ -79,12 +79,60 @@ def test_growth_is_not_significant_and_that_is_said_out_loud(m):
 # --- 2. 恒等式 --------------------------------------------------------------
 
 def test_identity_closes(m):
-    """**日次再生 ＝ 供給 × V** が帳尻で閉じること（差 5% 未満）。"""
+    """**日次再生 ＝ 供給 × V** が帳尻で閉じること（差 5% 未満）。
+
+    **ただし、左辺と右辺が同じチャンネルを見ている回だけ**です
+    （2026-08-21 04:3x に足した。理由は `trajectory.coverage()` に全部書いてあります）。
+
+    ここは長らく、記録の側（`data/views.jsonl` の 65本）と
+    Analytics の側（チャンネル全体・投稿済み 424件）を突き合わせて
+    **-27.6%** を出し、その差を **「後ろカタログが効き始めた」** と読ませていました。
+    **そのまま信じると、軌跡に要らない減衰項が入ります。**
+    足りないときに言うのは「閉じない」ではなく **「測れない」**です。
+    """
     ident = m["identity"]
     assert ident["ok"]
+    if not ident["comparable"]:
+        pytest.skip(
+            f"記録が {ident['n_snapshots']}本 / チャンネル {ident['n_channel']}本"
+            f"（{(ident['coverage'] or 0)*100:.0f}%）。**恒等式は測れません** ——"
+            "左辺だけが記録の側を見ているので、差は後ろカタログではなく取りこぼしです")
     assert abs(ident["gap"]) < 0.05, (
         f"恒等式が {ident['gap']*100:+.1f}% ずれました。"
         "後ろカタログが効き始めた可能性があります —— 軌跡に減衰項が要ります")
+
+
+def test_identity_says_when_it_cannot_measure(m):
+    """**測れない回に「閉じない」と言わないこと。**
+
+    `comparable` が無い（＝いつでも判定する）形に戻ると、この検査が落ちます。
+    """
+    ident = m["identity"]
+    assert "comparable" in ident and "coverage" in ident
+    assert "n_snapshots" in ident and "n_channel" in ident
+    if ident["n_channel"]:
+        # 判定してよいのは、記録がチャンネルをおおむね覆っている回だけ
+        assert ident["comparable"] == (
+            ident["n_snapshots"] / ident["n_channel"] >= traj.IDENTITY_MIN_COVERAGE)
+
+
+def test_coverage_reads_the_ledger_not_the_api(monkeypatch):
+    """**API を1単位も使わないこと**（日枠が閉じている窓でも同じ答えが要る）。"""
+    from src import history
+
+    monkeypatch.setattr(history, "ledger_topics", lambda: {str(i): str(i) for i in range(100)})
+    assert traj.coverage(95)["comparable"] is True
+    assert traj.coverage(65)["comparable"] is False
+    assert traj.coverage(65)["ratio"] == pytest.approx(0.65)
+
+
+def test_coverage_without_a_ledger_refuses_to_judge(monkeypatch):
+    """台帳が読めない回は **「測れない」**。0本を「覆っている」と読まないこと。"""
+    from src import history
+
+    monkeypatch.setattr(history, "ledger_topics", lambda: {})
+    cov = traj.coverage(65)
+    assert cov["comparable"] is False and cov["ratio"] is None
 
 
 def test_no_back_catalogue(m):

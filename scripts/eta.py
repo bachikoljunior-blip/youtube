@@ -2719,10 +2719,46 @@ def _how_to_pull(pl: dict) -> str | None:
     need = (f"この回ぶんは **節 {per_run:.1f}本**"
             if isinstance(per_run, (int, float)) and per_run == per_run
             and per_run != float("inf") else "この回ぶんは `src/supply.py` が出します")
-    if st.remaining > 0 and not st.closed:
+    back = st.resets_at.astimezone(JST).strftime("%m/%d %H:%M JST")
+    cap_open = st.remaining > 0 and not st.closed
+
+    # **在庫が密度を支えていないなら、答えは本数枠と関係なく「作る」です**
+    # （2026-08-21 04:0x に、この回の実測で直した）。
+    #
+    # ここは長らく **本数枠が開いているかどうかだけ**で「出す」「作る」を決めていました。
+    # **本数枠は「今この窓で何本 API に通せるか」しか言っていません。**
+    # ところが `density` の腕が読んでいる入力は `supply.make_rate`
+    # ＝ **テーマが1日に何本増えているか**のほうです。
+    #
+    # **在庫から出すだけでは、その入力は1ミリも動きません。** それどころか、
+    # 新しいテーマを1本も作らずに周を1つ進めると、窓だけ伸びて**下がります。**
+    #
+    # **実測（2026-08-21 03:1x の回）。** 本数枠は開（あと72本）で、ここは
+    # 「引き方は『出す』」と言いました。そのとおり在庫から10本を予約したあとの
+    # `--reflect` がこれです:
+    #
+    #     make_rate_per_day: 22.85 → **21.2**     ← 下がっている
+    #     到達日（軌跡）: 2026-12-02 → 2026-12-02（**+0日**）
+    #
+    # **腕を選んで、その腕を引けない道を案内していた**ことになります。
+    # `docs/JOURNAL.md`（8/20 18:1x）の申し送りは「`density` を引く回は、
+    # 掃引ではなく表を1本書くこと」と、**既に正しいほうを言っていました** ——
+    # この道具だけが、本数枠を見て逆を言っていた。
+    #
+    # **`holds` は「いまの在庫と作る速さで、その密度を期限まで保てるか」**です
+    # （`src/supply.py`）。保てないなら、出す先は在庫の食い減らしにしかなりません。
+    if sp.get("measured") and not sp.get("holds", True):
+        covered = sp.get("days_covered")
+        cov = f"{covered:.1f}日ぶん" if isinstance(covered, (int, float)) else "測定中"
+        cap = (f"本数枠は開（あと {st.remaining}本）だが" if cap_open
+               else f"本数枠は閉（{back} 戻り）。そのうえ")
+        return (f"**{cap}、在庫が密度を支えていません（{cov}）"
+                f"→ 引き方は「作る」**（`src/calc/` に節を書く）。{need}"
+                f"  ＊**在庫から出しても `make_rate` は上がりません**"
+                f"（08/21 03:1x の実測: 10本 予約して **+0日**・`make_rate` は下がった）")
+    if cap_open:
         return (f"**本数枠は開（あと {st.remaining}本）→ 引き方は「出す」**"
                 f"（`batch_build.py`）。作る側なら {need}")
-    back = st.resets_at.astimezone(JST).strftime("%m/%d %H:%M JST")
     return (f"**本数枠は閉（{back} 戻り）→ 引き方は「作る」**"
             f"（`src/calc/` に節を書く）。{need}")
 

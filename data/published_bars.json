@@ -305,6 +305,35 @@
     ],
     "video_id": "nNt2_3fiWzE"
   },
+  "s-aoiro-etax-10man": {
+    "charts": [
+      [
+        "20,420円",
+        "10,000円",
+        "10,000円"
+      ],
+      [
+        "25,105円",
+        "40,420円",
+        "53,693円"
+      ]
+    ],
+    "video_id": "Rb_ENqKZ8gM"
+  },
+  "s-aoiro-jitsu-51-65": {
+    "charts": [
+      [
+        "20万5731円",
+        "6万5千円",
+        "6万5千円"
+      ],
+      [
+        "21万4500円",
+        "33万5731円"
+      ]
+    ],
+    "video_id": "96qlWmD-OHs"
+  },
   "s-fudosan-241heihou-36man": {
     "charts": [
       [
@@ -536,6 +565,23 @@
       ]
     ],
     "video_id": ""
+  },
+  "s-furusato-33-cliff-1800": {
+    "charts": [
+      [
+        "18.00%",
+        "14.33%",
+        "11.57%",
+        "4.56%"
+      ],
+      [
+        "6,492,306円",
+        "11,035,293円",
+        "13,447,058円",
+        "49,917,646円"
+      ]
+    ],
+    "video_id": "aE7qcL_bEic"
   },
   "s-furusato-4": {
     "charts": [
@@ -1681,6 +1727,18 @@
       ]
     ],
     "video_id": "12V-kHrKzIg"
+  },
+  "s-jutaku-kuriage-1nenme-483460": {
+    "charts": [
+      [
+        "483,460円",
+        "404,933円",
+        "327,958円",
+        "215,345円",
+        "106,058円"
+      ]
+    ],
+    "video_id": "HoF6kT9UtZw"
   },
   "s-kabe-150man-4084en": {
     "charts": [
@@ -3221,6 +3279,27 @@
     ],
     "video_id": "L2fqMA7Xh-k"
   },
+  "s-nisa-refill-five-years": {
+    "charts": [
+      [
+        "54,000,000円",
+        "36,000,000円",
+        "18,000,000円",
+        "18,000,000円"
+      ]
+    ],
+    "video_id": "AL1kFbIZFj0"
+  },
+  "s-nisa-years-to-1800": {
+    "charts": [
+      [
+        "30.0年",
+        "18.0年",
+        "10.0年"
+      ]
+    ],
+    "video_id": "43iwNEFd-7o"
+  },
   "s-rousai-hachiwari-taihi-1213": {
     "charts": [
       [
@@ -4223,6 +4302,22 @@
     ],
     "video_id": "PdJ0ltnIvkw"
   },
+  "s-shoukyu-nokoru-wariai-640-r2": {
+    "charts": [
+      [
+        "7万1353円",
+        "2万8647円"
+      ],
+      [
+        "71.35%",
+        "66.25%",
+        "64.63%",
+        "63.41%",
+        "63.00%"
+      ]
+    ],
+    "video_id": "CwfNxMQlmJg"
+  },
   "s-shoukyuu-nano-ni-nen20940en-mainasu": {
     "charts": [
       [
@@ -4865,6 +4960,21 @@
     ],
     "video_id": ""
   },
+  "s-zangyo-1nichi-566en-machi": {
+    "charts": [
+      [
+        "113円",
+        "226円",
+        "340円",
+        "566円"
+      ],
+      [
+        "61万9898円",
+        "51万6582円"
+      ]
+    ],
+    "video_id": "M5WFRwM4llo"
+  },
   "s-zangyo-2": {
     "charts": [
       [
@@ -4888,6 +4998,15 @@
     ],
     "video_id": "Vpjbt0XofmQ"
   },
+  "s-zangyo-61jikanme-2480-r3": {
+    "charts": [
+      [
+        "2,066円",
+        "2,480円"
+      ]
+    ],
+    "video_id": "8gVKGl2r58c"
+  },
   "s-zangyo-ichiritsu-3man-45h": {
     "charts": [
       [
@@ -4908,6 +5027,23 @@
       ]
     ],
     "video_id": "XOs9JBL5wJ0"
+  },
+  "s-zoyo-1000man-3nen-zurashi-98man": {
+    "charts": [
+      [
+        "333万3333円",
+        "633万3333円",
+        "33万3333円"
+      ],
+      [
+        "70万5千円",
+        "71万8333円",
+        "74万3333円",
+        "80万4999円",
+        "98万1666円"
+      ]
+    ],
+    "video_id": "3S16LVnj0RU"
   },
   "s-zoyo-1000man-ippan-tokurei-54man": {
     "charts": [
