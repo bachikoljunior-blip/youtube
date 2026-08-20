@@ -158,3 +158,42 @@ def test_docstringに書いた青色の差が実際と合っている():
     assert kokuho_diff == 71_225
     assert f"{diff:,}円" in keihi.__doc__
     assert f"{kokuho_diff:,}円" in keihi.__doc__
+
+
+# ---- 年齢だけで動く値打ち（2026-08-20 に足した節）------------------------
+# **固定するのは「差 ＝ 介護分の所得割そのもの」の1点**です。
+# 率が変わったら値も変わるので、数字を直書きせず率から出しています。
+
+def test_介護分が乗る年齢と乗らない年齢で値打ちが所得割のぶんだけ違う():
+    from src.calc import kokuho
+
+    rate = kokuho.RATES["介護納付金分"]["所得割"]
+    g = keihi.care_age_gap(5_000_000)
+    assert g["差"] == round(keihi.STEP * rate)      # 1万円 × 2.25% ＝ 225円
+    assert g["45歳の値打ち"] > g["39歳の値打ち"]
+
+
+@pytest.mark.parametrize("age, kaigo", [
+    (39, False), (40, True), (64, True), (65, False),
+])
+def test_境目は40歳と65歳(age, kaigo):
+    from src.calc import kokuho
+
+    base = keihi.marginal(5_000_000, age=39)["値打ち"]
+    got = keihi.marginal(5_000_000, age=age)["値打ち"]
+    assert (got > base) is kaigo
+    assert (kokuho.KAIGO_FROM <= age <= kokuho.KAIGO_TO) is kaigo
+
+
+def test_賦課限度額に当たった帯では年齢の差が消える():
+    # 介護分が限度額（17万円）で止まっているので、経費を増やしても減らない。
+    assert abs(keihi.care_age_gap(9_000_000)["差"]) <= 1
+    assert abs(keihi.care_age_gap(12_000_000)["差"]) <= 1
+
+
+def test_差が残るいちばん上の所得はゆらぎを拾わない():
+    # **1円の差は端数処理のゆらぎ**（所得943万・946万…）。100円の床で外す。
+    got = keihi.care_gap_vanishes()
+    assert got == 7_900_000
+    assert keihi.care_age_gap(got)["差"] >= 100
+    assert keihi.care_age_gap(got + 100_000)["差"] < 100

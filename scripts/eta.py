@@ -1395,6 +1395,9 @@ def headline(pl: dict, prev: dict | None = None) -> list[str]:
                    "（天井が足りない。下の「何を何倍にすれば」を読むこと）")
     out.append(f"{bar} 縛っているのは **{pl['binding']}**"
                f" → **この回に引く腕は `{pl['lever_hint']}`**")
+    how = _how_to_pull(pl)
+    if how:
+        out.append(f"{bar} {how}")
     prev_date = None
     if prev and prev.get("target_date"):
         try:
@@ -1623,6 +1626,45 @@ def _report_supply(pl: dict) -> list[str]:
         P(f"    （掃引の点は {sw['age_hours']:.0f}時間前。測り直しは"
           " `python -m src.supply --measure --density 25`）")
     return out
+
+
+
+def _how_to_pull(pl: dict) -> str | None:
+    """**腕の名前だけでは足りない。** その腕を、この窓でどう引くかまで書く。
+
+    2026-08-20 14:2x に足した（前の回の宿題。`docs/JOURNAL.md` 問い3）。
+    `density` には道が2つあります —— **出す**（`upload`）と **作る**（節を書く）。
+    **どちらが今この窓で通るかは、この道具の外**（`upload_cap.state()`）にあり、
+    2つの道具を突き合わせて初めて分かる形でした。**その突き合わせが、
+    実測で1周の35分**です（8/20 13:1x と 14:1x が続けて同じ所で使っています）。
+
+    `upload_cap.state()` は控えと `data/*.jsonl` だけを読みます（**API 0単位**）。
+    読めなかったら黙って何も足しません —— **予測そのものは止めないこと。**
+    """
+    if pl.get("lever_hint") != "density":
+        return None
+    try:
+        from src import supply as supply_mod
+        from src import upload_cap
+
+        st = upload_cap.state()
+        days = pl.get("days_to_target")
+        horizon = days if isinstance(days, (int, float)) and days < NEVER else None
+        sw = supply_mod.sweep_novel()
+        sp = supply_mod.supply(pl["density"], novel=sw["novel"], horizon_days=horizon)
+        per_run = sp.get("sections_per_run_needed")
+    except Exception:                                          # noqa: BLE001
+        return None
+
+    need = (f"この回ぶんは **節 {per_run:.1f}本**"
+            if isinstance(per_run, (int, float)) and per_run == per_run
+            and per_run != float("inf") else "この回ぶんは `src/supply.py` が出します")
+    if st.remaining > 0 and not st.closed:
+        return (f"**本数枠は開（あと {st.remaining}本）→ 引き方は「出す」**"
+                f"（`batch_build.py`）。作る側なら {need}")
+    back = st.resets_at.astimezone(JST).strftime("%m/%d %H:%M JST")
+    return (f"**本数枠は閉（{back} 戻り）→ 引き方は「作る」**"
+            f"（`src/calc/` に節を書く）。{need}")
 
 
 def _report_long_gate(m: dict, a: dict) -> list[str]:

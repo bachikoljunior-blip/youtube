@@ -876,3 +876,53 @@ def test_今日はJSTで読む_UTCの日付ではない(monkeypatch):
     # UTC で 2026-08-19T22:30 ＝ JST では 2026-08-20T07:30
     utc = datetime(2026, 8, 19, 22, 30, tzinfo=timezone.utc)
     assert utc.astimezone(eta.JST).date() == _date(2026, 8, 20)
+
+
+# ---- 腕の「引き方」（2026-08-20 14:2x に足した）--------------------------
+# **腕の名前だけでは足りません。** `density` には「出す」と「作る」の2つの道が
+# あり、どちらが通るかは `upload_cap` にしかありませんでした。
+# 固定するのは**分岐そのもの**（本数枠が開いていれば「出す」・閉なら「作る」）。
+
+def _fake_state(monkeypatch, *, closed: bool, remaining: int):
+    from datetime import datetime, timedelta, timezone
+
+    from src import upload_cap
+
+    tail = datetime(2026, 8, 20, 7, 0, tzinfo=timezone.utc)   # 08/20 16:00 JST
+    st = upload_cap.State(closed, 0, remaining, tail, "")
+    monkeypatch.setattr(upload_cap, "state", lambda *a, **k: st)
+
+
+def test_本数枠が閉なら引き方は作るになる(monkeypatch):
+    _fake_state(monkeypatch, closed=True, remaining=0)
+    got = eta._how_to_pull({"lever_hint": "density", "density": 25,
+                            "days_to_target": 157.0})
+    assert got is not None
+    assert "作る" in got and "16:00 JST" in got
+    assert "出す" not in got
+
+
+def test_本数枠が開なら引き方は出すになる(monkeypatch):
+    _fake_state(monkeypatch, closed=False, remaining=12)
+    got = eta._how_to_pull({"lever_hint": "density", "density": 25,
+                            "days_to_target": 157.0})
+    assert got is not None
+    assert "出す" in got and "あと 12本" in got
+
+
+def test_density以外の腕では何も足さない(monkeypatch):
+    _fake_state(monkeypatch, closed=True, remaining=0)
+    for lever in ("per_video", "rpm", "sub_rate", "none"):
+        assert eta._how_to_pull({"lever_hint": lever, "density": 25,
+                                 "days_to_target": 157.0}) is None
+
+
+def test_読めなくても予測を止めない(monkeypatch):
+    from src import upload_cap
+
+    def boom(*a, **k):
+        raise RuntimeError("控えが読めない")
+
+    monkeypatch.setattr(upload_cap, "state", boom)
+    assert eta._how_to_pull({"lever_hint": "density", "density": 25,
+                             "days_to_target": 157.0}) is None
