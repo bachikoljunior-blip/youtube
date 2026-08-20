@@ -1771,3 +1771,6 @@
 {"at": "2026-08-20T23:28:00+00:00", "detail": "channels.list mine"}
 {"at": "2026-08-20T23:28:52+00:00", "detail": "channels.list mine"}
 {"at": "2026-08-20T23:30:08+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-20T23:31:55+00:00", "detail": "status: Data API 読み"}
+{"at": "2026-08-20T23:32:22+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-20T23:32:24+00:00", "detail": "channels.list mine"}

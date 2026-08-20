@@ -1,12 +1,12 @@
 {
   "id": "trig_017g2Meu9DZqZ7dJbPKJFS8c",
-  "name": "YouTube 定期（毎時・親 016PyeT6／指示表示・質疑応答・子を立てて畳む）",
-  "cron_expression": "9 * * * *",
+  "name": "YouTube 定期（1日21回・親 016PyeT6／指示表示・質疑応答・子を立てて畳む）",
+  "cron_expression": "9 0-5,7-11,13-17,19-23 * * *",
   "enabled": true,
   "persistent_session_id": "session_016PyeT6Afj5KzKQ9xkKE3Kx",
   "environment_id": "env_01QMJaP2yRCzw4tY5VpJeM1m",
   "body": "【親】**`docs/trigger_parent.md` を読んで、そこに書いてあるとおりにしてください。**\n\n手順はリポジトリ側にあります。**ここには、リポジトリから求まらないものだけ**書きます。\n\n    あなたのセッションID   session_016PyeT6Afj5KzKQ9xkKE3Kx\n    子を立てる環境         env_01QMJaP2yRCzw4tY5VpJeM1m\n    リポジトリ             https://github.com/bachikoljunior-blip/youtube\n    枝                     claude/youtube-auto-post-revenue-ggedij\n    このトリガー           （`list_triggers` で引けます。名前は「YouTube 定期（毎時…）」）\n\n**あなたはリポジトリを触れません**（`git` を打たない・ファイルを書かない）。\nなので `docs/trigger_parent.md` は **GitHub 経由で読むこと**\n（`mcp__github__get_file_contents`。owner=bachikoljunior-blip repo=youtube\npath=docs/trigger_parent.md ref=上の枝）。\n\n## なぜ本文をここに書かないのか\n\n**2026-08-10、オーナーの指摘:**\n\n> 目標以外のことは子の改善ループで変えられるようにしたほうが良くない？\n> 作業の途中で設計の欠陥に気づくこともあるだろうから\n\n親の手順をトリガー側に置いていたので、**子が親の欠陥に気づいても直せませんでした。**\nいまは手順が repo にあるので、**子が親のやり方を書き換えられます。**\n書き換わっていたら、次のあなたはそれに従ってください。**それが正しい動作です。**\n\n## あなた自身が重くなることについて（2026-08-15 に前の親を捨てた理由）\n\n前の親は8/3から生きていて、**文脈が cache_read 8,470万トークンぶんに膨らみました。**\n12時間おきなら無視できましたが、**毎時になった途端、鎖でいちばん高い部品になりました。**\n子は毎回まっさらなので安い。**高いのは親です。**\n\nだから**1回のターンを小さく保つこと。** 分析しない。日誌を書かない。数字を写さない。\n**自分が重くなってきたと感じたら、新しい親を立てて `create_trigger` で移し、\nこのトリガーを消してよい**（オーナーの承認は要りません）。\n\n## MCP が使えない回\n\n**子を立てられません。「立てられなかった」と1行だけ言って終えてください。**\n**代わりに周を回さないこと。** 親が働き出すと、この設計を作った理由が消えます。",
-  "next_run_at": "2026-08-20T23:09:00Z",
-  "last_fired_at": "2026-08-20T22:11:43.761445Z",
+  "next_run_at": "2026-08-21T00:09:00Z",
+  "last_fired_at": "2026-08-20T23:12:20.140048Z",
   "ingested_at": "2026-08-20T22:55:59+00:00"
 }

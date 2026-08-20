@@ -1,8 +1,8 @@
 {
   "_": "親トリガーの正本。実物へ当てるのは scripts/trigger_sync.py。docs/TRIGGER.md の表は人向けの写しで、機械が読むのはこのファイル。",
   "trigger_id": "trig_017g2Meu9DZqZ7dJbPKJFS8c",
-  "name": "YouTube 定期（毎時・親 016PyeT6／指示表示・質疑応答・子を立てて畳む）",
-  "cron_expression": "9 * * * *",
+  "name": "YouTube 定期（1日21回・親 016PyeT6／指示表示・質疑応答・子を立てて畳む）",
+  "cron_expression": "9 0-5,7-11,13-17,19-23 * * *",
   "enabled": true,
   "persistent_session_id": "session_016PyeT6Afj5KzKQ9xkKE3Kx",
   "environment_id": "env_01QMJaP2yRCzw4tY5VpJeM1m",
@@ -11,5 +11,6 @@
   "repo_url": "https://github.com/bachikoljunior-blip/youtube",
   "branch": "claude/youtube-auto-post-revenue-ggedij",
   "body_file": "docs/trigger_body.md",
-  "stale_hours": 24
+  "stale_hours": 24,
+  "_cron_why": "2026-08-21 08:3x に 毎時 → 1日21回（6・12・18時だけ抜く＝平均68.6分）。オーナーの画面 08/21 08:07 JST で週92%・リセットまで22時間52分。直近の区間 0.489 %/時 に対して許される速さは 0.350 %/時（残り8%÷残り23時間）＝40%速すぎで、このままなら 08/21 20:44 に100%、土07:00 のリセットまで10時間止まる。1周 0.405% なので持続できる間隔は69分。cron は分の刻みしか無いので、時を3つ抜いて 24h/21=68.6分にした。**覆る条件**: 週の目盛りが 0.350 %/時 より余裕を持ったら毎時へ戻す（docs/TRIGGER.md）"
 }
