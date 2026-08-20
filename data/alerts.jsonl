@@ -339,3 +339,4 @@
 {"at": "2026-08-20T17:15:02+09:00", "key": "dupes_actionable", "n": 14, "session": "session_01EvqdLGJg97otNa1dZhTSzN", "by": "status.py"}
 {"at": "2026-08-20T17:15:06+09:00", "key": "carry_over", "n": 13, "session": "session_01EvqdLGJg97otNa1dZhTSzN", "by": "retro.py"}
 {"at": "2026-08-20T17:16:43+09:00", "key": "calc_gap", "n": 12, "session": "session_01EvqdLGJg97otNa1dZhTSzN", "by": "status.py"}
+{"at": "2026-08-20T18:45:38+09:00", "key": "undeclared_close", "n": 1, "session": "session_01FoLG2gVMcTYfGhf84FLW7T", "by": "run_marker.py"}
