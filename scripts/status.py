@@ -49,6 +49,7 @@ def _ab_power_verdict():
         return None
 from src import alerts as _alerts  # noqa: E402
 from src import inbox as _inbox  # noqa: E402
+from src import reach_split as _reach_split  # noqa: E402
 from src.auth import note_day_quota as _note_day_quota  # noqa: E402
 from src.uploader import _service  # noqa: E402
 
@@ -1717,6 +1718,13 @@ def print_local_sections(inventory: bool = True) -> None:
     # **`record=True`**: 満ちて答えの無い待ちを1行ずつ積みます
     # （`data/watch_rings.jsonl`）。**放置の長さを、記憶ではなく数で持つため。**
     print(_watches.render(record=True))
+    # **`print_where_watched` の相方**（2026-08-20 21:5x に足した）。
+    # あちらは「どこで見られたか」（再生の側）、こちらは「**どれだけ見せた結果か**」
+    # （インプレッションの側）です。**片方だけでは、サムネを直すべきか
+    # 面そのものを疑うべきかが決まりません。** そして `where_watched` は
+    # Analytics（別枠）なのに対し、ここは**積んだ CSV を読むだけ**なので、
+    # **日枠が閉じている窓でも出ます。**
+    print(_reach_split.render(_reach_split.load_rows()))
     print_hypotheses()
     print_alert_hit_rate()
     print_budget()
