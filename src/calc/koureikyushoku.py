@@ -241,12 +241,20 @@ def flip_table() -> list[dict]:
 def one_day_table(daily: float = 5_000) -> list[dict]:
     """算定基礎期間が1年に届くかどうかで、1日の差がいくら動くか。"""
     out = []
+    base = None
     for y in (0.99, 1.0):
+        amount = money(kounen_days(y), daily)
         out.append({
             "算定基礎期間": y,
             "日数": kounen_days(y),
-            "受け取る額": money(kounen_days(y), daily),
+            "受け取る額": amount,
+            # **差そのものを印字します** —— 台本が引く「20日で100,000円」は
+            # 引き算の結果なので、表に出しておかないと裏が取れません。
+            "1年未満との差": 0.0 if base is None else amount - base,
+            "1年未満との日数差": 0 if base is None else kounen_days(y) - kounen_days(0.99),
         })
+        if base is None:
+            base = amount
     return out
 
 
@@ -258,6 +266,7 @@ def per_year_table() -> list[dict]:
         j, k, o = kihon_days(y), kihon_days(y, kaiko=True), kounen_days(y)
         out.append({
             "勤続年数": y,
+            "1年からのばした年数": y - 1,
             "自己都合": j,
             "自己都合の増分": 0 if prev_j is None else j - prev_j,
             "解雇": k,
@@ -393,6 +402,7 @@ if __name__ == "__main__":
     for row in per_year_table():
         if row["勤続年数"] in (1, 2, 5, 9, 10, 11, 19, 20, 21, 25):
             print(f"  勤続 {row['勤続年数']:>3}年"
+                  f"（1年から +{row['1年からのばした年数']:>2}年）"
                   f"  自己都合 {row['自己都合']:>4}日（+{row['自己都合の増分']:>2}）"
                   f"  解雇 {row['解雇']:>4}日（+{row['解雇の増分']:>2}）"
                   f"  65歳以降 {row['65歳以降']:>3}日（+{row['65歳以降の増分']:>2}）")
@@ -422,7 +432,9 @@ if __name__ == "__main__":
     for row in one_day_table():
         print(f"  算定基礎期間 {row['算定基礎期間']:>5}年"
               f"  {row['日数']:>3}日"
-              f"  {row['受け取る額']:>9,.0f}円")
+              f"  {row['受け取る額']:>9,.0f}円"
+              f"  （1年未満との差 {row['1年未満との日数差']:>2}日"
+              f"・{row['1年未満との差']:>8,.0f}円）")
 
     print("\n=== 受給資格に要る期間は、さかのぼる窓のほうが先に効く ===")
     for row in need_months_table():
