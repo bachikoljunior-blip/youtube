@@ -101,11 +101,41 @@ def test_答えには_腕を何日動かすかが入っている():
 
 
 def test_倍率は速さと日数から出ている():
-    """`x(t) = exp(rate · t)`。**定数で置いたら落ちます。**"""
-    tr = _solve(_arms(rpm={"rate": 0.03}))
+    """`x(t) = exp(rate · t)`。**定数で置いたら落ちます。**
+
+    **天井の無い世界でだけ、この等式です**（2026-08-21 02:1x に幅を足した）。
+    天井に着いた腕からは回転を引き上げる（`_factors_at(realloc=True)`）ので、
+    どれかが着いた後の残りは `rate` より**速く**なります。
+    下の `test_天井に着いた腕の配分は残りに回る` が、その向きを固定しています。
+    """
+    import math
+    no_cap = {k: {"cap": 0.0} for k in ("per_video", "sub_rate", "rpm", "density")}
+    no_cap["rpm"] = {"cap": 0.0, "rate": 0.03}
+    tr = _solve(_arms(**no_cap))
     if tr["t_work"]:
-        import math
         assert tr["factors"]["rpm"] == pytest.approx(math.exp(0.03 * tr["t_work"]))
+
+
+def test_天井に着いた腕の配分は残りに回る():
+    """**回転の半分を、もう伸びない腕に注ぎ続けないこと。**（2026-08-21 02:1x）
+
+    `rate = focus_rate × share` の `share` が固定だったので、実測では
+    `per_video`（配分 57% ・天井 ×1.57）が着いた後も、そこに回転が
+    回り続けていました。軌跡が「腕を全部振っても出ません」と言っていた理由の1つです。
+    """
+    import math
+    # `per_video` だけすぐ天井。残り3本は天井なし
+    arms = _arms(per_video={"cap": 1.2},
+                 **{k: {"cap": 0.0} for k in ("sub_rate", "rpm", "density")})
+    tr = _solve(arms)
+    if not tr["t_work"]:
+        pytest.skip("この標本では腕を動かさないのが最良（配り直しの向きは見られない）")
+    t = tr["t_work"]
+    assert tr["factors"]["per_video"] == pytest.approx(1.2)
+    # 着いた後は、据え置きの配分より**速い**こと
+    assert tr["factors"]["rpm"] > math.exp(0.05 * t)
+    # ただし「全部振った」より速くはならないこと
+    assert tr["factors"]["rpm"] <= math.exp(0.2 * t) + 1e-9
 
 
 # --- 2. 天井（**実在しない世界を歩かない**）--------------------------------------------

@@ -222,3 +222,53 @@ def test_記録しないのが既定():
     watches.render([w])
     after = watches.RINGS.read_text(encoding="utf-8") if watches.RINGS.exists() else ""
     assert before == after
+
+
+# --- 尺は後ろの一枚から補う（2026-08-21 03:0x）------------------------------------
+
+def test_尺の空いた一枚が積まれても_後ろから補う(tmp_path, monkeypatch):
+    """Data API の日枠が切れた回の走査は、**尺の欄が丸ごと空**で積まれます。
+
+    最後の一枚をそのまま採ると、尺を読む待ちが全部「読めません」に落ちます。
+    実測: 8/20 23:52 の一枚は 29本ぶんの尺つき、01:3x の一枚は 0本 ——
+    **在るのに読んでいないだけ**で、しかも Data API の枠が戻る JST 16:00 まで
+    毎日その時間帯に必ず起きます。
+    """
+    import json as _json
+
+    scan = tmp_path / "scan.jsonl"
+    good = {"at": "2026-08-20T23:52:01+09:00",
+            "values": {"動画.aaa.尺": 29, "動画.aaa.views": 100,
+                       "動画.bbb.尺": 31, "動画.bbb.views": 200}}
+    # Data API が 403 の回: Analytics の指標だけ・尺は1本も無い
+    degraded = {"at": "2026-08-21T01:36:16+09:00",
+                "values": {"動画.aaa.views": 111, "動画.bbb.views": 222}}
+    scan.write_text(_json.dumps(good) + "\n" + _json.dumps(degraded) + "\n",
+                    encoding="utf-8")
+    monkeypatch.setattr(watches, "SCAN", scan)
+
+    rows = watches._last_scan()
+    # **動く数は新しい一枚のまま**（古いほうを混ぜない）
+    assert rows["aaa"]["views"] == 111 and rows["bbb"]["views"] == 222
+    # **尺だけ補う**
+    assert rows["aaa"]["尺"] == 29 and rows["bbb"]["尺"] == 31
+
+    w = watches.Watch(id="試験", what="試し", cond="0以上", then="何かする",
+                      source="tests", kind="length_spread", params={"need": 0.0})
+    assert "満ちました" in watches.render([w])
+
+
+def test_新しい一枚に居ない本は_呼び戻さない(tmp_path, monkeypatch):
+    """補うのは尺だけで、**消えた本まで戻さない**こと。"""
+    import json as _json
+
+    scan = tmp_path / "scan.jsonl"
+    good = {"at": "1", "values": {"動画.aaa.尺": 29, "動画.zzz.尺": 40,
+                                  "動画.aaa.views": 1, "動画.zzz.views": 2}}
+    degraded = {"at": "2", "values": {"動画.aaa.views": 9}}
+    scan.write_text(_json.dumps(good) + "\n" + _json.dumps(degraded) + "\n",
+                    encoding="utf-8")
+    monkeypatch.setattr(watches, "SCAN", scan)
+    rows = watches._last_scan()
+    assert set(rows) == {"aaa"}
+    assert rows["aaa"]["尺"] == 29

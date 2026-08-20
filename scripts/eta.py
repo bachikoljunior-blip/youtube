@@ -1257,7 +1257,41 @@ def lever_days(m: dict, a: dict, pl0: dict, today: date | None = None,
     return rows
 
 
-def physical_caps(a0: dict, density: float = PLAN_PUBLISH_PER_DAY) -> dict[str, dict]:
+def sustained_density(supply: dict | None,
+                     density: float = PLAN_PUBLISH_PER_DAY) -> float:
+    """**天井を立てている密度**（1日に「続けられる」本数）を1か所で出す。
+
+    `plan()` の `density_sustained`（`min(PLAN_PUBLISH_PER_DAY, 作る速さ)`）と
+    **同じ数**です。写しではなく、同じ入口から読むために関数にしてあります。
+
+    ## なぜ要るか（2026-08-21 01:5x に踏んだ）
+
+    段4 の天井は `per_video × density_sustained`（実測 7.8本/日）で立ちます。
+    ところが `physical_caps` は `density` の伸びしろを
+    **`PLAN_PUBLISH_PER_DAY`（25本/日）で割っていました** ——
+    25 は「予約を詰め直したらこうなる」という**計画の数**で、
+    同じファイルが天井からは外している数です（`density_sustained` の注記）。
+
+        天井が立っている密度   7.8本/日（実測）
+        伸びしろの分母          25本/日（計画）  ← **別の数**
+        → 腕は 7.8 × (92/25) ＝ **28.7本/日 で頭打ち**。実物の上限 92本/日 の **3.2分の1**
+
+    軌跡は「腕を全部振っても出ません」と印字していましたが、その天井の
+    3.2倍ぶんは**そもそも歩かせてもらえていません**でした。
+    **`tests/test_eta_density_cap.py` が、分母が計画の数に戻ったら落とします。**
+    """
+    if supply is None:
+        return float(density)
+    rate = supply.get("sustained_rate_per_day")
+    if rate is None:
+        rate = supply.get("rate_per_day")
+    if rate is None:
+        return float(density)
+    return min(float(density), float(rate))
+
+
+def physical_caps(a0: dict, density: float = PLAN_PUBLISH_PER_DAY,
+                  supply: dict | None = None) -> dict[str, dict]:
     """**腕を「実在する幅」で止める。**（軌跡が実在しない世界を歩かないため）
 
     最初の版はここが無く、実測の速さのまま 224日ぶん外挿して
@@ -1277,9 +1311,13 @@ def physical_caps(a0: dict, density: float = PLAN_PUBLISH_PER_DAY) -> dict[str, 
     （`sub_rate` の実測は仮説「長尺の登録率はショートより1桁以上高い」・期限 2026-09-15）。
     """
     caps: dict[str, dict] = {}
+    # **分母は「天井が立っている密度」**（`sustained_density`）。
+    #     計画の 25本/日 で割ると、腕は実物の上限 92本/日 まで歩けません。
+    density = sustained_density(supply, density)
     if density > 0:
         caps["density"] = {"factor": UPLOAD_CAP_PER_DAY / density,
-                           "why": f"1日に出せる上限 {UPLOAD_CAP_PER_DAY}本（実測）",
+                           "why": (f"1日に出せる上限 {UPLOAD_CAP_PER_DAY}本（実測）"
+                                   f" ÷ いま続けられる {density:.1f}本/日"),
                            "measured": True}
     # --- `rpm` の天井は、2026-08-20 22:2x に**実測に入れ替えました**（`src/rpm_mix.py`）---
     #     ここには `max(RPM_SCENARIOS) / band`（¥2,000 ÷ ¥20 ＝ ×100）が入っていて、
@@ -1311,11 +1349,12 @@ def physical_caps(a0: dict, density: float = PLAN_PUBLISH_PER_DAY) -> dict[str, 
 
 
 def _capped_arms(a0: dict, arms: dict | None = None,
-                 density: float = PLAN_PUBLISH_PER_DAY) -> dict:
+                 density: float = PLAN_PUBLISH_PER_DAY,
+                 supply: dict | None = None) -> dict:
     """実測の天井（`hypotheses.yaml`）と、実在する幅（`physical_caps`）の**低いほう**を当てる。"""
     if arms is None:
         arms = arm_speed.all_arms(per_video_now=a0.get("per_video_now"))
-    phys = physical_caps(a0, density)
+    phys = physical_caps(a0, density, supply=supply)
     out = {}
     for lever, a in arms.items():
         a = dict(a)
@@ -1338,21 +1377,84 @@ TRAJECTORY_HORIZON_DAYS = 1_095
 
 
 def _factors_at(arms: dict, days: float, *, focus: str | None = None,
-                rate_scale: float = 1.0) -> dict:
+                rate_scale: float = 1.0, realloc: bool = True) -> dict:
     """**`days` 日たったときの、腕ごとの倍率。**（天井で頭打ち）
 
     `focus` を渡すと、**その腕に回転を全部振った**場合になります
     （他の腕は動きません ＝ 1.0 のまま）。回転は1本しかないので、
     「全部の腕を全力で」は**実在しない世界**です。
+
+    ## `realloc` ——**天井に着いた腕から、回転を引き上げる**（2026-08-21 02:1x）
+
+    `rate = focus_rate × share` で、`share` は**実績の配分**（過去にどの腕を
+    何回引いたか）です。ここが**固定**だったので、天井に着いた腕にも
+    回転が回り続けていました。実測では `per_video` の配分が **57%** で、
+    その腕は **×1.57 で天井**です —— **回転の半分以上を、
+    もう伸びない腕に永久に注ぎ続ける世界**を歩いていました。
+    軌跡が「腕を全部振っても出ません」と言っていた正体はこれです。
+
+    これは物理ではなく**この機械の振る舞い**で、しかも
+    **毎回 `lever_hint` を読んで腕を選び直している**のだから、
+    固定するほうが手順と食い違っています。天井に着いた腕を外して
+    **残りで配分を割り直す**のが、実際にやっていることです。
+
+    `realloc=False` で前の（配分を固定した）線に戻せます。
+    **`tests/test_eta_realloc.py` が、固定に戻ったら落とします。**
     """
+    if focus is not None or not realloc:
+        out = {}
+        for lever, a in arms.items():
+            if focus is None:
+                rate = a.get("rate")
+            else:
+                rate = a.get("focus_rate") if lever == focus else 0.0
+            rate = (rate or 0.0) * rate_scale
+            out[lever] = arm_speed.factor_at({**a, "rate": rate}, days)
+        return out
+
+    # --- 天井に着いた腕を外しながら、配分を割り直して進める ---
+    #     速さは log で線形（`x(t) = exp(rate·t)`）なので、
+    #     「次にどれかが天井に着く時刻」まで進めては割り直す、で厳密に解けます。
+    logf = {k: 0.0 for k in arms}
+    caps = {k: (arms[k].get("cap") if (arms[k].get("cap") or 0) > 1.0 else None)
+            for k in arms}
+    # **足すのではなく、空いた配分だけを配り直します。**
+    #     `rate` は「実績の配分のまま進んだ速さ」＝ `focus_rate × share`。
+    #     天井に着いた腕の `share` が空くので、残りは
+    #     `rate ÷ (残っている share の合計)` に上がります。
+    #     **全部が生きている t=0 では、これは `rate` そのもの**です
+    #     （`share` の合計は1）。だから前の線と食い違いません ——
+    #     `tests/test_eta_trajectory.py` の「倍率は速さと日数から出ている」が、
+    #     そこ（`x(t) = exp(rate·t)`）を固定しています。
+    base_rate = {k: ((arms[k].get("rate") or 0.0) * rate_scale) for k in arms}
+    share = {k: (arms[k].get("share") or 0.0) for k in arms}
+    live = {k for k in arms if base_rate[k] > 0
+            and (caps[k] is None or caps[k] > 1.0)}
+    t = 0.0
+    while t < days and live:
+        tot = sum(share[k] for k in live)
+        if tot <= 0:
+            break
+        step = float("inf")
+        rate = {}
+        for k in live:
+            rate[k] = base_rate[k] / tot
+            if caps[k] is not None and rate[k] > 0:
+                step = min(step, (math.log(caps[k]) - logf[k]) / rate[k])
+        step = min(step, days - t)
+        if not (step > 0):                       # 天井に着いている腕は外して割り直す
+            live -= {k for k in live
+                     if caps[k] is not None and logf[k] >= math.log(caps[k]) - 1e-12}
+            continue
+        for k in live:
+            logf[k] += rate[k] * step
+        t += step
+        live -= {k for k in live
+                 if caps[k] is not None and logf[k] >= math.log(caps[k]) - 1e-12}
     out = {}
-    for lever, a in arms.items():
-        if focus is None:
-            rate = a.get("rate")
-        else:
-            rate = a.get("focus_rate") if lever == focus else 0.0
-        rate = (rate or 0.0) * rate_scale
-        out[lever] = arm_speed.factor_at({**a, "rate": rate}, days)
+    for k in arms:
+        x = math.exp(logf[k])
+        out[k] = min(x, caps[k]) if caps[k] else x
     return out
 
 
@@ -1400,7 +1502,7 @@ def trajectory(m: dict, a0: dict, *, supply: dict | None = None,
     today = today or today_jst()
     # **腕は実在する幅の中でしか伸びません**（`physical_caps`）。
     #     ここを外すと、軌跡は 1日 110,525本 のような世界を歩きます。
-    arms = _capped_arms(a0, arms)
+    arms = _capped_arms(a0, arms, supply=supply)
 
     best = {"days": NEVER, "t_work": None, "factors": None}
     rates = {k: ((a.get("focus_rate") if focus == k else (0.0 if focus else a.get("rate"))) or 0.0)
@@ -1507,7 +1609,7 @@ def trajectory_all(m: dict, a0: dict, *, supply: dict | None = None,
     today = today or today_jst()
     rows = arm_speed.closed()
     bd = arm_speed.band(rows)
-    arms = _capped_arms(a0)
+    arms = _capped_arms(a0, supply=supply)
     kw = dict(supply=supply, points=points, today=today, arms=arms)
     base = trajectory(m, a0, **kw)
     p = bd.get("p") or 0.0
@@ -1663,8 +1765,23 @@ def plan(m: dict, a: dict, density: int = PLAN_PUBLISH_PER_DAY,
     # **密度の腕は、いまや「作る速さ」に効きます**（`solve_gate1`）。
     #     予約の詰め方（`density`）も一緒に動かさないと、倍率が片肺になります。
     density = density * sc["density"]
-    if supply is not None and supply.get("rate_per_day") is not None and sc["density"] != 1.0:
-        supply = dict(supply, rate_per_day=supply["rate_per_day"] * sc["density"])
+    # **倍率は `sustained_rate_per_day` にも当てること**（2026-08-21 02:3x に踏んだ）。
+    #     `solve_gate1` は 2026-08-20 20:0x に **読む欄を `rate_per_day` から
+    #     `sustained_rate_per_day` へ移しました**。ところがここは古い欄だけを
+    #     掛けたままで、**段4 の天井（`per_video × density_sustained`）に
+    #     `density` の倍率が1ミリも入っていませんでした** ——
+    #     `density_sustained = min(密度, 続けられる速さ)` の第2項が素通しなので、
+    #     腕を天井（×11.79）まで振っても `7.8本/日` のまま。
+    #     **`density` は、掛け値なしに「引いても日付が動かない腕」でした。**
+    #     軌跡が「全部振っても出ません」と言っていた理由の1つがこれです。
+    #     **`tests/test_eta_density_scale.py` が、片方だけに戻ったら落とします。**
+    if supply is not None and sc["density"] != 1.0:
+        upd = {}
+        for key in ("rate_per_day", "sustained_rate_per_day"):
+            if supply.get(key) is not None:
+                upd[key] = supply[key] * sc["density"]
+        if upd:
+            supply = dict(supply, **upd)
     g1 = solve_gate1(a, density=density, supply=supply)
     # **段4（月20万）は在庫を食い終わった先にあります。**
     #     そこでの密度は「予約の詰め方」ではなく「作る速さ」で頭打ちなので、

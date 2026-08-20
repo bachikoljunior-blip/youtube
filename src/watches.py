@@ -94,14 +94,55 @@ class Watch:
 
 # ---------------------------------------------------------------- 手元の材料
 
-def _last_scan() -> dict[str, dict]:
-    """走査の最後の一枚から、動画べつの指標を組み立てる。"""
+#: **動かない指標**（後ろの一枚から補ってよいもの）。
+#: 尺は Data API の `contentDetails.duration` から来ます。**動画の尺は変わりません**。
+IMMUTABLE_METRICS = ("尺",)
+
+
+def _row_metrics(line: str) -> dict[str, dict]:
     rows: dict[str, dict] = {}
-    lines = [l for l in SCAN.read_text(encoding="utf-8").splitlines() if l.strip()]
-    for k, v in json.loads(lines[-1])["values"].items():
+    for k, v in json.loads(line)["values"].items():
         if k.startswith("動画.") and k.count(".") >= 2:
             _, vid, metric = k.split(".", 2)
             rows.setdefault(vid, {})[metric] = v
+    return rows
+
+
+def _last_scan() -> dict[str, dict]:
+    """走査の最後の一枚から、動画べつの指標を組み立てる。
+
+    **尺だけは、後ろの一枚から補います**（2026-08-21 03:0x に踏んだ）。
+
+    走査は Analytics と Data API の**2本**から作られていて、**枠が別**です。
+    Data API の1日枠（10,000単位）は太平洋時間の0時 ＝ **JST 16:00** に戻るので、
+    その手前の数時間は `videos.list` が 403 を返し、走査は
+    **Analytics の指標だけ・尺の欄が丸ごと空**の一枚を積みます。
+
+    `_last_scan()` は最後の一枚を無条件で採っていたので、その一枚が積まれた瞬間に
+    **尺を読む待ち（`length_spread`）が全部「読めません」に落ちました** ——
+    実測: 8/20 23:52 の一枚は 29本ぶんの尺を持っていて、01:3x の一枚は 0本。
+    **在るのに読んでいないだけ**で、しかも毎日その時間帯に必ず起きます。
+
+    動く数（`views` など）を古い一枚から混ぜるのは間違いですが、
+    **尺は動きません**。だから補ってよいのは `IMMUTABLE_METRICS` だけです。
+    """
+    lines = [l for l in SCAN.read_text(encoding="utf-8").splitlines() if l.strip()]
+    rows = _row_metrics(lines[-1])
+    missing = [mt for mt in IMMUTABLE_METRICS
+               if not any(mt in v for v in rows.values())]
+    for line in reversed(lines[:-1]):
+        if not missing:
+            break
+        older = _row_metrics(line)
+        for mt in list(missing):
+            got = {vid: v[mt] for vid, v in older.items() if mt in v}
+            if not got:
+                continue
+            for vid, val in got.items():
+                # **その一枚に居る本にだけ**入れる（消えた本を呼び戻さない）
+                if vid in rows:
+                    rows[vid].setdefault(mt, val)
+            missing.remove(mt)
     return rows
 
 
