@@ -51,6 +51,10 @@ JST = timezone(timedelta(hours=9))
 # `--compact` で詰める日数の**床**。判定に要る3日＋1日（`compact_plan` の節）。
 # **穴が空くときは、ここから上へ自動で探します**（`_compact`）。
 DEFAULT_MAX_DAYS = 4
+# `--spread` の1日あたりの Shorts の上限。**08/20 の実測**（`spread_plan` の節）:
+# 25本出して、公開の早い10本は 185〜1,394、**11本目から先は 0〜3**。
+# 1日の合計は 4本の日（5,301）と 25本の日（5,948）でほぼ同じでした。
+DEFAULT_PER_DAY = 10
 MARKER = re.compile(r"\[t:([a-z0-9\-]+)\]")
 
 
@@ -268,6 +272,238 @@ def compact_plan(rows: list[dict], *, now: datetime, step_min: int = 30,
                      "old": old.strftime("%Y-%m-%dT%H:%M:%SZ"),
                      "new": new.strftime("%Y-%m-%dT%H:%M:%SZ")})
     return plan
+
+
+def _is_short(row: dict) -> bool:
+    """その本が Shorts かどうか。**題名の `#Shorts` だけで見ます。**
+
+    **テーマIDの `s-` 頭で見ないこと**（2026-08-21 に踏んだ）。長尺は Shorts の
+    テーマから起こすので `s-` を継いでいて、控えの実物では **10本が長尺なのに
+    `s-` 頭**でした（逆に `#Shorts` は付いているのに `s-` でない本が18本）。
+    長尺を Shorts に数えると、上の上限がその日の Shorts を不当に減らします。
+
+    長尺は Shorts のフィードに出ないので、**下の1日の上限には数えません**
+    （目盛りの取り合いには数えます —— 同じ時刻に2本置かないため）。
+    """
+    return "#Shorts" in str(row.get("title") or "")
+
+
+def spread_plan(rows: list[dict], *, now: datetime, per_day: int = 10,
+                hour: int = 9, until_hour: int = 21, step_min: int = 30,
+                lead_min: int = 60, from_day: date | None = None,
+                window: tuple[str, str] | None = None) -> list[dict]:
+    """**1日に置く Shorts の本数に上限をかけ、あふれたぶんを後ろの空き日へ送る**
+    （API 0単位・純関数）。返す形は `compact_plan` と同じ。
+
+    ## なぜ要るか（2026-08-21 08:2x に実測した）
+
+    08/20 に Shorts を **25本**出しました。`data/views.jsonl` を公開時刻で並べると、
+    **10本目と11本目のあいだで切れています**（同じ経過11時間の時点で）:
+
+        09:00 208  09:30 409  10:00 1394 10:30 1000 11:00 246
+        11:30 185  12:00 1133 12:30 211  13:00 352  13:30 1111   ← ここまで
+        14:00   0  14:30   0  15:00   1  15:30   0  16:00   3    ← ここから 0 が並ぶ
+        …… 21:00 まで15本、0が9本・残りも1〜3
+
+    **経過時間の差ではありません** —— 10本目（11.8時間で 1111）と
+    11本目（11.3時間で 0）は**30分しか離れていません**。
+    公開から3時間で数字が出る本があるので、「まだ着いていない」でもありません
+    （55時間たっても 0 のままの本があります）。
+
+    1日の合計で見ると、もっとはっきりします（**同じ経過11時間の時点**）:
+
+        08/16   4本 → 合計 5,301（1本 1,325）
+        08/20  25本 → 合計 5,948（1本   541）
+
+    **6倍出しても、その日に届く数は 12% しか増えていません。**
+    1日あたりに配られる量のほうに天井があり、本数はそれを分け合うだけです。
+    だから11本目から先は、**在庫を捨てているのと同じ**です
+    （空いている日に置けば1本 600前後は取れる）。
+
+    ## 動かすのは後ろへだけ。**上限を超えた日の、遅いほうから**
+
+    `compact_plan` の不変条件（新しい時刻は必ず今より前）と**向きが逆**です。
+    こちらは `new >= old` を守ります。理由は同じで、**途中で止まっても
+    もう一度走らせれば続きになる**ためです（遅いほうから撃つので、
+    動かした本が、まだ動かしていない本を追い越しません）。
+
+    置き先は「その日より後で、まだ上限に届いていない日」の**空いている目盛り**。
+    詰まっている所を避けて、**いちばん間の空いた目盛りから**埋めます。
+
+    ## `from_day` より前の日は、**上限もかけないし、置き先にもしません**
+
+    測定中の日を壊さないためです。`config/hypotheses.yaml` の
+    「予約の間隔を1時間より詰めても、1本あたりの再生は落ちない」は
+    **1日16本以上の日が3日ぶん**そろわないと判定しません（08/20・21・22 で
+    ちょうど3日・判定は 08/23）。ここで 08/22 を10本に削ると、
+    **登録した条件のほうを、都合よく後から緩めた**ことになります。
+    払うのは 08/22 の15本ぶんで、**返るのは n=1 ではなく n=3 の答え**です。
+    """
+    if per_day < 1:
+        raise SystemExit(f"--per-day は1以上: {per_day}")
+    if not 1 <= step_min <= 60 or 60 % step_min:
+        raise SystemExit(f"--step-min は 60 の約数で 1〜60 のどれか: {step_min}")
+    if not 0 <= hour <= until_hour <= 23:
+        raise SystemExit(f"時刻の範囲がおかしい: {hour}〜{until_hour}")
+
+    floor = now + timedelta(minutes=lead_min)
+    live: list[tuple[datetime, dict]] = []
+    for r in rows:
+        if not r.get("at"):
+            continue
+        try:
+            at = datetime.fromisoformat(str(r["at"]).replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        if at <= floor:
+            continue
+        jst = at.astimezone(JST)
+        if measure_window.inside(jst.strftime("%Y-%m-%d"), window):
+            continue          # 測定中の日は動かさない（M14）
+        if from_day is not None and jst.date() < from_day:
+            continue          # 判定に要る日は、削らないし埋めない
+        live.append((at, r))
+    live.sort(key=lambda t: (t[0], t[1].get("id", "")))
+    if not live:
+        return []
+
+    # その日に埋まっている時刻（**長尺も数えます** —— 同じ時刻に2本置かないため）
+    taken: dict[date, set[datetime]] = defaultdict(set)
+    # その日の Shorts の本数（**上限はこちらで数えます**）
+    shorts: dict[date, list[tuple[datetime, dict]]] = defaultdict(list)
+    for at, r in live:
+        jst = at.astimezone(JST)
+        taken[jst.date()].add(jst.replace(second=0, microsecond=0))
+        if _is_short(r):
+            shorts[jst.date()].append((at, r))
+
+    # あふれた本（上限を超えた日の、**遅いほう**から）
+    over: list[tuple[datetime, dict]] = []
+    for day in sorted(shorts):
+        rest = shorts[day][per_day:]
+        for at, r in rest:
+            taken[day].discard(at.astimezone(JST).replace(second=0, microsecond=0))
+        over.extend(rest)
+    if not over:
+        return []
+    counts = {d: min(len(v), per_day) for d, v in shorts.items()}
+
+    last_day = max(shorts)
+    plan: list[dict] = []
+    for at, row in sorted(over, key=lambda t: (t[0], t[1].get("id", ""))):
+        old_day = at.astimezone(JST).date()
+        day = old_day + timedelta(days=1)
+        placed = None
+        while placed is None and day <= last_day + timedelta(days=400):
+            if (not measure_window.inside(day.isoformat(), window)
+                    and counts.get(day, 0) < per_day):
+                free = []
+                for m in range(hour * 60, until_hour * 60 + 1, step_min):
+                    slot = datetime(day.year, day.month, day.day,
+                                    m // 60, m % 60, tzinfo=JST)
+                    if slot <= floor or slot.astimezone(timezone.utc) < at:
+                        continue
+                    if slot in taken[day]:
+                        continue
+                    free.append(slot)
+                if free:
+                    # **いちばん間の空いた目盛り**を選ぶ（同点なら早いほう）
+                    def gap(s: datetime) -> float:
+                        others = taken[day]
+                        if not others:
+                            return 1e9
+                        return min(abs((s - o).total_seconds()) for o in others)
+                    placed = max(free, key=lambda s: (gap(s), -s.timestamp()))
+            if placed is None:
+                day += timedelta(days=1)
+        if placed is None:
+            raise SystemExit(
+                f"[spread] **{row.get('id')} の置き先が見つかりません**"
+                f"（{old_day} より後・1日 {per_day}本まで）。--per-day を上げること"
+            )
+        taken[day].add(placed)
+        counts[day] = counts.get(day, 0) + 1
+        new = placed.astimezone(timezone.utc)
+        if new < at:
+            raise SystemExit(
+                f"[spread] **{row.get('id')} を前へ動かす割り当てになりました**"
+                f"（{at.astimezone(JST):%m/%d %H:%M} → {placed:%m/%d %H:%M} JST）。"
+                "\n        後ろへ送る道具なので、これは割り当ての誤りです。"
+            )
+        plan.append({"id": row.get("id", ""), "topic": row.get("topic", ""),
+                     "title": row.get("title", ""),
+                     "old": at.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                     "new": new.strftime("%Y-%m-%dT%H:%M:%SZ")})
+    return plan
+
+
+def _spread(args) -> int:
+    """`--spread`。**既定は割り当てを出すだけ**で、`--apply` で初めて撃ちます。
+
+    **遅いほうから撃ちます**（`spread_plan` の不変条件。途中で止まっても続きになる）。
+    """
+    rows = [r for r in dupes.ledger_rows() if r.get("at")]
+    if not rows:
+        raise SystemExit("控え（data/uploaded.jsonl）に予約の行がありません")
+    now = datetime.now(timezone.utc)
+    from_day = (datetime.strptime(args.since, "%Y-%m-%d").date()
+                if args.since else None)
+    plan = spread_plan(rows, now=now, per_day=args.per_day, hour=args.hour,
+                       until_hour=args.until_hour, step_min=args.step_min,
+                       lead_min=args.lead_min, from_day=from_day)
+    if not plan:
+        print(f"[spread] 1日 {args.per_day}本を超えている日はありません。")
+        return 0
+
+    before: dict[str, int] = defaultdict(int)
+    after: dict[str, int] = defaultdict(int)
+    moved = {p["id"] for p in plan}
+    for r in rows:
+        if not r.get("at") or not _is_short(r):
+            continue
+        try:
+            at = datetime.fromisoformat(str(r["at"]).replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        if at <= now or (from_day and at.astimezone(JST).date() < from_day):
+            continue
+        before[at.astimezone(JST).strftime("%m/%d")] += 1
+        if r.get("id") not in moved:
+            after[at.astimezone(JST).strftime("%m/%d")] += 1
+    for p in plan:
+        after[datetime.fromisoformat(p["new"].replace("Z", "+00:00"))
+              .astimezone(JST).strftime("%m/%d")] += 1
+
+    print(f"[spread] 予約の Shorts のうち、**動かすのは {len(plan)}本**"
+          f"（1日 {args.per_day}本まで・{args.hour}〜{args.until_hour}時）")
+    for p in plan[:12]:
+        o = datetime.fromisoformat(p["old"].replace("Z", "+00:00")).astimezone(JST)
+        n = datetime.fromisoformat(p["new"].replace("Z", "+00:00")).astimezone(JST)
+        print(f"  {o:%m/%d %H:%M} → {n:%m/%d %H:%M}  {p['id']}  {p['topic'][:26]}")
+    if len(plan) > 12:
+        print(f"  …… ほか {len(plan) - 12}本")
+    print("[spread] Shorts の本数/日（前 → 後）: "
+          + " ".join(f"{d}={before.get(d, 0)}→{after.get(d, 0)}"
+                     for d in sorted(set(before) | set(after))))
+    if not args.apply:
+        print("[spread] **これは割り当てだけです。**撃つには --apply を付けること"
+              f"（`videos.update` は1本 50単位・日枠 10,000 ＝ {args.max}本で止めます）")
+        return 0
+
+    svc = uploader._service()
+    done = 0
+    # **遅いほうから**（追い越しを作らない）
+    for p in sorted(plan, key=lambda p: p["old"], reverse=True)[:args.max]:
+        _update(svc, p["id"], p["new"], fallback_status=uploader.base_status())
+        dupes.retime(p["id"], p["new"])
+        done += 1
+        n = datetime.fromisoformat(p["new"].replace("Z", "+00:00")).astimezone(JST)
+        print(f"[spread] {p['id']} → {n:%m/%d %H:%M} JST（{done}/{min(len(plan), args.max)}）",
+              flush=True)
+    left = len(plan) - done
+    print(f"[spread] **{done}本を動かしました。**残り {left}本"
+          + ("（もう一度 --spread --apply を走らせること）" if left else ""))
+    return 0
 
 
 def _horizon(rows: list[dict], plan: list[dict], now: datetime) -> tuple[str, float]:
@@ -528,6 +764,15 @@ def build_parser() -> argparse.ArgumentParser:
                     help="M14 の比較の窓の中へ動かす（**理由を JOURNAL に書くこと**）")
     ap.add_argument("--compact", action="store_true",
                     help="予約を前に詰める割り当てを出す（**API 0単位**。撃つには --apply）")
+    ap.add_argument("--spread", action="store_true",
+                    help="**1日の Shorts に上限をかけ、あふれたぶんを後ろの空き日へ送る**"
+                         "（**API 0単位**。撃つには --apply）")
+    ap.add_argument("--per-day", type=int, default=DEFAULT_PER_DAY,
+                    help=f"--spread の1日あたりの Shorts の上限（既定{DEFAULT_PER_DAY}。"
+                         "08/20 の実測で11本目から先が 0 だった）")
+    ap.add_argument("--since", metavar="YYYY-MM-DD",
+                    help="--spread で、この日より前は上限をかけず置き先にもしない"
+                         "（**測定中の日を壊さないため**）")
     ap.add_argument("--apply", action="store_true",
                     help="--compact の割り当てを実際に撃つ（`videos.update`・1本50単位）")
     ap.add_argument("--step-min", type=int, default=30, help="--compact の目盛り（分・既定30）")
@@ -551,6 +796,8 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
 
+    if args.spread:
+        return _spread(args)
     if args.compact:
         return _compact(args)
 

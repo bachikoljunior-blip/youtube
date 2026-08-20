@@ -441,6 +441,12 @@ def _show_slot(spec: str) -> str:
     return text if ":" in text else f"{text}:00"
 
 
+# **1日に置く本数の目安**（`scripts/reschedule.py` の `DEFAULT_PER_DAY` と同じ数）。
+# 08/20 の実測で11本目から先が 0〜3 再生でした。**止める門ではなく、言うだけ**です
+# （判定は 08/23・`config/hypotheses.yaml`）。
+_PER_DAY_SOFT = 10
+
+
 def _slots_fine(count: int, hour: int, date_jst: str, hours: list[int],
                 step_min: int, taken: set[int] | None,
                 taken_min: set[int] | None) -> list[str]:
@@ -476,6 +482,23 @@ def _slots_fine(count: int, hour: int, date_jst: str, hours: list[int],
             "        **別の日にするか、--hour を早めるか、--step-min を細かくすること。**"
         )
     picked = grid[:count]
+    # **1日に置きすぎていないか言う**（2026-08-21 の実測。止めはしません）
+    #
+    # 08/20 に Shorts を25本置いた実測: 公開の早い10本は 185〜1,394 再生、
+    # **11本目から先は 0〜3**（同じ経過11時間の時点。10本目と11本目は30分差）。
+    # 1日の合計は 4本の日 5,301 と 25本の日 5,948 で**ほぼ同じ**でした。
+    # つまり **11本目から先は在庫を捨てている**のと同じです。
+    #
+    # **ここで止めないのはわざとです。** `config/hypotheses.yaml` の
+    # 「1時間より詰めても1本あたりは落ちない」は 08/23 に判定します
+    # （1日16本以上の日が3日ぶん要る）。**判定の前に条件を変えないこと。**
+    # 判定が出たら、ここを `raise SystemExit` に変えるか、
+    # `scripts/reschedule.py --spread` で後から均すこと。
+    if len(taken_min) + count > _PER_DAY_SOFT:
+        print(f"[batch] [!] **{date_jst} は控えと合わせて {len(taken_min) + count}本**"
+              f"（1日の目安 {_PER_DAY_SOFT}本）。08/20 の実測では**11本目から先が 0〜3 再生**です。"
+              "\n        置いたあと `python scripts/reschedule.py --spread` で均せます"
+              "（1本50単位）。**作る前に日を割るほうが安いです。**", flush=True)
     if picked != list(range(hour * 60, hour * 60 + step_min * count, step_min)):
         shown = ", ".join(f"{m // 60}:{m % 60:02d}" for m in picked)
         print(f"[batch] {date_jst} の埋まりを避けて {shown} に置きます"
