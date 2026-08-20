@@ -52,6 +52,7 @@ from src import alerts as _alerts  # noqa: E402
 from src import inbox as _inbox  # noqa: E402
 from src import reach_split as _reach_split  # noqa: E402
 from src import rpm_mix as _rpm_mix  # noqa: E402
+from src import density_verdict as _density_verdict  # noqa: E402
 from src.auth import note_day_quota as _note_day_quota  # noqa: E402
 from src.uploader import _service  # noqa: E402
 
@@ -1811,6 +1812,13 @@ def print_local_sections(inventory: bool = True) -> None:
     # 「測った天井ではありません。軌跡はここに寄りかかっています」と言っていました。
     # **積んだ点を読むだけなので API は叩きません**（測り直すのは `--record`）。
     print(_rpm_mix.render(_rpm_mix.last()))
+    # **前提のすぐ上**（2026-08-21 06:2x に足した）。`print_hypotheses` は
+    # 「期限が来たか」を**日付**で言いますが、腕 `density` の前提
+    # 「間隔を詰めても1本あたりは落ちない」は、**日がそろったか（数）**でしか
+    # 判定できません。08/21 の実測では、その日は **08/23** でした ——
+    # `deadline` の 09/05 で待つと、**判定が13日おそくなります。**
+    # 読むのは手元の2ファイルだけなので、**日枠が閉じている窓でも出ます。**
+    print(_density_verdict.render())
     print_hypotheses()
     print_alert_hit_rate()
     print_budget()
