@@ -167,6 +167,7 @@ SHORT_SECOND_SEGMENT_CHARS = 26
 SUBJECT_WORDS: dict[str, tuple[str, ...]] = {
     "furusato": ("ふるさと納税", "寄付", "寄附"),
     "inshi": ("印紙", "印紙税", "収入印紙"),
+    "koureikyushoku": ("高年齢求職者給付金", "高年齢求職者", "基本手当", "所定給付日数", "65歳"),
     "fudosanshutoku": ("不動産取得税", "不動産の取得", "取得税"),
     "jutaku": ("住宅ローン", "住宅ローン控除"),
     "iryohi": ("医療費",),

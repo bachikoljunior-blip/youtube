@@ -1698,3 +1698,8 @@
 {"at": "2026-08-20T19:35:10+00:00", "detail": "channels.list mine"}
 {"at": "2026-08-20T19:35:12+00:00", "detail": "channels.list mine"}
 {"at": "2026-08-20T19:35:14+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-20T20:17:13+00:00", "detail": "status: Data API 読み"}
+{"at": "2026-08-20T20:17:39+00:00", "detail": "playlistItems.list uploads"}
+{"at": "2026-08-20T20:17:42+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-20T20:18:19+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-20T20:24:01+00:00", "detail": "channels.list mine"}
