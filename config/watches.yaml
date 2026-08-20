@@ -1,0 +1,111 @@
+# **待ちの条件の台帳。** 読むのは `src/watches.py`、出すのは `scripts/status.py`。
+#
+# ここに書く待ちは、**必ず数で書くこと。** 「本が出れば測れる」ではなく
+# 「8/23 以降の公開が3本、かつその日の実データが届いている」まで落とす。
+# 数にならない待ちは、**満ちたことに誰も気づけません**（それが 8/10〜8/20 に
+# `scripts/retention.py` で実際に起きたことです。理由は `src/watches.py` の冒頭）。
+#
+# 満ちた待ちは `answered:` に1行（日付と答え）を入れるまで毎回鳴ります。
+# **「見た」では消えません。消すには判定するしかない形にしてあります。**
+#
+#   id       短い名前（画面に出る）
+#   what     何が待っているか（どの判定・どの仮説か）
+#   cond     満ちる条件を人の言葉で
+#   then     満ちたら何を走らせるか
+#   source   その待ちが書いてある場所
+#   kind     `src/watches.py` の KINDS のどれか ＋ その引数
+#   answered 満ちて、判定し終えたなら、日付と答えを1行
+
+watches:
+  - id: 維持率-尺のばらつき
+    what: 「落ちる位置は秒でそろうか、割合でそろうか」の検定（＝尺を縮めて効くのか）
+    cond: 尺の変動係数が 0.15 以上（そろっていると秒の軸と割合の軸が同じものになる）
+    then: python scripts/retention.py
+    source: scripts/retention.py
+    kind: length_spread
+    need: 0.15
+    min_views: 1
+    answered: >-
+      2026-08-20 判定。**秒のほうがそろう**（ばらつき 秒 0.16 対 割合 0.40・n=21・
+      落差は全本 4.8〜8.6秒）。**尺を縮めても落ちる時刻は動かない。**
+      8/19 の「30秒に縮めると engaged が上がる」が外れた（p=0.393）のと同じ向き。
+      次に引くのは尺ではなく**冒頭5秒の中身**。
+
+  - id: 実データ-8/19〜8/21の3本
+    what: 「engaged を決めているのは冒頭で画面が変わらないこと」の判定（期限 2026-08-26）
+    cond: 8/19〜8/21 に公開した本が3本、かつ**その日の実データが届いている**
+    then: python -m src.length_verdict（群を 8/16〜18 と比べる）
+    source: config/hypotheses.yaml
+    kind: published_count
+    since: '2026-08-19'
+    until: '2026-08-21'
+    need: 3
+    data_ready: true
+
+  - id: 実データ-8/23以降の3本
+    what: 冒頭0.9秒の動き（期限 09/05）と「前提を先・数字を後」（期限 09/05）の判定
+    cond: 8/23 以降の公開が3本（＝母集団の上限）、かつその日の実データが届いている
+    then: python scripts/status.py の engaged と `src/ab_split.py` で群を割って比べる
+    source: config/hypotheses.yaml
+    kind: published_count
+    since: '2026-08-23'
+    need: 3
+    data_ready: true
+
+  - id: 予約30分きざみ-3日
+    what: 「1時間より詰めても1本あたりの再生は落ちない」の判定（期限 2026-09-05）
+    cond: 1日16本以上で置いた日が3日、かつどの日も公開から7日以上たっている
+    then: python scripts/per_day_views.py --hours 168 --group 8-13,16-99
+    source: scripts/per_day_views.py
+    kind: days_with_min_videos
+    per_day: 16
+    min_age_days: 7
+    need: 3
+
+  - id: 独立評価-6本
+    what: 「評価スコアは engaged を予測する」の判定（期限 2026-09-05・外れならゲートを外す）
+    cond: 点を付けた本のうち、30再生以上あって突き合わせられるものが6本
+    then: python scripts/critique_record.py --check
+    source: scripts/critique_record.py
+    kind: scored_pairs
+    need: 6
+    min_views: 30
+
+  - id: 長尺-1000再生
+    what: 「長尺の登録率はショートより1桁以上高い」の判定（期限 2026-09-15）
+    cond: 長尺（180秒以上）の合計再生が1000
+    then: 走査の subscribersGained を長尺だけで足して、2人未満なら外れ（data/scan.jsonl）
+    source: config/hypotheses.yaml
+    kind: scan_sum
+    metric: views
+    min_length: 180
+    unit: 再生
+    need: 1000
+
+  - id: 族べつ登録率-15000再生
+    what: 「題材の順番は族べつの登録率でも重み付けるべき」の判定（期限 2026-09-20）
+    cond: 9/8 以降に公開した本の合計再生が 15,000（それ未満だと0人と区別がつかない）
+    then: 9/8 以降の本の subscribersGained ÷ 再生 が 0.038% 以下なら外れ
+    source: config/hypotheses.yaml
+    kind: scan_sum
+    metric: views
+    published_since: '2026-09-08'
+    unit: 再生
+    need: 15000
+
+# **見張らないと決めたもの**（`tests/test_watches.py` が読みます）。
+# 「まだ判定できません」と印字するのに待ちの台帳に無いファイルは、
+# ここに理由を書くまで検査が落ちます。**黙って放置できない形にするため。**
+exempt:
+  scripts/search_terms.py: >-
+    「この回は M4 を判定できません」は**外の口が落ちた回の断り**で、待ちではありません。
+    次の回に取れれば判定できます（時間で満ちる条件が無い）。
+  src/length_verdict.py: >-
+    尺30秒の仮説は 2026-08-20 に判定済み（外れ・p=0.393）。残る印字は、
+    再生0の本があるときの断りです。
+  src/ab_split.py: >-
+    `scripts/status.py` が毎回 `ab_split` / `ab_power` の件数を出しています（＝すでに毎周見えている）。
+  src/endcard_verdict.py: >-
+    末尾の問いかけの仮説は判定済み（対照群が0本だったため、言えるのは「この枠では取れない」まで）。
+  src/m8_funnel.py: >-
+    導線の仮説は 2026-08-21 の版で判定済み。

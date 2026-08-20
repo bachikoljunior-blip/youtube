@@ -24,10 +24,24 @@
 8/19 の仮説（30秒に縮めると engaged が上がる）は後者を仮定している。
 **この100点は、公開を待たずにその仮定を測れる。**
 
+## **条件が満ちたことは、この道具からは分かりません**（2026-08-20 に踏んだ）
+
+8/10 のこの道具は「**30秒設計の3本（8/16〜18）が出れば、ここで測れるようになります**」と
+正しく印字していました。**3本は 8/18 に出ました。それから 8/20 まで、
+誰も走らせ直していません。**（気づいたのはオーナーで、10日後）
+**待ちを書いた回と、条件が満ちる回は別の回です。** 印字は走らせた回にしか届きません。
+
+だから条件のほうを `config/watches.yaml` に移し、**毎周の `scripts/status.py` が
+数で見張ります**（`src/watches.py`）。ここの印字は、その控えです。
+
 ## 使い方
 
     python scripts/retention.py              # 全本のカーブと、そろい方の検定
+    python scripts/retention.py --refresh    # 取り直す（既定は貯めたぶんを使う）
     python scripts/retention.py --html 出力先 # 重ねたグラフを HTML で書き出す
+
+**新しい本のカーブは `--refresh` なしでも取ります**（貯めに無いIDだけ引く）。
+`--refresh` が要るのは、**同じ本を取り直す**とき（公開直後に引いた本など）。
 """
 from __future__ import annotations
 
@@ -150,8 +164,9 @@ def report(vs: list[dict], cache: dict) -> None:
               f"{min(lengths)}〜{max(lengths)}秒に固まっていて"
               f"（ばらつき {_spread(lengths):.2f}）、"
               "**秒の軸と割合の軸がほぼ同じもの**になっています。")
-        print("      分けるには尺の違う本が要ります。"
-              "**30秒設計の3本（8/16〜18）が出れば、ここで測れるようになります。**")
+        print("      分けるには尺の違う本が要ります。**この条件は "
+              "`config/watches.yaml` の `維持率-尺のばらつき` が見張っていて、"
+              "満ちた回の `scripts/status.py` に出ます。**")
     elif len(secs) >= 4:
         sv, rv = _spread(secs), _spread(ratios)
         print(f"\n  最大の落差の位置: 秒で見ると {min(secs):.1f}〜{max(secs):.1f}秒"

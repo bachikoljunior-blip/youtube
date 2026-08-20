@@ -37,6 +37,7 @@ import functools as _functools  # noqa: E402
 
 from src import ab_power as _ab_power  # noqa: E402
 from src import ab_split as _ab  # noqa: E402
+from src import watches as _watches  # noqa: E402
 
 
 @_functools.lru_cache(maxsize=1)
@@ -1709,6 +1710,11 @@ def print_local_sections(inventory: bool = True) -> None:
     # **`print_means` の隣に置いています。** あちらは「手段が尽きたか」、
     # こちらは「材料が尽きたか」で、**§4 でどれを選べるかを決めるのは両方**です。
     print_topic_stock()
+    # **前提のすぐ上に置いています。** あちらは「期限が来たか」（日付）、
+    # こちらは「**測れるようになったか**」（数）で、**片方だけでは判定できません。**
+    # 8/10〜8/20 の `scripts/retention.py` は、期限のほうを持っていなかったので
+    # 10日間だれも気づきませんでした（`src/watches.py` の冒頭）。
+    print(_watches.render())
     print_hypotheses()
     print_alert_hit_rate()
     print_budget()
