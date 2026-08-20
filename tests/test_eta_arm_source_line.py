@@ -98,3 +98,65 @@ def test_腕が軌跡に無ければ黙る():
     assert not [ln for ln in lines if "hypotheses.yaml" in ln], (
         "名指しした腕が軌跡の表に無いのに、速さの行を出しています。"
     )
+
+
+# ---- 「いつなら動くのか」（`arm_speed.next_close`）--------------------------
+#
+# **期日の来た前提が1件も無い回は、何をしても到達日は動きません。**
+# それを先に言わないと、その回は外れる `--moves` を立てるだけで終わります
+# （2026-08-21 の回がそうでした ―― 開いていた13件のいちばん早い期日は
+# 08/26 で、**日付を動かす道はそもそも1本もありませんでした**）。
+
+import datetime as _dt
+
+
+def _hyp(*settle):
+    return {"hypotheses": [{"id": f"h{i}", "settle_by": s}
+                           for i, s in enumerate(settle)]}
+
+
+def test_次に閉じられる日と件数を返す():
+    from src import arm_speed
+    got = arm_speed.next_close(_hyp("2026-09-05", "2026-08-26", "2026-09-12"),
+                               today=_dt.date(2026, 8, 21))
+    assert got["on"] == _dt.date(2026, 8, 26)
+    assert got["days"] == 5
+    assert got["open"] == 3
+
+
+def test_閉じた前提は数えない():
+    from src import arm_speed
+    doc = _hyp("2026-08-26", "2026-09-05")
+    doc["hypotheses"][0]["closed_on"] = "2026-08-20"
+    got = arm_speed.next_close(doc, today=_dt.date(2026, 8, 21))
+    assert got["open"] == 1, "閉じた前提を開いている側で数えています"
+    assert got["on"] == _dt.date(2026, 9, 5)
+
+
+def test_開いている前提が無ければ日付を作らない():
+    from src import arm_speed
+    got = arm_speed.next_close({"hypotheses": []}, today=_dt.date(2026, 8, 21))
+    assert got["on"] is None and got["open"] == 0, "無いものを埋めています"
+
+
+def test_期日が来ていない回はmoves0が正しいと言う(monkeypatch):
+    eta = _load()
+    monkeypatch.setattr(eta.arm_speed, "next_close",
+                        lambda *a, **k: {"on": _dt.date(2026, 8, 26),
+                                         "days": 5, "open": 13})
+    line = next(ln for ln in eta.headline(_plan(), None, _traj())
+                if "閉じられる前提はありません" in ln)
+    assert "2026-08-26" in line and "`--moves 0` が正しい回です" in line, (
+        "**動かせない回だと分かる字**が出ていません。"
+        "これが無いと、その回は外れる宣言を立てるだけで終わります。"
+    )
+
+
+def test_期日が来ている回はverdictと言う(monkeypatch):
+    eta = _load()
+    monkeypatch.setattr(eta.arm_speed, "next_close",
+                        lambda *a, **k: {"on": _dt.date(2026, 8, 21),
+                                         "days": 0, "open": 13})
+    line = next(ln for ln in eta.headline(_plan(), None, _traj())
+                if "期日の来た前提があります" in ln)
+    assert "verdict" in line, "閉じられる回に、その手の名前を出していません"

@@ -367,3 +367,35 @@ def lines(arms: dict[str, dict], streak: dict, bd: dict,
         P(f"    [!] 閉じているのに欄の無い前提が **{unread}件**。"
           "**当たりを取りこぼす側にずれます**（`closed_on`/`lever`/`effect` を足すこと）")
     return out
+
+def next_close(doc: dict | None = None, today: date | None = None) -> dict:
+    """**次に前提を1件閉じられるのはいつか。**
+
+    軌跡の腕は閉じた前提でしか動かないので（この節の上を参照）、
+    **その日までは、どんな作業をしても印字される到達日は動きません。**
+    2026-08-21 の回は `make_rate` を 22.85 → 46.7 と2倍にして **+0日** でした。
+    そのとき開いていた前提13件のうち、いちばん早い期日は **2026-08-26** ——
+    **その回に日付を動かす道は、そもそも1本も無かった**わけです。
+
+    返り: `{"on": date|None, "days": int|None, "open": 件数}`
+    """
+    doc = _load() if doc is None else doc
+    today = today or today_jst()
+    days: list[date] = []
+    n_open = 0
+    for h in doc.get("hypotheses", []) or []:
+        if not isinstance(h, dict) or h.get("closed_on"):
+            continue
+        n_open += 1
+        when = h.get("settle_by") or h.get("decide_by") or h.get("deadline")
+        if isinstance(when, str):
+            try:
+                when = date.fromisoformat(when)
+            except ValueError:
+                when = None
+        if isinstance(when, date):
+            days.append(when)
+    if not days:
+        return {"on": None, "days": None, "open": n_open}
+    soonest = min(days)
+    return {"on": soonest, "days": (soonest - today).days, "open": n_open}
