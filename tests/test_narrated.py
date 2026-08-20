@@ -174,3 +174,19 @@ def test_文ごとに当てると厳しすぎる():
              if any(narrated.unshown(line, plan) for line in narr)}
     assert whole < per_segment
     assert len(per_segment) >= 10, len(per_segment)
+
+
+def test_暦の年は量として数えない():
+    """**`2026年4月分` の `2026` を「絵に無い数」と言わないこと**（2026-08-20 に踏んだ）。
+
+    `UHo79-HCOWo` の前提の文がこれで鳴りました。画面に出しているのは
+    「令和8年度」のほうで、**西暦は出しません。** 欠陥ではなく誤報です。
+
+    締めているのは3つとも同時（4桁ちょうど・区切りも位もない・直後が「年」）
+    なので、**`2026円` も `2,026年` も `2026万円` も、これまでどおり見ます。**
+    """
+    toks = [t for t, _, _ in narrated.numbers("令和8年度、2026年4月分からの額です")]
+    assert "2026" not in toks
+    assert [t for t, _, _ in narrated.numbers("2026円の差")] == ["2026"]
+    assert [t for t, _, _ in narrated.numbers("2,026年ぶん")] == ["2,026"]
+    assert [t for t, _, _ in narrated.numbers("2026万円")] == ["2026万"]

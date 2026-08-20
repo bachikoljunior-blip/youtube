@@ -110,11 +110,35 @@ def _split(s: str, scale: float) -> tuple[float, float] | None:
         return None
 
 
+#: **暦の年は量ではありません**（2026-08-20 に踏んだ）。
+#: `UHo79-HCOWo` の前提の文「令和8年度、**2026年**4月分からの額です」の
+#: `2026` が「絵に出ていない数」として鳴りました。**画面に西暦は出ません**
+#: （出しているのは「令和8年度」のほう）。これは欠陥ではなく**誤報**です。
+#:
+#: 締めているのは3つとも同時: **4桁ちょうど**・**区切りも位もない**
+#: （`2,026` や `2026万` は素通ししない）・**直後が「年」**。
+#: だから `2026円` も `2026人` も、これまでどおり見ます。
+_YEAR = re.compile(r"(?<![0-9,.])([0-9]{4})年")
+YEAR_LO, YEAR_HI = 1900, 2200
+
+
+def _year_spans(text: str) -> set[tuple[int, int]]:
+    """暦の年として読める `2026年` の、**数のほうの**位置。"""
+    out = set()
+    for m in _YEAR.finditer(text):
+        if YEAR_LO <= int(m.group(1)) <= YEAR_HI:
+            out.add((m.start(1), m.end(1)))
+    return out
+
+
 def numbers(text: str) -> list[tuple[str, float, float]]:
-    """文の中の数を `(書き方, 値, 言った桁)` で返す。"""
+    """文の中の数を `(書き方, 値, 言った桁)` で返す。**暦の年は外します**（上）。"""
+    years = _year_spans(text)
     out = []
     for m in _NUM.finditer(text):
         tok = m.group(0).rstrip(",.")
+        if (m.start(), m.start() + len(tok)) in years:
+            continue
         got = parse(tok)
         if got is not None:
             out.append((tok, got[0], got[1]))
