@@ -43,6 +43,7 @@ sys.path.insert(0, str(ROOT))
 from googleapiclient.discovery import build  # noqa: E402
 from googleapiclient.errors import HttpError  # noqa: E402
 
+from src import m8_funnel  # noqa: E402
 from src.auth import credentials  # noqa: E402
 
 START = "2026-08-01"
@@ -95,41 +96,99 @@ def _query(an, vid: str, dimension: str) -> dict[str, int]:
     return {row[0]: row[1] for row in res.get("rows", []) if row[1]}
 
 
-def main() -> int:
-    an = build("youtubeAnalytics", "v2", credentials=credentials(), cache_discovery=False)
-    long_, short = _videos()
+def _m8(an) -> int:
+    """**M8 の判定を、Data API 抜きで下す。**（2026-08-20 08:3x に足した）
 
-    print("=== WATCH（視聴ページ）の再生は、どこの誰か ===")
-    watch = {"長尺": 0, "ショート": 0}
-    for label, ids in (("長尺", long_), ("ショート", short)):
-        for vid in ids:
-            watch[label] += _query(an, vid, "insightPlaybackLocationType").get("WATCH", 0)
-    total = watch["長尺"] + watch["ショート"]
-    print(f"  長尺 {watch['長尺']} ／ ショート {watch['ショート']} ＝ 合計 {total}")
-    if total and watch["長尺"] / total > 0.8:
-        print("  **WATCH はほぼ長尺の再生数そのものです。**")
-        print("  M3・M12 の着手条件『WATCH が1日30人』は、"
-              "実質『長尺が1日30再生』と同じ意味になります。")
+    母集団は `config/pairs.yaml` と `data/uploaded.jsonl` から決めます。
+    理由は `src/m8_funnel.py` の冒頭 —— 落ちるのは「どのIDを訊くか」を
+    決める所だけで、**測定そのものの枠は生きている**からです。
+    """
+    pairs = m8_funnel.load_pairs()
+    shorts, longs = m8_funnel.populations(pairs, m8_funnel.load_ledger())
 
-    print("\n=== その長尺は、どこから来たのか ===")
+    print("=== M8（説明欄の導線）の判定 ===")
+    print(f"  母集団は手元の設定から: 導線を入れたショート {len(shorts)}テーマ "
+          f"／ 対応する長尺 {len(longs)}本  ← **Data API を叩いていません**")
+
+    print("\n--- 導線を入れたショート（テーマごと・撮り直しは全部出す）---")
+    per_topic_max, per_topic_sum = 0, 0
+    for topic, ids in shorts.items():
+        got = {vid: sum(_query(an, vid, "insightTrafficSourceType").values()) for vid in ids}
+        best = max(got.values()) if got else 0
+        per_topic_max += best
+        per_topic_sum += sum(got.values())
+        shown = " ".join(f"{v}={n}" for v, n in got.items())
+        print(f"  {topic:<22} {shown}")
+    print(f"  **1テーマ1本で数えて {per_topic_max}再生**（撮り直しも足すと {per_topic_sum}）")
+    print("  門は 3,000再生。**低いほうで判定します**"
+          "（撮り直しの本に導線が入っているかは控えからは決まらないため）。")
+
+    print("\n--- 対応する長尺6本は、どこから来たのか ---")
     src: dict[str, int] = {}
-    for vid in long_:
-        for key, val in _query(an, vid, "insightTrafficSourceType").items():
+    for vid in longs:
+        got = _query(an, vid, "insightTrafficSourceType")
+        print(f"  {vid}  {got or '（再生なし）'}")
+        for key, val in got.items():
             src[key] = src.get(key, 0) + val
+    print("  --- 合計 ---")
     for key, val in sorted(src.items(), key=lambda x: -x[1]):
-        mark = "  ← 他の手段で説明がつく" if key in ATTRIBUTED else ""
+        mark = "  ← 他の手段で説明がつく" if key in m8_funnel.ATTRIBUTED else ""
         print(f"  {key:<18} {val}{mark}")
 
-    residual = sum(v for k, v in src.items() if k not in ATTRIBUTED)
-    print(f"\n  **M8（説明欄の導線）に帰せる残り: {residual}**")
-    if residual == 0:
+    resid = m8_funnel.residual(src)
+    out = m8_funnel.verdict(per_topic_max, resid)
+    print(f"\n  **M8 に帰せる残り: {resid}**")
+    print(f"  **判定: {out['line']}**")
+    if out["state"] == "falsified":
         print("  **0 は「効いていない」ではなく「効いている証拠が無い」です。**"
-              " 混ぜないこと。")
-    if src.get("RELATED_VIDEO", 0) > residual:
-        print(f"  関連動画が {src['RELATED_VIDEO']} で最大。**これは M12（推薦面）の面です。**")
-        print("  M12 は「WATCH が伸びたら着手」で保留していますが、"
-              "**その WATCH を伸ばしている当のものが M12 の面です。条件が循環しています。**")
+              " ただし反証条件は残りの数で書いてあるので、条件としては外れです。")
     return 0
+
+
+def main() -> int:
+    an = build("youtubeAnalytics", "v2", credentials=credentials(), cache_discovery=False)
+
+    if "--m8" not in sys.argv:
+        try:
+            long_, short = _videos()
+        except HttpError as exc:
+            # **Data API が閉じている窓でも、判定は下せます。**
+            # 落ちるのは「どのIDを訊くか」を決める所だけで、Analytics は別枠。
+            print(f"[!] Data API が読めません（{str(exc)[:60]}…）。")
+            print("    **これは測定の枠ではありません。** M8 の判定だけ、"
+                  "手元の設定から母集団を決めて続けます（`--m8` と同じ）。")
+            return _m8(an)
+
+        print("=== WATCH（視聴ページ）の再生は、どこの誰か ===")
+        watch = {"長尺": 0, "ショート": 0}
+        for label, ids in (("長尺", long_), ("ショート", short)):
+            for vid in ids:
+                watch[label] += _query(an, vid, "insightPlaybackLocationType").get("WATCH", 0)
+        total = watch["長尺"] + watch["ショート"]
+        print(f"  長尺 {watch['長尺']} ／ ショート {watch['ショート']} ＝ 合計 {total}")
+        if total and watch["長尺"] / total > 0.8:
+            print("  **WATCH はほぼ長尺の再生数そのものです。**")
+            print("  M3・M12 の着手条件『WATCH が1日30人』は、"
+                  "実質『長尺が1日30再生』と同じ意味になります。")
+
+        print("\n=== その長尺は、どこから来たのか（**チャンネルの全長尺**）===")
+        src: dict[str, int] = {}
+        for vid in long_:
+            for key, val in _query(an, vid, "insightTrafficSourceType").items():
+                src[key] = src.get(key, 0) + val
+        for key, val in sorted(src.items(), key=lambda x: -x[1]):
+            mark = "  ← 他の手段で説明がつく" if key in m8_funnel.ATTRIBUTED else ""
+            print(f"  {key:<18} {val}{mark}")
+        print("  **この表は M8 の母集団ではありません**（導線を入れていない長尺も入る）。"
+              " 判定は下の節。")
+        if src.get("RELATED_VIDEO", 0) > m8_funnel.residual(src):
+            print(f"  関連動画が {src['RELATED_VIDEO']} で最大。"
+                  "**これは M12（推薦面）の面です。**")
+            print("  M12 は「WATCH が伸びたら着手」で保留していますが、"
+                  "**その WATCH を伸ばしている当のものが M12 の面です。条件が循環しています。**")
+        print()
+
+    return _m8(an)
 
 
 if __name__ == "__main__":

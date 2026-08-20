@@ -87,15 +87,26 @@ def test_1本あたり再生を上げると段4の期日が動く():
 
 # --- 2. 到達日は「遅いほう」 ------------------------------------------------------
 
-def test_到達日は収益化の門と再生数の遅いほう():
+def test_到達日は3つの床のいちばん遅いもの():
+    """**(a) 再生・(b) 収益化＋30日・(c) 確かめ終わり＋30日 の、いちばん遅いもの。**
+
+    (b) は 2026-08-20 08:3x の回が入れた床です（`REVENUE_WINDOW_DAYS`）——
+    月20万は水準なので、**収益化してから30日ぶん積んだ合計**でしか名乗れない。
+    **(a) にそれを足さないこと。** (a) は直近30日の合計で見ているので、
+    足すと1か月ぶん二重に数えます。
+    """
     m = _measured()
     pl = eta.plan(m, eta.analyse(m))
-    assert pl["days_to_target"] == max(pl["days_monetized"], pl["days_revenue"])
+    tg = pl["target"]
+    assert pl["days_to_target"] == max(pl["days_revenue"], tg["gate_floor"], tg["verify_floor"])
+    assert tg["gate_floor"] == pl["days_monetized"] + eta.REVENUE_WINDOW_DAYS
+    # **二重に数えていないこと**（(a) + 30日 になっていたら落ちる）
+    assert pl["days_to_target"] != pl["days_revenue"] + eta.REVENUE_WINDOW_DAYS
     # **縛っている側の名指しと、引く腕が食い違わないこと**
-    if pl["days_monetized"] >= pl["days_revenue"]:
-        assert pl["lever_hint"] == "density"
-    else:
+    if pl["days_revenue"] >= tg["floor"]:
         assert pl["lever_hint"] in ("per_video", "rpm")
+    else:
+        assert pl["lever_hint"] in ("density", "rpm")
 
 
 def test_再生数が届かないなら到達日も出ない():

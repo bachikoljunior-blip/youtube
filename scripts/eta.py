@@ -81,6 +81,19 @@ PLAN_PUBLISH_PER_DAY = 25
 # --- 収益化の審査にかかる日数（YouTube 公表「通常1か月以内」。**実測ではない**）---
 MONETIZE_REVIEW_DAYS = 30
 
+# --- 「月20万」は**流量ではなく、30日ぶんの合計**です（2026-08-20 08:1x に足した）---
+#
+# ここが無かったので、段4 の期日に **段3（収益化の審査が終わる日）をそのまま代入**
+# していました（`d_target = d_monetized`）。印字は「月20万の到達見込み」ですが、
+# **中身は収益化の日付**です —— オーナー追記（原文）:
+#
+#   > 勝手に20万達成以外の日時の予測だけにしないで
+#
+# 収益化した日に入るのは**その日ぶんの収入**であって、月20万ではありません。
+# 月20万を名乗れるのは、**収益化してから30日ぶん積んだ合計**が20万を超えた日です。
+# 収益化前の再生は1円も生まないので、この30日は前借りできません。
+REVENUE_WINDOW_DAYS = 30
+
 # --- 段取りを立てるときに使う RPM は、その形の**いちばん低い帯** ---
 #     `RPM_SCENARIOS` の 低/中/高 は「別の道」ではなく**同じニッチの幅**です。
 #     いちばん高い帯で段取りを立てると、**計画そのものが上振れ側に乗ります**
@@ -994,6 +1007,115 @@ def report(m: dict, a: dict) -> list[str]:
     return out
 
 
+def _stage4(m: dict, a: dict, sp: dict, density: int, per_video: float,
+            d_monetized: float, today: date, proxy: bool = False,
+            d_revenue: float = 0.0) -> dict:
+    """**月20万の期日を、20万の条件そのものから出す。段3の日を代入しない。**
+
+    2026-08-20 08:1x・オーナー追記（原文）——
+
+    > 勝手に20万達成以外の日時の予測だけにしないで
+
+    **直していること。** ここは1行 `d_target = d_monetized` でした。
+    段3（収益化の審査が終わる日）を段4の期日として印字していたので、
+    画面の「月20万の到達見込み」は、**中身が収益化の日付**でした。
+    門1（登録者1,000人）・門2a（長尺4,000時間）・審査30日 ——
+    **どれも20万の日付ではありません。**
+
+    月20万の条件は、門の条件とは形がちがいます。門は**積み上がれば通る**（累積）
+    ので、速さで割れば日が出ます。20万は**その月の水準**なので、日が出るには
+    2つ要ります:
+
+        (1) 合格点が立つこと    1日に出す本数 × 1本あたり再生 × RPM が 20万に届く
+        (2) その水準で30日ぶん積むこと（`REVENUE_WINDOW_DAYS`）
+
+    (2) は収益化より前には始められません（収益化前の再生は1円も生まない）。
+    **だから 段4 は、段3 + 30日 より後ろにしか来ません。** 同じ日には決してならない
+    （例外は、門が「届かない」で返って下の `fallback` に落ちたとき —— そこでは
+    段3 が日付を持っていないので、比べる相手そのものがありません）。
+
+    そして (1) は**実測で立っているとは限りません。** 立っていないなら、
+    「届きません」で畳まずに、**何を何倍にすれば、いつ出るのか**を返します
+    （同じ追記の後半。倍率は `ratio`、その倍率が本当かを**確かめられる最短の日**が
+    `verify_day` ＝ 公開の翌日 → 伸びきる48時間 → Analytics 3日遅れ）。
+    """
+    need_per_video = sp["per_video_needed"]
+    ratio = (need_per_video / per_video) if per_video else float("inf")
+    # **倍率が1を切っていても、それだけでは「立っている」と言えません。**
+    #     `per_video` はショートの実測で、段4 が立てているのは長尺です。
+    #     別の形の実測を当てているあいだは、合格点は**推測**です（`proxy`）——
+    #     ここを見落とすと、20万の期日がまた「測っていない数字の写し」になります。
+    met = (ratio <= 1.0) and not proxy
+
+    # **倍率が本当かを確かめられる最短の日**（今日からの日数）。
+    # 段4 は、確かめる前に来ることはありません —— 立っていない合格点の上に
+    # 期日を置くと、それは予測ではなく願望になります。
+    #     **日付そのものを持たせます**（`_fmt_days` は TZ を持たない `date.today()`
+    #     ＝ UTC に足すので、JST の 00:00〜09:00 は1日ずれた日を印字します）。
+    verify_on = answer_day(today + timedelta(days=1))
+    verify_day = float((verify_on - today).days)
+
+    # --- 合格点が立つ日 ---
+    #
+    # **`d_revenue` が入るまで、ここは「収益化の日」か「確かめる日」でした**
+    # （2026-08-20 08:3x の版。同じ回の申し送りに「**要る倍率が上がっても日数は
+    # 動かない（1本あたり再生の伸び率を持っていないため）**」と書いてあります）。
+    # いまは伸び率を実測して解いた日が入ります（`solve_revenue_day`）——
+    # **倍率が上がれば、この日が後ろへ動きます。**
+    bar_day = max(d_revenue, d_monetized if met else max(d_monetized, verify_day))
+
+    # --- 門が「届かない」で返ってきたときも、日付を1つ出す ---
+    #     `days_subs_at` が NEVER になるのは、**登録が28日で0件**のとき（0で割る）。
+    #     倍率では出ません（0 を何倍しても 0）。**出るのは「1人でも出れば」のほう**なので、
+    #     28日に1人の線（＝この機械が観測しうる最小の非ゼロ）で引き直します。
+    #     **見るのは門のほう**（`d_monetized`）です。`bar_day` で見ると、
+    #     再生数の側が「届かない」でも門の引き直しが走り、**関係のない仮定で
+    #     日付が出ます**（引き直しても再生数は届かないままなので、意味がない）。
+    fallback = None
+    if d_monetized >= NEVER:
+        views_28d = m.get("views_28d") or 0
+        rate_min = (1.0 / views_28d) if views_28d else 0.0
+        subs_day = density * per_video * rate_min
+        d1 = _days_to(a["subs_remaining"], subs_day)
+        if d1 < NEVER:
+            d_monetized = d1 + MONETIZE_REVIEW_DAYS
+            bar_day = max(d_revenue, d_monetized if met else max(d_monetized, verify_day))
+            fallback = {
+                "why": "登録が28日で0件なので、いまの実測では門1が開きません",
+                "assume": (f"**28日に1人でも登録が出れば**（登録率 {rate_min * 100:.4f}%"
+                           f" ＝ この機械が観測しうる最小の非ゼロ）"),
+                "gate1_days": d1,
+            }
+
+    # --- ②の30日は前借りできない ---
+    #     **ただし `d_revenue` に足さないこと。** あちらは「直近30日の合計」が
+    #     必要量に達する日なので、**30日ぶんの積み上げを既に含んでいます。**
+    #     足すと二重に数え、到達日が1か月ぶん遠くなります。
+    #     前借りできないのは**収益化より前の再生**のほうなので、床はこの2つ:
+    gate_floor = d_monetized + REVENUE_WINDOW_DAYS if d_monetized < NEVER else NEVER
+    verify_floor = (verify_day + REVENUE_WINDOW_DAYS) if (not met) else 0.0
+    floor = max(gate_floor, verify_floor)
+    when = max(d_revenue, floor) if (d_revenue < NEVER and floor < NEVER) else NEVER
+
+    return {
+        "when": when,
+        "floor": floor, "gate_floor": gate_floor, "verify_floor": verify_floor,
+        "d_revenue": d_revenue,
+        "bar_day": bar_day,
+        "verify_day": verify_day, "verify_on": verify_on,
+        "ratio": ratio,
+        "met": met,
+        "need_per_video": need_per_video,
+        "per_video_now": per_video,
+        "window": REVENUE_WINDOW_DAYS,
+        # **条件つきの日付であることを、道具の側が持っておく**（画面で断るため）。
+        # 満たしていない合格点の上に立っているなら、それは「最早」であって見込みではない。
+        "conditional": (not met) or fallback is not None,
+        "fallback": fallback,
+        "proxy": proxy,
+    }
+
+
 def plan(m: dict, a: dict, density: int = PLAN_PUBLISH_PER_DAY,
          today: date | None = None) -> dict:
     """**月20万に届くまでの段取りを、必ず1つ返す。**
@@ -1058,26 +1180,19 @@ def plan(m: dict, a: dict, density: int = PLAN_PUBLISH_PER_DAY,
     # --- 段3: 収益化の審査 ---
     d_monetized = d_gate1 + MONETIZE_REVIEW_DAYS if d_gate1 < NEVER else NEVER
 
-    # --- 段4: 月20万に届く日を、**解いて出す**（2026-08-20 08:0x）---
+    # --- 段4: 月20万に届く日を、**解いて出す**（2026-08-20 08:0x と 08:3x の合流）---
     #
-    # **ここは 8/20 まで `d_target = d_monetized` の1行でした。**
-    # つまり「収益化の審査が終わる見込みの日」を「月20万に届く日」として
-    # 印字していた。合格点（1本あたり◯回）は別に書いてあるのに、
-    # **それを満たす日を解いていません。**
+    # **2つの回が、同じ1行（`d_target = d_monetized`）を別々に見つけました。**
+    # 片方は「20万は水準なので、**収益化してから30日ぶん積んだ合計**でしか名乗れない」
+    # （`REVENUE_WINDOW_DAYS`・`_stage4`）。もう片方は「**合格点が立つ日そのものを、
+    # 実測の伸び率で解いていない**」（`solve_revenue_day`）。**どちらも要ります。**
     #
-    # 写しだと何が起きるか —— **per_video を10倍にしても RPM を5倍にしても、
-    # 印字される到達日は1日も動きません。** 「早めることを考えてから進めろ」という
-    # 指示が、**構造上動かない数字**に向かって出されていたことになります
-    # （オーナー指示は 08-19 33699957・08-20 06:2x・08-20 08:0x の**3回**）。
+    #   ① 直近30日の再生が、月に要る回数に達する日          ← 伸び率で解く
+    #   ② その30日が**まるごと収益化の後**にあること        ← 収益化前の再生は1円も生まない
+    #   ③ 合格点の倍率が**推測**なら、確かめた後であること  ← 別の形の実測を当てている間
     #
-    # 解く形はこうです。**天井は「計画の密度 × 1本あたり再生」**で、
-    # 92本（API の日枠）ではありません。伸び率は実測（`growth_per_day`）。
-    #
-    #     直近30日の再生数(d) ≧ 月に要る再生数   を満たす最初の d
-    #
-    # そして到達日は**段3 と段4 の遅いほう**です。収益化していなければ
-    # 再生数がいくつでも収入は 0 円、再生数が足りなければ収益化していても
-    # 20万にはなりません。**どちらが縛っているかが、次に引く腕を決めます。**
+    # 到達日は、この3つの**いちばん遅いほう**です。
+    # **どれが縛っているかが、次に引く腕を決めます。**
     ceiling_day = per_video * density
     ceiling_day_long = (a.get("long_per_video") or 0) * density
     need_month = sp["views_needed_month"]
@@ -1090,20 +1205,36 @@ def plan(m: dict, a: dict, density: int = PLAN_PUBLISH_PER_DAY,
     # 「まだ測っていない」が「届く」にも「届かない」にも化けます（M20）。
     d_revenue_long = solve_revenue_day(views_day_now, g, ceiling_day_long, need_month)
 
-    d_target = max(d_monetized, d_revenue) if d_revenue < NEVER else NEVER
-    # **どちらの段が到達日を縛っているか。** ここが、この回に引く腕を決めます。
+    # --- **物差しが「別の形の実測」になっていないか** ---
+    #     段4 が立てているのは長尺で、割っているのはショートの実測です。
+    #     長尺の実測が無い／標本が薄いあいだ、合格点は**推測**でしかありません。
+    #     （下の `blocking` と同じ条件。2か所で別々に書くと必ずずれるので、ここで1回）
+    lpv = a.get("long_per_video")
+    n_long = a.get("long_videos_28d", 0)
+    proxy = spine.startswith("長尺") and (lpv is None or n_long < 20)
+
+    s4 = _stage4(m, a, sp, density, per_video, d_monetized,
+                 today or today_jst(), proxy=proxy, d_revenue=d_revenue)
+    d_target = s4["when"]
+
+    # **どれが到達日を縛っているか。** ここが、この回に引く腕を決めます。
     if d_revenue >= NEVER:
-        binding, hint = "段4（再生数が天井に当たっている）", "rpm"
-    elif d_revenue > d_monetized:
-        binding, hint = "段4（再生数）", "per_video"
+        binding, hint = "再生数が天井に当たっている", "rpm"
+    elif d_revenue >= s4["floor"]:
+        binding, hint = "再生数（段4の (a)）", "per_video"
+    elif s4["conditional"] and s4["verify_floor"] >= s4["gate_floor"]:
+        binding, hint = "合格点がまだ推測（確かめ待ち）", "rpm"
     else:
-        binding, hint = "段1〜3（収益化の門）", "density"
+        binding, hint = "収益化の門＋その後の30日", "density"
 
     # --- 「何を何倍にすれば何日後か」（**届かないで終わらせない**）---
+    #     ②の30日は前借りできないので、**期日から30日を引いた所まで**に
+    #     再生の水準が立っていなければ間に合いません。そこを逆算します。
     base = today or today_jst()
     horizons = []
     for h in GROWTH_HORIZONS:
-        rg = required_growth(views_day_now, ceiling_day, need_month, h)
+        rg = required_growth(views_day_now, ceiling_day, need_month,
+                             h - REVENUE_WINDOW_DAYS)
         horizons.append({
             "days": h,
             "date": base + timedelta(days=h),
@@ -1116,12 +1247,13 @@ def plan(m: dict, a: dict, density: int = PLAN_PUBLISH_PER_DAY,
     ceiling_short = need_month / ceiling_month if ceiling_month > 0 else float("inf")
 
     # **結論はこの1つの比較に乗っています。**
-    # 「収益化が終わる日までに、再生数のほうが間に合うか」——
-    # 間に合うなら到達日は収益化の門で決まり（引く腕は density / sub_rate）、
+    # 「②と③で決まる床までに、再生数のほうが間に合うか」——
+    # 間に合うなら到達日は門と窓で決まり（引く腕は density / sub_rate）、
     # 間に合わないなら再生数で決まります（引く腕は per_video / rpm）。
     # **どちらかを言うだけでは、次の回が「余裕があるのか、ぎりぎりなのか」を測れません。**
-    g_needed = (required_growth(views_day_now, ceiling_day, need_month, int(d_monetized))
-                if d_monetized < NEVER else None)
+    g_needed = (required_growth(views_day_now, ceiling_day, need_month,
+                                int(s4["floor"]))
+                if s4["floor"] < NEVER else None)
 
     stages = [
         {
@@ -1151,24 +1283,29 @@ def plan(m: dict, a: dict, density: int = PLAN_PUBLISH_PER_DAY,
             "measured": False,
         },
         {
-            "no": 4, "lever": ("rpm" if ceiling_short > 1 else "per_video"), "when": d_revenue,
-            "title": f"月20万ぶんの再生に到達（{sp['band']}・RPM ¥{sp['rpm']:,}）",
+            "no": 4, "lever": ("rpm" if ceiling_short > 1 else "per_video"),
+            "when": d_target,
+            "title": f"月20万に到達（{sp['band']}・RPM ¥{sp['rpm']:,}）",
             "bar": (f"直近30日で **{sp['views_needed_month']:,.0f}回**"
-                    f"（＝1日{density}本 × 1本あたり {sp['per_video_needed']:,.0f}回）。"
+                    f"（＝1日{density}本 × 1本あたり {sp['per_video_needed']:,.0f}回）を、"
+                    f"**収益化の後に {REVENUE_WINDOW_DAYS}日ぶん**積む。"
                     f"いま 1日 {views_day_now:,.0f}回、伸び率 "
                     + (f"**{g * 100:+.2f}%／日**（{double_days(g):,.0f}日で2倍）"
                        if g and g > 0 else "**0以下 ＝ 伸びていません**")
                     + f"、天井 1日 {ceiling_day:,.0f}回"),
-            "measured": True,
+            "measured": s4["met"],
+            # **段取りの一覧だけを読む人にも、条件つきだと分かるようにする。**
+            #     ここが無いと「2027-01-21 に届く」とだけ読めます。
+            "note": ("**この日付は条件つきの「最早」です**（合格点がまだ実測で"
+                     "立っていない）。下の「その日付は、どこから出ているか」を読むこと"
+                     if s4["conditional"] else None),
         },
     ]
 
     # --- 段取り全体を止めている「まだ測っていない入力」を1つ名指しする ---
     #     **計画を空にしない**ための欄です。ここが埋まっていれば、
     #     次の回は「何をするか」を決め直さずに、この1手から始められます。
-    lpv = a.get("long_per_video")
-    n_long = a.get("long_videos_28d", 0)
-    if spine.startswith("長尺") and (lpv is None or n_long < 20):
+    if proxy:
         blocking = {
             "what": "長尺の1本あたり再生",
             "now": (f"{lpv:,.0f}回（n={n_long}・登録者が9人だった頃の標本）"
@@ -1193,7 +1330,7 @@ def plan(m: dict, a: dict, density: int = PLAN_PUBLISH_PER_DAY,
     return {
         "density": density, "spine": spine, "spine_band": sp["band"],
         "forms": forms, "stages": stages, "blocking": blocking,
-        "days_to_target": d_target,
+        "days_to_target": d_target, "target": s4,
         "target_date": (base + timedelta(days=math.ceil(d_target))) if d_target < NEVER else None,
         "days_monetized": d_monetized,
         "days_revenue": d_revenue,
@@ -1312,12 +1449,19 @@ def _report_plan(m: dict, a: dict, pl: dict | None = None) -> list[str]:
         P(f"    段{st['no']}［腕 {st['lever']}］{st['title']}")
         P(f"        期日: {_fmt_days(st['when'])}")
         P(f"        合格点: {st['bar']}")
+        if st.get("note"):
+            P(f"        [!] {st['note']}")
     P("")
+    tg = pl["target"]
     P(f"  → 月20万の到達見込み: {_fmt_days(pl['days_to_target'])}")
     P(f"     （{pl['spine_band']}・1日{d}本・審査{MONETIZE_REVIEW_DAYS}日を置いた線）")
-    P(f"     内訳: 収益化の門 {_fmt_days(pl['days_monetized'])}"
-      f" ／ 再生数（段4）{_fmt_days(pl['days_revenue'])}"
-      "  ← **遅いほうが到達日**")
+    P(f"     内訳（**いちばん遅いものが到達日**）:")
+    P(f"       (a) 直近30日の再生が、月に要る回数に達する日 …… {_fmt_days(pl['days_revenue'])}")
+    P(f"       (b) その30日がまるごと収益化の後にある日 …… {_fmt_days(tg['gate_floor'])}"
+      f"（収益化 {_fmt_days(pl['days_monetized'])} ＋ {REVENUE_WINDOW_DAYS}日）")
+    if tg["verify_floor"]:
+        P(f"       (c) 合格点の倍率を確かめ終えている日 …… {_fmt_days(tg['verify_floor'])}"
+          f"（確認 {tg['verify_on'].isoformat()} ＋ {REVENUE_WINDOW_DAYS}日）")
     P(f"     **縛っているのは {pl['binding']}**"
       f" → **この回に引く腕は `{pl['lever_hint']}`**"
       "（ここを動かさない作業は、上の日付を1日も動かしません）")
@@ -1332,13 +1476,14 @@ def _report_plan(m: dict, a: dict, pl: dict | None = None) -> list[str]:
     gn, gnow = pl.get("growth_needed_by_gate"), (gr.get("g") or 0.0)
     if gn is not None:
         room = (gnow / gn) if gn > 0 else float("inf")
-        P(f"     **収益化が終わる日までに段4 を満たすのに要る伸び: {gn * 100:+.2f}%／日**"
+        P(f"     **(b)(c) の床（{_fmt_days(tg['floor'])}）までに (a) を満たすのに要る伸び:"
+          f" {gn * 100:+.2f}%／日**"
           f" ／ 実測 {gnow * 100:+.2f}%／日"
           + (f" → **足りています（{room:,.1f}倍の余裕）**" if gnow >= gn
              else f" → **足りません（{gn / gnow:,.1f}倍 要る）**" if gnow > 0
              else " → **伸びていません**"))
         P("       ← **結論はこの1行に乗っています。** 伸びが落ちれば、"
-          "到達日を縛るのは収益化の門ではなく再生数のほうに移ります。")
+          "到達日を縛るのは門と窓ではなく再生数 (a) のほうに移ります。")
     if pl["ceiling_day_long"] > 0:
         P(f"     **長尺の実測（{pl['ceiling_day_long'] / d:,.0f}回/本）をそのまま当てた側**: "
           f"再生数 {_fmt_days(pl['days_revenue_long'])}")
@@ -1359,6 +1504,42 @@ def _report_plan(m: dict, a: dict, pl: dict | None = None) -> list[str]:
     else:
         P(f"    （天井は足りています: 1日 {pl['ceiling_day']:,.0f}回 × 30日 ＝ 月 {pl['ceiling_day'] * 30:,.0f}回"
           f" ≧ 要る {pl['need_month']:,.0f}回）")
+    P("")
+    P("--- **その日付は、どこから出ているか**（20万以外の日付で代用しない）---")
+    P(f"    合格点 : 1本あたり **{tg['need_per_video']:,.0f}回**"
+      f"（いまの物差し {tg['per_video_now']:,.0f}回 の **{tg['ratio']:.2f}倍**）")
+    if tg["fallback"]:
+        f = tg["fallback"]
+        P(f"    [!] {f['why']}。**倍率では出ません**（0を何倍しても0）。")
+        P(f"        {f['assume']} → 門1 {_fmt_days(f['gate1_days'])}")
+    if tg["met"]:
+        P(f"    ① 合格点は**いまの実測で立っています**（{tg['ratio']:.2f}倍 ≤ 1.00）"
+          f" → 立つ日は収益化と同じ {_fmt_days(tg['bar_day'])}")
+    else:
+        if tg["proxy"]:
+            P(f"    ① 合格点は**まだ立っていません**。倍率は ×{tg['ratio']:.2f} ですが、"
+              "**割っているのはショートの実測**です。")
+            P(f"        段4 が立てているのは長尺で、そこは測っていません"
+              f"（{pl['blocking']['now']}）。**別の形の実測を当てているあいだ、"
+              "合格点は推測です。**")
+        else:
+            P(f"    ① 合格点は**まだ立っていません**。要るのは"
+              f" **1本あたり ×{tg['ratio']:.2f}**。")
+        P(f"        それが本当かを確かめられる最短が"
+          f" **{tg['verify_on'].isoformat()}**（{tg['verify_day']:.0f}日後"
+          "。公開の翌日 → 伸びきる48時間 → Analytics 3日遅れ）")
+        P(f"        → 合格点が立つ日 {_fmt_days(tg['bar_day'])}")
+    P(f"    ② その水準で **{tg['window']}日ぶん積んだ合計**が、"
+      "**まるごと収益化の後**にあること"
+      "（収益化前の再生は1円も生まないので、この30日は前借りできません）")
+    P(f"       → 床は {_fmt_days(tg['floor'])}")
+    P(f"    ①と②の遅いほう ＝ {_fmt_days(pl['days_to_target'])}")
+    P("      （①は伸び率で解いた日なので、**倍率が上がればここが後ろへ動きます**。"
+      "**②に①を足さないこと** —— ①は直近30日の合計で見ているので、"
+      "足すと1か月ぶん二重に数えます）")
+    if tg["conditional"]:
+        P("    [!] **これは「見込み」ではなく「最早」です。**"
+          " 上の倍率が出なければ、この日は来ません（出た日に引き直すこと）。")
     P("")
     b = pl["blocking"]
     P("--- **この段取りを止めている、まだ測っていない入力は1つです** ---")
@@ -1388,8 +1569,8 @@ def _report_plan(m: dict, a: dict, pl: dict | None = None) -> list[str]:
     P("")
     if pl["lever_hint"] == "density":
         P(f"  **この回の一手は、門を開ける側（`{pl['lever_hint']}` / `sub_rate`）です** ——"
-          " 到達日を縛っているのは収益化の門のほうで、")
-        P("  再生数（段4）はそれより先に満たせる見込みだからです。"
+          " 到達日を縛っているのは収益化の門と、その後の30日のほうで、")
+        P("  再生数 (a) はそれより先に満たせる見込みだからです。"
           "**ただし段2 の合格点は上の1行が未測定のまま**なので、")
         P("  **同じ回で測定の的を撃てるなら撃つこと**（穴埋めとは別の日に）。")
     else:

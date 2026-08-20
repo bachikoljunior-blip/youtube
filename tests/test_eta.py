@@ -642,11 +642,123 @@ def test_段取りの物差しは_ショートの実測であって長尺の古�
         assert f["ratio_vs_shorts"] == pytest.approx(f["per_video_needed"] / per_video)
 
 
-def test_段取りの日付は_門1から審査ぶんだけ後ろにある():
+# --- **段4 は「20万の日付」でなければならない**（2026-08-20 08:1x・オーナー追記） ---
+#
+#   > 勝手に20万達成以外の日時の予測だけにしないで
+#
+# ここは `d_target = d_monetized` の1行で、**段3（収益化の審査が終わる日）を
+# 段4の期日として印字**していました。下の検査は、その1行が戻ったら落ちます。
+
+def test_段4は_段3の日付の写しではない():
+    """**同じ日にならないこと。** 収益化した日に入るのはその日ぶんの収入です。"""
     m, a = _analysed()
     pl = eta.plan(m, a)
-    d1 = next(s for s in pl["stages"] if s["no"] == 1)["when"]
-    assert pl["days_to_target"] == pytest.approx(d1 + eta.MONETIZE_REVIEW_DAYS)
+    d3 = next(s for s in pl["stages"] if s["no"] == 3)["when"]
+    d4 = next(s for s in pl["stages"] if s["no"] == 4)["when"]
+    assert d4 != d3, "段4 の期日に、段3（収益化）の日付をそのまま代入している"
+    assert pl["days_to_target"] == d4
+
+
+def test_段4は_収益の30日窓のぶんだけ段3より後ろ():
+    """月20万は**30日ぶんの合計**。収益化前の再生は1円も生まないので前借りできません。"""
+    m, a = _analysed()
+    pl = eta.plan(m, a)
+    d3 = next(s for s in pl["stages"] if s["no"] == 3)["when"]
+    assert pl["days_to_target"] == pytest.approx(d3 + eta.REVENUE_WINDOW_DAYS)
+
+
+def test_段4の合格点は_20万の条件で動く_門の日付では動かない(monkeypatch):
+    """**目標額を動かすと、段4の合格点だけが動く。** 段1〜段3 は1日も動きません。
+
+    段3の写しなら、目標額を10倍にしても**何も動きません** —— 門の日付は
+    20万がいくらかを知らないからです。ここが「20万の予測になっているか」の芯。
+
+    **日数そのものは動きません**（動かないのが正しい）。要る倍率が 0.70 → 7.00 に
+    なっても、この機械は**1本あたり再生の伸び率を持っていない**ので、
+    「7倍に何日かかるか」は出せません。出せるのは**最早**のほうだけで、
+    だから道具は `conditional` を立てて「見込みではない」と断ります。
+    **伸び率を測ったら、ここに日数が入ります。**
+    """
+    m, a = _analysed()
+    pl = eta.plan(m, a)
+
+    monkeypatch.setattr(eta, "TARGET_YEN", eta.TARGET_YEN * 10)
+    m2, a2 = _analysed()
+    pl2 = eta.plan(m2, a2)
+
+    for no in (1, 2, 3):
+        before = next(s for s in pl["stages"] if s["no"] == no)["when"]
+        after = next(s for s in pl2["stages"] if s["no"] == no)["when"]
+        assert before == pytest.approx(after), f"段{no} が目標額で動いている"
+
+    # 段4 の合格点は、目標額に**比例して**上がる（門の日付は素通り）
+    assert pl2["target"]["need_per_video"] == pytest.approx(
+        pl["target"]["need_per_video"] * 10)
+    assert pl2["target"]["ratio"] == pytest.approx(pl["target"]["ratio"] * 10)
+    assert pl2["days_to_target"] >= pl["days_to_target"]
+    assert pl2["target"]["conditional"] is True
+
+
+def test_合格点が立っていないなら_確かめる日より前には到達しない():
+    """**立っていない合格点の上に期日を置かない。**
+
+    要るのが ×N なら、その N が本当かを確かめられる最短の日（公開の翌日 →
+    伸びきる48時間 → Analytics 3日遅れ）より前に、到達日は来ません。
+    """
+    m, a = _analysed()
+    a["per_video_now"] = 1.0          # 合格点が立たない側へ倒す
+    pl = eta.plan(m, a, today=_date(2026, 8, 20))
+    t = pl["target"]
+    assert not t["met"]
+    assert t["ratio"] > 1
+    assert t["conditional"] is True
+    assert t["verify_day"] == 6       # 1日後に公開 → +2日で伸びきる → +3日で読める
+    # **日付そのものを持つこと**（`_fmt_days` は UTC に足すので JST 早朝に1日ずれる）
+    assert t["verify_on"] == _date(2026, 8, 26)
+    assert t["bar_day"] >= t["verify_day"]
+    assert pl["days_to_target"] == pytest.approx(t["bar_day"] + eta.REVENUE_WINDOW_DAYS)
+
+
+def test_倍率が1を切っていても_別の形の実測なら合格点は立っていない():
+    """**段4 が立てているのは長尺で、割っているのはショートの実測です。**
+
+    ここを「立っている」と言うと、20万の期日がまた
+    **測っていない数字の写し**になります（追記が名指ししている穴と同じ形）。
+    """
+    m, a = _analysed()                       # 長尺の実測は無い＝物差しはショート
+    pl = eta.plan(m, a)
+    assert pl["spine"].startswith("長尺")
+    assert pl["target"]["ratio"] < 1.0, "前提: 倍率は1を切っている側"
+    assert pl["target"]["proxy"] is True
+    assert pl["target"]["met"] is False, "別の形の実測で「立っている」と言っている"
+    assert pl["target"]["conditional"] is True
+
+    # 長尺を十分に測ったら、推測ではなくなる
+    a2 = dict(a, long_per_video=800.0, long_videos_28d=25)
+    pl2 = eta.plan(m, a2)
+    assert pl2["target"]["proxy"] is False
+    assert pl2["target"]["met"] is True
+
+
+def test_門が届かない側でも_日付を1つ出す():
+    """**「届きません」で終わらせない**（追記の後半）。
+
+    登録が28日で0件なら、倍率では出ません（0を何倍しても0）。出るのは
+    「1人でも出れば」のほうなので、その線で日付を引きます。
+    """
+    m, a = _analysed(subs_gained_28d=0)
+    assert a["days_subs_at"][eta.PLAN_PUBLISH_PER_DAY] >= eta.NEVER
+    pl = eta.plan(m, a)
+    assert pl["days_to_target"] < eta.NEVER, "段4 が「届きません」で畳まれている"
+    assert pl["target"]["fallback"] is not None
+    assert pl["target"]["conditional"] is True
+
+
+def test_段4の日付は画面に出る_道具が知っているのに黙らない():
+    m, a = _analysed()
+    lines = eta._report_plan(m, a)
+    assert any("その日付は、どこから出ているか" in l for l in lines)
+    assert any("日ぶん積んだ合計" in l for l in lines)
 
 
 def test_段取りは例外を出さずに全部の行を出す():
