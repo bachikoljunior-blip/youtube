@@ -49,6 +49,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import os
 import sys
 from collections import deque
 from datetime import date, datetime, timedelta, timezone
@@ -695,6 +696,29 @@ def solve_revenue_day(views_day_now: float, growth: float | None,
     月20万は**月の収入**なので、その水準の日が1日来ても届きません。
     伸びている最中は、日次が達したあとに合計が追いつきます —— その差を無視すると、
     **到達日が数日から数週間ぶん早く出ます。**
+
+    ## **時間の頭打ちは入れません。頭打ちは `ceiling_views_day` のほうです**
+
+    2026-08-20 20:0x に「伸び率を測った窓（10.5日）の先まで延ばすな」という
+    指摘を受けて、**実際に入れて測りました。結果は入れないほうが正しい**です。
+
+    伸び率は「天井へ**どれだけ速く**近づくか」しか決めていません。**水準を
+    決めているのは天井**（密度 × 1本あたり再生）で、`v = min(v * (1 + growth), cap)`
+    が毎日それを当てています。だから「1日5.38%を100日 ＝ 180倍」は**起きません**
+    （実測では 56日目に天井に着いて、そこで止まります）。
+    伸び率に時間の頭打ちを足すと、**天井と二重に縛る**ことになり、
+    `plan()` は入力を問わず `NEVER` を返しました（検査10件が落ちた）——
+    それは「**予測を届きませんで終わらせない**」（オーナー 2026-08-20 06:2x）に反します。
+
+    **13倍の開きを埋めていたのは、伸び率ではなく天井のほうでした。**
+    天井の密度が `min(25, 3.3時間の実測36.5) = 25` になっていて、
+    直すと（`src.supply.MIN_SUSTAINED_HOURS`）天井は 1日 3,230回まで下がり、
+    **同じ伸び率のままで到達日は「届かない」に変わります。**
+
+    **覆る条件**: 天井が「速さ」まで決めるようになったら（例: 密度を時間の
+    関数にしたら）、ここにも時間の制限が要ります。いまは天井が水準だけを
+    決めているので、要りません。**`tests/test_eta_growth_ceiling.py` が
+    「伸び率をいくら上げても天井×30日を超えない」を固定しています。**
     """
     if need_month <= 0:
         return 0.0
@@ -1476,6 +1500,16 @@ def trajectory_all(m: dict, a0: dict, *, supply: dict | None = None,
     }
 
 
+def supply_min_sustained_hours() -> float:
+    """`src.supply.MIN_SUSTAINED_HOURS`。**読めない回でも印字を止めない。**"""
+    try:
+        from src import supply as supply_mod
+
+        return float(supply_mod.MIN_SUSTAINED_HOURS)
+    except Exception:                                          # noqa: BLE001
+        return 24.0
+
+
 def supply_state() -> dict | None:
     """**予測に渡す供給の実測**（読めなければ `None`。回は止めない）。"""
     try:
@@ -1508,20 +1542,40 @@ def solve_gate1(a: dict, *, density: float, supply: dict | None) -> dict:
     固定値ではなく、**この回が節を書けば上がる数**なので、`density` の腕は
     ここに効きます —— 効いたぶんだけ、次の回の予測が前に動きます。
 
+    **ただし、読むのは `sustained_rate_per_day`（1日続けられる速さ）のほうです**
+    （2026-08-20 20:0x）。`rate_per_day` は窓が3時間でも数を返すので、
+    **3.3時間で +5本 ＝ 1日 36.5本**というバーストが `min(25, 36.5) = 25` を通り、
+    **同じ日に外させた 25 が別の入口から戻っていました。**
+    窓が 24時間 をまたいでいない回は、`src.supply.state()` が
+    **出口の実測**（実際に公開になった本数／日）へ落とします。
+
     供給が読めないとき（`supply is None`）は前と同じ直線に落ちますが、
     **`measured: False` を返すので、画面は「未検証の前提」と断ります。**
     """
     need = a.get("videos_needed_gate1", float("inf"))
-    if supply is None or supply.get("rate_per_day") is None:
+    # **使ってよいのは「1日続けられる速さ」だけ**（2026-08-20 20:0x に踏んだ）。
+    #     `rate_per_day` をそのまま使うと、**3.3時間で +5本 ＝ 1日36.5本**という
+    #     バーストが入り、`min(25, 36.5)` を通って **25 が別の入口から戻ります**
+    #     —— 同じ日にオーナーが「物理的に不可なら予測に使うな」と外させた数です。
+    #     `src.supply.state()` が `sustained_rate_per_day` を出すので、そちらを読む。
+    #     （手で作った塊にその欄が無い回は、前と同じ `rate_per_day` に落ちます）
+    if supply is None:
+        rate_raw = None
+    elif "sustained_rate_per_day" in supply:
+        rate_raw = supply["sustained_rate_per_day"]
+    else:
+        rate_raw = supply.get("rate_per_day")
+
+    if rate_raw is None:
         return {"days": a["days_subs_at"].get(int(density), NEVER),
                 "measured": False, "need_videos": need,
                 "density_sustained": density, "dry_days": None,
-                "rate_per_day": None, "stock": None}
+                "rate_per_day": None, "stock": None, "density_basis": None}
 
     from src import supply as supply_mod
 
-    rate = float(supply["rate_per_day"])
-    stock = int(supply.get("stock") or 0)
+    rate = float(rate_raw)
+    stock = int((supply or {}).get("stock") or 0)
     days = supply_mod.days_for(need, stock=stock, rate_per_day=rate,
                                plan_density=density, never=NEVER)
     return {
@@ -1531,9 +1585,17 @@ def solve_gate1(a: dict, *, density: float, supply: dict | None) -> dict:
         # 収益の窓（30日）は在庫を食い終わった先にあるので、**そこでの密度は
         # 「作る速さ」で頭打ち**です。段4 はこちらで立てること。
         "density_sustained": min(float(density), rate),
-        "dry_days": supply_mod.material_dry_days(novel=supply.get("novel"),
-                                                 rate_per_day=rate),
+        "density_basis": (supply or {}).get("sustained_basis"),
+        # **材料が尽きる日だけは、速いほうの実測で見ます。**
+        #     掃引の候補を食うのは「節を書く手」＝ `make_rate` のほうで、
+        #     持続する速さ（＝出口の実測）はその下限でしかありません。
+        #     下限で割ると尽きる日が**後ろにずれ、警告が甘くなります**
+        #     （実測: 3.5本/日 なら 22日、36.5本/日 なら 2日）。
+        "dry_days": supply_mod.material_dry_days(
+            novel=supply.get("novel"),
+            rate_per_day=max(rate, float((supply or {}).get("rate_per_day") or 0.0))),
         "rate_per_day": rate,
+        "rate_burst": (supply or {}).get("rate_per_day"),
         "stock": stock,
         "thin": bool(supply.get("rate", {}).get("thin")),
     }
@@ -1809,8 +1871,22 @@ def plan(m: dict, a: dict, density: int = PLAN_PUBLISH_PER_DAY,
     return out
 
 
-def _points() -> list[dict]:
-    """`data/eta.jsonl` を積んだ順に読む。**壊れた行は黙って飛ばす**（回を止めない）。"""
+REFLECT_KIND = "reflect"
+
+
+def _points(*, reflect: bool = False) -> list[dict]:
+    """`data/eta.jsonl` を積んだ順に読む。**壊れた行は黙って飛ばす**（回を止めない）。
+
+    **既定では「反映の行」を外します**（2026-08-20・オーナー指示「毎回その予測に
+    反映して」の配線）。周の終わりに `--reflect` が積む行は、
+    **同じ実測をもう一度解き直したもの**です。予測の点として数えると:
+
+      * `growth_per_day()` の回帰に、**中身が同じで時刻だけ違う点**が入る
+      * `_drift()` の「前の回」が、**同じ回の自分自身**になる
+
+    どちらも「チャンネルが動いた」と読める形の嘘になります。**だから外す。**
+    読みたいときだけ `reflect=True`（`_reflect_rows()` がそれを使います）。
+    """
     if not LOG.exists():
         return []
     out = []
@@ -1819,9 +1895,12 @@ def _points() -> list[dict]:
         if not line:
             continue
         try:
-            out.append(json.loads(line))
+            row = json.loads(line)
         except json.JSONDecodeError:
             continue
+        if not reflect and row.get("kind") == REFLECT_KIND:
+            continue
+        out.append(row)
     return out
 
 
@@ -1964,8 +2043,19 @@ def _report_plan(m: dict, a: dict, pl: dict | None = None) -> list[str]:
     P("=" * 66)
     g1 = pl.get("gate1") or {}
     if g1.get("measured"):
-        P(f"  **密度は実測から解いています: 作る速さ 1日 {g1['rate_per_day']:.1f}本"
+        P(f"  **密度は実測から解いています: 1日続けられる速さ {g1['rate_per_day']:.1f}本"
           f"（在庫 {g1['stock']}本）／詰め方の上限 {d:.0f}本/日**")
+        if g1.get("density_basis"):
+            P(f"     出どころ: **{g1['density_basis']}**")
+        # **バーストを持続と読み替えていないか、画面に出す**（2026-08-20 20:0x）。
+        #     3.3時間の窓の 36.5本/日 が `min(25, 36.5) = 25` を通って
+        #     `density_month` に入り、**外させたはずの 25 が戻っていました。**
+        burst = g1.get("rate_burst")
+        if burst is not None and g1["rate_per_day"] < burst - 1e-9:
+            P(f"     [!] **直近の作る速さ {burst:.1f}本/日 は使っていません**"
+              f"（窓 {((pl.get('supply') or {}).get('rate') or {}).get('hours', 0.0):.1f}時間"
+              f" < {supply_min_sustained_hours():.0f}時間 ＝ **1日続く速さとは言えない**）。"
+              "24時間をまたぐ点が貯まれば、自動でそちらに切り替わります")
         P(f"  → **段4（月20万）が乗るのは、持続する {pl['density_month']:.1f}本/日 のほう**"
           "（収益の30日は在庫を食い終わった先にあります）")
         if g1.get("dry_days") is not None:
@@ -2021,6 +2111,15 @@ def _report_plan(m: dict, a: dict, pl: dict | None = None) -> list[str]:
         P(f"     伸び率: {gr['basis']}")
     if gr.get("caveat"):
         P(f"       断り: {gr['caveat']}")
+    # **測った窓と、延ばしている先の比を出す**（2026-08-20 20:0x）。
+    #     水準を決めているのは天井のほうなので、ここに時間の頭打ちは入れません
+    #     （`solve_revenue_day` の註）。**ただし、何倍先まで延ばしているかは見せる。**
+    span = gr.get("span_days") or 0.0
+    if span > 0 and tg.get("d_revenue", NEVER) < NEVER:
+        P(f"       **{span:.1f}日ぶんの窓で測った伸びを、{tg['d_revenue']:,.0f}日先"
+          f"（{tg['d_revenue'] / span:,.1f}倍）まで延ばしています。**"
+          f" 水準の頭打ちは天井（1日 {pl['ceiling_day']:,.0f}回 ＝"
+          f" 密度 {pl['density_month']:.1f}本 × {a['per_video_now']:,.0f}回）のほうです")
     gn, gnow = pl.get("growth_needed_by_gate"), (gr.get("g") or 0.0)
     if gn is not None:
         room = (gnow / gn) if gn > 0 else float("inf")
@@ -2572,27 +2671,17 @@ def _scale_note(prev: dict, current: dict) -> list[str]:
     return out
 
 
-def main() -> int:
-    ap = argparse.ArgumentParser(description="月20万に届く日を予測して積む")
-    ap.add_argument("--no-record", action="store_true", help="data/eta.jsonl に積まない")
-    ap.add_argument("--offline", action="store_true", help="API を叩かず、積んである最後の点から出す")
-    args = ap.parse_args()
+def solve(m: dict, points: list[dict]) -> dict:
+    """**実測 `m` から、予測を最後まで解く。**（2026-08-20 に `main()` から出した）
 
-    if args.offline:
-        if not LOG.exists():
-            print("[eta] 積んだ点がありません。--offline は使えません。")
-            return 1
-        m = json.loads([l for l in LOG.read_text(encoding="utf-8").splitlines() if l.strip()][-1])
-        print("[eta] **積んである最後の点で出しています（いまの実測ではありません）**")
-    else:
-        try:
-            m = _measure()
-        except Exception as exc:  # noqa: BLE001 — 予測で回を止めない
-            print(f"[eta] 実測を取れませんでした: {type(exc).__name__}: {exc}")
-            print("[eta] **回は止めないこと。** `--offline` で最後の点から読めます。")
-            return 1
+    出したのは、**周の終わりの「反映」が同じ道を通るため**です
+    （オーナー指示・原文: **「毎回その予測に反映して」**）。
+    `reflect()` が自前で解き直す形にすると、**2つの道が別々に古びます** ——
+    片方だけに腕の上限や供給が入る、という壊れ方は、外から見えません。
 
-    points = _points()
+    返すのは `{"a", "sup", "pl", "tr", "row"}`。**印字はしません**
+    （`main()` は 200行出し、`reflect()` は 10行しか出さないため）。
+    """
     a = analyse(m, points)
     m["per_video_now"] = a["per_video_now"]
 
@@ -2620,12 +2709,12 @@ def main() -> int:
             pl["lever_hint_binding"] = pl["lever_hint"]
             pl["lever_hint"] = _top["lever"]
             pl["lever_from"] = "軌跡"
-    prev = points[-1] if points else None
-    for line in headline(pl, prev, tr):
-        print(line)
+    return {"a": a, "sup": sup, "pl": pl, "tr": tr,
+            "row": _row(m, a, pl, tr, sup)}
 
-    for line in report(m, a):
-        print(line)
+
+def _row(m: dict, a: dict, pl: dict, tr: dict | None, sup: dict | None) -> dict:
+    """`data/eta.jsonl` に積む1行を組む。**`solve()` と同じ理由でここに出しています。**"""
     row = {**m, **{k: v for k, v in a.items() if isinstance(v, (int, float))}}
     # **予測日そのものを積む。** 積まないと、次の回が「早まったか」を測れません
     # （`headline` の3行目と、`run_marker.py --ship --moves` の突き合わせ）。
@@ -2649,11 +2738,286 @@ def main() -> int:
         row["arm_rates"] = {k: a["rate"] for k, a in tr["arms"].items()}
         row["arm_hits"] = f"{tr['band']['k']}/{tr['band']['n']}"
     row["videos_needed_gate1"] = pl.get("gate1", {}).get("need_videos")
-    # **`--offline` の点だと分かる形で積む**（2026-08-20）。中身は最後の実測の写しで、
-    # **新しい実測ではありません。** 印が無いと、次の回は写しを実測として数えます。
+    return row
+
+
+# ---------------------------------------------------------------------------
+# **周の終わりの「反映」**（2026-08-20・オーナー指示。原文は次の1行）
+#
+#     > 毎回の実行で予測するように言ったはずなので、毎回その予測に反映して
+#
+# **予測を出すことは、既に毎回やっています。** 言われているのは**反映**のほうです。
+# いま起きているのはこう:
+#
+#   * 判定や実測が出ても、**予測に入るのは次の回か、あるいは入らない**
+#   * 2026-08-20 の実例 —— 歩留り 1.0→0.156・供給 21日→4日・A/B の在庫の
+#     数え方・掃引の候補数・`retention` の6本。**どれもその回の予測に
+#     入っていません**
+#   * 逆に、入れてはいけないもの（`density_month 25.0`）が別の欄から戻って
+#     **予測を3分の1にしました**
+#
+# だから、周の終わりに**もう一度解いて、日付の前後差を残します。**
+#
+# ## なぜ Analytics を取り直さないか（`--reflect` が offline なのは、そのため）
+#
+# Analytics は**日次で3日遅れ**。回は1時間ごとに回るので、**1日のうち
+# 入力は1度も動きません**（実測: `data/eta.jsonl` の18点は `views_7d` も
+# `subs_net` も全部同値）。取り直すと API を叩く時間がかかるうえ、
+# **たまたま日が変わった回だけ、チャンネル側の変化がこちらの作業のぶんに混ざります。**
+#
+# **出発点と同じ実測を使えば、動いた差は「この回が触った所」だけになります。**
+# ＝ 反映の差は、定義として**この回の作業ぶん**です。
+# ---------------------------------------------------------------------------
+
+# **差として数えない鍵**（時刻・種別・反映そのものが書く欄）。
+_REFLECT_IGNORE = {
+    "at", "kind", "session", "base_at", "note", "moved", "no_movable_input",
+    "traj_date_before", "target_date_before", "traj_delta_days", "target_delta_days",
+    "traj_days_before", "days_to_target_before", "traj_solved",
+}
+
+
+def _reflect_session() -> str:
+    """自分のセッションID。**推測しないこと**（`run_marker.session_id()` と同じ読み）。"""
+    raw = os.environ.get("CLAUDE_CODE_REMOTE_SESSION_ID", "")
+    return ("session_" + raw[4:]) if raw.startswith("cse_") else raw
+
+
+def _moved(before: dict, after: dict) -> dict:
+    """**この回で動いた入力**を、鍵ごとに `[前, 後]` で返す。
+
+    **鍵を列挙しないこと。** 列挙すると、次に足された入力が黙って漏れます
+    （`density_month` が別の欄から戻って予測を3分の1にしたのが、まさにその形）。
+    実測（Analytics 由来）は出発点のものをそのまま使うので、**ここには構造上出ません** ——
+    出るのは供給・密度・腕の速さ・こちらの計算式だけです。
+    """
+    out: dict = {}
+    for k in sorted(set(before) | set(after)):
+        if k in _REFLECT_IGNORE:
+            continue
+        b, a = before.get(k), after.get(k)
+        if b == a:
+            continue
+        if isinstance(b, (int, float)) and isinstance(a, (int, float)) \
+                and not isinstance(b, bool) and not isinstance(a, bool):
+            if abs(a - b) <= 1e-9 * max(1.0, abs(b)):
+                continue
+        out[k] = [b, a]
+    return out
+
+
+def _date_delta(before: str | None, after: str | None) -> int | None:
+    """**負なら早まった**（`--moves` と同じ向き）。片方でも無ければ `None`。"""
+    if not before or not after:
+        return None
+    try:
+        return (date.fromisoformat(after) - date.fromisoformat(before)).days
+    except ValueError:
+        return None
+
+
+def _fmt_moved(moved: dict, limit: int = 8) -> list[str]:
+    def one(v):
+        if isinstance(v, float):
+            return f"{v:,.4g}"
+        if isinstance(v, dict):
+            return "{…}"
+        return "無し" if v is None else str(v)
+    keys = list(moved)
+    out = [f"      {k}: {one(moved[k][0])} → {one(moved[k][1])}" for k in keys[:limit]]
+    if len(keys) > limit:
+        out.append(f"      （ほか {len(keys) - limit} 件。`data/eta.jsonl` の `moved` に全部あります）")
+    return out
+
+
+def reflect(note: str | None = None, *, record: bool = True) -> tuple[int, dict]:
+    """**この回で動いた入力を、この回のうちに予測へ入れ直す。**
+
+    返すのは `(終了コード, 積んだ行)`。**回を止めません** —— 解けなくても 0 を返し、
+    「解けませんでした」とだけ言います（反映は記録であって門ではない）。
+    """
+    points = _points()
+    if not points:
+        print("[eta] 積んだ点がありません。**まず `python scripts/eta.py` を撃つこと。**")
+        return 1, {}
+    base = points[-1]
+    # **出発点と同じ実測で解き直す**（上のコメント参照）。`solve()` は `m` を書き換えるので複製。
+    m = {k: v for k, v in base.items() if k not in _REFLECT_IGNORE or k == "at"}
+    try:
+        s = solve(dict(m), points)
+    except Exception as exc:                                   # noqa: BLE001
+        print(f"[eta] 反映を解けませんでした: {type(exc).__name__}: {exc}")
+        print("[eta] **回は止めないこと。** 理由を docs/JOURNAL.md に1行書いて進むこと。")
+        return 0, {}
+    row = s["row"]
+    # **軌跡が解けなかった回に、出発点の日付を「後」として読ませないこと。**
+    #     `_row()` は `tr is None` のとき軌跡の欄を書きません。反映は
+    #     **出発点の行そのものを `m` として渡す**ので、書かれなければ
+    #     `traj_date` は出発点の値のまま残り、**差が黙って +0日**になります。
+    #     ＝「動かなかった」と「測れなかった」が同じ字になる、いちばん悪い形。
+    if s["tr"] is None:
+        for k in ("traj_date", "traj_days", "traj_t_work", "traj_focus", "arm_rates", "arm_hits"):
+            row.pop(k, None)
+    moved = _moved(base, row)
+    # **日付そのものは「動いた入力」ではなく「結果」です。** 差の一覧からは外し、
+    # 下の前後差として別に出します（混ぜると「入力が動いた」に見える）。
+    #     **`per_video_now` は落としません** —— あれは入力の側です
+    #     （実測が同じでも、`_per_video()` の式を変えれば動く ＝ この回の作業ぶん）。
+    for k in ("target_date", "traj_date", "days_to_target", "traj_days",
+              "days_revenue", "binding", "lever_hint", "traj_focus"):
+        moved.pop(k, None)
+    t_before, t_after = base.get("traj_date"), row.get("traj_date")
+    s_before, s_after = base.get("target_date"), row.get("target_date")
+    t_delta, s_delta = _date_delta(t_before, t_after), _date_delta(s_before, s_after)
+
+    out = ["", "=== この回の反映（**動いた入力を、この回のうちに予測へ入れ直す**）==="]
+    out.append(f"    出発点: {base.get('at', '?')}（同じ実測で解き直しています）")
+    if moved:
+        out.append(f"    **この回で動いた入力: {len(moved)}件**")
+        out.extend(_fmt_moved(moved))
+    else:
+        # **「効いていない」と混同しないこと**（`_drift` に同じ趣旨の断りがあります）。
+        out.append("    [!] **この回で動かせる入力は、1つもありませんでした。**")
+        out.append("        **「効いていない」ではありません。** Analytics は日次で3日遅れ、"
+                   "回はそれよりずっと速い。")
+        out.append("        この回が触った所が、**予測の入力に1つも入っていない**という意味です"
+                   "（道具・文書・手順の整備はここに出ません）。")
+        out.append("        → 次の回は、**入力に入る腕**（per_video / sub_rate / rpm / density）"
+                   "を選ぶこと。")
+
+    def line(label, b, a, d):
+        if b is None and a is None:
+            return f"    {label}: **どちらも「届かない」**"
+        if d is None:
+            return f"    {label}: {b or '届かない'} → **{a or '届かない'}**（前後のどちらかが「届かない」＝差は出せません）"
+        arrow = "**早まりました**" if d < 0 else ("**遠のきました**" if d > 0 else "動いていません")
+        return f"    {label}: {b} → **{a}**（{d:+d}日）  {arrow}"
+
+    if s["tr"] is None:
+        out.append("    [!] **軌跡を解けませんでした。** 下の「軌跡」の行は**測れていません**"
+                   "（動かなかった、ではありません）。据え置きの線のほうを読むこと。")
+    out.append(line("到達日（軌跡）", t_before, t_after, t_delta))
+    out.append(line("到達日（腕を据え置いた線）", s_before, s_after, s_delta))
+    if moved and t_delta == 0 and s_delta == 0:
+        out.append("    → 入力は動いたのに**日付は動いていません。** その入力は"
+                   "**いまの律速の外**にあります（`binding` を見ること）。")
+    for ln in out:
+        print(ln)
+
+    rec = {
+        "at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "kind": REFLECT_KIND,
+        "session": _reflect_session() or None,
+        "base_at": base.get("at"),
+        "moved": moved,
+        "no_movable_input": not moved,
+        "traj_date_before": t_before, "traj_date": t_after, "traj_delta_days": t_delta,
+        "target_date_before": s_before, "target_date": s_after, "target_delta_days": s_delta,
+        "traj_days_before": base.get("traj_days"), "traj_days": row.get("traj_days"),
+        "days_to_target_before": base.get("days_to_target"),
+        "days_to_target": row.get("days_to_target"),
+        "binding": row.get("binding"), "lever_hint": row.get("lever_hint"),
+        "traj_solved": s["tr"] is not None,
+    }
+    if note:
+        rec["note"] = note
+    if record:
+        LOG.parent.mkdir(parents=True, exist_ok=True)
+        with LOG.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
+        try:
+            where = LOG.relative_to(ROOT)
+        except ValueError:                                     # 検査は tmp に積みます
+            where = LOG
+        print(f"[eta] **反映を残しました**: {where}"
+              f"（`kind=\"{REFLECT_KIND}\"`。予測の点としては数えません）")
+    return 0, rec
+
+
+def _reflect_recap(limit: int = 3) -> list[str]:
+    """**前の回たちが「入れ直した」結果を、この回の頭で見せる。**（2026-08-20）
+
+    `_drift()` は**予測の点どうし**（周の頭と周の頭）を比べます。**周の中で
+    動いた入力は、そこには出ません** —— 出るのは次の回か、あるいは永久に出ない。
+    それがオーナー指示（**「毎回その予測に反映して」**）の指している穴でした。
+
+    反映そのものは `reflect()` が周の終わりに残します。**ここはその読み口**です ——
+    残す所と読む所の両方が無いと、`retention.py` が 8/10〜8/20 に踏んだ形
+    （**正しく印字していたが、誰も読まなかった**）をもう一度やります。
+    """
+    rows = [r for r in _points(reflect=True) if r.get("kind") == REFLECT_KIND]
+    if not rows:
+        return []
+    out = ["", "--- 前の回たちの**反映**（周の中で動いた入力 → 日付がどう動いたか）---"]
+    for r in rows[-limit:]:
+        when = str(r.get("at", "?"))[5:16].replace("T", " ")
+        if r.get("no_movable_input"):
+            out.append(f"    {when}  **動かせる入力なし**"
+                       f"（{(r.get('note') or '')[:40]}）"
+                       "  ← **「効いていない」ではありません**")
+            continue
+        d = r.get("traj_delta_days")
+        if d is None:
+            d = r.get("target_delta_days")
+        moved = ", ".join(list(r.get("moved") or {})[:3])
+        out.append(f"    {when}  {moved or '(入力の記録なし)'}"
+                   + (f"  → **{d:+d}日**" if isinstance(d, int) else "  → 差は出せません")
+                   + (f"（{(r.get('note') or '')[:40]}）" if r.get("note") else ""))
+    n_moved = sum(1 for r in rows if not r.get("no_movable_input"))
+    out.append(f"    **入れ直した回: {len(rows)}回 / うち入力が動いたのは {n_moved}回**"
+               "（動かなかった回は、触った所が予測の入力に無かったということ）")
+    return out
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description="月20万に届く日を予測して積む")
+    ap.add_argument("--no-record", action="store_true", help="data/eta.jsonl に積まない")
+    ap.add_argument("--offline", action="store_true", help="API を叩かず、積んである最後の点から出す")
+    # **周の終わりに打つ**（オーナー指示 2026-08-20「毎回その予測に反映して」）。
+    # `run_marker.py --ship` が自動で呼びます。**手で打つのは、ship の外で入力を動かした回だけ。**
+    ap.add_argument("--reflect", action="store_true",
+                    help="周の終わり: この回で動いた入力を予測へ入れ直し、日付の前後差を残す")
+    ap.add_argument("--note", metavar="1行", help="--reflect に添える1行（何を入れ直したか）")
+    args = ap.parse_args()
+
+    if args.reflect:
+        return reflect(args.note, record=not args.no_record)[0]
+
+    if args.offline:
+        if not LOG.exists():
+            print("[eta] 積んだ点がありません。--offline は使えません。")
+            return 1
+        # **反映の行を掴まないこと**（`_points()` が既に外しています）。
+        m = _points()[-1]
+        print("[eta] **積んである最後の点で出しています（いまの実測ではありません）**")
+    else:
+        try:
+            m = _measure()
+        except Exception as exc:  # noqa: BLE001 — 予測で回を止めない
+            print(f"[eta] 実測を取れませんでした: {type(exc).__name__}: {exc}")
+            print("[eta] **回は止めないこと。** `--offline` で最後の点から読めます。")
+            return 1
+
+    points = _points()
+    _s = solve(m, points)
+    a, sup, pl, tr = _s["a"], _s["sup"], _s["pl"], _s["tr"]
+    prev = points[-1] if points else None
+    for line in headline(pl, prev, tr):
+        print(line)
+
+    for line in report(m, a):
+        print(line)
+    row = _row(m, a, pl, tr, sup)
+    # **`--offline` の点だと分かる形で積む**（2026-08-20）。中身は最後の実測の**写し**で、
+    # 新しい実測ではありません。印が無いと、次の回は写しを実測として数えます
+    # （`_points()` の履歴は、伸び率の分母になります）。
     if args.offline:
         row["offline"] = True
     for line in _drift(row):
+        print(line)
+    # **周の中で動いた入力は `_drift` には出ません**（あれは点どうしの比較）。
+    # 反映の読み口はこちら。**残す所と読む所の両方が要ります。**
+    for line in _reflect_recap():
         print(line)
     # **「予測 → 腕を選ぶ → 進む」の、選んだ側の実績**（オーナー指示 2026-08-19 21:2x）。
     # 1周ごとに動くのは日付ではなく**ここ**です（`src/levers.py` の説明）。

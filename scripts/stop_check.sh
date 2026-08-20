@@ -172,6 +172,73 @@ EOF
   exit 0
 fi
 
+# --- (1.6) **出したのに、予測へ入れ直さないまま終わらせない**（2026-08-20 に足した） ---
+#
+# オーナー指示（原文）: **「毎回の実行で予測するように言ったはずなので、毎回その予測に反映して」**
+#
+# 予測を**出すこと**は毎回やっています。抜けているのは**反映**のほうでした ——
+# その回で分かったこと（歩留り 1.0→0.156・供給 21日→4日・A/B の在庫の数え方・
+# 掃引の候補数）は、**どれもその回の予測に入っていません。**
+#
+# 反映の本体は `run_marker.py --ship` が自動で呼びます。**ここが要るのは
+# `--no-reflect` を使った回と、反映が落ちた回のため**です。
+# **註に書くだけにしないこと** —— 2026-08-20 に註へ書いたものは、その日のうちに
+# 全部素通りしました。**引き止めは、素通りしない唯一の形です。**
+#
+# 引き止めは (1)(1.5) と同じく3回まで。**止まったまま死ぬほうが確実に悪い。**
+REFLECTED=$(python3 - "$ROOT/data/eta.jsonl" "$ME" <<'REFPY' 2>/dev/null || echo unknown
+import json, sys, pathlib
+path, me = pathlib.Path(sys.argv[1]), sys.argv[2]
+if not me or not path.exists():
+    print("unknown"); raise SystemExit
+for ln in path.read_text(encoding="utf-8").splitlines():
+    try:
+        r = json.loads(ln)
+    except Exception:
+        continue
+    if r.get("kind") == "reflect" and r.get("session") == me:
+        print("yes"); raise SystemExit
+print("no")
+REFPY
+)
+if [ "$SHIP_STATE" = "shipped" ] && [ "$REFLECTED" = "no" ]; then
+  RCOUNT="$STATE_DIR/claude-youtube-reflect-blocks-${ME:-none}"
+  RN=$(cat "$RCOUNT" 2>/dev/null || echo 0)
+  if [ "$RN" -lt 3 ]; then
+    echo $((RN + 1)) > "$RCOUNT"
+    cat <<EOF >&2
+【出したのに、予測へ入れ直していません】（${RN}→$((RN + 1))回目・3回で通します）
+
+この回は \`--ship\` の印を打っていますが、\`data/eta.jsonl\` に
+**この回の \`kind="reflect"\` がありません。**
+
+オーナー指示（2026-08-20・原文）:
+**「毎回の実行で予測するように言ったはずなので、毎回その予測に反映して」**
+
+**予測を出すことは、毎回やっています。** 抜けているのは**反映**です ——
+その回で測ったこと・判定したこと・外れたことを、**その回のうちに**予測へ
+入れ直して、**日付が何日動いたか**を残すところまで。
+
+    python scripts/eta.py --reflect
+
+API は叩きません（出発点と同じ実測で解き直すだけ・約4秒）。
+**この回で動かせる入力が1つも無かった回**は、そう印字されます ——
+それは「効いていない」ではなく、**この回が触った所が予測の入力に無い**という意味です。
+**その行が残ること自体が答え**なので、必ず撃つこと。
+
+- 背後で走っているもの: ${RUNNING}
+- 未コミットの変更: ${DIRTY}
+EOF
+    printf '{"decision":"block","reason":"出したものを予測へ入れ直してから終わってください（python scripts/eta.py --reflect）"}\n'
+    exit 0
+  fi
+  rm -f "$RCOUNT"
+  cat <<EOF >&2
+【3回問いました。通します】
+**反映しないまま終わる回になります。** 理由を \`docs/JOURNAL.md\` に必ず書くこと。
+EOF
+fi
+
 # --- (1.5) **満ちた待ちに答えないまま終わらせない**（2026-08-20 に足した） ---
 #
 # オーナー指示（原文）: **「これからも同じことにならないようにするんだよ」**
@@ -214,35 +281,6 @@ EOF
     exit 0
   fi
   rm -f "$WCOUNT"
-fi
-
-# --- (1.6) **出したのに、予測へ入れ直さないまま終わらせない**（2026-08-20 に足した） ---
-#
-# オーナー指示（原文）: **「毎回の実行で予測するように言ったはずなので、毎回その予測に反映して」**
-#
-# 予測は回の**最初**に出ます。腕を引いたのはそのあとなので、**出したものは
-# その回の予測に入っていません。** 入れ直さないと、次の回もまた作業前の日付から始まり、
-# **動かしたはずのものがどの日付にも現れません。**
-# 判定の中身は `src/reflect.py`（ship の `at` より新しい eta の点があるか、だけ）。
-REFLECT=$(cd "$ROOT" && timeout 20 python3 -m src.reflect --pending --session "${ME:-}" 2>/dev/null || true)
-if [ -n "$REFLECT" ]; then
-  RCOUNT="$STATE_DIR/claude-youtube-reflect-blocks-${ME:-none}"
-  RN=$(cat "$RCOUNT" 2>/dev/null || echo 0)
-  if [ "$RN" -lt 3 ]; then
-    echo $((RN + 1)) > "$RCOUNT"
-    cat <<EOF2 >&2
-【出したものが、まだ予測に入っていません】（${RN}→$((RN + 1))回目・3回で通します）
-
-${REFLECT}
-
-**撃ち直すだけです**（\`--offline\` なら外の口を叩かず5秒）。積んだ点が
-「宣言 → 実際」の突き合わせの片側になります（\`eta.py\` 末尾の「宣言と実際」）。
-**外れてよい。** 外れたと分かるほうが、何も残さず進むより速い。
-EOF2
-    printf '{"decision":"block","reason":"出したものを予測へ入れ直してから終わってください（python scripts/eta.py）"}\n'
-    exit 0
-  fi
-  rm -f "$RCOUNT"
 fi
 
 # --- (2) 普通の「終わるのが最善か」。5分以内に一度問うていれば通す ---
