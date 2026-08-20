@@ -1982,7 +1982,7 @@ def plan(m: dict, a: dict, density: int = PLAN_PUBLISH_PER_DAY,
 REFLECT_KIND = "reflect"
 
 
-def _points(*, reflect: bool = False) -> list[dict]:
+def _points(*, reflect: bool = False, offline: bool = False) -> list[dict]:
     """`data/eta.jsonl` を積んだ順に読む。**壊れた行は黙って飛ばす**（回を止めない）。
 
     **既定では「反映の行」を外します**（2026-08-20・オーナー指示「毎回その予測に
@@ -1994,6 +1994,18 @@ def _points(*, reflect: bool = False) -> list[dict]:
 
     どちらも「チャンネルが動いた」と読める形の嘘になります。**だから外す。**
     読みたいときだけ `reflect=True`（`_reflect_rows()` がそれを使います）。
+
+    **`offline: true` の点も、同じ理由で外します**（2026-08-20 23:5x）。
+    `--offline` は「最後の実測の**写し**をもう一度解く」ので、印は 875814c が
+    足していました。**ところが、その印を読む側が1つもありませんでした。**
+
+    実際に踏んだ形（この回）——
+    周の中で `--offline` を3回撃って直しを確かめたら、その3点が末尾に積まれ、
+    **周の終わりの `--reflect` が、自分の debug の点を「前の回」として掴みました。**
+    結果、この回の前後差は **2027-04-06 → 届かない** ではなく
+    **「どちらも届かない」**と出ました —— **その回の作業ぶんが、消えます。**
+
+    読みたいときだけ `offline=True`。
     """
     if not LOG.exists():
         return []
@@ -2007,6 +2019,8 @@ def _points(*, reflect: bool = False) -> list[dict]:
         except json.JSONDecodeError:
             continue
         if not reflect and row.get("kind") == REFLECT_KIND:
+            continue
+        if not offline and row.get("offline"):
             continue
         out.append(row)
     return out

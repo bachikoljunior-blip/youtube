@@ -196,3 +196,35 @@ def test_伸び率が極小でも2倍日数で落ちない():
     assert eta.double_days(0) == float("inf")
     assert eta.double_days(-0.1) == float("inf")
     assert 13 < eta.double_days(0.0538) < 14      # 実測 +5.38%/日 ＝ 13日で2倍
+
+
+# --- 7. 踏んだもの: `--offline` の点が「前の回」になっていた -----------------------
+
+def test_offlineの点は予測の点として数えない(tmp_path, monkeypatch):
+    """**印は 875814c が足していました。読む側が1つも無かった。**
+
+    `--offline` は「最後の実測の**写し**をもう一度解く」だけです。
+    周の中で直しを確かめるために撃つと、その点が末尾に積まれ、
+    **周の終わりの `--reflect` が、自分の debug の点を「前の回」として掴みます。**
+
+    実際にこの回が踏みました —— 前後差が
+    **2027-04-06 → 届かない** ではなく **「どちらも届かない」**と出ました。
+    **その回の作業ぶんが、まるごと消えます。**
+    """
+    import json
+    log = tmp_path / "eta.jsonl"
+    log.write_text("\n".join(json.dumps(r, ensure_ascii=False) for r in [
+        {"at": "2026-08-20T13:00:00+00:00", "traj_date": "2027-04-06"},
+        {"at": "2026-08-20T14:00:00+00:00", "traj_date": "2027-04-06", "offline": True},
+        {"at": "2026-08-20T14:30:00+00:00", "kind": eta.REFLECT_KIND},
+    ]) + "\n", encoding="utf-8")
+    monkeypatch.setattr(eta, "LOG", log)
+
+    pts = eta._points()
+    assert [p["at"] for p in pts] == ["2026-08-20T13:00:00+00:00"], (
+        "`--offline` の点か、反映の行が、予測の点として数えられています"
+    )
+    # **写しそのものを読みたいときだけ、明示して取れること**
+    assert len(eta._points(offline=True)) == 2
+    assert len(eta._points(reflect=True)) == 2
+    assert len(eta._points(reflect=True, offline=True)) == 3
