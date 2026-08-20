@@ -217,18 +217,26 @@ def journal_lines() -> int:
 ETA_LOG = Path(__file__).resolve().parent.parent / "data" / "eta.jsonl"
 
 
-def _eta_target() -> tuple[str | None, float | None]:
+def _eta_target() -> tuple[str | None, float | None, str]:
     """**いま出ている予測日**（`data/eta.jsonl` の最後の点）。
 
     読めなければ `(None, None)`。**回を止めないこと** —— この印は記録であって
     門ではありません。予測が撃てていない回でも、出したものは残します。
+
+    **読むのは軌跡のほう**（`traj_date`。2026-08-20 18:xx に切り替えた）。
+    `target_date` は「**腕が1ミリも動かない未来**」の日付で、いまは
+    `None`（＝天井が足りない）が続きます。そこを読むと `--moves` の
+    突き合わせ（`levers.reconcile`）が**永久に空**になり、
+    「宣言と実際」が1行も並ばなくなります。
     """
     try:
         lines = [ln for ln in ETA_LOG.read_text(encoding="utf-8").splitlines() if ln.strip()]
         row = json.loads(lines[-1])
     except (OSError, IndexError, json.JSONDecodeError):
-        return None, None
-    return row.get("target_date"), row.get("days_to_target")
+        return None, None, "無し"
+    if row.get("traj_date"):
+        return row["traj_date"], row.get("traj_days"), "軌跡"
+    return row.get("target_date"), row.get("days_to_target"), "据え置き"
 
 
 def ship(what: str, closes: list[str] | None = None, lever: str | None = None,
@@ -315,9 +323,14 @@ def ship(what: str, closes: list[str] | None = None, lever: str | None = None,
     # 何も言わずに進むより速い（外した回は、その腕の効き目を1つ潰したことになる）。
     if moves is not None:
         rec["moves"] = moves
-    target, days = _eta_target()
+    target, days, basis = _eta_target()
     if target is not None:
         rec["eta_target"] = target
+        # **物差しの名前も残すこと。** 2026-08-20 18:xx に予測日は
+        # 「腕を据え置いた線」から「軌跡」へ替わりました。**替わった前後の
+        # 日付を引き算すると、チャンネルは何も変わっていないのに
+        # 「149日 遠のいた」が出ます**（`levers.reconcile` が飛ばします）。
+        rec["eta_basis"] = basis
     if days is not None:
         rec["eta_days"] = days
     closes = [c.strip() for c in (closes or []) if c.strip()]

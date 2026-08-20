@@ -191,7 +191,7 @@ def test_到達予測は出力の最初と最後に出る():
     assert "到達予測" in text
     assert "引く腕" in text
     src = (ROOT / "scripts" / "eta.py").read_text(encoding="utf-8")
-    assert src.count("for line in headline(pl, prev):") == 2, (
+    assert src.count("for line in headline(pl, prev, tr):") == 2, (
         "`headline` は最初と最後の2回出すこと（片方だけになっています）"
     )
 

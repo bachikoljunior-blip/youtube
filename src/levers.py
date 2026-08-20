@@ -108,16 +108,26 @@ def reconcile(rows: list[dict]) -> list[str]:
         if mv is None:
             continue
         cur = r.get("eta_target")
-        nxt = next((c.get("eta_target") for c in chrono[i + 1:] if c.get("eta_target")), None)
+        nxt_row = next((c for c in chrono[i + 1:] if c.get("eta_target")), None)
+        nxt = nxt_row.get("eta_target") if nxt_row else None
+        # **物差しの違う2点を引き算しないこと**（2026-08-20 18:xx に足した）。
+        #     予測日は「腕を据え置いた線」から「軌跡」へ替わりました。
+        #     替わった前後を引くと、**チャンネルは何も変わっていないのに
+        #     149日ぶん動いた**と出ます。`eta_basis` が違う組は飛ばします
+        #     （**古い行に `eta_basis` はありません** —— 後から書き足さないこと)。
+        same_basis = (nxt_row is not None
+                      and r.get("eta_basis") == nxt_row.get("eta_basis"))
         act = None
-        if cur and nxt:
+        if cur and nxt and same_basis:
             try:
                 act = (date.fromisoformat(str(nxt)) - date.fromisoformat(str(cur))).days
             except ValueError:
                 act = None
         when = str(r.get("at", ""))[5:16].replace("T", " ")
         if act is None:
-            lines.append(f"    {when}  {r.get('lever', '?'):<9} 宣言 {mv:+3d}日   実際 —（次の ship がまだ）")
+            why = ("次の ship がまだ" if nxt is None or not cur
+                   else "**物差しが替わった**（据え置きの線 → 軌跡）")
+            lines.append(f"    {when}  {r.get('lever', '?'):<9} 宣言 {mv:+3d}日   実際 —（{why}）")
         else:
             sum_declared += mv
             sum_actual += act
