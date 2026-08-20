@@ -422,6 +422,15 @@ def pending(include_stranded: bool = False,
     return [d for _, d in ranked]
 
 
+#: 2026-08-21、この待ち行列が食わせていたゲートは外れました（下）。
+OFF_BANNER = (
+    "  [注] **独立評価のゲートは 2026-08-21 に外れています**"
+    "（順位相関 -0.27 / しきい値 +0.40）。\n"
+    "       材料を積むのは続けますが、**点を付けにいく理由はもうありません**。\n"
+    "       回すなら `python scripts/critique_run.py --anyway`。"
+)
+
+
 def main(argv: list[str]) -> int:
     include_stranded = "--include-stranded" in argv
     argv = [a for a in argv if a != "--include-stranded"]
@@ -483,10 +492,9 @@ def main(argv: list[str]) -> int:
         print("    見るなら `python scripts/critique_queue.py --include-stranded`")
     print(f"  焼き直せるのは {n_bakeable}/{len(rows)} 本"
           f"（`slides_plan.json` を残し始めたのは 2026-08-15 23:xx から）")
+    print(OFF_BANNER)
     print("  手順は docs/CRITIQUE.md。材料の中身は:")
     print("    python scripts/critique_queue.py <動画ID>")
-    print("  積むのは:")
-    print("    python scripts/critique_record.py <動画ID> <s1> <s2> <s3>")
     return 0
 
 

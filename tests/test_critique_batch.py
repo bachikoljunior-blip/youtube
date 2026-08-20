@@ -30,6 +30,13 @@
 3. `--count N` が N本ぶんを積むこと。**訊く段は並列・記録は1本ずつ**
    （`critique_record.py` は共有の台帳に書くので、並列にすると行が壊れる）
 4. 1本の材料が欠けても、**残りを落とさないこと**
+
+**2026-08-21: この道具のゲートは外れました**（`tests/test_critique_gate_off.py`）。
+`config/hypotheses.yaml` の「評価スコアは engaged を予測する」が **falsified**
+（順位相関 -0.27・しきい値 +0.40）で閉じたためです。
+**下の検査は `--anyway` を付けて、待ち行列の組み立てそのものを固定し続けます** ——
+外したのは「点を付けにいく理由」であって、**別の的に当て直す道は塞いでいない**ので、
+そのときにこの積み方が壊れていると、また同じ穴を踏みます。
 """
 from __future__ import annotations
 
@@ -112,7 +119,7 @@ def test_countNがN本ぶんを積む(monkeypatch, tmp_path, capsys):
     monkeypatch.setattr(critique_run.subprocess, "run",
                         lambda cmd, **kw: recorded.append(cmd) or type("P", (), {"returncode": 0})())
 
-    rc = critique_run.main(["--count", "2", "--jobs", "2"])
+    rc = critique_run.main(["--count", "2", "--jobs", "2", "--anyway"])
     assert rc == 0
     # 2本 × 3体
     assert len(seen) == 2 * critique_run.CRITICS
@@ -133,7 +140,7 @@ def test_材料の欠けた1本で残りを落とさない(monkeypatch, tmp_path
     monkeypatch.setattr(critique_run.subprocess, "run",
                         lambda cmd, **kw: recorded.append(cmd) or type("P", (), {"returncode": 0})())
 
-    critique_run.main(["--count", "2"])
+    critique_run.main(["--count", "2", "--anyway"])
     assert [c[2] for c in recorded] == ["bbb"], "欠けた1本で残りごと止まった"
 
 
@@ -152,7 +159,7 @@ def test_材料の欠けた本は枠を食わない(monkeypatch, tmp_path):
     monkeypatch.setattr(critique_run.subprocess, "run",
                         lambda cmd, **kw: recorded.append(cmd) or type("P", (), {"returncode": 0})())
 
-    critique_run.main(["--count", "2"])
+    critique_run.main(["--count", "2", "--anyway"])
     assert [c[2] for c in recorded] == ["bbb", "ccc"], "欠けた本が枠を食った"
 
 
@@ -164,7 +171,7 @@ def test_3体そろわなければ記録しない(monkeypatch, tmp_path):
     monkeypatch.setattr(critique_run.subprocess, "run",
                         lambda cmd, **kw: recorded.append(cmd) or type("P", (), {"returncode": 0})())
 
-    assert critique_run.main(["--count", "1"]) == 1
+    assert critique_run.main(["--count", "1", "--anyway"]) == 1
     assert not recorded, "嘘の点を記録した。**検査そのものが死にます**"
 
 
@@ -175,7 +182,7 @@ def test_dryは記録しない(monkeypatch, tmp_path):
     recorded: list[list[str]] = []
     monkeypatch.setattr(critique_run.subprocess, "run",
                         lambda cmd, **kw: recorded.append(cmd) or type("P", (), {"returncode": 0})())
-    assert critique_run.main(["--count", "2", "--dry"]) == 0
+    assert critique_run.main(["--count", "2", "--dry", "--anyway"]) == 0
     assert not recorded
 
 
@@ -195,7 +202,7 @@ def test_nextも材料の欠けた本を繰り上げる(monkeypatch, tmp_path):
     monkeypatch.setattr(critique_run.subprocess, "run",
                         lambda cmd, **kw: recorded.append(cmd) or type("P", (), {"returncode": 0})())
 
-    critique_run.main(["--next"])
+    critique_run.main(["--next", "--anyway"])
     assert [c[2] for c in recorded] == ["bbb"], "--next が先頭で止まった"
 
 
@@ -208,5 +215,5 @@ def test_nextは1本だけ回す(monkeypatch, tmp_path):
     monkeypatch.setattr(critique_run.subprocess, "run",
                         lambda cmd, **kw: recorded.append(cmd) or type("P", (), {"returncode": 0})())
 
-    critique_run.main(["--next"])
+    critique_run.main(["--next", "--anyway"])
     assert [c[2] for c in recorded] == ["aaa"]

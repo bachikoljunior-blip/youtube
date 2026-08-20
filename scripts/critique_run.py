@@ -41,6 +41,11 @@
 （「独立したエージェントの評価スコアは、engaged 比率を予測する」）の仕事で、
 判定は engaged と突き合わせた6本がたまってからです。
 **較正期間なので、点が低くても公開は止めません**（`docs/CRITIQUE.md`）。
+
+## **2026-08-21: 較正は終わり、ゲートは外れました**
+
+判定は **外れ**（順位相関 -0.27・しきい値 +0.40・n=10）。
+**この道具は `--anyway` を付けない限り回りません**（下の `OFF_REASON`）。
 """
 from __future__ import annotations
 
@@ -279,6 +284,34 @@ def _measured_changes(video_id: str) -> str:
             f" ← **こちらは本物です。**")
 
 
+#: **2026-08-21、このゲートは外れました。** `--anyway` を付けない限り回りません。
+#:
+#: `config/hypotheses.yaml`「独立したエージェントの評価スコアは、engaged 比率を
+#: 予測する」の判定が **外れ** で閉じたためです（`closed_on: 2026-08-21`）。
+#: **消さずに残してあるのは、外れたのが「engaged を予測する」であって
+#: 「評価そのものが無意味」ではないから**です（別の的に当て直す道が残ります）。
+OFF_REASON = """**この道具は 2026-08-21 に外れました。**（`--anyway` で回せます）
+
+  `python scripts/critique_record.py --check` の実測:
+    突き合わせ 10本（要る6本） → **順位相関 -0.27**（しきい値 +0.40）
+    しきい値に届かないどころか**符号が逆**。中央値 3.0 の本が engaged 39.3%。
+
+  `config/hypotheses.yaml`「独立したエージェントの評価スコアは、engaged 比率を
+  予測する」を **falsified** で閉じ、`next_if_false` の1つ目
+  「**ゲートを外す**」を実行した結果がこの1行です。
+
+  **残っていた費用は `claude -p` 3体ぶん / 1本**でした。待ち行列は 310本 ＝
+  **930回**。予測しない点のために払うものがありません。
+  **浮いたぶんは腕 `density`（節を書く）へ回すこと** —— `eta.py` はこの回、
+  1周あたり 節0.9本 を要求しています。
+
+  **点も材料も消していません**（`data/critique.jsonl` / `data/critique_queue/`）。
+  **覆る条件**: engaged 以外の的（維持率・登録率）に当て直したとき、または
+  長尺が種を撒かれるようになって長尺でも測れるようになったとき。
+  そのときは `--anyway` で回し、相関を取り直してから判断すること。
+"""
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="独立評価を3体に投げて記録する")
     ap.add_argument("video_id", nargs="?", default="", help="動画ID")
@@ -289,7 +322,13 @@ def main(argv: list[str] | None = None) -> int:
                     help="同時に走らせる本数。1体あたり claude -p が1つ立つので、"
                          f"実際のプロセス数は jobs×{CRITICS}")
     ap.add_argument("--dry", action="store_true", help="投げるが記録しない")
+    ap.add_argument("--anyway", action="store_true",
+                    help="外したゲートを承知で回す（下の OFF_REASON を読んでから）")
     args = ap.parse_args(argv)
+
+    if not args.anyway:
+        print(OFF_REASON)
+        return 2
 
     # **`--count` を足した理由**（2026-08-16。前の回の (a2) 問い3）。
     #

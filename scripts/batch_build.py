@@ -1062,8 +1062,11 @@ def main(argv: list[str] | None = None) -> int:
         print(f"  {mark} {r['topic']:<18} {r['video_id'] or '—':<12} {r['error']}")
     print(f"  予約できたのは {len(ok)} / {len(topics)} 本")
     print(f"  記録: {LOG.relative_to(ROOT)}")
-    if ok:
-        print("  **独立評価が待ち行列に積まれています**: python scripts/critique_queue.py")
+    # **2026-08-21、ここは「独立評価が待ち行列に積まれています」でした。**
+    # その評価のゲートは同日 falsified で外れています
+    # （`config/hypotheses.yaml`・順位相関 -0.27／しきい値 +0.40）。
+    # **積むこと自体は続けます**（材料は投稿直後にしか残らないので）が、
+    # **次の手として勧めるのはやめました。** 勧める先は腕 `density` です。
     return 0 if ok or args.skip_upload else 1
 
 

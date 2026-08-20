@@ -144,6 +144,32 @@ def check_tables() -> None:
             "日数が減らないのに総額が減る行がありません。"
             "上限額の段差が日数の差に埋もれたなら、節の文言を見直すこと")
 
+    # 9. **`reason_equivalent_tenure()` の主題そのもの。** 自己都合の最長（20年以上）に、
+    #    倒産・解雇なら**10年以上早い帯**で並ぶ年齢があること。ここが崩れると
+    #    「離職理由は在籍19年ぶん」という節の言い分が消えます。
+    #    **節の関数は呼びません**（`check_tables()` を呼び返すので）。表から直に見ます。
+    longest = DAYS_GENERAL["20年以上"]
+    if longest is None:
+        raise TableError("自己都合の20年以上が欠けています")
+    if not any(
+        TENURE_MIN_YEARS["20年以上"] - TENURE_MIN_YEARS[band] >= 10
+        for row in DAYS_INVOLUNTARY.values()
+        for band in TENURE_BANDS
+        if row[band] is not None and row[band] >= longest
+    ):
+        raise TableError(
+            "自己都合の最長に、倒産・解雇の10年以上早い帯で並ぶ組み合わせがありません。"
+            "reason_equivalent_tenure() は『離職理由が在籍何年ぶんか』が主題なので、"
+            "表が変わったなら節の文言ごと見直すこと")
+
+
+#: 各帯の**下端**（年）。`flat_stretch()` が文字列を割って作っていたのと同じ値を、
+#: `reason_equivalent_tenure()` でも使うので1か所に出しました。
+#: **「1年未満」を 0 にしています** —— 自己都合はここに受給資格が無いので、
+#: 比べる相手として出てくるのは倒産・解雇の側だけです。
+TENURE_MIN_YEARS = {"1年未満": 0, "1年以上5年未満": 1, "5年以上10年未満": 5,
+                    "10年以上20年未満": 10, "20年以上": 20}
+
 
 def yen_range(days: int, age: str) -> tuple[int, int]:
     """日数を、下限額と上限額で挟んだ金額の幅にする。"""
@@ -421,6 +447,73 @@ def same_days_spread() -> list[dict]:
     return out
 
 
+
+def reason_equivalent_tenure(age: str) -> list[dict]:
+    """**離職理由の差は、在籍何年ぶんの価値か。**
+
+    既存の `reason_boundary()` は「**同じ勤続年数**で、自己都合と倒産・解雇が
+    何日ちがうか」を出します。**同じ行どうしを横に比べているだけ**です。
+    ところが人が知りたいのはたいてい逆向きで、
+    **「その差は、何年よけいに勤めたのと同じか」**のほうです。
+
+    だからここは**縦に**探します。自己都合のある帯の日数を取り、
+    **倒産・解雇の表を短いほうから見て、最初にその日数以上になる帯**を当てます。
+
+        45歳以上60歳未満・自己都合 20年以上 = 150日
+        倒産・解雇なら 1年以上5年未満 = 180日 で、もう追い越している
+        → **19年ぶんの在籍が、離職理由ひとつで消えます**（下端どうしの差）
+
+    **この交換レートの表は、どこにも出ていません。** 所定給付日数の表は
+    2つ並べて印刷されるだけで、**片方の何年目が、もう片方の何年目に当たるか**を
+    突き合わせた行がありません。
+
+    出る行の読み方:
+
+        years_saved   下端どうしの差（年）。**「何年ぶん得か」の下限**です ——
+                      帯の中のどこに居るかで実際の差は前後します
+        excess_days   追い越した側の余り（日）。0 なら**ちょうど並んだ**
+        excess_yen_*  その余りの金額（下限額と上限額で挟む）
+
+    `match_band` が `None` の行は、**倒産・解雇の表をいくら伸ばしても届かない**
+    ということです（この表では出ませんが、改定で起こりえます）。
+    """
+    check_tables()
+    involuntary = DAYS_INVOLUNTARY[age]
+    reachable = [(b, involuntary[b]) for b in TENURE_BANDS if involuntary[b] is not None]
+
+    out: list[dict] = []
+    for band in TENURE_BANDS:
+        self_days = DAYS_GENERAL[band]
+        if self_days is None:      # 自己都合に受給資格が無い帯は、比べる相手にならない
+            continue
+        match = next((b for b, days in reachable if days >= self_days), None)
+        if match is None:
+            out.append({
+                "age": age, "self_band": band, "self_days": self_days,
+                "match_band": None, "match_days": None,
+                "self_min_years": TENURE_MIN_YEARS[band], "match_min_years": None,
+                "years_saved": None, "excess_days": None,
+                "excess_yen_low": None, "excess_yen_high": None,
+            })
+            continue
+        excess = involuntary[match] - self_days
+        lo, hi = yen_range(excess, age)
+        out.append({
+            "age": age,
+            "self_band": band,
+            "self_days": self_days,
+            "match_band": match,
+            "match_days": involuntary[match],
+            "self_min_years": TENURE_MIN_YEARS[band],
+            "match_min_years": TENURE_MIN_YEARS[match],
+            "years_saved": TENURE_MIN_YEARS[band] - TENURE_MIN_YEARS[match],
+            "excess_days": excess,
+            "excess_yen_low": lo,
+            "excess_yen_high": hi,
+        })
+    return out
+
+
 if __name__ == "__main__":
     # **ここが無かった（2026-08-05 に発覚）。** kojo・zangyo と同じ穴。
     # 標準出力が空のまま台本を書かせると、数字を発明させることになる。
@@ -485,6 +578,23 @@ if __name__ == "__main__":
             print(f"{edge:>14s} {r['days']:8d}日 {span:>12s} "
                   f"{r['days_gained']:+8d}日 {r['cap_yen_gained']:11,d}円 "
                   f"{r['floor_yen_gained']:11,d}円")
+
+    print("\n=== 離職理由の差は、在籍何年ぶんか（自己都合の帯に、倒産・解雇の何年目が並ぶか）===")
+    print("  上の『離職理由の境界』は**同じ勤続年数**を横に比べたものです。ここは**縦に**探します。")
+    print("  倒産・解雇の表を短いほうから見て、**最初にその日数以上になる帯**を当てています。")
+    print(f"{'年齢':>16s} {'自己都合':>14s} {'日数':>5s} {'並ぶ相手':>16s} "
+          f"{'日数':>5s} {'在籍の差':>8s} {'余り':>6s} {'余りの金額':>22s}")
+    for age in AGE_ORDER:
+        for r in reason_equivalent_tenure(age):
+            if r["match_band"] is None:
+                print(f"{r['age']:>16s} {r['self_band']:>14s} {r['self_days']:3d}日 "
+                      f"{'（届く帯がありません）':>16s}")
+                continue
+            print(f"{r['age']:>16s} {r['self_band']:>14s} {r['self_days']:3d}日 "
+                  f"{r['match_band']:>16s} {r['match_days']:3d}日 "
+                  f"{r['years_saved']:+6d}年 {r['excess_days']:4d}日 "
+                  f"{r['excess_yen_low']:8,d}円〜{r['excess_yen_high']:8,d}円"
+                  + ("  ← ちょうど並ぶ" if r["excess_days"] == 0 else ""))
 
     print("\n=== 所定給付日数が同じでも、総額はここまで開く ===")
     print("  日数の表と上限額の表は別々にしか出ていません。**同じ日数を横に並べます。**")
