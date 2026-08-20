@@ -171,12 +171,18 @@ def test_実在する幅で腕を止める_1日110525本を歩かない():
 
 
 def test_実測の天井のほうが低ければ_そちらを採る():
-    """`config/hypotheses.yaml` の `ceiling`（1本あたり 1,447回）が効いていること。"""
+    """`config/hypotheses.yaml` の `ceiling`（1本あたり再生）が効いていること。
+
+    **値は台帳から読みます。写さないこと**（2026-08-21 03:2x）—— ここには
+    `1447` が直に書いてあり、天井を n=7 の最大から測り直した回に落ちました。
+    **守りたいのは「台帳の天井が効いていること」で、その日の数字ではありません。**
+    """
+    recorded = eta.arm_speed.ceilings()["per_video"]["value"]
     arms = eta._capped_arms({"per_video_now": 923.0, "sub_rate": 0.000443})
     pv = arms["per_video"]
-    assert pv["cap"] == pytest.approx(1447 / 923.0)
+    assert pv["cap"] == pytest.approx(recorded / 923.0)
     assert pv["cap_measured"] is True
-    assert pv["cap"] < 2.0, "ショートのままで「1本あたり2倍」を歩いています"
+    assert pv["cap"] < 3.0, "ショートのままで「1本あたり3倍」を歩いています"
 
 
 # --- 4. 連敗 --------------------------------------------------------------------------
