@@ -426,29 +426,37 @@ def traffic(v: dict) -> dict:
 
 
 def reach() -> dict:
-    """Reporting API `channel_reach_basic_a1`（`data/reach.jsonl`）。
+    """サムネを見せた面（Reporting API `channel_reach_basic_a1`）。
 
-    **サムネのインプレッションは「ショート以外の面」の広さ**です。ショートの
-    フィードはこの数に入りません（実測: 再生 1,257/日 に対しインプレッション 145/日）。
-    **だから CTR の腕が効く範囲は、ショート以外の面のぶんだけ**です。
+    **`src/reach_split.py` に寄せています。** 2026-08-20 に別のセッションが
+    `scripts/reach.py` の欠陥を2つ見つけました —— **こちらの回は同じ日に
+    同じ数を自前で数えて、2つとも踏んでいます**:
+
+      1. **報告を新しい3本しか落としていなかった**（ジョブには35本並んでいる）。
+         Reporting API は作った時点から30日ぶん遡って置くので、
+         **在るのに読んでいない31日**があった（165行 → 540行）
+      2. **CTR の列を百分率として読んでいた。** 実物は割合。
+         直すとショートの CTR は 1.34%（オーナーが Studio で読んだ 1.3% と一致）
+
+    **自前で数え直さないこと。** ここが二重に実装されていると、
+    片方だけ直った状態で両方から数が出ます。
+
+    この面が効くのは**ショートのフィード以外**だけです（フィードはこの数に
+    入りません）。**長尺が生きられる面の広さは、まるごとこの数**です。
     """
-    rows = _jsonl("reach.jsonl")
+    try:
+        from src import reach_split
+    except Exception:                                   # noqa: BLE001
+        return {"ok": False}
+    rows = reach_split.load_rows()
     if not rows:
         return {"ok": False}
-    days = sorted({r["date"] for r in rows})
-    imp = sum(int(r.get("video_thumbnail_impressions", 0) or 0) for r in rows)
-    ctr_w = sum(int(r.get("video_thumbnail_impressions", 0) or 0)
-                * float(r.get("video_thumbnail_impressions_ctr", 0) or 0) for r in rows)
-    per_video_imp = collections.Counter()
-    for r in rows:
-        per_video_imp[r["video_id"]] += int(r.get("video_thumbnail_impressions", 0) or 0)
-    return {
-        "ok": True, "days": days, "n_days": len(days), "rows": len(rows),
-        "impressions": imp, "imp_per_day": imp / len(days),
-        "ctr": ctr_w / imp if imp else None,
-        "clicks_per_day": (ctr_w / len(days)) if imp else 0.0,
-        "top": per_video_imp.most_common(5),
-    }
+    longs = reach_split.long_ids()
+    sm = reach_split.summary(rows, longs)
+    return {"ok": True, "summary": sm, "n_rows": len(rows),
+            "days": sm.get("days"), "dates": sm.get("dates"),
+            "long": sm.get("長尺"), "short": sm.get("ショート"),
+            "text": reach_split.render(rows, longs)}
 
 
 def retention() -> dict:
@@ -746,15 +754,25 @@ def render(m: dict, today: dt.date) -> list[str]:
       f" それ以外は全部合わせて {tf['non_shorts']:,}回"
       + (f" ＝ **1日 {st['non_shorts_day']:.0f}回**" if st.get("non_shorts_day") else ""))
     P("    **長尺が生きられるのは、この 1日数十回の面だけです。**")
+    P("    （**この数は長尺の面の上限**です —— いま流れているのはほとんどショートで、")
+    P("      長尺がその面をまるごと取れたとしても、という数え方。実測は下）")
     if rc.get("ok"):
+        lg, sh = rc["long"], rc["short"]
         P("")
-        P(f"  [実測] サムネのインプレッション（Reporting API `channel_reach_basic_a1`・"
-          f"{rc['days'][0]}〜{rc['days'][-1]}・{rc['n_days']}日・{rc['rows']}行）")
-        P(f"         **1日 {rc['imp_per_day']:.0f} インプレッション ／ CTR {rc['ctr']*100:.2f}%"
-          f" → クリック 1日 {rc['clicks_per_day']:.1f}回**")
-        P("         → **サムネと題の腕が効くのは、この1日1回未満のクリックのぶんだけ。**")
-        P("           ショートのフィードはこの数に入りません。**サムネを作り直しても軌跡は動きません。**")
-        P("           （8/14 にジョブを作ってから、この数を取りに来たのは 2026-08-20 が初めてです）")
+        P(f"  [実測] サムネを見せた面（Reporting API `channel_reach_basic_a1`・"
+          f"{rc['dates'][0]}〜{rc['dates'][-1]}・{rc['days']}日・{rc['n_rows']}行）")
+        P(f"         ショート {sh['videos']:>3}本  1日 {sh['per_day']:>5.1f}回"
+          f"  CTR {sh['ctr']:.2f}%  → クリック 1日 {sh['impressions']*sh['ctr']/100/rc['days']:.2f}回")
+        P(f"         長尺   {lg['videos']:>3}本  1日 {lg['per_day']:>5.1f}回"
+          f"  CTR {lg['ctr']:.2f}%  → クリック 1日 {lg['impressions']*lg['ctr']/100/rc['days']:.2f}回")
+        P("         **ショートのフィードはこの数に入りません。** だからこの面は"
+          "**ほぼ長尺のためだけの面**です。")
+        P(f"         → **長尺は 6本で 1日 {lg['per_day']:.0f}インプレッション。**"
+          "  **CTR を100%にしても、この面から取れるのは")
+        P(f"           月 {lg['per_day']*30:.0f}回**です。**足りないのはインプレッションで、"
+          "サムネでも題でもありません。**")
+        P("           （この数は `src/reach_split.py` に寄せています。**自前で数え直さないこと** ——")
+        P("             この回は自前で数えて、`scripts/reach.py` の欠陥2つを両方踏みました）")
     if rt.get("ok"):
         P("")
         P(f"  [実測] 維持率カーブ n={rt['n']}本 —— **いちばん大きい落差の位置**は")
@@ -850,11 +868,24 @@ def render(m: dict, today: dt.date) -> list[str]:
     P("")
     P(f"      [門2a] 長尺で {LONG_HOURS_GATE:,}時間 ＝ {LONG_HOURS_GATE*60:,}分")
     P(f"             [代用] 尺7分・維持40%（1再生 2.8分）→ **長尺 {st['long_views_need']:,.0f}回**")
-    if st.get("long_days_at_now"):
-        P(f"             [実測] ショート以外の面はいま **1日 {st['non_shorts_day']:.0f}回**")
-        P("                    **これは上限です** —— いま流れているのはほとんどショートで、")
-        P("                    長尺がその面をまるごと取れたとしても、という数え方です")
-        P(f"             → その面のままなら **{st['long_days_at_now']:,.0f}日以上**。")
+    if rc.get("ok"):
+        lg = rc["long"]
+        # **門2a は「直近12か月で4,000時間」なので、比べる相手は年**です。
+        # 月の上限と年の必要数を並べると、12倍ぶん厳しく見えます（2026-08-20 に踏んだ）。
+        ceil_year = lg["per_day"] * 365                # CTR 100% と置いた年の上限
+        P(f"             [実測] 長尺の面は **1日 {lg['per_day']:.0f}インプレッション**"
+          f"（{lg['videos']}本・{rc['days']}日）")
+        P(f"             → **CTR を100%にしても 年 {ceil_year:,.0f}回**が上限"
+          f"（門2a は直近12か月で数えるので、**年で比べます**）。")
+        P(f"               要る {st['long_views_need']:,.0f}回 に対し "
+          f"**{st['long_views_need']/ceil_year:.1f}倍 足りません**")
+        P(f"             [実測] 実際の CTR は **{lg['ctr']:.2f}%** ＝ "
+          f"{rc['days']}日で長尺のクリックは **{lg['impressions']*lg['ctr']/100:.0f}回**")
+        short_now = st["long_views_need"] / (ceil_year * lg["ctr"] / 100) if lg["ctr"] else None
+        if short_now:
+            P(f"               実測の CTR のままなら **{short_now:,.0f}倍**。")
+        P("             → **足りないのはインプレッションです。** サムネと題（CTR）を")
+        P("               100%まで直しても、**まだ 6倍**足りません。**面そのものが小さい。**")
     P("             **この扉は、面が広がらないかぎり開きません。面が広がるかは [未測定]。**")
     P("             **だからこの軌跡は門2b で立てています。** 門2a を柱にすると、")
     P("             **柱が丸ごと未測定の上に乗ります。**")
