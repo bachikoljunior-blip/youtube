@@ -695,6 +695,29 @@ def solve_revenue_day(views_day_now: float, growth: float | None,
     月20万は**月の収入**なので、その水準の日が1日来ても届きません。
     伸びている最中は、日次が達したあとに合計が追いつきます —— その差を無視すると、
     **到達日が数日から数週間ぶん早く出ます。**
+
+    ## **時間の頭打ちは入れません。頭打ちは `ceiling_views_day` のほうです**
+
+    2026-08-20 20:0x に「伸び率を測った窓（10.5日）の先まで延ばすな」という
+    指摘を受けて、**実際に入れて測りました。結果は入れないほうが正しい**です。
+
+    伸び率は「天井へ**どれだけ速く**近づくか」しか決めていません。**水準を
+    決めているのは天井**（密度 × 1本あたり再生）で、`v = min(v * (1 + growth), cap)`
+    が毎日それを当てています。だから「1日5.38%を100日 ＝ 180倍」は**起きません**
+    （実測では 56日目に天井に着いて、そこで止まります）。
+    伸び率に時間の頭打ちを足すと、**天井と二重に縛る**ことになり、
+    `plan()` は入力を問わず `NEVER` を返しました（検査10件が落ちた）——
+    それは「**予測を届きませんで終わらせない**」（オーナー 2026-08-20 06:2x）に反します。
+
+    **13倍の開きを埋めていたのは、伸び率ではなく天井のほうでした。**
+    天井の密度が `min(25, 3.3時間の実測36.5) = 25` になっていて、
+    直すと（`src.supply.MIN_SUSTAINED_HOURS`）天井は 1日 3,230回まで下がり、
+    **同じ伸び率のままで到達日は「届かない」に変わります。**
+
+    **覆る条件**: 天井が「速さ」まで決めるようになったら（例: 密度を時間の
+    関数にしたら）、ここにも時間の制限が要ります。いまは天井が水準だけを
+    決めているので、要りません。**`tests/test_eta_growth_ceiling.py` が
+    「伸び率をいくら上げても天井×30日を超えない」を固定しています。**
     """
     if need_month <= 0:
         return 0.0
@@ -1476,6 +1499,16 @@ def trajectory_all(m: dict, a0: dict, *, supply: dict | None = None,
     }
 
 
+def supply_min_sustained_hours() -> float:
+    """`src.supply.MIN_SUSTAINED_HOURS`。**読めない回でも印字を止めない。**"""
+    try:
+        from src import supply as supply_mod
+
+        return float(supply_mod.MIN_SUSTAINED_HOURS)
+    except Exception:                                          # noqa: BLE001
+        return 24.0
+
+
 def supply_state() -> dict | None:
     """**予測に渡す供給の実測**（読めなければ `None`。回は止めない）。"""
     try:
@@ -1508,20 +1541,40 @@ def solve_gate1(a: dict, *, density: float, supply: dict | None) -> dict:
     固定値ではなく、**この回が節を書けば上がる数**なので、`density` の腕は
     ここに効きます —— 効いたぶんだけ、次の回の予測が前に動きます。
 
+    **ただし、読むのは `sustained_rate_per_day`（1日続けられる速さ）のほうです**
+    （2026-08-20 20:0x）。`rate_per_day` は窓が3時間でも数を返すので、
+    **3.3時間で +5本 ＝ 1日 36.5本**というバーストが `min(25, 36.5) = 25` を通り、
+    **同じ日に外させた 25 が別の入口から戻っていました。**
+    窓が 24時間 をまたいでいない回は、`src.supply.state()` が
+    **出口の実測**（実際に公開になった本数／日）へ落とします。
+
     供給が読めないとき（`supply is None`）は前と同じ直線に落ちますが、
     **`measured: False` を返すので、画面は「未検証の前提」と断ります。**
     """
     need = a.get("videos_needed_gate1", float("inf"))
-    if supply is None or supply.get("rate_per_day") is None:
+    # **使ってよいのは「1日続けられる速さ」だけ**（2026-08-20 20:0x に踏んだ）。
+    #     `rate_per_day` をそのまま使うと、**3.3時間で +5本 ＝ 1日36.5本**という
+    #     バーストが入り、`min(25, 36.5)` を通って **25 が別の入口から戻ります**
+    #     —— 同じ日にオーナーが「物理的に不可なら予測に使うな」と外させた数です。
+    #     `src.supply.state()` が `sustained_rate_per_day` を出すので、そちらを読む。
+    #     （手で作った塊にその欄が無い回は、前と同じ `rate_per_day` に落ちます）
+    if supply is None:
+        rate_raw = None
+    elif "sustained_rate_per_day" in supply:
+        rate_raw = supply["sustained_rate_per_day"]
+    else:
+        rate_raw = supply.get("rate_per_day")
+
+    if rate_raw is None:
         return {"days": a["days_subs_at"].get(int(density), NEVER),
                 "measured": False, "need_videos": need,
                 "density_sustained": density, "dry_days": None,
-                "rate_per_day": None, "stock": None}
+                "rate_per_day": None, "stock": None, "density_basis": None}
 
     from src import supply as supply_mod
 
-    rate = float(supply["rate_per_day"])
-    stock = int(supply.get("stock") or 0)
+    rate = float(rate_raw)
+    stock = int((supply or {}).get("stock") or 0)
     days = supply_mod.days_for(need, stock=stock, rate_per_day=rate,
                                plan_density=density, never=NEVER)
     return {
@@ -1531,9 +1584,17 @@ def solve_gate1(a: dict, *, density: float, supply: dict | None) -> dict:
         # 収益の窓（30日）は在庫を食い終わった先にあるので、**そこでの密度は
         # 「作る速さ」で頭打ち**です。段4 はこちらで立てること。
         "density_sustained": min(float(density), rate),
-        "dry_days": supply_mod.material_dry_days(novel=supply.get("novel"),
-                                                 rate_per_day=rate),
+        "density_basis": (supply or {}).get("sustained_basis"),
+        # **材料が尽きる日だけは、速いほうの実測で見ます。**
+        #     掃引の候補を食うのは「節を書く手」＝ `make_rate` のほうで、
+        #     持続する速さ（＝出口の実測）はその下限でしかありません。
+        #     下限で割ると尽きる日が**後ろにずれ、警告が甘くなります**
+        #     （実測: 3.5本/日 なら 22日、36.5本/日 なら 2日）。
+        "dry_days": supply_mod.material_dry_days(
+            novel=supply.get("novel"),
+            rate_per_day=max(rate, float((supply or {}).get("rate_per_day") or 0.0))),
         "rate_per_day": rate,
+        "rate_burst": (supply or {}).get("rate_per_day"),
         "stock": stock,
         "thin": bool(supply.get("rate", {}).get("thin")),
     }
@@ -1964,8 +2025,19 @@ def _report_plan(m: dict, a: dict, pl: dict | None = None) -> list[str]:
     P("=" * 66)
     g1 = pl.get("gate1") or {}
     if g1.get("measured"):
-        P(f"  **密度は実測から解いています: 作る速さ 1日 {g1['rate_per_day']:.1f}本"
+        P(f"  **密度は実測から解いています: 1日続けられる速さ {g1['rate_per_day']:.1f}本"
           f"（在庫 {g1['stock']}本）／詰め方の上限 {d:.0f}本/日**")
+        if g1.get("density_basis"):
+            P(f"     出どころ: **{g1['density_basis']}**")
+        # **バーストを持続と読み替えていないか、画面に出す**（2026-08-20 20:0x）。
+        #     3.3時間の窓の 36.5本/日 が `min(25, 36.5) = 25` を通って
+        #     `density_month` に入り、**外させたはずの 25 が戻っていました。**
+        burst = g1.get("rate_burst")
+        if burst is not None and g1["rate_per_day"] < burst - 1e-9:
+            P(f"     [!] **直近の作る速さ {burst:.1f}本/日 は使っていません**"
+              f"（窓 {((pl.get('supply') or {}).get('rate') or {}).get('hours', 0.0):.1f}時間"
+              f" < {supply_min_sustained_hours():.0f}時間 ＝ **1日続く速さとは言えない**）。"
+              "24時間をまたぐ点が貯まれば、自動でそちらに切り替わります")
         P(f"  → **段4（月20万）が乗るのは、持続する {pl['density_month']:.1f}本/日 のほう**"
           "（収益の30日は在庫を食い終わった先にあります）")
         if g1.get("dry_days") is not None:
@@ -2021,6 +2093,15 @@ def _report_plan(m: dict, a: dict, pl: dict | None = None) -> list[str]:
         P(f"     伸び率: {gr['basis']}")
     if gr.get("caveat"):
         P(f"       断り: {gr['caveat']}")
+    # **測った窓と、延ばしている先の比を出す**（2026-08-20 20:0x）。
+    #     水準を決めているのは天井のほうなので、ここに時間の頭打ちは入れません
+    #     （`solve_revenue_day` の註）。**ただし、何倍先まで延ばしているかは見せる。**
+    span = gr.get("span_days") or 0.0
+    if span > 0 and tg.get("d_revenue", NEVER) < NEVER:
+        P(f"       **{span:.1f}日ぶんの窓で測った伸びを、{tg['d_revenue']:,.0f}日先"
+          f"（{tg['d_revenue'] / span:,.1f}倍）まで延ばしています。**"
+          f" 水準の頭打ちは天井（1日 {pl['ceiling_day']:,.0f}回 ＝"
+          f" 密度 {pl['density_month']:.1f}本 × {a['per_video_now']:,.0f}回）のほうです")
     gn, gnow = pl.get("growth_needed_by_gate"), (gr.get("g") or 0.0)
     if gn is not None:
         room = (gnow / gn) if gn > 0 else float("inf")

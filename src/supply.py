@@ -470,6 +470,25 @@ def created_series(ps: list[dict] | None = None) -> tuple[list[tuple[datetime, i
 #: この時間より短い窓では、速さを名乗らない（1本の増減で桁が変わるため）
 MIN_RATE_HOURS = 1.0
 
+#: **この時間より短い窓の速さを「持続する速さ」と呼ばないこと。**
+#:
+#: 2026-08-20 20:0x に実測で踏みました。`data/supply.jsonl` の点は
+#: **3.3時間で +5本**しかなく、そこから割ると **1日 36.5本**が出ます。
+#: この数は `min(25, 36.5) = 25` を通して `density_month` に入り、
+#: **オーナーが同じ日に「物理的に不可なら予測に使うな」と言って外させた 25 が、
+#: 別の入口から戻っていました**（`data/eta.jsonl` 18:1x の点 0.0 → 最新 25.0。
+#: 到達予測が 306日 → 100日 に縮んだ大半がこれです）。
+#:
+#: 36.5本/日 は「節をまとめて書いた3時間」の**瞬間の速さ**であって、
+#: 1か月続く速さではありません。**在庫は26本**なので、25本/日 なら1日で尽きます。
+#: 段4（月20万）が数えるのは**収益化の後の30日ぶん**——在庫を食い終わった
+#: ずっと先なので、そこに置いてよいのは「1日続けられる速さ」だけです。
+#:
+#: **覆る条件**: `data/supply.jsonl` に 24時間 をまたぐ点が貯まれば、
+#: `make_rate` がそのまま `sustained` を名乗ります（下の `state`）。
+#: **測るほど、この迂回は自動で外れます。**
+MIN_SUSTAINED_HOURS = 24.0
+
 
 def make_rate(ps: list[dict] | None = None,
               min_hours: float = MIN_RATE_HOURS) -> dict:
@@ -482,20 +501,68 @@ def make_rate(ps: list[dict] | None = None,
       （0 は「増えていない」という別の意味です）
     - `thin` は「窓が 6時間 未満」＝ 1本の増減で桁が動く帯。
       **数は返しますが、断りを付けて印字すること**
+    - `sustained` は「窓が 24時間 以上」＝ **1日続く速さとして使ってよい**か。
+      `False` の数を `density_month` に入れないこと（`MIN_SUSTAINED_HOURS`）
     - `basis` は出どころ（`created_series`）。**物差しが切り替わった回は、
       その差を「速くなった」と読まないこと**
     """
     s, basis = created_series(ps)
     if len(s) < 2:
         return {"per_day": None, "hours": 0.0, "delta": 0, "n": len(s),
-                "thin": True, "basis": basis}
+                "thin": True, "sustained": False, "basis": basis}
     (t0, v0), (t1, v1) = s[0], s[-1]
     hours = (t1 - t0).total_seconds() / 3600.0
     if hours < min_hours:
         return {"per_day": None, "hours": hours, "delta": v1 - v0,
-                "n": len(s), "thin": True, "basis": basis}
+                "n": len(s), "thin": True, "sustained": False, "basis": basis}
     return {"per_day": (v1 - v0) / (hours / 24.0), "hours": hours,
-            "delta": v1 - v0, "n": len(s), "thin": hours < 6.0, "basis": basis}
+            "delta": v1 - v0, "n": len(s), "thin": hours < 6.0,
+            "sustained": hours >= MIN_SUSTAINED_HOURS, "basis": basis}
+
+
+def published_rate(rows: list[dict] | None = None,
+                   today: date | None = None) -> dict:
+    """**実際に公開になった本数／日**（`data/uploaded.jsonl` の `at`）。
+
+    返り: `{"per_day": float|None, "days": int, "n": int, "first": date|None,
+            "last": date|None}`
+
+    `make_rate`（テーマが増える速さ）と何がちがうか —— こちらは
+    **出口の実測**です。テーマを何本書いても、公開になった本数がそれを
+    下回っていれば、収益の窓（30日）で数えてよいのは下回ったほうです。
+
+    **数えるのは、終わった日だけ**（今日は途中なので入れません）。
+    公開が1本も無かった日も分母に入れます —— 落とすと「出した日だけの速さ」
+    になり、**止まっていた日を無かったことにします。**
+
+    2026-08-20 の実測: 08/16 4本・08/17 1本・08/18 1本・08/19 8本
+    → **3.5本/日**。同じ日の `make_rate` は 36.5本/日（窓 3.3時間）でした。
+    """
+    if rows is None:
+        rows = _ledger_rows()
+    today = today_jst() if today is None else today
+    days: dict[date, int] = {}
+    for r in rows:
+        v = r.get("at")
+        if not v or str(v) == "None":
+            continue
+        try:
+            t = datetime.fromisoformat(str(v).replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        if t.tzinfo is None:
+            t = t.replace(tzinfo=JST)
+        d = t.astimezone(JST).date()
+        if d >= today:          # 今日は途中。**未来の予約も入れない**
+            continue
+        days[d] = days.get(d, 0) + 1
+    if not days:
+        return {"per_day": None, "days": 0, "n": 0, "first": None, "last": None}
+    first, last = min(days), max(days)
+    span = (last - first).days + 1
+    n = sum(days.values())
+    return {"per_day": n / span, "days": span, "n": n,
+            "first": first, "last": last}
 
 
 def published_by(t: float, *, stock: int, rate_per_day: float,
@@ -549,17 +616,35 @@ def state(*, stock_n: int | None = None, ps: list[dict] | None = None) -> dict:
     """**予測に渡す1つの塊**（API 0単位。読めなくても例外を出さない）。"""
     ps = points() if ps is None else ps
     r = make_rate(ps)
+    pr = published_rate()
     sw = sweep_novel()
     try:
         s = stock() if stock_n is None else stock_n
     except Exception:                                          # noqa: BLE001
         last = ps[-1] if ps else {}
         s = int(last.get("stock") or 0)
+
+    # --- **1日続けられる速さ**（`density_month` に入ってよい唯一の数）---
+    #     `make_rate` は窓が 24時間 をまたいで初めてここを名乗れます。
+    #     またいでいない回は、**出口の実測**（実際に公開になった本数／日）に
+    #     落とします —— そちらは何日ぶんもの窓で測れているので、
+    #     「3時間のバースト」を1か月の速さとして印字せずに済みます。
+    if r["per_day"] is not None and r.get("sustained"):
+        sustained, basis = r["per_day"], f"作る速さ（{r['hours']:.1f}時間の実測）"
+    elif pr["per_day"] is not None:
+        sustained, basis = pr["per_day"], f"実際に公開になった本数（{pr['days']}日の実測）"
+    else:
+        sustained, basis = None, None
+
     return {
         "stock": s,
         "novel": sw.get("novel"),
         "rate_per_day": r["per_day"],
         "rate": r,
+        "published": pr,
+        # **在庫を食い終わった先の密度は、こちらしか使わないこと**
+        "sustained_rate_per_day": sustained,
+        "sustained_basis": basis,
         "measured": r["per_day"] is not None,
         "sweep_age_hours": sw.get("age_hours"),
     }

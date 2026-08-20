@@ -6,7 +6,7 @@
 """
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime, timedelta
 
 import pytest
 
@@ -99,6 +99,66 @@ def test_歩留りは測った1点で_1_ではない():
     """
     assert supply.SWEEP_YIELD < 1.0, "歩留りが測る前（1.0）に戻っている"
     assert 0 < supply.SWEEP_YIELD <= 0.5
+
+
+# ---------------------------------------------- 1日続けられる速さ（2026-08-20 20:0x）
+
+def test_窓が24時間未満の速さは持続を名乗らない():
+    """**実測で踏んだ欠陥です。**
+
+    `data/supply.jsonl` は **3.3時間で +5本**しかなく、割ると 1日 36.5本。
+    それが `min(25, 36.5) = 25` を通って `density_month` に入り、
+    **同じ日にオーナーが外させた 25 が別の入口から戻っていました。**
+    """
+    t0 = datetime(2026, 8, 20, 16, 11, tzinfo=supply.JST)
+    ps = [{"at": (t0 + timedelta(hours=h)).isoformat(timespec="seconds"),
+           "topics_total": 437 + n}
+          for h, n in ((0.0, 0), (1.5, 0), (2.25, 5), (3.28, 5))]
+    r = supply.make_rate(ps)
+    assert r["per_day"] == pytest.approx(36.5, rel=0.02)   # 数そのものは返す
+    assert r["sustained"] is False                         # **持続とは名乗らない**
+
+
+def test_24時間をまたげば持続を名乗る():
+    """**測るほど、この迂回は自動で外れます。**"""
+    t0 = datetime(2026, 8, 20, 6, 0, tzinfo=supply.JST)
+    ps = [{"at": (t0 + timedelta(hours=h)).isoformat(timespec="seconds"),
+           "topics_total": 400 + h} for h in (0, 12, 24)]
+    r = supply.make_rate(ps)
+    assert r["sustained"] is True
+    assert r["per_day"] == pytest.approx(24.0)
+
+
+def test_出口の実測は終わった日だけを数える():
+    """今日は途中・**未来の予約は公開実績ではありません**。0本の日は分母に残す。"""
+    rows = [{"at": "2026-08-16T10:00:00Z"}] * 4 \
+        + [{"at": "2026-08-17T10:00:00Z"}] \
+        + [{"at": "2026-08-18T10:00:00Z"}] \
+        + [{"at": "2026-08-19T10:00:00Z"}] * 8 \
+        + [{"at": "2026-08-20T10:00:00Z"}] * 25 \
+        + [{"at": "2026-08-25T10:00:00Z"}] * 99 \
+        + [{"at": None}, {"topic": "x"}]
+    pr = supply.published_rate(rows, today=date(2026, 8, 20))
+    assert pr["n"] == 14 and pr["days"] == 4
+    assert pr["per_day"] == pytest.approx(3.5)
+
+
+def test_公開が1本も無ければ速さを名乗らない():
+    assert supply.published_rate([{"at": None}], today=date(2026, 8, 20))["per_day"] is None
+
+
+def test_持続する速さはバーストではなく出口の実測に落ちる():
+    """**`state()` の配線。** ここが外れると 25 がまた戻ります。"""
+    t0 = datetime(2026, 8, 20, 16, 11, tzinfo=supply.JST)
+    ps = [{"at": (t0 + timedelta(hours=h)).isoformat(timespec="seconds"),
+           "topics_total": 437 + n} for h, n in ((0.0, 0), (3.28, 5))]
+    st = supply.state(stock_n=26, ps=ps)
+    assert st["rate_per_day"] == pytest.approx(36.5, rel=0.02)
+    assert st["sustained_rate_per_day"] is not None
+    assert st["sustained_rate_per_day"] < st["rate_per_day"], (
+        "3.3時間のバーストが、1か月続く速さとして通っています"
+    )
+    assert "公開" in st["sustained_basis"]
 
 
 # ---------------------------------------------------------------- 印字
