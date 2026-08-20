@@ -57,7 +57,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from src import levers  # noqa: E402  （`sys.path` を通した後でないと読めません）
+from src import arm_speed, levers  # noqa: E402  （`sys.path` を通した後でないと読めません）
 
 LOG = ROOT / "data" / "eta.jsonl"
 
@@ -1223,6 +1223,259 @@ def lever_days(m: dict, a: dict, pl0: dict, today: date | None = None,
     return rows
 
 
+def physical_caps(a0: dict, density: float = PLAN_PUBLISH_PER_DAY) -> dict[str, dict]:
+    """**腕を「実在する幅」で止める。**（軌跡が実在しない世界を歩かないため）
+
+    最初の版はここが無く、実測の速さのまま 224日ぶん外挿して
+    **`density` を ×4,421**（＝1日 110,525本）まで伸ばしていました。
+    **同じ回に「1日25本」を外したばかり**で、まったく同じ欠陥です ——
+    伸ばした先が満たせるかを、誰も確かめていませんでした。
+
+    ここが返す倍率は全部**この機械の中にある数**で、出どころを併記します:
+
+        density    `UPLOAD_CAP_PER_DAY`（92本/日・**実測**）÷ いまの密度
+        rpm        `RPM_SCENARIOS` の最大（**推測の幅の上端**）÷ いま立てている帯
+        sub_rate   登録率 100%（**定義上の上限**。測った天井ではありません）
+        per_video  ここでは付けません（`config/hypotheses.yaml` の `ceiling` が実測で持っています）
+
+    **`rpm` と `sub_rate` は実測の天井ではありません。** どちらも
+    「これ以上は誰も主張していない」という線で、**測れば動きます**
+    （`sub_rate` の実測は仮説「長尺の登録率はショートより1桁以上高い」・期限 2026-09-15）。
+    """
+    caps: dict[str, dict] = {}
+    if density > 0:
+        caps["density"] = {"factor": UPLOAD_CAP_PER_DAY / density,
+                           "why": f"1日に出せる上限 {UPLOAD_CAP_PER_DAY}本（実測）",
+                           "measured": True}
+    band = RPM_SCENARIOS.get(PLAN_BAND_BY_FORM.get("ショート", ""), 0)
+    if band:
+        caps["rpm"] = {"factor": max(RPM_SCENARIOS.values()) / band,
+                       "why": f"RPM の幅の上端 ¥{max(RPM_SCENARIOS.values()):,}",
+                       "measured": False}
+    sr = a0.get("sub_rate") or 0.0
+    if sr > 0:
+        caps["sub_rate"] = {"factor": 1.0 / sr,
+                            "why": "登録率 100%（定義上の上限）",
+                            "measured": False}
+    return caps
+
+
+def _capped_arms(a0: dict, arms: dict | None = None,
+                 density: float = PLAN_PUBLISH_PER_DAY) -> dict:
+    """実測の天井（`hypotheses.yaml`）と、実在する幅（`physical_caps`）の**低いほう**を当てる。"""
+    if arms is None:
+        arms = arm_speed.all_arms(per_video_now=a0.get("per_video_now"))
+    phys = physical_caps(a0, density)
+    out = {}
+    for lever, a in arms.items():
+        a = dict(a)
+        p = phys.get(lever)
+        if p and p["factor"] > 0:
+            if a.get("cap") is None or p["factor"] < a["cap"]:
+                a["cap"] = p["factor"]
+                a["cap_why"] = p["why"]
+                a["cap_measured"] = p["measured"]
+        if a.get("cap") is not None and "cap_why" not in a and a.get("ceiling"):
+            a["cap_why"] = f"実測の天井 {a['ceiling']['value']:,}（{a['ceiling']['unit']}）"
+            a["cap_measured"] = True
+        out[lever] = a
+    return out
+
+
+#: 軌跡を追う地平（日）。ここより先は「届かない」と同じに扱う。
+#: 3年 ＝ 目標の「最短」から見ればとっくに別の道を選んでいる長さです。
+TRAJECTORY_HORIZON_DAYS = 1_095
+
+
+def _factors_at(arms: dict, days: float, *, focus: str | None = None,
+                rate_scale: float = 1.0) -> dict:
+    """**`days` 日たったときの、腕ごとの倍率。**（天井で頭打ち）
+
+    `focus` を渡すと、**その腕に回転を全部振った**場合になります
+    （他の腕は動きません ＝ 1.0 のまま）。回転は1本しかないので、
+    「全部の腕を全力で」は**実在しない世界**です。
+    """
+    out = {}
+    for lever, a in arms.items():
+        if focus is None:
+            rate = a.get("rate")
+        else:
+            rate = a.get("focus_rate") if lever == focus else 0.0
+        rate = (rate or 0.0) * rate_scale
+        out[lever] = arm_speed.factor_at({**a, "rate": rate}, days)
+    return out
+
+
+def trajectory(m: dict, a0: dict, *, supply: dict | None = None,
+               points: list[dict] | None = None, today: date | None = None,
+               arms: dict | None = None, focus: str | None = None,
+               rate_scale: float = 1.0,
+               horizon: int = TRAJECTORY_HORIZON_DAYS) -> dict:
+    """**腕が実測の速さで動いていったとき、いつ月20万に届くか。**
+
+    2026-08-20 18:xx・オーナー指示（原文）——
+
+    > 腕とやらをそう設定した時に達成がいつになるって予測じゃなくて、じゃあその腕を
+    > そうなるまでにどれくらい時間がかかるのかとか予測しないとダメだよ。**特定条件の
+    > 予測じゃなくて、実際にどういう軌跡を辿るか予測して、いつ達成かを予測するんだよ。**
+
+    `lever_days` が出していたのは「**×2 になったら** 2027-01-19」で、
+    **×2 に何日かかるかを1行も予測していませんでした。** 同じ回に
+    「1日25本」を外したばかりです —— **満たせるか分からない前提の上に日付が乗る**
+    という、まったく同じ欠陥が腕の側に残っていました。
+
+    ## 解いている形
+
+    腕の倍率は時間の関数です（`src/arm_speed`。閉じた前提15件の実測）:
+
+        x_l(t) = min( exp(rate_l · t), 天井_l )
+
+    `t` 日ぶん腕を動かしてから走らせたときの到達日は `t + D(x(t))` で、
+    `D` は既存の `plan()` をそのまま解き直したものです。**軌跡の到達日は
+    その最小値**です:
+
+        T = min_t [ t + D(x(t)) ]
+
+    最小を取る `t` が「**腕をどれだけ動かしてから走らせるのが最短か**」で、
+    そこが 0 なら**いま走らせるのが最短**、大きければ**先に腕を動かせ**という意味です。
+
+    **`t` のあいだの進みを足していません**（＝ 遅い側に倒しています）。
+    腕を動かしている最中にも公開は続き、登録者も再生も積み上がるので、
+    実際の到達はこれより早いほうへ動きえます。**上振れ側に倒すより、
+    こちらのほうが目標に対して安全です** —— 早く出た日付は、待つ理由に使われます。
+
+    返り: `days` / `date` / `t_work`（腕を動かす日数）/ `factors`（そのときの倍率）/
+    `blocking`（届かないときに**名指しした理由**）。
+    """
+    today = today or today_jst()
+    # **腕は実在する幅の中でしか伸びません**（`physical_caps`）。
+    #     ここを外すと、軌跡は 1日 110,525本 のような世界を歩きます。
+    arms = _capped_arms(a0, arms)
+
+    best = {"days": NEVER, "t_work": None, "factors": None}
+    rates = {k: ((a.get("focus_rate") if focus == k else (0.0 if focus else a.get("rate"))) or 0.0)
+             * rate_scale for k, a in arms.items()}
+    # **腕が全部止まっているなら、`t` を回す意味はありません**（`t=0` だけ見る）。
+    moving = any(r > 0 for r in rates.values())
+    # **天井まで行き着いたら、その先は `t` が増えるだけ**なので打ち切る。
+    saturate = 0.0
+    for k, a in arms.items():
+        r, cap = rates[k], a.get("cap")
+        if r > 0:
+            saturate = max(saturate, (math.log(cap) / r) if cap and cap > 1 else float(horizon))
+    last = int(min(horizon, math.ceil(saturate))) if moving else 0
+
+    for t_work in range(0, last + 1):
+        # **打ち切りは厳密です**（近似ではありません）。`D >= 0` なので、
+        #     `t` が今の最良を超えた時点で `t + D(t)` は必ずそれより大きくなります。
+        if t_work >= best["days"]:
+            break
+        fac = _factors_at(arms, t_work, focus=focus, rate_scale=rate_scale)
+        try:
+            a2 = analyse(m, points=points, scale=fac)
+            pl2 = plan(m, a2, today=today, supply=supply, sensitivity=False, points=points)
+        except Exception:                                      # noqa: BLE001 — 回を止めない
+            continue
+        d = pl2.get("days_to_target", NEVER)
+        if d >= NEVER:
+            continue
+        total = t_work + d
+        if total < best["days"]:
+            best = {"days": total, "t_work": t_work, "factors": fac,
+                    "binding": pl2.get("binding"), "plan_days": d}
+
+    out = {
+        "arms": arms, "focus": focus, "rate_scale": rate_scale,
+        "days": best["days"], "t_work": best["t_work"], "factors": best["factors"],
+        "binding": best.get("binding"), "plan_days": best.get("plan_days"),
+        "date": (today + timedelta(days=math.ceil(best["days"])))
+                if best["days"] < NEVER else None,
+        "searched_days": last,
+    }
+    out["blocking"] = _trajectory_blocking(arms, out)
+    return out
+
+
+def _trajectory_blocking(arms: dict, out: dict) -> list[str]:
+    """**軌跡が出なかったとき、何が塞いでいるかを名指しする。**
+
+    「届きません」で終えないこと（`plan()` の `blocking` と同じ作り）。
+    ここが空のまま「出ません」と印字したら、**次の回は何を測ればいいか分かりません。**
+    """
+    if out["date"] is not None:
+        return []
+    why: list[str] = []
+    for lever, a in arms.items():
+        if not a.get("rate"):
+            note = a["missing"][-1] if a.get("missing") else "速さが出ていない"
+            why.append(f"`{lever}` が動きません（{note}）")
+        cap = a.get("cap")
+        if cap and a.get("ceiling"):
+            c = a["ceiling"]
+            why.append(f"`{lever}` は **×{cap:.2f} が天井**（実測 {c['value']:,} ・{c['unit']}）。"
+                       f"外す腕は `{c.get('escape')}`")
+    if not why:
+        why.append(f"腕を {out['searched_days']:,}日 動かしても、到達日が出ませんでした"
+                   "（天井そのものが目標の下）")
+    return why
+
+
+def trajectory_choice(m: dict, a0: dict, base: dict, **kw) -> list[dict]:
+    """**この回の回転を、どの腕に振るのがいちばん早いか。**
+
+    `base` は実績の配分のまま進んだ軌跡です。ここが返すのは
+    **「全部この腕に振ったら軌跡が何日動くか」** —— 名前ではなく日数で選べる形にします。
+    **回転は1本しかありません。** 4本とも全力で動かす線は、実在しません。
+    """
+    rows = []
+    for lever in arm_speed.ARMS:
+        t = trajectory(m, a0, focus=lever, **kw)
+        rows.append({
+            "lever": lever, "days": t["days"], "date": t["date"],
+            "t_work": t["t_work"],
+            "gain": (base["days"] - t["days"]) if (base["days"] < NEVER and t["days"] < NEVER)
+                    else (NEVER - t["days"] if t["days"] < NEVER else 0.0),
+            "reachable": t["days"] < NEVER,
+        })
+    rows.sort(key=lambda r: (r["days"], r["lever"]))
+    return rows
+
+
+def trajectory_all(m: dict, a0: dict, *, supply: dict | None = None,
+                   points: list[dict] | None = None,
+                   today: date | None = None) -> dict:
+    """**軌跡を1回で全部解く**（本線・幅・腕べつ）。`main` と検査の入口はここ1つ。
+
+    返り:
+
+        base     実績の配分のまま進んだ軌跡（**これが印字する1つの日付**）
+        fast/slow 当たる確率の幅（Jeffreys 90%）の両端で解き直した軌跡
+        choice   「全部この腕に振ったら」を腕べつに解いたもの（早い順）
+        streak   いま何連続で外しているか
+        band     当たり件数と確率の幅（出どころ）
+    """
+    today = today or today_jst()
+    rows = arm_speed.closed()
+    bd = arm_speed.band(rows)
+    arms = _capped_arms(a0)
+    kw = dict(supply=supply, points=points, today=today, arms=arms)
+    base = trajectory(m, a0, **kw)
+    p = bd.get("p") or 0.0
+    fast = slow = None
+    if p > 0 and bd.get("lo") and bd.get("hi"):
+        # **速さは当たる確率に比例します**（`rate = p·log g·θ`）。だから幅は
+        # 確率の幅をそのまま倍率にして入れます。**腕ごとの p は別ですが、
+        # 幅の出どころは1つ**（標本15件）なので、同じ比を当てています。
+        fast = trajectory(m, a0, rate_scale=bd["hi"] / p, **kw)
+        slow = trajectory(m, a0, rate_scale=bd["lo"] / p, **kw)
+    return {
+        "base": base, "fast": fast, "slow": slow,
+        "choice": trajectory_choice(m, a0, base, **kw),
+        "streak": arm_speed.miss_streak(rows),
+        "band": bd, "arms": arms, "unread": arm_speed.unreadable(),
+    }
+
+
 def supply_state() -> dict | None:
     """**予測に渡す供給の実測**（読めなければ `None`。回は止めない）。"""
     try:
@@ -1572,7 +1825,8 @@ def _points() -> list[dict]:
     return out
 
 
-def headline(pl: dict, prev: dict | None = None) -> list[str]:
+def headline(pl: dict, prev: dict | None = None,
+             tr: dict | None = None) -> list[str]:
     """**この回のいちばん最初と、いちばん最後に出す3行。**
 
     ## なぜ2回出すか（2026-08-20 08:0x・オーナー指示3回目）
@@ -1595,14 +1849,50 @@ def headline(pl: dict, prev: dict | None = None) -> list[str]:
     """
     bar = "###"
     out = ["", "=" * 66]
+    # **いちばん上に出す日付は「軌跡」のほうです**（2026-08-20 18:xx・オーナー指示）。
+    #     腕を据え置いた線（`pl["target_date"]`）は、**腕が1ミリも動かない未来**の
+    #     日付です。この機械は毎周かならず腕を1つ引いているので、それは
+    #     「特定条件の予測」であって、辿る道ではありません。
+    base = (tr or {}).get("base")
+    if base is not None:
+        if base["date"] is not None:
+            out.append(f"{bar} **月20万の到達予測（軌跡）: {base['date'].isoformat()}**"
+                       f"（{math.ceil(base['days']):,}日後）"
+                       f" …… 腕を {base['t_work']}日 動かして、そこから"
+                       f" {base['plan_days']:,.0f}日")
+        else:
+            out.append(f"{bar} **月20万の到達予測（軌跡）: 出ません**"
+                       f" …… {base['blocking'][0] if base['blocking'] else '塞いでいる所が名指しできていません'}")
+        fast, slow = (tr or {}).get("fast"), (tr or {}).get("slow")
+        if fast and slow:
+            def _d(x):
+                return x["date"].isoformat() if x["date"] else "出ません"
+            out.append(f"{bar} 幅（当たる確率の90%区間）: 早い **{_d(fast)}**"
+                       f" ／ 遅い **{_d(slow)}**（遅い側が「外れ続けた場合」）")
+    # **軌跡が解けなかった回でも、「到達予測」の字は必ず出すこと。**
+    #     ここを「据え置いた線」だけにすると、軌跡が落ちた回の出力から
+    #     **到達予測という言葉ごと消えます**（検査が1件それを見ています）。
+    label = ("腕を**据え置いた**線" if base is not None
+             else "**月20万の到達予測（腕を据え置いた線）**")
     if pl["target_date"] is not None:
-        out.append(f"{bar} **月20万の到達予測: {pl['target_date'].isoformat()}**"
-                   f"（{_fmt_days(pl['days_to_target'])}）")
+        out.append(f"{bar} {label}: {pl['target_date'].isoformat()}"
+                   f"（{_fmt_days(pl['days_to_target'])}）"
+                   + ("" if base is None else " ← **腕が1ミリも動かない未来。辿る道ではありません**"))
     else:
-        out.append(f"{bar} **月20万の到達予測: いまの実測のままでは出ません**"
-                   "（天井が足りない。次の行に「どの腕をいくつにすれば出るか」）")
+        out.append(f"{bar} {label}: **出ません**"
+                   "（天井が足りない。下に「どの腕をいくつにすれば出るか」）")
     out.append(f"{bar} 縛っているのは **{pl['binding']}**"
-               f" → **この回に引く腕は `{pl['lever_hint']}`**")
+               f" → **この回に引く腕は `{pl['lever_hint']}`**"
+               + (f"（**軌跡が名指し**。床の名前は `{pl['lever_hint_binding']}` ですが、"
+                  "それは診断であって、引いて何日縮むかは言っていません）"
+                  if pl.get("lever_from") == "軌跡" else ""))
+    top = next((r for r in (tr or {}).get("choice", []) if r["reachable"]), None)
+    if top is not None:
+        gain = (base["days"] - top["days"]) if base and base["days"] < NEVER else None
+        out.append(f"{bar} **回転を全部振るなら `{top['lever']}`** →"
+                   f" {top['date'].isoformat()}"
+                   + (f"（軌跡より **{gain:,.0f}日 早い**）" if gain and gain > 0
+                      else "（軌跡と同じか、遅い）"))
     # **腕の名前だけで終わらせない。** その腕を引いたら日付が何日動くかを、
     # 同じ3行の中に出します（オーナー指示 2026-08-20 16:0x「分析して制作に
     # 活かして視聴回数などを上げることが予測に使えることじゃない？」）。
@@ -1621,17 +1911,22 @@ def headline(pl: dict, prev: dict | None = None) -> list[str]:
     if how:
         out.append(f"{bar} {how}")
     prev_date = None
-    if prev and prev.get("target_date"):
+    # **比べるのは同じ物差しどうし。** 軌跡が出ている回は軌跡の日付と、
+    # 出ていない回は据え置きの日付と比べます（混ぜると「1日で200日早まった」が出ます）。
+    key = "traj_date" if (base is not None and prev and prev.get("traj_date")) else "target_date"
+    cur_date = base["date"] if (key == "traj_date" and base is not None) else pl["target_date"]
+    if prev and prev.get(key):
         try:
-            prev_date = date.fromisoformat(str(prev["target_date"]))
+            prev_date = date.fromisoformat(str(prev[key]))
         except ValueError:
             prev_date = None
-    if prev_date and pl["target_date"]:
-        delta = (pl["target_date"] - prev_date).days
+    if prev_date and cur_date:
+        delta = (cur_date - prev_date).days
         mark = ("**早まりました**" if delta < 0
                 else "動いていません" if delta == 0 else "**遠のきました**")
-        out.append(f"{bar} 前の回の予測 {prev_date.isoformat()} → **{delta:+d}日** {mark}")
-    elif prev_date and pl["target_date"] is None:
+        out.append(f"{bar} 前の回の予測 {prev_date.isoformat()} → **{delta:+d}日** {mark}"
+                   + ("（軌跡どうし）" if key == "traj_date" else "（据え置きの線どうし）"))
+    elif prev_date and cur_date is None:
         out.append(f"{bar} 前の回は {prev_date.isoformat()} → **今回は日付が出ません**"
                    "（前提が変わったか、実測が落ちた）")
     # **物差しを取り替えた回は、その差を「遠のいた」と読ませない**（`_scale_note` と同じ形）。
@@ -1644,7 +1939,7 @@ def headline(pl: dict, prev: dict | None = None) -> list[str]:
                    f"**作る速さ {pl['gate1']['rate_per_day']:.1f}本/日 の実測**）。"
                    "**上の差は実績ではありません。**")
 
-    elif prev and prev.get("target_date") is None and pl["target_date"]:
+    elif prev and prev.get(key) is None and cur_date:
         out.append(f"{bar} 前の回は日付が出ていませんでした → **道が開きました**")
     else:
         out.append(f"{bar} （比べられる前の点がまだありません）")
@@ -1876,6 +2171,90 @@ def _report_levers(pl: dict) -> list[str]:
           f" 床の名前（{pl.get('lever_hint_binding')}）ではなく、**差の大きさで選んでいます**")
     P("    **「2倍にできる」とは言っていません。** 言っているのは"
       "「2倍にしたら何日縮むか」だけで、**できるかどうかは別の話**です。")
+    return out
+
+
+def _report_trajectory(tr: dict, pl: dict) -> list[str]:
+    """**腕が動く速さを含んだ、1本の軌跡**（2026-08-20 18:xx・オーナー指示）。
+
+    > 特定条件の予測じゃなくて、実際にどういう軌跡を辿るか予測して、
+    > いつ達成かを予測するんだよ。
+
+    上の `_report_levers` は「×2 にしたら」の表です。**そこには
+    「×2 に何日かかるか」が1行もありません** —— 満たせるか分からない前提の上に
+    日付が乗る形で、同じ回に外したばかりの「1日25本」とまったく同じ欠陥でした。
+
+    ここが出すのは**時間の関数としての腕**です。倍率は実測の速さで伸び、
+    実測の天井で止まります。**表ではなく、1つの日付**にすること。
+    """
+    base, bd, st = tr["base"], tr["band"], tr["streak"]
+    out = ["", "=" * 66,
+           "=== **軌跡**（腕が「実測の速さ」で動いていった場合。条件つきの表ではありません）===",
+           "=" * 66]
+    P = out.append
+    for line in arm_speed.lines(tr["arms"], st, bd, tr.get("unread", 0)):
+        P(line)
+    for lever, a in tr["arms"].items():
+        if a.get("cap") and a.get("cap_why"):
+            mark = "" if a.get("cap_measured") else "  ← **実測の天井ではありません**"
+            P(f"      天井 `{lever}` ×{a['cap']:,.2f} …… {a['cap_why']}{mark}")
+
+    P("")
+    if base["date"] is not None:
+        P(f"  → **軌跡の到達日: {base['date'].isoformat()}**"
+          f"（{math.ceil(base['days']):,}日後）")
+        P(f"     内訳: **腕を {base['t_work']}日ぶん動かして**"
+          f"（そのとき "
+          + " ／ ".join(f"`{k}` ×{v:,.2f}" for k, v in (base["factors"] or {}).items())
+          + f"）、そこから {base['plan_days']:,.0f}日 で届く")
+        P(f"     そのとき縛っているのは **{base['binding']}**")
+    else:
+        P("  → **軌跡でも到達日が出ません。** 塞いでいるのは次のものです:")
+        for why in base["blocking"]:
+            P(f"       - {why}")
+
+    if tr["fast"] and tr["slow"]:
+        def _d(x):
+            return x["date"].isoformat() if x["date"] else "出ません"
+        P(f"     幅（当たる確率 {bd['k']}件/{bd['n']}件 の 90% 区間"
+          f" {bd['lo']:.0%}〜{bd['hi']:.0%}）: "
+          f"**早い {_d(tr['fast'])} ／ 遅い {_d(tr['slow'])}**")
+        P("       **遅いほうが「外れ続けた場合」です。** いまの連敗を確率の更新に使うより、"
+          "標本15件ぶんの幅で読むほうが素直です")
+    if st["n"]:
+        P(f"     いま **{st['n']}連続で外れ**。当たりの間隔の実測は "
+          f"{st['expected_gap']:.1f}件 なので "
+          + ("**外れすぎです**（速さの前提そのものを疑うこと）" if st["unusual"]
+             else "**まだ範囲の中**（「次は当たる」でも「もう当たらない」でもありません）"))
+
+    P("")
+    P("--- **この回の回転を、どの腕に振るのがいちばん早いか**"
+      "（回転は1本しかありません。4本とも全力の線は実在しません）---")
+    for r in tr["choice"]:
+        if not r["reachable"]:
+            P(f"    `{r['lever']:<10}` **全部振っても出ません**")
+            continue
+        gain = ((base["days"] - r["days"]) if base["days"] < NEVER else None)
+        note = (f"**{gain:,.0f}日 早い**" if gain and gain > 0
+                else "**軌跡より遅い**" if gain is not None and gain < 0
+                else "**日付が出るようになる**")
+        P(f"    `{r['lever']:<10}` → {r['date'].isoformat()}"
+          f"（腕を {r['t_work']}日 動かして 計 {math.ceil(r['days']):,}日）  {note}")
+    top = next((r for r in tr["choice"] if r["reachable"]), None)
+    if top:
+        a = tr["arms"][top["lever"]]
+        P(f"    → **この回に振る腕は `{top['lever']}`。**")
+        if a["source"] != "自前":
+            P(f"      [!] ただし `{top['lever']}` の速さは **{a['source']}**"
+              f"（この腕で閉じた前提は {a['n']}件・当たり {a['hits']}件）。"
+              "**この1行が、いま軌跡でいちばん薄い数です**")
+        if a.get("cap") and not a.get("cap_measured"):
+            P(f"      [!] `{top['lever']}` の天井 ×{a['cap']:,.2f} は"
+              "**測った天井ではありません。** **軌跡はここに寄りかかっています** ——"
+              " 測れば動きます")
+    P("  **これは「腕がその倍率になる」と言っていません。** 言っているのは"
+      "「閉じた前提15件の実測の速さで進んだら、そこに着く」だけです。"
+      "速さも天井も、**次に閉じる1件で動きます**。")
     return out
 
 
@@ -2223,8 +2602,26 @@ def main() -> int:
     #     「1日25本」という**満たせない前提**で解かれます（`solve_gate1`）。
     sup = supply_state()
     pl = plan(m, a, supply=sup, sensitivity=True, points=points)
+    # **腕が動く速さを含んだ軌跡**（2026-08-20 18:xx・オーナー指示）。
+    #     ここが出ないと、印字される日付は「腕が1ミリも動かない未来」になります。
+    #     **回を止めないこと** —— 軌跡が解けなくても、据え置きの線だけで出します。
+    try:
+        tr = trajectory_all(m, a, supply=sup, points=points)
+    except Exception as exc:                                   # noqa: BLE001
+        print(f"[eta] 軌跡を解けませんでした: {type(exc).__name__}: {exc}")
+        tr = None
+    # **引く腕は1つに絞ること。** 軌跡が出た回は、そちらが名指しした腕を採ります。
+    #     `plan()` の `lever_hint` は「いちばん遅い床の名前」＝**診断**で、
+    #     **引いたら何日縮むか**は言っていません。同じ見出しに2つの腕が並ぶと、
+    #     読み手はどちらでも選べてしまい、**後から理由を付ける**側に戻ります。
+    if tr is not None:
+        _top = next((r for r in tr["choice"] if r["reachable"]), None)
+        if _top is not None and _top["lever"] != pl["lever_hint"]:
+            pl["lever_hint_binding"] = pl["lever_hint"]
+            pl["lever_hint"] = _top["lever"]
+            pl["lever_from"] = "軌跡"
     prev = points[-1] if points else None
-    for line in headline(pl, prev):
+    for line in headline(pl, prev, tr):
         print(line)
 
     for line in report(m, a):
@@ -2241,6 +2638,16 @@ def main() -> int:
     row["density_month"] = pl.get("density_month")
     row["make_rate_per_day"] = (sup or {}).get("rate_per_day")
     row["days_gate1"] = pl.get("gate1", {}).get("days")
+    # **軌跡そのものを積む。** 積まないと、次の回が「軌跡が早まったか」を測れません
+    # （据え置きの線と混ぜないこと ＝ 別の欄にする）。
+    if tr is not None:
+        _b = tr["base"]
+        row["traj_days"] = _b["days"]
+        row["traj_date"] = _b["date"].isoformat() if _b["date"] else None
+        row["traj_t_work"] = _b["t_work"]
+        row["traj_focus"] = next((r["lever"] for r in tr["choice"] if r["reachable"]), None)
+        row["arm_rates"] = {k: a["rate"] for k, a in tr["arms"].items()}
+        row["arm_hits"] = f"{tr['band']['k']}/{tr['band']['n']}"
     row["videos_needed_gate1"] = pl.get("gate1", {}).get("need_videos")
     for line in _drift(row):
         print(line)
@@ -2252,13 +2659,19 @@ def main() -> int:
     # 引く腕は `binding`（どの床が遅いか）という診断からしか決まりません。
     for line in _report_levers(pl):
         print(line)
+    # **「×2 にしたら」の表の、すぐ下に軌跡を置くこと。**
+    #     表だけを見た読み手は「2倍にすればいい」で終わります。
+    #     2倍に何日かかるかは、ここにしかありません。
+    if tr is not None:
+        for line in _report_trajectory(tr, pl):
+            print(line)
     # **段取りは、いちばん最後に出すこと**（オーナー指示 2026-08-20 06:2x）。
     # 読み手が最後に見たものが、そのまま次の回の入口になります。
     # ここより後ろに「届きません」を置かないこと。
     for line in _report_plan(m, a, pl):
         print(line)
     # **最後にもう一度、日付と腕。** 真ん中を読み飛ばしても、ここだけで決まる形にする。
-    for line in headline(pl, prev):
+    for line in headline(pl, prev, tr):
         print(line)
     print("  **この回の作業は、上の日付を動かすものを選ぶこと。**"
           " 出したら `run_marker.py --ship \"…\" --lever <腕> --moves <見込みの日数>`。")
