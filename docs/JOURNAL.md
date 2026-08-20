@@ -36061,3 +36061,12 @@ ship 2 と ship 3 を丸ごと書けました。**縮める価値があるのは
 3. `data/views.jsonl` は Data API で作られるので **JST 16:00 以降に観測を積むこと**。
    積まないと 08/22・08/23 公開ぶんが帯に入らず、判定がまた延びます
 4. 在庫は12本（`per_calc=2` の上限）・未使用の節 0件。**表を書かないと density は引けません**
+
+**踏んだ（この回）**: 作業木は **detached HEAD** で、ローカルの
+`claude/youtube-auto-post-revenue-ggedij` は前の回の位置に取り残されていました。
+`git push -u origin <枝>` は**そのローカルの枝**を押すので、
+「behind its remote」で断られます（**この回の変更は1バイトも関係ありません**）。
+通ったのは **`git push origin HEAD:claude/youtube-auto-post-revenue-ggedij`**。
+`git branch --show-current` が**空を返したら、この形で押すこと。**
+
+検査は **2,609件 緑**（8 skip・16分17秒。全体は背景に投げて `ps` で生存だけ見る）。
