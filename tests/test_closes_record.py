@@ -1,9 +1,13 @@
 """潰した宣言を、**散文ではなく構造で**残すこと（`--closes`）。
 
-# **`--lever "none"` は、この検査が見ているものではありません**（2026-08-19 21:2x）。
-# `run_marker.py --ship` は腕の宣言を必須にしたので、`--closes` を試すにも要ります
-# （`src/levers.py`）。**ここで `none` を選んでいるのは「腕は別軸だ」という意味**で、
-# 腕そのものの検査は `tests/test_levers.py` にあります。
+# **`--lever "none"` と `--moves 0` は、この検査が見ているものではありません**
+# （2026-08-19 21:2x ／ 2026-08-20 08:5x）。`run_marker.py --ship` は
+# **腕の宣言と、予測日を何日動かす見込みか**を必須にしたので、`--closes` を試すにも要ります
+# （`src/levers.py`）。**ここで `none` / `0` を選んでいるのは「別軸だ」という意味**で、
+# 腕と見込みそのものの検査は `tests/test_levers.py` にあります。
+#
+# **旗を増やした回へ**: ここは14件まとめて落ちます（`--lever` を足した回も同じ形で
+# 落としています）。**必須の旗を足したら、この行を探すこと。**
 
 ## なぜ要るか（4回運ばれた申し送り。2026-08-16 に閉じた）
 
@@ -71,7 +75,7 @@ def rows(runs: Path) -> list[dict]:
 
 def test_書く側が語と日誌の行数を残す(paths):
     runs, journal = paths
-    assert run_marker.main(["--ship", "fix: なにか", "--closes", "critique_queue", "--lever", "none"]) == 0
+    assert run_marker.main(["--ship", "fix: なにか", "--closes", "critique_queue", "--lever", "none", "--moves", "0"]) == 0
     (rec,) = rows(runs)
     assert rec["kind"] == "ship"
     assert rec["closes"] == ["critique_queue"]
@@ -81,7 +85,7 @@ def test_書く側が語と日誌の行数を残す(paths):
 
 def test_closes_は何度でも書ける(paths):
     runs, _ = paths
-    run_marker.main(["--ship", "fix: 2件", "--closes", "aaa", "--closes", "bbb", "--lever", "none"])
+    run_marker.main(["--ship", "fix: 2件", "--closes", "aaa", "--closes", "bbb", "--lever", "none", "--moves", "0"])
     assert rows(runs)[0]["closes"] == ["aaa", "bbb"]
 
 
@@ -94,22 +98,22 @@ def test_closes_だけでは受けない(paths):
 def test_closes_を書かない_ship_は今までどおり(paths):
     """**既存の呼び方の挙動を変えないこと**（毎周これを叩いています）。"""
     runs, _ = paths
-    run_marker.main(["--ship", "means: なにか", "--lever", "none"])
+    run_marker.main(["--ship", "means: なにか", "--lever", "none", "--moves", "0"])
     rec = rows(runs)[0]
     assert "closes" not in rec and "journal_lines" not in rec
 
 
 def test_読む側が記録から拾う(paths):
     runs, _ = paths
-    run_marker.main(["--ship", "fix: x", "--closes", "critique_queue", "--lever", "none"])
+    run_marker.main(["--ship", "fix: x", "--closes", "critique_queue", "--lever", "none", "--moves", "0"])
     assert retro.recorded_closures() == {"critique_queue": 41}
 
 
 def test_同じ語が二度なら後のほうを採る(paths):
     runs, journal = paths
-    run_marker.main(["--ship", "fix: 1回目", "--closes", "abc", "--lever", "none"])
+    run_marker.main(["--ship", "fix: 1回目", "--closes", "abc", "--lever", "none", "--moves", "0"])
     journal.write_text("x\n" * 100, encoding="utf-8")
-    run_marker.main(["--ship", "fix: 2回目", "--closes", "abc", "--lever", "none"])
+    run_marker.main(["--ship", "fix: 2回目", "--closes", "abc", "--lever", "none", "--moves", "0"])
     assert retro.recorded_closures()["abc"] == 101
 
 
@@ -162,7 +166,7 @@ def test_散文が書き忘れても記録があれば黙る(paths):
     ])
     assert len(_muted(doc, "_template.py")) == 2      # 記録が無ければ持ち越し
     journal.write_text(doc + "\n", encoding="utf-8")
-    run_marker.main(["--ship", "fix: ひな型", "--closes", "_template.py", "--lever", "none"])
+    run_marker.main(["--ship", "fix: ひな型", "--closes", "_template.py", "--lever", "none", "--moves", "0"])
     assert _muted(doc, "_template.py") == []          # **散文は1字も変えていない**
 
 
@@ -179,7 +183,7 @@ def test_散文が閉じていないと言う行でも記録が勝つ(paths):
     ])
     assert retro.closures(doc) == {}
     journal.write_text(doc + "\n", encoding="utf-8")
-    run_marker.main(["--ship", "fix: 待ち行列", "--closes", "critique_queue", "--lever", "none"])
+    run_marker.main(["--ship", "fix: 待ち行列", "--closes", "critique_queue", "--lever", "none", "--moves", "0"])
     assert _muted(doc, "critique_queue") == []
 
 
@@ -193,7 +197,7 @@ def test_引用符の中の宣言でも記録が勝つ(paths):
     ])
     assert retro.closures(doc) == {}
     journal.write_text(doc + "\n", encoding="utf-8")
-    run_marker.main(["--ship", "fix: 読む場所", "--closes", "critique_queue", "--lever", "none"])
+    run_marker.main(["--ship", "fix: 読む場所", "--closes", "critique_queue", "--lever", "none", "--moves", "0"])
     assert _muted(doc, "critique_queue") == []
 
 
@@ -209,7 +213,7 @@ def test_宣言より後の言及は残る(paths):
         "1. `critique_queue` の待ち",
     ])
     journal.write_text(before + "\n", encoding="utf-8")
-    run_marker.main(["--ship", "fix: x", "--closes", "critique_queue", "--lever", "none"])
+    run_marker.main(["--ship", "fix: x", "--closes", "critique_queue", "--lever", "none", "--moves", "0"])
     after = before + "\n" + "\n".join([
         "",
         "## 2026-08-16 02:0x — 題",
@@ -232,7 +236,7 @@ def test_出どころが分かれて返る(paths):
     """出す側が［記録］と［日誌の文］を分けて見せられること。"""
     runs, journal = paths
     journal.write_text("x\n" * 5, encoding="utf-8")
-    run_marker.main(["--ship", "fix: x", "--closes", "kikai", "--lever", "none"])
+    run_marker.main(["--ship", "fix: x", "--closes", "kikai", "--lever", "none", "--moves", "0"])
     closed, from_record = retro.all_closures("**`sanbun` はこの回で閉じました**\n")
     assert from_record == {"kikai"}
     assert set(closed) == {"kikai", "sanbun"}
@@ -249,7 +253,7 @@ def test_出どころが分かれて返る(paths):
 
 def test_closes_add_は_ship_を増やさない(paths):
     runs, _ = paths
-    run_marker.main(["--ship", "fix: なにか", "--closes", "carry_over", "--lever", "none"])
+    run_marker.main(["--ship", "fix: なにか", "--closes", "carry_over", "--lever", "none", "--moves", "0"])
     assert run_marker.main(["--closes-add", "critique_queue"]) == 0
     recs = rows(runs)
     assert len([r for r in recs if r["kind"] == "ship"]) == 1, \
@@ -259,7 +263,7 @@ def test_closes_add_は_ship_を増やさない(paths):
 
 def test_closes_add_は同じ語を二重に足さない(paths):
     runs, _ = paths
-    run_marker.main(["--ship", "fix: なにか", "--closes", "aaa", "--lever", "none"])
+    run_marker.main(["--ship", "fix: なにか", "--closes", "aaa", "--lever", "none", "--moves", "0"])
     run_marker.main(["--closes-add", "aaa"])
     assert rows(runs)[-1]["closes"] == ["aaa"]
 
@@ -268,9 +272,9 @@ def test_closes_add_は前の回の記録を触らない(paths, monkeypatch):
     """前の回の宣言は、**その回の判断の記録**です。足す先はこの回だけ。"""
     runs, _ = paths
     monkeypatch.setattr(run_marker, "session_id", lambda: "前の回")
-    run_marker.main(["--ship", "fix: 前の回", "--closes", "aaa", "--lever", "none"])
+    run_marker.main(["--ship", "fix: 前の回", "--closes", "aaa", "--lever", "none", "--moves", "0"])
     monkeypatch.setattr(run_marker, "session_id", lambda: "この回")
-    run_marker.main(["--ship", "fix: この回", "--lever", "none"])
+    run_marker.main(["--ship", "fix: この回", "--lever", "none", "--moves", "0"])
     run_marker.main(["--closes-add", "bbb"])
     old, new = rows(runs)
     assert old["closes"] == ["aaa"], "前の回の記録が書き換わっています"
@@ -285,7 +289,7 @@ def test_ship_が無いまま_closes_add_しても壊さない(paths):
 
 def test_closes_add_は_ship_と一緒には使わない(paths):
     with pytest.raises(SystemExit):
-        run_marker.main(["--ship", "fix: x", "--closes-add", "aaa", "--lever", "none"])
+        run_marker.main(["--ship", "fix: x", "--closes-add", "aaa", "--lever", "none", "--moves", "0"])
 
 
 def test_closes_add_の語彙は書き込む前に読む(paths, capsys, monkeypatch):
@@ -305,7 +309,7 @@ def test_closes_add_の語彙は書き込む前に読む(paths, capsys, monkeypa
                   f"1. **`critique_queue` が残っています。**\n" for i in range(3)),
         encoding="utf-8")
     assert "critique_queue" in retro.carry_over()[0], "検査の前提が崩れています"
-    run_marker.main(["--ship", "fix: なにか", "--lever", "none"])
+    run_marker.main(["--ship", "fix: なにか", "--lever", "none", "--moves", "0"])
     capsys.readouterr()
     run_marker.main(["--closes-add", "critique_queue"])
     out = capsys.readouterr().out
