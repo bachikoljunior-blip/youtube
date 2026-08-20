@@ -58,7 +58,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from src import arm_speed, levers  # noqa: E402  （`sys.path` を通した後でないと読めません）
+from src import arm_speed, levers, rpm_mix  # noqa: E402  （`sys.path` を通した後でないと読めません）
 
 LOG = ROOT / "data" / "eta.jsonl"
 
@@ -1271,11 +1271,27 @@ def physical_caps(a0: dict, density: float = PLAN_PUBLISH_PER_DAY) -> dict[str, 
         caps["density"] = {"factor": UPLOAD_CAP_PER_DAY / density,
                            "why": f"1日に出せる上限 {UPLOAD_CAP_PER_DAY}本（実測）",
                            "measured": True}
-    band = RPM_SCENARIOS.get(PLAN_BAND_BY_FORM.get("ショート", ""), 0)
-    if band:
-        caps["rpm"] = {"factor": max(RPM_SCENARIOS.values()) / band,
-                       "why": f"RPM の幅の上端 ¥{max(RPM_SCENARIOS.values()):,}",
-                       "measured": False}
+    # --- `rpm` の天井は、2026-08-20 22:2x に**実測に入れ替えました**（`src/rpm_mix.py`）---
+    #     ここには `max(RPM_SCENARIOS) / band`（¥2,000 ÷ ¥20 ＝ ×100）が入っていて、
+    #     この関数の docstring 自身が「測った天井ではありません」と言っていました。
+    #     入れ替えたのは**混ざり方**です —— RPM は1本に付く数ではなく
+    #     「視聴分がどちらの形に何%乗っているか」で決まるので、
+    #     長尺のサムネが見せられている回数（実測）より上には行けません。
+    #     初測: 実効 ¥20.9 → 天井 ¥866（×41.5）。**据え置きの ×100 は 2.4倍 甘かった。**
+    #     **測れていないときだけ**、前の据え置きへ落ちます（黙って落ちないよう why に出す）。
+    mixed = rpm_mix.last()
+    if mixed and mixed.get("factor"):
+        caps["rpm"] = {"factor": float(mixed["factor"]),
+                       "why": (f"実測の混ざり方 ¥{mixed.get('rpm_now', 0):,.1f} → "
+                               f"¥{mixed.get('rpm_max', 0):,.0f}（{mixed.get('why', '')}）"),
+                       "measured": True}
+    else:
+        band = RPM_SCENARIOS.get(PLAN_BAND_BY_FORM.get("ショート", ""), 0)
+        if band:
+            caps["rpm"] = {"factor": max(RPM_SCENARIOS.values()) / band,
+                           "why": (f"RPM の幅の上端 ¥{max(RPM_SCENARIOS.values()):,}"
+                                   "（**まだ測っていません**: `python -m src.rpm_mix --record`）"),
+                           "measured": False}
     sr = a0.get("sub_rate") or 0.0
     if sr > 0:
         caps["sub_rate"] = {"factor": 1.0 / sr,

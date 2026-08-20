@@ -152,9 +152,18 @@ def test_実在する幅で腕を止める_1日110525本を歩かない():
     caps = eta.physical_caps(a0, density=25)
     assert caps["density"]["factor"] == pytest.approx(eta.UPLOAD_CAP_PER_DAY / 25)
     assert caps["density"]["measured"] is True
-    # RPM と登録率は**測った天井ではありません**。そう言うこと
-    assert caps["rpm"]["measured"] is False
+    # 登録率は**測った天井ではありません**。そう言うこと
     assert caps["sub_rate"]["measured"] is False
+    # `rpm` は 2026-08-20 22:4x に**実測へ入れ替えました**（`src/rpm_mix.py`）。
+    # ここには `assert caps["rpm"]["measured"] is False` と書いてあり、
+    # **据え置きの ×100（¥2,000 ÷ ¥20）を「そう言えていれば正しい」としていました。**
+    # 言えているだけでは足りません —— 測った点があれば measured、
+    # **無いときだけ据え置きへ落ち、`why` に「まだ測っていません」と出る**こと。
+    if eta.rpm_mix.last():
+        assert caps["rpm"]["measured"] is True
+    else:
+        assert caps["rpm"]["measured"] is False
+        assert "まだ測っていません" in caps["rpm"]["why"]
     arms = eta._capped_arms(a0)
     assert arms["density"]["cap"] <= eta.UPLOAD_CAP_PER_DAY / 25 + 1e-9
     for lever, a in arms.items():

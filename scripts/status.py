@@ -50,6 +50,7 @@ def _ab_power_verdict():
 from src import alerts as _alerts  # noqa: E402
 from src import inbox as _inbox  # noqa: E402
 from src import reach_split as _reach_split  # noqa: E402
+from src import rpm_mix as _rpm_mix  # noqa: E402
 from src.auth import note_day_quota as _note_day_quota  # noqa: E402
 from src.uploader import _service  # noqa: E402
 
@@ -1725,6 +1726,12 @@ def print_local_sections(inventory: bool = True) -> None:
     # Analytics（別枠）なのに対し、ここは**積んだ CSV を読むだけ**なので、
     # **日枠が閉じている窓でも出ます。**
     print(_reach_split.render(_reach_split.load_rows()))
+    # **面のすぐ下に置くこと**（2026-08-20 22:4x に足した）。上が「どれだけ見せたか」、
+    # ここは**その面が RPM の天井をいくらに縛っているか**です。腕 `rpm` の天井は
+    # 8/20 まで ¥2,000 ÷ ¥20 ＝ ×100 の据え置きで、`eta.py` 自身が
+    # 「測った天井ではありません。軌跡はここに寄りかかっています」と言っていました。
+    # **積んだ点を読むだけなので API は叩きません**（測り直すのは `--record`）。
+    print(_rpm_mix.render(_rpm_mix.last()))
     print_hypotheses()
     print_alert_hit_rate()
     print_budget()
