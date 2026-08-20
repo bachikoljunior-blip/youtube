@@ -1364,9 +1364,19 @@ Stop フックが引き止めます（`config/watches.yaml` / `src/watches.py`�
 
 #### **掃引（`src/section_sweep.py`）を触る回は、`test_section_sweep.py` を先に**（2026-08-18 に2回払って足した）
 
-    python -m pytest tests/test_section_sweep.py -q     # **約4分**（102件）
+    python -m pytest tests/test_section_sweep.py -q     # **8分10秒**（118件・2026-08-20 実測）
 
-**この検査は `sweep_all()` を実物で回すので、単体でも4分かかります。**
+**背後に投げて、その間に残りを先に通すこと**（2026-08-20 17:4x に測って足した）。
+掃引を触ると `test_section_sweep.py` のほかに6ファイルが道連れになりますが、
+**その6ファイル 242件は合わせて 4.5秒**です。**遅いのは1本だけ**なので、
+待ち方を分ければ 8分が丸ごと他の作業に重なります:
+
+    nohup python -m pytest tests/test_section_sweep.py -q > <scratch>/ss.log 2>&1 &
+    python -m pytest tests/test_pair_sweep.py tests/test_supply.py tests/test_calc_axes.py \
+      tests/test_section_depth.py tests/test_sweep_flat_top.py tests/test_eta_supply_density.py -q
+    # 速いほうが緑になってから、日誌を書きつつ ss.log を待つ
+
+**この検査は `sweep_all()` を実物で回すので、単体でも8分かかります。**
 全体（7分）との差が小さいので「まとめて最後に」と思いがちですが、**逆です** ——
 掃引を触る回は**途中で形や軸を足しては確かめる**ので、回数のほうが効きます。
 2026-08-18 の2回（13:2x と 14:1x）は、どちらもこれを**2回**払っています（8〜13分＝1周の2〜3割）。
