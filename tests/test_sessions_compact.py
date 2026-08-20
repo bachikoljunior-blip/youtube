@@ -268,7 +268,11 @@ def test_seven_day_は並び順で消えない():
         got = sc.parse(f"{base} {tail}", "2026-08-17", "youtube-hourly")[0]
         kind = got["external_metadata"]["rate_limit_info"]["rateLimitType"]
         assert kind == "seven_day", f"{tail!r} で {kind} に化けています"
-    got = sc.parse(base, "2026-08-17", "youtube-hourly")[0]
+    # **書かない行は `five_hour`。ただしリセットが5時間の中にあるときだけ**
+    # （2026-08-20 09:4x に足した算数の門。上の `1786979400` は更新の13.2時間先で、
+    #  **5時間枠ではありえない** ＝ 書き落としとして直されます）。
+    near = "a AR 2026-08-17T01:00:00 2026-08-17T02:00:00 p 1786936000 allowed"
+    got = sc.parse(near, "2026-08-17", "youtube-hourly")[0]
     assert got["external_metadata"]["rate_limit_info"]["rateLimitType"] == "five_hour"
 
 
@@ -338,3 +342,39 @@ def _write(tmp_path, rows: str):
     p = tmp_path / "compact.txt"
     p.write_text(rows, encoding="utf-8")
     return p
+
+
+# --- 枠の種類の書き落とし（2026-08-20 09:4x に**自分で踏んだ**）---
+#
+# `seven_day` は行の末尾に書くと効きますが、**書き方のどこにも書いてありません**
+# （§2 の並びにも、この道具の「## 書き方」にも）。書かなければ既定は `five_hour` で、
+# **黙って通ります。** §6 (f) は「枠は five_hour と seven_day の両方を、
+# 窓ごとに一番新しい観測で見る」ので、週枠の観測が5時間枠の窓へ入ります。
+#
+# **書いた側に頼らずに捕まえます** —— 5時間枠のリセットは、
+# その窓の中の観測から**5時間より先には来ません**。
+
+def test_リセットが5時間より先なら5時間枠ではない(capsys):
+    """**書き落としを、算数で捕まえる。** 週枠のリセットは何十時間も先にあります。"""
+    row = ("01TwzHNxY2W2p1V4iLCDBZAx RUNNING 00:10:26 00:11:41 "
+           "016PyeT6Afj5KzKQ9xkKE3Kx 1787349600 allowed_warning")   # 08-22 07:00 JST
+    (got,) = sc.parse(row, "2026-08-20", "youtube-hourly")
+    assert got["external_metadata"]["rate_limit_info"]["rateLimitType"] == "seven_day"
+    assert "seven_day" in capsys.readouterr().err, "黙って直さないこと"
+
+
+def test_本物の5時間枠は直さない(capsys):
+    """**両向きに掛けること。** 全部を `seven_day` にする道具では役に立ちません。"""
+    row = ("01TwzHNxY2W2p1V4iLCDBZAx RUNNING 00:10:26 00:11:41 "
+           "016PyeT6Afj5KzKQ9xkKE3Kx 1787188000 allowed")   # 更新の 1.2時間後
+    (got,) = sc.parse(row, "2026-08-20", "youtube-hourly")
+    assert got["external_metadata"]["rate_limit_info"]["rateLimitType"] == "five_hour"
+    assert capsys.readouterr().err == ""
+
+
+def test_書いてある行はそのまま通る(capsys):
+    row = ("01TwzHNxY2W2p1V4iLCDBZAx RUNNING 00:10:26 00:11:41 "
+           "016PyeT6Afj5KzKQ9xkKE3Kx 1787349600 allowed_warning seven_day")
+    (got,) = sc.parse(row, "2026-08-20", "youtube-hourly")
+    assert got["external_metadata"]["rate_limit_info"]["rateLimitType"] == "seven_day"
+    assert capsys.readouterr().err == "", "書いてある行で鳴らさないこと"

@@ -38,6 +38,10 @@
 
     <id> <status> <created> <updated> <parent> <resetsAt> <rlstatus> [<cr>,<cw>,<in>,<out>] [<tag>]
 
+- **週枠の行には `seven_day` と書くこと**（2026-08-20 09:4x に**この回が書き落とした**）。
+  書かない行は `five_hour` になります。**書き落としても、リセットが5時間より先なら
+  こちらで直して鳴らします** —— 5時間枠のリセットが窓の中の観測より5時間も先に
+  来ることはないからです。**鳴ったら、写した側を直すこと**
 - **タグの違う行は、そのタグを書くこと**（2026-08-20 09:2x に踏んだ。下の節）。
   `youtube-owner-request` のように**そのまま**書くか、`tag:a,b` と書く。
   書かなかった行は `--tag`（既定 `youtube-hourly`）になります
@@ -199,8 +203,13 @@ def row_tags(fields: list[str], default: str) -> list[str]:
     return out or [default]
 
 
+#: 5時間枠の長さ（秒）。**この枠のリセットは、窓の中の観測から5時間より先には来ません。**
+FIVE_HOUR_SEC = 5 * 3600
+
+
 def parse(rows: str, base: str, tag: str) -> list[dict]:
-    out = []
+    out: list[dict] = []
+    fixed: list[str] = []
     for raw in rows.splitlines():
         line = raw.split("#", 1)[0].strip()
         if not line:
@@ -212,9 +221,9 @@ def parse(rows: str, base: str, tag: str) -> list[dict]:
         # **位置ではなく中身で見ること**（2026-08-17 23:2x）。`f[7]` 決め打ちだと、
         # 落ち方の印を先に書いた行で `seven_day` が黙って `five_hour` に化けます
         # （このファイルが3度目の「片方だけ」です）。
+        kind = "seven_day" if "seven_day" in f[7:] else "five_hour"
         meta = {"rate_limit_info": {
-            "rateLimitType": "seven_day" if "seven_day" in f[7:] else "five_hour",
-            "resetsAt": int(resets), "status": rls}}
+            "rateLimitType": kind, "resetsAt": int(resets), "status": rls}}
         tokens = [x for x in f[7:] if re.fullmatch(r"\d+(,\d+){3}", x)]
         if tokens:
             cr, cw, i, o = (int(x) for x in tokens[0].split(","))
@@ -230,6 +239,15 @@ def parse(rows: str, base: str, tag: str) -> list[dict]:
             "parent_session_id": full_id(parent),
             "external_metadata": meta,
         }
+        # **書き忘れを、書いた側に頼らず捕まえる**（2026-08-20 09:4x に自分で踏んだ）。
+        # 5時間枠のリセットは、その窓の中の観測から**5時間より先には来ません**。
+        # 先にあるなら、それは週枠の行に `seven_day` を書き落としたものです。
+        if kind == "five_hour":
+            ahead = int(resets) - int(datetime.fromisoformat(
+                row["updated_at"].replace("Z", "+00:00")).timestamp())
+            if ahead > FIVE_HOUR_SEC:
+                meta["rate_limit_info"]["rateLimitType"] = "seven_day"
+                fixed.append(row["id"])
         ending = [x for x in f[7:] if x in ENDINGS]
         if ending:
             # **書かれていないことを「無かった」と読まないため**、印のある行にだけ
@@ -238,6 +256,11 @@ def parse(rows: str, base: str, tag: str) -> list[dict]:
             if ending[0] == "nosrc":
                 row["session_context"] = {"sources": []}
         out.append(row)
+    if fixed:
+        # **黙って直さないこと。** 直したこと自体が、写し方の欠けの合図です。
+        print(f"[compact] `seven_day` の書き落としを {len(fixed)} 行ぶん補いました"
+              f"（リセットが5時間より先だったので、5時間枠ではありえません）。"
+              f"**次からは行の末尾に `seven_day` と書くこと。**", file=sys.stderr)
     return out
 
 
