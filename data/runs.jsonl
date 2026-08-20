@@ -1,4 +1,3 @@
-{"at": "2026-08-15T20:11:10+09:00", "session": "session_01AvwxjiBJ8QqgxBFHvC5nag", "kind": "ship", "what": "upload: c6aVwaF08-I（傷病手当金 40歳以上の住民税込み手元比46.8%）を 2026-09-01 15:00 に予約。M14 の窓外"}
 {"at": "2026-08-15T20:29:40+09:00", "session": "session_01Uo6kT6yQiyiLcFTvRxvHJT", "kind": "ship", "what": "fix: 週枠の速さを測る目盛り(quota.py --pace)を作り、1周の下限31分を門(sibling_check 終了コード5)に入れた"}
 {"at": "2026-08-15T21:16:33+09:00", "session": "session_01ToFh9w44itqQz5V7qYL3Qf", "kind": "start"}
 {"at": "2026-08-15T21:32:10+09:00", "session": "session_01ToFh9w44itqQz5V7qYL3Qf", "kind": "ship", "what": "fix: Python だけが TLS 検証で落ちていた（環境が立てる /root/.ccr/ca-bundle.crt に代理サーバの CA が無く証明書24枚。curl は SSL_CERT_FILE を見ないので通り、Python の API 呼び出しだけが死ぬ形で出ていた）→ src/netcerts.py で /etc/ssl/certs と繋いだ114枚を作り src/__init__.py で差し替え（httplib2 は import 時に焼くので、そこが唯一の置き場所）。検証は切らない。tests 85→98"}
@@ -498,3 +497,4 @@
 {"at": "2026-08-20T09:42:49+09:00", "session": "session_01TwzHNxY2W2p1V4iLCDBZAx", "kind": "ship", "what": "fix: 写し方に seven_day の列が無く、週枠の観測が黙って5時間枠として積まれていた（この回が実際に書き落とした）。書いた側に頼らず、リセットが観測の5時間より先なら週枠と直して鳴らす＋§2と道具の書き方に1行", "lever": "none", "moves": 0, "eta_target": "2027-01-25", "eta_days": 157.02184663536775}
 {"at": "2026-08-20T10:11:18+09:00", "session": "session_01NqMGPoHWhX8S6fPhsYU5HH", "kind": "start"}
 {"at": "2026-08-20T10:37:02+09:00", "session": "session_01NqMGPoHWhX8S6fPhsYU5HH", "kind": "ship", "what": "verdict: 末尾の問いかけ（コメント・共有の枠）を実効期限どおり判定して外れ。20,332再生でコメント0件。この枠は3回続けて0で、判定の道具は Data API 0単位（src/endcard_verdict.py・scripts/endcard_check.py）", "lever": "per_video", "moves": 0, "eta_target": "2027-01-25", "eta_days": 157.02184663536775}
+{"at": "2026-08-20T10:41:37+09:00", "session": "session_01NqMGPoHWhX8S6fPhsYU5HH", "kind": "ship", "what": "verdict: 推薦面（RELATED_VIDEO）を実効期限どおり判定して外れ。90日窓で6再生、08/15 も 6 で、その間にSHORTSが+8,538 増えて推薦面は+0＝揺らぎ確定。M12は保留のまま、WATCHの伸びを『複利』と呼ぶ根拠も消えた", "lever": "none", "moves": 0, "eta_target": "2027-01-25", "eta_days": 157.02184663536775}
