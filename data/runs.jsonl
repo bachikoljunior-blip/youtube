@@ -1,5 +1,3 @@
-{"at": "2026-08-16T00:12:21+09:00", "session": "session_01Cox9GMhpv6ag9qgg9ggKK7", "kind": "start"}
-{"at": "2026-08-16T00:23:12+09:00", "session": "session_01Cox9GMhpv6ag9qgg9ggKK7", "kind": "ship", "what": "fix: 6回持ち越された『check_tables() のひな型』を切り出した。12本を並べると書いているものは4種類（速算表の昇順と境目の連続・法定値・単調性・範囲）で、うち速算表は5本が別々に手で書いていた → src/calc/_checks.py。あわせて『機械検査が値しか見ず、見出しと値の対応を誰も見ていない』穴を per_unit_steps で塞いだ（taishoku が5年とびの行に『1年あたり』と書いて素通りした欠陥）。写して埋める _template.py つき（埋め忘れると必ず落ちる）。souzoku/taishoku/jutaku を実際に載せ替え、tests 144→170"}
 {"at": "2026-08-16T00:55:03+09:00", "session": "session_01WDiJ3WSwCDkHTyWTG7Dnbc", "kind": "start"}
 {"at": "2026-08-16T01:04:36+09:00", "session": "session_01WDiJ3WSwCDkHTyWTG7Dnbc", "kind": "ship", "what": "means: src/calc/ikuji.py（育児休業給付を手取り比で出す）を _template.py から新規。節5→テーマ5件・tests 170→182・書くのに3.1分（従来20分）"}
 {"at": "2026-08-16T01:38:02+09:00", "session": "session_01V8pXxeMp4GXXCB1A6949Sg", "kind": "start"}
@@ -498,3 +496,5 @@
 {"at": "2026-08-20T17:42:44+09:00", "session": "session_01EvqdLGJg97otNa1dZhTSzN", "kind": "ship", "what": "率の格子と月額の埋め値を実在する幅へ直した（実在しない率を名指しする候補 13→0・月額の死んだ不変6件が標準報酬月額の上限を名指しする頭打ちへ）／あわせて『直せば歩留りは上がる』を測って否定（5/32のまま。落ち先の44%は自明な片効き・不変だった）", "lever": "density", "moves": 0, "eta_days": 1000000000}
 {"at": "2026-08-20T18:14:13+09:00", "session": "session_012kA8tZuWsGJ4ZeYCnpspTm", "kind": "start"}
 {"at": "2026-08-20T18:28:31+09:00", "session": "session_012kA8tZuWsGJ4ZeYCnpspTm", "kind": "ship", "what": "src/calc/aoiro.py（青色申告特別控除）を1本書いて節5件＝テーマ5件を在庫へ（437→442・歩留り1.0）。あわせて予約が付かず永久に出ないままだった2本を 09/13・09/14 へ入れた", "lever": "density", "moves": -1, "eta_target": "2027-01-24", "eta_days": 156.88346214036355}
+{"at": "2026-08-20T19:11:40+09:00", "session": "session_019EnWeecVdzsvpSqYVTKMRB", "kind": "start"}
+{"at": "2026-08-20T19:28:55+09:00", "session": "session_019EnWeecVdzsvpSqYVTKMRB", "kind": "ship", "what": "A/Bの在庫を「1日ぶんの上限」で数えていたのを、締切までの日数で数えるよう直した（per_calc=2 は1日の門）。hook_form の在庫 26→33本と読め、問い群が「あと13本／在庫12本＝足りません」から「在庫16本＝足ります」へ。ab_balance も **動かせません** から 問い15→16 に変わり、1件を付け替えた", "lever": "per_video", "moves": 0, "eta_target": "2027-01-24", "eta_days": 156.88346214036355}

@@ -43,6 +43,7 @@ from __future__ import annotations
 import argparse
 import re
 import sys
+from datetime import date
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -51,6 +52,8 @@ sys.path.insert(0, str(ROOT))
 from scripts import batch_build                     # noqa: E402
 from src import config                              # noqa: E402
 from src import script_writer                       # noqa: E402
+from src.ab_split import EXPERIMENTS, settle_by     # noqa: E402
+from src.supply import today_jst                    # noqa: E402
 
 TOPICS = ROOT / "config" / "topics.yaml"
 
@@ -72,9 +75,38 @@ ARMS = {
 SUFFIXES = tuple(f"-r{i}" for i in range(2, 40))
 
 
-def _pool(count: int = 60) -> list[dict]:
-    """`pick` が実際に返す本。**在庫全部ではありません**（1つの calc から2本まで）。"""
-    return batch_build.pick(count, [])
+def days_until(settle: date, today: date | None = None) -> int:
+    """締切の日までに**置ける日数**（今日も含む）。過ぎていても 1 は返します。"""
+    return max(1, (settle - (today or today_jst())).days + 1)
+
+
+def _pool(count: int = 60, days: int = 1) -> list[dict]:
+    """締切までの `days` 日ぶんに置ける本。
+
+    ## `per_calc` は「1日に何本まで」の門です（2026-08-20 19:2x に測って直した）
+
+    ここは長らく `batch_build.pick(count, [])` —— つまり **1日ぶんの上限**でした。
+    `pick` の `per_calc=2` は「**同じ制度の本が1日に何本も並ぶと繰り返しに見える**」
+    という理由で置かれた門なので（`batch_build.pick` の docstring）、
+    **20日先の締切に何本置けるかを聞く場面では、掛ける日数のぶんだけ緩みます。**
+
+    実測（2026-08-20 19:2x）:
+
+        未投稿・calc あり            **33本**
+        pick(60)（＝1日ぶん）        **26本**   ← 7本が見えていなかった
+          内訳: aoiro 5→2 / zoyo 4→2 / kogaku 3→2 / nenkinmenjo 3→2
+
+    `hook_form` は両群 16本＝**32本**が床で、締切は 09/09（20日先）。
+    **26本と読むと「在庫だけでは床に届きません」になり、33本と読むと届きます。**
+    `ab_balance` はそこで `**動かせません。**` と言って降りていました ——
+    `eta.py` がこの回に名指しした腕（`per_video`）を測る唯一の実験が、
+    **在庫の数え方だけで畳まれる**形です（`src/ab_split.py` 冒頭の `next_if_false`）。
+
+    **1日の門はそのまま**です。20日に散らすので、aoiro の5本は
+    2本/日 × 20日 = 40本の枠に収まります。
+    """
+    days = max(1, days)
+    return batch_build.pick(count, [], per_calc=batch_build.DEFAULT_PER_CALC * days)
 
 
 def tally(rows: list[dict], split) -> dict[str, list[str]]:
@@ -100,10 +132,14 @@ def rename_for(topic_id: str, want: str, split, taken: set[str]) -> str | None:
 
 
 def plan(target: int, split_name: str = "hook_form",
-         count: int = 60) -> tuple[dict[str, list[str]], list[tuple[str, str]], str]:
-    """どの本を、どちらの腕へ付け替えるか。**書き込みはしません。**"""
+         count: int = 60, days: int = 1) -> tuple[dict[str, list[str]], list[tuple[str, str]], str]:
+    """どの本を、どちらの腕へ付け替えるか。**書き込みはしません。**
+
+    `days` は**締切までに置ける日数**（`days_until`）。`per_calc` は1日ぶんの門なので、
+    ここを 1 にすると在庫を**実際より少なく**数えます（`_pool` の冒頭）。
+    """
     split = SPLITS[split_name]
-    rows = _pool(count)
+    rows = _pool(count, days)
     counts = tally(rows, split)
     for arm in ARMS[split_name]:
         counts.setdefault(arm, [])          # **0本の腕も、腕として数える**
@@ -155,11 +191,14 @@ def main() -> None:
     ap.add_argument("--target", type=int, default=12,
                     help="どちらの腕にも、この本数を用意する（判定の床は8本）")
     ap.add_argument("--count", type=int, default=60, help="`pick` に頼む数")
+    ap.add_argument("--days", type=int, default=0,
+                    help="締切までに置ける日数（既定は実験の締切から数える）")
     ap.add_argument("--apply", action="store_true", help="実際に書き換える")
     a = ap.parse_args()
 
-    counts, moves, note = plan(a.target, a.split, a.count)
-    print(f"=== {a.split} の腕（`pick({a.count})` が返す本だけ）===")
+    days = a.days or days_until(settle_by(EXPERIMENTS[a.split]))
+    counts, moves, note = plan(a.target, a.split, a.count, days)
+    print(f"=== {a.split} の腕（締切まで {days}日 に置ける本）===")
     for arm in sorted(counts):
         print(f"  {arm:6s} {len(counts[arm]):3d}本")
     print(f"  目標 {a.target}本（判定の床は8本）")
@@ -174,7 +213,7 @@ def main() -> None:
         return
     n = apply(moves)
     print(f"\n[ab_balance] {n}件を書き換えました: {TOPICS}")
-    counts2 = tally(_pool(a.count), SPLITS[a.split])
+    counts2 = tally(_pool(a.count, days), SPLITS[a.split])
     print("=== 書き換えた後 ===")
     for arm in sorted(counts2):
         print(f"  {arm:6s} {len(counts2[arm]):3d}本")

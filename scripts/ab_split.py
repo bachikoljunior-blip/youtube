@@ -25,20 +25,29 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src import ab_power  # noqa: E402
-from src.ab_split import EXPERIMENTS, report  # noqa: E402
+from src.ab_split import EXPERIMENTS, report, settle_by  # noqa: E402
 
 
-def stock_by_experiment(count: int = 60) -> dict[str, dict[str, int]]:
+def stock_by_experiment(count: int = 60, today: date | None = None) -> dict[str, dict[str, int]]:
     """実験ごとに「未投稿の在庫が、どちらの腕に何本あるか」。
 
-    **`batch_build.pick` が返す本だけ**を数えます（在庫全部ではありません ——
-    1つの calc から2本までという門が先に効くので、`pick` の返りが実際に作れる上限です）。
-    """
-    from scripts.ab_balance import _pool, tally
+    **実験ごとに締切までの日数で数えます**（2026-08-20 19:2x に測って直した）。
 
-    rows = _pool(count)
+    ここは長らく `_pool(count)` —— つまり **1日ぶんの上限**でした。
+    `pick` の `per_calc=2` は「同じ制度の本が**1日に**何本も並ぶと繰り返しに見える」
+    ための門なので、**締切が20日先なら 2本/日 × 20日 まで置けます。**
+    1日ぶんで数えると、実測で **33本の在庫が 26本**に見えました
+    （aoiro 5→2・zoyo 4→2・kogaku 3→2・nenkinmenjo 3→2）。
+
+    `hook_form` の床は両群16本＝**32本**なので、この7本の差が
+    「在庫だけでは床に届きません」と「届きます」を分けます。
+    """
+    from scripts.ab_balance import _pool, days_until, tally
+
     out: dict[str, dict[str, int]] = {}
     for name, exp in EXPERIMENTS.items():
+        days = days_until(settle_by(exp), today)
+        rows = _pool(count, days)
         out[name] = {g: len(v) for g, v in tally(rows, exp.split).items()}
     return out
 

@@ -89,7 +89,7 @@ def _rows(ids: list[str]) -> list[dict]:
 def test_動かすのはpickが返した本だけ(monkeypatch):
     """**投稿済みの本には触りません。**`pick` が既に外しているので、そこから出ません。"""
     pool = _rows(FORGED_2026_08_20 + ["s-x-a", "s-x-b"])
-    monkeypatch.setattr(ab_balance, "_pool", lambda count=60: pool)
+    monkeypatch.setattr(ab_balance, "_pool", lambda count=60, days=1: pool)
     monkeypatch.setattr(ab_balance.config, "load_topics",
                         lambda: {"topics": pool})
     _, moves, _ = ab_balance.plan(target=4, split_name="hook_form")
@@ -100,7 +100,7 @@ def test_動かすのはpickが返した本だけ(monkeypatch):
 
 def test_短いほうを目標まで埋め_長いほうを目標より下にしない(monkeypatch):
     pool = _rows(FORGED_2026_08_20 + ["s-x-a", "s-x-b"])
-    monkeypatch.setattr(ab_balance, "_pool", lambda count=60: pool)
+    monkeypatch.setattr(ab_balance, "_pool", lambda count=60, days=1: pool)
     monkeypatch.setattr(ab_balance.config, "load_topics", lambda: {"topics": pool})
     counts, moves, _ = ab_balance.plan(target=5, split_name="hook_form")
     short = min(counts, key=lambda a: len(counts[a]))
@@ -112,7 +112,7 @@ def test_短いほうを目標まで埋め_長いほうを目標より下にし�
 def test_足りないときは動かさずに理由を出す(monkeypatch):
     """**在庫そのものが足りない回に、腕を削って取り繕わないこと。**"""
     pool = _rows(FORGED_2026_08_20[:3])
-    monkeypatch.setattr(ab_balance, "_pool", lambda count=60: pool)
+    monkeypatch.setattr(ab_balance, "_pool", lambda count=60, days=1: pool)
     monkeypatch.setattr(ab_balance.config, "load_topics", lambda: {"topics": pool})
     _, moves, note = ab_balance.plan(target=12, split_name="hook_form")
     assert moves == []
@@ -141,3 +141,73 @@ def test_当たらないidでは書かない(tmp_path, monkeypatch):
     with pytest.raises(SystemExit):
         ab_balance.apply([("s-nothing", "s-nothing-r2")])
     assert y.read_text(encoding="utf-8") == "topics:\n  - id: s-a-1\n"
+
+
+# ===================================================================
+# **在庫を「1日ぶんの上限」で数えていた**（2026-08-20 19:2x に測って直した）
+#
+# `pick` の `per_calc=2` は「**同じ制度の本が1日に何本も並ぶと繰り返しに見える**」
+# ための門です（`batch_build.pick` の docstring）。ところが `_pool` はそれを
+# **締切までに作れる上限**として使っていました。
+#
+# 実測（2026-08-20 19:2x・`config/topics.yaml`）:
+#     未投稿・calc あり            33本
+#     pick(60)（＝1日ぶん）        26本   ← aoiro 5→2 / zoyo 4→2 / kogaku 3→2 / nenkinmenjo 3→2
+#
+# `hook_form` の床は両群16本＝**32本**。26本と読むと `**動かせません。**` で降り、
+# 33本と読むと 問い15→16 / 条件18→17 で**両腕とも床に届きます。**
+# ===================================================================
+
+
+def test_締切までの日数だけper_calcが緩む(monkeypatch):
+    """`_pool(days=d)` が `pick` に渡す `per_calc` は **1日ぶん × d** です。"""
+    seen: dict = {}
+
+    def fake_pick(count, explicit, per_calc=2):
+        seen["count"], seen["per_calc"] = count, per_calc
+        return []
+
+    monkeypatch.setattr(ab_balance.batch_build, "pick", fake_pick)
+    ab_balance._pool(60, days=1)
+    assert seen["per_calc"] == ab_balance.batch_build.DEFAULT_PER_CALC
+    ab_balance._pool(60, days=21)
+    assert seen["per_calc"] == ab_balance.batch_build.DEFAULT_PER_CALC * 21, (
+        "**締切が21日先でも1日ぶんの門で数えています。**在庫が実際より少なく見えます"
+    )
+
+
+def test_日数は今日をふくむ():
+    from datetime import date
+    assert ab_balance.days_until(date(2026, 9, 9), date(2026, 8, 20)) == 21
+    assert ab_balance.days_until(date(2026, 8, 20), date(2026, 8, 20)) == 1
+    assert ab_balance.days_until(date(2026, 8, 1), date(2026, 8, 20)) == 1, (
+        "過ぎた締切でも 1 未満にはしない（0本と読むと在庫が丸ごと消えます）"
+    )
+
+
+def test_既知の当たり_33本の在庫なら両腕とも16本に届く(monkeypatch):
+    """**2026-08-20 19:2x の実測そのもの。** 26本と読むと降り、33本と読むと動きます。
+
+    腕の内訳（実測）: 問い 15 / 条件 18 → 1本の付け替えで 16 / 17。
+    """
+    from src.script_writer import hook_form as hf
+
+    pool = []
+    i, arms = 0, {"問い": 0, "条件": 0}
+    while arms["問い"] < 15 or arms["条件"] < 18:
+        tid = f"s-stock-{i}"
+        i += 1
+        a = hf(tid)
+        if arms[a] >= (15 if a == "問い" else 18):
+            continue
+        arms[a] += 1
+        pool.append({"id": tid, "calc": "aoiro", "title_seed": "", "score": 1.0})
+    assert len(pool) == 33
+
+    monkeypatch.setattr(ab_balance, "_pool", lambda count=60, days=1: pool)
+    monkeypatch.setattr(ab_balance.config, "load_topics", lambda: {"topics": pool})
+    counts, moves, note = ab_balance.plan(target=16, split_name="hook_form", days=21)
+    assert len(moves) == 1, f"1本の付け替えで届くはずです: {note}"
+    after = {a: len(v) for a, v in counts.items()}
+    assert after["問い"] == 15 and after["条件"] == 18
+    assert "動かせません" not in note
