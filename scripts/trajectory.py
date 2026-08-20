@@ -859,9 +859,14 @@ def render(m: dict, today: dt.date) -> list[str]:
     P("")
     P("  **段0 いま**")
     P(f"      [実測] 実績（直近{tr['n']}日）    {st['views_hist']:,.0f}回/日"
-      f"  ＝ 供給 {st['supply_hist']:.1f}本/日 × V {st['V']:.0f}回")
-    P(f"      [実測] 予約どおりなら        {st['views_sched']:,.0f}回/日"
-      f"  ＝ 供給 {st['supply_sched']:.1f}本/日 × V {st['V']:.0f}回")
+      f"   …… 供給 {st['supply_hist']:.1f}本/日 × V {st['V']:.0f}回 "
+      f"＝ {st['supply_hist']*st['V']:,.0f}（**日次の平均と本の平均を掛けているので"
+      f"{abs(st['supply_hist']*st['V']/st['views_hist']-1)*100:.0f}%ずれます**。")
+    P("             **帳尻が合うことの根拠は上の節の -0.4% のほうで、この行ではありません**）")
+    P(f"      [実測] 予約 {st['supply_sched']:.1f}本/日 × [実測] V {st['V']:.0f}回"
+      f" → **{st['views_sched']:,.0f}回/日 の見込み**")
+    P("             （**入力は2つとも実測、掛けた結果は見込み**です。"
+      "まだ Analytics に出ていません）")
     P(f"      **予約を入れ替えただけで ×{st['views_sched']/st['views_hist']:.1f}。**"
       "これは既に済んでいて、Analytics に出るのはこれからです")
     P("")
