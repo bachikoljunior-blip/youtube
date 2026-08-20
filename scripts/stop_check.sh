@@ -216,6 +216,35 @@ EOF
   rm -f "$WCOUNT"
 fi
 
+# --- (1.6) **出したのに、予測へ入れ直さないまま終わらせない**（2026-08-20 に足した） ---
+#
+# オーナー指示（原文）: **「毎回の実行で予測するように言ったはずなので、毎回その予測に反映して」**
+#
+# 予測は回の**最初**に出ます。腕を引いたのはそのあとなので、**出したものは
+# その回の予測に入っていません。** 入れ直さないと、次の回もまた作業前の日付から始まり、
+# **動かしたはずのものがどの日付にも現れません。**
+# 判定の中身は `src/reflect.py`（ship の `at` より新しい eta の点があるか、だけ）。
+REFLECT=$(cd "$ROOT" && timeout 20 python3 -m src.reflect --pending --session "${ME:-}" 2>/dev/null || true)
+if [ -n "$REFLECT" ]; then
+  RCOUNT="$STATE_DIR/claude-youtube-reflect-blocks-${ME:-none}"
+  RN=$(cat "$RCOUNT" 2>/dev/null || echo 0)
+  if [ "$RN" -lt 3 ]; then
+    echo $((RN + 1)) > "$RCOUNT"
+    cat <<EOF2 >&2
+【出したものが、まだ予測に入っていません】（${RN}→$((RN + 1))回目・3回で通します）
+
+${REFLECT}
+
+**撃ち直すだけです**（\`--offline\` なら外の口を叩かず5秒）。積んだ点が
+「宣言 → 実際」の突き合わせの片側になります（\`eta.py\` 末尾の「宣言と実際」）。
+**外れてよい。** 外れたと分かるほうが、何も残さず進むより速い。
+EOF2
+    printf '{"decision":"block","reason":"出したものを予測へ入れ直してから終わってください（python scripts/eta.py）"}\n'
+    exit 0
+  fi
+  rm -f "$RCOUNT"
+fi
+
 # --- (2) 普通の「終わるのが最善か」。5分以内に一度問うていれば通す ---
 if [ -f "$SENTINEL" ]; then
   LAST=$(cat "$SENTINEL" 2>/dev/null || echo 0)

@@ -38,6 +38,7 @@ import functools as _functools  # noqa: E402
 from src import ab_power as _ab_power  # noqa: E402
 from src import ab_split as _ab  # noqa: E402
 from src import watches as _watches  # noqa: E402
+from src import reflect as _reflect  # noqa: E402
 
 
 @_functools.lru_cache(maxsize=1)
@@ -1981,6 +1982,13 @@ def main(days: int = 7) -> int:
     末尾に固定されたままです（あの節は `tail` で拾えることが存在理由なので、
     後ろに何かを足すと壊れます）。**落ちた回だけ、ここで拾い直します。**
     """
+    # **前の回が「出したもの」を予測へ入れ直したか**（2026-08-20・オーナー指示
+    # 「毎回その予測に反映して」）。**入れ直していなければ、ここが先頭で鳴ります。**
+    # 中身は `src/reflect.py`。答えは「撃ち直す」しかなく、印字では消えません。
+    for _ln in _reflect.lines():
+        print("[!] **前の回が出したものが、予測に入っていません。** " + _ln
+              if _ln.startswith("出した") else "    " + _ln)
+
     try:
         return _channel_main(days)
     except Exception as exc:

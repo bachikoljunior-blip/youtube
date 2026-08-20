@@ -2649,6 +2649,10 @@ def main() -> int:
         row["arm_rates"] = {k: a["rate"] for k, a in tr["arms"].items()}
         row["arm_hits"] = f"{tr['band']['k']}/{tr['band']['n']}"
     row["videos_needed_gate1"] = pl.get("gate1", {}).get("need_videos")
+    # **`--offline` の点だと分かる形で積む**（2026-08-20）。中身は最後の実測の写しで、
+    # **新しい実測ではありません。** 印が無いと、次の回は写しを実測として数えます。
+    if args.offline:
+        row["offline"] = True
     for line in _drift(row):
         print(line)
     # **「予測 → 腕を選ぶ → 進む」の、選んだ側の実績**（オーナー指示 2026-08-19 21:2x）。
