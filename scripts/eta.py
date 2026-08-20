@@ -1567,6 +1567,8 @@ def _report_plan(m: dict, a: dict, pl: dict | None = None) -> list[str]:
         else:
             P("        予約0本の日はありません（穴埋めと測定が競合しません）")
     P("")
+    out.extend(_report_supply(pl))
+    P("")
     if pl["lever_hint"] == "density":
         P(f"  **この回の一手は、門を開ける側（`{pl['lever_hint']}` / `sub_rate`）です** ——"
           " 到達日を縛っているのは収益化の門と、その後の30日のほうで、")
@@ -1578,6 +1580,48 @@ def _report_plan(m: dict, a: dict, pl: dict | None = None) -> list[str]:
           " 到達日を縛っているのは再生数（段4）のほうで、")
         P("  門をいくら早く開けても、20万に届く日は動きません。"
           "**上の1行の測定が、その倍率を確定させます。**")
+    return out
+
+
+def _report_supply(pl: dict) -> list[str]:
+    """**その密度を出せるかを、在庫の側から確かめる**（2026-08-20 13:4x に足した）。
+
+    ## なぜ要るか（**この節が無い間、日付は supply を一度も見ていませんでした**）
+
+    `plan()` は `PLAN_PUBLISH_PER_DAY = 25` で段1 を解き、段1 が段3 を、
+    段3 が段4 を押します。**到達予測の日付は、まるごとこの 25 の上に乗っています。**
+    ところが定数の脇の註は「受け取り帳 3c7e12a3 の**詰め直し**が着地する所」——
+    **予約の置き方**であって、**作れる本数ではありません。**
+
+    実測（足した回）: 未投稿の在庫 36本・**未使用の節 0件**・
+    `config/topics.yaml` は 08/19 16:34 UTC から **20時間 増えていません**。
+    その 20時間に公開のほうは 25本/日 で進んでいます。
+    **25本/日 × 157日 ＝ 3,925本** に対し、いま在るもの（在庫＋掃引の候補）は **527本**。
+
+    **「届かない」と言うためではありません。** 出すのは
+    **1周あたり何本の節を書けば 25本/日 が保つか**（実測 **1.0本/周**）——
+    `density` の腕は、この回では**そこにしか無い**からです
+    （投稿の本数枠が閉じている窓では `upload` を選べません。1日16時間前後がそれ）。
+
+    **この節は日付を動かしません**（`plan()` の段には入れていません）。
+    supply は人が節を書けば伸びるので、**床として使うと「書かない未来」を
+    予測として印字する**ことになります。**出すのは、この回に要る本数だけ。**
+    """
+    from src import supply as supply_mod
+
+    out: list[str] = []
+    P = out.append
+    days = pl.get("days_to_target")
+    horizon = days if isinstance(days, (int, float)) and days < NEVER else None
+    try:
+        sw = supply_mod.sweep_novel()
+        sp = supply_mod.supply(pl["density"], novel=sw["novel"], horizon_days=horizon)
+    except Exception as exc:      # 台帳が読めなくても、予測そのものは止めないこと
+        return [f"    （在庫の supply は読めませんでした: {exc}）"]
+    out.extend(supply_mod.lines(sp))
+    if sw.get("age_hours") is not None and sw["age_hours"] > 24:
+        P(f"    （掃引の点は {sw['age_hours']:.0f}時間前。測り直しは"
+          " `python -m src.supply --measure --density 25`）")
     return out
 
 
