@@ -335,3 +335,7 @@
 {"at": "2026-08-20T16:28:35+09:00", "key": "undeclared_close", "n": 1, "session": "session_01HdwUGLwPkiA8u74FfheoAf", "by": "run_marker.py"}
 {"at": "2026-08-20T17:10:41+09:00", "key": "calc_gap", "n": 12, "session": "session_01C2eSBCmfXKkqvXh77Bv4jF", "by": "status"}
 {"at": "2026-08-20T17:12:17+09:00", "key": "undeclared_close", "n": 1, "session": "session_01C2eSBCmfXKkqvXh77Bv4jF", "by": "run_marker.py"}
+{"at": "2026-08-20T17:15:02+09:00", "key": "stranded", "n": 2, "session": "session_01EvqdLGJg97otNa1dZhTSzN", "by": "status.py"}
+{"at": "2026-08-20T17:15:02+09:00", "key": "dupes_actionable", "n": 14, "session": "session_01EvqdLGJg97otNa1dZhTSzN", "by": "status.py"}
+{"at": "2026-08-20T17:15:06+09:00", "key": "carry_over", "n": 13, "session": "session_01EvqdLGJg97otNa1dZhTSzN", "by": "retro.py"}
+{"at": "2026-08-20T17:16:43+09:00", "key": "calc_gap", "n": 12, "session": "session_01EvqdLGJg97otNa1dZhTSzN", "by": "status.py"}

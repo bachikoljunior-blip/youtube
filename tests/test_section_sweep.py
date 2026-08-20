@@ -1276,3 +1276,77 @@ def test_引数を取る表も行として歩ける():
     hits = ss.sweep_rows(ir.low_income_grid, name="low_income_grid")
     assert hits, "引数を埋めれば歩ける表を、1件も歩いていない"
     assert all(h.get("固定した引数") for h in hits), "埋めた引数が候補に残っていない"
+
+
+# --------------------------------------------------------------------------
+# **格子が「実在しない世界」を歩かないこと**（2026-08-20 に足した）
+#
+# 8/20 15:5x に歩留りを初めて測ったところ **5/32 = 0.156** で、落ちた27件の
+# 最大の族は「引数の振れ幅の作りごと」でした —— `social_rate` を 0.7〜0.9 まで
+# 振って住民税が 0、`monthly_pay` を 1,500,000→11,999,999 と振って「不変」。
+# **どちらも節に書けません**（そんな世界は無いので）。
+#
+# ここで固定するのは**幅のほう**です。件数や歩留りは固定しません
+# （測り直すたびに動く数なので、検査に入れると測るたびに赤くなる）。
+# --------------------------------------------------------------------------
+
+def test_率の格子は名前で決めた実在する幅の中に収まる():
+    from src import calc_axes
+    for key, (lo, hi) in calc_axes.RATE_BAND.items():
+        family, _, param = key.rpartition(".")
+        xs = ss._grid((lo + hi) / 2, param, family)
+        assert len(xs) >= 4, f"{key}: 点が {len(xs)} 個しかない（掃引に足りない）"
+        assert min(xs) >= lo - 1e-9 and max(xs) <= hi + 1e-9, f"{key}: {xs} が幅 {lo}〜{hi} を出た"
+
+
+def test_名前の無い率は既定値のまわりだけを歩く():
+    """`RATE_BAND` に無い率は、**既定値の 0.5〜2倍**。0.1〜0.9 の一律ではない。
+
+    既定値は、その関数を書いた側が置いた「実在の1点」なので、
+    そのまわりは必ず実在の側に残ります。
+    """
+    xs = ss._grid(0.15, "shiranai_rate", "shiranai")
+    assert min(xs) >= 0.15 * 0.5 - 1e-9
+    assert max(xs) <= 0.15 * 2.0 + 1e-9
+    assert max(xs) < 0.5, f"実在しない高さまで振っている: {xs}"
+
+
+def test_桁の細かい率でも点が潰れない():
+    """`koyouhoken` の率は 0.0055。**2桁で丸めると9点が全部 0.01 になる。**
+
+    そうなると `len(xs) < 4` で関数ごと掃引から落ちます（例外も警告も出ない）。
+    """
+    xs = ss._grid(0.0055, "worker_rate", "koyouhoken")
+    assert len(set(xs)) >= 4, f"点が潰れている: {xs}"
+    assert xs == sorted(xs)
+
+
+def test_月額の引数に年収の代表値を入れない():
+    """`monthly*` は月給。**所得の軸の 3,000,000 が入ると月給300万円**になる。
+
+    `_grid` は 0.5〜4倍で振るので、月150万〜1,200万を歩きます。
+    そこで見つかる崖は1つも実在しません（8/20 の実測で6件）。
+    """
+    for family, param in [("rousai", "monthly"), ("ikuji", "monthly_pay"),
+                          ("shahoken", "monthly_before"), ("izoku", "avg_monthly"),
+                          ("koureikoyou", "w60"), ("shobyo", "standard_pay"),
+                          ("yukyu", "monthly_wage")]:
+        fill = ss._axis_fill(param, family)
+        assert fill is not None, f"{family}.{param} が埋められない"
+        assert fill <= 500_000, f"{family}.{param} の埋め値が月額として大きすぎる: {fill:,}"
+
+
+def test_族べつの埋め値は部分一致より先に引く():
+    """同じ `monthly` でも、`shokibo` は共済の掛金（月1,000〜70,000円）。"""
+    from src import calc_axes
+    assert "shokibo.monthly" in calc_axes.PARAM_FILL
+    assert ss._axis_fill("monthly", "shokibo") < ss._axis_fill("monthly", "rousai")
+
+
+def test_量の引数が所得の軸へ落ちていない():
+    """`annual_days_off`（年間休日）と `bonus_months`（賞与の月数）は、
+    名前に `annual` / `bonus` が入っているだけで所得の軸へ寄っていた。"""
+    assert ss._axis_fill("annual_days_off", "zangyo") <= 200
+    assert ss._axis_fill("bonus_months", "rousai") <= 12
+    assert ss._axis_fill("purchase_ratio", "invoice") < 1
+    assert ss._axis_fill("annual_rate", "jutaku") < 1

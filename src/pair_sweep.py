@@ -61,8 +61,8 @@ import itertools
 from typing import Any, Callable
 
 from src import calc_axes
-from src.section_sweep import (GRID, _enum_containers, _grid, _scalars,
-                               calc_modules)
+from src.section_sweep import (GRID, _enum_containers, _family, _grid,
+                               _scalars, calc_modules)
 
 #: 拾う形。**足したら、ここに足すこと**（`--shape` の選択肢もここを見ます）。
 SHAPES = ("崖の近さ", "和の平坦", "順序の逆転")
@@ -174,11 +174,11 @@ def _sweep_axis(fn: Callable, name: str) -> list[float] | None:
     if isinstance(p.default, bool):
         return None
     if isinstance(p.default, (int, float)):
-        return _grid(float(p.default))
+        return _grid(float(p.default), name, _family(fn))
     axis = calc_axes.axis_of(name)
     if axis is None or axis not in AXIS_FILL:
         return None
-    return _grid(AXIS_FILL[axis])
+    return _grid(AXIS_FILL[axis], name, _family(fn))
 
 
 def unit_of(key: str, ys: list[float]) -> str | None:

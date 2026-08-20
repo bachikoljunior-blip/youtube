@@ -123,15 +123,69 @@ Y_KEYS = ("止まった値", "値", "跳ぶ幅", "動かない値", "帯の中",
           "どこ", "倍率", "並び")
 
 
-def _grid(default: float) -> list[float]:
+def _family(fn: Callable) -> str:
+    """関数の族名（`src.calc.ikuji` → `ikuji`）。取れなければ空文字。"""
+    return getattr(fn, "__module__", "").rsplit(".", 1)[-1]
+
+
+def _linspace(lo: float, hi: float) -> list[float]:
+    """`lo`〜`hi` に GRID 点を等間隔で置く。**丸めの桁は刻みから決める。**
+
+    固定の桁で丸めないこと —— `koyouhoken` の率は 0.0055 なので、
+    2桁で丸めると **9点が全部 0.01 になって**掃引に足りなくなります
+    （`len(xs) < 4` で関数ごと落ちる）。刻みより2桁細かく丸めれば、
+    どの桁の率でも点が潰れません。
+    """
+    step = (hi - lo) / (GRID - 1)
+    if step <= 0:
+        return [lo]
+    digits = max(2, 2 - math.floor(math.log10(step)))
+    out: list[float] = []
+    for i in range(GRID):
+        x = round(lo + step * i, digits)
+        if not out or x > out[-1]:
+            out.append(x)
+    return out
+
+
+def _rate_grid(default: float, param: str = "", family: str = "") -> list[float]:
+    """率（0 < x < 1）を、**実在する幅**で振る（2026-08-20 に直した）。
+
+    ここは長らく **一律 0.1〜0.9** でした。`social_rate` を 0.7〜0.9 まで
+    振れば住民税は 0 になり、`rate`（所得税率）0.9 の崖も出ます ——
+    **どちらも実在しない世界の話**なので、節には書けません。
+    8/20 に歩留りを初めて測ったところ **0.156**（5/32）で、
+    **落ちた27件の過半がこれ**でした（`supply.SWEEP_YIELD` の註）。
+
+    引くのは2段です:
+
+        1. `calc_axes.RATE_BAND` に名前があれば、その幅（`族.引数名` が先）
+        2. 無ければ **既定値の 0.5倍〜2倍**（上は 0.99 で止める）
+
+    2 が効くのは、**既定値そのものが「その関数を書いた側の置いた実在の1点」**
+    だからです。まわりを ±倍で取れば、桁は必ず実在の側に残ります。
+    **幅を狭めるほど候補の件数は減る**ので、直したら
+    `python -m src.supply --measure` で **歩留り × 件数**を見ること。
+    """
+    band = calc_axes.RATE_BAND.get(f"{family}.{param}") or calc_axes.RATE_BAND.get(param)
+    if band is not None:
+        return _linspace(band[0], band[1])
+    lo = max(default * 0.5, 1e-9)
+    hi = min(default * 2.0, 0.99)
+    if hi <= lo:
+        hi = min(default * 1.5, 0.99)
+    return _linspace(lo, hi)
+
+
+def _grid(default: float, param: str = "", family: str = "") -> list[float]:
     """既定値のまわりに点を置く。**桁で置き方を変える。**
 
-    - 率（0 < x < 1）      → 0.1 刻み
+    - 率（0 < x < 1）      → `_rate_grid`（**実在する幅**。名前で引く）
     - 小さい整数（〜200）   → 既定の半分〜2倍を整数で
     - 金額（それ以上）      → 既定の 0.5〜4倍を対数で
     """
     if isinstance(default, float) and 0 < default < 1:
-        return [round(0.1 * i, 2) for i in range(1, GRID + 1)]
+        return _rate_grid(default, param, family)
     if abs(default) <= 200:
         lo = max(1, int(default * 0.5))
         hi = max(lo + GRID, int(default * 2))
@@ -251,7 +305,7 @@ def _sweepable_params(fn: Callable,
         if name in skip:
             continue
         if p.default is inspect.Parameter.empty:
-            fill = _axis_fill(name)
+            fill = _axis_fill(name, _family(fn))
             if fill is None:
                 return []      # 埋めようのない引数は、そのまま呼べない
             out.append((name, fill))
@@ -262,7 +316,7 @@ def _sweepable_params(fn: Callable,
     return out
 
 
-def _axis_fill(param: str) -> float | None:
+def _axis_fill(param: str, family: str = "") -> float | None:
     """既定値の無い数値の引数に置く代表値。寄せられなければ `None`。
 
     **正本は `calc_axes`**（2026-08-19 に `pair_sweep` から移した）。
@@ -270,6 +324,8 @@ def _axis_fill(param: str) -> float | None:
 
     引くのは4つ。**この順です**（2026-08-19 に3つで足し、2026-08-20 に1つ増えた）:
 
+        `PARAM_FILL` の `族.引数名`   **同じ名前が族によって桁の変わるもの**
+                       （`shokibo.monthly` は共催の掛金・`rousai.monthly` は月給）
         `EXACT_FILL`   **名前が完全に一致したときだけ**引く表。
                        部分一致に置けない短い名前（`i` / `n` / `step`）はここ
         `PARAM_FILL`   名前ごとの値。**軸の代表値では桁が合わない引数**
@@ -281,10 +337,15 @@ def _axis_fill(param: str) -> float | None:
     **`FILL_ONLY` を `SEMANTIC_AXES` に足して済ませないこと。** あちらは
     表どうしを繋ぐ軸で、つまみを入れると母数だけが膨らみます。
     """
+    qualified = calc_axes.PARAM_FILL.get(f"{family}.{param}")
+    if qualified is not None:
+        return float(qualified)
     exact = calc_axes.EXACT_FILL.get(param)
     if exact is not None:
         return float(exact)
     for name, value in calc_axes.PARAM_FILL.items():
+        if "." in name:
+            continue           # 族つきは上で完全一致だけ引く（部分一致に混ぜない）
         if name == param or name in param:
             return float(value)
     axis = calc_axes.axis_of(param)
@@ -385,7 +446,7 @@ def unreachable(fn: Callable, *, calc: str = "", name: str = "") -> str:
     for pname, p in calc_axes.real_params(fn):
         if pname in enums or p.default is not inspect.Parameter.empty:
             continue
-        if _axis_fill(pname) is None:
+        if _axis_fill(pname, _family(fn)) is None:
             return pname
     return ""
 
@@ -511,7 +572,7 @@ def _required_others(fn: Callable, pname: str) -> dict[str, Any] | None:
     for name, p in calc_axes.real_params(fn):
         if name == pname or p.default is not inspect.Parameter.empty:
             continue
-        fill = _axis_fill(name)
+        fill = _axis_fill(name, _family(fn))
         if fill is None:
             return None        # 文字列の場合分けが2つある形。まだ見ていない
         out[name] = fill
@@ -837,7 +898,7 @@ def sweep_function(fn: Callable, *, name: str = "") -> list[dict]:
     swept: list[tuple[str, list[float], list[dict]]] = []
     for pname, default in params:
         xs, rows = [], []
-        for x in _grid(default):
+        for x in _grid(default, pname, _family(fn)):
             try:
                 value = fn(**{**base, pname: _cast(default, x)})
             except Exception:
@@ -1115,7 +1176,7 @@ def _row_call_cases(fn: Callable) -> list[dict[str, Any]] | None:
             else:
                 base[n] = enums[n][0]
             continue
-        fill = _axis_fill(n)
+        fill = _axis_fill(n, _family(fn))
         if fill is None:
             return None
         base[n] = fill
