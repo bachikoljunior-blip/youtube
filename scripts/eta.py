@@ -2211,6 +2211,26 @@ def headline(pl: dict, prev: dict | None = None,
                    f" {top['date'].isoformat()}"
                    + (f"（軌跡より **{gain:,.0f}日 早い**）" if gain and gain > 0
                       else "（軌跡と同じか、遅い）"))
+    # **腕の名前を出したら、その腕が何で動くのかも同じ3行に出す**
+    # （2026-08-21 05:xx に測って足した）。この回は `density` の入力
+    # `make_rate` を **22.85 → 46.7（2倍）** に動かしましたが、
+    # 到達日は **+0日** でした。軌跡の腕は `config/hypotheses.yaml` の
+    # **閉じた前提の実測**だけで動くので、テーマを作っても在庫から出しても
+    # 1ミリも動きません。**その区別が3行の中に無いと、次の回も同じ所へ来ます。**
+    arms = (tr or {}).get("arms") or {}
+    hint = pl.get("lever_hint")
+    a_hint = arms.get(hint)
+    if a_hint is not None:
+        th = a_hint.get("throughput")
+        turn = f"実測 {1 / th:,.1f}日に1件" if th else "実測なし（閉じた前提が0件）"
+        pr = a_hint.get("p")
+        prob = f"・当たり {pr:.0%}" if pr is not None else ""
+        out.append(
+            f"{bar} **軌跡の腕が動くのは、`config/hypotheses.yaml` の前提を"
+            f"1件閉じたときだけ**（`{hint}`: {turn}{prob}）。"
+            "**作る・出す・直すは、軌跡の入力に入りません** ——"
+            "段の側（`--reflect` が測る入力）は動きますが、"
+            "**上の日付は動きません**")
     # **腕の名前だけで終わらせない。** その腕を引いたら日付が何日動くかを、
     # 同じ3行の中に出します（オーナー指示 2026-08-20 16:0x「分析して制作に
     # 活かして視聴回数などを上げることが予測に使えることじゃない？」）。
