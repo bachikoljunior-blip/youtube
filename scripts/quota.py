@@ -371,8 +371,61 @@ def _is_impossible(row: dict) -> bool:
     return bool(seen and resets and resets < seen)
 
 
+def _total(row: dict) -> int:
+    """その行が言っている**通算の消費量**。入っていなければ 0。"""
+    tok = row.get("tokens") or {}
+    return sum(v for v in tok.values() if isinstance(v, (int, float)))
+
+
+def backward(rows: list[dict]) -> list[tuple[str, str, int, int]]:
+    """**消費量が時間をさかのぼって減っている組**を返す。空なら健全。
+
+    `usage` はそのセッションの**通算値**なので、`seen_at` の順に並べたとき
+    **減ることはありません**（`tests/test_quota_usage_lag.py`。実測 42セッションで
+    「無→有」11件・「有→無」0件）。減っていたら、**消費量ではなく時刻のほうが
+    壊れています。**
+
+    ## なぜ `--ingest` の側で見るのか（2026-08-20 12:4x に踏んだ）
+
+    この不変量を見張る検査は前からありましたが、**見張っていたのは全体 `pytest`**で、
+    そこに着くのは**回の終わりごろ**です。この回は §2 で汚し、**20分あとに**
+    赤で知りました。**その間の判断は、汚れた台帳の上でしています** ——
+    `--pace` の「1周いくら」と「持続できる間隔」は `seen_at` の差で出るので、
+    **間隔の判断がそのぶん狂います。**
+
+    踏み方はこうでした。**§2 は「返りをまるごと保存する」と言っていますが、
+    まるごと写すと 15,000トークンかかる**ので、`quota.py` と `sibling_check.py` が
+    読む列だけに削って渡しました。そのとき **`updated_at` を `created_at` で埋めた** ——
+    `_normalize()` は `updated_at` を `seen_at` にするので、
+    **25行が最大40分ぶん過去に倒れて**積まれ、既にあった行と順序が入れ替わりました。
+
+    **削って渡すこと自体は間違いではありません**（写すだけで1周の1割を使う）。
+    間違いなのは、**削ってよい列と、削ると時間軸が壊れる列を、機械が区別していなかった**
+    ことです。ここで見れば、削り方を間違えた回が**その場で**分かります。
+    """
+    by: dict[str, list[dict]] = {}
+    for r in rows:
+        sid = r.get("session_id")
+        if sid:
+            by.setdefault(sid, []).append(r)
+    out = []
+    for sid, group in by.items():
+        group.sort(key=lambda r: str(r.get("seen_at") or ""))
+        high = 0
+        for r in group:
+            t = _total(r)
+            if t and t < high:
+                out.append((sid, str(r.get("seen_at") or ""), high, t))
+            high = max(high, t)
+    return out
+
+
 def ingest(text: str) -> tuple[int, int]:
-    """MCP の返りを読んで `data/quota.jsonl` に足す。(新規, 更新) を返す。"""
+    """MCP の返りを読んで `data/quota.jsonl` に足す。(新規, 更新) を返す。
+
+    **時間軸を壊す行は書きません**（`backward()`）。積むほうは止めません ——
+    弾くのは、入れると順序が壊れる行**だけ**です。
+    """
     blob = None
     try:
         blob = json.loads(text)
@@ -411,6 +464,21 @@ def ingest(text: str) -> tuple[int, int]:
               "日をまたいだ行に `MM-DD/` を付け忘れていないか、"
               "`sessions_compact.py --date` を確かめること。")
     rows = sorted(table.values(), key=lambda r: (r.get("seen_at") or ""))
+
+    # **時間軸を壊す行だけ、書く前に落とす**（`backward()` の節）。
+    bad = backward(rows)
+    if bad:
+        drop = {(sid, seen) for sid, seen, _, _ in bad}
+        rows = [r for r in rows
+                if (r.get("session_id"), str(r.get("seen_at") or "")) not in drop]
+        added = max(0, added - len(drop))
+        print(f"[quota] **{len(drop)}件を書きませんでした**（消費量が時間をさかのぼって減る行）。")
+        for sid, seen, high, low in bad[:5]:
+            print(f"    {sid}  {seen}  {high:,} → {low:,}")
+        print("    **`usage` は通算値なので減りません。壊れているのは時刻のほうです。**")
+        print("    渡した返りで **`updated_at` を落としていないか**を見ること"
+              "（`_normalize()` はそこを `seen_at` にします）。")
+
     LOG.parent.mkdir(parents=True, exist_ok=True)
     LOG.write_text("".join(json.dumps(r, ensure_ascii=False) + "\n" for r in rows),
                    encoding="utf-8")

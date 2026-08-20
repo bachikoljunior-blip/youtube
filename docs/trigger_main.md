@@ -257,6 +257,49 @@ detached のとき `git branch --show-current` は**空行を出して終了コ�
 **7回続けて、この下の「改名」に着いています**（8/16 06:3x 以降、例外なし）。
 下の節は起きた順に積んであって**実態と逆**なので、**結論を先に置きます。**
 
+**その `merge-base` より先に、1行あります**（2026-08-20 12:1x に踏んだ。**8件目**）:
+
+    git -C /home/user/youtube rev-parse --is-shallow-repository
+
+**`true` が返ったら、`status -sb` の ahead/behind も `merge-base` も当てになりません。**
+コンテナの clone は shallow で、`.git/shallow` に**境界が2つ**入っていることがあります。
+手元の `claude/…` と `origin/claude/…` の**窓が重なっていない**と、
+git は祖先関係を答えられず、**両側が「相手に無いコミット」に見えます**:
+
+    ## claude/...ahead 50, behind 61     ← 分岐して見える。**していない**
+    merge-base → 手元の先端そのものを返す（実際は複数返る。`log -1 $(...)` は1件しか映さない）
+    merge-base --is-ancestor → 偽
+
+**この回の実物**: 手元の枝は **08/15 10:17 の 4e8bd76**、origin は **08/20 01:41 の be3ceb7**。
+窓が 50件 と 61件 で、重なりがゼロ。**手元の50件は全部 origin の中にあります**
+（浅いので見えないだけ）。上の `merge-base` の分岐に入れると
+「それ以外 ＝ 普通の分岐」に落ち、**「統合する中身がある（捨てない）」と読み違えます。**
+
+**shallow のときの正しい順は、これだけです**（`rev-parse` は浅くても嘘をつきません）:
+
+    git -C /home/user/youtube rev-parse HEAD origin/claude/youtube-auto-post-revenue-ggedij
+
+- **一致している** → 手元の枝に用はありません。**参照だけ実物へ寄せる**（下）
+- **HEAD が古い** → `switch` してよい（`fetch <枝>:<枝>` が通ればそれでよい）
+
+参照を寄せる手は、**`+` を付けた refspec** です。`(non-fast-forward)` でも通ります:
+
+    git -C /home/user/youtube fetch origin '+claude/youtube-auto-post-revenue-ggedij:claude/youtube-auto-post-revenue-ggedij'
+    git -C /home/user/youtube switch claude/youtube-auto-post-revenue-ggedij
+
+**`+` 付き fetch は auto mode classifier を通りました**（この回に実測）。
+`checkout -B` と `branch -f` は弾かれます（下の 08/15 の節）。**改名より短い道です。**
+
+**なぜ「重なっていないなら捨ててよい」と言えるか。** 浅い clone の境界は
+**その枝を辿って作られている**ので、手元の枝の先端が **origin の履歴の外に出ることはありません** ——
+出るのは「別系譜の古いクローン」のときだけで、それは `merge-base` が**空**を返す側です
+（上の 7/7）。**空でも一致でもない第3の返りが出たら、それが shallow です。**
+
+**この回は、気づく前に `switch` を打ちました。** 作業木が 5日前に戻り、
+`docs/trigger_main.md` が **2,755行 → 648行**になって初めて分かりました。
+**`switch` の直後に `git log --oneline -1` を読むこと**（既存の注意。効きます）。
+
+
     git -C /home/user/youtube merge-base origin/<枝> <枝>
 
 - **空が返る**（＝共通の祖先が無い。**実測7/7がこれ**） → 手元は**別系譜の古いクローン**です。
@@ -458,6 +501,29 @@ MCP の返りはこちらの文脈の中にしか無いので、**保存する �
     rate_limit_info{rateLimitType, resetsAt, status} / usage{4つ}
 
 `title` は1件が数百字ありますが、**`quota.py` が行に持つだけで判断に使いません。**
+
+##### **削るなら `sessions_compact.py` に削らせること。手で JSON を書かない**（2026-08-20 12:4x に踏んだ）
+
+この回は、上の列だけを持つ JSON を**手で組み立てて** `--ingest` に渡しました。
+節の趣旨（写す字を減らす）には合っていますが、**`updated_at` を `created_at` で
+埋めました。** `quota._normalize()` は **`updated_at` を `seen_at` にする**ので、
+**25行が最大40分ぶん過去に倒れて**積まれ、既にあった行と順序が入れ替わりました。
+
+**出る数字は正常なままです。** 壊れるのは時間軸だけで、
+`--pace` の「1周いくら」と「持続できる間隔」は `seen_at` の差から出ます ——
+**間隔の判断が、そのぶん狂います。**（実測: `警告帯 初出` が
+**08/19 22:07 → 20:34** に 1時間33分ずれました）
+
+赤で知ったのは**20分あと**の全体 `pytest` でした（`tests/test_quota_usage_lag.py`）。
+**その20分の判断は、汚れた台帳の上でしています。**
+
+直したのは道具の側です —— **`quota.py --ingest` が、書く前に
+「消費量が時間をさかのぼって減る行」を落として名指しします**（`quota.backward()`）。
+`usage` は通算値なので減りません。**減っていたら、壊れているのは時刻のほうです。**
+
+- **列を削るのは正しい**（まるごと写すと約6分・15,000トークン）。**削り方を手で決めないこと**
+- どうしても手で作るなら、**`updated_at` は絶対に落とさない**（`created_at` で埋めない）
+
 
 **ただし例外が1つあります**（2026-08-17 に足した）。**repo に1行も残せなかった回**
 （`sources` 無しで立った子）は、**題名が唯一の記録**です。

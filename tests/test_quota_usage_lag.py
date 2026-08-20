@@ -128,3 +128,53 @@ def test_実データで有から無へ戻った行が無いこと():
                 "**片方向という前提が外れました。**`quota.py` の docstring ごと測り直すこと"
             )
         seen[sid] = max(seen.get(sid, 0), total)
+
+
+# --- 書く前に捕まえる（2026-08-20 12:4x に足した） --------------------------
+#
+# **不変量は前からありました。見張っていたのが全体 `pytest` だけでした。**
+# この回は §2 で台帳を汚し、**20分あとに**赤で知りました。
+# その20分のあいだ、`--pace` の「持続できる間隔」は汚れた時間軸の上に出ています。
+
+def test_さかのぼって減る組を見つける():
+    rows = [
+        {"session_id": "a", "seen_at": "2026-08-19T23:16:00+00:00",
+         "tokens": {"cache_read_tokens": 35_000_000}},
+        {"session_id": "a", "seen_at": "2026-08-20T00:11:00+00:00",
+         "tokens": {"cache_read_tokens": 28_000_000}},
+    ]
+    bad = quota.backward(rows)
+    assert len(bad) == 1
+    sid, seen, high, low = bad[0]
+    assert (sid, high, low) == ("a", 35_000_000, 28_000_000)
+    assert seen.startswith("2026-08-20T00:11")
+
+
+def test_増える一方なら何も言わない():
+    rows = [
+        {"session_id": "a", "seen_at": "2026-08-19T23:00:00+00:00", "tokens": {"output_tokens": 10}},
+        {"session_id": "a", "seen_at": "2026-08-20T00:00:00+00:00", "tokens": {"output_tokens": 20}},
+        {"session_id": "b", "seen_at": "2026-08-19T23:30:00+00:00"},          # `usage` なし
+        {"session_id": "b", "seen_at": "2026-08-20T00:30:00+00:00", "tokens": {"output_tokens": 5}},
+    ]
+    assert quota.backward(rows) == []
+
+
+def test_消費量の無い行は減ったと数えない():
+    """**「入っていない」は「使っていない」ではありません**（このファイルの冒頭）。"""
+    rows = [
+        {"session_id": "a", "seen_at": "2026-08-19T23:00:00+00:00", "tokens": {"output_tokens": 99}},
+        {"session_id": "a", "seen_at": "2026-08-20T00:00:00+00:00"},
+    ]
+    assert quota.backward(rows) == []
+
+
+def test_実データの台帳が健全であること():
+    """`data/quota.jsonl` そのもの。**上の3件と同じ関数で見る。**"""
+    import json
+
+    path = ROOT / "data" / "quota.jsonl"
+    if not path.exists():
+        return
+    rows = [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
+    assert quota.backward(rows) == []
