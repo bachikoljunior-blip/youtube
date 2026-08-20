@@ -747,19 +747,45 @@ def double_days(growth: float) -> float:
     return math.log(2) / math.log(1 + growth) if growth and growth > 0 else float("inf")
 
 
-def analyse(m: dict, points: list[dict] | None = None) -> dict:
+#: 腕を1つだけ動かしてみるときの倍率（`lever_days`）。**1.0 が「いまのまま」**
+DEFAULT_SCALE = {"per_video": 1.0, "sub_rate": 1.0, "rpm": 1.0, "density": 1.0}
+
+
+def _scale(scale: dict | None) -> dict:
+    sc = dict(DEFAULT_SCALE)
+    for k, v in (scale or {}).items():
+        if k not in sc:
+            raise KeyError(f"知らない腕です: {k}（{sorted(DEFAULT_SCALE)}）")
+        sc[k] = float(v)
+    return sc
+
+
+def analyse(m: dict, points: list[dict] | None = None,
+            scale: dict | None = None) -> dict:
     """実測から、門ごとの日数と天井を出す。
 
     `points` は `data/eta.jsonl` の履歴（新しい順ではなく**積んだ順**）。
     **伸び率を測るためだけ**に使い、渡さなければ2つの窓の比で代用します
     （`growth_per_day`）。**渡しても渡さなくても、他の数字は1つも変わりません。**
+
+    `scale` は「**その腕を◯倍にしたら**」を測るための倍率です（既定は全部 1.0
+    ＝ いまの実測そのまま）。`lever_days` がここを使って、
+    **腕べつに到達日が何日動くか**を出します —— オーナー指示（2026-08-20 16:0x）:
+
+    > 分析して制作に活かして視聴回数などを上げることが予測に使えることじゃない？
+
+    **`views_day_now` は倍率を掛けません。** いま出ている再生は、いま出ている数です。
+    1本あたり再生を上げても、**過去に公開した本の再生数は遡って増えません** ——
+    掛けると「明日から全部が2倍」を予測として印字することになります。
+    倍率が効くのは**これから公開する本の側**（天井・門1の登録者）だけです。
     """
+    sc = _scale(scale)
     views_day_7 = m["views_7d"] / 7
     views_day_28 = m["views_28d"] / 28
     # 予測には速いほうを使う（伸びている最中に遅いほうで測ると、悲観に倒れる）
     views_day = max(views_day_7, views_day_28)
 
-    sub_rate = (m["subs_gained_28d"] / m["views_28d"]) if m["views_28d"] else 0.0
+    sub_rate = ((m["subs_gained_28d"] / m["views_28d"]) if m["views_28d"] else 0.0) * sc["sub_rate"]
     subs_per_day = views_day * sub_rate
 
     a = {
@@ -777,9 +803,14 @@ def analyse(m: dict, points: list[dict] | None = None) -> dict:
     # 公開の密度べつの門1（report のループが手で計算していたものをここへ寄せた。
     # **門2a の逆算がこの日数を要る**ので、2か所で別々に計算すると必ずずれます）
     a["days_subs_at"] = {
-        n: _days_to(a["subs_remaining"], n * _per_video(m) * sub_rate)
+        n: _days_to(a["subs_remaining"], n * _per_video(m) * sc["per_video"] * sub_rate)
         for n in sorted(set(PUBLISH_SCENARIOS) | {PLAN_PUBLISH_PER_DAY})
     }
+    # **門1 に要る「本数」**（日数ではなく本数）。供給の側から日を解くのに要ります。
+    _pv = _per_video(m) * sc["per_video"]
+    a["videos_needed_gate1"] = (
+        (a["subs_remaining"] / (_pv * sub_rate)) if (_pv > 0 and sub_rate > 0) else float("inf")
+    )
 
     # --- 門2a: 長尺4,000時間（ショートは入らない）---
     long_hours_per_day = m["long_hours_365"] / 365
@@ -825,8 +856,10 @@ def analyse(m: dict, points: list[dict] | None = None) -> dict:
     # 長尺の帯に「**届く**」と印字していました。**長尺の実測は 1本 2回**（n=5）で、
     # ショートの 1,092回 とは**546倍ちがいます。** 混ぜると、
     # 「長尺をまだ出していない」が「長尺なら届く」に化けます。
-    per_video = _per_video(m)
+    per_video = _per_video(m) * sc["per_video"]
     long_per_video = m.get("long_per_video")
+    if long_per_video is not None:
+        long_per_video = long_per_video * sc["per_video"]
     a["long_per_video"] = long_per_video
     a["long_videos_28d"] = m.get("long_videos_28d", 0)
     a["long_views_28d"] = m.get("long_views_28d", 0)
@@ -858,7 +891,9 @@ def analyse(m: dict, points: list[dict] | None = None) -> dict:
     }
 
     # 目標に要る月間再生数（RPM ごと）
-    a["views_needed_month"] = {k: TARGET_YEN * 1000 / rpm for k, rpm in RPM_SCENARIOS.items()}
+    a["views_needed_month"] = {
+        k: TARGET_YEN * 1000 / (rpm * sc["rpm"]) for k, rpm in RPM_SCENARIOS.items()
+    }
     # 1日92本の上限で、その再生数に要る「1本あたり再生」
     a["per_video_needed"] = {
         k: v / (UPLOAD_CAP_PER_DAY * 30) for k, v in a["views_needed_month"].items()
@@ -877,6 +912,7 @@ def analyse(m: dict, points: list[dict] | None = None) -> dict:
     a["growth"] = g
     a["growth_per_day"] = g["g"] if g["g"] is not None else 0.0
     a["views_day_now"] = views_day
+    a["scale"] = sc
     return a
 
 
@@ -1116,8 +1152,143 @@ def _stage4(m: dict, a: dict, sp: dict, density: int, per_video: float,
     }
 
 
+#: 腕を1つだけ「これだけ上げたら」と置いてみる倍率。**2倍は、この機械が
+#: 実際に出した幅の中にあります**（1本あたり再生の実測は 22本で 30回〜4,000回超）。
+LEVER_FACTOR = 2.0
+
+#: 到達日を動かしうる腕。**`none`（道具の整備）はここには入りません** ——
+#: 日付を動かさないと自分で言っている腕なので、比べる意味がありません。
+LEVERS = ("per_video", "sub_rate", "rpm", "density")
+
+LEVER_LABEL = {
+    "per_video": "1本あたり再生（分析→制作に反映）",
+    "sub_rate": "登録率（終端の作り・シリーズ化）",
+    "rpm": "RPM（ニッチ・尺・形式）",
+    "density": "作る速さ（節を書く／出す）",
+}
+
+
+def lever_days(m: dict, a: dict, pl0: dict, today: date | None = None,
+               supply: dict | None = None, points: list[dict] | None = None,
+               factor: float = LEVER_FACTOR) -> list[dict]:
+    """**腕べつに、到達日が何日動くか。**（2026-08-20 16:0x・オーナー指示）
+
+    > 分析して制作に活かして視聴回数などを上げることが予測に使えることじゃない？
+
+    **予測に使えていませんでした。** 到達日の入力は
+    「1日25本」「収益化の審査30日」で、**1本あたり再生は天井の表に出てくるだけ**——
+    上げても下げても、印字される日付は動きませんでした。だから
+    「次にどの腕を引くか」は `binding`（どの床がいちばん遅いか）という
+    **診断**から決めていて、**引いた結果どれだけ縮むか**は誰も出していません。
+
+    ここがやるのは1つだけです。**腕を1つずつ `factor` 倍にして、
+    予測をまるごと解き直し、到達日の差を取る。** 差が大きい腕が、
+    この回に引くべき腕です。**名前ではなく、日数で決まります。**
+
+    返り: 腕ごとに `{"lever", "label", "days", "date", "gain", "reachable"}`。
+    `gain` は**縮んだ日数**（正なら早まる）。届かない側は `gain=0.0`。
+
+    **これは「2倍にできる」と言っていません。** 言っているのは
+    「2倍にしたら何日縮むか」だけで、**できるかどうかは別の話**です。
+    比べられるのは、どの腕も**同じ倍率**で並べているからです。
+    """
+    base = pl0.get("days_to_target", NEVER)
+    rows: list[dict] = []
+    for lever in LEVERS:
+        try:
+            a2 = analyse(m, points=points, scale={lever: factor})
+            pl2 = plan(m, a2, today=today, supply=supply, sensitivity=False,
+                       points=points)
+        except Exception:                                      # noqa: BLE001
+            continue
+        d = pl2.get("days_to_target", NEVER)
+        reachable = d < NEVER
+        # **`base` が NEVER のときも、そのまま引くこと。**
+        #     ここを「届く側は一律に最大」と書いていたら、**届く腕が全部同点**になり、
+        #     並び順は `LEVERS` に書いた順（＝こちらの都合）で決まっていました。
+        #     引き算のままなら、`NEVER - d` は **d が小さい腕ほど大きい** ので、
+        #     「いまは出ない」帯でも**早く出るほうが上**に来ます。
+        gain = (base - d) if reachable else 0.0
+        rows.append({
+            "lever": lever,
+            "label": LEVER_LABEL[lever],
+            "factor": factor,
+            "days": d,
+            "date": ((today or today_jst()) + timedelta(days=math.ceil(d)))
+                    if reachable else None,
+            "gain": max(0.0, gain),
+            "reachable": reachable,
+        })
+    rows.sort(key=lambda r: -r["gain"])
+    return rows
+
+
+def supply_state() -> dict | None:
+    """**予測に渡す供給の実測**（読めなければ `None`。回は止めない）。"""
+    try:
+        from src import supply as supply_mod
+
+        return supply_mod.state()
+    except Exception:                                          # noqa: BLE001
+        return None
+
+
+def solve_gate1(a: dict, *, density: float, supply: dict | None) -> dict:
+    """**門1（登録者1,000人）が通る日を、「出せる本数」から解く。**
+
+    2026-08-20 16:0x・オーナー指示（原文）——
+
+    > 25は物理的に不可ならそれを予測に使うのはどうなの？
+
+    **そのとおりでした。** ここは `a["days_subs_at"][25]` の1行で、
+    `25` は `PLAN_PUBLISH_PER_DAY` ——「**予約を詰め直したらこうなる**」という
+    置き方であって、**作れる本数ではありません**（定数の脇の註がそう書いてある）。
+    実測は **在庫37本・未使用の節0件**。25本/日 は 1.5日で尽きます。
+    **満たせない前提を入力にした日付は、予測ではありません。**
+
+    いま解いているのは、次の2本の直線の**低いほう**です（`src.supply`）:
+
+        予約の詰め方   density × t           在庫が足りているあいだの上限
+        作る速さ       在庫 + 実測の速さ × t  在庫を食い終わった先の上限
+
+    **「作る速さ」は実測です**（`supply.make_rate`。テーマ総数の増え方）。
+    固定値ではなく、**この回が節を書けば上がる数**なので、`density` の腕は
+    ここに効きます —— 効いたぶんだけ、次の回の予測が前に動きます。
+
+    供給が読めないとき（`supply is None`）は前と同じ直線に落ちますが、
+    **`measured: False` を返すので、画面は「未検証の前提」と断ります。**
+    """
+    need = a.get("videos_needed_gate1", float("inf"))
+    if supply is None or supply.get("rate_per_day") is None:
+        return {"days": a["days_subs_at"].get(int(density), NEVER),
+                "measured": False, "need_videos": need,
+                "density_sustained": density, "dry_days": None,
+                "rate_per_day": None, "stock": None}
+
+    from src import supply as supply_mod
+
+    rate = float(supply["rate_per_day"])
+    stock = int(supply.get("stock") or 0)
+    days = supply_mod.days_for(need, stock=stock, rate_per_day=rate,
+                               plan_density=density, never=NEVER)
+    return {
+        "days": days,
+        "measured": True,
+        "need_videos": need,
+        # 収益の窓（30日）は在庫を食い終わった先にあるので、**そこでの密度は
+        # 「作る速さ」で頭打ち**です。段4 はこちらで立てること。
+        "density_sustained": min(float(density), rate),
+        "dry_days": supply_mod.material_dry_days(novel=supply.get("novel"),
+                                                 rate_per_day=rate),
+        "rate_per_day": rate,
+        "stock": stock,
+        "thin": bool(supply.get("rate", {}).get("thin")),
+    }
+
+
 def plan(m: dict, a: dict, density: int = PLAN_PUBLISH_PER_DAY,
-         today: date | None = None) -> dict:
+         today: date | None = None, supply: dict | None = None,
+         sensitivity: bool = False, points: list[dict] | None = None) -> dict:
     """**月20万に届くまでの段取りを、必ず1つ返す。**
 
     2026-08-20 06:2x・オーナー指示（原文）——
@@ -1147,7 +1318,19 @@ def plan(m: dict, a: dict, density: int = PLAN_PUBLISH_PER_DAY,
     「これを測れば期日が決まる」と言う形にします（**空で返さない**）。
     """
     per_video = a["per_video_now"]
-    monthly_slots = density * 30
+    sc = a.get("scale") or DEFAULT_SCALE
+    # **密度の腕は、いまや「作る速さ」に効きます**（`solve_gate1`）。
+    #     予約の詰め方（`density`）も一緒に動かさないと、倍率が片肺になります。
+    density = density * sc["density"]
+    if supply is not None and supply.get("rate_per_day") is not None and sc["density"] != 1.0:
+        supply = dict(supply, rate_per_day=supply["rate_per_day"] * sc["density"])
+    g1 = solve_gate1(a, density=density, supply=supply)
+    # **段4（月20万）は在庫を食い終わった先にあります。**
+    #     そこでの密度は「予約の詰め方」ではなく「作る速さ」で頭打ちなので、
+    #     月に何本出せるかは `density_sustained` で数えること。
+    #     ここを 25 のままにすると、**1.5日ぶんの在庫で1か月ぶんを数えます。**
+    density_month = g1["density_sustained"]
+    monthly_slots = density_month * 30
 
     # --- どの形で月20万を取りに行くか（**下振れの RPM で比べる**）---
     forms: dict[str, dict] = {}
@@ -1167,7 +1350,8 @@ def plan(m: dict, a: dict, density: int = PLAN_PUBLISH_PER_DAY,
     sp = forms[spine]
 
     # --- 段1: 門1（登録者1,000人）。**実測のあるショートで開ける** ---
-    d_gate1 = a["days_subs_at"].get(density, NEVER)
+    #     **供給（作る速さ）で解きます。** 定数 25 は上限としてしか使いません。
+    d_gate1 = g1["days"]
 
     # --- 段2: 門2a（長尺4,000時間）。段1と**並行**。合格点は1本あたり再生 ---
     #     いちばん甘い形（尺が長く維持率が高い）を取る。**本数は決められる／
@@ -1193,8 +1377,10 @@ def plan(m: dict, a: dict, density: int = PLAN_PUBLISH_PER_DAY,
     #
     # 到達日は、この3つの**いちばん遅いほう**です。
     # **どれが縛っているかが、次に引く腕を決めます。**
-    ceiling_day = per_video * density
-    ceiling_day_long = (a.get("long_per_video") or 0) * density
+    # 天井も**持続する密度**で。予約の詰め方で掛けると、在庫の無い先まで
+    # 「1日25本」が続く天井を印字します。
+    ceiling_day = per_video * density_month
+    ceiling_day_long = (a.get("long_per_video") or 0) * density_month
     need_month = sp["views_needed_month"]
     growth = a.get("growth") or growth_per_day(m)
     g = growth.get("g")
@@ -1213,7 +1399,7 @@ def plan(m: dict, a: dict, density: int = PLAN_PUBLISH_PER_DAY,
     n_long = a.get("long_videos_28d", 0)
     proxy = spine.startswith("長尺") and (lpv is None or n_long < 20)
 
-    s4 = _stage4(m, a, sp, density, per_video, d_monetized,
+    s4 = _stage4(m, a, sp, density_month, per_video, d_monetized,
                  today or today_jst(), proxy=proxy, d_revenue=d_revenue)
     d_target = s4["when"]
 
@@ -1258,10 +1444,15 @@ def plan(m: dict, a: dict, density: int = PLAN_PUBLISH_PER_DAY,
     stages = [
         {
             "no": 1, "lever": "density", "when": d_gate1,
-            "title": f"門1（登録者1,000人）を、実測のあるショートで開ける",
-            "bar": (f"1日{density}本 公開 ＝ 再生 {density * per_video:,.0f}／日"
-                    f" × 登録率 {a['sub_rate'] * 100:.4f}% ＝ 1日 {density * per_video * a['sub_rate']:,.1f}人"),
-            "measured": True,
+            "title": "門1（登録者1,000人）を、実測のあるショートで開ける",
+            "bar": (f"要る本数 **{g1['need_videos']:,.0f}本**"
+                    f"（1本あたり {per_video:,.0f}回 × 登録率 {a['sub_rate'] * 100:.4f}%）を、"
+                    + (f"在庫 {g1['stock']}本 ＋ **作る速さ 1日 {g1['rate_per_day']:.1f}本の実測**"
+                       f"（詰め方の上限 {density:.0f}本/日）で埋める"
+                       if g1["measured"] else
+                       f"**1日{density:.0f}本という未検証の前提**で埋める"
+                       "（`src/supply.py` が読めませんでした）")),
+            "measured": g1["measured"],
         },
         {
             "no": 2, "lever": "rpm", "when": d_gate1,
@@ -1327,8 +1518,10 @@ def plan(m: dict, a: dict, density: int = PLAN_PUBLISH_PER_DAY,
             "targets": None,
         }
 
-    return {
-        "density": density, "spine": spine, "spine_band": sp["band"],
+    out = {
+        "density": density, "density_month": density_month,
+        "gate1": g1, "supply": supply,
+        "spine": spine, "spine_band": sp["band"],
         "forms": forms, "stages": stages, "blocking": blocking,
         "days_to_target": d_target, "target": s4,
         "target_date": (base + timedelta(days=math.ceil(d_target))) if d_target < NEVER else None,
@@ -1346,6 +1539,21 @@ def plan(m: dict, a: dict, density: int = PLAN_PUBLISH_PER_DAY,
         "views_day_now": views_day_now,
         "horizons": horizons,
     }
+    # --- **腕べつに、到達日が何日動くか**（オーナー指示 2026-08-20 16:0x）---
+    #     `sensitivity=False` で呼ばれた回は測りません（`lever_days` が
+    #     `plan()` を呼び直すので、そのままだと無限に潜ります）。
+    if sensitivity:
+        out["lever_days"] = lever_days(m, a, pl0=out, today=today, supply=supply,
+                                       points=points)
+        best = max(out["lever_days"], key=lambda r: r["gain"], default=None)
+        # **縛っている床の名前より、実測の差のほうを信じる。**
+        #     「門が縛っている＝density」は正しい診断ですが、**どの腕がいちばん
+        #     日付を動かすか**は別の問いで、そこは掛け算の形で決まります。
+        if best and best["gain"] > 0:
+            out["lever_measured"] = best["lever"]
+            out["lever_hint_binding"] = out["lever_hint"]
+            out["lever_hint"] = best["lever"]
+    return out
 
 
 def _points() -> list[dict]:
@@ -1391,10 +1599,24 @@ def headline(pl: dict, prev: dict | None = None) -> list[str]:
         out.append(f"{bar} **月20万の到達予測: {pl['target_date'].isoformat()}**"
                    f"（{_fmt_days(pl['days_to_target'])}）")
     else:
-        out.append(f"{bar} **月20万の到達予測: いまの形では出ません**"
-                   "（天井が足りない。下の「何を何倍にすれば」を読むこと）")
+        out.append(f"{bar} **月20万の到達予測: いまの実測のままでは出ません**"
+                   "（天井が足りない。次の行に「どの腕をいくつにすれば出るか」）")
     out.append(f"{bar} 縛っているのは **{pl['binding']}**"
                f" → **この回に引く腕は `{pl['lever_hint']}`**")
+    # **腕の名前だけで終わらせない。** その腕を引いたら日付が何日動くかを、
+    # 同じ3行の中に出します（オーナー指示 2026-08-20 16:0x「分析して制作に
+    # 活かして視聴回数などを上げることが予測に使えることじゃない？」）。
+    ld = pl.get("lever_days") or []
+    top = [r for r in ld if r["reachable"]][:2]
+    if top:
+        f = top[0]["factor"]
+        out.append(f"{bar} **{f:.0f}倍にしたら:** "
+                   + " ／ ".join(
+                       f"`{r['lever']}` → **{r['date'].isoformat()}**"
+                       + (f"（{_fmt_days(pl['days_to_target'] - r['days'])[2:-2]} 早まる）"
+                          if pl["days_to_target"] < NEVER
+                          else "（いまは日付が出ません → **出ます**）")
+                       for r in top))
     how = _how_to_pull(pl)
     if how:
         out.append(f"{bar} {how}")
@@ -1412,6 +1634,16 @@ def headline(pl: dict, prev: dict | None = None) -> list[str]:
     elif prev_date and pl["target_date"] is None:
         out.append(f"{bar} 前の回は {prev_date.isoformat()} → **今回は日付が出ません**"
                    "（前提が変わったか、実測が落ちた）")
+    # **物差しを取り替えた回は、その差を「遠のいた」と読ませない**（`_scale_note` と同じ形）。
+    #     密度の入力が「1日25本という前提」から「作る速さの実測」に替わった回は、
+    #     チャンネルは何も変わっていないのに日付が大きく動きます。
+    if prev is not None and prev.get("make_rate_per_day") is None \
+            and (pl.get("gate1") or {}).get("measured"):
+        out.append(f"{bar} [!] **この回から、密度の入力が変わりました**"
+                   f"（「1日{pl['density']:.0f}本」という前提 → "
+                   f"**作る速さ {pl['gate1']['rate_per_day']:.1f}本/日 の実測**）。"
+                   "**上の差は実績ではありません。**")
+
     elif prev and prev.get("target_date") is None and pl["target_date"]:
         out.append(f"{bar} 前の回は日付が出ていませんでした → **道が開きました**")
     else:
@@ -1428,15 +1660,33 @@ def _report_plan(m: dict, a: dict, pl: dict | None = None) -> list[str]:
     """
     out: list[str] = []
     P = out.append
-    pl = pl or plan(m, a)
+    pl = pl or plan(m, a, supply=supply_state(), sensitivity=True)
     d = pl["density"]
 
     P("")
     P("=" * 66)
     P("=== **月20万に到達するまでの段取り**（予測を「届きません」で終わらせない）===")
     P("=" * 66)
-    P(f"  **出せる密度で解いています: 1日 {d}本 公開**（92本は API の日枠であって、"
-      "出せる本数ではありません）")
+    g1 = pl.get("gate1") or {}
+    if g1.get("measured"):
+        P(f"  **密度は実測から解いています: 作る速さ 1日 {g1['rate_per_day']:.1f}本"
+          f"（在庫 {g1['stock']}本）／詰め方の上限 {d:.0f}本/日**")
+        P(f"  → **段4（月20万）が乗るのは、持続する {pl['density_month']:.1f}本/日 のほう**"
+          "（収益の30日は在庫を食い終わった先にあります）")
+        if g1.get("dry_days") is not None:
+            P(f"  → 掃引の材料は **{g1['dry_days']:.0f}日**で尽きます"
+              "（その先は `src/calc/` に**新しい表**が要る）")
+        basis = ((pl.get("supply") or {}).get("rate") or {}).get("basis")
+        if basis:
+            P(f"     （作る速さの出どころ: **{basis}**。"
+              "**2つの物差しは混ぜていません** —— 実測で 20本ちがいました）")
+        if g1.get("thin"):
+            P("  [!] **作る速さの窓が 6時間 未満です**（1本の増減で桁が動く帯）。"
+              "`python -m src.supply --record` を毎周ぶん積むと締まります")
+    else:
+        P(f"  [!] **密度は未検証の前提です: 1日 {d:.0f}本**"
+          "（`src/supply.py` が読めませんでした。**作れる本数ではありません**）")
+    P("     （92本は API の日枠であって、出せる本数ではありません）")
     P(f"  **物差しはショートの実測 {a['per_video_now']:,.0f}回/本**"
       "（この機械が持つ唯一の当てになる1本あたり）")
     P("")
@@ -1586,6 +1836,49 @@ def _report_plan(m: dict, a: dict, pl: dict | None = None) -> list[str]:
     return out
 
 
+def _report_levers(pl: dict) -> list[str]:
+    """**腕べつに、到達日が何日動くか**（2026-08-20 16:0x・オーナー指示）。
+
+    > 分析して制作に活かして視聴回数などを上げることが予測に使えることじゃない？
+
+    **使えていませんでした。** 到達日を決めていたのは「1日25本」と「審査30日」で、
+    1本あたり再生は**天井の表に出てくるだけ**。上げても下げても日付は動かず、
+    それでいて `lever_hint` は毎回 `density` を名指ししていました。
+    **動かない数字に向かって「早めろ」と言われていた**わけです。
+
+    ここが出すのは、腕を1つずつ同じ倍率にして**予測をまるごと解き直した差**です。
+    **できるかどうかは言っていません。** 言っているのは
+    「引けたら何日縮むか」だけ —— それが分かれば、**同じ手間なら差の大きい腕**を
+    選べます。名前ではなく日数で決まる形にすること。
+    """
+    rows = pl.get("lever_days") or []
+    if not rows:
+        return []
+    base = pl.get("days_to_target", NEVER)
+    out = ["", "--- **腕べつに、到達日が何日動くか**"
+           f"（それぞれ **{rows[0]['factor']:.0f}倍**にして解き直した）---"]
+    P = out.append
+    if base < NEVER:
+        P(f"    いまの実測のまま        {_fmt_days(base)}")
+    else:
+        P("    いまの実測のまま        **日付が出ません**（天井が足りない）")
+    for r in rows:
+        if not r["reachable"]:
+            P(f"    `{r['lever']:<10}` ×{r['factor']:.0f}   **それでも出ません**"
+              f"   {r['label']}")
+            continue
+        gain = (f"**{base - r['days']:,.0f}日 早まる**" if base < NEVER
+                else "**日付が出るようになる**")
+        P(f"    `{r['lever']:<10}` ×{r['factor']:.0f}   {r['date'].isoformat()}"
+          f"（{r['days']:,.0f}日後）  {gain}   {r['label']}")
+    if pl.get("lever_measured"):
+        P(f"    → **この回に引く腕は `{pl['lever_measured']}`。**"
+          f" 床の名前（{pl.get('lever_hint_binding')}）ではなく、**差の大きさで選んでいます**")
+    P("    **「2倍にできる」とは言っていません。** 言っているのは"
+      "「2倍にしたら何日縮むか」だけで、**できるかどうかは別の話**です。")
+    return out
+
+
 def _report_supply(pl: dict) -> list[str]:
     """**その密度を出せるかを、在庫の側から確かめる**（2026-08-20 13:4x に足した）。
 
@@ -1606,9 +1899,27 @@ def _report_supply(pl: dict) -> list[str]:
     `density` の腕は、この回では**そこにしか無い**からです
     （投稿の本数枠が閉じている窓では `upload` を選べません。1日16時間前後がそれ）。
 
-    **この節は日付を動かしません**（`plan()` の段には入れていません）。
-    supply は人が節を書けば伸びるので、**床として使うと「書かない未来」を
-    予測として印字する**ことになります。**出すのは、この回に要る本数だけ。**
+    ## **2026-08-20 16:0x に、ここは日付を動かすようになりました**
+
+    足した回のこの註は「**この節は日付を動かしません**（`plan()` の段には
+    入れていません）」でした。理由は「supply は人が節を書けば伸びるので、
+    床として使うと『書かない未来』を予測として印字する」——
+    **理屈は合っていますが、結論が逆でした。** オーナー指示（原文）:
+
+    > 25は物理的に不可ならそれを予測に使うのはどうなの？
+
+    **足りないと分かっている前提を、日付には反映しないまま印字していた**
+    わけです。いま `plan()` が入力にしているのは、
+    **在庫（＝いま在るもの）と、テーマが増える速さの実測**（`supply.make_rate`）です。
+
+    - **材料（掃引の候補）は壁にしていません。** 壁にすれば、まさに
+      「新しい表を1本も書かない未来」を印字することになります。
+      材料は**尽きる日**として出すだけ（`material_dry_days`）
+    - **速さのほうは実測**です。固定値ではなく、この回が節を書けば上がるので、
+      `density` の腕はそこに効きます
+
+    この節が残っているのは、**その密度が在庫の側から見てどう見えるか**を
+    並べて読むためです。**日付そのものは `plan()` の `gate1` にあります。**
     """
     from src import supply as supply_mod
 
@@ -1622,9 +1933,14 @@ def _report_supply(pl: dict) -> list[str]:
     except Exception as exc:      # 台帳が読めなくても、予測そのものは止めないこと
         return [f"    （在庫の supply は読めませんでした: {exc}）"]
     out.extend(supply_mod.lines(sp))
+    g1 = pl.get("gate1") or {}
+    if g1.get("measured"):
+        P(f"    → **予測が使っているのはこちらです: 作る速さ 1日 {g1['rate_per_day']:.1f}本の実測**"
+          f"（段1 は {_fmt_days(g1['days'])}）。**上の 25本/日 は詰め方の上限**です")
     if sw.get("age_hours") is not None and sw["age_hours"] > 24:
         P(f"    （掃引の点は {sw['age_hours']:.0f}時間前。測り直しは"
-          " `python -m src.supply --measure --density 25`）")
+          " `python -m src.supply --measure`。**掃引を回さず速さだけ積むなら**"
+          " `python -m src.supply --record`）")
     return out
 
 
@@ -1903,7 +2219,10 @@ def main() -> int:
 
     # **段取りを先に解いて、日付を最初に出す**（オーナー指示3回目・2026-08-20 08:0x）。
     # 出力は200行あり、読み手が最初に見た数字がその回の入口になります。
-    pl = plan(m, a)
+    #     **供給の実測を渡すこと**（2026-08-20 16:0x）。渡さないと段1 は
+    #     「1日25本」という**満たせない前提**で解かれます（`solve_gate1`）。
+    sup = supply_state()
+    pl = plan(m, a, supply=sup, sensitivity=True, points=points)
     prev = points[-1] if points else None
     for line in headline(pl, prev):
         print(line)
@@ -1918,11 +2237,20 @@ def main() -> int:
     row["days_revenue"] = pl["days_revenue"]
     row["binding"] = pl["binding"]
     row["lever_hint"] = pl["lever_hint"]
+    # **供給の実測も積む**（次の回が「作る速さは上がったか」を測れる形にする）
+    row["density_month"] = pl.get("density_month")
+    row["make_rate_per_day"] = (sup or {}).get("rate_per_day")
+    row["days_gate1"] = pl.get("gate1", {}).get("days")
+    row["videos_needed_gate1"] = pl.get("gate1", {}).get("need_videos")
     for line in _drift(row):
         print(line)
     # **「予測 → 腕を選ぶ → 進む」の、選んだ側の実績**（オーナー指示 2026-08-19 21:2x）。
     # 1周ごとに動くのは日付ではなく**ここ**です（`src/levers.py` の説明）。
     for line in levers.report(ROOT / "data" / "runs.jsonl"):
+        print(line)
+    # **腕を「日数の差」で並べる**（2026-08-20 16:0x）。ここが無いと、
+    # 引く腕は `binding`（どの床が遅いか）という診断からしか決まりません。
+    for line in _report_levers(pl):
         print(line)
     # **段取りは、いちばん最後に出すこと**（オーナー指示 2026-08-20 06:2x）。
     # 読み手が最後に見たものが、そのまま次の回の入口になります。

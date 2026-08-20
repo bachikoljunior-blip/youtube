@@ -83,6 +83,13 @@ def stock() -> int:
 
 # ---------------------------------------------------------------- 掃引の余地
 
+def topics_total() -> int:
+    """`config/topics.yaml` のテーマ総数。**作る速さの正本**（在庫は出せば減る）。"""
+    from src import config
+
+    return len(config.load_topics()["topics"])
+
+
 def sweep_novel(*, compute: bool = False, max_age_hours: float = 24.0) -> dict:
     """「まだどの節も言っていない」掃引の候補の数。
 
@@ -176,6 +183,8 @@ def last_point() -> dict | None:
 def record(row: dict) -> dict:
     """1点積む。**`at` は必ず入れること**（速さは点の差からしか出ません）。"""
     row = dict(row)
+    if row.get("at") is None:
+        row.pop("at", None)
     row.setdefault("at", datetime.now(JST).isoformat(timespec="seconds"))
     CACHE.parent.mkdir(parents=True, exist_ok=True)
     with CACHE.open("a", encoding="utf-8") as fh:
@@ -239,7 +248,7 @@ def supply(density: int, *, stock_n: int | None = None,
 def lines(sp: dict) -> list[str]:
     """`eta.py` が印字する行。**数字だけ。判断は書かない。**"""
     L: list[str] = []
-    L.append(f"--- **その密度（{sp['density']}本/日）を、在庫が支えられるか** ---")
+    L.append(f"--- **その密度（{sp['density']:g}本/日）を、在庫が支えられるか** ---")
     if not sp["measured"]:
         L.append("    掃引の余地を**一度も測っていません**（`python -m src.supply --measure` で1点入ります）。")
     L.append(f"    未投稿のテーマ（在庫）      {sp['stock']:>6,} 本"
@@ -278,12 +287,16 @@ def main() -> None:
                    help="1周の間隔（分）。`quota.py --pace` の「持続できる間隔」")
     p.add_argument("--measure", action="store_true",
                    help="掃引をやり直して1点積む（約47秒）")
+    p.add_argument("--record", action="store_true",
+                   help="掃引はやり直さず、在庫とテーマ総数だけ1点積む（1秒未満）。"
+                        "**作る速さ（make_rate）は点の差からしか出ません**")
     args = p.parse_args()
 
     sw = sweep_novel(compute=args.measure)
     s = stock()
-    if args.measure:
-        record({"at": sw["at"], "stock": s,
+    if args.measure or args.record:
+        record({"at": sw["at"] if args.measure else None, "stock": s,
+                "topics_total": topics_total(),
                 "sweep_total": sw["total"], "sweep_novel": sw["novel"]})
         print(f"[supply] 積みました: {CACHE}")
     elif sw["age_hours"] is not None:
@@ -298,3 +311,206 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+
+# ---------------------------------------------------------------- 作る速さ
+#
+# **ここから下は 2026-08-20 16:0x に足しました。** オーナー指示（原文）:
+#
+#   > 25は物理的に不可ならそれを予測に使うのはどうなの？
+#   > 分析して制作に活かして視聴回数などを上げることが予測に使えることじゃない？
+#
+# そのとおりでした。`scripts/eta.py` の `PLAN_PUBLISH_PER_DAY = 25` は
+# **予約の詰め方**であって、**作れる本数ではありません。** 上の `supply()` は
+# それを「保ちません」と印字するだけで、**日付そのものは 25 の上に乗ったまま**でした
+# （`_report_supply` の註に「この節は日付を動かしません」と書いてあります）。
+#
+# **満たせない前提を入力にした日付は、予測ではありません。**
+#
+# ではなにを入力にするか。**測れるもの**です —— テーマが1日に何本増えているか。
+# これは「人が節を書けば伸びる」ので固定値ではありませんが、**書いているのは
+# この回そのもの**なので、その速さは実測できます（下の `make_rate`）。
+#
+# **材料（掃引の候補）を壁として扱わないこと。** 壁にすると「新しい表を1本も
+# 書かない未来」を予測として印字します。材料は**尽きる日**として出し、
+# 直線そのものは実測の速さで引きます。
+
+def uploads_before(ts: datetime, rows: list[dict] | None = None) -> int:
+    """`ts` までに**作った**本数（`data/uploaded.jsonl` の `uploaded_at`）。
+
+    在庫は作れば増え、出せば減ります。**累計で作った数**を出すには、
+    そのときの在庫に、そこまでに出した本数を足し戻す必要があります。
+    """
+    if rows is None:
+        rows = _ledger_rows()
+    n = 0
+    for r in rows:
+        u = r.get("uploaded_at")
+        if not u:
+            continue
+        try:
+            t = datetime.fromisoformat(str(u).replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        if t.tzinfo is None:
+            t = t.replace(tzinfo=JST)
+        if t <= ts:
+            n += 1
+    return n
+
+
+def _ledger_rows() -> list[dict]:
+    path = ROOT / "data" / "uploaded.jsonl"
+    if not path.exists():
+        return []
+    out = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            out.append(json.loads(line))
+        except json.JSONDecodeError:
+            continue
+    return out
+
+
+def created_series(ps: list[dict] | None = None) -> tuple[list[tuple[datetime, int]], str]:
+    """**累計で作ったテーマ数**の並びと、その出どころ。`(時刻, 本数)` を古い順に。
+
+    出どころは2つあり、**混ぜてはいけません**（2026-08-20 16:1x に実測で踏んだ）。
+
+        topics_total  `config/topics.yaml` の総数。**正本**
+        復元          `在庫 + そこまでに出した本数`。古い点用
+
+    **この2つは同じ数になりません。** `stock()` は「`calc` を持つ・まだ出していない」
+    テーマだけを数え、控えの側にも topics.yaml に無い行が混じります ——
+    実測で **417（復元）と 437（正本）で 20本ちがいました。** 1つの並びに混ぜると、
+    **物差しの差が「2.7時間で +21本」＝ 1日183本という速さ**として出ます
+    （実際に増えたのは 0本）。**だから、どちらか片方だけで並びを作ります。**
+
+    返り: `(並び, 出どころ)`。`topics_total` の点が2つ以上あればそちらへ、
+    無ければ復元へ落ちます（**正本の点が貯まれば自動で切り替わる**）。
+    """
+    ps = points() if ps is None else ps
+    parsed: list[tuple[datetime, dict]] = []
+    for p in ps:
+        at = p.get("at")
+        if not at:
+            continue
+        try:
+            t = datetime.fromisoformat(at)
+        except ValueError:
+            continue
+        if t.tzinfo is None:
+            t = t.replace(tzinfo=JST)
+        parsed.append((t, p))
+    parsed.sort(key=lambda r: r[0])
+
+    exact = [(t, int(p["topics_total"])) for t, p in parsed
+             if p.get("topics_total") is not None]
+    if len(exact) >= 2:
+        return exact, "topics_total"
+
+    rows = _ledger_rows()
+    approx = [(t, int(p["stock"]) + uploads_before(t, rows)) for t, p in parsed
+              if p.get("stock") is not None and p.get("topics_total") is None]
+    return approx, "復元（在庫＋投稿済み）"
+
+
+#: この時間より短い窓では、速さを名乗らない（1本の増減で桁が変わるため）
+MIN_RATE_HOURS = 1.0
+
+
+def make_rate(ps: list[dict] | None = None,
+              min_hours: float = MIN_RATE_HOURS) -> dict:
+    """**テーマが1日に何本増えているか。実測。**
+
+    返り: `{"per_day": float|None, "hours": float, "delta": int, "n": int,
+            "thin": bool}`
+
+    - `per_day` が `None` なら「**まだ測っていない**」。0 と取り違えないこと
+      （0 は「増えていない」という別の意味です）
+    - `thin` は「窓が 6時間 未満」＝ 1本の増減で桁が動く帯。
+      **数は返しますが、断りを付けて印字すること**
+    - `basis` は出どころ（`created_series`）。**物差しが切り替わった回は、
+      その差を「速くなった」と読まないこと**
+    """
+    s, basis = created_series(ps)
+    if len(s) < 2:
+        return {"per_day": None, "hours": 0.0, "delta": 0, "n": len(s),
+                "thin": True, "basis": basis}
+    (t0, v0), (t1, v1) = s[0], s[-1]
+    hours = (t1 - t0).total_seconds() / 3600.0
+    if hours < min_hours:
+        return {"per_day": None, "hours": hours, "delta": v1 - v0,
+                "n": len(s), "thin": True, "basis": basis}
+    return {"per_day": (v1 - v0) / (hours / 24.0), "hours": hours,
+            "delta": v1 - v0, "n": len(s), "thin": hours < 6.0, "basis": basis}
+
+
+def published_by(t: float, *, stock: int, rate_per_day: float,
+                 plan_density: float) -> float:
+    """**t日後までに公開できる本数の累計。**
+
+    2本の直線の**低いほう**です。どちらも単調なので、min も単調:
+
+        予約の詰め方   plan_density × t          （在庫が足りているあいだの上限）
+        作る速さ       stock + rate_per_day × t  （在庫を食い終わった先の上限）
+
+    材料（掃引の候補）は**ここでは壁にしません** —— 壁にすると
+    「新しい表を1本も書かない未来」を予測として印字することになります。
+    尽きる日は `material_dry_days` が別に出します。
+    """
+    if t <= 0:
+        return 0.0
+    return min(plan_density * t, stock + max(0.0, rate_per_day) * t)
+
+
+def days_for(need: float, *, stock: int, rate_per_day: float,
+             plan_density: float, never: float = 36_500.0) -> float:
+    """`published_by` が `need` 本に届く最初の日。**届かないなら `never`。**
+
+    `published_by` は単調なので、2本の直線それぞれを解いて**遅いほう**を取れば
+    厳密です（探索は要りません）。
+    """
+    if need <= 0:
+        return 0.0
+    if plan_density <= 0:
+        return never
+    t_plan = need / plan_density
+    if need <= stock:
+        t_make = 0.0
+    elif rate_per_day <= 0:
+        return never
+    else:
+        t_make = (need - stock) / rate_per_day
+    t = max(t_plan, t_make)
+    return never if t > never else t
+
+
+def material_dry_days(*, novel: int | None, rate_per_day: float) -> float | None:
+    """掃引の候補を使い切るまでの日数。**その先は新しい表が要ります。**"""
+    if novel is None or rate_per_day is None or rate_per_day <= 0:
+        return None
+    return (novel * SWEEP_YIELD) / rate_per_day
+
+
+def state(*, stock_n: int | None = None, ps: list[dict] | None = None) -> dict:
+    """**予測に渡す1つの塊**（API 0単位。読めなくても例外を出さない）。"""
+    ps = points() if ps is None else ps
+    r = make_rate(ps)
+    sw = sweep_novel()
+    try:
+        s = stock() if stock_n is None else stock_n
+    except Exception:                                          # noqa: BLE001
+        last = ps[-1] if ps else {}
+        s = int(last.get("stock") or 0)
+    return {
+        "stock": s,
+        "novel": sw.get("novel"),
+        "rate_per_day": r["per_day"],
+        "rate": r,
+        "measured": r["per_day"] is not None,
+        "sweep_age_hours": sw.get("age_hours"),
+    }
