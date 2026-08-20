@@ -270,3 +270,71 @@ def test_seven_day_は並び順で消えない():
         assert kind == "seven_day", f"{tail!r} で {kind} に化けています"
     got = sc.parse(base, "2026-08-17", "youtube-hourly")[0]
     assert got["external_metadata"]["rate_limit_info"]["rateLimitType"] == "five_hour"
+
+
+# --- タグは行ごと（2026-08-20 09:2x に踏んだ。**1周まるごと消えるところでした**）---
+#
+# `--tag` は全行に同じ1つを付けるだけでした。**読む側は行ごとに見ています** ——
+# `sibling_check.py` は `tags` に `youtube-hourly` を含む行だけを兄弟に数えます。
+# 09:2x の実物には `youtube-owner-request` の回が2件入っていて、それが
+# `youtube-hourly` として積まれ、**終了コード 2（この場で畳め）**が返りました。
+# §2 の指示どおりなら、その回は1件も出さずに終わります。
+
+def test_タグを書いた行は_その行だけそのタグになる():
+    rows = "\n".join([
+        "a01 RUNNING 01:00:00 01:10:00 p01 1787349600 allowed_warning",
+        "b01 RUNNING 02:00:00 02:10:00 p01 1787349600 allowed_warning youtube-owner-request",
+    ])
+    hourly, owner = sc.parse(rows, "2026-08-20", "youtube-hourly")
+    assert hourly["tags"] == ["youtube-hourly"], "書かなかった行は既定のまま"
+    assert owner["tags"] == ["youtube-owner-request"], "書いた行だけが変わること"
+
+
+def test_タグは複数書ける():
+    rows = ("a01 RUNNING 01:00:00 01:10:00 p01 1787349600 allowed "
+            "tag:youtube-hourly,cowork-remote")
+    (got,) = sc.parse(rows, "2026-08-20", "youtube-hourly")
+    assert got["tags"] == ["youtube-hourly", "cowork-remote"]
+
+
+def test_タグの走査は使用量も枠の種類も落ち方の印も食わない():
+    """**`f[7:]` を4つの規則が見ています**（このファイルで4度目の「片方だけ」）。"""
+    rows = ("a01 ARCHIVED 01:00:00 01:10:00 p01 1787349600 allowed_warning "
+            "seven_day apifail 8861380,190452,130,47841 youtube-owner-request")
+    (got,) = sc.parse(rows, "2026-08-20", "youtube-hourly")
+    assert got["tags"] == ["youtube-owner-request"]
+    assert got["ending"] == "apifail"
+    assert got["external_metadata"]["rate_limit_info"]["rateLimitType"] == "seven_day"
+    assert got["external_metadata"]["usage"]["output_tokens"] == 47841
+
+
+def test_別の目的で走っている回は兄弟に数えられない(tmp_path):
+    """**実際に踏んだ形をそのまま**（08/20 09:2x）。
+
+    ここは `parse` の中だけを見てもわかりません —— 壊れていたのは
+    **書く側と読む側のあいだ**なので、`sibling_check` の終了コードまで通すこと。
+    """
+    import subprocess
+    me = "session_01TwzHNxY2W2p1V4iLCDBZAx"
+    rows = "\n".join([
+        f"{me[8:]} RUNNING 09:00:00 09:10:00 p01 1787349600 allowed_warning",
+        "b01LMZGoWyqyZxSEdtSUcQR RUNNING 08:00:00 09:10:00 p01 1787349600 "
+        "allowed_warning youtube-owner-request",
+    ])
+    out = tmp_path / "sessions.json"
+    subprocess.run(
+        [sys.executable, str(ROOT / "scripts" / "sessions_compact.py"),
+         str(out), "--rows", str(_write(tmp_path, rows))],
+        capture_output=True, text=True, check=True)
+    got = subprocess.run(
+        [sys.executable, str(ROOT / "scripts" / "sibling_check.py"),
+         "--sessions", str(out), "--me", me],
+        capture_output=True, text=True)
+    assert got.returncode == 0, (
+        f"別の目的の回を兄弟に数えて畳んでいます（{got.returncode}）:\n{got.stdout}")
+
+
+def _write(tmp_path, rows: str):
+    p = tmp_path / "compact.txt"
+    p.write_text(rows, encoding="utf-8")
+    return p

@@ -811,7 +811,7 @@ def main(argv: list[str] | None = None) -> int:
                          "「calc が全部ちがう」に戻り、1回の上限が calc の本数になります")
     ap.add_argument("--no-retry", action="store_true",
                     help="落ちた本を作り直さない（既定は1回だけ作り直す。"
-                         "実測 54% が2回目で通り、テーマ在庫は減りません）")
+                         "実測 54%% が2回目で通り、テーマ在庫は減りません）")
     ap.add_argument("--stop-on-error", action="store_true",
                     help="1本落ちたらそこで止める（**予約の段だけ**。"
                          "作る段は並列なので、落ちた1本の巻き添えで他を捨てません）")

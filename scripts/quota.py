@@ -904,10 +904,10 @@ def main() -> int:
     ap.add_argument("--pace", action="store_true",
                     help="速さだけを出す（§6 (f) の間隔を決めるとき）")
     ap.add_argument("--gauge", metavar="週%", type=int,
-                    help="**オーナーの画面の%を1行で積む**（`--at` と対）。"
-                         "『週間の制限／すべてのモデル』の使用済み%")
+                    help="**オーナーの画面の%%を1行で積む**（`--at` と対）。"
+                         "『週間の制限／すべてのモデル』の使用済み%%")
     ap.add_argument("--at", metavar="時刻", help="画面の時刻（`MM/DD HH:MM` か `YYYY-MM-DD HH:MM`・JST）")
-    ap.add_argument("--session", metavar="%", type=int, help="『現在のセッション』の%（5時間枠）")
+    ap.add_argument("--session", metavar="%", type=int, help="『現在のセッション』の%%（5時間枠）")
     ap.add_argument("--session-in", metavar="分", type=int, help="『N時間M分後にリセット』を分に直した数")
     ap.add_argument("--resets", metavar="時刻", help="週枠のリセットを明示（既定は次の土 07:00 JST）")
     ap.add_argument("--note", metavar="文", default="", help="その点に添える1行")

@@ -36,8 +36,11 @@
 
 1行1セッション。空白区切り。**`#` から行末は註**。
 
-    <id> <status> <created> <updated> <parent> <resetsAt> <rlstatus> [<cr>,<cw>,<in>,<out>]
+    <id> <status> <created> <updated> <parent> <resetsAt> <rlstatus> [<cr>,<cw>,<in>,<out>] [<tag>]
 
+- **タグの違う行は、そのタグを書くこと**（2026-08-20 09:2x に踏んだ。下の節）。
+  `youtube-owner-request` のように**そのまま**書くか、`tag:a,b` と書く。
+  書かなかった行は `--tag`（既定 `youtube-hourly`）になります
 - `<id>` `<parent>` は `session_` を外した接尾辞。**頭の `0` は省いてよい**
   （接尾辞は必ず24字で `01` 始まりなので、こちらで補います）
 - `<created>` `<updated>` は `HH:MM:SS` だけ。日付は `--date`（既定は今日 UTC）
@@ -46,6 +49,21 @@
 - 最後の4つ組は `external_metadata.usage` がある行だけ。**無い行は省く**
   （**省くことと 0 は違います。** `usage` は全部の行には入らないので、
   0 と書くと「使っていない」という嘘の点が積まれます）
+
+## **タグを全行に同じものとして写すと、その回が丸ごと消えます**（2026-08-20 09:2x に踏んだ）
+
+`--tag` は長らく**全行に同じ1つ**を付けるだけで、行ごとに書く道がありませんでした。
+**読む側は行ごとに見ています** —— `sibling_check.py` は
+`tags` に `youtube-hourly` を含む行だけを兄弟に数えます。
+
+09:2x の回の実物には、オーナー指示で走っている `youtube-owner-request` の
+セッションが**2件**入っていました。それが `youtube-hourly` として積まれ、
+`sibling_check` は**「自分より古い兄弟が2件走っている」→ 終了コード 2
+＝ この場で畳め**と答えました。§2 の指示どおりなら、**その回は
+§6 (a)〜(e) を飛ばして、1件も出さずに終わります**（1周まるごと）。
+
+**片方だけの形です**（このファイルで4度目）—— 読む側は行ごとに見るのに、
+書く側が行ごとに書けない。**足りないのは判断ではなく、書ける列**でした。
 
 ## 割り引いて読むこと
 
@@ -158,6 +176,28 @@ def stamp(text: str, base: str) -> str:
 #: 既定のままの題名（中身ゼロ）を読みにいかせます。
 ENDINGS = {"nosrc", "apifail"}
 
+#: 行に書けるタグ。**`youtube-hourly` 以外の行があるから要ります**（2026-08-20 09:2x）。
+#: `sibling_check.py` は行ごとに `tags` を見るので、**全行に同じものを付けると
+#: 別の目的で走っているセッションが「兄弟」に化けます**（終了コード 2 ＝ その回は畳む）。
+#: 受ける形は2つ:
+#:
+#:     youtube-owner-request     そのまま書く（`-` を含む小文字の語）
+#:     tag:youtube-hourly,foo    複数付けたいとき
+#:
+#: **数字の4つ組（`usage`）にも `seven_day` にも `-` は入りません**ので、ぶつかりません。
+TAG_RE = re.compile(r"^[a-z][a-z0-9]*(?:-[a-z0-9]+)+$")
+
+
+def row_tags(fields: list[str], default: str) -> list[str]:
+    """行の末尾から、その行のタグを読む。**書いていなければ `default`。**"""
+    out: list[str] = []
+    for f in fields:
+        if f.startswith("tag:"):
+            out += [t for t in f[4:].split(",") if t]
+        elif f not in ENDINGS and TAG_RE.match(f):
+            out.append(f)
+    return out or [default]
+
 
 def parse(rows: str, base: str, tag: str) -> list[dict]:
     out = []
@@ -186,7 +226,7 @@ def parse(rows: str, base: str, tag: str) -> list[dict]:
             else "SESSION_STATUS_" + status,
             "created_at": stamp(born, base),
             "updated_at": stamp(seen, base),
-            "tags": [tag],
+            "tags": row_tags(f[7:], tag),
             "parent_session_id": full_id(parent),
             "external_metadata": meta,
         }
@@ -207,7 +247,10 @@ def main() -> int:
     ap.add_argument("out", help="組み立てた JSON の書き出し先")
     ap.add_argument("--rows", help="compact な行を書いたファイル（既定は標準入力）")
     ap.add_argument("--date", help="時刻に付ける日付（UTC の YYYY-MM-DD）。既定は今日")
-    ap.add_argument("--tag", default=TAG, help=f"全行に付けるタグ（既定 {TAG}）")
+    ap.add_argument("--tag", default=TAG,
+                    help=f"**タグを書かなかった行**に付ける既定（既定 {TAG}）。"
+                         "行ごとに違うときは、その行に `youtube-owner-request` の"
+                         "ように書くこと（全行を同じにすると兄弟の数が狂います）")
     args = ap.parse_args()
 
     base = args.date or datetime.now(timezone.utc).strftime("%Y-%m-%d")
