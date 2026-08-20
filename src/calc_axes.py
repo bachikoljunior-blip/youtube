@@ -104,6 +104,49 @@ PARAM_FILL: dict[str, float] = {
     "remaining": 45,           # 支給残日数。1/3 と 2/3 の崖のあいだに置く
 }
 
+#: **名前が完全に一致したときだけ引く表**（2026-08-20 に足した）。
+#:
+#: `PARAM_FILL` と `FILL_ONLY` は **部分一致**（`name in param`）で引きます。
+#: そのおかげで `estate` 1語が `estate_total` にも効くのですが、
+#: **短い名前はそこに置けません** —— `i` を置けば `income` にも `kikan` にも
+#: 当たり、`n` はほぼ全部の引数に当たります。
+#:
+#: そのせいで、**引数が `i` や `n` や `step` というだけで関数が丸ごと
+#: 掃引から落ちていました**（`shahoken.bounds(i)`・`inshi.split_cost(n)`・
+#: `haiguusha.cliff(step)`）。**語彙の不足ではなく、引き方の不足**です。
+#: 部分一致の3つより**先に**、ここを完全一致で引きます。
+#:
+#: **`axis_of` からは見えません**（＝`pair_sweep` の組は増えません）。
+#: ここに並ぶのはどれも「その表の中の何番目か」「何回目か」の類で、
+#: **表どうしを繋ぐ意味の軸ではない**からです（`FILL_ONLY` と同じ扱い）。
+EXACT_FILL: dict[str, float] = {
+    # 番号・回数（**その表の中でしか意味を持たない**）
+    "i": 12,                 # `shahoken.bounds` の等級（0起点・全32段）
+    "n": 3,                  # `inshi.split_cost` の分割の通数
+    "step": 5,               # `haiguusha.cliff` / `recovery` の段（1〜9）
+    "order": 2,              # `jidou` の第何子
+    "parts": 3,              # `iryohi.split_months_tax` の分ける月数
+    "nth": 3,                # `yukyu.granted_at` の付与の回（0起点）
+    "skipped_nth": 3,        # `yukyu.skip_one_year`
+    "points": 20,            # `ninikeizoku.keigen_kintou` の軽減のポイント
+    # 量（**軸の代表値では桁が合わないもの**）
+    "nth_hour": 20,          # `zangyo.marginal_hour` の残業の何時間目
+    "this_month": 60,        # `jikangai.next_month_cap` の今月の残業時間
+    "ratio": 0.6,            # `koureikoyou.keep_rate` の低下率
+    "small": 100,            # `koteishisan.same_tax_floor` の狭い家の床面積（㎡）
+    "edge": 1_000_000,       # `inshi.zeinuki_limit` の帯の入口（円）
+    "std": 300_000,          # `sankyu.premium` の標準報酬月額（円）
+    "hantei": 800_000,       # `kouki.keigen_rate` の判定所得（円）
+    "target": 2_000,         # `zangyo.hours_for_average` の平均単価（円）
+    "smaller_share": 100_000,  # `iryohi.split_loss` の分けた側の医療費（円）
+    # **`shobyo.example_pay` の `remainder` は、ここに置きません。**
+    # 届く余りは `gcd(1000, 900) = 100` の倍数だけで、`_grid` は 100 きざみの
+    # 点を並べません（どの代表値を置いても、当たるのは1点だけ＝掃引に足りない）。
+    # **埋められないのは語彙の不足ではなく、格子とその関数の刻みが噛み合わない**
+    # からです。関数の側は同じ回に直しました（**無限ループ → `TableError`**）。
+}
+
+
 #: **埋めるためだけの語彙**（2026-08-19 に足した）。
 #:
 #: `SEMANTIC_AXES` には消費者が2つあり、**要求が正反対**でした:

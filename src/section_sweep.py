@@ -268,8 +268,10 @@ def _axis_fill(param: str) -> float | None:
     **正本は `calc_axes`**（2026-08-19 に `pair_sweep` から移した）。
     ここで写しを持たないこと —— 次に軸を足した回が、片方だけ書きます。
 
-    引くのは3つ。**この順です**（2026-08-19 に足した）:
+    引くのは4つ。**この順です**（2026-08-19 に3つで足し、2026-08-20 に1つ増えた）:
 
+        `EXACT_FILL`   **名前が完全に一致したときだけ**引く表。
+                       部分一致に置けない短い名前（`i` / `n` / `step`）はここ
         `PARAM_FILL`   名前ごとの値。**軸の代表値では桁が合わない引数**
                        （`estate` を所得の 3,000,000 で埋めると税額が全行 0）
         `SEMANTIC_AXES` → `AXIS_FILL`   意味の軸の代表値
@@ -279,6 +281,9 @@ def _axis_fill(param: str) -> float | None:
     **`FILL_ONLY` を `SEMANTIC_AXES` に足して済ませないこと。** あちらは
     表どうしを繋ぐ軸で、つまみを入れると母数だけが膨らみます。
     """
+    exact = calc_axes.EXACT_FILL.get(param)
+    if exact is not None:
+        return float(exact)
     for name, value in calc_axes.PARAM_FILL.items():
         if name == param or name in param:
             return float(value)

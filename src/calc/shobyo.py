@@ -42,7 +42,10 @@
 """
 from __future__ import annotations
 
+import math
 from fractions import Fraction
+
+from . import _checks
 
 ASSUMPTIONS = [
     "1日あたりの額は、支給開始日以前12か月の標準報酬月額の平均を30で割り、3分の2をかけて計算しています",
@@ -236,8 +239,26 @@ def rounding_gain(standard_pay: int) -> Fraction:
 
 
 def example_pay(remainder: int, floor: int = 200_000) -> int:
-    """その余りを持つ、`floor` 以上でいちばん小さい標準報酬月額（1,000円きざみ）。"""
-    pay = floor - floor % PAY_STEP
+    """その余りを持つ、`floor` 以上でいちばん小さい標準報酬月額（1,000円きざみ）。
+
+    ## **届かない余りがあります**（2026-08-20 に踏んだ）
+
+    `pay` は `PAY_STEP`（1,000円）ずつ増えるので、`pay % ROUND_MOD`（900）が
+    取りうるのは **`gcd(1000, 900) = 100` の倍数ぶんだけ離れた値**です ——
+    出発点の余りが 200,000 % 900 = 200 なら、届くのは **100 の倍数の余りだけ。**
+    `remainder=10` のような値は**永久に一致しません。**
+
+    もとの `while` には出口がなく、**そのまま無限に回りました。**
+    `src/section_sweep.py` が `remainder` を埋められるようになった回に、
+    掃引ぜんぶが**この1関数で止まりました**（5分の打ち切りまで無反応）。
+    掃引は例外を1本ずつ受け取って捨てるので、**止まるより落ちるほうが安全**です。
+    """
+    start = floor - floor % PAY_STEP
+    reach = math.gcd(PAY_STEP, ROUND_MOD)
+    if (remainder - start) % reach != 0:
+        raise _checks.TableError(
+            f"この余りには届きません（{reach} きざみの余りだけ）: {remainder}")
+    pay = start
     while pay % ROUND_MOD != remainder % ROUND_MOD:
         pay += PAY_STEP
     return pay

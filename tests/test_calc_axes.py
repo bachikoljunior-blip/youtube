@@ -182,3 +182,50 @@ def test_呼べるようになった関数(mod, fname):
 
     fn = getattr(importlib.import_module(f"src.calc.{mod}"), fname)
     assert unreachable(fn) == "", f"{mod}.{fname} が掃引から落ちている"
+
+
+@pytest.mark.parametrize("mod,fname", [
+    ("haiguusha", "cliff"), ("haiguusha", "recovery"),
+    ("inshi", "split_cost"), ("inshi", "zeinuki_limit"),
+    ("iryohi", "split_loss"), ("iryohi", "split_months_tax"),
+    ("jidou", "monthly"), ("jidou", "total_for"),
+    ("jikangai", "next_month_cap"), ("koteishisan", "same_tax_floor"),
+    ("kouki", "keigen_rate"), ("kouki", "part"),
+    ("koureikoyou", "keep_rate"), ("ninikeizoku", "keigen_kintou"),
+    ("sankyu", "premium"), ("shahoken", "bounds"),
+    ("yukyu", "granted_at"), ("yukyu", "skip_one_year"),
+    ("zangyo", "hours_for_average"), ("zangyo", "marginal_hour"),
+])
+def test_完全一致の表で呼べるようになった関数(mod, fname):
+    """**短い引数名だけで、20関数が掃引から落ちていました**（2026-08-20）。
+
+    `PARAM_FILL` も `FILL_ONLY` も**部分一致**（`name in param`）なので、
+    `i` や `n` や `step` はそこに置けません（`i` は `income` にも当たる）。
+    足りなかったのは語彙ではなく**引き方**で、`EXACT_FILL`（完全一致）を
+    先に引くようにして戻りました（34件 → 14件）。
+    """
+    import importlib
+
+    from src.section_sweep import unreachable
+
+    fn = getattr(importlib.import_module(f"src.calc.{mod}"), fname)
+    assert unreachable(fn) == "", f"{mod}.{fname} が掃引から落ちている"
+
+
+def test_完全一致の表は部分一致に混ぜない():
+    """`EXACT_FILL` の短い名前を `PARAM_FILL` / `FILL_ONLY` に置かないこと。
+
+    あちらは部分一致なので、`i` を置いた瞬間に **`income` も `kikan` も
+    12 で埋まります**（＝金額の引数が桁ごと壊れて、掃引は「不変」を返す）。
+    **同じ表に混ぜたら壊れる**ことを、ここで固定します。
+    """
+    from src import calc_axes
+
+    for name in calc_axes.EXACT_FILL:
+        assert name not in calc_axes.PARAM_FILL, f"{name} は部分一致に置けない"
+        assert name not in calc_axes.FILL_ONLY, f"{name} は部分一致に置けない"
+    from src.section_sweep import _axis_fill
+
+    assert _axis_fill("i") == 12
+    assert _axis_fill("income") == calc_axes.AXIS_FILL["所得"], "短い名前が金額を食った"
+    assert _axis_fill("kikan") == calc_axes.AXIS_FILL["期間"], "短い名前が期間を食った"

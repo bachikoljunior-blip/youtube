@@ -121,3 +121,23 @@ def test_率1ポイントの差は比ではどこでも1ポイント():
     amounts = [r["diff_limit"] for r in rows]
     assert amounts == sorted(amounts)
     assert round(max(amounts) / min(amounts), 4) == 3.25
+
+
+def test_届かない余りは無限に回らず落ちる():
+    """**`example_pay` は出口の無い `while` でした**（2026-08-20 に踏んだ）。
+
+    `pay` は 1,000円きざみ・余りは 900 で見るので、届くのは
+    `gcd(1000, 900) = 100` の倍数ぶんだけ離れた余りだけです。
+    `remainder=10` は永久に一致せず、**掃引ぜんぶがこの1関数で止まりました。**
+    掃引は例外を1本ずつ捨てるので、**止まるより落ちるほうが安全**です。
+    """
+    import pytest
+
+    from src.calc import _checks
+
+    assert shobyo.example_pay(200) == 200_000
+    for good in (0, 100, 500, 800):
+        assert shobyo.example_pay(good) % shobyo.ROUND_MOD == good % shobyo.ROUND_MOD
+    for bad in (1, 10, 55, 899):
+        with pytest.raises(_checks.TableError):
+            shobyo.example_pay(bad)
