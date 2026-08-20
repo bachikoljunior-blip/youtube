@@ -50,6 +50,11 @@
 - `<created>` `<updated>` は `HH:MM:SS` だけ。日付は `--date`（既定は今日 UTC）
   **日をまたいだ行だけ** `MM-DD/HH:MM:SS` と書く
 - `<status>` は `RUNNING` / `ARCHIVED` / `PENDING` / `IDLE` …（`SESSION_STATUS_` は不要）
+- **`rate_limit_info` が丸ごと無い行は、`<resetsAt>` と `<rlstatus>` を `-` と書く**
+  （2026-08-21 02:1x に足した）。1ターン目で `API Error: 529` に当たって死んだ回が
+  それです。**行ごと落とさないこと** —— `sibling_check` が「印を1つも残していない回」
+  として名指しするのは、まさにその回です。**適当な `resetsAt` も書かないこと** ——
+  枠の観測が1点でっち上がります
 - 最後の4つ組は `external_metadata.usage` がある行だけ。**無い行は省く**
   （**省くことと 0 は違います。** `usage` は全部の行には入らないので、
   0 と書くと「使っていない」という嘘の点が積まれます）
@@ -222,8 +227,20 @@ def parse(rows: str, base: str, tag: str) -> list[dict]:
         # 落ち方の印を先に書いた行で `seven_day` が黙って `five_hour` に化けます
         # （このファイルが3度目の「片方だけ」です）。
         kind = "seven_day" if "seven_day" in f[7:] else "five_hour"
-        meta = {"rate_limit_info": {
-            "rateLimitType": kind, "resetsAt": int(resets), "status": rls}}
+        # **`rate_limit_info` が丸ごと無い行がある**（2026-08-21 02:1x に踏んだ）。
+        # 1ターン目で `API Error: 529` に当たって死んだ回は `external_metadata` に
+        # `rate_limit_info` を持ちません。ここは長らく `resets` と `rls` を必須にしていて、
+        # **書けない行**でした。逃げ道は2つとも台帳を汚します ——
+        # 行ごと落とせば `sibling_check` から**その回だけ**消え（印を1つも残していない回を
+        # 名指しするのは、まさにその道具です）、適当な `resetsAt` を書けば
+        # **枠の観測が1点でっち上がります**。読む側（`quota.py:510` と
+        # `sibling_check.py:552`）はどちらも `or {}` で欠落を織り込み済みなので、
+        # **書く側に「無い」と言う字を足すのが正しい**。`-` で省きます。
+        if resets == "-" or rls == "-":
+            meta: dict = {}
+        else:
+            meta = {"rate_limit_info": {
+                "rateLimitType": kind, "resetsAt": int(resets), "status": rls}}
         tokens = [x for x in f[7:] if re.fullmatch(r"\d+(,\d+){3}", x)]
         if tokens:
             cr, cw, i, o = (int(x) for x in tokens[0].split(","))
@@ -242,7 +259,7 @@ def parse(rows: str, base: str, tag: str) -> list[dict]:
         # **書き忘れを、書いた側に頼らず捕まえる**（2026-08-20 09:4x に自分で踏んだ）。
         # 5時間枠のリセットは、その窓の中の観測から**5時間より先には来ません**。
         # 先にあるなら、それは週枠の行に `seven_day` を書き落としたものです。
-        if kind == "five_hour":
+        if kind == "five_hour" and meta:
             ahead = int(resets) - int(datetime.fromisoformat(
                 row["updated_at"].replace("Z", "+00:00")).timestamp())
             if ahead > FIVE_HOUR_SEC:
