@@ -44,5 +44,11 @@ def _alerts_ledger_to_tmp(tmp_path_factory):
     keep = (alerts.LEDGER, alerts.RUNS)
     alerts.LEDGER = d / "alerts.jsonl"
     alerts.RUNS = d / "runs.jsonl"
+    # **`ship()` の反映も、ここで止めます**（2026-08-20 に足した。理由は同じ）。
+    # `tests/test_closes_vocab.py` は `run_marker.ship()` を直接呼ぶので、
+    # 反映を既定にしたら**本物の `data/eta.jsonl` に 19行**入りました。
+    # **`growth_per_day()` の回帰を汚す向き**なので、規律ではなく機械で外します。
+    os.environ["YT_SKIP_REFLECT"] = "1"
+
     yield
     alerts.LEDGER, alerts.RUNS = keep

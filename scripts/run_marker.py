@@ -240,7 +240,7 @@ def _eta_target() -> tuple[str | None, float | None, str]:
 
 
 def ship(what: str, closes: list[str] | None = None, lever: str | None = None,
-         moves: int | None = None) -> int:
+         moves: int | None = None, reflect: bool = True) -> int:
     """**この回が「出したもの」を1行残す。**（2026-08-15 追加）
 
     オーナーの指示（原文）: **「子が、少しの作業で終わるの直して」**
@@ -363,7 +363,54 @@ def ship(what: str, closes: list[str] | None = None, lever: str | None = None,
             print("         [!] **動かす腕を選んで 0日** と言っています。"
                   " 効くまでに時差があるなら、それを JOURNAL に1行書くこと。")
     _suggest_undeclared(what, closes, known)
+    # **出したら、その場で予測へ入れ直す**（2026-08-20・オーナー指示。原文:
+    # **「毎回の実行で予測するように言ったはずなので、毎回その予測に反映して」**）。
+    #
+    # **ここに繋いだ理由は1つ**です —— `--ship` は、この周でただ1つ
+    # **飛ばせない呼び出し**だからです（`stop_check.sh` が印の無い回を引き止めます）。
+    # 手順書に「周の終わりに反映すること」と書くだけでは足りません:
+    # **2026-08-20 に註へ書いたものは、その日のうちに全部素通りしました。**
+    #
+    # 反映は API を叩きません（出発点と同じ実測で解き直すだけ・約4秒）。
+    # **失敗しても ship は成功のまま返します** —— 反映は記録であって門ではない。
+    if reflect:
+        _reflect_now(what)
     return 0
+
+
+# **検査から呼ばれたときは撃たない**（2026-08-20。**入れた当日に自分で踏みました**）。
+#
+# `tests/test_closes_vocab.py` は `run_marker.ship()` を**直接**呼びます。
+# 反映を既定にした瞬間、その検査が**本物の `data/eta.jsonl` に 19行**書きました
+# （1回 3.3秒 × 19 ＝ 検査も1分遅くなる）。`tests/conftest.py` が
+# `src/alerts.py` の台帳で同じ形を 2026-08-17 に踏んで塞いでいます —— **同じ傘に入れます。**
+SKIP_REFLECT_ENV = "YT_SKIP_REFLECT"
+
+
+def _reflect_now(what: str) -> None:
+    """`scripts/eta.py --reflect` を呼ぶ。**この回を止めないこと。**"""
+    import subprocess
+    if os.environ.get(SKIP_REFLECT_ENV):
+        return
+    print("")
+    print("[marker] **予測へ入れ直します**（この回で動いた入力 → 日付の前後差）")
+    try:
+        r = subprocess.run(
+            [sys.executable, str(Path(__file__).resolve().parent / "eta.py"),
+             "--reflect", "--note", what[:120]],
+            cwd=str(Path(__file__).resolve().parent.parent),
+            capture_output=True, text=True, timeout=180)
+    except (OSError, subprocess.SubprocessError) as exc:
+        print(f"[marker] 反映を撃てませんでした: {type(exc).__name__}: {exc}")
+        print("         **回は止めません。** `python scripts/eta.py --reflect` を手で撃つこと。")
+        return
+    out = (r.stdout or "").strip()
+    if out:
+        print(out)
+    if r.returncode != 0:
+        print(f"[marker] 反映が失敗しました（終了 {r.returncode}）。"
+              f"{(r.stderr or '').strip()[-300:]}")
+        print("         **回は止めません。** 理由を docs/JOURNAL.md に1行書くこと。")
 
 
 def _known_vocab() -> tuple[set[str], dict[str, list[str]]] | None:
@@ -623,6 +670,11 @@ def main(argv: list[str] | None = None) -> int:
                          "`--closes=--closes` と等号で書くこと**"
                          "（argparse が次の旗と読みます。持ち越しには "
                          "`--closes` `--next` のような旗の名前が実際に載ります）")
+    ap.add_argument("--no-reflect", action="store_true",
+                    help="**この ship の後で予測へ入れ直さない**（既定では入れ直します。"
+                         "オーナー指示 2026-08-20「毎回その予測に反映して」）。"
+                         "**逃げ道であって、既定ではありません** —— 使ったら理由を "
+                         "JOURNAL に1行。`stop_check.sh` が終わる前にもう一度訊きます")
     ap.add_argument("--seen", metavar="ID",
                     help="**名指しされた回を見にいって、拾うものが無かった**ことを"
                          "残す（`sibling_check` がもう名指ししません）。"
@@ -665,7 +717,8 @@ def main(argv: list[str] | None = None) -> int:
                      "**この成果で予測日が何日動く見込みか**を、"
                      "出す前に言うこと（早まるなら負・遠のくなら正・動かさないなら 0）。"
                      "予測日は `python scripts/eta.py` の先頭3行に出ています")
-        return ship(args.ship, args.closes, args.lever, args.moves)
+        return ship(args.ship, args.closes, args.lever, args.moves,
+                    reflect=not args.no_reflect)
     if args.moves is not None:
         ap.error("--moves は --ship と一緒に使ってください（出したものと対で残します）")
     if args.lever:
