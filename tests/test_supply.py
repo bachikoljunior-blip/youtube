@@ -15,13 +15,19 @@ from src import supply
 
 # ---------------------------------------------------------------- 算数（手で作った行）
 
-def test_足りないときは日数と1周あたりの本数を出す():
+def test_足りないときは日数と1周あたりの本数を出す(monkeypatch):
     """**既知の当たり**（2026-08-20 13:4x に手で確かめた）。
 
         在庫 36本 ＋ 掃引の候補 491件 = 527本
         25本/日 × 157日 = 3,925本 要る  → 足りないのは 3,398本
         3,398 ÷ 157 = 21.6本/日 → 1周60分（1日24周）なら **0.9本/周**
+
+    **歩留りは 1.0 に留めて確かめます**（2026-08-20 15:5x に足した）。
+    この行は**算数の当たり**で、`SWEEP_YIELD` の値そのものではありません ——
+    留めないと、歩留りを測り直すたびにここが赤くなり、
+    **測ったこと（進歩）を、検査が「壊れた」と言います。**
     """
+    monkeypatch.setattr(supply, "SWEEP_YIELD", 1.0)
     sp = supply.supply(25, stock_n=36, novel=491, horizon_days=157,
                        run_minutes=60, today=date(2026, 8, 20))
     assert sp["supply_total"] == 527
@@ -42,15 +48,17 @@ def test_足りているときは要求本数を0にする():
     assert sp["sections_per_run_needed"] == 0
 
 
-def test_実効の密度は在庫を期日で割ったもの():
+def test_実効の密度は在庫を期日で割ったもの(monkeypatch):
     """**25本/日 と印字しても、在庫がそれを出せるとは限りません。**"""
+    monkeypatch.setattr(supply, "SWEEP_YIELD", 1.0)
     sp = supply.supply(25, stock_n=36, novel=491, horizon_days=157,
                        today=date(2026, 8, 20))
     assert sp["density_supported"] == pytest.approx(527 / 157)
     assert sp["density_supported"] < sp["density"]
 
 
-def test_尽きる日は在庫を密度で割った日():
+def test_尽きる日は在庫を密度で割った日(monkeypatch):
+    monkeypatch.setattr(supply, "SWEEP_YIELD", 1.0)
     sp = supply.supply(10, stock_n=20, novel=30, horizon_days=None,
                        today=date(2026, 8, 20))
     assert sp["days_covered"] == pytest.approx(5.0)
@@ -73,12 +81,24 @@ def test_測っていない掃引は0と区別する():
 
 
 def test_歩留りを下げると日数は短くなる側にしか動かない(monkeypatch):
-    """`SWEEP_YIELD` は 1.0（上限側）。下げたら**必ず短くなる**こと。"""
+    """歩留りを下げたら**必ず短くなる**こと（向きだけを見ます）。"""
+    monkeypatch.setattr(supply, "SWEEP_YIELD", 1.0)
     high = supply.supply(25, stock_n=36, novel=491, horizon_days=157)
     monkeypatch.setattr(supply, "SWEEP_YIELD", 0.5)
     low = supply.supply(25, stock_n=36, novel=491, horizon_days=157)
     assert low["days_covered"] < high["days_covered"]
     assert low["sections_per_day_needed"] > high["sections_per_day_needed"]
+
+
+def test_歩留りは測った1点で_1_ではない():
+    """**測ったことを固定する**（2026-08-20 15:5x）。
+
+    `SWEEP_YIELD` は長らく 1.0 ＝「測っていないので上限側に置く」でした。
+    32件を目で見て **5件が節になる（0.156）**と分かったので下げています。
+    **1.0 に戻っていたら、それは測った1点が消えた合図**です。
+    """
+    assert supply.SWEEP_YIELD < 1.0, "歩留りが測る前（1.0）に戻っている"
+    assert 0 < supply.SWEEP_YIELD <= 0.5
 
 
 # ---------------------------------------------------------------- 印字
