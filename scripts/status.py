@@ -1785,6 +1785,12 @@ def print_local_sections(inventory: bool = True) -> None:
     # 「**運ばれてきたのに、まだ閉じていない依頼**」で、
     # 途中で死んだ回の申し送りが唯一残る場所です（`src/inbox.py`）。
     print(_inbox.render())
+    # **受け取り帳のすぐ下**（2026-08-20 に足した）。ここが赤いと、
+    # **この repo を直しても発火が変わりません** —— 直した気になる回が出ます。
+    # 実際 8/12 は `docs/TRIGGER.md`・実物・親の見立てが**3か所とも別の値**でした。
+    # 警告の一覧（`alerts.ring()`）を通していないのは、**畳まれてほしくない**から。
+    # 鳴り続けるのが正しい —— 直るまで、鎖の一番下が正本と食い違っています。
+    print_trigger_drift()
     print_upload_cap()
     if inventory:
         _print_inventory_from_ledger()
@@ -1822,6 +1828,28 @@ def print_local_sections(inventory: bool = True) -> None:
     print_hypotheses()
     print_alert_hit_rate()
     print_budget()
+
+
+def print_trigger_drift() -> None:
+    """**正本（`docs/trigger_spec.json`）と実物のトリガーのズレ**（2026-08-20 に足した）。
+
+    `docs/TRIGGER.md` は長らく「正本」と名乗っていましたが、**正本ではありません。**
+    実物は Routine 側にあり、**この repo を1文字書き換えても発火は1秒も変わりません。**
+    「変えたら同時に直すこと」と書いてあっても、実測として直っていませんでした。
+
+    **落ちても続けます。** 計器が1つ読めないことは、この回を止める理由になりません。
+    """
+    try:
+        import importlib.util
+        spec_path = Path(__file__).resolve().parent / "trigger_sync.py"
+        _s = importlib.util.spec_from_file_location("trigger_sync", spec_path)
+        ts = importlib.util.module_from_spec(_s)
+        _s.loader.exec_module(ts)                              # type: ignore[union-attr]
+        text, _drifted = ts.render(ts.load_spec(), ts.load_seen())
+        print(text)
+    except Exception as exc:                                   # noqa: BLE001
+        print("\n=== 親トリガー（正本 ↔ 実物）===")
+        print(f"  読めませんでした（続行）: {type(exc).__name__}: {str(exc)[:100]}")
 
 
 def print_upload_cap() -> None:

@@ -1,5 +1,33 @@
 # 親トリガーの本文
 
+## いちばん先に —— **トリガー本文の正本**（2026-08-20 に足した。2手・数秒）
+
+**あなたがいま読んでいる「【親】…」の本文は、repo 側に正本があります。**
+
+    mcp__github__get_file_contents
+      owner=bachikoljunior-blip  repo=youtube
+      path=docs/trigger_body.rendered.md  ref=claude/youtube-auto-post-revenue-ggedij
+
+**取った中身が、あなたが受け取った本文と違っていたら、その場で当ててください:**
+
+    mcp__bf7c680d-5fdc-5ef4-b4a0-abadb619bf0a__update_trigger
+      trigger_id: trig_017g2Meu9DZqZ7dJbPKJFS8c
+      prompt:     <取った中身をそのまま>
+
+**これは子には撃てません**（2026-08-20 に子が実際に撃って弾かれた）:
+
+> editing the prompt of a routine whose fires deliver into a session
+> that is not your own is not available via this tool
+
+**あなたの発火先はあなた自身なので、あなたからは通ります。**
+つまり**この1件は、あなたがやらないと永久に直りません。** 人手は要りません。
+当てたら、その回はそこで終えてよい（次の発火から新しい本文になります）。
+
+**同じなら、何もしないこと。** 普通の回は「同じ」です ——
+`get_file_contents` 1回で終わります。
+
+---
+
 > **cron やセッションIDをここで読んで信じないこと。`list_triggers` で実物を見ること。**
 > 2026-08-12、この行は `9 */6` のままで実物は `9 */12` でした。
 > 親は「たぶん `9 */8`」と見立て、前の回の子は「12h」と書き、この行は「6h」——
@@ -219,20 +247,24 @@
 鎖はそのあいだ止まります。**それでよい**（会話のほうが速い）。
 **2時間の年齢の規則が自動でほどきます**ので、こちらから割り込まないこと。
 
-### 子の立て方（`create_session`）
+### 子の立て方（`create_session`）—— **引数一式は repo にあります**
 
-    source_url:      https://github.com/bachikoljunior-blip/youtube
-    source_revision: claude/youtube-auto-post-revenue-ggedij
-    environment_id:  env_01QMJaP2yRCzw4tY5VpJeM1m
-    tags:            ["youtube-hourly"]
+**ここに書き写しません**（2026-08-20 に変えた）。取ってきて、そのまま貼ってください:
 
-**`source_url` を忘れるとリポジトリが無い状態で始まります。**
-**`source_revision` を忘れると main で始まり、成果がどこにも残りません。**
+    mcp__github__get_file_contents
+      owner=bachikoljunior-blip  repo=youtube
+      path=docs/spawn_prompt.rendered.md  ref=claude/youtube-auto-post-revenue-ggedij
 
-渡す本文は短く。**事実を写さないこと**（写した瞬間に古くなります）:
+3つの型（`hourly` / `owner-full` / `owner-record`）が、**`create_session` の
+引数一式の JSON** で入っています。**埋めるのは2か所だけ**で、あとは1字も変えない。
 
-> 【定期の回】`docs/trigger_main.md` を読んで、そのとおりに1周してください。
-> **最低1件は出してから終わること**（同 §4）。最後に自分を archive すること。
+**なぜ写すのをやめたか。** 渡し方が親のターンの中にしかなく、**子が「渡し方が
+悪い」と気づいても直せませんでした。** そして実測で3回壊れています ——
+`source_url` の付け忘れで repo の無い子が立った回が2回（8/17・8/18。**8/17 の回は
+1件も出せずに終わっています**）、親が本文を要約して条件を落とした回が1回（8/10）。
+
+**型そのものは `docs/spawn_prompt.md`。子が直せます。** 直ると
+`docs/spawn_prompt.rendered.md` も一緒に更新され、次の発火からあなたに届きます。
 
 ### 畳んでよい子（**状態では決めない。年齢で決める**）
 

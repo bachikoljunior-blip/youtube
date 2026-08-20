@@ -1,0 +1,189 @@
+#!/usr/bin/env python3
+"""**子に渡すプロンプトを組み立てる**（2026-08-20 に作った）。
+
+型の正本は `docs/spawn_prompt.md`、識別子の正本は `docs/trigger_spec.json`。
+**この道具は組み立てるだけで、文言をここに持ちません** —— 持つと2か所になり、
+片方だけ直った回に、また 8/12 の「3か所とも別の値」に戻ります。
+
+## なぜ要ったか
+
+渡し方が**親のターンの中にしかありませんでした。** 毎時走るので回数が効き、
+実測で3つ壊れています（理由の全文は `docs/spawn_prompt.md`）:
+
+    source_url の付け忘れ    8/17 04:1x・8/18 23:5x（repo の無い子が立つ）
+    親が要約して条件を落とす  8/10
+    申し送りが親と一緒に消える 8/15・8/16
+
+**上2つは、道具が組み立てれば起きません。** `--json` は `source_url` と
+`source_revision` を**必ず**入れるので、付け忘れる余地がありません。
+
+## 使い方
+
+    python scripts/spawn_prompt.py --kind hourly
+    python scripts/spawn_prompt.py --kind owner-full --note "<原文>"
+    python scripts/spawn_prompt.py --kind hourly --siblings 016bZbYd,01Cja6DK
+    python scripts/spawn_prompt.py --kind hourly --only "eta.py の _drift だけ" --json
+
+## この設計が覆る条件
+
+- **枝が1本でなくなったら** —— `--branch` を足して、既定を spec から取ること
+- **`create_session` の引数が変わったら** —— `--json` の欄を合わせること
+  （`tests/test_spawn_prompt.py` が `source_url` / `source_revision` を見ています）
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import re
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+TEMPLATE = ROOT / "docs" / "spawn_prompt.md"
+SPEC = ROOT / "docs" / "trigger_spec.json"
+
+KINDS = ("hourly", "owner-full", "owner-record")
+
+_BLOCK = re.compile(
+    r"^## (?:kind|block):\s*(?P<name>[\w-]+)\s*$\n+```text\n(?P<body>.*?)^```",
+    re.M | re.S)
+
+# 型のほかに要る段。**`lead-only` が欠けると、`--only` の回に
+# 「1周してください」が残り、受け取った子が両方やろうとします。**
+NEEDED = KINDS + ("lead-round", "lead-only")
+
+
+def templates(path: Path = TEMPLATE) -> dict[str, str]:
+    text = path.read_text(encoding="utf-8")
+    out = {m.group("name"): m.group("body").rstrip() for m in _BLOCK.finditer(text)}
+    missing = [k for k in NEEDED if not out.get(k, "").strip()]
+    if missing:
+        raise SystemExit(f"[!] `{path}` に型がありません: {', '.join(missing)}")
+    return out
+
+
+def _siblings_block(siblings: list[str]) -> str:
+    """**同じ枝で走っている相手を名指しする段。**
+
+    空でも段を落としません —— 「いない」と書いてあることに意味があります
+    （書いていないと、受け取った子は「調べていないだけ」と区別できません）。
+    """
+    if not siblings:
+        return ("**同じ枝で他に走っている子は、立てた時点ではいません。**\n"
+                "それでも push 前に必ず `git fetch`。競合したら rebase／merge で"
+                "**相手の作業を残すこと。捨てないこと。**")
+    named = "／".join(siblings)
+    return ("**いま同じ枝で走っています: " + named + "**\n"
+            "**あなたの担当は、上のどれとも別のファイルのはずです。**\n"
+            "push 前に必ず `git fetch`。競合したら rebase／merge で"
+            "**相手の作業を残すこと。捨てないこと。**")
+
+
+def build(kind: str, note: str = "", siblings: list[str] | None = None,
+          only: str = "", root: Path = ROOT) -> str:
+    if kind not in KINDS:
+        raise SystemExit(f"[!] --kind は {'/'.join(KINDS)} のどれか（受け取った: {kind}）")
+    tpl = templates(root / "docs" / "spawn_prompt.md")
+    body = tpl[kind]
+    note, only = (note or "").strip(), (only or "").strip()
+    if kind.startswith("owner") and not note:
+        raise SystemExit("[!] `--kind owner-*` には `--note \"<原文>\"` が要ります。"
+                         "**要約しないこと。** 数字は桁もそのまま写すこと")
+    note_block = ("**申し送り（原文のまま。要約されていません）:**\n\n> "
+                  + note.replace("\n", "\n> ")) if note else ""
+    filled = {
+        "note": note,
+        "only": only,
+        "note_block": note_block,
+        "siblings_block": _siblings_block(list(siblings or [])),
+        "lead": (tpl["lead-only"].replace("<<only>>", only) if only
+                 else tpl["lead-round"]),
+    }
+    out: list[str] = []
+    for line in body.splitlines():
+        key = line.strip()
+        if key.startswith("<<") and key.endswith(">>"):
+            value = filled.get(key[2:-2], "")
+            if value:                        # 空の差し込み口は、行ごと落とす
+                out.append(value)
+            continue
+        for name, value in filled.items():
+            line = line.replace(f"<<{name}>>", value)
+        out.append(line)
+    return re.sub(r"\n{3,}", "\n\n", "\n".join(out)).strip() + "\n"
+
+
+def create_session_args(kind: str, root: Path = ROOT, **kw) -> dict:
+    """`create_session` にそのまま渡せる一式。
+
+    **`source_url` と `source_revision` は省略できません**（2026-08-18 に踏んだ）。
+    `environment_id` は継がれますが `sources` は継がれないので、**継がれる側から
+    「repo も継がれる」と読めてしまう**のがこの穴の正体です。ここでは常に入れます。
+    """
+    spec = json.loads((root / "docs" / "trigger_spec.json").read_text(encoding="utf-8"))
+    return {
+        "source_url": spec["repo_url"],
+        "source_revision": spec["branch"],
+        "environment_id": spec["environment_id"],
+        "tags": ["youtube-hourly"],
+        "prompt": build(kind, root=root, **kw),
+    }
+
+
+RENDERED = ROOT / "docs" / "spawn_prompt.rendered.md"
+
+# 親向けの写しに残す差し込み口。**親は repo を触れないので、この道具を回せません。**
+# テンプレートだけ置くと、親は組み立てを暗算することになり、**そこが「要約して
+# 条件を落とす」（8/10）の入口**です。だから **1ファイル取って、2か所だけ
+# 埋めて貼る**形にします。埋めるのは、repo からは絶対に求まらない2つだけ。
+_NOTE_SLOT = "<<オーナーの言葉を、ここに原文のまま。要約しない。数字は桁もそのまま>>"
+_SIBS_SLOT = "<<いま走っている子の識別子。いなければこの行ごと消す>>"
+
+
+def write_rendered(root: Path = ROOT) -> Path:
+    """**親がそのまま貼れる形**を1ファイルに書き出す。"""
+    parts = ["# 子に渡すプロンプト（**親向けの写し。そのまま貼れます**）",
+             "",
+             "**この写しは `scripts/spawn_prompt.py --write-rendered` が作ります。"
+             "手で直さないこと** —— 直すのは `docs/spawn_prompt.md` の型のほうです。",
+             "",
+             f"埋めるのは2か所だけ: `{_NOTE_SLOT}` と `{_SIBS_SLOT}`。",
+             "**それ以外は1字も変えないこと**（`source_url` を落とすと、"
+             "repo の無い子が立ちます。8/17・8/18 に2回）。",
+             ""]
+    for kind in KINDS:
+        note = _NOTE_SLOT if kind.startswith("owner") else ""
+        args = create_session_args(kind, note=note, siblings=[_SIBS_SLOT], only="",
+                                   root=root)
+        parts += [f"## kind: {kind}", "", "```json",
+                  json.dumps(args, ensure_ascii=False, indent=2), "```", ""]
+    RENDERED.write_text("\n".join(parts), encoding="utf-8")
+    return RENDERED
+
+
+def main(argv: list[str] | None = None) -> int:
+    ap = argparse.ArgumentParser(description="子に渡すプロンプトを組み立てる")
+    ap.add_argument("--kind", default="hourly", choices=list(KINDS))
+    ap.add_argument("--note", default="", help="オーナーの言葉を**原文のまま**")
+    ap.add_argument("--siblings", default="", help="同じ枝で走っている相手（カンマ区切り）")
+    ap.add_argument("--only", default="", help="「この回はこれだけ」の中身")
+    ap.add_argument("--json", action="store_true",
+                    help="create_session の引数一式で出す")
+    ap.add_argument("--write-rendered", action="store_true",
+                    help="親向けの写し（docs/spawn_prompt.rendered.md）を書き直す")
+    args = ap.parse_args(argv)
+    if args.write_rendered:
+        print(f"書きました: {write_rendered().relative_to(ROOT)}")
+        return 0
+    sibs = [s.strip() for s in args.siblings.split(",") if s.strip()]
+    kw = {"note": args.note, "siblings": sibs, "only": args.only}
+    if args.json:
+        print(json.dumps(create_session_args(args.kind, **kw),
+                         ensure_ascii=False, indent=2))
+    else:
+        print(build(args.kind, **kw), end="")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

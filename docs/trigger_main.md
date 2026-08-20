@@ -2836,6 +2836,16 @@ repo があるなら **`docs/JOURNAL.md` の「次の回へ」が正規の経路
 そちらを読むこと**（写した瞬間に古くなります）。目盛りは `data/usage.jsonl` の
 %の点で、**外から入るしかありません**（`rate_limit_info` に % は入らない）。
 
+**引数を手で組み立てないこと**（2026-08-20 に道具にした）:
+
+    python scripts/spawn_prompt.py --kind hourly --json
+
+**`create_session` にそのまま渡せる一式**が出ます。`source_url` と `source_revision`
+は道具が必ず入れるので、**付け忘れる余地がありません**（8/17・8/18 の2回は、
+ここを手で組み立てて落としました）。同じ枝で他の子が走っているなら
+`--siblings 016bZbYd,01Cja6DK`、1件だけ頼むなら `--only "<中身>"` を足すこと。
+**型は `docs/spawn_prompt.md` にあり、あなたが直せます。**
+
 立て方は `docs/trigger_parent.md`「子の立て方」と同じ。**タグを必ず付けること**
 （付け忘れると、次の子から見て**自分が見えなくなり**、二重に走ります）:
 
