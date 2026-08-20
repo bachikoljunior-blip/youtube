@@ -3024,6 +3024,11 @@ def main() -> int:
     for line in report(m, a):
         print(line)
     row = _row(m, a, pl, tr, sup)
+    # **`--offline` の点だと分かる形で積む**（2026-08-20）。中身は最後の実測の**写し**で、
+    # 新しい実測ではありません。印が無いと、次の回は写しを実測として数えます
+    # （`_points()` の履歴は、伸び率の分母になります）。
+    if args.offline:
+        row["offline"] = True
     for line in _drift(row):
         print(line)
     # **周の中で動いた入力は `_drift` には出ません**（あれは点どうしの比較）。
