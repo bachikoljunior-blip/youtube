@@ -58,6 +58,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from googleapiclient.discovery import build  # noqa: E402
 
+from src import reach_split  # noqa: E402
 from src.auth import credentials  # noqa: E402
 
 REPORT_TYPES = ("channel_reach_basic_a1",)
@@ -89,7 +90,36 @@ def _download(rep, url: str) -> str:
     return rep._http.request(url)[1].decode("utf-8")  # noqa: SLF001
 
 
-def show(limit: int = 3) -> int:
+def seen_report_ids(path: Path | None = None) -> set[str]:
+    """**もう積んだ報告のID。**（2026-08-20 21:3x に足した）
+
+    ここが無いあいだ、この道具は **`reports[-3:]` の3本しか落としていません**でした。
+    ジョブは**作った時点から最大30日ぶんを遡って**日ごとの CSV を置くので、
+    **在るのに一度も読んでいない日**が残ります（実測: 8/20 時点で 3日ぶんだけ積まれ、
+    それより前は1行も無し）。**古い日が要るのは、伸び率をそこからしか出せないから**です。
+
+    そして `STORE` は**追記しかしません。** 同じ報告を2度落とすと、
+    同じ日が二重に積まれます（`src.reach_split.dedupe` が読む側でも潰しますが、
+    **書く側で止めるほうが安い**）。
+    """
+    p = path or STORE
+    if not p.exists():
+        return set()
+    out: set[str] = set()
+    for line in p.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        rid = row.get("_report_id")
+        if rid:
+            out.add(str(rid))
+    return out
+
+
+def show(limit: int | None = None) -> int:
     rep = _api()
     jobs = [j for j in rep.jobs().list().execute().get("jobs", [])
             if j.get("reportTypeId") in REPORT_TYPES]
@@ -98,6 +128,8 @@ def show(limit: int = 3) -> int:
         return 1
 
     rows_all: list[dict] = []
+    seen = seen_report_ids()
+    skipped = 0
     for job in jobs:
         reports = rep.jobs().reports().list(jobId=job["id"]).execute().get("reports", [])
         if not reports:
@@ -106,14 +138,27 @@ def show(limit: int = 3) -> int:
                   " **24〜48時間かかります。** 次の回でまた見ること。")
             continue
         reports.sort(key=lambda r: r.get("endTime", ""))
-        for r in reports[-limit:]:
+        # **まだ積んでいない報告は、全部落とすこと。**`limit` は明示したときだけ効きます
+        # （既定で切ると、遡って埋まったぶんが永久に読まれません）。
+        todo = [r for r in reports if str(r.get("id", "")) not in seen]
+        skipped += len(reports) - len(todo)
+        if limit is not None:
+            todo = todo[-limit:]
+        print(f"[reach] {job['reportTypeId']}: 報告 {len(reports)}本"
+              f" / 未読 {len(todo)}本 を落とします")
+        for r in todo:
             text = _download(rep, r["downloadUrl"])
             for row in csv.DictReader(io.StringIO(text)):
                 row["_report_end"] = r.get("endTime", "")
+                row["_report_id"] = str(r.get("id", ""))
                 rows_all.append(row)
 
     if not rows_all:
-        return 1
+        print(f"[reach] **新しい報告はありません**（積み済み {skipped}本）。"
+              " 積んである分から出します。")
+        print()
+        print(reach_split.render(reach_split.load_rows()))
+        return 0
 
     STORE.parent.mkdir(parents=True, exist_ok=True)
     with STORE.open("a", encoding="utf-8") as fh:
@@ -144,7 +189,10 @@ def show(limit: int = 3) -> int:
         clicks = 0.0
         if ctr_col:
             try:
-                clicks = imp * float(row.get(ctr_col) or 0) / 100.0
+                # **この列は「割合」で、百分率ではありません**（`src.reach_split._clicks`
+                # に実物の裏取り）。`/ 100` していたあいだ、クリックは100分の1に見えて
+                # いました（CTR 1.3% が 0.013% と出る）。
+                clicks = imp * float(row.get(ctr_col) or 0)
             except ValueError:
                 clicks = 0.0
         acc = per[row[vid_col]]
@@ -157,14 +205,21 @@ def show(limit: int = 3) -> int:
         print(f"  {vid:<14} {imp:>14,.0f} {ctr:>7.2f}%")
     print("\n  **少ないのがインプレッションなら、直すのは題材と本数。**")
     print("  **CTR が低いなら、直すのはサムネと題。** 逆をやっても動きません。")
+
+    # **形で割ること**（2026-08-20 21:3x）。全体の一覧だけでは、
+    # 段4（長尺で月50万再生）の前提が立っているかを言えません。
+    print()
+    print(reach_split.render(reach_split.load_rows()))
     return 0
 
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--setup", action="store_true", help="収集ジョブを作る（冪等）")
+    ap.add_argument("--limit", type=int, default=None,
+                    help="落とす報告の本数（既定は**未読を全部**）")
     args = ap.parse_args(argv)
-    return setup() if args.setup else show()
+    return setup() if args.setup else show(args.limit)
 
 
 if __name__ == "__main__":
