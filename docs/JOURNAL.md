@@ -36511,8 +36511,15 @@ cron は分の刻みしか無いので、**時を3つ（6/12/18）抜いて**平
     pip install --ignore-installed cffi cryptography     # ← `--ignore-installed` が要る
 
 **`--upgrade` では `Cannot uninstall cryptography 41.0.7, RECORD file not found` で止まります。**
-`scripts/setup.sh` はここを見ていないので、**次にコンテナが作り直された回も同じ2手を踏みます。**
-→ **次の1手: `setup.sh` に上の2行目を足すこと**（この回は在庫のほうを優先したので手を付けていません）。
+**`setup.sh` はこれを直せる中身を持っていました。誰も呼びません** ——
+セッションの開始で走るものが1つも無く、**踏んだ回が毎回、症状から辿ります。**
+しかも `setup.sh` の側も見る所が違いました: 27〜29行目は `import _cffi_backend` で見て
+`pip install --upgrade cffi` を撃ちますが、**落ちているのは cryptography のほう**で、
+`--upgrade` は `Cannot uninstall cryptography 41.0.7, RECORD file not found` で止まります。
+そして 33行目の `pip install -r requirements.txt` は **成功する**ので、
+`||` の `--ignore-installed` 側には**落ちません。**
+
+**この回で直しました**（下の「2本目に出したもの」）。
 
 ### 1. なぜ (A) ではなく (B) を選んだか
 
@@ -36581,3 +36588,27 @@ cron は分の刻みしか無いので、**時を3つ（6/12/18）抜いて**平
 3. **【コンテナが作り直された回】上の §0 の2手**。`setup.sh` に入れるのが本筋。
 4. `section_sweep` の「頭打ち」を止まる値でまとめる（§3）。
 5. 09:15〜12:45 の長尺7本が公開されたら `rpm_mix --record`（**9回持ち越し**）。
+
+### 2本目に出したもの — `fix`（腕 `none`）: 回が始まる前に、環境を自分で直す
+
+**腕を `none` にした理由**: これは `eta.py` の入力を1つも動かしません（道具の側）。
+ただし**動かないと、その回は `--offline` の推定でしか進めず、投稿そのものが撃てません。**
+「投稿が途切れるのが最大の損失」（`CLAUDE.md`）の側を守る手当てです。
+
+- **`scripts/env_guard.sh` を足した**（新規）。`SessionStart` フックとして
+  `.claude/settings.json` から呼ばれます。**健康なら 0.37秒・出力なし**で終わります
+  （import を1回するだけ）。欠けていたら `requirements.txt` →
+  `--ignore-installed cffi cryptography` の順に入れ直し、直ったかを言います。
+  **apt は叩きません**（フックの制限時間に入らないので、`ffmpeg`／`open_jtalk` が
+  無いときは `setup.sh` を促すだけにしています）
+- **`scripts/setup.sh` の確かめ方を変えた。** `pip install` の**成功では見ません** ——
+  `from google.oauth2.credentials import Credentials` が実際に通るかで見て、
+  通らなければ `--ignore-installed cffi cryptography`、それでも駄目なら**そこで落とします**
+  （いまは黙って先へ進み、回の最初の `eta.py` で分かる形でした）
+- **`tests/test_env_guard.py` 7件**（配線が外れていないこと・`--upgrade` に戻っていないこと・
+  健康な回に何も出さないこと・import 一式が実際に通ること）。**0.77秒**
+
+**書いていて1つ踏みました**: ヒアドキュメントの中の `echo "... \`bash scripts/setup.sh\` ..."` が
+**バッククォートで本当に `setup.sh` を実行しました**（apt が2分走った）。
+実害はありません（むしろ ffmpeg と open_jtalk がこの回で入りました）が、
+**フックの中で書くときは、二重引用符の中にバッククォートを置かないこと。**
