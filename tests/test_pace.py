@@ -42,6 +42,17 @@ START = datetime(2026, 8, 14, 22, 0, tzinfo=UTC)
 ANCHOR_AT = "2026-08-15T20:12:00+09:00"
 
 
+def _now(iso: str) -> datetime:
+    """その目盛りを取った瞬間を `now` として渡す。
+
+    **2026-08-21 まで、`pace()` は `now` を見ずに目盛りの時刻で
+    「残り ÷ 残り時間」を割っていました。** 目盛りは人手でしか入らないので
+    必ず古くなり、そのぶん**必ず「速すぎてよい」側へ外れます**（実測で 9%）。
+    いまは `now` から数えるので、**古い前提の検査は `now` を明示すること。**
+    """
+    return datetime.fromisoformat(iso).astimezone(UTC)
+
+
 def _write(tmp_path, used_percent, births, *, window="seven_day", anchor_at=ANCHOR_AT,
            extra_anchors=(), extra_births=()):
     """%の点と、誕生を持つ計器を作る。
@@ -96,7 +107,7 @@ def _restore():
 def test_算術は実測を再現する(tmp_path):
     """オーナーの実測（13.2時間で10%・誕生33件）から出る数字を固定する。"""
     _write(tmp_path, 10, 33)
-    p = quota.pace()
+    p = quota.pace(_now(ANCHOR_AT))          # **目盛りを取ったその瞬間に読む**
 
     assert p["births"] == 33
     assert p["hours"] == pytest.approx(13.2, abs=0.05)
@@ -119,7 +130,7 @@ def test_基準線は残りを残り時間で割ったもの(tmp_path):
     ここを直さないと、先行しているのに「ほぼ基準どおり」と読めてしまう。
     """
     _write(tmp_path, 10, 33)
-    p = quota.pace()
+    p = quota.pace(_now(ANCHOR_AT))          # **目盛りを取ったその瞬間に読む**
     assert p["left_hours"] == pytest.approx(154.8, abs=0.1)
     assert p["forward_rate"] == pytest.approx(90 / 154.8, abs=0.001)   # 0.581
     assert p["forward_rate"] < quota.SUSTAIN_PCT_PER_HOUR              # 先行 → 厳しくなる
@@ -209,7 +220,7 @@ def test_区間が短いほど通算へ寄せる(tmp_path):
     全部を区間に賭けると、**1周ぶんの読み取り誤差で間隔が倍半分に振れます。**
     """
     _two_point(tmp_path)
-    p = quota.pace()
+    p = quota.pace(_now(SECOND_AT))          # **目盛りを取ったその瞬間に読む**
 
     assert p["per_lap_cum"] == pytest.approx(13 / 39, abs=0.005)   # 0.333
     assert p["seg_weight"] == pytest.approx(3.0 / quota.QUANT_FULL_PCT, abs=0.01)
@@ -383,3 +394,67 @@ def test_十分あいた子はそのまま立てられる(tmp_path):
     assert r.returncode == 0, r.stdout
     assert "待ち不要" in r.stdout
     assert "立ててよい" in r.stdout
+
+
+# --------------------------------------------------------------------------
+# 目盛りが古いとき（2026-08-21 に直した。**間違いは必ず「速すぎてよい」側に出る**）
+# --------------------------------------------------------------------------
+
+
+def test_目盛りが古いぶんを運んでから割る(tmp_path):
+    """**残りは目盛りの時刻からではなく、いまから数えること。**
+
+    実測 08/21 13:0x —— 目盛りは 08:07 の 92%。古い式は「8% ÷ 23時間 = 0.350 %/時」
+    と言い、持続できる間隔を **69分** と出していました。5時間ぶん進めて数え直すと
+    **6.3% ÷ 19.4時間 = 0.325 %/時 → 75分**。**9% 速く走らせていた。**
+    """
+    _write(tmp_path, 10, 33)
+    at = _now(ANCHOR_AT)
+    now = at + timedelta(hours=10)
+
+    fresh = quota.pace(at)
+    stale = quota.pace(now)
+
+    # 運んだぶんだけ「使った%」が増え、「残り時間」は減る
+    assert fresh["used_now"] == pytest.approx(10.0, abs=0.01)
+    assert stale["used_now"] == pytest.approx(10 + 10 * fresh["rate"], abs=0.05)
+    assert stale["left_hours"] == pytest.approx(fresh["left_hours"] - 10, abs=0.05)
+
+    # **どちらの向きにも外れない**: 許される速さは必ず厳しくなる
+    assert stale["forward_rate"] < fresh["forward_rate"]
+    assert stale["floor_min"] > fresh["floor_min"]
+
+
+def test_運ぶ速さは区間があれば区間のほう(tmp_path):
+    """通算は鎖が止まっていた時間までならしている。**運ぶのは直近の速さで。**"""
+    _two_point(tmp_path)
+    at = _now(SECOND_AT)
+    p = quota.pace(at + timedelta(hours=5))
+    assert p["carry_rate"] == pytest.approx(p["seg"]["rate"], abs=1e-9)
+    assert p["carry_rate"] != pytest.approx(p["rate"], abs=1e-9)
+
+
+def test_運ぶ速さは区間が無ければ通算(tmp_path):
+    _write(tmp_path, 10, 33)
+    p = quota.pace(_now(ANCHOR_AT) + timedelta(hours=5))
+    assert p["seg"] is None
+    assert p["carry_rate"] == pytest.approx(p["rate"], abs=1e-9)
+
+
+def test_運びきって満杯に届いていたら天井まで空ける(tmp_path):
+    """**尽きているのに「まだ行ける」と言わないこと。** 閉じた枠に鎖を突っ込む形。"""
+    _write(tmp_path, 90, 33)
+    p = quota.pace(_now(ANCHOR_AT) + timedelta(hours=100))
+    assert p["used_now"] == pytest.approx(100.0)
+    assert p["forward_rate"] == 0.0
+    assert p["floor_min"] == quota.FLOOR_MAX_CLAMP
+
+
+def test_尽きる時刻もいまから数える(tmp_path):
+    """`exhaust_at` を枠の頭から引くと、**運んだぶんが二重に効きます。**"""
+    _write(tmp_path, 10, 33)
+    at = _now(ANCHOR_AT)
+    p = quota.pace(at + timedelta(hours=10))
+    want = at + timedelta(hours=10) + timedelta(
+        hours=(100 - p["used_now"]) / p["carry_rate"])
+    assert abs((p["exhaust_at"] - want).total_seconds()) < 60

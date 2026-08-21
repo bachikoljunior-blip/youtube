@@ -655,8 +655,21 @@ def pace(now: datetime | None = None) -> dict | None:
 
     # --- この先に許される速さ（残りを残り時間で割る） --------------------
     # **ここが基準線。** 0.595（枠の頭から見た値）ではない。
-    left_hours = (resets - at).total_seconds() / 3600
-    forward_rate = ((100.0 - used) / left_hours) if left_hours > 0 else 0.0
+    #
+    # **そして「残り」は目盛りの時刻ではなく `now` から数えること**（2026-08-21）。
+    # 長らく `at`（目盛りを取った時刻）で割っていました。目盛りは人手でしか
+    # 入らないので**必ず古くなり**、そのぶん「残り%」を多く・「残り時間」も
+    # 多く見積もります。**間違いは必ず「速すぎてよい」の側に出ます。**
+    #   実測 08/21 13:0x: 目盛りは 08:07 の 92%。古い式は 8% ÷ 23時間 = 0.350 %/時
+    #   → 持続できる間隔 **69分**。5時間ぶん進めて数え直すと
+    #   6.3% ÷ 19.4時間 = 0.325 %/時 → **75分**。**9% 速く走らせていた。**
+    # CLAUDE.md は「目盛りが古くなる」と警告していましたが、
+    # **古い目盛りから出した『許される速さ』も同じだけ古い**とは書いていません。
+    elapsed = max(0.0, (now - at).total_seconds() / 3600)
+    carry_rate = seg["rate"] if seg else rate      # 区間があれば直近の速さで運ぶ
+    used_now = min(100.0, used + elapsed * carry_rate)
+    left_hours = (resets - now).total_seconds() / 3600
+    forward_rate = ((100.0 - used_now) / left_hours) if left_hours > 0 else 0.0
 
     # --- 1周いくらか（区間へ寄せる。寄せる量は Δ% の大きさで決める） -----
     weight, per_lap = 0.0, per_lap_cum
@@ -674,7 +687,10 @@ def pace(now: datetime | None = None) -> dict | None:
             floor = max(FLOOR_MIN_CLAMP,
                         min(FLOOR_MAX_CLAMP, per_lap / forward_rate * 60))
 
-    exhaust = start + timedelta(hours=100.0 / rate) if rate > 0 else None
+    # 尽きる時刻も `now` から。ここも目盛りの時刻から引いていました。
+    exhaust = (now + timedelta(hours=(100.0 - used_now) / carry_rate)
+               if carry_rate > 0 and used_now < 100.0
+               else (now if used_now >= 100.0 else None))
     return {
         "anchor_at": at, "anchor_used": used, "anchor_source": a.get("source", ""),
         "window_start": start, "window_reset": resets,
@@ -682,6 +698,7 @@ def pace(now: datetime | None = None) -> dict | None:
         "rate": rate, "per_lap": per_lap, "per_lap_cum": per_lap_cum,
         "seg": seg, "seg_weight": weight,
         "forward_rate": forward_rate, "left_hours": left_hours,
+        "used_now": used_now, "carry_rate": carry_rate, "carried_hours": elapsed,
         "floor_min": floor,
         "exhaust_at": exhaust,
         "dead_hours": ((resets - exhaust).total_seconds() / 3600
@@ -733,8 +750,15 @@ def pace_report(now: datetime | None = None) -> None:
               f"{'**この幅では通算と区別がつきません**' if seg['rate_lo'] <= p['rate'] <= seg['rate_hi'] else '通算とは別の値です'}")
     else:
         print("    **区間が引けません**（同じ枠の中に2点目がない）。通算だけで決めています")
+    if p["carried_hours"] >= 0.1:
+        print(f"    いま（推定）: **{p['used_now']:.1f}%** "
+              f"＝ 目盛りの {p['anchor_used']:.0f}% を {p['carry_rate']:.3f} %/時で "
+              f"{p['carried_hours']:.1f}時間ぶん運んだもの")
+        print(f"      **残りは目盛りの時刻からではなく、いまから数えること。**"
+              f"目盛りは人手でしか入らないので必ず古くなり、"
+              f"**古いまま割ると必ず「速すぎてよい」側に外れます**（2026-08-21 に 9% ずれた）")
     print(f"    この先に許される速さ: **{p['forward_rate']:.3f} %/時**"
-          f"（残り {100 - p['anchor_used']:.0f}% ÷ 残り {p['left_hours']:.0f}時間）"
+          f"（残り {100 - p['used_now']:.1f}% ÷ 残り {p['left_hours']:.1f}時間）"
           f"   → 通算は **{p['over']:+.0%}**")
     print(f"      ＊枠の頭から見た 0.595 %/時ではなく、**すでに使ったぶんを引いた線**を"
           f"基準にしています（追い越したぶんは取り返せない）")
