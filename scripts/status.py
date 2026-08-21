@@ -186,11 +186,14 @@ def print_step_days(short_hours: dict[str, set[int]], top: int = 4) -> None:
     """
     if not short_hours:
         return
+    # **幅ではなく一覧で見ます**（2026-08-21 22:4x）。窓は離れた日を持てるように
+    # なったので、`lo <= d <= hi` だと**間の18日まで「置くな」と出ます**。
     try:
-        sys.path.insert(0, str(Path(__file__).resolve().parent))
-        from batch_build import M14_WINDOW
+        from src import measure_window
+        窓か = measure_window.inside
     except Exception:
-        M14_WINDOW = ("", "")
+        def 窓か(_d: str) -> bool:      # noqa: ANN001
+            return False
 
     today = datetime.now(JST).strftime("%Y-%m-%d")
     future = {d: h for d, h in short_hours.items() if d >= today}
@@ -209,19 +212,18 @@ def print_step_days(short_hours: dict[str, set[int]], top: int = 4) -> None:
         return
 
     print("  --- 安い順（**この表の `空き` をそのまま `--hours` に渡せます**）---")
-    lo, hi = M14_WINDOW
     for d in partial[:top]:
         have = len(future[d])
         free = [h for h in STEP_SLOT_HOURS if h not in future[d]]
         need = STEP_SIZE - have
         # **窓の中の日は候補から外さず、印を付ける。** 外すと理由が見えなくなり、
         # 窓が終わったあとも「なぜかこの日だけ出ない」に見えます。
-        warn = "  ← **M14 の比較の窓。置かないこと**" if lo <= d <= hi else ""
+        warn = "  ← **測定日。置かないこと**" if 窓か(d) else ""
         print(f"    {d[5:]}  {have}本 → **あと{need}本**"
               f"  空き {','.join(str(h) for h in free[:need])}{warn}")
 
     best = partial[0]
-    if not (lo <= best <= hi):
+    if not 窓か(best):
         need = STEP_SIZE - len(future[best])
         free = [h for h in STEP_SLOT_HOURS if h not in future[best]][:need]
         print(f"  そのまま打てます（在庫が {need}本 あるとき）:")

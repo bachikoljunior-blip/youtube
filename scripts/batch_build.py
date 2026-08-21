@@ -128,7 +128,13 @@ LOG = ROOT / "data" / "batch_runs.jsonl"
 # 置いてあったあいだ、門は**この道具の `--date` を渡した時にしか**効かず、
 # `--hour` も `upload_only.py` も `reschedule.py` も素通りでした。
 # ここは別名です。**窓を終わらせるときは `src/measure_window.py` を直すこと。**
-M14_WINDOW = measure_window.WINDOW
+#
+# **`None` は「一覧をそのまま見ろ」の意味です**（2026-08-21 22:4x）。
+# 前はここに `measure_window.WINDOW`（＝区間1本）を写していましたが、
+# 窓が離れた2日（08/22 と 09/10）になったので、区間で写すと
+# **間の18日まで止まります。** 検査が `M14_WINDOW = (日, 日)` と
+# 差し替える手は、そのまま効きます（区間を渡せば区間で見ます）。
+M14_WINDOW: tuple[str, str] | None = None
 
 # 台本生成〜レンダリングの実測は5〜10分。倍を上限に取る（無限には待たない）。
 BUILD_TIMEOUT = 1800

@@ -219,3 +219,88 @@ def test_形の誤りも_窓より先に断られる():
     for bad in ("8月20日", "20/8/2026", "あした"):
         with pytest.raises(ValueError):
             uploader.next_publish_at(10, 0, taken=set(), date_jst=bad)
+
+
+# --- 窓の一覧（2026-08-21 22:4x） ----------------------------------------
+#
+# **区間1本では足りませんでした。** 実物は離れた2日（08/22 と 09/10）で、
+# 区間で持つと**あいだの18日まで窓**になります。そして `WINDOW` は
+# 2026-08-19 に空にされ、**2つの測定日が機械の外**に出ていました ——
+# 守っていたのは `reschedule.py --spread --since 2026-08-23` の
+# `--since` を毎回手で打つ記憶だけです。
+
+_TEST_WINDOWS = (
+    {"from": "2026-08-22", "to": "2026-08-22", "until": "2026-09-05",
+     "label": "M14", "why": "3日目"},
+    {"from": "2026-09-10", "to": "2026-09-10", "until": "2026-09-16",
+     "label": "M14", "why": "上から測り直す"},
+)
+
+
+@pytest.fixture()
+def 二つの窓(monkeypatch):
+    monkeypatch.setattr(measure_window, "WINDOWS", _TEST_WINDOWS)
+    return _TEST_WINDOWS
+
+
+def test_離れた2つの窓が両方とも当たる(二つの窓):
+    assert measure_window.inside("2026-08-22", today="2026-08-21") is True
+    assert measure_window.inside("2026-09-10", today="2026-08-21") is True
+
+
+def test_窓と窓のあいだは窓ではない(二つの窓):
+    """**ここが区間で持っていたときの落ち方です。** 18日ぶん止まります。"""
+    for day in ["2026-08-23", "2026-09-01", "2026-09-09"]:
+        assert measure_window.inside(day, today="2026-08-21") is False, day
+
+
+def test_until_を過ぎた窓は自分で外れる(二つの窓):
+    """**手で消す作業を残さない。** 消し忘れた窓は静かに予約を追い出します。"""
+    assert measure_window.inside("2026-08-22", today="2026-09-05") is True
+    assert measure_window.inside("2026-08-22", today="2026-09-06") is False
+    assert measure_window.inside("2026-09-10", today="2026-09-06") is True
+    assert measure_window.active(today="2026-09-17") == ()
+
+
+def test_止めるときに理由が本文に出る(二つの窓):
+    """**理由が文書にしかないと、止められた側は force を付けます。**"""
+    with pytest.raises(SystemExit) as e:
+        measure_window.check("2026-09-10", tool="てすと", today="2026-08-21")
+    assert "上から測り直す" in str(e.value)
+    assert "M14" in str(e.value)
+
+
+def test_実物の窓は前提の期限を写している():
+    """**`until` は、その窓が支えている前提の期限**（`config/hypotheses.yaml`）。
+
+    短く書くと、前提が閉じる前に窓が開いて測定が壊れます。ここは
+    「窓の `until` が、開いている前提のどれかの期限と一致する」ことだけを見ます。
+    """
+    import yaml
+
+    def _walk(o):
+        if isinstance(o, dict):
+            if "claim" in o and "deadline" in o:
+                yield o
+            for v in o.values():
+                yield from _walk(v)
+        elif isinstance(o, list):
+            for v in o:
+                yield from _walk(v)
+
+    conf = yaml.safe_load((ROOT / "config" / "hypotheses.yaml").read_text(encoding="utf-8"))
+    期限 = {str(h["deadline"]) for h in _walk(conf) if not h.get("closed_on")}
+    for w in measure_window.WINDOWS:
+        assert w["until"] in 期限, (
+            f'{w["from"]} の窓の until={w["until"]} が、開いている前提の期限に無い。'
+            " 前提を閉じたなら窓も外すこと（`until` を過ぎれば自分で外れます）。"
+        )
+
+
+def test_窓には理由が必ず書いてある():
+    """**「なぜか出ない日」を作らない。** 空欄は次の回に読めません。"""
+    for w in measure_window.WINDOWS:
+        for k in ("from", "to", "until", "label", "why"):
+            assert w.get(k), (w, k)
+        assert w["from"] <= w["to"] <= w["until"], w
+        assert len(w["why"]) >= 40, w["why"]

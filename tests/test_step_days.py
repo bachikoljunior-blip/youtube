@@ -87,27 +87,59 @@ def test_past_days_are_ignored():
     assert "いま **1日**" in out
 
 
+def _窓を差し替える(*days: str):
+    """`measure_window.WINDOWS` を、渡した日だけの窓に差し替える文脈。
+
+    **差し替える先を `batch_build.M14_WINDOW` から移しました**（2026-08-21 22:4x）。
+    `status.py` は幅（区間1本）ではなく**窓の一覧**を見るようになったので、
+    別名を差し替えても届きません。**seam は正本のほうに置くこと。**
+    """
+    import contextlib
+
+    from src import measure_window as mw
+
+    @contextlib.contextmanager
+    def _ctx():
+        old = mw.WINDOWS
+        mw.WINDOWS = tuple(
+            {"from": d, "to": d, "until": "2099-12-31",
+             "label": "M14", "why": "検査"} for d in days
+        )
+        try:
+            yield
+        finally:
+            mw.WINDOWS = old
+
+    return _ctx()
+
+
 def test_m14_window_is_marked_not_hidden():
     """窓の中の日は**外さず印を付ける。** 外すと理由が見えなくなる。"""
     import scripts.status as st
 
-    # 窓を「明日」に差し替えて測る（実物の窓は 8/23 で切れるため）
     target = _day(1)
-    saved = sys.modules.get("batch_build")
-    import batch_build
-
-    old = batch_build.M14_WINDOW
-    batch_build.M14_WINDOW = (target, target)
-    try:
+    with _窓を差し替える(target):
         out = _run({target: {9, 10, 11, 12, 13, 14, 15}})
-        assert target[5:] in out                      # 消えていない
-        assert "M14 の比較の窓" in out                 # 印が付いている
-        assert "batch_build.py --count" not in out    # 打てる形では出さない
-    finally:
-        batch_build.M14_WINDOW = old
-        if saved is not None:
-            sys.modules["batch_build"] = saved
+    assert target[5:] in out                      # 消えていない
+    assert "測定日。置かないこと" in out           # 印が付いている
+    assert "batch_build.py --count" not in out    # 打てる形では出さない
     assert st.STEP_SIZE == 8
+
+
+def test_離れた2つの窓のあいだの日には印が付かない():
+    """**窓は区間1本ではありません**（2026-08-21 22:4x に踏みかけた）。
+
+    実物の窓は 08/22 と 09/10 の**2日**で、あいだの18日は普通の日です。
+    `status.py` が `lo <= d <= hi`（＝幅）で見ていたので、
+    一覧に直したあともここが幅のままだと、**18日ぶん「置くな」と出ます。**
+    そのとおりに従うと、`density` の腕がまるごと止まります。
+    """
+    間 = _day(2)
+    with _窓を差し替える(_day(1), _day(3)):
+        out = _run({間: {9, 10, 11, 12, 13, 14}})
+    assert 間[5:] in out
+    assert "測定日。置かないこと" not in out
+    assert f"--count 2 --date {間} --hours 15,16" in out
 
 
 def test_ready_to_paste_command_matches_the_cheapest_day():
