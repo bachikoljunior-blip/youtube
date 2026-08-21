@@ -48,7 +48,13 @@ SEMANTIC_AXES: dict[str, tuple[str, ...]] = {
              # `estate` は相続財産、`base` は課税標準（`tokutei.tax_of` /
              # `zoyo.tax_of` / `yoteinozei.with_fukko` / `shokibo.income_tax`）。
              # 寄せていなかったので、この 11関数が掃引から丸ごと落ちていました。
-             "estate", "base"),
+             "estate", "base",
+             # 2026-08-21 に足した（計器 UNCALLABLE から）。**投資の元本＝金額**
+             # （`nisa.grown` / `nisa.tax_saved`）。この2本が掃引から落ちていました。
+             # **`principal` を持つ引数は `src/calc/` に この2本しかありません**
+             # （部分一致の巻き添えは無い）。代表値は所得の 3,000,000 ＝ 元本300万円で、
+             # `_grid` が 150万〜1,200万を歩きます。NISA の生涯枠 1,800万円の内側です。
+             "principal"),
     "年齢": ("age", "start_age", "wife_age", "months_from_65", "age_gap_years",
              "birth"),
     "世帯": ("members", "children", "heads", "earners", "setainushi",

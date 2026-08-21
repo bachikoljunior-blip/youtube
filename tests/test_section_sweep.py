@@ -1350,3 +1350,134 @@ def test_量の引数が所得の軸へ落ちていない():
     assert ss._axis_fill("bonus_months", "rousai") <= 12
     assert ss._axis_fill("purchase_ratio", "invoice") < 1
     assert ss._axis_fill("annual_rate", "jutaku") < 1
+
+
+# ---------------------------------------------------------------------------
+# **一部の要素だけで振れる場合分け**（2026-08-21）
+#
+# `_enum_axis` は「入れ物の要素が**全部**数字を返すこと」を要求していました。
+# 関係のない入れ物を弾くにはそれで足りますが、**制度の表は正しい入れ物でも
+# 一部の値で「無い」を返します**。そのせいで関数が丸ごと掃引の外にいました。
+# ---------------------------------------------------------------------------
+
+def test_一部の区分が値を返さなくても軸として振れる():
+    """`iryohi.deduction_start_cost` の返りは、型からして `int | None`。
+
+    区分 ア・イ・ウ は数字を返し、エ・オ は `None`（そこに閾値が無い）。
+    **5つ全部を要求していたので、この関数は丸ごと「呼べなかった関数」**でした。
+    """
+    import src.calc.iryohi as m
+    axis = ss._enum_axis(m.deduction_start_cost, "tier_name", None)
+    assert axis, "一部が None を返すだけで軸ごと捨てている"
+    assert 2 <= len(axis) < 5, f"落ちる区分まで振っている: {axis}"
+    assert ss.unreachable(m.deduction_start_cost) == ""
+
+
+def test_段が1つしかない文書は落とすが表そのものは軸になる():
+    """`inshi.edges('17号')` は段が1つで境目が無い。残り4つは境目を返す。"""
+    import src.calc.inshi as m
+    axis = ss._enum_axis(m.edges, "kind", None)
+    assert axis, "1つ落ちるだけで軸ごと捨てている"
+    assert "17号" not in axis, "数字を返さない値を軸に入れている"
+    assert len(axis) == 4
+
+
+def test_通った要素が6割に満たない入れ物は捨てる():
+    """**線が本体です。** `kyoiku` は `PROGRAMS`（6件）と、その部分集合
+    `FLOOR_PROGRAMS`（3件）を持ちます。`min_cost_paid` は下限のある3つでしか
+    定義されていないので、`PROGRAMS` は 3/6 ＝ 0.5 で**この線に届きません**。
+
+    2026-08-18 に「6つ中3つだけを振って倍率を 2.5倍（実際は 6.4倍）と
+    嘘に書いた」のと同じ形が、一部を許した瞬間に別の入口から戻ります。
+    """
+    import src.calc.kyoiku as m
+    axis = ss._enum_axis(m.min_cost_paid, "name", None)
+    assert set(axis) == set(m.FLOOR_PROGRAMS), \
+        f"部分集合ではなく広いほうを採っている: {axis}"
+    assert len(axis) * 2 <= len(m.PROGRAMS) + 1, "6割の線が効いていない"
+
+
+def test_全部通った入れ物を_一部だけ通った広い入れ物より先に採る():
+    """並べ替えの鍵の先頭が「全部通ったか」であること。"""
+    ss.PARTIAL_ENUM.clear()
+
+    WIDE = ("あ", "い", "う", "え", "お")      # 3/5 ＝ 0.6 で線は通る
+    NARROW = ("か", "き", "く")                # 3/3
+
+    def fn(x: str) -> float:
+        if x in NARROW:
+            return 1.0 + NARROW.index(x)
+        if x in ("あ", "い", "う"):
+            return 10.0
+        raise ValueError(x)
+
+    fn.__module__ = __name__
+    sys.modules[__name__].WIDE = WIDE
+    sys.modules[__name__].NARROW = NARROW
+    try:
+        assert ss._enum_axis(fn, "x", None) == list(NARROW)
+    finally:
+        del sys.modules[__name__].WIDE, sys.modules[__name__].NARROW
+
+
+def test_一部だけ振ったことは計器に残る():
+    """**黙って半分だけ振らないこと。** 見えないと節に「全区分のうち」と書きます。"""
+    ss.PARTIAL_ENUM.clear()
+    import src.calc.inshi as m
+    ss._ENUM_CACHE.clear()
+    ss._enum_axis(m.edges, "kind", None)
+    rows = [r for r in ss.PARTIAL_ENUM if r[1] == "edges"]
+    assert rows, "一部だけ振ったのに計器に残っていない"
+    _calc, _fn, arg, _cont, good, whole = rows[0]
+    assert arg == "kind" and good == 4 and whole == 5
+
+
+def test_一部だけ振った件数は一覧の頭に出る():
+    ss.PARTIAL_ENUM.clear()
+    ss.PARTIAL_ENUM.append(("inshi", "edges", "kind", "TABLES", 4, 5))
+    head = "\n".join(ss.report_lines([], top=1)[:6])
+    assert "一部の要素だけで振った場合分け" in head
+    assert "inshi.edges(kind) 4/5" in head
+
+
+def test_投資の元本は金額の軸に寄る():
+    """`nisa.grown` / `nisa.tax_saved` は `principal` を埋められず落ちていた。"""
+    from src import calc_axes
+    import src.calc.nisa as m
+    assert calc_axes.axis_of("principal") == "所得"
+    assert ss.unreachable(m.grown) == ""
+    assert ss.unreachable(m.tax_saved) == ""
+
+
+def test_場合分けの名前は文の長さに達しない():
+    """`ENUM_NAME_MAX` の**覆る条件**を、検査のほうで見張る。
+
+    前提の文（`ASSUMPTIONS`）を入れ物の候補から外すために、
+    **名前ではなく長さ**で切っています。切ったせいで本物の場合分けが
+    黙って消えるのが唯一の怖い形なので、**`src/calc/` の全部の入れ物**を
+    実際に測って、線の内側にいることを確かめます。
+
+    ここが落ちたら、線を上げる前に **その並びが本当に場合分けか**を見ること。
+    """
+    import importlib
+    import pkgutil
+
+    import src.calc as calc
+
+    over: list[str] = []
+    for mod_info in pkgutil.iter_modules(calc.__path__):
+        if mod_info.name.startswith("_"):
+            continue
+        mod = importlib.import_module(f"src.calc.{mod_info.name}")
+        for cname, v in vars(mod).items():
+            if cname.startswith("_") or cname == "ASSUMPTIONS":
+                continue
+            if not isinstance(v, (list, tuple, dict)):
+                continue
+            items = ss._names_of(list(v))
+            if not items or not (2 <= len(items) <= ss.ENUM_MAX):
+                continue
+            longest = max(len(x) for x in items)
+            if longest > ss.ENUM_NAME_MAX:
+                over.append(f"{mod_info.name}.{cname}（{longest}字）")
+    assert not over, f"場合分けの名前が線を越えた（黙って掃引から消える）: {over}"

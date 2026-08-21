@@ -455,6 +455,49 @@ def unreachable(fn: Callable, *, calc: str = "", name: str = "") -> str:
 #: 表そのもの**なので、`sweep_rows` の側で歩きます（1つの表に2度当てない）。
 ENUM_MAX = 12
 
+#: 数え上げの軸として通すのに要る、**実際に数字を返した要素の数と割合**。
+#: 2026-08-21 に足した（`_enum_axis` の docstring「全部通ることを要求していた頃の穴」）。
+#: **割合のほうが本体です** —— 件数だけだと、要素の多い無関係な入れ物が
+#: 2つ通っただけで軸になります。
+ENUM_MIN_ITEMS = 2
+ENUM_MIN_SHARE = 0.6
+
+#: **場合分けの名前の長さの上限**（2026-08-21）。これより長い要素を含む並びは、
+#: 場合分けの名前ではなく**文**なので、入れ物の候補から外します。
+#:
+#: **名前で外していないこと**が肝です（`_enum_containers` の「語彙で弾くと、
+#: 表を足した回が書き忘れて黙って落ちる」）。ここで見ているのは**形**です ——
+#: `src/calc/` の全56本を測ると、40字を超える並びは**51本すべてが
+#: `ASSUMPTIONS`（前提の文）**で、本物の場合分けでいちばん長いのは
+#: `tokurou.COHORTS` の **30字**（「昭和28年4月2日〜昭和30年4月1日（女性は5年おくれ）」）。
+#: **10字ぶん空けてあります。**
+#:
+#: **なぜ外すか**: 前提の文は全56本にあり、`_enum_axis` は要素を1つずつ
+#: 実際に呼んで捨てます。**関数 × 引数 × 要素**の呼び出しがまるごと無駄で、
+#: 2026-08-21 の実測では、外すと1周が **107秒 → 76秒**（-29%）。
+#:
+#: **覆る条件**: 40字を超える場合分けを持つ表を書いたとき。
+#: `tests/test_section_sweep.py::test_場合分けの名前は文の長さに達しない` が
+#: そのとき落ちます（黙って消えないように、検査のほうで見張っています）。
+ENUM_NAME_MAX = 40
+
+#: **一部の要素だけで振った場合分け**（表名, 関数名, 引数, 入れ物名, 振った数, 全体）。
+#: `sweep_all` が回すたびに積み直します。**計器です** ——
+#: 一部だけ振ったことが見えないと、節を書く側が「全区分のうちいちばん高いのは」と
+#: 書いてしまいます（2026-08-18 に `kyoiku` で実際に書いた形）。
+#: **落とした要素は「たまたま落ちた」のではなく、その関数がそこで
+#: 数字を返さない＝制度の側に無い**という意味です。
+PARTIAL_ENUM: list[tuple[str, str, str, str, int, int]] = []
+
+
+def _note_partial(fn: Callable, pname: str, cname: str,
+                  items: list[str], good: list[str]) -> None:
+    """一部だけ振れた場合分けを計器に積む（同じ組は1度だけ）。"""
+    row = (_family(fn), getattr(fn, "__name__", "?"), pname,
+           cname, len(good), len(items))
+    if row not in PARTIAL_ENUM:
+        PARTIAL_ENUM.append(row)
+
 
 def _enum_containers(fn: Callable) -> list[tuple[str, list[str]]]:
     """`fn` から見える、**文字列を並べた入れ物**を返す。
@@ -495,6 +538,8 @@ def _enum_containers(fn: Callable) -> list[tuple[str, list[str]]]:
                 continue
             if items is None or not (2 <= len(items) <= ENUM_MAX):
                 continue
+            if max(len(x) for x in items) > ENUM_NAME_MAX:
+                continue           # 場合分けの名前ではなく文（`ENUM_NAME_MAX`）
             out.append((cname, items))
     return out
 
@@ -601,10 +646,38 @@ def _enum_axis(fn: Callable, pname: str, default: Any) -> list[str]:
     同じ形の穴）。ここでやるのは:
 
     1. 既定値が文字列なら、**その値を含む入れ物**を先に試す
-    2. 入れ物の要素を全部入れてみて、**全部が例外なく数字を返す**ものだけ通す
+    2. 入れ物の要素を入れてみて、**数字を返す要素だけ**を軸にする。
+       ただし通った要素が **2つ未満**か、**全体の 6割未満**なら、その入れ物は捨てる
 
     **2 が本体です。** 関係のない入れ物（たとえば見出しの並び）は、
-    途中の要素で必ず落ちるか、数字を返しません。
+    ほとんどの要素で落ちるか、数字を返しません。
+
+    ## 「全部通ること」を要求していた頃の穴（2026-08-21 に直した）
+
+    ここは長らく **「入れ物の要素が1つでも落ちたら、その入れ物ごと捨てる」**
+    でした。関係のない入れ物を弾くにはそれで足りるのですが、
+    **制度の表は、正しい入れ物でも一部の値で「無い」を返します**:
+
+        inshi.edges('17号')                        → 段が1つしかなく、境目が無い
+        iryohi.deduction_start_cost('エ' / 'オ')   → 返りの型からして `int | None`
+
+    どちらも **5区分のうち4つ／3つは正しく数字を返します。** それでも
+    「全部」を要求していたので、**この2関数は丸ごと掃引の外**でした
+    （`UNCALLABLE` に「埋められなかった引数 kind / tier_name」として出ていた）。
+    **語彙の不足ではありません。** 場合分けの軸は見つかっていて、
+    **一部が定義されていないという、制度の側の普通の形**で落ちていました。
+
+    **6割の線が守っているもの。** 関係のない入れ物（`ASSUMPTIONS`・
+    別の表の見出し）は、実測では**全要素で落ちます** —— 部分一致で
+    たまたま数個通る形は `src/calc/` に見当たりません。一方 `kyoiku` の
+    部分集合（`FLOOR_PROGRAMS` 3件 ⊂ `PROGRAMS` 6件）は、
+    `min_cost_paid` では 3/6 ＝ 0.5 で**この線に届かず落ちます** ——
+    2026-08-18 に直した「6つ中3つだけを振って倍率を嘘に書いた」形は、
+    **この線と、下の「全部通ったほうを先に採る」の2つで塞いであります。**
+
+    **覆る条件**: 無関係な入れ物が6割通る例が出たとき（候補の `x の幅` に
+    その表と関係のない語が出ます）。出たら線を上げるのではなく、
+    **引数名との一致**で選び直すこと。
     """
     conts = _enum_containers(fn)
     if not conts:
@@ -614,21 +687,35 @@ def _enum_axis(fn: Callable, pname: str, default: Any) -> list[str]:
         return []
     if isinstance(default, str):
         conts.sort(key=lambda kv: default not in kv[1])
-    passed: list[list[str]] = []
-    for _cname, items in conts:
-        ok = True
+    passed: list[tuple[int, int, list[str]]] = []
+    for cname, items in conts:
+        # **落ちてよい数を先に決めて、超えたらそこで降りる。**
+        # ここは以前「1つでも落ちたら break」で、無関係な入れ物は
+        # 1回の呼び出しで捨てられていました。全要素を必ず呼ぶ形に変えると、
+        # **入れ物1つあたりの呼び出しが要素数ぶんに増えます** —— 掃引は
+        # 関数 × 引数 × 入れ物 で回るので、そのまま1周の時間に乗ります。
+        # 6割の線に届かないと確定した時点で、残りを呼ぶ意味はありません。
+        budget = len(items) - math.ceil(len(items) * ENUM_MIN_SHARE)
+        good: list[str] = []
         for e in items:
             try:
                 with contextlib.redirect_stdout(io.StringIO()):
                     value = fn(**{pname: e}, **rest)
+                ok = _readable(value)
             except Exception:
                 ok = False
+            if ok:
+                good.append(e)
+                continue
+            budget -= 1
+            if budget < 0:
                 break
-            if not _readable(value):
-                ok = False
-                break
-        if ok:
-            passed.append(items)
+        if len(good) < ENUM_MIN_ITEMS or len(good) < len(items) * ENUM_MIN_SHARE:
+            continue
+        whole = len(good) == len(items)
+        if not whole:
+            _note_partial(fn, pname, cname, items, good)
+        passed.append((1 if whole else 0, len(good), good))
     if not passed:
         return []
     # **いちばん広い入れ物を採る**（2026-08-18 に直した）。
@@ -646,8 +733,14 @@ def _enum_axis(fn: Callable, pname: str, default: Any) -> list[str]:
     # **覆る条件**: 関係のない入れ物が「たまたま全部通る」ほうが広かったとき。
     # そのときは候補の `x の幅` に、その表と関係のない語が出ます。
     # 出たら、広さではなく**引数名との一致**で選び直すこと。
-    passed.sort(key=len, reverse=True)
-    return passed[0]
+    #
+    # **2026-08-21 に、鍵の先頭へ「全部通ったか」を足しました。** 一部だけ
+    # 通る入れ物を採るようにしたので、広さだけで比べると
+    # **「半分落ちる広い入れ物」が「全部通る狭い入れ物」に勝ちます**
+    # （`kyoiku` で嘘を書いたのと同じ形が、別の入口から戻る）。
+    # **全部通ったほうが先。同点なら広いほう。**
+    passed.sort(key=lambda t: (t[0], t[1]), reverse=True)
+    return passed[0][2]
 
 
 #: `_enum_params` の答え。**同じ関数を1周で4回聞かれます**
@@ -1401,6 +1494,7 @@ def sweep_calc(name: str) -> list[dict]:
 def sweep_all(names: Iterable[str] | None = None) -> list[dict]:
     out = []
     UNCALLABLE.clear()
+    PARTIAL_ENUM.clear()
     _ENUM_CACHE.clear()
     for name in (names if names is not None else calc_modules()):
         try:
@@ -1854,6 +1948,18 @@ def report_lines(hits: list[dict], *, top: int = 40) -> list[str]:
                      f"（組にも効く）、**格子のつまみなら `calc_axes.FILL_ONLY`**"
                      f"（埋めるだけ・組は増えない）、"
                      f"**軸の代表値では桁が合わないなら `calc_axes.PARAM_FILL`**")
+    if PARTIAL_ENUM:
+        # **一部だけ振ったことを黙らせないこと**（2026-08-21）。
+        # 落ちた要素は「その関数がそこで数字を返さない」＝制度の側に無い、
+        # という意味です。**見えないまま節を書くと「全区分のうち」と書きます。**
+        worst_p = ", ".join(
+            f"{c}.{f}({a}) {g}/{n}"
+            for c, f, a, _cn, g, n
+            in sorted(PARTIAL_ENUM, key=lambda r: (r[4] / r[5], -r[5]))[:5])
+        lines.append(f"  [!] **一部の要素だけで振った場合分け {len(PARTIAL_ENUM)}件**"
+                     f"（落ちた要素は、その関数が数字を返さない値です）: {worst_p}"
+                     f"  → **節に「全区分のうち」と書かないこと。**"
+                     f"振った値は各行の `x の幅` に出ています")
     if covered:
         lines.append("  **[既]** は、いまの節がもう言っているもの"
                      "（`status.py` の「新しい M件」はこれを除いた数です）。"
