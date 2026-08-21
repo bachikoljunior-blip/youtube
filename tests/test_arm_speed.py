@@ -28,6 +28,8 @@ _spec = importlib.util.spec_from_file_location("eta_mod", ROOT / "scripts" / "et
 eta = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(eta)
 
+from src import day_cap  # noqa: E402
+
 from src import arm_speed  # noqa: E402
 
 
@@ -150,7 +152,22 @@ def test_実在する幅で腕を止める_1日110525本を歩かない():
     """
     a0 = {"per_video_now": 923.0, "sub_rate": 0.000443}
     caps = eta.physical_caps(a0, density=25)
-    assert caps["density"]["factor"] == pytest.approx(eta.UPLOAD_CAP_PER_DAY / 25)
+    # **2026-08-21 16:2x に、天井の分子が変わりました。**
+    #     `UPLOAD_CAP_PER_DAY = 92` は **投稿の口が1日に受け付ける本数**で、
+    #     出せることと再生が付くことは別でした（`src/day_cap.py`。08/20 は
+    #     25本 公開して #11から先の15本が 0〜3再生）。
+    #     **この検査の主題（実在する幅で止める）は、そのぶん強くなっています。**
+    #     素の比は **1 を下回ります**（10 ÷ 25 = 0.4）——
+    #     **すでに再生が付く上限より多く出している**、という意味です。
+    #     そこは **×1.0（引き代なし）に丸めます** —— 0.4 をそのまま返すと
+    #     軌跡が「腕を 0.4倍 に引ける」と読み、**密度を減らす向きに歩きます。**
+    #     超えていること自体は `at_ceiling` と `why` に残ります。
+    arm_cap = min(float(eta.UPLOAD_CAP_PER_DAY), float(day_cap.cap()))
+    assert caps["density"]["factor"] == pytest.approx(max(1.0, arm_cap / 25))
+    assert caps["density"]["factor"] <= eta.UPLOAD_CAP_PER_DAY / 25
+    if arm_cap < 25:
+        assert caps["density"]["at_ceiling"] is True
+        assert "引き代なし" in caps["density"]["why"]
     assert caps["density"]["measured"] is True
     # 登録率は**測った天井ではありません**。そう言うこと
     assert caps["sub_rate"]["measured"] is False
@@ -167,7 +184,14 @@ def test_実在する幅で腕を止める_1日110525本を歩かない():
     arms = eta._capped_arms(a0)
     assert arms["density"]["cap"] <= eta.UPLOAD_CAP_PER_DAY / 25 + 1e-9
     for lever, a in arms.items():
-        assert a["cap"] is None or a["cap"] > 1.0, lever
+        # **`> 1.0` から `>= 1.0` へ**（2026-08-21 16:2x）。
+        #     ここは「腕を 110,525本/日 まで歩かせない」ための下限で、
+        #     **1 を割る倍率＝『引ける』の逆向き**を弾くのが目的です。
+        #     `density` は再生が付く上限（10本/日）を**すでに超えて出している**ので、
+        #     引き代はちょうど 0 ＝ **×1.0** になりました。**天井に張り付いた腕は
+        #     存在してよい**（軌跡はそこを最初の一歩で飽和と読みます）。
+        #     **1 を下回るものは、いまも弾きます。**
+        assert a["cap"] is None or a["cap"] >= 1.0, lever
 
 
 def test_実測の天井のほうが低ければ_そちらを採る():

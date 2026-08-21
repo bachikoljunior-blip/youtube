@@ -1331,12 +1331,21 @@ def physical_caps(a0: dict, density: float = PLAN_PUBLISH_PER_DAY,
         #     天井を口の側で立てると、**腕を ×3.7 まで歩けると出て、
         #     実際には1日も縮まない**という形になります。
         arm_cap = min(float(UPLOAD_CAP_PER_DAY), float(day_cap.cap()))
-        caps["density"] = {"factor": arm_cap / density,
+        raw = arm_cap / density
+        # **倍率が 1 を下回るのは「引き代がマイナス」ではありません** ——
+        #     **すでに上限より多く出している**、という意味です。そのまま返すと
+        #     腕を 0.4倍 に「引ける」ことになり、軌跡が**密度を減らす向きに歩きます**。
+        #     引き代は 0（＝×1.0 が天井）。**超えていること自体は `why` に残します。**
+        over = raw < 1.0
+        caps["density"] = {"factor": max(1.0, raw),
                            "why": (f"1日に再生が付く上限 {arm_cap:.0f}本（実測・`src/day_cap.py`）"
                                    f" ÷ いま続けられる {density:.1f}本/日"
                                    f"（出せる口の上限は {UPLOAD_CAP_PER_DAY}本ですが、"
-                                   f"そこまで出しても再生は付きません）"),
-                           "measured": True}
+                                   f"そこまで出しても再生は付きません）"
+                                   + ("。**すでに上限を {:.1f}倍 超えて出しています ＝ 引き代なし**"
+                                      "（超えたぶんは 0再生）".format(1 / raw) if over else "")),
+                           "measured": True,
+                           "at_ceiling": over}
     # --- `rpm` の天井は、2026-08-20 22:2x に**実測に入れ替えました**（`src/rpm_mix.py`）---
     #     ここには `max(RPM_SCENARIOS) / band`（¥2,000 ÷ ¥20 ＝ ×100）が入っていて、
     #     この関数の docstring 自身が「測った天井ではありません」と言っていました。
