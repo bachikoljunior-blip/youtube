@@ -378,3 +378,40 @@ def test_書いてある行はそのまま通る(capsys):
     (got,) = sc.parse(row, "2026-08-20", "youtube-hourly")
     assert got["external_metadata"]["rate_limit_info"]["rateLimitType"] == "seven_day"
     assert capsys.readouterr().err == "", "書いてある行で鳴らさないこと"
+
+
+def test_親の無い行が書ける():
+    """**読む側は扱えるのに、書く側が書けなかった**（2026-08-22 07:2x に踏んだ）。
+
+    `origin:"ios"` の回のように**誰にも立てられていない**セッションは
+    `parent_session_id` を持ちません。ここは長らく `full_id(parent)` を必須にしていて、
+    `-` を渡すと「セッションIDの形が違います」で **`SystemExit` ＝ 25件ぶんが1行も出ません**。
+
+    逃げ道は2つとも台帳を汚します ——
+      行ごと落とす  → `sibling_check` から**その回だけ**消える
+                      （印を1つも残していない回を名指しするのは、まさにその道具）
+      他人のIDを借りる → `sibling_check.generation()` が鎖をさかのぼるので
+                      **深さが1代ずれる**
+
+    読む側（`quota.py` / `sibling_check.py:174,196,594`）はどれも
+    `.get("parent_session_id")` で欠落を織り込み済みです。
+    **`resets`/`rls` の `-` と同じく、書く側に「無い」と言う字を足すのが正しい。**
+    """
+    rows = sc.parse(
+        "1CbuxPZ9RHNqFYHExh2xbxt ARCHIVED 22:08:32 22:09:09 - 1787361000 allowed",
+        "2026-08-21", "youtube-hourly")
+
+    assert len(rows) == 1
+    assert "parent_session_id" not in rows[0]      # **0 でも空文字でもなく、無いこと**
+    assert rows[0]["id"] == "session_01CbuxPZ9RHNqFYHExh2xbxt"
+    assert rows[0]["external_metadata"]["rate_limit_info"]["status"] == "allowed"
+
+
+def test_親が在る行はこれまでどおり():
+    """**この直しの巻き添えを塞ぐ。**"""
+    rows = sc.parse(
+        "1MGjF5pkQn8v39Mnn6SjZJF RUNNING 22:10:29 22:15:43 "
+        "16PyeT6Afj5KzKQ9xkKE3Kx 1787361000 allowed",
+        "2026-08-21", "youtube-hourly")
+
+    assert rows[0]["parent_session_id"] == "session_016PyeT6Afj5KzKQ9xkKE3Kx"

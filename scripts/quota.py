@@ -665,10 +665,40 @@ def pace(now: datetime | None = None) -> dict | None:
     #   6.3% ÷ 19.4時間 = 0.325 %/時 → **75分**。**9% 速く走らせていた。**
     # CLAUDE.md は「目盛りが古くなる」と警告していましたが、
     # **古い目盛りから出した『許される速さ』も同じだけ古い**とは書いていません。
-    elapsed = max(0.0, (now - at).total_seconds() / 3600)
     carry_rate = seg["rate"] if seg else rate      # 区間があれば直近の速さで運ぶ
-    used_now = min(100.0, used + elapsed * carry_rate)
-    left_hours = (resets - now).total_seconds() / 3600
+
+    # --- **目盛りの枠が、もう閉じていることがある**（2026-08-22 07:2x に踏んだ） ---
+    # 目盛りは人手でしか入らないので、**枠のリセットをまたいでも古いまま残ります。**
+    # ここは長らく「目盛りの枠 ＝ いまの枠」を前提にしていて、
+    # またいだ瞬間に `left_hours` が**負**になり、こう出ていました:
+    #
+    #     枠: 08/15 07:00 → 08/22 07:00 JST     ← **07:00 に閉じ終わっている**
+    #     いま（推定）: 97.3%
+    #     この先に許される速さ: 0.000 %/時（残り 2.7% ÷ 残り **-0.3時間**）
+    #
+    # そして `forward_rate <= 0` の枝が `floor = FLOOR_MAX_CLAMP` を返します。
+    # **枠の中で使い切ったときはそれが正しい**（閉じた枠に鎖を突っ込まない）。
+    # **またいだ後は逆です** —— 枠は 0% から始まっているのに、
+    # 鎖は**いちばん広い間隔まで開かれ**、`sibling_check` が次の子を止めます。
+    # 直る条件は「オーナーが新しい%を貼ること」だけで、
+    # **人の操作を待つ形が計器に埋まっていました**（CLAUDE.md はそれを禁じています）。
+    #
+    # **またいだら、枠のほうを送ること。** 新しい枠の使用済みは**測れていません**
+    # （%はこの機械から読めない）ので、**0% から直近の速さで運んだ推定**に置きます。
+    # 「凍らせて 0 と言う」でも「古い%を持ち越す」でもなく、**軌跡で埋める**。
+    span = WINDOW_SPAN["seven_day"]
+    win_start, win_reset, rolled = start, resets, 0
+    while win_reset <= now:
+        win_start, win_reset = win_reset, win_reset + span
+        rolled += 1
+    if rolled:
+        # 新しい枠の中には目盛りが1つも無い。頭を 0% として運ぶ。
+        elapsed = max(0.0, (now - win_start).total_seconds() / 3600)
+        used_now = min(100.0, elapsed * carry_rate)
+    else:
+        elapsed = max(0.0, (now - at).total_seconds() / 3600)
+        used_now = min(100.0, used + elapsed * carry_rate)
+    left_hours = (win_reset - now).total_seconds() / 3600
     forward_rate = ((100.0 - used_now) / left_hours) if left_hours > 0 else 0.0
 
     # --- 1周いくらか（区間へ寄せる。寄せる量は Δ% の大きさで決める） -----
@@ -693,7 +723,9 @@ def pace(now: datetime | None = None) -> dict | None:
                else (now if used_now >= 100.0 else None))
     return {
         "anchor_at": at, "anchor_used": used, "anchor_source": a.get("source", ""),
-        "window_start": start, "window_reset": resets,
+        "window_start": win_start, "window_reset": win_reset,
+        "gauge_window_start": start, "gauge_window_reset": resets,
+        "rolled": rolled,
         "hours": hours, "births": births,
         "rate": rate, "per_lap": per_lap, "per_lap_cum": per_lap_cum,
         "seg": seg, "seg_weight": weight,
@@ -736,8 +768,18 @@ def pace_report(now: datetime | None = None) -> None:
     if p["stale_hours"] > 24:
         print(f"    [!] **この目盛りは {p['stale_hours'] / 24:.1f}日前です。**"
               "新しい%が入るまで、下の数字は古い前提で動いています")
+    if p["rolled"]:
+        print(f"    [!] **その目盛りは閉じた枠のものです**"
+              f"（{p['gauge_window_start'].astimezone(JST):%m/%d %H:%M} → "
+              f"{p['gauge_window_reset'].astimezone(JST):%m/%d %H:%M} JST"
+              f"{'・' + str(p['rolled']) + '枠ぶん前' if p['rolled'] > 1 else ''}）。"
+              f"**いまの枠の使用済みは、1点も測れていません**")
+        print(f"        → **下の%は目盛りの持ち越しではなく、"
+              f"新しい枠の頭 0% から直近の速さ {p['carry_rate']:.3f} %/時 で"
+              f"運んだ推定**です。**残り%を理由に作業を見送らないこと**")
     print(f"    枠: {p['window_start'].astimezone(JST):%m/%d %H:%M} → "
-          f"{p['window_reset'].astimezone(JST):%m/%d %H:%M} JST")
+          f"{p['window_reset'].astimezone(JST):%m/%d %H:%M} JST"
+          f"{'  ← **いまの枠**（目盛りの枠ではありません）' if p['rolled'] else ''}")
     print(f"    通算 {p['rate']:.3f} %/時（{p['hours']:.1f}時間で {p['anchor_used']:.0f}%）")
     seg = p["seg"]
     if seg:
@@ -751,9 +793,15 @@ def pace_report(now: datetime | None = None) -> None:
     else:
         print("    **区間が引けません**（同じ枠の中に2点目がない）。通算だけで決めています")
     if p["carried_hours"] >= 0.1:
-        print(f"    いま（推定）: **{p['used_now']:.1f}%** "
-              f"＝ 目盛りの {p['anchor_used']:.0f}% を {p['carry_rate']:.3f} %/時で "
-              f"{p['carried_hours']:.1f}時間ぶん運んだもの")
+        if p["rolled"]:
+            print(f"    いま（推定）: **{p['used_now']:.1f}%** "
+                  f"＝ **いまの枠の頭 0%** を {p['carry_rate']:.3f} %/時で "
+                  f"{p['carried_hours']:.1f}時間ぶん運んだもの"
+                  f"（目盛りの {p['anchor_used']:.0f}% は**持ち越しません**）")
+        else:
+            print(f"    いま（推定）: **{p['used_now']:.1f}%** "
+                  f"＝ 目盛りの {p['anchor_used']:.0f}% を {p['carry_rate']:.3f} %/時で "
+                  f"{p['carried_hours']:.1f}時間ぶん運んだもの")
         print(f"      **残りは目盛りの時刻からではなく、いまから数えること。**"
               f"目盛りは人手でしか入らないので必ず古くなり、"
               f"**古いまま割ると必ず「速すぎてよい」側に外れます**（2026-08-21 に 9% ずれた）")

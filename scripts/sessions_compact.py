@@ -50,6 +50,10 @@
 - `<created>` `<updated>` は `HH:MM:SS` だけ。日付は `--date`（既定は今日 UTC）
   **日をまたいだ行だけ** `MM-DD/HH:MM:SS` と書く
 - `<status>` は `RUNNING` / `ARCHIVED` / `PENDING` / `IDLE` …（`SESSION_STATUS_` は不要）
+- **親の無い行は `<parent>` を `-` と書く**（2026-08-22 07:2x に足した）。
+  `origin:"ios"` の回のように**誰にも立てられていない**セッションは
+  `parent_session_id` を持ちません。他人のIDを借りて埋めないこと ——
+  `sibling_check.generation()` が鎖をさかのぼるので、**深さが1代ずれます**
 - **`rate_limit_info` が丸ごと無い行は、`<resetsAt>` と `<rlstatus>` を `-` と書く**
   （2026-08-21 02:1x に足した）。1ターン目で `API Error: 529` に当たって死んだ回が
   それです。**行ごと落とさないこと** —— `sibling_check` が「印を1つも残していない回」
@@ -253,9 +257,21 @@ def parse(rows: str, base: str, tag: str) -> list[dict]:
             "created_at": stamp(born, base),
             "updated_at": stamp(seen, base),
             "tags": row_tags(f[7:], tag),
-            "parent_session_id": full_id(parent),
             "external_metadata": meta,
         }
+        # **親の無い行がある**（2026-08-22 07:2x に踏んだ）。`origin:"ios"` の回など、
+        # 誰にも立てられていないセッションは `parent_session_id` を持ちません。
+        # ここは長らく `full_id(parent)` を必須にしていて、**書けない行**でした
+        # （`-` を渡すと「セッションIDの形が違います」で**ファイルが1行も出ません**）。
+        # 逃げ道は2つとも台帳を汚します —— 行ごと落とせば `sibling_check` から
+        # その回だけ消え、他人のIDを借りて書けば**鎖の深さが1代でっち上がります**
+        # （`sibling_check.generation()` は親をさかのぼって「何代目か」を数えます）。
+        # 読む側は `quota.py` も `sibling_check.py:174,196,594` も
+        # `.get("parent_session_id")` なので**欠落を織り込み済み**。
+        # **書く側に「無い」と言う字を足すのが正しい**（`resets`/`rls` の `-` と同じ形。
+        # このファイルで「読む側は扱えるのに書く側が書けない」は5度目です）。
+        if parent != "-":
+            row["parent_session_id"] = full_id(parent)
         # **書き忘れを、書いた側に頼らず捕まえる**（2026-08-20 09:4x に自分で踏んだ）。
         # 5時間枠のリセットは、その窓の中の観測から**5時間より先には来ません**。
         # 先にあるなら、それは週枠の行に `seven_day` を書き落としたものです。

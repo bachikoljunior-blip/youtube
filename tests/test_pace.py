@@ -144,7 +144,7 @@ def test_遅れているときは基準線がゆるむ(tmp_path):
     余らせるのは「安全」ではありません。**回せたはずの周を捨てています。**
     """
     _write(tmp_path, 4, 33)                    # 13.2時間で4% ＝ 基準線より遅い
-    p = quota.pace()
+    p = quota.pace(_now(ANCHOR_AT))            # **枠の中の時刻を渡すこと**（下の註）
     assert p["forward_rate"] > quota.SUSTAIN_PCT_PER_HOUR
     assert p["over"] < 0
     assert p["floor_min"] < 31                 # 遅れているぶん、詰めてよい
@@ -158,7 +158,7 @@ def test_持続できる速さなら死なない(tmp_path):
     # 13.2時間で7.5% ＝ 0.568 %/時。持続線（0.595）より**下**。
     # 境目は薄い: 8% だと 0.606 %/時 で、これはもう3時間ぶん足りない。
     _write(tmp_path, 7.5, 33)
-    p = quota.pace()
+    p = quota.pace(_now(ANCHOR_AT))            # **枠の中の時刻を渡すこと**（下の註）
     assert p["rate"] == pytest.approx(0.568, abs=0.005)
     assert p["over"] < 0                     # 持続線より遅い
     assert p["dead_hours"] == 0              # リセットまで届く
@@ -261,7 +261,7 @@ def test_枠を使い切っていたら天井まで空ける(tmp_path):
     ここで None（＝待たない）を返すと、`sibling_check` は素通りさせます。
     """
     _write(tmp_path, 100, 33)
-    p = quota.pace()
+    p = quota.pace(_now(ANCHOR_AT))            # **枠の中の時刻を渡すこと**（下の註）
     assert p["forward_rate"] == 0
     assert p["floor_min"] == quota.FLOOR_MAX_CLAMP
 
@@ -310,8 +310,27 @@ def test_歯止めが効く(tmp_path, used, births, expect):
     上が無いと1周で鎖が死に、下が無いと歯止めそのものが消える。
     """
     _write(tmp_path, used, births)
-    assert quota.recommended_floor_minutes() == pytest.approx(expect)
+    assert quota.recommended_floor_minutes(_now(ANCHOR_AT)) == pytest.approx(expect)
 
+
+
+# --------------------------------------------------------------------------
+# **`now` を渡さない検査は、実時刻が RESET を追い越した日に化けます**
+# （2026-08-22 07:2x に踏んだ）
+#
+# この束の RESET は **08/22 07:00 JST**。そこを過ぎた回で `quota.pace()` を
+# 引数なしで呼ぶと、`pace()` は**枠を次へ送り**（それが正しい振る舞いです。
+# `tests/test_pace_window_rollover.py`）、`used_now` は 0% 近くに戻ります。
+# その日、`test_枠を使い切っていたら天井まで空ける` が落ちました ——
+# **直すべきは `pace()` ではなく、時刻を固定していないこの側**です。
+#
+# 落ちたのは1件ですが、**同じ形は4件ありました。** 残り3件は
+# `forward_rate` が偶然 0.596 ≈ 0.595 の境目に着地して**通っていただけ**です
+# （`docs/JOURNAL.md` 08/22 01:2x「実測で動く値に、検査が乗っていた」の5件目）。
+# **`forward_rate` / `floor_min` / `over` / `dead_hours` / `used_now` を見る検査は、
+# 必ず `_now(...)` で枠の中の時刻を渡すこと。**
+# `rate` / `seg` / `per_lap` は目盛りだけから出るので、渡さなくても動きません。
+# --------------------------------------------------------------------------
 
 # --------------------------------------------------------------------------
 # 門が実際に閉まるか（ここが本体。上の算術が正しくても、門が読まなければ無意味）
@@ -366,7 +385,16 @@ def test_早すぎる子は待たされる(tmp_path):
     **「待たずに畳む」（6）**を返すからです（`test_早すぎても親が先に来るなら畳む`）。
     ここが見ているのは**待つ側の枝**なので、親を遠ざけて分岐を固定します。
     """
-    r = _spawn_check(_sessions_file(tmp_path, 60), cron_minute=_cron_minute_in(50))
+    # **「60分」と書かないこと**（2026-08-22 07:2x に直した）。
+    # 子は本物の `data/usage.jsonl` を読むので、**下限は実測で動きます** ——
+    # 書いた日は 36分、08/22 は **50分**。固定の 60 は、下限がそこを越えた日にだけ
+    # 「早すぎる子」でなくなり、**この枝ごと測られなくなります**（実際そうなりました）。
+    # 見たいのは分数ではなく**枝**なので、いまの下限から作ること。
+    floor = quota.recommended_floor_minutes()
+    if floor is None:
+        pytest.skip("目盛りが無い ＝ 下限そのものが無い（`pace()` は None を返す）")
+    born = max(1, int(floor) - 15)                  # **下限の内側**＝必ず早すぎる
+    r = _spawn_check(_sessions_file(tmp_path, born), cron_minute=_cron_minute_in(50))
     assert r.returncode == 5, r.stdout
     assert "まだ立てないこと" in r.stdout
     assert "sleep " in r.stdout          # 待ち方まで出すこと（人が計算しない）
