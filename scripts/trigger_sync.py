@@ -65,6 +65,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import sys
 from datetime import datetime, timedelta, timezone
@@ -150,6 +151,20 @@ def observed(dump: dict | list, trigger_id: str) -> dict | None:
     return None
 
 
+def spec_fingerprint(spec: dict, root: Path = ROOT) -> str:
+    """正本の「比べる側」だけを縮めた指紋。
+
+    **観測より後に正本が変わったかを見分けるためだけ**のものです。
+    ファイルの更新時刻では見分けられません —— このリポジトリは回ごとに
+    clone し直されるので、**全ファイルの mtime がコンテナの起動時刻**になり、
+    「いつも観測より新しい」になってしまいます。
+    """
+    want = {k: spec[k] for k in FIELDS if k in spec}
+    want["body"] = render_body(spec, root)
+    blob = json.dumps(want, ensure_ascii=False, sort_keys=True)
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:16]
+
+
 def ingest(path: Path, spec: dict, seen_path: Path = SEEN) -> dict:
     dump = json.loads(Path(path).read_text(encoding="utf-8"))
     got = observed(dump, spec["trigger_id"])
@@ -159,6 +174,8 @@ def ingest(path: Path, spec: dict, seen_path: Path = SEEN) -> dict:
             "    `list_triggers` の返りを**まるごと**保存すること"
             "（limit を絞ると落ちます）。")
     got["ingested_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    # 観測したその時の正本の姿。**後で正本だけが変わったかを見分ける唯一の手がかり。**
+    got["spec_fingerprint"] = spec_fingerprint(spec)
     seen_path.parent.mkdir(parents=True, exist_ok=True)
     seen_path.write_text(json.dumps(got, ensure_ascii=False, indent=2) + "\n",
                          encoding="utf-8")
@@ -229,6 +246,15 @@ def render(spec: dict, seen: dict | None, root: Path = ROOT) -> tuple[str, bool]
         lines.append(f"  一致（{when}に観測）: `{spec['cron_expression']}` "
                      f"／ enabled={spec['enabled']}")
         return "\n".join(lines), False
+    if seen is not None and seen.get("spec_fingerprint") not in (
+            None, spec_fingerprint(spec, root)):
+        lines.append(
+            "  [!] **正本がこの観測より後に変わっています。** 下のズレは、"
+            "実物が違うのではなく**観測が古い**だけかもしれません —— "
+            "前の回が `update_trigger` を当てたのに積み直していない場合がこれです"
+            "（2026-08-21 に実測。1日21回→19回を当てた回が積み直さず、"
+            "次の回が「実物は21回のまま」と読んだ）。"
+            "\n      **まず `list_triggers` を保存して `--ingest` を打つこと。**")
     for gap in gaps:
         lines.append(f"  [!] {gap}")
     if old is not None:

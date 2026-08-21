@@ -213,6 +213,50 @@ def check_tables() -> None:
     if nets[0] <= nets[-1]:
         raise ValueError("手取り率が額によらず一定になっている。これでは分岐点が動かない")
 
+    # --- 繰下げの年利（`deferral_irr` 以下の5節の主題）---------------------
+    # (1) **累計の追い越し（`break_even`）と、正味現在価値の符号（`irr_zero_age`）は
+    #     別々に書いてある。** 同じ年齢に着かなければ、どちらかが壊れています。
+    #     年利がプラスに変わる最初の「歳」は、分岐点の歳（月が余っていれば+1歳）。
+    for m in (12, 60, 96):
+        be = break_even(m, 180.0)
+        z = irr_zero_age(m, 180.0)
+        want = be[0] + (1 if be[1] > 0 else 0)
+        if z != want:
+            raise ValueError(
+                f"繰下げ{m}か月: 分岐点は {be[0]}歳{be[1]}か月なのに、"
+                f"年利がプラスに変わるのは {z}歳（{want}歳のはず）")
+
+    # (2) **額面の年利は年金額によらない**（節「谷は内側」の前半そのもの）。
+    #     割引率の式で額が約分されるので、どの年額でも同じ値になります。
+    gross_by_base = [deferral_irr(60, float(x), 85) for x in (78, 180, 350, 500)]
+    if any(abs(g - gross_by_base[0]) > 1e-6 for g in gross_by_base):
+        raise ValueError(f"額面の年利が年金額で動いています: {gross_by_base}")
+
+    # (3) **手取りの年利の谷は、端ではなく内側**（節の主題）。
+    #     端で額面に戻るのは、下は課税されないから・上は手取り率が一定だから。
+    w = irr_worst_base(60, 85, step_man=4)
+    if not (w["谷の年利_手取り"] < w["下の端の年利_手取り"]
+            and w["谷の年利_手取り"] < w["上の端の年利_手取り"]):
+        raise ValueError(f"手取りの年利の谷が端にあります: {w}")
+
+    # (4) **待つほど年利は下がる。** 「1か月0.7%増」は一定なのに年利が落ちる、
+    #     というのが節の主題なので、向きが変わったら節ごと書き直すこと。
+    seq = [r["年利_額面"] for r in irr_grid(180.0, 85, 12)
+           if r["年利_額面"] is not None]
+    for a, b in zip(seq, seq[1:]):
+        if b >= a:
+            raise ValueError(f"繰り下げるほど年利が上がっています: {seq}")
+
+    # (5) **手取りで見ると、元が取れる最後の月は前へ動く**（縮まない向きなら節が逆）。
+    ceiling = (MAX_DEFER_AGE - BASE_AGE) * 12
+    lg = irr_last_month(180.0, 85, net=False)["最後の月数"]
+    ln = irr_last_month(180.0, 85, net=True)["最後の月数"]
+    if ln > lg or (ln == lg and lg < ceiling):
+        # 額面のほうが上限に張り付いている（`lg == ceiling`）ときは、
+        # 手取りが同じ月で止まっていても**繰下げの上限で切れただけ**なので通す。
+        raise ValueError(
+            f"手取りのほうが遅くまで元が取れています（額面{lg}か月 / 手取り{ln}か月）")
+
     # --- 最適な開始月（`best_start` 以下の3節の主題）-----------------------
     # 1. **75歳まで繰り下げるのが最適になるのは、うんと長生きする場合だけ**。
     #    ここが「85歳で最適」に変わる表になったら、節の文言ごと逆になります。
@@ -844,6 +888,206 @@ def advance_one_more_month(base_annual_man: float = 180.0,
 
 # ------------------------------- 生まれた日で減額率が変わる（昭和37年4月2日）
 
+def _monthly_flows(months_from_65: int, base_annual_man: float,
+                   until_age: int, net: bool = False) -> list[float]:
+    """65歳0か月を第0月として、「繰り下げた側 − 65歳開始側」の月ごとの差額を並べる。
+
+    繰下げを**投資**として見るための並びです。待っているあいだは
+    65歳開始なら入っていたはずの額が入らないので **マイナス**、
+    受け取りが始まってからは増額ぶんだけ **プラス**。
+    符号が変わるのは1回だけなので、内部収益率がただ1つに決まります。
+    """
+    base_year = base_annual_man * rate_for(0)
+    plan_year = base_annual_man * rate_for(months_from_65)
+    if net:
+        base_year *= _clamp_rate(base_year)
+        plan_year *= _clamp_rate(plan_year)
+    base_month = base_year / 12.0
+    plan_month = plan_year / 12.0
+
+    total = (until_age - BASE_AGE) * 12
+    flows = []
+    for m in range(total):
+        got = plan_month if m >= months_from_65 else 0.0
+        flows.append(got - base_month)
+    return flows
+
+
+def deferral_irr(months_from_65: int, base_annual_man: float = 180.0,
+                 until_age: int = 85, net: bool = False) -> float | None:
+    """繰下げを「投資」とみなしたときの**年利**を返す（％）。届かないなら None。
+
+    繰下げの説明は「1か月で 0.7% 増える」で止まっていて、**増える率**しか
+    言っていません。増額は終身ですが、**待っているあいだの受給を差し出して
+    買っている**ので、率だけでは損得になりません。
+
+    ここで出すのは、差し出したぶんと受け取るぶんが釣り合う割引率
+    —— つまり **その人が何歳まで生きるかを決めたときの、繰下げの年利**です。
+    どこにも出ていないのは、これを **1か月きざみ × 寿命べつ**で全部出した表。
+
+    符号が変わるのは1回だけ（待機中はマイナス・受給後はプラス）なので、
+    正味現在価値は割引率について単調に減り、**答えはただ1つ**に決まります。
+    寿命が分岐点より手前なら、どんな割引率でも釣り合わない ＝ None。
+    """
+    if months_from_65 <= 0:
+        return None
+    flows = _monthly_flows(months_from_65, base_annual_man, until_age, net=net)
+    if sum(flows) <= 0:
+        return None      # 総額で追いついていない＝分岐点の手前
+
+    def npv(monthly_rate: float) -> float:
+        acc = 0.0
+        for m, f in enumerate(flows):
+            acc += f / ((1.0 + monthly_rate) ** m)
+        return acc
+
+    lo, hi = 0.0, 1.0        # 月利 0%〜100%
+    if npv(hi) > 0:
+        return None          # 現実には来ない（念のため）
+    for _ in range(200):
+        mid = (lo + hi) / 2
+        if npv(mid) > 0:
+            lo = mid
+        else:
+            hi = mid
+    monthly = (lo + hi) / 2
+    return ((1.0 + monthly) ** 12 - 1.0) * 100.0
+
+
+def irr_grid(base_annual_man: float = 180.0, until_age: int = 85,
+             step_months: int = 12) -> list[dict]:
+    """繰り下げた月数ごとに、額面と手取りの年利を並べる。"""
+    rows = []
+    for m in range(step_months, (MAX_DEFER_AGE - BASE_AGE) * 12 + 1, step_months):
+        gross = deferral_irr(m, base_annual_man, until_age, net=False)
+        netv = deferral_irr(m, base_annual_man, until_age, net=True)
+        rows.append({
+            "開始": Plan(m, rate_for(m)).age_text,
+            "月数": m,
+            "倍率": round(rate_for(m), 3),
+            "年利_額面": None if gross is None else round(gross, 2),
+            "年利_手取り": None if netv is None else round(netv, 2),
+            "差_ポイント": None if (gross is None or netv is None)
+                         else round(gross - netv, 2),
+        })
+    return rows
+
+
+def irr_by_lifespan(months_from_65: int = 60, base_annual_man: float = 180.0,
+                    low_age: int = 80, high_age: int = 100,
+                    step_age: int = 2) -> list[dict]:
+    """寿命を動かしたときに、繰下げの年利がどう動くかを出す。"""
+    rows = []
+    for age in range(low_age, high_age + 1, step_age):
+        gross = deferral_irr(months_from_65, base_annual_man, age, net=False)
+        netv = deferral_irr(months_from_65, base_annual_man, age, net=True)
+        rows.append({
+            "何歳まで": age,
+            "年利_額面": None if gross is None else round(gross, 2),
+            "年利_手取り": None if netv is None else round(netv, 2),
+        })
+    return rows
+
+
+def irr_best_months(base_annual_man: float = 180.0, until_age: int = 85,
+                    net: bool = False) -> dict:
+    """121通りのうち、年利がいちばん高い繰下げ月数を1か月きざみで探す。
+
+    **総額がいちばん多い開始月とは別のもの**です。総額は「いくら受け取るか」、
+    こちらは「差し出したものに対して、どれだけの率で戻るか」。
+    どちらを選ぶかで答えが変わること自体が、この表の主張です。
+    """
+    best = {"月数": 0, "年利": None}
+    for m in range(1, (MAX_DEFER_AGE - BASE_AGE) * 12 + 1):
+        v = deferral_irr(m, base_annual_man, until_age, net=net)
+        if v is None:
+            continue
+        if best["年利"] is None or v > best["年利"]:
+            best = {"月数": m, "開始": Plan(m, rate_for(m)).age_text,
+                    "年利": round(v, 2)}
+    return best
+
+
+def irr_zero_age(months_from_65: int, base_annual_man: float = 180.0,
+                 net: bool = False) -> int | None:
+    """年利がプラスに変わる最初の寿命（歳）を返す。**分岐点と一致するはず**。
+
+    `break_even` は累計の追い越しで、こちらは正味現在価値の符号。
+    **別の道から同じ年齢に着かなければ、どちらかが壊れています。**
+    `check_tables` の不変条件はこの一致を見ています。
+    """
+    for age in range(BASE_AGE + 1, 121):
+        if deferral_irr(months_from_65, base_annual_man, age, net=net) is not None:
+            return age
+    return None
+
+
+def irr_by_base(months_from_65: int = 60, until_age: int = 85,
+                low_man: int = 78, high_man: int = 500,
+                step_man: int = 2) -> list[dict]:
+    """年金額べつに、繰下げの年利を出す。**額面は動かず、手取りだけが動く。**
+
+    額面の年利は年金額によりません（差し出す額と受け取る額に同じ数が掛かる
+    ので、割引率の式から約分で消えます）。**手取りだけが動くのは、
+    年額によって手取り率が変わるから**です。
+    """
+    rows = []
+    for man in range(low_man, high_man + 1, step_man):
+        rows.append({
+            "65歳の年額_万": float(man),
+            "年利_額面": deferral_irr(months_from_65, float(man), until_age, net=False),
+            "年利_手取り": deferral_irr(months_from_65, float(man), until_age, net=True),
+        })
+    return rows
+
+
+def irr_worst_base(months_from_65: int = 60, until_age: int = 85,
+                   low_man: int = 78, high_man: int = 500,
+                   step_man: int = 1) -> dict:
+    """手取りの年利がいちばん低くなる年金額を返す。**端ではなく途中にあります。**
+
+    低いほうへ動かしても高いほうへ動かしても年利は上がるので、
+    **谷は内側**です。理由は手取り率の折れ線の形にあります ——
+    下の端（78万）では課税されないので額面と同じ、上の端（500万以上）では
+    手取り率が一定になるのでやはり額面と同じ率に戻る。
+    **その間だけ、繰り下げて増えたぶんに元より重い率が掛かります。**
+    """
+    rows = [r for r in irr_by_base(months_from_65, until_age,
+                                   low_man, high_man, step_man)
+            if r["年利_手取り"] is not None]
+    if not rows:
+        return {}
+    worst = min(rows, key=lambda r: r["年利_手取り"])
+    ends = [rows[0], rows[-1]]
+    return {
+        "谷の年額_万": worst["65歳の年額_万"],
+        "谷の年利_手取り": round(worst["年利_手取り"], 2),
+        "年利_額面": round(worst["年利_額面"], 2),
+        "下の端_万": ends[0]["65歳の年額_万"],
+        "下の端の年利_手取り": round(ends[0]["年利_手取り"], 2),
+        "上の端_万": ends[1]["65歳の年額_万"],
+        "上の端の年利_手取り": round(ends[1]["年利_手取り"], 2),
+        "谷と額面の差_ポイント": round(worst["年利_額面"] - worst["年利_手取り"], 2),
+    }
+
+
+def irr_last_month(base_annual_man: float = 180.0, until_age: int = 85,
+                   net: bool = False) -> dict:
+    """その寿命で「元が取れる」最後の繰下げ月を返す。1か月きざみで探す。"""
+    last = None
+    for m in range(1, (MAX_DEFER_AGE - BASE_AGE) * 12 + 1):
+        if deferral_irr(m, base_annual_man, until_age, net=net) is not None:
+            last = m
+    if last is None:
+        return {}
+    return {
+        "最後の月数": last,
+        "最後の開始": Plan(last, rate_for(last)).age_text,
+        "そこでの年利": round(deferral_irr(last, base_annual_man, until_age, net=net), 2),
+        "次の月の開始": Plan(last + 1, rate_for(last + 1)).age_text,
+    }
+
+
 def birth_gap(months_before_65: int, base_annual_man: float = 180.0,
               until_age: int = 85) -> dict:
     """**繰上げの減額率は、生まれた日で 0.4% と 0.5% に分かれます。**
@@ -1029,3 +1273,74 @@ if __name__ == "__main__":
     print("  **ずれは、繰り上げた月数によらず ちょうど50か月（4年2か月）です。**"
           "厳密に解くと追い抜かれる月齢は「1030 − 繰上げ月数」と「980 − 繰上げ月数」で、"
           "**繰上げ月数が引き算で消えます。**")
+
+    print(f"\n=== 繰下げを「投資」とみなしたときの年利（65歳で年{base:.1f}万円・85歳まで）===")
+    print("  繰下げの説明は「1か月あたり0.7パーセント増える」で止まっています。"
+          "**増える率は一定なのに、投資としての年利は待つほど下がります。**")
+    print("  待っているあいだは、65歳開始なら入っていたはずの額が入りません。"
+          "**それを差し出して、終身の増額を買っている**と見て、"
+          "差し引きが釣り合う割引率（内部収益率）を月ごとに解いたものです。")
+    print(f"{'開始':>9s} {'倍率':>6s} {'年利(額面)':>10s} {'年利(手取り)':>12s} {'差':>8s}")
+    for r in irr_grid(base, 85, 12):
+        g = "—" if r["年利_額面"] is None else f"{r['年利_額面']:.2f}%"
+        nv = "—" if r["年利_手取り"] is None else f"{r['年利_手取り']:.2f}%"
+        d = "—" if r["差_ポイント"] is None else f"{r['差_ポイント']:.2f}pt"
+        print(f"{r['開始']:>9s} {r['倍率']:>6.3f} {g:>10s} {nv:>12s} {d:>8s}")
+    print("  **「—」は、85歳までに差し出したぶんを取り返せないという意味です。**"
+          "率がいくら高くても、受け取る年数が足りません。")
+
+    last_g = irr_last_month(base, 85, net=False)
+    last_n = irr_last_month(base, 85, net=True)
+    print(f"\n=== 85歳まで生きるなら、繰下げが元を取れる最後の月は"
+          f"「額面{last_g['最後の開始']}」「手取り{last_n['最後の開始']}」===")
+    print(f"  額面で見ると {last_g['最後の開始']}開始が年利 {last_g['そこでの年利']:.2f}% で、"
+          f"**{last_g['次の月の開始']}開始からは1円も取り返せません。**")
+    print(f"  手取りで見ると、その境目は **{last_n['最後の開始']}** まで前へ動きます"
+          f"（年利 {last_n['そこでの年利']:.2f}%）—— "
+          f"**{last_g['最後の月数'] - last_n['最後の月数']}か月ぶん**、"
+          f"手取りで計算するだけで繰下げの上限が縮みます。")
+    print("  よく見る「70歳まで繰り下げると得」は額面の話です。"
+          f"手取りだと、{last_n['次の月の開始']}から先は 85歳までの範囲で成立しません。")
+
+    span = [r for r in irr_by_lifespan(60, base, 80, 100, 2)
+            if r["年利_額面"] is not None]
+    lo_r, hi_r = span[0], span[-1]
+    print(f"\n=== 70歳まで繰り下げたときの年利は、寿命で "
+          f"{lo_r['年利_額面']:.2f}% から {hi_r['年利_額面']:.2f}% まで動く"
+          f"（65歳で年{base:.1f}万円）===")
+    print(f"  同じ選択でも、何歳まで生きるかで年利は "
+          f"**{hi_r['年利_額面'] / lo_r['年利_額面']:.0f}倍**ちがいます。"
+          "**繰下げは率の決まった商品ではありません。**")
+    print(f"{'何歳まで':>8s} {'年利(額面)':>10s} {'年利(手取り)':>12s}")
+    for r in irr_by_lifespan(60, base, 80, 100, 2):
+        g = "—" if r["年利_額面"] is None else f"{r['年利_額面']:.2f}%"
+        nv = "—" if r["年利_手取り"] is None else f"{r['年利_手取り']:.2f}%"
+        print(f"{r['何歳まで']:>6d}歳 {g:>10s} {nv:>12s}")
+
+    worst = irr_worst_base(60, 85)
+    print(f"\n=== 繰下げの年利がいちばん低くなる年金額は"
+          f"{worst['谷の年額_万']:.0f}万円 —— 端ではなく途中にある ===")
+    print(f"  **額面の年利は年金額によりません**（どの年額でも "
+          f"{worst['年利_額面']:.2f}%）。差し出す額と受け取る額に同じ数が掛かるので、"
+          "割引率の式から約分で消えます。")
+    print(f"  **動くのは手取りだけです。** 下の端 {worst['下の端_万']:.0f}万で "
+          f"{worst['下の端の年利_手取り']:.2f}%、"
+          f"谷の {worst['谷の年額_万']:.0f}万で **{worst['谷の年利_手取り']:.2f}%**、"
+          f"上の端 {worst['上の端_万']:.0f}万で {worst['上の端の年利_手取り']:.2f}%。")
+    print("  **両端で額面に戻り、間だけ落ちます。** 下の端は公的年金等控除と"
+          "基礎控除でほぼ課税されないから、上の端は手取り率が頭打ちで一定になるから。"
+          f"その間だけ、繰り下げて増えたぶんに元より重い率が掛かります"
+          f"（谷での落差 {worst['谷と額面の差_ポイント']:.2f}ポイント）。")
+
+    ib_g = irr_best_months(base, 85, net=False)
+    bs_g = best_start(85 * 12, base, net=False)
+    bs_n = best_start(85 * 12, base, net=True)
+    print(f"\n=== 年利がいちばん高い開始と、総額がいちばん多い開始は別の月 ===")
+    print(f"  年利で選ぶなら **{ib_g['開始']}**（{ib_g['年利']:.2f}%）—— "
+          "**繰り下げる月数がいちばん短いところ**です。")
+    print(f"  総額で選ぶなら **{Plan(bs_g, rate_for(bs_g)).age_text}**（額面）／"
+          f"**{Plan(bs_n, rate_for(bs_n)).age_text}**（手取り）。"
+          "85歳まで生きる前提は同じです。")
+    print("  **どちらが正しいという話ではありません。** 年利は「差し出したものに対して"
+          "どれだけの率で戻るか」、総額は「いくら受け取るか」で、問いが違います。"
+          "繰下げの説明が率だけを言うとき、答えているのは前者だけです。")

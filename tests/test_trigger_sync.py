@@ -136,3 +136,56 @@ def test_spec_matches_the_documented_identifiers() -> None:
     for key in ("trigger_id", "cron_expression", "persistent_session_id",
                 "environment_id", "repo_url", "branch", "body_file"):
         assert spec.get(key), f"`docs/trigger_spec.json` に {key} がありません"
+
+
+def test_正本が観測より後に変わったら_それを先に言う(tmp_path, monkeypatch):
+    """**ズレの正体が「実物が違う」ではなく「観測が古い」場合を見分ける。**
+
+    2026-08-21 に実測: 前の回が `update_trigger` で 1日21回→19回 を当てたのに
+    `list_triggers` を積み直さなかったので、次の回の `status.py` が
+    「実物は21回のまま」と読み、**直っているものを直しにいく**ところでした。
+    時刻では見分けられません（clone のたびに mtime が起動時刻になる）。
+    """
+    import json as _json
+    from scripts import trigger_sync as ts
+
+    spec = ts.load_spec()
+    seen = {
+        "id": spec["trigger_id"],
+        "name": spec["name"],
+        "cron_expression": spec["cron_expression"],
+        "enabled": spec["enabled"],
+        "persistent_session_id": spec.get("persistent_session_id"),
+        "environment_id": spec.get("environment_id"),
+        "body": ts.render_body(spec),
+        "ingested_at": ts.datetime.now(ts.timezone.utc).isoformat(timespec="seconds"),
+        "spec_fingerprint": ts.spec_fingerprint(spec),
+    }
+    text, drifted = ts.render(spec, seen)
+    assert not drifted, text
+    assert "正本がこの観測より後に" not in text
+
+    # 正本だけを動かす（＝直した直後に積み直していない回）
+    moved = _json.loads(_json.dumps(spec))
+    moved["cron_expression"] = "9 */3 * * *"
+    text, drifted = ts.render(moved, seen)
+    assert drifted
+    assert "正本がこの観測より後に変わっています" in text
+    assert "まず `list_triggers` を保存して `--ingest` を打つこと" in text
+
+
+def test_指紋の無い古い観測では余計なことを言わない():
+    """`spec_fingerprint` を入れる前に積んだ観測が残っていても、鳴らさない。"""
+    from scripts import trigger_sync as ts
+
+    spec = ts.load_spec()
+    seen = {
+        "id": spec["trigger_id"],
+        "cron_expression": "9 */12 * * *",     # わざとズラす
+        "enabled": spec["enabled"],
+        "body": "",
+        "ingested_at": ts.datetime.now(ts.timezone.utc).isoformat(timespec="seconds"),
+    }
+    text, drifted = ts.render(spec, seen)
+    assert drifted
+    assert "正本がこの観測より後に" not in text
