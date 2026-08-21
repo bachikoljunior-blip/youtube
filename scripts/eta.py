@@ -58,7 +58,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from src import arm_speed, levers, rpm_mix  # noqa: E402  （`sys.path` を通した後でないと読めません）
+from src import arm_speed, day_cap, levers, rpm_mix  # noqa: E402  （`sys.path` を通した後でないと読めません）
 
 LOG = ROOT / "data" / "eta.jsonl"
 
@@ -836,8 +836,17 @@ def analyse(m: dict, points: list[dict] | None = None,
 
     # 公開の密度べつの門1（report のループが手で計算していたものをここへ寄せた。
     # **門2a の逆算がこの日数を要る**ので、2か所で別々に計算すると必ずずれます）
+    # **本数のうち、再生が付くぶんだけを数えます**（2026-08-21 16:2x）。
+    # ここは長らく `n` をそのまま掛けていて、**25本/日 なら 25本ぶんの再生**と
+    # 読んでいました。実測は違います（`src/day_cap.py`）:
+    #   08/20 は 25本 公開して **#11から先の15本が 0〜3再生**。#10 は 1,111再生。
+    #   時刻ではなく**その日の通し番号**で割れます（08/16 の14時 #4 は 1,361再生）。
+    # つまり段1 の日付は、上限を超えて出したぶんだけ**楽観に倒れて**いました。
+    a["view_cap_per_day"] = day_cap.cap()
     a["days_subs_at"] = {
-        n: _days_to(a["subs_remaining"], n * _per_video(m) * sc["per_video"] * sub_rate)
+        n: _days_to(a["subs_remaining"],
+                    min(n, a["view_cap_per_day"]) * _per_video(m)
+                    * sc["per_video"] * sub_rate)
         for n in sorted(set(PUBLISH_SCENARIOS) | {PLAN_PUBLISH_PER_DAY})
     }
     # **門1 に要る「本数」**（日数ではなく本数）。供給の側から日を解くのに要ります。
@@ -1315,9 +1324,18 @@ def physical_caps(a0: dict, density: float = PLAN_PUBLISH_PER_DAY,
     #     計画の 25本/日 で割ると、腕は実物の上限 92本/日 まで歩けません。
     density = sustained_density(supply, density)
     if density > 0:
-        caps["density"] = {"factor": UPLOAD_CAP_PER_DAY / density,
-                           "why": (f"1日に出せる上限 {UPLOAD_CAP_PER_DAY}本（実測）"
-                                   f" ÷ いま続けられる {density:.1f}本/日"),
+        # **腕の天井は「出せる本数」ではなく「再生が付く本数」**（2026-08-21 16:2x）。
+        #     ここは `UPLOAD_CAP_PER_DAY`（1日92本・**投稿の口の上限**）で割って
+        #     いました。出せはします。**ただし再生は付きません** ——
+        #     08/20 は 25本 公開して #11から先の15本が 0〜3再生（`src/day_cap.py`）。
+        #     天井を口の側で立てると、**腕を ×3.7 まで歩けると出て、
+        #     実際には1日も縮まない**という形になります。
+        arm_cap = min(float(UPLOAD_CAP_PER_DAY), float(day_cap.cap()))
+        caps["density"] = {"factor": arm_cap / density,
+                           "why": (f"1日に再生が付く上限 {arm_cap:.0f}本（実測・`src/day_cap.py`）"
+                                   f" ÷ いま続けられる {density:.1f}本/日"
+                                   f"（出せる口の上限は {UPLOAD_CAP_PER_DAY}本ですが、"
+                                   f"そこまで出しても再生は付きません）"),
                            "measured": True}
     # --- `rpm` の天井は、2026-08-20 22:2x に**実測に入れ替えました**（`src/rpm_mix.py`）---
     #     ここには `max(RPM_SCENARIOS) / band`（¥2,000 ÷ ¥20 ＝ ×100）が入っていて、
@@ -1648,7 +1666,8 @@ def supply_state() -> dict | None:
         return None
 
 
-def solve_gate1(a: dict, *, density: float, supply: dict | None) -> dict:
+def solve_gate1(a: dict, *, density: float, supply: dict | None,
+                view_cap: float | None = None) -> dict:
     """**門1（登録者1,000人）が通る日を、「出せる本数」から解く。**
 
     2026-08-20 16:0x・オーナー指示（原文）——
@@ -1681,6 +1700,18 @@ def solve_gate1(a: dict, *, density: float, supply: dict | None) -> dict:
     **`measured: False` を返すので、画面は「未検証の前提」と断ります。**
     """
     need = a.get("videos_needed_gate1", float("inf"))
+    # **出した本数ではなく、再生が付いた本数だけが門を押します**（2026-08-21 16:2x）。
+    #     ここは長らく `plan_density = 25` をそのまま使い、**25本/日 出せば
+    #     25本ぶんの登録者が来る**と読んでいました。実測は違います
+    #     （`src/day_cap.py`）—— 08/20 は 25本 公開して **#11から先の15本が
+    #     0〜3再生**。時刻ではなく**その日の通し番号**で割れます
+    #     （08/16 の 14時 #4 は 1,361再生／08/20 の 14時 #12 は 0再生）。
+    #     **上限は腕では動きません。** `density` を倍に振っても、上限を超えたぶんは
+    #     0再生のままなので、ここは倍率の**後**に掛けます。
+    #     **これが `density` の腕の天井そのもの**で、`tests/test_eta_day_cap.py`
+    #     が「上限を無視した側へ戻ったら」落とします。
+    view_cap = day_cap.cap() if view_cap is None else view_cap
+    density = min(float(density), float(view_cap))
     # **使ってよいのは「1日続けられる速さ」だけ**（2026-08-20 20:0x に踏んだ）。
     #     `rate_per_day` をそのまま使うと、**3.3時間で +5本 ＝ 1日36.5本**という
     #     バーストが入り、`min(25, 36.5)` を通って **25 が別の入口から戻ります**
@@ -1730,6 +1761,7 @@ def solve_gate1(a: dict, *, density: float, supply: dict | None) -> dict:
 
 
 def plan(m: dict, a: dict, density: int = PLAN_PUBLISH_PER_DAY,
+         view_cap: float | None = None,
          today: date | None = None, supply: dict | None = None,
          sensitivity: bool = False, points: list[dict] | None = None) -> dict:
     """**月20万に届くまでの段取りを、必ず1つ返す。**
@@ -1782,7 +1814,7 @@ def plan(m: dict, a: dict, density: int = PLAN_PUBLISH_PER_DAY,
                 upd[key] = supply[key] * sc["density"]
         if upd:
             supply = dict(supply, **upd)
-    g1 = solve_gate1(a, density=density, supply=supply)
+    g1 = solve_gate1(a, density=density, supply=supply, view_cap=view_cap)
     # **段4（月20万）は在庫を食い終わった先にあります。**
     #     そこでの密度は「予約の詰め方」ではなく「作る速さ」で頭打ちなので、
     #     月に何本出せるかは `density_sustained` で数えること。
@@ -2721,6 +2753,8 @@ def _report_supply(pl: dict) -> list[str]:
     if g1.get("measured"):
         P(f"    → **予測が使っているのはこちらです: 作る速さ 1日 {g1['rate_per_day']:.1f}本の実測**"
           f"（段1 は {_fmt_days(g1['days'])}）。**上の 25本/日 は詰め方の上限**です")
+    # **作れても、出しても、再生が付く本数には上限があります**（2026-08-21 16:2x）
+    out.extend(day_cap.lines())
     if sw.get("age_hours") is not None and sw["age_hours"] > 24:
         P(f"    （掃引の点は {sw['age_hours']:.0f}時間前。測り直しは"
           " `python -m src.supply --measure`。**掃引を回さず速さだけ積むなら**"

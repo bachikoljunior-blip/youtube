@@ -21,6 +21,20 @@ spec = importlib.util.spec_from_file_location("eta_mod", ROOT / "scripts" / "eta
 eta = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(eta)
 
+from src import day_cap  # noqa: E402
+
+# --- **2026-08-21 16:2x: 分子が 92 から「再生が付く上限」へ変わりました** ---
+#
+# この file の主題は **分母**（`sustained_density` ＝ いま続けられる 7.8本/日 で
+# 割ること。計画の 25 で割ると腕が上限まで歩けない）で、**そこは変えていません。**
+#
+# 変わったのは分子です。`UPLOAD_CAP_PER_DAY = 92` は **投稿の口が1日に受け付ける
+# 本数**で、**出せることと再生が付くことは別**でした（`src/day_cap.py`。08/20 は
+# 25本 公開して #11から先の15本が 0〜3再生）。口の側で天井を立てると
+# **腕を ×11.8 まで歩けると出て、実際には1日も縮みません。**
+_ARM_CAP = min(float(eta.UPLOAD_CAP_PER_DAY), float(day_cap.cap()))
+
+
 
 def test_sustained_density_reads_the_sustained_rate():
     """`min(計画, 続けられる速さ)`。**バーストの `rate_per_day` では上書きしない。**"""
@@ -35,21 +49,23 @@ def test_sustained_density_reads_the_sustained_rate():
 
 
 def test_density_cap_is_measured_against_the_sustained_density():
-    """**92 ÷ 7.8 であること。** 92 ÷ 25（＝計画の数）に戻ったら落とす。"""
+    """**（再生が付く上限）÷ 7.8 であること。** ÷ 25（＝計画の数）に戻ったら落とす。"""
     sup = {"sustained_rate_per_day": 7.8, "rate_per_day": 36.5}
     caps = eta.physical_caps({"sub_rate": 0.0004}, supply=sup)
     got = caps["density"]["factor"]
-    assert abs(got - eta.UPLOAD_CAP_PER_DAY / 7.8) < 1e-9, got
-    # 計画の数で割った側（×3.68）に戻っていないこと
-    assert got > eta.UPLOAD_CAP_PER_DAY / eta.PLAN_PUBLISH_PER_DAY + 1e-9, got
+    assert abs(got - _ARM_CAP / 7.8) < 1e-9, got
+    # **計画の数（25）で割った側に戻っていないこと。** 分子が変わったので、
+    #     線も同じ分子で引き直します（前は `92/25`。いまは `_ARM_CAP/25`）——
+    #     **見ているのは分母のほう**なので、比べる相手は同じ分子でなければ意味がありません。
+    assert got > _ARM_CAP / eta.PLAN_PUBLISH_PER_DAY + 1e-9, got
 
 
 def test_density_cap_lands_on_the_real_upload_cap():
-    """腕を天井まで振ったとき、**実物の上限 92本/日 に着く**こと。"""
+    """腕を天井まで振ったとき、**再生が付く上限**に着くこと（口の 92本ではない）。"""
     sup = {"sustained_rate_per_day": 7.8}
     dens = eta.sustained_density(sup)
     caps = eta.physical_caps({"sub_rate": 0.0004}, supply=sup)
-    assert abs(dens * caps["density"]["factor"] - eta.UPLOAD_CAP_PER_DAY) < 1e-9
+    assert abs(dens * caps["density"]["factor"] - _ARM_CAP) < 1e-9
 
 
 def test_capped_arms_passes_supply_through():
@@ -57,4 +73,4 @@ def test_capped_arms_passes_supply_through():
     sup = {"sustained_rate_per_day": 7.8}
     arms = eta._capped_arms({"sub_rate": 0.0004}, arms={"density": {"cap": None}},
                             supply=sup)
-    assert abs(arms["density"]["cap"] - eta.UPLOAD_CAP_PER_DAY / 7.8) < 1e-9
+    assert abs(arms["density"]["cap"] - _ARM_CAP / 7.8) < 1e-9

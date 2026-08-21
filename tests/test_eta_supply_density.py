@@ -40,6 +40,24 @@ _spec = importlib.util.spec_from_file_location("eta_supply_mod", ROOT / "scripts
 eta = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(eta)
 
+from src import day_cap  # noqa: E402
+
+
+# --- **この file は「供給 vs 詰め方」を測っています。天井は主題ではありません** ---
+#
+# 2026-08-21 16:2x に、段1 へもう1枚 天井が入りました —— **1日に再生が付く本数の
+# 上限**（`src/day_cap.py`。08/20 は 25本 公開して #11から先の15本が 0〜3再生）。
+# 実測の 10本/日 はここの合成データ（作る速さ 13〜400本/日）より**下**なので、
+# かぶせると**どの筋も上限10に潰れ**、「作る速さから出ているか／詰め方が効くか」
+# という**この file の discriminator そのものが消えます。**
+#
+# **隠しているのではありません。** 天井は `tests/test_eta_day_cap.py` が持ちます。
+# ここでは縛らせない、と**書いてから**外します。
+@pytest.fixture(autouse=True)
+def _天井は主題ではない(monkeypatch):
+    monkeypatch.setattr(day_cap, "cap", lambda *a, **k: eta.UPLOAD_CAP_PER_DAY)
+
+
 JST = timezone(timedelta(hours=9))
 
 

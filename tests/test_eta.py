@@ -22,6 +22,19 @@ _spec = importlib.util.spec_from_file_location("eta_mod", ROOT / "scripts" / "et
 eta = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(eta)
 
+# --- **この file の合成データは、1日の再生の天井より前に書かれています**（2026-08-21 16:2x） ---
+#
+# `src/day_cap.py` の実測 —— 08/20 は 25本 公開して **#11から先の15本が 0〜3再生**。
+# `solve_gate1` はそれ以来「出した本数」ではなく**再生が付いた本数**で門を解きます。
+#
+# ここの合成データ（`_measured()` 系）はその天井より前に置かれていて、
+# 天井をかぶせると**どの帯にも届かなくなり**、この file の主題
+# （**段取りが空で返らないこと・段4 が20万の日付であること**）が測れません。
+# **`view_cap` を明示して縛らせません。** 天井そのものは
+# `tests/test_eta_day_cap.py` が持ちます（**隠さず、置き場所を分けています**）。
+_UNCAPPED = eta.UPLOAD_CAP_PER_DAY
+
+
 
 def _measured(**over):
     """2026-08-19 の実測をそのまま置く（数字を変える検査は over で上書きする）。"""
@@ -593,7 +606,7 @@ def test_段取りは_どの帯も届かない入力でも空で返らない():
     # 前提: この入力は「どの帯でも届かない」側（ここが変わったら検査の意味が変わる）
     assert all(a["ceiling"][k] < eta.TARGET_YEN for k in eta.RPM_SCENARIOS)
 
-    pl = eta.plan(m, a)
+    pl = eta.plan(m, a, view_cap=_UNCAPPED)
     assert pl["stages"], "段取りが空で返った"
     assert pl["stages"][-1]["when"] < eta.NEVER, "最後の段に日付が入っていない"
     assert pl["blocking"]["what"], "止めている入力が名指しされていない"
@@ -609,6 +622,11 @@ def test_段取りは_出せる密度で解く_APIの日枠では解かない():
     pl = eta.plan(m, a)
     assert pl["density"] == eta.PLAN_PUBLISH_PER_DAY
     assert pl["density"] < eta.UPLOAD_CAP_PER_DAY
+    # **割るのは「再生が付く本数」のほう**（2026-08-21 16:2x に分けた）。
+    #     `density` は詰め方、`density_month` は**そのうち再生が付くぶん**で、
+    #     上に `src/day_cap.py` の実測（08/20 は #11から先の15本が 0〜3再生）が
+    #     もう1枚かぶります。**92本/日 で割らないこと**が、この検査の主題です。
+    assert pl["density_month"] <= pl["density"]
 
     # **要る月間再生は、帯（`views_needed_month`）そのものではありません**
     #     （2026-08-20 23:2x）。段4 の RPM は**実測の混ざり方の天井**で頭打ちに
@@ -616,7 +634,8 @@ def test_段取りは_出せる密度で解く_APIの日枠では解かない():
     #     **この検査が守っているのは分母のほう** ——「92本/日 で割っていないか」です。
     spine = pl["forms"][pl["spine"]]
     need_month = spine["views_needed_month"]
-    assert spine["per_video_needed"] == pytest.approx(need_month / (pl["density"] * 30))
+    assert spine["per_video_needed"] == pytest.approx(
+        need_month / (pl["density_month"] * 30))
     assert spine["per_video_needed"] != pytest.approx(
         need_month / (eta.UPLOAD_CAP_PER_DAY * 30)
     ), "API の日枠 92本/日 で割っています（**出せる本数ではありません**）"
@@ -674,7 +693,7 @@ def test_段4は_段3の日付の写しではない():
 def test_段4は_収益の30日窓のぶんだけ段3より後ろ():
     """月20万は**30日ぶんの合計**。収益化前の再生は1円も生まないので前借りできません。"""
     m, a = _analysed()
-    pl = eta.plan(m, a)
+    pl = eta.plan(m, a, view_cap=_UNCAPPED)
     d3 = next(s for s in pl["stages"] if s["no"] == 3)["when"]
     assert pl["days_to_target"] == pytest.approx(d3 + eta.REVENUE_WINDOW_DAYS)
 
@@ -738,7 +757,7 @@ def test_倍率が1を切っていても_別の形の実測なら合格点は立
     **測っていない数字の写し**になります（追記が名指ししている穴と同じ形）。
     """
     m, a = _analysed()                       # 長尺の実測は無い＝物差しはショート
-    pl = eta.plan(m, a)
+    pl = eta.plan(m, a, view_cap=_UNCAPPED)
     assert pl["spine"].startswith("長尺")
     assert pl["target"]["ratio"] < 1.0, "前提: 倍率は1を切っている側"
     assert pl["target"]["proxy"] is True
@@ -747,7 +766,7 @@ def test_倍率が1を切っていても_別の形の実測なら合格点は立
 
     # 長尺を十分に測ったら、推測ではなくなる
     a2 = dict(a, long_per_video=800.0, long_videos_28d=25)
-    pl2 = eta.plan(m, a2)
+    pl2 = eta.plan(m, a2, view_cap=_UNCAPPED)
     assert pl2["target"]["proxy"] is False
     assert pl2["target"]["met"] is True
 
@@ -760,7 +779,7 @@ def test_門が届かない側でも_日付を1つ出す():
     """
     m, a = _analysed(subs_gained_28d=0)
     assert a["days_subs_at"][eta.PLAN_PUBLISH_PER_DAY] >= eta.NEVER
-    pl = eta.plan(m, a)
+    pl = eta.plan(m, a, view_cap=_UNCAPPED)
     assert pl["days_to_target"] < eta.NEVER, "段4 が「届きません」で畳まれている"
     assert pl["target"]["fallback"] is not None
     assert pl["target"]["conditional"] is True

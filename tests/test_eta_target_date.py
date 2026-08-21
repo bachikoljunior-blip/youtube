@@ -37,6 +37,21 @@ _spec = importlib.util.spec_from_file_location("eta_target_mod", ROOT / "scripts
 eta = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(eta)
 
+# --- **この file の合成データは、1日の再生の天井より前に書かれています**（2026-08-21 16:2x） ---
+#
+# `src/day_cap.py` の実測 —— 08/20 は 25本 公開して **#11から先の15本が 0〜3再生**。
+# `solve_gate1` はそれ以来「出した本数」ではなく**再生が付いた本数**で門を解きます。
+#
+# ここの合成データ（`_measured()` 系）はその天井より前に置かれていて、
+# 天井をかぶせると**どの帯にも届かなくなり**、この file の主題
+# （**段取りが空で返らないこと・段4 が20万の日付であること**）が測れません。
+# **`view_cap` を明示して縛らせません。** 天井そのものは
+# `tests/test_eta_day_cap.py` が持ちます（**隠さず、置き場所を分けています**）。
+_UNCAPPED = eta.UPLOAD_CAP_PER_DAY
+
+from src import day_cap  # noqa: E402
+
+
 
 def _measured(**over):
     """2026-08-19〜20 の実測（`data/eta.jsonl` の最後の点）。"""
@@ -202,8 +217,14 @@ def test_予測日は記録に積まれる():
     assert 'row["target_date"]' in src and 'row["days_to_target"]' in src
 
 
-def test_日付はJSTで数える():
-    """器は UTC。`date.today()` を使うと、日本時間の朝まで**1日ずれます**。"""
+def test_日付はJSTで数える(monkeypatch):
+    """器は UTC。`date.today()` を使うと、日本時間の朝まで**1日ずれます**。
+
+    **`analyse()` の側にも天井が入ります**（`days_subs_at`）ので、
+    ここでは `day_cap.cap` ごと縛らせません —— この検査の主題は
+    **JST と UTC のずれ**であって、天井ではありません（上の註）。
+    """
+    monkeypatch.setattr(day_cap, "cap", lambda *a, **k: _UNCAPPED)
     # Analytics の窓（`_measure` の `end`）は UTC のままでよい —— あちらは
     # **まだ来ていない日を問い合わせない**ための下限で、先へ進めると空が返ります。
     # 揃えるのは**予測の日付を作る所**です（`_fmt_days` と `plan`）。
@@ -212,5 +233,5 @@ def test_日付はJSTで数える():
         "`_fmt_days` が UTC の today で日付を作っています（`headline` は JST なので1日ずれます）"
     )
     m = _measured()
-    pl = eta.plan(m, eta.analyse(m), today=date(2026, 8, 20))
+    pl = eta.plan(m, eta.analyse(m), view_cap=_UNCAPPED, today=date(2026, 8, 20))
     assert pl["target_date"] is not None and pl["target_date"] > date(2026, 8, 20)
