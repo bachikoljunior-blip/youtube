@@ -36,6 +36,21 @@ _spec = importlib.util.spec_from_file_location("_eta_growth_ceiling", ROOT / "sc
 eta = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(eta)
 
+import _eta_pin  # noqa: E402
+
+
+# --- **天井は2つあり、どちらもこの file の主題ではありません**（2026-08-22 に足した）---
+#
+# ここが測っているのは「伸び率と天井のどちらが13倍を埋めたか」で、
+# **天井の値そのものではありません。** ところが `plan()` は
+# `src/day_cap.cap()`（1日に再生が付く本数）と `src/rpm_mix.last()`（実効 RPM）を
+# 実測から直に読むので、**こちらが1回測るたびに合成データが帯から外れます** ——
+# 08/21 の day_cap 実測（25→17本/日）で `density_month` が 25.0 → 17.0 になり、
+# 「直す前の姿」を再現する検査が落ちました（`tests/_eta_pin.py` に全文）。
+@pytest.fixture(autouse=True)
+def _天井は主題ではない(monkeypatch):
+    _eta_pin.pin_ceilings(monkeypatch, eta.PLAN_PUBLISH_PER_DAY)
+
 
 def _trailing30(views_day_now: float, growth: float, cap: float, days: int) -> float:
     """`solve_revenue_day` と同じ歩き方で、`days` 日目の直近30日合計を出す。"""

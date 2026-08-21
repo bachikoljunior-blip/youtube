@@ -51,6 +51,29 @@ _UNCAPPED = eta.UPLOAD_CAP_PER_DAY
 
 from src import day_cap  # noqa: E402
 
+# --- **同じことが、RPM の混ざり方でも起きていました**（2026-08-22 に直した） ---
+#
+# `plan()` は `src/rpm_mix.last()`（**実測**）を読んで実効 RPM の天井を決め、
+# 合格点 `need_month` はその逆数です。08/20 の初測で 帯¥400 → 実効¥253 に下がり、
+# 合格点が 500,000 → **789,922回/月** に上がって、この file の合成データの天井
+# （25本/日 × 952回 × 30日 ＝ **714,000回/月**）を追い越しました。
+# その瞬間、`days_to_target` は全部 `NEVER` に落ち、**この file の3件が赤**に。
+#
+# **形は1行も壊れていません。** 落ちたのは「合成データが届く帯にいるか」だけです。
+# 物差しを実データの偶然に置かない、という同じ理由で（`docs/trigger_main.md` §4）、
+# **混ざり方も明示して縛らせません。** `{}` ＝「まだ測っていない」＝ 帯そのまま(¥400)。
+# 天井が合格点を越える側の振る舞いは `test_再生数が届かないなら到達日も出ない` と
+# `tests/test_eta_surface_cap.py` が持ちます（**隠さず、置き場所を分けています**）。
+_BAND_ONLY: dict = {}
+
+
+def _pinned(m, monkeypatch, **kw):
+    """**天井を2つとも明示して**段取りを解く（1日の本数・RPM の混ざり方）。"""
+    monkeypatch.setattr(day_cap, "cap", lambda *a, **k: _UNCAPPED)
+    kw.setdefault("view_cap", _UNCAPPED)
+    kw.setdefault("mix", _BAND_ONLY)
+    return eta.plan(m, eta.analyse(m), **kw)
+
 
 
 def _measured(**over):
@@ -79,10 +102,10 @@ def _measured(**over):
 
 # --- 1. 段4 は段3 の写しではない -------------------------------------------------
 
-def test_段4の期日は段3の写しではない():
+def test_段4の期日は段3の写しではない(monkeypatch):
     """**この検査が本体です。** 写しに戻ったら、ここで落ちること。"""
     m = _measured()
-    pl = eta.plan(m, eta.analyse(m))
+    pl = _pinned(m, monkeypatch)
     stage3 = next(s for s in pl["stages"] if s["no"] == 3)
     stage4 = next(s for s in pl["stages"] if s["no"] == 4)
     assert stage4["when"] != stage3["when"], (
@@ -102,7 +125,7 @@ def test_1本あたり再生を上げると段4の期日が動く():
 
 # --- 2. 到達日は「遅いほう」 ------------------------------------------------------
 
-def test_到達日は3つの床のいちばん遅いもの():
+def test_到達日は3つの床のいちばん遅いもの(monkeypatch):
     """**(a) 再生・(b) 収益化＋30日・(c) 確かめ終わり＋30日 の、いちばん遅いもの。**
 
     (b) は 2026-08-20 08:3x の回が入れた床です（`REVENUE_WINDOW_DAYS`）——
@@ -111,7 +134,7 @@ def test_到達日は3つの床のいちばん遅いもの():
     足すと1か月ぶん二重に数えます。
     """
     m = _measured()
-    pl = eta.plan(m, eta.analyse(m))
+    pl = _pinned(m, monkeypatch)
     tg = pl["target"]
     assert pl["days_to_target"] == max(pl["days_revenue"], tg["gate_floor"], tg["verify_floor"])
     assert tg["gate_floor"] == pl["days_monetized"] + eta.REVENUE_WINDOW_DAYS
@@ -233,5 +256,39 @@ def test_日付はJSTで数える(monkeypatch):
         "`_fmt_days` が UTC の today で日付を作っています（`headline` は JST なので1日ずれます）"
     )
     m = _measured()
-    pl = eta.plan(m, eta.analyse(m), view_cap=_UNCAPPED, today=date(2026, 8, 20))
+    pl = _pinned(m, monkeypatch, today=date(2026, 8, 20))
     assert pl["target_date"] is not None and pl["target_date"] > date(2026, 8, 20)
+
+
+# --- 5. **その天井そのものを、検査が持つ**（2026-08-22 に足した） ---------------------
+
+def test_混ざり方の実測は差し替えられる_そして合格点を動かす(monkeypatch):
+    """**既知の当たり**: `mix` を差すと `need_month` が RPM の逆数どおりに動く。
+
+    ここが動かなくなったら、`plan()` がまた実測を直に読んでいます
+    （＝ `--record` を1回撃つだけで、形を測る検査が赤くなる作りに戻っている）。
+    **手で作った値だけで測っています** —— `data/rpm_mix.jsonl` が何を持っていても、
+    この検査の意味は変わりません（それがこの節の主題です）。
+    """
+    monkeypatch.setattr(day_cap, "cap", lambda *a, **k: _UNCAPPED)
+    m = _measured()
+    band = eta.plan(m, eta.analyse(m), view_cap=_UNCAPPED, mix=_BAND_ONLY)
+    half = eta.plan(m, eta.analyse(m), view_cap=_UNCAPPED,
+                    mix={"rpm_max": band["surface"]["rpm_plan"] / 2})
+    assert half["surface"]["rpm_plan"] == pytest.approx(band["surface"]["rpm_plan"] / 2)
+    assert half["target"]["need_per_video"] == pytest.approx(
+        band["target"]["need_per_video"] * 2), "実効 RPM を半分にしたのに合格点が2倍になっていません"
+    assert half["surface"]["capped"] and not band["surface"]["capped"]
+
+
+def test_形を測る検査は実測の混ざり方に乗らない(monkeypatch):
+    """**実測が何であっても、`mix` を差した側の答えは1日も動かないこと。**"""
+    monkeypatch.setattr(day_cap, "cap", lambda *a, **k: _UNCAPPED)
+    m = _measured()
+    got = []
+    for fake in ({"rpm_max": 253.19, "imp_day": 37.6}, {"rpm_max": 400.0}, None):
+        monkeypatch.setattr(eta.rpm_mix, "last", lambda _f=fake: _f)
+        got.append(eta.plan(m, eta.analyse(m), view_cap=_UNCAPPED,
+                            mix=_BAND_ONLY, today=date(2026, 8, 20))["target_date"])
+    assert got[0] is not None and len(set(got)) == 1, (
+        f"実測の混ざり方で到達日が動いています: {got}")

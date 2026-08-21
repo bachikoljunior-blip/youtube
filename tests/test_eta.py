@@ -34,6 +34,19 @@ _spec.loader.exec_module(eta)
 # `tests/test_eta_day_cap.py` が持ちます（**隠さず、置き場所を分けています**）。
 _UNCAPPED = eta.UPLOAD_CAP_PER_DAY
 
+# --- **2026-08-22: 同じことが RPM の側でも起きました** ---
+#
+# `plan()` は `src/rpm_mix.last()`（実効 RPM の天井）も実測から直に読みます。
+# 08/20 の初測で 帯¥400 → 実効¥253 に落ち、合格点（月に要る再生）が 1.58倍に。
+# **形は1行も変わっていないのに** `days_to_target` が `NEVER` へ潰れました。
+# 天井は2つあるので、**2つとも止めます**（理由と置き場所は `tests/_eta_pin.py`）。
+import _eta_pin  # noqa: E402  （pytest が tests/ を sys.path に入れます）
+
+
+@pytest.fixture(autouse=True)
+def _天井は主題ではない(monkeypatch):
+    _eta_pin.pin_mix(monkeypatch)
+
 
 
 def _measured(**over):

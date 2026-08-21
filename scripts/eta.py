@@ -1213,7 +1213,7 @@ LEVER_LABEL = {
 
 def lever_days(m: dict, a: dict, pl0: dict, today: date | None = None,
                supply: dict | None = None, points: list[dict] | None = None,
-               factor: float = LEVER_FACTOR) -> list[dict]:
+               factor: float = LEVER_FACTOR, mix: dict | None = None) -> list[dict]:
     """**腕べつに、到達日が何日動くか。**（2026-08-20 16:0x・オーナー指示）
 
     > 分析して制作に活かして視聴回数などを上げることが予測に使えることじゃない？
@@ -1241,7 +1241,7 @@ def lever_days(m: dict, a: dict, pl0: dict, today: date | None = None,
         try:
             a2 = analyse(m, points=points, scale={lever: factor})
             pl2 = plan(m, a2, today=today, supply=supply, sensitivity=False,
-                       points=points)
+                       points=points, mix=mix)
         except Exception:                                      # noqa: BLE001
             continue
         d = pl2.get("days_to_target", NEVER)
@@ -1443,8 +1443,13 @@ def _factors_at(arms: dict, days: float, *, focus: str | None = None,
     #     速さは log で線形（`x(t) = exp(rate·t)`）なので、
     #     「次にどれかが天井に着く時刻」まで進めては割り直す、で厳密に解けます。
     logf = {k: 0.0 for k in arms}
-    caps = {k: (arms[k].get("cap") if (arms[k].get("cap") or 0) > 1.0 else None)
-            for k in arms}
+    # **`cap == 1.00` は「天井が無い」ではなく「もう伸びない」**（2026-08-22 に直した）。
+    #     ここは `> 1.0` で弾いていたので、**伸びしろゼロの腕だけが野放し**になり、
+    #     軌跡が `density` を ×3.43 まで歩いていました（`arm_speed.factor_at` に全文）。
+    caps = {}
+    for k in arms:
+        c = arms[k].get("cap")
+        caps[k] = None if (c is None or c <= 0) else max(float(c), 1.0)
     # **足すのではなく、空いた配分だけを配り直します。**
     #     `rate` は「実績の配分のまま進んだ速さ」＝ `focus_rate × share`。
     #     天井に着いた腕の `share` が空くので、残りは
@@ -1489,7 +1494,8 @@ def trajectory(m: dict, a0: dict, *, supply: dict | None = None,
                points: list[dict] | None = None, today: date | None = None,
                arms: dict | None = None, focus: str | None = None,
                rate_scale: float = 1.0,
-               horizon: int = TRAJECTORY_HORIZON_DAYS) -> dict:
+               horizon: int = TRAJECTORY_HORIZON_DAYS,
+               mix: dict | None = None) -> dict:
     """**腕が実測の速さで動いていったとき、いつ月20万に届くか。**
 
     2026-08-20 18:xx・オーナー指示（原文）——
@@ -1541,7 +1547,13 @@ def trajectory(m: dict, a0: dict, *, supply: dict | None = None,
     for k, a in arms.items():
         r, cap = rates[k], a.get("cap")
         if r > 0:
-            saturate = max(saturate, (math.log(cap) / r) if cap and cap > 1 else float(horizon))
+            # **天井 ×1.00 の腕は、0日で行き着いています**（`t` を回す意味がない）。
+            #     ここも `cap > 1` で弾いていたので、**動かない腕のために
+            #     地平（3年）ぶんの探索**を回していました。
+            if cap is not None and cap > 0:
+                saturate = max(saturate, math.log(max(float(cap), 1.0)) / r)
+            else:
+                saturate = max(saturate, float(horizon))
     last = int(min(horizon, math.ceil(saturate))) if moving else 0
 
     for t_work in range(0, last + 1):
@@ -1552,7 +1564,8 @@ def trajectory(m: dict, a0: dict, *, supply: dict | None = None,
         fac = _factors_at(arms, t_work, focus=focus, rate_scale=rate_scale)
         try:
             a2 = analyse(m, points=points, scale=fac)
-            pl2 = plan(m, a2, today=today, supply=supply, sensitivity=False, points=points)
+            pl2 = plan(m, a2, today=today, supply=supply, sensitivity=False, points=points,
+                       mix=mix)
         except Exception:                                      # noqa: BLE001 — 回を止めない
             continue
         d = pl2.get("days_to_target", NEVER)
@@ -1772,7 +1785,8 @@ def solve_gate1(a: dict, *, density: float, supply: dict | None,
 def plan(m: dict, a: dict, density: int = PLAN_PUBLISH_PER_DAY,
          view_cap: float | None = None,
          today: date | None = None, supply: dict | None = None,
-         sensitivity: bool = False, points: list[dict] | None = None) -> dict:
+         sensitivity: bool = False, points: list[dict] | None = None,
+         mix: dict | None = None) -> dict:
     """**月20万に届くまでの段取りを、必ず1つ返す。**
 
     2026-08-20 06:2x・オーナー指示（原文）——
@@ -1850,7 +1864,18 @@ def plan(m: dict, a: dict, density: int = PLAN_PUBLISH_PER_DAY,
     #     **天井は固定ではありません。** 長尺を出せば面が増え、次の回の
     #     `python -m src.rpm_mix --record` でこの天井は上がります。
     #     **測れていないときは据え置きの帯へ落ちます**（`capped=False` で分かるようにする）。
-    mix = rpm_mix.last() or {}
+    #     **この天井は、呼ぶ側から差せます**（`mix=` / 2026-08-22 に足した）。
+    #     既定（`None`）は今までどおり `rpm_mix.last()` ——**本番の数字は1つも変わりません。**
+    #     差せるようにしたのは、**構造を測る検査が実測の混ざり方に乗っていた**からです:
+    #     `tests/test_eta_target_date.py` は「段4 は段3 の写しでないこと」など
+    #     **形**を固定していますが、合格点（`need_month`）は実効 RPM の逆数なので、
+    #     `--record` を1回撃つたびに動きます。08/20 の初測（帯 ¥400 → 実効 ¥253）で
+    #     合格点が 500,000 → 789,922回/月 に上がり、**天井 714,000回/月 を追い越して**
+    #     `days_to_target` が全部 `NEVER` に落ち、検査3件が赤になりました
+    #     （**形は1行も壊れていないのに**です）。`view_cap` を差せるようにしたのと同じ理由で、
+    #     **物差しを実データの偶然から外します**（`docs/trigger_main.md` §4「既知の当たりを
+    #     実データの偶然に置かないこと」）。`mix={}` ＝「混ざり方を測っていない」＝ 帯そのまま。
+    mix = (rpm_mix.last() or {}) if mix is None else dict(mix)
     rpm_cap = float(mix.get("rpm_max") or 0.0) or None
     long_views_day_cap = float(mix.get("imp_day") or 0.0) or None
 
@@ -2125,7 +2150,7 @@ def plan(m: dict, a: dict, density: int = PLAN_PUBLISH_PER_DAY,
     #     `plan()` を呼び直すので、そのままだと無限に潜ります）。
     if sensitivity:
         out["lever_days"] = lever_days(m, a, pl0=out, today=today, supply=supply,
-                                       points=points)
+                                       points=points, mix=mix)
         best = max(out["lever_days"], key=lambda r: r["gain"], default=None)
         # **縛っている床の名前より、実測の差のほうを信じる。**
         #     「門が縛っている＝density」は正しい診断ですが、**どの腕がいちばん

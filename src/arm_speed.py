@@ -251,13 +251,29 @@ def all_arms(rows: list[dict] | None = None, today: date | None = None,
 
 
 def factor_at(a: dict, days: float) -> float:
-    """**`days` 日たったとき、その腕は何倍になっているか。**（天井で頭打ち）"""
+    """**`days` 日たったとき、その腕は何倍になっているか。**（天井で頭打ち）
+
+    ## **天井 ×1.00 は「天井が無い」ではありません**（2026-08-22 に踏んで直した）
+
+    ここは長らく `min(x, cap) if cap and cap > 1.0 else x` でした。
+    **`cap == 1.0` は「もう1ミリも伸びない」＝ いちばんきつい天井**なのに、
+    その行は `cap > 1.0` が偽になるので**頭打ちを丸ごと外していました。**
+    `_capped_arms` は実在する幅（`physical_caps`）を当てるので、
+    **伸びしろが無い腕には 1.00 が入ります** —— 実測で `density` がそれでした。
+
+    結果、軌跡は**動かせない腕を ×3.43 まで伸ばした世界**を歩き、
+    そのぶん到達日が早く出ていました（`tests/test_eta_trajectory.py` の
+    「天井を超えた倍率まで腕を伸ばさない」が、まさにここで落ちています）。
+    **早く出た日付は、待つ理由に使われます。**
+    """
     rate = a.get("rate")
     if not rate or rate <= 0 or days <= 0:
         return 1.0
     x = math.exp(rate * days)
     cap = a.get("cap")
-    return min(x, cap) if cap and cap > 1.0 else x
+    if cap is None or cap <= 0:
+        return x
+    return min(x, max(float(cap), 1.0))
 
 
 def days_to_factor(a: dict, factor: float) -> float:

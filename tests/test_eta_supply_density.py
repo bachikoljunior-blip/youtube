@@ -40,7 +40,9 @@ _spec = importlib.util.spec_from_file_location("eta_supply_mod", ROOT / "scripts
 eta = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(eta)
 
-from src import day_cap  # noqa: E402
+from src import day_cap  # noqa: E402,F401
+
+import _eta_pin  # noqa: E402  （pytest が tests/ を sys.path に入れます）
 
 
 # --- **この file は「供給 vs 詰め方」を測っています。天井は主題ではありません** ---
@@ -53,9 +55,14 @@ from src import day_cap  # noqa: E402
 #
 # **隠しているのではありません。** 天井は `tests/test_eta_day_cap.py` が持ちます。
 # ここでは縛らせない、と**書いてから**外します。
+#
+# **2026-08-22 に、同じことが RPM の側でも起きました。** `plan()` は
+# `src/rpm_mix.last()`（実効 RPM の天井）も実測から直に読みます。08/20 の初測で
+# 帯¥400 → 実効¥253 に下がり、合格点が 1.58倍になって**この file の4件が赤**に。
+# **天井は2つあるので、2つとも止めます**（`tests/_eta_pin.py` に理由と置き場所）。
 @pytest.fixture(autouse=True)
 def _天井は主題ではない(monkeypatch):
-    monkeypatch.setattr(day_cap, "cap", lambda *a, **k: eta.UPLOAD_CAP_PER_DAY)
+    _eta_pin.pin_ceilings(monkeypatch, eta.UPLOAD_CAP_PER_DAY)
 
 
 JST = timezone(timedelta(hours=9))

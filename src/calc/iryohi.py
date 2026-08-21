@@ -53,6 +53,10 @@ ASSUMPTIONS = [
     "医療費控除は所得控除なので、その人の所得を超えた分は戻りません",
     "医療費を分けて申告できるのは、その医療費を実際に負担した人の分だけです。"
     "誰が払ったかを動かせない医療費は、この計算の対象になりません",
+    "保険金や給付金は「その給付の目的となった医療費」から差し引くもので、"
+    "その医療費を超えた分は、他の医療費から差し引かないものとしています",
+    "入院給付金の計算では、入院にかかった医療費とそれ以外の医療費を分けて置いています。"
+    "実際にどこまでが「その給付の目的となった医療費」かは、給付の条件によって変わります",
 ]
 
 # 制度の値。**改正が続くものは入力に逃がす**（docs/CONSTRAINTS.md B4）が、
@@ -728,6 +732,111 @@ def cross_year_grid(rate: float, small_paid: int = 150_000) -> list[dict]:
     return out
 
 
+# --- 保険金を「全部」引いてしまう誤り（2026-08-22 に足した節）-------------------
+#
+# 差し引くのは**その給付の目的となった医療費の額を限度**とする。入院給付金が
+# 入院費より多く出たとき、**はみ出した分は他の医療費から引かない。**
+# ところが確定申告の入力欄は「支払った医療費」と「補填される金額」の2つしかなく、
+# **総額どうしで引くと、はみ出した分まで控除が減ります。**
+# ここが出すのは「**その引きすぎで、いくら捨てているか**」——
+# どこにも表になっていない（制度の説明は限度の話で終わり、金額に直さない）。
+
+def reimbursement_applied(hospital_cost: int, benefit: int) -> int:
+    """実際に差し引く補填額。**その入院費が限度。**"""
+    return min(max(benefit, 0), max(hospital_cost, 0))
+
+
+def over_reimbursement(hospital_cost: int, benefit: int) -> int:
+    """入院費からはみ出した給付金。**ここを他の医療費から引いてはいけない。**"""
+    return max(0, max(benefit, 0) - max(hospital_cost, 0))
+
+
+def benefit_loss(hospital_cost: int, benefit: int, other_paid: int,
+                 total_income: int, rate: float) -> dict:
+    """**総額どうしで引いた場合と、正しく引いた場合の差。**
+
+    正しい側 : 補填 = min(給付金, 入院費)
+    誤った側 : 補填 = 給付金（はみ出した分まで、他の医療費から引いてしまう）
+
+    返りの `lost_yen` が、その引きすぎで**捨てている還付**（円）。
+    """
+    paid = max(hospital_cost, 0) + max(other_paid, 0)
+    right = refund(paid, reimbursement_applied(hospital_cost, benefit), total_income, rate)
+    wrong = refund(paid, max(benefit, 0), total_income, rate)
+    return {
+        "paid": paid,
+        "applied": reimbursement_applied(hospital_cost, benefit),
+        "over": over_reimbursement(hospital_cost, benefit),
+        "deduction_right": right["deduction"],
+        "deduction_wrong": wrong["deduction"],
+        "lost_deduction": right["deduction"] - wrong["deduction"],
+        "refund_right": right["total"],
+        "refund_wrong": wrong["total"],
+        "lost_yen": right["total"] - wrong["total"],
+    }
+
+
+def benefit_zero_paid(hospital_cost: int, other_paid: int, total_income: int) -> int:
+    """**引きすぎた側の控除が0円になる給付金**（円）。
+
+    誤った側の控除 ＝ (入院費＋その他) － 給付金 － 足切り なので、
+    給付金が「医療費の合計 － 足切り」に達したところで0になる。
+    正しい側は、**給付金がいくら出ても** その他の医療費 － 足切り が残る。
+    """
+    paid = max(hospital_cost, 0) + max(other_paid, 0)
+    return max(0, paid - floor_amount(total_income))
+
+
+def benefit_grid(hospital_cost: int, other_paid: int, total_income: int,
+                 rate: float) -> list[dict]:
+    """給付金べつ。**はみ出した分が、そのまま捨てた控除になる。**"""
+    check_tables()
+    zero_at = benefit_zero_paid(hospital_cost, other_paid, total_income)
+    benefits = sorted({0, hospital_cost // 2, hospital_cost,
+                       hospital_cost + other_paid // 2,
+                       hospital_cost + other_paid, zero_at,
+                       hospital_cost + other_paid + 100_000})
+    out = []
+    for b in benefits:
+        if b < 0:
+            continue
+        row = benefit_loss(hospital_cost, b, other_paid, total_income, rate)
+        row["benefit"] = b
+        row["hospital_cost"] = hospital_cost
+        row["other_paid"] = other_paid
+        row["total_income"] = total_income
+        row["rate"] = rate
+        row["wrong_is_zero"] = row["deduction_wrong"] == 0
+        out.append(row)
+    return out
+
+
+def benefit_ceiling(other_paid: int, total_income: int, rate: float) -> dict:
+    """**引きすぎで捨てる額の上限。**
+
+    はみ出しがいくら大きくても、削られるのは「その他の医療費 － 足切り」まで
+    （そこで誤った側の控除が0になり、それ以上は減りようがない）。
+    ＝ **入院給付金が青天井でも、捨てる額には天井がある。**
+    """
+    floor = floor_amount(total_income)
+    lost_deduction = max(0, min(other_paid - floor, DEDUCTION_CAP))
+    # **`coefficient()` で掛けないこと。** あちらは境目を解くために丸めません。
+    # 画面の表は `refund()`（所得税と住民税を別々に切り捨て）で作るので、
+    # 同じ額に **1円のずれ**が出ます（実測: 30,315 と 30,314）。
+    # **同じ画面に出る数字どうしが食い違うので、こちらを表と同じ側に合わせます。**
+    lost_yen = (int(lost_deduction * rate * (1 + RECONSTRUCTION))
+                + int(lost_deduction * RESIDENT_RATE))
+    return {
+        "other_paid": other_paid,
+        "total_income": total_income,
+        "rate": rate,
+        "floor": floor,
+        "lost_deduction": lost_deduction,
+        "lost_yen": lost_yen,
+        "five_years": lost_yen * RECLAIM_YEARS,
+    }
+
+
 def zero_years(paid: int, total_income: int) -> int:
     """**何年に分けたら、還付が1円も残らなくなるか。**
 
@@ -938,3 +1047,31 @@ if __name__ == "__main__":
         first = tier_gap_cost(name)
         print(f"  区分{name}が窓口3割から離れる医療費: "
               + (f"{first:,}円" if first else "この表の範囲では離れません"))
+
+    HC, OP, TI_B, RATE_B = 300_000, 250_000, 3_000_000, 0.10
+    print(f"\n=== 入院給付金を「全部」引くと、いくら控除を捨てるか"
+          f"（入院費{HC:,}円・それ以外の医療費{OP:,}円・"
+          f"総所得{TI_B:,}円・所得税率{RATE_B:.0%}）===")
+    print(f"  差し引くのは**その給付の目的となった医療費が限度**なので、"
+          f"入院費{HC:,}円を超えた給付金は、それ以外の医療費{OP:,}円からは引きません。")
+    print(f"  足切りは {floor_amount(TI_B):,}円（総所得{TI_B:,}円）。")
+    print(f"{'給付金':>11s} {'正しく引く額':>11s} {'はみ出した額':>11s} {'正しい控除':>10s} "
+          f"{'全部引いた控除':>13s} {'捨てた控除':>10s} {'捨てた還付':>10s} {'5年分':>9s}")
+    zeroed = False
+    for r in benefit_grid(HC, OP, TI_B, RATE_B):
+        first_zero = r["wrong_is_zero"] and r["deduction_right"] > 0 and not zeroed
+        zeroed = zeroed or r["wrong_is_zero"]
+        mark = "  ← ここで「引きすぎた側」の控除が0円" if first_zero else ""
+        print(f"{r['benefit']:10,d}円 {r['applied']:10,d}円 {r['over']:10,d}円 "
+              f"{r['deduction_right']:9,d}円 {r['deduction_wrong']:12,d}円 "
+              f"{r['lost_deduction']:9,d}円 {r['lost_yen']:9,d}円 "
+              f"{r['lost_yen'] * RECLAIM_YEARS:8,d}円" + mark)
+    cap = benefit_ceiling(OP, TI_B, RATE_B)
+    print(f"  **捨てる額には天井があります**: それ以外の医療費{OP:,}円から足切り"
+          f"{cap['floor']:,}円を引いた {cap['lost_deduction']:,}円 が上限で、"
+          f"還付にすると {cap['lost_yen']:,}円（5年分 {cap['five_years']:,}円）。"
+          "給付金がそれ以上はみ出しても、控除は0より下がらないからです。")
+    print(f"  **給付金が {benefit_zero_paid(HC, OP, TI_B):,}円 を超えると、"
+          "全部引いた側の控除は0円になります**"
+          f"（医療費の合計{HC + OP:,}円 － 足切り{cap['floor']:,}円）。"
+          f"正しく引けば、そこでも {deduction(HC + OP, HC, TI_B):,}円 の控除が残ります。")

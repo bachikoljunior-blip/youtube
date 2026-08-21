@@ -29,7 +29,22 @@ _spec = importlib.util.spec_from_file_location("eta_traj", ROOT / "scripts" / "e
 eta = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(eta)
 
+import _eta_pin  # noqa: E402  （pytest が tests/ を sys.path に入れます）
+
 TODAY = date(2026, 8, 20)
+
+
+# --- **天井2つは、この file の主題ではありません**（2026-08-22 に足した）---
+#
+# ここが測るのは「腕が動く速さを含んだ軌跡が出るか」で、天井の値ではありません。
+# `plan()` は `src/day_cap.cap()` と `src/rpm_mix.last()` を実測から直に読むため、
+# **こちらが1回測るたびに、合成データが「届く帯」から外れます** ——
+# 08/20 の RPM 初測（帯¥400 → 実効¥253）と 08/21 の day_cap 実測（25→17本/日）で、
+# **腕を伸ばしても1本も届かなくなり、この file の3件が赤**になりました。
+# 天井そのものは `tests/test_eta_surface_cap.py` / `test_eta_day_cap.py` が持ちます。
+@pytest.fixture(autouse=True)
+def _天井は主題ではない(monkeypatch):
+    _eta_pin.pin_ceilings(monkeypatch, eta.PLAN_PUBLISH_PER_DAY)
 
 
 def _measured(**over):
@@ -249,3 +264,30 @@ def test_前の回との差は同じ物差しどうしで比べる():
     text = "\n".join(eta.headline(pl, prev, tr))
     assert "（軌跡どうし）" in text
     assert "**+0日**" in text, "同じ軌跡どうしなら 0日 のはずです"
+
+
+# --- 5. **天井 ×1.00 は「天井が無い」ではない**（2026-08-22 に踏んで足した）---------
+
+def test_伸びしろゼロの腕を歩かない():
+    """`cap == 1.00` ＝ **もう1ミリも伸びない**。いちばんきつい天井です。
+
+    ここは `cap > 1.0` で弾いていたので、**伸びしろゼロの腕だけが野放し**になり、
+    軌跡は `density` を **×3.43** まで伸ばした世界を歩いていました（実測）。
+    `_capped_arms` は `physical_caps` の低いほうを当てるので、**1.00 は実際に入ります。**
+    """
+    tr = _solve(_arms(density={"cap": 1.0}, per_video={"cap": 1.0}))
+    assert tr["factors"]["density"] == pytest.approx(1.0)
+    assert tr["factors"]["per_video"] == pytest.approx(1.0)
+
+
+def test_伸びしろゼロの腕は探索の地平を延ばさない():
+    """**動かない腕のために3年ぶん探索していました**（`saturate` も同じ穴）。"""
+    frozen = _solve(_arms(**{k: {"cap": 1.0}
+                             for k in ("per_video", "sub_rate", "rpm", "density")}))
+    assert frozen["searched_days"] == 0, "伸びない腕のために t を回しています"
+
+
+def test_倍率1未満の天井も1倍で止まる():
+    """腕はこの模型で縮みません。`cap < 1` は 1.00 と同じに扱うこと。"""
+    tr = _solve(_arms(density={"cap": 0.5}))
+    assert tr["factors"]["density"] == pytest.approx(1.0)

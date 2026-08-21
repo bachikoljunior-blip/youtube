@@ -1919,3 +1919,19 @@
 {"at": "2026-08-21T15:04:10+00:00", "detail": "thumbnails.set ym2zst-jSzM"}
 {"at": "2026-08-21T15:04:11+00:00", "detail": "thumbnails.set yy7wFYJOz88"}
 {"at": "2026-08-21T15:04:11+00:00", "detail": "thumbnails.set zM9LWPirhCA"}
+{"at": "2026-08-21T16:24:42+00:00", "detail": "playlistItems.list uploads"}
+{"at": "2026-08-21T16:24:45+00:00", "detail": "status: Data API 読み"}
+{"at": "2026-08-21T16:25:46+00:00", "detail": "videos.list snippet"}
+{"at": "2026-08-21T16:25:49+00:00", "detail": "playlistItems.list uploads"}
+{"at": "2026-08-21T16:25:56+00:00", "detail": "playlistItems.list uploads"}
+{"at": "2026-08-21T16:32:07+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-21T16:43:38+00:00", "detail": "status: Data API 読み"}
+{"at": "2026-08-21T16:44:24+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-21T16:44:27+00:00", "detail": "playlistItems.list uploads"}
+{"at": "2026-08-21T16:46:29+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-21T16:49:12+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-21T16:52:56+00:00", "detail": "status: Data API 読み"}
+{"at": "2026-08-21T16:53:39+00:00", "detail": "playlistItems.list uploads"}
+{"at": "2026-08-21T16:53:39+00:00", "detail": "videos.list snippet"}
+{"at": "2026-08-21T16:53:42+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-21T16:55:45+00:00", "detail": "channels.list mine"}
