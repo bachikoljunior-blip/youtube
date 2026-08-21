@@ -458,3 +458,18 @@ def test_尽きる時刻もいまから数える(tmp_path):
     want = at + timedelta(hours=10) + timedelta(
         hours=(100 - p["used_now"]) / p["carry_rate"])
     assert abs((p["exhaust_at"] - want).total_seconds()) < 60
+
+
+def test_尽きる時刻は直近の速さのままだと断る(tmp_path, capsys):
+    """**間隔を変えた直後、この行はまだ前の速さを見ています。**
+
+    `exhaust_at` は「このままなら」＝ 直近の区間の速さのまま、という条件つきです。
+    間隔を緩めた回がここだけを読むと「効いていない」と誤読して、
+    **同じ回でもう一度緩める**ことになります（緩めすぎは回を捨てる側の損失）。
+    """
+    _write(tmp_path, 10, 33)
+    quota.pace_report(_now(ANCHOR_AT))
+    out = capsys.readouterr().out
+    assert "鎖が止まります" in out
+    assert "直近の速さ" in out
+    assert "まだ前の速さを見ています" in out

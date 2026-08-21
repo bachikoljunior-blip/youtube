@@ -778,6 +778,10 @@ def pace_report(now: datetime | None = None) -> None:
             print(f"    このままなら 100% は "
                   f"{p['exhaust_at'].astimezone(JST):%m/%d %H:%M} JST"
                   f" → **リセットまで {p['dead_hours']:.0f}時間、鎖が止まります**")
+            print(f"      ＊**「このまま」＝ 直近の速さ {p['carry_rate']:.3f} %/時 のまま**、"
+                  "という意味です。**間隔を変えた直後のこの行は、まだ前の速さを見ています** ——"
+                  "新しい点が積まれるまで動きません。"
+                  "**変えた効きを見るのは、1つ上の『持続できる間隔』のほう。**")
         else:
             print(f"    このままならリセットまで届きます"
                   f"（100% 到達は {p['exhaust_at'].astimezone(JST):%m/%d %H:%M} JST）")
