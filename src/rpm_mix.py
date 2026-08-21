@@ -59,12 +59,21 @@ RPM は1本ごとに付く数ではなく、**チャンネル全体の収益 ÷ 
 from __future__ import annotations
 
 import json
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).resolve().parent.parent
 LOG = ROOT / "data" / "rpm_mix.jsonl"
+
+#: **Analytics の日次がどこまで届いているか**の点（`scripts/status.py` が積む）。
+#: ここを読むのに API は要りません。**日枠が閉じている回でも読めます。**
+LAG = ROOT / "data" / "analytics_lag.jsonl"
+
+#: 公開の台帳。`at` が公開時刻（UTC）、無ければ `uploaded_at` で代える。
+UPLOADED = ROOT / "data" / "uploaded.jsonl"
+
+JST = timezone(timedelta(hours=9))
 
 #: `scripts/eta.py` の `RPM_SCENARIOS` と**同じもの**。
 #: `eta.py` を import すると循環するので写していますが、
@@ -86,6 +95,103 @@ FORM_OF = {"shorts": "ショート", "videoOnDemand": "長尺"}
 #: **JP 以外の RPM は帯が違います**（日本のお金の帯は世界の中でも高いほう）。
 #: いまは JP 100% なので割り引きは掛けていません。**下回ったら掛けること。**
 JP_SHARE_FLOOR = 0.90
+
+
+# --------------------------------------------------------------------------
+# **この数字が、どこまでの日を含んでいるか**（2026-08-21 に足した）
+# --------------------------------------------------------------------------
+# **なぜ要るか。** `fetch_mix` は窓の終わりに `date.today()` を渡し、
+# 積んだ点にもそう書きます。**しかし Analytics の日次はそこまで来ていません。**
+# 実測（`data/analytics_lag.jsonl`、2026-08-21 に3回）—— **最終日は 2026-08-18**。
+# つまり `window.end: 2026-08-21` と書かれた点の中身は **08/18 まで**です。
+#
+# これが何を壊したか。「長尺を出して測り直す」という申し送りが
+# **6回続けて次の回へ持ち越されました**（08/21 05:1x／06:2x／07:1x／08:3x／
+# 11:1x／13:1x）。撃った回は毎回この道具を叩き、**同じ11再生**を読み、
+# 「長尺は伸びない」と受け取っています。**新しく出した本は、まだ1本も
+# この数字に入っていません。** 道具は入っていないことを一言も言いませんでした。
+#
+# **窓の終わりを実データの最終日に合わせ、入っていない公開を数えて、
+# いつ読めるかを同じ画面に出します。**「届きません」ではなく
+# 「**この日になれば読めます**」と言えるようにするのが目的です。
+def data_last_day(path: Path | None = None) -> str | None:
+    """Analytics の日次が**届いている最終日**。**API を叩きません。**
+
+    無ければ `None`（呼ぶ側が「分からない」と言えるように。
+    **今日で埋めないこと** —— それがこの欠陥そのものです）。
+    """
+    p = path or LAG
+    if not p.exists():
+        return None
+    days = []
+    for line in p.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        try:
+            d = json.loads(line).get("last_day")
+        except json.JSONDecodeError:
+            continue
+        if isinstance(d, str) and d:
+            days.append(d)
+    return max(days) if days else None
+
+
+def _published_at(row: dict) -> datetime | None:
+    """公開時刻。`at`（予約時刻）が正本で、無ければ `uploaded_at`。"""
+    raw = row.get("at") or row.get("uploaded_at")
+    if not isinstance(raw, str) or not raw:
+        return None
+    try:
+        return datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def pending_after(last_day: str | None, *, now: datetime | None = None,
+                  uploaded_path: Path | None = None,
+                  long_ids: set[str] | None = None) -> dict[str, Any]:
+    """**その最終日より後に公開され、まだこの数字に入っていない本。**
+
+    `readable_on` は「いちばん新しい公開日 ＋ いま見えている遅れ」です。
+    **遅れは帳面から測ります**（`today - last_day`）。定数で書くと、
+    向こうが速くなった／遅くなったときに黙って外れます。
+    """
+    empty = {"total": 0, "long": 0, "first": None, "last": None, "readable_on": None,
+             "lag_days": None}
+    if not last_day:
+        return empty
+    now = now or datetime.now(JST)
+    lag = (now.date() - date.fromisoformat(last_day)).days
+    p = uploaded_path or UPLOADED
+    if not p.exists():
+        return {**empty, "lag_days": lag}
+    cut = datetime.fromisoformat(last_day + "T23:59:59").replace(tzinfo=JST)
+    longs = long_ids if long_ids is not None else set()
+    hit = []
+    for line in p.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        when = _published_at(row)
+        if when is None or not (cut < when <= now):
+            continue
+        hit.append((when, row))
+    if not hit:
+        return {**empty, "lag_days": lag}
+    hit.sort(key=lambda kv: kv[0])
+    newest = hit[-1][0].astimezone(JST).date()
+    return {
+        "total": len(hit),
+        "long": sum(1 for _, r in hit if r.get("video_id") in longs),
+        "first": hit[0][0].astimezone(JST).isoformat(timespec="minutes"),
+        "last": hit[-1][0].astimezone(JST).isoformat(timespec="minutes"),
+        # **その本が数字に出るのは、公開日が最終日に追いついた回**です。
+        "readable_on": (newest + timedelta(days=lag)).isoformat(),
+        "lag_days": lag,
+    }
 
 
 # --------------------------------------------------------------------------
@@ -118,10 +224,13 @@ def fetch_mix(days: int = 90) -> dict[str, Any]:
             print(f"[rpm_mix] {dim} を取れませんでした（続行）: {type(exc).__name__}: {exc}")
             return []
 
+    # **窓の終わりを2つ返します。**`end` は問い合わせた日、`data_end` は
+    # **実際に中身がある最終日**。同じ欄に入れると、次に読む側が区別できません。
     return {
         "days": days,
         "start": start.isoformat(),
         "end": end.isoformat(),
+        "data_end": data_last_day(),
         "by_form": {r[0]: {"views": float(r[1]), "minutes": float(r[2])}
                     for r in _q("creatorContentType")},
         "by_country": {r[0]: {"views": float(r[1]), "minutes": float(r[2])}
@@ -239,6 +348,15 @@ def surface_ceiling(mix: dict, reach: dict, level: str = "高",
 # --------------------------------------------------------------------------
 # 積む・読む（`eta.py` は `--offline` でも動くので、最後の点をファイルから読みます）
 # --------------------------------------------------------------------------
+def _long_ids() -> set[str]:
+    """長尺の動画ID。**正本は `config/pairs.yaml`**（`reach_split` と同じ口）。"""
+    try:
+        from . import reach_split
+        return reach_split.long_ids()
+    except Exception:                                          # noqa: BLE001
+        return set()
+
+
 def record(mix: dict, ceiling: dict, path: Path | None = None) -> dict:
     p = path or LOG
     p.parent.mkdir(parents=True, exist_ok=True)
@@ -247,7 +365,12 @@ def record(mix: dict, ceiling: dict, path: Path | None = None) -> dict:
         # **重みが何か**を必ず残す。最初の版は視聴分で重みを付けていて（天井 ×41.5）、
         # 単位が合っていませんでした。欄が無いと、次に読む側が区別できません。
         "weight": "views",
-        "window": {"start": mix.get("start"), "end": mix.get("end"), "days": mix.get("days")},
+        "window": {"start": mix.get("start"), "end": mix.get("end"),
+                    "days": mix.get("days"),
+                    # **中身がある最終日。**`end` と食い違うのが普通です（日次は遅れる）。
+                    "data_end": mix.get("data_end")},
+        # **この数字に入っていない公開**。入っていないことを、点の側に残します。
+        "pending": pending_after(mix.get("data_end"), long_ids=_long_ids()),
         "minutes_by_form": minutes_by_form(mix.get("by_form") or {}),
         "views_by_form": views_by_form(mix.get("by_form") or {}),
         "jp_share": jp_share(mix.get("by_country") or {}),
@@ -278,15 +401,48 @@ def last(path: Path | None = None) -> dict | None:
         return None
 
 
+def _freshness_lines(rec: dict) -> list[str]:
+    """**この数字がどこまでの日を含んでいるか**を、数字と同じ画面に出す。
+
+    **無ければ黙る**のではなく、「分かりません」と言うこと。
+    黙ると、読む側は窓の終わり（＝今日）を信じます。**それが元の欠陥です。**
+    """
+    win = rec.get("window") or {}
+    end, data_end = win.get("end"), win.get("data_end")
+    if not data_end:
+        return ["  [?] **この数字がどこまでの日を含むか分かりません**"
+                "（`data/analytics_lag.jsonl` に点がありません）。"
+                "**窓の終わり＝今日と読まないこと。**"]
+    out = []
+    pend = rec.get("pending") or {}
+    lag = pend.get("lag_days")
+    if end and data_end < end:
+        out.append(f"  **中身は {data_end} まで**です"
+                   + (f"（Analytics の日次は **{lag}日遅れ**）。" if lag is not None else "。")
+                   + f"窓の終わり {end} は**問い合わせた日**であって、届いている日ではありません")
+    if pend.get("total"):
+        out.append(f"    **この数字に入っていない公開: {pend['total']:,}本**"
+                   f"（{(pend.get('first') or '')[5:16]} → {(pend.get('last') or '')[5:16]}）"
+                   f"／うち長尺 {pend.get('long', 0)}本")
+        if pend.get("readable_on"):
+            out.append(f"    → **{pend['readable_on']} より前に撃っても、その本は1本も出ません。**"
+                       f"（この日に撃ち直すこと）")
+    elif end and data_end < end:
+        out.append("    入っていない公開はありません（この窓の後に出した本が無い）")
+    return out
+
+
 def render(rec: dict | None) -> str:
     if not rec:
         return ("=== RPM の帯（実測の混ざり方）===\n"
                 "  **まだ一度も測っていません。** `python -m src.rpm_mix --record`\n")
     mins = rec.get("minutes_by_form") or {}
     total = sum(mins.values()) or 1.0
+    win = rec.get("window") or {}
     lines = ["=== RPM の帯（実測の混ざり方・`creatorContentType`）==="]
-    lines.append(f"  窓 {rec.get('window', {}).get('start')}〜{rec.get('window', {}).get('end')}"
-                 f"（{rec.get('window', {}).get('days')}日）／ JP の視聴分 {rec.get('jp_share', 1.0) * 100:.1f}%")
+    lines.append(f"  窓 {win.get('start')}〜{win.get('end')}"
+                 f"（{win.get('days')}日）／ JP の視聴分 {rec.get('jp_share', 1.0) * 100:.1f}%")
+    lines.extend(_freshness_lines(rec))
     for form, m in sorted(mins.items(), key=lambda kv: -kv[1]):
         v = (rec.get("views_by_form") or {}).get(form, 0)
         lines.append(f"    {form:<6} 視聴分 {m:>10,.0f}（{m / total * 100:5.2f}%）／ 再生 {v:>10,.0f}")
@@ -305,6 +461,40 @@ def render(rec: dict | None) -> str:
     return "\n".join(lines) + "\n"
 
 
+def is_ready(prev: dict | None, now_last_day: str | None) -> tuple[bool, str]:
+    """**前の点より中身が進んでいるか。**進んでいないなら撃つ意味がありません。
+
+    実測（2026-08-21）—— `data/rpm_mix.jsonl` の最後の2行は**1バイト違わず同じ**
+    でした。同じ日の中で2回撃ったからではありません。**中身の最終日が
+    08/18 のまま動いていない**からで、何回撃っても同じ行が積まれます。
+    申し送りが6回続けて「撃つこと」と言い、6回とも同じ答えを読んでいました。
+
+    **「まだです」で終わらせないこと**（目標側の理由）。返す文には
+    **いつなら進むか**を必ず入れます。
+    """
+    if not now_last_day:
+        return True, ("  **中身の最終日が分かりません**"
+                      "（`data/analytics_lag.jsonl` が空）→ 測ります")
+    prev_end = ((prev or {}).get("window") or {}).get("data_end")
+    if not prev_end:
+        return True, f"  前の点に最終日の欄がありません（中身は {now_last_day} まで）→ 測ります"
+    if now_last_day > prev_end:
+        return True, f"  中身が **{prev_end} → {now_last_day}** に進みました → 測ります"
+    pend = pending_after(now_last_day, long_ids=_long_ids())
+    # **「次に動く日」は最終日の翌日ではありません** —— それはもう過ぎています。
+    # 動くのは**こちらの明日**で、そのとき中身が1日ぶん進みます。
+    tomorrow = datetime.now(JST).date() + timedelta(days=1)
+    reach = date.fromisoformat(now_last_day) + timedelta(days=1)
+    when = pend.get("readable_on")
+    tail = (f"／待っている本が出るのは **{when}**" if when else "")
+    return False, (f"  **測りません。**中身は前の点と同じ **{now_last_day}** までで、"
+                   f"撃っても同じ行が積まれるだけです\n"
+                   f"    入っていない公開 {pend.get('total', 0):,}本"
+                   f"（うち長尺 {pend.get('long', 0)}本）。"
+                   f"**次に中身が動くのは {tomorrow.isoformat()}**"
+                   f"（そのとき {reach.isoformat()} まで入る）{tail}")
+
+
 def main(argv: list[str] | None = None) -> int:
     import argparse
 
@@ -312,11 +502,20 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--record", action="store_true", help="測って data/rpm_mix.jsonl に積む")
     ap.add_argument("--days", type=int, default=90)
     ap.add_argument("--show", action="store_true", help="最後に積んだ点を出すだけ（API を叩かない）")
+    ap.add_argument("--if-ready", action="store_true",
+                    help="**中身が前の点より進んでいるときだけ測る。**進んでいなければ "
+                         "API を1回も叩かずに rc=2 と「次に意味がある日」を返す")
     args = ap.parse_args(argv)
 
     if args.show or not args.record:
         print(render(last()))
         return 0
+
+    if args.if_ready:
+        ready, why = is_ready(last(), data_last_day())
+        print(why)
+        if not ready:
+            return 2
 
     from . import reach_split
 
