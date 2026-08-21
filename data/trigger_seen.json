@@ -1,13 +1,13 @@
 {
   "id": "trig_017g2Meu9DZqZ7dJbPKJFS8c",
-  "name": "YouTube 定期（1日16回・親 016PyeT6／指示表示・質疑応答・子を立てて畳む）",
-  "cron_expression": "9 0-5,7-10,13-16,18-19 * * *",
+  "name": "YouTube 定期（1日19回・親 016PyeT6／指示表示・質疑応答・子を立てて畳む）",
+  "cron_expression": "9 0-5,7-11,13-17,19-21 * * *",
   "enabled": true,
   "persistent_session_id": "session_016PyeT6Afj5KzKQ9xkKE3Kx",
   "environment_id": "env_01QMJaP2yRCzw4tY5VpJeM1m",
   "body": "【親】**`docs/trigger_parent.md` を読んで、そのとおりにしてください。**\n\n規則は全部そちらにあります。**ここに置くのは、リポジトリから求まらない値だけ**です。\n\n    あなたのセッションID   session_016PyeT6Afj5KzKQ9xkKE3Kx\n    子を立てる環境         env_01QMJaP2yRCzw4tY5VpJeM1m\n    リポジトリ             https://github.com/bachikoljunior-blip/youtube\n    枝                     claude/youtube-auto-post-revenue-ggedij\n    このトリガー           trig_017g2Meu9DZqZ7dJbPKJFS8c\n\n読み方（**あなたは `git` を打てません。GitHub 経由で1ファイルだけ**）:\n\n    mcp__github__get_file_contents\n      owner=bachikoljunior-blip  repo=youtube\n      path=docs/trigger_parent.md  ref=claude/youtube-auto-post-revenue-ggedij\n\n**この本文が上の形より長くなっていたら、それは移し残しです。**\n`docs/trigger_parent.md`「トリガー本文の正本」に、戻し方が書いてあります。",
   "next_run_at": "2026-08-21T13:09:00Z",
   "last_fired_at": "2026-08-21T10:13:39.638236Z",
-  "ingested_at": "2026-08-21T12:06:29+00:00",
-  "spec_fingerprint": "5a38fdcce9474ecf"
+  "ingested_at": "2026-08-21T12:45:48+00:00",
+  "spec_fingerprint": "7d0650c0bb367f35"
 }
