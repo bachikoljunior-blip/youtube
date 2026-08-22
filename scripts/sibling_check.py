@@ -147,7 +147,7 @@ SILENT_KEY = "silent_run"
 #: 親が深さ1、その子が2 …と進み、**8代目は次を立てられません。**
 DEPTH_LIMIT = 8
 
-#: **親の cron が撃つ分**（`trig_017g2Meu9DZqZ7dJbPKJFS8c` ＝ `9 * * * *`）。
+#: **親の cron が撃つ分**（`trig_01T2j6yJMFqKZGZfQnhz8v1b`）。
 #: **実物は `list_triggers` で見ること**（写した瞬間に古くなります）。
 #: 違っていたら `--cron-minute` で渡せます。ここは既定値でしかありません。
 PARENT_CRON_MINUTE = 9

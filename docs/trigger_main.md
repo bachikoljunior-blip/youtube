@@ -2990,7 +2990,7 @@ repo に触れないまま1周ぶんの枠を溶かし、**申し送りも題名
 `create_session` は必ず落ちるので、**呼ばないのが正しい。**
 間隔の下限の待ちにも入りません（**立てない回に下限は要りません**）。
 
-**復帰は親の毎時 cron です**（`trig_017g2Meu9DZqZ7dJbPKJFS8c`、毎時9分）。
+**復帰は親の毎時 cron です**（`trig_01T2j6yJMFqKZGZfQnhz8v1b`、毎時9分）。
 親は深さ1なので、そこから立つ子はまた深さ2に戻り、**次の8代が始まります。**
 つまり**鎖は7周ごとに1回だけ、親の発火を待ちます**（最大60分の空き）。
 
@@ -3012,7 +3012,7 @@ repo に触れないまま1周ぶんの枠を溶かし、**申し送りも題名
 **`create_trigger` で「数分後に1回だけ親を起こす」Routine を置きます。**
 
     name:                  自走の鎖・深さ8の復帰（1回きり）
-    persistent_session_id: session_016PyeT6Afj5KzKQ9xkKE3Kx  ← **`list_triggers` で実物を確かめる**
+    persistent_session_id: session_01GUdDmLixcbtycXJ8s7DRqG  ← **`list_triggers` で実物を確かめる**
     run_once_at:           **いまから3分後**（UTC の RFC3339。例 2026-08-15T07:31:00Z）
     prompt:                【復帰】鎖が深さ上限で切れました。`docs/trigger_parent.md` の
                            とおりに、生きている子がいなければ子を1つ立ててください。

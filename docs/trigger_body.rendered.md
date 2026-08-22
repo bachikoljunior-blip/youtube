@@ -2,11 +2,11 @@
 
 規則は全部そちらにあります。**ここに置くのは、リポジトリから求まらない値だけ**です。
 
-    あなたのセッションID   session_016PyeT6Afj5KzKQ9xkKE3Kx
+    あなたのセッションID   session_01GUdDmLixcbtycXJ8s7DRqG
     子を立てる環境         env_01QMJaP2yRCzw4tY5VpJeM1m
     リポジトリ             https://github.com/bachikoljunior-blip/youtube
     枝                     claude/youtube-auto-post-revenue-ggedij
-    このトリガー           trig_017g2Meu9DZqZ7dJbPKJFS8c
+    このトリガー           trig_01T2j6yJMFqKZGZfQnhz8v1b
 
 読み方（**あなたは `git` を打てません。GitHub 経由で1ファイルだけ**）:
 
