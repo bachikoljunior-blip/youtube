@@ -1953,3 +1953,31 @@
 {"at": "2026-08-21T22:14:13+00:00", "detail": "playlistItems.list uploads"}
 {"at": "2026-08-21T22:15:46+00:00", "detail": "playlistItems.list uploads"}
 {"at": "2026-08-21T22:15:46+00:00", "detail": "videos.list snippet"}
+{"at": "2026-08-22T05:34:43+00:00", "detail": "status: Data API 読み"}
+{"at": "2026-08-22T05:36:08+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-22T05:36:10+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-22T05:36:10+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-22T05:36:10+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-22T05:36:11+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-22T05:36:20+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-22T05:36:21+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-22T05:41:00+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-22T05:41:00+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-22T05:41:00+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-22T05:41:01+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-22T05:41:10+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-22T05:41:11+00:00", "detail": "playlistItems.list uploads"}
+{"at": "2026-08-22T05:45:46+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-22T05:45:48+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-22T05:45:48+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-22T05:45:48+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-22T05:45:49+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-22T05:45:58+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-22T05:45:59+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-22T05:55:05+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-22T05:55:05+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-22T05:55:15+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-22T05:55:16+00:00", "detail": "playlistItems.list uploads"}
+{"at": "2026-08-22T06:01:39+00:00", "detail": "scheduled_publish_times"}
+{"at": "2026-08-22T06:01:41+00:00", "detail": "playlistItems.insert"}
+{"at": "2026-08-22T06:01:41+00:00", "detail": "thumbnails.set plmBPZqqP1U"}

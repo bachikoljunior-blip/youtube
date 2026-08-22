@@ -414,3 +414,4 @@
 {"at": "2026-08-22T07:13:48+09:00", "key": "missing_thumbnail", "n": 97, "session": "session_01MGjF5pkQn8v39Mnn6SjZJF", "by": "status.py"}
 {"at": "2026-08-22T07:15:46+09:00", "key": "calc_gap", "n": 12, "session": "session_01MGjF5pkQn8v39Mnn6SjZJF", "by": "status.py"}
 {"at": "2026-08-22T07:31:31+09:00", "key": "silent_run", "n": 1, "session": "session_01MGjF5pkQn8v39Mnn6SjZJF", "by": "sibling_check.py"}
+{"at": "2026-08-22T15:02:59+09:00", "key": "undeclared_close", "n": 1, "session": "session_01XULxgb4aVVRopHm8mPc1H9", "by": "run_marker.py"}
