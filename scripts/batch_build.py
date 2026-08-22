@@ -102,6 +102,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
 import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor
@@ -636,6 +637,53 @@ def run(cmd: list[str], timeout: int, label: str = "") -> tuple[int, str]:
     return proc.returncode, out
 
 
+NEEDED_BINS = ("ffmpeg", "ffprobe", "open_jtalk")
+
+
+def ensure_toolchain(root: Path = ROOT) -> bool:
+    """生成に要る外部コマンドを確かめ、欠けていれば `setup.sh` を撃つ。
+
+    **2026-08-22 に足した。この回、コンテナに ffmpeg も open_jtalk も
+    入っていませんでした。** `scripts/setup.sh` は「何度でも安全」なのに、
+    **生成の道の上で誰も呼んでいません** —— `scripts/preflight.py` は
+    まったく同じ検査（`shutil.which`）を持っているのに、`batch_build` からも
+    `src.pipeline` からも呼ばれていませんでした。
+
+    実測の損: **3本 × 2回 ＝ 約8分**を使ってから `ffprobe が見つかりません`
+    で全部落ちました。1周が実測 44分なので、**その回の2割**です。
+
+    **落ちること自体は正しい。落ちる場所が8分先だったのが欠陥です**
+    （下の「0. 投稿本数の枠」がまったく同じ形で、そこは 2026-08-17 に直っている）。
+    しかも**1回目は図の重なりで落ちた**ので、本当の理由は作り直しの側に
+    しか出ず、読む側からは道具の不足に見えません。**症状が理由を隠します。**
+
+    **訊かずに撃ちます**（CLAUDE.md 2「人間の作業に依存する計画を立てない」）。
+    入っていれば `which` 3回ぶんで戻るので、普通の回の費用はゼロです。
+
+    **覆る条件**: `setup.sh` が壊れて毎回2分かかるようになったら、
+    ここを「欠けていたら止めるだけ」に落とすこと。
+    """
+    missing = [b for b in NEEDED_BINS if not shutil.which(b)]
+    if not missing:
+        return True
+    print(f"[batch] **道具が欠けています: {', '.join(missing)}** —— "
+          "`scripts/setup.sh` を撃ちます（何度でも安全）", flush=True)
+    try:
+        proc = subprocess.run(["bash", str(root / "scripts" / "setup.sh")],
+                              capture_output=True, text=True, timeout=900)
+    except subprocess.TimeoutExpired:
+        print("[batch] **setup.sh が 15分で終わりませんでした。**", flush=True)
+        return False
+    still = [b for b in NEEDED_BINS if not shutil.which(b)]
+    if still:
+        tail = "\n".join((proc.stdout or "").splitlines()[-5:])
+        print(f"[batch] **まだ欠けています: {', '.join(still)}**"
+              f"（setup.sh exit={proc.returncode}）\n{tail}", flush=True)
+        return False
+    print(f"[batch] 入りました: {', '.join(missing)}", flush=True)
+    return True
+
+
 def build_one(topic: dict, long_form: bool) -> dict:
     """**作るところまで**を1本ぶん。予約はしない（呼ぶ側が直列でやる）。
 
@@ -866,6 +914,11 @@ def main(argv: list[str] | None = None) -> int:
     except ValueError as exc:
         print(f"[batch] {exc}")
         return 2
+
+    # ---- 0.0 **撃つ前に、道具が入っているか**（2026-08-22 に足した。理由は
+    # `ensure_toolchain` の docstring）------------------------------------
+    if not ensure_toolchain():
+        return 1
 
     # ---- 0. **撃つ前に、1日の投稿本数の枠を見る**（2026-08-17 に足した）----
     #
