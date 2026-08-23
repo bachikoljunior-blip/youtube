@@ -360,6 +360,19 @@
     ],
     "video_id": "96qlWmD-OHs"
   },
+  "s-aoiro-kokuho-1662-r4": {
+    "charts": [
+      [
+        "16万3183円",
+        "9万8183円"
+      ],
+      [
+        "1.6620倍",
+        "1.2289倍"
+      ]
+    ],
+    "video_id": "WcTl11_5Khw"
+  },
   "s-fudosan-241heihou-36man": {
     "charts": [
       [
@@ -2712,6 +2725,20 @@
     ],
     "video_id": "lgeEw4f_W7w"
   },
+  "s-koureikyushoku-nankaimo-oitsuku-nensu": {
+    "charts": [
+      [
+        "5回",
+        "3回"
+      ],
+      [
+        "150日",
+        "210日",
+        "240日"
+      ]
+    ],
+    "video_id": "cJw79xThyTY"
+  },
   "s-koyouhoken-301001-1en": {
     "charts": [
       [
@@ -3043,6 +3070,24 @@
     ],
     "video_id": "HfEf08Qzfb0"
   },
+  "s-nenkin-70sai-jumyou-nenri-69bai": {
+    "charts": [
+      [
+        "0.09%",
+        "2.93%",
+        "4.49%",
+        "5.73%",
+        "6.20%"
+      ],
+      [
+        "1.74%",
+        "3.82%",
+        "5.00%",
+        "5.99%"
+      ]
+    ],
+    "video_id": "NEOkkCKHhSY"
+  },
   "s-nenkin-70sai-zure-27": {
     "charts": [
       [
@@ -3159,6 +3204,16 @@
       ]
     ],
     "video_id": "VdYZ7l8VV6c"
+  },
+  "s-nenkin-nenri-tani-246man-054": {
+    "charts": [
+      [
+        "1.22%",
+        "0.54%",
+        "2.39%"
+      ]
+    ],
+    "video_id": "gmCvNpLfBg4"
   },
   "s-nenkin-oinukare-50kagetsu": {
     "charts": [
@@ -3369,6 +3424,32 @@
       ]
     ],
     "video_id": "AL1kFbIZFj0"
+  },
+  "s-nisa-reuse-cost-basis": {
+    "charts": [
+      [
+        "909万909円",
+        "666万6667円",
+        "333万3333円"
+      ]
+    ],
+    "video_id": "Yk7emDumTz8"
+  },
+  "s-nisa-tax-saved-20y": {
+    "charts": [
+      [
+        "4775万9359円",
+        "2975万9359円",
+        "604万5614円"
+      ],
+      [
+        "80万5169円",
+        "294万7707円",
+        "604万5614円",
+        "1049万3575円"
+      ]
+    ],
+    "video_id": "3Avf3SCfPug"
   },
   "s-nisa-years-to-1800": {
     "charts": [
@@ -3610,6 +3691,19 @@
       ]
     ],
     "video_id": "jFYrezqN0C4"
+  },
+  "s-santei-1nen-todokazu-20nichi-kieru": {
+    "charts": [
+      [
+        "150,000円",
+        "250,000円"
+      ],
+      [
+        "30日",
+        "50日"
+      ]
+    ],
+    "video_id": "E3ZxRzil-O0"
   },
   "s-seimeihoken-24000-zure": {
     "charts": [
@@ -4610,6 +4704,19 @@
       ]
     ],
     "video_id": "a1b2Nm6jN_0"
+  },
+  "s-tokurou-kaidan-showa36": {
+    "charts": [
+      [
+        "60か月",
+        "48か月",
+        "36か月",
+        "24か月",
+        "12か月",
+        "0か月"
+      ]
+    ],
+    "video_id": "IsAiWt2lzG4"
   },
   "s-tokutei-120man-yama-2457143": {
     "charts": [
