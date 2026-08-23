@@ -38,14 +38,23 @@ def test_unrecorded_is_dropped(tmp_path: Path) -> None:
     assert groups(motion=motion_by_topic(runs), topics=topic_by_video(up)) == ([], [])
 
 
-def test_first_record_wins(tmp_path: Path) -> None:
-    """作り直しても群は動かない（最初に作ったときの値が、その本の群）。"""
+def test_conflicting_records_are_dropped(tmp_path: Path) -> None:
+    """**食い違ったテーマは両方から落とす。**（2026-08-23 に実際に踏んだ）
+
+    `--skip-upload` で作った本は「使った」にならないので、次の `pick()` が
+    **同じテーマを選び直し**、`build/` を上書きする。ディスクは動きあり・
+    記録の1件目は動きなし、という食い違いが起きた。
+    最初の記録を採ると、**中身が動きありの本を対照群として数える**ことになる。
+    """
     runs = tmp_path / "runs.jsonl"
     _write(runs, [
         {"at": "1", "opening_motion": False, "results": [{"topic": "a"}]},
         {"at": "2", "opening_motion": True, "results": [{"topic": "a"}]},
+        {"at": "3", "opening_motion": True, "results": [{"topic": "b"}]},
     ])
-    assert motion_by_topic(runs)["a"] is False
+    got = motion_by_topic(runs)
+    assert "a" not in got          # 食い違い → 落とす
+    assert got["b"] is True        # 食い違わないものは残る
 
 
 def test_missing_files_are_empty(tmp_path: Path) -> None:

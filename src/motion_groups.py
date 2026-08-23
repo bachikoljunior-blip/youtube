@@ -33,10 +33,27 @@ UPLOADED = ROOT / "data" / "uploaded.jsonl"
 
 
 def motion_by_topic(runs: Path = RUNS) -> dict[str, bool]:
-    """テーマID → **作ったときに動きが入っていたか**。記録の無い回は入れない。"""
-    out: dict[str, bool] = {}
+    """テーマID → **作ったときに動きが入っていたか**。
+
+    **記録の無い回は入れない。食い違う記録があるテーマは落とす。**
+
+    ## なぜ「最初の記録を採る」をやめたか（2026-08-23 に踏んだ）
+
+    対照群を `--skip-upload` で8本作った直後、動きあり側を同じ引数で作ったところ、
+    **`pick()` が同じ8テーマを選び直しました**（`--skip-upload` の本は「使った」に
+    ならないため）。`build/` は上書きされ、**ディスクの中身は動きあり・
+    記録の1件目は動きなし**という食い違いが生まれた。
+
+    最初の記録を採る規則だと、**この本は「対照群」として集計されます** ——
+    中身は動きありなのに。**群のラベルだけが静かに嘘になる**形で、
+    今日ずっと潰してきた失敗（8/19・8/23 の2件）とまったく同じです。
+
+    **だから食い違ったら、そのテーマは両方から落とします。**
+    標本は減りますが、**嘘のラベルで判定するより安い。**
+    """
+    seen: dict[str, set[bool]] = {}
     if not runs.exists():
-        return out
+        return {}
     for line in runs.read_text(encoding="utf-8").splitlines():
         if not line.strip():
             continue
@@ -50,8 +67,8 @@ def motion_by_topic(runs: Path = RUNS) -> dict[str, bool]:
         for res in row.get("results") or []:
             tid = res.get("topic")
             if tid:
-                out.setdefault(tid, flag)
-    return out
+                seen.setdefault(tid, set()).add(flag)
+    return {tid: flags.pop() for tid, flags in seen.items() if len(flags) == 1}
 
 
 def topic_by_video(uploaded: Path = UPLOADED) -> dict[str, str]:

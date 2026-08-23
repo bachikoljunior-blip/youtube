@@ -302,7 +302,15 @@ def pick(count: int, explicit: list[str], per_calc: int = DEFAULT_PER_CALC) -> l
         return chosen
 
     posted = _posted_including_ledger()
-    usable = [t for t in pool if t["id"] not in posted and t.get("calc")]
+    # **作ってあるが未投稿の本も「使った」に数える**（2026-08-23 に踏んで足した）。
+    # `--skip-upload` の本は投稿の記録に入らないので、次の `pick()` が**同じテーマを
+    # 選び直し、`build/` を上書き**します。実測: 対照群8本を作った直後に
+    # 動きあり8本を作ったら **8/8 が同じテーマ**で、ディスクは動きあり・
+    # 記録の1件目は動きなし、という食い違いになりました（A/B の群が静かに嘘になる）。
+    built = {d.name for d in (ROOT / "build").iterdir() if d.is_dir()} \
+        if (ROOT / "build").is_dir() else set()
+    usable = [t for t in pool if t["id"] not in posted and t["id"] not in built
+              and t.get("calc")]
     usable = _drop_doomed(usable, pool)
 
     # **順番は実績で決める**（2026-08-16 に測って変えた。それまでは手書きの
