@@ -19,6 +19,28 @@
 **同じ時刻でも、その日の何本目かで 1361 と 0 に割れます。**
 だから軸は時刻ではなく **その日の通し番号** です。
 
+## **何本目か、ではなく何本か**（2026-08-24 に測り直した。17本 → 10本）
+
+上の切り分けは正しいのですが、**数え方が「生きたいちばん後ろの番号」でした。**
+公開の順番と、YouTube が配信する順番は**同じではありません。** 実測（08/21・32本）:
+
+    00:00 280  00:15   1  00:30 184  00:45   5  01:00 996  01:15  1  01:30 1066
+    02:00 367  02:15   0  02:30 314  02:45   0  03:00 1045  03:15 13  03:30 1097
+    03:45   3  04:00 1075  04:30 190  |  05:00 以降の15本は全部 0〜5
+
+**生きたのは :00 と :30 の 10本ちょうど**で、そのあいだに挟まれた :15/:45 の7本は
+死んでいます。**番号で数えると「#17 まで生きた」＝ 上限17本**になりますが、
+**実際に再生が付いた本数は 10本**です。08/20・08/22 も 25本 出して **ちょうど 10本**。
+
+    08/20  25本 → 生きた 10本      08/21  32本 → 生きた 10本      08/22  25本 → 生きた 10本
+    08/19   8本 → 生きた  8本（上限より少ない日。上限の証拠にはならない）
+
+**3日とも 10本で一致**しているので、上限は**その日の本数**であって順番ではありません。
+17本 のままだと、段1 が **1.7倍 楽観**になります（`scripts/eta.py`）。
+
+**覆る条件**: 上限より多く出した日に、**生きた本数が 10本を超えたら**上へ動きます
+（`floor` が自動で追います。定数ではありません）。
+
 ## 何を壊していたか
 
 `scripts/eta.py` の段1 は
@@ -110,7 +132,7 @@ def measure(path: pathlib.Path | None = None) -> dict:
     （`floor`）より、さらに後ろで崩れたとき**だけ。
     """
     days = by_day(path)
-    qual: list[tuple[dt.date, list, float]] = []
+    qual: list[tuple[dt.date, list, float, int, int]] = []
     floor = 0
     for d, rows in sorted(days.items()):
         if len(rows) < MIN_PER_DAY:
@@ -119,21 +141,21 @@ def measure(path: pathlib.Path | None = None) -> dict:
         if top < MIN_TOP_VIEWS:
             continue                      # その日は面に載っていない。上限の話ではない
         line = top * DEAD_SHARE
-        alive = [i + 1 for i, (_, n, _) in enumerate(rows) if n >= line]
-        if alive:
-            floor = max(floor, max(alive))
-        qual.append((d, rows, line))
+        # **数えるのは「生きた本数」で、生きたいちばん後ろの番号ではありません**
+        # （2026-08-24 に測り直した。理由はこのファイルの冒頭「何本目か、何本か」）。
+        n_alive = sum(1 for _, n, _ in rows if n >= line)
+        floor = max(floor, n_alive)
+        qual.append((d, rows, line, n_alive, len(rows) - n_alive))
 
     probes: list[tuple[int, str]] = []
-    for d, rows, line in qual:
-        first_dead = None
-        for i in range(len(rows) - 1, -1, -1):
-            if rows[i][1] >= line:
-                break
-            first_dead = i + 1
-        # **`floor` より後ろで始まった崩れだけが、上限の証拠です。**
-        if first_dead is not None and first_dead > floor:
-            probes.append((first_dead, f"{d} {len(rows)}本→#{first_dead}から先が0"))
+    for d, rows, line, n_alive, n_dead in qual:
+        # **上限の証拠になるのは、「生きた本数が最良の日と同じで、なお死んだ本が
+        # ある日」だけです。** 生きた本数が最良より少ない日は、上限ではなく
+        # **その日の題材が外れた**日です（08/04 の7本で cap=2 と出た形）。
+        if n_dead and n_alive >= floor:
+            probes.append((n_alive + 1,
+                           f"{d} {len(rows)}本→再生が付いたのは {n_alive}本"
+                           f"（{n_dead}本が0）"))
 
     if probes:
         collapse = min(r for r, _ in probes)
@@ -157,13 +179,14 @@ def lines(path: pathlib.Path | None = None) -> list[str]:
     out = [f"  **1日に再生が付く本数の上限: {m['cap']}本**"
            + ("（実測）" if m["measured"] else "（**崩れをまだ観測していません**・既定値）")]
     if m["measured"]:
-        out.append(f"    ここまでは付いた: #{m['floor']} ／ ここから先は付かなかった: #{m['collapse']}")
+        out.append(f"    再生が付いた本数の最大: {m['floor']}本 ／ "
+                   f"それ以上出しても付かなかった: {m['collapse']}本目から")
         for d in m["days"][-3:]:
             out.append(f"      {d}")
         out.append("    **上限を超えて出したぶんは 0再生です。**本数を増やしても、"
                    "ここを超えたぶんは登録者に効きません")
     else:
-        out.append(f"    **上限より多く出した日がまだありません**（見えている最大 #{m['floor']}）。"
+        out.append(f"    **上限より多く出した日がまだありません**（見えている最大 {m['floor']}本）。"
                    "崩れを観測するまで、この数は既定値です")
     return out
 
