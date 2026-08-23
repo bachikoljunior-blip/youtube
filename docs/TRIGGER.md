@@ -40,9 +40,9 @@
 
 | 項目 | 値 |
 |---|---|
-| trigger_id | `trig_011aqbWZYMrY1YzXJ6ndfHEn`（**2026-08-23 に親を交代（旧 `trig_01T2j6yJMFqKZGZfQnhz8v1b` は削除済み）。その前は `trig_017g2Meu9DZqZ7dJbPKJFS8c` / `trig_01S5mtxkjiBp6hsttmDvdzgw`**） |
+| trigger_id | `trig_01LNvtNdjggEA4nfxX49YjX8`（**2026-08-23 21:2x に親を交代。旧 `trig_011aqbWZYMrY1YzXJ6ndfHEn` は削除済み。その前は `trig_01T2j6yJMFqKZGZfQnhz8v1b` / `trig_017g2Meu9DZqZ7dJbPKJFS8c` / `trig_01S5mtxkjiBp6hsttmDvdzgw`**） |
 | cron | 実物は **`list_triggers`** で見ること（正本は `docs/trigger_spec.json`・突き合わせは `scripts/trigger_sync.py`）。2026-08-21 21:2x JST に **`9 0-5,7-11,13-17,19-21 * * *`**（1日19回＝平均75.8分。オーナーの目盛り 08/21 21:10 の 95% で引き直した。「持続できる間隔」は58分なので、これより緩い）。毎時 → 6h → 8h → 12h → 毎時 → 21回 → 19回 → 18回 → 17回 → 16回 → 19回 と動いた。**UTC7（＝JST 16:00）は必ず残すこと** —— Data API の日枠が戻るのがそこで、`reschedule --spread` と `refresh_thumbnail` はその回から先でしか撃てない |
-| 起動先 | 常駐セッション `session_01XnvQjcpg5pvqbbAM4ejgmH`（旧 `session_016PyeT6Afj5KzKQ9xkKE3Kx` → その前 `session_01PXy8TiBxL1SM7AUc6XAMML`） |
+| 起動先 | 常駐セッション `session_017yMBL2xfhjbZRhb6D646HG`（旧 `session_016PyeT6Afj5KzKQ9xkKE3Kx` → その前 `session_01PXy8TiBxL1SM7AUc6XAMML`） |
 | 環境 | `env_01QMJaP2yRCzw4tY5VpJeM1m` |
 | **親の仕事** | **`docs/FOR_OWNER.md` の未処理を表示する／子を1つ立てる／詰まった子を畳む。それだけ** |
 | **親の出力** | **人への指示だけ。無ければ何も書かない**（親が作業ログを出しても、読む側の時間を食うだけで数字は動かない） |
@@ -454,7 +454,7 @@ cron は分の刻みしか持たないので、69分は作れません。**時�
 **その手前で断られます。** `SESSION_STATUS_REQUIRES_ACTION` とは別物です）
 
 **したがって、深さが尽きた回にできることはありません。** 鎖の復帰は
-**親の毎時 cron（`trig_011aqbWZYMrY1YzXJ6ndfHEn`、毎時9分）だけ**です。
+**親の毎時 cron（`trig_01LNvtNdjggEA4nfxX49YjX8`、毎時9分）だけ**です。
 この回は 11:18 UTC に尽きたので、次の親の発火は **12:09 UTC（21:09 JST）＝約50分後**。
 
 **7周に1度、最大60分の空きが必ず出ます。**「3分に縮む」は成立しません。
