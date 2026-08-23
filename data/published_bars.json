@@ -1657,6 +1657,16 @@
     ],
     "video_id": "-15HcNgcv6M"
   },
+  "s-jukyu-shikaku-sakanoboru-mado-1nen": {
+    "charts": [
+      [
+        "12か月",
+        "6か月",
+        "6か月"
+      ]
+    ],
+    "video_id": "VDn9Ue0GEVk"
+  },
   "s-juminzei-1yen-koeru-6000": {
     "charts": [
       [
@@ -2121,6 +2131,19 @@
       ]
     ],
     "video_id": "lges32AtBC0"
+  },
+  "s-kinzoku-1nen-miman-65sai-ijo-yuri": {
+    "charts": [
+      [
+        "0日",
+        "30日"
+      ],
+      [
+        "90日",
+        "50日"
+      ]
+    ],
+    "video_id": "1nIfEOsNunk"
   },
   "s-kogaku-1nen-661890": {
     "charts": [
@@ -2725,6 +2748,39 @@
     ],
     "video_id": "lgeEw4f_W7w"
   },
+  "s-koureikyushoku-65sai-2ka-mae": {
+    "charts": [
+      [
+        "100日減",
+        "190日減"
+      ],
+      [
+        "40日減",
+        "70日減",
+        "100日減"
+      ]
+    ],
+    "video_id": "mWIrQ0IIlWI"
+  },
+  "s-koureikyushoku-hanto-6kagetsu-60nichi": {
+    "charts": [
+      [
+        "年60.0日",
+        "年16.7日"
+      ]
+    ],
+    "video_id": "QTL7_jky0o0"
+  },
+  "s-koureikyushoku-kinzoku-fuka": {
+    "charts": [
+      [
+        "50日",
+        "50日",
+        "50日"
+      ]
+    ],
+    "video_id": "oB8M8Q5EtMw"
+  },
   "s-koureikyushoku-nankaimo-oitsuku-nensu": {
     "charts": [
       [
@@ -3069,6 +3125,16 @@
       ]
     ],
     "video_id": "HfEf08Qzfb0"
+  },
+  "s-nenkin-65sai-1kagetsu-nenri-584": {
+    "charts": [
+      [
+        "65歳1か月",
+        "67歳10か月",
+        "69歳1か月"
+      ]
+    ],
+    "video_id": "Sl5DTCZxaRs"
   },
   "s-nenkin-70sai-jumyou-nenri-69bai": {
     "charts": [
@@ -4704,6 +4770,19 @@
       ]
     ],
     "video_id": "a1b2Nm6jN_0"
+  },
+  "s-tokurou-genkaku-05": {
+    "charts": [
+      [
+        "84万円",
+        "91万2000円"
+      ],
+      [
+        "1万4400円",
+        "7万2000円"
+      ]
+    ],
+    "video_id": "1-wPfwy_amg"
   },
   "s-tokurou-kaidan-showa36": {
     "charts": [
