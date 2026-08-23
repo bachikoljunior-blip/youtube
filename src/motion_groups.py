@@ -29,6 +29,10 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 RUNS = ROOT / "data" / "batch_runs.jsonl"
+#: **1本ごとのラベル**（`scripts/batch_build._flag_line` が作るたびに1行足す）。
+#: `RUNS` は回のおしまいに1回しか書かれないので、**途中で落ちるとラベルが消える**
+#: （2026-08-23 に実測: 8本中6本できた回が落ち、6本が「どちらか分からない本」になった）。
+FLAGS = ROOT / "data" / "build_flags.jsonl"
 UPLOADED = ROOT / "data" / "uploaded.jsonl"
 
 
@@ -52,8 +56,19 @@ def motion_by_topic(runs: Path = RUNS) -> dict[str, bool]:
     標本は減りますが、**嘘のラベルで判定するより安い。**
     """
     seen: dict[str, set[bool]] = {}
+    # **1本ごとのラベルも読む。**（回のおしまいの記録だけだと、落ちた回のぶんが消える）
+    if FLAGS.exists():
+        for line in FLAGS.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if row.get("topic") and "opening_motion" in row:
+                seen.setdefault(row["topic"], set()).add(bool(row["opening_motion"]))
     if not runs.exists():
-        return {}
+        return {tid: f.pop() for tid, f in seen.items() if len(f) == 1}
     for line in runs.read_text(encoding="utf-8").splitlines():
         if not line.strip():
             continue

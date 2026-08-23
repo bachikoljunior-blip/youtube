@@ -60,3 +60,18 @@ def test_conflicting_records_are_dropped(tmp_path: Path) -> None:
 def test_missing_files_are_empty(tmp_path: Path) -> None:
     assert motion_by_topic(tmp_path / "nope.jsonl") == {}
     assert topic_by_video(tmp_path / "nope.jsonl") == {}
+
+
+def test_per_video_flags_are_read(tmp_path: Path, monkeypatch) -> None:
+    """**1本ごとのラベルも群になる。**
+
+    回のおしまいの記録（`batch_runs.jsonl`）だけだと、**途中で落ちた回のぶんが消える**。
+    2026-08-23 に実測: 8本頼んで6本できた回が落ち、記録が1行も残らず、
+    **6本が「どちらの群か分からない本」**になった。
+    """
+    import src.motion_groups as mg
+    flags = tmp_path / "build_flags.jsonl"
+    _write(flags, [{"at": "1", "topic": "a", "opening_motion": False}])
+    monkeypatch.setattr(mg, "FLAGS", flags)
+    got = mg.motion_by_topic(tmp_path / "no_runs.jsonl")
+    assert got == {"a": False}

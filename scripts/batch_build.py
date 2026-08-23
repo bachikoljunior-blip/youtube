@@ -117,6 +117,7 @@ from src import renderer
 
 JST = timezone(timedelta(hours=9))
 LOG = ROOT / "data" / "batch_runs.jsonl"
+FLAGS = ROOT / "data" / "build_flags.jsonl"
 
 # **M14 の比較の窓**（`docs/MEANS.md` M14）。8/16 が4本・8/17〜8/23 が各1本で、
 # 「1日あたりの本数」を測っています。**ここへ足すと測定そのものが壊れます。**
@@ -731,7 +732,27 @@ def build_one(topic: dict, long_form: bool) -> dict:
         row["error"] = "contact sheet を作れず、独立評価の材料が残りません"
     row["built"] = True
     row["make_sec"] = round((datetime.now(JST) - started).total_seconds(), 1)
+    # **群のラベルは、作った時に書く**（2026-08-23 に踏んで足した）。
+    # それまで `opening_motion` は**回のおしまいに1回だけ**書いていたので、
+    # **途中で落ちると、実際に作った本のラベルが丸ごと消えました** ——
+    # 実測: 8本頼んで6本できた回が落ち、`data/batch_runs.jsonl` に1行も残らず、
+    # **6本が「どちらの群か分からない本」になった**（`src/motion_groups` が落とす）。
+    # A/B は「あとから推定する」と必ず壊れる。**作るたびに1行残す。**
+    _flag_line(tid)
     return row
+
+
+def _flag_line(tid: str) -> None:
+    """1本ぶんの群のラベルを、その場で `data/build_flags.jsonl` に足す。"""
+    try:
+        rec = {"at": datetime.now(JST).isoformat(timespec="seconds"),
+               "topic": tid, "opening_motion": renderer.opening_motion_on()}
+        FLAGS.parent.mkdir(parents=True, exist_ok=True)
+        with FLAGS.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
+    except Exception as exc:                                   # noqa: BLE001
+        # **記録に失敗しても作るのは止めない。**ただし黙らない。
+        print(f"[batch] 群のラベルを残せませんでした（{tid}）: {exc}", flush=True)
 
 
 def video_id_of(out: str) -> str:
