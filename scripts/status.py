@@ -1807,6 +1807,17 @@ def print_local_sections(inventory: bool = True) -> None:
     # **`record=True`**: 満ちて答えの無い待ちを1行ずつ積みます
     # （`data/watch_rings.jsonl`）。**放置の長さを、記憶ではなく数で持つため。**
     print(_watches.render(record=True))
+    # **満ちた待ちの隣に、「満ちない待ち」を出します**（2026-08-23 に足した）。
+    # `render` が言うのは「いま満ちたか」だけで、**埋まりようがない待ちは黙ったまま**です。
+    # 実測（8/23）: `長尺-1000再生` は need 1000 に対し 18、伸び 1.40/日 ＝
+    # **埋まるのは 2028-07-25**（期限 2026-09-15）。**2年ちかく足りません。**
+    # 黙っている待ちと、届かない待ちが、画面上で同じに見えていました。
+    try:
+        from src import watch_eta as _watch_eta
+        _watch_eta.main()
+    except Exception as exc:                                   # noqa: BLE001
+        # **計器が落ちても回は止めない**（`watches.gauge` と同じ扱い）。ただし黙らない。
+        print(f"  [!] 待ちの埋まる日が出せません: {type(exc).__name__}: {str(exc)[:90]}")
     # **`print_where_watched` の相方**（2026-08-20 21:5x に足した）。
     # あちらは「どこで見られたか」（再生の側）、こちらは「**どれだけ見せた結果か**」
     # （インプレッションの側）です。**片方だけでは、サムネを直すべきか
