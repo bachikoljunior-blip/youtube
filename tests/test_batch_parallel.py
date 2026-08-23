@@ -107,6 +107,25 @@ class _Sink:
         self.sink.append(text)
 
 
+
+def _ledger(written: list[str]) -> str:
+    """**記録の行**（`data/batch_runs.jsonl` に積まれるほうの1行）を拾う。
+
+    **`written[0]` ではありません**（2026-08-23 に直した）。8/22 の A/B が
+    同じ sink に `{"at": …, "topic": …, "opening_motion": …}` を**本数ぶん先に**
+    書くようになったので、`written[0]` はその行になり、**この4件の検査が
+    「予約時刻の並び」ではなく「先頭が何の行か」を見て**落ちていました。
+
+    A/B の行と記録の行は **どちらも `opening_motion` を持ちます**（記録の行は
+    その回の旗を丸ごと残すため）。**持っていないほうで分けられません。**
+    記録の行だけが持つのは `results` です。
+    """
+    for row in written:
+        if '"results"' in row:
+            return row
+    raise AssertionError(f"記録の行が1つも書かれていません: {written!r}")
+
+
 # --- 1. 順番が崩れないこと -------------------------------------------------
 
 def test_slow_first_video_does_not_lose_its_slot(monkeypatch):
@@ -127,7 +146,7 @@ def test_slot_hour_matches_topic_order(monkeypatch):
     _, rec, written = _run(
         monkeypatch, ["a", "b", "c"], delays={"a": 0.2, "b": 0.1},
     )
-    row = written[0]
+    row = _ledger(written)
     assert "vid-a-2026-08-30@9" in row
     assert "vid-b-2026-08-30@10" in row
     assert "vid-c-2026-08-30@11" in row
@@ -171,7 +190,7 @@ def test_failed_build_is_not_uploaded_and_others_survive(monkeypatch):
     assert uploaded == ["a", "c"]
     # **b の枠（10時）は誰も取らない。** c は自分の 11時 のまま。
     # 記録の `slots` には 10時 が残るので、見るのは**動画IDのほう**です。
-    assert "vid-c-2026-08-30@11" in written[0]
+    assert "vid-c-2026-08-30@11" in _ledger(written)
     assert "vid-c-2026-08-30@10" not in written[0]
     assert "vid-a-2026-08-30@10" not in written[0]
 
@@ -262,7 +281,7 @@ def test_retry_does_not_consume_another_topic(monkeypatch):
 def test_retry_keeps_the_slot_order(monkeypatch):
     """作り直した本が、**自分の枠**に戻ること（完了順に積むと枠がずれる）。"""
     _, _, written = _run_flaky(monkeypatch, ["a", "b", "c"], flaky={"a"})
-    row = written[0]
+    row = _ledger(written)
     assert "vid-a-2026-08-30@9" in row
     assert "vid-b-2026-08-30@10" in row
     assert "vid-c-2026-08-30@11" in row
@@ -290,4 +309,4 @@ def test_two_failures_are_marked_in_the_ledger(monkeypatch):
     monkeypatch.setattr(batch_build.Path, "open",
                         lambda self, *a, **k: _Sink(written))
     batch_build.main(["--count", "3", "--date", "2026-08-30", "--jobs", "3"])
-    assert "2回とも" in written[0]
+    assert "2回とも" in _ledger(written)
