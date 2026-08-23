@@ -1,10 +1,10 @@
 {
   "_": "親トリガーの正本。実物へ当てるのは scripts/trigger_sync.py。docs/TRIGGER.md の表は人向けの写しで、機械が読むのはこのファイル。",
-  "trigger_id": "trig_011aqbWZYMrY1YzXJ6ndfHEn",
-  "name": "YouTube 定期（1日19回・親 01XnvQjc／指示表示・質疑応答・子を立てて畳む）",
+  "trigger_id": "trig_01LNvtNdjggEA4nfxX49YjX8",
+  "name": "YouTube 定期（1日19回・親 017yMBL2／指示表示・質疑応答・子を立てて畳む）",
   "cron_expression": "9 0-5,7-11,13-17,19-21 * * *",
   "enabled": true,
-  "persistent_session_id": "session_01XnvQjcpg5pvqbbAM4ejgmH",
+  "persistent_session_id": "session_017yMBL2xfhjbZRhb6D646HG",
   "environment_id": "env_01QMJaP2yRCzw4tY5VpJeM1m",
   "owner": "bachikoljunior-blip",
   "repo": "youtube",

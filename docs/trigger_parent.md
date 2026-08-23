@@ -11,7 +11,7 @@
 **取った中身が、あなたが受け取った本文と違っていたら、その場で当ててください:**
 
     mcp__bf7c680d-5fdc-5ef4-b4a0-abadb619bf0a__update_trigger
-      trigger_id: trig_011aqbWZYMrY1YzXJ6ndfHEn
+      trigger_id: trig_01LNvtNdjggEA4nfxX49YjX8
       prompt:     <取った中身をそのまま>
 
 **これは子には撃てません**（2026-08-20 に子が実際に撃って弾かれた）:
@@ -33,8 +33,8 @@
 > 親は「たぶん `9 */8`」と見立て、前の回の子は「12h」と書き、この行は「6h」——
 > **3か所とも別の値**でした。**写した瞬間に古くなります。**
 >
-> 2026-08-22 時点: 親トリガーは `9 0-5,7-11,13-17,19-21 * * *`（1日19回）、常駐セッションは
-> `session_01XnvQjcpg5pvqbbAM4ejgmH`、環境は `env_01QMJaP2yRCzw4tY5VpJeM1m`。
+> 2026-08-23 時点: 親トリガーは `9 0-5,7-11,13-17,19-21 * * *`（1日19回）、常駐セッションは
+> `session_017yMBL2xfhjbZRhb6D646HG`、環境は `env_01QMJaP2yRCzw4tY5VpJeM1m`。
 > **これも確かめること。**
 
 ---
@@ -396,6 +396,15 @@
 **`create_session` が復旧した最初の回で、親を新しいセッションへ移すこと**
 （`create_trigger` で移して古いトリガーを消す。承認は要りません）。
 **移し方はこのファイルの先頭「トリガー本文の正本」と `docs/trigger_spec.json`。**
+
+> **交代を完了させるのは `delete_trigger` であって、`archive_session` ではありません**
+> （2026-08-23 実測）。旧親の archive は**権限分類器に弾かれることがあります**
+> （`Blocked by classifier`）。**弾かれてもやり直さないこと** ——
+> 撃ち込むトリガーが無くなった時点で、旧親は二度と起きません。
+> archive は掃除であって、安全装置ではありません。
+>
+> **順番は「新しいトリガーの発火が実際に届くのを見てから、旧トリガーを消す」。**
+> 先に消すと、届かなかった場合に鎖が丸ごと切れます。
 そのとき `trigger_id` / `persistent_session_id` / `name` の3つを spec に書き戻し、
 `python scripts/trigger_sync.py --emit-body` で `docs/trigger_body.rendered.md` を作り直すこと
 （**8/23 に旧IDのまま残っていて、`--check` が削除済みのトリガーを指していました**）。
