@@ -113,6 +113,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from src import auth, config, dupes, history, measure_window, upload_cap, uploader  # noqa: E402
+from src import renderer
 
 JST = timezone(timedelta(hours=9))
 LOG = ROOT / "data" / "batch_runs.jsonl"
@@ -1134,6 +1135,12 @@ def main(argv: list[str] | None = None) -> int:
              "jobs": jobs, "count": len(topics),
              "wall_sec": wall_sec, "serial_sec": serial_sec, "speedup": speedup,
              "long": bool(args.long),
+             # **作ったときの設定を、作った本と一緒に残す**（2026-08-23 に足した）。
+             # これが無いと、A/B の群を**作った日でしか割れません**。実装は在庫より
+             # 先に効き、在庫は数週間先まで予約されているので、**実装日で割ると
+             # 両群の中身が同じになります**（8/19 の ab_split と 8/23 の
+             # 「冒頭0.9秒の動き」で2回踏んだ。後者は対照群が 405本中 0本だった）。
+             "opening_motion": renderer.opening_motion_on(),
              "results": results},
             ensure_ascii=False) + "\n")
 
