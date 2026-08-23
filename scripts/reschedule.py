@@ -43,6 +43,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+import functools  # noqa: E402
+
 from googleapiclient.errors import HttpError  # noqa: E402
 
 from src import auth, dupes, history, measure_window, uploader  # noqa: E402
@@ -54,7 +56,24 @@ DEFAULT_MAX_DAYS = 4
 # `--spread` の1日あたりの Shorts の上限。**08/20 の実測**（`spread_plan` の節）:
 # 25本出して、公開の早い10本は 185〜1,394、**11本目から先は 0〜3**。
 # 1日の合計は 4本の日（5,301）と 25本の日（5,948）でほぼ同じでした。
-DEFAULT_PER_DAY = 10
+#
+# **2026-08-24: 定数をやめて、計器（`src/day_cap.py`）から取ります。**
+# 上限は測り直しで動きます（この日 17本 → 10本）。定数のままだと、
+# **上限が上がっても下がっても、置き方が付いていきません**。
+# `day_cap` が読めない・崩れを観測していない回は、既定の 10 に落ちます。
+@functools.cache
+def _measured_per_day(fallback: int = 10) -> int:
+    """**呼ばれたときに測ります**（import では読みません。`views.jsonl` は1万行あり、
+    ここを import 時に読むと全部の道具の起動が遅くなります）。"""
+    try:
+        from src import day_cap
+        m = day_cap.measure()
+        return int(m["cap"]) if m.get("measured") else fallback
+    except Exception:
+        return fallback
+
+
+DEFAULT_PER_DAY = 10          # **読めない回の既定**。実際に使う数は `_measured_per_day()`
 MARKER = re.compile(r"\[t:([a-z0-9\-]+)\]")
 
 
@@ -767,8 +786,8 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--spread", action="store_true",
                     help="**1日の Shorts に上限をかけ、あふれたぶんを後ろの空き日へ送る**"
                          "（**API 0単位**。撃つには --apply）")
-    ap.add_argument("--per-day", type=int, default=DEFAULT_PER_DAY,
-                    help=f"--spread の1日あたりの Shorts の上限（既定{DEFAULT_PER_DAY}。"
+    ap.add_argument("--per-day", type=int, default=_measured_per_day(DEFAULT_PER_DAY),
+                    help=f"--spread の1日あたりの Shorts の上限（既定{_measured_per_day(DEFAULT_PER_DAY)}＝実測。"
                          "08/20 の実測で11本目から先が 0 だった）")
     ap.add_argument("--since", metavar="YYYY-MM-DD",
                     help="--spread で、この日より前は上限をかけず置き先にもしない"

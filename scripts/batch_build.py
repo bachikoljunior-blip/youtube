@@ -100,6 +100,7 @@
 """
 from __future__ import annotations
 
+import functools
 import argparse
 import json
 import shutil
@@ -460,8 +461,22 @@ def _show_slot(spec: str) -> str:
 
 # **1日に置く本数の目安**（`scripts/reschedule.py` の `DEFAULT_PER_DAY` と同じ数）。
 # 08/20 の実測で11本目から先が 0〜3 再生でした。**止める門ではなく、言うだけ**です
-# （判定は 08/23・`config/hypotheses.yaml`）。
-_PER_DAY_SOFT = 10
+# （判定は 08/23 に済み・`config/hypotheses.yaml` の「予約の間隔」）。
+#
+# **2026-08-24: ここも計器から取ります**（`src/day_cap.py`。定数だと測り直しに
+# 付いていきません）。読めない回は 10 に落ちます。
+@functools.cache
+def _per_day_soft(fallback: int = 10) -> int:
+    """**呼ばれたときに測ります**（import では読みません。理由は reschedule.py と同じ）。"""
+    try:
+        from src import day_cap
+        m = day_cap.measure()
+        return int(m["cap"]) if m.get("measured") else fallback
+    except Exception:
+        return fallback
+
+
+_PER_DAY_SOFT = 10            # **読めない回の既定**。実際に使う数は `_per_day_soft()`
 
 
 def _slots_fine(count: int, hour: int, date_jst: str, hours: list[int],
@@ -511,9 +526,10 @@ def _slots_fine(count: int, hour: int, date_jst: str, hours: list[int],
     # （1日16本以上の日が3日ぶん要る）。**判定の前に条件を変えないこと。**
     # 判定が出たら、ここを `raise SystemExit` に変えるか、
     # `scripts/reschedule.py --spread` で後から均すこと。
-    if len(taken_min) + count > _PER_DAY_SOFT:
+    soft = _per_day_soft(_PER_DAY_SOFT)
+    if len(taken_min) + count > soft:
         print(f"[batch] [!] **{date_jst} は控えと合わせて {len(taken_min) + count}本**"
-              f"（1日の目安 {_PER_DAY_SOFT}本）。08/20 の実測では**11本目から先が 0〜3 再生**です。"
+              f"（1日の目安 {soft}本・実測）。08/20 の実測では**11本目から先が 0〜3 再生**です。"
               "\n        置いたあと `python scripts/reschedule.py --spread` で均せます"
               "（1本50単位）。**作る前に日を割るほうが安いです。**", flush=True)
     if picked != list(range(hour * 60, hour * 60 + step_min * count, step_min)):
