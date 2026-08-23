@@ -1,13 +1,13 @@
 {
-  "id": "trig_01T2j6yJMFqKZGZfQnhz8v1b",
-  "name": "YouTube 定期（1日19回・親 01GUdDmL／指示表示・質疑応答・子を立てて畳む）",
+  "id": "trig_011aqbWZYMrY1YzXJ6ndfHEn",
+  "name": "YouTube 定期（1日19回・親 01XnvQjc／指示表示・質疑応答・子を立てて畳む）",
   "cron_expression": "9 0-5,7-11,13-17,19-21 * * *",
   "enabled": true,
-  "persistent_session_id": "session_01GUdDmLixcbtycXJ8s7DRqG",
+  "persistent_session_id": "session_01XnvQjcpg5pvqbbAM4ejgmH",
   "environment_id": "env_01QMJaP2yRCzw4tY5VpJeM1m",
-  "body": "【親】**`docs/trigger_parent.md` を読んで、そのとおりにしてください。**\n\n規則は全部そちらにあります。**ここに置くのは、リポジトリから求まらない値だけ**です。\n\n    あなたのセッションID   session_01GUdDmLixcbtycXJ8s7DRqG\n    子を立てる環境         env_01QMJaP2yRCzw4tY5VpJeM1m\n    リポジトリ             https://github.com/bachikoljunior-blip/youtube\n    枝                     claude/youtube-auto-post-revenue-ggedij\n    このトリガー           trig_01T2j6yJMFqKZGZfQnhz8v1b\n\n読み方（**あなたは `git` を打てません。GitHub 経由で1ファイルだけ**）:\n\n    mcp__github__get_file_contents\n      owner=bachikoljunior-blip  repo=youtube\n      path=docs/trigger_parent.md  ref=claude/youtube-auto-post-revenue-ggedij\n\n**この本文が上の形より長くなっていたら、それは移し残しです。**\n`docs/trigger_parent.md`「トリガー本文の正本」に、戻し方が書いてあります。",
-  "next_run_at": "2026-08-22T07:09:00Z",
-  "last_fired_at": "2026-08-22T05:09:22.551841Z",
-  "ingested_at": "2026-08-22T05:32:20+00:00",
-  "spec_fingerprint": "be8631abe6fb0248"
+  "body": "【親】**`docs/trigger_parent.md` を読んで、そのとおりにしてください。**\n\n規則は全部そちらにあります。**ここに置くのは、リポジトリから求まらない値だけ**です。\n\n    あなたのセッションID   session_01XnvQjcpg5pvqbbAM4ejgmH\n    子を立てる環境         env_01QMJaP2yRCzw4tY5VpJeM1m\n    リポジトリ             https://github.com/bachikoljunior-blip/youtube\n    枝                     claude/youtube-auto-post-revenue-ggedij\n    このトリガー           trig_011aqbWZYMrY1YzXJ6ndfHEn\n\n読み方（**あなたは `git` を打てません。GitHub 経由で1ファイルだけ**）:\n\n    mcp__github__get_file_contents\n      owner=bachikoljunior-blip  repo=youtube\n      path=docs/trigger_parent.md  ref=claude/youtube-auto-post-revenue-ggedij\n\n**この本文が上の形より長くなっていたら、それは移し残しです。**\n`docs/trigger_parent.md`「トリガー本文の正本」に、戻し方が書いてあります。",
+  "next_run_at": "2026-08-23T01:09:00Z",
+  "last_fired_at": "2026-08-23T00:09:46.692691Z",
+  "ingested_at": "2026-08-23T00:52:35+00:00",
+  "spec_fingerprint": "df150b13b1bc3038"
 }
