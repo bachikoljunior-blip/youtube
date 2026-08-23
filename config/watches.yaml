@@ -34,13 +34,24 @@ watches:
   - id: 実データ-8/19〜8/21の3本
     what: 「engaged を決めているのは冒頭で画面が変わらないこと」の判定（期限 2026-08-26）
     cond: 8/19〜8/21 に公開した本が3本、かつ**その日の実データが届いている**
-    then: python -m src.length_verdict（群を 8/16〜18 と比べる）
+    then: python -m src.hook_verdict（A 8/16〜18 と B 8/19〜21 を比べる）
     source: config/hypotheses.yaml
     kind: published_count
     since: '2026-08-19'
     until: '2026-08-21'
     need: 3
     data_ready: true
+    answered: >
+      2026-08-23 判定。**外れ（falsified）。** A（8/16〜18・従来の冒頭）の engaged 中央値
+      **30.1%**（公開6本・30再生以上4本＝14.6/20.9/39.2/42.7%）に対し、
+      B（8/19〜21・冒頭22文字）は **22.8%**（公開65本・30再生以上28本）。
+      `falsified_if` は「上回らない（同点も外れ）」なので、ここで閉じる。
+      **`then:` の道具を差し替えた** —— `length_verdict` は 8/4〜8/15 と 8/16〜18 を比べる
+      別の判定で、この待ちが要求している A/B とは群が違う。**同じ道具を二度使えない**ので
+      `src/hook_verdict.py` を足した（`fetch_engaged` / `ratios` / `MIN_VIEWS=30` は
+      length_verdict から借用。線を引き直すと比較が壊れるため）。検査 tests/test_hook_verdict.py 5件。
+      **次**: `next_if_false` は「静止画スライド＋合成音声という形式そのものを疑う」。
+      形式の側で残っている未検証は 09/05「冒頭0.9秒に絵の動きを入れる」＝下の待ち。
 
   - id: 実データ-8/23以降の3本
     what: 冒頭0.9秒の動き（期限 09/05）と「前提を先・数字を後」（期限 09/05）の判定
