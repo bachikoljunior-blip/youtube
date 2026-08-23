@@ -6,6 +6,8 @@
 """
 from __future__ import annotations
 
+import os
+
 from pathlib import Path
 
 from .util import require, run
@@ -84,6 +86,40 @@ OPENING_ZOOM = 1.10           # 上の計算の上限。上げると上が切れ
 OPENING_SETTLE_SECONDS = 0.9  # 引き切るまで。1.5秒より前に動きが終わるようにする
 
 
+def opening_motion_on() -> bool:
+    """**冒頭0.9秒の動きを入れるか。** `YT_OPENING_MOTION=0` で切れる（既定は入れる）。
+
+    ## なぜ切れる必要があるのか（2026-08-23 に測って足した）
+
+    `config/hypotheses.yaml` の「**冒頭0.9秒に絵そのものの動きを入れると engaged が
+    上がる**」（期限 09/05）は、**8/23以降の3本 と 8/19〜8/21の3本**を比べる形でした。
+    ところが動きが入ったのは **8/15 の実装**で、効くのは公開日ではなく**作った日**です。
+
+    実測（8/23。`data/batch_runs.jsonl` の作成時刻で数えた）:
+
+        作った記録のある本 405本 —— **8/15 より前に作った本は 0本**
+        B群（8/19〜8/21 公開）63/63本 が 8/15 以降
+        C群（8/23 以降 公開）93/93本 が 8/15 以降
+
+    **つまり対照群が1本も無く、両群とも動きが入っています。** 比べても差は出ず、
+    `falsified_if` は「上回らなければ外れ」なので **測る前から「外れ」が確定**していました。
+    しかも `next_if_false` は「**静止画スライド＋合成音声という形式そのものを疑う**」で、
+    **形式側で最後に残った仮説が、測らずに殺される**ところでした
+    （8/19 の `src/ab_split.py` と同型の事故。あちらは「指示が入った本だけで割る」で直した）。
+
+    **待っても対照群は現れません。** こちらから作るしかないので、この切り替えを置きます。
+
+    ## 使い方
+
+        YT_OPENING_MOTION=0 python -m src.pipeline ...   ← 動きなし（対照群）
+        （既定）                                          ← 動きあり
+
+    **群の再構成は「作った日」ではなく、この値を記録して行うこと。**
+    実装日で割ると、また同じ穴に落ちます。
+    """
+    return (os.environ.get("YT_OPENING_MOTION", "1").strip() not in {"0", "false", "off"})
+
+
 def _clip_from_slide(src: Path, duration: float, dest: Path, fps: int, w: int, h: int,
                      opening: bool = False) -> None:
     """図解1枚から、ゆっくり寄っていくクリップを作る。
@@ -139,7 +175,7 @@ def build_video(
         # 無音の分だけクリップを伸ばして、カットの切れ目と発話の切れ目をずらす
         dest = clips_dir / f"clip_{i:03d}.mp4"
         _clip_from_slide(slide, duration + SILENCE_SECONDS, dest, fps, width, height,
-                         opening=(i == 0))
+                         opening=(i == 0 and opening_motion_on()))
         clips.append(dest)
         print(f"[render] クリップ {i + 1}/{len(slides)}")
 
