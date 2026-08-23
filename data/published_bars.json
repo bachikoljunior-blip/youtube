@@ -3344,6 +3344,21 @@
     ],
     "video_id": "L2fqMA7Xh-k"
   },
+  "s-nisa-growth-only-1200": {
+    "charts": [
+      [
+        "1200万円",
+        "1800万円",
+        "1800万円"
+      ],
+      [
+        "120万円",
+        "240万円",
+        "360万円"
+      ]
+    ],
+    "video_id": "1d3sR_XOdCw"
+  },
   "s-nisa-refill-five-years": {
     "charts": [
       [
@@ -3957,6 +3972,15 @@
       ]
     ],
     "video_id": "FaQ6LJB5tuw"
+  },
+  "s-shitsugyo-45sai-60nichi-546600": {
+    "charts": [
+      [
+        "54万6600円",
+        "23万4900円"
+      ]
+    ],
+    "video_id": "OW7wZKVojUw"
   },
   "s-shitsugyo-45sai-kaiko-1nen": {
     "charts": [
@@ -4844,6 +4868,23 @@
     ],
     "video_id": "NEb3UY_LAJs"
   },
+  "s-yukyu-nen0nichi-20nen-4721538": {
+    "charts": [
+      [
+        "472万1538円",
+        "333万6923円",
+        "195万2308円",
+        "74万7692円"
+      ],
+      [
+        "333万6923円",
+        "266万5385円",
+        "200万7692円",
+        "79万6154円"
+      ]
+    ],
+    "video_id": "JmKA7eB5jc0"
+  },
   "s-yukyu-nen19nichi-sen-shu5": {
     "charts": [
       [
@@ -5128,6 +5169,15 @@
       ]
     ],
     "video_id": "hcqHpGUOeM8"
+  },
+  "s-zoyo-110man-zutsu-1110000": {
+    "charts": [
+      [
+        "705,000円",
+        "1,110,000円"
+      ]
+    ],
+    "video_id": "A1PLXzC4Uv8"
   },
   "s-zoyo-3000man-28years": {
     "charts": [
