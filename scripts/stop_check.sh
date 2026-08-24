@@ -402,7 +402,22 @@ fi
 #
 # **覆る条件**: 親が5回続けて札を埋めるようになったら、この受け渡しは二重になります。
 # `python scripts/relay.py --audit` を見て、そのときは畳んでよい。
-if [ "$SHIP_STATE" != "unknown" ]; then
+#
+# ## **この門だけは `unknown` でも効かせます**（書いた直後に自分で見つけた穴）
+#
+# 上の (1)(1.6)(1.7) は `SHIP_STATE = unknown` で黙ります —— 印を打っていない回＝
+# 周ではない、という足切りです。**ここに同じ足切りを置いたら、この門は
+# 最適化の札にだけ効かなくなります。** 最適化の子は `run_marker.py` を
+# 押すかどうか自体が自由（`docs/spawn_prompt.md`）なので、**印の無い回がふつう**です。
+# **そして 14:31〜21:50 に空いていたのは、まさにその札でした。**
+#
+# **代わりの足切りは、上の `config/parents.txt` の分岐がすでにやっています**
+# （親はそこで `exit 0` します）。ここで見るのは「識別子があるか」だけ ——
+# 手元で打っている回には `CLAUDE_CODE_REMOTE_SESSION_ID` がありません。
+#
+# **名簿に無い新しい親には効いてしまいますが、それは害になりません** ——
+# 「札を見て、空なら立てろ」は親の仕事そのものです。
+if [ -n "$ME" ]; then
   timeout 20 python3 "$ROOT/scripts/relay.py" --check >/dev/null 2>&1
   if [ $? -eq 2 ]; then
     RLCOUNT="$STATE_DIR/claude-youtube-relay-blocks-${ME:-none}"

@@ -123,6 +123,21 @@ def test_audit_counts_the_runs_that_left_a_lane_empty(sandbox, monkeypatch, caps
 
 # --- 入口そのものが通ること ---------------------------------------------
 
+def test_next_says_that_a_pending_approval_is_not_alive():
+    """**承認待ちを「生きている」と数えないこと。**
+
+    2026-08-24 22:5x の実測。主実行の子は仕事を終えて 2383a69 まで push した
+    あと、**`archive_session` の承認待ちで `REQUIRES_ACTION` のまま固着**していました。
+    一覧では `connection_status: connected` なので**生きて見えます。**
+    承認待ちは永久に待つ（目標本文「私が必ず読むとは限らない」）ので、
+    **そこを生きていると読むと、札は空のままです。**
+    """
+    p = _run(["--next"], cwd=ROOT)
+    assert p.returncode == 0, p.stderr
+    assert "REQUIRES_ACTION" in p.stdout
+    assert "生きている」ではありません" in p.stdout
+
+
 def test_the_entry_point_is_not_named_plan():
     """**`--plan` という名前にしないこと**（2026-08-24 に実測）。
 
@@ -164,6 +179,21 @@ def test_stop_hook_actually_calls_the_relay_gate():
     assert "relay.py" in src
     assert "--check" in src
     assert '"decision":"block"' in src.replace(" ", "")
+
+
+def test_stop_hook_relay_gate_is_not_silenced_by_an_unmarked_run():
+    """**この門だけは `SHIP_STATE = unknown` で黙ってはいけません。**
+
+    他の門は「印を打っていない回＝周ではない」で足切りします。
+    **ここに同じ足切りを置くと、最適化の札にだけ効かなくなります** ——
+    最適化の子は `run_marker.py` を押すかどうか自体が自由なので、
+    **印の無い回がふつう**です。そして 2026-08-24 に 14:31〜21:50 の
+    **7時間19分ぶん空いていたのは、まさにその札でした。**
+    """
+    src = (ROOT / "scripts" / "stop_check.sh").read_text(encoding="utf-8")
+    gate = src.split("(2.0)", 1)[1].split("--- (2)", 1)[0]
+    assert 'if [ -n "$ME" ]; then' in gate
+    assert 'SHIP_STATE" != "unknown"' not in gate
 
 
 def test_stop_hook_relay_gate_lets_go_after_two_blocks():

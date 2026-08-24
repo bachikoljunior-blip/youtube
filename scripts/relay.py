@@ -138,6 +138,15 @@ def cmd_next(args) -> int:
     print("      → `PENDING` / `RUNNING` / `IDLE` を、tags ごとに数える\n")
     print("        youtube-hourly     主実行")
     print("        youtube-optimizer  最適化\n")
+    # **これが実際にいちばん多い死に方です。** 2026-08-24 22:5x に実測:
+    # 主実行の子は仕事を終えて 2383a69 まで push したあと、
+    # **`archive_session` の承認待ちで `REQUIRES_ACTION` のまま固着**していました。
+    # 一覧では「つながっている」ように見えるので、**生きていると誤読しやすい。**
+    # 承認待ちは永久に待ちます（目標本文「私が必ず読むとは限らない」）。
+    print("  **`REQUIRES_ACTION` / `BLOCKED` は「生きている」ではありません。**")
+    print("  承認待ちは永久に待ちます —— **その札は空として数え、立てること。**")
+    print("  （2026-08-24 22:5x の実測。主実行が `archive_session` の承認待ちで固着し、")
+    print("   仕事は終わっていたのに次が立たない状態になっていました）\n")
     print("**2. 立てる／立てない**\n")
     print("  **隣の札が空なら、必ず立てる。**（これが本体です。親は今日5回飛ばしました）")
     if self_ok:
