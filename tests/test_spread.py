@@ -93,3 +93,40 @@ def test_under_the_cap_moves_nothing():
 def test_default_per_day_is_the_measured_ten():
     mod = _mod()
     assert mod.DEFAULT_PER_DAY == 10
+
+
+def test_置き先は生きる目盛りの中だけ_遅い時間へ送らない():
+    """**あふれたぶんを 14:00 以降へ送らないこと**（2026-08-24 に直した）。
+
+    この道具の docstring は「14:00 以降は15本中9本が0、残りも1〜3」と
+    自分で測っています。それでも置き先は `9〜21時` の全部から
+    **いちばん間の空いた目盛り**（＝遅いほう）を採っていたため、
+    「その日の11本目だから0」を「19:30 だから0」に付け替えるだけでした。
+    実測 08/24: 22本の割り当てのうち 09/20 21:00・09/22 19:30 など。
+
+    生きるのは**その日の先頭から per_day 本ぶん**の目盛りです
+    （per_day=10・hour=9・step=30 なら 09:00〜13:30）。
+    """
+    rows = [_row(i, _day(h=9, mi=30 * i)) for i in range(25)]   # 09/01 に25本
+    mod = _mod()
+    plan = mod.spread_plan(rows, now=NOW, per_day=10)
+    assert plan
+    edge = 9 * 60 + (10 - 1) * 30                              # 13:30
+    for p in plan:
+        when = datetime.fromisoformat(p["new"].replace("Z", "+00:00")).astimezone(JST)
+        assert when.hour * 60 + when.minute <= edge, p
+
+
+def test_窓は_per_day_から起こす_定数ではない():
+    """`day_cap` の実測が上がれば、窓もいっしょに広がること。
+
+    **ここを 13:30 の定数で書くと、上限が上がった日に窓だけ取り残されます。**
+    """
+    rows = [_row(i, _day(h=9, mi=30 * i)) for i in range(20)]
+    mod = _mod()
+    plan = mod.spread_plan(rows, now=NOW, per_day=14)           # → 窓は 15:30 まで
+    assert plan
+    late = [p for p in plan
+            if datetime.fromisoformat(p["new"].replace("Z", "+00:00"))
+            .astimezone(JST).hour >= 14]
+    assert late, "per_day を上げても窓が 13:30 のままなら、定数で書かれています"
