@@ -1793,6 +1793,7 @@ def print_local_sections(inventory: bool = True) -> None:
     # 警告の一覧（`alerts.ring()`）を通していないのは、**畳まれてほしくない**から。
     # 鳴り続けるのが正しい —— 直るまで、鎖の一番下が正本と食い違っています。
     print_trigger_drift()
+    print_goal_drift()
     print_upload_cap()
     if inventory:
         _print_inventory_from_ledger()
@@ -1841,6 +1842,38 @@ def print_local_sections(inventory: bool = True) -> None:
     print_hypotheses()
     print_alert_hit_rate()
     print_budget()
+
+
+def print_goal_drift() -> None:
+    """**この輪が目標に向かっているか**を、毎周ひとつの比で出す（2026-08-24 に足した）。
+
+    オーナー指摘（原文）: **「なんで実験そんな少ないの？」**
+
+    手で数えるまで、この比はどこにも印字されていませんでした ——
+    8/18以降の ship 240件で **fix 115 ／ verdict 14**、
+    `moves` に0以外を書いたのは **17件**。
+    **240回のうち223回が「この回で到達日は動かない」と自分で言いながら通っていた。**
+
+    **止めるほうは `scripts/stop_check.sh` (1.7) にあります。**
+    ここは印字のほう。**両方要ります** ——
+    このリポジトリは `retention.py` で「正しく印字していたのに、
+    その道具を走らせた回にしか届かなかった」を10日間やっています。
+    **止めるだけだと、外れの手前が見えません。**
+
+    **落ちても続けます。** 計器が1つ読めないことは、この回を止める理由になりません。
+    """
+    try:
+        import importlib.util
+        path = Path(__file__).resolve().parent / "drift.py"
+        _s = importlib.util.spec_from_file_location("drift", path)
+        mod = importlib.util.module_from_spec(_s)
+        _s.loader.exec_module(mod)                             # type: ignore[union-attr]
+        from datetime import datetime as _dt
+        text, _ = mod.report(_dt.now().date().isoformat())
+        print("\n" + text)
+    except Exception as exc:                                   # noqa: BLE001
+        print("\n=== この輪は目標に向かっているか ===")
+        print(f"  読めませんでした（続行）: {type(exc).__name__}: {str(exc)[:100]}")
 
 
 def print_trigger_drift() -> None:
