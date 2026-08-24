@@ -40450,3 +40450,25 @@ regex が **『項目内容使った割合』**を1語として拾います。**
 
 **この輪でいちばんよく出る壊れ方は「手で持った名前が腐る」ことです。**
 今回は**書いた1時間後に**それが起きたので、証拠つきで残しておきます。
+
+### 9. 全件のテストを回した（**6件落ちています。どれもこの回の変更ではありません**）
+
+    2,874 passed / **6 failed** / 3 skipped（28分）
+    この回が触った所の周辺だけ（-k verify/assumption/visual/wrap/slide/repeat/formula/queue/status）
+    → **206件すべて緑**
+
+落ちている6件と、落ちている理由:
+
+    test_narrated.py::実物で当たりが3本に収まっている
+      当たりのIDを **3件そのまま書いた**アサート。今日の別の回が出した
+      `DyEcaMK5ZU8` `mRisqvcqmm4` と 08/23 の `plmBPZqqP1U` が増えて 6件になった
+      → **手で持ったIDの一覧が腐る**、いつもの形。次に触る回が「数で持つ」か
+        「腐ったら鳴る」に変えること
+    test_motion_groups.py::missing_files_are_empty
+      無い道を渡したのに 25件返る（実物へ落ちている）＝**受け取った道を使っていない**
+    test_forge_floor_fallback / test_reschedule_move_ledger（速さ）/
+    test_spawn_prompt（写しが最新か）/ test_trajectory（有意でないと言えているか）
+
+**どれも `src/verify.py` の繋ぎ目とは無関係です**（触ったのは
+`_check_assumption_value_shown` の1行だけで、前提の検査は 22+3件とも緑）。
+**直していません** —— この回の腕ではないので、**見つけたことだけ残します。**
