@@ -2033,7 +2033,26 @@ def _print_inventory_from_ledger() -> None:
     except Exception as exc:
         print(f"\n=== 予約の先 ===\n  [!] 控えが読めません: {str(exc)[:100]}")
 
+    _print_collisions()
     _print_missing_thumbnails()
+
+
+def _print_collisions() -> None:
+    """**同じ分に2本入っている予約**（2026-08-25 に足した）。
+
+    前の回は控えを**手で並べて**見つけました。どの道具も鳴らしていません ——
+    `reschedule.py --list` の「二重予約」は同じテーマの重なり、
+    `status.py` は日ごとの**本数**しか見ていませんでした。
+    **手で並べる回が来なければ、見つからないまま公開されます。**
+    """
+    try:
+        from src import collisions
+        text = collisions.say()
+    except Exception as exc:                                 # noqa: BLE001
+        print(f"\n=== 同じ分に2本入っている予約 ===\n  [!] 読めません: {str(exc)[:100]}")
+        return
+    if text:
+        print("\n" + text)
 
 
 # **「あと何日 / 何本」だけでは、日ごとの穴が見えません**（2026-08-19 に踏んだ）。

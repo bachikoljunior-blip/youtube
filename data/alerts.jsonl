@@ -441,3 +441,8 @@
 {"at": "2026-08-24T21:14:23+09:00", "key": "calc_gap", "n": 11, "session": "session_01LqCeUknVZCXKQeU1kJC2Ej", "by": "status.py"}
 {"at": "2026-08-24T23:17:47+09:00", "key": "dupes_actionable", "n": 27, "session": "session_01KeYKvMnJT9Q9tMnrHKVdqg", "by": "status.py"}
 {"at": "2026-08-24T23:18:45+09:00", "key": "calc_gap", "n": 11, "session": "session_01KeYKvMnJT9Q9tMnrHKVdqg", "by": "status.py"}
+{"at": "2026-08-25T06:32:57+09:00", "key": "missing_thumbnail", "n": 2, "session": "session_01U2NmsSJUwyRUi8NrRenkey", "by": "status.py"}
+{"at": "2026-08-25T06:34:45+09:00", "key": "calc_gap", "n": 11, "session": "session_01U2NmsSJUwyRUi8NrRenkey", "by": "status.py"}
+{"at": "2026-08-25T08:06:37+09:00", "key": "missing_thumbnail", "n": 2, "session": "session_01M7fQ9cJBNdFQi4frzY9VWN", "by": "status.py"}
+{"at": "2026-08-25T08:08:08+09:00", "key": "calc_gap", "n": 11, "session": "session_01M7fQ9cJBNdFQi4frzY9VWN", "by": "status.py"}
+{"at": "2026-08-25T08:24:00+09:00", "key": "undeclared_close", "n": 1, "session": "session_01M7fQ9cJBNdFQi4frzY9VWN", "by": "run_marker.py"}

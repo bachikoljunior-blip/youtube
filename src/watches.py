@@ -33,6 +33,7 @@
 """
 from __future__ import annotations
 
+import collections
 import json
 import sys
 from dataclasses import dataclass, field
@@ -49,6 +50,7 @@ LAG = ROOT / "data" / "analytics_lag.jsonl"
 CRITIQUE = ROOT / "data" / "critique.jsonl"
 #: **鳴った回を積む帳面。** 満ちて答えの無い待ちが、何回ぶん放置されたか。
 RINGS = ROOT / "data" / "watch_rings.jsonl"
+BATCH_RUNS = ROOT / "data" / "batch_runs.jsonl"
 
 
 @dataclass
@@ -352,6 +354,42 @@ def _k_ab_group(p: dict) -> Gauge:
     return Gauge(low, float(ab_split.MIN_PER_GROUP), "本", note)
 
 
+def _k_error_reasons(p: dict) -> Gauge:
+    """**理由の入った生成失敗が、判定に要る本数たまったか**（2026-08-25 に足した）。
+
+    見るのは `data/batch_runs.jsonl` の `results[].error_reason` です。
+    **理由の無い行は数えません** —— 2026-08-24 より前は `build_one` が
+    出力を捨てていたので理由が1文字も残っておらず、
+    **分母に入れると必ず薄まります**（対応する仮説の `falsified_if` が
+    「`error_reason` の無い行は数えないこと」と明記している、その分母です）。
+
+    `long: true` を渡すと長尺の回だけを数えます。
+    """
+    if not BATCH_RUNS.exists():
+        return Gauge(0, float(p["need"]), "本",
+                     err="batch_runs.jsonl がありません")
+    want_long = bool(p.get("long"))
+    reasons: list[str] = []
+    for line in BATCH_RUNS.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        try:
+            row = json.loads(line)
+        except ValueError:
+            continue
+        if want_long and not row.get("long"):
+            continue
+        for item in row.get("results", []):
+            why = (item or {}).get("error_reason")
+            if why:
+                reasons.append(str(why)[:24])
+    top = collections.Counter(reasons).most_common(2)
+    note = ("理由つきの失敗のみ"
+            + ("（長尺）" if want_long else "")
+            + ("　" + " / ".join(f"{k}×{n}" for k, n in top) if top else ""))
+    return Gauge(len(reasons), float(p["need"]), "本", note)
+
+
 KINDS = {
     "ab_group": _k_ab_group,
     "length_spread": _k_length_spread,
@@ -359,6 +397,7 @@ KINDS = {
     "scan_sum": _k_scan_sum,
     "days_with_min_videos": _k_days_with_min_videos,
     "scored_pairs": _k_scored_pairs,
+    "error_reasons": _k_error_reasons,
 }
 
 

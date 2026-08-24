@@ -114,7 +114,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from src import auth, config, dupes, history, measure_window, upload_cap, uploader  # noqa: E402
+from src import auth, config, dupes, history, lanes, measure_window, upload_cap, uploader  # noqa: E402
 from src import renderer
 
 JST = timezone(timedelta(hours=9))
@@ -391,6 +391,26 @@ def pick(count: int, explicit: list[str], per_calc: int = DEFAULT_PER_CALC) -> l
     return chosen
 
 
+def _row_times(row: dict) -> list[datetime]:
+    """その1本について、控えに**一度でも書かれた**予約時刻を全部返す。
+
+    `ledger_rows()` は 1本を1行にたたみますが、**たたむのは「数える側」のため**です
+    （`src.dupes._collapse`）。置き場所を避ける側はたたんではいけません ——
+    `at` の食い違う組はどちらが本物か行から言えないので、
+    **両方を「埋まっている」と読む**のが安全な向きです。
+    空きを1つ余計に飛ばすだけで済み、逆向きは**ぶつけて1本捨てます。**
+    """
+    out = []
+    for raw in [row.get("at"), *(row.get("at_others") or [])]:
+        if not raw:
+            continue
+        try:
+            out.append(datetime.fromisoformat(str(raw).replace("Z", "+00:00")))
+        except ValueError:
+            continue
+    return out
+
+
 def ledger_hours(date_jst: str) -> set[int]:
     """その日に**もう置いてある**時刻（JST の時）を、手元の控えから読む。
 
@@ -414,13 +434,10 @@ def ledger_hours(date_jst: str) -> set[int]:
         return set()
     taken: set[int] = set()
     for row in rows:
-        try:
-            when = datetime.fromisoformat(str(row["at"]).replace("Z", "+00:00"))
-        except ValueError:
-            continue
-        when = when.astimezone(JST)
-        if when.strftime("%Y-%m-%d") == date_jst:
-            taken.add(when.hour)
+        for at in _row_times(row):
+            when = at.astimezone(JST)
+            if when.strftime("%Y-%m-%d") == date_jst:
+                taken.add(when.hour)
     return taken
 
 
@@ -441,13 +458,10 @@ def ledger_minutes(date_jst: str) -> set[int]:
         return set()
     taken: set[int] = set()
     for row in rows:
-        try:
-            when = datetime.fromisoformat(str(row["at"]).replace("Z", "+00:00"))
-        except ValueError:
-            continue
-        when = when.astimezone(JST)
-        if when.strftime("%Y-%m-%d") == date_jst:
-            taken.add(when.hour * 60 + when.minute)
+        for at in _row_times(row):
+            when = at.astimezone(JST)
+            if when.strftime("%Y-%m-%d") == date_jst:
+                taken.add(when.hour * 60 + when.minute)
     return taken
 
 
@@ -482,7 +496,8 @@ _PER_DAY_SOFT = 10            # **読めない回の既定**。実際に使う�
 
 def _slots_fine(count: int, hour: int, date_jst: str, hours: list[int],
                 step_min: int, taken: set[int] | None,
-                taken_min: set[int] | None) -> list[str]:
+                taken_min: set[int] | None,
+                lanes_n: int | None = None) -> list[str]:
     """`step_min` が 60 未満のときの割り当て（0時からの分で数える）。
 
     **`slots()` から呼ばれる前提**です。単体で呼ばないこと（`date_jst` を必須にしてある）。
@@ -514,7 +529,17 @@ def _slots_fine(count: int, hour: int, date_jst: str, hours: list[int],
             f"（{count} 本ぶん要ります／{step_min}分きざみ／控えでの埋まり {busy}）。\n"
             "        **別の日にするか、--hour を早めるか、--step-min を細かくすること。**"
         )
-    picked = grid[:count]
+    # **自分の車線から先に取る**（2026-08-25。理由は `src/lanes.py` の docstring）。
+    #
+    # 控えは**このコンテナの中にしか無い**ので、同じ回に走っているきょうだいが
+    # いま置いた本は見えません（`git` で配られるのは push のあと）。だから
+    # `taken_min` を避けただけでは足りず、**同じ日の先頭から取る2つの回は
+    # 必ず同じ分を選びます。** 実測: 08/27 に5組・09/06 に3組が同じ分でした。
+    #
+    # 車線は**セッションIDと「0時からの分」だけ**から決まります（控えを見ない）。
+    # 相手の控えがこちらと食い違っていても、車線が違えば選ぶ分は重なりません。
+    n_lanes = lanes.LANES if lanes_n is None else lanes_n
+    picked = sorted(lanes.order(grid, step_min=step_min, lanes=n_lanes)[:count])
     # **1日に置きすぎていないか言う**（2026-08-21 の実測。止めはしません）
     #
     # 08/20 に Shorts を25本置いた実測: 公開の早い10本は 185〜1,394 再生、
@@ -535,14 +560,15 @@ def _slots_fine(count: int, hour: int, date_jst: str, hours: list[int],
               "（1本50単位）。**作る前に日を割るほうが安いです。**", flush=True)
     if picked != list(range(hour * 60, hour * 60 + step_min * count, step_min)):
         shown = ", ".join(f"{m // 60}:{m % 60:02d}" for m in picked)
-        print(f"[batch] {date_jst} の埋まりを避けて {shown} に置きます"
-              "（控えから。API 0単位）", flush=True)
+        print(f"[batch] {date_jst} の埋まりと車線（{lanes.lane(lanes=n_lanes)}/{n_lanes}）"
+              f"を避けて {shown} に置きます（控えから。API 0単位）", flush=True)
     return [f"{date_jst}@{m // 60}:{m % 60:02d}" for m in picked]
 
 
 def slots(count: int, hour: int, date_jst: str | None, hours: list[int],
           taken: set[int] | None = None, step_min: int = 60,
-          taken_min: set[int] | None = None) -> list[str]:
+          taken_min: set[int] | None = None,
+          lanes_n: int | None = None) -> list[str]:
     """各本の予約時刻の指定を返す（`upload_only.py` の第3引数の形）。
 
     `date_jst` が無ければ従来どおり全部同じ時刻 —— `next_publish_at` が
@@ -596,7 +622,8 @@ def slots(count: int, hour: int, date_jst: str | None, hours: list[int],
     if not date_jst:
         return [str(hour)] * count
     if step_min != 60:
-        return _slots_fine(count, hour, date_jst, hours, step_min, taken, taken_min)
+        return _slots_fine(count, hour, date_jst, hours, step_min, taken, taken_min,
+                           lanes_n=lanes_n)
     if taken is None:
         taken = ledger_hours(date_jst)
     if hours:
