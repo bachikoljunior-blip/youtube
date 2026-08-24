@@ -23,8 +23,14 @@
 --------------------------------------------------------------------------
 外れる向きが問題
 --------------------------------------------------------------------------
-上限を **超えた分は全額自己負担** になる。下回った分は、単に使い残しになるだけ。
-つまり誤差は対称ではなく、**多く見積もる誤差のほうが痛い。**
+上限を超えた分は、**その 79.79 パーセント**（所得税率10パーセントの帯）が自己負担になる。
+下回った分は、単に使い残しになるだけ。つまり誤差は対称ではなく、
+**多く見積もる誤差のほうが痛い。**
+
+**ここは 2026-08-24 まで「超えた分は全額自己負担」と書いていた。誤りだった** ——
+頭打ちがあるのは3階の住民税・特例分だけで、1階と2階は超過分にも効く。
+向き（多く見積もるほうが痛い）は変わらないが、**痛さの大きさは 8割**になる。
+下の節を見ること。
 
 目安表が実際より高く出るのは、社会保険料が仮定より多い人。
 ここではその条件を特定して、超過額がいくらになるかまで出す。
@@ -56,6 +62,45 @@
 15%と16%のあいだで課税所得が330万を割り、**1つ下の税率帯へ落ちる。**
 目安表の「同じ年収なら同じ上限」がいちばん壊れるのがここで、
 **壊れ方は年収では引けない。**
+
+--------------------------------------------------------------------------
+「超えた分は全額自己負担」は、2階ぶん数え落としている（2026-08-24 に足した）
+--------------------------------------------------------------------------
+どの解説も「上限を超えた分は自己負担」で止まります。**正確ではありません。**
+頭打ちがあるのは **3階の住民税・特例分だけ**で、1階（所得税）と2階（住民税の基本分）は
+**超過分にも効きます。** だから自己負担になるのは超過額の全部ではなく、
+
+    1 −（所得税率 × 1.021 ＋ 10パーセント）
+
+の割合だけ。所得税率10パーセントの帯なら **79.79パーセント**。
+
+そして超過がいちばん起きやすいのは **年収が下がった年**です。上限は**その年**の
+所得で決まるのに、寄付するときに手元にあるのは**去年**の源泉徴収票だから。
+年収600万で枠いっぱい（77,949円）寄付した人の自己負担は:
+
+    年収が変わらない      2,000円
+    10パーセント下がる    9,800円（**4.9倍**）
+    20パーセント下がる   17,600円（**8.8倍**）
+    30パーセント下がる   29,277円（**14.6倍**）
+
+--------------------------------------------------------------------------
+扶養1人あたりの減りは、1人目だけ深い（2026-08-24 に足した）
+--------------------------------------------------------------------------
+扶養控除は住民税で1人33万円。所得割が33,000円減り、特例分の頭打ちが6,600円下がるので、
+上限は **6,600 ÷ 分母 ＝ 8,272円**（所得税率10パーセントの帯）だけ減ります。
+**揃うのは、段を割らない年収だけです。**
+
+年収700万・社会保険料15パーセントだと、扶養1人目で所得税の課税所得が330万円を割り、
+税率が20→10パーセントへ落ちて分母が広がります。**1人目だけ 21,954円（2.65倍）。**
+2人目からは 8,272円に戻ります。
+
+深くなる年収の帯は、速算表の段の数だけあります（1万円刻みで走査）:
+
+    年収  6,500,000 〜  7,010,000円   20% → 10%   減り 20,611 〜 21,981円
+    年収 11,040,000 〜 11,480,000円   23% → 20%   減り 18,756 〜 19,252円
+    年収 13,450,000 〜 13,890,000円   33% → 23%   減り 59,277 〜 61,316円
+
+**同じ「扶養1人」で、場所によって桁がちがいます。**
 
 --------------------------------------------------------------------------
 根拠
@@ -92,6 +137,12 @@ ASSUMPTIONS = [
     "加入している健康保険や介護保険の対象かどうかで実際は変わります",
     "ふるさと納税以外の所得控除は入れていません。医療費控除や住宅ローン控除があると上限は下がります",
     "ワンストップ特例ではなく確定申告した場合で計算しています",
+    "上限を超えた寄付の計算では、寄付金控除の枠を入れています。"
+    "所得税は総所得金額等の40パーセントまで、住民税の基本分は30パーセントまでです",
+    "年収が下がった年の計算では、去年の年収で引いた上限額をそのまま寄付したものとしています。"
+    "社会保険料率は去年も今年も15パーセントの仮定で置いています",
+    "扶養控除は一般の扶養（16歳以上19歳未満・23歳以上）とし、住民税33万円・所得税38万円で"
+    "計算しています。特定扶養親族や同居老親等だと額が変わります",
 ]
 
 RECONSTRUCTION = 1.021          # 復興特別所得税
@@ -183,6 +234,140 @@ def limit(p: Person) -> int:
     if denominator <= 0:
         raise ValueError("分母が0以下になりました。所得税率の取り違えです")
     return int(levy * SPECIAL_CAP_RATE / denominator) + SELF_PAY
+
+
+def total_income(p: Person) -> int:
+    """総所得金額等（給与収入 − 給与所得控除）。**寄付金控除の枠の分母。**"""
+    return max(0, p.income - salary_deduction(p.income))
+
+
+def out_of_pocket(p: Person, donation: int) -> dict:
+    """**上限を超えて寄付したとき、自己負担がいくらになるか。**
+
+    3階建てのうち、**上限があるのは住民税の特例分だけ**です
+    （所得割額の20パーセント）。だから超えた分は
+    「所得税ぶん ＋ 住民税の基本分」だけしか戻らず、
+    **残りがそのまま自己負担になります。**
+
+        所得税      (min(寄付額, 総所得×40%) − 2,000) × 所得税率 × 1.021
+        住民税・基本 (min(寄付額, 総所得×30%) − 2,000) × 10%
+        住民税・特例 (寄付額 − 2,000) × (90% − 所得税率×1.021)  ← 所得割額×20% で頭打ち
+
+    一般の解説は「超えた分は自己負担」で止まります。**それは正確ではありません** ——
+    超えた分にも所得税と住民税の基本分（合わせて所得税率×1.021＋10パーセント）は
+    効くので、**自己負担になるのは超過額の全部ではなく、その残り**です。
+    """
+    ti = total_income(p)
+    levy = resident_tax_income_levy(p)
+    rate = income_tax_rate(taxable_income(p))
+    base = max(0, donation - SELF_PAY)
+
+    income_base = max(0, min(donation, int(ti * 0.40)) - SELF_PAY)
+    income_tax_cut = income_base * rate * RECONSTRUCTION
+    resident_base_target = max(0, min(donation, int(ti * 0.30)) - SELF_PAY)
+    resident_basic = resident_base_target * RESIDENT_RATE
+    special_uncapped = base * (0.90 - rate * RECONSTRUCTION)
+    special_cap = levy * SPECIAL_CAP_RATE
+    resident_special = min(special_uncapped, special_cap)
+
+    refund = income_tax_cut + resident_basic + resident_special
+    return {
+        "寄付額": donation,
+        "上限額": limit(p),
+        "所得税から戻る": income_tax_cut,
+        "住民税・基本分": resident_basic,
+        "住民税・特例分": resident_special,
+        "特例分の頭打ち": special_cap,
+        "頭打ちに当たったか": special_uncapped > special_cap,
+        "戻る合計": refund,
+        "自己負担": donation - refund,
+    }
+
+
+def income_drop_grid(last_year: int, social_rate: float = TYPICAL_SOCIAL_RATE,
+                     drops=(0.0, 0.05, 0.10, 0.20, 0.30, 0.40)) -> list[dict]:
+    """**去年の年収で枠いっぱい寄付して、今年の年収が下がったとき。**
+
+    上限額は**その年の所得**で決まるのに、寄付は**その年が終わる前**にします。
+    目安表を引くときに手元にあるのは去年の源泉徴収票なので、
+    **年収が下がった年は、去年の枠がそのまま超過額になります。**
+    """
+    donation = limit(Person(income=last_year, social_rate=social_rate))
+    rows: list[dict] = []
+    for d in drops:
+        this_year = int(last_year * (1 - d))
+        p = Person(income=this_year, social_rate=social_rate)
+        o = out_of_pocket(p, donation)
+        rows.append({
+            "年収の下がり方": d,
+            "今年の年収": this_year,
+            "去年の枠で寄付した額": donation,
+            "今年の上限額": o["上限額"],
+            "超過額": max(0, donation - o["上限額"]),
+            "自己負担": o["自己負担"],
+            "自己負担の増え方": o["自己負担"] / SELF_PAY,
+            "超過額のうち自己負担になる割合": (
+                (o["自己負担"] - SELF_PAY) / (donation - o["上限額"])
+                if donation > o["上限額"] else 0.0),
+        })
+    return rows
+
+
+def dependent_grid(income: int, social_rate: float = TYPICAL_SOCIAL_RATE,
+                   upto: int = 3) -> list[dict]:
+    """**扶養が1人ふえると、枠は何円減るか。**
+
+    扶養控除は住民税で1人33万円。所得割はその10パーセント＝33,000円減り、
+    特例分の頭打ちはその20パーセント＝6,600円ぶん下がります。
+    **上限額はそれを分母で割った額だけ減ります** ——
+    所得税率10パーセントの帯なら 6,600 ÷ 0.7979 ＝ **8,272円**。
+    **ところが、それで揃うのは段を割らない年収だけです** ——
+    扶養控除は所得税の課税所得も同時に下げるので、
+    **税率の段を割る年収では分母が広がり、そこだけ深く落ちます。**
+    """
+    rows: list[dict] = []
+    prev: int | None = None
+    for n in range(upto + 1):
+        p = Person(income=income, social_rate=social_rate, dependents_general=n)
+        lim = limit(p)
+        rows.append({
+            "扶養の人数": n,
+            "住民税の所得割額": resident_tax_income_levy(p),
+            "所得税の課税所得": taxable_income(p),
+            "所得税率": income_tax_rate(taxable_income(p)),
+            "上限額": lim,
+            "1人ふえて減った額": None if prev is None else prev - lim,
+        })
+        prev = lim
+    return rows
+
+
+def dependent_cliff(social_rate: float = TYPICAL_SOCIAL_RATE,
+                    lo: int = 5_000_000, hi: int = 15_000_000,
+                    step: int = 10_000) -> list[dict]:
+    """**扶養が1人ふえたせいで所得税の段を割る年収**を、全部拾う。
+
+    段を割らない年収なら減りは 6,600円ぐらいで揃います。
+    **割る年収だけ、そこが数倍から十数倍に深くなります。**
+    刻みは既定1万円。`check_tables` が、刻みを半分にしても
+    見つかる帯が同じであることを見ています。
+    """
+    out: list[dict] = []
+    for income in range(lo, hi + 1, step):
+        p0 = Person(income=income, social_rate=social_rate)
+        p1 = Person(income=income, social_rate=social_rate, dependents_general=1)
+        r0 = income_tax_rate(taxable_income(p0))
+        r1 = income_tax_rate(taxable_income(p1))
+        if r0 != r1:
+            out.append({
+                "年収": income,
+                "扶養0人の所得税率": r0,
+                "扶養1人の所得税率": r1,
+                "扶養0人の上限額": limit(p0),
+                "扶養1人の上限額": limit(p1),
+                "減った額": limit(p0) - limit(p1),
+            })
+    return out
 
 
 def check_tables() -> None:
@@ -289,6 +474,70 @@ def check_tables() -> None:
                       0.9 - r["所得税率"] * RECONSTRUCTION, "上限の式の分母")
         if r["段の幅ポイント"] <= 0:
             raise ValueError(f"段の幅が {r['段の幅ポイント']}ポイント。速算表は必ず上がる")
+
+    # --- 上限を超えた寄付と、扶養（2026-08-24 に足した2節）-------------------
+    #
+    # (1) 枠ちょうどなら自己負担は2,000円。**式の3階建てが揃っている証拠**
+    p0 = Person(income=6_000_000, social_rate=TYPICAL_SOCIAL_RATE)
+    at_limit = out_of_pocket(p0, limit(p0))
+    _checks.close(at_limit["自己負担"], float(SELF_PAY), "枠ちょうど寄付した人の自己負担")
+    if at_limit["頭打ちに当たったか"]:
+        raise ValueError("枠ちょうどで特例分の頭打ちに当たっている（上限の式と矛盾）")
+
+    # (2) **主題**: 超えた分は「全額」自己負担ではない。
+    #     所得税ぶんと住民税の基本分は超過分にも効くので、
+    #     自己負担になるのは **1 −（所得税率×1.021 ＋ 10%）** の割合だけ。
+    over = out_of_pocket(p0, limit(p0) * 3)
+    if not over["頭打ちに当たったか"]:
+        raise ValueError("枠の3倍を寄付して、特例分の頭打ちに当たっていない")
+    rate0 = income_tax_rate(taxable_income(p0))
+    share = (over["自己負担"] - SELF_PAY) / (over["寄付額"] - over["上限額"])
+    #     **1e-9 では通りません** —— `limit()` が円未満を切り捨てるので、
+    #     割合には 1円 ÷ 超過額ぶん（実測 1.9e-06）のずれが必ず残ります。
+    _checks.close(share, 1 - (rate0 * RECONSTRUCTION + RESIDENT_RATE),
+                  "超過額のうち自己負担になる割合", tol=1e-4)
+    if share >= 1.0:
+        raise ValueError(f"超過額が全額自己負担になっています（{share}）。3階建ての1と2が効いていない")
+
+    # (3) 年収が下がるほど自己負担は増える（この節の主題）
+    drops = income_drop_grid(6_000_000)
+    _checks.close(drops[0]["自己負担"], float(SELF_PAY), "年収が変わらない人の自己負担")
+    seq = [r["自己負担"] for r in drops]
+    for a, b in zip(seq, seq[1:]):
+        if b <= a:
+            raise ValueError("年収の下がり方が大きいのに、自己負担が増えていない")
+
+    # (4) 扶養が1人ふえて減る額は、**段を割らないなら分母で割った額で揃う**
+    dep = dependent_grid(7_000_000)
+    flat = [r for r in dep[1:] if r["所得税率"] == dep[-1]["所得税率"]
+            and r["1人ふえて減った額"] is not None]
+    plateau = {r["1人ふえて減った額"] for r in flat[1:]}
+    if len(plateau) != 1:
+        raise ValueError(f"段を割らない扶養1人あたりの減りが揃っていません: {sorted(plateau)}")
+    only = plateau.pop()
+    _checks.close(float(only),
+                  330_000 * RESIDENT_RATE * SPECIAL_CAP_RATE
+                  / (0.90 - dep[-1]["所得税率"] * RECONSTRUCTION),
+                  "扶養1人あたりの上限額の減り", tol=2.0)
+
+    # (5) **主題**: 段を割る年収では、1人目だけが深い
+    if dep[1]["1人ふえて減った額"] <= only:
+        raise ValueError("段を割る扶養1人目が、割らない2人目より浅い")
+
+    # (6) 崖の帯は、**刻みを半分にしても同じ数**（_template の「刻み」の節）
+    def _bands(step: int) -> int:
+        rows = dependent_cliff(step=step)
+        n, prev = 0, None
+        for r in rows:
+            if prev is None or r["年収"] - prev != step:
+                n += 1
+            prev = r["年収"]
+        return n
+    if _bands(10_000) != _bands(5_000):
+        raise ValueError(
+            f"崖の帯の数が刻みで変わります（1万円 {_bands(10_000)} / 5千円 {_bands(5_000)}）")
+    if _bands(10_000) != len(INCOME_TAX_BRACKETS) - 4:
+        raise ValueError(f"崖の帯が {_bands(10_000)}本。速算表の段から出る本数と違う")
 
 
 def social_rate_grid(income: int, rates=(0.13, 0.14, 0.15, 0.16, 0.17)) -> list[dict]:
@@ -467,7 +716,14 @@ def worst_overrun(incomes=(4_000_000, 6_000_000, 8_000_000, 10_000_000)) -> dict
     """目安表どおりに寄付して、一番損をするのはどの条件か。
 
     目安表は社会保険料を年収の15パーセントと置いている。実際がそれより重い人は、
-    目安表の額まで寄付すると**上限を超え、超過分が全額自己負担**になる。
+    目安表の額まで寄付すると**上限を超える。**
+
+    **超過分が「全額」自己負担になるわけではありません**（2026-08-24 に正した）——
+    頭打ちがあるのは住民税の特例分だけで、所得税ぶんと住民税の基本分は
+    超過分にも効きます。実際に自己負担になるのは
+    **1 −（所得税率×1.021 ＋ 10パーセント）** の割合で、
+    所得税率10パーセントの帯なら **79.79パーセント**（`out_of_pocket`）。
+    ここが返す「超過自己負担」は、**その割引をかける前の超過額**です。
     """
     worst = {"超過自己負担": -1}
     for income in incomes:
@@ -542,3 +798,66 @@ if __name__ == "__main__":
     print("\n=== 目安表どおり寄付して一番損をする条件 ===")
     for k, v in worst_overrun().items():
         print(f"  {k}: {v:,}" if isinstance(v, int) else f"  {k}: {v}")
+
+
+    print("\n=== 上限を超えて寄付しても、超過分は「全額」自己負担にはならない ===")
+    _p = Person(income=6_000_000, social_rate=TYPICAL_SOCIAL_RATE)
+    _rate = income_tax_rate(taxable_income(_p))
+    print(f"  年収600万・社会保険料{TYPICAL_SOCIAL_RATE:.0%}・所得税率{_rate:.0%}"
+          f"（上限 {limit(_p):,}円）")
+    print("  頭打ちがあるのは**住民税の特例分だけ**。所得税ぶんと住民税の基本分は、")
+    print("  超えた寄付にも効きます。だから自己負担になるのは超過額の一部です:")
+    print("   寄付額     上限     超過      所得税    住民税基本   住民税特例    自己負担")
+    for mult in (1.0, 1.5, 2.0, 3.0, 5.0):
+        _d = int(limit(_p) * mult)
+        o = out_of_pocket(_p, _d)
+        print(f"  {o['寄付額']:>8,}  {o['上限額']:>7,}  {max(0, o['寄付額'] - o['上限額']):>7,}"
+              f"  {o['所得税から戻る']:>9,.0f}  {o['住民税・基本分']:>9,.0f}"
+              f"  {o['住民税・特例分']:>10,.0f}  **{o['自己負担']:>9,.0f}円**")
+    _o3 = out_of_pocket(_p, limit(_p) * 3)
+    _share = (_o3["自己負担"] - SELF_PAY) / (_o3["寄付額"] - _o3["上限額"])
+    print(f"  超過額のうち自己負担になるのは **{_share * 100:.2f}%**"
+          f"（＝ 1 − 所得税率{_rate:.0%}×1.021 − 住民税{RESIDENT_RATE:.0%}）。")
+    print("  **「超えた分は全額自己負担」は、この2階ぶんを数え落としています。**")
+    print("  そして、その超過はいちばん起きやすいのが**年収が下がった年**です")
+    print("  （上限はその年の所得で決まるのに、目安表を引くのは去年の源泉徴収票だから）:")
+    print("   去年比      今年の年収    今年の上限     超過      自己負担    2,000円の何倍")
+    for row in income_drop_grid(6_000_000):
+        print(f"  {-row['年収の下がり方'] * 100:>6.0f}%  {row['今年の年収']:>11,}円"
+              f"  {row['今年の上限額']:>9,}円  {row['超過額']:>7,}円"
+              f"  **{row['自己負担']:>9,.0f}円**  {row['自己負担の増え方']:>7.1f}倍")
+
+    print("\n=== 扶養が1人ふえて枠が減る額は、1人目だけ深い（年収で場所が動く）===")
+    _inc = 7_000_000
+    print(f"  年収{_inc:,}円・社会保険料{TYPICAL_SOCIAL_RATE:.0%}:")
+    print("   扶養   住民税の所得割   所得税の課税所得   所得税率      上限      1人ふえて減る額")
+    for row in dependent_grid(_inc):
+        d = row["1人ふえて減った額"]
+        mark = "" if d is None else f"  **−{d:,}円**"
+        print(f"  {row['扶養の人数']:>3}人  {row['住民税の所得割額']:>12,}円"
+              f"  {row['所得税の課税所得']:>14,}円  {row['所得税率']:>8.0%}"
+              f"  {row['上限額']:>9,}円{mark}")
+    _dep = dependent_grid(_inc)
+    _flat = _dep[-1]["1人ふえて減った額"]
+    print(f"  段を割らない人の減りは {_flat:,}円で揃います"
+          f"（＝ 33万円 × 10% × 20% ÷ (90% − {_dep[-1]['所得税率']:.0%}×1.021)）。")
+    print(f"  この年収では**1人目だけ {_dep[1]['1人ふえて減った額']:,}円**"
+          f"（{_dep[1]['1人ふえて減った額'] / _flat:.2f}倍）——"
+          "扶養控除が所得税の課税所得も下げて、税率の段を割るから。")
+    print("  **深くなる年収の帯は、速算表の段の数だけあります**（1万円刻みで走査）:")
+    _rows = dependent_cliff()
+    _bands: list[list[int]] = []
+    for r in _rows:
+        if _bands and r["年収"] - _bands[-1][1] == 10_000:
+            _bands[-1][1] = r["年収"]
+        else:
+            _bands.append([r["年収"], r["年収"]])
+    for lo_i, hi_i in _bands:
+        a = next(r for r in _rows if r["年収"] == lo_i)
+        b = next(r for r in _rows if r["年収"] == hi_i)
+        print(f"    年収 {lo_i:,}円 〜 {hi_i:,}円"
+              f"  所得税率 {a['扶養0人の所得税率']:.0%} → {a['扶養1人の所得税率']:.0%}"
+              f"  減る額 {a['減った額']:,}円 〜 {b['減った額']:,}円")
+    print(f"  帯の外なら {_flat:,}円ぐらいで済むところが、"
+          f"帯の中では最大 {max(r['減った額'] for r in _rows):,}円。"
+          "**同じ「扶養1人」で、場所によって桁がちがいます。**")
