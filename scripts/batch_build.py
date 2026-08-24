@@ -103,6 +103,7 @@ from __future__ import annotations
 import functools
 import argparse
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -710,6 +711,32 @@ def ensure_toolchain(root: Path = ROOT) -> bool:
     return True
 
 
+# 落ちた出力から「理由の1行」を取り出す形。**綴りを並べません。**
+#
+# 前に同じ所を、落ちる文言の一覧で書こうとした跡が `src/queue_mix.py` にあります
+# （2026-08-23「手で持った名前が腐る」）。文言は増えるので、**例外の名前のほうを拾います** ——
+# `RuntimeError: …` は言語が出す形で、こちらが書き換えても綴りが変わりません。
+_EXC_LINE = re.compile(
+    r"^(?:\S*\.)?([A-Za-z_][A-Za-z0-9_]*(?:Error|Exception|Exit|Interrupt))\s*:\s*(.+)$"
+)
+
+
+def _failure_reason(out: str) -> str:
+    """落ちた本の理由を、**1行**にする（台帳に積んで、次の回が数えられる形）。
+
+    返すのは「例外の名前: 中身の頭」。取れなければ最後の非空行をそのまま返す。
+    **分からないときに「不明」と書かないこと** —— 中身を捨てるのが元の欠陥です。
+    """
+    lines = [ln.rstrip() for ln in (out or "").splitlines() if ln.strip()]
+    if not lines:
+        return "出力が空のまま落ちました（殺された可能性。exit の値を見ること）"
+    for ln in reversed(lines):
+        m = _EXC_LINE.match(ln.strip())
+        if m:
+            return f"{m.group(1)}: {m.group(2)}"[:300]
+    return lines[-1][:300]
+
+
 def build_one(topic: dict, long_form: bool) -> dict:
     """**作るところまで**を1本ぶん。予約はしない（呼ぶ側が直列でやる）。
 
@@ -727,10 +754,26 @@ def build_one(topic: dict, long_form: bool) -> dict:
     cmd = [sys.executable, "-m", "src.pipeline", "--topic", tid, "--dry-run"]
     if not long_form:
         cmd.append("--short")
-    code, _ = run(cmd, BUILD_TIMEOUT, tid)
+    code, out = run(cmd, BUILD_TIMEOUT, tid)
     row["build_sec"] = round((datetime.now(JST) - started).total_seconds(), 1)
     if code != 0:
         row["error"] = f"生成が失敗（exit {code}）"
+        # **落ちた理由を台帳に残す**（2026-08-24 に足した。**症状が理由を隠していました**）。
+        #
+        # ここは `code, _ = run(...)` で、**出力を捨てていました。** 出力は
+        # `run()` が端末へ流しますが、**その端末はその回のコンテナと一緒に消えます。**
+        # 残るのは `data/batch_runs.jsonl` の `生成が失敗（exit 1）` の1行だけで、
+        # **次の回は「何が落ちたか」を1文字も持っていません。**
+        #
+        # 実測の損: 2026-08-24 18:58 の回が **8本すべて exit 1** で落ちました。
+        # 台帳に理由が無いので、この回は**同じ本をもう一度撃って**（約4分）
+        # 理由を取り直すところから始めています。**長尺は直近 15/31 本（48%）しか
+        # 通っておらず**、`config/hypotheses.yaml` の 08-31 の判定
+        # （「長尺は1日4本 作れる」）は、この歩留りにそのまま乗っています。
+        #
+        # **`build_one` は `--dry-run` なので、ここを残すのに副作用はありません。**
+        row["error_reason"] = _failure_reason(out)
+        row["error_tail"] = "\n".join(out.strip().splitlines()[-25:])[-2000:]
         row["built"] = False
         return row
 
@@ -1194,6 +1237,10 @@ def main(argv: list[str] | None = None) -> int:
     for r in results:
         mark = "✓" if r["video_id"] else "✗"
         print(f"  {mark} {r['topic']:<18} {r['video_id'] or '—':<12} {r['error']}")
+        # **理由も、まとめの中に出す。** 上の1行は「exit 1」しか言いません。
+        # 端末はコンテナと一緒に消えるので、**読まれる場所に理由を置くこと**。
+        if r.get("error_reason"):
+            print(f"      ↳ {r['error_reason']}")
     print(f"  予約できたのは {len(ok)} / {len(topics)} 本")
     print(f"  記録: {LOG.relative_to(ROOT)}")
     # **2026-08-21、ここは「独立評価が待ち行列に積まれています」でした。**
