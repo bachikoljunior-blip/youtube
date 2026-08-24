@@ -51,6 +51,7 @@ def _ab_power_verdict():
 from src import alerts as _alerts  # noqa: E402
 from src import inbox as _inbox  # noqa: E402
 from src import reach_split as _reach_split  # noqa: E402
+from src import queue_mix as _queue_mix  # noqa: E402
 from src import rpm_mix as _rpm_mix  # noqa: E402
 from src import density_verdict as _density_verdict  # noqa: E402
 from src.auth import note_day_quota as _note_day_quota  # noqa: E402
@@ -1354,6 +1355,26 @@ def _channel_main(days: int = 7) -> int:
     short_hours: dict[str, set[int]] = {}
     # **公開済みショートの再生（Data API・遅れなし）。** 門の先の掛け算に使う。
     short_views: list[int] = []
+    # **予約の待ち行列の、長尺とショートの数**（2026-08-24 に足した）。
+    #
+    # `eta.py` の `rpm` の天井は **長尺の面（インプレッション 73.0回/日・実測）**
+    # から出ており、同じ出力が「**長尺を出せば面が増え、次の回の測り直しで
+    # この天井は上がります**」と書いています。つまり **待ち行列に長尺が
+    # 何本あるか**が、`rpm` の腕そのものです。
+    #
+    # ところが、それを出す計器がどこにもありませんでした。実測（この回）:
+    # **予約 約300本のうち長尺は6本（2%）**、そして `status.py` は
+    # 「**この数字に入っていない公開 40本／うち長尺 0本**」と印字していました。
+    # `lever_hint` は 8/23 からずっと `rpm` を名指ししていたのに、
+    # **腕の実体が0のまま40本進んでいた**わけです。
+    #
+    # 上の `schedule_gaps` は「**ショート**の空き」しか見ません（露出が
+    # ショートにしか出ていなかった頃の正しい判断で、註もそう書いてあります）。
+    # **その判断は `rpm` が律速になった時点で片肺になりました** ——
+    # ショートの空きは鳴るのに、長尺が0でも誰も鳴らさない。
+    # 消さずに、**もう片方を足します**。
+    sched_long = 0
+    sched_short = 0
 
     print(f"{'ID':13s} {'状態':16s} {'尺':>7s} {'再生':>5s} {'高評価':>4s}  題")
     for v in videos:
@@ -1372,9 +1393,12 @@ def _channel_main(days: int = 7) -> int:
             state = f"予約 {_fmt(publish_at)}"
             scheduled.append(f"{v['id']} {_fmt(publish_at)}（あと{hours:.1f}時間）")
             if _is_short(v):
+                sched_short += 1
                 short_days.add(_fmt(publish_at).split()[0])
                 _jst = datetime.fromisoformat(publish_at.replace("Z", "+00:00")).astimezone(JST)
                 short_hours.setdefault(_jst.strftime("%Y-%m-%d"), set()).add(_jst.hour)
+            else:
+                sched_long += 1
         else:
             state = f"{st['privacyStatus']} 予約なし"
             stranded.append(f"{v['id']} {sn['title'][:34]}")
@@ -1423,6 +1447,14 @@ def _channel_main(days: int = 7) -> int:
             print("    投稿が途切れるのが最大の損失。生成を撃ち直すこと。")
             print("    長尺が入っていても空きとみなす。露出が出ているのはショートだけだから。")
             print("    背後の生成はコンテナ再起動で消えるので、ログが残っていてもプロセスは死んでいる。")
+
+    # **待ち行列の長尺の割合**（2026-08-24）。上の `schedule_gaps` の裏返し。
+    # **`rpm` の腕は、ここの本数そのものです**（`src/queue_mix.py` に理由）。
+    _mix = _queue_mix.lines(sched_long, sched_short)
+    if _mix:
+        print()
+        for _line in _mix:
+            print(_line)
 
     # **意図して伏せたものは警告しない。** 毎回鳴る警告は無視されるようになり、
     # 本当に予約し忘れたときに効かなくなる（2026-08-05）。理由は withheld.yaml に。

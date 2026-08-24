@@ -646,6 +646,20 @@ def _check_assumption_value_shown(script: dict | None) -> list[str]:
     **射程の外**（承知のうえ）: 「1万210円の**210円**」のような、
     前提ではなく**途中の導出**が落ちている形はここでは捕まらない。
     別の壊れ方なので、見たらそのとき足すこと。
+
+    **欄と欄のあいだは必ず区切ること**（2026-08-24 に踏んで直した）。
+    `_visual_texts` は**欄ごと・セルごとに1つずつ**返すので、
+    継ぎ目なしで繋ぐと**隣り合わない字が1語に見えます。** 実物:
+
+        headers = ["前提の項目", "内容"]   rows = [["使った割合", "任意解約"], ...]
+        → 繋ぐと `…前提の項目内容使った割合…`
+        → 語尾 `割合` で拾って **『項目内容使った割合』**（そんな量はどこにも無い）
+        → 画面に「＝ 数字」の形で出るはずもなく、**必ず落ちる**
+
+    この日の長尺 8本のうち **3本がこの検査で止まり**、うち1本がこの継ぎ目でした。
+    **表を出すコマほど当たりやすい** —— セルが多いほど継ぎ目が増えるからです。
+    量の名前が**2つの欄をまたぐことはありません**。だから区切っても
+    本物の指摘は1件も減りません（`tests/test_assumption_value.py` が押さえます）。
     """
     if not script:
         return []
@@ -653,10 +667,12 @@ def _check_assumption_value_shown(script: dict | None) -> list[str]:
     if not segs:
         return []
 
-    screen = "".join(t for seg in segs for t in _visual_texts(seg))
+    # 量の名前に**使われない字**なら何でもよい。改行にしてある。
+    _SEP = "\n"
+    screen = _SEP.join(t for seg in segs for t in _visual_texts(seg))
     named: list[str] = []
     for seg in segs:
-        text = str(seg.get("narration") or "") + "".join(_visual_texts(seg))
+        text = str(seg.get("narration") or "") + _SEP + _SEP.join(_visual_texts(seg))
         if not any(m in text for m in _ASSUMPTION_MARKERS):
             continue
         for m in re.finditer(r"[一-龥ぁ-んァ-ヶー]{1,8}?(?:" + "|".join(_QUANTITY_TAILS) + ")", text):

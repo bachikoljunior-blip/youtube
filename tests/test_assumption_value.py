@@ -186,3 +186,51 @@ def test_投稿前の砦にも入っている():
     src = (Path(__file__).resolve().parent.parent / "src" / "verify.py").read_text(
         encoding="utf-8")
     assert src.count("_check_assumption_value_shown") >= 2
+
+
+# --- 欄の継ぎ目（2026-08-24 に踏んだ） -------------------------------------
+#
+# `_visual_texts` は**欄ごと・セルごと**に返す。継ぎ目なしで繋ぐと、
+# 隣り合わない字が1語に見えて、**存在しない量の名前**が生まれる。
+# 実物（`s-tousan-one-month-172`）: headers `["前提の項目","内容"]` と
+# rows の `"使った割合"` が繋がって **『項目内容使った割合』**。
+# そんな量はどこにも無いので、**画面に出しようがなく必ず落ちる**。
+
+
+def _table_seg(headers, rows, headline="計算の前提"):
+    return {"narration": "前提を置きます。",
+            "visual": {"kind": "table", "headline": headline,
+                       "headers": list(headers), "rows": [list(r) for r in rows]}}
+
+
+def test_quantity_name_does_not_span_two_cells():
+    """**セルをまたいで量の名前を作らない。** 実物そのままの形。"""
+    script = {"segments": [
+        _table_seg(["前提の項目", "内容"],
+                   [["使った割合", "30%"], ["解約後の再加入", "2年は経費不可"]]),
+    ]}
+    problems = verify._check_assumption_value_shown(script)
+    assert not any("項目内容使った割合" in p for p in problems), \
+        "存在しない量の名前（欄の継ぎ目）で落としてはいけない"
+
+
+def test_real_missing_value_still_caught_in_a_table():
+    """**継ぎ目を切っても、本物の欠けは落とす。** 値の無い『使った割合』は残る。"""
+    script = {"segments": [
+        _table_seg(["前提の項目", "内容"],
+                   [["使った割合", "任意解約"], ["解約後の再加入", "2年は経費不可"]]),
+    ]}
+    problems = verify._check_assumption_value_shown(script)
+    assert any("『使った割合』" in p for p in problems), \
+        "画面に数字の無い前提は、区切っても捕まえ続けること"
+
+
+def test_narration_and_visual_do_not_splice():
+    """読み上げの末尾と、画面の先頭も繋がない。"""
+    script = {"segments": [{
+        "narration": "前提として置いたのは次の項目",
+        "visual": {"kind": "table", "headline": "前提", "headers": ["内容率"],
+                   "rows": [["30%"]]},
+    }]}
+    problems = verify._check_assumption_value_shown(script)
+    assert not any("項目内容率" in p for p in problems)
