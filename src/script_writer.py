@@ -433,6 +433,27 @@ def _subject_missing(script, topic_id: str) -> list[str]:
     ]
 
 
+#: **落ちた台本を書き直させるときに添える、直し方の本文**（ショート）。
+#: 指摘そのもの（`short_script_problems` が返す行）は前に付くので、ここは
+#: 「その種類の指摘をどう直すか」だけを書く。
+#: **2026-08-15 22:5x に「計算出力にありません」の段落を足した。** それまで
+#: ここは全部が長さの話で、**数字の指摘に対して読める指示が1つも無かった。**
+#: 落ちた3本は全部この種類で、直し方は「丸めた数字を丸め直す」だった。
+SHORT_FIX_GUIDANCE = (
+    '**合計が長すぎる場合は、分けずに内容を削ってください**（1本＝1つの計算結果。派生は別の動画にする）。\n1セグメントだけが長い場合は、そのセグメントを2つに割る。2つに割り、それぞれ{short_segment_chars}文字以内にする。**割ったほうの visual は別のものにすること**（同じ絵が2枚続くと、これも検査で落ちます）。\n\n**「計算出力にありません」と言われた数字は、丸めた値です。**\nその数字を、上の計算結果に**出ているとおりの桁で**書き直してください（『約30万円』→『287,000円』）。近い値に置き換えるのではなく、**計算結果の行から写すこと。** 写せる行が無いなら、その数字はタイトルにもサムネにも出さず、写せる別の数字に変えてください。\n同じ JSON 形式で全体を出し直してください。'
+).format(short_segment_chars=SHORT_SEGMENT_CHARS)
+
+#: **同じものの長尺版**（2026-08-24 に足した。`long_script_problems` の docstring に経緯）。
+#: **ショートの本文をそのまま使い回さないこと。** あちらの中身は
+#: 「140文字に削る」「セグメントを2つに割る」で、長尺には1行も当てはまりません
+#: （長尺は4分を下回ると落ちるので、削れと言うと逆向きに壊れます）。
+#: 長尺が実際に落ちていた理由は **`_check_not_repeat` だけ**（3/3）なので、
+#: 本文の中心はそこに置く。
+LONG_FIX_GUIDANCE = (
+    '**「図の棒が … と N本 共通」と言われた場合、原因はほぼ1つです ——その chart の棒が、計算結果ではなく『等差の梯子』になっています。**\n実例（2026-08-24 に落ちた3本）: `120万円・240万円・360万円・480万円・600万円`。これは 120万円の1倍・2倍・3倍・4倍・5倍で、**何も計算していません。**\n丸い数の空間は狭いので、**梯子を出す動画は、他の梯子の動画と必ずぶつかります。**テーマが違っても一致するのはそのためで、切り口の問題ではありません。\n直し方: **その棒を、上の計算結果に出ている値そのもので置き換えてください**（例 `120万円・130万800円・140万1600円…` のように、端数の付いた実際の計算列になります）。計算結果の行から写すこと。写せる行が無いなら、その chart は**別の計算結果**に差し替えてください。\n\n**「chart が N 枚しかない」と言われた場合**、文字だけの板を chart に変えるのではなく、**まだ出していない計算結果を1つ足して**図にすること。\n\n**「計算出力にありません」と言われた数字は、丸めた値です。**\nその数字を、上の計算結果に**出ているとおりの桁で**書き直してください（『約30万円』→『287,000円』）。近い値に置き換えるのではなく、**計算結果の行から写すこと。** 写せる行が無いなら、その数字はタイトルにもサムネにも出さず、写せる別の数字に変えてください。\n\n**尺は縮めないこと。** 長尺は4分を下回ると投稿前の検査が止めます。指摘された箇所だけを直し、ナレーションの総量は保つこと。\n同じ JSON 形式で全体を出し直してください。'
+)
+
+
 def short_script_problems(script, topic_id: str = "") -> list[str]:
     """ショートの台本の不備を並べる。空なら合格。
 
@@ -537,6 +558,62 @@ def short_script_problems(script, topic_id: str = "") -> list[str]:
         # ここに置けば `generate()` の作り直しの輪に入り、**同じセッションが
         # 計算出力を見たまま書き直します**（丸めた数字を戻すのはその場が一番安い）。
         problems += _calc_source_problems(topic_id, data)
+    return problems
+
+
+def long_script_problems(script, topic_id: str = "") -> list[str]:
+    """長尺の台本の不備を並べる。空なら合格。**`short_script_problems` の長尺版。**
+
+    **なぜ要ったか**（2026-08-24 の実測）。`generate()` の作り直しの輪は
+    `max_minutes <= 1.5`、つまり**ショートにしか掛かっていませんでした。**
+    そのため長尺は、**直る種類の指摘で1本まるごと捨てになっていました**:
+
+        ショート  08-24 は 10/10 通過   ← 落ちても3回まで書き直せる
+        長尺      0/3・0/8              ← 書き直す口が1つも無い
+
+    落ちていた 3/3 は全部 `verify._check_not_repeat`（過去の図と棒が2本以上共通）で、
+    当たるのは `claude -p` に約250秒使ったあとの `pipeline.py` です。そこには
+    直す口が無い。**「この棒は等差の梯子で、`s-nisa-…` と3本かぶっている。
+    計算結果の桁で書き直せ」と言えば直る指摘**を、捨てるために使っていました。
+
+    **並べる検査は、長尺に対して `verify.run` が実際に当てるものと同じにします。**
+    厳しくしないこと —— ここで余分に落とすと、通る台本が
+    書き直しの回数（3回）を使い切って、**かえって歩留りが下がります。**
+    なので `_check_headline_from_calc` は入れません（`verify` は
+    portrait のときしか当てていない）。
+
+    `_check_slides` は `work/slides` がまだ無いので chart の枚数だけを見ます
+    （画像の重複はレンダリング後にしか見えないので、そこは `verify` に残す）。
+    """
+    from . import config, verify
+
+    data = script.model_dump()
+    work = config.BUILD_DIR / (topic_id or "_no_topic")
+
+    problems = []
+    problems += [p.strip() for p in verify._check_visual_wrap(data, False)]
+    problems += [p.strip() for p in verify._check_count_matches(data)]
+    problems += [p.strip() for p in verify._check_adjacent_repeat(data)]
+    problems += [p.strip() for p in verify._check_formula_shown(data)]
+    problems += [p.strip() for p in verify._check_assumption_value_shown(data)]
+    problems += [p.strip() for p in verify._check_yomi(data)]
+    problems += [p.strip() for p in verify._check_slides(work, data)]
+    if topic_id:
+        # **本命はこれ。** 3/3 がここで死んでいました。
+        problems += [p.strip() for p in verify._check_not_repeat(work, data)]
+        problems += [p.strip() for p in
+                     verify._check_law_citation_verbatim(work, data)]
+        topic = None
+        try:
+            for t in config.load_topics().get("topics") or []:
+                if str(t.get("id")) == topic_id:
+                    topic = t
+                    break
+        except Exception:
+            topic = None
+        if topic is not None:
+            problems += [p.strip() for p in
+                         verify._check_title_from_calc(work, data, topic)]
     return problems
 
 
@@ -1257,17 +1334,30 @@ def generate(channel: dict, topic: dict) -> VideoScript:
     if chars < min_chars:
         print(f"[script] 警告: 目標{min_chars}文字に届きませんでした（{chars}文字）")
 
-    # **ショートは1セグメントが長すぎると落ちる。** 短すぎる側には
-    # 書き足させる仕組みがあるのに、**長すぎる側には無かった**（片方だけ）。
-    # 2026-08-09、指示に「60文字以内」と書いても 86〜93文字で返ってきて、
+    # **落ちた事実を渡して、同じセッションで直させる輪。**
+    #
+    # ショート: 2026-08-09、指示に「60文字以内」と書いても 86〜93文字で返ってきて、
     # 前倒し検査に3回続けて落ちた。**文章での指示は守られない。**
-    # 落ちた事実を渡して、同じセッションで直させる。
-    if max_minutes <= 1.5 and session:
+    # 短すぎる側には書き足させる仕組みがあるのに、長すぎる側には無かった（片方だけ）。
+    #
+    # 長尺: **2026-08-24 まで、この輪は `max_minutes <= 1.5` の中にありました** ——
+    # つまりショート専用で、長尺には直す口が1つもありませんでした。実測は
+    # ショート 10/10・長尺 0/3・0/8 で、落ちた 3/3 は全部
+    # 「過去の図と棒が2本以上共通」。**書き直しで直る種類の指摘**を、
+    # `claude -p` に約250秒使ったあと `pipeline.py` で捨てていました。
+    # **輪はどちらにも要ります。** 違うのは「何を見るか」と「どう直せと言うか」だけ。
+    # `is_short` は上（セグメント数を決めるところ）で1度だけ作っています。
+    # **ここで作り直さないこと** —— あちらのコメントが「下の follow_up と
+    # 同じ条件を使うこと。別々に持つと、片方だけ直したときに静かにずれます」。
+    problems_of = short_script_problems if is_short else long_script_problems
+    kind_label = "ショート" if is_short else "長尺"
+    fix_guidance = SHORT_FIX_GUIDANCE if is_short else LONG_FIX_GUIDANCE
+    if session:
         for attempt in range(3):
-            problems = short_script_problems(script, topic.get('id', ''))
+            problems = problems_of(script, topic.get('id', ''))
             if not problems:
                 break
-            print(f"[script] ショートの条件を満たしていません（{attempt + 1}回目）:")
+            print(f"[script] {kind_label}の条件を満たしていません（{attempt + 1}回目）:")
             for p in problems:
                 print(f"  - {p}")
             script, _ = follow_up(
@@ -1276,26 +1366,12 @@ def generate(channel: dict, topic: dict) -> VideoScript:
                 (
                     "**この台本は投稿前の検査に落ちます。** 直してください:\n"
                     + "\n".join(f"- {p}" for p in problems)
-                    + "\n\n**合計が長すぎる場合は、分けずに内容を削ってください**"
-                    "（1本＝1つの計算結果。派生は別の動画にする）。\n"
-                    "1セグメントだけが長い場合は、そのセグメントを2つに割る。"
-                    f"2つに割り、それぞれ{SHORT_SEGMENT_CHARS}文字以内にする。"
-                    "**割ったほうの visual は別のものにすること**"
-                    "（同じ絵が2枚続くと、これも検査で落ちます）。\n"
-                    # **「計算出力にありません」に、直し方を1行付ける。**
-                    # 上の文はどれも長さの話なので、数字の指摘に対して
-                    # 読める指示が1つも無かった（2026-08-15 22:5x）。
-                    # 落ちた3本は全部この種類で、**丸めた数字を丸め直す**のが直し方。
-                    "\n**「計算出力にありません」と言われた数字は、丸めた値です。**\n"
-                    "その数字を、上の計算結果に**出ているとおりの桁で**書き直してください"
-                    "（『約30万円』→『287,000円』）。近い値に置き換えるのではなく、"
-                    "**計算結果の行から写すこと。** 写せる行が無いなら、"
-                    "その数字はタイトルにもサムネにも出さず、写せる別の数字に変えてください。\n"
-                    "同じ JSON 形式で全体を出し直してください。"
+                    + "\n\n"
+                    + fix_guidance
                 ),
                 model=model,
             )
-        remaining = short_script_problems(script, topic.get('id', ''))
+        remaining = problems_of(script, topic.get('id', ''))
         if remaining:
             print(f"[script] 警告: {len(remaining)}件がまだ残っています。"
                   "パイプラインが合成前に止めます")
