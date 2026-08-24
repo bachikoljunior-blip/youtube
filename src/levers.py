@@ -168,3 +168,113 @@ def report(path: Path, limit: int = 10) -> list[str]:
         out.append("          **この回で選ぶこと。** 何を選ぶかは、上の「早めるには、どれを何倍にするか」から。")
     out.extend(reconcile(rows))
     return out
+
+
+# ---------------------------------------------------------------------------
+# **死んだ腕**（2026-08-24。**印字にしか無かった事実を、選ぶ側へ渡す**）
+#
+# `scripts/eta.py` の軌跡は、腕ごとに「天井（いまの何倍まで伸びうるか）」を
+# 出しています。`_factors_at` は **`cap <= 1.0` の腕を `live` から外す** ——
+# つまり **その腕をどれだけ引いても、到達日は1日も動きません。**
+#
+# 8/24 の実測: `density` の天井は **×1.00**
+# （1日に再生が付く上限 10本 ÷ いま続けられる 12.1本/日 ＝ **すでに 1.2倍 超過**）。
+# それでも同じ日の ship 12件のうち **5件が `--lever density`** でした。
+# **選んだ側が悪いのではありません** —— 天井は `eta.py` を4分走らせた
+# stdout にしか無く、`--ship` が撃つのは4秒の `--reflect` なので、
+# **その数は選ぶ側に一度も届いていませんでした。**
+#
+# ここが渡すのは事実だけです。**止めません**（`none` を禁じないのと同じ理由で、
+# 禁じると宣言が嘘になり、数えたいものが測れなくなる）。
+# **覆る条件**: 天井そのものが未判定の前提に乗っているとき
+# （`density` の ×1.00 は day_cap=10本 に乗っており、それは 13:30 の窓と
+# **まだ切り分けられていません**。08/28 の判定で窓のほうなら、天井は上がります）。
+# だから文言は「引き代なし」ではなく「**いまの実測では引き代なし**」にすること。
+# ---------------------------------------------------------------------------
+
+#: 天井がこれ以下なら「もう伸びない」。`eta.py` の `_factors_at` と同じ境目。
+DEAD_CAP = 1.0
+
+
+def arm_state(eta_row: dict | None) -> dict:
+    """`data/eta.jsonl` の1行から、腕を選ぶのに要るものだけ取り出す。
+
+    返す形（**読めなければ全部 `None`／空**。回は止めないこと）::
+
+        {"hint": "rpm", "binding": "再生数が天井に当たっている",
+         "caps": {"per_video": 2.84, ..., "density": 1.0},
+         "dead": ("density",)}
+
+    `caps` は 2026-08-24 より前の行には**ありません**（積んでいなかった）。
+    無い行では `dead` は空になります —— **「死んだ腕は無い」ではなく
+    「読めない」**なので、呼ぶ側はそう扱うこと。
+    """
+    row = eta_row or {}
+    caps = row.get("arm_caps") or {}
+    caps = {k: v for k, v in caps.items() if isinstance(v, (int, float))}
+    dead = tuple(k for k, v in caps.items() if v <= DEAD_CAP)
+    return {"hint": row.get("lever_hint"), "binding": row.get("binding"),
+            "caps": caps, "dead": dead}
+
+
+def lever_notes(lever: str | None, state: dict) -> list[str]:
+    """宣言した腕について、**その場で言えることだけ**を返す（0〜3行）。
+
+    出すのは2つです。どちらも `eta.py` が既に計算していて、
+    **選ぶ側には届いていなかった**ものです:
+
+        1. その腕の天井が ×1.00 …… 引いても到達日は動かない
+        2. その腕が `lever_hint` と違う …… 縛っている床が別を名指ししている
+
+    **どちらも門ではありません。** 1 は前提が未判定なら覆り、
+    2 は「時差があるので今は別を引く」が正しい回があります
+    （実測: 8/24 は「いちばん早い期日は 08/28」で、それまでどの腕も動かない）。
+    """
+    if not lever or lever == "none":
+        return []
+    out: list[str] = []
+    cap = state.get("caps", {}).get(lever)
+    if cap is not None and cap <= DEAD_CAP:
+        out.append(f"         [!] **`{lever}` は、いまの実測では天井に着いています（×{cap:.2f}）。**"
+                   " 引いても到達日は動きません（`eta.py` の軌跡がこの腕を外して解いています）。")
+        out.append("             動かすなら、まず**天井そのものを上げる**こと"
+                   "（天井が乗っている前提を1件、実データで判定する）。")
+    hint = state.get("hint")
+    if hint and hint in LEVERS and hint != lever:
+        why = state.get("binding") or "（床の名前が読めません）"
+        out.append(f"         [!] 縛っている床は **{why}** で、名指しは **`{hint}`** です。"
+                   f" `{lever}` を選んだ理由を docs/JOURNAL.md に1行書くこと。")
+    return out
+
+
+def latest_arm_state(path: Path) -> dict:
+    """`data/eta.jsonl` を**後ろから読んで**、腕の状態を組む。
+
+    最後の1行では足りません。`--reflect` が積む行（`kind="reflect"`）は
+    **差分の記録**で、`arm_caps` を持ちません —— そして `--ship` が
+    既定で撃つのは `--reflect` なので、**最後の行はたいてい reflect** です。
+    最後だけ読むと、天井は**永久に読めません**（入れた当日に踏みました）。
+
+    だから「天井を持つ最後の行」と「名指しを持つ最後の行」を別々に拾います。
+    どちらも無ければ空（`arm_state({})` と同じ）を返す ——
+    **読めないことと「死んだ腕は無い」は別**です。
+    """
+    caps_row: dict = {}
+    hint_row: dict = {}
+    try:
+        lines = [ln for ln in path.read_text(encoding="utf-8").splitlines() if ln.strip()]
+    except OSError:
+        return arm_state({})
+    for ln in reversed(lines):
+        try:
+            row = json.loads(ln)
+        except json.JSONDecodeError:
+            continue
+        if not caps_row and isinstance(row.get("arm_caps"), dict):
+            caps_row = row
+        if not hint_row and row.get("lever_hint"):
+            hint_row = row
+        if caps_row and hint_row:
+            break
+    return arm_state({**caps_row, "lever_hint": hint_row.get("lever_hint"),
+                      "binding": hint_row.get("binding")})

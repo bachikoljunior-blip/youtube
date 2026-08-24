@@ -3160,6 +3160,18 @@ def _row(m: dict, a: dict, pl: dict, tr: dict | None, sup: dict | None) -> dict:
         row["traj_focus"] = next((r["lever"] for r in tr["choice"] if r["reachable"]), None)
         row["arm_rates"] = {k: a["rate"] for k, a in tr["arms"].items()}
         row["arm_hits"] = f"{tr['band']['k']}/{tr['band']['n']}"
+        # --- **天井と配分も積む**（2026-08-24。**印字にしか無かった数**）---
+        #     `_factors_at` は `cap <= 1.0` の腕を `live` から外します ＝
+        #     **その腕はこの先1日も動きません。** ところがこの事実は
+        #     `data/eta.jsonl` に1つも入っていませんでした。
+        #     結果、**この機械の外にいる誰も「どの腕が死んでいるか」を読めない**:
+        #     `run_marker.py --ship --lever density` は、density の天井が
+        #     ×1.00（引き代ゼロ）でも黙って通ります —— 実測で
+        #     **8/24 の ship 12件のうち5件がそれ**でした。
+        #     天井は `eta.py` を4分走らせた stdout にしか無く、
+        #     `--ship` は4秒の `--reflect` しか撃たないので、届いていません。
+        row["arm_caps"] = {k: a.get("cap") for k, a in tr["arms"].items()}
+        row["arm_share"] = {k: a.get("share") for k, a in tr["arms"].items()}
     row["videos_needed_gate1"] = pl.get("gate1", {}).get("need_videos")
     # --- **天井（面と混ざり方）も積む**（2026-08-20 23:3x。前の周の申し送り②）---
     #     `--reflect` は「出発点の行」と「解き直した行」の差を取ります。

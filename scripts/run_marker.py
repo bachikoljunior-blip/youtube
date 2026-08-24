@@ -323,6 +323,17 @@ def ship(what: str, closes: list[str] | None = None, lever: str | None = None,
     # 何も言わずに進むより速い（外した回は、その腕の効き目を1つ潰したことになる）。
     if moves is not None:
         rec["moves"] = moves
+    # **そのとき出ていた「名指し」と「その腕の天井」も残す**（2026-08-24）。
+    #     残さないと、あとから「名指しに従った回と、外した回で、
+    #     実際に動いた日数が違ったか」を**誰も測れません。**
+    #     いまは外した回が数えられていないので、`lever_hint` は
+    #     **毎回計算されて、誰にも読まれない数**でした。
+    _arm = levers.latest_arm_state(ETA_LOG)
+    if lever and _arm.get("hint"):
+        rec["lever_hint"] = _arm["hint"]
+        rec["lever_followed"] = (lever == _arm["hint"])
+    if lever and lever in _arm.get("caps", {}):
+        rec["lever_cap"] = _arm["caps"][lever]
     target, days, basis = _eta_target()
     if target is not None:
         rec["eta_target"] = target
@@ -355,6 +366,8 @@ def ship(what: str, closes: list[str] | None = None, lever: str | None = None,
         print(f"[marker] 腕: **{lever}** —— {levers.LEVERS[lever]}")
         if lever == "none":
             print("         **この回は予測日を動かしません。** 理由を docs/JOURNAL.md に1行書くこと。")
+        for _ln in levers.lever_notes(lever, _arm):
+            print(_ln)
     if moves is not None:
         print(f"[marker] 予測日の見込み: **{moves:+d}日**"
               + (f"（いまの予測 {rec.get('eta_target')}）" if rec.get("eta_target") else "")

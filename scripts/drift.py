@@ -50,6 +50,9 @@ from collections import Counter
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from src import levers  # noqa: E402
+
 ROOT = Path(__file__).resolve().parent.parent
 RUNS = ROOT / "data" / "runs.jsonl"
 HYPS = ROOT / "config" / "hypotheses.yaml"
@@ -335,6 +338,62 @@ def supply_report(today: str, horizon: int = SUPPLY_HORIZON) -> tuple[str, bool]
     return "\n".join(lines), dry
 
 
+# ---------------------------------------------------------------------------
+# **引き代のない腕を、何回選んだか**（2026-08-24）
+#
+# `eta.py` の軌跡は、天井 ×1.00 の腕を **解く前に外します** ——
+# その腕をどれだけ引いても到達日は1日も動きません。
+# 8/24 の実測で `density` がそれ（1日に再生が付く上限 10本 ÷
+# いま続けられる 12.1本/日 ＝ **すでに 1.2倍 超えて出している**）。
+#
+# ところがこの数は `eta.py` の stdout にしか無く、**選ぶ側に届いていません**。
+# だから同じ日の ship が、名指し（`lever_hint`＝`rpm`）ではなく
+# `density` を繰り返し選んでいました。ここはその比を毎周1行で出します。
+#
+# **門にはしません。** 天井そのものが未判定の前提に乗っているためです
+# （`density` の ×1.00 は day_cap=10本 に乗り、それは 13:30 の窓と
+# **まだ切り分けられていません** —— 08/28 の判定で窓のほうなら天井は上がる）。
+# **覆る条件**: 08/28 の判定が「窓」に出たら、この節の `density` の行は消えます。
+# ---------------------------------------------------------------------------
+
+def dead_arm_report(today: str, window_days: int = WINDOW_DAYS) -> str:
+    """直近の ship が、**引き代のない腕**をどれだけ選んだか。"""
+    state = levers.latest_arm_state(ROOT / "data" / "eta.jsonl")
+    caps, hint = state.get("caps") or {}, state.get("hint")
+    since = (date.fromisoformat(today) - timedelta(days=window_days)).isoformat()
+    runs = [r for r in load_runs(since) if r.get("lever")]
+    out = ["", "=== 引き代のない腕を、何回選んだか ==="]
+    if not caps:
+        out.append("  （`data/eta.jsonl` に `arm_caps` がまだありません。"
+                   "`python scripts/eta.py` を1回走らせると出ます）")
+        return "\n".join(out)
+    if not runs:
+        out.append("  （この窓に `--lever` つきの ship がありません）")
+        return "\n".join(out)
+    tally = Counter(r["lever"] for r in runs)
+    dead = sorted(k for k in tally if k in caps and caps[k] <= levers.DEAD_CAP)
+    n_dead = sum(tally[k] for k in dead)
+    for k, n in tally.most_common():
+        cap = caps.get(k)
+        mark = ""
+        if cap is not None and cap <= levers.DEAD_CAP:
+            mark = f"  ← **天井 ×{cap:.2f}（いまの実測では引き代なし）**"
+        elif cap is not None:
+            mark = f"  （天井 ×{cap:.2f}）"
+        out.append(f"    {k:<10} {n:>3}回{mark}")
+    out.append(f"  → **引き代のない腕を選んだ回: {n_dead}/{len(runs)}**"
+               f"（{n_dead / len(runs) * 100:.0f}%）")
+    if hint:
+        follow = sum(1 for r in runs if r["lever"] == hint)
+        out.append(f"  → 名指し **`{hint}`** に従った回: **{follow}/{len(runs)}**"
+                   f"（{follow / len(runs) * 100:.0f}%）")
+    if n_dead:
+        out.append("      **止めてはいません。** 天井は未判定の前提に乗ることがあり、"
+                   "そのときは引き代のほうが後から出ます。")
+        out.append("      引くなら、**天井が乗っている前提を1件、実データで判定する**こと。")
+    return "\n".join(out)
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -350,6 +409,7 @@ def main(argv: list[str] | None = None) -> int:
     print(text)
     stext, dry = supply_report(today, a.horizon)
     print(stext)
+    print(dead_arm_report(today, a.window))
     return 2 if (a.gate and (drifting or dry)) else 0
 
 
