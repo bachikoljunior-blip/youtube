@@ -58,6 +58,10 @@ WINDOW_DAYS = 7
 STALE_ROUNDS = 20
 KINDS = ("upload", "means", "verdict", "fix")
 
+# **この先 SUPPLY_HORIZON 日に期日が来る、開いている前提の数**を在庫と呼びます。
+# 期限切れ（期日が過ぎて未判定）も**いま閉じられる**ので在庫に数えます。
+SUPPLY_HORIZON = 7
+
 
 def _kind_of(what: str) -> str:
     """ship の1行から種別を読む。**先頭の語だけを見ます。**
@@ -180,6 +184,157 @@ def report(today: str, window_days: int = WINDOW_DAYS) -> tuple[str, bool]:
     return "\n".join(lines), drifting
 
 
+def rounds_per_day(today: str, days: int = WINDOW_DAYS) -> float:
+    """**この輪が1日に何周しているか。** 周＝ `run_marker.py` の印を打ったセッション。
+
+    今日は途中なので数えません（半端な日を混ぜると周速が下振れします）。
+    """
+    if not RUNS.exists():
+        return 0.0
+    t = date.fromisoformat(today)
+    window = {(t - timedelta(days=i)).isoformat() for i in range(1, days + 1)}
+    seen: dict[str, set] = {}
+    for ln in RUNS.read_text(encoding="utf-8").splitlines():
+        if not ln.strip():
+            continue
+        try:
+            r = json.loads(ln)
+        except Exception:
+            continue
+        d = str(r.get("at", ""))[:10]
+        if d in window:
+            seen.setdefault(d, set()).add(r.get("session"))
+    return sum(len(v) for v in seen.values()) / float(days)
+
+
+def closed_per_day(today: str, days: int = WINDOW_DAYS) -> int:
+    """直近 days 日に**実際に閉じた**前提の件数（`closed_on` を数える）。"""
+    rows = _hypotheses()
+    t = date.fromisoformat(today)
+    lo = (t - timedelta(days=days)).isoformat()
+    return sum(1 for h in rows
+               if str(h.get("closed_on") or "") and lo < str(h["closed_on"]) <= today)
+
+
+def _hypotheses() -> list[dict]:
+    try:
+        import yaml
+    except ImportError:
+        return []
+    if not HYPS.exists():
+        return []
+    try:
+        d = yaml.safe_load(HYPS.read_text(encoding="utf-8"))
+    except Exception:
+        return []
+    rows = d if isinstance(d, list) else (d.get("hypotheses") or next(iter(d.values()), []))
+    return [h for h in (rows or []) if isinstance(h, dict)]
+
+
+def closable_within(today: str, horizon: int = SUPPLY_HORIZON) -> list[dict]:
+    """**この先 horizon 日のあいだに閉じられる、開いた前提。**
+
+    期日が過ぎているものも数えます —— **いますぐ閉じられる**ので在庫です。
+    """
+    end = (date.fromisoformat(today) + timedelta(days=horizon)).isoformat()
+    out = []
+    for h in _hypotheses():
+        if any(k in h for k in ("verdict", "closed_on", "outcome")):
+            continue
+        dl = str(h.get("deadline") or h.get("settle_by") or "")
+        if dl and dl <= end:
+            out.append(h)
+    return out
+
+
+def supply_report(today: str, horizon: int = SUPPLY_HORIZON) -> tuple[str, bool]:
+    """**到達日は「何周に1回」動きうるか。** 本文と「在庫が尽きている」かを返す。
+
+    ## なぜ要るのか（2026-08-24・最適化の回）
+
+    `eta.py` は毎回こう印字しています ——
+    **「軌跡の腕が動くのは、前提を1件閉じたときだけ。作る・出す・直すは
+    軌跡の入力に入りません」。** つまり**到達日が動きうる回数の上限は、
+    その期間に閉じられる前提の数**であって、周の数ではありません。
+
+    ところが上の `report()` は **「到達日を動かすと宣言した回 17/341」**と
+    印字していました。**分母は周、分子は宣言で、上限はどこにも出てきません。**
+    実測すると、直近7日は **141周に対して閉じた前提は6件** ——
+    **上限は 6 で、宣言は 17。** 宣言のほうが上限の 2.8倍 あり、
+    **「動かす」と言った回の大半は、裏づけになる前提を持っていませんでした。**
+
+    2か所が別々のことを言っていて、片方しか読まれていない箇所がこれです:
+    **`eta.py` は上限を知っていて、門はそれを一度も計算していなかった。**
+
+    ## 止める条件（1つだけ）
+
+    **在庫 0** —— この先 horizon 日に期日の来る開いた前提が1件も無い。
+    そのときは**どの回が何をしても、その期間に到達日は動きません**。
+    これは働き方の良し悪しではなく、**確実にそうなる**という意味で外れです。
+    直し方は安く、その場でできます: 期日の近い前提を1件立てる（または
+    期日を手前に倒す）。**それがその回の成果です。**
+
+    **薄い（0ではないが少ない）だけでは止めません。** 実験は待ち時間が本体で、
+    在庫3件で1週間回すのは正しい場面があります。**印字はします。**
+    """
+    rate = rounds_per_day(today)
+    ahead = rate * horizon
+    stock = closable_within(today, horizon)
+    closed = closed_per_day(today)
+    rounds_7d = rate * WINDOW_DAYS
+
+    lines = ["", "=== 到達日は「何周に1回」動きうるか ==="]
+    lines.append(
+        "  `eta.py`: **軌跡の腕が動くのは、前提を1件閉じたときだけ**"
+        "（作る・出す・直すは軌跡の入力に入りません）"
+    )
+    if rounds_7d and closed:
+        lines.append(
+            f"  実績（直近{WINDOW_DAYS}日）: 周 **{rounds_7d:.0f}** ／ 閉じた前提 **{closed}件**"
+            f" → **{rounds_7d / closed:.0f}周に1回**"
+        )
+    elif rounds_7d:
+        lines.append(
+            f"  実績（直近{WINDOW_DAYS}日）: 周 **{rounds_7d:.0f}** ／ 閉じた前提 **0件**"
+            " → **1回も動いていません**"
+        )
+    else:
+        lines.append(f"  実績（直近{WINDOW_DAYS}日）: 周が数えられません（印がありません）")
+
+    if stock:
+        dls = sorted(str(h.get("deadline") or h.get("settle_by") or "") for h in stock)
+        ratio = (f"**{ahead / len(stock):.0f}周に1回**" if ahead else "（周速が測れません）")
+        lines.append(
+            f"  見込み（今後{horizon}日）: 見込み周 **{ahead:.0f}** ／ 期日の来る前提"
+            f" **{len(stock)}件** → {ratio}"
+        )
+        lines.append(f"    期日: {' / '.join(dls[:6])}")
+    else:
+        lines.append(
+            f"  見込み（今後{horizon}日）: 期日の来る前提 **0件** →"
+            f" **この{horizon}日は、何をしても到達日は動きません**"
+        )
+
+    dry = not stock
+    lines.append("")
+    if dry:
+        lines.append(
+            f"  [!] **在庫が尽きています。** 開いた前提の期日が、今後{horizon}日に1件もありません。"
+        )
+        lines.append(
+            "      **これは働き方の問題ではありません** —— この期間は、"
+            "どの回が何をしても到達日が動かないことが**確定しています**。"
+        )
+        lines.append(
+            "      **この回の成果は「期日の近い前提を1件立てる」こと**"
+            "（`config/hypotheses.yaml` に claim / deadline / falsified_if / next_if_false）。"
+        )
+        lines.append("      期日を手前に倒せる開いた前提があるなら、それでも構いません。")
+    else:
+        lines.append("      （在庫あり。**薄いだけでは止めません** —— 実験は待ち時間が本体です）")
+    return "\n".join(lines), dry
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -187,11 +342,15 @@ def main(argv: list[str] | None = None) -> int:
                     help="外れているとき exit 2（stop フックから読む用）")
     ap.add_argument("--today", default=None, help="基準日（検査用）")
     ap.add_argument("--window", type=int, default=WINDOW_DAYS)
+    ap.add_argument("--horizon", type=int, default=SUPPLY_HORIZON,
+                    help="在庫を数える先の日数（既定 %d日）" % SUPPLY_HORIZON)
     a = ap.parse_args(argv)
     today = a.today or datetime.now().date().isoformat()
     text, drifting = report(today, a.window)
     print(text)
-    return 2 if (a.gate and drifting) else 0
+    stext, dry = supply_report(today, a.horizon)
+    print(stext)
+    return 2 if (a.gate and (drifting or dry)) else 0
 
 
 if __name__ == "__main__":
