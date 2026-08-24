@@ -90,9 +90,16 @@ CASES = [
         "s-jutaku-3", True,
     ),
     (
+        # **ここは長らく `ideco-vs-nisa` でした**（2026-08-24 に差し替え）。
+        # 実在するテーマIDを「語を持たない例」に使っていたので、
+        # `ideco_deguchi` が `SUBJECT_WORDS` を持った 2026-08-23 に**premise が腐り**、
+        # この行だけが赤のまま2日走っていました。
+        # **`_subject_missing` が見るのは `SUBJECT_WORDS.get(topic["calc"])` が
+        # 空かどうかだけ**なので、`config.load_topics()` に無いIDでも同じ枝を通ります。
+        # 実在しないIDにしておけば、calc を足すたびに腐ることがありません。
         "**語を持っていないテーマは黙って通す**（投稿を止めないため）",
         [_Seg("なにかの数字です。", headline="見出し")],
-        "ideco-vs-nisa", False,
+        "s-calc-no-subject-words", False,
     ),
     (
         "テーマIDが空なら見ない",
