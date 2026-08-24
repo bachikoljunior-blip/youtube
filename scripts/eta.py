@@ -573,7 +573,7 @@ def _fmt_days(days: float) -> str:
     return f"**{math.ceil(days):,}日後（{when.isoformat()}）**"
 
 
-def _long_break_even(a: dict) -> list[dict]:
+def _long_break_even(a: dict, days: float | None = None) -> list[dict]:
     """**門1 が通る日までに門2a も開けるには、長尺1本あたり何回の再生が要るか。**
 
     返すのは形（尺×維持率）ごとの1行で、`views` は「長尺を1日L本足したとき」の
@@ -585,7 +585,15 @@ def _long_break_even(a: dict) -> list[dict]:
     未知の側を解いて出せば、**段2 に入った瞬間に当たり外れが判定できます**
     （M20 の「推測を測れる形にする」と同じ形）。
     """
-    days = a["days_subs_at"].get(PLAN_PUBLISH_PER_DAY, NEVER)
+    # **門1 が通る日は、段1 が解いた日と同じものを使うこと**（2026-08-24）。
+    #     ここは長らく `a["days_subs_at"][PLAN_PUBLISH_PER_DAY]` ＝ **25本/日**
+    #     でした。段1 のほうは 2026-08-20 16:0x にオーナー指示
+    #     （「25は物理的に不可ならそれを予測に使うのはどうなの？」）で
+    #     `solve_gate1()` の実測へ移しています。**段2 だけが取り残されていました。**
+    #     いまは `day_cap` が両方を 10本/日 に丸めるので**同じ数**ですが、
+    #     上限が動いた日に**黙って割れます**（片方だけが動く）。
+    #     呼ぶ側から差せるようにして、`plan()` は `g1["days"]` を渡します。
+    days = a["days_subs_at"].get(PLAN_PUBLISH_PER_DAY, NEVER) if days is None else days
     minutes = a["long_minutes_needed"]
     rows = []
     for label, length_min, retention in LONG_SHAPES:
@@ -596,6 +604,20 @@ def _long_break_even(a: dict) -> list[dict]:
             views[per_day] = (minutes / (slots * per_view)) if slots > 0 and per_view > 0 else float("inf")
         rows.append({"label": label, "min_per_view": per_view, "views": views})
     return rows
+
+
+def _gate2_bar(a: dict, row: dict, per_day: float, days: float) -> float:
+    """**段2 の合格点**（長尺1本あたり何回の再生が要るか）を、任意のLで解く。
+
+    `_long_break_even()` の `views` は筋書き（1・2・4本/日）ぶんしか持ちません。
+    **実測の供給は 1.71本/日 のような端数**なので、同じ式をここで1回だけ書きます。
+    式は1つ ——「要る視聴分 ÷ (L本/日 × 門1までの日数 × 1再生の視聴分)」。
+    """
+    slots = per_day * days
+    per_view = row["min_per_view"]
+    if slots <= 0 or per_view <= 0:
+        return float("inf")
+    return a["long_minutes_needed"] / (slots * per_view)
 
 
 # --- 到達日を「解く」ための道具（2026-08-20 08:0x。**オーナー指示3回目**）---
@@ -1721,6 +1743,97 @@ def supply_state() -> dict | None:
         return None
 
 
+#: 長尺の供給を実測する窓（日）。**丸1日そろった日だけを数えます** ——
+#: 今日は途中なので混ぜると必ず下振れします（`drift.rounds_per_day` と同じ置き方）。
+LONG_SUPPLY_WINDOW_DAYS = 7
+
+#: 長尺の作り置き帳。`scripts/batch_build.py` が1回ごとに1行足します。
+BATCH_RUNS = ROOT / "data" / "batch_runs.jsonl"
+
+
+def long_supply_per_day(path: Path | None = None,
+                        today: date | None = None,
+                        window_days: int = LONG_SUPPLY_WINDOW_DAYS) -> dict:
+    """**長尺を1日に何本、実際に作れているか**（実測。計画値ではありません）。
+
+    ## なぜ要るのか（2026-08-24。**同じ定数が、片方の扉からしか外されていなかった**）
+
+    段2（門2a・長尺4,000時間）の合格点は、`_long_break_even()` が
+
+        1本あたり再生 ＝ 要る視聴分 ÷ (**1日L本** × 門1までの日数 × 1再生の視聴分)
+
+    で解いています。この **L** が `max(LONG_PER_DAY_SCENARIOS)` ＝ **4本/日** の
+    決め打ちでした。**この機械は、長尺を1日4本 作れた日が一度もありません。**
+
+        08/19  1本 試して **0本**      08/22  6本 試して **1本**（5本が生成失敗）
+        08/20  8本 試して  7本         08/23  0本
+        08/21  0本                     08/24  5本 試して  4本
+        → 直近7日: **20本 試して 12本 ＝ 1日 1.71本**（長尺の生成失敗率 **40%**）
+
+    合格点はLに反比例するので、4本/日 と置くと **46回/本**、実測の 1.71本/日 なら
+    **107回/本**。**2.3倍 甘い数字**が出ていました。しかもこの 46回 は、
+    `plan()` が「**この段取りを止めている、まだ測っていない入力は1つ**」と
+    名指ししている当のものです ——「測れ」と言っている的が、2.3倍 ずれていました。
+
+    **これは 2026-08-20 16:0x にオーナーが外した定数と同じ形です**（原文
+    「25は物理的に不可ならそれを予測に使うのはどうなの？」）。あのとき直したのは
+    `solve_gate1()`（段1）だけで、**段2 の側は決め打ちのまま残っていました。**
+
+    ## 「本数はこちらで決められる」は、決めただけでは成り立ちません
+
+    `_long_break_even()` の註は「本数はこちらで決められる／決められないのは
+    1本あたり再生のほう」と書いています。**決められるのは正しい。**
+    ただし**決めた本数を出していない**あいだ、その本数で割った合格点は
+    予測ではなく願望です。だから **計画（4本/日）と実測の低いほう**を使い、
+    2つの数を画面に並べます —— 差が出たら、それは
+    「**長尺の供給を上げる**」という腕がそこにある、という意味です。
+
+    ## 出どころと、外れる条件
+
+    `data/batch_runs.jsonl` の `long: true` の回で、`results[].video_id` が
+    **空でない**ものだけを数えます（`count` は失敗も含むので使わない）。
+    **この帳面に載らない作り方をしたぶんは、下振れとして出ます**
+    （`batch_build.py` を通さず `src.pipeline` を直接叩いた回など）。
+    覆る条件: 長尺を帳面の外で作るようになったら、ここは実測ではなくなります。
+
+    測れないとき（帳面が無い・窓に1行も無い）は `measured: False` を返し、
+    呼ぶ側は計画値へ落ちます。**そのとき画面は「未検証の前提」と断ること。**
+    """
+    p = BATCH_RUNS if path is None else Path(path)
+    t = today or today_jst()
+    # **今日は数えません**（途中の日を混ぜると必ず下振れします）
+    window = {(t - timedelta(days=i)).isoformat() for i in range(1, window_days + 1)}
+    ok = attempts = 0
+    if p.exists():
+        for ln in p.read_text(encoding="utf-8").splitlines():
+            ln = ln.strip()
+            if not ln:
+                continue
+            try:
+                r = json.loads(ln)
+            except Exception:                                  # noqa: BLE001
+                continue
+            if not r.get("long"):
+                continue
+            if str(r.get("at", ""))[:10] not in window:
+                continue
+            for x in (r.get("results") or []):
+                attempts += 1
+                if x.get("video_id"):
+                    ok += 1
+    return {
+        "rate": (ok / window_days) if attempts else 0.0,
+        "built": ok,
+        "attempts": attempts,
+        "window_days": window_days,
+        "fail_rate": ((attempts - ok) / attempts) if attempts else None,
+        # **1本も試していない窓は「0本/日」ではなく「測っていない」です。**
+        #     0 を実測として通すと、段2 の合格点が無限大になり、
+        #     「届きません」だけが残ります（何を固定してそうなったかが消える）。
+        "measured": attempts > 0,
+    }
+
+
 def solve_gate1(a: dict, *, density: float, supply: dict | None,
                 view_cap: float | None = None) -> dict:
     """**門1（登録者1,000人）が通る日を、「出せる本数」から解く。**
@@ -1943,10 +2056,25 @@ def plan(m: dict, a: dict, density: int = PLAN_PUBLISH_PER_DAY,
     # --- 段2: 門2a（長尺4,000時間）。段1と**並行**。合格点は1本あたり再生 ---
     #     いちばん甘い形（尺が長く維持率が高い）を取る。**本数は決められる／
     #     決められないのは1本あたり再生のほう**なので、そちらを解いて出す。
-    rows = _long_break_even(a)
-    per_day_long = max(LONG_PER_DAY_SCENARIOS)
-    best = min(rows, key=lambda r: r["views"][per_day_long])
-    gate2_bar = best["views"][per_day_long]
+    rows = _long_break_even(a, days=g1["days"])
+    # **Lは「計画」ではなく「実測との低いほう」**（2026-08-24。`long_supply_per_day`）。
+    #     ここは `max(LONG_PER_DAY_SCENARIOS)` ＝ 4本/日 の決め打ちでした。
+    #     合格点はLに反比例するので、出していない本数で割ると**そのぶん甘く**出ます
+    #     （実測 1.71本/日 のとき 46回/本 → **107回/本**）。
+    #     そしてこの数は、下の `blocking` が「**この段取りを止めている、
+    #     まだ測っていない入力**」と名指ししている当のものです。
+    long_sup = long_supply_per_day(today=today or today_jst())
+    plan_long = max(LONG_PER_DAY_SCENARIOS)
+    per_day_long = (min(float(plan_long), long_sup["rate"])
+                    if long_sup["measured"] else float(plan_long))
+    # **0本/日 を通さない。** 窓に1本も作れていない回に合格点を無限大にすると、
+    #     画面には「届きません」だけが残り、**何を固定してそうなったかが消えます**
+    #     （`CLAUDE.md`「裸の『届きません』を出さないこと」）。
+    #     いちばん低い筋書き（1本/日）を床にして、**足りない事実は文言で言います。**
+    long_dry = per_day_long < min(LONG_PER_DAY_SCENARIOS)
+    per_day_long = max(per_day_long, float(min(LONG_PER_DAY_SCENARIOS)))
+    best = min(rows, key=lambda r: -r["min_per_view"])
+    gate2_bar = _gate2_bar(a, best, per_day_long, g1["days"])
 
     # --- 段3: 収益化の審査 ---
     d_monetized = d_gate1 + MONETIZE_REVIEW_DAYS if d_gate1 < NEVER else NEVER
@@ -2087,8 +2215,23 @@ def plan(m: dict, a: dict, density: int = PLAN_PUBLISH_PER_DAY,
             #     面の天井を平均から最大へ直した回に、そのまま出ています。
             "note": (_gate2_surface_note(long_views_day_cap, gate2_bar * per_day_long)
                      if long_views_day_cap else None),
-            "bar": (f"長尺を1日{per_day_long}本・{best['label']} で出し、"
+            # **Lの出どころを、合格点と同じ行に書くこと**（`CLAUDE.md`「何を固定
+            #     したせいでそう出たのかを同じ行に並べる」）。計画の 4本/日 と
+            #     実測を並べておかないと、次の回は「46回」を天から降ってきた数として読みます。
+            "bar": (f"長尺を1日{per_day_long:.2f}本・{best['label']} で出し、"
                     f"**1本あたり {gate2_bar:,.0f}回**"
+                    + (f"（**Lは実測**: 直近{long_sup['window_days']}日に "
+                       f"{long_sup['attempts']}本 試して **{long_sup['built']}本** ＝ "
+                       f"1日 {long_sup['rate']:.2f}本"
+                       + (f"・生成失敗 {long_sup['fail_rate'] * 100:.0f}%"
+                          if long_sup["fail_rate"] else "")
+                       + f"。計画は {plan_long}本/日 で、そこでは "
+                       f"{_gate2_bar(a, best, float(plan_long), g1['days']):,.0f}回 に見えます）"
+                       + ("　[!] **実測が筋書きの下限を割っています**（床の1本/日 で置いた）"
+                          if long_dry else "")
+                       if long_sup["measured"] else
+                       f"（**Lは未検証の前提 {plan_long}本/日**。"
+                       "`data/batch_runs.jsonl` に長尺の回がありませんでした）")
                     # **0除算で回を止めないこと。** 1本あたり再生が 0 で返る日
                     # （Analytics が空・窓に公開が1本も無い）に、予測そのものが落ちます。
                     # `plan()` は 2026-08-20 08:0x から `report()` より**先**に走るので、
@@ -2096,6 +2239,10 @@ def plan(m: dict, a: dict, density: int = PLAN_PUBLISH_PER_DAY,
                     + (f"（ショート実測の {gate2_bar / per_video:.2f}倍）"
                        if per_video else "（ショートの実測がまだありません）")),
             "measured": False,
+            # **次の回が、この合格点を作った入力を機械から読めるようにする。**
+            "long_per_day": per_day_long,
+            "long_per_day_plan": float(plan_long),
+            "long_supply": long_sup,
         },
         {
             "no": 3, "lever": "none", "when": d_monetized,
