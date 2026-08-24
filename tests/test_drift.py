@@ -106,3 +106,102 @@ def test_ship以外の印は数えない(tmp_path, monkeypatch):
            _ship("2026-08-23T11:00", "fix: 直した")], OPEN_FUTURE)
     text, _ = drift.report("2026-08-24")
     assert "ship 1件" in text
+
+
+# --- ここから 2026-08-24（最適化の回）に足した「在庫」の検査 ---
+#
+# **見つけたズレ**: `eta.py` は毎回「軌跡の腕が動くのは前提を1件閉じたときだけ」と
+# 印字しています。つまり**到達日が動きうる回数の上限は、その期間に閉じられる
+# 前提の数**です。ところが `report()` は「到達日を動かすと宣言した回 17/341」しか
+# 出しておらず、**上限をどこでも計算していませんでした。**
+# 実測: 直近7日 周141 ／ 閉じた前提7件 → **20周に1回**。宣言17は上限7の2.4倍。
+#
+# **止めるのは在庫0のときだけ。** 薄いだけでは止めません（待ち時間が実験の本体）。
+
+
+def _seed_supply(tmp_path, monkeypatch, runs_rows, hyps_yaml):
+    runs = tmp_path / "runs.jsonl"
+    runs.write_text("\n".join(json.dumps(r, ensure_ascii=False) for r in runs_rows) + "\n",
+                    encoding="utf-8")
+    hyps = tmp_path / "hypotheses.yaml"
+    hyps.write_text(hyps_yaml, encoding="utf-8")
+    monkeypatch.setattr(drift, "RUNS", runs)
+    monkeypatch.setattr(drift, "HYPS", hyps)
+
+
+def _round(at, sess):
+    return {"at": at, "kind": "write", "session": sess, "what": "周を始めた"}
+
+
+NEAR = "- claim: 4日後に閉じられる\n  deadline: '2026-08-28'\n"
+FAR = "- claim: ずっと先\n  deadline: '2026-12-01'\n"
+
+
+def test_期日が全部先なら在庫0で止める(tmp_path, monkeypatch):
+    """**期限が来るまで待つ門は、期日が全部先だと一度も効きません。**
+
+    その1週間（≒140周）は、どの回が何をしても到達日が動かないことが**確定**します。
+    """
+    _seed_supply(tmp_path, monkeypatch,
+                 [_round("2026-08-23T10:00", "s1")], FAR)
+    text, dry = drift.supply_report("2026-08-24")
+    assert dry is True
+    assert "在庫が尽きています" in text
+    assert drift.main(["--gate", "--today", "2026-08-24"]) == 2
+
+
+def test_期日が近い前提が1件でもあれば止めない(tmp_path, monkeypatch):
+    _seed_supply(tmp_path, monkeypatch,
+                 [_round("2026-08-23T10:00", "s1")], NEAR + FAR)
+    text, dry = drift.supply_report("2026-08-24")
+    assert dry is False
+    assert "薄いだけでは止めません" in text
+    assert drift.main(["--gate", "--today", "2026-08-24"]) == 0
+
+
+def test_期限切れの前提は在庫に数える(tmp_path, monkeypatch):
+    """**期日が過ぎた開いた前提は「いますぐ閉じられる」ので在庫です。**
+
+    そこは (1.7) のもう片方の条件（期限切れ＋判定ゼロ）が見ます。
+    在庫0のほうで二重に止めないこと。
+    """
+    _seed_supply(tmp_path, monkeypatch,
+                 [_round("2026-08-23T10:00", "s1")], OPEN_OVERDUE)
+    _, dry = drift.supply_report("2026-08-24")
+    assert dry is False
+
+
+def test_閉じた前提は在庫に数えない(tmp_path, monkeypatch):
+    _seed_supply(tmp_path, monkeypatch,
+                 [_round("2026-08-23T10:00", "s1")],
+                 "- claim: 済んだ\n  deadline: '2026-08-26'\n  verdict: false\n")
+    _, dry = drift.supply_report("2026-08-24")
+    assert dry is True
+
+
+def test_周速はセッションの数で数える(tmp_path, monkeypatch):
+    """周＝印を打ったセッション。**同じ回の複数の印を2周と数えないこと。**
+
+    今日（半端な日）は数えません。
+    """
+    rows = [_round("2026-08-23T10:00", "s1"), _round("2026-08-23T11:00", "s1"),
+            _round("2026-08-23T12:00", "s2"), _round("2026-08-24T09:00", "s3")]
+    _seed_supply(tmp_path, monkeypatch, rows, NEAR)
+    assert drift.rounds_per_day("2026-08-24", days=7) == pytest.approx(2 / 7)
+
+
+def test_閉じた件数はclosed_onの窓で数える(tmp_path, monkeypatch):
+    y = ("- claim: a\n  deadline: '2026-08-20'\n  closed_on: '2026-08-20'\n  verdict: true\n"
+         "- claim: b\n  deadline: '2026-07-01'\n  closed_on: '2026-07-01'\n  verdict: true\n")
+    _seed_supply(tmp_path, monkeypatch, [_round("2026-08-23T10:00", "s1")], y)
+    assert drift.closed_per_day("2026-08-24", days=7) == 1
+
+
+def test_到達日が何周に1回動きうるかを印字する(tmp_path, monkeypatch):
+    """**上限を印字しない限り、宣言が上限を超えていても誰も気づきません。**"""
+    rows = [_round(f"2026-08-2{d}T0{h}:00", f"s{d}{h}")
+            for d in range(1, 4) for h in range(1, 8)]
+    _seed_supply(tmp_path, monkeypatch, rows, NEAR)
+    text, _ = drift.supply_report("2026-08-24")
+    assert "周に1回" in text
+    assert "前提を1件閉じたときだけ" in text
