@@ -349,6 +349,29 @@ def spread_plan(rows: list[dict], *, now: datetime, per_day: int = 10,
     置き先は「その日より後で、まだ上限に届いていない日」の**空いている目盛り**。
     詰まっている所を避けて、**いちばん間の空いた目盛りから**埋めます。
 
+    ## **置き先は「生きる目盛り」の中だけ**（2026-08-24 に直した。それまで0再生へ送っていた）
+
+    この docstring は上で **「14:00 以降は15本中9本が 0、残りも1〜3」**と自分で
+    測っています。それなのに置き先の選び方は `9〜21時` の全部から
+    **「いちばん間の空いた目盛り」**を採っており、空いているのは当然**遅いほう**でした。
+    実測（08/24 16:2x・`--spread --since 2026-08-28` の割り当て22本）:
+
+        09/05 14:30 → **09/20 21:00**      09/05 15:00 → **09/20 18:30**
+        09/06 12:30 → **09/22 16:30**      09/06 13:00 → **09/22 19:30**
+
+    **「その日の11本目だから0再生」を「19:30 だから0再生」に付け替えただけ**で、
+    22本ぶんの移動（1,100単位）が1再生も生みません。
+
+    直し方は、`per_day` と同じ数字から窓を起こすことです。**その日の先頭から
+    `per_day` 本ぶんの目盛り**（既定 09:00〜13:30）だけを置き先にします。
+
+    **なぜこの窓の作り方が、08/28 の判定より先に決められるか。**
+    `config/hypotheses.yaml` は「1日10本まで」か「13:30 JST で閉じる窓」かを
+    まだ切り分けていません。**どちらでも、生きるのは同じ10枠です** ——
+    本数の説明なら先頭10本、窓の説明なら 09:00〜13:30 の10枠。
+    だから判定を待たずに直せます。**判定が「窓」に出たら、変えるのは
+    `hour` を前へ倒すことだけ**で、ここの式はそのまま使えます。
+
     ## `from_day` より前の日は、**上限もかけないし、置き先にもしません**
 
     測定中の日を壊さないためです。`config/hypotheses.yaml` の
@@ -408,6 +431,10 @@ def spread_plan(rows: list[dict], *, now: datetime, per_day: int = 10,
     counts = {d: min(len(v), per_day) for d, v in shorts.items()}
 
     last_day = max(shorts)
+    # **その日の先頭から per_day 本ぶんの目盛り**が「生きる」範囲です（下の節）。
+    # per_day=10・hour=9・step=30 なら 09:00〜13:30。**定数ではありません** ——
+    # `day_cap` の実測が上がれば、窓もいっしょに広がります。
+    live_edge_min = hour * 60 + (per_day - 1) * step_min
     plan: list[dict] = []
     for at, row in sorted(over, key=lambda t: (t[0], t[1].get("id", ""))):
         old_day = at.astimezone(JST).date()
@@ -425,6 +452,9 @@ def spread_plan(rows: list[dict], *, now: datetime, per_day: int = 10,
                     if slot in taken[day]:
                         continue
                     free.append(slot)
+                # **生きる目盛りの中だけ**から選ぶ（下の `live_edge_min`）
+                free = [s for s in free
+                        if s.hour * 60 + s.minute <= live_edge_min]
                 if free:
                     # **いちばん間の空いた目盛り**を選ぶ（同点なら早いほう）
                     def gap(s: datetime) -> float:
