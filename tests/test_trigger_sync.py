@@ -79,7 +79,10 @@ def test_plan_never_mixes_the_body_into_the_child_call() -> None:
     child_call = out.split("## 本文")[0]
     assert "cron_expression" in child_call
     assert "prompt" not in child_call, "子の呼びに本文が混ざっています"
-    assert "親だけ" in out
+    # 2026-08-24 まで `親だけ` を見ていました。**親も撃ってはいけません** ——
+    # 12:10:35Z、親が撃って `Waiting on permission: …update_trigger` で止まり、
+    # 次の発火が届かなくなりました。見るのは「子は撃てません」のほうだけにします。
+    assert "子は撃てません" in out
 
 
 def test_drift_is_detected_field_by_field() -> None:
