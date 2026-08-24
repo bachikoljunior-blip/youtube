@@ -1481,3 +1481,102 @@ def test_場合分けの名前は文の長さに達しない():
             if longest > ss.ENUM_NAME_MAX:
                 over.append(f"{mod_info.name}.{cname}（{longest}字）")
     assert not over, f"場合分けの名前が線を越えた（黙って掃引から消える）: {over}"
+
+
+# --- 「新しい」の中身を割る（2026-08-24）------------------------------------
+#
+# `is_covered` が `False` を返す道は2本ある。**混ぜると在庫が水増しされる。**
+#
+#     (1) 印字されていないと **分かった**      → 本当に新しい
+#     (2) 照合できる点が無い（`None`）        → **分かっていない**
+#
+# 実測 2026-08-24: 新しい 568件のうち **203件（36%）が (2)**。
+# `src/supply.py` はこの「新しい」を在庫に数えるので、割らずに置くと
+# 「あるかどうか分からないもの」を在庫に積んだままになる。
+
+def _report_hit_不変():
+    """`line_of` が読める形の `不変`（`x の幅` は hit の直下・値は `詳しく["値"]`）。"""
+    return {"表": "t", "関数": "f", "見た値": "v", "形": "不変",
+            "動かした引数": "a", "x の幅": (1, 2), "詳しく": {"値": 1.25}}
+
+
+def _report_hit_崖():
+    return {"表": "t", "関数": "g", "見た値": "w", "形": "崖",
+            "動かした引数": "b", "x の幅": (3, 4),
+            "詳しく": {"x の手前": 3, "x の先": 4, "跳ぶ幅": 5, "中央の段差": 1}}
+
+
+def _hit_不変(値, 表="nenkin", 軸="months_before_65"):
+    return {"表": 表, "形": "不変", "動かした引数": 軸,
+            "詳しく": {"動かない値": 値, "x の幅": "6→22"}}
+
+
+def test_小さい値の不変は_本文に出ていても新しいと数えられる():
+    """**この道具の欠陥そのもの。**直す前に、あることを検査で固定する。
+
+    `_LONE_NUMBER_MIN` は 1000。結果が 1.25 のような裸の小さい数だけの候補は、
+    `_point_printed` が `None` を返すので **本文に書いてあっても既出にならない。**
+    実例は `nenkin.birth_gap_ratio … 1.25 のまま` —— 節は
+    「0.5% ÷ 0.4% ＝ 1.25倍で、1か月でも60か月でも同じです」と印字している。
+    """
+    sections = {"繰上げの生年差": "  **減る額の比は、繰り上げた月数によりません** —— "
+                                  "0.5% ÷ 0.4% ＝ 1.25倍で、1か月でも60か月でも同じです。"}
+    hit = _hit_不変(1.25)
+    assert ss.is_covered(hit, sections) is False, "既出になった（欠陥が直っている）"
+    assert ss.undecided(hit, sections) is True, \
+        "**判定できなかった**ほうに数えられていない"
+
+
+def test_印字されていないと分かったものは_判定できなかったに入れない():
+    """(1) と (2) を取り違えないこと。**大きい値なら照合できる。**"""
+    sections = {"どこか": "  止まった値は 4,063,000円です。"}
+    assert ss.undecided(_hit_不変(4_063_000), sections) is False
+    assert ss.is_covered(_hit_不変(4_063_000), sections) is True
+    # 同じ桁で、本文に無い値
+    assert ss.is_covered(_hit_不変(9_999_111), sections) is False
+    assert ss.undecided(_hit_不変(9_999_111), sections) is False, \
+        "印字されていないと**分かった**のに、判定できなかった側へ落ちている"
+
+
+def test_節が読めない回は_判定できなかったに数えない():
+    """節そのものが読めない回は、**この道具の欠陥ではない。**
+
+    `_covered_map` は節を読めなければ空を返し、印を1つも出さない。
+    そこで「全部が判定できなかった」と数えると、**読めなかったことが
+    候補の性質のように見えます。**
+    """
+    assert ss.undecided(_hit_不変(1.25), None) is False
+    assert ss.undecided(_hit_不変(1.25), {}) is False
+
+
+def test_自明な形は一覧の最後に回す():
+    """`片効き`・`不変` は実測 32枠中14枠を占め、そこから書けた節は0件。
+
+    表ごとに6件で切るので、先頭に混ざるぶんだけ書ける候補が沈む
+    （`src/supply.py` の `SWEEP_YIELD` の註が、この修正を予約していた）。
+    """
+    assert set(ss.SHAPE_LAST) == {"片効き", "不変"}
+    hits = [_report_hit_不変(), _report_hit_崖()]
+    lines = ss.report_lines(hits, top=10)
+    body = [ln for ln in lines if "t." in ln]
+    assert len(body) == 2
+    assert "崖" in body[0] and "不変" in body[1], \
+        f"自明な形が先頭に残っている: {body}"
+
+
+def test_判定できなかった件数は一覧の頭に出る():
+    """**黙って在庫に積まないこと。**件数が出ていれば、次の回が最初に見る。
+
+    実物の表（`nenkin`）で組みます。`report_lines` は自分で節を読み直すので、
+    `_UNDECIDED` に手で入れても上書きされます —— **そこを通すのが本体。**
+    `nenkin` の節は「0.5% ÷ 0.4% ＝ 1.25倍」と印字しているのに、
+    `_LONE_NUMBER_MIN` が 1000 なので 1.25 は照合できません。
+    """
+    hit = _report_hit_不変()
+    hit["表"] = "nenkin"
+    lines = ss.report_lines([hit], top=10)
+    head = "\n".join(lines)
+    if "[既]" not in head:        # 節が読めない環境。**その回は何も言えない**
+        pytest.skip("節が読めないので既出の印そのものが出ない")
+    assert "判定できていません" in head
+    assert "[未]" in head

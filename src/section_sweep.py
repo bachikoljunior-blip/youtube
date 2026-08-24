@@ -100,6 +100,39 @@ RATIO_MIN = 2.0
 #: （`status.py` は「載っていない形は末尾に回す」ので、そこだけは出ていました）。
 SHAPES = ("不変", "帯", "頭打ち", "崖", "逆転", "片効き", "倍率")
 
+#: **一覧の中で、いちばん後ろに回す形。**（2026-08-24 に足した）
+#:
+#: `src/supply.py` の `SWEEP_YIELD` の註が、**この修正を名指しで予約していました** ——
+#:
+#: > **覆る条件 / 次に測ること**: `片効き` と `不変` は、いまも他の形と同じ重みで
+#: > 族の先頭に並びます。**この2つを候補から落とすか、順番を最後に回せば、
+#: > 族の先頭6件の歩留りは机上で 5/18 ≒ 0.28 まで上がります**（14件が抜けるので）。
+#:
+#: 実測（2026-08-20 に32枠を目で読んだときの内訳）:
+#:
+#:     片効き 10件 ＋ 不変 4件 = **14/32（44%）**  ← どれも「X は Y に依らない」の自明
+#:     書ける                                        5件
+#:
+#: **一覧は6件で切ります。**だから、この2つが先頭に混ざるぶんだけ、
+#: 書ける候補が `…ほか N件` の中に沈みます。**落とすのではなく後ろへ回す** ——
+#: `不変` は本物の節になったことがあり（「上限は片方の帯にしか効かない」）、
+#: 落とすと形ごと消えます（`table_constants` の註と同じ理由）。
+#:
+#: **もう1つ、この2つだけが持つ性質があります**（2026-08-24 に測って足した）。
+#: `_hit_points` は `不変` に空を返し、`片効き` は x の欄そのものを持ちません。
+#: つまり既出の判定は `_hit_outcome`（結果の値）だけが頼りで、その値が
+#: **1000未満なら `_point_printed` は `None`（判定できない）を返します**
+#: （`_LONE_NUMBER_MIN`）。`is_covered` はそこで `False` ＝「まだ誰も言っていない」を
+#: 返すので、**倍率・年齢・パーセントのような小さい値の候補は、
+#: 本文に書いてあっても必ず「新しい」に数えられます。**
+#: 実例: `nenkin.birth_gap_ratio … 1.25 のまま` は「新しい」と出ますが、
+#: 節は **「0.5% ÷ 0.4% ＝ 1.25倍で、1か月でも60か月でも同じです」**と
+#: 既に印字しています。**この2つは「新しいと分かった」のではなく
+#: 「判定できないので新しいことにした」**ぶんを多く含みます。
+#:
+#: **覆る条件**: この2つから節が2件以上書けたら、後ろへ回すのをやめること。
+SHAPE_LAST = ("片効き", "不変")
+
 #: `詳しく` のうち、**x 軸の値**を持つ欄。行を歩く掃引では、ここだけを
 #: 行番号から見出しに直します。**形を足したら、ここに足すこと。**
 #:
@@ -1779,6 +1812,47 @@ def is_covered(hit: dict, sections: dict[str, str] | None) -> bool:
     return _point_printed(out, lines) is True if out is not None else False
 
 
+def undecided(hit: dict, sections: dict[str, str] | None) -> bool:
+    """その候補は「**新しいと分かった**」のか、「**判定できなかった**」のか。
+
+    `is_covered` が `False` を返す道は2本あります。**混ぜてはいけません。**
+
+        (1) x の点、または結果の値が **印字されていないと分かった** → 本当に新しい
+        (2) x も結果も **照合できなかった**（`_point_printed` が `None`）
+            → `is_covered` は `False` を返すが、**分かったのではない**
+
+    (2) が起きるのは、`_LONE_NUMBER_MIN`（1000）未満の裸の数だけを結果に持つ
+    候補です。**倍率・年齢・パーセントは、ここに全部落ちます。**
+    実例（2026-08-24）: `nenkin.birth_gap_ratio … 1.25 のまま` は「新しい」と
+    出ますが、節は「0.5% ÷ 0.4% ＝ 1.25倍で、1か月でも60か月でも同じです」と
+    **もう印字しています。**
+
+    **実測 2026-08-24**: 新しい 568件のうち **203件（36%）が (2)**
+    （不変 79・頭打ち 48・逆転 34・片効き 24・崖 9・帯 9）。
+    `src/supply.py` はこの「新しい」を在庫に数えるので、**その36%は
+    「あるかどうか分からないもの」を在庫に積んでいます。**
+
+    **消さずに、別に数えて印字する**のがここの答えです ——
+    落とすと在庫が過小に振れ、黙って足すと過大に振れます。
+    **どちらへ倒すかを決めるには、まず幅が見えていること。**
+    """
+    if is_covered(hit, sections):
+        return False
+    if not sections:
+        return False          # 節そのものが読めない回。**この道具の欠陥ではない**
+    lines = [ln for body in sections.values() for ln in str(body).splitlines()]
+    if hit.get("形") == "倍率":
+        # `_ratio_printed` は True/False しか返さないので、判定はいつも付きます。
+        # **ただし比を1つも持たない候補は、照合するものがありません。**
+        d = hit.get("詳しく") or {}
+        return d.get("倍率") is None and not d.get("並び")
+    judged = [_point_printed(p, lines) for p in _hit_points(hit)]
+    if any(v is False for v in judged):
+        return False
+    out = _hit_outcome(hit)
+    return out is None or _point_printed(out, lines) is None
+
+
 def novel_counts(hits: list[dict],
                  all_sections: dict[str, dict[str, str]] | None,
                  ) -> tuple[dict[str, int], dict[str, int]]:
@@ -1856,6 +1930,11 @@ def line_of(hit: dict) -> str:
             f"（{hit['見た値']}）… {tail}")
 
 
+#: 直前の `_covered_map` で「**判定できなかった**」候補の id。
+#: `report_lines` が件数を出すためだけの控えです（`undecided()` の註）。
+_UNDECIDED: set[int] = set()
+
+
 def _covered_map(hits: list[dict]) -> dict[int, bool]:
     """候補ごとに「もう節が言っているか」。**読めなければ空**（印は出さない）。
 
@@ -1907,6 +1986,13 @@ def _covered_map(hits: list[dict]) -> dict[int, bool]:
             out[id(hit)] = is_covered(hit, sections.get(hit.get("表", "?")))
         except Exception:
             pass
+    _UNDECIDED.clear()
+    for hit in hits:
+        try:
+            if undecided(hit, sections.get(hit.get("表", "?"))):
+                _UNDECIDED.add(id(hit))
+        except Exception:
+            pass
     return out
 
 
@@ -1925,6 +2011,7 @@ def report_lines(hits: list[dict], *, top: int = 40) -> list[str]:
     ranked = sorted(by_calc.items(),
                     key=lambda kv: (-order.get(kv[0], 0.0), -len(kv[1]), kv[0]))
     n_new = sum(1 for h in hits if covered.get(id(h)) is False) if covered else None
+    n_und = sum(1 for h in hits if id(h) in _UNDECIDED) if covered else None
     head = f"=== 機械が拾った節の候補 {len(hits)}件 / 表 {len(by_calc)}本 ==="
     if n_new is not None:
         head += f"（うち **まだ節が言っていない {n_new}件**）"
@@ -1964,6 +2051,23 @@ def report_lines(hits: list[dict], *, top: int = 40) -> list[str]:
         lines.append("  **[既]** は、いまの節がもう言っているもの"
                      "（`status.py` の「新しい M件」はこれを除いた数です）。"
                      "**印の無いほうから選ぶこと。**")
+        # **「新しい」の中身を割ること**（2026-08-24。`undecided()` の註）。
+        # ここは長らく「新しい N件」だけを出していました。その N には
+        # **「印字されていないと分かった」ものと「照合できなかった」ものが
+        # 混ざっています。** 後者は結果の値が 1000未満の裸の数だけ持つ候補で、
+        # **本文に書いてあっても必ず「新しい」に落ちます。**
+        # `src/supply.py` はこの N を在庫に数えるので、**割らないと
+        # 「あるかどうか分からないもの」を在庫に積んだままになります。**
+        if n_und:
+            pct = 100.0 * n_und / n_new if n_new else 0.0
+            lines.append(f"  [!] 「新しい {n_new}件」のうち **{n_und}件（{pct:.0f}%）は"
+                         f"判定できていません** —— 印字されていないと分かったのではなく、"
+                         f"**照合できる点が無い**（結果が1000未満の裸の数だけ）。"
+                         f"**在庫として数える前に、ここを引くか、引かない理由を書くこと**"
+                         f"（`src/supply.py` の `SWEEP_YIELD`）。"
+                         f"**[未]** の印が付いています")
+        lines.append("  **[片効き]・[不変] は一覧の最後に回しています**"
+                     "（`SHAPE_LAST`。実測 32枠中14枠を占めて、そこから書けた節は0件）。")
     else:
         # **黙って印を消さないこと**（2026-08-18）。印が無い一覧は
         # 「全部が新しい」に見えます。**読めなかったと言うほうが安全です。**
@@ -1988,10 +2092,18 @@ def report_lines(hits: list[dict], *, top: int = 40) -> list[str]:
         # 並べ替えないと**「新しい」が `…ほか N件` の中に隠れます** ——
         # すぐ上の行で「印の無いほうから選べ」と言いながら、選べる所に
         # 出していませんでした（実測: 新しい8件のうち4件が隠れていた）。
+        # **自明な形を後ろへ回すこと**（2026-08-24。`SHAPE_LAST` の註）。
+        # 表ごとに6件で切るので、`片効き`・`不変` が先頭に混ざるぶんだけ
+        # 書ける候補が `…ほか N件` に沈みます（実測 14/32 ＝ 44%）。
+        # **既出かどうかが先**（既出は何をしても書けない）、その中で自明を後ろへ。
         if covered:
-            group = sorted(group, key=lambda h: covered.get(id(h)) is not False)
+            group = sorted(group, key=lambda h: (covered.get(id(h)) is not False,
+                                                 h.get("形") in SHAPE_LAST))
+        else:
+            group = sorted(group, key=lambda h: h.get("形") in SHAPE_LAST)
         for hit in group[:per_group]:
-            mark = "[既]" if covered.get(id(hit)) else "   "
+            mark = ("[既]" if covered.get(id(hit))
+                    else ("[未]" if id(hit) in _UNDECIDED else "   "))
             lines.append(f"{mark}{line_of(hit)}" if covered else line_of(hit))
             shown += 1
         if len(group) > per_group:

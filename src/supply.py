@@ -104,6 +104,41 @@ CACHE = ROOT / "data" / "supply.jsonl"
 #: 族の先頭6件の歩留りは机上で 5/18 ≒ 0.28 まで上がります**（14件が抜けるので）。
 #: そこを直したら、また同じ32枠で測り直すこと。**「直せば上がる」を
 #: 二度目も信じないこと** —— 上の1回で外れています。
+#:
+#: ## 2026-08-24 —— **順番のほうを直した。値はまだ動かしていません**
+#:
+#: 上の「覆る条件」を実行しました。`src/section_sweep.SHAPE_LAST` を足し、
+#: **`片効き` と `不変` を族ごとの一覧の最後へ回した**（落とさない ——
+#: `不変` は本物の節になったことがあり、落とすと形ごと消えます）。
+#:
+#: **`SWEEP_YIELD` は 0.156 のままです。** 上の註が「直せば上がる」を
+#: 二度目も信じるなと言っているので、**机上の 5/18 ≒ 0.28 を書きません。**
+#: 順番を変えても**全体の歩留りは1件も動きません** —— 動くのは
+#: 「族の先頭6件を人が読んだときの当たり率」だけで、この定数が掛かるのは
+#: 全体の件数のほうです。**次に測り直すときは、同じ32枠を
+#: `python -m src.section_sweep --calc <族>` の新しい先頭6件で読むこと。**
+#:
+#: ## 同じ日に測った、もう1つの幅 —— **「新しい」の36%は分かっていません**
+#:
+#: `section_sweep.undecided()` を足して数えたところ:
+#:
+#:     候補 1,059件 ／ 既出 491 ／ **新しい 568**
+#:     そのうち **203件（36%）は「印字されていないと分かった」のではなく
+#:     「照合できる点が無い」** —— 不変79・頭打ち48・逆転34・片効き24・崖9・帯9
+#:
+#: 理由は `_LONE_NUMBER_MIN`（1000）です。結果が **1000未満の裸の数**しか
+#: 持たない候補（倍率・年齢・パーセント）は `_point_printed` が `None` を返し、
+#: `is_covered` はそこで `False` ＝「まだ誰も言っていない」を返します。
+#: 実例: `nenkin.birth_gap_ratio … 1.25 のまま` は「新しい」と出るのに、
+#: 節は「0.5% ÷ 0.4% ＝ 1.25倍で、1か月でも60か月でも同じです」と印字済み。
+#: **`--calc nenkin` は 16件が16件とも「判定できていない」**でした。
+#:
+#: **この 203件を、ここでは引いていません。** 引かない理由は1つ:
+#: **上の 0.156 は、その 568件を分母にして目で読んだ数**だからです。
+#: 分子（書ける5件）は分母の作り方を知りません —— 分母だけ 363件に縮めると、
+#: **同じ標本から取った比を、別の分母に掛ける**ことになります。
+#: **引くなら、引いた分母で 32枠を読み直してから。**
+#: 一覧には `[未]` の印と件数が出ます（黙って在庫に積まないため）。
 SWEEP_YIELD = 0.156
 
 JST = timezone(timedelta(hours=9))
@@ -153,19 +188,24 @@ def sweep_novel(*, compute: bool = False, max_age_hours: float = 24.0) -> dict:
         point = last_point()
         if point and point.get("sweep_novel") is not None:
             age = _age_hours(point.get("at"))
-            if age is not None and age <= max_age_hours:
-                return {"novel": point["sweep_novel"], "total": point.get("sweep_total"),
-                        "at": point.get("at"), "age_hours": age}
             # 古くても、無いよりは読める。**年齢を添えて返す**（黙って捨てない）
             return {"novel": point["sweep_novel"], "total": point.get("sweep_total"),
+                    "undecided": point.get("sweep_undecided"),
                     "at": point.get("at"), "age_hours": age}
-        return {"novel": None, "total": None, "at": None, "age_hours": None}
+        return {"novel": None, "total": None, "undecided": None,
+                "at": None, "age_hours": None}
 
     from src import section_sweep as ss
 
     hits = ss.sweep_all()
-    total_by, novel_by = ss.novel_counts(hits, _all_sections())
+    sections = _all_sections()
+    total_by, novel_by = ss.novel_counts(hits, sections)
+    # **「新しい」の中身を割ること**（2026-08-24。`SWEEP_YIELD` の註）。
+    # 「印字されていないと分かった」と「照合できる点が無い」は別のものです。
+    und = sum(1 for h in ss.dedupe(hits)
+              if ss.undecided(h, (sections or {}).get(h.get("表", "?"))))
     return {"novel": sum(novel_by.values()), "total": sum(total_by.values()),
+            "undecided": und,
             "at": datetime.now(JST).isoformat(timespec="seconds"), "age_hours": 0.0}
 
 
@@ -245,7 +285,8 @@ def record(row: dict) -> dict:
 
 def supply(density: int, *, stock_n: int | None = None,
            novel: int | None = None, horizon_days: float | None = None,
-           run_minutes: float = 60.0, today: date | None = None) -> dict:
+           run_minutes: float = 60.0, today: date | None = None,
+           undecided: int | None = None) -> dict:
     """**その密度を、何日ぶん supply できるか。**
 
     `density` は 1日に公開する本数（`eta.PLAN_PUBLISH_PER_DAY`）。
@@ -267,6 +308,7 @@ def supply(density: int, *, stock_n: int | None = None,
         "density": density,
         "stock": s,
         "sweep_novel": novel,
+        "sweep_undecided": undecided,
         "supply_total": total,
         "days_covered": days,
         "dry_date": (d0 + timedelta(days=int(days))) if days != float("inf") else None,
@@ -306,6 +348,16 @@ def lines(sp: dict) -> list[str]:
     if sp["sweep_novel"] is not None:
         L.append(f"    まだ節が言っていない候補    {sp['sweep_novel']:>6,} 件"
                  f"  （`src.section_sweep`。**節そのものではない ＝ 上限側**）")
+        # **黙って在庫に積まないこと**（2026-08-24。`SWEEP_YIELD` の註）。
+        # この件数は「印字されていないと分かった」ものと「照合できる点が無い」
+        # ものの合計です。後者は結果が1000未満の裸の数だけを持つ候補で、
+        # **本文に書いてあっても必ずここへ入ります。**
+        und = sp.get("sweep_undecided")
+        if und:
+            pct = 100.0 * und / sp["sweep_novel"] if sp["sweep_novel"] else 0.0
+            L.append(f"      うち **判定できていない**       {und:>6,} 件"
+                     f"  （{pct:.0f}%。照合できる点が無いだけで、"
+                     f"**無いと分かったのではない**）")
     L.append(f"    合わせて                    {sp['supply_total']:>6,} 本"
              f"  ＝ **{sp['days_covered']:.0f}日ぶん**"
              + (f"（{sp['dry_date']} に尽きる）" if sp.get("dry_date") else ""))
@@ -346,13 +398,15 @@ def main() -> None:
     if args.measure or args.record:
         record({"at": sw["at"] if args.measure else None, "stock": s,
                 "topics_total": topics_total(),
-                "sweep_total": sw["total"], "sweep_novel": sw["novel"]})
+                "sweep_total": sw["total"], "sweep_novel": sw["novel"],
+                "sweep_undecided": sw.get("undecided")})
         print(f"[supply] 積みました: {CACHE}")
     elif sw["age_hours"] is not None:
         print(f"[supply] 掃引の点は {sw['age_hours']:.1f}時間前のものです"
               f"（測り直しは --measure）")
 
-    sp = supply(args.density, stock_n=s, novel=sw["novel"], horizon_days=args.horizon,
+    sp = supply(args.density, stock_n=s, novel=sw["novel"],
+                undecided=sw.get("undecided"), horizon_days=args.horizon,
                 run_minutes=args.run_minutes)
     for line in lines(sp):
         print(line)
