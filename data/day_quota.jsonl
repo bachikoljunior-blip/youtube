@@ -2110,6 +2110,11 @@
 {"at": "2026-08-24T03:34:49+00:00", "detail": "scheduled_publish_times"}
 {"at": "2026-08-24T03:34:52+00:00", "detail": "playlistItems.insert"}
 {"at": "2026-08-24T03:34:52+00:00", "detail": "thumbnails.set DyEcaMK5ZU8"}
+{"at": "2026-08-24T04:39:52+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-24T04:42:52+00:00", "detail": "status: Data API 読み"}
+{"at": "2026-08-24T04:43:29+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-24T04:43:31+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-24T04:45:02+00:00", "detail": "channels.list mine"}
 {"at": "2026-08-24T04:18:05+00:00", "detail": "status: Data API 読み"}
 {"at": "2026-08-24T04:18:46+00:00", "detail": "channels.list mine"}
 {"at": "2026-08-24T04:18:48+00:00", "detail": "channels.list mine"}

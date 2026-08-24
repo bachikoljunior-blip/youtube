@@ -119,3 +119,71 @@ def test_rendered_copy_keeps_the_repo_arguments() -> None:
         assert f"## kind: {kind}" in text
     assert text.count('"source_url"') == len(sp.KINDS)
     assert text.count('"source_revision"') == len(sp.KINDS)
+
+
+# --- 役が2つになった（2026-08-24。オーナー提案「並行して、主実行を目標に
+#     最適化し続ける子を動かしたら？」）---------------------------------------
+#
+# **いちばん壊れると危ないのは札です。** 親は札で子の生死を見るので、
+# 最適化の子が `youtube-hourly` を名乗ると、**主実行が立たなくなります**
+# （親は「子が生きている」と読んで見送る）。ここを検査で留めます。
+
+def test_optimizerの札はhourlyと別_混ざると主実行が立たなくなる():
+    import scripts.spawn_prompt as sp
+    assert sp.create_session_args("optimizer")["tags"] == ["youtube-optimizer"]
+    assert sp.create_session_args("hourly")["tags"] == ["youtube-hourly"]
+
+
+def test_optimizerは1周を頼まない():
+    """**主実行と同じことをさせないこと。** 同じなら役を分けた意味がありません。"""
+    import scripts.spawn_prompt as sp
+    body = sp.build("optimizer")
+    assert "1周してください" not in body
+    assert "最適化の回" in body
+
+
+def test_optimizerに規則の一覧を書き足させない():
+    """**この役に渡すのは、目標と実測した事実だけ**（2026-08-24 に書き直した）。
+
+    最初の版は、オーナーが言っていないことを私が足していました ——
+    「触ってよいファイルの一覧」「触らない一覧」「合格の4つの型」「1件」。
+    **オーナーの言葉は「主実行を目標に最適化し続ける役」だけ**で、
+    やり方の指定はどこにもありませんでした。
+
+    **`CLAUDE.md` の冒頭が言っているのと同じ失敗です** ——
+    「自分で規則の一覧を作って聖域と呼び、守ることを仕事にしていた。
+    それは目標から出てきたものではありません」。
+    **診断した歪みを、別の子に対して再生産していました。**
+
+    **この検査が守るのは「規則が無いこと」ではありません**
+    （事実や道具の紹介まで消すと、次の子は何も知らずに始めます）。
+    守るのは**「決めるのは渡された側だ」と明示されていること**です。
+    """
+    import scripts.spawn_prompt as sp
+    body = sp.build("optimizer")
+    assert "それ以外に与件はありません" in body
+    assert "全部あなたが決めます" in body
+    # **禁止の一覧を書き戻したら、ここで落ちること。**
+    for banned in ("何を触らないか", "何を触るか（**ここだけ**）",
+                   "この回の合格", "この役の成果ではありません"):
+        assert banned not in body, f"勝手な規則が戻っています: {banned}"
+
+
+def test_optimizerは資源の衝突を規則ではなく事実として渡す():
+    """**8/15 の予約の取り合いは実測です。禁止に翻訳しないこと。**
+
+    起きたことを渡せば、避けるかどうかは向こうが決められます。
+    「予約するな」と書くと、**避ける価値のある場面をこちらが先に決めてしまう。**
+    """
+    import scripts.spawn_prompt as sp
+    body = sp.build("optimizer")
+    assert "2026-08-15" in body
+    assert "あなたの判断です" in body
+
+
+def test_optimizerもrepoと枝を必ず持つ():
+    """`source_url` の付け忘れで repo の無い子が立った事故は2回（8/17・8/18）。"""
+    import scripts.spawn_prompt as sp
+    a = sp.create_session_args("optimizer")
+    assert a["source_url"].endswith("/youtube")
+    assert a["source_revision"].startswith("claude/")

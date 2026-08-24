@@ -42,7 +42,7 @@ ROOT = Path(__file__).resolve().parent.parent
 TEMPLATE = ROOT / "docs" / "spawn_prompt.md"
 SPEC = ROOT / "docs" / "trigger_spec.json"
 
-KINDS = ("hourly", "owner-full", "owner-record")
+KINDS = ("hourly", "optimizer", "owner-full", "owner-record")
 
 _BLOCK = re.compile(
     r"^## (?:kind|block):\s*(?P<name>[\w-]+)\s*$\n+```text\n(?P<body>.*?)^```",
@@ -125,7 +125,11 @@ def create_session_args(kind: str, root: Path = ROOT, **kw) -> dict:
         "source_url": spec["repo_url"],
         "source_revision": spec["branch"],
         "environment_id": spec["environment_id"],
-        "tags": ["youtube-hourly"],
+        # **役ごとに札を分けます**（2026-08-24。オーナー提案「並行して、主実行を
+        # 目標に最適化し続ける子を動かしたら？」）。**親は札で子の生死を見る**ので、
+        # 分けないと「最適化の子が走っている」を「主実行が走っている」と読み、
+        # **主実行が立たなくなります。**
+        "tags": ["youtube-optimizer" if kind == "optimizer" else "youtube-hourly"],
         "prompt": build(kind, root=root, **kw),
     }
 
