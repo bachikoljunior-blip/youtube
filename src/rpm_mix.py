@@ -374,14 +374,44 @@ def surface_ceiling(mix: dict, reach: dict, level: str = "高",
 
     long_row = (reach or {}).get("長尺") or {}
     reach_days = max(1.0, float((reach or {}).get("days") or 1))
-    # 全期間の1日あたりで取ります（直近7日ではなく）。**天井は上振れ側で読むこと** ——
-    # 面が細っている7日で天井を作ると、「もう届かない」を面のゆらぎで作ってしまいます。
-    imp_day = float(long_row.get("impressions") or 0.0) / reach_days
+    # **天井は「いちばん大きかった1日」で読みます**（2026-08-24 に直した）。
+    #
+    #     ここは 2026-08-20 から **全期間の平均**（`impressions / days`）でした。
+    #     すぐ上の行に「**天井は上振れ側で読むこと**」と書いてあるのに、
+    #     **中身は平均**です —— この輪で繰り返し出ている
+    #     「同じことを2か所が別々に言っていて、片方しか読まれていない」の形です。
+    #
+    #     平均が天井にならない理由は、ゆらぎではなく**分母**でした。実測（08/24）:
+    #     38日の平均 **73.0回/日** ／ 最大の1日 **1,285回**（08/21）。
+    #     最初の20日は長尺の公開前で、**面そのものが存在しない日**です。
+    #     存在しなかった日を分母に数えて「上限」を作っていました。
+    #
+    #     この 73.0 が、そのまま次へ流れていました:
+    #       長尺の面 73.0回/日 → 実効RPM の天井 **¥287** → 段4 の合格点
+    #       **695,675回/月** → 1日の再生の天井 6,650回 では **3.5倍 足りない**
+    #       → **「月20万の到達予測: 出ません」**（軌跡・幅・据え置き線の3本とも）
+    #     つまり **恒久の「届きません」は、面の平均の分母1つから出ていました。**
+    #
+    #     **上限の測り方は、この機械の中で既に決まっています** ——
+    #     `per_video` の天井は「ショート39本の実測の**最大**」です。面だけ平均でした。
+    #
+    #     `per_day_max` を持たない古い呼び（検査・保存済みの点）は、
+    #     **今までどおり平均に落ちます**。どちらで出したかは `imp_day_basis` に残します。
+    imp_mean = float(long_row.get("impressions") or 0.0) / reach_days
+    imp_max = float(long_row.get("per_day_max") or 0.0)
+    if imp_max > 0:
+        imp_day, imp_basis = imp_max, "最大の1日"
+    else:
+        imp_day, imp_basis = imp_mean, "全期間の平均"
 
     now = effective_rpm(views, "低", bands)
     if imp_day <= 0 or now <= 0:
         return {"factor": None, "rpm_now": now, "rpm_max": None,
                 "long_share_max": None, "imp_day": imp_day,
+                "imp_day_basis": imp_basis, "imp_day_mean": imp_mean,
+                "imp_day_max": imp_max or None,
+                "imp_day_max_on": long_row.get("per_day_max_on"),
+                "imp_day_live_days": long_row.get("live_days"),
                 "reach_days": reach_days,
                 "reach_last_day": (reach or {}).get("last_day"),
                 "why": "長尺の面（インプレッション）が測れていません"}
@@ -399,13 +429,24 @@ def surface_ceiling(mix: dict, reach: dict, level: str = "高",
         "long_share_max": share_max,
         "long_share_now": (views.get("長尺", 0.0) / total_views) if total_views else 0.0,
         "imp_day": imp_day,
+        # **どちらで出した天井か**を必ず残す。残さないと、次に読む側が
+        # 「平均の版か最大の版か」を区別できません（`weight` を残しているのと同じ理由）。
+        "imp_day_basis": imp_basis,
+        "imp_day_mean": imp_mean,
+        "imp_day_max": imp_max or None,
+        "imp_day_max_on": long_row.get("per_day_max_on"),
+        "imp_day_live_days": long_row.get("live_days"),
         "reach_days": reach_days,
         "reach_last_day": (reach or {}).get("last_day"),
         "short_views_day": short_views_day,
         # 診断だけ（重みには使いません。使うと長尺を実際より重く数えます）
         "long_minutes_per_view": long_minutes_per_view(mix.get("by_form") or {}),
         "long_minutes_share_now": (mins.get("長尺", 0.0) / sum(mins.values())) if sum(mins.values()) else 0.0,
-        "why": (f"長尺の面 {imp_day:,.1f}回/日 × CTR100% ＝ 再生の {share_max * 100:.1f}% が上限 "
+        "why": (f"長尺の面 {imp_day:,.1f}回/日（{imp_basis}"
+                + (f"・{long_row.get('per_day_max_on')}" if imp_basis == "最大の1日"
+                   and long_row.get("per_day_max_on") else "")
+                + f"／全期間の平均は {imp_mean:,.1f}回/日）"
+                f" × CTR100% ＝ 再生の {share_max * 100:.1f}% が上限 "
                 f"→ 実効RPM ¥{rpm_max:,.0f}"),
     }
 
@@ -450,6 +491,13 @@ def record(mix: dict, ceiling: dict, path: Path | None = None) -> dict:
         "long_share_now": ceiling.get("long_share_now"),
         "long_share_max": ceiling.get("long_share_max"),
         "imp_day": ceiling.get("imp_day"),
+        # **天井をどちらで出したか**（2026-08-24）。平均で出した点と最大で出した点が
+        # 同じ帳面に並ぶので、欄が無いと次の回が比べられません。
+        "imp_day_basis": ceiling.get("imp_day_basis"),
+        "imp_day_mean": ceiling.get("imp_day_mean"),
+        "imp_day_max": ceiling.get("imp_day_max"),
+        "imp_day_max_on": ceiling.get("imp_day_max_on"),
+        "imp_day_live_days": ceiling.get("imp_day_live_days"),
         # **面の側の鮮度**（2026-08-24 に足した）。天井は「Analytics の混ざり方」と
         # 「Reporting の面」の**2つの実測の積**なのに、鮮度の表示は
         # **Analytics の側にしか付いていませんでした。** この回、`data/reach.jsonl`

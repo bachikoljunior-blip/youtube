@@ -1601,6 +1601,26 @@ def trajectory(m: dict, a0: dict, *, supply: dict | None = None,
     return out
 
 
+def _gate2_surface_note(imp_day: float, need_day: float) -> str:
+    """**段2 の面が、合格点に対して足りているか足りていないか。**
+
+    2026-08-24 まで「足りません」しか書けませんでした。面の天井を
+    「全期間の平均」から「最大の1日」へ直した回に 73.0 → 1,285.0 と動き、
+    **合格点 184回/日 を越えたのに「0.1倍 足りません」**と出ています。
+    **倍率が1を割ったら、それは足りているという意味です。**
+    """
+    head = (f"**いまの面（長尺のインプレッション {imp_day:,.1f}回/日・実測）は、"
+            f"CTR 100% でも {imp_day:,.0f}回/日**。合格点は {need_day:,.0f}回/日。")
+    if need_day > imp_day:
+        return (head + f" **{need_day / imp_day:,.1f}倍 足りません**。"
+                "**足りないのはインプレッションで、サムネと題（CTR）では動きません**"
+                "（`src/reach_split.py`）")
+    return (head + f" **面は足りています（{imp_day / need_day:,.1f}倍）** —— "
+            f"ここから先で効くのは CTR のほうです"
+            f"（要る CTR {need_day / imp_day * 100:.1f}%・"
+            f"サムネと題。`src/reach_split.py`）")
+
+
 def _trajectory_blocking(arms: dict, out: dict) -> list[str]:
     """**軌跡が出なかったとき、何が塞いでいるかを名指しする。**
 
@@ -2061,12 +2081,11 @@ def plan(m: dict, a: dict, density: int = PLAN_PUBLISH_PER_DAY,
             # **面（インプレッション）と突き合わせる。**
             #     合格点は「1日 per_day_long 本 × 1本あたり gate2_bar 回」＝ 再生/日 です。
             #     いまの面は CTR 100% でも `long_views_day_cap` 回/日 しか出せません。
-            "note": ((f"**いまの面（長尺のインプレッション {long_views_day_cap:,.1f}回/日・実測）は、"
-                      f"CTR 100% でも {long_views_day_cap:,.0f}回/日**。"
-                      f"合格点の {gate2_bar * per_day_long:,.0f}回/日 に "
-                      f"**{gate2_bar * per_day_long / long_views_day_cap:,.1f}倍 足りません**。"
-                      "**足りないのはインプレッションで、サムネと題（CTR）では動きません**"
-                      "（`src/reach_split.py`）")
+            # **足りる側へ回った日に、文言も回ること**（2026-08-24）。
+            #     ここは「必ず足りない」前提で書かれていて、面が合格点を越えた回に
+            #     **「0.1倍 足りません」**と印字しました（倍率が1を割った ＝ 足りている）。
+            #     面の天井を平均から最大へ直した回に、そのまま出ています。
+            "note": (_gate2_surface_note(long_views_day_cap, gate2_bar * per_day_long)
                      if long_views_day_cap else None),
             "bar": (f"長尺を1日{per_day_long}本・{best['label']} で出し、"
                     f"**1本あたり {gate2_bar:,.0f}回**"

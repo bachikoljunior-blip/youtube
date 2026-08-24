@@ -198,22 +198,51 @@ def summary(rows: list[dict], longs: set[str]) -> dict:
     天井を作っていて、誰にも見えていませんでした）。
     **「ショート」は「長尺でないもの」**です（控えに無い本もこちらへ入れる ——
     分母を大きく見せる側に倒すため。長尺の側を大きく見せない）。
+
+    ## `per_day` と `per_day_max` は、使い先が違います（2026-08-24 に分けた）
+
+        per_day       全期間の平均。**いま出ている量**を言う（表示むき）
+        per_day_max   いちばん大きかった1日。**天井**を言う（`surface_ceiling` むき）
+        per_day_live  中身のある日だけの平均（立ち上がる前の 0日 を分母から外す）
+
+    **平均を天井に使うと、天井が実測より下に出ます。** 実物（08/24）:
+    38日の平均 **73.0回/日** に対し、最大の1日は **1,285回**（08/21・全期間の46%）。
+    最初の20日は**面そのものが存在しない日**（長尺の公開前）で、平均はそれを分母に
+    数えていました。**存在しなかった日を数えて上限を作っていた**ということです。
+    この 73.0 が `rpm` の天井（¥287）→ 段4 の合格点（695,675回/月）→
+    **「月20万には届きません」**まで、まっすぐ効いていました。
     """
     rows = dedupe(rows)
     dates = sorted({str(r.get("date", "")) for r in rows if r.get("date")})
     out: dict[str, dict] = {}
+    per_day_of: dict[str, dict[str, float]] = {}
     for key in ("長尺", "ショート"):
         out[key] = {"impressions": 0.0, "clicks": 0.0, "videos": set()}
+        per_day_of[key] = {d: 0.0 for d in dates}
     for r in rows:
         key = "長尺" if str(r.get("video_id")) in longs else "ショート"
         out[key]["impressions"] += _imp(r)
         out[key]["clicks"] += _clicks(r)
         out[key]["videos"].add(str(r.get("video_id")))
+        d = str(r.get("date", ""))
+        if d in per_day_of[key]:
+            per_day_of[key][d] += _imp(r)
     days = len(dates)
     for key, v in out.items():
         v["videos"] = len(v["videos"])
         v["per_day"] = v["impressions"] / days if days else 0.0
         v["ctr"] = (v["clicks"] / v["impressions"] * 100) if v["impressions"] else 0.0
+        # **いちばん大きかった1日**（2026-08-24 に足した）。`per_day` は平均で、
+        # **天井の分母には使えません** —— 下の docstring 「天井は最大の1日で読む」。
+        series = per_day_of[key]
+        best = max(series.items(), key=lambda kv: kv[1], default=("", 0.0))
+        v["per_day_max"] = best[1]
+        v["per_day_max_on"] = best[0] or None
+        v["per_day_series"] = series
+        # 中身のある日だけの平均（面が立ち上がる前の 0日 を分母から外した数）
+        live = [x for x in series.values() if x > 0]
+        v["per_day_live"] = (sum(live) / len(live)) if live else 0.0
+        v["live_days"] = len(live)
     return {"長尺": out["長尺"], "ショート": out["ショート"], "days": days,
             "dates": dates, "last_day": dates[-1] if dates else None}
 
