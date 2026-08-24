@@ -659,7 +659,8 @@ def hole_days(rows: list[dict], plan: list[dict], now: datetime) -> list[str]:
 
 
 def suggest_max_days(rows: list[dict], now: datetime, args, *,
-                     ceiling: int = 40, start: int | None = None) -> int | None:
+                     ceiling: int = 40, start: int | None = None,
+                     window: tuple[str, str] | None = None) -> int | None:
     """**穴が空かない `--max-days`** を探して返す（見つからなければ None）。
 
     純関数を回すだけなので API は 0単位です。**人に「減らすか増やすか」を
@@ -669,13 +670,20 @@ def suggest_max_days(rows: list[dict], now: datetime, args, *,
     探しはじめる値は `start`（既定は `args.max_days`）。**下げる方向には探しません** ——
     `DEFAULT_MAX_DAYS` は「判定に要る3日＋1日」で決めた**床**で、
     穴を避けるために上げることはあっても、下げる理由は別の話だからです。
+
+    `window` は `compact_plan` へそのまま渡します（既定 `None` ＝ 実物の
+    `measure_window.WINDOWS` を見る）。**検査が渡せるようにするために足しました**
+    （2026-08-24）。ここが渡せないと、検査は**日付を直に書いたまま実物の窓に
+    ぶつかります** —— 実際 `2026-08-27` を窓に入れた回で、この関数を使う検査が
+    3件落ちました（`v2` の置き先が窓の中だったので `None` しか返せなくなった）。
+    **検査の日付を動かして直すと、次に窓が増えた回にまた落ちます。**
     """
     first = args.max_days if start is None else start
     for md in range(first, ceiling + 1):
         try:
             plan = compact_plan(rows, now=now, step_min=args.step_min, hour=args.hour,
                                 until_hour=args.until_hour, max_days=md,
-                                lead_min=args.lead_min)
+                                lead_min=args.lead_min, window=window)
         except SystemExit:
             continue
         if hole_days(rows, plan, now):

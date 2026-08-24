@@ -119,6 +119,10 @@ def test_全部の予約経路が窓の門を通る():
 
 # --- next_publish_at: 2つの道で止め方が違う ------------------------------
 
+def _tomorrow_jst() -> str:
+    return (datetime.now(JST) + timedelta(days=1)).strftime("%Y-%m-%d")
+
+
 def _in_window_day() -> str:
     """窓の中で、いまより先の日を1つ。窓が過ぎていたら検査を飛ばす。"""
     lo, hi = measure_window.WINDOW
@@ -153,9 +157,19 @@ def test_自動で探す道は窓を飛ばす_止まらない(capsys):
     got = uploader.next_publish_at(11, 0, taken=set())
     got_jst = datetime.strptime(got, "%Y-%m-%dT%H:%M:%SZ").replace(
         tzinfo=timezone.utc).astimezone(JST).strftime("%Y-%m-%d")
+    # **これが契約です**: 自動で探した先が窓の中で終わらないこと。
     assert not measure_window.inside(got_jst), got_jst
-    assert got_jst > day
-    assert "飛ばしました" in capsys.readouterr().out
+
+    # **「窓より後」と「飛ばしました」は、窓が明日に来ている回だけの話です**
+    # （2026-08-24 に直した）。ここは長らく無条件で `got_jst > day` を見ていて、
+    # **`_in_window_day()` が「明日」を返すことに寄りかかっていました。**
+    # 窓を 2026-08-27 に1つ足した回に、既定の返り（明日 ＝ 08-25）と
+    # 窓（08-27）を比べて `'2026-08-25' > '2026-08-27'` で落ちています。
+    # **窓は明日に来るとはかぎらない** ので、飛ばしたかどうかで分けること。
+    out = capsys.readouterr().out
+    if measure_window.inside(_tomorrow_jst()):
+        assert got_jst > day
+        assert "飛ばしました" in out
 
 
 def test_門を外せば今までどおり最初の枠が返る():
@@ -191,8 +205,13 @@ def test_reschedule_は_API_を呼ぶ前に止まる(monkeypatch):
 
     monkeypatch.setattr(reschedule.uploader, "_service", 呼ばれたら困る)
     with pytest.raises(SystemExit) as e:
-        reschedule.main(["--move", "abc123", f"{_in_window_day()}T09:00"])
-    assert "M14" in str(e.value)
+        day = _in_window_day()
+        reschedule.main(["--move", "abc123", f"{day}T09:00"])
+    # **札の名前ではなく、日付を見ること**（2026-08-24 に直した）。
+    # ここは `"M14"` を直に見ていたので、**`label` が `day_cap` の窓を
+    # 足した回に落ちました。** 門の約束は「API を呼ぶ前に、どの日で
+    # 止まったかを言う」ことで、**札の綴りはその約束に入っていません。**
+    assert day in str(e.value)
 
 
 def test_過去の日は_窓ではなく過去として断られる():

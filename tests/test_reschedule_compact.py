@@ -219,7 +219,8 @@ def test_もともと空いていた日を道具が名指しして詰め方ま�
     """
     rows = [_row(f"v{i}", f"2026-08-{19 + i * 4:02d}T09:00") for i in range(3)]
     assert reschedule.hole_days(rows, [], NOW), "穴があるのに0件"
-    hint = reschedule.suggest_max_days(rows, NOW, _Args(1), ceiling=20)
+    hint = reschedule.suggest_max_days(rows, NOW, _Args(1), ceiling=20,
+                                       window=EMPTY)
     assert hint is not None, "**詰め方を名指しできていない**"
     plan = reschedule.compact_plan(rows, now=NOW, step_min=60, hour=9, until_hour=11,
                                    max_days=hint, window=EMPTY)
@@ -259,7 +260,8 @@ class _Args:
 def test_穴の空かない詰め方を道具の側が名指しする():
     """**増やすと消える**ので、人の直感（減らす）と逆向きです。"""
     rows = [_row(f"v{i}", f"2026-08-{19 + i:02d}T09:00") for i in range(12)]
-    hint = reschedule.suggest_max_days(rows, NOW, _Args(2), ceiling=20)
+    hint = reschedule.suggest_max_days(rows, NOW, _Args(2), ceiling=20,
+                                       window=EMPTY)
     assert hint is not None
     plan = reschedule.compact_plan(rows, now=NOW, step_min=60, hour=9, until_hour=11,
                                    max_days=hint, window=EMPTY)
@@ -282,8 +284,8 @@ def test_探しはじめる値を指定できる():
     """`start` を渡した回は、**そこから上だけ**を探す（床は下げない）。"""
     rows = [_row(f"v{i}", f"2026-08-{19 + i:02d}T09:00") for i in range(12)]
     args = _Args(2)
-    low = reschedule.suggest_max_days(rows, NOW, args, ceiling=20)
-    high = reschedule.suggest_max_days(rows, NOW, args, ceiling=20, start=low + 1)
+    low = reschedule.suggest_max_days(rows, NOW, args, ceiling=20, window=EMPTY)
+    high = reschedule.suggest_max_days(rows, NOW, args, ceiling=20, window=EMPTY, start=low + 1)
     assert low is not None and high is not None
     assert high > low, "start を上げても同じ値が返るなら、探しはじめが効いていない"
     assert args.max_days == 2, "args を書き換えてはいけない"
