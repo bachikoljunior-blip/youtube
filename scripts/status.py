@@ -474,6 +474,31 @@ def print_hypotheses() -> None:
             for left, claim in sorted(no_next):
                 print(f"    あと{left}日  {claim}")
 
+    # **検出できない反証条件は、判定する前に見つけること**（2026-08-24 に足した）。
+    # 8/08、実測 0.0318% のチャンネルで「3,000再生で0.1%未満なら外れ」と置き、
+    # **効きなしでも38%が0人になる標本**を証拠にして `outcome: falsified` で閉じた。
+    # その1件が `src/script_writer.py` に「登録を頼むな」という規則として3週間残り、
+    # **天井がいちばん高い腕（sub_rate ×3,147）を105回中1回しか選べない状態**にした。
+    # **道具を作っても撃たれなければ同じことが起きる**ので、ここから毎回出す。
+    try:
+        from src import verdict_power as _vp
+        _base, _v, _s = _vp.baseline_rate()
+        _weak = [(r, _vp.power(_base, r["n"], r["gate"], r["target"]))
+                 for r in _vp.scan_hypotheses()]
+        _weak = [(r, q) for r, q in _weak if q["detects_nothing"]]
+        if _weak:
+            print(f"\n  --- [!] **見分けられない反証条件 {len(_weak)}件** ---")
+            print(f"  実測の登録率 **{_base*100:.4f}%**（{_v:,}再生→{_s}人）にかけると、"
+                  "**効きなしと、主張どおりの効きとを、区別できません。**")
+            for r, q in _weak:
+                print(f"    効きなしで生き残る {q['alpha']:.0%} ／ "
+                      f"{r['target']:g}倍あるのに外す {q['beta']:.0%}  "
+                      f"（n={r['n']:,}再生・門 {r['gate_label']}）  {r['claim'][:34]}")
+            print("  **ここで閉じた前提は証拠ではありません。**"
+                  " `python -m src.verdict_power` で必要な再生数が出ます。")
+    except Exception as _e:      # 計器が欠けても status は止めない
+        print(f"\n  [!] 検出力の点検を飛ばしました: {str(_e)[:70]}")
+
     # **判定済みも中身を出す（2026-08-10 に直した）。**
     # ここは長らく件数だけだった。その結果、**もう外れたと分かっている手を
     # 何度でも提案できる状態**になっていた。実際この日の回で、

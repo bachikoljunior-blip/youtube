@@ -56,8 +56,8 @@ ROOT = Path(__file__).resolve().parent.parent
 SCAN = ROOT / "data" / "scan.jsonl"
 HYP = ROOT / "config" / "hypotheses.yaml"
 
-#: 「0人」が効きなしでも普通に起きる、とみなす確率。これを超えたら証拠にならない。
-NOISE_P = 0.10
+#: 取り違え率の上限。**alpha と beta の両方**がこれ以下でないと、門は見分けられない。
+MAX_ERR = 0.20
 
 
 def baseline_rate() -> tuple[float, int, int]:
@@ -75,23 +75,42 @@ def baseline_rate() -> tuple[float, int, int]:
     return (subs / views if views else 0.0), views, subs
 
 
-def power(baseline: float, n: int, threshold: float | None = None) -> dict:
-    """再生 `n` の標本が、実測の率 `baseline` に対して何を見分けられるか。"""
-    lam = n * baseline
-    out = {
-        "n": n,
-        "baseline": baseline,
-        "expected": lam,
-        "p_zero_if_no_effect": math.exp(-lam),
-        # 0人という観測が否定できる率の上限（片側95%）
-        "rules_out_above": 3.0 / n if n else float("inf"),
+def _pois_le(k: int, lam: float) -> float:
+    """P(X <= k) —— ポアソン。"""
+    if k < 0:
+        return 0.0
+    return sum(math.exp(-lam) * lam ** i / math.factorial(i) for i in range(k + 1))
+
+
+def power(baseline: float, n: int, gate: int, target: float = 2.0) -> dict:
+    """門「再生 `n` で `gate` 人以上なら生き残る」の、**両側の取り違え率**。
+
+    `alpha` 効きがまったく無いのに生き残ってしまう率
+    `beta`  `target` 倍の効きがあるのに外してしまう率
+
+    **片側だけ見ないこと。** 2026-08-08 の判定は alpha=0.07 と小さい一方、
+    beta=0.43 —— **主張どおりの効きがあっても、4割は「外れ」と出る門**でした。
+    """
+    lam0, lam1 = n * baseline, n * baseline * target
+    alpha = 1.0 - _pois_le(gate - 1, lam0)
+    beta = _pois_le(gate - 1, lam1)
+    return {
+        "n": n, "gate": gate, "baseline": baseline, "target": target,
+        "expected_null": lam0, "expected_target": lam1,
+        "alpha": alpha, "beta": beta,
+        "p_zero_if_no_effect": math.exp(-lam0),
+        "detects_nothing": alpha > MAX_ERR or beta > MAX_ERR,
     }
-    out["rules_out_multiple"] = (out["rules_out_above"] / baseline) if baseline else float("inf")
-    out["detects_nothing"] = out["p_zero_if_no_effect"] > NOISE_P
-    if threshold is not None:
-        out["threshold"] = threshold
-        out["threshold_multiple"] = threshold / baseline if baseline else float("inf")
-    return out
+
+
+def zero_means(baseline: float, n: int) -> dict:
+    """**0人という観測が、何を言っているか。** 閉じた判定の見直しに使う。"""
+    return {
+        "n": n,
+        "p_zero_if_no_effect": math.exp(-n * baseline),
+        "rules_out_above": (3.0 / n) if n else float("inf"),
+        "rules_out_multiple": ((3.0 / n) / baseline) if (n and baseline) else float("inf"),
+    }
 
 
 def n_for(baseline: float, multiple: float, confidence: float = 0.95) -> int:
@@ -106,6 +125,19 @@ _PCT = re.compile(r"([0-9]*\.?[0-9]+)\s*%")
 #: 「**14人未満**なら外れ」のように、**人数で置いた門**。率より優先して読む
 #: （率で書くと、地の文にある実測の率を拾ってしまう。2026-08-24 に実際に誤読した）。
 _COUNT = re.compile(r"\*{0,2}([0-9]+)\s*人\*{0,2}\s*(?:未満|を下回)")
+#: **その前提が「何倍を狙っている」と言っているか。** 既定は2倍。
+#: 10倍を狙う門を2倍の物差しで測ると、まともな設計を「見分けられない」と誤って挙げる
+#: （2026-08-24、「長尺の登録率は1桁以上高い」で実際に誤判定した）。
+_TARGET = re.compile(r"([0-9]+(?:\.[0-9]+)?)\s*倍")
+_ORDER = re.compile(r"1\s*桁以上|一桁以上")
+
+
+def claimed_target(claim: str, cond: str) -> float:
+    """claim/反証条件が名乗っている倍率。無ければ 2.0。"""
+    if _ORDER.search(claim) or _ORDER.search(cond):
+        return 10.0
+    m = _TARGET.search(claim)
+    return float(m.group(1)) if m else 2.0
 
 
 def scan_hypotheses() -> list[dict]:
@@ -129,16 +161,18 @@ def scan_hypotheses() -> list[dict]:
         n = int(vm.group(1).replace(",", ""))
         cm, pm = _COUNT.search(cond), _PCT.search(cond)
         if cm:                       # 人数で置いた門。**こちらが優先**
-            threshold = int(cm.group(1)) / n
+            gate, label = int(cm.group(1)), f"{cm.group(1)}人未満"
         elif pm:
-            threshold = float(pm.group(1)) / 100.0
+            rate = float(pm.group(1)) / 100.0
+            gate, label = max(1, round(rate * n)), f"{pm.group(1)}%未満"
         else:
             continue
         found.append({
             "claim": claim,
             "n": n,
-            "threshold": threshold,
-            "gate": f"{cm.group(1)}人未満" if cm else f"{pm.group(1)}%未満",
+            "gate": gate,
+            "gate_label": label,
+            "target": claimed_target(claim, cond),
             "outcome": (re.search(r"\n    outcome:\s*(\w+)", block) or [None, ""])[1],
         })
     return found
@@ -149,33 +183,38 @@ def main() -> int:
     print("=== その判定は、何かを見分けられたのか（登録率・ポアソン）===")
     print(f"  実測の登録率: **{base*100:.4f}%**  （{views:,}再生 → {subs}人・`data/scan.jsonl`）")
     print(f"  ＝ 再生 {1/base:,.0f} 回につき1人。**しきい値はこの数にかけること。**")
+    print(f"  門は「効きなしで生き残る率」と「**その前提が名乗った倍率**があるのに外す率」の"
+          f"**両方**が {MAX_ERR:.0%} 以下でないと、見分けられません。")
     print()
 
     rows = scan_hypotheses()
     if not rows:
-        print("  （反証条件が「N再生でX%」の形の前提は見つかりませんでした）")
+        print("  （反証条件が「N再生でX%／N人未満」の形の前提は見つかりませんでした）")
     bad = 0
     for r in rows:
-        p = power(base, r["n"], r["threshold"])
-        flag = "**検出できません**" if p["detects_nothing"] else "見分けられます"
-        print(f"  [{r['outcome'] or '未判定'}] {r['claim'][:46]}")
-        print(f"      n={r['n']:,}再生  期待値 {p['expected']:.2f}人  "
-              f"P(0人|効きなし)={p['p_zero_if_no_effect']:.2f}  → {flag}")
-        print(f"      門 {r.get('gate','')} ＝ 率 {r['threshold']*100:.4f}% は"
-              f"実測の **{p['threshold_multiple']:.1f}倍**（生き残るには、これだけの効きが要る）")
-        if p["detects_nothing"]:
+        q = power(base, r["n"], r["gate"], r["target"])
+        ok = "見分けられます" if not q["detects_nothing"] else "**見分けられません**"
+        print(f"  [{r['outcome'] or '未判定'}] {r['claim'][:44]}")
+        print(f"      n={r['n']:,}再生・門 {r['gate_label']}  "
+              f"（効きなしなら {q['expected_null']:.1f}人／"
+              f"{r['target']:g}倍なら {q['expected_target']:.1f}人）")
+        print(f"      効きなしで生き残る **{q['alpha']:.0%}** ／ "
+              f"{r['target']:g}倍あるのに外す **{q['beta']:.0%}**"
+              f"  → {ok}")
+        if q["detects_nothing"]:
             bad += 1
-            print(f"      **0人はこの標本では証拠になりません。** "
-                  f"1.5倍を棄却するだけでも {n_for(base,1.5):,}再生 要ります")
+            z = zero_means(base, r["n"])
+            print(f"      0人が出ても、否定できるのは実測の **{z['rules_out_multiple']:.1f}倍超**まで。"
+                  f" {r['target']:g}倍を見分けるには **{n_for(base, r['target']):,}再生** 要ります")
         print()
 
-    print("=== 実測の率で引き直した必要数 ===")
+    print("=== 実測の率で引き直した必要数（「0人」で棄却する場合）===")
     for mult in (1.5, 2.0, 3.0):
-        print(f"  {mult}倍を「0人」で棄却する: **{n_for(base, mult):,}再生**")
+        print(f"  {mult}倍: **{n_for(base, mult):,}再生**")
     print()
     if bad:
-        print(f"  → **検出できない反証条件が {bad} 件あります。**"
-              " ここで閉じた前提は、証拠ではありません。**開け直すこと。**")
+        print(f"  → **見分けられない門が {bad} 件あります。**"
+              " ここで閉じた前提は証拠ではありません。**開け直すこと。**")
     return 0
 
 
