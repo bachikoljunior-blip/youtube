@@ -1827,6 +1827,36 @@
     ],
     "video_id": "12V-kHrKzIg"
   },
+  "s-jutaku-kinri-riso-2percent-r7": {
+    "charts": [
+      [
+        "3万3786円",
+        "6万6339円",
+        "9万7594円",
+        "15万5993円"
+      ],
+      [
+        "165万8589円",
+        "335万9714円",
+        "510万664円",
+        "869万592円"
+      ],
+      [
+        "2.0%",
+        "2.0%",
+        "1.9%",
+        "1.8%"
+      ],
+      [
+        "221万8935円",
+        "225万2721円",
+        "228万5274円",
+        "231万6529円",
+        "237万4928円"
+      ]
+    ],
+    "video_id": "CfzcVmRncPg"
+  },
   "s-jutaku-kuriage-1nenme-483460": {
     "charts": [
       [
@@ -2127,6 +2157,21 @@
     ],
     "video_id": "g2fnGkUlTNE"
   },
+  "s-keihi-kaigo-225": {
+    "charts": [
+      [
+        "3,389円",
+        "3,614円"
+      ],
+      [
+        "59,800円",
+        "104,800円",
+        "149,800円",
+        "170,000円"
+      ]
+    ],
+    "video_id": "vOQslc4umu0"
+  },
   "s-keihi-shotoku-1390200-25176": {
     "charts": [
       [
@@ -2408,6 +2453,15 @@
       ]
     ],
     "video_id": "PfBJajph-Cc"
+  },
+  "s-kokuho-7ninme-107380": {
+    "charts": [
+      [
+        "645,120円",
+        "537,740円"
+      ]
+    ],
+    "video_id": "X4pYqtVPHt4"
   },
   "s-kokuho-7wari-43man-koteikei": {
     "charts": [
@@ -2819,6 +2873,30 @@
       ]
     ],
     "video_id": "cJw79xThyTY"
+  },
+  "s-koureikyushoku-nichigaku-6000": {
+    "charts": [
+      [
+        "114万円減",
+        "60万円減"
+      ],
+      [
+        "57万円減",
+        "114万円減"
+      ]
+    ],
+    "video_id": "A91-FSp6liY"
+  },
+  "s-koureikyushoku-riyuu-sa-kieru": {
+    "charts": [
+      [
+        "60日",
+        "60日",
+        "90日",
+        "90日"
+      ]
+    ],
+    "video_id": "HRODZ-R58CI"
   },
   "s-koyouhoken-301001-1en": {
     "charts": [
@@ -3295,6 +3373,28 @@
       ]
     ],
     "video_id": "VdYZ7l8VV6c"
+  },
+  "s-nenkin-motowotoreru-saigo-73sai1": {
+    "charts": [
+      [
+        "0.01%",
+        "0.02%"
+      ],
+      [
+        "0.7%",
+        "0.4%",
+        "0.5%"
+      ],
+      [
+        "100%",
+        "96%",
+        "91%",
+        "87%",
+        "83%",
+        "79%"
+      ]
+    ],
+    "video_id": "cFZd55jRxAw"
   },
   "s-nenkin-nenri-tani-246man-054": {
     "charts": [

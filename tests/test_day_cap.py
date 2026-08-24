@@ -124,3 +124,106 @@ def test_挟まれて死んだ本を上限に数えない(tmp_path):
     assert m["measured"] is True
     assert m["cap"] == 10, f"番号で数えています（cap={m['cap']}）"
     assert m["collapse"] == 11
+
+
+# --- **「本数」と「時刻の窓」の切り分け**（2026-08-24 に足した） ----------------
+#
+# 上の検査は、**同じ生データが2通りに読める**ことを見ていませんでした。実測の
+# 08/20〜08/22 は3日とも 09:00 JST から30分きざみで始めており、生きた本の最後が
+# 13:30・そこから後は全滅です。**09:00 から30分きざみだと 13:30 がちょうど10本目**
+# なので、「1日10本の予算」と「13:30 で閉じる窓」は**まったく同じ数を出します。**
+#
+# 断定して印字すると `eta.py` の `density` の腕がそこで頭打ちになるので、
+# **切り分けられていないことを、道具のほうが言うこと。**
+
+
+def test_09時から始めた日だけでは切り分けられない(tmp_path):
+    """3日とも同じ始まりなら、2つのモデルは同じ数を出す ＝ `confounded`。"""
+    rows = []
+    for d in (20, 21, 22):
+        for i in range(25):
+            rows.append((f"2026-08-{d}T{9 + i // 2:02d}:{(i % 2) * 30:02d}",
+                         f"v{d}_{i}", 800 if i < 10 else 0))
+    p = _log(tmp_path, rows)
+    w = day_cap.window(p)
+    assert w["confounded"] is True
+    assert w["verdict"] is None
+    assert (w["C"], w["T"]) == (10, "13:30")
+    assert "切り分けられていません" in "\n".join(day_cap.lines(p))
+
+
+def test_早い日を1日置けば切り分く(tmp_path):
+    """**05:00 から出した日**を足すと、2つの予測が割れて決まります。
+
+    この検査が落ちるのは、切り分けの実験（2026-08-27 の 05〜08時）が
+    実データに入って**別の答え**を出したときです。そのときは
+    検査ではなく、`density` の腕の天井のほうを引き直すこと。
+    """
+    rows = []
+    for d in (20, 21):
+        for i in range(25):
+            rows.append((f"2026-08-{d}T{9 + i // 2:02d}:{(i % 2) * 30:02d}",
+                         f"v{d}_{i}", 800 if i < 10 else 0))
+    # 05:00 から 30分きざみ 25本。**13:30 までの18本が生きた** ＝ 窓のほう
+    for i in range(25):
+        rows.append((f"2026-08-27T{5 + i // 2:02d}:{(i % 2) * 30:02d}",
+                     f"w{i}", 800 if i < 18 else 0))
+    p = _log(tmp_path, rows)
+    w = day_cap.window(p)
+    assert w["confounded"] is False
+    assert w["verdict"] == "window"
+    assert day_cap.measure(p)["cap"] == 18      # floor が上へ追う
+    assert "時刻の窓のほうが上限" in "\n".join(day_cap.lines(p))
+
+
+def test_早く出しても増えなければ本数のほうだと言う(tmp_path):
+    """05:00 から出しても 10本しか生きなければ、**予算のほう**で決まる。"""
+    rows = []
+    for d in (20, 21):
+        for i in range(25):
+            rows.append((f"2026-08-{d}T{9 + i // 2:02d}:{(i % 2) * 30:02d}",
+                         f"v{d}_{i}", 800 if i < 10 else 0))
+    for i in range(25):
+        rows.append((f"2026-08-27T{5 + i // 2:02d}:{(i % 2) * 30:02d}",
+                     f"w{i}", 800 if i < 10 else 0))
+    w = day_cap.window(_log(tmp_path, rows))
+    assert w["confounded"] is False
+    assert w["verdict"] == "count"
+
+
+def test_どちらのモデルにも乗っていない日で決めない(tmp_path):
+    """**2026-08-04 の実物**（18:29 から7本・生きた2本）で断定しないこと。
+
+    本数なら4・窓なら0 で、実測の2は**両方から等距離**です。ここを通していた
+    ので、この道具はコインの裏表で「窓のほうが上限」と印字していました。
+    """
+    rows = []
+    for d in (20, 21, 22):
+        for i in range(25):
+            rows.append((f"2026-08-{d}T{9 + i // 2:02d}:{(i % 2) * 30:02d}",
+                         f"v{d}_{i}", 800 if i < 10 else 0))
+    for i in range(7):
+        rows.append((f"2026-08-04T{18 + i // 2:02d}:{29 if i % 2 == 0 else 59}",
+                     f"x{i}", 400 if i < 2 else 0))
+    w = day_cap.window(_log(tmp_path, rows))
+    assert w["confounded"] is True
+    assert w["verdict"] is None
+
+
+def test_間隔で死んだ本を窓のせいにしない(tmp_path):
+    """**08/21 の :15/:45**（15分後に出した7本）は、上限ではなく間隔で死んでいる。"""
+    times = ["08:59", "09:15", "09:30", "09:44", "10:00", "10:15", "10:30",
+             "11:00", "11:14", "11:30", "11:45", "11:59", "12:14", "12:30",
+             "12:45", "13:00", "13:30"]
+    alive = {"08:59", "09:30", "10:00", "10:30", "11:00", "11:30", "11:59",
+             "12:30", "13:00", "13:30"}
+    rows = [(f"2026-08-21T{t}", f"v{i}", 800 if t in alive else 0)
+            for i, t in enumerate(times)]
+    rows += [(f"2026-08-21T{14 + i // 2:02d}:{(i % 2) * 30:02d}", f"z{i}", 0)
+             for i in range(15)]
+    p = _log(tmp_path, rows)
+    # 間隔で落としたあと 13:30 までに残るのは10本 ＝ 本数のモデルと同じ数
+    kept = day_cap._spaced([dt.datetime.fromisoformat(f"2026-08-21T{t}")
+                            .replace(tzinfo=day_cap.JST) for t in times])
+    assert len(kept) == 10
+    assert day_cap.window(p)["confounded"] is True
