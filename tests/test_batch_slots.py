@@ -267,7 +267,15 @@ def test_unpinned_still_slides_a_day():
 
 
 def test_step_min_30_packs_twice_per_hour() -> None:
-    got = slots(6, 9, "2026-09-30", [], step_min=30, taken_min=set())
+    """**目盛りそのもの**を見る検査なので、車線は切ってあります（`lanes_n=1`）。
+
+    2026-08-25 に `src/lanes.py` が入り、既定では**自分の車線の分から先に**
+    取ります（同じ回に走っているきょうだいと同じ分を選ばないため）。
+    ここで見たいのは「1時間に2本置けるか」という目盛りの話で、
+    **1回ぶんの並びではありません。** 車線ごしの並びは
+    `test_lanes_*` のほうで検査しています。
+    """
+    got = slots(6, 9, "2026-09-30", [], step_min=30, taken_min=set(), lanes_n=1)
     assert got == [
         "2026-09-30@9:00", "2026-09-30@9:30",
         "2026-09-30@10:00", "2026-09-30@10:30",
@@ -285,7 +293,7 @@ def test_step_min_60_is_unchanged() -> None:
 def test_step_min_skips_taken_minutes() -> None:
     """**埋まりは分で数える。** 9:00 が埋まっていても 9:30 は空きです。"""
     got = slots(4, 9, "2026-09-30", [], step_min=30,
-                taken_min={9 * 60, 10 * 60 + 30})
+                taken_min={9 * 60, 10 * 60 + 30}, lanes_n=1)
     assert got == [
         "2026-09-30@9:30", "2026-09-30@10:00",
         "2026-09-30@11:00", "2026-09-30@11:30",

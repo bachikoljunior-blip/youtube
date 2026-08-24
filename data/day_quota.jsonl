@@ -2173,3 +2173,14 @@
 {"at": "2026-08-24T21:47:21+00:00", "detail": "channels.list mine"}
 {"at": "2026-08-24T21:47:22+00:00", "detail": "channels.list mine"}
 {"at": "2026-08-24T21:48:43+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-24T23:05:53+00:00", "detail": "status: Data API 読み"}
+{"at": "2026-08-24T23:06:20+00:00", "detail": "status: Data API 読み"}
+{"at": "2026-08-24T23:06:55+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-24T23:06:56+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-24T23:08:08+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-24T23:16:51+00:00", "detail": "playlistItems.list uploads"}
+{"at": "2026-08-24T23:16:51+00:00", "detail": "status: Data API 読み"}
+{"at": "2026-08-24T23:17:24+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-24T23:17:26+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-24T23:18:44+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-24T23:22:04+00:00", "detail": "channels.list mine"}
