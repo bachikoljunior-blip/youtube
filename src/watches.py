@@ -159,6 +159,27 @@ def _uploaded() -> list[dict]:
     return out
 
 
+def _uploaded_ats() -> dict[str, datetime]:
+    """動画ID → **投稿した時刻**（`uploaded_at`）。
+
+    **公開日ではありません。** 台本の作りを変えたとき、
+    予約ずみの在庫は**古い作りのまま先の日付で公開される**ので、
+    公開日で切ると新旧が混ざります（2026-08-24 に登録の依頼を入れたとき、
+    在庫が 09/24 まで埋まっていて実際にそうなった）。
+    **作りの変更を測る窓は、投稿時刻で切ること。**
+    """
+    out: dict[str, datetime] = {}
+    for r in _uploaded():
+        at, vid = r.get("uploaded_at"), r.get("video_id")
+        if not at or not vid:
+            continue
+        try:
+            out[vid] = datetime.fromisoformat(str(at).replace("Z", "+00:00"))
+        except ValueError:
+            continue
+    return out
+
+
 def _publish_dates() -> dict[str, date]:
     """動画ID → 公開日（JST）。**予約ぶんも入ります**（`at` は予約時刻）。
 
@@ -249,6 +270,12 @@ def _k_scan_sum(p: dict) -> Gauge:
     dates = _publish_dates()
     metric = p.get("metric", "views")
     since = _day(p["published_since"]) if p.get("published_since") else None
+    # **投稿時刻で切る窓**（台本の作りを変えたときは、こちらでないと在庫が混ざる）
+    up_since = None
+    if p.get("uploaded_since"):
+        up_since = datetime.fromisoformat(
+            str(p["uploaded_since"]).replace("Z", "+00:00"))
+    ups = _uploaded_ats() if up_since else {}
     total, n = 0.0, 0
     for vid, v in scan.items():
         length = v.get("尺") or 0
@@ -257,6 +284,8 @@ def _k_scan_sum(p: dict) -> Gauge:
         if p.get("max_length") and length > p["max_length"]:
             continue
         if since and (vid not in dates or dates[vid] < since):
+            continue
+        if up_since and (vid not in ups or ups[vid] < up_since):
             continue
         total += float(v.get(metric, 0) or 0)
         n += 1
