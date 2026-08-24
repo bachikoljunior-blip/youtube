@@ -41768,3 +41768,34 @@ merge のあと「どちらが `videos.update` を通った側か」を行から
 **順番はこうしました**: push → 後継を立てる → 記録 → 自分を畳む。
 **固着した子は、そのまま残します。** 規則が「空」として数えるので害はありません
 （オーナーが気づいたら畳めますが、**気づかなくても回ります**）。
+
+### さらに追記 —— **コンテナが立て直ると、枝から外れます（detached HEAD）**
+
+**この回の途中でコンテナが一度落ちて、立ち上がり直しました。**
+作業も commit も残っていましたが、**枝から外れた状態（detached HEAD）**でした。
+
+    git branch --show-current   → （空）
+    git status                  → HEAD detached from refs/heads/claude/youtube-...
+
+**commit は積めるので、気づかずに進めます。** 気づくのは push のときで、
+しかもメッセージが紛らわしい:
+
+    error: failed to push some refs
+    hint: Updates were rejected because a pushed branch tip is **behind** its remote
+
+**「behind」と言われますが、実際は 4 commit ぶん ahead でした。**
+枝の ref が古い所を指したままなので、そう見えるだけです。
+**ここで `git pull` を素直にやると、面倒なことになります。**
+
+直し方（**この順で確かめること**）:
+
+    git merge-base --is-ancestor origin/<枝> HEAD   ← 0 なら早送りで安全
+    git checkout -B <枝> HEAD
+    git push -u origin <枝>
+
+**先に `--is-ancestor` を撃つこと。** 0 が返るなら、相手の作業は自分の履歴に
+入っているので `-B` で潰しても何も消えません。**返らないうちに `-B` を撃たないこと**
+——そのときは本当に相手の作業を捨てます。
+
+**覆る条件**: コンテナの立ち上げが枝を保つようになったら、この節は要らなくなります。
+**確かめ方は `git branch --show-current` が空でないこと** —— 回の最初に撃てば足ります。
