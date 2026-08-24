@@ -119,3 +119,51 @@ def test_rendered_copy_keeps_the_repo_arguments() -> None:
         assert f"## kind: {kind}" in text
     assert text.count('"source_url"') == len(sp.KINDS)
     assert text.count('"source_revision"') == len(sp.KINDS)
+
+
+# --- 役が2つになった（2026-08-24。オーナー提案「並行して、主実行を目標に
+#     最適化し続ける子を動かしたら？」）---------------------------------------
+#
+# **いちばん壊れると危ないのは札です。** 親は札で子の生死を見るので、
+# 最適化の子が `youtube-hourly` を名乗ると、**主実行が立たなくなります**
+# （親は「子が生きている」と読んで見送る）。ここを検査で留めます。
+
+def test_optimizerの札はhourlyと別_混ざると主実行が立たなくなる():
+    import scripts.spawn_prompt as sp
+    assert sp.create_session_args("optimizer")["tags"] == ["youtube-optimizer"]
+    assert sp.create_session_args("hourly")["tags"] == ["youtube-hourly"]
+
+
+def test_optimizerは1周を頼まない():
+    """**主実行と同じことをさせないこと。** 同じなら役を分けた意味がありません。"""
+    import scripts.spawn_prompt as sp
+    body = sp.build("optimizer")
+    assert "1周してください" not in body
+    assert "最適化の回" in body
+
+
+def test_optimizerは生成と予約を禁じている():
+    """**役を分けた理由そのもの**（8/15 に2人が同じ日の予約を取り合った）。"""
+    import scripts.spawn_prompt as sp
+    body = sp.build("optimizer")
+    for word in ("動画を作らない", "予約しない", "src/calc/"):
+        assert word in body, word
+
+
+def test_optimizerはfixを成果と呼ばせない():
+    """**この役の合格は「決め方が変わったこと」**で、道具を直すことではありません。
+
+    ここが緩むと、最適化の子も `fix` 工場になり、
+    **診断した歪みをそのまま再生産します。**
+    """
+    import scripts.spawn_prompt as sp
+    body = sp.build("optimizer")
+    assert "この役の成果ではありません" in body
+
+
+def test_optimizerもrepoと枝を必ず持つ():
+    """`source_url` の付け忘れで repo の無い子が立った事故は2回（8/17・8/18）。"""
+    import scripts.spawn_prompt as sp
+    a = sp.create_session_args("optimizer")
+    assert a["source_url"].endswith("/youtube")
+    assert a["source_revision"].startswith("claude/")
