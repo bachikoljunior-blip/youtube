@@ -105,6 +105,7 @@ hypotheses:
   - claim: 長尺の生成が落ちる主因は「過去の図と重なっています」の門で、公開が増えるほど落ちる率が上がる
     deadline: '2026-08-27'
     lever: rpm
+    watch: 長尺の失敗の理由-6本      # 満ちたかは `src/watches.py` が毎周見ています
     falsified_if: |
       2026-08-27 に、`data/batch_runs.jsonl` の **`error_reason` が入っている**
       長尺（`long: true`）の生成失敗を数え、**「過去の図と重なっています」が
