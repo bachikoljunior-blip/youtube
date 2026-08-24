@@ -307,6 +307,31 @@ def _is_short(row: dict) -> bool:
     return "#Shorts" in str(row.get("title") or "")
 
 
+def _say_conflicts(rows: list[dict]) -> None:
+    """**この割り当ては、何本ぶん推測の上に乗っているか**を先に言う（2026-08-25）。
+
+    控えは git で配られるので、同時に走った回の行が merge で両方残ります。
+    `src.dupes.ledger_rows()` は1本にたたみますが、**`at` が食い違う組では
+    どちらが本物かを行から言えません**（`retimed_at` の印がある側が勝ちますが、
+    印は 2026-08-25 から押しはじめたので、それより古い組には付いていません）。
+
+    たたむ前の 2026-08-25 の実測では、**上限に達していない 09/05・09/06・09/24 が
+    12・14・11本に見えていて**、`--spread --per-day 10` はそこから実物を
+    11本 動かすところでした。**数のほうは直っています。**
+    残るのは「その本が今どちらの枠にいるか」で、そこは `videos.update` が
+    上書きするので**動かす向きは安全**です。ただし**黙っては進まないこと。**
+    """
+    bad = {r["id"]: r["at_others"] for r in rows if r.get("at_others")}
+    if not bad:
+        return
+    print(f"[reschedule] [!] **{len(bad)}本は、控えに予約時刻が2つ残っています**"
+          "（同時に走った回の行が merge で両方残った跡）。")
+    print("        数える側は1本にたたんでいるので、**日ごとの本数は実物どおり**です。")
+    print("        どちらの枠に居るかだけが推測で、`videos.update` が上書きするので"
+          "動かす向きは安全です: "
+          + " ".join(sorted(bad)[:6]) + (" …" if len(bad) > 6 else ""))
+
+
 def spread_plan(rows: list[dict], *, now: datetime, per_day: int = 10,
                 hour: int = 9, until_hour: int = 21, step_min: int = 30,
                 lead_min: int = 60, from_day: date | None = None,
@@ -494,6 +519,7 @@ def _spread(args) -> int:
     rows = [r for r in dupes.ledger_rows() if r.get("at")]
     if not rows:
         raise SystemExit("控え（data/uploaded.jsonl）に予約の行がありません")
+    _say_conflicts(rows)
     now = datetime.now(timezone.utc)
     from_day = (datetime.strptime(args.since, "%Y-%m-%d").date()
                 if args.since else None)
@@ -711,6 +737,7 @@ def _compact(args) -> int:
     rows = [r for r in dupes.ledger_rows() if r.get("at")]
     if not rows:
         raise SystemExit("控え（data/uploaded.jsonl）に予約の行がありません")
+    _say_conflicts(rows)
     now = datetime.now(timezone.utc)
     if args.max_days is None:
         args.max_days = DEFAULT_MAX_DAYS

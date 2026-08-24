@@ -391,6 +391,26 @@ def pick(count: int, explicit: list[str], per_calc: int = DEFAULT_PER_CALC) -> l
     return chosen
 
 
+def _row_times(row: dict) -> list[datetime]:
+    """その1本について、控えに**一度でも書かれた**予約時刻を全部返す。
+
+    `ledger_rows()` は 1本を1行にたたみますが、**たたむのは「数える側」のため**です
+    （`src.dupes._collapse`）。置き場所を避ける側はたたんではいけません ——
+    `at` の食い違う組はどちらが本物か行から言えないので、
+    **両方を「埋まっている」と読む**のが安全な向きです。
+    空きを1つ余計に飛ばすだけで済み、逆向きは**ぶつけて1本捨てます。**
+    """
+    out = []
+    for raw in [row.get("at"), *(row.get("at_others") or [])]:
+        if not raw:
+            continue
+        try:
+            out.append(datetime.fromisoformat(str(raw).replace("Z", "+00:00")))
+        except ValueError:
+            continue
+    return out
+
+
 def ledger_hours(date_jst: str) -> set[int]:
     """その日に**もう置いてある**時刻（JST の時）を、手元の控えから読む。
 
@@ -414,13 +434,10 @@ def ledger_hours(date_jst: str) -> set[int]:
         return set()
     taken: set[int] = set()
     for row in rows:
-        try:
-            when = datetime.fromisoformat(str(row["at"]).replace("Z", "+00:00"))
-        except ValueError:
-            continue
-        when = when.astimezone(JST)
-        if when.strftime("%Y-%m-%d") == date_jst:
-            taken.add(when.hour)
+        for at in _row_times(row):
+            when = at.astimezone(JST)
+            if when.strftime("%Y-%m-%d") == date_jst:
+                taken.add(when.hour)
     return taken
 
 
@@ -441,13 +458,10 @@ def ledger_minutes(date_jst: str) -> set[int]:
         return set()
     taken: set[int] = set()
     for row in rows:
-        try:
-            when = datetime.fromisoformat(str(row["at"]).replace("Z", "+00:00"))
-        except ValueError:
-            continue
-        when = when.astimezone(JST)
-        if when.strftime("%Y-%m-%d") == date_jst:
-            taken.add(when.hour * 60 + when.minute)
+        for at in _row_times(row):
+            when = at.astimezone(JST)
+            if when.strftime("%Y-%m-%d") == date_jst:
+                taken.add(when.hour * 60 + when.minute)
     return taken
 
 

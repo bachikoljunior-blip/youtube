@@ -335,8 +335,81 @@ def ledger_rows(topics: dict[str, str] | None = None) -> list[dict]:
                      # **`at` は公開予定、`uploaded_at` は投稿した時刻**（別物です）。
                      # 前者しか無かったので「この枠の日にあと何本撃てるか」を
                      # 撃つ前に言えず、6本を作ってから捨てました（`src/upload_cap.py`）。
-                     "uploaded_at": rec.get("uploaded_at")})
-    return [r for r in rows if r["id"] and r["title"]]
+                     "uploaded_at": rec.get("uploaded_at"),
+                     # **`retime()` が押した印**。同じ本の行が2つ残ったとき、
+                     # どちらが `videos.update` を通った側かを言う唯一の手がかりです
+                     "retimed_at": rec.get("retimed_at")})
+    return _collapse([r for r in rows if r["id"] and r["title"]])
+
+
+def _collapse(rows: list[dict]) -> list[dict]:
+    """**1本の動画は1行**にたたむ。余分な `at` は `at_others` に残す。
+
+    ## なぜ要るか（2026-08-25 に実測）
+
+    `retime()` の本文は「同じ `video_id` の行が2つあると幻の埋まりが残る」と
+    書いていて、**書く側**（足さずに書き換える）だけを直していました。
+    **読む側は素通しのまま**です。ところが行が増える口は `retime()` の他にもあります ——
+
+      **控えは `data/uploaded.jsonl` で、git で配られます。** 同時に走っている
+      きょうだいの回が別々に足し、**merge が両方の行を残します。**
+      片方だけが `retime()` を通っていれば、`at` の違う2行がそのまま残ります。
+
+    2026-08-25 の実測（518行）: **27本が2行ずつ**（13本は同じ `at`・14本は違う `at`）。
+    これから公開する行は **355。実物は 328本** ＝ **幻が 27個**。
+
+    **害は「置き場所」ではなく「数」のほうに出ます。**
+    `batch_build.ledger_minutes()` は集合を作るので二重でも同じ答えですが、
+    本数を数える側は全部ふくれます。同じ日の実測:
+
+        09/05  控え 12本 → 実際 10本      09/06  控え 14本 → 実際 10本
+        09/24  控え 11本 → 実際  8本      09/23  控え 14本 → 実際 11本
+
+    `config/hypotheses.yaml` は次の回に
+    `reschedule.py --spread --per-day 10 --apply` を撃てと言っています。
+    **今日の控えで撃つと、上限に達していない日から実物を 11本 動かします**
+    （1本50単位・**動かした先で上限を割るので、再生は減ります**）。
+    08/24 の `f6db033`「自分で空にした 08/27 を守り、死んだ枠の11本を戻した」が
+    同じ事故の領収書です。
+
+    **`at` が食い違うときは、どちらが本物かをここでは決められません**
+    （どちらの回が `videos.update` を通したかは行に書いてありません）。
+    だから **数えるのは1本**、**置き場所を避けるのは両方**に分けます ——
+    外す向き（空きを1つ余計に飛ばす）は安全で、
+    逆向き（埋まっているのに空きと読む）は1本捨てるからです
+    （`batch_build.ledger_hours` の本文と同じ理由）。
+
+    勝つ行は「`retimed_at` がいちばん新しい行」、無ければ**最後の行**です。
+    """
+    best: dict[str, dict] = {}
+    others: dict[str, list] = {}
+    for r in rows:
+        vid = r["id"]
+        others.setdefault(vid, [])
+        if r.get("at"):
+            others[vid].append(r["at"])
+        cur = best.get(vid)
+        if cur is None or _retime_key(r) >= _retime_key(cur):
+            best[vid] = dict(r)
+    out = []
+    for r in rows:
+        vid = r["id"]
+        if vid not in best:
+            continue
+        win = best.pop(vid)
+        win["at_others"] = [a for a in dict.fromkeys(others[vid]) if a != win.get("at")]
+        out.append(win)
+    return out
+
+
+def _retime_key(row: dict) -> tuple:
+    """勝ち負けの目盛り。`retimed_at` を持つ行が、持たない行に勝つ。
+
+    **同じ強さなら「あとの行」が勝ちます**（この関数は `>=` で比べられるので、
+    走査の順番がそのまま最後の行を残します）。
+    """
+    stamp = row.get("retimed_at") or ""
+    return (1 if stamp else 0, stamp)
 
 
 def remember(video_id: str, topic_id: str, title: str, at: str | None,
@@ -625,12 +698,22 @@ def retime(video_id: str, at: str | None) -> bool:
 
     返り値は「1行でも書き換えたか」。**書き込みは一時ファイル経由で入れ替えます**
     （途中で落ちても控えが半分になりません）。
+
+    ## `retimed_at` を押す理由（2026-08-25）
+
+    ここで書き換えても、**同時に走っているきょうだいの回が持っている古い行は
+    消せません** —— 控えは git で配られるので、merge が両方を残します。
+    そのとき「どちらが `videos.update` を通した側か」を行から言えないと、
+    読む側（`_collapse`）は最後の行を選ぶしかありません。**それは順番の運です。**
+
+    だから通った側に印を押します。**押されている行が、押されていない行に勝ちます。**
     """
     from . import config
 
     path = config.ROOT / LEDGER
     if not path.exists():
         return False
+    stamp = _now_iso()
     lines = path.read_text(encoding="utf-8").splitlines()
     out, hit = [], False
     for line in lines:
@@ -643,6 +726,7 @@ def retime(video_id: str, at: str | None) -> bool:
                 continue
             if rec.get("video_id") == video_id and rec.get("at") != at:
                 rec["at"] = at
+                rec["retimed_at"] = stamp
                 out.append(json.dumps(rec, ensure_ascii=False))
                 hit = True
                 continue
@@ -653,3 +737,53 @@ def retime(video_id: str, at: str | None) -> bool:
     tmp.write_text("\n".join(out) + "\n", encoding="utf-8")
     tmp.replace(path)
     return True
+
+
+def _now_iso() -> str:
+    from datetime import datetime, timezone
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def compact_ledger(path=None) -> dict:
+    """**同じ行が2つある**ぶんだけを、控えから物理的に落とす（API 0単位）。
+
+    落とすのは **`video_id` も `at` も同じ行**だけです。`at` が食い違う組は
+    **残します** —— どちらが本物かはここでは決められず、置き場所を避ける側は
+    「両方が埋まっている」と読むほうが安全だからです（`_collapse` の本文）。
+    数えるほうは `ledger_rows()` が1本にたたむので、残っていても膨らみません。
+
+    返り: removed（落とした行数）／conflicts（`at` が食い違う video_id と、その候補）
+    """
+    from . import config
+
+    p = config.ROOT / LEDGER if path is None else path
+    if not p.exists():
+        return {"removed": 0, "conflicts": {}}
+    lines = p.read_text(encoding="utf-8").splitlines()
+    seen: set[tuple] = set()
+    ats: dict[str, list] = {}
+    out, removed = [], 0
+    for line in lines:
+        stripped = line.strip()
+        if not stripped:
+            continue
+        try:
+            rec = json.loads(stripped)
+        except Exception:
+            out.append(line)
+            continue
+        vid = rec.get("video_id", "")
+        key = (vid, rec.get("at"), rec.get("title", ""))
+        if vid and key in seen:
+            removed += 1
+            continue
+        seen.add(key)
+        if vid and rec.get("at"):
+            ats.setdefault(vid, []).append(rec["at"])
+        out.append(line)
+    conflicts = {v: a for v, a in ats.items() if len(set(a)) > 1}
+    if removed:
+        tmp = p.with_suffix(p.suffix + ".tmp")
+        tmp.write_text("\n".join(out) + "\n", encoding="utf-8")
+        tmp.replace(p)
+    return {"removed": removed, "conflicts": conflicts}
