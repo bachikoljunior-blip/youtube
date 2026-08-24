@@ -2110,3 +2110,22 @@
 {"at": "2026-08-24T03:34:49+00:00", "detail": "scheduled_publish_times"}
 {"at": "2026-08-24T03:34:52+00:00", "detail": "playlistItems.insert"}
 {"at": "2026-08-24T03:34:52+00:00", "detail": "thumbnails.set DyEcaMK5ZU8"}
+{"at": "2026-08-24T04:18:05+00:00", "detail": "status: Data API 読み"}
+{"at": "2026-08-24T04:18:46+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-24T04:18:48+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-24T04:20:49+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-24T04:20:59+00:00", "detail": "status: Data API 読み"}
+{"at": "2026-08-24T04:21:28+00:00", "detail": "status: Data API 読み"}
+{"at": "2026-08-24T04:22:09+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-24T04:22:11+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-24T04:24:10+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-24T04:32:46+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-24T04:35:59+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-24T04:37:49+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-24T04:39:51+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-24T04:39:53+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-24T04:39:55+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-24T04:41:53+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-24T04:41:54+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-24T04:41:56+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-24T04:41:58+00:00", "detail": "channels.list mine"}
