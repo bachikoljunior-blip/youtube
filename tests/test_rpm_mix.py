@@ -141,3 +141,96 @@ def test_測っていなければ据え置きに戻るが黙らない(monkeypatc
     caps = eta.physical_caps({"sub_rate": 0.0004}, density=1.0)
     assert caps["rpm"]["measured"] is False
     assert "まだ測っていません" in caps["rpm"]["why"]
+
+
+# ---------------------------------------------------------------------------
+# **本べつの形の控え**（2026-08-24 に足した）
+#
+# `reach_split.long_ids()` の分母が `config/pairs.yaml`（手で書く対応表）だけで、
+# **新しく出した長尺が面に入りませんでした。** この道具が印字している
+# 「長尺を出せば面が増え、次の回の測り直しでこの天井は上がります」が
+# **成り立っていなかった**、という形の欠陥です。
+# ---------------------------------------------------------------------------
+def test_控えを書くと長尺が読み出せる(tmp_path):
+    p = tmp_path / "video_forms.json"
+    rec = rpm_mix.save_video_forms({"L": "長尺", "S": "ショート"}, 90, p)
+    assert rec and p.exists()
+    from src import reach_split
+    assert reach_split.measured_long_ids(p) == {"L"}
+
+
+def test_空では控えを消さない(tmp_path):
+    """**再生0の日に空で上書きすると「長尺が1本も無い」に化けます。**"""
+    p = tmp_path / "video_forms.json"
+    rpm_mix.save_video_forms({"L": "長尺"}, 90, p)
+    before = p.read_text(encoding="utf-8")
+    assert rpm_mix.save_video_forms({}, 90, p) is None
+    assert p.read_text(encoding="utf-8") == before
+
+
+def test_控えには測った日と出どころが残る(tmp_path):
+    p = tmp_path / "video_forms.json"
+    rec = rpm_mix.save_video_forms({"L": "長尺"}, 90, p)
+    assert rec["window_days"] == 90 and "creatorContentType" in rec["source"]
+    assert rec["at"]
+
+
+# ---------------------------------------------------------------------------
+# **面の鮮度**（2026-08-24 に足した）
+#
+# 天井は「混ざり方 × 面」の**2つの実測の積**なのに、鮮度の表示は
+# Analytics の側にしか付いていませんでした。`data/reach.jsonl` が
+# 4日ぶん止まったまま天井 ¥184 が出て、撃ち直したら ¥287 でした。
+# ---------------------------------------------------------------------------
+def _rec(reach_last, data_end="2026-08-21", days=38):
+    return {"window": {"start": "2026-05-26", "end": "2026-08-24",
+                       "days": 90, "data_end": data_end},
+            "reach": {"days": days, "last_day": reach_last}}
+
+
+def test_面が遅れていたら鳴る():
+    out = rpm_mix._reach_freshness_lines(_rec("20260817"))
+    assert len(out) == 1 and "4日ぶん遅れています" in out[0]
+    assert "scripts/reach.py" in out[0]
+
+
+def test_面が追いついていたら鳴らない():
+    out = rpm_mix._reach_freshness_lines(_rec("20260821"))
+    assert "遅れています" not in out[0] and "追いついています" in out[0]
+
+
+def test_今日とは比べない():
+    """**Reporting も数日遅れます。**今日と比べると鳴りっぱなしになります。
+
+    `data_end` と同じ日なら、面は**取れるだけ取れています**。
+    """
+    out = rpm_mix._reach_freshness_lines(_rec("20260821", data_end="2026-08-21"))
+    assert "[!]" not in out[0]
+
+
+def test_面の日付が無ければ黙らずに言う():
+    out = rpm_mix._reach_freshness_lines(_rec(None))
+    assert "[?]" in out[0] and "scripts/reach.py" in out[0]
+
+
+def test_詰めた日付も区切った日付も同じに読む():
+    assert rpm_mix._iso("20260821") == "2026-08-21"
+    assert rpm_mix._iso("2026-08-21") == "2026-08-21"
+
+
+def test_天井の下に面の行が出る():
+    rec = _rec("20260817")
+    rec.update({"minutes_by_form": {"ショート": 5631.0, "長尺": 19.0},
+                "views_by_form": {"ショート": 49440.0, "長尺": 30.0},
+                "rpm_now": 20.2, "rpm_max": 287.0, "factor": 14.2,
+                "why": "長尺の面 73.0回/日", "jp_share": 0.998})
+    body = rpm_mix.render(rec)
+    assert "面（インプレッション）が 4日ぶん遅れています" in body
+    assert body.index("天井（実測）") < body.index("面（インプレッション）が 4日")
+
+
+def test_天井が測れていない回でも面の行は出る():
+    rec = _rec("20260817")
+    rec.update({"minutes_by_form": {}, "views_by_form": {},
+                "rpm_now": 20.2, "factor": None, "why": "測れていません"})
+    assert "面（インプレッション）" in rpm_mix.render(rec)

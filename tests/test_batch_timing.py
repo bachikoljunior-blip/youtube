@@ -51,7 +51,29 @@ def _run(monkeypatch, ids, delays=None, fail_build=None, jobs=3):
     batch_build.main([
         "--count", str(len(ids)), "--date", "2026-08-30", "--jobs", str(jobs),
     ])
-    return json.loads(written[0])
+    return json.loads(_ledger(written))
+
+
+def _ledger(written: list[str]) -> str:
+    """**記録の行**（`data/batch_runs.jsonl` に積まれるほうの1行）を拾う。
+
+    **`written[0]` ではありません**（2026-08-24 に直した。5件が赤かった）。
+    8/22 の A/B が同じ sink へ `{"at": …, "topic": …, "opening_motion": …}` を
+    **本数ぶん先に**書くようになったので、`written[0]` はその行になり、
+    `jobs` / `wall_sec` / `results` が `KeyError` で落ちていました。
+
+    **同じ欠陥を 8/23 に `tests/test_batch_parallel.py` で直しています。**
+    直したのは片方だけで、**こちらは名前が違うだけの双子**でした ——
+    `pytest -x` が先に `test_batch_parallel` を通していたので、
+    赤はそのぶん遅れて出ます。**直す回は、同じ sink を読む検査を全部見ること。**
+
+    A/B の行と記録の行は **どちらも `opening_motion` を持ちます**。
+    記録の行だけが持つのは `results` です。
+    """
+    for row in written:
+        if '"results"' in row:
+            return row
+    raise AssertionError(f"記録の行が1つも書かれていません: {written!r}")
 
 
 # --- 1. 台帳に、次の回が読めるものが残ること -------------------------------

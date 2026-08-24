@@ -65,6 +65,10 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parent.parent
 LOG = ROOT / "data" / "rpm_mix.jsonl"
+#: **YouTube 自身が「長尺／ショート」と数えた控え。**`--record` のたびに書き直します。
+#: 読むのは `src/reach_split.long_ids()`（あちらは API を叩かない約束なので、
+#: 測るこちらが置いていきます）。**手で書かないこと。**
+FORMS = ROOT / "data" / "video_forms.json"
 
 #: **Analytics の日次がどこまで届いているか**の点（`scripts/status.py` が積む）。
 #: ここを読むのに API は要りません。**日枠が閉じている回でも読めます。**
@@ -238,6 +242,63 @@ def fetch_mix(days: int = 90) -> dict[str, Any]:
     }
 
 
+def fetch_video_forms(days: int = 90) -> dict[str, str]:
+    """**動画1本ずつの形**を YouTube に聞く（`video` × `creatorContentType`）。
+
+    返りは `{video_id: "長尺" | "ショート"}`。**失敗しても回は止めません**
+    （空を返すと、控えは前のまま ＝ いままでの答えのまま）。
+
+    Analytics を形の数だけ引きます（いまは2回）。**Data API は0単位です。**
+    """
+    from googleapiclient.discovery import build
+
+    from .auth import credentials
+
+    analytics = build("youtubeAnalytics", "v2", credentials=credentials(),
+                      cache_discovery=False)
+    end = date.today()
+    start = end - timedelta(days=days)
+    out: dict[str, str] = {}
+    for raw_form, name in FORM_OF.items():
+        try:
+            res = analytics.reports().query(
+                ids="channel==MINE",
+                startDate=start.isoformat(),
+                endDate=end.isoformat(),
+                metrics="views",
+                dimensions="video",
+                filters=f"creatorContentType=={raw_form}",
+                sort="-views",
+                maxResults=200,
+            ).execute()
+        except Exception as exc:                               # noqa: BLE001
+            print(f"[rpm_mix] {raw_form} の本べつが取れませんでした（続行）: "
+                  f"{type(exc).__name__}: {exc}")
+            continue
+        for r in res.get("rows", []) or []:
+            out[str(r[0])] = name
+    return out
+
+
+def save_video_forms(forms: dict[str, str], days: int = 90,
+                     path: Path | None = None) -> dict | None:
+    """控えを書き直す。**空なら書きません**（前の控えを消さないため）。
+
+    **消さないのが要点です。** 再生が0本の長尺は Analytics が返さないので、
+    空で上書きすると「長尺が1本も無い」に化けます。
+    """
+    if not forms:
+        return None
+    p = path or FORMS
+    p.parent.mkdir(parents=True, exist_ok=True)
+    rec = {"at": date.today().isoformat(), "window_days": days,
+           "source": "youtubeAnalytics: video x creatorContentType",
+           "forms": dict(sorted(forms.items()))}
+    p.write_text(json.dumps(rec, ensure_ascii=False, indent=1) + "\n",
+                 encoding="utf-8")
+    return rec
+
+
 # --------------------------------------------------------------------------
 # 混ざり方と実効 RPM
 # --------------------------------------------------------------------------
@@ -321,6 +382,8 @@ def surface_ceiling(mix: dict, reach: dict, level: str = "高",
     if imp_day <= 0 or now <= 0:
         return {"factor": None, "rpm_now": now, "rpm_max": None,
                 "long_share_max": None, "imp_day": imp_day,
+                "reach_days": reach_days,
+                "reach_last_day": (reach or {}).get("last_day"),
                 "why": "長尺の面（インプレッション）が測れていません"}
 
     long_views_day_max = imp_day                    # CTR 100% の上限
@@ -336,6 +399,8 @@ def surface_ceiling(mix: dict, reach: dict, level: str = "高",
         "long_share_max": share_max,
         "long_share_now": (views.get("長尺", 0.0) / total_views) if total_views else 0.0,
         "imp_day": imp_day,
+        "reach_days": reach_days,
+        "reach_last_day": (reach or {}).get("last_day"),
         "short_views_day": short_views_day,
         # 診断だけ（重みには使いません。使うと長尺を実際より重く数えます）
         "long_minutes_per_view": long_minutes_per_view(mix.get("by_form") or {}),
@@ -349,7 +414,12 @@ def surface_ceiling(mix: dict, reach: dict, level: str = "高",
 # 積む・読む（`eta.py` は `--offline` でも動くので、最後の点をファイルから読みます）
 # --------------------------------------------------------------------------
 def _long_ids() -> set[str]:
-    """長尺の動画ID。**正本は `config/pairs.yaml`**（`reach_split` と同じ口）。"""
+    """長尺の動画ID。**口は `reach_split.long_ids()` 1つ**。
+
+    正本は「**測った控え（`data/video_forms.json`）∪ `config/pairs.yaml`**」です
+    —— `pairs.yaml` だけを見ていた頃は、**対になっていない長尺が入りませんでした**
+    （2026-08-24 の実測で 6本 対 12本）。理由は `reach_split.long_ids` の docstring。
+    """
     try:
         from . import reach_split
         return reach_split.long_ids()
@@ -380,6 +450,13 @@ def record(mix: dict, ceiling: dict, path: Path | None = None) -> dict:
         "long_share_now": ceiling.get("long_share_now"),
         "long_share_max": ceiling.get("long_share_max"),
         "imp_day": ceiling.get("imp_day"),
+        # **面の側の鮮度**（2026-08-24 に足した）。天井は「Analytics の混ざり方」と
+        # 「Reporting の面」の**2つの実測の積**なのに、鮮度の表示は
+        # **Analytics の側にしか付いていませんでした。** この回、`data/reach.jsonl`
+        # が4日ぶん止まっていて、天井が ¥184 と出ました（撃ち直したら ¥287）。
+        # **止まっていたことは、どこにも表示されていません。**
+        "reach": {"days": ceiling.get("reach_days"),
+                  "last_day": ceiling.get("reach_last_day")},
         "why": ceiling.get("why"),
     }
     with p.open("a", encoding="utf-8") as fh:
@@ -432,6 +509,52 @@ def _freshness_lines(rec: dict) -> list[str]:
     return out
 
 
+def _reach_freshness_lines(rec: dict) -> list[str]:
+    """**面（`data/reach.jsonl`）が、Analytics の側に追いついているか。**
+
+    2026-08-24 に足しました。理由はこの日踏んだものそのものです ——
+    天井は **2つの実測の積**（混ざり方 × 面）なのに、鮮度の表示は
+    Analytics の側にしか付いていませんでした。`data/reach.jsonl` は
+    08/17 で止まっていて、そのまま出た天井が **¥184**。
+    `scripts/reach.py` を撃ち直したら **¥287** です。
+    **止まっていたことは、どこにも表示されていませんでした。**
+
+    **「今日」と比べないこと。** Reporting も Analytics と同じく数日遅れるので、
+    今日と比べると**追いついている日も必ず鳴ります**（鳴りっぱなしの警告は
+    読まれません）。比べるのは **Analytics の中身の最終日**（`window.data_end`）
+    —— そこに追いついていれば、面は取れるだけ取れています。
+    """
+    reach = rec.get("reach") or {}
+    last_day = reach.get("last_day")
+    if not last_day:
+        return ["  [?] **面（インプレッション）がいつまでの日か分かりません**"
+                "（`data/reach.jsonl` に日付がありません）。"
+                "**`python scripts/reach.py` を撃つこと。**"]
+    have = _iso(last_day)
+    data_end = ((rec.get("window") or {}).get("data_end"))
+    days = reach.get("days")
+    if not data_end:
+        return [f"    面（インプレッション）は **{have}** まで（{days}日ぶん）"]
+    if have >= data_end:
+        return [f"    面（インプレッション）は **{have}** まで（{days}日ぶん）"
+                f" ＝ **Analytics の側（{data_end}）に追いついています**"]
+    try:
+        gap = (date.fromisoformat(data_end) - date.fromisoformat(have)).days
+    except ValueError:
+        gap = 0
+    return [f"  [!] **面（インプレッション）が {gap}日ぶん遅れています**"
+            f"（{have} まで・{days}日ぶん。Analytics の中身は {data_end} まで）。"
+            f"**天井はこの面に乗っているので、いまの数字は低く出ます** ——"
+            f" `python scripts/reach.py` を撃ってから読むこと"
+            f"（2026-08-24 の実測: 4日ぶんで ¥184 → ¥287）"]
+
+
+def _iso(day: str) -> str:
+    """`20260821` も `2026-08-21` も `2026-08-21` にする（Reporting は詰めた形）。"""
+    d = str(day)
+    return f"{d[:4]}-{d[4:6]}-{d[6:8]}" if len(d) == 8 and d.isdigit() else d
+
+
 def render(rec: dict | None) -> str:
     if not rec:
         return ("=== RPM の帯（実測の混ざり方）===\n"
@@ -455,6 +578,9 @@ def render(rec: dict | None) -> str:
         lines.append("      長尺を出せば面が増え、次の回の測り直しでこの天井は上がります。")
     else:
         lines.append(f"  天井: **測れていません** —— {rec.get('why', '')}")
+    # **天井のすぐ下に置くこと。** 天井は「混ざり方 × 面」の積で、
+    # 面が止まっていれば天井は低く出ます（2026-08-24 の実測: ¥184 → ¥287）。
+    lines.extend(_reach_freshness_lines(rec))
     if rec.get("jp_share", 1.0) < JP_SHARE_FLOOR:
         lines.append(f"  [!] JP の視聴分が {rec['jp_share'] * 100:.1f}% ＝ **帯そのものを見直すこと**"
                      f"（この表は日本のお金の帯です）")
@@ -520,6 +646,14 @@ def main(argv: list[str] | None = None) -> int:
     from . import reach_split
 
     mix = fetch_mix(args.days)
+    # **控えを先に書き直します。** 面（インプレッション）を数える集合が
+    # `config/pairs.yaml`（手で書く対応表）だけだと、新しく出した長尺が
+    # 入らず、**出しても天井が動かない**形になります（2026-08-24）。
+    saved = save_video_forms(fetch_video_forms(args.days), args.days)
+    if saved:
+        longs = sum(1 for v in saved["forms"].values() if v == "長尺")
+        print(f"  本べつの形を控え直しました: {len(saved['forms'])}本"
+              f"（うち長尺 {longs}本）→ {FORMS.relative_to(ROOT)}")
     rows = reach_split.dedupe(reach_split.load_rows())
     reach = reach_split.summary(rows, reach_split.long_ids())
     ceiling = surface_ceiling(mix, reach)

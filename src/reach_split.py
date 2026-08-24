@@ -21,6 +21,10 @@
     ショート  インプレッション 1,339  クリック 18   CTR **1.34%**
     長尺 6本  インプレッション 1,278  クリック  3   CTR **0.23%**
 
+**この「6本」が、2026-08-24 まで欠陥でした**（`long_ids` の docstring）。
+長尺は同じ34日で **12本**あり、面は **1,278 → 1,456**（+13.9%）。
+表の形は変わりません —— **見せて、押されていない**のはそのままです。
+
 **長尺は「見せられていない」のではありませんでした。**
 1,278回 見せて、押されたのが3回です。そして**見せる量そのものが落ちています** ——
 08/09 の **346/日** から 08/15〜17 は **5/日**。**試されて、外された**形です。
@@ -51,6 +55,9 @@ ROOT = Path(__file__).resolve().parent.parent
 STORE = ROOT / "data" / "reach.jsonl"
 LEDGER = ROOT / "data" / "uploaded.jsonl"
 PAIRS = ROOT / "config" / "pairs.yaml"
+#: **YouTube 自身が「長尺」と数えた動画IDの控え**（`src/rpm_mix.py --record` が書く）。
+#: この道具は API を叩かないので、**測った側が置いていったものを読みます。**
+FORMS = ROOT / "data" / "video_forms.json"
 
 #: 段4（月20万）が長尺に置いている月あたり再生数。`scripts/eta.py` の
 #: `TARGET_YEN 200,000` ÷ `RPM_SCENARIOS["長尺 お金 低"] 400` × 1000。
@@ -79,13 +86,67 @@ def dedupe(rows: list[dict]) -> list[dict]:
     return list(keep.values())
 
 
-def long_ids(pairs_path: Path | None = None) -> set[str]:
-    """長尺の動画ID。`config/pairs.yaml` が正本（`src/m8_funnel.py` と同じ口）。"""
-    p = pairs_path or PAIRS
+def measured_long_ids(forms_path: Path | None = None) -> set[str]:
+    """**YouTube 自身が長尺と数えた動画ID**（`data/video_forms.json`）。
+
+    書くのは `src/rpm_mix.py --record`（Analytics の `creatorContentType` を
+    `video` べつに1回引くだけ）。**ここでは API を叩きません** ——
+    この道具の約束は「積んであるものを読むだけ」だからです。
+
+    **無ければ空**を返します。呼ぶ側（`long_ids`）が `pairs.yaml` と足すので、
+    控えがまだ無い機械でも、いままでと同じ答えになります。
+    """
+    p = forms_path or FORMS
     if not p.exists():
         return set()
-    raw = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
-    return set(dict(raw.get("pairs", {})).values())
+    try:
+        raw = json.loads(p.read_text(encoding="utf-8")) or {}
+    except json.JSONDecodeError:
+        return set()
+    forms = raw.get("forms") or {}
+    return {vid for vid, form in forms.items() if form == "長尺"}
+
+
+def long_ids(pairs_path: Path | None = None,
+             forms_path: Path | None = None) -> set[str]:
+    """長尺の動画ID ＝ **測った控え ∪ `config/pairs.yaml`**。
+
+    ## なぜ足すのか（2026-08-24 に直した。**天井の分母が半分だった**）
+
+    ここは長らく `config/pairs.yaml` **だけ**を読んでいました。ところが
+    あの表は「**ショート → 同じ題材の長尺**」の対応表で、
+    ファイルの頭にこう書いてあります —— 「**同じ題材の公開済み長尺が
+    あるものだけ**」。つまり**対になっていない長尺は、初めから入りません。**
+
+    実測（2026-08-24・Analytics の `creatorContentType`）:
+
+        `pairs.yaml` が名指しする長尺   **6本**
+        YouTube が長尺と数えた本        **12本**（直近90日に再生のあったもの）
+
+    そして `src/rpm_mix.surface_ceiling()` は、この集合で
+    **長尺のインプレッション（面）**を数え、それが `scripts/eta.py` の
+    段2 の合格点を決めています ——
+
+        [!] いまの面（長尺のインプレッション 37.6回/日）は、CTR 100% でも 38回/日。
+            合格点の 187回/日 に **5.0倍 足りません**
+
+    **その 37.6 が、半分の本で数えた数でした。**（足すと 42.8回/日 ＝ +13.9%）
+
+    **もっと悪いのは向きのほうです。** `rpm_mix` は自分でこう印字します ——
+    「**長尺を出せば面が増え、次の回の測り直しでこの天井は上がります**」。
+    `pairs.yaml` は**手で書く表**なので、新しく出した長尺は入りません。
+    **出しても天井が動かない** ＝ 腕 `rpm` を引いた回が、
+    自分の効きを測れない形になっていました。
+
+    **控えのほうを正本にしないのは**、再生が0本の長尺を Analytics が
+    返さないからです（実測 `SSI1MVb12Ng`）。**足すと、どちらの穴も塞がります。**
+    """
+    out = measured_long_ids(forms_path)
+    p = pairs_path or PAIRS
+    if p.exists():
+        raw = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
+        out |= set(dict(raw.get("pairs", {})).values())
+    return out
 
 
 def _imp(row: dict) -> float:
@@ -131,7 +192,10 @@ def tail(rows: list[dict], days: int) -> list[dict]:
 def summary(rows: list[dict], longs: set[str]) -> dict:
     """形べつに集計する。
 
-    返り: `{"長尺": {...}, "ショート": {...}, "days": n, "dates": [...]}`。
+    返り: `{"長尺": {...}, "ショート": {...}, "days": n, "dates": [...],
+    "last_day": "20260821"}`。**`last_day` は「積んである最後の日」**で、
+    今日ではありません（2026-08-24 に足した —— この帳面が4日ぶん止まったまま
+    天井を作っていて、誰にも見えていませんでした）。
     **「ショート」は「長尺でないもの」**です（控えに無い本もこちらへ入れる ——
     分母を大きく見せる側に倒すため。長尺の側を大きく見せない）。
     """
@@ -150,7 +214,8 @@ def summary(rows: list[dict], longs: set[str]) -> dict:
         v["videos"] = len(v["videos"])
         v["per_day"] = v["impressions"] / days if days else 0.0
         v["ctr"] = (v["clicks"] / v["impressions"] * 100) if v["impressions"] else 0.0
-    return {"長尺": out["長尺"], "ショート": out["ショート"], "days": days, "dates": dates}
+    return {"長尺": out["長尺"], "ショート": out["ショート"], "days": days,
+            "dates": dates, "last_day": dates[-1] if dates else None}
 
 
 def gap(sm: dict, need_views_month: float | None = None) -> dict:

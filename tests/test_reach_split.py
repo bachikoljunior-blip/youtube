@@ -99,3 +99,80 @@ def test_出す節はインプレッションとCTRの両方を名指しする()
     out = R.render(rows, {"L1"})
     assert "長尺" in out and "ショート" in out
     assert "直近" in out
+
+
+# ---------------------------------------------------------------------------
+# **長尺の集合は `pairs.yaml` だけでは足りない**（2026-08-24 に踏んだ）
+#
+# `pairs.yaml` は「ショート → 同じ題材の長尺」の対応表で、
+# **対になっていない長尺は初めから入りません**。ところがその集合が
+# `rpm_mix.surface_ceiling()` の「面（インプレッション）」の分母で、
+# `eta.py` の段2 の合格点（「CTR 100% でも 38回/日」）を決めていました。
+#
+# 実測: `pairs.yaml` 6本 対 YouTube が長尺と数えた 12本 ／ 面 37.6 → 42.8回/日。
+# ---------------------------------------------------------------------------
+import json  # noqa: E402
+
+
+def _pairs(tmp_path, ids):
+    p = tmp_path / "pairs.yaml"
+    body = "pairs:\n" + "".join(f"  t{i}: {v}\n" for i, v in enumerate(ids))
+    p.write_text(body, encoding="utf-8")
+    return p
+
+
+def _forms(tmp_path, mapping):
+    p = tmp_path / "video_forms.json"
+    p.write_text(json.dumps({"at": "2026-08-24", "forms": mapping},
+                            ensure_ascii=False), encoding="utf-8")
+    return p
+
+
+def test_測った控えと対応表を足す(tmp_path):
+    pairs = _pairs(tmp_path, ["A", "B"])
+    forms = _forms(tmp_path, {"B": "長尺", "C": "長尺", "S": "ショート"})
+    assert R.long_ids(pairs, forms) == {"A", "B", "C"}
+
+
+def test_控えが無ければ対応表だけ_いままでと同じ答え(tmp_path):
+    pairs = _pairs(tmp_path, ["A", "B"])
+    assert R.long_ids(pairs, tmp_path / "no-such.json") == {"A", "B"}
+
+
+def test_対応表に無い長尺を落とさない(tmp_path):
+    """**これが 2026-08-24 の欠陥そのもの。** 6本しか数えていなかった。"""
+    pairs = _pairs(tmp_path, ["A"])
+    forms = _forms(tmp_path, {f"L{i}": "長尺" for i in range(12)})
+    got = R.long_ids(pairs, forms)
+    assert len(got) == 13 and "A" in got
+
+
+def test_再生0の長尺は控えに出ないので対応表の側で残る(tmp_path):
+    """Analytics は再生0の本を返しません（実測 `SSI1MVb12Ng`）。
+
+    **だから控えを正本にしてはいけない** —— 足すことで、どちらの穴も塞がる。
+    """
+    pairs = _pairs(tmp_path, ["SSI1MVb12Ng"])
+    forms = _forms(tmp_path, {"other": "長尺"})
+    assert "SSI1MVb12Ng" in R.long_ids(pairs, forms)
+
+
+def test_ショートは長尺に混ぜない(tmp_path):
+    forms = _forms(tmp_path, {"S1": "ショート", "S2": "ショート"})
+    assert R.measured_long_ids(forms) == set()
+
+
+def test_控えが壊れていても落ちない(tmp_path):
+    p = tmp_path / "broken.json"
+    p.write_text("{壊れた", encoding="utf-8")
+    assert R.measured_long_ids(p) == set()
+
+
+def test_面は長尺を足すと増える(tmp_path):
+    """**向きの検査。** 長尺を1本足したら、面が増えなければ意味がない。"""
+    rows = [row("20260810", "A", "100", "0.01"),
+            row("20260810", "C", "50", "0.02"),
+            row("20260810", "S", "10", "0.1")]
+    few = R.summary(rows, {"A"})
+    many = R.summary(rows, {"A", "C"})
+    assert many["長尺"]["impressions"] > few["長尺"]["impressions"]

@@ -2021,3 +2021,10 @@
 {"at": "2026-08-23T23:55:50+00:00", "detail": "scheduled_publish_times"}
 {"at": "2026-08-23T23:55:52+00:00", "detail": "playlistItems.insert"}
 {"at": "2026-08-23T23:55:52+00:00", "detail": "thumbnails.set TgxORnHbfms"}
+{"at": "2026-08-24T00:27:14+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-24T00:30:58+00:00", "detail": "status: Data API 読み"}
+{"at": "2026-08-24T00:31:37+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-24T00:31:39+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-24T00:31:41+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-24T00:51:45+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-24T00:55:25+00:00", "detail": "status: Data API 読み"}
