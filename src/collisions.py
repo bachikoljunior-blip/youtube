@@ -104,6 +104,12 @@ STEP_MIN = 30
 PER_DAY = 10                    # `src/day_cap.py` の実測（11本目から先が 0〜3再生）
 
 
+def _latest(taken: dict[int, list[str]]) -> int | None:
+    """その日にいま入っている、**いちばん遅い分**（本が1本も無ければ None）。"""
+    live = [m for m, vids in taken.items() if vids]
+    return max(live) if live else None
+
+
 def _by_day(rows: list[dict]) -> dict[str, dict[int, list[str]]]:
     out: dict[str, dict[int, list[str]]] = collections.defaultdict(dict)
     for row in rows:
@@ -122,13 +128,34 @@ def plan(rows: list[dict] | None = None, *, today: str | None = None) -> list[di
     （`refresh_thumbnail --missing` の2本は3回続けて積み残されました）。
     日枠の戻った回が**そのまま貼れる**形にしておくこと。
 
-    ## 測定の窓の日は、**その日の中では直しません**
+    ## 測定の窓の日は、**まずその日の空き分へ寄せます**（2026-08-25 に逆へ直した）
 
-    08/27 は窓の切り分けの測定日で、いま **05:00〜13:30 の14個の分に19本**
-    （5組が同じ分）。同じ日の空きへ逃がすと 13:30 より後ろへ出ることになり、
-    **「13:30 までの本は全部生きる」という説そのものを崩します。**
-    だから窓の日からは**別の日へ出します** —— 残る14本はそのままなので、
-    「10本生きる（本数の説）」か「14本生きる（窓の説）」かは、その日で決まります。
+    **ここには「窓の日からは別の日へ出す」と書いてありました。理由が事実と違いました。**
+    書いてあったのは「同じ日の空きへ逃がすと 13:30 より後ろへ出る」ですが、
+    逃がす先は `grid`（`LIVE_FROM_MIN`〜`LIVE_TO_MIN`）からしか採らないので、
+    **13:30 より後ろの分は最初から候補にありません。**
+
+    実物を数えると、08/27 は **05:00〜13:30 の18枠のうち14枠が埋まっていて、
+    空いている4枠は全部 09:00 より前**でした（05:30 / 06:30 / 07:30 / 08:30）。
+
+        別の日へ出す（前の版）  08/27 は 14分・19本 → 間隔で残るのは 14本
+                                本数の説 **10** ／ 窓の説 **14** —— 差 4
+        同じ日へ寄せる（いま）  08/27 は 18分・18本 → 間隔で残るのは 18本
+                                本数の説 **10** ／ 窓の説 **18** —— 差 8
+
+    **この差が、そのまま切り分けの分解能です。** `day_cap.window()` は
+    2つの予測の近いほうを採り、`far - near < 2` なら「差が付いていない」として
+    降ります。差 4 の側は、実測が 12本 に出ただけで**どちらとも言えなく**なります
+    （|12-10| = |12-14|）。差 8 なら 12本 は「本数」、16本 は「窓」と読めます。
+
+    そして `src/day_cap.py` の切り分けの節が要求しているのは、まさにこの形です ——
+    **「05:00 から出す日を1日置けば、(A) は 10・(B) は 18 を出す」。**
+    別の日へ出す版は、その 18 を 14 に削っていました。
+
+    **1つだけ守ります**: 窓の日の同じ日へ寄せるとき、**その日にいま入っている
+    いちばん遅い分より後ろへは出しません**（`_latest`）。後ろへ伸ばすと
+    「13:30 までの本は全部生きる」の T を自分で動かすことになり、
+    説そのものが検証できなくなります。**穴を埋めるだけ**にしています。
     """
     if rows is None:
         from . import dupes
@@ -166,10 +193,14 @@ def plan(rows: list[dict] | None = None, *, today: str | None = None) -> list[di
         minute = int(at[:2]) * 60 + int(at[3:])
         # **残すのは1本目**（控えに先に載ったほう）。動かすのはそれ以外。
         for vid in days.get(day, {}).get(minute, [])[1:]:
-            dest_days = [] if window(day) else [day]
-            dest_days += [d for d in horizon if d != day and not window(d)]
+            dest_days = [day] + [d for d in horizon if d != day and not window(d)]
             for dest in dest_days:
                 slots = free(dest, same_day=(dest == day))
+                if dest == day and window(day):
+                    # **穴を埋めるだけ**。いま入っているいちばん遅い分より後ろへは
+                    # 出しません（上の docstring「1つだけ守ります」）。
+                    ceiling = _latest(days.get(day, {}))
+                    slots = [m for m in slots if ceiling is not None and m <= ceiling]
                 if not slots:
                     continue
                 m = slots[0]
