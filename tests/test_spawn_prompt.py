@@ -244,3 +244,25 @@ def test_相手がいない回は_いないと書いてある側が写しの既�
         "写しの `hourly` に「他に走っている相手はいません」が書かれていません。"
         "**書いていないと、受け取った側は「調べていないだけ」と区別できません。**"
     )
+
+
+def test_枝の名前が本文に入る() -> None:
+    """**差し込み口の中の差し込み口**（2026-08-25 夜に踏んだ）。
+
+    サブへ移してから `create_session` の `source_revision` が使われなくなり、
+    **ワークツリーが `main` から切られる**ようになりました
+    （実測: 8/25 夜のサブ3枚が3枚とも、同じ合流を自分でやり直している）。
+    型の「最初の1手」がその合流を頼みますが、**`<<lead>>` は段まるごと
+    差し込む口**なので、その中の `<<branch>>` は行ごとの置換を通りません。
+
+    **置換が漏れると、受け取った側は `git merge origin/<<branch>>` を
+    そのまま読みます。** 枝の名前は `docs/trigger_spec.json` の1か所だけに置き、
+    型には書き写さないこと。
+    """
+    import json
+    branch = json.loads(
+        (ROOT / "docs" / "trigger_spec.json").read_text(encoding="utf-8"))["branch"]
+    for kind in ("hourly", "optimizer"):
+        text = sp.build(kind)
+        assert "<<branch>>" not in text, f"{kind}: 差し込み口が残っています"
+        assert f"git merge origin/{branch}" in text, kind

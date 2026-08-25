@@ -102,7 +102,10 @@ def test_drift_が死んだ腕を選んだ回を数える(tmp_path, monkeypatch)
     (tmp_path / "data" / "eta.jsonl").write_text(
         json.dumps(ROW, ensure_ascii=False) + "\n", encoding="utf-8")
     text = drift.dead_arm_report("2026-08-24")
-    assert "**引き代のない腕を選んだ回: 2/3**" in text
+    # 2026-08-25 に見出しを「引き代のない」→「到達日を動かせない」へ。
+    # **数える対象が2つになったから**です（天井 ×1.00 と、
+    # 「天井は大きいのに到達日に触らない」腕）。**数え方は変えていません。**
+    assert "**到達日を動かせない腕を選んだ回: 2/3**" in text
     assert "名指し **`rpm`** に従った回: **1/3**" in text
 
 
@@ -117,3 +120,68 @@ def test_drift_は天井が読めないときそう言う(tmp_path, monkeypatch)
     (tmp_path / "data").mkdir()
     (tmp_path / "data" / "eta.jsonl").write_text("", encoding="utf-8")
     assert "まだありません" in drift.dead_arm_report("2026-08-24")
+
+
+# --------------------------------------------------------------------------
+# **天井が大きいことと、その腕が到達日を動かせることは別**（2026-08-25）
+#
+# `sub_rate` の天井は ×2,923.79（＝登録率100%）。`cap` だけで数えると
+# **「引き代 ×2,923 の生きた腕」**に見えますが、いまの縛りは再生数（段4）で、
+# 登録率はそこに触りません —— **天井まで引いても月20万には届きません。**
+# 8/25 の実測では、閉じた前提の実績配分 11% がここに載っていました
+# （`density` の 28% と合わせて **39%**）。
+# 判定は `scripts/eta.py` の `lever_days()` が `reachable_at_cap` として解き、
+# `data/eta.jsonl` に `arm_reaches` で積みます。
+# --------------------------------------------------------------------------
+
+REACH_ROW = {**ROW, "arm_reaches": {"per_video": True, "rpm": True,
+                                    "sub_rate": False, "density": False},
+             "arm_threshold": {"per_video": 2.62, "rpm": 2.62,
+                               "sub_rate": None, "density": None}}
+
+
+def test_天井まで引いても届かない腕も死んでいると言う():
+    st = levers.arm_state(REACH_ROW)
+    assert set(st["dead"]) == {"density", "sub_rate"}
+    # **理由は別。** density は天井、sub_rate は「届かない」
+    assert st["dead_why"]["density"] == "天井"
+    assert st["dead_why"]["sub_rate"] == "天井まで引いても届かない"
+
+
+def test_届かない腕には天井の警告ではなく届かない旨を出す():
+    notes = levers.lever_notes("sub_rate", levers.arm_state(REACH_ROW))
+    assert any("天井まで引いても到達日に届きません" in n for n in notes)
+    # **天井 ×3147 の腕に「天井に着いています」と言わないこと**（別の話）
+    assert not any("天井に着いています" in n for n in notes)
+
+
+def test_届く腕には何も足さない():
+    notes = levers.lever_notes("per_video", levers.arm_state(REACH_ROW))
+    assert not any("届きません" in n for n in notes)
+
+
+def test_arm_reaches_の無い行では届かない側を判定しない():
+    """**読めないことと「全部届く」は別。** 古い行では `reaches` は空。"""
+    st = levers.arm_state(ROW)
+    assert st["reaches"] == {}
+    assert st["dead"] == ("density",)      # 天井の側だけは読める
+
+
+def test_drift_は届かない腕も数える(tmp_path, monkeypatch):
+    runs = tmp_path / "runs.jsonl"
+    ships = [
+        {"at": "2026-08-23T10:00:00+09:00", "kind": "ship", "what": "a", "lever": "sub_rate"},
+        {"at": "2026-08-23T11:00:00+09:00", "kind": "ship", "what": "b", "lever": "density"},
+        {"at": "2026-08-23T12:00:00+09:00", "kind": "ship", "what": "c", "lever": "rpm"},
+    ]
+    runs.write_text("\n".join(json.dumps(s, ensure_ascii=False) for s in ships) + "\n",
+                    encoding="utf-8")
+    monkeypatch.setattr(drift, "RUNS", runs)
+    monkeypatch.setattr(drift, "ROOT", tmp_path)
+    (tmp_path / "data").mkdir()
+    (tmp_path / "data" / "eta.jsonl").write_text(
+        json.dumps(REACH_ROW, ensure_ascii=False) + "\n", encoding="utf-8")
+    text = drift.dead_arm_report("2026-08-24")
+    # **sub_rate も数に入ること**（天井 ×3,147 でも届かない）
+    assert "**到達日を動かせない腕を選んだ回: 2/3**" in text
+    assert "天井まで引いても到達日に届きません" in text
