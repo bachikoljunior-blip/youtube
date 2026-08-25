@@ -43365,3 +43365,59 @@ UTC の日で割っている。実測の差:
 **この回の変更を全部外して撃っても同じように落ちます**（確認済み）。
 触ったのは `forms` / `dupes` / `verify` / `reschedule` / `upload_only` だけで、
 `topic_forge` には1行も入れていません。
+
+### Stop フックに止められて、もう1件出た —— **軌跡の道具が丸ごと死んでいた**
+
+「終わるのが最善か」に答えようとして全体検査の結果を最後まで読んだら、
+申し送りの **「3 failed / 2893 passed」ではありませんでした**:
+
+    4 failed, 2886 passed, 2 skipped, **17 errors**
+
+**17件は全部 `tests/test_trajectory.py`**。原因はこの1行です:
+
+    scripts/trajectory.py:687   tot = sum(src.values()) or 1
+    → TypeError: unsupported operand type(s) for +: 'int' and 'NoneType'
+
+**`src/scan.py` は「取れなかった」を `None` で書き残します**（`scan.py:194`）。
+
+    data/scan.jsonl 最終行（**08/25 19:00:34 —— この回に書かれた行**）
+      insightTrafficSourceType.（取れず）: None
+
+**印そのものは正しい設計です。** 取れなかったのを黙って0にすると、
+「本当に0だった回」と区別が付きません。**落ちていたのは読む側**で、
+`traffic()` は前置きだけで族をまるごと集めるので、印まで `sum()` に渡していました。
+
+**これは今日この回に入った値です。** つまり `scripts/trajectory.py` は
+**いま丸ごと動きません。** CLAUDE.md が (ア) として名指ししている
+「**進んでいく軌跡**」の本体がそれです。**次の回が撃っても動きませんでした。**
+
+直したもの: `traffic()` が `None` の印を数に混ぜず、**落としたことを返す**
+（`src_unavailable` / `loc_unavailable`）。**黙って捨てないこと** ——
+捨てると次の回は「流入が全部0だった」と読みます。
+`tests/test_forms.py` に回帰検査を2件。
+
+    tests/test_trajectory.py   **17 errors → 21 passed / 1 skipped**
+
+**この回の変更が原因ではありません**（`trajectory.py` は `forms` も `duration_s` も
+`ledger_rows` も `remember` も参照していない。grep で0件）。
+**入ってきたのはデータのほうです。**
+
+### Stop フック自身の誤検知も直した
+
+    pgrep -f "src.pipeline"   ← **その文字列を含むだけの `bash -c` を拾います**
+
+この回、「動いているか確かめる」ための `pgrep -af "src.pipeline"` **自身**が
+引っかかり、**何も走っていないのに「動作中」**と出ました。
+嘘の「あり」は「**畳めばコンテナごと消えるので、待つこと**」を意味するので、
+**次の回を、走っていないものの前で待たせます。** 1周ぶんの損です。
+本物の起動の形（`-m src.pipeline`）だけに当て、**自分と親を外しました**。
+両向き（走っていない／走っている）を実際に作って確かめてあります。
+
+### 持ち越しが1件、閉じました
+
+    python scripts/refresh_thumbnail.py --missing
+    → **サムネイルの載っていない本はありません**
+
+**4回続けて申し送られていた項目**（「2本4連続」「2本3連続」「28件」）です。
+JST 19:03 ＝ 日枠が戻る 16:00 を過ぎているので、いま撃てました。
+**もう写さないこと。** 次に必要になったら、そのとき測って書くこと。

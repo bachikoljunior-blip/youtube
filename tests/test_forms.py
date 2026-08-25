@@ -111,3 +111,43 @@ def test_ledger_keeps_duration_across_retime(tmp_path, monkeypatch):
     rows = dupes.ledger_rows()
     assert len(rows) == 1
     assert rows[0]["duration_s"] == 312.0
+
+
+# ---------------------------------------------------------------------------
+# **「取れなかった」の印で、軌跡が丸ごと止まらないこと**（2026-08-25 に踏んだ）
+# ---------------------------------------------------------------------------
+
+def test_traffic_survives_the_unavailable_marker():
+    """`src/scan.py` の `（取れず）: None` を `sum()` に混ぜないこと。
+
+    実測: `data/scan.jsonl` の 08/25 19:00:34 の行に印が1つ入った時点で、
+    **`tests/test_trajectory.py` の17件が全部 ERROR**（`int + NoneType`）になり、
+    `scripts/trajectory.py` が丸ごと動かなくなりました。
+    """
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "_traj", Path(__file__).resolve().parent.parent / "scripts" / "trajectory.py")
+    traj = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(traj)
+
+    tf = traj.traffic({
+        "insightTrafficSourceType.SHORTS": 900,
+        "insightTrafficSourceType.YT_SEARCH": 100,
+        "insightTrafficSourceType.（取れず）": None,      # ← これで落ちていた
+        "insightPlaybackLocationType.（取れず）": None,
+    })
+    assert tf["total"] == 1000
+    assert tf["shorts"] == 900
+    # **落としたことを黙らないこと**（0 と「測れていない」は別物）
+    assert tf["src_unavailable"] is True
+    assert tf["loc_unavailable"] is True
+
+
+def test_traffic_reports_available_when_nothing_is_missing():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "_traj2", Path(__file__).resolve().parent.parent / "scripts" / "trajectory.py")
+    traj = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(traj)
+    tf = traj.traffic({"insightTrafficSourceType.SHORTS": 5})
+    assert tf["src_unavailable"] is False
