@@ -142,6 +142,71 @@ def unreadable(doc: dict | None = None) -> int:
     return n
 
 
+def planned(doc: dict | None = None) -> dict:
+    """**これから閉じる前提の配分。**（`share` は閉じた前提 ＝ 過去の写し）
+
+    ## なぜ要るか（2026-08-26・最適化の回）
+
+    軌跡は**未来**を解きます。その速さは `rate = focus_rate × share` で、
+    `share` は **閉じた前提の腕べつの割合 ＝ 過去にどう振ってきたか**です。
+
+    **しかし未来の配分は、過去ではなく「いま開いている前提」が既に決めています。**
+    16本作って2週間待たないと1件も閉じないので、**これから2週間に閉じるのは、
+    いま台帳に開いている15件だけ**です。**そこに per_video の前提が1件も無ければ、
+    per_video の腕は、実績が何%であろうと動きません。**
+
+    実測 2026-08-26 —— 過去と未来が食い違っていました::
+
+        実績（閉じた21件）  per_video 60% ／ density 25% ／ sub_rate 10% ／ rpm 5%
+        これから（開いた5件）rpm 60% ／ sub_rate 20% ／ density 20% ／ **per_video 0%**
+        **腕の名前が無い前提 10件**（開いた15件の 67%）
+
+    軌跡は「回転の 60% が per_video に回る」前提で 2026-12-28 を出しますが、
+    **台帳には per_video の前提が1件もありません。**
+    どちらの数もこの機械が持っていて、**照らし合わせている所がどこにも無い**
+    ——`docs/JOURNAL.md` が「いちばん当たる」と書いている形そのものです
+    （**同じことを2か所が別々に言っていて、片方しか読まれていない**）。
+
+    ## `lever` の無い前提は、閉じたときに**丸ごと落ちます**
+
+    `closed()` は `lever` か `effect` の無い行を `continue` で飛ばします。
+    飛ばされた分は `throughput()`（＝ θ）にも入らないので、
+    **1件を黙って落とすたびに、腕の速さは全部いっしょに下がります**
+    （`rate = p · log(g) · θ`）。いまは閉じた21件が全部そろっていますが、
+    **それは閉じるときに書き足しているからで、開いた時点では 67% が空です。**
+    `unassigned` はその数です。**0 でないなら、この配分は上限側の推測**です。
+
+    返り::
+
+        {"share": {腕: 割合}, "n": 腕の付いた開いた前提の件数,
+         "by_lever": {腕: 件数}, "unassigned": 腕の名前が無い開いた前提の件数,
+         "total": 開いた前提の件数}
+
+    **`closed()` と同じく、`hypotheses` だけを見ます**（`confirmed` は閉じた側）。
+    """
+    doc = _load() if doc is None else doc
+    by_lever: dict[str, int] = {}
+    unassigned = total = 0
+    for h in doc.get("hypotheses") or []:
+        if not isinstance(h, dict) or h.get("outcome") is not None:
+            continue
+        total += 1
+        lever = h.get("lever")
+        if lever in ARMS:
+            by_lever[lever] = by_lever.get(lever, 0) + 1
+        elif lever == "none":
+            # **`none` は「この前提は腕を動かさない」と宣言した側**です。
+            # 分母から外すこと —— 入れると、動かないと分かっている前提が
+            # 「未来の配分」を薄めます。`unassigned`（＝空欄）とも別物です。
+            continue
+        else:
+            unassigned += 1
+    n = sum(by_lever.values())
+    share = {k: by_lever.get(k, 0) / n for k in ARMS} if n else {}
+    return {"share": share, "n": n, "by_lever": by_lever,
+            "unassigned": unassigned, "total": total}
+
+
 def ceilings(doc: dict | None = None) -> dict[str, dict]:
     """**測ってしまった天井**を腕ごとに返す（`{"per_video": {...}}`）。"""
     out: dict[str, dict] = {}
