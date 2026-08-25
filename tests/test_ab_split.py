@@ -344,3 +344,57 @@ def test_実物の帳面は行数より少ない本数になる():
     assert len(rows) == len(seen) < len(lines), (
         f"{len(lines)}行 → {len(rows)}本（実物 {len(seen)}本）"
     )
+
+
+# --- landed_groups（2026-08-25 に足した）---------------------------------
+# **振り分けの無い作りの変更**（冒頭の stat の割り方・冒頭の動きなど）は、
+# 「入る前に作ったか・後に作ったか」が群そのものです。**公開日で割らないこと** ——
+# 作ってから公開までの間隔が伸び続けているので、公開日は群を表しません
+# （実測 2026-08-25: 8/16 公開の本は 0.9日・8/24 は 7.5日・予約全体は中央値 13.4日）。
+
+from src.ab_split import landed_groups
+
+
+def test_作った時刻で割る() -> None:
+    JST_ = datetime(2026, 8, 23, 22, 3, 31).replace(tzinfo=ab_split.JST)
+    builds = {
+        "old-1": datetime(2026, 8, 20, 9, 0, tzinfo=ab_split.JST),
+        "old-2": datetime(2026, 8, 23, 22, 3, 30, tzinfo=ab_split.JST),   # 1秒前
+        "new-1": datetime(2026, 8, 23, 22, 3, 31, tzinfo=ab_split.JST),   # ちょうど
+        "new-2": datetime(2026, 8, 24, 9, 0, tzinfo=ab_split.JST),
+    }
+    assert landed_groups(JST_, builds) == (["old-1", "old-2"], ["new-1", "new-2"])
+
+
+def test_公開日で割ると処置群がほぼ空になる() -> None:
+    """**この検査が、条件を書き直した理由そのものです。**
+
+    実測（2026-08-25・`config/hypotheses.yaml` の 09/05「前提を先・数字を後」）:
+    旧条件の『処置群』350本のうち、**実際に処置が入っていたのは 21本（6.0%）**。
+    ここでは同じ形を小さく作って、**公開日で割ると処置群が薄まる**ことを固定します。
+    """
+    landed = datetime(2026, 8, 23, 22, 3, 31, tzinfo=ab_split.JST)
+    # 3本とも「landed より後に公開」だが、作ったのは landed より前（在庫が先に積んである）
+    builds = {f"t{i}": datetime(2026, 8, 18, 9, 0, tzinfo=ab_split.JST) for i in range(3)}
+    builds["t-new"] = datetime(2026, 8, 24, 9, 0, tzinfo=ab_split.JST)
+    before, after = landed_groups(landed, builds)
+    assert len(after) == 1 and len(before) == 3, (
+        "公開日ではなく作った時刻で割れていません"
+    )
+
+
+def test_実物で処置群は門に足りていない() -> None:
+    """**まだ判定してはいけない**ことを、実データで固定する。
+
+    足りているのに「足りない」と言い続けるほうが危ないので、
+    **足りたらこの検査が落ちます。** 落ちたら判定に入ってよい合図です。
+    """
+    landed = datetime(2026, 8, 23, 22, 3, 31, tzinfo=ab_split.JST)
+    before, after = landed_groups(landed)
+    if not before and not after:
+        pytest.skip("作った記録がありません")
+    assert len(after) < MIN_PER_GROUP, (
+        f"処置群が {len(after)}本 ＝ 門 {MIN_PER_GROUP} に達しました。"
+        "**判定に入ってよい合図です** —— hypotheses.yaml の 09/05 を判定し、"
+        "この検査を消すこと"
+    )
