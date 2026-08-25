@@ -181,6 +181,55 @@ def cliff_grid(max_children: int = 4, **kw) -> list[dict]:
     return [cliff(n, **kw) for n in range(1, max_children + 1)]
 
 
+def cliff_pay_grid(children: int = 1, widow_age: float = 45) -> list[dict]:
+    """**同じ崖を、報酬と月数を変えて測り直す。**
+
+    `cliff` は `avg_monthly` と `months` を受けますが、どの節も既定のまま
+    （30万円・300月）で呼んでいました。動かすと出てくるのは、
+    **落ちる額が1円も動かない**という事実です。
+
+    落ちる額 ＝ 遺族基礎年金（子の加算こみ）− 中高齢寡婦加算 で、
+    **遺族厚生年金は前にも後にも同じ額で入っているので、引き算で消えます。**
+    動くのは**残る割合**だけ。報酬が高い世帯ほど割合の落ち込みは浅く見えますが、
+    **家計から消える金額は1円も違いません。**
+    """
+    rows = []
+    for avg_monthly, months in ((150_000, 120), (150_000, 300),
+                                (300_000, 300), (500_000, 300),
+                                (650_000, 300), (650_000, 480)):
+        c = cliff(children, avg_monthly=avg_monthly, months=months,
+                  widow_age=widow_age)
+        rows.append({
+            "平均標準報酬額": avg_monthly,
+            "被保険者期間": months,
+            "遺族厚生年金": survivor_employee(avg_monthly, months),
+            "18歳到達年度末の前": c["18歳到達年度末の前"],
+            "18歳到達年度末の後": c["18歳到達年度末の後"],
+            "落ちる額": c["落ちる額"],
+            "残る割合": c["残る割合"],
+        })
+    return rows
+
+
+def cliff_pay_invariant(children: int = 1) -> dict:
+    """落ちる額が報酬で動かないことと、残る割合だけが動くことを、数で出す。"""
+    rows = cliff_pay_grid(children)
+    drops = {r["落ちる額"] for r in rows}
+    ratios = [r["残る割合"] for r in rows]
+    return {
+        "子の数": children,
+        "落ちる額の種類": len(drops),
+        "落ちる額": next(iter(drops)) if len(drops) == 1 else None,
+        "残る割合のいちばん低い": min(ratios),
+        "残る割合のいちばん高い": max(ratios),
+        "残る割合の幅": max(ratios) - min(ratios),
+        "いちばん低い報酬の遺族厚生年金": rows[0]["遺族厚生年金"],
+        "いちばん高い報酬の遺族厚生年金": rows[-1]["遺族厚生年金"],
+        "遺族厚生年金の倍率": (rows[-1]["遺族厚生年金"]
+                        / rows[0]["遺族厚生年金"]),
+    }
+
+
 # ---- 中高齢寡婦加算に、そもそも届くか ----------------------------------
 def widow_age_range(mother_age_at_birth: int) -> tuple[int, int]:
     """末子が18歳到達年度末を迎えたときの、妻の年齢の幅。
@@ -314,6 +363,70 @@ def childless_wall(ages: tuple[int, ...] = (36, 38, 39, 40, 41, 45),
     return rows
 
 
+def youngest_grid(widow_age: int = 35, children: int = 1,
+                  youngest_ages: tuple[int, ...] = (0, 5, 10, 12, 13, 14, 15, 17)
+                  ) -> list[dict]:
+    """**同じ妻の年齢・同じ子の数で、末子の年齢だけを動かす。**
+
+    中高齢寡婦加算の判定は「**末子が18歳到達年度末を迎えたときの妻の年齢**」で
+    一度だけ行われます（`widow_add_eligible`）。妻の年齢は
+    `妻の年齢 + (18 − 末子の年齢)` なので、**末子が年上であるほど、
+    その判定の日が早く来て、妻はまだ40歳になっていません。**
+
+    子のいない妻の「40歳の壁」は妻の年齢に立っていますが、
+    **子のいる妻の壁は、末子の年齢のほうに立っています。**
+    """
+    rows = []
+    for y in youngest_ages:
+        lt = lifetime(widow_age, children, youngest_child_age=y)
+        rows.append({
+            "末子の年齢": y,
+            "18歳到達年度末のときの妻の年齢": widow_age + (CHILD_END_AGE - y),
+            "中高齢寡婦加算に届くか": widow_add_eligible(widow_age, children, y),
+            "遺族基礎年金": lt["遺族基礎年金"],
+            "中高齢寡婦加算": lt["中高齢寡婦加算"],
+            "65歳までの総額": lt["65歳までの総額"],
+        })
+    return rows
+
+
+def youngest_wall(widow_age: int = 35, children: int = 1) -> dict:
+    """**その壁が、末子の何歳と何歳のあいだに立っているか。**
+
+    `WIDOW_ADD_FROM` を満たす境目は `末子の年齢 ≦ 18 −（40 − 妻の年齢）`。
+    ここではその1歳ぶんで、65歳までの総額がいくら変わるかを出します。
+    """
+    edge = CHILD_END_AGE - (WIDOW_ADD_FROM - widow_age)
+    # **末子が18歳到達年度末を過ぎていれば、そもそも遺族基礎年金の対象外**です。
+    # 境目のすぐ外（`edge + 1`）が 18歳以上になる妻（39歳以上）には、
+    # この壁は立ちません —— その年齢の子はもう遺族基礎年金の対象ではなく、
+    # 子がいる限り、判定の日には必ず40歳を過ぎているからです。
+    stands = edge + 1 < CHILD_END_AGE
+    inside = lifetime(widow_age, children,
+                      youngest_child_age=min(edge, CHILD_END_AGE - 1))
+    outside = lifetime(widow_age, children,
+                       youngest_child_age=min(edge + 1, CHILD_END_AGE - 1))
+    return {
+        "妻の年齢": widow_age,
+        "子の数": children,
+        "壁が立っているか": stands,
+        "届く末子の年齢の上限": edge,
+        "届かない末子の年齢": edge + 1,
+        "届く側の中高齢寡婦加算": inside["中高齢寡婦加算"],
+        "届かない側の中高齢寡婦加算": outside["中高齢寡婦加算"],
+        "加算の差": inside["中高齢寡婦加算"] - outside["中高齢寡婦加算"],
+        "届く側の総額": inside["65歳までの総額"],
+        "届かない側の総額": outside["65歳までの総額"],
+        "総額の差": inside["65歳までの総額"] - outside["65歳までの総額"],
+    }
+
+
+def youngest_wall_grid(ages: tuple[int, ...] = (25, 30, 35, 37, 38, 39),
+                       children: int = 1) -> list[dict]:
+    """妻の年齢べつに、壁が末子の何歳に立つか。**1歳ずつ動きます。**"""
+    return [youngest_wall(a, children) for a in ages]
+
+
 def lifetime_grid(ages: tuple[int, ...] = (30, 35, 40, 45),
                   children_list: tuple[int, ...] = (0, 1, 2, 3)) -> list[dict]:
     return [lifetime(a, c) for a in ages for c in children_list]
@@ -413,6 +526,54 @@ def check_tables() -> None:
 
     _checks.unique_by(child_steps(), lambda r: r["子の数"], "子の加算の表")
     _checks.unique_by(months_grid(), lambda r: r["被保険者期間の月数"], "被保険者期間の表")
+    # **主題**: 18歳の崖で落ちる額は、報酬にも月数にも1円も依存しない
+    for n in (1, 2, 3, 4):
+        inv = cliff_pay_invariant(n)
+        if inv["落ちる額の種類"] != 1:
+            raise _checks.TableError(
+                f"子{n}人の落ちる額が報酬で動いています"
+                f"（{inv['落ちる額の種類']}種類）。**引き算で消えるはずです**")
+        _checks.rounding(inv["落ちる額"],
+                         basic_pension(n) - MIDDLE_WIDOW_ADD,
+                         f"子{n}人の落ちる額（遺族基礎年金 − 中高齢寡婦加算）")
+    inv = cliff_pay_invariant(1)
+    # 遺族厚生年金のほうは本当に動いていること（＝消えたのが偶然でないこと）
+    _checks.greater(inv["遺族厚生年金の倍率"], 5.0,
+                    "遺族厚生年金の幅が5倍未満です。**動かない側と区別が付きません**")
+    # 残る割合だけは動くこと
+    _checks.greater(inv["残る割合の幅"], 10.0,
+                    "残る割合の幅が10ポイント未満です。**この節の主張が立ちません**")
+    # 子が多いほど落差が深い（既存の主題と、報酬を変えても同じであること）
+    for pay in (150_000, 650_000):
+        drops = [cliff(n, avg_monthly=pay)["落ちる額"] for n in (1, 2, 3, 4)]
+        _checks.ascending(drops, f"報酬{pay:,}円のときの、子の数ごとの落ちる額",
+                          strict=True)
+
+    # **主題**: 子のいる妻の壁は、妻の年齢ではなく末子の年齢に立つ
+    for age in (25, 30, 35, 38):
+        w = youngest_wall(age, 1)
+        if not w["壁が立っているか"]:
+            raise _checks.TableError(f"妻{age}歳で壁が立っていません")
+        _checks.rounding(w["届く末子の年齢の上限"],
+                         CHILD_END_AGE - (WIDOW_ADD_FROM - age),
+                         f"妻{age}歳の、届く末子の年齢の上限")
+        if w["届かない側の中高齢寡婦加算"] != 0:
+            raise _checks.TableError(
+                f"妻{age}歳・末子{w['届かない末子の年齢']}歳で、"
+                f"中高齢寡婦加算が {w['届かない側の中高齢寡婦加算']:,}円 出ています。"
+                f"**判定は一度きりなので0円のはずです**")
+        # 加算の差は、40歳から65歳までの満額そのもの
+        _checks.rounding(w["加算の差"], widow_add_lifetime(True),
+                         f"妻{age}歳の壁で失う中高齢寡婦加算")
+    # 39歳には壁が立たない（境目の外がもう子でなくなるため）
+    if youngest_wall(39, 1)["壁が立っているか"]:
+        raise _checks.TableError(
+            "妻39歳に壁が立っています。**末子18歳はもう遺族基礎年金の対象外です**")
+    # 末子が年上になるほど総額は減る（単調）
+    totals = [r["65歳までの総額"] for r in youngest_grid()]
+    _checks.decreases_with(lambda i: totals[i], list(range(len(totals))),
+                           "末子が年上なのに65歳までの総額が減っていない")
+
     _checks.assumption_values(ASSUMPTIONS, name="izoku")
 
 
@@ -427,6 +588,57 @@ if __name__ == "__main__":
     print("\n=== 末子が18歳になった瞬間の崖（落ちる先は子の数を見ない） ===")
     for row in cliff_grid():
         print(row)
+
+    print("\n=== その崖で落ちる額は、夫がいくら稼いでいたかと1円も関係ない"
+          "（動くのは割合だけ・子1人）===")
+    for row in cliff_pay_grid(1):
+        print(f"  平均標準報酬額 {row['平均標準報酬額']:>8,}円 × {row['被保険者期間']:>3}月"
+              f"  遺族厚生年金 {row['遺族厚生年金']:>9,}円"
+              f"  → 前 {row['18歳到達年度末の前']:>9,}円"
+              f"  後 {row['18歳到達年度末の後']:>9,}円"
+              f"  **落ちる額 {row['落ちる額']:>8,}円**"
+              f"  残る割合 {row['残る割合']:>5.1f}%")
+    inv = cliff_pay_invariant(1)
+    print(f"  → 遺族厚生年金は {inv['いちばん低い報酬の遺族厚生年金']:,}円 から "
+          f"{inv['いちばん高い報酬の遺族厚生年金']:,}円 まで **{inv['遺族厚生年金の倍率']:.2f}倍** 動いています。"
+          f"それでも**落ちる額は {inv['落ちる額']:,}円 の1種類だけ**です")
+    print(f"    崖の前にも後にも遺族厚生年金は同じ額で入っているので、**引き算で消えます。**"
+          f"残るのは 遺族基礎年金（子の加算こみ）− 中高齢寡婦加算 だけ ——"
+          f"**子の数だけで決まる量**です")
+    print(f"    動くのは残る割合のほうで、{inv['残る割合のいちばん低い']:.1f}% 〜 "
+          f"{inv['残る割合のいちばん高い']:.1f}%（幅 {inv['残る割合の幅']:.1f}ポイント）。"
+          f"**報酬が高い世帯ほど「割合の落ち込み」は浅く見えますが、"
+          f"家計から消える金額はどの世帯でも同じ {inv['落ちる額']:,}円**です")
+    print(f"    子の数べつの落ちる額（報酬で動きません）: "
+          + " ／ ".join(f"子{n}人 **{cliff(n)['落ちる額']:,}円**" for n in (1, 2, 3, 4)))
+
+    print("\n=== 子のいる妻の壁は、妻の年齢ではなく**末子の年齢**に立っている"
+          "（妻35歳・子1人）===")
+    for row in youngest_grid():
+        mark = "  ← **ここで消える**" if not row["中高齢寡婦加算に届くか"] and row["末子の年齢"] == 14 else ""
+        print(f"  末子 {row['末子の年齢']:>2}歳"
+              f"  → 18歳到達年度末のとき妻 {row['18歳到達年度末のときの妻の年齢']:>2}歳"
+              f"  中高齢寡婦加算 {row['中高齢寡婦加算']:>10,}円"
+              f"  遺族基礎年金 {row['遺族基礎年金']:>10,}円"
+              f"  **65歳までの総額 {row['65歳までの総額']:>10,}円**{mark}")
+    w = youngest_wall(35, 1)
+    print(f"  → 中高齢寡婦加算の判定は「**末子が18歳到達年度末を迎えたときの妻の年齢**」で、"
+          f"**一度きり**です。妻の年齢は 妻 + (18 − 末子の年齢) なので、"
+          f"**末子が年上であるほど、その日が早く来ます**")
+    print(f"    妻35歳なら、末子 {w['届く末子の年齢の上限']}歳 までは届き、"
+          f"**{w['届かない末子の年齢']}歳 で 0円**。"
+          f"総額は {w['届く側の総額']:,}円 → {w['届かない側の総額']:,}円 で、"
+          f"**末子1歳の差で {w['総額の差']:,}円**です")
+    print(f"    子のいない妻の「40歳の壁」は妻の年齢に立っていますが、"
+          f"**子のいる妻の壁は末子の年齢に立ちます。**妻の年齢べつの境目:")
+    for row in youngest_wall_grid():
+        if row["壁が立っているか"]:
+            print(f"      妻 {row['妻の年齢']:>2}歳  → 末子 {row['届く末子の年齢の上限']:>2}歳 まで届き、"
+                  f"{row['届かない末子の年齢']:>2}歳 で **{row['総額の差']:,}円** 失う")
+        else:
+            print(f"      妻 {row['妻の年齢']:>2}歳  → **壁は立ちません**"
+                  f"（末子 {row['届かない末子の年齢']}歳 はもう遺族基礎年金の対象外なので、"
+                  f"子がいる限り判定の日には40歳を過ぎています）")
 
     print("\n=== 末子を21歳以下で産んだ妻は、中高齢寡婦加算に一生届かない ===")
     for row in reach_grid():
