@@ -42123,3 +42123,35 @@ merge のあと「どちらが `videos.update` を通った側か」を行から
    叩く検査が遅い）。観測できた赤は **5件**で、8/24 の回の「6件」と同じ帯です。
    **`data/day_quota.jsonl` に検査由来の `channels.list mine` が積まれている**ので、
    **全体の検査は日枠を食います。** 投稿の前に回すなら、そこを見てから
+
+### 追記（同じ回）—— 全体検査を最後まで通した。赤は**7件**、名前を残す
+
+**「前からの赤6件」と報告した回はありますが、どれかは誰も書いていませんでした**
+（08/24 の optimizer。08/25 09:0x の回は関わる117件だけ見て畳んでいます）。
+**名前が無いと、次の回は毎回ゼロから数え直します。** 通したので置いておきます。
+
+    2,972 passed / **7 failed** / 4 skipped / 26分32秒（この回は同時に4セッション走行）
+
+    tests/test_batch_slots.py::test_unpinned_still_slides_a_day
+    tests/test_forge_floor_fallback.py::test_実物の_nenkin_で作り話は落ちたまま
+    tests/test_forge_order.py::test_余りの多い族より実績の高い族が先
+    tests/test_forge_order.py::test_在庫が尽きた族は回り番から落ちる
+    tests/test_narrated.py::test_実物で当たりが3本に収まっている
+    tests/test_reschedule_move_ledger.py::test_節を数えるのに使う関数が速いこと
+    tests/test_trajectory.py::test_growth_is_not_significant_and_that_is_said_out_loud
+
+**この回の2件（`collisions` / `density_verdict`）は1つも入っていません。**
+その2モジュールを import している検査は `tests/test_collisions.py` と
+`tests/test_density_verdict.py` だけで（`grep -rl`）、どちらも緑です。
+
+**7件の見立て**（**推測です。数字で確かめていません**）:
+
+- `test_reschedule_move_ledger` の1件は**壁時計の検査**（`src/calc/*` の import 時間）。
+  **26分かかる走りの中で、4セッション同時のときに測っています。** 中身ではなく
+  負荷で落ちる形。**単体で撃ち直せば緑の可能性が高い** —— 次の回が確かめること
+- `test_trajectory` と `test_narrated` と `test_forge_*` は**実データを読む検査**
+  （`data/views.jsonl`・在庫）。実データは毎周動くので、**「前からの赤」ではなく
+  「いまのデータではそう」かもしれません**。しきい値の側を疑うこと
+
+**次にここを見る回への1行**: **この7件を、まず単体で撃ち直すこと。**
+全体走行の中の赤と、単体の赤は別物です（少なくとも1件は壁時計で分かれます）。
