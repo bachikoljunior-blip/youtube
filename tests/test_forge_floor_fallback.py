@@ -164,3 +164,27 @@ def test_金額を持たない_calc_はこれまでどおり():
     small = {"=== 日数の節 ===": "  20年で241日  年5日  時季指定義務"}
     assert tf.section_floor(small) == tf.SMALL_FLOOR
     assert tf.best_section("20年で241日を捨てる", small)[0][0] > 0
+
+
+def test_落とす理由が2つに分かれている():
+    """**文言と中身を食い違わせない**（2026-08-25 22:xx に足した）。
+
+    この門は、同じ事故を3回踏んでいます —— 「表の外の数字を使っています」と
+    言いながら、書き手は表の外へ出ていなかった。**割合の門は4回目を作ります**
+    （数字は表にあるのに、足りないのは割合のほう）。**理由を分けて出すこと。**
+    """
+    sections = tf.sections("nenkin")
+
+    n = _absent_two_digit(sections)
+    assert "どの節の表にも載っていません" in tf.why_dropped(f"分岐点は{n}歳まで動く", sections)
+
+    seen: set[int] = set()
+    for rung in tf.rungs(sections):
+        for body in sections.values():
+            seen |= rung(body)
+    fake = [x for x in range(10, 100) if x not in seen][:3]
+    assert len(fake) == 3, "2桁がほぼ埋まっています。この検査は割合を測れません"
+    text = "分岐点は92歳から" + "か月・".join(str(x) for x in fake) + "か月へ動く"
+    why = tf.why_dropped(text, sections)
+    assert "割合が足りません" in why, why
+    assert "1/4" in why, why          # 92 だけが載っている

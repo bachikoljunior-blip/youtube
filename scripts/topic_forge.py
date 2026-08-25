@@ -526,6 +526,39 @@ def best_section(text: str, sections: dict[str, str]) -> list[tuple[int, str]]:
 MATCH_RATIO_FLOOR = 1 / 3
 
 
+def why_dropped(text: str, sections: dict[str, str]) -> str:
+    """落とした理由を、**そのとき本当に起きたこと**で書く。
+
+    **文言と中身が食い違うのは、この門が繰り返し踏んでいる形です**
+    （`section_floor` と `best_section` の docstring に、同じ事故が3回出てきます。
+    どれも「表の外の数字を使っています」と言いながら、書き手は表の外へ出ていなかった）。
+    **割合の門を足すと、4回目を自分で作ります** —— 数字は表にあるのに、
+    足りないのは**割合**のほうだからです。だから理由を2つに分けます。
+
+        一致0        → 本当に1つも載っていない
+        割合が足りない → 載ってはいる。**足りないのは何割か**と、どの数が無いか
+
+    **次に読む側が、どちらを直せばよいかを迷わないこと**が目的です。
+    """
+    for rung in rungs(sections):
+        want = rung(text)
+        if not want:
+            continue
+        union: set = set()
+        for body in sections.values():
+            union |= rung(body)
+        hit = want & union
+        if hit:
+            miss = sorted(want - union)[:8]
+            return (f"数字は載っているが、割合が足りません"
+                    f"（{len(hit)}/{len(want)} = {len(hit)/len(want):.2f}"
+                    f" < {MATCH_RATIO_FLOOR:.2f}）。"
+                    f"表に無い数: {miss}"
+                    f" —— **その数を落とすか、表を持っている calc へ移すこと**")
+    return ("題と狙いの数字が、この calc のどの節の表にも載っていません"
+            "（表の外の数字を使っています）")
+
+
 def backed_ratio(want: set, sections: dict[str, str], rung) -> float:
     r"""題の数字のうち、**その calc のどこかの表に載っている割合**。
 
@@ -790,9 +823,7 @@ def realign(forged: ForgedSet, picked, all_sections,
                     ranked = best_section(text, all_sections[mod])
         used_rung = match_scale(text, all_sections[mod])
         if top == 0:
-            dropped.append(
-                f"{item.id}: 題と狙いの数字が、この calc のどの節の表にも載っていません"
-                f"（表の外の数字を使っています）")
+            dropped.append(f"{item.id}: {why_dropped(text, all_sections[mod])}")
             fixed.append(None)
             continue
         # **同点では動かさない**（2026-08-16 に足した）。ここは長らく
