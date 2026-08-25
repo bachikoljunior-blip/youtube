@@ -75,3 +75,46 @@ def test_yaml_の_settle_days_も同じ数を使っている():
                 f"いまの実測は {settle.SETTLE_DAYS}日 です。**長く待つ理由があるなら、"
                 "その理由を `src/settle.py` に書いてからこの検査を直すこと**"
             )
+
+
+# ---- 遅れの帯（2026-08-26）----------------------------------------------
+
+def test_遅れの帯は実測から出る():
+    """**遅れは点ではありません。1日の中で動きます。**
+
+    Analytics は日の途中で新しい日を出すので、**同じ日でも早い時刻に走った回は
+    4日、遅い時刻の回は 3日**を見ます。実測 438観測で 3日が 381・4日が 57、
+    **1日のうちに両方を観測した日が 6日**（08/18〜08/22・08/26）。
+
+    この幅を `scripts/deadline_check.py` が帯として使い、
+    **「期限が1日 ずれています」という churn を止めます。**
+    """
+    b = settle.analytics_lag_band()
+    assert set(b) >= {"lag", "lo", "hi", "band", "n"}
+    assert b["lo"] <= b["lag"] <= b["hi"] or b["n"] < 2
+    assert b["band"] == b["hi"] - b["lo"] >= 0
+
+
+def test_観測が足りない回は帯を主張しない(tmp_path):
+    """**黙って広げないこと。** 帯が広いほど「ずれ」を見逃すので、根拠が要ります。"""
+    空 = tmp_path / "からっぽ.jsonl"
+    空.write_text("", encoding="utf-8")
+    assert settle.analytics_lag_band(path=空)["band"] == 0
+
+
+def test_窓の外の観測は帯に入れない(tmp_path):
+    """古い遅れを混ぜると、**もう起きない幅**で今日の判定を黙らせます。"""
+    import json
+    p = tmp_path / "lag.jsonl"
+    p.write_text("\n".join(json.dumps(r) for r in [
+        {"at": "2020-01-01T00:00:00+09:00", "last_day": "2019-12-01"},   # 31日 遅れ・窓の外
+        {"at": "2026-08-26T02:00:00+09:00", "last_day": "2026-08-22"},   # 4日
+        {"at": "2026-08-26T06:00:00+09:00", "last_day": "2026-08-23"},   # 3日
+    ]), encoding="utf-8")
+    b = settle.analytics_lag_band(window_days=10**6, path=p)
+    assert b["hi"] == 31 and b["band"] == 28, "窓を広げれば入る（この検査じしんの前提の確認）"
+
+    b = settle.analytics_lag_band(window_days=14, path=p)
+    assert b["hi"] == 4 and b["lo"] == 3, "窓の中に残るのは 08/26 の2件だけ"
+    assert b["band"] == 1, ("古い 31日 を混ぜて帯を 28日 にしないこと —— "
+                            "**もう起きない幅で今日の判定を黙らせる**ことになります")
