@@ -65,9 +65,33 @@ def test_実物の_nenkin_で2回落ちた形が通る():
         assert tf.best_section(text, sections)[0][0] > 0, text
 
 
+def _absent_two_digit(sections: dict[str, str]) -> int:
+    """**その calc の表のどこにも出てこない2桁の数**を探して返す。
+
+    ここを固定値で書かないこと（2026-08-25 に赤で気づいた）。
+    この検査は長らく `分岐点は92歳7か月まで動く` を「作り話」として使っていましたが、
+    8/24 に `nenkin` へ「繰下げの年利」の節が入り、その表に **`92歳` の行が実在**
+    するようになりました。**作り話が作り話でなくなった**ので、
+    `best_section` は正しく1を返し、**検査だけが古くなって赤になります。**
+
+    `src/calc/` は毎周太るので、**固定値はいつか必ず表に当たります。**
+    探して選べば、門が本当に空でないことを、**表が増えても**押さえられます。
+    """
+    seen: set[int] = set()
+    for rung in tf.rungs(sections):
+        for body in sections.values():
+            seen |= rung(body)
+    for n in range(10, 100):
+        if n not in seen:
+            return n
+    raise AssertionError("2桁の数が全部どこかの表に出ています（この検査は使えません）")
+
+
 def test_実物の_nenkin_で作り話は落ちたまま():
+    """**門が空になっていないこと。** ここが緩むと誤情報がそのまま公開されます。"""
     sections = tf.sections("nenkin")
-    assert tf.best_section("分岐点は92歳7か月まで動く", sections)[0][0] == 0
+    n = _absent_two_digit(sections)
+    assert tf.best_section(f"分岐点は{n}歳7か月まで動く", sections)[0][0] == 0, n
 
 
 def test_金額を持たない_calc_はこれまでどおり():
