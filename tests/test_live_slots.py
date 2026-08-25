@@ -148,3 +148,51 @@ def test_入れ替え先は生きる帯の中():
         assert collisions.LIVE_FROM_MIN <= m <= collisions.LIVE_TO_MIN, \
             f"{vid} を帯の外（{when:%H:%M}）へ置こうとしています"
         assert m % collisions.STEP_MIN == 0, f"{vid} が30分きざみに乗っていません"
+
+
+# --- `queue_lag` が判定を壊さないか（2026-08-26 に足した門）--------------------
+
+def _fake_plan(before: dict, after: dict):
+    class P:
+        before_at = before
+        at = after
+        swaps = [("a", "b")]
+    return P()
+
+
+def test_queue_lag_は要る本数を割る入れ替えを撃たない(monkeypatch):
+    """**「何日 早まるか」より「判定を壊さないか」のほうが強い門です。**
+
+    日付だけを見て入れ替えると、「早い枠へ移した」つもりが
+    「死んだ枠へ移した」になりえます。そのとき `ready` は早まるのに、
+    **その群の生きた本が要る数を割ります。**
+    """
+    from scripts import queue_lag
+    import scripts.live_slots as ls
+
+    day = dt.datetime(2026, 9, 10, 5, 0, tzinfo=JST)
+    before = {f"v{i}": day + dt.timedelta(minutes=30 * i) for i in range(3)}
+    after = dict(before)
+    after["v2"] = day + dt.timedelta(minutes=15)      # v1 から15分 → 落ちる
+
+    monkeypatch.setattr(ls, "_groups",
+                        lambda: {"k": ({"処置": ["v0", "v1", "v2"]}, 3)})
+    lines, ok = queue_lag.live_cost_lines(_fake_plan(before, after))
+    assert not ok, "要る本数を割る入れ替えを、通しています\n" + "\n".join(lines)
+    assert any("割ります" in ln for ln in lines)
+
+
+def test_queue_lag_は割らない入れ替えを止めない(monkeypatch):
+    """**止めすぎないこと。** 余っている群が減るだけなら通します。"""
+    from scripts import queue_lag
+    import scripts.live_slots as ls
+
+    day = dt.datetime(2026, 9, 10, 5, 0, tzinfo=JST)
+    before = {f"v{i}": day + dt.timedelta(minutes=30 * i) for i in range(5)}
+    after = dict(before)
+    after["v4"] = day + dt.timedelta(minutes=15)
+
+    monkeypatch.setattr(ls, "_groups",
+                        lambda: {"k": ({"処置": [f"v{i}" for i in range(5)]}, 2)})
+    _lines, ok = queue_lag.live_cost_lines(_fake_plan(before, after))
+    assert ok, "余っている群が減っただけで止めています"

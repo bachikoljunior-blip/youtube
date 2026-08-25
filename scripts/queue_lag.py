@@ -156,6 +156,8 @@ class Plan:
         self.n: dict[str, int] = {f.key: f.min_per_group for f in self.floors}
         self.swaps: list[tuple[str, str]] = []      # (早める本, 後ろへ送る本)
         self.before = self.readies()
+        #: **入れ替える前**の割り当て。`live_cost_lines()` が前後を比べるのに使う
+        self.before_at: dict[str, datetime] = dict(self.at)
 
     # -- いまの姿 --
     def _days_of(self, key: str, group: str) -> list[date]:
@@ -409,6 +411,55 @@ def apply_moves(plan: Plan) -> int:
     return 0
 
 
+def live_cost_lines(plan: Plan) -> tuple[list[str], bool]:
+    """**この入れ替えで、判定に要る本を割らないか。**（返り: 行, 撃ってよいか）
+
+    ## なぜ要るか（2026-08-26。**入れた日に、まだ当たっていないだけでした**）
+
+    この道具は**日付だけ**を見て入れ替えます。ところが再生が付くかどうかは
+    **その日の何本目か**で決まります（`src/day_cap.py`・実測で
+    帯に入る本は再生の中央値 **718**、入らない本は **2**）。
+
+    **つまり「早い枠へ移した」つもりが「死んだ枠へ移した」ことがありえます。**
+    そうなると `ready` は早まったのに、**その群の生きた本が要る数を割る** ——
+    `falsified_if` は「上回らなければ外れ（同点も外れ）」なので、
+    **足りない標本はそのまま「外れ」に化けます。**
+
+    2026-08-26 に実物で数えたときは、**たまたま**どの群も割りませんでした
+    （`stat_split 処置(後)` は 13→16 で、むしろ助かっています）。
+    **たまたまを門にしないこと。** ここで数えて、割るなら撃ちません。
+    """
+    from src import day_cap
+    from scripts import live_slots
+
+    live_now = day_cap.live_ids([{"at": w, "video_id": v}
+                                 for v, w in plan.before_at.items()])
+    live_next = day_cap.live_ids([{"at": w, "video_id": v}
+                                  for v, w in plan.at.items()])
+    out = ["", "=== この入れ替えで、判定に要る本を割らないか"
+                "（`src/day_cap.py` の実測の枠で数える）==="]
+    bad: list[str] = []
+    for key, (groups, n) in sorted(live_slots._groups().items()):
+        for g, vids in sorted(groups.items()):
+            a = len([v for v in vids if v in live_now])
+            b = len([v for v in vids if v in live_next])
+            if a == b:
+                continue
+            mark = ""
+            if b < n <= a:
+                mark = "   ← [!] **要る本数を割ります**"
+                bad.append(f"{key}/{g} {a}→{b}（要 {n}）")
+            out.append(f"  {key:16s} {g:14s} {a:4d} → **{b:4d}**"
+                       f"（{b - a:+d}／要 {n}）{mark}")
+    if len(out) == 2:
+        out.append("  （どの群も動きません）")
+    if bad:
+        out.append("  [!] **撃たないこと。** " + " / ".join(bad)
+                   + "。判定日を早めるために、**判定そのものを壊しています。**"
+                     "`python scripts/live_slots.py --plan` で枠のほうを先に直すこと")
+    return out, not bad
+
+
 def report(plan: Plan | None = None) -> list[str]:
     plan = plan or Plan()
     out = lag_lines(plan.rows, plan.now)
@@ -437,13 +488,23 @@ def main(argv: list[str] | None = None) -> int:
     lines += plan.gain_lines()
     if args.plan or args.apply:
         lines += plan.plan_lines()
+    safe = True
     if plan.swaps:
+        # **枠の門が先です。**「何日 早まるか」より「判定を壊さないか」のほうが強い。
+        cost, safe = live_cost_lines(plan)
+        lines += cost
         qlines, ok = quota_lines(plan)
         lines += qlines
     else:
         ok = True
     print("\n".join(lines))
     if args.apply:
+        if not safe:
+            # **`--force-quota` では抜けられません。** あれは日枠の話で、
+            # こちらは**判定そのものを壊すか**の話です。
+            print("  [!] **撃ちません。**判定に要る本を割ります"
+                  "（上の「割らないか」の節）。`--force-quota` では抜けられません")
+            return 1
         if not ok and not args.force_quota:
             return 1
         return apply_moves(plan)
