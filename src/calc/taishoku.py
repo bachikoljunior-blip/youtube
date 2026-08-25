@@ -147,6 +147,32 @@ def check_tables() -> None:
         lambda p: tax(int(p), 30)["total"] / p, [20_000_000, 80_000_000, 200_000_000],
         "退職金が増えたのに、実効の負担率が上がっていない")
 
+    # --- 2026-08-25 に足した節ぶん（控除の「単価」）------------------------
+    # **主張は3つあり、3つとも数で置きます。**
+    # 4. 単価は「下がって、上がる」——端が頂点なら形が違う
+    units = [deduction(a) / a for a in (1, 2, 3, 5, 10, 20, 21, 25, 30, 40)]
+    bottom = units.index(min(units))
+    if bottom in (0, len(units) - 1):
+        raise _checks.TableError(
+            f"控除の単価の底が端に来ています（下がって上がる形になっていない）: {units}")
+    if units[0] != float(DEDUCTION_FLOOR):
+        raise _checks.TableError(
+            f"勤続1年の単価が下限の {DEDUCTION_FLOOR:,}円 になっていません: {units[0]:,.0f}")
+    # 5. **2年目から20年目までは、単価が動かない**（平ら）
+    flat = {deduction(a) / a for a in range(2, YEARS_BORDER + 1)}
+    if flat != {float(RATE_UNDER)}:
+        raise _checks.TableError(f"2年目から20年目の単価が平らではありません: {sorted(flat)}")
+    # 6. **1年目の単価には二度と追いつかない**（解が負・40年でも差が残る）
+    never = deduction_unit_never_recovers()
+    if never["追いつく勤続年数"] >= 0:
+        raise _checks.TableError(
+            "1年目の単価に追いつく勤続年数が正で出ています: "
+            f"{never['追いつく勤続年数']:.1f}年。**節の主張と逆**です")
+    _checks.greater(never["40年でも残る差"], 0, "40年勤めても1年目の単価に残る差が")
+    _checks.increases_with(
+        lambda a: deduction(int(a)) / a, [YEARS_BORDER + 1, 30, 40],
+        "20年を超えたのに、控除の単価が上がっていない")
+
 
 def years_counted(years: float) -> int:
     """勤続年数。**1年未満は切り上げ。** 10年1か月は11年で数える。"""
@@ -313,6 +339,50 @@ def effective_rate_grid(years: float = 30, payouts: list[int] | None = None) -> 
     return out
 
 
+# ---- 控除の「単価」（2026-08-25 に足した節）------------------------------
+#
+# **`free_line()` と同じ数字を割っただけですが、形が逆を向きます。**
+# 総額は勤続年数について単調に増えるので、棒は右肩上がりの1本調子です。
+# 割った単価は **下がってから上がる** ので、絵がまったく別のものになります。
+def deduction_unit_grid(years: list[int] | None = None) -> list[dict]:
+    """**勤続1年あたりに直した退職所得控除**（＝控除の「単価」）。
+
+    単価が動く理由は控除の下限（`DEDUCTION_FLOOR` ＝ 80万円）です。
+    勤続1年でも80万円が保証されるので **1年目だけ単価が80万円**になり、
+    2年目で 40万円 に落ちます（80万円 ÷ 2年）。そこから20年までは
+    40万円 で平ら、20年を超えると1年あたり 70万円 が足されるので
+    単価は上がり始めますが、**上がりきりません**（`deduction_unit_never_recovers`）。
+    """
+    check_tables()
+    years = years or [1, 2, 3, 5, 10, 20, 21, 25, 30, 35, 40]
+    return [{"years": a, "deduction": deduction(a),
+             "per_year": deduction(a) / a} for a in years]
+
+
+def deduction_unit_never_recovers() -> dict:
+    """**1年目の単価（80万円）に追いつく勤続年数は、存在しない。**
+
+    20年超の単価は `(40万×20 + 70万×(a−20)) ÷ a` で、`a` を伸ばすと
+    `RATE_OVER`（70万円）に近づきます。**70万 < 80万** なので、
+    どれだけ長く勤めても1年目の単価には届きません。
+
+    「いつ追いつくか」を式で解くと `a` が**負**になります。
+    ここではその `a` を返して、**追いつかないことを数で示します。**
+
+    （`check_tables()` はここから呼びません。**この関数を検査が呼ぶ**ので、
+    呼ぶと再帰します。`officer_grid` などと同じ扱いです）
+    """
+    # (RATE_UNDER*20 + RATE_OVER*(a-20)) / a = DEDUCTION_FLOOR を a について解く
+    numer = float(RATE_UNDER * YEARS_BORDER - RATE_OVER * YEARS_BORDER)
+    denom = float(DEDUCTION_FLOOR - RATE_OVER)
+    return {
+        "追いつく勤続年数": numer / denom,
+        "単価が近づく先": float(RATE_OVER),
+        "1年目の単価": float(DEDUCTION_FLOOR),
+        "40年でも残る差": DEDUCTION_FLOOR - deduction(40) / 40,
+    }
+
+
 if __name__ == "__main__":
     check_tables()
     print("制度の値の検査: 通過")
@@ -329,6 +399,21 @@ if __name__ == "__main__":
             rows, "years", "free", label=LABEL, x_unit="年")):
         cell = "—" if step is None else f"{step:,.0f}円/年"
         print(f"{r['years']:6d}年 {r['free']:11,d}円  {cell}")
+
+    print("\n=== 控除の単価は1年目がいちばん高く、そこへは二度と戻らない（勤続年数べつ）===")
+    print(f"{'勤続年数':>8s} {'控除の総額':>12s} {'1年あたりの単価'}")
+    for r in deduction_unit_grid():
+        print(f"{r['years']:6d}年 {r['deduction']:11,d}円  {r['per_year']:,.0f}円/年")
+    nv = deduction_unit_never_recovers()
+    print(f"  → 控除には下限 {DEDUCTION_FLOOR:,}円 があるので、"
+          f"**勤続1年の単価だけが {nv['1年目の単価']:,.0f}円/年** になります。"
+          f"2年目で {RATE_UNDER:,}円/年 に落ち、20年目まで平らです")
+    print(f"  → 20年を超えると1年あたり {RATE_OVER:,}円 が足されるので単価は戻り始めますが、"
+          f"**近づく先は {nv['単価が近づく先']:,.0f}円/年**（20年超の単価そのもの）。"
+          f"1年目の {nv['1年目の単価']:,.0f}円/年 より低いので、**追いつきません**")
+    print(f"  → 式で解くと、追いつく勤続年数は **{nv['追いつく勤続年数']:.0f}年**（負の数）。"
+          f"40年勤めても **{nv['40年でも残る差']:,.0f}円/年** の差が残ります。"
+          "**総額は増え続けるのに、1年あたりの値打ちは1年目が頂点**です")
 
     print("\n=== 勤続20年の前後で、あと1年ぶんの手取りがどれだけ変わるか（退職金2000万円）===")
     print(f"{'勤続年数':>8s} {'控除':>11s} {'課税退職所得':>11s} {'税金合計':>10s} {'手取り':>12s} {'前年からの増え'}")

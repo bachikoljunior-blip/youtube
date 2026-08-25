@@ -462,3 +462,6 @@
 {"at": "2026-08-25T20:57:24+09:00", "key": "dupes_actionable", "n": 9, "session": "session_01CG3zZrknQuFTVXUtz4V19E", "by": "status.py"}
 {"at": "2026-08-25T20:59:44+09:00", "key": "calc_gap", "n": 16, "session": "session_01CG3zZrknQuFTVXUtz4V19E", "by": "status.py"}
 {"at": "2026-08-25T22:07:43+09:00", "key": "dupes_actionable", "n": 9, "session": "session_017yMBL2xfhjbZRhb6D646HG", "by": "status.py"}
+{"at": "2026-08-25T22:29:00+09:00", "key": "carry_over", "n": 2, "session": "session_01RzmEZySHAZdDMJmD2z9eUb", "by": "retro.py"}
+{"at": "2026-08-25T22:29:21+09:00", "key": "dupes_actionable", "n": 9, "session": "session_01RzmEZySHAZdDMJmD2z9eUb", "by": "status.py"}
+{"at": "2026-08-25T22:31:01+09:00", "key": "calc_gap", "n": 16, "session": "session_01RzmEZySHAZdDMJmD2z9eUb", "by": "status.py"}
