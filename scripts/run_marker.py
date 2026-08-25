@@ -498,12 +498,59 @@ def ship(what: str, closes: list[str] | None = None, lever: str | None = None,
 SKIP_REFLECT_ENV = "YT_SKIP_REFLECT"
 
 
+def _record_supply() -> None:
+    """**反映の前に、在庫の点を1つ積む**（`python -m src.supply --record`・1秒未満）。
+
+    ## なぜ要るか（2026-08-26 07:4x に実測して足した）
+
+    `eta.py --reflect` は「この回で動いた入力」を出しますが、**在庫（`stock`）と
+    作る速さ（`make_rate_per_day`）は `data/supply.jsonl` の点の差からしか出ません。**
+    点を積むのは `python -m src.supply --record` だけで、**`topic_forge` も
+    `batch_build` も積みません。** つまり:
+
+    - テーマを6件 forge して長尺を4本 予約した回が、
+    - `--ship` を打つと **「この回で動かせる入力は、1つもありませんでした」**
+
+    実測（この回）。`--ship` の反映は 0件。そのあと `supply --record` を撃って
+    `--reflect` をもう一度撃つと、**同じ回・同じ作業のまま 2件**出ました:
+
+        density_surfaces:   {…} → {…}
+        make_rate_per_day:  18.2 → 19.3
+
+    **「動かせる入力が1つも無い」は、この回が予測の入力に触っていないという意味だと
+    書いてあります**（`eta.reflect` の印字）。**在庫を触った回では、それが嘘になります。**
+    `retro.py` の申し送りが「18周のあいだ入力が1つも動いていない」と言い続けていたのは、
+    **少なくとも一部はこれ**です —— 動いていたのに、測る点が積まれていなかった。
+
+    **止めないこと。** 積めなくても反映へ進みます（記録であって門ではない）。
+    """
+    import subprocess
+    try:
+        r = subprocess.run(
+            [sys.executable, "-m", "src.supply", "--record"],
+            cwd=str(Path(__file__).resolve().parent.parent),
+            capture_output=True, text=True, timeout=120)
+    except (OSError, subprocess.SubprocessError) as exc:
+        print(f"[marker] 在庫の点を積めませんでした: {type(exc).__name__}: {exc}")
+        print("         **回は止めません。** 反映の『動いた入力』が"
+              "在庫ぶん少なく出ます（`python -m src.supply --record`）。")
+        return
+    if r.returncode != 0:
+        print(f"[marker] 在庫の点を積めませんでした（終了コード {r.returncode}）。"
+              "**回は止めません。**")
+        return
+    print("[marker] 在庫の点を積みました（`supply --record`）—— "
+          "**これが無いと、在庫を増やした回の反映が『0件』になります。**")
+
+
 def _reflect_now(what: str) -> None:
     """`scripts/eta.py --reflect` を呼ぶ。**この回を止めないこと。**"""
     import subprocess
     if os.environ.get(SKIP_REFLECT_ENV):
         return
     print("")
+    # **在庫の点は、反映より先に積むこと**（理由は `_record_supply` の docstring）。
+    _record_supply()
     print("[marker] **予測へ入れ直します**（この回で動いた入力 → 日付の前後差）")
     try:
         r = subprocess.run(
