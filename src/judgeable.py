@@ -141,6 +141,21 @@ def _publish_by_topic() -> dict[str, date]:
     }
 
 
+def _video_by_topic() -> dict[str, str]:
+    """テーマID → `video_id`。**`_publish_by_topic()` と同じ走査・同じ勝ち方**。
+
+    同じ題材を別の本として2回上げた組が実測 20件あります（`ab_split.published`）。
+    `_publish_by_topic` は素直な辞書内包なので**後の行が勝ち**ます。
+    ここも同じ順で作らないと、**日は本Aのもの・IDは本Bのもの**という
+    組み合わせが出ます（動かす先を決める側は、それを1本だと思って撃ちます）。
+    """
+    return {
+        str(r["topic"]): str(r.get("video_id") or "")  # type: ignore[index]
+        for r in published()
+        if r.get("publish") and r.get("topic")
+    }
+
+
 def _publish_by_video() -> dict[str, date]:
     return {
         str(r["video_id"]): r["publish"]  # type: ignore[index]
@@ -149,63 +164,89 @@ def _publish_by_video() -> dict[str, date]:
     }
 
 
-def _by_split(name: str) -> dict[str, list[date]]:
+#: 群の1本 ＝ （公開日, `video_id`）。**`video_id` は「どの本を動かせば早まるか」に要る。**
+#: 日だけを返していたので、`scripts/queue_lag.py` を書くときに
+#: **振り分けをもう一度書き写す**しかありませんでした（このリポジトリで7回踏んでいる形）。
+#: **群の作り方はここ1か所。日の一覧は下の `_days()` が畳んで出します。**
+Member = tuple[date, str]
+
+
+def _members_by_split(name: str) -> dict[str, list[Member]]:
     """`ab_split.EXPERIMENTS` の A/B（IDで振り分け・指示より前の本は落とす）。"""
     from src.ab_split import EXPERIMENTS
 
     exp = EXPERIMENTS[name]
-    builds, pub = build_times(), _publish_by_topic()
-    out: dict[str, list[date]] = {exp.treated: [], exp.control: []}
+    builds, pub, vid = build_times(), _publish_by_topic(), _video_by_topic()
+    out: dict[str, list[Member]] = {exp.treated: [], exp.control: []}
     for topic, built in builds.items():
         if built < exp.landed:
             continue  # 指示が入る前に作った本。IDが何と言おうと処置は入っていない
         group = exp.split(topic)
         day = pub.get(topic)
         if group in out and day:
-            out[group].append(day)
-    for days in out.values():
-        days.sort()
+            out[group].append((day, vid.get(topic, "")))
+    for rows in out.values():
+        rows.sort()
     return out
 
 
-def _by_landed(landed: datetime) -> dict[str, list[date]]:
+def _members_by_landed(landed: datetime) -> dict[str, list[Member]]:
     """振り分けの無い変更（入った後に作る本は**全部**そうなる）を、作った時刻で割る。"""
-    builds, pub = build_times(), _publish_by_topic()
-    out: dict[str, list[date]] = {"対照(前)": [], "処置(後)": []}
+    builds, pub, vid = build_times(), _publish_by_topic(), _video_by_topic()
+    out: dict[str, list[Member]] = {"対照(前)": [], "処置(後)": []}
     for topic, built in builds.items():
         day = pub.get(topic)
         if day:
-            out["処置(後)" if built >= landed else "対照(前)"].append(day)
-    for days in out.values():
-        days.sort()
+            out["処置(後)" if built >= landed else "対照(前)"].append(
+                (day, vid.get(topic, "")))
+    for rows in out.values():
+        rows.sort()
     return out
 
 
-def _by_opening_motion() -> dict[str, list[date]]:
+def _members_by_opening_motion() -> dict[str, list[Member]]:
     """`YT_OPENING_MOTION` の値で割る（`src/motion_groups.py` が実物から引きます）。"""
     from src import motion_groups
 
     off, on = motion_groups.groups()
     pub = _publish_by_video()
-    out = {
-        "対照(動きなし)": sorted(d for v in off if (d := pub.get(v))),
-        "処置(動きあり)": sorted(d for v in on if (d := pub.get(v))),
+    return {
+        "対照(動きなし)": sorted((d, v) for v in off if (d := pub.get(v))),
+        "処置(動きあり)": sorted((d, v) for v in on if (d := pub.get(v))),
     }
-    return out
 
 
-#: yaml の `key:` → (群を作る関数, 片群あたりの必要本数)
-SOURCES: dict[str, tuple[Callable[[], dict[str, list[date]]], int]] = {
-    "title_form": (lambda: _by_split("title_form"), MIN_PER_GROUP),
-    "hook_form": (lambda: _by_split("hook_form"), MIN_PER_GROUP),
+def _days(rows: dict[str, list[Member]]) -> dict[str, list[date]]:
+    """群べつの本 → 群べつの公開日（昇順）。**`Floor` が要るのはこちらだけ。**"""
+    return {g: sorted(d for d, _ in ms) for g, ms in rows.items()}
+
+
+#: yaml の `key:` → (**群べつの本**を作る関数, 片群あたりの必要本数)
+MEMBER_SOURCES: dict[str, tuple[Callable[[], dict[str, list[Member]]], int]] = {
+    "title_form": (lambda: _members_by_split("title_form"), MIN_PER_GROUP),
+    "hook_form": (lambda: _members_by_split("hook_form"), MIN_PER_GROUP),
     # d14dbf7「冒頭の stat を 前提を先・数字を後 に割る」 2026-08-23 22:03:31 JST
     "stat_split": (
-        lambda: _by_landed(datetime(2026, 8, 23, 22, 3, 31, tzinfo=JST)),
+        lambda: _members_by_landed(datetime(2026, 8, 23, 22, 3, 31, tzinfo=JST)),
         MIN_PER_GROUP,
     ),
     # `falsified_if` の「対照 8本以上・動きあり 8本以上」がこの前提の N
-    "opening_motion": (_by_opening_motion, 8),
+    "opening_motion": (_members_by_opening_motion, 8),
 }
+
+#: yaml の `key:` → (群べつの**公開日**を作る関数, 片群あたりの必要本数)。
+#: **`MEMBER_SOURCES` から畳んで作ります。ここに直接足さないこと** ——
+#: 足すと群の作り方が2か所になり、`queue_lag.py` と `Floor` が別の群を見ます。
+SOURCES: dict[str, tuple[Callable[[], dict[str, list[date]]], int]] = {
+    key: ((lambda make=make: _days(make())), n)
+    for key, (make, n) in MEMBER_SOURCES.items()
+}
+
+
+def members(key: str) -> dict[str, list[Member]]:
+    """その前提の、群べつの本（公開日つき）。**動かす先を決めるのに使う。**"""
+    make, _ = MEMBER_SOURCES[key]
+    return make()
 
 
 def _hypotheses() -> list[dict]:

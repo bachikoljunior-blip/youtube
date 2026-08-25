@@ -315,6 +315,38 @@ def _analytics_lag() -> tuple[str, int] | None:
         return None
 
 
+def print_queue_lag() -> None:
+    """**予約の順番待ちが、判定までの日数をいくら食っているか。**（API 0単位）
+
+    **前提の一覧のすぐ上に置くこと。** 下の `print_hypotheses` は前提ごとに
+    「いちばん早い判定日」を出しますが、**その日を決めているのが何か**は
+    どこにも出ていませんでした。実測（2026-08-26）: 予約 323本・いちばん後ろは
+    **32日先**。つまり**いま作った本が公開されるのは32日後**で、
+    判定できるのは 42日後です。`eta.py` は毎回
+    「軌跡の腕が動くのは前提を1件閉じたときだけ」と印字しているので、
+    **この待ち時間が、そのまま到達日の時定数**です。
+
+    そして「もう予約に在る本を入れ替えるだけで何日早まるか」を並べます ——
+    **新しい本は1本も要りません**（実測でいま 22日）。
+    `python scripts/queue_lag.py --plan` が手を出し、`--apply` が撃ちます。
+
+    **状態を見る道具が、状態のせいで死んではいけない**ので、
+    ここが落ちても一行だけ出して先へ進みます。
+    """
+    try:
+        from scripts import queue_lag
+        plan = queue_lag.Plan()
+        lines = queue_lag.lag_lines(plan.rows, plan.now)
+        plan.improve()
+        lines += plan.gain_lines()
+        if plan.swaps:
+            lines.append("  → **`python scripts/queue_lag.py --plan` で手が出ます**"
+                         f"（撃つのは `--apply`・{len(plan.swaps) * 100}単位）")
+        print("\n" + "\n".join(lines))
+    except Exception as e:  # pragma: no cover - 状態しだい
+        print(f"\n  [!] 予約の順番待ちを数えられませんでした: {e}")
+
+
 def print_hypotheses() -> None:
     """検証していない前提と、その期限を毎回出す。
 
@@ -2095,6 +2127,7 @@ def print_local_sections(inventory: bool = True) -> None:
     # `deadline` の 09/05 で待つと、**判定が13日おそくなります。**
     # 読むのは手元の2ファイルだけなので、**日枠が閉じている窓でも出ます。**
     print(_density_verdict.render())
+    print_queue_lag()
     print_hypotheses()
     print_alert_hit_rate()
     print_budget()
