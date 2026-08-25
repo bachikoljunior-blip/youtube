@@ -316,6 +316,55 @@ class Plan:
         return out
 
 
+#: `videos.insert` 1本ぶんの単位（`src/upload_cap.py` の註と同じ）
+INSERT_UNITS = 1600
+#: 日枠の既定（YouTube の公表値）
+DAY_UNITS = 10000
+
+
+def quota_lines(plan: Plan) -> tuple[list[str], bool]:
+    """**この入れ替えを撃つと、今日の投稿を止めないか。**（返り: 行, 撃ってよいか）
+
+    ## なぜ要るか（2026-08-26。**撃つ直前に気づいた**）
+
+    `--move` は1回 50単位で、16手なら 1,600単位です。安く見えますが、
+    **同じ日枠から `videos.insert`（1本 1,600単位）が出ています。**
+    実測（2026-08-25 の窓）: 既に **7本** 上がっており、
+    7 × 1,600 ＝ 11,200単位 ＝ **既定の日枠 10,000 を超えています**
+    （`src/upload_cap.py` の `day_quota()` が同じことを言っています ——
+    「7本上げた後はまず尽きています」）。
+
+    **ここで 1,600単位 使うと、止まるのは投稿のほうです。**
+    `CLAUDE.md`「投稿が途切れるのが最大の損失」。
+    **入れ替えで取り戻せる 22日 は、1本落とすより後回しでよい**
+    —— 枠が変わるのを待っても、手は消えません（`--plan` は毎回組み直します）。
+
+    **観測していない残量を、残っていることにしないこと。** `day_quota()` は
+    403 を見たかどうかしか言えないので、ここでは**上げた本数から見積もり**ます。
+    """
+    from src import upload_cap
+
+    st = upload_cap.state()
+    spent = st.counted * INSERT_UNITS
+    need = len(plan.swaps) * 2 * 50
+    ok = spent + need <= DAY_UNITS
+    lines = ["", "=== 枠（撃つ前に見ること）===",
+             f"  この窓で上げた本 **{st.counted}本** ＝ 概算 {spent:,}単位"
+             f"（`videos.insert` 1本 {INSERT_UNITS:,}）",
+             f"  この入れ替え **{need:,}単位** ／ 日枠の既定 {DAY_UNITS:,}",
+             f"  窓が変わるのは {st.resets_at.astimezone(JST):%m/%d %H:%M} JST"]
+    if ok:
+        lines.append("  → **撃てます**")
+    else:
+        lines.append("  [!] **撃たないこと。**同じ枠から投稿が出ています。"
+                     "ここで使うと止まるのは投稿のほうです"
+                     "（`CLAUDE.md`「投稿が途切れるのが最大の損失」）。"
+                     "**窓が変わってから撃つこと。手は消えません**"
+                     "（`--plan` は毎回、実物の控えから組み直します）。"
+                     " どうしても今なら `--force-quota`")
+    return lines, ok
+
+
 def apply_moves(plan: Plan) -> int:
     """実物へ当てる。**1手 100単位。**片側で落ちたら、そこで止めて言い残す。"""
     from scripts import reschedule
@@ -355,6 +404,9 @@ def main(argv: list[str] | None = None) -> int:
                     help="そのとおりに撃つ（**1手 100単位**）")
     ap.add_argument("--max-swaps", type=int, default=MAX_SWAPS,
                     help=f"組む入れ替えの上限（既定 {MAX_SWAPS}）")
+    ap.add_argument("--force-quota", action="store_true",
+                    help="日枠が尽きていそうでも撃つ（**投稿が止まります。**"
+                         "理由を JOURNAL に書くこと）")
     args = ap.parse_args(argv)
 
     plan = Plan()
@@ -363,8 +415,15 @@ def main(argv: list[str] | None = None) -> int:
     lines += plan.gain_lines()
     if args.plan or args.apply:
         lines += plan.plan_lines()
+    if plan.swaps:
+        qlines, ok = quota_lines(plan)
+        lines += qlines
+    else:
+        ok = True
     print("\n".join(lines))
     if args.apply:
+        if not ok and not args.force_quota:
+            return 1
         return apply_moves(plan)
     return 0
 

@@ -340,8 +340,15 @@ def print_queue_lag() -> None:
         plan.improve()
         lines += plan.gain_lines()
         if plan.swaps:
-            lines.append("  → **`python scripts/queue_lag.py --plan` で手が出ます**"
-                         f"（撃つのは `--apply`・{len(plan.swaps) * 100}単位）")
+            # **枠まで一緒に出すこと。** `--move` は 50単位でも、同じ日枠から
+            # `videos.insert`（1本 1,600単位）が出ています。安く見えるほうだけ
+            # 出すと、**投稿を止めて 22日 を取りにいく**回が出ます。
+            _q, _ok = queue_lag.quota_lines(plan)
+            lines.append(
+                "  → **`python scripts/queue_lag.py --plan` で手が出ます**"
+                f"（撃つのは `--apply`・{len(plan.swaps) * 100}単位）"
+                + ("" if _ok else "  ← [!] **いまは枠が足りません。**"
+                                  "撃つと止まるのは投稿のほう（`--apply` が拒みます）"))
         print("\n" + "\n".join(lines))
     except Exception as e:  # pragma: no cover - 状態しだい
         print(f"\n  [!] 予約の順番待ちを数えられませんでした: {e}")
