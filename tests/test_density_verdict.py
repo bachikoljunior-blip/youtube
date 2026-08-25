@@ -161,3 +161,74 @@ def test_予約ぶんの先の日も数える():
     counts = dv.day_counts(pub, now)      # 過去ぶんは 08/20 だけ
     assert set(counts) == {"2026-08-20"}
     assert dv.next_settle(counts, pub, now).isoformat() == "2026-08-24"
+
+
+# --- **上限を外して数え直す側**（2026-08-25 に足した） -------------------------
+#
+# 生の中央値は、16本以上の日で「上限の外に出た本の 0」を拾います
+# （`src/day_cap.py` の実測: 1日に再生が付くのは10本、11本目から先は 0〜3）。
+# **それは間隔のせいではありません。** `live_band()` で両群をそろえます。
+
+def _pub(day: str, times: list[str]) -> dict[str, datetime]:
+    out = {}
+    for i, hhmm in enumerate(times):
+        h, m = int(hhmm[:2]), int(hhmm[3:])
+        out[f"{day}-{i}"] = datetime.fromisoformat(f"{day}T{h:02d}:{m:02d}:00+09:00")
+    return out
+
+
+def test_live_band_は先頭から上限ぶんだけ残す():
+    times = [f"{9 + i // 2:02d}:{(i % 2) * 30:02d}" for i in range(14)]   # 09:00〜15:30
+    published = _pub("2026-08-20", times)
+    values = {vid: (500 if i < 10 else 0) for i, vid in enumerate(published)}
+    band = dv.live_band(published, values, cap_n=10)
+    assert band["2026-08-20"] == [500] * 10          # **0 の4本は帯の外**
+
+
+def test_live_band_は間隔で落ちるぶんを先に落とす():
+    """30分未満で挟んだ本は、上限を数える前に落とす（`day_cap._spaced` と同じ）。"""
+    published = _pub("2026-08-20", ["09:00", "09:15", "09:30", "09:45", "10:00"])
+    values = {vid: (300 if i % 2 == 0 else 0) for i, vid in enumerate(published)}
+    band = dv.live_band(published, values, cap_n=10)
+    assert band["2026-08-20"] == [300, 300, 300]     # :15/:45 は落ちる
+
+
+def test_上限を外すと倍率が変わる_生の側は上限のぶんを見ている():
+    """**同じ日を2通りに数えると、片方だけが 0 を拾う。**"""
+    counts, published, values = {}, {}, {}
+    for d in (18, 19, 20):
+        day = f"2026-08-{d}"
+        counts[day] = 20
+        times = [f"{9 + i // 2:02d}:{(i % 2) * 30:02d}" for i in range(20)]
+        pub = _pub(day, times)
+        published.update(pub)
+        for i, vid in enumerate(pub):
+            values[vid] = 400 if i < 10 else 0       # 上限の外は 0
+    day = "2026-08-10"
+    counts[day] = 10
+    pub = _pub(day, [f"{9 + i // 2:02d}:{(i % 2) * 30:02d}" for i in range(10)])
+    published.update(pub)
+    for vid in pub:
+        values[vid] = 800
+    ripe = set(counts)
+
+    raw = dv.verdict(counts, dv.by_day(published, values), ripe)
+    band = dv.verdict(counts, dv.live_band(published, values, cap_n=10), ripe)
+    # 生の側は 20本中10本が 0 なので中央値 200（＝ 0 と 400 の平均）→ 800 との比 0.25
+    assert raw["outcome"] == "falsified" and raw["ratio"] == pytest.approx(0.25)
+    # 上限を外すと 400 対 800 ＝ ×0.5 ＝ **同値なので外れではない**
+    assert band["ratio"] == pytest.approx(0.5) and band["outcome"] == "survived"
+
+
+def test_render_は2つの倍率を並べて出す():
+    rep = {
+        "verdict": {"outcome": "falsified", "ratio": 0.0,
+                    "tight_median": 2, "hourly_median": 1000},
+        "cap_free": {"outcome": "survived", "ratio": 0.6,
+                     "tight_median": 600, "hourly_median": 1000},
+        "per_day": {}, "counts": {}, "ripe": set(), "freeze": {"n": 0},
+    }
+    text = dv.render(rep)
+    assert "上限" in text and "×0.60" in text
+    assert "間隔について" in text          # 向きが違うので、強い断りが出る
+    assert "2026-08-27" in text            # 切り分けの日を必ず指す
