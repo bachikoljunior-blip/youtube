@@ -96,6 +96,24 @@ def analytics_lag_days(as_of: date | None = None) -> int:
     return settle_mod.analytics_lag_days(as_of or today_jst())
 
 
+def analytics_lag_band() -> int:
+    """**遅れそのもののゆらぎ（日）。**実測は `src/settle.analytics_lag_band()`。
+
+    **遅れは1日の中で動きます**（Analytics が日の途中で新しい日を出すため）。
+    実測 438観測で **3日が 381・4日が 57**、
+    **1日のうちに両方を観測した日が 6日**（08/18〜08/22・08/26）。
+
+    だから遅れを足して作った判定日は、**同じ日でも走った時刻で1日ずれます** ——
+    そしてこの道具は、そのずれを見るたびに「期限を書き換えること」と言っていました。
+    実測（2026-08-26 06:0x）: **「1日 後ろ」と言われた5件が、5件とも遅れを足す種類**
+    （`after` ×2・`group_key` ×2・`published_group` ×1）。**1件も例外がありません。**
+
+    `Answer.slack` はまさにこの churn を止めるために置かれた欄ですが、
+    掛かっていたのは伸び率の推定（`accrual`）だけでした。ここで遅れ側にも掛けます。
+    """
+    return int(settle_mod.analytics_lag_band().get("band") or 0)
+
+
 def _rows(name: str) -> list[dict]:
     path = ROOT / "data" / name
     try:
@@ -225,9 +243,12 @@ def _ans_published_group(need: dict, as_of: date, lag: int) -> Answer:
                       "**予約にまだ在りません**（作れば動きます）")
     nth = date.fromisoformat(pub[count - 1])
     ready = nth + timedelta(days=settle + lag)
+    band = analytics_lag_band()
+    tail = f"（**±{band}日** —— 遅れは1日の中で動きます）" if band else ""
     return Answer(ready,
                   f"{after[:10]} 以降に作った本の **{count}本目の公開 {nth:%m/%d}** "
-                  f"＋ 落ち着く {settle}日 ＋ 実データの遅れ {lag}日")
+                  f"＋ 落ち着く {settle}日 ＋ 実データの遅れ {lag}日{tail}",
+                  slack=band)
 
 
 def _ans_after(need: dict, lag: int) -> Answer:
@@ -242,8 +263,12 @@ def _ans_after(need: dict, lag: int) -> Answer:
         return Answer(None, f"**`on_date` が読めません**: {need.get('on_date')!r}")
     what = str(need.get("what") or "その日のデータ")
     if need.get("plus_lag"):
+        band = analytics_lag_band()
+        tail = (f"（**±{band}日**。遅れは1日の中で {lag}日 と {lag + band}日 の"
+                "間を動くので、この幅の中の書き換えは意味を持ちません）" if band else "")
         return Answer(on + timedelta(days=lag),
-                      f"{what} は {on:%m/%d} の分 ＋ 実データの遅れ {lag}日")
+                      f"{what} は {on:%m/%d} の分 ＋ 実データの遅れ {lag}日{tail}",
+                      slack=band)
     return Answer(on, f"{what} は {on:%m/%d} に出ます")
 
 
@@ -280,8 +305,11 @@ def _ans_group_key(need: dict, as_of: date) -> Answer:
     body = f"{key}（`src/judgeable.py`）: " + " ／ ".join(parts)
     if ready is None:
         return Answer(None, body + " → **群がそろわないので日が出ません**")
+    band = analytics_lag_band()
+    tail = f"（**±{band}日** —— 遅れは1日の中で動きます）" if band else ""
     return Answer(ready, body + f" ＋ 落ち着く {SJ.SETTLE_DAYS}日 "
-                                f"＋ 遅れ {SJ.ANALYTICS_LAG_DAYS}日")
+                                f"＋ 遅れ {SJ.ANALYTICS_LAG_DAYS}日{tail}",
+                  slack=band)
 
 
 def answer(need: dict, as_of: date, lag: int) -> Answer:

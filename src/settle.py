@@ -112,6 +112,60 @@ def analytics_lag_days(as_of: date | None = None) -> int:
         return ANALYTICS_LAG_FALLBACK
 
 
+#: 遅れの帯を測る窓（日）。**短すぎると段差をまたがず、幅 0 に見えます。**
+LAG_BAND_WINDOW_DAYS = 14
+
+
+def analytics_lag_band(window_days: int = LAG_BAND_WINDOW_DAYS,
+                       path: Path | None = None) -> dict:
+    """**遅れは1日の中で動きます。その幅（日）を実測で返す。**（2026-08-26）
+
+    `analytics_lag_days()` は「いま何日 遅れているか」の**点**を返します。
+    ところが Analytics は日の途中で新しい日を出すので、**同じ日でも
+    早い時刻に走った回は 4日、遅い時刻の回は 3日**を見ます。
+
+    実測（`data/analytics_lag.jsonl` 438観測）: **3日が 381・4日が 57**。
+    **1日のうちに 3 と 4 の両方を観測した日が 6日**あります
+    （08/18・08/19・08/20・08/21・08/22・08/26）。
+
+    **これは誤差ではなく段差です。** そして `scripts/deadline_check.py` の
+    判定日は、この遅れをそのまま足して作られています。だから
+
+        02時に走った回  → 判定できるのは **09-02**
+        06時に走った回  → 判定できるのは **09-01**
+
+    と出て、**どちらの回も「期限が1日 ずれています。書き換えること」と言います。**
+    書き換えると、次の回が逆向きに書き換えます。
+
+    **`Answer.slack` は、まさにこれを止めるために置かれた欄です**
+    （docstring: 「3回ぶんの `fix` は、到達日を1日も動かしていない churn です」）。
+    ただし置かれた先は伸び率の推定（`accrual`）だけで、
+    **遅れを足す側（`after` / `published_group` / `group_key`）には
+    掛かっていませんでした。** 帯を出すのがこの関数です。
+
+    返すのは `{"lag": いまの点, "lo": 最小, "hi": 最大, "band": hi-lo, "n": 観測数}`。
+    観測が足りない回は `band=0`（＝帯を主張しない。**黙って広げないこと**）。
+    """
+    p = path or (ROOT / "data" / "analytics_lag.jsonl")
+    now = datetime.now(timezone(timedelta(hours=9))).date()
+    lags: list[int] = []
+    try:
+        for line in p.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            r = json.loads(line)
+            at = date.fromisoformat(str(r["at"])[:10])
+            if (now - at).days > window_days:
+                continue
+            lags.append(max(0, (at - date.fromisoformat(r["last_day"])).days))
+    except Exception:                                          # noqa: BLE001
+        lags = []
+    if len(lags) < 2:
+        return {"lag": analytics_lag_days(), "lo": 0, "hi": 0, "band": 0, "n": len(lags)}
+    lo, hi = min(lags), max(lags)
+    return {"lag": analytics_lag_days(), "lo": lo, "hi": hi, "band": hi - lo, "n": len(lags)}
+
+
 def _publish_times(path: Path | None = None) -> dict[str, float]:
     """`video_id` → 公開時刻（epoch秒）。`data/views.jsonl` の `at - hours` から。"""
     seen: dict[str, list[float]] = {}
