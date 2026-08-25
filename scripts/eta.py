@@ -3002,6 +3002,17 @@ def _planned_lines(bar: str, tr: dict | None, base: dict | None) -> list[str]:
                      "（`config/hypotheses.yaml` の `lever`）。"
                      " **どの腕が早いかは `python scripts/eta.py --alloc`**"
                      "（API 0単位・約80秒。毎回は撃たない）")
+        # **`lever_hint` とは別の問いです**（2026-08-26 に足した理由）。
+        #     `lever_hint` は「**いま どの床が遅いか**」＝ 診断で、
+        #     `--alloc` は「**次の前提をどの腕に立てるか**」＝ 配分の選択。
+        #     頭の3行しか読まない側は、前者を後者だと読みます ——
+        #     実測 2026-08-26: 名指しは `per_video` だが、per_video に1件 足しても
+        #     日付は **0日** しか動かず、`sub_rate` に足すと **6日 早い**。
+        lines.append(f"{bar} **`{'lever_hint'}` は「いまどの床が遅いか」で、"
+                     "「次の前提をどの腕に立てるか」とは別の問いです** ——"
+                     " 到達日を動かすのは後者のほう"
+                     "（`eta.py` 自身が「腕が動くのは前提を1件閉じたときだけ」と"
+                     "この下に印字しています）")
     un = meta.get("unassigned") or 0
     if un:
         lines.append(f"{bar} [!] **腕の名前が無い開いた前提が {un}件**"
