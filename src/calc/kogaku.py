@@ -68,6 +68,25 @@ def multi_hit(name: str) -> int:
     return tier(name)[6]
 
 
+def multi_hit_paid(name: str, cost: float) -> float:
+    """**多数回該当の月に、実際に払う額。**
+
+    多数回該当が変えるのは**限度額**であって、払う額そのものではありません。
+    窓口で払うのは**3割と限度額の低いほう**なので、
+    **3割のほうが小さい月は、そちらが上限**です（`paid()` と同じ形）。
+
+    ## なぜ分けて書いたか（2026-08-26 に踏んだ）
+
+    ここまで `multi_hit(name)` を**そのまま「その月の自己負担」**として
+    使っていました。区分ウ・医療費30万円以上の節しか無かったので
+    （3割 90,000円 ＞ 多数回 44,400円）**一度も表に出ていません。**
+    区分を横に並べた瞬間に出ます —— **区分ア・医療費30万円で
+    「多数回該当だと 140,100円 払う」**（3割は 90,000円）。
+    **軽くなるはずの制度が、3割より高い額を出していました。**
+    """
+    return min(cost * COPAY_RATE, float(multi_hit(name)))
+
+
 def crossing_cost(name: str) -> float:
     """**3割で払う額と、限度額がぴったり一致する医療費。**
 
@@ -131,13 +150,14 @@ def year_with_multi_hit(cost: int, months: int, name: str = "ウ") -> dict:
     normal = min(months, MULTI_HIT_FROM - 1)
     reduced = max(0, months - normal)
     per = paid(name, cost)
-    total = normal * per + reduced * multi_hit(name)
+    low = multi_hit_paid(name, cost)          # **3割のほうが低い月はそちら**
+    total = normal * per + reduced * low
     return {
         "月数": months,
         "多数回該当より前": normal,
         "多数回該当": reduced,
         "1か月あたり": round(per),
-        "多数回の額": multi_hit(name),
+        "多数回の額": round(low),
         "1年の合計": round(total),
         "多数回が無ければ": round(months * per),
         "軽くなる額": round(months * per - total),
@@ -211,14 +231,13 @@ def multi_hit_flat(costs: tuple[int, ...] = (300_000, 500_000, 1_000_000,
     多数回該当の限度額は**定額**で、1%の上乗せがありません。
     3か月目までは医療費に比例して増える部分があるのに、そこで完全に止まります。
     """
-    flat = multi_hit(name)
     return [{
         "区分": name,
         "医療費": c,
         "3か月目までの自己負担": round(paid(name, c)),
-        "4か月目からの自己負担": flat,
-        "止まる額": round(paid(name, c)) - flat,
-        "4か月目の実効の負担率": flat / c * 100,
+        "4か月目からの自己負担": round(multi_hit_paid(name, c)),
+        "止まる額": round(paid(name, c)) - round(multi_hit_paid(name, c)),
+        "4か月目の実効の負担率": multi_hit_paid(name, c) / c * 100,
     } for c in costs]
 
 
@@ -227,13 +246,81 @@ def multi_hit_year(cost: int = 1_000_000, name: str = "ウ") -> list[dict]:
     rows = []
     running = 0.0
     for m in range(1, 13):
-        per = paid(name, cost) if m < MULTI_HIT_FROM else float(multi_hit(name))
+        per = (paid(name, cost) if m < MULTI_HIT_FROM
+               else multi_hit_paid(name, cost))
         running += per
         rows.append({"区分": name, "医療費": cost, "月": m,
                      "その月の自己負担": round(per),
                      "ここまでの合計": round(running),
                      "多数回該当か": m >= MULTI_HIT_FROM})
     return rows
+
+
+# ---- 多数回該当の「割引」を、区分べつに読む（2026-08-26 に足した）--------
+#
+# ここまでの節は**区分ウだけ**を見ていました。多数回該当の額 `multi_hit` は
+# 区分ごとの定額なのに、**そこから引く前の限度額は区分ア・イ・ウだけが
+# 医療費に連動します**（1パーセントの項）。だから「4回目から軽くなる額」は
+# **区分によって、性質そのものが違います** —— 伸びる区分と、1円も動かない区分。
+def multi_hit_gap(name: str, cost: int) -> dict:
+    """**多数回該当で、1か月あたりいくら軽くなるか。**"""
+    per = paid(name, cost)
+    m = multi_hit_paid(name, cost)
+    return {
+        "区分": name,
+        "医療費": cost,
+        "ふだんの自己負担": round(per),
+        "多数回の額": round(m),
+        "1か月の割引": round(per - m),
+        "割引の割合": (per - m) / per if per else 0.0,
+    }
+
+
+def multi_hit_gap_grid(cost: int = 1_000_000) -> list[dict]:
+    """5つの区分ぜんぶで、1か月の割引を並べる。"""
+    return [multi_hit_gap(row[0], cost) for row in TIERS]
+
+
+def multi_hit_gap_by_cost(costs: tuple[int, ...] = (300_000, 1_000_000,
+                                                    3_000_000, 10_000_000)
+                          ) -> list[dict]:
+    """**医療費を動かすと、割引が伸びる区分と伸びない区分に割れる。**
+
+    1パーセントの項を持つのは区分ア・イ・ウだけです
+    （`TIERS` の5番目の欄。エとオは 0.0）。
+    """
+    rows = []
+    for cost in costs:
+        row: dict = {"医療費": cost}
+        for t in TIERS:
+            row[t[0]] = multi_hit_gap(t[0], cost)["1か月の割引"]
+        rows.append(row)
+    return rows
+
+
+def multi_hit_catch_up(name: str, cost: int = 1_000_000) -> dict:
+    """**割引だけで、最初の3か月ぶんの自己負担と同じ額になるのは何か月目か。**
+
+    「取り返す」という話ではありません。**割引の累積が、多数回該当に入る前の
+    3か月ぶんの自己負担に並ぶ月数**を、そのまま割り算で出しています。
+    `MULTI_HIT_FROM` が 4 なので、割引が付くのは4か月目からです。
+    """
+    g = multi_hit_gap(name, cost)
+    first3 = (MULTI_HIT_FROM - 1) * g["ふだんの自己負担"]
+    months = first3 / g["1か月の割引"] if g["1か月の割引"] else 0.0
+    return {
+        "区分": name,
+        "医療費": cost,
+        "最初の3か月": round(first3),
+        "1か月の割引": g["1か月の割引"],
+        "並ぶ月数": months,
+        "1年で並ぶか": months <= 12,
+    }
+
+
+def multi_hit_catch_up_grid(cost: int = 1_000_000) -> list[dict]:
+    """5つの区分ぜんぶ。**額の大きい区分が、必ずしも速くありません。**"""
+    return [multi_hit_catch_up(row[0], cost) for row in TIERS]
 
 
 def check_tables() -> None:
@@ -258,6 +345,45 @@ def check_tables() -> None:
     _checks.never_decreases(lambda i: household_cliff()[int(i)]["自己負担の差"],
                             list(range(len(household_cliff()))),
                             "人数を増やしたのに、合算が効かない損が小さくなっている")
+    # (w) **多数回該当の月でも、3割を超えて払うことはない**（2026-08-26 に踏んだ）
+    #     `multi_hit(name)` をそのまま「その月の自己負担」にしていたので、
+    #     区分アで医療費30万円のとき **140,100円**（3割は 90,000円）が出ていました。
+    for name in [row[0] for row in TIERS]:
+        for c in (100_000, 300_000, 1_000_000, 10_000_000):
+            if multi_hit_paid(name, c) > c * COPAY_RATE + 1e-9:
+                raise _checks.TableError(
+                    f"区分{name}・医療費{c:,}円 の多数回該当で "
+                    f"{multi_hit_paid(name, c):,.0f}円 払うことになっています。"
+                    f"**3割の {c * COPAY_RATE:,.0f}円 を超えています**")
+            g = multi_hit_gap(name, c)
+            if g["1か月の割引"] < 0:
+                raise _checks.TableError(
+                    f"区分{name}・医療費{c:,}円 の割引が {g['1か月の割引']:,}円 で"
+                    "マイナスです。**多数回該当のほうが高くなっています**")
+    # (w2) **主題**: 1パーセントの項を持つ区分だけ、割引が医療費で伸びる
+    for name in ("ア", "イ", "ウ"):
+        _checks.increases_with(
+            lambda c, n=name: multi_hit_gap(n, int(c))["1か月の割引"],
+            (1_000_000, 3_000_000, 10_000_000),
+            f"区分{name}の割引が、医療費とともに伸びる")
+    for name in ("エ", "オ"):
+        vals = {multi_hit_gap(name, c)["1か月の割引"]
+                for c in (1_000_000, 3_000_000, 10_000_000)}
+        if len(vals) != 1:
+            raise _checks.TableError(
+                f"区分{name}の割引が {sorted(vals)} と動いています。"
+                "**定額の区分なので、医療費では動かないはず**")
+    # (w3) **主題**: 割引の額が大きいエのほうが、オより「並ぶ月数」が遅い
+    e = multi_hit_catch_up("エ")
+    o = multi_hit_catch_up("オ")
+    if not (e["1か月の割引"] > o["1か月の割引"] and e["並ぶ月数"] > o["並ぶ月数"]):
+        raise _checks.TableError(
+            f"区分エ（割引 {e['1か月の割引']:,}円・{e['並ぶ月数']:.2f}か月）と"
+            f"区分オ（割引 {o['1か月の割引']:,}円・{o['並ぶ月数']:.2f}か月）で、"
+            "**額と速さの逆転が起きていません**")
+    if e["1年で並ぶか"] or not o["1年で並ぶか"]:
+        raise _checks.TableError(
+            "12か月を超えるのが区分エだけ、という形が崩れています")
     # (z) **主題**: 多数回該当の額は定額で、医療費に依らない
     flat = {r["4か月目からの自己負担"] for r in multi_hit_flat()}
     if len(flat) != 1:
@@ -455,3 +581,56 @@ if __name__ == "__main__":
     print("  → **4か月目に段が1つ下がり、そこから12月まで1円も動きません。**"
           "「高額療養費で戻る」という話は月ごとに語られますが、"
           "**続いた場合の1年の合計は、月額の12倍にはなりません。**")
+
+    C = 1_000_000
+    print(f"\n=== 多数回該当で軽くなる額は、区分で何倍ちがうか"
+          f"（医療費{C:,}円・1か月あたり）===")
+    print(f"{'区分':>3s} {'ふだんの自己負担':>15s} {'多数回の額':>11s} "
+          f"{'1か月の割引':>12s} {'割引の割合':>10s}")
+    g = multi_hit_gap_grid(C)
+    for r in g:
+        print(f"{r['区分']:>3s} {r['ふだんの自己負担']:14,d}円 {r['多数回の額']:10,d}円 "
+              f"{r['1か月の割引']:11,d}円 {r['割引の割合']:9.1%}")
+    hi = max(g, key=lambda r: r["1か月の割引"])
+    lo = min(g, key=lambda r: r["1か月の割引"])
+    print(f"  → **区分{hi['区分']}の {hi['1か月の割引']:,}円 は、"
+          f"区分{lo['区分']}の {lo['1か月の割引']:,}円 の "
+          f"{hi['1か月の割引'] / lo['1か月の割引']:.2f}倍**です。"
+          f"ところが**割合で見ると逆**で、"
+          f"{hi['区分']}は{hi['割引の割合']:.1%}、{lo['区分']}は{lo['割引の割合']:.1%}。"
+          "**多数回該当の額だけが定額で、そこから引く前の限度額は"
+          "区分ア・イ・ウだけが医療費に連動する**からです")
+
+    print("\n=== 医療費を増やすと、割引が伸びる区分と、1円も伸びない区分に割れる"
+          "（1か月あたりの割引）===")
+    print(f"{'医療費':>12s} " + " ".join(f"{t[0]:>11s}" for t in TIERS))
+    for r in multi_hit_gap_by_cost():
+        print(f"{r['医療費']:11,d}円 "
+              + " ".join(f"{r[t[0]]:10,d}円" for t in TIERS))
+    print("  → **区分エとオは、医療費が33倍になっても割引が1円も動きません。**"
+          f"1パーセントの項を持つのは区分ア・イ・ウだけで（`TIERS` の5番目の欄）、"
+          "**エとオの限度額はもともと定額**だからです。"
+          "**「重い月ほど多数回該当が効く」は、上の3区分だけの話です**")
+    print(f"  → そして**上の行では、区分アとイの割引が 0円**です。"
+          f"医療費{300_000:,}円 の3割は {round(300_000 * COPAY_RATE):,}円 で、"
+          f"多数回該当の限度額（ア {multi_hit('ア'):,}円 ／ "
+          f"イ {multi_hit('イ'):,}円）より低い。"
+          "**払うのは3割と限度額の低いほう**なので、"
+          "**限度額をいくら下げても、その月の負担は1円も変わりません。**"
+          "**区分が上の人ほど、多数回該当が効きはじめる医療費が高いところにあります**")
+
+    print(f"\n=== 割引だけで、最初の3か月ぶんの自己負担に並ぶのは何か月目か"
+          f"（医療費{C:,}円）===")
+    print(f"{'区分':>3s} {'最初の3か月':>12s} {'1か月の割引':>12s} "
+          f"{'並ぶ月数':>9s}  {'1年で並ぶか'}")
+    for r in multi_hit_catch_up_grid(C):
+        print(f"{r['区分']:>3s} {r['最初の3か月']:11,d}円 {r['1か月の割引']:11,d}円 "
+              f"{r['並ぶ月数']:8.2f}か月  "
+              + ("並びます" if r["1年で並ぶか"] else "**並びません（12か月を超える）**"))
+    e = multi_hit_catch_up("エ", C)
+    o = multi_hit_catch_up("オ", C)
+    print(f"  → **割引の額が大きい区分エ（{e['1か月の割引']:,}円）のほうが、"
+          f"区分オ（{o['1か月の割引']:,}円）より遅い**"
+          f"（{e['並ぶ月数']:.2f}か月 と {o['並ぶ月数']:.2f}か月）。"
+          "**最初の3か月ぶんが、割引の差より大きく開いている**からです。"
+          "**5つの区分のうち、12か月を超えるのは区分エだけ**です")
