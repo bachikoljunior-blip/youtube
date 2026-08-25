@@ -101,23 +101,29 @@ AUTHORITY = """
 # `branch` と食い違っていました。** 同じ問いに2つの答えがある状態で、
 # **このリポジトリが何度も踏んでいる形そのもの**です。消してあります。
 #
-# 残すのは、型の側が言っていない1点だけ: **`main` から切られた worktree を
-# 合流させると、`CLAUDE.md` で必ず衝突します**（幹は恒久指示9件の枠を外した版、
-# `main` は `note` の `propagate_directive.py` がその枠を入れた版 ＝ `4114f7b`）。
-# そして **サブエージェントはそのファイルを書き換えられません** ——
-# 8/25 に `checkout --theirs` / `add` / `merge -X theirs` / `reset --hard` の
-# **4つとも分類器に拒否**されました。知らないと、ここで回が丸ごと止まります。
-TRUNK = """
+# **`CLAUDE.md` の衝突を予告する段は、2026-08-26 に畳みました。**
+#
+# ここには長らく「合流すると `CLAUDE.md` で必ず衝突します（幹は恒久指示9件の枠を
+# 外した版、`main` は入れた版 ＝ `4114f7b`）。サブはそのファイルを書き換えられません」
+# と書いてありました。**その前提は、もうありません** —— 親が同じ日に
+# `origin/main` を枝の先頭まで進めたので、`main` と幹が同じものになりました。
+#
+# **消しきらずに1行だけ残すのは、実測がまだ両方あるからです**（2026-08-26 06:0x）:
+#
+#     06:02 に立ったサブ  `main`(4114f7b) から切られており、
+#                         `docs/trigger_main.md` が**無い**状態で始まった
+#     06:47 に親が        `origin/main` を枝の先頭へ進めた
+#
+# **同じ日の中で切り替わっています。** だから「必ず衝突する」でも
+# 「もう何もしなくていい」でもなく、**早送りで終わるはずの1手**として残します。
+# 空振りなら数秒で、外れていたときの損（読む手順そのものが古い）は1周ぶんです。
+FIRST_MOVE = """
 
-**合流すると `CLAUDE.md` で衝突します。止まらないこと。**
-幹は恒久指示9件の枠を**外した**版、`main` は入れた版なので、必ずここでぶつかります。
-**サブエージェントはこのファイルを書き換えられません**（分類器が止めます ——
-8/25 に `checkout --theirs` / `add` / `merge -X theirs` / `reset --hard` の4つとも拒否）。
-
-**衝突したまま進めて構いません。** その1ファイルには触らず、
-**自分が変えたファイルだけを** commit して push すること
-（`git read-tree --reset origin/<枝>` → `git add <変えたファイル>` →
-`git write-tree` → `git commit-tree` → `git push <sha>:refs/heads/<枝>` で通ります）。
+**最初の1手: `git fetch origin` → `git merge origin/<<branch>>`**（早送りで終わるはずです・数秒）。
+`origin/main` は枝の先頭まで進めてあるので、**もう `CLAUDE.md` では衝突しません。**
+それでも撃つのは、空振りが数秒なのに対し、**外していたときは読む手順そのものが古くなる**から ——
+実測 2026-08-26 06:02 のサブは、`docs/trigger_main.md` が**無い**所から始まっています
+（`main` を進めたのは、その45分 後）。競合したら **merge で相手の作業を残すこと。捨てないこと。**
 """
 
 
@@ -127,9 +133,10 @@ def _siblings_block(siblings: list[str]) -> str:
     空でも段を落としません —— 「いない」と書いてあることに意味があります
     （書いていないと、受け取った子は「調べていないだけ」と区別できません）。
 
-    **`TRUNK` を必ず添えること**（2026-08-25）。合流で `CLAUDE.md` が衝突したとき、
-    サブはそれを自力で解けません —— 知らないと、そこで回が丸ごと止まります。
-    **枝の合わせ方そのものは型の「最初の1手」が持ちます**（重ねて書かないこと）。
+    **枝の合わせ方はここには入りません**（2026-08-26）。
+    それは `FIRST_MOVE` が1か所で持ち、型が `<<first_move>>` で**置き場所を決めます** ——
+    「最初の1手」と名乗るものが本文の最後に出ていては、名前が嘘になるからです。
+    **文言は1か所・位置は型の側**。どちらも重ねて書かないこと。
     """
     if not siblings:
         head = ("**同じ枝で他に走っている相手は、立てた時点ではいません。**\n"
@@ -141,7 +148,7 @@ def _siblings_block(siblings: list[str]) -> str:
                 "**あなたの担当は、上のどれとも別のファイルのはずです。**\n"
                 "push 前に必ず `git fetch`。競合したら merge で"
                 "**相手の作業を残すこと。捨てないこと。**")
-    return head + TRUNK + AUTHORITY
+    return head + AUTHORITY
 
 
 def build(kind: str, note: str = "", siblings: list[str] | None = None,
@@ -170,6 +177,7 @@ def build(kind: str, note: str = "", siblings: list[str] | None = None,
         "note": note,
         "only": only,
         "note_block": note_block,
+        "first_move": FIRST_MOVE.strip(),
         "siblings_block": _siblings_block(list(siblings or [])),
         "lead": (tpl["lead-only"].replace("<<only>>", only) if only
                  else tpl["lead-round"]),
@@ -190,7 +198,13 @@ def build(kind: str, note: str = "", siblings: list[str] | None = None,
     # `<<lead>>` は段まるごと差し込むので、**その中の `<<branch>>` は
     # 上の行ごとの置換を通りません。** 組み上げたあとで、もう一度当てること。
     # ここを飛ばすと、子は `git merge origin/<<branch>>` を**そのまま読みます。**
-    text = text.replace("<<branch>>", branch)
+    #
+    # **2026-08-26 に `<<first_move>>` で同じ穴を踏みました。** 「最初の1手」を
+    # `<<lead>>` の中へ置いた瞬間、上の行ごとの置換を通らなくなり、
+    # 出来上がった本文に `<<first_move>>` の6文字がそのまま残りました。
+    # **段まるごと差し込む口の中に置いた差し込み口は、全部ここで当て直すこと。**
+    text = text.replace("<<first_move>>", FIRST_MOVE.strip())
+    text = text.replace("<<branch>>", branch)      # FIRST_MOVE の中にも枝名がある
     return re.sub(r"\n{3,}", "\n\n", text).strip() + "\n"
 
 

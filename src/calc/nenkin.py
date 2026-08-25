@@ -118,6 +118,9 @@ ASSUMPTIONS = [
     "仮定を置いて計算しています。仮定が変われば答えも変わります",
     "あと1か月待つ・早めるの取り返しは、その1か月ぶんの累計が入れ替わる最初の月です。"
     "取り返しの月数は、繰下げが倍率÷0.007＋1、繰上げが倍率÷0.004＋1で、年額は約分で消えます",
+    "増えたぶんに掛かる手取り率は、(繰下げ後の手取り − 65歳の手取り) ÷ (繰下げ後の額面 − 65歳の額面) で出しています。表に出ている手取り率は年額全体に掛かる平均の率で、これとは別の数です",
+    "取りこぼしの表は、寿命を75歳から100歳まで1か月きざみで301通り置き、それぞれの寿命での最善の総額との差を出したものです。寿命がその範囲の外なら、この答えも変わります",
+    "手取り率の前提を振る表の k は、手取り率の下がり方だけを何倍にするかです。k が0なら額面と同じ、1ならこの計算で使っている前提そのもので、制度に k という値があるわけではありません",
     "年金額べつの表は、繰り下げた後の年額が350万円までの人だけを出しています。"
     "手取り率の仮定が年額500万円までしか無く、それを超えると率が平らになって"
     "手取りと額面の差が消えてしまうためです",
@@ -361,6 +364,84 @@ def check_tables() -> None:
         raise ValueError("手取りの分岐点が額面より前に来ている行がある")
     if any(r["差_円"] <= 0 for r in by_base):
         raise ValueError("85歳まで生きて繰下げの生涯手取りが増えていない行がある")
+
+    # --- 増えたぶんに掛かる手取り率（`marginal_net_rate` の節）--------------
+    # 1. **節の主張そのもの**: 増えたぶんの率は、平均の率より必ず低い。
+    #    等しくなるのは手取り率が平らなときだけで、そうなったら節が消えます。
+    for r in marginal_net_grid(180.0):
+        if r["限界の手取り率"] is None or r["限界の手取り率"] >= r["平均の手取り率"]:
+            raise ValueError(
+                f"{r['開始']}: 増えたぶんの率 {r['限界の手取り率']} が"
+                f"平均の率 {r['平均の手取り率']} を下回っていません")
+    # 2. **平均の率で見込むと、必ず多く見える**（差が負の向きで揃うこと）。
+    if any(r["実際の手取り増_円"] >= r["平均の率で見込んだ手取り増_円"]
+           for r in marginal_net_grid(180.0)):
+        raise ValueError("平均の率で見込んだ額より、実際のほうが多い行があります")
+    # 3. **差の定義を、独立にもう1本で裏取りする。**
+    #    限界の率 ＝ (手取りの差) ÷ (額面の差) を、`lifetime` 側から解き直す
+    #    （こちらは年額から直に、あちらは総額から）。1年ぶんに揃えて比べる。
+    for m in (12, 60, 120):
+        r = marginal_net_rate(m, 180.0)
+        g_up = 180.0 * (rate_for(m) - rate_for(0))
+        n_up = (lifetime(m, 180.0, (BASE_AGE * 12 + m) + 12, net=True)
+                - lifetime(0, 180.0, BASE_AGE * 12 + 12, net=True))
+        if abs(n_up / g_up - r["限界の手取り率"]) > 1e-9:
+            raise ValueError(
+                f"{m}か月: 限界の率が2つの解き方で食い違います"
+                f"（{r['限界の手取り率']} 対 {n_up / g_up}）")
+
+    # --- 寿命が読めないときの開始（`minimax_start` の節）--------------------
+    # 4. **節の題そのもの**: 最大の取りこぼしを最小にする開始は、端でも
+    #    「よく言われる年齢」でもない。ここが 60/65/70/75 のどれかに
+    #    なったら、題を書き直すこと。
+    mm = minimax_start(180.0, (75, 100), net=False)
+    for key in ("金額で選ぶ", "割合で選ぶ"):
+        if mm[key]["月数"] in (-60, 0, 60, 120):
+            raise ValueError(
+                f"{key}の答えが {mm[key]['開始']} です。"
+                "節は『よく言われる年齢ではない』が主題なので、題ごと見直すこと")
+    # 5. **金額と割合で答えが割れること**（割れないなら、節が半分になります）。
+    if mm["金額で選ぶ"]["月数"] == mm["割合で選ぶ"]["月数"]:
+        raise ValueError("金額で選んだ答えと、割合で選んだ答えが同じになっています")
+    # 6. **選んだ開始が、比べる相手より本当に小さいこと**（最小化の裏取り）。
+    for key in ("65歳開始", "70歳繰下げ", "75歳繰下げ", "60歳繰上げ"):
+        if mm[key]["最大の取りこぼし_円"] < mm["金額で選ぶ"]["最大の取りこぼし_円"]:
+            raise ValueError(f"{key} のほうが取りこぼしが小さい。最小化が壊れています")
+        if mm[key]["最大の取りこぼし_割合"] < mm["割合で選ぶ"]["最大の取りこぼし_割合"]:
+            raise ValueError(f"{key} のほうが割合が小さい。最小化が壊れています")
+    # 7. 帯の下の端で亡くなると、そこまで1円も受け取らない開始は**全額**の
+    #    取りこぼしになる（割合が 1.0）。ここが 1.0 でなければ、
+    #    取りこぼしの定義か `lifetime` のどちらかが壊れています。
+    if abs(mm["75歳繰下げ"]["最大の取りこぼし_割合"] - 1.0) > 1e-12:
+        raise ValueError(
+            f"75歳0か月開始で75歳まで生きた場合の取りこぼしが全額になっていません"
+            f"（{mm['75歳繰下げ']['最大の取りこぼし_割合']}）")
+
+    # --- 前提を振ると裏返る点（`assumption_flip` の節）----------------------
+    # 8. **裏返る k は、二分法とは別に閉じた形でも出せる。**
+    #    差は k について1次なので `flip = d0 / (d0 - d1)`。
+    #    二分法と一致しなければ、どちらかが壊れています。
+    for age in (85, 88, 90):
+        af = assumption_flip(180.0, age, 60)
+        d0 = af["額面での差_円"] / 10_000
+        d1 = af["いまの前提での差_円"] / 10_000
+        want = d0 / (d0 - d1)
+        if af["裏返る_k"] is None or abs(af["裏返る_k"] - want) > 1e-6:
+            raise ValueError(
+                f"{age}歳: 裏返る k が二分法({af['裏返る_k']})と式({want})で"
+                "食い違います")
+    # 9. **手取りの前提は、繰下げを不利にする向きにしか効かない**
+    #    （k を上げると差が縮む）。向きが変われば節の文言ごと逆になります。
+    for age in (82, 85, 88, 90, 95):
+        af = assumption_flip(180.0, age, 60)
+        if af["いまの前提での差_円"] >= af["額面での差_円"]:
+            raise ValueError(
+                f"{age}歳: 手取りで見たほうが繰下げの差が大きくなっています")
+    # 10. 長生きを見込むほど、裏返るまでの余裕は大きくなる（単調）。
+    ks = [assumption_flip(180.0, a, 60)["裏返る_k"] for a in (85, 88, 90, 95)]
+    for a, b in zip(ks, ks[1:]):
+        if a is None or b is None or b <= a:
+            raise ValueError(f"寿命を長く見たのに、裏返る k が増えていません: {ks}")
 
 
 def break_even(months_from_65: int, base_annual_man: float, net: bool = False) -> tuple[int, int] | None:
@@ -1144,6 +1225,221 @@ def birth_gap_ratio(months_before_65: int) -> float:
             / (1 - rate_for(-months_before_65)))
 
 
+# ---------------- 増えた額面のうち、手元に残るのは何円か（限界の手取り率）----
+def marginal_net_rate(months_from_65: int, base_annual_man: float = 180.0) -> dict:
+    """**繰り下げて増えた額面1円のうち、手取りとして残るのは何円か。**
+
+    表に出ている手取り率（`NET_RATE_POINTS`）は**平均の率**です ——
+    「年額180万円なら91パーセント」は、180万円**全体**に掛かる率のこと。
+
+    **繰下げの説明が答えていないのは、増えたぶんに掛かる率のほう**です。
+    年額が上がると平均の率そのものが下がるので、
+    **増えた額面に掛かる率は、平均より必ず低くなります**:
+
+        限界の手取り率 ＝ (繰下げ後の手取り − 65歳の手取り)
+                        ÷ (繰下げ後の額面 − 65歳の額面)
+
+    分母も分子も**差**なので、平均の率とは別の数です。
+    「1か月0.7パーセント増える」は額面の話で、
+    **手取りで見た増え方は、この率のぶんだけ薄まります。**
+    """
+    g0 = base_annual_man * rate_for(0)
+    g1 = base_annual_man * rate_for(months_from_65)
+    n0 = g0 * _clamp_rate(g0)
+    n1 = g1 * _clamp_rate(g1)
+    dg = g1 - g0
+    marginal = None if abs(dg) < 1e-12 else (n1 - n0) / dg
+    return {
+        "開始": Plan(months_from_65, rate_for(months_from_65)).age_text,
+        "月数": months_from_65,
+        "倍率": rate_for(months_from_65),
+        "額面_万": g1,
+        "手取り_万": n1,
+        "平均の手取り率": _clamp_rate(g1),
+        "限界の手取り率": marginal,
+        # 平均の率で増えると思った場合との差（年額・円）
+        "平均の率で見込んだ手取り増_円": round((n0 / g0 * dg) * 10_000) if dg else 0,
+        "実際の手取り増_円": round((n1 - n0) * 10_000),
+    }
+
+
+def marginal_net_grid(base_annual_man: float = 180.0,
+                      step_months: int = 12) -> list[dict]:
+    """繰下げの各段で、限界の手取り率がどこまで落ちるか。"""
+    return [marginal_net_rate(m, base_annual_man)
+            for m in range(step_months, (MAX_DEFER_AGE - BASE_AGE) * 12 + 1,
+                           step_months)]
+
+
+def marginal_worst(base_annual_man: float = 180.0) -> dict:
+    """**限界の手取り率がいちばん低くなる開始月**（1か月きざみで全部見る）。
+
+    1か月ずつ刻んだ「その1か月ぶんの限界」も一緒に出します
+    （前の月からの差ぶんに、どれだけの率が掛かるか）。
+    """
+    rows = []
+    for m in range(1, (MAX_DEFER_AGE - BASE_AGE) * 12 + 1):
+        ga = base_annual_man * rate_for(m - 1)
+        gb = base_annual_man * rate_for(m)
+        na = ga * _clamp_rate(ga)
+        nb = gb * _clamp_rate(gb)
+        rows.append({
+            "月数": m,
+            "開始": Plan(m, rate_for(m)).age_text,
+            "その1か月の限界の手取り率": (nb - na) / (gb - ga),
+            "65歳からの限界の手取り率": marginal_net_rate(m, base_annual_man)["限界の手取り率"],
+        })
+    low = min(rows, key=lambda r: r["その1か月の限界の手取り率"])
+    return {
+        "行": rows,
+        "いちばん低い月": low,
+        "75歳での_65歳からの限界": rows[-1]["65歳からの限界の手取り率"],
+        "65歳の平均の手取り率": _clamp_rate(base_annual_man),
+    }
+
+
+# ---------------- 寿命が分からないときの開始年齢（最大の取りこぼしを最小に）----
+def regret_table(base_annual_man: float = 180.0,
+                 span_ages: tuple[int, int] = (75, 100),
+                 step_months: int = 12,
+                 net: bool = False) -> list[dict]:
+    """**候補の開始月ごとに、「外したときの取りこぼし」の最大値**を出す。
+
+    既存の節は全部「何歳まで生きるかを**決め打ちして**最適を出す」形です。
+    **決め打ちできないから誰も決められない**、というのが本当の問題なので、
+    ここでは向きを変えます ——
+    **寿命を 75〜100歳のどこかとしか言えないとき、
+    どの開始月なら「いちばん外したときの損」がいちばん小さいか。**
+
+    取りこぼし（後悔）＝ その寿命での最善の総額 − この開始での総額。
+    金額の取りこぼしは長生きするほど大きくなるので、
+    **割合（最善に対して何パーセント取りこぼすか）でも同じ表を出します。**
+    どちらで測るかで答えが変わるなら、それ自体が結果です。
+    """
+    lo, hi = span_ages
+    lifespans = list(range(lo * 12, hi * 12 + 1))
+    best_by_span = {
+        um: max(lifetime(m, base_annual_man, um, net=net)
+                for m in range(-(BASE_AGE - MIN_ADVANCE_AGE) * 12,
+                               (MAX_DEFER_AGE - BASE_AGE) * 12 + 1))
+        for um in lifespans
+    }
+    rows = []
+    for m in range(-(BASE_AGE - MIN_ADVANCE_AGE) * 12,
+                   (MAX_DEFER_AGE - BASE_AGE) * 12 + 1, step_months):
+        worst_yen, worst_yen_at = -1.0, None
+        worst_pct, worst_pct_at = -1.0, None
+        for um in lifespans:
+            best = best_by_span[um]
+            gap = best - lifetime(m, base_annual_man, um, net=net)
+            if gap > worst_yen:
+                worst_yen, worst_yen_at = gap, um
+            pct = 0.0 if best <= 0 else gap / best
+            if pct > worst_pct:
+                worst_pct, worst_pct_at = pct, um
+        rows.append({
+            "開始": Plan(m, rate_for(m)).age_text,
+            "月数": m,
+            "最大の取りこぼし_円": round(worst_yen * 10_000),
+            "そのときの寿命": _age_text(worst_yen_at),
+            "最大の取りこぼし_割合": worst_pct,
+            "割合が最大の寿命": _age_text(worst_pct_at),
+        })
+    return rows
+
+
+def minimax_start(base_annual_man: float = 180.0,
+                  span_ages: tuple[int, int] = (75, 100),
+                  net: bool = False) -> dict:
+    """**最大の取りこぼしを最小にする開始月**（1か月きざみで181通り全部）。
+
+    金額で測った答えと、割合で測った答えの**両方**を返します。
+    """
+    rows = regret_table(base_annual_man, span_ages, step_months=1, net=net)
+    by_yen = min(rows, key=lambda r: r["最大の取りこぼし_円"])
+    by_pct = min(rows, key=lambda r: r["最大の取りこぼし_割合"])
+    at65 = next(r for r in rows if r["月数"] == 0)
+    at70 = next(r for r in rows if r["月数"] == 60)
+    at60 = next(r for r in rows if r["月数"] == -60)
+    at75 = next(r for r in rows if r["月数"] == 120)
+    return {
+        "寿命の帯": f"{span_ages[0]}〜{span_ages[1]}歳",
+        "金額で選ぶ": by_yen,
+        "割合で選ぶ": by_pct,
+        "65歳開始": at65,
+        "70歳繰下げ": at70,
+        "75歳繰下げ": at75,
+        "60歳繰上げ": at60,
+    }
+
+
+# ---------------- 手取り率の前提を振ると、結論はどこで裏返るか ---------------
+def _net_rate_scaled(annual_man: float, k: float) -> float:
+    """手取り率の**下がり方**を k 倍にした前提。k=1 がいまの前提、k=0 は額面。"""
+    return 1.0 - k * (1.0 - _clamp_rate(annual_man))
+
+
+def lifetime_scaled(months_from_65: int, base_annual_man: float,
+                    until_months: int, k: float) -> float:
+    """`lifetime` の手取り版を、手取り率の前提 k で解いたもの（万円）。"""
+    start_months = BASE_AGE * 12 + months_from_65
+    if until_months <= start_months:
+        return 0.0
+    annual = base_annual_man * rate_for(months_from_65)
+    return annual * _net_rate_scaled(annual, k) * (until_months - start_months) / 12
+
+
+def assumption_flip(base_annual_man: float = 180.0, until_age: int = 85,
+                    months_from_65: int = 60,
+                    k_max: float = 6.0) -> dict:
+    """**この結論は、こちらの前提がどれだけ違っていたら裏返るか。**
+
+    手取り率（`NET_RATE_POINTS`）は制度の値ではなく**こちらが置いた前提**です。
+    節は毎回それを画面に出していますが、**「その前提がどれくらい違ったら
+    答えが変わるのか」は、どの節も答えていません。**
+
+    ここでは下がり方だけを k 倍に振ります（k=0 で額面と同じ、k=1 がいまの前提）。
+    そして「繰下げが65歳受給に負ける」最初の k を、二分法で解きます。
+    **k が1に近いほど、その結論は前提に寄りかかっている**ということです。
+    """
+    um = until_age * 12
+
+    def diff(k: float) -> float:
+        return (lifetime_scaled(months_from_65, base_annual_man, um, k)
+                - lifetime_scaled(0, base_annual_man, um, k))
+
+    d0 = diff(0.0)
+    d1 = diff(1.0)
+    dmax = diff(k_max)
+    flip = None
+    if d0 > 0 and dmax < 0:
+        lo, hi = 0.0, k_max
+        for _ in range(200):
+            mid = (lo + hi) / 2
+            if diff(mid) > 0:
+                lo = mid
+            else:
+                hi = mid
+        flip = (lo + hi) / 2
+    return {
+        "開始": Plan(months_from_65, rate_for(months_from_65)).age_text,
+        "何歳まで": until_age,
+        "65歳の年額_万": base_annual_man,
+        "額面での差_円": round(d0 * 10_000),
+        "いまの前提での差_円": round(d1 * 10_000),
+        "裏返る_k": flip,
+        "余裕_倍": None if flip is None else flip - 1.0,
+    }
+
+
+def assumption_flip_grid(base_annual_man: float = 180.0,
+                         until_ages: tuple[int, ...] = (80, 82, 85, 88, 90, 95),
+                         months_from_65: int = 60) -> list[dict]:
+    """裏返る k を、見込む寿命べつに並べる。"""
+    return [assumption_flip(base_annual_man, a, months_from_65)
+            for a in until_ages]
+
+
 if __name__ == "__main__":
     check_tables()
     print("制度の値の検査: 通過\n")
@@ -1351,3 +1647,91 @@ if __name__ == "__main__":
     print("  **どちらが正しいという話ではありません。** 年利は「差し出したものに対して"
           "どれだけの率で戻るか」、総額は「いくら受け取るか」で、問いが違います。"
           "繰下げの説明が率だけを言うとき、答えているのは前者だけです。")
+
+    mw = marginal_worst(base)
+    m70 = marginal_net_rate(60, base)
+    m75 = marginal_net_rate(120, base)
+    print(f"\n=== 繰り下げて増えた額面のうち、手取りに残るのは"
+          f"{m70['限界の手取り率'] * 100:.1f}パーセント（70歳・65歳で年{base:.0f}万円）===")
+    print(f"  前提: 手取り率は年額から補間（**制度の値ではなくこちらの前提**）/ "
+          f"65歳の年額 {base:.0f}万円")
+    print(f"  表に出ている手取り率は**平均の率**です —— 年{base:.0f}万円で "
+          f"{mw['65歳の平均の手取り率'] * 100:.1f}パーセントというのは、"
+          f"{base:.0f}万円**全体**に掛かる率のこと。")
+    print("  **繰下げの説明が答えていないのは、増えたぶんに掛かる率のほうです。**"
+          "年額が上がると平均の率そのものが下がるので、"
+          "**増えた額面に掛かる率は、平均より必ず低くなります。**")
+    print(f"{'開始':>9s} {'額面':>9s} {'平均の率':>8s} {'増えたぶんの率':>13s} "
+          f"{'平均の率で見込むと':>17s} {'実際':>12s} {'差':>12s}")
+    for r in marginal_net_grid(base):
+        print(f"{r['開始']:>9s} {r['額面_万']:8.1f}万 {r['平均の手取り率'] * 100:7.1f}% "
+              f"{r['限界の手取り率'] * 100:12.1f}% "
+              f"{r['平均の率で見込んだ手取り増_円']:>16,d}円 "
+              f"{r['実際の手取り増_円']:>11,d}円 "
+              f"{r['実際の手取り増_円'] - r['平均の率で見込んだ手取り増_円']:>+11,d}円")
+    print(f"  **75歳まで繰り下げると、増えた額面 "
+          f"{(m75['額面_万'] - base) * 10_000:,.0f}円 のうち手取りに残るのは "
+          f"{m75['限界の手取り率'] * 100:.1f}パーセント**"
+          f"（平均の率 {m75['平均の手取り率'] * 100:.1f}パーセントで見込むと、"
+          f"年 {m75['平均の率で見込んだ手取り増_円'] - m75['実際の手取り増_円']:,d}円 多く見えます）。")
+    print(f"  1か月きざみで見ると、いちばん低いのは "
+          f"**{mw['いちばん低い月']['開始']}に入る1か月**で "
+          f"{mw['いちばん低い月']['その1か月の限界の手取り率'] * 100:.1f}パーセント。"
+          "**「1か月0.7パーセント増える」は額面の話**で、"
+          "手取りで見た増え方はこの率のぶんだけ薄まります。")
+
+    mm = minimax_start(base, (75, 100), net=False)
+    print(f"\n=== 寿命が{mm['寿命の帯']}としか言えないとき、いちばん損の小さい開始は"
+          f"**{mm['金額で選ぶ']['開始']}**（65歳でも70歳でも75歳でもない）===")
+    print(f"  前提: 65歳で年{base:.0f}万円 / 額面で比べる / "
+          f"寿命は {mm['寿命の帯']} の1か月きざみ301通り / "
+          f"開始は60歳0か月〜75歳0か月の181通り")
+    print("  ほかの節は「何歳まで生きるか」を決め打ちして最適を出しています。"
+          "**決め打ちできないから誰も決められない**、というのが本当の問題なので、"
+          "ここでは向きを変えます —— **どの開始なら、いちばん外したときの損が"
+          "いちばん小さいか。**")
+    print("  取りこぼし ＝ その寿命での最善の総額 − この開始での総額。"
+          "**金額で測るか、割合で測るかで答えが変わります**（どちらも下に出します）。")
+    print(f"{'開始':>9s} {'最大の取りこぼし':>15s} {'そのときの寿命':>14s} "
+          f"{'割合で見た最大':>13s} {'その寿命':>10s}")
+    for r in regret_table(base, (75, 100), step_months=12, net=False):
+        print(f"{r['開始']:>9s} {r['最大の取りこぼし_円']:>14,d}円 "
+              f"{r['そのときの寿命']:>14s} "
+              f"{r['最大の取りこぼし_割合'] * 100:12.1f}% "
+              f"{r['割合が最大の寿命']:>10s}")
+    print(f"  **金額で選ぶと {mm['金額で選ぶ']['開始']}**"
+          f"（最大の取りこぼし {mm['金額で選ぶ']['最大の取りこぼし_円']:,d}円）、"
+          f"**割合で選ぶと {mm['割合で選ぶ']['開始']}**"
+          f"（同 {mm['割合で選ぶ']['最大の取りこぼし_割合'] * 100:.1f}パーセント）。"
+          "**どちらも「よく言われる年齢」ではありません。**")
+    print(f"  比べる相手: 65歳開始は最大 "
+          f"{mm['65歳開始']['最大の取りこぼし_円']:,d}円／"
+          f"{mm['65歳開始']['最大の取りこぼし_割合'] * 100:.1f}パーセント、"
+          f"70歳繰下げは {mm['70歳繰下げ']['最大の取りこぼし_円']:,d}円／"
+          f"{mm['70歳繰下げ']['最大の取りこぼし_割合'] * 100:.1f}パーセント、"
+          f"75歳繰下げは {mm['75歳繰下げ']['最大の取りこぼし_円']:,d}円／"
+          f"{mm['75歳繰下げ']['最大の取りこぼし_割合'] * 100:.0f}パーセント"
+          f"（75歳で亡くなると1円も受け取れないので、取りこぼしは全額です）。")
+
+    af85 = assumption_flip(base, 85, 60)
+    print(f"\n=== 「70歳まで繰り下げたほうが得」は、手取り率の前提が"
+          f"{af85['裏返る_k']:.2f}倍 きつくなると消える（85歳まで生きる場合）===")
+    print(f"  前提: 65歳で年{base:.0f}万円 / 手取り率の**下がり方**だけを k 倍に振る"
+          f"（k=0 で額面と同じ、k=1 がこの計算で使っている前提）")
+    print("  手取り率は制度の値ではなく**こちらが置いた前提**です。"
+          "ほかの節は毎回それを画面に出していますが、"
+          "**「その前提がどれくらい違ったら答えが変わるのか」には答えていません。**")
+    print(f"{'何歳まで':>8s} {'額面での差':>13s} {'いまの前提での差':>17s} "
+          f"{'裏返る k':>10s} {'いまの前提からの余裕':>20s}")
+    for r in assumption_flip_grid(base):
+        k = "—" if r["裏返る_k"] is None else f"{r['裏返る_k']:.2f}倍"
+        yoyu = "—" if r["余裕_倍"] is None else f"{r['余裕_倍'] * 100:+.0f}%"
+        print(f"{r['何歳まで']:>6d}歳 {r['額面での差_円']:>12,d}円 "
+              f"{r['いまの前提での差_円']:>16,d}円 {k:>10s} {yoyu:>20s}")
+    print(f"  **85歳までなら、余裕は "
+          f"{af85['余裕_倍'] * 100:.0f}パーセントしかありません。** "
+          "手取り率の下がり方をこれ以上きつく置くと、"
+          "**同じ計算が逆の答えを出します。**")
+    print("  「—」は、額面の時点で既に負けているか、k を6倍まで振っても裏返らないという意味です。"
+          "**82歳までの行を見ること** —— 額面ではぎりぎり勝っているのに、"
+          "いまの前提では既に負けています。")
