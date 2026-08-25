@@ -290,3 +290,65 @@ def test_埋め方は_手を全部置いたあとに言う():
         "`_how_to_fill` を手の途中でも呼んでいます。**置き終えてから1回だけ**")
     assert body.index("shortfalls.append(") < body.index("_how_to_fill("), (
         "溜める前に言っています")
+
+
+# --- 交換の相手（**押し出してよい本**）--------------------------------------
+#
+# 上限に達している日には、**空いた生きた枠というものがありません。** その日に
+# 生きるのはちょうど `cap()` 本で、どの時刻に置いても本数は変わらないので、
+# **新しく足した本は必ず `cap()+1` 本目（0再生）**になります。
+# だから「枠を空けてから入れる」は成立せず（空けた瞬間に別の本が繰り上がる）、
+# **成立するのは `at` の交換だけ**です —— (日, 時刻) の集合は1つも変わらないので、
+# 生きている本の総数も再生の総数も動かず、**実験の情報だけが増えます。**
+#
+# **相手に選んでよいのは「余り」だけ**です。どこかの群が床のぶんとして
+# 使っている本を押し出すと、**別の前提を1件 遅らせます。**
+
+def _fake_groups(monkeypatch, groups):
+    from scripts import live_slots
+    monkeypatch.setattr(live_slots, "_groups", lambda: groups)
+
+
+def test_床のぶんとして使われている本は交換の相手にしない(monkeypatch):
+    from scripts import live_slots
+    rows = [_row(f"v{i}", "2026-09-02", f"{9 + i // 2:02d}:{(i % 2) * 30:02d}")
+            for i in range(4)]
+    board = _live_board(rows, now="2026-09-01")
+    # 床 2本 の群が v0/v1 を使っている → 押し出してよいのは v2/v3 だけ
+    _fake_groups(monkeypatch, {"k": ({"g": ["v0", "v1"]}, 2)})
+    got = [v for v, _ in live_slots._swap_candidates(board, dt.date(2026, 9, 2), 4)]
+    assert "v0" not in got and "v1" not in got, (
+        "床のぶんの本を押し出そうとしています。**別の前提を1件 遅らせます**")
+    assert got == ["v2", "v3"]
+
+
+def test_床を上回っているぶんは交換の相手になる(monkeypatch):
+    """`stat_split 対照(前)` は 床 16 に対して 316本 生きています。**余りです。**"""
+    from scripts import live_slots
+    rows = [_row(f"v{i}", "2026-09-02", f"{9 + i // 2:02d}:{(i % 2) * 30:02d}")
+            for i in range(4)]
+    board = _live_board(rows, now="2026-09-01")
+    _fake_groups(monkeypatch, {"k": ({"g": ["v0", "v1", "v2", "v3"]}, 2)})
+    got = [v for v, _ in live_slots._swap_candidates(board, dt.date(2026, 9, 2), 4)]
+    # 早い順の先頭2本が床のぶん。残りは押し出してよい
+    assert got == ["v2", "v3"]
+
+
+def test_期限より後の本は交換の相手にしない(monkeypatch):
+    from scripts import live_slots
+    rows = [_row("v0", "2026-09-02", "09:00"), _row("v1", "2026-09-20", "09:00")]
+    board = _live_board(rows, now="2026-09-01")
+    _fake_groups(monkeypatch, {})
+    got = [v for v, _ in live_slots._swap_candidates(board, dt.date(2026, 9, 2), 4)]
+    assert got == ["v0"], "期限より後の枠と交換しても、その前提は判定できません"
+
+
+def test_0再生の枠の本は交換の相手にしない(monkeypatch):
+    """**押し出す意味がありません。**相手が生きていないと、枠は手に入りません。"""
+    from scripts import live_slots
+    # 15分きざみ → 09:15 は間隔で死ぬ
+    rows = [_row("v0", "2026-09-02", "09:00"), _row("v1", "2026-09-02", "09:15")]
+    board = _live_board(rows, now="2026-09-01")
+    _fake_groups(monkeypatch, {})
+    got = [v for v, _ in live_slots._swap_candidates(board, dt.date(2026, 9, 2), 4)]
+    assert got == ["v0"]

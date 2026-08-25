@@ -930,10 +930,72 @@ def motion_shortfall() -> tuple[int, str]:
         pending = sum(1 for tid, on in by_topic.items() if not on and tid not in posted)
     except Exception as exc:                                   # noqa: BLE001
         return 0, f"（群を読めませんでした: {exc}）"
-    need = max(0, floor - live - pending)
+    want = max(0, floor - live - pending)
+    if not want:
+        return 0, (f"対照(動きなし) 判定に入る **{live}本** ＋ 作り置き {pending}本"
+                   f" ／ 床 {floor}本 → **足りています**")
+
+    # **置く所があるかを、作る前に数える**（2026-08-26。**踏みかけました**）。
+    #
+    # `docs/trigger_main.md` に、**この手を撃って外した回**が記録されています ——
+    # 申し送りは3回続けて「対照を2本 作り足すこと」と書いていましたが、
+    # `scripts/live_slots.py --plan` の実物は
+    # **「期限までに空いた生きた枠は 0本。作った本はその日の 11本目 ＝ 死に枠」**。
+    # そのまま撃っていたら、**2本ぶんの生成を 0再生の枠に捨てて**いました。
+    #
+    # **自動で寄せる仕掛けは、その失敗も自動にします。** だから同じ数え方
+    # （`live_slots._free_live_before`）をここから読みます —— `judgeable.members`
+    # が標本を絞るのと**同じ `day_cap.live_ids` の定義**なので、
+    # 「作れば判定に入る」と「入らない」がここで一致します。
+    room = _live_room()
+    if room is None:
+        return want, (f"対照(動きなし) 判定に入る **{live}本** ＋ 作り置き {pending}本"
+                      f" ／ 床 {floor}本 → **あと {want}本**"
+                      "（置き先を数えられなかったので、絞っていません）")
+    need = min(want, room)
     why = (f"対照(動きなし) 判定に入る **{live}本** ＋ 作り置き {pending}本 ／ 床 {floor}本"
-           f" → **あと {need}本**")
+           f" → **あと {want}本** ／ 期限までに空いた生きた枠 **{room}本**"
+           f" → **この回で作るのは {need}本**")
+    if need < want:
+        why += ("  [!] **足りないのは本ではなく、置き先です。**"
+                " 作っても その日の上限の外（0再生）に入るので、判定には入りません。"
+                "**効くのは「A/B でない本を1本 生きた枠から押し出して、そこへ入れる」"
+                "まで通した1手だけ**（`python scripts/live_slots.py --plan`）。")
     return need, why
+
+
+def _live_room() -> int | None:
+    """**新しい本が入れる、生きた枠の数。**（API 0単位）
+
+    数え方は `scripts/live_slots.py` の1か所に置いてあります。**写さないこと** ——
+    この輪は「同じことを2か所が別々に言っていて、片方しか読まれていない」で
+    何度も外しています。読めなければ `None`（＝絞らない）を返します。
+
+    ## **空いた生きた枠を、二度 数えないこと**（2026-08-26 に踏みかけた）
+
+    `_free_live_before()` を素の盤面に当てると **5本** 返ります。
+    ところがその 5本は、**`live_slots.plan()` が既に取りに行っている枠**です ——
+    あの手は「**もう予約に在る**対照の本を、死に枠から生きた枠へ動かす」もので、
+    **生成を1本も要りません。** 同じ枠を新しい本にも数えると、
+    **どちらか片方は必ず死に枠に落ちます**（実測: 手を置くと 5 → **0**）。
+
+    **安いほうが先です。** 入れ替えは 50単位、生成は1本 数分＋1,600単位。
+    だからここは**入れ替えを済ませた後の盤面**で数えます。
+    つまり `need` は「**入れ替えでは埋まらず、本当に作るしかないぶん**」だけになります。
+    """
+    try:
+        import live_slots
+        from src import judgeable
+
+        board = live_slots.Board(live_slots._rows())
+        limit = next((f.deadline for f in judgeable.floors()
+                      if f.key == "opening_motion"), None)
+        if limit is None:
+            return None
+        live_slots.plan(board)          # **盤面を進める**（出力は要らない）
+        return live_slots._free_live_before(board, limit)
+    except Exception:                                          # noqa: BLE001
+        return None
 
 
 def motion_plan(n: int) -> list[bool | None]:

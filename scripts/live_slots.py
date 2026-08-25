@@ -180,6 +180,55 @@ def _free_live_before(board: Board, limit: dt.date) -> int:
     return free
 
 
+def _needed(board: Board, live: set[str] | None = None) -> set[str]:
+    """**押し出してはいけない本**（どこかの群が、判定に要る床のぶんとして使っている本）。
+
+    群ごとに、生きている本を公開の早い順に並べ、**先頭 N本**が「要る本」です。
+    そこから溢れたぶんは**余り**で、押し出しても判定は1件も遅れません
+    （実測 08/26: `stat_split 対照(前)` は 床 16 に対して **316本** 生きています）。
+    """
+    live = board.live() if live is None else live
+    keep: set[str] = set()
+    for _key, (groups, n) in _groups().items():
+        for _g, vids in groups.items():
+            alive = sorted((v for v in vids if v in live), key=lambda v: board.at[v])
+            keep.update(alive[:n])
+    return keep
+
+
+def _swap_candidates(board: Board, limit: dt.date, want: int) -> list[tuple[str, dt.datetime]]:
+    """**時刻を交換してよい相手**を、早い順に。（API 0単位）
+
+    ## なぜ「空き枠」ではなく「交換」なのか（2026-08-26 に数えて足した）
+
+    上限に達している日には、**空いた生きた枠というものがありません。**
+    その日に生きるのはちょうど `cap()` 本で、どの時刻に置いても本数は変わらない ——
+    **新しく足した本は必ず `cap()+1` 本目（0再生）になります。**
+    だから「枠を空けてから入れる」は成立しません（空けた瞬間に、その日の
+    別の本が繰り上がって埋めます）。**成立するのは交換だけです。**
+
+    **2本の `at` を入れ替えると、(日, 時刻) の集合は1つも変わりません。**
+    どの本がどの枠に居るかだけが入れ替わるので、**生きている本の総数も、
+    再生の総数も変わりません。** 動くのは「その枠に居るのがどちらか」だけ ——
+    つまり**実験の情報だけが増えます**（`plan()` の節が言っているのと同じ形）。
+
+    **相手に選んでよいのは「余り」だけ**です（`_needed()`）。
+    どこかの群が床のぶんとして使っている本を押し出すと、**別の前提を1件 遅らせます。**
+    """
+    live = board.live()
+    keep = _needed(board, live)
+    out: list[tuple[str, dt.datetime]] = []
+    for vid, when in sorted(board.at.items(), key=lambda kv: kv[1]):
+        if len(out) >= want:
+            break
+        if vid not in live or vid in keep:
+            continue
+        if when.date() > limit or not board.movable(vid):
+            continue
+        out.append((vid, when))
+    return out
+
+
 def _how_to_fill(board: Board, key: str, still: int) -> str:
     """**足りないぶんを、どう埋めるか。**置く所の有無で言うことが変わります。"""
     limit = next((f.deadline for f in judgeable.floors() if f.key == key), None)
@@ -191,14 +240,28 @@ def _how_to_fill(board: Board, key: str, still: int) -> str:
         return (f"**本を {still}本 足すこと**"
                 f"（期限 {limit:%m/%d} までに空いた生きた枠が {free}本 あります）。"
                 "**`falsified_if` は緩めないこと**")
-    return (f"[!] **「作り足す」だけでは埋まりません** —— 期限 {limit:%m/%d} までに"
+    head = (f"[!] **「作り足す」だけでは埋まりません** —— 期限 {limit:%m/%d} までに"
             f"空いた生きた枠は **{free}本** しかありません"
             f"（要 {still}本）。作った本はその日の {board.cap + 1}本目 ＝"
             "**死に枠**に入り、いま逃がしている場所に積むだけです。"
             "**効くのは「作って、早い日の生きた枠へ入れて、A/B でない本を1本 押し出す」"
             "まで通した1手だけ**（`live_slots` の交換と同じ形。総再生は変わらず、"
-            "実験の情報だけが増えます）。**それが無理なら期限を延ばすこと。"
-            "`falsified_if` は緩めないこと**")
+            "実験の情報だけが増えます）。")
+    # **その「1手」の相手を、ここで名指しすること**（2026-08-26 に足した）。
+    #     この文はずっと「交換すれば効く」と言うだけで、**誰と交換するのかを
+    #     出していませんでした。** 出さないと、読んだ回が自分で盤面を数え直す
+    #     ところから始めます（実測: 申し送りが3回続けて具体の手を書き、
+    #     3回とも盤面が変わっていて外した。`docs/trigger_main.md`）。
+    #     **書き置きではなく、撃つたびにその場の実物から出すこと。**
+    swaps = _swap_candidates(board, limit, still)
+    tail = ("**それが無理なら期限を延ばすこと。`falsified_if` は緩めないこと**")
+    if len(swaps) < still:
+        return (head + f"[!] **交換の相手も {len(swaps)}本 しか居ません**（要 {still}本）。"
+                + tail)
+    named = " ／ ".join(f"`{v}`（{w:%m/%d %H:%M}）" for v, w in swaps)
+    return (head + f"**交換してよい余りの本**（床を割らないもの）: {named}。"
+            f" 作った {still}本 を投稿してから、この本と `at` を入れ替えること"
+            "（1組 2手・100単位。**(日,時刻) の集合は1つも変わりません**）。" + tail)
 
 
 def report(board: Board | None = None) -> list[str]:
