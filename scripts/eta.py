@@ -60,7 +60,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from src import arm_speed, day_cap, levers, motion_groups, rpm_mix  # noqa: E402  （`sys.path` を通した後でないと読めません）
+from src import arm_speed, day_cap, levers, motion_groups, rpm_mix, settle  # noqa: E402  （`sys.path` を通した後でないと読めません）
 
 LOG = ROOT / "data" / "eta.jsonl"
 
@@ -160,7 +160,12 @@ NEVER = 10 ** 9  # 「届かない」を日数で表すときの番人
 #
 # **48時間で伸びが終わります。** だから「まだ48時間経っていない本」を標本に入れると、
 # その本は**一生ぶんではなく数時間ぶん**を持って平均に入り、天井を下振れさせます。
-MATURE_HOURS = 48
+#
+# **この数はここでは定義しません（2026-08-26）。** 同じ「いつ確定するか」を
+# `src/ab_split.py` が `SETTLE_DAYS = 7`（勘）で別に持っていて、**判定の門はそちらだけを
+# 読んでいました。** 実測と定義は `src/settle.py` に1か所へ寄せてあります
+# （そこに「標本に入れる年齢」と「判定を待つ日数」が**なぜ違う数なのか**も書いてあります）。
+MATURE_HOURS = settle.MATURE_HOURS
 
 
 # --- **測定が返ってくる日**（2026-08-20 07:1x に足した） ---

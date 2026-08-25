@@ -69,11 +69,18 @@ import yaml
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
+from src import settle as settle_mod  # noqa: E402  （`sys.path` を通した後でないと読めません）
+
 JST = timezone(timedelta(hours=9))
 
 #: Analytics の遅れが読めなかったときの控え。**0 にしないこと** ——
 #: 0 にすると「遅れは無い」と言い切ることになり、いちばん危ない側へ倒れます。
 FALLBACK_LAG_DAYS = 3
+
+#: `needs` に `settle_days` が書いていないときの既定。**実測は `src/settle.py`**。
+#: **ここに数を書かないこと（2026-08-26）** —— 元は `need.get("settle_days", 7)` と
+#: 直に 7 が入っていて、`src/settle.py`（72時間で判定は入れ替わらない）と別々でした。
+DEFAULT_SETTLE_DAYS = settle_mod.SETTLE_DAYS
 
 
 def today_jst() -> date:
@@ -81,14 +88,12 @@ def today_jst() -> date:
 
 
 def analytics_lag_days(as_of: date | None = None) -> int:
-    """**実データが何日 遅れているか。** `data/analytics_lag.jsonl` の実測から。"""
-    path = ROOT / "data" / "analytics_lag.jsonl"
-    try:
-        rows = [json.loads(x) for x in path.read_text(encoding="utf-8").splitlines() if x.strip()]
-        last = max(r["last_day"] for r in rows)
-        return max(0, ((as_of or today_jst()) - date.fromisoformat(last)).days)
-    except Exception:                                          # noqa: BLE001
-        return FALLBACK_LAG_DAYS
+    """**実データが何日 遅れているか。** 実測は `src/settle.py` が持ちます。
+
+    **ここで数え直さないこと（2026-08-26）** —— 同じ量を `src/judgeable.py` が
+    `= 3` のべた書きで持っていて、**A/B 4件だけ1日 楽観**に出ていました。
+    """
+    return settle_mod.analytics_lag_days(as_of or today_jst())
 
 
 def _rows(name: str) -> list[dict]:
@@ -145,6 +150,16 @@ class Answer:
     why: str
     #: 待っても来ない種類か（外の出来事）
     unreachable: bool = False
+    #: **その日が「推定」のときの、意味のあるゆらぎ（日）。**（2026-08-26 に足した）
+    #:
+    #: 伸び率から解いた日（`accrual`）は、**その回の実測でしか出せません。**
+    #: 実例: 同じ前提の判定日が 11-13 → 11-09 → 11-16 → 11-22 と動き、
+    #: **3回とも「期限がずれています」と言われ、3回とも期限だけを書き換えました。**
+    #: 動いたのは伸び率の見積りで、**前提も、届く日も、1日も動いていません。**
+    #: 3回ぶんの `fix` は、到達日を1日も動かしていない churn です。
+    #:
+    #: だから**点ではなく帯**で見ます。帯の中なら「ずれ」と言いません。
+    slack: int = 0
 
 
 def _ans_now() -> Answer:
@@ -182,8 +197,13 @@ def _ans_accrual(need: dict, as_of: date) -> Answer:
         return Answer(None, f"要 {want} ／ いま **0**（{elapsed}日ぶん。"
                             "**伸び率が出せないので、いつ届くか言えません**）")
     days = math.ceil((want - have) / rate)
+    # **帯の幅**: 積み上げの数え上げ誤差 ≒ 1/√have（件数の相対標準誤差）を日数へ移す。
+    # have=74・days=88 なら ±11日。**この幅の中で期限を書き換えても、何も動きません。**
+    slack = max(1, math.ceil(days / max(1.0, have ** 0.5)))
     return Answer(as_of + timedelta(days=days),
-                  f"要 {want} ／ いま {have}（{elapsed}日で {rate:.2f}/日）→ あと {days}日")
+                  f"要 {want} ／ いま {have}（{elapsed}日で {rate:.2f}/日）→ あと {days}日"
+                  f"（**±{slack}日**。伸び率からの推定なので、この幅の中の書き換えは意味を持ちません）",
+                  slack=slack)
 
 
 def _ans_published_group(need: dict, as_of: date, lag: int) -> Answer:
@@ -194,7 +214,7 @@ def _ans_published_group(need: dict, as_of: date, lag: int) -> Answer:
     """
     after = str(need.get("created_after") or "")
     count = int(need.get("count") or 1)
-    settle = int(need.get("settle_days", 7))
+    settle = int(need.get("settle_days", DEFAULT_SETTLE_DAYS))
     since_pub = str(need.get("published_after") or "")
     rows = [r for r in _rows("uploaded.jsonl") if str(r.get("uploaded_at") or "") >= after]
     pub = sorted(p for p in (str(r["at"])[:10] for r in rows if r.get("at")) if p >= since_pub)
@@ -301,13 +321,20 @@ class Verdict:
             return "[!!]"
         if self.deadline is None:
             return "[!!]"
-        return "[OK]" if self.ready <= self.deadline else "[!!]"
+        return "[!!]" if self.slips else "[OK]"
+
+    @property
+    def slack(self) -> int:
+        """`ready` を決めた要件の帯の幅（日）。**推定でない要件は 0**。"""
+        if self.ready is None:
+            return 0
+        return max([a.slack for a in self.answers if a.ready == self.ready] or [0])
 
     @property
     def slips(self) -> bool:
-        """期限が、データの来る日より前に置かれているか。"""
+        """期限が、データの来る日より前に置かれているか。**帯の中なら言いません。**"""
         return (self.ready is not None and self.deadline is not None
-                and self.ready > self.deadline)
+                and (self.ready - timedelta(days=self.slack)) > self.deadline)
 
     @property
     def waits(self) -> int:
@@ -325,7 +352,9 @@ class Verdict:
         """
         if self.ready is None or self.deadline is None:
             return 0
-        return max(0, (self.deadline - self.ready).days)
+        # **帯の中の待ちは数えません**（数えると、推定のゆらぎのぶんだけ
+        # 「縮めること」と言い続け、書き換えても次の回にまた言われます）。
+        return max(0, (self.deadline - self.ready).days - self.slack)
 
 
 def load(path: Path | None = None) -> list[dict]:
@@ -357,7 +386,9 @@ def check(items: list[dict], as_of: date | None = None, lag: int | None = None) 
 
 def lines(vs: list[Verdict], lag: int) -> list[str]:
     out = ["=== この期限までに、判定に要るデータは在るか（scripts/deadline_check.py）===",
-           f"  実データは **{lag}日 遅れ**ています。**「公開から7日」に必ず足すこと。**"]
+           f"  実データは **{lag}日 遅れ**ています。"
+           f"**「公開から{settle_mod.SETTLE_DAYS}日」に必ず足すこと。**"
+           f"（この {settle_mod.SETTLE_DAYS}日 は実測です —— `python -m src.settle`）"]
     for v in sorted(vs, key=lambda x: (x.deadline or date(2099, 1, 1))):
         dl = f"{v.deadline:%m-%d}" if v.deadline else "  ??  "
         out.append(f"  {v.mark} {dl}  {v.claim[:58]}")
@@ -384,6 +415,10 @@ def lines(vs: list[Verdict], lag: int) -> list[str]:
                        f"期限は {v.waits}日 **後ろ**に置いてあります。"
                        f"  `deadline: \"{v.ready}\"` へ**縮めること**"
                        "（**`falsified_if` は緩めないこと** —— 動かすのは期限だけ）")
+        elif v.slack:
+            out.append(f"         → 判定できるのは {v.ready:%m-%d}（±{v.slack}日の推定）。"
+                       f"**期限 {v.deadline:%m-%d} はその帯の中**です —— "
+                       "**書き換えないこと**（帯の中で動かしても、届く日は1日も動きません）")
         else:
             out.append(f"         → 判定できるのは {v.ready:%m-%d}。**期限とちょうど同じ**です")
     bad = [v for v in vs if v.slips]

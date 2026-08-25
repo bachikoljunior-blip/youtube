@@ -97,6 +97,31 @@ def test_0本のまま来ないのは_宣言したときだけ():
     assert J.answer({**base, "zero_means_never": True}, date(2026, 8, 25), 3).unreachable
 
 
+def test_伸び率から解いた日は帯で見る():
+    """**推定の日を点で見ると、書き換えの churn が毎回1件生まれます**（2026-08-26）。
+
+    実例: 同じ前提の判定日が 11-13 → 11-09 → 11-16 → 11-22 と動き、
+    そのたびに「期限がずれています」と言われて期限だけを3回書き換えました。
+    **動いたのは伸び率の見積りで、届く日は1日も動いていません。**
+    """
+    need = {"kind": "accrual", "count_expr": "74", "need": 1000, "since": "2026-08-19"}
+    a = J.answer(need, date(2026, 8, 26), 3)
+    assert a.slack > 0, "伸び率から解いた日には、必ず帯を付けること"
+    v = J.Verdict("t", a.ready + timedelta(days=a.slack - 1), a.ready, [a])
+    assert not v.slips and not v.waits, "**帯の中の期限を「ずれ」と言わないこと**"
+    far = J.Verdict("t", a.ready + timedelta(days=a.slack + 5), a.ready, [a])
+    assert far.waits == 5, "帯の外に出たぶんだけを、待ちとして数えること"
+    early = J.Verdict("t", a.ready - timedelta(days=a.slack + 3), a.ready, [a])
+    assert early.slips, "帯の外に早すぎる期限は、これまでどおり止めること"
+
+
+def test_点で決まる要件には帯を付けない():
+    """**帯は推定にだけ。** 予約の実物から数えた日に幅を付けると、待ちが見えなくなります。"""
+    a = J._ans_published_group(
+        {"created_after": "1970-01-01", "count": 1}, date(2026, 8, 25), lag=3)
+    assert a.slack == 0
+
+
 @pytest.mark.parametrize("kind", ["now", "external", "accrual", "published_group",
                                   "after", "group_key"])
 def test_知っている_kind_は落ちない(kind: str):
