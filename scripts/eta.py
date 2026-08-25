@@ -63,6 +63,21 @@ from src import arm_speed, day_cap, levers, motion_groups, rpm_mix  # noqa: E402
 
 LOG = ROOT / "data" / "eta.jsonl"
 
+
+def _ready_by_claim() -> dict:
+    """**前提ごとの「判定できる最早の日」**（`scripts/deadline_check.py`）。
+
+    `scripts/` の中の兄弟なので、**遅延して**読みます —— この1本が壊れても
+    到達予測そのものは出し続けること（呼び手が `except` で受けています）。
+    """
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "eta_deadline_check", ROOT / "scripts" / "deadline_check.py")
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules["eta_deadline_check"] = mod        # dataclass が __module__ を引きます
+    spec.loader.exec_module(mod)
+    return mod.ready_by_claim()
+
 # --- 門（YouTube の公表値。守るのではなく、通らないと収入が0になる事実）---
 SUBS_GATE = 1_000
 LONG_HOURS_GATE = 4_000          # 直近12か月・長尺のみ
@@ -2645,8 +2660,18 @@ def headline(pl: dict, prev: dict | None = None,
         # **そのうえで「いつなら動くのか」を出す**（2026-08-21 06:xx）。
         # 期日の来た前提が1件も無い回は、**何をしても到達日は動きません。**
         # それを先に言わないと、その回は外れる `--moves` を立てるだけで終わります。
+        # **`deadline` ではなく「データが揃う日」で聞くこと**（2026-08-25 22:5x）。
+        # `deadline` は置いた回の勘です。`deadline_check.ready_by_claim()` は
+        # 予約・台帳・Analytics の遅れから**実際に判定できる日**を出します。
+        # 実測でここは **10件・合計46日**（平均4.6日・最大14日）ずれていて、
+        # **その46日は軌跡がまるごと止まっている日数**でした
+        # （腕は前提を1件閉じたときだけ動くので）。
         try:
-            nc = arm_speed.next_close()
+            ready = _ready_by_claim()
+        except Exception:
+            ready = None
+        try:
+            nc = arm_speed.next_close(ready=ready)
         except Exception:
             nc = None
         if nc and nc.get("on") is not None:

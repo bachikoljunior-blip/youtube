@@ -384,7 +384,8 @@ def lines(arms: dict[str, dict], streak: dict, bd: dict,
           "**当たりを取りこぼす側にずれます**（`closed_on`/`lever`/`effect` を足すこと）")
     return out
 
-def next_close(doc: dict | None = None, today: date | None = None) -> dict:
+def next_close(doc: dict | None = None, today: date | None = None,
+               ready: dict[str, date] | None = None) -> dict:
     """**次に前提を1件閉じられるのはいつか。**
 
     軌跡の腕は閉じた前提でしか動かないので（この節の上を参照）、
@@ -393,11 +394,31 @@ def next_close(doc: dict | None = None, today: date | None = None) -> dict:
     そのとき開いていた前提13件のうち、いちばん早い期日は **2026-08-26** ——
     **その回に日付を動かす道は、そもそも1本も無かった**わけです。
 
-    返り: `{"on": date|None, "days": int|None, "open": 件数}`
+    ## **`deadline` は「判定できる日」ではありません**（2026-08-25 22:5x）
+
+    ここは長らく `deadline` だけを読んでいました。`deadline` は**置いた回の勘**で、
+    **データが実際に揃う日**（`scripts/deadline_check.py` の `ready`）とは別物です。
+    実測（2026-08-25・開いている16件）:
+
+        ready ≤ deadline が **10件**、合計 **46日** ／ 平均 **4.6日** 早い
+        いちばん大きいもの: ready 08-29 に対し deadline 09-12 ＝ **14日**
+
+    **`deadline_check.py` は `ready > deadline`（期限が早すぎる）しか見ていませんでした。**
+    逆向き ——**データはもう揃っているのに期限がまだ先** —— は
+    「**期限に間に合います**」という緑の行で流れていました。
+    その 46日 は、**軌跡がまるごと止まっている日数**です
+    （腕は閉じた前提でしか動かないので）。
+
+    `ready` を渡すと、**claim ごとにそちらを優先**します
+    （`ready > deadline` でも `ready` が正 —— 期限が守れないだけで、
+    判定できる日は動きません）。渡さなければ従来どおり `deadline` で読みます。
+
+    返り: `{"on": date|None, "days": int|None, "open": 件数, "source": "ready"|"deadline"}`
     """
     doc = _load() if doc is None else doc
     today = today or today_jst()
-    days: list[date] = []
+    ready = ready or {}
+    days: list[tuple[date, str]] = []
     n_open = 0
     for h in doc.get("hypotheses", []) or []:
         if not isinstance(h, dict) or h.get("closed_on"):
@@ -409,9 +430,14 @@ def next_close(doc: dict | None = None, today: date | None = None) -> dict:
                 when = date.fromisoformat(when)
             except ValueError:
                 when = None
+        src = "deadline"
+        r = ready.get(str(h.get("claim") or ""))
+        if isinstance(r, date):
+            when, src = r, "ready"
         if isinstance(when, date):
-            days.append(when)
+            days.append((when, src))
     if not days:
-        return {"on": None, "days": None, "open": n_open}
-    soonest = min(days)
-    return {"on": soonest, "days": (soonest - today).days, "open": n_open}
+        return {"on": None, "days": None, "open": n_open, "source": None}
+    soonest, src = min(days, key=lambda x: x[0])
+    return {"on": soonest, "days": (soonest - today).days,
+            "open": n_open, "source": src}
