@@ -85,14 +85,17 @@
 **`IDLE` を「終わった」と読むと、走っているサブの上に二重で立てます。**
 push を見ること。
 
-**閉じるときにやること（この順で。1回だけ）:**
+**閉じるときにやること —— 2026-08-25 13:2x に全部済みました:**
 
-1. `update_trigger` で `trig_01LNvtNdjggEA4nfxX49YjX8` を `enabled: false`
-   （毎時9分・前の親に固定。生かしたままだと二重に周が立ちます）
-2. `delete_trigger` で `trig_01TD2k18Aj3EM8fPHLa8tsZH`
-   （毎時24分・**発火するがセッションが生まれない**。2回試して成果ゼロ）
-3. `docs/TRIGGER.md` の交代の註を消して、心拍を
-   `trig_01CTzKURfdS5LLHPGepXRwvt`（毎時59分）1本にする
+    済 trig_01LNvtNdjggEA4nfxX49YjX8   13:16Z に停止（毎時9分・前の親に固定だった）
+    済 trig_01TD2k18Aj3EM8fPHLa8tsZH   削除（発火するがセッションが生まれない）
+    済 trig_018JbWLLKRFPgpYgmjzZQJbq   削除（予備。create_session を呼ぶので機能しない）
+
+**いま生きている心拍は `trig_01CTzKURfdS5LLHPGepXRwvt`（毎時59分）1本だけです。**
+
+**これが「サブ増えてんの？」の答えでした**（オーナー指摘 2026-08-25）——
+古い心拍が3つ生きていて、親も2枚あり、**1時間に5回だれかが起きていました。**
+**心拍を増やすときは、必ず1本消してから増やすこと。**
 
 **閉じるまでは `data/rounds.jsonl` が二重立ちを止めます**
 （両方が pull → 記録 → push を守るかぎり）。**だから記録の push を落とさないこと。**
