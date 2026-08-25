@@ -44975,3 +44975,58 @@ merge すると必ずそこで衝突しますが、**サブエージェントは
 そのとき `CLAUDE.md` は幹の版を採ること（幹の冒頭に理由が書いてあります）。
 
 **覆る条件**: `main` が幹に追いついたら、`TRUNK` の段は要らなくなります。消すこと。
+
+---
+
+## 2026-08-25 23:5x（同じ回の続き・ship **fix**）**サブへ移したとき、枝を渡す口だけが落ちていました**
+
+**この回は `docs/trigger_main.md` を探すところから始まりました。** 無かったからです。
+
+原因は、ワークツリーが **`main`（4114f7b）から切られていた**こと。
+`main` にはこの企画の道具も文書も申し送りも入っていません
+（実物は `claude/youtube-auto-post-revenue-ggedij`）。
+
+**子セッションのときは起きませんでした。** `create_session` に
+`source_revision`（＝枝）を渡していたからです（`scripts/spawn_prompt.py --json`、
+`docs/spawn_prompt.md`「`source_url` / `source_revision` の付け忘れ」で
+**8/17 と 8/18 に2回踏んで、道具で塞いだ**ところ）。
+
+**サブにはその口がありません。** 8/25 夜に子→サブへ移したとき、
+**塞いだはずの穴が、別の入口から開き直しました。**
+
+実測: この夜のサブ**3枚が3枚とも** `main` から切られ、
+**3枚とも同じ合流を自分でやり直しています**
+（`worktree-agent-a16b…` / `worktree-agent-a47d…` / `worktree-agent-acd2…` の合流コミット）。
+**1枚（この回）は、読む手順そのものを探すところから始めています。**
+
+### 直したもの
+
+`docs/spawn_prompt.md` の `lead-round` と `optimizer` の両方に、**最初の1手**を足しました。
+
+    git fetch origin
+    git merge origin/<<branch>>      ← 枝の名前は docs/trigger_spec.json から入る
+      → 競合したら merge で相手の作業を残すこと。捨てないこと
+      → 済んだら commit して push。**ここが最初の節目**
+
+**そして、その場で `<<branch>>` が置換されないことを踏みました。**
+`<<lead>>` は**段まるごと差し込む口**なので、その中の差し込み口は
+行ごとの置換を通りません。**受け取った側は `git merge origin/<<branch>>` を
+そのまま読むところでした。** 組み上げたあとで、もう一度当てる形にしています
+（`scripts/spawn_prompt.py`）。検査は `tests/test_spawn_prompt.py::test_枝の名前が本文に入る`
+（**`hourly` と `optimizer` の両方**を見ています）。
+
+**枝の名前は `docs/trigger_spec.json` の1か所だけ**です。型には書き写していません。
+
+### 覆る条件
+
+**サブのワークツリーが、枝から切られるようになったら。** そのときは
+「最初の1手」の合流は空振りになるので、**節ごと消してよい**（毎回 `git fetch` は残す）。
+見分け方は簡単で、**立った直後に `docs/trigger_main.md` があるかどうか**です。
+
+### この回のもう1つ（記録漏れ防止）
+
+同じ枝に**相手が直接 push していました**（`21b0ff1` eta の腕の分岐）。
+`git push` が non-fast-forward で弾かれたので、**merge して両方残しています。**
+`docs/spawn_prompt.rendered.md` は**生成物**なので、合流の解決は
+`python scripts/spawn_prompt.py --write-rendered` を打ち直すだけです
+（手で直すと `test_rendered_copy_for_the_parent_is_current` が赤くなります）。
