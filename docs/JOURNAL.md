@@ -43333,3 +43333,35 @@ UTC の日で割っている。実測の差:
 - **`inferred()` が 0 を返し続けたら、札の段（3）は消してよい。**
   それまでは残すこと —— 予約中の古い本には秒数がありません。
 - **08/27 は day_cap の切り分けの日。** 本数を増やさないこと（対照）。答えは 09/01 ごろ
+
+### 鎖と承認の目盛り（この回の実測）
+
+    relay.py --stamp → list_triggers + list_sessions → --record
+    MCP 1回 **25.8秒** ／ 承認待ちだった回 **0件**   ← **読む側は素通り**（点が2つ目）
+
+**書く側は、この回も塞がっていました。** 親（`session_01NMCM5G`）は
+**`archive_session` の承認待ちのまま `REQUIRES_ACTION`** で止まっています。
+前の回が測った「**`create_session` は106.6分待って拒否**」と同じ形です。
+
+**だから `create_session` は撃ちません。** いまの親トリガー
+（`trig_01TD2k18Aj3EM8fPHLa8tsZH`・毎時24分）は**発火した回が自分で1周する**形で、
+本文が「**`create_session` を呼ばないでください。呼んだ瞬間、この設計の意味が消えます**」
+と言っています。**柱はサーバが時刻で撃つほう**で、受け渡しは上振れです。
+`relay.py --next` は撃ちました —— **札はどちらも埋まっています**
+（hourly = この回・optimizer = `session_01LijVu5` IDLE）。
+
+**1つ直すこと**: `--record --hourly 2` と打ちましたが、
+`--next` の規則は「**`REQUIRES_ACTION` は生きているに数えない**」です。
+**正しくは hourly=1。** 目盛りの本体（秒と blocked）は正しいので撃ち直しませんが、
+**点が2つしか無いうちは、数のほうも当てにしないこと。**
+
+### 検査
+
+    触った所の既存検査                        112件 全部通る
+    tests/test_forms.py（この回に足した）        9件 全部通る
+    全体（--ignore=tests/test_section_sweep.py） 1 failed / 1070 passed で -x が止まった
+
+**赤は `tests/test_forge_floor_fallback.py`（`topic_forge`）。前からのもの**で、
+**この回の変更を全部外して撃っても同じように落ちます**（確認済み）。
+触ったのは `forms` / `dupes` / `verify` / `reschedule` / `upload_only` だけで、
+`topic_forge` には1行も入れていません。
