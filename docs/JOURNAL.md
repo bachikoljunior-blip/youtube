@@ -45293,3 +45293,24 @@ note は「**答えが返るまで、他の日の本数を増やさないこと*
   単調性の仮定の上に立っているので、そこが崩れればこちらも崩れます
 - **門にはしていません。** 8/24 の判断（天井が未判定の前提に乗ることがある）を
   そのまま引き継いでいます。**数が届くことだけが目的です**
+
+### （同じ回）**検査は、この直しが触る面を全部緑で確認しました**
+
+**「全体で N passed」を根拠にしていません** —— この夜は同じ機械で
+サブ3枚が同時に `pytest tests/` を回しており、**全体は取り合いで15分の枠に入りません**
+（実測: 私の1本目は 80% で `timeout 900` に殺され、2本目も 60% で止まりました）。
+**代わりに、触る面を名指しで全部当てています**（`grep -l 'topic_forge\|best_section\|realign'`）。
+
+    test_forge_floor_fallback / _cross_calc / _decimal_rung / _topic_forge_align
+    test_spawn_prompt / test_spawn_gate_overrun / test_next_round        **58 + 32 passed**
+    test_forge_doomed / _indent / _long / _man_sen / _order / _swallow    **35 passed**
+    test_topic_stock / test_section_depth / test_retro_noise
+      / test_retro_quota_block / test_ab_balance                          **63 passed**
+
+残る3本（`test_calc_checks` / `test_doc_numbers` / `test_section_sweep`）は
+`topic_forge` を**`sections()` `survey()` `calc_modules()` だけ**で使っており、
+**`best_section` の側には一度も触れません**（`grep` で確認）。
+`scripts/eta.py --offline` と `scripts/topic_forge.py --list` も、合流後に動くことを見ています。
+
+**「全部走らせた」と言えない回は、何を当てたかを書くこと。**
+件数だけ書くと、次の回は「緑だった」と読みます。
