@@ -1098,11 +1098,19 @@ def _pull_verdicts_first() -> None:
     対して この 2,600単位 は、**いま開いている2件の判定を 8日 手前に倒します。**
     交換しているのは「1〜2本を32日先へ置くこと」と「8日ぶんの θ」です。
 
-    ## 撃たない条件（**上2つは既に `queue_lag.main` の中にあります**）
+    ## 2段ある（**順番が意味を持ちます**）
+
+        (1) `_rescue_dead_slots()`   死に枠の A/B を生きた枠へ（標本をそろえる）
+        (2) `_pull_ready_dates()`    その「判定できる日」を手前へ倒す
+
+    **(1) が先です。** 標本が足りない群は、そもそも**判定できる日が出ません**
+    （`judgeable.Floor.ready is None`）。日付の無いものは手前へ倒せません。
+
+    ## 撃たない条件（**下2つは既に呼ぶ先の中にあります**）
 
     - **日枠の 403 をこの窓で観測している** → 撃たない（**実測だけの門**）
     - **判定に要る本を割る** → 撃たない（`--force-quota` でも抜けられない）
-    - **取り戻せる日数が 0** → 撃たない（ここの門。単位を捨てないため）
+    - **取り戻せる日数が 0 ／ 手が 0** → 撃たない（単位を捨てないため）
 
     **落ちても投稿は続けます**（サムネイルと同じ。**順番を逆にしないこと**）。
 
@@ -1112,11 +1120,51 @@ def _pull_verdicts_first() -> None:
     `queue_lag` の「いちばん後ろ」が数日まで縮み、**後ろへ回った投稿が
     その窓のうちに公開される**ようになったら、投稿を先に戻すこと。
     """
+    if not upload_cap.day_quota().open:
+        return                          # 観測済みで閉じている。撃つだけ無駄
+    _rescue_dead_slots()                # (1) 標本を生き返らせる
+    _pull_ready_dates()                 # (2) その日を手前へ倒す
+
+
+def _rescue_dead_slots() -> None:
+    """**死に枠に落ちた A/B の本を、生きた枠へ逃がす**（`scripts/live_slots.py`）。
+
+    **`_pull_ready_dates()` より先です。** 入れ替えは「判定できる日」を手前へ
+    倒しますが、**そもそも標本が足りない群は、日付が出ません**
+    （`judgeable.Floor.ready is None`）。先に本数をそろえること。
+
+    実測（2026-08-26 03:3x）: **6手 ＝ 300単位**で
+    `stat_split 処置(後)` が **13本 → 16本（要 16）＝ 足ります**。
+    生きている本の総数も **363 → 368**。
+    これは 8/26 05:0x の申し送りが「**日枠が戻る 16:00 JST 以降に立った回が
+    撃つこと**」と書いていた手で、**待っているあいだ `tests/test_judgeable.py`
+    の `stat_split` は赤のまま**でした。
+
+    **`--all` は撃ちません。** あれは A/B に限らず全部を逃がす広い手で、
+    ここが自動でやってよい範囲を超えます（人が見て撃つこと）。
+    """
+    try:
+        from scripts import live_slots
+
+        board = live_slots.Board(live_slots._rows())
+        live_slots.plan(board)          # API 0単位。`board.moves` を埋める
+        if not board.moves:
+            return
+        print(f"[batch] **死に枠の A/B を {len(board.moves)}本 逃がします**"
+              f"（{len(board.moves) * 50}単位。**投稿より先に撃ちます**）", flush=True)
+        live_slots.main(["--apply"])
+    except Exception as exc:                                   # noqa: BLE001
+        print(f"[batch] 死に枠の逃がしは飛ばします: {str(exc)[:120]}", flush=True)
+
+
+def _pull_ready_dates() -> None:
+    """**判定できる日を手前へ倒す**（`scripts/queue_lag.py --apply`）。
+
+    **0日 なら撃ちません。**（単位を捨てないため。`Plan.gain_days()` が門）
+    """
     try:
         from scripts import queue_lag
 
-        if not upload_cap.day_quota().open:
-            return                      # 観測済みで閉じている。撃つだけ無駄
         plan = queue_lag.Plan()
         plan.improve()
         if not plan.swaps:
