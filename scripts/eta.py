@@ -27,7 +27,8 @@
 
 いちばん効くのは (1) ではなく、**「いまの構成の上限は目標に届くのか」**です。
 
-    1本あたりの再生 × 1日に出せる上限（92本）× 30日 ÷ 1000 × RPM
+    1本あたりの再生 × **1日に再生が付く上限**（実測 10本。`src/day_cap.py`）× 30日 ÷ 1000 × RPM
+    （**92本は API の日枠であって、再生が付く本数ではありません。** 2026-08-25 に分母を移しました）
 
 これが 200,000 円に届かないなら、**本数を増やしても、在庫を増やしても、
 予測日は永遠に来ません。** 増やすべきは本数ではなく、
@@ -412,7 +413,7 @@ def drop_unripe(rows, pub: dict[str, datetime], now: datetime,
 
     ## なぜ要るか（2026-08-20 03:1x。**実測で見つけました**）
 
-    天井は `1本あたり再生 × 92本 × 30日` です。この `1本あたり再生` は
+    天井は `1本あたり再生 × 再生が付く上限（実測10本/日）× 30日` です。この `1本あたり再生` は
     **「1本が一生に集める再生数」**でなければ、掛け算が意味を持ちません。
     ところが測っていたのは **「直近28日の窓に落ちた再生数」**で、
     次の2つが混ざっていました。
@@ -494,11 +495,16 @@ def split_per_video(rows) -> tuple[list[int], list[int]]:
     ここは `elif views >= 30` でした。**床は標本からは落としますが、
     天井の掛け算からは落としません。** 天井は
 
-        1本あたり再生 × **92本/日** × 30日
+        1本あたり再生 × **再生が付く上限（実測10本/日）** × 30日
 
-    で、この 92 は「作った本数」です。**床を通った本だけの数字を、
+    で、この本数は「作った本数」です。**床を通った本だけの数字を、
     落ちた本まで含む本数に掛けている**ので、
     **落ちた本が全部「通った本と同じだけ回る」ことになっていました。**
+
+    **同じ形が、分母そのものにも残っていました**（2026-08-25 に直した）。
+    ここは長らく `UPLOAD_CAP_PER_DAY = 92`（API の日枠）を掛けていましたが、
+    実測は **10本/日**で、**それを超えて出したぶんは 0再生**です
+    （`src/day_cap.py`）。**床の話より1桁大きい版**でした。
 
     実測（直近28日・ショート22本）: 床を通ったのは20本で、
     落ちた2本は**1回ずつ**。**床は「まだ伸びていない本」を落とすつもりの道具でしたが、
@@ -1047,10 +1053,31 @@ def analyse(m: dict, points: list[dict] | None = None,
         k: ("長尺" if (k.startswith("長尺") and long_per_video is not None) else "ショート")
         for k in RPM_SCENARIOS
     }
-    ceiling_views_month = per_video * UPLOAD_CAP_PER_DAY * 30
+    # **天井の分母は「口が受け付ける本数」ではなく「再生が付く本数」**（2026-08-25 22:4x）。
+    #
+    # ここは 08/24 に直し残った最後の1か所でした。`solve_gate1`・`days_subs_at`・
+    # `physical_caps`（`density` の腕の天井）は、その回に **92 → `day_cap.cap()`**
+    # へ移っています。**この表だけが 92 のまま**でした。
+    #
+    # 92 は API の日枠です。実測（`src/day_cap.py`・3日とも一致）は **10本/日** で、
+    # **それを超えて出したぶんは 0再生**。いっぽう掛けている `per_video` は
+    # **「再生が付いた本」だけの平均**なので、**92 を掛けると、再生の付かない
+    # 82本まで「付いた本と同じだけ回る」ことになります** ——
+    # 同じファイルの docstring が「床を通った本だけの数字を、落ちた本まで含む
+    # 本数に掛けている」と書いて禁じている形の、いちばん大きい版です。
+    #
+    # **何が変わるか**: 天井が **9.2分の1**。いちばん効くのは「長尺がショート並みに
+    # 伸びたら」の行で、¥400/¥1,000 の帯が **「届く」→「届かない」に反転**します。
+    # つまり「長尺さえ動けば、どの帯でも目標を超える」は 92 の産物でした。
+    #
+    # **覆る条件**: `day_cap.cap()` が上がったとき（登録者が増えれば上がるはず、と
+    # `src/day_cap.py` が書いています）。定数ではないので自動で追います。
+    a["ceiling_per_day"] = min(float(UPLOAD_CAP_PER_DAY), float(a["view_cap_per_day"]))
+    ceiling_per_day = a["ceiling_per_day"]
+    ceiling_views_month = per_video * ceiling_per_day * 30
     a["ceiling_views_month"] = ceiling_views_month
     a["ceiling_views_month_by_band"] = {
-        k: a["per_video_by_band"][k] * UPLOAD_CAP_PER_DAY * 30 for k in RPM_SCENARIOS
+        k: a["per_video_by_band"][k] * ceiling_per_day * 30 for k in RPM_SCENARIOS
     }
     a["ceiling"] = {
         k: a["ceiling_views_month_by_band"][k] / 1000 * rpm for k, rpm in RPM_SCENARIOS.items()
@@ -1066,9 +1093,11 @@ def analyse(m: dict, points: list[dict] | None = None,
     a["views_needed_month"] = {
         k: TARGET_YEN * 1000 / (rpm * sc["rpm"]) for k, rpm in RPM_SCENARIOS.items()
     }
-    # 1日92本の上限で、その再生数に要る「1本あたり再生」
+    # **再生が付く本数**で、その再生数に要る「1本あたり再生」
+    #     （92本/日 で割ると、要る倍率が 9.2分の1 に見えます。
+    #      `tests/test_eta.py` が段取り側で禁じているのと同じ分母の話）
     a["per_video_needed"] = {
-        k: v / (UPLOAD_CAP_PER_DAY * 30) for k, v in a["views_needed_month"].items()
+        k: v / (ceiling_per_day * 30) for k, v in a["views_needed_month"].items()
     }
     # **要る倍率は、その帯の形の実測で割ること**（ここが混ざると 36倍 が 0.1倍 に見える）
     a["per_video_ratio"] = {
@@ -1160,7 +1189,7 @@ def report(m: dict, a: dict) -> list[str]:
     P(f"  1本あたり再生は**形ごとに別の実測**です（直近28日。混ぜると長尺が「もう届く」に見えます）:")
     P(f"    ショート  **{a['per_video_now']:,}回**／本（**平均**・n={m.get('videos_with_views_28d', 0)}・**床は当てていません**）")
     P("      **床（30再生未満は除外）を外しました**（2026-08-19 15:0x）。床は標本からは落としますが、")
-    P(f"      **下の {UPLOAD_CAP_PER_DAY}本 からは落としません。** 落ちた本まで「通った本と同じだけ回る」ことになっていました。")
+    P(f"      **下の {a['ceiling_per_day']:.0f}本 からは落としません。** 落ちた本まで「通った本と同じだけ回る」ことになっていました。")
     P("      **天井は「本数を増やす意味があるか」を決める数**なので、上振れ側で読むと『届く』を作ります。")
     _print_dropped(P, m)
     if lpv is None:
@@ -1169,7 +1198,12 @@ def report(m: dict, a: dict) -> list[str]:
     else:
         P(f"    長尺      **{lpv:,}回**／本（**平均**・n={a['long_videos_28d']}・合計 {a['long_views_28d']:,}回・"
           "**30再生の床は当てていません**。当てると1本も残りません）")
-    P(f"  1日に出せる上限 {UPLOAD_CAP_PER_DAY}本 × 30日 に、**その形の実測**を当てた上限:")
+    P(f"  **再生が付く上限 {a['ceiling_per_day']:.0f}本/日**（実測・`src/day_cap.py`）× 30日 に、"
+      "**その形の実測**を当てた上限:")
+    P(f"      （口が受け付けるのは {UPLOAD_CAP_PER_DAY}本/日 ですが、**それを超えて出したぶんは 0再生**です。"
+      "掛けている1本あたり再生は**再生が付いた本だけの平均**なので、")
+    P(f"       {UPLOAD_CAP_PER_DAY} を掛けると、付かない本まで「付いた本と同じだけ回る」ことになります。"
+      "**2026-08-25 に直しました。それ以前の天井は 9.2倍 楽観です**）")
     for k in RPM_SCENARIOS:
         yen = a["ceiling"][k]
         need = a["per_video_needed"][k]
