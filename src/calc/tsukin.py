@@ -361,6 +361,65 @@ def flat_top_grid() -> list[dict]:
     return [coverage(km) for km in (55, 67.71, 100, 150, 200)]
 
 
+# ---- 節7: 距離べつに、非課税枠の何割が厚生年金で消えるか（2026-08-25）------
+#
+# **節3 と同じ `pension_increase()` を使いますが、動かす軸が違います。**
+# あちらは手当を 31,600円 に固定して**報酬月額**を動かします。
+# こちらは報酬月額を固定して、**距離帯（＝非課税限度額）のほうを動かします。**
+# 限度額は等間隔ではないので、割合はのこぎりになり、絵の形が変わります。
+def pension_by_distance(base: int = 280_000) -> list[dict]:
+    """**片道距離べつ**に、非課税の通勤手当と、そのぶん増える厚生年金保険料。
+
+    通勤手当は所得税では非課税ですが、**社会保険料の計算には入ります。**
+    増えるのは等級をまたいだときだけなので、「手当のうち何割が保険料で消えるか」は
+    距離に対して**上がって下がる**形（のこぎり）になります。
+    """
+    rows = []
+    for low, _high, limit in CAR_BANDS:
+        if limit == 0:
+            continue
+        r = pension_increase(base, limit)
+        rows.append({
+            "帯の入口km": low,
+            "限度額": limit,
+            "年で受け取る手当": limit * 12,
+            "増える厚生年金（年）": r["増える年額"],
+            "差引で残る額": limit * 12 - r["増える年額"],
+            "手当に対する割合": r["手当に対する割合"],
+            "等級(前)": r["標準報酬月額(前)"],
+            "等級(後)": r["標準報酬月額(後)"],
+            "またいだか": r["標準報酬月額(後)"] > r["標準報酬月額(前)"],
+        })
+    return rows
+
+
+def pension_by_distance_worst(base: int = 280_000) -> dict:
+    """**割合がいちばん重くなる距離帯。**本人負担率 9.15% を超えます。"""
+    rows = [r for r in pension_by_distance(base) if r["またいだか"]]
+    return max(rows, key=lambda r: r["手当に対する割合"])
+
+
+def pension_cliff_bite(base: int = 280_000) -> list[dict]:
+    """**帯をまたぐ1kmで、増えた枠のうち何割が保険料に取られるか。**
+
+    「限度額が上がった」と「手取りが上がった」は別です。
+    増えた枠より保険料の増えぶんが大きい帯があれば、そこは**逆ざや**になります。
+    """
+    rows = pension_by_distance(base)
+    out = []
+    for prev, now in zip(rows, rows[1:]):
+        gained = now["年で受け取る手当"] - prev["年で受け取る手当"]
+        taken = now["増える厚生年金（年）"] - prev["増える厚生年金（年）"]
+        out.append({
+            "境目km": now["帯の入口km"],
+            "増える枠（年）": gained,
+            "増える保険料（年）": taken,
+            "手元に残る": gained - taken,
+            "取られる割合": taken / gained if gained else 0.0,
+        })
+    return out
+
+
 def check_tables() -> None:
     """制度の値と計算の向きを確かめる。**壊れた数字で台本を書かせない。**"""
     # 1. 法令が名指ししている値
@@ -466,6 +525,38 @@ def check_tables() -> None:
                            [55, 100, 200],
                            "距離が伸びたのにまかなう割合が減っていない")
     _checks.unique_by(cliffs(), lambda r: r["境目km"], "境目の表")
+    # 7. **節7（2026-08-25）**: 距離べつに見ると、割合はのこぎりになる。
+    #    **主張を「またぐ帯」と「またがない帯」の両方で置きます。**
+    dist = pension_by_distance()
+    if not any(r["またいだか"] for r in dist):
+        raise _checks.TableError("どの距離帯でも等級をまたいでいない（節の前提が崩れている）")
+    if not any(not r["またいだか"] for r in dist):
+        raise _checks.TableError("すべての距離帯でまたいでいる（のこぎりにならない）")
+    # 受け取る手当そのものは距離とともに必ず増える（増えないのは差引のほう）
+    _checks.ascending([r["年で受け取る手当"] for r in dist],
+                      "距離帯べつに受け取る通勤手当", strict=True)
+    # またいだ帯では、手当に対する割合が**本人負担率より重い**ことがある
+    worst = pension_by_distance_worst()
+    _checks.greater(worst["手当に対する割合"], shahoken.HALF,
+                    f"片道{worst['帯の入口km']}km帯で、手当に対する割合が本人負担率より")
+    # 割合は単調ではない（またいだあと、距離が伸びると薄まる）
+    crossed = [r["手当に対する割合"] for r in dist if r["またいだか"]]
+    if sorted(crossed) == crossed:
+        raise _checks.TableError(
+            f"またいだ帯の割合が昇順になっている（のこぎりのはず）: {crossed}")
+    # 境目の食われ方: 1件も食われない境目と、半分以上食われる境目が両方ある
+    bites = pension_cliff_bite()
+    for row in bites:
+        if row["増える枠（年）"] <= 0:
+            raise _checks.TableError(f"{row['境目km']}kmで枠が増えていない")
+        if row["手元に残る"] < 0:
+            raise _checks.TableError(
+                f"{row['境目km']}kmで手元に残る額がマイナス（逆ざや）: {row}")
+    if not any(r["取られる割合"] == 0 for r in bites):
+        raise _checks.TableError("1円も取られない境目が1つも無い")
+    _checks.greater(max(r["取られる割合"] for r in bites), 0.5,
+                    "いちばん重い境目で、増えた枠から取られる割合が")
+
     _checks.assumption_values(ASSUMPTIONS, name="tsukin")
 
 
@@ -532,6 +623,38 @@ if __name__ == "__main__":
         c = coverage(km)
         print(f"  片道 {km:>5}km  限度 {c['限度額']:>7,}円  "
               f"実費 {c['実費']:>9,.0f}円  まかなう割合 {c['まかなう割合']:>7.1%}")
+
+    BASE = 280_000
+    print("\n=== 距離が1つ上の帯に入っても、増えた非課税枠の半分が厚生年金で消える帯がある"
+          f"（報酬月額{BASE:,}円・マイカー）===")
+    print(f"{'片道':>8s} {'限度額':>8s} {'年で受け取る':>11s} "
+          f"{'増える厚生年金':>12s} {'差引で残る':>11s} {'手当に対する割合'}")
+    for row in pension_by_distance(BASE):
+        mark = "" if row["またいだか"] else "  （等級をまたがない → 0円）"
+        print(f"  {row['帯の入口km']:>4}km〜 {row['限度額']:>7,}円 "
+              f"{row['年で受け取る手当']:>10,}円 "
+              f"{row['増える厚生年金（年）']:>11,}円 "
+              f"{row['差引で残る額']:>10,}円  "
+              f"{row['手当に対する割合']:>6.2%}{mark}")
+    w = pension_by_distance_worst(BASE)
+    print(f"  → いちばん重いのは **片道{w['帯の入口km']}km の帯**で、"
+          f"非課税で受け取る {w['年で受け取る手当']:,}円 のうち "
+          f"**{w['手当に対する割合']:.2%}** が厚生年金保険料に消えます。"
+          f"本人負担率 {shahoken.HALF:.2%} の "
+          f"**{w['手当に対する割合'] / shahoken.HALF:.2f}倍**です")
+    print("  → 距離が伸びるほど割合は薄まり、次に等級をまたぐところでまた跳ねます。"
+          "**距離に対して、上がって下がるのこぎり**になります")
+    print(f"\n  --- 帯の境目をまたぐ1kmで、増えた枠のうち何割を取られるか（報酬月額{BASE:,}円）---")
+    for row in pension_cliff_bite(BASE):
+        print(f"  {row['境目km']:>4}km の境目  増える枠 {row['増える枠（年）']:>8,}円/年  "
+              f"増える保険料 {row['増える保険料（年）']:>7,}円/年  "
+              f"→ 手元に残る **{row['手元に残る']:>8,}円**"
+              f"（取られる割合 {row['取られる割合']:>6.1%}）")
+    heavy = max(pension_cliff_bite(BASE), key=lambda r: r["取られる割合"])
+    print(f"  → **{heavy['境目km']}km の境目だけ、増えた枠の "
+          f"{heavy['取られる割合']:.1%} が保険料に消えます。**"
+          f"限度額は {heavy['増える枠（年）']:,}円 増えたのに、"
+          f"手元に残るのは {heavy['手元に残る']:,}円 です")
 
     print("\n=== 55km以上は頭打ち。距離が2倍でも1円も増えない ===")
     for row in flat_top_grid():

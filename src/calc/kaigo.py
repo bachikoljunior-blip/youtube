@@ -288,6 +288,67 @@ def cap_class_bites(rate: float) -> list[dict]:
         })
     return rows
 
+
+# ---- 段が1つ上がったときの増え方（2026-08-25 に足した節）-----------------
+#
+# **`level_spread` と同じ `pay()` を使いますが、出す量が違います。**
+# あちらは「いちばん低い段の何倍か」＝ 端どうしの比を3つ出します。
+# こちらは **隣り合う段の差**を、7段 × 3つの負担割合ぶん並べます。
+# 比は上限に当たっても滑らかに縮みますが、**差はゼロで止まる**ので、
+# 「どこから1円も増えなくなるか」がそのまま絵に出ます。
+def level_step_costs(rate: float, cap: int = GENERAL_CAP) -> list[dict]:
+    """**要介護度が1段上がると、1か月の自己負担はいくら増えるか。**
+
+    限度額いっぱいまで使う人の話です。使えるサービスの総額は段ごとに
+    必ず増えますが、**払う額のほうは上限（高額介護サービス費）で止まります。**
+    止まったあとは、段が上がっても **増える自己負担が0円** になります。
+    """
+    rows = []
+    prev = None
+    for name, units in LIMIT_UNITS:
+        p = pay(name, units, rate, cap)
+        now = p["1か月に払う額"]
+        rows.append({
+            "要介護度": name,
+            "限度額": units * UNIT_YEN,
+            "限度額の増え方": None if prev is None else units * UNIT_YEN - prev["限度額の単位"] * UNIT_YEN,
+            "1か月に払う額": now,
+            "自己負担の増え方": None if prev is None else now - prev["額"],
+            "上限で止まっているか": p["上限で戻る額"] > 0,
+            "限度額の単位": units,
+        })
+        prev = {"額": now, "限度額の単位": units}
+    return rows
+
+
+def free_upgrade_levels(rate: float, cap: int = GENERAL_CAP) -> list[dict]:
+    """**段が上がったのに、自己負担が1円も増えない段**を名指しする。
+
+    ここに並ぶ段は、使えるサービスだけが増えて**値段が変わらない**段です。
+    上限に当たっていない人（多くは1割負担）には1件も出ません。
+    """
+    return [r for r in level_step_costs(rate, cap)
+            if r["自己負担の増え方"] == 0]
+
+
+def free_upgrade_summary(rate: float, cap: int = GENERAL_CAP) -> dict:
+    """0円で上がれる段が始まる場所と、そこで増えるサービスの総額。"""
+    rows = level_step_costs(rate, cap)
+    free = [r for r in rows if r["自己負担の増え方"] == 0]
+    if not free:
+        return {"負担割合": rate, "0円で上がる段": 0, "始まる段": None,
+                "ただで増えるサービス": 0, "倍率": None}
+    start = rows[rows.index(free[0]) - 1]
+    return {
+        "負担割合": rate,
+        "0円で上がる段": len(free),
+        "始まる段": start["要介護度"],
+        "最後の段": free[-1]["要介護度"],
+        "ただで増えるサービス": free[-1]["限度額"] - start["限度額"],
+        "倍率": free[-1]["限度額"] / start["限度額"],
+    }
+
+
 def check_tables() -> None:
     """制度の値と計算の向きを確かめる。**壊れた数字で台本を書かせない。**"""
     # 1. 法令が名指ししている値
@@ -458,6 +519,32 @@ def check_tables() -> None:
     _checks.greater(high["いちばん高い段でも足りない単位"], 0,
                     "140,100円の上限に、要介護5の限度額で届いてしまっている")
 
+    # 11. **主題その7**（2026-08-25 に足した節）: 段が上がっても
+    #     自己負担が1円も増えない段がある。**主張を段の名前で置きます。**
+    if free_upgrade_levels(0.1):
+        raise _checks.TableError(
+            "1割負担で「0円で上がる段」が出た。上限にどこも当たらないはず")
+    for rate, want in ((0.2, ["要介護4", "要介護5"]),
+                       (0.3, ["要介護2", "要介護3", "要介護4", "要介護5"])):
+        got = [r["要介護度"] for r in free_upgrade_levels(rate)]
+        if got != want:
+            raise _checks.TableError(
+                f"{rate * 10:.0f}割で自己負担が増えない段が {got}。{want} のはず")
+    # 限度額のほうは、どの段でも必ず増えている（＝増えないのは支払いだけ）
+    for row in level_step_costs(0.3):
+        if row["限度額の増え方"] is not None and row["限度額の増え方"] <= 0:
+            raise _checks.TableError(
+                f"{row['要介護度']}で区分支給限度基準額が増えていない")
+    # 3割の人は 要介護1 から上が全部ただ ＝ サービスは2倍以上に増える
+    s3 = free_upgrade_summary(0.3)
+    if s3["始まる段"] != "要介護1":
+        raise _checks.TableError(
+            f"3割で0円の段が始まるのは要介護1のはず: {s3['始まる段']}")
+    _checks.greater(s3["倍率"], 2.0,
+                    "3割の人がただで増やせるサービスの倍率が")
+    _checks.greater(free_upgrade_summary(0.2)["0円で上がる段"], 0,
+                    "2割で0円で上がる段の数が")
+
     _checks.assumption_values(ASSUMPTIONS, name="kaigo")
 
 
@@ -530,6 +617,35 @@ if __name__ == "__main__":
                   f"  実効 {row['実効の負担率']:>5.2f}%")
     print(f"  → 上が同じ {GENERAL_CAP:,}円 で止まるので、"
           f"2割と3割の倍率の比は下の端の比＝負担割合の比そのもの（1.50倍）です")
+
+    print("\n=== 要介護度が1段上がっても、自己負担が1円も増えない段がある"
+          "（限度額いっぱいまで使う人）===")
+    for rate, label, _who in COPAY_RATES:
+        s = free_upgrade_summary(rate)
+        print(f"  {label}負担")
+        for row in level_step_costs(rate):
+            if row["自己負担の増え方"] is None:
+                mark = "—"
+            elif row["自己負担の増え方"] == 0:
+                mark = "**+0円**  ← ただで1段上がる"
+            else:
+                mark = f"+{row['自己負担の増え方']:,}円"
+            step = row["限度額の増え方"]
+            grew = f"+{step:,}円" if step else "—"
+            print(f"    {row['要介護度']}  限度額 {row['限度額']:>9,}円（{grew}）"
+                  f"  1か月に払う額 {row['1か月に払う額']:>8,}円"
+                  f"  自己負担の増え方 {mark}")
+        if s["0円で上がる段"]:
+            print(f"    → **{s['始まる段']} から上は、いくら段が上がっても"
+                  f"1か月に払う額が変わりません**（{s['0円で上がる段']}段ぶん）。"
+                  f"使えるサービスは {s['ただで増えるサービス']:,}円 増えて "
+                  f"**{s['倍率']:.2f}倍** になります")
+        else:
+            print("    → 0円で上がる段はありません（上限にどこも当たっていない）")
+    print(f"  → 増えないのは**払う額だけ**です。区分支給限度基準額は"
+          f"どの段でも必ず増えています。上限（高額介護サービス費 {GENERAL_CAP:,}円）は"
+          "**保険内の自己負担にしか掛からない**ので、そこに当たった時点で"
+          "「段が上がる」の値段が0円になります")
 
     print("\n=== 上限の区分を変えると、効き始める段が動く"
           "（非課税世帯は1割でも効き、690万円以上は3割でも効かない）===")
