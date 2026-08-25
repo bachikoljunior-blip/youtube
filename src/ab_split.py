@@ -153,15 +153,44 @@ def build_times(path: Path | None = None) -> dict[str, datetime]:
 
 
 def published(path: Path | None = None) -> list[dict[str, object]]:
-    """控えの1行1本。`topic` と **公開日**（`at`・UTC）だけ取り出す。
+    """控えの1本1件。`topic` と **公開日（JST）** だけ取り出す。
 
-    `at` が無い行（実測 46/419）は**公開日が分からない**ので落とします。
-    落とした数は `split_counts` が返して、`status.py` が印字します。
+    `at` が無い行（実測 44/491）は**公開日が分からない**ので `publish=None` で返し、
+    `split_counts` が `unknown_publish` に数えます。
+
+    ## **1行1件ではなく、1本1件**（2026-08-25 に実測。ここが2つ壊れていました）
+
+    `uploaded.jsonl` は**足すだけの帳面**です。`scripts/reschedule.py` が
+    公開時刻を動かすと、**同じ `video_id` の行がもう1行足されます。**
+    実測 **505行 / 実物 491本** —— 14本が2つの `at` を持っていました。
+
+    素直に1行1件で返すと、**動かした本だけが両群のどちらかで2回数えられます。**
+    `split_counts` は `treated_ready` をそのまま `MIN_PER_GROUP` に当てるので、
+    **15本しか無い群が「16本そろった」と言い、判定が始まります。**
+    群の分母が条件と食い違う形は 8/19・8/23・8/25 に3回出ており、**これが4件目**です。
+
+    **`topic` ではなく `video_id` で畳むこと。** `topic` で畳むと、
+    **同じ題材を別の本として2回上げた 20件**（実測。`video_id` が違う）が
+    1本に潰れて、**今度は実在する本が消えます。**
+    動かした本（同じ `video_id`）は 12件で、そちらだけを畳むのが正です。
+
+    **採るのは後の行**（`motion_groups.scheduled_at` と同じ理由）——
+    最初の行は「投稿したときの予約」＝すでに動かされた過去の予定です。
+
+    ## **日は JST で採ること**
+
+    `at` は UTC です。素直に `.date()` を採ると **JST の朝が前日に落ちます**。
+    実測でいま 4本 が食い違い、**それは 08/27 の 05〜08時 JST に置いた
+    「時刻の窓か本数か」の実験そのもの**でした（UTC では 08/26 に落ちる）。
+    予約も `day_cap` も JST で置いているので、**割るのも JST** です。
+    `src/motion_groups.py` は 2026-08-25 にここを直しており、**この関数が
+    帳面を UTC の日で割る最後の1つでした**（`src/` `scripts/` を全部見て確認）。
     """
     src = path or LEDGER
-    out: list[dict[str, object]] = []
     if not src.exists():
-        return out
+        return []
+    latest: dict[str, dict] = {}
+    order: list[str] = []
     for line in src.read_text(encoding="utf-8").splitlines():
         if not line.strip():
             continue
@@ -172,14 +201,25 @@ def published(path: Path | None = None) -> list[dict[str, object]]:
         topic = row.get("topic")
         if not topic:
             continue
+        # `video_id` が無い帳面（古い形）は畳めないので、行そのものを鍵にする
+        key = str(row.get("video_id") or f"__row__{len(order)}")
+        if key not in latest:
+            order.append(key)
+        latest[key] = row              # **後の行で上書きする**
+
+    out: list[dict[str, object]] = []
+    for key in order:
+        row = latest[key]
         at = row.get("at")
         pub: date | None = None
         if at:
             try:
-                pub = datetime.fromisoformat(str(at).replace("Z", "+00:00")).date()
+                pub = (datetime.fromisoformat(str(at).replace("Z", "+00:00"))
+                       .astimezone(JST).date())
             except ValueError:
                 pub = None
-        out.append({"topic": topic, "video_id": row.get("video_id"), "publish": pub})
+        out.append({"topic": row.get("topic"), "video_id": row.get("video_id"),
+                    "publish": pub})
     return out
 
 

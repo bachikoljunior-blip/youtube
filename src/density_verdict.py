@@ -65,6 +65,14 @@
 - **n は日ごとに1桁**です。出るのは向きまでで、理由は言えません
 - **交絡が残っています** —— 詰めた日は題材も作りも別の群（08/20 は「問い」の
   10本を含む）。**本数だけを動かした実験ではありません**
+- **いちばん大きい交絡は上限のほうです**（2026-08-25 に足した）。`src/day_cap.py` の
+  実測では **1日に再生が付くのは 10本**で、11本目から先は 0〜3再生。つまり
+  「詰めた日（16本以上）」の中央値は、**間隔ではなく、上限の外に出た本の 0 を
+  中央値が拾っているだけ**かもしれません。1時間きざみの日（8〜12本）は
+  上限の内側なので、そちらには 0 が入りません。**`×0.00` は、そう出て当たり前です。**
+  そこで `live_band()` で**両群とも上限の内側だけ**にそろえて数え直し、
+  `cap` の側として並べて出します。**2つの倍率が違う向きに出たら、この前提は
+  間隔について何も言っていません**（言っているのは上限のこと）。
 - `data/views.jsonl` は Data API で作られるので、**日枠が閉じた窓では更新が
   止まります**（JST 16:00 に戻る）。最後の観測が古い回は、そう印字します
 """
@@ -203,6 +211,43 @@ def ripe_days(published: dict[str, datetime], now: datetime | None = None,
             if (now - v) >= timedelta(hours=ripe_h)}
 
 
+def live_band(published: dict[str, datetime], values: dict[str, int],
+              cap_n: int | None = None,
+              gap_min: float = 30.0) -> dict[str, list[int]]:
+    """`by_day()` と同じ形。ただし**その日の「生きる帯」の本だけ**を返す。
+
+    帯の作り方は `src/day_cap.py` と同じ2段です:
+
+      1. 公開時刻の早い順に見て、**前に残した本から `gap_min` 未満**のものは落とす
+      2. 残ったうちの**先頭 `cap_n` 本**（既定は `day_cap.cap()` ＝ 実測の上限）
+
+    **なぜ要るか**: 上の docstring「いちばん大きい交絡は上限のほう」。
+    16本以上出した日の中央値は、上限の外に出た本の `0` を中央値が拾います。
+    ここでそろえると、**残るのは間隔のちがいだけ**になります
+    （帯の中はどちらの群も30分以上あいているので、厳密には
+    「上限を外したときに、まだ差が残るか」を見ています）。
+    """
+    if cap_n is None:
+        try:
+            from . import day_cap
+            cap_n = day_cap.cap()
+        except Exception:                                    # noqa: BLE001
+            cap_n = 10
+    days: dict[str, list[tuple[datetime, int]]] = defaultdict(list)
+    for vid, when in published.items():
+        if vid in values:
+            jst = when.astimezone(JST)
+            days[jst.date().isoformat()].append((jst, values[vid]))
+    out: dict[str, list[int]] = {}
+    for day, rows in days.items():
+        kept: list[tuple[datetime, int]] = []
+        for when, val in sorted(rows):
+            if not kept or (when - kept[-1][0]).total_seconds() / 60.0 >= gap_min - 1.0:
+                kept.append((when, val))
+        out[day] = sorted(v for _w, v in kept[:cap_n])
+    return out
+
+
 def verdict(counts: dict[str, int], per_day: dict[str, list[int]],
             ripe: set[str]) -> dict[str, Any]:
     """`falsified_if` をそのまま当てる。**条件は緩めません。**
@@ -253,10 +298,14 @@ def report(now: datetime | None = None, views_path: Path | None = None,
     per_day = by_day(published, values)
     ripe = ripe_days(published, now)
     latest = max((r.get("at") for r in _rows(views_path) if r.get("at")), default=None)
+    per_day_live = live_band(published, values)
     return {
         "counts": counts, "per_day": per_day, "ripe": ripe,
         "dropped": dropped, "freeze": freeze_ratio(obs),
         "verdict": verdict(counts, per_day, ripe),
+        # **上限を外した側**（`live_band`）。生の側と向きが違えば、この前提は
+        # 間隔について何も言っていません（module docstring「割り引いて読むこと」）。
+        "cap_free": verdict(counts, per_day_live, ripe),
         "latest_obs": latest, "tracked": len(values),
     }
 
@@ -304,6 +353,33 @@ def render(rep: dict[str, Any] | None = None) -> str:
         out.append(f"  中央値 詰めた日 {v['tight_median']:.0f} 対 1時間きざみ {v['hourly_median']:.0f}"
                    f" ＝ **×{v['ratio']:.2f}**（{RATIO_FALSIFIED} 未満で外れ）")
     out.append(f"  **{v['outcome']}**" + (f" —— {v['why']}" if v.get("why") else ""))
+    cf = rep.get("cap_free") or {}
+    if cf.get("ratio") is not None:
+        try:
+            from . import day_cap
+            cap_n = day_cap.cap()
+        except Exception:                                    # noqa: BLE001
+            cap_n = 10
+        out.append(f"  **上限（1日{cap_n}本）を外して数え直すと ×{cf['ratio']:.2f}"
+                   f"（{cf['outcome']}）** —— 中央値 詰めた日 {cf['tight_median']:.0f}"
+                   f" 対 1時間きざみ {cf['hourly_median']:.0f}")
+        if cf["outcome"] != v.get("outcome"):
+            out.append("      [!] **生の側と向きが違います。この前提は、間隔について"
+                       "何も言っていません** —— 出ているのは上限のほうです"
+                       "（16本以上の日は、上限の外に出た本の 0 を中央値が拾う）。"
+                       "**これを理由に1日の本数を減らさないこと。**")
+        elif v.get("ratio") is not None and cf["ratio"] >= v["ratio"] * 2:
+            out.append(f"      [!] **生の ×{v['ratio']:.2f} は、ほとんどが上限のぶんです**"
+                       f"（上限を外すと ×{cf['ratio']:.2f}）。"
+                       "**間隔のせいにできるのは、外した側の差だけ。**")
+        near = abs(cf["ratio"] - RATIO_FALSIFIED) / RATIO_FALSIFIED
+        if near <= 0.25:
+            out.append(f"      [!] **外した側は線（{RATIO_FALSIFIED}）から {near:.0%} しか"
+                       "離れていません。**群のちがい（題材・時期）で裏返る幅です。"
+                       "**外れとして手を打つ前に、上限そのものを切り分けること。**")
+        out.append("      上限が「1日N本」なのか「13:30 までの窓」なのかは"
+                   " 2026-08-27 に切り分けます（`src/day_cap.window()`）。"
+                   " **窓のほうなら、本数を減らすのは逆向きの手です。**")
     if v["outcome"] == "undecided":
         from scripts.eta import published_at
         when = next_settle(rep["counts"], published_at())
