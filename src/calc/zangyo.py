@@ -231,6 +231,29 @@ def check_tables() -> None:
     if seq[-1] >= marginal_hour(wage, hours, 61.0):
         raise ValueError("平均単価が、60時間超の1時間の値段を追い越した")
 
+    # --- 節7（2026-08-25）: 年間所定休日そのものが単価を決めている ---------
+    grid = holiday_rate_grid()
+    if [r["年間所定休日"] for r in grid] != sorted(r["年間所定休日"] for r in grid):
+        raise ValueError("年間所定休日の並びが昇順になっていない")
+    for prev, now in zip(grid, grid[1:]):
+        if not now["月平均所定労働時間"] < prev["月平均所定労働時間"]:
+            raise ValueError("休日が増えたのに月平均所定労働時間が減っていない")
+        if not now["残業の単価"] > prev["残業の単価"]:
+            raise ValueError("休日が増えたのに残業の単価が上がっていない")
+        if not now["残業代（年）"] > prev["残業代（年）"]:
+            raise ValueError("休日が増えたのに年間の残業代が増えていない")
+    # 単価の倍率は、所定労働時間の逆比そのもの（式と独立に置く）
+    spread = holiday_rate_spread()
+    want = grid[0]["月平均所定労働時間"] / grid[-1]["月平均所定労働時間"]
+    if abs(spread["単価の倍率"] - want) > 1e-9:
+        raise ValueError(
+            f"単価の倍率 {spread['単価の倍率']} が、所定労働時間の逆比 {want} と違う")
+    # **月給も残業時間も同じ**なのに、年で4万円を超えて開くこと
+    if not spread["年間の差"] > 40_000:
+        raise ValueError(
+            f"年間休日{spread['休日の差']}日の差で、年間の残業代の差が "
+            f"{spread['年間の差']:,.0f}円 しか開いていない")
+
 
 def monthly_scheduled_hours(annual_days_off: int, hours_per_day: float) -> float:
     """1か月の平均所定労働時間。
@@ -243,6 +266,62 @@ def monthly_scheduled_hours(annual_days_off: int, hours_per_day: float) -> float
 def hourly_rate(wage: Wage, scheduled_hours: float, *, mistaken: bool) -> float:
     """1時間あたりの単価（割増前）。"""
     return wage.base_for_premium(mistaken=mistaken) / scheduled_hours
+
+
+# ---- 節7: 年間所定休日そのものが単価を決めている（2026-08-25 に足した）----
+#
+# **`hours_error_shortfall()` の節と混同しないこと。** あちらは
+# 「会社が所定労働時間を**多く見積もっている**（＝誤り）」ときの差額です。
+# こちらは**どの会社も正しく計算している**前提で、
+# 年間所定休日が違うだけで残業単価がいくら違うかを出します。
+# **誤りの話ではなく、制度の作りの話**なので、答える相手が別です。
+def holiday_rate_grid(monthly_pay: int = 300_000, hours_per_day: float = 8.0,
+                      overtime_hours: float = 20.0,
+                      days_off: list[int] | None = None) -> list[dict]:
+    """**年間所定休日べつ**の、月平均所定労働時間・残業単価・年間の残業代。
+
+    割増賃金の単価は `月給 ÷ 月平均所定労働時間` で、その分母は
+    `(365 − 年間所定休日) × 1日の所定 ÷ 12` です。
+    つまり**休みが多い会社ほど分母が小さく、残業1時間が高くつきます。**
+    月給も残業時間もまったく同じでも、**会社の休日カレンダーだけで変わります。**
+    """
+    days_off = days_off or [105, 110, 115, 120, 125]
+    wage = Wage(base=monthly_pay)
+    rows = []
+    base_row = None
+    for off in days_off:
+        hours = monthly_scheduled_hours(off, hours_per_day)
+        rate = hourly_rate(wage, hours, mistaken=False)
+        annual = monthly_overtime_pay(wage, hours, overtime_hours,
+                                      mistaken=False) * 12
+        row = {
+            "年間所定休日": off,
+            "月平均所定労働時間": hours,
+            "残業の単価": rate * (1 + RATE_OVERTIME),
+            "割増前の単価": rate,
+            "残業代（年）": annual,
+        }
+        if base_row is None:
+            base_row = row
+        row["いちばん休日が少ない会社との差（年）"] = annual - base_row["残業代（年）"]
+        row["単価の倍率"] = rate / base_row["割増前の単価"]
+        rows.append(row)
+    return rows
+
+
+def holiday_rate_spread(monthly_pay: int = 300_000, hours_per_day: float = 8.0,
+                        overtime_hours: float = 20.0) -> dict:
+    """休日がいちばん少ない会社と多い会社で、どれだけ開くか。"""
+    rows = holiday_rate_grid(monthly_pay, hours_per_day, overtime_hours)
+    lo, hi = rows[0], rows[-1]
+    return {
+        "休日の差": hi["年間所定休日"] - lo["年間所定休日"],
+        "所定労働時間の差": lo["月平均所定労働時間"] - hi["月平均所定労働時間"],
+        "単価の倍率": hi["割増前の単価"] / lo["割増前の単価"],
+        "年間の差": hi["残業代（年）"] - lo["残業代（年）"],
+        # 休日の少ない会社で、多い会社の1時間ぶんに届くのに要る残業時間
+        "1時間に相当する残業時間": hi["割増前の単価"] / lo["割増前の単価"],
+    }
 
 
 def monthly_overtime_pay(
@@ -465,6 +544,28 @@ if __name__ == "__main__":
             r = hours_error_shortfall(300_000, off, per_day, assumed, 20.0)
             print(f"{300_000:8,d}円 {off:5d}日 {assumed:7.1f}h "
                   f"{r['correct_hours']:7.1f}h {20:4.0f}h {r['annual_shortfall']:9,.0f}円")
+
+    HOL_PAY, HOL_OT = 300_000, 20.0
+    print("\n=== 月給も残業時間も同じなのに、年間所定休日が20日ちがうと残業代が年4万3千円ちがう ===")
+    print(f"  前提の月給 {HOL_PAY:,}円（一律手当なし）・1日の所定 {per_day}時間・"
+          f"残業 月{HOL_OT:.0f}時間。**どの会社も正しく計算しています**")
+    print(f"{'年間所定休日':>12s} {'月平均所定':>10s} {'残業の単価':>11s} "
+          f"{'残業代（年）':>12s} {'105日の会社との差':>16s} {'単価の倍率'}")
+    for row in holiday_rate_grid(HOL_PAY, per_day, HOL_OT):
+        diff = row["いちばん休日が少ない会社との差（年）"]
+        cell = "—" if diff == 0 else f"+{diff:,.0f}円"
+        print(f"  {row['年間所定休日']:>8d}日 {row['月平均所定労働時間']:>9.1f}h "
+              f"{row['残業の単価']:>10,.0f}円 {row['残業代（年）']:>11,.0f}円 "
+              f"{cell:>16s}  {row['単価の倍率']:.4f}倍")
+    sp = holiday_rate_spread(HOL_PAY, per_day, HOL_OT)
+    print(f"  → 単価の分母は `(365 − 年間所定休日) × {per_day}時間 ÷ 12` です。"
+          f"休日が {sp['休日の差']}日 多いと分母が {sp['所定労働時間の差']:.1f}時間 小さくなり、"
+          f"単価は **{sp['単価の倍率']:.4f}倍**になります")
+    print(f"  → **年間休日105日の会社では、125日の会社の残業1時間ぶんに届くのに "
+          f"{sp['1時間に相当する残業時間']:.4f}時間** 働く必要があります。"
+          f"年でみた差は **{sp['年間の差']:,.0f}円**")
+    print("  → **休みが多い会社は、残業も高くつきます。**"
+          "月給が同額なら、休日の多さはそのまま残業単価の高さです")
 
     print("\n=== 手当の種類べつ 一律だと除外できない ===")
     # **基本給を必ず印字すること。** `allowance_grid()` の既定値で計算しています
