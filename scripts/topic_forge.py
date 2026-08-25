@@ -274,6 +274,11 @@ _NUM = re.compile(
 MONEY_FLOOR = 1000   # 金額の表を持つ calc で捨てる下限（年数・回数を当てにしない）
 SMALL_FLOOR = 10     # 金額を1つも持たない calc（日数・時間の表）で使う下限
 
+# **calc をまたいで貼り直すのに要る、一致数の差**（`realign` の該当節）。
+# 1個差では動かしません —— 制度の定数（基礎控除43万円など）は calc をまたいで
+# 同じ数が出るので、弱い証拠で動かすと**正しく貼られた件のほうがずれます。**
+CROSS_MARGIN = 2
+
 
 def _value(digits: str) -> int | float:
     """`"1,655"` → 1655 ／ `"1.636"` → 1.636。**整数になる小数は整数に戻す。**
@@ -567,6 +572,34 @@ def realign(forged: ForgedSet, picked, all_sections,
 
     落とすほうが安全側でもあります。**落ちた1件は動画になりません**。
     回ごと殺しても同じで、違うのは**通った件まで消えるかどうか**だけです。
+
+    ## **ずれるのは節だけではありません。calc ごとずれます**（2026-08-25 に踏んだ）
+
+    上の直しは **`all_sections[mod]` の中だけ**を探し直します。
+    ところが実測（`--count 5` / kokuho・kaigo・taishoku・tsukin・zangyo）では、
+    書き手が **4件しか返さず**、2件目から**まるごと1つずれました**:
+
+        書いた中身        貼られた calc     この直しの前の結果
+        kokuho の節       kokuho            ✓
+        zangyo の節       kaigo             ✗ 一致1で「当たった」ことになり、通る
+        kaigo の節        taishoku          ✗ 同上
+        taishoku の節     tsukin            ✗ 同上
+
+    **`top == 0` の門はここを止めません。** 1桁の数や `20` のような
+    ありふれた数がどの表にも出るので、**別の calc でも一致1が出ます。**
+    そのまま作れば、**語っている制度と、画面に出る表が別の制度**になります
+    —— 8/16 に節の中で踏んだ穴と同じ壊れ方が、**1つ上の粒度**で残っていました。
+
+    直しは、**この回で頼んだ calc 全部**に当て直し、割り当て先より
+    **`CROSS_MARGIN` 個以上多く**当たる calc があれば、そちらへ移すこと。
+
+    - **正しく貼られている件は動きません。** 自分の calc の節には主役の数字が
+      そのまま載るので一致数が大きく、他の calc が2個ぶん追い越すことはまずありません
+      （実測: zangyo の題は zangyo で4・kaigo で1・taishoku で2）
+    - **同点や1個差では動かしません。** 制度の定数（基礎控除43万円など）は
+      calc をまたいで同じ数が出るので、弱い証拠で動かすと逆にずれます
+    - 移った先の節が埋まっていれば、**下の重複判定が1件だけ落とします**
+      （回ごとは殺しません）
     """
     # 割り当て先の無い件（頼んだ数より多く返ってきたぶん）は、
     # **どの calc から選ぶか**をここで決めます。候補は「この回で頼んだ calc」だけ。
@@ -585,6 +618,19 @@ def realign(forged: ForgedSet, picked, all_sections,
         else:
             ranked = best_section(text, all_sections[mod])
             top, best = ranked[0][0], ranked[0][1]
+            # **ずれるのは節だけではありません。calc ごとずれます**
+            # （2026-08-25 に踏んだ。下の `CROSS_MARGIN` の節）。
+            cross = [(best_section(text, all_sections[m])[0], m)
+                     for m in mods if m != mod]
+            if cross:
+                (ctop, cbest), cmod = max(cross, key=lambda c: c[0][0])
+                if ctop >= top + CROSS_MARGIN:
+                    print(f"  [calc ごと貼り直し] {item.id}\n"
+                          f"      書かせた順の calc: {mod} / {head}（一致 {top} 個）\n"
+                          f"      数字が載っている calc: {cmod} / {cbest}"
+                          f"（一致 {ctop} 個）")
+                    mod, head, best, top = cmod, cbest, cbest, ctop
+                    ranked = best_section(text, all_sections[mod])
         used_rung = match_scale(text, all_sections[mod])
         if top == 0:
             dropped.append(
