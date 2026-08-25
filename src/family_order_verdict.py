@@ -66,6 +66,7 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+from src import density_confound
 from src.ab_power import rank_sum_p
 from src.length_verdict import MIN_VIEWS, _published, fetch_engaged, ratios
 from src.settle import SETTLE_DAYS, analytics_lag_days
@@ -284,6 +285,8 @@ def report(as_of: date | None = None) -> dict[str, Any]:
     out["p_treat_higher"] = rank_sum_p(treat, base)
     out["p_base_higher"] = rank_sum_p(base, treat)
     out["age_objection"] = age_objection()
+    out["density"] = density_confound.overlap(base_ids, treat_ids, published)
+    out["density_line"] = density_confound.line(base_ids, treat_ids, published)
     gap = out.get("median_base"), out.get("median_treat")
     out["gap_pt"] = None if None in gap else (gap[0] - gap[1]) * 100
     return out
@@ -328,6 +331,11 @@ def main() -> None:  # pragma: no cover - 画面出力だけ
         print(f"    {s['min_views']}再生以上: 処置 {s['n_treat']}本 {_pct(s['median_treat'])}"
               f" 対 対照 {s['n_base']}本 {_pct(s['median_base'])}"
               f" → {'上回る' if s['upheld'] else '上回らない'}")
+    print("  --- 交絡（`src/density_confound.py`）---")
+    print(out.get("density_line", ""))
+    if (out.get("density") or {}).get("confounded"):
+        print("    **この判定は、順番の効果と公開密度の効果を分けられていません。**")
+        print("    engaged は密度と逆向きに動きます（1〜2本/日 34.8% 対 9本以上/日 19.4%・片側 p=0.057）。")
     print("  --- 処置群の族べつ（claim の中身）---")
     for f in out.get("by_family", []):
         print(f"    {f['calc']:<12} {f['n']}本  {_pct(f['median'])}")
