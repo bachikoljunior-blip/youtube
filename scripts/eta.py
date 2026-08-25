@@ -3705,6 +3705,22 @@ def _row(m: dict, a: dict, pl: dict, tr: dict | None, sup: dict | None) -> dict:
         #     `--ship` は4秒の `--reflect` しか撃たないので、届いていません。
         row["arm_caps"] = {k: a.get("cap") for k, a in tr["arms"].items()}
         row["arm_share"] = {k: a.get("share") for k, a in tr["arms"].items()}
+    # --- **「天井まで引いたら届くのか」も積む**（2026-08-25）---
+    #     `arm_caps` だけでは足りません。**天井が大きいことと、
+    #     その腕が到達日を動かせることは別**です:
+    #
+    #         sub_rate  天井 ×2,923.79 …… **天井まで引いても月20万には届かない**
+    #                   （いまの縛りは再生数（段4）で、登録率はそこに触らない）
+    #
+    #     `DEAD_CAP`（＝天井 ×1.00 以下）で数えると、この腕は
+    #     **「引き代 ×2,923.79 の生きた腕」**に見えます。**偽の緑です。**
+    #     8/25 の実測では、実績配分の 11% がここに載っていました
+    #     （`density` の 28% と合わせて **39%**）。
+    #     `lever_days` が既に解いているので、**印字だけで捨てないこと。**
+    _ld = pl.get("lever_days") or []
+    if _ld:
+        row["arm_reaches"] = {r["lever"]: bool(r.get("reachable_at_cap")) for r in _ld}
+        row["arm_threshold"] = {r["lever"]: r.get("threshold") for r in _ld}
     row["videos_needed_gate1"] = pl.get("gate1", {}).get("need_videos")
     # --- **天井（面と混ざり方）も積む**（2026-08-20 23:3x。前の周の申し送り②）---
     #     `--reflect` は「出発点の行」と「解き直した行」の差を取ります。
