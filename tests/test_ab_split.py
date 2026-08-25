@@ -281,3 +281,66 @@ def test_実物_hook_form_の在庫の締切は09_09():
     ここで固定するのは**期限の算術だけ**で、在庫の本数は固定しません。"""
     assert ab_split.settle_by(EXPERIMENTS["hook_form"]) == date(2026, 9, 9)
     assert ab_split.settle_by(EXPERIMENTS["title_form"]) == date(2026, 9, 5)
+
+
+# --- 帳面は「1行1本」ではない（2026-08-25。群の分母が条件と食い違う形の4件目）---
+#
+# `data/uploaded.jsonl` は足すだけの帳面で、`scripts/reschedule.py` が公開時刻を
+# 動かすたびに同じ `video_id` の行が増えます。実測 **505行 / 実物 491本**。
+# 下の2件は、直す前の `published()` なら**どちらも落ちます。**
+
+
+def test_動かした本は1本として数える(tmp_path):
+    """同じ `video_id` が2行あっても1本。**片群だけ2回数えると床が早く開きます。**"""
+    ledger = tmp_path / "up.jsonl"
+    ledger.write_text(
+        "\n".join([
+            json.dumps({"topic": "x-a", "video_id": "vx", "at": "2026-08-20T09:00:00Z"}),
+            json.dumps({"topic": "x-a", "video_id": "vx", "at": "2026-08-22T09:00:00Z"}),
+        ]),
+        encoding="utf-8",
+    )
+    rows = published(ledger)
+    assert len(rows) == 1, "動かした本が2件に化けています"
+    # **後の行**を採ること（最初の行は、すでに動かされた過去の予定）
+    assert rows[0]["publish"] == date(2026, 8, 22)
+
+
+def test_同じ題材でも別の本なら別に数える(tmp_path):
+    """`topic` で畳むと、**実在する本が消えます**（実測 20件が別 `video_id`）。"""
+    ledger = tmp_path / "up.jsonl"
+    ledger.write_text(
+        "\n".join([
+            json.dumps({"topic": "x-a", "video_id": "v1", "at": "2026-08-20T09:00:00Z"}),
+            json.dumps({"topic": "x-a", "video_id": "v2", "at": "2026-08-21T09:00:00Z"}),
+        ]),
+        encoding="utf-8",
+    )
+    assert len(published(ledger)) == 2, "別の本が1本に潰れています"
+
+
+def test_公開日は_JST_で採る(tmp_path):
+    """`at` は UTC。素直に `.date()` を採ると **JST の朝が前日に落ちます。**
+
+    下の時刻は 08/27 の 05〜08時 JST に置いた「時刻の窓か本数か」の実験そのもので、
+    UTC で割ると 4本とも 08/26 に落ちます（実測）。
+    """
+    ledger = tmp_path / "up.jsonl"
+    ledger.write_text(
+        json.dumps({"topic": "x-a", "video_id": "vx", "at": "2026-08-26T20:00:00Z"}),
+        encoding="utf-8",
+    )
+    assert published(ledger)[0]["publish"] == date(2026, 8, 27), "UTC の日で割っています"
+
+
+def test_実物の帳面は行数より少ない本数になる():
+    """実データで、畳みが効いていること。"""
+    ledger = ROOT / "data" / "uploaded.jsonl"
+    if not ledger.exists():
+        pytest.skip("控えがありません")
+    lines = [x for x in ledger.read_text(encoding="utf-8").splitlines() if x.strip()]
+    rows = published(ledger)
+    seen = {json.loads(x)["video_id"] for x in lines}
+    assert len(rows) == len(seen) < len(lines), (
+        f"{len(lines)}行 → {len(rows)}本（実物 {len(seen)}本）"
+    )
