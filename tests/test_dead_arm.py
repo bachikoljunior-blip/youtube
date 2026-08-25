@@ -144,7 +144,10 @@ def test_天井まで引いても届かない腕も死んでいると言う():
     st = levers.arm_state(REACH_ROW)
     assert set(st["dead"]) == {"density", "sub_rate"}
     # **理由は別。** density は天井、sub_rate は「届かない」
-    assert st["dead_why"]["density"] == "天井"
+    # **前方一致で見ること（2026-08-26）。** 理由の文言に但し書きが付いた回
+    # （「天井（**ショートの面だけ。長尺の面は未測定**）」）に、ここだけが古い文字列を
+    # 主張して落ちました。**見たいのは「なぜ死んでいるか」の種別**で、但し書きではありません。
+    assert st["dead_why"]["density"].startswith("天井")
     assert st["dead_why"]["sub_rate"] == "天井まで引いても届かない"
 
 
