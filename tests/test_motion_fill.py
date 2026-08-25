@@ -84,18 +84,79 @@ def test_明示された指示を上書きしない(monkeypatch):
     assert batch_build.motion_plan(4) == [None] * 4
 
 
+def _stock(monkeypatch, live: int, pending_off: int, room):
+    from src import judgeable
+    monkeypatch.delenv("YT_OPENING_MOTION", raising=False)
+    monkeypatch.setattr(judgeable, "members",
+                        lambda k: {"対照(動きなし)": [("d", "v")] * live})
+    flags = {f"t{i}": False for i in range(pending_off)}
+    flags["t-on"] = True
+    monkeypatch.setattr(motion_groups, "motion_by_topic", lambda *a, **k: flags)
+    monkeypatch.setattr(motion_groups, "topic_by_video", lambda *a, **k: {})
+    monkeypatch.setattr(batch_build, "_live_room", lambda: room)
+
+
 def test_作り置きも数える(monkeypatch):
     """**まだ投稿していない対照を数えないと、判定に入るまでの数日で作り過ぎます。**"""
-    monkeypatch.delenv("YT_OPENING_MOTION", raising=False)
-    from src import judgeable
-    monkeypatch.setattr(judgeable, "members",
-                        lambda k: {"対照(動きなし)": [("d", "v")] * 2})
-    monkeypatch.setattr(motion_groups, "motion_by_topic",
-                        lambda *a, **k: {"t1": False, "t2": False, "t3": True})
-    monkeypatch.setattr(motion_groups, "topic_by_video", lambda *a, **k: {})
+    _stock(monkeypatch, live=2, pending_off=2, room=99)
     need, why = batch_build.motion_shortfall()
     # 床 8 ／ 判定に入る 2 ／ 作り置き 2 → あと 4
     assert need == 4, why
+
+
+def test_置き先が無ければ作らない(monkeypatch):
+    """**これを入れないと、automation が「生成を捨てる回」を自動化します。**
+
+    `docs/trigger_main.md` に、この手を**撃って外した回**が残っています ——
+    申し送りは3回続けて「対照を2本 作り足すこと」と書き、実物の
+    `live_slots.py --plan` は「期限までに空いた生きた枠は 0本。作った本は
+    その日の 11本目 ＝ 死に枠」でした。**2本ぶんの生成を 0再生の枠に捨てる**手です。
+    """
+    _stock(monkeypatch, live=2, pending_off=0, room=0)
+    need, why = batch_build.motion_shortfall()
+    assert need == 0, why
+    assert "足りないのは本ではなく、置き先です" in why
+
+
+def test_置き先のぶんだけ作る(monkeypatch):
+    """床まで 6本 要っても、置ける枠が 2本 なら 2本だけ作ること。"""
+    _stock(monkeypatch, live=2, pending_off=0, room=2)
+    need, _why = batch_build.motion_shortfall()
+    assert need == 2
+
+
+def test_置き先を数えられなければ絞らない(monkeypatch):
+    """**観測できないことを「無い」にしないこと。**読めない回は今までどおり。"""
+    _stock(monkeypatch, live=2, pending_off=0, room=None)
+    need, why = batch_build.motion_shortfall()
+    assert need == 6, why
+
+
+def test_数えるのは1回だけ(monkeypatch):
+    """`motion_shortfall()` は盤面ぜんぶを引き直します（`live_slots.plan()` を通す）。
+    **2回 数えると遅いだけでなく、2つの答えが食い違う隙ができます。**"""
+    calls: list = []
+    monkeypatch.delenv("YT_OPENING_MOTION", raising=False)
+    monkeypatch.setattr(batch_build, "motion_shortfall",
+                        lambda: (calls.append(1), (3, ""))[1])
+    batch_build.motion_plan(4, shortfall=(3, ""))
+    assert calls == [], "呼ぶ側が数えた答えを渡しているのに、数え直しています"
+
+
+def test_置き先が無い回も黙らない():
+    """**黙って既定に戻らないこと。**
+
+    「対照が足りている」のと「置く所が無くて作れない」のは、**次の手が
+    まるごと違います**（前者は放っておく／後者は `at` の交換が要る）。
+    ここで何も印字しないと、その回はどちらか分かりません ——
+    **印字されていない数字は、無い数字と同じ**（`scripts/drift.py` の冒頭）。
+    """
+    src = (ROOT / "scripts" / "batch_build.py").read_text(encoding="utf-8")
+    body = src[src.index("explicit = os.environ.get(_MOTION_ENV)"):]
+    body = body[:body.index("with ThreadPoolExecutor")]
+    assert '"置き先" in _why' in body, (
+        "置き先が無くて作れなかった回に、何も言わずに既定へ戻っています")
+    assert body.count("motion_shortfall()") == 1, "1回の生成で2回 数えています"
 
 
 # --- 作った値が、そのまま子プロセスと台帳へ行くか -------------------------
