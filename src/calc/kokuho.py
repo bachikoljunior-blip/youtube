@@ -246,6 +246,70 @@ def cap_order(members: int = 1, age: int = 45) -> list[dict]:
     return rows
 
 
+# ---- 節10: 頭打ちが早まる速さ（2026-08-25 に足した）---------------------
+#
+# **節1 と同じ `cap_at()` を使いますが、動かす軸が違います。**
+# あちらは**単身**に固定して、区分ごとの折れ目を所得の上に並べます。
+# こちらは**世帯人数**を動かして、折れ目が所得のどこまで下りてくるかを出します。
+def cap_shift_per_member(name: str) -> float:
+    """被保険者が1人増えると、その区分の頭打ちが**いくら低い所得で来るか**。
+
+    `cap_at()` は `基礎控除 + (限度額 − 均等割×人数) ÷ 率` なので、
+    人数について**傾き `均等割 ÷ 率` の直線**です。
+    つまり早まる速さを決めるのは**均等割の額ではなく、率との比**です。
+    """
+    r = RATES[name]
+    return int(r["均等割"]) / float(r["所得割"])
+
+
+def cap_shift_table(age: int = 45) -> list[dict]:
+    """区分べつに、**均等割の額の順**と**早まる速さの順**を並べる。
+
+    この2つは**一致しません。** 均等割がいちばん小さい区分が、
+    いちばん速く早まることがあります（率のほうがもっと小さいため）。
+    """
+    rows = []
+    for name in parts_for(age):
+        r = RATES[name]
+        rows.append({
+            "区分": name,
+            "1人あたりの均等割": int(r["均等割"]),
+            "所得割の率": float(r["所得割"]),
+            "1人ふえると早まる所得": cap_shift_per_member(name),
+        })
+    by_kinto = sorted(rows, key=lambda x: -x["1人あたりの均等割"])
+    by_speed = sorted(rows, key=lambda x: -x["1人ふえると早まる所得"])
+    for i, row in enumerate(by_kinto, 1):
+        row["均等割の順位"] = i
+    for i, row in enumerate(by_speed, 1):
+        row["早まる速さの順位"] = i
+    return rows
+
+
+def cap_by_members(upto: int = 8, age: int = 45) -> list[dict]:
+    """**世帯人数べつに、保険料が頭打ちになる所得。**
+
+    「最初の1本」が頭打ちになる所得と、「4本ぜんぶ」が頭打ちになる所得
+    （＝賦課限度額 113万円 に届く所得）を並べます。
+    """
+    rows = []
+    prev = None
+    for m in range(1, upto + 1):
+        order = cap_order(m, age)
+        first = order[0]["頭打ちになる所得"]
+        last = order[-1]["頭打ちになる所得"]
+        rows.append({
+            "被保険者数": m,
+            "最初に頭打ちになる所得": first,
+            "その区分": order[0]["区分"],
+            "全部が頭打ちになる所得": last,
+            "上限に届いたときの保険料": premium(last, m, age)["保険料"],
+            "前の人数からの下がり": None if prev is None else prev - last,
+        })
+        prev = last
+    return rows
+
+
 def marginal_steps(members: int = 1, age: int = 45) -> list[dict]:
     """**所得が1万円増えたときに増える保険料が、階段状に減っていく。**
 
@@ -653,6 +717,45 @@ def check_tables() -> None:
         raise _checks.TableError(
             f"真ん中の上がり幅がいちばん大きくない: {[r['差'] for r in steps3]}")
 
+    # --- 節10（2026-08-25）: 頭打ちが早まる速さ ---------------------------
+    # **主張は2つ。どちらも数で置きます。**
+    # (1) 人数が増えるほど、上限に届く所得は下がる。しかも**一定の傾き**
+    caps = cap_by_members()
+    drops = [r["前の人数からの下がり"] for r in caps[1:]]
+    if not all(d > 0 for d in drops):
+        raise _checks.TableError(
+            f"人数が増えても上限に届く所得が下がっていない: {drops}")
+    if max(drops) - min(drops) > 1:      # 丸めの1円ぶんだけ許す
+        raise _checks.TableError(f"下がり方が一定になっていない: {drops}")
+    # **`cap_at()` は `ceil` で切り上げるので、1円ぶんずれます。**
+    # `rounding` は丸めの順番を見る道具なので、ここでは使えません
+    want_drop = cap_shift_per_member("子ども子育て支援金分")
+    if abs(drops[0] - want_drop) > 1.0:
+        raise _checks.TableError(
+            f"1人ふえたときに、全部が頭打ちになる所得の下がり: {drops[0]:,} になった。"
+            f"均等割 ÷ 率 ＝ {want_drop:,.1f} のはず")
+    # 上限に届いたときの保険料は、どの人数でも賦課限度額そのもの
+    for row in caps:
+        _checks.rounding(row["上限に届いたときの保険料"],
+                         sum(int(RATES[n]["限度額"]) for n in parts_for(45)),
+                         f"{row['被保険者数']}人世帯で上限に届いたときの保険料")
+    _checks.greater(caps[0]["全部が頭打ちになる所得"] - caps[-1]["全部が頭打ちになる所得"],
+                    4_000_000, "単身と8人世帯で、上限に届く所得の差が")
+    # (2) **均等割の額の順位と、早まる速さの順位は一致しない**
+    shifts = cap_shift_table()
+    if all(r["均等割の順位"] == r["早まる速さの順位"] for r in shifts):
+        raise _checks.TableError(
+            "均等割の順位と早まる速さの順位が全部一致している（節の主張と逆）")
+    top_kinto = [r for r in shifts if r["均等割の順位"] == 1][0]
+    if top_kinto["早まる速さの順位"] == 1:
+        raise _checks.TableError(
+            f"均等割がいちばん大きい {top_kinto['区分']} が、"
+            "早まる速さでも1位になっている（率との比で決まるはず）")
+    for row in shifts:
+        _checks.rounding(row["1人ふえると早まる所得"],
+                         row["1人あたりの均等割"] / row["所得割の率"],
+                         f"{row['区分']}の、1人ふえて早まる所得")
+
     _checks.assumption_values(ASSUMPTIONS, name="kokuho")
 
 
@@ -770,6 +873,39 @@ if __name__ == "__main__":
     print(f"    22歳と75歳は、崖も保険料も**1円も違いません**"
           f"（どちらも {ba[75]['境目での保険料']:,}円 → {ba[75]['1円こえたときの保険料']:,}円）。"
           f"高くなるのは**40歳から64歳までの25年間だけ**です")
+
+    print("\n=== 世帯人数が1人ふえるごとに、上限113万円に届く所得は63万円ずつ下がる（40〜64歳）===")
+    print(f"{'被保険者数':>10s} {'最初の1本が頭打ち':>16s} {'4本ぜんぶが頭打ち':>16s} {'前の人数から'}")
+    for row in cap_by_members():
+        drop = ("—" if row["前の人数からの下がり"] is None
+                else f"−{row['前の人数からの下がり']:,}円")
+        print(f"  {row['被保険者数']:>4}人 {row['最初に頭打ちになる所得']:>15,}円"
+              f"（{row['その区分']}） {row['全部が頭打ちになる所得']:>13,}円  {drop}")
+    caps = cap_by_members()
+    print(f"  → 上限そのものは動きません（どの人数でも "
+          f"{caps[0]['上限に届いたときの保険料']:,}円）。動くのは**そこへ届く所得**のほうで、"
+          f"単身 {caps[0]['全部が頭打ちになる所得']:,}円 に対し "
+          f"8人世帯は {caps[-1]['全部が頭打ちになる所得']:,}円 ＝ "
+          f"**{caps[0]['全部が頭打ちになる所得'] - caps[-1]['全部が頭打ちになる所得']:,}円 低い**")
+    print("  → 均等割は人数ぶん増えるので、そのぶん所得割が少なくても限度額に届きます。"
+          "**人数が多い世帯ほど、保険料は早く『所得に反応しなくなる』**わけです")
+    print("\n  --- 早まる速さを決めるのは、均等割の額ではなく**率との比**です ---")
+    print(f"{'区分':<20s} {'1人あたり均等割':>14s} {'所得割の率':>10s} "
+          f"{'1人ふえて早まる所得':>18s}  順位（額 / 速さ）")
+    for row in cap_shift_table():
+        print(f"  {row['区分']:<18s} {row['1人あたりの均等割']:>12,}円 "
+              f"{row['所得割の率'] * 100:>9.2f}% "
+              f"{row['1人ふえると早まる所得']:>16,.0f}円   "
+              f"{row['均等割の順位']}位 / **{row['早まる速さの順位']}位**")
+    sh = cap_shift_table()
+    big = [r for r in sh if r["均等割の順位"] == 1][0]
+    fast = [r for r in sh if r["早まる速さの順位"] == 1][0]
+    print(f"  → 均等割がいちばん大きいのは {big['区分']}（{big['1人あたりの均等割']:,}円）ですが、"
+          f"早まる速さでは **{big['早まる速さの順位']}位**。"
+          f"いちばん速いのは {fast['区分']}（均等割 {fast['1人あたりの均等割']:,}円）で、"
+          f"1人ふえるごとに **{fast['1人ふえると早まる所得']:,.0f}円** 早まります")
+    print("  → **額の大きさの順と、効きの順は一致しません。**"
+          "早まる所得は `均等割 ÷ 所得割の率` なので、率が小さい区分ほど大きく動きます")
 
     print("\n=== 3つの崖は、40歳をまたぐと 20・30・20 の比で高くなる（単身）===")
     for r in cliffs_by_age(1):
