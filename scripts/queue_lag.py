@@ -119,12 +119,27 @@ def _taken(rows: list[dict]) -> dict[date, set[tuple[int, int]]]:
     return out
 
 
+def _in_window(d: date) -> bool:
+    """**測定の窓の日か。**
+
+    `uploader.next_publish_at()` は、自動で探す道では**窓の日を飛ばします**
+    （その docstring の「2つの道で、止め方が違います」）。**ここも飛ばすこと** ——
+    飛ばさないと「明日 置けます」と印字して、実際には置けない日を指します
+    （2026-08-26 に踏んだ: 明日 08/27 は `day_cap` の切り分けの窓でした）。
+    """
+    try:
+        return measure_window.inside(d.isoformat())
+    except Exception:                                          # noqa: BLE001
+        return False
+
+
 def _first_free(taken: dict[date, set[tuple[int, int]]], hm: tuple[int, int],
                 start: date, horizon: int = 90) -> int:
     """`uploader.next_publish_at()` と同じ探し方で、`hm` が空く最初の日までの日数。"""
-    d = start
     for i in range(1, horizon + 1):
         d = start + timedelta(days=i)
+        if _in_window(d):
+            continue                    # 窓の日は飛ばす（`next_publish_at` と同じ）
         if hm not in taken.get(d, set()):
             return i
     return horizon
@@ -223,6 +238,8 @@ def views_days(rows: list[dict], now: datetime | None = None) -> dict:
     a_days = b_days = None
     for i in range(1, 91):
         d = now.date() + timedelta(days=i)
+        if _in_window(d):
+            continue                    # 窓の日には置けない（`next_publish_at` が飛ばす）
         if a_days is None and per_day_n.get(d, 0) < cap_n:
             a_days = i
         if b_days is None and _room_before_cutoff(per_day_min.get(d, [])):

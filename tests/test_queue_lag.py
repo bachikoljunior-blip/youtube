@@ -199,12 +199,17 @@ def _queue() -> list[dict]:
     return rows
 
 
-def test_いま作った本の待ちは_いちばん後ろの日ではない():
+def test_いま作った本の待ちは_いちばん後ろの日ではない(monkeypatch):
     """**`depth()` と `placement_days()` は別物。**
 
     ここが同じ数を返していたので、判定日も θ も「税は2回」も、
     全部いちばん後ろの日の上に乗っていました。
+
+    **窓は切っておきます** —— 実物の `measure_window.WINDOWS` が動くたびに
+    ここが赤くなると、**測ったこと（進歩）を検査が「壊れた」と言います**。
+    窓そのものは下の専用の1件で縛っています。
     """
+    monkeypatch.setattr(Q, "_in_window", lambda d: False)
     rows = _queue()
     assert Q.depth(rows, NOW) == 30                    # いちばん後ろ（変えていない）
 
@@ -228,6 +233,7 @@ def test_再生が付く日は本数で数える_同じ分の重なりで手前�
     monkeypatch.setattr(day_cap, "window",
                         lambda *a, **k: {"T": "13:30", "confounded": True,
                                          "verdict": None})
+    monkeypatch.setattr(Q, "_in_window", lambda d: False)   # 実物の窓に左右されない
     rows = []
     for i in range(6):                       # 6つの時刻に2本ずつ ＝ 12本
         rows.append(_row(f"a{i}", _at(1, 14 + i)))
@@ -248,6 +254,7 @@ def test_2つのモデルが割れているあいだは両方印字する(monkey
     monkeypatch.setattr(day_cap, "window",
                         lambda *a, **k: {"T": "13:30", "confounded": True,
                                          "verdict": None})
+    monkeypatch.setattr(Q, "_in_window", lambda d: False)   # 実物の窓に左右されない
     rows = _queue()
     v = Q.views_days(rows, NOW)
     assert v["count_days"] == 6 and v["window_days"] == 1, v   # 割れている
@@ -257,3 +264,30 @@ def test_2つのモデルが割れているあいだは両方印字する(monkey
     assert "まだ決まっていません" in out
     # **いちばん後ろの日を「公開されるのは N日後」と言わないこと**
     assert "いま作った本が公開されるのは 30日後" not in out
+
+
+def test_測定の窓の日は_置ける日として数えない(monkeypatch):
+    """**`next_publish_at()` は窓の日を飛ばします。ここも飛ばすこと。**
+
+    2026-08-26 に踏んだ形 —— 明日（08/27）は `day_cap` の切り分けの窓でした。
+    飛ばさないと「**明日 置けます**」と印字して、**実際には置けない日**を指します。
+    """
+    from src import day_cap
+
+    monkeypatch.setattr(day_cap, "cap", lambda *a, **k: 10)
+    monkeypatch.setattr(day_cap, "window",
+                        lambda *a, **k: {"T": "13:30", "confounded": True,
+                                         "verdict": None})
+    rows = [_row("far", _at(30, 9))]                  # 手前は全部 空
+
+    # 窓が無ければ、明日（1日後）に置ける
+    monkeypatch.setattr(Q, "_in_window", lambda d: False)
+    assert Q.placement_days(rows, NOW)["min_days"] == 1
+    assert Q.views_days(rows, NOW)["window_days"] == 1
+
+    # 明日だけが窓なら、明後日へ下りる
+    tomorrow = NOW.date() + timedelta(days=1)
+    monkeypatch.setattr(Q, "_in_window", lambda d: d == tomorrow)
+    assert Q.placement_days(rows, NOW)["min_days"] == 2, "**窓の日を置ける日と数えています**"
+    assert Q.views_days(rows, NOW)["window_days"] == 2
+    assert Q.views_days(rows, NOW)["count_days"] == 2
