@@ -334,7 +334,8 @@ def _drop_queue_tail_calcs(usable: list[dict], pool: list[dict]) -> list[dict]:
     return kept
 
 
-def pick(count: int, explicit: list[str], per_calc: int = DEFAULT_PER_CALC) -> list[dict]:
+def pick(count: int, explicit: list[str], per_calc: int = DEFAULT_PER_CALC,
+         long_form: bool = False) -> list[dict]:
     """未投稿・`calc` あり・**計算の節が全部ちがう** テーマを score の高い順に取る。
 
     ## ここが 2026-08-15 19:5x に変わりました（天井の測り違い）
@@ -360,6 +361,23 @@ def pick(count: int, explicit: list[str], per_calc: int = DEFAULT_PER_CALC) -> l
 
     **覆る条件**: 同じ calc の2本を並べた日の engaged 比率の中央値が、
     全部ちがう calc の日を下回ったら、`per_calc` を 1 に戻すこと。
+
+    ## `long_form` は 2026-08-26 に足しました（**`--long` が選ぶ側に効いていなかった**）
+
+    `--long` は長らく **`build_one(topic, long_form)` にしか渡っていません**でした。
+    つまり**作り方だけが長尺になり、題は在庫の上から取っていた**ということです。
+    `scripts/topic_forge.py` は `--long` を付けた回だけ `s-` で始まらない id を書き、
+    **ショート向けの題は `s-` で始まります**（`LONG_ID_RE` / `ID_RE`）。
+    在庫はショートが圧倒的多数（実測 08/26: 未投稿34件のうち長尺向けは7件）なので、
+    **`--long` を付けても、ほぼ確実にショート向けの題で長尺を作ります。**
+
+    実測（2026-08-26 01:5x）: `--count 1 --long` が
+    `s-zangyo-nenkan-kyujitsu-tanka` を取り、5.4分の長尺として投稿しました。
+    **落ちも警告も出ません** —— ショート向けに書かれた細い表が、
+    長尺の尺に引き伸ばされるだけなので、**外からは成功に見えます。**
+
+    **在庫が尽きているときは止めません**（投稿が途切れるのが最大の損失）。
+    その回は理由を印字して、ショート向けの題で作ります。
     """
     pool = config.load_topics()["topics"]
     by_id = {t["id"]: t for t in pool}
@@ -388,6 +406,16 @@ def pick(count: int, explicit: list[str], per_calc: int = DEFAULT_PER_CALC) -> l
               and t.get("calc")]
     usable = _drop_doomed(usable, pool)
     usable = _drop_queue_tail_calcs(usable, pool)
+
+    # **長尺は、長尺向けに書かれた題からしか取らない**（上の docstring）。
+    if long_form:
+        long_usable = [t for t in usable if not t["id"].startswith("s-")]
+        if long_usable:
+            usable = long_usable
+        else:
+            print("[pick] 長尺向けのテーマ（`s-` で始まらない id）が在庫にありません。"
+                  "**ショート向けの題で長尺を作ります**（投稿を止めないため）。"
+                  "`python scripts/topic_forge.py --count N --long` で足すこと")
 
     # **順番は実績で決める**（2026-08-16 に測って変えた。それまでは手書きの
     # `score` だけで、実績を1つも見ていませんでした ＝ 91件中64件が `1.0`）。
@@ -1153,7 +1181,7 @@ def main(argv: list[str] | None = None) -> int:
     _push_thumbnails_first()
 
     topics = pick(args.count if not explicit else len(explicit), explicit,
-                  per_calc=args.per_calc)
+                  per_calc=args.per_calc, long_form=args.long)
     if not topics:
         print("[batch] 作れるテーマがありません。config/topics.yaml を足すこと。")
         return 1
