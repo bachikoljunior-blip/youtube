@@ -101,11 +101,20 @@ def test_drift_が死んだ腕を選んだ回を数える(tmp_path, monkeypatch)
     (tmp_path / "data").mkdir()
     (tmp_path / "data" / "eta.jsonl").write_text(
         json.dumps(ROW, ensure_ascii=False) + "\n", encoding="utf-8")
+    # **長尺の面の話を、この検査に混ぜないこと**（2026-08-26 に赤いのを直した）。
+    #     `levers.arm_state()` は「長尺の面がまだ測れていない」あいだ `density` を
+    #     死んだ腕から**外します**（それ自体は正しい）。ところがこの2件は
+    #     `density` が死んでいる前提で数を書いているので、**その変更の日から
+    #     ずっと赤**でした。ここが縛るのは「**数が届くこと**」だけなので、
+    #     面の話は据え置いて、数え方だけを見ます。
+    monkeypatch.setattr(levers, "_long_surface_measured", lambda: True)
+    monkeypatch.setattr(levers, "_long_surface_open", lambda _row: False)
     text = drift.dead_arm_report("2026-08-24")
     # 2026-08-25 に見出しを「引き代のない」→「到達日を動かせない」へ。
     # **数える対象が2つになったから**です（天井 ×1.00 と、
     # 「天井は大きいのに到達日に触らない」腕）。**数え方は変えていません。**
-    assert "**到達日を動かせない腕を選んだ回: 2/3**" in text
+    # 2026-08-26: `none` を別立てにしたので、この行は「引き代が無かった回」。
+    assert "**引き代が無かった回: 2/3**" in text
     assert "名指し **`rpm`** に従った回: **1/3**" in text
 
 
@@ -184,7 +193,9 @@ def test_drift_は届かない腕も数える(tmp_path, monkeypatch):
     (tmp_path / "data").mkdir()
     (tmp_path / "data" / "eta.jsonl").write_text(
         json.dumps(REACH_ROW, ensure_ascii=False) + "\n", encoding="utf-8")
+    monkeypatch.setattr(levers, "_long_surface_measured", lambda: True)
+    monkeypatch.setattr(levers, "_long_surface_open", lambda _row: False)
     text = drift.dead_arm_report("2026-08-24")
     # **sub_rate も数に入ること**（天井 ×3,147 でも届かない）
-    assert "**到達日を動かせない腕を選んだ回: 2/3**" in text
+    assert "**引き代が無かった回: 2/3**" in text
     assert "天井まで引いても到達日に届きません" in text
