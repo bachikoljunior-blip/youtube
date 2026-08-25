@@ -427,8 +427,74 @@ def best_section(text: str, sections: dict[str, str]) -> list[tuple[int, str]]:
         scored = sorted([(len(want & rung(body)), head)
                          for head, body in sections.items()], key=lambda x: -x[0])
         if scored and scored[0][0] > 0:
-            return scored
-    return scored
+            if backed_ratio(want, sections, rung) >= MATCH_RATIO_FLOOR:
+                return scored
+            # **一致はした。証拠が薄いだけ** —— 下の段へ降りる（下の `backed_ratio`）
+    # **薄い一致は、一致していないのと同じ扱いにします。**
+    # ここで `weak` をそのまま返すと `realign` の `top` が 0 になりません。
+    return [(0, head) for _, head in scored] if scored else scored
+
+
+# **題の数字のうち、何割がその calc の表に載っていれば「表から書いた」と見なすか。**
+# 3分の1。**実測で決めました**（下の `backed_ratio` の docstring）。
+MATCH_RATIO_FLOOR = 1 / 3
+
+
+def backed_ratio(want: set, sections: dict[str, str], rung) -> float:
+    r"""題の数字のうち、**その calc のどこかの表に載っている割合**。
+
+    ## なぜ「一致数」では足りないか（2026-08-25 22:xx に実測して足した）
+
+    `best_section` はこれまで **「一致が1つでもあれば通す」**でした。
+    門の文言は「表の外の数字を使っています」ですが、**実際に見ていたのは
+    『表の中の数字を1つでも使っているか』**です。**向きが逆です。**
+    題の9割がでたらめでも、1つ当たれば通ります。
+
+    実測（`config/topics.yaml` の実物 486件を土台に、**数字だけ全部でたらめに
+    置き換えた題 1,458本**を通した）:
+
+        通ってしまった      **378本（25.9%）**
+        通った件の一致数    **中央値 1**   ← 偶然ひとつ当たっただけ
+
+    偶然が効くのは、**表が深いほど 2桁の数がほとんど埋まる**からです
+    （実測: `nenkin` は 10〜99 のうち **68個（75.6%）**を持っています。
+    61本の中央値は 10個）。**在庫を増やすほど、この門は弱くなります** ——
+    いま進めている「既にある表に節を足す」は、まさにその向きの作業です。
+
+    ## 見るのは割合のほう
+
+    表から書いた題は、**数字のほとんどが表に載っています**。
+    偶然当たっただけの題は、1つしか載っていません。**分布は重なりません**:
+
+        本物 486件      中央 **1.00** ／ 25%点 1.00 ／ 5%点 0.71
+        でたらめ 378件  中央 **0.12** ／ 75%点 0.20 ／ 95%点 ほぼ 0.3
+
+        しきい値   本物が残る   でたらめが通る（通った件のうち）
+          0.25      100.0%        14.6%
+          **1/3**   **99.6%**     **3.2%**   ← ここ
+          0.50       99.2%         2.7%
+
+    **1/3 にすると、でたらめの通過は 25.9% → 0.8% になります**（1/30 以下）。
+    本物で落ちるのは 486件中 **2件**で、中身を見ると2件とも
+    **丸めた散文**です（`s-kojo-4` の「所得900万円」、`s-zoyo-…` の 4,299.5万）——
+    表には `9,619,168` のような端数が載っていて、題は `961万円` と丸める。
+    `numbers()` は両方を別の数として数えるので、**分母だけが膨らみます。**
+
+    **覆る条件**: 本番の批（`--count N`）で「表の外の数字を使っています」が
+    増え、中身が丸めた散文ばかりなら、**しきい値を下げる前に分母を直すこと** ——
+    `numbers()` が `961万` から足している素の `961` と、丸めた側の数を
+    分母から外すほうが先です。しきい値は最後の手段。
+
+    分母は「題にある数」、分子は「**節をまたいだ和集合**に載っている数」です。
+    節ごとに見ないのは、題が2つの節から数字を引くのが普通だからです
+    （`nenkin-kurisage` は繰下げ表と手取り表の両方を見ています）。
+    """
+    if not want:
+        return 0.0
+    union: set = set()
+    for body in sections.values():
+        union |= rung(body)
+    return len(want & union) / len(want)
 
 
 def rungs(sections: dict[str, str]) -> list[Callable[[str], set]]:
@@ -488,7 +554,12 @@ def match_scale(text: str, sections: dict[str, str]):
     for rung in ladder:
         want = rung(text)
         if any(want & rung(body) for body in sections.values()):
-            return rung
+            # **`best_section` と同じ条件で降りること**（2026-08-25 22:xx）。
+            # 割合の門をこちらに入れ忘れると、`best_section` が捨てた段を
+            # `swallows` が物差しに使い、**同じ題を2つの目盛りで測ります。**
+            # このリポジトリが通算7回踏んでいる「片方だけ直す」の形です。
+            if backed_ratio(want, sections, rung) >= MATCH_RATIO_FLOOR:
+                return rung
     return ladder[-1]
 
 
