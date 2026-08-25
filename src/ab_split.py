@@ -152,6 +152,51 @@ def build_times(path: Path | None = None) -> dict[str, datetime]:
     return out
 
 
+def landed_groups(landed: datetime, builds: dict[str, datetime] | None = None,
+                  ) -> tuple[list[str], list[str]]:
+    """**時刻で入った作りの変更**を、`(変更前に作った本, 変更後に作った本)` に割る。
+
+    返すのはテーマID。**公開日ではなく、作った時刻で割ります。**
+
+    ## `EXPERIMENTS` と何が違うか
+
+    上の `EXPERIMENTS` は **IDで2群に振り分ける A/B**（題を問いにするか断定にするか）で、
+    `landed` は「その振り分けが実装に入る前の本を落とす」ために使います。
+    こちらは**振り分けの無い変更** —— 入った後に作る本は**全部**そうなる、という形です
+    （冒頭の stat の割り方・冒頭0.9秒の動き・描画の作り替えなど）。
+    **群そのものが「入る前か後か」**なので、`split` は要りません。
+
+    ## **公開日で割らないこと**（2026-08-25 に実測。同じ形で4回踏んでいます）
+
+    **作ってから公開されるまでの間隔が伸び続けています。**
+
+        8/16 に公開した本   作ってから **0.9日**
+        8/21                          **2.2日**
+        8/24                          **7.5日**
+        いま（予約 443本）  中央値 **13.4日**・最大 40.2日
+
+    だから「変更が入った日より後に**公開**された本」は、その大半が
+    **入る前に作られた本**です。実測 —— `config/hypotheses.yaml` の
+    「冒頭の stat は前提を先・数字を後」（期限 09/05）は、条件が
+    「8/23 以降に**公開**されるもの」と書いてありました:
+
+        条件が言う『処置群』 350本 …… **実際に新しい割り方で作った本は 21本（6.0%）**
+        残り 329本（94.0%）は、**処置が入っていない本**
+
+    処置が 6% しか入っていない群を対照と比べれば、差は出ません。
+    条件は「上回らなければ外れ」なので、**測る前から「外れ」が確定**していました
+    （8/23 に「冒頭0.9秒の動き」で直したのと**同じ形**です）。
+
+    **在庫が数週間先まで予約されているかぎり、公開日は群を表しません。**
+    """
+    builds = build_times() if builds is None else builds
+    before: list[str] = []
+    after: list[str] = []
+    for topic, at in builds.items():
+        (after if at >= landed else before).append(topic)
+    return sorted(before), sorted(after)
+
+
 def published(path: Path | None = None) -> list[dict[str, object]]:
     """控えの1本1件。`topic` と **公開日（JST）** だけ取り出す。
 
