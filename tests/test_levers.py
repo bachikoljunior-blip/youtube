@@ -151,3 +151,41 @@ def test_reconcile_is_quiet_before_the_first_declaration():
     rows = [{"kind": "ship", "at": "2026-08-19T09:00:00+09:00", "lever": "none"}]
     text = "\n".join(levers.reconcile(rows))
     assert "まだありません" in text
+
+
+# --- **名指しを「外せ」と言われて外した回を、外した回として数えないこと** ---
+#     （2026-08-26 に踏んだ。`eta.py` が同じ回に両方を言っていました）
+
+def test_hint_covered_is_carried_from_the_ledger():
+    """`data/eta.jsonl` の `lever_hint_covered` が、腕の状態に載ること。
+
+    載らないと `run_marker.py` から見えず、**道具の指示どおりに動いた回**が
+    `lever_followed=False` のまま残ります。
+    """
+    st = levers.arm_state({"lever_hint": "per_video", "binding": "再生数",
+                           "lever_hint_covered": "2026-09-01"})
+    assert st["hint_covered"] == "2026-09-01"
+    assert levers.arm_state({"lever_hint": "per_video"})["hint_covered"] is None
+
+
+def test_note_does_not_scold_when_the_hint_is_covered():
+    """**「外した理由を書け」を出さないこと。** 外すのが正しい回だからです。"""
+    covered = {"hint": "per_video", "binding": "再生数が天井に当たっている",
+               "hint_covered": "2026-09-01", "caps": {}, "reaches": {}}
+    lines = "\n".join(levers.lever_notes("density", covered))
+    assert "eta.py` の指示どおり" in lines
+    assert "理由を docs/JOURNAL.md に1行書くこと" not in lines
+
+    # **覆っていない回は、今までどおり訊くこと**（緩めたのは1つの条件だけ）
+    plain = {**covered, "hint_covered": None}
+    lines = "\n".join(levers.lever_notes("density", plain))
+    assert "理由を docs/JOURNAL.md に1行書くこと" in lines
+
+
+def test_eta_prints_the_covered_line_in_the_three_lines():
+    """**同じ3行に出すこと。** 手順は「見出しと3行だけ読め」と言っています。"""
+    src = (ROOT / "scripts" / "eta.py").read_text(encoding="utf-8")
+    assert "lever_hint_covered" in src
+    assert "この回は「名指しを外した」ではありません" in src
+    # 積むほうも（積まないと次の回から見えない）
+    assert 'row["lever_hint_covered"]' in src

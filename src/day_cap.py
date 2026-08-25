@@ -70,6 +70,7 @@ import statistics
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 VIEWS = ROOT / "data" / "views.jsonl"
+FORMS = ROOT / "data" / "video_forms.json"
 
 JST = dt.timezone(dt.timedelta(hours=9))
 
@@ -78,6 +79,55 @@ DEAD_SHARE = 0.05      # その日の上位3本の中央値の 5% 未満なら�
 MIN_PER_DAY = 3        # 崩れを見るのに要る最低の本数
 MIN_TOP_VIEWS = 50     # その日の上位3本の中央値がこれ未満なら、面に載っていない日
 FALLBACK = 10          # 読みが足りないときの既定（**この日の実測そのもの**）
+
+LONG_FORM = "長尺"     # `data/video_forms.json` の値（`youtubeAnalytics: creatorContentType`）
+
+
+# ---------------------------------------------------------------------------
+# **この上限は「ショートの面」のものです**（2026-08-26 に、実物を数えて足した）
+#
+# 冒頭の実測は「**長尺は最初から0なので除く**」と書いていました。
+# **除いていませんでした。** `_readings` は `data/views.jsonl` を丸ごと読み、
+# `measure` は 0再生 の本を **`n_dead`（＝上限の証拠）**として数えます。
+# つまり長尺は、除かれるどころか **ショートの上限を押し下げる側**に入っていました。
+#
+# 実測（`data/video_forms.json` と突き合わせた）:
+#
+#     2026-08-21  32本 → 生きた10 / 死んだ22 の**うち5本が長尺**
+#                 （-NbX_FMzAg0 0再生 ／ Qb-m7s1T5gk 0 ／ WuTf0Z-tRJc 0 ／
+#                   _Mz5rg6jQ_A 0 ／ UHo79-HCOWo 2）
+#     2026-08-04   7本 → 死んだ5 の**うち1本が長尺**（qm-w6nVwMhY 1再生）
+#
+# **いまは `cap` の値を変えません**（10本のまま）。長尺は全部「死んだ」側なので
+# `n_alive` が動かず、`collapse` も 11 のまま。**ですが無害なのは偶然です** ——
+# ショートが全部生きた日に長尺が1本混ざれば、その日が「崩れた日」に化けて
+# 上限を1本ぶん下げます。**そうなってから気づく形にしないこと。**
+#
+# **もっと効くのは、この上限が何の上限かのほうです。** `scripts/eta.py` の
+# `physical_caps` は、ここを **`density` の腕の天井**として使っています。
+# ところが長尺はショートの面を1枠も食いません（`SHORTS_FEED` の外）。
+# **4,000時間の門に入るのは長尺だけ**なので、「密度は天井 ×1.00 ＝ 引き代なし」は
+# **唯一開いている門について、何も言っていません。** `long_form()` を別に出すのは
+# そのためです。**混ぜて1つの数にしないこと。**
+# ---------------------------------------------------------------------------
+
+
+def forms(path: pathlib.Path | None = None) -> dict[str, str]:
+    """id → 形（`長尺` / `ショート`）。**読めなければ空**（回は止めない）。"""
+    p = path or FORMS
+    if not p.exists():
+        return {}
+    try:
+        doc = json.loads(p.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return {}
+    got = doc.get("forms")
+    return {str(k): str(v) for k, v in got.items()} if isinstance(got, dict) else {}
+
+
+def _long_ids(forms_path: pathlib.Path | None = None) -> set[str]:
+    """**形が分かっている長尺だけ**。不明は落としません（落とすと母集団が消えます）。"""
+    return {v for v, f in forms(forms_path).items() if f == LONG_FORM}
 
 
 def _readings(path: pathlib.Path | None = None) -> dict[str, tuple[dt.datetime, float, int]]:
@@ -108,15 +158,73 @@ def _readings(path: pathlib.Path | None = None) -> dict[str, tuple[dt.datetime, 
     return {v: (first[v].astimezone(JST), h, n) for v, (h, n) in best.items() if v in first}
 
 
-def by_day(path: pathlib.Path | None = None) -> dict[dt.date, list[tuple[str, int, float]]]:
-    """公開日（JST）→ [(id, 再生, 齢)]。**公開の早い順**。"""
+def by_day(path: pathlib.Path | None = None,
+           forms_path: pathlib.Path | None = None,
+           include_long: bool = False) -> dict[dt.date, list[tuple[str, int, float]]]:
+    """公開日（JST）→ [(id, 再生, 齢)]。**公開の早い順**。
+
+    **既定で長尺を外します**（この節の上の註）。ここが測っているのは
+    **ショートの面の上限**で、長尺はその枠を1つも使いません。
+    `include_long=True` は、外す前後を比べるとき用です。
+    """
+    skip = set() if include_long else _long_ids(forms_path)
     out: dict[dt.date, list] = collections.defaultdict(list)
     for vid, (pub, h, n) in _readings(path).items():
+        if vid in skip:
+            continue
         out[pub.date()].append((pub, vid, n, h))
     return {d: [(v, n, h) for _, v, n, h in sorted(rows)] for d, rows in out.items()}
 
 
-def measure(path: pathlib.Path | None = None) -> dict:
+def long_form(path: pathlib.Path | None = None,
+              forms_path: pathlib.Path | None = None) -> dict:
+    """**長尺の面は、1日に何本まで出せるのか。**
+
+    答えは「**まだ分からない**」です。そしてそれが要点です ——
+    `measure()` の 10本 は**ショートの上限**で、長尺には掛かりません。
+
+    返り:
+      per_day    長尺を出した日 → 本数
+      most       1日に出した最大の本数（**これを超えた日がまだ無い**）
+      alive      その最大の日に、再生が付いた本数
+      measured   崩れ（出したのに付かない）を観測しているか。**いまは常に False**
+    """
+    longs = _long_ids(forms_path)
+    days: dict[dt.date, list[tuple[str, int]]] = collections.defaultdict(list)
+    for vid, (pub, _h, n) in _readings(path).items():
+        if vid in longs:
+            days[pub.date()].append((vid, n))
+    per_day = {d: len(rows) for d, rows in days.items()}
+    most = max(per_day.values(), default=0)
+    alive = 0
+    for d, rows in days.items():
+        if len(rows) == most:
+            alive = max(alive, sum(1 for _, n in rows if n > 0))
+    return {"per_day": per_day, "most": most, "alive": alive, "measured": False}
+
+
+def long_form_lines(path: pathlib.Path | None = None,
+                    forms_path: pathlib.Path | None = None) -> list[str]:
+    """**長尺の面の上限は、まだ一度も測っていない。**その事実を毎回出す。"""
+    m = long_form(path, forms_path)
+    if not m["per_day"]:
+        return ["  **長尺の面**: 読める長尺がまだありません（上限は未測定）"]
+    return [
+        f"  **長尺の面の上限: 未測定**（1日に出した最大 {m['most']}本）",
+        "    **上の上限はショートの面のもので、長尺には掛かりません**"
+        "（長尺は `SHORTS_FEED` の枠を1つも使わない）。",
+        f"    **6時間の読みでは長尺の生死を判定できません**（最大の日で"
+        f" {m['alive']}/{m['most']}本 しか付いていませんが、"
+        "長尺は数日かけて付くので、これは崩れの証拠になりません）。"
+        "測るなら 7日 以上の齢で数え直すこと。",
+        "    **4,000時間の門に入るのは長尺だけ**なので、`density` の「引き代なし」を"
+        "「長尺も増やせない」と読まないこと。",
+    ]
+
+
+def measure(path: pathlib.Path | None = None,
+            forms_path: pathlib.Path | None = None,
+            include_long: bool = False) -> dict:
     """**上限を、崩れた日から読む。**
 
     返り:
@@ -131,7 +239,7 @@ def measure(path: pathlib.Path | None = None) -> dict:
     外れた**だけです。上限だと言えるのは、**これまでに効いたいちばん後ろの番号
     （`floor`）より、さらに後ろで崩れたとき**だけ。
     """
-    days = by_day(path)
+    days = by_day(path, forms_path, include_long=include_long)
     qual: list[tuple[dt.date, list, float, int, int]] = []
     floor = 0
     for d, rows in sorted(days.items()):
@@ -402,7 +510,7 @@ def effective(per_day: float, path: pathlib.Path | None = None) -> float:
 
 def lines(path: pathlib.Path | None = None) -> list[str]:
     m = measure(path)
-    out = [f"  **1日に再生が付く本数の上限: {m['cap']}本**"
+    out = [f"  **1日に再生が付く本数の上限: {m['cap']}本**（**ショートの面**）"
            + ("（実測）" if m["measured"] else "（**崩れをまだ観測していません**・既定値）")]
     if m["measured"]:
         out.append(f"    再生が付いた本数の最大: {m['floor']}本 ／ "
@@ -415,6 +523,7 @@ def lines(path: pathlib.Path | None = None) -> list[str]:
     else:
         out.append(f"    **上限より多く出した日がまだありません**（見えている最大 {m['floor']}本）。"
                    "崩れを観測するまで、この数は既定値です")
+    out.extend(long_form_lines(path))
     return out
 
 
@@ -555,3 +664,72 @@ def _booked_lines(first_pub: str) -> list[str]:
 if __name__ == "__main__":  # pragma: no cover
     for line in lines():
         print(line)
+
+
+# --- 再生が付く本／付かない本を、**1か所で**決める -------------------------
+#
+# ## なぜここに置くか（2026-08-26。**12件目の「2か所が別々に言っている」**）
+#
+# このファイルは「1日に再生が付くのは 10本」「30分より詰めた本は死ぬ」を
+# **実測から**持っています。ところが `src/judgeable.py` は A/B の群を
+# **公開日だけ**で数えていて、**死ぬと分かっている本も1本と数えていました。**
+#
+# 実測（2026-08-26・`data/views.jsonl` の6時間以上たった読み）:
+#
+#     この帯に入る本   n=74   再生の中央値 **718**
+#     入らない本       n=81   再生の中央値 **2**（>10再生 は 81本中 17本）
+#
+# **中央値が 359倍 違います。** 帯の外の本は、A/B の標本としては 0 です。
+# それを「1本」と数えると、`falsified_if` は「上回らなければ外れ（同点も外れ）」
+# なので、**足りない標本はそのまま「外れ」に化けます**
+# （`src/judgeable.py` の `ANALYTICS_LAG_DAYS` の節が、同じ壊れ方を1日ぶんで書いています）。
+#
+# ## **結果（再生数）で落とさないこと**
+#
+# 落とす条件は **その日の何本目か** だけです。**中身とは無関係**に、
+# 予約を置いた側が決めている量なので、処置とは独立です。
+# **「再生が0だったから落とす」は結果で条件付けること**になり、
+# 処置そのものが再生を落としている場合に、その効果を隠します。
+# ここは順番だけを見ます。
+
+def live_ids(rows: list[dict], path: pathlib.Path | None = None) -> set[str]:
+    """**再生が付く側の `video_id`** を返す（API 0単位。公開済みも予約も同じ規則）。
+
+    `rows` は `ab_split.published()` の行（`at` が JST の datetime、`video_id`）。
+    2段で絞ります。**`measure()` が上限を出すときと同じ2段**です:
+
+      1. 間隔 —— 前に残した本から `MIN_GAP_MIN` 未満のものは落とす（`_spaced`）
+      2. 本数 —— 残ったうちの**先頭 `cap()` 本**
+
+    **覆る条件**: `cap()` は実測から動きます（定数ではありません）。
+    上限が上がれば、ここが返す集合も自動で広がります。
+    """
+    per_day: dict[dt.date, list[tuple[dt.datetime, str]]] = collections.defaultdict(list)
+    for row in rows:
+        when, vid = row.get("at"), str(row.get("video_id") or "")
+        if isinstance(when, dt.datetime) and vid:
+            per_day[when.date()].append((when, vid))
+    keep: set[str] = set()
+    limit = cap(path)
+    for day in per_day:
+        seen = sorted(per_day[day])
+        spaced = _spaced([w for w, _ in seen])
+        alive = {w: v for w, v in reversed(seen) if w in set(spaced)}
+        for when in spaced[:limit]:
+            if when in alive:
+                keep.add(alive[when])
+    return keep
+
+
+def live_lines(rows: list[dict], path: pathlib.Path | None = None) -> list[str]:
+    """予約と公開済みのうち、**何本が再生の付かない側に居るか**。"""
+    keep = live_ids(rows, path)
+    total = sum(1 for r in rows if r.get("video_id") and isinstance(r.get("at"), dt.datetime))
+    dead = total - len(keep)
+    out = [f"  予約と公開済み **{total}本** のうち、"
+           f"再生が付く帯に居るのは **{len(keep)}本**／**{dead}本 は 0再生の側**"
+           f"（1日 {cap(path)}本・間隔 {MIN_GAP_MIN:.0f}分）"]
+    if dead:
+        out.append("    **A/B の本がここに落ちていると、その群は標本が足りません。**"
+                   "`python scripts/live_slots.py` が、どの前提が何本 落としているかを出します")
+    return out
