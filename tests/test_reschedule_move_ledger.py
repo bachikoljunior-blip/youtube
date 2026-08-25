@@ -100,9 +100,23 @@ def test_節を数えるのに使う関数が速いこと():
         check = getattr(mod, "check_tables", None)
         if check is None:
             continue
-        start = time.monotonic()
+        # **壁時計ではなく、この処理が使った CPU 時間で見ること**（2026-08-26）。
+        # `time.monotonic()` は**同じ機械で他が走っているだけで伸びます。**
+        # 実測: このコンテナはきょうだいの検査と同時に回るので、3本 並んだ回に
+        # `nenkin` が 1.0秒 を超えて落ちました。**単独で測ると 0.51秒**で、
+        # 63本の合計でも 1.5秒 です。**遅い表は1つもありませんでした。**
+        #
+        # 落ちる理由が「隣が忙しい」なら、**この門は乱数**です。
+        # 乱数の門は、常時赤と同じ壊れ方をします —— 鳴っても誰も見に行かなくなる。
+        #
+        # `time.process_time()` は**自分が使った CPU だけ**を数えるので、
+        # 隣の忙しさでは動きません。そして、この検査が本当に捕まえたいもの
+        # （上の註の「1円ずつ数え上げて約1億回まわる」）は **CPU を焼く**ので、
+        # measure の向きは変わりません。**取りこぼすのは I/O 待ちで遅い表**ですが、
+        # `src/calc/` は外を叩きません（叩いたらそれ自体が別の欠陥）。
+        start = time.process_time()
         check()
-        took = time.monotonic() - start
+        took = time.process_time() - start
         if took > 1.0:
             slow.append((path.stem, round(took, 2)))
     assert not slow, (
