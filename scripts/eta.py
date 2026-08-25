@@ -1615,6 +1615,24 @@ def sustained_density(supply: dict | None,
     return min(float(density), float(rate))
 
 
+def _long_form_per_day() -> float:
+    """**いま、長尺を1日に何本出しているか。**（読めなければ 0.0）
+
+    `day_cap.long_form()` の `per_day` は「長尺を出した日」だけを持つので、
+    **その日数で割ると出していない日が消えます。** 割るのは
+    **最初に出した日から今日まで**の暦日です（＝実際の密度）。
+    """
+    try:
+        rows = day_cap.long_form().get("per_day") or {}
+    except Exception:                                          # noqa: BLE001
+        return 0.0
+    if not rows:
+        return 0.0
+    days = sorted(rows)
+    span = (date.today() - days[0]).days + 1
+    return sum(rows.values()) / max(1, span)
+
+
 def physical_caps(a0: dict, density: float = PLAN_PUBLISH_PER_DAY,
                   supply: dict | None = None) -> dict[str, dict]:
     """**腕を「実在する幅」で止める。**（軌跡が実在しない世界を歩かないため）
@@ -1661,7 +1679,43 @@ def physical_caps(a0: dict, density: float = PLAN_PUBLISH_PER_DAY,
                                    + ("。**すでに上限を {:.1f}倍 超えて出しています ＝ 引き代なし**"
                                       "（超えたぶんは 0再生）".format(1 / raw) if over else "")),
                            "measured": True,
-                           "at_ceiling": over}
+                           "at_ceiling": over,
+                           "surface": "ショート"}
+        # --- **長尺の面は、別の天井です**（2026-08-26。**3回続けて申し送られていた**）---
+        #     上の `day_cap.cap()` は **ショートの面**の数です（`SHORTS_FEED` に
+        #     1日に差し込まれる本数）。**長尺はその枠を1つも使いません**し、
+        #     **4,000時間の門に入るのは長尺だけ**です。つまり上の「引き代なし」は、
+        #     **唯一開いている門について何も言っていません。**
+        #
+        #     **数は作りません。** 長尺の面の上限は**まだ一度も測っていない**ので
+        #     （`day_cap.long_form()` が常に `measured: False`）、ここに実測の顔を
+        #     した数を置くと、`sub_rate` の ×2,923 と同じ「偽の緑」になります。
+        #     置くのは **`sub_rate` と同じ扱い ＝ 定義上の上限**です:
+        #     口が通す 1日 `UPLOAD_CAP_PER_DAY` 本 から、ショートの面で死ぬと
+        #     **測れている**ぶんを引いた残り。**測った天井ではありません。**
+        #
+        #     **これは `LEVERS` に入れません。** 入れると `_capped_arms` が
+        #     この未測定の天井で軌跡を歩かせます（08/21 に `UPLOAD_CAP_PER_DAY`
+        #     そのままで歩かせて「×3.7 引けるのに1日も縮まない」を踏んだのと同じ形）。
+        #     **軌跡は歩きません。使うのは `src/levers.py` の「死んだ腕」の判定だけ**で、
+        #     そこが**面ごとに割れる**ようにするために置いています ——
+        #     ショートの面が天井でも、**長尺を増やす作業を `none` へ落とさない**ため。
+        long_cap = max(0.0, float(UPLOAD_CAP_PER_DAY) - float(day_cap.cap()))
+        long_now = _long_form_per_day()
+        long_raw = (long_cap / long_now) if long_now > 0 else None
+        caps["density_long"] = {
+            "factor": long_raw,
+            "why": (f"口が通す {UPLOAD_CAP_PER_DAY}本/日 から、ショートの面で死ぬ"
+                    f" {day_cap.cap()}本 を引いた {long_cap:.0f}本"
+                    "（**定義上の上限。測った天井ではありません** ——"
+                    " 長尺の面が崩れるところは一度も観測していない）"
+                    + (f" ÷ いま出している長尺 {long_now:.2f}本/日"
+                       if long_now > 0 else "。**長尺をまだ1本も出していません**")),
+            "measured": False,
+            "at_ceiling": bool(long_raw is not None and long_raw <= 1.0),
+            "surface": "長尺",
+            "now_per_day": long_now,
+        }
     # --- `rpm` の天井は、2026-08-20 22:2x に**実測に入れ替えました**（`src/rpm_mix.py`）---
     #     ここには `max(RPM_SCENARIOS) / band`（¥2,000 ÷ ¥20 ＝ ×100）が入っていて、
     #     この関数の docstring 自身が「測った天井ではありません」と言っていました。
@@ -3861,6 +3915,24 @@ def _row(m: dict, a: dict, pl: dict, tr: dict | None, sup: dict | None) -> dict:
     row["density_month"] = pl.get("density_month")
     row["make_rate_per_day"] = (sup or {}).get("rate_per_day")
     row["days_gate1"] = pl.get("gate1", {}).get("days")
+    # --- **`density` の天井は、面ごとに割れている**（2026-08-26。3回続けて申し送られた）---
+    #     `arm_caps["density"]` はショートの面の数だけです。**長尺の面は別**で、
+    #     しかも**未測定**なので `LEVERS` には入れていません（軌跡に歩かせない）。
+    #     ところが「死んだ腕」の判定は `data/eta.jsonl` しか読まないので、
+    #     **ここに積まないかぎり、選ぶ側からは面の割れが永久に見えません。**
+    try:
+        _ph = physical_caps(a, supply=sup)
+        row["density_surfaces"] = {
+            name: {
+                "at_ceiling": bool(_ph[key].get("at_ceiling")),
+                "measured": bool(_ph[key].get("measured")),
+                "why": _ph[key].get("why"),
+            }
+            for name, key in (("short", "density"), ("long", "density_long"))
+            if key in _ph
+        }
+    except Exception:                                          # noqa: BLE001 — 回を止めない
+        pass
     # **軌跡そのものを積む。** 積まないと、次の回が「軌跡が早まったか」を測れません
     # （据え置きの線と混ぜないこと ＝ 別の欄にする）。
     if tr is not None:

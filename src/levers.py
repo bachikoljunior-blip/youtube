@@ -210,6 +210,27 @@ def _long_surface_measured() -> bool:
         return False
 
 
+def _long_surface_open(row: dict) -> bool:
+    """**長尺の面に、まだ引き代があるか。**（2026-08-26。3回続けて申し送られた話の本体）
+
+    ここまでは「ショートの面の数だ」と**名乗るだけ**でした。名乗っても
+    `density` は「死んだ腕」に入ったままなので、**長尺を増やす作業は
+    やはり `none` に落ちます** —— 申し送りが3回とも言っていたのはそこです。
+
+    見るのは `scripts/eta.py` が積む `density_surfaces`（面ごとの `at_ceiling`）。
+
+    **`density_surfaces` を持たない行では、前のまま（閉じている側）に倒します。**
+    そこを「開いている」に倒すと、**過去の行の判定が全部ひっくり返り**、
+    `drift.dead_arm_report` の「到達日を動かせない腕を選んだ回」が
+    **さかのぼって書き換わります** —— 済んだ回の記録を、あとから足した欄で
+    塗り替えないこと。新しい行は毎回この欄を持つので、**次の `eta.py` で直ります。**
+    """
+    surfaces = row.get("density_surfaces")
+    if isinstance(surfaces, dict) and isinstance(surfaces.get("long"), dict):
+        return not bool(surfaces["long"].get("at_ceiling"))
+    return False
+
+
 def arm_state(eta_row: dict | None) -> dict:
     """`data/eta.jsonl` の1行から、腕を選ぶのに要るものだけ取り出す。
 
@@ -257,6 +278,22 @@ def arm_state(eta_row: dict | None) -> dict:
     #     足せば推測を実測に見せることになります）。**名前だけ正します。**
     if dead_why.get("density") == "天井" and not _long_surface_measured():
         dead_why["density"] = "天井（**ショートの面だけ。長尺の面は未測定**）"
+    # **そして、面が割れているなら `density` は死んでいません**（2026-08-26）。
+    #     上の1行は**名前を正すだけ**で、`density` は「死んだ腕」に入ったままでした。
+    #     だから `--ship --lever density` はいまも叱られ、
+    #     **長尺を増やした回が `none` を選び直す**という形が3周続いています
+    #     （`retro.py` の持ち越し `physical_caps` / `density`）。
+    #     **片方の面が天井でも、もう片方が開いているなら、その腕は引けます。**
+    #     殺すのは**両方の面が閉じたとき**だけ。**理由のほうは残します**
+    #     （`open_why` として返し、`lever_notes` がそのまま出す）。
+    density_open_why = None
+    if "density" in dead_why and _long_surface_open(row):
+        density_open_why = (
+            "ショートの面は天井ですが、**長尺の面は開いています（未測定）**。"
+            " 長尺は `SHORTS_FEED` の枠を1つも使わず、"
+            "**4,000時間の門に入るのは長尺だけ**です。"
+            " **長尺を増やす作業を `none` へ落とさないこと。**")
+        dead_why.pop("density")
     # **「天井まで引いても届かない」は、天井の大小と別の理由です。**
     #     両方に当たる腕は、天井のほうを理由として残します（そちらが手前の話）。
     for k, ok in reaches.items():
@@ -270,6 +307,8 @@ def arm_state(eta_row: dict | None) -> dict:
             "hint_covered": row.get("lever_hint_covered"),
             "caps": caps, "reaches": reaches,
             "thresholds": row.get("arm_threshold") or {},
+            # **面が割れていて生きている腕の、その理由**（`density` だけ）。
+            "open_why": ({"density": density_open_why} if density_open_why else {}),
             "dead": dead, "dead_why": dead_why}
 
 
@@ -290,7 +329,17 @@ def lever_notes(lever: str | None, state: dict) -> list[str]:
         return []
     out: list[str] = []
     cap = state.get("caps", {}).get(lever)
-    if cap is not None and cap <= DEAD_CAP:
+    # **面が割れていて生きている腕は、叱らないこと**（2026-08-26）。
+    #     `arm_state` が `density` を「死んだ腕」から外したのに、ここが
+    #     `caps` の生の数（＝ショートの面）だけを見て叱り続けていました。
+    #     **同じ回に「引いてよい」と「引いても動かない」を両方出す形**です。
+    open_why = (state.get("open_why") or {}).get(lever)
+    if open_why:
+        out.append(f"         **`{lever}` は、面が割れています。** {open_why}")
+        out.append("             ショートの面の数（"
+                   + (f"×{cap:.2f}" if cap is not None else "×1.00")
+                   + "）を、この腕ぜんぶの天井として読まないこと。")
+    elif cap is not None and cap <= DEAD_CAP:
         out.append(f"         [!] **`{lever}` は、いまの実測では天井に着いています（×{cap:.2f}）。**"
                    " 引いても到達日は動きません（`eta.py` の軌跡がこの腕を外して解いています）。")
         out.append("             動かすなら、まず**天井そのものを上げる**こと"
