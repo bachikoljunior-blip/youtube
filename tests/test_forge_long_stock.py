@@ -44,7 +44,13 @@ def test_1族に何節あっても上限は2本(monkeypatch, capsys):
     out = capsys.readouterr().out
     assert "**7件** / 族 **1**" in out, out
     assert "最大 2本" in out, out
-    assert "別の族" in out, out
+    # **文言そのものではなく、言っている中身を固定します**（2026-08-26 03:5x に直した）。
+    #     ここは `"別の族" in out` でした。**その1語は「新しい表を書け」と読めます** ——
+    #     実際、そう読んだ回が2回、`src/calc/` に新しい表を書くところから
+    #     始めています（実測 20〜25分。既にある表に節を足せば12〜15分）。
+    #     文言を直した回がこの検査に当たったので、**固定する先を中身へ移しました。**
+    assert "族を1つ増やす" in out, out          # 増やすのは族であって節ではない
+    assert "同じ族に節を足しても" in out, out   # 同じ族に足しても増えない
 
 
 def test_族が増えれば上限も増える(monkeypatch, capsys):
