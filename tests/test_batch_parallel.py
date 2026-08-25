@@ -44,7 +44,7 @@ class _Recorder:
         self._uploads_now = 0
         self._lock = threading.Lock()
 
-    def __call__(self, cmd, timeout, label=""):
+    def __call__(self, cmd, timeout, label="", env=None):
         kind = ("build" if "src.pipeline" in cmd else
                 "inspect" if "inspect_build.py" in " ".join(cmd) else "upload")
         tid = label or "?"
@@ -232,7 +232,7 @@ class _FlakyRecorder(_Recorder):
         super().__init__(**kw)
         self.seen: dict[str, int] = {}
 
-    def __call__(self, cmd, timeout, label=""):
+    def __call__(self, cmd, timeout, label="", env=None):
         if "src.pipeline" in cmd:
             tid = label or "?"
             self.seen[tid] = self.seen.get(tid, 0) + 1

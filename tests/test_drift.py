@@ -226,3 +226,31 @@ def test_基準日はJSTで数える(monkeypatch):
 
     monkeypatch.setattr(drift, "datetime", _Now)
     assert drift.today_jst() == "2026-08-26", "**UTC の日付で門を開け閉めしないこと**"
+
+
+def test_noneは動きえない回として数える(tmp_path, monkeypatch):
+    """**`none` を分母にだけ入れないこと**（2026-08-26・最適化の回）。
+
+    `src/levers.LEVERS` の `none` は「この回は予測日を動かさない」そのもので、
+    `MOVING` はここだけを外して作られています。ところが `dead_arm_report()` は
+    `none` を**分母にだけ**入れていました ——「動かないと宣言した回」を
+    「生きた腕を引いた回」と同じ側で数えていた、ということです。
+
+    **外れる向きが悪いほうでした。** 実測 2026-08-26 の実物で
+    **43/175（25%）** と出ていたものが、`none` 71回 を入れると **114/175（65%）**。
+    25% は「まあ許容」に読め、65% は読めません。**判断がひっくり返ります。**
+    """
+    _seed(tmp_path, monkeypatch, [
+        _ship("2026-08-25T10:00:00+09:00", "fix: 道具", lever="none"),
+        _ship("2026-08-25T11:00:00+09:00", "fix: 手順", lever="none"),
+        _ship("2026-08-25T12:00:00+09:00", "means: 実験", lever="per_video"),
+    ], OPEN_FUTURE)
+    monkeypatch.setattr(drift.levers, "latest_arm_state", lambda _p: {
+        "caps": {"per_video": 3.0, "density": 1.0},
+        "dead_why": {}, "reaches": {"per_video": True}, "hint": "per_video",
+    })
+    out = drift.dead_arm_report("2026-08-26")
+    assert "`none`（動かさないと宣言した回）: 2/3" in out
+    assert "到達日が動きえない回: 2/3" in out
+    # **`fix` そのものを叱る文にしないこと**（この道具の冒頭を読むこと）
+    assert "動きうるのは残りの **1回**" in out
