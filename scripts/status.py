@@ -354,6 +354,37 @@ def print_queue_lag() -> None:
         print(f"\n  [!] 予約の順番待ちを数えられませんでした: {e}")
 
 
+def print_live_slots() -> None:
+    """**A/B の本が「再生の付かない枠」に置かれていないか。**（API 0単位）
+
+    **`print_hypotheses` のすぐ上に置くこと。** 下は前提ごとに「予約 N本」と出しますが、
+    その N は長いあいだ**公開日だけ**で数えていて、`src/day_cap.py` が
+    「0再生」と言っている枠の本も 1本と数えていました（2026-08-26 に見つけた。
+    実測: 帯に入る本は再生の中央値 **718**・入らない本は **2**）。
+
+    `falsified_if` はどれも「上回らなければ外れ（同点も外れ）」なので、
+    **足りない標本はそのまま「外れ」に化けます。** 実物では
+    `opening_motion 対照` が 8本中5本・`stat_split 処置(後)` が 23本中10本
+    そちら側に落ちていて、**どちらも期限どおりなら「外れ」と判定されるところ**でした。
+
+    **状態を見る道具が、状態のせいで死んではいけない**ので、
+    ここが落ちても一行だけ出して先へ進みます。
+    """
+    try:
+        from scripts import live_slots
+        board = live_slots.Board(live_slots._rows())
+        lines = live_slots.report(board)
+        live_slots.plan(board)
+        if board.moves:
+            lines.append(
+                f"  → **`python scripts/live_slots.py --plan` で手が出ます**"
+                f"（撃つのは `--apply`・{len(board.moves) * 50}単位）。"
+                "**新しい本は1本も要りません。**生きる枠の付け替えです")
+        print("\n" + "\n".join(lines))
+    except Exception as e:  # pragma: no cover - 状態しだい
+        print(f"\n  [!] A/B の本が生きた枠に居るかを数えられませんでした: {e}")
+
+
 def print_hypotheses() -> None:
     """検証していない前提と、その期限を毎回出す。
 
@@ -2135,6 +2166,7 @@ def print_local_sections(inventory: bool = True) -> None:
     # 読むのは手元の2ファイルだけなので、**日枠が閉じている窓でも出ます。**
     print(_density_verdict.render())
     print_queue_lag()
+    print_live_slots()
     print_hypotheses()
     print_alert_hit_rate()
     print_budget()
