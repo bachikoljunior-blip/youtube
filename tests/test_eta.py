@@ -1004,3 +1004,34 @@ def test_読めなくても予測を止めない(monkeypatch):
     monkeypatch.setattr(upload_cap, "state", boom)
     assert eta._how_to_pull({"lever_hint": "density", "density": 25,
                              "days_to_target": 157.0}) is None
+
+
+def test_控えに同じ本が2行あるとき_後の行を採る():
+    """**帳面は1行1件ではなく、1本1件**（この family の5件目・2026-08-25）。
+
+    `uploaded.jsonl` は足すだけの帳面で、予約を動かすと**同じ `video_id` の行が
+    もう1行足されます**（実測 505行 / 実物 491本）。最初の行は
+    「投稿したときの予約」＝**すでに動かされた過去の予定**なので、採るのは後の行。
+
+    `published_at()` は `setdefault` で最初の行を採っており、実測でその14本が
+    **全部 `views.jsonl` に無い**＝この控えが唯一の出どころでした。JST の日で
+    数えた本数が 09/20 7→9・09/21 8→10・09/23 8→7・09/24 8→5 とずれ、
+    **09/21 は上限（10本/日）ちょうど**なのに空きが2つ見えていました。
+
+    群の分母が条件と食い違う形は 8/19・8/23・8/25（2件）に続いて**これが5件目**で、
+    `src/ab_split.published()` と `src/motion_groups.scheduled_at()` は同じ規則です。
+    **3つが同じ帳面を別々に読んでいるので、直すときは3つとも見ること。**
+    """
+    import tempfile
+    with tempfile.TemporaryDirectory() as d:
+        d = Path(d)
+        (d / "views.jsonl").write_text("", encoding="utf-8")
+        (d / "uploaded.jsonl").write_text(
+            # 後の行のほうが**早い**（詰め直すと前へ動く。実測の14本はすべてこの向き）
+            json.dumps({"video_id": "v", "at": "2026-09-22T04:30:00Z"}) + "\n"
+            + json.dumps({"video_id": "v", "at": "2026-09-20T02:30:00Z"}) + "\n",
+            encoding="utf-8")
+        pub = eta.published_at(views_path=d / "views.jsonl",
+                               uploaded_path=d / "uploaded.jsonl")
+    assert pub["v"] == datetime(2026, 9, 20, 2, 30, tzinfo=timezone.utc), \
+        "**後の行**が、いま効いている予約。最初の行は動かされた過去の予定"

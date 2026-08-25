@@ -59,10 +59,29 @@ def is_precise(n) -> bool:
 
 
 def scheduled(now: dt.datetime) -> list[dict]:
-    """まだ公開されていない予約本（控えから）。**同じ題は最後の行が正。**"""
+    """まだ公開されていない予約本（控えから）。**同じ本は最後の行が正。**
+
+    ## **畳むのは `topic` ではなく `video_id`**（2026-08-25）
+
+    控えは足すだけの帳面なので、予約を動かすと同じ本の行がもう1行増えます
+    （実測 505行 / 実物 491本）。**採るのは後の行**＝いま効いている予約。
+
+    畳む鍵を `topic` にすると、**同じ題材を別の本として2回上げた本**が
+    1本に潰れ、**実在する予約本がこの検査から丸ごと落ちます**
+    （`src/ab_split.published()` に同じ註。あちらは実測 20件）。
+    ここは**公開前に悪い本を外すための検査**なので、落ちた本はそのまま公開されます。
+
+    実測（2026-08-25）: いま先の予約 333行 → 実物 319本で、
+    **`topic` で畳んでも `video_id` で畳んでも 319本**（同じ題の2本は
+    どれも公開済みで、先の予約には居ない）。**いまは差が出ません** ——
+    直したのは、次に同じ題を撮り直したときに黙って落ちるのを止めるためです。
+
+    覆る条件: 控えが `video_id` を持たない形に戻ったら、下の `__row__` の
+    逃げ道が効きます（そのときは行ごとに1件と数えます）。
+    """
     out: dict[str, dict] = {}
     with open(ROOT / "data/uploaded.jsonl", encoding="utf-8") as fh:
-        for line in fh:
+        for n, line in enumerate(fh):
             line = line.strip()
             if not line:
                 continue
@@ -72,7 +91,8 @@ def scheduled(now: dt.datetime) -> list[dict]:
                 continue
             when = dt.datetime.fromisoformat(at.replace("Z", "+00:00"))
             if when > now:
-                out[row["topic"]] = row
+                # 古い形（`video_id` の無い行）は畳めないので行そのものを鍵にする
+                out[str(row.get("video_id") or f"__row__{n}")] = row
     return sorted(out.values(), key=lambda r: r["at"])
 
 

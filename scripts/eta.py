@@ -243,7 +243,8 @@ def published_at(views_path: Path | None = None,
        **観測のたびに追記されるので、いちばん古い行がいちばん正確**です。
        `scripts/per_day_views.py` が同じ復元をしています
     2. `data/uploaded.jsonl` の `at`（**予約した公開時刻**）。1 に無い本 ——
-       つまり**まだ一度も観測されていない本**は、ここでしか年齢が分かりません
+       つまり**まだ一度も観測されていない本**は、ここでしか年齢が分かりません。
+       **同じ本の行が2つあるときは、後の行を採ります**（下の註）
 
     **`src/build_perf.py` の `first_seen()` とは別物です。** あちらは
     「最初に観測した時刻」で、こちらは「公開した時刻」。観測は公開の後なので、
@@ -283,6 +284,23 @@ def published_at(views_path: Path | None = None,
                 out[vid] = born
 
     if uploaded_path.exists():
+        # **控えは1行1件ではなく、1本1件**（2026-08-25 に `src/ab_split.published()`
+        # が同じことを書いています）。`uploaded.jsonl` は足すだけの帳面で、
+        # 予約を動かすと**同じ `video_id` の行がもう1行足されます**
+        # （実測 505行 / 実物 491本 —— 14本が2つの `at` を持つ）。
+        # **採るのは後の行。** 最初の行は「投稿したときの予約」＝すでに
+        # 動かされた過去の予定です。ここは `setdefault` で**最初の行**を
+        # 採っていたので、その14本だけ公開時刻が古いままでした。
+        #
+        # 実測（2026-08-25）: 14本とも `views.jsonl` に無い＝この控えが唯一の
+        # 出どころで、JST の日で数えた本数が **09/20 7→9・09/21 8→10・
+        # 09/23 8→7・09/24 8→5** とずれていました。09/21 は上限
+        # （`src/day_cap.py` ＝ 10本/日）**ちょうど**なので、直す前は
+        # **埋まっている日に空きが2つ見えていました**（`density` の腕そのもの）。
+        #
+        # 覆る条件: 控えが「足すだけ」でなくなり、動かした行で
+        # 上書きするようになったら、後の行を採る理由は消えます。
+        ledger: dict[str, datetime] = {}
         for line in uploaded_path.read_text(encoding="utf-8").splitlines():
             if not line.strip():
                 continue
@@ -293,7 +311,9 @@ def published_at(views_path: Path | None = None,
             vid = row.get("video_id")
             at = _parse(row.get("at"))
             if vid and at is not None:
-                out.setdefault(vid, at)   # 1 のほうが正確なので、上書きしない
+                ledger[vid] = at          # **後の行で上書きする**
+        for vid, at in ledger.items():
+            out.setdefault(vid, at)       # 1 のほうが正確なので、上書きしない
     return out
 
 
