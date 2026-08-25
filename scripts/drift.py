@@ -426,10 +426,23 @@ def dead_arm_report(today: str, window_days: int = WINDOW_DAYS) -> str:
     why = state.get("dead_why") or {}
     dead = sorted(k for k in tally if k in why)
     n_dead = sum(tally[k] for k in dead)
+    # **`none` は、定義そのものが「この回は予測日を動かさない」です**
+    #     （`src/levers.LEVERS`。`MOVING` はここだけを外して作られています）。
+    #     ここは長らく `none` を**分母にだけ**入れていました ——
+    #     つまり「動かない回」を「生きた腕を引いた回」と同じ側で数えていた。
+    #     **外れる向きが悪いほうでした**: 実測 2026-08-26 で
+    #     **43/175（25%）** と印字していたものが、`none` 71回 を入れると
+    #     **114/175（65%）** です。25% は「まあ許容」に読め、65% は読めません。
+    #     この節に渡される本文が言っている「べた書きが判断をひっくり返す」の、
+    #     計算版です。**`fix` を禁じるためではありません**（この道具の冒頭を読むこと）——
+    #     禁じるのではなく、**2つを別々に印字して、合計も出します。**
+    n_none = tally.get("none", 0)
     for k, n in tally.most_common():
         cap = caps.get(k)
         mark = ""
-        if why.get(k) == "天井":
+        if k == "none":
+            mark = "  ← **宣言どおり、この回は到達日を動かしません**（道具・手順・記録の整備）"
+        elif why.get(k) == "天井":
             mark = f"  ← **天井 ×{cap:.2f}（いまの実測では引き代なし）**"
         elif why.get(k) == "天井まで引いても届かない":
             cap_s = f"天井 ×{cap:,.2f} だが、" if cap is not None else ""
@@ -439,8 +452,14 @@ def dead_arm_report(today: str, window_days: int = WINDOW_DAYS) -> str:
             th_s = f"／出はじめ ×{th:,.2f}" if isinstance(th, (int, float)) else ""
             mark = f"  （天井 ×{cap:.2f}{th_s}）"
         out.append(f"    {k:<10} {n:>3}回{mark}")
-    out.append(f"  → **到達日を動かせない腕を選んだ回: {n_dead}/{len(runs)}**"
+    out.append(f"  → 動かす腕を選んだのに**引き代が無かった回: {n_dead}/{len(runs)}**"
                f"（{n_dead / len(runs) * 100:.0f}%）")
+    out.append(f"  → **`none`（動かさないと宣言した回）: {n_none}/{len(runs)}**"
+               f"（{n_none / len(runs) * 100:.0f}%）")
+    out.append(f"  → 合わせて、**この回では到達日が動きえない回: "
+               f"{n_dead + n_none}/{len(runs)}**"
+               f"（{(n_dead + n_none) / len(runs) * 100:.0f}%）"
+               f" —— 動きうるのは残りの **{len(runs) - n_dead - n_none}回**")
     if not state.get("reaches"):
         out.append("      （`arm_reaches` がまだ行に入っていません。"
                    "**「天井まで引いても届かない」側は数えられていません** ——"
