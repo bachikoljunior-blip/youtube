@@ -26,8 +26,30 @@ def check(label: str, ok: bool, hint: str = "", required: bool = True) -> None:
         print(f"        → {hint}")
 
 
+def check_script_names() -> None:
+    """scripts/ に標準ライブラリと同じ名前のファイルを置いていないか。
+
+    `python scripts/upload_only.py` は scripts/ を sys.path の先頭に置く。
+    そこに標準ライブラリと同名のファイルがあると、そのディレクトリから起動した
+    **全部のスクリプト**が黙って壊れる。実際に scripts/inspect.py を足した直後、
+    投稿が `module 'inspect' has no attribute 'signature'` で落ちた。
+
+    壊れ方が原因から遠いので、気づくのに時間がかかる。機械に見せておく。
+    """
+    shadowed = sorted(
+        p.stem for p in Path(__file__).resolve().parent.glob("*.py")
+        if p.stem in sys.stdlib_module_names
+    )
+    check(
+        "scripts/ の名前が標準ライブラリと衝突していない",
+        not shadowed,
+        f"{', '.join(f'scripts/{s}.py' for s in shadowed)} の名前を変えてください",
+    )
+
+
 def main() -> int:
     print("=== 環境チェック ===\n")
+    check_script_names()
 
     for name, hint in [
         ("CLAUDE_CODE_OAUTH_TOKEN", "手元で `claude setup-token`"),
@@ -117,14 +139,28 @@ def main() -> int:
         except Exception as exc:
             check("YouTube 認証", False, explain(exc)[:300])
 
+    # 在庫は「全テーマ − 投稿済み」でしか出せない。投稿済みはチャンネルから引く。
+    # ここを `if not problems` で飛ばしていたので、**他の項目が1つでも落ちていると
+    # posted が空になり、在庫が「全件」に化けていました**（2026-08-15 に実測で発覚。
+    # CLAUDE_CODE_OAUTH_TOKEN がコンテナに無いだけで毎回そうなり、
+    # 真の12件が **40件** と出ていた）。在庫切れは M14 の律速そのもの
+    # （`docs/MEANS.md`「着手して分かった律速 —— 手段ではなく在庫でした」）なので、
+    # **多いほうに間違える計器は、いちばん見たいときに黙る。**
+    #
+    # 直し: 引けたときだけ数える。**引けなかったら数を出さない。**
+    # 「分からない」を「たくさんある」と書かないこと。
+    total = len(config.load_topics()["topics"])
     try:
         from src.history import posted_topic_ids
 
-        posted = posted_topic_ids() if not problems else set()
-    except Exception:
-        posted = set()
-    unused = [t for t in config.load_topics()["topics"] if t["id"] not in posted]
-    check(f"未投稿テーマ {len(unused)} 件", len(unused) > 0, "config/topics.yaml に追加")
+        posted = posted_topic_ids()
+    except Exception as exc:
+        check(f"未投稿テーマ ?件 / 全{total}件 — 投稿済みを引けませんでした",
+              False, f"チャンネルに繋がりません（{str(exc)[:120]}）。在庫は判定できていません")
+    else:
+        unused = [t for t in config.load_topics()["topics"] if t["id"] not in posted]
+        check(f"未投稿テーマ {len(unused)} 件 / 全{total}件",
+              len(unused) > 0, "config/topics.yaml に追加")
 
     print()
     if problems:

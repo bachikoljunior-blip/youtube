@@ -1,0 +1,16 @@
+{
+  "_": "親トリガーの正本。実物へ当てるのは scripts/trigger_sync.py。docs/TRIGGER.md の表は人向けの写しで、機械が読むのはこのファイル。",
+  "trigger_id": "trig_01LNvtNdjggEA4nfxX49YjX8",
+  "name": "YouTube 定期（1日19回・親 017yMBL2／指示表示・質疑応答・子を立てて畳む）",
+  "cron_expression": "9 0-5,7-11,13-17,19-21 * * *",
+  "enabled": true,
+  "persistent_session_id": "session_017yMBL2xfhjbZRhb6D646HG",
+  "environment_id": "env_01QMJaP2yRCzw4tY5VpJeM1m",
+  "owner": "bachikoljunior-blip",
+  "repo": "youtube",
+  "repo_url": "https://github.com/bachikoljunior-blip/youtube",
+  "branch": "claude/youtube-auto-post-revenue-ggedij",
+  "body_file": "docs/trigger_body.md",
+  "stale_hours": 24,
+  "_cron_why": "2026-08-21 21:2x に 1日16回 → **1日19回**（UTC 11・17・21 を戻す＝平均 75.8分）。**戻した理由は、推定が実測に置き換わったからです** —— 同じ回の 21:0x に 16回へ落としたときの 98.4% は『08/21 08:07 の目盛り 92% を 0.489 %/時 で13時間運んだ推定』でした。その直後、別のセッションが**オーナーの使用状況の画面（08/21 21:10 で 95%）**を積み（129bcf8）、**実測の区間は 0.489 ではなく 0.230 %/時**でした（08/21 08:07→21:10 で +3%）。推定が 3.4ポイント 高すぎたので、16回はそのぶん締めすぎです。新しい読み: 残り 4.9% ÷ 残り 9.6時間 ＝ 許される **0.515 %/時**、1周 0.496% ＝ **持続できる間隔 58分**。19回（75.8分）はそれより緩いので収まります。リセットまでに残るのは UTC 13,14,15,16,17,19,20,21 の **8回** ＝ 3.97% ＜ 4.9%。**UTC 7（＝JST 16:00・Data API の日枠が戻る回）は必ず残すこと** —— reschedule と thumbnails はそこから先でしか撃てません。**教訓**: 目盛りが人手でしか入らない以上、推定はいつでも 3ポイント 外れます。**新しい目盛りが積まれた回は、間隔を必ず引き直すこと。****覆る条件**: 次の目盛りで『持続できる間隔』が 75.8分 より長くなったら締める（docs/TRIGGER.md）"
+}

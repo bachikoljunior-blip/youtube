@@ -1,5 +1,16 @@
 {
   "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash scripts/env_guard.sh",
+            "timeout": 300
+          }
+        ]
+      }
+    ],
     "UserPromptSubmit": [
       {
         "hooks": [
@@ -65,6 +76,10 @@
       "Bash(find *)",
       "Bash(wc *)",
       "Bash(jq *)",
+            "mcp__bf7c680d-5fdc-5ef4-b4a0-abadb619bf0a",
+      "mcp__Claude_Code_Remote",
+      "mcp__github",
+
       "Bash(rm -rf build/*)"
     ],
     "deny": [
@@ -77,5 +92,10 @@
       "Bash(printenv*)",
       "Bash(sudo *)"
     ]
+  },
+  "statusLine": {
+    "type": "command",
+    "command": "python3 scripts/statusline_usage.py",
+    "padding": 0
   }
 }

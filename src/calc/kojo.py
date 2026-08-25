@@ -155,3 +155,20 @@ def by_rate(name: str) -> list[dict]:
     check_tables()
     d = next(x for x in DEDUCTIONS if x.name == name)
     return [refund(d, r) for r in INCOME_TAX_RATES]
+
+
+if __name__ == "__main__":
+    # **ここが無かった（2026-08-05 に発覚）。** zangyo・shitsugyo と同じ穴。
+    # 標準出力が空だと `calc_block` は空のコードブロックを返し、台本を書く側が
+    # 数字を発明できてしまう。数字を発明させないための仕組みが開いていた。
+    check_tables()
+    print("制度の値の検査: 通過")
+
+    for rate in INCOME_TAX_RATES:
+        print(f"\n=== 所得税率 {rate:.0%} のとき、控除ごとにいくら変わるか ===")
+        print(f"{'控除':>14s} {'所得税で戻る':>10s} {'住民税が減る':>10s} {'合計':>9s} "
+              f"{'よく見る計算':>10s} {'多く出る額':>9s} {'5年分':>9s}")
+        for r in table(rate):
+            print(f"{r['name']:>14s} {r['income_tax_refund']:9,d}円 {r['resident_tax_cut']:9,d}円 "
+                  f"{r['total']:8,d}円 {r['naive_total']:9,d}円 {r['overstated_by']:8,d}円 "
+                  f"{r['five_years']:8,d}円")

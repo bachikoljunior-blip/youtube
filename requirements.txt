@@ -6,3 +6,10 @@ playwright>=1.47.0
 Pillow>=10.4.0
 PyYAML>=6.0
 pydantic>=2.9.0
+# `docs/trigger_main.md` §4 が「検査を足したら pytest tests/ を叩いて件数を見ろ」と
+# 言っているのに、**入っていなかった**（2026-08-15 の回が `No module named pytest`）。
+# 手順が要求する道具は、手順と一緒に入っていないと毎回1手ぶん無駄になる。
+pytest>=8.0.0
+# `scripts/probe_yomi.py` が合成音声のスペクトルを比べるのに使う。
+# 読み違いは耳でしか見つからなかったので、機械が聞けるようにするための道具。
+numpy>=2.0.0

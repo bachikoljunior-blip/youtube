@@ -1,0 +1,301 @@
+"""**在庫を増やす道は、1つではありません。** どの表を「深く掘るか」を出す。
+
+    from src import section_depth
+    for line in section_depth.report_lines(all_sections):
+        print(line)
+
+## なぜ要るか（2026-08-17 に測って足した）
+
+`status.py` は、未使用の節が 0 になったときこう言っていました。
+
+> **増やす道は1つだけ: `src/calc/` に新しい表を足す**
+
+**嘘です。道は2つあります。**
+
+    (A) 新しい表を1本書く         → 節が **+5前後**（実測の中央値）
+    (B) 既にある表に節を足す       → 節が **+1ずつ**。**表は書かない**
+
+そして `scripts/retro.py` が §6 (a2) の問い1を縦に並べると、
+**直近8回のうち7回で、いちばん時間を食ったのが (A) の「中身を決めるところ」**でした
+（約20〜25分。`docs/JOURNAL.md` 2026-08-17）。**1周の半分です。**
+
+(A) が高いのは、節を書くところではありません。**新しい題材だからです** ——
+制度の値を条文に当たって拾い直し、`ASSUMPTIONS` を置き直し、
+`check_tables()` をその題材ぶん書き下ろす。**(B) はそこを全部飛ばします。**
+既にある表は、値も前提も検査も**もう通っている**ので、足すのは節だけです。
+
+## 余地は、実物が持っています
+
+節の数は表ごとに **3〜13件**（2026-08-17 の実測。全37本で221件）。
+**同じ道具立てで13件まで掘れている**（`shitsugyo`）のだから、
+**3件で止まっている表は、題材が浅いのではなく掘っていないだけ**です。
+
+    いま        221節 / 37本（中央値 5節）
+    中央値まで  「中央値に届いていない表」を中央値まで掘るだけで **+30節前後**
+
+**新しい題材を1つも増やさずに、いまの在庫の1割強が出ます。**
+
+## 並べ方（**浅いだけで選ばない**）
+
+浅い表から順に掘ると、**実績の悪い族に本数を注ぐ**ことになります。
+門は登録者なので、`family_perf.combined_map()`（engaged × 登録の倍率）を掛けます。
+
+    掘り甲斐 ＝ (中央値 − いまの節数) × 族の順番の値
+
+- **足りている表（中央値以上）は出しません。** 0以下になるので自然に落ちます
+- **実績の無い族は全体平均**（`family_perf.scorer` と同じ扱い。探索を殺さない）
+
+## 同点を、アルファベット順で破らないこと（2026-08-17 に測って直した）
+
+**掘り甲斐は、ほとんどの表で同じ値になります。** 実測（同日）:
+
+    13族が **ぴったり 0.704 で同点**（節5・あと2節・実績が無いので全部 base）
+
+同点は `sort` の第2キー（**モジュール名**）で破られていました。つまり
+`status.py` が出す「(B) の候補」の1位は、**値打ちの1位ではなく、
+あ行の1位**です。そして手順（`docs/trigger_main.md` §4）は
+**「(B) の1位を見ること」**を既定にしています。
+
+    出ていた5件   ideco(3) ikuji(**0**) jidou(**0**) jikangai(2) juminzei(2)
+    出ていない    kokuho(**9**) ← 同点なのに7番目なので、一度も出ません
+
+括弧は `src/section_sweep.py` が**その表から機械で拾えた形の数**です。
+**0件の表を1位として出し、9件の表を隠していました。**
+
+**これは `critique_queue --next` と同じ形の2度目です**（2026-08-16 11:3x
+「待ち行列は動画IDのアルファベット順で、**並びが選択そのものだったのに、
+その並びは値打ちと何の関係もなかった**」）。**別の道具で、同じ壊れ方。**
+
+だから同点は**掃引の候補数**で破ります（`sweep_counts`）。
+
+- **掘り甲斐そのものは変えていません。** 第1キーは今までどおりです ——
+  「候補1件がいくらの節になるか」は **n=2 で割れています**
+  （17:3x は棄却・18:09 は 4→6節）。**値に混ぜるとその未検証の係数が主キーに乗ります。**
+  破るのは**同点のときだけ**で、そこは今まで**測っていない順**でした
+- **掃引が読めない回は、今までどおりモジュール名で破ります**（止めない）
+- 候補数は行に出します。**0件の表が1位に出たら、それは (A) に戻る合図**です
+
+## その候補数が、既に節が言っているぶんで水増しされていた（2026-08-17 20:5x）
+
+上の直しは「同点を**測っていない順**で破るな」でした。**測る先が違いました。**
+数えていたのは**拾えた形の数**で、**まだ誰も言っていない形の数**ではありません。
+前の回の実測（申し送りの1件目）:
+
+    ideco  掃引 3件 → **3件とも既存の節がもう言っていること**。それでも (B) の1位
+
+**1位は「掘れば節が出る表」のつもりで読まれます**（手順 §4 の既定）。
+既出で水増しされた数で破ると、**掘っても0節の表を1位に出します。**
+`critique_queue --next` → 同点のモジュール名 に続く、**同じ形の3度目**です。
+
+だから破るのは `section_sweep.novel_counts()` の2つめ（**新しい候補の数**）。
+全体では **94件 → 新しい 23件**（同日の実測。`ideco` は 3→0）。
+**拾えた数も行に残します** —— 落とす向きの誤りは「候補が少なく見える」なので、
+**黙って落とさないこと**（人が両方見て検算できるようにしてあります）。
+
+## 深い表を、ここで黙って落としていた（2026-08-20 に測って直した）
+
+上の並べ方には、もう1つ**候補に出す前の門**がありました ——
+**「目標（上位四分位＝8節）に届いている表は返らない」**です。
+掘り甲斐は `(目標 − いまの節数) × 族の順番の値` なので、
+**深い表ほど先に0以下になって消えます。**
+
+同じ日の `status.py` は、別の節でこう言っていました。
+
+> **次に節を書くならここ**（実績が上位なのに未使用の節が0）: nenkin iryohi shitsugyo
+
+**その3本が、3本ともこの門で消えていました**（nenkin 13節・iryohi 15節・
+shitsugyo 13節。**深いのは「掘り尽くした」からではなく、実績が良くて何度も
+選ばれたから**です）。2つの道具が正反対を指していて、
+**候補の一覧を作っている側が勝ちます** —— だから在庫は
+**いつまでも実績の悪い族にしか作れませんでした**（実測: 未投稿27本の族に
+nenkin も iryohi も shitsugyo も**1本もありません**）。
+
+余地が0だという根拠もありませんでした。**掃引はその場で数えています**:
+
+    iryohi     掃引 61件 のうち **まだどの節も言っていない 33件**
+    nenkin     掃引 20件 のうち **新しい 14件**
+    shitsugyo  掃引 14件 のうち **新しい 0件**  ← ここは本当に尽きている（(A) の合図）
+
+だから目標を超えた表は、**掃引の新しい候補の数を余地として**出します。
+`novel_counts` を渡さない呼び方では今までどおり落ちるので、
+**掃引が読めない回の振る舞いは変わりません。**
+
+**覆る条件**: 掘った節から作った本が、族の実績（`family_perf`）を再現しないとき ——
+つまり nenkin/iryohi の1本あたり再生が、全体の中央値を上回らなくなったとき。
+そのときは族の順番の値そのものが事前分布として外れているので、
+**ここではなく `family_perf` を直すこと。**
+
+## この道具が言わないこと
+
+**「掘れば必ず節が出る」とは言っていません。** 題材によっては
+本当に3節で尽きていることがあります。**掘って出なければ、それは (A) に戻る合図**で、
+そのときは `docs/JOURNAL.md` に「この族は尽きた」と書くこと ——
+**書かないと、次の回が同じ表をもう一度掘ります。**
+"""
+from __future__ import annotations
+
+import statistics
+
+__all__ = ["depths", "median_depth", "candidates", "report_lines"]
+
+
+def depths(all_sections: dict[str, dict[str, str]]) -> dict[str, int]:
+    """モジュール → 節の数。`topic_forge.survey()` の1つめをそのまま渡す。"""
+    return {m: len(v) for m, v in all_sections.items()}
+
+
+def median_depth(all_sections: dict[str, dict[str, str]]) -> float:
+    """節の数の中央値。**目標値ではなく、いま実際に届いている線**です。"""
+    got = list(depths(all_sections).values())
+    return statistics.median(got) if got else 0.0
+
+
+# 掘る目標をどこに置くか。**中央値では低すぎます**（2026-08-17 に測って上げた）。
+# 中央値（5節）に揃えると余地は +6節にしかならず、**(B) が無意味に見えます。**
+# いっぽう最大（`shitsugyo` の13節）を全部に課すのは、題材の深さを無視した楽観です。
+# **4分の1の表が実際に届いている線**を目標にします ＝ 上位四分位。
+TARGET_QUANTILE = 0.75
+
+
+def target_depth(all_sections: dict[str, dict[str, str]],
+                 quantile: float = TARGET_QUANTILE) -> int:
+    """掘る目標の節数。**「4分の1の表がもう届いている」線**を返します。"""
+    got = sorted(depths(all_sections).values())
+    if not got:
+        return 0
+    idx = min(len(got) - 1, int(round(quantile * (len(got) - 1))))
+    return got[idx]
+
+
+def candidates(all_sections: dict[str, dict[str, str]],
+               scores: dict[str, float] | None = None,
+               base: float = 1.0,
+               limit: int = 5,
+               sweep_counts: dict[str, int] | None = None,
+               novel_counts: dict[str, int] | None = None,
+               ) -> list[tuple[str, int, int, float]]:
+    """掘り甲斐の順に (モジュール, いまの節数, 中央値まであと何節, 値) を返す。
+
+    `scores` は `family_perf.combined_map()`。無ければ全部 `base` で並べます
+    （＝ 浅い順そのもの）。
+
+    **目標に届いている表も返ることがあります**（2026-08-20 に直した）。
+    そのときの3つめは「あと何節」ではなく **`novel_counts` の件数**です
+    （`report_lines` はその行をそう書きます）。`novel_counts` を渡さなければ
+    今までどおり落ちるので、**掃引が読めない回の振る舞いは変わりません。**
+
+    `sweep_counts` は `src/section_sweep.py` が表ごとに拾った候補の数。
+    `novel_counts` はそのうち **まだどの節も言っていない**数
+    （`section_sweep.novel_counts()` の2つめ）。
+    **同点を破るためだけに使います**（第1キーは掘り甲斐のまま）。
+    渡さなければ、今までどおりモジュール名で破ります —— 上の節の理由により、
+    **それは「測っていない順」なので、渡せるなら渡すこと。**
+    """
+    scores = scores or {}
+    counts = sweep_counts or {}
+    novel = novel_counts or {}
+    tgt = target_depth(all_sections)
+    out = []
+    for mod, n in depths(all_sections).items():
+        room = tgt - n
+        if room <= 0:
+            # **目標を超えた表を、ここで黙って落としていました**（2026-08-20 に測って直した）。
+            # 実測: `family_perf` が「次に節を書くならここ」と名指しする上位3族
+            # （nenkin 13節・iryohi 15節・shitsugyo 13節）は**全部この行で消えます**。
+            # 目標は8節（上位四分位）なので、**深い表ほど落ちる**からです。
+            # つまり**いちばん実績の良い族には、構造上いつまでも在庫が作れません。**
+            # 余地は「目標まであと何節」だけではありません。**掃引が実際に数えています** ——
+            # 同日の実測で iryohi は**まだどの節も言っていない形が33件**（nenkin 14件）。
+            # だから目標を超えた表は、**その新しい候補の数を余地として**出します。
+            # 渡されなければ 0 なので、**今までどおり落ちます**（掃引が読めない回は不変）。
+            room = novel.get(mod, 0)
+            if room <= 0:
+                continue
+        out.append((mod, n, room, room * scores.get(mod, base)))
+    # **破る順は「新しい候補 → 拾えた候補 → 名前」**。
+    # 新しい数だけで破ると、掃引が読めない回に全部 0 で並んで名前順に戻るので、
+    # 拾えた数を控えに残してあります（`novel` を渡さない呼び方も今までどおり通る）。
+    out.sort(key=lambda r: (-r[3], -novel.get(r[0], 0), -counts.get(r[0], 0), r[0]))
+    return out[:limit]
+
+
+def ties_at_top(rows: list[tuple[str, int, int, float]]) -> int:
+    """先頭と**同じ掘り甲斐**の表が何本あるか。
+
+    **1 より大きければ、1位は「1位」ではありません** —— 同点の中から
+    掃引の候補数で選んだものです。`report_lines` がそれを行に出します。
+    **黙って1位として出すと、次の回が値打ちの順だと読みます**（実測13本が同点）。
+    """
+    if not rows:
+        return 0
+    top = rows[0][3]
+    return sum(1 for r in rows if r[3] == top)
+
+
+def report_lines(all_sections: dict[str, dict[str, str]],
+                 scores: dict[str, float] | None = None,
+                 base: float = 1.0,
+                 limit: int = 5,
+                 sweep_counts: dict[str, int] | None = None,
+                 novel_counts: dict[str, int] | None = None) -> list[str]:
+    """`status.py` がそのまま印刷する行。**空のリストを返すことがあります。**"""
+    med = median_depth(all_sections)
+    tgt = target_depth(all_sections)
+    # **`max()` を素で呼ばないこと**（検査が見つけた。`src/calc/` が読めない回は空で来る）。
+    got = depths(all_sections)
+    deep = max(got.items(), key=lambda kv: kv[1]) if got else ("—", 0)
+    counts = sweep_counts or {}
+    novel = novel_counts or {}
+    rows = candidates(all_sections, scores, base, limit, counts, novel)
+    whole = candidates(all_sections, scores, base, len(all_sections), counts, novel)
+    total = sum(len(v) for v in all_sections.values())
+    out = [
+        f"  **道は2つあります。**（いま {total}節 / {len(all_sections)}本・"
+        f"中央値 {med:g}節・いちばん深い表は {deep[0]} の {deep[1]}節）",
+        "    (A) 新しい表を1本書く … 節 **+5前後**。"
+        "**直近8回のうち7回で、この回いちばんの時間食い**（20〜25分）",
+        "    (B) 既にある表に節を足す … **+1ずつ。制度の値も前提も検査も、もう通っています**",
+    ]
+    if not rows:
+        out.append(f"    → いまは (B) の候補がありません（全部が {tgt}節以上）。**(A) を選ぶこと。**")
+        return out
+    out.append(f"    → **(B) の候補**（目標 {tgt}節 ＝ **4分の1の表がもう届いている線**。"
+               f"掘り甲斐 ＝ あと何節 × 族の順番の値）")
+    # **足し算に、目標を超えた表の余地を混ぜないこと。**
+    # あちらの余地は「目標まであと何節」ではなく**掃引の新しい候補の数**なので、
+    # 混ぜると「{tgt}節まで掘るだけで」という文が数字と食い違います。
+    shallow = [r for r in whole if r[1] < tgt]
+    out.append(f"       **全部を {tgt}節まで掘るだけで +{sum(r[2] for r in shallow)}節**"
+               f"（新しい題材は1つも増やさずに）:")
+    over = [r for r in whole if r[1] >= tgt]
+    if over:
+        out.append(f"       **目標を超えた表も出しています**（{len(over)}本）—— "
+                   "そこの余地は「あと何節」ではなく**掃引がまだ誰も言っていないと数えた形の数**です。"
+                   "**深い表ほど落ちる作りだったので、実績の良い族に在庫が作れませんでした。**")
+    tied = ties_at_top(whole)
+    if tied > 1:
+        out.append(f"       [!] **上位 {tied}本が掘り甲斐で同点です。"
+                   "1位は値打ちの1位ではありません** —— "
+                   "同点は「掃引の**新しい**候補の数」で破っています"
+                   "（既に節が言っているぶんは数えません）")
+    for mod, n, gap, val in rows:
+        if n >= tgt:
+            line = (f"       {mod:<12} いま{n:2d}節 → **目標超・掃引の新しい候補 {gap}件**"
+                    f"（掘り甲斐 {val:.1f}")
+        else:
+            line = f"       {mod:<12} いま{n:2d}節 → **あと{gap}節**（掘り甲斐 {val:.1f}"
+        if counts:
+            c = counts.get(mod, 0)
+            if novel:
+                nv = novel.get(mod, 0)
+                line += f" ・掃引 {c}件のうち**新しい {nv}件**"
+                if not nv:
+                    line += (" ← **全部、いまの節がもう言っています**"
+                             if c else " ← **機械には1つも見えていません**")
+            else:
+                line += f" ・掃引 {c}件" + ("" if c else " ← **機械には1つも見えていません**")
+        out.append(line + "）")
+    out.append("    **掘って出なければ (A) に戻る合図です。**"
+               "そのときは「この族は尽きた」と `docs/JOURNAL.md` に書くこと"
+               "（書かないと次の回が同じ表を掘ります）。")
+    return out

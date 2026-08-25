@@ -1,9 +1,28 @@
-"""既存の build/<テーマID>/ からサムネイルを作り直して差し替える。
+"""投稿済みの動画に、サムネイルを載せ直す。**入口は2つあります。**
+
+    python scripts/refresh_thumbnail.py --missing [--force]
+        **控えに残した bytes を、載っていない本すべてに押す**（2026-08-17 に追加）。
+        `build/` は要りません。ふつうはこちらです
 
     python scripts/refresh_thumbnail.py <テーマID> <動画ID> <配色の番号>
+        `build/<テーマID>/` から**作り直して**差し替える。
+        サムネイルの作りそのものを変えたときだけ
 
-サムネイルの作りを直したあと、すでに投稿した動画にも当て直すために使う。
-動画そのものを作り直す必要はないので数秒で終わる。
+## `--missing` を足した理由（**3回持ち越された項目**）
+
+日枠が切れている13時間は `thumbnails.set` だけが 403 になり、
+`videos.insert` は通ります。つまり**サムネイルの無い予約**が積まれます。
+
+申し送りは3回とも「枠が戻った回に `refresh_thumbnail.py` を回すこと」と
+書いていました。**その手順は実行できません。** 下の作り直しの道が読むのは
+`build/<テーマID>/` ですが、**`build/` は .gitignore で、1周ごとに
+コンテナごと消えます。** 枠が戻る JST 16:00 には、03時台に上げた本の
+`build/` はとっくにありません。**不可能なことを3回頼み続けていました。**
+
+そして**焼き直す必要はありません。** サムネイルは投稿の時点でもう出来ていて、
+YouTube に載らなかっただけです。`scripts/critique_queue.stash()` が
+bytes を `data/critique_queue/<動画ID>.thumb.jpg` に残すので、
+**後の回は押すだけで済みます**（1本 約70KB）。
 """
 from __future__ import annotations
 
@@ -16,7 +35,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from googleapiclient.discovery import build  # noqa: E402
 from googleapiclient.http import MediaFileUpload  # noqa: E402
 
-from src import thumbnail, visuals  # noqa: E402
+from src import auth, thumbnail, upload_cap, visuals  # noqa: E402
 from src.auth import credentials  # noqa: E402
 
 
@@ -44,7 +63,102 @@ def main(topic: str, video_id: str, theme_index: int) -> int:
     return 0
 
 
+def _ledger_ahead() -> list:
+    """これから公開される予定時刻（控えだけ・**API 0単位**）。"""
+    from datetime import datetime, timezone
+
+    from src import dupes as _dupes
+
+    now = datetime.now(timezone.utc)
+    out = []
+    for r in _dupes.ledger_rows():
+        at = r.get("at")
+        if not at:
+            continue
+        try:
+            t = datetime.fromisoformat(at.replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        if t > now:
+            out.append(t)
+    return sorted(out)
+
+
+def push_missing(dry_run: bool = False, force: bool = False) -> int:
+    """控えに残した bytes を、載っていない本すべてに押す。**`build/` は要りません。**
+
+    **予約に0本の日があるあいだは押しません**（2026-08-19。理由は
+    `src/upload_cap.thumbnail_yield_to_schedule` の本文）。同じ50単位で
+    詰め直しが1本できて、そちらのほうが `eta.py` の日付を動かすからです。
+    `force=True` で今すぐ押せます。
+    """
+    import critique_queue
+
+    rows = critique_queue.missing_thumbnail()
+    if not rows:
+        print("[thumb] サムネイルの載っていない本はありません")
+        return 0
+
+    print(f"[thumb] サムネイルの載っていない本: **{len(rows)}本**")
+    for row in rows:
+        print(f"  {row['video_id']}  {row['topic']}  ({row['stashed_at']})")
+    if dry_run:
+        print("[thumb] --dry-run なので押していません")
+        return 0
+
+    # **押す前に、観測した事実のほうを見る**（2026-08-17 22:4x に足した）。
+    # 時計ではありません —— 単位枠は窓の中でこちらの `videos.insert` が
+    # 使い切るので、**「窓が開いている」と「単位が残っている」は別の事実**です。
+    q = upload_cap.day_quota()
+    if not q.open:
+        print(f"[thumb] {q.line}")
+        print("[thumb] **押しません**（この窓では 5本とも 403 になるだけです）。"
+              " 窓が変わってから、**投稿より先に**この1行を回すこと。")
+        return 1
+
+    # **穴のほうが先です**（2026-08-19 18:3x に測って足した）。ここは長らく
+    # 「窓が開いていれば押す」でした。窓の単位は**詰め直しと取り合い**で、
+    # 値段は同じ50単位、効きは桁で違います（再生の 99.9% は
+    # サムネイルの出ない SHORTS_FEED）。**門は押す側に置いてあります** ——
+    # `batch_build` にだけ置くと、`reschedule` から見えません。
+    if not force:
+        okay, line = upload_cap.thumbnail_yield_to_schedule(_ledger_ahead(), len(rows))
+        if not okay:
+            print(f"[thumb] {line}")
+            return 3
+        print(f"[thumb] {line}")
+
+    y = build("youtube", "v3", credentials=credentials(), cache_discovery=False)
+    ok = 0
+    for row in rows:
+        try:
+            y.thumbnails().set(
+                videoId=row["video_id"],
+                media_body=MediaFileUpload(str(row["thumb"])),
+            ).execute()
+        except Exception as exc:
+            # **1本落ちても止めない。** 日枠がまだ戻っていないだけのことがあり、
+            # そこで抜けると、押せるはずの残りまで押さずに終わります。
+            print(f"[thumb] ✗ {row['video_id']}: {str(exc)[:160]}")
+            # **403 は残すこと**（2026-08-17 22:4x に足した）。残さないと、
+            # 次の回は「JST 16時を回ったから戻っているはず」と**時計で推測**します。
+            # この回はそれで「いまなら潰せます」と言われ、**5本とも 403**でした。
+            if auth.is_day_quota(exc):
+                upload_cap.note_quota_hit(detail=f"thumbnails.set {row['video_id']}")
+            continue
+        # **押せた本だけ印を消す。** 消してから押すと、落ちた本が
+        # 一覧から消えて二度と拾われません
+        critique_queue.mark_thumbnail_set(row["video_id"])
+        ok += 1
+        print(f"[thumb] ✓ {row['video_id']}  https://youtu.be/{row['video_id']}")
+    print(f"[thumb] **{ok} / {len(rows)} 本に載せました**")
+    return 0 if ok == len(rows) else 1
+
+
 if __name__ == "__main__":
+    if "--missing" in sys.argv:
+        raise SystemExit(push_missing(dry_run="--dry-run" in sys.argv,
+                                      force="--force" in sys.argv))
     if len(sys.argv) != 4:
         print(__doc__)
         raise SystemExit(2)

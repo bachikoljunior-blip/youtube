@@ -1,0 +1,2 @@
+{"at": "2026-08-17T01:45:00+00:00", "detail": "backfill: 10:4x の回の 429（Video Uploads per day）。data/runs.jsonl 同回の ship 行が根拠"}
+{"at": "2026-08-19T10:34:02+00:00", "detail": "400 uploadLimitExceeded / The user has exceeded the number of videos they may upload. （09/01 の batch_build。見分けが429を先に要求していて残せていなかったぶんを、手で入れた）"}

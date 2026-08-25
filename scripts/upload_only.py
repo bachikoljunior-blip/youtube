@@ -16,14 +16,55 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from src import config, uploader  # noqa: E402
+import critique_queue  # noqa: E402  scripts/ 直下。独立評価の材料を残す
+
+from src import bars, config, uploader  # noqa: E402
 
 # 動画に出してはいけない語。オーナーの指示でリポジトリの存在を伏せている。
 FORBIDDEN = ("github", "GitHub", "リポジトリ", "コードを公開", "ソースコード")
 
 
-def main(topic: str, visibility: str | None = None) -> int:
+def split_when(when: str) -> tuple[int, int, str | None]:
+    """予約時刻の指定を `(時, 分, 日付 or None)` に分ける。
+
+        "9"                  → (9, 0, None)           最初に空いている日の 09:00
+        "9:30"               → (9, 30, None)          同じく 09:30
+        "2026-08-24@10"      → (10, 0, "2026-08-24")  **その日に釘づけ**
+        "2026-08-24@10:30"   → (10, 30, "2026-08-24")
+
+    日付を釘づけできないと「1日にN本」が作れません（`src/uploader.py`
+    `next_publish_at` の docstring）。M14 の 8 の段はこれが無くて止まっていました。
+
+    **分を足したのは 2026-08-18 です。** `next_publish_at` は最初から
+    `minute_jst` を受け取るのに、**ここが時しか渡していませんでした。**
+    そのぶん1日に置ける枠が11個で止まり（9〜19時）、投稿の本数枠 92本に対して
+    **8倍以上足りていません**でした（`batch_build.slots` の `step_min`）。
+    """
+    text = when.strip()
+    date_part: str | None = None
+    if "@" in text:
+        date_part, _, text = text.partition("@")
+    hour_part, _, minute_part = text.partition(":")
+    minute = int(minute_part) if minute_part else 0
+    if not 0 <= minute <= 59:
+        raise ValueError(f"分は 0〜59 で渡すこと: {when!r}")
+    return int(hour_part), minute, date_part
+
+
+def main(topic: str, visibility: str | None = None, hour: int | None = None,
+         date_jst: str | None = None, skip_dupe_check: bool = False,
+         minute: int | None = None) -> int:
+    """hour を渡すと、その時刻（JST）で予約する。
+    date_jst（`YYYY-MM-DD`）も渡すと、**その日に釘づけ**する（埋まっていれば失敗）。
+
+    **ショートは朝のほうが強い**（2026-08-05 の実測）。09:21 公開の1本が1245回、
+    18:29〜19:55 に固めて出した5本が最良で558回・後発3本は0回。
+    `config/channel.yaml` の 19:00 は長尺（視聴ピーク）に合わせた値なので、
+    ショートはここで上書きする。**まだ n=1 なので、時刻の効果と本数の効果は
+    分離できていない。** 毎日1本を続けて確かめること。
+    """
     work = Path("build") / topic
     if not (work / "final.mp4").exists():
         print(f"{work}/final.mp4 がありません。先に --dry-run で作ってください")
@@ -41,6 +82,19 @@ def main(topic: str, visibility: str | None = None) -> int:
         channel["publish"] = dict(channel["publish"])
         channel["publish"]["visibility"] = visibility
         print(f"[check] 公開設定を {visibility} で上書き")
+    if hour is not None:
+        channel["publish"] = dict(channel["publish"])
+        channel["publish"]["publish_hour_jst"] = hour
+    if minute is not None:
+        # **時と別に上書きすること。** `channel.yaml` の既定は :00 なので、
+        # 分だけ渡された回（`"9:30"`）でここを飛ばすと、黙って :00 に戻ります。
+        channel["publish"] = dict(channel["publish"])
+        channel["publish"]["publish_minute_jst"] = minute
+        print(f"[check] 予約時刻を {hour}:00 JST で上書き")
+    if date_jst:
+        channel["publish"] = dict(channel["publish"])
+        channel["publish"]["publish_date_jst"] = date_jst
+        print(f"[check] 予約日を {date_jst} に釘づけ（埋まっていれば翌日へ送らず失敗）")
 
     if "[t:" not in description:
         print("説明欄にテーマ印がありません。投稿済みの記録が残らないので中止します")
@@ -56,6 +110,57 @@ def main(topic: str, visibility: str | None = None) -> int:
                 return 1
     print("[check] リポジトリへの言及なし")
 
+    # **自分で作った「繰り返し」を、公開される前に止める**（2026-08-16 に足した）。
+    # ここに置くのは、**予約がこの1か所しか通らない**からです。生成の段に置くと、
+    # 手で `--dry-run` してから上げる道が素通りします（`src/verify.py` と同じ考え）。
+    #
+    # 8/15 23:0x は「同じテーマIDが2本」を直しましたが、**それでは足りません。**
+    # 8/16 に実物76本を突き合わせると、**テーマIDが違うのに同じ金額**の組が
+    # 予約の中に4本残っていました（`35万9318円` `61万9千円` `136万円` `足切り8万円`）。
+    # 見ているのは題の数字なので、**calc も台本も別でも、答えが同じなら鳴ります。**
+    if not skip_dupe_check:
+        try:
+            from src import dupes, history
+            svc = uploader._service()
+            ch = svc.channels().list(part="contentDetails", mine=True).execute()["items"][0]
+            ids = history.channel_video_ids(
+                svc, ch["contentDetails"]["relatedPlaylists"]["uploads"])
+            existing: list[dict] = []
+            for i in range(0, len(ids), 50):
+                existing += svc.videos().list(
+                    part="snippet,status", id=",".join(ids[i:i + 50])).execute()["items"]
+            # **手元の控えに載っているが、口から返らなかった本を引き直す。**
+            # 2026-08-16 に、まさにここがすり抜けました —— 同じ `s-fukugyo-2` を
+            # 5分の間に**止めて、そのあと通して**います。落ちていたのは
+            # `iTrogWVf4Eg`（8/22 予約済み・実在）で、uploads プレイリストが
+            # 落とし、search は当日の API 枠を使い切って 429 でした（`src/dupes.py`）。
+            # **消した本で誤って止めないよう、生きているものだけを足します。**
+            seen_ids = {v["id"] for v in existing}
+            missing = [r["id"] for r in dupes.ledger_rows() if r["id"] not in seen_ids]
+            for i in range(0, len(missing), 50):
+                existing += svc.videos().list(
+                    part="snippet,status", id=",".join(missing[i:i + 50])).execute()["items"]
+            if missing:
+                print(f"[check] 口から返らなかった控え {len(missing)}本を引き直しました")
+            hits = dupes.blocking(
+                title, topic, existing,
+                {t["id"]: t.get("calc", "") for t in config.load_topics()["topics"]})
+            if hits:
+                print("\n[!] **既にある本と強く重なります。投稿を中止します。**")
+                for h in hits:
+                    other = h["b"] if h["a"]["id"].startswith("＜") else h["a"]
+                    print(f"  [{h['kind']}] {h['why']}")
+                    print(f"      これから: {title[:44]}")
+                    print(f"      既にある: {other['id']}  {other['title'][:44]}")
+                print("  「同じチャンネルの動画を続けて数本視聴した後、繰り返しのように"
+                      "感じられる可能性のあるコンテンツ」は**収益化の対象外**です。")
+                print("  どうしても上げるなら `--allow-dupe`。**理由を JOURNAL に書くこと。**")
+                return 1
+            print("[check] 既存の本との強い重なりなし")
+        except Exception as exc:
+            # **落ちても投稿は止めない。** 途切れるほうが高い（CLAUDE.md）。
+            print(f"[check] 重なりを見られませんでした（続行）: {str(exc)[:100]}")
+
     video_id = uploader.upload(
         work / "final.mp4",
         work / "thumbnail.jpg",
@@ -64,12 +169,68 @@ def main(topic: str, visibility: str | None = None) -> int:
         script["tags"],
         channel["publish"],
     )
+    # 公開した棒を残す。`build/` は .gitignore なので、これをやらないと
+    # 次のコンテナで「同じ図」検査の比較対象がゼロになる（`src/bars.py`）。
+    bars.record(topic, video_id, script)
+    # **投稿は済んでいます。ここから先で落ちても動画IDを失わないこと。**
+    # 先に出しておく（2026-08-15。材料を残す処理が例外を上げるようにしたため）。
     print(f"VIDEO_ID {video_id}")
+
+    # **自分が上げたものを、自分で控える**（2026-08-16）。上の門が見る先です。
+    # 口が落としても、こちらは落ちません（理由は `src/dupes.ledger_rows`）。
+    try:
+        from src import dupes as _dupes
+        # **秒数も控える**（2026-08-25）。無いと「ショートか長尺か」を題名の
+        # `#Shorts` で推測することになり、実測で4本ずれていました（`src/forms.py`）。
+        # **測れなくても投稿は止めません**（途切れるほうが高い）。
+        _dur = None
+        try:
+            from src import verify as _verify
+            _dur = float(_verify._probe(work / "final.mp4")
+                         .get("format", {}).get("duration") or 0) or None
+        except Exception as exc:
+            print(f"[dupes] 秒数を測れませんでした（続行）: {str(exc)[:60]}")
+        _dupes.remember(video_id, topic, title,
+                        channel["publish"].get("publish_at") or None,
+                        duration_s=_dur)
+    except Exception as exc:
+        print(f"[dupes] **控えを残せませんでした: {str(exc)[:80]}**")
+
+    # 独立評価（M13）の材料も同じ理由で残す。**残さないと、投稿した回で評価を
+    # 回せなかった時点で永久に評価できません**（`scripts/critique_queue.py`）。
+    #
+    # **投稿そのものは終わっているので、ここで止めません。** ただし黙って
+    # 素通りさせると 8/15 の再発（読み上げ文が0行のまま2本積まれた）になるので、
+    # **見落とせない形で出して、終了コードにも出します。**
+    try:
+        critique_queue.stash(topic, video_id, script, work,
+                             thumbnail_set=channel["publish"].get("thumbnail_set"))
+    except Exception as exc:
+        print(f"[queue] **材料を残せませんでした: {exc}**")
+        print("[queue] **投稿は済んでいます。** この動画は独立評価を回せません。")
+        print("[queue] 公開前なら予約を外せます（docs/CRITIQUE.md）。")
+        return 1
+
     return 0
 
 
 if __name__ == "__main__":
-    if len(sys.argv) not in (2, 3):
+    _argv = sys.argv[1:]
+    # **重なりの門を越える札**（`src/dupes.py`）。位置引数の数を変えないよう、
+    # 先に抜いておく。**使ったら理由を JOURNAL に書くこと。**
+    _allow = "--allow-dupe" in _argv
+    _argv = [a for a in _argv if a != "--allow-dupe"]
+    if len(_argv) not in (1, 2, 3):
         print(__doc__)
         raise SystemExit(2)
-    raise SystemExit(main(sys.argv[1], sys.argv[2] if len(sys.argv) == 3 else None))
+    _hour, _minute, _date = (None, None, None)
+    if len(_argv) == 3:
+        _hour, _minute, _date = split_when(_argv[2])
+    raise SystemExit(main(
+        _argv[0],
+        _argv[1] if len(_argv) >= 2 and _argv[1] else None,
+        _hour,
+        _date,
+        _allow,
+        _minute,
+    ))

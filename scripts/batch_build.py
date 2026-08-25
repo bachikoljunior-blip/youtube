@@ -1,0 +1,1355 @@
+#!/usr/bin/env python3
+"""1回のセッションで、複数本をまとめて作って予約する。
+
+    python scripts/batch_build.py --count 2                 # 既定は 09:00 の空き枠へ
+    python scripts/batch_build.py --count 3 --hour 11
+    python scripts/batch_build.py --topics s-fukugyo-3,s-iryohi-3
+    python scripts/batch_build.py --count 2 --skip-upload   # 作るだけ（予約しない）
+    python scripts/batch_build.py --count 8 --date 2026-08-30 --jobs 3   # 同時に3本ずつ
+
+## 律速は「作る速さ」でした（2026-08-15 に測って直した）
+
+8/15 に7本を通したとき **80分＝1本11分**でした。この11分がどこに行っているかを
+`ps` で見たら、**生成中の python は CPU を 2〜4% しか使っていません。**
+内訳はほぼ全部が `claude -p`（`src/claude_cli.py`）の**待ち時間**です。
+台本を書かせるのが一番高い工程で、そこは**こちらの CPU では何も起きていない。**
+
+**待ち時間は重ねられます。** 直列で待っていたのは、そう書いてあったからで、
+理由はありませんでした。`--jobs`（既定 3）で同時に走らせます。
+
+    直列   8本 × 11分 = 88分   ← 1周に収まらない
+    同時3  8本 ÷ 3 × 11分 ≒ 30分
+
+**【2026-08-15 22:3x】この「11分」は、もう本当ではありません。**
+実測は **1本 1.7分**（同時1）／**2.7分**（同時6）です。11.4分だったのは
+8/15 18:xx の7本で、**そのあと台本の作り方が変わりました。**
+この数字は文書に3回引用され、**誰も測り直していませんでした。**
+**上の掛け算は当時の記録として残しますが、根拠に使わないこと。**
+いまの値は `python scripts/batch_build.py --report` が出します。
+
+**予約だけは直列のまま**です（`upload_only.py` は `next_publish_at` と
+待ち行列という共有の状態を触るので、同時に走らせると予約時刻がぶつかる）。
+段を分けてあるのはそのためで、**作る段と予約の段を混ぜないこと。**
+
+## なぜ要るか（2026-08-15）
+
+門は **「90日で1000万ショート再生」の一本**に縮みました（`docs/MEANS.md`
+「M4 の土台が崩れた」）。1本あたりは 1777 が天井と確定済みなので、
+**残っている変数は1日あたりの本数だけ**です。1000万/90日 ＝ 1日11.1万再生、
+1本1200再生なら **1日92本**。
+
+ところが、この輪は **1セッション＝1本**でした（`docs/trigger_main.md` §4 の
+「最低1件」を、そのまま上限として運用していた）。1周は実測15〜45分なので、
+**丸1日回しても十数本が上限**です。M14 が測ろうとしている 4 → 8 の段を、
+**手段のほうが先に支えられません。**
+
+だから、律速は「テーマ在庫」でも「配信」でもなく、**1回の起動で作れる本数**でした。
+ここを機械化しないと、M14 は 8 の段で必ず止まります。
+
+## この道具が守っていること
+
+- **1本落ちても、残りは作る。** 例外は握って次のテーマへ進む（`--stop-on-error` で従来動作）
+- **calc は全部ばらす。** 同じ計算を並べると量産判定に当たる（`CLAUDE.md`「この作りの根幹」）
+- **`--dry-run` で作ってから `upload_only.py` で予約する。** 既存の2段構えのまま。
+  検査（`src/verify.py`）も独立評価の材料保存も、そちらに入ったままです
+- **予約時刻は `next_publish_at` に任せる。** 同じ時刻が埋まっていれば翌日へ送るので、
+  連続で呼ぶと1日ずつ後ろに積まれます。**実験の窓を踏まないよう、時刻で選ぶこと**
+- **結果は `data/batch_runs.jsonl` に残す。** `build/` は gitignore なので、
+  セッションが畳まれた後に「何が出て何が落ちたか」を読めるのはここだけです
+- **かかった時間も残す**（2026-08-15 22:3x に足した。下の節が理由）
+
+## 「`--jobs` の上限を測る」が4回持ち越された理由（2026-08-15 22:3x）
+
+`retro.py` の持ち越しで **`--jobs` が4回**（19:0x / 19:2x / 20:5x / 22:0x）出ています。
+**4回とも「次の回で測る」と書かれ、4回とも測られませんでした。**
+「忙しかったから」ではありません。**測れなかったからです。**
+
+    data/batch_runs.jsonl に入っていたもの   at / hour / date / slots / results[topic,calc,video_id,error]
+    入っていなかったもの                     **`jobs` も、かかった秒数も**
+
+**この台帳を後から読んでも、何本ずつ走らせたのかすら分かりません。**
+19:0x の「6本を4.7分」は**その回の画面にしか無く**、次の回には残っていない。
+だから毎回「まず測り直すところから」になり、10分かかるので後回しになる ——
+**それが4回くり返されました。**
+
+そして、持ち越しの文言が**測り方そのものを高くしていました。**
+「`--jobs` の上限」を **jobs=3 の回と jobs=6 の回を別々に走らせて比べる**と読むと、
+1回10分の生成が2回要り、**しかも題材が違うので条件が揃いません**（台本の長さも
+落ちる本数も毎回ちがう）。**1周に収まらない測定は、永久に後回しになります。**
+
+**1本ずつの所要時間を記録すれば、1回の走りで答えが出ます。**
+
+    直列に要る時間 ＝ 1本ずつの秒数の合計
+    実際にかかった時間 ＝ 壁時計
+    **速くなった倍率 ＝ 合計 ÷ 壁時計**（jobs に近ければ、待ち時間は素直に重なっている）
+
+    **1本あたりの秒数が jobs を上げるほど伸びていたら、そこが上限です**
+    （待ち時間ではなく、こちらの CPU かメモリを取り合い始めている）
+
+**上限は「速くならなくなる点」ではなく「1本あたりが太り始める点」で出ます。**
+前者は本数と題材に左右されますが、後者は**同じ走りの中で比べられます。**
+
+    python scripts/batch_build.py --report    # 台帳を jobs 別に並べる（生成しない・数秒）
+
+## この道具が答えないこと
+
+**目視も独立評価もやりません**（`docs/trigger_main.md` §5・`docs/CRITIQUE.md`）。
+機械検査は「指示どおり折ったか」しか見ておらず、**指示した位置そのものが悪い場合は
+素通りします**。まとめて作ったぶんは、**投稿後に `scripts/critique_queue.py` の
+待ち行列に積まれます。** そこを消化するのは呼んだ側の仕事です。
+"""
+from __future__ import annotations
+
+import functools
+import argparse
+import json
+import re
+import shutil
+import subprocess
+import sys
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+
+from src import auth, config, dupes, history, lanes, measure_window, upload_cap, uploader  # noqa: E402
+from src import renderer
+
+JST = timezone(timedelta(hours=9))
+LOG = ROOT / "data" / "batch_runs.jsonl"
+FLAGS = ROOT / "data" / "build_flags.jsonl"
+
+# **M14 の比較の窓**（`docs/MEANS.md` M14）。8/16 が4本・8/17〜8/23 が各1本で、
+# 「1日あたりの本数」を測っています。**ここへ足すと測定そのものが壊れます。**
+#
+# 文書には「実験の窓を踏まないこと」と3か所に書いてありましたが、
+# **守るのは毎回こちらの記憶でした。** 8/15 の日誌が4回続けて言っている
+# 「人が見れば一目で分かる欠陥を、機械検査が素通りさせた」と同じ形なので、
+# **窓を機械に持たせます。**
+#
+# **正本は `src/measure_window.py` に移しました**（2026-08-18）。ここに
+# 置いてあったあいだ、門は**この道具の `--date` を渡した時にしか**効かず、
+# `--hour` も `upload_only.py` も `reschedule.py` も素通りでした。
+# ここは別名です。**窓を終わらせるときは `src/measure_window.py` を直すこと。**
+#
+# **`None` は「一覧をそのまま見ろ」の意味です**（2026-08-21 22:4x）。
+# 前はここに `measure_window.WINDOW`（＝区間1本）を写していましたが、
+# 窓が離れた2日（08/22 と 09/10）になったので、区間で写すと
+# **間の18日まで止まります。** 検査が `M14_WINDOW = (日, 日)` と
+# 差し替える手は、そのまま効きます（区間を渡せば区間で見ます）。
+M14_WINDOW: tuple[str, str] | None = None
+
+# 台本生成〜レンダリングの実測は5〜10分。倍を上限に取る（無限には待たない）。
+BUILD_TIMEOUT = 1800
+UPLOAD_TIMEOUT = 600
+
+# **同時に走らせる本数の既定**（2026-08-15 に足した。理由は下）。
+#
+# 1本11分の内訳は、ほぼ全部が `claude -p`（`src/claude_cli.py`）の**待ち時間**です。
+# 生成中の python は **CPU 2〜4%** しか使っていません（実測、`ps` で確認）。
+# **CPU が空いているのに直列で待っていた**ので、ここは待ち時間を重ねるだけで縮みます。
+#
+# 4 にしていないのは、レンダリング（ffmpeg・open-jtalk）だけは CPU を使うからで、
+# 4コアに対して 3 なら、山が重なっても 1コア残ります。**`--jobs` で変えられます。**
+DEFAULT_JOBS = 3
+
+# 1つの `calc` から、1回の batch で取ってよい本数。
+#
+# **天井の話です**（2026-08-15 19:5x）。それまでは「calc が全部ちがう」＝実質 1 で、
+# `calc` は11本しかないので **1回 11本が上限**でした。M14 の段はその先を狙う手なのに、
+# 上限がどこにも書いてありません。**節（`calc_sections`）で見れば 54 件あります。**
+# 2 にしているのは、同じ制度の本が並ぶと題も似て「繰り返しのように感じられる」側に
+# 寄るからで、**根拠のあるぶんだけ（11 → 22）上げています。**
+DEFAULT_PER_CALC = 2
+
+
+def _section_key(topic: dict) -> tuple:
+    """その本が**実際に見せる計算**を指す鍵。
+
+    テーマは `calc`（モジュール）と `calc_sections`（その中のどの節を出すか）を
+    持ちます。**画面に出る数字も棒の形も決めているのは節のほう**なので、
+    「同じものが続くか」を見るときに見るべきなのはここです。
+
+    節の指定が無い古いテーマは**モジュール全体**を指しているとみなします
+    （どの節とも重なるので、その calc を1本で使い切る扱い）。
+    """
+    sections = tuple(sorted(topic.get("calc_sections") or ()))
+    return (topic["calc"], sections)
+
+
+def _posted_including_ledger() -> set[str]:
+    """投稿済みのテーマIDを、**チャンネルと手元の控えの和**で返す（2026-08-16 07:5x）。
+
+    ## 何が起きていたか（この回が2回踏み、2本ぶんの生成を捨てた）
+
+    `pick` はチャンネルの説明欄からだけ「投稿済み」を復元していました。
+    ところが復元の口は**両方とも欠けます** —— uploads プレイリストは予約中を落とし、
+    `search` は**この日1日枠を使い切っています**（HTTP 429。`src/history.py` の実測）。
+    欠けたぶんは**未投稿として選び直され**、11分かけて動画を作った後、
+    投稿の直前の門（`src/dupes.blocking`）が止めます。
+
+        s-furusato-5   作った → 却下（既にある b3ZewNvalXc と同じテーマID）
+        s-shitsugyo-6  作った → 却下（既にある 8PMLfjjCe4w と同じテーマID）
+
+    **この回に作った8本のうち2本、25%が捨てになりました。**
+    **門は正しく働いています。**間違っていたのは、**門の位置ではなく選ぶ側**です。
+
+    ## なぜ控えを混ぜてよいか（前は、意図してやっていませんでした）
+
+    `src/dupes.ledger_rows` はこう書いています ——「どのテーマを次に作るか（`pick`）は
+    **今もチャンネルから決めます**。動画を消したときにファイルが嘘になるからです」。
+
+    **その心配は、いまのこちらには当たりません。** 動画を消す道が1本もないからです
+    （`docs/FOR_OWNER.md` の済み3。`videos().delete` も、private に落とす
+    `videos().update` も、環境の判定に弾かれます）。**控えは増えるだけで、
+    嘘になる経路が存在しません。** 一方、混ぜない費用は**実測で生成の25%**です。
+
+    **覆る条件**: 動画を消せるようになったら、ここは生存確認（`videos.list`）を
+    通すか、チャンネルだけに戻すこと。**消した動画のテーマが永久に選べなくなります。**
+    """
+    posted = set(history.posted_topic_ids())
+    from src import dupes
+
+    extra = {r["topic"] for r in dupes.ledger_rows() if r.get("topic")} - posted
+    if extra:
+        # **黙って足さないこと。** 差は「口が欠けた量」そのもので、読める唯一の場所です。
+        print(f"[pick] 控えにしか無い投稿済みテーマ {len(extra)}件を足しました"
+              f"（口が欠けたぶん）: {', '.join(sorted(extra)[:6])}"
+              f"{' …' if len(extra) > 6 else ''}")
+    return posted | extra
+
+
+def _drop_doomed(usable: list[dict], pool: list[dict]) -> list[dict]:
+    """**投稿の門が必ず止めるテーマを、作る前に外す**（2026-08-17 に足した）。
+
+    `s-menjo-hangaku-10200` は3回続けて申し送りに出ています ——
+    `pick` が上位で返し、11分かけて作り、`upload_only.py` の
+    `dupes.blocking()` が **毎回** 止める。**作った1本はそのたび捨てになります。**
+    そのあいだ手順は `--topics` で手で避けていましたが、
+    **手で避けている限り、避け忘れた回が必ず出ます。**
+
+    ここで見るのは**控え（`data/` のローカル）だけ**で、API は1単位も使いません
+    （`dupes.blocking(title, id, [], topics)` は videos が空でも控えを読みます）。
+    見ているのは `title_seed` なので、門と同じではありません:
+
+    - **同じテーマID**（`same-topic`）は、これで確実に当たります
+    - **金額の入れ子**（`same-yen`）は、種に主役の数字が出ていれば当たります。
+      台本が別の数字を主役にしたら当たりません。**そのぶんは門が受けます**
+
+    逆に「門は通すのに、ここで落とす」ことはあり得ます（種にだけ数字がある場合）。
+    **だから落としたものは必ず名前を出し**、`--topics` で明示すれば
+    この関門は通りません（`explicit` は上で先に返っています）。
+    """
+    from src import dupes
+
+    # **投稿済みのぶんも含めて、テーマ全部の calc を渡すこと。**
+    # 控えの1行は「どの calc の本か」をテーマID経由でしか知りません。
+    # 未投稿ぶんだけ渡すと、**既にある本の calc が空になり、`same-yen` が
+    # 1組も当たりません**（最初にそう書いて、s-menjo-hangaku-10200 が素通りしました）。
+    topics_calc = {t["id"]: t.get("calc", "") for t in pool}
+    kept, dropped = [], []
+    for t in usable:
+        seed = t.get("title_seed") or ""
+        hits = dupes.blocking(seed, t["id"], [], topics_calc) if seed else []
+        if hits:
+            dropped.append((t["id"], hits[0]["why"]))
+        else:
+            kept.append(t)
+    for tid, why in dropped:
+        print(f"[pick] **門が必ず止めるので外します**: {tid} — {why}")
+    return kept
+
+
+#: 着地点のまわり何日ぶんの calc を避けるか（**長尺だけ**）。
+#: 新しい本は「いちばん早い空き日」に入るので、そこから数日ぶんを見ます。
+QUEUE_TAIL_DAYS = 7
+
+
+def _queue_tail_calcs(pool: list[dict], days: int = QUEUE_TAIL_DAYS) -> set[str]:
+    """**これから公開される長尺の calc** を返す（**API を1単位も使いません**）。
+
+    ## なぜ要るのか（2026-08-25 に踏んだ）
+
+    `--per-calc` は **1回の batch の中でしか効きません。** 2回続けて走らせると、
+    同じ calc が何本でも**連続して**予約に入ります。実際にそうなりました:
+
+        08/28 tokurou / 08/29 tokurou / 08/30 yukyu / 08/30 furusato
+        08/31 tokurou ← 2回目の batch / 09/01 tokurou ← 同
+
+    **次の長尺6本のうち4本が同じ計算で、題名の頭まで同一**でした。これは
+    `CLAUDE.md` が引いているポリシー本文そのもの ——「**同じチャンネルの動画を
+    続けて数本視聴した後、繰り返しのように感じられる可能性のあるコンテンツ**」は
+    **収益化の対象外**。収益化されなければ収入はゼロなので、
+    **在庫を厚くした効果を自分で打ち消します。**
+
+    **見るのは「末尾」ではありません**（一度そう書いて外しました）。
+    `upload_only.py` は**いちばん早い空き日**を取るので、新しい本は列の先頭側に
+    入ります。実測: 08/30 まで埋まっている状態で撃ったら 08/31・09/01 に着きました。
+    **末尾（09/26）を避けても、着地点の隣は避けられません。**
+    だから**いまから `days` 日ぶん**を見ます。
+
+    **長尺だけを見ます。** ショートは1日10本入るので、その calc まで避けると
+    候補が枯れます（実測: 全490件のうち、ショート込みで避けると大半が落ちる）。
+    そして踏んだ事故も長尺でした ——**題名の頭が同一の長尺が4本続く**形です。
+
+    **覆る条件**: 未投稿テーマの calc が偏っていて、避けると毎回 `pick` が
+    空になるようなら、`QUEUE_TAIL_DAYS` を下げること
+    （下の呼び出し側が、空になった回は避けずに通します）。
+    """
+    calc_of = {t["id"]: (t.get("calc") or "") for t in pool}
+    now = datetime.now(timezone.utc)
+    until = (now + timedelta(days=days)).isoformat()
+    now_s = now.isoformat()
+    calcs = set()
+    for row in dupes.ledger_rows():
+        at = row.get("at") or ""
+        if not (now_s < at <= until) or not row.get("topic"):
+            continue
+        if "#Shorts" in (row.get("title") or ""):
+            continue
+        calcs.add(calc_of.get(row["topic"], ""))
+    return calcs - {""}
+
+
+def _drop_queue_tail_calcs(usable: list[dict], pool: list[dict]) -> list[dict]:
+    """末尾の calc を落とす。**全部落ちる回は落とさない**（出すほうが先）。"""
+    try:
+        tail = _queue_tail_calcs(pool)
+    except Exception as exc:                                  # noqa: BLE001
+        print(f"[pick] これからの予約を読めませんでした（避けずに続けます）: {exc}")
+        return usable
+    if not tail:
+        return usable
+    kept = [t for t in usable if t.get("calc") not in tail]
+    if not kept:
+        print(f"[pick] これから7日ぶんの長尺の calc {sorted(tail)} を避けると候補が0件になります"
+              " —— **避けずに続けます**（出さないより、隣接するほうがまだ良い）。"
+              " 偏りが続くなら QUEUE_TAIL_DAYS を下げること。")
+        return usable
+    if len(kept) < len(usable):
+        print(f"[pick] これから7日ぶんの長尺に出ている calc を避けました: {sorted(tail)}"
+              f"（候補 {len(usable)} → {len(kept)}件）")
+    return kept
+
+
+def pick(count: int, explicit: list[str], per_calc: int = DEFAULT_PER_CALC) -> list[dict]:
+    """未投稿・`calc` あり・**計算の節が全部ちがう** テーマを score の高い順に取る。
+
+    ## ここが 2026-08-15 19:5x に変わりました（天井の測り違い）
+
+    それまでの規則は「**calc が全部ちがう**」でした。`calc` は11本しかないので、
+    **1回の batch は最大11本**です。M14（本数の段）は 8 → その先を狙う手なのに、
+    **11 で頭打ちになることが、どこにも書いてありませんでした。**
+
+    実測（この回）: 未投稿テーマ7件のうち calc は5種類で、`pick(8)` は
+    **5件しか返しませんでした。** 前の回が次の宿題に置いた「`--jobs` の上限を測る」は、
+    **`pick` が5件しか返さない状態では意味がありません**（同時に作る相手がいない）。
+    **律速は並列度ではなく、取れるテーマの数のほうでした。**
+
+    節で見ると 54 件あります。**節がちがえば、前提も数字も棒の形もちがう** ——
+    `calc_sections` は「モジュールのどの節を出すか」を指していて、
+    画面に出るものを決めているのはこちらです。つまり
+    **「同じ計算を2回出さない」を守ったまま、天井は 11 から上げられます。**
+
+    ただし**節だけにはしません。** 同じ制度の本が1日に何本も並ぶと、
+    題も似るので「繰り返しのように感じられる」側に寄ります（収益化の条件）。
+    だから **1つの calc から取るのは既定で2本まで**（`per_calc`）。
+    天井は 11 → 22 で、**根拠のあるぶんだけ上げています。**
+
+    **覆る条件**: 同じ calc の2本を並べた日の engaged 比率の中央値が、
+    全部ちがう calc の日を下回ったら、`per_calc` を 1 に戻すこと。
+    """
+    pool = config.load_topics()["topics"]
+    by_id = {t["id"]: t for t in pool}
+
+    if explicit:
+        missing = [i for i in explicit if i not in by_id]
+        if missing:
+            raise SystemExit(f"config/topics.yaml に無いテーマ: {', '.join(missing)}")
+        chosen = [by_id[i] for i in explicit]
+        no_calc = [t["id"] for t in chosen if not t.get("calc")]
+        if no_calc:
+            raise SystemExit(
+                f"calc の無いテーマは台本生成が止まります: {', '.join(no_calc)}"
+            )
+        return chosen
+
+    posted = _posted_including_ledger()
+    # **作ってあるが未投稿の本も「使った」に数える**（2026-08-23 に踏んで足した）。
+    # `--skip-upload` の本は投稿の記録に入らないので、次の `pick()` が**同じテーマを
+    # 選び直し、`build/` を上書き**します。実測: 対照群8本を作った直後に
+    # 動きあり8本を作ったら **8/8 が同じテーマ**で、ディスクは動きあり・
+    # 記録の1件目は動きなし、という食い違いになりました（A/B の群が静かに嘘になる）。
+    built = {d.name for d in (ROOT / "build").iterdir() if d.is_dir()} \
+        if (ROOT / "build").is_dir() else set()
+    usable = [t for t in pool if t["id"] not in posted and t["id"] not in built
+              and t.get("calc")]
+    usable = _drop_doomed(usable, pool)
+    usable = _drop_queue_tail_calcs(usable, pool)
+
+    # **順番は実績で決める**（2026-08-16 に測って変えた。それまでは手書きの
+    # `score` だけで、実績を1つも見ていませんでした ＝ 91件中64件が `1.0`）。
+    # 族ごとの engaged 比率は実物で **4倍ちがい**、登録も上位の族からしか
+    # 入っていません（`src/family_perf.py` に測り方と割り引き方）。
+    # 手書きの見立ては捨てず、**掛ける**（実績は事前分布、`score` は狙い）。
+    # 測っていない族は全体平均になるので、**真ん中の順位から試されます。**
+    from src import family_perf
+
+    try:
+        family_score = family_perf.scorer()
+    except Exception as exc:              # 実績が読めなくても止めない
+        print(f"[pick] 実績が読めませんでした（手書きの score だけで並べます）: {exc}")
+        family_score = lambda calc: 1.0   # noqa: E731
+    usable.sort(key=lambda t: -float(t.get("score", 1.0)) * family_score(t["calc"]))
+
+    if per_calc < 1:
+        raise SystemExit(f"--per-calc は1以上です: {per_calc}")
+
+    # **節を指定したテーマが1つでもある calc では、節の指定が無いテーマを取りません**
+    # （2026-08-18 に測って足した）。`calc_sections` の無いテーマは
+    # **表を書くと決めた回の「題材」**で、`calc:` を繋いだ時点から
+    # 「モジュール全体を1本にする」テーマとして `usable` に残ります。
+    # 下の `whole_module` は「全体の1本」と「節の1本」が並ばないようにする規則ですが、
+    # **どちらが勝つかは並び順まかせ**で、実測では**題材のほうが勝っていました。**
+    #
+    # 実測（2026-08-18・`per_calc=2`）: 直近8回で書いた5本の表
+    # （`shokibo` `invoice` `rousai` `tsukin` `seimeihoken`）が、**どれも1本ずつ**しか
+    # 出していません。節は6件ずつあるのに、**題材の1件が全部を飲み込んでいた**からです。
+    # **`pick` の返り 14本 → 19本**（5族 × 1本）。表を1本書いても
+    # 「桁が変わらない」ように見えていた原因の一つが、ここでした。
+    #
+    # **題材のほうを捨てるのが正しい向き**です —— 節を指定しないテーマは
+    # 表ぜんぶを1本に詰める形になり、「テンプレートで大量生産された」と
+    # 判定される側に寄ります（収益化の条件。`CLAUDE.md`）。
+    has_sections = {t["calc"] for t in usable if t.get("calc_sections")}
+
+    chosen: list[dict] = []
+    used_sections: set[tuple] = set()
+    per_calc_taken: dict[str, int] = {}
+    whole_module: set[str] = set()   # 節の指定が無いテーマを取った calc
+
+    for topic in usable:
+        calc = topic["calc"]
+        key = _section_key(topic)
+        sections = key[1]
+
+        if not sections and calc in has_sections:
+            continue                      # 題材のテーマは、節があるあいだ取らない
+        if key in used_sections:
+            continue                      # **同じ計算は2回出さない**
+        if per_calc_taken.get(calc, 0) >= per_calc:
+            continue                      # 同じ制度が並びすぎないように
+        if calc in whole_module:
+            continue                      # モジュール全体のテーマと必ず重なる
+        if not sections and per_calc_taken.get(calc, 0):
+            continue                      # 逆向きも同じ
+
+        chosen.append(topic)
+        used_sections.add(key)
+        per_calc_taken[calc] = per_calc_taken.get(calc, 0) + 1
+        if not sections:
+            whole_module.add(calc)
+        if len(chosen) == count:
+            break
+
+    if len(chosen) < count:
+        print(
+            f"[batch] **計算の節がちがう未投稿テーマが {len(chosen)} 件しかありません**"
+            f"（要求 {count} 件 / 1つの calc から最大 {per_calc} 本）。"
+            f"在庫のほうが先に尽きています。",
+            flush=True,
+        )
+    return chosen
+
+
+def _row_times(row: dict) -> list[datetime]:
+    """その1本について、控えに**一度でも書かれた**予約時刻を全部返す。
+
+    `ledger_rows()` は 1本を1行にたたみますが、**たたむのは「数える側」のため**です
+    （`src.dupes._collapse`）。置き場所を避ける側はたたんではいけません ——
+    `at` の食い違う組はどちらが本物か行から言えないので、
+    **両方を「埋まっている」と読む**のが安全な向きです。
+    空きを1つ余計に飛ばすだけで済み、逆向きは**ぶつけて1本捨てます。**
+    """
+    out = []
+    for raw in [row.get("at"), *(row.get("at_others") or [])]:
+        if not raw:
+            continue
+        try:
+            out.append(datetime.fromisoformat(str(raw).replace("Z", "+00:00")))
+        except ValueError:
+            continue
+    return out
+
+
+def ledger_hours(date_jst: str) -> set[int]:
+    """その日に**もう置いてある**時刻（JST の時）を、手元の控えから読む。
+
+    読むのは `data/uploaded.jsonl`（`src.dupes.ledger_rows`）で、**API は叩きません。**
+    予約の一覧を口から取ると channels + playlistItems + videos で数単位かかるうえ、
+    **Data API の日枠が切れている回では、そもそも読めません**
+    （日枠が戻るのは JST 16:00。それ以前の回はここが唯一の手がかりです）。
+
+    **控えは上限側の見積りです**（`scripts/status.py` の「予約の先」と同じ性質）。
+    取り消した本の行も残るので、**空いているのに「埋まっている」と読むことがあります。**
+    外す向きは安全です —— 空き枠を1つ余計に飛ばすだけで、**ぶつけて1本捨てるより安い。**
+    逆向き（埋まっているのに空きと読む）は起きません。控えは投稿した本人が書くので、
+    **置いた本が控えから落ちることはない**からです。
+
+    読めなかったら空集合を返します。**この道具のために回を止めないこと。**
+    """
+    try:
+        rows = [r for r in dupes.ledger_rows() if r.get("at")]
+    except Exception as exc:                                  # noqa: BLE001
+        print(f"[batch] 控えが読めませんでした（続行）: {str(exc)[:80]}", flush=True)
+        return set()
+    taken: set[int] = set()
+    for row in rows:
+        for at in _row_times(row):
+            when = at.astimezone(JST)
+            if when.strftime("%Y-%m-%d") == date_jst:
+                taken.add(when.hour)
+    return taken
+
+
+def ledger_minutes(date_jst: str) -> set[int]:
+    """その日に埋まっている時刻を**0時からの分**で返す（API 0単位）。
+
+    `ledger_hours()` は同じ控えを**時だけ**に落として読んでいました。
+    落とすと 10:00 の1本が 10:30 まで塞ぎます —— **1時間に1本しか置けない**
+    のは制度でも枠でもなく、**この読み方**でした（2026-08-18 に測った:
+    予約262本の分は**全部 :00**、公開は 1日6.4本、置ける枠は 9〜19時の11個）。
+
+    投稿の本数枠は1日92本あります。**律速は置く場所のほうです。**
+    """
+    try:
+        rows = [r for r in dupes.ledger_rows() if r.get("at")]
+    except Exception as exc:                                  # noqa: BLE001
+        print(f"[batch] 控えが読めませんでした（続行）: {str(exc)[:80]}", flush=True)
+        return set()
+    taken: set[int] = set()
+    for row in rows:
+        for at in _row_times(row):
+            when = at.astimezone(JST)
+            if when.strftime("%Y-%m-%d") == date_jst:
+                taken.add(when.hour * 60 + when.minute)
+    return taken
+
+
+def _show_slot(spec: str) -> str:
+    """`slots()` が返した指定を、人が読む `H:MM` にする。
+
+    `2026-08-24@10` → `10:00` ／ `2026-08-24@10:30` → `10:30`
+    """
+    text = spec.partition("@")[2] or spec
+    return text if ":" in text else f"{text}:00"
+
+
+# **1日に置く本数の目安**（`scripts/reschedule.py` の `DEFAULT_PER_DAY` と同じ数）。
+# 08/20 の実測で11本目から先が 0〜3 再生でした。**止める門ではなく、言うだけ**です
+# （判定は 08/23 に済み・`config/hypotheses.yaml` の「予約の間隔」）。
+#
+# **2026-08-24: ここも計器から取ります**（`src/day_cap.py`。定数だと測り直しに
+# 付いていきません）。読めない回は 10 に落ちます。
+@functools.cache
+def _per_day_soft(fallback: int = 10) -> int:
+    """**呼ばれたときに測ります**（import では読みません。理由は reschedule.py と同じ）。"""
+    try:
+        from src import day_cap
+        m = day_cap.measure()
+        return int(m["cap"]) if m.get("measured") else fallback
+    except Exception:
+        return fallback
+
+
+_PER_DAY_SOFT = 10            # **読めない回の既定**。実際に使う数は `_per_day_soft()`
+
+
+def _slots_fine(count: int, hour: int, date_jst: str, hours: list[int],
+                step_min: int, taken: set[int] | None,
+                taken_min: set[int] | None,
+                lanes_n: int | None = None) -> list[str]:
+    """`step_min` が 60 未満のときの割り当て（0時からの分で数える）。
+
+    **`slots()` から呼ばれる前提**です。単体で呼ばないこと（`date_jst` を必須にしてある）。
+    """
+    if not 1 <= step_min < 60 or 60 % step_min:
+        raise SystemExit(
+            f"--step-min は 60 の約数で 1〜59 のどれか: {step_min}\n"
+            "        （1時間を割り切らないと、日をまたぐ所で目盛りがずれます）"
+        )
+    if hours:
+        raise SystemExit(
+            "--hours と --step-min は同時に使えません。\n"
+            "        `--hours` は**時だけ**の指定なので、分の目盛りを打ち消します。"
+        )
+    if taken_min is None:
+        if taken is not None:
+            raise SystemExit(
+                "step_min が 60 未満のときは taken（時）ではなく taken_min"
+                "（0時からの分）を渡すこと。\n"
+                "        時に落として読むと 10:00 の1本が 10:30 まで塞ぎます —— "
+                "**それがこの目盛りの相手そのもの**です。"
+            )
+        taken_min = ledger_minutes(date_jst)
+    grid = [m for m in range(hour * 60, 24 * 60, step_min) if m not in taken_min]
+    if len(grid) < count:
+        busy = sorted(f"{m // 60}:{m % 60:02d}" for m in taken_min)
+        raise SystemExit(
+            f"{date_jst} は {hour}時以降の空きが {len(grid)} 個しかありません"
+            f"（{count} 本ぶん要ります／{step_min}分きざみ／控えでの埋まり {busy}）。\n"
+            "        **別の日にするか、--hour を早めるか、--step-min を細かくすること。**"
+        )
+    # **自分の車線から先に取る**（2026-08-25。理由は `src/lanes.py` の docstring）。
+    #
+    # 控えは**このコンテナの中にしか無い**ので、同じ回に走っているきょうだいが
+    # いま置いた本は見えません（`git` で配られるのは push のあと）。だから
+    # `taken_min` を避けただけでは足りず、**同じ日の先頭から取る2つの回は
+    # 必ず同じ分を選びます。** 実測: 08/27 に5組・09/06 に3組が同じ分でした。
+    #
+    # 車線は**セッションIDと「0時からの分」だけ**から決まります（控えを見ない）。
+    # 相手の控えがこちらと食い違っていても、車線が違えば選ぶ分は重なりません。
+    n_lanes = lanes.LANES if lanes_n is None else lanes_n
+    picked = sorted(lanes.order(grid, step_min=step_min, lanes=n_lanes)[:count])
+    # **1日に置きすぎていないか言う**（2026-08-21 の実測。止めはしません）
+    #
+    # 08/20 に Shorts を25本置いた実測: 公開の早い10本は 185〜1,394 再生、
+    # **11本目から先は 0〜3**（同じ経過11時間の時点。10本目と11本目は30分差）。
+    # 1日の合計は 4本の日 5,301 と 25本の日 5,948 で**ほぼ同じ**でした。
+    # つまり **11本目から先は在庫を捨てている**のと同じです。
+    #
+    # **ここで止めないのはわざとです。** `config/hypotheses.yaml` の
+    # 「1時間より詰めても1本あたりは落ちない」は 08/23 に判定します
+    # （1日16本以上の日が3日ぶん要る）。**判定の前に条件を変えないこと。**
+    # 判定が出たら、ここを `raise SystemExit` に変えるか、
+    # `scripts/reschedule.py --spread` で後から均すこと。
+    soft = _per_day_soft(_PER_DAY_SOFT)
+    if len(taken_min) + count > soft:
+        print(f"[batch] [!] **{date_jst} は控えと合わせて {len(taken_min) + count}本**"
+              f"（1日の目安 {soft}本・実測）。08/20 の実測では**11本目から先が 0〜3 再生**です。"
+              "\n        置いたあと `python scripts/reschedule.py --spread` で均せます"
+              "（1本50単位）。**作る前に日を割るほうが安いです。**", flush=True)
+    if picked != list(range(hour * 60, hour * 60 + step_min * count, step_min)):
+        shown = ", ".join(f"{m // 60}:{m % 60:02d}" for m in picked)
+        print(f"[batch] {date_jst} の埋まりと車線（{lanes.lane(lanes=n_lanes)}/{n_lanes}）"
+              f"を避けて {shown} に置きます（控えから。API 0単位）", flush=True)
+    return [f"{date_jst}@{m // 60}:{m % 60:02d}" for m in picked]
+
+
+def slots(count: int, hour: int, date_jst: str | None, hours: list[int],
+          taken: set[int] | None = None, step_min: int = 60,
+          taken_min: set[int] | None = None,
+          lanes_n: int | None = None) -> list[str]:
+    """各本の予約時刻の指定を返す（`upload_only.py` の第3引数の形）。
+
+    `date_jst` が無ければ従来どおり全部同じ時刻 —— `next_publish_at` が
+    埋まった日を飛ばすので、**結果として1日ずつ後ろに積まれます**（1日1本）。
+
+    `date_jst` があると**その日に釘づけ**して、時刻のほうをずらします。
+    これが「1日にN本」です。M14 の 8 の段はこの道が無くて止まっていました。
+
+    ## 空き時刻を自分で読みます（2026-08-17。**3回持ち越された穴**）
+
+    ここは長らく `hour + i` で、**その日に何が置いてあるかを一度も見ていませんでした。**
+    埋まっている時刻に当たると `upload_only.py` が
+    「すでに埋まっています。**翌日へは送りません**」で落ちるので、
+    **作った1本がそのまま捨てられます**（`build/` はコンテナと一緒に消えるため）。
+
+    避ける道は「**人が予約一覧を見て `--hours` に手で写す**」しかありませんでした。
+    申し送りは3回とも同じことを言っています ——
+    「手で `--hours` を写している限り、埋まっている時刻とぶつけて1本捨てる回が出る」。
+    **人の記憶と手写しに依存する門は、この輪では毎回落ちる側**です。
+
+    `taken` を渡さなければ `ledger_hours()` が控えから読みます（**API 0単位**）。
+    実測（2026-08-17 の控え）: 09-01 は 9,10,12〜16 が埋まりで **空きは 11 だけ** ——
+    前の回が API を叩いて手で出した答えと一致しました。
+    既定の `hour + i` なら 9,10 とぶつけて**先頭2本を捨てていた**ところです。
+
+    `--hours` を明示したときは**そちらを通します**（控えは上限側なので、
+    取り消し済みの枠へ置き直す道を塞がない）。ただし**重なっていれば必ず言います。**
+
+    ## `step_min` を足した理由（2026-08-18。**律速は投稿でも作りでもなかった**）
+
+    ここは長らく**時の目盛りしか持っていませんでした**（`range(hour, 24)`）。
+    だから1日に置けるのは最大24枠、実際に使う 9〜19時では **11枠**です。
+    ところが投稿の本数枠は **1日92本**あり、作る側も1日118本まで出ています。
+    **4倍以上足りないのは、置く場所の目盛りのほうでした**（予約262本の分は全部 `:00`）。
+
+    実測（2026-08-18 の控え）: 予約257本が **09/27 まで40日ぶん**に伸びていて、
+    公開は **1日6.4本**。同じ在庫を 30分きざみ（1日22枠）で置けば
+    **13日ぶん**に縮みます。**追加の生成も、追加の投稿枠も要りません。**
+
+    `next_publish_at` は最初から分を受け取ります（`minute_jst`）。
+    **受け取る側はできていて、渡す側が時しか持っていなかった**だけです。
+
+    **控えを時に落として読まないこと**（`ledger_minutes`）。落とすと
+    10:00 の1本が 10:30 まで塞ぎ、目盛りを細かくした意味が消えます。
+    だから `step_min < 60` では `taken`（時）を受け取りません ——
+    **黙って粗く読むより、止まるほうがよい**（この輪では「片方だけ」が7回起きています）。
+
+    **効きは前提として登録済みです**（`config/hypotheses.yaml`・9/05 判定）。
+    1本あたりの再生が半分未満に落ちるなら、この道は間違いです。
+    """
+    if not date_jst:
+        return [str(hour)] * count
+    if step_min != 60:
+        return _slots_fine(count, hour, date_jst, hours, step_min, taken, taken_min,
+                           lanes_n=lanes_n)
+    if taken is None:
+        taken = ledger_hours(date_jst)
+    if hours:
+        picked = hours
+        clash = sorted(set(hours[:count]) & taken)
+        if clash:
+            print(f"[batch] **{date_jst} の {clash} は控えでは埋まっています。**"
+                  " --hours が明示されているので続けますが、"
+                  "取り消し済みの枠でなければ `upload_only.py` が落とします。",
+                  flush=True)
+    else:
+        picked = [h for h in range(hour, 24) if h not in taken]
+        if len(picked) < count:
+            raise SystemExit(
+                f"{date_jst} は {hour}時以降の空きが {len(picked)} 個しかありません"
+                f"（{count} 本ぶん要ります／控えでの埋まり {sorted(taken)}）。\n"
+                "        **別の日にするか、--hour を早めるか、本数を減らすこと。**\n"
+                "        控えは上限側の見積りなので、取り消した本の枠も埋まりに数えます。\n"
+                "        そこへ置き直すなら --hours で明示すること。"
+            )
+        if picked[:count] != list(range(hour, hour + count)):
+            print(f"[batch] {date_jst} の埋まり {sorted(taken)} を避けて"
+                  f" {picked[:count]} 時に置きます（控えから。API 0単位）", flush=True)
+    if len(picked) < count:
+        raise SystemExit(
+            f"--hours が {len(picked)} 個しかありません（{count} 本ぶん要ります）"
+        )
+    bad = [h for h in picked[:count] if not 0 <= h <= 23]
+    if bad:
+        raise SystemExit(f"時刻が 0〜23 の外です: {bad}")
+    if len(set(picked[:count])) != count:
+        raise SystemExit(f"同じ時刻が2本以上あります: {picked[:count]}")
+    return [f"{date_jst}@{h}" for h in picked[:count]]
+
+
+def check_window(date_jst: str, force: bool) -> None:
+    """M14 の比較の窓に置こうとしていないかを見る。**記憶に任せない。**
+
+    中身は `src/measure_window.check` です。**窓を読むのは呼ばれた時**なので、
+    検査が `M14_WINDOW` を差し替える手はそのまま効きます。
+    """
+    measure_window.check(date_jst, force=force, tool="batch_build.py --date",
+                         window=M14_WINDOW)
+
+
+def run(cmd: list[str], timeout: int, label: str = "") -> tuple[int, str]:
+    """出力をそのまま流しながら、末尾も返す（VIDEO_ID を拾うため）。
+
+    **並列で呼ばれます。** 途中経過を流すと複数本の行が混ざって読めなくなるので、
+    1本ぶんを**1回の `print` にまとめて**出す（行の途中で割り込まれない）。
+    """
+    tag = f"[{label}] " if label else ""
+    print(f"[batch] {tag}$ {' '.join(cmd)}", flush=True)
+    try:
+        proc = subprocess.run(
+            cmd, cwd=ROOT, timeout=timeout,
+            capture_output=True, text=True,
+        )
+    except subprocess.TimeoutExpired:
+        print(f"[batch] {tag}**{timeout}秒を超えたので打ち切りました**", flush=True)
+        return 124, f"{timeout}秒を超えたので打ち切りました"
+    out = (proc.stdout or "") + (proc.stderr or "")
+    body = "\n".join(f"{tag}{line}" for line in out[-4000:].splitlines())
+    print(body, flush=True)
+    return proc.returncode, out
+
+
+NEEDED_BINS = ("ffmpeg", "ffprobe", "open_jtalk")
+
+
+def ensure_toolchain(root: Path = ROOT) -> bool:
+    """生成に要る外部コマンドを確かめ、欠けていれば `setup.sh` を撃つ。
+
+    **2026-08-22 に足した。この回、コンテナに ffmpeg も open_jtalk も
+    入っていませんでした。** `scripts/setup.sh` は「何度でも安全」なのに、
+    **生成の道の上で誰も呼んでいません** —— `scripts/preflight.py` は
+    まったく同じ検査（`shutil.which`）を持っているのに、`batch_build` からも
+    `src.pipeline` からも呼ばれていませんでした。
+
+    実測の損: **3本 × 2回 ＝ 約8分**を使ってから `ffprobe が見つかりません`
+    で全部落ちました。1周が実測 44分なので、**その回の2割**です。
+
+    **落ちること自体は正しい。落ちる場所が8分先だったのが欠陥です**
+    （下の「0. 投稿本数の枠」がまったく同じ形で、そこは 2026-08-17 に直っている）。
+    しかも**1回目は図の重なりで落ちた**ので、本当の理由は作り直しの側に
+    しか出ず、読む側からは道具の不足に見えません。**症状が理由を隠します。**
+
+    **訊かずに撃ちます**（CLAUDE.md 2「人間の作業に依存する計画を立てない」）。
+    入っていれば `which` 3回ぶんで戻るので、普通の回の費用はゼロです。
+
+    **覆る条件**: `setup.sh` が壊れて毎回2分かかるようになったら、
+    ここを「欠けていたら止めるだけ」に落とすこと。
+    """
+    missing = [b for b in NEEDED_BINS if not shutil.which(b)]
+    if not missing:
+        return True
+    print(f"[batch] **道具が欠けています: {', '.join(missing)}** —— "
+          "`scripts/setup.sh` を撃ちます（何度でも安全）", flush=True)
+    try:
+        proc = subprocess.run(["bash", str(root / "scripts" / "setup.sh")],
+                              capture_output=True, text=True, timeout=900)
+    except subprocess.TimeoutExpired:
+        print("[batch] **setup.sh が 15分で終わりませんでした。**", flush=True)
+        return False
+    still = [b for b in NEEDED_BINS if not shutil.which(b)]
+    if still:
+        tail = "\n".join((proc.stdout or "").splitlines()[-5:])
+        print(f"[batch] **まだ欠けています: {', '.join(still)}**"
+              f"（setup.sh exit={proc.returncode}）\n{tail}", flush=True)
+        return False
+    print(f"[batch] 入りました: {', '.join(missing)}", flush=True)
+    return True
+
+
+# 落ちた出力から「理由の1行」を取り出す形。**綴りを並べません。**
+#
+# 前に同じ所を、落ちる文言の一覧で書こうとした跡が `src/queue_mix.py` にあります
+# （2026-08-23「手で持った名前が腐る」）。文言は増えるので、**例外の名前のほうを拾います** ——
+# `RuntimeError: …` は言語が出す形で、こちらが書き換えても綴りが変わりません。
+_EXC_LINE = re.compile(
+    r"^(?:\S*\.)?([A-Za-z_][A-Za-z0-9_]*(?:Error|Exception|Exit|Interrupt))\s*:\s*(.+)$"
+)
+
+
+def _failure_reason(out: str) -> str:
+    """落ちた本の理由を、**1行**にする（台帳に積んで、次の回が数えられる形）。
+
+    返すのは「例外の名前: 中身の頭」。取れなければ最後の非空行をそのまま返す。
+    **分からないときに「不明」と書かないこと** —— 中身を捨てるのが元の欠陥です。
+    """
+    lines = [ln.rstrip() for ln in (out or "").splitlines() if ln.strip()]
+    if not lines:
+        return "出力が空のまま落ちました（殺された可能性。exit の値を見ること）"
+    for ln in reversed(lines):
+        m = _EXC_LINE.match(ln.strip())
+        if m:
+            return f"{m.group(1)}: {m.group(2)}"[:300]
+    return lines[-1][:300]
+
+
+def build_one(topic: dict, long_form: bool) -> dict:
+    """**作るところまで**を1本ぶん。予約はしない（呼ぶ側が直列でやる）。
+
+    ここが並列に走る部分です。**予約を混ぜないこと** —— `upload_only.py` は
+    `next_publish_at` と待ち行列（`critique_queue`）という**共有の状態**を触るので、
+    同時に走らせると予約時刻がぶつかります（8/15 03:48 の二重起動と同じ壊れ方）。
+    """
+    tid = topic["id"]
+    row: dict = {"topic": tid, "calc": topic["calc"], "video_id": "", "error": ""}
+
+    # **1本ぶんの秒数を残す。** これが無かったので「`--jobs` の上限」が
+    # 4回持ち越されました（上の節）。**落ちた本も測ります** ——
+    # 落ちるまでに使った時間も、他の本を待たせているからです。
+    started = datetime.now(JST)
+    cmd = [sys.executable, "-m", "src.pipeline", "--topic", tid, "--dry-run"]
+    if not long_form:
+        cmd.append("--short")
+    code, out = run(cmd, BUILD_TIMEOUT, tid)
+    row["build_sec"] = round((datetime.now(JST) - started).total_seconds(), 1)
+    if code != 0:
+        row["error"] = f"生成が失敗（exit {code}）"
+        # **落ちた理由を台帳に残す**（2026-08-24 に足した。**症状が理由を隠していました**）。
+        #
+        # ここは `code, _ = run(...)` で、**出力を捨てていました。** 出力は
+        # `run()` が端末へ流しますが、**その端末はその回のコンテナと一緒に消えます。**
+        # 残るのは `data/batch_runs.jsonl` の `生成が失敗（exit 1）` の1行だけで、
+        # **次の回は「何が落ちたか」を1文字も持っていません。**
+        #
+        # 実測の損: 2026-08-24 18:58 の回が **8本すべて exit 1** で落ちました。
+        # 台帳に理由が無いので、この回は**同じ本をもう一度撃って**（約4分）
+        # 理由を取り直すところから始めています。**長尺は直近 15/31 本（48%）しか
+        # 通っておらず**、`config/hypotheses.yaml` の 08-31 の判定
+        # （「長尺は1日4本 作れる」）は、この歩留りにそのまま乗っています。
+        #
+        # **`build_one` は `--dry-run` なので、ここを残すのに副作用はありません。**
+        row["error_reason"] = _failure_reason(out)
+        row["error_tail"] = "\n".join(out.strip().splitlines()[-25:])[-2000:]
+        row["built"] = False
+        return row
+
+    # **contact sheet は投稿の前に作る。**
+    #
+    # 最初に書いたときここを飛ばしていて、**1本目の投稿でそのまま踏みました**
+    # （2026-08-15、`H28qfOxuJF0`）。`critique_queue.stash()` は
+    # `inspect.jpg` が無いと材料を残さないので、**その動画は独立評価を
+    # 永久に回せなくなります**（`build/` はコンテナと一緒に消える）。
+    # `docs/CRITIQUE.md` が「投稿の時点から残る」と書いているのはこの1枚のことです。
+    code, _ = run([sys.executable, "scripts/inspect_build.py", tid], UPLOAD_TIMEOUT, tid)
+    if code != 0:
+        # **止めません。**contact sheet は評価の材料で、動画そのものではない。
+        # 投稿が途切れるほうが損なので、印だけ残して先へ進みます。
+        row["error"] = "contact sheet を作れず、独立評価の材料が残りません"
+    row["built"] = True
+    row["make_sec"] = round((datetime.now(JST) - started).total_seconds(), 1)
+    # **群のラベルは、作った時に書く**（2026-08-23 に踏んで足した）。
+    # それまで `opening_motion` は**回のおしまいに1回だけ**書いていたので、
+    # **途中で落ちると、実際に作った本のラベルが丸ごと消えました** ——
+    # 実測: 8本頼んで6本できた回が落ち、`data/batch_runs.jsonl` に1行も残らず、
+    # **6本が「どちらの群か分からない本」になった**（`src/motion_groups` が落とす）。
+    # A/B は「あとから推定する」と必ず壊れる。**作るたびに1行残す。**
+    _flag_line(tid)
+    return row
+
+
+def _flag_line(tid: str) -> None:
+    """1本ぶんの群のラベルを、その場で `data/build_flags.jsonl` に足す。"""
+    try:
+        rec = {"at": datetime.now(JST).isoformat(timespec="seconds"),
+               "topic": tid, "opening_motion": renderer.opening_motion_on()}
+        FLAGS.parent.mkdir(parents=True, exist_ok=True)
+        with FLAGS.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
+    except Exception as exc:                                   # noqa: BLE001
+        # **記録に失敗しても作るのは止めない。**ただし黙らない。
+        print(f"[batch] 群のラベルを残せませんでした（{tid}）: {exc}", flush=True)
+
+
+def video_id_of(out: str) -> str:
+    for line in reversed(out.splitlines()):
+        if line.startswith("VIDEO_ID "):
+            return line.split(None, 1)[1].strip()
+    return ""
+
+
+def _median(xs: list[float]) -> float:
+    xs = sorted(xs)
+    n = len(xs)
+    if not n:
+        return 0.0
+    return xs[n // 2] if n % 2 else (xs[n // 2 - 1] + xs[n // 2]) / 2
+
+
+def report() -> int:
+    """台帳を `jobs` 別に並べる。**生成しません**（数秒で終わります）。
+
+    見るのは2つだけ。
+
+        速くなった倍率   直列の合計 ÷ 壁時計。**jobs に近いほど、待ち時間が素直に重なっている**
+        1本あたりの中央値 **jobs を上げるほど伸びていたら、そこが上限**
+
+    倍率だけでは上限が出ません（本数と題材で動くので）。
+    **太り始めたかどうかが、同じ走りの中で比べられる唯一の量**です。
+    """
+    if not LOG.exists():
+        print("まだ1回も走っていません（data/batch_runs.jsonl が空）。")
+        return 1
+    rows = []
+    for line in LOG.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            rows.append(json.loads(line))
+        except json.JSONDecodeError:
+            continue
+
+    timed = [r for r in rows if r.get("jobs") and r.get("wall_sec")]
+    print(f"=== batch の走り {len(rows)} 回（うち時間が入っているのは {len(timed)} 回）===")
+    if not timed:
+        print("\n  **時間の入った走りがまだありません。**")
+        print("  2026-08-15 22:3x より前の走りには `jobs` も秒数も入っていません")
+        print("  （入れていなかったので、`--jobs` の上限が4回持ち越されました）。")
+        print("  次に `batch_build.py` を走らせた回から、ここに並びます。")
+        return 1
+
+    by_jobs: dict[int, list[float]] = {}
+    print("\n  日時              同時 本数  壁時計   直列なら  倍率  1本あたりの中央値")
+    for r in timed:
+        per = [float(x["build_sec"]) for x in r.get("results", [])
+               if x.get("build_sec")]
+        med = _median(per)
+        by_jobs.setdefault(int(r["jobs"]), []).extend(per)
+        print(f"  {r['at'][5:16]:<16} {r['jobs']:>3} {r.get('count', len(per)):>4}"
+              f" {r['wall_sec']/60:>7.1f}分 {(r.get('serial_sec') or 0)/60:>8.1f}分"
+              f" {str(r.get('speedup') or '—'):>5}  {med/60:>6.1f}分")
+
+    # **1回の走りの中で出した「倍率」は、自分に甘い。**
+    #
+    # `speedup` は「1本ずつの秒数の合計 ÷ 壁時計」ですが、その1本ずつの秒数は
+    # **既に混雑で太った後の値**です。太るほど分子も大きくなるので、
+    # **混雑しているときほど倍率が良く見えます**（8/15 22:3x の実測で 4.2倍と出た。
+    # 本当は 2.6倍）。**割る相手は、いちばん空いている走りの1本あたり**です。
+    per_run_thru = {}
+    for r in timed:
+        per = [float(x["build_sec"]) for x in r.get("results", []) if x.get("build_sec")]
+        if per and r.get("wall_sec"):
+            per_run_thru.setdefault(int(r["jobs"]), []).append(
+                len(per) / float(r["wall_sec"]))
+
+    js = sorted(by_jobs)
+    base = _median(by_jobs[js[0]])
+    base_thru = max(per_run_thru.get(js[0], [0.0]))
+
+    print("\n  **jobs 別**（1本あたりが太り始めた点と、実際に出た本数）")
+    print("    同時  本数  1本あたり  太り方   1時間あたり  空いているときの何倍")
+    for j in js:
+        med = _median(by_jobs[j])
+        swell = med / base if base else 0.0
+        thru = max(per_run_thru.get(j, [0.0])) * 3600.0
+        gain = (thru / (base_thru * 3600.0)) if base_thru else 0.0
+        print(f"    {j:>3} {len(by_jobs[j]):>5}本 {med/60:>8.1f}分 {swell:>7.2f}倍"
+              f" {thru:>10.1f}本 {gain:>13.2f}倍")
+
+    if len(js) < 2:
+        print("\n  **まだ1種類の `jobs` しか走っていません。** 上限は言えません。")
+        print("  別の `--jobs` で1回走らせると、上の行が2行になって比べられます。")
+        return 0
+
+    top = max(js, key=lambda j: max(per_run_thru.get(j, [0.0])))
+    worst = max(js, key=lambda j: _median(by_jobs[j]))
+    swell = _median(by_jobs[worst]) / base if base else 0.0
+
+    if swell >= 1.3:
+        print(f"\n  **同時 {worst} で1本あたりが {swell:.2f}倍に太っています。**"
+              " 待ち時間だけでなく、こちらの資源も取り合い始めています。")
+    else:
+        print(f"\n  1本あたりは最大でも {swell:.2f}倍で、**まだ太っていません。**")
+
+    # **太り始めた ≠ 上限。** 1本あたりが遅くなっても、同時に走る本数が
+    # それ以上に増えていれば、**1時間あたりに出る本数は増え続けます。**
+    # 止めるのは「太ったから」ではなく「**出る本数が増えなくなったから**」。
+    if top == max(js):
+        print(f"  それでも**いちばん出たのは同時 {top}**です"
+              f"（1時間あたり {max(per_run_thru[top])*3600:.1f}本）。"
+              " **太り始めた点は上限ではありません。**")
+        print(f"  まだ上げられます。次は同時 {max(js)*2} を1回。"
+              " **出る本数が増えなくなったところが上限**です。")
+    else:
+        print(f"  **出る本数がいちばん多いのは同時 {top}** で、それより上げると"
+              "減っています。**そこが上限です。**")
+    return 0
+
+
+def _push_thumbnails_first() -> None:
+    """溜まったサムネイルを、**この回の投稿が単位を使い切る前に**押す。
+
+    **落ちても投稿は続けます。** ここで止めると、サムネイル（あれば良いもの）の
+    ために投稿（途切れるのが最大の損失）を止めることになります。**順番が逆です。**
+    """
+    try:
+        import refresh_thumbnail
+
+        if not upload_cap.day_quota().open:
+            return                      # 観測済みで閉じている。撃つだけ無駄
+        refresh_thumbnail.push_missing()
+    except Exception as exc:                                   # noqa: BLE001
+        print(f"[batch] サムネイルの押し直しは飛ばします: {str(exc)[:120]}", flush=True)
+
+
+def main(argv: list[str] | None = None) -> int:
+    ap = argparse.ArgumentParser(description="複数本をまとめて作って予約する")
+    ap.add_argument("--count", type=int, default=2, help="作る本数（既定 2）")
+    ap.add_argument("--hour", type=int, default=9,
+                    help="予約時刻（JST の時。既定 9）。埋まっていれば翌日へ送られる")
+    ap.add_argument("--date", default="",
+                    help="YYYY-MM-DD。**その日に釘づけして時刻をずらす**＝1日にN本。"
+                         "無ければ従来どおり1日ずつ後ろへ積む（1日1本）")
+    ap.add_argument("--hours", default="",
+                    help="--date と一緒に使う。時刻をカンマ区切りで明示"
+                         "（既定は --hour から1時間ずつ）")
+    ap.add_argument("--step-min", type=int, default=60,
+                    help="--date と一緒に使う。予約の間隔（分・60の約数）。"
+                         "既定の60は1日11枠まで（9〜19時）＝投稿枠92本の1/8。"
+                         "30 にすると1日22枠。--hours とは併用できません")
+    ap.add_argument("--force-window", action="store_true",
+                    help="M14 の比較の窓に置くことを承知で続ける（測定が壊れます）")
+    ap.add_argument("--topics", default="",
+                    help="テーマIDをカンマ区切りで明示する（--count より優先）")
+    ap.add_argument("--long", action="store_true",
+                    help="長尺で作る（既定はショート）")
+    ap.add_argument("--skip-upload", action="store_true",
+                    help="作るだけで予約しない。**この場合コンテナと一緒に消えます**")
+    ap.add_argument("--jobs", type=int, default=DEFAULT_JOBS,
+                    help=f"同時に作る本数（既定 {DEFAULT_JOBS}）。**予約はいつも1本ずつ**")
+    ap.add_argument("--per-calc", type=int, default=DEFAULT_PER_CALC,
+                    help=f"1つの calc から取ってよい本数（既定 {DEFAULT_PER_CALC}）。"
+                         "**節はいつも全部ちがいます。**1 にすると昔の"
+                         "「calc が全部ちがう」に戻り、1回の上限が calc の本数になります")
+    ap.add_argument("--no-retry", action="store_true",
+                    help="落ちた本を作り直さない（既定は1回だけ作り直す。"
+                         "実測 54%% が2回目で通り、テーマ在庫は減りません）")
+    ap.add_argument("--stop-on-error", action="store_true",
+                    help="1本落ちたらそこで止める（**予約の段だけ**。"
+                         "作る段は並列なので、落ちた1本の巻き添えで他を捨てません）")
+    ap.add_argument("--report", action="store_true",
+                    help="台帳を jobs 別に並べるだけ（**生成も予約もしません**・数秒）")
+    args = ap.parse_args(argv)
+
+    if args.report:
+        return report()
+
+    # ---- 0. **日付は、生成の前にここで正す**（2026-08-19 08:1x に9本ぶん捨てて足した）----
+    #
+    # `--date 08/23` は、この道具の中では**最後まで通ります** ——
+    # `slots()` は文字を組み立てるだけ、印字も `08/23 の1日に入れます` と出るので、
+    # **渡した側からは正しく動いているように見えます。** 形を見るのは
+    # `uploader.next_publish_at`（`videos.insert` の直前）だけで、そこは
+    # **9本の生成が全部終わったあと**です。実測: 約20分ぶんを作ってから
+    # **9本とも予約で落ちました**（`予約できたのは 0 / 9 本`）。
+    #
+    # **落ちること自体は正しい。落ちる場所が20分先だったのが欠陥です。**
+    try:
+        args.date = uploader.normalize_date_jst(args.date)
+    except ValueError as exc:
+        print(f"[batch] {exc}")
+        return 2
+
+    # ---- 0.0 **撃つ前に、道具が入っているか**（2026-08-22 に足した。理由は
+    # `ensure_toolchain` の docstring）------------------------------------
+    if not ensure_toolchain():
+        return 1
+
+    # ---- 0. **撃つ前に、1日の投稿本数の枠を見る**（2026-08-17 に足した）----
+    #
+    # 下の「2. 予約する」には、429 に当たったら止まる門が既にあります。
+    # **あれは作り終えたあとにしか効きません。** 10:5x の回は6本を作ってから当たり、
+    # **6本とも `build/` ごと捨てました**（コンテナが畳まれると消えます）。
+    #
+    # ここは **API を1単位も使いません**（控えと観測の記録だけ）。だから
+    # **Data API の日枠が切れている回でも効きます** —— そういう回は1日13時間あり、
+    # 撃てるかどうかを口に訊く道がそもそもありません。
+    explicit = [i.strip() for i in args.topics.split(",") if i.strip()]
+    if not args.skip_upload:
+        cap = upload_cap.state()
+        print(f"[batch] {cap.line}", flush=True)
+        if cap.remaining <= 0:
+            print("[batch] **作りません。**（予約せずに作るだけなら "
+                  "`--skip-upload`。枠が戻ってから "
+                  '`upload_only.py <ID> "" <日付>@<時>` で打てます）', flush=True)
+            return 1
+        want = len(explicit) if explicit else args.count
+        if cap.remaining < want:
+            print(f"[batch] 要求 {want} 本を **{cap.remaining} 本に縮めます**"
+                  "（残りは作っても撃てず、`build/` ごと消えるだけなので）。",
+                  flush=True)
+            if explicit:
+                explicit = explicit[:cap.remaining]
+            else:
+                args.count = cap.remaining
+
+    # ---- 0.5 **溜まったサムネイルを、投稿より先に押す**（2026-08-17 22:4x に足した）--
+    #
+    # **順番がすべてです。** Data API の単位枠は 10,000単位で、
+    # `videos.insert` は 1本 1,600単位 —— **7本で 11,200単位**。1周で7〜8本
+    # 上げているので、**窓が開いた直後の1周が、その窓の単位を丸ごと使い切ります。**
+    # `thumbnails.set` は 50単位しか要らないのに、**いつも投稿の後ろに並んでいた**ので
+    # 一度も順番が回ってきませんでした。
+    #
+    #     待ち行列は 8/17 の1日で 28 → 33本にふえ、
+    #     `missing_thumbnail` は **15回鳴って当たり2回**
+    #
+    # 一覧が悪いのではありません。**押せる時刻に、押す手順が無かった**だけです。
+    # 5本ぶんで 250単位（投稿0.16本ぶん）なので、**投稿の本数は減りません。**
+    _push_thumbnails_first()
+
+    topics = pick(args.count if not explicit else len(explicit), explicit,
+                  per_calc=args.per_calc)
+    if not topics:
+        print("[batch] 作れるテーマがありません。config/topics.yaml を足すこと。")
+        return 1
+
+    if args.date:
+        check_window(args.date, args.force_window)
+    hours = [int(h) for h in args.hours.split(",") if h.strip()]
+    when = slots(len(topics), args.hour, args.date or None, hours,
+                 step_min=args.step_min)
+
+    if args.date:
+        # **`+ ':00'` と書かないこと**（2026-08-18 に直した）。`--step-min` を
+        # 足すまで時しか無かったので足していましたが、いまは `10:30` が来ます。
+        shown = ", ".join(_show_slot(w) for w in when)
+        print(f"[batch] {len(topics)} 本を **{args.date} の1日に**入れます"
+              f"（{shown} JST）")
+    else:
+        print(f"[batch] {len(topics)} 本を作ります（予約は {args.hour}:00 JST の空き枠へ）")
+    for t in topics:
+        print(f"        {t['id']}  calc={t['calc']}  {t['title_seed'][:38]}")
+
+    # ---- 1. 作る（**ここだけ並列**）----------------------------------------
+    #
+    # 1本の11分は、ほぼ全部が `claude -p` の待ち時間です（生成中の CPU は 2〜4%）。
+    # **待ち時間は重ねられます。** 直列だと 8本で90分、3本ずつなら30分台。
+    # M14 が測ろうとしている「1日あたりの本数」は、ここが律速でした。
+    jobs = max(1, min(args.jobs, len(topics)))
+    began = datetime.now(JST)
+    if jobs > 1:
+        print(f"\n[batch] **{jobs} 本ずつ同時に作ります**"
+              f"（待ち時間を重ねるだけなので、予約は下で1本ずつやります）", flush=True)
+    with ThreadPoolExecutor(max_workers=jobs) as pool:
+        results = list(pool.map(lambda t: build_one(t, args.long), topics))
+
+    # ---- 1b. 落ちた本を、その場でもう一度だけ作る ---------------------------
+    #
+    # **落ちる理由は、テーマではなく回でした**（2026-08-19 19:2x に
+    # `data/batch_runs.jsonl` の 449本を数えた）:
+    #
+    #     直前が失敗 → 次の試行が成功   **46/85 = 54%**
+    #     （`生成が失敗` に絞っても 38/70 = 54%）
+    #     落ち2回以上のテーマ 16件のうち、**13件は最後に通って投稿済み**
+    #
+    # つまり「必ず落ちるテーマ」はほぼ無く（成功0回は1件）、失敗の半分は
+    # **その回かぎりのぶれ**です。だから門（`pick` から外す）は効きません ——
+    # **測ってから足すこと**、の答えがこれです。効くのは撃ち直しのほう。
+    #
+    # **在庫が律速なので、撃ち直しは「多めに作る」より強い。**
+    # 8枠に10本つっこむ手は、余った2本ぶんの**テーマを1回で使い切ります**
+    # （いま未投稿の在庫は 18件）。撃ち直しは**同じテーマを使う**ので
+    # 在庫を1件も減らしません。歩留まり 86.7% → 約 94% の見込み。
+    #
+    # **1回だけ**です（2回目の期待値は同じ54%だが、時間は線形に増える）。
+    # `--no-retry` で従来どおりになります。
+    retry_at = [n for n, r in enumerate(results)
+                if not r.get("built") and not args.no_retry]
+    if retry_at:
+        print(f"\n[batch] **{len(retry_at)} 本を、もう一度だけ作り直します**"
+              f"（実測 54% が2回目で通ります。テーマは減りません）", flush=True)
+        with ThreadPoolExecutor(max_workers=max(1, min(jobs, len(retry_at)))) as pool:
+            again = list(pool.map(lambda n: build_one(topics[n], args.long), retry_at))
+        recovered = 0
+        for n, row in zip(retry_at, again):
+            row["retried"] = True
+            # **落ちたほうの時間も残す。** 撃ち直しは只ではないので、
+            # 次の回が「割に合っているか」を数字で見られるようにしておく。
+            row["first_build_sec"] = results[n].get("build_sec")
+            if row.get("built"):
+                recovered += 1
+            else:
+                # 2回とも落ちた ＝ そのテーマ側の可能性が上がる。台帳に残す。
+                row["error"] = (row["error"] or "生成が失敗") + "（2回とも）"
+            results[n] = row      # **同じ位置に戻す**（枠の対応は並び順で決まる）
+        print(f"[batch] 作り直しで {recovered} / {len(retry_at)} 本が通りました",
+              flush=True)
+
+    built = sum(1 for r in results if r.get("built"))
+    wall_sec = round((datetime.now(JST) - began).total_seconds(), 1)
+    spent = wall_sec / 60
+    print(f"\n[batch] 作れたのは {built} / {len(topics)} 本（{spent:.1f}分・同時 {jobs}）",
+          flush=True)
+
+    # **重なりを、その場で出す。** 台帳に残すだけだと誰も読みません
+    # （`--jobs` が4回持ち越されたのは、まさにそれです）。
+    # **作り直した本は、落ちた1回目の時間も足すこと**（2026-08-19 に足した）。
+    # 足さないと直列相当が過少になり、`speedup` が実際より大きく出ます。
+    serial_sec = round(sum(float(r.get("make_sec") or r.get("build_sec") or 0.0)
+                           + float(r.get("first_build_sec") or 0.0)
+                           for r in results), 1)
+    speedup = round(serial_sec / wall_sec, 2) if wall_sec > 0 else None
+    per_book = [float(r["build_sec"]) for r in results if r.get("build_sec")]
+    if per_book and jobs > 1:
+        mean = sum(per_book) / len(per_book)
+        print(f"[batch] 直列なら {serial_sec/60:.1f}分 → **{speedup} 倍**"
+              f"（同時 {jobs}）／1本あたり {mean/60:.1f}分", flush=True)
+        print("[batch] **1本あたりが jobs を上げるほど伸びていたら、そこが上限です**"
+              "（`--report` で並べて見ること）", flush=True)
+
+    # ---- 2. 予約する（**必ず直列**）----------------------------------------
+    #
+    # `upload_only.py` は `next_publish_at` と待ち行列という共有の状態を触るので、
+    # 同時に走らせると予約時刻がぶつかります。**ここを並列にしないこと。**
+    # 順番も `topics` のまま＝`when[n-1]` の対応が崩れません。
+    for n, row in enumerate(results, 1):
+        tid = row["topic"]
+        if not row.get("built"):
+            print(f"[batch] **{tid} は作れませんでした。** 予約しません。", flush=True)
+            continue
+        if args.skip_upload:
+            row["error"] = (row["error"] + " / " if row["error"] else "") \
+                + "予約していません（--skip-upload）"
+            continue
+
+        code, out = run(
+            [sys.executable, "scripts/upload_only.py", tid, "", when[n - 1]],
+            UPLOAD_TIMEOUT, tid,
+        )
+        vid = video_id_of(out)
+        row["video_id"] = vid
+        if not vid:
+            row["error"] = f"予約が失敗（exit {code}）"
+        elif code != 0:
+            # 投稿は済んでいるが材料を残せなかった場合（upload_only.py の 1）。
+            row["error"] = "投稿済み。ただし独立評価の材料を残せていない"
+
+        # **1日の投稿本数の枠に当たったら、そこで止めること**（2026-08-17 に踏んだ）。
+        #
+        # この枠は Data API の10,000単位とは別で、**当たったら残り全部が必ず落ちます。**
+        # ところがここは1本ずつ独立に撃つので、**6本を撃って6本とも同じ429**で捨てました。
+        # `--stop-on-error` は既定で off なので、旗に頼ると次も同じことが起きます。
+        # **「次も必ず落ちる」と分かっている失敗だけは、旗によらず止めます。**
+        if not vid and auth.is_upload_cap(RuntimeError(out)):
+            # **観測は `src/uploader._note_cap` が既に残しています**（2026-08-17）。
+            # ここで重ねて書かないこと —— 予約は `upload_only.py` を**子プロセス**で
+            # 叩くので、向こうの中で `videos.insert` が落ちた時点で記録されています。
+            # 両方で書くと、1回の 429 が「2回観測した」に見えます。
+            rest = [r["topic"] for r in results[n:] if r.get("built")]
+            print(f"[batch] **1日の投稿本数の枠に当たりました**（HTTP 429・"
+                  "Data API の10,000単位とは別の枠）。"
+                  "**残りを撃っても全部落ちるので、ここで止めます。**", flush=True)
+            print(f"[batch] 戻るのは **JST 16:00 ごろ**（太平洋時間の0時）。", flush=True)
+            if rest:
+                print(f"[batch] **作ってあるのに predicate できていない本が {len(rest)}本**"
+                      "。`build/` に残っているので、枠の戻った回に打ち直せます:", flush=True)
+                for tid in rest:
+                    print(f"[batch]     python scripts/upload_only.py {tid} "
+                          f'"" <日付>@<時>', flush=True)
+            for r in results[n:]:
+                if r.get("built") and not r.get("video_id"):
+                    r["error"] = "投稿本数の枠で撃っていません（build/ に残っています）"
+            break
+
+        if code != 0 and not vid and args.stop_on_error:
+            break
+
+    for row in results:
+        row.pop("built", None)
+
+    stamp = datetime.now(JST).isoformat(timespec="seconds")
+    LOG.parent.mkdir(parents=True, exist_ok=True)
+    with LOG.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(
+            {"at": stamp, "hour": args.hour, "date": args.date or None,
+             "slots": when,
+             # **`jobs` と秒数は、この台帳にしか残りません。**
+             # `build/` もセッションの画面も、次の回には無い。
+             "jobs": jobs, "count": len(topics),
+             "wall_sec": wall_sec, "serial_sec": serial_sec, "speedup": speedup,
+             "long": bool(args.long),
+             # **作ったときの設定を、作った本と一緒に残す**（2026-08-23 に足した）。
+             # これが無いと、A/B の群を**作った日でしか割れません**。実装は在庫より
+             # 先に効き、在庫は数週間先まで予約されているので、**実装日で割ると
+             # 両群の中身が同じになります**（8/19 の ab_split と 8/23 の
+             # 「冒頭0.9秒の動き」で2回踏んだ。後者は対照群が 405本中 0本だった）。
+             "opening_motion": renderer.opening_motion_on(),
+             "results": results},
+            ensure_ascii=False) + "\n")
+
+    ok = [r for r in results if r["video_id"]]
+    print("\n=== まとめ ===")
+    for r in results:
+        mark = "✓" if r["video_id"] else "✗"
+        print(f"  {mark} {r['topic']:<18} {r['video_id'] or '—':<12} {r['error']}")
+        # **理由も、まとめの中に出す。** 上の1行は「exit 1」しか言いません。
+        # 端末はコンテナと一緒に消えるので、**読まれる場所に理由を置くこと**。
+        if r.get("error_reason"):
+            print(f"      ↳ {r['error_reason']}")
+    print(f"  予約できたのは {len(ok)} / {len(topics)} 本")
+    print(f"  記録: {LOG.relative_to(ROOT)}")
+    # **2026-08-21、ここは「独立評価が待ち行列に積まれています」でした。**
+    # その評価のゲートは同日 falsified で外れています
+    # （`config/hypotheses.yaml`・順位相関 -0.27／しきい値 +0.40）。
+    # **積むこと自体は続けます**（材料は投稿直後にしか残らないので）が、
+    # **次の手として勧めるのはやめました。** 勧める先は腕 `density` です。
+    return 0 if ok or args.skip_upload else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
