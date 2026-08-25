@@ -257,3 +257,127 @@ def test_時刻が読めない行は落とす():
     rows = [{"session": "A", "at": "こわれた", "spawned": ["hourly"]},
             _rec("B", "2026-08-25T03:05:30+00:00", ["hourly"])]
     assert relay._dupes(rows) == []
+
+
+# --- 承認が挟まったか（2026-08-25 に足した） ----------------------------
+#
+# **これは「秒を記録できること」の検査ではありません。**
+# 守っているのは、**承認で動いていたのを「自力で回っている」と書けないこと**です。
+#
+# オーナーの指摘（原文）:
+#     「上手くいってるように見えてるところは私が承認押しまくってるおかげかもよ」
+#
+# そのとおりでした。**呼んだ側からは、承認されて成功したのと許可されて成功したのが
+# 同じに見えます** —— 返るのは「成功」だけ。見分けられるのは「拒否」だけで、
+# 承認は待たされたことすら分かりません。**唯一の目盛りが秒です。**
+
+def test_測っていない回はそう印字する(sandbox, monkeypatch, capsys):
+    """**黙って通さないこと。**
+
+    ここが黙ると、次の回は「`--record` は通った＝測れている」と読みます。
+    **無いことが見えなければ、感想に戻ります。**
+    """
+    monkeypatch.setattr(relay, "me", lambda: "session_TEST")
+    args = type("A", (), {"hourly": 1, "optimizer": 1, "spawned": "", "note": ""})()
+    relay.cmd_record(args)
+    out = capsys.readouterr().out
+    assert "測っていません" in out
+    assert "数えていません" in out
+
+
+def test_速い呼び出しは承認なしと読む(sandbox, monkeypatch, capsys):
+    monkeypatch.setattr(relay, "me", lambda: "session_TEST")
+    args = type("A", (), {"hourly": 1, "optimizer": 1, "spawned": "", "note": "",
+                          "call_seconds": 10.7, "blocked": 0})()
+    relay.cmd_record(args)
+    out = capsys.readouterr().out
+    assert "承認は挟まっていません" in out
+    assert "10.7秒" in out
+    assert "承認待ちだった回: **0件**" in out
+
+
+def test_遅い呼び出しは疑いとして残す(sandbox, monkeypatch, capsys):
+    """**閾を超えたら、成功していても疑いを残すこと。**
+
+    `--record` は通ります（記録できないほうが確実に悪い）が、
+    **印字が「素通りだった」に見えてはいけません。**
+    """
+    monkeypatch.setattr(relay, "me", lambda: "session_TEST")
+    args = type("A", (), {"hourly": 1, "optimizer": 1, "spawned": "", "note": "",
+                          "call_seconds": float(relay.APPROVAL_SUSPECT_SEC + 1),
+                          "blocked": 2})()
+    relay.cmd_record(args)
+    out = capsys.readouterr().out
+    assert "承認待ちが挟まった疑い" in out
+
+
+def test_秒の引き算はスクリプト側でやる(sandbox):
+    """**模型に `date` の引き算をさせないこと。**
+
+    分をまたいだ回で必ず間違え、しかも**短く出るほうへ間違えます**
+    （＝「承認は挟まっていない」の側）。だから `--since` で渡し、ここで引く。
+    """
+    import time
+    since = int(time.time()) - 90
+    p = _run(["--record", "--hourly", "1", "--optimizer", "1",
+              "--since", str(since), "--blocked", "0"], cwd=sandbox,
+             env={**__import__("os").environ,
+                  "CLAUDE_CODE_REMOTE_SESSION_ID": "session_TEST",
+                  # **実物の台帳に行を足さないこと。** `monkeypatch` は
+                  # 別プロセスに効きません（最初の版が1行足しました）。
+                  "RELAY_LEDGER": str(sandbox / "relay.jsonl")})
+    assert p.returncode == 0, p.stderr
+    assert "承認待ちが挟まった疑い" in p.stdout, p.stdout
+    assert (sandbox / "relay.jsonl").exists()
+
+
+def test_stamp_は秒だけを標準出力に出す(sandbox):
+    """`--since` に渡す値です。**説明を混ぜると次の回が貼り間違えます。**"""
+    p = _run(["--stamp"], cwd=sandbox)
+    assert p.returncode == 0, p.stderr
+    assert p.stdout.strip().isdigit(), repr(p.stdout)
+
+
+def test_audit_は測った回が0なら何も言えないと言う(sandbox, monkeypatch, capsys):
+    """**0件を「承認なし 0件」と読ませないこと。**
+
+    「疑い 0」は「測って無かった」と同じ字面になり得ます。
+    測っていないなら、**そう言うこと。**
+    """
+    monkeypatch.setattr(relay, "me", lambda: "session_TEST")
+    (sandbox / "relay.jsonl").write_text(
+        json.dumps({"at": "2026-08-25T00:00:00+00:00", "session": "s",
+                    "alive": {"youtube-hourly": 1, "youtube-optimizer": 1},
+                    "spawned": []}, ensure_ascii=False) + "\n", encoding="utf-8")
+    relay.cmd_audit(type("A", (), {"limit": 5})())
+    out = capsys.readouterr().out
+    assert "まだ何も言えません" in out
+
+
+def test_audit_は疑いのある回を数えて出す(sandbox, monkeypatch, capsys):
+    monkeypatch.setattr(relay, "me", lambda: "session_TEST")
+    rows = [
+        {"at": "2026-08-25T00:00:00+00:00", "session": "a", "spawned": [],
+         "alive": {"youtube-hourly": 1, "youtube-optimizer": 1},
+         "call_seconds": 9.0, "blocked": 0},
+        {"at": "2026-08-25T01:00:00+00:00", "session": "b", "spawned": [],
+         "alive": {"youtube-hourly": 1, "youtube-optimizer": 1},
+         "call_seconds": float(relay.APPROVAL_SUSPECT_SEC + 300), "blocked": 3},
+    ]
+    (sandbox / "relay.jsonl").write_text(
+        "\n".join(json.dumps(r, ensure_ascii=False) for r in rows) + "\n",
+        encoding="utf-8")
+    relay.cmd_audit(type("A", (), {"limit": 5})())
+    out = capsys.readouterr().out
+    assert "承認なしで通った **1**" in out
+    assert "承認待ちの疑い **1**" in out
+    assert "自力で回っている" in out          # 疑いが出た回は、そう書くなと言う
+    assert "**3件**" in out                    # 承認待ちの件数の合計
+
+
+def test_next_は撃つ前に秒を打てと言う():
+    """**手順の側にも置くこと。** 測り方を知らない回は測りません。"""
+    p = _run(["--next"], cwd=ROOT)
+    assert p.returncode == 0, p.stderr
+    assert "--stamp" in p.stdout
+    assert "--blocked" in p.stdout

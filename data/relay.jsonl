@@ -4,3 +4,4 @@
 {"at": "2026-08-25T03:34:29+00:00", "session": "session_019MJX6fpB65ano3RrJb6LAj", "alive": {"youtube-hourly": 2, "youtube-optimizer": 2}, "spawned": [], "note": ""}
 {"at": "2026-08-25T05:03:48+00:00", "snapshot_at": null, "session": "session_01LijVu5rsjn6NL5UKLavSRg", "alive": {"youtube-hourly": 0, "youtube-optimizer": 1}, "spawned": ["hourly"], "note": ""}
 {"at": "2026-08-25T05:24:55+00:00", "snapshot_at": null, "session": "session_01TFacJyaKzJJuiW9LgTp5PN", "alive": {"youtube-hourly": 2, "youtube-optimizer": 1}, "spawned": [], "note": ""}
+{"at": "2026-08-25T07:43:18+00:00", "snapshot_at": "2026-08-25T06:16:57+00:00", "session": "session_01NMCM5GCrcNCa926AqPb4nt", "alive": {"youtube-hourly": 1, "youtube-optimizer": 1}, "spawned": [], "blocked": 5, "call_seconds": 4636.1, "note": "承認の計測回。read=list_sessions 10.7秒で素通り / write=set_session_title 4636秒待って拒否。窓25件中の承認待ち5件は全部『書く側』"}

@@ -29,6 +29,35 @@
 
 **鎖のうち、確実に動いている部分は子です。** 子は MCP を持ち、実際に毎周
 `list_sessions` も `create_session` も通しています。**なら子に渡させればよい。**
+
+> ### **2026-08-25、この段落の後半が実測で倒れました。**
+>
+> 「子は `create_session` も通しています」は、**通していたのではなく、
+> オーナーが押していた**可能性が高い。オーナーの指摘が起点です（原文）:
+>
+> > 「上手くいってるように見えてるところは私が承認押しまくってるおかげかもよ」
+>
+> **同じ日に測りました**（`--stamp` → 撃つ → `--since`）。
+> 分かれたのは**読む側と書く側**です:
+>
+>     list_sessions      **10.7秒** で成功        ← 読む側。素通り
+>     set_session_title  **4,636秒（77分）** 待って **拒否**  ← 書く側
+>
+> **`list_sessions` が通ることは、この仕組みが動く証拠になりません。**
+> 受け渡しが要るのは `create_session` と `archive_session` ——
+> **どちらも書く側**です。同じ日の窓（25件）で承認待ちに固着していた5件も、
+> **全部書く側**でした（`create_session`×2 / `archive_session` /
+> `set_session_title` / `delete_trigger`。読む側は1件もありません）。
+>
+> **つまりこの仕組みは、人が押す前提の上に立っています。**
+> 「文書ではなく機械にした」と言いながら、**機械の側が人待ちでした。**
+>
+> **鎖の本体は、こちらではなく親のトリガーのほうです** ——
+> あれはサーバが時刻で撃つので、承認は挟まりません
+> （`docs/trigger_spec.json` ／ 実物は `list_triggers`）。
+> **受け渡しは「親が飛ばしたときの上振れ」に格下げして読むこと。**
+> 柱として数えると、止まった回に誰も気づきません
+> （目標本文「私が必ず読むとは限らない」）。
 `scripts/stop_check.sh` が終わりぎわに割り込み、この記録が無ければ通しません。
 **引き止めは2回まで**（止まったまま死ぬほうが確実に悪い）。
 
@@ -61,7 +90,11 @@ import sys
 from datetime import datetime, timezone, timedelta
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-LEDGER = ROOT / "data" / "relay.jsonl"
+# **`RELAY_LEDGER` で差し替えられること。** 検査は `--record` を
+# 別プロセスで叩きます（引き算がスクリプト側で起きるかを見るため）。
+# `monkeypatch` は別プロセスに効かないので、**環境変数の口が無いと
+# 検査が実物の台帳に行を足します**（2026-08-25 に1行足しました）。
+LEDGER = pathlib.Path(os.environ.get("RELAY_LEDGER") or (ROOT / "data" / "relay.jsonl"))
 RENDERED = ROOT / "docs" / "spawn_prompt.rendered.md"
 JST = timezone(timedelta(hours=9))
 
@@ -133,6 +166,11 @@ def cmd_next(args) -> int:
         print("  速さ: **読めませんでした**（`quota.py --pace` が取れない）"
               "→ 自分の札は立てない側へ倒します")
     print()
+    print("**0. 撃つ前に秒を打つ**（**承認が挟まったかは、これでしか見えません**）\n")
+    print("      python scripts/relay.py --stamp     ← 返った秒を控える\n")
+    print("  返るのは「成功」だけで、**承認されて成功したのと、許可されて成功したのは")
+    print("  区別が付きません。** 見分けられるのは秒のほうです"
+          "（人が押すまでの時間が丸ごと乗る）。\n")
     print("**1. 札ごとに、生きている回を数える**\n")
     print("      list_sessions  mine=true limit=25")
     print("      → `PENDING` / `RUNNING` / `IDLE` を、tags ごとに数える\n")
@@ -160,7 +198,11 @@ def cmd_next(args) -> int:
     print("**3. 立てたら／立てなかったら、必ず記録する**（これが無いと終われません）\n")
     print("      python scripts/relay.py --record --hourly <生きている数> "
           "--optimizer <生きている数> \\")
+    print("             --since <0で控えた秒> --blocked <承認待ちだった回の数> \\")
     print("             [--spawned hourly,optimizer]\n")
+    print("  **`--blocked` は 0 でも渡すこと。** 省くと「数えていない」になり、")
+    print("  次の回がまた感想で「効いた」と言うことになります。")
+    print("  （`list_sessions` の `post_turn_summary.status_category == \"need_input\"`）\n")
     for lane in LANES:
         print(f"--- create_session に渡すもの（{lane}）---")
         print(_args_for(KIND_OF[lane]))
@@ -171,6 +213,34 @@ def cmd_next(args) -> int:
 
 #: 「同じ札を二重に立てた」とみなす幅（分）。**親の発火間隔より十分に短く。**
 DUP_WINDOW_MIN = 10
+
+
+# ------------------------------------------------------------------
+# **承認が挟まったかを測る**（2026-08-25 に足した。オーナーの指摘が起点）
+#
+#     「上手くいってるように見えてるところは私が承認押しまくってるおかげかもよ」
+#
+# **そのとおりでした。** 親は「鎖は自力で回っている」と報告していましたが、
+# 子は日常的に `REQUIRES_ACTION` で止まり、オーナーが押して動いていました。
+#
+# **問題は、承認されて成功したのと、許可されて成功したのが、
+# 呼んだ側からは同じに見えることです。** 返るのは「成功」だけ。
+# 見分けられるのは「拒否」だけで、**承認は待たされたことすら分かりません。**
+#
+# **見分けられる目盛りが1つあります: 時間です。**
+# 承認が挟まると、人が押すまでの秒数が丸ごと乗ります。
+#
+#     python scripts/relay.py --stamp        → 秒（epoch）が出る
+#     MCP を1回撃つ
+#     python scripts/relay.py --record ... --since <さっきの秒>
+#
+# **この秒には模型の手番が2回ぶん入っています**（撃つ判断と、記録する判断）。
+# 実測の素の往復は **10.7秒**（8/25 06:16、`list_sessions` の 20KB の返り）。
+# だから下の閾は「素の往復の何倍か」で置いてあり、**人の実測とは桁が違います** ——
+# 同じ日に固着した2件は 20分 と 37分 待って、結局だれも押しませんでした。
+#
+# **点が溜まったら動かすこと。** いまは 1点しかありません。
+APPROVAL_SUSPECT_SEC = 60
 
 
 def _when(r: dict) -> datetime | None:
@@ -222,6 +292,18 @@ def cmd_record(args) -> int:
         "session": me(),
         "alive": alive,
         "spawned": spawned,
+        # **その回で承認待ちに落ちていた回の数**（`list_sessions` の
+        # `post_turn_summary.status_category == "need_input"` を数える）。
+        # 帳面は長らく「誰が立てたか」しか残していませんでした。
+        # **それだと「効いた」を感想でしか言えません。**
+        # **`getattr` で読むこと。** 検査が組む簡易の args には無い欄です
+        # （`snapshot_at` と同じ理由。属性が無いだけで記録ごと落ちると、
+        #  門が永久に開きません）。
+        "blocked": (None if getattr(args, "blocked", None) is None
+                    else int(args.blocked)),
+        # **MCP を1回撃つのに何秒かかったか**（`--stamp` → 撃つ → `--since`）。
+        # 承認が挟まると人が押すまでの秒数が丸ごと乗るので、**ここだけが目盛り**です。
+        "call_seconds": getattr(args, "call_seconds", None),
         "note": args.note or "",
     }
     LEDGER.parent.mkdir(parents=True, exist_ok=True)
@@ -238,12 +320,41 @@ def cmd_record(args) -> int:
     print(f"記録しました → {shown}")
     print(f"  生きていた数: hourly={args.hourly} optimizer={args.optimizer}")
     print(f"  この回で立てた: {', '.join(spawned) if spawned else 'なし'}")
+    # **承認が挟まったかを、この回のぶんだけ先に言う。**
+    if rec["call_seconds"] is not None:
+        sec = rec["call_seconds"]
+        verdict = ("**承認待ちが挟まった疑い**" if sec >= APPROVAL_SUSPECT_SEC
+                   else "承認は挟まっていません（許可で通っています）")
+        print(f"  MCP を1回撃つのにかかった時間: **{sec:.1f}秒** → {verdict}"
+              f"（閾 {APPROVAL_SUSPECT_SEC}秒）")
+    else:
+        print("  MCP を1回撃つのにかかった時間: **測っていません**"
+              "（`--stamp` → MCP → `--since <秒>`）")
+    if rec["blocked"] is None:
+        print("  そのとき承認待ちだった回: **数えていません**"
+              "（`list_sessions` の `need_input` を数えて `--blocked N`）")
+    else:
+        print(f"  そのとき承認待ちだった回: **{rec['blocked']}件**")
     # **空のまま終えようとしていたら、そう言うこと。** 記録は通しますが、黙りません。
     holes = [lane for lane in LANES if alive[lane] == 0 and KIND_OF[lane] not in spawned]
     if holes:
         print()
         print("  **警告: 空の札を残したまま終わろうとしています** → " + " / ".join(holes))
         print("  親は今日5回これを飛ばしました（6時間40分の空白）。**立ててから終わること。**")
+    return 0
+
+
+def cmd_stamp(args) -> int:
+    """**MCP を撃つ直前に打つ。** 返った秒を `--record --since <秒>` に渡す。
+
+    **秒を模型に数えさせないこと。** `date` の出力を引き算させると、
+    分をまたいだ回で必ず間違えます（そして間違いは「承認は挟まっていない」の
+    側に落ちます —— 短く出るほうが自然だからです）。**引き算はここでやります。**
+    """
+    now = datetime.now(timezone.utc)
+    print(f"{int(now.timestamp())}")
+    print(f"  ({now.isoformat(timespec='seconds')})  ← この秒を --since に渡す",
+          file=sys.stderr)
     return 0
 
 
@@ -317,7 +428,49 @@ def cmd_audit(args) -> int:
         print("  （資源を取り合います。2026-08-15 は片方の生成が丸ごと無駄になりました）")
     else:
         print(f"  同じ札を {DUP_WINDOW_MIN}分内に二重に立てた組: **0**")
+
+    _audit_approval(rows)
     return 0
+
+
+def _audit_approval(rows: list[dict]) -> None:
+    """**承認が挟まっていたか。**（2026-08-25 に足した）
+
+    ここが無かったあいだ、鎖は「自力で回っている」と報告していました。
+    **実際にはオーナーが押していました。** 呼んだ側には見えないからです ——
+    返るのは「成功」だけで、承認は待たされたことすら分かりません。
+
+    **だから見るのは秒のほうです。** 承認が挟まると人が押すまでの時間が丸ごと乗る。
+    """
+    timed = [r for r in rows if isinstance(r.get("call_seconds"), (int, float))]
+    counted = [r for r in rows if isinstance(r.get("blocked"), int)]
+    print()
+    print("  --- 承認が挟まったか（**見分けられるのは秒だけ**）---")
+    if not timed:
+        print(f"  測った回: **0/{len(rows)}** —— まだ何も言えません")
+        print("  （`--stamp` → MCP を1回 → `--record ... --since <秒>`）")
+    else:
+        slow = [r for r in timed if r["call_seconds"] >= APPROVAL_SUSPECT_SEC]
+        fast = len(timed) - len(slow)
+        print(f"  測った回: **{len(timed)}/{len(rows)}**  "
+              f"承認なしで通った **{fast}** ／ 承認待ちの疑い **{len(slow)}**"
+              f"（閾 {APPROVAL_SUSPECT_SEC}秒）")
+        for r in timed[-5:]:
+            try:
+                t = datetime.fromisoformat(r["at"]).astimezone(JST).strftime("%m/%d %H:%M")
+            except Exception:
+                t = r.get("at", "?")
+            mark = "**待たされた疑い**" if r["call_seconds"] >= APPROVAL_SUSPECT_SEC else "素通り"
+            print(f"    {t} JST  {r['call_seconds']:>7.1f}秒  {mark}")
+        if slow:
+            print("  **疑いが出ている以上、「自力で回っている」と書かないこと。**")
+    if counted:
+        tot = sum(r["blocked"] for r in counted)
+        last = counted[-1]["blocked"]
+        print(f"  承認待ちに落ちていた回（数えた {len(counted)}回の合計）: "
+              f"**{tot}件**（直近の回では {last}件）")
+    else:
+        print("  承認待ちの件数: **数えた回がありません**（`--blocked N` を渡すこと）")
 
 
 def main() -> int:
@@ -339,9 +492,25 @@ def main() -> int:
     ap.add_argument("--snapshot-at", default="",
                     help="`list_sessions` を**撮った**時刻（ISO）。`alive` はこの時刻の姿です。"
                          "省くと記録した時刻で代用しますが、**古いほうに倒れます**")
+    ap.add_argument("--stamp", action="store_true",
+                    help="いまの秒（epoch）を出す。**MCP を撃つ直前に打つ**")
+    ap.add_argument("--since", type=int, default=None,
+                    help="`--stamp` が出した秒。MCP を1回撃つのに何秒かかったかを"
+                         "ここで引き算します（**承認が挟まると人の待ち時間が丸ごと乗る**）")
+    ap.add_argument("--call-seconds", type=float, default=None, dest="call_seconds",
+                    help="秒を自分で測ったときの直接指定（ふつうは `--since` を使うこと）")
+    ap.add_argument("--blocked", type=int, default=None,
+                    help="`list_sessions` で **承認待ち（need_input）だった回の数**。"
+                         "**0 でも渡すこと** —— 省くと「数えていない」になります")
     ap.add_argument("--limit", type=int, default=15)
     args = ap.parse_args()
 
+    # **引き算はここでやる。** 模型に秒を数えさせると分またぎで必ず間違えます。
+    if args.since is not None and args.call_seconds is None:
+        args.call_seconds = round(datetime.now(timezone.utc).timestamp() - args.since, 1)
+
+    if args.stamp:
+        return cmd_stamp(args)
     if args.record:
         return cmd_record(args)
     if args.check:
