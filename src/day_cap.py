@@ -419,6 +419,64 @@ def lines(path: pathlib.Path | None = None) -> list[str]:
 
 
 
+def booked_split_day(first_pub: str, today: dt.date | None = None,
+                     uploaded: pathlib.Path | None = None) -> dict | None:
+    """**その切り分けの日は、もう予約されていないか**（2026-08-25 に足した）。
+
+    `window_lines()` は「**`first_pub` より前から公開する日を1日作れ**」と
+    言うだけで、**その日がもう帳面にあるかを見ていませんでした。**
+    実測（2026-08-25）—— **08/27 は 19本**が予約済みで、うち4本が
+    **05:00 / 06:00 / 07:00 / 08:00 JST**、全部が 13:30 以前です。
+    つまり切り分けの日は**もう置いてあり**、**10本しか生きなければ (A)、
+    19本とも生きれば (B)** と読めます。
+
+    それを言わないと、次の回は「1日作れ」を**もう1度作ります** ——
+    そして日が増えるほど交絡が増えます（同じ分の組・穴埋め）。
+    `scripts/eta.py` の `blocking` にあったのと**同じ形の欠陥**です
+    （そちらは「もう測っている値」を「まだ測っていない」と言っていた）。
+
+    返すのは `{"day", "before", "total", "answer"}`、無ければ `None`。
+
+        day     いちばん早い切り分けの日（JST）
+        before  そのうち `first_pub` より前に置かれている本数
+        total   その日の予約の合計
+        answer  生きた本数を**読めるようになる日**（伸びきる2日 + Analytics 3日）
+
+    **`before` が 0 の日は返しません。** 早い本が1本も無ければ切り分かりません。
+    """
+    if not first_pub:
+        return None
+    try:
+        cut = dt.datetime.strptime(first_pub, "%H:%M").time()
+    except ValueError:
+        return None
+    today = today or dt.datetime.now(JST).date()
+
+    # **帳面の読み手を増やさないこと**（`docs/JOURNAL.md` 2026-08-25）。
+    # 「後の行を採る・JST で割る」の2規則は `src.motion_groups` が持っています。
+    from src import motion_groups
+
+    at = motion_groups.scheduled_at(uploaded) if uploaded else motion_groups.scheduled_at()
+    per_day: dict[str, list[dt.time]] = collections.defaultdict(list)
+    for when in at.values():
+        day = motion_groups.jst_day(when)
+        if not day:
+            continue
+        t = dt.datetime.fromisoformat(when.replace("Z", "+00:00")).astimezone(JST)
+        per_day[day].append(t.time())
+
+    for day in sorted(per_day):
+        if dt.date.fromisoformat(day) <= today:
+            continue                       # **もう過ぎた日では置き直せません**
+        early = [t for t in per_day[day] if t < cut]
+        if not early:
+            continue
+        return {"day": day, "before": len(early), "total": len(per_day[day]),
+                "answer": (dt.date.fromisoformat(day)
+                           + dt.timedelta(days=5)).isoformat()}
+    return None
+
+
 def window_lines(path: pathlib.Path | None = None) -> list[str]:
     """**その上限が「本数」なのか「時刻の窓」なのかを、黙って断定しない。**"""
     w = window(path)
@@ -450,6 +508,32 @@ def window_lines(path: pathlib.Path | None = None) -> list[str]:
         "（作る本数は1本も増えません）。",
         f"        切り分けるには、**{w['first_pub']} より前から公開する日**を1日作り、"
         "その日の**生きた本数**を数えること。",
+    ] + _booked_lines(w["first_pub"])
+
+
+def _booked_lines(first_pub: str) -> list[str]:
+    """**その日がもう予約されているなら、そう言うこと**（2026-08-25 に足した）。
+
+    このファイルの冒頭の註には「2026-08-27 に 05/06/07/08時 の4本を置いてあります」と
+    **既に書いてありました。** それでも `window_lines()` の出力は
+    「**1日作り**」で終わっており、**道具は知っているのに黙っていました。**
+    註は読まれません。**出力に出ていないものは、無いのと同じです。**
+    """
+    try:
+        b = booked_split_day(first_pub)
+    except Exception:                      # 帳面が読めない回でも出力を止めない
+        return []
+    if not b:
+        return ["        [!] **その日はまだ予約されていません。**"
+                "この回に置けば、そのぶん早く切り分きます"]
+    return [
+        f"        **その日はもう予約されています: {b['day']}**"
+        f"（{b['total']}本・うち {b['before']}本 が {first_pub} より前）。",
+        f"        → 生きた本数を読めるのは **{b['answer']}** ごろ"
+        f"（伸びきる2日 + Analytics 3日遅れ）。**もう1日作らないこと**"
+        "（日を増やすほど交絡が増えます）。",
+        "        [!] **答えが返るまで、他の日の本数を増やさないこと** ——"
+        "その日が対照です。",
     ]
 
 

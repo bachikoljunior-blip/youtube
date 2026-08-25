@@ -58,7 +58,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from src import arm_speed, day_cap, levers, rpm_mix  # noqa: E402  （`sys.path` を通した後でないと読めません）
+from src import arm_speed, day_cap, levers, motion_groups, rpm_mix  # noqa: E402  （`sys.path` を通した後でないと読めません）
 
 LOG = ROOT / "data" / "eta.jsonl"
 
@@ -168,6 +168,32 @@ MATURE_HOURS = 48
 # （名指しした日に予約できないほうが損なので）。
 ANALYTICS_LAG_DAYS = 3
 
+# --- **長尺の標本が「薄い」と「無い」は別です**（2026-08-25 に直した） ---
+#
+# 合格点が推測になっている状態（`proxy`）の条件は、長らく裸の `n_long < 20` でした。
+# **閾値そのものは正しい**（標本が薄いあいだ平均は暴れる）のに、`blocking` の文面が
+#
+#     「（n=14・**登録者が9人だった頃の標本**）」
+#     「**まだ一度も測り直していない**」
+#
+# と**固定文字列**で書いてありました。**どちらも事実ではありません。**
+# `measured()` は毎回 Analytics から `long_per_video` を取り直しており、
+# **同じ画面の別の節が「長尺の1本あたり再生は測れています: 1本 4.0回
+# （直近28日・n=14・合計 59回）」と印字しています。** 1つの出力が、
+# 同じ数について「測っていない」と「測れています」を同時に言っていました。
+#
+# **何を損したか。** `blocking` は「次の回が何をするか」を決めるための欄です
+# （すぐ下の註「計画を空にしない」）。そこが「測り直していない → 長尺を出して
+# 測り直せ」と言い、`measure_targets()` が日付まで添えるので、
+# **もう答えの返ってくる測定に、1回ぶんの ship を使わせます。**
+# 2026-08-25 の実測では、長尺は**10本が予約済み**（08/25・08/26×2・08/27・
+# 08/28×2・09/09・09/11・09/15・09/19）でした。
+#
+# **覆る条件**: `split_per_video()` が 0再生の長尺も標本に入れるようになったら、
+# `long_sample_forecast()` の返す日は「最早」ではなく実際の日と一致します
+# （いまは 0再生の本が標本に入らないぶん、上限側に寄っています）。
+LONG_SAMPLE_MIN = 20
+
 # **予約の日付は全部 JST です。**`date.today()` はコンテナの TZ（＝UTC）を読むので、
 # **JST の 00:00〜09:00 は前日を返します。** 2026-08-20 07:1x（JST）に足したこの節が、
 # 最初の版で「いちばん早く予約できる日 ＝ 08/20」と印字しました。08/20 は
@@ -231,6 +257,67 @@ def measure_targets(today: date, uploaded_path: Path | None = None) -> dict:
         "days_lost": (hole - soonest).days if hole else 0,
     }
     return out
+
+
+def long_sample_forecast(today: date, n_now: int,
+                         uploaded_path: Path | None = None) -> dict:
+    """**予約済みの長尺だけで、標本が `LONG_SAMPLE_MIN` に届くか。**
+
+    `blocking` が「長尺を出して測り直せ」と言うたびに、**その測定がもう
+    予約済みかどうかは誰も見ていませんでした。** ここが空いている間、
+    「予約済みの本を待てば返ってくる答え」に 1回ぶんの ship が使えます。
+
+    返すのは:
+
+        need      あと何本、標本に足りないか（`LONG_SAMPLE_MIN - n_now`）
+        booked    まだ読めていない長尺の予約（**読める日の昇順**）
+        reaches   `need` 本目が**読めるようになる日**（足りなければ `None`）
+        short_by  予約だけでは足りない本数（足りていれば 0）
+
+    ## **これは「最早」です**（上限側に寄っています）
+
+    `split_per_video()` が見るのは **Analytics が返した本だけ**で、
+    **0再生の長尺は標本に入りません。** 長尺の実測は 1本 4回なので、
+    0 の本は必ず出ます。だから実際の n は、ここが言う日より**遅れて**届きます。
+    **「この日には必ず n が埋まる」と読まないこと。**
+
+    ## 帳面の読み手を増やしていません
+
+    `data/uploaded.jsonl` は「後の行を採る・JST で割る」の2規則を要求しますが、
+    それを別々に持った読み手が既に3つあります（`docs/JOURNAL.md` 2026-08-25）。
+    ここは **`src.motion_groups` の `scheduled_at()` / `topic_by_video()` /
+    `jst_day()` を借ります** —— 4つ目の読み手を書かないこと。
+    """
+    up = uploaded_path or (ROOT / "data" / "uploaded.jsonl")
+    at = motion_groups.scheduled_at(up)
+    topics = motion_groups.topic_by_video(up)
+
+    booked: list[dict] = []
+    for vid, when in at.items():
+        tid = topics.get(vid, "")
+        # ショートは `s-` で始まるIDを、その場で作って付けます
+        # （`src/pipeline.py` の同じ判定）。長尺だけを数えます。
+        if str(tid).startswith("s-"):
+            continue
+        day = motion_groups.jst_day(when)
+        if not day:
+            continue
+        pub = date.fromisoformat(day)
+        ans = answer_day(pub)
+        # **もう読める本は、標本の n にもう入っています。** ここで二重に数えない
+        if ans <= today:
+            continue
+        booked.append({"video_id": vid, "topic": tid, "publish": pub, "answer": ans})
+    booked.sort(key=lambda r: (r["answer"], r["publish"], r["video_id"]))
+
+    need = max(0, LONG_SAMPLE_MIN - int(n_now or 0))
+    if need == 0:
+        return {"need": 0, "booked": booked, "reaches": None, "short_by": 0}
+    if len(booked) >= need:
+        return {"need": need, "booked": booked,
+                "reaches": booked[need - 1]["answer"], "short_by": 0}
+    return {"need": need, "booked": booked,
+            "reaches": None, "short_by": need - len(booked)}
 
 
 def published_at(views_path: Path | None = None,
@@ -1015,7 +1102,15 @@ def report(m: dict, a: dict) -> list[str]:
     P("  **推測**（この5つは測っていません。日付はこの上に乗っています）:")
     P(f"    1) RPM ——`RPM_SCENARIOS` の帯。ニッチで10倍変わる")
     P(f"    2) 収益化の審査 {MONETIZE_REVIEW_DAYS}日 —— YouTube の公表値。**実測ではない**")
-    P("    3) 長尺の合格点 —— n=8・登録者が9人だった頃の標本")
+    # **ここは n=8 の固定文字列でした**（2026-08-25 に直した）。実測は毎回
+    # `measured()` が取り直しており、この日は n=14 です。**固定した数を
+    # 「推測の出どころ」として出すと、読み手は測り直しが要ると読みます。**
+    if a.get("long_per_video") is None:
+        P("    3) 長尺の合格点 —— 直近28日に長尺の再生が0本。**ショートの実測で割っています**")
+    else:
+        P(f"    3) 長尺の合格点 —— 1本 {a['long_per_video']:,.1f}回"
+          f"（n={a.get('long_videos_28d', 0)}・直近28日の Analytics・**毎回測り直し**）。"
+          f"**{LONG_SAMPLE_MIN}本 に満たないので推測のまま**")
     P("    4) 1日N本出しても1本あたりが保つか —— **未測定**（配信の壁）")
     P("    5) **日次再生の複利は入っていません** —— 実測 10.2%/日（t=2.17・有意）だが、"
       "区間が 0.96〜20.3%/日 と広く、上端は30日で破綻値になるため保留（2026-08-23）")
@@ -2132,7 +2227,7 @@ def plan(m: dict, a: dict, density: int = PLAN_PUBLISH_PER_DAY,
     #     （下の `blocking` と同じ条件。2か所で別々に書くと必ずずれるので、ここで1回）
     lpv = a.get("long_per_video")
     n_long = a.get("long_videos_28d", 0)
-    proxy = spine.startswith("長尺") and (lpv is None or n_long < 20)
+    proxy = spine.startswith("長尺") and (lpv is None or n_long < LONG_SAMPLE_MIN)
 
     s4 = _stage4(m, a, sp, density_month, per_video, d_monetized,
                  today or today_jst(), proxy=proxy, d_revenue=d_revenue)
@@ -2297,15 +2392,32 @@ def plan(m: dict, a: dict, density: int = PLAN_PUBLISH_PER_DAY,
     #     **計画を空にしない**ための欄です。ここが埋まっていれば、
     #     次の回は「何をするか」を決め直さずに、この1手から始められます。
     if proxy:
+        # **「薄い」と「無い」を書き分けること**（2026-08-25 に直した。
+        # 理由は `LONG_SAMPLE_MIN` の註）。ここは長らく、値が出ている回にも
+        # 「まだ一度も測り直していない」と**固定文字列**で印字していました。
+        measured = lpv is not None
+        fc = (long_sample_forecast(today or today_jst(), n_long)
+              if measured else None)
         blocking = {
             "what": "長尺の1本あたり再生",
-            "now": (f"{lpv:,.0f}回（n={n_long}・登録者が9人だった頃の標本）"
-                    if lpv is not None else "測っていない"),
+            # **測れているか／薄いだけか。** 読み手も検査も、ここで分岐します
+            "measured": measured,
+            "sample": fc,
+            "now": (f"{lpv:,.1f}回（n={n_long}・**直近28日の Analytics**。"
+                    f"**毎回測り直しています**。標本が {LONG_SAMPLE_MIN}本 に"
+                    "満たないので、合格点は推測のまま）"
+                    if measured
+                    else "**測れていません**（直近28日に長尺の再生が0本）"),
             "need": f"{sp['per_video_needed']:,.0f}回（段4）／{gate2_bar:,.0f}回（段2）",
-            "how": "長尺を出して、公開から48時間おいた本で測り直す",
+            "how": (f"長尺の本数を増やして標本を n≥{LONG_SAMPLE_MIN} にする"
+                    f"（**あと {fc['need']}本**）"
+                    if measured
+                    else "長尺を出して、公開から48時間おいた本で測り直す"),
             "why": ("段2・段4 の期日がこの1つに乗っている。"
                     f"ショートは{per_video:,.0f}回出ているので、要るのはその"
-                    f"{sp['ratio_vs_shorts']:.2f}倍。**まだ一度も測り直していない**"),
+                    f"{sp['ratio_vs_shorts']:.2f}倍。"
+                    + (f"**値は出ています（1本 {lpv:,.1f}回）。薄いのは標本のほうです**"
+                       if measured else "**一度も測れていない**")),
             "targets": measure_targets(today or today_jst()),
         }
     else:
@@ -2760,14 +2872,41 @@ def _report_plan(m: dict, a: dict, pl: dict | None = None) -> list[str]:
           " 上の倍率が出なければ、この日は来ません（出た日に引き直すこと）。")
     P("")
     b = pl["blocking"]
-    P("--- **この段取りを止めている、まだ測っていない入力は1つです** ---")
+    # **見出しを「測っていない」で固定しないこと**（2026-08-25）。
+    # 値が出ている回に「測っていない」と書くと、**もう答えの返る測定に
+    # 1回ぶんの ship が使われます**（`LONG_SAMPLE_MIN` の註）。
+    if b.get("measured"):
+        P("--- **この段取りを止めているのは、値ではなく「標本の薄さ」です** ---")
+    else:
+        P("--- **この段取りを止めている、まだ測っていない入力は1つです** ---")
     P(f"    {b['what']}")
     P(f"      いま: {b['now']}")
     P(f"      要る: {b['need']}")
     P(f"      測り方: {b['how']}")
     P(f"      なぜここか: {b['why']}")
+    fc = b.get("sample")
+    if fc:
+        P("")
+        P("      **予約済みの長尺だけで、その標本は埋まるか**"
+          "（**最早**。0再生の本は標本に入らないので、実際はこれより遅い）:")
+        P(f"        まだ読めていない長尺の予約 **{len(fc['booked'])}本**"
+          f"／要る {fc['need']}本")
+        if fc["reaches"]:
+            P(f"        → **{fc['reaches']} に n≥{LONG_SAMPLE_MIN} に届きます"
+              "（この回に長尺を足さなくても届く）**")
+            P("        [!] **この測定に ship を使わないこと。**"
+              " 予約済みの本が答えを返します。**別の腕を引くこと。**")
+        else:
+            P(f"        → 予約だけでは **{fc['short_by']}本 足りません**"
+              "（この回に足すぶんが、そのまま前倒しになります）")
     t = b.get("targets")
-    if t:
+    # **計算したものを黙って落とさないこと**（この repo の「片方だけ」＝通算9件）。
+    # 予約で届く回は、的の日付を**1行に畳んで**「要りません」と添えます ——
+    # 消すと道具が黙り、そのまま出すと**要らない測定に ship が使われます。**
+    if t and fc and fc.get("reaches"):
+        P(f"        （前倒ししたい場合の的: **{t['soonest']}** に置けば"
+          f" {t['answer_soonest']} に読める。**この回は要りません** —— 上の予約で届きます）")
+    if t and not (fc and fc.get("reaches")):
         P("")
         P("      **いつ答えが返るか**（公開 → 伸びきる 48時間 → Analytics 3日遅れ）:")
         P(f"        いちばん早く予約できる日 **{t['soonest']}** に置く"

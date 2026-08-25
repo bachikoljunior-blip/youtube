@@ -1035,3 +1035,91 @@ def test_控えに同じ本が2行あるとき_後の行を採る():
                                uploaded_path=d / "uploaded.jsonl")
     assert pub["v"] == datetime(2026, 9, 20, 2, 30, tzinfo=timezone.utc), \
         "**後の行**が、いま効いている予約。最初の行は動かされた過去の予定"
+
+
+# --- **「薄い標本」を「測っていない」と言わないこと**（2026-08-25 に足した） ---
+#
+# `eta.py` は同じ1回の出力の中で、長尺の1本あたり再生について
+# 「**測れています: 1本 4.0回（直近28日・n=14・合計 59回）**」と印字しながら、
+# `blocking` では「**まだ一度も測り直していない**」「登録者が9人だった頃の標本」と
+# **固定文字列**で出していました。**後者が「次の回が何をするか」を決める欄**なので、
+# もう予約済みの測定（実測 2026-08-25 時点で長尺10本が予約済み）に
+# 1回ぶんの ship を使わせます。
+
+def test_値が出ている回に_測っていないと言わない():
+    """**同じ画面が2つのことを言っていた。** 値が出ているなら、薄いのは標本のほう。"""
+    m, a = _analysed(long_per_video=4.0, long_videos_28d=14, long_views_28d=59)
+    pl = eta.plan(m, a, today=_date(2026, 8, 25))
+    b = pl["blocking"]
+    assert pl["target"]["proxy"] is True, "前提: 標本が薄い側に置いている"
+    assert b["measured"] is True
+    assert "まだ一度も測り直していない" not in b["why"]
+    assert "登録者が9人だった頃" not in b["now"]
+    # **値そのものは名指しで出すこと**（出ているのに隠すと、また測りに行きます）
+    assert "4.0" in b["now"]
+    assert str(eta.LONG_SAMPLE_MIN) in b["how"]
+
+
+def test_長尺が1本も測れていない回は_測れていないと言う():
+    """**逆側を潰しておく。** 値が無い回に「薄いだけ」と言うと、今度は測りに行きません。"""
+    m, a = _analysed()                      # long_per_video が無い
+    assert a["long_per_video"] is None
+    pl = eta.plan(m, a, today=_date(2026, 8, 25))
+    b = pl["blocking"]
+    assert b["measured"] is False
+    assert b["sample"] is None
+    assert "測れていません" in b["now"]
+
+
+def test_予約済みの長尺で標本が埋まるなら_その日を出す(tmp_path):
+    """**この測定に ship が要るかどうかは、帳面を見れば分かります。**"""
+    up = tmp_path / "uploaded.jsonl"
+    rows = []
+    # 長尺6本を、JST で 08/26 から1日ずつ
+    for i in range(6):
+        rows.append({"video_id": f"L{i}", "topic": f"nagajaku-{i}",
+                     "at": f"2026-08-{26 + i:02d}T10:00:00Z"})
+    # ショートは数えない（`s-` で始まるID）
+    rows.append({"video_id": "S0", "topic": "s-fukugyo-1",
+                 "at": "2026-08-26T00:00:00Z"})
+    up.write_text("\n".join(json.dumps(r) for r in rows), encoding="utf-8")
+
+    fc = eta.long_sample_forecast(_date(2026, 8, 25), 14, uploaded_path=up)
+    assert fc["need"] == eta.LONG_SAMPLE_MIN - 14 == 6
+    assert [r["video_id"] for r in fc["booked"]] == [f"L{i}" for i in range(6)]
+    assert fc["short_by"] == 0
+    # 6本目は JST 08/31 公開 → 伸びきる2日 + Analytics 3日遅れ
+    assert fc["reaches"] == eta.answer_day(_date(2026, 8, 31)) == _date(2026, 9, 5)
+
+
+def test_予約が足りなければ_足りない本数を返す(tmp_path):
+    up = tmp_path / "uploaded.jsonl"
+    up.write_text(json.dumps({"video_id": "L0", "topic": "nagajaku",
+                              "at": "2026-08-26T10:00:00Z"}), encoding="utf-8")
+    fc = eta.long_sample_forecast(_date(2026, 8, 25), 14, uploaded_path=up)
+    assert fc["reaches"] is None
+    assert fc["short_by"] == 5
+
+
+def test_もう読める本は_予約として二重に数えない(tmp_path):
+    """公開して答えの返った本は、もう n の中にいます。**両方で数えないこと。**"""
+    up = tmp_path / "uploaded.jsonl"
+    up.write_text(json.dumps({"video_id": "L0", "topic": "nagajaku",
+                              "at": "2026-08-01T10:00:00Z"}), encoding="utf-8")
+    fc = eta.long_sample_forecast(_date(2026, 8, 25), 14, uploaded_path=up)
+    assert fc["booked"] == []
+    assert fc["short_by"] == 6
+
+
+def test_控えの後の行を採る_予約を動かした本(tmp_path):
+    """`uploaded.jsonl` は足すだけの帳面。**4つ目の読み手を書かないこと**の担保。"""
+    up = tmp_path / "uploaded.jsonl"
+    up.write_text("\n".join([
+        json.dumps({"video_id": "L0", "topic": "nagajaku",
+                    "at": "2026-09-23T03:00:00Z"}),
+        json.dumps({"video_id": "L0", "topic": "nagajaku",
+                    "at": "2026-08-26T10:00:00Z"}),   # ← 前へ寄せた
+    ]), encoding="utf-8")
+    fc = eta.long_sample_forecast(_date(2026, 8, 25), 19, uploaded_path=up)
+    assert len(fc["booked"]) == 1
+    assert fc["booked"][0]["publish"] == _date(2026, 8, 26)

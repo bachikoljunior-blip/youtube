@@ -326,3 +326,58 @@ def test_試す日そのものが天井を決めない(tmp_path):
     # 問うのは「本数モデルが覆せたか」——覆せなければ、この実験は無意味です。
     assert w["verdict"] == "window", f"窓と出るはず: {w}"
     assert w["blocked"] == []
+
+
+# --- **切り分けの日が、もう予約されていないか**（2026-08-25 に足した） ---
+#
+# `window_lines()` は「**08:59 より前から公開する日を1日作れ**」で終わっていました。
+# ところが**このファイルの冒頭の註には「2026-08-27 に 05/06/07/08時 の4本を
+# 置いてあります」と既に書いてあり**、実測でも 08/27 は19本が予約済みでした。
+# **道具が知っているのに黙っている**形（`scripts/eta.py` の `blocking` と同じ）で、
+# 放っておくと次の回が**もう1日**作ります —— 日が増えるほど交絡が増えます。
+
+def _up(tmp_path, rows):
+    import json
+    p = tmp_path / "uploaded.jsonl"
+    p.write_text("\n".join(json.dumps(r) for r in rows), encoding="utf-8")
+    return p
+
+
+def test_切り分けの日が予約済みなら_その日と読める日を返す(tmp_path):
+    up = _up(tmp_path, [
+        # JST 05:00 / 06:00（UTC は前日 20:00 / 21:00）—— **UTC の日で割ると前日に落ちます**
+        {"video_id": "a", "topic": "s-1", "at": "2026-08-26T20:00:00Z"},
+        {"video_id": "b", "topic": "s-2", "at": "2026-08-26T21:00:00Z"},
+        {"video_id": "c", "topic": "s-3", "at": "2026-08-27T00:00:00Z"},   # JST 09:00
+    ])
+    b = day_cap.booked_split_day("08:59", today=dt.date(2026, 8, 25), uploaded=up)
+    assert b is not None
+    assert b["day"] == "2026-08-27"
+    assert b["before"] == 2
+    assert b["total"] == 3
+    assert b["answer"] == "2026-09-01"
+
+
+def test_早い本が1本も無い日は_切り分けの日にならない(tmp_path):
+    up = _up(tmp_path, [
+        {"video_id": "c", "topic": "s-3", "at": "2026-08-27T00:00:00Z"},   # JST 09:00
+        {"video_id": "d", "topic": "s-4", "at": "2026-08-27T01:00:00Z"},   # JST 10:00
+    ])
+    assert day_cap.booked_split_day("08:59", today=dt.date(2026, 8, 25), uploaded=up) is None
+
+
+def test_過ぎた日は返さない_置き直せないから(tmp_path):
+    up = _up(tmp_path, [
+        {"video_id": "a", "topic": "s-1", "at": "2026-08-19T20:00:00Z"},   # JST 08/20 05:00
+    ])
+    assert day_cap.booked_split_day("08:59", today=dt.date(2026, 8, 25), uploaded=up) is None
+
+
+def test_控えの後の行を採る_予約を動かした本(tmp_path):
+    """`uploaded.jsonl` は足すだけの帳面。**4つ目の読み手を書かない**ことの担保。"""
+    up = _up(tmp_path, [
+        {"video_id": "a", "topic": "s-1", "at": "2026-08-27T02:00:00Z"},   # JST 11:00
+        {"video_id": "a", "topic": "s-1", "at": "2026-08-26T20:00:00Z"},   # → JST 08/27 05:00
+    ])
+    b = day_cap.booked_split_day("08:59", today=dt.date(2026, 8, 25), uploaded=up)
+    assert b is not None and b["before"] == 1 and b["total"] == 1
