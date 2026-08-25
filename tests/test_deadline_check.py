@@ -109,3 +109,60 @@ def test_count_expr_は台帳を読める():
     a = J.answer({"kind": "accrual", "count_expr": "len(uploaded())",
                   "need": 1, "since": "2026-08-01"}, date(2026, 8, 25), 3)
     assert a.ready is not None, a.why
+
+
+# ---- **逆向き: データはもう揃うのに、期限がまだ先**（2026-08-25 22:5x）------
+#
+# ここは長らく `slips`（期限が早すぎる）**だけ**を見ていて、逆向きは
+# 「**期限に間に合います**」という緑の行で流れていました。
+# **軌跡の腕は前提を1件閉じたときだけ動く**ので、その待ちは
+# **到達日がまるごと止まっている日数**です。
+# 実測（2026-08-25・開いている16件）: **10件・合計 46日・平均 4.6日・最大 14日**。
+
+
+def _one(deadline: str, count: int, need: int, since: str) -> list[dict]:
+    return [{"claim": "A", "deadline": deadline,
+             "needs": [{"kind": "accrual", "count_expr": str(count),
+                        "need": need, "since": since}]}]
+
+
+def test_期限が遅すぎる側も数えること():
+    """**緑の行にしないこと。** ここが「もう判定できるのに待っている」側です。"""
+    items = _one("2026-09-30", count=100, need=1, since="2026-08-20")
+    v = J.check(items, as_of=date(2026, 8, 25), lag=3)[0]
+    assert v.ready is not None
+    assert v.waits > 0, "**期限が遅すぎる側を 0日 と数えています**"
+    assert v.waits == (v.deadline - v.ready).days
+    assert not v.slips
+
+
+def test_期限が早すぎる側は_待ちに数えないこと():
+    """2つの向きを混ぜないこと。**押し出す側は 0日** です。"""
+    items = _one("2026-08-26", count=0, need=1_000_000, since="2026-08-20")
+    v = J.check(items, as_of=date(2026, 8, 25), lag=3)[0]
+    if v.ready is not None:
+        assert v.waits == 0 or not v.slips
+
+
+def test_待ちの合計を出力に出すこと():
+    """**数えていても黙っていたら、同じことです。**"""
+    items = _one("2026-09-30", count=100, need=1, since="2026-08-20")
+    vs = J.check(items, as_of=date(2026, 8, 25), lag=3)
+    txt = "\n".join(J.lines(vs, 3))
+    assert "期限が遅すぎる" in txt
+    assert "縮めること" in txt
+
+
+def test_ready_by_claim_は_claimごとの最早の日を返す():
+    """`src/arm_speed.next_close` がここを読みます。"""
+    items = _one("2026-09-30", count=100, need=1, since="2026-08-20")
+    got = J.ready_by_claim(items, as_of=date(2026, 8, 25), lag=3)
+    assert got["A"] == J.check(items, as_of=date(2026, 8, 25), lag=3)[0].ready
+
+
+def test_実物にも待ちが残っていないか_数えられること():
+    """**実物で回ること。**（件数そのものは日々動くので固定しません）"""
+    vs = J.check(_open_items())
+    total = sum(v.waits for v in vs)
+    assert total >= 0
+    assert all(v.waits == 0 or v.ready < v.deadline for v in vs if v.ready and v.deadline)

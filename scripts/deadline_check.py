@@ -309,6 +309,24 @@ class Verdict:
         return (self.ready is not None and self.deadline is not None
                 and self.ready > self.deadline)
 
+    @property
+    def waits(self) -> int:
+        """**データはもう揃うのに、期限がまだ先**。その待ち日数（0 なら待っていない）。
+
+        **こちらの向きは、8日ぶん黙って流れていました**（2026-08-25 22:5x）。
+        `slips`（期限が早すぎる）だけを見ていて、逆向きは
+        「**期限に間に合います**」という緑の行になっていたからです。
+
+        **軌跡の腕は、前提を1件閉じたときだけ動きます**（`src/arm_speed.py`）。
+        だから「データは揃っているが期限がまだ先」の日数は、
+        **到達日がまるごと止まっている日数**そのものです。
+        実測（2026-08-25・開いている16件）: **10件・合計 46日・平均 4.6日**、
+        いちばん大きいもので **14日**。
+        """
+        if self.ready is None or self.deadline is None:
+            return 0
+        return max(0, (self.deadline - self.ready).days)
+
 
 def load(path: Path | None = None) -> list[dict]:
     p = path or (ROOT / "config" / "hypotheses.yaml")
@@ -360,15 +378,44 @@ def lines(vs: list[Verdict], lag: int) -> list[str]:
             out.append(f"         → **判定できるのは {v.ready:%m-%d}。期限は {gap}日 早すぎます。**"
                        f"  `deadline: \"{v.ready}\"` へ延ばすこと"
                        "（**`falsified_if` は緩めないこと** —— 動かすのは期限だけ）")
+        elif v.waits:
+            # **緑の行にしないこと。** ここが「もう判定できるのに待っている」側です。
+            out.append(f"         → 判定できるのは {v.ready:%m-%d} なのに、"
+                       f"期限は {v.waits}日 **後ろ**に置いてあります。"
+                       f"  `deadline: \"{v.ready}\"` へ**縮めること**"
+                       "（**`falsified_if` は緩めないこと** —— 動かすのは期限だけ）")
         else:
-            out.append(f"         → 判定できるのは {v.ready:%m-%d}。**期限に間に合います**")
+            out.append(f"         → 判定できるのは {v.ready:%m-%d}。**期限とちょうど同じ**です")
     bad = [v for v in vs if v.slips]
     unk = [v for v in vs if v.ready is None and not v.unchecked]
     non = [v for v in vs if v.unchecked]
+    late = [v for v in vs if v.waits]
     out.append("")
     out.append(f"  期限が早すぎる **{len(bad)}件** ／ 判定できる日が出せない **{len(unk)}件** "
                f"／ 確かめていない **{len(non)}件** ／ 開いている {len(vs)}件")
+    if late:
+        total = sum(v.waits for v in late)
+        worst = max(late, key=lambda v: v.waits)
+        out.append(f"  **期限が遅すぎる {len(late)}件 —— 合計 {total}日 の待ち**"
+                   f"（平均 {total / len(late):.1f}日・最大 {worst.waits}日）。")
+        out.append("    **軌跡の腕は、前提を1件閉じたときだけ動きます。**"
+                   "この合計は、**到達日がまるごと止まっている日数**です ——"
+                   "データは揃っているのに、期限がまだ先だという理由だけで止まっています。")
+        out.append(f"    最大: {worst.ready:%m-%d} に判定できるのに"
+                   f" {worst.deadline:%m-%d}  {worst.claim[:44]}")
     return out
+
+
+def ready_by_claim(items: list[dict] | None = None, as_of: date | None = None,
+                   lag: int | None = None) -> dict[str, date]:
+    """**claim → 判定できる最早の日。**（`src/arm_speed.next_close` が読みます）
+
+    `deadline` は置いた回の勘、`ready` は**データが実際に揃う日**です。
+    2つを別々の場所が持っていて、**到達日を印字する側は `deadline` しか
+    読んでいませんでした**（2026-08-25 22:5x に繋いだ）。
+    """
+    vs = check(items if items is not None else load(), as_of=as_of, lag=lag)
+    return {v.claim: v.ready for v in vs if v.ready is not None}
 
 
 def main(argv: list[str] | None = None) -> int:

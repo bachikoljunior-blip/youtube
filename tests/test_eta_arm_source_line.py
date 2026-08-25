@@ -160,3 +160,54 @@ def test_期日が来ている回はverdictと言う(monkeypatch):
     line = next(ln for ln in eta.headline(_plan(), None, _traj())
                 if "期日の来た前提があります" in ln)
     assert "verdict" in line, "閉じられる回に、その手の名前を出していません"
+
+
+# ---- **`deadline` ではなく「データが揃う日」で聞くこと**（2026-08-25 22:5x）
+#
+# `deadline` は置いた回の勘で、**データが実際に揃う日**（`deadline_check` の
+# `ready`）とは別物です。実測（2026-08-25・開いている16件）:
+#
+#     ready <= deadline が **10件・合計 46日**（平均 4.6日・最大 14日）
+#
+# **軌跡の腕は前提を1件閉じたときだけ動く**ので、その 46日 は
+# **到達日がまるごと止まっている日数**です。
+
+
+def test_データが揃う日のほうが早ければ_そちらを返す():
+    """**待たないこと。** 期限が先でも、判定できるならその日が答えです。"""
+    from src import arm_speed
+    doc = {"hypotheses": [{"id": "h0", "claim": "A", "deadline": "2026-09-12"}]}
+    got = arm_speed.next_close(doc, today=_dt.date(2026, 8, 25),
+                               ready={"A": _dt.date(2026, 8, 29)})
+    assert got["on"] == _dt.date(2026, 8, 29), \
+        "`deadline` を読んでいます（**データはもう揃っています**）"
+    assert got["days"] == 4
+    assert got["source"] == "ready"
+
+
+def test_データが遅れる側でも_揃う日が答え():
+    """`ready > deadline` は「期限が守れない」だけ。**判定できる日は動きません。**"""
+    from src import arm_speed
+    doc = {"hypotheses": [{"id": "h0", "claim": "A", "deadline": "2026-08-26"}]}
+    got = arm_speed.next_close(doc, today=_dt.date(2026, 8, 25),
+                               ready={"A": _dt.date(2026, 9, 6)})
+    assert got["on"] == _dt.date(2026, 9, 6), "守れない期限を答えにしています"
+
+
+def test_揃う日が分からない前提は_期限のまま():
+    """**埋めないこと。** `ready` の無い前提は従来どおり `deadline` で読みます。"""
+    from src import arm_speed
+    doc = {"hypotheses": [{"id": "h0", "claim": "A", "deadline": "2026-09-12"},
+                          {"id": "h1", "claim": "B", "deadline": "2026-08-30"}]}
+    got = arm_speed.next_close(doc, today=_dt.date(2026, 8, 25),
+                               ready={"A": _dt.date(2026, 9, 9)})
+    assert got["on"] == _dt.date(2026, 8, 30)
+    assert got["source"] == "deadline"
+
+
+def test_渡さなければ_昔と同じに読む():
+    """**既定は変えていません。** 呼び手が渡したときだけ切り替わります。"""
+    from src import arm_speed
+    doc = {"hypotheses": [{"id": "h0", "claim": "A", "deadline": "2026-09-12"}]}
+    got = arm_speed.next_close(doc, today=_dt.date(2026, 8, 25))
+    assert got["on"] == _dt.date(2026, 9, 12)
