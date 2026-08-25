@@ -29,6 +29,8 @@ import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from src import settle
+
 ROOT = Path(__file__).resolve().parent.parent
 RUNS = ROOT / "data" / "batch_runs.jsonl"
 #: **1本ごとのラベル**（`scripts/batch_build._flag_line` が作るたびに1行足す）。
@@ -234,15 +236,46 @@ def paired(off: list[str], on: list[str],
     そして `next_if_false` は「静止スライド＋合成音声という形式そのものを疑う」なので、
     **形式側で最後に残った前提が、条件を満たさない標本で殺されます**
     （8/19 の `ab_split`・8/23 の「公開日で割る」と同型で、これが3件目）。
+
+    ## **再生が付かない本も落とします**（2026-08-26 に足した）
+
+    共有日にそろっていても、**その日の11本目から後ろは 0再生**です
+    （`src/day_cap.py` の実測）。0再生の本は engaged 比率を持たないので、
+    `falsified_if` の「30再生以上」にも入りません。
+
+    **同じ絞り込みが `src/judgeable.members()` に先に入り、ここだけ残っていました。**
+    実測（2026-08-26）: ここは「共有日だけで両群とも 8本に達しています」と印字し、
+    `python -m src.judgeable` は同じ群を「**3本 —— そろいません**」と出していました。
+    **同じ群について、2つの道具が逆のことを言っていた**ということです。
+    数える所を増やさず、`day_cap.live_ids()` を呼びます。
     """
+    keep = _live(at)
     days = by_day(off, on, at)
     p_off: list[str] = []
     p_on: list[str] = []
     for a, b in days.values():
+        a = [v for v in a if keep is None or v in keep]
+        b = [v for v in b if keep is None or v in keep]
         if a and b:
             p_off += a
             p_on += b
     return sorted(p_off), sorted(p_on)
+
+
+def _live(at: dict[str, str] | None) -> set[str] | None:
+    """**再生が付く側の `video_id`**（判定は `src/day_cap.py` が1か所で持っています）。
+
+    読めない回は `None`（＝絞らない）。**観測していないものを、無いことにしない** ——
+    控えが読めないだけで群が空になると、判定できる日そのものが消えます。
+    """
+    try:
+        from src import day_cap
+        from src.ab_split import published
+
+        rows = [r for r in published() if r.get("at")]
+        return day_cap.live_ids(rows)
+    except Exception:                                    # noqa: BLE001
+        return None
 
 
 def free_slot(day: str, at: dict[str, str], *,
@@ -380,7 +413,7 @@ def main() -> None:  # pragma: no cover - 画面出力だけ
         print("  **`videos.update` は 1本 50単位**。日枠が戻るのは JST 16:00")
     elif len(p_off) >= BAR and len(p_on) >= BAR:
         print(f"\n  **共有日だけで両群とも {BAR}本に達しています。**"
-              " あとは公開から7日・30再生以上を待って判定へ")
+              f" あとは公開から{settle.SETTLE_DAYS}日・30再生以上を待って判定へ")
     else:
         print("\n  [!] **動かすだけでは門に届きません。**"
               " 足りない側を `YT_OPENING_MOTION` を明示して作り足すこと")
