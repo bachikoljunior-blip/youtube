@@ -111,15 +111,35 @@ def test_群の作り方は1か所():
             f"{key}: SOURCES と members が別の群を見ています"
 
 
-def test_入れ替えは生きている本の総数を増やさない():
-    """**上限は 1日 `cap()` 本。** 付け替えても総数が増えるなら、数え方が壊れています。"""
+def test_入れ替えで生きている本を減らさない():
+    """**減らしたら本末転倒です。**
+
+    増えるぶんには構いません（上限に余りのある日へ置けたぶん）。
+    **2026-08-26 まで「増えてもいけない」と書いてありました。** その思い込みが
+    `_slots()` の空きを `_in_band()`（帯の中の本数）で数えさせていて、
+    **埋まっている日を空いていると読んで**いました ——
+    同じ 24手 で **+4本** しか増えないところを、正しく数えて **+24本** に直しています。
+    """
     ls = pytest.importorskip("scripts.live_slots")
     board = ls.Board(ls._rows())
     before = len(board.live())
     ls.plan(board)
     after = len(board.live())
-    assert after == before, \
-        f"入れ替えで生きている本が {before} → {after} に増減しました（上限が動いています）"
+    assert after >= before, \
+        f"入れ替えで生きている本が {before} → {after} に**減りました**"
+
+
+def test_全部逃がす手は生きている本を増やす():
+    """`--all` は**上限に余りのある日**へ逃がすので、総数が増えるはずです。"""
+    ls = pytest.importorskip("scripts.live_slots")
+    board = ls.Board(ls._rows())
+    before = len(board.live())
+    lines = ls.plan_all(board)
+    after = len(board.live())
+    if board.moves:
+        assert after > before, \
+            ("0再生の枠から動かしたのに生きている本が増えていません"
+             f"（{before} → {after}）。空きの数え方がずれています\n" + "\n".join(lines))
 
 
 def test_入れ替えは測定の窓の日を動かさない():
@@ -148,3 +168,51 @@ def test_入れ替え先は生きる帯の中():
         assert collisions.LIVE_FROM_MIN <= m <= collisions.LIVE_TO_MIN, \
             f"{vid} を帯の外（{when:%H:%M}）へ置こうとしています"
         assert m % collisions.STEP_MIN == 0, f"{vid} が30分きざみに乗っていません"
+
+
+# --- `queue_lag` が判定を壊さないか（2026-08-26 に足した門）--------------------
+
+def _fake_plan(before: dict, after: dict):
+    class P:
+        before_at = before
+        at = after
+        swaps = [("a", "b")]
+    return P()
+
+
+def test_queue_lag_は要る本数を割る入れ替えを撃たない(monkeypatch):
+    """**「何日 早まるか」より「判定を壊さないか」のほうが強い門です。**
+
+    日付だけを見て入れ替えると、「早い枠へ移した」つもりが
+    「死んだ枠へ移した」になりえます。そのとき `ready` は早まるのに、
+    **その群の生きた本が要る数を割ります。**
+    """
+    from scripts import queue_lag
+    import scripts.live_slots as ls
+
+    day = dt.datetime(2026, 9, 10, 5, 0, tzinfo=JST)
+    before = {f"v{i}": day + dt.timedelta(minutes=30 * i) for i in range(3)}
+    after = dict(before)
+    after["v2"] = day + dt.timedelta(minutes=15)      # v1 から15分 → 落ちる
+
+    monkeypatch.setattr(ls, "_groups",
+                        lambda: {"k": ({"処置": ["v0", "v1", "v2"]}, 3)})
+    lines, ok = queue_lag.live_cost_lines(_fake_plan(before, after))
+    assert not ok, "要る本数を割る入れ替えを、通しています\n" + "\n".join(lines)
+    assert any("割ります" in ln for ln in lines)
+
+
+def test_queue_lag_は割らない入れ替えを止めない(monkeypatch):
+    """**止めすぎないこと。** 余っている群が減るだけなら通します。"""
+    from scripts import queue_lag
+    import scripts.live_slots as ls
+
+    day = dt.datetime(2026, 9, 10, 5, 0, tzinfo=JST)
+    before = {f"v{i}": day + dt.timedelta(minutes=30 * i) for i in range(5)}
+    after = dict(before)
+    after["v4"] = day + dt.timedelta(minutes=15)
+
+    monkeypatch.setattr(ls, "_groups",
+                        lambda: {"k": ({"処置": [f"v{i}" for i in range(5)]}, 2)})
+    _lines, ok = queue_lag.live_cost_lines(_fake_plan(before, after))
+    assert ok, "余っている群が減っただけで止めています"

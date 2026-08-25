@@ -267,13 +267,41 @@ def _live(at: dict[str, str] | None) -> set[str] | None:
 
     読めない回は `None`（＝絞らない）。**観測していないものを、無いことにしない** ——
     控えが読めないだけで群が空になると、判定できる日そのものが消えます。
+
+    ## **渡された `at` を使うこと**（2026-08-26 に直した）
+
+    ここは `at` を受け取りながら**一度も見ずに**、いつも実物の控えを読んでいました。
+    そのせいで `at` を渡す呼び方（検査と、割り当てを試算する側）では
+    **渡した本が1本も控えに居ない** ので、`keep` に誰も入らず
+    **群が丸ごと空になります**（`paired()` が `([], [])` を返す）。
+
+    `paired()` の上の節が言っているとおり、ここが空を返すと
+    **「そろっていない」に化けて、判定できる日そのものが消えます。**
+    絞り込みの規則は `day_cap` の1か所のままにして、**見る盤面だけを
+    呼び手に合わせます。**
     """
     try:
         from src import day_cap
+
+        if at is not None:
+            rows = []
+            for vid, raw in at.items():
+                if not raw:
+                    continue
+                try:
+                    when = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+                except ValueError:
+                    continue
+                if when.tzinfo is None:
+                    when = when.replace(tzinfo=timezone.utc)
+                # **JST に寄せてから渡すこと。** `day_cap` は日ごとに数えるので、
+                # UTC のままだと JST の朝が前日に落ちます（`jst_day` の節と同じ罠）。
+                rows.append({"video_id": vid, "at": when.astimezone(JST)})
+            return day_cap.live_ids(rows)
+
         from src.ab_split import published
 
-        rows = [r for r in published() if r.get("at")]
-        return day_cap.live_ids(rows)
+        return day_cap.live_ids([r for r in published() if r.get("at")])
     except Exception:                                    # noqa: BLE001
         return None
 
