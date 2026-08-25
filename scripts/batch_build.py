@@ -262,6 +262,78 @@ def _drop_doomed(usable: list[dict], pool: list[dict]) -> list[dict]:
     return kept
 
 
+#: 着地点のまわり何日ぶんの calc を避けるか（**長尺だけ**）。
+#: 新しい本は「いちばん早い空き日」に入るので、そこから数日ぶんを見ます。
+QUEUE_TAIL_DAYS = 7
+
+
+def _queue_tail_calcs(pool: list[dict], days: int = QUEUE_TAIL_DAYS) -> set[str]:
+    """**これから公開される長尺の calc** を返す（**API を1単位も使いません**）。
+
+    ## なぜ要るのか（2026-08-25 に踏んだ）
+
+    `--per-calc` は **1回の batch の中でしか効きません。** 2回続けて走らせると、
+    同じ calc が何本でも**連続して**予約に入ります。実際にそうなりました:
+
+        08/28 tokurou / 08/29 tokurou / 08/30 yukyu / 08/30 furusato
+        08/31 tokurou ← 2回目の batch / 09/01 tokurou ← 同
+
+    **次の長尺6本のうち4本が同じ計算で、題名の頭まで同一**でした。これは
+    `CLAUDE.md` が引いているポリシー本文そのもの ——「**同じチャンネルの動画を
+    続けて数本視聴した後、繰り返しのように感じられる可能性のあるコンテンツ**」は
+    **収益化の対象外**。収益化されなければ収入はゼロなので、
+    **在庫を厚くした効果を自分で打ち消します。**
+
+    **見るのは「末尾」ではありません**（一度そう書いて外しました）。
+    `upload_only.py` は**いちばん早い空き日**を取るので、新しい本は列の先頭側に
+    入ります。実測: 08/30 まで埋まっている状態で撃ったら 08/31・09/01 に着きました。
+    **末尾（09/26）を避けても、着地点の隣は避けられません。**
+    だから**いまから `days` 日ぶん**を見ます。
+
+    **長尺だけを見ます。** ショートは1日10本入るので、その calc まで避けると
+    候補が枯れます（実測: 全490件のうち、ショート込みで避けると大半が落ちる）。
+    そして踏んだ事故も長尺でした ——**題名の頭が同一の長尺が4本続く**形です。
+
+    **覆る条件**: 未投稿テーマの calc が偏っていて、避けると毎回 `pick` が
+    空になるようなら、`QUEUE_TAIL_DAYS` を下げること
+    （下の呼び出し側が、空になった回は避けずに通します）。
+    """
+    calc_of = {t["id"]: (t.get("calc") or "") for t in pool}
+    now = datetime.now(timezone.utc)
+    until = (now + timedelta(days=days)).isoformat()
+    now_s = now.isoformat()
+    calcs = set()
+    for row in dupes.ledger_rows():
+        at = row.get("at") or ""
+        if not (now_s < at <= until) or not row.get("topic"):
+            continue
+        if "#Shorts" in (row.get("title") or ""):
+            continue
+        calcs.add(calc_of.get(row["topic"], ""))
+    return calcs - {""}
+
+
+def _drop_queue_tail_calcs(usable: list[dict], pool: list[dict]) -> list[dict]:
+    """末尾の calc を落とす。**全部落ちる回は落とさない**（出すほうが先）。"""
+    try:
+        tail = _queue_tail_calcs(pool)
+    except Exception as exc:                                  # noqa: BLE001
+        print(f"[pick] これからの予約を読めませんでした（避けずに続けます）: {exc}")
+        return usable
+    if not tail:
+        return usable
+    kept = [t for t in usable if t.get("calc") not in tail]
+    if not kept:
+        print(f"[pick] これから7日ぶんの長尺の calc {sorted(tail)} を避けると候補が0件になります"
+              " —— **避けずに続けます**（出さないより、隣接するほうがまだ良い）。"
+              " 偏りが続くなら QUEUE_TAIL_DAYS を下げること。")
+        return usable
+    if len(kept) < len(usable):
+        print(f"[pick] これから7日ぶんの長尺に出ている calc を避けました: {sorted(tail)}"
+              f"（候補 {len(usable)} → {len(kept)}件）")
+    return kept
+
+
 def pick(count: int, explicit: list[str], per_calc: int = DEFAULT_PER_CALC) -> list[dict]:
     """未投稿・`calc` あり・**計算の節が全部ちがう** テーマを score の高い順に取る。
 
@@ -315,6 +387,7 @@ def pick(count: int, explicit: list[str], per_calc: int = DEFAULT_PER_CALC) -> l
     usable = [t for t in pool if t["id"] not in posted and t["id"] not in built
               and t.get("calc")]
     usable = _drop_doomed(usable, pool)
+    usable = _drop_queue_tail_calcs(usable, pool)
 
     # **順番は実績で決める**（2026-08-16 に測って変えた。それまでは手書きの
     # `score` だけで、実績を1つも見ていませんでした ＝ 91件中64件が `1.0`）。
