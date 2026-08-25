@@ -205,3 +205,24 @@ def test_到達日が何周に1回動きうるかを印字する(tmp_path, monke
     text, _ = drift.supply_report("2026-08-24")
     assert "周に1回" in text
     assert "前提を1件閉じたときだけ" in text
+
+
+def test_基準日はJSTで数える(monkeypatch):
+    """**門が期限を見落とす時間帯を作らないこと**（2026-08-26 に踏んだ）。
+
+    `deadline` も予約も JST なのに、ここは `datetime.now().date()`（＝ UTC）で
+    数えていました。**JST の 00:00〜09:00 は「昨日」**になるので、
+    その日に期限が来た前提が「来ていない」ことにされます。
+    実測: 02:0x JST に「期限の来た前提: なし」と印字し、実際は1件 来ていました。
+    """
+    import datetime as dt
+
+    class _Now(dt.datetime):
+        @classmethod
+        def now(cls, tz=None):
+            # UTC で 2026-08-25 17:00 ＝ JST で 2026-08-26 02:00
+            base = dt.datetime(2026, 8, 25, 17, 0, tzinfo=dt.timezone.utc)
+            return base.astimezone(tz) if tz else base.replace(tzinfo=None)
+
+    monkeypatch.setattr(drift, "datetime", _Now)
+    assert drift.today_jst() == "2026-08-26", "**UTC の日付で門を開け閉めしないこと**"
