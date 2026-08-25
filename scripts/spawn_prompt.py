@@ -36,6 +36,7 @@ import argparse
 import json
 import re
 import sys
+from collections import Counter
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -144,6 +145,83 @@ def _siblings_block(siblings: list[str]) -> str:
     return head + TRUNK + AUTHORITY
 
 
+def _facts_block(root: Path = ROOT) -> str:
+    """**立てるたびに数え直す「いまの姿」。**（API 0単位）
+
+    ## なぜ要るか（2026-08-26）
+
+    ここは長らく**型に数字がべた書き**でした。実測でどれだけずれていたか:
+
+        型に書いてあった   ship 240件 / fix 115 / moves≠0 17件 / **作れるのは4本・在庫は0本**
+        実際（08-26）      ship 300件 / fix 126 / moves≠0 19件 / **作れるのは 13.6本・在庫 27本**
+
+    **「作れるのは4本・在庫は0本」は、受け取った側を必ず誤らせます** ——
+    その2つが本当なら律速は供給で、**「もっと作れ」が正解**になります。
+    実際の律速は**予約の順番待ち（32日）**で、作る本数を増やすと
+    **待ち行列が伸びて律速が悪化します。正反対です。**
+
+    **型に数字を書かないこと。** 書くと、書いた回の姿で次の回が判断します
+    （`CLAUDE.md`「昔オーナーがそう言ったから」は理由にならない、と同じ形）。
+
+    **数えられなかった行は落とします。** ここで例外を上げると
+    **子が1人も立ちません** —— 立たないほうが、数字が1行欠けるより高くつきます。
+    """
+    lines: list[str] = []
+    try:                                    # ship の内訳（8/18 以降）
+        import json as _json
+        rows = []
+        for ln in (root / "data" / "runs.jsonl").read_text(
+                encoding="utf-8").splitlines():
+            ln = ln.strip()
+            if not ln:
+                continue
+            try:
+                rows.append(_json.loads(ln))
+            except ValueError:
+                continue
+        ships = [r for r in rows
+                 if r.get("kind") == "ship" and str(r.get("at", "")) >= "2026-08-18"]
+        def _cat(w: str) -> str:
+            w = (w or "").strip()
+            for k in ("fix", "means", "upload", "verdict"):
+                if w.startswith(k + ":"):
+                    return k
+            return "その他"
+        n = Counter(_cat(str(r.get("what", ""))) for r in ships)
+        moved = sum(1 for r in ships if r.get("moves"))
+        lines.append(
+            f"    8/18以降の ship {len(ships)}件   "
+            + " ／ ".join(f"{k} {n[k]}" for k in ("fix", "means", "upload", "verdict"))
+            + f"（その他 {n['その他']}）")
+        lines.append(
+            f"    `moves` に0以外を書いた回  **{moved}件**"
+            f"（＝{len(ships) - moved}回は「日付は動かない」と自分で言って合格）")
+    except Exception:
+        pass
+    try:                                    # 予約の順番待ち（この機械の時定数）
+        sys.path.insert(0, str(root))
+        from scripts import queue_lag       # noqa: PLC0415
+        from src.ab_split import SETTLE_DAYS  # noqa: PLC0415
+        from src import judgeable           # noqa: PLC0415
+        rows_q = queue_lag.scheduled()
+        d = queue_lag.depth(rows_q)
+        lines.append(
+            f"    予約 {len(rows_q)}本 ／ いちばん後ろは **{d}日 先**"
+            f"（＝いま作った本が公開されるまで）"
+            f" → 判定できるのは **{d + SETTLE_DAYS + judgeable.ANALYTICS_LAG_DAYS}日後**")
+    except Exception:
+        pass
+    try:                                    # 出せる本数と、作れる本数と、在庫
+        from src import day_cap, supply     # noqa: PLC0415
+        st = supply.stock() if hasattr(supply, "stock") else None
+        lines.append(
+            f"    再生が付く上限 **{day_cap.cap()}本/日**（実測）"
+            + (f" ／ 在庫 **{st}本**" if isinstance(st, int) else ""))
+    except Exception:
+        pass
+    return "\n".join(lines) if lines else "    （この回は数えられませんでした）"
+
+
 def build(kind: str, note: str = "", siblings: list[str] | None = None,
           only: str = "", root: Path = ROOT) -> str:
     if kind not in KINDS:
@@ -171,6 +249,9 @@ def build(kind: str, note: str = "", siblings: list[str] | None = None,
         "only": only,
         "note_block": note_block,
         "siblings_block": _siblings_block(list(siblings or [])),
+        # **数字は立てるたびに数え直す**（2026-08-26）。型にべた書きすると、
+        # 書いた回の姿で次の回が判断します（`_facts_block` の註）。
+        "facts": _facts_block(root),
         "lead": (tpl["lead-only"].replace("<<only>>", only) if only
                  else tpl["lead-round"]),
     }
