@@ -5019,6 +5019,25 @@
     ],
     "video_id": "a1b2Nm6jN_0"
   },
+  "s-tokurou-11kagetsu-12kagetsu": {
+    "charts": [
+      [
+        "0円",
+        "120万円"
+      ],
+      [
+        "1か月",
+        "11か月",
+        "12か月",
+        "13か月"
+      ],
+      [
+        "120万円",
+        "120万円"
+      ]
+    ],
+    "video_id": "icSuiH8u6G0"
+  },
   "s-tokurou-danjo-240man": {
     "charts": [
       [
@@ -5050,6 +5069,28 @@
       ]
     ],
     "video_id": "1-wPfwy_amg"
+  },
+  "s-tokurou-jikou-5nen": {
+    "charts": [
+      [
+        "610万円",
+        "10万円",
+        "720万円",
+        "120万円"
+      ],
+      [
+        "610万円",
+        "720万円",
+        "840万円",
+        "960万円"
+      ],
+      [
+        "610万円",
+        "600万円",
+        "10万円"
+      ]
+    ],
+    "video_id": "15U62kgvij0"
   },
   "s-tokurou-kaidan-showa36": {
     "charts": [
