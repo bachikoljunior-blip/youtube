@@ -387,7 +387,7 @@ def dead_arm_report(today: str, window_days: int = WINDOW_DAYS) -> str:
     caps, hint = state.get("caps") or {}, state.get("hint")
     since = (date.fromisoformat(today) - timedelta(days=window_days)).isoformat()
     runs = [r for r in load_runs(since) if r.get("lever")]
-    out = ["", "=== 引き代のない腕を、何回選んだか ==="]
+    out = ["", "=== 到達日を動かせない腕を、何回選んだか ==="]
     if not caps:
         out.append("  （`data/eta.jsonl` に `arm_caps` がまだありません。"
                    "`python scripts/eta.py` を1回走らせると出ます）")
