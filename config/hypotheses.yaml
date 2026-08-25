@@ -2328,6 +2328,7 @@ hypotheses:
   - claim: "冒頭の stat は「前提を先・数字を後」に割ったほうが engaged 比率が上がる"
     key: stat_split                # `src/judgeable.py` が期限を守れるか数えます
     deadline: "2026-09-20"
+    watch: 冒頭のstatの割り方-両群16本
     # **09/05 → 09/20 へ延ばした（2026-08-25）。条件は1文字も変えていません。**
     # `python -m src.judgeable` の実測: 処置(後)の **16本目の公開が 09/03**。
     # 公開から7日 + Analytics の遅れ3日 で、**いちばん早く判定できるのは 09/13**。
