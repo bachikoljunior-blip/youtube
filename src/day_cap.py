@@ -601,6 +601,87 @@ def booked_split_day(first_pub: str, today: dt.date | None = None,
     return None
 
 
+def cap_if_window(path: pathlib.Path | None = None,
+                  uploaded: pathlib.Path | None = None,
+                  today: dt.date | None = None) -> dict | None:
+    """**(B)「時刻の窓」だったときの上限**（枠の数。**測った天井ではありません**）。
+
+    ## なぜ要るか（2026-08-26・最適化の回）
+
+    `window()` は「(A) 1日 C本 と (B) T までに出した本は全部生きる の
+    **どちらか分かっていない**」と、`confounded=True` で毎回言っています。
+    ところが **`cap()` は (A) の数だけを返し**、`scripts/eta.py` の
+    `physical_caps` はそれだけを読んで
+
+        density 天井 ×1.00 …… **すでに上限を 1.8倍 超えて出しています ＝ 引き代なし**
+
+    と印字していました。**分かっていないほうの枝を、断定して印字しています。**
+    `CLAUDE.md` が (イ) で禁じている形そのものです ——
+    「**裸の「届きません」を出さないこと。何を固定したせいでそう出たのかを
+    同じ行に並べる**」。
+
+    **`cap()` は変えません。** 軌跡は保守的な (A) の側を歩くべきで、
+    測っていない (B) で歩かせると「実在しない世界」を歩きます
+    （`physical_caps` の docstring が禁じている形）。**変えるのは印字だけ**で、
+    ここが返すのは**その断定に添える、もう一方の枝の数**です。
+
+    ## 数の出どころ（**全部その場の実物。書き写していません**）
+
+        T         `window()["T"]`（実測で死線が立っている時刻）
+        きざみ    `MIN_GAP_MIN`（**このファイルが既に持っている実測**。
+                  08/21 に :15/:45 で詰めた7本が0再生 ＝ これより詰めると死ぬ）
+        いちばん早い時刻
+                  **切り分けの日にもう予約してある本**のいちばん早い時刻
+                  （`booked_split_day` が名指しする日。実測 08/27 の 05:00）
+
+    ## **これは「1日 N本 出せる」ではありません**
+
+    このチャンネルは **08:59 より早く公開したことが一度もありません**
+    （`batch_build --hour` の既定が 9）。だから **05:00 が生きるかどうかも
+    測っていません。** 08/27 の切り分けの日は、**モデルの別と、早い時刻が
+    生きるかを同時に**答えます。それまでは `measured: False` のままです。
+
+    返すのは `{"cap", "earliest", "T", "step_min", "measured", "answer_on"}`、
+    切り分けが済んでいる（`confounded=False`）か材料が無ければ `None`。
+    """
+    w = window(path)
+    if not w.get("confounded") or not w.get("T"):
+        return None
+    try:
+        end = dt.datetime.strptime(str(w["T"]), "%H:%M").time()
+    except ValueError:
+        return None
+
+    booked = booked_split_day(str(w.get("first_pub") or ""), today=today,
+                              uploaded=uploaded)
+    if not booked:
+        return None
+
+    # **帳面の読み手を増やさないこと**（`docs/JOURNAL.md` 2026-08-25）——
+    # 「後の行を採る・JST で割る」の2規則は `src.motion_groups` が持っています。
+    from src import motion_groups
+
+    at = motion_groups.scheduled_at(uploaded) if uploaded else motion_groups.scheduled_at()
+    earliest: dt.time | None = None
+    for when in at.values():
+        if motion_groups.jst_day(when) != booked["day"]:
+            continue
+        t = dt.datetime.fromisoformat(when.replace("Z", "+00:00")).astimezone(JST).time()
+        if earliest is None or t < earliest:
+            earliest = t
+    if earliest is None or earliest >= end:
+        return None
+
+    step = int(MIN_GAP_MIN)
+    span = ((end.hour * 60 + end.minute) - (earliest.hour * 60 + earliest.minute))
+    return {"cap": int(span // step) + 1,
+            "earliest": earliest.strftime("%H:%M"),
+            "T": str(w["T"]),
+            "step_min": step,
+            "measured": False,
+            "answer_on": booked["answer"]}
+
+
 def window_lines(path: pathlib.Path | None = None) -> list[str]:
     """**その上限が「本数」なのか「時刻の窓」なのかを、黙って断定しない。**"""
     w = window(path)
