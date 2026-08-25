@@ -276,11 +276,26 @@ def test_報告に在庫を渡さなければ見通しは出ない():
     assert "この判定には入りません" not in report()
 
 
-def test_実物_hook_form_の在庫の締切は09_09():
+def test_在庫の締切は_期限から落ち着く日数を引いた日():
     """実データ側に固定してよいのは『まだ測れていない』ことのほう ——
-    ここで固定するのは**期限の算術だけ**で、在庫の本数は固定しません。"""
-    assert ab_split.settle_by(EXPERIMENTS["hook_form"]) == date(2026, 9, 9)
-    assert ab_split.settle_by(EXPERIMENTS["title_form"]) == date(2026, 9, 5)
+    ここで固定するのは**期限の算術だけ**で、在庫の本数は固定しません。
+
+    **日付そのものを書かないこと**（2026-08-25 22:5x に書き換えた）。
+    ここは `date(2026, 9, 9)` / `date(2026, 9, 5)` とべた書きで、
+    **期限が 09-16 / 09-12 だったころの引き算の答え**でした。
+    `deadline_check.py` の `ready` まで期限を縮めた回に、
+    **この検査が「縮めるな」と言う側に回りました** ——
+    docstring は「固定するのは期限の算術だけ」と言っているのに、
+    **実際には期限そのものを裏から固定していた**わけです
+    （`tests/test_eta.py` の `72` と `1.33` で踏んだのと同じ形）。
+
+    **期限を縮めるのは、これから毎回起きます**（`status.py` が
+    「期限が遅すぎる N件」を毎回出します）。だから引き算だけを見ます。
+    """
+    for name in ("hook_form", "title_form"):
+        exp = EXPERIMENTS[name]
+        assert ab_split.settle_by(exp) == exp.deadline - timedelta(
+            days=ab_split.SETTLE_DAYS), f"{name} の締切が期限の算術と合っていません"
 
 
 # --- 帳面は「1行1本」ではない（2026-08-25。群の分母が条件と食い違う形の4件目）---

@@ -98,9 +98,52 @@ class Experiment:
     commit: str = ""
 
 
+def _deadline_from_yaml(name: str, fallback: date) -> date:
+    """**期限は `config/hypotheses.yaml` が正本**（2026-08-25 22:5x）。
+
+    ここは長らく `date(2026, 9, 12)` のような**べた書き**でした。
+    `tests/test_ab_split.py::test_期限は_yaml_と同じ` が
+    「**`deadline` を2か所で持っているので、ずれたら止める**」と書いて
+    見張っていましたが、**見張るだけでは同期しません** ——
+    実際 2026-08-25 に、`deadline_check.py` の `ready` まで期限を縮めた回で
+    **2件ともずれて落ちました**（title_form 09-12→09-09・hook_form 09-16→09-14）。
+
+    **そして期限を縮めるのは、これから毎回起きます**（`status.py` が
+    「期限が遅すぎる N件」を毎回出して縮めさせる）。**べた書きのままだと、
+    縮めるたびにここが落ちます。** だから写しをやめて、**引く**ようにしました。
+
+    紐づけの鍵は `falsified_if` の中の `script_writer.<name>` です
+    （その前提が、この振り分けを名指ししている所）。
+
+    **見つからなければ `fallback` に落ちます。** ここで例外を上げると、
+    `status.py` ごと止まって**投稿が止まります** ——
+    `CLAUDE.md`「投稿を途切れさせないこと」。ずれたことは検査が言います。
+    """
+    try:
+        import yaml
+        doc = yaml.safe_load(
+            (ROOT / "config" / "hypotheses.yaml").read_text(encoding="utf-8"))
+        hit = [h for h in (doc.get("hypotheses") or [])
+               if f"script_writer.{name}" in str(h.get("falsified_if", ""))
+               and not h.get("closed_on")]
+        if len(hit) == 1:
+            d = hit[0].get("deadline")
+            if isinstance(d, date):
+                return d
+            if isinstance(d, str):
+                return date.fromisoformat(d)
+    except Exception:
+        pass
+    return fallback
+
+
 #: 走っている実験。**新しく振り分けを足したら、ここにも足すこと。**
 #: 足し忘れると `status.py` が「指示が入った本 0本」を言わないまま、
 #: 中身の同じ2群を突き合わせて外れを出します。
+#:
+#: **`deadline` は書きません。`config/hypotheses.yaml` から引きます**
+#: （上の `_deadline_from_yaml`）。下の日付は**その前提が消えたときの受け皿**で、
+#: 正本ではありません。
 EXPERIMENTS: dict[str, Experiment] = {
     "title_form": Experiment(
         name="title_form",
@@ -109,7 +152,7 @@ EXPERIMENTS: dict[str, Experiment] = {
         control="断定",
         # 6a7520f「道具は『無関係』でなく『一度も試していない』と言っていた」
         landed=datetime(2026, 8, 19, 16, 50, 5, tzinfo=JST),
-        deadline=date(2026, 9, 12),
+        deadline=_deadline_from_yaml("title_form", date(2026, 9, 12)),
         commit="6a7520f",
     ),
     "hook_form": Experiment(
@@ -119,7 +162,7 @@ EXPERIMENTS: dict[str, Experiment] = {
         control="条件",
         # 443c66b「冒頭1枚目の主役（kind=stat の note）を問いかけに振り分ける A/B」
         landed=datetime(2026, 8, 19, 21, 0, 3, tzinfo=JST),
-        deadline=date(2026, 9, 16),
+        deadline=_deadline_from_yaml("hook_form", date(2026, 9, 16)),
         commit="443c66b",
     ),
 }
