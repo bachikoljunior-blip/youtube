@@ -680,10 +680,39 @@ def engagement(v: dict) -> dict:
 
 
 def traffic(v: dict) -> dict:
-    src = {k.split(".", 1)[1]: n for k, n in v.items()
-           if k.startswith("insightTrafficSourceType.")}
-    loc = {k.split(".", 1)[1]: n for k, n in v.items()
-           if k.startswith("insightPlaybackLocationType.")}
+    """**`src/scan.py` は「取れなかった」を `None` で書き残します**（2026-08-25 に踏んだ）。
+
+        src/scan.py:194   out[f"{dim}.（取れず）"] = None
+
+    次元の取得が落ちた回は、この印が `values` に1つ混ざります。**印そのものは
+    正しい設計**です —— 取れなかったことを黙って0にすると、
+    「本当に0だった回」と区別が付かなくなります。
+
+    **落ちていたのは読む側でした。** ここは前置きだけで族をまるごと集めるので、
+    印まで拾って `sum()` に渡し、`int + NoneType` で落ちます。実測:
+
+        data/scan.jsonl 最終行（08/25 19:00:34）に
+        `insightTrafficSourceType.（取れず）: None` が1つ
+        → **`tests/test_trajectory.py` の17件が全部 ERROR**
+        → `scripts/trajectory.py`（軌跡の本体）が丸ごと動かない
+
+    **印は落としますが、落としたことは返します**（`src_unavailable`）——
+    黙って捨てると、次の回は「流入が全部0だった」と読みます。
+    """
+    def _family(prefix: str) -> tuple[dict, bool]:
+        got, missing = {}, False
+        for k, n in v.items():
+            if not k.startswith(prefix):
+                continue
+            name = k.split(".", 1)[1]
+            if n is None:          # ← `（取れず）` の印。数に混ぜない
+                missing = True
+                continue
+            got[name] = n
+        return got, missing
+
+    src, src_missing = _family("insightTrafficSourceType.")
+    loc, loc_missing = _family("insightPlaybackLocationType.")
     tot = sum(src.values()) or 1
     shorts = src.get("SHORTS", 0)
     non_shorts = tot - shorts
@@ -692,6 +721,9 @@ def traffic(v: dict) -> dict:
         "loc": dict(sorted(loc.items(), key=lambda kv: -kv[1])),
         "total": tot, "shorts": shorts, "shorts_share": shorts / tot,
         "non_shorts": non_shorts,
+        # **この回、その次元が API から取れたか。** False なら上の数は
+        # 「0だった」ではなく「**測れていない**」（`src/scan.py` の `（取れず）`）
+        "src_unavailable": src_missing, "loc_unavailable": loc_missing,
         "search": src.get("YT_SEARCH", 0), "browse": src.get("YT_OTHER_PAGE", 0),
         "suggested": src.get("RELATED_VIDEO", 0),
     }

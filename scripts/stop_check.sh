@@ -61,7 +61,18 @@ if [ -n "$ME" ] && grep -qxF "$ME" "$ROOT/config/parents.txt" 2>/dev/null; then
 fi
 
 # --- いまの状態を集める（ネットワークは使わない。フックは速いこと） ---
-if pgrep -f "src.pipeline" > /dev/null 2>&1; then
+# **`pgrep -f "src.pipeline"` は誤検知します**（2026-08-25 に実際に踏んだ）。
+# `-f` は cmdline 全体に当たるので、**その文字列を含むだけの `bash -c` が拾われます** ——
+# この回は「動いているか確かめる」ための `pgrep -af "src.pipeline"` 自身が
+# 引っかかり、**何も走っていないのに「動作中」**と出ました。
+# 嘘の「あり」は「**畳めばコンテナごと消えるので、待つこと**」を意味するので、
+# **次の回を、走っていないものの前で待たせます。** 1周ぶんの損です。
+#
+# 直し方は2つ: (1) 本物の起動の形（`python … -m src.pipeline`）だけに当てる。
+# (2) **自分と親を外す**（フックはこのシェルの子として走るので、
+# 判定している当人が必ず候補に入ります）。**両方やります。**
+if pgrep -f -- "-m[[:space:]]+src\.pipeline" 2>/dev/null \
+     | grep -vx -e "$$" -e "$PPID" | grep -q .; then
   RUNNING="あり（src.pipeline が動いている。**畳めばコンテナごと消えるので、待つこと**）"
 else
   RUNNING="なし"

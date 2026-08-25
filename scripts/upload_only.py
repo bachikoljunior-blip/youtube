@@ -180,8 +180,19 @@ def main(topic: str, visibility: str | None = None, hour: int | None = None,
     # 口が落としても、こちらは落ちません（理由は `src/dupes.ledger_rows`）。
     try:
         from src import dupes as _dupes
+        # **秒数も控える**（2026-08-25）。無いと「ショートか長尺か」を題名の
+        # `#Shorts` で推測することになり、実測で4本ずれていました（`src/forms.py`）。
+        # **測れなくても投稿は止めません**（途切れるほうが高い）。
+        _dur = None
+        try:
+            from src import verify as _verify
+            _dur = float(_verify._probe(work / "final.mp4")
+                         .get("format", {}).get("duration") or 0) or None
+        except Exception as exc:
+            print(f"[dupes] 秒数を測れませんでした（続行）: {str(exc)[:60]}")
         _dupes.remember(video_id, topic, title,
-                        channel["publish"].get("publish_at") or None)
+                        channel["publish"].get("publish_at") or None,
+                        duration_s=_dur)
     except Exception as exc:
         print(f"[dupes] **控えを残せませんでした: {str(exc)[:80]}**")
 
