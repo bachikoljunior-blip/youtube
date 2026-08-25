@@ -1397,7 +1397,20 @@ def _stage4(m: dict, a: dict, sp: dict, density: int, per_video: float,
 
 #: 腕を1つだけ「これだけ上げたら」と置いてみる倍率。**2倍は、この機械が
 #: 実際に出した幅の中にあります**（1本あたり再生の実測は 22本で 30回〜4,000回超）。
+#:
+#: **この倍率だけで腕を選ばないこと**（2026-08-25 に踏んだ）。
+#: 2026-08-25 の実測では、**4本とも ×2 では「届きません」**でした ——
+#: 合格点が ×2.61 足りない回だったので、**2.0 < 2.61 の時点で、どの腕を
+#: 入れても答えは「出ません」に確定していました。** `plan()` はこの表の
+#: 最大値で `lever_hint` を上書きする作りでしたが、`gain > 0` が一度も真に
+#: ならず、**8/20 に書いてから一度も動いていません**でした。
+#: いまは各腕の**自分の天井**でも解き、そちらで選びます（`gain_at_cap`）。
 LEVER_FACTOR = 2.0
+
+#: `threshold`（日付が出はじめる倍率）を挟み込む回数。
+#: 1回の探りは実測 0.12秒。4本 × 8回 ＝ **約4秒**で、`trajectory_all`（75秒）の
+#: 5%。**ここを増やすなら、先に軌跡のほうを速くすること。**
+LEVER_BISECT_ITERS = 8
 
 #: 到達日を動かしうる腕。**`none`（道具の整備）はここには入りません** ——
 #: 日付を動かさないと自分で言っている腕なので、比べる意味がありません。
@@ -1413,7 +1426,8 @@ LEVER_LABEL = {
 
 def lever_days(m: dict, a: dict, pl0: dict, today: date | None = None,
                supply: dict | None = None, points: list[dict] | None = None,
-               factor: float = LEVER_FACTOR, mix: dict | None = None) -> list[dict]:
+               factor: float = LEVER_FACTOR, mix: dict | None = None,
+               caps: dict[str, float | None] | None = None) -> list[dict]:
     """**腕べつに、到達日が何日動くか。**（2026-08-20 16:0x・オーナー指示）
 
     > 分析して制作に活かして視聴回数などを上げることが予測に使えることじゃない？
@@ -1428,23 +1442,72 @@ def lever_days(m: dict, a: dict, pl0: dict, today: date | None = None,
     予測をまるごと解き直し、到達日の差を取る。** 差が大きい腕が、
     この回に引くべき腕です。**名前ではなく、日数で決まります。**
 
-    返り: 腕ごとに `{"lever", "label", "days", "date", "gain", "reachable"}`。
+    返り: 腕ごとに
+    `{"lever", "label", "days", "date", "gain", "reachable",
+      "cap", "days_at_cap", "date_at_cap", "gain_at_cap", "reachable_at_cap",
+      "threshold", "at_ceiling"}`。
     `gain` は**縮んだ日数**（正なら早まる）。届かない側は `gain=0.0`。
 
-    **これは「2倍にできる」と言っていません。** 言っているのは
-    「2倍にしたら何日縮むか」だけで、**できるかどうかは別の話**です。
-    比べられるのは、どの腕も**同じ倍率**で並べているからです。
+    ## **同じ倍率だけで並べると、答えが「出ません」に固定されます**（2026-08-25）
+
+    元の版はここが `factor`（＝×2）1本で、docstring はそれを
+    「比べられるのは、どの腕も**同じ倍率**で並べているからです」と正当化していました。
+    **並べる目的なら正しい。選ぶ目的には使えません。**
+
+    2026-08-25 の実測:
+
+        合格点は ×2.61 足りない（`per_video` いま 638回 → 要る 1,667回）
+        → **2.0 < 2.61 なので、どの腕を ×2 にしても「届きません」**
+        → `gain` は4本とも 0.0
+        → `plan()` の `if best["gain"] > 0:` は **8/20 に書いてから一度も真になっていない**
+
+    つまりこの表は、**構造として肯定的な答えを返せません**でした。
+    毎周 `それでも出ません` を4行印字して、読み手に
+    「どの腕でも届かない」という**誤った印象**を渡していました。実際は:
+
+        per_video  天井 ×2.96 → **211.7日**（届く）
+        rpm        天井 ×70.20 → **509.6日**（届く）
+        sub_rate   天井 ×2,923.79 → **届かない**（再生の天井に触らない腕なので、何倍でも出ません）
+        density    天井 ×1.00 → **引き代なし**（すでに上限を 1.3倍 超えて出している）
+
+    **天井は `physical_caps` / `_capped_arms` が同じファイルの中で計算しています。**
+    それをこの関数が読んでいなかった、というだけの話です
+    （「同じことを2か所が別々に言っていて、片方しか読まれていない」の一例）。
+
+    いまは3つ出します。**選ぶのは2番目です**:
+
+        1. `days`        —— 同じ倍率（`factor`）で並べた線。**腕の感度**
+        2. `days_at_cap` —— **その腕の天井まで引いた**線。**引けるところまで引いた実力**
+        3. `threshold`   —— **日付が出はじめる倍率**。天井まで引いても出ないなら `None`
+
+    `threshold` が要るのは、「あと何倍で景色が変わるか」が
+    **`cap` とも `factor` とも別の数**だからです（実測 `per_video` は ×2.7 付近）。
     """
     base = pl0.get("days_to_target", NEVER)
+    if caps is None:
+        try:
+            caps = {k: v.get("cap") for k, v in
+                    _capped_arms(a, supply=supply).items()}
+        except Exception:                                      # noqa: BLE001
+            caps = {}
+
+    def _days(lever: str, f: float) -> float:
+        """腕 `lever` を `f` 倍にして、到達日（日数）を解き直す。"""
+        a2 = analyse(m, points=points, scale={lever: f})
+        pl2 = plan(m, a2, today=today, supply=supply, sensitivity=False,
+                   points=points, mix=mix)
+        return pl2.get("days_to_target", NEVER)
+
+    def _date(d: float):
+        return ((today or today_jst()) + timedelta(days=math.ceil(d))
+                ) if d < NEVER else None
+
     rows: list[dict] = []
     for lever in LEVERS:
         try:
-            a2 = analyse(m, points=points, scale={lever: factor})
-            pl2 = plan(m, a2, today=today, supply=supply, sensitivity=False,
-                       points=points, mix=mix)
+            d = _days(lever, factor)
         except Exception:                                      # noqa: BLE001
             continue
-        d = pl2.get("days_to_target", NEVER)
         reachable = d < NEVER
         # **`base` が NEVER のときも、そのまま引くこと。**
         #     ここを「届く側は一律に最大」と書いていたら、**届く腕が全部同点**になり、
@@ -1452,17 +1515,58 @@ def lever_days(m: dict, a: dict, pl0: dict, today: date | None = None,
         #     引き算のままなら、`NEVER - d` は **d が小さい腕ほど大きい** ので、
         #     「いまは出ない」帯でも**早く出るほうが上**に来ます。
         gain = (base - d) if reachable else 0.0
+
+        # --- その腕の天井まで引いたら ---
+        #     **天井 ×1.00 は「引き代なし」**（`physical_caps` が
+        #     `max(1.0, raw)` で潰しています）。解き直す意味がないので、そのまま 0。
+        cap = caps.get(lever)
+        at_ceiling = cap is not None and cap <= 1.0
+        d_cap, threshold = NEVER, None
+        if cap is not None and cap > 1.0:
+            try:
+                d_cap = _days(lever, cap)
+            except Exception:                                  # noqa: BLE001
+                d_cap = NEVER
+            if d_cap < NEVER:
+                # **日付が出はじめる倍率を挟み込む。**
+                #     `cap` で出ている以上、`[1.0, cap]` のどこかに境目があります
+                #     （出ない → 出る、は単調と置いています。倍率を上げて
+                #     到達日が遠くなる腕は、この機械にはありません）。
+                lo, hi = 1.0, cap
+                for _ in range(LEVER_BISECT_ITERS):
+                    mid = (lo + hi) / 2.0
+                    try:
+                        ok = _days(lever, mid) < NEVER
+                    except Exception:                          # noqa: BLE001
+                        break
+                    if ok:
+                        hi = mid
+                    else:
+                        lo = mid
+                threshold = hi
+        reachable_at_cap = d_cap < NEVER
+        gain_at_cap = (base - d_cap) if reachable_at_cap else 0.0
+
         rows.append({
             "lever": lever,
             "label": LEVER_LABEL[lever],
             "factor": factor,
             "days": d,
-            "date": ((today or today_jst()) + timedelta(days=math.ceil(d)))
-                    if reachable else None,
+            "date": _date(d),
             "gain": max(0.0, gain),
             "reachable": reachable,
+            "cap": cap,
+            "at_ceiling": at_ceiling,
+            "days_at_cap": d_cap,
+            "date_at_cap": _date(d_cap),
+            "gain_at_cap": max(0.0, gain_at_cap),
+            "reachable_at_cap": reachable_at_cap,
+            "threshold": threshold,
         })
-    rows.sort(key=lambda r: -r["gain"])
+    # **並べ替えは「引けるところまで引いた実力」で。**
+    #     同じ倍率の `gain` は、`factor` が合格点に足りない回は4本とも 0 になり、
+    #     並び順が `LEVERS` に書いた順（＝こちらの都合）に戻ります。
+    rows.sort(key=lambda r: (-r["gain_at_cap"], -r["gain"], r["days_at_cap"]))
     return rows
 
 
@@ -2623,11 +2727,25 @@ def plan(m: dict, a: dict, density: int = PLAN_PUBLISH_PER_DAY,
     if sensitivity:
         out["lever_days"] = lever_days(m, a, pl0=out, today=today, supply=supply,
                                        points=points, mix=mix)
-        best = max(out["lever_days"], key=lambda r: r["gain"], default=None)
+        # **選ぶのは「その腕の天井まで引いたら」のほう**（2026-08-25）。
+        #     ここは `r["gain"]`（＝どの腕も一律 ×2）で選んでいましたが、
+        #     合格点が ×2 より上にある回は**4本とも 0** になり、この分岐は
+        #     一度も走りませんでした（8/20 に書いてから 8/25 まで死んだまま）。
+        #     天井は腕ごとに ×1.00〜×2,923 と3桁ちがうので、
+        #     **同じ倍率で並べた差は「引けるか」を含んでいません。**
+        #
+        #     **天井が1つも測れていない回は、同じ倍率の差へ落ちます。**
+        #     落とさないと、`gain_at_cap` が全部 0 になった環境で
+        #     **上書きごと消え、`lever_hint` が床の名前（＝診断）に戻ります** ——
+        #     それは 8/20 に直したはずの状態そのものです。**黙って戻さないこと。**
+        _rows = out["lever_days"]
+        _key = "gain_at_cap" if any(r["gain_at_cap"] > 0 for r in _rows) else "gain"
+        best = max(_rows, key=lambda r: r[_key], default=None)
         # **縛っている床の名前より、実測の差のほうを信じる。**
         #     「門が縛っている＝density」は正しい診断ですが、**どの腕がいちばん
         #     日付を動かすか**は別の問いで、そこは掛け算の形で決まります。
-        if best and best["gain"] > 0:
+        if best and best[_key] > 0:
+            out["lever_chosen_by"] = _key
             out["lever_measured"] = best["lever"]
             out["lever_hint_binding"] = out["lever_hint"]
             out["lever_hint"] = best["lever"]
@@ -3121,36 +3239,67 @@ def _report_levers(pl: dict) -> list[str]:
     それでいて `lever_hint` は毎回 `density` を名指ししていました。
     **動かない数字に向かって「早めろ」と言われていた**わけです。
 
-    ここが出すのは、腕を1つずつ同じ倍率にして**予測をまるごと解き直した差**です。
-    **できるかどうかは言っていません。** 言っているのは
-    「引けたら何日縮むか」だけ —— それが分かれば、**同じ手間なら差の大きい腕**を
-    選べます。名前ではなく日数で決まる形にすること。
+    ここが出すのは、腕を1つずつ解き直した**到達日の差**です。**2つの倍率で出します**:
+
+        ×N（同じ倍率）    腕の**感度**を並べる。どれが効きやすいか
+        天井まで          その腕が**実際に引けるところまで**引いた線。**選ぶのはこちら**
+
+    **同じ倍率だけで選ぶと、答えが「出ません」に固定されます**（2026-08-25 に判明）。
+    合格点が ×2 より上にある回は、**どの腕を ×2 にしても届かない**ので4本とも
+    同点 0 になり、`plan()` の上書きは 8/20 から一度も走っていませんでした。
+    天井は腕ごとに ×1.00〜×2,923 と3桁ちがいます。**その差を含めないと選べません。**
     """
     rows = pl.get("lever_days") or []
     if not rows:
         return []
     base = pl.get("days_to_target", NEVER)
     out = ["", "--- **腕べつに、到達日が何日動くか**"
-           f"（それぞれ **{rows[0]['factor']:.0f}倍**にして解き直した）---"]
+           f"（**×{rows[0]['factor']:.0f}（感度）** と **天井まで（実力）** の2本）---"]
     P = out.append
     if base < NEVER:
         P(f"    いまの実測のまま        {_fmt_days(base)}")
     else:
         P("    いまの実測のまま        **日付が出ません**（天井が足りない）")
     for r in rows:
-        if not r["reachable"]:
-            P(f"    `{r['lever']:<10}` ×{r['factor']:.0f}   **それでも出ません**"
-              f"   {r['label']}")
-            continue
-        gain = (f"**{base - r['days']:,.0f}日 早まる**" if base < NEVER
-                else "**日付が出るようになる**")
-        P(f"    `{r['lever']:<10}` ×{r['factor']:.0f}   {r['date'].isoformat()}"
-          f"（{r['days']:,.0f}日後）  {gain}   {r['label']}")
+        # --- ×N の側（感度）---
+        if r["reachable"]:
+            g = (f"**{base - r['days']:,.0f}日 早まる**" if base < NEVER
+                 else "**日付が出るようになる**")
+            sens = f"{r['date'].isoformat()}（{r['days']:,.0f}日後）  {g}"
+        else:
+            sens = "**それでも出ません**"
+        P(f"    `{r['lever']:<10}` ×{r['factor']:.0f}   {sens}   {r['label']}")
+
+        # --- 天井の側（実力）---
+        cap = r.get("cap")
+        if cap is None:
+            P("                 天井 —— **測れていません**（この腕は実力で選べません）")
+        elif r.get("at_ceiling"):
+            P(f"                 天井 ×{cap:,.2f} …… **引き代なし。"
+              f"この腕は何をしても上の日付を1日も動かしません**")
+        elif r.get("reachable_at_cap"):
+            g2 = (f"**{base - r['days_at_cap']:,.0f}日 早まる**" if base < NEVER
+                  else "**日付が出る**")
+            th = r.get("threshold")
+            th_s = (f"／日付が出はじめるのは **×{th:,.2f}** から" if th else "")
+            P(f"                 天井 ×{cap:,.2f} → "
+              f"{r['date_at_cap'].isoformat()}（{r['days_at_cap']:,.0f}日後）  {g2}{th_s}")
+        else:
+            P(f"                 天井 ×{cap:,.2f} → **天井まで引いても出ません**"
+              f"（この腕は、いまの縛りに触っていません）")
+
     if pl.get("lever_measured"):
         P(f"    → **この回に引く腕は `{pl['lever_measured']}`。**"
-          f" 床の名前（{pl.get('lever_hint_binding')}）ではなく、**差の大きさで選んでいます**")
-    P("    **「2倍にできる」とは言っていません。** 言っているのは"
-      "「2倍にしたら何日縮むか」だけで、**できるかどうかは別の話**です。")
+          f" 床の名前（{pl.get('lever_hint_binding')}）ではなく、"
+          f"**天井まで引いたときの差の大きさで選んでいます**")
+    dead = [r["lever"] for r in rows
+            if r.get("cap") is not None and not r.get("reachable_at_cap")]
+    if dead:
+        P(f"    **上の日付を動かせない腕: {'／'.join(f'`{d}`' for d in dead)}** ——"
+          "  天井まで引いても届きません。**ここに前提を置いても、到達日は動きません**"
+          "（門1 など、別の段には効くことがあります）。")
+    P("    **「その倍率にできる」とは言っていません。** 言っているのは"
+      "「そこまで引けたら何日縮むか」だけで、**引けるかどうかは別の話**です。")
     return out
 
 
@@ -3668,6 +3817,22 @@ def _row(m: dict, a: dict, pl: dict, tr: dict | None, sup: dict | None) -> dict:
         #     `--ship` は4秒の `--reflect` しか撃たないので、届いていません。
         row["arm_caps"] = {k: a.get("cap") for k, a in tr["arms"].items()}
         row["arm_share"] = {k: a.get("share") for k, a in tr["arms"].items()}
+    # --- **「天井まで引いたら届くのか」も積む**（2026-08-25）---
+    #     `arm_caps` だけでは足りません。**天井が大きいことと、
+    #     その腕が到達日を動かせることは別**です:
+    #
+    #         sub_rate  天井 ×2,923.79 …… **天井まで引いても月20万には届かない**
+    #                   （いまの縛りは再生数（段4）で、登録率はそこに触らない）
+    #
+    #     `DEAD_CAP`（＝天井 ×1.00 以下）で数えると、この腕は
+    #     **「引き代 ×2,923.79 の生きた腕」**に見えます。**偽の緑です。**
+    #     8/25 の実測では、実績配分の 11% がここに載っていました
+    #     （`density` の 28% と合わせて **39%**）。
+    #     `lever_days` が既に解いているので、**印字だけで捨てないこと。**
+    _ld = pl.get("lever_days") or []
+    if _ld:
+        row["arm_reaches"] = {r["lever"]: bool(r.get("reachable_at_cap")) for r in _ld}
+        row["arm_threshold"] = {r["lever"]: r.get("threshold") for r in _ld}
     row["videos_needed_gate1"] = pl.get("gate1", {}).get("need_videos")
     # --- **天井（面と混ざり方）も積む**（2026-08-20 23:3x。前の周の申し送り②）---
     #     `--reflect` は「出発点の行」と「解き直した行」の差を取ります。

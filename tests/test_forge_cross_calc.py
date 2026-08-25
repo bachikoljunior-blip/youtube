@@ -114,6 +114,11 @@ def test_1個差ではcalcをまたがない():
     try:
         forge.CROSS_MARGIN = scores["zangyo"] - scores["kaigo"] + 1
         got = forge.realign(_Set([item]), picked, all_sections, [])
-        assert got[0][0] == "kaigo", "差が足りないのに calc をまたいだ"
+        # **`None`（落とす）も「またがなかった」です**（2026-08-25 22:xx）。
+        # 割合の門が入る前は、`kaigo` での一致が偶然1個あったので
+        # **間違った calc に貼られたまま残っていました。** いまは
+        # 「この calc の表が裏付けていない」＝ 0 なので落ちます。
+        # **落ちるほうが安全側です** —— 語る制度と画面の表が別物になりません。
+        assert got[0] is None or got[0][0] == "kaigo", "差が足りないのに calc をまたいだ"
     finally:
         forge.CROSS_MARGIN = old

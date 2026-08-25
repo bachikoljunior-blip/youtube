@@ -90,11 +90,46 @@ AUTHORITY = """
 **それ以外に聖域はありません。**"""
 
 
+#: **合流したとき `CLAUDE.md` で必ず止まる、その1点だけ。**（2026-08-25）
+#
+# **枝の合わせ方そのものは、ここには書きません** —— 型の
+# 「最初の1手は、枝を合わせることです」が `<<branch>>`（＝`docs/trigger_spec.json`）
+# から本物の枝名を入れて渡しています。**2か所で言うと、片方が古びます。**
+#
+# 実際に8/25 にそうなりかけました: この段の最初の版は
+# 「いちばん新しい `worktree-agent-*` が幹」と書いていて、**spec が名指しする
+# `branch` と食い違っていました。** 同じ問いに2つの答えがある状態で、
+# **このリポジトリが何度も踏んでいる形そのもの**です。消してあります。
+#
+# 残すのは、型の側が言っていない1点だけ: **`main` から切られた worktree を
+# 合流させると、`CLAUDE.md` で必ず衝突します**（幹は恒久指示9件の枠を外した版、
+# `main` は `note` の `propagate_directive.py` がその枠を入れた版 ＝ `4114f7b`）。
+# そして **サブエージェントはそのファイルを書き換えられません** ——
+# 8/25 に `checkout --theirs` / `add` / `merge -X theirs` / `reset --hard` の
+# **4つとも分類器に拒否**されました。知らないと、ここで回が丸ごと止まります。
+TRUNK = """
+
+**合流すると `CLAUDE.md` で衝突します。止まらないこと。**
+幹は恒久指示9件の枠を**外した**版、`main` は入れた版なので、必ずここでぶつかります。
+**サブエージェントはこのファイルを書き換えられません**（分類器が止めます ——
+8/25 に `checkout --theirs` / `add` / `merge -X theirs` / `reset --hard` の4つとも拒否）。
+
+**衝突したまま進めて構いません。** その1ファイルには触らず、
+**自分が変えたファイルだけを** commit して push すること
+（`git read-tree --reset origin/<枝>` → `git add <変えたファイル>` →
+`git write-tree` → `git commit-tree` → `git push <sha>:refs/heads/<枝>` で通ります）。
+"""
+
+
 def _siblings_block(siblings: list[str]) -> str:
     """**同じ枝で走っている相手を名指しする段。**
 
     空でも段を落としません —— 「いない」と書いてあることに意味があります
     （書いていないと、受け取った子は「調べていないだけ」と区別できません）。
+
+    **`TRUNK` を必ず添えること**（2026-08-25）。合流で `CLAUDE.md` が衝突したとき、
+    サブはそれを自力で解けません —— 知らないと、そこで回が丸ごと止まります。
+    **枝の合わせ方そのものは型の「最初の1手」が持ちます**（重ねて書かないこと）。
     """
     if not siblings:
         head = ("**同じ枝で他に走っている相手は、立てた時点ではいません。**\n"
@@ -106,7 +141,7 @@ def _siblings_block(siblings: list[str]) -> str:
                 "**あなたの担当は、上のどれとも別のファイルのはずです。**\n"
                 "push 前に必ず `git fetch`。競合したら merge で"
                 "**相手の作業を残すこと。捨てないこと。**")
-    return head + AUTHORITY
+    return head + TRUNK + AUTHORITY
 
 
 def build(kind: str, note: str = "", siblings: list[str] | None = None,
@@ -121,7 +156,17 @@ def build(kind: str, note: str = "", siblings: list[str] | None = None,
                          "**要約しないこと。** 数字は桁もそのまま写すこと")
     note_block = ("**申し送り（原文のまま。要約されていません）:**\n\n> "
                   + note.replace("\n", "\n> ")) if note else ""
+    # **枝の名前は spec から。型に書き写さないこと**（2026-08-25 夜に足した）。
+    # サブへ移してから `source_revision` の口が無くなり、**ワークツリーが
+    # `main` から切られる**ようになりました（実測: 8/25 夜のサブ3枚が3枚とも）。
+    # 型の「最初の1手」がこの名前を使うので、**spec と食い違わせないこと。**
+    try:
+        branch = json.loads(
+            (root / "docs" / "trigger_spec.json").read_text(encoding="utf-8"))["branch"]
+    except Exception:
+        branch = ""            # spec が読めない回でも、型そのものは組み立てる
     filled = {
+        "branch": branch,
         "note": note,
         "only": only,
         "note_block": note_block,
@@ -140,7 +185,13 @@ def build(kind: str, note: str = "", siblings: list[str] | None = None,
         for name, value in filled.items():
             line = line.replace(f"<<{name}>>", value)
         out.append(line)
-    return re.sub(r"\n{3,}", "\n\n", "\n".join(out)).strip() + "\n"
+    text = "\n".join(out)
+    # **差し込み口の中の差し込み口**（2026-08-25 夜に踏んだ）。
+    # `<<lead>>` は段まるごと差し込むので、**その中の `<<branch>>` は
+    # 上の行ごとの置換を通りません。** 組み上げたあとで、もう一度当てること。
+    # ここを飛ばすと、子は `git merge origin/<<branch>>` を**そのまま読みます。**
+    text = text.replace("<<branch>>", branch)
+    return re.sub(r"\n{3,}", "\n\n", text).strip() + "\n"
 
 
 def create_session_args(kind: str, root: Path = ROOT, **kw) -> dict:
