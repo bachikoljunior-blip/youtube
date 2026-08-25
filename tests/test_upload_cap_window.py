@@ -230,7 +230,7 @@ def test_batch_build_shrinks_to_what_is_left(monkeypatch):
 
     asked: list = []
 
-    def _pick(count, explicit=None, per_calc=2):
+    def _pick(count, explicit=None, per_calc=2, **k):
         asked.append(count)
         return []
 
