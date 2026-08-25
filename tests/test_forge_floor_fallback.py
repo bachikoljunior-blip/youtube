@@ -88,10 +88,75 @@ def _absent_two_digit(sections: dict[str, str]) -> int:
 
 
 def test_実物の_nenkin_で作り話は落ちたまま():
-    """**門が空になっていないこと。** ここが緩むと誤情報がそのまま公開されます。"""
+    """**門が空になっていないこと。** ここが緩むと誤情報がそのまま公開されます。
+
+    **この検査は 2026-08-25 の夕方まで赤でした。原因は門ではなく、題のほうです。**
+    もとは `分岐点は92歳7か月まで動く` を「表に無い年齢」として決め打ちしていました。
+    2026-08-24 に `nenkin` へ `deferral_irr` の節が入り、その表に
+    **`92歳` の行が実在します**（寿命べつの年利）。つまり **92 は表の中の数**で、
+    **数字を見る門では、もう落とせません。**
+
+    嘘なのは数字ではなく**主張のほう**（分岐点が 92歳7か月 だとは、どの表も
+    言っていない）。**数字の門に、主張の判定を期待しないこと。**
+    だから `_absent_two_digit` で、**そのときの表に無い数**を取り直します
+    —— 決め打ちに戻さないこと。表は毎週深くなります
+    （実測 2026-08-25: `nenkin` は 10〜99 のうち **68個（75.6%）**を既に持つ）。
+
+    **表が全部埋まったら、この検査は使えなくなります。** そのときに効くのは
+    下の `test_実物の_nenkin_で偶然の1個では通らない` のほう ——
+    割合の門は、表がどれだけ深くなっても効きます。
+    """
     sections = tf.sections("nenkin")
     n = _absent_two_digit(sections)
     assert tf.best_section(f"分岐点は{n}歳7か月まで動く", sections)[0][0] == 0, n
+
+
+def test_実物の_nenkin_で偶然の1個では通らない():
+    """**一致1個は「表から書いた」証拠になりません**（2026-08-25 22:xx に足した）。
+
+    上の検査が守れるのは「**表に無い数字を使った**」題だけです。
+    **表の中の数を1つ拾って、あとは全部でたらめ**な題は、これまで通っていました ——
+    門の文言は「表の外の数字を使っています」ですが、実際に見ていたのは
+    **「表の中の数字を1つでも使っているか」**で、**向きが逆**だったからです。
+
+    実測: 実物486件の数字を全部でたらめに置き換えた 1,458本のうち
+    **378本（25.9%）が通り、通った件の一致数は中央値1**でした。
+
+    `backed_ratio` は「題の数字のうち、表に載っている割合」を見ます。
+    しきい値 1/3 で、でたらめの通過は **25.9% → 0.8%**、
+    本物は 486件中 **484件**が残ります（落ちる2件は丸めた散文）。
+    """
+    sections = tf.sections("nenkin")
+    real = 92                                  # 寿命べつの年利の表に実在する
+    assert tf.numbers(" ".join(sections.values()), tf.SMALL_FLOOR) >= {real}
+    seen = set()
+    for rung in tf.rungs(sections):
+        for body in sections.values():
+            seen |= rung(body)
+    fake = [n for n in range(10, 100) if n not in seen][:3]
+    assert len(fake) == 3, "2桁がほぼ埋まっています。この検査は割合を測れません"
+    text = f"分岐点は{real}歳から" + "か月・".join(str(n) for n in fake) + "か月へ動く"
+    assert tf.best_section(text, sections)[0][0] == 0, text
+    assert tf.backed_ratio(tf.numbers(text, tf.SMALL_FLOOR),
+                           sections, tf._by_floor(tf.SMALL_FLOOR)) == 0.25
+
+
+def test_実物の_nenkin_で本物は残る():
+    """**片方だけ直さない。** 上を厳しくした結果、本物が落ちていないこと。"""
+    sections = tf.sections("nenkin")
+    for text in ("70歳まで待つと分岐点は81歳10か月から84歳2か月へ",
+                 "年金額べつ 手取りの分岐点は28か月うしろ"):
+        assert tf.best_section(text, sections)[0][0] > 0, text
+
+
+def test_割合の門は下限を持つ():
+    """**しきい値そのものを固定する。** 動かすときは実測を添えること。"""
+    assert tf.MATCH_RATIO_FLOOR == 1 / 3
+    small = {"=== 日数の節 ===": "  20年で241日  年5日  時季指定義務"}
+    rung = tf._by_floor(tf.SMALL_FLOOR)
+    assert tf.backed_ratio({20, 241}, small, rung) == 1.0
+    assert tf.backed_ratio({20, 241, 88, 99}, small, rung) == 0.5
+    assert tf.backed_ratio(set(), small, rung) == 0.0
 
 
 def test_金額を持たない_calc_はこれまでどおり():
@@ -99,3 +164,27 @@ def test_金額を持たない_calc_はこれまでどおり():
     small = {"=== 日数の節 ===": "  20年で241日  年5日  時季指定義務"}
     assert tf.section_floor(small) == tf.SMALL_FLOOR
     assert tf.best_section("20年で241日を捨てる", small)[0][0] > 0
+
+
+def test_落とす理由が2つに分かれている():
+    """**文言と中身を食い違わせない**（2026-08-25 22:xx に足した）。
+
+    この門は、同じ事故を3回踏んでいます —— 「表の外の数字を使っています」と
+    言いながら、書き手は表の外へ出ていなかった。**割合の門は4回目を作ります**
+    （数字は表にあるのに、足りないのは割合のほう）。**理由を分けて出すこと。**
+    """
+    sections = tf.sections("nenkin")
+
+    n = _absent_two_digit(sections)
+    assert "どの節の表にも載っていません" in tf.why_dropped(f"分岐点は{n}歳まで動く", sections)
+
+    seen: set[int] = set()
+    for rung in tf.rungs(sections):
+        for body in sections.values():
+            seen |= rung(body)
+    fake = [x for x in range(10, 100) if x not in seen][:3]
+    assert len(fake) == 3, "2桁がほぼ埋まっています。この検査は割合を測れません"
+    text = "分岐点は92歳から" + "か月・".join(str(x) for x in fake) + "か月へ動く"
+    why = tf.why_dropped(text, sections)
+    assert "割合が足りません" in why, why
+    assert "1/4" in why, why          # 92 だけが載っている

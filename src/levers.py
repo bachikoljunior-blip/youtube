@@ -203,18 +203,47 @@ def arm_state(eta_row: dict | None) -> dict:
 
         {"hint": "rpm", "binding": "再生数が天井に当たっている",
          "caps": {"per_video": 2.84, ..., "density": 1.0},
-         "dead": ("density",)}
+         "reaches": {"per_video": True, ..., "sub_rate": False},
+         "dead": ("density", "sub_rate"),
+         "dead_why": {"density": "天井", "sub_rate": "天井まで引いても届かない"}}
 
     `caps` は 2026-08-24 より前の行には**ありません**（積んでいなかった）。
     無い行では `dead` は空になります —— **「死んだ腕は無い」ではなく
     「読めない」**なので、呼ぶ側はそう扱うこと。
+
+    ## **天井が大きいことと、その腕が日付を動かせることは別です**（2026-08-25）
+
+    ここは長らく `cap <= DEAD_CAP` だけで数えていました。それだと:
+
+        sub_rate  天井 ×2,923.79 → **「引き代 ×2,923 の生きた腕」に見える**
+                  実際は**天井まで引いても月20万には届きません**
+                  （いまの縛りは再生数（段4）で、登録率はそこに触らない）
+
+    **偽の緑です。** 8/25 の実測では実績配分の 11% がここに載っていました
+    （`density` の 28% と合わせて **39%** が、到達日を動かせない腕）。
+    `scripts/eta.py` の `lever_days()` が `reachable_at_cap` を解いているので、
+    それを `arm_reaches` として読みます。**無い行では判定しません**（`None`）。
     """
     row = eta_row or {}
     caps = row.get("arm_caps") or {}
     caps = {k: v for k, v in caps.items() if isinstance(v, (int, float))}
-    dead = tuple(k for k, v in caps.items() if v <= DEAD_CAP)
+    reaches = row.get("arm_reaches") or {}
+    reaches = {k: bool(v) for k, v in reaches.items() if isinstance(v, bool)}
+
+    dead_why: dict[str, str] = {}
+    for k, v in caps.items():
+        if v <= DEAD_CAP:
+            dead_why[k] = "天井"
+    # **「天井まで引いても届かない」は、天井の大小と別の理由です。**
+    #     両方に当たる腕は、天井のほうを理由として残します（そちらが手前の話）。
+    for k, ok in reaches.items():
+        if not ok and k not in dead_why:
+            dead_why[k] = "天井まで引いても届かない"
+    dead = tuple(k for k in dead_why)
     return {"hint": row.get("lever_hint"), "binding": row.get("binding"),
-            "caps": caps, "dead": dead}
+            "caps": caps, "reaches": reaches,
+            "thresholds": row.get("arm_threshold") or {},
+            "dead": dead, "dead_why": dead_why}
 
 
 def lever_notes(lever: str | None, state: dict) -> list[str]:
@@ -239,6 +268,15 @@ def lever_notes(lever: str | None, state: dict) -> list[str]:
                    " 引いても到達日は動きません（`eta.py` の軌跡がこの腕を外して解いています）。")
         out.append("             動かすなら、まず**天井そのものを上げる**こと"
                    "（天井が乗っている前提を1件、実データで判定する）。")
+    elif state.get("reaches", {}).get(lever) is False:
+        # **天井は大きいのに、その天井まで引いても到達日に届かない腕。**
+        #     `cap` だけ見ていると生きて見えます（`sub_rate` は ×2,923.79）。
+        cap_s = f"（天井 ×{cap:,.2f}）" if cap is not None else ""
+        out.append(f"         [!] **`{lever}` は、天井まで引いても到達日に届きません**{cap_s}。"
+                   " 天井が大きいことと、日付を動かせることは別です。")
+        out.append("             いまの縛りにこの腕が触っていない、という意味です"
+                   "（門1 など別の段には効くことがあります）。"
+                   " **到達日を動かしたいなら、別の腕にすること。**")
     hint = state.get("hint")
     if hint and hint in LEVERS and hint != lever:
         why = state.get("binding") or "（床の名前が読めません）"
