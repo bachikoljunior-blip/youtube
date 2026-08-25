@@ -611,6 +611,25 @@ def long_script_problems(script, topic_id: str = "") -> list[str]:
     problems += [p.strip() for p in verify._check_adjacent_repeat(data)]
     problems += [p.strip() for p in verify._check_formula_shown(data)]
     problems += [p.strip() for p in verify._check_assumption_value_shown(data)]
+    # **耳で言った数が、目に出ているか**（2026-08-26 に足した）。
+    #
+    # `verify` はこれを `if portrait:` の中に置いていたので、**長尺は1本も
+    # 通っていませんでした。** 控え430本の実測で、門が入った 08/17 より後の
+    # 漏れは **ショート 0/397・長尺 7/33（21%）＝ 100% が長尺**。
+    # 同じ回に `verify` 側を `portrait` の外へ出したので、**ここにも要ります**
+    # —— この関数の冒頭が「並べる検査は `verify` が実際に当てるものと同じにする」
+    # と書いており、`verify` が当てるようになったからです。
+    #
+    # **そして、ここに置く理由のほうが本体です。** `verify` で落とすと
+    # 1本まるごと捨て（`claude -p` 約250秒＋合成＋レンダリング）ですが、
+    # ここなら**同じセッションが計算結果を見たまま3回まで書き直せます。**
+    # 直し方も1行（言った数を棒か行か見出しに足す／その数を言わない）なので、
+    # `_check_not_repeat` を 2026-08-24 にここへ移したときと同じ形です。
+    #
+    # `work/slides_plan.json` はまだ無いので、`verify._plan_frames` が
+    # 台本の `visual` で代用します。**長尺は割らない**ので同じものです。
+    problems += [p.strip() for p in
+                 verify._check_narrated_shown(work, data, from_script=True)]
     problems += [p.strip() for p in verify._check_yomi(data)]
     problems += [p.strip() for p in verify._check_slides(work, data)]
     if topic_id:
