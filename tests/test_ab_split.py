@@ -223,9 +223,16 @@ def _counts(**ready) -> ab_split.Counts:
     return ab_split.Counts(experiment="t", treated_ready=dict(ready))
 
 
-def test_公開の締切は判定日の7日前():
-    """**これが outlook の本体**: 締切より後に公開する本は、1本も数に入らない。"""
-    assert ab_split.settle_by(_exp(deadline=date(2026, 9, 16))) == date(2026, 9, 9)
+def test_公開の締切は判定日のSETTLE_DAYS日前():
+    """**これが outlook の本体**: 締切より後に公開する本は、1本も数に入らない。
+
+    **日数を直に書かないこと（2026-08-26）。** 元は `== date(2026, 9, 9)` と
+    7日前が焼き込んであり、`SETTLE_DAYS` を実測に合わせて 7 → 3 にしたとき、
+    **この検査だけが古い数を主張して落ちました。** 実測の置き場は `src/settle.py`。
+    """
+    assert ab_split.settle_by(_exp(deadline=date(2026, 9, 16))) == date(
+        2026, 9, 16
+    ) - timedelta(days=SETTLE_DAYS)
     assert ab_split.settle_by(_exp(), as_of=date(2026, 9, 1)) == date(2026, 9, 1) - timedelta(
         days=SETTLE_DAYS
     )
@@ -261,7 +268,10 @@ def test_足りない群があれば置く日付の締切を必ず言う():
                          counts=_counts(問い=0, 断定=0))
     text = "\n".join(o.lines())
     assert o.reachable
-    assert "09/09" in text and "batch_build.py --date" in text
+    # **日付を焼き込まないこと（2026-08-26）** —— `SETTLE_DAYS` は実測で動きます
+    # （`src/settle.py`）。焼き込むと、実測に合わせた回にこの検査だけが古い数を主張します。
+    limit = date(2026, 9, 16) - timedelta(days=SETTLE_DAYS)
+    assert f"{limit:%m/%d}" in text and "batch_build.py --date" in text
 
 
 def test_在庫の総数を出す():
