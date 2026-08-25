@@ -110,34 +110,38 @@
 
 #### **ワークツリーに隔離されたサブは、上の2行が撃てません**（2026-08-26 に踏んだ）
 
-サブは `/home/user/youtube/.claude/worktrees/agent-XXXX` の中に隔離されます。
-そこから `/home/user/youtube` へ向けた `git` は、**分類器が拒否します**（正しい制限）:
+**「合わせ方」はここには書きません。** 正本は `docs/spawn_prompt.md` の
+**「最初の1手は、枝を合わせることです」**で、**本文に入って先に届きます**
+（同じ手順を2か所に置くと、片方が黙って古びます —— `docs/JOURNAL.md` 2026-08-25 15:5x）。
 
-    This agent is isolated in the worktree ... Refusing to run it —
-    a worktree-isolated agent's git operations must target its own worktree.
+ここに残すのは、**あちらが言っていない3点だけ**です。
 
-**共有チェックアウトを `-C` で指しても、そこへ `cd` してから叩いても通りません。**
-（**ここに実物の字面を書きません** —— ヒアドキュメントに入れただけで、
-その `cat` ごと拒否されます。2026-08-26 に踏みました）
-そして**ワークツリーの枝は `main` から切られていることがあります** ——
-08/26 の回は `worktree-agent-a23777b88d9d14352` が **`main`（4114f7b・08/08）**の
-位置にあり、**`docs/trigger_main.md` がファイルごと存在しませんでした。**
-「repo が無い回」でもなく「HEAD が古い」でもない、**3つ目の形**です。
+- **共有チェックアウトへ向けた `git` は、分類器が拒否します**（正しい制限）。
+  `-C` で指しても、そこへ `cd` してから叩いても同じ:
 
-**サブの2行は、こちらです**（自分のワークツリーの中だけで完結します）:
+        This agent is isolated in the worktree ... Refusing to run it —
+        a worktree-isolated agent's git operations must target its own worktree.
 
-    git fetch origin
-    git merge --no-edit origin/claude/youtube-auto-post-revenue-ggedij
+  つまり**この節の頭の2行は、サブには当たりません。**
+  **実物の字面をここに書かないこと** —— ヒアドキュメントに入っているだけで、
+  その `cat` ごと拒否されます（08/26 に踏みました）。
+  同じ理由で、**1つのコマンドに複数の `git` を並べないこと**
+  （「複雑すぎて検証できない」と言って拒否されます）。**平文で1つずつ。**
+
+- **`CLAUDE.md` は必ず衝突します。** `git checkout --theirs CLAUDE.md` → `add` →
+  `commit --no-edit` で通ります。**08/26 に2回とも通しました** ——
+  `docs/JOURNAL.md` 2026-08-25 15:5x の「4つとも分類器に拒否される」は、
+  少なくとも `checkout --theirs` についてはもう当たりません。
+  **再発したら、そのときの拒否メッセージごとここへ追記すること**
+  （「前は通った」では次が判断できません）。
+  **origin 側が新しいほうです。迷ったら相手の作業を残す側を採ること。**
 
 - **`switch` しないこと。** サブの枝はサブのもので、寄せにいく先ではありません。
-  push は `git push origin HEAD:claude/youtube-auto-post-revenue-ggedij`（§6 と同じ）
-- **`CLAUDE.md` で必ず衝突します。** `git checkout --theirs CLAUDE.md` → `add` →
-  `commit --no-edit` で通ります（**08/26 に2回とも通しました。** 8/25 15:5x の
-  「4つとも分類器に拒否される」は、少なくとも `checkout --theirs` については
-  もう当たりません。再発したら拒否メッセージごとここへ追記すること）
-- **origin 側が新しいほうです。** 迷ったら**相手の作業を残す側**を採ること
-- **1つのコマンドに複数の git を並べないこと。** 分類器が
-  「複雑すぎて検証できない」と言って拒否します。**平文で1つずつ**
+  push は `git push origin HEAD:claude/youtube-auto-post-revenue-ggedij`（§6 と同じ）。
+
+**この形は「repo が無い回」でも「HEAD が古い」でもない、3つ目です** ——
+08/26 の回のワークツリーは **`main`（4114f7b・08/08）**の位置にあり、
+**`docs/trigger_main.md` がファイルごと存在しませんでした。**
 
 **この2行は、この節のいちばん下（08/16〜08/18 の記録）に既に書いてありました。**
 それでも **08/21 23:2x・08/22 01:2x と続けて踏んでいます** ——
