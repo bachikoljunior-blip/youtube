@@ -42868,3 +42868,14 @@ UTC の日で割っている。実測の差:
     tests/test_watches.py::test_数の門を持つ未判定の仮説は台帳を指している
 
 **この回は赤を1件も足していません。**
+
+### 鎖の受け渡し（この回）
+
+`list_sessions` の実測: **hourly 2**（この回 `01TFacJy` ＋ `01VEiz93`・どちらも RUNNING）／
+**optimizer 1**（`01LijVu5`・IDLE）。**どちらの札も空いていないので、立てていません。**
+速さは実際 **186分/周** に対し持続できるのが **90分/周** ——
+**許される速さの 48% しか使っていない**ので、枠が理由で絞ってはいません。
+
+**同じ枝で `01VEiz93`（hourly）が「eta.py の欠陥を直している」と言っています。**
+この回が触ったのは `scripts/trajectory.py` ／ `tests/test_trajectory.py` ／
+`tests/test_ledger_readers_agree.py` で、**`eta.py` は1行も触っていません。**
