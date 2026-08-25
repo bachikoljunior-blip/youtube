@@ -121,7 +121,17 @@ def build(kind: str, note: str = "", siblings: list[str] | None = None,
                          "**要約しないこと。** 数字は桁もそのまま写すこと")
     note_block = ("**申し送り（原文のまま。要約されていません）:**\n\n> "
                   + note.replace("\n", "\n> ")) if note else ""
+    # **枝の名前は spec から。型に書き写さないこと**（2026-08-25 夜に足した）。
+    # サブへ移してから `source_revision` の口が無くなり、**ワークツリーが
+    # `main` から切られる**ようになりました（実測: 8/25 夜のサブ3枚が3枚とも）。
+    # 型の「最初の1手」がこの名前を使うので、**spec と食い違わせないこと。**
+    try:
+        branch = json.loads(
+            (root / "docs" / "trigger_spec.json").read_text(encoding="utf-8"))["branch"]
+    except Exception:
+        branch = ""            # spec が読めない回でも、型そのものは組み立てる
     filled = {
+        "branch": branch,
         "note": note,
         "only": only,
         "note_block": note_block,
@@ -140,7 +150,13 @@ def build(kind: str, note: str = "", siblings: list[str] | None = None,
         for name, value in filled.items():
             line = line.replace(f"<<{name}>>", value)
         out.append(line)
-    return re.sub(r"\n{3,}", "\n\n", "\n".join(out)).strip() + "\n"
+    text = "\n".join(out)
+    # **差し込み口の中の差し込み口**（2026-08-25 夜に踏んだ）。
+    # `<<lead>>` は段まるごと差し込むので、**その中の `<<branch>>` は
+    # 上の行ごとの置換を通りません。** 組み上げたあとで、もう一度当てること。
+    # ここを飛ばすと、子は `git merge origin/<<branch>>` を**そのまま読みます。**
+    text = text.replace("<<branch>>", branch)
+    return re.sub(r"\n{3,}", "\n\n", text).strip() + "\n"
 
 
 def create_session_args(kind: str, root: Path = ROOT, **kw) -> dict:
