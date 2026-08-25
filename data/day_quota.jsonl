@@ -2597,6 +2597,23 @@
 {"at": "2026-08-25T21:57:59+00:00", "detail": "channels.list mine"}
 {"at": "2026-08-25T21:58:01+00:00", "detail": "playlistItems.list uploads"}
 {"at": "2026-08-25T21:58:02+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-25T22:20:13+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-25T22:20:15+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-25T22:29:38+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-25T22:29:43+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-25T22:39:42+00:00", "detail": "playlistItems.list uploads"}
+{"at": "2026-08-25T22:39:43+00:00", "detail": "scheduled_publish_times"}
+{"at": "2026-08-25T22:39:46+00:00", "detail": "playlistItems.insert"}
+{"at": "2026-08-25T22:39:47+00:00", "detail": "thumbnails.set HmRqkHLaXp0"}
+{"at": "2026-08-25T22:39:50+00:00", "detail": "scheduled_publish_times"}
+{"at": "2026-08-25T22:39:53+00:00", "detail": "playlistItems.insert"}
+{"at": "2026-08-25T22:39:53+00:00", "detail": "thumbnails.set nTLSU-dvuhw"}
+{"at": "2026-08-25T22:39:56+00:00", "detail": "scheduled_publish_times"}
+{"at": "2026-08-25T22:40:00+00:00", "detail": "playlistItems.insert"}
+{"at": "2026-08-25T22:40:00+00:00", "detail": "thumbnails.set PEgvoEc3Yeg"}
+{"at": "2026-08-25T22:40:03+00:00", "detail": "scheduled_publish_times"}
+{"at": "2026-08-25T22:40:06+00:00", "detail": "playlistItems.insert"}
+{"at": "2026-08-25T22:40:06+00:00", "detail": "thumbnails.set wDGpEz-7JLA"}
 {"at": "2026-08-25T22:06:16+00:00", "detail": "channels.list mine"}
 {"at": "2026-08-25T22:06:21+00:00", "detail": "channels.list mine"}
 {"at": "2026-08-25T22:06:21+00:00", "detail": "channels.list mine"}
@@ -2613,3 +2630,8 @@
 {"at": "2026-08-25T22:23:43+00:00", "detail": "scheduled_publish_times"}
 {"at": "2026-08-25T22:23:45+00:00", "detail": "playlistItems.insert"}
 {"at": "2026-08-25T22:23:46+00:00", "detail": "thumbnails.set o1hv0nNVdE4"}
+{"at": "2026-08-25T22:31:28+00:00", "detail": "status: Data API 読み"}
+{"at": "2026-08-25T22:31:55+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-25T22:31:57+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-25T22:32:45+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-25T22:32:49+00:00", "detail": "channels.list mine"}
