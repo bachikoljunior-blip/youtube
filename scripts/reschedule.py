@@ -864,7 +864,8 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--unschedule", metavar="VIDEO_ID",
                     help="予約を外す（private のまま残るので、時刻を入れ直せば戻ります）")
     ap.add_argument("--force-window", action="store_true",
-                    help="M14 の比較の窓の中へ動かす（**理由を JOURNAL に書くこと**）")
+                    help="測定の窓の中へ動かす／**窓の中から動かす**"
+                         "（**理由を JOURNAL に書くこと**）")
     ap.add_argument("--compact", action="store_true",
                     help="予約を前に詰める割り当てを出す（**API 0単位**。撃つには --apply）")
     ap.add_argument("--spread", action="store_true",
@@ -896,6 +897,59 @@ def build_parser() -> argparse.ArgumentParser:
     return ap
 
 
+def _current_day(video_id: str) -> str | None:
+    """その本が**いま**予約されている日（JST の `YYYY-MM-DD`）。控えから引く。
+
+    **控えは足すだけの帳面**なので、`src.ab_split.published()` に畳ませます
+    （同じ `video_id` の行が動かすたびに増える／日は JST で採る、の2つを
+    あそこが持っています。**ここで畳み直さないこと** —— 畳み方が2か所に
+    なった時点で、片方だけが直る形になります）。
+    """
+    try:
+        from src.ab_split import published
+    except Exception:
+        return None
+    for row in published():
+        if str(row.get("video_id") or "") == video_id:
+            day = row.get("publish")
+            return day.isoformat() if day is not None else None
+    return None
+
+
+def _check_source_window(video_id: str, *, force: bool = False, tool: str = "") -> None:
+    """**動かす「元」の日も窓で見る。**（2026-08-26。実害が1回出ている）
+
+    ## なぜ要るか
+
+    `measure_window.check()` は `--move` の**行き先**にしか当たっていませんでした。
+    ところが 2026-08-24 に実際に壊れたのは**元の側**です ——
+    `--spread` が 08/27 を「14本 ＝ 上限超え」と読んで4本を後ろへ送り、
+    さらに別の回が送って、**窓に残ったのは1本だけ**でした
+    （`src/measure_window.py` の 08-27 の `why` に、その顛末が書いてあります）。
+
+    `--spread` と `--compact` は、そのあと**動かす対象からも窓の日を外しました**
+    （このファイルの `_spread` / `_compact`）。**`--move` と `--unschedule` だけが
+    取り残されていました。** 手で1本ずつ動かす道は残っているので、
+    「窓の日から1本ずつ抜く」は、いまも黙って通ります。
+
+    **同じ約束を守る所が3つあって、2つにしか付いていない形**です。
+    このリポジトリで通算7件目（`src/measure_window.py` 冒頭の「入口ではなく
+    合流点で直す」）。ここは合流点が無い（`--move` は時刻を外から受ける）ので、
+    **入口に付けるしかありません。検査で固定します**
+    （`tests/test_reschedule_window.py`）。
+
+    ## 分かっていないこと
+
+    - **控えに無い本は止めません**（`None` を返す）。止めると、控えを持たない
+      古い本を動かす道が消えます。**投稿を止めないほうを採ります**（`CLAUDE.md`）
+    """
+    day = _current_day(video_id)
+    if day is None:
+        return
+    measure_window.check(day, force=force,
+                         tool=f"{tool}（**元の日** {day} が測定日です）")
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
 
@@ -909,6 +963,11 @@ def main(argv: list[str] | None = None) -> int:
         # 通らない移動で単位（50単位）を捨てないため。
         measure_window.check(args.move[1][:10], force=args.force_window,
                              tool="reschedule.py --move")
+        _check_source_window(args.move[0], force=args.force_window,
+                             tool="reschedule.py --move")
+    if args.unschedule:
+        _check_source_window(args.unschedule, force=args.force_window,
+                             tool="reschedule.py --unschedule")
 
     svc = uploader._service()
 
