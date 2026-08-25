@@ -61,12 +61,27 @@ def _picked():
 
 def test_長尺の指示文に切り替わる():
     prompt = forge.build_prompt(_picked(), _sections(), [], long_form=True)
-    assert "8分30秒" in prompt
     assert "`s-` で始めないこと" in prompt
     assert "縦・30秒前後" not in prompt
     # 既定はショートのまま（他の呼び出し元を巻き込まない）
     short = forge.build_prompt(_picked(), _sections(), [])
     assert "縦・30秒前後" in short
+
+
+def test_尺は決め打ちではなく設定から来る():
+    """**2026-08-25 に踏んだ。** 最初の版は「8分30秒以上」と書いていましたが、
+    実物は 2026-08-09 から **4分**です（`config/channel.yaml` に
+    「通っていない門（ミッドロール広告の8分）のための制約だった」と理由ごとある）。
+    **決め打ちは、覆った側の判断を静かに巻き戻します。**
+    """
+    from src import config
+
+    vid = config.load_channel()["video"]
+    prompt = forge.build_prompt(_picked(), _sections(), [], long_form=True)
+    assert f"{float(vid['min_minutes']):g}分を下回ると" in prompt
+    assert f"{float(vid['target_minutes']):g}分前後" in prompt
+    # **古い決め打ちが残っていないこと**（戻したら赤になる）
+    assert "8分30秒" not in prompt
 
 
 def test_長尺のidにsハイフンを付けたら落とす():
