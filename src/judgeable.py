@@ -52,6 +52,7 @@ from typing import Callable
 
 import yaml
 
+from src import settle
 from src.ab_split import SETTLE_DAYS, MIN_PER_GROUP, build_times, published
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -59,9 +60,14 @@ HYPOTHESES = ROOT / "config" / "hypotheses.yaml"
 
 JST = timezone(timedelta(hours=9))
 
-#: YouTube Analytics の日次は3日遅れます（`data/analytics_lag.jsonl` で毎回測っている値）。
-#: **公開から7日たった日に判定しようとしても、その日のデータはまだ来ていません。**
-ANALYTICS_LAG_DAYS = 3
+#: YouTube Analytics の日次の遅れ。**`data/analytics_lag.jsonl` の実測**（`src/settle.py`）。
+#: **公開から落ち着いた日に判定しようとしても、その日のデータはまだ来ていません。**
+#:
+#: **2026-08-26 まで `= 3` のべた書きでした。** 同じ量を `scripts/deadline_check.py` が
+#: 実測から出していて（そのとき **4日**）、**A/B 4件だけ1日 楽観**に出ていました。
+#: 楽観へ期限を寄せると、**まだ来ていないデータで判定**することになります ——
+#: `falsified_if` は「上回らなければ外れ」なので、**外れ側に倒れます。**
+ANALYTICS_LAG_DAYS = settle.analytics_lag_days()
 
 
 @dataclass

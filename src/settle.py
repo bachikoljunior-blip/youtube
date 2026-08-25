@@ -67,7 +67,7 @@ from __future__ import annotations
 import json
 import math
 import statistics
-from datetime import datetime
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -82,6 +82,34 @@ MATURE_HOURS = 48
 #: `falsified_if` のしきい値は1文字も動かしていません。動かしたのは待つ時間だけで、
 #: 実測が「72時間で判定は入れ替わらない」と言っているぶんを削りました。
 SETTLE_DAYS = math.ceil(72 / 24)
+
+
+#: Analytics の遅れが読めなかったときの控え。**0 にしないこと** ——
+#: 0 は「遅れは無い」と言い切ることで、いちばん危ない側へ倒れます。
+ANALYTICS_LAG_FALLBACK = 3
+
+
+def analytics_lag_days(as_of: date | None = None) -> int:
+    """**実データ（Analytics）が何日 遅れているか。**`data/analytics_lag.jsonl` の実測。
+
+    **ここにも同じ穴がありました（2026-08-26）。**
+
+        scripts/deadline_check.py  実測（`analytics_lag.jsonl` の最終日から数える）→ **4日**
+        src/judgeable.py           `ANALYTICS_LAG_DAYS = 3` の**べた書き**   → **3日**
+
+    そして A/B 4件の判定日を出すのは `judgeable` のほうなので、
+    **A/B だけ1日 楽観**に出ていました。楽観のほうへ期限を寄せると、
+    **その日にはまだ来ていないデータで判定する**ことになります
+    （`falsified_if` は「上回らなければ外れ」なので、**外れ側に倒れます**）。
+    """
+    path = ROOT / "data" / "analytics_lag.jsonl"
+    try:
+        rows = [json.loads(x) for x in path.read_text(encoding="utf-8").splitlines() if x.strip()]
+        last = max(r["last_day"] for r in rows)
+        today = as_of or datetime.now(timezone(timedelta(hours=9))).date()
+        return max(0, (today - date.fromisoformat(last)).days)
+    except Exception:                                          # noqa: BLE001
+        return ANALYTICS_LAG_FALLBACK
 
 
 def _publish_times(path: Path | None = None) -> dict[str, float]:
