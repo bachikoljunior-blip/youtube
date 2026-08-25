@@ -555,3 +555,72 @@ def _booked_lines(first_pub: str) -> list[str]:
 if __name__ == "__main__":  # pragma: no cover
     for line in lines():
         print(line)
+
+
+# --- 再生が付く本／付かない本を、**1か所で**決める -------------------------
+#
+# ## なぜここに置くか（2026-08-26。**12件目の「2か所が別々に言っている」**）
+#
+# このファイルは「1日に再生が付くのは 10本」「30分より詰めた本は死ぬ」を
+# **実測から**持っています。ところが `src/judgeable.py` は A/B の群を
+# **公開日だけ**で数えていて、**死ぬと分かっている本も1本と数えていました。**
+#
+# 実測（2026-08-26・`data/views.jsonl` の6時間以上たった読み）:
+#
+#     この帯に入る本   n=74   再生の中央値 **718**
+#     入らない本       n=81   再生の中央値 **2**（>10再生 は 81本中 17本）
+#
+# **中央値が 359倍 違います。** 帯の外の本は、A/B の標本としては 0 です。
+# それを「1本」と数えると、`falsified_if` は「上回らなければ外れ（同点も外れ）」
+# なので、**足りない標本はそのまま「外れ」に化けます**
+# （`src/judgeable.py` の `ANALYTICS_LAG_DAYS` の節が、同じ壊れ方を1日ぶんで書いています）。
+#
+# ## **結果（再生数）で落とさないこと**
+#
+# 落とす条件は **その日の何本目か** だけです。**中身とは無関係**に、
+# 予約を置いた側が決めている量なので、処置とは独立です。
+# **「再生が0だったから落とす」は結果で条件付けること**になり、
+# 処置そのものが再生を落としている場合に、その効果を隠します。
+# ここは順番だけを見ます。
+
+def live_ids(rows: list[dict], path: pathlib.Path | None = None) -> set[str]:
+    """**再生が付く側の `video_id`** を返す（API 0単位。公開済みも予約も同じ規則）。
+
+    `rows` は `ab_split.published()` の行（`at` が JST の datetime、`video_id`）。
+    2段で絞ります。**`measure()` が上限を出すときと同じ2段**です:
+
+      1. 間隔 —— 前に残した本から `MIN_GAP_MIN` 未満のものは落とす（`_spaced`）
+      2. 本数 —— 残ったうちの**先頭 `cap()` 本**
+
+    **覆る条件**: `cap()` は実測から動きます（定数ではありません）。
+    上限が上がれば、ここが返す集合も自動で広がります。
+    """
+    per_day: dict[dt.date, list[tuple[dt.datetime, str]]] = collections.defaultdict(list)
+    for row in rows:
+        when, vid = row.get("at"), str(row.get("video_id") or "")
+        if isinstance(when, dt.datetime) and vid:
+            per_day[when.date()].append((when, vid))
+    keep: set[str] = set()
+    limit = cap(path)
+    for day in per_day:
+        seen = sorted(per_day[day])
+        spaced = _spaced([w for w, _ in seen])
+        alive = {w: v for w, v in reversed(seen) if w in set(spaced)}
+        for when in spaced[:limit]:
+            if when in alive:
+                keep.add(alive[when])
+    return keep
+
+
+def live_lines(rows: list[dict], path: pathlib.Path | None = None) -> list[str]:
+    """予約と公開済みのうち、**何本が再生の付かない側に居るか**。"""
+    keep = live_ids(rows, path)
+    total = sum(1 for r in rows if r.get("video_id") and isinstance(r.get("at"), dt.datetime))
+    dead = total - len(keep)
+    out = [f"  予約と公開済み **{total}本** のうち、"
+           f"再生が付く帯に居るのは **{len(keep)}本**／**{dead}本 は 0再生の側**"
+           f"（1日 {cap(path)}本・間隔 {MIN_GAP_MIN:.0f}分）"]
+    if dead:
+        out.append("    **A/B の本がここに落ちていると、その群は標本が足りません。**"
+                   "`python scripts/live_slots.py` が、どの前提が何本 落としているかを出します")
+    return out

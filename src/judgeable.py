@@ -241,18 +241,55 @@ MEMBER_SOURCES: dict[str, tuple[Callable[[], dict[str, list[Member]]], int]] = {
 }
 
 #: yaml の `key:` → (群べつの**公開日**を作る関数, 片群あたりの必要本数)。
-#: **`MEMBER_SOURCES` から畳んで作ります。ここに直接足さないこと** ——
+#: **`members()` から畳んで作ります。ここに直接足さないこと** ——
 #: 足すと群の作り方が2か所になり、`queue_lag.py` と `Floor` が別の群を見ます。
 SOURCES: dict[str, tuple[Callable[[], dict[str, list[date]]], int]] = {
-    key: ((lambda make=make: _days(make())), n)
-    for key, (make, n) in MEMBER_SOURCES.items()
+    key: ((lambda k=key: _days(members(k))), n)
+    for key, (_make, n) in MEMBER_SOURCES.items()
 }
 
 
+def _live_ids() -> set[str] | None:
+    """**再生が付く側の `video_id`**（`src/day_cap.py` が1か所で決めています）。
+
+    読めない回は `None` を返し、**絞りません**。
+    「観測していないものを、無いことにしない」——
+    控えが読めないだけで群が空になると、`ready` が消えて期限が壊れます。
+    """
+    try:
+        from src import day_cap
+        from src.ab_split import published
+
+        return day_cap.live_ids([r for r in published() if r.get("at")])
+    except Exception:                                    # noqa: BLE001
+        return None
+
+
 def members(key: str) -> dict[str, list[Member]]:
-    """その前提の、群べつの本（公開日つき）。**動かす先を決めるのに使う。**"""
+    """その前提の、群べつの本（公開日つき）。**動かす先を決めるのに使う。**
+
+    ## **再生が付かない本は、標本として数えません**（2026-08-26 に足した）
+
+    ここは長いあいだ**公開日だけ**で数えていました。ところが `src/day_cap.py` は
+    「1日 10本を超えたぶんと、30分より詰めた本は 0再生」を**実測で**持っています。
+    実測の差は**再生の中央値 718 対 2**（`day_cap.live_ids` の節）。
+
+    **0再生の本を1本と数えると、`falsified_if` は「上回らなければ外れ」なので、
+    足りない標本がそのまま「外れ」に化けます。** 2026-08-26 の実物では
+    `opening_motion 対照(動きなし)` が 8本中 **5本**、
+    `stat_split 処置(後)` が 23本中 **10本** そちら側に落ちていて、
+    **どちらも期限どおりに「外れ」と判定されるところ**でした。
+
+    落とす条件は **その日の何本目か** だけです（予約を置いた側が決める量なので、
+    処置とは独立）。**再生数そのものでは落としません** —— 結果で条件付けると、
+    処置が再生を落としている場合にその効果を隠します。
+    """
     make, _ = MEMBER_SOURCES[key]
-    return make()
+    rows = make()
+    keep = _live_ids()
+    if keep is None:
+        return rows
+    return {g: [(d, v) for d, v in ms if v in keep] for g, ms in rows.items()}
 
 
 def _hypotheses() -> list[dict]:
