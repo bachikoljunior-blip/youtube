@@ -52,6 +52,7 @@ import functools
 import json
 import math
 import os
+import subprocess
 import sys
 from collections import deque
 from datetime import date, datetime, timedelta, timezone
@@ -4240,6 +4241,50 @@ def _date_delta(before: str | None, after: str | None) -> int | None:
         return None
 
 
+def _others_landed(since: str | None) -> list[str]:
+    """**同じ周のあいだに、他の回が押した変更を数える。**
+
+    サブの回は同じ枝の worktree が何枚も同時に走っており、
+    **`--reflect` の「前 → 後」には、その周のあいだに merge された
+    他の回の変更が全部 混ざります。** ここを黙っていると、
+    上の「動いた入力」が**こちらの ship の成績に見えます。**
+
+    実測（2026-08-26 07:5x）: `--moves 0` と宣言した回の軌跡が **+1日** 動き、
+    追うと原因はきょうだいの `95cc164`（`config/hypotheses.yaml` の10件に
+    `lever` を足した ＝ 飛ばされていた**外れ**の前提が1件 読めるようになった）で、
+    **こちらの ship は `arm_speed.closed()` の分母に1件も入っていません。**
+
+    **数えるだけで、差し引きはしません** —— どの入力が誰のものかは
+    ここでは決められないからです。**「混ざっている」と言えれば足ります。**
+    """
+    if not since:
+        return []
+    try:
+        out = subprocess.run(
+            ["git", "log", f"--since={since}", "--no-merges",
+             "--format=%h %s"],
+            capture_output=True, text=True, cwd=ROOT, timeout=20,
+        )
+    except Exception:                                          # noqa: BLE001
+        return []
+    if out.returncode != 0:
+        return []
+    rows = [ln for ln in out.stdout.splitlines() if ln.strip()]
+    if not rows:
+        return []
+    lines = [f"    [!] **この間に、この枝へ {len(rows)}件 のコミットが載っています。**"
+             "「動いた入力」は**この回だけの成績ではありません**"
+             "（同じ枝で複数の回が同時に走っています）。"]
+    for r in rows[:6]:
+        lines.append(f"        {r[:100]}")
+    if len(rows) > 6:
+        lines.append(f"        …ほか {len(rows) - 6}件")
+    lines.append("        → **`--moves` の宣言と突き合わせるときは、"
+                 "この行を先に読むこと。** どれが誰のぶんかは、"
+                 "`git log -1 --format=%h -- <その入力を作るファイル>` で引けます。")
+    return lines
+
+
 def _fmt_moved(moved: dict, limit: int = 8) -> list[str]:
     def one(v):
         if isinstance(v, float):
@@ -4299,6 +4344,7 @@ def reflect(note: str | None = None, *, record: bool = True) -> tuple[int, dict]
     if moved:
         out.append(f"    **この回で動いた入力: {len(moved)}件**")
         out.extend(_fmt_moved(moved))
+        out.extend(_others_landed(base.get("at")))
     else:
         # **「効いていない」と混同しないこと**（`_drift` に同じ趣旨の断りがあります）。
         out.append("    [!] **この回で動かせる入力は、1つもありませんでした。**")
