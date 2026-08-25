@@ -207,6 +207,13 @@ def report(today: date | None = None) -> dict[str, Any]:
     out["per_video_new"] = {v: (ratios(rows, min_views=1)).get(v) for v in new_ids}
     out["sweep"] = sweep(rows, old_ids, new_ids)
     out["reverse_p"] = reverse_p(old, new)
+    # **順に並べた窓は、密度と共線になります**（2026-08-26。`src/density_confound.py`）。
+    # この判定の「外れ」は、**尺を縮めたせいか、その日の本数が増えたせいか**を分けていません。
+    from .density_confound import line as _density_line, overlap as _density_overlap
+
+    pub = _published()
+    out["density"] = _density_overlap(old_ids, new_ids, pub)
+    out["density_line"] = _density_line(old_ids, new_ids, pub)
     return out
 
 
@@ -238,6 +245,14 @@ def main() -> None:  # pragma: no cover - 画面出力だけ
         print(f"    再生{row['min_views']:>3}以上  旧 {row['n_old']:2}本 {_pct(row['median_old'])}"
               f"  ／ 新 {row['n_new']:2}本 {_pct(row['median_new'])}"
               f"   → {'上回った' if row['upheld'] else '**上回らない**'}")
+    print()
+    print("  **交絡（`src/density_confound.py`）**")
+    print(out.get("density_line", ""))
+    if (out.get("density") or {}).get("confounded"):
+        print("    **この判定は、尺の効果と公開密度の効果を分けられていません。**")
+        print("    engaged は密度と逆向きに動きます（1〜2本/日 34.8% 対 9本以上/日 19.4%・片側 p=0.057）。")
+        print("    **`next_if_false` の連鎖を引く前に、`hypotheses.yaml` の"
+              "「engaged はその日の本数が増えると下がる」（期限 2026-10-02）を待つこと。**")
     print()
     if not out.get("decided"):
         print("  **判定できません。** 届いていない本の置き方で答えが変わります。")

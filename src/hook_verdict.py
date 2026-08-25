@@ -34,6 +34,7 @@ from __future__ import annotations
 import statistics
 from datetime import date, timedelta, timezone
 
+from src import density_confound
 from src.length_verdict import MIN_VIEWS, _published, fetch_engaged, ratios
 
 JST = timezone(timedelta(hours=9))
@@ -65,7 +66,8 @@ def verdict(a_ratios: list[float], b_ratios: list[float]) -> str:
 
 
 def main() -> None:  # pragma: no cover - 画面出力だけ
-    a_ids, b_ids = groups()
+    published = _published()
+    a_ids, b_ids = groups(published)
     rows = fetch_engaged(a_ids + b_ids, A_FROM, date.today())
     rat = ratios(rows)
     a = [rat[v] for v in a_ids if v in rat]
@@ -77,11 +79,24 @@ def main() -> None:  # pragma: no cover - 画面出力だけ
     print(f"  B 8/19〜8/21（冒頭22文字）  公開 {len(b_ids)}本 / {MIN_VIEWS}再生以上 {len(b)}本")
     if b:
         print(f"    中央値 {statistics.median(b) * 100:.1f}%")
+    print()
+    print("  **交絡（`src/density_confound.py`）**")
+    print(density_confound.line(a_ids, b_ids, published))
+    confounded = density_confound.overlap(a_ids, b_ids, published)["confounded"]
+    if confounded:
+        print("    **この判定は、冒頭の効果と公開密度の効果を分けられていません。**")
+        print("    engaged は密度と逆向きに動きます（1〜2本/日 34.8% 対 9本以上/日 19.4%・片側 p=0.057）。")
+    print()
     v = verdict(a, b)
     print(f"  → **{v}**")
     if v == "falsified":
         print("     冒頭を縮めても engaged は上がりませんでした。")
-        print("     `next_if_false`: **静止画スライド＋合成音声という形式そのものを疑う。**")
+        if confounded:
+            print("     **ただし `next_if_false` を引く前に、`hypotheses.yaml` の"
+                  "「engaged はその日の本数が増えると下がる」（期限 2026-10-02）を待つこと。**")
+            print("     密度で説明がつくなら、形式を疑う根拠はここにはありません。")
+        else:
+            print("     `next_if_false`: **静止画スライド＋合成音声という形式そのものを疑う。**")
 
 
 if __name__ == "__main__":  # pragma: no cover
