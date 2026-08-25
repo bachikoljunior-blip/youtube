@@ -68,18 +68,33 @@ def test_plan_moves_within_the_day_when_it_can() -> None:
     assert moves[0]["to"] != "2026-08-28T09:00"
 
 
-def test_plan_leaves_the_measure_window_day() -> None:
-    """**測定の窓の日は、その日の中で直さない。**
+def test_plan_fills_the_holes_on_the_measure_window_day() -> None:
+    """**測定の窓の日は、まずその日の空き分へ寄せる**（2026-08-25 に逆へ直した）。
 
-    08/27 は 05:00〜13:30 に14個の分がある日で、同じ日の空きへ逃がすと
-    13:30 より後ろへ出ます。**「13:30 までの本は全部生きる」という説そのもの**を
-    崩すので、窓の日からは別の日へ出します。
+    前の版は「同じ日へ逃がすと 13:30 より後ろへ出る」を理由に別の日へ出していました。
+    **逃がす先は `grid`（05:00〜13:30）からしか採らないので、後ろへは出ません。**
+    そして寄せたぶんだけ「窓の説」の予測が上がり、**切り分けの分解能が上がります。**
     """
+    rows = [row("a", "2026-08-27T00:00:00Z"),   # 09:00 JST
+            row("b", "2026-08-27T00:00:00Z"),   # 09:00 JST（衝突）
+            row("z", "2026-08-26T20:00:00Z"),   # 08/27 05:00 JST ＝ 早い側の枠が埋まる
+            row("c", "2026-08-29T00:00:00Z")]
+    moves = collisions.plan(rows, today=TODAY)
+    assert len(moves) == 1
+    assert moves[0]["id"] == "b"
+    assert moves[0]["to"].startswith("2026-08-27T")     # **同じ日に残る**
+    assert moves[0]["force_window"] is True             # 窓の日なので force が要る
+
+
+def test_plan_does_not_push_past_the_days_last_slot_on_a_window_day() -> None:
+    """**穴を埋めるだけ。** いちばん遅い分より後ろへ出すと T を自分で動かします。"""
     rows = [row("a", "2026-08-27T00:00:00Z"), row("b", "2026-08-27T00:00:00Z"),
             row("c", "2026-08-29T00:00:00Z")]
     moves = collisions.plan(rows, today=TODAY)
     assert len(moves) == 1
-    assert not moves[0]["to"].startswith("2026-08-27")
+    # 08/27 に入っているのは 09:00 の2本だけ ＝ いちばん遅い分も 09:00。
+    # 09:00 より前の空きはあるが `grid` の先頭から採るので 05:00 が返る。
+    assert moves[0]["to"] == "2026-08-27T05:00"
 
 
 def test_plan_does_not_reuse_one_slot_twice() -> None:
