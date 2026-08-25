@@ -3,7 +3,16 @@
 
     python scripts/topic_forge.py --list            # 未使用の見出しを数える（無料・数秒）
     python scripts/topic_forge.py --count 6         # 6件つくって config/topics.yaml に足す
+    python scripts/topic_forge.py --count 6 --long  # **長尺**の企画を作る（既定はショート）
     python scripts/topic_forge.py --count 6 --dry-run   # 出すだけで書かない
+
+**`--long` を付け忘れないこと**（2026-08-25 に足しました）。この道具は
+長らく**ショートの企画しか書けませんでした**。ところが `scripts/eta.py` の逆算では
+**門2b（ショート90日1,000万回）は API の上限まで出しても 0.53倍で届かず、
+残る道は門2a（長尺4,000時間）だけ**です。そして**ショートの視聴時間は
+そこに1分も入りません**（受け取り帳 `88e9fb44`・YouTube 公式ヘルプの原文）。
+**唯一の門を開ける形を、在庫の側が1件も作れない**作りでした
+（実測: 予約の待ち行列は 長尺11本 / ショート310本 ＝ **3.4%**）。
 
 ## なぜ要るか（2026-08-15）
 
@@ -64,6 +73,10 @@ from src.claude_cli import ask  # noqa: E402
 TOPICS_YAML = ROOT / "config" / "topics.yaml"
 CALC_DIR = ROOT / "src" / "calc"
 ID_RE = re.compile(r"^s-[a-z][a-z0-9]*(-[a-z0-9]+)*$")
+#: **長尺の id には `s-` を付けません。** `src/pipeline.py` が `s-` で始まる id を
+#: 「ショート。`topics.yaml` に置かず、その場で作る」と読むためです
+#: （`scripts/eta.py:316` も同じ規則で形を数えています）。
+LONG_ID_RE = re.compile(r"^(?!s-)[a-z][a-z0-9]*(-[a-z0-9]+)*$")
 
 
 class Forged(BaseModel):
@@ -221,8 +234,65 @@ YouTube ショート（縦・30秒前後）の企画を {n} 件つくります�
 **割り当て**（この順に、1件ずつ書くこと。表の外の数字を使わないこと）
 """
 
+# ---- 長尺（2026-08-25 に足した。**この道具はショートしか作れませんでした**）----
+#
+# ## なぜ要るか
+#
+# `scripts/eta.py` の逆算はこう言っています ——
+# **門2b（ショート90日1,000万回）は、API の上限 1日92本を全部出しても
+# 111,111回/日 に対し 58,696回/日 ＝ 0.53倍。届きません。**
+# 残る道は **門2a（長尺4,000時間）だけ**で、しかも受け取り帳 `88e9fb44`
+# （YouTube 公式ヘルプの原文）のとおり、**ショートの視聴時間はそこに1分も入りません。**
+#
+# ところが在庫を作る道具は、**ショートの企画しか書けませんでした。**
+# 上の `PROMPT_HEAD` は「YouTube ショート（縦・30秒前後）」で始まり、
+# `angle` に「**ショート。1つのことだけ言う。**」と書かせ、id を `s-` に強制します。
+# **唯一の門を開ける形を、在庫の側が1件も作れない**という作りです。
+# 実測: 予約の待ち行列は **長尺11本 / ショート310本（3.4%）**。
+#
+# ## 何を変えたか
+#
+# **節の選び方も、貼り直しも、検査も、全部そのまま**です。変わるのは
+# 「書かせる文」と「id の形」の2つだけ。同じ節から長尺とショートの
+# 両方を作れるわけではありません（節は1件で使い切ります）。
+LONG_PROMPT_HEAD = """\
+YouTube の長尺（横・**8分30秒以上**）の企画を {n} 件つくります。
 
-def build_prompt(picked: list[tuple[str, str]], all_sections, topics) -> str:
+**この企画の作りかた（守ること）**
+
+- 制度の解説はしません。**すでに計算済みの表から、自分で出した数字を発表します**
+- 数字を新しく考えないこと。**下に貼った表に無い数字は、1つも書かないこと**
+- **8分30秒を下回ると投稿前の検査が止めます。** 1つの表を最後まで読み切る分量を書くこと
+- **前提と計算式は、画面にも説明欄にも全部出します。** 視聴者が追試できることが主題です
+- 「必ずこうなる」と言わないこと。**その前提のときの数字**だと言い切る
+- 特定のウェブサイト・リポジトリ・出典名を出さないこと
+
+**ショートとの違い（ここを外さないこと）**
+
+- ショートは「1つのことだけ」ですが、**長尺は表を全部読みます。**
+  主役の1行を出したあと、**同じ表の他の行がなぜそうなるか**まで進みます
+- **棒グラフになる行を最低3つ**選ぶこと（`kind=chart`）。棒の長さは計算結果そのものです
+- 途中で**前提を1つ動かして、数字がどう変わるか**を見せる段を1つ入れること
+
+**1件ぶんに書くもの**
+
+    id          **`s-` で始めないこと**（`s-` はショートの印です）。
+                `<計算モジュール名>-<内容>` の形。小文字とハイフンだけ。既存と重ならないこと
+    title_seed  題の種。**10〜44文字。** 数字を1つ入れる。煽らない
+    angle       この1本で何を出すかの指示。**6〜10行**の日本語。
+                「**長尺。表を最後まで読み切る。**」で始め、
+                主役の数字／前提として画面に出すもの／棒にする3行以上／
+                途中で動かす前提／最後の問いかけを書く
+
+**既に出した題**（言い換えでも重ねないこと）:
+{seen}
+
+**割り当て**（この順に、1件ずつ書くこと。表の外の数字を使わないこと）
+"""
+
+
+def build_prompt(picked: list[tuple[str, str]], all_sections, topics,
+                 long_form: bool = False) -> str:
     """割り当てた節ごとに、表と **「主役にしてはいけない金額」** を貼る。
 
     後者は 2026-08-18 に足しました。**同じ calc で既に題に出した金額**を
@@ -241,7 +311,8 @@ def build_prompt(picked: list[tuple[str, str]], all_sections, topics) -> str:
     from src import dupes
 
     seen = "\n".join(f"  - {t['title_seed']}" for t in topics)
-    parts = [PROMPT_HEAD.format(n=len(picked), seen=seen)]
+    head_tpl = LONG_PROMPT_HEAD if long_form else PROMPT_HEAD
+    parts = [head_tpl.format(n=len(picked), seen=seen)]
     used = dupes.used_amounts({t["id"]: t.get("calc", "") for t in topics})
     for i, (mod, head) in enumerate(picked, 1):
         body = all_sections[mod][head]
@@ -278,6 +349,11 @@ SMALL_FLOOR = 10     # 金額を1つも持たない calc（日数・時間の表
 # 1個差では動かしません —— 制度の定数（基礎控除43万円など）は calc をまたいで
 # 同じ数が出るので、弱い証拠で動かすと**正しく貼られた件のほうがずれます。**
 CROSS_MARGIN = 2
+
+# **長尺の `angle` の下限**（文字数）。ショートは 40 字で足りますが、
+# 長尺は 8分30秒 を埋める指示が要ります。短いまま通すと、
+# **作ってから `src/verify.py` に落とされ、生成1本ぶんが捨てになります。**
+LONG_ANGLE_MIN = 200
 
 
 def _value(digits: str) -> int | float:
@@ -679,7 +755,7 @@ def realign(forged: ForgedSet, picked, all_sections,
 
 
 def validate(forged: ForgedSet, picked, all_sections,
-             known_ids) -> tuple[list[dict], list[str]]:
+             known_ids, long_form: bool = False) -> tuple[list[dict], list[str]]:
     """通った件だけを返す。**落ちた件は理由と一緒に、第2の返りで報せる。**
 
     ## **件数の食い違いでも、回ごと落とさない**（2026-08-17 11:5x に実測して直した）
@@ -726,8 +802,12 @@ def validate(forged: ForgedSet, picked, all_sections,
             continue
         mod, head = slot
         tid = item.id.strip()
-        if not ID_RE.match(tid):
-            dropped.append(f"id の形が不正: {tid!r}")
+        # **`s-` はショートの印です**（`src/pipeline.py` / `scripts/eta.py`）。
+        # 長尺に付けると `topics.yaml` に置いても pipeline がその場で作り直し、
+        # **`calc_sections` を渡さないまま台本を書かせます。**
+        if not (LONG_ID_RE if long_form else ID_RE).match(tid):
+            want = "`s-` で始めないこと" if long_form else "`s-` で始めること"
+            dropped.append(f"id の形が不正（{want}）: {tid!r}")
             continue
         if tid in used:
             dropped.append(f"id が重複: {tid!r}")
@@ -746,8 +826,12 @@ def validate(forged: ForgedSet, picked, all_sections,
             continue
 
         angle = item.angle.strip()
-        if len(angle) < 40:
-            dropped.append(f"{tid}: angle が短すぎます（{len(angle)}文字）")
+        # **長尺は下限を上げます。** 8分30秒を下回ると `src/verify.py` が止めるので、
+        # 指示が短いと**作ってから落ちます**（生成1本ぶんが捨てになる）。
+        floor = LONG_ANGLE_MIN if long_form else 40
+        if len(angle) < floor:
+            dropped.append(
+                f"{tid}: angle が短すぎます（{len(angle)}文字 / 下限 {floor}）")
             continue
 
         used.add(tid)
@@ -841,6 +925,10 @@ def main() -> int:
     ap.add_argument("--count", type=int, default=0, help="つくる件数")
     ap.add_argument("--list", action="store_true", help="未使用の見出しを数えるだけ")
     ap.add_argument("--dry-run", action="store_true", help="出すだけで書かない")
+    ap.add_argument("--long", action="store_true",
+                    help="**長尺（8分30秒以上）の企画を作る。**"
+                         "既定はショート。門2a（長尺4,000時間）が唯一の門なので、"
+                         "面を増やすならこちら（`LONG_PROMPT_HEAD` の節）")
     ap.add_argument("--model", default="opus")
     args = ap.parse_args()
 
@@ -872,10 +960,10 @@ def main() -> int:
         print(f"  {mod:10} {head}")
 
     topics = config.load_topics()["topics"]
-    prompt = build_prompt(picked, all_sections, topics)
-    print("\n[forge] 書かせています…")
+    prompt = build_prompt(picked, all_sections, topics, args.long)
+    print(f"\n[forge] 書かせています…（{'**長尺**' if args.long else 'ショート'}）")
     forged, _ = ask(ForgedSet, prompt, model=args.model)
-    rows, dropped = validate(forged, picked, all_sections, known_ids)
+    rows, dropped = validate(forged, picked, all_sections, known_ids, args.long)
     rows, doomed = drop_doomed(rows, topics)
     dropped += doomed
 
