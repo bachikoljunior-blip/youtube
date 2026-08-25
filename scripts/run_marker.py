@@ -422,6 +422,14 @@ def ship(what: str, closes: list[str] | None = None, lever: str | None = None,
     if lever and _arm.get("hint"):
         rec["lever_hint"] = _arm["hint"]
         rec["lever_followed"] = (lever == _arm["hint"])
+        # **「名指しを外した」と「外せと言われて外した」を分けること**
+        #     （2026-08-26 に踏んだ）。`eta.py` は、名指しした腕の測定に
+        #     もう答えが返る回に **「この測定に ship を使わないこと。
+        #     別の腕を引くこと」** と印字します。そのとおりに動いた回が、
+        #     ここで `lever_followed=False` として残っていました。
+        #     受け取り帳 `68e90017` が数え直す 12/98 は、その分だけ嘘です。
+        if _arm.get("hint_covered"):
+            rec["lever_hint_covered"] = _arm["hint_covered"]
     if lever and lever in _arm.get("caps", {}):
         rec["lever_cap"] = _arm["caps"][lever]
     target, days, basis = _eta_target()

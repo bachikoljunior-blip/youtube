@@ -241,6 +241,10 @@ def arm_state(eta_row: dict | None) -> dict:
             dead_why[k] = "天井まで引いても届かない"
     dead = tuple(k for k in dead_why)
     return {"hint": row.get("lever_hint"), "binding": row.get("binding"),
+            # **その名指しは、この回に引かなくてよいか**（2026-08-26）。
+            #     `eta.py` が「予約済みの本が答えを返すので別の腕を引け」と
+            #     言っている回は、名指しを外すのが**正しい**です。
+            "hint_covered": row.get("lever_hint_covered"),
             "caps": caps, "reaches": reaches,
             "thresholds": row.get("arm_threshold") or {},
             "dead": dead, "dead_why": dead_why}
@@ -280,8 +284,18 @@ def lever_notes(lever: str | None, state: dict) -> list[str]:
     hint = state.get("hint")
     if hint and hint in LEVERS and hint != lever:
         why = state.get("binding") or "（床の名前が読めません）"
-        out.append(f"         [!] 縛っている床は **{why}** で、名指しは **`{hint}`** です。"
-                   f" `{lever}` を選んだ理由を docs/JOURNAL.md に1行書くこと。")
+        covered = state.get("hint_covered")
+        if covered:
+            # **道具の指示どおりに動いた回を、叱らないこと**（2026-08-26）。
+            #     `eta.py` は同じ回に「引く腕は `per_video`」と
+            #     「この測定に ship を使うな・別の腕を引け」を両方言います。
+            #     後者に従うと、ここが前者を根拠に「外した」と言っていました。
+            out.append(f"         名指しは **`{hint}`**（床は {why}）ですが、"
+                       f" **その測定は予約済みの本が {covered} に答えます** ——"
+                       f" `{lever}` を引いたのは、`eta.py` の指示どおりです。")
+        else:
+            out.append(f"         [!] 縛っている床は **{why}** で、名指しは **`{hint}`** です。"
+                       f" `{lever}` を選んだ理由を docs/JOURNAL.md に1行書くこと。")
     return out
 
 
