@@ -48668,6 +48668,33 @@ engaged 比率は、その日の本数と逆向きに動きます（08/20 まで
    確かめたのは `-k "hypoth or verdict or deadline or density or confound or settle or judgeable"`
    の **202件** と `-k "window"` の **76件**、新しい2ファイルの **20件**。
 
+### 追記（同じ回・3つ目の ship・腕 `density`・moves 0）: 長尺2本を予約しました
+
+**`upload` はこの窓でも選べます。** `status.py` は「この回で `upload` は選べません」を
+**出していません** —— 落ちているのは読みの側（`videos.list` / `channels.list` /
+`thumbnails.set`）だけで、**`videos.insert` は日枠では落ちない**（§5 の実測）。
+投稿の本数枠もこの窓で 13/97本 ＝ **あと84本**でした。
+
+    1Tduvr67ohI  iryohi-jogen-nihyakuman-todoku-iryohi  → 2026-08-31 09:00 JST
+    Z_gdDajV4TU  iryohi-ashikiri-sa-kieru-tenn          → 2026-09-03 09:00 JST
+
+**測定の窓が効いていることを、実物で見ました** —— どちらも置き先が
+`2026-08-27` から弾かれています（`[window] M14 の比較の窓を飛ばしました`）。
+**この回に足した `density_engaged`（09/25〜09/26）も、同じ経路で守られます。**
+
+**腕を `density` にした理由**（`eta.py` の名指しは `per_video`）:
+`eta.py` 自身が「**4,000時間の門に入るのは長尺だけ**なので、`density` の
+『引き代なし』を『長尺も増やせない』と読まないこと」「**長尺の面の上限は未測定**」
+と書いています。ショートの面は天井に当たっていますが、**長尺の面は別**で、
+2本足すのはその面の密度を上げる手です。
+
+**サムネイルは載っていません**（`thumbnails.set` も 403）。bytes は控えに残っているので、
+**JST 16:00 以降の回が `python scripts/refresh_thumbnail.py --missing` を撃つこと。**
+公開は 08/31 と 09/03 なので、それまでに1回でも 16:00 以降の回が立てば間に合います。
+
+**目視（`inspect.jpg`・16コマ）**: 図解と字幕の重なりなし・折り返しなし・
+`kind=chart` 3枚以上・図の形は毎コマ変わっています。
+**最後の「明日やること」が2コマ続きます**（終わりの持ち）。
 ---
 
 ## 2026-08-26 04:4x〜05:3x —— 最適化の回（サブ `agent-ad19b5260887bd0d7`）: **作った本が全部、飽和した腕へ入っていました**（腕 `none`・ship `fix` ×2・moves 0）
