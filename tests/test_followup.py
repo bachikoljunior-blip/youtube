@@ -106,3 +106,40 @@ def test_実物の台帳が読める():
     for r in followup.pending(doc):
         assert r["step"] and isinstance(r["step"], str)
         assert r["index"] < r["n_steps"]
+
+
+# --- 束（`docs/MEANS.md` の M番号で束ねる） -----------------------------------
+#
+# **文字 n-gram で束ねた最初の実装は、文法を拾ったので捨てました**
+# （「…と確定させ…」で、形式の話と説明欄の話が同じ束になった）。
+# ここが守るのは「**話題ではなく参照で束ねている**」ことです。
+
+def _rows(*steps):
+    return [{"claim": f"前提{i}", "closed_on": date(2026, 8, 20 + i),
+             "step": s, "lever": "per_video", "age_days": 6,
+             "index": 0, "n_steps": 1, "partial": None}
+            for i, s in enumerate(steps)]
+
+
+def test_同じM番号を指す手は_束になる():
+    cs = followup.clusters(_rows("形式そのものを疑う（M5 か M2 へ）",
+                                 "M5（RPM の高いニッチ）へ移る"))
+    assert [c["means"] for c in cs][:1] == ["M5"]
+    assert len(cs[0]["keys"]) == 2
+
+
+def test_言い回しが同じでも_参照が無ければ束にならない():
+    """**これが n-gram 版を捨てた理由です。**"""
+    cs = followup.clusters(_rows("タイトルだけでは載らないと確定させる",
+                                 "説明欄は読まれていないと確定させる",
+                                 "6 は揺らぎだったと確定させる"))
+    assert cs == [], "文法で束ねないこと"
+
+
+def test_同じ前提の中で同じMを2回書いても_1件と数える():
+    assert followup.clusters(_rows("M5 へ。やはり M5 だ")) == []
+
+
+def test_M番号の無い台帳では_黙る():
+    """**薄いのは既知です。黙るほうが、間違った束を出すより良い。**"""
+    assert followup.clusters(_rows("冒頭を短くする", "色を変える")) == []

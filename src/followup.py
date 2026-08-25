@@ -259,6 +259,65 @@ def open_on_lever(doc: dict, lever: str | None) -> list[str]:
     return out
 
 
+#: 束を「束」と呼ぶ最低の件数。**2件で足ります** —— M番号は散文ではなく
+#: **参照**なので、別々の前提が同じ番号を書いたら偶然ではありません
+#: （文字 n-gram のときに 3 が要ったのは、言い回しが偶然 重なるからでした）。
+CLUSTER_MIN = 2
+
+#: `docs/MEANS.md` の手段の名前（`M5` など）。**これが束の鍵です。**
+_MEANS_RE = re.compile(r"\bM(\d{1,2})\b")
+
+
+def clusters(rows: list[dict], min_h: int = CLUSTER_MIN) -> list[dict]:
+    """**同じ手段（`docs/MEANS.md` の `M…`）を指している「次の手」の束**を返す。
+
+    ## なぜ古い順だけでは足りないか（2026-08-26 に自分で踏んだ）
+
+    最初この道具は**古い順に3件**だけ出していました。実物で撃つと、
+    出たのは 08/07・08/07・08/10 —— **どれも小さい手**です。肝心の
+    「**形式そのものを疑え**」の束は**4件目以降に沈んで一度も出ませんでした。**
+    **いちばん強い証拠が、いちばん見えない**形になっていました。
+
+    ## **文字 n-gram で束を探して、失敗しました**（この節が本題です）
+
+    最初の実装は**5文字の並び**が別々の前提にまたがる回数で束を作りました。
+    語の一覧を持たずに済むので筋が良いと思ったのですが、**実物で撃つと
+    文法を拾いました**:
+
+        「…と確定させ…」 5件   ← 08/15 の形式の話と、08/20 の説明欄の話が同じ束
+        「…そのものを…」 5件   ← 「最後の1枚そのもの」と「形式そのもの」が同じ束
+
+    **日本語の言い回しは、話題が違っても同じ形をします。**
+    これは**それらしく見える誤りを毎周 印字する道具**で、FIFO より悪い ——
+    **読む側が「5件が同じ方向」と信じてしまいます。** 捨てました。
+
+    ## 代わりに、**このリポジトリ自身の語彙**で束ねます
+
+    `next_if_false` は手段を **`docs/MEANS.md` の M番号**で名指しします
+    （「形式そのものを疑う（**M5 か M2 へ**）」「**M5**（RPM の高いニッチ）か、
+    YouTube 以外の面へ」）。**これは散文ではなく参照**なので、
+    取り違えようがありません。
+
+    **薄いです**（実測 28手のうち M を持つのは 5手）。**それでよい** ——
+    **黙るほうが、間違った束を出すより良い。**
+    M番号の無い手は束にならず、下の古い順に出ます。
+
+    **これは検出であって、意味の理解ではありません。**
+    束が出たら**読んで確かめること** —— 出典の日付と本文を必ず添えます。
+    """
+    by_m: dict[str, dict] = {}
+    for r in rows:
+        key = (r["claim"], r["closed_on"])
+        for num in sorted(set(_MEANS_RE.findall(str(r["step"])))):
+            name = f"M{num}"
+            slot = by_m.setdefault(name, {"means": name, "keys": set(), "rows": []})
+            if key not in slot["keys"]:
+                slot["keys"].add(key)
+                slot["rows"].append(r)
+    out = [c for c in by_m.values() if len(c["keys"]) >= min_h]
+    return sorted(out, key=lambda c: (-len(c["keys"]), c["means"]))
+
+
 def report(doc: dict | None = None, today: date | None = None,
            limit: int = 3) -> tuple[str, bool]:
     """印字と、**止めるべきか**を返す。
@@ -278,6 +337,21 @@ def report(doc: dict | None = None, today: date | None = None,
     overdue = [r for r in rows if (r["age_days"] or 0) > GRACE_DAYS]
     lines.append(f"  未記録の手: **{len(rows)}手**"
                  f"（{GRACE_DAYS}日を超えたもの: **{len(overdue)}手**）")
+
+    # **束を先に出す。** 古い順だけだと、いちばん強い証拠がいちばん沈みます
+    # （`clusters()` の docstring に、実際にそれで沈んだ実例）。
+    for c in clusters(rows)[:2]:
+        days = sorted({str(r["closed_on"]) for r in c["rows"]})
+        lines.append("")
+        lines.append(f"  [!] **{len(c['keys'])}件の別々の外れが、"
+                     f"同じ手段 `{c['means']}` を指しています**"
+                     f"（`docs/MEANS.md`。出典 {' / '.join(days)}）")
+        for r in c["rows"][:4]:
+            step = " ".join(str(r["step"]).split())
+            lines.append(f"      ・{r['closed_on']}  {step[:74]}")
+        lines.append("      **束は1件ずつより強い証拠です** ——"
+                     " 別々の実験が、別々の反証条件から、同じ手段へ出ています。"
+                     " **まとめて1つの判断にしてよい。**")
     lines.append("  **実験を閉じて手に入るのは、この1行だけです。**"
                  "採用か却下かを書くまで、毎周ここに出ます。")
     lines.append("")
