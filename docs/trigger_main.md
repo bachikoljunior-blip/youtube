@@ -1550,6 +1550,33 @@ Stop フックが引き止めます（`config/watches.yaml` / `src/watches.py`�
 12:0x の回は `tokutei` の新しい節が「その節が使っている引数の値」を行の列に持っておらず（＝**画面に出しようがない前提**）、**それを 6分35秒の全体実行で**知りました。
 `-k tokutei` なら **2.5秒**で同じことを言います。**落ちる場所が6分先**でした。
 
+##### **撃つ前に `ps` を1回。きょうだいが同じものを回しています**（2026-08-26 07:4x に踏んだ）
+
+    ps -eo pid,etime,args | grep -E 'pytest|status\.py|section_sweep' | grep -v grep
+
+**サブの回は、きょうだいと同じコンテナの CPU を分け合っています**
+（`git worktree list` が 20枚以上 返ります。**枝は別でも、機械は1台です**）。
+07:4x の回は持ち越し1位の「全体 `pytest`」を撃ち、直後の `ps` で
+**きょうだいが8分前から同じ全体実行を回している**のを見つけました:
+
+    8710   08:41  timeout 1500 python -m pytest -q -p no:cacheprovider   ← きょうだい
+    14552  00:10  python -m pytest tests/ -q -p no:randomly              ← こちら
+
+**こちらを殺すのが正解です。** 全体は9〜12分・CPU を丸ごと使うので、
+2本 同時に回すと**両方が遅くなり、同じ回の `status.py`（40〜60秒）まで伸びます**
+（実測: 1分以上かかりました）。そして**結果は向こうの日誌に出ます** ——
+実際、その回の日誌に「2 failed / 3362 passed / 3 skipped（12分21秒）」があり、
+**持ち越しは向こうが潰していました。**
+
+**待つのではなく、別の仕事をすること。** 重いのはこの3つです:
+
+    python -m pytest tests/      全体 9〜12分
+    python scripts/status.py     40〜60秒（Analytics を取り直す）
+    python -m src.section_sweep  47秒／`--measure`
+
+**覆る条件**: **この周のうちに結果が要る**とき。そのときも全体は要りません ——
+`-k` で絞れば数十秒です（下の2節）。
+
 ##### **全体を回すなら `timeout` を付けないこと**（2026-08-20 01:4x に踏んだ）
 
 `timeout 590 python -m pytest tests/ -q | tail -6 > <file>` は、**9分50秒で `Terminated`**。
