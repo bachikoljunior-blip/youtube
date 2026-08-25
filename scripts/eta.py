@@ -48,6 +48,7 @@
 from __future__ import annotations
 
 import argparse
+import functools
 import json
 import math
 import os
@@ -1787,24 +1788,114 @@ def trajectory(m: dict, a0: dict, *, supply: dict | None = None,
     return out
 
 
-def _gate2_surface_note(imp_day: float, need_day: float) -> str:
+@functools.lru_cache(maxsize=1)
+def _recent_surface() -> tuple[float, int] | None:
+    """積んである `data/reach.jsonl` の「いま続いている量」（**API 0単位**）。
+
+    **1回の実行で1度だけ読みます** —— `plan()` は感度と軌跡のループから
+    何十回も呼ばれるので、そのたびに帳面を開き直すと回が重くなります。
+    読めなければ `None`（回を止めない・推測で埋めない）。
+    """
+    try:
+        from src import reach_split
+        rows = reach_split.dedupe(reach_split.load_rows())
+        if not rows:
+            return None
+        long = (reach_split.summary(rows, reach_split.long_ids()).get("長尺") or {})
+        recent = float(long.get("per_day_recent") or 0.0)
+        if recent <= 0:
+            return None
+        return recent, int(long.get("recent_days") or reach_split.RECENT_DAYS)
+    except Exception:  # noqa: BLE001  （測れないことで回を止めない）
+        return None
+
+
+def _with_recent_surface(mix: dict) -> dict:
+    """点に「いま続いている量」を足す。足せなければ**そのまま返す**。"""
+    got = _recent_surface()
+    if not got:
+        return mix
+    return {**mix, "imp_day_recent": got[0], "imp_day_recent_days": got[1]}
+
+
+def _gate2_surface_basis(mix: dict) -> tuple[float | None, str, dict]:
+    """**段2 が読むべき面は「いま続いている量」です**（2026-08-25 に直した）。
+
+    ## 直した理由（**同じ帳面の読み手2つが、逆を向いていた**。この形は4件目）
+
+    ここは長らく `mix["imp_day"]` を読んでいました。あれは
+    `rpm_mix.surface_ceiling()` の**天井**で、2026-08-24 から
+    **38日でいちばん良かった1日**（1,285.0回/日・08/21）です。
+    天井の質問（「腕 `rpm` は届きうるか」）にはそれで正しい。
+    **段2 の質問は別です** ——「門2a を 450日 かけて開けられるか」。
+    **1日ぶんの当たりは、450日 続く量の答えになりません。**
+
+    実測（2026-08-25・同じ `data/reach.jsonl`）:
+
+        eta.py 段2   最大の1日 1,285.0回/日 → 合格点 191 → **面は足りています（6.7倍）**
+        status.py    直近7日  190.6回/日 → 段4 の要求  → **87倍 足りません**
+
+    **同じ回の、同じ帳面です。** そして段2 の文はそのまま
+    「ここから先で効くのは CTR のほう（サムネと題）」と、次の回に引く腕まで
+    名指ししていました。**面が足りていないのに CTR を直しても、面は動きません。**
+
+    返り: `(面の回/日, 何で出したか, 3つの数)`。**古い点は `imp_day_recent` を
+    持ちません** —— そのときは**平均（下振れ側）へ落ちます。**
+    最大へ落とすと、測っていない回ほど「足りている」と出ます。
+    """
+    recent = float(mix.get("imp_day_recent") or 0.0)
+    mean = float(mix.get("imp_day_mean") or 0.0)
+    top = float(mix.get("imp_day_max") or 0.0)
+    others = {"recent": recent or None, "mean": mean or None, "max": top or None,
+              "recent_days": mix.get("imp_day_recent_days")}
+    if recent > 0:
+        return recent, f"直近{mix.get('imp_day_recent_days') or 7}日の平均", others
+    if mean > 0:
+        return mean, "全期間の平均（**直近の点をまだ積んでいません**）", others
+    # **2026-08-24 より前の点は、天井も平均でした**（`imp_day_basis` がまだ無い）。
+    #     その `imp_day` は平均そのものなので、段取りの分母に使えます。
+    if not mix.get("imp_day_basis") and float(mix.get("imp_day") or 0.0) > 0:
+        v = float(mix["imp_day"])
+        others["mean"] = v
+        return v, "全期間の平均（この点は最大と分けて記録する前のもの）", others
+    # **最大の1日しか無い点では、段2 の答えを出しません。**
+    #     出すと、測っていない回ほど「足りている」と印字されます。
+    return None, "測れていません", others
+
+
+def _gate2_surface_note(imp_day: float, need_day: float,
+                        basis: str = "最大の1日", others: dict | None = None) -> str:
     """**段2 の面が、合格点に対して足りているか足りていないか。**
 
-    2026-08-24 まで「足りません」しか書けませんでした。面の天井を
-    「全期間の平均」から「最大の1日」へ直した回に 73.0 → 1,285.0 と動き、
-    **合格点 184回/日 を越えたのに「0.1倍 足りません」**と出ています。
-    **倍率が1を割ったら、それは足りているという意味です。**
+    **どの数で出したかを必ず同じ行に書くこと。** 2026-08-24〜25 の壊れ方は
+    「倍率の向き」ではなく「**分母の取り違え**」で、向きだけ直すと再発します。
     """
-    head = (f"**いまの面（長尺のインプレッション {imp_day:,.1f}回/日・実測）は、"
-            f"CTR 100% でも {imp_day:,.0f}回/日**。合格点は {need_day:,.0f}回/日。")
+    others = others or {}
+    head = (f"**いまの面（長尺のインプレッション {imp_day:,.1f}回/日・実測・"
+            f"{basis}）は、CTR 100% でも {imp_day:,.0f}回/日**。"
+            f"合格点は {need_day:,.0f}回/日。")
+    span = ""
+    if others.get("mean") and others.get("max"):
+        span = (f"　（同じ帳面の他の読み: 全期間の平均 {others['mean']:,.1f}"
+                f"／最大の1日 {others['max']:,.1f}回/日。"
+                "**天井にだけ最大を使い、段取りには使わないこと**）")
+    ratio = (need_day / imp_day) if imp_day else float("inf")
+    # **「1.0倍 足りません」を印字しないこと。** 191 対 190.6 は倍率にすると
+    #     ×1.00 で、丸めると「足りている」と読める字面になります。
+    #     **同点は足りていない側**（合格点は 450日 続ける数なので、
+    #     ちょうどの面には1日ぶんの余裕もありません）。
+    if 1.0 < ratio < 1.05:
+        return (head + " **ちょうど同じ（×1.00）＝ 余裕がありません**。"
+                "合格点は 450日 続ける数なので、**いまの面では1日でも落ちたら届きません**。"
+                "**先に増やすのはインプレッションのほうです**（`src/reach_split.py`）" + span)
     if need_day > imp_day:
-        return (head + f" **{need_day / imp_day:,.1f}倍 足りません**。"
+        return (head + f" **{ratio:,.1f}倍 足りません**。"
                 "**足りないのはインプレッションで、サムネと題（CTR）では動きません**"
-                "（`src/reach_split.py`）")
+                "（`src/reach_split.py`）" + span)
     return (head + f" **面は足りています（{imp_day / need_day:,.1f}倍）** —— "
             f"ここから先で効くのは CTR のほうです"
             f"（要る CTR {need_day / imp_day * 100:.1f}%・"
-            f"サムネと題。`src/reach_split.py`）")
+            f"サムネと題。`src/reach_split.py`）" + span)
 
 
 def _trajectory_blocking(arms: dict, out: dict) -> list[str]:
@@ -2185,9 +2276,27 @@ def plan(m: dict, a: dict, density: int = PLAN_PUBLISH_PER_DAY,
     #     （**形は1行も壊れていないのに**です）。`view_cap` を差せるようにしたのと同じ理由で、
     #     **物差しを実データの偶然から外します**（`docs/trigger_main.md` §4「既知の当たりを
     #     実データの偶然に置かないこと」）。`mix={}` ＝「混ざり方を測っていない」＝ 帯そのまま。
-    mix = (rpm_mix.last() or {}) if mix is None else dict(mix)
+    if mix is None:
+        # **積んである点。** 無ければ `{}`（＝「混ざり方を測っていない」）。
+        mix = rpm_mix.last() or {}
+        # **面の「いま続いている量」だけは、その場で測り直します**（**API 0単位**）。
+        #     `rpm_mix --record` は Analytics の日枠を食うので、撃てない窓が
+        #     1日16時間ほどあります。そこで古い点に合わせて段2 を読むと、
+        #     **窓が閉じているあいだじゅう「全期間の平均」で判断する**ことに
+        #     なります（存在しなかった日を分母に数えた数です）。
+        #     `data/reach.jsonl` は `scripts/reach.py` が別に積んでいるので、
+        #     **読むだけなら1単位も要りません。**
+        #     **点そのものが無い回では測り直しません** —— 「測っていない」を
+        #     「面だけ測れている」に変えると、段2 の注記が推測で出ます
+        #     （`tests/test_eta_surface_cap.py`「面が測れていなければ出ない」）。
+        if mix and not mix.get("imp_day_recent"):
+            mix = _with_recent_surface(mix)
+    else:
+        mix = dict(mix)
     rpm_cap = float(mix.get("rpm_max") or 0.0) or None
     long_views_day_cap = float(mix.get("imp_day") or 0.0) or None
+    # **段2 の分母は天井ではありません**（2026-08-25）。`_gate2_surface_basis` を読むこと。
+    long_views_day_now, gate2_basis, gate2_span = _gate2_surface_basis(mix)
 
     # --- どの形で月20万を取りに行くか（**下振れの RPM で比べる**）---
     forms: dict[str, dict] = {}
@@ -2377,8 +2486,11 @@ def plan(m: dict, a: dict, density: int = PLAN_PUBLISH_PER_DAY,
             #     ここは「必ず足りない」前提で書かれていて、面が合格点を越えた回に
             #     **「0.1倍 足りません」**と印字しました（倍率が1を割った ＝ 足りている）。
             #     面の天井を平均から最大へ直した回に、そのまま出ています。
-            "note": (_gate2_surface_note(long_views_day_cap, gate2_bar * per_day_long)
-                     if long_views_day_cap else None),
+            # **読むのは「いま続いている量」**（最大の1日ではありません。2026-08-25）。
+            "note": (_gate2_surface_note(long_views_day_now,
+                                         gate2_bar * per_day_long,
+                                         gate2_basis, gate2_span)
+                     if long_views_day_now else None),
             # **Lの出どころを、合格点と同じ行に書くこと**（`CLAUDE.md`「何を固定
             #     したせいでそう出たのかを同じ行に並べる」）。計画の 4本/日 と
             #     実測を並べておかないと、次の回は「46回」を天から降ってきた数として読みます。

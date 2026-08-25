@@ -404,6 +404,18 @@ def surface_ceiling(mix: dict, reach: dict, level: str = "高",
     else:
         imp_day, imp_basis = imp_mean, "全期間の平均"
 
+    # **段取り（段2）が乗るのは、天井ではなく「いま続いている量」です**（2026-08-25）。
+    #     ここは天井を出す関数なので `imp_day` は最大の1日のままにしますが、
+    #     **同じ返りに続いている量も入れて出します。** 入れないと、呼ぶ側
+    #     （`scripts/eta.py` の段2）から見える面の数が「平均」と「最大」の
+    #     2つしかなく、**どちらも 450日 続けられるかの答えになりません。**
+    #     実際 08/25 に、段2 は最大の1日（1,285.0）を当てて
+    #     「面は足りています（6.7倍）」と印字し、同じ回の `status.py` は
+    #     直近7日（190.6）から「87倍 足りません」と印字していました。
+    #     **古い点は `imp_day_recent` を持ちません** —— 呼ぶ側は
+    #     **平均のほう（下振れ側）へ落ちること**。最大へ落とすと、
+    #     測っていない回ほど「足りている」と出ます。
+    imp_recent = float(long_row.get("per_day_recent") or 0.0)
     now = effective_rpm(views, "低", bands)
     if imp_day <= 0 or now <= 0:
         return {"factor": None, "rpm_now": now, "rpm_max": None,
@@ -412,6 +424,8 @@ def surface_ceiling(mix: dict, reach: dict, level: str = "高",
                 "imp_day_max": imp_max or None,
                 "imp_day_max_on": long_row.get("per_day_max_on"),
                 "imp_day_live_days": long_row.get("live_days"),
+                "imp_day_recent": imp_recent or None,
+                "imp_day_recent_days": long_row.get("recent_days"),
                 "reach_days": reach_days,
                 "reach_last_day": (reach or {}).get("last_day"),
                 "why": "長尺の面（インプレッション）が測れていません"}
@@ -436,6 +450,10 @@ def surface_ceiling(mix: dict, reach: dict, level: str = "高",
         "imp_day_max": imp_max or None,
         "imp_day_max_on": long_row.get("per_day_max_on"),
         "imp_day_live_days": long_row.get("live_days"),
+        # **いま続いている量**（直近 `reach_split.RECENT_DAYS` 日の平均）。
+        #     天井ではなく**段取りの分母**です。上のコメントを読むこと。
+        "imp_day_recent": imp_recent or None,
+        "imp_day_recent_days": long_row.get("recent_days"),
         "reach_days": reach_days,
         "reach_last_day": (reach or {}).get("last_day"),
         "short_views_day": short_views_day,
@@ -498,6 +516,10 @@ def record(mix: dict, ceiling: dict, path: Path | None = None) -> dict:
         "imp_day_max": ceiling.get("imp_day_max"),
         "imp_day_max_on": ceiling.get("imp_day_max_on"),
         "imp_day_live_days": ceiling.get("imp_day_live_days"),
+        # **段取り（段2）が読む分母。** 天井（`imp_day`）とは別物なので、
+        #     点の側に別の欄で残します（欄が無いと次の回が区別できません）。
+        "imp_day_recent": ceiling.get("imp_day_recent"),
+        "imp_day_recent_days": ceiling.get("imp_day_recent_days"),
         # **面の側の鮮度**（2026-08-24 に足した）。天井は「Analytics の混ざり方」と
         # 「Reporting の面」の**2つの実測の積**なのに、鮮度の表示は
         # **Analytics の側にしか付いていませんでした。** この回、`data/reach.jsonl`
