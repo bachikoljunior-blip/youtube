@@ -38,6 +38,13 @@
 **なぜ** —— 長いセッションは判断が雑になり、コンテナも掴んだままになります。
 1回ぶんの文脈で完結させるほうが、1周あたりの質が安定します。
 
+> **2026-08-25 12:59Z に親を交代しました。** 心拍は
+> **`trig_01CTzKURfdS5LLHPGepXRwvt`（毎時59分・`session_01RzmEZySHAZdDMJmD2z9eUb` に固定）**です。
+> 下の表の `trig_01LNvtNdjggEA4nfxX49YjX8` は**前の親 `session_017yMBL2xfhjbZRhb6D646HG` に
+> 届き続けています**。**まだ落としていません** —— 新しい心拍が実際に発火するのを
+> 1回も見ていないからです（初回は 13:59Z）。**見てから落とすこと。**
+> 二重に立つのは `data/rounds.jsonl` が止めます（両方が pull → 記録 → push を守るかぎり）。
+
 | 項目 | 値 |
 |---|---|
 | trigger_id | `trig_01LNvtNdjggEA4nfxX49YjX8`（**2026-08-23 21:2x に親を交代。旧 `trig_011aqbWZYMrY1YzXJ6ndfHEn` は削除済み。その前は `trig_01T2j6yJMFqKZGZfQnhz8v1b` / `trig_017g2Meu9DZqZ7dJbPKJFS8c` / `trig_01S5mtxkjiBp6hsttmDvdzgw`**） |
