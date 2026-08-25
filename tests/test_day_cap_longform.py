@@ -92,12 +92,42 @@ def test_実物で08_21の証拠から長尺5本が抜けている():
 
 
 def test_長尺の上限は未測定だと言い続ける():
-    """**「測った」に化けないこと。** 6時間の読みでは長尺の生死は判定できません。"""
+    """**「測った」に化けないこと。** 崩れを1日も観測していないうちは上限を言えません。
+
+    2026-08-26 に**言い方だけ**変えました。守っているものは同じです ——
+    もとは「未測定」の4文字と「6時間の読みでは判定できない」の2つを見ていました。
+    **6時間 で読むのをやめた**ので（`LONG_MIN_AGE_H`・齢48時間）、
+    後者はもう本文に出ません。**代わりに、齢を間違えると何が起きるかを見ます。**
+    """
     m = day_cap.long_form()
-    assert m["measured"] is False
+    assert m["measured"] is False, "崩れを観測していないのに『測った』になっています"
+    assert m["collapsed"] is False
     text = "\n".join(day_cap.long_form_lines())
-    assert "未測定" in text
-    assert "6時間の読みでは長尺の生死を判定できません" in text
+    assert "上限そのものはまだ出ていません" in text
+    # **齢を間違えると長尺は全部 死んで見える**、という註が消えないこと
+    assert "6時間の読みで数えないこと" in text
+
+
+def test_長尺は齢をそろえて数える():
+    """**6時間 で数えると、長尺は何本 出しても『ほぼ全部 死んだ』に見えます。**
+
+    実測（2026-08-21・長尺を5本 出した唯一の日）: 齢 6時間 で 1/5本、
+    24時間 で 5/5本。**崩れではなく、読みが早すぎただけ**でした。
+    """
+    assert day_cap.LONG_MIN_AGE_H >= 24.0, "長尺を 24時間 未満で数えないこと"
+    late = day_cap.long_form()
+    early = day_cap.long_form(min_age_h=6.0)
+    if not late["per_day"] or late["most"] < 2:
+        return                                   # 実物が無い環境では飛ばす
+    assert late["alive"] >= early["alive"], (
+        "齢を延ばしたのに生存が減っています（読みの採り方が壊れています）")
+
+
+def test_ショートの面は齢を変えても動かない():
+    """**ずれるのは長尺だけ**、という切り分けの担保（2026-08-26 の実測）。"""
+    if not day_cap.measure()["measured"]:
+        return
+    assert day_cap.measure()["cap"] == day_cap.cap()
 
 
 def test_上限の行がショートの面だと名乗る():

@@ -75,6 +75,24 @@ FORMS = ROOT / "data" / "video_forms.json"
 JST = dt.timezone(dt.timedelta(hours=9))
 
 MIN_AGE_H = 6.0        # これより若い読みは「まだ伸びていない」と見分けが付かない
+
+# **長尺だけは 6時間 では数えられません**（2026-08-26 に測って足した）。
+# このファイルはずっとそう書いていました ——「長尺は数日かけて付くので、
+# これは崩れの証拠になりません。**測るなら 7日 以上の齢で数え直すこと**」——
+# **ですが `long_form()` は 6時間 の読みを返したままでした。**
+#
+# 実測（同じ生データを、読みの齢だけ変えて数え直した）:
+#
+#     2026-08-21（**長尺を5本 出した唯一の日**）
+#       齢  6時間 → 再生が付いたのは **1/5本**  [0, 0, 0, 2, 0]
+#       齢 24時間 → **5/5本**                   [3, 13, 1, 5, 1]
+#       齢 48時間 → **5/5本**                   [5, 1, 3, 15, 1]
+#
+# **「1/5本」は崩れではなく、読みが早すぎただけです。**
+# 6時間 で数えているかぎり、長尺は何本 出しても「ほぼ全部 死んだ」に見えます。
+# **ショート側は齢を変えても動きません**（6/12/24/48/72時間 のどれで数えても
+# `cap=10 floor=10 collapse=11`）。**ずれるのは長尺だけ**です。
+LONG_MIN_AGE_H = 48.0  # 長尺を数えるときの齢。24時間で足りるが、余裕を取る
 DEAD_SHARE = 0.05      # その日の上位3本の中央値の 5% 未満なら「再生が付いていない」
 MIN_PER_DAY = 3        # 崩れを見るのに要る最低の本数
 MIN_TOP_VIEWS = 50     # その日の上位3本の中央値がこれ未満なら、面に載っていない日
@@ -130,8 +148,15 @@ def _long_ids(forms_path: pathlib.Path | None = None) -> set[str]:
     return {v for v, f in forms(forms_path).items() if f == LONG_FORM}
 
 
-def _readings(path: pathlib.Path | None = None) -> dict[str, tuple[dt.datetime, float, int]]:
-    """id → (公開時刻JST, 齢, 再生)。**齢は 6時間にいちばん近いものを採ります。**"""
+def _readings(path: pathlib.Path | None = None,
+              min_age_h: float | None = None) -> dict[str, tuple[dt.datetime, float, int]]:
+    """id → (公開時刻JST, 齢, 再生)。**齢は `min_age_h` にいちばん近いものを採ります。**
+
+    既定は `MIN_AGE_H`（6時間）で、**これはショートの面の話**です。
+    長尺は数日かけて付くので、**長尺を数えるときは `LONG_MIN_AGE_H` を渡すこと**
+    （`long_form()` がそうしています。理由はそちらの docstring）。
+    """
+    min_age = MIN_AGE_H if min_age_h is None else min_age_h
     p = path or VIEWS
     if not p.exists():
         return {}
@@ -148,7 +173,7 @@ def _readings(path: pathlib.Path | None = None) -> dict[str, tuple[dt.datetime, 
         pub = at - dt.timedelta(hours=r["hours"])
         if r["id"] not in first or pub < first[r["id"]]:
             first[r["id"]] = pub
-        if r["hours"] < MIN_AGE_H:
+        if r["hours"] < min_age:
             continue
         cur = best.get(r["id"])
         # **いちばん若い読みを採ります**（伸びきる前で揃えたい。齢が散ると
@@ -177,21 +202,41 @@ def by_day(path: pathlib.Path | None = None,
 
 
 def long_form(path: pathlib.Path | None = None,
-              forms_path: pathlib.Path | None = None) -> dict:
+              forms_path: pathlib.Path | None = None,
+              min_age_h: float = LONG_MIN_AGE_H) -> dict:
     """**長尺の面は、1日に何本まで出せるのか。**
 
-    答えは「**まだ分からない**」です。そしてそれが要点です ——
     `measure()` の 10本 は**ショートの上限**で、長尺には掛かりません。
+
+    **2026-08-26 に、齢をそろえて数え直しました**（上の `LONG_MIN_AGE_H` の註）。
+    それまでここは **6時間 の読み**を返していて、
+    **長尺を5本 出した日を「1/5本しか付かなかった」と報告していました。**
+    同じ日を 24時間 で数えると **5/5本** です。
+    **崩れは1日も観測されていません。**
+
+    そのせいで `docs/JOURNAL.md`（2026-08-26）にはこう書かれていました ——
+    「**`--long` を既定にしてよいかは、まだ決まっていません。**
+    長尺の面の上限は `measured: False` のままで、**1日に何本まで生きるか
+    誰も測っていません**」。**面の側は、少なくとも 5本/日 までは空いています。**
+
+    **ただし「だから長尺を増やせ」にはなりません。** 面が空いていることと、
+    出す価値があることは別です —— 同じ齢（48時間）でそろえた1本あたり再生は
+    **長尺 2.8回 対 ショート 666.8回 ＝ 1/238**（n=12/71）。
+    `config/hypotheses.yaml` の閉じた前提にも同じ向きの実測があります
+    （`rpm` ×256「同じ日の同じ本数で ショート256回 対 長尺1回」）。
+    **面の広さではなく、1本あたりのほうが縛っています。**
 
     返り:
       per_day    長尺を出した日 → 本数
       most       1日に出した最大の本数（**これを超えた日がまだ無い**）
       alive      その最大の日に、再生が付いた本数
-      measured   崩れ（出したのに付かない）を観測しているか。**いまは常に False**
+      age_h      数えた読みの齢（時間）
+      collapsed  **その最大の日に、崩れ（出したのに付かない）があったか**
+      measured   崩れを観測しているか（＝ `collapsed`）。**観測できて初めて上限が言える**
     """
     longs = _long_ids(forms_path)
     days: dict[dt.date, list[tuple[str, int]]] = collections.defaultdict(list)
-    for vid, (pub, _h, n) in _readings(path).items():
+    for vid, (pub, _h, n) in _readings(path, min_age_h).items():
         if vid in longs:
             days[pub.date()].append((vid, n))
     per_day = {d: len(rows) for d, rows in days.items()}
@@ -200,26 +245,39 @@ def long_form(path: pathlib.Path | None = None,
     for d, rows in days.items():
         if len(rows) == most:
             alive = max(alive, sum(1 for _, n in rows if n > 0))
-    return {"per_day": per_day, "most": most, "alive": alive, "measured": False}
+    # **崩れと呼べるのは、いちばん多く出した日に「出したのに付かない」本が
+    # 出たときだけ**です。1本ずつの日で 0再生 が出るのは、面の上限ではなく
+    # **その本が外れた**だけ（`measure()` の `floor` と同じ考え方）。
+    collapsed = most > 0 and alive < most
+    return {"per_day": per_day, "most": most, "alive": alive,
+            "age_h": min_age_h, "collapsed": collapsed, "measured": collapsed}
 
 
 def long_form_lines(path: pathlib.Path | None = None,
                     forms_path: pathlib.Path | None = None) -> list[str]:
-    """**長尺の面の上限は、まだ一度も測っていない。**その事実を毎回出す。"""
+    """**長尺の面は、どこまで空いているか。**齢をそろえた数で毎回出す。"""
     m = long_form(path, forms_path)
     if not m["per_day"]:
         return ["  **長尺の面**: 読める長尺がまだありません（上限は未測定）"]
-    return [
-        f"  **長尺の面の上限: 未測定**（1日に出した最大 {m['most']}本）",
+    out = [
+        f"  **長尺の面: {m['most']}本/日 までは崩れていません**"
+        f"（齢 {m['age_h']:.0f}時間 でそろえた実測。最大の日 {m['alive']}/{m['most']}本 が生存）",
         "    **上の上限はショートの面のもので、長尺には掛かりません**"
         "（長尺は `SHORTS_FEED` の枠を1つも使わない）。",
-        f"    **6時間の読みでは長尺の生死を判定できません**（最大の日で"
-        f" {m['alive']}/{m['most']}本 しか付いていませんが、"
-        "長尺は数日かけて付くので、これは崩れの証拠になりません）。"
-        "測るなら 7日 以上の齢で数え直すこと。",
-        "    **4,000時間の門に入るのは長尺だけ**なので、`density` の「引き代なし」を"
-        "「長尺も増やせない」と読まないこと。",
     ]
+    if not m["collapsed"]:
+        out.append(
+            f"    **上限そのものはまだ出ていません**（{m['most']}本/日 を超えた日が無い）。"
+            "**`measured: False` は「面が狭い」ではなく「まだ広いほうの端を見ていない」**です。")
+    out.append(
+        "    **6時間の読みで数えないこと**（2026-08-26 に踏んだ）——"
+        "同じ 08/21 の5本が、齢 6時間 では **1/5本**、24時間 では **5/5本** です。"
+        "早く読むと、長尺は何本 出しても『ほぼ全部 死んだ』に見えます。")
+    out.append(
+        "    **ただし面が空いていることは、出す価値があることではありません** ——"
+        "同じ齢でそろえた1本あたり再生は **長尺 対 ショート ＝ 1/238**"
+        "（閉じた前提 `rpm` ×256 と同じ向き）。**縛っているのは1本あたりのほう**です。")
+    return out
 
 
 def measure(path: pathlib.Path | None = None,
