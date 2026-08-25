@@ -111,15 +111,35 @@ def test_群の作り方は1か所():
             f"{key}: SOURCES と members が別の群を見ています"
 
 
-def test_入れ替えは生きている本の総数を増やさない():
-    """**上限は 1日 `cap()` 本。** 付け替えても総数が増えるなら、数え方が壊れています。"""
+def test_入れ替えで生きている本を減らさない():
+    """**減らしたら本末転倒です。**
+
+    増えるぶんには構いません（上限に余りのある日へ置けたぶん）。
+    **2026-08-26 まで「増えてもいけない」と書いてありました。** その思い込みが
+    `_slots()` の空きを `_in_band()`（帯の中の本数）で数えさせていて、
+    **埋まっている日を空いていると読んで**いました ——
+    同じ 24手 で **+4本** しか増えないところを、正しく数えて **+24本** に直しています。
+    """
     ls = pytest.importorskip("scripts.live_slots")
     board = ls.Board(ls._rows())
     before = len(board.live())
     ls.plan(board)
     after = len(board.live())
-    assert after == before, \
-        f"入れ替えで生きている本が {before} → {after} に増減しました（上限が動いています）"
+    assert after >= before, \
+        f"入れ替えで生きている本が {before} → {after} に**減りました**"
+
+
+def test_全部逃がす手は生きている本を増やす():
+    """`--all` は**上限に余りのある日**へ逃がすので、総数が増えるはずです。"""
+    ls = pytest.importorskip("scripts.live_slots")
+    board = ls.Board(ls._rows())
+    before = len(board.live())
+    lines = ls.plan_all(board)
+    after = len(board.live())
+    if board.moves:
+        assert after > before, \
+            ("0再生の枠から動かしたのに生きている本が増えていません"
+             f"（{before} → {after}）。空きの数え方がずれています\n" + "\n".join(lines))
 
 
 def test_入れ替えは測定の窓の日を動かさない():
