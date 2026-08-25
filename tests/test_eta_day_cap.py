@@ -19,6 +19,8 @@ from __future__ import annotations
 import importlib.util
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parent.parent
 _spec = importlib.util.spec_from_file_location("eta_cap_mod", ROOT / "scripts" / "eta.py")
 eta = importlib.util.module_from_spec(_spec)
@@ -74,3 +76,81 @@ def test_段4の月あたり本数も天井を超えないこと(monkeypatch):
     monkeypatch.setattr(day_cap, "cap", lambda *a, **k: 10)
     g1 = eta.solve_gate1(_a(), density=25, supply=_supply(rate=34.0))
     assert g1["density_sustained"] <= 10
+
+
+# ---------------------------------------------------------------------------
+# **天井の表の分母**（2026-08-25 22:4x に直した、最後の1か所）
+#
+# 08/24 に `solve_gate1` / `days_subs_at` / `physical_caps` は
+# **92 → `day_cap.cap()`** へ移りました。**天井の表だけが 92 のまま**でした。
+# 92 は API の日枠で、実測は 10本/日。**超えたぶんは 0再生**です。
+#
+# 直した効果は「長尺がショート並みに伸びたら」の行に出ます:
+#     直す前  ¥400 ¥704,352 **届く** ／ ¥1,000 ¥1,760,880 **届く**
+#     直した後 ¥400 ¥76,560 届かない ／ ¥1,000 ¥191,400 届かない（¥2,000 だけ届く）
+# **「長尺さえ動けばどの帯でも超える」は、92 の産物でした。**
+# ---------------------------------------------------------------------------
+
+def _measured(**over):
+    base = dict(
+        at="2026-08-25T13:00:00+00:00",
+        subs_net=19, views_all=65_128, views_7d=35_252, views_28d=55_552,
+        views_90d=57_698, subs_gained_28d=19, subs_gained_90d=19,
+        long_hours_365=0.6, shorts_views_90d=57_698,
+        median_views_per_video=638, videos_with_views_28d=87,
+    )
+    base.update(over)
+    return base
+
+
+def test_天井の分母は_口の日枠ではなく再生が付く上限(monkeypatch):
+    """**`UPLOAD_CAP_PER_DAY`(92) で掛けていないこと。**
+
+    掛けている1本あたり再生は「**再生が付いた本**だけの平均」なので、
+    92 を掛けると、付かない 82本まで「付いた本と同じだけ回る」ことになります。
+    """
+    monkeypatch.setattr(day_cap, "cap", lambda *a, **k: 10)
+    a = eta.analyse(_measured())
+    assert a["ceiling_per_day"] == 10
+    assert a["ceiling_views_month"] == 638 * 10 * 30
+    assert a["ceiling_views_month"] != 638 * eta.UPLOAD_CAP_PER_DAY * 30, (
+        "API の日枠 92本/日 で天井を立てています（**再生は付きません**）")
+
+
+def test_要る倍率も同じ分母で割ること(monkeypatch):
+    """`per_video_needed` が 92 で割ると、**要る倍率が 9.2分の1 に見えます。**"""
+    monkeypatch.setattr(day_cap, "cap", lambda *a, **k: 10)
+    a = eta.analyse(_measured())
+    need = a["per_video_needed"]["ショート 高"]
+    assert need == a["views_needed_month"]["ショート 高"] / (10 * 30)
+    assert need != a["views_needed_month"]["ショート 高"] / (eta.UPLOAD_CAP_PER_DAY * 30)
+
+
+def test_上限が上がれば天井も上がること(monkeypatch):
+    """**定数ではありません。** `day_cap` が育てば天井も追います。"""
+    monkeypatch.setattr(day_cap, "cap", lambda *a, **k: 10)
+    低 = eta.analyse(_measured())["ceiling"]["ショート 高"]
+    monkeypatch.setattr(day_cap, "cap", lambda *a, **k: 20)
+    高 = eta.analyse(_measured())["ceiling"]["ショート 高"]
+    assert 高 == pytest.approx(低 * 2)
+
+
+def test_天井は口の日枠を超えないこと(monkeypatch):
+    """上限が口より大きく読めても、**出せない本は回りません**。"""
+    monkeypatch.setattr(day_cap, "cap", lambda *a, **k: 1_000)
+    a = eta.analyse(_measured())
+    assert a["ceiling_per_day"] == eta.UPLOAD_CAP_PER_DAY
+
+
+def test_長尺がショート並みでも_低い帯は届かないこと(monkeypatch):
+    """**この直しの値打ちそのもの。**
+
+    直す前は ¥400 の帯まで「届く」と出ていて、
+    「長尺さえ動けばどの帯でも目標を超える」と読めていました。
+    """
+    monkeypatch.setattr(day_cap, "cap", lambda *a, **k: 10)
+    a = eta.analyse(_measured())
+    c = a["ceiling_if_shorts_rate"]
+    assert c["長尺 お金 低"] < eta.TARGET_YEN
+    assert c["長尺 お金 中"] < eta.TARGET_YEN
+    assert c["長尺 お金 高"] >= eta.TARGET_YEN

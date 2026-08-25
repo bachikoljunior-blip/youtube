@@ -255,8 +255,15 @@ def test_長尺の帯は長尺の実測で割る():
     assert a["per_video_by_band"]["長尺 お金 中"] == 2
     assert a["per_video_by_band"]["ショート 中"] == 1_092
     assert a["band_measured"]["長尺 お金 中"] == "長尺"
-    # 要る 72回 ÷ 実測 2回 = 36倍（ショートの 1,092 で割ると 0.07倍 に見える）
-    assert a["per_video_ratio"]["長尺 お金 中"] == pytest.approx(72 / 2, rel=0.02)
+    # **要る回数 ÷ 実測 2回**（ショートの 1,092 で割ると、桁が2つ下がって見える）。
+    # **要る回数そのものを定数で書かないこと**（2026-08-25）——
+    # ここは長らく `72` で、それは**天井の分母が 92本/日 だった頃の数**でした。
+    # 分母は `day_cap.cap()` へ移っています（実測10本/日）。定数で書くと、
+    # **この検査が、直したはずの分母を裏から固定し直します。**
+    need = a["per_video_needed"]["長尺 お金 中"]
+    assert a["per_video_ratio"]["長尺 お金 中"] == pytest.approx(need / 2)
+    assert a["per_video_ratio"]["長尺 お金 中"] != pytest.approx(need / 1_092), \
+        "ショートの実測で割っています（**混ぜると桁が2つ変わります**）"
     assert a["ceiling"]["長尺 お金 中"] < eta.TARGET_YEN, \
         "長尺の実測を当てたら、長尺の帯も上限は目標の下"
 
@@ -308,9 +315,13 @@ def test_天井は平均で出す_中央値だと歪んだぶんだけ上振れ�
     a_median = eta.analyse(_measured(views_per_video=1_092, median_views_per_video=1_092))
     assert a_mean["per_video_now"] == 909
     assert a_mean["ceiling"]["ショート 高"] < a_median["ceiling"]["ショート 高"]
-    # **倍率は 1.1倍 → 1.33倍**。ここが「どの帯がいちばん近いか」を決めます。
+    # ここが「どの帯がいちばん近いか」を決めます。
+    # **倍率そのものを定数で書かないこと**（2026-08-25）—— 昔の `1.33` は
+    # **天井の分母が 92本/日 だった頃の数**でした。この検査の主題は
+    # 「平均か中央値か」なので、**2つの比だけを見ます**（分母は約分で消えます）。
     assert a_mean["per_video_ratio"]["ショート 高"] > a_median["per_video_ratio"]["ショート 高"]
-    assert round(a_mean["per_video_ratio"]["ショート 高"], 2) == 1.33
+    assert (a_mean["per_video_ratio"]["ショート 高"]
+            / a_median["per_video_ratio"]["ショート 高"]) == pytest.approx(1_092 / 909)
 
 
 def test_公開密度の段も平均で出す_門1の日付が変わる():
