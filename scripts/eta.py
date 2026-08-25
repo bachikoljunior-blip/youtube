@@ -2195,12 +2195,60 @@ def trajectory_all(m: dict, a0: dict, *, supply: dict | None = None,
         # 幅の出どころは1つ**（標本15件）なので、同じ比を当てています。
         fast = trajectory(m, a0, rate_scale=bd["hi"] / p, **kw)
         slow = trajectory(m, a0, rate_scale=bd["lo"] / p, **kw)
+    # --- **台帳が実際に用意している配分**で、もう一度解く（2026-08-26・最適化の回） ---
+    #
+    # `base` は `share`（**閉じた前提の腕べつの割合 ＝ 過去にどう振ってきたか**）で
+    # 解いています。**しかし未来の配分は、過去ではなく「いま開いている前提」が
+    # 既に決めています** —— 16本作って2週間待たないと1件も閉じないので、
+    # これから閉じるのは台帳に開いている分だけです。
+    #
+    # 実測 2026-08-26（`src.arm_speed.planned()`）::
+    #
+    #     実績（閉じた21件）   per_video 60% ／ density 25% ／ sub_rate 10% ／ rpm  5%
+    #     台帳（開いた 5件）   rpm 60% ／ sub_rate 20% ／ density 20% ／ **per_video 0%**
+    #
+    # 軌跡は「回転の 60% が per_video に回る」前提で日付を出しますが、
+    # **台帳には per_video の前提が1件もありません。**
+    # どちらの数もこの機械が持っていて、**照らし合わせている所がどこにも
+    # ありませんでした**（`docs/JOURNAL.md`「同じことを2か所が別々に言っていて、
+    # 片方しか読まれていない」の形）。
+    #
+    # **これは `base` を置き換えるものではありません。** 台帳は書き換えられるので、
+    # 「このまま台帳どおりに閉じたら」の線です。**2つの差が、
+    # 「次の前提をどの腕に立てるか」で動く日数**そのものになります。
+    pln = None
+    try:
+        pl_share = arm_speed.planned()
+        if pl_share.get("n"):
+            # **`kw` は既に `arms` を持っています。** そのまま `arms=` を足すと
+            #     `TypeError: got multiple values for keyword argument 'arms'` になり、
+            #     下の `except` が飲み込んで **この節ごと黙って消えます**
+            #     （2026-08-26、書いた直後に踏みました。印字が1行も出ませんでした）。
+            kw2 = {k: v for k, v in kw.items() if k != "arms"}
+            pln = trajectory(m, a0, arms=_realloc_arms(arms, pl_share["share"]), **kw2)
+            pln["planned"] = pl_share
+    except Exception:                                          # noqa: BLE001 — 回を止めない
+        pln = None
     return {
-        "base": base, "fast": fast, "slow": slow,
+        "base": base, "fast": fast, "slow": slow, "planned": pln,
         "choice": trajectory_choice(m, a0, base, **kw),
         "streak": arm_speed.miss_streak(rows),
         "band": bd, "arms": arms, "unread": arm_speed.unreadable(),
     }
+
+
+def _realloc_arms(arms: dict, share: dict[str, float]) -> dict:
+    """腕の束を、**別の配分**で解けるように組み直す。
+
+    `rate = focus_rate × share` は `src/arm_speed.arm()` が置いている形です。
+    ここは `share` だけを差し替えて `rate` を引き直します ——
+    **`focus_rate`（その腕に全部振ったときの速さ）は配分に依りません。**
+    """
+    out = {}
+    for k, a in arms.items():
+        w = float(share.get(k, 0.0) or 0.0)
+        out[k] = {**a, "share": w, "rate": (a.get("focus_rate") or 0.0) * w}
+    return out
 
 
 def supply_min_sustained_hours() -> float:
@@ -2898,6 +2946,70 @@ def plan(m: dict, a: dict, density: int = PLAN_PUBLISH_PER_DAY,
     return out
 
 
+def _share_str(share: dict[str, float]) -> str:
+    """配分を「腕 N%」の並びで。**0% の腕も出すこと** —— 0 が本体だからです。"""
+    return " ／ ".join(f"{k} {(share.get(k) or 0.0):.0%}"
+                       for k in arm_speed.ARMS if k in share)
+
+
+def _planned_lines(bar: str, tr: dict | None, base: dict | None) -> list[str]:
+    """**上の日付が前提にしている配分を、台帳が用意しているか。**（2026-08-26）
+
+    `base` の速さは `rate = focus_rate × share` で、`share` は
+    **閉じた前提の腕べつの割合 ＝ 過去にどう振ってきたか**です。
+    **未来の配分を決めているのは、いま開いている前提のほう**で、
+    それは `config/hypotheses.yaml` に既に書いてあります。
+
+    実測 2026-08-26 —— 2つは食い違っていました::
+
+        実績（閉じた21件）  per_video 60% ／ density 25% ／ sub_rate 10% ／ rpm  5%
+        台帳（開いた 5件）  per_video  0% ／ density 20% ／ sub_rate 20% ／ rpm 60%
+        **腕の名前が無い前提 10件**（開いた15件の 67%）
+
+    **どちらの数もこの機械が持っていて、照らし合わせている所がありませんでした。**
+    `docs/JOURNAL.md` が「いちばん当たる」と書いている形そのものです ——
+    **同じことを2か所が別々に言っていて、片方しか読まれていない。**
+
+    **これは「台帳が正しい」ではありません。** 台帳は書き換えられます。
+    2つの差が、**次の前提をどの腕に立てるかで動く日数**そのものなので、
+    そこを見せて、選べる形にするのがここの役目です。
+    """
+    pln = (tr or {}).get("planned")
+    if pln is None:
+        return []
+    meta = pln.get("planned") or {}
+    lines: list[str] = []
+    have = base is not None and base.get("days", NEVER) < NEVER
+    diff = ((pln["days"] - base["days"]) if have and pln["days"] < NEVER else None)
+    past = {k: (v.get("share") or 0.0) for k, v in ((tr or {}).get("arms") or {}).items()}
+    head = (f"{bar} 上の日付は**過去の配分**で解いています"
+            f"（{_share_str(past)}）。"
+            f" **台帳が実際に用意している配分**は"
+            f"（{_share_str(meta.get('share') or {})}・開いた{meta.get('n', 0)}件）")
+    if pln["days"] < NEVER and pln["date"] is not None:
+        head += f" → **{pln['date'].isoformat()}**"
+        if diff is not None:
+            head += (f"（**{diff:+,.0f}日**）" if abs(diff) >= 1
+                     else "（同じ）")
+    else:
+        head += " → **出ません**"
+    lines.append(head)
+    if diff is not None and abs(diff) >= 1:
+        lines.append(f"{bar} **その差 {abs(diff):,.0f}日 は、"
+                     "「次の前提をどの腕に立てるか」で動きます** ——"
+                     " 台帳を書き換えれば配分は変わります"
+                     "（`config/hypotheses.yaml` の `lever`）")
+    un = meta.get("unassigned") or 0
+    if un:
+        lines.append(f"{bar} [!] **腕の名前が無い開いた前提が {un}件**"
+                     f"（開いた{meta.get('total', 0)}件のうち）。"
+                     " **閉じるときに `lever` が無い行は、`arm_speed.closed()` が"
+                     "丸ごと飛ばします** —— 飛ばされた分は θ（回転の速さ）にも"
+                     "入らないので、**腕の速さが全部いっしょに下がります。**"
+                     " 上の配分は、その分だけ**当てにならない側**です")
+    return lines
+
+
 REFLECT_KIND = "reflect"
 
 
@@ -3012,6 +3124,11 @@ def headline(pl: dict, prev: dict | None = None,
                    " **この回は別の腕を引くこと。**"
                    f" `--lever` が `{pl['lever_hint']}` でなくても、"
                    "この回は「名指しを外した」ではありません")
+    # --- **その日付が前提にしている配分を、台帳が用意しているか**（2026-08-26） ---
+    #     上の日付は `share`（**閉じた前提の割合 ＝ 過去にどう振ってきたか**）で
+    #     解かれています。**未来の配分を決めているのは、開いている前提のほう**です。
+    #     食い違っていたら、上の日付は**台帳が用意していない世界**の日付です。
+    out.extend(_planned_lines(bar, tr, base))
     top = next((r for r in (tr or {}).get("choice", []) if r["reachable"]), None)
     if top is not None:
         gain = (base["days"] - top["days"]) if base and base["days"] < NEVER else None
