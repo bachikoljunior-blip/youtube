@@ -52,6 +52,9 @@ from pathlib import Path
 import yaml
 
 ROOT = Path(__file__).resolve().parent.parent
+
+#: 「いま続いている量」を測る窓（日）。**平均でも最大でもない、段取りが乗る数。**
+RECENT_DAYS = 7
 STORE = ROOT / "data" / "reach.jsonl"
 LEDGER = ROOT / "data" / "uploaded.jsonl"
 PAIRS = ROOT / "config" / "pairs.yaml"
@@ -201,9 +204,24 @@ def summary(rows: list[dict], longs: set[str]) -> dict:
 
     ## `per_day` と `per_day_max` は、使い先が違います（2026-08-24 に分けた）
 
-        per_day       全期間の平均。**いま出ている量**を言う（表示むき）
-        per_day_max   いちばん大きかった1日。**天井**を言う（`surface_ceiling` むき）
-        per_day_live  中身のある日だけの平均（立ち上がる前の 0日 を分母から外す）
+        per_day        全期間の平均。**いま出ている量**を言う（表示むき）
+        per_day_max    いちばん大きかった1日。**天井**を言う（`surface_ceiling` むき）
+        per_day_live   中身のある日だけの平均（立ち上がる前の 0日 を分母から外す）
+        per_day_recent 直近 RECENT_DAYS 日の平均。**段取りが乗る量**（段2 むき）
+
+    **この4つを取り違えると、答えが逆になります。** 2026-08-25 の実測:
+
+        全期間の平均    73.0回/日   → 段2 の合格点 191回/日 に **2.6倍 足りない**
+        直近7日の平均  190.6回/日   → 合格点と **ほぼ同じ（×1.0）**
+        最大の1日    1,285.0回/日   → 合格点の **6.7倍**
+
+    そして `scripts/eta.py` の段2 は、**最大の1日**を当てて
+    「**面は足りています（6.7倍）** —— ここから先で効くのは CTR のほう」と
+    印字していました。同じ回の `status.py` は同じ帳面から
+    「**87倍 足りません。足りないのはインプレッションです**」と印字しています。
+    **同じ帳面の読み手2つが、逆を向いていた**（この形は4件目）。
+    段2 が問うているのは「450日 続けられるか」で、**38日でいちばん良かった1日は
+    その答えになりません。** 天井（`rpm` が届きうるか）だけが最大の1日を使います。
 
     **平均を天井に使うと、天井が実測より下に出ます。** 実物（08/24）:
     38日の平均 **73.0回/日** に対し、最大の1日は **1,285回**（08/21・全期間の46%）。
@@ -243,6 +261,18 @@ def summary(rows: list[dict], longs: set[str]) -> dict:
         live = [x for x in series.values() if x > 0]
         v["per_day_live"] = (sum(live) / len(live)) if live else 0.0
         v["live_days"] = len(live)
+        # **いま続いている量**（直近 RECENT_DAYS 日の平均。2026-08-25 に足した）。
+        #     上の `tail()` の docstring が「**段取りが乗るのは、いま見せられている
+        #     量のほう**」と書いているのに、その数は `render()` の中で
+        #     `summary(tail(rows, 7))` を組み直したときにしか出ませんでした。
+        #     **`summary()` の返りだけを持って歩く呼び側（`rpm_mix.surface_ceiling`
+        #     → `scripts/eta.py`）からは、平均か最大の2つしか見えていません。**
+        #     どちらも段取りの分母には使えない数です（片方は存在しなかった日を
+        #     数え、片方は38日でいちばん良かった1日）。ここで一緒に返します。
+        recent = dates[-RECENT_DAYS:]
+        v["per_day_recent"] = (
+            (sum(series[d] for d in recent) / len(recent)) if recent else 0.0)
+        v["recent_days"] = len(recent)
     return {"長尺": out["長尺"], "ショート": out["ショート"], "days": days,
             "dates": dates, "last_day": dates[-1] if dates else None}
 
@@ -264,9 +294,6 @@ def gap(sm: dict, need_views_month: float | None = None) -> dict:
         "now_views_month": now_month,
         "short_by": (need / ceiling_month) if ceiling_month else float("inf"),
     }
-
-
-RECENT_DAYS = 7
 
 
 def render(rows: list[dict], longs: set[str] | None = None) -> str:
