@@ -4489,6 +4489,21 @@ def alloc_search() -> int:
     past = {k: (v.get("share") or 0.0) for k, v in arms.items()}
     print("=== 次の前提を、どの腕に立てるのがいちばん早いか ===")
     print("  **API は0単位**（積んである最後の点で解き直すだけ）。1本 15〜20秒。")
+    # --- **どの腕の数が「その腕の実測」で、どれが代用か**（2026-08-26 に足した） ---
+    #     `arm_speed.arm()` は、その腕で閉じた前提が `MIN_N`（=3）に満たないと
+    #     **全体の当たり確率と伸び幅で代用**します。代用の腕どうしは
+    #     `focus_rate` が同じ値になるので、**下の順位は「天井の遠さ」だけで
+    #     決まっている**ことがあります。**黙って埋めると、薄い腕ほど自信ありげに見えます。**
+    #     実測 2026-08-26: 自前は `per_video`（12件）と `density`（5件）だけ。
+    #     `rpm` は1件、`sub_rate` は2件で、**どちらも代用**です。
+    src = []
+    for k in arm_speed.ARMS:
+        v = arms.get(k) or {}
+        src.append(f"{k} {v.get('n', 0)}件"
+                   + ("（**代用**）" if v.get("source") != "自前" else ""))
+    print("  腕べつに閉じた前提: " + " ／ ".join(src)
+          + f"  ← {arm_speed.MIN_N}件 未満は**全体の値で代用**しています"
+          "（代用どうしは速さが同値になるので、順位が天井の遠さだけで決まります）")
 
     def _solve(share: dict[str, float], label: str) -> float:
         t = trajectory(m, a, arms=_realloc_arms(arms, share), **kw)
