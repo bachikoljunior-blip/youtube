@@ -24,7 +24,9 @@
 """
 from __future__ import annotations
 
+import collections
 import json
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -34,9 +36,12 @@ RUNS = ROOT / "data" / "batch_runs.jsonl"
 #: （2026-08-23 に実測: 8本中6本できた回が落ち、6本が「どちらか分からない本」になった）。
 FLAGS = ROOT / "data" / "build_flags.jsonl"
 UPLOADED = ROOT / "data" / "uploaded.jsonl"
+JST = timezone(timedelta(hours=9))
+#: 各群に要る本数（`config/hypotheses.yaml` の 09/05 の前提。**共有日だけで数える**）。
+BAR = 8
 
 
-def motion_by_topic(runs: Path = RUNS) -> dict[str, bool]:
+def motion_by_topic(runs: Path = RUNS, flags: Path | None = None) -> dict[str, bool]:
     """テーマID → **作ったときに動きが入っていたか**。
 
     **記録の無い回は入れない。食い違う記録があるテーマは落とす。**
@@ -57,8 +62,14 @@ def motion_by_topic(runs: Path = RUNS) -> dict[str, bool]:
     """
     seen: dict[str, set[bool]] = {}
     # **1本ごとのラベルも読む。**（回のおしまいの記録だけだと、落ちた回のぶんが消える）
-    if FLAGS.exists():
-        for line in FLAGS.read_text(encoding="utf-8").splitlines():
+    #
+    # **`flags` を引数にしたのは 2026-08-25。** それまでは `FLAGS` を直に読んでいたので、
+    # `runs` に別の道を渡しても**本物の `data/build_flags.jsonl` が混ざっていました**
+    # （`tests/test_motion_groups.py::test_missing_files_are_empty` が
+    # 「空のはず」に実データ 29件を返して落ちていた）。
+    flags = FLAGS if flags is None else flags
+    if flags.exists():
+        for line in flags.read_text(encoding="utf-8").splitlines():
             if not line.strip():
                 continue
             try:
@@ -120,13 +131,242 @@ def groups(video_ids: list[str] | None = None,
     return sorted(off), sorted(on)
 
 
+def scheduled_at(uploaded: Path = UPLOADED) -> dict[str, str]:
+    """video_id → 予約の公開時刻（`data/uploaded.jsonl` の `at`。UTC の文字列）。
+
+    **API は要りません。** 予約は投稿のときに手元へ落ちています。
+
+    ## **後の行を採ること**（2026-08-25 に実測。ここを間違えると群が動きます）
+
+    `uploaded.jsonl` は**足すだけの帳面**です。`scripts/reschedule.py` が
+    公開時刻を動かすと、**同じ video_id の行がもう1行足されます。**
+    実測: **14本**が2つの `at` を持っていました（491本中）。例——
+
+        485行  QTL7_jky0o0  at=2026-09-23T03:00Z   ← 投稿したときの予約
+        489行  QTL7_jky0o0  at=2026-09-22T00:30Z   ← **その後 --compact で前へ寄せた**
+
+    `topic` は作り直しても変わらないので**最初の行**でよいのですが、
+    `at` は**動かすためにある欄**なので、最初の行は「過去の予定」です。
+    先の行を採ると、この本は 09/23 に居ることになります —— 実際は 09/22 です。
+
+    **A/B の群はこの日で割ります。** 1日足りない側に落ちるだけで、
+    共有日が消えたり生えたりします（実測: この1本で 09/22 の列が消え、
+    09/24 に 1本 生えていました）。**だから後の行を採ります。**
+
+    **本当の正は API です**（`scripts/reschedule.py --list`）。ここは
+    日枠が切れている13時間でも読めるように、手元の帳面で代用しています。
+    """
+    out: dict[str, str] = {}
+    if not uploaded.exists():
+        return out
+    for line in uploaded.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if row.get("video_id") and row.get("at"):
+            out[row["video_id"]] = row["at"]      # **後の行で上書きする**
+    return out
+
+
+def jst_day(at: str | None) -> str | None:
+    """公開時刻 → **JST の日**。
+
+    ## **UTC の日で割らないこと**（2026-08-25 に実測で踏みかけた）
+
+    `at` は UTC で入っています。素直に先頭10文字を採ると **JST の朝が前日に落ちます**。
+    実測（この日の A/B）——
+
+        2026-08-26T20:00Z 〜 23:00Z の 4本  → **JST では 08/27 の 05〜08時**
+
+    UTC の日で数えると 08/26 に対照 0本・動きあり 3本、08/27 に対照 2本・動きあり 1本。
+    **JST で数え直すと 08/27 は 2本 対 5本**で、群の重なり方がまるで違います。
+    予約も day_cap も JST で置いているので、**割るのも JST**です。
+    """
+    if not at:
+        return None
+    try:
+        t = datetime.fromisoformat(at.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if t.tzinfo is None:
+        t = t.replace(tzinfo=timezone.utc)
+    return t.astimezone(JST).strftime("%Y-%m-%d")
+
+
+def by_day(off: list[str], on: list[str],
+           at: dict[str, str] | None = None,
+           ) -> dict[str, tuple[list[str], list[str]]]:
+    """JST の日 → `(その日の対照, その日の動きあり)`。時刻の無い本は落とします。"""
+    at = scheduled_at() if at is None else at
+    out: dict[str, tuple[list[str], list[str]]] = {}
+    for ids, idx in ((off, 0), (on, 1)):
+        for vid in ids:
+            day = jst_day(at.get(vid))
+            if day is None:
+                continue
+            out.setdefault(day, ([], []))[idx].append(vid)
+    return {d: (sorted(a), sorted(b)) for d, (a, b) in sorted(out.items())}
+
+
+def paired(off: list[str], on: list[str],
+           at: dict[str, str] | None = None) -> tuple[list[str], list[str]]:
+    """**両群がそろっている日の本だけ**を返す ＝ この A/B で実際に使える標本。
+
+    ## なぜ生の本数を「標本」と呼んではいけないか（2026-08-25）
+
+    `config/hypotheses.yaml` の 09/05 の前提は、条件にこう書いてあります ——
+    **「動きありと同じ日に交互で予約する（公開時刻の差を群に混ぜないため）」**。
+    片方しか無い日の本は、**動きの差と「その日の配信の差」を分けられません。**
+    1日に配信されるのは 10本ちょうど（`src/day_cap.py`）で、
+    **その10本をどの群が取ったかは日ごとに変わります。**
+
+    それでもここは長らく生の合計だけを出していました。実測（2026-08-25）——
+
+        生の合計    対照 8本 ／ 動きあり 19本   → **どちらも門(8)を越えて見える**
+        共有日だけ  対照 6本 ／ 動きあり 8本    → **対照が 2本 足りない**
+
+    **「越えて見える」ほうを読むと、条件を満たさないまま判定に入ります。**
+    そして `next_if_false` は「静止スライド＋合成音声という形式そのものを疑う」なので、
+    **形式側で最後に残った前提が、条件を満たさない標本で殺されます**
+    （8/19 の `ab_split`・8/23 の「公開日で割る」と同型で、これが3件目）。
+    """
+    days = by_day(off, on, at)
+    p_off: list[str] = []
+    p_on: list[str] = []
+    for a, b in days.values():
+        if a and b:
+            p_off += a
+            p_on += b
+    return sorted(p_off), sorted(p_on)
+
+
+def free_slot(day: str, at: dict[str, str], *,
+              hour: int = 9, until_hour: int = 21, step_min: int = 30) -> str | None:
+    """その JST 日で、**まだ誰も居ない 30分きざみの時刻**を1つ返す（`HH:MM`）。
+
+    `scripts/reschedule.py --move` は**時刻の取り合いを見ません**（`--compact` 側だけが
+    見ています）。だから割り当てをそのまま貼れるように、ここで空きを選んでおきます。
+    **長尺も数えます** —— 同じ時刻に2本置かないため（`reschedule.py:437` と同じ規則）。
+    """
+    taken = set()
+    for v in at.values():
+        d = jst_day(v)
+        if d != day:
+            continue
+        t = datetime.fromisoformat(v.replace("Z", "+00:00")).astimezone(JST)
+        taken.add((t.hour, t.minute))
+    for h in range(hour, until_hour + 1):
+        for m in range(0, 60, step_min):
+            if (h, m) not in taken:
+                return f"{h:02d}:{m:02d}"
+    return None
+
+
+def retime_plan(off: list[str], on: list[str],
+                at: dict[str, str] | None = None,
+                bar: int = BAR) -> list[tuple[str, str, str]]:
+    """共有日の標本を門まで持ち上げる、**いちばん本数の少ない動かし方**を出す。
+
+    返すのは `(video_id, いまの JST 日, 送り先の JST 日)` の並び。
+    撃つのは `scripts/reschedule.py --move <video_id> <JST>` です（1本 50単位）。
+
+    **足りない側だけを動かします。** 足りているほうを動かすと、
+    せっかく共有になっている日を壊すことがあるからです。
+    送り先は「**相手だけが居る日のうち、その本にいちばん近い日**」——
+    そこへ1本入れれば、その日はまるごと共有日に変わり、
+    **相手のその日のぶんも一緒に標本へ入ります**（いちばん効率が良い）。
+    """
+    at = scheduled_at() if at is None else at
+    days = by_day(off, on, at)
+    plan: list[tuple[str, str, str]] = []
+    moved: set[str] = set()
+
+    def counts() -> tuple[int, int]:
+        n_a = n_b = 0
+        for x, y in days.values():
+            if x and y:
+                n_a += len(x)
+                n_b += len(y)
+        return n_a, n_b
+
+    # **無限に回らないよう、動かす本数は在庫の数で止めます。**
+    for _ in range(len(off) + len(on)):
+        n_off, n_on = counts()
+        if n_off >= bar and n_on >= bar:
+            break
+        short = 0 if n_off < bar else 1          # 0=対照が足りない / 1=動きありが足りない
+        # 送り先: **相手だけが居る日**（そこへ1本足すと共有日になる）
+        targets = [d for d, pair in days.items()
+                   if pair[1 - short] and not pair[short]]
+        # 出し元: **自分だけが居る日**（そこから引いても共有日を壊さない）
+        sources = [(d, v) for d, pair in days.items()
+                   for v in pair[short]
+                   if not pair[1 - short] and v not in moved]
+        if not targets or not sources:
+            break
+        best: tuple[int, str, str, str] | None = None
+        for d, v in sources:
+            for t in targets:
+                gap = abs((datetime.strptime(t, "%Y-%m-%d")
+                           - datetime.strptime(d, "%Y-%m-%d")).days)
+                cand = (gap, t, d, v)
+                if best is None or cand < best:
+                    best = cand
+        gap, t, d, v = best
+        days[d][short].remove(v)
+        days[t][short].append(v)
+        moved.add(v)
+        plan.append((v, d, t))
+    return plan
+
+
 def main() -> None:  # pragma: no cover - 画面出力だけ
     off, on = groups()
+    at = scheduled_at()
+    p_off, p_on = paired(off, on, at)
     print("=== 冒頭の動き A/B（作ったときの値で割る）===")
-    print(f"  対照（動きなし） {len(off)}本 ／ 動きあり {len(on)}本")
+    print(f"  生の合計         対照（動きなし） {len(off)}本 ／ 動きあり {len(on)}本")
+    print(f"  **共有日だけ**   対照 {len(p_off)}本 ／ 動きあり {len(p_on)}本"
+          f"   ← **標本はこちら**（門は各 {BAR}本）")
+    if len(off) >= BAR > len(p_off) or len(on) >= BAR > len(p_on):
+        print("  [!] **生の合計は門を越えて見えますが、条件を満たしていません。**"
+              " 片方しか居ない日の本は、動きの差と『その日の配信の差』を分けられません"
+              "（1日に配信されるのは 10本ちょうど・`src/day_cap.py`）")
     if not off:
         print("  **対照群がまだ 0本です。** `YT_OPENING_MOTION=0` で作らないかぎり増えません")
         print("  （`config/hypotheses.yaml` の `control_group_todo`: 8本以上・同じ日に交互で予約）")
+
+    days = by_day(off, on, at)
+    if days:
+        print("\n  --- JST の日ごと（**UTC の日で割らないこと**。JST の朝が前日に落ちます）---")
+        print(f"  {'JST日':<12}{'対照':>5}{'動きあり':>8}   共有")
+        for d, (a, b) in days.items():
+            print(f"  {d:<12}{len(a):>5}{len(b):>8}   {'○' if a and b else '×'}")
+
+    plan = retime_plan(off, on, at)
+    if plan:
+        print(f"\n  --- 門まで持ち上げる割り当て（**{len(plan)}本 動かすだけで済みます**）---")
+        used = dict(at)
+        for vid, src, dst in plan:
+            slot = free_slot(dst, used)
+            if slot is None:
+                print(f"  {vid}  {src} → {dst}    **{dst} に空き時刻がありません**（別の日へ）")
+                continue
+            used[vid] = (datetime.strptime(f"{dst} {slot}", "%Y-%m-%d %H:%M")
+                         .replace(tzinfo=JST)
+                         .astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))
+            print(f"  {vid}  {src} → {dst}    "
+                  f"python scripts/reschedule.py --move {vid} {dst}T{slot}")
+        print("  **`videos.update` は 1本 50単位**。日枠が戻るのは JST 16:00")
+    elif len(p_off) >= BAR and len(p_on) >= BAR:
+        print(f"\n  **共有日だけで両群とも {BAR}本に達しています。**"
+              " あとは公開から7日・30再生以上を待って判定へ")
+    else:
+        print("\n  [!] **動かすだけでは門に届きません。**"
+              " 足りない側を `YT_OPENING_MOTION` を明示して作り足すこと")
 
 
 if __name__ == "__main__":  # pragma: no cover
