@@ -2758,6 +2758,25 @@ def plan(m: dict, a: dict, density: int = PLAN_PUBLISH_PER_DAY,
             out["lever_measured"] = best["lever"]
             out["lever_hint_binding"] = out["lever_hint"]
             out["lever_hint"] = best["lever"]
+    # --- **名指しした腕の測定が、もう予約済みの本で答えが返る回がある** ---
+    #     （2026-08-26 に踏んだ。**この道具が自分と食い違っていました**）
+    #
+    #     この回の出力は、頭の3行で「この回に引く腕は `per_video`」と言い、
+    #     200行下で「**この測定に ship を使わないこと。別の腕を引くこと**」と
+    #     言っていました。**手順（`docs/trigger_main.md` の「普通の回の読む順」）は
+    #     3行だけ読めと言っている**ので、下の断りは普通の回には届きません。
+    #
+    #     そして届いた回も罰されます —— `run_marker.py --ship --lever` は
+    #     `lever_followed = (lever == lever_hint)` を残すので、
+    #     **道具の指示どおり別の腕を引くと「名指しを外した」として記録されます。**
+    #     受け取り帳 `68e90017` が 09/01 に数え直そうとしている
+    #     `lever_followed`（いま 12/98＝12%）は、**その分だけ嘘をついています。**
+    #
+    #     だから「この名指しは、この回は引かなくてよい」を**同じ3行に**出し、
+    #     `data/eta.jsonl` にも積んで、数える側が外せるようにします。
+    _fc = ((out.get("blocking") or {}).get("sample")) or {}
+    if _fc.get("reaches") and out.get("lever_hint") == "per_video":
+        out["lever_hint_covered"] = _fc["reaches"]
     return out
 
 
@@ -2869,6 +2888,12 @@ def headline(pl: dict, prev: dict | None = None,
                + (f"（**軌跡が名指し**。床の名前は `{pl['lever_hint_binding']}` ですが、"
                   "それは診断であって、引いて何日縮むかは言っていません）"
                   if pl.get("lever_from") == "軌跡" else ""))
+    if pl.get("lever_hint_covered"):
+        out.append(f"{bar} **その `{pl['lever_hint']}` の測定は、予約済みの本が"
+                   f" {pl['lever_hint_covered']} に答えます** →"
+                   " **この回は別の腕を引くこと。**"
+                   f" `--lever` が `{pl['lever_hint']}` でなくても、"
+                   "この回は「名指しを外した」ではありません")
     top = next((r for r in (tr or {}).get("choice", []) if r["reachable"]), None)
     if top is not None:
         gain = (base["days"] - top["days"]) if base and base["days"] < NEVER else None
@@ -3810,6 +3835,10 @@ def _row(m: dict, a: dict, pl: dict, tr: dict | None, sup: dict | None) -> dict:
     row["days_revenue"] = pl["days_revenue"]
     row["binding"] = pl["binding"]
     row["lever_hint"] = pl["lever_hint"]
+    # **名指しを「引かなくてよい回」も積むこと**（2026-08-26）。
+    #     積まないと `run_marker.py` から見えず、`lever_followed` が
+    #     道具の指示どおりに動いた回を「外した」と数えつづけます。
+    row["lever_hint_covered"] = pl.get("lever_hint_covered")
     # **供給の実測も積む**（次の回が「作る速さは上がったか」を測れる形にする）
     row["density_month"] = pl.get("density_month")
     row["make_rate_per_day"] = (sup or {}).get("rate_per_day")
