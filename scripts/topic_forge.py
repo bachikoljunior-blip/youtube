@@ -786,19 +786,48 @@ def drop_doomed(rows: list[dict], topics: list[dict]) -> tuple[list[dict], list[
     return kept, dropped
 
 
-def to_yaml(rows: list[dict]) -> str:
+ITEM_RE = re.compile(r"^([ \t]*)- id:", re.MULTILINE)
+
+
+def list_indent(text: str) -> str:
+    """`topics:` のリスト項目が、いま何字下げで書かれているか。
+
+    ## なぜ読み取るのか（2026-08-25 に踏んだ）
+
+    ここは長らく **2字下げ決め打ち**でした。ところが `config/topics.yaml` の
+    項目は **503件すべてが0字下げ**（`- id:` が行頭）で、
+    追記した5件だけが2字下げになり、**ファイル全体が読めなくなりました。**
+
+        yaml.parser.ParserError: while parsing a block mapping
+          expected <block end>, but found '-'
+
+    **書いた直後の読み直しがこれを捕まえます**が、そのときには**もう書いた後**で、
+    `topics.yaml` は壊れたまま残ります（実測：その回の `--count 5` は
+    5件を書いてから落ちた）。**壊れた `topics.yaml` は、次の回の
+    `status.py` も `pipeline` も全部止めます。**
+
+    決め打ちを直しても同じことが起きます —— **どちらが正しいかは、
+    そのときのファイルにしか書いていません。** だから読み取ります。
+    項目が1つも無いファイルなら、YAML のブロック列の既定（0字下げ）を返します。
+    """
+    hits = ITEM_RE.findall(text)
+    return hits[-1] if hits else ""
+
+
+def to_yaml(rows: list[dict], indent: str = "") -> str:
+    pad = indent
     out = []
     for r in rows:
-        out.append(f"\n  - id: {r['id']}")
-        out.append(f"    title_seed: {yaml_scalar(r['title_seed'])}")
-        out.append("    angle: >")
+        out.append(f"\n{pad}- id: {r['id']}")
+        out.append(f"{pad}  title_seed: {yaml_scalar(r['title_seed'])}")
+        out.append(f"{pad}  angle: >")
         for line in r["angle"].splitlines():
-            out.append(f"      {line.strip()}" if line.strip() else "")
-        out.append(f"    calc: {r['calc']}")
-        out.append("    calc_sections:")
+            out.append(f"{pad}    {line.strip()}" if line.strip() else "")
+        out.append(f"{pad}  calc: {r['calc']}")
+        out.append(f"{pad}  calc_sections:")
         for s in r["calc_sections"]:
-            out.append(f"      - {yaml_scalar(s)}")
-        out.append("    score: 1.0")
+            out.append(f"{pad}    - {yaml_scalar(s)}")
+        out.append(f"{pad}  score: 1.0")
     return "\n".join(out) + "\n"
 
 
@@ -862,7 +891,9 @@ def main() -> int:
         print("\n**1件も通りませんでした。**")
         return 1
 
-    block = to_yaml(rows)
+    # **字下げは決め打ちにしない**（`list_indent` の節。2026-08-25 に壊した）
+    existing = TOPICS_YAML.read_text(encoding="utf-8")
+    block = to_yaml(rows, list_indent(existing))
     print("\n=== できたもの ===")
     print(block)
 
