@@ -465,9 +465,46 @@ def dead_arm_report(today: str, window_days: int = WINDOW_DAYS) -> str:
                    "**「天井まで引いても届かない」側は数えられていません** ——"
                    " `python scripts/eta.py` を1回走らせると入ります）")
     if hint:
+        # **名指しを外した回と、`eta.py` 自身が「外せ」と言った回は別ものです**
+        #     （2026-08-26・最適化の回）。
+        #
+        #     `eta.py` は、名指しした腕の測定がもう予約済みのとき、こう印字します:
+        #
+        #     > **その `per_video` の測定は、予約済みの本が 2026-08-31 に答えます**
+        #     > → **この回は別の腕を引くこと。** `--lever` が `per_video` でなくても、
+        #     >   この回は「名指しを外した」ではありません
+        #
+        #     `run_marker.py` はそれを `lever_hint_covered` として**その回の行に
+        #     残しています**。ところがここは `lever == hint` だけを数えていて、
+        #     **その欄を1度も読んでいませんでした。**
+        #
+        #     外れる向きが悪いほうです —— 読まないと「名指しに従った回 21%」と出て、
+        #     読んだ回が「instrument を8割 無視している」と受け取ります。
+        #     **そして直し方は「per_video の回を増やす」になります** ——
+        #     `eta.py` が「その腕はもう測定中だから別を引け」と言っている、
+        #     まさにその腕を。**この repo が何度も踏んでいる「同じことを2か所が
+        #     別々に言っていて、片方しか読まれていない」の、また1件**です。
+        covered = [r for r in runs if r.get("lever_hint_covered")]
+        judged = [r for r in runs if not r.get("lever_hint_covered")]
         follow = sum(1 for r in runs if r["lever"] == hint)
         out.append(f"  → 名指し **`{hint}`** に従った回: **{follow}/{len(runs)}**"
                    f"（{follow / len(runs) * 100:.0f}%）")
+        if covered:
+            when = sorted({str(r.get("lever_hint_covered")) for r in covered})
+            f2 = sum(1 for r in judged if r["lever"] == hint)
+            out.append(
+                f"      うち **{len(covered)}回** は、`eta.py` 自身が"
+                f"**「この回は別の腕を引くこと」**と言っていた回です"
+                f"（名指しの測定が {'／'.join(when)} に予約済み）。"
+                f"**外した回には数えないこと。**")
+            if judged:
+                out.append(f"      それを除くと: **{f2}/{len(judged)}**"
+                           f"（{f2 / len(judged) * 100:.0f}%）"
+                           f" ← **こちらが「名指しに従ったか」の数**です")
+            else:
+                out.append("      **除くと1回も残りません** ——"
+                           "この窓は、名指しの腕がずっと測定中でした。"
+                           "**従いようがない窓を、従わなかった窓と読まないこと。**")
     if n_dead:
         out.append("      **止めてはいません。** 天井は未判定の前提に乗ることがあり、"
                    "そのときは引き代のほうが後から出ます。")

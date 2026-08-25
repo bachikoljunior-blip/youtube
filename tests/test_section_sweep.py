@@ -16,6 +16,7 @@
 """
 from __future__ import annotations
 
+import copy
 import sys
 from decimal import Decimal
 from fractions import Fraction
@@ -26,6 +27,36 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src import section_sweep as ss  # noqa: E402
+
+
+# ---- 実物の全掃引は、この検査の中で **1回だけ** 走らせる（2026-08-26）--------
+#
+# **この1ファイルだけで 685秒 かかっており、全体の `pytest` が
+# 何日も「時間切れで通していません」と申し送られ続けていました**
+# （`docs/JOURNAL.md` 2026-08-26 03:5x / 04:3x の申し送り 6・7。
+#  `retro.py` の持ち越しにも `pytest` と `test_section_sweep.py` が2回ずつ）。
+#
+# 実測（`--durations=12`）: 遅い12件が **全部 `ss.sweep_all()` を丸ごと1回ずつ**
+# 呼んでおり、合計 608秒 ＝ **ファイル全体の 89%** でした。
+# `sweep_all()` は 1回 46〜48秒、**引数が同じなら結果も同じ**
+# （実測: 2回続けて呼んで `==` が真・候補1,236件）。
+# つまり 11回ぶんは、**同じ計算をやり直しているだけ**です。
+#
+# **検査の中身は1つも変えていません。** 変えたのは「何回 計算するか」だけ。
+# 呼び出し側には毎回コピーを渡すので、どれかが手を入れても次に響きません。
+#
+# **`monkeypatch` で表を壊してから掃く検査（`test_壊れた表があっても全体は止まらない`）
+# だけは、ここを通さず `ss.sweep_all()` を直に呼ぶこと。** 壊した結果を
+# ここに載せると、後続の検査がその壊れた一覧を読みます。
+_SWEEP_CACHE: dict[tuple[str, ...] | None, list[dict]] = {}
+
+
+def sweep_once(names: list[str] | None = None) -> list[dict]:
+    """同じ引数の `ss.sweep_all()` を、この session で1回に畳む。"""
+    key = tuple(names) if names is not None else None
+    if key not in _SWEEP_CACHE:
+        _SWEEP_CACHE[key] = ss.sweep_all() if names is None else ss.sweep_all(names)
+    return copy.deepcopy(_SWEEP_CACHE[key])
 
 
 # ---- 形を見分ける ------------------------------------------------------
@@ -113,7 +144,7 @@ def test_この回で足した表から候補が出る():
 
 
 def test_全部の表を掃引しても落ちない():
-    hits = ss.sweep_all()
+    hits = sweep_once()
     assert len(hits) >= 20, f"候補が {len(hits)}件。row モードが効いていない疑い"
     assert not [h for h in hits if h["形"] == "読めない"], \
         [h for h in hits if h["形"] == "読めない"]
@@ -121,7 +152,7 @@ def test_全部の表を掃引しても落ちない():
 
 def test_行モードが表の中の形を拾う():
     """引数を動かす掃引だけだと、`list` を返す表が丸ごと落ちます。"""
-    from_rows = [h for h in ss.sweep_all() if h["動かした引数"] == "（表の行）"]
+    from_rows = [h for h in sweep_once() if h["動かした引数"] == "（表の行）"]
     assert len(from_rows) >= 10, f"行モードの候補が {len(from_rows)}件"
 
 
@@ -200,7 +231,7 @@ def test_文字の見出しがあるほうを優先する():
 
 
 def test_実物に同語反復が1件も残っていない():
-    for h in ss.sweep_all():
+    for h in sweep_once():
         if h["動かした引数"] != "（表の行）":
             continue
         d = h["詳しく"]
@@ -268,7 +299,7 @@ def test_途中の行だけ単位がちがう欄は比べない():
 
 def test_文字列を足しても表が1本も落ちていない():
     """**片方だけ直すと、`float()` が投げて表ごと消えます**（この回に踏んだ）。"""
-    hits = ss.sweep_all()
+    hits = sweep_once()
     unreadable = [h for h in hits if h["形"] == "読めない"]
     assert not unreadable, unreadable
 
@@ -365,7 +396,7 @@ def test_実物で_ideco_は既定値の無い引数を埋めてから掃引さ�
     import topic_forge as tf
 
     all_sections, _, _ = tf.survey()
-    total, novel = ss.novel_counts(ss.sweep_all(["ideco"]), all_sections)
+    total, novel = ss.novel_counts(sweep_once(["ideco"]), all_sections)
     assert total["ideco"] > 3, total
     assert 0 < novel["ideco"] < total["ideco"], (total, novel)
 
@@ -377,7 +408,7 @@ def test_実物で_新しい候補が全部は消えていない():
     import topic_forge as tf
 
     all_sections, _, _ = tf.survey()
-    total, novel = ss.novel_counts(ss.sweep_all(), all_sections)
+    total, novel = ss.novel_counts(sweep_once(), all_sections)
     assert sum(novel.values()) > 0, novel
     assert sum(novel.values()) < sum(total.values()), (total, novel)
 
@@ -439,7 +470,7 @@ def test_片効き_は不変を消さない():
 
 def test_片効き_が実物の表から出る():
     """**実データでの回帰。** 手で作った例だけだと、実装が変わったとき黙ります。"""
-    hits = [h for h in ss.sweep_all() if h["形"] == "片効き"]
+    hits = [h for h in sweep_once() if h["形"] == "片効き"]
     assert hits, "実物の表から1件も出ていません"
     for h in hits:
         assert h["詳しく"]["動く"] and h["詳しく"]["動かない"]
@@ -472,7 +503,7 @@ def test_実物の片効きが全部新しいと出ていたら疑うこと():
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
     import topic_forge
 
-    hits = [h for h in ss.sweep_all() if h["形"] == "片効き"]
+    hits = [h for h in sweep_once() if h["形"] == "片効き"]
     if not hits:
         return
     alls, _free, _known = topic_forge.survey()
@@ -804,7 +835,7 @@ def test_どの形も既出の判定に材料を渡している():
     個別に1件ずつ足すのをやめ、**全部の形について**見ます。
     """
     seen: dict[str, int] = {}
-    for hit in ss.sweep_all():
+    for hit in sweep_once():
         shape = hit["形"]
         seen[shape] = seen.get(shape, 0) + 1
         assert ss._hit_points(hit) or ss._hit_outcome(hit) is not None, \
@@ -831,7 +862,7 @@ def test_status_の内訳が形を1つも落としていない():
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
     import status as st  # noqa: E402
 
-    hits = ss.sweep_all()
+    hits = sweep_once()
     buf = io.StringIO()
     with contextlib.redirect_stdout(buf):
         st._print_sweep_hint(hits)
@@ -974,7 +1005,7 @@ def test_実物の段階表が既出のまま残ること():
     **見出しを長くした表だけ**を上位へ上げます。
     """
     from src.calc import shitsugyo
-    hits = [h for h in ss.sweep_all() if h.get("表") == "shitsugyo"]
+    hits = [h for h in sweep_once() if h.get("表") == "shitsugyo"]
     assert hits, "shitsugyo の候補が拾えていない"
     covered = ss._covered_map(hits)
     assert covered, "節が読めていない（読めない回はこの検査が空を通してしまう）"
@@ -992,7 +1023,7 @@ def test_詳しくの欄は全部_x_か_y_のどちらかに宣言されてい�
     """
     known = set(ss.X_KEYS) | set(ss.Y_KEYS)
     unknown: dict[str, set[str]] = {}
-    for hit in ss.sweep_all():
+    for hit in sweep_once():
         for k in (hit.get("詳しく") or {}):
             if k not in known:
                 unknown.setdefault(hit["形"], set()).add(k)
@@ -1580,3 +1611,43 @@ def test_判定できなかった件数は一覧の頭に出る():
         pytest.skip("節が読めないので既出の印そのものが出ない")
     assert "判定できていません" in head
     assert "[未]" in head
+
+
+# ---- 畳んだことが、次に戻されないための門（2026-08-26）--------------------
+
+def test_実物の全掃引を直に呼ぶ検査は_壊れた表の1件だけ():
+    """**`ss.sweep_all()` の直呼びを増やすと、この1ファイルが分単位で伸びます。**
+
+    1回 46〜48秒。ここが 11回に増えていたせいで、このファイルだけで 685秒 かかり、
+    **全体の `pytest` が「時間切れで通していません」と何日も申し送られていました**
+    （`retro.py` の持ち越しに `pytest` と `test_section_sweep.py` が2回ずつ）。
+    畳んだ後（`sweep_once`）に誰かが直呼びを書き足しても、
+    **検査は緑のまま通ってしまう** —— 遅くなるだけだからです。
+    **だから遅さのほうを検査にします。**
+
+    足すときは `sweep_once()` を使うこと。**それでは駄目な検査**
+    （表を壊してから掃く、など）だけ、下の名前に足して直呼びしてよい。
+
+    **数えるのは構文木です**（`ast`）。文字列や註釈に名前が出るだけでは数えません ——
+    最初に書いた版は自分の説明文を数えて落ちました。
+    """
+    import ast
+
+    直呼びしてよい = {"test_壊れた表があっても全体は止まらない"}
+    木 = ast.parse(Path(__file__).read_text(encoding="utf-8"))
+
+    いま: set[str] = set()
+    for 節 in ast.walk(木):
+        if not isinstance(節, ast.FunctionDef) or not 節.name.startswith("test_"):
+            continue
+        for 中 in ast.walk(節):
+            if (isinstance(中, ast.Call)
+                    and isinstance(中.func, ast.Attribute)
+                    and 中.func.attr == "sweep_all"):
+                いま.add(節.name)
+
+    assert いま == 直呼びしてよい, (
+        f"`ss.sweep_all()` を直に呼んでいる検査: {sorted(いま)}。"
+        f"許しているのは {sorted(直呼びしてよい)} だけです —— "
+        "1回 46〜48秒 かかるので `sweep_once()` に替えること"
+    )
