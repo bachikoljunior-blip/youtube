@@ -171,7 +171,22 @@ RENDERED = ROOT / "docs" / "spawn_prompt.rendered.md"
 # 条件を落とす」（8/10）の入口**です。だから **1ファイル取って、2か所だけ
 # 埋めて貼る**形にします。埋めるのは、repo からは絶対に求まらない2つだけ。
 _NOTE_SLOT = "<<オーナーの言葉を、ここに原文のまま。要約しない。数字は桁もそのまま>>"
-_SIBS_SLOT = "<<いま走っている子の識別子。いなければこの行ごと消す>>"
+
+# **差し込み口は1つだけにします**（2026-08-25 に減らした）。
+#
+# それまで siblings 側にも `<<いま走っている子の識別子。いなければこの行ごと消す>>`
+# を置いていました。ところが親の手順は「`prompt` を **1字も変えずに**渡す」です。
+# **両方を守ると、サブはプレースホルダの文字列を、走っている相手の名前として
+# 受け取ります。** `_siblings_block()` は「**いないと明記してある**ことに意味がある」
+# （調べていないだけと区別できない）ために作った段なので、
+# **逐語コピーの規則が、その段の意味をちょうど壊していました。**
+#
+# だから写しでは **`siblings=[]`（「いません」と書いてある側）を既定**にします。
+# 走っている相手を親が知っている回だけ、その1文を差し替えること。
+#
+# **覆る条件**: 親が走っているサブを承認なしで数えられるようになったら
+# （`ListAgents` が前の親のサブまで見えるなら）、写しではなく `next_round.py` に
+# 数えさせて埋めること。**親に暗算させないこと**が、この節の要点です。
 
 
 def write_rendered(root: Path = ROOT) -> Path:
@@ -181,13 +196,15 @@ def write_rendered(root: Path = ROOT) -> Path:
              "**この写しは `scripts/spawn_prompt.py --write-rendered` が作ります。"
              "手で直さないこと** —— 直すのは `docs/spawn_prompt.md` の型のほうです。",
              "",
-             f"埋めるのは2か所だけ: `{_NOTE_SLOT}` と `{_SIBS_SLOT}`。",
+             f"差し込み口は `owner-*` の1つだけ: `{_NOTE_SLOT}`。",
+             "**`hourly` / `optimizer` は差し込み口がありません。"
+             "1字も変えずにそのまま渡せます。**",
              "**それ以外は1字も変えないこと**（`source_url` を落とすと、"
              "repo の無い子が立ちます。8/17・8/18 に2回）。",
              ""]
     for kind in KINDS:
         note = _NOTE_SLOT if kind.startswith("owner") else ""
-        args = create_session_args(kind, note=note, siblings=[_SIBS_SLOT], only="",
+        args = create_session_args(kind, note=note, siblings=[], only="",
                                    root=root)
         parts += [f"## kind: {kind}", "", "```json",
                   json.dumps(args, ensure_ascii=False, indent=2), "```", ""]
