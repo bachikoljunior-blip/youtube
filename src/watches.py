@@ -335,6 +335,30 @@ def _k_scored_pairs(p: dict) -> Gauge:
                  f"{p.get('min_views', 30)}再生以上で突き合わせ可能")
 
 
+def _ab_group_from_sources(name: str) -> Gauge:
+    """`src/judgeable.SOURCES` の群が、**落ち着いた本**で床に届いたか。
+
+    `Floor.groups` は公開日の一覧なので、**落ち着いた本 ＝ 今日から
+    `SETTLE_DAYS + ANALYTICS_LAG_DAYS` 引いた日までに公開した本**です。
+    **遅れを引かないと、報告されていない本を数えます。**
+    """
+    from datetime import timedelta
+
+    from src import ab_split, judgeable
+
+    src = judgeable.SOURCES.get(name)
+    if src is None:
+        return Gauge(0, 1.0, "本", err=f"{name}: `src/judgeable.SOURCES` にありません")
+    make, need = src
+    cutoff = (datetime.now(JST).date()
+              - timedelta(days=ab_split.SETTLE_DAYS + judgeable.ANALYTICS_LAG_DAYS))
+    ready = {g: sum(1 for d in days if d <= cutoff) for g, days in make().items()}
+    if not ready:
+        return Gauge(0, float(need), "本", err=f"{name}: 群が1つも立っていません")
+    note = " / ".join(f"{g} {n}本" for g, n in sorted(ready.items()))
+    return Gauge(min(ready.values()), float(need), "本", note)
+
+
 def _k_ab_group(p: dict) -> Gauge:
     """A/B の**少ないほうの群**が、判定に要る本数に届いたか。
 
@@ -343,7 +367,13 @@ def _k_ab_group(p: dict) -> Gauge:
     """
     from src import ab_split
 
-    exp = ab_split.EXPERIMENTS[p["experiment"]]
+    name = p["experiment"]
+    if name not in ab_split.EXPERIMENTS:
+        # **IDで振り分けない群**（作った時刻で割る・環境変数で割る）は
+        # `src/judgeable.SOURCES` にあります。**群の作り方は1か所だけ**に
+        # 置いてあるので、ここは数えるのではなく訊くこと。
+        return _ab_group_from_sources(name)
+    exp = ab_split.EXPERIMENTS[name]
     counts = ab_split.split_counts(exp)
     ready = counts.treated_ready
     if not ready:
