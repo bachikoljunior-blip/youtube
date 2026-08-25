@@ -9,3 +9,6 @@ __pycache__/
 *.png
 !assets/**/*.png
 .venv/
+
+# サブエージェントの作業コピー（埋め込みリポジトリ。commit すると壊れる）
+.claude/worktrees/
