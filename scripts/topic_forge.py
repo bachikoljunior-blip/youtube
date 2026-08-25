@@ -256,13 +256,13 @@ YouTube ショート（縦・30秒前後）の企画を {n} 件つくります�
 # 「書かせる文」と「id の形」の2つだけ。同じ節から長尺とショートの
 # 両方を作れるわけではありません（節は1件で使い切ります）。
 LONG_PROMPT_HEAD = """\
-YouTube の長尺（横・**8分30秒以上**）の企画を {n} 件つくります。
+YouTube の長尺（横・**{target:g}分前後**）の企画を {n} 件つくります。
 
 **この企画の作りかた（守ること）**
 
 - 制度の解説はしません。**すでに計算済みの表から、自分で出した数字を発表します**
 - 数字を新しく考えないこと。**下に貼った表に無い数字は、1つも書かないこと**
-- **8分30秒を下回ると投稿前の検査が止めます。** 1つの表を最後まで読み切る分量を書くこと
+- **{floor:g}分を下回ると投稿前の検査が止めます。** 1つの表を最後まで読み切る分量を書くこと
 - **前提と計算式は、画面にも説明欄にも全部出します。** 視聴者が追試できることが主題です
 - 「必ずこうなる」と言わないこと。**その前提のときの数字**だと言い切る
 - 特定のウェブサイト・リポジトリ・出典名を出さないこと
@@ -311,8 +311,18 @@ def build_prompt(picked: list[tuple[str, str]], all_sections, topics,
     from src import dupes
 
     seen = "\n".join(f"  - {t['title_seed']}" for t in topics)
-    head_tpl = LONG_PROMPT_HEAD if long_form else PROMPT_HEAD
-    parts = [head_tpl.format(n=len(picked), seen=seen)]
+    if long_form:
+        # **尺は決め打ちにしない**（2026-08-25 に踏んだ。最初の版は「8分30秒以上」と
+        # 書きましたが、実物は 2026-08-09 から **4分**です ——
+        # 「通っていない門（ミッドロール広告の8分）のための制約だった」と
+        # `config/channel.yaml` に理由ごと書いてあります）。
+        # **決め打ちは、覆った側の判断を静かに巻き戻します。**
+        vid = config.load_channel()["video"]
+        parts = [LONG_PROMPT_HEAD.format(
+            n=len(picked), seen=seen,
+            floor=float(vid["min_minutes"]), target=float(vid["target_minutes"]))]
+    else:
+        parts = [PROMPT_HEAD.format(n=len(picked), seen=seen)]
     used = dupes.used_amounts({t["id"]: t.get("calc", "") for t in topics})
     for i, (mod, head) in enumerate(picked, 1):
         body = all_sections[mod][head]
