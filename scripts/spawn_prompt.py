@@ -90,11 +90,47 @@ AUTHORITY = """
 **それ以外に聖域はありません。**"""
 
 
+#: **「同じ枝」がどれかを、受け取った側が自分で見つけられるようにする段。**（2026-08-25）
+#
+# `_siblings_block` は「同じ枝で走っています」と書きますが、**その枝の名前は
+# どこにも入っていませんでした。** サブは毎回 `main` から切った worktree で
+# 始まるのに、`main` は **2026-08-08 で止まっています**（8/25 の実測）。
+# 受け取った側の手元には `scripts/drift.py` も `scripts/eta.py` も無く、
+# **幹を自分で探し当てて merge するところから**始まります。
+# 8/25 の最適化の回はここで最初の10分を使いました。**毎回 掛かる税です。**
+#
+# **本当の直しは `main` を進めることです。** ただし幹の `CLAUDE.md` は
+# `note` の `propagate_directive.py` が配る恒久指示の枠を**外した**版で、
+# `main` にはその枠が入っています（`4114f7b`）。**merge すると必ずここで衝突し、
+# サブエージェントは `CLAUDE.md` を書き換えられません**（分類器が止めます。
+# 8/25 に `checkout --theirs` / `add` / `merge -X theirs` / `reset --hard` の
+# 4つとも拒否されました）。**だから、まず手順の側で塞ぎます。**
+TRUNK = """
+
+**幹は `origin/main` ではありません。** あなたの worktree は `main` から切られますが、
+`main` は **2026-08-08 で止まっています**（8/25 の実測。17日ぶん古い）。
+**何かを読む前に、幹を取り込むこと**:
+
+    git fetch --all --prune
+    git branch -r --sort=-committerdate      ← いちばん新しい `worktree-agent-*` が幹
+    git merge origin/<その枝>
+
+**飛ばすと、17日前のファイルに対して作業します** —— `scripts/eta.py` も
+`scripts/drift.py` も `docs/trigger_main.md` も**存在しない**状態から始まります。
+**`CLAUDE.md` で衝突したら、幹の版を採ること**（幹の冒頭に理由が書いてあります）。
+**サブエージェントは `CLAUDE.md` を書き換えられません** —— 衝突したまま進めて構いません。
+その1ファイルは触らず、変えたファイルだけを push すること。
+"""
+
+
 def _siblings_block(siblings: list[str]) -> str:
     """**同じ枝で走っている相手を名指しする段。**
 
     空でも段を落としません —— 「いない」と書いてあることに意味があります
     （書いていないと、受け取った子は「調べていないだけ」と区別できません）。
+
+    **`TRUNK` を必ず添えること**（2026-08-25）。ここは「同じ枝」と言いながら
+    **枝の名前を1度も出していませんでした。**
     """
     if not siblings:
         head = ("**同じ枝で他に走っている相手は、立てた時点ではいません。**\n"
@@ -106,7 +142,7 @@ def _siblings_block(siblings: list[str]) -> str:
                 "**あなたの担当は、上のどれとも別のファイルのはずです。**\n"
                 "push 前に必ず `git fetch`。競合したら merge で"
                 "**相手の作業を残すこと。捨てないこと。**")
-    return head + AUTHORITY
+    return head + TRUNK + AUTHORITY
 
 
 def build(kind: str, note: str = "", siblings: list[str] | None = None,
