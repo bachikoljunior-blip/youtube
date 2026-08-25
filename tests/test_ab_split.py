@@ -393,8 +393,32 @@ def test_実物で処置群は門に足りていない() -> None:
     before, after = landed_groups(landed)
     if not before and not after:
         pytest.skip("作った記録がありません")
-    assert len(after) < MIN_PER_GROUP, (
-        f"処置群が {len(after)}本 ＝ 門 {MIN_PER_GROUP} に達しました。"
+
+    # **数えるのは「作った本」ではなく「判定に使える本」**（2026-08-25 に直した）。
+    #
+    # ここは長らく `len(after)` を `MIN_PER_GROUP` に当てていました。
+    # **`landed_groups` は作った時刻でしか割っていません** ——
+    # 公開されたかどうかも、落ち着いたかどうかも見ていない。
+    # 一方 `MIN_PER_GROUP` は `split_counts.treated_ready`（＝ `SETTLE_DAYS` 日前
+    # までに公開した本）に当てる門です。**別の量を門に当てていました。**
+    #
+    # 実測（2026-08-25 11:5x）: 処置群は 13 → **17本**になり、この検査が落ちて
+    # 「判定に入ってよい合図」を出しました。**増えた4本は、その日に作って
+    # 08/30〜09/05 に予約した未公開の本**（`s-furusato-fuyou-8272` ほか）で、
+    # **1本も判定に使えません。** 合図は偽でした。
+    #
+    # **群の分母が条件と食い違う形は、これで5件目です**
+    # （8/19・8/23・8/25 に3件、`published()` の二重計上で4件目）。
+    # **門に当てる量は、門の定義に出てくる量そのものにすること。**
+    today = datetime.now(ab_split.JST).date()
+    settled_by = today - timedelta(days=SETTLE_DAYS)
+    pub_of = {str(r.get("topic") or ""): r.get("publish") for r in published()}
+    ready = [t for t in after
+             if pub_of.get(t) is not None and pub_of[t] <= settled_by]
+
+    assert len(ready) < MIN_PER_GROUP, (
+        f"処置群の**判定に使える本**が {len(ready)}本 ＝ 門 {MIN_PER_GROUP} に達しました"
+        f"（作っただけの本を含めると {len(after)}本）。"
         "**判定に入ってよい合図です** —— hypotheses.yaml の 09/05 を判定し、"
         "この検査を消すこと"
     )
