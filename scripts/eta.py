@@ -2998,7 +2998,9 @@ def _planned_lines(bar: str, tr: dict | None, base: dict | None) -> list[str]:
         lines.append(f"{bar} **その差 {abs(diff):,.0f}日 は、"
                      "「次の前提をどの腕に立てるか」で動きます** ——"
                      " 台帳を書き換えれば配分は変わります"
-                     "（`config/hypotheses.yaml` の `lever`）")
+                     "（`config/hypotheses.yaml` の `lever`）。"
+                     " **どの腕が早いかは `python scripts/eta.py --alloc`**"
+                     "（API 0単位・約80秒。毎回は撃たない）")
     un = meta.get("unassigned") or 0
     if un:
         lines.append(f"{bar} [!] **腕の名前が無い開いた前提が {un}件**"
@@ -4391,6 +4393,83 @@ def _reflect_recap(limit: int = 3) -> list[str]:
     return out
 
 
+def alloc_search() -> int:
+    """**次の前提をどの腕に立てるのが、いちばん早いか。**（2026-08-26・最適化の回）
+
+    ## なぜ別の口にしたか（毎回は撃たない）
+
+    軌跡は1本ごとに **15〜20秒** かかります。頭の3行では
+    「過去の配分」と「台帳の配分」の**2本だけ**を解いて差を出しています。
+    ここは**そこからさらに腕べつ**に解くので、本数ぶん時間が増えます
+    （腕4つ ＝ 60〜80秒）。**周は約10分に1回**回るので、毎回は撃ちません。
+
+    ## 何を解いているか
+
+    台帳（`config/hypotheses.yaml` の開いた前提）の配分に、
+    **前提を1件だけ足したら**どうなるかを腕ごとに解きます。
+    これは「次に立てる1件」そのものなので、**この回に実際にできる手**です。
+
+    実測 2026-08-26 —— 過去の配分 2026-12-28 に対し、台帳の配分は
+    **2027-01-13（+17日）**でした。`share` は**閉じた前提の割合 ＝ 過去の写し**で、
+    未来を決めているのは開いた前提のほうなので、
+    **上の日付は台帳が用意していない世界のもの**です。
+
+    **API は0単位です**（積んである最後の点で解き直すだけ）。
+    """
+    points = _points()
+    if not points:
+        print("[eta] 積んだ点がありません。**まず `python scripts/eta.py` を撃つこと。**")
+        return 1
+    m = dict({k: v for k, v in points[-1].items()
+              if k not in _REFLECT_IGNORE or k == "at"})
+    a = analyse(m, points)
+    m["per_video_now"] = a["per_video_now"]
+    sup = supply_state()
+    arms = _capped_arms(a, supply=sup)
+    kw = dict(supply=sup, points=points, today=today_jst())
+
+    pln = arm_speed.planned()
+    past = {k: (v.get("share") or 0.0) for k, v in arms.items()}
+    print("=== 次の前提を、どの腕に立てるのがいちばん早いか ===")
+    print("  **API は0単位**（積んである最後の点で解き直すだけ）。1本 15〜20秒。")
+
+    def _solve(share: dict[str, float], label: str) -> float:
+        t = trajectory(m, a, arms=_realloc_arms(arms, share), **kw)
+        d = t["date"].isoformat() if t["date"] else "出ません"
+        print(f"  {label:36s} {d}  ({_share_str(share)})", flush=True)
+        return t["days"]
+
+    base_days = _solve(past, "過去の配分（＝頭の3行の日付）")
+    if not pln.get("n"):
+        print("  [!] 台帳に腕の付いた開いた前提がありません。**比べる相手がいません。**")
+        return 1
+    now_days = _solve(pln["share"], "台帳の配分（いま開いている前提）")
+    print(f"  → その差 **{now_days - base_days:+,.0f}日**"
+          "（上の日付は、台帳が用意していない配分で解かれています）")
+
+    # **「次の1件」は、いまの分母に1を足した配分です。** 分母が14件なら
+    #     1件は 7pt —— **この回に実際にできる手の大きさ**そのもの。
+    n = pln["n"]
+    best = (now_days, "そのまま（足さない）")
+    print(f"\n  --- そこへ **前提を1件** 足したら（いま {n}件 ＝ 1件は {1 / (n + 1):.0%}）---")
+    for lever in arm_speed.ARMS:
+        share = {k: (pln["share"].get(k, 0.0) * n + (1 if k == lever else 0)) / (n + 1)
+                 for k in arm_speed.ARMS}
+        d = _solve(share, f"次の1件を `{lever}` に")
+        if d < best[0]:
+            best = (d, lever)
+    # **符号は「早い／遅い」の字で出すこと。** `+6日` は
+    #     「6日 早い」とも「6日 遠のく」とも読めます —— この道具の頭の3行は
+    #     `+17日` を「遠のく」の意味で使っているので、混ぜると逆に読まれます。
+    gap = now_days - best[0]
+    print(f"\n  **いちばん早いのは `{best[1]}`**"
+          + (f"（そのままより **{gap:,.0f}日 早い**）" if gap >= 1
+             else "（そのままと同じ。**どの腕に立てても日付は動きません**）"))
+    print("  立てるときは `config/hypotheses.yaml` に `lever:` を**その腕で**書くこと ——"
+          " 空欄だと `arm_speed.closed()` が閉じたときに行ごと飛ばします。")
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="月20万に届く日を予測して積む")
     ap.add_argument("--no-record", action="store_true", help="data/eta.jsonl に積まない")
@@ -4400,7 +4479,14 @@ def main() -> int:
     ap.add_argument("--reflect", action="store_true",
                     help="周の終わり: この回で動いた入力を予測へ入れ直し、日付の前後差を残す")
     ap.add_argument("--note", metavar="1行", help="--reflect に添える1行（何を入れ直したか）")
+    # **毎回は撃ちません**（軌跡1本 15〜20秒 × 腕4つ）。頭の3行が
+    # 「過去の配分」と「台帳の配分」の差を出すので、**その差が気になった回だけ。**
+    ap.add_argument("--alloc", action="store_true",
+                    help="次の前提をどの腕に立てるのが早いか、腕べつに解く（API 0単位・約80秒）")
     args = ap.parse_args()
+
+    if args.alloc:
+        return alloc_search()
 
     if args.reflect:
         return reflect(args.note, record=not args.no_record)[0]
