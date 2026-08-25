@@ -68,7 +68,7 @@ watches:
       形式の側で残っている未検証は 09/05「冒頭0.9秒に絵の動きを入れる」＝下の待ち。
 
   - id: 実データ-8/23以降の3本
-    what: 冒頭0.9秒の動き（期限 09/05）と「前提を先・数字を後」（期限 09/05）の判定
+    what: 冒頭0.9秒の動き（期限 09/13）と「前提を先・数字を後」（期限 09/14）の判定
     cond: 8/23 以降の公開が3本（＝母集団の上限）、かつその日の実データが届いている
     then: python scripts/status.py の engaged と `src/ab_split.py` で群を割って比べる
     source: config/hypotheses.yaml
@@ -76,6 +76,49 @@ watches:
     since: '2026-08-23'
     need: 3
     data_ready: true
+    answered: >-
+      2026-08-26 に閉じる。**判定したからではありません。この待ちは、
+      判定できるかどうかを別のもので数えていました。**
+
+      条件は `published_count since 8/23 need 3` で、実測は **13本**。
+      **満ちています。** ところがこの2件を判定するのに要るのは
+      「8/23 以降に何本 公開したか」ではありません:
+
+        opening_motion  共有日 × 再生の付く枠で、対照・動きあり **各8本**
+                        実測 **対照3本 / 動きあり5本**（`python -m src.motion_groups`）
+        stat_split      処置(後) **16本**（`src/ab_split.MIN_PER_GROUP`）
+                        実測 **13本**（`python scripts/live_slots.py`）
+
+      **どちらも足りていません。** つまりこの待ちは、**満ちるはずのない門について
+      毎回「満ちました」と鳴り**、`stop_check.sh` が毎回そこで引き止めていました。
+      `then:` が名指しする `src/ab_split.py` も、`title_form` と `hook_form` しか
+      出しません（この2件は `src/judgeable.SOURCES` の側にあります）。
+
+      **正しい計器は既にあります。** `stat_split` は下の
+      `冒頭のstatの割り方-両群16本`（`kind: ab_group`）が持っていました。
+      **`opening_motion` だけ待ちが無かった**ので、同じ形で新しく足しました
+      （下の `冒頭0.9秒の動き-両群8本`）。**数え方は1か所のまま**
+      （`src/judgeable.SOURCES["opening_motion"]`）で、ここは訊くだけです。
+
+      **消していません。** 期限の日付だけ実物に合わせました（09/05 → 09/13・09/14。
+      `config/hypotheses.yaml` の `deadline` がその後2回動いています）。
+
+  - id: 冒頭0.9秒の動き-両群8本
+    what: 「冒頭0.9秒に絵の動きを入れると engaged が上がる」の判定（期限 2026-09-13）
+    cond: 対照(動きなし)・処置(動きあり)のどちらの群も、落ち着いた本が8本
+    then: python -m src.motion_groups
+    source: src/judgeable.py
+    kind: ab_group
+    experiment: opening_motion
+    # **上の `実データ-8/23以降の3本` の置き換えです**（2026-08-26）。
+    # あちらは「8/23 以降の公開が3本」を数えており、**満ちるはずのない門について
+    # 毎回「満ちました」と鳴っていました。** 群は公開日では割れません ——
+    # 割るのは**作ったときの `YT_OPENING_MOTION` の値**で、
+    # そのうえで**共有日**（両群が同じ JST 日に居る日）に絞り、さらに
+    # `day_cap.live_ids` で**再生の付く枠**に絞ります。
+    # 数え方は `src/judgeable.SOURCES["opening_motion"]` の1か所だけ。
+    # **8本** は `config/hypotheses.yaml` の `falsified_if`
+    #（「対照 8本以上・動きあり 8本以上」）から来ています。**緩めないこと。**
 
   - id: 予約30分きざみ-3日
     what: 「1時間より詰めても1本あたりの再生は落ちない」の判定（期限 2026-09-05）
