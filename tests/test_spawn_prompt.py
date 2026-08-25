@@ -266,3 +266,41 @@ def test_枝の名前が本文に入る() -> None:
         text = sp.build(kind)
         assert "<<branch>>" not in text, f"{kind}: 差し込み口が残っています"
         assert f"git merge origin/{branch}" in text, kind
+
+
+def test_最初の1手は_どの役でも本文の頭のほうに出る():
+    """**「最初の1手」と名乗るものが本文の最後に出ていたら、名前が嘘です**（2026-08-26）。
+
+    この日、枝を合わせる段を1か所へまとめるとき、**まとめ先を
+    `_siblings_block()`（＝本文のいちばん下）にしました。** 文言は1つになりましたが、
+    「最初の1手」が **58行の本文の 31行目**、`optimizer` では **142行中 99行目**に
+    出るようになりました。**受け取る側は上から読みます。**
+
+    だから **文言は1か所（`FIRST_MOVE`）・位置は型の側（`<<first_move>>`）** に分けました。
+    ここはその位置を縛ります。
+    """
+    for kind in sp.KINDS:
+        text = sp.build(kind, note="（原文）")
+        lines = text.splitlines()
+        at = [i for i, ln in enumerate(lines) if "最初の1手" in ln]
+        assert at, f"{kind}: 「最初の1手」の段がありません"
+        assert at[0] <= max(14, len(lines) // 5), (
+            f"{kind}: 「最初の1手」が {at[0]}行目（全 {len(lines)}行）。"
+            "**上から読む相手に、最初の1手を最後に見せないこと。**"
+            "位置は型の `<<first_move>>` で決めます"
+        )
+
+
+def test_どの役にも差し込み口が残らない():
+    """`test_逐語で渡す役には…` は `hourly` / `optimizer` だけを見ています。
+
+    **`<<first_move>>` は4つの型 全部に入った**ので、`owner-*` も見ます。
+    段まるごと差し込む口（`<<lead>>`）の中に置いた差し込み口は、
+    **行ごとの置換を通りません** —— 2026-08-26 に、まさにそれで
+    `<<first_move>>` の6文字が本文に残りました。
+    """
+    import re as _re
+    for kind in sp.KINDS:
+        text = sp.build(kind, note="（原文）")
+        left = _re.findall(r"<<[^>]*>>", text)
+        assert not left, f"{kind}: 埋まっていない差し込み口 {left}"
