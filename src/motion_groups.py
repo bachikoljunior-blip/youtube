@@ -39,6 +39,8 @@ UPLOADED = ROOT / "data" / "uploaded.jsonl"
 JST = timezone(timedelta(hours=9))
 #: 各群に要る本数（`config/hypotheses.yaml` の 09/05 の前提。**共有日だけで数える**）。
 BAR = 8
+#: **1日に配信される本数**（`src/day_cap.py` の実測。11本目から先は 0〜3再生）。
+PER_DAY = 10
 
 
 def motion_by_topic(runs: Path = RUNS, flags: Path | None = None) -> dict[str, bool]:
@@ -267,7 +269,7 @@ def free_slot(day: str, at: dict[str, str], *,
 
 def retime_plan(off: list[str], on: list[str],
                 at: dict[str, str] | None = None,
-                bar: int = BAR) -> list[tuple[str, str, str]]:
+                bar: int = BAR, per_day: int = PER_DAY) -> list[tuple[str, str, str]]:
     """共有日の標本を門まで持ち上げる、**いちばん本数の少ない動かし方**を出す。
 
     返すのは `(video_id, いまの JST 日, 送り先の JST 日)` の並び。
@@ -278,9 +280,21 @@ def retime_plan(off: list[str], on: list[str],
     送り先は「**相手だけが居る日のうち、その本にいちばん近い日**」——
     そこへ1本入れれば、その日はまるごと共有日に変わり、
     **相手のその日のぶんも一緒に標本へ入ります**（いちばん効率が良い）。
+
+    ## **満杯の日へ送らないこと**（`per_day`）
+
+    1日に配信されるのは **10本ちょうど**です（`src/day_cap.py`。08/20〜08/22 の3日とも
+    一致し、08/21 は挟まれた7本が死んでいる）。**11本目から先は 0〜3再生**なので、
+    満杯の日へ1本足すと、**その本は「動きが無かったから伸びなかった」ではなく
+    「その日の11本目だったから伸びなかった」**ことになります。
+    **群を揃えるために動かして、動かした本を殺す**——本末転倒なので、ここで弾きます。
+    数えるのは A/B の本だけでなく**その日の予約すべて**です（長尺も配信の枠を取ります）。
     """
     at = scheduled_at() if at is None else at
     days = by_day(off, on, at)
+    #: JST の日 → その日の予約の本数（**A/B 以外も全部**）
+    load: dict[str, int] = collections.Counter(
+        d for d in (jst_day(v) for v in at.values()) if d)
     plan: list[tuple[str, str, str]] = []
     moved: set[str] = set()
 
@@ -298,9 +312,10 @@ def retime_plan(off: list[str], on: list[str],
         if n_off >= bar and n_on >= bar:
             break
         short = 0 if n_off < bar else 1          # 0=対照が足りない / 1=動きありが足りない
-        # 送り先: **相手だけが居る日**（そこへ1本足すと共有日になる）
+        # 送り先: **相手だけが居る日**（そこへ1本足すと共有日になる）。
+        # **満杯の日は外す** —— 11本目は配信されず、動きのせいで伸びなかったことにされる
         targets = [d for d, pair in days.items()
-                   if pair[1 - short] and not pair[short]]
+                   if pair[1 - short] and not pair[short] and load[d] < per_day]
         # 出し元: **自分だけが居る日**（そこから引いても共有日を壊さない）
         sources = [(d, v) for d, pair in days.items()
                    for v in pair[short]
@@ -318,6 +333,8 @@ def retime_plan(off: list[str], on: list[str],
         gap, t, d, v = best
         days[d][short].remove(v)
         days[t][short].append(v)
+        load[d] -= 1
+        load[t] += 1
         moved.add(v)
         plan.append((v, d, t))
     return plan
