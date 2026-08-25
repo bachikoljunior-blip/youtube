@@ -3002,6 +3002,17 @@ def _planned_lines(bar: str, tr: dict | None, base: dict | None) -> list[str]:
                      "（`config/hypotheses.yaml` の `lever`）。"
                      " **どの腕が早いかは `python scripts/eta.py --alloc`**"
                      "（API 0単位・約80秒。毎回は撃たない）")
+        # **`lever_hint` とは別の問いです**（2026-08-26 に足した理由）。
+        #     `lever_hint` は「**いま どの床が遅いか**」＝ 診断で、
+        #     `--alloc` は「**次の前提をどの腕に立てるか**」＝ 配分の選択。
+        #     頭の3行しか読まない側は、前者を後者だと読みます ——
+        #     実測 2026-08-26: 名指しは `per_video` だが、per_video に1件 足しても
+        #     日付は **0日** しか動かず、`sub_rate` に足すと **6日 早い**。
+        lines.append(f"{bar} **`{'lever_hint'}` は「いまどの床が遅いか」で、"
+                     "「次の前提をどの腕に立てるか」とは別の問いです** ——"
+                     " 到達日を動かすのは後者のほう"
+                     "（`eta.py` 自身が「腕が動くのは前提を1件閉じたときだけ」と"
+                     "この下に印字しています）")
     un = meta.get("unassigned") or 0
     if un:
         lines.append(f"{bar} [!] **腕の名前が無い開いた前提が {un}件**"
@@ -4478,6 +4489,21 @@ def alloc_search() -> int:
     past = {k: (v.get("share") or 0.0) for k, v in arms.items()}
     print("=== 次の前提を、どの腕に立てるのがいちばん早いか ===")
     print("  **API は0単位**（積んである最後の点で解き直すだけ）。1本 15〜20秒。")
+    # --- **どの腕の数が「その腕の実測」で、どれが代用か**（2026-08-26 に足した） ---
+    #     `arm_speed.arm()` は、その腕で閉じた前提が `MIN_N`（=3）に満たないと
+    #     **全体の当たり確率と伸び幅で代用**します。代用の腕どうしは
+    #     `focus_rate` が同じ値になるので、**下の順位は「天井の遠さ」だけで
+    #     決まっている**ことがあります。**黙って埋めると、薄い腕ほど自信ありげに見えます。**
+    #     実測 2026-08-26: 自前は `per_video`（12件）と `density`（5件）だけ。
+    #     `rpm` は1件、`sub_rate` は2件で、**どちらも代用**です。
+    src = []
+    for k in arm_speed.ARMS:
+        v = arms.get(k) or {}
+        src.append(f"{k} {v.get('n', 0)}件"
+                   + ("（**代用**）" if v.get("source") != "自前" else ""))
+    print("  腕べつに閉じた前提: " + " ／ ".join(src)
+          + f"  ← {arm_speed.MIN_N}件 未満は**全体の値で代用**しています"
+          "（代用どうしは速さが同値になるので、順位が天井の遠さだけで決まります）")
 
     def _solve(share: dict[str, float], label: str) -> float:
         t = trajectory(m, a, arms=_realloc_arms(arms, share), **kw)

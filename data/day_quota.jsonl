@@ -2651,3 +2651,10 @@
 {"at": "2026-08-25T23:13:56+00:00", "detail": "channels.list mine"}
 {"at": "2026-08-25T23:13:58+00:00", "detail": "channels.list mine"}
 {"at": "2026-08-25T23:14:52+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-25T23:09:39+00:00", "detail": "scheduled_publish_times"}
+{"at": "2026-08-25T23:09:42+00:00", "detail": "playlistItems.insert"}
+{"at": "2026-08-25T23:09:42+00:00", "detail": "thumbnails.set AFfHrkaAHzk"}
+{"at": "2026-08-25T23:15:49+00:00", "detail": "status: Data API 読み"}
+{"at": "2026-08-25T23:16:14+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-25T23:16:16+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-25T23:17:09+00:00", "detail": "channels.list mine"}
