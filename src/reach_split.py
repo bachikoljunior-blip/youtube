@@ -55,6 +55,23 @@ ROOT = Path(__file__).resolve().parent.parent
 
 #: 「いま続いている量」を測る窓（日）。**平均でも最大でもない、段取りが乗る数。**
 RECENT_DAYS = 7
+
+#: **窓の中の1日が、この割合以上を占めていたら「平均」は使えません**（2026-08-26 に足した）。
+#:
+#: 実測（`data/reach.jsonl`・長尺・08/15〜08/21 の7日）:
+#:
+#:     4 / 8 / 5 / 7 / 8 / 17 / **1,285**   → 平均 190.6 ・ 中央値 **8**
+#:
+#: 08/21 の 1,285回 のうち **1,276回（99.3%）が、その日に公開した5本**に付いています。
+#: 同じ日、それ以前の長尺6本に付いたのは **1〜3回ずつ**でした。
+#: つまり長尺の面は「立っている面」ではなく、**公開日の立ち上がりだけ**です。
+#: `tail()` の docstring は最初から「**平均は burst をならしてしまいます**」と
+#: 書いていましたが、**`per_day_recent` は平均のままでした** ——
+#: そして `scripts/eta.py` の段2 がその 190.6 を読んで
+#: 「合格点 191回/日 と**ちょうど同じ（×1.00）**」と印字していました。
+#: 続いている量は 8回/日 なので、実際は **24倍 足りません。**
+#: **同じ帳面の読み手2つが逆を向いていた形の5件目**（4件目は `summary()` の docstring）。
+BURST_SHARE = 0.5
 STORE = ROOT / "data" / "reach.jsonl"
 LEDGER = ROOT / "data" / "uploaded.jsonl"
 PAIRS = ROOT / "config" / "pairs.yaml"
@@ -192,6 +209,15 @@ def tail(rows: list[dict], days: int) -> list[dict]:
     return [r for r in rows if str(r.get("date", "")) in keep]
 
 
+def _median(vals: list[float]) -> float:
+    """**並べて真ん中**。空なら 0.0（呼ぶ側で「測れていない」に落とすため）。"""
+    if not vals:
+        return 0.0
+    s = sorted(vals)
+    n = len(s)
+    return s[n // 2] if n % 2 else (s[n // 2 - 1] + s[n // 2]) / 2
+
+
 def summary(rows: list[dict], longs: set[str]) -> dict:
     """形べつに集計する。
 
@@ -273,6 +299,25 @@ def summary(rows: list[dict], longs: set[str]) -> dict:
         v["per_day_recent"] = (
             (sum(series[d] for d in recent) / len(recent)) if recent else 0.0)
         v["recent_days"] = len(recent)
+        # **その平均を、1日が丸ごと作っていないか**（2026-08-26 に足した。
+        #     `BURST_SHARE` の docstring に実測）。**上の平均は残します** ——
+        #     保存済みの点と比べられなくなるため。判断に使うのは下の
+        #     `per_day_sustained` のほうです。
+        vals = sorted(series[d] for d in recent)
+        total_recent = sum(vals)
+        top = vals[-1] if vals else 0.0
+        v["per_day_recent_top"] = top
+        v["per_day_recent_top_share"] = (top / total_recent) if total_recent else 0.0
+        v["per_day_recent_median"] = _median(vals)
+        if v["per_day_recent_top_share"] >= BURST_SHARE and len(vals) >= 3:
+            v["per_day_sustained"] = v["per_day_recent_median"]
+            v["per_day_sustained_basis"] = (
+                f"直近{len(vals)}日の中央値"
+                f"（平均 {v['per_day_recent']:,.1f} は"
+                f" 1日で {v['per_day_recent_top_share'] * 100:.0f}% ＝ 立ち上がりの burst）")
+        else:
+            v["per_day_sustained"] = v["per_day_recent"]
+            v["per_day_sustained_basis"] = f"直近{len(vals)}日の平均"
     return {"長尺": out["長尺"], "ショート": out["ショート"], "days": days,
             "dates": dates, "last_day": dates[-1] if dates else None}
 

@@ -416,6 +416,13 @@ def surface_ceiling(mix: dict, reach: dict, level: str = "高",
     #     **平均のほう（下振れ側）へ落ちること**。最大へ落とすと、
     #     測っていない回ほど「足りている」と出ます。
     imp_recent = float(long_row.get("per_day_recent") or 0.0)
+    # **その「続いている量」が、窓の中の1日で作られていないか**（2026-08-26）。
+    #     `reach_split.per_day_sustained` は、1日が窓の半分以上を占めていたら
+    #     中央値へ落ちます。実測 08/26: 平均 190.6（96% が 08/21 の1日）→ 中央値 8.0。
+    #     **段2 の分母はこちらです。**古い呼び（保存済みの点・検査）は持たないので、
+    #     その場合は今までどおり平均に落ちます。
+    imp_sustained = float(long_row.get("per_day_sustained") or 0.0)
+    sustained_basis = long_row.get("per_day_sustained_basis")
     now = effective_rpm(views, "低", bands)
     if imp_day <= 0 or now <= 0:
         return {"factor": None, "rpm_now": now, "rpm_max": None,
@@ -426,6 +433,8 @@ def surface_ceiling(mix: dict, reach: dict, level: str = "高",
                 "imp_day_live_days": long_row.get("live_days"),
                 "imp_day_recent": imp_recent or None,
                 "imp_day_recent_days": long_row.get("recent_days"),
+                "imp_day_sustained": imp_sustained or None,
+                "imp_day_sustained_basis": sustained_basis,
                 "reach_days": reach_days,
                 "reach_last_day": (reach or {}).get("last_day"),
                 "why": "長尺の面（インプレッション）が測れていません"}
@@ -454,6 +463,9 @@ def surface_ceiling(mix: dict, reach: dict, level: str = "高",
         #     天井ではなく**段取りの分母**です。上のコメントを読むこと。
         "imp_day_recent": imp_recent or None,
         "imp_day_recent_days": long_row.get("recent_days"),
+        # **1日の立ち上がりを外した「続いている量」**（2026-08-26）。段2 の分母。
+        "imp_day_sustained": imp_sustained or None,
+        "imp_day_sustained_basis": sustained_basis,
         "reach_days": reach_days,
         "reach_last_day": (reach or {}).get("last_day"),
         "short_views_day": short_views_day,

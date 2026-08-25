@@ -1893,7 +1893,7 @@ def trajectory(m: dict, a0: dict, *, supply: dict | None = None,
 
 
 @functools.lru_cache(maxsize=1)
-def _recent_surface() -> tuple[float, int] | None:
+def _recent_surface() -> tuple[float, int, str] | None:
     """積んである `data/reach.jsonl` の「いま続いている量」（**API 0単位**）。
 
     **1回の実行で1度だけ読みます** —— `plan()` は感度と軌跡のループから
@@ -1906,10 +1906,16 @@ def _recent_surface() -> tuple[float, int] | None:
         if not rows:
             return None
         long = (reach_split.summary(rows, reach_split.long_ids()).get("長尺") or {})
-        recent = float(long.get("per_day_recent") or 0.0)
+        # **「続いている量」は平均ではありません**（2026-08-26 に直した）。
+        #     窓の中の1日が半分以上を占めていたら中央値へ落ちます
+        #     （`reach_split.BURST_SHARE` に実測。08/21 の 1,285回 の 99.3% は
+        #      その日に公開した5本の立ち上がりで、既存の長尺は 1〜3回でした）。
+        recent = float(long.get("per_day_sustained")
+                       or long.get("per_day_recent") or 0.0)
         if recent <= 0:
             return None
-        return recent, int(long.get("recent_days") or reach_split.RECENT_DAYS)
+        return (recent, int(long.get("recent_days") or reach_split.RECENT_DAYS),
+                str(long.get("per_day_sustained_basis") or ""))
     except Exception:  # noqa: BLE001  （測れないことで回を止めない）
         return None
 
@@ -1919,7 +1925,8 @@ def _with_recent_surface(mix: dict) -> dict:
     got = _recent_surface()
     if not got:
         return mix
-    return {**mix, "imp_day_recent": got[0], "imp_day_recent_days": got[1]}
+    return {**mix, "imp_day_recent": got[0], "imp_day_recent_days": got[1],
+            "imp_day_recent_basis": got[2]}
 
 
 def _gate2_surface_basis(mix: dict) -> tuple[float | None, str, dict]:
@@ -1953,7 +1960,9 @@ def _gate2_surface_basis(mix: dict) -> tuple[float | None, str, dict]:
     others = {"recent": recent or None, "mean": mean or None, "max": top or None,
               "recent_days": mix.get("imp_day_recent_days")}
     if recent > 0:
-        return recent, f"直近{mix.get('imp_day_recent_days') or 7}日の平均", others
+        basis = (mix.get("imp_day_recent_basis")
+                 or f"直近{mix.get('imp_day_recent_days') or 7}日の平均")
+        return recent, str(basis), others
     if mean > 0:
         return mean, "全期間の平均（**直近の点をまだ積んでいません**）", others
     # **2026-08-24 より前の点は、天井も平均でした**（`imp_day_basis` がまだ無い）。

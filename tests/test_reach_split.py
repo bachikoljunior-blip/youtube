@@ -176,3 +176,38 @@ def test_面は長尺を足すと増える(tmp_path):
     few = R.summary(rows, {"A"})
     many = R.summary(rows, {"A", "C"})
     assert many["長尺"]["impressions"] > few["長尺"]["impressions"]
+
+
+# ---------------------------------------------------------------------------
+# **「いま続いている量」が、窓の中の1日で作られていないか**（2026-08-26 に足した）
+#
+# 実物（`data/reach.jsonl`・長尺・08/15〜08/21）: 4 / 8 / 5 / 7 / 8 / 17 / **1,285**
+# 平均 190.6・中央値 8。そして 08/21 の 1,285回 のうち **1,276回（99.3%）**が
+# その日に公開した5本に付いており、それ以前の長尺6本は **1〜3回ずつ**でした。
+# つまり長尺の面は「立っている面」ではなく、**公開日の立ち上がり**です。
+# `scripts/eta.py` の段2 はその 190.6 を読んで
+# 「合格点 191回/日 と**ちょうど同じ（×1.00）＝ 余裕がありません**」と印字していました。
+# 続いている量は 8回/日 なので、実際は **23.8倍 足りません。**
+# ---------------------------------------------------------------------------
+def _series(vals: list[float], vid: str = "L") -> list[dict]:
+    return [row(f"202608{10 + i:02d}", vid, str(v), "0") for i, v in enumerate(vals)]
+
+
+def test_1日が窓の半分以上を占めたら平均ではなく中央値へ落ちる():
+    long = R.summary(_series([4, 8, 5, 7, 8, 17, 1285]), {"L"})["長尺"]
+    assert abs(long["per_day_recent"] - 190.571428) < 1e-3   # 平均は残す
+    assert long["per_day_recent_median"] == 8.0
+    assert long["per_day_sustained"] == 8.0                  # 判断に使うのはこちら
+    assert "中央値" in long["per_day_sustained_basis"]
+
+
+def test_平らな窓では平均のまま():
+    long = R.summary(_series([10, 12, 11, 9, 10, 13, 11]), {"L"})["長尺"]
+    assert long["per_day_sustained"] == long["per_day_recent"]
+    assert "平均" in long["per_day_sustained_basis"]
+
+
+def test_平均は消さない_保存済みの点と比べられなくなるため():
+    long = R.summary(_series([4, 8, 5, 7, 8, 17, 1285]), {"L"})["長尺"]
+    assert long["per_day_recent"] > long["per_day_sustained"]
+    assert long["per_day_recent_top_share"] > 0.9
