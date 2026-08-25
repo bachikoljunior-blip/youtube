@@ -10,10 +10,13 @@
 from __future__ import annotations
 
 import datetime as dt
+from pathlib import Path
 
 import pytest
 
 from src import day_cap
+
+ROOT = Path(__file__).resolve().parent.parent
 
 JST = dt.timezone(dt.timedelta(hours=9))
 
@@ -216,3 +219,74 @@ def test_queue_lag_は割らない入れ替えを止めない(monkeypatch):
                         lambda: {"k": ({"処置": [f"v{i}" for i in range(5)]}, 2)})
     _lines, ok = queue_lag.live_cost_lines(_fake_plan(before, after))
     assert ok, "余っている群が減っただけで止めています"
+
+
+# ---- 「空いた生きた枠」の数え方 ---------------------------------------------
+#
+# **私はこの数を、2026-08-26 の1周のうちに手で2回 数え間違えました**
+# （1回目は「その日の**予約**の本数」で数え、2回目は**数える時点**を間違えた）。
+# **どちらも、答えの向きが逆になる間違い**です:
+#
+#     予約の本数で数える  → 予約11本・上限10本 を「超過・余り0」と読む。
+#                           実際は **15分きざみで詰めた本が死んでいる**ので、
+#                           生きているのは7本、**まだ3本 入る**（実物の 09/02）
+#     置く前に数える      → その3本は**このあとの群が置く先**だった。**実際は0本**
+#
+# **死ぬ理由は帯ではなく間隔です**（帯の外に居ても、その日が上限に届いて
+# いなければ生きています —— `Board._alive_on` の註）。ここが縛るのは次の2つ。
+
+def _live_board(rows, now="2026-09-02"):
+    from scripts import live_slots
+    return live_slots.Board(
+        rows, now=dt.datetime.fromisoformat(now).replace(tzinfo=JST))
+
+
+def test_空きは予約の本数ではなく生きている本の数で数える():
+    """**15分きざみで詰めた本は死んでいるので、その日はまだ入ります。**
+
+    実物（08/26 の 09/02）: 予約 11本・上限 10本 —— 予約の本数で数えると
+    「超過・余り0」ですが、`09:00 / 09:15 / 09:30 …` と詰まっているので
+    **生きているのは 7本**で、**空きは 3本**でした。
+    """
+    from scripts import live_slots
+    # 15分きざみで8本 → 生きるのは 09:00 / 09:30 / 10:00 / 10:30 の **4本**
+    rows = [_row(f"v{i}", "2026-09-02", f"{9 + i // 4:02d}:{(i % 4) * 15:02d}")
+            for i in range(8)]
+    board = _live_board(rows)
+    assert board._alive_on(dt.date(2026, 9, 2)) == 4, "生きている本の数え方が違います"
+    free = live_slots._free_live_before(board, dt.date(2026, 9, 2))
+    assert free == day_cap.cap() - 4, (
+        f"空きを {free}本 と数えました（正しくは {day_cap.cap() - 4}本）。"
+        "**予約の本数（8本）で数えると 2本 になります** —— "
+        "詰めて死んでいる本は、生きた枠を埋めていません")
+
+
+def test_測定の窓の日は空きに数えない():
+    """窓の日は置き先にしないので、**空きとして数えないこと。**"""
+    from scripts import live_slots
+    from src import measure_window
+    board = _live_board([])
+    lim = dt.date(2026, 9, 2)
+    real = live_slots._free_live_before(board, lim)
+    saved = measure_window.inside
+    try:
+        measure_window.inside = lambda d, w=None, today=None: True
+        assert live_slots._free_live_before(board, lim) == 0, (
+            f"窓の日を空きに数えています（窓でない日は {real}本）")
+    finally:
+        measure_window.inside = saved
+
+
+def test_埋め方は_手を全部置いたあとに言う():
+    """**ループの途中で数えると、あとの群が使う枠まで「空いている」と数えます。**
+
+    実物（08/26）: 途中で数えたら「3本 空いています」と出ましたが、
+    **その3本とも、次の群の置き先**でした。置き終えたあとは **0本** です。
+    """
+    src = (ROOT / "scripts" / "live_slots.py").read_text(encoding="utf-8")
+    body = src[src.index("def plan(board: Board)"):src.index("def plan_all(")]
+    assert "shortfalls.append(" in body, "不足を溜めていません"
+    assert body.count("_how_to_fill(") == 1, (
+        "`_how_to_fill` を手の途中でも呼んでいます。**置き終えてから1回だけ**")
+    assert body.index("shortfalls.append(") < body.index("_how_to_fill("), (
+        "溜める前に言っています")
