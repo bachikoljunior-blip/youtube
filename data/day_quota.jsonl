@@ -2489,3 +2489,15 @@
 {"at": "2026-08-25T19:40:21+00:00", "detail": "channels.list mine"}
 {"at": "2026-08-25T19:40:23+00:00", "detail": "channels.list mine"}
 {"at": "2026-08-25T19:40:25+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-25T20:04:09+00:00", "detail": "playlistItems.list uploads"}
+{"at": "2026-08-25T20:04:12+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-25T20:04:12+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-25T20:04:13+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-25T20:04:13+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-25T20:14:23+00:00", "detail": "scheduled_publish_times"}
+{"at": "2026-08-25T20:14:26+00:00", "detail": "playlistItems.insert"}
+{"at": "2026-08-25T20:14:26+00:00", "detail": "thumbnails.set 1Tduvr67ohI"}
+{"at": "2026-08-25T20:14:29+00:00", "detail": "playlistItems.list uploads"}
+{"at": "2026-08-25T20:14:30+00:00", "detail": "scheduled_publish_times"}
+{"at": "2026-08-25T20:14:33+00:00", "detail": "playlistItems.insert"}
+{"at": "2026-08-25T20:14:33+00:00", "detail": "thumbnails.set Z_gdDajV4TU"}
