@@ -190,3 +190,57 @@ def test_optimizerもrepoと枝を必ず持つ():
     a = sp.create_session_args("optimizer")
     assert a["source_url"].endswith("/youtube")
     assert a["source_revision"].startswith("claude/")
+
+
+# --- 逐語で渡す役に、埋まっていない差し込み口を残さない（2026-08-25）-----------
+#
+# **親の手順は「`prompt` を1字も変えずに渡す」です。**
+# それなのに写しの `hourly` には
+# `<<いま走っている子の識別子。いなければこの行ごと消す>>` が入っていました。
+# **両方を守ると、サブはプレースホルダの文字列を「走っている相手の名前」として
+# 受け取ります。** しかも `_siblings_block()` は
+# 「**いないと明記してある**ことに意味がある」ために作った段なので、
+# **逐語コピーの規則が、その段の意味をちょうど壊していました。**
+#
+# 埋めさせてよいのは `owner-*` だけです（オーナーの言葉は repo から求まらない）。
+
+#: 親がそのまま渡す役。ここに差し込み口があってはならない。
+VERBATIM_KINDS = ("hourly", "optimizer")
+
+
+def test_逐語で渡す役には差し込み口が残っていない():
+    import json
+    import re as _re
+
+    text = sp.RENDERED.read_text(encoding="utf-8")
+    blocks = dict(_re.findall(
+        r"^## kind: ([\w-]+)\s*\n\n```json\n(.*?)^```", text, _re.M | _re.S))
+    for kind in VERBATIM_KINDS:
+        assert kind in blocks, f"写しに `## kind: {kind}` がありません"
+        prompt = json.loads(blocks[kind])["prompt"]
+        left = _re.findall(r"<<[^>]*>>", prompt)
+        assert not left, (
+            f"`{kind}` の prompt に埋まっていない差し込み口が残っています: {left}。"
+            "**親は1字も変えずに渡すので、これはそのままサブに届きます。**"
+            "写しの既定を「埋まった側」にすること"
+            "（`scripts/spawn_prompt.py` の `write_rendered`）。"
+        )
+
+
+def test_相手がいない回は_いないと書いてある側が写しの既定():
+    """**空欄ではなく「いません」と書いてあること。**
+
+    差し込み口を消すだけだと、`_siblings_block()` の
+    「調べていないだけと区別できない」という穴に戻ります。
+    """
+    import json
+    import re as _re
+
+    text = sp.RENDERED.read_text(encoding="utf-8")
+    blocks = dict(_re.findall(
+        r"^## kind: ([\w-]+)\s*\n\n```json\n(.*?)^```", text, _re.M | _re.S))
+    prompt = json.loads(blocks["hourly"])["prompt"]
+    assert "他に走っている" in prompt and "いません" in prompt, (
+        "写しの `hourly` に「他に走っている相手はいません」が書かれていません。"
+        "**書いていないと、受け取った側は「調べていないだけ」と区別できません。**"
+    )
