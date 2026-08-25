@@ -124,6 +124,34 @@ def test_万の書き方は拾わない():
     assert _checks.doc_numbers("値打ちは24,475円") == ["24,475"]
 
 
+#: **見たうえで「当たりではない」と判断した、未裏取りのテーマ。**
+#:
+#: **2026-08-26 に「件数の上限」からこの一覧へ替えました。** 上限（`hits <= 12`）は
+#: **在庫がふえるたびに赤くなります** —— テーマは毎回ふえるので、
+#: この門は「たまに正しく鳴る」ではなく**常時赤**へ向かいます。
+#: 常時赤の門は、新しく壊した1件を隠します
+#: （`tests/test_narrated.py` の `KNOWN_UNSHOWN` と同じ形。同日の3件目）。
+#:
+#: **一覧にすると「増えた」と「新しい」が分かれます。** 在庫がふえても、
+#: 中身が同じなら鳴りません。**新しい ID が出たときだけ鳴ります。**
+#:
+#: 中身は2つの型しかありません（2026-08-26 に13件とも見た）:
+#:   (型1) calc が**1つの数として印字しない導出値**。
+#:         `s-fukugyo-5pct-1en` の `10,209円` は手取りの落ち幅（180,000 − 169,791）で、
+#:         calc が印字するのは税額の `10,210円` のほう。**1円ずれているのが主題そのもの**
+#:   (型2) **丸めた形**（`14.15` ← 14.1500 ／ `2.96` ← 2.9565…）。
+#:         丸めた瞬間に、どの表にも無い数になります
+REVIEWED_UNBACKED = {
+    "tenshoku-nenshu", "s-kojo-3", "s-shitsugyo-4", "s-shitsugyo-5",
+    "s-fukugyo-5pct-1en", "s-zangyo-ichiritsu-3man-45h", "s-fukugyo-10pct-1en",
+    "s-kojo-23pct-tokutei-fuyo", "s-fukugyo-zeiritsu20-1en",
+    "s-shobyo-rounding-remainder-200", "s-shobyo-drop-14-15-points",
+    "s-ideco-kakekin-3bai-deguchi",
+    # 2026-08-26 に増えたぶん（型1。`10.21` は配当控除の率で、表は税額を印字する）
+    "haito-kojo-nashi-330man",
+}
+
+
 def test_topics_yamlには掛けない():
     """**この検査を `config/topics.yaml` の angle に広げないこと**（2026-08-18 に測った）。
 
@@ -138,7 +166,7 @@ def test_topics_yamlには掛けない():
     広げると `src/alerts.py` の「一覧が当たりを含まないまま育つ」の8件目になります。
     """
     from src import config
-    hits = 0
+    hits = set()
     for t in config.load_topics()["topics"]:
         calc = t.get("calc")
         if not calc or calc not in MODULES:
@@ -147,11 +175,13 @@ def test_topics_yamlには掛けない():
         try:
             _checks.numbers_backed(text, backing(calc), name=calc)
         except _checks.TableError:
-            hits += 1
-    assert hits <= 12, (
-        f"topics.yaml の未裏取りが {hits} 件に増えました（2026-08-18 の実測は10件）。"
-        "**この検査を angle に掛ける根拠にはなりません** —— 10件は全部、"
-        "calc が1つの数として印字しない導出値でした。増えた中身を目で見ること。"
+            hits.add(str(t.get("id")))
+    new = sorted(hits - REVIEWED_UNBACKED)
+    assert not new, (
+        f"topics.yaml の未裏取りに、**見ていないテーマ**が増えました: {new}\n"
+        "  **この検査を angle に掛ける根拠にはなりません** —— これまでの件は全部、"
+        "calc が1つの数として印字しない導出値でした。**中身を目で見てから** "
+        "`REVIEWED_UNBACKED` に足すこと。**実物に当たっていたら、直すのは angle のほう。**"
     )
 
 

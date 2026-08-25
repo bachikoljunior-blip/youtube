@@ -55,6 +55,7 @@ from pathlib import Path
 from typing import Callable
 
 from src import ab_power
+from src.settle import SETTLE_DAYS  # noqa: F401  （**ここでは定義しません**。下の註）
 from src.script_writer import hook_form, title_form
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -74,8 +75,15 @@ JST = timezone(timedelta(hours=9))
 #: yaml の「満たないときは**期限だけを延ばす**」のほうを使うこと。
 MIN_PER_GROUP = 16
 
-#: 「初速だけを見ない」ための日数。yaml の「公開から7日以上たっていること」と同じ。
-SETTLE_DAYS = 7
+#: 「初速だけを見ない」ための日数は **`src/settle.py` が持ちます**（上で読み込み済み）。
+#: yaml の「公開から3日以上たっていること」と同じ数で、`tests/test_ab_split.py` が
+#: 突き合わせています。
+#:
+#: **ここに数を書かないこと（2026-08-26）。** 元は `SETTLE_DAYS = 7` という**勘**が
+#: この行にあり、`scripts/eta.py` の `MATURE_HOURS = 48`（実測つき）と、
+#: `config/hypotheses.yaml` が 2026-08-21 に測って書き換えた「24時間」と、
+#: **同じ量について3つの数が別々に立っていました。** 判定の門が読むのはこの行だけ
+#: だったので、**すべての前提の判定日が 4日 遠いまま**でした。実測は `src/settle.py`。
 
 
 @dataclass(frozen=True)
