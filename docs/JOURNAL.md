@@ -49728,6 +49728,69 @@ push したあと、**きょうだいの回がそれを読んで実際に塞い�
    （`arg_gaps` の docstring の `shobyo` の実例）。**この回のように表を読んで
    角度を探すより、こちらが先に来るはず**です。次の回で測ること。
 
+
+### 追記（同じ回の2つ目の ship・腕 `none`・moves 0）— **「動いた入力は0件」の一部は、測る点が無かっただけでした**
+
+**上の `upload` を打った直後の反映が、こう出ました。**
+
+    [!] **この回で動かせる入力は、1つもありませんでした。**
+        この回が触った所が、**予測の入力に1つも入っていない**という意味です
+
+**テーマを6件 forge して、長尺を4本 予約した回です。** おかしい。
+そこで `python -m src.supply --record`（**1秒未満**）を撃って、
+`eta.py --reflect` を**もう一度**撃ちました。**同じ回・同じ作業のまま2件**出ました:
+
+    density_surfaces:   {…} → {…}
+    make_rate_per_day:  18.2 → 19.3
+
+**原因。** `reflect()` の「動いた入力」は、在庫（`stock`）と作る速さ
+（`make_rate_per_day`）を **`data/supply.jsonl` の点の差**からしか出しません
+（`src/supply.py` の `sustained_rate_per_day` は点の差そのもの）。
+**点を積むのは `python -m src.supply --record` だけで、
+`topic_forge` も `batch_build` も積みません。**
+
+**あの印字は「この回が予測の入力に触っていない」と言い切っています。
+在庫を触った回では、それが嘘になります。**
+そして `retro.py` の申し送りは、ずっとこう言っていました ——
+**「18周のあいだ入力が1つも動いていない」「予測は出ていた。使われていなかった」。**
+**少なくとも一部はこれです。動いていたのに、測る点が積まれていなかった。**
+
+直し（`scripts/run_marker.py`）: `_reflect_now` が `eta.py --reflect` より**先に**
+`_record_supply()` を呼びます。**止めません** —— 積めなくても反映へ進みます
+（記録であって門ではない）。検査は `tests/test_reflect_records_supply.py` の7件で、
+**故障注入つき**（`_record_supply` を外すと順番の検査が落ちる側も見ています）。
+
+**この回の2つ目の `--ship` は、直したあとの道を通っています** ——
+`[marker] 在庫の点を積みました` が出て、反映が **2件** になりました。
+
+**覆る条件**: `topic_forge` か `batch_build` が自分で `supply --record` を
+積むようになったら、ここは二重になります（害は無いが、1秒を2回払います）。
+そのときは `run_marker` 側を外すこと。
+
+### 追記2 — **`tests/test_seen_mark.py` は、単独では通り、束にすると落ちます**（この回は直していません）
+
+再現する1行（**この回の実測。`scripts/run_marker.py` の変更とは無関係**で、
+`git stash` して origin の版に戻しても同じ4件が落ちます）:
+
+    python -m pytest tests/test_seen_mark.py tests/test_dead_arm.py \
+        tests/test_levers.py tests/test_closes_vocab.py \
+        tests/test_drift_hint_covered.py -q -p no:randomly
+    → 4 failed, 52 passed
+
+    python -m pytest tests/test_seen_mark.py -q            → 8 passed
+    上の4つと **1対1で組んでも、4通りとも全部 通ります**（実測）
+
+**つまり3つ以上たまって初めて出る、検査どうしの汚染です。**
+`test_seen_mark` は `MARKS` を tmp へ差し替えて読み書きするので、
+**差し替えを戻していない検査がどれかに居る**のが筋の通る読みですが、
+**この回は当てていません**（1対1で出ないので、二分するには3つ組を回す要あり）。
+
+**なぜ書き残すか。** 直近3回の申し送りが3回とも
+「**全体の `pytest` はこの回も通していません**」で終わっています。
+その理由として挙がっているのは `test_section_sweep.py` の600秒だけですが、
+**時間の問題を片付けても、この汚染は残ります**（緑にならない理由が2つある）。
+**次に全体を撃つ回は、落ちた件数を「時間切れ」と「汚染」に分けてから読むこと。**
+
 ### 次の回へ
 
 1. **長尺の族は8つ（7日で16本）。同じ手をもう一度回せば18本です。**
@@ -49758,10 +49821,17 @@ push したあと、**きょうだいの回がそれを読んで実際に塞い�
    （`fe545eb9` / `f8fcb316` は `videos.update` が要り、この窓では 403）。
 
 5. **全体の `pytest` はこの回も通していません。** 確かめたのは
-   `test_calc_checks.py` / `test_calc_axes.py` / `test_doc_numbers.py` の **165件**と、
-   `check_tables()` の10件の新しい不変条件。
-   前の回（06:0x）が「同じ47秒を11回やり直していた」と書いているので、
-   **次に全体を撃つ回は、その申し送りを先に読むこと。**
+   `test_calc_checks.py` / `test_calc_axes.py` / `test_doc_numbers.py` の **165件**、
+   `check_tables()` の10件の新しい不変条件、`tests/test_reflect_records_supply.py` の7件。
+   **緑にならない理由は2つあります**（上の「追記2」）——
+   `test_section_sweep.py` の600秒**と**、`test_seen_mark.py` の検査どうしの汚染。
+   **次に全体を撃つ回は、落ちた件数をその2つに分けてから読むこと。**
+
+6. **`--ship` の反映が「動いた入力 0件」と出たら、まず在庫の点を疑わないこと** ——
+   **もう直っています**（`run_marker._record_supply`）。それでも 0件 なら、
+   本当にその回は予測の入力に触っていません。
+   **`retro.py` の「入力が1つも動いていない」は、この直しの前の観測です。**
+   次に数え直す回は、**08/26 07:4x より後の点だけ**で読むこと。
 
 ---
 
