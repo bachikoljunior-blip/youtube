@@ -218,7 +218,7 @@ def marginal_grid(kind: str = "軽減") -> list[dict]:
 def kind_grid(gain: float = 50_000_000) -> list[dict]:
     """同じ譲渡益を、3つの区分で並べる。**1月1日の判定だけで動く幅。**"""
     base = taxable(gain)
-    return [{"区分": k, "課税譲渡所得": round(base),
+    return [{"区分": k, "譲渡益": round(gain), "課税譲渡所得": round(base),
              "税額": round(tax_of(gain, k)),
              "長期との差": round(tax_of(gain, k) - tax_of(gain, "長期"))}
             for k in KINDS]
@@ -248,7 +248,8 @@ def known_cost_grid(price: float = 50_000_000) -> list[dict]:
     for ratio in (None, 0.3, 0.5, 0.7, 0.9):
         cost = None if ratio is None else price * ratio
         g = gain_from_price(price, cost)
-        out.append({"取得費": "分からない（5パーセント）" if ratio is None else round(cost),
+        out.append({"売値": round(price),
+                    "取得費": "分からない（5パーセント）" if ratio is None else round(cost),
                     "譲渡益": round(g),
                     "課税譲渡所得": round(taxable(g)),
                     "税額（軽減税率）": round(tax_of(g, "軽減"))})
@@ -263,7 +264,8 @@ def share_grid(gain: float = 60_000_000) -> list[dict]:
         b = gain * (1 - share)
         ta = tax_of(a, "軽減")
         tb = tax_of(b, "軽減")
-        out.append({"多いほうの持分": share,
+        out.append({"2人の譲渡益の合計": round(gain),
+                    "多いほうの持分": share,
                     "多いほうの譲渡益": round(a),
                     "多いほうの税額": round(ta),
                     "少ないほうの税額": round(tb),
