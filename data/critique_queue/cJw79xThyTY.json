@@ -1,0 +1,30 @@
+{
+ "video_id": "cJw79xThyTY",
+ "topic": "s-koureikyushoku-nankaimo-oitsuku-nensu",
+ "stashed_at": "2026-08-23T20:13:26+09:00",
+ "orientation": "縦",
+ "narration": [
+  "解雇の210日に追いつくのに5回です。",
+  "同じ勤続10年でも自己都合なら3回です。",
+  "解雇は210日、自己都合は120日です。",
+  "高年齢求職者給付金は一年以上で50日。",
+  "勤続一年なら解雇でも150日です。",
+  "五年かけて取り返す前提で、辞め方を選びますか。"
+ ],
+ "slides_plan": true,
+ "change_ratios": [
+  0.1077,
+  0.114,
+  0.0649,
+  0.1187,
+  0.0834,
+  0.1289,
+  0.2212,
+  0.2592,
+  0.0654,
+  0.144,
+  0.0871
+ ],
+ "thumbnail_stashed": true,
+ "thumbnail_set": true
+}

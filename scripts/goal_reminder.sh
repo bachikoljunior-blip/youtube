@@ -1,33 +1,115 @@
 #!/usr/bin/env bash
-# 目標を、判断のたびに文脈へ差し戻す。
+# **目標を、判断のたびに文脈へ差し戻す。**
 #
 # なぜ要るか。CLAUDE.md はセッション開始時と要約後にしか入らない。長い作業の
 # 途中では薄れるし、薄れたことには気づけない。実際、覚えてはいたのに適用せず、
 # オーナーに2回指摘されている（docs/JOURNAL.md 2026-08-04）。
 #
-# このフックは UserPromptSubmit で毎回発火し、docs/GOAL.md の中身を
-# additionalContext としてモデルに戻す。定期実行の撃ち込みもユーザーの発話として
-# 届くので、**毎日の実行の冒頭で必ず目標が入る**。
+# ## 2026-08-15、注入する中身を「目標だけ」に戻した
 #
-# 中身は docs/GOAL.md 側にある。ここは運び役なので、文面を変えたいときは
-# GOAL.md を編集すること（このスクリプトも settings.json も触らなくてよい）。
+# オーナーの指示（原文）:
+#
+# > **恒久指示とかないよ。目標だけ。変えられないとかじゃなくて、それに従うようにして**
+#
+# ここは長らく「**恒久指示（これだけは変えられない。9件）**」という表を毎ターン
+# 配っていた。**その表そのものが要らなかった。** 与えられているのは目標1つで、
+# 残りは全部こちらの判断です。**「変えられない規則」を自分で作って自分に配り、
+# それを守ることを仕事だと思っていた**のが、直前までの状態でした。
+#
+# だからいまは:
+#
+#   - **目標の全文**（`docs/GOAL.md` から機械的に抜く。手で写さない）
+#   - **決める前の5つの確認**（目標から出てくるもの。中身は見直してよい）
+#   - **この回の最低ライン**（分析だけで終えない）
+#
+# **目標の文言だけは書き換えないこと。** これはオーナーの言葉です。
+# それ以外は、より速い道が見つかったら書き換えてよい（理由は JOURNAL に）。
 set -uo pipefail
 
-GOAL="$(dirname "$0")/../docs/GOAL.md"
-[ -f "$GOAL" ] || exit 0
+# **台本生成の子プロセスでは黙る。**
+# 注入が子プロセスに入ると、台本ではなく「確認項目への回答」が返ってきて
+# 生成が失敗する（2026-08-07 に実際に起きた）。目標を思い出すのは
+# 判断する側の話で、台本を書く側には要らない。
+[ -n "${YOUTUBE_PIPELINE_CHILD:-}" ] && exit 0
 
-# JSON に安全に埋めるため、python で文字列化する。jq が無い環境でも動く。
-python3 - "$GOAL" <<'PY' 2>/dev/null || exit 0
-import json, sys, pathlib
-text = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
-print(json.dumps({
-    "hookSpecificOutput": {
-        "hookEventName": "UserPromptSubmit",
-        "additionalContext": (
-            "以下はオーナーが定めた目標と、判断のたびに確認すべき項目です。"
-            "覚えているだけでなく、実際に適用したかを毎回確かめてください。\n\n" + text
-        ),
-    },
-    "suppressOutput": True,
-}, ensure_ascii=False))
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+[ -f "$ROOT/docs/GOAL.md" ] || exit 0
+
+# **親では黙る**（2026-08-15）。親は判断も生成もしないので、目標の注入が要りません。
+# 常駐で文脈が溜まる側なので、毎ターン差し込むと**一番高い部品をさらに重くします。**
+RAW="${CLAUDE_CODE_REMOTE_SESSION_ID:-}"
+ME="${RAW/#cse_/session_}"
+if [ -n "$ME" ] && grep -qxF "$ME" "$ROOT/config/parents.txt" 2>/dev/null; then
+  exit 0
+fi
+
+python3 - "$ROOT" <<'PY' 2>/dev/null || exit 0
+import json, re, sys, pathlib
+
+root = pathlib.Path(sys.argv[1])
+goal_md = (root / "docs" / "GOAL.md").read_text(encoding="utf-8")
+
+
+def emit(text):
+    print(json.dumps({
+        "hookSpecificOutput": {
+            "hookEventName": "UserPromptSubmit",
+            "additionalContext": text,
+        },
+        "suppressOutput": True,
+    }, ensure_ascii=False))
+    raise SystemExit(0)
+
+
+# 目標の全文（`docs/GOAL.md` 冒頭の引用ブロック）を抜く。**手で写さない。**
+blocks = re.findall(r"(?:^> .*\n)+", goal_md, re.M)
+goal = next((b.strip() for b in blocks if "月収20万" in b), "")
+
+# **抜き出しが壊れたら黙るのではなく、大声で言う。**
+# 0件のまま静かに通すと、目標が誰にも気づかれないまま文脈から消える。
+if not goal:
+    emit(
+        "**[!] 目標の抜き出しが壊れています。**\n"
+        "`docs/GOAL.md` 冒頭の引用ブロック（`> 目標は最短で月収20万…`）が\n"
+        "見つかりませんでした。**他の作業より先に直すこと。**\n"
+        "直るまで、目標は `docs/GOAL.md` を直接読むこと。"
+    )
+
+# **写しがずれていないか。** 目標は CLAUDE.md にも載っている（開始時に読まれる）。
+# 2つが食い違ったら、どちらを信じるかで判断が変わる。**機械で見張る。**
+def norm(s):
+    return re.sub(r"[\s>　]+", "", s)
+
+claude_md = (root / "CLAUDE.md")
+warn = ""
+if claude_md.exists() and norm(goal) not in norm(claude_md.read_text(encoding="utf-8")):
+    warn = ("\n**[!] `CLAUDE.md` の目標が `docs/GOAL.md` と食い違っています。**\n"
+            "**オーナーの言葉は `docs/GOAL.md` 側が正本です。** 先に直すこと。\n")
+
+emit(f"""**あなたに与えられているのは、この目標だけです。**（オーナーの言葉のまま）
+
+{goal}
+{warn}
+**恒久指示の一覧はありません。** 手順も規則も頻度も形式も、**全部こちらの判断**です。
+目標に照らして、より速い道が見つかったら**書き換えてよい**（理由を `docs/JOURNAL.md` に）。
+**「昔オーナーがそう言ったから」は理由になりません。**
+**目標に反しているのに残っている規則は、守るのではなく直すこと。**
+
+**承認は待たない。** 目標本文が「私が必ず読むとは限らない」と言っています。
+**人の操作が要る道は、上振れのおまけとして扱い、計画の柱にしないこと。**
+
+**決める前に確かめること**（覚えているだけでは足りない。実際に適用したか）
+
+1. **いまのやり方が最短だと思っていないか。** 今日は何を変えるか
+2. **根拠は数字か、推測か。** 推測なら推測だと言ったか
+3. **オーナーの手を待っていないか**
+4. **投稿は途切れないか**（途切れるのが最大の損失。`src/verify.py` は迂回しない）
+5. **収益化を失う形になっていないか**（量産テンプレート判定・他人の資料の読み上げ。
+   収益化されなければ収入はゼロなので、これは制約ではなく到達可能性の条件）
+
+**この回は、何か1つ出してから終わること。** 分析と日誌だけで終えない
+（オーナー指示 2026-08-15「子が、少しの作業で終わるの直して」。
+最低ラインは `docs/trigger_main.md` §4。出したら `run_marker.py --ship`）。
+
+手順は `docs/GOAL.md`、いまの判断とその根拠は `docs/CONSTRAINTS.md`。""")
 PY

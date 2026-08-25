@@ -1,0 +1,424 @@
+#!/usr/bin/env python3
+"""独立評価を、**この環境で実際に回せる形**で回す（`docs/CRITIQUE.md` の実装）。
+
+    python scripts/critique_run.py <動画ID>            # 3体に投げて、点まで記録する
+    python scripts/critique_run.py --next              # 待ち行列の先頭を1本
+    python scripts/critique_run.py --count 4 --jobs 4  # 先頭から4本を同時に
+    python scripts/critique_run.py <動画ID> --dry      # 投げるだけで記録しない
+
+## なぜ要るか（2026-08-15）
+
+`docs/CRITIQUE.md` は「**意図を知らない3体**に、同じメッセージで同時に投げる」と
+書いてあり、手順は `Agent` ツール（サブエージェント）を前提にしていました。
+**この環境ではそれが使えません。** 結果、8/15 の回が続けて
+「環境がサブエージェント禁止で回せず」と書いて終え、**待ち行列は9本まで伸びました。**
+
+`docs/trigger_main.md` §5 はこう言っています ——
+**「`Agent` ツールが禁じられているように見えるなら、使えるやり方に自分で置き換える」。**
+**回らない検査は、生成費だけ増やす儀式です。**
+
+**置き換え先は、既にこのリポジトリの中で動いていました。**
+台本生成は `src/claude_cli.py` から `claude -p`（ヘッドレス）を叩いています。
+**同じ道で3体を立てられます。** しかも**別プロセス・別セッション**なので、
+サブエージェントより独立性は強いくらいです（互いの答えが原理的に見えない）。
+
+## 独立を保つために、ここでやっていること
+
+**`claude -p` を、リポジトリの外で走らせます。**
+
+これが要ります。CLI は cwd の `CLAUDE.md` をプロジェクト指示として読み込むので、
+リポジトリの中で走らせると **3体とも「この動画の目的・合格基準・いま試している仮説」を
+全部読んでから見る**ことになります。`docs/CRITIQUE.md` が
+「渡してはいけないもの」に挙げているものが、**丸ごと入ります。**
+それでは「意図を知っている検査」＝いまの目視と同じものになり、**手が無意味になります。**
+
+だから contact sheet だけを一時ディレクトリに置き、**そこを cwd にして呼びます。**
+渡すのは `docs/CRITIQUE.md` の2つだけ ——**コマの画像と、読み上げ文。**
+
+## この道具が答えないこと
+
+**点が本物かは答えません。** それは `config/hypotheses.yaml`
+（「独立したエージェントの評価スコアは、engaged 比率を予測する」）の仕事で、
+判定は engaged と突き合わせた6本がたまってからです。
+**較正期間なので、点が低くても公開は止めません**（`docs/CRITIQUE.md`）。
+
+## **2026-08-21: 較正は終わり、ゲートは外れました**
+
+判定は **外れ**（順位相関 -0.27・しきい値 +0.40・n=10）。
+**この道具は `--anyway` を付けない限り回りません**（下の `OFF_REASON`）。
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+import time
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+
+from src.claude_cli import _binary, _child_env, _parse_envelope  # noqa: E402
+
+QUEUE = ROOT / "data" / "critique_queue"
+CRITICS = 3
+TIMEOUT = 900
+
+# **`docs/CRITIQUE.md`「投げる文」をそのまま使う。**
+# 書き換えたら、あちらと一緒に直して記録に残すこと（片方だけ動かすと、
+# 過去の点と比べられなくなります）。
+PROMPT = """あなたは日本語のショート動画をスクロールしている視聴者です。
+同じフォルダにある {sheet} が、動画のコマを時間順に並べた画像です（{orient}動画）。
+**まずその画像を開いて見てください。**
+
+コマは3列に並べてあるので、**最後の行に余りの枠が出ることがあります。**
+赤く塗って×印を入れてある枠が**それ**で、**動画のコマではありません。**
+動画はその手前のコマで終わっています。**この枠については何も答えないでください。**
+
+読み上げられる文は、次のとおりです。
+
+{narration}
+
+**この動画が何を目的に作られたかは知らされていません。知る必要もありません。**
+次の5つに、この順で答えてください。前置きは要りません。
+
+1. 最初の1.5秒（左上の1〜2コマ）で親指が止まりますか。はい/いいえ と理由1行
+2. これは何の動画か、1文で言えますか。言えるならその1文。**言えないなら「言えない」**
+3. 出ている数字を信じられますか。**前提が画面に出ているか**で答えてください
+4. 画面は1〜2秒ごとに変わりますか。変わらない区間があればその位置
+5. **総合 0〜10。** 10 は「最後まで見てしまう」、0 は「1秒で飛ばす」
+
+最後の行は `SCORE: <数字>` だけにしてください。
+"""
+
+
+def load(video_id: str) -> tuple[dict, Path]:
+    meta_path = QUEUE / f"{video_id}.json"
+    sheet = QUEUE / f"{video_id}.jpg"
+    if not meta_path.exists():
+        raise SystemExit(f"待ち行列に {video_id} がありません: {meta_path}")
+    if not sheet.exists():
+        raise SystemExit(
+            f"contact sheet がありません: {sheet}\n"
+            "**画像が無い本には点を付けないこと**（docs/CRITIQUE.md）。"
+        )
+    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    if not meta.get("narration"):
+        raise SystemExit(
+            f"{video_id} は読み上げ文が0行です。**渡してよいもの2つのうち片方が無いので評価しません**"
+            "（docs/CRITIQUE.md「最初の2本は、材料が半分しか残っていません」）。"
+        )
+    return meta, sheet
+
+
+def ask_one(n: int, prompt: str, workdir: Path) -> tuple[int, str]:
+    """1体ぶん。**リポジトリの外**で走らせる（CLAUDE.md を読ませないため）。"""
+    args = [_binary(), "-p", prompt, "--output-format", "json", "--model", "opus"]
+    try:
+        proc = subprocess.run(
+            args, capture_output=True, text=True, timeout=TIMEOUT,
+            env=_child_env(), cwd=workdir,
+        )
+    except subprocess.TimeoutExpired:
+        return n, ""
+    if proc.returncode != 0:
+        tail = (proc.stderr or proc.stdout).strip()[-400:]
+        print(f"[critique] {n}体目が異常終了 (exit {proc.returncode})\n{tail}")
+        return n, ""
+    try:
+        body, _ = _parse_envelope(proc.stdout)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[critique] {n}体目の返りを読めません: {str(exc)[:200]}")
+        return n, ""
+    return n, body
+
+
+def score_of(body: str) -> float | None:
+    """最終行の `SCORE: n` を拾う。**無ければ None**（推測で埋めないこと）。"""
+    hits = re.findall(r"SCORE:\s*([0-9]+(?:\.[0-9]+)?)", body)
+    if not hits:
+        return None
+    value = float(hits[-1])
+    return value if 0 <= value <= 10 else None
+
+
+def scored_ids() -> set[str]:
+    """既に点の付いた動画。`data/critique.jsonl` から拾う。"""
+    out: set[str] = set()
+    log = ROOT / "data" / "critique.jsonl"
+    if not log.exists():
+        return out
+    for line in log.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        rec = json.loads(line)
+        if isinstance(rec, dict):
+            out.add(rec.get("video") or rec.get("topic"))
+    return out
+
+
+def pending_ids() -> list[str]:
+    """まだ点の付いていない動画を、**締切の近い順**に返す。
+
+    #### **ここは待ち行列を自分で組み立てないこと**（2026-08-16。**原因のほうを消した**）
+
+    ここには `sorted(QUEUE.glob("*.json"))` を**自前でもう一度書いた**版があり、
+    `scripts/critique_queue.py` の `pending()` と**同じ仕事を2か所でしていました。**
+    そして直しは片方にしか入らない ——
+
+        8/15 23:4x  `*.plan.json` の偽物を一覧側だけ直した（点を付ける側は52件中13件が偽物のまま）
+        8/16 09:1x  `--count` の繰り上げだけ直した（`--next` は `[:1]` のまま空振り）
+        8/16 11:2x  **並びが動画IDのアルファベット順**だと分かったのが、この2つ目の実装
+
+    **「片方だけ直す」は通算7回目です。数え続けても減りませんでした。**
+    数えるのをやめて、**片方を消します。** いま待ち行列の定義は
+    `critique_queue.pending()` の1か所だけで、ここはそれを呼ぶだけです。
+
+    docstring も嘘をついていました（「**古い順**（投稿した順）」と書いてあるのに、
+    実際は動画IDのアルファベット順）。**2つあると、註のほうも別々に古くなります。**
+    """
+    # **`from critique_queue import ...` と書かないこと**（2026-08-16 に踏んだ）。
+    # `scripts/` は sys.path にも入るので、そう書くと `critique_queue` と
+    # `scripts.critique_queue` の **2つのモジュール実体**ができます。
+    # 片方に当てた差し替えがもう片方に効かず、**「2か所ある」を消したつもりで
+    # 種類を変えて作り直す**ことになります（検査が実際にそれを捕まえました）。
+    from scripts import critique_queue
+
+    return [d["video_id"] for d in critique_queue.pending()]
+
+
+def critique_one(video_id: str, pool: ThreadPoolExecutor) -> list:
+    """1本ぶんの3体を `pool` に積んで、Future の一覧を返す。
+
+    **作業場（リポジトリの外）は本ごとに別**です。同じ場所に2本ぶんの
+    contact sheet を置くと、3体が隣の本の画像を開けてしまいます
+    （2026-08-15 に、生成側の `claude -p` が cwd 共有で隣の題を出した件と同じ形）。
+    """
+    meta, sheet = load(video_id)
+    narration = "\n".join(f"{i}. {t}" for i, t in enumerate(meta["narration"], 1))
+    tmp = tempfile.mkdtemp(prefix=f"critique-{video_id}-")
+    work = Path(tmp)
+    shutil.copy2(sheet, work / sheet.name)
+    prompt = PROMPT.format(
+        sheet=sheet.name,
+        orient=meta.get("orientation", "縦"),
+        narration=narration,
+    )
+    print(f"[critique] {video_id} を {CRITICS}体に**同時に**投げます"
+          f"（互いの答えは見えません・cwd={work}）", flush=True)
+    return [pool.submit(ask_one, n, prompt, work) for n in range(1, CRITICS + 1)]
+
+
+def report(video_id: str, answers: list[tuple[int, str]]) -> list[float]:
+    scores: list[float] = []
+    for n, body in answers:
+        print(f"\n===== {video_id} / {n}体目 =====")
+        print(body.strip() if body else "（返りなし）")
+        s = score_of(body)
+        if s is None:
+            print(f"[critique] **{n}体目の点が読めません。**")
+        else:
+            scores.append(s)
+    print(f"\n[critique] {video_id} 取れた点: {scores}")
+    print(_measured_changes(video_id))
+    return scores
+
+
+# **「画面が変わっていない」という指摘は、必ずこの数字と突き合わせること**
+# （下限は `verify.NEAR_DUPE_RATIO` と同じ 1.0%。実測で置いた値です）
+CHANGE_FLOOR = 0.01
+
+
+def _measured_changes(video_id: str) -> str:
+    """評価の直後に、**隣り合うコマの実測差**を並べる（2026-08-16 22:3x）。
+
+    ## なぜ要るか —— 同じ空振りが3回続いた
+
+    評価する体も目視する体も、見ているのは **contact sheet の縮んだタイル**です。
+    そこでは「1行増えた」「数字が現れた」が読めないので、
+    **3回続けて「画面が変わっていない」と報告し、3回とも誤報**でした
+    （21:5x 余り枠／22:0x 前提表 実測 16.10%／22:3x 冒頭2コマ 実測 12.24%）。
+
+    **誤報そのものは止められません。** タイルが小さいのは材料の作りだからです。
+    止められるのは**こちら側が真に受けて調べ直すこと**で、
+    後の2件は**焼き直して初めて**否定できました（毎回10〜25分）。
+
+    測る道具は最初からありました（`verify.slide_change_ratios`）。
+    足りなかったのは、**その値が報告のとなりに出ていないこと**だけです。
+
+    **数字が指摘を打ち消すわけではありません。** 12% 塗り替わっていても
+    「見て気づかない」ことはあり得ます。ここが言えるのは
+    **「同一ではない」という一点だけ**で、そう書いてあります。
+    """
+    meta = QUEUE / f"{video_id}.json"
+    if not meta.exists():
+        return ""
+    try:
+        ratios = json.loads(meta.read_text(encoding="utf-8")).get("change_ratios")
+    except (json.JSONDecodeError, OSError):
+        return ""
+    if not ratios:
+        # **黙って何も出さないこと**（2026-08-16 22:3x より前の本には入っていません）。
+        # 出さないと、次の回は「測っていない」と「差が無い」を区別できません。
+        return (f"[critique] {video_id} には隣との実測がありません"
+                f"（8/16 22:3x より前の投稿）。測るには:\n"
+                f"    python scripts/bake_slides.py "
+                f"--plan data/critique_queue/{video_id}.plan.json --short")
+    low = [(i + 1, i + 2, r) for i, r in enumerate(ratios) if r < CHANGE_FLOOR]
+    head = (f"[critique] {video_id} の隣り合うコマの実測差"
+            f"（最小 {min(ratios):.2%} / 最大 {max(ratios):.2%} / {len(ratios)}組）")
+    if not low:
+        return (f"{head}\n"
+                f"  **同じ絵の組は0件です。**「コマNとN+1が同一」という指摘が"
+                f"上にあるなら、それは**縮んだタイルの見え方**であって、"
+                f"実物は同一ではありません（3回続けて誤報。`_measured_changes` の説明）。\n"
+                f"  **ただし「同一ではない」までしか言えません。**"
+                f"「変わったが気づかない」は、この数字では否定できません")
+    return (f"{head}\n  **下限 {CHANGE_FLOOR:.0%} を下回った組が {len(low)} 件**"
+            f"（{'・'.join(f'{a}→{b} {r:.2%}' for a, b, r in low[:5])}）"
+            f" ← **こちらは本物です。**")
+
+
+#: **2026-08-21、このゲートは外れました。** `--anyway` を付けない限り回りません。
+#:
+#: `config/hypotheses.yaml`「独立したエージェントの評価スコアは、engaged 比率を
+#: 予測する」の判定が **外れ** で閉じたためです（`closed_on: 2026-08-21`）。
+#: **消さずに残してあるのは、外れたのが「engaged を予測する」であって
+#: 「評価そのものが無意味」ではないから**です（別の的に当て直す道が残ります）。
+OFF_REASON = """**この道具は 2026-08-21 に外れました。**（`--anyway` で回せます）
+
+  `python scripts/critique_record.py --check` の実測:
+    突き合わせ 10本（要る6本） → **順位相関 -0.27**（しきい値 +0.40）
+    しきい値に届かないどころか**符号が逆**。中央値 3.0 の本が engaged 39.3%。
+
+  `config/hypotheses.yaml`「独立したエージェントの評価スコアは、engaged 比率を
+  予測する」を **falsified** で閉じ、`next_if_false` の1つ目
+  「**ゲートを外す**」を実行した結果がこの1行です。
+
+  **残っていた費用は `claude -p` 3体ぶん / 1本**でした。待ち行列は 310本 ＝
+  **930回**。予測しない点のために払うものがありません。
+  **浮いたぶんは腕 `density`（節を書く）へ回すこと** —— `eta.py` はこの回、
+  1周あたり 節0.9本 を要求しています。
+
+  **点も材料も消していません**（`data/critique.jsonl` / `data/critique_queue/`）。
+  **覆る条件**: engaged 以外の的（維持率・登録率）に当て直したとき、または
+  長尺が種を撒かれるようになって長尺でも測れるようになったとき。
+  そのときは `--anyway` で回し、相関を取り直してから判断すること。
+"""
+
+
+def main(argv: list[str] | None = None) -> int:
+    ap = argparse.ArgumentParser(description="独立評価を3体に投げて記録する")
+    ap.add_argument("video_id", nargs="?", default="", help="動画ID")
+    ap.add_argument("--next", action="store_true", help="待ち行列の先頭を1本")
+    ap.add_argument("--count", type=int, default=0,
+                    help="待ち行列の先頭から N 本を**同時に**回す（--next の複数版）")
+    ap.add_argument("--jobs", type=int, default=3,
+                    help="同時に走らせる本数。1体あたり claude -p が1つ立つので、"
+                         f"実際のプロセス数は jobs×{CRITICS}")
+    ap.add_argument("--dry", action="store_true", help="投げるが記録しない")
+    ap.add_argument("--anyway", action="store_true",
+                    help="外したゲートを承知で回す（下の OFF_REASON を読んでから）")
+    args = ap.parse_args(argv)
+
+    if not args.anyway:
+        print(OFF_REASON)
+        return 2
+
+    # **`--count` を足した理由**（2026-08-16。前の回の (a2) 問い3）。
+    #
+    # 待ち行列は37本まで伸びていて、`--next` は**1回に1本**しか回しません。
+    # 3体が同時に走るのはその1本ぶんだけで、**残りは積まれるほうが速い**状態でした。
+    # 生成の段では `--jobs` の実測（同時6で2.66倍）を取ってあるのに、
+    # **評価の段では取っていませんでした。**
+    # 材料（`.jpg` と `.plan.json`）はディスクにあるので、**生成は0回**です。
+    if args.count and args.video_id:
+        ap.error("--count と動画IDは一緒に使えません")
+    # **`want` は「回したい本数」であって、待ち行列の先頭N本ではありません。**
+    # 材料の欠けた本（読み上げ文0行）は永久に評価できないので、
+    # **先頭N本を切り取る形にすると、その本が毎回1枠ずつ食い続けます**
+    # （2026-08-16 の実測で、未評価36本のうち2本がこれ）。**足りるまで繰り上げます。**
+    if args.count:
+        queue = pending_ids()
+        want = args.count
+        if not queue:
+            print("[critique] 待ち行列は空です。")
+            return 0
+        print(f"[critique] 待ち行列 {len(queue)}本のうち {min(want, len(queue))}本を回します"
+              f"（同時 {args.jobs}本 ＝ claude -p は最大 {args.jobs * CRITICS} 個）")
+    elif args.video_id:
+        queue, want = [args.video_id], 1
+    elif args.next:
+        # **`--next` も繰り上げること**（2026-08-16 に実際に踏んだ）。
+        # 上の `--count` は「材料の欠けた本が枠を食い続ける」を直してあるのに、
+        # **`--next` は `[:1]` のままでした**（片方だけ直した形。通算6回目）。
+        # この回の `--next` は先頭 `CdX2oIb7BG8`（読み上げ文0行＝永久に評価不能）を
+        # 飛ばし、**そこで終わって1本も評価していません。** 待ち行列は37本あるのに、
+        # 手順（§5）が毎回すすめる `--next` が**空振りし続ける**形でした。
+        queue, want = pending_ids(), 1
+        if not queue:
+            print("[critique] 待ち行列は空です。")
+            return 0
+        print(f"[critique] 待ち行列 {len(queue)}本の先頭から1本"
+              f"（材料の欠けた本は飛ばして繰り上げます）")
+    else:
+        ap.error("動画ID か --next か --count のどれかが要ります")
+
+    started = time.monotonic()
+    futures: dict[str, list] = {}
+    skipped: list[str] = []
+    with ThreadPoolExecutor(max_workers=max(1, args.jobs) * CRITICS) as pool:
+        for vid in queue:
+            if len(futures) >= want:
+                break
+            try:
+                futures[vid] = critique_one(vid, pool)
+            except SystemExit as exc:
+                # **1本の材料が欠けただけで、残りを落とさないこと。**
+                print(f"[critique] {vid} は飛ばします: {exc}")
+                skipped.append(vid)
+        results = {vid: [f.result() for f in fs] for vid, fs in futures.items()}
+    elapsed = time.monotonic() - started
+    ids = list(futures)
+
+    # **点を付けるのは1本ずつ。** `critique_record.py` は共有の台帳
+    # （`data/critique.jsonl`）に書くので、ここを並列にすると行が壊れます。
+    # **並列にしてよいのは「訊く段」だけ**（`batch_build.py` の予約と同じ理由）。
+    rc = 0
+    done = 0
+    for vid in ids:
+        if vid not in results:
+            continue
+        scores = report(vid, results[vid])
+        if len(scores) < CRITICS:
+            print(f"**{CRITICS}体そろっていないので {vid} は記録しません**"
+                  "（`critique_record.py` に嘘の点を入れると検査そのものが死にます）。")
+            rc = 1
+            continue
+        if args.dry:
+            print(f"[critique] --dry なので {vid} は記録しません。")
+            continue
+        cmd = [sys.executable, str(ROOT / "scripts" / "critique_record.py"), vid]
+        cmd += [str(s) for s in scores]
+        print(f"[critique] $ {' '.join(cmd)}", flush=True)
+        rc = subprocess.run(cmd, cwd=ROOT).returncode or rc
+        done += 1
+
+    if len(ids) > 1:
+        # **速さを実測で残す。** 「速くなったはず」で終えないこと
+        # （生成側の `--jobs` はここを測らなかったせいで4回持ち越されました）。
+        per = elapsed / max(len(results), 1)
+        print(f"\n[critique] {len(results)}本を {elapsed / 60:.1f}分"
+              f"（1本あたり {per / 60:.1f}分・同時 {args.jobs}本）"
+              f" 記録 {done}本／飛ばし {len(skipped)}本")
+        print(f"[critique] 残り {len(pending_ids())}本")
+    return rc
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -17,6 +17,7 @@ from pathlib import Path
 
 from . import config
 from .util import probe_duration, run
+from .yomi import to_speech
 
 GOOGLE_ENDPOINT = "https://texttospeech.googleapis.com/v1/text:synthesize"
 GOOGLE_MAX_BYTES = 4800  # API 上限は 5000 バイト
@@ -102,15 +103,19 @@ def synthesize_segments(narrations: list[str], tts_cfg: dict, out_dir: Path) -> 
     請求先の紐付け漏れ・APIキーの制限ミス・無料枠超過は、どれもここに出る。
 
     声は途中で変えない。1本の中で話者が変わるのは、機械的な声より不快。
+
+    読みの直しは **ここだけ** に効く（`src/yomi.py`）。字幕・画面・説明欄は
+    元の narration をそのまま使うので、画面の文字は変わらない。
     """
     engine = choose_engine(tts_cfg)
     out_dir.mkdir(parents=True, exist_ok=True)
+    spoken = [to_speech(text) for text in narrations]
 
     for attempt_engine in (engine, "open-jtalk"):
         synth = _google if attempt_engine == "google" else _open_jtalk
         results: list[tuple[Path, float]] = []
         try:
-            for i, text in enumerate(narrations):
+            for i, text in enumerate(spoken):
                 path = out_dir / f"seg_{i:03d}.wav"
                 synth(text, path, tts_cfg)
                 duration = probe_duration(path)
