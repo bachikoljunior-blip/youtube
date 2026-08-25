@@ -528,6 +528,46 @@ def print_hypotheses() -> None:
     except Exception as _e:      # 計器が欠けても status は止めない
         print(f"\n  [!] 検出力の点検を飛ばしました: {str(_e)[:70]}")
 
+    # **その期限までに、判定に要るデータは在るか**（2026-08-25 に足した）。
+    #
+    # ここは長らく「あと N日」しか言いませんでした。**その N日後にデータが
+    # 在るかは、一度も確かめていません。** 実測（足した日）: 開いている16件は
+    # **全部** `needs:` が無く、うち **6件**は期限が来た日に何も言えない形でした
+    # （「収益化の審査に落ちる」＝ 登録者があと999人／処置群の16本目の公開が
+    # 期限より後／対照群が0本で、こちらが作らないかぎり永久に現れない）。
+    #
+    # **`scripts/drift.py` の「直近20回の verdict 0件」は、この帰結です。**
+    # `eta.py` は「軌跡の腕が動くのは前提を1件閉じたときだけ」と毎回言うので、
+    # **閉じられない期限を並べているあいだ、到達日は1日も動きません。**
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        # **`_judge`（`src/judgeable`）と別名にすること。** 同じ関数の中で
+        # 上（375行目）が `src/judgeable.floors()` を使っているので、
+        # ここで同じ名前を束ね直すと**その行が壊れます。**
+        import deadline_check as _reach                         # noqa: PLC0415
+        _vs = _reach.check(open_)
+        _bad = [v for v in _vs if v.slips]
+        _unk = [v for v in _vs if v.ready is None and not v.unchecked]
+        _non = [v for v in _vs if v.unchecked]
+        if _bad or _unk or _non:
+            print(f"\n  --- [!] **その期限にデータは在るか** "
+                  f"（早すぎる {len(_bad)}件 ／ 日が出せない {len(_unk)}件 ／ "
+                  f"確かめていない {len(_non)}件）---")
+            for v in _bad:
+                print(f"    **期限 {v.deadline} は {(v.ready - v.deadline).days}日 早い** "
+                      f"→ {v.ready} へ  {v.claim[:40]}")
+            for v in _unk:
+                print(f"    判定できる日が出せない  {v.claim[:40]}")
+                for a in v.answers:
+                    if a.ready is None:
+                        print(f"        {a.why[:110]}")
+            for v in _non:
+                print(f"    **`needs:` が無い**  {v.claim[:44]}")
+            print("  詳しくは `python scripts/deadline_check.py`。"
+                  "**動かすのは期限だけ。`falsified_if` は緩めないこと。**")
+    except Exception as _e:      # 計器が欠けても status は止めない
+        print(f"\n  [!] 期限の点検を飛ばしました: {str(_e)[:70]}")
+
     # **判定済みも中身を出す（2026-08-10 に直した）。**
     # ここは長らく件数だけだった。その結果、**もう外れたと分かっている手を
     # 何度でも提案できる状態**になっていた。実際この日の回で、
