@@ -1032,6 +1032,49 @@ def yaml_scalar(text: str) -> str:
     return '"' + text.replace("\\", "\\\\").replace('"', '\\"') + '"'
 
 
+# **7日ぶんの長尺で取れる本数は、節ではなく族の数で決まります**（2026-08-26 に踏んだ）
+#
+# `--list` は長らく節しか数えていませんでした。**長尺の律速はそこではありません** ——
+# `scripts/batch_build.pick` は `_drop_queue_tail_calcs` で
+# **これから7日ぶんの長尺に出ている calc を丸ごと落とし**、さらに1回の batch で
+# 同じ calc から取れるのは `per_calc`（既定2）までです。つまり
+# **1族に7節あっても、7日で取れるのは2本。**
+#
+# 実測（2026-08-26 02:0x）: `jouto` の節を7つ足した直後、長尺向けのテーマは6件
+# 残っていたのに `pick(long_form=True)` は **1件も返しませんでした**
+# （`jouto` が7日ぶんの予約に載っていたため）。
+# **節の数を見ているかぎり、この形は数字に出ません。**
+PER_CALC_DEFAULT = 2
+LONG_WINDOW_DAYS = 7
+
+
+def print_long_stock() -> None:
+    """長尺向けのテーマを、**族の数**で数えて出す。**API は叩きません。**"""
+    from src import config, dupes
+
+    try:
+        pool = config.load_topics()["topics"]
+        used = {r["topic"] for r in dupes.ledger_rows() if r.get("topic")}
+    except Exception as exc:                                   # noqa: BLE001
+        print(f"\n[長尺] 在庫が読めませんでした: {str(exc)[:120]}")
+        return
+
+    longs = [t for t in pool
+             if t.get("calc") and t["id"] not in used
+             and not t["id"].startswith("s-")]
+    families = sorted({t["calc"] for t in longs})
+    ceiling = min(len(longs), len(families) * PER_CALC_DEFAULT)
+    print(f"\n=== 長尺向けのテーマ **{len(longs)}件** / 族 **{len(families)}** ===")
+    if families:
+        print("  " + " ".join(families))
+    print(f"  **{LONG_WINDOW_DAYS}日ぶんで取れるのは最大 {ceiling}本**"
+          f"（1族から {PER_CALC_DEFAULT}本まで。`batch_build` の `--per-calc` と"
+          f" `_drop_queue_tail_calcs`）。")
+    if len(longs) > ceiling:
+        print(f"  **節を足しても、この数は増えません** —— "
+              f"増やすなら `src/calc/` に**別の族**を書くこと。")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--count", type=int, default=0, help="つくる件数")
@@ -1055,6 +1098,7 @@ def main() -> int:
             print(f"       {h}")
 
     if args.list or not args.count:
+        print_long_stock()
         if not spare:
             print("\n**未使用が0件です。** ここが本当の在庫切れなので、"
                   "`src/calc/` に新しい表を足すこと（この道具では増えません）。")

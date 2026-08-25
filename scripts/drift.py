@@ -47,7 +47,7 @@ import argparse
 import json
 import sys
 from collections import Counter
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -56,6 +56,29 @@ from src import levers  # noqa: E402
 ROOT = Path(__file__).resolve().parent.parent
 RUNS = ROOT / "data" / "runs.jsonl"
 HYPS = ROOT / "config" / "hypotheses.yaml"
+
+JST = timezone(timedelta(hours=9))
+
+
+def today_jst() -> str:
+    """**基準日は JST（2026-08-26 に直した）。**
+
+    `config/hypotheses.yaml` の `deadline` も、予約の日付も、全部 JST です。
+    ここは `datetime.now().date()` ＝ **コンテナの TZ（UTC）**を読んでいました。
+    9時間ずれるので、**JST の 00:00〜09:00 は「昨日」として判定します** ——
+    つまり**その日に期限が来た前提が、来ていないことにされる**時間帯が毎日9時間。
+    定期実行は2時間ごとなので、**1日のうち4〜5周がそこに落ちます。**
+
+    実測（2026-08-26 02:0x JST）: 期限 08-26 の前提が1件 来ているのに、
+    この門は「**期限の来た前提: なし**」と印字しました。
+    **門が期限を見落とす時間帯があるなら、期限を前へ倒しても効きません。**
+
+    同じ穴は `scripts/eta.py` と `scripts/status.py` が**それぞれ自分の中で
+    註つきで直しています**（「この器は UTC なので `date.today()` を使うと…」）。
+    **知っていて、門にだけ当てていなかった**形です。
+    """
+    return datetime.now(JST).date().isoformat()
+
 
 WINDOW_DAYS = 7
 STALE_ROUNDS = 20
@@ -443,7 +466,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--horizon", type=int, default=SUPPLY_HORIZON,
                     help="在庫を数える先の日数（既定 %d日）" % SUPPLY_HORIZON)
     a = ap.parse_args(argv)
-    today = a.today or datetime.now().date().isoformat()
+    today = a.today or today_jst()
     text, drifting = report(today, a.window)
     print(text)
     stext, dry = supply_report(today, a.horizon)
