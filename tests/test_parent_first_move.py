@@ -85,13 +85,20 @@ def test_first_section_tells_the_parent_to_run_the_loop_itself() -> None:
     assert len(sections) >= 2, "`## ` の節が1つもありません"
     first = sections[1]
 
-    assert "trigger_main.md" in first, (
-        "親の手順書の第1節に `docs/trigger_main.md` がありません。"
-        "**第1節の仕事は「親が自分で1周する」ことです**（2026-08-25 に入れ替えた）。"
+    assert "next_round.py" in first, (
+        "親の手順書の第1節に `scripts/next_round.py` がありません。"
+        "**第1節の仕事は「サブを立てる。中身は判断しない」です**"
+        "（2026-08-25 夜・オーナー指示「親はサブがやることについて判断しない」）。"
         "**先頭にあるものだけが確実に実行されます。**"
     )
-    assert "1周" in first, (
-        "第1節に「1周」がありません。見るだけ・立てるだけでは、その回は何も出しません。"
+    assert "spawn_prompt.rendered.md" in first, (
+        "第1節に、サブへ渡す本文の出どころ（`docs/spawn_prompt.rendered.md`）が"
+        "ありません。**親が本文を composeし始めると、周ごとに中身がぶれます** ——"
+        "実測: ship 240件のうち `verdict` は14件で、その回に終わる `fix` に寄っていた。"
+    )
+    assert "worktree" in first, (
+        "第1節に `worktree` がありません。**隔離せずに並列で走らせると衝突します** ——"
+        "2026-08-25 に `config/hypotheses.yaml` が5か所ぶつかりました（YAML は両方残せない）。"
     )
     # **第1節に、承認待ちになる操作を「やること」として置かないこと。**
     # 触れるのは構いません（なぜ置かないかの説明が要る）が、
