@@ -178,6 +178,26 @@ def test_投稿より先に呼ばれている():
         "**投稿より後ろに居ます。**窓を空にしてから順番が回ります"
 
 
+def test_投稿の本数枠で落ちても_50単位の手は撃たれる():
+    """**枠は2つあります。**片方が閉じても、もう片方は開いています。
+
+    `src/upload_cap.py` の頭:
+
+        Data API の日枠   10,000単位  403 quotaExceeded     ← 50単位の手を止めるのはこちら
+        投稿の本数枠      1日92本     429 rateLimitExceeded  ← `videos.insert` だけの枠
+
+    ここは長らく `cap.remaining <= 0` の `return 1` の**後ろ**にありました ——
+    つまり**「今日はもう92本 上げた」だけで、50単位の手まで丸ごと落ちて**いました。
+    **`src/upload_cap.py` が「片方しか数えていませんでした」と書いた、その形です。**
+    """
+    src = (ROOT / "scripts" / "batch_build.py").read_text(encoding="utf-8")
+    call = src.index("    _pull_verdicts_first()\n")
+    gate = src.index("        if cap.remaining <= 0:")
+    assert call < gate, (
+        "**投稿の本数枠（429）の `return` より後ろに居ます。**"
+        "別の枠なので、ここで一緒に落ちてはいけません")
+
+
 def test_取り戻せる日数を2か所で数えていない():
     """引き算は `Plan.gains()` の1か所。**印字と門がずれると、撃たなくなります。**"""
     src = (ROOT / "scripts" / "queue_lag.py").read_text(encoding="utf-8")
