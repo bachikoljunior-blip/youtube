@@ -396,18 +396,32 @@ def dead_arm_report(today: str, window_days: int = WINDOW_DAYS) -> str:
         out.append("  （この窓に `--lever` つきの ship がありません）")
         return "\n".join(out)
     tally = Counter(r["lever"] for r in runs)
-    dead = sorted(k for k in tally if k in caps and caps[k] <= levers.DEAD_CAP)
+    # **「引き代がない」は2種類あります**（2026-08-25）。
+    #     ここは天井 ×1.00 だけを数えていて、**天井は大きいのに到達日に
+    #     触らない腕**（`sub_rate` 天井 ×2,923.79）を**生きた腕として数えて
+    #     いました。** 判定は `levers.arm_state()` が持ちます（1か所に寄せる）。
+    why = state.get("dead_why") or {}
+    dead = sorted(k for k in tally if k in why)
     n_dead = sum(tally[k] for k in dead)
     for k, n in tally.most_common():
         cap = caps.get(k)
         mark = ""
-        if cap is not None and cap <= levers.DEAD_CAP:
+        if why.get(k) == "天井":
             mark = f"  ← **天井 ×{cap:.2f}（いまの実測では引き代なし）**"
+        elif why.get(k) == "天井まで引いても届かない":
+            cap_s = f"天井 ×{cap:,.2f} だが、" if cap is not None else ""
+            mark = f"  ← **{cap_s}天井まで引いても到達日に届きません**"
         elif cap is not None:
-            mark = f"  （天井 ×{cap:.2f}）"
+            th = (state.get("thresholds") or {}).get(k)
+            th_s = f"／出はじめ ×{th:,.2f}" if isinstance(th, (int, float)) else ""
+            mark = f"  （天井 ×{cap:.2f}{th_s}）"
         out.append(f"    {k:<10} {n:>3}回{mark}")
-    out.append(f"  → **引き代のない腕を選んだ回: {n_dead}/{len(runs)}**"
+    out.append(f"  → **到達日を動かせない腕を選んだ回: {n_dead}/{len(runs)}**"
                f"（{n_dead / len(runs) * 100:.0f}%）")
+    if not state.get("reaches"):
+        out.append("      （`arm_reaches` がまだ行に入っていません。"
+                   "**「天井まで引いても届かない」側は数えられていません** ——"
+                   " `python scripts/eta.py` を1回走らせると入ります）")
     if hint:
         follow = sum(1 for r in runs if r["lever"] == hint)
         out.append(f"  → 名指し **`{hint}`** に従った回: **{follow}/{len(runs)}**"
