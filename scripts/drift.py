@@ -240,14 +240,38 @@ def closable_within(today: str, horizon: int = SUPPLY_HORIZON) -> list[dict]:
     期日が過ぎているものも数えます —— **いますぐ閉じられる**ので在庫です。
     """
     end = (date.fromisoformat(today) + timedelta(days=horizon)).isoformat()
+    ready = _ready_by_claim()
     out = []
     for h in _hypotheses():
         if any(k in h for k in ("verdict", "closed_on", "outcome")):
             continue
-        dl = str(h.get("deadline") or h.get("settle_by") or "")
+        # **`deadline` は置いた回の勘です**（2026-08-25 22:5x）。
+        # 実際に判定できる日は `scripts/deadline_check.py` が予約・台帳・
+        # Analytics の遅れから出します。2つは実測で **10件・合計46日** ずれていて、
+        # ここが `deadline` を読んでいるあいだ、**在庫が実際より薄く見えていました**
+        # （＝この門が「在庫0」で止める側にも、素通しする側にも外れます）。
+        r = ready.get(str(h.get("claim") or ""))
+        dl = str(r) if r else str(h.get("deadline") or h.get("settle_by") or "")
         if dl and dl <= end:
-            out.append(h)
+            out.append({**h, "_closable_on": dl})
     return out
+
+
+def _ready_by_claim() -> dict:
+    """**前提ごとの「判定できる最早の日」**（`scripts/deadline_check.py`）。
+
+    壊れても在庫の数えそのものは止めないこと —— 落ちたら `deadline` に戻ります。
+    """
+    try:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "drift_deadline_check", ROOT / "scripts" / "deadline_check.py")
+        mod = importlib.util.module_from_spec(spec)
+        sys.modules["drift_deadline_check"] = mod   # dataclass が __module__ を引きます
+        spec.loader.exec_module(mod)
+        return mod.ready_by_claim()
+    except Exception:
+        return {}
 
 
 def supply_report(today: str, horizon: int = SUPPLY_HORIZON) -> tuple[str, bool]:
@@ -305,7 +329,8 @@ def supply_report(today: str, horizon: int = SUPPLY_HORIZON) -> tuple[str, bool]
         lines.append(f"  実績（直近{WINDOW_DAYS}日）: 周が数えられません（印がありません）")
 
     if stock:
-        dls = sorted(str(h.get("deadline") or h.get("settle_by") or "") for h in stock)
+        dls = sorted(str(h.get("_closable_on")
+                         or h.get("deadline") or h.get("settle_by") or "") for h in stock)
         ratio = (f"**{ahead / len(stock):.0f}周に1回**" if ahead else "（周速が測れません）")
         lines.append(
             f"  見込み（今後{horizon}日）: 見込み周 **{ahead:.0f}** ／ 期日の来る前提"
