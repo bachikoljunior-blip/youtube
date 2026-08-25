@@ -1,3 +1,4 @@
 {"at": "2026-08-25T03:45:38+00:00", "session": "session_01EJcF4skZaV5q2AgrhdkEBo", "alive": {"youtube-hourly": 1, "youtube-optimizer": 0}, "spawned": ["hourly", "optimizer"], "note": "optimizer(01SK7YNz)はcreate_session承認待ちで固着→空として数えた。親(017yMBL2)も同じ形で停止。hourly=019MJX6f / optimizer=01LijVu5 を立てた"}
 {"at": "2026-08-25T03:05:11+00:00", "session": "session_01SK7YNz1JhgDJC4n99Q3YGk", "alive": {"youtube-hourly": 0, "youtube-optimizer": 1}, "spawned": ["hourly", "optimizer"], "note": "親が5回飛ばした穴を塞いだ回。固着した札を空と数え、両方立てた"}
+{"at": "2026-08-25T03:25:44+00:00", "session": "session_013fAGoAzx37QFvF4zQMiJU3", "alive": {"youtube-hourly": 1, "youtube-optimizer": 2}, "spawned": [], "note": ""}
 {"at": "2026-08-25T03:34:29+00:00", "session": "session_019MJX6fpB65ano3RrJb6LAj", "alive": {"youtube-hourly": 2, "youtube-optimizer": 2}, "spawned": [], "note": ""}

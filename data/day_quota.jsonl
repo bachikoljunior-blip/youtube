@@ -2253,6 +2253,18 @@
 {"at": "2026-08-25T03:35:22+00:00", "detail": "channels.list mine"}
 {"at": "2026-08-25T03:37:14+00:00", "detail": "channels.list mine"}
 {"at": "2026-08-25T03:22:46+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-25T03:25:33+00:00", "detail": "status: Data API 読み"}
+{"at": "2026-08-25T03:26:03+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-25T03:26:05+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-25T03:27:26+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-25T03:45:21+00:00", "detail": "playlistItems.list uploads"}
+{"at": "2026-08-25T03:46:39+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-25T03:46:40+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-25T03:46:41+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-25T03:48:00+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-25T03:48:01+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-25T03:48:02+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-25T03:48:04+00:00", "detail": "channels.list mine"}
 {"at": "2026-08-25T03:26:30+00:00", "detail": "status: Data API 読み"}
 {"at": "2026-08-25T03:27:09+00:00", "detail": "channels.list mine"}
 {"at": "2026-08-25T03:27:11+00:00", "detail": "channels.list mine"}
