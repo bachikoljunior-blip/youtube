@@ -246,3 +246,54 @@ def test_到達日が出ていない回でも_supplyの節は落ちない():
     text = "\n".join(lines)
     assert "在庫が支えられるか" in text
     assert "到達予測まで" not in text
+
+
+# ------------------------------------------ 既定の密度は書き写さない（2026-08-26）
+
+def test_既定の密度はべた書きではなく_day_cap_の実測を読む(monkeypatch, capsys):
+    """**`--density` の既定が定数へ戻っていないこと。**
+
+    2026-08-26 まで既定は `25` でした。実測は `day_cap.cap()` の **10本/日**
+    （予約が実際に減る速さも中央値 10本/日）で、**2.5倍 外れて**います。
+    外れる向きが悪いほうでした —— 在庫を 25 で割ると「08/31 に尽きる」と出て
+    「急いで作れ」と読めますが、**作る速さ(13.6) は既に予約の減る速さ(10) を
+    超えている**ので、作るほど順番待ちが伸びて `arm_speed` の θ が下がります。
+
+    **この検査は値そのものを固定しません**（10 を書けば、同じ間違いを
+    もう1か所に増やすことになります）。固定するのは
+    **「`day_cap.cap()` と同じ数を使う」という結び付き**だけです。
+    """
+    from src import day_cap
+
+    monkeypatch.setattr(day_cap, "cap", lambda *a, **k: 7)   # 25 でも 10 でもない数
+    monkeypatch.setattr(supply, "sweep_novel",
+                        lambda **k: {"novel": 0, "undecided": 0, "total": 0, "at": None,
+                                     "age_hours": None})
+    monkeypatch.setattr(supply, "stock", lambda *a, **k: 14)
+    monkeypatch.setattr("sys.argv", ["supply"])
+
+    supply.main()
+    out = capsys.readouterr().out
+
+    assert "7本/日" in out, f"既定が `day_cap.cap()` を読んでいません:\n{out}"
+    assert "実測 `src/day_cap.py`" in out, "どこから来た数かを印字していません"
+    # 14本 ÷ 7本/日 = 2.0日ぶん（25 で割っていたら 0.6日 になる）
+    assert "2.0日ぶん" in out, f"既定の密度で割っていません:\n{out}"
+
+
+def test_密度を明示したときは指定が勝ち_そう印字する(monkeypatch, capsys):
+    """`--density 25` は**残してあります**。消すのではなく、明示させるだけ。"""
+    from src import day_cap
+
+    monkeypatch.setattr(day_cap, "cap", lambda *a, **k: 7)
+    monkeypatch.setattr(supply, "sweep_novel",
+                        lambda **k: {"novel": 0, "undecided": 0, "total": 0, "at": None,
+                                     "age_hours": None})
+    monkeypatch.setattr(supply, "stock", lambda *a, **k: 50)
+    monkeypatch.setattr("sys.argv", ["supply", "--density", "25"])
+
+    supply.main()
+    out = capsys.readouterr().out
+
+    assert "25本/日" in out
+    assert "`--density` で指定" in out, "指定で来たことを印字していません"

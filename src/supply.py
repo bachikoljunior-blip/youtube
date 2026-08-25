@@ -44,6 +44,43 @@
 - 掃引の候補が節になる歩留りは **0.156**（2026-08-20 に 32件を目で見て付けた1点。
   それまでは 1.0 ＝ 測らずに上限側へ置いていました）。**根拠と覆る条件は
   `SWEEP_YIELD` の註**。無作為標本ではないので、**さらに低い側**にも動きえます
+
+## 2026-08-26 —— **既定の密度を 25 から実測へ移した（最適化の回）**
+
+**上の冒頭は「`eta.py` が 25 を持っている」と書いていますが、`eta.py` は
+とっくにそこから離れています。** 段1 は `solve_gate1()` の実測で解いていて、
+`_report_supply` は 25 で呼んだうえで
+「**上の 25本/日 は詰め方の上限です**」と註を付けて打ち消しています。
+
+**打ち消しが片方にしか無いのが問題でした。** `python -m src.supply` を
+単体で撃つと（そしてそれが、最適化の回に「撃て」と名指しされている撃ち方です）、
+**その註は1行も出ません。** 出るのは割り算の結果だけです。
+
+**実測（2026-08-26）。** 25 は 2.5倍 外れていました。独立に2つ:
+
+    `day_cap.cap()`            **10本/日**（08/22・08/23・08/25 とも、
+                               11本目から先は 0再生）
+    予約が実際に減る速さ        **中央値 10本/日**（平均 9.94。
+                               328本 / 33日。`queue_lag.scheduled()`）
+
+**この 2.5倍が、どちらへ効くか。** 25 で割ると在庫は
+「**1.8日ぶん・08/31 に尽きる**」と出ます。10 で割ると
+「**4.5日ぶん・09/08**」です。前者は「**急いで作れ**」と読めます。
+**そして「もっと作る」は、この機械では逆向きです** ——
+作る速さは実測 13.6本/日、予約が減るのは 10本/日 なので、
+**作れば作るほど順番待ちが伸び、`arm_speed` の θ（＝待ちの逆数）が下がります**
+（`scripts/queue_lag.py` の冒頭）。**存在しない飢餓が、到達日を押していました。**
+
+**だから既定はもう書き写しません。** `--density` の既定は
+`day_cap.cap()` を読みます。25 が要るときは `--density 25` と明示すること
+（`lines()` が、どちらを使ったかを毎回 1行目に印字します）。
+
+**覆る条件**: `day_cap.cap()` が上がったら、既定も黙って追随します
+（それが狙いです）。**ただし `day_cap` の 10 は「ショートの面」の数**で、
+長尺には掛かりません（`day_cap.lines()` がそう言っています）。
+**長尺が予約の主になった日には、この既定は過少になります** ——
+そのときは予約が減る実速（上の2つ目）と食い違うので、
+`queue_lag` の「予約に入っている本 / いちばん後ろ」と突き合わせて測り直すこと。
 """
 from __future__ import annotations
 
@@ -286,7 +323,7 @@ def record(row: dict) -> dict:
 def supply(density: int, *, stock_n: int | None = None,
            novel: int | None = None, horizon_days: float | None = None,
            run_minutes: float = 60.0, today: date | None = None,
-           undecided: int | None = None) -> dict:
+           undecided: int | None = None, density_source: str = "") -> dict:
     """**その密度を、何日ぶん supply できるか。**
 
     `density` は 1日に公開する本数（`eta.PLAN_PUBLISH_PER_DAY`）。
@@ -306,6 +343,7 @@ def supply(density: int, *, stock_n: int | None = None,
 
     out = {
         "density": density,
+        "density_source": density_source,
         "stock": s,
         "sweep_novel": novel,
         "sweep_undecided": undecided,
@@ -339,7 +377,8 @@ def supply(density: int, *, stock_n: int | None = None,
 def lines(sp: dict) -> list[str]:
     """`eta.py` が印字する行。**数字だけ。判断は書かない。**"""
     L: list[str] = []
-    L.append(f"--- **その密度（{sp['density']:g}本/日）を、在庫が支えられるか** ---")
+    src_note = f"・{sp['density_source']}" if sp.get("density_source") else ""
+    L.append(f"--- **その密度（{sp['density']:g}本/日{src_note}）を、在庫が支えられるか** ---")
     if not sp["measured"]:
         L.append("    掃引の余地を**一度も測っていません**（`python -m src.supply --measure` で1点入ります）。")
     L.append(f"    未投稿のテーマ（在庫）      {sp['stock']:>6,} 本"
@@ -382,7 +421,9 @@ def main() -> None:
     import argparse
 
     p = argparse.ArgumentParser(description="密度を在庫が支えられるかを出す（API 0単位）")
-    p.add_argument("--density", type=int, default=25, help="1日に公開する本数")
+    p.add_argument("--density", type=int, default=None,
+                   help="1日に公開する本数。**既定は `src/day_cap.py` の実測**"
+                        "（べた書きしないこと。下の註を読むこと）")
     p.add_argument("--horizon", type=float, default=None, help="到達予測までの日数")
     p.add_argument("--run-minutes", type=float, default=60.0,
                    help="1周の間隔（分）。`quota.py --pace` の「持続できる間隔」")
@@ -392,6 +433,16 @@ def main() -> None:
                    help="掃引はやり直さず、在庫とテーマ総数だけ1点積む（1秒未満）。"
                         "**作る速さ（make_rate）は点の差からしか出ません**")
     args = p.parse_args()
+
+    # **既定の密度は、書き写さずに測ったものを読むこと**（2026-08-26）。
+    # ここは長らく `default=25` でした。理由は下の 2026-08-26 の註にあります。
+    if args.density is None:
+        from src import day_cap
+        density = day_cap.cap()
+        density_source = "実測 `src/day_cap.py`"
+    else:
+        density = args.density
+        density_source = "`--density` で指定"
 
     sw = sweep_novel(compute=args.measure)
     s = stock()
@@ -405,9 +456,9 @@ def main() -> None:
         print(f"[supply] 掃引の点は {sw['age_hours']:.1f}時間前のものです"
               f"（測り直しは --measure）")
 
-    sp = supply(args.density, stock_n=s, novel=sw["novel"],
+    sp = supply(density, stock_n=s, novel=sw["novel"],
                 undecided=sw.get("undecided"), horizon_days=args.horizon,
-                run_minutes=args.run_minutes)
+                run_minutes=args.run_minutes, density_source=density_source)
     for line in lines(sp):
         print(line)
 
