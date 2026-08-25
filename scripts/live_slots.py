@@ -158,6 +158,49 @@ def _groups() -> dict[str, tuple[dict[str, list[str]], int]]:
     return out
 
 
+def _free_live_before(board: Board, limit: dt.date) -> int:
+    """**期限までに、上限の余っている生きた枠が何本あるか。**（API 0単位）
+
+    **「本を足すこと」と言う前に、置く所があるかを数えるためのもの**です
+    （2026-08-26 04:2x に足した）。ここが 0 なら、**作った本はその日の
+    `cap()+1` 本目 ＝ 死に枠に入ります** —— いま逃がしている場所に
+    新しく積むだけで、その群は1本も増えません。
+
+    実測（08/26）: 期限 09/13 までの**全部の日**が上限ちょうどか超過で、
+    **余りは 0本**でした。それでも申し送りは3回続けて
+    「対照を2本 作り足すこと」と書いていました。
+    """
+    live = board.live()
+    day = board.now.date()
+    free = 0
+    while day <= limit:
+        if not measure_window.inside(day.isoformat()):
+            free += max(0, board.cap - board._alive_on(day, live))
+        day += dt.timedelta(days=1)
+    return free
+
+
+def _how_to_fill(board: Board, key: str, still: int) -> str:
+    """**足りないぶんを、どう埋めるか。**置く所の有無で言うことが変わります。"""
+    limit = next((f.deadline for f in judgeable.floors() if f.key == key), None)
+    if limit is None:
+        return ("**本を足すか、期限を延ばすこと。"
+                "`falsified_if` は緩めないこと**")
+    free = _free_live_before(board, limit)
+    if free >= still:
+        return (f"**本を {still}本 足すこと**"
+                f"（期限 {limit:%m/%d} までに空いた生きた枠が {free}本 あります）。"
+                "**`falsified_if` は緩めないこと**")
+    return (f"[!] **「作り足す」だけでは埋まりません** —— 期限 {limit:%m/%d} までに"
+            f"空いた生きた枠は **{free}本** しかありません"
+            f"（要 {still}本）。作った本はその日の {board.cap + 1}本目 ＝"
+            "**死に枠**に入り、いま逃がしている場所に積むだけです。"
+            "**効くのは「作って、早い日の生きた枠へ入れて、A/B でない本を1本 押し出す」"
+            "まで通した1手だけ**（`live_slots` の交換と同じ形。総再生は変わらず、"
+            "実験の情報だけが増えます）。**それが無理なら期限を延ばすこと。"
+            "`falsified_if` は緩めないこと**")
+
+
 def report(board: Board | None = None) -> list[str]:
     board = board or Board(_rows())
     live = board.live()
@@ -233,7 +276,7 @@ def plan(board: Board) -> list[str]:
                 out.append(f"  [!] {key}/{g} は **まだ {still}本 足りません** —— "
                            "動かせる死に枠を使い切りました"
                            "（測定の窓の日と公開済みは動かせません）。"
-                           "**本を足すか、期限を延ばすこと。`falsified_if` は緩めないこと**")
+                           + _how_to_fill(board, key, still))
     if not board.moves:
         out.append("  （動かす手はありません）")
         return out
