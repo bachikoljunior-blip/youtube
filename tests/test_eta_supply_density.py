@@ -257,10 +257,22 @@ def test_1本あたり再生の腕が到達日を動かす():
 
 
 def test_引く腕は床の名前ではなく差の大きさで決まる():
+    """**主題は「名前ではなく実測の差で選ぶ」こと。** どの差で選ぶかは主題ではありません。
+
+    2026-08-25 に物差しを `gain`（どの腕も一律 ×2）から
+    `gain_at_cap`（**その腕の天井まで引いたとき**）へ移しました。理由は
+    `scripts/eta.py` の `LEVER_FACTOR` の註 —— 合格点が ×2 より上にある回は
+    **4本とも `gain=0`** になり、この上書きが一度も走らなかったからです。
+    **どちらを使ったかは `lever_chosen_by` が言います。**ここはそれに従うこと
+    （物差しの名前を検査に直書きすると、次に物差しを直した回が
+    **裏から古い物差しを固定し直します** —— 8/25 の `per_video_needed` と同じ形）。
+    """
     m = _metrics()
     a = eta.analyse(m)
     pl = eta.plan(m, a, supply=_supply(13.0), sensitivity=True)
-    best = max(pl["lever_days"], key=lambda r: r["gain"])
+    key = pl["lever_chosen_by"]
+    assert key in ("gain_at_cap", "gain")
+    best = max(pl["lever_days"], key=lambda r: r[key])
     assert pl["lever_hint"] == best["lever"]
     assert pl["lever_hint_binding"]      # 診断のほうも残っていること
 
@@ -275,11 +287,13 @@ def test_届かない帯でも早い腕が上に来る():
     a = eta.analyse(m)
     pl = eta.plan(m, a, supply=_supply(13.0), sensitivity=True)
     assert pl["days_to_target"] >= eta.NEVER, "この物差しでは、いま日付は出ない前提"
-    reach = [r for r in pl["lever_days"] if r["reachable"]]
+    key = pl["lever_chosen_by"]
+    days_key = "days_at_cap" if key == "gain_at_cap" else "days"
+    reach = [r for r in pl["lever_days"] if r[days_key] < eta.NEVER]
     assert len(reach) >= 2
-    # gain の降順 ＝ 日数の昇順 になっていること
-    assert [r["days"] for r in reach] == sorted(r["days"] for r in reach)
-    assert len({r["gain"] for r in reach}) == len(reach), "同点になっています"
+    # 選んだ物差しの降順 ＝ 日数の昇順 になっていること
+    assert [r[days_key] for r in reach] == sorted(r[days_key] for r in reach)
+    assert len({r[key] for r in reach}) == len(reach), "同点になっています"
 
 
 def test_感度は既定では測らない():
