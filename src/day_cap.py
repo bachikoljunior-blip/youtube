@@ -224,6 +224,39 @@ def _spaced(times: list[dt.datetime], gap_min: float = MIN_GAP_MIN) -> list[dt.d
     return kept
 
 
+TIE_GAP_MIN = 1.0      # これ未満は「どちらが死んだか」を**測っていない**
+
+
+def ties(times: list[dt.datetime], gap_min: float = TIE_GAP_MIN) -> list[list[dt.datetime]]:
+    """**同じ分に入っている組**を返す（2本以上の塊だけ）。
+
+    `_spaced()` は「詰めて出した2本のうち、**後ろが死んで前が生きる**」と読みます。
+    それは 2026-08-21 の実測で確かめてあります —— :00/:30 の10本が生きて、
+    あいだの :15/:45 の7本が 0〜2再生。**確かめてあるのは 15分 の間隔まで**です。
+
+    **間隔0（同じ分）は、一度も測っていません。** 起こりうる読みが3つあり、
+    どれも `_spaced()` の1つの答えには畳めません:
+
+        前が生きて後ろが死ぬ   `_spaced()` の読み。**同分では未測定**
+        両方とも死ぬ           同時押しがまとめて弾かれる
+        両方とも生きる         YouTube が同分を区別していない
+
+    **どれかに決められないあいだ、その日の死は上限のせいだと言えません。**
+    """
+    groups: list[list[dt.datetime]] = []
+    cur: list[dt.datetime] = []
+    for t in sorted(times):
+        if cur and (t - cur[-1]).total_seconds() / 60.0 < gap_min:
+            cur.append(t)
+        else:
+            if len(cur) > 1:
+                groups.append(cur)
+            cur = [t]
+    if len(cur) > 1:
+        groups.append(cur)
+    return groups
+
+
 def window(path: pathlib.Path | None = None) -> dict:
     """**上限が「1日N本」なのか「時刻の窓」なのかを、切り分けられているか。**
 
@@ -244,40 +277,101 @@ def window(path: pathlib.Path | None = None) -> dict:
       confounded      True ＝ **どの日でも2つが同じ数**（区別できていない）
       decided_by      切り分けた日（無ければ None）
       verdict         "count" / "window" / None
+      blocked         [(日, 組の数, 巻き込まれた本数)] ＝ **同じ分の組があって使えなかった日**
+
+    **同じ分の組がある日からは決めません**（2026-08-25 に足した）。理由は `ties()`。
+    実物で確かめた落ち方 —— 08/27 は 19本のうち **5組10本が同じ分**にいました。
+    そこで「窓が真・組は両方死ぬ」を当てると生きた本が 9本 になり、
+    **本数モデルの予測（10本）に着地**します。守りが無いと、この道具は
+
+        decided_by=2026-08-27（出した 19本・生きた 9本 ／ 本数なら 10・窓なら 14）
+        verdict='count'  confounded=False
+
+    と**確信つきで逆を印字**しました。`density` の天井が 10本 に固定され、
+    **1.8倍 を取り落とします。**
+
+    **覆る条件**: 同じ分の2本がどう死ぬかを1日測れば、`_spaced()` に畳めます。
+    そうしたらこの守りは要りません（`ties()` の3つの読みのどれかに決まる）。
     """
     per_day: list[tuple[dt.date, list, float, int, int]] = []
+    blocked: list[tuple[dt.date, int, int]] = []
+    tied_days: set[dt.date] = set()
     floor = 0
     for d, rows, line in _qual_days(path):
         n_alive = sum(1 for _p, _v, n in rows if n >= line)
-        floor = max(floor, n_alive)
+        tied = ties([p for p, _v, _n in rows])
+        if tied:
+            # **同じ分の組がある日は、ここで1度だけ外します。**
+            # `floor` にも入れません —— 入れると、割り当てられない日が
+            # 「ここまでは付いた」の線を持ち上げ、**まともな日が全部
+            # `a >= floor` から落ちて証拠が空になります**（2026-08-25 に踏んだ）。
+            tied_days.add(d)
+            blocked.append((d, len(tied), sum(len(g) for g in tied)))
+        else:
+            floor = max(floor, n_alive)
         per_day.append((d, rows, line, n_alive, len(rows) - n_alive))
     # **証拠になるのは `measure()` と同じ日だけ**（生きた本数が最良で、なお死んだ本がある日）。
     # 生きた本数が最良より少ない日は、上限ではなく**その日の題材が外れた**日です。
+    #
+    # **同じ分の組がある日は、ここでも外します**（2026-08-25）。決めるときだけ
+    # 外して当てはめに残すと、**C と T が汚れた日から決まります** —— 08/27 を
+    # 「窓が真・組の後ろだけ死ぬ」で当てると生きた 14本 が C に入り、
+    # C=14 のまま 08/20 を見て `window` と印字しました。**答えは合っていても、
+    # 根拠が測っていない日**です。割り当てられない日は、当てはめにも使いません。
     evidence = [(d, rows, line, a) for d, rows, line, a, dead in per_day
-                if dead and a >= floor]
+                if dead and a >= floor and d not in tied_days]
     if not evidence:
-        return {"days": 0, "C": None, "T": None, "confounded": False,
+        # **`blocked` は必ず返します。** 空にすると、同分で潰れた測定日が
+        # 「まだ測っていない日」と見分けが付かなくなります。
+        return {"days": 0, "C": None, "T": None, "confounded": bool(blocked),
                 "decided_by": None, "verdict": None, "first_pub": None,
-                "last_alive": None}
+                "last_alive": None, "blocked": blocked}
 
-    C = max(a for _d, _r, _l, a in evidence)
-    alive_times = [p for _d, rows, line, _a in evidence
-                   for p, _v, n in rows if n >= line]
-    T = max(alive_times, key=lambda t: t.hour * 60 + t.minute)
-    T_min = T.hour * 60 + T.minute
-    first_pub = min((rows[0][0] for _d, rows, _l, _a in evidence),
-                    key=lambda t: t.hour * 60 + t.minute)
+    def _fit(exclude: dt.date | None):
+        """**その日を除いて**、2つのモデルの値を当てはめる。
 
-    def predict(rows) -> tuple[int, int]:
+        `exclude` を外すのが要点です（2026-08-25）。C を「証拠の日の生きた本数の
+        最大」で置くと、**試している日そのものが C を決めます** —— 窓が真なら
+        08/27 の生きた 14本 がそのまま C=14 になり、`本数なら 14・窓なら 14` で
+        **予測が一致して、その日は「どちらにも読める」で捨てられます。**
+
+        つまり**本数モデルは、それを覆すために作った日では絶対に覆りません。**
+        実測（衝突を散らした 08/27・窓が真）で `verdict=None` を確かめました。
+        当てはめは**前の日から**やり、試す日は当てるだけにします。
+        """
+        ev = [e for e in evidence if e[0] != exclude]
+        if not ev:
+            return None
+        c = max(a for _d, _r, _l, a in ev)
+        times = [p for _d, rows, line, _a in ev for p, _v, n in rows if n >= line]
+        t = max(times, key=lambda x: x.hour * 60 + x.minute)
+        fp = min((rows[0][0] for _d, rows, _l, _a in ev),
+                 key=lambda x: x.hour * 60 + x.minute)
+        return c, t, t.hour * 60 + t.minute, fp
+
+    C, T, T_min, first_pub = _fit(None)
+
+    def predict(rows, c: int, t_min: int) -> tuple[int, int]:
         kept = _spaced([p for p, _v, _n in rows])
-        return min(len(kept), C), sum(1 for t in kept
-                                      if t.hour * 60 + t.minute <= T_min)
+        return min(len(kept), c), sum(1 for x in kept
+                                      if x.hour * 60 + x.minute <= t_min)
 
     decided_by = verdict = None
     for d, rows, line, a, _dead in per_day:
-        pc, pw = predict(rows)
+        held = _fit(d)                    # **その日を除いて当てはめる**
+        if held is None:
+            continue                      # 前の日が無い ＝ 比べる相手がいない
+        c_d, _t_d, t_min_d, _fp_d = held
+        pc, pw = predict(rows, c_d, t_min_d)
         if abs(pc - pw) < 3:
             continue                      # 2つの予測が近い日は、どちらにも読める
+        if d in tied_days:
+            # **同じ分の組がある日からは決めません。** そこで死んだ本が
+            # 「衝突で死んだ」のか「上限で死んだ」のか、**割り当てられません**。
+            # 黙って通すと答えが反転します（2026-08-25 に 08/27 の実物で確かめた）——
+            # 窓が真で、組が両方死ぬ場合、生きた本数が**本数モデルの予測に着地**し、
+            # `count` を確信つきで印字します。**それは 1.8倍 を取り落とす向き**です。
+            continue
         near, far = sorted(((abs(a - pc), "count"), (abs(a - pw), "window")))
         # **どちらにも合っていない日で決めないこと。** 2026-08-04（登録者が9人・
         # 18:29 から7本）は 生きた2本 に対し 本数なら4・窓なら0 で、**両方から等距離**
@@ -294,7 +388,7 @@ def window(path: pathlib.Path | None = None) -> dict:
     return {"days": len(evidence), "C": C, "T": T.strftime("%H:%M"),
             "confounded": decided_by is None, "decided_by": decided_by,
             "verdict": verdict, "first_pub": first_pub.strftime("%H:%M"),
-            "last_alive": T.strftime("%H:%M")}
+            "last_alive": T.strftime("%H:%M"), "blocked": blocked}
 
 
 def cap(path: pathlib.Path | None = None) -> int:
@@ -330,13 +424,23 @@ def window_lines(path: pathlib.Path | None = None) -> list[str]:
     w = window(path)
     if not w["days"]:
         return []
+    blocked = [
+        f"    [!] **同じ分の組があるので、{d} からは決めていません**"
+        f"（{g}組・{n}本）。そこで死んだ本は「衝突で死んだ」のか"
+        f"「上限で死んだ」のか割り当てられません"
+        for d, g, n in w.get("blocked", [])
+    ]
+    if blocked:
+        blocked.append("        散らしてから測ること: `python -m src.collisions` の"
+                       "割り当てを `scripts/reschedule.py --move` で撃つ"
+                       "（`videos.update` は JST 16:00 以降）")
     if not w["confounded"]:
         which = ("**本数のほうが上限**です（早く出しても、後ろが死ぬだけ）"
                  if w["verdict"] == "count"
                  else f"**時刻の窓のほうが上限**です（**{w['T']} JST までに出した本は全部生きる**）")
         return [f"    切り分け済み: {which}",
-                f"      決めた日: {w['decided_by']}"]
-    return [
+                f"      決めた日: {w['decided_by']}"] + blocked
+    return blocked + [
         "    [!] **この本数は「時刻の窓」と切り分けられていません。**",
         f"        当てはまる説明が2つあり、**どの日でも同じ数**を出します ——"
         f" (A) 1日 {w['C']}本 まで ／ (B) **{w['T']} JST** までに出した本は全部生きる。",
