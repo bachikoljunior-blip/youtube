@@ -165,6 +165,32 @@ DEFAULT_JOBS = 3
 # 寄るからで、**根拠のあるぶんだけ（11 → 22）上げています。**
 DEFAULT_PER_CALC = 2
 
+#: **長尺の既定の予約時刻（JST）。**（2026-08-26 に足した）
+#:
+#: 既定は長らく **ショートと同じ 9時**でした。ところが 9時はショートで埋まっており、
+#: `next_publish_at()` は**その時刻が空いている最初の日**まで後ろへ流します。
+#: 実測（2026-08-26 07:0x・控え462本で解いた）:
+#:
+#:     09:00 JST → **2026-09-28**（32日先）  ← それまでの既定
+#:     14:00 JST → 2026-08-28（2日後）
+#:     18:00 JST → **2026-08-26（当日）**
+#:     20:00 JST → **2026-08-26（当日）**
+#:     22:00 JST → **2026-08-26（当日）**
+#:
+#: **同じ本が、時刻を変えるだけで 33日 早く出ます。作る手間は1秒も増えません。**
+#: この回は既定の 9時 で4本 作ってしまい、4本とも 09/28〜10/01 に入りました
+#: （`docs/JOURNAL.md` 2026-08-26 06:0x の第4節）。
+#:
+#: **長尺にだけ掛けます。** 長尺は `SHORTS_FEED` の枠を1つも使わないので、
+#: `src/day_cap.py` の「1日10本／13:30まで」はショートの面の話であって、
+#: 夜に置いても長尺の生死には掛かりません（`eta.py` の `density_surfaces`）。
+#: **ショートを夜へ動かすのは別の話** —— あちらは上限の内側で争っているので、
+#: ここを共通の既定にしないこと。
+#:
+#: **覆る条件**: 長尺の面でも時刻べつの生死が測れたら、その実測で置き直すこと。
+#: いまは「**空いている**」以上の根拠はありません（生死は未測定）。
+LONG_HOUR_JST = 20
+
 
 def _section_key(topic: dict) -> tuple:
     """その本が**実際に見せる計算**を指す鍵。
@@ -1433,8 +1459,9 @@ def _push_thumbnails_first() -> None:
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="複数本をまとめて作って予約する")
     ap.add_argument("--count", type=int, default=2, help="作る本数（既定 2）")
-    ap.add_argument("--hour", type=int, default=9,
-                    help="予約時刻（JST の時。既定 9）。埋まっていれば翌日へ送られる")
+    ap.add_argument("--hour", type=int, default=None,
+                    help="予約時刻（JST の時。既定 ショート 9／**長尺 20**）。"
+                         "埋まっていれば翌日へ送られる")
     ap.add_argument("--date", default="",
                     help="YYYY-MM-DD。**その日に釘づけして時刻をずらす**＝1日にN本。"
                          "無ければ従来どおり1日ずつ後ろへ積む（1日1本）")
@@ -1468,6 +1495,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--report", action="store_true",
                     help="台帳を jobs 別に並べるだけ（**生成も予約もしません**・数秒）")
     args = ap.parse_args(argv)
+
+    if args.hour is None:
+        args.hour = LONG_HOUR_JST if args.long else 9
 
     if args.report:
         return report()
