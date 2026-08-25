@@ -141,6 +141,38 @@ def test_まだ来ていない期日は出さない():
     assert status.means_due_dates(body) == []
 
 
+# ---------------------------------------------------------------------------
+# **閉じ方は3つある**（2026-08-26 に足した。**実物で2件、閉じたのに開いて見えていた**）
+#
+# `print_hypotheses` は `verdict` の1つだけを見ていて、`closed_on` +
+# `outcome: falsified` で閉じた2件を「まだ検証していない前提」に数えていました。
+# **どちらも期限がいちばん近い側**なので、判定済みの2件が毎回いちばん上に出て、
+# **本当に期限が来たもの（08/26 の「過去の図」の門）が下に埋もれていました。**
+# 他の読み手（`arm_speed.next_close` / `judgeable` / `deadline_check`）は
+# **既に `closed_on` を見ています。** この節だけが取り残されていた形です。
+# ---------------------------------------------------------------------------
+def test_閉じ方は3つとも閉じたと数える():
+    assert status._is_judged({"verdict": "外れ"})
+    assert status._is_judged({"closed_on": "2026-08-25"})
+    assert status._is_judged({"outcome": "falsified"})
+    assert not status._is_judged({"deadline": "2026-08-27"})
+
+
+def test_実物の前提の開いている数が_arm_speedと一致する():
+    """**同じ帳面を、2つの読み手が同じ数で読むこと。**"""
+    import yaml
+
+    from src import arm_speed
+
+    items = yaml.safe_load(
+        (ROOT / "config" / "hypotheses.yaml").read_text(encoding="utf-8"))["hypotheses"]
+    mine = sum(1 for h in items if not status._is_judged(h))
+    theirs = sum(1 for h in items
+                 if isinstance(h, dict) and not h.get("closed_on"))
+    assert mine == theirs, f"status={mine} / closed_on を見る側={theirs}"
+    assert arm_speed.next_close() is not None or mine == 0
+
+
 def test_実物のMEANSに未判定の期日が残っていない():
     """**残っていたら、その回が判定すること。** 落ちるのが正しい形です。
 

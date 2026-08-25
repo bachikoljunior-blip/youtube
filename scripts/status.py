@@ -351,7 +351,7 @@ def print_hypotheses() -> None:
     # 期限切れの表示が毎回出続けて**本当に期限が来たものが埋もれる。**
     open_, judged = [], []
     for h in items:
-        (judged if h.get("verdict") else open_).append(h)
+        (judged if _is_judged(h) else open_).append(h)
 
     print("\n=== まだ検証していない前提 ===")
     _lag = _analytics_lag()
@@ -732,6 +732,31 @@ def reversal_conditions(body: str, width: int = 110, limit: int = 1) -> list[str
     # （M11 の条件1 は 8/15 に閉じられ、同日 16:0x にその閉じ方ごと取り消された）。
     # **上から採ると、取り消された側が先に出ます。**
     return out[-limit:]
+
+
+def _is_judged(h: dict) -> bool:
+    """**その前提は、もう閉じているか。**（2026-08-26 に足した）
+
+    ## なぜ `verdict` だけでは足りないか（**実物で2件、閉じたのに開いて見えていた**）
+
+    この節は長らく `h.get("verdict")` の1つだけを見ていました。ところが
+    `config/hypotheses.yaml` の閉じ方は**3つ**あります ——
+    `verdict` ／ `closed_on` ／ `outcome`。そして実測（2026-08-26）で、
+    **`closed_on` と `outcome: falsified` を持つのに `verdict` の無い前提が2件**:
+
+        2026-08-27  falsified  許可の一覧に MCP サーバ名を入れたことで、鎖は承認なしで回る
+        2026-08-26  falsified  engaged を決めているのは尺でも文言でもなく、冒頭で画面が変わらないこと
+
+    **どちらも期限がいちばん近い側**なので、**判定済みの2件が、
+    毎回「次に判定するもの」の先頭に出続けていました。**
+    この関数のすぐ上の註が、その害をそのまま書いています ——
+    「期限切れの表示が毎回出続けて**本当に期限が来たものが埋もれる**」。
+
+    **他の読み手は既に `closed_on` を見ています**（`src/arm_speed.next_close()`・
+    `src/judgeable.py`・`scripts/deadline_check.py`）。**この節だけが取り残されて
+    いました** —— つまり「同じ帳面の読み手2つが逆を向いていた」形の6件目です。
+    """
+    return bool(h.get("verdict") or h.get("closed_on") or h.get("outcome"))
 
 
 #: `docs/MEANS.md` の本文に書かれた「**M/D 時点で〜**」という判断点。

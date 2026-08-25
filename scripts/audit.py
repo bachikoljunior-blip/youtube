@@ -358,7 +358,11 @@ def report_hypotheses() -> list[str]:
     today = datetime.now(JST).date()
     gaps = []
     for h in items:
-        if h.get("verdict"):
+        # **閉じ方は3つあります**（2026-08-26 に直した）: `verdict` / `closed_on` /
+        #     `outcome`。`verdict` だけを見ていたので、`closed_on` + `outcome:
+        #     falsified` で閉じた2件が「判定していない」に数えられていました
+        #     （`scripts/status.py::_is_judged` に実測）。
+        if h.get("verdict") or h.get("closed_on") or h.get("outcome"):
             continue
         try:
             due = datetime.strptime(str(h["deadline"]), "%Y-%m-%d").date()
