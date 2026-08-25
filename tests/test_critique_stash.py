@@ -211,3 +211,81 @@ def test_critique_run_uses_the_same_queue(tmp_path, stash_dir, monkeypatch):
                         lambda *a, **k: ({"AAA0000001": (0, 500.0),
                                           "BBB0000002": (0, 20.0)}, "test"))
     assert critique_run.pending_ids() == ["BBB0000002", "AAA0000001"]
+
+
+# ---- **向きの欄が、向きを言っていること**（2026-08-26 に実測して足した）--------
+#
+# `orientation` は長らく `script.get("short", True)` でした。
+# **台本に `short` という鍵はありません**（`src/script_writer.VideoScript` に無い）。
+# だから既定の `True` が必ず出て、**控え469本が469本とも「縦」**。
+# **定数であって、向きではありませんでした。**
+#
+# **この検査が長らく通っていたのは、上の `SCRIPT` が `"short": True` を
+# 持っているからです** —— 実物には無い鍵を、身代わりだけが持っていました。
+# **身代わりが本物より豊かだと、欄が壊れても緑のままです。**
+#
+# 実害は2つ:
+#   1. `main()` が焼き直しの手を `bake_slides.py --plan … --short` で組む。
+#      **長尺にも必ず `--short`** が付いていた（縦・約30秒で焼き直す）
+#   2. 2026-08-25〜26 の申し送りが「4本とも縦なのに `verify` の門を素通りした
+#      ＝ 門が壊れている」と読んだ。**実際は4本とも長尺**で、門は
+#      `if portrait:` の中にあり長尺に掛かっていなかっただけ。
+#      **2回ぶんの回が、この1行の嘘を追いかけています。**
+
+#: **本物に合わせた身代わり**（`short` という鍵を持たない）。
+REAL_SCRIPT = {
+    "title": "副業20万円の壁",
+    "segments": [
+        {"narration": "副業所得が1円ふえると手取りは1万円減ります"},
+        {"narration": "20万円ちょうどなら手取りは18万円です"},
+    ],
+}
+
+
+def test_ショートの印があれば縦(tmp_path, stash_dir):
+    """`slide_seconds.json` は `pipeline` の `if args.short:` の中でしか書かれない。"""
+    work = _work(tmp_path, with_plan=True)
+    (work / "slide_seconds.json").write_text("[1.0, 1.0]", encoding="utf-8")
+    critique_queue.stash("s-fukugyo-1", "VID0000101", REAL_SCRIPT, work)
+
+    meta = json.loads((stash_dir / "VID0000101.json").read_text(encoding="utf-8"))
+    assert meta["orientation"] == "縦"
+
+
+def test_印が無くコマが割れていなければ横(tmp_path, stash_dir):
+    """**長尺は `reveal_variants` を通らない**ので `コマ = 文`。
+
+    ここが「縦」に戻ったら、`orientation` がまた定数になっています。
+    """
+    work = _work(tmp_path, with_plan=True)      # PLAN は2コマ・台本も2文
+    critique_queue.stash("s-fukugyo-1", "VID0000102", REAL_SCRIPT, work)
+
+    meta = json.loads((stash_dir / "VID0000102.json").read_text(encoding="utf-8"))
+    assert meta["orientation"] == "横", "長尺が「縦」で積まれています"
+
+
+def test_台本の_short_という鍵を見ないこと(tmp_path, stash_dir):
+    """**実物に無い鍵を信じないこと。** あっても実物の構造が勝つ。"""
+    work = _work(tmp_path, with_plan=True)
+    liar = dict(REAL_SCRIPT, short=True)        # 実物には無い鍵
+    critique_queue.stash("s-fukugyo-1", "VID0000103", liar, work)
+
+    meta = json.loads((stash_dir / "VID0000103.json").read_text(encoding="utf-8"))
+    assert meta["orientation"] == "横", "`script['short']` をまだ見ています"
+
+
+def test_古い控えは読むときに数え直す(tmp_path, stash_dir):
+    """**控えは作り直せません**（投稿の時点の記録）。だから読む側で直します。"""
+    stash_dir.mkdir(parents=True, exist_ok=True)
+    plan = stash_dir / "VID0000104.plan.json"
+    plan.write_text(json.dumps(PLAN, ensure_ascii=False), encoding="utf-8")
+    old = {"video_id": "VID0000104", "orientation": "縦",       # ← 定数だったころ
+           "narration": [s["narration"] for s in REAL_SCRIPT["segments"]]}
+    assert critique_queue.orientation_of(old, plan) == "横"
+
+    # 割れているほう（ショート）は「縦」のまま
+    plan.write_text(json.dumps(PLAN + PLAN, ensure_ascii=False), encoding="utf-8")
+    assert critique_queue.orientation_of(old, plan) == "縦"
+
+    # **控えが無い本は、保存された欄のまま**（作り話をしない）
+    assert critique_queue.orientation_of(old, stash_dir / "nope.plan.json") == "縦"

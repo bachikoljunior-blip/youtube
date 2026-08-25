@@ -25,6 +25,8 @@
 """
 from __future__ import annotations
 
+import math
+
 from . import _checks
 
 # ---- 制度の値（令和8年4月からの額。日本年金機構「加給年金額と振替加算」）------
@@ -55,6 +57,10 @@ HYOUJUN_CAP = 650_000
 # 繰下げは1か月あたり0.7%増（厚生年金保険法44条の3）
 KURISAGE_PER_MONTH = 0.007
 
+# **ここだけが仮定です。** 65歳から何年 老齢厚生年金を受け取るか。
+# 20年 ＝ 85歳まで。制度の値ではないので、動かして読めるようにしてあります。
+RECEIVE_YEARS = 20
+
 # **振替加算の対象は「大正15年4月2日〜昭和41年4月1日生まれ」だけです。**
 # 昭和41年4月2日以後に生まれた配偶者には、振替加算が1円も付きません。
 FURIKAE_LAST_BIRTH = "昭和41年4月1日"
@@ -72,6 +78,10 @@ ASSUMPTIONS = [
     "繰下げの増額率は1か月あたり0.7パーセントとして置いています",
     "物価や賃金による毎年の改定は入れていません。今の額のまま続くものとして計算しています",
     "配偶者の生計維持の要件、つまり年収850万円未満は満たしているものとしています",
+    "取り返すのに要る月数を出すところだけ、老齢厚生年金を受け取る年数を"
+    "65歳から20年、つまり85歳までとして置いています。"
+    "**ここだけが制度の値ではありません。**受け取る年数を半分にすれば"
+    "要る月数は2倍になります",
 ]
 
 
@@ -127,16 +137,23 @@ def monthly_reward_gain(hyoujun: int, months: int = 1) -> float:
     return hyoujun * ACCRUAL * months
 
 
-def payback_years(age_gap_years: float, hyoujun: int) -> float:
+def payback_years(age_gap_years: float, hyoujun: int, months: int = 1, *,
+                  yearly: int = SPOUSE_FULL) -> float:
     """配偶者が240月目に手をかけたとき、失った加給年金を取り返すのに要る年数。
 
-    **失うのは「加給年金 × 年齢差」（1回きり）、増えるのは1か月ぶんの報酬比例（毎年）。**
+    **失うのは「加給年金 × 年齢差」（1回きり）、増えるのは報酬比例（毎年）。**
     割ると年数が出ます。**この年数は報酬が小さいほど長くなります。**
+
+    `months` は **239か月から数えて何か月ぶん多く働いたか**です。
+    既定の1は「240か月目に手をかけただけ」＝ いちばん損な止め方で、
+    **ここを増やすと年数は反比例で縮みます**（下の `break_even_months`）。
+    `yearly` は加給年金の年額で、**受給権者の生年月日で5段あります**
+    （`SPECIAL_ADD`）。既定は昭和18年4月2日以後生まれの 423,700円。
     """
-    gain = monthly_reward_gain(hyoujun)
+    gain = monthly_reward_gain(hyoujun, months)
     if gain <= 0:
         return float("inf")
-    return spouse_total(age_gap_years) / gain
+    return spouse_total(age_gap_years, yearly=yearly) / gain
 
 
 def payback_table(age_gap_years: float = 1) -> list[dict]:
@@ -150,6 +167,102 @@ def payback_table(age_gap_years: float = 1) -> list[dict]:
             "取り返すのに要る年数": payback_years(age_gap_years, hyoujun),
         })
     return rows
+
+
+def break_even_months(age_gap_years: float, hyoujun: int, *,
+                      receive_years: float = RECEIVE_YEARS,
+                      yearly: int = SPOUSE_FULL) -> dict:
+    """**239か月から数えて、何か月ぶん多く働けば元が取れるか。**
+
+    上の `payback_years` は `months=1` で解いています ——
+    **「240か月目に手をかけて、そこで辞めた」**という止め方です。
+    ところが 240か月に届いた時点で加給年金は消えるので、
+    **そこで辞めるのがいちばん損**になります。失う額はもう固定で、
+    そこから先は働いたぶんだけ報酬比例が積み上がるからです。
+
+    だから本当に要るのは年数ではなく**月数**です:
+
+        (何か月ぶん多く働くか) × 標準報酬月額 × 乗率 × (受け取る年数)
+          ≧ 加給年金の年額 × 年齢差
+
+    左辺の `受け取る年数` は寿命の置き方で、ここでは 65歳から
+    `RECEIVE_YEARS` 年（＝85歳まで）としています。**この1つだけが仮定**で、
+    残りは全部 制度の値です。
+    """
+    per_month_per_year = monthly_reward_gain(hyoujun, 1)
+    lost = spouse_total(age_gap_years, yearly=yearly)
+    if per_month_per_year <= 0 or receive_years <= 0:
+        need = float("inf")
+    else:
+        need = lost / (per_month_per_year * receive_years)
+    months = math.ceil(need) if need != float("inf") else None
+    return {
+        "年齢差": age_gap_years,
+        "標準報酬月額": hyoujun,
+        "受け取る年数": receive_years,
+        "失う加給年金": lost,
+        "1か月ぶんで増える年額": round(per_month_per_year),
+        "要る月数（端数のまま）": need,
+        "要る月数": months,
+        "そのときの総月数": None if months is None else NEEDED_MONTHS - 1 + months,
+        "そのときの年数": None if months is None else (NEEDED_MONTHS - 1 + months) / 12,
+        "240か月ちょうどで辞めたときの年数": payback_years(
+            age_gap_years, hyoujun, 1, yearly=yearly),
+    }
+
+
+def break_even_months_table(age_gap_years: float = 1, *,
+                            receive_years: float = RECEIVE_YEARS) -> list[dict]:
+    """報酬べつに、要る月数を並べる。**報酬が高いほど短くて済みます。**"""
+    return [break_even_months(age_gap_years, h, receive_years=receive_years)
+            for h in (150_000, 300_000, 500_000, HYOUJUN_CAP)]
+
+
+def break_even_gap_table(hyoujun: int = 300_000, *,
+                         receive_years: float = RECEIVE_YEARS) -> list[dict]:
+    """年齢差べつに、要る月数を並べる。**年齢差に正比例します。**"""
+    return [break_even_months(g, hyoujun, receive_years=receive_years)
+            for g in (1, 2, 3, 5, 10)]
+
+
+def birth_band_months(age_gap_years: float = 1, hyoujun: int = 300_000, *,
+                      receive_years: float = RECEIVE_YEARS) -> list[dict]:
+    """**同じ年齢差・同じ報酬でも、生年月日の段で要る月数が変わります。**
+
+    加給年金の年額は `SPECIAL_ADD` の5段で 279,800円 〜 423,700円。
+    失う額はそれに比例するので、**要る月数もそのまま比例します。**
+    報酬でも年齢差でもなく、**生まれた日**が決めている量です。
+    """
+    rows = []
+    for name, add, total in SPECIAL_ADD:
+        r = break_even_months(age_gap_years, hyoujun,
+                              receive_years=receive_years, yearly=total)
+        rows.append({
+            "区分": name,
+            "特別加算": add,
+            "加給年金の年額": total,
+            "失う加給年金": r["失う加給年金"],
+            "要る月数": r["要る月数"],
+            "要る月数（端数のまま）": r["要る月数（端数のまま）"],
+        })
+    return rows
+
+
+def birth_band_spread(age_gap_years: float = 1, hyoujun: int = 300_000, *,
+                      receive_years: float = RECEIVE_YEARS) -> dict:
+    """いちばん上の段といちばん下の段で、要る月数がどれだけ違うか。"""
+    rows = birth_band_months(age_gap_years, hyoujun, receive_years=receive_years)
+    lo, hi = rows[0], rows[-1]
+    return {
+        "低い段の年額": lo["加給年金の年額"],
+        "高い段の年額": hi["加給年金の年額"],
+        "年額の倍率": hi["加給年金の年額"] / lo["加給年金の年額"],
+        "低い段の要る月数": lo["要る月数"],
+        "高い段の要る月数": hi["要る月数"],
+        "月数の差": hi["要る月数"] - lo["要る月数"],
+        "月数の倍率": (hi["要る月数（端数のまま）"]
+                   / lo["要る月数（端数のまま）"]),
+    }
 
 
 def kurisage_lost(age_gap_years: float, wait_years: float) -> dict:
@@ -252,6 +365,54 @@ def check_tables() -> None:
     _checks.rounding(kurisage_lost(10, 5)["残る額"], SPOUSE_FULL * 5,
                      "年齢差10年・5年繰下げで残る額")
 
+    # (e) **主題**: 240か月ちょうどで辞めるのがいちばん損。
+    #     多く働いた月数に反比例して、取り返す年数が縮むこと
+    _checks.decreases_with(lambda m: payback_years(1, 300_000, m),
+                           [1, 6, 12, 24, 60],
+                           "多く働いた月数が増えたのに、取り返す年数が縮んでいない")
+    # 反比例そのもの（12倍 働けば 12分の1）
+    _checks.rounding(round(payback_years(1, 300_000, 1)
+                           / payback_years(1, 300_000, 12), 6),
+                     12.0, "月数12倍で年数が12分の1になっていない")
+    # 要る月数は、受け取る年数で割った形に一致すること（式の写し違いを止める）
+    b = break_even_months(1, 300_000)
+    _checks.rounding(
+        round(b["要る月数（端数のまま）"] * monthly_reward_gain(300_000, 1)
+              * RECEIVE_YEARS),
+        b["失う加給年金"], "要る月数 × 1か月ぶんの年額 × 受け取る年数 が失う額に戻らない")
+    # 端数は必ず切り上げ（足りない月数を出さないこと）
+    if b["要る月数"] < b["要る月数（端数のまま）"]:
+        raise _checks.TableError(
+            f"要る月数を切り捨てています（{b['要る月数']} < "
+            f"{b['要る月数（端数のまま）']:.3f}）。**足りない月数を出しています**")
+    # **人の寿命の内側に入ること**（＝この節が「取り返せない」を覆していること）
+    if not b["要る月数"] < 12 * 5:
+        raise _checks.TableError(
+            f"1歳差・報酬30万円で要る月数が {b['要る月数']}か月 です。"
+            f"**5年を超えるなら、この節の主張が成り立ちません**")
+    # 報酬が高いほど短くて済む
+    _checks.decreases_with(
+        lambda h: break_even_months(1, h)["要る月数（端数のまま）"],
+        [150_000, 300_000, 500_000, HYOUJUN_CAP],
+        "報酬が上がったのに、要る月数が減っていない")
+    # 年齢差に正比例（2歳差はちょうど2倍）
+    _checks.rounding(
+        round(break_even_months(2, 300_000)["要る月数（端数のまま）"]
+              / break_even_months(1, 300_000)["要る月数（端数のまま）"], 6),
+        2.0, "年齢差2倍で要る月数が2倍になっていない")
+
+    # (f) **主題**: 要る月数を決めているのは、報酬でも年齢差でもなく生年月日の段
+    sp = birth_band_spread()
+    _checks.rounding(round(sp["月数の倍率"], 6),
+                     round(sp["年額の倍率"], 6),
+                     "要る月数の倍率が、加給年金の年額の倍率と一致しない")
+    if not sp["高い段の要る月数"] > sp["低い段の要る月数"]:
+        raise _checks.TableError(
+            "高い段のほうが要る月数が多くなっていません。"
+            "**失う額が大きいほど、多く働かないと取り返せないはずです**")
+    _checks.ascending([r["要る月数"] for r in birth_band_months()],
+                      "生年月日の段ごとの要る月数", strict=False)
+
     _checks.assumption_values(ASSUMPTIONS, name="kakyu")
 
 
@@ -291,6 +452,44 @@ def main() -> None:
     print("  → **増えるほうも失うほうも1年あたりの額なので、報酬は約分で消えます。**"
           "残るのは年齢差だけで、**1歳ぶんが258年**（報酬30万円のとき）。"
           "**年齢差が何歳でも、人の寿命では取り返せません**")
+
+    print("\n=== 「あと1か月」で取り返せないのは、そこで辞めた場合だけ。"
+          "**何か月 多く働けばいいのか**（85歳まで受け取る場合）===")
+    for r in break_even_months_table(1):
+        print(f"  標準報酬月額 {r['標準報酬月額']:>8,}円"
+              f"  1か月ぶんで増える年金 **年 {r['1か月ぶんで増える年額']:>5,}円**"
+              f"  240か月で辞めたら {r['240か月ちょうどで辞めたときの年数']:>6.1f}年"
+              f"  → **{r['要る月数']:>3}か月 多く働けば元が取れる**"
+              f"（通算 {r['そのときの総月数']:>3}か月 ＝ {r['そのときの年数']:>5.2f}年）")
+    b = break_even_months(1, 300_000)
+    print(f"  → **240か月ちょうどで辞めるのが、いちばん損な止め方です。**"
+          f"240か月に届いた時点で加給年金は消えているので、失う額はもう固定。"
+          f"そこから先は働いたぶんだけ報酬比例が積み上がります")
+    print(f"    報酬30万円なら、239か月から **{b['要る月数']}か月**"
+          f"（通算 {b['そのときの総月数']}か月 ＝ {b['そのときの年数']:.2f}年）で釣り合います。"
+          f"**{b['240か月ちょうどで辞めたときの年数']:.0f}年 は「1か月だけ多く働いた人」の数字**であって、"
+          f"働き続ける人の数字ではありません")
+    print(f"    年齢差べつ（報酬30万円）: "
+          + " ／ ".join(f"{r['年齢差']}歳差 **{r['要る月数']}か月**"
+                       for r in break_even_gap_table(300_000)))
+    print(f"    年齢差には正比例します（失う額が比例するから）。"
+          f"**受け取る年数を {RECEIVE_YEARS}年 と置いた1点だけが仮定**で、"
+          f"半分（{RECEIVE_YEARS // 2}年）に縮めれば要る月数は2倍になります")
+
+    print("\n=== その「何か月」を決めているのは、報酬でも年齢差でもなく"
+          "**受給権者の生年月日** ===")
+    for r in birth_band_months(1, 300_000):
+        print(f"  {r['区分']:<24}  加給年金 年 {r['加給年金の年額']:>8,}円"
+              f"  失う額 {r['失う加給年金']:>8,}円"
+              f"  → **{r['要る月数']:>3}か月**")
+    sp = birth_band_spread(1, 300_000)
+    print(f"  → 同じ1歳差・同じ報酬30万円でも、"
+          f"**{sp['低い段の要る月数']}か月 と {sp['高い段の要る月数']}か月**（差 {sp['月数の差']}か月）。"
+          f"年額の倍率 {sp['年額の倍率']:.4f}倍 が、そのまま月数の倍率 {sp['月数の倍率']:.4f}倍 です")
+    print(f"    **特別加算は「もらえる額が増える」話として説明されます。**"
+          f"ところが 239か月で止めるかどうかの分かれ目で見ると、"
+          f"**厚い段の人ほど、加給年金を捨てた損を埋めるのに長く働かされます**。"
+          f"上の段と下の段は生年月日1日で分かれます（{SPECIAL_ADD[-2][0]} と、その翌日）")
 
     print("\n=== 繰下げ待機中は、加給年金が1円も出ない"
           "（そして待っているあいだに配偶者が65歳になれば、永久に戻らない）===")

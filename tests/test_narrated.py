@@ -167,7 +167,35 @@ KNOWN_UNSHOWN = {
     # 2026-08-26 の実測 —— **長尺 7/33本（21.2%）／ショート 3/397本（0.76%）＝ 28倍**。
     # **門が有るほうだけが低い。** 詳しくは `docs/JOURNAL.md` 2026-08-26 06:0x。
     "jYoDuz0S9z4", "xQ2EzmkHRjw", "a63FzIUV2wI", "jeRBnxQjBvY",
+    #
+    # ### **その門を、同じ日の夜（最適化の回）に長尺へ広げました**
+    #
+    # 上の 06:0x が「掛かっていないから増え続ける」と**正しく名指しした**まま、
+    # `verify` は直っていませんでした（この一覧が増えただけ）。夜の回で
+    # `verify.check` の呼び出しを `if portrait:` の**外**へ出し、
+    # `script_writer.long_script_problems` にも入れています。
+    # 下の `test_門は長尺にも掛かっている` が、戻せないように固定します。
+    #
+    # **なぜ `portrait` だと長尺が落ちるのか。** `portrait` は動画の実物ではなく
+    # `video_cfg["resolution"]` から来ます ＝ **`--short` を付けたときだけ縦**。
+    # 長尺は常に横なので、**1本も通っていませんでした。**
+    #
+    # **そして `orientation` を証拠に使わないこと。**
+    # 8/26 朝の申し送りは「4本とも縦なのに素通りした ＝ 門が壊れている」と読み、
+    # 次の回に「`--dry-run` で作って `work/slides_plan.json` を控えと
+    # 突き合わせろ」を残していました。**突き合わせても何も出ません**
+    # （`critique_queue` は同じファイルを `shutil.copy2` するので必ず一致する）。
+    # `orientation` は `script.get("short", True)` で、**台本に `short` という
+    # 鍵はありません** —— 既定の `True` が必ず出るので、
+    # **控え469本が469本とも「縦」**です。**向きではなく定数**でした。
+    # 向きを知りたいなら**コマ数と文の数**を比べること
+    # （長尺は `reveal_variants` を通らないので必ず `コマ = 文`）。
 }
+
+#: **門が入る前に出た本**（`10d0028` 2026-08-16 17:42 より前）。
+#: この3本は「門が漏らした」ではなく「まだ門が無かった」側です。
+#: 下の `test_門は長尺にも掛かっている` が、その区別を使います。
+BEFORE_GATE = {"9hqzUxqBjBE", "WSJAjK1Xo-I", "YBZFmrsL_kk"}
 
 
 def test_実物で当たりが_見た本に収まっている():
@@ -236,3 +264,125 @@ def test_暦の年は量として数えない():
     assert [t for t, _, _ in narrated.numbers("2026円の差")] == ["2026"]
     assert [t for t, _, _ in narrated.numbers("2,026年ぶん")] == ["2,026"]
     assert [t for t, _, _ in narrated.numbers("2026万円")] == ["2026万"]
+
+
+# ---- **門が長尺にも掛かっていること**（2026-08-26 に実測して足した）------------
+#
+# ここが本体です。上の一覧は「漏れた本」を数えるだけで、
+# **漏れた理由**（門が長尺に掛かっていなかった）は数えません。
+# 理由のほうを固定しないと、次に `verify.check` を触った回が
+# `_check_narrated_shown` を `if portrait:` の中へ戻して、**また静かに全部通します。**
+
+def test_門は長尺にも掛かっている():
+    """`verify.check` が `if portrait:` の**外**でこの検査を呼ぶこと。
+
+    2026-08-26 まで中にありました。`portrait` は動画の実物ではなく
+    `video_cfg["resolution"]` から来る（＝ `--short` を付けたときだけ縦）ので、
+    **長尺は1本も通っていませんでした。**
+
+    実測（`data/critique_queue/` 430本・門が入った 08/17 より後）:
+
+        ショート（コマ>文）  397本 → 漏れ **0本**
+        長尺  （コマ=文）     33本 → 漏れ **7本（21%）**
+
+    `CLAUDE.md`「**4,000時間の門に入るのは長尺だけ**」＝
+    **収益化を背負っている側だけが無検査**でした。
+
+    **見るのは字ではなく、字の位置です** —— 呼び出しが `if portrait:` の
+    ぶら下がりより浅い字下げにあること。並べ替えでは落ちません。
+    """
+    import inspect
+    import textwrap
+
+    from src import verify
+
+    src = textwrap.dedent(inspect.getsource(verify.check))
+    depth = None
+    called_at = None
+    for raw in src.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        indent = len(raw) - len(raw.lstrip())
+        if line.startswith("if portrait:"):
+            depth = indent
+            continue
+        if depth is not None and indent <= depth:
+            depth = None            # ぶら下がりが終わった
+        if "_check_narrated_shown(" in line:
+            called_at = (indent, depth)
+    assert called_at is not None, "`verify.check` がこの検査を呼んでいません"
+    _indent, inside = called_at
+    assert inside is None, (
+        "`_check_narrated_shown` が `if portrait:` の中にあります。"
+        "**長尺が素通りします**（実測 7/33 = 21%）"
+    )
+
+
+def test_台本の段でも掛かっている():
+    """**生成中に直させる口**があること（`script_writer.long_script_problems`）。
+
+    `verify` だけに置くと、当たるのは `claude -p` 約250秒＋合成＋レンダリングの
+    **後**で、そこには直す口がありません ＝ **1本まるごと捨て**。
+    ここに置けば同じセッションが3回まで書き直せます
+    （`_check_not_repeat` を 2026-08-24 にここへ移したのと同じ形）。
+
+    **`work/slides_plan.json` はまだ無い**ので、`verify._plan_frames` が
+    台本の `visual` で代用します。長尺は割らないので、同じものです。
+    """
+    from src import script_writer
+
+    class _V:
+        def __init__(self, d):
+            self._d = d
+            self.headline = d.get("headline", "")
+            self.kind = d.get("kind", "")
+
+        def model_dump(self):
+            return dict(self._d)
+
+    class _S:
+        def __init__(self, seg):
+            self.narration = seg["narration"]
+            self.visual = _V(seg["visual"])
+
+        def model_dump(self):
+            return {"narration": self.narration,
+                    "visual": self.visual.model_dump()}
+
+    class _Script:
+        def __init__(self, d):
+            self.segments = [_S(s) for s in d["segments"]]
+            self._d = d
+
+        def model_dump(self):
+            out = dict(self._d)
+            out["segments"] = [s.model_dump() for s in self.segments]
+            return out
+
+    def _script(narration: str) -> _Script:
+        return _Script({
+            "title": "手取りはいくら減るか",
+            "segments": [
+                {"narration": narration,
+                 # **`display` に入れること。** `narrated.shown_values()` は
+                 # `label` と `display` を読み、`value`（棒の長さ）は読みません
+                 # —— 画面に字として出るのはそちらだからです。
+                 "visual": {"kind": "chart", "headline": "年収べつの手取り",
+                            "bars": [{"label": "300万円", "value": 2_412_000,
+                                      "display": "241万2000円"},
+                                     {"label": "400万円", "value": 3_161_000,
+                                      "display": "316万1000円"}]}},
+            ],
+        })
+
+    said_on_screen = script_writer.long_script_problems(
+        _script("300万円の手取りは241万2000円です"))
+    said_nowhere = script_writer.long_script_problems(
+        _script("300万円の手取りは241万2000円で、差は98万7654円です"))
+
+    hit = "画面のどこにも出ていません"
+    assert not [p for p in said_on_screen if hit in p], said_on_screen
+    absent = [p for p in said_nowhere if hit in p]
+    assert absent, said_nowhere
+    assert "98万7654" in absent[0], absent
