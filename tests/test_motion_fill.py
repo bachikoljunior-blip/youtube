@@ -132,6 +132,33 @@ def test_置き先を数えられなければ絞らない(monkeypatch):
     assert need == 6, why
 
 
+def test_数えるのは1回だけ(monkeypatch):
+    """`motion_shortfall()` は盤面ぜんぶを引き直します（`live_slots.plan()` を通す）。
+    **2回 数えると遅いだけでなく、2つの答えが食い違う隙ができます。**"""
+    calls: list = []
+    monkeypatch.delenv("YT_OPENING_MOTION", raising=False)
+    monkeypatch.setattr(batch_build, "motion_shortfall",
+                        lambda: (calls.append(1), (3, ""))[1])
+    batch_build.motion_plan(4, shortfall=(3, ""))
+    assert calls == [], "呼ぶ側が数えた答えを渡しているのに、数え直しています"
+
+
+def test_置き先が無い回も黙らない():
+    """**黙って既定に戻らないこと。**
+
+    「対照が足りている」のと「置く所が無くて作れない」のは、**次の手が
+    まるごと違います**（前者は放っておく／後者は `at` の交換が要る）。
+    ここで何も印字しないと、その回はどちらか分かりません ——
+    **印字されていない数字は、無い数字と同じ**（`scripts/drift.py` の冒頭）。
+    """
+    src = (ROOT / "scripts" / "batch_build.py").read_text(encoding="utf-8")
+    body = src[src.index("explicit = os.environ.get(_MOTION_ENV)"):]
+    body = body[:body.index("with ThreadPoolExecutor")]
+    assert '"置き先" in _why' in body, (
+        "置き先が無くて作れなかった回に、何も言わずに既定へ戻っています")
+    assert body.count("motion_shortfall()") == 1, "1回の生成で2回 数えています"
+
+
 # --- 作った値が、そのまま子プロセスと台帳へ行くか -------------------------
 
 def test_腕は子プロセスの環境で渡す(monkeypatch):

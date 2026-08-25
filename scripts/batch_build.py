@@ -998,7 +998,7 @@ def _live_room() -> int | None:
         return None
 
 
-def motion_plan(n: int) -> list[bool | None]:
+def motion_plan(n: int, shortfall: tuple[int, str] | None = None) -> list[bool | None]:
     """この回の `n` 本を、どちらの腕で作るか。`True`＝動きあり／`False`＝動きなし。
 
     `None` は「決めない」＝ `src/renderer.opening_motion_on()` の既定に任せる、
@@ -1016,7 +1016,10 @@ def motion_plan(n: int) -> list[bool | None]:
         return [None] * n
     if n <= 0:
         return []
-    need, _why = motion_shortfall()
+    # **数え直さないこと。** `motion_shortfall()` は盤面ぜんぶを引き直します
+    # （`live_slots.plan()` を通す）。呼ぶ側が既に数えていたら、それを使います ——
+    # 2回 数えると遅いだけでなく、**2つの答えが食い違う隙**ができます。
+    need, _why = shortfall if shortfall is not None else motion_shortfall()
     if need <= 0:
         return [True] * n
     off = min(need, max(1, n // 2))
@@ -1553,8 +1556,9 @@ def main(argv: list[str] | None = None) -> int:
 
     # ---- 0. **この本数の行き先を、足りない腕へ寄せる**（本数は1本も増やしません）----
     #     `motion_shortfall()` の docstring に理由と実測があります。
-    motion = motion_plan(len(topics))
-    _need, _why = motion_shortfall()
+    explicit = os.environ.get(_MOTION_ENV) is not None
+    _need, _why = (0, "") if explicit else motion_shortfall()
+    motion = motion_plan(len(topics), shortfall=None if explicit else (_need, _why))
     if any(m is False for m in motion):
         n_off = sum(1 for m in motion if m is False)
         print(f"\n[batch] **{n_off} 本を `opening_motion` の対照（動きなし）で作ります**"
@@ -1562,9 +1566,14 @@ def main(argv: list[str] | None = None) -> int:
         print("        処置(動きあり)の側は既に床を越えているので、"
               "そちらへ足しても判定は1日も早まりません"
               "（`scripts/batch_build.motion_shortfall`）。", flush=True)
-    elif motion and motion[0] is None:
+    elif explicit:
         print(f"\n[batch] `{_MOTION_ENV}` が明示されているので、腕はそれに従います"
               f"（この回では選び直しません）", flush=True)
+    elif "置き先" in _why:
+        # **黙って既定に戻らないこと。** ここで何も言わないと、この回は
+        # 「対照が足りている」のか「置く所が無くて作れない」のかを区別できません。
+        # **足りないのが本なのか枠なのかは、次の手をまるごと変えます。**
+        print(f"\n[batch] [!] `opening_motion` の対照は作りません —— {_why}", flush=True)
 
     with ThreadPoolExecutor(max_workers=jobs) as pool:
         results = list(pool.map(lambda tm: build_one(tm[0], args.long, tm[1]),
