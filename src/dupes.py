@@ -338,7 +338,10 @@ def ledger_rows(topics: dict[str, str] | None = None) -> list[dict]:
                      "uploaded_at": rec.get("uploaded_at"),
                      # **`retime()` が押した印**。同じ本の行が2つ残ったとき、
                      # どちらが `videos.update` を通った側かを言う唯一の手がかりです
-                     "retimed_at": rec.get("retimed_at")})
+                     "retimed_at": rec.get("retimed_at"),
+                     # **上げた実物の秒数**（2026-08-25 から）。ショートか長尺かを
+                     # 題名の `#Shorts` で推測せずに済む唯一の欄です（`src/forms.py`）
+                     "duration_s": rec.get("duration_s")})
     return _collapse([r for r in rows if r["id"] and r["title"]])
 
 
@@ -383,11 +386,17 @@ def _collapse(rows: list[dict]) -> list[dict]:
     """
     best: dict[str, dict] = {}
     others: dict[str, list] = {}
+    # **秒数は、勝った行に入っているとは限りません**（2026-08-25）。
+    # `retime()` は行を足しますが、その行は `duration_s` を持ちません。
+    # 秒数は本ごとに1つしかない事実なので、**同じ本のどの行から拾っても同じ**です。
+    dur: dict[str, float] = {}
     for r in rows:
         vid = r["id"]
         others.setdefault(vid, [])
         if r.get("at"):
             others[vid].append(r["at"])
+        if r.get("duration_s") is not None and vid not in dur:
+            dur[vid] = r["duration_s"]
         cur = best.get(vid)
         if cur is None or _retime_key(r) >= _retime_key(cur):
             best[vid] = dict(r)
@@ -398,6 +407,8 @@ def _collapse(rows: list[dict]) -> list[dict]:
             continue
         win = best.pop(vid)
         win["at_others"] = [a for a in dict.fromkeys(others[vid]) if a != win.get("at")]
+        if win.get("duration_s") is None and vid in dur:
+            win["duration_s"] = dur[vid]
         out.append(win)
     return out
 
@@ -413,7 +424,8 @@ def _retime_key(row: dict) -> tuple:
 
 
 def remember(video_id: str, topic_id: str, title: str, at: str | None,
-             uploaded_at: str | None = None) -> None:
+             uploaded_at: str | None = None,
+             duration_s: float | None = None) -> None:
     """上げた1本を手元に控える。**`upload_only.py` が投稿の直後に呼ぶ。**
 
     `at` は**公開予定時刻**、`uploaded_at` は**投稿した時刻**です。**別物で、
@@ -422,6 +434,13 @@ def remember(video_id: str, topic_id: str, title: str, at: str | None,
 
     後者が無かったので、10:5x の回は**6本を作ってから 429 に当たり、6本とも捨てました。**
     既定は「いま」です（呼ぶ側は、投稿の直後にしか呼びません）。
+
+    `duration_s` は**上げた実物の秒数**です（2026-08-25 から控えます）。
+    無くても通りますが、**無い本は「ショートか長尺か」を題名の `#Shorts` で
+    推測するしかなくなります** —— その札は実測で4本ずれていました
+    （`src/forms.py` の冒頭。長尺に付いていた本が1本、ショートで欠けていた本が3本）。
+    `--spread` が1日のショートの本数に上限をかけるので、
+    **ずれた本はその日の枠を食うか、上限から漏れます。**
     """
     from datetime import datetime, timezone
 
@@ -432,9 +451,11 @@ def remember(video_id: str, topic_id: str, title: str, at: str | None,
     path = config.ROOT / LEDGER
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as fh:
-        fh.write(json.dumps({"video_id": video_id, "topic": topic_id,
-                             "title": title, "at": at,
-                             "uploaded_at": uploaded_at}, ensure_ascii=False) + "\n")
+        rec = {"video_id": video_id, "topic": topic_id,
+               "title": title, "at": at, "uploaded_at": uploaded_at}
+        if duration_s is not None:
+            rec["duration_s"] = round(float(duration_s), 1)
+        fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
 
 
 def why_stranded(video: dict, videos: list[dict],

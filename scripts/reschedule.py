@@ -47,7 +47,7 @@ import functools  # noqa: E402
 
 from googleapiclient.errors import HttpError  # noqa: E402
 
-from src import auth, dupes, history, measure_window, uploader  # noqa: E402
+from src import auth, dupes, forms, history, measure_window, uploader  # noqa: E402
 
 JST = timezone(timedelta(hours=9))
 # `--compact` で詰める日数の**床**。判定に要る3日＋1日（`compact_plan` の節）。
@@ -294,7 +294,7 @@ def compact_plan(rows: list[dict], *, now: datetime, step_min: int = 30,
 
 
 def _is_short(row: dict) -> bool:
-    """その本が Shorts かどうか。**題名の `#Shorts` だけで見ます。**
+    """その本が Shorts かどうか。**`src.forms` が1か所で決めます。**
 
     **テーマIDの `s-` 頭で見ないこと**（2026-08-21 に踏んだ）。長尺は Shorts の
     テーマから起こすので `s-` を継いでいて、控えの実物では **10本が長尺なのに
@@ -303,8 +303,27 @@ def _is_short(row: dict) -> bool:
 
     長尺は Shorts のフィードに出ないので、**下の1日の上限には数えません**
     （目盛りの取り合いには数えます —— 同じ時刻に2本置かないため）。
+
+    ## **`#Shorts` だけで見るのをやめました**（2026-08-25。**実測で4本ずれていた**）
+
+    ここは「**題名の `#Shorts` だけで見ます**」でした。ところが
+    `scripts/status.py:150` は同じ問いに「**尺で見る。題の #Shorts は
+    付け忘れがある**」と書いてあり、**同じ帳面の読み手2つが逆を向いていました。**
+
+    突き合わせた実測（控え493本）:
+
+        WuTf0Z-tRJc   **5分51秒の長尺**なのに `#Shorts` 付き（公開済み・**1再生**）
+        pMHDwK5tB2E / YmJ7psxW3co / FSAN9tjIX10   **ショートなのに札が無い**
+
+    前者はその日の Shorts 枠を1本ぶん食いつぶし、後者は上限から漏れます。
+    **どちらも `--spread` が本を動かす向きを狂わせます。**
+    しかも `CfzcVmRncPg`（5分9秒・`#Shorts` 付き）は **08/27** ——
+    **day_cap の切り分けの日**に載っていました。
+
+    測った形（Analytics → 控えの秒数）を先に見て、**何も測っていない本だけ
+    札に落ちます**（`src.forms.classify` の3段）。
     """
-    return "#Shorts" in str(row.get("title") or "")
+    return forms.is_short(row)
 
 
 def _say_conflicts(rows: list[dict]) -> None:

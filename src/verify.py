@@ -20,6 +20,7 @@ import subprocess
 from pathlib import Path
 
 from . import narrated
+from . import forms
 from .subtitles import _NUM_TOKEN, _is_katakana
 from .util import require, run
 from .yomi import remaining_risks
@@ -1578,6 +1579,45 @@ def _check_yomi(script: dict | None) -> list[str]:
     return problems
 
 
+def _check_form_tag(script: dict | None, duration: float) -> list[str]:
+    """**長尺に `#Shorts` の札を付けて出さない**（2026-08-25 に実測で見つけた）。
+
+    YouTube のショートの区切りは **3分**です。それを超えた本に `#Shorts` を
+    付けても Shorts のフィードには出ません。**出ないのに、題名の一等地を使い、
+    ブラウズと検索の側には「これはショートだ」と言います。**
+
+    実物（この回に控え493本を突き合わせた）:
+
+        WuTf0Z-tRJc   **5分51秒**   … #Shorts   公開済み・**1再生**
+        CfzcVmRncPg   **5分9秒**    … #Shorts   予約 08/27 09:00
+
+    後者は **day_cap の切り分けの日（08/27）**に載っていました。
+    `scripts/reschedule.py --spread` は**1日のショートの本数に上限**をかけるので、
+    長尺をショートと数えると、その日の枠を1本ぶん食いつぶし、
+    **本物のショートを後ろの日へ押し出します**（＝密度の損・対照の破壊）。
+
+    ## 逆向き（ショートなのに札が無い）は落としません
+
+    実測で3本ありました（`pMHDwK5tB2E` / `YmJ7psxW3co` / `FSAN9tjIX10`）。
+    こちらも上限から漏れるので直すべきですが、**投稿を止める理由にはしません** ——
+    札が無くても Shorts のフィードには尺で載るので、**動画そのものは正しい**。
+    途切れるほうが高いので（CLAUDE.md）、**印字だけして通します。**
+    `src.forms.mislabelled()` が後から数え直せます。
+    """
+    if not script or duration <= 0:
+        return []
+    title = str(script.get("title") or "")
+    tagged = "#Shorts" in title
+    long_form = duration > forms.SHORT_MAX_SECONDS
+    if long_form and tagged:
+        return [f"**{duration / 60:.1f}分の長尺に `#Shorts` が付いています**"
+                "（3分を超えるとショートのフィードには出ません。題名から外すこと）"]
+    if not long_form and not tagged:
+        print(f"[verify] 注意: {duration:.0f}秒 のショートに `#Shorts` がありません"
+              "（投稿は止めません。1日の本数の上限から漏れます）")
+    return []
+
+
 def check(path: Path, video_cfg: dict, min_minutes: float, work: Path,
           topic: dict | None = None) -> float:
     """問題があれば VerificationError。無ければ尺（秒）を返す。"""
@@ -1636,6 +1676,7 @@ def check(path: Path, video_cfg: dict, min_minutes: float, work: Path,
     problems += _check_visual_wrap(script, portrait)
     problems += _check_count_matches(script)
     problems += _check_title_from_calc(work, script, topic)
+    problems += _check_form_tag(script, duration)
     problems += _check_not_repeat(work, script)
     problems += _check_adjacent_repeat(script)
     problems += _check_adjacent_frames(work)
