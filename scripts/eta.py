@@ -3550,9 +3550,22 @@ _REFLECT_IGNORE = {
 
 
 def _reflect_session() -> str:
-    """自分のセッションID。**推測しないこと**（`run_marker.session_id()` と同じ読み）。"""
+    """**この回を回している当人**（`run_marker.actor_id()` と同じ読み）。
+
+    2026-08-25 22:0x に `session_id()` から差し替えました。毎時の回は
+    親セッションの中の**サブエージェント**になり、素のIDだと
+    **同時に走っている隣の回と同一人物**になるためです
+    （`run_marker.worktree_tag()` に実測。ship 14件が親フィルタに落ちていました）。
+    `stop_check.sh` の「反映したか」は `#` から前で見るので、こちらが長くても効きます。
+    """
     raw = os.environ.get("CLAUDE_CODE_REMOTE_SESSION_ID", "")
-    return ("session_" + raw[4:]) if raw.startswith("cse_") else raw
+    sid = ("session_" + raw[4:]) if raw.startswith("cse_") else raw
+    parts = Path(__file__).resolve().parent.parent.parts
+    for i in range(len(parts) - 2):
+        if parts[i] == ".claude" and parts[i + 1] == "worktrees":
+            tag = parts[i + 2]
+            return f"{sid}#{tag}" if sid else tag
+    return sid
 
 
 def _moved(before: dict, after: dict) -> dict:

@@ -98,7 +98,11 @@ for ln in path.read_text(encoding="utf-8").splitlines():
         r = json.loads(ln)
     except Exception:
         continue
-    if r.get("session") != me:
+    # **`#` から前で見ます**（2026-08-25 22:0x）。サブエージェントの回は
+    # `session_…#agent-xxxx` で印を打ちます（`run_marker.actor_id()`）——
+    # 親と同じ環境変数しか持てないので、素のIDだと隣の回と同一人物になるためです。
+    # ここで完全一致を要求すると、**出したのに「出していない」と読んで引き止めます。**
+    if str(r.get("session", "")).split("#")[0] != me:
         continue
     if r.get("kind") == "ship":
         shipped = True
@@ -207,7 +211,8 @@ for ln in path.read_text(encoding="utf-8").splitlines():
         r = json.loads(ln)
     except Exception:
         continue
-    if r.get("kind") == "reflect" and r.get("session") == me:
+    # `#` から前で見る（上の SHIP_STATE と同じ理由）
+    if r.get("kind") == "reflect" and str(r.get("session", "")).split("#")[0] == me:
         print("yes"); raise SystemExit
 print("no")
 REFPY

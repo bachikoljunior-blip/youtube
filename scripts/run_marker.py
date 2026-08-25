@@ -104,6 +104,80 @@ def session_id() -> str:
     return ("session_" + raw[4:]) if raw.startswith("cse_") else raw
 
 
+def worktree_tag() -> str:
+    """作業コピー（worktree）で走っているなら、その名前。走っていなければ空。
+
+    **2026-08-25 の夜に、毎時の回は「親が立てる子セッション」から
+    「親セッションの中のサブエージェント」へ移りました**（`docs/trigger_parent.md`）。
+    `create_session` が人のタップを待つので、夜のあいだ鎖が止まったためです。
+
+    **サブエージェントは、親と同じ `CLAUDE_CODE_REMOTE_SESSION_ID` を持ちます。**
+    環境変数は1つのコンテナに1つしかなく、サブエージェントはその中の
+    別スレッドだからです。つまり `session_id()` だけで見ると、
+    **周を回している当人が「親」に見えます。**
+
+    実測（2026-08-25 22:0x、この関数を足した回）——
+    `data/runs.jsonl` の 378件の ship のうち **14件が親IDで書かれており**、
+    `_records()` の親フィルタが**丸ごと落としていました**。落ちた中には
+    「在庫の穴(08/30)へ長尺2本を予約」「長尺2本追加＋同calc連続4本を組み替え」
+    という **upload 2件**が入っています。`run_marker.py`（引数なし）は
+    それを1行も出さないまま「**周は回っています**」と印字しました。
+    **8/25 夜以降は全部の回が親IDになるので、放っておくと 100% 落ちます。**
+
+    そして `--write` のほうは、そもそも「親からは印を付けません」で
+    **拒否されます** —— 印が無い回は `stop_check.sh` が黙って通し、
+    `sessions_compact.py` は「印を1つも残していない回」として数えます。
+    **周は回っているのに、機械からは1つも見えない**のがいまの姿です。
+
+    直し方は、名簿を触ることでも環境変数を増やすことでもありません ——
+    **サブエージェントは必ず自分専用の作業コピーで走る**ので、
+    その道に名前が書いてあります:
+
+        /home/user/youtube/.claude/worktrees/agent-a06c647462c3c1fb0
+                                   ~~~~~~~~~ ここ
+
+    **親は共有チェックアウト（`/home/user/youtube`）で走る**ので空になり、
+    親の足切りはそのまま効きます。**IDの直書きより腐りません。**
+    """
+    # **`MARKS` から辿らないこと。** あちらは検査が tmp へ差し替えます ——
+    # 差し替えられた瞬間に「作業コピーではない」に化けて、判定が検査ごと嘘になります。
+    parts = Path(__file__).resolve().parent.parent.parts
+    for i in range(len(parts) - 2):
+        if parts[i] == ".claude" and parts[i + 1] == "worktrees":
+            return parts[i + 2]
+    return ""
+
+
+def actor_id() -> str:
+    """**この回を回している当人**の識別子。印に残すのはこちら。
+
+    素のセッションIDではなく、作業コピーで走っているならその名前を足します
+    （`session_017yMB…#agent-a06c647462c3c1fb0`）。理由は2つ:
+
+    1. **親IDのまま書くと、親フィルタに落とされます**（`worktree_tag()` の実測）
+    2. **同じ親から2つのサブエージェントが同時に走ります。**
+       素のIDだと2人が同一人物になり、`--closes-add` の
+       「この回の最後の ship」が**隣の回の ship を掴みます**
+
+    素のセッションIDが要る側（`list_sessions` と突き合わせるなど）は
+    `session_id()` を使うこと。**`#` から前がそれです。**
+    """
+    sid = session_id()
+    tag = worktree_tag()
+    if not tag:
+        return sid
+    return f"{sid}#{tag}" if sid else tag
+
+
+def is_parent() -> bool:
+    """**常駐の親そのものか。** 作業コピーで走っている回は親ではありません。
+
+    親が repo を触る回（引き継ぎ・手直し）は共有チェックアウトなので、
+    ここは今までどおり真になります。
+    """
+    return not worktree_tag() and session_id() in PARENT_SESSIONS
+
+
 def _records() -> list[dict]:
     out = []
     if not MARKS.exists():
@@ -115,7 +189,23 @@ def _records() -> list[dict]:
             rec = json.loads(ln)
         except json.JSONDecodeError:
             continue
-        if rec.get("session") in PARENT_SESSIONS:
+        # **親の足切りは「心音」にだけ効かせます**（2026-08-25 22:0x に狭めた）。
+        #
+        # ここが落としていたのは `kind` を問わない全部でした。落とす狙いは
+        # 「親が居るだけで**周が回っているように見える**」を潰すことなので、
+        # 効かせる先は `start`（心音）です。
+        #
+        # **`ship` まで落とすと、出したものが消えます。** 実測：8/25 夜に
+        # サブエージェントへ移ってから、回は親と同じIDを持つようになり、
+        # **14件の ship が丸ごと見えなくなっていました** —— そのうち2件は
+        # 「在庫の穴(08/30)へ長尺2本を予約」「長尺2本追加」で、**upload です。**
+        # そして `src/levers.py` の `recent()` は元から `ship` を落としていません ——
+        # **同じ台帳を読む2つが、違うものを見ていました。** 揃えるほうを取ります。
+        #
+        # **覆る条件**: 親が `--ship` を打つようになったら（`config/parents.txt` は
+        # 打つなと書いています）、ここは嘘を通します。そのときは
+        # `actor_id()` に `#` が無い親IDの ship だけを落とすこと。
+        if rec.get("kind") == "start" and rec.get("session") in PARENT_SESSIONS:
             continue
         out.append(rec)
     return out
@@ -131,8 +221,8 @@ def _append(rec: dict) -> str:
 
 
 def write() -> int:
-    me = session_id() or "(不明)"
-    if me in PARENT_SESSIONS:
+    me = actor_id() or "(不明)"
+    if is_parent():
         print("[marker] **親からは印を付けません。**"
               " 親が周を回すのは設計の否定なので、平常の心音として数えません。")
         return 0
@@ -181,7 +271,7 @@ def seen(target: str, why: str) -> int:
     `why` は必須です。**理由の書いていない黙らせ方は、次に来た側が
     判断できず惰性で残ります。**
     """
-    me = session_id() or "(不明)"
+    me = actor_id() or "(不明)"
     if not target.startswith("session_"):
         print(f"[marker] **セッションIDに見えません**: {target}")
         return 2
@@ -302,7 +392,7 @@ def ship(what: str, closes: list[str] | None = None, lever: str | None = None,
     行数を渡せば、**そのとき既にあった申し送りだけが黙り、
     この後に書かれた言及は「一度閉じた後の再発」として残ります**（意図どおり）。
     """
-    me = session_id() or "(不明)"
+    me = actor_id() or "(不明)"
     rec = {
         "at": datetime.now(JST).isoformat(timespec="seconds"),
         "session": me,
@@ -583,7 +673,9 @@ def closes_add(words: list[str]) -> int:
     words = [w.strip() for w in words if w.strip()]
     if not words:
         return 0
-    me = session_id()
+    # **`actor_id()` で見ること。** 素のIDだと、同じ親から同時に走っている
+    # 隣のサブエージェントの ship を掴みます（`actor_id()` の説明の 2）。
+    me = actor_id()
     lines = [x for x in (MARKS.read_text(encoding="utf-8").splitlines()
                          if MARKS.exists() else []) if x.strip()]
     target = None
