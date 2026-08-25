@@ -10,9 +10,11 @@
 
 **この2つを、3つの関数が別々に持っています。**
 
-    src/ab_split.published()          8/25 に直した
-    src/motion_groups.scheduled_at()  8/25 に直した
-    scripts/eta.published_at()        **直っていなかった（5件目）**
+    src/ab_split.published()             8/25 に直した
+    src/motion_groups.scheduled_at()     8/25 に直した
+    scripts/eta.published_at()           **直っていなかった（5件目）**
+    scripts/trajectory.published_per_day()  **直っていなかった（6件目）**
+                                         —— 8/25 に `motion_groups` を借りる形へ直した
 
 群の分母が条件と食い違う形は 8/19・8/23・8/25（2件）・8/25（`eta`）で**5件**出ており、
 **5件とも「1つ直しても、同じ帳面の別の読み手が古いまま残る」形**でした。
@@ -38,6 +40,14 @@ if str(ROOT) not in sys.path:
 from src import ab_split, motion_groups  # noqa: E402
 
 JST = timezone(timedelta(hours=9))
+
+
+def _traj():
+    spec = importlib.util.spec_from_file_location(
+        "_traj_mod", ROOT / "scripts" / "trajectory.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
 
 
 def _eta():
@@ -66,8 +76,15 @@ def ledger(tmp_path: Path) -> Path:
     return p
 
 
-def test_三つの読み手が同じ日を答える(ledger: Path, tmp_path: Path):
-    """**後の行を採る**と**JST で割る**が、3つとも効いていること。"""
+def test_四つの読み手が同じ日を答える(ledger: Path, tmp_path: Path):
+    """**後の行を採る**と**JST で割る**が、4つとも効いていること。
+
+    4つ目（`scripts/trajectory.published_per_day()`）は **6件目**でした ——
+    このファイルが書かれたのと同じ日に、`供給（本/日）` を
+    「行数 × UTC の日」で数えているのが見つかっています
+    （実測: 08/26 が 18本、08/27 が 15本 → 正しくは **14本 / 19本**）。
+    **借りる形へ直したので、ここでは「借りた先と同じ日を答える」ことだけを見ます。**
+    """
     # 1) ab_split
     rows = ab_split.published(ledger)
     assert len(rows) == 1, "**1行1件ではなく1本1件**（動かした本を2回数えない）"
@@ -82,9 +99,17 @@ def test_三つの読み手が同じ日を答える(ledger: Path, tmp_path: Path
     got_eta = (_eta().published_at(views_path=empty, uploaded_path=ledger)["v1"]
                .astimezone(JST).date().isoformat())
 
+    # 4) trajectory（日ごとの本数。**1本しか居ないので {WANT_DAY: 1} になるはず**）
+    traj = _traj()
+    counts = traj.published_per_day(ledger, observed={})
+
     assert got_ab == got_mg == got_eta == WANT_DAY, (
         f"読み手どうしが食い違っています: ab_split={got_ab} "
         f"motion_groups={got_mg} eta={got_eta}（正: {WANT_DAY}）"
+    )
+    assert counts == {WANT_DAY: 1}, (
+        f"trajectory.published_per_day が {counts} と答えました（正: {{{WANT_DAY!r}: 1}}）。"
+        "**行数で数えている**か、**UTC の日で割っています**"
     )
 
 
