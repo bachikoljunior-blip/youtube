@@ -99,32 +99,210 @@ def scheduled(now: datetime | None = None) -> list[dict]:
 
 
 def depth(rows: list[dict], now: datetime | None = None) -> int:
-    """**いま作った本が公開されるまでの日数**（予約のいちばん後ろまで）。"""
+    """**予約のいちばん後ろの日まで**の日数。
+
+    **これは「いま作った本が公開されるまでの日数」ではありません**（2026-08-26）。
+    そう書いてあったので直しました —— 理由は `placement_days()` の註。
+    """
     if not rows:
         return 0
     now = now or datetime.now(JST)
     return (rows[-1]["at"].date() - now.date()).days  # type: ignore[union-attr]
 
 
+def _taken(rows: list[dict]) -> dict[date, set[tuple[int, int]]]:
+    """日（JST）→ その日に埋まっている (時, 分)。"""
+    out: dict[date, set[tuple[int, int]]] = {}
+    for r in rows:
+        t = r["at"].astimezone(JST)             # type: ignore[union-attr]
+        out.setdefault(t.date(), set()).add((t.hour, t.minute))
+    return out
+
+
+def _in_window(d: date) -> bool:
+    """**測定の窓の日か。**
+
+    `uploader.next_publish_at()` は、自動で探す道では**窓の日を飛ばします**
+    （その docstring の「2つの道で、止め方が違います」）。**ここも飛ばすこと** ——
+    飛ばさないと「明日 置けます」と印字して、実際には置けない日を指します
+    （2026-08-26 に踏んだ: 明日 08/27 は `day_cap` の切り分けの窓でした）。
+    """
+    try:
+        return measure_window.inside(d.isoformat())
+    except Exception:                                          # noqa: BLE001
+        return False
+
+
+def _first_free(taken: dict[date, set[tuple[int, int]]], hm: tuple[int, int],
+                start: date, horizon: int = 90) -> int:
+    """`uploader.next_publish_at()` と同じ探し方で、`hm` が空く最初の日までの日数。"""
+    for i in range(1, horizon + 1):
+        d = start + timedelta(days=i)
+        if _in_window(d):
+            continue                    # 窓の日は飛ばす（`next_publish_at` と同じ）
+        if hm not in taken.get(d, set()):
+            return i
+    return horizon
+
+
+def placement_days(rows: list[dict], now: datetime | None = None) -> dict:
+    """**いま作った本が、実際にはいつ予約されるか。**
+
+    ## なぜ `depth()` ではないのか（2026-08-26・最適化の回）
+
+    `depth()` は**予約のいちばん後ろの日**を返します。`lag_lines()` はそれを
+    「**いま作った本が公開されるのは N日後**」と印字し、判定日も θ も
+    「税は2回」も、全部その N の上に乗っていました。
+
+    **新しい本は、いちばん後ろには置かれません。**
+    予約時刻を決めているのは `uploader.next_publish_at()` **だけ**で
+    （その docstring がそう書いています）、あれは
+    **指定の時刻で最初に空いている日**へ置きます。予約は密ではないので、
+    空きは手前にあります。
+
+    **実測（2026-08-26 03:5x）。** 予約 328本・いちばん後ろ 32日先。ところが:
+
+        使われている時刻べつの「最初に空く日」   最短 **1日** ／ 中央値 **2日**
+        実際に作った本が待った日数（実績）        08/24 **3.5日** ／ 08/26 **9.7日**
+        `depth()` が印字していた数                **32日**
+
+    **3〜10倍 外れています。** 外れる向きは「実験は遅い」と言うほうなので、
+    **実験を1つ増やす判断を、ずっと重く見積もっていました。**
+
+    返り: `min_days` / `median_days` ／ `by_slot`（時刻 → 最初に空く日数）
+    """
+    now = now or datetime.now(JST)
+    if not rows:
+        return {"min_days": 0, "median_days": 0, "by_slot": {}}
+    taken = _taken(rows)
+    slots = sorted({hm for s in taken.values() for hm in s})
+    by_slot = {hm: _first_free(taken, hm, now.date()) for hm in slots}
+    waits = sorted(by_slot.values())
+    return {"min_days": waits[0],
+            "median_days": waits[len(waits) // 2],
+            "by_slot": by_slot}
+
+
+def views_days(rows: list[dict], now: datetime | None = None) -> dict:
+    """**その本が「再生を得られる」のはいつか。** ——`day_cap` の2つのモデルべつに。
+
+    **置けることと、再生が付くことは別です。** `placement_days()` は前者だけ。
+    `src/day_cap.py` は「1日に再生が付く上限」に**当てはまる説明が2つある**と
+    言っていて（`window()` の `confounded`）、**この待ち時間はモデルで桁が変わります**:
+
+        (A) 1日 C本 まで   → **その日の予約が C本 未満**の最初の日
+        (B) T までに出す   → **T 以前に空きがある**最初の日
+
+    実測（2026-08-26）: (A) なら **25日**、(B) なら **2日**。**12倍 ちがいます。**
+    どちらが真かは `day_cap.window()` がまだ決めておらず、
+    **切り分けの実測は既に予約済み**です（同じ docstring が日付を持っています）。
+
+    **片方だけを印字しないこと。** それがこの機械の時定数 θ そのもので、
+    12倍 は「実験を1つ増やすか」の判断をひっくり返します。
+    """
+    now = now or datetime.now(JST)
+    w = day_cap.window()
+    cap_n = day_cap.cap()
+    try:
+        hh, mm = (int(x) for x in str(w.get("T") or "23:59").split(":"))
+    except ValueError:
+        hh, mm = 23, 59
+    cutoff_min = hh * 60 + mm
+
+    # **本数はセットで数えないこと**（2026-08-26 に踏んだ）。同じ分に2本ある日が
+    # あるので（`day_cap.ties()`: 08/27 は 5組10本）、`{(時,分)}` の大きさは
+    # **本数より小さく**なり、(A) の「空きのある最初の日」が手前へずれます。
+    per_day_n: dict[date, int] = {}
+    per_day_min: dict[date, list[int]] = {}
+    for r in rows:
+        t = r["at"].astimezone(JST)               # type: ignore[union-attr]
+        per_day_n[t.date()] = per_day_n.get(t.date(), 0) + 1
+        per_day_min.setdefault(t.date(), []).append(t.hour * 60 + t.minute)
+
+    gap = int(day_cap.MIN_GAP_MIN)                # 詰めて置いた本は死ぬ（実測）
+
+    def _room_before_cutoff(mins: list[int]) -> bool:
+        """`cutoff` までに、**前後 gap分 空いた**置き場が残っているか。"""
+        busy = sorted(mins)
+        t = 0
+        for b in busy + [cutoff_min + gap]:
+            if b > cutoff_min:
+                b = cutoff_min + gap
+            if b - t >= gap:
+                return True
+            t = max(t, b + gap)
+            if t > cutoff_min:
+                return False
+        return t <= cutoff_min
+
+    a_days = b_days = None
+    for i in range(1, 91):
+        d = now.date() + timedelta(days=i)
+        if _in_window(d):
+            continue                    # 窓の日には置けない（`next_publish_at` が飛ばす）
+        if a_days is None and per_day_n.get(d, 0) < cap_n:
+            a_days = i
+        if b_days is None and _room_before_cutoff(per_day_min.get(d, [])):
+            b_days = i
+        if a_days is not None and b_days is not None:
+            break
+    return {"count_days": a_days, "window_days": b_days,
+            "cap": cap_n, "cutoff": w.get("T"), "gap_min": gap,
+            "confounded": w.get("confounded"), "verdict": w.get("verdict")}
+
+
 def lag_lines(rows: list[dict], now: datetime | None = None) -> list[str]:
+    """**この機械の時定数。**
+
+    2026-08-26 まで、ここは `depth()`（＝予約のいちばん後ろの日）を
+    「いま作った本が公開されるのは N日後」として印字していました。
+    **新しい本はいちばん後ろには置かれません**（`placement_days()` の註）。
+    いまは実際に置かれる日と、**再生が付く日**（`day_cap` の2モデルべつ）を出します。
+    """
     d = depth(rows, now)
     cap = day_cap.cap()
-    judge = d + SETTLE_DAYS + judgeable.ANALYTICS_LAG_DAYS
+    place = placement_days(rows, now)
+    v = views_days(rows, now)
     last = rows[-1]["at"].date().isoformat() if rows else "—"  # type: ignore[union-attr]
-    return [
+    tail = SETTLE_DAYS + judgeable.ANALYTICS_LAG_DAYS
+
+    out = [
         "=== 予約の順番待ち（この機械の時定数）===",
         f"  予約に入っている本 **{len(rows)}本** ／ いちばん後ろ {last}"
-        f"（**{d}日 先**） ／ 再生が付く上限 {cap}本/日（実測）",
-        f"  → **いま作った本が公開されるのは {d}日後。**"
-        f" 判定できるのは ＋落ち着き{SETTLE_DAYS}日 ＋Analytics {judgeable.ANALYTICS_LAG_DAYS}日"
-        f" ＝ **{judge}日後**",
-        f"  [!] **税は2回**: いま立てた前提は {judge}日 判定できない。"
-        f"そのうえ、判定が出ても**先 {d}日ぶんの枠は埋まっている**ので、"
-        f"勝った作りが画面に出るのはさらに {d}日後",
+        f"（{d}日 先） ／ 再生が付く上限 {cap}本/日（実測）",
+        f"  → **いま作った本が予約されるのは {place['min_days']}〜"
+        f"{place['median_days']}日後**"
+        f"（`uploader.next_publish_at()` と同じ探し方。**いちばん後ろの"
+        f" {d}日 ではありません** —— 予約は疎で、空きは手前にあります）",
+    ]
+
+    a, b = v["count_days"], v["window_days"]
+    if v["confounded"] and a is not None and b is not None and a != b:
+        out += [
+            f"  [!] **その本に再生が付く日は、まだ決まっていません**"
+            f"（`day_cap.window()` が切り分けていない）:",
+            f"        (A) 1日 {v['cap']}本 まで   → **{a}日後**"
+            f"（＋落ち着き{SETTLE_DAYS}＋Analytics {judgeable.ANALYTICS_LAG_DAYS}"
+            f" ＝ 判定 **{a + tail}日後**）",
+            f"        (B) {v['cutoff']} までに出す → **{b}日後**"
+            f"（同 ＝ 判定 **{b + tail}日後**）",
+            f"  **{a / b:.0f}倍 ちがいます。** これが θ そのものなので、"
+            "**どちらかに賭けて動かないこと** —— "
+            "切り分けの実測は既に予約済みです（`src/day_cap.py` が日付を持っています）",
+        ]
+    else:
+        eff = a if v["verdict"] == "count" else b
+        eff = d if eff is None else eff
+        out.append(f"  → **再生が付くのは {eff}日後**"
+                   f"（`day_cap` の判定: {v['verdict'] or '未'}）。"
+                   f" 判定できるのは ＋落ち着き{SETTLE_DAYS}日"
+                   f" ＋Analytics {judgeable.ANALYTICS_LAG_DAYS}日 ＝ **{eff + tail}日後**")
+
+    out.append(
         "  **`eta.py` の腕が動く速さ θ は、この待ち時間の逆数です**"
         "（`src/arm_speed.py`: rate = p · log(g) · θ）。"
-        "**待ちを縮めることだけが、作る本数と無関係に θ を上げます。**",
-    ]
+        "**待ちを縮めることだけが、作る本数と無関係に θ を上げます。**")
+    return out
 
 
 # --- 取り戻せる日数 ---------------------------------------------------------
