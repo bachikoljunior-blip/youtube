@@ -252,6 +252,8 @@ def plan(board: Board) -> list[str]:
     """
     out = ["", "=== 手（`scripts/reschedule.py --move` を、この順で）==="]
     was_live = board.live()
+    #: (前提, 群, まだ足りない本数)。**埋め方は、置き終えてから言います**
+    shortfalls: list[tuple[str, str, int]] = []
     for key, (groups, n) in sorted(_groups().items()):
         for g, vids in sorted(groups.items()):
             live = board.live()
@@ -273,10 +275,20 @@ def plan(board: Board) -> list[str]:
                            f"{was:%m/%d %H:%M} から（死に枠）")
             still = n - len([v for v in vids if v in board.live()])
             if still > 0:
+                # **どう埋めるかは、全部の手を置き終えてから言うこと**（04:4x に直した）。
+                # ここで数えると、**このあとの群がまだ使う枠まで「空いている」と
+                # 数えます** —— 実物で 3本 空きと出したのに、そのうち3本とも
+                # 次の群の置き先でした。`shortfalls` に溜めて、下でまとめて言います。
+                shortfalls.append((key, g, still))
                 out.append(f"  [!] {key}/{g} は **まだ {still}本 足りません** —— "
                            "動かせる死に枠を使い切りました"
-                           "（測定の窓の日と公開済みは動かせません）。"
-                           + _how_to_fill(board, key, still))
+                           "（測定の窓の日と公開済みは動かせません）")
+    if shortfalls:
+        out.append("")
+        out.append("=== 足りないぶんを、どう埋めるか"
+                   "（**上の手を全部 置いたあとの空きで数えています**）===")
+        for key, g, still in shortfalls:
+            out.append(f"  {key}/{g}  あと {still}本 —— " + _how_to_fill(board, key, still))
     if not board.moves:
         out.append("  （動かす手はありません）")
         return out
