@@ -617,7 +617,10 @@ hypotheses:
     #   **`falsified_if` は緩めていません。動かしたのは期限だけです。**
     # **09-09 → 09-05 へ縮めた（2026-08-26）。`falsified_if` は1文字も変えていません。**
     #   `python scripts/deadline_check.py` の `ready` に合わせただけ。熟成 7日 → 3日（`src/settle.py` の実測）を当てた結果です
-    deadline: "2026-09-05"
+    # **09-05 → 09-06 へ1日 延ばした（2026-08-26・同じ回の続き）。`falsified_if` は1文字も変えていません。**
+    #   `src/judgeable.py` が Analytics の遅れを `= 3` のべた書きで持っていて、実測（4日）より1日 楽観でした。
+    #   楽観へ寄せると、**まだ来ていないデータで判定**して「上回らなかった＝外れ」に倒れます（title_form）。
+    deadline: "2026-09-06"
     needs:
       # 群の作り方は `src/judgeable.SOURCES["title_form"]` に置いてある。
       - kind: group_key
@@ -703,7 +706,10 @@ hypotheses:
     #   **`falsified_if` は緩めていません。動かしたのは期限だけです。**
     # **09-14 → 09-10 へ縮めた（2026-08-26）。`falsified_if` は1文字も変えていません。**
     #   `python scripts/deadline_check.py` の `ready` に合わせただけ。熟成 7日 → 3日（`src/settle.py` の実測）を当てた結果です
-    deadline: "2026-09-10"
+    # **09-10 → 09-11 へ1日 延ばした（2026-08-26・同じ回の続き）。`falsified_if` は1文字も変えていません。**
+    #   `src/judgeable.py` が Analytics の遅れを `= 3` のべた書きで持っていて、実測（4日）より1日 楽観でした。
+    #   楽観へ寄せると、**まだ来ていないデータで判定**して「上回らなかった＝外れ」に倒れます（hook_form）。
+    deadline: "2026-09-11"
     needs:
       # 群の作り方は `src/judgeable.SOURCES["hook_form"]` に置いてある。
       - kind: group_key
@@ -1909,7 +1915,10 @@ hypotheses:
     #   **`falsified_if` は緩めていません。動かしたのは期限だけです。**
     # **09-16 → 09-12 へ縮めた（2026-08-26）。`falsified_if` は1文字も変えていません。**
     #   `python scripts/deadline_check.py` の `ready` に合わせただけ。熟成 7日 → 3日（`src/settle.py` の実測）を当てた結果です
-    deadline: "2026-09-12"
+    # **09-12 → 09-13 へ1日 延ばした（2026-08-26・同じ回の続き）。`falsified_if` は1文字も変えていません。**
+    #   `src/judgeable.py` が Analytics の遅れを `= 3` のべた書きで持っていて、実測（4日）より1日 楽観でした。
+    #   楽観へ寄せると、**まだ来ていないデータで判定**して「上回らなかった＝外れ」に倒れます（opening_motion）。
+    deadline: "2026-09-13"
     # **09/05 → 10/11 → 09/23（2026-08-25 に2回動かした）。条件は1文字も変えていません。**
     # (1) 09/05 は 29日 早すぎた。`python -m src.judgeable` の実測で、対照(動きなし)は
     #     予約に **8本ちょうど**しかなく、**8本目の公開が 09/24** ＝ 判定できるのは 10/04。
@@ -2472,7 +2481,10 @@ hypotheses:
     #   **`falsified_if` は緩めていません。動かしたのは期限だけです。**
     # **09-13 → 09-06 へ縮めた（2026-08-26）。`falsified_if` は1文字も変えていません。**
     #   `python scripts/deadline_check.py` の `ready` に合わせただけ。熟成 7日 → 3日（`src/settle.py` の実測）を当てた結果です
-    deadline: "2026-09-06"
+    # **09-06 → 09-07 へ1日 延ばした（2026-08-26・同じ回の続き）。`falsified_if` は1文字も変えていません。**
+    #   `src/judgeable.py` が Analytics の遅れを `= 3` のべた書きで持っていて、実測（4日）より1日 楽観でした。
+    #   楽観へ寄せると、**まだ来ていないデータで判定**して「上回らなかった＝外れ」に倒れます（stat_split）。
+    deadline: "2026-09-07"
     watch: 冒頭のstatの割り方-両群16本
     # **09/05 → 09/20 へ延ばした（2026-08-25）。条件は1文字も変えていません。**
     # `python -m src.judgeable` の実測: 処置(後)の **16本目の公開が 09/03**。
