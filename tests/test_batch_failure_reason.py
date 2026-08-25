@@ -103,7 +103,7 @@ def test_落ちた行に理由と末尾が入る(monkeypatch, tmp_path):
 def test_通った本には理由の欄をつけない(monkeypatch):
     """**通った行を汚さないこと。** 台帳は1周ごとに増えます。"""
     monkeypatch.setattr(batch_build, "run", lambda *a, **k: (0, "ok"))
-    monkeypatch.setattr(batch_build, "_flag_line", lambda tid: None)
+    monkeypatch.setattr(batch_build, "_flag_line", lambda tid, motion=None: None)
     row = batch_build.build_one({"id": "s-y", "calc": "nenkin"}, True)
     assert row["built"] is True
     assert "error_reason" not in row and "error_tail" not in row

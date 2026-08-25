@@ -91,13 +91,20 @@ def motion_by_topic(runs: Path = RUNS, flags: Path | None = None) -> dict[str, b
             row = json.loads(line)
         except json.JSONDecodeError:
             continue
-        if "opening_motion" not in row:
-            continue
-        flag = bool(row["opening_motion"])
+        # **1本ごとの旗が結果の行にあるなら、そちらが本物です**（2026-08-26）。
+        #     `scripts/batch_build.py` は 1回のうちで腕を混ぜられるようになりました
+        #     （足りない側へ寄せるため）。混ざった回は**回の旗を書きません**が、
+        #     結果の行には必ず `opening_motion` が入ります。
+        #     回の旗を全テーマに貼るのは、**旗が1個しか無い回だけ**にすること。
+        row_flag = row.get("opening_motion")
         for res in row.get("results") or []:
             tid = res.get("topic")
-            if tid:
-                seen.setdefault(tid, set()).add(flag)
+            if not tid:
+                continue
+            if "opening_motion" in res:
+                seen.setdefault(tid, set()).add(bool(res["opening_motion"]))
+            elif row_flag is not None:
+                seen.setdefault(tid, set()).add(bool(row_flag))
     return {tid: flags.pop() for tid, flags in seen.items() if len(flags) == 1}
 
 

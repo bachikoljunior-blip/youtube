@@ -103,6 +103,7 @@ from __future__ import annotations
 import functools
 import argparse
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -770,11 +771,19 @@ def check_window(date_jst: str, force: bool) -> None:
                          window=M14_WINDOW)
 
 
-def run(cmd: list[str], timeout: int, label: str = "") -> tuple[int, str]:
+def run(cmd: list[str], timeout: int, label: str = "",
+        env: dict[str, str] | None = None) -> tuple[int, str]:
     """出力をそのまま流しながら、末尾も返す（VIDEO_ID を拾うため）。
 
     **並列で呼ばれます。** 途中経過を流すと複数本の行が混ざって読めなくなるので、
     1本ぶんを**1回の `print` にまとめて**出す（行の途中で割り込まれない）。
+
+    `env` は**この1本だけ**に効きます。`os.environ` を書き換えないこと ——
+    生成はスレッドで並列に走るので、**環境変数は全部のスレッドで共有**です。
+    A/B の腕を `os.environ["YT_OPENING_MOTION"]` で切り替えると、
+    **同時に走っている別の本の腕まで変わります**（そして台帳のラベルだけが
+    正しいまま残るので、`src/motion_groups.py` が言う「ラベルが静かに嘘になる」
+    形そのものになります）。
     """
     tag = f"[{label}] " if label else ""
     print(f"[batch] {tag}$ {' '.join(cmd)}", flush=True)
@@ -782,6 +791,7 @@ def run(cmd: list[str], timeout: int, label: str = "") -> tuple[int, str]:
         proc = subprocess.run(
             cmd, cwd=ROOT, timeout=timeout,
             capture_output=True, text=True,
+            env=({**os.environ, **env} if env else None),
         )
     except subprocess.TimeoutExpired:
         print(f"[batch] {tag}**{timeout}秒を超えたので打ち切りました**", flush=True)
@@ -865,12 +875,108 @@ def _failure_reason(out: str) -> str:
     return lines[-1][:300]
 
 
-def build_one(topic: dict, long_form: bool) -> dict:
+#: `YT_OPENING_MOTION` を呼ぶ側が明示したか（したなら、こちらは何も決めない）。
+_MOTION_ENV = "YT_OPENING_MOTION"
+
+
+def motion_shortfall() -> tuple[int, str]:
+    """**`opening_motion` の対照群は、判定の床まであと何本要るか。**
+
+    ## なぜ生成側がこれを読むのか（2026-08-26・最適化の回）
+
+    `config/hypotheses.yaml` の「冒頭0.9秒の動き」は、対照群を
+    **`YT_OPENING_MOTION=0` で作らないかぎり永久に増えません**
+    （`src/renderer.opening_motion_on` / `scripts/deadline_check.py` の
+    `zero_means_never`）。そして機械は、足りない側を既に印字しています:
+
+        src/motion_groups.py:447   「足りない側を `YT_OPENING_MOTION` を明示して作り足すこと」
+        scripts/queue_lag.py       「opening_motion 判定できる日が出ません ← **本が足りない**」
+
+    **その2つを読む口が、作る側にありませんでした。** `batch_build` は
+    既定（動きあり）で作り続けるので、**作った本は全部、既に飽和している側**へ入ります。
+
+    実測 2026-08-26（`src/judgeable.members`。再生が付く枠だけ）:
+
+        処置(動きあり)  **20本** ／ 床 8   ← 250%。ここへ足しても判定は1日も早まらない
+        対照(動きなし)  ** 3本** ／ 床 8   ← **あと5本。ここだけが期限を動かす**
+
+    **これは「作る本数」の話ではありません。** `scripts/queue_lag.py` は
+    予約の順番待ちが律速だと言っていて、**作る本数を増やすと待ちが伸びて悪化**します。
+    ここでやるのは**同じ本数の行き先を変える**ことだけです ——
+    **1本も増やさずに、`eta.py` が言う唯一の動かし方（前提を1件閉じる）へ寄せます。**
+
+    ## 数え方
+
+    - **床に入るのは「再生が付く枠」の本だけ**（`src/judgeable.members` が
+      `day_cap.live_ids` で絞ります）。**生の8本ではなく3本**です ——
+      前に作った対照8本のうち**5本が0再生の枠**に落ちました（`scripts/ab_slots.py`）。
+    - **まだ投稿していない対照も数えます**（作った時点で腕は確定しているので）。
+      数えないと、判定に入るまでの数日で毎周ぶん作り足して**大幅に超過**します。
+
+    **覆る条件**: 投稿してみたら死んだ枠だった、という本はここでは分かりません
+    （枠は予約のときに決まる）。`scripts/ab_slots.py` が入れ替えで直す側です。
+    この関数は「まだ1本も作っていない」ぶんだけを埋めます。
+    """
+    try:
+        from src import judgeable, motion_groups
+    except Exception as exc:                                   # noqa: BLE001
+        return 0, f"（群を読めませんでした: {exc}）"
+    try:
+        floor = int(judgeable.MEMBER_SOURCES["opening_motion"][1])
+        live = len(judgeable.members("opening_motion").get("対照(動きなし)", []))
+        # **作ったが、まだ投稿していない対照。** これを数えないと毎周ぶん作り足します。
+        by_topic = motion_groups.motion_by_topic()
+        posted = set(motion_groups.topic_by_video().values())
+        pending = sum(1 for tid, on in by_topic.items() if not on and tid not in posted)
+    except Exception as exc:                                   # noqa: BLE001
+        return 0, f"（群を読めませんでした: {exc}）"
+    need = max(0, floor - live - pending)
+    why = (f"対照(動きなし) 判定に入る **{live}本** ＋ 作り置き {pending}本 ／ 床 {floor}本"
+           f" → **あと {need}本**")
+    return need, why
+
+
+def motion_plan(n: int) -> list[bool | None]:
+    """この回の `n` 本を、どちらの腕で作るか。`True`＝動きあり／`False`＝動きなし。
+
+    `None` は「決めない」＝ `src/renderer.opening_motion_on()` の既定に任せる、
+    という意味で、**呼ぶ側が `YT_OPENING_MOTION` を明示している回**がこれです。
+    **人（や別の回）が明示した指示を、こちらが上書きしないこと。**
+
+    ## 半分までしか対照にしません
+
+    `src/motion_groups.paired()` は**同じ JST 日に両群が居る日**しか標本に
+    数えません（「片方しか居ない日の本は、動きの差とその日の配信の差を分けられない」）。
+    1回ぶんを全部 対照にすると、**その日が片群だけの日になりかねません。**
+    半々で作れば、同じ回の本は近い日へ入るので**共有日になります。**
+    """
+    if os.environ.get(_MOTION_ENV) is not None:
+        return [None] * n
+    if n <= 0:
+        return []
+    need, _why = motion_shortfall()
+    if need <= 0:
+        return [True] * n
+    off = min(need, max(1, n // 2))
+    # **先頭に固めないこと。** 落ちた本は先頭から撃ち直されるので、
+    # 固めると撃ち直しの回が片群だけになります。交互に置きます。
+    plan: list[bool | None] = [True] * n
+    if off:
+        step = max(1, n // off)
+        for i in range(off):
+            plan[min(n - 1, i * step)] = False
+    return plan
+
+
+def build_one(topic: dict, long_form: bool, motion: bool | None = None) -> dict:
     """**作るところまで**を1本ぶん。予約はしない（呼ぶ側が直列でやる）。
 
     ここが並列に走る部分です。**予約を混ぜないこと** —— `upload_only.py` は
     `next_publish_at` と待ち行列（`critique_queue`）という**共有の状態**を触るので、
     同時に走らせると予約時刻がぶつかります（8/15 03:48 の二重起動と同じ壊れ方）。
+
+    `motion` は `opening_motion` の腕（`None`＝既定に任せる）。**子プロセスの環境で
+    渡します。** `os.environ` を書き換えると、並列で走っている別の本にも効きます。
     """
     tid = topic["id"]
     row: dict = {"topic": tid, "calc": topic["calc"], "video_id": "", "error": ""}
@@ -882,7 +988,8 @@ def build_one(topic: dict, long_form: bool) -> dict:
     cmd = [sys.executable, "-m", "src.pipeline", "--topic", tid, "--dry-run"]
     if not long_form:
         cmd.append("--short")
-    code, out = run(cmd, BUILD_TIMEOUT, tid)
+    env = None if motion is None else {_MOTION_ENV: "1" if motion else "0"}
+    code, out = run(cmd, BUILD_TIMEOUT, tid, env=env)
     row["build_sec"] = round((datetime.now(JST) - started).total_seconds(), 1)
     if code != 0:
         row["error"] = f"生成が失敗（exit {code}）"
@@ -919,21 +1026,32 @@ def build_one(topic: dict, long_form: bool) -> dict:
         row["error"] = "contact sheet を作れず、独立評価の材料が残りません"
     row["built"] = True
     row["make_sec"] = round((datetime.now(JST) - started).total_seconds(), 1)
+    # **その本の腕を、結果の行にも残す。** 回のおしまいの1個の旗は、
+    # 腕が混ざった回には書けません（下の `mixed` を見ること）。
+    row["opening_motion"] = (renderer.opening_motion_on() if motion is None
+                             else bool(motion))
     # **群のラベルは、作った時に書く**（2026-08-23 に踏んで足した）。
     # それまで `opening_motion` は**回のおしまいに1回だけ**書いていたので、
     # **途中で落ちると、実際に作った本のラベルが丸ごと消えました** ——
     # 実測: 8本頼んで6本できた回が落ち、`data/batch_runs.jsonl` に1行も残らず、
     # **6本が「どちらの群か分からない本」になった**（`src/motion_groups` が落とす）。
     # A/B は「あとから推定する」と必ず壊れる。**作るたびに1行残す。**
-    _flag_line(tid)
+    _flag_line(tid, row["opening_motion"])
     return row
 
 
-def _flag_line(tid: str) -> None:
-    """1本ぶんの群のラベルを、その場で `data/build_flags.jsonl` に足す。"""
+def _flag_line(tid: str, motion: bool | None = None) -> None:
+    """1本ぶんの群のラベルを、その場で `data/build_flags.jsonl` に足す。
+
+    **`motion` は、その本を実際に作った値**です。ここで
+    `renderer.opening_motion_on()` を読み直さないこと ——
+    腕は子プロセスの環境で渡すので、**この親プロセスの値とは別**になり得ます。
+    """
     try:
         rec = {"at": datetime.now(JST).isoformat(timespec="seconds"),
-               "topic": tid, "opening_motion": renderer.opening_motion_on()}
+               "topic": tid,
+               "opening_motion": (renderer.opening_motion_on() if motion is None
+                                  else bool(motion))}
         FLAGS.parent.mkdir(parents=True, exist_ok=True)
         with FLAGS.open("a", encoding="utf-8") as fh:
             fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
@@ -1370,8 +1488,25 @@ def main(argv: list[str] | None = None) -> int:
     if jobs > 1:
         print(f"\n[batch] **{jobs} 本ずつ同時に作ります**"
               f"（待ち時間を重ねるだけなので、予約は下で1本ずつやります）", flush=True)
+
+    # ---- 0. **この本数の行き先を、足りない腕へ寄せる**（本数は1本も増やしません）----
+    #     `motion_shortfall()` の docstring に理由と実測があります。
+    motion = motion_plan(len(topics))
+    _need, _why = motion_shortfall()
+    if any(m is False for m in motion):
+        n_off = sum(1 for m in motion if m is False)
+        print(f"\n[batch] **{n_off} 本を `opening_motion` の対照（動きなし）で作ります**"
+              f" —— {_why}", flush=True)
+        print("        処置(動きあり)の側は既に床を越えているので、"
+              "そちらへ足しても判定は1日も早まりません"
+              "（`scripts/batch_build.motion_shortfall`）。", flush=True)
+    elif motion and motion[0] is None:
+        print(f"\n[batch] `{_MOTION_ENV}` が明示されているので、腕はそれに従います"
+              f"（この回では選び直しません）", flush=True)
+
     with ThreadPoolExecutor(max_workers=jobs) as pool:
-        results = list(pool.map(lambda t: build_one(t, args.long), topics))
+        results = list(pool.map(lambda tm: build_one(tm[0], args.long, tm[1]),
+                                zip(topics, motion)))
 
     # ---- 1b. 落ちた本を、その場でもう一度だけ作る ---------------------------
     #
@@ -1399,7 +1534,11 @@ def main(argv: list[str] | None = None) -> int:
         print(f"\n[batch] **{len(retry_at)} 本を、もう一度だけ作り直します**"
               f"（実測 54% が2回目で通ります。テーマは減りません）", flush=True)
         with ThreadPoolExecutor(max_workers=max(1, min(jobs, len(retry_at)))) as pool:
-            again = list(pool.map(lambda n: build_one(topics[n], args.long), retry_at))
+            # **撃ち直しは、同じ腕で作ること。** ここで腕を選び直すと、
+            # 同じテーマが `data/build_flags.jsonl` に両方の値で並び、
+            # `motion_groups.motion_by_topic()` が**そのテーマを両群から落とします**。
+            again = list(pool.map(
+                lambda n: build_one(topics[n], args.long, motion[n]), retry_at))
         recovered = 0
         for n, row in zip(retry_at, again):
             row["retried"] = True
@@ -1499,6 +1638,17 @@ def main(argv: list[str] | None = None) -> int:
 
     stamp = datetime.now(JST).isoformat(timespec="seconds")
     LOG.parent.mkdir(parents=True, exist_ok=True)
+    # **腕が混ざった回に、回ぜんぶの旗を1個 書かないこと**（2026-08-26）。
+    #
+    # `src/motion_groups.motion_by_topic()` は、回の旗を**その回の全テーマ**に
+    # 貼ります。1本ごとの旗（`data/build_flags.jsonl`）と食い違うと、
+    # そのテーマは `len(flags) == 1` に落ちないので**両群から捨てられます** ——
+    # つまり回の旗を1個 書いた瞬間、**その回の本が全部 標本から消えます。**
+    # 混ざった回は書かないこと。1本ごとの旗と `results[].opening_motion` が本体です。
+    _arms = {r.get("opening_motion") for r in results if "opening_motion" in r}
+    _run_flag: dict[str, object] = ({} if len(_arms) > 1
+                                    else {"opening_motion": renderer.opening_motion_on()
+                                          if not _arms else _arms.pop()})
     with LOG.open("a", encoding="utf-8") as fh:
         fh.write(json.dumps(
             {"at": stamp, "hour": args.hour, "date": args.date or None,
@@ -1513,7 +1663,10 @@ def main(argv: list[str] | None = None) -> int:
              # 先に効き、在庫は数週間先まで予約されているので、**実装日で割ると
              # 両群の中身が同じになります**（8/19 の ab_split と 8/23 の
              # 「冒頭0.9秒の動き」で2回踏んだ。後者は対照群が 405本中 0本だった）。
-             "opening_motion": renderer.opening_motion_on(),
+             #
+             # **腕が混ざった回では、この欄そのものが消えます**（上の `_run_flag`）。
+             # 群は `results[].opening_motion` と `data/build_flags.jsonl` から読みます。
+             **_run_flag,
              "results": results},
             ensure_ascii=False) + "\n")
 
