@@ -152,6 +152,16 @@ class Answer:
     why: str
     #: 待っても来ない種類か（外の出来事）
     unreachable: bool = False
+    #: **その日が「推定」のときの、意味のあるゆらぎ（日）。**（2026-08-26 に足した）
+    #:
+    #: 伸び率から解いた日（`accrual`）は、**その回の実測でしか出せません。**
+    #: 実例: 同じ前提の判定日が 11-13 → 11-09 → 11-16 → 11-22 と動き、
+    #: **3回とも「期限がずれています」と言われ、3回とも期限だけを書き換えました。**
+    #: 動いたのは伸び率の見積りで、**前提も、届く日も、1日も動いていません。**
+    #: 3回ぶんの `fix` は、到達日を1日も動かしていない churn です。
+    #:
+    #: だから**点ではなく帯**で見ます。帯の中なら「ずれ」と言いません。
+    slack: int = 0
 
 
 def _ans_now() -> Answer:
@@ -189,8 +199,13 @@ def _ans_accrual(need: dict, as_of: date) -> Answer:
         return Answer(None, f"要 {want} ／ いま **0**（{elapsed}日ぶん。"
                             "**伸び率が出せないので、いつ届くか言えません**）")
     days = math.ceil((want - have) / rate)
+    # **帯の幅**: 積み上げの数え上げ誤差 ≒ 1/√have（件数の相対標準誤差）を日数へ移す。
+    # have=74・days=88 なら ±11日。**この幅の中で期限を書き換えても、何も動きません。**
+    slack = max(1, math.ceil(days / max(1.0, have ** 0.5)))
     return Answer(as_of + timedelta(days=days),
-                  f"要 {want} ／ いま {have}（{elapsed}日で {rate:.2f}/日）→ あと {days}日")
+                  f"要 {want} ／ いま {have}（{elapsed}日で {rate:.2f}/日）→ あと {days}日"
+                  f"（**±{slack}日**。伸び率からの推定なので、この幅の中の書き換えは意味を持ちません）",
+                  slack=slack)
 
 
 def _ans_published_group(need: dict, as_of: date, lag: int) -> Answer:
@@ -308,13 +323,20 @@ class Verdict:
             return "[!!]"
         if self.deadline is None:
             return "[!!]"
-        return "[OK]" if self.ready <= self.deadline else "[!!]"
+        return "[!!]" if self.slips else "[OK]"
+
+    @property
+    def slack(self) -> int:
+        """`ready` を決めた要件の帯の幅（日）。**推定でない要件は 0**。"""
+        if self.ready is None:
+            return 0
+        return max([a.slack for a in self.answers if a.ready == self.ready] or [0])
 
     @property
     def slips(self) -> bool:
-        """期限が、データの来る日より前に置かれているか。"""
+        """期限が、データの来る日より前に置かれているか。**帯の中なら言いません。**"""
         return (self.ready is not None and self.deadline is not None
-                and self.ready > self.deadline)
+                and (self.ready - timedelta(days=self.slack)) > self.deadline)
 
     @property
     def waits(self) -> int:
@@ -332,7 +354,9 @@ class Verdict:
         """
         if self.ready is None or self.deadline is None:
             return 0
-        return max(0, (self.deadline - self.ready).days)
+        # **帯の中の待ちは数えません**（数えると、推定のゆらぎのぶんだけ
+        # 「縮めること」と言い続け、書き換えても次の回にまた言われます）。
+        return max(0, (self.deadline - self.ready).days - self.slack)
 
 
 def load(path: Path | None = None) -> list[dict]:
@@ -364,7 +388,9 @@ def check(items: list[dict], as_of: date | None = None, lag: int | None = None) 
 
 def lines(vs: list[Verdict], lag: int) -> list[str]:
     out = ["=== この期限までに、判定に要るデータは在るか（scripts/deadline_check.py）===",
-           f"  実データは **{lag}日 遅れ**ています。**「公開から7日」に必ず足すこと。**"]
+           f"  実データは **{lag}日 遅れ**ています。"
+           f"**「公開から{settle_mod.SETTLE_DAYS}日」に必ず足すこと。**"
+           f"（この {settle_mod.SETTLE_DAYS}日 は実測です —— `python -m src.settle`）"]
     for v in sorted(vs, key=lambda x: (x.deadline or date(2099, 1, 1))):
         dl = f"{v.deadline:%m-%d}" if v.deadline else "  ??  "
         out.append(f"  {v.mark} {dl}  {v.claim[:58]}")
@@ -391,6 +417,10 @@ def lines(vs: list[Verdict], lag: int) -> list[str]:
                        f"期限は {v.waits}日 **後ろ**に置いてあります。"
                        f"  `deadline: \"{v.ready}\"` へ**縮めること**"
                        "（**`falsified_if` は緩めないこと** —— 動かすのは期限だけ）")
+        elif v.slack:
+            out.append(f"         → 判定できるのは {v.ready:%m-%d}（±{v.slack}日の推定）。"
+                       f"**期限 {v.deadline:%m-%d} はその帯の中**です —— "
+                       "**書き換えないこと**（帯の中で動かしても、届く日は1日も動きません）")
         else:
             out.append(f"         → 判定できるのは {v.ready:%m-%d}。**期限とちょうど同じ**です")
     bad = [v for v in vs if v.slips]
