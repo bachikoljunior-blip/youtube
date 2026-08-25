@@ -306,8 +306,21 @@ def published(path: Path | None = None) -> list[dict[str, object]]:
                        .astimezone(JST).date())
             except ValueError:
                 pub = None
+        # **`at`（時刻つき・JST）も返します**（2026-08-26）。
+        # 日だけだと「その本を別の本と入れ替える」が組めません
+        # （入れ替えは**同じ時刻枠の交換**なので、時分が要る）。
+        # **畳み方をもう一度書かせないため、ここから出します** ——
+        # `scripts/queue_lag.py` が自前で畳むと、
+        # 「動かした本が2回数えられる」形（この関数の冒頭）を作り直します。
+        when: datetime | None = None
+        if at:
+            try:
+                when = (datetime.fromisoformat(str(at).replace("Z", "+00:00"))
+                        .astimezone(JST))
+            except ValueError:
+                when = None
         out.append({"topic": row.get("topic"), "video_id": row.get("video_id"),
-                    "publish": pub})
+                    "publish": pub, "at": when})
     return out
 
 
