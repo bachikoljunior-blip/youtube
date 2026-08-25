@@ -23,6 +23,7 @@ FONT_CANDIDATES = [
     "/usr/share/fonts/opentype/ipafont-gothic/ipag.ttf",
 ]
 ACCENT = (255, 204, 0)   # 既定。動画のテーマ色を渡せばそちらを使う
+MOSAIC_W = 80            # 背景をいったんここまで縮める。字形が残らない幅
 
 
 def _font(size: int) -> ImageFont.FreeTypeFont:
@@ -38,14 +39,21 @@ def _font(size: int) -> ImageFont.FreeTypeFont:
 
 
 def _base_image(source: Path, work: Path) -> Image.Image:
-    """素材が動画ならフレームを1枚抜き、読めなくなるまでぼかす。
+    """素材が動画ならフレームを1枚抜き、字が**原理的に残らない**ところまで潰す。
 
     ここは**背景**であって、情報を載せる場所ではない。
-    以前は 1.5 秒の位置から抜いてぼかしも弱く、1枚目のスライドの文字が
-    そのまま読めていた。1枚目には冒頭の結論——つまりサムネに重ねるのと
-    同じ数字——が書いてあるので、二重に見えて事故のような絵になっていた。
 
-    抜く位置を後ろにずらし、ぼかしと減光を強くして、色の面だけを残す。
+    この処理は2回壊れている。1回目は 1.5 秒の位置から抜いていて1枚目の結論が
+    そのまま読めた。抜く位置を後ろにずらして直したつもりが、2回目は中央の
+    スライドが stat（巨大な数字1つ）で、ぼかし22でも形が残り、重ねた文字と
+    同じ数字が背後に二重に見えた。
+
+    「強くぼかす」で直そうとしたのが間違い。ぼかしは文字の大きさに対して
+    相対的で、160px の数字1つは 22 のぼかしでは消えない。**大きさに依存しない
+    方法**でないと、また同じ壊れ方をする。
+
+    だから解像度そのものを落とす。幅80pxまで縮めれば、元が何ptだろうと
+    字形は情報として消える。そこから引き伸ばして色の面だけを残す。
     """
     if source.suffix.lower() in (".mp4", ".mov", ".webm"):
         frame = work / "thumb_frame.jpg"
@@ -62,8 +70,10 @@ def _base_image(source: Path, work: Path) -> Image.Image:
     left, top = (img.width - W) // 2, (img.height - H) // 2
     img = img.crop((left, top, left + W, top + H))
 
-    # 文字が一切読めない強さまでぼかす。背景は色の面であればよい。
-    img = img.filter(ImageFilter.GaussianBlur(22))
+    # 縮めてから戻す。字の大きさに関係なく、字形が情報として消える。
+    small = img.resize((MOSAIC_W, round(H * MOSAIC_W / W)), Image.BILINEAR)
+    img = small.resize((W, H), Image.BILINEAR)
+    img = img.filter(ImageFilter.GaussianBlur(12))
     img = ImageEnhance.Brightness(img).enhance(0.42)
     img = ImageEnhance.Color(img).enhance(1.15)
     return img

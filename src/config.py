@@ -38,12 +38,44 @@ def env(name: str, *, required: bool = True, default: str = "") -> str:
     return value
 
 
+class _StrictLoader(yaml.SafeLoader):
+    """**同じ鍵を2回書いたら止める。**
+
+    YAML は既定で**あとの値が黙って勝つ。** 2026-08-09、`tenshoku-nenshu` に
+    `calc_sections` が2か所あり、上に書いたほうが捨てられた。
+    エラーも警告も出ないので、**渡す表を絞ったつもりで絞れていなかった。**
+    気づいたのは、出力を見て「指定した節が1つも通っていない」と分かったから。
+
+    このリポジトリで一番高い間違いは、いつも**静かに通るもの**です。
+    """
+
+
+def _no_duplicates(loader, node, deep=False):
+    mapping = {}
+    for key_node, value_node in node.value:
+        key = loader.construct_object(key_node, deep=deep)
+        if key in mapping:
+            raise yaml.constructor.ConstructorError(
+                None, None,
+                f"鍵 `{key}` が同じ場所に2回あります。**あとの値が黙って勝つので、"
+                "先に書いたほうは無かったことになります。** 片方を消してください",
+                key_node.start_mark,
+            )
+        mapping[key] = loader.construct_object(value_node, deep=deep)
+    return mapping
+
+
+_StrictLoader.add_constructor(
+    yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, _no_duplicates
+)
+
+
 def load_channel() -> dict:
-    return yaml.safe_load((CONFIG_DIR / "channel.yaml").read_text(encoding="utf-8"))
+    return yaml.load((CONFIG_DIR / "channel.yaml").read_text(encoding="utf-8"), _StrictLoader)
 
 
 def load_topics() -> dict:
-    return yaml.safe_load((CONFIG_DIR / "topics.yaml").read_text(encoding="utf-8"))
+    return yaml.load((CONFIG_DIR / "topics.yaml").read_text(encoding="utf-8"), _StrictLoader)
 
 
 def save_topics(data: dict) -> None:

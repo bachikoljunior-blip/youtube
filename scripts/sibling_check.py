@@ -1,0 +1,754 @@
+#!/usr/bin/env python3
+"""兄弟の子が生きているかを、**判断ではなく計算で**答える。
+
+    python scripts/sibling_check.py --sessions <file>            # 回の最初（§2）
+    python scripts/sibling_check.py --sessions <file> --phase spawn   # §6 (f) の直前
+
+`<file>` は MCP の `list_sessions limit=25 mine=true` の返りをそのまま保存したもの。
+`scripts/quota.py --ingest` に渡すのと**同じファイルで構いません**。
+
+## なぜ作ったか（2026-08-15、自走の1周目で踏んだ）
+
+`docs/trigger_main.md` §6 (f) で「子が自分で次の子を立てる」形にした回
+（`bcf433e`）の**次の子が、これに引っかかりました。** 私です。
+
+§2 はこう書いてありました。
+
+    tags に "youtube-hourly" を含む行のうち、**自分以外**に
+    PENDING / RUNNING / IDLE があるか
+    → いたら created_at を比べて、**自分のほうが新しければこの場で畳む**
+
+**自走した子は、この条件に必ず当たります。**
+
+    04:59:50  前の子が起きる
+    05:09:01  前の子が §6 (f) で**私を立てる**      ← ここで私が生まれる
+    05:09:26  前の子はまだ RUNNING（残りは (h) の archive だけ）
+    05:09:52  私が §2 を見る → **兄弟が RUNNING、しかも私のほうが新しい**
+              → 「この場で畳む」
+
+**立てた側は必ず自分より古く、立てた瞬間はまだ生きています。**
+§6 (f) は archive の**前**に置いてあるので（止まっても失うのが archive だけで済むように）、
+この重なりは事故ではなく**毎回起きます。**
+
+畳む側は §6 (a)〜(e) を飛ばすので、**次の子も立てません。**
+つまり **1周目で鎖が終わり**、親の毎時 cron だけが残ります。
+`bcf433e` が消しにきた「48%の空転」が、そのまま戻るところでした。
+
+## 直し方
+
+**自分を立てた相手（`parent_session_id`）を、生死の数から除きます。**
+
+除いて安全な理由は、§6 の順番そのものです。**(f) は (a)〜(e) の後ろ**なので、
+私を立てた時点で向こうは記録も push も題名も済ませています。
+**残っているのは archive だけで、生成も予約もぶつかりません。**
+向こうが詰まって IDLE のまま残っても同じです（何も出せないので害になりません）。
+
+**`parent_session_id` で「絞る」のは今も禁止です**（8/15 に直した理由は §2 のとおり、
+孫の親IDが親ではなく子になるため、親IDで絞ると兄弟の半分が見えない）。
+ここでやっているのは**絞り込みではなく、1件の除外**です。向きが逆なので両立します。
+
+## 終了コード
+
+    0  進んでよい
+    1  返りの中に自分がいない ＝ ファイルが古い。取り直すこと
+    2  （`--phase start`）自分より古い兄弟が走っている。この場で畳む
+    3  （`--phase spawn`）立てない。兄弟が生きているか、枠が警告帯／閉じている
+    4  （`--phase start`）続けてよい。ただし upload は選ばない
+    5  （`--phase spawn`）**まだ早い。**表示された秒数だけ待って、
+       `list_sessions` を取り直して**この検査からやり直す**（2026-08-15）
+    6  （`--phase spawn`）**待たずに畳む。**下限が明けるのが親の次の発火より後なので、
+       待っても親のほうが先に立てます（2026-08-19 23:1x に足した。下の「待たない待ち」）
+
+## 待つより畳んだほうが早いことがあります（2026-08-19 23:1x に足した）
+
+**2周続けて、この待ちの最中に鎖が切れました。**
+
+    8/19 21:5x  post_turn_summary "awaiting sleep timer (~35 min); next: spawn child & archive"
+    8/19 22:3x  同じ文字列。**どちらも子を立てないまま IDLE になり、親が畳んだ**
+
+**背景の `sleep` は、明ければ呼び戻されます。** 切れたのはそこではありません ——
+**親が毎時 9分に起きて、黙っている子を「詰まった」と読んで畳む**ほうが先に来ました。
+22:3x の子は 13:39 に黙り、明けるのは 14:14。**親は 14:09 に来ました。5分差です。**
+
+**待ちが親の発火をまたぐなら、その待ちは最初から成立していません。**
+またぐと分かっているなら、**待たずに畳むほうが速い** —— 親は「生きた子がいない」を
+見て、いつもの引数で立てます。**間隔は親の周期（60分）**で、下限（65分前後）と
+ほとんど同じです。**待って切れると、失うのは1時間まるごと**でした（実測2回）。
+
+## 速さも見ます（2026-08-15 に足した）
+
+**`--phase spawn` は、枠より先に「速すぎないか」を見ます。** 目盛りは
+`scripts/quota.py --pace`（`data/usage.jsonl` の%を誕生数で割ったもの）。
+
+**枠が `allowed` でも速すぎることはあります。** `allowed` は「まだ閉じていない」
+としか言っていません。閉じてから気づくのでは遅く、8/12〜8/14 はそれで58時間
+止まりました。**閉じる前に均すのがここの仕事です。**
+
+## この道具が答えないこと
+
+**「向こうが本当に畳んだか」は見ていません。** 待たない作りです（§2 の
+「畳んだことを確認してから走り出す作りにはしない」）。待つと、向こうが
+詰まったときにこちらも止まります。
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import re
+import sys
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
+TAG = "youtube-hourly"
+LIVE = ("PENDING", "RUNNING", "IDLE")
+# **枠が閉じているとき自走しない**（§6 (f) 2）。両方の窓を見る。
+WINDOWS = ("five_hour", "seven_day")
+OK = "allowed"
+
+#: **予約の在庫がこの日数を切ったら、間隔の下限より生成を優先する**
+#: （`docs/TRIGGER.md` の「覆る条件②」。2026-08-16 に機械へ入れた）。
+#:
+#: この文は 8/15 から `docs/TRIGGER.md` に2か所書いてあり、
+#: **申し送りも8回運びました。文書にしか無いものは、読み飛ばせば効きません。**
+#: 実際、この間ずっと `--phase spawn` は在庫を1度も見ていません。
+#:
+#: 止まるのと出せなくなるのとでは、**出せなくなるほうが痛い** ——
+#: 間隔を詰めて枠を早く使い切っても、**予約が埋まっていれば公開は続きます**。
+#: 逆に在庫が尽きると、枠がいくら余っていても投稿が途切れます。
+RUNWAY_FLOOR_DAYS = 14
+
+#: **リポジトリに1行も残さずに終わった回**を見つける（2026-08-17 に足した）。
+#:
+#: 2026-08-17 04:1x の子は `sources` を渡されずに立ち、
+#: **`/home/user/youtube` そのものが無い**まま終わりました。
+#: そういう回は `run_marker.py --write` を打てず、`inbox.py --open` も押せず、
+#: **`data/` に1バイトも残せません。** つまり:
+#:
+#:   - `retro.py` は日誌を読むので拾えません（日誌を書けていない）
+#:   - **受け取り帳も拾えません**（`inbox.py` は repo への commit で残すので）
+#:   - `run_marker.py` の空き警告も鳴りません（次の子が普通に走れば間隔は空かない）
+#:
+#: **残る経路は1つだけです —— `set_session_title`（§6 (d)）。**
+#: 題名は repo を触らずに書けて、`list_sessions` の返りに載ります。
+#: 実際 04:1x の回は、見つけたことを全部題名に書いていました。
+#:
+#: **ところが §2 は題名を写さないと決めています**（`sessions_compact.py`。
+#: 25件ぶん写すのに約6分かかり、`quota.py` も `sibling_check` も読まないため）。
+#: **唯一生き残る経路を、こちらが手順で捨てていた**わけです。
+#:
+#: だから題名を写させるのではなく、**「題名を読みにいくべき回がある」ことだけを
+#: 機械で言います。** 材料は既に手元にあります ——
+#: `list_sessions` の一覧と `data/runs.jsonl` の印。
+#: **印の無いセッションは、repo を一度も触っていません。**
+SILENT_KEY = "silent_run"
+
+#: **代の上限**（`create_session: caller session is at lineage depth 8 (limit 8)`）。
+#: 親が深さ1、その子が2 …と進み、**8代目は次を立てられません。**
+DEPTH_LIMIT = 8
+
+#: **親の cron が撃つ分**（`trig_011aqbWZYMrY1YzXJ6ndfHEn`）。
+#: **実物は `list_triggers` で見ること**（写した瞬間に古くなります）。
+#: 違っていたら `--cron-minute` で渡せます。ここは既定値でしかありません。
+PARENT_CRON_MINUTE = 9
+
+#: 親の発火に間に合わせるための余白（archive が効くまでの分）。
+ARCHIVE_MARGIN_MIN = 2
+
+JST = timezone(timedelta(hours=9))
+
+
+def spawn_roots(sessions: list[dict]) -> set[str]:
+    """**常駐の親**（鎖の根）を、鎖の形そのものから見つける。
+
+    根は「一覧の中に**自分の行は無い**のに、**2件以上の行の親になっている**」ID です。
+    親は毎時ひとつ子を立てるので、25件の窓には普通ふくまれます。
+
+    **1件しか親になっていない ID を根と読まないこと。** それは
+    「25件の窓からこぼれ落ちただけの、ふつうの子」です（実測: 8/16 16:04 の行の
+    親 `session_016Gas…` がこれで、根と読むと深さが4代ぶん過小に出ます）。
+    """
+    ids = {s.get("id") for s in sessions}
+    counts: dict[str, int] = {}
+    for sess in sessions:
+        parent = sess.get("parent_session_id")
+        if parent and parent not in ids:
+            counts[parent] = counts.get(parent, 0) + 1
+    return {pid for pid, n in counts.items() if n >= 2}
+
+
+def lineage_depth(sessions: list[dict], me: str,
+                  root: str | None = None) -> tuple[int, bool]:
+    """`parent_session_id` の鎖をさかのぼって、**自分が何代目か**を返す。
+
+    返り `(depth, exact)`。**`exact=False` のとき `depth` は下限**です
+    （鎖が一覧の外へ出た ＝ 本当はもっと深いかもしれない）。
+    **下限を「深さ」と言い切らないこと** —— 8代目を7代目と読むと、
+    `create_session` を呼んでから初めて気づくことになります。
+    """
+    by_id = {s.get("id"): s for s in sessions}
+    roots = {root} if root else spawn_roots(sessions)
+    cur, depth, seen = me, 1, set()
+    while True:
+        if cur in seen:                      # 環。起きないはずだが、回らないほうが悪い
+            return depth, False
+        seen.add(cur)
+        parent = (by_id.get(cur) or {}).get("parent_session_id")
+        if not parent:
+            return depth, False
+        depth += 1
+        if parent in roots:
+            return depth, True
+        if parent not in by_id:
+            return depth, False
+        cur = parent
+
+
+def next_parent_fire(now: datetime, minute: int = PARENT_CRON_MINUTE) -> datetime:
+    """**次に親の cron が撃つ時刻。**"""
+    fire = now.replace(minute=minute % 60, second=0, microsecond=0)
+    if fire <= now:
+        fire += timedelta(hours=1)
+    return fire
+
+
+def report_depth(sessions: list[dict], me: str, now: datetime,
+                 minute: int = PARENT_CRON_MINUTE,
+                 root: str | None = None) -> bool:
+    """代の深さを出す。**壁に当たっている回は True** を返す。
+
+    ## なぜ、いちばん最初に出すのか（2026-08-17 に測って足した）
+
+    深さ8は §6 (f) で分かっていました。**遅すぎます。**
+    §6 (f) は1周の**終わりぎわ**なので、そこで知っても手の打ちようがありません。
+
+    鎖の実測（8/16 16:04〜8/17 20:12・25件。**間は全部 41〜43分**）:
+
+        深さ8が終わった時刻   次の子が生まれた時刻   空き
+        23:28                00:13                **45分**
+        04:18                05:10                **52分**
+        10:16                11:12                **56分**
+
+    **親は毎時 9分に撃ちますが、走っている子を見つけると立てません。**
+    1周が42分なので、**:09 は 7割の確率で「まだ走っている最中」に当たり**、
+    そこで見送られると**まるまる1時間あきます。** 上の3件はどれもこれです。
+
+    **7周に1回、およそ40分**（＝ ほぼ1周ぶん）が、ここで消えていました。
+
+    深さは §2 の時点で分かります —— **材料は `list_sessions` の返りだけ**で、
+    追加の呼び出しも API も要りません。**先に知れば、間に合わせられます。**
+    """
+    depth, exact = lineage_depth(sessions, me, root)
+    at_wall = depth >= DEPTH_LIMIT
+    about = "" if exact else " **以上**（鎖が一覧の外へ出たので下限です）"
+    if not at_wall:
+        left = DEPTH_LIMIT - depth
+        print(f"代の深さ: **{depth} / {DEPTH_LIMIT}**{about}"
+              f" —— あと {left}代で親待ちになります")
+        if not exact:
+            print("  **下限なので、`create_session` が深さで弾かれることはあり得ます。**"
+                  "弾かれても異常ではありません（§6 (f)）")
+        return False
+
+    fire = next_parent_fire(now, minute)
+    deadline = fire - timedelta(minutes=ARCHIVE_MARGIN_MIN)
+    if deadline <= now:                       # もう間に合わない。次の発火に合わせる
+        fire += timedelta(hours=1)
+        deadline = fire - timedelta(minutes=ARCHIVE_MARGIN_MIN)
+    left_min = (deadline - now).total_seconds() / 60
+
+    print(f"代の深さ: **{depth} / {DEPTH_LIMIT}**{about}"
+          "  ← **この回は次の子を立てられません**")
+    print("  `create_session` は必ず `lineage depth 8 (limit 8)` で落ちます。"
+          "**§6 (f) で呼ばないこと**（`create_trigger` も同じ上限です）")
+    print(f"  復帰は親の毎時 cron（毎時 {minute:02d}分）。"
+          "**親は走っている子を見つけると立てません。**")
+    print(f"  → **{deadline.astimezone(JST):%H:%M} JST までに archive すること**"
+          f"（次の発火 {fire.astimezone(JST):%H:%M}）。"
+          f"いま {now.astimezone(JST):%H:%M} ／ **残り {left_min:.0f}分**")
+    print("  間に合わないと次の発火まで見送られます。**実測の空きは 45 / 52 / 56分** ——"
+          "ほぼ1周ぶんです。**この回だけは、間隔の下限ではなく締切で終わりを決めること。**")
+    return True
+
+
+def silent_runs(sessions: list[dict], me: str | None) -> list[dict]:
+    """**印を1つも残していない兄弟**を、新しい順に返す。
+
+    数えないもの（どれも「異常ではない」側）:
+
+    - 自分（まだ打っていない段階で呼ばれることがある）
+    - 常駐の親（`config/parents.txt`。repo を触らない設計なので印が無くて当然）
+    - `youtube-hourly` タグの無いセッション（オーナーとの会話・姉妹ループ）
+    - **いま生きているセッション**（これから打つかもしれない）
+    - **印の記録より古い回**（`data/runs.jsonl` は直近500行しか持たないので、
+      それより前は「印が無い」ではなく「もう覚えていない」）
+    - **見にいって、拾うものが無かったと残された回**（`run_marker --seen`）
+    """
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        import run_marker
+        recs = run_marker._records()
+        parents = run_marker.PARENT_SESSIONS
+    except Exception:
+        return []
+    if not recs:
+        return []
+    marked = {r.get("session") for r in recs}
+    # **「見にいった。拾うものは無かった」と残された回**（`run_marker --seen`）。
+    # 2026-08-18 に足しました。**判定済みの1件が毎回鳴っていた**からです ——
+    # `nosrc` で題名が既定のまま／`apifail` で1ターン目に死んだ回は、中身がゼロなので
+    # `inbox.py --open` に落とすことを §0 が禁じており、**黙らせる道が1本も無い。**
+    # 08/18 の 14:5x・17:0x・18:2x が、同じ1件を3回見にいっています。
+    # **黙らせるのは名指しだけで、印が無い事実は消しません**（`kind` が別なので
+    # `marked` には入らない ＝ `--closes silent_run` の当たり率も動きません）。
+    seen = {r.get("saw") for r in recs if r.get("kind") == "seen" and r.get("saw")}
+    # **もう受け取った回は、二度と名指ししない**（入れた回に自分で踏みました）。
+    # 名指しは `list_sessions` の窓（25件）が持っているあいだ**毎回鳴ります** ——
+    # 受け取り帳へ落としても消えないので、**次の子が同じ題名をもう一度 `--open` します。**
+    # 印の代わりになるのは、そのとき書いた**受け取り帳の本文**です
+    # （§0 が「題名を `inbox.py --open` に落とせ」と言うので、IDが本文に入ります）。
+    picked = ""
+    try:
+        inbox = Path(__file__).resolve().parent.parent / "data" / "inbox.jsonl"
+        picked = inbox.read_text(encoding="utf-8")
+    except OSError:
+        picked = ""
+    oldest = None
+    for r in recs:
+        got = parse_iso(r.get("at"))
+        if got and (oldest is None or got < oldest):
+            oldest = got
+    out = []
+    for sess in sessions:
+        sid = sess.get("id")
+        if not sid or sid == me or sid in parents or sid in marked:
+            continue
+        if sid in picked:               # 受け取り帳に本文ごと入っている
+            continue
+        if sid in seen:                 # 見にいって、拾うものが無かったと残っている
+            continue
+        if TAG not in (sess.get("tags") or []):
+            continue
+        if is_live(sess):
+            continue
+        born = parse_iso(sess.get("created_at"))
+        if not born or (oldest and born < oldest):
+            continue
+        out.append(sess)
+    return sorted(out, key=lambda s: str(s.get("created_at")), reverse=True)
+
+
+#: 名指しした回の**落ち方**（`sessions_compact.ENDINGS`）。行に1語足したときだけ入ります。
+#: §6 (d) に届かなかった回の題名（`docs/trigger_parent.md` が付ける既定）。
+#: **これと同じなら、中身は1行もありません。**
+DEFAULT_TITLE = "YouTube 定期の回（子）"
+
+ENDING_LABEL = {
+    "nosrc": "← **repo が渡らなかった回**（題名が唯一の記録。**既定のままなら中身ゼロ**）",
+    "apifail": "← **立ち上がりの API 一時失敗**（題名は既定のまま＝中身ゼロ）",
+}
+
+
+def silent_advice(found: list[dict]) -> list[str]:
+    """名指しした回に対して、**やることを落ち方べつに**返す。
+
+    **ここは長らく「`sources` が渡らなかった疑い」と断定していました**
+    （2026-08-17 23:2x に直した）。断定できるのは 04:1x の1件しか見ていなかったからで、
+    **同じ「印ゼロ」に、やることが正反対の落ち方がもう1つあります。**
+
+        `nosrc`    repo が渡らなかった回。**題名だけが記録**なので読みにいく値打ちがある
+        `apifail`  立ち上がりの1ターン目が API 側の一時失敗（`529 Overloaded` など）で
+                   落ちた回。**§6 (d) に到達していないので題名は既定のまま**
+                   （「YouTube 定期の回（子）」）で、**中身は1行もありません。**
+
+    ## **2つは同じ軸に並んでいません**（2026-08-18 に踏んだ）
+
+    上の2語は「どちらか」に見えますが、**測っているものが別**です:
+
+        `nosrc`    **sources が渡ったか**（repo に書けたか）
+        `apifail`  **§6 (d) まで届いたか**（題名に中身があるか）
+
+    **両方が同時に起きます。** `session_01CbJXLKu2La79BPj66zTyre` がそれで、
+    **`sources` は空、かつ 34秒で死んで題名は既定のまま**でした
+    （22:52:13 → 22:52:47）。`nosrc` と印を付けると、この関数は
+    **「題名を読め」と言います。読むものはありません。**
+
+    **`apifail` の側で塞いだ穴に、`nosrc` の側から入れました。**
+    だから分岐を落ち方の語ではなく、**題名が既定かどうか**で切ります ——
+    そちらが「読むものがあるか」を直接言っているからです
+    （落ち方の語は、そこへの遠回りな代理でしかありません）。
+
+    23:0x の `session_01JBEBXm3FijEVuXTFeynLAU` が後者です（出力2行・push なし）。
+    **前者の文言のまま名指しすると、次の子は中身ゼロの既定題名を読みにいき、
+    それを「申し送り」として受け取り帳に落とします** —— 空の依頼が1件増えて、
+    さらに次の回がそれを閉じる仕事をします。**拾えないものを拾わせないのが、ここの仕事です。**
+    """
+    kinds = {str(s.get("ending") or "") for s in found}
+    out: list[str] = []
+    if kinds - {"apifail"}:                  # nosrc か、落ち方の分からない回がある
+        out.append("    → **`session_context.sources` が空だった回なら、`title` を読むこと。**")
+        out.append("      §6 (d) の題名だけが、その回の唯一の記録です"
+                   "（`list_sessions` の返りは、いま手元にあります）。")
+        out.append(f"      **ただし、題名が既定（「{DEFAULT_TITLE}」）のままなら、"
+                   "そこで止めること** ——")
+        out.append("      その回は §6 (d) に届いていないので、**中身は1行もありません。**"
+                   "`inbox.py --open` に落とさないこと。")
+        out.append("      読んで中身があったときだけ "
+                   "`python scripts/inbox.py --open \"<題名>\"` で受け取り帳へ。")
+    if "apifail" in kinds:
+        out.append("    → **`apifail` の回は、拾い直すものがありません。**"
+                   "§6 (d) まで届いていないので")
+        out.append("      題名は既定のまま（中身ゼロ）です。"
+                   "**`inbox.py --open` に落とさないこと** ——")
+        out.append("      空の依頼が1件ふえ、次の回がそれを閉じる仕事をするだけです。")
+        out.append("      **失ったのは1周ぶんの時間だけで、鎖は切れていません**"
+                   "（親の毎時 cron が拾います）。")
+    if not kinds - {""}:                     # 1件も印が無い ＝ どちらか分からない
+        out.append("    **落ち方が書かれていません。**"
+                   "返りの2つを目で見て、行に1語足すこと（`sessions_compact.ENDINGS`）:")
+        out.append("      `session_context.sources` が空 → `nosrc` ／"
+                   "`post_turn_summary.status_detail` が API エラー → `apifail`")
+    return out
+
+
+def report_silent(sessions: list[dict], me: str | None) -> None:
+    """見つけたら、**題名を読みにいけ**と言う。件数だけでは何も伝わらない。
+
+    `alerts.ring` は同じ回の中で何度叩いても1回しか記録しないので、
+    §2（`--phase start`）と §6 (f)（`--phase spawn`）の両方から呼んで構いません。
+    """
+    found = silent_runs(sessions, me)
+    if not found:
+        return
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+        from src import alerts
+        r = alerts.ring(SILENT_KEY, len(found))
+        if r.folded:
+            print()
+            print(r.line)
+            return
+    except Exception:
+        pass                      # 一覧の台帳が読めなくても、警告そのものは出す
+    print()
+    print(f"[!] **repo に1行も残さずに終わった回が {len(found)}件あります。**")
+    for sess in found:
+        print(f"    {sess.get('id')}  生 {sess.get('created_at')}"
+              f"  {ENDING_LABEL.get(str(sess.get('ending')), '（落ち方は未確認）')}")
+    print("    **`run_marker.py --write` すら打てていません** ＝ その回は")
+    print("    `/home/user/youtube` に1バイトも書けていません。")
+    for line in silent_advice(found):
+        print(line)
+    print("    潰したら `run_marker.py --ship ... --closes silent_run`。")
+    print("    **見にいって中身がゼロだったときは、そこで終わりにすること**"
+          "（2026-08-18 に足した）:")
+    print("      python scripts/run_marker.py --seen <ID> --why \"<何が無かったか1行>\"")
+    print("    これを打たないと、**同じ1件が 25件の窓から落ちるまで毎回鳴ります** ——"
+          "08/18 に3回、同じ回を見にいきました。")
+
+
+def runway_days(now: datetime) -> float | None:
+    """**予約が何日先まで埋まっているか。** 読めなければ `None`。
+
+    見るのは `data/uploaded.jsonl`（上げた瞬間に1行。2026-08-16 02:5x に入った控え）。
+    **API を叩きません** —— この検査は archive の直前に走るので、
+    ここで口を叩くと、429 で読めなかった回に鎖が止まります。
+
+    **ずれる向きを選んであります。** 控えは「上げたときの予約時刻」なので、
+    あとで外した本（`reschedule.py --unschedule`）が残り、**在庫は多めに出ます。**
+    多めに出れば「まだ余裕がある」＝**いままでどおり待つ**になるので、
+    読み違えても悪化しません。少なめに出るほうが危ない（枠を余計に食う）ので、
+    この向きでよい。
+    """
+    path = Path(__file__).resolve().parent.parent / "data" / "uploaded.jsonl"
+    if not path.exists():
+        return None
+    latest = None
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            at = parse_iso(json.loads(line).get("at"))
+        except Exception:
+            continue
+        if at and (latest is None or at > latest):
+            latest = at
+    if latest is None:
+        return None
+    return (latest - now).total_seconds() / 86400
+
+
+def my_session_id() -> str | None:
+    raw = os.environ.get("CLAUDE_CODE_REMOTE_SESSION_ID") or ""
+    raw = raw.strip()
+    if not raw:
+        return None
+    return "session_" + raw[len("cse_"):] if raw.startswith("cse_") else raw
+
+
+def iter_sessions(blob):
+    """`list_sessions` の返りは入れ子が一定しないので、素直に掘る。"""
+    if isinstance(blob, dict):
+        if "id" in blob and "created_at" in blob:
+            yield blob
+            return
+        for value in blob.values():
+            yield from iter_sessions(value)
+    elif isinstance(blob, list):
+        for item in blob:
+            yield from iter_sessions(item)
+
+
+def load(path: Path):
+    text = path.read_text(encoding="utf-8")
+    try:
+        blob = json.loads(text)
+    except Exception:
+        m = re.search(r"\{.*\}", text, re.S)
+        if not m:
+            raise SystemExit("JSON として読めませんでした。MCP の返りをそのまま渡すこと。")
+        blob = json.loads(m.group(0))
+    return list(iter_sessions(blob))
+
+
+def is_live(sess: dict) -> bool:
+    status = str(sess.get("session_status") or "")
+    return any(s in status for s in LIVE)
+
+
+def parse_iso(value):
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except Exception:
+        return None
+
+
+def rate_limits(sessions: list[dict], now: datetime | None = None) -> dict[str, dict]:
+    """窓ごとに**いちばん新しい観測**を取る。**ただし切れた観測は捨てる。**
+
+    2つ、実データで踏んだ穴があります（2026-08-15）。
+
+    **1. 窓を混ぜない。** `list_sessions` は行ごとに、そのとき効いていた窓を返します。
+    8月12日の行には `seven_day`、いまの行には `five_hour` が入っています。
+    まとめて見ると「閉じている」が永久に残ります。
+
+    **2. `resetsAt` が過ぎた観測は、いまについて何も言っていません。**
+    ここが本題です。1 だけ直して実データに掛けたら、**まだ止まりました。**
+    いちばん新しい `seven_day` の観測が 8/12 22:53 の `rejected` で、
+    その `resetsAt` は **8/15 07:00 —— すでに過ぎています。**
+    枠はそこで回復しており、**あの行は3日前の、しかも別の期間の話**です。
+    捨てないと、`seven_day` の新しい観測が返ってくるまで
+    （＝週枠が再び効き始めるまで）**二度と自走できません。**
+
+    切れた観測しか無い窓は「観測なし」として扱います。
+    **「閉じている」とも「余裕がある」とも読みません。**
+    """
+    now = now or datetime.now(timezone.utc)
+    latest: dict[str, tuple[datetime, dict]] = {}
+    for sess in sessions:
+        rli = (sess.get("external_metadata") or {}).get("rate_limit_info") or {}
+        window = rli.get("rateLimitType")
+        seen = parse_iso(sess.get("updated_at"))
+        if not window or not seen:
+            continue
+        resets = rli.get("resetsAt")
+        if isinstance(resets, (int, float)):
+            if datetime.fromtimestamp(resets, timezone.utc) <= now:
+                continue                  # その期間はもう終わっている
+        if window not in latest or seen > latest[window][0]:
+            latest[window] = (seen, rli)
+    return {w: rli for w, (_, rli) in latest.items()}
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--sessions", required=True,
+                    help="list_sessions の返りを保存したファイル")
+    ap.add_argument("--me", default=None, help="自分の session_id（既定は環境変数から）")
+    ap.add_argument("--phase", choices=("start", "spawn"), default="start",
+                    help="start=回の最初（§2） / spawn=次の子を立てる直前（§6 (f)）")
+    ap.add_argument("--cron-minute", type=int, default=PARENT_CRON_MINUTE,
+                    help=f"親の cron が撃つ分（既定 {PARENT_CRON_MINUTE}）。"
+                         "**実物は `list_triggers` で見ること**")
+    ap.add_argument("--root", default=None,
+                    help="常駐の親の session_id（既定は鎖の形から自動で見つけます）")
+    args = ap.parse_args()
+
+    me = args.me or my_session_id()
+    if not me:
+        print("**自分の session_id が分かりません。** --me で渡すこと。")
+        return 1
+
+    sessions = load(Path(args.sessions))
+    by_id = {s.get("id"): s for s in sessions}
+    mine = by_id.get(me)
+    if not mine:
+        print(f"**返りの中に自分（{me}）がいません。**")
+        print("  `list_sessions` を取り直すこと。古いファイルを使い回していませんか。")
+        return 1
+
+    spawner = mine.get("parent_session_id")
+    born = parse_iso(mine.get("created_at"))
+
+    siblings = []
+    for sess in sessions:
+        if sess.get("id") == me:
+            continue
+        if TAG not in (sess.get("tags") or []):
+            continue
+        if not is_live(sess):
+            continue
+        siblings.append(sess)
+
+    excused = [s for s in siblings if s.get("id") == spawner]
+    rivals = [s for s in siblings if s.get("id") != spawner]
+
+    print(f"自分: {me}  生 {born.isoformat() if born else '不明'}")
+    if excused:
+        print(f"立てた相手: {spawner} —— **数に入れません**")
+        print("  §6 (f) は (a)〜(e) の後ろなので、向こうに残っているのは archive だけです。")
+    elif spawner:
+        print(f"立てた相手: {spawner}（もう生きていません）")
+
+    if not rivals:
+        print(f"生きている兄弟: **0件**（{TAG}）")
+    else:
+        print(f"生きている兄弟: **{len(rivals)}件**（{TAG}）")
+        for s in rivals:
+            print(f"  {s.get('id')}  生 {s.get('created_at')}  {s.get('session_status')}")
+
+    # **呼ぶ側に条件を書かないこと。** 畳む判定は `report_silent` の中にあります
+    # （`src/alerts.py` の註と同じ理由。呼ぶ側に置くと片方だけ書き忘れます）。
+    report_silent(sessions, me)
+
+    # **代の深さは、両方の段で出します。** 効くのは `start`（締切に間に合わせられる
+    # のはそちらだけ）で、`spawn` は必ず失敗する呼び出しを1つ減らすためです。
+    at_wall = report_depth(sessions, me, datetime.now(timezone.utc),
+                           args.cron_minute, args.root)
+
+    if args.phase == "spawn":
+        if at_wall:
+            print()
+            print("**立てないこと。** 代の上限です（`create_session` は必ず落ちます）。")
+            print("  異常ではありません（§6 (f)）。**そのまま (h) で archive すること。**")
+            return 3
+
+        # --- 速すぎないか（2026-08-15） --------------------------------
+        # **これを一番先に見る。** 待っているあいだに兄弟も枠も変わるので、
+        # 先に枠を調べても答えが古くなる。**待ってから調べ直すのが正しい順。**
+        #
+        # 見ているのは「誕生から誕生まで」。§6 (f) はここで撃つので、
+        # **`now - 自分の誕生` が、そのまま次の間隔**になる。
+        # 1周が長かった回は待たない（もう間隔が空いている）。
+        floor = None
+        try:
+            sys.path.insert(0, str(Path(__file__).resolve().parent))
+            from quota import recommended_floor_minutes
+            floor = recommended_floor_minutes()
+        except Exception as exc:                 # 計器が壊れても鎖は止めない
+            print(f"速さ: **測れませんでした**（{exc}）。間隔は空けません")
+        now = datetime.now(timezone.utc)
+        runway = runway_days(now)
+        # **在庫が薄いときは、間隔の下限より生成を優先する**（`docs/TRIGGER.md` 覆る条件②）。
+        # 枠を早く使い切っても、予約が埋まっていれば公開は続きます。
+        # 在庫が尽きたら、枠がいくら余っていても投稿が途切れます。**痛みの大きさが違う。**
+        if runway is None:
+            print("在庫: **読めませんでした**（`data/uploaded.jsonl`）。下限はそのまま効かせます")
+        else:
+            print(f"在庫: 予約は **{runway:.1f}日先**まで（下限を外す境目は {RUNWAY_FLOOR_DAYS}日）")
+            if runway < RUNWAY_FLOOR_DAYS and floor:
+                print(f"  → **間隔の下限 {floor:.0f}分を外します。**"
+                      "在庫が薄いので、生成の回数のほうが目標に近い。")
+                floor = None
+
+        if floor and born:
+            waited = (now - born).total_seconds() / 60
+            if waited < floor:
+                left = floor - waited
+                gate = now + timedelta(minutes=left)
+                fire = next_parent_fire(now, args.cron_minute)
+                print()
+                if gate >= fire - timedelta(minutes=ARCHIVE_MARGIN_MIN):
+                    print(f"**待たずに畳むこと。** 下限が明けるのは "
+                          f"{gate.astimezone(JST):%H:%M} JST ですが、"
+                          f"**親はその前（{fire.astimezone(JST):%H:%M}）に起きます。**")
+                    print("  待っても親のほうが先に立てます。しかも**黙っている子は"
+                          "「詰まった」と読まれて畳まれる**ので、待ちきれません"
+                          "（8/19 に2周続けてこれで切れた）。")
+                    print("  → **`create_session` を呼ばないこと。**"
+                          "(a)〜(e) を終えて、そのまま (h) で archive すること。"
+                          f"次の子は親が {fire.astimezone(JST):%H:%M} に立てます"
+                          f"（間隔 {(fire - born).total_seconds() / 60:.0f}分）。")
+                    return 6
+                print(f"**まだ立てないこと。** 誕生から {waited:.0f}分 / "
+                      f"持続できる間隔は **{floor:.0f}分**（`quota.py --pace`）")
+                print(f"  **{left * 60:.0f}秒 待ってから、"
+                      "`list_sessions` を取り直して、この検査をやり直すこと。**")
+                print(f"      Bash(run_in_background=True): sleep {left * 60:.0f}")
+                print(f"  （明けるのは {gate.astimezone(JST):%H:%M} JST。"
+                      f"親の次の発火 {fire.astimezone(JST):%H:%M} より前なので、"
+                      "この待ちは親に追い越されません）")
+                print("  **前倒しに意味はありません。** 速く回しても週の枠は増えず、"
+                      "先に使い切ればリセットまで1回も起きられません"
+                      "（8/12〜8/14 の58時間）。**待ちは投稿を減らしません** —— "
+                      "予約が埋まっていれば、起きなくても公開されます。")
+                return 5
+            print(f"速さ: 誕生から {waited:.0f}分 ≥ 下限 {floor:.0f}分 —— 待ち不要")
+
+        limits = rate_limits(sessions)
+        bad, seen_windows, blind = [], [], []
+        for window in WINDOWS:
+            rli = limits.get(window)
+            if not rli:
+                # **観測が無いことを「閉じている」と読まない。**`list_sessions` は
+                # そのとき効いている窓しか返さないことがあり、両方そろう保証はない。
+                # 読めなかったことを理由に回を止めない（§2「割り引いて読むこと」）。
+                print(f"枠 {window}: **観測なし**（この返りには出ていません。閉鎖とは読みません）")
+                blind.append(window)
+                continue
+            status = rli.get("status")
+            mark = "" if status == OK else "  ← **立てない**"
+            print(f"枠 {window}: {status}{mark}")
+            seen_windows.append(window)
+            if status != OK:
+                bad.append(window)
+        if rivals:
+            print()
+            print("**立てないこと。** 生きている兄弟がいます（親の毎時 cron が拾います）。")
+            return 3
+        if bad:
+            print()
+            print("**立てないこと。** 枠が " + " / ".join(bad) + " で警告帯か閉じています。")
+            print("  削るのは1回の中身ではなく間隔です。毎時 cron に戻すだけで足ります。")
+            return 3
+        print()
+        ok = " / ".join(seen_windows) if seen_windows else "観測できた窓なし"
+        print(f"**立ててよい。** 兄弟0件・{ok} は allowed。")
+        if blind:
+            print("  観測できなかった窓: " + " / ".join(blind)
+                  + "（**余裕があるとも尽きたとも読めません**）")
+        return 0
+
+    older = [s for s in rivals
+             if (parse_iso(s.get("created_at")) or datetime.max.replace(tzinfo=timezone.utc)) < (born or datetime.max.replace(tzinfo=timezone.utc))]
+    if older:
+        print()
+        print("**この場で畳むこと。** 自分より古い兄弟が走っています（古いほうが勝つ）。")
+        print("  §6 (a)〜(e) は要りません。何も出していないので記録することがありません。")
+        return 2
+    if rivals:
+        print()
+        print("**続けてよい。ただし upload は選ばないこと**（§2 (2)）。")
+        print("  means / verdict / fix に切り替える。向こうが自分で畳みます。")
+        return 4
+    print()
+    print("**続けてよい。** ぶつかる相手はいません。")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

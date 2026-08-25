@@ -33,6 +33,21 @@ python3 -c "import _cffi_backend" 2>/dev/null || pip install -q --upgrade cffi
 pip install -q -r requirements.txt \
   || pip install -q --ignore-installed -r requirements.txt
 
+# **入ったかどうかは、実際に import して見ること**（2026-08-21 に踏んだ）。
+# 上の `pip install -r requirements.txt` は**成功しても**、ディストリの
+# `python3-cryptography 41.0.7` が /usr/lib/python3/dist-packages に残っていると
+# `from google.oauth2.credentials import Credentials` が pyo3 の panic で落ちます
+# （`ModuleNotFoundError: No module named '_cffi_backend'` → `PanicException`）。
+# 成功しているので上の `||` 側には落ちず、**回の最初の eta.py で初めて分かります。**
+# `--upgrade` は `Cannot uninstall cryptography 41.0.7, RECORD file not found` で止まるので、
+# **剥がさずに上へ置く `--ignore-installed` でないと直りません。**
+_import_ok='from google.oauth2.credentials import Credentials
+import googleapiclient.discovery, yaml, pydantic, numpy, pytest'
+python3 -c "$_import_ok" 2>/dev/null \
+  || pip install -q --ignore-installed cffi cryptography
+python3 -c "$_import_ok" 2>/dev/null \
+  || { echo "Python 側が揃いませんでした（google-auth の import が通りません）"; exit 1; }
+
 # 同梱の Chromium は playwright の期待するビルド番号と一致しないことがある。
 # その場合は実体を直接指す。src/visuals.py が PLAYWRIGHT_CHROMIUM_PATH を見る。
 if ! python3 -c "

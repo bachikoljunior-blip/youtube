@@ -1,0 +1,260 @@
+#!/usr/bin/env python3
+"""**予約中の本を1本、公開させないようにする。** 作り直して差し替えるときの最後の1手。
+
+    python scripts/unschedule.py <video_id> --why "<1行の理由>"   # 予約を外す（既定）
+    python scripts/unschedule.py <video_id> --why "..." --delete   # 消す（弾かれる）
+
+## 消すのをやめた理由（2026-08-15 に既定を入れ替えた）
+
+**この道具は 8/15 に4回とも弾かれ、1本も処理できませんでした。**
+`videos().delete` は取り消せないので、環境の判定が止めるのは当然です。
+**そして親が確かめたところ、この判定を外す手段はオーナーの画面に存在しません**
+（権限モードは3つしか選べず、「確認しない」に当たるものが無い。
+`docs/FOR_OWNER.md` 済み3）。**つまり「消す」道は、待っても開きません。**
+
+**しかし目標が要求しているのは「消すこと」ではなく、
+「欠陥のある本を公開させないこと」です。** それは `videos().update` で
+`privacyStatus=private` にし、`publishAt` を落とせば足ります。
+
+- **取り消せます**（もう一度予約すれば戻る）。だから判定が止める理由がない
+- **公開はされません。** 予約が消えるので、その日時が来ても出ない
+- 本体はアカウントに残るので、**あとで見直す材料としても残る**
+
+**「消す」ほうは `--delete` に退避してあります**（弾かれる前提。
+判定が変わったとき用に、条件つきで残す）。
+
+## 守っていること
+
+**公開済みには触れません。** 誰かが URL を持っている・再生や評価やコメントが
+付いている可能性があるものを private にすると、その視聴者から見えなくなります。
+触ってよいのは**一度も公開されていない予約中の本**だけで、そちらは
+再生も評価もコメントも0なので、失うものがありません
+（§5「予約中の本は一度も公開されていないので…渋る理由は URL ではない」）。
+
+**順番も守ること。** §5 は「**先に作る、次に予約を移す、最後に外す**」。
+先に外すと、その間ずっと予約に穴が空きます
+（**投稿が途切れるのが最大の損失**）。この道具は最後に呼ぶもの。
+
+## 口が落ちた回は、手元の控えで代える（2026-08-17 に足した）
+
+**この道具は `videos().list` を読めないと1本も処理できませんでした。**
+Data API の1日枠が切れるのは JST 16:00 までの毎日13時間ぶんで、その間
+**「作り直して差し替える」道が丸ごと閉じます。**
+
+実際それで止まっていました ——「予約済みの2本が、直す前の絵のまま」は
+**5回運ばれて5回とも未着手**で、5回のうち何回かは日枠切れの時間帯です。
+`src/history.py`・`src/dupes.py`・`batch_build --date` は同じ形を
+**手元の控え**（`data/uploaded.jsonl`）で埋めていて、**ここだけ残っていました。**
+
+**ただし控えで代えられるのは「守り」の片方だけです。** 門が守っているのは
+「公開済みに触らないこと」で、控えは再生数を持っていません。
+だから**控えが証明できる形のときだけ**通します:
+
+    控えの予約時刻が、いまより先 → **まだ一度も公開されていない**
+    → 公開状態は private・再生は 0。**門が見たかったことは、これで足りる**
+
+**証明できないときは通しません**（控えに行が無い／予約時刻が過去）。
+「たぶん予約中だろう」で書き込まないこと —— 外したい本と、
+**うっかり公開済みを private にする事故**は、取り返しの重さが違います。
+"""
+from __future__ import annotations
+
+import argparse
+import sys
+import time
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+import reschedule  # noqa: E402  （書き込みの実装は1か所だけ）
+from src import dupes, uploader  # noqa: E402
+
+#: 控えの予約時刻が「いまより先」と言うために要る余白。
+#: ちょうど境目の行を「まだ公開されていない」と読まないための幅です。
+LEDGER_MARGIN = timedelta(hours=1)
+
+
+def _ledger_state(video_id: str) -> dict | None:
+    """**手元の控え**から、この動画が「まだ公開されていない」ことを示せるか。
+
+    示せたときだけ辞書を返します（`publish_at` / `title`）。
+    **示せないときは `None`**。呼ぶ側は `None` を「たぶん大丈夫」と読まないこと。
+    """
+    from src import dupes
+
+    try:
+        rows = dupes.ledger_rows()
+    except Exception as exc:                                  # noqa: BLE001
+        print(f"[unschedule] 控えも読めませんでした: {str(exc)[:80]}")
+        return None
+
+    row = next((r for r in rows if r.get("id") == video_id), None)
+    if row is None:
+        print(f"[unschedule] 控えに {video_id} の行がありません。"
+              "**予約中だと示せないので、触りません**")
+        return None
+
+    raw = row.get("at") or ""
+    try:
+        at = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        print(f"[unschedule] 控えの予約時刻が読めません（{raw!r}）。**触りません**")
+        return None
+    if at.tzinfo is None:
+        at = at.replace(tzinfo=timezone.utc)
+
+    now = datetime.now(timezone.utc)
+    if at <= now + LEDGER_MARGIN:
+        print(f"[unschedule] 控えの予約時刻 {raw} は、もう先ではありません"
+              f"（いま {now.isoformat(timespec='minutes')}）。"
+              "**一度公開されている可能性があるので触りません**")
+        return None
+
+    return {"publish_at": raw, "title": row.get("title", "")}
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(
+        description="予約中の本を1本、公開させないようにする（公開済みには触らない）")
+    ap.add_argument("video_id")
+    ap.add_argument("--why", required=True, help="外す理由を1行で。JOURNAL に写すため")
+    ap.add_argument("--delete", action="store_true",
+                    help="予約を外すのではなく消す。**取り消せません。**"
+                         "環境の判定に弾かれる前提で残してあります")
+    ap.add_argument("--force-public", action="store_true",
+                    help="公開済みでも実行する。**視聴者から見えなくなります**")
+    args = ap.parse_args()
+
+    yt = uploader._service()
+    from_ledger = False
+    try:
+        resp = yt.videos().list(
+            part="status,snippet,statistics", id=args.video_id).execute()
+    except Exception as exc:                                  # noqa: BLE001
+        print(f"[unschedule] **予約の状態を口から読めません**: {str(exc)[:110]}")
+        state = _ledger_state(args.video_id)
+        if state is None:
+            return 2
+        from_ledger = True
+        resp = {"items": [{
+            "status": {"privacyStatus": "private",
+                       "publishAt": state["publish_at"]},
+            "statistics": {"viewCount": "0"},
+            "snippet": {"title": state["title"]},
+        }]}
+        print(f"[unschedule] **手元の控えで代えます**（予約 {state['publish_at']} は"
+              "いまより先 ＝ まだ一度も公開されていない ＝ 再生0）")
+
+    items = resp.get("items") or []
+    if not items:
+        print(f"[unschedule] {args.video_id} が見つかりません（既に消えている？）")
+        return 1
+
+    item = items[0]
+    status = item.get("status") or {}
+    stats = item.get("statistics") or {}
+    privacy = status.get("privacyStatus")
+    publish_at = status.get("publishAt")
+    views = int(stats.get("viewCount") or 0)
+    title = (item.get("snippet") or {}).get("title", "")
+
+    print(f"[unschedule] {args.video_id} 『{title}』")
+    print(f"             公開状態 {privacy} / 予約 {publish_at or 'なし'} / 再生 {views}"
+          + ("  ← **控えから**" if from_ledger else ""))
+
+    if from_ledger and (args.delete or args.force_public):
+        print("[unschedule] **控えで代えた回は `--delete` も `--force-public` も通しません。**"
+              "どちらも『実物の状態を見たうえで押し切る』ための旗で、"
+              "見えていないときに押し切る意味がありません")
+        return 2
+
+    if privacy == "public" and not args.force_public:
+        print("[unschedule] **公開済みなので触りません。** "
+              "URL を持っている人がいる可能性があり、その人から見えなくなります。"
+              "本当にやるなら --force-public")
+        return 2
+    if views > 0 and not args.force_public:
+        print(f"[unschedule] **再生が {views} 回ついているので触りません。** "
+              "予約中なら0のはずで、0でないなら一度公開されています")
+        return 2
+
+    if args.delete:
+        yt.videos().delete(id=args.video_id).execute()
+        print(f"[unschedule] 消しました: {args.video_id}")
+        print(f"[unschedule] 理由: {args.why}")
+        print("[unschedule] **`docs/JOURNAL.md` に理由を書くこと。** "
+              "消した記録が残らないと、次の回が『なぜ予約が1本減ったか』を追えません")
+        return 0
+
+    if not publish_at and privacy == "private":
+        print("[unschedule] **すでに予約なしの private です。** 何もしません")
+        return 0
+
+    # **書き込みは `reschedule._update` に任せること**（2026-08-16 18:5x）。
+    # ここには同じ書き込みが**もう1つ**あり、`status` のうち4つの欄しか写して
+    # いませんでした（あちらは読み取り専用の欄だけ落として全部写す）。
+    # **同じことをする実装が2つある**のは、この repo が7回踏んだ「片方だけ直す」形
+    # そのものです。実際この道具は `auth.youtube()`（**存在しない関数**）で
+    # 落ちたまま放置されていて、気づいたのは 18:5x に実際に呼んだときでした。
+    # 控えで代えた回は、書き込みの側も現状を読めません（同じ日枠）。
+    # **投稿のときにこちらが立てた4欄**を渡します（`uploader.base_status`）。
+    reschedule._update(yt, args.video_id, None,
+                       fallback_status=uploader.base_status() if from_ledger else None)
+
+    # **控えにも書き戻すこと**（2026-08-18 16:0x に、実物で10本ぶん踏んだ）。
+    # ここには長らくこの1行がありませんでした。控え（`data/uploaded.jsonl`）は
+    # `at` を持ったままなので、**外した本が「予約中」のまま残ります。**
+    # そして `reschedule.py --compact` は**控えだけを見て割り当てを作る**
+    # （API 0単位で計画を出すための設計です）ので、
+    # **外したばかりの本に新しい publishAt を書き戻します。**
+    # 実測: この回は重複10本を外した直後に `--compact --apply` を撃ち、
+    # **8本が予約に戻りました**（うち2本は前の回から外れていた本で、
+    # **外れていたものが新たに予約に入った**）。もう一度10本を外し直しています。
+    # 書き戻す口は既にあります —— `dupes.retime(id, None)`。**足りなかったのは呼び出しです。**
+    dupes.retime(args.video_id, None)
+
+    try:
+        after = yt.videos().list(part="status", id=args.video_id).execute()
+    except Exception as exc:                                  # noqa: BLE001
+        # 読みの口が落ちている回。**書き込みは通っています**（同じ枠ではない）。
+        print(f"[unschedule] 予約を外しました: {args.video_id}")
+        print(f"[unschedule] 理由: {args.why}")
+        print(f"[unschedule] **外れたことを読んで確かめられません**: {str(exc)[:90]}")
+        print("[unschedule] **口が戻った回で確かめること**"
+              "（`videos().list(part='status')` の `publishAt` が消えていれば外れています）")
+        return 0
+
+    a_status = ((after.get("items") or [{}])[0].get("status") or {})
+    a_privacy = a_status.get("privacyStatus")
+    a_publish = a_status.get("publishAt")
+    print(f"[unschedule] 予約を外しました: {args.video_id}")
+    print(f"             いま 公開状態 {a_privacy} / 予約 {a_publish or 'なし'}")
+    print(f"[unschedule] 理由: {args.why}")
+    if a_publish:
+        # **1回目の読みは、書き込みに追いついていないことがあります**
+        # （2026-08-18 16:0x の実測。**10本すべてがここで「残っている」と出て、
+        # 数秒後に読み直すと10本とも消えていました** ＝ 当たり 0/10）。
+        # ここが誤報を出すと、次の回が「確かめ直す」ために1周を使います。
+        # **読み直してから言うこと。**（`videos.list` は1単位）
+        time.sleep(3)
+        try:
+            again = yt.videos().list(part="status", id=args.video_id).execute()
+            a_publish = (((again.get("items") or [{}])[0].get("status") or {})
+                         .get("publishAt"))
+        except Exception as exc:                              # noqa: BLE001
+            print(f"[unschedule] 読み直せません: {str(exc)[:90]}")
+        if a_publish:
+            print("[unschedule] **予約が残っています。落ちていません。** "
+                  "この日時に公開されるので、確かめ直すこと")
+            return 3
+        print("             読み直したら消えていました（1回目は書き込みに追いついていない）")
+    print("[unschedule] **`docs/JOURNAL.md` に理由を書くこと。** "
+          "記録が残らないと、次の回が『なぜ予約が1本減ったか』を追えません")
+    print("[unschedule] 本体は残っています（private）。"
+          "戻すなら同じ動画IDに publishAt を置き直すだけです")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
