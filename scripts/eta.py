@@ -183,12 +183,19 @@ MATURE_HOURS = settle.MATURE_HOURS
 # 答えが返るまでにかかる日数は、この2つの和です:
 #
 #     公開 → 伸びきる    MATURE_HOURS（48時間）= 2日   `drop_unripe` が標本に入れる条件
-#     伸びきる → 読める  ANALYTICS_LAG_DAYS（3日）     Analytics は日次で3日遅れ
+#     伸びきる → 読める  ANALYTICS_LAG_DAYS（**実測**。`src/settle.py`）  Analytics は日次で遅れる
 #
 # **覆る条件**: 日枠が朝のうちに開いている回なら「今日」も予約できるので、
 # `soonest` は1日早くなります。ここは**閉じている側に倒して**明日から数えています
 # （名指しした日に予約できないほうが損なので）。
-ANALYTICS_LAG_DAYS = 3
+# **この数もここでは決めません（2026-08-26）。** 同じ「Analytics の遅れ」を
+# `scripts/deadline_check.py` が `data/analytics_lag.jsonl` の実測から出していて
+# （その日は **4日**）、`src/judgeable.py` は `= 3` のべた書きでした。
+# **A/B 4件だけ1日 楽観**に出ていたのが、そのべた書きです。ここが最後の1か所。
+#
+# 1日 楽観だと、`answer_day()` が「測定の答えが返る日」を1日早く名指しします ——
+# **その日に見にいっても、まだ数字はありません。**
+ANALYTICS_LAG_DAYS = settle.analytics_lag_days()
 
 # --- **長尺の標本が「薄い」と「無い」は別です**（2026-08-25 に直した） ---
 #

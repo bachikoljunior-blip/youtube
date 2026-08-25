@@ -1058,6 +1058,130 @@ def report() -> int:
     return 0
 
 
+def _pull_verdicts_first() -> None:
+    """**予約の入れ替えを、この回の投稿が単位を使い切る前に撃つ。**
+
+    ## なぜ要るか（2026-08-26・最適化の回。**サムネイルと同じ穴の、2件目**）
+
+    下の `_push_thumbnails_first()` の註がこう書いています ——
+    「`thumbnails.set` は 50単位しか要らないのに、**いつも投稿の後ろに
+    並んでいた**ので一度も順番が回ってきませんでした。**一覧が悪いのでは
+    ありません。押せる時刻に、押す手順が無かっただけです**」。
+
+    **`scripts/queue_lag.py --apply` が、いま同じ所に立っています。**
+    こちらも 1回 50単位（`videos.update`）ですが、**手で撃つ道具のままなので、
+    順番そのものが無い。** 実測（2026-08-26 03:1x）:
+
+        入れ替え **26手 ＝ 2,600単位** で、判定が **合計8日 早まる**
+          title_form  09/08 → 09/06（2日）  hook_form  09/11 → 09/05（6日）
+        同じ窓で上げた本 **11本 ＝ 概算 17,600単位**
+        **日枠の 403 は、その窓で 22回 観測**
+
+    **17,600単位 は見つかっていて、2,600単位 が見つかっていません。**
+
+    8/26 05:0x の申し送りは「**16:00 JST を過ぎたら、まず `--plan` を撃つこと**」
+    でした。**申し送りでは直りません** —— 次に起きた回が16時をまたぐとは限らず、
+    またいでも投稿のほうが先に窓を空にします。だから**手順にします。**
+
+    ## なぜサムネイルより前か
+
+    `scripts/eta.py` が毎回印字しているとおり、**軌跡の腕が動くのは
+    前提を1件閉じたときだけ**です。入れ替えは**その日を手前に倒す唯一の手**で、
+    `src/arm_speed.py` の `rate = p · log(g) · θ` の θ をそのまま上げます
+    （θ は待ち時間の逆数）。サムネイルは「あれば良いもの」。
+    **同じ50単位なら、こちらが先です。**
+
+    ## なぜ投稿より前でよいか（**投稿が途切れるのが最大の損失**なのに）
+
+    ここで後ろへ回る投稿は、**32日先の待ち行列の、いちばん後ろに入る本**です
+    （`scripts/queue_lag.py` の頭）。**39日 どの判定にも効きません。**
+    対して この 2,600単位 は、**いま開いている2件の判定を 8日 手前に倒します。**
+    交換しているのは「1〜2本を32日先へ置くこと」と「8日ぶんの θ」です。
+
+    ## 2段ある（**順番が意味を持ちます**）
+
+        (1) `_rescue_dead_slots()`   死に枠の A/B を生きた枠へ（標本をそろえる）
+        (2) `_pull_ready_dates()`    その「判定できる日」を手前へ倒す
+
+    **(1) が先です。** 標本が足りない群は、そもそも**判定できる日が出ません**
+    （`judgeable.Floor.ready is None`）。日付の無いものは手前へ倒せません。
+
+    ## 撃たない条件（**下2つは既に呼ぶ先の中にあります**）
+
+    - **日枠の 403 をこの窓で観測している** → 撃たない（**実測だけの門**）
+    - **判定に要る本を割る** → 撃たない（`--force-quota` でも抜けられない）
+    - **取り戻せる日数が 0 ／ 手が 0** → 撃たない（単位を捨てないため）
+
+    **落ちても投稿は続けます**（サムネイルと同じ。**順番を逆にしないこと**）。
+
+    ## 覆る条件
+
+    **待ち行列が短くなったら、この交換は成り立ちません。**
+    `queue_lag` の「いちばん後ろ」が数日まで縮み、**後ろへ回った投稿が
+    その窓のうちに公開される**ようになったら、投稿を先に戻すこと。
+    """
+    if not upload_cap.day_quota().open:
+        return                          # 観測済みで閉じている。撃つだけ無駄
+    _rescue_dead_slots()                # (1) 標本を生き返らせる
+    _pull_ready_dates()                 # (2) その日を手前へ倒す
+
+
+def _rescue_dead_slots() -> None:
+    """**死に枠に落ちた A/B の本を、生きた枠へ逃がす**（`scripts/live_slots.py`）。
+
+    **`_pull_ready_dates()` より先です。** 入れ替えは「判定できる日」を手前へ
+    倒しますが、**そもそも標本が足りない群は、日付が出ません**
+    （`judgeable.Floor.ready is None`）。先に本数をそろえること。
+
+    実測（2026-08-26 03:3x）: **6手 ＝ 300単位**で
+    `stat_split 処置(後)` が **13本 → 16本（要 16）＝ 足ります**。
+    生きている本の総数も **363 → 368**。
+    これは 8/26 05:0x の申し送りが「**日枠が戻る 16:00 JST 以降に立った回が
+    撃つこと**」と書いていた手で、**待っているあいだ `tests/test_judgeable.py`
+    の `stat_split` は赤のまま**でした。
+
+    **`--all` は撃ちません。** あれは A/B に限らず全部を逃がす広い手で、
+    ここが自動でやってよい範囲を超えます（人が見て撃つこと）。
+    """
+    try:
+        from scripts import live_slots
+
+        board = live_slots.Board(live_slots._rows())
+        live_slots.plan(board)          # API 0単位。`board.moves` を埋める
+        if not board.moves:
+            return
+        print(f"[batch] **死に枠の A/B を {len(board.moves)}本 逃がします**"
+              f"（{len(board.moves) * 50}単位。**投稿より先に撃ちます**）", flush=True)
+        live_slots.main(["--apply"])
+    except Exception as exc:                                   # noqa: BLE001
+        print(f"[batch] 死に枠の逃がしは飛ばします: {str(exc)[:120]}", flush=True)
+
+
+def _pull_ready_dates() -> None:
+    """**判定できる日を手前へ倒す**（`scripts/queue_lag.py --apply`）。
+
+    **0日 なら撃ちません。**（単位を捨てないため。`Plan.gain_days()` が門）
+    """
+    try:
+        from scripts import queue_lag
+
+        plan = queue_lag.Plan()
+        plan.improve()
+        if not plan.swaps:
+            return
+        days = plan.gain_days()
+        if days <= 0:
+            print(f"[batch] 入れ替え {len(plan.swaps)}手 は **0日** なので撃ちません",
+                  flush=True)
+            return
+        print(f"[batch] **判定を {days}日 手前に倒します**"
+              f"（入れ替え {len(plan.swaps)}手 ＝ {len(plan.swaps) * 100}単位。"
+              "**投稿より先に撃ちます**）", flush=True)
+        queue_lag.main(["--apply"])
+    except Exception as exc:                                   # noqa: BLE001
+        print(f"[batch] 予約の入れ替えは飛ばします: {str(exc)[:120]}", flush=True)
+
+
 def _push_thumbnails_first() -> None:
     """溜まったサムネイルを、**この回の投稿が単位を使い切る前に**押す。
 
@@ -1165,7 +1289,11 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 args.count = cap.remaining
 
-    # ---- 0.5 **溜まったサムネイルを、投稿より先に押す**（2026-08-17 22:4x に足した）--
+    # ---- 0.5 **50単位の手を、投稿より先に押す**（2026-08-17 22:4x／08-26 03:2x）--
+    #
+    # 順は **入れ替え → サムネイル → 投稿**。どれも同じ日枠から出ていて、
+    # `videos.insert` だけが 1本 1,600単位 だからです。**先に撃つ順が、
+    # そのまま優先順位**になります（下の2つの註が、その理由）。
     #
     # **順番がすべてです。** Data API の単位枠は 10,000単位で、
     # `videos.insert` は 1本 1,600単位 —— **7本で 11,200単位**。1周で7〜8本
@@ -1178,6 +1306,7 @@ def main(argv: list[str] | None = None) -> int:
     #
     # 一覧が悪いのではありません。**押せる時刻に、押す手順が無かった**だけです。
     # 5本ぶんで 250単位（投稿0.16本ぶん）なので、**投稿の本数は減りません。**
+    _pull_verdicts_first()
     _push_thumbnails_first()
 
     topics = pick(args.count if not explicit else len(explicit), explicit,

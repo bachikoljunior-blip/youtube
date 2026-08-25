@@ -94,7 +94,20 @@ class Board:
                     and not measure_window.inside(w.date().isoformat()))
 
     # -- 置き先を探す --
-    def _slots(self, day: dt.date, *, same_day: bool) -> list[int]:
+    def _alive_on(self, day: dt.date, live: set[str] | None = None) -> int:
+        """その日に**いま再生が付いている本の数**。
+
+        **`_in_band` で代用しないこと**（2026-08-26 に数え直した）。帯の外
+        （14:00〜21:00）に居ても、その日の本数が上限に届いていなければ
+        **その本は生きています。** 帯の中の数だけで「空き」を出すと、
+        **すでに埋まっている日を空いていると読み**、置いたぶんだけ
+        別の本を押し出します（実測: それで 24手 打って正味 **+4本**しか増えなかった）。
+        """
+        live = self.live() if live is None else live
+        return sum(1 for v, w in self.at.items() if w.date() == day and v in live)
+
+    def _slots(self, day: dt.date, *, same_day: bool,
+               live: set[str] | None = None) -> list[int]:
         """その日の、帯の中の空き分。`same_day` なら本数の門は掛かりません。"""
         if measure_window.inside(day.isoformat()):
             return []
@@ -102,20 +115,31 @@ class Board:
         free = [m for m in GRID if m not in taken]
         if same_day:
             return free
-        return free[: max(0, self.cap - self._in_band(day))]
+        return free[: max(0, self.cap - self._alive_on(day, live))]
 
-    def place(self, vid: str) -> dt.datetime | None:
-        """`vid` を、**いちばん早い生きた枠**へ。同じ日に空きがあればそこを先に使う。"""
+    def place(self, vid: str, *, same_day_first: bool = True) -> dt.datetime | None:
+        """`vid` を、**いちばん早い生きた枠**へ。
+
+        `same_day_first` が真なら、**同じ日の空き分を先に**使います。同じ日の中で
+        動かすぶんは その日の本数が変わらないので、本数の門に掛かりません
+        （同じ分に2本ある「間隔で死んだ本」を直すのは、この道です）。
+
+        **真にしてよいのは、本数では死んでいない本だけ**です。その日が既に上限を
+        超えているなら、同じ日へ置き直しても**別の1本を押し出すだけ**（付け替え）で、
+        生きる本は1本も増えません。`--all` はここを偽にして、
+        **本当に空いている日**（上限に余りのある日）へ逃がします。
+        """
         cur = self.at[vid]
         floor = self.now.date() + dt.timedelta(days=1)
         last = max(w.date() for w in self.at.values())
         days: list[tuple[dt.date, bool]] = []
         day = floor
         while day <= last:
-            days.append((day, day == cur.date()))
+            days.append((day, same_day_first and day == cur.date()))
             day += dt.timedelta(days=1)
+        live = self.live()          # **1本ごとに1回だけ**（日ごとの空きを正しく読むため）
         for d, same in days:
-            for m in self._slots(d, same_day=same):
+            for m in self._slots(d, same_day=same, live=live):
                 when = dt.datetime.combine(d, dt.time(m // 60, m % 60), tzinfo=JST)
                 if when <= self.now:
                     continue
@@ -164,16 +188,21 @@ def report(board: Board | None = None) -> list[str]:
 def plan(board: Board) -> list[str]:
     """**足りない群から順に**、死に枠の本を生きた枠へ移す。
 
-    ## **生きる枠は増えません。付け替えるだけです**（2026-08-26 に数えて確かめた）
+    ## 押し出しは起きます。**総数は減りません**（2026-08-26 に数え直した）
 
-    1日に再生が付くのは `day_cap.cap()` 本ちょうどなので、
-    **1本 生き返らせると、必ず1本 死にます**（実測: 生き返り7・死に7・差 0）。
-    押し出されるのは、その日の**帯の外**（14:00〜21:00）に居て、
-    たまたま10位以内に入っていた本です。
+    置き先の日が**上限に余っている**なら、押し出す相手は居ません（生きる本が増える）。
+    余りが無い日へ置くと、その日の誰か1本と**付け替え**になります。
+    どちらになるかは `_alive_on()` が日ごとに見ています。
 
-    **それでも撃つ理由**: 押し出される側は A/B の情報を持たない本か、
+    **最初の版は `_in_band()`（帯の中の本数）で空きを数えていて、
+    埋まっている日を空いていると読んでいました。** 帯の外（14:00〜21:00）に居ても、
+    その日が上限に届いていなければ**その本は生きています。**
+    実測: その誤りのまま 24手 打って、正味 **+4本**しか増えませんでした
+    （正しく数えると同じ 24手 で **+24本**）。
+
+    **付け替えになる場合でも撃つ理由**: 押し出される側は A/B の情報を持たない本か、
     すでに標本の足りている群（`stat_split 対照(前)` は 316本 生きています）の本です。
-    **再生の総数は1つも減らず、実験の情報だけが増えます。**
+    **再生の総数は減らず、実験の情報だけが増えます。**
 
     押し出した先が**足りない群の本だった**場合、その群の不足はその場で数え直され、
     次の手で埋めます（だから手の数が、最初の不足より多くなることがあります）。
@@ -211,7 +240,8 @@ def plan(board: Board) -> list[str]:
 
     now_live = board.live()
     out.append("")
-    out.append("=== この入れ替えで、群ごとに何本 増えるか（**総数は増えません。付け替えです**）===")
+    out.append("=== この入れ替えで、群ごとに何本 増えるか"
+               "（上限に余りのある日へ置けたぶんは**総数も増えます**）===")
     for key, (groups, n) in sorted(_groups().items()):
         for g, vids in sorted(groups.items()):
             b = len([v for v in vids if v in was_live])
@@ -223,8 +253,56 @@ def plan(board: Board) -> list[str]:
             out.append(f"  {key:16s} {g:14s} {b:4d}本 → **{a:4d}本**"
                        f"（{a - b:+d}／要 {n}）{tail}")
     out.append(f"  生きている本の総数: {len(was_live)} → {len(now_live)}"
-               f"（{len(now_live) - len(was_live):+d}）"
-               "  **1日 の上限は変わらないので、ここは 0 になります**")
+               f"（**{len(now_live) - len(was_live):+d}**）"
+               "  上限に余りのある日へ置けたぶん。0 なら全部 付け替えです")
+    return out
+
+
+def plan_all(board: Board) -> list[str]:
+    """**A/B に限らず、0再生の枠に居る本を全部** 生きた枠へ逃がす。
+
+    ## なぜ別の手にするか（2026-08-26 に数えて足した）
+
+    上の `plan()` は**判定に要る本**だけを直します。生きる枠は 1日 `cap()` 本 ちょうどで
+    固定なので、あれは**付け替え**でした（生き返り7・死に7・差0）。
+
+    **こちらは違います。** 予約の後ろのほう（09/20〜09/27）は**上限に余りがあります** ——
+    実測 2026-08-26: 生きた枠の空き **123**、0再生の枠に居て動かせる本 **24**。
+    **上限の余っている日へ逃がすぶんは、押し出す相手が居ません。**
+
+    実測の差は**再生の中央値 718 対 2**（`day_cap.live_ids` の節）。
+    24本 ぶんは、**新しい本を1本も作らずに**取り戻せます。
+
+    **同じ日へは置き直しません**（`same_day_first=False`）。上限を超えている日で
+    同じ日へ動かしても、別の1本を押し出すだけで**生きる本は増えません。**
+
+    ## 覆る条件
+
+    **公開は遅くなります。** 08/26 の死に枠から 09/25 の生きた枠へ移すと、
+    その本が出るのは1か月 後ろです。**0再生のまま出すより良い**という判断ですが、
+    これは `day_cap` の上限が本物であることに乗っています。
+    **上限が上がったら（`cap()` は実測から動きます）、この手は要らなくなります。**
+    """
+    out = ["", "=== 0再生の枠に居る本を、上限の余っている日へ逃がす"
+                "（**新しい本は1本も要りません**）==="]
+    was = board.live()
+    dead = sorted((v for v, w in board.at.items()
+                   if v not in was and w > board.now and board.movable(v)),
+                  key=lambda v: board.at[v])
+    for vid in dead:
+        before = board.at[vid]
+        when = board.place(vid, same_day_first=False)
+        if when is None:
+            continue
+        out.append(f"  python scripts/reschedule.py --move {vid} "
+                   f"{when:%Y-%m-%dT%H:%M}   # {before:%m/%d %H:%M} から（死に枠）")
+    now_live = board.live()
+    gain = len(now_live) - len(was)
+    out.append(f"  → 生きている本 **{len(was)} → {len(now_live)}**（**{gain:+d}本**）／"
+               f"{len(board.moves)}手（{len(board.moves) * 50}単位）")
+    if gain <= 0:
+        out.append("  [!] **増えていません。**上限に余りのある日が無いか、"
+                   "数え方がずれています。**撃たないこと**")
     return out
 
 
@@ -253,12 +331,15 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=(__doc__ or "").splitlines()[0])
     ap.add_argument("--plan", action="store_true", help="動かす手を出す（API 0単位）")
     ap.add_argument("--apply", action="store_true", help="そのとおりに撃つ（1手 50単位）")
+    ap.add_argument("--all", action="store_true",
+                    help="A/B に限らず、0再生の枠に居る本を**全部**逃がす"
+                         "（上限に余りのある日へ。**生きる本が実際に増えます**）")
     args = ap.parse_args(argv)
 
     board = Board(_rows())
     lines = report(board)
     if args.plan or args.apply:
-        lines += plan(board)
+        lines += plan(board) if not args.all else plan_all(board)
         lines += ["", *day_cap.live_lines(_rows())]
     print("\n".join(lines))
     if args.apply:
