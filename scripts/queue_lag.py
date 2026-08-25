@@ -278,20 +278,45 @@ class Plan:
         return False
 
     # -- 出す --
-    def gain_lines(self) -> list[str]:
+    def gains(self) -> dict[str, int | None]:
+        """前提ごとに、**入れ替えで何日 早まるか**（`None` ＝ 判定できる日が出ない）。
+
+        **引き算はここ1か所だけです。** `gain_lines()`（人が読む行）も
+        `gain_days()`（機械が読む数）も、これを読みます。
+        この repo で通算15件出ている「**同じことを2か所が別々に言っていて、
+        片方しか読まれていない**」を、この道具でも作らないため
+        —— 印字と門が別々に数えていると、**印字が8日と言っているのに
+        門が0日で撃たない**が起こります。
+        """
         after = self.readies()
+        out: dict[str, int | None] = {}
+        for f in self.floors:
+            b, a = self.before.get(f.key), after.get(f.key)
+            out[f.key] = None if (b is None or a is None) else (b - a).days
+        return out
+
+    def gain_days(self) -> int:
+        """**この入れ替えで取り戻せる合計日数**（API 0単位）。
+
+        自動で撃つ側（`scripts/batch_build.py::_pull_verdicts_first`）の門です。
+        **0日なら単位を使いません。**
+        """
+        return sum(v for v in self.gains().values() if v)
+
+    def gain_lines(self) -> list[str]:
+        g = self.gains()
         out = ["", "=== もう予約に在る本を入れ替えるだけで、何日 早まるか"
                "（**新しい本は1本も要りません**）==="]
-        total = 0
+        total = self.gain_days()
+        after = self.readies()
         for f in sorted(self.floors, key=lambda f: f.deadline):
             b, a = self.before.get(f.key), after.get(f.key)
-            if b is None or a is None:
-                short = ", ".join(f"{g} あと{c}本" for g, c in f.shortfall().items() if c)
+            gain = g.get(f.key)
+            if gain is None or b is None or a is None:
+                short = ", ".join(f"{g2} あと{c}本" for g2, c in f.shortfall().items() if c)
                 out.append(f"  {f.key:16s} **判定できる日が出ません**（{short}）"
                            " ← 入れ替えでは動きません。**本が足りない**")
                 continue
-            gain = (b - a).days
-            total += gain
             mark = f"  → **{gain}日 早まる**" if gain else "  （動きません）"
             out.append(f"  {f.key:16s} 期限 {f.deadline:%m/%d}   "
                        f"判定 {b:%m/%d} → **{a:%m/%d}**{mark}")
