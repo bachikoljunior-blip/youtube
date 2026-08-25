@@ -3551,9 +3551,19 @@ def _report_long_gate(m: dict, a: dict) -> list[str]:
     days = a["days_subs_at"][PLAN_PUBLISH_PER_DAY]
     P("")
     P("--- **門2a（長尺4,000時間）を、長尺を足して開けるなら** ---")
-    P(f"    門2b（ショート90日1,000万）は、**1日92本の上限まで出しても"
-      f"{a['shorts_needed_per_day']:,.0f}回/日に対し {a['per_video_now'] * UPLOAD_CAP_PER_DAY:,.0f}回/日"
-      f" ＝ {a['per_video_now'] * UPLOAD_CAP_PER_DAY / a['shorts_needed_per_day']:.2f}倍**。門2a のほうを見ます。")
+    # **ここだけ `UPLOAD_CAP_PER_DAY = 92` が残っていました**（2026-08-26 に直した）。
+    # 天井の掛け算は 2026-08-25 に **92 → `day_cap.cap()`（実測10本/日）**へ直っています
+    # （`_measure` の註「それを超えて出したぶんは 0再生」）。
+    # **`_report_long_gate` だけが取り残されていて**、門2b を **9.2倍 楽観**に
+    # 出していました（0.53倍 と印字。実際は 0.06倍）。
+    # `docs/trigger_main.md` §4 の「長尺が唯一の道」は、この 0.53倍 を引いています。
+    # **同じ量を2か所が別々に持って、片方だけ直った形**の8件目です。
+    _cap = min(float(UPLOAD_CAP_PER_DAY), float(a["view_cap_per_day"]))
+    _got = a["per_video_now"] * _cap
+    P(f"    門2b（ショート90日1,000万）は、**再生が付く上限 {_cap:,.0f}本/日"
+      f"（口は92本/日 ですが、**超えたぶんは 0再生**）まで出しても"
+      f"{a['shorts_needed_per_day']:,.0f}回/日に対し {_got:,.0f}回/日"
+      f" ＝ {_got / a['shorts_needed_per_day']:.2f}倍**。門2a のほうを見ます。")
     P(f"    残り {a['long_minutes_needed']:,.0f}分（{a['long_minutes_needed']/60:,.0f}時間）を、"
       f"**門1 が通る日（1日{PLAN_PUBLISH_PER_DAY}本公開で {_fmt_days(days)}）までに**埋める。")
     P("")
