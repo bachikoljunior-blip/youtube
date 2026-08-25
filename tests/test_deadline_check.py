@@ -166,3 +166,18 @@ def test_実物にも待ちが残っていないか_数えられること():
     total = sum(v.waits for v in vs)
     assert total >= 0
     assert all(v.waits == 0 or v.ready < v.deadline for v in vs if v.ready and v.deadline)
+
+
+def test_status_も_遅すぎる側を出すこと():
+    """**読む側が黙っていたら、数えていても同じです。**
+
+    `scripts/status.py` は毎回の最初に読まれます。ここは長らく
+    `slips`（期限が早すぎる）／`unk`／`non` の3つしか出しておらず、
+    **「データは揃うのに期限がまだ先」は1行も出ていませんでした。**
+    実測 10件・合計46日 ——**腕は前提を1件閉じたときだけ動く**ので、
+    その待ちは到達日ごと止まります。
+    """
+    src = (ROOT / "scripts" / "status.py").read_text(encoding="utf-8")
+    assert "v.waits" in src, "status.py が遅すぎる側を数えていません"
+    assert "期限が遅すぎる" in src, "数えても印字していません"
+    assert "縮めること" in src, "何をすればいいかを言っていません"

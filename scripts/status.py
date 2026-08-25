@@ -549,10 +549,16 @@ def print_hypotheses() -> None:
         _bad = [v for v in _vs if v.slips]
         _unk = [v for v in _vs if v.ready is None and not v.unchecked]
         _non = [v for v in _vs if v.unchecked]
-        if _bad or _unk or _non:
+        # **逆向きも出すこと**（2026-08-25 22:5x）。ここは長らく「期限が早すぎる」
+        # 側しか出していませんでした。**データはもう揃うのに期限がまだ先**の側は、
+        # `deadline_check` の中で「**期限に間に合います**」という緑の行になり、
+        # ここには1行も出てきませんでした。実測 **10件・合計46日**。
+        # **腕は前提を1件閉じたときだけ動く**ので、その待ちは到達日ごと止まります。
+        _late = [v for v in _vs if v.waits]
+        if _bad or _unk or _non or _late:
             print(f"\n  --- [!] **その期限にデータは在るか** "
-                  f"（早すぎる {len(_bad)}件 ／ 日が出せない {len(_unk)}件 ／ "
-                  f"確かめていない {len(_non)}件）---")
+                  f"（早すぎる {len(_bad)}件 ／ **遅すぎる {len(_late)}件** ／ "
+                  f"日が出せない {len(_unk)}件 ／ 確かめていない {len(_non)}件）---")
             for v in _bad:
                 print(f"    **期限 {v.deadline} は {(v.ready - v.deadline).days}日 早い** "
                       f"→ {v.ready} へ  {v.claim[:40]}")
@@ -563,6 +569,15 @@ def print_hypotheses() -> None:
                         print(f"        {a.why[:110]}")
             for v in _non:
                 print(f"    **`needs:` が無い**  {v.claim[:44]}")
+            if _late:
+                _tot = sum(v.waits for v in _late)
+                print(f"    **期限が遅すぎる {len(_late)}件 —— 合計 {_tot}日 の待ち。**"
+                      " データは揃うのに、期限がまだ先だという理由だけで止まっています")
+                for v in sorted(_late, key=lambda x: -x.waits)[:5]:
+                    print(f"      {v.ready} に判定できるのに {v.deadline}"
+                          f"（{v.waits}日）  {v.claim[:36]}")
+                print("      → `deadline` をその日まで**縮めること**。"
+                      "**この回の成果になります**（`verdict` を1件 前倒しできます）")
             print("  詳しくは `python scripts/deadline_check.py`。"
                   "**動かすのは期限だけ。`falsified_if` は緩めないこと。**")
     except Exception as _e:      # 計器が欠けても status は止めない
