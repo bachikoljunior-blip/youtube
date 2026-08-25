@@ -352,6 +352,74 @@ def material_rate() -> dict:
     }
 
 
+def published_per_day(uploaded: Path | None = None,
+                      observed: dict[str, str] | None = None) -> dict[str, int]:
+    """**JST の日 → その日に公開される本数**（`data/uploaded.jsonl`）。
+
+    ## **4つ目の読み手を書かないこと**（2026-08-25 の申し送り）
+
+    同じ帳面を `src/ab_split.published()` ・ `src/motion_groups.scheduled_at()` ・
+    `scripts/eta.published_at()` の3つが別々に読み、**同じ2つの規則
+    （後の行を採る・JST で割る）をそれぞれ持っていました。**
+    規則が共有されていないので、8/19・8/23・8/25 に**5回**同じ形の欠陥が出ています。
+
+    **ここが6件目でした。** 直す前のこの関数は、帳面を
+
+        cnt[(r["at"] or r["uploaded_at"])[:10]] += 1
+
+    と読んでいて、**2つとも踏んでいます**:
+
+      1. **1行1本と数えていた。** 帳面は足すだけなので、`reschedule.py` で
+         動かした本は行が増えます（実測 **505行 / 447本**）。
+         動かした本だけが**2回**数えられ、その日の供給が水増しされます
+      2. **UTC の日で割っていた。** 予約も `src/day_cap.py` も JST で置いています。
+         実測で **08/26 が 18本、08/27 が 15本**に見えていました ——
+         正しくは **14本 / 19本** です。**08/27 の 5本ぶんが前日に落ちていました**
+
+    2 のずれは `stages()` の `sustained`（持続する供給）と、
+    下の `trend_decompose()` の分母に**そのまま**入ります。
+
+    ## **帳面は 08/16 より前を持っていません**（2026-08-25 に実測）
+
+    `data/uploaded.jsonl` のいちばん古い `at` は **2026-08-16** です ——
+    それより前に公開した本は、**帳面に1行もありません。**
+    帳面だけで供給を数えると、日次再生と重なる窓が **7日** しか取れず、
+    `trend_decompose()` が「点が足りない」で止まります。
+
+    **2つ目の出どころが `data/views.jsonl` です。** Analytics が返す `hours`
+    （公開からの経過時間）から `at - hours` で公開時刻が復元でき、
+    **08/04 まで戻れます**（`scripts/eta.published_at()` と同じ復元）。
+    重なる 9日 のうち **8日で帳面と本数が一致**します（08/16 だけ 3 対 4 ——
+    まだ一度も観測されていない本が1本）。
+
+    **観測の側は「下限」です** —— 一度も観測されなかった本は数えられません。
+    実測の取りこぼしは **-14.0%**（生涯再生の合計 47,796 対 Analytics 55,551）。
+    **ただしその欠けは窓の前半と後半でほぼ同じ**です（前半 -14.7% / 後半 -13.6%）——
+    log を採ると一定倍は定数に落ちるので、**傾きにはほとんど効きません。**
+    水準を語るときは下限、**傾きを語るときは使ってよい**、という札の付き方です。
+
+    **帳面のほうを優先します**（`reschedule.py` で動かした予約が入っているのは
+    帳面の側だけなので）。観測は、帳面に無い本だけを埋めます。
+
+    **借りているのは `src/motion_groups.py` です**（自分で規則を持たない）。
+    `at` の無い行（実測 44/491）は公開日が分からないので数えません。
+    """
+    from src import motion_groups as _mg
+
+    rows = _mg.scheduled_at(uploaded) if uploaded else _mg.scheduled_at()
+    by_video: dict[str, str] = {}
+    if observed is None:
+        observed = {k: v["pub"].isoformat() for k, v in videos().items()}
+    for vid, d in observed.items():
+        if d:
+            by_video[vid] = d
+    for vid, at in rows.items():                 # **帳面が勝つ**
+        d = _mg.jst_day(at)
+        if d:
+            by_video[vid] = d
+    return dict(collections.Counter(by_video.values()))
+
+
 def supply_now(today: dt.date) -> dict:
     """**いま実際に何本/日 公開されるか。** 予約の実物（`data/uploaded.jsonl`）から。
 
@@ -359,12 +427,7 @@ def supply_now(today: dt.date) -> dict:
     **予約の実物は 08/27 で 25本/日 を切ります。** 持続する密度は、
     上限ではなく**予約の実物の平均**です。
     """
-    rows = _jsonl("uploaded.jsonl")
-    cnt = collections.Counter()
-    for r in rows:
-        a = r.get("at") or r.get("uploaded_at")
-        if a:
-            cnt[a[:10]] += 1
+    cnt = published_per_day()
     fut = {d: n for d, n in cnt.items() if d > today.isoformat()}
     if not fut:
         return {"ok": False}
@@ -421,6 +484,134 @@ def trend(day: dict[str, int]) -> dict:
         "mean_views_day": statistics.mean(day[d] for d in ds),
         "first": ds[0], "last": ds[-1],
     }
+
+
+def _logreg(xs: list[float], ly: list[float]) -> dict:
+    """log 線形回帰。傾き・標準誤差・t・95%区間を返す。**`trend()` と同じ式**。"""
+    n = len(xs)
+    if n < 3:
+        return {"ok": False, "n": n}
+    mx, my = statistics.mean(xs), statistics.mean(ly)
+    sxx = sum((x - mx) ** 2 for x in xs)
+    if sxx <= 0:
+        return {"ok": False, "n": n}
+    b = sum((x - mx) * (y - my) for x, y in zip(xs, ly)) / sxx
+    a0 = my - b * mx
+    resid = [y - (a0 + b * x) for x, y in zip(xs, ly)]
+    se = math.sqrt(sum(r * r for r in resid) / (n - 2) / sxx)
+    if se <= 0:
+        return {"ok": False, "n": n}
+    return {"ok": True, "n": n, "b": b, "se": se, "t": b / se,
+            "g": math.exp(b) - 1,
+            "lo": math.exp(b - 1.96 * se) - 1, "hi": math.exp(b + 1.96 * se) - 1,
+            "significant": abs(b / se) >= 2.0}
+
+
+#: **V の傾きを軌跡に入れてよい下限の点数。** 7点で t=2 を出すのは
+#: 「7日つづけて同じ向きに動いた」に近く、供給の段替えと見分けが付きません。
+DECOMPOSE_MIN_DAYS = 10
+
+
+def trend_decompose(day: dict[str, int], per_day: dict[str, int] | None = None) -> dict:
+    """**日次再生の傾きを、供給の傾きと V の傾きに割る。**（2026-08-25 に作った）
+
+    ## なぜ要るか —— `test_trajectory.py` が落ちて、そこにこう書いてありました
+
+        もし将来これが有意になったら、この検査は落ちます。**そのときは
+        落ちたこと自体が「複利の項を軌跡に入れてよくなった」という報せ**なので、
+        検査を直すのではなく、**軌跡のほうを設計し直してください。**
+
+    **有意になりました**（t = 0.14 → **3.20**・n=14日 → 19日・
+    傾き 1日 +0.77% → **+12.30%**）。それが `CLAUDE.md` の **(ア)**
+    「天井の入力を時間の関数にする」の入口です。
+
+    **ただし「有意になったから複利を入れる」は間違いです。** 恒等式は
+
+        日次再生 ＝ 供給（本/日） × V（1本あたり生涯再生）
+
+    なので、log を採ると **傾きは必ず足し算に割れます**:
+
+        d log(再生)/dt  ＝  d log(供給)/dt  ＋  d log(V)/dt
+
+    **右の第1項は、軌跡がすでに天井付きで持っています**（`stages()` の
+    `supply_cap` ＝ 題材の生成速度 と API の日枠の低いほう）。
+    **複利の項として新しく足してよいのは第2項だけ**です ——
+    第2項が 0 と区別できないのに左辺の傾きを複利で伸ばすと、
+    **天井のある供給の伸びを、天井の無い複利として二重に数えます。**
+    それが `eta.py` が 2026-08-20 まで踏んでいた `growth_per_day` 5.38%/日 の正体です。
+
+    ## 実測（2026-08-25）—— **有意なのは供給だけ**
+
+    帳面が供給を持っているのは 08/16 からで、日次再生と重なるのは **7日**:
+
+        再生    1日 **+38.02%**   t = +1.66   95% [ -5.6%, +101.8%]  ← **有意でない**
+        供給    1日 **+74.87%**   t = +3.05   95% [+22.1%, +150.4%]  ← **有意**
+        V       1日 **-21.07%**   t = -1.02   95% [-49.9%,  +24.4%]  ← **有意でない**
+
+    **19日で採った左辺の t=3.20 は、供給が 0 から 25本/日 へ立ち上がった跡**です
+    （帳面に 08/16 より前の `at` がありません）。供給が見える窓に揃えると、
+    左辺は有意ですらなくなります。
+
+    **したがって軌跡に複利の項は入りません。** 入れてよくなる条件は1つだけ ——
+    **`v` の側が有意に正**になったときです。そのときは
+    `stages()` の `V` を時間の関数にしてよい（＝(ア) が引ける）。
+    いまは引けないので、**引けない理由のほうを印字します**（(イ)）。
+
+    **`v` が有意に負**なら、それは飽和です —— 出す本数を増やすほど1本あたりが
+    落ちる。点推定は負ですが（-21%/日）、区間は 0 をまたぎます。
+    **またいでいる数を「飽和が実測された」と読まないこと。**
+
+    返す辞書:
+
+        window   突き合わせた日（供給が分かる ∩ 再生が分かる ∩ 供給>0）
+        views    左辺の回帰
+        supply   供給の回帰
+        v        V ＝ 再生/供給 の回帰。**複利の項に使ってよいのはここだけ**
+        additive 3つの傾きが足し算で閉じているか（b_views ≈ b_supply + b_v）
+        compound 軌跡に複利の項を入れてよいか（v が有意に正で、点数が足りるとき）
+        why      入れない回に、その理由（(イ) の「何を固定したせいか」）
+    """
+    per_day = published_per_day() if per_day is None else per_day
+    if not day or not per_day:
+        return {"ok": False, "why": "帳面か日次再生が空です"}
+
+    both = [d for d in sorted(day) if per_day.get(d, 0) > 0 and day[d] > 0]
+    dropped_zero = [d for d in sorted(day) if d in per_day and per_day[d] == 0]
+    if len(both) < 3:
+        return {"ok": False, "n": len(both), "window": both,
+                "why": f"供給と再生が重なる日が {len(both)}日 しかありません"}
+
+    base = dt.date.fromisoformat(both[0])
+    xs = [float((dt.date.fromisoformat(d) - base).days) for d in both]
+    r_views = _logreg(xs, [math.log(day[d]) for d in both])
+    r_sup = _logreg(xs, [math.log(per_day[d]) for d in both])
+    r_v = _logreg(xs, [math.log(day[d] / per_day[d]) for d in both])
+
+    additive = None
+    if r_views.get("ok") and r_sup.get("ok") and r_v.get("ok"):
+        additive = abs(r_views["b"] - (r_sup["b"] + r_v["b"])) < 1e-9
+
+    enough = len(both) >= DECOMPOSE_MIN_DAYS
+    compound = bool(r_v.get("ok") and r_v.get("significant") and r_v["b"] > 0 and enough)
+    if compound:
+        why = None
+    elif not r_v.get("ok"):
+        why = "V の傾きが立ちません（点が足りない）"
+    elif not enough:
+        why = (f"重なる日が {len(both)}日 で、下限 {DECOMPOSE_MIN_DAYS}日 に足りません"
+               "（供給の段替えと見分けが付かない）")
+    elif not r_v["significant"]:
+        why = (f"V の傾き 1日 {r_v['g']*100:+.2f}%・t = {r_v['t']:+.2f} は "
+               f"0 と区別がつきません（95% {r_v['lo']*100:+.1f}% 〜 {r_v['hi']*100:+.1f}%）")
+    else:
+        why = (f"V の傾きは有意ですが **負** です（1日 {r_v['g']*100:+.2f}%）——"
+               "出すほど1本あたりが落ちる側なので、複利ではなく飽和です")
+
+    return {"ok": True, "window": both, "n": len(both),
+            "first": both[0], "last": both[-1], "dropped_zero": dropped_zero,
+            "views": r_views, "supply": r_sup, "v": r_v,
+            "additive": additive, "compound": compound, "why": why,
+            "min_days": DECOMPOSE_MIN_DAYS}
 
 
 # ----------------------------------------------------------------------------
@@ -693,6 +884,7 @@ def render(m: dict, today: dt.date) -> list[str]:
     P = out.append
     ident, dec, pv, sup = m["identity"], m["decay"], m["per_video"], m["supply"]
     tr, sb, tf, rc, st = m["trend"], m["subs"], m["traffic"], m["reach"], m["stages"]
+    td = m.get("decompose") or {}
     rt = m["retention"]
     bld, mat = sup.get("build") or {}, sup.get("material") or {}
 
@@ -778,12 +970,13 @@ def render(m: dict, today: dt.date) -> list[str]:
               f"   平均 {c['mean']:>8.1f}")
         P("         → **齢2日を超えた本は、中央値で 0.0 回/日。**")
     P("")
-    P("  **だから、複利で伸びる項が実測の中に1つもありません。**")
+    P("  **だから、複利で伸びる項は「V が時間とともに伸びるとき」にしか立ちません。**")
     P("  伸ばせるのは **供給** と **V** の2つだけ。どちらにも実測の天井があります。")
+    P("  **どちらが伸びているかは、下の 1. で割ってあります**（断言ではなく回帰です）。")
     P("")
 
     # -- 1. 伸び率 ------------------------------------------------------------
-    P("--- 1. **`growth_per_day` の 5.38%/日 は、区間を付けると 0 と区別がつきません** ---")
+    P("--- 1. **日次再生の傾きは、供給の傾きと V の傾きに割ってから使う** ---")
     P("")
     if tr.get("ok"):
         P(f"  [実測] 日次再生の log 線形回帰（{tr['first']}〜{tr['last']}・n={tr['n']}日）")
@@ -791,10 +984,60 @@ def render(m: dict, today: dt.date) -> list[str]:
           f"   → {'**有意**' if tr['significant'] else '**有意ではありません（0 と区別がつかない）**'}")
         P(f"         95%区間: 1日 {tr['lo']*100:+.2f}% 〜 {tr['hi']*100:+.2f}%")
         P(f"         **これを100日ぶん複利で伸ばすと** 区間は "
-          f"**{tr['blowup_lo']:.3g}倍 〜 {tr['blowup_hi']:.3g}倍**（**桁で9つぶん**）")
-        P("         → **点推定だけを100日ぶん伸ばすと、開きが1つの項で埋まってしまいます。**")
-        P("           `eta.py` の軌跡が段を飛ばすのは、ここが原因です。")
-        P("         **この道具は伸び率を1回も使いません。** 使うのは供給と V の2つだけ。")
+          f"**{tr['blowup_lo']:.3g}倍 〜 {tr['blowup_hi']:.3g}倍**")
+        P("         → **左辺をそのまま複利にしてはいけません。** 恒等式が")
+        P("           **日次再生 ＝ 供給 × V** なので、log の傾きは必ず足し算に割れます:")
+        P("           **d log(再生) ＝ d log(供給) ＋ d log(V)**")
+        P("           **供給の側は、軌跡がすでに天井付きで持っています**"
+          "（題材の生成速度と API の日枠の低いほう）。")
+        P("           **複利の項として足してよいのは V の側だけ**です ——"
+          "割らずに左辺を伸ばすと、")
+        P("           **天井のある供給の伸びを、天井の無い複利として二重に数えます。**")
+    P("")
+    P("  **その割り算**（`trend_decompose()`）:")
+    if not td.get("ok"):
+        P(f"  [未測定] **割れません** —— {td.get('why', '理由が立ちません')}")
+        P("           **割れないうちは、複利の項を入れません**（左辺の傾きだけでは、")
+        P("           供給が立ち上がった跡なのか V が伸びたのかを区別できないため）。")
+    else:
+        P(f"  [実測] 突き合わせた窓: {td['first']}〜{td['last']}・**n={td['n']}日**"
+          "（供給が分かる日 ∩ 日次再生がある日）")
+        P("         供給の出どころ: **帳面**（`uploaded.jsonl`・08/16 以降）＋"
+          "**観測**（`views.jsonl` の `at - hours`・08/04 まで戻る）。")
+        P("         観測の側は**下限**（一度も観測されなかった本は数えない。取りこぼし -14.0%）。")
+        P("         **ただし欠けは窓の前半と後半でほぼ同じ**（-14.7% / -13.6%）——"
+          "log では一定倍が定数に落ちるので、**傾きにはほとんど効きません。**")
+        for lab, key, note in (("再生 ", "views", "左辺"),
+                               ("供給 ", "supply", "**天井は `stages()` が持っている**"),
+                               ("V    ", "v", "**複利に足してよいのはここだけ**")):
+            r = td[key]
+            if not r.get("ok"):
+                P(f"         {lab} —— 立ちません")
+                continue
+            mark = "**有意**" if r["significant"] else "有意でない"
+            P(f"         {lab} 1日 **{r['g']*100:+.2f}%**  t = **{r['t']:+.2f}**  {mark}"
+              f"   95% [{r['lo']*100:+.1f}%, {r['hi']*100:+.1f}%]   {note}")
+        if td.get("additive"):
+            P("         → 3つは足し算で閉じています（恒等式のとおり）。")
+        if td.get("dropped_zero"):
+            P(f"         公開が 0本 の日 {len(td['dropped_zero'])}日 は log が採れないので外しました。")
+        P("")
+        if td["compound"]:
+            P("  → **V が有意に伸びています。複利の項を入れてよい回です**"
+              "（`CLAUDE.md` の (ア)）。")
+            P("    `stages()` の V を、この傾きの時間の関数に置き換えること。")
+        else:
+            P(f"  → **複利の項は入れません。** 理由: {td['why']}")
+            P("    **これは「伸びていない」ではありません** —— "
+              "**この窓のこの点数では、0 と区別がつかない**という意味です。")
+            P("    **固定しているものを名前で言うと**（`CLAUDE.md` の (イ)）:")
+            P(f"      V ＝ 今日の実測のまま（傾き 0 と置いた。点推定は 1日 "
+              f"{td['v']['g']*100:+.2f}%）")
+            P("      供給 ＝ 天井まで伸ばす（**据え置きではありません**。"
+              "`stages()` の `supply_cap`）")
+            P("      RPM ＝ [未測定]（収益化前なので自分の数字が1つも無い）")
+            P(f"    **この3つのうち V の固定が外れる条件**: 重なる窓が "
+              f"{td['min_days']}日 以上になり、V の t が ±2 を超えること。")
     P("")
 
     # -- 2. V -----------------------------------------------------------------
@@ -1092,6 +1335,7 @@ def measure(today: dt.date) -> dict:
     pv = per_video(vs)
     sup = supply_now(today)
     tr = trend(day)
+    td = trend_decompose(day)
     sb = subs(v)
     tf = traffic(v)
     eg = engagement(v)
@@ -1099,7 +1343,7 @@ def measure(today: dt.date) -> dict:
     rt = retention()
     st = stages(vs, day, ident, dec, pv, sup, tr, sb, tf, rc, today)
     return {"identity": ident, "decay": dec, "per_video": pv, "supply": sup,
-            "trend": tr, "subs": sb, "traffic": tf, "engagement": eg, "reach": rc,
+            "trend": tr, "decompose": td, "subs": sb, "traffic": tf, "engagement": eg, "reach": rc,
             "retention": rt, "stages": st, "today": today.isoformat()}
 
 
