@@ -38,6 +38,7 @@ import functools as _functools  # noqa: E402
 
 from src import ab_power as _ab_power  # noqa: E402
 from src import ab_split as _ab  # noqa: E402
+from src import judgeable as _judge  # noqa: E402
 from src import watches as _watches  # noqa: E402
 
 
@@ -364,6 +365,18 @@ def print_hypotheses() -> None:
               "**その期限には、まだ1行も出ていません。**")
     if not open_:
         print("  （ありません）")
+
+    # **期限が守れるかは、期限の日を見ても分かりません**（2026-08-25 に足した）。
+    # 処置が実装に入る → その作りの本ができる → **予約の順番待ち（中央値 13.4日）** →
+    # 公開 → 落ち着き7日 → Analytics の遅れ3日、の足し算をして初めて出ます。
+    # 足し算をしないと、**処置群が空のまま期限が来て「上回らない＝外れ」**が確定し、
+    # 測っていない腕を測ったことにして捨てます（`src/judgeable.py` の冒頭）。
+    try:
+        _floor_by_key = {f.key: f for f in _judge.floors()}
+    except Exception as e:  # 状態を見る道具が、状態のせいで死んではいけない
+        print(f"  [!] 期限が守れるかを数えられませんでした: {e}")
+        _floor_by_key = {}
+
     no_next: list[tuple[int, str]] = []
     for h in open_:
         try:
@@ -380,6 +393,22 @@ def print_hypotheses() -> None:
         cond = h.get("falsified_if")
         print(f"        外れとみなす条件: {cond}" if cond
               else "        [!] 外れとみなす条件が書かれていません。**書くこと。**")
+
+        # **その期限は、そもそも守れるのか**（`python -m src.judgeable`）
+        _f = _floor_by_key.get(str(h.get("key") or ""))
+        if _f is not None:
+            _r = _f.ready
+            if _r is None:
+                print(f"        [!] **判定できる日が出ません** —— "
+                      + ", ".join(f"{g} あと{n}本" for g, n in _f.shortfall().items() if n))
+            elif _r > _f.deadline:
+                print(f"        [!] **この期限は構造的に守れません。**いちばん早くて "
+                      f"{_r:%m/%d}（{(_r - _f.deadline).days}日 超過）。"
+                      f"\n            **期限だけを {_r:%Y-%m-%d} 以降へ延ばすこと。"
+                      f"`falsified_if` は変えないこと。**")
+            else:
+                print(f"        いちばん早い判定日 {_r:%m/%d}"
+                      f"（期限まで {(_f.deadline - _r).days}日）")
 
         # **走っている A/B は、件数を必ず横に出すこと**（2026-08-19 22:2x に足した）。
         #
@@ -512,8 +541,11 @@ def print_hypotheses() -> None:
     # **閉じられない期限を並べているあいだ、到達日は1日も動きません。**
     try:
         sys.path.insert(0, str(Path(__file__).resolve().parent))
-        import judgeable as _judge                             # noqa: PLC0415
-        _vs = _judge.check(open_)
+        # **`_judge`（`src/judgeable`）と別名にすること。** 同じ関数の中で
+        # 上（375行目）が `src/judgeable.floors()` を使っているので、
+        # ここで同じ名前を束ね直すと**その行が壊れます。**
+        import deadline_check as _reach                         # noqa: PLC0415
+        _vs = _reach.check(open_)
         _bad = [v for v in _vs if v.slips]
         _unk = [v for v in _vs if v.ready is None and not v.unchecked]
         _non = [v for v in _vs if v.unchecked]
@@ -531,7 +563,7 @@ def print_hypotheses() -> None:
                         print(f"        {a.why[:110]}")
             for v in _non:
                 print(f"    **`needs:` が無い**  {v.claim[:44]}")
-            print("  詳しくは `python scripts/judgeable.py`。"
+            print("  詳しくは `python scripts/deadline_check.py`。"
                   "**動かすのは期限だけ。`falsified_if` は緩めないこと。**")
     except Exception as _e:      # 計器が欠けても status は止めない
         print(f"\n  [!] 期限の点検を飛ばしました: {str(_e)[:70]}")

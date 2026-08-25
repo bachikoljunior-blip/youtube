@@ -227,39 +227,41 @@ def _ans_after(need: dict, lag: int) -> Answer:
     return Answer(on, f"{what} は {on:%m/%d} に出ます")
 
 
-#: `ab_group` を解くときに前へ見る日数。これを越えたら「出せない」と言います。
-AB_HORIZON_DAYS = 400
+def _ans_group_key(need: dict, as_of: date) -> Answer:
+    """**群の床は `src/judgeable.py` に委ねる**（2026-08-25 の合流でこうした）。
 
+    同じ日に、この道具と `src/judgeable.py` が**別々に同じ問いを解いていました。**
+    答えが割れると、次に来た者はどちらを信じるか決められません ——
+    実測でも割れました（対照(動きなし)を、こちらは `batch_runs` から **0本**、
+    向こうは `src/motion_groups.py` が実物から **8本**）。**向こうが正しい。**
 
-def _ans_ab_group(need: dict, as_of: date, lag: int) -> Answer:
-    """**A/B の2群が、そろって床に届く日**（`src/ab_split` の実際の振り分けで解く）。
-
-    予約の日付は `data/uploaded.jsonl` に**実際に入っている**ので、
-    中央値で見積もらずに、その本の予約日そのもので前へ進めます。
-
-    **`as_of` に `lag` を引いて当てること。** 判定日に読めるのは
-    `as_of - lag` までの実データなので、そこまでに落ち着いた本しか数えられません。
+    だから群の作り方は `src/judgeable.SOURCES` の1か所だけに置き、
+    こちらは「その key の床はいつか」を訊くだけにします。
+    **新しい A/B を足すときも、足す先はあちらです。**
     """
-    from src import ab_split as A                              # 遅く読む（重いので）
+    from src import judgeable as SJ                             # 遅く読む
 
-    name = str(need.get("split") or "")
-    exp = A.EXPERIMENTS.get(name)
-    if exp is None:
-        return Answer(None, f"**知らない実験です**: {name!r}")
+    key = str(need.get("key") or "")
+    src = SJ.SOURCES.get(key)
+    if src is None:
+        return Answer(None, f"**`src/judgeable.SOURCES` に無い key です**: {key!r}"
+                            "（新しい A/B は、あちらに足すこと）")
+    make, n = src
     try:
-        builds, ledger = A.build_times(), A.published()
+        floor = SJ.Floor(key=key, deadline=as_of, groups=make(), min_per_group=n)
     except Exception as e:                                     # noqa: BLE001
-        return Answer(None, f"**群を数えられませんでした**: {e}")
-    for i in range(AB_HORIZON_DAYS):
-        d = as_of + timedelta(days=i)
-        c = A.split_counts(exp, as_of=d - timedelta(days=lag), builds=builds, ledger=ledger)
-        if c.judgeable:
-            now = A.split_counts(exp, as_of=as_of - timedelta(days=lag),
-                                 builds=builds, ledger=ledger)
-            return Answer(d, f"{name}: {now.short()} → 両群 {A.MIN_PER_GROUP}本 そろうのは "
-                             f"**{d:%m/%d}**（公開 ＋ 落ち着く {A.SETTLE_DAYS}日 ＋ 遅れ {lag}日）")
-    return Answer(None, f"{name}: **{AB_HORIZON_DAYS}日 先まで見ても両群そろいません。**"
-                        "在庫を振り直すこと（`scripts/ab_balance.py`）")
+        return Answer(None, f"**{key} の群を数えられませんでした**: {e}")
+    ready = floor.ready
+    parts = []
+    for g in sorted(floor.groups):
+        nth = floor.nth[g]
+        parts.append(f"{g} 予約{len(floor.groups[g])}本/"
+                     + (f"{n}本目 {nth:%m/%d}" if nth else f"**あと{n - len(floor.groups[g])}本**"))
+    body = f"{key}（`src/judgeable.py`）: " + " ／ ".join(parts)
+    if ready is None:
+        return Answer(None, body + " → **群がそろわないので日が出ません**")
+    return Answer(ready, body + f" ＋ 落ち着く {SJ.SETTLE_DAYS}日 "
+                                f"＋ 遅れ {SJ.ANALYTICS_LAG_DAYS}日")
 
 
 def answer(need: dict, as_of: date, lag: int) -> Answer:
@@ -274,8 +276,8 @@ def answer(need: dict, as_of: date, lag: int) -> Answer:
         return _ans_published_group(need, as_of, lag)
     if kind == "after":
         return _ans_after(need, lag)
-    if kind == "ab_group":
-        return _ans_ab_group(need, as_of, lag)
+    if kind == "group_key":
+        return _ans_group_key(need, as_of)
     return Answer(None, f"**知らない kind です**: {kind!r}")
 
 
@@ -336,7 +338,7 @@ def check(items: list[dict], as_of: date | None = None, lag: int | None = None) 
 
 
 def lines(vs: list[Verdict], lag: int) -> list[str]:
-    out = ["=== この期限までに、判定に要るデータは在るか（scripts/judgeable.py）===",
+    out = ["=== この期限までに、判定に要るデータは在るか（scripts/deadline_check.py）===",
            f"  実データは **{lag}日 遅れ**ています。**「公開から7日」に必ず足すこと。**"]
     for v in sorted(vs, key=lambda x: (x.deadline or date(2099, 1, 1))):
         dl = f"{v.deadline:%m-%d}" if v.deadline else "  ??  "
