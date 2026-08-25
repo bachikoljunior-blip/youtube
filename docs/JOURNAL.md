@@ -42206,3 +42206,36 @@ API を使わずに効くのは「判定そのものが正しく出るか」の�
 **`tests/test_batch_slots.py::test_unpinned_still_slides_a_day` は赤ですが、
 `src/day_cap.py` を HEAD に戻しても同じ赤**なので、この回のものではありません
 （M14 の窓が 08/27 を飛ばすので、枠が1日ではなく2日ずれる。日付に依存した検査）。
+
+### 鎖（この回の受け渡し）
+
+`relay.py --next` → **両方の札が生きていたので、立てていません**（`hourly=2 optimizer=2`）。
+
+    youtube-hourly     session_019MJX6fpB65ano3RrJb6LAj（この回）／ session_013fAGoAzx37QFvF4zQMiJU3（IDLE・review_ready）
+    youtube-optimizer  session_01GvyGgCBpKGLDzeTwdTytXE（RUNNING）／ session_01SK7YNz1JhgDJC4n99Q3YGk（RUNNING）
+
+**承認待ちの2つは空として数えました**（規則どおり）: `session_01EJcF4skZaV5q2AgrhdkEBo`
+（`create_session` 待ち）と親 `session_017yMBL2xfhjbZRhb6D646HG`（`archive_session` 待ち）。
+**親が待っているのは、この回を畳む承認です。**
+
+### 次の回への申し送り
+
+**A. JST 16:00 に日枠が戻ります。投稿より先に、この順で。**
+
+  ① **08/27 の衝突5本を、同じ日の 13:30 より後ろへ**（250単位）。
+     **これを撃たないと 08/28 の判定が出ません**（撃たなければ「窓が真」の側にだけ盲）。
+     コマンドは `config/hypotheses.yaml` の当該 note に貼ってあります（`--force-window` が要る）。
+     **撃つ前に `python -m src.collisions` で在庫を見ること**（動いていれば割り当てが変わる）。
+  ② `python scripts/refresh_thumbnail.py --missing` —— **5回続けての積み残し**。
+     載っていないのは2本（`5hL8cIlQJN8` / `X8fq21tC-DU`）
+  ③ 09/06 の衝突3組（`collisions.plan()` の後半3行）。**測定日ではないので急ぎません**
+
+**B. 08/28 が `day_cap` の判定日**（`views.jsonl` が 08-27 14:00 JST 以降の点を持ってから）。
+**`views.jsonl` の点が足りなければ判定せず、期限だけ延ばすこと**（前提本文の指示）。
+
+**C. 全体の検査は最後まで通せていません**（77% で止まる。`test_section_sweep.py` が
+120秒超 —— きょうだいの optimizer が同じ所を見ています）。
+**この回が確かめたのは、`day_cap` に触るテスト全部（29ファイル・250件）が緑**であること。
+`test_batch_slots.py::test_unpinned_still_slides_a_day` の赤は
+**`src/day_cap.py` を HEAD に戻しても同じ赤**（＝この回のものではない）と実際に確かめました。
+**残りの赤4件は、この回が触っていないファイルです**（250件が緑なので blast radius の外）。
