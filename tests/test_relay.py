@@ -200,3 +200,60 @@ def test_stop_hook_relay_gate_lets_go_after_two_blocks():
     """**止まったまま死ぬほうが確実に悪い。** それはこの門が塞ぎたい穴そのものです。"""
     src = (ROOT / "scripts" / "stop_check.sh").read_text(encoding="utf-8")
     assert 'RL" -lt 2' in src
+
+
+# --- 立てすぎも数えること（2026-08-25。`--audit` は立て損ねしか見ていなかった）---
+
+
+def _rec(session, at, spawned, snapshot_at=None):
+    r = {"at": at, "session": session, "spawned": spawned,
+         "alive": {"youtube-hourly": 0, "youtube-optimizer": 0}}
+    if snapshot_at:
+        r["snapshot_at"] = snapshot_at
+    return r
+
+
+def test_別の回が同じ札を数分内に立てたら組で出る():
+    """**これが本体。** 親の毎時発火と子の受け渡しが、どちらも同じ札を立てる形。"""
+    rows = [_rec("A", "2026-08-25T03:05:11+00:00", ["hourly", "optimizer"]),
+            _rec("B", "2026-08-25T03:05:59+00:00", ["hourly"])]
+    dup = relay._dupes(rows)
+    assert [(a, b, lane) for a, b, lane in dup] == [("A", "B", "youtube-hourly")]
+
+
+def test_同じ回が2行書いても二重とは数えない():
+    """立てたのは1度。記録が2行あるだけの回を、取り合いと読まないこと。"""
+    rows = [_rec("A", "2026-08-25T03:05:11+00:00", ["hourly"]),
+            _rec("A", "2026-08-25T03:05:40+00:00", ["hourly"])]
+    assert relay._dupes(rows) == []
+
+
+def test_幅の外なら二重ではない():
+    """**親の発火間隔より十分に短い幅**でだけ鳴ること。"""
+    rows = [_rec("A", "2026-08-25T03:05:11+00:00", ["hourly"]),
+            _rec("B", "2026-08-25T04:05:11+00:00", ["hourly"])]
+    assert relay._dupes(rows) == []
+
+
+def test_札がちがえば二重ではない():
+    rows = [_rec("A", "2026-08-25T03:05:11+00:00", ["hourly"]),
+            _rec("B", "2026-08-25T03:05:30+00:00", ["optimizer"])]
+    assert relay._dupes(rows) == []
+
+
+def test_数えた時刻があればそちらを使う():
+    """`at` は記録した時刻。**`alive` は撮った時刻の姿**なので、そちらで並べる。
+
+    下は `at` どうしなら 10分を越えて見えますが、**撮った時刻は 20秒差**です。
+    """
+    rows = [_rec("A", "2026-08-25T03:20:00+00:00", ["hourly"],
+                 snapshot_at="2026-08-25T03:05:00+00:00"),
+            _rec("B", "2026-08-25T03:40:00+00:00", ["hourly"],
+                 snapshot_at="2026-08-25T03:05:20+00:00")]
+    assert len(relay._dupes(rows)) == 1
+
+
+def test_時刻が読めない行は落とす():
+    rows = [{"session": "A", "at": "こわれた", "spawned": ["hourly"]},
+            _rec("B", "2026-08-25T03:05:30+00:00", ["hourly"])]
+    assert relay._dupes(rows) == []

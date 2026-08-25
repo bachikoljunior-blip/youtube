@@ -19,6 +19,8 @@ M15 で `pick` は「作る題材の順番を実績で決める」ようにな�
 from __future__ import annotations
 
 import importlib.util
+
+import pytest
 import sys
 from pathlib import Path
 
@@ -32,7 +34,34 @@ spec.loader.exec_module(forge)
 from src import family_perf
 
 
-def test_余りの多い族より実績の高い族が先():
+@pytest.fixture
+def 実績(monkeypatch):
+    """**族べつの実績を、この検査のあいだだけ止める。**
+
+    ## なぜ止めるのか（2026-08-25。**2件とも赤のまま何日も置かれていました**）
+
+    ここは長く、実物の `family_perf.scorer()` をそのまま呼んで
+    `shitsugyo` が先に来ることを期待していました。**それは実装ではなく
+    「いまのデータ」を書いた検査です。** 実測が動けば、実装が正しいまま赤くなります。
+
+        2026-08-16（この検査を書いた日）  shitsugyo 45.6% ／ yukyu 未測定＝全体平均
+        2026-08-25（いま）               shitsugyo **0.355** ／ yukyu **0.422**
+
+    `yukyu` に再生が付いて、**本当に上に来ました。** つまり `assign` は正しく
+    `yukyu` を選んでおり、**落ちているのは検査の思い込みのほうです。**
+
+    赤が居すわると、**全体の検査そのものが読まれなくなります**（実際
+    「前からの赤6件」として何日も素通りされていました）。だから
+    **実績は差し替え、この検査は「順番の付け方」だけを見ます。**
+    """
+    from src import family_perf
+    scores = {"shitsugyo": 0.9, "yukyu": 0.1}
+    monkeypatch.setattr(family_perf, "scorer",
+                        lambda *a, **k: (lambda calc: scores.get(calc, 0.5)))
+    return scores
+
+
+def test_余りの多い族より実績の高い族が先(実績):
     """**これが本体。** 余り1件の高実績を、余り4件の低実績より先に取ること。"""
     free = {"shitsugyo": ["=== A ==="],
             "yukyu": ["=== B ===", "=== C ===", "=== D ===", "=== E ==="]}
@@ -40,7 +69,7 @@ def test_余りの多い族より実績の高い族が先():
     assert picked == [("shitsugyo", "=== A ===")], picked
 
 
-def test_在庫が尽きた族は回り番から落ちる():
+def test_在庫が尽きた族は回り番から落ちる(実績):
     """順番は実績で決めますが、**無い在庫からは取れません。**"""
     free = {"shitsugyo": ["=== A ==="], "yukyu": ["=== B ===", "=== C ==="]}
     picked = forge.assign(free, 3)
@@ -48,6 +77,21 @@ def test_在庫が尽きた族は回り番から落ちる():
     assert picked[0][0] == "shitsugyo"
     # 尽きた後は残っている族から取る（件数が減らないこと）
     assert [m for m, _ in picked].count("yukyu") == 2
+
+
+def test_実績の高い族が先という向きは実物でも保たれる():
+    """**実物では、どの族が上かを書かないこと**（上の fixture の理由）。
+
+    見るのは向きだけ ——「`assign` が返す順は `scorer` の降順」。
+    これなら実測が動いても落ちません。
+    """
+    from src import family_perf
+    score = family_perf.scorer()
+    free = {"shitsugyo": ["=== A ==="], "yukyu": ["=== B ==="],
+            "nenkin": ["=== C ==="], "jikangai": ["=== D ==="]}
+    mods = [m for m, _ in forge.assign(free, len(free))]
+    got = [score(m) for m in mods]
+    assert got == sorted(got, reverse=True), list(zip(mods, got))
 
 
 def test_calc_をばらして取る():

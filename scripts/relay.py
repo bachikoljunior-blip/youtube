@@ -169,11 +169,56 @@ def cmd_next(args) -> int:
     return 0
 
 
+#: 「同じ札を二重に立てた」とみなす幅（分）。**親の発火間隔より十分に短く。**
+DUP_WINDOW_MIN = 10
+
+
+def _when(r: dict) -> datetime | None:
+    """その回が**数えた**時刻。無ければ記録した時刻（古いほうに倒れます）。"""
+    for key in ("snapshot_at", "at"):
+        v = r.get(key)
+        if not v:
+            continue
+        try:
+            return datetime.fromisoformat(str(v).replace("Z", "+00:00"))
+        except ValueError:
+            continue
+    return None
+
+
+def _dupes(rows: list[dict]) -> list[tuple[str, str, str]]:
+    """**同じ札を、別の回が `DUP_WINDOW_MIN` 分内に立てていないか。**
+
+    返すのは `(回A, 回B, 札)`。同じ回が2回書いた行は数えません（立てたのは1度）。
+    """
+    out: list[tuple[str, str, str]] = []
+    for i, a in enumerate(rows):
+        ta = _when(a)
+        if ta is None:
+            continue
+        for b in rows[i + 1:]:
+            tb = _when(b)
+            if tb is None or a.get("session") == b.get("session"):
+                continue
+            if abs((tb - ta).total_seconds()) > DUP_WINDOW_MIN * 60:
+                continue
+            for lane in LANES:
+                kind = KIND_OF[lane]
+                if kind in (a.get("spawned") or []) and kind in (b.get("spawned") or []):
+                    out.append((str(a.get("session")), str(b.get("session")), lane))
+    return out
+
+
 def cmd_record(args) -> int:
     spawned = [s.strip() for s in (args.spawned or "").split(",") if s.strip()]
     alive = {"youtube-hourly": args.hourly, "youtube-optimizer": args.optimizer}
     rec = {
         "at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        # **数えた時刻**。`at` は「記録した時刻」で、`alive` の中身は
+        # **その前に撮った `list_sessions`** です。撮ってから `create_session` を
+        # 通すまでの数十秒に、別の口が立てます（2026-08-25 の実測。下の `_dupes`）。
+        # **無ければ `at` で代用しますが、それは古いほうに倒れます。**
+        "snapshot_at": getattr(args, "snapshot_at", "") or None,
         "session": me(),
         "alive": alive,
         "spawned": spawned,
@@ -250,6 +295,28 @@ def cmd_audit(args) -> int:
     print()
     print(f"  空の札を残したまま終えた回: **{holes}/{len(rows)}**")
     print("  （ここが増えるなら、引き止めが効いていません。`stop_check.sh` の (2.0) を見ること）")
+
+    # **立てすぎも数えること**（2026-08-25 に足した）。
+    #
+    # ここは長く `holes`（＝立て損ね）しか数えていませんでした。**受け渡しを
+    # 足したぶん、二重に立つ形が新しくできています** —— 親の毎時発火と子の
+    # 受け渡しが、どちらも同じ札を立てます。実測（8/25 03:0x）:
+    #
+    #     013fAG  03:04:59  札 youtube-hourly  親 017yMBL（常駐の親）
+    #     019MJX  03:05:01  札 youtube-hourly  親 01EJcF（子の受け渡し）
+    #
+    # そして帳面の唯一の行は、その 10秒後に `hourly=0` と言っていました
+    # （`alive` は**撮った時刻**の姿で、記録した時刻の姿ではないため）。
+    # **立て損ねだけを数えると、二重に立った直後でも 0/N と出て「効いている」と読めます。**
+    dup = _dupes(rows)
+    if dup:
+        print()
+        print(f"  **同じ札を、別の回が {DUP_WINDOW_MIN}分内に立てています: {len(dup)}組**")
+        for a, b, lane in dup[-5:]:
+            print(f"    {lane}: {a} と {b}")
+        print("  （資源を取り合います。2026-08-15 は片方の生成が丸ごと無駄になりました）")
+    else:
+        print(f"  同じ札を {DUP_WINDOW_MIN}分内に二重に立てた組: **0**")
     return 0
 
 
@@ -269,6 +336,9 @@ def main() -> int:
     ap.add_argument("--optimizer", type=int, default=0, help="youtube-optimizer で生きている数")
     ap.add_argument("--spawned", default="", help="この回で立てた札（hourly,optimizer）")
     ap.add_argument("--note", default="", help="1行の註")
+    ap.add_argument("--snapshot-at", default="",
+                    help="`list_sessions` を**撮った**時刻（ISO）。`alive` はこの時刻の姿です。"
+                         "省くと記録した時刻で代用しますが、**古いほうに倒れます**")
     ap.add_argument("--limit", type=int, default=15)
     args = ap.parse_args()
 

@@ -248,13 +248,39 @@ def test_pinned_bare_mmdd_is_read_as_this_year():
 
 
 def test_unpinned_still_slides_a_day():
-    """日付を渡さない側の動きは変えていない（作り置きが重ならない）。"""
+    """日付を渡さない側の動きは変えていない（作り置きが重ならない）。
+
+    ## **「ちょうど1日」と書かないこと**（2026-08-25。**赤のまま何日も置かれていました**）
+
+    ここは長く `b - a == 1日` でした。**それは実装ではなく暦を書いた検査です。**
+    `next_publish_at` は `measure_window.inside()` の日を**飛ばします**
+    （窓の中に本を置くと測定が壊れる。止めずに先へ送るのは、
+    投稿が途切れるのが最大の損失だから）。だから**窓に隣り合った日に走らせると
+    2日ぶん滑り、実装が正しいまま落ちます。**
+
+        実測 2026-08-25: 08/26 → **08/28**（08/27 は M14 の比較の窓）
+
+    見るのは向きだけ ——「後ろへ滑る」「あいだに空いた日を残さない」。
+    **飛ばしてよいのは窓の日だけ**で、そこは下で数えています。
+    """
+    from src import measure_window
+
     first = next_publish_at(10, 0, taken=set())
     second = next_publish_at(10, 0, taken={first})
     assert second != first
     a = datetime.strptime(first, "%Y-%m-%dT%H:%M:%SZ")
     b = datetime.strptime(second, "%Y-%m-%dT%H:%M:%SZ")
-    assert (b - a) == timedelta(days=1)
+    assert b > a, (first, second)
+    assert (b - a) % timedelta(days=1) == timedelta(0), "時刻がずれています"
+    # **あいだの日は、窓だから飛ばしたのでなければならない**
+    JSTd = timedelta(hours=9)
+    between = []
+    d = a + timedelta(days=1)
+    while d < b:
+        between.append((d + JSTd).strftime("%Y-%m-%d"))
+        d += timedelta(days=1)
+    for day in between:
+        assert measure_window.inside(day), f"窓でない日 {day} を飛ばしています"
 
 
 # ---------------------------------------------------------------------------
