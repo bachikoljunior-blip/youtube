@@ -196,6 +196,20 @@ def report(path: Path, limit: int = 10) -> list[str]:
 DEAD_CAP = 1.0
 
 
+def _long_surface_measured() -> bool:
+    """**長尺の面の上限を、もう測ったか。**（いまは常に False。`src/day_cap.py`）
+
+    読めなければ **False**（＝「まだ測っていない」側）を返します ——
+    ここで True に倒すと、**測っていないものを「天井」として黙らせる**ことに
+    なります。**分からないときは、分からないと言う側へ倒すこと。**
+    """
+    try:
+        from src import day_cap                      # 遅く読む（循環を避ける）
+        return bool(day_cap.long_form().get("measured"))
+    except Exception:                                # noqa: BLE001
+        return False
+
+
 def arm_state(eta_row: dict | None) -> dict:
     """`data/eta.jsonl` の1行から、腕を選ぶのに要るものだけ取り出す。
 
@@ -234,6 +248,15 @@ def arm_state(eta_row: dict | None) -> dict:
     for k, v in caps.items():
         if v <= DEAD_CAP:
             dead_why[k] = "天井"
+    # **`density` の「天井」は、ショートの面の数です**（2026-08-26 に足した）。
+    #     `physical_caps` はここを `day_cap.cap()`（＝ショートの面で1日に再生が
+    #     付く本数）で立てています。**長尺はその枠を1つも使いません**し、
+    #     **4,000時間の門に入るのは長尺だけ**です。つまりこの「引き代なし」は、
+    #     **唯一開いている門について何も言っていません。**
+    #     数字は足しません（長尺の面の上限は**まだ一度も測っていない**ので、
+    #     足せば推測を実測に見せることになります）。**名前だけ正します。**
+    if dead_why.get("density") == "天井" and not _long_surface_measured():
+        dead_why["density"] = "天井（**ショートの面だけ。長尺の面は未測定**）"
     # **「天井まで引いても届かない」は、天井の大小と別の理由です。**
     #     両方に当たる腕は、天井のほうを理由として残します（そちらが手前の話）。
     for k, ok in reaches.items():
@@ -272,6 +295,12 @@ def lever_notes(lever: str | None, state: dict) -> list[str]:
                    " 引いても到達日は動きません（`eta.py` の軌跡がこの腕を外して解いています）。")
         out.append("             動かすなら、まず**天井そのものを上げる**こと"
                    "（天井が乗っている前提を1件、実データで判定する）。")
+        if lever == "density" and not _long_surface_measured():
+            out.append("             [!] **ただし、その天井はショートの面の数です**"
+                       "（`day_cap.cap()`）。**長尺はその枠を1つも使いません**し、"
+                       "**4,000時間の門に入るのは長尺だけ**です。")
+            out.append("             **長尺の面の上限は、まだ一度も測っていません。**"
+                       " 長尺を増やす作業を、この ×1.00 を理由に `none` へ落とさないこと。")
     elif state.get("reaches", {}).get(lever) is False:
         # **天井は大きいのに、その天井まで引いても到達日に届かない腕。**
         #     `cap` だけ見ていると生きて見えます（`sub_rate` は ×2,923.79）。
