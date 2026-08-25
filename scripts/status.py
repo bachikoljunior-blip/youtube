@@ -37,6 +37,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import functools as _functools  # noqa: E402
 
 from src import ab_power as _ab_power  # noqa: E402
+from src import followup  # noqa: E402  （`next_if_false` の読み方の正本）
 from src import ab_split as _ab  # noqa: E402
 from src import judgeable as _judge  # noqa: E402
 from src import watches as _watches  # noqa: E402
@@ -258,14 +259,11 @@ def next_moves(h: dict) -> list[str]:
     （期限切れ／期限前）にあるからです。**片方だけ直す**形は、
     このリポジトリで通算9回出ています（`docs/JOURNAL.md`）。
     """
-    raw = h.get("next_if_false")
-    if not raw:
-        return []
-    if isinstance(raw, str):
-        # **段落は割らない。** ブロックで書かれた1件は1件です
-        # （空行で区切られていれば、そこだけ割る）。
-        return [p.strip() for p in raw.split("\n\n") if p.strip()]
-    return [str(x) for x in raw]
+    # **正本は `src/followup.py` に移しました**（2026-08-25・最適化の回）。
+    # 同じ規則を2か所に置くと、片方だけ直す形になります —— このリポジトリで
+    # 通算9回出ていて、`next_if_false` はまさにその欄です
+    # （書かれているかは `status.py`、実行されたかは `followup.py` が見る）。
+    return followup.next_steps(h)
 
 
 def _print_moves(nexts: list[str]) -> None:
@@ -602,6 +600,21 @@ def print_hypotheses() -> None:
             print(f"    {h.get('claim', '(claim なし)')}")
             print(f"      → {verdict}")
 
+    # **外れた前提の「次の手」は、記録されるまで消えない**（2026-08-25・最適化の回）。
+    #
+    # 上の「判定済み」は verdict（何が起きたか）を出しますが、
+    # **`next_if_false`（だから次に何をやれ）は1行も出していません。**
+    # 閉じた実験から手に入るのはその1行だけなのに、そこだけが落ちていました。
+    # 実測: 外れ／半々 14件・手 31件・**記録された手 0件**。
+    #
+    # 3つの独立した実験が8日かけて同じ結論に着いていたのに
+    # （08/15・08/20・08/23 とも「形式そのものを疑え」）、
+    # **その4日後に中身の調整の実験が2件 新しく開かれています。**
+    try:
+        _text, _ = followup.report(limit=3)
+        print(_text)
+    except Exception as _e:      # 計器が欠けても status は止めない
+        print(f"\n  [!] 次の手の点検を飛ばしました: {str(_e)[:70]}")
 
 
 # 使用量の正本。**2026-08-14 に読む先を丸ごと変えた。**
