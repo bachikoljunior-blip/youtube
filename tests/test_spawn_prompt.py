@@ -96,7 +96,10 @@ def test_siblings_are_named_and_absence_is_stated() -> None:
     named = sp.build("hourly", siblings=["016bZbYd", "01Cja6DK"])
     assert "016bZbYd" in named and "01Cja6DK" in named
     alone = sp.build("hourly", siblings=[])
-    assert "他に走っている子は" in alone
+    # **語ではなく意味で固定する**（2026-08-25 に「子」→「相手」へ変えたら落ちた）。
+    # 立てられる側はサブエージェントになったので「子」ではありません。
+    # 守りたいのは**「いないと明記してある」**ことだけです。
+    assert "他に走っている" in alone and "いません" in alone
     for out in (named, alone):
         assert "git fetch" in out and "捨てないこと" in out
 
