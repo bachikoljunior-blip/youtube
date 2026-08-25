@@ -106,3 +106,47 @@ def test_画面にM11が出る(capsys):
     out = capsys.readouterr().out
     assert "却下・待ち" in out
     assert "M11" in out
+
+
+# ---------------------------------------------------------------------------
+# **日付つきの判断点**（2026-08-26 に足した。**実物で4日ぶん過ぎていた**）
+#
+# M12 に「**8/22 時点で 20 以上** → 着手する／**10 未満** → 保留のまま」と
+# 書いてあり、**8/22 は 4日 前に過ぎていて、誰も判定していませんでした。**
+# この節は状態の一行しか見ておらず、`config/hypotheses.yaml` の期限を見る側は
+# MEANS.md を読みません。**期日つきの判断が、2つの帳面の隙間に落ちます。**
+# ---------------------------------------------------------------------------
+_SAMPLE = "### M99. ためし\n- **状態**: **保留**\n- **7/01 時点で 20 以上** → 着手する\n"
+
+
+def test_期日の来た判断点を拾う():
+    got = status.means_due_dates(_SAMPLE)
+    assert len(got) == 1
+    code, when, over, line = got[0]
+    assert code == "M99" and when.endswith("-07-01") and over > 0
+    assert "20 以上" in line
+
+
+def test_判定を書いた判断点は消える():
+    """**閉じ方は1つだけ**: 同じ「M/D」と「判定」を同じ行に書くこと。"""
+    closed = _SAMPLE + "\n#### 2026-07-05 — 7/01 の判断点を判定した\n"
+    assert status.means_due_dates(closed) == []
+
+
+def test_まだ来ていない期日は出さない():
+    from datetime import datetime, timedelta
+
+    soon = datetime.now(status.JST) + timedelta(days=3)
+    body = f"### M98. x\n- **{soon.month}/{soon.day} 時点で 5 以上** → 着手\n"
+    assert status.means_due_dates(body) == []
+
+
+def test_実物のMEANSに未判定の期日が残っていない():
+    """**残っていたら、その回が判定すること。** 落ちるのが正しい形です。
+
+    当日ぶん（`grace_days=1`）は見逃します —— 期日の当日に落ちると、
+    **その日に判定する回そのものが赤で始まります。**
+    画面（`print_means`）のほうは当日から出ます。
+    """
+    got = status.means_due_dates(MEANS, grace_days=1)
+    assert got == [], f"期日の来た判断点が未判定です: {got}"

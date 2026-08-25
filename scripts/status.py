@@ -734,6 +734,73 @@ def reversal_conditions(body: str, width: int = 110, limit: int = 1) -> list[str
     return out[-limit:]
 
 
+#: `docs/MEANS.md` の本文に書かれた「**M/D 時点で〜**」という判断点。
+#: 例: 「**8/22 時点で 20 以上** → 面が自力で伸びている。**M12 に着手する**」
+_MEANS_DUE_RE = re.compile(r"\*\*(\d{1,2})/(\d{1,2})\s*時点で")
+
+
+def means_due_dates(text: str, *, now: datetime | None = None,
+                    grace_days: int = 0) -> list[tuple[str, str, int, str]]:
+    """**期日が来ている「日付つきの判断点」**を返す（`(M番号, 期日, 何日超過, 行)`）。
+
+    ## なぜ要るか（2026-08-26 に足した。**実物で4日ぶん過ぎていた**）
+
+    `docs/MEANS.md` の M12 に、こう書いてあります ——
+
+        - **見るもの**: `python scripts/watch_source.py` の `RELATED_VIDEO`
+        - **8/22 時点で 20 以上** → 面が自力で伸びている。**M12 に着手する**
+        - **8/22 時点で 10 未満** → 6は揺らぎ。**M12 は保留のままでよい**
+
+    **8/22 は 4日 前に過ぎており、誰も判定していませんでした。**
+    この節は「未着手・保留・却下」の**状態の一行**しか見ておらず、
+    **本文に書かれた期日を1つも読んでいません。** そして
+    `config/hypotheses.yaml` の期限を見る側（`print_hypotheses`）は
+    MEANS.md を読みません。**期日つきの判断が、2つの帳面の隙間に落ちます。**
+
+    「保留」のままでも、期日が来たら**判定する義務がある**というのが
+    台帳の規則（`docs/MEANS.md` 冒頭「未着手ではなく未評価として扱うこと」）です。
+
+    **年は書かれていません**（「8/22」だけ）。いまの年で読み、
+    未来に出たら前の年として扱います（12月の節を1月に読む形を塞ぐ）。
+    """
+    now = now or datetime.now(JST)
+    out: list[tuple[str, str, int, str]] = []
+    for code, _name, body in re.findall(r"^### (M\d+)\. (.+?)$\n(.*?)(?=^### |\Z)",
+                                        text, re.M | re.S):
+        # **その判断点を、その節が既に判定していたら出しません。**
+        #     閉じ方は1つだけ: **同じ「M/D」と「判定」を同じ行に書くこと。**
+        #     （例: `#### 2026-08-26 — 8/22 の判断点を、4日 遅れで判定した`）
+        #     状態の一行では閉じません —— 状態は節ぜんたいの話で、
+        #     **1つの節が判断点を2つ持てる**からです。
+        decided = {(int(a), int(b))
+                   for ln in body.splitlines() if "判定" in ln
+                   for a, b in re.findall(r"(\d{1,2})/(\d{1,2})", ln)}
+        seen: set[str] = set()
+        for line in body.splitlines():
+            m = _MEANS_DUE_RE.search(line)
+            if not m:
+                continue
+            month, day = int(m.group(1)), int(m.group(2))
+            if (month, day) in decided:
+                continue
+            try:
+                when = date(now.year, month, day)
+            except ValueError:
+                continue
+            if when > now.date():
+                # 未来の日付は「まだ来ていない」。ただし年をまたいだ節は
+                # 前の年のものなので、**1か月以上先なら去年として読む**。
+                if (when - now.date()).days <= 31:
+                    continue
+                when = date(now.year - 1, month, day)
+            over = (now.date() - when).days
+            if over < grace_days or when.isoformat() in seen:
+                continue
+            seen.add(when.isoformat())
+            out.append((code, when.isoformat(), over, line.strip().lstrip("- ")))
+    return out
+
+
 def print_means() -> None:
     """**手段の台帳（docs/MEANS.md）の未着手を毎回出す。**
 
@@ -827,6 +894,16 @@ def print_means() -> None:
             print(f"    {code} {name}")
             for line in reversal_conditions(body):
                 print(f"        覆る条件: {line}")
+    due = means_due_dates(text)
+    if due:
+        print(f"  --- **日付つきの判断点 {len(due)}件（期日が来ています）** ---")
+        print("      **どの道具もこの日付を見ていませんでした**"
+              "（2026-08-26 に足した。M12 の 8/22 が 4日 過ぎて誰の目にも入らなかった）。")
+        for code, when, over, line in due:
+            print(f"    {code}  期日 {when}（**{over}日 過ぎています**）")
+            print(f"        {line[:150]}")
+        print("      → **判定して、その節に結果を書くこと。**"
+              "期日の来た判断点は `verdict` として数えます（`run_marker.py --ship`）。")
     if untried:
         print("  **目標の数字が2週間動いていないなら、いまの機械の改善ではなく")
         print("  ここから1つ選ぶこと。** それが A13 を実行に移す唯一の経路です。")
