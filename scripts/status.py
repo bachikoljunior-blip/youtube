@@ -345,10 +345,20 @@ def print_queue_lag() -> None:
             # 出すと、**投稿を止めて 22日 を取りにいく**回が出ます。
             _q, _ok = queue_lag.quota_lines(plan)
             lines.append(
-                "  → **`python scripts/queue_lag.py --plan` で手が出ます**"
-                f"（撃つのは `--apply`・{len(plan.swaps) * 100}単位）"
-                + ("" if _ok else "  ← [!] **いまは枠が足りません。**"
-                                  "撃つと止まるのは投稿のほう（`--apply` が拒みます）"))
+                f"  → **`batch_build` が投稿より先に自動で撃ちます**"
+                f"（`_pull_verdicts_first`・{len(plan.swaps) * 100}単位）"
+                + ("" if _ok else "  ← [!] **いまは枠が足りません**（403 を観測済み）。"
+                                  "**窓が変わってから自動で撃たれます。手で撃たないこと** ——"
+                                  "撃つと止まるのは投稿のほう"))
+            if _ok:
+                # **枠が開いているのに数が残っているなら、自動の段が落ちています。**
+                # `_pull_verdicts_first` は投稿を守るために例外を飲むので、
+                # **落ちても静かです。ここが唯一の気づき所**（2026-08-26 に足した）。
+                lines.append(
+                    "  [!] **枠は開いているのに手が残っています。**"
+                    "`batch_build` の `_pull_verdicts_first` が落ちている可能性 ——"
+                    "その回の `[batch] 予約の入れ替えは飛ばします:` の行を見ること。"
+                    "**まだ `batch_build` を1度も回していないだけなら、正常です**")
         print("\n" + "\n".join(lines))
     except Exception as e:  # pragma: no cover - 状態しだい
         print(f"\n  [!] 予約の順番待ちを数えられませんでした: {e}")
@@ -377,9 +387,11 @@ def print_live_slots() -> None:
         live_slots.plan(board)
         if board.moves:
             lines.append(
-                f"  → **`python scripts/live_slots.py --plan` で手が出ます**"
-                f"（撃つのは `--apply`・{len(board.moves) * 50}単位）。"
-                "**新しい本は1本も要りません。**生きる枠の付け替えです")
+                f"  → **`batch_build` が投稿より先に自動で撃ちます**"
+                f"（`_rescue_dead_slots`・{len(board.moves) * 50}単位）。"
+                "**新しい本は1本も要りません。**生きる枠の付け替えです。"
+                "**枠が開いているのに数が残り続けるなら、その段が落ちています** ——"
+                "その回の `[batch] 死に枠の逃がしは飛ばします:` の行を見ること")
         print("\n" + "\n".join(lines))
     except Exception as e:  # pragma: no cover - 状態しだい
         print(f"\n  [!] A/B の本が生きた枠に居るかを数えられませんでした: {e}")
