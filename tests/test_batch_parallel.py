@@ -74,7 +74,7 @@ def _run(monkeypatch, ids, delays=None, fail_build=None, jobs=3):
     rec = _Recorder(delays, fail_build)
     monkeypatch.setattr(batch_build, "run", rec)
     monkeypatch.setattr(batch_build, "pick",
-                        lambda c, e, per_calc=None: _topics(ids))
+                        lambda c, e, per_calc=None, **k: _topics(ids))
     monkeypatch.setattr(batch_build, "check_window", lambda d, f: None)
     # **本数枠の門を、実物の控えから切り離す**（2026-08-17 に足した）。
     # `batch_build` は撃つ前に `src/upload_cap.state()` を見ます。素通しにすると
@@ -247,7 +247,7 @@ def _run_flaky(monkeypatch, ids, flaky, extra=()):
     rec = _FlakyRecorder(flaky, fail_build=flaky)
     monkeypatch.setattr(batch_build, "run", rec)
     monkeypatch.setattr(batch_build, "pick",
-                        lambda c, e, per_calc=None: _topics(ids))
+                        lambda c, e, per_calc=None, **k: _topics(ids))
     monkeypatch.setattr(batch_build, "check_window", lambda d, f: None)
     monkeypatch.setattr(batch_build.upload_cap, "state", lambda: _open_window())
     written: list[dict] = []
@@ -302,7 +302,7 @@ def test_two_failures_are_marked_in_the_ledger(monkeypatch):
     rec = _Recorder(fail_build={"b"})          # 何度でも落ちる
     monkeypatch.setattr(batch_build, "run", rec)
     monkeypatch.setattr(batch_build, "pick",
-                        lambda c, e, per_calc=None: _topics(["a", "b", "c"]))
+                        lambda c, e, per_calc=None, **k: _topics(["a", "b", "c"]))
     monkeypatch.setattr(batch_build, "check_window", lambda d, f: None)
     monkeypatch.setattr(batch_build.upload_cap, "state", lambda: _open_window())
     written: list[dict] = []
