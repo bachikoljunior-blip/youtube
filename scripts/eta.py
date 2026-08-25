@@ -2774,9 +2774,15 @@ def plan(m: dict, a: dict, density: int = PLAN_PUBLISH_PER_DAY,
     #
     #     だから「この名指しは、この回は引かなくてよい」を**同じ3行に**出し、
     #     `data/eta.jsonl` にも積んで、数える側が外せるようにします。
+    #     **`date` のまま持たないこと**（2026-08-26。入れた直後に自分で踏みました）。
+    #     この欄は `data/eta.jsonl` に積まれ、`--reflect` が JSON へ書き戻します ——
+    #     `TypeError: Object of type date is not JSON serializable` で
+    #     **反映だけが落ち、ship は残る**という形で出ます（回は止まりません）。
     _fc = ((out.get("blocking") or {}).get("sample")) or {}
-    if _fc.get("reaches") and out.get("lever_hint") == "per_video":
-        out["lever_hint_covered"] = _fc["reaches"]
+    _rc = _fc.get("reaches")
+    if _rc and out.get("lever_hint") == "per_video":
+        out["lever_hint_covered"] = (_rc.isoformat() if hasattr(_rc, "isoformat")
+                                     else str(_rc))
     return out
 
 
