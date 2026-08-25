@@ -56,10 +56,32 @@ from src import day_cap                                            # noqa: E402
 from src.ab_split import EXPERIMENTS, MIN_PER_GROUP, build_times, published  # noqa: E402
 
 
+def live_set(rows: list[dict] | None = None) -> set[str]:
+    """**再生が付く側の `video_id`**。`src/day_cap.live_ids()` が1か所で決めています。
+
+    ## ここで自前に数えないこと（2026-08-26 に合流したときに直した）
+
+    この下の `slot_rank()` は「その日の何番目か」しか見ていませんでした。
+    **`day_cap` の規則は2段**です ——
+    (1) 間隔 30分 未満の本を落とす → (2) 残ったうちの先頭 `cap()` 本。
+
+    **(1) が抜けていると、同じ分に2本入っている日で答えが割れます**
+    （実物: 09/06 の 09:00/10:00/11:00 が各2本。順番だけで数えると両方が
+    「10番目まで」に入って**2本とも生きている**ことになりますが、
+    実際は少なくとも片方が死にます）。
+
+    同じことを2か所が別々に数えるのは、このリポジトリで**14件目**です。
+    **数えるのは `day_cap` の1か所だけ**にしました。
+    """
+    rows = published() if rows is None else rows
+    return day_cap.live_ids([r for r in rows if r.get("video_id") and r.get("at")])
+
+
 def slot_rank(rows: list[dict] | None = None) -> dict[str, int]:
     """`video_id` → **その日の何番目に公開されるか**（1始まり）。
 
-    **日ごとに時刻で並べます。** `day_cap.cap()` 番目までが「再生が付く枠」。
+    **順番を見せるためだけ**に残しています。**生きているかの判定に使わないこと** ——
+    それは `live_set()`（＝ `day_cap.live_ids`）の仕事です。間隔の段が抜けています。
     """
     rows = published() if rows is None else rows
     by_day: dict[object, list[dict]] = collections.defaultdict(list)
@@ -97,7 +119,7 @@ def judging_set(exp, rows: list[dict] | None = None,
 def report() -> list[str]:
     cap = day_cap.cap()
     rows = published()
-    rank = slot_rank(rows)
+    live = live_set(rows)
     bt = build_times()
     out = [f"=== A/B の本は、再生が付く枠に入っているか（上限 {cap}本/日・"
            f"床 片群 {MIN_PER_GROUP}本）===",
@@ -110,13 +132,12 @@ def report() -> list[str]:
             if not items:
                 out.append(f"    {g:12s} **まだ1本も予約に在りません**")
                 continue
-            live = sum(1 for r in items
-                       if rank.get(str(r.get("video_id") or r.get("topic")), 10 ** 9) <= cap)
-            mark = " ← **痩せています**" if live < MIN_PER_GROUP * 0.75 else ""
-            out.append(f"    {g:12s} 最初の{len(items):2d}本 → 再生が付く枠 **{live:2d}本**"
-                       f"（{live / len(items) * 100:3.0f}%）  {len(items)}本目の公開 "
+            n_live = sum(1 for r in items if str(r.get("video_id") or "") in live)
+            mark = " ← **痩せています**" if n_live < MIN_PER_GROUP * 0.75 else ""
+            out.append(f"    {g:12s} 最初の{len(items):2d}本 → 再生が付く枠 **{n_live:2d}本**"
+                       f"（{n_live / len(items) * 100:3.0f}%）  {len(items)}本目の公開 "
                        f"{items[-1]['publish']}{mark}")
-            thin.append((g, live))
+            thin.append((g, n_live))
         if len(thin) == 2 and min(t[1] for t in thin) < max(t[1] for t in thin) * 0.8:
             lo = min(thin, key=lambda t: t[1])
             hi = max(thin, key=lambda t: t[1])
