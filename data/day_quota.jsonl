@@ -2573,6 +2573,17 @@
 {"at": "2026-08-25T21:36:14+00:00", "detail": "scheduled_publish_times"}
 {"at": "2026-08-25T21:36:18+00:00", "detail": "playlistItems.insert"}
 {"at": "2026-08-25T21:36:18+00:00", "detail": "thumbnails.set xQ2EzmkHRjw"}
+{"at": "2026-08-25T21:49:16+00:00", "detail": "playlistItems.list uploads"}
+{"at": "2026-08-25T21:49:17+00:00", "detail": "status: Data API 読み"}
+{"at": "2026-08-25T21:49:43+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-25T21:49:45+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-25T21:49:47+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-25T22:03:11+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-25T22:03:11+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-25T22:03:11+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-25T22:03:12+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-25T22:03:17+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-25T22:03:17+00:00", "detail": "channels.list mine"}
 {"at": "2026-08-25T21:46:50+00:00", "detail": "playlistItems.list uploads"}
 {"at": "2026-08-25T21:50:21+00:00", "detail": "status: Data API 読み"}
 {"at": "2026-08-25T21:50:51+00:00", "detail": "playlistItems.list uploads"}

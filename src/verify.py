@@ -903,7 +903,43 @@ def _check_adjacent_repeat(script: dict | None) -> list[str]:
     return problems
 
 
-def _check_narrated_shown(work: Path, script: dict | None) -> list[str]:
+def _plan_frames(work: Path, script: dict | None,
+                 from_script: bool = False) -> list[dict] | None:
+    """**画面に出るコマの列**。読めなければ `None`、無ければ空。
+
+    正本は `work/slides_plan.json`（`pipeline` が**割った後**を書き出す唯一の場所）。
+    **無いときは台本の `visual` で代用します** —— 台本を書いている最中は
+    まだレンダリングしていないので、そこにしか絵がありません
+    （`script_writer.long_script_problems` がこの道を通ります）。
+
+    **代用しても答えは変わりません。** 割るのは `visuals.reveal_variants` で、
+    あれは `bars`/`rows`/`items` の**先頭からの部分列**しか作らないので、
+    割った後のコマ全部を合わせた値の集合は、割る前の1枚と**同じ**です。
+    `narrated.unshown()` が見ているのはその集合だけです。
+
+    `from_script=True` は「**ファイルがあっても台本を見る**」。
+    台本を書いている最中の呼び手はこちらを使うこと —— いまは
+    `pipeline` が `generate()` の**前に** `work` を `rmtree` するので
+    残骸は在りませんが、**その順序に頼ると、順序が変わった日に
+    「新しい読み上げ × 前の回の絵」を突き合わせて黙って誤報を出します。**
+    """
+    path = work / "slides_plan.json"
+    if path.exists() and not from_script:
+        try:
+            plan = json.loads(path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            return None
+        if isinstance(plan, list):
+            return [v for v in plan if isinstance(v, dict)]
+        return []
+    if not script:
+        return []
+    return [s["visual"] for s in script.get("segments", [])
+            if isinstance(s, dict) and isinstance(s.get("visual"), dict)]
+
+
+def _check_narrated_shown(work: Path, script: dict | None,
+                          from_script: bool = False) -> list[str]:
     """**読み上げが言った数が、絵に1つも出ていないか**（2026-08-17）。
 
     独立評価で2体が「図解の棒に、読み上げが言った行が無い」と書き、
@@ -920,19 +956,72 @@ def _check_narrated_shown(work: Path, script: dict | None) -> list[str]:
     確かめていない厳しさをここに置きません。ぜんたいで見ると
     **84本中3本・4件で、抜き取った全部が本物**でした。
 
-    **ショートだけに掛けます**（長尺は構成が違う）。呼ぶ側で `portrait` を見ています。
-    """
-    path = work / "slides_plan.json"
-    if not path.exists() or not script:
-        return []
-    try:
-        plan = json.loads(path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as exc:
-        return [f"slides_plan.json が読めない: {exc}"]
-    if not isinstance(plan, list) or not plan:
-        return []
+    ## **長尺にも掛けます**（2026-08-26 に実測して変えた。**それまで掛けていなかった**）
 
-    frames = [v for v in plan if isinstance(v, dict)]
+    ここは長く「**ショートだけに掛けます**（長尺は構成が違う）」でした。
+    呼ぶ側が `if portrait:` の中に置いていたので、**長尺は素通り**です。
+    そして `portrait` は動画の実物ではなく `video_cfg["resolution"]` から来るので、
+    **`--short` を付けずに作った本は、この検査を1度も通っていません。**
+
+    **どこが痛いか。** `CLAUDE.md` は「**4,000時間の門に入るのは長尺だけ**」と
+    書いています。つまり**収益化の可否を背負っているのは長尺のほう**で、
+    根幹の一文（「**前提と計算式を、画面と説明欄に全部出す**」「視聴者が自分で
+    追試できることがテンプレート量産との違い」）が効くのも長尺です。
+    **その長尺だけが無検査でした。**
+
+    ### 実測（`data/critique_queue/` の控え 430本。門が入った 08/17 より後）
+
+        ショート（コマ>文・5〜6行・94〜140字）  397本 → 漏れ **0本**
+        長尺  （コマ=文・14〜25行・1473〜2191字） 33本 → 漏れ **7本（21%）**
+
+    **門が入った後の漏れは、100% が長尺です。** 掛かっている側は完璧に効き、
+    掛かっていない側だけが漏れていました。
+
+    ### 誤報を数えた（**誤報は不投稿**なので、先にこれを見ること）
+
+    長尺の指摘 **10件を全部** 目で確かめ、**10/10 が本物**でした
+    （どれも `narrated.shown_values()` の集合に1つも無い）:
+
+        plmBPZqqP1U 2万5262・12万6310   還付額そのもの（答え）
+        mRisqvcqmm4 1万7510             国民年金保険料の前提
+        DyEcaMK5ZU8 1万7510             同上
+        jeRBnxQjBvY 330万・110万        公的年金等控除の適用条件
+        a63FzIUV2wI 1544万8761          声で言った3点を図が1つも持っていない
+        jYoDuz0S9z4 81万6000            3級の最低保障から導いた額
+        xQ2EzmkHRjw 37万2500            控除前の所得税額（答え）
+
+    ### **`orientation` を証拠に使わないこと**（この穴を1回隠しました）
+
+    `scripts/critique_queue.py` の `orientation` は
+    `"縦" if script.get("short", True) else "横"` です。**台本に `short` という鍵は
+    ありません**（`VideoScript` に無い）。だから `.get` の既定 `True` が必ず出て、
+    **控え 469本が469本とも「縦」**です。**定数であって、向きではありません。**
+
+    2026-08-25 の申し送りは、この欄を読んで「4本とも縦なのに門を素通りした
+    ＝ 門が壊れている」と書き、次の回に「`--dry-run` で作って
+    `work/slides_plan.json` を控えと突き合わせろ」と残していました。
+    **突き合わせても何も出ません**（同じファイルの `shutil.copy2` なので必ず一致する）。
+    **壊れていたのは門ではなく、向きを見た計器のほうです。**
+    向きを知りたいなら **コマ数と文の数**を見ること（長尺は `reveal_variants` を
+    通らないので必ず `コマ = 文`、ショートは必ず `コマ > 文`）。
+
+    ### 覆る条件
+
+    - **長尺の誤報が出たら**、そのときは「文ごと」ではなく**動画ぜんたい**で
+      見ていることを先に確かめること（上の節）。それでも誤報なら、
+      長尺だけ `narrated.FLOOR` を上げるか、ここから外して理由を書くこと
+    - **歩留りが落ちたら。** この検査は `script_writer.long_script_problems` にも
+      入れてあるので、**生成中に3回まで書き直させてから**ここに来ます。
+      それでも長尺の歩留りが目に見えて落ちるなら、書き直しの指示文
+      （`LONG_FIX_GUIDANCE`）が効いていないほうを先に疑うこと
+    """
+    if not script:
+        return []
+    frames = _plan_frames(work, script, from_script)
+    if frames is None:
+        return ["slides_plan.json が読めない"]
+    if not frames:
+        return []
     problems: list[str] = []
     for seg in script.get("segments", []):
         line = str(seg.get("narration") or "")
@@ -1672,7 +1761,14 @@ def check(path: Path, video_cfg: dict, min_minutes: float, work: Path,
         problems += _check_short_pace(script, duration)
         problems += _check_slide_hold(work, duration)
         problems += _check_assumptions_on_screen(work)
-        problems += _check_narrated_shown(work, script)
+    # **これは `portrait` の外に出しています**（2026-08-26 に実測して移した）。
+    # 中に置いていた間、**長尺は1本も通っていませんでした** ——
+    # 控え430本で、門の入った 08/17 より後の漏れは
+    # **ショート 0/397・長尺 7/33（21%）で、100% が長尺**。
+    # `CLAUDE.md`「4,000時間の門に入るのは長尺だけ」＝
+    # **収益化を背負っている側だけが無検査**でした。
+    # 誤報は 10件を目で確かめて 0件（詳しくは関数の docstring）。
+    problems += _check_narrated_shown(work, script)
     problems += _check_visual_wrap(script, portrait)
     problems += _check_count_matches(script)
     problems += _check_title_from_calc(work, script, topic)
