@@ -57,6 +57,13 @@ ASSUMPTIONS = [
     "その医療費を超えた分は、他の医療費から差し引かないものとしています",
     "入院給付金の計算では、入院にかかった医療費とそれ以外の医療費を分けて置いています。"
     "実際にどこまでが「その給付の目的となった医療費」かは、給付の条件によって変わります",
+    "総所得が増えると還付が減る計算では、総所得が動くあいだも所得税率は"
+    "5パーセントから45パーセントまでの同じ率のまま変わらないものとして置いています。"
+    "所得税率は課税所得で決まるので、実際には総所得が上がる途中で税率も上がることがあります",
+    "多数回該当は直近12か月に3回あった場合の4回目からとして、"
+    "最初の3か月は通常の限度額で計算しています",
+    "多数回該当の計算では、同じ額の医療費が毎月続いたものとして置いています。"
+    "実際は月ごとに額が変わり、その月の自己負担も変わります",
 ]
 
 # 制度の値。**改正が続くものは入力に逃がす**（docs/CONSTRAINTS.md B4）が、
@@ -207,6 +214,54 @@ def check_tables() -> None:
         bigger_cash = r["cash_now"] > r["next_year"]
         if bigger_cash != (r["rate"] > tip_rate):
             raise ValueError(f"税率{r['rate']} で内訳の大小が向きと合っていない: {r}")
+
+    # --- 上限に着く医療費と、足切りの得が消える点（主題10）--------------
+    # **`grid` を呼ばないこと**（あちらが check_tables() を呼ぶ）。部品を直に回す
+    if cap_hit_paid(3_000_000) != DEDUCTION_CAP + FLOOR_CAP:
+        raise ValueError("総所得200万円以上で、上限に着く医療費が「上限＋10万円」でない")
+    if not cap_hit_paid(1_000_000) < cap_hit_paid(3_000_000):
+        raise ValueError("足切りが低いほうが、上限に着くのが早くなっていない")
+    if deduction(cap_hit_paid(3_000_000), 0, 3_000_000) != DEDUCTION_CAP:
+        raise ValueError("上限に着く医療費で、控除が上限になっていない")
+    if deduction(cap_hit_paid(3_000_000) - 1, 0, 3_000_000) >= DEDUCTION_CAP:
+        raise ValueError("その1円下で、まだ控除が上限に着いている")
+    # 足切りの差から出ていた得は、相手が上限に着く点でちょうど 0 になる
+    _v = floor_gain_vanishes(1_600_000, 3_000_000)
+    if floor_gain(_v, 1_600_000, 3_000_000, 0.05)["gap_deduction"] != 0:
+        raise ValueError(f"医療費 {_v} 円で、足切りの差がまだ残っている")
+    if floor_gain(_v - 10_000, 1_600_000, 3_000_000, 0.05)["gap_deduction"] <= 0:
+        raise ValueError(f"医療費 {_v - 10_000} 円で、足切りの差が消えている")
+
+    # --- 見えない税は総所得200万円で消える（主題11）---------------------
+    if hidden_rate(0.10) <= 0:
+        raise ValueError("総所得が増えても還付が減らない")
+    if hidden_tax_total(0.10) != int(FLOOR_CAP * coefficient(0.10)):
+        raise ValueError("0円から200万円までの合計が、足切りの上限ぶんと合わない")
+    _p = 400_000
+    if not (refund(_p, 0, 0, 0.10)["total"]
+            > refund(_p, 0, 1_000_000, 0.10)["total"]
+            > refund(_p, 0, 2_000_000, 0.10)["total"]):
+        raise ValueError("総所得が上がるほど還付が減る、という向きになっていない")
+    if refund(_p, 0, 2_000_000, 0.10)["total"] != refund(_p, 0, 5_000_000, 0.10)["total"]:
+        raise ValueError("総所得200万円を超えても還付がまだ動いている")
+
+    # --- 多数回該当の割引は、還付の減りに食われる（主題12）---------------
+    # **`multi_hit_paid` を使うこと**（`multi_hit()` そのままだと、
+    #   3割のほうが小さい月に「軽くなるはずの制度が3割より高い額」を出します）
+    for _t in ("ア", "ウ", "オ"):
+        if year_self_pay(1_000_000, 12, _t) >= year_self_pay(
+                1_000_000, 12, _t, multi_hit=False):
+            raise ValueError(f"区分{_t} で、多数回該当があるのに自己負担が減っていない")
+    _m = multi_hit_after_tax(1_000_000, 12, 3_000_000, 0.10, "ウ")
+    if not 0 < _m["net_gain"] < _m["saved"]:
+        raise ValueError(f"割引の取り分が、0と軽くなった額のあいだにない: {_m}")
+    if abs(_m["eaten_share"] - coefficient(0.10)) > 0.001:
+        raise ValueError(f"消える割合が係数と合わない: {_m['eaten_share']}")
+    # 税率が高いほど、取り分は小さくなる（戻りが大きい人ほど、減りも大きい）
+    _low = multi_hit_after_tax(1_000_000, 12, 3_000_000, 0.05, "ウ")
+    _high = multi_hit_after_tax(1_000_000, 12, 3_000_000, 0.45, "ウ")
+    if not _high["net_gain"] < _low["net_gain"]:
+        raise ValueError("税率が高いほうが、割引の取り分が大きくなっている")
 
 
 def floor_amount(total_income: int) -> int:
@@ -870,6 +925,205 @@ def zero_years_grid(total_income: int, rate: float) -> list[dict]:
     return out
 
 
+# ---- 主題10: 「足切りが下がって得する額」には天井があり、途中で消える ----
+#
+# 総所得200万円未満なら足切りは10万円より下がる —— ここまでは既にこの表の
+# 主題1です。**その先が誰も言っていません**: 控除には上限200万円があるので、
+# **足切りが低い人ほど、上限に早く着きます。** 着いたあとの控除はどちらも
+# 200万円で同じなので、**「足切りが下がって得していた額」は1円も残りません。**
+# 消える点は `控除の上限 ＋ 相手の足切り` で、総所得200万円以上の人が相手なら
+# **医療費 2,100,000円**。そこまでの間は、差が直線で細っていきます。
+def cap_hit_paid(total_income: int) -> int:
+    """**控除が上限（200万円）に着く、いちばん低い医療費。**
+
+    控除は `医療費 － 足切り` なので、上限に着く医療費は
+    **上限 ＋ 足切り**。足切りが低い人ほど、この点は手前にあります。
+    """
+    return DEDUCTION_CAP + floor_amount(total_income)
+
+
+def refund_at_cap(rate: float) -> int:
+    """**上限に着いたあとの還付。**ここから先は医療費が増えても1円も増えません。
+
+    `refund()` と同じ切り捨てで出します（別の丸めをすると表の中で食い違う）。
+    """
+    return (int(DEDUCTION_CAP * rate * (1 + RECONSTRUCTION))
+            + int(DEDUCTION_CAP * RESIDENT_RATE))
+
+
+def floor_gain(paid: int, low_income: int, high_income: int, rate: float) -> dict:
+    """**足切りが低い側が、その1年で実際に多く戻る額。**
+
+    上限が無ければ `足切りの差 × 係数` で一定ですが、
+    **低いほうが先に上限へ着く**ので、そこから先は細っていきます。
+    """
+    d_low = deduction(paid, 0, low_income)
+    d_high = deduction(paid, 0, high_income)
+    return {
+        "paid": paid,
+        "deduction_low": d_low,
+        "deduction_high": d_high,
+        "gap_deduction": d_low - d_high,
+        "gap_yen": (refund(paid, 0, low_income, rate)["total"]
+                    - refund(paid, 0, high_income, rate)["total"]),
+        "low_capped": d_low >= DEDUCTION_CAP,
+        "high_capped": d_high >= DEDUCTION_CAP,
+    }
+
+
+def floor_gain_vanishes(low_income: int, high_income: int) -> int:
+    """**足切りの差が1円も残らなくなる医療費。** ＝ 足切りが高い側が上限に着く点。"""
+    return cap_hit_paid(max(low_income, high_income))
+
+
+def cap_grid(rate: float) -> list[dict]:
+    """総所得べつ。**上限に着く医療費**と、そこでの還付。"""
+    check_tables()
+    top = cap_hit_paid(2_000_000)
+    return [{
+        "total_income": ti,
+        "floor": floor_amount(ti),
+        "cap_paid": cap_hit_paid(ti),
+        "earlier_by": top - cap_hit_paid(ti),
+        "refund_at_cap": refund_at_cap(rate),
+    } for ti in (400_000, 1_000_000, 1_600_000, 2_000_000, 3_000_000, 10_000_000)]
+
+
+def floor_gain_grid(low_income: int, high_income: int, rate: float) -> list[dict]:
+    """医療費べつ。**足切りの差から出ていた得が、どこで消えるか。**"""
+    check_tables()
+    lo_cap, hi_cap = cap_hit_paid(low_income), cap_hit_paid(high_income)
+    mid = (lo_cap + hi_cap) // 2
+    return [floor_gain(p, low_income, high_income, rate)
+            for p in (200_000, 500_000, 1_000_000, lo_cap, mid, hi_cap,
+                      hi_cap + 500_000)]
+
+
+# ---- 主題11: 総所得200万円までの人にだけ掛かる「見えない税」 -------------
+#
+# 足切りは総所得200万円までは `総所得 × 5%` です。**総所得が1円増えると
+# 足切りが5銭上がり、控除がその分だけ減ります。** 還付にすると
+# `0.05 × 係数` —— 所得税率10%なら**総所得が10万円増えるごとに1,010円**。
+# **医療費控除を使っている年だけ、その人の実効税率はこれだけ上がっています。**
+# そして総所得200万円ちょうどで足切りが10万円で頭打ちになるので、
+# **この税は200万円で消えます**（上に行くほど軽くなる、めずらしい向き）。
+def hidden_rate(rate: float) -> float:
+    """**総所得1円あたり、還付がいくら減るか。**（総所得200万円未満のとき）"""
+    return FLOOR_RATE * coefficient(rate)
+
+
+def hidden_tax_step(rate: float, step: int = 100_000) -> int:
+    """総所得が `step` 円 増えたときに減る還付。**円未満は切り捨て。**"""
+    return int(hidden_rate(rate) * step)
+
+
+def hidden_tax_total(rate: float) -> int:
+    """**総所得0円から200万円までで、合計いくら減るか。** ＝ 足切りの上限ぶん。"""
+    return int(FLOOR_CAP * coefficient(rate))
+
+
+def hidden_tax_grid(paid: int = 400_000) -> list[dict]:
+    """所得税率べつ。**見えない税の重さ**と、200万円で消えること。
+
+    `paid` は「控除が0でも上限でもない」ことを確かめるために使います ——
+    足切り以下なら控除は0で、この税は掛かりません（掛かる相手が居ない）。
+    """
+    check_tables()
+    out = []
+    for r in INCOME_TAX_RATES:
+        out.append({
+            "rate": r,
+            "per_100k": hidden_tax_step(r),
+            "total_to_2m": hidden_tax_total(r),
+            "refund_at_0": refund(paid, 0, 0, r)["total"],
+            "refund_at_2m": refund(paid, 0, 2_000_000, r)["total"],
+            "refund_at_3m": refund(paid, 0, 3_000_000, r)["total"],
+        })
+    return out
+
+
+def hidden_tax_income_grid(paid: int, rate: float) -> list[dict]:
+    """総所得べつ。**20万円ずつ増えるたびに、還付がいくら減るか。**"""
+    check_tables()
+    out, prev = [], None
+    for ti in range(0, 2_600_001, 200_000):
+        total = refund(paid, 0, ti, rate)["total"]
+        out.append({
+            "total_income": ti,
+            "floor": floor_amount(ti),
+            "refund": total,
+            "drop": (0 if prev is None else prev - total),
+            "capped_floor": floor_amount(ti) >= FLOOR_CAP,
+        })
+        prev = total
+    return out
+
+
+# ---- 主題12: 高額療養費で軽くなった額は、税金の戻りが減るぶん目減りする ----
+#
+# 高額療養費の多数回該当（直近12か月で4回目から限度額が下がる）は、
+# **自己負担そのものを減らします。** 医療費控除は**その自己負担に掛かる**ので、
+# 軽くなった額と同じだけ**控除が減り、還付も減ります。**
+# 減る割合は `係数`（所得税率×1.021 ＋ 住民税10%）そのもので、
+# **所得税率が高い人ほど、割引の取り分を大きく失います** ——
+# 税率45%なら**軽くなった額の55.95%が戻りの減少で消えます。**
+# 「高額療養費と医療費控除は両取りできる」は、額のうえでは半分正しくありません。
+def year_self_pay(cost: int, months: int, tier_name: str = "ウ",
+                  *, multi_hit: bool = True) -> int:
+    """**その年に窓口で払う額の合計。**（同じ額の医療費が `months` か月続いた場合）
+
+    多数回該当は `MULTI_HIT_FROM`（4回目）からなので、
+    **最初の3か月は通常の限度額**です。
+    """
+    normal = kogaku.paid(tier_name, cost)
+    if not multi_hit:
+        return int(round(normal * months))
+    n_normal = min(months, kogaku.MULTI_HIT_FROM - 1)
+    low = kogaku.multi_hit_paid(tier_name, cost)
+    return int(round(normal * n_normal + low * max(0, months - n_normal)))
+
+
+def multi_hit_after_tax(cost: int, months: int, total_income: int,
+                        rate: float, tier_name: str = "ウ") -> dict:
+    """**多数回該当で軽くなった額のうち、いくらが税金の戻りの減少で消えるか。**"""
+    pay_on = year_self_pay(cost, months, tier_name, multi_hit=True)
+    pay_off = year_self_pay(cost, months, tier_name, multi_hit=False)
+    r_on = refund(pay_on, 0, total_income, rate)
+    r_off = refund(pay_off, 0, total_income, rate)
+    saved = pay_off - pay_on
+    lost = r_off["total"] - r_on["total"]
+    return {
+        "tier": tier_name,
+        "pay_off": pay_off,
+        "pay_on": pay_on,
+        "saved": saved,
+        "deduction_off": r_off["deduction"],
+        "deduction_on": r_on["deduction"],
+        "refund_off": r_off["total"],
+        "refund_on": r_on["total"],
+        "lost_refund": lost,
+        "net_gain": saved - lost,
+        "eaten_share": (0.0 if saved <= 0 else lost / saved),
+        "capped_off": r_off["deduction"] >= DEDUCTION_CAP,
+    }
+
+
+def multi_hit_tier_grid(cost: int, months: int, total_income: int,
+                        rate: float) -> list[dict]:
+    """区分べつ。**割引が大きい区分ほど、消える額も大きい。**"""
+    check_tables()
+    return [multi_hit_after_tax(cost, months, total_income, rate, t[0])
+            for t in kogaku.TIERS]
+
+
+def multi_hit_rate_grid(cost: int, months: int, total_income: int,
+                        tier_name: str = "ウ") -> list[dict]:
+    """所得税率べつ。**上に行くほど、割引の取り分を失う。**"""
+    check_tables()
+    return [multi_hit_after_tax(cost, months, total_income, r, tier_name)
+            for r in INCOME_TAX_RATES]
+
+
 if __name__ == "__main__":
     check_tables()
     print("制度の値の検査: 通過")
@@ -1075,3 +1329,97 @@ if __name__ == "__main__":
           "全部引いた側の控除は0円になります**"
           f"（医療費の合計{HC + OP:,}円 － 足切り{cap['floor']:,}円）。"
           f"正しく引けば、そこでも {deduction(HC + OP, HC, TI_B):,}円 の控除が残ります。")
+
+    RATE_C = 0.10
+    print("\n=== 総所得べつ / 控除が上限200万円に着く医療費"
+          "（足切りが低い人ほど早く着く）===")
+    print(f"  控除は「医療費 － 足切り」なので、上限{DEDUCTION_CAP:,}円に着く医療費は"
+          "**上限 ＋ 足切り**です。")
+    print(f"  **そこから先は、医療費がいくら増えても還付は1円も増えません**"
+          f"（所得税率{RATE_C:.0%}で {refund_at_cap(RATE_C):,}円）。")
+    print(f"{'総所得':>11s} {'足切り':>9s} {'上限に着く医療費':>16s} "
+          f"{'総所得200万円以上の人より早い額':>25s}")
+    for r in cap_grid(RATE_C):
+        mark = "  ← ここが上限（足切りが10万円で頭打ち）" if r["earlier_by"] == 0 else ""
+        print(f"{r['total_income']:10,d}円 {r['floor']:8,d}円 {r['cap_paid']:15,d}円 "
+              f"{r['earlier_by']:24,d}円" + mark)
+    print("  **足切りが低いことは、上限が近いことと同じです。**"
+          "同じ足切りの低さが、片方では得に、もう片方では頭打ちの早さになります。")
+
+    LOW_C, HIGH_C, RATE_D = 1_600_000, 3_000_000, 0.05
+    print(f"\n=== 「足切りが下がって得する額」が消えるまで"
+          f"（総所得{LOW_C:,}円 対 {HIGH_C:,}円・所得税率{RATE_D:.0%}）===")
+    print(f"  足切りは {floor_amount(LOW_C):,}円 対 {floor_amount(HIGH_C):,}円 で、"
+          f"差は {floor_amount(HIGH_C) - floor_amount(LOW_C):,}円。"
+          "**医療費が小さいうちは、この差がそのまま控除の差です。**")
+    print(f"{'支払った医療費':>13s} {'総所得160万の控除':>17s} {'総所得300万の控除':>17s} "
+          f"{'控除の差':>9s} {'還付の差':>9s}")
+    for r in floor_gain_grid(LOW_C, HIGH_C, RATE_D):
+        mark = ""
+        if r["low_capped"] and not r["high_capped"]:
+            mark = "  ← 低いほうが先に上限。ここから差が細る"
+        elif r["low_capped"] and r["high_capped"]:
+            mark = "  ← どちらも上限。差は0円"
+        print(f"{r['paid']:12,d}円 {r['deduction_low']:16,d}円 "
+              f"{r['deduction_high']:16,d}円 {r['gap_deduction']:8,d}円 "
+              f"{r['gap_yen']:8,d}円" + mark)
+    print(f"  **得が1円も残らなくなるのは医療費 "
+          f"{floor_gain_vanishes(LOW_C, HIGH_C):,}円**"
+          f"（＝ 上限{DEDUCTION_CAP:,}円 ＋ 足切り{floor_amount(HIGH_C):,}円）。")
+
+    print("\n=== 所得税率べつ / 総所得が10万円増えると、還付はいくら減るか"
+          "（総所得200万円未満の人だけ）===")
+    print(f"  足切りは総所得200万円までは「総所得の{FLOOR_RATE:.0%}」です。"
+          "**総所得が1円増えると足切りが5銭上がり、控除がその分だけ減ります。**")
+    print(f"  減る速さは {FLOOR_RATE} × 係数（所得税率×{1 + RECONSTRUCTION} ＋ 住民税"
+          f"{RESIDENT_RATE:.0%}）。**医療費の額にはよりません。**")
+    print(f"{'所得税率':>7s} {'総所得+10万円で減る還付':>21s} "
+          f"{'総所得0円から200万円までの合計':>27s} {'総所得200万円を超えたら'}")
+    for r in hidden_tax_grid():
+        print(f"{r['rate']:6.0%} {r['per_100k']:20,d}円 {r['total_to_2m']:26,d}円 "
+              "  0円（足切りが10万円で頭打ち。ここで消えます）")
+    print("  **上に行くほど軽くなる税です。**"
+          "総所得200万円ちょうどで足切りが頭打ちになり、そこから先は掛かりません。")
+
+    PAID_H = 400_000
+    print(f"\n=== 総所得べつ / 医療費{PAID_H:,}円のときの還付"
+          f"（所得税率{RATE_C:.0%}・200万円で下げ止まる）===")
+    print(f"{'総所得':>11s} {'足切り':>9s} {'還付':>9s} {'20万円前より減った額':>19s}")
+    for r in hidden_tax_income_grid(PAID_H, RATE_C):
+        mark = "  ← ここから先は減りません" if r["capped_floor"] and r["drop"] == 0 else ""
+        print(f"{r['total_income']:10,d}円 {r['floor']:8,d}円 {r['refund']:8,d}円 "
+              f"{r['drop']:18,d}円" + mark)
+    print(f"  **同じ医療費{PAID_H:,}円でも、総所得0円の人と200万円の人では還付が "
+          f"{hidden_tax_total(RATE_C):,}円 ちがいます。**")
+
+    COST_M, MONTHS_M, TI_M, RATE_M = 1_000_000, 12, 3_000_000, 0.10
+    print(f"\n=== 区分べつ / 高額療養費の多数回該当で軽くなった額のうち、"
+          f"税金の戻りが減って消える割合"
+          f"（医療費{COST_M:,}円が{MONTHS_M}か月・総所得{TI_M:,}円・"
+          f"所得税率{RATE_M:.0%}）===")
+    print(f"  多数回該当は直近12か月で{kogaku.MULTI_HIT_FROM}回目からなので、"
+          "**最初の3か月は通常の限度額**です。")
+    print("  自己負担が減ると、**その自己負担に掛かっていた医療費控除も減ります。**")
+    print(f"{'区分':>4s} {'多数回が無い年の自己負担':>21s} {'多数回がある年の自己負担':>21s} "
+          f"{'軽くなった額':>11s} {'減った還付':>10s} {'実際に得した額':>12s} {'消えた割合':>9s}")
+    for r in multi_hit_tier_grid(COST_M, MONTHS_M, TI_M, RATE_M):
+        mark = "  ← 多数回が無い側は控除が上限で頭打ち。だから消える割合が小さい" if r["capped_off"] else ""
+        print(f"{r['tier']:>4s} {r['pay_off']:20,d}円 {r['pay_on']:20,d}円 "
+              f"{r['saved']:10,d}円 {r['lost_refund']:9,d}円 {r['net_gain']:11,d}円 "
+              f"{r['eaten_share']:8.2%}" + mark)
+    print(f"  **消える割合は係数そのものです**"
+          f"（所得税率{RATE_M:.0%}なら {coefficient(RATE_M):.2%}）。"
+          "区分によらず同じ割合になります —— **控除が上限で頭打ちになっている区分を除いて。**")
+
+    print(f"\n=== 所得税率べつ / 多数回該当の割引のうち、消える割合"
+          f"（区分ウ・医療費{COST_M:,}円が{MONTHS_M}か月・総所得{TI_M:,}円）===")
+    print("  **税率が高い人ほど、割引の取り分を大きく失います。**"
+          "医療費控除の戻りが大きい人ほど、その戻りの減り方も大きいからです。")
+    print(f"{'所得税率':>7s} {'軽くなった額':>11s} {'減った還付':>10s} "
+          f"{'実際に得した額':>12s} {'消えた割合':>9s}")
+    for r, rate_row in zip(multi_hit_rate_grid(COST_M, MONTHS_M, TI_M),
+                           INCOME_TAX_RATES):
+        print(f"{rate_row:6.0%} {r['saved']:10,d}円 {r['lost_refund']:9,d}円 "
+              f"{r['net_gain']:11,d}円 {r['eaten_share']:8.2%}")
+    print("  **「高額療養費と医療費控除は両取りできる」は、額のうえでは半分正しくありません。**"
+          "高額療養費で戻った額は補填なので、医療費控除の対象から差し引かれます。")

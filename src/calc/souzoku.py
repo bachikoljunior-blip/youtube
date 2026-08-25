@@ -123,6 +123,36 @@ def check_tables() -> None:
         if row["取り逃し"] <= 0:
             raise ValueError(f"課税価格{row['estate']:,}円の取り逃しが0。粗い格子で足りている")
 
+    # --- 2026-08-26 に足した節ぶん（配偶者の軽減の上限）---------------------
+    # **入れ替わる点は1つで、そこで2つの上限が等しくなる**
+    s = relief_switch()
+    if int(s * SPOUSE_SHARE) != SPOUSE_FLOOR:
+        raise ValueError(
+            f"入れ替わる点 {s:,}円 の法定相続分が {int(s * SPOUSE_SHARE):,}円 で、"
+            f"下限 {SPOUSE_FLOOR:,}円 と一致しません")
+    if relief_limit(s - 1)["効いているのは"] != "1億6000万円":
+        raise ValueError("入れ替わる点の1円下で、法定相続分のほうが効いています")
+    if relief_limit(s + 2)["効いているのは"] != "法定相続分":
+        raise ValueError("入れ替わる点より上で、下限のほうが効いています")
+    # **上限の式に人数が入っていない** —— 何人でも同じ点
+    if len({r["上限が入れ替わる課税価格"] for r in relief_switch_by_heirs()}) != 1:
+        raise ValueError("入れ替わる点が相続人の数で動いています。上限の式に人数は入りません")
+    # **基礎控除のほうは動く**（同じ表の中で、動く線と動かない線を並べるのが主題）
+    _checks.ascending([r["基礎控除"] for r in relief_switch_by_heirs()],
+                      "相続人が増えたときの基礎控除", strict=True)
+    # **全部寄せたときの「上限の割合」は、下げ止まる**（50%を割らない）
+    ratios = [r["上限が課税価格に占める割合"] for r in all_to_spouse_grid(3)]
+    if min(ratios) < SPOUSE_SHARE - 1e-9:
+        raise ValueError(
+            f"上限の割合が {min(ratios):.4f} まで落ちています。"
+            f"{SPOUSE_SHARE} を割ることはありません")
+    if not all(a >= b - 1e-9 for a, b in zip(ratios, ratios[1:])):
+        raise ValueError(f"上限の割合が増える向きに動いています: {ratios}")
+    # 1億6000万円までは、全部寄せれば一次相続は0
+    for e in (80_000_000, SPOUSE_FLOOR):
+        if all_to_spouse(e, 3)["一次相続で払う額"] != 0:
+            raise ValueError(f"課税価格{e:,}円を全部寄せたのに、一次相続の納税が出ています")
+
 
 def basic_deduction(heirs: int) -> int:
     """基礎控除。**法定相続人の数だけで決まる。** 財産額とは無関係。"""
@@ -334,6 +364,77 @@ def grid_error_grid(children: int = 2) -> list[dict]:
     return out
 
 
+# ---- 配偶者の税額軽減は、2つの上限の「多いほう」（2026-08-26 に足した）------
+#
+# `spouse_relief` は `max(課税価格 × 2分の1, 1億6000万円)` を上限にしています。
+# **どちらが効いているかは、課税価格だけで決まります** —— 相続人が何人いても、
+# 子が何人いても、**入れ替わる点は動きません。** 基礎控除のほうは
+# `3,000万円 + 600万円 × 人数` で人数とともに動くので、**同じ表の中に
+# 「人数で動く線」と「人数で動かない線」が並びます。**
+def relief_limit(estate: int) -> dict:
+    """**その課税価格で、どちらの上限が効いているか。**"""
+    share = int(estate * SPOUSE_SHARE)
+    return {
+        "課税価格": estate,
+        "法定相続分": share,
+        "下限": SPOUSE_FLOOR,
+        "効いている上限": max(share, SPOUSE_FLOOR),
+        "効いているのは": "法定相続分" if share > SPOUSE_FLOOR else "1億6000万円",
+    }
+
+
+def relief_switch() -> int:
+    """**2つの上限が入れ替わる課税価格。** `1億6000万円 ÷ 2分の1`。"""
+    return int(SPOUSE_FLOOR / SPOUSE_SHARE)
+
+
+def relief_limit_grid(estates: tuple[int, ...] = (
+        100_000_000, 160_000_000, 240_000_000, 320_000_000,
+        400_000_000, 600_000_000)) -> list[dict]:
+    """入れ替わる点をまたいで並べる。**点そのものも行に入れます。**"""
+    rows = [relief_limit(e) for e in estates]
+    return sorted(rows, key=lambda r: r["課税価格"])
+
+
+def all_to_spouse(estate: int, heirs: int) -> dict:
+    """**全部を配偶者が取ったときの、一次相続の税額。**
+
+    軽減の上限は課税価格の割合として効くので、
+    **1億6000万円を境に「全額」から落ちはじめ、
+    入れ替わる点から先は2分の1で下げ止まります。**
+    """
+    gross = total_tax(estate, heirs)
+    relief = spouse_relief(estate, heirs, 1.0)
+    lim = relief_limit(estate)["効いている上限"]
+    return {
+        "課税価格": estate,
+        "法定相続人": heirs,
+        "軽減する前の総額": gross,
+        "軽減される額": relief,
+        "一次相続で払う額": max(gross - relief, 0),
+        "軽減の割合": (relief / gross) if gross else 1.0,
+        "上限が課税価格に占める割合": min(1.0, lim / estate) if estate else 1.0,
+    }
+
+
+def all_to_spouse_grid(heirs: int = 3, estates: tuple[int, ...] = (
+        80_000_000, 160_000_000, 200_000_000, 240_000_000,
+        320_000_000, 480_000_000, 800_000_000)) -> list[dict]:
+    return [all_to_spouse(e, heirs) for e in estates]
+
+
+def relief_switch_by_heirs(heirs: tuple[int, ...] = (2, 3, 4, 5)) -> list[dict]:
+    """**人数で動く線と、動かない線を並べる。**"""
+    rows = []
+    for n in heirs:
+        rows.append({
+            "法定相続人": n,
+            "基礎控除": basic_deduction(n),
+            "上限が入れ替わる課税価格": relief_switch(),
+        })
+    return rows
+
+
 def _man(yen: int) -> str:
     """円を万円で読む（画面に出す桁を1つにするため）。"""
     return f"{yen / 10_000:,.1f}万円"
@@ -381,3 +482,50 @@ if __name__ == "__main__":
     for r in gap_grid(2):
         print(f"{r['estate']:11,d}円 {r['best_ratio']:15.0%} {r['best_total']:11,d}円 "
               f"{r['allin_total']:14,d}円 {r['loss']:11,d}円")
+
+    S = relief_switch()
+    print(f"\n=== 配偶者の税額軽減で「1億6000万円」が効くのは、"
+          f"課税価格 {S:,}円 まで ===")
+    print(f"{'課税価格':>12s} {'法定相続分（2分の1）':>20s} {'下限':>12s} "
+          f"{'効いている上限':>14s}  {'効いているのは'}")
+    for r in relief_limit_grid():
+        mark = "  ← **ここで入れ替わる（2つが等しい）**" if r["課税価格"] == S else ""
+        print(f"{r['課税価格']:11,d}円 {r['法定相続分']:19,d}円 {r['下限']:11,d}円 "
+              f"{r['効いている上限']:13,d}円  {r['効いているのは']}" + mark)
+    print(f"  → 上限は **`max(課税価格の2分の1, {SPOUSE_FLOOR:,}円)`** なので、"
+          f"入れ替わるのは **{SPOUSE_FLOOR:,} ÷ {SPOUSE_SHARE} ＝ {S:,}円** の1点です。"
+          "**「1億6000万円まで無税」だけを覚えていると、"
+          "ここから上では法定相続分のほうが大きいことが落ちます**")
+
+    H = 3
+    print(f"\n=== 全部を配偶者が取ったとき、一次相続でいくら払うか"
+          f"（法定相続人{H}人）===")
+    print(f"{'課税価格':>12s} {'軽減する前の総額':>15s} {'軽減される額':>13s} "
+          f"{'一次で払う額':>13s} {'軽減の割合':>10s} {'上限の割合':>10s}")
+    for r in all_to_spouse_grid(H):
+        print(f"{r['課税価格']:11,d}円 {r['軽減する前の総額']:14,d}円 "
+              f"{r['軽減される額']:12,d}円 {r['一次相続で払う額']:12,d}円 "
+              f"{r['軽減の割合']:9.1%} {r['上限が課税価格に占める割合']:9.1%}")
+    print(f"  → **上限の割合は、{SPOUSE_FLOOR:,}円 までは100%。"
+          f"そこから {S:,}円 まで落ちつづけ、"
+          f"そこから先は {SPOUSE_SHARE:.0%} で下げ止まります**"
+          f"（上限が課税価格に比例するようになるため）。"
+          "**財産が大きいほど「全部配偶者に寄せる」の効きが薄くなる**のではなく、"
+          "**半分のところで止まります**")
+
+    print("\n=== 同じ表の中に、人数で動く線と、人数で動かない線がある ===")
+    print(f"{'法定相続人':>10s} {'基礎控除':>13s} {'上限が入れ替わる課税価格':>24s}")
+    for r in relief_switch_by_heirs():
+        print(f"{r['法定相続人']:9d}人 {r['基礎控除']:12,d}円 "
+              f"{r['上限が入れ替わる課税価格']:23,d}円")
+    _rows = relief_switch_by_heirs()
+    print(f"  → 2人から{_rows[-1]['法定相続人']}人までで、基礎控除は "
+          f"{_rows[-1]['基礎控除'] - _rows[0]['基礎控除']:,}円 増えます"
+          f"（{_rows[0]['基礎控除']:,}円 → {_rows[-1]['基礎控除']:,}円）。"
+          f"**入れ替わる点は、その間ずっと {S:,}円 のままです**")
+    print(f"  → 基礎控除は1人につき {PER_HEIR_DEDUCTION:,}円 動くのに、"
+          f"**入れ替わる点は {S:,}円 から1円も動きません。**"
+          "**上限の式に人数が入っていない**からです"
+          f"（`max(課税価格の2分の1, {SPOUSE_FLOOR:,}円)`）。"
+          "**「相続人を増やせば軽減も広がる」は、基礎控除の話であって、"
+          "配偶者の軽減の話ではありません**")
