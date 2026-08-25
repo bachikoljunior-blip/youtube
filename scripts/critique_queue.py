@@ -44,6 +44,50 @@ LEDGER = ROOT / "data" / "critique.jsonl"
 JST = timezone(timedelta(hours=9))
 
 
+def _was_short(work: Path, lines: list[str], plan_src: Path) -> bool:
+    """**この本はショートとして作られたか。** 実物だけで決める。
+
+    印は `work/slide_seconds.json` —— `src/pipeline.py` の `if args.short:` の
+    **中でしか書かれません**。あればショート、無ければ長尺。
+
+    無いときの控えは「**コマの数が文の数より多いか**」です。ショートは
+    `visuals.reveal_variants` で1つの文の絵を複数コマに割るので必ず `コマ > 文`、
+    長尺は割らないので必ず `コマ = 文` になります。実測（控え430本）で
+    **例外は0本**、2つの群は文字数でもきれいに割れます
+    （ショート 5〜6行・94〜140字／長尺 14〜25行・1473〜2191字）。
+    """
+    if (work / "slide_seconds.json").exists():
+        return True
+    try:
+        plan = json.loads(plan_src.read_text(encoding="utf-8"))
+    except Exception:                                          # noqa: BLE001
+        return False        # **分からないときは長尺**（`--short` を付け足さない側）
+    if not isinstance(plan, list) or not lines:
+        return False
+    return len([v for v in plan if isinstance(v, dict)]) > len([x for x in lines if x])
+
+
+def orientation_of(meta: dict, plan_path: Path) -> str:
+    """控えの1本の向き。**保存された `orientation` を鵜呑みにしないこと。**
+
+    2026-08-26 より前に積んだ控えは、`orientation` が
+    `script.get("short", True)` の既定でできています ＝ **469本とも「縦」**。
+    定数なので、読む側で数え直します（上の `_was_short` と同じ数え方）。
+
+    **消して作り直さないこと** —— 控えは投稿の時点の記録で、
+    `stashed_at` 以外に作り直せる材料がありません。**読むときに直します。**
+    """
+    try:
+        plan = json.loads(plan_path.read_text(encoding="utf-8"))
+        frames = [v for v in plan if isinstance(v, dict)]
+    except Exception:                                          # noqa: BLE001
+        return str(meta.get("orientation") or "不明")
+    lines = [x for x in (meta.get("narration") or []) if x]
+    if not frames or not lines:
+        return str(meta.get("orientation") or "不明")
+    return "縦" if len(frames) > len(lines) else "横"
+
+
 def _change_ratios(work: Path) -> list[float] | None:
     """隣り合うコマが画面のどれだけを塗り替えているか、**焼いた実物**から測る。
 
@@ -168,7 +212,27 @@ def stash(topic: str, video_id: str, script: dict, work: Path,
                 "video_id": video_id,
                 "topic": topic,
                 "stashed_at": datetime.now(JST).isoformat(timespec="seconds"),
-                "orientation": "縦" if script.get("short", True) else "横",
+                # **実物から決めること。**（2026-08-26 に直した）
+                #
+                # ここは長く `"縦" if script.get("short", True) else "横"` でした。
+                # **台本に `short` という鍵はありません**（`VideoScript` に無い）。
+                # だから `.get` の既定 `True` が必ず出て、**控え469本が469本とも
+                # 「縦」**でした。**向きではなく定数**です。
+                #
+                # **黙っていただけではありません。2つ壊しました。**
+                #
+                #   1. 下の `main()` が、この欄を見て焼き直しの手を組みます
+                #      （`bake_slides.py --plan … --short`）。長尺の本にも
+                #      **必ず `--short` が付いていました**（＝縦・約30秒で焼き直す）
+                #   2. 2026-08-25〜26 の申し送りが、この欄を「向き」として読み、
+                #      「4本とも縦なのに `verify` の門を素通りした ＝ 門が壊れている」
+                #      と書きました。**実際は4本とも長尺**で、門は
+                #      `if portrait:` の中にあって長尺に掛かっていなかっただけです。
+                #      **2回ぶんの回が、この1行の嘘を追いかけています。**
+                #
+                # `slide_seconds.json` は `src/pipeline.py` の `if args.short:` の
+                # **中でしか書かれません**。＝ ショートの印そのものです。
+                "orientation": "縦" if _was_short(work, lines, plan_src) else "横",
                 "narration": [ln for ln in lines if ln],
                 "slides_plan": plan_kept,
                 "change_ratios": _change_ratios(work),
@@ -441,15 +505,22 @@ def main(argv: list[str]) -> int:
             print(f"{vid} の材料はありません（投稿より前に投稿したものは残っていません）")
             return 1
         d = json.loads(meta.read_text(encoding="utf-8"))
-        print(f"contact sheet : {sheet}")
-        print(f"動画の向き    : {d['orientation']}")
         plan = STASH / f"{vid}.plan.json"
+        # **保存された `orientation` ではなく、数え直したほうを使うこと**
+        # （2026-08-26）。2026-08-26 より前の控えは 469本とも「縦」で、
+        # **長尺の焼き直しにも `--short` が付いていました。**
+        facing = orientation_of(d, plan)
+        print(f"contact sheet : {sheet}")
+        print(f"動画の向き    : {facing}"
+              + ("" if facing == str(d.get("orientation")) else
+                 f"（控えの `orientation` は {d.get('orientation')!r}。"
+                 "**あの欄は 2026-08-26 まで定数でした** —— コマ数と文の数で数え直しています）"))
         if plan.exists():
             # **独立評価の子に渡すものではありません**（渡してよいのは
             # contact sheet と読み上げ文の2つ）。こちらが絵を焼き直すための入力です。
             print(f"焼き直す入力  : {plan}")
             print(f"  python scripts/bake_slides.py --plan {plan}"
-                  f"{' --short' if d['orientation'] == '縦' else ''}")
+                  f"{' --short' if facing == '縦' else ''}")
         else:
             print("焼き直す入力  : **ありません**（この本は絵を測り直せません）")
         print("読み上げ文:")
@@ -480,7 +551,9 @@ def main(argv: list[str]) -> int:
             when = "締切不明  "
         else:
             when = f"あと{hours:5.0f}h"
-        print(f"  {d['video_id']}  {when}  {d['orientation']}  {len(d['narration'])}行  "
+        # **数え直したほう**（保存された欄は 2026-08-26 まで定数だった）。
+        facing = orientation_of(d, STASH / f"{d['video_id']}.plan.json")
+        print(f"  {d['video_id']}  {when}  {facing}  {len(d['narration'])}行  "
               f"{bakeable}  投稿 {d['stashed_at'][:16]}")
     n_bakeable = sum(1 for d in rows if (STASH / f"{d['video_id']}.plan.json").exists())
     print()
