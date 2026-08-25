@@ -69,11 +69,18 @@ import yaml
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
+from src import settle as settle_mod  # noqa: E402  （`sys.path` を通した後でないと読めません）
+
 JST = timezone(timedelta(hours=9))
 
 #: Analytics の遅れが読めなかったときの控え。**0 にしないこと** ——
 #: 0 にすると「遅れは無い」と言い切ることになり、いちばん危ない側へ倒れます。
 FALLBACK_LAG_DAYS = 3
+
+#: `needs` に `settle_days` が書いていないときの既定。**実測は `src/settle.py`**。
+#: **ここに数を書かないこと（2026-08-26）** —— 元は `need.get("settle_days", 7)` と
+#: 直に 7 が入っていて、`src/settle.py`（72時間で判定は入れ替わらない）と別々でした。
+DEFAULT_SETTLE_DAYS = settle_mod.SETTLE_DAYS
 
 
 def today_jst() -> date:
@@ -194,7 +201,7 @@ def _ans_published_group(need: dict, as_of: date, lag: int) -> Answer:
     """
     after = str(need.get("created_after") or "")
     count = int(need.get("count") or 1)
-    settle = int(need.get("settle_days", 7))
+    settle = int(need.get("settle_days", DEFAULT_SETTLE_DAYS))
     since_pub = str(need.get("published_after") or "")
     rows = [r for r in _rows("uploaded.jsonl") if str(r.get("uploaded_at") or "") >= after]
     pub = sorted(p for p in (str(r["at"])[:10] for r in rows if r.get("at")) if p >= since_pub)
