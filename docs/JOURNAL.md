@@ -48637,14 +48637,18 @@ engaged 比率は、その日の本数と逆向きに動きます（08/20 まで
 
 ### 次の回へ
 
-1. **`length_verdict` と `hook_verdict` にも `density_confound.line()` を足すこと。**
-   この回は `family_order_verdict` にしか付けていません。**3件とも同じ形で外れており、
-   3件とも密度と共線**なので、片方だけ警告が出るのは実物と食い違います。
-   `report()` に2行足すだけです（`published` は既に手元にあります）。
+1. ~~`length_verdict` と `hook_verdict` にも `density_confound.line()` を足すこと。~~
+   **この回のうちに潰しました**（2つ目の ship・腕 `none`・moves 0）。
+   実測は `length_verdict` **2.0倍**（対照2本/日 対 処置4本/日）／
+   `hook_verdict` **6.2倍**（4本/日 対 25本/日）で、**3件とも「交絡あり」**が出ます。
+   あわせて、外れたときの `next_if_false` の案内を交絡の有無で分けました ——
+   **交絡しているうちは「形式そのものを疑う」（M5 / M2）へ進む根拠がここにはありません。**
 2. **`09/25〜09/26` を詰めないこと。** `status.py` は毎回
    「1日2本以下の日が2日あります → そこは詰められます」と鳴らします。
-   **窓（`src/measure_window.py`）が `--date` / `--move` は止めますが、
-   `reschedule.py --compact` / `--spread` が窓を見るかは確かめていません。**
+   **窓は効きます**（この回に確かめました）—— `scripts/reschedule.py` は
+   `--spread`（256/267行）でも `--compact`（447/488行）でも `measure_window.inside()` を見ており、
+   **置き先からも動かす対象からも外します。** `--move` / `--date` は `check()` で止まります。
+   **確かめていないのは `--apply` を実際に撃った後の姿だけ**です（日枠が 403 で撃てていません）。
    次の回は `python scripts/reschedule.py --compact --dry-run` 相当で
    **09/25〜09/26 が動かされないこと**を目で見ること。動くなら、そこに門を足すこと。
 3. **`--moves` は「早まる／遠のく」の両方を宣言できる欄なのに、
