@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import math
 from pathlib import Path
 
 import pytest
@@ -767,9 +768,12 @@ def test_合格点が立っていないなら_確かめる日より前には到�
     assert not t["met"]
     assert t["ratio"] > 1
     assert t["conditional"] is True
-    assert t["verify_day"] == 6       # 1日後に公開 → +2日で伸びきる → +3日で読める
+    # 1日後に公開 → 伸びきる（`MATURE_HOURS`）→ 読める（`ANALYTICS_LAG_DAYS`・**実測**）
+    # **日数も日付も焼き込まないこと（2026-08-26）** —— 遅れは `src/settle.py` の実測で動きます
+    _lag = math.ceil(eta.MATURE_HOURS / 24) + eta.ANALYTICS_LAG_DAYS
+    assert t["verify_day"] == 1 + _lag
     # **日付そのものを持つこと**（`_fmt_days` は UTC に足すので JST 早朝に1日ずれる）
-    assert t["verify_on"] == _date(2026, 8, 26)
+    assert t["verify_on"] == _date(2026, 8, 21) + timedelta(days=_lag)
     assert t["bar_day"] >= t["verify_day"]
     assert pl["days_to_target"] == pytest.approx(t["bar_day"] + eta.REVENUE_WINDOW_DAYS)
 
@@ -857,7 +861,9 @@ def _uploaded(tmp_path, days):
 
 def test_答えが返る日は_伸びきる48時間とAnalyticsの3日遅れの和():
     """公開から **5日**。どちらか片方を落とすと、次の回が早すぎる日に測ります。"""
-    assert eta.answer_day(_date(2026, 8, 21)) == _date(2026, 8, 26)
+    # **日付を焼き込まないこと（2026-08-26）** —— 遅れは実測で動きます（`src/settle.py`）
+    assert eta.answer_day(_date(2026, 8, 21)) == _date(2026, 8, 21) + timedelta(
+        days=math.ceil(eta.MATURE_HOURS / 24) + eta.ANALYTICS_LAG_DAYS)
 
 
 def test_いちばん近い穴は_いちばん早く測れる日ではない(tmp_path):
@@ -872,8 +878,8 @@ def test_いちばん近い穴は_いちばん早く測れる日ではない(tmp
     assert t["soonest"] == _date(2026, 8, 21)
     assert t["hole"] == _date(2026, 9, 2)
     assert t["days_lost"] == 12
-    assert t["answer_soonest"] == _date(2026, 8, 26)
-    assert t["answer_hole"] == _date(2026, 9, 7)
+    assert t["answer_soonest"] == eta.answer_day(t["soonest"])
+    assert t["answer_hole"] == eta.answer_day(t["hole"])
 
 
 def test_穴が無ければ失うものも無い(tmp_path):
@@ -901,7 +907,7 @@ def test_止めている入力に_いつ答えが返るかが載る():
     b = pl["blocking"]
     assert b["what"] == "長尺の1本あたり再生"
     assert b["targets"]["soonest"] == _date(2026, 8, 21)
-    assert b["targets"]["answer_soonest"] == _date(2026, 8, 26)
+    assert b["targets"]["answer_soonest"] == eta.answer_day(b["targets"]["soonest"])
 
 
 def test_未知が消えたら_返る日の欄も消える():
@@ -1100,7 +1106,7 @@ def test_予約済みの長尺で標本が埋まるなら_その日を出す(tmp
     assert [r["video_id"] for r in fc["booked"]] == [f"L{i}" for i in range(6)]
     assert fc["short_by"] == 0
     # 6本目は JST 08/31 公開 → 伸びきる2日 + Analytics 3日遅れ
-    assert fc["reaches"] == eta.answer_day(_date(2026, 8, 31)) == _date(2026, 9, 5)
+    assert fc["reaches"] == eta.answer_day(_date(2026, 8, 31))
 
 
 def test_予約が足りなければ_足りない本数を返す(tmp_path):
