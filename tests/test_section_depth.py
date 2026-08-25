@@ -262,3 +262,70 @@ def test_目標超の行は_あと何節_と書かない():
     assert row, "iryohi の行が出ていない"
     assert "あと33節" not in row[0], f"掃引の件数を節の数として書いている: {row[0]}"
     assert "目標超" in row[0]
+
+
+# --- 長尺の族に入っているか（2026-08-26 09:0x に足した）--------------------
+#
+# **同じことを2か所が別々に言っていて、片方しか読まれていなかった3件目**です。
+# `status.py` の (B) の候補は 掘り甲斐だけで並んでいて、
+# `topic_forge --list` の「**同じ族に節を足しても、7日ぶんの上限は1本も
+# 増えません**」を知りませんでした。実測（08/26 08:xx）の上位5件は
+# iryohi / keihi / shougai / nenkin / yukyu で、**上4件はもう長尺の族**です。
+#
+# **故障注入つきで書きます** —— 印が出ているだけでは通らないように、
+# 「区別しない実装」で落ちる形にすること。
+
+
+def test_長尺の族に入っている候補には印がつく():
+    mods = _mods({"iryohi": 3, "asai": 3, "x": 8, "y": 8, "z": 8})
+    lines = section_depth.report_lines(mods, long_families={"iryohi"})
+    row = [ln for ln in lines if ln.strip().startswith("iryohi")]
+    assert row, "iryohi の行が出ていない"
+    assert "長尺の族にもう入っています" in row[0], row[0]
+    other = [ln for ln in lines if ln.strip().startswith("asai")]
+    assert other and "長尺の族にもう入っています" not in other[0], other
+
+
+def test_故障注入_上限を動かす候補を名指しする行が要る():
+    """**印だけでは足りません。** 上位が全部「もう入っている」回に、
+    どこへ行けばよいかが出ないと、次の回は上から順に取ります。"""
+    mods = _mods({"iryohi": 3, "keihi": 3, "asai": 4, "x": 8, "y": 8})
+    lines = section_depth.report_lines(
+        mods, long_families={"iryohi", "keihi"})
+    hit = [ln for ln in lines if "実際に動かすのは" in ln]
+    assert hit, f"上限を動かす候補を名指しする行が無い: {lines}"
+    body = "\n".join(lines)
+    assert "asai" in body
+
+
+def test_全部が長尺の族なら_A_しか残らないと言う():
+    mods = _mods({"a": 3, "b": 3, "c": 8, "d": 8, "e": 8})
+    lines = section_depth.report_lines(
+        mods, long_families={"a", "b", "c", "d", "e"})
+    body = "\n".join(lines)
+    assert "新しい表を書く (A) しか残っていません" in body, body
+
+
+def test_読めない回は_見ていないと断る():
+    """**黙って全部を候補に見せないこと。** 読めない回は、そう言う。"""
+    mods = _mods({"a": 3, "b": 3, "c": 8, "d": 8, "e": 8})
+    lines = section_depth.report_lines(mods, long_families=None)
+    body = "\n".join(lines)
+    assert "長尺の族が読めない" in body, body
+    assert "長尺の族にもう入っています" not in body
+
+
+def test_渡さない回は_今までどおり():
+    """既定は None なので、**前からの呼び出しは壊れません。**"""
+    mods = _mods({"a": 3, "b": 3, "c": 8, "d": 8, "e": 8})
+    lines = section_depth.report_lines(mods)
+    assert any(ln.strip().startswith("a ") or ln.strip().startswith("a\t")
+               or ln.strip().startswith("a  ") for ln in lines), lines
+
+
+def test_long_form_families_は集合かNone():
+    """実物を読む。**落ちても None を返すこと**（在庫の節を止めない）。"""
+    got = section_depth.long_form_families()
+    assert got is None or isinstance(got, set)
+    if got:
+        assert all(isinstance(x, str) for x in got)

@@ -232,13 +232,56 @@ def ties_at_top(rows: list[tuple[str, int, int, float]]) -> int:
     return sum(1 for r in rows if r[3] == top)
 
 
+
+# --- 長尺の族に入っているか ------------------------------------------------
+# **ここが 2026-08-26 09:0x まで抜けていました**（同じことを2か所が別々に言って、
+# 片方しか読まれていなかった3件目。1件目は `day_cap` の分母、2件目は合否の門）。
+#
+# `status.py` の「(B) の候補」は 掘り甲斐 ＝ (目標 − 節数) × 族の順番の値 だけで
+# 並んでいて、**その族が長尺のテーマを持っているかを見ていませんでした。**
+# ところが `scripts/topic_forge.py --list` は同じ画面でこう言っています:
+#
+#     **7日ぶんで取れるのは最大 22本**（1族から 2本まで）
+#     **詰まっているのは節ではなく族の数です。同じ族に節を足しても、
+#       この数は1本も増えません。**
+#
+# 実測（2026-08-26 08:xx）: (B) の上位5件は
+# iryohi / keihi / shougai / nenkin / yukyu で、**上4件はもう長尺の族**です。
+# そこへ節を足しても、**7日ぶんの長尺の上限は 0本 動きます。**
+# 4,000時間の門に入るのは長尺だけなので、**上位4件は門に1分も積みません。**
+#
+# **覆る条件**: `batch_build` の `--per-calc` が族あたり2本という上限を
+# 外したら、この区別は要らなくなります（族の数が律速でなくなるので）。
+def long_form_families() -> set[str] | None:
+    """**まだ投稿していない長尺のテーマ**を持っている族。読めなければ None。
+
+    `scripts/topic_forge.py` の `print_long_stock()` と**同じ数え方**です
+    （`s-` で始まらない ＝ 長尺、かつ台帳に無い ＝ 未投稿）。
+    ここを別々に数えると、2か所が違うことを言い始めます。
+    """
+    try:
+        from src import config, dupes
+
+        pool = config.load_topics()["topics"]
+        used = {r["topic"] for r in dupes.ledger_rows() if r.get("topic")}
+    except Exception:                                          # noqa: BLE001
+        return None
+    return {t["calc"] for t in pool
+            if t.get("calc") and t["id"] not in used
+            and not t["id"].startswith("s-")}
+
 def report_lines(all_sections: dict[str, dict[str, str]],
                  scores: dict[str, float] | None = None,
                  base: float = 1.0,
                  limit: int = 5,
                  sweep_counts: dict[str, int] | None = None,
-                 novel_counts: dict[str, int] | None = None) -> list[str]:
-    """`status.py` がそのまま印刷する行。**空のリストを返すことがあります。**"""
+                 novel_counts: dict[str, int] | None = None,
+                 long_families: set[str] | None = None) -> list[str]:
+    """`status.py` がそのまま印刷する行。**空のリストを返すことがあります。**
+
+    `long_families` を渡すと、**その族へ節を足しても7日ぶんの長尺の上限が
+    1本も増えないこと**を候補の行に書きます（`long_form_families()`）。
+    """
     med = median_depth(all_sections)
     tgt = target_depth(all_sections)
     # **`max()` を素で呼ばないこと**（検査が見つけた。`src/calc/` が読めない回は空で来る）。
@@ -294,8 +337,41 @@ def report_lines(all_sections: dict[str, dict[str, str]],
                              if c else " ← **機械には1つも見えていません**")
             else:
                 line += f" ・掃引 {c}件" + ("" if c else " ← **機械には1つも見えていません**")
-        out.append(line + "）")
+        line += "）"
+        if long_families is not None and mod in long_families:
+            line += "  ← **長尺の族にもう入っています（足しても上限は 0本）**"
+        out.append(line)
+    out += _long_lines(whole, long_families)
     out.append("    **掘って出なければ (A) に戻る合図です。**"
                "そのときは「この族は尽きた」と `docs/JOURNAL.md` に書くこと"
                "（書かないと次の回が同じ表を掘ります）。")
     return out
+
+
+def _long_lines(whole: list[tuple[str, int, int, float]],
+                long_families: set[str] | None,
+                limit: int = 5) -> list[str]:
+    """**長尺の上限を実際に動かす候補**を、掘り甲斐の順に名指しする。
+
+    上の一覧は 掘り甲斐 だけで並んでいるので、**もう長尺の族に入っている表**が
+    上位を占めます。そこへ節を足しても `batch_build` の `--per-calc`（族あたり2本）
+    が効いて、**7日ぶんの長尺の上限は 0本 動きます。**
+    """
+    if long_families is None:
+        return ["       （長尺の族が読めないので、上の順番は"
+                "**7日ぶんの上限を動かすか**を見ていません）"]
+    fresh = [r for r in whole if r[0] not in long_families]
+    if not fresh:
+        return ["       [!] **どの候補も、もう長尺の族に入っています。**"
+                "節を足しても7日ぶんの上限は1本も増えません。"
+                "**`src/calc/` に新しい表を書く (A) しか残っていません。**"]
+    names = " ".join(f"{m}({v:.0f})" for m, _n, _g, v in fresh[:limit])
+    return [
+        f"       → **7日ぶんの長尺の上限を実際に動かすのは、この{len(fresh)}件のほう**"
+        f"（まだ長尺の族に入っていない ＝ 1件つき **+2本**）:",
+        f"          {names}",
+        "          **同じ族に4つ目を足しても、上限は1本も増えません**"
+        "（`--per-calc` は族あたり2本）。"
+        "**4,000時間の門に入るのは長尺だけ**なので、"
+        "ここを外すと門には1分も積みません",
+    ]

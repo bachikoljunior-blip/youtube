@@ -1100,9 +1100,15 @@ def _print_deepening(all_sections: dict[str, dict[str, str]]) -> None:
         print(f"    （掃引の既出判定が読めません: {str(exc)[:80]}）")
         for h in hits:
             counts[h["表"]] = counts.get(h["表"], 0) + 1
+    # **長尺の族に入っているかを渡す**（2026-08-26 09:0x に足した）。
+    # 掘り甲斐だけで並べると、**もう長尺の族に入っている表が上位を占め**、
+    # そこへ節を足しても7日ぶんの長尺の上限は 0本 動きます
+    # （`--per-calc` が族あたり2本）。実測: 上位5件のうち4件がそれでした。
     for line in section_depth.report_lines(all_sections, scores, base,
                                            sweep_counts=counts,
-                                           novel_counts=novel):
+                                           novel_counts=novel,
+                                           long_families=section_depth
+                                           .long_form_families()):
         print(line)
     _print_sweep_hint(hits)
 
