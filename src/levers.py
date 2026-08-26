@@ -325,6 +325,13 @@ def arm_state(eta_row: dict | None) -> dict:
             #     言っている回は、名指しを外すのが**正しい**です。
             "hint_covered": row.get("lever_hint_covered"),
             "caps": caps, "reaches": reaches,
+            # **「その腕を凍らせたら軌跡は何日 遠のくか」**（2026-08-26）。
+            #     `reaches=False`（＝この腕だけを天井まで引いても届かない）は
+            #     **十分でない**ことしか言っていません。**必要かどうかは別の問い**で、
+            #     それに答えるのがこの数です（`scripts/eta.py` の `frozen_days`）。
+            #     `>0` なら、回転をよその腕へ全部 配り直しても遠のく ＝ 必要。
+            "frozen": {k: v for k, v in (row.get("arm_frozen_days") or {}).items()
+                       if isinstance(v, (int, float))},
             "thresholds": row.get("arm_threshold") or {},
             # **面が割れていて生きている腕の、その理由**（`density` だけ）。
             "open_why": ({"density": density_open_why} if density_open_why else {}),
@@ -384,10 +391,20 @@ def lever_notes(lever: str | None, state: dict) -> list[str]:
         #     **凍らせて測ったら、逆でした**（下の1行が誰でも引き直せます）:
         #       いまの軌跡 2026-12-28 → `sub_rate` を凍結すると **2027-04-21（+115日）**。
         #     **門は効いています。** 直したのは模型ではなく、この文言のほうです。
+        # **ここは長らく「+115日（2026-08-26）」と べた書き でした**（同日に直した）。
+        #     べた書きは腐ります —— この本文が名指ししている壊れ方そのものです。
+        #     いまは `eta.py` の `frozen_days` が毎回 測り直した数を運びます。
+        frozen = (state.get("frozen") or {}).get(lever)
+        if frozen is not None and frozen > 0.5:
+            out.append(f"             [!] **ただし、この腕を凍らせると軌跡は {frozen:+,.0f}日**"
+                       "（回転はよその腕へ配り直したうえで）。"
+                       " **十分でないだけで、必要な腕です。**")
+        elif frozen is not None:
+            out.append(f"             凍らせても軌跡は {frozen:+,.0f}日 ＝"
+                       " **回転をよそへ回しても同じ。この腕は要りません。**")
         if lever == "sub_rate":
             out.append("             **登録者は AND の門です**（1,000人）。"
-                       "この行を「登録者は要らない」と読まないこと ——"
-                       " 伸びを凍らせると軌跡は実測で **+115日**（2026-08-26）。")
+                       "この行を「登録者は要らない」と読まないこと。")
         out.append("             **単独で到達日を動かしたいなら、別の腕にすること。**"
                    " 確かめ方（`arms` に `rate=0` を渡して解き直す）:")
         out.append("               `eta.trajectory(m, a, arms=<その腕だけ rate=0>)`"

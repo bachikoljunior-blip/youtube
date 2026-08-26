@@ -2497,6 +2497,74 @@ def trajectory_all(m: dict, a0: dict, *, supply: dict | None = None,
     }
 
 
+def frozen_days(m: dict, a0: dict, tr: dict, levers_: list[str], *,
+                supply: dict | None = None, points: list[dict] | None = None,
+                today: date | None = None) -> dict[str, float | None]:
+    """**その腕を凍らせたら、軌跡は何日 遠のくか。**（2026-08-26・最適化の回）
+
+    ## なぜ要るか（**この関数が無かったせいで、同じ日に正反対が印字されていました**）
+
+    `lever_days()` の表は「**他の3本を今日の実測で凍らせたまま、1本だけを
+    天井まで引く**」モデルです。そこで届かなかった腕に、`_report_levers` は
+    こう書いていました（原文・2026-08-26 に消した）:
+
+        **上の日付を動かせない腕: `sub_rate`／`density`**
+        —— **ここに前提を置いても、到達日は動きません**
+
+    ところが同じプログラムの `--alloc` は、同じ日・同じ点で
+
+        **いちばん早いのは `sub_rate`**（そのままより **3日 早い**）
+        立てるときは `hypotheses.yaml` に `lever:` をその腕で書くこと
+
+    と出します。**「置いても動かない」と「次はここに置くのが最短」が、
+    同じプログラムから同時に出ていました。**
+
+    正しいのは `--alloc` の側です。頭に出る日付は**軌跡**（4本とも動かす）で、
+    その内訳は実測で `sub_rate` ×13.41、**そのとき縛っているのは
+    収益化の門（登録者 1,000人 の AND）**——`sub_rate` はその床に直に触ります。
+    `CLAUDE.md` が「凍らせた企画についての恒真式であって予測ではない」と
+    名指ししているのが、まさに `lever_days` の側です。
+
+    ## 何を測るか
+
+    **その腕の `rate` を 0 にして、軌跡を解き直すだけ**です。
+    `_factors_at()` は `rate == 0` の腕を `live` から外すので、
+    **空いた配分は残りの腕へ配り直されます** —— つまりこれは
+    「**この腕に回していた回転を、全部よその腕へ回したら**」の線です。
+    **それが「必要か」の正しい問いの形**です（「十分か」ではなく）。
+
+        戻り値 > 0   凍らせると遠のく ＝ **その腕は必要**（十分でなくても）
+        戻り値 = 0   回転をよそへ回しても同じ ＝ **この腕は要らない**
+        戻り値 None  base が届かない回など、比べられない
+
+    **`src/levers.py` はこの数を べた書き していました**（「+115日（2026-08-26）」）。
+    べた書きは腐ります。**ここで毎回 測り直して渡すこと。**
+
+    費用: 腕1本につき軌跡1本（**API 0単位・実測 15〜20秒**）。
+    呼ぶのは「天井まで引いても届かない」と出た腕だけなので、普通は1〜2本です。
+    """
+    out: dict[str, float | None] = {}
+    base = (tr or {}).get("base") or {}
+    base_days = base.get("days")
+    arms = (tr or {}).get("arms") or {}
+    if not levers_ or not arms or base_days is None or base_days >= NEVER:
+        return {k: None for k in levers_}
+    kw = dict(supply=supply, points=points, today=today or today_jst())
+    for lv in levers_:
+        if lv not in arms:
+            out[lv] = None
+            continue
+        cold = {k: (dict(v) if k != lv else {**v, "rate": 0.0}) for k, v in arms.items()}
+        try:
+            t = trajectory(m, a0, arms=cold, **kw)
+        except Exception:                                      # noqa: BLE001 — 回を止めない
+            out[lv] = None
+            continue
+        d = t.get("days")
+        out[lv] = None if (d is None) else (min(d, NEVER) - base_days)
+    return out
+
+
 def _realloc_arms(arms: dict, share: dict[str, float]) -> dict:
     """腕の束を、**別の配分**で解けるように組み直す。
 
@@ -4094,9 +4162,34 @@ def _report_levers(pl: dict) -> list[str]:
     dead = [r["lever"] for r in rows
             if r.get("cap") is not None and not r.get("reachable_at_cap")]
     if dead:
-        P(f"    **上の日付を動かせない腕: {'／'.join(f'`{d}`' for d in dead)}** ——"
-          "  天井まで引いても届きません。**ここに前提を置いても、到達日は動きません**"
-          "（門1 など、別の段には効くことがあります）。")
+        # **ここには長らく「ここに前提を置いても、到達日は動きません」と
+        #     書いてありました。偽です**（2026-08-26・最適化の回に消した）。
+        #     同じプログラムの `--alloc` が、同じ日・同じ点で
+        #     「**いちばん早いのは `sub_rate`**（そのままより 3日 早い）。
+        #     立てるときは `hypotheses.yaml` に `lever:` をその腕で書くこと」
+        #     と出していました。**「置いても動かない」と「次はここに置け」**です。
+        #     上の表は**他の3本を今日の実測で凍らせた**モデルで、
+        #     `CLAUDE.md` が「凍らせた企画についての恒真式」と名指ししている側。
+        #     **十分でないことは、要らないことではありません。**
+        frz = pl.get("arm_frozen_days") or {}
+        P(f"    **この腕**だけ**を天井まで引いても届かない腕: "
+          f"{'／'.join(f'`{d}`' for d in dead)}**"
+          " —— 言っているのは**十分でない**ことだけです。"
+          "**「ここに前提を置いても動かない」ではありません**"
+          "（門1 など、別の段には効きます）。")
+        for d in dead:
+            v = frz.get(d)
+            if v is None:
+                P(f"      `{d:<10}` 凍らせた線が出ていません"
+                  "（`--no-frozen` か、軌跡が解けなかった回）。"
+                  " **『要らない』と読まないこと。**")
+            elif v > 0.5:
+                P(f"      `{d:<10}` **この腕を凍らせると軌跡は {v:+,.0f}日**"
+                  "（回転はよその腕へ配り直したうえで）→ **必要な腕です。**"
+                  " 次の1件をどの腕に立てるかは `python scripts/eta.py --alloc`")
+            else:
+                P(f"      `{d:<10}` 凍らせても軌跡は {v:+,.0f}日 ＝"
+                  " **回転をよそへ回しても同じ。この腕は要りません。**")
     P("    **「その倍率にできる」とは言っていません。** 言っているのは"
       "「そこまで引けたら何日縮むか」だけで、**引けるかどうかは別の話**です。")
     return out
@@ -4576,6 +4669,17 @@ def solve(m: dict, points: list[dict]) -> dict:
     except Exception as exc:                                   # noqa: BLE001
         print(f"[eta] 軌跡を解けませんでした: {type(exc).__name__}: {exc}")
         tr = None
+    # --- **「天井まで引いても届かない」腕を、必要／不要で割る**（2026-08-26）---
+    #     この1行が無かったせいで、頭の表は「ここに前提を置いても動きません」と
+    #     書き、`--alloc` は同じ日に「次の1件はその腕に置くのが最短」と書いて
+    #     いました。**測れば済む話です**（`frozen_days` の docstring に全文）。
+    #     費用は腕1本につき軌跡1本（API 0単位・15〜20秒）。**普通は1〜2本**。
+    if tr is not None and not getattr(args, "no_frozen", False):
+        _dead = [r["lever"] for r in (pl.get("lever_days") or [])
+                 if r.get("cap") is not None and not r.get("reachable_at_cap")]
+        if _dead:
+            pl["arm_frozen_days"] = frozen_days(m, a, tr, _dead,
+                                                supply=sup, points=points)
     # **引く腕は1つに絞ること。** 軌跡が出た回は、そちらが名指しした腕を採ります。
     #     `plan()` の `lever_hint` は「いちばん遅い床の名前」＝**診断**で、
     #     **引いたら何日縮むか**は言っていません。同じ見出しに2つの腕が並ぶと、
@@ -4664,6 +4768,13 @@ def _row(m: dict, a: dict, pl: dict, tr: dict | None, sup: dict | None) -> dict:
     if _ld:
         row["arm_reaches"] = {r["lever"]: bool(r.get("reachable_at_cap")) for r in _ld}
         row["arm_threshold"] = {r["lever"]: r.get("threshold") for r in _ld}
+    # **「凍らせたら何日 遠のくか」も積む**（2026-08-26）。
+    #     `arm_reaches` だけを読むと、`drift.py` はその腕を「引き代なし」に
+    #     数えます。**十分でないことと、要らないことは別**なので、
+    #     判別できる数を同じ行に置きます（`frozen_days`）。
+    if pl.get("arm_frozen_days"):
+        row["arm_frozen_days"] = {k: (None if v is None else round(float(v), 1))
+                                  for k, v in pl["arm_frozen_days"].items()}
     row["videos_needed_gate1"] = pl.get("gate1", {}).get("need_videos")
     # --- **天井（面と混ざり方）も積む**（2026-08-20 23:3x。前の周の申し送り②）---
     #     `--reflect` は「出発点の行」と「解き直した行」の差を取ります。
@@ -5069,6 +5180,10 @@ def main() -> int:
     ap.add_argument("--note", metavar="1行", help="--reflect に添える1行（何を入れ直したか）")
     # **毎回は撃ちません**（軌跡1本 15〜20秒 × 腕4つ）。頭の3行が
     # 「過去の配分」と「台帳の配分」の差を出すので、**その差が気になった回だけ。**
+    ap.add_argument("--no-frozen", action="store_true",
+                    help="「その腕を凍らせたら何日 遠のくか」を測らない"
+                         "（軌跡1本ぶん 15〜20秒 を省く。**普通は付けないこと** ——"
+                         " 付けると『十分でない腕』と『要らない腕』が区別できません）")
     ap.add_argument("--alloc", action="store_true",
                     help="次の前提をどの腕に立てるのが早いか、腕べつに解く（API 0単位・**実測 4分**）")
     args = ap.parse_args()
