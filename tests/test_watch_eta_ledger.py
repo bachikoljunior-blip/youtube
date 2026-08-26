@@ -13,6 +13,7 @@
 予約の順番待ちのぶんだけ後**です。その間、走査の伸びは定義として 0.00/日 になり、
 「**届きません**」と印字されていました —— **届かないのではなく、始まっていません。**
 """
+import re
 from datetime import date, datetime
 
 import pytest
@@ -96,18 +97,28 @@ def test_実物の待ちが台帳の期限を指している() -> None:
     """
     from src import watches as W
 
-    want = ["登録の依頼-30000再生", "長尺-1000再生",
-            "族べつ登録率-15000再生", "冒頭のstatの割り方-両群16本"]
-    by_id = {w.id: w for w in W.load()}
-    for wid in want:
-        assert wid in by_id, f"待ちが消えています: {wid}"
-        w = by_id[wid]
-        assert "期限" not in w.what, f"{wid}: 期限は台帳から引くこと（文面に書き戻さない）"
-        ledger = watch_eta.ledger_deadline(wid)
-        assert ledger is not None, \
-            f"{wid}: 台帳（config/hypotheses.yaml）に開いている期限がありません"
+    # **名前の一覧を持たないこと**（2026-08-26 夕に直した）。
+    #   ここは 4件 を手で並べていて、**同じ穴の 5件目**（`深い題のショート-16本`・
+    #   文面 09-03 ／ 台帳 08-26 ＝ **8日 ずれ**）を1度も見ていませんでした。
+    #   実物を数えたら、文面に期限を持つ待ちは **11件**あります。
+    #   **一覧は、書いた回に見えていたものの写しにしかなりません。**
+    covered = 0
+    for w in W.load():
+        ledger = watch_eta.ledger_deadline(w.id)
+        if ledger is None:
+            # 台帳に無い待ちは、文面が控えです（`test_台帳に無い待ちなら文面へ落ちる`）。
+            continue
+        covered += 1
+        # **禁じるのは「日付」であって「期限」の字ではありません。**
+        #   `途中の依頼-両群72本` は「期限は `config/hypotheses.yaml` が正本」と
+        #   書いていて、**それは正しい書き方**です。腐るのは日付のほうだけ。
+        stale = re.search(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", w.what)
+        assert not stale, \
+            f"{w.id}: 文面に日付が書いてあります（{stale.group(0)}／台帳 {ledger}）。" \
+            "**期限は台帳から引くこと**"
         assert deadline_of(w) == ledger, \
-            f"{wid}: 文面のほうが読まれています（台帳 {ledger} ／ 読めた {deadline_of(w)}）"
+            f"{w.id}: 文面のほうが読まれています（台帳 {ledger} ／ 読めた {deadline_of(w)}）"
+    assert covered >= 4, f"台帳と繋がった待ちが {covered}件 しかありません（数え方が壊れています）"
 
 
 # ---------------------------------------------------------------- 控えからの見込み

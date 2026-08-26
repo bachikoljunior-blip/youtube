@@ -218,7 +218,7 @@ watches:
     # 引かないと、報告されていない本を数えます。
 
   - id: 題の問い-両群16本
-    what: 「題を問いの形にすると engaged が上がる」の判定（期限 2026-09-12）
+    what: 「題を問いの形にすると engaged が上がる」の判定
     cond: 問い・断定のどちらの群も、落ち着いた本が16本（`src/ab_split.MIN_PER_GROUP`）
     then: python scripts/ab_split.py --outlook
     source: src/ab_split.py
@@ -246,7 +246,7 @@ watches:
     experiment: request_form
 
   - id: 冒頭の問い-両群16本
-    what: 「冒頭1枚目を問いかけにすると engaged が上がる」の判定（期限 2026-09-16）
+    what: 「冒頭1枚目を問いかけにすると engaged が上がる」の判定
     cond: 問い・条件のどちらの群も、落ち着いた本が16本
     then: python scripts/ab_split.py --outlook
     source: src/ab_split.py
@@ -267,7 +267,7 @@ watches:
       **床を動かして後から辻褄を合わせないこと。**
 
   - id: 長尺の失敗の理由-6本
-    what: 「長尺が落ちる主因は『過去の図と重なっています』の門」の判定（期限 2026-08-27）
+    what: 「長尺が落ちる主因は『過去の図と重なっています』の門」の判定
     cond: "`data/batch_runs.jsonl` に**理由の入った**長尺の生成失敗が6本"
     then: "python -m src.watches で数を見て、6本に届いていれば理由の内訳で判定する"
     source: config/hypotheses.yaml
@@ -285,7 +285,7 @@ watches:
     # `scripts/retention.py` で実際に起きたのがそれです（`src/watches.py` 冒頭）。
 
   - id: 密度の交絡-低密度の窓5本
-    what: 「engaged 比率は、その日に出した本数が増えると下がる」の判定（期限 2026-10-02）
+    what: 「engaged 比率は、その日に出した本数が増えると下がる」の判定
     cond: "**低密度の群**（2026-09-25〜09-26・1〜2本/日）に公開した本が5本、かつその日の実データが届いている"
     then: "python -m src.density_confound（低密度の群と、前後7日の 9本以上/日 の群を比べる）"
     source: config/hypotheses.yaml
@@ -317,7 +317,7 @@ watches:
     # **08/27 の切り分けの日の話**で、9月の日には掛かりません。
 
   - id: 深い題のショート-16本
-    what: 「深い題をショートとして出すと1本あたり再生が上がる」の判定（期限 2026-09-03）
+    what: 「深い題をショートとして出すと1本あたり再生が上がる」の判定
     cond: "**2026-08-19 以降**に、ショートの車線（`--long` なし）で公開した**`s-` で始まらない題**が 16本"
     then: "齢48時間でそろえて、`s-` の題のショートと1本あたり再生を比べる（1.2倍 に届かなければ外れ）"
     source: config/hypotheses.yaml
