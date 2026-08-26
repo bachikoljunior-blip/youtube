@@ -280,6 +280,16 @@ def _days(rows: dict[str, list[Member]]) -> dict[str, list[date]]:
 MEMBER_SOURCES: dict[str, tuple[Callable[[], dict[str, list[Member]]], int]] = {
     "title_form": (lambda: _members_by_split("title_form"), MIN_PER_GROUP),
     "hook_form": (lambda: _members_by_split("hook_form"), MIN_PER_GROUP),
+    # 登録の依頼を途中にも入れるか（`src/script_writer.request_form`）。
+    # **ショートだけ**が群に入ります（長尺は `"長尺"` が返り、`out` に無いので落ちます）。
+    #
+    # **床が 16本 ではなく 72本 なのは、測っているのが engaged ではなく登録だから**です。
+    # 登録率の実測は **0.0318%**（3,066再生に1人）。片群 16本 ＝ 約 6,700再生 では
+    # 期待 2.1人 で、2群を比べても**効きが2倍でも見分けられません**。
+    # 30,000再生 ÷ 418.7再生/本（公開済み130本の実測）＝ **72本**。
+    # ここは `config/hypotheses.yaml` の期限 2026-10-11 と同じ引き方です
+    # （あちらは対照群が無いので絶対値、こちらは2群）。
+    "request_form": (lambda: _members_by_split("request_form"), 72),
     # d14dbf7「冒頭の stat を 前提を先・数字を後 に割る」 2026-08-23 22:03:31 JST
     "stat_split": (
         lambda: _members_by_landed(datetime(2026, 8, 23, 22, 3, 31, tzinfo=JST)),
@@ -289,12 +299,28 @@ MEMBER_SOURCES: dict[str, tuple[Callable[[], dict[str, list[Member]]], int]] = {
     "opening_motion": (_members_by_opening_motion, 8),
 }
 
+#: `MEMBER_SOURCES` には在るが、**期限は `kind: accrual`（伸び率）で解く**もの。
+#:
+#: `Floor.ready` は「片群 N本 が予約にそろって初めて日が出る」形なので、
+#: **これから積む群**を `SOURCES` に入れると `ready is None` のまま
+#: `tests/test_judgeable.py::test_実物で期限が構造的に守れる` が**赤で居座ります**。
+#: 実際、`request_form` は立てた回に 0本 / 0本 で、床は 72本 —— 赤が2週間 続きます。
+#:
+#: **群の数え方は捨てません**（`members("request_form")` はそのまま使えます。
+#: `scripts/deadline_check.py` の `ab_members()` がここから数え、
+#: 伸び率で「72本目はいつか」を出します）。
+#:
+#: **積み終わったらここから外すこと。** そのとき yaml の `needs` を
+#: `kind: group_key` に戻せば、`Floor` の側で期限が守れるか見張られます。
+ACCRUING: set[str] = {"request_form"}
+
 #: yaml の `key:` → (群べつの**公開日**を作る関数, 片群あたりの必要本数)。
 #: **`members()` から畳んで作ります。ここに直接足さないこと** ——
 #: 足すと群の作り方が2か所になり、`queue_lag.py` と `Floor` が別の群を見ます。
 SOURCES: dict[str, tuple[Callable[[], dict[str, list[date]]], int]] = {
     key: ((lambda k=key: _days(members(k))), n)
     for key, (_make, n) in MEMBER_SOURCES.items()
+    if key not in ACCRUING
 }
 
 

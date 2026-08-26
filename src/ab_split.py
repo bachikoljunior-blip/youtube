@@ -56,7 +56,7 @@ from typing import Callable
 
 from src import ab_power
 from src.settle import SETTLE_DAYS  # noqa: F401  （**ここでは定義しません**。下の註）
-from src.script_writer import hook_form, title_form
+from src.script_writer import hook_form, request_form, title_form
 
 ROOT = Path(__file__).resolve().parent.parent
 BATCH = ROOT / "data" / "batch_runs.jsonl"
@@ -172,6 +172,19 @@ EXPERIMENTS: dict[str, Experiment] = {
         landed=datetime(2026, 8, 19, 21, 0, 3, tzinfo=JST),
         deadline=_deadline_from_yaml("hook_form", date(2026, 9, 16)),
         commit="443c66b",
+    ),
+    "request_form": Experiment(
+        name="request_form",
+        split=request_form,
+        treated="途中あり",
+        control="終端のみ",
+        # **長尺は `request_form` が `"長尺"` を返し、どちらの群にも入りません。**
+        # 2026-08-26 19:08 JST に `MID_REQUEST_RULE` が `generate()` に入った。
+        # **未来の時刻を書かないこと** —— この行より前に作った本は全部 落ちるので、
+        # 書いた回が自分で作った本まで落とします（この行を最初 20:15 と書いて踏みかけた）。
+        landed=datetime(2026, 8, 26, 19, 8, 0, tzinfo=JST),
+        deadline=_deadline_from_yaml("request_form", date(2026, 11, 9)),
+        commit="",
     ),
 }
 
