@@ -118,21 +118,98 @@ def _scheduled(svc) -> list[dict]:
     return sorted(rows, key=lambda r: r["at"])
 
 
+def _forms_of(rows: list[dict]) -> dict[str, bool]:
+    """予約中の本を、**ショートか長尺か**に分ける（動画ID → ショートなら True）。
+
+    `src.forms.classify()` に任せます —— 実測（`data/video_forms.json`）→
+    秒数 → 題名の `#Shorts` の順で決まる、この repo で唯一の決め方です。
+    **予約中の本は Analytics にまだ出ない**ので、実測は当たりません。
+    そこで秒数を控え（`data/uploaded.jsonl`）から足してから訊きます。
+    """
+    dur: dict[str, float] = {}
+    try:
+        from src import dupes as _dupes
+        for row in _dupes.ledger_rows():
+            vid, sec = row.get("video_id"), row.get("duration_s")
+            if vid and sec:
+                dur[str(vid)] = float(sec)
+    except Exception:                                          # noqa: BLE001
+        pass
+
+    from src import forms as _forms
+    measured = _forms.measured_forms()
+    out = {}
+    for r in rows:
+        row = {"id": r["id"], "title": r.get("title") or ""}
+        if r["id"] in dur:
+            row["duration_s"] = dur[r["id"]]
+        out[r["id"]] = _forms.classify(row, measured)[0]
+    return out
+
+
 def _show(rows: list[dict]) -> None:
-    by_topic: dict[str, list[str]] = defaultdict(list)
+    """予約の一覧。**同じテーマの二重予約に印を付ける。**
+
+    ## 形式をまたぐ組に印を付けないこと（2026-08-26 12:xx に直した）
+
+    ここは長らく**テーマIDだけ**で数えていました。実物（受け取り帳 `c23c90a9`・
+    親からの申し送り 08/24）:
+
+        08/26 14:00  cFZd55jRxAw  長尺    65歳で年180万円 繰下げで元が取れる最後は何歳か
+        09/05 12:00  rRYgdX9GFJA  ショート 85歳まで生きるなら繰下げは何歳まで得か #Shorts
+
+    **10日 離れ・形式ちがい・切り口ちがい。** これは `CLAUDE.md` が明記している
+    「長尺1本から何本も切り出せる」の形**そのもの**です。
+    ところがここは「**片方を外すこと**」と印字していました ——
+    **その指示に従うと、正しい在庫を捨てます。**
+
+    だから数えるのを `(テーマ, 形式)` にしました。**同じ形式で2本**なら、
+    今までどおり「繰り返し」として印を付けます。**形式がちがう組**は
+    別の行で、**捨てろとは言いません。**
+
+    ## それでも残る本当の欠陥は、ID の衝突のほう
+
+    投稿済みの復元は説明欄の `[t:テーマID]` でやるので、
+    **長尺とショートが同じIDだと、チャンネル越しに2本を区別できません。**
+    上の実物は `s-nenkin-motowotoreru-saigo-73sai1` が2本 出た形です。
+
+    **出どころは 2026-08-26 01:5x に閉じています** —— `--long` が
+    選ぶ側に効いておらず、ショート向けの題（`s-`）で長尺を作っていました
+    （`tests/test_pick_long.py`）。いまは長尺は非 `s-` からしか取りません。
+    **新しい衝突は出ない**ので、ここでは印字だけにします。
+
+    **覆る条件**: 形式ちがいの組が **08/26 より後に上がった本**で出たら、
+    `--long` の側がまた漏れています。そのときは検出器ではなく
+    `pick()` を見ること。
+    """
+    is_short = _forms_of(rows)
+    by_key: dict[tuple, list[str]] = defaultdict(list)
+    by_topic: dict[str, set[bool]] = defaultdict(set)
     for r in rows:
         if r["topic"]:
-            by_topic[r["topic"]].append(r["id"])
-    dup = {t for t, v in by_topic.items() if len(v) > 1}
+            by_key[(r["topic"], is_short[r["id"]])].append(r["id"])
+            by_topic[r["topic"]].add(is_short[r["id"]])
+    dup = {k[0] for k, v in by_key.items() if len(v) > 1}
+    # **形式がちがうだけの組**（捨てさせない）
+    crossed = {t for t, fs in by_topic.items() if len(fs) > 1} - dup
 
     for r in rows:
         jst = datetime.fromisoformat(r["at"].replace("Z", "+00:00")).astimezone(JST)
-        mark = " **二重**" if r["topic"] in dup else ""
-        print(f"{jst:%m/%d %H:%M}  {r['id']}  {r['topic']:<22s}{mark}  {r['title'][:34]}")
+        mark = " **二重**" if r["topic"] in dup else (
+            " （形式ちがい）" if r["topic"] in crossed else "")
+        form = " short" if is_short[r["id"]] else "long "
+        print(f"{jst:%m/%d %H:%M}  {r['id']}  {form}  "
+              f"{r['topic']:<22s}{mark}  {r['title'][:34]}")
     if dup:
-        print(f"\n**同じテーマが2本以上予約に入っています: {'・'.join(sorted(dup))}**")
+        print(f"\n**同じテーマ・同じ形式が2本以上 予約に入っています: {'・'.join(sorted(dup))}**")
         print("  続けて見たときに「繰り返し」と映る形です。**片方を外すこと。**")
-    else:
+    if crossed:
+        print(f"\n同じテーマですが**形式がちがいます**: {'・'.join(sorted(crossed))}")
+        print("  **外さないこと。**『長尺1本から何本も切り出す』の形です（`CLAUDE.md`）。")
+        print("  ただし `[t:テーマID]` は形式を持たないので、**チャンネル越しには"
+              "2本を区別できません**。08/26 より後に上がった本で出たなら、"
+              "`--long` の選ぶ側がまた漏れています（`pick()` を見ること）。")
+    if not dup and not crossed:
         print("\n二重予約はありません。")
 
 
