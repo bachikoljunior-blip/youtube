@@ -3390,6 +3390,17 @@
 {"at": "2026-08-26T20:06:36+00:00", "detail": "scheduled_publish_times"}
 {"at": "2026-08-26T20:06:39+00:00", "detail": "playlistItems.insert"}
 {"at": "2026-08-26T20:06:39+00:00", "detail": "thumbnails.set vuhvrJ1CkBE"}
+{"at": "2026-08-26T20:10:49+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-26T20:14:53+00:00", "detail": "status: Data API 読み"}
+{"at": "2026-08-26T20:15:22+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-26T20:15:23+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-26T20:16:14+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-26T20:17:06+00:00", "ok": true, "detail": "videos.update vid1"}
+{"at": "2026-08-26T20:21:20+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-26T20:22:05+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-26T20:22:07+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-26T20:22:09+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-26T20:22:56+00:00", "detail": "channels.list mine"}
 {"at": "2026-08-26T20:16:48+00:00", "detail": "channels.list mine"}
 {"at": "2026-08-26T20:17:37+00:00", "detail": "channels.list mine"}
 {"at": "2026-08-26T20:17:39+00:00", "detail": "channels.list mine"}
@@ -3410,3 +3421,20 @@
 {"at": "2026-08-26T20:37:05+00:00", "detail": "channels.list mine"}
 {"at": "2026-08-26T20:37:55+00:00", "detail": "channels.list mine"}
 {"at": "2026-08-26T20:37:57+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-26T20:23:42+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-26T20:23:44+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-26T20:23:46+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-26T20:24:34+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-26T20:24:35+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-26T20:24:36+00:00", "ok": true, "detail": "videos.update vid1"}
+{"at": "2026-08-26T20:24:36+00:00", "ok": true, "detail": "videos.update vid1"}
+{"at": "2026-08-26T20:24:47+00:00", "detail": "videos.update -rNsh53STNw"}
+{"at": "2026-08-26T20:24:48+00:00", "detail": "videos.update -rNsh53STNw"}
+{"at": "2026-08-26T20:24:49+00:00", "detail": "videos.update -rNsh53STNw"}
+{"at": "2026-08-26T20:24:50+00:00", "detail": "videos.update -rNsh53STNw"}
+{"at": "2026-08-26T20:24:51+00:00", "detail": "videos.update -rNsh53STNw"}
+{"at": "2026-08-26T20:24:52+00:00", "detail": "videos.update -rNsh53STNw"}
+{"at": "2026-08-26T20:24:53+00:00", "detail": "videos.update -rNsh53STNw"}
+{"at": "2026-08-26T20:24:55+00:00", "detail": "videos.update -rNsh53STNw"}
+{"at": "2026-08-26T20:24:56+00:00", "detail": "videos.update -rNsh53STNw"}
+{"at": "2026-08-26T20:24:57+00:00", "detail": "videos.update -rNsh53STNw"}
