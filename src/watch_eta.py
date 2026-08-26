@@ -50,6 +50,7 @@ from src import watches as W
 
 ROOT = Path(__file__).resolve().parent.parent
 SCAN = ROOT / "data" / "scan.jsonl"
+HYPOTHESES = ROOT / "config" / "hypotheses.yaml"
 JST = timezone(timedelta(hours=9))
 
 #: 既定の測る幅。短すぎると雑音、長すぎると昔の運転が混ざる。
@@ -96,8 +97,50 @@ def gauge_with(line: str, watch: W.Watch) -> W.Gauge:
         W._last_scan = real                              # type: ignore[assignment]
 
 
+def ledger_deadline(key: str) -> date | None:
+    """`config/hypotheses.yaml` の `key:` から期限を引く。**期限の正本はこちら。**
+
+    待ちの `what:` に手で書いた「（期限 YYYY-MM-DD）」は、台帳の `deadline:` が
+    動いた瞬間に古くなります。**実測（2026-08-26）**: 「登録の依頼-30000再生」の
+    文面は **2026-09-14**、台帳は **2026-10-11** で、**27日 ずれていました。**
+    `status.py` はずっと文面のほうを読んでいたので、**台帳ではまだ生きている前提を
+    「期限に間に合いません」と印字していました。**
+
+    これは「同じことを2か所が別々に言っていて、片方しか読まれていない」の型です
+    （`scripts/retro.py` が「この形を探すのがいちばん当たる」と言っている型）。
+    **消さずに、読む順を変えます** —— 台帳があればそちら、無ければ文面。
+    """
+    if not key:
+        return None
+    try:
+        import yaml
+
+        doc = yaml.safe_load(HYPOTHESES.read_text(encoding="utf-8")) or {}
+    except Exception:                                    # noqa: BLE001
+        return None
+    for h in doc.get("hypotheses") or []:
+        if str(h.get("key") or "") != key:
+            continue
+        if h.get("closed_on"):
+            return None
+        raw = h.get("deadline")
+        if isinstance(raw, date):
+            return raw
+        try:
+            return date.fromisoformat(str(raw))
+        except (TypeError, ValueError):
+            return None
+    return None
+
+
 def deadline_of(watch: W.Watch) -> date | None:
-    """待ちの文面から期限を拾う（`期限 2026-09-15` / `期限 09/05` の2形）。"""
+    """待ちの期限。**台帳（`hypothesis_key`）が正本で、文面は控え。**
+
+    文面の形は2つ（`期限 2026-09-15` / `期限 09/05`）。
+    """
+    from_ledger = ledger_deadline(str(watch.params.get("hypothesis_key") or ""))
+    if from_ledger is not None:
+        return from_ledger
     text = f"{watch.what} {watch.cond}"
     m = re.search(r"期限\s*(\d{4})-(\d{2})-(\d{2})", text)
     if m:
@@ -106,6 +149,100 @@ def deadline_of(watch: W.Watch) -> date | None:
     if m:
         return date(date.today().year, int(m[1]), int(m[2]))
     return None
+
+
+@dataclass
+class QueuePlan:
+    """**予約の中に、その処置の本が何本あるか。** 走査の履歴ではなく控えから読む。
+
+    `uploaded_since` で切る待ち（＝台本の作りを変えたときの窓）は、
+    **処置の本がまだ1本も公開されていない間、走査の履歴からは何も出ません。**
+    そこで履歴の伸びを外挿すると `0.00/日 → 届きません` になります ——
+    **「まだ始まっていない」を「永久に届かない」と言う誤報**です。
+
+    要る数はもう控えにあります（`data/uploaded.jsonl` の予約時刻）。
+    **何本が期限までに公開されるか・そのうち何本が再生の付く枠に居るか**が分かれば、
+    見込みの再生数と、**あと何本 足りないか**が出ます。
+    """
+    treated: int            # 処置の本（予約ぶんを含む）
+    before_deadline: int    # 期限までに公開される本
+    live: int               # そのうち再生が付く枠に居る本（`src/day_cap.py`）
+    per_video: float        # 生きた枠の1本あたり再生（実測）
+    est: float              # 期限までに積める見込み
+    need: float
+    started: bool           # 処置の本が1本でも公開済みか
+
+    @property
+    def short_videos(self) -> float:
+        """あと何本ぶん（生きた枠で）足りないか。0以下なら足りている。"""
+        if self.per_video <= 0:
+            return 0.0
+        return max(0.0, (self.need - self.est) / self.per_video)
+
+
+def _treated_ids(watch: W.Watch) -> list[str]:
+    """その待ちの処置に当たる動画ID（`uploaded_since` で切る）。"""
+    raw = watch.params.get("uploaded_since")
+    if not raw:
+        return []
+    cut = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+    return [v for v, u in W._uploaded_ats().items() if u >= cut]
+
+
+def _per_video_views(watch: W.Watch) -> float:
+    """**生きた枠に居る本の、1本あたり再生**（最後の走査の実測）。
+
+    待ちの尺の条件（`min_length` / `max_length`）をそのまま当てます ——
+    ショートを数える待ちに長尺の平均を掛けると、見込みが桁でずれます。
+    """
+    scan = W._last_scan()
+    live = _live_ids()
+    lo, hi = watch.params.get("min_length"), watch.params.get("max_length")
+    vals = []
+    for vid, v in scan.items():
+        if live is not None and vid not in live:
+            continue
+        length = v.get("尺") or 0
+        if lo and length < lo:
+            continue
+        if hi and length > hi:
+            continue
+        vals.append(float(v.get("views") or 0))
+    return (sum(vals) / len(vals)) if vals else 0.0
+
+
+def _live_ids() -> set[str] | None:
+    """再生が付く枠の動画ID。読めなければ `None`（**絞らない**）。"""
+    try:
+        from src import day_cap
+        from src.ab_split import published
+
+        return day_cap.live_ids([r for r in published() if r.get("at")])
+    except Exception:                                    # noqa: BLE001
+        return None
+
+
+def queue_plan(watch: W.Watch, deadline: date | None,
+               today: date | None = None) -> QueuePlan | None:
+    """`uploaded_since` の待ちについて、**控えから**見込みを出す（API 0単位）。"""
+    ids = _treated_ids(watch)
+    if not ids:
+        return None
+    pubs = W._publish_dates()
+    days = {v: pubs[v] for v in ids if v in pubs}
+    if not days:
+        return None
+    today = today or datetime.now(JST).date()
+    live = _live_ids()
+    before = [v for v, d in days.items() if deadline is None or d <= deadline]
+    n_live = len([v for v in before if live is None or v in live])
+    per = _per_video_views(watch)
+    need = float(watch.params.get("need") or 0)
+    return QueuePlan(
+        treated=len(days), before_deadline=len(before), live=n_live,
+        per_video=per, est=n_live * per, need=need,
+        started=any(d <= today for d in days.values()),
+    )
 
 
 @dataclass
@@ -147,6 +284,22 @@ def forecast(watch: W.Watch, days: int = DEFAULT_DAYS, today: date | None = None
         # 始まってすらいない待ちに「届きません」と出ます（**誤報**）。
         return Forecast(watch.id, now.now, now.need, 0.0, None,
                         deadline_of(watch), not_started=True)
+    # **`uploaded_since` にも同じ穴がありました**（2026-08-26 に測って足した）。
+    #
+    # あちらは「いつ公開されたか」で切るので、窓が未来なら上の1手で止まります。
+    # こちらは**投稿時刻**で切る窓です —— 台本の作りを変えた瞬間から数え始めますが、
+    # **その作りの本が公開されるのは、予約の順番待ちのぶんだけ後**です
+    # （実測 2026-08-26: 依頼を入れたのは 08/24、いちばん早い公開は 08/26、
+    #   いちばん遅い本は 10/05）。**その間、走査の伸びは定義として 0.00/日**で、
+    # `status.py` は毎回「**届きません**」と印字していました。
+    #
+    # **1本も公開されていない待ちは、届かないのではなく、始まっていません。**
+    # 判断に要る数は控え（`data/uploaded.jsonl`）に全部あるので、
+    # ここでは判定を出さず、`queue_plan()` に見込みを言わせます。
+    plan = queue_plan(watch, deadline_of(watch), today)
+    if plan is not None and not plan.started:
+        return Forecast(watch.id, now.now, now.need, 0.0, None,
+                        deadline_of(watch), not_started=True)
     then = gauge_with(older[0], watch)
     span = max(1, (_at(lines[-1]) - older[1]).days)
     per_day = (now.now - then.now) / span
@@ -168,17 +321,54 @@ def main() -> None:  # pragma: no cover - 画面出力だけ
             print(f"  −  {w.id}: `{w.kind}` は この道具の対象外（予約表で決まる待ち）")
             continue
         head = f"  {w.id}: {f.now:.0f} / {f.need:.0f}"
+        plan = queue_plan(w, f.deadline)
         if f.not_started:
-            print(f"{head}  **数える窓がまだ来ていません**（`published_since` が未来）"
+            why = ("`published_since` が未来" if w.params.get("published_since")
+                   else "処置の本が**まだ1本も公開されていません**（予約の順番待ち）")
+            print(f"{head}  **数える窓がまだ来ていません**（{why}）"
                   + (f"（期限 {f.deadline}）" if f.deadline else ""))
+            _print_plan(plan)
+            continue
+        if plan is not None and f.now <= 0:
+            # **走査がまだ処置を1本も数えていないなら、伸びは処置について
+            # 何も言っていません。** ここで「届きません」と印字すると、
+            # 測っていないものについての判定になります（2026-08-26 に直した）。
+            print(f"{head}  **走査の伸びからは出せません**"
+                  f"（処置の本がまだ走査に入っていない。伸び {f.per_day:.2f}/日 は"
+                  f"**処置の前の本の伸び**です）"
+                  + (f"（期限 {f.deadline}）" if f.deadline else ""))
+            _print_plan(plan)
             continue
         if f.fills_on is None:
             print(f"{head}  伸び {f.per_day:.2f}/日 → **届きません**"
                   + (f"（期限 {f.deadline}）" if f.deadline else ""))
+            _print_plan(plan)
             continue
         mark = {True: "間に合う", False: "**期限に間に合いません**", None: "期限不明"}[f.in_time]
         print(f"{head}  伸び {f.per_day:.2f}/日 → 埋まるのは {f.fills_on}"
               + (f"（期限 {f.deadline}）" if f.deadline else "") + f" … {mark}")
+        _print_plan(plan)
+
+
+def _print_plan(plan: QueuePlan | None) -> None:  # pragma: no cover - 画面出力だけ
+    """**「届きません」の下に、控えから読んだ数を並べる。**
+
+    裸の「届きません」を出さないこと（`CLAUDE.md` の (イ) と同じ規則）。
+    ここで言えるのは「何本 予約に在って、何本が生きた枠か」までで、
+    **足りないぶんは本数で言います** —— そこが次の回の手になるからです。
+    """
+    if plan is None:
+        return
+    print(f"       予約の中の処置: {plan.treated}本 ／ 期限までに公開 {plan.before_deadline}本"
+          f" ／ うち再生の付く枠 **{plan.live}本**"
+          f"（1本あたり {plan.per_video:.0f}回・実測）")
+    short = plan.short_videos
+    if short <= 0:
+        print(f"       → 見込み {plan.est:,.0f} / 要る {plan.need:,.0f} … **足りています**")
+    else:
+        print(f"       → 見込み **{plan.est:,.0f}** / 要る {plan.need:,.0f}"
+              f" … **生きた枠で あと {short:.0f}本 足りません**"
+              f"（死に枠の処置を入れ替えると縮みます: `python scripts/live_slots.py --plan --all`）")
 
 
 if __name__ == "__main__":  # pragma: no cover
