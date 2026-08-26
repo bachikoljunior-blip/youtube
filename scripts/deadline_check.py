@@ -59,6 +59,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import re
 import sys
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
@@ -596,12 +597,135 @@ def ready_by_claim(items: list[dict] | None = None, as_of: date | None = None,
     return {v.claim: v.ready for v in vs if v.ready is not None}
 
 
+# --- **印字ではなく、書き換えるところまでやる**（2026-08-26・最適化の回）---
+#
+# この道具は **2026-08-25 13:54Z** から「期限が遅すぎる N件 —— 合計 M日 の待ち」と
+# 印字しています。`scripts/status.py` も同じ日の 22:5x から、**毎回の最初に読まれる
+# 場所**で「→ `deadline` をその日まで**縮めること**。**この回の成果になります**」と
+# 出しています。**それでも、1件も縮んでいません。**
+#
+#     検出を足した      2026-08-25 13:54Z   そのとき **46日**
+#     それから撃った回  **666 commits**
+#     いま              **64日**（3件・最大 33日）  ← **増えています**
+#
+# **同じ 20時間 に、逆向きの書き換えは起きています。**
+# `e664d5a`（08-25 21:46Z）は stat_split を 09-14 → **10-06 へ 22日 延ばし**ました。
+# 理由は commit がそのまま書いています ——「**赤い検査が2件**」。
+# 遅すぎる側の検査は `assert total >= 0` ＝ **何も主張していません。**
+#
+#     延ばす向き  赤い検査あり  → 20時間で 2回 起きた
+#     縮める向き  印字のみ      → 666 commits で 0回
+#
+# **印字が読まれていないのではありません。印字は「判断」を要求します。**
+# 赤い検査は判断を要求しません（直すか、直さないかしかない）。
+# だからここは、**印字と同じ内容を、自分で書き戻す手**を持ちます。
+
+
+def shrink(path: Path | None = None, as_of: date | None = None,
+           lag: int | None = None, dry_run: bool = False) -> list[tuple[str, str, str]]:
+    """**遅すぎる期限を、判定できる日（`ready`）まで縮めて書き戻す。**
+
+    返り: `[(claim, 前の期限, 後の期限), ...]`。**API 0単位・本は0本。**
+
+    ## 触らないもの
+
+    - **`falsified_if` には触りません。** 動かすのは `deadline:` の1行だけです。
+      もっと n が要るなら、動かすのは **`needs.count` のほう**です ——
+      期限を水増しして待つのは `needs` に嘘を書いているのと同じで、
+      `src/arm_speed.forward()` は **`ready` の側**を読むので、
+      **予測だけが「その日に閉じる」前提のまま**残ります（＝到達日が早すぎる）。
+    - **`slips`（期限が早すぎる）側は動かしません。** ここは縮める向き専用です。
+      延ばす側には、もう赤い検査が付いています。
+
+    ## **`yaml.dump` で書き戻さないこと**
+
+    `config/hypotheses.yaml` は 3,300行 のうちほとんどが註で、
+    `safe_load` → `dump` すると**全部 消えます**（外れた理由も、
+    しきい値の引き方も、次に来た側が判断する材料も）。
+    だから**行単位で `deadline:` の1行だけ**を置き換え、
+    書く前に **読み直して同じ値になるか**を確かめます。
+    """
+    p = path or (ROOT / "config" / "hypotheses.yaml")
+    text = p.read_text(encoding="utf-8")
+    rows = text.split("\n")
+    start = next((i for i, l in enumerate(rows) if l.startswith("hypotheses:")), None)
+    if start is None:
+        raise RuntimeError("`hypotheses:` の節が見つかりません")
+    end = next((i for i in range(start + 1, len(rows))
+                if re.match(r"^[A-Za-z_]+:", rows[i])), len(rows))
+    heads = [i for i in range(start + 1, end) if rows[i].startswith("  - ")]
+    dl_at: dict[int, int] = {}
+    for k, h in enumerate(heads):
+        stop = heads[k + 1] if k + 1 < len(heads) else end
+        j = next((i for i in range(h, stop) if re.match(r"^\s+deadline:", rows[i])), None)
+        if j is not None:
+            dl_at[k] = j
+    items = yaml.safe_load(text).get("hypotheses", [])
+    if len(items) != len(heads):
+        raise RuntimeError(f"項目の数が合いません（読めた {len(items)} 対 行 {len(heads)}）"
+                           "。**書きません**")
+    by_claim: dict[str, int] = {}
+    for k, h in enumerate(items):
+        if h.get("closed_on") or h.get("verdict"):
+            continue
+        c = str(h.get("claim") or "")
+        if c in by_claim:
+            raise RuntimeError(f"開いている前提に同じ claim が2つあります: {c[:40]}。**書きません**")
+        by_claim[c] = k
+    done: list[tuple[str, str, str]] = []
+    for v in check(items, as_of=as_of, lag=lag):
+        if not v.waits or v.ready is None or v.deadline is None:
+            continue
+        k = by_claim.get(v.claim)
+        j = dl_at.get(k) if k is not None else None
+        if j is None:
+            continue
+        indent = re.match(r"^(\s*)", rows[j]).group(1)      # type: ignore[union-attr]
+        rows[j] = f'{indent}deadline: "{v.ready}"'
+        done.append((v.claim, str(v.deadline), str(v.ready)))
+    if not done:
+        return []
+    out = "\n".join(rows)
+    # **書く前に読み直す。** 註を1行も落としていないか・値が入ったかを確かめます。
+    back = yaml.safe_load(out).get("hypotheses", [])
+    if len(back) != len(items):
+        raise RuntimeError("書き換えたら項目の数が変わりました。**書きません**")
+    want = {c: a for c, _b, a in done}
+    for h in back:
+        c = str(h.get("claim") or "")
+        if c in want and str(h.get("deadline")) != want[c]:
+            raise RuntimeError(f"書き換えが入っていません: {c[:40]}。**書きません**")
+    if not dry_run:
+        p.write_text(out, encoding="utf-8")
+    return done
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--as-of", help="この日に判定するつもりで解く（YYYY-MM-DD）")
+    ap.add_argument("--shrink", action="store_true",
+                    help="**遅すぎる期限を、判定できる日まで縮めて書き戻す**"
+                         "（`falsified_if` は触りません。**API 0単位**）")
+    ap.add_argument("--dry-run", action="store_true",
+                    help="`--shrink` が何を書くかだけ出す（書きません）")
     a = ap.parse_args(argv)
     as_of = date.fromisoformat(a.as_of) if a.as_of else today_jst()
     lag = analytics_lag_days(as_of)
+    if a.shrink:
+        done = shrink(as_of=as_of, lag=lag, dry_run=a.dry_run)
+        if not done:
+            print("  **縮める期限はありません**（`waits` が 0件）")
+            return 0
+        head = "**書いていません**（--dry-run）" if a.dry_run else "書きました"
+        total = sum((date.fromisoformat(b) - date.fromisoformat(af)).days
+                    for _c, b, af in done)
+        print(f"=== 遅すぎた期限を {len(done)}件 縮めました（{head}）—— 合計 **{total}日** ===")
+        for c, b, af in done:
+            d = (date.fromisoformat(b) - date.fromisoformat(af)).days
+            print(f"  {b} → **{af}**（{d}日）  {c[:44]}")
+        print("  **`falsified_if` は1文字も触っていません。**"
+              "もっと n が要るなら、動かすのは `needs.count` のほうです")
+        return 0
     vs = check(load(), as_of=as_of, lag=lag)
     print("\n".join(lines(vs, lag)))
     return 0
