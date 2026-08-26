@@ -3351,6 +3351,73 @@ def _points(*, reflect: bool = False, offline: bool = False) -> list[dict]:
     return out
 
 
+#: `flagged()` が尾に運ぶ本数の上限。**多いほど尾が読まれなくなる**ので、
+#: 増やす前に「頭と尾しか読まれない」という前提のほうを疑うこと。
+FLAG_LIMIT = 12
+
+
+def flagged(said: list[str], width: int = 116) -> list[str]:
+    """**この回の出力の中で `[!]` が付いた所を、尾（読まれる場所）へ運ぶ。**
+
+    ## なぜ要るか（2026-08-26・最適化の回の実測）
+
+    `CLAUDE.md` は「**読むのは、出力の最初と最後に同じ字で出る3行だけ**」と
+    書いています。**そのとおりに読むと、`[!]` は1本も読まれません。**
+
+        実測 2026-08-26 …… 出力 297行・`[!]` **10本**（80〜289行目）
+                            頭 8行 に **0本** ／ 尾 25行 に **0本**
+
+    そのうち1本は、直す先を名指ししていました ——
+    「**2026-09-06〜2026-09-18 の 13日 は長尺の予約が0本**です。
+    直す先はサムネでも題でもなく、**その 13日 に長尺を置くこと**」。
+    **どの回も読んでいません。**
+
+    ## これは `headline()` が一度 学んだのと同じ話です
+
+    `headline()` の説明が、その理由をこう書いています ——
+    「**その日付が、出力の 200行目あたりにあった**。読み手が最初に見るのは
+    天井の表です」。**そこで運んだのは日付だけで、警告は置いてきました。**
+    **1つ上の階の同じ欠陥**で、この repo が「いちばん当たる」と言っている形
+    （同じことを2か所が別々に言っていて、片方しか読まれていない）そのものです。
+
+    ## 何をしないか
+
+    **選り分けません。** 重要かどうかを決める規則を置くと、次の回はその規則の
+    世話をします。ここは「`[!]` と書いた側が重要だと言っている」をそのまま
+    信じて、**在り処と頭を運ぶだけ**です。全文は本文の側にあります。
+
+    **覆る条件**: `[!]` が FLAG_LIMIT 本を超えて出るのが常態になったら、
+    運ぶ側ではなく**付ける側**が緩んでいます（`[!]` を足した回が、
+    尾に載るかを見て書かなくなったとき）。そのときはここを直すのではなく、
+    **`[!]` を打つ場所を減らすこと。**
+    """
+    hits: list[tuple[int, str]] = []
+    seen: set[str] = set()
+    for i, line in enumerate(said):
+        if "[!]" not in line:
+            continue
+        for frag in line.split("[!]")[1:]:
+            t = " ".join(frag.split())
+            if not t:
+                continue
+            key = t[:40]
+            if key in seen:
+                continue
+            seen.add(key)
+            hits.append((i, t))
+    if not hits:
+        return []
+    bar = "###"
+    out = [f"{bar} **この回に名指しされた欠陥: {len(hits)}件**"
+           "（本文の真ん中に出ます。**頭と尾だけ読む手順では1本も読まれません**）"]
+    for i, t in hits[:FLAG_LIMIT]:
+        body = t if len(t) <= width else t[:width] + "…"
+        out.append(f"{bar}   ・{body}")
+    if len(hits) > FLAG_LIMIT:
+        out.append(f"{bar}   （ほか {len(hits) - FLAG_LIMIT}件。全文は本文の `[!]` を見ること）")
+    return out
+
+
 def headline(pl: dict, prev: dict | None = None,
              tr: dict | None = None) -> list[str]:
     """**この回のいちばん最初と、いちばん最後に出す3行。**
@@ -4924,11 +4991,19 @@ def main() -> int:
     _s = solve(m, points)
     a, sup, pl, tr = _s["a"], _s["sup"], _s["pl"], _s["tr"]
     prev = points[-1] if points else None
-    for line in headline(pl, prev, tr):
+    # **この回が印字した行を、そのまま控えておく**（`flagged()` が尾へ運びます）。
+    # `print` を差し替えているだけで、出る中身も順番も1文字も変えていません。
+    said: list[str] = []
+
+    def say(line: str) -> None:
+        said.append(str(line))
         print(line)
 
+    for line in headline(pl, prev, tr):
+        say(line)
+
     for line in report(m, a):
-        print(line)
+        say(line)
     row = _row(m, a, pl, tr, sup)
     # **`--offline` の点だと分かる形で積む**（2026-08-20）。中身は最後の実測の**写し**で、
     # 新しい実測ではありません。印が無いと、次の回は写しを実測として数えます
@@ -4936,32 +5011,36 @@ def main() -> int:
     if args.offline:
         row["offline"] = True
     for line in _drift(row):
-        print(line)
+        say(line)
     # **周の中で動いた入力は `_drift` には出ません**（あれは点どうしの比較）。
     # 反映の読み口はこちら。**残す所と読む所の両方が要ります。**
     for line in _reflect_recap():
-        print(line)
+        say(line)
     # **「予測 → 腕を選ぶ → 進む」の、選んだ側の実績**（オーナー指示 2026-08-19 21:2x）。
     # 1周ごとに動くのは日付ではなく**ここ**です（`src/levers.py` の説明）。
     for line in levers.report(ROOT / "data" / "runs.jsonl"):
-        print(line)
+        say(line)
     # **腕を「日数の差」で並べる**（2026-08-20 16:0x）。ここが無いと、
     # 引く腕は `binding`（どの床が遅いか）という診断からしか決まりません。
     for line in _report_levers(pl):
-        print(line)
+        say(line)
     # **「×2 にしたら」の表の、すぐ下に軌跡を置くこと。**
     #     表だけを見た読み手は「2倍にすればいい」で終わります。
     #     2倍に何日かかるかは、ここにしかありません。
     if tr is not None:
         for line in _report_trajectory(tr, pl):
-            print(line)
+            say(line)
     # **段取りは、いちばん最後に出すこと**（オーナー指示 2026-08-20 06:2x）。
     # 読み手が最後に見たものが、そのまま次の回の入口になります。
     # ここより後ろに「届きません」を置かないこと。
     for line in _report_plan(m, a, pl):
-        print(line)
+        say(line)
     # **最後にもう一度、日付と腕。** 真ん中を読み飛ばしても、ここだけで決まる形にする。
     for line in headline(pl, prev, tr):
+        print(line)
+    # **`[!]` を尾へ運ぶ**（2026-08-26・最適化の回）。日付は 08-20 に運びましたが、
+    # **欠陥の名指しは真ん中に置いたまま**でした。実測: `[!]` 10本／頭にも尾にも 0本。
+    for line in flagged(said):
         print(line)
     print("  **この回の作業は、上の日付を動かすものを選ぶこと。**"
           " 出したら `run_marker.py --ship \"…\" --lever <腕> --moves <見込みの日数>`。")
