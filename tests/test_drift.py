@@ -254,3 +254,93 @@ def test_noneは動きえない回として数える(tmp_path, monkeypatch):
     assert "到達日が動きえない回: 2/3" in out
     # **`fix` そのものを叱る文にしないこと**（この道具の冒頭を読むこと）
     assert "動きうるのは残りの **1回**" in out
+
+
+# --- **期限が来たことと、判定できることは別**（2026-08-26 20:4x に足した）---
+#
+# この日、同じ1件の前提について3つの道具が食い違いました:
+#     status.py（drift）  「[!] 外れています。この回は verdict を出すこと」
+#     eta.py              「期日の来た前提があります → verdict で日付が動かせます」
+#     deadline_check.py   「まだ数えはじめたところです。**この回は何もしないのが正解**」
+# 正しいのは3つ目。要 8本 に対し公開済み 7本、群がそろう公開日は 3日 要るのに 0日。
+# **判定できない前提は永久に判定されない**ので、この赤は放っておくと毎周 出続けます。
+
+#: `needs` がまだ満ちていない ＝ **待てば日が出る**（`Verdict.warming`）
+OPEN_OVERDUE_WARMING = (
+    "- claim: まだ数えはじめたところ\n"
+    "  deadline: '2026-08-20'\n"
+    "  needs:\n"
+    "    - kind: accrual\n"
+    "      count_expr: '0'\n"
+    "      need: 8\n"
+    "      since: '2026-08-19'\n"
+)
+
+#: 手元のデータだけで**いま**判定できる（`needs` が満ちている）
+OPEN_OVERDUE_READY = (
+    "- claim: もう数え終えている\n"
+    "  deadline: '2026-08-20'\n"
+    "  needs:\n"
+    "    - kind: accrual\n"
+    "      count_expr: '99'\n"
+    "      need: 8\n"
+    "      since: '2026-08-19'\n"
+)
+
+
+def test_判定できない期限切れだけなら外れと言わない(tmp_path, monkeypatch):
+    _seed(tmp_path, monkeypatch,
+          [_ship("2026-08-23T10:00", "fix: 直した")] * 3, OPEN_OVERDUE_WARMING)
+    text, drifting = drift.report("2026-08-24")
+    assert drifting is False
+    assert "外れています" not in text
+    assert "判定に要るデータがまだ無い前提: 1件" in text
+    # **畳ませないこと。** 言われたとおりに畳む回が、いちばん悪い枝です。
+    assert "verdict で畳まないこと" in text
+
+
+def test_いま判定できる期限切れなら今までどおり止める(tmp_path, monkeypatch):
+    _seed(tmp_path, monkeypatch,
+          [_ship("2026-08-23T10:00", "fix: 直した")] * 3, OPEN_OVERDUE_READY)
+    text, drifting = drift.report("2026-08-24")
+    assert drifting is True
+    assert "外れています" in text
+    assert "いま判定できる前提: 1件" in text
+
+
+def test_判定できるものと出来ないものが混ざったら止める(tmp_path, monkeypatch):
+    """**混ざったときは赤。** 判定できる1件が置き去りになっているのは事実です。"""
+    _seed(tmp_path, monkeypatch,
+          [_ship("2026-08-23T10:00", "fix: 直した")] * 3,
+          OPEN_OVERDUE_READY + OPEN_OVERDUE_WARMING)
+    text, drifting = drift.report("2026-08-24")
+    assert drifting is True
+    assert "いま判定できる前提: 1件" in text
+    assert "判定に要るデータがまだ無い前提: 1件" in text
+
+
+def test_台帳が読めないときは赤の側に倒す(tmp_path, monkeypatch):
+    """**分からないときに赤を消さないこと。**
+
+    `deadline_check` が落ちる・claim が引けない回は、
+    **全部「いま判定できる」に倒します**（今までどおりの振る舞い）。
+    黙って赤が消えるほうが危ないからです。
+    """
+    _seed(tmp_path, monkeypatch,
+          [_ship("2026-08-23T10:00", "fix: 直した")] * 3, OPEN_OVERDUE)
+    now, later = drift.judgeable_split(drift.overdue("2026-08-24"), "2026-08-24")
+    assert len(now) == 1 and later == []
+
+
+def test_needsが書かれていない前提は赤の側に数える(tmp_path, monkeypatch):
+    """**書かなければ赤が消える、を作らないこと。**
+
+    `needs:` が無い前提は `deadline_check` が `[??]`（確かめていない）と言います。
+    これは「判定できない」ではなく「**何が要るか誰も書いていない**」です。
+    緑に倒すと、`needs:` を書かないほうが得になります。
+    """
+    _seed(tmp_path, monkeypatch,
+          [_ship("2026-08-23T10:00", "fix: 直した")] * 3, OPEN_OVERDUE)
+    text, drifting = drift.report("2026-08-24")
+    assert drifting is True
+    assert "いま判定できる前提: 1件" in text

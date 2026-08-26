@@ -153,6 +153,75 @@ def overdue(today: str) -> list[dict]:
     return out
 
 
+def judgeable_split(od: list[dict], today: str) -> tuple[list[dict], list[dict]]:
+    """期限切れの前提を「**いま判定できる**」と「**まだ判定できない**」に割る。
+
+    ## なぜ要るか（2026-08-26 20:4x に踏んだ。**3つの道具が食い違っていた**）
+
+    この回、同じ1件の前提について3つの道具がこう言いました:
+
+        status.py（この道具） **[!] 外れています。この回は verdict を出すこと**
+        eta.py                **期日の来た前提があります → verdict で日付が動かせます**
+        deadline_check.py     **まだ数えはじめたところです。この回は何もしないのが正解**
+
+    **正しいのは3つ目**でした。要 8本 に対し公開済み 7本、
+    「両群がそろう公開日」は 3日 要るのに **0日**（Analytics が3日遅れ）。
+    その前提の `falsified_if` 自身が「**どちらも 8本 に満たなければ
+    判定できません。期限を延ばすこと。『まだ分からない』で閉じないこと**」
+    と書いています。
+
+    **ここが期限の日付しか見ていなかったのが原因です。**
+    `deadline_check.Verdict` は 2026-08-26 から `warming`（待てば日が出る）と
+    `unreachable`（こちらの手では起こせない）を持っていて、
+    **判定できるかどうかは既に計算されていました。** 上がって来ていなかっただけです。
+
+    **放っておくと、この赤は永久に消えません** —— 判定できない前提は
+    判定されないので、`verdicts_tail == 0` のまま毎周この行が出ます。
+    そして毎周が「verdict を出せと言われたが出せない」を一から考え直します
+    （`retro.py` の (a2) 問い1 の直近5件が全部「何を出すか決めるところ」）。
+    **いちばん悪い枝は、言われたとおりに判定できない前提を畳む回**です
+    —— `docs/JOURNAL.md` 2026-08-26 が「判断を抜くと、入力の質が
+    そのまま結果になる」と書いたのと同じ壊れ方になります。
+
+    **覆る条件**: `deadline_check` を読めない・評価が落ちるときは、
+    **全部を「判定できる」側に倒します**（第2返り値が空）。
+    分からないときに赤を消すほうが危ないからです。
+    """
+    try:
+        sys.path.insert(0, str(ROOT / "scripts"))
+        import deadline_check as dc                          # noqa: PLC0415
+
+        as_of = date.fromisoformat(today)
+        # **`od` をそのまま渡すこと**（`dc.load()` を呼び直さない）。理由が2つ:
+        #   1. `dc.load()` は既定の `config/hypotheses.yaml` を読むので、
+        #      **`drift.HYPS` を差し替えた検査が、本物の台帳を評価しはじめます**
+        #   2. `overdue()` は台帳の書き方3種（裸のリスト／`hypotheses:`／
+        #      1つ目の値）を吸収しますが、`dc.load()` は `hypotheses:` だけです
+        # そして期限切れの分だけ評価するので、**そのぶん速い**。
+        by_claim = {str(v.claim): v for v in dc.check(od, as_of=as_of)}
+    except Exception:                                        # noqa: BLE001
+        return list(od), []
+
+    now, later = [], []
+    for h in od:
+        v = by_claim.get(str(h.get("claim") or h.get("q") or ""))
+        if v is None or v.unchecked:
+            # **分からなければ赤の側。** `unchecked` ＝ `needs:` が書かれていない
+            # ＝「判定できない」と分かったのではなく、**何が要るか誰も書いていない**。
+            # ここを緑に倒すと、**書かなければ赤が消える**という抜け道になります。
+            now.append(h)
+            continue
+        # **`ready` が今日までに来ているものだけが「いま判定できる」**。
+        # `warming`（伸び率がまだ出ない）と `unreachable`（外の出来事待ち）は
+        # `ready is None` なので、そのまま later に落ちます。
+        if v.ready is not None and v.ready <= as_of:
+            now.append(h)
+        else:
+            later.append(dict(h, _why=v.answers[0].why if v.answers else "",
+                              _mark=v.mark))
+    return now, later
+
+
 def report(today: str, window_days: int = WINDOW_DAYS) -> tuple[str, bool]:
     """印字する本文と、「外れている」かどうかを返す。"""
     since = (date.fromisoformat(today) - timedelta(days=window_days)).isoformat()
@@ -169,7 +238,10 @@ def report(today: str, window_days: int = WINDOW_DAYS) -> tuple[str, bool]:
     verdicts_tail = sum(1 for r in tail if _kind_of(r.get("what", "")) == "verdict")
 
     od = overdue(today)
-    drifting = bool(od) and verdicts_tail == 0
+    # **期限が来たことと、判定できることは別です**（`judgeable_split` の註）。
+    # 外れの条件に使うのは「**いま判定できる**」ほうだけ。
+    od_now, od_later = judgeable_split(od, today)
+    drifting = bool(od_now) and verdicts_tail == 0
 
     lines = [
         "=== この輪は目標に向かっているか（直近 %d日 / ship %d件）===" % (window_days, n),
@@ -185,18 +257,35 @@ def report(today: str, window_days: int = WINDOW_DAYS) -> tuple[str, bool]:
         lines.append("  この窓に ship がありません。")
 
     lines.append(f"  直近{STALE_ROUNDS}回の verdict: **{verdicts_tail}件**")
-    if od:
-        lines.append(f"  **期限の来た前提: {len(od)}件**")
-        for h in od[:5]:
+    if od_now:
+        lines.append(f"  **期限が来ていて、いま判定できる前提: {len(od_now)}件**")
+        for h in od_now[:5]:
             claim = str(h.get("claim") or h.get("q") or "")[:64]
             lines.append(f"    {h.get('deadline', '?')}  {claim}")
     else:
-        lines.append("  期限の来た前提: なし")
+        lines.append("  期限が来ていて、いま判定できる前提: なし")
+    if od_later:
+        # **この一覧は「サボっている証拠」ではありません。**
+        # 判定に要るデータが、まだ手元に無いだけです（`judgeable_split`）。
+        lines.append(
+            f"  期限は来たが、**判定に要るデータがまだ無い前提: {len(od_later)}件**"
+            "（`scripts/deadline_check.py` と同じ計算）"
+        )
+        for h in od_later[:5]:
+            claim = str(h.get("claim") or h.get("q") or "")[:56]
+            lines.append(f"    {h.get('_mark', '')} {h.get('deadline', '?')}  {claim}")
+            if h.get("_why"):
+                lines.append(f"         {str(h['_why'])[:96]}")
+        lines.append(
+            "      **これを verdict で畳まないこと。** `falsified_if` が"
+            "「満たなければ判定できない。期限を延ばすこと。"
+            "『まだ分からない』で閉じないこと」と書いている側です。"
+        )
 
     lines.append("")
     if drifting:
         lines.append(
-            "  [!] **外れています。** 期限の来た前提があるのに、"
+            "  [!] **外れています。** いま判定できる期限切れの前提があるのに、"
             f"直近{STALE_ROUNDS}回で1件も判定していません。"
         )
         lines.append(
@@ -204,6 +293,14 @@ def report(today: str, window_days: int = WINDOW_DAYS) -> tuple[str, bool]:
             "動くのは前提を1件閉じたときだけ」と印字しています。"
         )
         lines.append("      **この回は verdict を出すこと。** 出せないなら理由を JOURNAL に。")
+    elif od_later and verdicts_tail == 0:
+        lines.append(
+            "  外れではありません —— **期限は来ていますが、判定できる前提が1件もありません。**"
+        )
+        lines.append(
+            "      この回に verdict を探さないこと（**待てば日が出ます**）。"
+            "  縮められるのは期限のほうです: `python scripts/deadline_check.py`"
+        )
     else:
         lines.append("  外れの条件（期限切れの前提 かつ 判定ゼロ）には当たっていません。")
 

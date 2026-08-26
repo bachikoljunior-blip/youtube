@@ -177,13 +177,31 @@ def _ready_by_claim() -> dict:
     **2度読むと素直に2倍かかります。** 同じ回の中で答えは変わらないので
     `lru_cache` で1回に畳みます（2026-08-26）。
     """
+    return _deadline_check_mod().ready_by_claim()
+
+
+@functools.lru_cache(maxsize=1)
+def _deadline_check_mod():
+    """`scripts/deadline_check.py` を1回だけ読み込む。**兄弟なので遅延で。**"""
     import importlib.util
     spec = importlib.util.spec_from_file_location(
         "eta_deadline_check", ROOT / "scripts" / "deadline_check.py")
     mod = importlib.util.module_from_spec(spec)
     sys.modules["eta_deadline_check"] = mod        # dataclass が __module__ を引きます
     spec.loader.exec_module(mod)
-    return mod.ready_by_claim()
+    return mod
+
+
+@functools.lru_cache(maxsize=1)
+def _unready_claims() -> set:
+    """**判定できる日が出せない claim**（`deadline_check.unready_claims()`）。
+
+    `_ready_by_claim()` はこれを黙って落とし、`next_close()` が
+    その claim を **`deadline` のほうへ流していました** ——
+    「今日が期限 ＝ **この回は `verdict` で日付が動かせます**」という嘘の頭3行が、
+    判定に要る本が0本の日に出ます（2026-08-26 20:4x に踏んだ）。
+    """
+    return _deadline_check_mod().unready_claims()
 
 # --- 門（YouTube の公表値。守るのではなく、通らないと収入が0になる事実）---
 SUBS_GATE = 1_000
@@ -3630,8 +3648,15 @@ def headline(pl: dict, prev: dict | None = None,
             ready = _ready_by_claim()
         except Exception:
             ready = None
+        # **`ready` が出せなかった claim を、`deadline` へ落とさないこと**
+        # （`_unready_claims` の註。判定に要る本が0本の日に
+        #   「この回は `verdict` で日付が動かせます」と出ていました）
         try:
-            nc = arm_speed.next_close(ready=ready)
+            unready = _unready_claims()
+        except Exception:
+            unready = None
+        try:
+            nc = arm_speed.next_close(ready=ready, unready=unready)
         except Exception:
             nc = None
         if nc and nc.get("on") is not None:
