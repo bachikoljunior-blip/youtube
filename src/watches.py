@@ -336,11 +336,17 @@ def _k_scored_pairs(p: dict) -> Gauge:
 
 
 def _ab_group_from_sources(name: str) -> Gauge:
-    """`src/judgeable.SOURCES` の群が、**落ち着いた本**で床に届いたか。
+    """`src/judgeable` の群が、**落ち着いた本**で床に届いたか。
 
     `Floor.groups` は公開日の一覧なので、**落ち着いた本 ＝ 今日から
     `SETTLE_DAYS + ANALYTICS_LAG_DAYS` 引いた日までに公開した本**です。
     **遅れを引かないと、報告されていない本を数えます。**
+
+    **`SOURCES` に無くても諦めないこと**（2026-08-26 22:5x に踏んだ）。
+    `judgeable.ACCRUING` に入っている群（いまは `request_form`）は
+    `SOURCES` から**わざと外れています** —— 外れているのは「期限の出し方」の
+    話であって、**群の数え方と床は `MEMBER_SOURCES` に在ります。**
+    ここで `SOURCES` だけを見ると、その群は「ありません」で落ちます。
     """
     from datetime import timedelta
 
@@ -348,7 +354,12 @@ def _ab_group_from_sources(name: str) -> Gauge:
 
     src = judgeable.SOURCES.get(name)
     if src is None:
-        return Gauge(0, 1.0, "本", err=f"{name}: `src/judgeable.SOURCES` にありません")
+        member_src = judgeable.MEMBER_SOURCES.get(name)
+        if member_src is None:
+            return Gauge(0, 1.0, "本",
+                         err=f"{name}: `src/judgeable.MEMBER_SOURCES` にありません")
+        _make_members, need = member_src
+        src = ((lambda k=name: judgeable._days(judgeable.members(k))), need)
     make, need = src
     cutoff = (datetime.now(JST).date()
               - timedelta(days=ab_split.SETTLE_DAYS + judgeable.ANALYTICS_LAG_DAYS))
@@ -362,16 +373,46 @@ def _ab_group_from_sources(name: str) -> Gauge:
 def _k_ab_group(p: dict) -> Gauge:
     """A/B の**少ないほうの群**が、判定に要る本数に届いたか。
 
-    数えているのは `src/ab_split.py` です（**同じ数を2箇所で持たない**）。
+    数えているのは `src/judgeable.MEMBER_SOURCES` です（**同じ数を2箇所で持たない**）。
     ここは「その数を毎周ここにも出す」ためだけの入口。
+
+    ## **`ab_split.MIN_PER_GROUP` を床に使わないこと**（2026-08-26 22:5x に踏んだ）
+
+    ここは長らく「`name in ab_split.EXPERIMENTS` なら `MIN_PER_GROUP`（16）」で
+    割っていました。**`request_form` の床は 72本 です**
+    （`src/judgeable.MEMBER_SOURCES`・`config/hypotheses.yaml` の両方が
+    「**16本 を写さないこと**」と明記しています —— 測っているのが
+    engaged ではなく**登録**だから）。実測の症状:
+
+        あと **13本**  途中の依頼-両群72本（いま 3 / **要る 16**）
+
+    **見出しは 72本 と言い、目盛りは 16本 で割っています。**
+    このまま 16本 で「満ちました」が鳴ると、`stop_check.sh` がその回を
+    引き止め、**片群 6,700再生（期待 2.1人）で登録率を比べる**ことになります。
+    `falsified_if` は「上回らなければ外れ（同点も外れ）」なので、
+    **見分けられない標本で判定すると、そのまま「外れ」に化けます。**
+
+    ## **数え方も `ab_split.split_counts` ではありません**（同じ回）
+
+    `split_counts` は `exp.split(topic)` を**全部の本**に当てるので、
+    **長尺も群に入ります。** 長尺は依頼そのものを書かない（`script_writer.ROLE`）ので
+    どちらの群でもなく、`judgeable._members_by_request_form()` は
+    控えの `duration_s` で落としています。実測の食い違い:
+
+        この目盛り        終端のみ **6本** / 途中あり 3本
+        judgeable 側      終端のみ **5本** / 途中あり 3本   ← 長尺が1本 混ざっていた
+
+    **`MEMBER_SOURCES` に在る群は、床も数え方もそちらに訊くこと。**
     """
-    from src import ab_split
+    from src import ab_split, judgeable
 
     name = p["experiment"]
+    if name in judgeable.MEMBER_SOURCES:
+        # **群の作り方も床も1か所**（`judgeable.MEMBER_SOURCES`）に置いてあるので、
+        # ここは数えるのではなく訊くこと。`ACCRUING` で `SOURCES` から
+        # 外れている群（`request_form`）も、あちらが拾います。
+        return _ab_group_from_sources(name)
     if name not in ab_split.EXPERIMENTS:
-        # **IDで振り分けない群**（作った時刻で割る・環境変数で割る）は
-        # `src/judgeable.SOURCES` にあります。**群の作り方は1か所だけ**に
-        # 置いてあるので、ここは数えるのではなく訊くこと。
         return _ab_group_from_sources(name)
     exp = ab_split.EXPERIMENTS[name]
     counts = ab_split.split_counts(exp)
