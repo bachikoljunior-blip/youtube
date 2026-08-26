@@ -2736,3 +2736,6 @@
 {"at": "2026-08-26T00:53:03+00:00", "detail": "channels.list mine"}
 {"at": "2026-08-26T00:53:05+00:00", "detail": "channels.list mine"}
 {"at": "2026-08-26T00:53:06+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-26T00:57:19+00:00", "detail": "scheduled_publish_times"}
+{"at": "2026-08-26T00:57:21+00:00", "detail": "playlistItems.insert"}
+{"at": "2026-08-26T00:57:22+00:00", "detail": "thumbnails.set h35ot6MqYso"}
