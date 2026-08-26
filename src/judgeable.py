@@ -453,14 +453,44 @@ def _hypotheses() -> list[dict]:
 
 
 def deadlines() -> dict[str, date]:
-    """yaml の `key:` → 期限（**閉じた前提は返しません**）。"""
+    """yaml の群の key → 期限（**閉じた前提は返しません**）。
+
+    ## **`needs:` の側の `key:` も拾います**（2026-08-27 に測って足した）
+
+    ここは長らく**前提の直下の `key:` だけ**を読んでいました。ところが
+    `request_form`（腕 `sub_rate`）は、直下に `key:` を**わざと付けていません** ——
+    yaml のその行に理由が書いてあります（「立てた時点で両群 0本・床 72本 なので、
+    `key:` を付けると `tests/test_judgeable.py` がそろうまで赤で居座る」）。
+    群そのものは `needs: [{kind: group_key, key: request_form}]` に在ります。
+
+    **その置き場所の都合が、群の一覧ごと消していました。** 実測 2026-08-27:
+    `deadlines()` は4件を返し、`request_form` だけが落ちていました。
+    落ちた1件は **`eta.py` が「凍らせると軌跡は +118日」と言う唯一の腕**の、
+    ただ1つの走っている実験で、**床がいちばん遠い**（片群 72本 に対し 9本/7本）。
+    **いちばん足りない群が、群の一覧から消えていた**ということです。
+
+    **`floors()` は1件も変わりません** —— あちらは `SOURCES` を回り、
+    `request_form` は `ACCRUING` で最初から外れています（実測で確認済み。
+    `tests/test_judgeable.py::test_実物で期限が構造的に守れる` は緑のまま）。
+    変わるのは「**群の一覧を訊く側**」（`scripts/queue_lag.py` の枠の節）だけです。
+
+    **覆る条件**: `request_form` の群がそろって `ACCRUING` から外れ、
+    yaml の直下に `key:` が戻ったら、この二重読みは要りません。
+    """
     out: dict[str, date] = {}
     for h in _hypotheses():
-        key = h.get("key")
-        if not key or h.get("closed_on"):
+        if h.get("closed_on"):
             continue
         raw = h.get("deadline")
-        out[str(key)] = raw if isinstance(raw, date) else date.fromisoformat(str(raw))
+        if not raw:
+            continue
+        when = raw if isinstance(raw, date) else date.fromisoformat(str(raw))
+        keys = [str(h["key"])] if h.get("key") else []
+        for need in (h.get("needs") or []):
+            if isinstance(need, dict) and need.get("kind") == "group_key" and need.get("key"):
+                keys.append(str(need["key"]))
+        for key in keys:
+            out.setdefault(key, when)
     return out
 
 
