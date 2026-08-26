@@ -2473,8 +2473,11 @@ id を `s-` に強制していた）。ところが `eta.py` の逆算はこう�
 **上の「撃つ前に1回 解いて確かめること」は、もう要りません。**
 `batch_build` は `--date` も `--hour` も `--hours` も書かなかった回に、
 **控えの空きから自分で選びます**（`batch_build.live_ring()`・API 0単位）。
-選ぶ先は**生きる帯**（05:00〜13:30・`src/collisions.py`）の空き枠で、
+選ぶ先は**実測で生きている帯**（09:00〜13:30 の 30分きざみ・10枠）の空き枠で、
 1日に `day_cap.cap()` を超えては積みません。
+**09:00 より前へは置きません** —— `collisions.LIVE_FROM_MIN` は 05:00 ですが、
+その帯は `src/day_cap.py` が **08/27 に測っている最中**です
+（`batch_build.PROVEN_FROM_MIN` の註）。
 
     python scripts/batch_build.py --count N            # ← 時刻は書かない。これが既定
     python scripts/batch_build.py --count N --long     # 長尺は 20時 の輪のまま
