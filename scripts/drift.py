@@ -618,6 +618,8 @@ def dead_arm_report(today: str, window_days: int = WINDOW_DAYS) -> str:
     #     触らない腕**（`sub_rate` 天井 ×2,923.79）を**生きた腕として数えて
     #     いました。** 判定は `levers.arm_state()` が持ちます（1か所に寄せる）。
     why = state.get("dead_why") or {}
+    #: **死んだ腕から外した理由**（面が割れている腕。いまは `density` だけ）。
+    open_why = state.get("open_why") or {}
     # --- **「引き代なし」と「十分でないだけ」を、同じ数に足さない**（2026-08-26）---
     #
     # ここは長らく、`dead_why` に載った腕を**理由を問わず** `n_dead` へ足し、
@@ -675,6 +677,13 @@ def dead_arm_report(today: str, window_days: int = WINDOW_DAYS) -> str:
         mark = ""
         if k == "none":
             mark = "  ← **宣言どおり、この回は到達日を動かしません**（道具・手順・記録の整備）"
+        elif open_why.get(k):
+            # **面が割れていて生きている腕**（2026-08-27・最適化の回）。
+            #     ここが無いと、`density` の行は「（天井 ×1.00）」だけになります ——
+            #     **分子から外したのに、読む側には「死んでいる」と同じ字で出る。**
+            #     外した理由（＝長尺の面が開いている・何をすれば引けるか）を
+            #     同じ行に置かないと、次の回はまた `none` を選びます。
+            mark = f"  ← **{open_why[k]}**"
         elif (why.get(k) or "").startswith("天井") and why.get(k) != "天井まで引いても届かない":
             # **前方一致で見ること**（2026-08-26）。`arm_state` は理由に但し書きを
             #     足すことがあり（「天井（**ショートの面の数**）」）、完全一致だと

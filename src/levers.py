@@ -306,6 +306,8 @@ def arm_state(eta_row: dict | None) -> dict:
     #     殺すのは**両方の面が閉じたとき**だけ。**理由のほうは残します**
     #     （`open_why` として返し、`lever_notes` がそのまま出す）。
     density_open_why = None
+    #: **面が割れているから外した腕**。下の `reaches` の輪が入れ直さないため。
+    rescued: set[str] = set()
     if "density" in dead_why and _long_surface_open(row):
         density_open_why = (
             "ショートの面は天井ですが、**長尺の面は開いています（未測定）**。"
@@ -313,10 +315,43 @@ def arm_state(eta_row: dict | None) -> dict:
             "**4,000時間の門に入るのは長尺だけ**です。"
             " **長尺を増やす作業を `none` へ落とさないこと。**")
         dead_why.pop("density")
+        rescued.add("density")
     # **「天井まで引いても届かない」は、天井の大小と別の理由です。**
     #     両方に当たる腕は、天井のほうを理由として残します（そちらが手前の話）。
+    #
+    # **ただし、上で外した腕をここで入れ直さないこと**（2026-08-27・最適化の回）。
+    #     08/26 に入れた上の3行は、実データでは**1行も効いていませんでした。**
+    #     `pop` した2行あとに、この輪が `density` をそのまま戻します:
+    #
+    #         arm_caps    {'density': 1.0, ...}        ← ショートの面の数
+    #         arm_reaches {'density': False, ...}      ← **同じ 1.0 から出た数**
+    #         → dead_why  {'density': '天井まで引いても届かない'}
+    #
+    #     `eta.lever_days()` の `reachable_at_cap` は
+    #     **`cap <= 1.0` なら解き直さず `NEVER` のまま**返します
+    #     （`at_ceiling` の枝）。つまり `reaches["density"] is False` は
+    #     **「天井が ×1.00 だ」の言い直し**で、別の証拠ではありません。
+    #     **同じ数を2回 数えて、2回目で殺していた**ということです。
+    #
+    #     何が起きていたか（実測 2026-08-27・`data/eta.jsonl` の最後の天井の行）:
+    #       `_long_surface_open(row)` は **True**（長尺の面 82枠/日 ÷
+    #       いま出している 0.65本/日 ＝ ×126 空いている）。それでも
+    #       `drift.dead_arm_report` は **`density` 64回（ship の 23%）**を
+    #       「引き代が無かった回」に数え、「この回では到達日が動きえない回
+    #       179/274（65%）」の分子に入れていました。
+    #       **長尺の再生は、台帳でいちばん大きい前提**
+    #       （「長尺の登録率はショートより1桁以上高い」・`sub_rate`・期限 11/22。
+    #        `needs` は「長尺の合計が 1,000再生」で、いま 74・10.6回/日 ＝ あと 88日）
+    #       **の待ち時間そのもの**です。その期限は**すでに3回 延ばされています。**
+    #       つまりこの1行は、**唯一の桁ちがいの前提を遅らせている側の作業を、
+    #       毎回「無駄だった」と記録していました。**
+    #
+    # **覆る条件**: `physical_caps` が `density` の天井を**面ごとに**立てるように
+    #     なったら（いまは `arm_caps["density"]` がショートの面の数ひとつだけ）、
+    #     `reaches["density"]` は独立した証拠になります。**そのときはこの除外を外すこと。**
+    #     見分け方: `arm_caps` に `density_long` が入っているかどうか。
     for k, ok in reaches.items():
-        if not ok and k not in dead_why:
+        if not ok and k not in dead_why and k not in rescued:
             dead_why[k] = "天井まで引いても届かない"
     dead = tuple(k for k in dead_why)
     return {"hint": row.get("lever_hint"), "binding": row.get("binding"),
