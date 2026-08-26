@@ -292,7 +292,9 @@ def publishes_per_day(longs: set[str] | None = None,
 
 def surface_forecast(sm: dict, pubs: dict[str, int] | None = None,
                      days: int = RECENT_DAYS,
-                     today: str | None = None) -> dict | None:
+                     today: str | None = None,
+                     make_per_day: float | None = None,
+                     slots_per_day: int | None = None) -> dict | None:
     """**これから先の面（インプレッション/日）を、予約の長尺の本数から出す。**
 
     ## なぜ要るか（2026-08-26。**この帳面の8件目の同じ穴**）
@@ -337,6 +339,37 @@ def surface_forecast(sm: dict, pubs: dict[str, int] | None = None,
         planned           その内訳（`YYYYMMDD` → 本）
         dry_days          これから60日で長尺の公開が0本の日（連なりの先頭から）
         dry_span          いちばん長い連なり `(始まり, 終わり, 日数)`
+        dry_fill          **その穴は、作る速さで自然に埋まるか**（下）
+
+    ## `dry_span` を「直せ」と読ませないこと（2026-08-26 夜に足した）
+
+    上の註は「直す先はサムネでも題でもなく、**その 13日 に長尺を置くこと**」と
+    書いていました。**それは、たいていの回で間違った手を指します。**
+
+    予約の時刻を決めているのは `uploader.next_publish_at()` だけで、
+    **その時刻で最初に空いている日**へ置きます ＝ **手前から順に埋まります。**
+    だから未来の空き日は「穴」ではなく「**まだ順番が来ていない日**」で、
+    作りつづけていれば、その日が来る前に頭が通過して埋まります。
+
+    実測 2026-08-26（`data/uploaded.jsonl` の長尺 28本・全部 08/24 以降のアップ）::
+
+        公開 08/29 [3.2 3.3 3.4 3.7日前]  …… 頭は 5本/日 で前へ進む
+        公開 09/06 [10.9 11.7日前]
+        公開 09/20〜10/10 [25〜45日前]     …… 1日1本だった頃の置き方の残り
+        → 空いているのは **09/07〜09/19**（頭と、古い置き方の残りのあいだ）
+
+    埋まるかどうかを決めるのは、**穴までの日数と、作る速さ**です::
+
+        穴の手前にある空き枠  ＝ Σ max(0, 1日の枠 − その日の予約)
+        埋まるまでの日数      ＝ 空き枠 ÷ 作る速さ（本/日）
+        穴の日までの日数 より短ければ、**放っておいて埋まります**
+
+    **足りないときに要るのは「その日に置くこと」ではなく、作る速さのほうです。**
+    既にある本を後ろへ動かして穴を埋めると、判定が遅れるぶん**必ず損**します
+    （`scripts/queue_lag.py` が数えているのと同じ日数）。
+
+    `make_per_day` / `slots_per_day` を渡さなければ `dry_fill` は `None`
+    （**測っていないことを、埋まる/埋まらないのどちらにも倒さない**）。
     """
     from datetime import date, timedelta
 
@@ -376,7 +409,53 @@ def surface_forecast(sm: dict, pubs: dict[str, int] | None = None,
             "planned": planned,
             "last_scheduled": last,
             "dry_days": dry,
-            "dry_span": best}
+            "dry_span": best,
+            "dry_fill": dry_fill(best, pubs, make_per_day, slots_per_day,
+                                 today=start)}
+
+
+def dry_fill(span: tuple[str, str, int] | None,
+             pubs: dict[str, int] | None,
+             make_per_day: float | None,
+             slots_per_day: int | None,
+             today=None) -> dict | None:
+    """**その穴は、作る速さで自然に埋まるか。**（`surface_forecast` の説明を読むこと）
+
+    返り（測れなければ `None` —— **どちらにも倒さない**）::
+
+        open_slots   穴の手前にある空き枠（本）
+        reach_days   その枠が埋まるまでの日数（＝ open_slots ÷ 作る速さ）
+        gap_days     いまから穴の初日までの日数
+        ok           reach_days <= gap_days（＝ 放っておいて埋まる）
+        short_per_day 足りないとき、作る速さをいくつ上げれば間に合うか（本/日）
+    """
+    from datetime import date, timedelta
+
+    if not span or not make_per_day or make_per_day <= 0 or not slots_per_day:
+        return None
+    start = today or date.today()
+    try:
+        first = date(int(span[0][:4]), int(span[0][4:6]), int(span[0][6:]))
+    except ValueError:
+        return None
+    gap = (first - start).days
+    if gap <= 0:
+        return None
+    pubs = pubs or {}
+    open_slots = 0
+    for i in range(gap):
+        d = (start + timedelta(days=i)).strftime("%Y%m%d")
+        open_slots += max(0, int(slots_per_day) - int(pubs.get(d, 0)))
+    reach = open_slots / float(make_per_day)
+    need = (open_slots / gap) if gap else None
+    return {"open_slots": open_slots, "reach_days": reach, "gap_days": gap,
+            "ok": reach <= gap, "make_per_day": float(make_per_day),
+            "slots_per_day": int(slots_per_day),
+            # **埋まる回でも、どこで割れるかを返すこと。** 「埋まります」だけだと
+            #     次の回は作る速さを落としてよいと読みます（余裕は実測 1.9日 しかない）。
+            "need_per_day": need,
+            "short_per_day": (None if reach <= gap
+                              else max(0.0, need - float(make_per_day)))}
 
 
 def last_scheduled_day(ledger_path: Path | None = None) -> str | None:

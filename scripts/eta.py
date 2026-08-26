@@ -2137,9 +2137,44 @@ def _recent_surface() -> tuple[float, int, str] | None:
                 str(long.get("per_day_sustained_basis") or ""),
                 int(long.get("recent_zero_publish_days") or 0),
                 reach_split.surface_forecast(
-                    reach_split.summary(rows, reach_split.long_ids())),
+                    reach_split.summary(rows, reach_split.long_ids()),
+                    make_per_day=_long_make_per_day(),
+                    slots_per_day=_long_slots_per_day()),
                 float(long.get("ctr") or 0.0))
     except Exception:  # noqa: BLE001  （測れないことで回を止めない）
+        return None
+
+
+def _long_make_per_day() -> float | None:
+    """**長尺を1日に何本 作れているか**（実測。読めなければ `None`）。
+
+    `long_supply_per_day()` の `per_day`。**計画値へは落としません** ——
+    ここが要るのは「予定表の穴が、放っておいて埋まるか」の判定で、
+    **願望で割ると『埋まります』と出て、実際には空のまま公開日が来ます。**
+    """
+    try:
+        got = long_supply_per_day()
+        # **`rate` です**（`per_day` ではありません）。**測れていない回は使わない** ——
+        # `measured: False` のときの数は計画値で、そこで割ると「埋まります」と出ます。
+        if not got.get("measured"):
+            return None
+        v = float(got.get("rate") or 0.0)
+        return v if v > 0 else None
+    except Exception:                                  # noqa: BLE001 — 回を止めない
+        return None
+
+
+def _long_slots_per_day() -> int | None:
+    """**1日に長尺を置ける枠の数**（`batch_build._long_ring()` の実測の輪）。
+
+    定数を写さないこと —— `_long_ring()` は `day_cap.long_form()` が
+    崩れを見つけたら自動で1つ下げます。**写した瞬間に古くなります。**
+    """
+    try:
+        sys.path.insert(0, str(ROOT / "scripts"))
+        import batch_build                             # noqa: PLC0415
+        return len(batch_build._long_ring())
+    except Exception:                                  # noqa: BLE001 — 回を止めない
         return None
 
 
@@ -2160,6 +2195,7 @@ def _with_recent_surface(mix: dict) -> dict:
         out["imp_day_planned_pubs"] = fc["pubs_per_day"]
         out["imp_day_per_publish"] = fc["per_publish"]
         out["imp_day_dry_span"] = fc["dry_span"]
+        out["imp_day_dry_fill"] = fc.get("dry_fill")
     if len(got) > 5 and got[5]:
         out["imp_ctr_long"] = got[5]
     return out
@@ -2201,6 +2237,7 @@ def _gate2_surface_basis(mix: dict) -> tuple[float | None, str, dict]:
               "planned_pubs": mix.get("imp_day_planned_pubs"),
               "per_publish": mix.get("imp_day_per_publish"),
               "dry_span": mix.get("imp_day_dry_span"),
+              "dry_fill": mix.get("imp_day_dry_fill"),
               "ctr": mix.get("imp_ctr_long")}
     # **窓が「公開を止めていた日」で埋まっているなら、中央値は段2 の答えではありません**
     #     （2026-08-26。`src/reach_split.surface_forecast()` の docstring に実測）。
@@ -2257,10 +2294,45 @@ def _gate2_surface_note(imp_day: float, need_day: float,
     dry = others.get("dry_span")
     if dry and dry[2] >= 3:
         a, b, n = dry
-        span += (f"　[!] **{a[:4]}-{a[4:6]}-{a[6:]}〜{b[:4]}-{b[4:6]}-{b[6:]} の {n}日 は"
-                 f"長尺の予約が0本**です（控えの実物）。面は公開で立つので、"
-                 f"**そこで {imp_day:,.0f}回/日 は保ちません。**"
-                 f"直す先はサムネでも題でもなく、**その {n}日 に長尺を置くこと**")
+        head_dry = (f"{a[:4]}-{a[4:6]}-{a[6:]}〜{b[:4]}-{b[4:6]}-{b[6:]} の {n}日 は"
+                    f"長尺の予約が0本です（控えの実物）。")
+        # **「その日に置け」と言わないこと**（2026-08-26 夜に直した）。
+        #     予約の時刻を決めているのは `uploader.next_publish_at()` だけで、
+        #     **手前から順に**埋めます。だから未来の空き日は「穴」ではなく
+        #     「**まだ順番が来ていない日**」で、作りつづけていれば頭が通過します。
+        #     実測（`data/uploaded.jsonl` 長尺28本・全部 08/24 以降のアップ）:
+        #     08/29 は 3.2〜3.7日前・09/06 は 10.9〜11.7日前・09/20〜10/10 は 25〜45日前
+        #     （最後のは 1日1本 だった頃の残り）。空いているのは**その2つのあいだ**。
+        #     **既にある本を後ろへ動かして埋めると、判定が遅れるぶん必ず損します。**
+        fill = others.get("dry_fill")
+        if not fill:
+            span += (f"　[!] **{head_dry}** "
+                     "**埋まるかどうかは、まだ数えていません**"
+                     "（作る速さか、1日の枠のどちらかが読めていません）。"
+                     "**『その日に置く』と読まないこと** —— "
+                     "予約は手前から埋まるので、**未来の空き日は"
+                     "『順番が来ていない日』かもしれません**")
+        elif fill["ok"]:
+            span += (f"　（{head_dry}"
+                     f"ただし**放っておいて埋まります** ——"
+                     f" 手前の空き枠 {fill['open_slots']}本 ÷ 作る速さ"
+                     f" {fill['make_per_day']:.2f}本/日 ＝ **{fill['reach_days']:.1f}日** で"
+                     f"頭が通過し、穴の初日までは {fill['gap_days']}日 あります。"
+                     f"**その日に置きにいかないこと** —— 既にある本を後ろへ動かすので、"
+                     f"判定が遅れるぶん損します。"
+                     f"**割れる線は作る速さ {(fill.get('need_per_day') or 0):.2f}本/日**"
+                     f"（いま {fill['make_per_day']:.2f}。"
+                     f"余裕 {fill['gap_days'] - fill['reach_days']:.1f}日））")
+        else:
+            span += (f"　[!] **{head_dry}** "
+                     f"面は公開で立つので、**そこで {imp_day:,.0f}回/日 は保ちません。**"
+                     f" 手前の空き枠 {fill['open_slots']}本 を、作る速さ"
+                     f" {fill['make_per_day']:.2f}本/日 で埋めるには"
+                     f" **{fill['reach_days']:.0f}日** かかり、穴の初日まで"
+                     f" {fill['gap_days']}日 しかありません。"
+                     f"**直す先はサムネでも題でも予定表でもなく、作る速さです** ——"
+                     f" あと **{(fill.get('short_per_day') or 0):.2f}本/日**"
+                     f"（既にある本を後ろへ動かして穴を埋めると、判定が遅れるぶん必ず損します）")
     ratio = (need_day / imp_day) if imp_day else float("inf")
     # **「1.0倍 足りません」を印字しないこと。** 191 対 190.6 は倍率にすると
     #     ×1.00 で、丸めると「足りている」と読める字面になります。
