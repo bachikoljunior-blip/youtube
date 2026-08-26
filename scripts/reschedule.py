@@ -279,6 +279,119 @@ def _update(svc, video_id: str, publish_at: str | None,
             pass
 
 
+def _parse_at(value) -> datetime | None:
+    """控えの `at` を datetime に。**読めなければ None**（その行は飛ばす）。"""
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+
+
+#: 長尺を同じ日に置くときの時刻（`scripts/batch_build.LONG_HOURS_JST` と同じ並び）。
+#: **長尺は `SHORTS_FEED` の枠を1つも使いません**（`src/day_cap.py`）。
+#: 夜に置いても生死に掛からないので、要るのは「空いている別々の時刻」だけです。
+LONG_HOURS_JST = (20, 21, 22, 19, 18)
+
+
+def long_pack_plan(rows: list[dict], durations: dict[str, float], *,
+                   now: datetime, per_day: int = 5, lead_min: int = 60,
+                   long_min_s: float = 180.0,
+                   window: tuple[str, str] | None = None) -> list[dict]:
+    """**予約済みの長尺だけを前へ詰める割り当て**（API 0単位・純関数）。
+
+    返すのは `{"id", "topic", "old", "new"}` の並びで、**動かす本だけ**です。
+
+    ## なぜ長尺だけ別に詰めるのか
+
+    **4,000時間の門に入るのは長尺だけ**です（`src/levers.py` / `src/day_cap.py` /
+    `src/verify.py` が同じことを書いています）。ショートは再生の 99.9% を
+    取っていますが（実測 08/26・直近28日: `SHORTS_FEED` 64,283 / `WATCH` 67）、
+    **その門には1分も積みません。** つまり長尺の公開が後ろへ流れたぶん、
+    **いま開いている唯一の門だけが止まります。**
+
+    `compact_plan` はこれをやりません —— あちらは**全部**を詰める道具で、
+    「真ん中に穴を空けない」を守ります。長尺は日ごとに在ったり無かったりが
+    普通なので、あの穴の判定に掛けると必ず止まります。**別の問いです。**
+
+    ## なぜ散っていたか（2026-08-26 に数えた）
+
+    `scripts/batch_build.slots()` は `--date` が無いと**同じ時刻を count 回**返し、
+    `uploader.next_publish_at()` は「その時刻で最初に空いている**日**」を返します。
+    つまり **N本 = N日 に1本ずつ**。実測: 長尺 28本 が 08/26〜10/10 の
+    **21日** に散っていた（1.3本/日）。作る側は 08/25 だけで **25本** 出しています。
+    **散らしているのは置き方だけ**でした。
+
+    （作る側は `batch_build._long_ring()` で直してあります。**こちらは
+    もう予約に入っている本の後始末**で、そちらの直しは効きません。）
+
+    ## 守っている不変条件
+
+    - **新しい時刻は必ず今より前か同じ。** 後ろへ下げる本は1つも作りません
+      （`compact_plan` と同じ理由 —— 途中で止まっても、もう一度走らせれば
+      同じ割り当てになるため）
+    - **埋まっている枠は使いません**（ショートの枠も含めて全部避ける）
+    - 測定の窓（`src.measure_window`）の日は置き先から外します
+    - `per_day` を超えて同じ日に置きません。**既定 5 は実測の上限**
+      （`src/day_cap.long_form()`: `most=5` `alive=5` `collapsed=False` ＝
+      5本 出した日は5本とも再生が付いた。**6本目は一度も観測されていません**）
+
+    ## 覆る条件
+
+    `day_cap.long_form()` の `collapsed` が True になったら（＝いちばん多く
+    出した日に「出したのに付かない」本が出たら）、`per_day` をその日の本数より
+    1つ下げること。**黙って上げないこと** —— 上げるのは前提を立てて測る手です。
+    """
+    floor = now.astimezone(JST) + timedelta(minutes=lead_min)
+    longs: list[tuple[datetime, dict]] = []
+    moving: set[str] = set()
+    parsed: list[tuple[datetime, dict]] = []
+    for r in rows:
+        at = _parse_at(r.get("at"))
+        if at is None:
+            continue
+        at = at.astimezone(JST)
+        parsed.append((at, r))
+        if durations.get(r.get("id"), 0.0) >= long_min_s and at > floor:
+            longs.append((at, r))
+            moving.add(str(r.get("id")))
+    if not longs:
+        return []
+    longs.sort(key=lambda t: (t[0], t[1].get("id", "")))
+    # **空いている枠は「動かさない本が居ない時刻」**です（2026-08-26 に検査が捕まえた）。
+    #     ここは最初「全部の時刻から、動かす本の時刻を引く」と書いていました。
+    #     `set` は同じ時刻を1つしか持たないので、**ショートと長尺が同じ時刻に
+    #     二重予約されていると、長尺を引いた拍子にショートの枠まで空きます** ——
+    #     そこへ別の長尺を置くと、**ショートが上書きで消えます。**
+    #     `_say_conflicts` が居るとおり、二重予約は実際に起きています。
+    free = {at for at, r in parsed if str(r.get("id")) not in moving}
+
+    hours = list(LONG_HOURS_JST)[:max(1, per_day)]
+    plan: list[dict] = []
+    day = min(longs[0][0].date(), floor.date())
+    i = 0
+    guard = 0
+    while i < len(longs) and guard < 400:
+        guard += 1
+        if measure_window.inside(day.strftime("%Y-%m-%d"), window):
+            day += timedelta(days=1)
+            continue
+        for h in hours:
+            if i >= len(longs):
+                break
+            slot = datetime(day.year, day.month, day.day, h, 0, tzinfo=JST)
+            if slot <= floor or slot in free:
+                continue
+            old, row = longs[i]
+            i += 1
+            if slot >= old:
+                continue                      # **後ろへは下げない**（不変条件）
+            free.add(slot)
+            plan.append({"id": row.get("id"), "topic": row.get("topic", ""),
+                         "old": old, "new": slot})
+        day += timedelta(days=1)
+    return plan
+
+
 def compact_plan(rows: list[dict], *, now: datetime, step_min: int = 30,
                  hour: int = 9, until_hour: int = 21, max_days: int = DEFAULT_MAX_DAYS,
                  lead_min: int = 60,

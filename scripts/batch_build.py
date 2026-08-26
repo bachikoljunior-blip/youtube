@@ -108,6 +108,7 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -1670,6 +1671,94 @@ def _pull_verdicts_first() -> None:
               "**一度だけ撃ってみます**（403 は単位を使いません）", flush=True)
     _rescue_dead_slots()                # (1) 標本を生き返らせる
     _pull_ready_dates()                 # (2) その日を手前へ倒す
+    _pack_long_form()                   # (3) 長尺を実測の密度まで詰める
+
+
+def _pack_long_form() -> None:
+    """**予約済みの長尺を、実測の密度（1日5本）まで前へ詰める**。
+
+    ## なぜここか —— **サムネイルより前、投稿より前**
+
+    `_push_thumbnails_first()` の註が「同じ50単位なら、到達日を動かす手が先」と
+    書いています。**同じ理屈がこちらにも当たります。**
+
+    **4,000時間の門に入るのは長尺だけ**です。ショートは再生の 99.9% を
+    取りますが（実測 08/26・直近28日: `SHORTS_FEED` 64,283 / `WATCH` 67）、
+    **その門には1分も積みません。** しかも `thumbnails.set` は
+    **ショートでは絵が出ません**（フィードで自動再生される）——
+    `src/upload_cap.py` の「同じ50単位を、2つの用途が取り合っています」の節が
+    同じ実測を載せています。**こちらを後ろに置く理由がありません。**
+
+    ## 何が起きていたか（2026-08-26 に数えた）
+
+        長尺は 08/25 に 25本・08/26 に 3本 作られている（作る側は1日25本 出せる）
+        その 28本 の**予約日**は 08/26〜10/10 の 21日 に散っている ＝ **1.3本/日**
+        詰め直すと 最後の1本が **10/10 → 09/01（39日 早い）**・前倒しの合計 **369日**
+
+    散らしていたのは置き方だけです —— `slots()` が `--date` の無い回に
+    **同じ時刻を count 回**返し、`next_publish_at()` が
+    「その時刻で最初に空いている**日**」を返すため（**N本 = N日**）。
+    **作る側は `_long_ring()` で直しました。ここはもう予約に入っている本の後始末**で、
+    そちらの直しは効きません。
+
+    ## 撃たない条件（`long_pack_plan` の中と、ここと、両方）
+
+    - 動かす本が0本 → 撃たない（単位を捨てないため）
+    - 後ろへ下がる本は**そもそも計画に入りません**（純関数側の不変条件）
+    - 測定の窓の日は置き先から外れます（同上）
+    - 1日 `per_day` 本を超えません。**既定 5 は実測**
+      （`day_cap.long_form()`: `most=5` `alive=5` `collapsed=False`）
+
+    **落ちても投稿は続けます**（他の段と同じ。**順番を逆にしないこと**）。
+
+    ## 覆る条件
+
+    **長尺の面が崩れたら**（`day_cap.long_form()['collapsed']` が True）、
+    `per_day` は自動で `most - 1` に落ちます（`_long_ring()` と同じ計器を読む）。
+    **予約の長尺が常に0〜1本なら、この段は空振りし続けます** —— そのときは
+    詰める話ではなく、**長尺を作る本数**のほうが律速です。
+    """
+    try:
+        import json as _json
+
+        from src import dupes, uploader
+        from scripts import reschedule
+
+        dur: dict[str, float] = {}
+        with open(ROOT / "data" / "uploaded.jsonl", encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                row = _json.loads(line)
+                dur[row.get("video_id")] = float(row.get("duration_s") or 0)
+
+        rows = [r for r in dupes.ledger_rows() if r.get("at")]
+        per_day = len(_long_ring())          # 実測の上限（崩れたら自動で下がる）
+        plan = reschedule.long_pack_plan(rows, dur, now=datetime.now(timezone.utc),
+                                         per_day=per_day)
+        if not plan:
+            return
+        gain = sum((p["old"] - p["new"]).days for p in plan)
+        last_o = max(p["old"] for p in plan)
+        last_n = max(p["new"] for p in plan)
+        print(f"[batch] **予約済みの長尺 {len(plan)}本 を 1日 {per_day}本 まで詰めます**"
+              f"（{len(plan) * 50}単位）。最後の1本 {last_o:%m/%d} → **{last_n:%m/%d}**"
+              f"・前倒しの合計 {gain}日。**4,000時間の門に入るのは長尺だけ**です",
+              flush=True)
+        svc = uploader._service()
+        done = 0
+        for p in plan:
+            stamp = p["new"].astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+            reschedule._update(svc, p["id"], stamp,
+                               fallback_status=uploader.base_status())
+            dupes.retime(p["id"], stamp)
+            upload_cap.note_quota_ok(detail=f"videos.update {p['id']}")
+            done += 1
+            time.sleep(1.2)     # **短い間に撃ちすぎると 403**（08/26 に 120本 で踏んだ）
+        print(f"[batch] 長尺を {done}本 詰めました", flush=True)
+    except Exception as exc:                                   # noqa: BLE001
+        print(f"[batch] 長尺の詰め直しは飛ばします: {str(exc)[:120]}", flush=True)
 
 
 def _rescue_dead_slots() -> None:
