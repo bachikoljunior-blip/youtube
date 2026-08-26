@@ -3295,3 +3295,9 @@
 {"at": "2026-08-26T15:18:55+00:00", "ok": true, "detail": "videos.update vid1"}
 {"at": "2026-08-26T15:20:03+00:00", "detail": "channels.list mine"}
 {"at": "2026-08-26T15:32:10+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-26T15:34:23+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-26T15:34:29+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-26T15:34:35+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-26T15:41:11+00:00", "detail": "scheduled_publish_times"}
+{"at": "2026-08-26T15:41:14+00:00", "detail": "playlistItems.insert"}
+{"at": "2026-08-26T15:41:14+00:00", "detail": "thumbnails.set pe_2z1xGWxk"}
