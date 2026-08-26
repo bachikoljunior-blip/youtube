@@ -264,6 +264,26 @@ def _ans_accrual(need: dict, as_of: date) -> Answer:
     except Exception as e:                                     # noqa: BLE001
         return Answer(None, f"**数えられませんでした**: {e}")
     if have >= want:
+        # **ここには門がありません。`count_expr` を丸ごと信じています。**
+        #   （2026-08-26 夕・最適化の回。**自分の `--shrink` がここで踏みました**）
+        #
+        #   下の `_MIN_SPAN_DAYS`（1日の窓から伸び率を出さない）は
+        #   **推定の道だけ**を守ります。**この行は推定ではないので素通りします** ——
+        #   そして `--shrink` は `ready` を見て期限を書き換えるので、
+        #   **`count_expr` が違うものを数えていると、期限が今日まで飛びます。**
+        #
+        #   実測: 「深い題ショート」の `count_expr` は `batch_runs.jsonl` の
+        #   **作った本**を数えていて **16本 →「足りています」**。ところが
+        #   **公開済みは 7本**、うち `video_forms` が「ショート」と言うのは **0本**、
+        #   `falsified_if` が要る「両群がそろう公開日」は **0日**（3日 要る）。
+        #   `--shrink` はその 16 を読んで **09-03 → 08-29 → 08-26（今日）** まで縮め、
+        #   **判定できる本が1本も無いのに「今日が期限」**にしていました。
+        #
+        #   **数が門を通ったことと、`falsified_if` が当てられることは別です。**
+        #   直すのは、その前提の `count_expr` を**公開済み・分類済み**で数え直すことと、
+        #   「本数が満ちても判定できるとは限らない」を数える要件を足すこと
+        #   （`src/watches.deep_short_days()` がその例）。**ここに一般の門は置けません** ——
+        #   何を数えるべきかは、前提ごとに `falsified_if` が決めるからです。
         return Answer(as_of, f"要 {want} ／ いま **{have}** → 足りています")
     try:
         spanned = (as_of - date.fromisoformat(since_s)).days
