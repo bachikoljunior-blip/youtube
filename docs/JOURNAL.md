@@ -57327,6 +57327,13 @@ M9 を判定して `run_marker --ship` を押したあと、`drift.py` を撃ち
    **この数を写さないこと** —— 予約の埋まり方で毎日 動きます）。
    出なければ、その定数のままにすること。**どちらでも、判定を JOURNAL に書くこと。**
 
+   **手は2つあります。両方やること** —— `config/hypotheses.yaml` の
+   `next_if_false` は `scripts/reschedule.py` の始まりの時刻を前へ倒せと
+   言っていて、それは**もう予約に在る本**の側です（`videos.update` ＝
+   JST 16:00 以降・1手50単位）。**`PROVEN_FROM_MIN` のほうは、
+   これから作る本の側**（`batch_build.live_ring()`・API 0単位）。
+   **片方だけだと、枠は半分しか開きません。**
+
 2. **【08/27 16:00 JST 以降の回へ】** 日枠が戻ります。この回も
    `videos.update` / `thumbnails.set` は 403 でした（403 の観測 404回）。
    戻ったら **`python scripts/refresh_thumbnail.py --missing` が先**
