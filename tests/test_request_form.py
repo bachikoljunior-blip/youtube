@@ -129,8 +129,12 @@ def test_台帳と道具が同じ床を言っている():
            if "終端だけでなく途中にも" in str(h.get("claim", ""))]
     assert len(hit) == 1 and hit[0]["lever"] == "sub_rate"
     need = hit[0]["needs"][0]
-    assert need["kind"] == "accrual" and need["need"] == n
-    assert "ab_members" in need["count_expr"] and "min(" in need["count_expr"]
+    # **`kind: accrual` に戻さないこと**（2026-08-26 夜に踏んだ）。
+    # あちらは台帳の件数しか見ないので、**予約が 09/29 の本を 09/18 に判定できる**
+    # と言いました（41日 楽観）。`group_key` は `_project_nth` を通るので、
+    # 作る速さと「作ってから公開までの遅れ」の両方が入ります。
+    assert need["kind"] == "group_key" and need["key"] == "request_form"
+    assert need.get("since"), "`since:`（群を作りはじめた日）が無いと推定が出ません"
 
 
 def test_群がそろったら見張りに戻せる形になっている():

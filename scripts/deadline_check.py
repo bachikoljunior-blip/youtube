@@ -454,6 +454,11 @@ def _ans_group_key(need: dict, as_of: date) -> Answer:
 
     key = str(need.get("key") or "")
     src = SJ.SOURCES.get(key)
+    if src is None and key in getattr(SJ, "ACCRUING", ()):
+        # **これから積む群**（`src/judgeable.ACCRUING`）。`Floor` の見張りには
+        # 入れないが、**期限はここで推定できる**（下の `_project_nth`）。
+        _make_m, n_m = SJ.MEMBER_SOURCES[key]
+        src = ((lambda k=key: SJ._days(SJ.members(k))), n_m)
     if src is None:
         return Answer(None, f"**`src/judgeable.SOURCES` に無い key です**: {key!r}"
                             "（新しい A/B は、あちらに足すこと）")
@@ -470,7 +475,53 @@ def _ans_group_key(need: dict, as_of: date) -> Answer:
                      + (f"{n}本目 {nth:%m/%d}" if nth else f"**あと{n - len(floor.groups[g])}本**"))
     body = f"{key}（`src/judgeable.py`）: " + " ／ ".join(parts)
     if ready is None:
-        return Answer(None, body + " → **群がそろわないので日が出ません**")
+        # **「群がそろわない ＝ 日が出せない」は、もうやめます**（2026-08-26 夜）。
+        #
+        # 同じ機械の `_ans_published_group` は、**この形をとっくに解いています**
+        # （すぐ上の `_project_nth`: 作る速さ × 作ってから公開までの遅れ）。
+        # 前の回の申し送りが「同じ形を次は `eta.py` の外で探すこと。
+        # `live_slots` ／ `judgeable` ／ `ab_split` は**まだ当てていません**」と
+        # 名指ししていた、その `judgeable` 側がここです。
+        #
+        # **日が出ないと何が止まるか**（`_project_nth` の docstring と同じ）:
+        # `arm_speed.forward()` の `undated` に落ちて θ に数えられず、
+        # `queue_lag` も `Floor` も動かせず、到達日はそのぶん止まります。
+        #
+        # **推定に要るのは「群を作りはじめた日」だけ**なので、`needs` の `since:`
+        # から取ります。**書いていない前提は、今までどおり `None`** ——
+        # 勝手に日を作らないため（`landed` を推測すると、群ごとに別の日が出ます）。
+        since = str(need.get("since") or "")
+        if not since:
+            return Answer(None, body + " → **群がそろわないので日が出ません**"
+                                "（`needs` に `since:`（群を作りはじめた日）を足せば、"
+                                "作る速さと公開の遅れから推定します）")
+        rows_all = _rows("uploaded.jsonl")
+        nths: list[date] = []
+        slacks: list[int] = []
+        notes: list[str] = []
+        for g in sorted(floor.groups):
+            got = floor.nth[g]
+            if got is not None:
+                nths.append(got)
+                continue
+            pub = sorted(d.isoformat() for d in floor.groups[g])
+            proj = _project_nth(rows_all, pub, n, since, as_of)
+            if proj is None:
+                return Answer(None, body + f" → **{g} がまだ1本もありません**"
+                                           "（作れば動きます）")
+            nth_g, rate, lead, sl = proj
+            nths.append(nth_g)
+            slacks.append(sl)
+            notes.append(f"{g} は**推定**（{rate:.2f}本/日・作ってから公開まで"
+                         f"中央値 {lead}日）→ {n}本目 {nth_g:%m/%d}")
+        nth = max(nths)
+        band = max(slacks) if slacks else analytics_lag_band()
+        return Answer(nth + timedelta(days=SJ.SETTLE_DAYS + SJ.ANALYTICS_LAG_DAYS),
+                      body + " ／ " + " ／ ".join(notes)
+                      + f" ＋ 落ち着く {SJ.SETTLE_DAYS}日 ＋ 遅れ {SJ.ANALYTICS_LAG_DAYS}日"
+                        f"（**±{band}日**。伸び率からの推定なので、この幅の中の"
+                        "書き換えは意味を持ちません）",
+                      slack=band)
     band = analytics_lag_band()
     tail = f"（**±{band}日** —— 遅れは1日の中で動きます）" if band else ""
     return Answer(ready, body + f" ＋ 落ち着く {SJ.SETTLE_DAYS}日 "

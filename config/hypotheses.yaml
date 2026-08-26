@@ -924,19 +924,28 @@ hypotheses:
   # 立てた時点で両群とも 0本 で、床は 72本 です。`Floor.ready` は
   # 「群がそろって初めて日が出る」形なので、`key:` を付けると
   # `tests/test_judgeable.py` が**そろうまで赤で居座ります**（2週間ぶん）。
-  # 群がそろったら `src/judgeable.ACCRUING` から外し、`needs` を
-  # `kind: group_key` に戻すこと（そこに書いてあります）。
-    deadline: "2026-11-09"
+  # 群がそろったら `src/judgeable.ACCRUING` から外すこと（そこに書いてあります）。
+  #
+  # **期限は「推定した日」ではなく「帯の遠い端」に置いてあります**（2026-08-26 夜）。
+  # `deadline_check` の推定は **10-13 ±25日**（片群3本・1日ぶんの伸び率）で、
+  # 点に合わせると**次の回の推定がずれるたびに書き換えることになります** ——
+  # `docs/JOURNAL.md` に「11-13 → 11-09 → 11-16 → 11-22 と3回 動かし、
+  # 届く日は1日も動いていない churn」と残っている、あの形です。
+  # 10-13 ＋ 25日 ＝ **11-07**。帯が縮んだら、そのとき縮めること。
+    deadline: "2026-11-07"
     lever: sub_rate               # subscribersGained ÷ 再生 で判定する
     needs:
       # 群の作り方は `src/judgeable.MEMBER_SOURCES["request_form"]`（床 **72本**）。
       # **16本 ではありません** —— 測っているのが engaged ではなく登録だからです。
       # 実測の登録率 0.0318%（3,066再生に1人）で、片群 16本 ＝ 約 6,700再生 なら
       # 期待 2.1人。**効きが2倍でも見分けられません。**
-      # **`min` で数えること** —— 片群だけ積んでも判定はできません。
-      - kind: accrual
-        count_expr: "min(ab_members('request_form').values())"
-        need: 72
+      # `since:` は**群を作りはじめた日**（`MID_REQUEST_RULE` が入った日）。
+      # 群がまだ 72本 に満たないあいだ、`scripts/deadline_check._ans_group_key` が
+      # ここから「作る速さ × 作ってから公開までの遅れ」で 72本目の公開日を推定します。
+      # **`kind: accrual` にしないこと** —— あちらは台帳の件数しか見ないので、
+      # **予約が 09/29 の本を 09/18 に判定できる**と言います（実測 41日 楽観）。
+      - kind: group_key
+        key: request_form
         since: "2026-08-26"
     watch: "途中の依頼-両群72本"     # 満ちたかは `src/watches.py` が毎周見ています
     falsified_if: >
