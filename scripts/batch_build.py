@@ -110,7 +110,7 @@ import subprocess
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -940,9 +940,24 @@ def _long_ring() -> tuple[int, ...]:
 #: 置かなければ 0再生 が確定している）。こちらは**まだ死んでいない本**なので、
 #: 測れている側から埋めます。
 #:
-#: **覆る条件**: 08/27 の切り分けが「09:00 より前も生きる」と出たら、
-#: ここを `collisions.LIVE_FROM_MIN` に差し替えること —— 枠が 10 → 18 に増え、
-#: 1日に置ける本数がそのぶん増えます。「出ない」と出たら、この定数のままにする。
+#: **覆る条件は「09:00 より前も生きるか」ではありません**（2026-08-27 に直した）。
+#: **その問いは、どちらのモデルでも「生きる」と答えます** ——
+#: (A)「1日 C本 まで」なら、朝より前に置いた本は**その日の先頭**なので生きます。
+#: 死ぬのはそのぶん後ろへ押し出された 09:00〜13:30 の本のほうで、
+#: **1日に生きる本数は 10本 のまま**です。
+#:
+#: 読むのは `config/hypotheses.yaml` の `falsified_if` が言っているほう ——
+#: **その日の「生きた本数」が 11本以上か**（＝ (B)「T までに出す」）。
+#:
+#:     (B) と出た   ここを `collisions.LIVE_FROM_MIN` に差し替える。
+#:                  枠が 10 → 18 に増え、1日に置ける本数もそのぶん増える
+#:     (A) と出た   **差し替えないこと。** 広げると、いま朝より前に置いてある本が
+#:                  上限を食うので、**置ける日はかえって後ろへ下がります**
+#:
+#: **値打ちは `python scripts/queue_lag.py` が毎回その場で出します**
+#: （(A) と (B) を並べて印字する。**この註に数を写さないこと**）。
+#: 実測 2026-08-27 の一度きりの姿: 128本 を置くのに いまの帯 +34日 /
+#: (A) で広げると +67日 / (B) で広げると +12日。**符号が逆になります。**
 PROVEN_FROM_MIN = 9 * 60        # 09:00 JST
 
 
@@ -1010,23 +1025,61 @@ def live_ring(count: int, now: datetime | None = None) -> list[str] | None:
 
     返り: `["12:00", "13:00", …]`（`upload_only.split_when()` が読む形）。
     読めなければ `None` —— **呼ぶ側は今までどおりに倒すこと**（黙って粗くしない）。
+
+    **中身は `live_plan()` です**（2026-08-27 に切り出した）。あちらは
+    **選んだ日も一緒に返します** —— `queue_lag.band_lines()` が
+    「あと N本 を置き切るのは何日か」を、**この関数と同じ手順で**数えるためです。
+    切り出す前、あちらは「帯の空き枠の**平均**」で割っていて、**11日 楽観**でした
+    （実測 2026-08-27: 平均だと 128本 に 23日、実際に置くと 34日 ——
+    置く側は**手前の日から埋める**ので、空いている先の日が平均を持ち上げます）。
+    """
+    plan = live_plan(count, now)
+    return [t for t, _ in plan] or None
+
+
+def live_plan(count: int, now: datetime | None = None,
+              grid: list[tuple[int, int]] | None = None,
+              horizon: int = 90,
+              cap: int | str | None = "auto") -> list[tuple[str, date]]:
+    """`live_ring()` の中身。**時刻と、置くことになる日**を返す（API 0単位）。
+
+    `live_ring()` は時刻しか返さないので、**日は `uploader.next_publish_at()` が
+    もう一度 探し直します。** ここはその探し方をそのまま写したもので、
+    **数える側（`queue_lag`）と置く側（`batch_build`）が同じ答えを出す**ための1本です。
+
+    `grid` を渡すと帯を差し替えて数えられます（`PROVEN_FROM_MIN` を下げたら
+    何日 早まるか、の反実仮想）。**既定はいま置いている帯そのもの**です。
+
+    `cap` は **`day_cap.window()` の (A)/(B) がそのまま入る所**です:
+
+        `"auto"`  `day_cap.cap()` を読む ＝ **(A)「1日 C本 まで」**。
+                  その日の帯に既に C本 在れば、その日は後ろへ回す
+        `None`    上限なし ＝ **(B)「T までに出す」**。帯に在るだけ置ける
+
+    **既定は `"auto"`（＝ `live_ring()` がいま置いている形）です。**
+    (A)/(B) はまだ切り分いていないので（`day_cap.window()` が `confounded`）、
+    **帯を広げる値打ちを数えるときは両方を出すこと** —— (A) では
+    帯を広げても**1日に生きる本数は増えません**（上限のほうが先に当たる）。
+
+    読めなければ `[]` —— 呼ぶ側は今までどおりに倒すこと（黙って粗くしない）。
     """
     if count <= 0:
-        return None
+        return []
     try:
         sys.path.insert(0, str(Path(__file__).resolve().parent))
         import queue_lag                                        # noqa: PLC0415
         rows = queue_lag.scheduled()
         if not rows:
-            return None
+            return []
         taken = {d: set(s) for d, s in queue_lag._taken(rows).items()}
         today = (now or datetime.now(JST)).date()
-        try:
-            from src import day_cap                             # noqa: PLC0415
-            cap = int(day_cap.cap())
-        except Exception:                                       # noqa: BLE001
-            cap = 10
-        grid = _band_grid()
+        if cap == "auto":
+            try:
+                from src import day_cap                         # noqa: PLC0415
+                cap = int(day_cap.cap())
+            except Exception:                                   # noqa: BLE001
+                cap = 10
+        grid = list(grid) if grid else _band_grid()
         band = set(grid)
         seen: dict[object, bool] = {}
         _mine = lanes.lane()
@@ -1038,7 +1091,7 @@ def live_ring(count: int, now: datetime | None = None) -> list[str] | None:
 
         def _first(hm) -> object:
             """`next_publish_at()` と同じ探し方（時刻は動かさず、1日ずつ後ろ）。"""
-            for i in range(1, 91):
+            for i in range(1, horizon + 1):
                 d = today + timedelta(days=i)
                 if _win(d):
                     continue                    # 窓の日は飛ばす
@@ -1046,7 +1099,7 @@ def live_ring(count: int, now: datetime | None = None) -> list[str] | None:
                     return d
             return None
 
-        out: list[str] = []
+        out: list[tuple[str, date]] = []
         for _ in range(count):
             best = None
             for hm in grid:
@@ -1055,8 +1108,9 @@ def live_ring(count: int, now: datetime | None = None) -> list[str] | None:
                     continue
                 # **その日の帯が上限に達しているか。** 達していれば (A) では死ぬので
                 # **その日ごと後ろへ回します**（(B) なら生きるので、外しはしない）。
-                full = 1 if sum(1 for t in taken.get(d, set())
-                                if t in band) >= cap else 0
+                full = 0 if cap is None else (
+                    1 if sum(1 for t in taken.get(d, set())
+                             if t in band) >= cap else 0)
                 # 同着は車線で割る（`src/lanes.py`）。**控えを見ない**ので、
                 # 同じ回に走っているきょうだいと相談せずに分かれます。
                 key = (full, d,
@@ -1068,12 +1122,12 @@ def live_ring(count: int, now: datetime | None = None) -> list[str] | None:
                 break
             _, hm, d = best
             taken.setdefault(d, set()).add(hm)
-            out.append(f"{hm[0]}:{hm[1]:02d}")
-        return out or None
+            out.append((f"{hm[0]}:{hm[1]:02d}", d))
+        return out
     except Exception as exc:                                    # noqa: BLE001
         print(f"[batch] 帯の空きが読めませんでした（既定の時刻へ倒します）: "
               f"{str(exc)[:80]}", flush=True)
-        return None
+        return []
 
 
 def slots(count: int, hour: int, date_jst: str | None, hours: list[int],
