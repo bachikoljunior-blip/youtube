@@ -220,6 +220,93 @@ def _append(rec: dict) -> str:
     return line
 
 
+CLAIM_KIND = "claim"
+
+#: **「いま取りかかっている」が新鮮だと見なす分数。**
+#: 1周は 15〜30分（`docs/trigger_main.md`）。倍に取って、直前の回のぶんまで見せます。
+CLAIM_WINDOW_MIN = 60
+
+
+def claims(window_min: int = CLAIM_WINDOW_MIN, me: str | None = None) -> list[dict]:
+    """**直近 window_min 分に、自分以外が「取りかかる」と書いたもの。**
+
+    ## なぜ要るか（2026-08-26 21:xx に、この回が 30分 払った）
+
+    この回は `scripts/drift.py` を 30分 かけて直し、push の直前に
+    **きょうだいが同じ 20分間に同じ所を直していた**ことを知りました
+    （merge conflict）。あちらのほうが広かったので**こちらのぶんを捨てています。**
+
+    **fetch では防げません。** 着手前に fetch は撃っていて、
+    そのとき向こうはまだ push していませんでした。**同時に走っています。**
+
+    そして**当たるべくして当たっています** —— `retro.py` の持ち越し1位と
+    `status.py` の「[!] 外れています」は**どの回にも同じ形で見えている**ので、
+    **上位の1件は複数の回が同時に取りにいきます。** 直近7日の周は 115、
+    そのうち ship は 305件。**重なりは事故ではなく、既定の状態です。**
+
+    **`data/runs.jsonl` に置くのは、口が既に在るからです**
+    （`.gitattributes` の `merge=union` で、追記どうしは黙って両方残ります）。
+    読む場所を `--write`（§1・**その回のいちばん最初のコマンド**）にしたのは、
+    **何をやるか決める前**でないと意味がないからです。
+
+    **これは予約ではありません。** 見て、避けるか、重ねるかを決めるのはこちらです
+    （同じ所を2つの回が直すのが正しい場面もあります —— 08-26 の
+    `--shrink` は、きょうだいが見つけなければ間違ったまま走っていました）。
+    """
+    me = me if me is not None else (actor_id() or "")
+    cut = datetime.now(JST) - timedelta(minutes=window_min)
+    out = []
+    for r in _records():
+        if r.get("kind") != CLAIM_KIND:
+            continue
+        if str(r.get("session") or "") == me:
+            continue
+        try:
+            at = datetime.fromisoformat(str(r.get("at")))
+        except ValueError:
+            continue
+        if at.tzinfo is None:
+            at = at.replace(tzinfo=JST)
+        if at >= cut:
+            out.append(r)
+    return out
+
+
+def _claim_lines(window_min: int = CLAIM_WINDOW_MIN) -> list[str]:
+    rows = claims(window_min)
+    if not rows:
+        return []
+    out = [f"[marker] **直近 {window_min}分 に、他の回が取りかかると書いたもの: "
+           f"{len(rows)}件**（`--claim`）"]
+    for r in rows[-5:]:
+        who = str(r.get("session") or "")[-8:]
+        out.append(f"         {str(r.get('at'))[11:16]}  …{who}  {r.get('what')}")
+    out.append("         **予約ではありません。**避けるか重ねるかはこちらが決めること"
+               "（同じ所を2つの回が直して、片方の誤りが見つかった例が 08-26 にあります）。"
+               "**ただし、ぶつかると片方は捨てになります。**")
+    return out
+
+
+def claim(what: str) -> int:
+    """**「いまからこれに取りかかる」を残す。**（`claims()` の註）"""
+    if not (what or "").strip():
+        print("[marker] `--claim` は1行の中身が要ります。")
+        return 2
+    if is_parent():
+        print("[marker] **親からは印を付けません。**")
+        return 0
+    line = _append({
+        "at": datetime.now(JST).isoformat(timespec="seconds"),
+        "session": actor_id() or "(不明)",
+        "kind": CLAIM_KIND,
+        "what": what.strip(),
+    })
+    print(f"[marker] 取りかかる印を付けました: {line}")
+    for ln in _claim_lines():
+        print(ln)
+    return 0
+
+
 def write() -> int:
     me = actor_id() or "(不明)"
     if is_parent():
@@ -232,6 +319,10 @@ def write() -> int:
         "kind": "start",
     })
     print(f"[marker] 走った印を付けました: {line}")
+    # **ここで出すこと。** §1 はその回のいちばん最初のコマンドで、
+    # **何をやるか決める前**です。決めた後に見せても、払った時間は戻りません。
+    for ln in _claim_lines():
+        print(ln)
     return 0
 
 
@@ -844,6 +935,11 @@ def main(argv: list[str] | None = None) -> int:
                          "オーナー指示 2026-08-20「毎回その予測に反映して」）。"
                          "**逃げ道であって、既定ではありません** —— 使ったら理由を "
                          "JOURNAL に1行。`stop_check.sh` が終わる前にもう一度訊きます")
+    ap.add_argument("--claim", metavar="内容",
+                    help="**いまから取りかかるものを1行で残す**（`claims()` の註）。"
+                         "`--write` が、直近60分に他の回が書いたぶんを出します —— "
+                         "**何をやるか決める前**に見えるように。**予約ではありません**が、"
+                         "ぶつかると片方は捨てになります（08-26 に 30分 払った）")
     ap.add_argument("--seen", metavar="ID",
                     help="**名指しされた回を見にいって、拾うものが無かった**ことを"
                          "残す（`sibling_check` がもう名指ししません）。"
@@ -856,6 +952,10 @@ def main(argv: list[str] | None = None) -> int:
                          "言われたときの直し方。**`--ship` を打ち直すと同じ成果が"
                          "2行入り、帳簿が二重に数えます。**")
     args = ap.parse_args(argv)
+    if args.claim:
+        if args.ship or args.seen:
+            ap.error("--claim は単独で打ちます（出したものとは別の記録です）")
+        return claim(args.claim)
     if args.seen:
         if args.ship or args.write:
             ap.error("--seen は単独で打ちます（出したものとは別の記録です）")
