@@ -420,8 +420,46 @@ def _k_error_reasons(p: dict) -> Gauge:
     return Gauge(len(reasons), float(p["need"]), "本", note)
 
 
+def _k_deep_shorts(p: dict) -> Gauge:
+    """**深い題（`s-` で始まらない）を、ショートの車線で何本 出したか**（2026-08-26 に足した）。
+
+    見るのは `data/batch_runs.jsonl` です。`long` が偽の回 ＝ ショートの車線
+    （`batch_build.build_one()` は `--long` が無ければ `--short` を付けるだけで、
+    **題の id が `s-` かどうかは見ていません**）。そこに載った
+    **`s-` で始まらない題**が、この待ちの数えるものです。
+
+    **`video_id` の無い本は数えません** —— 生成に失敗した本は公開されないので、
+    比べる群にも入りません。**分母に入れると、待ちだけが先に満ちます。**
+
+    対応する仮説の `needs.count_expr` と**同じ数え方**にしてあります。
+    片方だけ直すと、待ちが鳴る日と判定できる日がずれます。
+    """
+    if not BATCH_RUNS.exists():
+        return Gauge(0, float(p["need"]), "本", err="batch_runs.jsonl がありません")
+    since = str(p.get("since") or "")
+    n = 0
+    for line in BATCH_RUNS.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        try:
+            row = json.loads(line)
+        except ValueError:
+            continue
+        if row.get("long"):
+            continue                       # 長尺の車線は数えない
+        if since and str(row.get("at", ""))[:10] < since:
+            continue
+        for item in row.get("results", []):
+            item = item or {}
+            if item.get("video_id") and not str(item.get("topic", "")).startswith("s-"):
+                n += 1
+    return Gauge(n, float(p["need"]), "本",
+                 f"{since or '全期間'} 以降・ショートの車線に載った深い題")
+
+
 KINDS = {
     "ab_group": _k_ab_group,
+    "deep_shorts": _k_deep_shorts,
     "length_spread": _k_length_spread,
     "published_count": _k_published_count,
     "scan_sum": _k_scan_sum,
