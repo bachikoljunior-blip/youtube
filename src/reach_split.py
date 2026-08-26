@@ -169,6 +169,59 @@ def long_ids(pairs_path: Path | None = None,
     return out
 
 
+def publishes_per_day(longs: set[str] | None = None,
+                      ledger_path: Path | None = None) -> dict[str, int]:
+    """**その日に公開した長尺の本数**（`YYYYMMDD` → 本数）。
+
+    ## なぜ要るか（2026-08-26 に足した。**この帳面の6件目の同じ穴**）
+
+    `BURST_SHARE` の註が、この帳面でいちばん大事なことを既に書いています ——
+
+    > 08/21 の 1,285回 のうち **1,276回（99.3%）が、その日に公開した5本**に
+    > 付いています。…長尺の面は「立っている面」ではなく、**公開日の立ち上がりだけ**です。
+
+    **そこまで分かったうえで、次の行が「続いている量」を1日あたりで測っています。**
+    直近7日の中央値 **8.0回/日** で、`scripts/eta.py` はそれを読んで
+    「**22.4倍 足りません。足りないのはインプレッションで、サムネと題（CTR）では
+    動きません**」と印字します。
+
+    **その7日のうち、長尺を1本でも公開した日は1日だけです**（08/21）。
+    残り6日は**公開が0本**で、面が立ち上がる元がありません。
+    **中央値は、その6日のほうを拾います。**
+
+    これは `summary()` の docstring が書いている穴と**同じ形の、1段 下**です ——
+    あちらは「最初の20日は面そのものが存在しない日（長尺の公開前）で、
+    平均はそれを分母に数えていた」。**こちらは、公開の止まっていた日を
+    『続いている量』の分母に数えています。**
+
+    面が公開で立つなら、続く量を決めるのは**カレンダーではなく公開の本数**です。
+    だから、この関数が返す本数で割った `per_publish` を一緒に出します。
+
+    **控えの `at`（予約時刻）から数えます。** `at` の無い本（2026-08-16 より前に
+    公開したぶん）は数えられないので、**古い窓では本数が下振れします** ——
+    直近の窓（`RECENT_DAYS`）でだけ使うこと。
+    """
+    longs = long_ids() if longs is None else longs
+    p = ledger_path or LEDGER
+    out: dict[str, int] = {}
+    if not p.exists():
+        return out
+    for line in p.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        vid, at = row.get("video_id"), row.get("at")
+        if not vid or not at or str(vid) not in longs:
+            continue
+        day = str(at)[:10].replace("-", "")
+        out[day] = out.get(day, 0) + 1
+    return out
+
+
 def _imp(row: dict) -> float:
     try:
         return float(row.get("video_thumbnail_impressions") or 0)
@@ -218,8 +271,13 @@ def _median(vals: list[float]) -> float:
     return s[n // 2] if n % 2 else (s[n // 2 - 1] + s[n // 2]) / 2
 
 
-def summary(rows: list[dict], longs: set[str]) -> dict:
+def summary(rows: list[dict], longs: set[str],
+            publishes: dict[str, int] | None = None) -> dict:
     """形べつに集計する。
+
+    `publishes` は `{"YYYYMMDD": その日に公開した長尺の本数}`。
+    省略すると控え（`data/uploaded.jsonl`）から数えます
+    （`publishes_per_day()`。**なぜ本数で割るのかは、そちらの註**）。
 
     返り: `{"長尺": {...}, "ショート": {...}, "days": n, "dates": [...],
     "last_day": "20260821"}`。**`last_day` は「積んである最後の日」**で、
@@ -318,6 +376,26 @@ def summary(rows: list[dict], longs: set[str]) -> dict:
         else:
             v["per_day_sustained"] = v["per_day_recent"]
             v["per_day_sustained_basis"] = f"直近{len(vals)}日の平均"
+        # **公開1本あたりの面**（2026-08-26 に足した。`publishes_per_day` の註）。
+        # 上の `per_day_*` は全部カレンダーの1日あたりで、**公開が0本の日を
+        # 分母に数えます。** 面が公開の立ち上がりで立つなら、そちらは
+        # 「続いている量」ではなく「**公開を止めていた量**」です。
+        # **上の数は1つも変えていません**（保存済みの点と比べられなくなるため）。
+        # ここで足すのは読みのほうだけで、判断は呼び側がします。
+        if key == "長尺":
+            pubs = publishes_per_day(longs) if publishes is None else publishes
+            n_pub = sum(pubs.get(d, 0) for d in recent)
+            v["recent_publishes"] = n_pub
+            v["recent_publish_days"] = sum(1 for d in recent if pubs.get(d, 0))
+            v["recent_zero_publish_days"] = len(recent) - v["recent_publish_days"]
+            v["per_publish"] = (
+                (sum(series[d] for d in recent) / n_pub) if n_pub else None)
+            if v["recent_zero_publish_days"]:
+                v["per_day_sustained_basis"] += (
+                    f"。**この{len(recent)}日のうち"
+                    f"{v['recent_zero_publish_days']}日は長尺を1本も公開していません**"
+                    + (f"（公開1本あたりでは {v['per_publish']:,.1f}回"
+                       f" ／ 公開 {n_pub}本）" if n_pub else "（公開 0本）"))
     return {"長尺": out["長尺"], "ショート": out["ショート"], "days": days,
             "dates": dates, "last_day": dates[-1] if dates else None}
 
