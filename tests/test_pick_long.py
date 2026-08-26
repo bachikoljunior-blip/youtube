@@ -59,3 +59,62 @@ def test_既定は両方から取る(monkeypatch):
     _stub(monkeypatch, "s-alpha", "charlie")
     got = [t["id"] for t in batch_build.pick(2, [])]
     assert sorted(got) == ["charlie", "s-alpha"], got
+
+
+# ---- ショートの回が、長尺の在庫を食うときの値札（2026-08-26 09:5x に踏んだ）----
+#
+# `--long` を付けない `pick` は `s-` で始まらない題も候補に残します
+# （そうでないと「深い題をショートで出す」前提が永久に溜まりません）。
+# ですが `s-` で始まらない題は、**そのまま長尺の在庫**でもあります。
+# 族の最後の1件をショートで使うと、**7日ぶんの長尺の上限が2本 落ちます。**
+#
+# 実測: `topic_forge --count 2 --long` で `jutaku` の族を作って
+# 上限を 22本 → 24本 にした直後、同じ回の `batch_build --count 2`（`--long` なし）が
+# `jutaku-hanbun-jougen` を取りました。**どこにも印字されません。**
+#
+# **止めません。** どちらの使い道にも理由があるので、**値札を出すだけ**にします。
+
+
+def _stub_ledger(monkeypatch, used: set[str]) -> None:
+    from src import dupes
+
+    monkeypatch.setattr(dupes, "ledger_rows",
+                        lambda: [{"topic": t} for t in used])
+
+
+def test_族の最後の長尺の題をショートで使うと_落ちる本数を印字する(monkeypatch, capsys):
+    _stub(monkeypatch, "charlie", "s-delta")
+    _stub_ledger(monkeypatch, set())
+    got = [t["id"] for t in batch_build.pick(1, [])]
+    assert got == ["charlie"], got
+    out = capsys.readouterr().out
+    assert "7日ぶんの長尺の上限が 2本 落ちます" in out
+    # **止めないこと**（深い題ショートは 09/03 の前提に積む）
+    assert "止めません" in out
+    assert "topic_forge.py --count N --long" in out
+
+
+def test_族に長尺の題がまだ残るなら_上限は動かないと言う(monkeypatch, capsys):
+    # 同じ族（calc は id の最後の語）に2件ある ＝ 1件使っても族は残る
+    _stub(monkeypatch, "alpha-charlie", "bravo-charlie", "s-delta")
+    _stub_ledger(monkeypatch, set())
+    batch_build.pick(1, [])
+    out = capsys.readouterr().out
+    assert "7日ぶんの長尺の上限は動きません" in out
+
+
+def test_ショート向けの題だけの回は_何も言わない(monkeypatch, capsys):
+    _stub(monkeypatch, "s-alpha", "s-bravo")
+    _stub_ledger(monkeypatch, set())
+    batch_build.pick(2, [])
+    out = capsys.readouterr().out
+    assert "長尺の在庫" not in out
+
+
+def test_長尺の回では値札を出さない(monkeypatch, capsys):
+    """`--long` の回は、そもそも長尺として使っているので値札は要りません。"""
+    _stub(monkeypatch, "charlie", "s-delta")
+    _stub_ledger(monkeypatch, set())
+    batch_build.pick(1, [], long_form=True)
+    out = capsys.readouterr().out
+    assert "長尺の在庫" not in out

@@ -516,7 +516,71 @@ def pick(count: int, explicit: list[str], per_calc: int = DEFAULT_PER_CALC,
             f"在庫のほうが先に尽きています。",
             flush=True,
         )
+    if not long_form:
+        _warn_long_stock_eaten(chosen, pool, posted)
     return chosen
+
+
+def _warn_long_stock_eaten(chosen: list[dict], pool: list[dict],
+                           posted: set[str]) -> None:
+    """**ショートの回が、長尺の在庫を黙って食っていないか**（2026-08-26 09:5x に踏んだ）。
+
+    `--long` を付けない `pick` は `s-` で始まらない題も候補に残します
+    （**そうでないと「深い題をショートで出す」前提が永久に溜まりません**）。
+    ですが `s-` で始まらない題は、そのまま**長尺の在庫**でもあります ——
+    `topic_forge.print_long_stock()` が数えているのはちょうどそれです。
+
+    **ショートで1本 使うと、その族の長尺の在庫が1件 減ります。**
+    族の最後の1件を使うと、**7日ぶんの長尺の上限が丸ごと2本 落ちます**
+    （`--per-calc` が族あたり2本なので、族が1つ消えるのと同じ）。
+
+    実測（この関数を書いた回）: `topic_forge --count 2 --long` で
+    `jutaku` の族を作って上限を 22本 → 24本 にした直後、
+    **同じ回の `batch_build --count 2`（`--long` なし）が
+    `jutaku-hanbun-jougen` を取りました** —— 残り1件だったので、
+    そのまま **24本 → 22本** に戻ります。**どこにも印字されません。**
+
+    **止めません。** どちらの使い道にも理由があり
+    （長尺は門2a、深い題ショートは `deep_shorts` の前提 期限 09/03）、
+    **どちらが得かはその回の判断**です。**見えないことだけが問題**なので、
+    ここでは**値札を出すだけ**にします。
+
+    **覆る条件**: `deep_shorts` の前提が閉じたら、
+    「非 `s-` の題をショートに回す」理由が1つ減ります。そのときは
+    **止める側に倒してよい**（`usable` を `s-` だけに絞る）。
+    """
+    deep = [t for t in chosen if not t["id"].startswith("s-")]
+    if not deep:
+        return
+    # **1族から何本かは、数えている側から引くこと**（写すと片方が古びます）
+    try:
+        import topic_forge
+        per_calc_long = topic_forge.PER_CALC_DEFAULT
+    except Exception:                                          # noqa: BLE001
+        return                                                 # 値札が出せないなら黙る
+    try:
+        from src import dupes
+        used = posted | {r["topic"] for r in dupes.ledger_rows() if r.get("topic")}
+    except Exception:                                          # noqa: BLE001
+        used = set(posted)
+    lost = 0
+    for topic in deep:
+        calc = topic["calc"]
+        left = [t for t in pool
+                if t.get("calc") == calc and t["id"] not in used
+                and not t["id"].startswith("s-")
+                and t["id"] not in {d["id"] for d in deep}]
+        if not left:
+            lost += per_calc_long
+    if not lost:
+        print(f"[pick] 長尺の在庫から {len(deep)}件 をショートに回します"
+              "（族はまだ残るので、7日ぶんの長尺の上限は動きません）", flush=True)
+        return
+    print(f"[pick] [!] **この回のショート {len(deep)}件 は長尺の在庫です。**"
+          f"うち族の最後の1件があるので、**7日ぶんの長尺の上限が {lost}本 落ちます**"
+          f"（`topic_forge --list` の『族』が減るため）。"
+          "**止めません** —— 深い題ショートは `deep_shorts` の前提（期限 09/03）に積みます。"
+          "**戻すなら `python scripts/topic_forge.py --count N --long`**", flush=True)
 
 
 def _row_times(row: dict) -> list[datetime]:
