@@ -131,19 +131,20 @@ def _forms(tmp_path, mapping):
 def test_測った控えと対応表を足す(tmp_path):
     pairs = _pairs(tmp_path, ["A", "B"])
     forms = _forms(tmp_path, {"B": "長尺", "C": "長尺", "S": "ショート"})
-    assert R.long_ids(pairs, forms) == {"A", "B", "C"}
+    assert R.long_ids(pairs, forms, tmp_path / "no-batch.jsonl") == {"A", "B", "C"}
 
 
 def test_控えが無ければ対応表だけ_いままでと同じ答え(tmp_path):
     pairs = _pairs(tmp_path, ["A", "B"])
-    assert R.long_ids(pairs, tmp_path / "no-such.json") == {"A", "B"}
+    assert R.long_ids(pairs, tmp_path / "no-such.json",
+                      tmp_path / "no-batch.jsonl") == {"A", "B"}
 
 
 def test_対応表に無い長尺を落とさない(tmp_path):
     """**これが 2026-08-24 の欠陥そのもの。** 6本しか数えていなかった。"""
     pairs = _pairs(tmp_path, ["A"])
     forms = _forms(tmp_path, {f"L{i}": "長尺" for i in range(12)})
-    got = R.long_ids(pairs, forms)
+    got = R.long_ids(pairs, forms, tmp_path / "no-batch.jsonl")
     assert len(got) == 13 and "A" in got
 
 
@@ -154,7 +155,7 @@ def test_再生0の長尺は控えに出ないので対応表の側で残る(tmp
     """
     pairs = _pairs(tmp_path, ["SSI1MVb12Ng"])
     forms = _forms(tmp_path, {"other": "長尺"})
-    assert "SSI1MVb12Ng" in R.long_ids(pairs, forms)
+    assert "SSI1MVb12Ng" in R.long_ids(pairs, forms, tmp_path / "no-batch.jsonl")
 
 
 def test_ショートは長尺に混ぜない(tmp_path):
