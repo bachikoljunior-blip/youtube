@@ -318,7 +318,14 @@ hypotheses:
         count_expr: "sum(1 for r in rows('batch_runs.jsonl') if r.get('long') for x in r.get('results', []) or [] if x.get('error_reason'))"
         need: 6
         since: "2026-08-24"
-    lever: rpm
+    # **2026-08-26 に `rpm` → `density` へ直しました**（最適化の回）。
+    # ここが測っているのは**長尺が何本 通るか**で、1再生あたりの実入りではありません
+    # （`falsified_if` は `error_reason` の分布を数えているだけで、RPM の語が1つも出ません）。
+    # `rpm` に置いた理由は「長尺＝ミッドロール＝RPM が高い」だと思われますが、
+    # **それは通った後の話**で、この前提は**通る本数**の側にいます。
+    # 隣の3件（面→実効RPM／WATCH→商品／深い題→ニッチ）は RPM への鎖を
+    # `note` に書いてあるので**そのまま**です。**鎖の書いていない2件だけ**を直しました。
+    lever: density
     watch: 長尺の失敗の理由-6本      # 満ちたかは `src/watches.py` が毎周見ています
     falsified_if: |
       2026-08-27 に、`data/batch_runs.jsonl` の **`error_reason` が入っている**
@@ -394,7 +401,11 @@ hypotheses:
       - kind: after
         on_date: "2026-08-31"
         what: "直近7日（08/24〜08/30）の長尺の生成（`data/batch_runs.jsonl`）"
-    lever: rpm
+    # **2026-08-26 に `rpm` → `density` へ直しました**（最適化の回）。
+    # 主張そのものが「長尺は**1日4本 作れる**」＝ **1日に出る本数**です。
+    # `note` も「L ＝ `max(LONG_PER_DAY_SCENARIOS)`（本/日）が段2 の合格点を割っている」
+    # と書いており、**RPM は一度も出てきません。** `density` の定義そのものです。
+    lever: density
     falsified_if: |
       2026-08-31 に、直近7日（08/24〜08/30）の長尺の**成功した生成**が
       **28本（＝1日4本）に届かない**なら外れ。判定はこの1行:
