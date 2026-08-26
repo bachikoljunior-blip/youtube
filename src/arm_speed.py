@@ -506,3 +506,115 @@ def next_close(doc: dict | None = None, today: date | None = None,
     soonest, src = min(days, key=lambda x: x[0])
     return {"on": soonest, "days": (soonest - today).days,
             "open": n_open, "source": src}
+
+
+#: `forward()` が数える窓（日）。**14 を先頭に置くこと** —— いちばん短い窓が
+#: いちばん過去に近く、「合っていない」を最小に見積もった姿になります。
+FORWARD_HORIZONS = (14, 30, 60)
+
+
+def forward(ready: dict[str, date] | None = None, doc: dict | None = None,
+            today: date | None = None,
+            horizons: tuple[int, ...] = FORWARD_HORIZONS) -> dict:
+    """**予定表から数えた θ**（＝これから何日に1件 閉じる見込みか）。API は 0単位。
+
+    ## なぜ要るか（2026-08-26・最適化の回。**到達日の 40% がこの1つの数に乗っています**）
+
+    `throughput()`（＝ `scripts/eta.py` が使う θ）は
+    **`closed_on` の実測 ÷ 経過日数**です。**過去だけを見ています。**
+    `eta.py` の頭は「腕を **50日** 動かして、そこから 73日」と出しますが、
+    その 50日 は `rate = p · log(g) · θ` の θ にそのまま反比例します
+    —— **124日 のうち 50日 が、この1つの数の上に乗っています。**
+
+    **その θ が、この機械自身の予定表と合っていません**（2026-08-26 の実測）:
+
+        `throughput()`   21件 ÷ 22日 ＝ **0.955/日**
+        予定表（開いている前提の「判定できる日」・`deadline_check.ready_by_claim()`）
+                         今後14日 **7件 → 0.500/日**（過去の 0.52倍）
+                         今後30日 **10件 → 0.333/日**（0.35倍）
+                         今後60日 **12件 → 0.200/日**（0.21倍）
+
+    **さらに、過去の 0.955 は率ではありません。**
+    `config/hypotheses.yaml` を git の履歴で数え直すと:
+
+        08/04〜08/19（16日間）  閉じた前提 **0件**
+        08/20（1日）            **12件**   ← 溜めた16日ぶんを、1回でまとめて閉じた
+        08/20〜08/26（6日間）   **5件**（0.83/日）
+
+    **21件のうち 12件（57%）が1日に集中しています。** 分母の 22日 は
+    「その速さで回っていた22日」ではなく、**16日 止まって1日で追いついた**姿です。
+
+    ## **予定表の側は下限です**（この註を消さないこと）
+
+    数えているのは**いま開いている前提だけ**で、これから立つぶんは入っていません。
+    実測では **1.5件/日 立って 0.83件/日 閉じています**（08/20〜08/26・git 履歴）。
+    立ったものの一部は窓の内側で閉じるので、**本当の θ は予定表と過去の間**です。
+
+    **だから片方に置き換えないこと。** `eta.py` は `throughput()` を使い続け、
+    **予定表の側を同じ行に並べます** —— `CLAUDE.md` が
+    「**裸の『届きません』を出さないこと。何を固定したせいでそう出たのかを
+    同じ行に並べること**」と言っているのと、同じ扱いです。
+    **θ にも同じことが要る**、というだけの話です。
+
+    ## 覆る条件
+
+    - **予定表の側が過去に追いついたら**（14日 窓の比が 0.8 を超えたら）、
+      この行は要りません。並べる意味は「合っていない」ことにあります
+    - **`ready` が空で返るとき**（`deadline_check` が読めない）は
+      `per_day` を出さず `missing` に理由を残します。**黙って 0 にしないこと** ——
+      0 にすると θ が 0 になり、到達日が「出ません」に化けます
+
+    返り: `{"horizons": [{"days", "n", "per_day", "ratio"}...], "dated": 件数,
+             "undated": 件数, "backward": float|None, "missing": str|None}`
+    """
+    doc = _load() if doc is None else doc
+    today = today or today_jst()
+    back = throughput(closed(doc), today)["per_day"]
+
+    n_open = sum(1 for h in (doc.get("hypotheses") or [])
+                 if isinstance(h, dict) and not h.get("closed_on"))
+
+    if not ready:
+        return {"horizons": [], "dated": 0, "undated": n_open, "backward": back,
+                "missing": "判定できる日が1件も取れませんでした"
+                           "（`deadline_check.ready_by_claim()` が空）"}
+
+    days = sorted(d for d in ready.values() if isinstance(d, date))
+    out = []
+    for h in horizons:
+        n = sum(1 for d in days if 0 <= (d - today).days <= h)
+        per = n / h
+        out.append({"days": h, "n": n, "per_day": per,
+                    "ratio": (per / back) if back else None})
+    return {"horizons": out, "dated": len(days),
+            "undated": max(n_open - len(days), 0), "backward": back,
+            "missing": None}
+
+
+def forward_line(fw: dict) -> str | None:
+    """`forward()` を、`eta.py` の頭に並べる1行にする。**合っていれば `None`。**
+
+    **黙って消える条件は1つだけ**（14日 窓が過去の 0.8倍 以上 ＝ 予定表が
+    過去に追いついている）。読めなかったときは**消さずに、読めなかったと言います。**
+    """
+    if fw.get("missing"):
+        return ("### **腕の回転 θ の裏取りができません** —— "
+                f"{fw['missing']}。**到達日はこの θ に反比例します**"
+                "（`eta.py` の『腕を N日 動かして』の N）")
+    hs = fw.get("horizons") or []
+    if not hs:
+        return None
+    first = hs[0]
+    if first.get("ratio") is not None and first["ratio"] >= 0.8:
+        return None
+    back = fw.get("backward")
+    parts = ", ".join(
+        f"今後{h['days']}日 **{h['per_day']:.2f}/日**（{h['ratio']:.2f}倍）"
+        for h in hs if h.get("ratio") is not None)
+    extra = (f"／**日の付いていない開いた前提 {fw['undated']}件**は数えていません"
+             if fw.get("undated") else "")
+    return (f"### **上の日付は θ＝{back:.2f}/日（`closed_on` の過去の実測）に"
+            f"反比例します。予定表から数えると {parts}** —— "
+            "予定表の側は**下限**です（これから立つ前提を数えていない）が、"
+            "**この差のぶん、上の日付は早すぎます**"
+            f"（`src/arm_speed.forward()`{extra}）")
