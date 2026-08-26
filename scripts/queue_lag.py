@@ -726,6 +726,24 @@ def answering_lines(rows: list[dict], now: datetime | None = None) -> list[str]:
         out.append(f"{bar}[!] **{best[0]} 〜 {best[-1]} の {len(best)}日**は、"
                    f"1日 {cap}本 のうち効くのが **1本 以下**です")
     out += band_lines(rows, short)
+    # **余っている側も出すこと。** 「足りない」だけだと、
+    #   **枠がどこへ行っているか**が見えません。実測 2026-08-27:
+    #   `request_form` 以外の 8群 は床の **3〜20倍** に届いていました
+    #   （`stat_split 対照(前)` は 316本 / 要 16本）。
+    #   **答えの出た問いに本を積み続け、まだ答えの出ない問いには 16/144 しか無い** ——
+    #   それがこの節の 81% の中身です。
+    over = [(k, g, len(ms) - need) for k, g, need, ms in open_floors()
+            if len(ms) > need]
+    if over:
+        # **「延べ」と書くこと。** 1本が `title_form` と `stat_split` の
+        #   両方に入るので、群ごとの余りを足すと**同じ本を何度も数えます**。
+        #   足すこと自体は正しい（枠がどれだけ答えの出た問いに向いているかの目安）が、
+        #   **「549本 の本がある」と読まれると別の話になります。**
+        out.append(f"{bar}  一方、**床に届いている {len(over)}群 の余り 延べ"
+                   f" {sum(n for _k, _g, n in over):,}本**（群をまたぐ本は重複）"
+                   f"（いちばん多い群 {max(over, key=lambda x: x[2])[0]}"
+                   f" {max(over, key=lambda x: x[2])[1]} +{max(over, key=lambda x: x[2])[2]}本）"
+                   " —— **答えの出た問いに、枠が使われています**")
     if len(short) > 2:
         out.append(f"{bar}  （ほかに床が足りない群 {len(short) - 2}件: "
                    + " / ".join(f"`{k}` {g} あと {n}本" for k, g, n in short[2:]) + "）")
