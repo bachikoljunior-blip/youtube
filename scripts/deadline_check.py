@@ -524,9 +524,47 @@ class Verdict:
     needs: list[dict] | None = None
 
     @property
+    def unreachable(self) -> bool:
+        """**こちらの手では起こせない**要件を含むか（`Answer.unreachable`）。
+
+        `Answer` はこれを 2026-08-25 から持っていましたが、**ここまで上がって
+        いませんでした。** 結果、`mark` は下の2つに**同じ `[!!]`** を付けます:
+
+            収益化の審査（登録者があと 999人）        …… **こちらでは起こせない**
+            今日 立てたばかりで、伸び率がまだ出ない  …… **明日には出る**
+
+        **直し方が正反対です。** 前者は前提の立て方ごと変えるしかなく、
+        後者は**何もしないのが正解**です。同じ札を付けると、
+        読んだ回は区別できません（`src/measure_window.py` が
+        「直し方が違うものに同じ札が付く」と書いているのと同じ形）。
+        """
+        return any(a.unreachable for a in self.answers)
+
+    @property
+    def warming(self) -> bool:
+        """**まだ数えはじめたところ**（日が出ないが、待てば出る）。
+
+        **2026-08-26 夕に足した。** この日、きょうだいの回が 19:08 JST に
+        前提を1件 立て、その 11分後 に `[!!] 判定できる日が出せません` と
+        印字されました。**正しく走っている前提です** ——
+        `since` から 1日 しか経っていないので伸び率が出ないだけで、
+        **明日には日が出ます。**
+
+        **なぜこの回に分けたか**: 同じ回に
+        `test_遅すぎる期限が残っていないこと` を入れて、
+        **`deadline_check` の出力に赤い検査を付けました。**
+        読まれる度合いが上がったぶん、**紛らわしい札の危険も上がります** ——
+        直す必要のない前提を「判定できない」と読んで畳む回が出ます。
+        """
+        return self.ready is None and not self.unchecked and not self.unreachable
+
+    @property
     def mark(self) -> str:
         if self.unchecked:
             return "[??]"
+        if self.warming:
+            # **[!!] にしないこと。** 待てば日が出ます（上の `warming`）。
+            return "[..]"
         if self.ready is None:
             return "[!!]"
         if self.deadline is None:
@@ -611,7 +649,12 @@ def lines(vs: list[Verdict], lag: int) -> list[str]:
             out.append(f"         {a.why}")
             if n:
                 out.append(f"           {str(n).strip()}")
-        if v.ready is None:
+        if v.warming:
+            # **「出せません」と言わないこと。** 待てば出ます。
+            out.append("         → **まだ数えはじめたところです。**"
+                       "伸び率が出れば日が出ます —— **この回は何もしないのが正解**です"
+                       "（畳まないこと・条件を緩めないこと）")
+        elif v.ready is None:
             out.append("         → **判定できる日が出せません。**"
                        "期限を置いても、その日に言えることはありません")
         elif v.slips:
@@ -632,12 +675,17 @@ def lines(vs: list[Verdict], lag: int) -> list[str]:
         else:
             out.append(f"         → 判定できるのは {v.ready:%m-%d}。**期限とちょうど同じ**です")
     bad = [v for v in vs if v.slips]
-    unk = [v for v in vs if v.ready is None and not v.unchecked]
+    unk = [v for v in vs if v.ready is None and not v.unchecked and not v.warming]
+    warm = [v for v in vs if v.warming]
     non = [v for v in vs if v.unchecked]
     late = [v for v in vs if v.waits]
     out.append("")
     out.append(f"  期限が早すぎる **{len(bad)}件** ／ 判定できる日が出せない **{len(unk)}件** "
                f"／ 確かめていない **{len(non)}件** ／ 開いている {len(vs)}件")
+    if warm:
+        out.append(f"  まだ数えはじめたところ **{len(warm)}件**"
+                   "（**直すところはありません。**待てば日が出ます）: "
+                   + " ／ ".join(v.claim[:26] for v in warm))
     if late:
         total = sum(v.waits for v in late)
         worst = max(late, key=lambda v: v.waits)

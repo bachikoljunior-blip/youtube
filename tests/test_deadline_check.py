@@ -466,3 +466,52 @@ def test_shrink_は_閉じた前提と同じ_claim_で取り違えないこと(t
     doc = yaml.safe_load(p.read_text(encoding="utf-8"))
     closed = next(h for h in doc["hypotheses"] if h.get("closed_on"))
     assert str(closed["deadline"]) == "2026-01-01", "閉じた前提の期限を書き換えました"
+
+
+def _verdict(need: dict, deadline: str = "2026-12-31"):
+    items = [{"claim": "x", "deadline": deadline, "lever": "none", "needs": [need]}]
+    return J.check(items, as_of=date(2026, 8, 26), lag=3)[0]
+
+
+def test_まだ数えはじめたところを_判定できないに混ぜないこと():
+    """**直し方が正反対のものに、同じ札を付けないこと。**
+
+    2026-08-26 19:08 JST にきょうだいの回が前提を1件 立て、その **11分後** に
+    `[!!] 判定できる日が出せません` と並びました。**正しく走っている前提**で、
+    `since` から 1日 しか経っていないから伸び率が出ないだけです ——
+    **明日には日が出ます。何もしないのが正解。**
+
+    同じ札の下にいたもう1件は「収益化の審査（登録者があと 999人）」で、
+    **こちらの手では起こせません。** 前提の立て方ごと変えるしかない。
+
+    **同じ回に `test_遅すぎる期限が残っていないこと` を入れて、
+    この道具の出力に赤い検査を付けました。** 読まれる度合いが上がったぶん、
+    **紛らわしい札の危険も上がります** —— 直す必要のない前提を
+    「判定できない」と読んで畳む回が出ます。
+    """
+    warm = _verdict({"kind": "accrual", "count_expr": "0", "need": 72,
+                     "since": "2026-08-26"})
+    assert warm.ready is None
+    assert warm.warming and not warm.unreachable
+    assert warm.mark == "[..]", "まだ数えはじめたところに [!!] を付けています"
+
+    never = _verdict({"kind": "accrual", "count_expr": "0", "need": 72,
+                      "since": "2026-08-26", "zero_means_never": True})
+    assert never.unreachable and not never.warming
+    assert never.mark == "[!!]"
+
+
+def test_まだ数えはじめたところは_出力で何もするなと言うこと():
+    warm = _verdict({"kind": "accrual", "count_expr": "0", "need": 72,
+                     "since": "2026-08-26"})
+    body = "\n".join(J.lines([warm], 3))
+    assert "まだ数えはじめたところ" in body
+    assert "判定できる日が出せません" not in body, "待てば出るものに『出せません』と言っています"
+    assert "何もしないのが正解" in body
+
+
+def test_status_も_2つを分けて出すこと():
+    """**読む側が混ぜたら、数えていても同じです。**"""
+    src = (ROOT / "scripts" / "status.py").read_text(encoding="utf-8")
+    assert "v.warming" in src, "status.py が『まだ数えはじめたところ』を分けていません"
+    assert "まだ数えはじめたところ" in src, "分けても印字していません"
