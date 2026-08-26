@@ -82,8 +82,33 @@ def _stub_ledger(monkeypatch, used: set[str]) -> None:
                         lambda: [{"topic": t} for t in used])
 
 
-def test_族の最後の長尺の題をショートで使うと_落ちる本数を印字する(monkeypatch, capsys):
+def test_ショート向けの題があるなら_族の最後の1件は残す(monkeypatch):
+    """**2026-08-26 12:0x に向きを変えた検査です。消していません。**
+
+    ここは長らく「`charlie`（族の最後の深い題）を取って、**値札を出す**」を
+    固定していました。09:5x の回が値札を足したときの検査です。
+
+    ですが値札は**選んだ後**に出ます。同じ在庫に `s-delta` が居るのだから、
+    **そちらを取れば族は死にません** —— 値札を読む人は要らなかった。
+    実測（12:0x の `pick(8)`）: **同じ深い題3件**を取りながら、
+    落ちる上限が **2本 → 0本** になりました。
+
+    だから固定するものを裏返しました。**値札そのものは消していません** ——
+    逃げ場が無い回には、下の `test_逃げ場が無い回は_値札を出して取る` で出ます。
+    """
     _stub(monkeypatch, "charlie", "s-delta")
+    _stub_ledger(monkeypatch, set())
+    got = [t["id"] for t in batch_build.pick(1, [])]
+    assert got == ["s-delta"], got
+
+
+def test_逃げ場が無い回は_値札を出して取る(monkeypatch, capsys):
+    """**在庫が尽きているときは止めません**（投稿が途切れるのが最大の損失）。
+
+    守りは1周目だけで、埋まらなければ2周目が同じ手を取ります。
+    そのときは 09:5x の値札が、今までどおり出ること。
+    """
+    _stub(monkeypatch, "charlie")
     _stub_ledger(monkeypatch, set())
     got = [t["id"] for t in batch_build.pick(1, [])]
     assert got == ["charlie"], got
