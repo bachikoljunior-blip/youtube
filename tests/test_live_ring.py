@@ -145,12 +145,35 @@ def test_読めない回は今までどおりに倒す(monkeypatch):
 
 
 def test_帯は写さずに実物から引く():
-    """**べた書きしないこと。** 帯もきざみも、測っている側が動けば一緒に動きます。"""
+    """**べた書きしないこと。** 上端もきざみも、測っている側が動けば一緒に動きます。"""
     from src import collisions, day_cap
     grid = bb._band_grid()
-    assert grid[0] == (collisions.LIVE_FROM_MIN // 60, collisions.LIVE_FROM_MIN % 60)
     assert grid[-1][0] * 60 + grid[-1][1] <= collisions.LIVE_TO_MIN
     step = (grid[1][0] * 60 + grid[1][1]) - (grid[0][0] * 60 + grid[0][1])
     assert step == int(day_cap.MIN_GAP_MIN), (
         "きざみが `day_cap.MIN_GAP_MIN`（これより詰めた本は死ぬ）と食い違っています"
+    )
+
+
+def test_測定中の帯へは置かない():
+    """**05:00〜08:59 は、まだ測っている最中の帯です**（`PROVEN_FROM_MIN` の註）。
+
+    `src/collisions.LIVE_FROM_MIN` は 05:00 ですが、その根拠の行は
+    「**08:59〜13:30** の :00/:30 が10本とも生き」です。
+    `src/day_cap.py` は「09:00 より前も生きるか」を 2026-08-27 に測っています。
+    **作った本を、その測定中の帯へ置かないこと。**
+
+    **覆る条件**: その切り分けが「前も生きる」と出たら
+    `PROVEN_FROM_MIN` を `collisions.LIVE_FROM_MIN` に差し替え、この試験も畳むこと。
+    """
+    from src import collisions, day_cap
+    grid = bb._band_grid()
+    assert min(h * 60 + m for h, m in grid) == bb.PROVEN_FROM_MIN
+    assert bb.PROVEN_FROM_MIN > collisions.LIVE_FROM_MIN, (
+        "測定中の帯（05:00〜09:00）まで置き先にしています"
+    )
+    # 枠の数と1日の上限は、どちらも 08/21 の同じ実測から来ています
+    assert len(grid) == int(day_cap.cap()), (
+        f"枠 {len(grid)} と 1日の上限 {day_cap.cap()} が食い違っています —— "
+        "どちらかが測り直しで動いたのに、片方だけが残っています"
     )

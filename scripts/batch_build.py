@@ -927,20 +927,42 @@ def _long_ring() -> tuple[int, ...]:
         return (LONG_HOUR_JST,)
 
 
-def _band_grid() -> list[tuple[int, int]]:
-    """**生きる帯**（05:00〜13:30）の 30分きざみの枠。**写さずに実物から引く。**
+#: **実測で生きていると分かっている帯の下端**（JST の分）。
+#:
+#: `src/collisions.py` の `LIVE_FROM_MIN` は **05:00** ですが、その根拠の行は
+#: 「**08:59〜13:30** の :00/:30 が10本とも生き、あいだの :15/:45 は7本とも 0〜2再生」
+#: です。**05:00〜08:59 は測っていません** —— そこは
+#: `src/day_cap.py` が「09:00 より前に置いたぶんは丸ごと上積みになるか」を
+#: **2026-08-27 に測っている、まさにその帯**です（05/06/07/08時 の4本）。
+#:
+#: **作った本を、測定中の帯へ置かないこと。** `live_slots.py` が
+#: そこへ「逃がす」のは別の話です（あちらは既に死に枠にいる本の救出で、
+#: 置かなければ 0再生 が確定している）。こちらは**まだ死んでいない本**なので、
+#: 測れている側から埋めます。
+#:
+#: **覆る条件**: 08/27 の切り分けが「09:00 より前も生きる」と出たら、
+#: ここを `collisions.LIVE_FROM_MIN` に差し替えること —— 枠が 10 → 18 に増え、
+#: 1日に置ける本数がそのぶん増えます。「出ない」と出たら、この定数のままにする。
+PROVEN_FROM_MIN = 9 * 60        # 09:00 JST
 
-    帯は `src/collisions.py`（`LIVE_FROM_MIN` / `LIVE_TO_MIN`）、きざみは
-    `src/day_cap.MIN_GAP_MIN`（「これより詰めた本は死ぬ」の実測）から取ります。
-    どちらかが測り直しで動いたら、ここも一緒に動きます。
+
+def _band_grid() -> list[tuple[int, int]]:
+    """**実測で生きている帯**（09:00〜13:30）の 30分きざみの枠。**写さずに引く。**
+
+    上端は `src/collisions.LIVE_TO_MIN`、きざみは `src/day_cap.MIN_GAP_MIN`
+    （「これより詰めた本は死ぬ」の実測）。どちらかが測り直しで動いたら、
+    ここも一緒に動きます。下端だけは `PROVEN_FROM_MIN`（理由はその註）。
+
+    枠は 10個 で、`day_cap.cap()` の 10本/日 とちょうど同じです。**偶然ではありません**
+    —— どちらも 08/21 の同じ実測から来ています。
     """
     try:
-        from src import collisions, day_cap
-        lo, hi = int(collisions.LIVE_FROM_MIN), int(collisions.LIVE_TO_MIN)
+        from src import collisions, day_cap                     # noqa: PLC0415
+        hi = int(collisions.LIVE_TO_MIN)
         step = max(1, int(day_cap.MIN_GAP_MIN))
-    except Exception:                                          # noqa: BLE001
-        lo, hi, step = 5 * 60, 13 * 60 + 30, 30
-    return [(m // 60, m % 60) for m in range(lo, hi + 1, step)]
+    except Exception:                                           # noqa: BLE001
+        hi, step = 13 * 60 + 30, 30
+    return [(m // 60, m % 60) for m in range(PROVEN_FROM_MIN, hi + 1, step)]
 
 
 def live_ring(count: int, now: datetime | None = None) -> list[str] | None:
