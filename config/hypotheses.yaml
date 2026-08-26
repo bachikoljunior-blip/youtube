@@ -932,7 +932,7 @@ hypotheses:
   # `docs/JOURNAL.md` に「11-13 → 11-09 → 11-16 → 11-22 と3回 動かし、
   # 届く日は1日も動いていない churn」と残っている、あの形です。
   # 10-13 ＋ 25日 ＝ **11-07**。帯が縮んだら、そのとき縮めること。
-    deadline: "2026-11-07"
+    deadline: "2026-10-06"
     lever: sub_rate               # subscribersGained ÷ 再生 で判定する
     needs:
       # 群の作り方は `src/judgeable.MEMBER_SOURCES["request_form"]`（床 **72本**）。
