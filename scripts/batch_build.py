@@ -191,6 +191,54 @@ DEFAULT_PER_CALC = 2
 #: いまは「**空いている**」以上の根拠はありません（生死は未測定）。
 LONG_HOUR_JST = 20
 
+#: **長尺を、同じ日に何本まで置くか**（2026-08-26・最適化の回に足した）。
+#:
+#: 上の `LONG_HOUR_JST` は「1本目がいつ出るか」を 33日 早めましたが、
+#: **2本目から先は直していません。** `slots()` は `--date` が無いと
+#: `[str(hour)] * count` を返し、`next_publish_at()` は
+#: 「**その時刻で最初に空いている日**」を返します。つまり同じ時刻を N回 渡すと
+#: **N日 に1本ずつ**ばらけます（`slots` の docstring 自身がそう書いています）。
+#:
+#: 実測（2026-08-26 16:0x・控え545本で数えた）:
+#:
+#:     長尺は 08/25 に **25本**、08/26 に 3本 作られている（`uploaded_at`）
+#:     その 28本 の**予約日**は 08/26〜10/05 の **21日** に散っている ＝ **1.3本/日**
+#:     いちばん後ろは **10/05**
+#:
+#: **作る側は既に1日25本 出せています。散らしているのは置き方だけです。**
+#:
+#: ## なぜ「散らさない」ほうが目標に近いか
+#:
+#: **4,000時間の門に入るのは長尺だけ**です（`src/levers.py` / `src/day_cap.py` /
+#: `src/verify.py` が同じことを書いています）。ショートは `SHORTS_FEED` に
+#: 99.9% を出していますが、**その門には1分も積みません**
+#: （実測 2026-08-26・直近28日: `SHORTS_FEED` 64,283再生 / `WATCH` **67再生**）。
+#: つまり**長尺の公開が後ろへ流れたぶん、開いている唯一の門は止まっています。**
+#:
+#: ## 上限を 5 にした根拠（**推測で上げないこと**）
+#:
+#: `src/day_cap.long_form()` の実測: `most=5` `alive=5` `collapsed=False`
+#: —— **1日5本 出した日（08/21）は、5本とも再生が付きました。**
+#: 天井はそこより上にあるはずですが、**5本を超えた日はまだ一度もありません**
+#: （`measured=False` はそういう意味です。`src/levers.py` の
+#: `_long_surface_measured` の註）。
+#:
+#: **だから 5 で止めます。** ここを 6以上 にすると、それは
+#: 「**まだ測っていない天井を、黙って測りにいく**」ことになります。
+#: 測るなら前提として登録して測ること（`config/hypotheses.yaml`）。
+#:
+#: **覆る条件**: `day_cap.long_form()` の `collapsed` が True になったら
+#: （＝いちばん多く出した日に「出したのに付かない」本が出たら）、
+#: **その日の本数より1つ下**へ落とすこと。逆に 5本/日 が続いても崩れないなら、
+#: 前提を1件立てて 6本/日 を試すこと —— **黙って上げないこと。**
+LONG_PER_DAY = 5
+
+#: 長尺を同じ日に置くための時刻の輪。**`LONG_HOUR_JST` から後ろへ広げます。**
+#: 時刻そのものに意味はありません（上の註「夜に置いても長尺の生死には掛かりません」）。
+#: 要るのは「**その日に空いている別々の時刻が `LONG_PER_DAY` 個ある**」ことだけです。
+#: 21時・22時を先に使うのは、ショートが 9〜19時 に固まっているためです。
+LONG_HOURS_JST = (20, 21, 22, 19, 18)
+
 
 def _section_key(topic: dict) -> tuple:
     """その本が**実際に見せる計算**を指す鍵。
@@ -845,10 +893,44 @@ def _slots_fine(count: int, hour: int, date_jst: str, hours: list[int],
     return [f"{date_jst}@{m // 60}:{m % 60:02d}" for m in picked]
 
 
+def _long_ring() -> tuple[int, ...]:
+    """**長尺を1日に何本 置くか**を、実測から決めて時刻の輪にして返す。
+
+    `LONG_PER_DAY` は「まだ崩れていないと分かっている一番上」です。
+    ところが**それは測り直しで下がることがある**ので、定数のまま使いません
+    （`scripts/reschedule.py::_measured_per_day` が同じ理由で計器から取っています）。
+
+    見るのは `src/day_cap.long_form()` の2つだけ:
+
+        collapsed=True  いちばん多く出した日に「出したのに再生が付かない」本が出た
+                        → **その日の本数より1つ下**へ落とす（`most - 1`）
+        collapsed=False そこまでは崩れていない → `most` と `LONG_PER_DAY` の**小さいほう**
+
+    **上へは伸ばしません。** `most` が 5 なら、6本目がどうなるかは
+    **一度も観測されていません**（`measured=False`）。ここで 6 を返すのは
+    「測っていない天井を、黙って測りにいく」ことです。**測るなら前提を立てること。**
+
+    読めない回は **1本**（＝今までどおり1日1本）に落ちます ——
+    **分からないときは、今までの動きへ倒すこと。**
+    """
+    try:
+        from src import day_cap
+        lf = day_cap.long_form()
+        most = int(lf.get("most") or 0)
+        if most <= 0:
+            return (LONG_HOUR_JST,)
+        n = (most - 1) if lf.get("collapsed") else min(most, LONG_PER_DAY)
+        n = max(1, min(n, len(LONG_HOURS_JST)))
+        return tuple(LONG_HOURS_JST[:n])
+    except Exception:                                        # noqa: BLE001
+        return (LONG_HOUR_JST,)
+
+
 def slots(count: int, hour: int, date_jst: str | None, hours: list[int],
           taken: set[int] | None = None, step_min: int = 60,
           taken_min: set[int] | None = None,
-          lanes_n: int | None = None) -> list[str]:
+          lanes_n: int | None = None,
+          ring: tuple[int, ...] | list[int] | None = None) -> list[str]:
     """各本の予約時刻の指定を返す（`upload_only.py` の第3引数の形）。
 
     `date_jst` が無ければ従来どおり全部同じ時刻 —— `next_publish_at` が
@@ -900,6 +982,16 @@ def slots(count: int, hour: int, date_jst: str | None, hours: list[int],
     1本あたりの再生が半分未満に落ちるなら、この道は間違いです。
     """
     if not date_jst:
+        # **同じ時刻を count 回 返すと、1日1本になります**（この docstring の冒頭）。
+        # `next_publish_at()` が「その時刻で最初に空いている**日**」を返すからです。
+        # `ring` を渡すと、**別々の時刻を順に配る**ので、同じ日に `len(ring)` 本 入り、
+        # そこから先が翌日へ回ります。**日を釘づけしないので `--date` とは別物です**
+        # （窓の門も、埋まっていたら例外、も踏みません。空いている所を探すだけ）。
+        #
+        # 2026-08-26 に足しました。長尺 28本 が 21日 に散っていた（1.3本/日）のは、
+        # ここが1つの時刻しか配っていなかったからです。**作る側は1日25本 出せています。**
+        if ring:
+            return [str(ring[i % len(ring)]) for i in range(count)]
         return [str(hour)] * count
     if step_min != 60:
         return _slots_fine(count, hour, date_jst, hours, step_min, taken, taken_min,
@@ -1789,8 +1881,20 @@ def main(argv: list[str] | None = None) -> int:
     if args.date:
         check_window(args.date, args.force_window)
     hours = [int(h) for h in args.hours.split(",") if h.strip()]
+    # **長尺は、同じ日に `LONG_PER_DAY` 本まで詰めます**（2026-08-26 に足した）。
+    # `--date` を渡した回は今までどおり（あちらは日を釘づけする別の道）。
+    # `--hours` を明示した回も触りません（**明示は常に通す**）。
+    ring = None
+    if args.long and not args.date and not hours:
+        ring = _long_ring()
+        if ring and len(ring) > 1:
+            days = (len(topics) + len(ring) - 1) // len(ring)
+            print(f"[batch] 長尺 {len(topics)}本 を **1日 {len(ring)}本** で置きます"
+                  f"（{days}日ぶん・時刻 {list(ring)} JST）。"
+                  " **4,000時間の門に入るのは長尺だけ**なので、"
+                  "散らすとその門だけが止まります", flush=True)
     when = slots(len(topics), args.hour, args.date or None, hours,
-                 step_min=args.step_min)
+                 step_min=args.step_min, ring=ring)
 
     if args.date:
         # **`+ ':00'` と書かないこと**（2026-08-18 に直した）。`--step-min` を
