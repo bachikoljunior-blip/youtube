@@ -64,11 +64,39 @@ def test_本数はそろっているのに期限に間に合わない形():
 
 
 def test_間に合っていれば両方とも0():
-    days = [f"2026-09-0{i}" for i in range(1, 8)] + ["2026-08-30"]
-    f = _floor({"対照": days, "処置": days}, "2026-09-13")
+    """**日付を手で置かないこと**（2026-08-27 に書き直した）。
+
+    ここは `2026-09-01`〜`09-07` を**べた書き**していて、期限 `09-13` との差が
+    ちょうど `落ち着き3 ＋ Analytics の遅れ3 ＝ 6日`、**余裕 0日** でした。
+    `judgeable.ANALYTICS_LAG_DAYS` が実測で **3日 → 4日** に動いた日
+    （`data/analytics_lag.jsonl` の `last_day` が 08-23 のまま JST の日が回った）、
+    **この検査は、何も壊れていないのに赤くなりました。**
+
+    同じ日に `config/hypotheses.yaml` の期限も3件 同時に赤くなっています
+    （どれも 1日 きっかり）。**原因は1つで、症状が4つ**でした。
+
+    **遅れは測る値です。写すと、測り直すたびに検査のほうが壊れます。**
+    だからここは、その2つの定数から日付を組み立てます。
+    """
+    from datetime import date, timedelta
+
+    from src import judgeable
+
+    lag = judgeable.ANALYTICS_LAG_DAYS + judgeable.SETTLE_DAYS
+    limit = date(2026, 9, 13)
+    last = limit - timedelta(days=lag)          # ここまでに公開すれば間に合う
+    days = [(last - timedelta(days=i)).isoformat() for i in range(8)]
+    f = _floor({"対照": days, "処置": days}, limit.isoformat())
     assert f.shortfall()["対照"] == 0
-    assert f.shortfall_in_time()["対照"] == 0
+    assert f.shortfall_in_time()["対照"] == 0, (
+        "**ちょうど間に合う日に置いた本**を、間に合わない側に数えています"
+    )
     assert f.ok
+
+    # **1日 遅らせたら、間に合わない側へ移ること**（境目が本当にそこにあるか）
+    late = [(last + timedelta(days=1)).isoformat()] + days[1:]
+    assert _floor({"対照": late, "処置": days}, limit.isoformat())\
+        .shortfall_in_time()["対照"] == 1
 
 
 def test_期限を延ばすと自動でゆるむ():
