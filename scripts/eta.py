@@ -4641,7 +4641,7 @@ def _scale_note(prev: dict, current: dict) -> list[str]:
     return out
 
 
-def solve(m: dict, points: list[dict]) -> dict:
+def solve(m: dict, points: list[dict], *, frozen: bool = True) -> dict:
     """**実測 `m` から、予測を最後まで解く。**（2026-08-20 に `main()` から出した）
 
     出したのは、**周の終わりの「反映」が同じ道を通るため**です
@@ -4674,7 +4674,7 @@ def solve(m: dict, points: list[dict]) -> dict:
     #     書き、`--alloc` は同じ日に「次の1件はその腕に置くのが最短」と書いて
     #     いました。**測れば済む話です**（`frozen_days` の docstring に全文）。
     #     費用は腕1本につき軌跡1本（API 0単位・15〜20秒）。**普通は1〜2本**。
-    if tr is not None and not getattr(args, "no_frozen", False):
+    if tr is not None and frozen:
         _dead = [r["lever"] for r in (pl.get("lever_days") or [])
                  if r.get("cap") is not None and not r.get("reachable_at_cap")]
         if _dead:
@@ -4951,7 +4951,8 @@ def reflect(note: str | None = None, *, record: bool = True) -> tuple[int, dict]
     # **出発点と同じ実測で解き直す**（上のコメント参照）。`solve()` は `m` を書き換えるので複製。
     m = {k: v for k, v in base.items() if k not in _REFLECT_IGNORE or k == "at"}
     try:
-        s = solve(dict(m), points)
+        # **`--reflect` では凍らせません**（積み直すのは日付で、腕の要否は問うていない）。
+        s = solve(dict(m), points, frozen=False)
     except Exception as exc:                                   # noqa: BLE001
         print(f"[eta] 反映を解けませんでした: {type(exc).__name__}: {exc}")
         print("[eta] **回は止めないこと。** 理由を docs/JOURNAL.md に1行書いて進むこと。")
@@ -5210,7 +5211,7 @@ def main() -> int:
             return 1
 
     points = _points()
-    _s = solve(m, points)
+    _s = solve(m, points, frozen=not args.no_frozen)
     a, sup, pl, tr = _s["a"], _s["sup"], _s["pl"], _s["tr"]
     prev = points[-1] if points else None
     # **この回が印字した行を、そのまま控えておく**（`flagged()` が尾へ運びます）。
