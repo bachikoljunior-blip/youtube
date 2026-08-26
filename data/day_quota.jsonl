@@ -2880,3 +2880,5 @@
 {"at": "2026-08-26T04:18:28+00:00", "detail": "scheduled_publish_times"}
 {"at": "2026-08-26T04:18:31+00:00", "detail": "playlistItems.insert"}
 {"at": "2026-08-26T04:18:31+00:00", "detail": "thumbnails.set NQFpuf7LMP0"}
+{"at": "2026-08-26T04:23:46+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-26T04:25:21+00:00", "detail": "status: Data API 読み"}
