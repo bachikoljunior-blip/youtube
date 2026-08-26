@@ -618,8 +618,15 @@ def band_lines(rows: list[dict],
     days = sorted({r["at"].astimezone(JST).date() for r in rows})  # type: ignore[union-attr]
 
     def _free(g: list[tuple[int, int]]) -> float:
+        """1日あたり、その帯に空いている枠。**`cap()` で頭を打つこと。**
+
+        空き枠が上限より多くても、**再生が付くのは 1日 `cap()` 本まで**です
+        （`src/day_cap.py` の実測）。頭を打たないと、帯を広げた側が
+        「1日 12.9本 置ける」と出て、**実際には 10本 しか生きません** ——
+        この回が一度そう印字して外しました（13日 早い → 実際は 10日）。
+        """
         n = sum(1 for d in days for hm in g if hm not in taken.get(d, set()))
-        return n / max(len(days), 1)
+        return min(n / max(len(days), 1), float(day_cap.cap()))
 
     per = _free(grid)
     need = sum(n for _k, _g, n in short)
