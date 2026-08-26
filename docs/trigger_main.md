@@ -161,6 +161,20 @@
   スクリプトは、**先に `Write` でファイルに落として `python <file>` を撃つ**
   （この回はそれで全部通りました）。**リダイレクトは1行に1つまで。**
 
+  **`git push -q … 2>&1|tail -2; echo rc=$?` も落ちます**（2026-08-26 23:xx に踏んだ）。
+  **`git` を含む行は、なおさら単独で書くこと** —— `;` でつないだ瞬間に
+  「複雑すぎて検証できない」に落ちます。`fetch` → `merge` → `push` は**3行**です。
+
+  **そして、スクラッチに落としたスクリプトは `src` を import できません**
+  （同じ回に2回 踏んだ）。サブの bash は**呼び出しごとに cwd が戻る**ので、
+  `python <scratch>/probe.py` は**リポジトリの外から**走り、
+  `ModuleNotFoundError: No module named 'src'` になります。**前に1つ足すだけ**です:
+
+      PYTHONPATH=<このワークツリーの絶対パス> python <scratch>/probe.py
+
+  リポジトリの中のもの（`python -m src.calc.keihi` や `python scripts/status.py`）は
+  **相対パスのまま通ります** —— 落ちるのは**外に置いたファイルを撃つとき**だけ。
+
 - **`CLAUDE.md` は、もう衝突しません**（2026-08-26 08:1x に実測。**上の行を書き換えた**）。
   ここは長らく「**必ず衝突します**」で、`git checkout --theirs CLAUDE.md` の
   3手が続いていました。**この回の実測は `Already up to date.`**（1回目）と

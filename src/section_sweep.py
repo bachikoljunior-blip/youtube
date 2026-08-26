@@ -1812,6 +1812,22 @@ def is_covered(hit: dict, sections: dict[str, str] | None) -> bool:
     return _point_printed(out, lines) is True if out is not None else False
 
 
+def unnameable(hit: dict) -> bool:
+    """**その候補は、この目盛りのままでは節にできない**（`[並 N点]` の側）。
+
+    `逆転` は「いちばん高いのは端ではなく x のとき」と言いますが、
+    **同じ高さが他にもあると、その x を名指しできません** ——
+    印字の側も「細かく刻み直すまで、この x を名指しする節は書けません」と
+    言っています。**言っているのに、一覧の並び順には入っていませんでした**
+    （2026-08-26 に測って足した。`逆転` の 12件中7件 ＝ 58%）。
+
+    **`数え上げ` の同点は別です。** 行が数え上げなので同点が「それが全部」＝
+    「1つだけ名指さず、N件を全部書くこと」で**節になります。** 沈めません。
+    """
+    d = hit.get("詳しく") or {}
+    return bool(d.get("並ぶ点", 1) > 1 and not d.get("数え上げ"))
+
+
 def undecided(hit: dict, sections: dict[str, str] | None) -> bool:
     """その候補は「**新しいと分かった**」のか、「**判定できなかった**」のか。
 
@@ -2096,11 +2112,20 @@ def report_lines(hits: list[dict], *, top: int = 40) -> list[str]:
         # 表ごとに6件で切るので、`片効き`・`不変` が先頭に混ざるぶんだけ
         # 書ける候補が `…ほか N件` に沈みます（実測 14/32 ＝ 44%）。
         # **既出かどうかが先**（既出は何をしても書けない）、その中で自明を後ろへ。
+        # **`[並 N点]` も後ろへ回すこと**（2026-08-26。`SHAPE_LAST` と同じ理由）。
+        # あの印が付いた候補は、道具自身が
+        # 「**細かく刻み直すまで、この x を名指しする節は書けません**」と
+        # 印字しています ＝ **その回では書けません。**
+        # それが `逆転` の 12件中7件（58%）に付いていて、
+        # **書ける候補を `…ほか N件` に沈めていました。**
+        # `数え上げ` の同点は「それが全部」なので**書けます** —— 沈めません。
         if covered:
             group = sorted(group, key=lambda h: (covered.get(id(h)) is not False,
-                                                 h.get("形") in SHAPE_LAST))
+                                                 h.get("形") in SHAPE_LAST,
+                                                 unnameable(h)))
         else:
-            group = sorted(group, key=lambda h: h.get("形") in SHAPE_LAST)
+            group = sorted(group, key=lambda h: (h.get("形") in SHAPE_LAST,
+                                                 unnameable(h)))
         for hit in group[:per_group]:
             mark = ("[既]" if covered.get(id(hit))
                     else ("[未]" if id(hit) in _UNDECIDED else "   "))
