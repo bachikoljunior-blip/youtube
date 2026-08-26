@@ -13,6 +13,7 @@
 """
 from __future__ import annotations
 
+import re
 import sys
 from datetime import date, timedelta
 from pathlib import Path
@@ -82,6 +83,33 @@ def test_遅れを必ず足す():
 def test_遅れが読めないときは_0_に倒れない():
     """**遅れを 0 と言い切るのが、いちばん危ない側です。**"""
     assert J.FALLBACK_LAG_DAYS > 0
+
+
+def test_endcard_を書くと処置群だけを数える():
+    """**対照が混ざったまま満たすと、効きが薄まって「外れ」に化けます。**
+
+    2026-08-26 夕の実測 —— 期限 10/11「ショートの最後で登録を直接1回頼む」の
+    `created_after: 2026-08-24` に当たっていた 51本 のうち、**依頼の型は 5本**で、
+    残りは問いかけ 25本（＝対照）・長尺の「明日やること」20本 でした。
+    依頼が出はじめたのは **08/26 02:50** で、**同じ束の中にも問いかけが3本**
+    混ざっています ——**日付では切れません。**
+
+    その前提の `next_if_false` は「登録率の腕を**動画の外**へ移す」なので、
+    誤って外れると、**律速の門（登録者1,000人）を誤った理由で手放します。**
+    """
+    need = {"created_after": "2026-08-24", "count": 72, "settle_days": 0}
+    loose = J._ans_published_group(dict(need), date(2026, 8, 26), lag=3)
+    tight = J._ans_published_group(dict(need, endcard="request"), date(2026, 8, 26), lag=3)
+
+    def n(ans):
+        return int(re.search(r"\*\*(\d+)本\*\* ／ 要", ans.why).group(1))
+
+    assert n(tight) < n(loose), (
+        "`endcard: request` を書いても数が変わっていません —— "
+        "処置群の絞り込みが効いていない（`src/endcard_verdict.form_of`）"
+    )
+    assert "終端が request" in tight.why, "何で絞ったかが出力に出ていません"
+    assert "終端が" not in loose.why, "`endcard:` の無い要件まで絞ってはいけません"
 
 
 def test_外の出来事は_判定できる日を出さない():
