@@ -3032,3 +3032,4 @@
 {"at": "2026-08-26T07:42:18+00:00", "ok": true, "detail": "videos.update vid1"}
 {"at": "2026-08-26T07:42:27+00:00", "detail": "videos.update 13TynquQzQU"}
 {"at": "2026-08-26T07:55:43+00:00", "ok": true, "detail": "videos.update vid1"}
+{"at": "2026-08-26T08:28:42+00:00", "detail": "status: Data API 読み"}
