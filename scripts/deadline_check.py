@@ -484,12 +484,54 @@ def _ans_after(need: dict, lag: int) -> Answer:
 
     `plus_lag: true` なら Analytics の遅れを足します —— 「08/29 時点の累計」は、
     08/29 に見ても **08/26 までの累計**しか出ていません。
+
+    ## `at_time_jst` —— **日だけでは足りない要件**（2026-08-27・最適化の回）
+
+    ここは長らく**日の粒**しか持っていませんでした。`drift.split_overdue()` は
+    `str(ready) <= today` で見るので、**その日の 00:00 から「いま判定できる」**
+    と言います。
+
+    **実際に踏みました。** 2026-08-27 **00:22 JST** に `drift.py` が
+    「**期限が来ていて、いま判定できる前提: 1件**」「**この回は verdict を出すこと**」
+    と印字しました。その前提は `day_cap` の (A)/(B) の切り分けで、
+    要るデータは **05/06/07/08時 の4本の、公開から6時間の読み**
+    ——`config/hypotheses.yaml` の `falsified_if` が
+    「`data/views.jsonl` が **08-27 14:00 JST 以降**の点を持っていること。
+    持っていなければ判定せず、期限だけ延ばすこと」と**散文で**書いています。
+    そのとき `src/day_cap.window()` は `confounded=True` / `verdict=None` でした。
+
+    **正しい文はあって、門が読んでいたのは日付だけ**でした。
+    しかも**その早撃ちは一度 起きています** —— 同じ前提の `note` に
+    「本数モデルの予測（10本）に着地して `verdict='count' confounded=False` を
+    印字しました —— **確信つきで逆**です」と記録があります。
+
+    `at_time_jst: "14:00"` を書くと、**その日でも時刻が来るまでは日を返しません**
+    （＝`warming` に落ちて、門は「待てば出ます」と言う）。
+
+    **覆る条件**: 時刻の粒でも足りない要件が出てきたら（分・本数など）、
+    ここではなく**その計器に直接 訊く `kind`** を足すこと ——
+    日と時刻を足し続けると、台帳が計器の写しになります。
     """
     try:
         on = date.fromisoformat(str(need.get("on_date")))
     except (TypeError, ValueError):
         return Answer(None, f"**`on_date` が読めません**: {need.get('on_date')!r}")
     what = str(need.get("what") or "その日のデータ")
+    at = need.get("at_time_jst")
+    if at:
+        try:
+            hh, _, mm = str(at).partition(":")
+            when = datetime(on.year, on.month, on.day,
+                            int(hh), int(mm or 0), tzinfo=JST)
+        except (TypeError, ValueError):
+            return Answer(None, f"**`at_time_jst` が読めません**: {at!r}")
+        now = datetime.now(JST)
+        if now < when:
+            return Answer(
+                None,
+                f"{what} は **{on:%m/%d} {when:%H:%M} JST** に出ます"
+                f"（いま {now:%m/%d %H:%M} JST。**まだ出ていません** ——"
+                "日は来ていますが、この要件は日の粒ではありません）")
     if need.get("plus_lag"):
         band = analytics_lag_band()
         tail = (f"（**±{band}日**。遅れは1日の中で {lag}日 と {lag + band}日 の"
@@ -748,9 +790,21 @@ def lines(vs: list[Verdict], lag: int) -> list[str]:
                 out.append(f"           {str(n).strip()}")
         if v.warming:
             # **「出せません」と言わないこと。** 待てば出ます。
-            out.append("         → **まだ数えはじめたところです。**"
-                       "伸び率が出れば日が出ます —— **この回は何もしないのが正解**です"
-                       "（畳まないこと・条件を緩めないこと）")
+            #
+            # **待ち方は1つではありません**（2026-08-27 に分けた）。ここは
+            # 「伸び率が出れば」を**無条件**で言っていましたが、`at_time_jst` の
+            # 要件は**今日の決まった時刻に出る**もので、伸び率とは関係ありません。
+            # 待ち方を1つに丸めると、**次の回が「まだ何日も先だ」と読みます。**
+            when = next((str(x.get("at_time_jst")) for x in (v.needs or [])
+                         if x.get("at_time_jst")), "")
+            if when:
+                out.append(f"         → **今日の {when} JST に出ます。**"
+                           "伸び率の話ではありません —— **その時刻まで待つこと**"
+                           "（畳まないこと・条件を緩めないこと）")
+            else:
+                out.append("         → **まだ数えはじめたところです。**"
+                           "伸び率が出れば日が出ます —— **この回は何もしないのが正解**です"
+                           "（畳まないこと・条件を緩めないこと）")
         elif v.ready is None:
             out.append("         → **判定できる日が出せません。**"
                        "期限を置いても、その日に言えることはありません")
