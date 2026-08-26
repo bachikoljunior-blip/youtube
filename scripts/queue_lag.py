@@ -118,6 +118,59 @@ def live_counts(before_at: dict[str, datetime],
     return out
 
 
+def _how_short(floor) -> str:
+    """**足りない群を、本を作らずに埋められるか。**（API 0単位）
+
+    ## なぜ要るか（2026-08-26。**この1行が、32倍 高い手を指していました**）
+
+    ここはずっと「**本が足りない**」とだけ書いていました。読んだ回は
+    「1本 作れ」と読みます —— 生成 ＋ `videos.insert` **1,600単位**。
+
+    **実物はそうではありませんでした。** 同じ日の
+    `scripts/live_slots.py --plan` が、**1手 50単位**でこう出しています:
+
+        opening_motion/対照(動きなし)  7本 → **8本（足ります）**
+        `reschedule.py --move kH-2eghxy2w 2026-09-02T05:00`（08/26 20:00 の死に枠から）
+
+    **足りないのは本ではなく、生きた枠に居る本でした。**
+    予約は 16本 あって、生きているのが 7本 だっただけです。
+
+    **なぜ入れ替え（この道具）では動かないか**: `Plan._swap()` は2本の `at` を
+    交換するので、**(日,時刻) の集合が1つも変わりません** ——
+    生きた枠の数は不変で、中身が入れ替わるだけです。
+    `live_slots` は**上限に余りのある日の空き枠へ置く**ので、総数が増えます
+    （実測 380 → 381）。**別の道具なのは、そこが理由です。**
+
+    **覆る条件**: 動かせる死に枠が足りなければ、本当に本が要ります。
+    そのときは「作り足すこと」と出ます —— **数えてから言うこと。**
+    """
+    try:
+        from scripts import live_slots
+
+        board = live_slots.Board(live_slots._rows())
+        live = board.live()
+        groups = live_slots._groups().get(floor.key)
+        if not groups:
+            return "**`python scripts/live_slots.py --plan` を見ること**"
+        gmap, n = groups
+        movable = 0
+        for _g, vids in gmap.items():
+            al = [v for v in vids if v in live]
+            if len(al) >= n:
+                continue
+            movable += sum(1 for v in vids if v not in live and board.movable(v))
+        need = sum(c for c in floor.shortfall().values() if c)
+        if movable >= need:
+            return (f"**死に枠から逃がせば足ります**（動かせる {movable}本／要 {need}本）"
+                    "。`python scripts/live_slots.py --plan`"
+                    "（**1手 50単位。新しい本は要りません**）")
+        return (f"**本を {need - movable}本 作り足すこと**"
+                f"（死に枠から逃がせるのは {movable}本 だけ）。"
+                "`python scripts/live_slots.py --plan` で逃がせるぶんを先に")
+    except Exception:                                          # noqa: BLE001
+        return "**`python scripts/live_slots.py --plan` を見ること**"
+
+
 def live_bad(counts: list[tuple[str, str, int, int, int]]) -> list[str]:
     """**判定に要る本を割った群**（`b < n <= a` ＝ 足りていたのに足りなくなった）。
 
@@ -628,7 +681,9 @@ class Plan:
             if gain is None or b is None or a is None:
                 short = ", ".join(f"{g2} あと{c}本" for g2, c in f.shortfall().items() if c)
                 out.append(f"  {f.key:16s} **判定できる日が出ません**（{short}）"
-                           " ← 入れ替えでは動きません。**本が足りない**")
+                           " ← **この道具では動きません**"
+                           "（入れ替えは (日,時刻) の集合を1つも変えないので、"
+                           f"生きた本は増えません）。{_how_short(f)}")
                 continue
             mark = f"  → **{gain}日 早まる**" if gain else "  （動きません）"
             out.append(f"  {f.key:16s} 期限 {f.deadline:%m/%d}   "
