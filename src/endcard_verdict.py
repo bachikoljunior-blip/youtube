@@ -77,6 +77,55 @@ def is_ask(narration: list[str]) -> bool:
     return bool(ASK.search(narration[-1]))
 
 
+def is_request(narration: list[str]) -> bool:
+    """読み上げの**最後の1行**が「登録の依頼」か。（2026-08-26 夕に足した）
+
+    ## なぜ `is_ask` の裏ではないのか
+
+    **両方 入っている本があります。** `src/script_writer.py` は
+    「**問いかけを残す余裕があるなら残してよいが、優先は依頼のほう**」と
+    書いています。だから「問いかけでない ＝ 依頼」ではありません ——
+    **依頼が在るかどうかを、独立に見ること。**
+
+    そして「問いかけでない」の側には**長尺の「明日やること」型**も落ちます
+    （長尺は依頼を書かない ＝ `src/script_writer.py`「維持率が落ちる」）。
+    `not_ask` を依頼の群として数えると、**長尺の手順型が混ざります。**
+
+    ## 何に使うか
+
+    `config/hypotheses.yaml` 期限 2026-10-11
+    「**ショートの最後で登録を直接1回頼むと、登録率が上がる**」の**処置群**は、
+    これが真の本です。`scripts/deadline_check.py` の `published_group` に
+    `endcard: request` を書くと、ここで絞ります。
+
+    **覆る条件**: 依頼の文言が「登録」を含まない形（「チャンネルを追加して」など）に
+    変わったら、ここに足すこと。**変えた回が足さないと、処置群が黙って空になります。**
+    """
+    if not narration:
+        return False
+    return "登録" in narration[-1]
+
+
+def form_of(video_id: str, queue: Path | None = None) -> str | None:
+    """その本の終端の型。`"request"` / `"ask"` / `"other"`、読めなければ `None`。
+
+    **読めない本を `"other"` にしないこと** —— 型が分からないだけで、
+    数えると群が実際より大きく見えます（`population()` の同じ注意）。
+    """
+    path = (queue or QUEUE) / f"{video_id}.json"
+    if not path.exists():
+        return None
+    try:
+        nar = (json.loads(path.read_text(encoding="utf-8")) or {}).get("narration") or []
+    except (OSError, ValueError):
+        return None
+    if not nar:
+        return None
+    if is_request(nar):
+        return "request"
+    return "ask" if is_ask(nar) else "other"
+
+
 def population(ledger: list[dict], queue: Path | None = None) -> tuple[list[str], dict]:
     """判定の母集団（**問いかけ型のショートの動画ID**）と、その内訳を返す。
 

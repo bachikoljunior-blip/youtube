@@ -69,6 +69,7 @@ import yaml
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
+from src import endcard_verdict  # noqa: E402  （終端の型で処置群を絞る。`endcard:` のある要件だけ）
 from src import settle as settle_mod  # noqa: E402  （`sys.path` を通した後でないと読めません）
 
 JST = timezone(timedelta(hours=9))
@@ -234,12 +235,36 @@ def _ans_published_group(need: dict, as_of: date, lag: int) -> Answer:
     count = int(need.get("count") or 1)
     settle = int(need.get("settle_days", DEFAULT_SETTLE_DAYS))
     since_pub = str(need.get("published_after") or "")
+    endcard = str(need.get("endcard") or "")
     rows = [r for r in _rows("uploaded.jsonl") if str(r.get("uploaded_at") or "") >= after]
+    # --- **処置群だけを数える**（2026-08-26 夕に足した） ---
+    #
+    # ここは長らく「その日以降に作った本」を**型を問わず全部**数えていました。
+    # 実測 2026-08-26: 期限 10/11 の「ショートの最後で登録を直接1回頼む」の
+    # `created_after: 2026-08-24` に当たる 51本 のうち、**依頼の型は 5本だけ**で、
+    # 残りは問いかけ 25本・長尺の「明日やること」20本 でした（依頼が実際に
+    # 出はじめたのは **08/26 02:50** で、同じ束の中にも問いかけが3本 混ざっています）。
+    #
+    # **この群は 30,000再生 から検出力を逆算して 72本 と置いてあります**
+    # （`config/hypotheses.yaml` の note）。対照が混ざったまま満たすと、
+    # **効きが薄まって「外れ」に化けます** —— そしてその前提の `next_if_false` は
+    # 「登録率の腕を動画の外へ移す」なので、**律速の門（登録者1,000人）を
+    # 誤った理由で手放す**ことになります。
+    #
+    # `endcard:` を書かない要件は、**今までどおり型を問いません。**
+    if endcard:
+        keep = []
+        for r in rows:
+            vid = r.get("video_id")
+            if vid and endcard_verdict.form_of(str(vid)) == endcard:
+                keep.append(r)
+        rows = keep
     pub = sorted(p for p in (str(r["at"])[:10] for r in rows if r.get("at")) if p >= since_pub)
     if len(pub) < count:
         tail = f"（{since_pub} 以降に公開する本だけ）" if since_pub else ""
+        form = f"・**終端が {endcard} の本だけ**" if endcard else ""
         return Answer(None,
-                      f"{after[:10]} 以降に作った本{tail} **{len(pub)}本** ／ 要 {count}本 —— "
+                      f"{after[:10]} 以降に作った本{tail}{form} **{len(pub)}本** ／ 要 {count}本 —— "
                       "**予約にまだ在りません**（作れば動きます）")
     nth = date.fromisoformat(pub[count - 1])
     ready = nth + timedelta(days=settle + lag)
