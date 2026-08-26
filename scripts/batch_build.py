@@ -1750,14 +1750,27 @@ def _pack_long_form() -> None:
         done = 0
         for p in plan:
             stamp = p["new"].astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-            reschedule._update(svc, p["id"], stamp,
-                               fallback_status=uploader.base_status())
+            try:
+                reschedule._update(svc, p["id"], stamp,
+                                   fallback_status=uploader.base_status())
+            except (Exception, SystemExit) as exc:             # noqa: BLE001
+                # **`SystemExit` を必ず捕まえること**（2026-08-26 に検査が捕まえた）。
+                #     `reschedule._update` は日枠の 403 で `SystemExit` を上げます。
+                #     あれは `BaseException` なので **`except Exception` を素通り**し、
+                #     この段から `batch_build` の外まで抜けます ＝
+                #     **その回は1本も作らずに終わります。**
+                #     `docs/GOAL.md`「投稿が途切れるのが最大の損失」に真っ向から反します。
+                #     **詰め直しは「あれば良いもの」。投稿を止める権利はありません。**
+                print(f"[batch] 長尺の詰め直しは {done}本 で止めます: "
+                      f"{str(exc)[:100]}", flush=True)
+                break
             dupes.retime(p["id"], stamp)
             upload_cap.note_quota_ok(detail=f"videos.update {p['id']}")
             done += 1
             time.sleep(1.2)     # **短い間に撃ちすぎると 403**（08/26 に 120本 で踏んだ）
-        print(f"[batch] 長尺を {done}本 詰めました", flush=True)
-    except Exception as exc:                                   # noqa: BLE001
+        if done:
+            print(f"[batch] 長尺を {done}本 詰めました", flush=True)
+    except (Exception, SystemExit) as exc:                     # noqa: BLE001
         print(f"[batch] 長尺の詰め直しは飛ばします: {str(exc)[:120]}", flush=True)
 
 

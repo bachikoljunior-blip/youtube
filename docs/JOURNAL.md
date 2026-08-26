@@ -53885,3 +53885,29 @@ ship の内訳も、予約の待ちも、在庫も出ます。**そのどれも�
 自動の道が自分を閉じ込めることに、**こちらの実装が当たったから気づいています。**
 **次に同じことが起きたら、先に `git fetch` して相手の枝を読むこと**
 （この回は最初の merge のあと 1時間 読み直していません）。
+
+### 追記（同じ回）—— **自分が入れた段が、投稿を止めうる作りでした**
+
+上の「出したもの2」を入れた直後、`tests/test_upload_cap_window.py` の
+`test_batch_build_refuses_to_generate_when_the_window_is_closed` が落ちました。
+
+`reschedule._update` は**日枠の 403 で `SystemExit` を上げます**。
+`SystemExit` は `BaseException` なので、**`except Exception` を素通り**します ——
+つまり `_pack_long_form()` は、更新の袋が閉じている窓で
+**`batch_build` の外まで抜けて、その回を1本も作らせずに終わらせます。**
+**「あれば良いもの」が、投稿を止める作りでした**（`CLAUDE.md`「4.」に真っ向から反する）。
+
+**隣も数えました**（前の回の答え「1件で終わらせない」をそのまま当てた）:
+
+    scripts/live_slots.py:434        `except SystemExit` **あり**
+    scripts/queue_lag.py:927         `except SystemExit` **あり**
+    scripts/refresh_thumbnail.py     `push_missing()` を直接 呼ぶので上げない
+
+**穴はこの段だけ**でした —— 隣は先の回が既に塞いでいます。
+**つまり自分は、隣が3つとも通った道で1つだけ落とし穴を作りました。**
+`tests/test_pack_long_form_never_stops_the_round.py` で固定
+（`SystemExit`／ふつうの例外／計画が空なら口を叩かない）。
+
+**次にこの輪へ段を足す回へ**: `scripts/*.py` の関数を `batch_build` から呼ぶときは、
+**`except (Exception, SystemExit)` で受けること。** あちらは CLI として書かれていて、
+`SystemExit` を「呼ぶ側に伝える正常な終わり方」として使っています。
