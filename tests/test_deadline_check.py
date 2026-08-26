@@ -322,7 +322,8 @@ def test_ready_by_claim_は_claimごとの最早の日を返す():
 
 
 def test_実物にも待ちが残っていないか_数えられること():
-    """**実物で回ること。**（件数そのものは日々動くので固定しません）"""
+    """**数え方が実物で回ること。**（主張しているのは下の
+    `test_遅すぎる期限が残っていないこと` のほうです —— ここは形だけ見ます）"""
     vs = J.check(_open_items())
     total = sum(v.waits for v in vs)
     assert total >= 0
@@ -342,3 +343,126 @@ def test_status_も_遅すぎる側を出すこと():
     assert "v.waits" in src, "status.py が遅すぎる側を数えていません"
     assert "期限が遅すぎる" in src, "数えても印字していません"
     assert "縮めること" in src, "何をすればいいかを言っていません"
+
+
+def test_遅すぎる期限が残っていないこと():
+    """**印字は 666 commits 効きませんでした。赤い検査は同じ日に効きました。**
+
+    2026-08-25 13:54Z、`scripts/deadline_check.py` が
+    「期限が遅すぎる N件 —— 合計 **46日** の待ち」を印字しはじめ、
+    同じ日の 22:5x に `scripts/status.py` も、**毎回の最初に読まれる場所**で
+    「→ `deadline` をその日まで**縮めること**。**この回の成果になります**」
+    と出すようになりました。**それから 666 commits のあいだ、1件も縮んでいません**
+    （待ちは 46日 → **67日** に増えました）。
+
+    **同じ 20時間 に、逆向きの書き換えは 2回 起きています。**
+    `e664d5a`（08-25 21:46Z）は stat_split を 09-14 → 10-06 へ **22日 延ばし**、
+    commit がその理由をそのまま書いています ——「**赤い検査が2件**」。
+
+        延ばす向き  赤い検査あり（`test_期限が_判定できる日より前に置かれていない`）
+                    → 20時間で 2回 起きた
+        縮める向き  印字のみ（`assert total >= 0` ＝ 何も主張していない）
+                    → 666 commits で 0回
+
+    **印字が読まれていないのではありません。印字は「判断」を要求します。**
+    毎周「1件 出す」に追われている側にとって、
+    **判断の要る行は、要らない行に必ず負けます。**
+    赤い検査は判断を要求しません（直すか、直さないかしかない）。
+
+    **直し方は1つ**（判断は要りません。API 0単位・本は0本）:
+
+        python scripts/deadline_check.py --shrink
+
+    **`falsified_if` を緩めて逃げないこと。** もっと n が要るなら、
+    動かすのは **`needs.count` のほう**です —— 期限を水増しして待つと、
+    `src/arm_speed.forward()` は **`ready` の側**を読むので、
+    **予測だけが「その日に閉じる」前提のまま**残ります（＝到達日が早すぎる）。
+
+    ## 覆る条件（**次に来た側へ**）
+
+    - この検査が**毎周 赤くなる**（＝ `--shrink` の後すぐまた赤い）なら、
+      効いていないのは検査ではなく **`Verdict.slack`（帯）の幅**です。
+      帯を広げること。**この検査を消して印字に戻さないこと** ——
+      印字に戻した結果が、上の 666 commits です
+    - 「期限を意図して先に置きたい」回が出てきたら、そのときは
+      **`needs` に書くこと**。期限は日付の欄で、設計の欄ではありません
+    """
+    vs = J.check(_open_items())
+    late = sorted((v for v in vs if v.waits), key=lambda v: -v.waits)
+    total = sum(v.waits for v in late)
+    detail = " / ".join(f"{v.claim[:28]} 判定 {v.ready} なのに期限 {v.deadline}（{v.waits}日）"
+                        for v in late)
+    assert not late, (
+        f"**データは揃うのに期限が先の前提が {len(late)}件・合計 {total}日。**"
+        f" 到達日はそのぶん止まっています: {detail}"
+        "  → `python scripts/deadline_check.py --shrink`"
+        "（`falsified_if` は緩めないこと）")
+
+
+def _mini_yaml(deadline: str, on_date: str) -> str:
+    """註つきの小さな台帳。**註が残るかを見るために入れてあります。**"""
+    return f"""# 先頭の註。**消えたら `yaml.dump` で書き戻しています。**
+hypotheses:
+  - claim: "縮める側の前提"
+    # 中の註。ここも残ること
+    deadline: "{deadline}"
+    lever: per_video
+    needs:
+      - kind: after
+        on_date: "{on_date}"
+    falsified_if: "触らないこと"
+  - claim: "閉じている前提"
+    deadline: "2026-01-01"
+    closed_on: "2026-01-01"
+    lever: none
+    effect: 1.0
+    needs:
+      - kind: now
+confirmed:
+  - "ここも残ること"
+"""
+
+
+def test_shrink_は_期限だけを縮めて_註を残すこと(tmp_path):
+    """**`yaml.dump` で書き戻したら、3,300行の註が全部 消えます。**
+
+    註には「なぜ外れたか」「しきい値をどう引いたか」が入っていて、
+    **次に来た側が判断できるのは、その註があるからです。**
+    """
+    p = tmp_path / "h.yaml"
+    p.write_text(_mini_yaml("2026-12-31", "2026-08-01"), encoding="utf-8")
+    done = J.shrink(path=p, as_of=date(2026, 8, 26), lag=0)
+    assert [(b, a) for _c, b, a in done] == [("2026-12-31", "2026-08-01")]
+    out = p.read_text(encoding="utf-8")
+    assert 'deadline: "2026-08-01"' in out
+    assert "# 先頭の註" in out and "# 中の註" in out, "註が消えました（`yaml.dump` で書いています）"
+    assert 'falsified_if: "触らないこと"' in out, "`falsified_if` に触っています"
+    assert "confirmed:" in out and "ここも残ること" in out
+
+
+def test_shrink_は_期限が早すぎる側を動かさないこと(tmp_path):
+    """**この手は縮める向き専用です。** 延ばす側には、もう赤い検査があります。"""
+    p = tmp_path / "h.yaml"
+    p.write_text(_mini_yaml("2026-08-05", "2026-09-30"), encoding="utf-8")
+    assert J.shrink(path=p, as_of=date(2026, 8, 26), lag=0) == []
+    assert 'deadline: "2026-08-05"' in p.read_text(encoding="utf-8")
+
+
+def test_shrink_の_dry_run_は書かないこと(tmp_path):
+    p = tmp_path / "h.yaml"
+    before = _mini_yaml("2026-12-31", "2026-08-01")
+    p.write_text(before, encoding="utf-8")
+    done = J.shrink(path=p, as_of=date(2026, 8, 26), lag=0, dry_run=True)
+    assert done, "何を書くかは返すこと"
+    assert p.read_text(encoding="utf-8") == before, "--dry-run なのに書きました"
+
+
+def test_shrink_は_閉じた前提と同じ_claim_で取り違えないこと(tmp_path):
+    """**`check()` は閉じた前提を飛ばします。** 行の対応を順番で取ると、
+    閉じた行の `deadline:` を書き換えます（そちらが先に並んでいるため）。"""
+    p = tmp_path / "h.yaml"
+    p.write_text(_mini_yaml("2026-12-31", "2026-08-01"), encoding="utf-8")
+    J.shrink(path=p, as_of=date(2026, 8, 26), lag=0)
+    doc = yaml.safe_load(p.read_text(encoding="utf-8"))
+    closed = next(h for h in doc["hypotheses"] if h.get("closed_on"))
+    assert str(closed["deadline"]) == "2026-01-01", "閉じた前提の期限を書き換えました"
