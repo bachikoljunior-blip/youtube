@@ -84,8 +84,24 @@ ROUND_SPAN_MAX_MIN = 45.0
 
 
 def round_span(floor_min: float) -> float:
-    """同じ周とみなす幅（分）。**間隔の半分。上限 `ROUND_SPAN_MAX_MIN`。**"""
-    return min(ROUND_SPAN_MAX_MIN, max(1.0, float(floor_min) / 2.0))
+    """同じ周とみなす幅（分）。**絶対値で締める。間隔に比例させない。**
+
+    **比例させて2回とも外しました**（2026-08-26）。
+
+    1周の2件は `--record hourly,optimizer` の**1回の呼び**で書かれるので、
+    実際の差は**マイクロ秒**です。隣の周までは `floor`（最低35分）離れます。
+    **必要な幅は、その2つのあいだのどこか** —— `floor` に比例させる理由が
+    ありません。比例させると `floor` が伸びたとき幅が隣の周に届きます。
+
+        幅 = floor/2 のとき   間隔 36分 → 90分 で幅が45分になり、
+                              **40分おきの周が数珠つなぎ**（「前の周から185分」・
+                              実際は21分前。従えば二重に立つ）
+        幅 = 45分 のとき      片肺の周が、前の周の1件を吸って
+                              **「そろっている」に見える**（欠けが消える）
+
+    **上限10分**は、親が1回のターンで `--record` を2回に分けても入る幅です。
+    """
+    return min(10.0, max(1.0, float(floor_min) / 4.0))
 
 #: 間隔が取れなかった回に使う下限（分）。**推定ではなく、止めないための安全弁**です。
 #: `quota.py` が答えられない回にゼロ間隔で回すと、枠を先に使い切ります。
@@ -135,12 +151,34 @@ def current_round(got: list[dict] | None = None,
     parsed = sorted(((at, r) for r in got if (at := _at(r))), key=lambda x: x[0])
     if not parsed:
         return []
+
+    # **識別子があるなら、それが答えです。窓を当てません**（2026-08-26）。
+    # 窓は「離れていたら別の周」を推測するしかなく、比例させれば隣に届き、
+    # 締めれば穴埋めの回が割れます。**幅をいくつにしても消えない誤りです。**
+    # 古い行（`round` の無い行）だけが、下の窓へ落ちます。
+    if str(parsed[-1][1].get("round") or ""):
+        rid = str(parsed[-1][1]["round"])
+        return [r for _, r in parsed if str(r.get("round") or "") == rid]
+
+    # **最後の行を軸にする。塊の先頭を軸にしない**（2026-08-26 に踏んだ）。
+    #
+    # 先頭を軸にすると、**周が数珠つなぎになります** —— 入れるたびに先頭が
+    # 過去へ動くので、幅が「隣どうしの間隔」を上回った瞬間、いくらでも遡ります。
+    # 実測: 間隔が 36分 → 90分 になって幅が45分に広がり、
+    # **40分おきに刻まれていた周が全部1つに繋がって「前の周の開始から185分」**
+    # と出ました。実際の前の周は **21分前**で、従えば二重に立ちます。
+    #
+    # **1周の記録は `len(ROLES)` 件ちょうど**なので、件数でも止めます。
+    # 幅と件数の両方 —— 幅だけだと上のように伸び、件数だけだと
+    # 片肺の周に前の周の1件を吸わせます。
     group = [parsed[-1]]
+    newest = parsed[-1][0]
     for at, r in reversed(parsed[:-1]):
-        if (group[0][0] - at).total_seconds() / 60.0 <= span:
-            group.insert(0, (at, r))
-        else:
+        if len(group) >= len(ROLES):
             break
+        if (newest - at).total_seconds() / 60.0 > span:
+            break
+        group.insert(0, (at, r))
     return [r for _, r in group]
 
 
@@ -208,12 +246,48 @@ def decide(now: datetime | None = None) -> dict:
 
 
 def record(role: str, now: datetime | None = None) -> dict:
+    """立てたことを1行残す。**周の識別子（`round`）も一緒に書きます。**
+
+    **なぜ識別子が要るのか**（2026-08-26。時刻の窓で2回外したあと）:
+
+    窓は「どれくらい離れていたら別の周か」を**当てる**しかありません。
+    比例させれば隣に届き（数珠つなぎ）、締めれば穴埋めの回が割れます。
+    **どちらも当て推量の失敗で、幅をいくつにしても消えません。**
+
+        幅 = floor/2 → 40分おきの周が全部つながり「前の周から185分」
+        幅 = 10分    → 33.6分 空けて穴埋めした周が2つに割れる
+
+    **識別子なら当てる必要がありません。** 同じ呼びで書いた行は同じ `round`、
+    穴埋めは**埋める先の `round`** を継ぎます（下の `_join_round`）。
+    古い行に `round` が無い場合だけ、窓へ落ちます。
+    """
     now = now or datetime.now(timezone.utc)
-    row = {"at": now.isoformat(), "role": role}
+    row = {"at": now.isoformat(), "role": role, "round": _join_round(role, now)}
     ROUNDS.parent.mkdir(parents=True, exist_ok=True)
     with ROUNDS.open("a", encoding="utf-8") as fh:
         fh.write(json.dumps(row, ensure_ascii=False) + "\n")
     return row
+
+
+def _join_round(role: str, now: datetime) -> str:
+    """この行が属する周の識別子。
+
+    **いちばん新しい周にその役がまだ無く、周が `floor` の内側にいるなら、
+    その周を継ぎます**（＝穴埋め）。そうでなければ新しい周を始めます。
+    **時刻の幅を当てません** —— 見るのは「その役が埋まっているか」だけ。
+    """
+    got = rows()
+    latest = [r for r in got if r.get("round")]
+    if not latest:
+        return now.isoformat()
+    rid = str(latest[-1]["round"])
+    same = [r for r in latest if str(r.get("round")) == rid]
+    if role in {str(r.get("role") or "") for r in same}:
+        return now.isoformat()                      # もう埋まっている ＝ 次の周
+    starts = [at for at in (_at(r) for r in same) if at]
+    if starts and (now - min(starts)).total_seconds() / 60.0 > floor_minutes()[0]:
+        return now.isoformat()                      # 古すぎる ＝ 次の周
+    return rid                                      # 穴埋め
 
 
 def main() -> int:
