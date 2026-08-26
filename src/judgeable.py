@@ -45,6 +45,7 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -245,6 +246,85 @@ def _members_by_split(name: str) -> dict[str, list[Member]]:
     return out
 
 
+#: ショートの上限（秒）。`config/hypotheses.yaml` の「ショート(3分以下)」と同じ数。
+SHORT_MAX_S = 180.0
+
+
+def _short_topics() -> set[str]:
+    """**ショートとして出したテーマID**（控えの `duration_s` から。3分以下）。
+
+    ## `s-` の接頭辞では割れません（2026-08-26 に実測）
+
+    控えのうち `duration_s` を持つ 56件を数えると:
+
+        `s-` で始まるのに **3分超** が **3件**
+        `s-` で始まらないのに 3分以下 が **6件**（＝ 深い題ショート）
+
+    **`request_form` の A/B は「ショートの終端の依頼」を測っています。**
+    接頭辞で割ると、深い題ショート（`batch_build` が毎回 半分ぐらい混ぜる）が
+    **処置も対照も無い所へ落ち**、群が半分の速さでしか積みません。
+
+    `duration_s` は新しい欄なので、**無い行は接頭辞に落とします**（568件中 512件）。
+    それらは全部 `landed`（2026-08-26 19:08）より前の本なので、この前提には入りません。
+    """
+    out: set[str] = set()
+    for row in _ledger_rows():
+        topic = str(row.get("topic") or "")
+        if not topic:
+            continue
+        d = row.get("duration_s")
+        if isinstance(d, (int, float)) and d > 0:
+            if float(d) <= SHORT_MAX_S:
+                out.add(topic)
+            else:
+                out.discard(topic)          # **後の行が勝ち**（`published()` と同じ）
+        elif topic.startswith("s-"):
+            out.add(topic)
+    return out
+
+
+def _ledger_rows() -> list[dict]:
+    """`data/uploaded.jsonl` を素で。**`published()` は `duration_s` を捨てます。**"""
+    path = ROOT / "data" / "uploaded.jsonl"
+    out: list[dict] = []
+    if not path.exists():
+        return out
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        try:
+            out.append(json.loads(line))
+        except ValueError:
+            continue
+    return out
+
+
+def _members_by_request_form() -> dict[str, list[Member]]:
+    """登録の依頼を途中にも入れる A/B。**ショートだけ**を、テーマIDのハッシュで割る。
+
+    `_members_by_split()` を使わないのは、**長尺を落とす必要がある**からです
+    （長尺は依頼そのものを書かない ＝ `src/script_writer.ROLE`）。
+    落とし方は接頭辞ではなく**控えの `duration_s`**（上の `_short_topics`）。
+    """
+    from src.ab_split import EXPERIMENTS
+    from src.script_writer import request_form
+
+    exp = EXPERIMENTS["request_form"]
+    builds, pub, vid = build_times(), _publish_by_topic(), _video_by_topic()
+    shorts = _short_topics()
+    out: dict[str, list[Member]] = {exp.treated: [], exp.control: []}
+    for topic, built in builds.items():
+        if built < exp.landed or topic not in shorts:
+            continue
+        day = pub.get(topic)
+        group = request_form(topic)
+        if group in out and day:
+            out[group].append((day, vid.get(topic, "")))
+    for rows in out.values():
+        rows.sort()
+    return out
+
+
 def _members_by_landed(landed: datetime) -> dict[str, list[Member]]:
     """振り分けの無い変更（入った後に作る本は**全部**そうなる）を、作った時刻で割る。"""
     builds, pub, vid = build_times(), _publish_by_topic(), _video_by_topic()
@@ -289,7 +369,7 @@ MEMBER_SOURCES: dict[str, tuple[Callable[[], dict[str, list[Member]]], int]] = {
     # 30,000再生 ÷ 418.7再生/本（公開済み130本の実測）＝ **72本**。
     # ここは `config/hypotheses.yaml` の期限 2026-10-11 と同じ引き方です
     # （あちらは対照群が無いので絶対値、こちらは2群）。
-    "request_form": (lambda: _members_by_split("request_form"), 72),
+    "request_form": (_members_by_request_form, 72),
     # d14dbf7「冒頭の stat を 前提を先・数字を後 に割る」 2026-08-23 22:03:31 JST
     "stat_split": (
         lambda: _members_by_landed(datetime(2026, 8, 23, 22, 3, 31, tzinfo=JST)),

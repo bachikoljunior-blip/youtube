@@ -24,11 +24,44 @@ def test_ショートは二つの群に半々で割れる():
     assert 0.45 <= share <= 0.55, share
 
 
-def test_長尺はどちらの群でもない():
-    """`s-` で始まらないテーマIDは `"長尺"`。**`"終端のみ"` を返さないこと** ——
-    依頼そのものが無い本が対照群に混ざると、測っているものがすり替わる。"""
+def test_振り分けはテーマIDだけを見る():
+    """**接頭辞で長尺を落とさないこと**（2026-08-26 に書き直した）。
+
+    控えの実測で `s-` なのに3分超が3件、`s-` でないのに3分以下（深い題ショート）が
+    6件ありました。**接頭辞で落とすと、深い題ショートが群から丸ごと消えます。**
+    落とすのは群を数える側（`src/judgeable._short_topics()` が `duration_s` で割る）。
+    """
     for tid in ["iryohi-kougaku-100man", "nenkin-kuriage-5nen", "keihi-x"]:
-        assert request_form(tid) == "長尺"
+        assert request_form(tid) in {"途中あり", "終端のみ"}
+
+
+def test_長尺は群を数える側で落ちる():
+    """`duration_s` が3分を超える本は、どちらの群にも入らないこと。"""
+    from src import judgeable as J
+
+    shorts = J._short_topics()
+    long_topics = [
+        str(r.get("topic") or "")
+        for r in J._ledger_rows()
+        if isinstance(r.get("duration_s"), (int, float)) and float(r["duration_s"]) > J.SHORT_MAX_S
+    ]
+    assert long_topics, "控えに長尺が1本もありません（この検査が空回りしています）"
+    assert not (set(long_topics) & shorts), sorted(set(long_topics) & shorts)[:5]
+
+
+def test_深い題ショートは群に入る():
+    """`s-` で始まらないのに3分以下の本（深い題ショート）が落ちていないこと。"""
+    from src import judgeable as J
+
+    deep = [
+        str(r.get("topic") or "")
+        for r in J._ledger_rows()
+        if isinstance(r.get("duration_s"), (int, float))
+        and 0 < float(r["duration_s"]) <= J.SHORT_MAX_S
+        and not str(r.get("topic") or "").startswith("s-")
+    ]
+    assert deep, "深い題ショートが控えに1本もありません（この検査が空回りしています）"
+    assert set(deep) <= J._short_topics()
 
 
 def test_塩が他の二つと別():
