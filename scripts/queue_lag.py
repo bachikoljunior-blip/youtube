@@ -146,6 +146,24 @@ def _first_free(taken: dict[date, set[tuple[int, int]]], hm: tuple[int, int],
     return horizon
 
 
+def _lanes() -> tuple[tuple[int, int], ...]:
+    """**`batch_build` が実際に予約に渡す時刻**（ショート／長尺）。
+
+    **写さずに実物から引きます** —— `--hour` の既定が動いたら、
+    ここも一緒に動かないと、また「印字と実際が食い違う」に戻ります
+    （それがこの節そのものです）。
+    """
+    try:
+        sys.path.insert(0, str(ROOT / "scripts"))
+        import batch_build as _bb
+        return ((9, 0), (int(_bb.LONG_HOUR_JST), 0))
+    except Exception:                                          # noqa: BLE001
+        return ((9, 0), (20, 0))
+
+
+_LANES = _lanes()
+
+
 def placement_days(rows: list[dict], now: datetime | None = None) -> dict:
     """**いま作った本が、実際にはいつ予約されるか。**
 
@@ -170,18 +188,53 @@ def placement_days(rows: list[dict], now: datetime | None = None) -> dict:
     **3〜10倍 外れています。** 外れる向きは「実験は遅い」と言うほうなので、
     **実験を1つ増やす判断を、ずっと重く見積もっていました。**
 
+    ## **その 1〜2日 も、実際に使われる数ではありませんでした**（2026-08-26 11:5x）
+
+    上の直しは `depth()`（32日）を `min/median`（1〜2日）に替えました。
+    **どちらも、実際に置かれる日ではありません。**
+
+    実測（この節を書いた回）。`batch_build --count 8` を撃って、
+    8本が実際に取った枠:
+
+        2026-10-06 〜 2026-10-13 の 09:00 JST（1日1本）＝ **41〜48日後**
+        同じ回の `lag_lines()` の印字                    ＝ **2〜2日後**
+
+    **20倍 外れています。** 向きも前と同じ（**実験は速い**と言う側）で、
+    「実験を1つ増やす」判断を**ずっと軽く**見積もらせます。
+
+    理由は `min/median` の取り方です。ここは
+    **「予約表のどこかに出てくる時刻」を全部 集めて**、その最短と中央値を出します。
+    ところが `uploader.next_publish_at(hour_jst, ...)` は
+    **渡された時刻ひとつだけ**を、1日ずつ後ろへ試します
+    （`src/uploader.py` の探索は `target += timedelta(days=1)` だけで、
+    **時刻は一度も動きません**）。そして `batch_build` が渡す時刻は
+    **ショート 09:00 ／ 長尺 20:00 の2つに固定**です（`--hour` の既定）。
+
+    **つまり空きが手前にあっても、その車線が埋まっていれば届きません。**
+    09:00 は 10/05 まで埋まっていたので、次の本は 10/06 でした。
+
     返り: `min_days` / `median_days` ／ `by_slot`（時刻 → 最初に空く日数）
+    ＋ **`lane_days`**（`batch_build` が実際に使う時刻 → 最初に空く日数）と
+    **`lane_min` / `lane_max`**。**読むのは `lane_*` のほうです。**
+    `min/median` は「車線を選べたら、どこまで手前に置けるか」の上振れです。
     """
     now = now or datetime.now(JST)
     if not rows:
-        return {"min_days": 0, "median_days": 0, "by_slot": {}}
+        return {"min_days": 0, "median_days": 0, "by_slot": {},
+                "lane_days": {}, "lane_min": 0, "lane_max": 0}
     taken = _taken(rows)
     slots = sorted({hm for s in taken.values() for hm in s})
     by_slot = {hm: _first_free(taken, hm, now.date()) for hm in slots}
     waits = sorted(by_slot.values())
+    # **`batch_build` が実際に渡す時刻**（`--hour` の既定）。写さずにここから引く。
+    lane_days = {hm: _first_free(taken, hm, now.date()) for hm in _LANES}
+    lane_waits = sorted(lane_days.values())
     return {"min_days": waits[0],
             "median_days": waits[len(waits) // 2],
-            "by_slot": by_slot}
+            "by_slot": by_slot,
+            "lane_days": lane_days,
+            "lane_min": lane_waits[0],
+            "lane_max": lane_waits[-1]}
 
 
 def views_days(rows: list[dict], now: datetime | None = None) -> dict:
@@ -266,15 +319,24 @@ def lag_lines(rows: list[dict], now: datetime | None = None) -> list[str]:
     v = views_days(rows, now)
     last = rows[-1]["at"].date().isoformat() if rows else "—"  # type: ignore[union-attr]
     tail = SETTLE_DAYS + judgeable.ANALYTICS_LAG_DAYS
+    lane_detail = "／".join(
+        f"{h:02d}:{m:02d}→{place['lane_days'][(h, m)]}日"
+        for h, m in sorted(place["lane_days"])
+    ) or "車線なし"
 
     out = [
         "=== 予約の順番待ち（この機械の時定数）===",
         f"  予約に入っている本 **{len(rows)}本** ／ いちばん後ろ {last}"
         f"（{d}日 先） ／ 再生が付く上限 {cap}本/日（実測）",
-        f"  → **いま作った本が予約されるのは {place['min_days']}〜"
-        f"{place['median_days']}日後**"
-        f"（`uploader.next_publish_at()` と同じ探し方。**いちばん後ろの"
-        f" {d}日 ではありません** —— 予約は疎で、空きは手前にあります）",
+        f"  → **いま作った本が予約されるのは {place['lane_min']}〜"
+        f"{place['lane_max']}日後**（{lane_detail}）。"
+        "**`batch_build` が渡す時刻は この2つに固定**です —— "
+        "`uploader.next_publish_at()` は**時刻を動かさず、1日ずつ後ろへ**試します",
+        f"     参考: 車線を選べたなら {place['min_days']}〜{place['median_days']}日後"
+        "（予約表に出てくる時刻ぜんぶの最短〜中央値）。"
+        "**この数を判断に使わないこと** —— 実測 2026-08-26、"
+        "この行が「2〜2日後」と出ていた回の `batch_build --count 8` は "
+        f"**41〜48日後（10/06〜10/13 の 09:00）** に置きました。いちばん後ろは {d}日 先",
     ]
 
     a, b = v["count_days"], v["window_days"]
