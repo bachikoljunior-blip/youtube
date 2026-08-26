@@ -3021,7 +3021,37 @@ def plan(m: dict, a: dict, density: int = PLAN_PUBLISH_PER_DAY,
         #     **点そのものが無い回では測り直しません** —— 「測っていない」を
         #     「面だけ測れている」に変えると、段2 の注記が推測で出ます
         #     （`tests/test_eta_surface_cap.py`「面が測れていなければ出ない」）。
-        if mix and not mix.get("imp_day_recent"):
+        #
+        # **`imp_day_recent` が既に在っても、測り直します**（2026-08-27 に直した）。
+        #     長らくここは `not mix.get("imp_day_recent")` で畳んでいました ——
+        #     「もう続いている量を持っているなら、測り直す必要はない」。
+        #     **持っている数が別の統計でした。**
+        #
+        #     積んである点（`rpm_mix --record` が書く）の `imp_day_recent` は
+        #     **直近7日の平均**です。段2 が読みたいのは
+        #     `reach_split.summary()` の `per_day_sustained`（**中央値**。
+        #     窓の1日が半分以上を占めたら平均から落とす、と同 file が書いています）。
+        #     実測 2026-08-27 の同じ帳面: 平均 **318.9回/日**／中央値 **17.0回/日**。
+        #     **18.8倍** ちがい、合格点 178回/日 をまたぎます ——
+        #     平均で読むと「**面は足りています（1.8倍）**」、
+        #     中央値で読むと「**10.5倍 足りません。足りないのはインプレッションで、
+        #     サムネと題（CTR）では動きません**」。**次の回に引く腕が正反対になります。**
+        #
+        #     そして畳んだ回は `_with_recent_surface()` が付ける**連れも全部**
+        #     落としていました —— `imp_ctr_long`（実測 CTR）・
+        #     `imp_day_recent_basis`（burst だと言う一行）・`imp_day_planned`・
+        #     `imp_day_dry_span` / `imp_day_dry_fill`。
+        #     とくに CTR が無いせいで、`_gate2_surface_note()` の
+        #     **「『足りています』を裸で出さないこと」**の枝（実測 CTR 2.20% ＝
+        #     **25.4倍 足りません**）が **一度も印字されていませんでした。**
+        #     **正しい注記が、入力が無いというだけで黙っていた**形です。
+        #
+        #     **覆る条件**: `rpm_mix --record` が `per_day_sustained` と
+        #     `imp_ctr_long` まで点に書くようになったら、ここは畳んでよい
+        #     （そのときは点のほうが `data/reach.jsonl` より新しいことがある）。
+        #     **それまでは、帳面が読める回は必ず測り直すこと**
+        #     —— `_with_recent_surface()` は読めなければ `mix` をそのまま返します。
+        if mix:
             mix = _with_recent_surface(mix)
     else:
         mix = dict(mix)
