@@ -715,6 +715,188 @@ def aoiro_vs_keihi_rows(profits: list[int] | None = None) -> list[dict]:
     return [aoiro_vs_keihi(p) for p in (profits or PROFITS)]
 
 
+# ---- 2026-08-26 の回に足した3節 -----------------------------------------
+#
+# **どれも既にある関数の「まだ誰も引いていない軸」です。**
+# `section_sweep` が拾った候補のうち、実際に当たってみて残ったものだけを入れています
+# （拾われた `逆転 burden（合計）… members=6 が最大` は**掃引の目盛りの粗さ**で、
+#  1人ずつ数え直すと合計は単調にふえて7人目で止まります。**節にしていません**）。
+
+
+def member_cost(profit: int = 7_000_000, max_members: int = 9,
+                aoiro: int = AOIRO_ETAX, age: int = 45) -> list[dict]:
+    """**被保険者が1人ふえたとき、国保料の増分のうち何割が税で戻るか。**
+
+    国民健康保険料は**全額が社会保険料控除**なので、
+    人数がふえて保険料が上がると、その額だけ課税所得が下がります。
+    **上がった額がそのまま出ていくわけではありません。**
+    """
+    base = burden(profit, aoiro, 1, age)
+    out = []
+    for m in range(1, max_members + 1):
+        b = burden(profit, aoiro, m, age)
+        d_kokuho = b["国民健康保険料"] - base["国民健康保険料"]
+        d_tax = (b["所得税"] + b["住民税"]) - (base["所得税"] + base["住民税"])
+        out.append({
+            "被保険者数": m,
+            "国民健康保険料": b["国民健康保険料"],
+            "国保のふえた額": d_kokuho,
+            "所得税と住民税の減り": -d_tax,
+            "正味のふえた額": d_kokuho + d_tax,
+            "戻る割合": (-d_tax / d_kokuho) if d_kokuho else 0.0,
+        })
+    return out
+
+
+def member_cost_rate(profit: int = 7_000_000, aoiro: int = AOIRO_ETAX,
+                     age: int = 45) -> dict:
+    """`member_cost` の「戻る割合」が人数によらず一定であることを1行にしたもの。"""
+    rows = [r for r in member_cost(profit, 9, aoiro, age) if r["国保のふえた額"]]
+    rates = [r["戻る割合"] for r in rows]
+    top = max(r["国保のふえた額"] for r in rows)
+    stop = next(r for r in rows if r["国保のふえた額"] == top)
+    return {
+        "所得（青色控除前）": profit,
+        "いちばん低い割合": min(rates),
+        "いちばん高い割合": max(rates),
+        "幅": max(rates) - min(rates),
+        "止まる人数": stop["被保険者数"],
+        "止まるまでの国保のふえた額": stop["国保のふえた額"],
+        "止まるまでの税の減り": stop["所得税と住民税の減り"],
+        "止まるまでの正味": stop["正味のふえた額"],
+    }
+
+
+def keihi_ramp(frm: int = AOIRO_KANI, to: int = AOIRO_FUKUSHIKI) -> dict:
+    """**「経費」と「控除の上乗せ」の差が満額になる所得。**
+
+    差は「その額 × 事業税の率」で頭を打ちます（`aoiro_vs_keihi`）。
+    **その満額に届く所得を1円きざみで探します。** 事業税は
+    `(青色控除前の所得 − 事業主控除) × 率` なので、
+    **入口 ＋ その額**でちょうど満額になるはずです —— それを確かめています。
+    """
+    amount = to - frm
+    full = int(amount * JIGYOZEI_RATE)
+    lo, hi = JIGYOZEI_KOJO, JIGYOZEI_KOJO + amount * 3
+    while lo < hi:
+        mid = (lo + hi) // 2
+        if aoiro_vs_keihi(mid, frm, to)["差"] >= full:
+            hi = mid
+        else:
+            lo = mid + 1
+    return {
+        "額": amount,
+        "満額の差": full,
+        "差が0で終わる所得": JIGYOZEI_KOJO,
+        "満額になる所得": lo,
+        "1円下の差": aoiro_vs_keihi(lo - 1, frm, to)["差"],
+        "坂の幅": lo - JIGYOZEI_KOJO,
+        "1万円あたり": int(STEP * JIGYOZEI_RATE),
+    }
+
+
+def keihi_ramp_rows(frm: int = AOIRO_KANI, to: int = AOIRO_FUKUSHIKI,
+                    points: int = 6) -> list[dict]:
+    """坂のあいだを等分して並べた表。**両端と、そのあいだ。**"""
+    r = keihi_ramp(frm, to)
+    lo, hi = r["差が0で終わる所得"], r["満額になる所得"]
+    out = []
+    for i in range(points + 1):
+        p = lo + (hi - lo) * i // points
+        v = aoiro_vs_keihi(p, frm, to)
+        out.append({
+            "所得（青色控除前）": p,
+            "差": v["差"],
+            "満額まで": r["満額の差"] - v["差"],
+            "入口からの距離": p - lo,
+        })
+    return out
+
+
+#: 「国保が1円も減らない」の2つの理由。**同じ結果で、意味は正反対です。**
+ZERO_NO_SHOTOKUWARI = "所得割がそもそも0（旧ただし書き所得が0）"
+ZERO_AT_LIMIT = "全区分が賦課限度額（これ以上は上がらない）"
+ZERO_MIXED = "国保は減る（0ではない）"
+
+
+def kokuho_zero_reason(profit: int, members: int = 1,
+                       aoiro: int = AOIRO_ETAX, age: int = 45) -> dict:
+    """**経費1万円で国保が1円も減らないとき、その理由はどちらか。**
+
+    `member_limit()` は「国保の減りが0になった人数」を返しますが、
+    **0 になる理由は2つあります** ——
+    (1) 旧ただし書き所得が0で、**所得割がそもそもかかっていない**（所得の下端）
+    (2) 4区分とも**賦課限度額に当たっている**（所得の上端）。
+    **どちらも「1人目から動かない」と出ます。意味は正反対です。**
+    """
+    shotoku = after_aoiro(profit, aoiro)
+    d = kokuho.premium(shotoku, members, age)
+    n_capped = d["頭打ちの本数"]
+    n_parts = len(d["内訳"])
+    base = kokuho.kyu_tadashigaki(shotoku)
+    got = marginal(profit, STEP, aoiro, members, age)
+    if got["国保の減り"] != 0:
+        why = ZERO_MIXED
+    elif base <= 0:
+        why = ZERO_NO_SHOTOKUWARI
+    elif n_capped == n_parts:
+        why = ZERO_AT_LIMIT
+    else:
+        why = ZERO_MIXED
+    return {
+        "所得（青色控除前）": profit,
+        "被保険者数": members,
+        "青色控除後の所得": shotoku,
+        "旧ただし書き所得": base,
+        "国民健康保険料": d["保険料"],
+        "頭打ちの区分": n_capped,
+        "区分の数": n_parts,
+        "国保の減り": got["国保の減り"],
+        "値打ち": got["値打ち"],
+        "理由": why,
+    }
+
+
+#: 下端と上端を並べるための所得。**両端が同じ「0」を出します。**
+ZERO_PROFITS = [1_000_000, 1_080_000, 1_090_000, 5_000_000,
+                11_000_000, 12_000_000, 20_000_000]
+
+
+def kokuho_zero_rows(profits: list[int] | None = None) -> list[dict]:
+    """所得ごとに「国保の減り」と、その理由を並べた表。"""
+    return [kokuho_zero_reason(p) for p in (profits or ZERO_PROFITS)]
+
+
+def kokuho_zero_edges(aoiro: int = AOIRO_ETAX) -> dict:
+    """**下端の帯がどこで終わり、上端の帯がどこから始まるか**（1円きざみ）。"""
+    lo, hi = 0, 20_000_000
+    while lo < hi:                        # 所得割が立ちはじめる所得
+        mid = (lo + hi) // 2
+        if kokuho.kyu_tadashigaki(after_aoiro(mid, aoiro)) > 0:
+            hi = mid
+        else:
+            lo = mid + 1
+    starts = lo
+    lo, hi = starts, 60_000_000
+    while lo < hi:                        # 4区分とも限度額に当たる所得
+        mid = (lo + hi) // 2
+        r = kokuho_zero_reason(mid)
+        if r["理由"] == ZERO_AT_LIMIT:
+            hi = mid
+        else:
+            lo = mid + 1
+    return {
+        "下端が終わる所得": starts,
+        "下端の値打ち": marginal(starts - 1)["値打ち"],
+        "そこから1円上の値打ち": marginal(starts)["値打ち"],
+        "上端が始まる所得": lo,
+        "上端の1円下の国保の減り": marginal(lo - 1)["国保の減り"],
+        "上端の値打ち": marginal(lo)["値打ち"],
+        "下端の帯の幅": starts,
+        "そのあいだ": lo - starts,
+    }
+
+
 def check_tables() -> None:
     """制度の値と、この計算の主題そのものを確かめる。"""
     _checks.statutory(AOIRO_ETAX, 650_000, "青色申告特別控除（e-Tax等）",
@@ -1086,3 +1268,84 @@ if __name__ == "__main__":
           f"{JIGYOZEI_RATE * 100:.0f}パーセント ＝ {vs5['満額なら']:,}円** です。"
           f"事業主控除 {JIGYOZEI_KOJO:,}円 より下では事業税そのものが0なので、差も0。"
           "**またぐ所得だけ、その中間になります。**")
+
+    ze = kokuho_zero_edges()
+    print(f"\n=== 経費1万円で、税も保険料も1円も減らない所得がある"
+          f"（{ze['下端が終わる所得']:,}円 まで）===")
+    print(f"  前提: 事業所得（青色控除前）／単身・{AGE_KAIGO}歳・国保 ／"
+          f"青色申告特別控除 {AOIRO_ETAX:,}円 ／ 経費 {STEP:,}円")
+    print("  「経費は税率ぶんだけ得」の税率がいちばん低い人は5パーセントです。"
+          "**その下に、0パーセントの帯があります。**")
+    print(f"  所得 {ze['下端が終わる所得'] - 1:,}円 まで  値打ち "
+          f"{ze['下端の値打ち']:,}円  ← **1円も戻りません**")
+    print(f"  その1円上（{ze['下端が終わる所得']:,}円）  値打ち "
+          f"{ze['そこから1円上の値打ち']:,}円  ← **1円で {ze['そこから1円上の値打ち']:,}円 跳ぶ**")
+    print(f"  → 青色控除後の所得が {KISO_JUMIN:,}円 以下だと、"
+          f"**国保の所得割の元になる旧ただし書き所得が0**になります。"
+          f"所得税は基礎控除 {KISO_SHOTOKU:,}円、住民税の所得割は基礎控除 {KISO_JUMIN:,}円 で"
+          f"どちらも0、事業税も事業主控除 {JIGYOZEI_KOJO:,}円 の下で0。"
+          "**減らせるものが1つも残っていません。**")
+    print(f"  → この帯では、経費1万円の正味の費用は {STEP:,}円 まるごとです。"
+          "**「経費で落とせば安くなる」が、字義どおり成り立たない人がいます。**")
+
+    print("\n=== 「国保が1円も減らない」は所得の上端と下端の両方で起きる。意味は正反対 ===")
+    print(f"{'所得':>12}{'青色控除後':>12}{'旧ただし書き':>13}{'国保':>11}"
+          f"{'頭打ち':>7}{'国保の減り':>11}{'値打ち':>9}  理由")
+    for r in kokuho_zero_rows():
+        print(f"{r['所得（青色控除前）']:>11,}円{r['青色控除後の所得']:>11,}円"
+              f"{r['旧ただし書き所得']:>12,}円{r['国民健康保険料']:>10,}円"
+              f"{str(r['頭打ちの区分']) + '/' + str(r['区分の数']):>7}"
+              f"{r['国保の減り']:>10,}円{r['値打ち']:>8,}円  {r['理由']}")
+    print(f"  → 上端が始まるのは 所得 {ze['上端が始まる所得']:,}円。"
+          f"その1円下では国保はまだ {ze['上端の1円下の国保の減り']:,}円 減ります。")
+    print(f"  → **同じ「0」でも、下端の値打ちは {ze['下端の値打ち']:,}円、"
+          f"上端は {ze['上端の値打ち']:,}円** です。"
+          "上端では所得税・住民税・事業税がそのぶん動くので、値打ちは残ります。")
+    print(f"  → **`member_limit()` の『動かなくなる人数』は、この2つを区別しません。**"
+          f"所得 {ZERO_PROFITS[0]:,}円 でも『1人目から動かない』と出ますが、"
+          "**限度額に当たっているのではなく、そもそも所得割がかかっていない**からです。")
+
+    mc = member_cost()
+    mr = member_cost_rate()
+    print(f"\n=== 家族が1人ふえて国保が {mr['止まるまでの国保のふえた額']:,}円 上がっても、"
+          f"正味は {mr['止まるまでの正味']:,}円（3割が税で戻る）===")
+    print(f"  前提: 事業所得（青色控除前）{mr['所得（青色控除前）']:,}円／"
+          f"{AGE_KAIGO}歳・国保 ／ 青色申告特別控除 {AOIRO_ETAX:,}円 ／"
+          "**動かしているのは被保険者数だけです**")
+    print("  国民健康保険料は**全額が社会保険料控除**なので、"
+          "**上がった額だけ課税所得が下がります。**"
+          "「扶養がふえると国保が上がる」の額は、そのまま出ていく額ではありません。")
+    print(f"{'人数':>5}{'国民健康保険料':>15}{'1人のときから':>14}"
+          f"{'所得税と住民税の減り':>21}{'正味のふえた額':>15}{'戻る割合':>10}")
+    for r in mc:
+        print(f"{r['被保険者数']:>4}人{r['国民健康保険料']:>14,}円"
+              f"{r['国保のふえた額']:>13,}円{r['所得税と住民税の減り']:>20,}円"
+              f"{r['正味のふえた額']:>14,}円{r['戻る割合'] * 100:>9.2f}%")
+    print(f"  → **戻る割合は人数によらず {mr['いちばん低い割合'] * 100:.2f}〜"
+          f"{mr['いちばん高い割合'] * 100:.2f}パーセント**で、"
+          f"幅は {mr['幅'] * 100:.2f}ポイントしかありません。"
+          "所得税の限界税率 ＋ 住民税の所得割 —— **その人の帯が変わらない限り一定**です。")
+    print(f"  → {mr['止まる人数']}人目から先は1円も動きません"
+          f"（4区分とも賦課限度額 合計 {kokuho.LIMIT_TOTAL:,}円 に当たっている）。"
+          "**8人でも20人でも、保険料も税も同じ額です。**")
+
+    rp = keihi_ramp()
+    print(f"\n=== 「経費」と「青色控除の上乗せ」の差 {rp['満額の差']:,}円 は、"
+          f"{rp['差が0で終わる所得']:,}円 から {rp['満額になる所得']:,}円 までの坂 ===")
+    print(f"  前提: 事業所得（青色控除前）／単身・{AGE_KAIGO}歳・国保 ／"
+          f"簡易簿記 {AOIRO_KANI:,}円 → 複式簿記 {AOIRO_FUKUSHIKI:,}円"
+          f"（控除が {rp['額']:,}円 ふえる）と、同じ額を経費で落とした場合")
+    print("  既にある表は「入口の下では0、上では満額、またぐ所得だけ中間」と言っています。"
+          "**その『またぐ所得』が、どこからどこまでかを1円きざみで出します。**")
+    print(f"{'所得':>12}{'入口からの距離':>16}{'差':>10}{'満額まで':>11}")
+    for r in keihi_ramp_rows():
+        print(f"{r['所得（青色控除前）']:>11,}円{r['入口からの距離']:>15,}円"
+              f"{r['差']:>9,}円{r['満額まで']:>10,}円")
+    print(f"  → 坂の幅は {rp['坂の幅']:,}円 で、"
+          f"**控除の額 {rp['額']:,}円 とぴったり同じ**です。"
+          f"事業税は「青色控除前の所得 − 事業主控除 {JIGYOZEI_KOJO:,}円」に率を掛けるので、"
+          "**経費で落とした側だけが事業主控除の中へ食い込んでいく**からです。")
+    print(f"  → 坂の上では、所得が1万円ふえるごとに差が {rp['1万円あたり']:,}円 ずつ広がります"
+          f"（{JIGYOZEI_RATE * 100:.0f}パーセント）。"
+          f"**{rp['満額になる所得']:,}円 の1円下でも {rp['1円下の差']:,}円 で、まだ満額ではありません**"
+          "（事業税は100円未満を切り捨てるので、表の値は階段状になります）。")
