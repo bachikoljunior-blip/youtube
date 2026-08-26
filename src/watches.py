@@ -495,20 +495,138 @@ def exempt(path: Path = CONFIG) -> dict[str, str]:
     return dict(doc.get("exempt") or {})
 
 
+# --- **満ちた ≠ 判定できる**（2026-08-26 夜・最適化の回に足した）---
+#
+# `config/watches.yaml` の「深い題のショート-16本」には、こう書いてありました:
+#
+#     **数え方は仮説の `needs.count_expr` と同じ**にしてあります。
+#     片方だけ直すと、鳴る日と判定できる日がずれます。
+#
+# **その日のうちに、片方だけが直りました。** きょうだいの回が
+# `config/hypotheses.yaml` の `needs` を
+# 「**作った** 16本」→「**公開して分類が付いた** 8本 ＋ 使える日 3日」に直し、
+# `src/watches.py::_k_deep_shorts`（**作った本を数える**）はそのままでした。
+#
+# 結果、同じ前提について3つの道具が別々のことを言っていました:
+#
+#     deadline_check.py   「[..] まだ数えはじめたところ。**何もしないのが正解**」
+#     drift.py --gate     exit 2 →「**この回は verdict を出すこと**」
+#     watches --pending   「**満ちました。この回で判定すること**」（3回まで止める）
+#
+# 実測は 要8／いま7、使える日 要3／**いま0**。**判定できる本は1本もありません。**
+#
+# **数え方を写し直すのは、同じ事故をもう一度 予約することです**（この註の上に
+# 「同じにしてある」と書いてあって、それでもずれました）。だから写しません ——
+# **判定できるかどうかの答えを持っている所を、1つに決めて、そこに訊きます。**
+# それが `scripts/deadline_check.py`（＝ `src/judgeable.py` の床）です。
+#
+# **仮説と結ばれている待ちだけ**が対象です（`config/hypotheses.yaml` の
+# `watch:` 欄。結ばれていない待ちは、これまでどおり自分の目盛りで鳴ります）。
+#
+# **覆る条件**: `deadline_check` が「判定できない」と言い続けるのに、
+# 実際には判定できるようになっていたら、待ちが鳴らなくなります。
+# そのときに直すのは `src/judgeable.py` の床のほうで、**ここを外すことではありません。**
+
+
+def _hypothesis_judge_state() -> dict[str, tuple[str, object]] | None:
+    """**待ちの id → その仮説を「いま判定できるか」**。
+
+    返り: `{watch_id: ("ready"|"warming"|"unreachable"|"unchecked", 判定できる日 or None)}`。
+    読めなければ `None` ——  **そのときは1件も抑えません**（黙るより鳴らす。
+    計器が1本読めないことは、「判定できない」ことの証拠ではありません）。
+    """
+    try:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "watches_deadline_check", ROOT / "scripts" / "deadline_check.py")
+        mod = importlib.util.module_from_spec(spec)
+        sys.modules["watches_deadline_check"] = mod   # dataclass が __module__ を引きます
+        spec.loader.exec_module(mod)                  # type: ignore[union-attr]
+        rows = mod.load()
+        by_claim: dict[str, tuple[str, object]] = {}
+        for v in mod.check(rows):
+            if v.ready is not None:
+                by_claim[v.claim] = ("ready", v.ready)
+            elif getattr(v, "unreachable", False):
+                by_claim[v.claim] = ("unreachable", None)
+            elif getattr(v, "unchecked", False):
+                by_claim[v.claim] = ("unchecked", None)
+            else:
+                by_claim[v.claim] = ("warming", None)
+        out: dict[str, tuple[str, object]] = {}
+        for h in rows or []:
+            if not isinstance(h, dict):
+                continue
+            wid = str(h.get("watch") or "").strip()
+            claim = str(h.get("claim") or "")
+            if wid and claim in by_claim:
+                out[wid] = by_claim[claim]
+        return out
+    except Exception:                                 # noqa: BLE001
+        return None
+
+
+def _too_early(w: Watch, state: dict[str, tuple[str, object]] | None) -> str:
+    """**この待ちを、いま鳴らすと嘘になるか。** 嘘なら理由を返す（空なら鳴らしてよい）。
+
+    **`unreachable` と `unchecked` は抑えません** —— 前者は前提の立て方ごと
+    変える必要があり、後者は分からないだけです。**どちらも人が読む価値があります。**
+    抑えるのは「**待てば判定できる**」と分かっている2つだけ。
+    """
+    if not state:
+        return ""
+    got = state.get(w.id)
+    if not got:
+        return ""
+    kind, ready = got
+    if kind == "warming":
+        return ("`scripts/deadline_check.py`: **まだ数えはじめたところ**"
+                "（判定に要るデータが揃っていません）")
+    if kind == "ready" and ready is not None:
+        # **JST で見ること。** この器は UTC なので `date.today()` を使うと
+        # 00:00〜09:00 の9時間、「まだ判定できない」と言い続けます
+        # （`scripts/drift.py::today_jst` が同じ穴を註つきで直しています）。
+        today = datetime.now(timezone(timedelta(hours=9))).date()
+        if ready > today:
+            return f"`scripts/deadline_check.py`: **判定できるのは {ready}**"
+    return ""
+
+
 def unanswered(ws: list[Watch] | None = None) -> list[Watch]:
-    """**満ちているのに、まだ答えが書かれていない待ち。**
+    """**満ちていて、しかも いま判定できる待ち。**
 
     `scripts/stop_check.sh` がこれを見て、回を引き止めます。
     **印字だけでは、読まなかった回に届きません**（それが 8/10〜8/20 の
     10日間に起きたことです）。
+
+    **2026-08-26 に「いま判定できる」を足しました**（上の長い註）。
+    目盛りが満ちても、判定に要るデータが揃っているとは限りません ——
+    **その回にできないことを要求する門は、門ごと信用を失わせます。**
     """
-    out = []
+    rung, _blocked = _split_rung(ws)
+    return rung
+
+
+def _split_rung(ws: list[Watch] | None = None) -> tuple[list[Watch], list[tuple[Watch, str]]]:
+    """満ちた待ちを「**いま判定できる**」と「**まだ早い**」に割る。
+
+    後ろは `render()` が理由つきで印字します。**黙って消さないこと** ——
+    消すと、次の回には存在しなかったことになります。
+    """
+    state = _hypothesis_judge_state()
+    rung: list[Watch] = []
+    blocked: list[tuple[Watch, str]] = []
     for w in (ws if ws is not None else load()):
         if w.answered:
             continue
-        if w.gauge().met:
-            out.append(w)
-    return out
+        if not w.gauge().met:
+            continue
+        why = _too_early(w, state)
+        if why:
+            blocked.append((w, why))
+        else:
+            rung.append(w)
+    return rung, blocked
 
 
 def note_rings(ws: list[Watch], at: str = "") -> None:
@@ -563,11 +681,19 @@ def render(watches: list[Watch] | None = None, record: bool = False) -> str:
         return f"\n=== 待ちの条件 ===\n  読めませんでした（続行）: {str(exc)[:90]}"
 
     lines = ["\n=== 待ちの条件（**満ちたらここに出ます。コメントに書くだけにしない**）==="]
-    rung, waiting, done, broken = [], [], [], []
+    # **満ちた ≠ 判定できる**（`_split_rung` の長い註）。
+    # 「まだ早い」ものは、**鳴らさないが、理由つきで必ず印字する。**
+    try:
+        _early = {w.id: why for w, why in _split_rung(ws)[1]}
+    except Exception:                                          # noqa: BLE001
+        _early = {}
+    rung, waiting, done, broken, early = [], [], [], [], []
     for w in ws:
         g = w.gauge()
         if g.err:
             broken.append((w, g))
+        elif g.met and not w.answered and w.id in _early:
+            early.append((w, g, _early[w.id]))
         elif g.met and not w.answered:
             rung.append((w, g))
         elif g.met:
@@ -588,6 +714,11 @@ def render(watches: list[Watch] | None = None, record: bool = False) -> str:
         lines.append(f"      → **{w.then}**")
         lines.append(f"      答えが出たら `config/watches.yaml` の "
                      f"`{w.id}` に `answered:` を1行。**それまで毎回鳴ります。**")
+    for w, g, why in early:
+        lines.append(f"  [..] **目盛りは満ちたが、まだ判定できません** {w.id} —— {w.what}")
+        lines.append(f"       {why}")
+        lines.append(f"       いま **{_fmt(g.now)}{g.unit}**（この待ちの目盛り）。"
+                     "**この回は何もしないのが正解です**（畳まない・条件を緩めない）")
     for w, g in waiting:
         lines.append(f"  あと **{_fmt(g.left)}{g.unit}**  {w.id}"
                      f"（いま {_fmt(g.now)} / 要る {_fmt(g.need)}）"
