@@ -129,6 +129,46 @@ def test_endcard_を書くと処置群だけを数える():
     assert "終端が" not in loose.why, "`endcard:` の無い要件まで絞ってはいけません"
 
 
+def test_群が足りなくても_伸び率から判定日を出す():
+    """**`None` は「判定できる日が出せない」であって、「まだ足りない」ではありません。**
+
+    2026-08-26 夕の実測 —— 期限 10/11「ショートの最後で登録を直接1回頼む」
+    （腕 `sub_rate`・処置は既に生成に入っていて**予約に 21本**）は、
+    72本 に足りないというだけで **`ready is None`** に落ちていました。その結果:
+
+        `src/arm_speed.forward()`   `undated` に落ちる ＝ **θ に数えられない**
+        `scripts/queue_lag.py`      判定日を持たない前提は**手前へ倒せない**
+        `scripts/deadline_check.py` `[!!] 判定できる日が出せません` で終わる
+
+    同じ回の `python scripts/eta.py --alloc` は
+    「**次の1件は `sub_rate` がいちばん早い（5日）**」と出しています ——
+    **いちばん速い腕の、唯一 走っている実験が、機械から見えていませんでした。**
+
+    **`_ans_group_key` は同じ形をとっくに解いています**
+    （`要 1000 ／ いま 78（7日で 11.14/日）→ あと 83日`）。
+    諦めていたのは、こちらの1関数だけです。
+    """
+    need = {"created_after": "2026-08-24", "count": 10_000, "settle_days": 0}
+    ans = J._ans_published_group(dict(need), date(2026, 8, 26), lag=3)
+    assert ans.ready is not None, (
+        "群が足りないだけで `ready is None` に落ちています —— "
+        "`_project_nth` が伸び率から日を出していません"
+    )
+    assert ans.slack > 0, "推定なのに帯が 0 です（点として読まれ、毎回 期限が書き換わります）"
+    assert "推定" in ans.why, "推定だと分かる字が出力に出ていません"
+
+
+def test_1本も作っていない群には_日を出さない():
+    """**伸び率がゼロの群に日を付けないこと。**
+
+    0 は「まだ来ていない」とも「こちらが作らないかぎり永久に来ない」とも読めます
+    （`zero_means_never`）。**式からは区別できない**ので、ここでは日を出しません。
+    """
+    need = {"created_after": "2099-01-01", "count": 5, "settle_days": 0}
+    ans = J._ans_published_group(dict(need), date(2026, 8, 26), lag=3)
+    assert ans.ready is None, "1本も作っていない群に、判定できる日が付いています"
+
+
 def test_外の出来事は_判定できる日を出さない():
     a = J.answer({"kind": "external", "what": "収益化の審査"}, date(2026, 8, 25), 3)
     assert a.ready is None and a.unreachable

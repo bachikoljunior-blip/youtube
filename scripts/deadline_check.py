@@ -225,6 +225,86 @@ def _ans_accrual(need: dict, as_of: date) -> Answer:
                   slack=slack)
 
 
+def _project_nth(rows: list[dict], pub: list[str], count: int, after: str,
+                 as_of: date) -> tuple[date, float, int, int] | None:
+    """群がまだ `count` 本に満たないとき、**`count` 本目が公開される日を推定する。**
+
+    ## なぜ要るか（2026-08-26 夕・サブの回。**`sub_rate` の腕が丸ごと止まっていた**）
+
+    ここは長らく、群が足りないと **`Answer(None, "予約にまだ在りません")`** で
+    返していました。**`None` は「判定できる日が出せない」という意味**なので:
+
+    - `src/arm_speed.forward()` の `undated` に落ちる ＝ **θ（腕の回転）に数えられない**
+    - `scripts/queue_lag.py` も `src/judgeable.py` も、**判定日を持たない前提は動かせない**
+    - `scripts/deadline_check.py` は `[!!] 判定できる日が出せません` と印字して終わる
+
+    実測 2026-08-26: 期限 10/11 の「ショートの最後で登録を直接1回頼むと、登録率が
+    上がる」（腕 `sub_rate`・**処置は既に生成に入っていて、予約に 21本 在る**）が
+    **これに当たっていました。** `eta.py --alloc` は同じ回に
+    「**次の1件は `sub_rate` がいちばん早い（5日）**」と出しており、
+    **いちばん速い腕の、唯一 走っている実験が、機械から見えていなかった**わけです。
+
+    **同じ機械の `_ans_group_key` は、同じ形をとっくに解いています**
+    （`要 1000 ／ いま 78（7日で 11.14/日）→ あと 83日（±10日）`）。
+    伸び率から日を出す道具が**すぐ上の関数に在って、こちらだけ諦めていました。**
+    `docs/JOURNAL.md` が「いちばん当たる」と書いている形そのものです ——
+    **同じことを2か所が別々に言っていて、片方しか読まれていない。**
+
+    ## 何を積むか（**2段。作る速さと、作ってから出るまでの遅れ**）
+
+    `_ans_group_key` は再生の積み上げなので1段で済みますが、こちらは
+    **「作る」と「公開する」が別の日**です。予約は先の空き枠へ入るので、
+    作った本が明日 出るとは限りません（実測 2〜49日 後）。
+
+        作る速さ    `created_after` からの経過日数 ÷ 群の本数
+        公開の遅れ  既に在る本の（公開日 − 作った日）の**中央値**
+
+    そして**推定した日は、既に予約に入っている最後の1本より前になりません**
+    （公開は前へは進まない）。`max()` で押さえています。
+
+    ## この推定が言えないこと
+
+    - **1本も作っていない群には出せません**（`None` を返す）。伸び率がゼロだと
+      「待っても来ない」と区別が付かず、`zero_means_never` の判断は呼び手の側です
+    - **帯は `1/√件数`**（`_ans_group_key` と同じ）。21本 なら ±22%。
+      **帯の中で期限を書き換えても、届く日は1日も動きません**
+    - **作る速さが落ちれば伸びます。** この推定は「いまの速さが続いたら」です
+
+    返り: `(count 本目の公開日, 1日あたり作った本数, 公開の遅れの中央値, 帯)`
+    """
+    have = len(pub)
+    if have <= 0:
+        return None
+    try:
+        since = date.fromisoformat(after[:10])
+    except ValueError:
+        return None
+    elapsed = max(1, (as_of - since).days)
+    rate = have / elapsed
+    if rate <= 0:
+        return None
+    leads = []
+    for r in rows:
+        at, up = str(r.get("at") or "")[:10], str(r.get("uploaded_at") or "")[:10]
+        if not at or not up:
+            continue
+        try:
+            leads.append((date.fromisoformat(at) - date.fromisoformat(up)).days)
+        except ValueError:
+            continue
+    leads.sort()
+    lead = leads[len(leads) // 2] if leads else 0
+    days_to_build = math.ceil((count - have) / rate)
+    nth = as_of + timedelta(days=days_to_build + max(0, lead))
+    try:                                    # 公開は前へ進まない ＝ 既にある最後より後
+        nth = max(nth, date.fromisoformat(pub[-1]))
+    except ValueError:
+        pass
+    span = max(1, (nth - as_of).days)
+    slack = max(1, math.ceil(span / max(1.0, have ** 0.5)))
+    return nth, rate, max(0, lead), slack
+
+
 def _ans_published_group(need: dict, as_of: date, lag: int) -> Answer:
     """**作った日で決まる群**が、公開 → 落ち着く → 実データに出るまで。
 
@@ -263,9 +343,19 @@ def _ans_published_group(need: dict, as_of: date, lag: int) -> Answer:
     if len(pub) < count:
         tail = f"（{since_pub} 以降に公開する本だけ）" if since_pub else ""
         form = f"・**終端が {endcard} の本だけ**" if endcard else ""
-        return Answer(None,
-                      f"{after[:10]} 以降に作った本{tail}{form} **{len(pub)}本** ／ 要 {count}本 —— "
-                      "**予約にまだ在りません**（作れば動きます）")
+        head = (f"{after[:10]} 以降に作った本{tail}{form} **{len(pub)}本** ／ 要 {count}本")
+        proj = _project_nth(rows, pub, count, after, as_of)
+        if proj is None:
+            return Answer(None, f"{head} —— **予約にまだ在りません**（作れば動きます）")
+        nth, rate, lead, slack = proj
+        ready = nth + timedelta(days=settle + lag)
+        return Answer(ready,
+                      f"{head} —— **推定**（{rate:.2f}本/日 で作られ、作ってから公開まで "
+                      f"中央値 {lead}日）→ {count}本目の公開 **{nth:%m/%d}** "
+                      f"＋ 落ち着く {settle}日 ＋ 実データの遅れ {lag}日"
+                      f"（**±{slack}日**。伸び率からの推定なので、この幅の中の"
+                      "書き換えは意味を持ちません）",
+                      slack=slack)
     nth = date.fromisoformat(pub[count - 1])
     ready = nth + timedelta(days=settle + lag)
     band = analytics_lag_band()
