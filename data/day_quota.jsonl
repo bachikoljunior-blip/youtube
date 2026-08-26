@@ -3316,6 +3316,7 @@
 {"at": "2026-08-26T16:47:26+00:00", "detail": "scheduled_publish_times"}
 {"at": "2026-08-26T16:47:29+00:00", "detail": "playlistItems.insert"}
 {"at": "2026-08-26T16:47:29+00:00", "detail": "thumbnails.set VG6EYTKXl1M"}
+{"at": "2026-08-26T16:56:56+00:00", "detail": "channels.list mine"}
 {"at": "2026-08-26T16:48:21+00:00", "detail": "channels.list mine"}
 {"at": "2026-08-26T16:48:25+00:00", "detail": "channels.list mine"}
 {"at": "2026-08-26T16:48:26+00:00", "detail": "channels.list mine"}
