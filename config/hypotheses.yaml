@@ -843,7 +843,7 @@ hypotheses:
     #   **緩めたのではありません。** 中身は同じで、遅れの実測ぶんだけ後ろへ動かしています。
     #   **覆る条件**: 遅れが 3日 に戻ったら、`deadline_check.py --shrink` が
     #   ここを勝手に縮めます（縮める側は自動・延ばす側は手作業のまま）。
-    deadline: "2026-09-07"
+    deadline: "2026-09-05"
     lever: per_video                # engaged 比率
     needs:
       # 群の作り方は `src/judgeable.SOURCES["title_form"]` に置いてある。
