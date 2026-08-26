@@ -988,6 +988,92 @@ def report(plan: Plan | None = None) -> list[str]:
     return out
 
 
+PROGRESS = ROOT / "data" / "queue_lag.jsonl"
+
+
+def _stamp(readies: dict) -> dict:
+    """判定日の姿を、そのまま帳面に置ける形へ（`date` → `"YYYY-MM-DD"`）。"""
+    return {k: (v.isoformat() if v else None) for k, v in readies.items()}
+
+
+def _last_apply() -> dict | None:
+    """**前の `--apply` が、何を約束して何手 撃ったか。**"""
+    import json
+
+    if not PROGRESS.exists():
+        return None
+    last = None
+    for line in PROGRESS.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            last = json.loads(line)
+        except ValueError:
+            continue
+    return last
+
+
+def _note_apply(before: dict, promised: dict, moves: int) -> None:
+    import json
+
+    PROGRESS.parent.mkdir(parents=True, exist_ok=True)
+    rec = {"at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+           "before": _stamp(before), "promised": _stamp(promised), "moves": moves}
+    with PROGRESS.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
+
+
+def stuck_lines(plan: "Plan") -> tuple[list[str], bool]:
+    """**前の `--apply` が1日も動かしていないなら、同じ手をもう一度 撃たない。**
+
+    ## なぜ要るか（2026-08-26 に実測で見つけた。**単位を捨てていました**）
+
+    この道具は「入れ替えれば判定日が N日 手前に来る」と印字して撃ちますが、
+    **実測では、3周 目から先は撃っても判定日が1日も動きません:**
+
+        1回目  46手  stat_split 10/04 → 09/05 ／ opening_motion 10/16 → 09/12
+        2回目  24手  （動いた）
+        3回目  26手  （動いた）
+        4回目  20手  **判定日 09/06 / 09/10 / 09/05 / 09/12 —— 3回目と同じ**
+
+    それでも `--plan` は毎回「合計 12日 早まる」と出し、`--apply` は
+    **20手 ＝ 1,000単位**を撃ちます。**印字と実物が食い違っています**
+    （`docs/JOURNAL.md` の「印字と門のあいだで 38日 が止まっていた」と同じ形の3件目）。
+
+    **単位は、この機械のいちばん狭い所です** —— 同じ窓で
+    `refresh_thumbnail --missing` の 29本 と `live_slots --all` の 10本 が
+    403 で落ちています。**空振りに 1,000単位 を渡すと、その2つが撃てません。**
+
+    ## どう見分けるか
+
+    深い所（なぜ動かないか）は、まだ分かっていません。**ここで止めているのは
+    「前の回が動かせなかった」という実測ひとつ**です —— 前の `--apply` の
+    **撃つ前の姿**と、いまの**撃つ前の姿**が同じなら、あいだの手は何も変えていません。
+
+    **覆る条件**: 印字と実物が合うように直したら、この門は要りません
+    （`plan.gain_lines()` が約束した日付に、実際に着くようになったとき）。
+    """
+    last = _last_apply()
+    if not last or not last.get("moves"):
+        return [], True
+    if _stamp(plan.before) != last.get("before"):
+        return [], True                     # 前の回のあと、実際に動いている
+    days = [f"{k}: {v}" for k, v in sorted(_stamp(plan.before).items())]
+    return ([
+        "",
+        "=== 前の `--apply` は、判定日を1日も動かしていません ===",
+        f"  前の回: **{last['moves']}手**（{last['moves'] * 50}単位）／"
+        f"  そのあと、判定日はこの姿のまま:",
+        "    " + " ／ ".join(days),
+        "  **同じ手をもう一度 撃ちません。** 印字（「合計 N日 早まる」）と"
+        "実物が食い違っています —— **直すのは印字の側**です（`stuck_lines` に実測）。",
+        "  **単位は、この機械のいちばん狭い所です。** 空振りに渡すと、"
+        "同じ窓の `refresh_thumbnail --missing` と `live_slots --all` が撃てません。",
+        "  どうしても撃つなら `--force-stuck`（**理由を JOURNAL に書くこと**）",
+    ], False)
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(
         description="予約の順番待ちが、判定までの日数をいくら食っているか")
@@ -1000,6 +1086,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--force-quota", action="store_true",
                     help="日枠が尽きていそうでも撃つ（**投稿が止まります。**"
                          "理由を JOURNAL に書くこと）")
+    ap.add_argument("--force-stuck", action="store_true",
+                    help="**前の `--apply` が判定日を1日も動かしていなくても撃つ**"
+                         "（既定は撃ちません。理由を JOURNAL に書くこと）")
     args = ap.parse_args(argv)
 
     plan = Plan()
@@ -1009,16 +1098,22 @@ def main(argv: list[str] | None = None) -> int:
     if args.plan or args.apply:
         lines += plan.plan_lines()
     safe = True
+    moving = True
     if plan.swaps:
         # **枠の門が先です。**「何日 早まるか」より「判定を壊さないか」のほうが強い。
         cost, safe = live_cost_lines(plan)
         lines += cost
         qlines, ok = quota_lines(plan)
         lines += qlines
+        # **その次が「前の回で動いたか」**（`stuck_lines` に実測）。
+        slines, moving = stuck_lines(plan)
+        lines += slines
     else:
         ok = True
     print("\n".join(lines))
     if args.apply:
+        if not moving and not args.force_stuck:
+            return 1
         if not safe:
             # **`--force-quota` では抜けられません。** あれは日枠の話で、
             # こちらは**判定そのものを壊すか**の話です。
@@ -1027,7 +1122,14 @@ def main(argv: list[str] | None = None) -> int:
             return 1
         if not ok and not args.force_quota:
             return 1
-        return apply_moves(plan)
+        rc = apply_moves(plan)
+        # **撃った回は、必ず残すこと**（途中で止まった回も。次の回が
+        # 「動いたか」を、この行と自分の姿で比べます）。
+        try:
+            _note_apply(plan.before, plan.readies(), len(plan.swaps) * 2)
+        except Exception:                                      # noqa: BLE001
+            pass
+        return rc
     return 0
 
 

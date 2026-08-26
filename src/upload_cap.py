@@ -212,8 +212,75 @@ GRACE_MIN = 30
 
 
 def quota_hits_in_window(now: datetime | None = None) -> list[dict]:
-    """いまの枠の中で観測した 403 quotaExceeded。**あれば単位枠は尽きています。**"""
-    return _in_window(DAY_QUOTA_HITS, now)
+    """いまの枠の中で観測した 403 quotaExceeded。**あれば単位枠は尽きています。**
+
+    **`ok` の行は数えません** —— あれは「403 のあとに通った」ことの記録で、
+    403 そのものではありません（`note_quota_ok`）。
+    """
+    return [r for r in _in_window(DAY_QUOTA_HITS, now) if not r.get("ok")]
+
+
+def note_quota_ok(now: datetime | None = None, detail: str = "") -> None:
+    """**単位を使う呼び出しが通ったことを残す**（2026-08-26 に実測して足した）。
+
+    ## なぜ要るか（**この窓の作業を、1回のまぐれ 403 が丸ごと止めていました**）
+
+    `day_quota()` は「この窓で 403 を1回でも観測したら閉じている」と答えます。
+    **窓の中で単位が戻ることは無いので、これは正しい形に見えます。**
+    ところが 2026-08-26 16:12 JST（枠が戻った 12分後）の実測:
+
+        [live_slots] videos.update h35ot6MqYso → **403**（帳面に載った）
+        その 1分後、同じ本を手で --move   → **通った**
+
+    **日枠は1分では戻りません。** つまりあの 403 は日枠ではなく、
+    短い間に 120本 撃ったことによる一過性のものでした。
+    それでも帳面に載った瞬間、`day_quota().open` が **False** になり、
+    `queue_lag` ・`live_slots` ・`refresh_thumbnail` ・
+    `batch_build._pull_verdicts_first()` が**そこから 24時間 まるごと降ります。**
+
+    **これが、受け取り帳が 14件 たまり、`missing_thumbnail` が 29件 になり、
+    `queue_lag` の 77日 が3周 止まっていた形そのものです** ——
+    毎日 16:00 に窓が開き、最初のまぐれ 403 で全部が閉じていました。
+
+    ## 直し方（**「実測だけの門」を崩さない**）
+
+    枠を推測しません。**足すのは、同じくらい確かな実測のほうです** ——
+    **その 403 より後に、単位を使う呼び出しが通ったなら、日枠は尽きていません。**
+    日枠は窓の中で戻らないので、**後の成功は、前の 403 を反証します。**
+
+    外す向きは今までどおり「押してみて 403 が返れば分かる」側です。
+    """
+    now = now or datetime.now(timezone.utc)
+    path = _root() / DAY_QUOTA_HITS
+    path.parent.mkdir(parents=True, exist_ok=True)
+    rec = {"at": now.astimezone(timezone.utc).isoformat(timespec="seconds"),
+           "ok": True, "detail": detail[:200]}
+    with path.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
+
+
+def quota_ok_after_hits(now: datetime | None = None) -> dict | None:
+    """**この窓の最後の 403 より後に通った呼び出し**（あれば、日枠は尽きていない）。
+
+    無ければ `None`。`day_quota()` だけが読みます。
+    """
+    rows = _in_window(DAY_QUOTA_HITS, now)
+    last_hit = None
+    for rec in rows:
+        if not rec.get("ok"):
+            when = _parse(rec.get("at"))
+            if when and (last_hit is None or when > last_hit):
+                last_hit = when
+    if last_hit is None:
+        return None
+    best = None
+    for rec in rows:
+        if rec.get("ok"):
+            when = _parse(rec.get("at"))
+            if when and when > last_hit:
+                if best is None or when > _parse(best.get("at")):
+                    best = rec
+    return best
 
 
 def counted(now: datetime | None = None) -> int:
@@ -360,6 +427,21 @@ def day_quota(now: datetime | None = None) -> DayQuota:
     hits = late or hits
 
     if hits:
+        # **後の成功は、前の 403 を反証します**（`note_quota_ok` に理由）。
+        # 日枠は窓の中で戻らないので、**403 のあとに通ったなら、それは日枠ではない。**
+        try:
+            later = quota_ok_after_hits(now)
+        except Exception:                                      # noqa: BLE001
+            later = None
+        if later:
+            when = _parse(later.get("at"))
+            stamp = when.astimezone(JST).strftime("%m/%d %H:%M JST") if when else "?"
+            line = (f"日枠（単位）: この窓で 403 を {len(hits)}回 観測していますが、"
+                    f"**そのあと {stamp} に `{later.get('detail') or '呼び出し'}` が通っています。**"
+                    f" 日枠は窓の中で戻らないので、**あの 403 は日枠ではありません**"
+                    f"（短い間に撃ちすぎた側）。**押してよい。**"
+                    f" 窓が変わるのは {back}（あと {hours:.1f}時間）。")
+            return DayQuota(True, False, len(hits), tail, line)
         line = (f"**日枠（単位）は、この窓ではもう尽きています**"
                 f"（{len(hits)}回の 403 を観測）。戻るのは **{back}**"
                 f"（あと {hours:.1f}時間）。"
