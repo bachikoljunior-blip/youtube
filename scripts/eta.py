@@ -164,11 +164,17 @@ def _ledger_reach(need_ratio: float) -> list[str]:
     return out
 
 
+@functools.lru_cache(maxsize=1)
 def _ready_by_claim() -> dict:
     """**前提ごとの「判定できる最早の日」**（`scripts/deadline_check.py`）。
 
     `scripts/` の中の兄弟なので、**遅延して**読みます —— この1本が壊れても
     到達予測そのものは出し続けること（呼び手が `except` で受けています）。
+
+    **1回の実行で2か所が呼びます**（頭の θ の行と、`next_close`）。
+    `deadline_check` は毎回モジュールごと読み直して予約と Analytics を当たるので、
+    **2度読むと素直に2倍かかります。** 同じ回の中で答えは変わらないので
+    `lru_cache` で1回に畳みます（2026-08-26）。
     """
     import importlib.util
     spec = importlib.util.spec_from_file_location(
@@ -3327,6 +3333,24 @@ def headline(pl: dict, prev: dict | None = None,
                 return x["date"].isoformat() if x["date"] else "出ません"
             out.append(f"{bar} 幅（当たる確率の90%区間）: 早い **{_d(fast)}**"
                        f" ／ 遅い **{_d(slow)}**（遅い側が「外れ続けた場合」）")
+        # --- **その幅は θ を固定して出しています**（2026-08-26・最適化の回） ---
+        #     上の `t_work`（「腕を N日 動かして」）は `rate = p·log(g)·θ` の
+        #     **θ にそのまま反比例**します。その θ は `arm_speed.throughput()`
+        #     ＝ `closed_on` の**過去の実測 ÷ 経過日数**で、**未来を1件も見ていません。**
+        #     実測 2026-08-26: 過去 0.95/日 に対し、**この機械自身の予定表**
+        #     （開いた前提の「判定できる日」）は 今後14日 0.50/日・30日 0.33/日。
+        #     **21件のうち12件が 08/20 の1日**（それ以前の16日間は 0件）で、
+        #     分母の22日は「その速さで回っていた22日」ではありません。
+        #     `CLAUDE.md` の (イ)「**何を固定したせいでそう出たのかを同じ行に並べる**」を、
+        #     **θ にも当てます** —— 幅の遅い側（2027-03-14）でさえ、
+        #     30日窓の θ が出す日付（≒2027-03-31）を含んでいませんでした。
+        try:
+            _fw = arm_speed.forward(_ready_by_claim())
+            _fl = arm_speed.forward_line(_fw)
+        except Exception:
+            _fl = None
+        if _fl:
+            out.append(_fl)
     # **軌跡が解けなかった回でも、「到達予測」の字は必ず出すこと。**
     #     ここを「据え置いた線」だけにすると、軌跡が落ちた回の出力から
     #     **到達予測という言葉ごと消えます**（検査が1件それを見ています）。
