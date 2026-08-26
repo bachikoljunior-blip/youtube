@@ -1603,7 +1603,16 @@ def _pull_ready_dates() -> None:
         print(f"[batch] **判定を {days}日 手前に倒します**"
               f"（入れ替え {len(plan.swaps)}手 ＝ {len(plan.swaps) * 100}単位。"
               "**投稿より先に撃ちます**）", flush=True)
-        queue_lag.main(["--apply"])
+        # **撃った結果を読むこと。** ここは長らく返り値を捨てていたので、
+        # 枠が閉じている窓では「**倒します**」と印字してから **1日も倒さず**、
+        # 帳面には倒したように見えていました（2026-08-26 の実測 ——
+        # 日枠の 403 を 516回 観測した窓で、この行だけが出ていた）。
+        rc = queue_lag.main(["--apply"])
+        if rc:
+            print(f"[batch] **倒せませんでした**（上の理由）。"
+                  f"{days}日 はまだ残っています —— "
+                  "**手は消えません**（`--plan` は毎回 実物の控えから組み直す）",
+                  flush=True)
     except Exception as exc:                                   # noqa: BLE001
         print(f"[batch] 予約の入れ替えは飛ばします: {str(exc)[:120]}", flush=True)
 

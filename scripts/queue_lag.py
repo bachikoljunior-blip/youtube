@@ -84,6 +84,50 @@ JST = timezone(timedelta(hours=9))
 MAX_SWAPS = 40
 
 
+def live_counts(before_at: dict[str, datetime],
+                at: dict[str, datetime]) -> list[tuple[str, str, int, int, int]]:
+    """群ごとに **(前に生きていた本数, 後で生きている本数, 要る本数)**。
+
+    **数えるのはここ1か所だけです。** `live_cost_lines()`（人が読む行）も
+    `Plan._breaks_live()`（計画が読む門）も、これを読みます ——
+    この repo で通算15件 出ている「**同じことを2か所が別々に言っていて、
+    片方しか読まれていない**」を、ここでも作らないため。
+
+    **実際に作っていました**（2026-08-26 の実測）。`Plan._pull()` は
+    **日付だけ**を見て入れ替え、`live_cost_lines()` が**後から**枠を数えて
+    「撃たないこと」を出していました。結果:
+
+        入れ替え 12手 まで  **33日 早まる／どの群も割らない**
+        入れ替え 16手 から  35日／`opening_motion 対照(動きなし)` 8→7（要 8）
+        入れ替え 24手（既定）**38日 だが、まるごと拒否 ＝ 実際に撃てるのは 0日**
+
+    **最後の 5日 を取りに行って、33日 を捨てていました。**
+    """
+    from scripts import live_slots
+
+    live_b = day_cap.live_ids([{"at": w, "video_id": v}
+                               for v, w in before_at.items()])
+    live_a = day_cap.live_ids([{"at": w, "video_id": v}
+                              for v, w in at.items()])
+    out: list[tuple[str, str, int, int, int]] = []
+    for key, (groups, n) in sorted(live_slots._groups().items()):
+        for g, vids in sorted(groups.items()):
+            a = len([v for v in vids if v in live_b])
+            b = len([v for v in vids if v in live_a])
+            out.append((key, g, a, b, n))
+    return out
+
+
+def live_bad(counts: list[tuple[str, str, int, int, int]]) -> list[str]:
+    """**判定に要る本を割った群**（`b < n <= a` ＝ 足りていたのに足りなくなった）。
+
+    もともと足りていない群（`a < n`）は数えません —— それは入れ替えのせいでは
+    なく、**本が足りない**という別の話です（`live_slots.py --plan` の担当）。
+    """
+    return [f"{key}/{g} {a}→{b}（要 {n}）"
+            for key, g, a, b, n in counts if b < n <= a]
+
+
 # --- 予約の姿 ---------------------------------------------------------------
 
 def scheduled(now: datetime | None = None) -> list[dict]:
@@ -497,6 +541,22 @@ class Plan:
                     return True
         return False
 
+    def _breaks_live(self) -> bool:
+        """**いまの並びが、判定に要る本を割っていないか**（`live_counts()` で数える）。
+
+        `needed()` との違い（**別のものです。両方 要ります**）:
+
+            needed()       その本が「どれかの群の N本目まで」に入っているか＝**身元**
+            _breaks_live() その本が居る枠に、**再生が付くか**＝**枠**
+
+        `_pull()` は身元しか見ていませんでした。だから「早い枠へ移した」つもりの
+        本が **死んだ枠**（その日の 10本目より後ろ）に落ち、
+        群の生きた本が要る数を割ります —— `falsified_if` は
+        「上回らなければ外れ（同点も外れ）」なので、
+        **足りない標本は、そのまま「外れ」に化けます。**
+        """
+        return bool(live_bad(live_counts(self.before_at, self.at)))
+
     def _pull(self, key: str, group: str, cur: date, keep: set[str]) -> bool:
         """その群の「N本目 `cur`」を、1つ早い枠へ入れ替える。できたら True。"""
         # 早める側: この群の本で、いま `cur` 以降に居るもの（遅い順に試す）
@@ -520,9 +580,12 @@ class Plan:
                     continue
                 before = self.potential()
                 self._swap(mover, early_slot)
-                if self.potential() < before:
+                # **枠の門は、縮んだかより先には置きません** —— `_breaks_live()` は
+                # 1回 60ms（実測・345本）かかるので、**縮んだ手だけ**に当てます。
+                # 縮まない手は 99% なので、当てても捨てるだけです。
+                if self.potential() < before and not self._breaks_live():
                     return True
-                self._swap(mover, early_slot)      # 戻す（縮まなかった）
+                self._swap(mover, early_slot)      # 戻す（縮まなかった／枠を割る）
                 self.swaps.pop()
                 self.swaps.pop()
         return False
@@ -838,34 +901,27 @@ def live_cost_lines(plan: Plan) -> tuple[list[str], bool]:
     （`stat_split 処置(後)` は 13→16 で、むしろ助かっています）。
     **たまたまを門にしないこと。** ここで数えて、割るなら撃ちません。
     """
-    from src import day_cap
-    from scripts import live_slots
-
-    live_now = day_cap.live_ids([{"at": w, "video_id": v}
-                                 for v, w in plan.before_at.items()])
-    live_next = day_cap.live_ids([{"at": w, "video_id": v}
-                                  for v, w in plan.at.items()])
+    counts = live_counts(plan.before_at, plan.at)
+    bad = live_bad(counts)
     out = ["", "=== この入れ替えで、判定に要る本を割らないか"
                 "（`src/day_cap.py` の実測の枠で数える）==="]
-    bad: list[str] = []
-    for key, (groups, n) in sorted(live_slots._groups().items()):
-        for g, vids in sorted(groups.items()):
-            a = len([v for v in vids if v in live_now])
-            b = len([v for v in vids if v in live_next])
-            if a == b:
-                continue
-            mark = ""
-            if b < n <= a:
-                mark = "   ← [!] **要る本数を割ります**"
-                bad.append(f"{key}/{g} {a}→{b}（要 {n}）")
-            out.append(f"  {key:16s} {g:14s} {a:4d} → **{b:4d}**"
-                       f"（{b - a:+d}／要 {n}）{mark}")
+    for key, g, a, b, n in counts:
+        if a == b:
+            continue
+        mark = "   ← [!] **要る本数を割ります**" if b < n <= a else ""
+        out.append(f"  {key:16s} {g:14s} {a:4d} → **{b:4d}**"
+                   f"（{b - a:+d}／要 {n}）{mark}")
     if len(out) == 2:
         out.append("  （どの群も動きません）")
     if bad:
+        # **ここに来たら、`Plan._pull()` の門が抜けています。**
+        # 2026-08-26 以降、計画そのものが枠を割る手を採らないので、
+        # この節は「割らない」ことの**確認**であって、拒否の場ではありません。
         out.append("  [!] **撃たないこと。** " + " / ".join(bad)
                    + "。判定日を早めるために、**判定そのものを壊しています。**"
-                     "`python scripts/live_slots.py --plan` で枠のほうを先に直すこと")
+                     "`python scripts/live_slots.py --plan` で枠のほうを先に直すこと"
+                     "（**`Plan._pull()` の門が抜けています。**"
+                     "`tests/test_queue_lag_live.py` を見ること）")
     return out, not bad
 
 
