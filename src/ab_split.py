@@ -75,6 +75,47 @@ JST = timezone(timedelta(hours=9))
 #: yaml の「満たないときは**期限だけを延ばす**」のほうを使うこと。
 MIN_PER_GROUP = 16
 
+
+def floor_of(name: str) -> int:
+    """その実験の、**片群あたりの床**。`MIN_PER_GROUP` を全部に当てないこと。
+
+    ## なぜ要るか（2026-08-27 に踏んだ。**同じ形の3件目**）
+
+    床は実験ごとに違います。**`request_form` は 72本**です ——
+    測っているのが engaged ではなく**登録**だから（登録率の実測 0.0318% ＝
+    3,066再生に1人。片群 16本 ＝ 約 6,700再生 では期待 2.1人で、
+    **効きが2倍でも見分けられません**）。理由ごと
+    `src/judgeable.MEMBER_SOURCES` に書いてあります。
+
+    ところが**この帳面の道具は、全部に 16 を当てていました。** 実測（この回）:
+
+        scripts/ab_split.py    途中あり 12本 → **まだ判定しない（あと4本）**
+        deadline_check.py      途中あり  9本 → **あと 63本**（床 72）
+
+    **`config/hypotheses.yaml` の `falsified_if` は、数える道具として
+    `scripts/ab_split.py` を名指ししています。** その道具が「あと4本」と言えば、
+    次の回は「もう埋まる」と読んで別の腕へ移ります —— **6,700再生で登録率を
+    比べる標本のまま「判定できます」が出て、`falsified_if` は
+    「上回らなければ外れ（同点も外れ）」なので、そのまま『外れ』に化けます。**
+    `next_if_false` は腕ごと畳むので、**見分けられなかっただけの実験が、
+    効かない実験として閉じます。**
+
+    **同じ穴は `src/watches.py` が 2026-08-26 22:5x に踏んで直しています**
+    （`_k_ab_group`。「`ab_split.MIN_PER_GROUP` を床に使わないこと」）。
+    **直したのはあちらの1か所だけで、こちらは残っていました。**
+
+    ## 覆る条件
+
+    `judgeable.MEMBER_SOURCES` に無い実験は `MIN_PER_GROUP` に落とします。
+    そこへ載せた回は、床もそちらに書くこと（**同じ数を2箇所で持たない**）。
+    """
+    # **遅らせて読み込みます** —— `src/judgeable.py` はこの帳面を読み込むので、
+    # 上で import すると輪になります。
+    from src import judgeable
+
+    src = judgeable.MEMBER_SOURCES.get(name)
+    return int(src[1]) if src else MIN_PER_GROUP
+
 #: 「初速だけを見ない」ための日数は **`src/settle.py` が持ちます**（上で読み込み済み）。
 #: yaml の「公開から3日以上たっていること」と同じ数で、`tests/test_ab_split.py` が
 #: 突き合わせています。
@@ -358,12 +399,14 @@ class Counts:
     stale: dict[str, int] = field(default_factory=dict)
     #: 公開日が控えから読めなかった本
     unknown_publish: int = 0
+    #: **この実験の床**（片群あたり。`floor_of()`。**`MIN_PER_GROUP` を写さないこと**）
+    floor: int = MIN_PER_GROUP
 
     @property
     def judgeable(self) -> bool:
-        """両群とも `MIN_PER_GROUP` に届いているか。"""
+        """両群とも**この実験の床**に届いているか（`floor_of()`）。"""
         return bool(self.treated_ready) and all(
-            n >= MIN_PER_GROUP for n in self.treated_ready.values()
+            n >= self.floor for n in self.treated_ready.values()
         )
 
     def short(self) -> str:
@@ -373,11 +416,13 @@ class Counts:
         if self.judgeable:
             return head + "  → **判定できます**"
         need = ", ".join(
-            f"{g} あと{MIN_PER_GROUP - n}本"
+            f"{g} あと{self.floor - n}本"
             for g, n in sorted(self.treated_ready.items())
-            if n < MIN_PER_GROUP
+            if n < self.floor
         )
-        return head + f"  → **まだ判定しない**（{need}）"
+        # **床を必ず書くこと。** 16 でない実験があるので、「あと N本」だけでは
+        # 読む側が 16 を思い浮かべます（2026-08-27）。
+        return head + f"  → **まだ判定しない**（{need} ／ 床 片群 {self.floor}本）"
 
 
 def split_counts(
@@ -397,7 +442,7 @@ def split_counts(
     bt = build_times() if builds is None else builds
     rows = published() if ledger is None else ledger
 
-    c = Counts(experiment=exp.name)
+    c = Counts(experiment=exp.name, floor=floor_of(exp.name))
     for g in (exp.treated, exp.control):
         c.treated_ready[g] = 0
         c.treated_all[g] = 0
@@ -525,7 +570,9 @@ def outlook(
     `batch_build.pick` から数えます）。**API を1単位も使いません。**
     """
     c = counts or split_counts(exp, as_of=as_of)
-    need = {g: max(0, MIN_PER_GROUP - n) for g, n in c.treated_ready.items()}
+    # **床は実験ごと**（`floor_of()`）。`MIN_PER_GROUP` を写すと `request_form`
+    # （床 72本）が「あと4本」に見えます —— 2026-08-27 に踏んだ。
+    need = {g: max(0, c.floor - n) for g, n in c.treated_ready.items()}
     return Outlook(
         experiment=exp.name,
         settle_by=settle_by(exp, as_of),
@@ -550,7 +597,7 @@ def report(as_of: date | None = None, stock: dict[str, dict[str, int]] | None = 
         lines.append("  " + c.short())
         if stock is not None and exp.name in stock:
             lines.extend(outlook(exp, stock[exp.name], as_of=as_of, counts=c).lines())
-        v = ab_power.verdict(MIN_PER_GROUP)
+        v = ab_power.verdict(c.floor)
         if v is not None:
             lines.extend(v.lines())
         if c.unknown_publish:
