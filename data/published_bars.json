@@ -358,6 +358,21 @@
     ],
     "video_id": "NPag7xobhTo"
   },
+  "jouto-gaisan-shutokuhi-32787350": {
+    "charts": [
+      [
+        "2,242,906円",
+        "3,545,963円",
+        "8,857,947円"
+      ],
+      [
+        "6,614,000円",
+        "43,294,000円",
+        "61,634,000円"
+      ]
+    ],
+    "video_id": "Eggpp86CkDk"
+  },
   "jouto-kikime-ore-6000man-9000man": {
     "charts": [
       [
@@ -413,6 +428,16 @@
       ]
     ],
     "video_id": "zwbEb9Fs4Jo"
+  },
+  "jouto-shutokuhi-wakaru-ka-5000man": {
+    "charts": [
+      [
+        "2,242,906円",
+        "466,656円",
+        "0円"
+      ]
+    ],
+    "video_id": "zrAb_NNETSU"
   },
   "jutaku-hanbun-jougen": {
     "charts": [
@@ -1641,6 +1666,17 @@
     ],
     "video_id": "hKCwPvuqviw"
   },
+  "s-ideco-jieigyo-riri-zero": {
+    "charts": [
+      [
+        "3.5%",
+        "3.6%",
+        "0.0%",
+        "0.0%"
+      ]
+    ],
+    "video_id": "2tAGEKVCgYQ"
+  },
   "s-ideco-jitsukou-nenshu660-22-8": {
     "charts": [
       [
@@ -1653,6 +1689,19 @@
       ]
     ],
     "video_id": "vS6PGatxPQw"
+  },
+  "s-ideco-kakekin-3bai-deguchi": {
+    "charts": [
+      [
+        "7,638,710円",
+        "22,584,012円"
+      ],
+      [
+        "1,115,600円",
+        "1,060,896円"
+      ]
+    ],
+    "video_id": "ZRRONBzRoGA"
   },
   "s-ideco-nenshu-400-300-gyakuten": {
     "charts": [
@@ -5778,6 +5827,23 @@
     ],
     "video_id": "tI07k9hQWKY"
   },
+  "s-taishoku-koujo-tanka-ichinenme": {
+    "charts": [
+      [
+        "80万円",
+        "40万円",
+        "40万円"
+      ],
+      [
+        "41万4286円",
+        "46万円",
+        "50万円",
+        "52万8571円",
+        "55万円"
+      ]
+    ],
+    "video_id": "u4iRJRE4JQk"
+  },
   "s-taishoku-muzei-joogen-20": {
     "charts": [
       [
@@ -6036,6 +6102,31 @@
       ]
     ],
     "video_id": "sa9FESDUPOs"
+  },
+  "s-tousan-800man-40kagetsu": {
+    "charts": [
+      [
+        "160か月",
+        "80か月",
+        "40か月"
+      ],
+      [
+        "400か月",
+        "54か月",
+        "40か月"
+      ]
+    ],
+    "video_id": "c62jFg13yws"
+  },
+  "s-tousan-murishi-4pct": {
+    "charts": [
+      [
+        "4.00%",
+        "3.33%",
+        "2.86%"
+      ]
+    ],
+    "video_id": "WE_ZB7XNN2o"
   },
   "s-tousan-one-month-172": {
     "charts": [
@@ -6854,6 +6945,17 @@
       ]
     ],
     "video_id": "jYoDuz0S9z4"
+  },
+  "souzoku-haiguusha-keigen-320000000": {
+    "charts": [
+      [
+        "1億6000万円",
+        "1億6000万円",
+        "2億円",
+        "3億円"
+      ]
+    ],
+    "video_id": "geiHHonej7U"
   },
   "taishoku-hoken": {
     "charts": [
