@@ -206,6 +206,13 @@ def _ans_external(need: dict) -> Answer:
     return Answer(None, f"**こちらの手では起こせません**: {what}", unreachable=True)
 
 
+#: **伸び率を出すのに要る、最低の観測窓（日）。**
+#   これを下回るあいだは日を出しません（＝ `Verdict.warming`）。
+#   2日 なのは「率」と呼べる最小の窓だから —— 1日では、その日が
+#   ふつうの日なのか偶然なのかを、この機械は区別できません。
+_MIN_SPAN_DAYS = 2
+
+
 def _ans_accrual(need: dict, as_of: date) -> Answer:
     expr = str(need.get("count_expr") or "")
     want = int(need.get("need") or 0)
@@ -217,9 +224,37 @@ def _ans_accrual(need: dict, as_of: date) -> Answer:
     if have >= want:
         return Answer(as_of, f"要 {want} ／ いま **{have}** → 足りています")
     try:
-        elapsed = max(1, (as_of - date.fromisoformat(since_s)).days)
+        spanned = (as_of - date.fromisoformat(since_s)).days
     except ValueError:
         return Answer(None, f"要 {want} ／ いま {have}（`since` が読めないので伸び率が出せません）")
+    # **1日の窓から伸び率を出さないこと**（2026-08-26 夕・最適化の回に踏んだ）。
+    #
+    #     実測: `since: 2026-08-26` の前提が、立った **1時間後**に
+    #           「要 72 ／ いま **3**（**1日で 3.00/日**）→ あと 23日（±14日）」
+    #           と projecting し、**期限を 11-09 → 09-18 へ 38日 縮めろ**と出した。
+    #
+    # **3本 から 72本 を見通しています。** 帯（±14日）は `1/√have` ——
+    # **`have` の数え上げ誤差**だけを見ていて、**窓の短さ**を見ていません。
+    # 同じ `have` でも、1日で3本と7日で3本は別の話です。
+    #
+    # **なぜこの回に効くか**: 同じ回に「遅すぎる期限は赤」を入れました。
+    # 1日の窓の projection が `waits` を作ると、**赤 → 縮める → データが
+    # 追いつかず `slips` → 延ばす** の往復になります。**縮める側の入力が
+    # 推定でしかないときは、縮めないほうが速い。**
+    # **`zero_means_never` は窓の話ではありません。** 「こちらから作らないかぎり
+    #   来ない」は**そのものの性質**の宣言なので、何日 見ていても変わりません。
+    #   **だから窓の門より先に見ること** —— 後ろに置いた版を一度書いて、
+    #   `since` が今日の対照群が「まだ数えはじめたところ」に化けました
+    #   （＝ **待てば来る**と読める。実際は永久に来ません）。
+    if have == 0 and need.get("zero_means_never"):
+        return Answer(None, f"要 {want} ／ いま **0**（`since` から {spanned}日。"
+                            "**こちらから作らないかぎり来ません**）", unreachable=True)
+    if spanned < _MIN_SPAN_DAYS:
+        return Answer(None, f"要 {want} ／ いま {have}"
+                            f"（`since` から {spanned}日。**{_MIN_SPAN_DAYS}日 ぶん"
+                            "たまるまで伸び率を出しません** —— 1日の窓からの見通しは、"
+                            "帯の外れ方が読めません）")
+    elapsed = max(1, spanned)
     rate = have / elapsed
     if rate <= 0:
         # **0 を「待っても来ない」と読んでよいのは、そう宣言したときだけ。**
