@@ -53387,6 +53387,19 @@ RPM がいくつでも・面が何回でも・1本あたりが何倍でも、**�
    **覆る条件**: `day_cap.window()` の切り分け（2026-09-01）で **(B) 時刻の窓**
    だと出たら、`density` の天井は ×1.00 → **×1.80** になります。
    そのときは、この項ごと要りません。
+7. **全体の `pytest` は、この回も通していません。**
+   2回 撃って、2回とも他の回と CPU を取り合ったまま `timeout 900` に届きました
+   （`ps` で確認。きょうだいが同じ `pytest tests/ -q` を回しています）。
+   **代わりに、触った面を名指しで 178件 通しました** ——
+   `test_surface_forecast` / `test_reach_split` / `test_gate2_surface_basis` /
+   `test_surface_ceiling_basis` / `test_eta_surface_cap` / `test_eta_ledger_reach` /
+   `test_eta_headline_alloc_hand` / `test_premise` / `test_trigger_sync` / `test_watches`。
+   広めの `-k`（reach / surface / rpm_mix / gate2 / long / day_cap / supply / eta / trigger）
+   でも **644件** 通っています。
+   **赤いのは `test_hypothesis_deadline_reachable::[冒頭0.9秒に絵そのものの動き]` の1件だけ**で、
+   **この回より前からのもの**です（対照が床に届いていない。3周 申し送られています）。
+   **この回の upload がその床を 7→8本 に埋めた**ので、次に数える回で緑になるはずです。
+   **覆る条件**: 緑にならなければ、直すのは本数ではなく**床の数え方**のほうです。
 
 ### 出したもの4（同じ回）: 閉じた前提2件を `per_video` → `none`（**到達日 -6日**）
 
