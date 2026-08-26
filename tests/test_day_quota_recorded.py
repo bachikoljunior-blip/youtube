@@ -111,11 +111,55 @@ def test_note_day_quota_survives_a_broken_ledger(tmp_path, monkeypatch):
 
 
 def test_recorded_hit_closes_the_window(tmp_path, monkeypatch):
-    """記録が `day_quota()` にそのまま効くこと（**入口と出口を繋ぐ1本**）。"""
+    """記録が `day_quota()` にそのまま効くこと（**入口と出口を繋ぐ1本**）。
+
+    **2026-08-26 に「いつの 403 か」で分けました。** 窓が開いて
+    `GRACE_MIN` を過ぎてからの 403 は、今までどおり窓を閉じます。
+    直後の 403 は閉じません（下の試験。理由は `upload_cap.day_quota()` の註）。
+    """
     _root(tmp_path, monkeypatch)
+    # `note_day_quota` は**いまの時刻**で記録するので、この検査がいつ走るかで
+    # 猶予の内か外かが変わります。**時計に依存させないため猶予を 0 にします** ——
+    # 見たいのは「入口が出口に繋がっているか」だけで、猶予は別の検査が見ます。
+    monkeypatch.setattr(upload_cap, "GRACE_MIN", 0)
     assert upload_cap.day_quota().open is True
     auth.note_day_quota(_FakeHttpError(403, _QUOTA), "videos.update X")
     state = upload_cap.day_quota()
+    assert state.open is False and state.observed is True
+
+
+def test_hit_inside_the_grace_does_not_close_the_window(tmp_path, monkeypatch):
+    """**窓が開いた直後の 403 で、23時間 閉めないこと**（2026-08-26）。
+
+    実測（`data/day_quota.jsonl` 2946件・9つの窓）: 窓が開いてから最初の403までは
+    **0.1h / 0.2h** の2件と **6.6h 以降** の7件に、6.4時間の隔たりで割れています。
+    左の2件はどちらも直前の窓が重く尽きていた日で、**08/26 はその窓の
+    `videos.insert` が0本** —— 何も使っていない窓は尽きません。
+
+    **403 は単位を使いません。** 撃って外す損は1回ぶん、撃たない損は
+    23.7時間ぶんの `videos.update` 全部です。**非対称なので開ける側へ倒します。**
+    """
+    _root(tmp_path, monkeypatch)
+    head = upload_cap.window_start(datetime.now(timezone.utc))
+    upload_cap.note_quota_hit(now=head + timedelta(minutes=1), detail="窓の直後の403")
+    state = upload_cap.day_quota(head + timedelta(minutes=upload_cap.GRACE_MIN - 5))
+    assert state.open is True, "直後の403で窓ごと閉めています"
+    assert state.observed is False, "**確実に尽きた**とは言えないはずです"
+    assert state.hits == 1, "観測そのものは残すこと（無かったことにしない）"
+
+
+def test_late_hit_wins_over_an_early_one(tmp_path, monkeypatch):
+    """猶予の中と外の 403 が混ざったら、**外のほうが効く**こと。
+
+    混ざった窓は「本当に尽きた窓」です。ここが逆になると、
+    朝の尻尾ひとつで**その日の残りを開いていると読み続けます。**
+    """
+    _root(tmp_path, monkeypatch)
+    head = upload_cap.window_start(datetime.now(timezone.utc))
+    upload_cap.note_quota_hit(now=head + timedelta(minutes=1), detail="早い 403")
+    now = head + timedelta(minutes=upload_cap.GRACE_MIN + 60)
+    upload_cap.note_quota_hit(now=now, detail="遅い 403")
+    state = upload_cap.day_quota(now + timedelta(minutes=1))
     assert state.open is False and state.observed is True
 
 
