@@ -13,7 +13,6 @@
 """
 from __future__ import annotations
 
-import re
 import sys
 from datetime import date, timedelta
 from pathlib import Path
@@ -96,17 +95,35 @@ def test_endcard_を書くと処置群だけを数える():
 
     その前提の `next_if_false` は「登録率の腕を**動画の外**へ移す」なので、
     誤って外れると、**律速の門（登録者1,000人）を誤った理由で手放します。**
+
+    ## 数を散文から拾わないこと（2026-08-26 に踏んだ）
+
+    ここは長らく `ans.why` から `**N本** ／ 要` を正規表現で抜いていました。
+    **その字は「まだ 72本 に足りていない」枝にしか出ません。** 在庫が増えて
+    `loose` が 72本 に届いた日、`why` は「**72本目の公開 10/11**」に変わり、
+    検査は「絞り込みが効いていない」ではなく **`AttributeError`** で落ちました
+    （`re.search(...)` が `None`）。**症状から原因が読めない形**です。
+
+    **見るのは `Answer` そのもの**にします。絞れば標本は減るので、
+    **`tight` は `loose` より早くなりようがありません** ——
+    72本目が後ろへ動くか、そもそも 72本 に届かなくなる（`ready is None`）。
+    **この不等号は、どちらの枝でも同じ向きです。**
     """
     need = {"created_after": "2026-08-24", "count": 72, "settle_days": 0}
     loose = J._ans_published_group(dict(need), date(2026, 8, 26), lag=3)
     tight = J._ans_published_group(dict(need, endcard="request"), date(2026, 8, 26), lag=3)
 
-    def n(ans):
-        return int(re.search(r"\*\*(\d+)本\*\* ／ 要", ans.why).group(1))
+    def rank(ans):
+        """**遅いほど大きい。** 届かない（`ready is None`）はいちばん遅い側。"""
+        return date.max if ans.ready is None else ans.ready
 
-    assert n(tight) < n(loose), (
-        "`endcard: request` を書いても数が変わっていません —— "
+    assert rank(tight) >= rank(loose), (
+        "`endcard: request` で絞ったのに、判定できる日が**早く**なっています —— "
         "処置群の絞り込みが効いていない（`src/endcard_verdict.form_of`）"
+    )
+    assert rank(tight) > rank(loose) or tight.why != loose.why, (
+        "`endcard: request` を書いても、答えが1文字も変わっていません —— "
+        "絞り込みがどこにも効いていない（`src/endcard_verdict.form_of`）"
     )
     assert "終端が request" in tight.why, "何で絞ったかが出力に出ていません"
     assert "終端が" not in loose.why, "`endcard:` の無い要件まで絞ってはいけません"
