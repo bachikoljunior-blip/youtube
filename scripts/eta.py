@@ -2380,6 +2380,109 @@ LONG_SUPPLY_WINDOW_DAYS = 7
 BATCH_RUNS = ROOT / "data" / "batch_runs.jsonl"
 
 
+UPLOADED = ROOT / "data" / "uploaded.jsonl"
+
+#: 控えから長尺と認めるための、いちばん短い尺（秒）。
+#
+# **テーマIDの `s-` では分けられません**（2026-08-26 に測って捨てた案）。
+# `s-` は新しいショートにしか付いておらず、`invoice-2wari-tokurei` /
+# `tsukin-teate-hikazei` のような**古いショートには付いていません。**
+# 実測: `s-` で分けたら 08/19 のショート9本が長尺に化け、
+# 供給が 1日 2.86本 → 4.29本 に跳ねました（**08/31 の前提の合否がひっくり返る幅**）。
+#
+# 尺で分けます。投稿前の検査が長尺に **4分** の床を掛けているので
+# （`CLAUDE.md`「4分を下回ると投稿前の検査が止める」）、ここも 240秒。
+# **`duration_s` が控えに無い行は数えません** —— 分からないものを
+# 長尺の側へ倒すと、`fail_rate` も供給も上振れします。
+LONG_MIN_SEC = 240.0
+
+
+def _rescued_long(window: set[str],
+                  seen: set[str],
+                  path: Path | None = None) -> list[str]:
+    """**台帳（`batch_runs.jsonl`）に載っていない長尺**を、控えから拾う。
+
+    ## なぜ要るか（2026-08-26 09:xx に踏んだ）
+
+    `batch_build` は **回のいちばん最後に1行だけ** `batch_runs.jsonl` を書きます。
+    だから**途中で死んだ回は、作った本ごと帳面から消えます** ——
+    この回は `timeout 900` で殺され、**verify まで通った2本が
+    `final.mp4` として残っているのに、台帳には1行も載りませんでした**
+    （`scripts/upload_only.py` で拾って予約は通っています）。
+
+    `long_supply_per_day()` の docstring は、まさにこの形を
+    **「覆る条件: 長尺を帳面の外で作るようになったら、ここは実測ではなくなります」**
+    と予告していました。**その条件が来たので、こちらで塞ぎます。**
+
+    塞がないと、**08/31 の前提「長尺は1日4本 作れる」が、
+    作った本を数え落としたまま外れに倒れます。**
+
+    数えるのは `data/uploaded.jsonl`（`upload_only.py` が予約のたびに書く控え）で、
+    **`video_id` で重複を外します** —— `batch_build` も予約は
+    `upload_only.py` を子プロセスで呼ぶので、**同じ本が両方に載ります。**
+
+    `uploaded_at` は UTC なので、**JST の暦日に直してから窓に当てること**
+    （直さないと、日本時間の朝9時より前に予約した本が前日に落ちます）。
+
+    **長尺かどうかは尺で見ます**（`LONG_MIN_SEC`）。テーマIDの `s-` では
+    分けられません —— 上の定数に、そう測った実測があります。
+    """
+    p = UPLOADED if path is None else Path(path)
+    if not p.exists():
+        return []
+    out: list[str] = []
+    for ln in p.read_text(encoding="utf-8").splitlines():
+        ln = ln.strip()
+        if not ln:
+            continue
+        try:
+            r = json.loads(ln)
+        except Exception:                                      # noqa: BLE001
+            continue
+        vid = str(r.get("video_id") or "")
+        if not vid or vid in seen:
+            continue
+        dur = r.get("duration_s")
+        if not isinstance(dur, (int, float)) or dur < LONG_MIN_SEC:
+            continue
+        raw = str(r.get("uploaded_at") or "")
+        try:
+            when = datetime.fromisoformat(raw)
+        except ValueError:
+            continue
+        if when.tzinfo is None:
+            when = when.replace(tzinfo=timezone.utc)
+        if when.astimezone(JST).date().isoformat() not in window:
+            continue
+        seen.add(vid)
+        out.append(vid)
+    return out
+
+
+def _ledger_video_ids(path: Path | None = None) -> set[str]:
+    """`batch_runs.jsonl` に**どこかの回で**載っている `video_id` を全部。
+
+    窓の中だけを見ないこと —— 窓の外の回で作った本が控えでは窓の中に
+    見えることがあり（作った日と予約した日が違う）、**二重に数えます。**
+    """
+    p = BATCH_RUNS if path is None else Path(path)
+    got: set[str] = set()
+    if not p.exists():
+        return got
+    for ln in p.read_text(encoding="utf-8").splitlines():
+        ln = ln.strip()
+        if not ln:
+            continue
+        try:
+            r = json.loads(ln)
+        except Exception:                                      # noqa: BLE001
+            continue
+        for x in (r.get("results") or []):
+            vid = str(x.get("video_id") or "")
+            if vid:
+                got.add(vid)
+    return got
+
 def long_supply_per_day(path: Path | None = None,
                         today: date | None = None,
                         window_days: int = LONG_SUPPLY_WINDOW_DAYS) -> dict:
@@ -2433,6 +2536,7 @@ def long_supply_per_day(path: Path | None = None,
     # **今日は数えません**（途中の日を混ぜると必ず下振れします）
     window = {(t - timedelta(days=i)).isoformat() for i in range(1, window_days + 1)}
     ok = attempts = 0
+    seen: set[str] = set()
     if p.exists():
         for ln in p.read_text(encoding="utf-8").splitlines():
             ln = ln.strip()
@@ -2448,12 +2552,20 @@ def long_supply_per_day(path: Path | None = None,
                 continue
             for x in (r.get("results") or []):
                 attempts += 1
-                if x.get("video_id"):
+                vid = str(x.get("video_id") or "")
+                if vid:
                     ok += 1
+                    seen.add(vid)
+    # **帳面の外で作ったぶんを足す**（回が途中で死んで台帳の行が書かれなかった本）。
+    # `_rescued_long` の docstring に、なぜ要るかと重複の外し方があります。
+    rescued = _rescued_long(window, seen | _ledger_video_ids(p))
+    ok += len(rescued)
+    attempts += len(rescued)
     return {
         "rate": (ok / window_days) if attempts else 0.0,
         "built": ok,
         "attempts": attempts,
+        "rescued": len(rescued),
         "window_days": window_days,
         "fail_rate": ((attempts - ok) / attempts) if attempts else None,
         # **1本も試していない窓は「0本/日」ではなく「測っていない」です。**
