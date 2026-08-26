@@ -654,7 +654,13 @@ def print_hypotheses() -> None:
         import deadline_check as _reach                         # noqa: PLC0415
         _vs = _reach.check(open_)
         _bad = [v for v in _vs if v.slips]
-        _unk = [v for v in _vs if v.ready is None and not v.unchecked]
+        # **「まだ数えはじめたところ」を「判定できない」に混ぜないこと**
+        #   （2026-08-26 夕）。直し方が正反対です ——
+        #   前者は**何もしないのが正解**、後者は前提の立て方ごと変えるしかない。
+        #   実測: きょうだいの回が 19:08 JST に立てた前提が、その 11分後 に
+        #   `[!!] 判定できる日が出せません` として並んでいました。
+        _unk = [v for v in _vs if v.ready is None and not v.unchecked and not v.warming]
+        _warm = [v for v in _vs if v.warming]
         _non = [v for v in _vs if v.unchecked]
         # **逆向きも出すこと**（2026-08-25 22:5x）。ここは長らく「期限が早すぎる」
         # 側しか出していませんでした。**データはもう揃うのに期限がまだ先**の側は、
@@ -662,7 +668,7 @@ def print_hypotheses() -> None:
         # ここには1行も出てきませんでした。実測 **10件・合計46日**。
         # **腕は前提を1件閉じたときだけ動く**ので、その待ちは到達日ごと止まります。
         _late = [v for v in _vs if v.waits]
-        if _bad or _unk or _non or _late:
+        if _bad or _unk or _non or _late or _warm:
             print(f"\n  --- [!] **その期限にデータは在るか** "
                   f"（早すぎる {len(_bad)}件 ／ **遅すぎる {len(_late)}件** ／ "
                   f"日が出せない {len(_unk)}件 ／ 確かめていない {len(_non)}件）---")
@@ -674,6 +680,9 @@ def print_hypotheses() -> None:
                 for a in v.answers:
                     if a.ready is None:
                         print(f"        {a.why[:110]}")
+            for v in _warm:
+                print(f"    **まだ数えはじめたところ**（直すところはありません）"
+                      f"  {v.claim[:36]}")
             for v in _non:
                 print(f"    **`needs:` が無い**  {v.claim[:44]}")
             if _late:
