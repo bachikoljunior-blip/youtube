@@ -1027,8 +1027,51 @@ def _check_source_window(video_id: str, *, force: bool = False, tool: str = "") 
                          tool=f"{tool}（**元の日** {day} が測定日です）")
 
 
+def _lift_dash_ids(argv: list[str] | None) -> tuple[list[str] | None, dict]:
+    """**`-` で始まる動画ID を、argparse の手前で抜き出す**（2026-08-26 に踏んだ）。
+
+    YouTube の動画IDは 64種の字（`A-Za-z0-9_-`）から作られるので、
+    **`-rNsh53STNw` `-LBSPCCE8Aw` のように `-` で始まるものが 1/64 ある**
+    ——実測で、予約中の 487本 のうち **8本**がこの形です。
+
+    argparse は先頭の `-` を旗と読むので、そのまま渡すと落ちます:
+
+        queue_lag.py: error: argument --move: expected 2 arguments
+
+    **これは「打ち方が悪い」ではありません。** `--plan` が出す行をそのまま
+    貼っても、`apply_moves()` が `reschedule.main(["--move", vid, when])` と
+    呼んでも、**同じ所で落ちます** —— 2026-08-26 16:0x の `queue_lag --apply` は
+    51手のうち **6手 目**で止まりました（`-rNsh53STNw`）。
+    `live_slots --apply --all` の 35手にも `-LBSPCCE8Aw` が入っています。
+
+    **`--move` は `nargs=2` なので `=` で書く逃げ道がありません。**
+    だから受け口の手前で外し、`parse_args` の後に戻します。
+    """
+    if argv is None:
+        argv = sys.argv[1:]         # **CLI から貼った行も同じ所で落ちます**
+    out: list[str] = []
+    lifted: dict = {}
+    i = 0
+    while i < len(argv):
+        tok = argv[i]
+        if tok == "--move" and len(argv) - i >= 3:
+            lifted["move"] = [argv[i + 1], argv[i + 2]]
+            i += 3
+            continue
+        if tok == "--unschedule" and len(argv) - i >= 2:
+            lifted["unschedule"] = argv[i + 1]
+            i += 2
+            continue
+        out.append(tok)
+        i += 1
+    return out, lifted
+
+
 def main(argv: list[str] | None = None) -> int:
+    argv, lifted = _lift_dash_ids(argv)
     args = build_parser().parse_args(argv)
+    for key, val in lifted.items():
+        setattr(args, key, val)
 
     if args.spread:
         return _spread(args)
