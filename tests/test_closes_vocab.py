@@ -36,11 +36,41 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-spec = importlib.util.spec_from_file_location(
-    "run_marker", ROOT / "scripts" / "run_marker.py")
-run_marker = importlib.util.module_from_spec(spec)
-sys.modules["run_marker"] = run_marker
-spec.loader.exec_module(run_marker)
+# --- **`sys.modules` の名前を横取りしないこと**（2026-08-26 夜に直した）---
+#
+# ここは `importlib` でまっさらな module を作り、**`sys.modules["run_marker"]` を
+# 上書き**していました。**これはこのファイルの中の話では済みません。**
+#
+# `tests/test_seen_mark.py` と `tests/test_silent_run.py` は
+# `import run_marker` で**最初の**module を掴み、fixture がその `MARKS` を
+# `monkeypatch` します。ところが `scripts/sibling_check.silent_runs()` は
+# **呼ばれた時に** `import run_marker` します —— つまり
+# **上書きされた後の module**、`MARKS` は実物のまま。
+# 差し替えたはずの台帳は読まれず、検査は実物の `data/runs.jsonl` を見ます。
+#
+# pytest は**走らせる前に全部の test module を import する**ので、
+# **並び順は関係ありません。** この2ファイルが同じ回に入っているだけで、
+# 向こうの **9件** が落ちます（実測 2026-08-26: `test_seen_mark` 4件・
+# `test_silent_run` 5件。**どちらも単体では緑**）。
+#
+# **緑と赤が「どのファイルを選んだか」で変わる検査は、何も主張していません。**
+# しかも落ち方が「実装が壊れた」に見えるので、**本物の欠陥がその赤に紛れます**
+# （同じ日、`tests/test_levers_density_surface.py` の本物の欠陥2件が
+#  べた書きの1件の赤に紛れて 20時間 隠れていました）。
+#
+# **直し方は「1つの object にする」こと。** すでに読まれていればそれを使います。
+# **覆る条件**: この検査が「まっさらな module」を要求するようになったら
+# （import の副作用そのものを見たいなど）、**canonical でない名前**で読むこと ——
+# `sys.modules["run_marker"]` を奪うのではなく `"closes_record_run_marker"` などに。
+
+if "run_marker" in sys.modules:                 # **奪わない。すでに在るものを使う**
+    run_marker = sys.modules["run_marker"]
+else:
+    spec = importlib.util.spec_from_file_location(
+        "run_marker", ROOT / "scripts" / "run_marker.py")
+    run_marker = importlib.util.module_from_spec(spec)
+    sys.modules["run_marker"] = run_marker
+    spec.loader.exec_module(run_marker)
 
 
 def _say(closes, capsys):
