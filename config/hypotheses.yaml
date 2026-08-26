@@ -654,6 +654,14 @@ hypotheses:
       # `data/views.jsonl` は `videos.list` の累計なので **Analytics の3日遅れは掛からない**。
       - kind: after
         on_date: "2026-08-27"
+        # **時刻まで書くこと**（2026-08-27 に足した）。下の `falsified_if` は
+        # 「`data/views.jsonl` が 08-27 14:00 JST 以降の点を持っていること」と
+        # 散文で言っていましたが、**門は日付しか読んでいませんでした** ——
+        # 08/27 **00:22 JST** に `drift.py` が「いま判定できる」「この回は
+        # verdict を出すこと」と印字しています（`day_cap.window()` のほうは
+        # そのとき `confounded=True` / `verdict=None`）。
+        # 早撃ちは一度 起きています（下の `note` の「確信つきで逆」）。
+        at_time_jst: "14:00"
         what: "05/06/07/08時に足した4本の、公開から6時間の読み（`data/views.jsonl`）"
     falsified_if: >
       2026-08-27 に **05/06/07/08時 JST の4本**を足した（09:00〜13:30 の10本は
