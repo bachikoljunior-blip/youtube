@@ -527,6 +527,134 @@ def lag_lines(rows: list[dict], now: datetime | None = None) -> list[str]:
 
 # --- 取り戻せる日数 ---------------------------------------------------------
 
+def open_floors() -> list[tuple[str, str, int, list[tuple[date, str]]]]:
+    """開いている前提の (key, 群, 要る本数, 群の本) —— **`MEMBER_SOURCES` から**。
+
+    **`judgeable.floors()` を使わないこと。** あちらは `SOURCES` を回るので、
+    `judgeable.ACCRUING` に入っている群（いまは `request_form`）が**落ちます** ——
+    そして `request_form` は腕 `sub_rate`（`eta.py`「凍らせると +118日」）の
+    ただ1つの走っている実験で、床は片群 **72本**、いま **9本 と 7本**です。
+    **いちばん足りない群が、いちばん先に落ちる**形でした。
+    """
+    want = judgeable.deadlines()
+    out: list[tuple[str, str, int, list[tuple[date, str]]]] = []
+    for key, (_make, need) in judgeable.MEMBER_SOURCES.items():
+        if key not in want:
+            continue
+        for g, ms in judgeable.members(key).items():
+            out.append((key, g, int(need), sorted(ms)))
+    return out
+
+
+def answering(rows: list[dict]) -> tuple[dict, set[str], list[tuple[str, str, int]]]:
+    """**これから公開する『再生が付く枠』の本**を、判定日を決めているかで分ける。
+
+    返り: (日 → [枠の本数, そのうち効く本数], 効く video_id, 足りない群)
+
+    **「どれかの群に入っている」では数えません**（2026-08-27 に一度そう書いて外した）。
+    `stat_split` と `opening_motion` は `_members_by_landed()` で割るので、
+    **全部の本がどちらかの群に入ります** —— その数え方だと 95% が「効く」と出て、
+    **何も言っていない**ことになります。
+
+    数えているのは「**その群の N本目までに入っているか**」だけです。
+    判定日は N本目の公開日で決まるので（`_ready()`）、
+    **N本目より後ろの本は、判定日を1日も動かしません。**
+    """
+    live = day_cap.live_ids(published())
+    ans: set[str] = set()
+    short: list[tuple[str, str, int]] = []
+    for key, g, need, ms in open_floors():
+        for _d, vid in ms[:need]:
+            ans.add(vid)
+        if len(ms) < need:
+            short.append((key, g, need - len(ms)))
+    per_day: dict[date, list[int]] = {}
+    for r in rows:
+        vid = str(r.get("video_id") or "")
+        if vid not in live:
+            continue
+        d = r["at"].astimezone(JST).date()          # type: ignore[union-attr]
+        cell = per_day.setdefault(d, [0, 0])
+        cell[0] += 1
+        if vid in ans:
+            cell[1] += 1
+    return per_day, ans, sorted(short, key=lambda x: -x[2])
+
+
+def answering_lines(rows: list[dict], now: datetime | None = None) -> list[str]:
+    """**枠を、いま開いている前提の群に入る本が使えているか**（API 0単位）。
+
+    ## なぜ要るか（2026-08-27・最適化の回。この回に測って足した）
+
+    `depth()` も `placement_days()` も **本数と日付**しか見ていません。
+    ところが `eta.py` は毎回「**軌跡の腕が動くのは前提を1件閉じたときだけ。
+    作る・出す・直すは軌跡の入力に入りません**」と印字しています。
+    つまり枠の値打ちは「何本 置けるか」ではなく
+    「**その本が、開いている前提のどれかの群に入るか**」で決まります。
+
+    実測（2026-08-27 04:4x・予約 402本）: これから 10/13 までの枠 **350本**のうち、
+    開いている前提の群に入る本は **165本（47%）**。残り **185本（53%）**は
+    **どの群にも入りません** —— 出せば再生は付きますが、
+    **判定に要る本数は1本も進みません**（＝到達日を1日も動かしません）。
+
+    しかも偏っています。**09/07〜09/21 は、ほぼ毎日 9〜10本 が
+    「効かない側」**でした（指示が入る前・08/19 より前に作った本）。
+    その帯は **`request_form`（腕 `sub_rate`・床 片群 72本）が
+    まだ 9本 と 7本 しか持っていない**まさにその期間です。
+
+    ## 何を言っていないか
+
+    **「その本を消せ」ではありません。** 出せば再生は付き、門（登録者）には効きます。
+    言っているのは「**同じ枠に、床の足りない群の本を置けば、再生は同じで
+    判定日が前に来る**」だけです。作る速さ（13.6〜20本/日）は
+    枠（10本/日）より速いので、**入れ替えても本が足りなくなりません。**
+
+    ## 覆る条件
+
+    - 枠の外の本にも再生が付くと分かったら（`day_cap.window()` の (A)/(B) の
+      切り分け）、`live_ids()` の側が広がるので、この数は自動で変わります
+    - 開いている前提が全部 床に届いたら、この節は「**効かない 100%**」を出します。
+      **それは異常ではありません** —— 次に測るものを決める合図です
+    """
+    per_day, ans, short = answering(rows)
+    if not per_day:
+        return []
+    days = sorted(per_day)
+    tot = sum(c[0] for c in per_day.values())
+    hit = sum(c[1] for c in per_day.values())
+    bar = "  "
+    out = ["", "=== その枠は、開いている前提に効くか（**本数ではなく中身**。API 0単位）==="]
+    out.append(f"{bar}再生が付く枠 **{tot}本**（{days[0]}〜{days[-1]}）のうち、"
+               f"開いている前提の群に入る本 **{hit}本（{hit / max(tot, 1):.0%}）**")
+    dead = tot - hit
+    out.append(f"{bar}残り **{dead}本（{dead / max(tot, 1):.0%}）は、どの群にも入りません**"
+               " —— 出せば再生は付きますが、**判定に要る本数は1本も進みません**"
+               "（`eta.py`「腕が動くのは前提を1件閉じたときだけ」）")
+    run: list[date] = []
+    best: list[date] = []
+    for d in days:
+        c = per_day[d]
+        if c[1] <= 1:
+            run.append(d)
+            if len(run) > len(best):
+                best = list(run)
+        else:
+            run = []
+    if len(best) >= 3:
+        out.append(f"{bar}[!] **{best[0]} 〜 {best[-1]} の {len(best)}日**は、"
+                   "1日 10本 のうち効くのが **1本 以下**です ——"
+                   " **この帯を、床の足りない群の本と入れ替えること**"
+                   "（`scripts/reschedule.py --move`・1手50単位）")
+    for key, g, need in short[:6]:
+        out.append(f"{bar}  床が足りない群: `{key}` {g} **あと {need}本**"
+                   "（この群の本を置くかぎり、枠は判定日を前へ動かします）")
+    if not short:
+        out.append(f"{bar}  **床が足りない群はありません** ——"
+                   " いま足りないのは本ではなく、**次に立てる前提**のほうです"
+                   "（`python scripts/eta.py --alloc`）")
+    return out
+
+
 def _ready(nths: list[date]) -> date:
     return max(nths) + timedelta(days=SETTLE_DAYS + judgeable.ANALYTICS_LAG_DAYS)
 
@@ -1034,6 +1162,7 @@ def live_cost_lines(plan: Plan) -> tuple[list[str], bool]:
 def report(plan: Plan | None = None) -> list[str]:
     plan = plan or Plan()
     out = lag_lines(plan.rows, plan.now)
+    out += answering_lines(plan.rows, plan.now)
     plan.improve()
     out += plan.gain_lines()
     return out
@@ -1144,6 +1273,11 @@ def main(argv: list[str] | None = None) -> int:
 
     plan = Plan()
     lines = lag_lines(plan.rows, plan.now)
+    # **枠の「中身」は、入れ替えの話より前に出すこと。**
+    #   下の `gain_lines()` は「**もう予約に在る本**を入れ替えると何日 早まるか」で、
+    #   在る本しか見ません。**枠を、床の足りない群がそもそも使えていないとき**は、
+    #   あちらは「動きません」としか言えず、理由がどこにも出ません。
+    lines += answering_lines(plan.rows, plan.now)
     plan.improve(args.max_swaps)
     lines += plan.gain_lines()
     if args.plan or args.apply:
