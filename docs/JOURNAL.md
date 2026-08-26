@@ -52031,10 +52031,23 @@ bytes は `data/critique_queue/h35ot6MqYso.*` に残してあります。
     [pick] 長尺の在庫から 3件 をショートに回します
            （族はまだ残るので、**7日ぶんの長尺の上限は動きません**）
 
-深い題3本は `kogaku-tasukai-warihiki-baisa` / `kogaku-iryohi-nobiru-kubun` /
-`izoku-gake-oshiru-gaku-ichiritsu`。`deep_shorts` は **9 → 12本**。
+**8/8 が予約まで通りました**（1本は2回目で通過 —— `s-tousan-one-month-172`。
+落ちた理由は「計算の前提が画面に1枚も出ていない」）。深い題3本は
+`kogaku-tasukai-warihiki-baisa` (rJERibgJ2kw) / `kogaku-iryohi-nobiru-kubun`
+(pte2D3b-VLI) / `izoku-gake-oshiru-gaku-ichiritsu` (NPag7xobhTo)。
 うち2本は `batch_build` が自動で `opening_motion` の対照（動きなし）に回した
 （対照 6本 → 床 8本 に対し あと2本、というのを `motion_shortfall()` が数えている）。
+
+**直しの効きを、実物で数え直しました**（`_deep_left` を投稿の前後で）:
+
+    deep_shorts の accrual   9 → **12 / 16**（期限 09/03）
+    長尺向けの族             12 → **12**（**1つも減っていない**）
+    深い題の在庫             31 → 28
+    内訳                     kogaku 3→1 ／ izoku 2→**1**（**空にしなかった**）
+
+**直しが無ければ `izoku` は 2→0** で、族が 12 → 11、
+7日ぶんの長尺の上限が **24 → 22本** に落ちていました。
+**同じ3本を出しながら、落ちていません。**
 
 ### 申し送りを撃つ前に引き直した（§2.7 の最後の節）
 
