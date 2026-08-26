@@ -704,7 +704,63 @@ def band_lines(rows: list[dict],
         out.append(f"{bar}  **だから 14:00 の切り分けは「広げるか」ではなく"
                    "「(A) か (B) か」を決めます。** (A) と出たら、"
                    "`PROVEN_FROM_MIN` を下げても 1日も早まりません")
+    out.extend(_over_cap_lines(rows, grid, bar))
     return out
+
+
+def _over_cap_lines(rows: list[dict], grid: list[tuple[int, int]],
+                    bar: str) -> list[str]:
+    """**`live_ring()` が上限を越えた日へ置く枠が、いくつ在るか**（API 0単位）。
+
+    `batch_build.live_plan()` の上限の見方は「**その日の帯に何本 置いたか**」で、
+    **帯の外に在るショートを1本も数えていません**（09:00 より前・14:00 以降）。
+    (A)「1日 C本 まで」なら、そこへ置いた本は**その日の誰かを押し出すだけ**です。
+
+    **数を写さないこと。** 予約の埋まり方で毎日 動きます。
+    """
+    try:
+        from src import judgeable                               # noqa: PLC0415
+        ids = judgeable._short_topics()
+    except Exception:                                           # noqa: BLE001
+        return []
+    cap = int(day_cap.cap())
+    band, taken = set(grid), _taken(rows)
+    per: dict[date, int] = {}
+    for r in rows:
+        t = str(r.get("topic") or "")
+        if t and t in ids:
+            d = r["at"].astimezone(JST).date()                  # type: ignore[union-attr]
+            per[d] = per.get(d, 0) + 1
+    today = datetime.now(JST).date()
+    days = [today + timedelta(days=i) for i in range(1, 61)]
+    free = over = 0
+    hit = 0
+    for d in days:
+        f = len(grid) - len(taken.get(d, set()) & band)
+        if f <= 0:
+            continue
+        free += f
+        room = cap - per.get(d, 0)
+        if room <= 0:
+            over += f
+            hit += 1
+        elif room < f:
+            over += f - room
+            hit += 1
+    if over <= 0:
+        return []
+    return [
+        f"{bar}[!] **`live_ring()` は「その日にショートが何本 あるか」を"
+        f"見ていません**（帯の枠しか数えない）。今後60日 の帯の空き {free}枠 のうち"
+        f" **{over}枠（{over / max(free, 1) * 100:.0f}%）は、その日のショートが"
+        f" 既に上限 {cap}本 に届いている日**にあります（**{hit}日ぶん**）。"
+        "(A) なら、そこへ置いた本はその日の誰かを押し出すだけです",
+        f"{bar}    **直し方は `live_plan()` の註**（1度 入れて外しました ——"
+        " 上限を並べ替えの鍵にすると手前を飛ばして遠くへ跳び、**5倍 悪化**）。"
+        "**日ごと返して `YYYY-MM-DD@HH:MM` の形で渡す**のが筋ですが、"
+        "その形は埋まっていたら**落ちて本が捨てになる**ので、"
+        "**きょうだいとの取り合いをどう避けるかが先**です",
+    ]
 
 
 def _walk_days(batch_build, need: int,
