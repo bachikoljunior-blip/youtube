@@ -340,10 +340,34 @@ def _members_by_landed(landed: datetime) -> dict[str, list[Member]]:
 
 
 def _members_by_opening_motion() -> dict[str, list[Member]]:
-    """`YT_OPENING_MOTION` の値で割る（`src/motion_groups.py` が実物から引きます）。"""
+    """`YT_OPENING_MOTION` の値で割る（`src/motion_groups.py` が実物から引きます）。
+
+    ## **共有日だけを数えます**（2026-08-27 に直した。**同じ穴の4件目**）
+
+    ここは長らく `motion_groups.groups()`（**生の合計**）を読んでいました。
+    ところが `falsified_if` は「**動きありと同じ日に交互で予約する**」と言っており、
+    **片方しか居ない日の本は使えません**（動きの差と、その日の配信の差を
+    分けられない —— 1日に配信されるのは 10本ちょうど・`src/day_cap.py`）。
+    `motion_groups.paired()` の docstring が同じことを3件ぶん書いています。
+
+    **食い違いは、期限の側に出ていました**（2026-08-27 の実測）:
+
+        `deadline_check.py`（ここ・生の合計）        判定できるのは **09/21**
+        `tests/test_hypothesis_deadline_reachable`   判定できるのは **09/26**
+                                                     （`earliest_opening_motion`＝共有日）
+
+    **どの期限を書いても、必ずどちらかの検査が赤くなる状態**でした
+    （09/21 なら「まだ判定できない」、09/26 なら「データは揃うのに期限が先」）。
+    `test_遅すぎる期限が残っていないこと` の docstring が
+    「**期限を意図して先に置きたいなら `needs` に書くこと**」と言っているとおり、
+    直すのは日付ではなく**数え方**のほうです。
+
+    **覆る条件**: `falsified_if` から「同じ日に交互」が外れたら、`groups()` に戻すこと
+    （そのときは片方しか居ない日の本も標本になります）。
+    """
     from src import motion_groups
 
-    off, on = motion_groups.groups()
+    off, on = motion_groups.paired(*motion_groups.groups())
     pub = _publish_by_video()
     return {
         "対照(動きなし)": sorted((d, v) for v in off if (d := pub.get(v))),
