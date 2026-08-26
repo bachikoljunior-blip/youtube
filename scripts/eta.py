@@ -2561,7 +2561,15 @@ def frozen_days(m: dict, a0: dict, tr: dict, levers_: list[str], *,
             out[lv] = None
             continue
         d = t.get("days")
-        out[lv] = None if (d is None) else (min(d, NEVER) - base_days)
+        if d is None:
+            out[lv] = None
+            continue
+        # **凍らせたら届かなくなる腕**は、差が `NEVER`（10億）になります。
+        #     そのまま出すと「+1,000,000,000日」と印字され、**欠陥に見えます**
+        #     （読み手はまず数字を疑い、主張のほうを読みません）。
+        #     地平（3年）で頭打ちにします —— **意味は変わりません**
+        #     「3年 先まで見ても戻ってこない ＝ 必要」。
+        out[lv] = min(float(d), float(TRAJECTORY_HORIZON_DAYS)) - base_days
     return out
 
 
