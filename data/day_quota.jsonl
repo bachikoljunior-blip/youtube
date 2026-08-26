@@ -3346,3 +3346,30 @@
 {"at": "2026-08-26T18:33:03+00:00", "detail": "scheduled_publish_times"}
 {"at": "2026-08-26T18:33:06+00:00", "detail": "playlistItems.insert"}
 {"at": "2026-08-26T18:33:06+00:00", "detail": "thumbnails.set bxCCN4BS2LE"}
+{"at": "2026-08-26T18:44:21+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-26T18:45:23+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-26T18:45:25+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-26T18:45:27+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-26T18:46:26+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-26T18:47:23+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-26T18:47:25+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-26T18:47:27+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-26T18:48:03+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-26T18:48:28+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-26T18:48:29+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-26T18:48:31+00:00", "detail": "status: Data API 読み"}
+{"at": "2026-08-26T18:49:05+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-26T18:49:07+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-26T18:49:09+00:00", "detail": "status: Data API 読み"}
+{"at": "2026-08-26T18:49:44+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-26T18:49:46+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-26T18:50:08+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-26T18:50:46+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-26T18:51:08+00:00", "detail": "status: Data API 読み"}
+{"at": "2026-08-26T18:51:41+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-26T18:51:44+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-26T18:52:44+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-26T18:53:18+00:00", "detail": "status: Data API 読み"}
+{"at": "2026-08-26T18:53:52+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-26T18:53:54+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-26T18:54:56+00:00", "detail": "channels.list mine"}
