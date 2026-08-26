@@ -326,12 +326,47 @@ def placement_days(rows: list[dict], now: datetime | None = None) -> dict:
     # **`batch_build` が実際に渡す時刻**（`--hour` の既定）。写さずにここから引く。
     lane_days = {hm: _first_free(taken, hm, now.date()) for hm in _LANES}
     lane_waits = sorted(lane_days.values())
+    # **いちばん大事なのはここです**（2026-08-27）。上の `lane_*` は
+    # 「`--hour` を明示した回」の数で、**既定の回はもう通りません** ——
+    # `batch_build.slots()` は時刻を書かなかった回に `live_ring()` で
+    # **生きる帯の空き**を選びます。**その実物に聞くこと。写さない。**
+    live = _live_days(taken, now.date())
     return {"min_days": waits[0],
             "median_days": waits[len(waits) // 2],
             "by_slot": by_slot,
             "lane_days": lane_days,
             "lane_min": lane_waits[0],
-            "lane_max": lane_waits[-1]}
+            "lane_max": lane_waits[-1],
+            "live_days": live,
+            "live_min": min(live) if live else None,
+            "live_max": max(live) if live else None}
+
+
+def _live_days(taken: dict[date, set[tuple[int, int]]], start: date,
+               count: int = 8) -> list[int]:
+    """**既定の回（時刻を書かない回）が実際に置く日**を、何日後かで返す。
+
+    `batch_build.live_ring()` に**そのまま聞きます**。ここで選び方を写すと、
+    向こうが動いたときに**印字と実際がまた食い違います** ——
+    この節そのものが、その食い違いの記録です（`placement_days()` の註）。
+    """
+    try:
+        sys.path.insert(0, str(ROOT / "scripts"))
+        import batch_build as _bb                              # noqa: PLC0415
+        picked = _bb.live_ring(count)
+    except Exception:                                          # noqa: BLE001
+        return []
+    if not picked:
+        return []
+    t = {d: set(s) for d, s in taken.items()}
+    out: list[int] = []
+    for spec in picked:
+        hh, _, mm = spec.partition(":")
+        hm = (int(hh), int(mm or 0))
+        i = _first_free(t, hm, start)
+        t.setdefault(start + timedelta(days=i), set()).add(hm)
+        out.append(i)
+    return out
 
 
 def views_days(rows: list[dict], now: datetime | None = None) -> dict:
@@ -425,16 +460,32 @@ def lag_lines(rows: list[dict], now: datetime | None = None) -> list[str]:
         "=== 予約の順番待ち（この機械の時定数）===",
         f"  予約に入っている本 **{len(rows)}本** ／ いちばん後ろ {last}"
         f"（{d}日 先） ／ 再生が付く上限 {cap}本/日（実測）",
-        f"  → **いま作った本が予約されるのは {place['lane_min']}〜"
-        f"{place['lane_max']}日後**（{lane_detail}）。"
-        "**`batch_build` が渡す時刻は この2つに固定**です —— "
-        "`uploader.next_publish_at()` は**時刻を動かさず、1日ずつ後ろへ**試します",
-        f"     参考: 車線を選べたなら {place['min_days']}〜{place['median_days']}日後"
-        "（予約表に出てくる時刻ぜんぶの最短〜中央値）。"
+    ]
+
+    # **既定の回（時刻を書かない回）**。2026-08-27 まで、ここは下の `lane_*`
+    # だけを印字していて「いま作った本が予約されるのは 2〜49日後」と言っていました。
+    # `batch_build.slots()` が帯の空きから選ぶようになったので、**実物に聞きます。**
+    if place.get("live_min") is not None:
+        out.append(
+            f"  → **いま作った本が予約されるのは {place['live_min']}〜"
+            f"{place['live_max']}日後**（`batch_build` の既定 ＝ "
+            "`live_ring()` が**生きる帯の空き**から選ぶ。8本ぶんで数えた）")
+        out.append(
+            f"     `--hour` を明示した回は {place['lane_min']}〜{place['lane_max']}日後"
+            f"（{lane_detail}）—— `uploader.next_publish_at()` は"
+            "**時刻を動かさず、1日ずつ後ろへ**試すので、"
+            "**その時刻が埋まっている日数ぶん、そのまま後ろへ落ちます**")
+    else:
+        out.append(
+            f"  → **いま作った本が予約されるのは {place['lane_min']}〜"
+            f"{place['lane_max']}日後**（{lane_detail}）。"
+            "**帯の空きが読めませんでした** —— `batch_build` も既定の時刻へ倒します")
+    out.append(
+        f"     参考: 予約表に出てくる時刻ぜんぶの最短〜中央値は"
+        f" {place['min_days']}〜{place['median_days']}日後。"
         "**この数を判断に使わないこと** —— 実測 2026-08-26、"
         "この行が「2〜2日後」と出ていた回の `batch_build --count 8` は "
-        f"**41〜48日後（10/06〜10/13 の 09:00）** に置きました。いちばん後ろは {d}日 先",
-    ]
+        f"**41〜48日後（10/06〜10/13 の 09:00）** に置きました。いちばん後ろは {d}日 先")
 
     a, b = v["count_days"], v["window_days"]
     if v["confounded"] and a is not None and b is not None and a != b:

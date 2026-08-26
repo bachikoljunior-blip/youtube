@@ -927,11 +927,139 @@ def _long_ring() -> tuple[int, ...]:
         return (LONG_HOUR_JST,)
 
 
+def _band_grid() -> list[tuple[int, int]]:
+    """**生きる帯**（05:00〜13:30）の 30分きざみの枠。**写さずに実物から引く。**
+
+    帯は `src/collisions.py`（`LIVE_FROM_MIN` / `LIVE_TO_MIN`）、きざみは
+    `src/day_cap.MIN_GAP_MIN`（「これより詰めた本は死ぬ」の実測）から取ります。
+    どちらかが測り直しで動いたら、ここも一緒に動きます。
+    """
+    try:
+        from src import collisions, day_cap
+        lo, hi = int(collisions.LIVE_FROM_MIN), int(collisions.LIVE_TO_MIN)
+        step = max(1, int(day_cap.MIN_GAP_MIN))
+    except Exception:                                          # noqa: BLE001
+        lo, hi, step = 5 * 60, 13 * 60 + 30, 30
+    return [(m // 60, m % 60) for m in range(lo, hi + 1, step)]
+
+
+def live_ring(count: int, now: datetime | None = None) -> list[str] | None:
+    """**`--date` も `--hours` も無い回の予約時刻**を、控えの空きから選ぶ（API 0単位）。
+
+    ## なぜ要るか（2026-08-26・最適化の回。実測でこの回に見つけた）
+
+    ここは長らく `[str(hour)] * count`（＝ショートなら 09:00 を count 回）でした。
+    `uploader.next_publish_at()` は**時刻を一度も動かさず、1日ずつ後ろへ**試すので
+    （`target += timedelta(days=1)` だけ）、**09:00 が埋まっている日数ぶん、
+    そのまま後ろへ落ちます。**
+
+    実測（2026-08-26 の控え 362本。`scripts/queue_lag.py` の `by_slot`）:
+
+        09:00 が空くまで  **49日**   ← `batch_build` の既定（ショート）
+        20:00 が空くまで  **2日**    ← 既定（長尺）。ただし帯の外
+        12:00 が空くまで  **3日**    ┐ どれも**生きる帯の中**で、
+        13:00 が空くまで  **3日**    │ 同じ日の帯には空き枠が
+        10:00 / 11:00     **4日**    ┘ 5〜8個 残っています
+
+    **開いている前提の期日は、いちばん遠いもので 17日 先**です（`config/hypotheses.yaml`）。
+    **49日 先に置いた本は、いま開いている前提を1件も閉じません** ——
+    `eta.py` が「軌跡の腕が動くのは前提を1件閉じたときだけ」と印字しているとおり、
+    **その本は到達日を1日も動かせない**ということです。
+
+    ## `day_cap` の (A)/(B) が未判定でも、この選び方は損をしません
+
+    `day_cap.window()` は `confounded`（(A) 1日C本まで ／ (B) T までに出す）です。
+    **どちらでも、帯の空き枠のほうが弱くても同じ**になります:
+
+        (B) 帯の外は死んでいる      → 帯へ置くのは**まるごと上積み**
+        (A) 早く出た C本 が生きる   → 帯は朝なので**その C本 の側**。
+                                     押し出されるのは、同じ既定が夜へ落とした本
+
+    **どちらに賭けてもいません。** 賭けが要るのは「何本 作るか」のほうで、
+    ここは「**同じ本をどこへ置くか**」だけを決めています。
+
+    ## 覆る条件
+
+    - `day_cap` の切り分け（08/27 の測定）が **(A) かつ 帯の外も生きる** と出たら、
+      帯にこだわる理由が消えます。**そのときは `_band_grid()` を広げること。**
+    - 帯が埋まって `first_free` が 09:00 と変わらなくなったら、
+      **効いているのは選び方ではなく在庫の少なさ**です。`--step-min` を細かくするか、
+      帯そのものを測り直すこと。
+
+    返り: `["12:00", "13:00", …]`（`upload_only.split_when()` が読む形）。
+    読めなければ `None` —— **呼ぶ側は今までどおりに倒すこと**（黙って粗くしない）。
+    """
+    if count <= 0:
+        return None
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        import queue_lag                                        # noqa: PLC0415
+        rows = queue_lag.scheduled()
+        if not rows:
+            return None
+        taken = {d: set(s) for d, s in queue_lag._taken(rows).items()}
+        today = (now or datetime.now(JST)).date()
+        try:
+            from src import day_cap                             # noqa: PLC0415
+            cap = int(day_cap.cap())
+        except Exception:                                       # noqa: BLE001
+            cap = 10
+        grid = _band_grid()
+        band = set(grid)
+        seen: dict[object, bool] = {}
+        _mine = lanes.lane()
+
+        def _win(d) -> bool:
+            if d not in seen:
+                seen[d] = queue_lag._in_window(d)
+            return seen[d]
+
+        def _first(hm) -> object:
+            """`next_publish_at()` と同じ探し方（時刻は動かさず、1日ずつ後ろ）。"""
+            for i in range(1, 91):
+                d = today + timedelta(days=i)
+                if _win(d):
+                    continue                    # 窓の日は飛ばす
+                if hm not in taken.get(d, set()):
+                    return d
+            return None
+
+        out: list[str] = []
+        for _ in range(count):
+            best = None
+            for hm in grid:
+                d = _first(hm)
+                if d is None:
+                    continue
+                # **その日の帯が上限に達しているか。** 達していれば (A) では死ぬので
+                # **その日ごと後ろへ回します**（(B) なら生きるので、外しはしない）。
+                full = 1 if sum(1 for t in taken.get(d, set())
+                                if t in band) >= cap else 0
+                # 同着は車線で割る（`src/lanes.py`）。**控えを見ない**ので、
+                # 同じ回に走っているきょうだいと相談せずに分かれます。
+                key = (full, d,
+                       (lanes.lane_of(hm[0] * 60 + hm[1], 30) - _mine)
+                       % lanes.LANES, hm)
+                if best is None or key < best[0]:
+                    best = (key, hm, d)
+            if best is None:
+                break
+            _, hm, d = best
+            taken.setdefault(d, set()).add(hm)
+            out.append(f"{hm[0]}:{hm[1]:02d}")
+        return out or None
+    except Exception as exc:                                    # noqa: BLE001
+        print(f"[batch] 帯の空きが読めませんでした（既定の時刻へ倒します）: "
+              f"{str(exc)[:80]}", flush=True)
+        return None
+
+
 def slots(count: int, hour: int, date_jst: str | None, hours: list[int],
           taken: set[int] | None = None, step_min: int = 60,
           taken_min: set[int] | None = None,
           lanes_n: int | None = None,
-          ring: tuple[int, ...] | list[int] | None = None) -> list[str]:
+          ring: tuple[int, ...] | list[int] | None = None,
+          live: bool = False) -> list[str]:
     """各本の予約時刻の指定を返す（`upload_only.py` の第3引数の形）。
 
     `date_jst` が無ければ従来どおり全部同じ時刻 —— `next_publish_at` が
@@ -993,6 +1121,18 @@ def slots(count: int, hour: int, date_jst: str | None, hours: list[int],
         # ここが1つの時刻しか配っていなかったからです。**作る側は1日25本 出せています。**
         if ring:
             return [str(ring[i % len(ring)]) for i in range(count)]
+        # **`--hour` を書かなかった回は、帯の空きから選びます**（2026-08-27 に足した）。
+        # 理由と実測は `live_ring()` の docstring —— 既定の 09:00 は
+        # **48日 先**まで埋まっていて、開いている前提の期日はいちばん遠くて 17日 先です。
+        # **明示した回は触りません**（`--hour` / `--hours` は常に通す）。
+        if live:
+            picked = live_ring(count)
+            if picked:
+                print("[batch] 予約は**生きる帯の空き**へ置きます（控えから。API 0単位）: "
+                      + ", ".join(picked[:8])
+                      + (" …" if len(picked) > 8 else "")
+                      + f"  ← 既定の {hour}:00 は埋まりで後ろへ流れます", flush=True)
+                return picked
         return [str(hour)] * count
     if step_min != 60:
         return _slots_fine(count, hour, date_jst, hours, step_min, taken, taken_min,
@@ -1895,6 +2035,10 @@ def main(argv: list[str] | None = None) -> int:
                     help="台帳を jobs 別に並べるだけ（**生成も予約もしません**・数秒）")
     args = ap.parse_args(argv)
 
+    # **`--hour` を書いたかどうか**を、既定を入れる前に覚えます。
+    # 書いた回は「その時刻に置け」という指示なので、帯の探索に掛けません
+    # （`slots(live=…)`／`live_ring()`）。**明示は常に通す**。
+    hour_given = args.hour is not None
     if args.hour is None:
         args.hour = LONG_HOUR_JST if args.long else 9
 
@@ -2003,8 +2147,12 @@ def main(argv: list[str] | None = None) -> int:
                   f"（{days}日ぶん・時刻 {list(ring)} JST）。"
                   " **4,000時間の門に入るのは長尺だけ**なので、"
                   "散らすとその門だけが止まります", flush=True)
+    # **帯の空きから選ぶのは、時刻を何も指定しなかった回だけ**です。
+    # `--date`（日に釘づけ）・`--hours`（時の明示）・`--hour`（時の明示）・
+    # `ring`（長尺の輪）は、どれも「置き先を指示された」回なので触りません。
+    live = not args.date and not hours and not ring and not hour_given
     when = slots(len(topics), args.hour, args.date or None, hours,
-                 step_min=args.step_min, ring=ring)
+                 step_min=args.step_min, ring=ring, live=live)
 
     if args.date:
         # **`+ ':00'` と書かないこと**（2026-08-18 に直した）。`--step-min` を
@@ -2013,7 +2161,11 @@ def main(argv: list[str] | None = None) -> int:
         print(f"[batch] {len(topics)} 本を **{args.date} の1日に**入れます"
               f"（{shown} JST）")
     else:
-        print(f"[batch] {len(topics)} 本を作ります（予約は {args.hour}:00 JST の空き枠へ）")
+        # **`args.hour` を印字しないこと**（2026-08-27）。`live` の回は
+        # `slots()` が帯の空きから別の時刻を選んでいるので、ここが `9:00` と
+        # 言っていると**印字と実際がまた食い違います**（`live_ring()` の docstring）。
+        print(f"[batch] {len(topics)} 本を作ります"
+              f"（予約は {', '.join(sorted(set(_show_slot(w) for w in when)))} JST の空き枠へ）")
     for t in topics:
         print(f"        {t['id']}  calc={t['calc']}  {t['title_seed'][:38]}")
 
