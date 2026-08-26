@@ -256,3 +256,36 @@ def test_閉じた前提には4つの欄が入っている():
     rows = arm_speed.closed(doc)
     assert len(rows) >= 15, "閉じた前提が減っています（欄を消していませんか）"
     assert any(r["hit"] for r in rows), "当たりが1件も無い ＝ 速さが出ません"
+
+
+def test_rpm_の前提が1本あたり再生を数えていない():
+    """**付け札は、その実験が実際に数えている値まで届いていること。**
+
+    2026-08-26 夕、`lever: rpm` の開いた前提の1件が、`falsified_if` で
+    **「1本あたり再生」を2群で比べて**いました（09/03 期限「深い題」）。
+    鎖は書いてありましたが、届く先が違います —— 「機構は**ニッチ**だから rpm」で、
+    **ニッチも ¥/1000再生 も1度も数えていません。**
+
+    閉じたときに `effect` へ入るのは**数えた値の倍率**（実測 ×1.59）で、
+    `arm_speed.arm()` はそれを**その腕の伸び幅 `g`** としてそのまま使います。
+    つまり付け札のままなら、**「RPM が 1.59倍 になった」と台帳に書く**ことになります。
+
+    直して、軌跡は **2027-01-07 → 2026-12-31（7日）**動きました。
+    **本数は1本も作っていません。**
+
+    **覆る条件**: 題の深さべつに ¥/1000再生 を実測した回が出たら、
+    **その新しい1件**を `rpm` に立てること（この検査はそちらを止めません ——
+    止めるのは「1本あたり再生を数えていて `rpm`」という組み合わせだけです）。
+    """
+    import yaml
+
+    doc = yaml.safe_load((ROOT / "config" / "hypotheses.yaml").read_text(encoding="utf-8"))
+    bad = [h["claim"][:32] for h in doc["hypotheses"]
+           if isinstance(h, dict) and not h.get("closed_on")
+           and h.get("lever") == "rpm"
+           and "1本あたり再生" in str(h.get("falsified_if") or "")]
+    assert not bad, (
+        "`lever: rpm` なのに `falsified_if` が **1本あたり再生**を数えています: "
+        f"{bad}。それは `per_video` です（`config/hypotheses.yaml` 冒頭の表）。"
+        "ニッチ→RPM の見立てを残したいなら、**¥/1000再生 を数える別の1件**として立てること。"
+    )
