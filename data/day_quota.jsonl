@@ -3490,3 +3490,30 @@
 {"at": "2026-08-26T22:03:05+00:00", "detail": "channels.list mine"}
 {"at": "2026-08-26T22:03:54+00:00", "detail": "channels.list mine"}
 {"at": "2026-08-26T22:03:55+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-26T21:48:33+00:00", "detail": "status: Data API 読み"}
+{"at": "2026-08-26T21:49:00+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-26T21:49:02+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-26T21:49:56+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-26T21:50:50+00:00", "ok": true, "detail": "videos.update vid1"}
+{"at": "2026-08-26T21:55:04+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-26T21:55:54+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-26T21:55:56+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-26T21:55:58+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-26T21:56:49+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-26T21:57:40+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-26T21:57:42+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-26T21:57:50+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-26T21:58:41+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-26T21:58:43+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-26T21:58:44+00:00", "ok": true, "detail": "videos.update vid1"}
+{"at": "2026-08-26T21:58:44+00:00", "ok": true, "detail": "videos.update vid1"}
+{"at": "2026-08-26T21:58:55+00:00", "detail": "videos.update -rNsh53STNw"}
+{"at": "2026-08-26T21:58:56+00:00", "detail": "videos.update -rNsh53STNw"}
+{"at": "2026-08-26T21:58:57+00:00", "detail": "videos.update -rNsh53STNw"}
+{"at": "2026-08-26T21:58:58+00:00", "detail": "videos.update -rNsh53STNw"}
+{"at": "2026-08-26T21:59:00+00:00", "detail": "videos.update -rNsh53STNw"}
+{"at": "2026-08-26T21:59:01+00:00", "detail": "videos.update -rNsh53STNw"}
+{"at": "2026-08-26T21:59:02+00:00", "detail": "videos.update -rNsh53STNw"}
+{"at": "2026-08-26T21:59:03+00:00", "detail": "videos.update -rNsh53STNw"}
+{"at": "2026-08-26T21:59:04+00:00", "detail": "videos.update -rNsh53STNw"}
+{"at": "2026-08-26T21:59:05+00:00", "detail": "videos.update -rNsh53STNw"}
