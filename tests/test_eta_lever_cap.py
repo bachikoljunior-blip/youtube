@@ -172,4 +172,37 @@ def test_表に天井の行が出る():
     dead = [r for r in pl["lever_days"]
             if r.get("cap") is not None and not r.get("reachable_at_cap")]
     if dead:
-        assert "上の日付を動かせない腕" in text
+        # **ここは長らく「上の日付を動かせない腕」と主張していました**（2026-08-26 に直した）。
+        #     その文言は偽です —— 同じ日・同じ点で `eta.py --alloc` が
+        #     「**次の1件は `sub_rate` に置くのが最短**（3日 早い）」と出しており、
+        #     実測でも `sub_rate` を凍らせると軌跡は **+120日**（＝必要な腕）。
+        #     **十分でないことは、要らないことではありません。**
+        assert "だけ**を天井まで引いても届かない腕" in text
+        assert "「ここに前提を置いても動かない」ではありません" in text
+        # **凍らせた線が無い回は、「要らない」と読ませないこと。**
+        assert "『要らない』と読まないこと" in text
+
+
+def test_凍らせた線があれば_必要な腕と要らない腕を言い分ける():
+    """**判別は、測ればつきます**（`frozen_days`）。実測 2026-08-26:
+
+        `sub_rate` を凍らせる → 軌跡 **+120日** ＝ 必要
+        `density`  を凍らせる → 軌跡 **+0日**   ＝ 要らない
+
+    **同じ1行にまとめて「動きません」と書いていたのが誤り**でした ——
+    片方については偽、もう片方については真です。
+    """
+    m = _metrics()
+    a = eta.analyse(m)
+    pl = eta.plan(m, a, supply=_supply(), sensitivity=True)
+    dead = [r["lever"] for r in pl["lever_days"]
+            if r.get("cap") is not None and not r.get("reachable_at_cap")]
+    if not dead:
+        return
+    pl["arm_frozen_days"] = {dead[0]: 120.0}
+    if len(dead) > 1:
+        pl["arm_frozen_days"][dead[1]] = 0.0
+    text = "\n".join(eta._report_levers(pl))
+    assert "+120日" in text and "必要な腕です" in text
+    if len(dead) > 1:
+        assert "この腕は要りません" in text
