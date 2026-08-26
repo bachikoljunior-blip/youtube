@@ -584,8 +584,47 @@ def dead_arm_report(today: str, window_days: int = WINDOW_DAYS) -> str:
     #     触らない腕**（`sub_rate` 天井 ×2,923.79）を**生きた腕として数えて
     #     いました。** 判定は `levers.arm_state()` が持ちます（1か所に寄せる）。
     why = state.get("dead_why") or {}
+    # --- **「引き代なし」と「十分でないだけ」を、同じ数に足さない**（2026-08-26）---
+    #
+    # ここは長らく、`dead_why` に載った腕を**理由を問わず** `n_dead` へ足し、
+    # 「この回では到達日が動きえない回 **175/249（70%）**」の分子にしていました。
+    # **`dead_why` には2種類 入っています**（`src/levers.arm_state`）:
+    #
+    #     「天井」                  天井 ×1.00 ＝ 引いても動かない
+    #     「天井まで引いても届かない」 **その腕だけ**を天井まで引いても届かない
+    #
+    # 後者は**十分でない**ことしか言っていません。**必要かどうかは別の問い**で、
+    # 同じ日の `eta.py --alloc` は「**次の1件は `sub_rate` に置くのが最短**
+    # （3日 早い）」と出していました。**同じプログラムが正反対を言っていた**
+    # ので、`drift` の側はそれを「無駄に選んだ回」として数えていたわけです。
+    #
+    # 判別は測ればつきます —— **その腕を凍らせて軌跡を解き直す**
+    # （`eta.frozen_days`。回転はよその腕へ配り直したうえで）。
+    # 遠のくなら必要、動かないなら要らない。**その数を読んで割ります。**
+    #
+    # **覆る条件**: `arm_frozen_days` が行に無い回は、判別できません。
+    # そのときは**鳴らす側ではなく、数えない側へ倒します** ——
+    # 「引き代が無かった」は主実行の作業を否定する数なので、
+    # **読めないまま否定しないこと**（`_LOUD_WHEN_UNKNOWN` の逆向きです。
+    # あちらは門、ここは自己評価の比で、外れる向きの損が反対です）。
+    frozen = state.get("frozen") or {}
     dead = sorted(k for k in tally if k in why)
-    n_dead = sum(tally[k] for k in dead)
+    NOT_ENOUGH = "天井まで引いても届かない"
+    # **天井 ×1.00 の側は、そのまま確定の「引き代なし」**（判別は要りません）。
+    hard = [k for k in dead if why.get(k) != NOT_ENOUGH]
+    # **「その腕だけでは届かない」側だけを、凍らせた線で割ります。**
+    needed, unknown = [], []
+    for k in (x for x in dead if why.get(x) == NOT_ENOUGH):
+        fz = frozen.get(k)
+        if not isinstance(fz, (int, float)):
+            unknown.append(k)          # 判別できていない → 分子に入れない（下で印字）
+        elif fz > 0.5:
+            needed.append(k)           # 凍らせると遠のく ＝ **必要**
+        else:
+            hard.append(k)             # 回転をよそへ回しても同じ ＝ 引き代なし
+    hard, needed, unknown = sorted(hard), sorted(needed), sorted(unknown)
+    n_needed = sum(tally[k] for k in needed)
+    n_dead = sum(tally[k] for k in hard)
     # **`none` は、定義そのものが「この回は予測日を動かさない」です**
     #     （`src/levers.LEVERS`。`MOVING` はここだけを外して作られています）。
     #     ここは長らく `none` を**分母にだけ**入れていました ——
@@ -602,11 +641,26 @@ def dead_arm_report(today: str, window_days: int = WINDOW_DAYS) -> str:
         mark = ""
         if k == "none":
             mark = "  ← **宣言どおり、この回は到達日を動かしません**（道具・手順・記録の整備）"
-        elif why.get(k) == "天井":
-            mark = f"  ← **天井 ×{cap:.2f}（いまの実測では引き代なし）**"
+        elif (why.get(k) or "").startswith("天井") and why.get(k) != "天井まで引いても届かない":
+            # **前方一致で見ること**（2026-08-26）。`arm_state` は理由に但し書きを
+            #     足すことがあり（「天井（**ショートの面の数**）」）、完全一致だと
+            #     **分子に数えている腕の行から理由が消えます** —— 実際に消えていました。
+            mark = f"  ← **{why[k]} ×{cap:.2f}（いまの実測では引き代なし）**"
         elif why.get(k) == "天井まで引いても届かない":
-            cap_s = f"天井 ×{cap:,.2f} だが、" if cap is not None else ""
-            mark = f"  ← **{cap_s}天井まで引いても到達日に届きません**"
+            cap_s = f"天井 ×{cap:,.2f}。" if cap is not None else ""
+            fz = frozen.get(k)
+            if isinstance(fz, (int, float)) and fz > 0.5:
+                mark = (f"  ← {cap_s}**この腕だけでは届きませんが、"
+                        f"凍らせると軌跡は {fz:+,.0f}日 ＝ 必要な腕です**"
+                        "（無駄に選んだ回には数えません）")
+            elif isinstance(fz, (int, float)):
+                mark = (f"  ← **{cap_s}凍らせても {fz:+,.0f}日 ＝ "
+                        "回転をよそへ回しても同じ。引き代なし**")
+            else:
+                mark = (f"  ← {cap_s}**この腕だけを天井まで引いても届きません**"
+                        "（＝十分でない。**要らないという意味ではありません** ——"
+                        " 凍らせた線がこの行にまだ無いので、"
+                        "**動きえない回には数えていません**）")
         elif cap is not None:
             th = (state.get("thresholds") or {}).get(k)
             th_s = f"／出はじめ ×{th:,.2f}" if isinstance(th, (int, float)) else ""
@@ -614,6 +668,25 @@ def dead_arm_report(today: str, window_days: int = WINDOW_DAYS) -> str:
         out.append(f"    {k:<10} {n:>3}回{mark}")
     out.append(f"  → 動かす腕を選んだのに**引き代が無かった回: {n_dead}/{len(runs)}**"
                f"（{n_dead / len(runs) * 100:.0f}%）")
+    # **判別できていない腕を、黙って分子から外さないこと**（2026-08-26）。
+    #     外すだけだと、`--no-frozen` を1回 付ける／`eta.py` が古いまま という
+    #     **計器を止めるだけでこの比が良くなる**道ができます。前の回が
+    #     「**計器を壊すだけで門が緑になる作りにしないこと**」と書いたのと同じ形なので、
+    #     **読めなかったことと、数えたらいくつかを、必ず両方 印字します。**
+    if unknown:
+        n_unknown = sum(tally[k] for k in unknown)
+        out.append(f"  [!] **凍らせた線がこの行にありません: "
+                   f"{'／'.join(f'`{k}`' for k in unknown)}** ——"
+                   " その腕が「十分でないだけ」か「要らない」かを**判別できていません**。"
+                   f" 数えた場合は **{n_dead + n_unknown}/{len(runs)}**"
+                   f"（{(n_dead + n_unknown) / len(runs) * 100:.0f}%）。"
+                   " **判別するには `python scripts/eta.py` を1回**"
+                   "（`--no-frozen` を付けないこと。腕1本 15〜20秒・API 0単位）")
+    if n_needed:
+        out.append(f"  → **十分ではないが必要な腕を選んだ回: {n_needed}/{len(runs)}**"
+                   f"（{n_needed / len(runs) * 100:.0f}%）"
+                   f" —— {'／'.join(f'`{k}`（凍らせると {frozen[k]:+,.0f}日）' for k in needed)}。"
+                   " **これは漂流ではありません。上の分子には入れていません**")
     out.append(f"  → **`none`（動かさないと宣言した回）: {n_none}/{len(runs)}**"
                f"（{n_none / len(runs) * 100:.0f}%）")
     out.append(f"  → 合わせて、**この回では到達日が動きえない回: "
