@@ -53911,3 +53911,18 @@ ship の内訳も、予約の待ちも、在庫も出ます。**そのどれも�
 **次にこの輪へ段を足す回へ**: `scripts/*.py` の関数を `batch_build` から呼ぶときは、
 **`except (Exception, SystemExit)` で受けること。** あちらは CLI として書かれていて、
 `SystemExit` を「呼ぶ側に伝える正常な終わり方」として使っています。
+
+### 見たが直さなかった赤（**私のではありません。次の回へ**）
+
+`tests/test_deadline_check.py::test_endcard_を書くと処置群だけを数える` が
+`AttributeError: 'NoneType' has no attribute 'group'` で落ちています
+（`ans.why` に `**N本** ／ 要` が出ていない）。
+
+**私の変更ではありません** —— この検査は `cf44c15`
+「処置群に対照が混ざっていた（endcard: request で絞る）」で入った、
+**この1時間の並行の回の作りかけ**で、しかも実データを読みます
+（`created_after: 2026-08-24` の公開済みを数える）。
+私が触ったのは公開時刻の置き方と日枠の門だけで、`endcard_verdict` /
+`deadline_check` は1行も触っていません。
+
+**赤を消すために門を緩めないこと。** 書いた側が続きを持っています。
