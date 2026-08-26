@@ -61,6 +61,8 @@ ASSUMPTIONS = [
     "ふるさと納税や医療費控除など、他の控除は入れていません",
     "返済は元利均等返済で、返済期間は35年、金利は年1.0パーセントとして置いています。期間と金利を変えた節では、その値を表に書いています",
     "繰り上げ返済は期間短縮型（毎月の返済額は変えず、残高だけを減らす形）で置いています。返済額軽減型なら、失う控除はこれより小さくなります",
+    "2人で借りる節では、各自の年末残高が持分の比でそのまま立つものとして置いています。持分と実際の負担額がずれている場合は、この計算どおりにはなりません",
+    "2人で借りる節では、2人とも控除の要件を満たして初年度に確定申告することを前提にしています。片方が要件を満たさない場合は、その人の枠は使えません",
 ]
 
 CREDIT_RATE = 0.007            # 控除率 0.7%
@@ -235,6 +237,62 @@ def check_tables() -> None:
         _checks.rounding(compute(relief_room(t)["使い切るのに要る残高"] + 10_000,
                                  t).recovered, room,
                          f"課税総所得{t:,}円で、枠を使い切ったときに戻る額")
+    _check_pair()
+
+
+def _check_pair() -> None:
+    """節7（ペアローンの持分）の等式。**通ると思っている式ほど、先に書くこと。**
+
+    2026-08-26 に書いたところ、(4) が最初は落ちました ——
+    「半分ずつで損しない残高」を**2人の枠の合計**から出していたためです。
+    実際に効いているのは**小さいほうの枠だけ**で、大きいほうは1円も関係しません。
+    **検査に書かなければ、そのまま動画に出ていました。**
+    """
+    pairs = ((3_000_000, 1_500_000), (6_000_000, 1_000_000), (2_000_000, 2_000_000))
+    for ta, tb in pairs:
+        room = pair_room_ratio(ta, tb)
+        # (1) **枠は人ごとに立つ。** 2人ぶんの合計を超えて戻ることはない
+        for bal in (10_000_000, 45_000_000, 100_000_000):
+            best = best_share(bal, ta, tb)
+            if best["最適で戻る合計"] > room["枠の合計"]:
+                raise _checks.TableError(
+                    f"課税総所得{ta:,}/{tb:,}・残高{bal:,}円で、最適で戻る合計 "
+                    f"{best['最適で戻る合計']:,} が枠の合計 {room['枠の合計']:,} を超えました")
+            # (2) **最適は、半分ずつを下回らない**（半分ずつも候補の1つなので）
+            _checks.greater(best["最適で戻る合計"] - best["半分ずつで戻る合計"] + 1,
+                            0.0, f"残高{bal:,}円で、最適と半分ずつの差が")
+        # (3) **2人で枠を使い切る残高を十分に超えたら、最適はちょうど枠の合計**
+        big = room["2人で使い切るのに要る残高"] * 2
+        _checks.rounding(best_share(big, ta, tb)["最適で戻る合計"],
+                         room["枠の合計"],
+                         f"課税総所得{ta:,}/{tb:,}で、枠を使い切ったときの合計")
+        # (3b) **ただし「ちょうど」の残高では、1パーセント刻みが枠に届きません。**
+        #      2026-08-26 に (3) がここで落ちて分かったことです ——
+        #      両方が満たされる持分の幅は `枠A/(0.007×残高)` 〜 `1−枠B/(0.007×残高)` で、
+        #      残高が使い切りにちょうどのときは**この幅が1パーセントより狭くなる**。
+        #      **落ちたのは検査ではなく、刻みのほうです。** 実測（課税600万/100万）:
+        #      969,529円 対 970,000円 ＝ **471円 届かない。**
+        just = room["2人で使い切るのに要る残高"] + 1_000_000
+        gap = room["枠の合計"] - best_share(just, ta, tb)["最適で戻る合計"]
+        _checks.greater(int(just * 0.01 * CREDIT_RATE) + 1, float(gap),
+                        f"課税総所得{ta:,}/{tb:,}で、刻み1つぶんより届かない額が")
+        # (4) **半分ずつで損しない残高は、小さいほうの枠だけで決まる**
+        safe = half_safe_balance(ta, tb)
+        if pair_split(safe["半分ずつで損しない残高"], ta, tb, 0.5)["取りこぼし合計"] != 0:
+            raise _checks.TableError(
+                f"課税総所得{ta:,}/{tb:,}で、半分ずつの上限 "
+                f"{safe['半分ずつで損しない残高']:,}円 のところで既に取りこぼしています")
+        over = pair_split(safe["半分ずつで損しない残高"] + 1_000_000, ta, tb, 0.5)
+        _checks.greater(over["取りこぼし合計"], 0.0,
+                        f"課税総所得{ta:,}/{tb:,}で、上限を超えたときの取りこぼしが")
+    # (5) **所得が同じなら、最適は半分ずつ**（左右対称なので幅の真ん中は 0.5）
+    for bal in (10_000_000, 45_000_000, 90_000_000):
+        _checks.rounding(best_share(bal, 3_000_000, 3_000_000)["最適な持分A"], 0.5,
+                         f"所得が同じ2人・残高{bal:,}円での最適な持分")
+    # (6) **残高が小さいうちは、持分がまったく効かない**（幅が 0〜1 の全部）
+    small = best_share(5_000_000, 3_000_000, 1_500_000)
+    _checks.rounding(small["最適の幅の広さ"], 1.0,
+                     "残高5,000,000円での、最適な持分の幅")
 
 
 def compute(balance: int, taxable: int) -> Result:
@@ -394,6 +452,157 @@ def relief_room_doubling() -> dict:
     }
 
 
+# ---- 節7: ペアローンの持分（2026-08-26 に足した。**長尺向け**）--------------
+#
+# 既にある節7つは、全部「1人が借りる」前提です。**この節は同じ残高を2人で分けます。**
+# 枠（`relief_room`）は**人ごとに立つ**ので、分け方を変えると戻る合計が変わります。
+#
+# 制度の側は「持分に応じて各自が控除を受ける」としか言いません。
+# **どこにも出ていないのは「では何対何にするのが正解か」**のほうです。
+# ここではそれを、1パーセント刻みで全部当てて出します。
+#
+# **狙って出す形は「台形」**です —— 最適はふつう1点ではなく**幅**を持ちます。
+# 「ぴったり合わせないと損する」ではなく「この幅に入れば同じ」が答えになる。
+def pair_split(balance: int, taxable_a: int, taxable_b: int,
+               share_a: float) -> dict:
+    """残高を A:B ＝ `share_a` : `1 - share_a` で分けたとき、2人ぶんの合計。
+
+    **持分は借入の負担割合**として置いています（ペアローンでも連帯債務でも、
+    各自の年末残高がこの比で立つ、という形）。
+    端数は A に寄せず **B が残り全部**を持つので、合計は必ず `balance` に一致します。
+    """
+    if not 0.0 <= share_a <= 1.0:
+        raise ValueError(f"持分は0〜1です: {share_a}")
+    bal_a = int(balance * share_a)
+    bal_b = balance - bal_a
+    ra, rb = compute(bal_a, taxable_a), compute(bal_b, taxable_b)
+    return {
+        "持分A": share_a,
+        "残高A": bal_a, "残高B": bal_b,
+        "戻るA": ra.recovered, "戻るB": rb.recovered,
+        "戻る合計": ra.recovered + rb.recovered,
+        "取りこぼしA": ra.lost, "取りこぼしB": rb.lost,
+        "取りこぼし合計": ra.lost + rb.lost,
+    }
+
+
+def pair_grid(balance: int, taxable_a: int, taxable_b: int,
+              shares: list[float] | None = None) -> list[dict]:
+    """持分べつに並べる。**山の形を見るための表**（既定は10パーセント刻み）。"""
+    shares = shares or [i / 10 for i in range(11)]
+    return [pair_split(balance, taxable_a, taxable_b, s) for s in shares]
+
+
+def best_share(balance: int, taxable_a: int, taxable_b: int,
+               step: float = 0.01) -> dict:
+    """1パーセント刻みで全部当てて、**戻る合計がいちばん大きい持分**を出す。
+
+    返すのは最大の1点だけではありません。**同じ最大に並ぶ持分の幅**も返します ——
+    そこが「ぴったり合わせる必要があるのか」の答えになるからです。
+    """
+    n = int(round(1 / step))
+    rows = [pair_split(balance, taxable_a, taxable_b, i / n) for i in range(n + 1)]
+    best = max(r["戻る合計"] for r in rows)
+    tied = [r["持分A"] for r in rows if r["戻る合計"] == best]
+    half = pair_split(balance, taxable_a, taxable_b, 0.5)
+    return {
+        "残高": balance, "課税総所得A": taxable_a, "課税総所得B": taxable_b,
+        # **幅の真ん中**を代表に取ります（並んだ点のどれを取っても戻る額は同じ）
+        "最適な持分A": (min(tied) + max(tied)) / 2,
+        "最適の幅": (min(tied), max(tied)),
+        "最適の幅の広さ": max(tied) - min(tied),
+        "最適で戻る合計": best,
+        "半分ずつで戻る合計": half["戻る合計"],
+        "半分ずつにすると捨てる額": best - half["戻る合計"],
+        "全部Aで戻る合計": rows[-1]["戻る合計"],
+        "全部Bで戻る合計": rows[0]["戻る合計"],
+    }
+
+
+def pair_room_ratio(taxable_a: int, taxable_b: int) -> dict:
+    """**枠の比**。ここが、上の最適な持分の当たりを付ける先です。
+
+    枠を使い切る残高までなら、**戻る合計は「各自の枠」で頭打ちになる**ので、
+    最適な持分は **枠A : 枠B** に寄ります。**残高によりません。**
+    残高が小さくて2人とも枠を余らせているうちは、**どの持分でも同じ**です
+    （そこが上の「幅」がいちばん広くなる帯）。
+    """
+    ra, rb = relief_room(taxable_a), relief_room(taxable_b)
+    total = ra["戻せる枠"] + rb["戻せる枠"]
+    return {
+        "枠A": ra["戻せる枠"], "枠B": rb["戻せる枠"], "枠の合計": total,
+        "枠の比A": ra["戻せる枠"] / total if total else 0.0,
+        "2人で使い切るのに要る残高": int(total / CREDIT_RATE),
+    }
+
+
+def half_safe_balance(taxable_a: int, taxable_b: int) -> dict:
+    """**半分ずつ借りても1円も取りこぼさない、年末残高の上限。**
+
+    この節のいちばん実用的な数字です。持分を細かく決めるのは面倒なので、
+    現場ではまず 50:50 が置かれます。**その 50:50 が破綻するのは、
+    枠の小さいほうが自分の半分を吸いきれなくなった瞬間**です。
+
+        半分の控除可能額 ＝ 残高 ÷ 2 × 0.7パーセント
+        これが「枠の小さいほう」を超えた時点で、超えた分はどこからも戻らない
+
+    だから上限は **枠の小さいほう × 2 ÷ 0.7パーセント**。
+    **枠の大きいほうは1円も関係しません** —— そこがこの数字の意外なところです。
+    """
+    ra, rb = relief_room(taxable_a), relief_room(taxable_b)
+    smaller = min(ra["戻せる枠"], rb["戻せる枠"])
+    return {
+        "枠A": ra["戻せる枠"], "枠B": rb["戻せる枠"],
+        "小さいほうの枠": smaller,
+        "半分ずつで損しない残高": int(smaller * 2 / CREDIT_RATE),
+        "1人で借りるなら損しない残高": int(max(ra["戻せる枠"], rb["戻せる枠"])
+                                          / CREDIT_RATE),
+    }
+
+
+def pair_thirteen_years(balance: int, taxable_a: int, taxable_b: int,
+                        share_a: float, annual_rate: float = 0.01,
+                        years: int = 13, term_years: int = 35) -> dict:
+    """13年ぶんの合計を、2人に分けて積む。
+
+    **1年の表と符号が変わることがあります** —— 残高は毎年減るので、
+    後半は2人とも枠を余らせる側に落ち、そこでは持分が効かなくなるからです。
+    **「1年で見た最適」を13年に引き伸ばさないこと。**
+    """
+    bal_a = int(balance * share_a)
+    bal_b = balance - bal_a
+    ta = thirteen_years(bal_a, taxable_a, annual_rate, years, term_years)
+    tb = thirteen_years(bal_b, taxable_b, annual_rate, years, term_years)
+    return {
+        "持分A": share_a,
+        "戻る合計": ta["実際に戻る合計"] + tb["実際に戻る合計"],
+        "取りこぼしの合計": ta["取りこぼしの合計"] + tb["取りこぼしの合計"],
+        "戻るA": ta["実際に戻る合計"], "戻るB": tb["実際に戻る合計"],
+    }
+
+
+def pair_thirteen_best(balance: int, taxable_a: int, taxable_b: int,
+                       step: float = 0.05, annual_rate: float = 0.01,
+                       years: int = 13, term_years: int = 35) -> dict:
+    """13年の合計で、最適な持分と「半分ずつ」との差。**刻みは5パーセント**。"""
+    n = int(round(1 / step))
+    rows = [pair_thirteen_years(balance, taxable_a, taxable_b, i / n,
+                                annual_rate, years, term_years)
+            for i in range(n + 1)]
+    best = max(r["戻る合計"] for r in rows)
+    tied = [r["持分A"] for r in rows if r["戻る合計"] == best]
+    half = pair_thirteen_years(balance, taxable_a, taxable_b, 0.5,
+                               annual_rate, years, term_years)
+    return {
+        "最適な持分A": tied[len(tied) // 2],
+        "最適の幅": (min(tied), max(tied)),
+        "最適で戻る合計": best,
+        "半分ずつで戻る合計": half["戻る合計"],
+        "半分ずつにすると捨てる額": best - half["戻る合計"],
+        "年ごと": rows,
+    }
+
+
 def interest_paid(balance: int, annual_rate: float,
                   years: int = 13, term_years: int = 35) -> int:
     """元利均等返済で、`years` 年のあいだに払う利息の合計。
@@ -538,3 +747,32 @@ if __name__ == "__main__":
               f"{p['繰上げ額に対する割合'] * 100:4.2f}パーセント）")
     print("  → 繰上げ返済は利息を減らしますが、**同時に控除の掛ける相手も減らします。**"
           "早い年ほど残る年数が多いので、**失う控除も早いほど大きくなります**")
+
+    print("\n=== 2人で借りるとき、半分ずつで損しなくなる残高の上限 ===")
+    for ta, tb in ((3_000_000, 1_500_000), (6_000_000, 1_000_000),
+                   (4_000_000, 2_500_000), (2_000_000, 2_000_000)):
+        s = half_safe_balance(ta, tb)
+        print(f"  課税総所得{ta:>9,}円 と {tb:>9,}円  枠 {s['枠A']:>7,}／{s['枠B']:>7,}円"
+              f"  → **半分ずつなら年末残高 {s['半分ずつで損しない残高']:>11,}円 まで**")
+    print(f"  → 上限を決めているのは**小さいほうの枠だけ**です"
+          f"（小さいほうの枠 × 2 ÷ {CREDIT_RATE:.1%}）。"
+          "**大きいほうの人がいくら稼いでいても、この上限は1円も動きません**")
+
+    print("\n=== 持分を振ると、戻る合計はどう動くか（課税総所得600万と100万）===")
+    for bal in (30_000_000, 45_000_000, 60_000_000):
+        b = best_share(bal, 6_000_000, 1_000_000)
+        lo, hi = b["最適の幅"]
+        print(f"  年末残高{bal:>11,}円  最適な持分 **{b['最適な持分A'] * 100:.0f}対"
+              f"{100 - b['最適な持分A'] * 100:.0f}**（同じ額で済む幅 {lo * 100:.0f}〜{hi * 100:.0f}パーセント）"
+              f"  最適{b['最適で戻る合計']:>8,}円  半分ずつ{b['半分ずつで戻る合計']:>8,}円"
+              f"  **捨てる{b['半分ずつにすると捨てる額']:>7,}円**")
+    print("  → **最適は1点ではなく幅です。** その幅に入ってさえいれば、"
+          "持分を1パーセント単位で詰めても戻る額は1円も変わりません")
+
+    t = pair_thirteen_best(45_000_000, 6_000_000, 1_000_000)
+    print(f"\n=== 同じペアの13年ぶんの合計（4500万円・35年・金利1.0%）===")
+    print(f"  最適な持分 {t['最適な持分A'] * 100:.0f}対{100 - t['最適な持分A'] * 100:.0f}"
+          f"  最適{t['最適で戻る合計']:>10,}円  半分ずつ{t['半分ずつで戻る合計']:>10,}円"
+          f"  **13年で捨てる{t['半分ずつにすると捨てる額']:>9,}円**")
+    print("  → 残高は毎年減るので、後半は2人とも枠を余らせます。"
+          "**持分が効くのは前半だけ**で、13年の差は1年の差の13倍にはなりません")
