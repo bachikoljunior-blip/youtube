@@ -105,10 +105,59 @@ class Floor:
         return r is not None and r <= self.deadline
 
     def shortfall(self) -> dict[str, int]:
-        """群名 → 予約の中にあと何本足りないか（0 なら足りている）。"""
+        """群名 → 予約の中にあと何本足りないか（0 なら足りている）。
+
+        **本数しか見ません。** ここが 0 でも `ok` が False のことがあります ——
+        本はそろっているが、**N本目が期限より後ろ**という形です。
+        作る側が読むのは、下の `shortfall_in_time()` のほうです。
+        """
         return {
             g: max(0, self.min_per_group - len(days)) for g, days in self.groups.items()
         }
+
+    @property
+    def last_useful_day(self) -> date:
+        """**この日までに公開された本だけが、期限までの判定に間に合います。**
+
+        期限から、落ち着き（`SETTLE_DAYS`）と Analytics の遅れを引いた日。
+        `ready` の逆算なので、**同じ2つの定数から出しています**（写さないこと）。
+        """
+        return self.deadline - timedelta(days=SETTLE_DAYS + ANALYTICS_LAG_DAYS)
+
+    def in_time(self) -> dict[str, int]:
+        """群名 → **期限までの判定に間に合う**本数（`last_useful_day` 以前の公開）。"""
+        cut = self.last_useful_day
+        return {g: sum(1 for d in days if d <= cut) for g, days in self.groups.items()}
+
+    def shortfall_in_time(self) -> dict[str, int]:
+        """群名 → **期限に間に合う本**が、あと何本 足りないか。
+
+        ## なぜ `shortfall()` と別に要るのか（2026-08-26 に踏んだ）
+
+        **同じ床を、2つの口が別々に数えていました。**
+
+            scripts/batch_build.motion_shortfall()   対照 **8本** ／ 床 8 → **足りています**
+            src/judgeable.Floor.ok                   8本目 **10/10** → 判定 10/16
+                                                     → **期限 09/13 を 33日 超えます**
+
+        どちらも嘘ではありません。**前者は本数だけを数え、期限を見ていない**だけです。
+        実測（`opening_motion` の対照8本の公開日）——
+
+            08/28 ／ 09/02 ／ 09/06 ／ 09/06 ／ 09/12 ／ **10/02 ／ 10/04 ／ 10/10**
+
+        **期限 09/13 に間に合うのは 5本**で、残り3本は判定のあとに公開されます。
+
+        **この食い違いは、実際に1本ぶんの生成を空振りさせました。** 08/26 の回が
+        `motion_shortfall()` の「**あと 1本**」を読んで対照を1本 作り、床は 7→8本 に
+        なりましたが、**赤い検査は3件とも赤のまま**でした（本数ではなく日付が縛り）。
+
+        **だから作る側は、こちらを読むこと。** そうすれば「あと 3本」と出て、
+        `--long` を付けない回が**期限の内側の枠**へ自動で寄せます。
+
+        **覆る条件**: 期限を延ばす判断をした回は、`last_useful_day` が後ろへ動くので、
+        ここも自動でゆるみます。**この関数の側に期限を書き写さないこと。**
+        """
+        return {g: max(0, self.min_per_group - n) for g, n in self.in_time().items()}
 
     def lines(self) -> list[str]:
         out = [f"  {self.key}  期限 {self.deadline:%m/%d}"]

@@ -1106,12 +1106,32 @@ def motion_shortfall() -> tuple[int, str]:
         by_topic = motion_groups.motion_by_topic()
         posted = set(motion_groups.topic_by_video().values())
         pending = sum(1 for tid, on in by_topic.items() if not on and tid not in posted)
+        # **床は「本数」ではなく「期限に間に合う本数」で数えること**（2026-08-26 に踏んだ）。
+        #     ここは長らく `floor - live` でした。**本数は合っていました** ——
+        #     08/26 の回はその印字（「あと 1本」）を読んで1本 作り、対照は 7→8本。
+        #     **それでも `test_judgeable` / `test_deadline_check` /
+        #     `test_hypothesis_deadline_reachable` の3件は赤のまま**でした。
+        #     8本の公開日が 08/28・09/02・09/06・09/06・09/12・10/02・10/04・10/10 で、
+        #     **期限 09/13 に間に合うのは 4本**だったからです（`last_useful_day` 09/07）。
+        #     **縛っていたのは本数ではなく日付**で、この口はそれを見ていませんでした。
+        #     判定の側（`judgeable.Floor.shortfall_in_time`）から引きます ——
+        #     **同じ床を2つの口が別々に数えない**ため（この形は `queue_lag` で3件目）。
+        in_time = None
+        for f in judgeable.floors():
+            if f.key == "opening_motion":
+                in_time = f
+                break
+        if in_time is not None:
+            live = in_time.in_time().get("対照(動きなし)", live)
+            floor = in_time.min_per_group
     except Exception as exc:                                   # noqa: BLE001
         return 0, f"（群を読めませんでした: {exc}）"
     want = max(0, floor - live - pending)
+    cut = (f"（期限 {in_time.deadline:%m/%d} に間に合うのは"
+           f" {in_time.last_useful_day:%m/%d} までの公開）" if in_time is not None else "")
     if not want:
         return 0, (f"対照(動きなし) 判定に入る **{live}本** ＋ 作り置き {pending}本"
-                   f" ／ 床 {floor}本 → **足りています**")
+                   f" ／ 床 {floor}本 → **足りています**{cut}")
 
     # **置く所があるかを、作る前に数える**（2026-08-26。**踏みかけました**）。
     #
@@ -1127,12 +1147,12 @@ def motion_shortfall() -> tuple[int, str]:
     # 「作れば判定に入る」と「入らない」がここで一致します。
     room = _live_room()
     if room is None:
-        return want, (f"対照(動きなし) 判定に入る **{live}本** ＋ 作り置き {pending}本"
-                      f" ／ 床 {floor}本 → **あと {want}本**"
+        return want, (f"対照(動きなし) **期限に間に合う {live}本** ＋ 作り置き {pending}本"
+                      f" ／ 床 {floor}本 → **あと {want}本**{cut}"
                       "（置き先を数えられなかったので、絞っていません）")
     need = min(want, room)
-    why = (f"対照(動きなし) 判定に入る **{live}本** ＋ 作り置き {pending}本 ／ 床 {floor}本"
-           f" → **あと {want}本** ／ 期限までに空いた生きた枠 **{room}本**"
+    why = (f"対照(動きなし) **期限に間に合う {live}本** ＋ 作り置き {pending}本 ／ 床 {floor}本"
+           f" → **あと {want}本**{cut} ／ 期限までに空いた生きた枠 **{room}本**"
            f" → **この回で作るのは {need}本**")
     if need < want:
         why += ("  [!] **足りないのは本ではなく、置き先です。**"
