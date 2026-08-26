@@ -3281,3 +3281,10 @@
 {"at": "2026-08-26T15:13:00+00:00", "detail": "channels.list mine"}
 {"at": "2026-08-26T15:13:02+00:00", "detail": "channels.list mine"}
 {"at": "2026-08-26T15:13:04+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-26T15:16:32+00:00", "detail": "status: Data API 読み"}
+{"at": "2026-08-26T15:17:02+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-26T15:17:04+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-26T15:17:40+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-26T15:17:58+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-26T15:18:55+00:00", "ok": true, "detail": "videos.update vid1"}
+{"at": "2026-08-26T15:20:03+00:00", "detail": "channels.list mine"}
