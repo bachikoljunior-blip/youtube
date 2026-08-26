@@ -79,6 +79,11 @@ PAIRS = ROOT / "config" / "pairs.yaml"
 #: この道具は API を叩かないので、**測った側が置いていったものを読みます。**
 FORMS = ROOT / "data" / "video_forms.json"
 
+#: **この機械が「長尺として作った」と書き残した帳面**（`scripts/batch_build.py --long`）。
+#: `data/video_forms.json` は **YouTube が分類し終えた本**しか持ちません ——
+#: つまり「まだ公開していない本」と「公開したが再生0の本」が丸ごと落ちます。
+BATCH_RUNS = ROOT / "data" / "batch_runs.jsonl"
+
 #: 段4（月20万）が長尺に置いている月あたり再生数。`scripts/eta.py` の
 #: `TARGET_YEN 200,000` ÷ `RPM_SCENARIOS["長尺 お金 低"] 400` × 1000。
 #: **写しではなく計算で出すこと**（片方だけ動くと、この道具が古い数字で断じます）。
@@ -127,8 +132,62 @@ def measured_long_ids(forms_path: Path | None = None) -> set[str]:
     return {vid for vid, form in forms.items() if form == "長尺"}
 
 
+def built_long_ids(path: Path | None = None) -> set[str]:
+    """**この機械が「長尺として作った」と書き残した動画ID**（`data/batch_runs.jsonl`）。
+
+    ## なぜ要るか（2026-08-26 に足した。**同じ帳面の7件目の同じ穴**）
+
+    `long_ids()` は「**YouTube が長尺と数えた本**」を正本にしています。
+    正しいのですが、**その名簿に載るのは、公開されて再生の付いた本だけ**です。
+    だから **これから公開する本は、1本も入りません。**
+
+    そのせいで `publishes_per_day()` が数えているのは
+    「その日に公開した長尺のうち、**もう分類が終わったもの**」で、
+    **公開日の本数そのものではありません**。実測（2026-08-26）:
+
+        08/21 の長尺の公開   `long_ids()` だけ **5本** ／ 作った帳面と足すと **7本**
+        公開1本あたりの面    **396.8回** → **248.0回**（**60% 上振れていた**）
+
+    **上振れの向きが悪い。** `per_publish` は「公開を止めていた日を分母から外す」
+    ために置いた数で、**段2 の面が足りているかの判断に直に入ります。**
+    分母（公開本数）が小さいほど「1本あたりよく回っている」と出るので、
+    **測り漏らすほど、面は足りているように見えます。**
+
+    ## 混ざらないことは実測で確かめました
+
+    `long: true` で作った 43本 のうち、YouTube が**ショートと数えた本は 0本**
+    （`data/video_forms.json` と突き合わせ・2026-08-26）。逆に、
+    測った長尺 12本 のうち 7本 はこの帳面より古く、載っていません。
+    **どちらの穴も、足せば塞がります**（`long_ids()` の docstring と同じ形）。
+
+    **覆る条件**: `long: true` で作った本が、YouTube にショートと数えられた
+    （`data/video_forms.json` に「ショート」で載る）ことが1本でもあったら、
+    ここは足し算ではなく突き合わせに変えること。
+    """
+    p = path or BATCH_RUNS
+    out: set[str] = set()
+    if not p.exists():
+        return out
+    for line in p.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not row.get("long"):
+            continue
+        for res in row.get("results") or []:
+            vid = res.get("video_id")
+            if vid:
+                out.add(str(vid))
+    return out
+
+
 def long_ids(pairs_path: Path | None = None,
-             forms_path: Path | None = None) -> set[str]:
+             forms_path: Path | None = None,
+             batch_path: Path | None = None) -> set[str]:
     """長尺の動画ID ＝ **測った控え ∪ `config/pairs.yaml`**。
 
     ## なぜ足すのか（2026-08-24 に直した。**天井の分母が半分だった**）
@@ -166,6 +225,15 @@ def long_ids(pairs_path: Path | None = None,
     if p.exists():
         raw = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
         out |= set(dict(raw.get("pairs", {})).values())
+    # **作った帳面も足す**（2026-08-26。`built_long_ids()` に実測）。
+    #     測った控えは「公開されて再生の付いた本」しか持たないので、
+    #     **これから公開する本が1本も入りません** —— `publishes_per_day()` が
+    #     公開日の本数を 5/7本 に取り違えていました。
+    #     **足したぶん、長尺の面は 3,435 → 3,683回 に増えます**（ショートから移る）。
+    #     保存済みの点との段差はここです。**向きは「より正しい側」**で、
+    #     08/22 以降の最大の1日は 337 → 492回（`config/hypotheses.yaml` の
+    #     09/05 の前提が見ている 643回 の線は、どちらでも越えません）。
+    out |= built_long_ids(batch_path)
     return out
 
 
@@ -220,6 +288,123 @@ def publishes_per_day(longs: set[str] | None = None,
         day = str(at)[:10].replace("-", "")
         out[day] = out.get(day, 0) + 1
     return out
+
+
+def surface_forecast(sm: dict, pubs: dict[str, int] | None = None,
+                     days: int = RECENT_DAYS,
+                     today: str | None = None) -> dict | None:
+    """**これから先の面（インプレッション/日）を、予約の長尺の本数から出す。**
+
+    ## なぜ要るか（2026-08-26。**この帳面の8件目の同じ穴**）
+
+    `per_day_sustained`（直近7日の中央値）は「**続いている量**」の名で、
+    実際に測っているのは**カレンダーの1日あたり**です。ところが
+    `publishes_per_day()` の docstring が既にこう書いています ——
+
+    > 面が公開で立つなら、続く量を決めるのは**カレンダーではなく公開の本数**です。
+
+    そこまで書いたうえで、`scripts/eta.py` の段2 は中央値の **17.0回/日** を読み、
+    「**10.5倍 足りません。足りないのはインプレッションで、サムネと題では
+    動きません**」と印字していました。**その7日のうち5日は長尺の公開が0本**です。
+    公開が0本の日の面を「続いている量」と呼ぶと、**測っているのは
+    「公開を止めたら面はいくつか」**であって、段2 の問い
+    （「門2a を 450日 かけて開けられるか」）の答えではありません。
+
+    ## 何を返すか
+
+    **予約は控えに入っています**（`data/uploaded.jsonl` の `at`）。
+    だから「これから N日 で長尺を何本 公開する予定か」は、API を1単位も
+    使わずに数えられます。面はそこから出します:
+
+        面（回/日） ＝ 公開1本あたり `per_publish` × これからの公開 本/日
+
+    実測（2026-08-26）: `per_publish` **248.0回** × これから7日の **2.43本/日**
+    ＝ **603回/日**（段2 の合格点 178回/日 の **3.4倍**）。
+    **同じ帳面の中央値は 17.0回/日** —— どちらも正しく、**問いが別**です。
+
+    ## いちばん大事なのは `dry_days` のほう
+
+    予約を日ごとに数えると、**09/08〜09/20 の 13日 が長尺 0本**でした
+    （2026-08-26 の実測）。面が公開で立つ以上、**そこで面は 08/15〜08/20 と
+    同じ 4〜17回/日 へ落ちます。** 「面が足りない」のではなく
+    **「予定表に穴がある」**で、直す先はサムネでも題でもありません。
+
+    **返り**（測れなければ `None`。回を止めない・推測で埋めない）:
+
+        per_publish       公開1本あたりの面（回）
+        per_day_planned   これから `days` 日の見込み（回/日）
+        pubs_per_day      これから `days` 日の長尺の公開（本/日）
+        planned           その内訳（`YYYYMMDD` → 本）
+        dry_days          これから60日で長尺の公開が0本の日（連なりの先頭から）
+        dry_span          いちばん長い連なり `(始まり, 終わり, 日数)`
+    """
+    from datetime import date, timedelta
+
+    long = (sm or {}).get("長尺") or {}
+    per_pub = long.get("per_publish")
+    if not per_pub or per_pub <= 0:
+        return None
+    pubs = publishes_per_day() if pubs is None else pubs
+    start = date.fromisoformat(today) if today else date.today()
+    horizon = [(start + timedelta(days=i)).strftime("%Y%m%d") for i in range(days)]
+    planned = {d: int(pubs.get(d, 0)) for d in horizon}
+    n = sum(planned.values())
+    # **穴を探すのは、予定表が続いているあいだだけ**（2026-08-26 に踏んだ）。
+    #     控えの最後より先は「長尺が0本」ではなく「**まだ何も置いていない**」で、
+    #     混ぜると必ずいちばん長い連なりがそこになります（実測 10/06〜10/24 の19日）。
+    #     予約が切れていること自体は `status.py`「予約の先」が別に鳴らします。
+    last = last_scheduled_day()
+    far: list[str] = []
+    for i in range(365):
+        d = (start + timedelta(days=i)).strftime("%Y%m%d")
+        if last and d > last:
+            break
+        far.append(d)
+    dry: list[str] = [d for d in far if not pubs.get(d)]
+    best: tuple[str, str, int] | None = None
+    run: list[str] = []
+    for d in far:
+        if pubs.get(d):
+            run = []
+            continue
+        run.append(d)
+        if best is None or len(run) > best[2]:
+            best = (run[0], run[-1], len(run))
+    return {"per_publish": float(per_pub),
+            "per_day_planned": float(per_pub) * n / len(horizon),
+            "pubs_per_day": n / len(horizon),
+            "planned": planned,
+            "last_scheduled": last,
+            "dry_days": dry,
+            "dry_span": best}
+
+
+def last_scheduled_day(ledger_path: Path | None = None) -> str | None:
+    """**控えに入っている最後の予約日**（`YYYYMMDD`）。無ければ `None`。
+
+    形は問いません（長尺でもショートでも）。ここが要るのは
+    「**予定表がどこまで続いているか**」だけで、その先の空白は
+    「長尺を置いていない日」ではなく「まだ何も置いていない日」だからです。
+    """
+    p = ledger_path or LEDGER
+    if not p.exists():
+        return None
+    best: str | None = None
+    for line in p.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        at = row.get("at")
+        if not at:
+            continue
+        day = str(at)[:10].replace("-", "")
+        if len(day) == 8 and (best is None or day > best):
+            best = day
+    return best
 
 
 def _imp(row: dict) -> float:

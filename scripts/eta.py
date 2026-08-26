@@ -2134,18 +2134,35 @@ def _recent_surface() -> tuple[float, int, str] | None:
         if recent <= 0:
             return None
         return (recent, int(long.get("recent_days") or reach_split.RECENT_DAYS),
-                str(long.get("per_day_sustained_basis") or ""))
+                str(long.get("per_day_sustained_basis") or ""),
+                int(long.get("recent_zero_publish_days") or 0),
+                reach_split.surface_forecast(
+                    reach_split.summary(rows, reach_split.long_ids())),
+                float(long.get("ctr") or 0.0))
     except Exception:  # noqa: BLE001  （測れないことで回を止めない）
         return None
 
 
 def _with_recent_surface(mix: dict) -> dict:
-    """点に「いま続いている量」を足す。足せなければ**そのまま返す**。"""
+    """点に「いま続いている量」と「**これからの予定で立つ量**」を足す。
+
+    足せなければ**そのまま返す**（推測で埋めない）。
+    `imp_day_planned` の中身は `src/reach_split.surface_forecast()` の docstring。
+    """
     got = _recent_surface()
     if not got:
         return mix
-    return {**mix, "imp_day_recent": got[0], "imp_day_recent_days": got[1],
-            "imp_day_recent_basis": got[2]}
+    out = {**mix, "imp_day_recent": got[0], "imp_day_recent_days": got[1],
+           "imp_day_recent_basis": got[2], "imp_day_recent_dry": got[3]}
+    fc = got[4]
+    if fc:
+        out["imp_day_planned"] = fc["per_day_planned"]
+        out["imp_day_planned_pubs"] = fc["pubs_per_day"]
+        out["imp_day_per_publish"] = fc["per_publish"]
+        out["imp_day_dry_span"] = fc["dry_span"]
+    if len(got) > 5 and got[5]:
+        out["imp_ctr_long"] = got[5]
+    return out
 
 
 def _gate2_surface_basis(mix: dict) -> tuple[float | None, str, dict]:
@@ -2176,8 +2193,31 @@ def _gate2_surface_basis(mix: dict) -> tuple[float | None, str, dict]:
     recent = float(mix.get("imp_day_recent") or 0.0)
     mean = float(mix.get("imp_day_mean") or 0.0)
     top = float(mix.get("imp_day_max") or 0.0)
+    planned = float(mix.get("imp_day_planned") or 0.0)
+    dry_in_window = int(mix.get("imp_day_recent_dry") or 0)
     others = {"recent": recent or None, "mean": mean or None, "max": top or None,
-              "recent_days": mix.get("imp_day_recent_days")}
+              "recent_days": mix.get("imp_day_recent_days"),
+              "planned": planned or None,
+              "planned_pubs": mix.get("imp_day_planned_pubs"),
+              "per_publish": mix.get("imp_day_per_publish"),
+              "dry_span": mix.get("imp_day_dry_span"),
+              "ctr": mix.get("imp_ctr_long")}
+    # **窓が「公開を止めていた日」で埋まっているなら、中央値は段2 の答えではありません**
+    #     （2026-08-26。`src/reach_split.surface_forecast()` の docstring に実測）。
+    #     段2 の問いは「門2a を 450日 かけて開けられるか」で、
+    #     **これから長尺を何本 公開するかは控えに入っています**（API 0単位）。
+    #     公開が0本の日を1日でも窓に含んだ中央値は、
+    #     **「公開を止めたら面はいくつか」**の答えで、別の問いです。
+    #     **中央値のほうは消しません** —— `others["recent"]` にそのまま残り、
+    #     印字は両方を同じ行に並べます（どちらも正しく、問いが別だから）。
+    if planned > 0 and dry_in_window > 0:
+        pubs = float(mix.get("imp_day_planned_pubs") or 0.0)
+        per_pub = float(mix.get("imp_day_per_publish") or 0.0)
+        basis = (f"これから{mix.get('imp_day_recent_days') or 7}日の予約から"
+                 f"（公開1本あたり {per_pub:,.1f}回 × 長尺 {pubs:.2f}本/日）"
+                 f"。**直近の中央値 {recent:,.1f}回/日 は、"
+                 f"窓の{dry_in_window}日が長尺の公開0本だったぶん**")
+        return planned, basis, others
     if recent > 0:
         basis = (mix.get("imp_day_recent_basis")
                  or f"直近{mix.get('imp_day_recent_days') or 7}日の平均")
@@ -2211,6 +2251,16 @@ def _gate2_surface_note(imp_day: float, need_day: float,
         span = (f"　（同じ帳面の他の読み: 全期間の平均 {others['mean']:,.1f}"
                 f"／最大の1日 {others['max']:,.1f}回/日。"
                 "**天井にだけ最大を使い、段取りには使わないこと**）")
+    # **予定表の穴を、同じ行に出すこと**（2026-08-26）。面が公開で立つ以上、
+    #     長尺の予約が0本の日は面も0に近づきます。**足りている/足りないより先に、
+    #     どこで落ちるか**を見せる —— 直す先はサムネでも題でもなく、予定表です。
+    dry = others.get("dry_span")
+    if dry and dry[2] >= 3:
+        a, b, n = dry
+        span += (f"　[!] **{a[:4]}-{a[4:6]}-{a[6:]}〜{b[:4]}-{b[4:6]}-{b[6:]} の {n}日 は"
+                 f"長尺の予約が0本**です（控えの実物）。面は公開で立つので、"
+                 f"**そこで {imp_day:,.0f}回/日 は保ちません。**"
+                 f"直す先はサムネでも題でもなく、**その {n}日 に長尺を置くこと**")
     ratio = (need_day / imp_day) if imp_day else float("inf")
     # **「1.0倍 足りません」を印字しないこと。** 191 対 190.6 は倍率にすると
     #     ×1.00 で、丸めると「足りている」と読める字面になります。
@@ -2224,10 +2274,22 @@ def _gate2_surface_note(imp_day: float, need_day: float,
         return (head + f" **{ratio:,.1f}倍 足りません**。"
                 "**足りないのはインプレッションで、サムネと題（CTR）では動きません**"
                 "（`src/reach_split.py`）" + span)
+    # **「足りています」を裸で出さないこと**（2026-08-26）。この節は
+    #     **CTR 100% を仮に置いた面**の話で、実際に再生になるのは
+    #     `面 × 実測の CTR` です。要る CTR と実測を並べないと、
+    #     「面は足りている ＝ もう手はいらない」と読めます。
+    got_ctr = float(others.get("ctr") or 0.0)
+    need_ctr = need_day / imp_day * 100
+    gap_ctr = ""
+    if got_ctr > 0:
+        gap_ctr = (f"　**実測の CTR は {got_ctr:.2f}%** ＝ いまのままなら"
+                   f" 長尺の再生は 1日 {imp_day * got_ctr / 100:,.1f}回 で、"
+                   f"合格点に **{need_ctr / got_ctr:,.1f}倍 足りません**"
+                   "（面ではなく CTR が縛っている、と読むこと）")
     return (head + f" **面は足りています（{imp_day / need_day:,.1f}倍）** —— "
             f"ここから先で効くのは CTR のほうです"
-            f"（要る CTR {need_day / imp_day * 100:.1f}%・"
-            f"サムネと題。`src/reach_split.py`）" + span)
+            f"（要る CTR {need_ctr:.1f}%・"
+            f"サムネと題。`src/reach_split.py`）" + gap_ctr + span)
 
 
 def _trajectory_blocking(arms: dict, out: dict) -> list[str]:
