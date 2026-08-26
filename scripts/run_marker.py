@@ -420,8 +420,53 @@ def _eta_target() -> tuple[str | None, float | None, str]:
     return row.get("target_date"), row.get("days_to_target"), "据え置き"
 
 
+#: `CLAUDE.md` §「毎回の実行で必ずやること」が「出した」と呼ぶ4つ。
+#: **`scripts/drift.py` の `KINDS` と同じ並びです**（片方だけ変えないこと）。
+SHIP_KINDS = ("upload", "means", "verdict", "fix")
+
+
+def ship_kind_of(what: str, kind: str | None = None) -> str:
+    """ship の種別。**明示された欄があればそれ。無ければ `what` の頭の語。**
+
+    ## なぜ欄を足したか（2026-08-26・最適化の回）
+
+    `scripts/drift.py` の `_kind_of()` は `what` の**先頭の語だけ**を見ます。
+    その docstring は「**欄を足すのが本筋ですが、既存の240件を読めなくなる**ので」と
+    書いて、頭の語を読むほうを選んでいました。
+
+    **その理由は当たっていません。** 欄を足しても、欄の無い古い行は
+    頭の語で読めばよいだけです（この関数がそうしています）。
+
+    **選ばなかった代償は実測できます**（2026-08-26 18:5x）:
+
+        ship 381件 のうち **155件（41%）が「その他」**
+
+    中身は「その他」ではありません。同じ窓に、こういう行が入っています ——
+    「**長尺1本を 09/07 20:00 JST に予約（VG6EYTKXl1M）**」（＝ `upload`）、
+    「**M9（配信の上限は…）を実データで判定**」（＝ `verdict`）。
+    **upload も verdict も、実数はもっと多い。**
+
+    そして `drift.py` は `verdicts_tail == 0` を**漂流の門**に使っています
+    （`drifting = bool(od_now) and verdicts_tail == 0`）。
+    **門が、4割こぼす目盛りの上に乗っていました。**
+
+    ## 覆る条件
+
+    `data/runs.jsonl` の「その他」が 5% を下回ったら、この欄は要りません
+    （＝頭の語の慣習が守られている）。**それまでは書き続けること。**
+    """
+    if kind:
+        return kind
+    head = (what or "").strip().lower()
+    for k in SHIP_KINDS:
+        if head.startswith(k):
+            return k
+    return "その他"
+
+
 def ship(what: str, closes: list[str] | None = None, lever: str | None = None,
-         moves: int | None = None, reflect: bool = True) -> int:
+         moves: int | None = None, reflect: bool = True,
+         kind: str | None = None) -> int:
     """**この回が「出したもの」を1行残す。**（2026-08-15 追加）
 
     オーナーの指示（原文）: **「子が、少しの作業で終わるの直して」**
@@ -490,6 +535,13 @@ def ship(what: str, closes: list[str] | None = None, lever: str | None = None,
         "kind": "ship",
         "what": what,
     }
+    # **種別を、書く側が残します**（2026-08-26。理由は `ship_kind_of()`）。
+    rec["ship_kind"] = ship_kind_of(what, kind)
+    if rec["ship_kind"] == "その他":
+        print(f"[marker] [!] **種別が読めません**（`{'／'.join(SHIP_KINDS)}` のどれでもない）。"
+              f"`drift.py` の「直近20回の verdict」はこの欄を数えるので、"
+              f"**この1件は漂流の門から見えません。**"
+              f" 直すには `--kind <種別>` を足すか、`--ship \"verdict: ...\"` の形で書くこと")
     # **腕は `what` より先に置きません**（読む側が `what` の頭で見分けているため）。
     if lever:
         rec["lever"] = lever
@@ -924,6 +976,11 @@ def main(argv: list[str] | None = None) -> int:
                          "早まるなら負、遠のくなら正、動かさないなら 0）。"
                          "オーナー指示 2026-08-20 08:0x「毎回達成日時を早めることを"
                          "考えてから進めるようにして」。**次の回が実際の差と突き合わせます**")
+    ap.add_argument("--kind", metavar="種別", choices=sorted(SHIP_KINDS),
+                    help="**この ship の種別**（`upload`／`means`／`verdict`／`fix`）。"
+                         "省くと `--ship` の頭の語から読みます。"
+                         "**読めないと `drift.py` の漂流の門から見えません**"
+                         "（実測 2026-08-26: 381件 中 155件 が読めていませんでした）")
     ap.add_argument("--closes", metavar="語", action="append", default=[],
                     help="この ship で潰した持ち越しの語（`retro.py` の一覧に出る形で。"
                          "何度でも書ける）。**語が `-` で始まるときは "
@@ -987,7 +1044,7 @@ def main(argv: list[str] | None = None) -> int:
                      "出す前に言うこと（早まるなら負・遠のくなら正・動かさないなら 0）。"
                      "予測日は `python scripts/eta.py` の先頭3行に出ています")
         return ship(args.ship, args.closes, args.lever, args.moves,
-                    reflect=not args.no_reflect)
+                    reflect=not args.no_reflect, kind=args.kind)
     if args.moves is not None:
         ap.error("--moves は --ship と一緒に使ってください（出したものと対で残します）")
     if args.lever:

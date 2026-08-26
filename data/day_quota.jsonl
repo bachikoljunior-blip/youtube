@@ -3323,3 +3323,16 @@
 {"at": "2026-08-26T17:00:37+00:00", "detail": "scheduled_publish_times"}
 {"at": "2026-08-26T17:00:40+00:00", "detail": "playlistItems.insert"}
 {"at": "2026-08-26T17:00:40+00:00", "detail": "thumbnails.set uo0tBXrDscc"}
+{"at": "2026-08-26T18:13:19+00:00", "detail": "shorts_subs.channel_now"}
+{"at": "2026-08-26T18:26:36+00:00", "detail": "status: Data API 読み"}
+{"at": "2026-08-26T18:27:11+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-26T18:27:13+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-26T18:28:20+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-26T18:29:46+00:00", "ok": true, "detail": "videos.update vid1"}
+{"at": "2026-08-26T18:29:46+00:00", "ok": true, "detail": "videos.update vid1"}
+{"at": "2026-08-26T18:35:22+00:00", "detail": "status: Data API 読み"}
+{"at": "2026-08-26T18:35:55+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-26T18:35:58+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-26T18:36:59+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-26T18:38:18+00:00", "ok": true, "detail": "videos.update vid1"}
+{"at": "2026-08-26T18:38:18+00:00", "ok": true, "detail": "videos.update vid1"}

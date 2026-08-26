@@ -104,6 +104,40 @@ def _kind_of(what: str) -> str:
     return "その他"
 
 
+def _kind_of_rec(rec: dict) -> str:
+    """ship の1行の種別。**書く側が残した欄が先。無ければ頭の語。**
+
+    ## なぜ欄を先にするか（2026-08-26・最適化の回）
+
+    すぐ上の `_kind_of()` は `what` の**先頭の語だけ**を見ます。その docstring は
+    「**欄を足すのが本筋ですが、既存の240件を読めなくなる**ので」と書いて、
+    頭の語のほうを選んでいました。**その理由は当たっていません** ——
+    欄を足しても、欄の無い古い行は頭の語で読めばよいだけです（この関数がそれです）。
+
+    **選ばなかった代償**（2026-08-26 18:5x の実測）: **ship 381件 のうち 155件（41%）が
+    「その他」**。中身は「その他」ではありません ——
+    「長尺1本を 09/07 20:00 JST に予約（VG6EYTKXl1M）」（＝ `upload`）、
+    「M9（配信の上限は…）を実データで判定」（＝ `verdict`）が同じ袋に入っています。
+
+    **そしてこの数は門に乗っています** ——
+    `drifting = bool(od_now) and verdicts_tail == 0`。
+    **4割こぼす目盛りの上で、漂流かどうかを決めていました。**
+
+    `scripts/run_marker.py` が `ship_kind` を書くようにしたので、
+    **これ以降の行は正しく数えます。** 古い行は頭の語のままです
+    （＝過去の「その他 41%」は、この関数では減りません。**それが正しい**）。
+
+    ## 覆る条件
+
+    `data/runs.jsonl` の「その他」が 5% を下回ったら、欄は要りません。
+    そのときは `_kind_of()` だけに戻すこと。
+    """
+    k = rec.get("ship_kind")
+    if isinstance(k, str) and (k in KINDS or k == "その他"):
+        return k
+    return _kind_of(rec.get("what", ""))
+
+
 def load_runs(since: str | None = None) -> list[dict]:
     if not RUNS.exists():
         return []
@@ -305,7 +339,7 @@ def report(today: str, window_days: int = WINDOW_DAYS) -> tuple[str, bool]:
     since = (date.fromisoformat(today) - timedelta(days=window_days)).isoformat()
     runs = load_runs(since)
     n = len(runs)
-    kinds = Counter(_kind_of(r.get("what", "")) for r in runs)
+    kinds = Counter(_kind_of_rec(r) for r in runs)
     closes = sum(1 for r in runs if r.get("closes"))
     declared = sum(1 for r in runs if r.get("moves") is not None)
     nonzero = sum(1 for r in runs if r.get("moves"))
@@ -313,7 +347,7 @@ def report(today: str, window_days: int = WINDOW_DAYS) -> tuple[str, bool]:
     # 直近 STALE_ROUNDS 回に verdict があるか（窓ではなく件数で見る）
     all_runs = load_runs()
     tail = all_runs[-STALE_ROUNDS:]
-    verdicts_tail = sum(1 for r in tail if _kind_of(r.get("what", "")) == "verdict")
+    verdicts_tail = sum(1 for r in tail if _kind_of_rec(r) == "verdict")
 
     od = overdue(today)
     # **期限が来た ≠ 判定できる**（上の註）。門に載せるのは前だけ。
