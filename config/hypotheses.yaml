@@ -3228,11 +3228,43 @@ hypotheses:
     lever: per_video          # 2026-08-26 に rpm から直した。理由は note の末尾
     watch: 深い題のショート-16本
     needs:
+      # **2026-08-26 夜に数え直した。ここは「作った本」を数えていて、
+      #   `falsified_if` が要求しているのは「公開して分類が付いた本」でした。**
+      #
+      #     作った本（前の count_expr）        **16本** → 「足りています」
+      #     公開済みの `s-` でない本            **5本**（08/25 に3・08/26 に2）
+      #     そのうち `video_forms` が「ショート」  **0本**（Analytics は3日遅れ）
+      #     両群がそろう公開日                  **0日**（`falsified_if` は 3日 要る）
+      #
+      # **`--shrink` はその 16本 を読んで、期限を 09-03 → 08-29 → 08-26（今日）まで
+      #   縮めました。** つまり明日には「期限切れ・判定ゼロ」になるところでした
+      #   （`status.py` の外れの条件）。**判定できる本は1本もありません。**
+      #
+      # この回に `_ans_group_key` で直したのと**同じ形**です ——
+      # 台帳の件数だけを数えて、公開日を1日も数えていない。
+      # **数えるのは公開済みの本**にしました（分類は Analytics が追いつけば付きます。
+      # `falsified_if` の「`video_forms` が『ショート』」は1文字も緩めていません）。
+      # 床も `falsified_if` の「どちらも 8本」に合わせて 16 → 8。
+      # **`video_id` で畳むこと。** `uploaded.jsonl` は足すだけの帳面で、
+      # `reschedule.py` が公開時刻を動かすと同じ本がもう1行 増えます
+      # （`src/ab_split.published()` の同じ註）。実測 8行 / 7本。
       - kind: accrual
-        count_expr: sum(1 for r in rows('batch_runs.jsonl') if not r.get('long')
-          and str(r.get('at', ''))[:10] >= '2026-08-19' for x in r.get('results', []) or []
-          if x.get('video_id') and not str(x.get('topic', '')).startswith('s-'))
-        need: 16
+        count_expr: len({r['video_id'] for r in uploaded()
+          if r.get('video_id') and r.get('at')
+          and not str(r.get('topic', '')).startswith('s-')
+          and str(r['at'])[:10] >= '2026-08-19'
+          and str(r['at'])[:10] <= str(date.today())})
+        need: 8
+        since: "2026-08-19"
+      # **本数が満ちても、判定できるとは限りません。**
+      # `falsified_if` は「**使える日が 3日 未満なら判定できない**」と書いています
+      # （1本あたり再生を動かしている最大の要因は、その日に何本 出したか。
+      #  同じ題の種類で ×3.3 散る／主張している差は ×1.2）。
+      # 実測 2026-08-26 夜: **使える日 0日**（公開済みの処置 7本のうち、
+      # `video_forms` の分類が付いているのは 0本。Analytics は3日遅れ）。
+      - kind: accrual
+        count_expr: "deep_short_days()"
+        need: 3
         since: "2026-08-19"
     falsified_if: >
       2026-09-03 に、**齢48時間でそろえた**1本あたり再生を2群で比べ、

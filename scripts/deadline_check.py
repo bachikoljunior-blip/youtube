@@ -171,7 +171,49 @@ def ab_members(name: str) -> dict[str, int]:
     return {g: len(v) for g, v in judgeable.members(name).items()}
 
 
+def deep_short_days() -> int:
+    """**深い題ショートの前提が「判定できる日」の数**（`falsified_if` は 3日 要る）。
+
+    数えるのは「その公開日に、`s-` でない本と `s-` の本が**どちらも1本以上**、
+    しかも両方 `data/video_forms.json` で『ショート』と分類されている日」。
+
+    ## なぜ本数と別に要るか（2026-08-26 夜に数えて足した）
+
+    その前提の `needs` は本数しか見ておらず、**本数が満ちても判定できません** ——
+    `falsified_if` が「**使える日が 3日 未満なら判定できない**」と書いているのは、
+    1本あたり再生を動かしている最大の要因が**その日に何本 出したか**だからです
+    （同じ題の種類で ×3.3 散る。主張している差は ×1.2）。
+
+    実測 2026-08-26: 本数は「16本 足りています」なのに、**使える日は 0日**でした
+    （公開済みの `s-` でない本 7本のうち、分類が付いているのは **0本**。
+    Analytics は3日遅れなので、08/25・08/26 の本にはまだ何も付いていません）。
+    **期限はその日まで縮められていて、明日には「期限切れ・判定ゼロ」**でした。
+    """
+    forms = {}
+    fp = ROOT / "data" / "video_forms.json"
+    if fp.exists():
+        try:
+            forms = (json.loads(fp.read_text(encoding="utf-8")) or {}).get("forms") or {}
+        except (OSError, ValueError):
+            forms = {}
+    last: dict[str, dict] = {}
+    for r in uploaded():
+        if r.get("video_id") and r.get("at"):
+            last[str(r["video_id"])] = r          # **後の行が勝ち**（付け替えの控え）
+    days: dict[str, set[str]] = {}
+    for vid, r in last.items():
+        if forms.get(vid) != "ショート":
+            continue
+        day = str(r["at"])[:10]
+        if day > str(date.today()):
+            continue
+        side = "対照" if str(r.get("topic", "")).startswith("s-") else "処置"
+        days.setdefault(day, set()).add(side)
+    return sum(1 for sides in days.values() if len(sides) == 2)
+
+
 EXPR_NS = {"json": json, "rows": _rows, "date": date, "ab_members": ab_members,
+           "deep_short_days": deep_short_days,
            "latest_views": latest_views, "uploaded": uploaded, "long_ids": long_ids}
 
 
