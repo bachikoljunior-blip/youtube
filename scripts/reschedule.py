@@ -47,7 +47,8 @@ import functools  # noqa: E402
 
 from googleapiclient.errors import HttpError  # noqa: E402
 
-from src import auth, dupes, forms, history, measure_window, uploader  # noqa: E402
+from src import (auth, dupes, forms, history, measure_window,  # noqa: E402
+                 upload_cap, uploader)
 
 JST = timezone(timedelta(hours=9))
 # `--compact` で詰める日数の**床**。判定に要る3日＋1日（`compact_plan` の節）。
@@ -268,6 +269,14 @@ def _update(svc, video_id: str, publish_at: str | None,
             "  **まだ作り直さないこと。** §5「外す → 作る → 上げ直す」の順は、\n"
             "  ここで止まれば1本も捨てないためにあります"
         ) from exc
+    else:
+        # **通ったことも残すこと**（2026-08-26 に実測して足した）。
+        # 403 のあとに通った呼び出しは、**その 403 が日枠でなかった証拠**です
+        # （日枠は窓の中で戻らない）。`upload_cap.note_quota_ok` に理由。
+        try:
+            upload_cap.note_quota_ok(detail=f"videos.update {video_id}")
+        except Exception:                                      # noqa: BLE001
+            pass
 
 
 def compact_plan(rows: list[dict], *, now: datetime, step_min: int = 30,

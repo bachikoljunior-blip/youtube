@@ -149,6 +149,12 @@ def push_missing(dry_run: bool = False, force: bool = False) -> int:
         # **押せた本だけ印を消す。** 消してから押すと、落ちた本が
         # 一覧から消えて二度と拾われません
         critique_queue.mark_thumbnail_set(row["video_id"])
+        # **通ったことも残すこと**（2026-08-26）。403 のあとに通った呼び出しは、
+        # **その 403 が日枠でなかった証拠**です（`upload_cap.note_quota_ok`）。
+        try:
+            upload_cap.note_quota_ok(detail=f"thumbnails.set {row['video_id']}")
+        except Exception:                                      # noqa: BLE001
+            pass
         ok += 1
         print(f"[thumb] ✓ {row['video_id']}  https://youtu.be/{row['video_id']}")
     print(f"[thumb] **{ok} / {len(rows)} 本に載せました**")
