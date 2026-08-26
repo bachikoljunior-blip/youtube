@@ -213,7 +213,7 @@ def ripe_days(published: dict[str, datetime], now: datetime | None = None,
 
 def live_band(published: dict[str, datetime], values: dict[str, int],
               cap_n: int | None = None,
-              gap_min: float = 30.0) -> dict[str, list[int]]:
+              gap_min: float | None = None) -> dict[str, list[int]]:
     """`by_day()` と同じ形。ただし**その日の「生きる帯」の本だけ**を返す。
 
     帯の作り方は `src/day_cap.py` と同じ2段です:
@@ -226,13 +226,23 @@ def live_band(published: dict[str, datetime], values: dict[str, int],
     ここでそろえると、**残るのは間隔のちがいだけ**になります
     （帯の中はどちらの群も30分以上あいているので、厳密には
     「上限を外したときに、まだ差が残るか」を見ています）。
+
+    **2つの既定は、どちらも `src/day_cap.py` から引きます**（2026-08-26 に直した）。
+    `gap_min` はここに **`30.0` と写してありました** —— 一致しているのは
+    **いまの `day_cap.MIN_GAP_MIN` が 30.0 だから**であって、
+    向こうは**実測から動く数**です（`cap()` と同じ）。
+    動いた日に、**この判定だけが古い帯で数え続けます** ——
+    しかも同じ字で「`day_cap.py` と同じ2段です」と書いてあるので、
+    **読んでも気づけません。** `cap_n` は既に引いていたので、`gap_min` もそろえました。
     """
-    if cap_n is None:
+    if cap_n is None or gap_min is None:
         try:
             from . import day_cap
-            cap_n = day_cap.cap()
+            cap_n = day_cap.cap() if cap_n is None else cap_n
+            gap_min = day_cap.MIN_GAP_MIN if gap_min is None else gap_min
         except Exception:                                    # noqa: BLE001
-            cap_n = 10
+            cap_n = 10 if cap_n is None else cap_n
+            gap_min = 30.0 if gap_min is None else gap_min
     days: dict[str, list[tuple[datetime, int]]] = defaultdict(list)
     for vid, when in published.items():
         if vid in values:
