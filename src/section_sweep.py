@@ -1241,8 +1241,15 @@ def _refine_cliff(fn, base: dict, pname: str, default: float, key: str,
     if x0 is None or x1 is None or x1 == x0:
         return {"細かく刻めなかった": "区間が取れません"}
     fine_x, fine_y = [], []
-    for i in range(steps + 1):
-        x = x0 + (x1 - x0) * i / steps
+    # **行のあいだに点を置かないこと**（`_fine_xs`。2026-08-27 に `_refine_band` と
+    # 同じ穴をここでも塞いだ）。返す `細かく刻んだ手前 / 先` はそのまま節の数字に
+    # なるので、整数の軸に小数の崖を出すと誤情報になります。
+    #
+    # **整数の軸で区間が狭いと、刻んでも点が増えません**（`[5, 7]` に 8等分の
+    # 余地はない）。そのときは下の「刻んでも段が3つ未満です」に落ちます ——
+    # **格子がもう解像度いっぱいだ、という意味で正しい**ので、
+    # 「崖だ」と言い切らずに未判定にします。
+    for x in _fine_xs(x0, x1, steps):
         try:
             value = fn(**{**base, pname: _cast(default, x)})
         except Exception as exc:                       # noqa: BLE001
@@ -1318,8 +1325,10 @@ def _refine_plateau(fn, base: dict, pname: str, default: float, key: str,
         return {"止まり際を刻めなかった": "手前の点がありません（1点目から平ら）"}
     scale = max(abs(y_stop), 1.0)
     fine: list[tuple[float, float]] = []
-    for i in range(steps + 1):
-        x = x_prev + (x_stop - x_prev) * i / steps
+    # **行のあいだに点を置かないこと**（`_fine_xs`。2026-08-27 に `_refine_band` と
+    # 同じ穴をここでも塞いだ）。等分した点をそのまま渡すと、整数の軸に小数が渡り、
+    # 「**63.625歳から上は同じ**」のような、そのまま節にすれば誤情報になる x を返します。
+    for x in _fine_xs(x_prev, x_stop, steps):
         try:
             value = fn(**{**base, pname: _cast(default, x)})
         except Exception as exc:                       # noqa: BLE001
