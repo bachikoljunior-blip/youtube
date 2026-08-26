@@ -382,6 +382,38 @@
     ],
     "video_id": "pvN0_4zZleo"
   },
+  "jouto-koujo-kikime-1-4296bai": {
+    "charts": [
+      [
+        "426万3千円",
+        "487万3500円",
+        "609万4500円"
+      ],
+      [
+        "426万3千円",
+        "426万3千円",
+        "426万3千円",
+        "548万4千円",
+        "609万4500円"
+      ]
+    ],
+    "video_id": "RT0_pZl-jig"
+  },
+  "jouto-shoyu-kikan-1gatsu-1nichi": {
+    "charts": [
+      [
+        "792万6千円",
+        "406万3千円",
+        "284万2千円"
+      ],
+      [
+        "386万3千円",
+        "0円",
+        "マイナス122万1千円"
+      ]
+    ],
+    "video_id": "zwbEb9Fs4Jo"
+  },
   "jutaku-loan-kojo": {
     "charts": [
       [
@@ -475,6 +507,37 @@
       ]
     ],
     "video_id": "ou3pE36xgCI"
+  },
+  "keihi-choboo-919en": {
+    "charts": [
+      [
+        "2,504円",
+        "1,295円",
+        "0円"
+      ],
+      [
+        "3,812円",
+        "4,308円",
+        "4,308円"
+      ]
+    ],
+    "video_id": "ONvXI2r4-4A"
+  },
+  "keihi-nenrei-225en": {
+    "charts": [
+      [
+        "48万5440円",
+        "59万240円",
+        "48万5440円"
+      ],
+      [
+        "3万7300円",
+        "10万4800円",
+        "14万9800円",
+        "17万円"
+      ]
+    ],
+    "video_id": "mmetNUrDNZs"
   },
   "kogaku-iryohi-nobiru-kubun": {
     "charts": [
@@ -1547,6 +1610,17 @@
     ],
     "video_id": "vS6PGatxPQw"
   },
+  "s-ideco-nenshu-400-300-gyakuten": {
+    "charts": [
+      [
+        "833,800円",
+        "833,780円",
+        "1,115,600円",
+        "1,115,600円"
+      ]
+    ],
+    "video_id": "1IBZOQag6Tg"
+  },
   "s-ideco-nenshu150man-27600": {
     "charts": [
       [
@@ -1595,6 +1669,22 @@
       ]
     ],
     "video_id": "h94Fv_SnnC4"
+  },
+  "s-ideco-riri-5-deguchi-zei": {
+    "charts": [
+      [
+        "111万5600円",
+        "111万5600円",
+        "111万5600円",
+        "111万5600円"
+      ],
+      [
+        "0円",
+        "11万9480円",
+        "31万5363円"
+      ]
+    ],
+    "video_id": "JfqeRrpdAcU"
   },
   "s-ideco-saigo-no-1man2000-15-1": {
     "charts": [
@@ -5914,6 +6004,31 @@
       ]
     ],
     "video_id": "HA9GfVV9b4w"
+  },
+  "s-tousan-zeiritsu-sa": {
+    "charts": [
+      [
+        "344万円",
+        "120万円",
+        "224万円"
+      ],
+      [
+        "224万円",
+        "184万円",
+        "104万円",
+        "80万円"
+      ]
+    ],
+    "video_id": "tk6sCW_TrKA"
+  },
+  "s-tousan-zenmoney-zero": {
+    "charts": [
+      [
+        "344万円",
+        "344万円"
+      ]
+    ],
+    "video_id": "5d0Ox7N4UYM"
   },
   "s-tsukin-cliff-tie-15km-25km": {
     "charts": [
