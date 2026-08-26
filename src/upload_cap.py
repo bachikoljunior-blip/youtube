@@ -203,6 +203,14 @@ def note_quota_hit(now: datetime | None = None, detail: str = "") -> None:
     _note(DAY_QUOTA_HITS, now, detail)
 
 
+#: **窓が開いた直後の何分を「前の窓の尻尾」とみなすか**（2026-08-26 に足した）。
+#: 実測では最初の403が 0.1h/0.2h の2件と、6.6h 以降の7件に割れています
+#: （`day_quota()` の註）。**30分 は、その隔たりの左側だけを拾う値**です。
+#: 大きくしすぎると本当に尽きた窓を開いていると読みますが、
+#: **403 は単位を使わない**ので、外した側の損は失敗した呼び出し1回ぶんです。
+GRACE_MIN = 30
+
+
 def quota_hits_in_window(now: datetime | None = None) -> list[dict]:
     """いまの枠の中で観測した 403 quotaExceeded。**あれば単位枠は尽きています。**
 
@@ -352,6 +360,73 @@ class DayQuota:
     hits: int             # 観測した回数
     resets_at: datetime   # 窓が変わる時刻（UTC）
     line: str             # そのまま印字して読める1行
+
+
+def worth_a_try(now: datetime | None = None) -> bool:
+    """**閉じているが、一度は撃ってみる価値があるか**（2026-08-26 に足した）。
+
+    `day_quota().open` は変えません —— あちらは「日枠が尽きたと**言い切れるか**」で、
+    **外す向きは保守的なままが正しい**（`note_quota_ok` の節）。
+    ここが答えるのは別の問いです: **その `False` は、証拠で閉じたのか。**
+
+    ## なぜ要るか —— **反証の材料が、永久に出ません**
+
+    `note_quota_ok` は「**403 のあとに通った呼び出しがあれば、あの403は日枠ではない**」
+    という、実測にもとづく反証の道です。**正しい。ただし材料が要ります** ——
+    誰かが実際に `videos.update` を撃って、通らなければ何も記録されません。
+
+    ところが**撃つ側は全部この門の下にいます**（2026-08-26 に数えた）:
+
+        scripts/batch_build.py  `_pull_verdicts_first()` / `_push_thumbnails_first()`
+        scripts/refresh_thumbnail.py
+
+    門が閉じている ＝ 撃たない ＝ 成功が記録されない ＝ **門は閉じたまま。**
+    自分で自分を閉じ込めます。**開くのは、人が手で `reschedule.py --move` を
+    撃った回だけ** —— この輪が何度も踏んでいる「人の操作が要る道」です
+    （`docs/GOAL.md`「人の操作が要る道を、計画の柱にしないこと」）。
+
+    実測 2026-08-26: 16:12 の 403 ひとつで門が閉じ、**その窓の残り 23.7時間**
+    ぶんの `videos.update` が全部降りました。その 403 は日枠ではありません
+    （16:13 に同じ本が手で動いています ＝ 短い間に撃ちすぎた側）。
+
+    ## 何を見るか
+
+    **窓が開いて `GRACE_MIN` 以内の 403 しか無い**なら True。
+    実測（`data/day_quota.jsonl` 2946件・9つの窓。窓が開いてから最初の403まで）:
+
+        0.1h  0.2h │ 6.6h  7.4h  7.6h  8.1h  10.6h  12.2h  14.4h
+        ↑2件        │ ↑7件      **6.4時間の隔たりで、きれいに2つに割れています**
+
+    左の2件はどちらも**直前の窓が重く尽きていた日**で、しかも 08/26 は
+    その窓の `videos.insert` が **0本**でした。**何も使っていない窓は尽きません。**
+
+    **試すのはタダです。** 403 は単位を消費しません（消費するのは通った呼び出し
+    だけ）。外した損は失敗した1回ぶん、撃たない損は 23.7時間ぶん全部。
+    **賭けが非対称なので、一度だけ撃つ側へ倒します。**
+
+    ## 覆る条件
+
+    - 猶予の外に 403 が1つでも出たら **False**（本当に尽きた窓なので、今までどおり降りる）
+    - 撃った結果が通れば `note_quota_ok` が記録し、**次からは `open` が True**
+      になるので、ここは読まれなくなります。**こちらは呼び水だけ**です
+    - 「窓が開いた直後の403だけで閉じていた回」が実測から消えたら、この関数は消してよい
+    """
+    now = now or datetime.now(timezone.utc)
+    try:
+        hits = quota_hits_in_window(now)
+    except Exception:                                          # noqa: BLE001
+        return False
+    if not hits:
+        return False                       # 閉じていない。ここの出番ではない
+    try:
+        if quota_ok_after_hits(now):
+            return False                   # 既に反証済み ＝ `open` が True 側で拾う
+    except Exception:                                          # noqa: BLE001
+        pass
+    head = window_start(now)
+    late = [h for h in hits
+            if (_parse(h.get("at")) or head) >= head + timedelta(minutes=GRACE_MIN)]
+    return not late
 
 
 def day_quota(now: datetime | None = None) -> DayQuota:
