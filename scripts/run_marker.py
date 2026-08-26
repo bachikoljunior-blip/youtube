@@ -464,6 +464,9 @@ def ship_kind_of(what: str, kind: str | None = None) -> str:
     return "その他"
 
 
+run_marker_ship_kind = ship_kind_of
+
+
 def ship(what: str, closes: list[str] | None = None, lever: str | None = None,
          moves: int | None = None, reflect: bool = True,
          kind: str | None = None) -> int:
@@ -1043,6 +1046,30 @@ def main(argv: list[str] | None = None) -> int:
                      "**この成果で予測日が何日動く見込みか**を、"
                      "出す前に言うこと（早まるなら負・遠のくなら正・動かさないなら 0）。"
                      "予測日は `python scripts/eta.py` の先頭3行に出ています")
+        # **種別も書かせる**（2026-08-27。**この回が自分で踏んだ**）。
+        #
+        # `ship_kind_of()` は 2026-08-26 に `--kind` の欄を足しましたが、
+        # **書かせる門はどこにも作りませんでした** —— 頭の語が種別で始まらない
+        # 回は「その他」で通り、`drift.py` の漂流の門（`verdicts_tail == 0`）から
+        # 消えます。実測: `ship` 381件 のうち **155件（41%）が「その他」**。
+        #
+        # 2026-08-27 05:0x の回は、その欄が足された **86分後**に、
+        # 「jutaku に節2件 → 長尺の族 11→13 → 長尺1本を予約（vuhvrJ1CkBE）」で
+        # 踏んでいます（中身は明らかに `upload`）。警告は**書いた後**に出るので、
+        # 気づいた回が `data/runs.jsonl` を手で直すことになりました。
+        #
+        # **`--lever` と同じ形の門にします。** あちらは 2026-08-19 に
+        # 「無いと通らない」にしたことで、以後の ship に必ず腕が付きました。
+        # **註や警告ではなく、通さないことだけが効いています。**
+        #
+        # **覆る条件**: `data/runs.jsonl` の直近100件の「その他」が 0 のまま
+        # 30日 続いたら、頭の語の慣習が定着したということなので、この門は要りません。
+        if run_marker_ship_kind(args.ship, args.kind) == "その他":
+            ap.error("--kind が要ります（--ship と対）。"
+                     f"種別は `{'／'.join(sorted(SHIP_KINDS))}` のどれか —— "
+                     "`what` の頭がその語で始まっていれば書かなくて通ります。"
+                     "**`drift.py` の漂流の門（直近20回の verdict）がこの欄を数えます** —— "
+                     "空けると、その回は門から見えません")
         return ship(args.ship, args.closes, args.lever, args.moves,
                     reflect=not args.no_reflect, kind=args.kind)
     if args.moves is not None:
