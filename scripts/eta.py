@@ -52,6 +52,7 @@ import functools
 import json
 import math
 import os
+import re
 import subprocess
 import sys
 from collections import deque
@@ -3353,7 +3354,7 @@ def _planned_lines(bar: str, tr: dict | None, base: dict | None) -> list[str]:
                      " 台帳を書き換えれば配分は変わります"
                      "（`config/hypotheses.yaml` の `lever`）。"
                      " **どの腕が早いかは `python scripts/eta.py --alloc`**"
-                     "（API 0単位・約80秒。毎回は撃たない）")
+                     "（API 0単位・**実測 4分**。毎回は撃たない）")
         # **`lever_hint` とは別の問いです**（2026-08-26 に足した理由）。
         #     `lever_hint` は「**いま どの床が遅いか**」＝ 診断で、
         #     `--alloc` は「**次の前提をどの腕に立てるか**」＝ 配分の選択。
@@ -3427,6 +3428,10 @@ def _points(*, reflect: bool = False, offline: bool = False) -> list[dict]:
 #: 増やす前に「頭と尾しか読まれない」という前提のほうを疑うこと。
 FLAG_LIMIT = 12
 
+#: `[!]` を**印として**打った所だけを拾う。行頭か、composed な行の区切り（全角空白）の直後。
+#: **文の途中の `[!]` は、たいてい他人の文言の引き写しです**（ship の1行など）。
+FLAG_MARK = re.compile(r"(?:^|　)[ \t]*\[!\][ \t]*")
+
 
 def flagged(said: list[str], width: int = 116) -> list[str]:
     """**この回の出力の中で `[!]` が付いた所を、尾（読まれる場所）へ運ぶ。**
@@ -3468,8 +3473,13 @@ def flagged(said: list[str], width: int = 116) -> list[str]:
     for i, line in enumerate(said):
         if "[!]" not in line:
             continue
-        for frag in line.split("[!]")[1:]:
-            t = " ".join(frag.split())
+        # **文の途中の `[!]` は拾わないこと**（2026-08-26 夜、入れた直後に踏んだ）。
+        #     `levers.report()` は `data/runs.jsonl` の ship の1行をそのまま印字します。
+        #     私自身が `--ship "eta の [!] 11本 を尾へ運び…"` と書いたので、
+        #     **自分の ship の文言が「名指しされた欠陥」として尾に並びました。**
+        #     印である `[!]` は、行頭か、composed な行の区切り（全角空白）の直後にしか出ません。
+        for m in FLAG_MARK.finditer(line):
+            t = " ".join(line[m.end():].split())
             if not t:
                 continue
             key = t[:40]
@@ -5035,7 +5045,7 @@ def main() -> int:
     # **毎回は撃ちません**（軌跡1本 15〜20秒 × 腕4つ）。頭の3行が
     # 「過去の配分」と「台帳の配分」の差を出すので、**その差が気になった回だけ。**
     ap.add_argument("--alloc", action="store_true",
-                    help="次の前提をどの腕に立てるのが早いか、腕べつに解く（API 0単位・約80秒）")
+                    help="次の前提をどの腕に立てるのが早いか、腕べつに解く（API 0単位・**実測 4分**）")
     args = ap.parse_args()
 
     if args.alloc:

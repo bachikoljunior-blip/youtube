@@ -40,11 +40,29 @@ def test_bang_が無ければ何も足さない():
 
 
 def test_同じ行に_bang_が2つあっても両方運ぶ():
-    said = ["  [!] 前の話です。 [!] **後ろの話です**"]
+    # **区切りは全角空白**（`_gate2_surface_note` が composed な行を作るときの形）
+    said = ["  [!] 前の話です。　[!] **後ろの話です**"]
     out = eta.flagged(said)
     assert "2件" in out[0]
     body = "\n".join(out)
     assert "前の話" in body and "後ろの話" in body
+
+
+def test_文の途中の_bang_は拾わない():
+    """**他人の文言の引き写しを、名指しされた欠陥として並べないこと。**
+
+    実測 2026-08-26 夜（`flagged()` を入れた直後に踏んだ）——
+    `levers.report()` は `data/runs.jsonl` の ship の1行をそのまま印字する。
+    その回の ship が `"eta の [!] 11本 を尾へ運び…"` だったので、
+    **自分の ship の文言が尾の「名指しされた欠陥」に並んだ。**
+    """
+    said = ["  この回の ship: eta の [!] 11本 を尾へ運んだ",
+            "  [!] **これは本物の警告です**"]
+    out = eta.flagged(said)
+    assert "1件" in out[0]
+    body = "\n".join(out)
+    assert "本物の警告" in body
+    assert "尾へ運んだ" not in body
 
 
 def test_同じ警告は1回だけ():
