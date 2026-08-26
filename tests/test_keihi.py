@@ -260,3 +260,20 @@ def test_経費と控除の差の坂は控除の額とぴったり同じ幅():
     assert rp["満額になる所得"] == keihi.JIGYOZEI_KOJO + rp["額"]
     # 満額の1円下は、まだ満額ではない。
     assert rp["1円下の差"] < rp["満額の差"]
+
+
+def test_天井は最高税率の段で止まる():
+    cl = keihi.ceiling()
+    steps = keihi.ceiling_steps()
+    assert cl["速算表の税率"] == 45
+    assert cl["値打ち"] == keihi.marginal(1_000_000_000)["値打ち"]
+    # **段は上へ行くほど高い**（国保が消えたあとは速算表だけが動かす）。
+    got = [r["値打ち"] for r in steps]
+    assert got == sorted(got)
+    # 天井の内訳: 国保は1円も効かない。住民税と事業税は所得で動かない。
+    for r in steps:
+        assert r["国保の減り"] == 0
+        assert r["事業税の減り"] == int(keihi.STEP * keihi.JIGYOZEI_RATE)
+        assert r["住民税の減り"] == int(keihi.STEP * keihi.JUMIN_RATE)
+    # **速算表の税率そのものより、必ず高い**（この表の主題）。
+    assert cl["実効率"] > 0.45
