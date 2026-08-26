@@ -536,7 +536,16 @@ def member_drops(profit: int, max_members: int = 20) -> list[dict]:
 
 
 def member_limit(profit: int, max_members: int = 30) -> dict | None:
-    """**経費1万円で国保が1円も減らなくなる人数。** 賦課限度額に当たった点です。"""
+    """**経費1万円で国保が1円も減らなくなる人数。**
+
+    **「賦課限度額に当たった点」とは限りません**（2026-08-26 に踏んだ）。
+    0 になる理由は2つあり（`kokuho_zero_reason`）、
+    **所得の下端では「所得割がそもそもかかっていない」ので 1人目から 0** です。
+    所得 1,000,000円 で撃つと「1人目で止まる」と返りますが、
+    **所得 12,000,000円 の「1人目で止まる」と意味が正反対**です。
+    `MEMBER_PROFITS` は 500万円 から始まっているので既存の表は無傷ですが、
+    **低い所得を渡すときは `理由` を読むこと。**
+    """
     for m in range(1, max_members + 1):
         g = marginal(profit, members=m)
         if g["国保の減り"] == 0:
@@ -547,6 +556,7 @@ def member_limit(profit: int, max_members: int = 30) -> dict | None:
                 "実効率": g["実効率"],
                 "1人のときの値打ち": marginal(profit)["値打ち"],
                 "落ちる額": marginal(profit)["値打ち"] - g["値打ち"],
+                "理由": kokuho_zero_reason(profit, m)["理由"],
             }
     return None
 
