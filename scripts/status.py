@@ -683,7 +683,14 @@ def print_hypotheses() -> None:
                 for v in sorted(_late, key=lambda x: -x.waits)[:5]:
                     print(f"      {v.ready} に判定できるのに {v.deadline}"
                           f"（{v.waits}日）  {v.claim[:36]}")
-                print("      → `deadline` をその日まで**縮めること**。"
+                # **手で直せと言わないこと**（2026-08-26・最適化の回）。
+                # ここは 08-25 22:5x から「縮めること」と言い続け、
+                # **666 commits のあいだ 1件も縮みませんでした**（待ちは 46日 → 67日）。
+                # 印字が読まれていないのではなく、**印字は判断を要求します。**
+                # 毎周「1件 出す」に追われている側では、判断の要る行は必ず負けます。
+                print("      → `python scripts/deadline_check.py --shrink` で"
+                      "**縮めること**（**判断は要りません・API 0単位**。"
+                      "`falsified_if` には触りません）。"
                       "**この回の成果になります**（`verdict` を1件 前倒しできます）")
             print("  詳しくは `python scripts/deadline_check.py`。"
                   "**動かすのは期限だけ。`falsified_if` は緩めないこと。**")
