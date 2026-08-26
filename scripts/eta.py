@@ -3021,7 +3021,39 @@ def plan(m: dict, a: dict, density: int = PLAN_PUBLISH_PER_DAY,
         #     **点そのものが無い回では測り直しません** —— 「測っていない」を
         #     「面だけ測れている」に変えると、段2 の注記が推測で出ます
         #     （`tests/test_eta_surface_cap.py`「面が測れていなければ出ない」）。
-        if mix and not mix.get("imp_day_recent"):
+        #
+        # **`imp_day_recent` が入っているかで測り直しを止めないこと**（2026-08-27 に踏んだ）。
+        #     ここは長らく `if mix and not mix.get("imp_day_recent")` でした。
+        #     書いた当時 `_with_recent_surface()` が足す欄は `imp_day_recent` の1つで、
+        #     **「入っているなら測り直す必要はない」は正しかった**。
+        #     その後この関数は欄を **6つ** 足し（`imp_day_recent_basis` /
+        #     `imp_day_planned` / `imp_day_planned_pubs` / `imp_day_per_publish` /
+        #     `imp_day_dry_span` / `imp_ctr_long`）、**門が全部まとめて塞ぎました。**
+        #
+        #     実測（2026-08-27・積んである点は 08-26 のもの）:
+        #
+        #       いま     面 318.9回/日（`per_day_recent` ＝ **平均**）
+        #                → 「**面は足りています（1.8倍）** —— 効くのは CTR のほう」
+        #       測り直す  面 876.9回/日（これからの予約から）・実測 CTR 1.44%
+        #                → 同じ行に「**合格点に 14.1倍 足りません**」が付く
+        #
+        #     `imp_ctr_long` が空だと `_gate2_surface_note()` の `gap_ctr` が
+        #     **1文字も出ません**。あれは 2026-08-26 に
+        #     「**面は足りていますを裸で出さないこと**」として足した門で、
+        #     **足した日から一度も効いていませんでした**（積んである点は必ず
+        #     `imp_day_recent` を持つので、門はいつも閉じている）。
+        #     そのあいだ段2 の行は「効くのは CTR のほう」と腕まで名指しし、
+        #     同じ帳面を読む `src/reach_split.render()` は
+        #     「**足りないのはインプレッションで、サムネと題では動きません**」と
+        #     **正反対**を出していました（「同じ帳面の読み手2つが逆を向く」の5件目）。
+        #
+        #     `_recent_surface()` は `lru_cache` 付きで **API 0単位**・実測 0.1秒 なので、
+        #     止める理由は速さの側にもありません。**積んである値は使わず、毎回 測り直すこと** ——
+        #     `imp_day_recent` は 2026-08-26 に**定義そのものが変わって**おり
+        #     （平均 → 立ち上がりを外した中央値）、**古い点の値は欠けているのではなく違います。**
+        #     **覆る条件**: `_with_recent_surface()` が重くなったら、
+        #     止めるのは呼び出しではなく `_recent_surface()` の中身のほう。
+        if mix:
             mix = _with_recent_surface(mix)
     else:
         mix = dict(mix)

@@ -48,6 +48,13 @@ MIX = {
     #     **この検査の当たりが、その日の帳面で動きます** ——
     #     `docs/trigger_main.md` §4「既知の当たりを実データの偶然に置かないこと」。
     #     2026-08-20 の点なので、当時の面（37.6回/日）をそのまま置きます。
+    #
+    # **ただし、これだけでは隔離になりません**（2026-08-27 に直した）。
+    #     この欄が「有れば測り直さない」ことに寄りかかっていましたが、
+    #     **`plan()` のあの門は、本番では CTR の実測を1文字も出させない欠陥**でした
+    #     （`tests/test_eta_surface_recompute.py`）。門を外したので、
+    #     隔離は `_plan()` が `_recent_surface` を明示で塞いで作ります。
+    #     **検査の隔離を、本番側の門に頼らないこと。**
     "imp_day_recent": 37.588235294117645,
     "imp_day_recent_days": 7,
     "why": "長尺の面 37.6回/日 × CTR100% ＝ 再生の 13.0% が上限 → 実効RPM ¥313",
@@ -70,6 +77,10 @@ def _measured(**over):
 
 def _plan(monkeypatch, mix=MIX, **over):
     monkeypatch.setattr(eta.rpm_mix, "last", lambda *a, **k: mix)
+    # **実データの帳面を塞ぐ**（2026-08-27）。`_recent_surface()` が `None` を返すと
+    #     `_with_recent_surface()` は点をそのまま返すので、上の `MIX` の 37.6 が残ります。
+    #     ここを塞がないと、当たりが `data/reach.jsonl` のその日の中身で動きます。
+    monkeypatch.setattr(eta, "_recent_surface", lambda *a, **k: None)
     m = _measured(**over)
     return eta.plan(m, eta.analyse(m))
 
