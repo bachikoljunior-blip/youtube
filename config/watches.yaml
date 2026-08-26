@@ -202,7 +202,9 @@ watches:
     need: 15000
 
   - id: 冒頭のstatの割り方-両群16本
-    what: 「冒頭の stat は 前提を先・数字を後 に割ったほうが engaged が上がる」の判定（期限 2026-09-20）
+    # **期限は台帳が正本**（2026-08-26）。文面は「期限 2026-09-20」でしたが、台帳は **2026-10-06**。
+    # `deadline_of()` は台帳を先に読むので実害は出ませんが、**人が yaml を読むと間違えます。**
+    what: 「冒頭の stat は 前提を先・数字を後 に割ったほうが engaged が上がる」の判定
     cond: 処置(後)・対照(前)のどちらの群も、落ち着いた本が16本（`src/ab_split.MIN_PER_GROUP`）
     then: python -m src.judgeable
     source: src/judgeable.py
