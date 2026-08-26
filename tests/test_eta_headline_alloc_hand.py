@@ -141,3 +141,46 @@ def test_台帳の付け札が実際に測っているものと合っている�
         "後ろへ動きます**（2026-08-26 の実測: 2件で 12日）。\n"
         "実際に測っている腕へ置き直すか、鎖を `note` に書くこと:\n  - "
         + "\n  - ".join(naked))
+
+
+# --- **閉じた仕事を、道具が毎回 名指ししないこと**（2026-08-27 に足した） ---
+#
+# すぐ上の `test_台帳の付け札が…` が守っているのは**台帳の中身**です。
+# ここで守るのは**印字のほう** —— 同じ照合を「先にやれ」と毎回 言い続けないこと。
+#
+# 実測 2026-08-27 07:5x のサブ: 頭の3行から
+# 「**付け札が実際に測っているものと合っているかを、先に見ること** ——
+#   2026-08-26 は、それだけで 12日 動きました」を読み、開いた19件を並べ直し、
+# **`docs/JOURNAL.md` に「開いた21件を1件ずつ当たって付け替え0件」と
+# 2回 書いてあるのを見つけて捨てました**（約8分）。
+# `retro.py` の持ち越しに `eta.py` が3回 並んでいるのと同じ形です。
+#
+# **空欄（`unassigned`）は機械で数えられます。そこだけ名指しすること。**
+
+
+def _lines_unassigned(n: int, monkeypatch) -> str:
+    """`unassigned` を差し替えて、配分の差のある回を撃つ。"""
+    tr = _tr(22.0)
+    tr["planned"]["planned"]["unassigned"] = n
+    base = {"days": 124.0, "date": date(2026, 12, 28),
+            "t_work": 50, "plan_days": 73.0, "blocking": []}
+    monkeypatch.setattr(eta.arm_speed, "next_close",
+                        lambda *a, **k: {"on": date(2026, 8, 27), "days": 1,
+                                         "open": 16, "source": "ready"})
+    monkeypatch.setattr(eta, "_ready_by_claim", lambda *a, **k: {})
+    return "\n".join(eta.headline(_pl(), tr={**tr, "base": base}))
+
+
+def test_空欄が0なら付け札の照合を次の一手として名指ししないこと(monkeypatch):
+    out = _lines_unassigned(0, monkeypatch)
+    assert "一巡ずみ" in out, out
+    assert "先に見ること" not in out, (
+        "空欄が0件なのに、済んだ照合を『先にやれ』と名指ししています。"
+        "**頭の3行しか読まない手順では、これが次の一手に見えます。**\n" + out)
+
+
+def test_空欄があるならそこだけは名指しすること(monkeypatch):
+    """空欄は θ にも配分にも入らないので、**これは本物の穴**です。"""
+    out = _lines_unassigned(3, monkeypatch)
+    assert "空欄が 3件" in out, out
+    assert "一巡ずみ" not in out, out
