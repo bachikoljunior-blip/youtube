@@ -283,8 +283,20 @@ def arm_state(eta_row: dict | None) -> dict:
     #     **唯一開いている門について何も言っていません。**
     #     数字は足しません（長尺の面の上限は**まだ一度も測っていない**ので、
     #     足せば推測を実測に見せることになります）。**名前だけ正します。**
-    if dead_why.get("density") == "天井" and not _long_surface_measured():
-        dead_why["density"] = "天井（**ショートの面だけ。長尺の面は未測定**）"
+    #     **2026-08-26 夜に直した。** ここは `and not _long_surface_measured()` で
+    #     囲ってありました。**2つの別のことを1つの条件に畳んでいます**:
+    #         (あ) この数字が**どの面のものか**  …… いつでも「ショートの面」
+    #         (い) **もう片方の面を測ったか**    …… 日によって変わる
+    #     `src/day_cap.long_form()` が 08/21 の 7本（生きた 5本）を拾って
+    #     `collapsed` を True にした瞬間、(い) が反転し、**(あ) の名前ごと消えました** ——
+    #     `dead_why["density"]` が裸の「天井」に戻り、
+    #     `tests/test_levers_density_surface.py` が 3件 赤いまま 20時間 残りました。
+    #     **名前は、旗が立っても消えません。** 分けて言います。
+    if dead_why.get("density") == "天井":
+        if _long_surface_measured():
+            dead_why["density"] = "天井（**ショートの面の数。長尺の面も測って天井**）"
+        else:
+            dead_why["density"] = "天井（**ショートの面だけ。長尺の面は未測定**）"
     # **そして、面が割れているなら `density` は死んでいません**（2026-08-26）。
     #     上の1行は**名前を正すだけ**で、`density` は「死んだ腕」に入ったままでした。
     #     だから `--ship --lever density` はいまも叱られ、

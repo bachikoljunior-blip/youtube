@@ -119,10 +119,31 @@ def test_読めないときは未測定の側へ倒す(monkeypatch):
     assert levers._long_surface_measured() is False
 
 
-def test_実物でも未測定のまま():
-    """長尺の面の上限を測ったと言い出したら、この検査が落ちます。
+def test_実物の値は_day_capのcollapsedをそのまま映す():
+    """**値をべた書きしない。関係のほうを縛る。**（2026-08-26 夜に書き換えた）
 
-    落ちたのが**本当に測れたから**なら、`src/day_cap.long_form()` の
-    `measured` を見直したうえで、この検査ごと書き換えること。
+    もとは `assert levers._long_surface_measured() is False` でした。
+    docstring は「落ちたのが**本当に測れたから**なら書き換えること」と
+    断ってあり、**実際にそうなりました**:
+
+        4af0005（08-25 23:38）  day_cap が長尺を齢48時間でそろえて数え直し、
+                                08/21 の **7本（生きた 5本）** を拾って
+                                `collapsed` を True にした
+        1b601a8（08-25 23:44・6分後）
+                                levers 側の docstring を直したが、
+                                **「値は False のまま」と書いた** ——
+                                6分前に True になっていた
+        → この検査は **20時間 赤いまま**残り、
+          `dead_why["density"]` から「ショートの面」の名前が消えたことも
+          道連れで隠れていました（同じファイルの2件）
+
+    **べた書きは、その日の姿を検査に焼き付けます。** 焼き付けた値は
+    データが動いた日に落ち、落ちた検査は「実装が壊れた」と読まれます。
+    ここが本当に守りたいのは **`levers` が `day_cap` の答えをそのまま映すこと**なので、
+    それを縛ります。**この検査は、データが動いても落ちません。**
+
+    **覆る条件**: `_long_surface_measured()` が `collapsed` 以外のものを
+    見るようになったら（例: 日数の下限を足す）、ここもその定義に合わせること。
     """
-    assert levers._long_surface_measured() is False
+    from src import day_cap
+    assert levers._long_surface_measured() is bool(day_cap.long_form().get("collapsed"))
