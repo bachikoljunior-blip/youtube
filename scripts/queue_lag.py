@@ -599,11 +599,30 @@ def band_lines(rows: list[dict],
         作る速さ    13.6〜20本/日（`python -m src.supply`）
         帯の空き    下に実測（`batch_build._band_grid()` の空き枠）
 
+    ## **平均で割らないこと**（2026-08-27 に直した。実測で 11日 楽観でした）
+
+    ここは長らく「帯の空き枠の**1日あたり平均** ÷ 足りない本数」でした。
+    **置く側はそう置きません** —— `batch_build.live_plan()`（＝ `live_ring()` の中身）は
+    **手前の日から順に埋めます。** 予約は先の日ほど疎なので、
+    **平均は先の空いている日に持ち上げられ、手前の詰まりを隠します。**
+
+        平均で割ると      1日 5.7枠 → 128本 に **23日**
+        実際に置くと      128本目は **+34日**（`live_plan(128)` の最後の1本）
+
+    **11日 の差**です。しかもこの差は「材料と枠のどちらが先に尽きるか」の
+    比較にそのまま乗ります（`docs/JOURNAL.md` 2026-08-26「枠と材料は釣り合っています」）。
+    **平均に戻したら `tests/test_queue_lag_band_walk.py` が落ちます。**
+
+    平均も**残して並べます** —— 消すと、次に読む側が
+    「なぜ 23日 ではなく 34日 なのか」を追えません。
+
     ## 覆る条件
 
     帯の下端 `batch_build.PROVEN_FROM_MIN`（09:00）は
     **08/27 の切り分け待ち**です。「09:00 より前も生きる」と出れば
-    枠は 10 → 18 に増え、ここの日数はほぼ半分になります。
+    枠は 10 → 18 に増え、ここの日数が縮みます（**半分にはなりません** ——
+    `day_cap.cap()` が 1日 10本 で頭を打つので、`live_plan` の側で
+    上限に達した日は後ろへ回されます）。
     その日が来たら、この節の数字が勝手に動きます（写さないこと）。
     """
     if not short:
@@ -635,9 +654,22 @@ def band_lines(rows: list[dict],
     out = [f"{bar}**足りないのは本で、入れ替えでは増えません**（{who}）。"
            "**作って帯へ置くこと** —— 群はテーマIDで自動に割れるので"
            "（`src/script_writer`）、ふつうのショートで埋まります"]
-    out.append(f"{bar}帯（`batch_build._band_grid()`・{len(grid)}枠/日）の空き"
-               f" **1日 {per:.1f}枠** → 足りない {need}本 に"
-               f" **{need / max(per, 0.01):.0f}日**")
+    walk = _walk_days(batch_build, need, grid)
+    if walk is None:
+        out.append(f"{bar}帯（`batch_build._band_grid()`・{len(grid)}枠/日）の空き"
+                   f" **1日 {per:.1f}枠** → 足りない {need}本 に"
+                   f" **{need / max(per, 0.01):.0f}日**"
+                   "（**平均です。置く側は手前から埋めるので、これは楽観**）")
+    else:
+        last, days_n = walk
+        out.append(f"{bar}帯（`batch_build._band_grid()`・{len(grid)}枠/日）に"
+                   f" いまから {need}本 を置くと、**最後の1本は {last:%m/%d}"
+                   f"（+{days_n}日）**"
+                   " ← `batch_build.live_plan()`（**置く側と同じ手順**。手前の日から埋める）")
+        out.append(f"{bar}  参考: 空き枠の**平均**で割ると 1日 {per:.1f}枠 →"
+                   f" {need / max(per, 0.01):.0f}日。**{days_n - round(need / max(per, 0.01)):+d}日"
+                   " ちがいます** —— 平均は、先の空いている日に持ち上げられます"
+                   "（**平均のほうを判断に使わないこと**）")
     # **08/27 の切り分けが決めるのは、この差です。**
     #   `PROVEN_FROM_MIN` の註は「枠が 10 → 18 に増える」としか言っていません。
     #   増えて**何日 早まるか**を並べないと、あの測定の値打ちが誰にも見えません。
@@ -649,15 +681,54 @@ def band_lines(rows: list[dict],
                                max(1, int(day_cap.MIN_GAP_MIN)))]
     except Exception:                                            # noqa: BLE001
         return out
-    if len(wide) > len(grid):
-        wper = _free(wide)
-        wdays = need / max(wper, 0.01)
+    if len(wide) > len(grid) and walk is not None:
+        # **(A) と (B) で符号が逆になります。** 片方だけ出すと、
+        # 08/27 の切り分けの値打ちを間違えます（この節の docstring）。
+        a = _walk_days(batch_build, need, wide)                 # 1日 cap 本まで
+        b = _walk_days(batch_build, need, wide, cap=None)       # T までに出す
+        b0 = _walk_days(batch_build, need, grid, cap=None)      # いまの帯・上限なし
         out.append(f"{bar}**帯の下端は 08/27 の切り分け待ち**です"
                    f"（`batch_build.PROVEN_FROM_MIN`）。09:00 より前も生きるなら"
-                   f" {len(grid)} → {len(wide)}枠/日（空き 1日 {wper:.1f}枠）"
-                   f" → 同じ {need}本 が **{wdays:.0f}日**"
-                   f"（**{need / max(per, 0.01) - wdays:.0f}日 早い**）")
+                   f" {len(grid)} → {len(wide)}枠/日 —— "
+                   "**値打ちは (A)/(B) で符号ごと変わります**:")
+        if a is not None:
+            out.append(f"{bar}  (A) 1日 {day_cap.cap()}本 まで → 最後が"
+                       f" {a[0]:%m/%d}（+{a[1]}日）。いまの帯は +{walk[1]}日 なので"
+                       f" **{walk[1] - a[1]:+d}日**"
+                       " —— **上限のほうが先に当たるので、広げても増えません**"
+                       "（広げると、いま朝より前に置いてある本が上限を食います）")
+        if b is not None and b0 is not None:
+            out.append(f"{bar}  (B) 13:30 までに出す（上限なし） → 最後が"
+                       f" {b[0]:%m/%d}（+{b[1]}日）。同じ (B) でいまの帯なら"
+                       f" +{b0[1]}日 なので **{b0[1] - b[1]:+d}日 早い**")
+        out.append(f"{bar}  **だから 14:00 の切り分けは「広げるか」ではなく"
+                   "「(A) か (B) か」を決めます。** (A) と出たら、"
+                   "`PROVEN_FROM_MIN` を下げても 1日も早まりません")
     return out
+
+
+def _walk_days(batch_build, need: int,
+               grid: list[tuple[int, int]],
+               cap: int | str | None = "auto") -> tuple[date, int] | None:
+    """`need` 本を**置く側と同じ手順**で並べ、最後の1本の日と、今日からの日数。
+
+    **平均で割らないための1本**です（`band_lines()` の docstring に実測）。
+    `batch_build.live_plan()` は `live_ring()` の中身そのものなので、
+    ここが出す日は**次の `batch_build` が実際に置く日**と同じ手順から来ています。
+
+    読めなければ `None` —— 呼ぶ側は平均へ倒し、**楽観だと断って印字すること**。
+    """
+    plan = getattr(batch_build, "live_plan", None)
+    if plan is None or need <= 0:
+        return None
+    try:
+        got = plan(need, grid=grid, horizon=240, cap=cap)
+    except Exception:                                            # noqa: BLE001
+        return None
+    if len(got) < need:
+        return None
+    last = got[-1][1]
+    return last, (last - datetime.now(JST).date()).days
 
 
 def answering_lines(rows: list[dict], now: datetime | None = None) -> list[str]:
