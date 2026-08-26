@@ -58246,6 +58246,13 @@ N を下げると検出力がそのまま落ちます:
 （`reschedule.py --move`・`videos.update` 1手 50単位）。動かしたら
 `deadline_check.py` が出す日へ**縮めること**。
 
+**検査**: 触った面を名指しで **507件 緑**／1件 skip（3分59秒。
+`-k "motion or judgeable or deadline or eta or lever or ab_split or live"`）。
+全体は撃っていません（きょうだいと CPU を分け合うので。実測15分）。
+`--reflect` は3件とも +0日 —— **この窓に同じ枝へ 11件 のコミットが載っている**ので、
+動いた入力（`growth_per_day` / `make_rate_per_day` / `density_surfaces`）が
+どれが誰のぶんかは切り分けられません。道具がそう断っています。
+
 ### 測ったが直さなかったもの —— **`_project_nth` の申し送り(ア)(イ)は、両方 外れています**
 
 08/27 06:1x の申し送りは、次の回に `scripts/deadline_check.py` の `_project_nth()` を
