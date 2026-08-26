@@ -60,3 +60,37 @@ def test_drift_は欄を先に読み_古い行は頭の語で読む() -> None:
 def test_2つの並びが同じ() -> None:
     """**片方だけ変えると、書いた種別を読む側が知らない、が起きます。**"""
     assert tuple(run_marker.SHIP_KINDS) == tuple(drift.KINDS)
+
+
+def test_種別が読めない_shipは通らない() -> None:
+    """**欄を足しただけでは足りませんでした**（2026-08-27 に、この輪自身が踏んだ）。
+
+    2026-08-26 に `--kind` を足したのは正しい手でしたが、**書かせる門を
+    作らなかった**ので、頭の語が種別で始まらない ship は「その他」で通り続けます。
+    警告は**書いた後**に出るため、気づいた回は `data/runs.jsonl` を手で直すことになります。
+
+    実物（2026-08-27 05:07・欄が足された 86分後）:
+
+        --ship "jutaku に節2件（在庫3→5）→ 長尺の族 11→13 → 長尺1本を予約（vuhvrJ1CkBE）"
+
+    中身は明らかに `upload` ですが、頭の語が `jutaku` なので「その他」でした。
+
+    **`--lever` と同じ門にします** —— あちらは 2026-08-19 に「無いと通らない」に
+    したことで、以後の ship に必ず腕が付きました。**註でも警告でもなく、
+    通さないことだけが効いています。**
+    """
+    import subprocess
+
+    r = subprocess.run(
+        [sys.executable, str(ROOT / "scripts" / "run_marker.py"),
+         "--ship", "jutaku に節2件（長尺1本を予約）", "--lever", "rpm", "--moves", "-1"],
+        capture_output=True, text=True, cwd=str(ROOT),
+    )
+    assert r.returncode != 0, "種別が読めない ship が通ってしまいました"
+    assert "--kind" in r.stderr, r.stderr
+
+
+def test_種別を明示すれば通る形になっている() -> None:
+    """門は `--kind` で開くこと（頭の語が種別なら、書かなくても開く）。"""
+    assert run_marker.ship_kind_of("jutaku に節2件", "upload") == "upload"
+    assert run_marker.ship_kind_of("upload: 長尺1本を予約") == "upload"

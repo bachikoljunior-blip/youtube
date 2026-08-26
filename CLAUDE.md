@@ -197,7 +197,7 @@ A14 この9件以外は、すべてあなたの考えで変えてよい。
 - **分析は毎回やる。** `python scripts/status.py` を読み、次に何を変えるかを決めて
   `docs/JOURNAL.md` に書く
 - **そのうえで、最低1件は「出して」から終わる。**
-  出したものは `python scripts/run_marker.py --ship "<1行>" --lever <腕> --moves <日数>`
+  出したものは `python scripts/run_marker.py --ship "<1行>" --kind <種別> --lever <腕> --moves <日数>`
   で記録する（**`--lever` と `--moves` は必須**。どの腕を動かし、予測日を何日
   動かす見込みか。上の「毎回の実行で必ずやること」2と5）。
   何を出したと呼ぶかは `docs/trigger_main.md` §4:
@@ -393,9 +393,11 @@ YouTube のチャンネル収益化ポリシーは、次のものを**収益化�
 4. チャンネルの実績を読む（`src/analytics.py`、YouTube Analytics）
 5. **決めた腕に沿って作業する** → 作る → 投稿する。出したら
 
-       run_marker.py --ship "<1行>" --lever <腕> --moves <見込みの日数>
+       run_marker.py --ship "<1行>" --kind <種別> --lever <腕> --moves <見込みの日数>
 
-   **`--lever` と `--moves` は両方とも必須**です。`--moves` は
+   **`--lever` と `--moves` は両方とも必須**です。**`--kind` は、`<1行>` の頭が
+   `upload/means/verdict/fix` で始まっていない回に必須**（2026-08-27 に門にした ——
+   空けると `drift.py` の漂流の門から、その回が見えません）。`--moves` は
    **この作業で予測日が何日動く見込みか**（早まるなら負・遠のくなら正・
    動かさないなら 0）。**当てるための欄ではありません** —— 先に言わなければ
    「早めることを考えてから進めた」かどうかが誰にも見えないので、
