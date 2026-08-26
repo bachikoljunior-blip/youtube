@@ -808,6 +808,33 @@ def ready_by_claim(items: list[dict] | None = None, as_of: date | None = None,
     return {v.claim: v.ready for v in vs if v.ready is not None}
 
 
+def unready_claims(items: list[dict] | None = None, as_of: date | None = None,
+                   lag: int | None = None) -> set[str]:
+    """**判定できる日が出せない claim**（`warming` と `unreachable`）。
+
+    `ready_by_claim()` はこれを**黙って落とします**（`ready is not None` で絞るので）。
+    落とされた claim を `src/arm_speed.next_close()` が受け取ると、
+    **`deadline` のほうへ落ちます** —— `deadline` は置いた回の勘なので、
+    **「今日が期限。だから今日 閉じられる」**という嘘になります。
+
+    実測 2026-08-26 20:4x（この関数を足した回）:
+
+        `scripts/eta.py`      「**期日の来た前提があります**（2026-08-26）→
+                               **この回は `verdict` で日付が動かせます**」
+        `scripts/deadline_check.py`
+                              「[..] 要 8 ／ いま 7 ・ 要 3 ／ いま **0** →
+                               **まだ数えはじめたところです。何もしないのが正解**」
+
+    **同じ1件です。** 判定に要る本は1本もありませんでした。
+
+    **`unchecked`（`needs:` が書かれていない）は入れません** ——
+    「判定できない」と分かったのではなく、**何が要るか誰も書いていない**だけ。
+    ここに入れると、`needs:` を書かないほうが得になります。
+    """
+    vs = check(items if items is not None else load(), as_of=as_of, lag=lag)
+    return {v.claim for v in vs if v.ready is None and not v.unchecked}
+
+
 # --- **印字ではなく、書き換えるところまでやる**（2026-08-26・最適化の回）---
 #
 # この道具は **2026-08-25 13:54Z** から「期限が遅すぎる N件 —— 合計 M日 の待ち」と

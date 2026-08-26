@@ -478,7 +478,8 @@ def lines(arms: dict[str, dict], streak: dict, bd: dict,
     return out
 
 def next_close(doc: dict | None = None, today: date | None = None,
-               ready: dict[str, date] | None = None) -> dict:
+               ready: dict[str, date] | None = None,
+               unready: set[str] | None = None) -> dict:
     """**次に前提を1件閉じられるのはいつか。**
 
     軌跡の腕は閉じた前提でしか動かないので（この節の上を参照）、
@@ -506,17 +507,35 @@ def next_close(doc: dict | None = None, today: date | None = None,
     （`ready > deadline` でも `ready` が正 —— 期限が守れないだけで、
     判定できる日は動きません）。渡さなければ従来どおり `deadline` で読みます。
 
+    ## **`ready` が出せなかった claim を、`deadline` へ落とさないこと**（2026-08-26 20:4x）
+
+    `ready_by_claim()` は `ready is None` の claim を**黙って落とします。**
+    落ちた claim はここで `deadline` のほうへ流れ、
+    **「今日が期限 ＝ 今日 閉じられる」**として印字されていました。
+    実測: `eta.py` が「期日の来た前提があります → **この回は `verdict` で
+    日付が動かせます**」と出した同じ1件を、`deadline_check.py` は
+    「まだ数えはじめたところです。**何もしないのが正解**」と言っています。
+    判定に要る本は **0本** でした（要 8本 に対し公開済み 7本・使える公開日 0日）。
+
+    `unready`（`deadline_check.unready_claims()`）を渡すと、**その claim を
+    まるごと外します** —— 開いている件数（`open`）には残しますが、
+    「次に閉じられる日」の候補にはしません。渡さなければ従来どおり。
+
     返り: `{"on": date|None, "days": int|None, "open": 件数, "source": "ready"|"deadline"}`
     """
     doc = _load() if doc is None else doc
     today = today or today_jst()
     ready = ready or {}
+    unready = unready or set()
     days: list[tuple[date, str]] = []
     n_open = 0
     for h in doc.get("hypotheses", []) or []:
         if not isinstance(h, dict) or h.get("closed_on"):
             continue
         n_open += 1
+        if str(h.get("claim") or "") in unready:
+            # **判定できる日が出せない前提。** `deadline` へ落とさないこと。
+            continue
         when = h.get("settle_by") or h.get("decide_by") or h.get("deadline")
         if isinstance(when, str):
             try:

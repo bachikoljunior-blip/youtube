@@ -548,3 +548,57 @@ def test_足りているなら_窓の長さは要らないこと():
     a = J.answer({"kind": "accrual", "count_expr": "16", "need": 16,
                   "since": "2026-08-26"}, date(2026, 8, 26), 3)
     assert a.ready == date(2026, 8, 26)
+
+
+# --- **判定できる日が出せない claim を、`deadline` へ落とさないこと** ---
+#
+# 2026-08-26 20:4x。同じ1件について、3つの道具がこう言っていました:
+#     scripts/eta.py          「期日の来た前提があります → **この回は `verdict` で
+#                               日付が動かせます**」
+#     scripts/status.py       「[!] **外れています。** この回は verdict を出すこと」
+#     scripts/deadline_check.py
+#                             「[..] まだ数えはじめたところです。
+#                               **この回は何もしないのが正解**」
+# 正しいのは3つ目。要 8本 に対し公開済み 7本、両群がそろう公開日は 3日 要るのに 0日。
+# 原因は `ready_by_claim()` が `ready is None` を**黙って落とす**こと ——
+# 落ちた claim は `next_close()` で `deadline`（置いた回の勘）へ流れます。
+
+
+def test_判定できる日が出せない_claim_を数え上げられること():
+    warming = _one("2026-08-26", count=0, need=8, since="2026-08-25")
+    assert J.check(warming, as_of=date(2026, 8, 26), lag=3)[0].warming
+    got = J.unready_claims(warming, as_of=date(2026, 8, 26), lag=3)
+    assert got == {"A"}
+    # 数えられる側は入らない
+    ready = _one("2026-08-26", count=99, need=8, since="2026-08-20")
+    assert J.unready_claims(ready, as_of=date(2026, 8, 26), lag=3) == set()
+
+
+def test_needsの無い前提は_判定できない側に数えないこと():
+    """**書かなければ赤が消える、を作らないこと。**
+
+    `needs:` が無いのは「判定できない」ではなく「**何が要るか誰も書いていない**」。
+    ここに入れると、`needs:` を書かないほうが得になります。
+    """
+    bare = [{"claim": "A", "deadline": "2026-08-26"}]
+    assert J.check(bare, as_of=date(2026, 8, 26), lag=3)[0].unchecked
+    assert J.unready_claims(bare, as_of=date(2026, 8, 26), lag=3) == set()
+
+
+def test_next_close_は判定できない前提をdeadlineへ落とさないこと():
+    """`src/arm_speed.next_close(unready=...)`。**開いた件数には残すこと。**"""
+    from src import arm_speed
+
+    doc = {"hypotheses": [
+        {"claim": "判定できない", "deadline": "2026-08-26"},
+        {"claim": "先の話", "deadline": "2026-09-20"},
+    ]}
+    today = date(2026, 8, 26)
+    bare = arm_speed.next_close(doc=doc, today=today)
+    assert bare["on"] == today and bare["days"] == 0
+
+    got = arm_speed.next_close(doc=doc, today=today, unready={"判定できない"})
+    assert got["on"] == date(2026, 9, 20), "**deadline のほうへ落ちています**"
+    assert got["days"] == 25
+    # **開いている件数からは外さないこと**（開いてはいます）
+    assert got["open"] == bare["open"] == 2
