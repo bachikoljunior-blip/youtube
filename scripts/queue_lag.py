@@ -346,27 +346,22 @@ def _live_days(taken: dict[date, set[tuple[int, int]]], start: date,
                count: int = 8) -> list[int]:
     """**既定の回（時刻を書かない回）が実際に置く日**を、何日後かで返す。
 
-    `batch_build.live_ring()` に**そのまま聞きます**。ここで選び方を写すと、
+    `batch_build.live_plan()` に**そのまま聞きます**。ここで選び方を写すと、
     向こうが動いたときに**印字と実際がまた食い違います** ——
     この節そのものが、その食い違いの記録です（`placement_days()` の註）。
+
+    **2026-08-27 まで、ここは `live_ring()`（時刻だけ）を受け取ってから
+    日を自分で探し直していました。** 答えは一致していましたが（実測で 8本 とも同値）、
+    **同じ量を出す式が2本 在る**形です。`live_plan()` が日を返すようになったので、
+    **探し直しをやめて、向こうが選んだ日をそのまま読みます。**
     """
     try:
         sys.path.insert(0, str(ROOT / "scripts"))
         import batch_build as _bb                              # noqa: PLC0415
-        picked = _bb.live_ring(count)
+        plan = _bb.live_plan(count)
     except Exception:                                          # noqa: BLE001
         return []
-    if not picked:
-        return []
-    t = {d: set(s) for d, s in taken.items()}
-    out: list[int] = []
-    for spec in picked:
-        hh, _, mm = spec.partition(":")
-        hm = (int(hh), int(mm or 0))
-        i = _first_free(t, hm, start)
-        t.setdefault(start + timedelta(days=i), set()).add(hm)
-        out.append(i)
-    return out
+    return [(d - start).days for _t, d in plan]
 
 
 def views_days(rows: list[dict], now: datetime | None = None) -> dict:
