@@ -26,9 +26,9 @@ def _w(what: str = "", cond: str = "") -> Watch:
     return Watch(id="x", what=what, cond=cond, then="", source="", kind="scan_sum")
 
 
-def _wk(key: str) -> Watch:
+def _wk(watch_id: str) -> Watch:
     w = _w(what="判定（期限 2026-09-14）")
-    w.params["hypothesis_key"] = key
+    w.id = watch_id
     return w
 
 
@@ -41,40 +41,54 @@ def _ledger_file(tmp_path, body: str):
 # ---------------------------------------------------------------- 期限の正本
 
 def test_台帳の期限が文面より優先される(tmp_path, monkeypatch) -> None:
-    doc = _ledger_file(tmp_path, 'hypotheses:\n  - key: k1\n    deadline: "2026-10-11"\n')
+    doc = _ledger_file(tmp_path, 'hypotheses:\n  - watch: w1\n    deadline: "2026-10-11"\n')
     monkeypatch.setattr(watch_eta, "HYPOTHESES", doc)
-    assert deadline_of(_wk("k1")) == date(2026, 10, 11)
+    assert deadline_of(_wk("w1")) == date(2026, 10, 11)
 
 
-def test_台帳に無い鍵なら文面へ落ちる(tmp_path, monkeypatch) -> None:
+def test_台帳に無い待ちなら文面へ落ちる(tmp_path, monkeypatch) -> None:
     """**文面を消していません。** 台帳に無いときの控えとして残します。"""
-    doc = _ledger_file(tmp_path, 'hypotheses:\n  - key: other\n    deadline: "2026-10-11"\n')
+    doc = _ledger_file(tmp_path, 'hypotheses:\n  - watch: other\n    deadline: "2026-10-11"\n')
     monkeypatch.setattr(watch_eta, "HYPOTHESES", doc)
-    assert deadline_of(_wk("k1")) == date(2026, 9, 14)
+    assert deadline_of(_wk("w1")) == date(2026, 9, 14)
 
 
 def test_閉じた前提の期限は台帳から返さない(tmp_path, monkeypatch) -> None:
     doc = _ledger_file(
         tmp_path,
-        'hypotheses:\n  - key: k1\n    deadline: "2026-10-11"\n    closed_on: "2026-08-20"\n')
+        'hypotheses:\n  - watch: w1\n    deadline: "2026-10-11"\n    closed_on: "2026-08-20"\n')
     monkeypatch.setattr(watch_eta, "HYPOTHESES", doc)
-    assert deadline_of(_wk("k1")) == date(2026, 9, 14)
+    assert deadline_of(_wk("w1")) == date(2026, 9, 14)
 
 
-def test_鍵が無ければ台帳を読まない() -> None:
+def test_名前が無ければ台帳を読まない() -> None:
     assert watch_eta.ledger_deadline("") is None
 
 
+def test_壊れた台帳でも落ちない(tmp_path, monkeypatch) -> None:
+    doc = _ledger_file(tmp_path, 'hypotheses:\n  - watch: w1\n    deadline: "とんでもない"\n')
+    monkeypatch.setattr(watch_eta, "HYPOTHESES", doc)
+    assert watch_eta.ledger_deadline("w1") is None
+
+
 def test_実物の待ちが台帳の期限を指している() -> None:
-    """**実物で線を引く。** 文面へ日付を書き戻したら、ここが落ちます。"""
+    """**実物で線を引く。** 文面へ日付を書き戻したら、ここが落ちます。
+
+    2026-08-26 の実測。3件とも文面のほうが古く、**そちらが読まれていました。**
+    """
     from src import watches as W
 
-    got = [w for w in W.load() if w.id == "登録の依頼-30000再生"]
-    assert got, "待ちが消えています"
-    w = got[0]
-    assert w.params.get("hypothesis_key") == "subscribe_ask"
-    assert "期限" not in w.what, "期限は台帳から引くこと（文面に書き戻さない）"
-    assert deadline_of(w) == date(2026, 10, 11)
+    want = {
+        "登録の依頼-30000再生": date(2026, 10, 11),   # 文面は 2026-09-14（27日 古い）
+        "長尺-1000再生": date(2026, 11, 22),          # 文面は 2026-09-15（68日 古い）
+        "族べつ登録率-15000再生": date(2026, 9, 17),   # 文面は 2026-09-20
+    }
+    by_id = {w.id: w for w in W.load()}
+    for wid, deadline in want.items():
+        assert wid in by_id, f"待ちが消えています: {wid}"
+        w = by_id[wid]
+        assert "期限" not in w.what, f"{wid}: 期限は台帳から引くこと（文面に書き戻さない）"
+        assert deadline_of(w) == deadline, wid
 
 
 # ---------------------------------------------------------------- 控えからの見込み

@@ -97,20 +97,27 @@ def gauge_with(line: str, watch: W.Watch) -> W.Gauge:
         W._last_scan = real                              # type: ignore[assignment]
 
 
-def ledger_deadline(key: str) -> date | None:
-    """`config/hypotheses.yaml` の `key:` から期限を引く。**期限の正本はこちら。**
+def ledger_deadline(watch_id: str) -> date | None:
+    """`config/hypotheses.yaml` の `watch:` からその待ちの期限を引く。**正本はこちら。**
 
     待ちの `what:` に手で書いた「（期限 YYYY-MM-DD）」は、台帳の `deadline:` が
-    動いた瞬間に古くなります。**実測（2026-08-26）**: 「登録の依頼-30000再生」の
-    文面は **2026-09-14**、台帳は **2026-10-11** で、**27日 ずれていました。**
-    `status.py` はずっと文面のほうを読んでいたので、**台帳ではまだ生きている前提を
-    「期限に間に合いません」と印字していました。**
+    動いた瞬間に古くなります。**実測（2026-08-26・3件とも本物）**:
+
+        登録の依頼-30000再生      文面 2026-09-14  台帳 **2026-10-11**（27日）
+        長尺-1000再生             文面 2026-09-15  台帳 **2026-11-22**（68日）
+        族べつ登録率-15000再生     文面 2026-09-20  台帳 **2026-09-17**（−3日）
+
+    `status.py` はずっと文面のほうを読んでいたので、**台帳ではまだ2か月 生きている
+    前提を「期限に間に合いません」と印字していました。**
 
     これは「同じことを2か所が別々に言っていて、片方しか読まれていない」の型です
     （`scripts/retro.py` が「この形を探すのがいちばん当たる」と言っている型）。
     **消さずに、読む順を変えます** —— 台帳があればそちら、無ければ文面。
+
+    **繋ぎは既にありました**（前提の側の `watch:`）。新しい欄を足していません ——
+    足すと、その欄自体がまた片方だけ古くなります。
     """
-    if not key:
+    if not watch_id:
         return None
     try:
         import yaml
@@ -119,7 +126,7 @@ def ledger_deadline(key: str) -> date | None:
     except Exception:                                    # noqa: BLE001
         return None
     for h in doc.get("hypotheses") or []:
-        if str(h.get("key") or "") != key:
+        if str(h.get("watch") or "") != watch_id:
             continue
         if h.get("closed_on"):
             return None
@@ -134,11 +141,11 @@ def ledger_deadline(key: str) -> date | None:
 
 
 def deadline_of(watch: W.Watch) -> date | None:
-    """待ちの期限。**台帳（`hypothesis_key`）が正本で、文面は控え。**
+    """待ちの期限。**台帳（前提の `watch:`）が正本で、文面は控え。**
 
     文面の形は2つ（`期限 2026-09-15` / `期限 09/05`）。
     """
-    from_ledger = ledger_deadline(str(watch.params.get("hypothesis_key") or ""))
+    from_ledger = ledger_deadline(watch.id)
     if from_ledger is not None:
         return from_ledger
     text = f"{watch.what} {watch.cond}"
