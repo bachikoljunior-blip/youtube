@@ -1659,7 +1659,15 @@ def _pull_verdicts_first() -> None:
     その窓のうちに公開される**ようになったら、投稿を先に戻すこと。
     """
     if not upload_cap.day_quota().open:
-        return                          # 観測済みで閉じている。撃つだけ無駄
+        # **閉じていても、証拠で閉じたのでなければ一度は撃ちます**（2026-08-26）。
+        # `note_quota_ok` の反証は「通った呼び出し」を材料にしますが、
+        # **撃つ側はここを含めて全部この門の下にいます** ——
+        # 閉じている＝撃たない＝成功が記録されない＝閉じたまま、で自分を閉じ込めます。
+        # `worth_a_try()` に実測（窓が開いた直後の403は日枠ではない）。
+        if not upload_cap.worth_a_try():
+            return                      # 観測済みで閉じている。撃つだけ無駄
+        print("[batch] 日枠は閉じていますが、**403 は窓が開いた直後のものだけ**です。"
+              "**一度だけ撃ってみます**（403 は単位を使いません）", flush=True)
     _rescue_dead_slots()                # (1) 標本を生き返らせる
     _pull_ready_dates()                 # (2) その日を手前へ倒す
 
@@ -1738,7 +1746,7 @@ def _push_thumbnails_first() -> None:
     try:
         import refresh_thumbnail
 
-        if not upload_cap.day_quota().open:
+        if not upload_cap.day_quota().open and not upload_cap.worth_a_try():
             return                      # 観測済みで閉じている。撃つだけ無駄
         refresh_thumbnail.push_missing()
     except Exception as exc:                                   # noqa: BLE001

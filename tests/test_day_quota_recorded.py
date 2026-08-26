@@ -128,32 +128,53 @@ def test_recorded_hit_closes_the_window(tmp_path, monkeypatch):
     assert state.open is False and state.observed is True
 
 
-def test_hit_inside_the_grace_does_not_close_the_window(tmp_path, monkeypatch):
-    """**窓が開いた直後の 403 で、23時間 閉めないこと**（2026-08-26）。
+def test_worth_a_try_after_an_early_403(tmp_path, monkeypatch):
+    """**窓が開いた直後の403だけなら、一度は撃つ**（2026-08-26）。
+
+    `day_quota().open` は **False のまま**にします（外す向きは保守的なままが正しい）。
+    ここが見るのは「その False は証拠で閉じたのか」だけです。
 
     実測（`data/day_quota.jsonl` 2946件・9つの窓）: 窓が開いてから最初の403までは
     **0.1h / 0.2h** の2件と **6.6h 以降** の7件に、6.4時間の隔たりで割れています。
-    左の2件はどちらも直前の窓が重く尽きていた日で、**08/26 はその窓の
-    `videos.insert` が0本** —— 何も使っていない窓は尽きません。
-
-    **403 は単位を使いません。** 撃って外す損は1回ぶん、撃たない損は
-    23.7時間ぶんの `videos.update` 全部です。**非対称なので開ける側へ倒します。**
+    08/26 はその窓の `videos.insert` が0本 —— **何も使っていない窓は尽きません。**
     """
     _root(tmp_path, monkeypatch)
     head = upload_cap.window_start(datetime.now(timezone.utc))
     upload_cap.note_quota_hit(now=head + timedelta(minutes=1), detail="窓の直後の403")
-    state = upload_cap.day_quota(head + timedelta(minutes=upload_cap.GRACE_MIN - 5))
-    assert state.open is True, "直後の403で窓ごと閉めています"
-    assert state.observed is False, "**確実に尽きた**とは言えないはずです"
-    assert state.hits == 1, "観測そのものは残すこと（無かったことにしない）"
+    now = head + timedelta(minutes=upload_cap.GRACE_MIN - 5)
+    assert upload_cap.day_quota(now).open is False, "外す向きは変えないこと"
+    assert upload_cap.worth_a_try(now) is True, "呼び水が出ないと反証材料が永久に出ません"
+
+
+def test_not_worth_a_try_after_a_late_403(tmp_path, monkeypatch):
+    """猶予の外の403は、**本当に尽きた窓**。今までどおり降りること。"""
+    _root(tmp_path, monkeypatch)
+    head = upload_cap.window_start(datetime.now(timezone.utc))
+    upload_cap.note_quota_hit(now=head + timedelta(minutes=1), detail="早い403")
+    upload_cap.note_quota_hit(now=head + timedelta(minutes=upload_cap.GRACE_MIN + 60),
+                              detail="遅い403")
+    now = head + timedelta(minutes=upload_cap.GRACE_MIN + 61)
+    assert upload_cap.day_quota(now).open is False
+    assert upload_cap.worth_a_try(now) is False, "尽きた窓で撃ち続けないこと"
+
+
+def test_not_worth_a_try_once_already_falsified(tmp_path, monkeypatch):
+    """**もう反証済みなら、ここの出番はありません**（`open` が True 側で拾う）。
+
+    2つの道が同じことを言う形にしないこと —— この repo が通算15件 踏んでいる
+    「印字と門が別々に数えている」の同じ穴です。
+    """
+    _root(tmp_path, monkeypatch)
+    head = upload_cap.window_start(datetime.now(timezone.utc))
+    upload_cap.note_quota_hit(now=head + timedelta(minutes=1), detail="早い403")
+    upload_cap.note_quota_ok(now=head + timedelta(minutes=2), detail="そのあと通った")
+    now = head + timedelta(minutes=5)
+    assert upload_cap.day_quota(now).open is True, "後の成功が403を反証します"
+    assert upload_cap.worth_a_try(now) is False
 
 
 def test_late_hit_wins_over_an_early_one(tmp_path, monkeypatch):
-    """猶予の中と外の 403 が混ざったら、**外のほうが効く**こと。
-
-    混ざった窓は「本当に尽きた窓」です。ここが逆になると、
-    朝の尻尾ひとつで**その日の残りを開いていると読み続けます。**
-    """
+    """猶予の中と外の 403 が混ざったら、**外のほうが効く**こと。"""
     _root(tmp_path, monkeypatch)
     head = upload_cap.window_start(datetime.now(timezone.utc))
     upload_cap.note_quota_hit(now=head + timedelta(minutes=1), detail="早い 403")
