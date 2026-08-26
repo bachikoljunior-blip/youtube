@@ -237,6 +237,14 @@ watches:
       **α=20%・検出力76% のまま読むこと**（`src/ab_power.py`）。
       **床を動かして後から辻褄を合わせないこと。**
 
+  - id: 途中の依頼-両群72本
+    what: 「登録の依頼を途中にも1回入れると登録率が上がる」の判定（期限は `config/hypotheses.yaml` が正本）
+    cond: 途中あり・終端のみのどちらの群も、落ち着いたショートが72本
+    then: python scripts/ab_split.py --outlook
+    source: src/ab_split.py
+    kind: ab_group
+    experiment: request_form
+
   - id: 冒頭の問い-両群16本
     what: 「冒頭1枚目を問いかけにすると engaged が上がる」の判定（期限 2026-09-16）
     cond: 問い・条件のどちらの群も、落ち着いた本が16本

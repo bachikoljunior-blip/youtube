@@ -155,7 +155,22 @@ def long_ids() -> set[str]:
 
 
 #: `count_expr` から使えるもの。**このリポジトリの中の式です**（外から来ません）
-EXPR_NS = {"json": json, "rows": _rows, "date": date,
+def ab_members(name: str) -> dict[str, int]:
+    """`src/ab_split.EXPERIMENTS` の A/B の、**群べつ本数**（予約ぶんを含む）。
+
+    `src/judgeable.members()` から数えるので、**再生が付かない枠の本は落ちます**
+    （`src/day_cap.live_ids`）。`count_expr` から呼びます:
+
+        count_expr: "min(ab_members('request_form').values())"
+
+    **`min` で数えること。** 片群だけ積んでも判定はできません。
+    """
+    from src import judgeable
+
+    return {g: len(v) for g, v in judgeable.members(name).items()}
+
+
+EXPR_NS = {"json": json, "rows": _rows, "date": date, "ab_members": ab_members,
            "latest_views": latest_views, "uploaded": uploaded, "long_ids": long_ids}
 
 
