@@ -485,29 +485,51 @@ def pick(count: int, explicit: list[str], per_calc: int = DEFAULT_PER_CALC,
     per_calc_taken: dict[str, int] = {}
     whole_module: set[str] = set()   # 節の指定が無いテーマを取った calc
 
-    for topic in usable:
-        calc = topic["calc"]
-        key = _section_key(topic)
-        sections = key[1]
+    # **族を空にする深い題は、後回しにする**（2026-08-26 12:0x に測って足した）。
+    # 詳しくは `_deep_left()` の docstring。ショートの回だけに効きます。
+    deep_left = _deep_left(pool, posted, built) if not long_form else {}
 
-        if not sections and calc in has_sections:
-            continue                      # 題材のテーマは、節があるあいだ取らない
-        if key in used_sections:
-            continue                      # **同じ計算は2回出さない**
-        if per_calc_taken.get(calc, 0) >= per_calc:
-            continue                      # 同じ制度が並びすぎないように
-        if calc in whole_module:
-            continue                      # モジュール全体のテーマと必ず重なる
-        if not sections and per_calc_taken.get(calc, 0):
-            continue                      # 逆向きも同じ
+    def _sweep(protect: bool) -> None:
+        """`usable` を1周して `chosen` を埋める。
 
-        chosen.append(topic)
-        used_sections.add(key)
-        per_calc_taken[calc] = per_calc_taken.get(calc, 0) + 1
-        if not sections:
-            whole_module.add(calc)
-        if len(chosen) == count:
-            break
+        `protect=True` の周は、**その族の深い題を使い切る一手を取りません。**
+        埋まらなければ `protect=False` でもう1周するので、
+        **在庫が尽きているときに投稿が止まることはありません**（上の docstring）。
+        """
+        for topic in usable:
+            if len(chosen) >= count:
+                return
+            calc = topic["calc"]
+            key = _section_key(topic)
+            sections = key[1]
+
+            if not sections and calc in has_sections:
+                continue                  # 題材のテーマは、節があるあいだ取らない
+            if key in used_sections:
+                continue                  # **同じ計算は2回出さない**
+            if per_calc_taken.get(calc, 0) >= per_calc:
+                continue                  # 同じ制度が並びすぎないように
+            if calc in whole_module:
+                continue                  # モジュール全体のテーマと必ず重なる
+            if not sections and per_calc_taken.get(calc, 0):
+                continue                  # 逆向きも同じ
+
+            deep = not topic["id"].startswith("s-")
+            if protect and deep and deep_left.get(calc, 0) <= 1:
+                continue                  # **この一手で族が消える。後回し**
+
+            chosen.append(topic)
+            used_sections.add(key)
+            per_calc_taken[calc] = per_calc_taken.get(calc, 0) + 1
+            if deep and calc in deep_left:
+                deep_left[calc] -= 1
+            if not sections:
+                whole_module.add(calc)
+
+    if not long_form:
+        _sweep(protect=True)
+    if len(chosen) < count:
+        _sweep(protect=False)
 
     if len(chosen) < count:
         print(
@@ -517,12 +539,80 @@ def pick(count: int, explicit: list[str], per_calc: int = DEFAULT_PER_CALC,
             flush=True,
         )
     if not long_form:
-        _warn_long_stock_eaten(chosen, pool, posted)
+        _warn_long_stock_eaten(chosen, pool, posted, built)
     return chosen
 
 
+def _deep_used(posted: set[str], built: set[str]) -> set[str]:
+    """もう使った題（投稿済み・控えに在る・`build/` に在る）を1つにまとめる。
+
+    `_warn_long_stock_eaten` が同じ数え方をしています。**片方だけ直すと、
+    値札と実際の選び方がずれます**ので、両方ここから引くこと。
+    """
+    used = set(posted) | set(built)
+    try:
+        from src import dupes as _dupes
+        used |= {r["topic"] for r in _dupes.ledger_rows() if r.get("topic")}
+    except Exception:                                          # noqa: BLE001
+        pass
+    return used
+
+
+def _deep_left(pool: list[dict], posted: set[str], built: set[str]) -> dict[str, int]:
+    """族べつに、**まだ使っていない深い題（`s-` で始まらない）が何件 残っているか**。
+
+    ## なぜ要るか（2026-08-26 12:0x に測って足した）
+
+    `_warn_long_stock_eaten` は 09:5x に **値札を出すところまで**やりました ——
+    「この回のショート N件 は長尺の在庫です。族の最後の1件があるので、
+    7日ぶんの長尺の上限が M本 落ちます」。**止めない**と書いてあり、
+    「どちらが得かはその回の判断」で終わっていました。
+
+    **その判断は、たいてい要りませんでした。** 実測（この関数を書いた回）:
+
+        使っていない深い題      **31件 / 族 12**
+        族の残りが1件だけ       **2族**（`jutaku` `nenkin`）
+        族を空にせず使える題    **19件**
+
+    つまり **19件は、長尺の上限を1本も落とさずにショートへ回せます。**
+    ところが同じ回の `pick(60)` は深い題を9件 取り、そのうち
+    **5族ぶんを空にして上限を 10本 落としていました。**
+    落ちた族は `kouki` `shougai` `izoku` `kakyu`（**残り2件の族**）と
+    `jutaku` `nenkin`（残り1件）—— `per_calc=2` が
+    **残り2件の族をちょうど飲み干す**ためです。
+
+    **並び順が実績だけで決まっていて、「この一手で族が消えるか」を
+    誰も見ていなかった**、というだけの話です。値札は出ていましたが、
+    値札は**選んだ後**に出ます。
+
+    だから `pick()` は、ショートの回に**2周**します ——
+    1周目は族を空にする手を取らず、埋まらなければ2周目で取る。
+    **在庫が尽きているときに投稿を止めないため**（`pick` の docstring）。
+
+    ## これは「深い題をショートに出さない」ではありません
+
+    `deep_shorts` の前提（腕 `rpm`・期限 09/03）は、まさに
+    **深い題のショートが 16本 溜まるのを待っています**（08/26 時点で 9本、
+    08/20 から7日 止まっている）。止めたらその前提は永久に判定できません。
+    ここでやっているのは **同じ 7本 を、族を殺さない側から取る**ことだけです。
+
+    **覆る条件**: 族を空にしない深い題が尽きたとき（実測 19件）。
+    そのときは2周目が働くので、動きは 08/26 以前と同じに戻ります。
+    `python scripts/status.py` の「長尺向けのテーマ … / 族 N」が
+    **ショートの回のあとで減っていたら、この守りが効いていません。**
+    """
+    used = _deep_used(posted, built)
+    left: dict[str, int] = {}
+    for topic in pool:
+        calc = topic.get("calc")
+        if not calc or topic["id"].startswith("s-") or topic["id"] in used:
+            continue
+        left[calc] = left.get(calc, 0) + 1
+    return left
+
+
 def _warn_long_stock_eaten(chosen: list[dict], pool: list[dict],
-                           posted: set[str]) -> None:
+                           posted: set[str], built: set[str] | None = None) -> None:
     """**ショートの回が、長尺の在庫を黙って食っていないか**（2026-08-26 09:5x に踏んだ）。
 
     `--long` を付けない `pick` は `s-` で始まらない題も候補に残します
@@ -558,11 +648,9 @@ def _warn_long_stock_eaten(chosen: list[dict], pool: list[dict],
         per_calc_long = topic_forge.PER_CALC_DEFAULT
     except Exception:                                          # noqa: BLE001
         return                                                 # 値札が出せないなら黙る
-    try:
-        from src import dupes
-        used = posted | {r["topic"] for r in dupes.ledger_rows() if r.get("topic")}
-    except Exception:                                          # noqa: BLE001
-        used = set(posted)
+    # **選ぶ側と同じ数え方から引く**（`_deep_used`）。片方だけ直すと、
+    # 値札と実際の選び方がずれます（2026-08-26 12:0x）。
+    used = _deep_used(posted, built or set())
     lost = 0
     for topic in deep:
         calc = topic["calc"]
