@@ -72,7 +72,8 @@ import sys
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
 
 from src import day_cap, judgeable, measure_window  # noqa: E402
 from src.ab_split import SETTLE_DAYS, published  # noqa: E402
@@ -298,10 +299,19 @@ def lag_lines(rows: list[dict], now: datetime | None = None) -> list[str]:
                    f" 判定できるのは ＋落ち着き{SETTLE_DAYS}日"
                    f" ＋Analytics {judgeable.ANALYTICS_LAG_DAYS}日 ＝ **{eff + tail}日後**")
 
+    # **ここは 2026-08-26 まで「θ はこの待ち時間の逆数です」と書いていました。**
+    # 系（Little の法則）としては合っていますが、**この機械の実装はそうではありません** ——
+    # `src/arm_speed.throughput()` が返す θ は
+    # `閉じた前提の件数 ÷ 最初に閉じた日からの経過日数`（**過去だけ**）で、
+    # 待ちは1つも入りません。**入れ替えた回の `--reflect` は +0日 と出ます。**
+    # そこを「逆数です」と書くと、撃った回が「効かなかった」と読んで手を捨てます。
     out.append(
-        "  **`eta.py` の腕が動く速さ θ は、この待ち時間の逆数です**"
-        "（`src/arm_speed.py`: rate = p · log(g) · θ）。"
-        "**待ちを縮めることだけが、作る本数と無関係に θ を上げます。**")
+        "  **待ちを縮めると θ（腕の回る速さ）が上がります** ——"
+        " ただし `src/arm_speed.throughput()` が `eta.py` に渡している θ は"
+        "**過去の実測（閉じた件数 ÷ 経過日数）**で、待ちは1つも入っていません。"
+        "**縮めた直後の `eta.py --reflect` は +0日 と出ます。それが正しい**"
+        "（効きは、実際に前提が早く閉じてから遅れて入る）。"
+        " 予定表の側から数えた θ は `src/arm_speed.forward()`")
     return out
 
 
@@ -502,6 +512,7 @@ class Plan:
                    f"（{len(self.swaps) * 2}回の `--move` ＝ {len(self.swaps) * 100}単位）")
         if total and not self.swaps:
             out.append("  [!] 手が0なのに日数が動いています。**数え方がずれています**")
+        out.extend(theta_lines(self))
         return out
 
     def moves(self) -> list[tuple[str, str]]:
@@ -519,6 +530,126 @@ class Plan:
         for vid, when in self.moves():
             out.append(f"  python scripts/reschedule.py --move {vid} {when}")
         return out
+
+
+def _ready_by_claim() -> dict:
+    """`scripts/deadline_check.py` の「判定できる日」（claim → date）。読めなければ空。"""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "qlag_deadline_check", ROOT / "scripts" / "deadline_check.py")
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules["qlag_deadline_check"] = mod
+    spec.loader.exec_module(mod)
+    return mod.ready_by_claim()
+
+
+def _key_to_claim() -> dict[str, str]:
+    """`judgeable` の key（`title_form` など）→ `hypotheses.yaml` の claim。
+
+    yaml の**トップレベルの `key:` 欄**が正本です（実測 4件が持っています）。
+    べた書きの対応表を置かないこと —— 前提が増えるたびに腐ります。
+    """
+    import yaml
+    doc = yaml.safe_load((ROOT / "config" / "hypotheses.yaml").read_text(
+        encoding="utf-8")) or {}
+    return {str(h["key"]): str(h.get("claim") or "")
+            for h in (doc.get("hypotheses") or [])
+            if isinstance(h, dict) and h.get("key") and not h.get("closed_on")}
+
+
+def theta_lines(plan: Plan) -> list[str]:
+    """**上の「合計 N日」を、到達日の単位に翻訳する。**
+
+    ## なぜ要るか（2026-08-26・最適化の回。**桁が1つ ちがっていました**）
+
+    `gain_lines()` の見出しは「**何日 早まるか**」で、合計を1つ出します。
+    実測 2026-08-26 は **40日** でした。**主語が書いてありません。**
+    その 40日 は「**4つの前提の判定日を、それぞれ何日 手前に倒せるか**の足し算」で、
+    **`eta.py` の到達日が 40日 早まるという意味ではありません。**
+
+    そして `lag_lines()` と `scripts/batch_build.py::_pull_verdicts_first()` は、
+    どちらも **「θ は待ち時間の逆数です」** と書いていました。
+    **コードはそうなっていません** —— `src/arm_speed.throughput()` が返すのは
+    `閉じた前提の件数 ÷ 最初に閉じた日からの経過日数`、つまり**過去の実測**です。
+    待ちは1つも入りません。**入れ替えた回の `eta.py --reflect` は +0日 と出ます。
+    それが正しい**（過去は動かないので）。効きは、実際に前提が早く閉じてから、遅れて入る。
+
+    **系（Little の法則）としては「待ちの逆数」で合っています。**
+    間違っているのは**この機械の実装についての記述**のほうで、
+    その区別が無いと、撃った回が「効かなかった」と読んで手を捨てます。
+
+    ## だから、同じ単位で出す
+
+    `src/arm_speed.forward()` が**予定表から θ を数えます**。入れ替えは
+    予定表の日付を手前に倒すので、**その θ は撃った直後に動きます**。
+    前後を並べれば、「合計 N日」が到達日の何日にあたるかが読めます。
+
+    実測 2026-08-26（入れ替え 25手）::
+
+        予定表の θ   今後14日 0.50 → 0.64/日（+29%）
+                     今後30日 0.33 → 0.37/日（+10%）
+                     今後60日 0.20 → 0.20/日（**±0**）
+
+    **60日 窓で動かないのが本質です** —— 入れ替えは前提を1件も増やしません。
+    **手前に倒すだけ**なので、長い窓では同じ数に戻ります。
+    到達日への効きは **3〜4日** 相当で、印字の **40日 ではありません。**
+
+    **それでも撃つ価値はあります**（2,500単位・投稿を1本も減らさない・
+    `batch_build` が自動で先に撃つ）。**捨てる理由にしないこと。**
+    直すのは**見込みの立て方**だけ —— `--moves -40` と宣言すると、
+    次の回が 36日 の外れを記録します。
+
+    ## 覆る条件
+
+    - **`forward()` が読めない**（`deadline_check` が落ちる）ときは、
+      この節ごと黙ります。**推測で数を出さないこと**
+    - 入れ替えが**前提の数を増やす**ようになったら（例: 群がそろって
+      `opening_motion` に日が出る）、60日 窓も動きます。そのときは
+      「手前に倒すだけ」ではなくなるので、この註を書き換えること
+    """
+    try:
+        from src import arm_speed
+        ready = _ready_by_claim()
+        if not ready:
+            return []
+        k2c = _key_to_claim()
+        after_ready = dict(ready)
+        moved = 0
+        for key, when in plan.readies().items():
+            claim = k2c.get(key)
+            if claim and isinstance(when, date) and claim in after_ready:
+                if after_ready[claim] != when:
+                    moved += 1
+                after_ready[claim] = when
+        before = arm_speed.forward(ready)
+        after = arm_speed.forward(after_ready)
+    except Exception:
+        return []
+
+    hb, ha = before.get("horizons") or [], after.get("horizons") or []
+    if not hb or len(hb) != len(ha):
+        return []
+
+    out = ["", "  --- **その「合計」は、到達日の日数ではありません** ---",
+           "  上の合計は「4つの前提の判定日を、それぞれ何日 手前に倒せるか」の"
+           "足し算です。`eta.py` の到達日が動くのは、"
+           "**`src/arm_speed.throughput()` の θ（＝閉じた件数 ÷ 経過日数・**過去だけ**）"
+           "が動いたとき**なので、**撃った直後の `--reflect` は +0日 と出ます。それが正しい。**"]
+    for b, a in zip(hb, ha):
+        d = a["per_day"] - b["per_day"]
+        pct = (d / b["per_day"] * 100) if b["per_day"] else 0.0
+        mark = f"**+{pct:.0f}%**" if pct > 0.5 else "**±0**"
+        out.append(f"    予定表の θ  今後{b['days']:>2}日  "
+                   f"{b['per_day']:.2f} → **{a['per_day']:.2f}/日**（{mark}）")
+    out.append("  **長い窓ほど差が消えるのが本質です** —— 入れ替えは前提を1件も"
+               "増やしません（手前に倒すだけ）。到達日への効きは、"
+               "**短い窓の伸びを、その窓の長さのぶんだけ受け取った量**です。")
+    out.append("  **`--moves` は、上の合計ではなくこちらで立てること。**"
+               " 合計を写すと、次の回がその差を外れとして記録します。")
+    if moved:
+        out.append(f"  （予定表で日が動く前提: {moved}件"
+                   f"／日の付いた開いた前提 {before.get('dated')}件）")
+    return out
 
 
 #: `videos.insert` 1本ぶんの単位（`src/upload_cap.py` の註と同じ）
