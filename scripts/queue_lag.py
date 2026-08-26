@@ -581,6 +581,78 @@ def answering(rows: list[dict]) -> tuple[dict, set[str], list[tuple[str, str, in
     return per_day, ans, sorted(short, key=lambda x: -x[2])
 
 
+def band_lines(rows: list[dict],
+               short: list[tuple[str, str, int]]) -> list[str]:
+    """**足りない群を埋めるのに、あと何日 かかるか**（置ける枠の側から）。
+
+    ## **「入れ替えろ」と言わないこと**（2026-08-27 に一度そう書いて外した）
+
+    `gain_lines()` の入れ替えは **もう予約に在る本**しか動かせません。
+    足りない群（いまは `request_form`）は**予約に 9本 と 7本 しか無い**ので、
+    **入れ替えでは1本も増えません。** 増やす道は「作って帯へ置く」だけです。
+
+    そして群は**テーマIDのハッシュ**で自動に割れるので
+    （`src/script_writer.request_form`）、**特別な本は要りません** ——
+    2026-08-26 19:08 JST より後に作ったショートは、どれかの群に入ります。
+    **律速は「作れるか」ではなく「帯に空きがあるか」**です:
+
+        作る速さ    13.6〜20本/日（`python -m src.supply`）
+        帯の空き    下に実測（`batch_build._band_grid()` の空き枠）
+
+    ## 覆る条件
+
+    帯の下端 `batch_build.PROVEN_FROM_MIN`（09:00）は
+    **08/27 の切り分け待ち**です。「09:00 より前も生きる」と出れば
+    枠は 10 → 18 に増え、ここの日数はほぼ半分になります。
+    その日が来たら、この節の数字が勝手に動きます（写さないこと）。
+    """
+    if not short:
+        return []
+    try:
+        sys.path.insert(0, str(ROOT / "scripts"))
+        import batch_build                                       # noqa: PLC0415
+        grid = batch_build._band_grid()
+    except Exception:                                            # noqa: BLE001
+        return []
+    taken = _taken(rows)
+    days = sorted({r["at"].astimezone(JST).date() for r in rows})  # type: ignore[union-attr]
+
+    def _free(g: list[tuple[int, int]]) -> float:
+        n = sum(1 for d in days for hm in g if hm not in taken.get(d, set()))
+        return n / max(len(days), 1)
+
+    per = _free(grid)
+    need = sum(n for _k, _g, n in short)
+    bar = "  "
+    who = " / ".join(f"`{k}` {g} あと {n}本" for k, g, n in short[:2])
+    out = [f"{bar}**足りないのは本で、入れ替えでは増えません**（{who}）。"
+           "**作って帯へ置くこと** —— 群はテーマIDで自動に割れるので"
+           "（`src/script_writer`）、ふつうのショートで埋まります"]
+    out.append(f"{bar}帯（`batch_build._band_grid()`・{len(grid)}枠/日）の空き"
+               f" **1日 {per:.1f}枠** → 足りない {need}本 に"
+               f" **{need / max(per, 0.01):.0f}日**")
+    # **08/27 の切り分けが決めるのは、この差です。**
+    #   `PROVEN_FROM_MIN` の註は「枠が 10 → 18 に増える」としか言っていません。
+    #   増えて**何日 早まるか**を並べないと、あの測定の値打ちが誰にも見えません。
+    try:
+        from src import collisions                               # noqa: PLC0415
+        wide = [(m // 60, m % 60)
+                for m in range(int(collisions.LIVE_FROM_MIN),
+                               int(collisions.LIVE_TO_MIN) + 1,
+                               max(1, int(day_cap.MIN_GAP_MIN)))]
+    except Exception:                                            # noqa: BLE001
+        return out
+    if len(wide) > len(grid):
+        wper = _free(wide)
+        wdays = need / max(wper, 0.01)
+        out.append(f"{bar}**帯の下端は 08/27 の切り分け待ち**です"
+                   f"（`batch_build.PROVEN_FROM_MIN`）。09:00 より前も生きるなら"
+                   f" {len(grid)} → {len(wide)}枠/日（空き 1日 {wper:.1f}枠）"
+                   f" → 同じ {need}本 が **{wdays:.0f}日**"
+                   f"（**{need / max(per, 0.01) - wdays:.0f}日 早い**）")
+    return out
+
+
 def answering_lines(rows: list[dict], now: datetime | None = None) -> list[str]:
     """**枠を、いま開いている前提の群に入る本が使えているか**（API 0単位）。
 
@@ -641,13 +713,13 @@ def answering_lines(rows: list[dict], now: datetime | None = None) -> list[str]:
         else:
             run = []
     if len(best) >= 3:
+        cap = day_cap.cap()
         out.append(f"{bar}[!] **{best[0]} 〜 {best[-1]} の {len(best)}日**は、"
-                   "1日 10本 のうち効くのが **1本 以下**です ——"
-                   " **この帯を、床の足りない群の本と入れ替えること**"
-                   "（`scripts/reschedule.py --move`・1手50単位）")
-    for key, g, need in short[:6]:
-        out.append(f"{bar}  床が足りない群: `{key}` {g} **あと {need}本**"
-                   "（この群の本を置くかぎり、枠は判定日を前へ動かします）")
+                   f"1日 {cap}本 のうち効くのが **1本 以下**です")
+    out += band_lines(rows, short)
+    if len(short) > 2:
+        out.append(f"{bar}  （ほかに床が足りない群 {len(short) - 2}件: "
+                   + " / ".join(f"`{k}` {g} あと {n}本" for k, g, n in short[2:]) + "）")
     if not short:
         out.append(f"{bar}  **床が足りない群はありません** ——"
                    " いま足りないのは本ではなく、**次に立てる前提**のほうです"
