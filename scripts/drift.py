@@ -44,6 +44,7 @@
 from __future__ import annotations
 
 import argparse
+import functools
 import json
 import sys
 from collections import Counter
@@ -153,6 +154,152 @@ def overdue(today: str) -> list[dict]:
     return out
 
 
+# --- **期限が来た ≠ 判定できる**（2026-08-26 夕・最適化の回に足した）---
+#
+# `overdue()` は `deadline <= today` だけを見ます。**判定に要るデータが
+# 揃っているかは、一度も見ていませんでした。** そのせいで、この日
+# **2つの道具が同じ前提について正反対のことを言っていました**:
+#
+#     scripts/deadline_check.py  「[..] まだ数えはじめたところです。
+#                                  **この回は何もしないのが正解**です
+#                                  （畳まないこと・条件を緩めないこと）」
+#     scripts/drift.py --gate    exit 2 → `stop_check.sh` が
+#                                「**この回は verdict を出すこと。**
+#                                  実データで判定して `verdict:` を書く」
+#                                 （3回まで止める）
+#
+# 対象は「深い題のショート」1件。台帳自身の `falsified_if` はこう書いています ——
+# **「どちらも 8本 に満たなければ判定できません。期限を延ばすこと。
+# 『まだ分からない』で閉じないこと。」** 実測は **要 8／いま 7**、
+# 使える日 **要 3／いま 0**。**判定できる本は1本もありません。**
+#
+# **門が、台帳が禁じている行為を要求していた**ということです。
+# 主実行に残る道は3つしかなく、どれも損です:
+#
+#     (1) 嘘の verdict を書く  → 台帳が明示的に禁じている。しかも
+#         `arm_speed.arm()` は `effect` の倍率を**その腕の伸び幅としてそのまま使う**ので、
+#         軌跡が嘘の日付を出します（同じ事故は `config/hypotheses.yaml` の
+#         「測っていない腕に、測った倍率が書き込まれます」で既に1回 起きています）
+#     (2) 3回ぶんの stop を焼いて JOURNAL に言い訳を書く → 毎周 その税を払う
+#     (3) `[!]` を無視する → **これがいちばん高い。**
+#         前の回が 666 commits かけて「印字は読まれない、赤い門にしろ」と
+#         直したばかりで、**その門が嘘をつくと、門ごと信用を失います。**
+#
+# **`[!]` が間違っているコストは、`[!]` が無いコストより高い。**
+# 印字なら読み手が判断で逃げられますが、**門は判断を要求しない形にしてある**ので
+# 逃げ道が無く、逃げ道を作ると門そのものが効かなくなります。
+# **判断を門に落としたなら、門の真偽はこちらが持つこと。**
+#
+# **覆る条件**: `deadline_check` の `ready` が外れる（実際には判定できたのに
+# `warming` を返す）なら、止めるべき回を止めなくなります。そのときは
+# ここではなく `src/judgeable.py` の床を直すこと ——
+# **この門を `overdue()` だけに戻さないこと。** 戻すと上の (1)〜(3) に帰ります。
+
+#: 判定できるか分からないときに、門を鳴らす側へ倒すか（**倒します**）。
+#: 計器が読めないことを理由に門が黙ると、外れに気づけません。
+_LOUD_WHEN_UNKNOWN = True
+
+
+def _judge_state_by_claim() -> dict[str, tuple[str, object]] | None:
+    """`_judge_state_cached` の入口。**台帳が差し替わったら読み直します。**
+
+    `HYPS` は検査が `monkeypatch` で差し替えます。素の `lru_cache` だと
+    **最初の1件で固まって、以後どの検査も同じ答えを見ます。**
+    鍵に台帳の道と更新時刻を入れて、そこだけで畳みます。
+    """
+    try:
+        key = (str(HYPS), HYPS.stat().st_mtime_ns if HYPS.exists() else 0)
+    except Exception:                               # noqa: BLE001
+        key = (str(HYPS), 0)
+    return _judge_state_cached(key)
+
+
+@functools.lru_cache(maxsize=8)
+def _judge_state_cached(_key: tuple) -> dict[str, tuple[str, object]] | None:
+    """claim → (`ready` / `warming` / `unreachable` / `unchecked`, 判定できる日 or None)。
+
+    読めなければ `None`。**呼び手はそのとき門を鳴らす側へ倒します**
+    （`_LOUD_WHEN_UNKNOWN`）—— 計器が1つ読めないことは、
+    「外れていない」ことの証拠ではありません。
+
+    **`deadline_check` は毎回 予約と Analytics を当たり直すので 約3秒**、
+    しかもこの道具の中で**2か所が呼びます**（門と在庫）。
+    同じ回で答えは変わらないので `lru_cache` で1回に畳みます
+    （`scripts/eta.py` の `_ready_by_claim` が同じ理由で同じことをしています）。
+    """
+    try:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "drift_deadline_check", ROOT / "scripts" / "deadline_check.py")
+        mod = importlib.util.module_from_spec(spec)
+        sys.modules["drift_deadline_check"] = mod   # dataclass が __module__ を引きます
+        spec.loader.exec_module(mod)                # type: ignore[union-attr]
+        # **`mod.load()` ではなく、この道具が実際に読んでいる台帳を渡すこと。**
+        # `load()` は `config/hypotheses.yaml` を直に読むので、検査が `HYPS` を
+        # 差し替えても**本物のほうを見ます** —— 門の検査が、本物の台帳の
+        # 都合で緑にも赤にもなります（＝何も主張しない検査になる）。
+        rows = _hypotheses()
+        if not rows:
+            return None                             # 台帳が読めない → 鳴らす側へ
+        vs = mod.check(rows)
+        out: dict[str, object] = {}
+        for v in vs:
+            if v.ready is not None:
+                out[v.claim] = ("ready", v.ready)
+            elif getattr(v, "unreachable", False):
+                out[v.claim] = ("unreachable", None)
+            elif getattr(v, "unchecked", False):
+                out[v.claim] = ("unchecked", None)
+            else:
+                out[v.claim] = ("warming", None)
+        return out
+    except Exception:                               # noqa: BLE001
+        return None
+
+
+def split_overdue(od: list[dict], today: str) -> tuple[list[dict], list[tuple[dict, str, str]]]:
+    """期限の来た前提を「**いま判定できる**」と「**まだできない**」に割る。
+
+    返り: `(判定できるもの, [(前提, 理由, その回にやること), ...])`。
+
+    **門が読むのは前だけ**です。後ろは印字しますが止めません ——
+    止めても、その回にできることが無いからです（上の長い註）。
+    """
+    ready_map = _judge_state_by_claim()
+    if ready_map is None:
+        # 計器が読めない。**全部を門に載せます**（黙るより鳴らす）。
+        return (list(od), [])
+    now: list[dict] = []
+    blocked: list[tuple[dict, str, str]] = []
+    for h in od:
+        claim = str(h.get("claim") or h.get("q") or "")
+        got = ready_map.get(claim)
+        if got is None:
+            # 台帳には在るのに `deadline_check` が返さない ＝ 突き合わせ不能。鳴らす側へ。
+            now.append(h) if _LOUD_WHEN_UNKNOWN else blocked.append(
+                (h, "突き合わせ不能", "—"))
+            continue
+        kind, ready = got
+        if kind == "ready":
+            if str(ready) <= today:
+                now.append(h)
+            else:
+                blocked.append((
+                    h, f"判定できるのは {ready}（期限のほうが手前）",
+                    "**期限を延ばすこと**（`falsified_if` は1文字も触らない）。"
+                    "`python scripts/deadline_check.py` がその日を出します"))
+        elif kind == "warming":
+            blocked.append((
+                h, "まだ数えはじめたところ（伸び率が出ないので日が出せない）",
+                "**この回は何もしないのが正解です**（畳まない・条件を緩めない）。"
+                "待てば日が出ます"))
+        elif kind == "unreachable":
+            now.append(h)          # 止める。ただし「verdict を出せ」ではない（下で分ける）
+        else:                      # unchecked
+            now.append(h)
+    return now, blocked
+
+
 def report(today: str, window_days: int = WINDOW_DAYS) -> tuple[str, bool]:
     """印字する本文と、「外れている」かどうかを返す。"""
     since = (date.fromisoformat(today) - timedelta(days=window_days)).isoformat()
@@ -169,7 +316,9 @@ def report(today: str, window_days: int = WINDOW_DAYS) -> tuple[str, bool]:
     verdicts_tail = sum(1 for r in tail if _kind_of(r.get("what", "")) == "verdict")
 
     od = overdue(today)
-    drifting = bool(od) and verdicts_tail == 0
+    # **期限が来た ≠ 判定できる**（上の註）。門に載せるのは前だけ。
+    od_now, od_blocked = split_overdue(od, today)
+    drifting = bool(od_now) and verdicts_tail == 0
 
     lines = [
         "=== この輪は目標に向かっているか（直近 %d日 / ship %d件）===" % (window_days, n),
@@ -185,18 +334,29 @@ def report(today: str, window_days: int = WINDOW_DAYS) -> tuple[str, bool]:
         lines.append("  この窓に ship がありません。")
 
     lines.append(f"  直近{STALE_ROUNDS}回の verdict: **{verdicts_tail}件**")
-    if od:
-        lines.append(f"  **期限の来た前提: {len(od)}件**")
-        for h in od[:5]:
+    if od_now:
+        lines.append(f"  **期限が来ていて、いま判定できる前提: {len(od_now)}件**")
+        for h in od_now[:5]:
             claim = str(h.get("claim") or h.get("q") or "")[:64]
             lines.append(f"    {h.get('deadline', '?')}  {claim}")
     else:
-        lines.append("  期限の来た前提: なし")
+        lines.append("  期限が来ていて、いま判定できる前提: なし")
+
+    if od_blocked:
+        # **止めません。印字だけします。**（`split_overdue` の註）
+        lines.append(
+            f"  期限は来たが、まだ判定できない前提: {len(od_blocked)}件"
+            "（**門には載せません** —— その回にできることが無いので）")
+        for h, why, todo in od_blocked[:5]:
+            claim = str(h.get("claim") or h.get("q") or "")[:56]
+            lines.append(f"    {h.get('deadline', '?')}  {claim}")
+            lines.append(f"        {why}")
+            lines.append(f"        → {todo}")
 
     lines.append("")
     if drifting:
         lines.append(
-            "  [!] **外れています。** 期限の来た前提があるのに、"
+            "  [!] **外れています。** いま判定できる前提の期限が来ているのに、"
             f"直近{STALE_ROUNDS}回で1件も判定していません。"
         )
         lines.append(
@@ -205,7 +365,7 @@ def report(today: str, window_days: int = WINDOW_DAYS) -> tuple[str, bool]:
         )
         lines.append("      **この回は verdict を出すこと。** 出せないなら理由を JOURNAL に。")
     else:
-        lines.append("  外れの条件（期限切れの前提 かつ 判定ゼロ）には当たっていません。")
+        lines.append("  外れの条件（**いま判定できる**期限切れの前提 かつ 判定ゼロ）には当たっていません。")
 
     return "\n".join(lines), drifting
 
@@ -284,17 +444,17 @@ def _ready_by_claim() -> dict:
     """**前提ごとの「判定できる最早の日」**（`scripts/deadline_check.py`）。
 
     壊れても在庫の数えそのものは止めないこと —— 落ちたら `deadline` に戻ります。
+
+    **2026-08-26 に `_judge_state_by_claim()` からの導出に変えました。**
+    それまで、この道具は同じ回のうちに `deadline_check` を**2度 読み込んで**
+    いました（門の側と、この在庫の側）。1回 約3秒 で、`stop_check.sh` の
+    `timeout 30` に対して素直に2倍 払っていたことになります。
+    **数字は1文字も変わりません** —— 同じ `check()` の `ready` です。
     """
-    try:
-        import importlib.util
-        spec = importlib.util.spec_from_file_location(
-            "drift_deadline_check", ROOT / "scripts" / "deadline_check.py")
-        mod = importlib.util.module_from_spec(spec)
-        sys.modules["drift_deadline_check"] = mod   # dataclass が __module__ を引きます
-        spec.loader.exec_module(mod)
-        return mod.ready_by_claim()
-    except Exception:
+    st = _judge_state_by_claim()
+    if not st:
         return {}
+    return {k: v[1] for k, v in st.items() if v[0] == "ready" and v[1] is not None}
 
 
 def supply_report(today: str, horizon: int = SUPPLY_HORIZON) -> tuple[str, bool]:
