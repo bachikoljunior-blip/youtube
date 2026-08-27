@@ -4353,3 +4353,8 @@
 {"at": "2026-08-27T09:20:35+00:00", "detail": "scheduled_publish_times"}
 {"at": "2026-08-27T09:20:39+00:00", "detail": "playlistItems.insert"}
 {"at": "2026-08-27T09:20:39+00:00", "detail": "thumbnails.set s7l-9zAcCww"}
+{"at": "2026-08-27T09:32:25+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-27T09:32:26+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-27T09:40:06+00:00", "detail": "scheduled_publish_times"}
+{"at": "2026-08-27T09:40:11+00:00", "detail": "playlistItems.insert"}
+{"at": "2026-08-27T09:40:11+00:00", "detail": "thumbnails.set k_s1KN6AB7E"}
