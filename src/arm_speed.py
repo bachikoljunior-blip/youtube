@@ -665,3 +665,179 @@ def forward_line(fw: dict) -> str | None:
             "予定表の側は**下限**です（これから立つ前提を数えていない）が、"
             "**この差のぶん、上の日付は早すぎます**"
             f"（`src/arm_speed.forward()`{extra}）")
+
+
+#: `speed_weights()` が使う窓（日）。**14日 ではなく 30日 を既定にしています。**
+#
+# 14日 窓は 2026-08-27 の実測で `sub_rate` が **0件**（＝ θ=0）になります。
+# 重みを 0 にすると `rate` が 0 になり、その腕が「出ません」に化けます ——
+# **予定表は下限**（これから立つ前提を数えていない）なので、
+# 「いま近い期日が無い」を「永久に閉じない」と読むのは行きすぎです。
+# 30日 窓は 4本とも非ゼロで、しかも差はそのまま残ります
+# （実測 per_video 0.100 ／ sub_rate 0.033 ／ rpm 0.133 ／ density 0.100）。
+SPEED_WINDOW_DAYS = 30
+
+
+def forward_by_arm(ready: dict[str, date] | None = None,
+                   doc: dict | None = None,
+                   today: date | None = None,
+                   horizons: tuple[int, ...] = FORWARD_HORIZONS) -> dict[str, dict]:
+    """**腕べつの「予定表 θ」。** `forward()` を腕で割ったもの。API は 0単位。
+
+    ## なぜ要るか（2026-08-27 に足した。**`--alloc` の推薦が裏返る幅です**）
+
+    `scripts/eta.py --alloc`（「次の前提をどの腕に立てるのがいちばん早いか」）は、
+    `rate = focus_rate × share` の `focus_rate` を腕ごとに出しています。
+    ところが `focus_rate = p · log(g) · θ` の **θ は `throughput()`** ——
+    **全体の実測ひとつを、4本とも同じ値で使っています。**
+
+    さらに `arm()` は、閉じた前提が `MIN_N`（=3）に満たない腕の
+    `p` と `g` を**全体で代用**します。つまり `sub_rate`（2件）と
+    `rpm`（1件）は **p も g も θ も全部 同じ値**になり、
+    **順位が天井の遠さだけで決まります**（`alloc_search()` 自身がそう印字しています）。
+
+    **その結果、実測 2026-08-27 に `--alloc` はこう言いました**:
+
+        **いちばん早いのは `sub_rate`**（そのままより **4日 早い**）
+
+    同じ日に、台帳の**開いている前提の「判定できる日」**を腕で割るとこうです
+    （`deadline_check.ready_by_claim()`）:
+
+        腕          閉じた  開いた   今後14日   今後30日   今後60日
+        per_video     10      5      0.214     0.100     0.067
+        sub_rate       2      4      **0.000** 0.033     0.050
+        rpm            1      4      0.214     0.133     0.067
+        density        4      5      0.214     0.100     0.067
+
+    **`sub_rate` は、今後14日 に1件も閉じられません**（いちばん早い判定日が
+    2026-09-16 ＝ 20日 先）。他の3本はどれも 14日 以内に1件あります
+    （density 08-28 ／ rpm 09-01 ／ per_video 09-05）。
+    **`--alloc` は、4本のうち唯一 near-term の回転がゼロの腕を推薦していました。**
+
+    独立の裏も取れています —— 2026-08-27 06:1x の回は
+    「`sub_rate` の実験は、思っていたより **15倍 遠い**。この速さだと **約20周**」
+    と測って、同じ結論に別の道から着いています（`docs/JOURNAL.md`）。
+
+    ## 返り
+
+    腕 → `forward()` と同じ形の辞書（`horizons` / `dated` / `undated` /
+    `backward` / `missing`）。**`backward` は全体の値のまま**です
+    （腕べつに割ると分母が1〜2件になり、率になりません）。
+
+    ## 覆る条件
+
+    - **どの腕も `MIN_N` に届いたら**（`arm()` の `source` が4本とも「自前」）、
+      順位は `p` と `g` で割れるので、この重みは要らなくなるかもしれません。
+      そのときは重みを外して、順位が変わるかを見ること
+    - **`ready` が空**（`deadline_check` が読めない）なら、腕べつも出せません。
+      `missing` に理由を残して、**黙って 1.0 にしないこと**
+    """
+    doc = _load() if doc is None else doc
+    today = today or today_jst()
+    back = throughput(closed(doc), today)["per_day"]
+
+    lever_of: dict[str, str] = {}
+    open_n: dict[str, int] = {k: 0 for k in ARMS}
+    for h in doc.get("hypotheses") or []:
+        if not isinstance(h, dict) or h.get("closed_on"):
+            continue
+        lev = h.get("lever")
+        if lev in ARMS:
+            lever_of[str(h.get("claim"))] = lev
+            open_n[lev] += 1
+
+    out: dict[str, dict] = {}
+    if not ready:
+        for k in ARMS:
+            out[k] = {"horizons": [], "dated": 0, "undated": open_n[k],
+                      "backward": back,
+                      "missing": "判定できる日が1件も取れませんでした"
+                                 "（`deadline_check.ready_by_claim()` が空）"}
+        return out
+
+    dated: dict[str, list[date]] = {k: [] for k in ARMS}
+    for claim, lev in lever_of.items():
+        d = ready.get(claim)
+        if isinstance(d, date):
+            dated[lev].append(d)
+
+    for k in ARMS:
+        days = sorted(dated[k])
+        hs = []
+        for h in horizons:
+            n = sum(1 for d in days if 0 <= (d - today).days <= h)
+            per = n / h
+            hs.append({"days": h, "n": n, "per_day": per,
+                       "ratio": (per / back) if back else None})
+        out[k] = {"horizons": hs, "dated": len(days),
+                  "undated": max(open_n[k] - len(days), 0),
+                  "backward": back, "missing": None}
+    return out
+
+
+def speed_weights(by_arm: dict[str, dict] | None = None,
+                  window: int = SPEED_WINDOW_DAYS) -> dict:
+    """**腕べつの「回転の重み」**（平均が 1 になるように正規化した倍率）。
+
+    `focus_rate` に掛けて使います。**全体の水準は動かしません** ——
+    動かすのは腕どうしの**並び**だけです。
+
+    ## なぜ「置き換え」ではなく「重み」なのか
+
+    `forward()` の註がこう言っています（**消さないこと**）:
+
+        **予定表の側は下限です。** 数えているのは いま開いている前提だけで、
+        これから立つぶんは入っていません。**だから片方に置き換えないこと。**
+
+    到達日の**水準**は `throughput()`（過去の実測）のままにして、
+    **腕どうしの比だけ**を予定表から取ります。平均を 1 に正規化してあるので、
+    4本を平らに均せば全体の速さは変わりません。
+
+    ## 下限であることの効かせ方（**縮め**）
+
+    生の比をそのまま使うと、近い期日が1件も無い腕が 0 になります。
+    予定表は下限なので、それは行きすぎです。**平均を1件ぶんの「事前」として足します**:
+
+        w_arm = (θ_arm + m) / (θ_mean + m)     m = θ_mean
+
+    実測 2026-08-27（30日 窓・θ_mean = 0.0917/日）:
+
+        per_video 0.100 → **1.05**   sub_rate 0.033 → **0.68**
+        rpm       0.133 → **1.23**   density  0.100 → **1.05**
+
+    **生の比なら sub_rate は 0.36 でした。** 縮めで 0.68 —— 半分だけ効きます。
+
+    ## 覆る条件
+
+    - **予定表が過去に追いついたら**（`forward()` の 14日 窓の比が 0.8 以上）、
+      腕べつの差も過去の配分で説明できるので、この重みは要りません
+    - **縮めの強さ（いまは「平均1件ぶん」）は勘です。**
+      `--alloc` の推薦どおりに立てた前提が、その腕の予定どおりに閉じたかを
+      3件 集めたら、縮めをその実績で決め直すこと
+
+    返り: `{"weights": {腕: 倍率}, "raw": {腕: θ}, "mean": float,
+             "window": int, "missing": str|None}`
+    """
+    by_arm = forward_by_arm() if by_arm is None else by_arm
+    raw: dict[str, float] = {}
+    for k in ARMS:
+        hs = (by_arm.get(k) or {}).get("horizons") or []
+        hit = [h for h in hs if h.get("days") == window]
+        if not hit:
+            return {"weights": {k2: 1.0 for k2 in ARMS}, "raw": {}, "mean": None,
+                    "window": window,
+                    "missing": ((by_arm.get(k) or {}).get("missing")
+                                or f"{window}日 の窓が `forward_by_arm()` にありません")}
+        raw[k] = float(hit[0]["per_day"])
+
+    mean = sum(raw.values()) / len(raw) if raw else 0.0
+    if mean <= 0:
+        # **全部 0** ＝ 予定表に近い期日が1件も無い。並べ替える根拠が無いので
+        # **1.0 のまま返します**（黙って 0 にすると到達日が「出ません」に化ける）。
+        return {"weights": {k: 1.0 for k in ARMS}, "raw": raw, "mean": mean,
+                "window": window,
+                "missing": f"{window}日 以内に判定できる前提が、どの腕にもありません"}
+
+    weights = {k: (raw[k] + mean) / (mean + mean) for k in ARMS}
+    return {"weights": weights, "raw": raw, "mean": mean,
+            "window": window, "missing": None}
