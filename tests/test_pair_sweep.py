@@ -63,15 +63,21 @@ def test_動かない並びは_比の形にしない():
     `_echoes` が塞いだのと同じ穴が、割り算の形で出てきたものです。
     """
     flat = {"ys": [100000.0] * 8}
-    moves = {"ys": [100000.0 * (1.0 + 0.1 * i) for i in range(8)]}
-    other = {"ys": [15000.0] * 8}          # `gassan` と同じ比（相手が 3〜5% を占める）
+    # `_span` は (最大 − 最小) / 最大 なので、**`SHARE_MOVES`（0.30）を超える幅**にする
+    moves = {"ys": [100000.0 * (1.0 + 0.1 * i) for i in range(12)]}
+    other = {"ys": [5000.0] * 8}           # `gassan` と同じ比（相手が 3〜5% を占める）
     assert pair_sweep._share_band(flat, other) is None, "動かない A を拾っています"
     assert pair_sweep._share_band(moves, other) is not None
+    # **`MOVES`（5%）では足りません**（2026-08-28 に測り直した）。
+    # 5% しか動かない A は、帯が細くなるのが算術上あたりまえ。
+    small = {"ys": [100000.0 * (1.0 + 0.01 * i) for i in range(8)]}
+    assert pair_sweep._share_band(small, other) is None, (
+        "A が 7% しか動かない組を拾っています —— `SHARE_MOVES` が緩んでいます")
 
 
 def test_比の形は_端に張り付いたら節にしない():
     """`SHARE_EDGE`。99.9% は「相手が無視できる」だけで、2つを並べたことにならない。"""
-    big = {"ys": [1_000_000.0 * (1.0 + 0.1 * i) for i in range(8)]}
+    big = {"ys": [1_000_000.0 * (1.0 + 0.1 * i) for i in range(12)]}
     tiny = {"ys": [10.0] * 8}
     assert pair_sweep._share_band(big, tiny) is None
 

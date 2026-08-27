@@ -227,6 +227,25 @@ class Answer:
     why: str
     #: 待っても来ない種類か（外の出来事）
     unreachable: bool = False
+    #: **`ready` の日のうち、この時刻まで計器が読めない**（`None` ＝ 一日じゅう読める）。
+    #:
+    #: **2026-08-28 03:5x に足した。** `_quota_gate` は「枠が戻るのは
+    #: **08/28 16:00 JST**」と**文字では**言っていましたが、機械が読める欄は
+    #: `ready`（日付）だけでした。**16:00 という時刻が、そこで落ちます。**
+    #: その日の 00:00〜16:00 に走る回は全部、`arm_speed.next_close()` から
+    #: 「**今日が判定できる日**」を受け取り、`eta.py` の頭3行に
+    #: 「**この回は `verdict` で日付が動かせます**」と出ます。**16時間ぶんの嘘**です。
+    #:
+    #: 実測 2026-08-28 03:1x: `data/views.jsonl` のいちばん新しい点は
+    #: **08-27 16:34 JST**、要件は 08-27 22:00 JST 以降の点、
+    #: 取り直す `snapshot.py` は 403（214回 観測）。**判定は1つも下せません。**
+    #: それでも `eta.py` は「期日の来た前提があります → この回は `verdict` で
+    #: 日付が動かせます」と出しました。
+    #:
+    #: これは `unready_claims()` が 2026-08-26 に塞いだ穴の**1段 深いところ**です
+    #: —— あちらは「日が出せない」を捕まえ、ここは「**日は出たが、その日の中で
+    #: まだ来ていない**」を捕まえます。
+    ready_at: datetime | None = None
     #: **その日が「推定」のときの、意味のあるゆらぎ（日）。**（2026-08-26 に足した）
     #:
     #: 伸び率から解いた日（`accrual`）は、**その回の実測でしか出せません。**
@@ -1041,7 +1060,8 @@ def _quota_gate(need: dict, when: datetime, what: str) -> Answer | None:
     how = str(need.get("refresh") or "").strip()
     return Answer(
         back.date(),
-        f"{what} —— ただし取り直す `{how}` は **Data API の日枠**を使い、"
+        ready_at=back,
+        why=f"{what} —— ただし取り直す `{how}` は **Data API の日枠**を使い、"
         f"**この窓ではもう尽きています**（403 を {q.hits}回 観測）。"
         f" **{when:%m/%d %H:%M} JST に撃っても 403 です。**"
         f" 枠が戻るのは **{back:%m/%d %H:%M} JST**",
@@ -1345,6 +1365,16 @@ class Verdict:
     needs: list[dict] | None = None
 
     @property
+    def ready_at(self) -> datetime | None:
+        """**`ready` の日のうち、この時刻まで計器が読めない**（`Answer.ready_at` の最も遅いもの）。
+
+        `None` ＝ その日なら一日じゅう読める。**`ready` と対で読むこと** ——
+        この時刻は `ready` の日についての話で、それより前の日には当たりません。
+        """
+        ats = [a.ready_at for a in self.answers if a.ready_at is not None]
+        return max(ats) if ats else None
+
+    @property
     def unreachable(self) -> bool:
         """**こちらの手では起こせない**要件を含むか（`Answer.unreachable`）。
 
@@ -1601,6 +1631,49 @@ def unready_claims(items: list[dict] | None = None, as_of: date | None = None,
     """
     vs = check(items if items is not None else load(), as_of=as_of, lag=lag)
     return {v.claim for v in vs if v.ready is None and not v.unchecked}
+
+
+def not_open_yet(items: list[dict] | None = None, now: datetime | None = None,
+                 lag: int | None = None) -> set[str]:
+    """**判定できる日は今日だが、その日の中でまだ時刻が来ていない claim。**
+
+    ## なぜ `unready_claims()` では足りないのか（2026-08-28 03:1x に踏んだ）
+
+    あちらは「**日が出せない**」を捕まえます。ここが捕まえるのは
+    「**日は出た。今日だ。ただし読めるのは 16:00 から**」です。
+    `Answer.ready` は日付なので、**時刻はそこで落ちます** ——
+    落ちたぶん、その日の 00:00〜16:00 に走る回は全部
+    `arm_speed.next_close()` から「今日が判定できる日」を受け取り、
+    `eta.py` の頭3行に「**この回は `verdict` で日付が動かせます**」と出ます。
+
+    実測 2026-08-28 03:1x（この関数を足した回）:
+
+        `scripts/eta.py`   「**期日の来た前提があります**（2026-08-28）→
+                            **この回は `verdict` で日付が動かせます**」
+        `scripts/status.py`「期限が来ていて、**いま判定できる前提: なし**」
+        実物              `data/views.jsonl` のいちばん新しい点は **08-27 16:34 JST**。
+                          要件は 08-27 **22:00 JST 以降**の点。取り直す
+                          `snapshot.py` は **403**（214回 観測）。枠が戻るのは 16:00 JST
+
+    **2つの道具が同じ回に逆のことを言っていました。** `status.py` が正しい。
+    この窓は **16時間**（00:00〜16:00 JST）あり、そのあいだの回は全部
+    `verdict` を探しにいって、`403` を1つ買って帰ります ——
+    `docs/JOURNAL.md` 2026-08-28 00:0x の申し送りが
+    「**この回に verdict が選べなかったのは日枠のせいだけです**」と書いています。
+
+    **覆る条件**: `Answer.ready` そのものが `datetime` になったら、
+    この関数は要りません（呼び手が時刻ごと比べられるので）。
+    """
+    now = now or datetime.now(JST)
+    vs = check(items if items is not None else load(), as_of=now.date(), lag=lag)
+    out: set[str] = set()
+    for v in vs:
+        at = v.ready_at
+        if v.ready is None or at is None:
+            continue
+        if v.ready == now.date() and at > now:
+            out.add(v.claim)
+    return out
 
 
 # --- **印字ではなく、書き換えるところまでやる**（2026-08-26・最適化の回）---

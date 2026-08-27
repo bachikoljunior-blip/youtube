@@ -128,3 +128,57 @@ def test_本物の台帳のday_cap要件が門を持っている():
         assert (str(need.get("quota") or "") == "data_api"
                 or any(t in str(need.get("refresh")) for t in dc._DATA_API_REFRESH)), (
             "`snapshot.py` が `_DATA_API_REFRESH` から外れています")
+
+
+# --- **時刻がそこで落ちていた**（2026-08-28 03:1x に踏んだ。`not_open_yet`）---
+
+
+def test_門は戻る時刻そのものも返す(monkeypatch):
+    """`Answer.ready` は**日付**なので、`16:00` はそこで落ちます。
+
+    落ちたぶん、その日の 00:00〜16:00 に走る回は全部
+    `arm_speed.next_close()` から「今日が判定できる日」を受け取り、
+    `eta.py` の頭3行に「**この回は `verdict` で日付が動かせます**」と出ました
+    （**16時間ぶん**）。同じ回に `status.py` は
+    「期限が来ていて、**いま判定できる前提: なし**」と正しく出しています。
+    """
+    _quota(monkeypatch, False, BACK)
+    a = dc._quota_gate(NEED, WHEN, "この日の読み")
+    assert a.ready_at == BACK, "戻る**時刻**が落ちています（日付だけでは 16時間 嘘をつきます）"
+
+
+def test_その日のうちでも時刻が来ていなければ外す(monkeypatch):
+    """`not_open_yet`。**`unready_claims` の1段 深いところ**です。
+
+    あちらは「日が出せない」を捕まえます。ここは
+    「**日は出た。今日だ。ただし読めるのは 16:00 から**」を捕まえます。
+    """
+    v = dc.Verdict(claim="c", deadline=BACK.date(), ready=BACK.date(),
+                   answers=[dc.Answer(BACK.date(), why="x", ready_at=BACK)])
+    monkeypatch.setattr(dc, "check", lambda *a, **k: [v])
+    monkeypatch.setattr(dc, "load", lambda *a, **k: [])
+    before = datetime(2026, 8, 28, 3, 17, tzinfo=JST)
+    after = datetime(2026, 8, 28, 16, 30, tzinfo=JST)
+    assert dc.not_open_yet(now=before) == {"c"}, "16:00 の前なのに通しています"
+    assert dc.not_open_yet(now=after) == set(), "16:00 を過ぎたのに止めています"
+
+
+def test_時刻を持たない要件は外さない(monkeypatch):
+    """**門を増やさないこと。** `ready_at` が無い ＝ その日なら一日じゅう読める。"""
+    v = dc.Verdict(claim="c", deadline=BACK.date(), ready=BACK.date(),
+                   answers=[dc.Answer(BACK.date(), why="x")])
+    monkeypatch.setattr(dc, "check", lambda *a, **k: [v])
+    monkeypatch.setattr(dc, "load", lambda *a, **k: [])
+    assert dc.not_open_yet(now=datetime(2026, 8, 28, 3, 17, tzinfo=JST)) == set()
+
+
+def test_etaはそのclaimをnext_closeから外す():
+    """**繋がっているところまでが1件です。** 道具を足しても、呼ばれなければ 0。
+
+    `scripts/eta.py` の `_unready_claims()` が `not_open_yet()` を
+    足し込んでいること。**外すと、また 16時間ぶん嘘が出ます。**
+    """
+    src = (ROOT / "scripts" / "eta.py").read_text(encoding="utf-8")
+    assert "not_open_yet" in src, (
+        "`eta.py` が `not_open_yet()` を読んでいません —— "
+        "`unready_claims()` だけでは『今日だが 16:00 から』を外せません")

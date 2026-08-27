@@ -201,7 +201,19 @@ def _unready_claims() -> set:
     「今日が期限 ＝ **この回は `verdict` で日付が動かせます**」という嘘の頭3行が、
     判定に要る本が0本の日に出ます（2026-08-26 20:4x に踏んだ）。
     """
-    return _deadline_check_mod().unready_claims()
+    mod = _deadline_check_mod()
+    out = set(mod.unready_claims())
+    # **「日は出た。今日だ。ただし読めるのは 16:00 から」も、ここで外すこと**
+    #   （2026-08-28 03:1x に踏んだ。`deadline_check.not_open_yet` の註）。
+    #   `Answer.ready` は日付なので **時刻がそこで落ちます** —— 落ちたぶん、
+    #   その日の 00:00〜16:00 に走る回は全部この頭3行で
+    #   「この回は `verdict` で日付が動かせます」と言われます（**16時間ぶん**）。
+    #   同じ回に `status.py` は「いま判定できる前提: なし」と正しく出していました。
+    try:
+        out |= set(mod.not_open_yet())
+    except Exception:                                          # noqa: BLE001
+        pass                            # **読めないときは黙る**（門を増やさない）
+    return out
 
 # --- 門（YouTube の公表値。守るのではなく、通らないと収入が0になる事実）---
 SUBS_GATE = 1_000
