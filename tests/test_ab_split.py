@@ -182,7 +182,10 @@ def test_走っている実験は全部_hypotheses_から引ける():
         assert _split_ref(exp) in text, f"{name} が hypotheses.yaml に居ません"
     # **`script_writer.` だけを拾わないこと**（2026-08-27）——
     # `slide_pace` は `src/pipeline.py` に在ります。
-    for name in re.findall(r"(?:script_writer|pipeline)\.(\w+)` が", text):
+    # **`.py` を除くこと**: 帳面には `src/pipeline.py` という**ファイル名**も
+    # 出てくるので、除かないと `py` という名前の実験を探しにいきます
+    # （この回にいちど落ちました）。
+    for name in re.findall(r"(?:script_writer|pipeline)\.(?!py\b)(\w+)` が", text):
         assert name in EXPERIMENTS, f"{name} が EXPERIMENTS に登録されていません"
 
 
