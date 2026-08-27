@@ -462,48 +462,60 @@ def record_estimates(vs: list["Verdict"], path: Path | None = None,
     他の道具からも何度も呼ばれます。**呼ぶたびに repo へ書き足す作りにすると、
     控えは「この機械が何回 撃たれたか」を数えるようになり、
     伸び率の散らばりではなくなります。** 積むのは印字する道の1か所だけ。
+
+    ## **「欄が足りない行を書き直す」を、1回だけにすること**（2026-08-27 夜・最適化の回）
+
+    同じ日の夕方に足した「`have` の無い今日の行は済みにしない」は、
+    **`have` を持たない答えに対して、毎周1行ずつ足していました。**
+    条件が「その行に `have` が無いか」だったので、**書き直した行にも `have` が
+    入らない**（＝答えの側が `have` を持たない）と、**次の周もまた足りない**
+    ＝ 永久に書き足します。`tests/test_deadline_band_from_rate_scatter.py` の
+    `test_控えは1鍵1日1行` が**その日から赤いまま押されていました**
+    （この回が実測: 2回 撃つと 1件 → **1件**。あるべきは 1件 → 0件）。
+
+    害は控えの行数ではなく**帯のほう**です —— `_rate_scatter()` は点の散らばりで
+    ±N日 を出すので、**同じ値の行が増えるほど散らばりが小さく出ます**
+    （＝帯が狭くなり、狭い帯は「書き換えてよい」に読めて churn が戻る。
+    その churn は `_rate_scatter` の註が「3日に4回 期限が書き換わった」と
+    書いているものです）。
+
+    直し方: **その (鍵, 日) に `have` を持つ行が既に在るか**で見ます。
+    在れば済み。無ければ、**これから書く答えが `have` を持つときだけ**書き足す
+    （＝移行の1回だけ）。`have` を持たない答えは、その日の1行目だけが残ります。
     """
     p = path or RATE_LOG
     day = (as_of or today_jst()).isoformat()
     seen: set[tuple[str, str]] = set()
-    # **`have` の無い今日の行は、まだ「済み」にしません**（2026-08-27 夜）。
-    #   `have` を控え始めた日は、その日の行が既に `have` 無しで在ります。
-    #   そこを飛ばすと、**最初の点が1日 遅れて立つ** ＝ 止まりに気づけるのが
-    #   1日 遅くなります。**1鍵1日1行は保ったまま**、欄の足りない行だけ
-    #   もう一度 書かせます（`_recent_rate` は `have` の無い行を捨てるので、
-    #   古いほうは残っていても害がありません）。
-    #
-    # **ただし「もう一度 書かせる」の条件が半分でした**（2026-08-28 に直した）。
-    #   古い行に `have` が無いことだけを見て、**新しい行が `have` を持つか**を
-    #   見ていませんでした。`have` が None のままの鍵（数を持たない要件）は、
-    #   撃つたびに `have: null` の行を1本ずつ足します ——
-    #   **控えが「この機械が何回 撃たれたか」を数える**、この関数の註が
-    #   まさに禁じている形です。`tests/test_deadline_band_from_rate_scatter.py::
-    #   test_控えは1鍵1日1行` はそこで赤のままでした。
-    refill: set[str] = set()
+    #: その (鍵, 日) に **`have` を持つ行**が既に在るか
+    filled: set[tuple[str, str]] = set()
     if p.exists():
         for ln in p.read_text(encoding="utf-8").splitlines():
             try:
                 r = json.loads(ln)
             except ValueError:
                 continue
-            if str(r.get("at")) == day and r.get("have") is None:
-                refill.add(str(r.get("key")))
-                continue
-            seen.add((str(r.get("key")), str(r.get("at"))))
+            k = (str(r.get("key")), str(r.get("at")))
+            seen.add(k)
+            if r.get("have") is not None:
+                filled.add(k)
     add = []
     for v in vs:
         for a in v.answers:
             if not a.rate_key or a.rate is None:
                 continue
-            if (a.rate_key, day) in seen:
+            k = (a.rate_key, day)
+            if k in filled:
                 continue
-            # **欄を埋められない書き直しはしません。** 今日の行が `have` 無しで
-            # 在って、こちらも `have` を持っていないなら、書いても同じ行が増えるだけ。
-            if a.rate_key in refill and a.have is None:
-                seen.add((a.rate_key, day))
+            # **`have` の無い今日の行は、1回だけ書き直します**（2026-08-27 夜）。
+            #   `have` を控え始めた日は、その日の行が既に `have` 無しで在ります。
+            #   そこを飛ばすと、**最初の点が1日 遅れて立つ** ＝ 止まりに気づけるのが
+            #   1日 遅くなります。**書き直すのは、こんど書く側が `have` を持つ
+            #   ときだけ** —— 持たないまま書き足すと、毎周1行ずつ増えます（上の註）。
+            if k in seen and a.have is None:
                 continue
-            seen.add((a.rate_key, day))
+            seen.add(k)
+            if a.have is not None:
+                filled.add(k)
             add.append({"at": day, "key": a.rate_key, "rate": round(a.rate, 6),
                         # **実数も控えます**（2026-08-27 夜）。`rate` は生涯の平均で、
                         # 積みが止まっても分母が伸びるぶん下がるだけ ——
