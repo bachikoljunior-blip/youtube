@@ -290,14 +290,33 @@ def arm(lever: str, rows: list[dict] | None = None, today: date | None = None,
     rows = closed() if rows is None else rows
     today = today or today_jst()
     caps = ceilings() if caps is None else caps
-    th = throughput(rows, today)
 
     mine = [r for r in rows if r["lever"] == lever]
     pool = [r for r in rows if r["lever"] in ARMS]
+    # **θ は `pool` で数えます**（`rows` ではありません。2026-08-27 に直した）。
+    #
+    # `rate = p · log(g) · θ · share` の `θ · share` は「**1日に腕 X で閉じる件数**」の
+    # つもりですが、`share = len(mine)/len(pool)` なので、θ を `rows`（＝ `closed()`
+    # そのもの）で数えると分子だけ `none` を含み、**合計が実測とずれます**::
+    #
+    #     θ(rows) · Σshare = n_all  / days    ← `lever: none` を含む
+    #     腕の回転の実測    = n_pool / days
+    #
+    # 実測 2026-08-27: **21件 ÷ 23日 = 0.913/日** に対し、腕の付いた実測は
+    # **17件 ÷ 23日 = 0.739/日**。**4本の腕の伸び率が、そろって 23.5% 水増し**でした。
+    # `none` は「**この前提は腕を動かさない**」と宣言した側なので、
+    # **動かさないと宣言した前提が、閉じるたびに到達日を早めていた**ことになります
+    # （実測の効き: `per_video` の「2倍まで」が **15日 → 19日**）。
+    #
+    # **同じファイルの `_pooled_p()` と `band()` は、最初から `pool` で絞っています。**
+    # `planned()`（未来の配分）も 2026-08-26 に `none` を分母から外しました。
+    # **4か所のうち、ここ1つだけが直っていませんでした。**
+    # 検査は `tests/test_theta_arm_bearing.py`。
+    th = throughput(pool, today)
 
     missing: list[str] = []
     if th["per_day"] is None:
-        missing.append("回転の速さ（閉じた前提が0件）")
+        missing.append("回転の速さ（腕の付いた閉じた前提が0件）")
 
     use, source = (mine, "自前") if len(mine) >= MIN_N else (pool, "全体で代用")
     if source == "全体で代用" and len(mine) < MIN_N:
@@ -390,9 +409,14 @@ def miss_streak(rows: list[dict] | None = None) -> dict:
     （＝ 連敗の件数 ÷ 回転の速さ）。
     """
     rows = closed() if rows is None else rows
-    th = throughput(rows)
+    # **連敗も θ も、腕の付いた行だけで数えます**（2026-08-27 に直した）。
+    # `expected_gap` は `_pooled_p()`（＝ `ARMS` だけ）から出ているので、
+    # 連敗のほうに `none` を混ぜると**別の母集団どうしを比べて**
+    # 「外れすぎです」と言い出します（`none` は必ず `effect: 1.0` ＝ 非当たり）。
+    pool = [r for r in rows if r["lever"] in ARMS]
+    th = throughput(pool)
     n = 0
-    for r in reversed(rows):
+    for r in reversed(pool):
         if r["hit"]:
             break
         n += 1
@@ -447,6 +471,8 @@ def lines(arms: dict[str, dict], streak: dict, bd: dict,
     th = any_arm.get("throughput") if any_arm else None
     if th:
         P(f"    回転の速さ  **1日 {th:.2f}件** が閉じている"
+          f"（**腕の付いた前提だけ**。`lever: none` は数えません ——"
+          "「動かさない」と宣言した前提が腕を速めていました。2026-08-27 に直した）"
           f"（最初に閉じた日からの実測。**間隔ではありません** —— 実験は同時に走ります）")
     for k, a in arms.items():
         if a["rate"]:
