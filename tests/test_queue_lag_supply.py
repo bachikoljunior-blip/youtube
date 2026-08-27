@@ -217,3 +217,24 @@ def test_帯の超過は下限だと言う(monkeypatch):
     monkeypatch.setattr(QL, "_walk_days", lambda *_a, **_k: (due + timedelta(days=1), 35))
     out = "\n".join(QL.supply_lines([("request_form", "途中あり", 114)]))
     assert "**下限**です" in out
+
+
+def test_期限を越えると出したら_突き合わせ先も同じ所に出す(monkeypatch):
+    """**この行だけで期限を書き換えさせないこと**（2026-08-27 に危うくやりかけた）。
+
+    `scripts/deadline_check.py` は同じ床を**伸び率**から解いていて、実測 08/27 は
+    `request_form` を **09/30・±10日** と出しました —— こちらの帯の歩き（10/01）と
+    **1日** しか違いません。**帯の中なら書き換えても届く日は1日も動きません。**
+    """
+    _fake_supply(monkeypatch, total=500)
+    monkeypatch.setattr(QL, "_shorts_only", lambda _keys: [])
+    monkeypatch.setattr(QL, "_short_share", lambda *_a, **_k: None)
+    monkeypatch.setattr(QL.judgeable, "deadlines",
+                        lambda: {"request_form": date(2026, 10, 6)})
+    lag = QL.SETTLE_DAYS + QL.judgeable.ANALYTICS_LAG_DAYS
+    due = date(2026, 10, 6) - timedelta(days=lag)
+    monkeypatch.setattr(QL, "_walk_days", lambda *_a, **_k: (due + timedelta(days=1), 35))
+    out = "\n".join(QL.supply_lines([("request_form", "途中あり", 114)]))
+    assert "deadline_check.py" in out
+    assert "帯の中なら期限を書き換えないこと" in out
+    assert "床を下げるのは、どちらの場合も禁止" in out
