@@ -4336,3 +4336,8 @@
 {"at": "2026-08-27T07:55:51+00:00", "detail": "videos.update KW3TqPvWctQ"}
 {"at": "2026-08-27T07:55:52+00:00", "detail": "videos.update KW3TqPvWctQ"}
 {"at": "2026-08-27T07:55:53+00:00", "detail": "videos.update KW3TqPvWctQ"}
+{"at": "2026-08-27T08:34:02+00:00", "detail": "status: Data API 読み"}
+{"at": "2026-08-27T08:34:38+00:00", "detail": "playlistItems.list uploads"}
+{"at": "2026-08-27T08:34:39+00:00", "detail": "videos.list snippet"}
+{"at": "2026-08-27T08:34:41+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-27T08:35:47+00:00", "detail": "channels.list mine"}
