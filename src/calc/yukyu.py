@@ -329,6 +329,92 @@ def shorter_but_more(years: int, monthly_wage: int) -> list[dict]:
     return out
 
 
+def same_hours_split(weekly_hours: float, years: int, monthly_wage: int) -> list[dict]:
+    """**週の総労働時間と月給を固定して、それを何日に割るかだけを変える。**
+
+    同じ時間を働き、同じ月給をもらっていても、**有給の生涯価値は日数の割り方で
+    変わります。** 2つの力が逆を向いているからです。
+
+        日数を減らす  → 1日の賃金は上がる（月給 ÷ 週の日数 × 52 ÷ 12）
+        日数を減らす  → 週4日以下かつ週30時間未満だと比例付与に落ちて、日数が減る
+
+    **1日8時間の上限（32条2項）があるので、割り方は自由ではありません** ——
+    週30時間を週3日に割ると1日10時間になり、この計算の外に出ます。
+    そこは行ごと落としてあります（成り立たない組を並べない）。
+    """
+    rows: list[dict] = []
+    for weekly_days in (5, 4, 3, 2, 1):
+        daily_hours = weekly_hours / weekly_days
+        if daily_hours > LEGAL_DAILY_HOURS:
+            continue
+        total = cumulative_by_hours(years, weekly_days, weekly_hours)
+        per_day = daily_wage(monthly_wage, weekly_days)
+        rows.append({
+            "週の所定労働時間": weekly_hours,
+            "週の所定労働日数": weekly_days,
+            "1日の所定労働時間": daily_hours,
+            "比例付与か": is_prorated(weekly_days, weekly_hours),
+            "生涯の付与日数": total,
+            "有給1日の賃金": per_day,
+            "生涯の付与を円で": total * per_day,
+        })
+    return rows
+
+
+def best_split(weekly_hours: float, years: int, monthly_wage: int) -> dict | None:
+    """その週の総時間で、**有給の生涯価値がいちばん高くなる割り方**。無ければ None。
+
+    同額が並んだときは**日数の多いほう**を返します（週5日が既定の働き方なので、
+    「入れ替わった」と言えるのは週5日を**上回った**ときだけ）。
+    """
+    rows = same_hours_split(weekly_hours, years, monthly_wage)
+    if not rows:
+        return None
+    return max(rows, key=lambda r: (r["生涯の付与を円で"], r["週の所定労働日数"]))
+
+
+def split_window(years: int, monthly_wage: int,
+                 lo_minutes: int = 10 * 60, hi_minutes: int = 40 * 60,
+                 step_minutes: int = 30) -> list[dict]:
+    """**週の総時間を刻んで、勝つ割り方がどこで入れ替わるかを出す。**
+
+    刻みは週あたりの分。返す各行は、その総時間での勝ち（`best_split`）と、
+    **既定の週5日との差**です。差が正の行が「週5日より得な帯」になります。
+    """
+    rows: list[dict] = []
+    for m in range(lo_minutes, hi_minutes + 1, step_minutes):
+        weekly_hours = m / 60
+        best = best_split(weekly_hours, years, monthly_wage)
+        if best is None:
+            continue
+        five = [r for r in same_hours_split(weekly_hours, years, monthly_wage)
+                if r["週の所定労働日数"] == 5]
+        base = five[0]["生涯の付与を円で"] if five else 0.0
+        rows.append({
+            "週の所定労働時間": weekly_hours,
+            "勝つ週の所定労働日数": best["週の所定労働日数"],
+            "その1日の所定労働時間": best["1日の所定労働時間"],
+            "勝ちの生涯の付与を円で": best["生涯の付与を円で"],
+            "週5日にしたときの生涯の付与を円で": base,
+            "週5日との差": best["生涯の付与を円で"] - base,
+        })
+    return rows
+
+
+def split_window_edges(years: int, monthly_wage: int,
+                       step_minutes: int = 30) -> tuple[float, float] | None:
+    """**週5日より得になる帯の、左端と右端**（週の総時間）。無ければ None。
+
+    実測ではここが**とても狭い**ので、「週4日にすれば得」とは言い切れません。
+    帯の外では、同じ総時間・同じ月給でも**週5日のほうが上**です。
+    """
+    win = [r for r in split_window(years, monthly_wage, step_minutes=step_minutes)
+           if r["週5日との差"] > 0]
+    if not win:
+        return None
+    return (win[0]["週の所定労働時間"], win[-1]["週の所定労働時間"])
+
+
 def quit_day_value(monthly_wage: int, weekly_days: int = 5,
                    grants: int = 21) -> list[dict]:
     """**付与日の前日に辞めるか、その日まで在籍するか。1日の差で何日・何円変わるか。**
@@ -501,6 +587,47 @@ def check_tables() -> None:
         raise _checks.TableError("退職日1日の差の最大が、付与の上限20日になっていない")
     if q[0]["1日の差（日）"] != FULL_TIME[0]:
         raise _checks.TableError("1回目（勤続6か月）の1日の差が10日になっていない")
+    #    (o) **主題**: 週の総時間を固定して日数だけ替えると、勝つ割り方が入れ替わる帯がある
+    for hours in (10.0, 20.0, 24.0, 28.0, 30.0, 32.0, 35.0, 40.0):
+        rows = same_hours_split(hours, 20, 300_000)
+        if not rows:
+            continue
+        for row in rows:
+            if row["1日の所定労働時間"] > LEGAL_DAILY_HOURS:
+                raise _checks.TableError(
+                    f"週{hours}時間の割り方に、1日{LEGAL_DAILY_HOURS}時間を超える行がある")
+            _checks.rounding(row["生涯の付与を円で"],
+                             row["生涯の付与日数"] * row["有給1日の賃金"],
+                             f"週{hours}時間・週{row['週の所定労働日数']}日の生涯の付与を円で")
+        if not any(r["週の所定労働日数"] == 5 for r in rows):
+            raise _checks.TableError(f"週{hours}時間の割り方に、週5日の行が無い")
+    #        帯の端は週30時間と週32時間ちょうど。**刻みを30分から1分にしても動かないこと**
+    edges = {step: split_window_edges(20, 300_000, step_minutes=step)
+             for step in (30, 15, 1)}
+    if len(set(edges.values())) != 1:
+        raise _checks.TableError(f"帯の端が刻みで動いている: {edges}")
+    edge = edges[1]
+    if edge is None:
+        raise _checks.TableError("週5日より得になる帯が1つも出ていない")
+    if edge[0] != float(FULLTIME_WEEKLY_HOURS):
+        raise _checks.TableError(
+            f"帯の左端が週{FULLTIME_WEEKLY_HOURS}時間になっていない（{edge[0]}）")
+    if edge[1] != float(PRORATED_MAX_WEEKLY_DAYS * LEGAL_DAILY_HOURS):
+        raise _checks.TableError(f"帯の右端が週4日×1日8時間になっていない（{edge[1]}）")
+    #        帯の中は週4日が勝ち、帯の外は週5日と同額（下回ることはない）
+    for row in split_window(20, 300_000, step_minutes=30):
+        inside = edge[0] <= row["週の所定労働時間"] <= edge[1]
+        if inside:
+            if row["勝つ週の所定労働日数"] != PRORATED_MAX_WEEKLY_DAYS:
+                raise _checks.TableError(
+                    f"帯の中（週{row['週の所定労働時間']}時間）で週4日が勝っていない")
+            _checks.greater(row["勝ちの生涯の付与を円で"],
+                            row["週5日にしたときの生涯の付与を円で"],
+                            f"週{row['週の所定労働時間']}時間の勝ちが、週5日")
+        else:
+            if row["週5日との差"] != 0:
+                raise _checks.TableError(
+                    f"帯の外（週{row['週の所定労働時間']}時間）で週5日と差が付いている")
 
 
 if __name__ == "__main__":
@@ -624,3 +751,39 @@ if __name__ == "__main__":
     b = cumulative_by_hours(20, 4, 28.0)
     print(f"  週25時間（5日×5時間）は生涯{a}日、週28時間（4日×7時間）は生涯{b}日。"
           f"**3時間よけいに働いて、{a - b}日少ない。**")
+
+    edge = split_window_edges(20, 300_000, step_minutes=1)
+    lo, hi = edge  # type: ignore[misc]
+    win = [r for r in split_window(20, 300_000, step_minutes=30)
+           if r["週5日との差"] > 0]
+    gap = win[0]["週5日との差"]
+    ratio = win[0]["勝ちの生涯の付与を円で"] / win[0]["週5日にしたときの生涯の付与を円で"]
+    print(f"\n=== 同じ週の総時間・同じ月給でも、何日に割るかで有給の生涯価値が変わる。"
+          f"得な帯は週{lo:.0f}〜{hi:.0f}時間の{hi - lo:.0f}時間だけ ===")
+    print(f"  月給30万・勤続20年で固定し、**週の総労働時間だけを刻んで**、"
+          f"それを何日に割るのがいちばん得かを出しました（1日{LEGAL_DAILY_HOURS}時間の上限つき）。")
+    print("    週の総時間  勝つ割り方           勝ちの生涯価値      週5日にしたとき      差")
+    for row in split_window(20, 300_000, step_minutes=60):
+        mark = "  ← **入れ替わる**" if row["週5日との差"] > 0 else ""
+        print(f"    週{row['週の所定労働時間']:>4.1f}時間"
+              f"  週{row['勝つ週の所定労働日数']}日×1日{row['その1日の所定労働時間']:>4.2f}時間"
+              f"  {row['勝ちの生涯の付与を円で']:>11,.0f}円"
+              f"  {row['週5日にしたときの生涯の付与を円で']:>11,.0f}円"
+              f"  {row['週5日との差']:>10,.0f}円{mark}")
+    print(f"  **入れ替わるのは週{lo:.0f}時間から週{hi:.0f}時間までの{hi - lo:.0f}時間だけ**です。"
+          f"そこでは週4日が週5日を **{gap:,.0f}円**（{ratio:.3f}倍）上回ります。")
+    print(f"  左端が週{lo:.0f}時間なのは比例付与を抜ける線（39条3項）、"
+          f"右端が週{hi:.0f}時間なのは1日{LEGAL_DAILY_HOURS}時間×4日の上限（32条2項）。"
+          "**帯の幅は、この2つの条文の差そのものです。**")
+    print(f"  週{hi:.0f}時間を超えると週4日は1日{LEGAL_DAILY_HOURS}時間に収まらないので、"
+          "行ごと消えます。**帯の外では、週5日と同額か、週5日のほうが上**です。")
+    for hours in (28.0, 30.0, 36.0):
+        print(f"  週{hours:.0f}時間の内訳:")
+        for row in same_hours_split(hours, 20, 300_000):
+            kind = "比例付与" if row["比例付与か"] else "通常"
+            print(f"    週{row['週の所定労働日数']}日 × 1日{row['1日の所定労働時間']:>4.2f}時間"
+                  f"  {kind:<4}  生涯{row['生涯の付与日数']:>3}日"
+                  f"  1日{row['有給1日の賃金']:>9,.0f}円"
+                  f"  = {row['生涯の付与を円で']:>11,.0f}円")
+    print("  **「週4日にすれば得」ではありません。** 得なのは、"
+          f"週の総時間を週{lo:.0f}〜{hi:.0f}時間に置いたまま4日に詰めたときだけです。")
