@@ -2285,6 +2285,22 @@ def main(argv: list[str] | None = None) -> int:
         print("        処置(動きあり)の側は既に床を越えているので、"
               "そちらへ足しても判定は1日も早まりません"
               "（`scripts/batch_build.motion_shortfall`）。", flush=True)
+        # **同じ段落が、同じ数について2つのことを言わないこと**（2026-08-27 に踏んだ）。
+        #     `_why` の末尾は `motion_shortfall()` の答え（＝**盤面が要る本数**）で、
+        #     頭の `n_off` は `motion_plan()` の答え（＝**この回で実際に対照にする本数**）。
+        #     `motion_plan` は `off = min(need, max(1, n // 2))` で
+        #     **1回の半分まで**しか対照にしません（同じ JST 日に両群が居ないと
+        #     `motion_groups.paired()` が標本に数えないため。理由はあちらの docstring）。
+        #     実測 2026-08-27: `--count 2` の回の出力が
+        #     「**1 本を…作ります** —— …→ **この回で作るのは 2本**」と、
+        #     **同じ行の中で 1 と 2 の両方**を言っていました。
+        #     読んだ側は「2本 埋まった」と思い、床はまだ 1本 空いたまま残ります。
+        if _need > n_off:
+            print(f"        [!] **残り {_need - n_off}本 は、この回では作りません。**"
+                  " 対照は1回の半分まで（同じ日に両群が居ないと `paired()` が"
+                  "標本に数えないため）。**この回で床まで埋めたいなら"
+                  f" `--count {2 * _need}`** —— そうでなければ、"
+                  f"**あと {_need - n_off}本 は次の回に残ります。**", flush=True)
     elif explicit:
         print(f"\n[batch] `{_MOTION_ENV}` が明示されているので、腕はそれに従います"
               f"（この回では選び直しません）", flush=True)
