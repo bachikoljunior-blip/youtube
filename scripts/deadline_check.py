@@ -362,10 +362,21 @@ def _ans_accrual(need: dict, as_of: date) -> Answer:
         #   （`src/watches.deep_short_days()` がその例）。**ここに一般の門は置けません** ——
         #   何を数えるべきかは、前提ごとに `falsified_if` が決めるからです。
         return Answer(as_of, f"要 {want} ／ いま **{have}** → 足りています")
+    # **足りていない道は、全部ここを通ります。** 古い計器の申告は1度だけ引いて、
+    # **日が出る道にも出ない道にも**同じものを載せます（下の3か所）。
+    #
+    # **`have == 0` の道にだけ載せて済ませないこと**（2026-08-27 夜に踏みかけた）。
+    # 取り直して 0 → 1 になった瞬間、この要件は**日の出る道**へ移ります ——
+    # そこに載せないと、翌日ふたたび控えが古びても**誰も言いません。**
+    # 数は 1 のまま、伸び率だけが 0.50/日 → 0.33 → 0.25 と落ち、
+    # **判定日が毎日 後ろへ滑るのに、理由がどこにも出ない**形になります。
+    # **`have >= want` の道には載せません**（もう足りているので、取り直す用が無い）。
+    stale = _stale_todo(need)
     try:
         spanned = (as_of - date.fromisoformat(since_s)).days
     except ValueError:
-        return Answer(None, f"要 {want} ／ いま {have}（`since` が読めないので伸び率が出せません）")
+        return Answer(None, f"要 {want} ／ いま {have}（`since` が読めないので伸び率が出せません）",
+                      todo=stale)
     # **1日の窓から伸び率を出さないこと**（2026-08-26 夕・最適化の回に踏んだ）。
     #
     #     実測: `since: 2026-08-26` の前提が、立った **1時間後**に
@@ -392,7 +403,7 @@ def _ans_accrual(need: dict, as_of: date) -> Answer:
         return Answer(None, f"要 {want} ／ いま {have}"
                             f"（`since` から {spanned}日。**{_MIN_SPAN_DAYS}日 ぶん"
                             "たまるまで伸び率を出しません** —— 1日の窓からの見通しは、"
-                            "帯の外れ方が読めません）")
+                            "帯の外れ方が読めません）", todo=stale)
     elapsed = max(1, spanned)
     rate = have / elapsed
     if rate <= 0:
@@ -405,15 +416,21 @@ def _ans_accrual(need: dict, as_of: date) -> Answer:
                                 "**こちらから作らないかぎり来ません**）", unreachable=True)
         return Answer(None, f"要 {want} ／ いま **0**（{elapsed}日ぶん。"
                             "**伸び率が出せないので、いつ届くか言えません**）",
-                      todo=_stale_todo(need))
+                      todo=stale)
     days = math.ceil((want - have) / rate)
     # **帯の幅**: 積み上げの数え上げ誤差 ≒ 1/√have（件数の相対標準誤差）を日数へ移す。
     # have=74・days=88 なら ±11日。**この幅の中で期限を書き換えても、何も動きません。**
     slack = max(1, math.ceil(days / max(1.0, have ** 0.5)))
+    # **日が出る道にも、古い計器の申告を載せます。** ここは `warming` ではないので
+    # `todo` は印字されません —— だから `why` のほうへ足します。
+    # **この推定は「計器を取り直しつづけたら」の話**で、止めれば伸び率は落ち、
+    # 判定日は毎日 後ろへ滑ります。**滑っている理由が、同じ行に出ること。**
+    tail = f"  ／ {stale}" if stale else ""
     return Answer(as_of + timedelta(days=days),
                   f"要 {want} ／ いま {have}（{elapsed}日で {rate:.2f}/日）→ あと {days}日"
-                  f"（**±{slack}日**。伸び率からの推定なので、この幅の中の書き換えは意味を持ちません）",
-                  slack=slack)
+                  f"（**±{slack}日**。伸び率からの推定なので、この幅の中の書き換えは意味を持ちません）"
+                  + tail,
+                  slack=slack, todo=stale)
 
 
 def _project_nth(rows: list[dict], pub: list[str], count: int, after: str,
