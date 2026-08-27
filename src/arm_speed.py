@@ -690,6 +690,13 @@ def forward(ready: dict[str, date] | None = None, doc: dict | None = None,
     """
     doc = _load() if doc is None else doc
     today = today or today_jst()
+    # **ここの `back` は `arm()` の θ とは別の数です**（2026-08-27 に分かれた）。
+    #   `arm()` は `lever` が `ARMS` の行だけで θ を数えます（`none` を入れると
+    #   「動かさないと宣言した前提」が4本の腕を速めるため。実測 23.5% 水増し）。
+    #   こちらの分子は「**いま開いている前提のうち、窓の内側に判定日があるもの**」で、
+    #   腕の有無で絞っていません。**同じ母集団と比べるには、こちらも `none` 込み**です。
+    #   だから `arm()` の 0.74/日 と、ここの 0.91/日 は**食い違いではありません。**
+    #   **片方を写して置き換えないこと** —— 揃えるなら、分子の側も同時に絞ること。
     back = throughput(closed(doc), today)["per_day"]
 
     n_open = sum(1 for h in (doc.get("hypotheses") or [])
@@ -842,6 +849,13 @@ def forward_by_arm(ready: dict[str, date] | None = None,
     """
     doc = _load() if doc is None else doc
     today = today or today_jst()
+    # **ここの `back` は `arm()` の θ とは別の数です**（2026-08-27 に分かれた）。
+    #   `arm()` は `lever` が `ARMS` の行だけで θ を数えます（`none` を入れると
+    #   「動かさないと宣言した前提」が4本の腕を速めるため。実測 23.5% 水増し）。
+    #   こちらの分子は「**いま開いている前提のうち、窓の内側に判定日があるもの**」で、
+    #   腕の有無で絞っていません。**同じ母集団と比べるには、こちらも `none` 込み**です。
+    #   だから `arm()` の 0.74/日 と、ここの 0.91/日 は**食い違いではありません。**
+    #   **片方を写して置き換えないこと** —— 揃えるなら、分子の側も同時に絞ること。
     back = throughput(closed(doc), today)["per_day"]
 
     lever_of: dict[str, str] = {}
