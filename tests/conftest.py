@@ -80,3 +80,73 @@ def _measure_window_dynamic_off():
     measure_window.DISABLE_DYNAMIC = True
     yield
     measure_window.DISABLE_DYNAMIC = keep
+
+
+def source_of(func, name: str | None = None) -> str:
+    """`inspect.getsource()` を、**ファイルが読み込み後に動いた回に気づく形で**。
+
+    ## なぜ要るか（2026-08-27 に踏んだ。**実測 2件 赤・2回とも同じ2件**）
+
+    全体の検査は **20分半** かかります。そのあいだ**同じ木で `git merge` を撃つと、
+    ファイルが下へずれます** —— 実測 08/27、兄弟の回が `scripts/status.py` に
+    **60行**入れ（`e3a1144`）、その挿入点は `print_channel_signals`（1594行）と
+    `_channel_main`（1773行）の**上**でした。
+
+    `inspect.getsource()` は **import 時に決まった行番号**を
+    **いまのファイル**に当てて切り出します。60行 ずれた回は
+    **別の場所の中身**が返り、`assert "..." in src` が落ちます ——
+    **コードは1文字も壊れていないのに、赤が2件 出ます。**
+
+        tests/test_status_analytics_lag.py::test_遅れの日数はJSTで数える
+        tests/test_status_blind_path.py::test_節の一覧は1か所にしかない
+
+    **単体で撃つと両方 緑**なので、次に来た側は「気まぐれな赤」と読みます。
+    そして `scripts/fast_tests.py` は「**押す前に1度は撃つこと** ——
+    16分 かかるから誰も撃たない、が赤を何日も残した原因です」と言っています。
+    **気まぐれに見える赤は、その1度を撃たない理由になります。**
+
+    ## 何をしているか
+
+    `linecache` を捨ててから切り出し、**先頭が本当にその関数か**を見ます。
+    違えば「ファイルが動いた」と**名指しして**落とします ——
+    `assert "..." in src` の赤より、そちらのほうが読めます。
+
+    **覆る条件**: 検査の走りが1分を切る（＝ずれる窓が無くなる）なら、
+    この包みは要りません。**素の `inspect.getsource` に戻すこと。**
+    """
+    import inspect
+    import linecache
+
+    name = name or getattr(func, "__name__", "?")
+    try:
+        linecache.checkcache(inspect.getsourcefile(func) or "")
+    except Exception:
+        pass
+    src = inspect.getsource(func)
+    # **先頭の行だけを見ること。** 「どこかに `def name` が在る」で見ると鳴りません ——
+    #     `inspect.findsource()` は行番号が合わないとき**後ろへ探しに行かず**、
+    #     ずれたぶんを**頭に付けたまま**返します。実測（60行 ずらした回）::
+    #
+    #         'x = 1\n' * 60 + "def target():\n    return ...\n"
+    #
+    #     `def target` は在るので「在るか」の検査は緑になり、**包みが黙ります**
+    #     （2026-08-27、最初にそう書いて `DID NOT RAISE` で落ちました）。
+    head = next((ln for ln in src.splitlines() if ln.strip()), "")
+    h = head.strip()
+    # 飾りが付いた関数は `@...` から始まります。**その回は、下に本体が在るかも見ること**
+    #     （`@` だけで通すと、ずれた先がたまたま別の飾りでも黙ります）。
+    defined = any(ln.strip().startswith((f"def {name}", f"async def {name}"))
+                  for ln in src.splitlines())
+    ok = defined and (h.startswith("@") or h.startswith(f"def {name}")
+                      or h.startswith(f"async def {name}"))
+    if not ok:
+        raise AssertionError(
+            f"**`{name}` の中身が取れていません。**"
+            f" `inspect.getsource()` が返した先頭は {head!r} です。\n"
+            "  **この検査は壊れていません** —— 読み込み後にファイルが動いています。"
+            "（`git merge` を、走っている検査と同じ木で撃った回に起きます。"
+            "実測 2026-08-27: 兄弟が `scripts/status.py` に 60行 入れ、"
+            "その下の関数を見る検査が2件 赤くなりました）\n"
+            "  **撃ち直すこと。** 木を動かさずに撃てば緑です。"
+        )
+    return src
