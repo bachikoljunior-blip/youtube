@@ -285,7 +285,16 @@ def test_毎回_読む道具に_この節が載っていること():
 
 
 def test_足りない前提が2件_以上なら_合計だと断る(monkeypatch):
-    """**黙って1件の話にしないこと。** `need` は足りない群ぜんぶの合計です。"""
+    """**黙って1件の話にしないこと。** `need` は足りない群ぜんぶの合計です。
+
+    **2026-08-28 に、この検査の当たり先を変えました。**
+    元の版は「合計です・2件」という**断りの文言**だけを見ていました ——
+    ところが `ee2ec73` が足したのはその断りだけで、**判定に使う数は合計のまま**
+    でした（下の `test_群ごとの期限は_その群だけの本数で歩く` が本体）。
+    **断りが出ていることは、正しく判定していることを1つも意味しません。**
+    だからここは「群ごとの本数が出ていること」と
+    「合計も伏せずに併記していること」の両方を見ます。
+    """
     _fake_supply(monkeypatch, total=500)
     monkeypatch.setattr(QL, "_shorts_only", lambda _keys: [])
     monkeypatch.setattr(QL, "_short_share", lambda *_a, **_k: None)
@@ -293,8 +302,11 @@ def test_足りない前提が2件_以上なら_合計だと断る(monkeypatch):
                         lambda: {"a": date(2026, 10, 6), "b": date(2026, 10, 8)})
     monkeypatch.setattr(QL, "_walk_days", lambda *_a, **_k: (date(2026, 9, 1), 5))
     out = "\n".join(QL.supply_lines([("a", "g1", 40), ("b", "g2", 20)]))
-    assert "足りない群ぜんぶの合計" in out and "2件" in out
+    # 群ごとの本数で語ること（合計 60本 を両方に当てない）
+    assert "`a` の 40本" in out and "`b` の 20本" in out
+    # 合計も伏せないこと
+    assert "合計 60本" in out
 
-    # 1件だけの回には、その断りは出さない（雑音になる）
+    # 1件だけの回には、合計の断りは出さない（雑音になる）
     out1 = "\n".join(QL.supply_lines([("a", "g1", 40)]))
-    assert "足りない群ぜんぶの合計" not in out1
+    assert "合計" not in out1

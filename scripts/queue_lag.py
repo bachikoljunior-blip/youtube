@@ -1022,11 +1022,20 @@ def supply_lines(short: list[tuple[str, str, int]]) -> list[str]:
     except Exception:                                            # noqa: BLE001
         want = {}
     walk = None
+    alone: dict[str, tuple[date, int] | None] = {}
+    per_key: dict[str, int] = {}
+    for _k, _g, _n in short:
+        per_key[_k] = per_key.get(_k, 0) + _n
     try:
         sys.path.insert(0, str(ROOT / "scripts"))
         import batch_build                                       # noqa: PLC0415
 
-        walk = _walk_days(batch_build, need, batch_build._band_grid())
+        _grid = batch_build._band_grid()
+        walk = _walk_days(batch_build, need, _grid)
+        # **群ごとにも歩くこと**（2026-08-28）。下の註のとおり、
+        #   合計だけで歩くと「その群が**最後に**埋まる場合」しか見ていません。
+        for _k, _n in per_key.items():
+            alone[_k] = _walk_days(batch_build, _n, _grid)
     except Exception:                                            # noqa: BLE001
         walk = None
     for key in keys:
@@ -1041,18 +1050,54 @@ def supply_lines(short: list[tuple[str, str, int]]) -> list[str]:
             # **枠の側も期限に間に合うか。** ここを出さないと、
             # 「材料さえ足せば閉じる」と読めます —— 実測 2026-08-27 は
             # **材料も枠も、どちらも足りていません**でした（最後の1本が期限の翌日）。
+            #
+            # ## **合計だけで歩かないこと**（2026-08-28 に直した。**符号が逆に出ます**）
+            #
+            # ここは長らく `need`（＝足りない群 **ぜんぶ**の合計）で1回だけ歩き、
+            # **その1つの日付を、群ごとの期限に順に当てて**いました。
+            # つまりどの群についても「**その群が最後に埋まる場合**」しか見ていません。
+            # **足りない群が2件 以上ある回は、それが全部の群について同時に真には
+            # なりえません**（最後に埋まる群は1つだけです）。
+            #
+            # 実測 2026-08-28（足りない群 2件・合計 119本）:
+            #
+            #     合計で歩く   119本 → 最後 10/04  → `slide_pace` は 期限を **17日 超過**
+            #     群だけで歩く  20本 → 最後 09/11  → `slide_pace` は 期限に **6日 余裕**
+            #
+            # **`slide_pace` の「間に合いません」は、まるごと偽**でした。
+            # `request_form` も 99本 単独なら 10/01（超過 5日 → **2日**）で、
+            # **2.5倍 に膨らんでいました。**
+            #
+            # そして直すと、**独立した2つの道具が一致します** ——
+            # `scripts/deadline_check.py` は伸び率から `slide_pace` を
+            # 「09-24（±10日）・期限はその帯の中」＝ **間に合う**と出しており、
+            # 合計で歩いた側だけが逆を言っていました。
+            #
+            # **なぜ 08/27 に見つからなかったか**: あの日 足りない群は
+            # `request_form` **1件だけ**で、合計 ＝ 単独 でした。
+            # **この穴は、群が2件 以上ある回にしか現れません。**
+            # 2026-08-27 の `ee2ec73` は「合計です」と**註を足しただけ**で、
+            # **数のほうは合計のまま**でした（＝ 表示は直り、判定は直っていない）。
             last, days_n = walk
-            # **`need` は「足りない群 ぜんぶ」の合計**です（`band_lines` と同じ数）。
-            #   足りない前提が2件 以上ある回は、**この1件だけの話ではありません** ——
-            #   その回は「全部を埋めるなら」と断ること。**黙って1件の話にしないこと。**
-            whose = ("" if len(keys) == 1
+            solo = alone.get(key)
+            n_key = per_key.get(key, need)
+            multi = len(keys) > 1
+            whose = ("" if not multi
                      else f"（{need}本 は**足りない群ぜんぶの合計**です・{len(keys)}件）")
-            if last > due:
-                out.append(f"{bar}    [!] **帯に {need}本 を置くと最後の1本は"
-                           f" {last}（+{days_n}日）で、期限を {(last - due).days}日"
-                           " 越えます** —— 材料を足しても、この床は期限内に埋まりません"
-                           f"（`band_lines` の帯／`src/day_cap.py` の上限）{whose}")
-                out.append(f"{bar}      この {(last - due).days}日 は**下限**です ——"
+            if solo is None:
+                solo = walk
+            s_last, s_days = solo
+            if s_last > due:
+                # **順番をどう変えても間に合いません**（この群だけを最優先しても超過）。
+                out.append(f"{bar}    [!] **この群だけを最優先しても間に合いません** ——"
+                           f" `{key}` に要る {n_key}本 を帯へ置くと最後の1本は"
+                           f" {s_last}（+{s_days}日）で、期限を {(s_last - due).days}日"
+                           " 越えます。**材料を足しても、この床は期限内に埋まりません**"
+                           f"（`band_lines` の帯／`src/day_cap.py` の上限）")
+                if multi and last > s_last:
+                    out.append(f"{bar}      **最後に回すと {last}（超過"
+                               f" {(last - due).days}日）**まで伸びます{whose}")
+                out.append(f"{bar}      この {(s_last - due).days}日 は**下限**です ——"
                            " `live_plan()` は**今日から全部 詰めた場合**を解いています。"
                            "実際は1周ずつ置くので、**遅れこそすれ早まりません**")
                 # **この行だけで期限を書き換えないこと**（2026-08-27 に危うくやりかけた）。
@@ -1065,9 +1110,28 @@ def supply_lines(short: list[tuple[str, str, int]]) -> list[str]:
                            "**帯（±N日）**を持っています。**その帯の中なら期限を"
                            "書き換えないこと**（動かしても届く日は1日も動きません）。"
                            "**床を下げるのは、どちらの場合も禁止**です")
+            elif multi and last > due:
+                # **ここが、合計で歩いていたときに丸ごと消えていた場面です。**
+                #   間に合うかどうかが「作れるか」ではなく「**どの群から埋めるか**」で
+                #   決まります —— つまり**この回に選べる手がある**、という意味です。
+                others = [k for k in keys if k != key]
+                out.append(f"{bar}    **順番で決まります**（間に合わないのは"
+                           "「埋められない」ではなく「後回しにした」場合）:")
+                out.append(f"{bar}      先に埋めれば **間に合います** ——"
+                           f" `{key}` の {n_key}本 だけなら最後の1本は {s_last}"
+                           f"（+{s_days}日）で、期限まで **{(due - s_last).days}日 余ります**")
+                out.append(f"{bar}      後回しにすると **{last}（超過"
+                           f" {(last - due).days}日）** ——"
+                           f" 合計 {need}本 の最後になる場合{whose}")
+                out.append(f"{bar}      → **`{key}` を"
+                           + ("／".join(f"`{k}`" for k in others))
+                           + " より先に埋めること。**"
+                           "作る本数ではなく**順番**が効きます（API 0単位・材料も同じ）")
             else:
                 out.append(f"{bar}    枠の側は間に合います"
-                           f"（最後の1本 {last} ≤ {due}）{whose}")
+                           f"（`{key}` の {n_key}本 の最後 {s_last} ≤ {due}"
+                           + (f"／合計 {need}本 でも {last} ≤ {due}" if multi else "")
+                           + "）")
     return out
 
 
