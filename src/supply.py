@@ -374,6 +374,124 @@ def supply(density: int, *, stock_n: int | None = None,
     return out
 
 
+def surfaces(long_min_s: float = 180.0) -> dict:
+    """**面べつの滑走路**（長尺／ショート）。API 0単位・控えだけを読みます。
+
+    ## なぜ要るか（2026-08-27 に測って足した）
+
+    上の `supply()` は在庫を **`day_cap.cap()`（＝ショートの 10本/日）**で割ります。
+    そして「**足ります**」と印字します。**その面は天井です** ——
+    `eta.py` の `density_surfaces` が実測でこう言っています:
+
+        ショート  at_ceiling=True  measured=True   （超えたぶんは 0再生）
+        長尺      at_ceiling=False measured=False  （崩れる所を一度も見ていない）
+
+    そして **4,000時間の門に入るのは長尺だけ**です（`src/levers.py` /
+    `src/day_cap.py` / `src/verify.py` / `scripts/batch_build.py` が同じことを
+    書いています。実測 08/26・直近28日: `SHORTS_FEED` 64,283再生 ／
+    `WATCH` **67再生**）。
+
+    **つまり「足ります」は、いま開いている唯一の門とは別の面についての合格でした。**
+    実測（2026-08-27・控えを畳んで数えた）:
+
+        長尺の予約    36本  08/28〜09/04 の **8日**（09/05 以降は **0本**）
+        ショートの予約 347本  10/12 まで ＝ **46日**
+
+    **6倍 ちがいます。そして長い側が、門に1分も積まない面です。**
+
+    ## この道具が言えないこと
+
+    ここが数えるのは**予約に入っている本**だけです。長尺を何本 作れるかは
+    `scripts/topic_forge.py --list` の「7日ぶんで取れるのは最大 N本」
+    （族 × `--per-calc`）。**そちらが本当の天井**で、ここは滑走路の残りです。
+
+    ## 覆る条件
+
+    長尺の面が天井に当たったら（`day_cap.long_form()['collapsed']`）、
+    「長い側が短い」は「詰め方が悪い」ではなく「その面が満杯」になります。
+    そのときは本数ではなく**面そのもの**を疑うこと。
+    """
+    import json as _json
+
+    from . import config, dupes
+
+    dur: dict[str, float] = {}
+    path = config.ROOT / "data" / "uploaded.jsonl"
+    try:
+        with path.open(encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                row = _json.loads(line)
+                dur[row.get("video_id")] = float(row.get("duration_s") or 0)
+    except OSError:
+        return {}
+
+    today = today_jst()
+    days: dict[str, set] = {"long": set(), "short": set()}
+    n = {"long": 0, "short": 0}
+    for row in dupes.ledger_rows():
+        at = row.get("at")
+        if not at:
+            continue
+        try:
+            when = datetime.fromisoformat(str(at).replace("Z", "+00:00")).astimezone(JST)
+        except (TypeError, ValueError):
+            continue
+        if when.date() < today:
+            continue
+        key = "long" if dur.get(row.get("id"), 0.0) >= long_min_s else "short"
+        n[key] += 1
+        days[key].add(when.date())
+
+    out = {}
+    for key in ("long", "short"):
+        last = max(days[key]) if days[key] else None
+        out[key] = {"booked": n[key], "last": last,
+                    "runway_days": (last - today).days + 1 if last else 0}
+    # **長尺の在庫は `s-` で始まらない題**（`batch_build.pick` の「長尺は長尺向けに
+    # 書かれた題からしか取らない」と同じ数え方。片方だけ直すとずれます）。
+    try:
+        pool = config.load_topics()["topics"]
+        used = {r["topic"] for r in dupes.ledger_rows() if r.get("topic")}
+        out["long"]["stock"] = sum(
+            1 for t in pool
+            if t.get("id") not in used and t.get("calc")
+            and not str(t.get("id", "")).startswith("s-"))
+    except Exception:                                          # noqa: BLE001
+        out["long"]["stock"] = None
+    return out
+
+
+def surface_lines(su: dict | None = None) -> list[str]:
+    """`surfaces()` を読む行。**数字だけ。判断は書かない。**"""
+    su = surfaces() if su is None else su
+    if not su:
+        return []
+    lo, sh = su.get("long", {}), su.get("short", {})
+    L = ["--- **4,000時間の門に入るのは長尺だけです。その面だけを別に数えます** ---"]
+    L.append(f"    長尺の予約                  {lo.get('booked', 0):>6,} 本"
+             f"  ＝ **{lo.get('runway_days', 0)}日ぶん**"
+             + (f"（最後は {lo['last']:%m/%d}）" if lo.get("last") else "（**0本**）"))
+    if lo.get("stock") is not None:
+        L.append(f"    長尺向けの在庫              {lo['stock']:>6,} 本"
+                 "  （`s-` で始まらない題。**天井は `topic_forge --list` の"
+                 "「7日ぶんで取れるのは最大 N本」**）")
+    L.append(f"    ショートの予約              {sh.get('booked', 0):>6,} 本"
+             f"  ＝ **{sh.get('runway_days', 0)}日ぶん**"
+             + (f"（最後は {sh['last']:%m/%d}）" if sh.get("last") else ""))
+    a, b = lo.get("runway_days", 0), sh.get("runway_days", 0)
+    if b > a:
+        L.append(f"    → **短いのは長尺の側です（{a}日 対 {b}日）。**"
+                 " ショートの面は天井（`eta.py` の `density_surfaces`）なので、"
+                 "**そこを伸ばしても門は1分も動きません**")
+    elif a and b:
+        L.append(f"    → 長尺の側のほうが長い（{a}日 対 {b}日）。"
+                 "**この向きなら、律速は滑走路ではありません**")
+    return L
+
+
 def lines(sp: dict) -> list[str]:
     """`eta.py` が印字する行。**数字だけ。判断は書かない。**"""
     L: list[str] = []
@@ -461,6 +579,13 @@ def main() -> None:
                 run_minutes=args.run_minutes, density_source=density_source)
     for line in lines(sp):
         print(line)
+    # **上の「足ります」は、ショートの密度で割った答えです**（`surfaces()` の註）。
+    #     門はショートでは開かないので、面べつも必ず並べて出すこと。
+    try:
+        for line in surface_lines():
+            print(line)
+    except Exception as exc:                                   # noqa: BLE001
+        print(f"    （面べつは出せませんでした: {str(exc)[:80]}）")
 
 
 if __name__ == "__main__":
