@@ -17,6 +17,21 @@
 #   answered 満ちて、判定し終えたなら、日付と答えを1行
 
 watches:
+  - id: 長尺シェア-14本
+    what: 「長尺の再生シェアは、長尺の公開本数を増やせば上がる」の判定（腕 `rpm`）
+    cond: "08/27〜09/07 に**長尺（尺180秒以上）**を14本 公開し、その日の実データが届いている"
+    then: "python -m src.rpm_mix → `long_share_now` が 1.2%（08/26 の実測 0.117% の10倍）に届かなければ外れ"
+    source: config/hypotheses.yaml
+    kind: published_count
+    since: '2026-08-27'
+    until: '2026-09-07'
+    need: 14
+    data_ready: true
+    # **尺で絞らないと、この門はショートだけで満ちます**（予約の 9割 がショート）。
+    # 180秒は `src/rpm_mix.py` が長尺とショートを分ける線と同じ向きの置き方
+    # （あちらは Analytics の `creatorContentType` を読むので、こちらは控えの尺で近似）。
+    min_duration_s: 180
+
   - id: 登録の依頼-30000再生
     # **期限をここに手で書かないこと**（2026-08-26 に測って直した）。
     # 文面は長らく「期限 2026-09-14」でしたが、`config/hypotheses.yaml` の
