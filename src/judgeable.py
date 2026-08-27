@@ -381,6 +381,54 @@ def _days(rows: dict[str, list[Member]]) -> dict[str, list[date]]:
 
 
 #: yaml の `key:` → (**群べつの本**を作る関数, 片群あたりの必要本数)
+def short_share(days: int = 30) -> tuple[int, int] | None:
+    """直近に作った本のうち、**ショートだったもの**（実測。返り `(ショート数, 数えた数)`）。
+
+    **べた書きしないこと。** 長尺の比率は回ごとに動きます（実測 2026-08-27 は 9%）。
+    数が少なすぎる回は `None` —— 引きの偏りで反対を言うので、言わないほうが安全です。
+
+    ここに置いてあるのは、`_short_topics()` と `build_times()` が
+    **この1か所にしか無い**からです（`tests/test_queue_lag.py` の
+    「群の作り方を、この道具の中で持ち直していない」が門）。
+    """
+    builds = build_times()
+    if not builds:
+        return None
+    shorts = _short_topics()
+    known = set(_video_by_topic())
+    newest = max(builds.values())
+    cut = newest - timedelta(days=days)
+    rec = [t for t, b in builds.items() if b >= cut and t in known]
+    if len(rec) < 8:
+        return None
+    return sum(1 for t in rec if t in shorts), len(rec)
+
+
+def shorts_only(keys: list[str]) -> list[str]:
+    """その前提が**ショートだけ**を数えているか。**宣言を写さず、標本から見ます。**
+
+    `_members_by_request_form()` の「長尺は群に入らない」を別の道具へ書き写すと、
+    **片方が腐ります**（この repo で6回 起きた形。
+    `docs/JOURNAL.md` 2026-08-27「1つの定数を全部に当てて、註に同じ数が出ると書いた」）。
+    だから**いまの群の中身**を見て、全部ショートなら「ショートだけ」と読みます。
+
+    **標本 8本 未満では言いません**（引きの偏りで反対を言います）。
+    """
+    shorts = _short_topics()
+    topic_by_vid = {v: t for t, v in _video_by_topic().items() if v}
+    out: list[str] = []
+    for key in keys:
+        try:
+            ms = members(key)
+        except Exception:                                        # noqa: BLE001
+            continue
+        ts = [topic_by_vid.get(v) for g in ms.values() for _d, v in g]
+        ts = [t for t in ts if t]
+        if len(ts) >= 8 and all(t in shorts for t in ts):
+            out.append(key)
+    return out
+
+
 MEMBER_SOURCES: dict[str, tuple[Callable[[], dict[str, list[Member]]], int]] = {
     "title_form": (lambda: _members_by_split("title_form"), MIN_PER_GROUP),
     "hook_form": (lambda: _members_by_split("hook_form"), MIN_PER_GROUP),
