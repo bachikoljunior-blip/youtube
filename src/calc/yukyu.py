@@ -54,7 +54,8 @@ from . import _checks
 ASSUMPTIONS = [
     "労働基準法39条の法定日数だけで計算しています。会社が独自に上乗せしている分は入れていません",
     "出勤率8割の要件は満たしている前提です。8割を切った年は付与がゼロになります",
-    "繰り越した有給は古いほうから使う前提です。新しいほうから使う運用だと、消える日数はここより増えます",
+    "繰り越した有給は古いほうから使う前提です。新しいほうから使う運用だと、消える日数は"
+    "その年に使った日数のぶんだけ増えます（週5日・勤続20年・年5日 消化なら 241日 が 246日）",
     "時効は2年なので、繰り越せるのは1年ぶんだけです。2年前の分は消えます",
     "週の所定労働日数は5日・4日・3日・2日・1日のどれかで、年間を通じて一定としています。"
     "途中で変わると付与日数も変わります",
@@ -150,6 +151,78 @@ def expiry_run(years: int, used_per_year: int, weekly_days: int = 5) -> list[dic
         })
         carry = grant - used_from_grant
     return rows
+
+
+def expiry_run_newest_first(years: int, used_per_year: int,
+                            weekly_days: int = 5) -> list[dict]:
+    """`expiry_run` と同じ条件で、**消化の順序だけを「新しいほうから」に変える。**
+
+    法律は消化の順序を定めていません。就業規則で決まっていない職場では
+    運用しだいで、**新しいほうから消化すると、繰越が毎年そのまま時効に当たります。**
+    `ASSUMPTIONS` は長らく「ここより増えます」とだけ書いていて、
+    **いくつ増えるかを1度も計算していませんでした。** ここがその数です。
+    """
+    rows: list[dict] = []
+    carry = 0
+    lost_total = 0
+    for i in range(years):
+        grant = granted_at(i, weekly_days)
+        used_from_grant = min(grant, used_per_year)      # ← 新しいほうを先に使う
+        used_from_carry = min(carry, used_per_year - used_from_grant)
+        lost = carry - used_from_carry
+        lost_total += lost
+        rows.append({
+            "勤続年": SERVICE_YEARS[min(i, len(SERVICE_YEARS) - 1)] if i < len(
+                SERVICE_YEARS) else i + 0.5,
+            "その年の付与": grant,
+            "使った日数": used_from_carry + used_from_grant,
+            "時効で消えた日数": lost,
+            "消えた日数の累計": lost_total,
+        })
+        carry = grant - used_from_grant
+    return rows
+
+
+def order_gap(years: int, used_per_year: int, weekly_days: int = 5,
+              monthly_wage: int = 300_000) -> dict:
+    """**消化の順序を変えるだけで、時効で消える日数がいくつ変わるか。**
+
+    付与も消化も1日も変えていません。**同じ人の、同じ年の、同じ枚数**の有給を、
+    どちらから使うかだけの差です。
+    """
+    old = expiry_run(years, used_per_year, weekly_days)
+    new = expiry_run_newest_first(years, used_per_year, weekly_days)
+    lost_old = old[-1]["消えた日数の累計"] if old else 0
+    lost_new = new[-1]["消えた日数の累計"] if new else 0
+    per_day = daily_wage(monthly_wage, weekly_days)
+    return {
+        "年の消化日数": used_per_year,
+        "古いほうから消えた日数": lost_old,
+        "新しいほうから消えた日数": lost_new,
+        "順序の差（日）": lost_new - lost_old,
+        "順序の差（円）": (lost_new - lost_old) * per_day,
+    }
+
+
+def order_gap_table(years: int, weekly_days: int = 5,
+                    monthly_wage: int = 300_000) -> list[dict]:
+    """年の消化日数を0日から上限まで刻んで、**順序の差がどこで立つか**を出す。"""
+    top = table_for(weekly_days)[-1]
+    return [order_gap(years, used, weekly_days, monthly_wage)
+            for used in range(0, top + 1)]
+
+
+def order_gap_band(years: int, weekly_days: int = 5) -> tuple[int, int] | None:
+    """**順序の差が立っている、年の消化日数の帯**（左端・右端）。無ければ None。
+
+    両端の外では、どちらから使っても消える日数は同じです ——
+    **0日 なら繰越を使いようがなく、上限まで使えば繰越が残らない**ので。
+    """
+    hit = [r["年の消化日数"] for r in order_gap_table(years, weekly_days)
+           if r["順序の差（日）"] > 0]
+    if not hit:
+        return None
+    return (hit[0], hit[-1])
 
 
 def grid(weekly_days: int = 5) -> list[dict]:
@@ -587,6 +660,44 @@ def check_tables() -> None:
         raise _checks.TableError("退職日1日の差の最大が、付与の上限20日になっていない")
     if q[0]["1日の差（日）"] != FULL_TIME[0]:
         raise _checks.TableError("1回目（勤続6か月）の1日の差が10日になっていない")
+    #    (n2) **主題**: 消化の順序を裏返すと、消える日数がいくつ増えるか
+    for wd in (5, 4, 3):
+        top = table_for(wd)[-1]
+        for used in range(0, top + 1):
+            old = expiry_run(20, used, wd)
+            new = expiry_run_newest_first(20, used, wd)
+            #      付与も消化も1日も変えていない（使った日数の合計が同じであること）
+            if sum(r["使った日数"] for r in old) != sum(r["使った日数"] for r in new):
+                raise _checks.TableError(
+                    f"週{wd}日・年{used}日 で、順序を変えたら使った日数の合計まで変わった")
+            gap = order_gap(20, used, wd)
+            if gap["順序の差（日）"] < 0:
+                raise _checks.TableError(
+                    f"週{wd}日・年{used}日 で、新しいほうから使うと消える日数が減っている")
+            _checks.rounding(gap["順序の差（円）"],
+                             gap["順序の差（日）"] * daily_wage(300_000, wd),
+                             f"週{wd}日・年{used}日 の順序の差（円）")
+        #      帯の外（0日 と 上限）では、どちらから使っても同じ
+        for edge in (0, top):
+            if order_gap(20, edge, wd)["順序の差（日）"] != 0:
+                raise _checks.TableError(f"週{wd}日・年{edge}日 で順序の差が立っている")
+    #      **主題の同一式**: 差は「年に使った日数」そのもの（週5日・勤続20年・年1〜18日）
+    for used in range(1, 19):
+        gap = order_gap(20, used, 5)
+        if gap["順序の差（日）"] != used:
+            raise _checks.TableError(
+                f"年{used}日 の順序の差が {gap['順序の差（日）']}日 で、"
+                "「使った日数そのもの」になっていない")
+    band = order_gap_band(20, 5)
+    if band != (1, FULL_TIME[-1] - 1):
+        raise _checks.TableError(f"順序の差が立つ帯が 1〜19日 になっていない（{band}）")
+    #      「1日も捨てない線」は順序で動く —— 古いほうからなら19日、新しいほうからなら20日
+    if zero_loss_at(20, 5) != FULL_TIME[-1] - 1:
+        raise _checks.TableError("古いほうから消化したときの「捨てない線」が19日になっていない")
+    newest_zero = [r["年の消化日数"] for r in order_gap_table(20, 5)
+                   if r["新しいほうから消えた日数"] == 0 and r["年の消化日数"] > 0]
+    if not newest_zero or newest_zero[0] != FULL_TIME[-1]:
+        raise _checks.TableError("新しいほうから消化したときの「捨てない線」が20日になっていない")
     #    (o) **主題**: 週の総時間を固定して日数だけ替えると、勝つ割り方が入れ替わる帯がある
     for hours in (10.0, 20.0, 24.0, 28.0, 30.0, 32.0, 35.0, 40.0):
         rows = same_hours_split(hours, 20, 300_000)
@@ -751,6 +862,40 @@ if __name__ == "__main__":
     b = cumulative_by_hours(20, 4, 28.0)
     print(f"  週25時間（5日×5時間）は生涯{a}日、週28時間（4日×7時間）は生涯{b}日。"
           f"**3時間よけいに働いて、{a - b}日少ない。**")
+
+    band = order_gap_band(20, 5)
+    lo_used, hi_used = band  # type: ignore[misc]
+    g5 = order_gap(20, 5, 5, 300_000)
+    print(f"\n=== 消化の順序を「古いほうから」から「新しいほうから」に裏返すと、"
+          f"時効で消える日数は**年に使った日数そのもの**だけ増える（週5日・勤続20年）===")
+    print("  法律は消化の順序を定めていません（39条にも規則にも無い）。"
+          "**就業規則で決まっていない職場では、運用しだいです。**")
+    print("  付与も消化も1日も変えず、**どちらから使うか**だけを変えて並べました:")
+    print("    年の消化  古いほうから  新しいほうから    差      差（円・月給30万）")
+    for row in order_gap_table(20, 5, 300_000):
+        mark = "  ← **差 = 使った日数**" if row["順序の差（日）"] == row["年の消化日数"] > 0 else ""
+        print(f"      年{row['年の消化日数']:>2}日"
+              f"      {row['古いほうから消えた日数']:>4}日"
+              f"       {row['新しいほうから消えた日数']:>4}日"
+              f"  {row['順序の差（日）']:>3}日"
+              f"  {row['順序の差（円）']:>10,.0f}円{mark}")
+    print(f"  **年{lo_used}日から年{hi_used - 1}日までは、差がぴったり「その年に使った日数」**です。"
+          f"年5日 なら {g5['順序の差（日）']}日（{g5['順序の差（円）']:,.0f}円）、"
+          f"年10日 なら {order_gap(20, 10, 5)['順序の差（日）']}日。")
+    print(f"  帯の外は差が0です —— 年0日 なら繰越を使いようがなく、"
+          f"年{FULL_TIME[-1]}日（上限）まで使えば繰越が1日も残らないので、順序の出番がありません。")
+    print(f"  **「1日も捨てない線」も順序で動きます**: 古いほうからなら年{zero_loss_at(20, 5)}日、"
+          f"新しいほうからなら年{FULL_TIME[-1]}日。**上の節の19日は、古いほうから使う前提の数字**です。")
+    print("  週の日数を替えると帯も動きます（勤続20年）:")
+    for wd in (5, 4, 3, 2):
+        b = order_gap_band(20, wd)
+        top = table_for(wd)[-1]
+        worst = max(order_gap_table(20, wd, 300_000), key=lambda r: r["順序の差（日）"])
+        print(f"    週{wd}日  上限{top:>2}日  差の立つ帯 年{b[0]}〜{b[1]}日"  # type: ignore[index]
+              f"  いちばん大きい差 {worst['順序の差（日）']:>2}日"
+              f"（年{worst['年の消化日数']}日のとき・{worst['順序の差（円）']:,.0f}円）")
+    print("  **どちらの順序でも、使った日数の合計は1日も変わりません**"
+          "（消えるほうだけが変わります）。就業規則にこの1行があるかどうかの差です。")
 
     edge = split_window_edges(20, 300_000, step_minutes=1)
     lo, hi = edge  # type: ignore[misc]
