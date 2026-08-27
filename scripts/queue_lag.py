@@ -1212,7 +1212,7 @@ def supply_lines(short: list[tuple[str, str, int]]) -> list[str]:
                            f"（+{s_days}日）で、期限まで **{(due - s_last).days}日 余ります**")
                 out.append(f"{bar}      後回しにすると **{last}（超過"
                            f" {(last - due).days}日）** ——"
-                           f" 合計 {need}本 の最後になる場合{whose}")
+                           f" {need}本 の最後になる場合{whose}")
                 out.append(f"{bar}      → **`{key}` を"
                            + ("／".join(f"`{k}`" for k in others))
                            + " より先に埋めること。**"
