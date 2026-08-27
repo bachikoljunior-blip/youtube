@@ -478,6 +478,71 @@ def split_power(times: list[dt.datetime], c: int, t_min: int,
             "decisive": abs(pc - pw) >= DECIDE_GAP_MIN and not tied}
 
 
+def left_edge(path: pathlib.Path | None = None) -> dict | None:
+    """**窓の左端**（これより早く出した本は、その日 0再生で終わる）。
+
+    ## なぜ要るか（2026-08-27 16:xx・実測して足した）
+
+    `window()` の2つのモデルは、**どちらも左端を持っていません**:
+
+        (A) 本数   生きるのは**先頭から** C 本   → 早い本ほど生きる
+        (B) 窓     生きるのは **T まで**の本 全部 → 早い本は全部生きる
+
+    **両方とも「早く出すほど有利」と言っています。** `cap_if_window()` は
+    そこから **05:00 から出せば 18枠（×1.80）** を出し、`scripts/eta.py` は
+    それを `density` の腕の上振れとして印字していました。
+
+    **2026-08-27 に実際に置いて、測りました。** 05:00〜08:30 JST に 8本
+    （30分きざみ）。結果は **8本とも 0再生**（07:30 の1本だけ 4再生）で、
+    生きたのは 08:59 以降の 10本です。**8本とも `public` / `processed`** を
+    `videos.list` で確かめてあるので、**投稿の失敗ではありません。**
+
+        05:00 0    05:30 0    06:00 0    06:30 0    07:00 0
+        07:30 4    08:00 0    08:30 0   ← ここまで死
+        08:59 313  09:30 106  10:00 84  10:30 367 …… 13:30 71  ← ここから生
+
+    **つまり早く出すほど有利ではありません。** 窓には左端があり、
+    **05:00 に倒すと本が死にます。** `density` の ×1.80 は**実在しません** ——
+    09:00〜13:30 は30分きざみで**ちょうど10枠**で、`cap()` の 10 と同じです。
+
+    **覆る条件**: 左端は日によって動くかもしれません（配信の面が育てば早い時刻にも
+    人がいる）。ここは**毎日その日の実物から測り直します**（定数で持ちません）。
+    右端のほうはまだ 13:30 で、**それより後ろは未測**です。
+
+    返り: `{"after", "by", "dead", "days"}` ＝ 左端は `after` より後・`by` まで。
+    早い時刻で死んだ本が1本も無ければ `None`（＝ まだ測っていない）。
+    """
+    found: list[tuple[int, dt.time, dt.time, str]] = []
+    n_dead = 0
+    days: list[str] = []
+    for d, rows, line in _qual_days(path):
+        alive = [p for p, _v, n in rows if n >= line]
+        if not alive:
+            continue
+        first_alive = min(alive)
+        # **その日いちばん早く生きた本より前に出て、死んだ本**だけを見ます。
+        # 「上限を超えて死んだ本」は後ろに出るので、ここには入りません。
+        early_dead = [p for p, _v, n in rows if n < line and p < first_alive]
+        if not early_dead:
+            continue
+        n_dead += len(early_dead)
+        days.append(f"{d}（{min(early_dead):%H:%M}〜{max(early_dead):%H:%M} の "
+                    f"{len(early_dead)}本が0再生 ／ 最初に生きたのは {first_alive:%H:%M}）")
+        found.append((len(early_dead), max(early_dead).time(),
+                      first_alive.time(), str(d)))
+    if not found:
+        return None
+    # **日をまたいで max/min を取らないこと**（2026-08-27 16:xx に踏んだ）。
+    # 死んだ時刻の最大と、生きた時刻の最小を**別々の日から**拾うと、
+    # 08-26（09:00 が死・09:30 から生）と 08-27（08:30 まで死・08:59 から生）で
+    # **`after=09:00` / `by=08:59` ＝ 左端が右端より後ろ**という、
+    # 成り立たない括弧を返します。**括弧は1日の中でしか閉じません。**
+    # 採るのは**早い時刻の死を いちばん多く見た日**（＝ わざと置いた実験日）。
+    n, after, by, day = max(found, key=lambda x: x[0])
+    return {"after": after.strftime("%H:%M"), "by": by.strftime("%H:%M"),
+            "dead": n_dead, "from": day, "from_dead": n, "days": days}
+
+
 def window(path: pathlib.Path | None = None) -> dict:
     """**上限が「1日N本」なのか「時刻の窓」なのかを、切り分けられているか。**
 
@@ -572,18 +637,43 @@ def window(path: pathlib.Path | None = None) -> dict:
 
     C, T, T_min, first_pub = _fit(None)
 
-    def predict(rows, c: int, t_min: int) -> tuple[int, int]:
+    def predict(rows, c: int, t_min: int):
+        """**どの本が生きるか**を、2つのモデルそれぞれの「集合」で返す。
+
+        **本数で返さないこと**（2026-08-27 16:xx に踏んだ）。ここは長らく
+        `min(len(kept), c)` と `sum(x <= t_min)` の**2つの整数**を返し、
+        下の `decided_by` はそれを生きた**本数** `a` と比べていました。
+        ところが 08/27 の実物は:
+
+            本数モデル  生きるのは先頭10本 ＝ 05:00〜09:30
+            実測        生きたのは 08:59〜13:30 の10本
+
+        で、**数は 10 と 10 でぴったり一致し、中身は 19本中 16本が
+        入れ替わっています**（本数モデルが「生きる」と名指しした 8本は
+        全部 0再生、「死ぬ」と名指しした 8本は全部 生きた）。
+        それでも整数しか返さないので `near` は `count` を**距離0**で選び、
+        この道具は `verdict='count'` を**確信つきで**印字しました ——
+        **その日の実物が、選ばれたモデルを丸ごと否定しているのに**です。
+
+        数だけを見ると「当たり」に見えるのは、生きている窓 09:00〜13:30 が
+        30分きざみで**ちょうど10枠**だからです。**それがこの `confounded` の
+        正体そのもの**なので、**数で切り分けようとするかぎり、
+        どんな日を足しても永久に切り分かりません。**
+        """
         kept = _spaced([p for p, _v, _n in rows])
-        return min(len(kept), c), sum(1 for x in kept
-                                      if x.hour * 60 + x.minute <= t_min)
+        return (set(kept[:c]),
+                {x for x in kept if x.hour * 60 + x.minute <= t_min},
+                kept)
 
     decided_by = verdict = None
+    misfit: list[str] = []
     for d, rows, line, a, _dead in per_day:
         held = _fit(d)                    # **その日を除いて当てはめる**
         if held is None:
             continue                      # 前の日が無い ＝ 比べる相手がいない
         c_d, _t_d, t_min_d, _fp_d = held
-        pc, pw = predict(rows, c_d, t_min_d)
+        pred_c, pred_w, kept = predict(rows, c_d, t_min_d)
+        pc, pw = len(pred_c), len(pred_w)
         if abs(pc - pw) < DECIDE_GAP_MIN:
             continue                      # 2つの予測が近い日は、どちらにも読める
         if d in tied_days:
@@ -593,23 +683,56 @@ def window(path: pathlib.Path | None = None) -> dict:
             # 窓が真で、組が両方死ぬ場合、生きた本数が**本数モデルの予測に着地**し、
             # `count` を確信つきで印字します。**それは 1.8倍 を取り落とす向き**です。
             continue
-        near, far = sorted(((abs(a - pc), "count"), (abs(a - pw), "window")))
+        # **生きた「本」の集合**で比べます。`_spaced()` で落ちた本は
+        # どちらのモデルの守備範囲でもない（衝突で死ぬ）ので、外します。
+        in_kept = set(kept)
+        act = {p for p, _v, n in rows if n >= line and p in in_kept}
+        # **上限が効いていない日から決めないこと**（2026-08-27 16:xx に足した）。
+        # 2026-08-04（登録者9人・18:29 から7本）は生きたのが 1本 だけです。
+        # 本数モデルは「先頭4本」、窓モデルは 13:30 までが1本も無いので
+        # **「1本も生きない」**を予測します。**何も生きないと言うモデルは、
+        # ほとんど何も生きなかった日で必ず勝ちます** —— 取り違え 窓1本 対
+        # 本数3本 で、この道具は `verdict='window'` を印字しました。
+        # 2026-08-24 に「コインの裏表で断定」として直した所が、
+        # 本の取り違えで測り直したとたんに**別の入口から戻っています。**
+        #
+        # 上限の話をしているのは、**その日が上限の近くまで埋まった日**だけです。
+        # 当てはめた C の半分に届かない日は、縛っているのが上限ではありません
+        # （面が細い・題材が外れた）。**覆る条件**: C 自体が下がって
+        # まともな日まで落ちるようなら、床は割合ではなく `floor` で持つこと。
+        if len(act) * 2 < c_d:
+            continue
+        miss_c, miss_w = len(pred_c ^ act), len(pred_w ^ act)
+        near, far = sorted(((miss_c, "count"), (miss_w, "window")))
         # **どちらにも合っていない日で決めないこと。** 2026-08-04（登録者が9人・
         # 18:29 から7本）は 生きた2本 に対し 本数なら4・窓なら0 で、**両方から等距離**
         # です。ここを通していたので、この道具は「窓のほうが上限」と**コインの裏表で
         # 断定**していました（2026-08-24 に踏んで直した）。
-        if near[0] > max(1.0, 0.25 * max(pc, pw)):
+        #
+        # **本の取り違えで測るようになったので、ここは 08/27 でも効きます** ——
+        # 取り違え 本数16本・窓8本 に対し 門は 19本の 25% ＝ 4.75本 なので、
+        # **どちらも通りません**（＝ この日からは決めない）。**それが正解**です:
+        # 実測の「生きた10本」は 08:59 から始まっており、**窓の左端が
+        # 05:00 ではない**ことを言っています。2つのモデルはどちらも
+        # 左端を持っていないので、**この日はどちらのモデルでも説明できません。**
+        if near[0] > max(1.0, 0.25 * len(kept)):
+            misfit.append(
+                f"{d}（出した {len(rows)}本・生きた {len(act)}本 ／ "
+                f"本を取り違えた数 本数 {miss_c}本・窓 {miss_w}本 "
+                f"＝ **どちらのモデルも合っていません**）")
             continue                      # 実測がどちらのモデルにも乗っていない日
         if far[0] - near[0] < 2:
             continue                      # 差が付いていない
         verdict = near[1]
-        decided_by = f"{d}（出した {len(rows)}本・生きた {a}本 ／ 本数なら {pc}・窓なら {pw}）"
+        decided_by = (f"{d}（出した {len(rows)}本・生きた {len(act)}本 ／ "
+                      f"本を取り違えた数 本数 {miss_c}本・窓 {miss_w}本）")
         break
 
     return {"days": len(evidence), "C": C, "T": T.strftime("%H:%M"),
             "confounded": decided_by is None, "decided_by": decided_by,
             "verdict": verdict, "first_pub": first_pub.strftime("%H:%M"),
-            "last_alive": T.strftime("%H:%M"), "blocked": blocked}
+            "last_alive": T.strftime("%H:%M"), "blocked": blocked,
+            "misfit": misfit, "left_edge": left_edge(path)}
 
 
 def cap(path: pathlib.Path | None = None) -> int:
@@ -825,6 +948,25 @@ def cap_if_window(path: pathlib.Path | None = None,
     if earliest is None or earliest >= end:
         return None
 
+    # **左端が測れていたら、そこより前から数えないこと**（2026-08-27 16:xx）。
+    # ここは「切り分けの日に**予約してある**いちばん早い時刻」から数えていました。
+    # 08/27 はそれが 05:00 なので **05:00〜13:30 ＝ 18枠（×1.80）** を返し、
+    # `scripts/eta.py` が `density` の上振れとして印字していました。
+    #
+    # **その 05:00 は、同じ日に実際に置いて、死ぬのを測った時刻です**
+    # （`left_edge()`。05:00〜08:30 の 8本が 0再生・全部 `public`/`processed`）。
+    # **予約してあることは、再生が付くことを1つも意味しません。**
+    # 左端まで詰めると 08:59〜13:30 ＝ **10枠** ＝ `cap()` と同じで、
+    # **(B) の側にも上振れはありません。**
+    edge = left_edge(path)
+    clamped = False
+    if edge:
+        by = dt.datetime.strptime(edge["by"], "%H:%M").time()
+        if earliest < by:
+            earliest, clamped = by, True
+        if earliest >= end:
+            return None
+
     step = int(MIN_GAP_MIN)
     span = ((end.hour * 60 + end.minute) - (earliest.hour * 60 + earliest.minute))
     return {"cap": int(span // step) + 1,
@@ -832,6 +974,8 @@ def cap_if_window(path: pathlib.Path | None = None,
             "T": str(w["T"]),
             "step_min": step,
             "measured": False,
+            "left_edge": edge,
+            "clamped": clamped,
             "answer_on": booked["answer"]}
 
 
@@ -856,21 +1000,47 @@ def window_lines(path: pathlib.Path | None = None) -> list[str]:
                  else f"**時刻の窓のほうが上限**です（**{w['T']} JST までに出した本は全部生きる**）")
         return [f"    切り分け済み: {which}",
                 f"      決めた日: {w['decided_by']}"] + blocked
-    return blocked + [
+    edge = w.get("left_edge")
+    misfit = w.get("misfit") or []
+    head = [
         "    [!] **この本数は「時刻の窓」と切り分けられていません。**",
         f"        当てはまる説明が2つあり、**どの日でも同じ数**を出します ——"
         f" (A) 1日 {w['C']}本 まで ／ (B) **{w['T']} JST** までに出した本は全部生きる。",
-        f"        測れている {w['days']}日 は全部 **{w['first_pub']} JST** から始めており、"
-        f"30分きざみだと {w['T']} がちょうど {w['C']}本目です。",
-        "        窓のほうなら、**その時刻より前に置いたぶんは丸ごと上積み**になります"
-        "（作る本数は1本も増えません）。",
-        f"        切り分けるには、**2つのモデルの予測が {DECIDE_GAP_MIN}本 以上ちがう日**を1日作り、"
-        "その日の**生きた本数**を数えること（`src.day_cap.split_power()` が門を出します）。",
-        f"        **道は2つあります。** (i) **{w['first_pub']} より前**に置く"
-        f"（窓のほうが**多く**予測する）／ (ii) **{w['T']} より後ろ**に置く"
-        "（窓のほうが**少なく**予測する）。**同じ分に2本 置かないこと**"
-        "（`ties()`。そこで死んだ本を割り当てられません）。",
-    ] + _booked_lines(w["first_pub"], w)
+    ]
+    if edge:
+        # **左端は測れています**（2026-08-27 16:xx）。ここが埋まっている回は、
+        # 「早い時刻に置けば上積み」を**もう書かないこと** —— 測って、死にました。
+        head += [
+            f"        **窓の左端は測れています: {edge['after']} より後・{edge['by']} まで**"
+            f"（{edge['from']} に {edge['from_dead']}本 置いて、**全部 0再生**）。",
+            f"        → **早い時刻に置いても上積みになりません。** {edge['by']}〜{w['T']} は"
+            f"30分きざみで **ちょうど {w['C']}枠** ＝ (A) の {w['C']}本 と同じで、"
+            "**(B) の側にも引き代はありません**（`cap_if_window()` はここで頭打ちにしています）。",
+            "        **残っているのは右端だけ**です —— "
+            f"**{w['T']} より後ろ**に置いた本が生きるかは、まだ測っていません。",
+        ]
+        head += [f"          {d}" for d in edge.get("days", [])]
+    else:
+        head += [
+            f"        測れている {w['days']}日 は全部 **{w['first_pub']} JST** から始めており、"
+            f"30分きざみだと {w['T']} がちょうど {w['C']}本目です。",
+            "        窓のほうなら、**その時刻より前に置いたぶんは丸ごと上積み**になります"
+            "（作る本数は1本も増えません）。",
+            f"        **道は2つあります。** (i) **{w['first_pub']} より前**に置く"
+            f"（窓のほうが**多く**予測する）／ (ii) **{w['T']} より後ろ**に置く"
+            "（窓のほうが**少なく**予測する）。**同じ分に2本 置かないこと**"
+            "（`ties()`。そこで死んだ本を割り当てられません）。",
+        ]
+    if misfit:
+        head += [
+            "        [!] **どちらのモデルでも説明できない日があります**"
+            "（生きた**本数**は合うのに、**生きた本が入れ替わっている**）:",
+        ] + [f"          {m}" for m in misfit] + [
+            "          → **本数だけを見て決めないこと。** この形は "
+            "`window()` が長らく `count` と**断定**していた所です"
+            "（2026-08-27 に、本の取り違えで測るよう直した）。",
+        ]
+    return blocked + head + _booked_lines(w["first_pub"], w)
 
 
 def _booked_lines(first_pub: str, w: dict | None = None) -> list[str]:
