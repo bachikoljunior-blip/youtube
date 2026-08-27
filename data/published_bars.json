@@ -341,6 +341,38 @@
     ],
     "video_id": ""
   },
+  "iryohi-sotoshotoku-10man-genshou": {
+    "charts": [
+      [
+        "755円",
+        "1521円",
+        "2184円",
+        "2797円"
+      ],
+      [
+        "755円",
+        "2797円",
+        "0円"
+      ]
+    ],
+    "video_id": "bGwW9Xp1Fiw"
+  },
+  "iryohi-tasuukai-kieru-wariai": {
+    "charts": [
+      [
+        "102万6720円",
+        "70万9380円",
+        "38万7270円"
+      ],
+      [
+        "1.51%",
+        "20.21%",
+        "20.21%",
+        "20.21%"
+      ]
+    ],
+    "video_id": "Z68A3rYmvew"
+  },
   "izoku-gake-oshiru-gaku-ichiritsu": {
     "charts": [
       [
@@ -985,6 +1017,25 @@
       ]
     ],
     "video_id": "kOoCPJCa1PU"
+  },
+  "kouki-7wari-setaininzu-line": {
+    "charts": [
+      [
+        "168万円",
+        "151万5000円",
+        "146万円",
+        "143万2500円",
+        "141万6000円"
+      ],
+      [
+        "43万円",
+        "26万5000円",
+        "21万円",
+        "18万2500円",
+        "16万6000円"
+      ]
+    ],
+    "video_id": "4woC2YuX7ig"
   },
   "kouki-futan-ritsu-yama-8336": {
     "charts": [
@@ -7116,6 +7167,22 @@
       ]
     ],
     "video_id": "o1hv0nNVdE4"
+  },
+  "shougai-204000-tosa-6543": {
+    "charts": [
+      [
+        "122万4千円",
+        "102万円",
+        "81万6千円",
+        "61万2千円"
+      ],
+      [
+        "20万4千円",
+        "20万4千円",
+        "20万4千円"
+      ]
+    ],
+    "video_id": "5EXnfjZdHm8"
   },
   "shougai-20saimae-sen-380000-gake": {
     "charts": [
