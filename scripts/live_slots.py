@@ -428,24 +428,59 @@ def plan_all(board: Board) -> list[str]:
     return out
 
 
+#: **1本で全部を止めない**（2026-08-27 16:xx に踏んだ）。
+#:
+#: ここは最初の1本が落ちた時点で `return 1` していました。実測で
+#: `kH-2eghxy2w` が **`invalidPublishAt`（400）** を返し、**残り 43手が
+#: 1つも当たりませんでした** —— しかもその本は毎回いちばん前に並ぶので、
+#: **撃ち直しても同じ所で止まります。** 「`--plan` を撃ち直して残りを当てること」
+#: という案内は、この場合ぜんぶ空振りです。
+#:
+#: 落ちた本の正体は**もう公開済みの本**でした（`publishAt` は公開後には置けない）。
+#: 控え（`data/uploaded.jsonl`）は 08/29 13:30 と言っていますが、実物は
+#: **08/26 20:00 に公開済み**です。**控えと実物が食い違っている本は、
+#: これからも出ます**（`git merge` で2行入った本・手で動かした本）。
+#:
+#: だから止め方を変えます —— **その本を飛ばして次へ進み、最後にまとめて言う。**
+#: **枠が尽きた合図（403）は別**です。あれは撃つほど悪くなるので、そこで止めます。
+_SKIP_REASONS = ("invalidPublishAt", "invalidVideoId", "videoNotFound",
+                 "forbidden", "videoRatingDisabled")
+
+
 def apply_moves(board: Board) -> int:
     from scripts import reschedule
 
     done = 0
+    skipped: list[tuple[str, str]] = []
     for vid, when in board.moves:
         try:
             reschedule.main(["--move", vid, f"{when:%Y-%m-%dT%H:%M}"])
         except SystemExit as e:
             if e.code:
-                print(f"[live_slots] {vid} で止まりました。"
-                      " **`--plan` を撃ち直して残りを当てること**", flush=True)
-                return 1
+                skipped.append((vid, f"終了コード {e.code}"))
+                continue
         except Exception as e:                            # noqa: BLE001
+            text = str(e)
+            if "quotaExceeded" in text or "dailyLimitExceeded" in text:
+                # **枠が尽きたら、そこで止めること。** 撃つほど悪くなります。
+                print(f"[live_slots] 日枠が尽きました（{done}回 動かした時点）。"
+                      " **窓が変わってから `--plan` を撃ち直すこと**", flush=True)
+                return 1
+            if any(r in text for r in _SKIP_REASONS):
+                skipped.append((vid, text.split('"')[1] if '"' in text else text[:60]))
+                continue
             print(f"[live_slots] {vid} で落ちました: {e}."
                   " **`--plan` を撃ち直して残りを当てること**", flush=True)
             return 1
         done += 1
     print(f"[live_slots] {done}回 動かしました（{done * 50}単位）")
+    if skipped:
+        print(f"[live_slots] **飛ばした {len(skipped)}本**"
+              "（控えと実物が食い違っている ＝ もう公開済みなど）:")
+        for vid, why in skipped:
+            print(f"    {vid}  {why}")
+        print("    → **控えのほうが古い**ので、`python scripts/snapshot.py` で"
+              "実物を積み直すこと（`videos.list` だけ ＝ 12単位）")
     return 0
 
 
