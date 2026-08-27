@@ -260,8 +260,27 @@ watches:
     kind: ab_group
     experiment: request_form
 
+  - id: 完成形の保持-16本
+    what: 「完成した図を説明のあいだ画面に残すと engaged が上がる」の判定（腕 `per_video`・オーナー指摘）
+    cond: "`reveal_durations` が入った 2026-08-27 12:00 JST より後に作ったショート（尺180秒以下）が16本 公開され、その実データが届いている"
+    then: python scripts/deadline_check.py → 齢48時間でそろえた engaged を、新旧の割り当てで比べる
+    source: config/hypotheses.yaml
+    kind: published_count
+    since: '2026-08-27'
+    need: 16
+    max_duration_s: 180
+    data_ready: true
+    # **尺で絞るのは、この前提が測っているのがショートの割り当てだから**です。
+    # 長尺は `reveal_variants` を1度も通らないので、混ぜると門がすぐ満ちて
+    # **「対照と同じ中身の処置群」で判定することになります**
+    # （`長尺シェア-14本` が同じ理由で絞っています）。
+    #
+    # **この待ちは、きょうだいの回（`818c7ef`）が立てた前提のぶんです。**
+    # 前提は入っていましたが `watch:` が空で、`tests/test_watches.py` と
+    # `tests/test_watch_eta_ledger.py` と `tests/test_hypothesis_deadline_reachable.py`
+    # の3件が赤になっていました。**合流させた側が塞いでいます**（2026-08-27 21:3x）。
   - id: ショートの刻み-両群16本
-    what: 「ショートの刻み 1コマ 2.5秒 は速すぎる（4.5秒 なら engaged が上がる）」の判定（腕 `per_video`・オーナー指摘 2026-08-27）
+    what: 「ショートの刻み 1コマ 2.5秒 は速すぎる（4.5秒 なら engaged が上がる）」の判定（腕 `per_video`・オーナー指摘）
     cond: 遅い（4.5秒）・速い（2.5秒）のどちらの群も、落ち着いた本が16本
     then: python scripts/ab_split.py --outlook
     source: src/ab_split.py

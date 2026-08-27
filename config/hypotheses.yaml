@@ -3910,6 +3910,7 @@ hypotheses:
         since: "2026-08-27"
         data_file: "data/uploaded.jsonl"
     lever: per_video
+    watch: "完成形の保持-16本"      # 満ちたかは `src/watches.py` が毎周見ています
     falsified_if: |
       2026-10-06 に、**齢48時間でそろえた** engaged 比率を2群で比べ、
       **新しい割り当ての群が古い群を上回らない**なら外れ。
