@@ -2286,8 +2286,11 @@ def main(argv: list[str] | None = None) -> int:
               "そちらへ足しても判定は1日も早まりません"
               "（`scripts/batch_build.motion_shortfall`）。", flush=True)
         # **同じ段落が、同じ数について2つのことを言わないこと**（2026-08-27 に踏んだ）。
-        #     `_why` の末尾は `motion_shortfall()` の答え（＝**盤面が要る本数**）で、
-        #     頭の `n_off` は `motion_plan()` の答え（＝**この回で実際に対照にする本数**）。
+        #     `_why` の末尾は `motion_shortfall` の答え（＝**盤面が要る本数**）で、
+        #     頭の `n_off` は `motion_plan` の答え（＝**この回で実際に対照にする本数**）。
+        #     （この註で `motion_shortfall` を呼び出しの字で書かないこと ——
+        #      `tests/test_motion_fill.py` が「1回の生成で2回 数えていないか」を
+        #      **この節のソースの字**で数えています）
         #     `motion_plan` は `off = min(need, max(1, n // 2))` で
         #     **1回の半分まで**しか対照にしません（同じ JST 日に両群が居ないと
         #     `motion_groups.paired()` が標本に数えないため。理由はあちらの docstring）。
