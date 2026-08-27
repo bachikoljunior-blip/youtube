@@ -238,3 +238,30 @@ def test_期限を越えると出したら_突き合わせ先も同じ所に出�
     assert "deadline_check.py" in out
     assert "帯の中なら期限を書き換えないこと" in out
     assert "床を下げるのは、どちらの場合も禁止" in out
+
+
+def test_どの群にも入らない本を_作りすぎと読ませない(monkeypatch):
+    """**符号が逆になる読み違えです**（2026-08-27 に自分で読み違えかけた）。
+
+    予約に居る 258本（79%）が群に入らないのは、**作った時刻**で群が決まるから
+    （`judgeable._members_by_request_form` の `built < exp.landed`）。
+    **入れ替えても後から群には入りません。** 一方これから作るショートは自動で入るので、
+    答えは「作るのをやめる」ではなく **「作り続ける」**です。
+    """
+    import datetime as _dt
+
+    now = _dt.datetime.now(JST)
+    rows = [{"video_id": f"v{i}", "at": now + timedelta(days=1, minutes=30 * i),
+             "topic": f"t{i}"} for i in range(6)]
+    monkeypatch.setattr(QL.day_cap, "live_ids", lambda _rows: {r["video_id"] for r in rows})
+    monkeypatch.setattr(QL, "published", lambda: rows)
+    monkeypatch.setattr(QL, "open_floors",
+                        lambda: [("request_form", "途中あり", 72,
+                                  [(now.date(), "v0")])])
+    monkeypatch.setattr(QL, "_short_share", lambda *_a, **_k: (91, 100))
+    monkeypatch.setattr(QL, "band_lines", lambda *_a, **_k: [])
+    monkeypatch.setattr(QL, "supply_lines", lambda *_a, **_k: [])
+    out = "\n".join(QL.answering_lines(rows))
+    assert "「作りすぎ」ではありません" in out
+    assert "作り続ける" in out
+    assert "91%" in out
