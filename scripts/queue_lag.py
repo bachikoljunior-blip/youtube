@@ -758,6 +758,11 @@ def _over_cap_lines(rows: list[dict], grid: list[tuple[int, int]],
     ]
 
 
+#: `_walk_days` の控え（1周のあいだだけ）。**永続させないこと** ——
+#: 予約は回の途中で動くので、次の回は新しい過程で解き直します。
+_WALK: dict = {}
+
+
 def _walk_days(batch_build, need: int,
                grid: list[tuple[int, int]],
                cap: int | str | None = "auto") -> tuple[date, int] | None:
@@ -772,6 +777,11 @@ def _walk_days(batch_build, need: int,
     plan = getattr(batch_build, "live_plan", None)
     if plan is None or need <= 0:
         return None
+    # **同じ問いを2度 解かないこと**（`band_lines` と `supply_lines` が同じ数を要ります）。
+    # `live_plan()` は 100本 超で数秒 かかるので、1周のうちは控えを使い回します。
+    key = (need, tuple(grid), cap)
+    if key in _WALK:
+        return _WALK[key]
     try:
         got = plan(need, grid=grid, horizon=240, cap=cap)
     except Exception:                                            # noqa: BLE001
@@ -779,7 +789,8 @@ def _walk_days(batch_build, need: int,
     if len(got) < need:
         return None
     last = got[-1][1]
-    return last, (last - datetime.now(JST).date()).days
+    _WALK[key] = (last, (last - datetime.now(JST).date()).days)
+    return _WALK[key]
 
 
 def answering_lines(rows: list[dict], now: datetime | None = None) -> list[str]:
@@ -848,6 +859,7 @@ def answering_lines(rows: list[dict], now: datetime | None = None) -> list[str]:
         out.append(f"{bar}[!] **{best[0]} 〜 {best[-1]} の {len(best)}日**は、"
                    f"1日 {cap}本 のうち効くのが **1本 以下**です")
     out += band_lines(rows, short)
+    out += supply_lines(short)
     # **余っている側も出すこと。** 「足りない」だけだと、
     #   **枠がどこへ行っているか**が見えません。実測 2026-08-27:
     #   `request_form` 以外の 8群 は床の **3〜20倍** に届いていました
@@ -873,6 +885,151 @@ def answering_lines(rows: list[dict], now: datetime | None = None) -> list[str]:
         out.append(f"{bar}  **床が足りない群はありません** ——"
                    " いま足りないのは本ではなく、**次に立てる前提**のほうです"
                    "（`python scripts/eta.py --alloc`）")
+    return out
+
+
+def _short_share(days: int = 30) -> tuple[int, int] | None:
+    """`judgeable.short_share()` を呼ぶだけ（**群の中身は1か所**）。"""
+    try:
+        return judgeable.short_share(days)
+    except Exception:                                            # noqa: BLE001
+        return None
+
+
+def _shorts_only(keys: list[str]) -> list[str]:
+    """`judgeable.shorts_only()` を呼ぶだけ（**群の中身は1か所**）。"""
+    try:
+        return judgeable.shorts_only(keys)
+    except Exception:                                            # noqa: BLE001
+        return []
+
+
+def supply_lines(short: list[tuple[str, str, int]]) -> list[str]:
+    """**その本を、そもそも作れるか。**（`src/supply.py` と突き合わせる。API 0単位）
+
+    ## なぜ要るか（2026-08-27。**2つの道具が、半分ずつ言っていました**）
+
+    すぐ上の `band_lines()` は「足りない **N本** を帯に置くと、最後の1本は M/D」と
+    出します —— **置く枠の話しかしていません。** 一方 `python -m src.supply` は
+    「在庫＋掃引の候補で **T本**・D日ぶん・いつ尽きる」と出します ——
+    **こちらは要る本数を知りません。**
+
+    実測 2026-08-27:
+
+        要る    114本（`request_form` 途中あり 58 ／ 終端のみ 56。**開いた10群のうち、
+                足りないのはこの2群だけ**。他8群は床の 3〜20倍 に届いています）
+        枠      置ける（最後の1本は 10/01）
+        材料    **110本**（在庫 22 ＋ 候補 568×0.156）。しかもこの前提が数えるのは
+                **ショートだけ**（直近30日の実測 91%）→ 使えるのは **100本**
+        → **14本 足りません。**
+
+    **どちらの道具も「足りない」とは一言も言っていませんでした。**
+    片方は枠が足りると言い、片方は材料の日数を言い、
+    **その2つを引き算する所が、どこにも無かった**だけです。
+
+    そして足りない前提は `request_form` ただ1件、腕は `sub_rate` ——
+    `eta.py --alloc` が3回 続けて名指ししている腕で、
+    **凍らせると軌跡が +126日** 動く、台帳で唯一 桁のちがう前提です。
+
+    ## 何を数えているか
+
+    - **材料**: `src.supply.supply()`（在庫 ＋ 掃引の候補 × `SWEEP_YIELD`）
+    - **ショート率**: 直近に作った本の実測（`_short_share`）。**べた書きしないこと**
+    - **ショートだけか**: 宣言ではなく**いまの群の標本**から（`_shorts_only`）
+
+    ## 覆る条件
+
+    - 掃引の候補が増えて材料が要る本数を超えたら、この節は「足ります」に変わり、
+      **律速は枠のほうへ戻ります**（`band_lines`）
+    - **床を下げて釣り合わせないこと。** `src/ab_split.floor_of()` が
+      「見分けられなかっただけの実験が、効かない実験として閉じる」と言っています
+    - 長尺の比率を下げれば使える本は増えますが、**4,000時間の門に入るのは長尺だけ**です
+      （`scripts/drift.py`）。**どちらを取るかは、この道具は決めません**
+    """
+    if not short:
+        return []
+    need = sum(n for _k, _g, n in short)
+    try:
+        from src import supply as _supply                        # noqa: PLC0415
+
+        sw = _supply.sweep_novel()
+        sp = _supply.supply(day_cap.cap(), novel=sw.get("novel"),
+                            undecided=sw.get("undecided"))
+    except Exception:                                            # noqa: BLE001
+        return []
+    total = int(sp.get("supply_total") or 0)
+    bar = "  "
+    keys = sorted({k for k, _g, _n in short})
+    out = ["", "=== その本を、そもそも作れるか（**材料の側**。API 0単位）==="]
+    body = f"在庫 {int(sp.get('stock') or 0)}本"
+    novel = sp.get("sweep_novel")
+    if novel:
+        body += f" ＋ 掃引の候補 {int(novel):,}件 × {_supply.SWEEP_YIELD:g}"
+    out.append(f"{bar}材料 **{total}本**（{body}）"
+               + (f"・**{sp['dry_date']} に尽きる**" if sp.get("dry_date") else ""))
+    usable = float(total)
+    only = _shorts_only(keys)
+    share = _short_share()
+    if only and share:
+        n_s, n_all = share
+        usable = total * n_s / max(n_all, 1)
+        out.append(f"{bar}このうち使えるのは**ショートだけ**"
+                   f"（{' / '.join('`' + k + '`' for k in only)} は長尺を群に入れません"
+                   "・いまの標本から見ています）"
+                   f" —— 直近に作った {n_all}本 中 {n_s}本 が ショート"
+                   f"（{n_s / max(n_all, 1):.0%}）→ **{usable:.0f}本**")
+    gap = need - usable
+    if gap > 0:
+        out.append(f"{bar}[!] **要る {need}本 に {gap:.0f}本 足りません** ——"
+                   " 枠が空いていても、いまの材料ではこの床に届きません"
+                   "（＝その腕は凍ったまま。`python scripts/eta.py --alloc`）")
+        und = sp.get("sweep_undecided")
+        fix = [f"{bar}  増やせる所: `python -m src.supply --measure`（掃引を測り直す・約47秒）"]
+        if und:
+            fix.append(f"{bar}  掃引の候補のうち **判定できていない {int(und):,}件**"
+                       "（照合できる点が無いだけで、**無いと分かったのではない**）"
+                       " —— ここが増えれば材料は増えます")
+        fix.append(f"{bar}  **床は下げないこと**（`src/ab_split.floor_of()`）。"
+                   "期限のほうを延ばすなら `python scripts/deadline_check.py`"
+                   "（`falsified_if` は1文字も触らない）")
+        out += fix
+    else:
+        out.append(f"{bar}→ **足ります**（要る {need}本 ／ 使える {usable:.0f}本）。"
+                   "**律速は材料ではなく枠のほうです**（すぐ上の節）")
+    lag = SETTLE_DAYS + judgeable.ANALYTICS_LAG_DAYS
+    try:
+        want = judgeable.deadlines()
+    except Exception:                                            # noqa: BLE001
+        want = {}
+    walk = None
+    try:
+        sys.path.insert(0, str(ROOT / "scripts"))
+        import batch_build                                       # noqa: PLC0415
+
+        walk = _walk_days(batch_build, need, batch_build._band_grid())
+    except Exception:                                            # noqa: BLE001
+        walk = None
+    for key in keys:
+        d = want.get(key)
+        if not d:
+            continue
+        due = d - timedelta(days=lag)
+        out.append(f"{bar}  `{key}` の期限 **{d}**（判定）"
+                   f" ＝ **{due} までに公開した本**しか入りません"
+                   f"（落ち着き＋Analytics の遅れ {lag}日）")
+        if walk is not None:
+            # **枠の側も期限に間に合うか。** ここを出さないと、
+            # 「材料さえ足せば閉じる」と読めます —— 実測 2026-08-27 は
+            # **材料も枠も、どちらも足りていません**でした（最後の1本が期限の翌日）。
+            last, days_n = walk
+            if last > due:
+                out.append(f"{bar}    [!] **帯に {need}本 を置くと最後の1本は"
+                           f" {last}（+{days_n}日）で、期限を {(last - due).days}日"
+                           " 越えます** —— 材料を足しても、この床は期限内に埋まりません"
+                           "（`band_lines` の帯／`src/day_cap.py` の上限）")
+            else:
+                out.append(f"{bar}    枠の側は間に合います"
+                           f"（最後の1本 {last} ≤ {due}）")
     return out
 
 
