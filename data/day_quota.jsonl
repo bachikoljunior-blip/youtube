@@ -3577,3 +3577,24 @@
 {"at": "2026-08-27T01:09:21+00:00", "ok": true, "detail": "videos.update vid1"}
 {"at": "2026-08-27T01:10:27+00:00", "ok": true, "detail": "videos.update vid1"}
 {"at": "2026-08-27T01:13:57+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-27T01:16:12+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-27T01:16:16+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-27T01:16:16+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-27T01:16:17+00:00", "detail": "playlistItems.list uploads"}
+{"at": "2026-08-27T01:16:17+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-27T01:16:17+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-27T01:16:18+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-27T01:21:02+00:00", "detail": "status: Data API 読み"}
+{"at": "2026-08-27T01:21:34+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-27T01:21:36+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-27T01:22:15+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-27T01:22:17+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-27T01:22:35+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-27T01:24:05+00:00", "ok": true, "detail": "videos.update vid1"}
+{"at": "2026-08-27T01:24:05+00:00", "ok": true, "detail": "videos.update vid1"}
+{"at": "2026-08-27T01:25:05+00:00", "detail": "status: Data API 読み"}
+{"at": "2026-08-27T01:25:33+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-27T01:25:35+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-27T01:26:28+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-27T01:28:07+00:00", "ok": true, "detail": "videos.update vid1"}
+{"at": "2026-08-27T01:28:07+00:00", "ok": true, "detail": "videos.update vid1"}
