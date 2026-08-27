@@ -401,13 +401,69 @@ def _ab_group_from_sources(name: str) -> Gauge:
         _make_members, need = member_src
         src = ((lambda k=name: judgeable._days(judgeable.members(k))), need)
     make, need = src
-    cutoff = (datetime.now(JST).date()
-              - timedelta(days=ab_split.SETTLE_DAYS + judgeable.ANALYTICS_LAG_DAYS))
-    ready = {g: sum(1 for d in days if d <= cutoff) for g, days in make().items()}
+    lag = ab_split.SETTLE_DAYS + judgeable.ANALYTICS_LAG_DAYS
+    today = datetime.now(JST).date()
+    cutoff = today - timedelta(days=lag)
+    groups = {g: sorted(days) for g, days in make().items()}
+    ready = {g: sum(1 for d in days if d <= cutoff) for g, days in groups.items()}
     if not ready:
         return Gauge(0, float(need), "本", err=f"{name}: 群が1つも立っていません")
-    note = " / ".join(f"{g} {n}本" for g, n in sorted(ready.items()))
+    note = ("落ち着き " + " / ".join(f"{g} {n}本" for g, n in sorted(ready.items()))
+            + _ab_bottleneck(groups, need, today, lag))
     return Gauge(min(ready.values()), float(need), "本", note)
+
+
+def _ab_bottleneck(groups: dict[str, list], need: int, today, lag: int) -> str:
+    """**足りないのは「本」か「齢」か。** 目盛りの数字だけでは区別が付きません。
+
+    ## なぜ要るか（2026-08-27 に実測して足した）
+
+    `Gauge.left` は `床 − 落ち着いた本` なので、画面には必ず
+
+        あと **16本**  題の問い-両群16本（いま 0 / 要る 16）  問い 0本 / 断定 0本
+
+    と出ます。**これは「16本 作れ」と読めます。**
+    ところが同じ日の実測では、群には **問い 56本 / 断定 65本** が既に居ました
+    （`judgeable.members("title_form")`）。**1本も作る必要がありません** ——
+    足りないのは公開からの齢（`SETTLE_DAYS + ANALYTICS_LAG_DAYS`）だけで、
+    床に届くのは **2026-09-05**（あと 9日）です。
+
+    同じ日の 6件のうち **4件**（`title_form` 56/65本・`hook_form` 43/50本・
+    `stat_split` 67/317本・`opening_motion` 28/8本）が この形でした。
+    本当に本が足りないのは `slide_pace`（5/3本・床16）と
+    `request_form`（20/22本・床72）の 2件だけです。
+
+    **`eta.py` は同じ回に「本数を増やしても在庫を増やしても、日付は動きません」
+    （腕 `density` の天井 ×1.00）と印字しています。** 目盛りを字面どおりに読んだ回は、
+    1日も早まらない側へ丸ごと持っていかれます。
+
+    ## **これは一度、1件だけ直されています**
+
+    `config/hypotheses.yaml` の `opening_motion` には 2026-08-26 の註で
+    「**本数は足りていて、縛っているのは日付でした**」と書いてあり、
+    その前提の**期限だけ**が 09-13 → 10-16 へ延ばされています。
+    **直したのは1件で、そう読ませている目盛りのほうは直っていませんでした。**
+    （受け取り帳 `e6d3be89`・オーナー 2026-08-23「失敗したならそこだけ直すんじゃなくて
+    応用しないの？」）
+
+    **覆る条件**: 群に居る本が予約から消える（取り消し・生成失敗）なら、
+    「本は足りている」は嘘になります。数えているのは控えの予約なので、
+    予約が減れば次の回の同じ行が本数側へ倒れます。
+    """
+    from datetime import timedelta
+
+    short = {g: need - len(ds) for g, ds in sorted(groups.items()) if len(ds) < need}
+    have = " / ".join(f"{g} {len(ds)}本" for g, ds in sorted(groups.items()))
+    if short:
+        return (f" ／ **本が足りません** —— 群 {have}（床 {need}本）。"
+                + "**あと " + " / ".join(f"{g} {n}本" for g, n in short.items()) + "**")
+    settles = max(ds[need - 1] for ds in groups.values()) + timedelta(days=lag)
+    left = (settles - today).days
+    if left <= 0:
+        return f" ／ 群 {have}（床 {need}本）"
+    return (f" ／ **足りないのは本ではありません** —— 群 {have}（床 {need}本）。"
+            f"**床に届くのは {settles}（あと {left}日）** ＝ 齢待ち。"
+            "**ここに本を足しても1日も早まりません**")
 
 
 def _k_ab_group(p: dict) -> Gauge:
