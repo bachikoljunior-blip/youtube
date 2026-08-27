@@ -576,6 +576,93 @@ def answering(rows: list[dict]) -> tuple[dict, set[str], list[tuple[str, str, in
     return per_day, ans, sorted(short, key=lambda x: -x[2])
 
 
+def _need_videos(short: list[tuple[str, str, int]]) -> tuple[int, dict[str, int]]:
+    """**足りない群を埋めるのに、新しいショートが何本 要るか。**
+
+    返すのは（合計, 前提ごと）。**`band_lines()` と `supply_lines()` の両方が
+    この1つを使うこと** —— 同じ問いを2か所で解くと、片方だけ直る形になります
+    （この repo が通算11回 踏んでいる形。直前の実例が `ee2ec73`）。
+
+    ## **前提をまたいで足さないこと**（2026-08-28 に直した。**19% 膨らんでいました**）
+
+    ここは長らく `sum(n for _k, _g, n in short)` —— **足りない群ぜんぶの単純な和**
+    でした。**群が1つの前提の中だけなら、それで正しい**（1本はその前提の
+    どちらか片方にしか入らないので、51本 と 48本 は別々の本が要ります）。
+
+    **ちがうのは前提をまたぐときです。** 振り分けはどれも
+    **テーマIDだけを見る純関数**で（`src/script_writer.request_form` /
+    `src/pipeline.slide_pace`）、**ショートは全部の前提で同時に群を持ちます。**
+    実測 2026-08-28（`judgeable._short_topics()` の 400本 に両方を当てた）:
+
+        request_form   途中あり 209 ／ 終端のみ 191   ← 400本 **ぜんぶ**が入る
+        slide_pace     遅い     195 ／ 速い     205   ← 同じ 400本 **ぜんぶ**が入る
+
+    公開済みの実物でも、`slide_pace` の 12本 のうち **11本** は
+    `request_form` の群にも入っています（残り1本は `request_form` が
+    `landed` を先に置いているための取りこぼし）。
+
+    **つまり `slide_pace` の 20本 は、`request_form` のために作る本が
+    そのまま埋めます。** 足すと、同じ本を2回 数えます:
+
+        足す（旧）   51 + 48 + 12 + 8 → **119本**
+        正しく解く   max(request_form 102, slide_pace 26) → **102本**
+
+    **害は数の大きさでは済みません。** すぐ下の `supply_lines()` は
+    この数を材料（実測 104本）と引き算して「**その腕は凍ったまま**」を出します ——
+    **119 なら 15本 足りず、102 なら 2本 余ります。符号が変わります。**
+
+    ## 群の中は、割合で割ること（**足し算ではありません**）
+
+    1つの前提の中でも、単純な和は**振り分けが狙って当たる場合**の下限です。
+    実際はテーマIDのハッシュで**半々に落ちる**ので、
+    片群 51本 を埋めるには 51/0.4775 ≒ 107本 が要ります（実測 2026-08-28 の `request_form` は 102本）。
+    **割合は書き写さず、その場で振り分けを実際に当てて測ります**
+    （`SLOW_PACE_SHARE` / `MID_REQUEST_SHARE` を読むと、
+    片方を変えたときにここが黙って古くなります）。
+
+    ## 覆る条件
+
+    - **どれか1つの前提が「ショートだけではない」形になったら**、ここの
+      `max` は成り立ちません（その前提の本は他の前提の本と別物になるので）。
+      いまは `ab_split` の `eligible=_shorts_only` が両方に付いています
+    - 振り分けが**テーマID以外**（作った時刻・在庫の順など）を見るようになったら、
+      同時に群を持つ保証が消えます。**そのときは和へ戻すこと**
+    - 測る標本が 50本 未満に落ちたら、割合は使わず和（下限）へ倒します
+    """
+    per_key: dict[str, int] = {}
+    groups: dict[str, list[tuple[str, int]]] = {}
+    for k, g, n in short:
+        groups.setdefault(k, []).append((g, n))
+    try:
+        from src import ab_split                                 # noqa: PLC0415
+
+        tops = sorted(judgeable._short_topics())
+    except Exception:                                            # noqa: BLE001
+        tops = []
+    for k, gs in groups.items():
+        share: dict[str, float] = {}
+        if len(tops) >= 50:
+            exp = getattr(ab_split, "EXPERIMENTS", {}).get(k)
+            split = getattr(exp, "split", None)
+            if split is not None:
+                hit: dict[str, int] = {}
+                for t in tops:
+                    try:
+                        hit[str(split(t))] = hit.get(str(split(t)), 0) + 1
+                    except Exception:                            # noqa: BLE001
+                        hit = {}
+                        break
+                tot = sum(hit.values())
+                if tot:
+                    share = {g: c / tot for g, c in hit.items()}
+        if share and all(share.get(g, 0.0) > 0 for g, _n in gs):
+            per_key[k] = max(int(-(-n // share[g])) for g, n in gs)   # 切り上げ
+        else:
+            # **割合が測れない回は和**（＝ 振り分けが狙って当たる場合の下限）。
+            per_key[k] = sum(n for _g, n in gs)
+    return (max(per_key.values()) if per_key else 0), per_key
+
+
 def band_lines(rows: list[dict],
                short: list[tuple[str, str, int]]) -> list[str]:
     """**足りない群を埋めるのに、あと何日 かかるか**（置ける枠の側から）。
@@ -643,7 +730,7 @@ def band_lines(rows: list[dict],
         return min(n / max(len(days), 1), float(day_cap.cap()))
 
     per = _free(grid)
-    need = sum(n for _k, _g, n in short)
+    need, _by_key = _need_videos(short)
     bar = "  "
     who = " / ".join(f"`{k}` {g} あと {n}本" for k, g, n in short[:2])
     out = [f"{bar}**足りないのは本で、入れ替えでは増えません**（{who}）。"
@@ -962,7 +1049,7 @@ def supply_lines(short: list[tuple[str, str, int]]) -> list[str]:
     """
     if not short:
         return []
-    need = sum(n for _k, _g, n in short)
+    need, need_by_key = _need_videos(short)
     try:
         from src import supply as _supply                        # noqa: PLC0415
 
@@ -1023,9 +1110,7 @@ def supply_lines(short: list[tuple[str, str, int]]) -> list[str]:
         want = {}
     walk = None
     alone: dict[str, tuple[date, int] | None] = {}
-    per_key: dict[str, int] = {}
-    for _k, _g, _n in short:
-        per_key[_k] = per_key.get(_k, 0) + _n
+    per_key = dict(need_by_key)
     try:
         sys.path.insert(0, str(ROOT / "scripts"))
         import batch_build                                       # noqa: PLC0415
@@ -1082,8 +1167,13 @@ def supply_lines(short: list[tuple[str, str, int]]) -> list[str]:
             solo = alone.get(key)
             n_key = per_key.get(key, need)
             multi = len(keys) > 1
+            # **「合計」と書かないこと**（2026-08-28）。`_need_videos()` のとおり、
+            #   1本のショートは**全部の前提で同時に群を持つ**ので、
+            #   `need` は前提をまたいだ**和ではなく max** です。
             whose = ("" if not multi
-                     else f"（{need}本 は**足りない群ぜんぶの合計**です・{len(keys)}件）")
+                     else f"（{need}本 は**足りない前提 {len(keys)}件 を"
+                          "ぜんぶ埋めるのに要る本数**です。"
+                          "1本が全部の前提の群に同時に入るので、**和ではありません**）")
             if solo is None:
                 solo = walk
             s_last, s_days = solo
@@ -1130,7 +1220,8 @@ def supply_lines(short: list[tuple[str, str, int]]) -> list[str]:
             else:
                 out.append(f"{bar}    枠の側は間に合います"
                            f"（`{key}` の {n_key}本 の最後 {s_last} ≤ {due}"
-                           + (f"／合計 {need}本 でも {last} ≤ {due}" if multi else "")
+                           + (f"／ぜんぶ埋める {need}本 でも {last} ≤ {due}"
+                              if multi else "")
                            + "）")
     return out
 

@@ -74,9 +74,15 @@ def test_ショートだけを数える前提には_ショート率を掛ける(
     monkeypatch.setattr(QL, "_shorts_only", lambda _keys: ["request_form"])
     monkeypatch.setattr(QL, "_short_share", lambda *_a, **_k: (91, 100))
     monkeypatch.setattr(QL.judgeable, "deadlines", lambda: {})
-    out = "\n".join(QL.supply_lines([("request_form", "途中あり", 114)]))
+    short = [("request_form", "途中あり", 114)]
+    out = "\n".join(QL.supply_lines(short))
     assert "**100本**" in out          # 110 × 0.91
-    assert "14本 足りません" in out
+    # **要る本数は `_need_videos()` から取ること**（2026-08-28）。
+    #   片群だけが足りない回は、振り分けの半分が満ちている側へ落ちるので、
+    #   114本 を埋めるのに要る新しいショートは **114本 ではありません**。
+    need, _ = QL._need_videos(short)
+    assert need > 114, need
+    assert f"{need - 100}本 足りません" in out
 
 
 def test_ショートだけかは_宣言ではなく標本から見る(monkeypatch):
@@ -301,12 +307,17 @@ def test_足りない前提が2件_以上なら_合計だと断る(monkeypatch):
     monkeypatch.setattr(QL.judgeable, "deadlines",
                         lambda: {"a": date(2026, 10, 6), "b": date(2026, 10, 8)})
     monkeypatch.setattr(QL, "_walk_days", lambda *_a, **_k: (date(2026, 9, 1), 5))
-    out = "\n".join(QL.supply_lines([("a", "g1", 40), ("b", "g2", 20)]))
-    # 群ごとの本数で語ること（合計 60本 を両方に当てない）
+    short = [("a", "g1", 40), ("b", "g2", 20)]
+    need, by_key = QL._need_videos(short)
+    # **前提をまたいで足さないこと**（`_need_videos()` の註）——
+    # 1本のショートは全部の前提で同時に群を持つので、`need` は和ではなく max
+    assert by_key == {"a": 40, "b": 20} and need == 40
+    out = "\n".join(QL.supply_lines(short))
+    # 前提ごとの本数で語ること（ぜんぶ埋める 40本 を両方に当てない）
     assert "`a` の 40本" in out and "`b` の 20本" in out
-    # 合計も伏せないこと
-    assert "合計 60本" in out
+    # ぜんぶ埋めるのに要る本数も伏せないこと
+    assert "ぜんぶ埋める 40本" in out
 
-    # 1件だけの回には、合計の断りは出さない（雑音になる）
+    # 1件だけの回には、その断りは出さない（雑音になる）
     out1 = "\n".join(QL.supply_lines([("a", "g1", 40)]))
-    assert "合計" not in out1
+    assert "ぜんぶ埋める" not in out1

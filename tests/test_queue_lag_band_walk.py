@@ -69,9 +69,17 @@ def _need_and_lines(need: int = 60):
 
 
 def test_見出しの日数は_平均ではなく_置いた最後の1本():
-    """**平均に戻したら、ここが落ちます。**"""
-    need = 60
-    rows, lines = _need_and_lines(need)
+    """**平均に戻したら、ここが落ちます。**
+
+    **要る本数は `QL._need_videos()` から取ること**（2026-08-28）——
+    群の数をそのまま足すと、`band_lines()` が実際に歩く本数と食い違います
+    （振り分けはテーマIDの純関数なので、片群 60本 を埋めるには
+    その倍ちかい本数が要ります）。
+    """
+    short = [("request_form", "途中あり", 60)]
+    rows = QL.scheduled()
+    lines = QL.band_lines(rows, short)
+    need, _by_key = QL._need_videos(short)
     assert lines, "band_lines が何も返していません"
     head = [ln for ln in lines if "最後の1本は" in ln]
     assert head, lines

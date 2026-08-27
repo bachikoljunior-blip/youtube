@@ -132,7 +132,9 @@ def test_単独でも越える群には_はっきり越えると言う(monkeypat
     out = "\n".join(QL.supply_lines([("big", "g", 99), ("small", "g", 20)]))
 
     assert "この群だけを最優先しても間に合いません" in out
-    assert "期限を 2日 越えます" in out          # 合計 119本 の 22日 ではない
+    assert "期限を 2日 越えます" in out          # 小さい群を積んだ日ではない
     assert "材料を足しても" in out
-    # 後回しにした場合の日も、伏せずに並べること
-    assert "最後に回すと" in out
+    # **`big` は「ぜんぶ埋める本数」そのもの**（`_need_videos()` は前提をまたいで
+    #   max を取るので）。だから「最後に回すと」は出ません —— 出たら、
+    #   どこかで前提をまたいで足しています
+    assert "最後に回すと" not in out
