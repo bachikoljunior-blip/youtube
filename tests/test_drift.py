@@ -443,3 +443,41 @@ def test_門と_deadline_check_が期限の書き換えについても逆を言�
         "`deadline_check.py` は「帯の中。書き換えないこと」と言っています: "
         f"{clash}"
     )
+
+
+def test_時刻の分かっている待ちは_その時刻を印字すること(tmp_path, monkeypatch):
+    """**`deadline_check` と別のことを言わないこと**（2026-08-27 14:5x に踏んだ）。
+
+    `deadline_check.py`  → 「**今日の 22:00 JST に出ます**。その時刻まで待つこと」
+    `drift.py`（＝`status.py` に載る側）→ 「まだ数えはじめたところ
+                                          （**伸び率が出ないので日が出せない**）」
+
+    **同じ前提について、同じ回に、別のことを言っています。** 読んだ回は後者を
+    「いつ来るか分からない待ち」と読み、**その日のうちに拾える前提を翌日以降へ流します。**
+    実測: `day_cap` の対照日（08/27・19本）は 22:00 JST に読めるようになります。
+
+    `Answer.todo` / `Answer.slips` と**同じ穴の3件目**です ——
+    `deadline_check` が持っている欄を、`drift` が持って上がっていない。
+    """
+    _seed(tmp_path, monkeypatch,
+          [_ship("2026-08-23T10:00", "fix: 直した")] * 3, OPEN_OVERDUE)
+    monkeypatch.setattr(
+        drift, "_judge_state_by_claim",
+        lambda: {"冒頭が engaged を決める":
+                 ("warming", None, None, 0, "", "…は **08/27 22:00 JST** に出ます", "22:00")})
+    text, drifting = drift.report("2026-08-24")
+    assert drifting is False
+    assert "22:00 JST に出ます" in text, "時刻を持って上がっていません"
+    assert "伸び率が出ないので日が出せない" not in text, (
+        "時刻の分かっている待ちを「伸び率が出ない」で塗り潰しています")
+
+
+def test_時刻の無い待ちは_これまでどおり伸び率で言うこと(tmp_path, monkeypatch):
+    """**上の直しで、こちらを巻き込まないこと。**（本当に伸び率待ちの前提）"""
+    _seed(tmp_path, monkeypatch,
+          [_ship("2026-08-23T10:00", "fix: 直した")] * 3, OPEN_OVERDUE)
+    monkeypatch.setattr(
+        drift, "_judge_state_by_claim",
+        lambda: {"冒頭が engaged を決める": ("warming", None, None, 0, "", "要 3 ／ いま 0", "")})
+    text, _ = drift.report("2026-08-24")
+    assert "まだ数えはじめたところ" in text

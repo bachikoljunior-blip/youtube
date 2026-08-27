@@ -306,7 +306,25 @@ def _judge_state_cached(_key: tuple) -> dict[str, tuple] | None:
                 # 後者に「待つこと」と言うと、その前提は期限を過ぎたまま止まります。
                 todo = next((a.todo for a in (getattr(v, "answers", None) or [])
                              if getattr(a, "todo", "")), "")
-                out[v.claim] = ("warming", None, None, 0, todo)
+                # **`why` も持って上がること**（2026-08-27 14:5x。`todo` と同じ穴の3件目）。
+                # `todo` の無い `warming` を一律に
+                # 「まだ数えはじめたところ（伸び率が出ないので日が出せない）」と
+                # 印字していましたが、**待ちには時刻の分かっているものがあります。**
+                # 実測: `day_cap` の対照日は `deadline_check.py` が
+                # 「**08/27 22:00 JST に出ます**（いま 14:35 JST）」と時刻つきで
+                # 言っているのに、`drift.py`（＝ `status.py` に載る側）は
+                # 「伸び率が出ない」とだけ言っていました。**別のことを言っています** ——
+                # 読んだ回は「いつ来るか分からない待ち」と読み、その日のうちに
+                # 拾える前提を翌日以降へ流します。
+                why = next((a.why for a in (getattr(v, "answers", None) or [])
+                            if getattr(a, "ready", None) is None
+                            and getattr(a, "why", "")), "")
+                # **時刻の分かっている待ちか**（`needs[].at_time_jst`）。
+                # `deadline_check.py` の印字はここで2つに分かれています ——
+                # 「**今日の HH:MM JST に出ます**」と「まだ数えはじめたところ」。
+                when = next((str(x.get("at_time_jst")) for x in (getattr(v, "needs", None) or [])
+                             if isinstance(x, dict) and x.get("at_time_jst")), "")
+                out[v.claim] = ("warming", None, None, 0, todo, why, when)
         return out
     except Exception:                               # noqa: BLE001
         return None
@@ -358,9 +376,18 @@ def split_overdue(od: list[dict], today: str) -> tuple[list[dict], list[tuple[di
                     "`python scripts/deadline_check.py` がその日を出します"))
         elif kind == "warming":
             todo = got[4] if len(got) > 4 else ""
+            why = got[5] if len(got) > 5 else ""
+            when = got[6] if len(got) > 6 else ""
             if todo:
                 # **待っても出ない側。** 手が在るので、そのまま渡します。
                 blocked.append((h, "時計は来たが、要るデータが在りません", str(todo)))
+            elif when:
+                # **時刻の分かっている待ち。** 「伸び率が出ない」で塗り潰すと、
+                # **その日のうちに拾える前提が、翌日以降へ流れます**（上の註）。
+                blocked.append((
+                    h, str(why) or f"今日の {when} JST に出ます",
+                    f"**今日の {when} JST に出ます**（伸び率の話ではありません）。"
+                    "**その時刻を過ぎた回が拾うこと** —— 畳まない・条件を緩めない"))
             else:
                 blocked.append((
                     h, "まだ数えはじめたところ（伸び率が出ないので日が出せない）",
