@@ -204,8 +204,24 @@ def plan(rows: list[dict] | None = None, *, today: str | None = None) -> list[di
         return [m for m in grid if m not in taken]
 
     def window(day: str) -> bool:
+        # **`today` を渡すこと**（2026-08-28 に足した。最適化の回）。
+        # ここは長らく `inside(day)` で、**壁の時計を読んでいました。**
+        # `plan()` の `today` は `upcoming()` と `horizon` には効いていて、
+        # **3つ目のこの枝にだけ効いていません。**
+        #
+        # 症状: `measure_window.WINDOWS` の `until` を過ぎた瞬間、
+        # その窓の日の守り（`ceiling`。「いちばん遅い分より後ろへ出さない」）が
+        # **黙って外れます。** `tests/test_collisions.py` の
+        # `test_plan_does_not_push_past_the_days_last_slot_on_a_window_day` は
+        # `today="2026-08-25"` を渡して 08/27 の窓を見ていましたが、
+        # **実時刻が 08/28 に入った日に赤へ変わりました**（08/27 の窓は
+        # `until: 2026-08-27`）。**検査が壊れたのではなく、注入が効いていない**
+        # のが見えただけです —— 窓の守りは、どの窓についても試せませんでした。
+        #
+        # 覆る条件: `measure_window.inside()` が `today` を受け取らなくなったら、
+        # ここも一緒に直すこと（あちらの既定は `None` ＝ 壁の時計）。
         try:
-            return measure_window.inside(day)
+            return measure_window.inside(day, today=today)
         except Exception:                                    # noqa: BLE001
             return False
 
