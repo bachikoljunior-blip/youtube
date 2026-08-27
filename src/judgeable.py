@@ -228,15 +228,61 @@ Member = tuple[date, str]
 
 
 def _members_by_split(name: str) -> dict[str, list[Member]]:
-    """`ab_split.EXPERIMENTS` の A/B（IDで振り分け・指示より前の本は落とす）。"""
+    """`ab_split.EXPERIMENTS` の A/B（IDで振り分け・指示より前の本は落とす）。
+
+    ## **`Experiment.eligible` を読みます**（2026-08-28 に足した。最適化の回）
+
+    `ab_split` は 2026-08-27 に `eligible=_shorts_only` を **`request_form` と
+    `slide_pace` の両方**へ足しました。`ab_split.split_counts()` はそれを読みます。
+    **ここは読んでいませんでした。** 同じ問い（「その本は群に入るか」）を
+    2か所が別々に解いて、**片方だけが `eligible` を見ていた**形です
+    （`docs/JOURNAL.md` にある、この repo で通算13回目）。
+
+    ### 実測（塞ぐ前に、実際に出ていた害）
+
+    `slide_pace` の群に、**長尺が3本**入っていました —— どれも
+    2026-08-27 夜に主実行が作った長尺です:
+
+        8hJnwkC8NU0  iryohi-furusato-joge-nenshubetsu  285.9s  → 速い  10/06
+        KfQeYEJwL7Q  iryohi-zeiritsu-dan-kaidan        302.8s  → 速い  10/11
+        f9WbldIUYpk  iryohi-jikofutan-2percent         363.2s  → 遅い  10/07
+
+    **長尺は `reveal_variants` を1度も通らない**ので、この3本には
+    刻みの処置が**入っていません**。IDのハッシュだけで群を名乗っていました。
+
+    害は標本の汚れだけでは済みません。`scripts/deadline_check._project_nth()` は
+    群がまだ N本 に満たないとき **`max(積み上がる日, pub[-1])`** で N本目を出します。
+    `pub[-1]` がこの長尺（10/11・10/07）なので:
+
+        長尺こみ（旧）  16本目 10/11・10/07 → 判定 **10-17**
+                        → 門が「**`deadline: "2026-10-17"` へ延ばすこと**」と印字
+        長尺を落とす    16本目 09/13・09/17 → 判定 **09-23**（期限 09-24 の**内側**）
+
+    **`eta.py` の到達日が動くのは前提を1件 閉じたときだけ**なので、
+    あの `[!!]` に従った回は、**期限を 23日 後ろへ送っていました。**
+    処置の入っていない3本が、軌跡から 24日 を持って行っていた形です。
+
+    ### 覆る条件
+
+    - `eligible` を持たない実験（いまは `title_form` / `hook_form` /
+      `stat_split` / `opening_motion`）は、**1本も落ちません**（`None` で素通り）。
+      あれらが長尺を含むべきかは、**この回では測っていません** ——
+      含むべきでないと分かったら、`ab_split` 側に `eligible` を足すこと。
+      **ここに条件を書き足さないこと**（それが上の「2か所」を作ります）
+    - `judgeable.shorts_only()` は**宣言ではなく標本**からこれを見ます。
+      あれが `slide_pace` を返さない回があれば、この門が効いていません
+    """
     from src.ab_split import EXPERIMENTS
 
     exp = EXPERIMENTS[name]
     builds, pub, vid = build_times(), _publish_by_topic(), _video_by_topic()
+    allowed = exp.eligible() if exp.eligible is not None else None
     out: dict[str, list[Member]] = {exp.treated: [], exp.control: []}
     for topic, built in builds.items():
         if built < exp.landed:
             continue  # 指示が入る前に作った本。IDが何と言おうと処置は入っていない
+        if allowed is not None and topic not in allowed:
+            continue  # 処置がそもそも掛からない本（長尺など）。上の docstring
         group = exp.split(topic)
         day = pub.get(topic)
         if group in out and day:
