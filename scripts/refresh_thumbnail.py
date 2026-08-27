@@ -1,6 +1,6 @@
 """投稿済みの動画に、サムネイルを載せ直す。**入口は2つあります。**
 
-    python scripts/refresh_thumbnail.py --missing [--force]
+    python scripts/refresh_thumbnail.py --missing [--long] [--force]
         **控えに残した bytes を、載っていない本すべてに押す**（2026-08-17 に追加）。
         `build/` は要りません。ふつうはこちらです
 
@@ -84,13 +84,66 @@ def _ledger_ahead() -> list:
     return sorted(out)
 
 
-def push_missing(dry_run: bool = False, force: bool = False) -> int:
+#: **長尺だけを押す道**（2026-08-27 16:xx に足した）。
+#:
+#: 下の「穴のほうが先」の門は、**ショートについては正しい** ——
+#: 再生の 99.9% は `SHORTS_FEED` で、**そこにサムネイルは出ません。**
+#: だから同じ50単位なら詰め直しのほうが効きます。
+#:
+#: **その理屈は長尺には掛かりません。** 長尺は `SHORTS_FEED` の枠を
+#: 1つも使わず、**門2a（4,000時間）に入るのは長尺だけ**です。そして
+#: `status.py` は「**面ではなく CTR が縛っている**」と印字しています ——
+#: 面は合格点の 5.2倍 あるのに、**実測 CTR 1.44%**（要る CTR 19.2%）。
+#: **サムネイルはその CTR そのもの**です。
+#:
+#: 実測 2026-08-27: サムネイルの無い 40本 のうち **10本が長尺**でした。
+#: `day_cap.forms()` はこれを**0本**と答えます（571本 中 130本 しか
+#: 覚えていないので、残りは「不明」に落ちる）。**尺は API に訊くこと**
+#: （`videos.list` の `contentDetails`。50本で1単位）。
+#:
+#: この10本は **6周 続けて「段2 の本体」として申し送られながら、
+#: 一度も押されていません** —— 門がショートの理屈で 40本まとめて
+#: 止めていたからです。**群を分ければ、門は正しいまま通ります。**
+LONG_FORM_SEC = 180
+
+
+def _long_form_ids(video_ids: list[str]) -> set[str]:
+    """**尺を API に訊く**（50本で1単位）。`forms()` の控えは当てにしません。"""
+    import re as _re
+
+    def _secs(d: str) -> int:
+        m = _re.match(r"PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?", d or "")
+        if not m:
+            return 0
+        h, mi, s = (int(x or 0) for x in m.groups())
+        return h * 3600 + mi * 60 + s
+
+    y = build("youtube", "v3", credentials=credentials(), cache_discovery=False)
+    out: set[str] = set()
+    for i in range(0, len(video_ids), 50):
+        try:
+            got = y.videos().list(part="contentDetails",
+                                  id=",".join(video_ids[i:i + 50])).execute()
+        except Exception as exc:                               # noqa: BLE001
+            print(f"[thumb] 尺が読めませんでした: {str(exc)[:120]}")
+            return out
+        for it in got.get("items", []):
+            if _secs(it["contentDetails"]["duration"]) >= LONG_FORM_SEC:
+                out.add(it["id"])
+    return out
+
+
+def push_missing(dry_run: bool = False, force: bool = False,
+                 only_long: bool = False) -> int:
     """控えに残した bytes を、載っていない本すべてに押す。**`build/` は要りません。**
 
     **予約に0本の日があるあいだは押しません**（2026-08-19。理由は
     `src/upload_cap.thumbnail_yield_to_schedule` の本文）。同じ50単位で
     詰め直しが1本できて、そちらのほうが `eta.py` の日付を動かすからです。
     `force=True` で今すぐ押せます。
+
+    `only_long=True` は**長尺だけ**に絞り、その門を通しません
+    （理由は `LONG_FORM_SEC` の上の註 —— あの門はショートの理屈です）。
     """
     import critique_queue
 
@@ -98,6 +151,17 @@ def push_missing(dry_run: bool = False, force: bool = False) -> int:
     if not rows:
         print("[thumb] サムネイルの載っていない本はありません")
         return 0
+
+    if only_long:
+        longs = _long_form_ids([r["video_id"] for r in rows])
+        skipped = len(rows) - len(longs)
+        rows = [r for r in rows if r["video_id"] in longs]
+        print(f"[thumb] **長尺だけに絞りました**: {len(rows)}本"
+              f"（ショート {skipped}本 は押しません —— `SHORTS_FEED` に"
+              "サムネイルは出ないので、同じ単位なら詰め直しのほうが効きます）")
+        if not rows:
+            print("[thumb] サムネイルの載っていない長尺はありません")
+            return 0
 
     print(f"[thumb] サムネイルの載っていない本: **{len(rows)}本**")
     for row in rows:
@@ -121,7 +185,7 @@ def push_missing(dry_run: bool = False, force: bool = False) -> int:
     # 値段は同じ50単位、効きは桁で違います（再生の 99.9% は
     # サムネイルの出ない SHORTS_FEED）。**門は押す側に置いてあります** ——
     # `batch_build` にだけ置くと、`reschedule` から見えません。
-    if not force:
+    if not force and not only_long:
         okay, line = upload_cap.thumbnail_yield_to_schedule(_ledger_ahead(), len(rows))
         if not okay:
             print(f"[thumb] {line}")
@@ -164,7 +228,8 @@ def push_missing(dry_run: bool = False, force: bool = False) -> int:
 if __name__ == "__main__":
     if "--missing" in sys.argv:
         raise SystemExit(push_missing(dry_run="--dry-run" in sys.argv,
-                                      force="--force" in sys.argv))
+                                      force="--force" in sys.argv,
+                                      only_long="--long" in sys.argv))
     if len(sys.argv) != 4:
         print(__doc__)
         raise SystemExit(2)
