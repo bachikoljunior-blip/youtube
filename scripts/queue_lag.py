@@ -1437,6 +1437,33 @@ INSERT_UNITS = 1600
 #: `upload_cap.quota_hits_in_window()`（**403 を実際に観測した回数**）だけです。
 
 
+def _spend_lines(spend: dict) -> list[str]:
+    """**この窓の単位を、誰が何に使ったか。**（`upload_cap.spend_in_window`）
+
+    2026-08-27 まで、この節は「403 が N回」しか出しておらず、
+    **尽きた原因を1行も言っていませんでした。** 実測で数えると、その窓の
+    通った `videos.update` 273回 のうち **215回（79%）が同じ本の撃ち直し**
+    ＝ 10,750単位 で、**日枠 1万 をそれだけで焼いています。**
+
+    `repeats` が 0 に近くないうちは、`reschedule._update` の飛ばしが
+    効いていないか、**2つの道具が同じ本を別々の時刻へ取り合っています。**
+    どちらかは `by` の並びで分かります（名前が2つ出るなら後者）。
+    """
+    if not spend.get("ok"):
+        return []
+    out = [f"  この窓で通った書き込み **{spend['ok']}回**"
+           f"（{spend['videos']}本・**同じ本の撃ち直し {spend['repeats']}回"
+           f" ＝ {spend['repeats'] * 50:,}単位**）"]
+    if spend["repeats"] > spend["videos"]:
+        out.append("  [!] **撃ち直しが本数を超えています。**"
+                   "`reschedule._update` の飛ばしが効いていないか、"
+                   "2つの道具が同じ本を取り合っています（下の名前が2つなら後者）")
+    top = list(spend.get("by", {}).items())[:4]
+    if top:
+        out.append("  撃ち手: " + " ／ ".join(f"{k} {v}回" for k, v in top))
+    return out
+
+
 def quota_lines(plan: Plan) -> tuple[list[str], bool]:
     """**この入れ替えを撃つと、今日の投稿を止めないか。**（返り: 行, 撃ってよいか）
 
@@ -1497,6 +1524,7 @@ def quota_lines(plan: Plan) -> tuple[list[str], bool]:
              f"  この入れ替え **{need:,}単位**",
              f"  **日枠の 403 をこの窓で観測した回数: {len(hits)}回**（これが門）",
              f"  窓が変わるのは {st.resets_at.astimezone(JST):%m/%d %H:%M} JST"]
+    lines += _spend_lines(upload_cap.spend_in_window())
     if ok:
         lines.append("  → **撃てます**（403 をまだ1回も観測していません）")
     else:

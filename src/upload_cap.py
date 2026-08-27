@@ -41,6 +41,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -113,6 +114,22 @@ HITS = "data/upload_cap.jsonl"
 # 枠の頭は太平洋時間の0時なので、**冬は JST 17:00 です。** 上の `PT` が
 # 「固定の時差で書き直さないこと」と書いているのに、**呼ぶ側が書き直していた** ——
 # この repo で通算9回出ている「**片方だけ**」の10件目です。
+#: **この帳面は失敗しか載らない帳面です。成功の記録として読まないこと**（2026-08-27）。
+#:
+#: `note_day_quota` は **403 のときだけ**書きます。`note_quota_ok` を呼ぶのは
+#: `videos.update` と `thumbnails.set` の2か所だけで、**`videos.insert` は
+#: 1度も書きません** —— 実測: 4,360行 のうち `videos.insert` の行は **0件**。
+#:
+#: 2026-08-27 の回は、その 0 を「今日は1本も投稿できなかった」と読み、
+#: **その回の いちばん大きい発見**として日誌に残しました。**逆です** ——
+#: `data/uploaded.jsonl` の `uploaded_at` で数えると同じ日の投稿は **25本**、
+#: うち **3本**は枠が尽きた 16:47 JST より**後**（18:05・18:20・18:40）に通っています。
+#:
+#: **投稿の本数は `data/uploaded.jsonl` で数えること。** そして
+#: **`videos.insert` を `note_quota_ok` に足さないこと** ——
+#: insert は日枠が尽きていても通るので、`ok` に書くと
+#: `quota_ok_after_hits` が本当に尽きた窓を「開いている」と答えます
+#: （`tests/test_insert_never_marked_ok.py` が、その両方を見ています）。
 DAY_QUOTA_HITS = "data/day_quota.jsonl"
 
 
@@ -208,6 +225,41 @@ def _write_path(name: str) -> Path | None:
     return Path(root) / name
 
 
+#: `by` を決めるとき**飛ばす**ファイル（帳面を書く側そのもの）。
+_NOTE_SELF = ("upload_cap.py", "auth.py")
+
+
+def caller_label(depth: int = 20) -> str:
+    """**この行を書かせたのは誰か**を `<ファイル名>:<関数>` で返す。
+
+    ## なぜ要るか（2026-08-27 に実測して足した）
+
+    `data/day_quota.jsonl` は「何が・いつ・どの本に当たったか」しか持っておらず、
+    **どの道具が撃ったかを1文字も持っていません。** そのせいで
+    08/27 の回は「`videos.update` 489回 / 58本、1本が 140回」まで数えたのに、
+    **撃ち手を名指しできず**、次の回への申し送りが
+    「**残りの撃ち手を名指しすること**」で終わりました。
+
+    入口は6つあります（`--move`・`--compact`・`--spread`・`long_pack`・
+    `live_slots`・`queue_lag`）。**推測で1つずつ潰すより、帳面に書かせるほうが速い。**
+
+    `detail` に足さないのは、読み手が `detail.split(' ')[1]` で本のIDを
+    取っているからです（別の欄にすれば、既存の読み手は1つも壊れません）。
+    """
+    try:
+        frame = sys._getframe(1)
+    except (AttributeError, ValueError):                       # pragma: no cover
+        return ""
+    for _ in range(depth):
+        if frame is None:
+            break
+        name = os.path.basename(frame.f_code.co_filename)
+        if name not in _NOTE_SELF:
+            return f"{name}:{frame.f_code.co_name}"[:80]
+        frame = frame.f_back
+    return ""
+
+
 def _note(name: str, now: datetime | None, detail: str) -> None:
     now = now or datetime.now(timezone.utc)
     path = _write_path(name)
@@ -216,6 +268,9 @@ def _note(name: str, now: datetime | None, detail: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     rec = {"at": now.astimezone(timezone.utc).isoformat(timespec="seconds"),
            "detail": detail[:200]}
+    by = caller_label()
+    if by:
+        rec["by"] = by
     with path.open("a", encoding="utf-8") as fh:
         fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
 
@@ -283,6 +338,46 @@ def quota_hits_in_window(now: datetime | None = None) -> list[dict]:
     return [r for r in _in_window(DAY_QUOTA_HITS, now) if not r.get("ok")]
 
 
+def spend_in_window(now: datetime | None = None) -> dict:
+    """**この窓で、単位を使う書き込みを誰が何回 通したか。**（API 0単位）
+
+    ## なぜ要るか（2026-08-27 の実測）
+
+    窓 08/27 07:00Z 〜 の `data/day_quota.jsonl`:
+
+        通った `videos.update`   **273回**（13,650単位・日枠は 1万）
+        撃たれた本の数            **58本**
+        → 同じ本の2回目以降      **215回 ＝ 10,750単位**（**79%**）
+
+    **枠が尽きた理由が「同じ値の書き直し」だと、数えて初めて分かりました。**
+    それまでの読み方は「403 が N回」だけで、**尽きた原因を1つも言っていません。**
+    `scripts/reschedule._update` が同じ値を飛ばすようになったので、
+    次の窓の `repeats` は **0 に近づくはず**です —— **そう出なければ、
+    飛ばし損ねか、2つの道具が同じ本を別々の時刻へ取り合っています**
+    （後者なら `by` の並びに2つの名前が出ます）。
+
+    返り: `{"ok", "videos", "repeats", "hits", "by"}`。
+    `by` は `<ファイル名>:<関数>` → 回数（`caller_label`。古い行には無いので
+    `"(不明)"` に落とします）。
+    """
+    rows = _in_window(DAY_QUOTA_HITS, now)
+    ok = [r for r in rows if r.get("ok")]
+    seen: dict[str, int] = {}
+    by: dict[str, int] = {}
+    for r in ok:
+        parts = str(r.get("detail") or "").split(" ")
+        vid = parts[1] if len(parts) > 1 else ""
+        if vid:
+            seen[vid] = seen.get(vid, 0) + 1
+        label = str(r.get("by") or "(不明)")
+        by[label] = by.get(label, 0) + 1
+    return {"ok": len(ok),
+            "videos": len(seen),
+            "repeats": sum(n - 1 for n in seen.values()),
+            "hits": len([r for r in rows if not r.get("ok")]),
+            "by": dict(sorted(by.items(), key=lambda kv: -kv[1]))}
+
+
 def note_quota_ok(now: datetime | None = None, detail: str = "") -> None:
     """**単位を使う呼び出しが通ったことを残す**（2026-08-26 に実測して足した）。
 
@@ -320,6 +415,9 @@ def note_quota_ok(now: datetime | None = None, detail: str = "") -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     rec = {"at": now.astimezone(timezone.utc).isoformat(timespec="seconds"),
            "ok": True, "detail": detail[:200]}
+    by = caller_label()
+    if by:
+        rec["by"] = by
     with path.open("a", encoding="utf-8") as fh:
         fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
 
