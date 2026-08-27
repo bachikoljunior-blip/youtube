@@ -40,7 +40,9 @@
 
 - **測定の窓の日**（`src/measure_window.py`）は、**動かす側にも置き先にもしません**
 - **公開済みの本**は動きません（`publishAt` が過ぎている）
-- 置き先は `src/collisions.py` の**生きる帯**（05:00〜13:30 の30分きざみ）の空き分だけ
+- 置き先は `src/collisions.py` の**生きる帯**（`LIVE_FROM_MIN`〜`LIVE_TO_MIN` の
+  30分きざみ）の空き分だけ。**ここに数を写さないこと** —— 下端は実測で動きます
+  （2026-08-27 に 05:00 → 09:00。朝に置いた8本が全部0再生だった）
 - 置き先の日の**帯の中の本数が `day_cap.cap()` を超えない**こと
   （同じ日の中で動かすぶんは本数が変わらないので、この門に掛かりません）
 """
@@ -268,7 +270,9 @@ def report(board: Board | None = None) -> list[str]:
     board = board or Board(_rows())
     live = board.live()
     out = ["=== A/B の本のうち、再生が付く枠に居るのは何本か"
-           f"（1日 {board.cap}本・間隔 {day_cap.MIN_GAP_MIN:.0f}分・帯 05:00〜13:30）==="]
+           f"（1日 {board.cap}本・間隔 {day_cap.MIN_GAP_MIN:.0f}分・"
+           f"帯 {collisions.LIVE_FROM_MIN // 60:02d}:{collisions.LIVE_FROM_MIN % 60:02d}"
+           f"〜{collisions.LIVE_TO_MIN // 60:02d}:{collisions.LIVE_TO_MIN % 60:02d}）==="]
     short_total = 0
     for key, (groups, n) in sorted(_groups().items()):
         for g, vids in sorted(groups.items()):

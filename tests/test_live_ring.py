@@ -156,21 +156,24 @@ def test_帯は写さずに実物から引く():
 
 
 def test_測定中の帯へは置かない():
-    """**05:00〜08:59 は、まだ測っている最中の帯です**（`PROVEN_FROM_MIN` の註）。
+    """**その測定は 2026-08-27 に終わりました。答えは「前は生きない」**です。
 
-    `src/collisions.LIVE_FROM_MIN` は 05:00 ですが、その根拠の行は
-    「**08:59〜13:30** の :00/:30 が10本とも生き」です。
-    `src/day_cap.py` は「09:00 より前も生きるか」を 2026-08-27 に測っています。
-    **作った本を、その測定中の帯へ置かないこと。**
+    05:00〜08:30 に置いた 8本は**全部 0再生**（齢 7.5〜11時間・8本とも
+    `public`/`processed`）。生きたのは 08:59 以降の10本だけです。
 
-    **覆る条件**: その切り分けが「前も生きる」と出たら
-    `PROVEN_FROM_MIN` を `collisions.LIVE_FROM_MIN` に差し替え、この試験も畳むこと。
+    だから `collisions.LIVE_FROM_MIN` は **09:00 へ戻して**あり、
+    `PROVEN_FROM_MIN` と**同じ**になりました ——
+    「まだ測っている最中の帯」は、もう存在しません。
+
+    **覆る条件**: 左端は面が育てば早い時刻へ動くかもしれません
+    （`day_cap.left_edge()` が毎回その場で測り直します）。
+    そのときは両方の下端が一緒に下がるので、この試験はそのまま効きます。
     """
     from src import collisions, day_cap
     grid = bb._band_grid()
     assert min(h * 60 + m for h, m in grid) == bb.PROVEN_FROM_MIN
-    assert bb.PROVEN_FROM_MIN > collisions.LIVE_FROM_MIN, (
-        "測定中の帯（05:00〜09:00）まで置き先にしています"
+    assert bb.PROVEN_FROM_MIN >= collisions.LIVE_FROM_MIN, (
+        "生きると測れている下端より前を、置き先にしています"
     )
     # 枠の数と1日の上限は、どちらも 08/21 の同じ実測から来ています
     assert len(grid) == int(day_cap.cap()), (
