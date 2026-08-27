@@ -265,6 +265,25 @@ def _deadline_from_yaml(name: str, fallback: date) -> date:
     return fallback
 
 
+def _pace_form(topic_id: str) -> str:
+    """`src/pipeline.slide_pace()` の返り（秒）を、群の名前に直す。
+
+    **`Experiment.split` は文字列を返す約束**なので、ここで翻訳します。
+    **秒のほうを写さないこと** —— 値は `pipeline` が持っています。
+    """
+    from src import pipeline
+
+    return ("遅い" if pipeline.slide_pace(topic_id) == pipeline.SHORT_SLIDE_SECONDS_SLOW
+            else "速い")
+
+
+#: **この包みの中身が、どこに在るか。** `config/hypotheses.yaml` の `falsified_if`
+#: はここを名指しします（`tests/test_ab_split._split_ref`）。
+#: **包みの `__module__` を書かせないこと** —— それは `src.ab_split` で、
+#: 読んだ回がそこを開いても振り分けの中身はありません。
+_pace_form.split_ref = "pipeline.slide_pace"
+
+
 #: 走っている実験。**新しく振り分けを足したら、ここにも足すこと。**
 #: 足し忘れると `status.py` が「指示が入った本 0本」を言わないまま、
 #: 中身の同じ2群を突き合わせて外れを出します。
@@ -311,6 +330,23 @@ EXPERIMENTS: dict[str, Experiment] = {
         # **登録で測ります**（engaged ではない）。上の `metric` の註を読むこと。
         metric="登録",
         # **長尺は依頼を1文字も書かないので、どちらの群にも入れません**（`_shorts_only()`）。
+        eligible=_shorts_only,
+    ),
+    "slide_pace": Experiment(
+        name="slide_pace",
+        split=_pace_form,
+        treated="遅い",
+        control="速い",
+        # 2026-08-27・オーナー指摘（「音声だけで理解できない説明なのに
+        # 画面はすぐ切り替わるし」）で入れた振り分け。`src/pipeline.slide_pace()`。
+        # **この時刻より前に作った本は、どちらの群でもありません** ——
+        # `want` が定数の 2.5 で割られていたので、全部が「速い」側の値です。
+        # ただし**群として使えません**（振り分けを通っていない ＝ 選ばれ方が違う）。
+        landed=datetime(2026, 8, 27, 21, 30, 0, tzinfo=JST),
+        deadline=_deadline_from_yaml("slide_pace", date(2026, 9, 24)),
+        commit="",
+        # **長尺は `reveal_variants` を1度も通りません**（1文＝1コマ）。
+        # だから刻みの話はショートにしか掛かりません（`_shorts_only()`）。
         eligible=_shorts_only,
     ),
 }

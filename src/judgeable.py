@@ -449,6 +449,13 @@ MEMBER_SOURCES: dict[str, tuple[Callable[[], dict[str, list[Member]]], int]] = {
     ),
     # `falsified_if` の「対照 8本以上・動きあり 8本以上」がこの前提の N
     "opening_motion": (_members_by_opening_motion, 8),
+    # ショートの刻み（1コマの秒数）を 2.5 と 4.5 に振り分ける
+    # （`src/pipeline.slide_pace`・2026-08-27 オーナー指摘）。
+    # **測るのは engaged** なので、床は `MIN_PER_GROUP` のまま
+    # （`request_form` の 72本 は登録を測るためで、ここには当たりません）。
+    # **長尺は `reveal_variants` を1度も通らない**ので、群はショートだけです
+    # （`ab_split` 側の `eligible=_shorts_only`）。
+    "slide_pace": (lambda: _members_by_split("slide_pace"), MIN_PER_GROUP),
 }
 
 #: `MEMBER_SOURCES` には在るが、**期限は `kind: accrual`（伸び率）で解く**もの。
@@ -464,7 +471,15 @@ MEMBER_SOURCES: dict[str, tuple[Callable[[], dict[str, list[Member]]], int]] = {
 #:
 #: **積み終わったらここから外すこと。** そのとき yaml の `needs` を
 #: `kind: group_key` に戻せば、`Floor` の側で期限が守れるか見張られます。
-ACCRUING: set[str] = {"request_form"}
+#:
+#: **`slide_pace` も同じ形です**（2026-08-27）—— 振り分けが入ったのは 21:30 JST で、
+#: **予約に入っている本は全部それより前に作られています**（両群 0本 / 床 16本）。
+#: `Floor.ready` は「片群 N本 が**予約に**そろって初めて日が出る」形なので、
+#: ここに入れないと `test_実物で期限が構造的に守れる` が**赤で居座ります**。
+#: **群の数え方は捨てません** —— `members("slide_pace")` はそのまま使えます。
+#: **積み終わったらここから外すこと**（`needs` を `kind: group_key` のまま戻せば、
+#: `Floor` の側で期限が守れるか見張られます）。
+ACCRUING: set[str] = {"request_form", "slide_pace"}
 
 #: yaml の `key:` → (群べつの**公開日**を作る関数, 片群あたりの必要本数)。
 #: **`members()` から畳んで作ります。ここに直接足さないこと** ——

@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 import random
@@ -165,6 +166,84 @@ MAX_SHORT_SEGMENT_CHARS = SHORT_SEGMENT_CHARS
 # その上限側に置いた。1文（5〜6秒）はこれで2〜3枚に割れる。
 SHORT_SLIDE_SECONDS = 2.5
 
+#: **遅い側の秒数**（2026-08-27・オーナー指摘で足した A/B の片方）。
+#:
+#: 上の 2.5 は **M13（独立評価）の言い分だけ**で決まっています —— `MEANS.md` の
+#: M13 は**終わった**手段で、そこから来た数は**視聴者の実データで一度も
+#: 確かめられていません。**`CLAUDE.md` A14「昔そう決まったから」は理由になりません。**
+SHORT_SLIDE_SECONDS_SLOW = 4.5
+
+#: 遅い側に振る割合。**0 にすると振り分けが止まります**（`hook_form` と同じ）。
+SLOW_PACE_SHARE = 0.5
+
+
+def slide_pace(topic_id: str, share: float = SLOW_PACE_SHARE) -> float:
+    """ショートの絵1枚が画面に残る秒数。**テーマIDで決まります。**
+
+    ## なぜ置いたか（2026-08-27 21:0x・オーナー指摘）
+
+    オーナー原文:
+
+    > 「動画についてまず何言ってるか分かんないね。音声だけで理解できない説明なのに
+    > **画面はすぐ切り替わるし。**説明を理解するにはかなり視聴者側の推論が必要だと思う」
+
+    実測（`data/critique_queue/` の控え **502本**）:
+
+        ショート（コマ>文）439本  尺 26.3秒 ／ 13.0コマ
+                                 → **1コマ 2.06秒**（中央値）
+                                 **3秒 未満が 100%・2秒 未満が 30%**
+        長尺  （コマ=文） 63本   尺 322.9秒 ／ 17.0コマ → 1コマ 19.5秒
+
+    **そして再生の 99.8% は `SHORTS_FEED`、1再生あたり 20秒**（`status.py`）。
+    **視聴者が見ている20秒のあいだに、画面は約10回 変わります。**
+
+    ## なぜ「直す」ではなく「振り分ける」のか
+
+    **2.5 は理由があって置かれた数**です（上の註 —— 独立評価3体が
+    「同じ絵が2コマ続く」「実質4〜5画面」と書き、中央値4で落ちた）。
+    **片方の言い分だけで戻すと、同じ間違いを向きだけ変えてやり直します。**
+
+    そして**その3体は視聴者ではありません。** `docs/MEANS.md` の M13 は
+    **終わった**手段で、ここから来た 2.5 は**実データで一度も確かめられていません。**
+    向きを知る道は1つしかなく、**違う値の本を作って出すこと**です
+    （`hook_form` / `title_form` / `request_form` と同じ形）。
+
+    ## 割り振り（`hook_form` を写しています。**塩だけ変えてあります**）
+
+    - **乱数にしない**（作り直しで群が移ると比較が壊れる）
+    - **日付や順番にしない**（`batch_build` は1日ぶんをまとめて撃つので題材と混ざる）
+    - **塩を他の実験と変えること。** 同じにすると2つが完全に重なり、
+      どちらが効いたのか永久に分かりません
+    - **テーマIDだけの純関数**なので、**控えに何も記録しなくても
+      後から群を数え直せます**（`config/hypotheses.yaml` の判定がそうします）
+
+    ## この実験が触らないもの（**対照を汚さないこと**）
+
+    読み上げ・台本・字幕・見出し・サムネイル・公開時刻は**1文字も変えません。**
+    変わるのは「同じ絵を何枚に割るか」だけです
+    （`visuals.reveal_variants` の `want`）。字幕は文の側（`segment_timeline`）に
+    付くので、**枚数を変えても字幕はずれません。**
+
+    ## 覆る条件
+
+    - 判定は `config/hypotheses.yaml`（`ショートの刻み-engaged`）。
+      **遅い側の engaged が速い側を上回らなければ、2.5 が正しかった**ので
+      `SLOW_PACE_SHARE` を 0 にして振り分けを止めること（**定数は消さない** ——
+      消すと、次に同じ話が出たときに測り直しになります）
+    - 逆に遅い側が勝ったら、`SHORT_SLIDE_SECONDS` を勝った値にして
+      振り分けを止めること
+    - **どちらも 4.5 と 2.5 の2点しか見ていません。** 勝ったほうの側で
+      さらに刻むかは、そのとき別に立てること
+    """
+    if share <= 0:
+        return SHORT_SLIDE_SECONDS
+    if share >= 1:
+        return SHORT_SLIDE_SECONDS_SLOW
+    # **塩 `pace:`**。他の実験と同じ塩にしないこと（docstring の割り振りの項）。
+    h = hashlib.sha1(("pace:" + str(topic_id)).encode("utf-8")).digest()
+    slow = (int.from_bytes(h[:4], "big") % 10_000) < share * 10_000
+    return SHORT_SLIDE_SECONDS_SLOW if slow else SHORT_SLIDE_SECONDS
+
 
 def _check_short_script(script, topic_id: str = "") -> None:
     """ショートの台本を、**音声合成の前に**落とす。
@@ -319,8 +398,13 @@ def main(argv: list[str] | None = None) -> int:
         expanded: list[dict] = []
         expanded_durations: list[float] = []
         slide_index_of_segment: list[int] = []
+        # **1コマの秒数は、テーマIDで2つに振り分けます**（2026-08-27・オーナー指摘）。
+        # 理由と実測は `slide_pace()` の docstring。**ここ以外は1文字も変えません。**
+        pace = slide_pace(args.topic or "")
+        print(f"[pipeline] ショートの刻み: **1コマ {pace}秒**"
+              f"（テーマIDで決まる。遅い側の割合 {SLOW_PACE_SHARE:.0%}）")
         for visual, dur in zip(plan, durations):
-            want = max(1, math.ceil(dur / SHORT_SLIDE_SECONDS))
+            want = max(1, math.ceil(dur / pace))
             parts = visuals.reveal_variants(visual, want)
             expanded.extend(parts)
             # **その文の「全部出ている」コマを指す**（2026-08-15 22:2x に先頭から変更）。

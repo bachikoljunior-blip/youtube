@@ -260,6 +260,13 @@ watches:
     kind: ab_group
     experiment: request_form
 
+  - id: ショートの刻み-両群16本
+    what: 「ショートの刻み 1コマ 2.5秒 は速すぎる（4.5秒 なら engaged が上がる）」の判定（腕 `per_video`・オーナー指摘 2026-08-27）
+    cond: 遅い（4.5秒）・速い（2.5秒）のどちらの群も、落ち着いた本が16本
+    then: python scripts/ab_split.py --outlook
+    source: src/ab_split.py
+    kind: ab_group
+    experiment: slide_pace
   - id: 冒頭の問い-両群16本
     what: 「冒頭1枚目を問いかけにすると engaged が上がる」の判定
     cond: 問い・条件のどちらの群も、落ち着いた本が16本
