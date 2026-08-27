@@ -6,8 +6,8 @@
   "persistent_session_id": "session_01RzmEZySHAZdDMJmD2z9eUb",
   "environment_id": "env_01QMJaP2yRCzw4tY5VpJeM1m",
   "body": "親の周です。考える前にこの2行だけ撃ってください。\n\n    git pull --no-rebase origin claude/youtube-auto-post-revenue-ggedij\n    python scripts/next_round.py\n\nWAIT なら何もせずに終える（ただし終わる前に必ず send_later で自分を呼び戻すこと）。\nGO <役> なら docs/spawn_prompt.rendered.md の kind: <役> の prompt を1字も変えずに\nAgent ツールへ渡す（isolation: \"worktree\" と run_in_background: true を必ず付ける）。\n立てたら python scripts/next_round.py --record <役> を撃ち、data/rounds.jsonl を\ncommit して push する。\n\n手順の正本は docs/trigger_parent.md の第1節。毎回読み直すこと（サブが書き換えている）。\nサブの中身は判断しない。子セッションは立てない（create_session は人のタップを待つ）。",
-  "next_run_at": "2026-08-26T05:59:00Z",
-  "last_fired_at": "2026-08-26T04:59:41.083607Z",
-  "ingested_at": "2026-08-26T05:45:27+00:00",
+  "next_run_at": "2026-08-27T01:59:00Z",
+  "last_fired_at": "2026-08-27T00:59:49.857190Z",
+  "ingested_at": "2026-08-27T01:17:13+00:00",
   "spec_fingerprint": "4b4a075c00acbe01"
 }
