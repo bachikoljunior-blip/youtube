@@ -569,6 +569,10 @@ def short_script_problems(script, topic_id: str = "") -> list[str]:
     # **その式に入れる値が画面に無い**ことは誰も見ていなかった。
     # 台本だけで判定できるので、レンダリングを待たずここで直させる。
     problems += [p.strip() for p in verify._check_assumption_value_shown(data)]
+    # **一息で、耳がいくつ数を持たされているか**（2026-08-27・オーナー指摘）。
+    # ショートは尺 30秒・読み上げ 120字 前後なので、そもそも長い列挙は入りません
+    # ——**入っている本が問題**です。理由と実測は `verify._check_ear_load`。
+    problems += [p.strip() for p in verify._check_ear_load(data)]
     if topic_id:
         problems += [p.strip() for p in
                      verify._check_not_repeat(config.BUILD_DIR / topic_id, data)]
@@ -660,6 +664,12 @@ def long_script_problems(script, topic_id: str = "") -> list[str]:
     problems += [p.strip() for p in
                  verify._check_narrated_shown(work, data, from_script=True)]
     problems += [p.strip() for p in verify._check_yomi(data)]
+    # **一息で、耳がいくつ数を持たされているか**（2026-08-27・オーナー指摘）。
+    # 実測 539本: 5個以上を持つコマが 13.4%・本で 14%（最大 16個）。
+    # `_check_narrated_shown` と**向きが逆**で、両方 要ります ——
+    # あちらは「言った数が絵に在るか」、こちらは「耳がいくつ持たされるか」。
+    # 理由と覆る条件は `verify._check_ear_load` の docstring。
+    problems += [p.strip() for p in verify._check_ear_load(data)]
     problems += [p.strip() for p in verify._check_slides(work, data)]
     if topic_id:
         # **本命はこれ。** 3/3 がここで死んでいました。
@@ -845,6 +855,16 @@ ROLE = """あなたは日本語YouTubeの動画の構成作家です。
 - 断定できないことは「〜の場合が多い」と書く。絶対・確実・必ず儲かる、は使わない。
 - 読み上げ用なので、括弧書き・箇条書き記号・URL・英数字の羅列は narration に入れない。数字は「およそ48万円」のように読める形で書く。
 - 各セグメントの narration は 60〜160文字。短く切ってテンポを作る。
+- **一息（1セグメント）で、耳に載せる数は4個まで。** 5個以上ならその文は不合格です。
+  視聴者は**音声だけで追えなければ、そこで離脱します**（実測: 再生の 99.8% は
+  スマホのフィード、1再生あたり20秒＝尺の56%）。
+  **列挙は画面の仕事です** —— 5個・10個の並びは visual の rows / bars に全部 入れ、
+  読み上げが言うのは「**形**」（どちらが大きいか・どこで逆転するか・
+  どこから伸びが鈍るか）と、**代表の1〜2個**だけにしてください。
+  ✗「2人で16万5千円、3人で22万円、4人で24万7500円、5人で26万4千円、10人で29万7千円です」
+  ○「2人めがいちばん重くて16万5千円。そこから先は伸びが鈍って、10人でも29万7千円どまりです」
+  **画面から数を減らしてはいけません**（減らすと視聴者が検算できなくなります）。
+  減らすのは耳のほうだけです。
 - **長尺のみ**: 最後のセグメントは「明日やること」を手順として言う。
   **narration で個数を言うなら、その数と items の数を必ず一致させること。**
   「3つ」と言って4個並べない。**言わずに列挙するのが一番安全。**

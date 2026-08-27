@@ -530,9 +530,54 @@ def quota_blocked(blocks: list[tuple[str, list[str], int]], tok: str) -> bool:
             if tok not in tokens(item):
                 continue
             total += 1
-            if QUOTA_MARK_RE.search("\n".join(item)):
+            text = "\n".join(item)
+            if QUOTA_MARK_RE.search(text) or names_data_api_tool(text):
                 marked += 1
     return total >= 2 and marked == total
+
+
+def names_data_api_tool(text: str) -> bool:
+    """その項目は、**日枠を使う道具を名指ししている**か（2026-08-27 に足した）。
+
+    ## なぜ regex だけでは足りないか（**この回の実測**）
+
+    `QUOTA_MARK_RE` が拾うのは**散文のほう**です —— 「日枠」「403」「16:00 JST」。
+    ところが申し送りは、**塞がっていることに気づかないまま**書かれます。
+    実測（この回の `retro.py` の持ち越し・20:44 JST）:
+
+        2回  python scripts/snapshot.py     ← **沈んでいませんでした**
+             08-27 14:2x「**22:00 JST を過ぎていたら、まず撃つこと**」
+             08-27 16:0x「**【今日 22:00 JST 以降】** …… 1回 撃ってから」
+
+    `snapshot.py` は `videos.list` ＝ **Data API** で、この窓の 403 は 88回、
+    戻るのは **08/28 16:00 JST**。**22:00 に撃っても 403 です。**
+    それでも 14:2x の項目は「日枠」とも「403」とも書いていないので
+    `quota_blocked()` に拾われず、`clock_blocked()` は
+    「22:00 JST **以降**」という言い回しでないと当たらないので
+    **2件のうち1件しか当たらず、沈みませんでした**（`len(waits) == total` が門）。
+
+    **散文の言い回しを追いかけると、次の書き方でまた抜けます。**
+    この repo が何度も踏んでいる「註と実装のずれ」で、
+    **註（＝申し送りの文）のほうを直しても、次の回が別の言い方をします。**
+
+    ## 何を見るか —— **道具の名前。これは事実です**
+
+    一覧は `src/upload_cap.DATA_API_TOOLS`（日枠という事実の持ち主）。
+    **ここに写しを置かないこと。**
+
+    ## 覆る条件
+
+    - `videos.insert` のように**日枠が尽きても通る**道具を一覧に入れたら、
+      打てる手まで沈みます（`DATA_API_TOOLS` の註に、入れてよい条件があります）
+    - 沈めた語の当たり率（`--closes` の付き方）が、沈めなかった語より
+      **低い**なら、見ているものが違います
+    """
+    try:
+        from src import upload_cap
+        tools = upload_cap.DATA_API_TOOLS
+    except Exception:                                          # noqa: BLE001
+        return False
+    return any(t in text for t in tools)
 
 
 def clock_blocked(blocks: list[tuple[str, list[str], int]], tok: str,

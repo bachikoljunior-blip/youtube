@@ -4395,3 +4395,23 @@
 {"at": "2026-08-27T10:37:56+00:00", "detail": "playlistItems.insert", "by": "uploader.py:_post_actions"}
 {"at": "2026-08-27T10:37:56+00:00", "detail": "thumbnails.set 3ThT8GxZ7Is", "by": "uploader.py:_set_thumbnail"}
 {"at": "2026-08-27T11:55:28+00:00", "detail": "channels.list probe: <HttpError 403 when requesting https://youtube.googleapis.com/youtube/v3/channels?part=id&mine=true&alt=json returned \"The request cannot be completed", "by": "probe.py:<module>"}
+{"at": "2026-08-27T11:44:18+00:00", "detail": "status: Data API 読み", "by": "status.py:main"}
+{"at": "2026-08-27T11:44:51+00:00", "detail": "channels.list mine", "by": "history.py:_scan"}
+{"at": "2026-08-27T11:44:53+00:00", "detail": "channels.list mine", "by": "history.py:_scan"}
+{"at": "2026-08-27T11:46:00+00:00", "detail": "channels.list mine", "by": "history.py:_scan"}
+{"at": "2026-08-27T11:46:11+00:00", "detail": "channels.list mine", "by": "history.py:_scan"}
+{"at": "2026-08-27T11:46:15+00:00", "detail": "channels.list mine", "by": "history.py:_scan"}
+{"at": "2026-08-27T11:46:16+00:00", "detail": "channels.list mine", "by": "history.py:_scan"}
+{"at": "2026-08-27T11:46:16+00:00", "detail": "channels.list mine", "by": "history.py:_scan"}
+{"at": "2026-08-27T11:46:17+00:00", "detail": "channels.list mine", "by": "history.py:_scan"}
+{"at": "2026-08-27T11:46:17+00:00", "detail": "channels.list mine", "by": "history.py:_scan"}
+{"at": "2026-08-27T11:46:17+00:00", "detail": "channels.list mine", "by": "history.py:_scan"}
+{"at": "2026-08-27T11:58:06+00:00", "detail": "scheduled_publish_times", "by": "uploader.py:taken_publish_times"}
+{"at": "2026-08-27T11:58:12+00:00", "detail": "playlistItems.insert", "by": "uploader.py:_post_actions"}
+{"at": "2026-08-27T11:58:12+00:00", "detail": "thumbnails.set DSfDyC4oyFY", "by": "uploader.py:_set_thumbnail"}
+{"at": "2026-08-27T11:58:15+00:00", "detail": "scheduled_publish_times", "by": "uploader.py:taken_publish_times"}
+{"at": "2026-08-27T11:58:18+00:00", "detail": "playlistItems.insert", "by": "uploader.py:_post_actions"}
+{"at": "2026-08-27T11:58:18+00:00", "detail": "thumbnails.set xaciR1LbaEs", "by": "uploader.py:_set_thumbnail"}
+{"at": "2026-08-27T11:58:21+00:00", "detail": "scheduled_publish_times", "by": "uploader.py:taken_publish_times"}
+{"at": "2026-08-27T11:58:24+00:00", "detail": "playlistItems.insert", "by": "uploader.py:_post_actions"}
+{"at": "2026-08-27T11:58:24+00:00", "detail": "thumbnails.set dh0Zg0WJ3TM", "by": "uploader.py:_set_thumbnail"}
