@@ -343,34 +343,88 @@ def _up(tmp_path, rows):
     return p
 
 
+# **2026-08-27 に、選び方そのものを直しました**（下の `split_power` の節）。
+# `c` / `t_min` は当てはめ済みの2つのモデルの値です。**検査では必ず渡すこと** ——
+# 渡さないと `window()` が本物の `data/views.jsonl` を読み、
+# **その日の実測でこの検査の結果が変わります。**
+_FIT = {"c": 2, "t_min": 13 * 60 + 30}
+
+
+def _booked(tmp_path, times_utc):
+    return _up(tmp_path, [{"video_id": f"v{i}", "topic": f"s-{i}", "at": t}
+                          for i, t in enumerate(times_utc)])
+
+
 def test_切り分けの日が予約済みなら_その日と読める日を返す(tmp_path):
-    up = _up(tmp_path, [
-        # JST 05:00 / 06:00（UTC は前日 20:00 / 21:00）—— **UTC の日で割ると前日に落ちます**
-        {"video_id": "a", "topic": "s-1", "at": "2026-08-26T20:00:00Z"},
-        {"video_id": "b", "topic": "s-2", "at": "2026-08-26T21:00:00Z"},
-        {"video_id": "c", "topic": "s-3", "at": "2026-08-27T00:00:00Z"},   # JST 09:00
-    ])
-    b = day_cap.booked_split_day("08:59", today=dt.date(2026, 8, 25), uploaded=up)
+    # JST 05:00〜09:00（UTC は前日 20:00〜）—— **UTC の日で割ると前日に落ちます**
+    up = _booked(tmp_path, ["2026-08-26T20:00:00Z", "2026-08-26T21:00:00Z",
+                         "2026-08-26T22:00:00Z", "2026-08-26T23:00:00Z",
+                         "2026-08-27T00:00:00Z"])
+    b = day_cap.booked_split_day("08:59", today=dt.date(2026, 8, 25), uploaded=up, **_FIT)
     assert b is not None
     assert b["day"] == "2026-08-27"
-    assert b["before"] == 2
-    assert b["total"] == 3
-    assert b["answer"] == "2026-09-01"
+    assert b["before"] == 4                      # 08:59 より前 ＝ 05:00〜08:00
+    assert b["total"] == 5
+    assert (b["count"], b["window"], b["gap"]) == (2, 5, 3)
+    # **読める日は「最後の本が齢 6時間」**。09:00 + 6h ＝ 15:00 JST（同じ日）。
+    # ここは長らく **+5日**（「伸びきる2日 + Analytics 3日遅れ」）でした ——
+    # `window()` が読む `data/views.jsonl` は **Data API** なので、Analytics の
+    # 遅れは1日も掛かりません。2026-08-27 に、答えを6日 遅らせていたのを直した。
+    assert b["answer"] == "2026-08-27"
+    assert b["answer_at"] == "15:00"
 
 
-def test_早い本が1本も無い日は_切り分けの日にならない(tmp_path):
-    up = _up(tmp_path, [
-        {"video_id": "c", "topic": "s-3", "at": "2026-08-27T00:00:00Z"},   # JST 09:00
-        {"video_id": "d", "topic": "s-4", "at": "2026-08-27T01:00:00Z"},   # JST 10:00
-    ])
-    assert day_cap.booked_split_day("08:59", today=dt.date(2026, 8, 25), uploaded=up) is None
+def test_予測の差が付かない日は_切り分けの日にならない(tmp_path):
+    """**門は「早い本があるか」ではなく「2つの予測が離れるか」**（2026-08-27 に直した）。
+
+    ここは長らく「早い本が1本も無い日は切り分けの日にならない」でした。
+    **必要でも十分でもありません** —— 下の2件がその反例です。
+    """
+    up = _booked(tmp_path, ["2026-08-27T00:00:00Z", "2026-08-27T01:00:00Z"])  # JST 09:00/10:00
+    assert day_cap.booked_split_day("08:59", today=dt.date(2026, 8, 25),
+                                    uploaded=up, **_FIT) is None
 
 
-def test_過ぎた日は返さない_置き直せないから(tmp_path):
-    up = _up(tmp_path, [
-        {"video_id": "a", "topic": "s-1", "at": "2026-08-19T20:00:00Z"},   # JST 08/20 05:00
-    ])
-    assert day_cap.booked_split_day("08:59", today=dt.date(2026, 8, 25), uploaded=up) is None
+def test_早い本が0でも_13時半より後ろが多ければ切り分ける(tmp_path):
+    """**窓のほうが少なく予測する側**でも切り分きます（実測 2026-09-07 の形）。
+
+    `booked_split_day()` は長らく「早い本が1本も無い日」を門前払いしていました。
+    ところが 09/07〜09/19 は早い本が **0本**のまま、予測の差が **5本** あります
+    ——13:30 より後ろに置いた本は、(A) では生きて (B) では死ぬからです。
+    """
+    up = _booked(tmp_path, ["2026-08-27T00:00:00Z",   # JST 09:00
+                            "2026-08-27T01:00:00Z",   # JST 10:00
+                            "2026-08-27T05:00:00Z",   # JST 14:00 —— 13:30 より後
+                            "2026-08-27T06:00:00Z",   # JST 15:00
+                            "2026-08-27T07:00:00Z",   # JST 16:00
+                            "2026-08-27T08:00:00Z",   # JST 17:00
+                            "2026-08-27T09:00:00Z",   # JST 18:00
+                            "2026-08-27T10:00:00Z"])  # JST 19:00
+    b = day_cap.booked_split_day("08:59", today=dt.date(2026, 8, 25), uploaded=up,
+                                 c=10, t_min=13 * 60 + 30)
+    assert b is not None and b["before"] == 0
+    assert (b["count"], b["window"], b["gap"]) == (8, 2, 6)
+
+
+def test_今日の日を飛ばさない_走っている日が答える(tmp_path):
+    """**その日が今日になった瞬間に対照日が消える**のを止めた（2026-08-27）。
+
+    実測: 08/27 の予約は 19本・05:00 から30分きざみ・同じ分の組0 で、
+    **(A) 10本 ／ (B) 18本**（差 8）。それでも `<= today` で飛ばしていたので、
+    道具は **差 3 しかない 09/02** を名指しし、「読めるのは 09-07」
+    「答えが返るまで他の日の本数を増やすな」と毎回 印字していました。
+    """
+    up = _booked(tmp_path, ["2026-08-26T20:00:00Z", "2026-08-26T21:00:00Z",
+                         "2026-08-26T22:00:00Z", "2026-08-26T23:00:00Z",
+                         "2026-08-27T00:00:00Z"])
+    b = day_cap.booked_split_day("08:59", today=dt.date(2026, 8, 27), uploaded=up, **_FIT)
+    assert b is not None and b["day"] == "2026-08-27" and b["running"] is True
+
+
+def test_過ぎた日は返さない_読みのほうで数えるから(tmp_path):
+    up = _booked(tmp_path, ["2026-08-19T20:00:00Z"])   # JST 08/20 05:00
+    assert day_cap.booked_split_day("08:59", today=dt.date(2026, 8, 25),
+                                    uploaded=up, **_FIT) is None
 
 
 def test_控えの後の行を採る_予約を動かした本(tmp_path):
@@ -378,6 +432,33 @@ def test_控えの後の行を採る_予約を動かした本(tmp_path):
     up = _up(tmp_path, [
         {"video_id": "a", "topic": "s-1", "at": "2026-08-27T02:00:00Z"},   # JST 11:00
         {"video_id": "a", "topic": "s-1", "at": "2026-08-26T20:00:00Z"},   # → JST 08/27 05:00
+        {"video_id": "b", "topic": "s-2", "at": "2026-08-26T21:00:00Z"},   # JST 06:00
+        {"video_id": "c", "topic": "s-3", "at": "2026-08-26T22:00:00Z"},   # JST 07:00
+        {"video_id": "d", "topic": "s-4", "at": "2026-08-26T23:00:00Z"},   # JST 08:00
+        {"video_id": "e", "topic": "s-5", "at": "2026-08-27T00:00:00Z"},   # JST 09:00
     ])
-    b = day_cap.booked_split_day("08:59", today=dt.date(2026, 8, 25), uploaded=up)
-    assert b is not None and b["before"] == 1 and b["total"] == 1
+    b = day_cap.booked_split_day("08:59", today=dt.date(2026, 8, 25), uploaded=up, **_FIT)
+    # 後の行（05:00）を採れば 08:59 より前は 4本。前の行（11:00）を採ると 3本。
+    assert b is not None and b["before"] == 4 and b["total"] == 5
+
+
+# --- **切り分ける力は、予約の形だけで先に分かる**（2026-08-27 に足した） ---
+
+def test_split_power_門は差と同分の組の2つ():
+    def t(hh, mm=0):
+        return dt.datetime(2026, 8, 27, hh, mm, tzinfo=day_cap.JST)
+
+    # 05:00 から30分きざみで 18本 ＋ 16:00 の1本 ＝ 実測 08/27 の形
+    times = [t(5) + dt.timedelta(minutes=30 * i) for i in range(18)] + [t(16)]
+    p = day_cap.split_power(times, 10, 13 * 60 + 30)
+    assert (p["count"], p["window"], p["gap"], p["ties"]) == (10, 18, 8, 0)
+    assert p["decisive"] is True
+
+    # 同じ分に2本 —— そこで死んだ本を割り当てられないので、決めない
+    tied = times + [t(16)]
+    assert day_cap.split_power(tied, 10, 13 * 60 + 30)["decisive"] is False
+
+    # 差が `DECIDE_GAP_MIN` 未満の日も決めない
+    near = [t(9) + dt.timedelta(minutes=30 * i) for i in range(11)]
+    p2 = day_cap.split_power(near, 10, 13 * 60 + 30)
+    assert p2["gap"] < day_cap.DECIDE_GAP_MIN and p2["decisive"] is False
