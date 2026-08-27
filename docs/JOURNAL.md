@@ -61634,3 +61634,38 @@ nenkin shobyo shougai yukyu zasson）。**つまり掘ればその場で長尺�
 `live_slots.apply_moves` は `from scripts import reschedule` で引くので、
 素の `import reschedule`（`sys.path` 経由）に monkeypatch を当てても
 **別の実体で、実物の口を叩きにいきます。** 検査に註を残しました。
+
+### ⑥ 申し送り —— **`pytest tests/` が、本物の台帳に書き、外の口を1回 叩いています**
+
+**塞いでいません。** 実測だけ置きます（次の回が拾うこと）。
+
+この回の 19:41〜20:00 JST に `python -m pytest tests/`（3,973件）を通したあと、
+`git status` に**手を触れていない台帳が4つ**出ました:
+
+    data/analytics_lag.jsonl   +1行（`{"at": "2026-08-27T19:45:46+09:00", "last_day": "2026-08-24"}`）
+    data/watch.jsonl           +1行（`watch: 73 / total: 67860 / yt_search: 685`）
+    data/status_lines.jsonl    +1行
+    data/scan.jsonl            書き換え
+
+**`last_day` と `total` が実物の数**です ＝ **検査から YouTube Analytics を
+1回 叩いています**（別枠。日枠とは違う袋ですが、**外の口には違いありません**）。
+
+`tests/conftest.py` の冒頭は 2026-08-17 から
+**「検査は、本物の台帳に書かないこと」**（通算7回）と言っており、
+08/27 に `data/day_quota.jsonl` が**8件目**として塞がれたばかりです
+（`upload_cap._write_path`）。**これは9件目の候補です。**
+
+**形も同じ**: `src/watches.py:47-53` と `src/rpm_mix.py:75` は
+
+    LAG = ROOT / "data" / "analytics_lag.jsonl"     # ← **import のときに束ねている**
+
+と書いています。`conftest.py` が `config.ROOT` を差し替えても、
+**import 時に束ねた `Path` には届きません。**
+
+**絞り込みは途中まで**: `-k "watch or status_lines or rpm_mix or scan"`（135件）
+**では再現しません**。全体（3,973件）で出ます。**残りを二分すること。**
+`data/watch.jsonl` を控えてから走らせ、変わったかを見るのが速い（1周 20分）。
+
+**なぜ塞ぐ前に止めたか**: `rpm_mix` の測る道は**本当に書く必要がある**側で、
+`_write_path` をそのまま被せると測定そのものが止まります。
+**先に「誰が呼んでいるか」を名指ししてから**にすること。
