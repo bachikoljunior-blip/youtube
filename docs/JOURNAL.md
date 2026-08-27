@@ -61598,3 +61598,39 @@ nenkin shobyo shougai yukyu zasson）。**つまり掘ればその場で長尺�
   作って帯へ置くこと（`request_form` 途中あり 58本 / 終端のみ 56本 も同じ）
 - **この回は前提を1件も閉じていません。** (a) が3回 続けて動かないなら、
   この役の答え方のほうを疑うこと（冒頭の問いの註）
+
+### ⑤ 追記 —— 4件目。**「枠が尽きたら止める」と書いてある所へ、永久に来ていなかった**
+
+③ を押したあと、同じ窓の 403 が **29回 → 60回** に育っているのが気になって、
+往復の出どころを追いました。`scripts/live_slots.apply_moves`:
+
+    except SystemExit as e:
+        if e.code:
+            skipped.append(...)      # ← **日枠の 403 も、ここへ来ます**
+            continue                 # ← **残りの手を、ぜんぶ撃ち続けます**
+    except Exception as e:
+        if "quotaExceeded" in text:
+            # **枠が尽きたら、そこで止めること。** 撃つほど悪くなります
+            return 1                 # ← **ここへは永久に来ません**
+
+`reschedule._update` は日枠の 403 を **`SystemExit`** に変えて投げ、
+**`SystemExit` は `Exception` の子ではありません。**
+だから「止める」と書いてある枝には**1度も入りません。**
+
+**この repo が通算11回 踏んでいる「言っている所と、している所が別」の形**です。
+①-2 の 79% とは別口で、**尽きたあとに 403 を人数ぶん買っていた**のがこちら。
+尽きた時点で降りていれば **1回** で済みます。
+
+`reschedule.QUOTA_MARK` と `is_quota_exit()` を足しました。**日枠だけ止め、
+ほかの `SystemExit`（過去の時刻・見つからない本・公開済み）はこれまでどおり
+1本ずつ飛ばします** —— 止めすぎると 08/27 16:xx の
+「`kH-2eghxy2w` の 400 で残り 43手 が1つも当たらない」形に戻るので、
+**両向きに検査を掛けました**（6件・`tests/test_quota_exit_stops.py`）。
+
+**覆る条件**: `_update` が日枠切れを `SystemExit` 以外で伝えるようになったとき
+（`is_quota_exit` の中身だけ変えれば、呼ぶ側は触らなくて済みます）。
+
+**この検査を書いているあいだに 403 を1回 実際に買いました** ——
+`live_slots.apply_moves` は `from scripts import reschedule` で引くので、
+素の `import reschedule`（`sys.path` 経由）に monkeypatch を当てても
+**別の実体で、実物の口を叩きにいきます。** 検査に註を残しました。
