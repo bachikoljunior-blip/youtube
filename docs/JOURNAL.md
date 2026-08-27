@@ -58854,6 +58854,24 @@ M11 は同じ関数の註が「**律速そのもの**」と書いている項
 
 ---
 
+### 検査
+
+**全体を1回 撃ちました: `3737 passed / 2 skipped / 0 failed`**（19分16秒。
+きょうだいが同じ機械で全体を回していたので、既定の見積り16分より長い）。
+触ったところの内訳（先に撃った順）:
+
+    arm_speed まわり                      35件 緑
+    measure_window ＋ live_slots           53件 緑
+    eta / realloc / alloc                 294件 緑
+    予約まわり全部（reschedule/queue_lag/
+      batch_build/day_cap/lanes/judgeable）520件 緑
+    means / status                         62件 緑
+    constraints / audit                     4件 緑
+
+**`--alloc-speed` の道も実際に撃ちました**（この回で足した口）。
+docstring に書いた実測（順位は `sub_rate` のまま・そのままより 5日 早い・
+過去の配分が 2027-01-05 へずれる）と1字も違いません。
+
 ### この回の ship（5件・最終）
 
     fix    --alloc に腕べつの回転を並べた                      lever none      moves 0
