@@ -277,11 +277,15 @@ def _update(svc, video_id: str, publish_at: str | None,
     **読んだ値と書く値が同じかどうかを1度も見ていませんでした。** 実測（窓は
     08/27 07:00Z 〜、`data/day_quota.jsonl`）:
 
-        通った `videos.update`      **273回**（13,650単位）
+        通った `videos.update`      **173回**（8,650単位）
         撃たれた本の数              **58本**
-        → 同じ本の2回目以降        **215回 ＝ 10,750単位**（**79%**）
+        → 同じ本の2回目以降        **115回 ＝ 5,750単位**（**66%**）
 
-    **日枠は 1万単位**なので、これは**その日の枠を丸ごと、同じ値の書き直しに
+    （**2026-08-28 に数え直した** —— それまでここは 273回／215回（79%）。
+    `batch_build` が `_update` の**あとにもう1行**帳面へ書いていて、
+    **同じ呼び出しが同じ秒に2行**載っていました。`upload_cap.dedupe_ok` の註。）
+
+    **日枠は 1万単位**なので、これは**その日の枠の 6割 を、同じ値の書き直しに
     焼いていた**ということです。控えにも残っています —— `1Tduvr67ohI`
     `QfQWE1ykEx4` `6TK2jXQsB5s` は `data/uploaded.jsonl` に
     **`at` が1文字も違わない行が2本ずつ**（`dupes.retime` は動かすたびに1行
@@ -331,6 +335,14 @@ def _update(svc, video_id: str, publish_at: str | None,
         print(f"[reschedule] {video_id} は**もうその値です**。撃ちません"
               f"（50単位 節約・{status.get('publishAt') or '予約なし'}）", flush=True)
         return False
+    # **計測のぶんを残して止める**（2026-08-28 の最適化の回に足した）。
+    # 実測: 窓 08/27 16:00 JST は **47分 で 9,150単位**（枠 1万）を焼き、そのあと
+    # **23.2時間、4単位 の `videos.list` が撃てません**。閉じられなかった前提が
+    # 2回 続けて出ています（`src/upload_cap.RESERVE_UNITS` に実測と覆る条件）。
+    # **推測では止めません** —— 枠の実測が無い窓では `None` が返ります。
+    hold = upload_cap.reserve_hold()
+    if hold:
+        raise SystemExit(f"[reschedule] {hold}")
     try:
         svc.videos().update(part="status",
                             body={"id": video_id, "status": status}).execute()

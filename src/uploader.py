@@ -297,6 +297,23 @@ def _set_thumbnail(youtube, video_id: str, path: Path, tries: int = 4) -> bool:
 
     権限（チャンネル未確認）なら何度撃っても通らないので、回数で打ち切る。
     """
+    # **計測のぶんを残して止める**（2026-08-28 の最適化の回に足した）。
+    # `thumbnails.set` は **50単位**。実測の窓（08/27 16:00 JST）は
+    # **47分 で 14,150単位** を焼き、そのあと 23.2時間、**4単位 の
+    # `videos.list` が撃てません**（`src/upload_cap.RESERVE_UNITS`）。
+    # **ここは投げません** —— 投稿そのものは日枠を1単位も使わないので、
+    # 止めるのはサムネだけ。控えに bytes が残り、窓が変わった回に
+    # `refresh_thumbnail.py --missing` で押せます（下の枠切れと同じ扱い）。
+    try:
+        from . import upload_cap as _cap
+        _hold = _cap.reserve_hold()
+    except Exception:                                          # noqa: BLE001
+        _hold = None
+    if _hold:
+        print(f"[upload] **サムネイルは載せません**: {_hold}")
+        print("[upload] **投稿は続けます。** 控えに bytes は残るので、"
+              "窓が変わった回に `refresh_thumbnail.py --missing` で押せます。")
+        return False
     for attempt in range(1, tries + 1):
         try:
             youtube.thumbnails().set(
