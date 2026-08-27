@@ -713,7 +713,38 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--if-ready", action="store_true",
                     help="**中身が前の点より進んでいるときだけ測る。**進んでいなければ "
                          "API を1回も叩かずに rc=2 と「次に意味がある日」を返す")
+    ap.add_argument("--forms", action="store_true",
+                    help="**本べつの形の控え（data/video_forms.json）だけ取り直す。**"
+                         "Analytics 2回。RPM の帯は測らず、jsonl にも積まない")
     args = ap.parse_args(argv)
+
+    # **控えだけを取り直す道**（2026-08-27 夜・最適化の回に足した）。
+    #
+    # `data/video_forms.json` を書き直すのは、長らく**この main の本処理だけ**
+    # でした。本処理は `--record` を要り、`--if-ready` は「RPM の帯が動いたか」で
+    # 門を閉めます。**分類の控えは、その門とは何の関係もありません** ——
+    # 新しく公開した本の分類は毎日 増えるのに、RPM の帯が動かない日は
+    # **1本も控えに入りません。**
+    #
+    # 実測 2026-08-27: 控えは **08-26 に取ったきり**で、分類し終えている
+    # いちばん新しい公開日は **08-24**。前提「深い題のショート」が要る
+    # 「両群がそろう公開日」は 08/25・08/26・08/27 と**もう3日ぶん公開済み**
+    # なのに、`scripts/deadline_check.py` は **0日** と数え、
+    # 「**まだ数えはじめたところ。この回は何もしないのが正解**」と毎周 出していました。
+    # **待っても永久に 0 のまま**です（`_stale_todo()` の註）。
+    #
+    # だから「控えだけ」を切り出します。**2回の Analytics で済み**、
+    # RPM の帯（`fetch_mix`）も `rpm_mix.jsonl` への追記も起こしません。
+    if args.forms:
+        saved = save_video_forms(fetch_video_forms(args.days), args.days)
+        if not saved:
+            print("  **取れませんでした。**控えは前のままです"
+                  "（空で上書きすると『長尺が1本も無い』に化けます）")
+            return 2
+        longs = sum(1 for v in saved["forms"].values() if v == "長尺")
+        print(f"  本べつの形を控え直しました: {len(saved['forms'])}本"
+              f"（うち長尺 {longs}本）→ {FORMS.relative_to(ROOT)}")
+        return 0
 
     if args.show or not args.record:
         print(render(last()))
