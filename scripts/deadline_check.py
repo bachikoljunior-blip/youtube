@@ -343,7 +343,18 @@ def _rate_scatter(key: str, path: Path | None = None) -> float | None:
     p = path or RATE_LOG
     if not key or not p.exists():
         return None
-    rates: list[float] = []
+    # **1鍵1日1行は、読む側でも守ること**（2026-08-27 夜に足した）。
+    #
+    # 控えは「1鍵1日1行」の約束ですが、**その約束は書く側にしかありません。**
+    # 同じ日に2行 入る道が実際に出ました —— `have` を控え始めた回が、
+    # **欄の足りない今日の行を書き直させた**ので、`have` 無しと `have` 付きが
+    # 1日に2行 並びます（実測 2026-08-27: 3鍵 が2行ずつ）。
+    #
+    # 数えているのは「**何日ぶん観測したか**」なので、同じ日を2回 数えると
+    # **`n_pts` が水増しされ、「まだ N点 なので、この帯は下限です」の註が
+    # 1回 早く消えます** —— 帯を狭いと読ませる向きです。
+    # **日ごとに最後の1行**を採ります（後から書いたほうが新しい）。
+    by_day: dict[str, float] = {}
     for ln in p.read_text(encoding="utf-8").splitlines():
         ln = ln.strip()
         if not ln:
@@ -359,7 +370,8 @@ def _rate_scatter(key: str, path: Path | None = None) -> float | None:
         except (TypeError, ValueError):
             continue
         if v > 0:
-            rates.append(v)
+            by_day[str(r.get("at"))[:10]] = v
+    rates = list(by_day.values())
     if len(rates) < 2:
         return None
     rates.sort()

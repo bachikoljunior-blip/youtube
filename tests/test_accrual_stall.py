@@ -88,3 +88,27 @@ def test_growth_is_reported_as_growth(tmp_path: Path) -> None:
     p = _log(tmp_path, [{"at": "2026-08-26", "key": KEY, "rate": 1.0, "have": 4}])
     r_rate, r_days, r_delta = deadline_check._recent_rate(KEY, 10, date(2026, 8, 28), path=p)
     assert (r_delta, r_days) == (6, 2) and abs(r_rate - 3.0) < 1e-9
+
+
+def test_same_day_rows_count_as_one_point(tmp_path: Path) -> None:
+    """**1鍵1日1行は、読む側でも守ること。**（2026-08-27・最適化の回）
+
+    控えの「1鍵1日1行」は**書く側の約束**でしかありません。同じ日に2行 入る道が
+    実際に出ました —— `have` を控え始めた回が、欄の足りない今日の行を
+    書き直させたので、`have` 無しと `have` 付きが1日に2行 並びます
+    （実測 2026-08-27: 3鍵 が2行ずつ）。
+
+    `_rate_scatter` が数えているのは「**何日ぶん観測したか**」なので、
+    同じ日を2回 数えると `n_pts` が水増しされ、
+    「まだ N点 なので、この帯は下限です」の註が1回 早く消えます
+    ——**帯を狭いと読ませる向き**です。
+    """
+    p = _log(tmp_path, [
+        {"at": "2026-08-26", "key": KEY, "rate": 1.0},
+        {"at": "2026-08-27", "key": KEY, "rate": 2.0},             # have 無しの旧行
+        {"at": "2026-08-27", "key": KEY, "rate": 2.0, "have": 5},  # 書き直したほう
+    ])
+    got = deadline_check._rate_scatter(KEY, path=p)
+    assert got is not None
+    _spread, n_pts = got
+    assert n_pts == 2, f"同じ日を2回 数えています（{n_pts}点）"
