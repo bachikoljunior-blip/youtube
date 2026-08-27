@@ -374,8 +374,117 @@ def spend_in_window(now: datetime | None = None) -> dict:
     return {"ok": len(ok),
             "videos": len(seen),
             "repeats": sum(n - 1 for n in seen.values()),
+            "units": sum(unit_cost(r.get("detail")) for r in ok),
             "hits": len([r for r in rows if not r.get("ok")]),
             "by": dict(sorted(by.items(), key=lambda kv: -kv[1]))}
+
+
+#: **呼び出し1回の値段**（YouTube Data API v3 の公表値）。
+#:
+#: **回数ではなく単位で数えること**（2026-08-27 の最適化の回に足した）。
+#: それまで、この repo は `videos.update` を**回数**でしか数えておらず、
+#: 「273回 通った」とは言えても「**それが1日ぶんの予算だった**」とは
+#: 言えませんでした。値段を掛けると、その窓の姿は一行で出ます:
+#:
+#:     videos.update  269回 × 50 = **13,450単位**
+#:     thumbnails.set  10回 × 50 =     500単位
+#:     ------------------------------------------
+#:                                 **13,950単位 で 403**
+#:
+#: そして `videos.insert` は**この予算に入っていません** —— 実測 08/27、
+#: 最初の 403 は 07:47Z なのに、**10:33Z と 10:37Z の投稿は通っています**
+#: （`data/uploaded.jsonl` の 8本）。同じ秒の `thumbnails.set` は 403 です。
+#: **投稿は別の枠から出ています。** だから「投稿を止めて単位を空ける」は
+#: 効きません —— 空けたいなら `videos.update` を減らすしかない。
+#:
+#: **覆る条件**: Google が値段表を変えたとき、または `videos.insert` の 403 が
+#: `videos.update` と同じ窓で同時に始まったのを観測したとき（＝枠が1つに統合された）。
+UNIT_COST = {
+    "videos.insert": 1600,
+    "videos.update": 50,
+    "thumbnails.set": 50,
+    "playlistItems.insert": 50,
+    "commentThreads.insert": 50,
+    "playlists.insert": 50,
+    "videos.list": 1,
+    "channels.list": 1,
+    "playlistItems.list": 1,
+    "search.list": 100,
+}
+
+
+def unit_cost(detail) -> int:
+    """`detail`（例 `videos.update abc123`）から、その呼び出しの単位を返す。
+
+    表に無いものは **1単位**（読みの既定値）に落とします。**0 にしないこと** ——
+    知らない呼び出しを0円にすると、使った量を必ず低く見ます。
+    """
+    text = str(detail or "")
+    for name, cost in UNIT_COST.items():
+        if text.startswith(name):
+            return cost
+    return 1
+
+
+def measured_budget(now: datetime | None = None) -> dict:
+    """**1日の単位枠を、推測ではなく帳面から出す。**（API 0単位）
+
+    ## なぜ要るか（2026-08-27 の最適化の回）
+
+    このファイルは長らく「**日枠の実測は、この機械にはありません**」と
+    書いていました（`scripts/queue_lag.py` の註）。だから
+    `day_quota()` が言えたのは「403 を N回 見た」だけで、
+    **あと何単位 使えるのかを、どの回も1度も知りませんでした。**
+
+    ところが帳面には答えが入っています。**ある窓で 403 より前に通った
+    呼び出しの値段を足すと、その日 API が確かに渡した単位**になります。
+    窓をまたいでその最大を取れば、**枠の下限が実測で出ます**（上限ではない ——
+    使い切らずに終わった窓は、それより低い数しか見せません）。
+
+    実測（2026-08-27 時点）: 08/27 の窓は **13,950単位** で 403。
+    **既定の 10,000 ではありません。**
+
+    返り: `{"floor", "spent", "left", "from"}`
+      floor  過去の窓で 403 の前に通った単位の**最大**（＝枠の下限・実測）
+      spent  **この窓で**すでに使った単位
+      left   `floor - spent`（負にはしません。**「確実に残っている」ではなく
+             「ここまでは前例がある」**）
+
+    **`left` を残量として読まないこと。** これは「同じ枠なら、少なくとも
+    ここまでは通った前例がある」という意味です。**外す向きは、押して 403 を
+    受ける側**（403 は単位を使わないので、外した損は失敗1回ぶん）。
+    """
+    now = now or datetime.now(timezone.utc)
+    path = _root() / DAY_QUOTA_HITS
+    by_window: dict[datetime, list[dict]] = {}
+    if path.exists():
+        for line in path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                rec = json.loads(line)
+            except ValueError:
+                continue
+            when = _parse(rec.get("at"))
+            if not when:
+                continue
+            by_window.setdefault(window_start(when), []).append(rec)
+
+    here = window_start(now)
+    floor, came_from = 0, None
+    for start, rows in by_window.items():
+        rows = sorted(rows, key=lambda r: str(r.get("at")))
+        first_hit = next((str(r.get("at")) for r in rows if not r.get("ok")), None)
+        spent = sum(unit_cost(r.get("detail")) for r in rows
+                    if r.get("ok") and (not first_hit or str(r.get("at")) < first_hit))
+        if start != here and spent > floor:
+            floor, came_from = spent, start
+    spent_here = sum(unit_cost(r.get("detail"))
+                     for r in by_window.get(here, []) if r.get("ok"))
+    return {"floor": floor, "spent": spent_here,
+            "left": max(0, floor - spent_here),
+            "from": came_from.astimezone(JST).strftime("%m/%d") if came_from else None}
 
 
 def note_quota_ok(now: datetime | None = None, detail: str = "") -> None:
@@ -637,9 +746,28 @@ def day_quota(now: datetime | None = None) -> DayQuota:
                 f" **`thumbnails.set` も `videos.update` も、この窓では通りません。**")
         return DayQuota(False, True, len(hits), tail, line)
 
+    # **「観測していない」で終えないこと**（2026-08-27 の最適化の回）。
+    # ここは長らく「`videos.insert` 1本 1,600単位なので、7本上げた後はまず
+    # 尽きています」と書いていました。**実測でそうではありません** ——
+    # 08/27 は最初の 403 が 07:47Z、投稿は 10:33Z と 10:37Z で**通っています**。
+    # **投稿は別の枠から出ていて、この枠を1単位も食いません。**
+    # 食っていたのは `videos.update` 269回 ＝ **13,450単位**（うち 215回が
+    # 同じ本の撃ち直し ＝ 10,750単位）。**名指しを間違えると、止める先も間違えます。**
+    try:
+        b = measured_budget(now)
+    except Exception:                                          # noqa: BLE001
+        b = None
+    if b and b["floor"]:
+        gauge = (f" この窓で使った単位 **{b['spent']:,}** ／"
+                 f" 前例のある枠 **{b['floor']:,}**（{b['from']} の実測）→"
+                 f" **あと {b['left']:,}**。"
+                 f"**残量ではなく前例です** —— `videos.update` は1回 50単位で、"
+                 f"**この枠を使い切るのはいつもこれ**です（投稿は別枠）。")
+    else:
+        gauge = (" **観測していないだけで、残量を見たわけではありません。**"
+                 " 使い切るのは `videos.update`（1回 50単位）で、投稿ではありません。")
     line = (f"日枠（単位）: この窓ではまだ 403 を観測していません（窓が変わるのは {back}）。"
-            f" **観測していないだけで、残量を見たわけではありません** ——"
-            f" `videos.insert` 1本 1,600単位なので、7本上げた後はまず尽きています。")
+            + gauge)
     return DayQuota(True, False, 0, tail, line)
 
 
