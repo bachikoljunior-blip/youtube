@@ -1042,11 +1042,16 @@ def supply_lines(short: list[tuple[str, str, int]]) -> list[str]:
             # 「材料さえ足せば閉じる」と読めます —— 実測 2026-08-27 は
             # **材料も枠も、どちらも足りていません**でした（最後の1本が期限の翌日）。
             last, days_n = walk
+            # **`need` は「足りない群 ぜんぶ」の合計**です（`band_lines` と同じ数）。
+            #   足りない前提が2件 以上ある回は、**この1件だけの話ではありません** ——
+            #   その回は「全部を埋めるなら」と断ること。**黙って1件の話にしないこと。**
+            whose = ("" if len(keys) == 1
+                     else f"（{need}本 は**足りない群ぜんぶの合計**です・{len(keys)}件）")
             if last > due:
                 out.append(f"{bar}    [!] **帯に {need}本 を置くと最後の1本は"
                            f" {last}（+{days_n}日）で、期限を {(last - due).days}日"
                            " 越えます** —— 材料を足しても、この床は期限内に埋まりません"
-                           "（`band_lines` の帯／`src/day_cap.py` の上限）")
+                           f"（`band_lines` の帯／`src/day_cap.py` の上限）{whose}")
                 out.append(f"{bar}      この {(last - due).days}日 は**下限**です ——"
                            " `live_plan()` は**今日から全部 詰めた場合**を解いています。"
                            "実際は1周ずつ置くので、**遅れこそすれ早まりません**")
@@ -1062,7 +1067,7 @@ def supply_lines(short: list[tuple[str, str, int]]) -> list[str]:
                            "**床を下げるのは、どちらの場合も禁止**です")
             else:
                 out.append(f"{bar}    枠の側は間に合います"
-                           f"（最後の1本 {last} ≤ {due}）")
+                           f"（最後の1本 {last} ≤ {due}）{whose}")
     return out
 
 

@@ -282,3 +282,19 @@ def test_毎回_読む道具に_この節が載っていること():
         "`status.py` が `queue_lag.answering_lines()` を呼んでいません。"
         "呼ばないと、材料と期限の引き算は主実行から見えません"
     )
+
+
+def test_足りない前提が2件_以上なら_合計だと断る(monkeypatch):
+    """**黙って1件の話にしないこと。** `need` は足りない群ぜんぶの合計です。"""
+    _fake_supply(monkeypatch, total=500)
+    monkeypatch.setattr(QL, "_shorts_only", lambda _keys: [])
+    monkeypatch.setattr(QL, "_short_share", lambda *_a, **_k: None)
+    monkeypatch.setattr(QL.judgeable, "deadlines",
+                        lambda: {"a": date(2026, 10, 6), "b": date(2026, 10, 8)})
+    monkeypatch.setattr(QL, "_walk_days", lambda *_a, **_k: (date(2026, 9, 1), 5))
+    out = "\n".join(QL.supply_lines([("a", "g1", 40), ("b", "g2", 20)]))
+    assert "足りない群ぜんぶの合計" in out and "2件" in out
+
+    # 1件だけの回には、その断りは出さない（雑音になる）
+    out1 = "\n".join(QL.supply_lines([("a", "g1", 40)]))
+    assert "足りない群ぜんぶの合計" not in out1
