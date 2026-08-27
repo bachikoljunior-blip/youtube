@@ -35,6 +35,7 @@ API で差し替えられる**」と書いていますが、**時刻を動かす
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import sys
 from collections import defaultdict
@@ -214,10 +215,27 @@ def _show(rows: list[dict]) -> None:
         print("\n二重予約はありません。")
 
 
+def _same_instant(a, b) -> bool:
+    """2つの時刻表記が**同じ瞬間**か（`Z` と `+00:00`、秒の小数を吸収する）。
+
+    読めない字が来たら、そのまま文字列で比べます —— **分からないときは
+    「ちがう」側に倒す**こと。ここで取り違えると書き込みを飛ばしてしまいます。
+    """
+    if a is None or b is None:
+        return a is None and b is None
+    try:
+        return (datetime.fromisoformat(str(a).replace("Z", "+00:00"))
+                == datetime.fromisoformat(str(b).replace("Z", "+00:00")))
+    except ValueError:
+        return str(a) == str(b)
+
+
 def _update(svc, video_id: str, publish_at: str | None,
-            fallback_status: dict | None = None) -> None:
+            fallback_status: dict | None = None) -> bool:
     """`status` だけを差し替える。**snippet を触らないこと** —— 部分更新なので、
     渡さなかった欄は消えます（題名や説明欄を巻き添えで空にしない）。
+
+    返りは **書いたか**（`True` ＝ `videos.update` を撃った／`False` ＝ 撃たずに済んだ）。
 
     `fallback_status` を渡すと、**現状を読めなかった回だけ**それで代えます
     （2026-08-17 に足した）。**既定は None ＝ これまでどおり読めなければ落ちる**：
@@ -227,7 +245,39 @@ def _update(svc, video_id: str, publish_at: str | None,
     **黙って代えないのはわざとです。** ここで読んでいるのは
     「他人が変えたかもしれない欄」で、示せないまま既定値で上書きすると、
     **`videos().update` は部分更新ではない**ので他の欄が巻き添えになります。
+
+    ## もう同じ値なら、撃たないこと（2026-08-27 に実測して足した）
+
+    **ここは現状を必ず読んでいます**（`videos.list` ＝ 1単位）。にもかかわらず、
+    **読んだ値と書く値が同じかどうかを1度も見ていませんでした。** 実測（窓は
+    08/27 07:00Z 〜、`data/day_quota.jsonl`）:
+
+        通った `videos.update`      **273回**（13,650単位）
+        撃たれた本の数              **58本**
+        → 同じ本の2回目以降        **215回 ＝ 10,750単位**（**79%**）
+
+    **日枠は 1万単位**なので、これは**その日の枠を丸ごと、同じ値の書き直しに
+    焼いていた**ということです。控えにも残っています —— `1Tduvr67ohI`
+    `QfQWE1ykEx4` `6TK2jXQsB5s` は `data/uploaded.jsonl` に
+    **`at` が1文字も違わない行が2本ずつ**（`dupes.retime` は動かすたびに1行
+    足すので、同じ値で撃った証拠がそのまま残ります）。
+
+    そして焼け切ると、**この窓では `queue_lag --apply` の 12手（1,200単位）が
+    撃てません。** あれは判定日を合計 **7日** 手前に倒す手で、
+    `data/queue_lag.jsonl` の4行は `hook_form` が **4回とも 09-10 のまま** ——
+    **約束した前倒しが1度も実現していない**のは、ここで枠が尽きるからです。
+
+    **どの呼び出し側が悪いのかを探すのはやめました。** `--move`・`--compact`・
+    `--spread`・`long_pack`・`live_slots`・`queue_lag` と入口が6つあり、
+    塞いでも7つ目が同じ穴を作ります（この repo が通算11回 踏んでいる
+    「片方だけ」の形）。**関門はここ1か所なので、ここで止めます。**
+
+    **覆る条件**: `status` のうち、こちらが書き換えるのが
+    `privacyStatus` と `publishAt` の2つだけ、でなくなったとき
+    （`tests/test_reschedule_noop.py` が、その2つ以外を触ったら落ちます）。
+    どうしても撃ち直したい回は `YT_FORCE_UPDATE=1`。
     """
+    read_ok = True
     try:
         cur = svc.videos().list(part="status", id=video_id).execute()["items"]
     except Exception as exc:                                  # noqa: BLE001
@@ -237,8 +287,10 @@ def _update(svc, video_id: str, publish_at: str | None,
         print("[reschedule] 呼ぶ側が渡した `status` で代えます"
               "（投稿のときにこちらが立てた4欄）")
         cur = [{"status": dict(fallback_status)}]
+        read_ok = False
     if not cur:
         raise SystemExit(f"動画が見つかりません: {video_id}")
+    before = dict(cur[0]["status"])
     status = dict(cur[0]["status"])
     for k in ("uploadStatus", "failureReason", "rejectionReason"):
         status.pop(k, None)
@@ -247,6 +299,13 @@ def _update(svc, video_id: str, publish_at: str | None,
         status["publishAt"] = publish_at
     else:
         status.pop("publishAt", None)
+    # **読めた回だけ**。控えで代えた回は、YouTube 側の実物を知らないので飛ばせません。
+    if (read_ok and not os.environ.get("YT_FORCE_UPDATE")
+            and before.get("privacyStatus") == status["privacyStatus"]
+            and _same_instant(before.get("publishAt"), status.get("publishAt"))):
+        print(f"[reschedule] {video_id} は**もうその値です**。撃ちません"
+              f"（50単位 節約・{status.get('publishAt') or '予約なし'}）", flush=True)
+        return False
     try:
         svc.videos().update(part="status",
                             body={"id": video_id, "status": status}).execute()
@@ -277,6 +336,7 @@ def _update(svc, video_id: str, publish_at: str | None,
             upload_cap.note_quota_ok(detail=f"videos.update {video_id}")
         except Exception:                                      # noqa: BLE001
             pass
+        return True
 
 
 def _parse_at(value) -> datetime | None:
