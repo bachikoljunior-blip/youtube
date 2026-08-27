@@ -246,21 +246,61 @@ def _k_length_spread(p: dict) -> Gauge:
                  f"{len(lens)}本・{min(lens):.0f}〜{max(lens):.0f}秒")
 
 
+def _durations() -> dict[str, float]:
+    """動画ID → 尺（秒）。控え（`data/uploaded.jsonl`）の `duration_s` から。
+
+    **`_last_scan()` の「尺」ではありません。** あちらは走査に載った本
+    ＝ **もう実データの来た本**しか持たないので、`published_count` が
+    数えたい「窓のなかに公開した本」には、まだ載っていないものが混じります。
+    控えは投稿した瞬間に書かれるので、**予約ぶんも数えられます。**
+    """
+    out: dict[str, float] = {}
+    for r in _uploaded():
+        vid, sec = r.get("video_id"), r.get("duration_s")
+        if not vid or sec is None:
+            continue
+        try:
+            out[vid] = float(sec)
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
 def _k_published_count(p: dict) -> Gauge:
-    """窓のなかに公開した本数。`data_ready: true` なら**実データの来た本だけ**。"""
+    """窓のなかに公開した本数。`data_ready: true` なら**実データの来た本だけ**。
+
+    **`min_duration_s` / `max_duration_s` で形を絞れます**（2026-08-27 に足した）。
+    絞らないと、ショートが 9割 を占めるこのチャンネルでは
+    **「長尺を14本 出したか」の門が、ショートだけで満ちます。**
+    尺の分からない本（控えに `duration_s` が無い古い行）は、
+    **絞りを指定した回では数えません** —— 満ちていないものを満ちたと
+    言うより、遅れて満ちるほうが安全なので。
+    """
     dates = _publish_dates()
     since, until = _day(p["since"]), (_day(p["until"]) if p.get("until") else None)
     last = analytics_last_day()
     if p.get("data_ready") and last is None:
         return Gauge(0, float(p["need"]), "本", err="実データの最終日が読めません")
+    lo, hi = p.get("min_duration_s"), p.get("max_duration_s")
+    secs = _durations() if (lo is not None or hi is not None) else {}
     n = 0
-    for d in dates.values():
+    for vid, d in dates.items():
         if d < since or (until and d > until):
             continue
         if p.get("data_ready") and last and d > last:
             continue
+        if lo is not None or hi is not None:
+            sec = secs.get(vid)
+            if sec is None:
+                continue
+            if lo is not None and sec < float(lo):
+                continue
+            if hi is not None and sec > float(hi):
+                continue
         n += 1
     note = f"{since}〜{until or '以降'}"
+    if lo is not None or hi is not None:
+        note += f" / 尺 {lo or 0:.0f}〜{hi if hi is not None else '∞'}秒"
     if p.get("data_ready") and last:
         note += f" / 実データは {last} まで"
     return Gauge(n, float(p["need"]), "本", note)
