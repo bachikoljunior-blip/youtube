@@ -387,3 +387,59 @@ def test_門と_deadline_check_が同じ前提について逆を言っていな�
         "`deadline_check.py` は「まだ数えはじめたところ・何もしないのが正解」と"
         f"言っています: {clash}"
     )
+
+
+def test_帯の中の期限に_延ばせと言わないこと(tmp_path, monkeypatch):
+    """`deadline_check` が「帯の中。**書き換えないこと**」と言う前提。
+
+    **`drift.py` は同じ `deadline_check` を根拠に挙げながら、
+    「期限を延ばすこと」と指示していました**（実測 2026-08-27・
+    「長尺の生成が落ちる主因は…」期限 08-27 / 判定日 08-28 / 帯 ±1日）。
+
+    `Answer.slack` の註が名指ししている churn そのものです ——
+    「3回とも『期限がずれています』と言われ、3回とも期限だけを書き換えた。
+    **到達日は1日も動いていない。**」
+    """
+    from datetime import date as _d
+    _seed(tmp_path, monkeypatch,
+          [_ship("2026-08-23T10:00", "fix: 直した")] * 3, OPEN_OVERDUE)
+    monkeypatch.setattr(
+        drift, "_judge_state_by_claim",
+        lambda: {"冒頭が engaged を決める": ("ready", _d(2026, 8, 25), False, 1)})
+    text, drifting = drift.report("2026-08-24")
+    assert drifting is False
+    assert "期限を延ばすこと" not in text
+    assert "書き換えないこと" in text
+
+
+def test_帯の外なら今までどおり延ばせと言う(tmp_path, monkeypatch):
+    """**帯を理由に黙らせないこと。** 本当にずれているものは、今までどおり言う。"""
+    from datetime import date as _d
+    _seed(tmp_path, monkeypatch,
+          [_ship("2026-08-23T10:00", "fix: 直した")] * 3, OPEN_OVERDUE)
+    monkeypatch.setattr(
+        drift, "_judge_state_by_claim",
+        lambda: {"冒頭が engaged を決める": ("ready", _d(2026, 9, 10), True, 1)})
+    text, _ = drift.report("2026-08-24")
+    assert "期限を延ばすこと" in text
+
+
+def test_門と_deadline_check_が期限の書き換えについても逆を言っていないこと():
+    """**実物**で縛る。`slips` が False の前提に「延ばせ」と言っていないこと。"""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "test_dc2", Path(__file__).resolve().parent.parent / "scripts" / "deadline_check.py")
+    dc = importlib.util.module_from_spec(spec)
+    sys.modules["test_dc2"] = dc
+    spec.loader.exec_module(dc)
+
+    today = drift.today_jst()
+    stable = {v.claim for v in dc.check(dc.load()) if v.ready is not None and not v.slips}
+    _now, blocked = drift.split_overdue(drift.overdue(today), today)
+    clash = [str(h.get("claim") or "") for h, _why, todo in blocked
+             if "期限を延ばすこと" in todo and str(h.get("claim") or "") in stable]
+    assert not clash, (
+        "`drift.py` が「期限を延ばせ」と言っている前提を、"
+        "`deadline_check.py` は「帯の中。書き換えないこと」と言っています: "
+        f"{clash}"
+    )
