@@ -164,6 +164,66 @@ class Experiment:
     #: 見分けられなかっただけで畳ませる形**で置かれていました。
     #: `src/ab_split.floor_of()` が2026-08-27 に直したのと**同じ穴の4件目**です。
     metric: str = "engaged"
+    #: **この実験に入れてよいテーマID**を返す関数（`None` なら全部）。
+    #: 2026-08-27 に足した。理由は下の `_shorts_only()`。
+    eligible: Callable[[], set[str]] | None = None
+
+
+def _shorts_only() -> set[str]:
+    """**ショートとして出したテーマIDだけ**（控えの `duration_s` で 3分以下）。
+
+    ## なぜ要るか（2026-08-27 に測って足した。**同じ穴の5件目**）
+
+    `request_form` の A/B は「**ショートの登録の依頼**を途中にも入れるか」です。
+    長尺は依頼そのものを1文字も書きません（`src/script_writer.ROLE`）——
+    **どちらの群にも入れてはいけない本**です。
+
+    ところが `Experiment.split`（＝ `script_writer.request_form()`）は
+    **テーマIDのハッシュだけ**を見ており、長尺にも `途中あり` / `終端のみ` を返します。
+    `src/ab_split.py` のこの行のすぐ上には長らく
+
+        **長尺は `request_form` が `"長尺"` を返し、どちらの群にも入りません。**
+
+    と書いてありましたが、**そんな枝は関数にありません**（2026-08-27 に実物を読んだ）。
+    註だけが正しく、実装が黙って長尺を数えていました。
+
+    実測（同じ日・同じ枝・API 0単位）::
+
+        split_counts   途中あり **17本** ／ 終端のみ **20本**
+        judgeable      途中あり   14本  ／ 終端のみ   16本
+
+    差の 7本 は全部 長尺でした（`duration_s` 298〜442秒）::
+
+        jutaku-mochibun-13nen-389546     keihi-kokuho-zero-ryoutan
+        keihi-zero-taiki-1080000         jouto-kyouyu-mochibun-852600
+        jutaku-kuriage-tadade-11600000   keihi-keihi-vs-kojo-22500
+        keihi-kokuho-hihokensha-195280
+
+    **`judgeable` のほうが正しい。** `src/judgeable._members_by_request_form()` は
+    控えの `duration_s` で長尺を落としています。**負けたほうを消すのがこの関数**です
+    —— 数え方を2つ並べて残すと、次の回がまた両方読みます
+    （`src/watches.py` が 2026-08-26 に同じ結論を出しています:
+    「`MEMBER_SOURCES` に在る群は、床も数え方もそちらに訊くこと」）。
+
+    ## なぜ「数えない」であって「stale」ではないか
+
+    `stale` は「**指示より前に作ったのにこの群にいる本**」で、作り直せば処置群に入ります。
+    長尺は作り直しても**永久に依頼を書きません**。混ぜると
+    「あと N本」の N が実際より小さく見え、**床に届く前に判定できると読みます** ——
+    `falsified_if` は「上回らなければ外れ（同点も外れ）」で、`next_if_false` は
+    腕ごと畳むので、**見分けられなかっただけの実験が、効かない実験として閉じます**
+    （`floor_of()` の註と同じ壊れ方です）。
+
+    ## 覆る条件
+
+    長尺にも依頼を書くようになったら（`src/script_writer.ROLE` を変えたら）、
+    この絞り込みを外すこと。**そのときは `judgeable._short_topics()` の側も同時に。**
+    """
+    # **遅らせて読み込みます** —— `src/judgeable.py` はこの帳面を読み込むので、
+    # 上で import すると輪になります（`floor_of()` と同じ）。
+    from src import judgeable
+
+    return judgeable._short_topics()
 
 
 def _deadline_from_yaml(name: str, fallback: date) -> date:
@@ -238,7 +298,10 @@ EXPERIMENTS: dict[str, Experiment] = {
         split=request_form,
         treated="途中あり",
         control="終端のみ",
-        # **長尺は `request_form` が `"長尺"` を返し、どちらの群にも入りません。**
+        # **長尺を落とすのは `eligible` です**（下の行）。2026-08-27 まで、ここには
+        # 「長尺は `request_form` が `"長尺"` を返し、どちらの群にも入りません」と
+        # 書いてありました。**そんな枝は関数にありません** —— 註だけが正しく、
+        # 実装は長尺を 7本 数えていました（`_shorts_only()` に実測）。
         # 2026-08-26 19:08 JST に `MID_REQUEST_RULE` が `generate()` に入った。
         # **未来の時刻を書かないこと** —— この行より前に作った本は全部 落ちるので、
         # 書いた回が自分で作った本まで落とします（この行を最初 20:15 と書いて踏みかけた）。
@@ -247,6 +310,8 @@ EXPERIMENTS: dict[str, Experiment] = {
         commit="",
         # **登録で測ります**（engaged ではない）。上の `metric` の註を読むこと。
         metric="登録",
+        # **長尺は依頼を1文字も書かないので、どちらの群にも入れません**（`_shorts_only()`）。
+        eligible=_shorts_only,
     ),
 }
 
@@ -462,6 +527,9 @@ def split_counts(
     settled_by = when - timedelta(days=SETTLE_DAYS)
     bt = build_times() if builds is None else builds
     rows = published() if ledger is None else ledger
+    # **この実験に入れてよい本だけを数えます**（2026-08-27 に足した）。
+    # `request_form` は長尺を落とします —— 理由と実測は `_shorts_only()`。
+    allowed = exp.eligible() if exp.eligible is not None else None
 
     c = Counts(experiment=exp.name, floor=floor_of(exp.name))
     for g in (exp.treated, exp.control):
@@ -478,6 +546,10 @@ def split_counts(
         assert isinstance(pub, date)
         if pub > when:
             continue  # 判定日より後に公開する本は、この判定には入らない
+        if allowed is not None and topic not in allowed:
+            # **`stale` にも入れません。** 作り直しても永久に処置群へ入らない本です
+            #（`_shorts_only()` の「なぜ stale ではないか」）。
+            continue
         group = exp.split(topic)
         if group not in c.treated_all:
             continue
