@@ -3909,3 +3909,5 @@
 {"at": "2026-08-27T04:02:57+00:00", "detail": "scheduled_publish_times"}
 {"at": "2026-08-27T04:03:00+00:00", "detail": "playlistItems.insert"}
 {"at": "2026-08-27T04:03:00+00:00", "detail": "thumbnails.set 3klTFIxPZEo"}
+{"at": "2026-08-27T04:05:59+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-27T04:07:25+00:00", "detail": "channels.list mine"}

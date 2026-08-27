@@ -281,7 +281,19 @@ def _judge_state_cached(_key: tuple) -> dict[str, tuple[str, object]] | None:
         out: dict[str, object] = {}
         for v in vs:
             if v.ready is not None:
-                out[v.claim] = ("ready", v.ready)
+                # **`slips` と `slack` も持って上がること**（2026-08-27・最適化の回）。
+                # ここが `(kind, ready)` だけを返していたので、`split_overdue()` は
+                # 「`ready` が今日より後」というだけで**期限を延ばせ**と言っていました。
+                # `deadline_check.py` は同じ前提について
+                # 「**期限 08-27 は判定日 08-28 の帯（±1日）の中。書き換えないこと**」
+                # と印字しています —— **drift がその deadline_check を根拠に挙げながら、
+                # 逆のことを指示していた**（実測 2026-08-27）。
+                # `Answer.slack` の註が名指ししている churn そのものです:
+                # 「3回とも『期限がずれています』と言われ、3回とも期限だけを書き換えた。
+                #   到達日は1日も動いていない」。
+                out[v.claim] = ("ready", v.ready,
+                                bool(getattr(v, "slips", True)),
+                                int(getattr(v, "slack", 0) or 0))
             elif getattr(v, "unreachable", False):
                 out[v.claim] = ("unreachable", None)
             elif getattr(v, "unchecked", False):
@@ -315,10 +327,23 @@ def split_overdue(od: list[dict], today: str) -> tuple[list[dict], list[tuple[di
             now.append(h) if _LOUD_WHEN_UNKNOWN else blocked.append(
                 (h, "突き合わせ不能", "—"))
             continue
-        kind, ready = got
+        # **3つ目以降は後から足しました。** 検査が2つ組を差し込むので、
+        # 長さで受けます。**無いときは「分からない」＝ 従来どおり延ばせと言う側**へ。
+        kind, ready = got[0], got[1]
+        slips = got[2] if len(got) > 2 else None
+        slack = got[3] if len(got) > 3 else 0
         if kind == "ready":
             if str(ready) <= today:
                 now.append(h)
+            elif slips is False:
+                # **帯の中。`deadline_check.py` は「書き換えないこと」と言っています。**
+                # ここが「延ばせ」と言うと、根拠に挙げた道具と逆を指示することになり、
+                # **書き換えても次の回にまた同じ行が出ます**（到達日は1日も動かない）。
+                blocked.append((
+                    h, f"判定できるのは {ready}（期限との差は帯 ±{slack}日 の中）",
+                    "**この回は何もしないのが正解です** —— "
+                    "`python scripts/deadline_check.py` が「**書き換えないこと**」と"
+                    "言っています（帯の中で動かしても、届く日は1日も動きません）。待てば判定できます"))
             else:
                 blocked.append((
                     h, f"判定できるのは {ready}（期限のほうが手前）",
