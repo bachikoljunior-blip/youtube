@@ -655,7 +655,45 @@ def _project_nth(rows: list[dict], pub: list[str], count: int, after: str,
         since = date.fromisoformat(after[:10])
     except ValueError:
         return None
-    elapsed = max(1, (as_of - since).days)
+    # **窓の下限は `_MIN_SPAN_DAYS`**（2026-08-27 夜・最適化の回に足した）。
+    #
+    # ここは長らく `max(1, ...)` でした。**同じファイルの `_ans_accrual` は、
+    # 前の日に `_MIN_SPAN_DAYS` の門を足して、まったく同じ穴を塞いでいます** ——
+    # あちらの註（原文）:
+    #
+    #     **1日の窓から伸び率を出さないこと**（2026-08-26 夕・最適化の回に踏んだ）。
+    #     実測: `since: 2026-08-26` の前提が、立った **1時間後**に
+    #           「要 72 ／ いま 3（**1日で 3.00/日**）→ あと 23日」と projecting し、
+    #           **期限を 11-09 → 09-18 へ 38日 縮めろ**と出した。
+    #
+    # **こちらは同じ日に、同じ人が、同じ目的で書いた関数です。**
+    # それでも門が付いていませんでした（`docs/JOURNAL.md`「同じことを2か所が
+    # 別々に言っていて、片方しか読まれていない」——**この repo で通算12回目**）。
+    #
+    # 実測 2026-08-27 22:2x、**塞ぐ前に実際に出ていた偽の日付**::
+    #
+    #     slide_pace   since 2026-08-27（**窓 0日**）  速い 5本 → **5.00本/日**
+    #                                                遅い 3本 → **3.00本/日**
+    #                  → 16本目 09/13・09/15 → **判定 09-21** と印字
+    #     request_form since 2026-08-26（**窓 1日**）  22本 → **22.00本/日**
+    #
+    # `slide_pace` は**この機械が今日 入れた A/B** です。**0日 の窓**から
+    # 「1日 5本 作れる」と読み、そのまま到達日の入力（`arm_speed.forward()`）に
+    # 乗っていました。
+    #
+    # ## **`None` には戻しません**（この関数が在る理由がそれです）
+    #
+    # `_ans_accrual` は窓が足りないと日を出さずに返しますが、**こちらで同じことを
+    # すると `arm_speed.forward()` の `undated` に落ち、腕が丸ごと凍ります**
+    # （上の docstring がその実測です）。だから**日は出し続けて、分母だけ
+    # 下限で押さえます** —— 「`have` 本を `_MIN_SPAN_DAYS` 日で作った」より
+    # 速い伸び率は、名乗らないということです。
+    #
+    # **覆る条件**: 群の本ごとに「作った時刻」が引けるようになったら
+    # （`data/batch_runs.jsonl` の `at` を群へ結び直す）、`since` からの
+    # 経過ではなく**実際の作った時刻の幅**で割れます。そのときこの下限は要りません。
+    span = (as_of - since).days
+    elapsed = max(_MIN_SPAN_DAYS, span)
     rate = have / elapsed
     if rate <= 0:
         return None
@@ -676,9 +714,14 @@ def _project_nth(rows: list[dict], pub: list[str], count: int, after: str,
         nth = max(nth, date.fromisoformat(pub[-1]))
     except ValueError:
         pass
-    span = max(1, (nth - as_of).days)
-    slack = max(1, math.ceil(span / max(1.0, have ** 0.5)))
-    return nth, rate, max(0, lead), slack
+    ahead = max(1, (nth - as_of).days)
+    slack = max(1, math.ceil(ahead / max(1.0, have ** 0.5)))
+    # **窓が下限に当たった回は、そう言うこと。** 言わないと、
+    # `have / _MIN_SPAN_DAYS` が「実測の伸び率」として読まれます。
+    warn = ("" if span >= _MIN_SPAN_DAYS else
+            f"・**窓が {span}日 しかないので、分母に {_MIN_SPAN_DAYS}日 を当てています**"
+            f"（この伸び率は上限です。実測は `since` を {_MIN_SPAN_DAYS}日 またいでから）")
+    return nth, rate, max(0, lead), slack, warn
 
 
 def _ans_published_group(need: dict, as_of: date, lag: int) -> Answer:
@@ -723,11 +766,11 @@ def _ans_published_group(need: dict, as_of: date, lag: int) -> Answer:
         proj = _project_nth(rows, pub, count, after, as_of)
         if proj is None:
             return Answer(None, f"{head} —— **予約にまだ在りません**（作れば動きます）")
-        nth, rate, lead, slack = proj
+        nth, rate, lead, slack, warn = proj
         ready = nth + timedelta(days=settle + lag)
         return Answer(ready,
                       f"{head} —— **推定**（{rate:.2f}本/日 で作られ、作ってから公開まで "
-                      f"中央値 {lead}日）→ {count}本目の公開 **{nth:%m/%d}** "
+                      f"中央値 {lead}日{warn}）→ {count}本目の公開 **{nth:%m/%d}** "
                       f"＋ 落ち着く {settle}日 ＋ 実データの遅れ {lag}日"
                       f"（**±{slack}日**。伸び率からの推定なので、この幅の中の"
                       "書き換えは意味を持ちません）",
@@ -1091,11 +1134,11 @@ def _ans_group_key(need: dict, as_of: date) -> Answer:
             if proj is None:
                 return Answer(None, body + f" → **{g} がまだ1本もありません**"
                                            "（作れば動きます）")
-            nth_g, rate, lead, sl = proj
+            nth_g, rate, lead, sl, warn = proj
             nths.append(nth_g)
             slacks.append(sl)
             notes.append(f"{g} は**推定**（{rate:.2f}本/日・作ってから公開まで"
-                         f"中央値 {lead}日）→ {n}本目 {nth_g:%m/%d}")
+                         f"中央値 {lead}日{warn}）→ {n}本目 {nth_g:%m/%d}")
         nth = max(nths)
         band = max(slacks) if slacks else analytics_lag_band()
         return Answer(nth + timedelta(days=SJ.SETTLE_DAYS + SJ.ANALYTICS_LAG_DAYS),
