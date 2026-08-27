@@ -742,6 +742,97 @@ def _ans_published_group(need: dict, as_of: date, lag: int) -> Answer:
                   slack=band, slack_down=0)
 
 
+#: **Data API の日枠（10,000単位）を使う取り直しの道具。**
+#:
+#: `refresh:` がこれを指しているなら、**日枠が閉じている窓では取り直せません。**
+#: `needs.quota:` に `data_api` / `none` と書けば、この一覧より優先します。
+#:
+#: **中身を確かめてから足すこと。** `scripts/snapshot.py` は
+#: `youtube.videos().list(part="snippet,status,statistics")` を撃つので Data API
+#: です（同ファイルの註「571本 なら 12組 ＝ 12単位。日枠は10,000単位」）。
+#: **Analytics API と Reporting API は別の枠**なので、ここに入れないこと ——
+#: 入れると、読めるのに「読めません」と言う側に外れます。
+_DATA_API_REFRESH = ("scripts/snapshot.py",)
+
+
+def _quota_gate(need: dict, when: datetime, what: str) -> Answer | None:
+    """**その時刻に、計器がそもそも読めるか。** 読めるなら `None`。
+
+    ## なぜ要るか（2026-08-27 に踏んだ。**同じ日の3件目**）
+
+    この門は同じ日のうちに2段 直っています ——
+    朝に `at_time_jst`（日 → 時刻）、昼に `data_file:`（時計 → **点が在るか**）。
+    **3段目が抜けていました: その点を、取り直せるのか。**
+
+    実測 2026-08-27 18:5x JST、前提「1日に再生が付く本数の上限は
+    その日の本数（10本）であって、時刻の窓ではない」:
+
+        門の言い分   **今日の 22:00 JST に出ます。その時刻を過ぎた回が拾うこと**
+        取り直す道具  `python scripts/snapshot.py` ＝ `videos.list`（**Data API**）
+        Data API 日枠 **この窓で 403 を 29回 観測**。戻るのは **08/28 16:00 JST**
+
+    **22:00 JST に撃っても 403 です。** 読めるのはその 18時間 後。
+    つまり門は**偽の判定日**を出していて、しかも
+    「**その時刻を過ぎた回が拾うこと**」と名指しで指示していました ——
+    拾いに行った回は 403 を1つ買って帰ります。
+
+    ## なぜ `data_file:` では捕まらないか
+
+    `data_file:` は「**点が在るか**」を見ます。在りません、と正しく言えますが、
+    その次の行で「`python scripts/snapshot.py` を撃つこと」と**撃てない手**を
+    出します。**在るかどうかと、取れるかどうかは別の事実**です
+    （`upload_cap.day_quota()` の冒頭が、時計と単位について同じことを言っています）。
+
+    ## 覆る条件
+
+    `videos.list` が日枠の外に出たら（別の枠・別の口）、この門は黙るべきです ——
+    `_DATA_API_REFRESH` からその道具を外すこと。
+    逆に日枠を使う道具が増えたら、**中身を確かめてから**足すこと。
+    """
+    kind = str(need.get("quota") or "").strip()
+    if kind == "none":
+        return None
+    if not kind:
+        src = str(need.get("refresh") or "")
+        if not any(tool in src for tool in _DATA_API_REFRESH):
+            return None
+    elif kind != "data_api":
+        return None
+    try:
+        from src import upload_cap
+        q = upload_cap.day_quota()
+    except Exception:                                          # noqa: BLE001
+        return None                     # **読めないときは黙る**（門を増やさない）
+    if q.open:
+        return None
+    back = q.resets_at.astimezone(JST)
+    if back <= when:
+        return None                     # 枠のほうが先に戻る ＝ 時計だけの話
+    # **いま見ている枠の中の時刻についてしか、この門は何も言えません**
+    #     （2026-08-27 に検査が捕まえた）。過去の窓・先の窓の 22:00 に
+    #     「いまの窓が尽きている」を当てると、**関係のない要件まで日が動きます**
+    #     （`tests/test_deadline_data_file.py` が 2020-06-01 で組んでいて、
+    #      2件 落ちました。**中身は1行も変わっていません**）。
+    #     `tests/conftest.py` の `_measure_window_dynamic_off` と同じ形です。
+    try:
+        from src import upload_cap as _uc
+        head = _uc.window_start().astimezone(JST)
+    except Exception:                                          # noqa: BLE001
+        return None
+    if not (head <= when < back):
+        return None
+    how = str(need.get("refresh") or "").strip()
+    return Answer(
+        back.date(),
+        f"{what} —— ただし取り直す `{how}` は **Data API の日枠**を使い、"
+        f"**この窓ではもう尽きています**（403 を {q.hits}回 観測）。"
+        f" **{when:%m/%d %H:%M} JST に撃っても 403 です。**"
+        f" 枠が戻るのは **{back:%m/%d %H:%M} JST**",
+        todo=(f"**{when:%m/%d %H:%M} JST に拾いに行かないこと** —— 403 を1つ買って帰ります。"
+              f" 撃つのは **{back:%m/%d %H:%M} JST 以降**。"
+              f"  `{how}`  **条件は緩めないこと**"))
+
+
 def newest_point(path: Path) -> datetime | None:
     """`data/*.jsonl` の中で **いちばん新しい観測時刻**。読めなければ `None`。
 
@@ -874,6 +965,10 @@ def _ans_after(need: dict, lag: int) -> Answer:
                             int(hh), int(mm or 0), tzinfo=JST)
         except (TypeError, ValueError):
             return Answer(None, f"**`at_time_jst` が読めません**: {at!r}")
+        # **その時刻に、計器が読めるか**（`_quota_gate` の註。時計より先に見ること）
+        gate = _quota_gate(need, when, what)
+        if gate is not None:
+            return gate
         now = datetime.now(JST)
         if now < when:
             return Answer(
