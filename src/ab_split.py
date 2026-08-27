@@ -145,6 +145,25 @@ class Experiment:
     deadline: date
     #: 由来（`git log -S` で引ける commit）
     commit: str = ""
+    #: **この実験が比べている値**（2026-08-27 に足した。既定は `"engaged"`）。
+    #:
+    #: `src/ab_power.py` の当てっこは、**実データ 90本の engaged 比率**を
+    #: ブートストラップして作っています。**engaged で測っていない実験に
+    #: 当てると、要る本数が嘘になります。**
+    #:
+    #: 実測 2026-08-27 —— `request_form`（測るのは**登録**）の出力::
+    #:
+    #:     片群 72本で 1.3倍は当てられます（**要る本数は 25本**）
+    #:
+    #: 床 72本 は `judgeable.MEMBER_SOURCES` が**登録率 0.0318%**（3,066再生に
+    #: 1人）から引いた数です。engaged の当てっこが出す 25本 は
+    #: **約 10,500再生 ＝ 期待 3.3人** で、効きが2倍でも見分けられません。
+    #: そして `falsified_if` は「上回らなければ外れ（同点も外れ）」、
+    #: `next_if_false` は**腕ごと畳みます** —— つまりこの1行は、
+    #: **`--alloc` が3回 続けて名指ししている `sub_rate` の腕を、
+    #: 見分けられなかっただけで畳ませる形**で置かれていました。
+    #: `src/ab_split.floor_of()` が2026-08-27 に直したのと**同じ穴の4件目**です。
+    metric: str = "engaged"
 
 
 def _deadline_from_yaml(name: str, fallback: date) -> date:
@@ -226,6 +245,8 @@ EXPERIMENTS: dict[str, Experiment] = {
         landed=datetime(2026, 8, 26, 19, 8, 0, tzinfo=JST),
         deadline=_deadline_from_yaml("request_form", date(2026, 11, 9)),
         commit="",
+        # **登録で測ります**（engaged ではない）。上の `metric` の註を読むこと。
+        metric="登録",
     ),
 }
 
@@ -597,7 +618,10 @@ def report(as_of: date | None = None, stock: dict[str, dict[str, int]] | None = 
         lines.append("  " + c.short())
         if stock is not None and exp.name in stock:
             lines.extend(outlook(exp, stock[exp.name], as_of=as_of, counts=c).lines())
-        v = ab_power.verdict(c.floor)
+        # **`metric` を渡すこと。** engaged で測っていない実験に、engaged の
+        #     ブートストラップから出した「要る本数」を出すと嘘になります
+        #     （`Experiment.metric` の註。実測 2026-08-27 に `request_form` で踏んだ）。
+        v = ab_power.verdict(c.floor, metric=exp.metric)
         if v is not None:
             lines.extend(v.lines())
         if c.unknown_publish:
