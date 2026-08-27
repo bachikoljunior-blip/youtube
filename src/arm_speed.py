@@ -591,11 +591,40 @@ def forward(ready: dict[str, date] | None = None, doc: dict | None = None,
     **21件のうち 12件（57%）が1日に集中しています。** 分母の 22日 は
     「その速さで回っていた22日」ではなく、**16日 止まって1日で追いついた**姿です。
 
+    ## **窓を伸ばすほど下がるのは、予定表のせいではありません**（2026-08-27）
+
+    **`ratio` を「予定表が過去の N倍 遅い」と読まないこと。**
+    分子は「**いま開いている前提**のうち、窓の内側に判定日があるもの」で、
+    **`n_open` を超えられません。** 分母 `h` だけが伸びるので、
+    `per_day` は窓を伸ばすほど必ず下がります —— **予定表が完璧でも**です
+    （`h → ∞` で 0 に行きます）。だから `cap_per_day = n_open / h` を同じ行に出します。
+
+    実測 2026-08-27（開いた前提 19件・過去 θ 0.913/日）::
+
+        窓    実際      取りうる最大   実際/最大   印字していた倍率
+        14日  0.643/日  1.357/日      **47%**     0.70倍
+        30日  0.367/日  0.633/日      **58%**     0.40倍
+        60日  0.250/日  0.317/日      **79%**     0.27倍
+
+    **印字していた倍率と、実際/最大は、窓に対して逆を向いています。**
+    「遠くを見るほど悪い」と読める行が出ていましたが、実際は
+    **遠くを見るほど予定表は最大に近く、縛っているのは台帳の件数のほう**です。
+    60日窓で 0.27倍 が出るのは、19件しか無い台帳を60で割ったからで、
+    **予定を1日も動かせない**（最大 0.35倍）。**そこを直しに行くと空振りします** ——
+    長い窓の θ を上げる手は**前提を増やすこと**だけで、
+    それは `scripts/eta.py --alloc`（どの腕に立てるか）の側の話です。
+
     ## **予定表の側は下限です**（この註を消さないこと）
 
     数えているのは**いま開いている前提だけ**で、これから立つぶんは入っていません。
     実測では **1.5件/日 立って 0.83件/日 閉じています**（08/20〜08/26・git 履歴）。
     立ったものの一部は窓の内側で閉じるので、**本当の θ は予定表と過去の間**です。
+
+    **その凍結が効く度合いは、窓ごとに違います。** 前提を立ててから判定できるまでは
+    「16本 ＋ 落ち着き7日 ＋ Analytics 3日」＝ **最短でも2週間ほど**かかるので、
+    **14日窓では『これから立つぶん』はほとんど入りません**（凍結は無害に近い）。
+    60日窓では 90件（1.5/日 × 60）が入らないまま割っていて、**凍結が支配します。**
+    **短い窓ほど信用できる、というのはこの意味です。**
 
     **だから片方に置き換えないこと。** `eta.py` は `throughput()` を使い続け、
     **予定表の側を同じ行に並べます** —— `CLAUDE.md` が
@@ -631,11 +660,19 @@ def forward(ready: dict[str, date] | None = None, doc: dict | None = None,
     for h in horizons:
         n = sum(1 for d in days if 0 <= (d - today).days <= h)
         per = n / h
+        # --- **その窓で取りうる最大**（2026-08-27・最適化の回。下の註を読むこと） ---
+        #     分子は「**いま開いている前提**のうち、窓の内側に判定日があるもの」で、
+        #     **`n_open` を超えられません。** 分母 `h` だけが伸びるので、
+        #     `per_day` は窓を伸ばすほど必ず下がります —— **予定表が完璧でも**です。
+        cap = (n_open / h) if h else None
         out.append({"days": h, "n": n, "per_day": per,
-                    "ratio": (per / back) if back else None})
+                    "ratio": (per / back) if back else None,
+                    "cap_per_day": cap,
+                    "cap_ratio": (cap / back) if (back and cap is not None) else None,
+                    "head": (per / cap) if cap else None})
     return {"horizons": out, "dated": len(days),
             "undated": max(n_open - len(days), 0), "backward": back,
-            "missing": None}
+            "open": n_open, "missing": None}
 
 
 def forward_line(fw: dict) -> str | None:
@@ -655,13 +692,35 @@ def forward_line(fw: dict) -> str | None:
     if first.get("ratio") is not None and first["ratio"] >= 0.8:
         return None
     back = fw.get("backward")
+    # **`ratio` だけを並べないこと**（2026-08-27・最適化の回）。
+    #     分子は開いた前提の件数で頭打ち、分母だけが伸びるので、
+    #     **予定表が完璧でも窓を伸ばすほど `ratio` は下がります。**
+    #     「遠くほど悪い」と読める行が出て、直しに行くと空振りします ——
+    #     長い窓を上げる手は**前提を増やすこと**だけ（`eta.py --alloc`）。
+    #     だから `実際/取りうる最大` を同じ括弧に入れます。
     parts = ", ".join(
-        f"今後{h['days']}日 **{h['per_day']:.2f}/日**（{h['ratio']:.2f}倍）"
+        f"今後{h['days']}日 **{h['per_day']:.2f}/日**（{h['ratio']:.2f}倍"
+        + (f"／この窓で取りうる最大の **{h['head']:.0%}**" if h.get("head") else "")
+        + "）"
         for h in hs if h.get("ratio") is not None)
     extra = (f"／**日の付いていない開いた前提 {fw['undated']}件**は数えていません"
              if fw.get("undated") else "")
+    # **どこを直せば上がるか**を、同じ行に名指しする（裸の倍率を出さない）。
+    worst = min((h for h in hs if h.get("head") is not None),
+                key=lambda h: h["head"], default=None)
+    best = max((h for h in hs if h.get("head") is not None),
+               key=lambda h: h["head"], default=None)
+    how = ""
+    if worst is not None and best is not None:
+        how = (f" **上げ方は窓で違います**: 今後{worst['days']}日 は最大の"
+               f" {worst['head']:.0%} なので**予定を手前に倒せば上がります**"
+               f"（`scripts/queue_lag.py`）。今後{best['days']}日 は既に"
+               f" {best['head']:.0%} で、**台帳が {fw.get('open')}件 しか無いのが天井**"
+               f"（最大 {best['cap_ratio']:.2f}倍）—— **予定を動かしても上がりません。"
+               "前提を増やすこと**（`python scripts/eta.py --alloc`）。")
     return (f"### **上の日付は θ＝{back:.2f}/日（`closed_on` の過去の実測）に"
             f"反比例します。予定表から数えると {parts}** —— "
-            "予定表の側は**下限**です（これから立つ前提を数えていない）が、"
+            "予定表の側は**下限**です（これから立つ前提を数えていない。"
+            "**凍結は短い窓ほど無害**: 立ててから判定できるまで最短2週間）が、"
             "**この差のぶん、上の日付は早すぎます**"
-            f"（`src/arm_speed.forward()`{extra}）")
+            f"（`src/arm_speed.forward()`{extra}）。{how}")
