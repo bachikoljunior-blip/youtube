@@ -334,6 +334,53 @@ def test_判定できる日が期限より後なら_延ばせと言う(tmp_path,
     assert "期限を延ばすこと" in text
 
 
+def test_その日のうちで時刻が来ていなければ門に載せない(tmp_path, monkeypatch):
+    """**`ready_at`。`slips` `todo` `why` と同じ穴の4件目**（2026-08-28 に踏んだ）。
+
+    `Answer.ready` は日付なので、`_quota_gate` の
+    「枠が戻るのは **08/28 16:00 JST**」の **16:00 がここで落ちます。**
+    落ちると `split_overdue()` は `str(ready) <= today` だけで
+    「いま判定できる」に入れ、`[!] 外れています。**この回は verdict を出すこと**」を
+    鳴らします —— **その日の 00:00〜16:00 の回は全部**です。
+
+    実測 2026-08-28 03:1x: 同じ回に `status.py` は
+    「いま判定できる前提: **なし**」と正しく出していました。
+    """
+    from datetime import date as _d
+    from datetime import datetime as _dt
+    from datetime import timedelta as _td
+    from datetime import timezone as _tz
+    _seed(tmp_path, monkeypatch,
+          [_ship("2026-08-23T10:00", "fix: 直した")] * 3, OPEN_OVERDUE)
+    jst = _tz(_td(hours=9))
+    back = _dt.now(jst).replace(microsecond=0) + _td(hours=12)
+    monkeypatch.setattr(
+        drift, "_judge_state_by_claim",
+        lambda: {"冒頭が engaged を決める": ("ready", _d(2026, 8, 24), True, 0, back)})
+    text, drifting = drift.report("2026-08-24")
+    assert drifting is False, "**まだ読めない計器で、門を鳴らしています**"
+    assert "まだ判定できない前提" in text
+    assert "撃たないこと" in text
+    assert f"{back:%H:%M} JST 以降" in text
+
+
+def test_時刻が過ぎていれば従来どおり門に載せる(tmp_path, monkeypatch):
+    """**門を増やさないこと。** 16:00 を過ぎた回は、これまでどおり鳴ります。"""
+    from datetime import date as _d
+    from datetime import datetime as _dt
+    from datetime import timedelta as _td
+    from datetime import timezone as _tz
+    _seed(tmp_path, monkeypatch,
+          [_ship("2026-08-23T10:00", "fix: 直した")] * 3, OPEN_OVERDUE)
+    jst = _tz(_td(hours=9))
+    back = _dt.now(jst).replace(microsecond=0) - _td(hours=1)
+    monkeypatch.setattr(
+        drift, "_judge_state_by_claim",
+        lambda: {"冒頭が engaged を決める": ("ready", _d(2026, 8, 24), True, 0, back)})
+    _, drifting = drift.report("2026-08-24")
+    assert drifting is True
+
+
 def test_計器が読めないときは鳴らす側へ倒す(tmp_path, monkeypatch):
     """**黙るより鳴らす。**
 

@@ -291,9 +291,19 @@ def _judge_state_cached(_key: tuple) -> dict[str, tuple] | None:
                 # `Answer.slack` の註が名指ししている churn そのものです:
                 # 「3回とも『期限がずれています』と言われ、3回とも期限だけを書き換えた。
                 #   到達日は1日も動いていない」。
+                # **`ready_at`（その日のうちの、読めるようになる時刻）も持って上がること**
+                # （2026-08-28 04:0x。`slips` `todo` `why` と**同じ穴の4件目**）。
+                # `Answer.ready` は日付なので、`_quota_gate` の
+                # 「枠が戻るのは **08/28 16:00 JST**」の **16:00 がここで落ちます。**
+                # 落ちると `split_overdue()` は `str(ready) <= today` だけで
+                # 「いま判定できる」に入れ、`[!] 外れています。**この回は verdict を
+                # 出すこと**」を鳴らします —— **その日の 00:00〜16:00 の回は全部**です。
+                # 実測 2026-08-28 03:1x: 同じ回に `status.py` は
+                # 「いま判定できる前提: **なし**」と正しく出していました。
                 out[v.claim] = ("ready", v.ready,
                                 bool(getattr(v, "slips", True)),
-                                int(getattr(v, "slack", 0) or 0))
+                                int(getattr(v, "slack", 0) or 0),
+                                getattr(v, "ready_at", None))
             elif getattr(v, "unreachable", False):
                 out[v.claim] = ("unreachable", None)
             elif getattr(v, "unchecked", False):
@@ -357,8 +367,19 @@ def split_overdue(od: list[dict], today: str) -> tuple[list[dict], list[tuple[di
         kind, ready = got[0], got[1]
         slips = got[2] if len(got) > 2 else None
         slack = got[3] if len(got) > 3 else 0
+        ready_at = got[4] if (kind == "ready" and len(got) > 4) else None
         if kind == "ready":
-            if str(ready) <= today:
+            # **その日のうちで、まだ時刻が来ていない**（`ready_at`。2026-08-28 に足した）。
+            # 日付だけで見ると、**枠が 16:00 に戻る日の 00:00〜16:00 の回は全部**
+            # 「いま判定できる」に入り、この門が鳴ります。
+            if (ready_at is not None and str(ready) == today
+                    and ready_at > datetime.now(ready_at.tzinfo)):
+                blocked.append((
+                    h, f"判定できるのは {ready} の **{ready_at:%H:%M} JST 以降**"
+                       "（計器がそれまで読めません）",
+                    "**この回は撃たないこと** —— 403 を1つ買って帰るだけで、"
+                    f"答えは1分も早まりません。撃つのは **{ready_at:%m/%d %H:%M} JST 以降**"))
+            elif str(ready) <= today:
                 now.append(h)
             elif slips is False:
                 # **帯の中。`deadline_check.py` は「書き換えないこと」と言っています。**
