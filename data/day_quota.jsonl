@@ -4549,3 +4549,9 @@
 {"at": "2026-08-27T21:50:22+00:00", "detail": "channels.list mine", "by": "history.py:_scan"}
 {"at": "2026-08-27T21:50:24+00:00", "detail": "channels.list mine", "by": "history.py:_scan"}
 {"at": "2026-08-27T21:50:24+00:00", "detail": "channels.list mine", "by": "history.py:_scan"}
+{"at": "2026-08-27T21:57:06+00:00", "detail": "scheduled_publish_times", "by": "uploader.py:taken_publish_times"}
+{"at": "2026-08-27T21:57:08+00:00", "detail": "playlistItems.insert", "by": "uploader.py:_post_actions"}
+{"at": "2026-08-27T21:57:08+00:00", "detail": "thumbnails.set U65hKyPr7p8", "by": "uploader.py:_set_thumbnail"}
+{"at": "2026-08-27T21:57:12+00:00", "detail": "scheduled_publish_times", "by": "uploader.py:taken_publish_times"}
+{"at": "2026-08-27T21:57:15+00:00", "detail": "playlistItems.insert", "by": "uploader.py:_post_actions"}
+{"at": "2026-08-27T21:57:15+00:00", "detail": "thumbnails.set R6H23zZ8f-Y", "by": "uploader.py:_set_thumbnail"}
