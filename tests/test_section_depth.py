@@ -54,7 +54,34 @@ def test_実績が無い族は全体平均で扱う():
     """`family_perf.scorer` と同じ扱い。**未知の族を0点にすると探索が死にます。**"""
     mods = _mods({"unknown": 3, "x": 7, "y": 7, "z": 7})
     got = section_depth.candidates(mods, scores={}, base=2.0)
-    assert got and got[0][3] == pytest.approx(got[0][2] * 2.0)
+    # **掛かるのは生の余地ではなく `ROUND_YIELD` で頭打ちにした側**（2026-08-28）。
+    # ここが見ているのは「未知の族に `base` が掛かるか」で、頭打ちとは別の話です
+    # （頭打ちそのものは `test_掘り甲斐は1周で書ける節数で頭打ちになる`）。
+    room = min(got[0][2], section_depth.ROUND_YIELD)
+    assert got and got[0][3] == pytest.approx(room * 2.0)
+
+
+def test_掘り甲斐は1周で書ける節数で頭打ちになる():
+    """**「あと8節」も「あと3節」も、この回に書けるのは3節**（2026-08-28 に測って直した）。
+
+    頭打ちにしないと、余地の**大きさ**が族の実績を押し流します。実測:
+    `keihi`（掃引の新しい候補 96件・順番の値 46.5）が1位で、
+    `nenkin`（38件・**順番の値 60.5**）が4位でした。
+    **当たり率 0/23 の掃引の件数が、第1キーを独占していた**わけです。
+    """
+    mods = _mods({"jisseki_takai": 12, "jisseki_hikui": 3,
+                  "x": 20, "y": 20, "z": 20})
+    scores = {"jisseki_takai": 1.0, "jisseki_hikui": 0.5}
+    got = {r[0]: r for r in section_depth.candidates(mods, scores, base=1.0)}
+    # 生の余地は実績の低いほうが大きい（目標20節に対して あと8節 対 あと17節）。
+    # **頭打ちが無いと 8×1.0 ＝ 8.0 対 17×0.5 ＝ 8.5 で、実績の低いほうが勝ちます。**
+    # 頭打ちを入れると どちらも 3節 になり、勝つのは族の順番の値が高いほう。
+    assert got["jisseki_takai"][2] > section_depth.ROUND_YIELD, "この検査の前提（生の余地）が崩れた"
+    assert got["jisseki_hikui"][2] > got["jisseki_takai"][2], (
+        "この検査の前提（実績の低いほうが余地が大きい）が崩れた")
+    assert got["jisseki_takai"][3] > got["jisseki_hikui"][3], (
+        "余地の大きさが族の実績を押し流している（頭打ちが効いていない）")
+    assert got["jisseki_takai"][3] == pytest.approx(section_depth.ROUND_YIELD * 1.0)
 
 
 def test_報告は道を2つとも名指しする():
