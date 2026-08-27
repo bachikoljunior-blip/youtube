@@ -844,6 +844,20 @@ def answering_lines(rows: list[dict], now: datetime | None = None) -> list[str]:
     out.append(f"{bar}残り **{dead}本（{dead / max(tot, 1):.0%}）は、どの群にも入りません**"
                " —— 出せば再生は付きますが、**判定に要る本数は1本も進みません**"
                "（`eta.py`「腕が動くのは前提を1件閉じたときだけ」）")
+    # **この 79% を「作りすぎ」と読ませないこと**（2026-08-27 に自分で読み違えかけた）。
+    #   ここに居るのは**もう作って予約に入っている本**で、群は作った時刻で決まります
+    #   （`judgeable._members_by_request_form` の `built < exp.landed` で落ちる）。
+    #   **入れ替えても、後から群には入りません。** 一方これから作る本は、
+    #   足りない群に**自動で**入ります —— だから答えは「作るのをやめる」ではなく、
+    #   「作り続ける」です。**符号が逆になる読み違えなので、同じ所に書くこと。**
+    if short:
+        share = _short_share()
+        pct = f"（直近の実測 {share[0] / max(share[1], 1):.0%}）" if share else ""
+        out.append(f"{bar}  **これは「作りすぎ」ではありません** ——"
+                   " ここに居るのは**もう作って予約に入っている本**で、"
+                   "群は**作った時刻**で決まります（後から入れ替えても入りません）。"
+                   f"**これから作るショートは、足りない群に自動で入ります**{pct} ——"
+                   " だから答えは『作るのをやめる』ではなく**『作り続ける』**です")
     run: list[date] = []
     best: list[date] = []
     for d in days:
@@ -965,6 +979,9 @@ def supply_lines(short: list[tuple[str, str, int]]) -> list[str]:
     novel = sp.get("sweep_novel")
     if novel:
         body += f" ＋ 掃引の候補 {int(novel):,}件 × {_supply.SWEEP_YIELD:g}"
+    age = sw.get("age_hours")
+    if age is not None:
+        body += f"・掃引の点は **{age:.1f}時間前**"
     out.append(f"{bar}材料 **{total}本**（{body}）"
                + (f"・**{sp['dry_date']} に尽きる**" if sp.get("dry_date") else ""))
     usable = float(total)
@@ -984,7 +1001,10 @@ def supply_lines(short: list[tuple[str, str, int]]) -> list[str]:
                    " 枠が空いていても、いまの材料ではこの床に届きません"
                    "（＝その腕は凍ったまま。`python scripts/eta.py --alloc`）")
         und = sp.get("sweep_undecided")
-        fix = [f"{bar}  増やせる所: `python -m src.supply --measure`（掃引を測り直す・約47秒）"]
+        fix = [f"{bar}  **まず測り直すこと**: `python -m src.supply --measure`（約47秒・API 0単位）。"
+               "実測 2026-08-27、**0.4時間前**の点で「14本 足りない」と出たものが、"
+               "測り直すと **10本 余る**に変わりました（候補 568 → 735件）——"
+               "**この節の結論は、点の古さで符号ごと変わります**"]
         if und:
             fix.append(f"{bar}  掃引の候補のうち **判定できていない {int(und):,}件**"
                        "（照合できる点が無いだけで、**無いと分かったのではない**）"
@@ -1022,14 +1042,32 @@ def supply_lines(short: list[tuple[str, str, int]]) -> list[str]:
             # 「材料さえ足せば閉じる」と読めます —— 実測 2026-08-27 は
             # **材料も枠も、どちらも足りていません**でした（最後の1本が期限の翌日）。
             last, days_n = walk
+            # **`need` は「足りない群 ぜんぶ」の合計**です（`band_lines` と同じ数）。
+            #   足りない前提が2件 以上ある回は、**この1件だけの話ではありません** ——
+            #   その回は「全部を埋めるなら」と断ること。**黙って1件の話にしないこと。**
+            whose = ("" if len(keys) == 1
+                     else f"（{need}本 は**足りない群ぜんぶの合計**です・{len(keys)}件）")
             if last > due:
                 out.append(f"{bar}    [!] **帯に {need}本 を置くと最後の1本は"
                            f" {last}（+{days_n}日）で、期限を {(last - due).days}日"
                            " 越えます** —— 材料を足しても、この床は期限内に埋まりません"
-                           "（`band_lines` の帯／`src/day_cap.py` の上限）")
+                           f"（`band_lines` の帯／`src/day_cap.py` の上限）{whose}")
+                out.append(f"{bar}      この {(last - due).days}日 は**下限**です ——"
+                           " `live_plan()` は**今日から全部 詰めた場合**を解いています。"
+                           "実際は1周ずつ置くので、**遅れこそすれ早まりません**")
+                # **この行だけで期限を書き換えないこと**（2026-08-27 に危うくやりかけた）。
+                #   `scripts/deadline_check.py` は同じ床を**伸び率**から解いていて、
+                #   実測 08/27 は `request_form` を **09/30・±10日** と出し、
+                #   こちらの帯の歩き（10/01）と **1日** しか違いませんでした。
+                #   **あちらの帯の中なら、書き換えても届く日は1日も動きません。**
+                out.append(f"{bar}      **`python scripts/deadline_check.py` と"
+                           "突き合わせてから動くこと** —— あちらは同じ床を伸び率で解き、"
+                           "**帯（±N日）**を持っています。**その帯の中なら期限を"
+                           "書き換えないこと**（動かしても届く日は1日も動きません）。"
+                           "**床を下げるのは、どちらの場合も禁止**です")
             else:
                 out.append(f"{bar}    枠の側は間に合います"
-                           f"（最後の1本 {last} ≤ {due}）")
+                           f"（最後の1本 {last} ≤ {due}）{whose}")
     return out
 
 
