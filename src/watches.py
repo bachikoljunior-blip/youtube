@@ -417,12 +417,19 @@ def _k_ab_group(p: dict) -> Gauge:
     exp = ab_split.EXPERIMENTS[name]
     counts = ab_split.split_counts(exp)
     ready = counts.treated_ready
+    # **ここでも `MIN_PER_GROUP` を写さないこと**（2026-08-27 に潰した。**6件目**）。
+    #     この枝は `MEMBER_SOURCES` に無い実験だけが通るので、**いまは死に枝**です
+    #     （3件とも上で拾われます）。ただし床の違う実験がこれから足されたら、
+    #     **この2行が黙って 16本 で割ります** —— 上の註が防ごうとしている、
+    #     まさにその形。`floor_of()` は `MEMBER_SOURCES` に無い名前を
+    #     `MIN_PER_GROUP` に落とすので、**いまの値は1つも変わりません。**
+    floor = float(ab_split.floor_of(name))
     if not ready:
-        return Gauge(0, float(ab_split.MIN_PER_GROUP), "本",
+        return Gauge(0, floor, "本",
                      err=f"{p['experiment']}: 群が1つも立っていません")
     low = min(ready.values())
     note = " / ".join(f"{g} {n}本" for g, n in sorted(ready.items()))
-    return Gauge(low, float(ab_split.MIN_PER_GROUP), "本", note)
+    return Gauge(low, floor, "本", note)
 
 
 def _k_error_reasons(p: dict) -> Gauge:

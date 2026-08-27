@@ -725,10 +725,14 @@ def forward_line(fw: dict) -> str | None:
     extra = (f"／**日の付いていない開いた前提 {fw['undated']}件**は数えていません"
              if fw.get("undated") else "")
     # **どこを直せば上がるか**を、同じ行に名指しする（裸の倍率を出さない）。
-    worst = min((h for h in hs if h.get("head") is not None),
-                key=lambda h: h["head"], default=None)
-    best = max((h for h in hs if h.get("head") is not None),
-               key=lambda h: h["head"], default=None)
+    # **`cap_ratio` まで揃っている窓だけを候補にすること。** `back` が無い回は
+    #     `cap_ratio` が `None` になり、下の書式で `TypeError` を上げます ——
+    #     そこは `eta.py` 側が `except Exception` で飲むので、
+    #     **この行ごと黙って消えます**（消えたことは誰にも見えません）。
+    usable = [h for h in hs
+              if h.get("head") is not None and h.get("cap_ratio") is not None]
+    worst = min(usable, key=lambda h: h["head"], default=None)
+    best = max(usable, key=lambda h: h["head"], default=None)
     how = ""
     if worst is not None and best is not None:
         how = (f" **上げ方は窓で違います**: 今後{worst['days']}日 は最大の"
