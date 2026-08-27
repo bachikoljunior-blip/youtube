@@ -452,7 +452,20 @@ JST = timezone(timedelta(hours=9))
 # **手で語彙を並べていません** —— 日誌の実物から引いた4つの形だけです
 # （`noise_tokens()` の教訓と同じ。ただしこちらは語ではなく**文の印**なので、
 # `src/` から引ける実物がありません。増えたらここに足すこと）。
-QUOTA_MARK_RE = re.compile(r"JST\s*16:00|16:00\s*(?:以降|より前)|日枠|403")
+# **`16:00 JST 以降` の形も読むこと**（2026-08-27 に足した）。ここは長らく
+# `JST 16:00` と `16:00 以降` の2つしか見ておらず、**申し送りが実際に使う
+# 「【08/27 16:00 JST 以降の回へ】」に当たっていませんでした**（順が逆）。
+# 実害が出ていなかったのは、その項目がたいてい「日枠」か「403」も
+# 一緒に書いていたからで、**規則が効いていたのではありません。**
+QUOTA_MARK_RE = re.compile(
+    r"JST\s*16:00|16:00\s*JST|16:00\s*(?:以降|より前)|日枠|403")
+
+#: 「【14:00 JST 以降の回へ】」の形。**時計で塞がっている申し送り**を拾う。
+#: `QUOTA_MARK_RE` は日枠（16:00）しか見ていないので、
+#: **それ以外の時刻で塞がっているものは、いままで上位に残っていました**
+#: （2026-08-27 12:3x の回が踏んだ —— 持ち越しの上位4件が全部
+#: 「【14:00 JST 以降の回へ】」で、12:3x に始まった回では1件も打てなかった）。
+CLOCK_MARK_RE = re.compile(r"(\d{1,2}):(\d{2})\s*JST\s*以降")
 
 
 def items_of(body: list[str]) -> list[list[str]]:
@@ -520,6 +533,56 @@ def quota_blocked(blocks: list[tuple[str, list[str], int]], tok: str) -> bool:
             if QUOTA_MARK_RE.search("\n".join(item)):
                 marked += 1
     return total >= 2 and marked == total
+
+
+def clock_blocked(blocks: list[tuple[str, list[str], int]], tok: str,
+                  now: datetime | None = None) -> float | None:
+    """その語を言っている項目が、**1つ残らず**「HH:MM JST 以降の回へ」で、
+    **その時刻がまだ来ていない**か。来ていなければ、あと何時間かを返す。
+
+    ## なぜ要るか（2026-08-27 12:3x に踏んだ。**`quota_blocked` の穴**）
+
+    `quota_blocked()` は **日枠（16:00）だけ**を見ています。ところが
+    申し送りは他の時刻でも塞がります —— この日の持ち越しの**上位4件**は
+    全部これでした:
+
+        4回  09:00 より前も生きるか / PROVEN_FROM_MIN / 生きた本数 / day_cap
+             → どれも「**【08/27 14:00 JST 以降の回へ】** その時刻に判定できます」
+
+    **12:3x に始まった回からは、1件も打てません。** それでも
+    `quota_blocked()` は 16:00 しか知らないので、4件とも一覧の**いちばん上**に
+    並びました。`docs/trigger_main.md` §2.7 は「持ち越しから選ぶのが既定」と
+    言っているので、**既定に従うと、その回は何も選べない**ことになります。
+
+    ## 同じ扱いにする理由
+
+    塞いでいるのが単位か時計かは、**選ぶ側には関係ありません** ——
+    「この回では打てない」という一点だけが効きます。だから
+    `quota_blocked()` と同じく**沈めるだけで、消しません。**
+    時刻が来た回では逆に上へ戻ります（`None` が返るので）。
+
+    ## 「全部」で見るのと、1件では沈めないのは `quota_blocked()` と同じ
+    """
+    now = now or datetime.now(timezone.utc)
+    jst = now.astimezone(JST)
+    total, waits = 0, []
+    for _date, body, _start in blocks:
+        for item in items_of(body):
+            if tok not in tokens(item):
+                continue
+            total += 1
+            m = CLOCK_MARK_RE.search("\n".join(item))
+            if not m:
+                continue
+            hh, mm = int(m.group(1)), int(m.group(2))
+            if not (0 <= hh <= 23 and 0 <= mm <= 59):
+                continue
+            gate = jst.replace(hour=hh, minute=mm, second=0, microsecond=0)
+            if gate > jst:
+                waits.append((gate - jst).total_seconds() / 3600)
+    if total < 2 or len(waits) != total:
+        return None
+    return min(waits)
 
 
 def quota_is_back(now: datetime | None = None) -> bool:
@@ -671,15 +734,32 @@ def main() -> int:
         # **上位が必ず 403 で落ちる語で埋まっていると、選択そのものを誤らせます。**
         back = quota_is_back()
         blocked = {t for t in carried if quota_blocked(blocks, t)}
+        # **時計で塞がっているものも同じ扱い**（2026-08-27 に足した。`clock_blocked()`）。
+        # 塞いでいるのが単位か時計かは、選ぶ側には関係ありません。
+        clocked = {t: h for t in carried
+                   if (h := clock_blocked(blocks, t)) is not None}
+        def _sinks(tok: str) -> bool:
+            return ((tok in blocked) and not back) or (tok in clocked)
         order = sorted(carried.items(),
-                       key=lambda kv: ((kv[0] in blocked) and not back, -len(kv[1])))
+                       key=lambda kv: (_sinks(kv[0]), -len(kv[1])))
         for tok, dates in order:
             tail = "  ← **一度閉じた後の再発**" if tok in closed else ""
             if tok in blocked:
                 tail += ("  ← **いまなら潰せます**（403 をまだ観測していません）" if back else
                          f"  ← **いまは潰せません**（単位枠。窓が変わるまであと {hours_to_quota():.1f} 時間）")
+            # **印を二重に付けないこと。** 単位枠で沈めた語に時刻の印まで足すと、
+            # 同じ1行に「いまは潰せません」が2回 出ます（2026-08-27 に実測）。
+            if tok in clocked and not (tok in blocked and not back):
+                tail += (f"  ← **いまは潰せません**（申し送りが時刻を指定。"
+                         f"あと {clocked[tok]:.1f} 時間）")
             print(f"  {len(dates)}回  {tok}{tail}")
             print(f"        {' / '.join(dates)}")
+        clock_only = [t for t in clocked if not (t in blocked and not back)]
+        if clock_only:
+            print(f"\n  **この {len(clock_only)}件 は、申し送り自身が「【HH:MM JST 以降の回へ】」"
+                  f"と書いているものです。**")
+            print("  **この回では打てません。**（日枠とは別の塞がり方です）"
+                  "時刻が来た回では、逆に上へ戻ります。")
         if blocked and not back:
             print(f"\n  **下の {len(blocked)}件 は日枠（`videos.update` / `thumbnails.set`）待ちで、"
                   f"この回では 403 になります。**")
