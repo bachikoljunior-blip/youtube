@@ -56,15 +56,26 @@ class _FakeDayCap:
         self._first_pub = first_pub
         self._booked = booked
 
-    def window(self):
-        return {"verdict": self._verdict, "first_pub": self._first_pub}
+    #: **`_split_day_window_uncached()` は当てはめ済みの2つのモデルの値も渡します**
+    #  （2026-08-27。渡さないと `booked_split_day()` が `window()` をもう1度 呼び、
+    #   `data/views.jsonl` を2度 読みます）。ここは受け取るだけ。
+    MIN_AGE_H = 6.0
 
-    def booked_split_day(self, first_pub):
+    def window(self):
+        return {"verdict": self._verdict, "first_pub": self._first_pub,
+                "C": 10, "T": "13:30"}
+
+    def booked_split_day(self, first_pub, c=None, t_min=None):
         assert first_pub == self._first_pub
+        assert (c, t_min) == (10, 13 * 60 + 30), (
+            "**当てはめ済みの値を渡していません。**"
+            "`booked_split_day()` が `window()` を呼び直します")
         return self._booked
 
 
-BOOKED = {"day": "2026-09-02", "before": 2, "total": 10, "answer": "2026-09-07"}
+BOOKED = {"day": "2026-09-02", "before": 2, "total": 10, "answer": "2026-09-07",
+          "answer_at": "19:30", "count": 10, "window": 7, "gap": 3,
+          "ties": 0, "kept": 10, "running": False}
 
 
 def _install(monkeypatch, fake):
@@ -135,6 +146,9 @@ def test_理由に本数と時刻が入っていること(monkeypatch):
     assert "10本" in why and "2本" in why and "08:59" in why, (
         f"止めた理由に実測が入っていません: {why}")
     assert "2026-09-07" in why, "読める日が書かれていません"
+    # **どちらのモデルが何本を予測しているか**（2026-08-27 に足した）——
+    # 「差 3本 でしか切り分からない日」を、止められた側が自分で読めること。
+    assert "差 3本" in why and "18本" not in why
 
 
 def test_手の一覧のほうが先に当たること(monkeypatch):
