@@ -615,11 +615,43 @@ def theta_response(today: str, closed: int, soonest: str | None,
     else:
         out.append("  この役の周の間隔が測れません（`data/rounds.jsonl` に印が足りません）")
     out.append(
-        "  **1周で応えるのは予定表の θ**（`src/arm_speed.forward()`・"
-        "`scripts/queue_lag.py` が印字）—— 入れ替え・期限・群への割り当ては"
-        "**その回のうちに動きます**"
+        "  **1周で応えるのは予定表の θ**（`src/arm_speed.forward()`）——"
+        " 入れ替え・期限・群への割り当ては**その回のうちに動きます**"
     )
+    out += _forward_theta_line()
     return out
+
+
+def _forward_theta_line() -> list[str]:
+    """**代わりに読む数を、同じ画面に出す。**（`src/arm_speed.forward()` の14日窓）
+
+    **これを出さないと、上の行は「読むな」しか言っていません。**
+    `queue_lag.py` も同じ数を出しますが、あちらは長い出力の真ん中で、
+    しかも**入れ替えを解いてから**なので数十秒かかります。ここは台帳だけ
+    （API 0単位・予約も読みません）。
+
+    **窓は14日だけ**にします —— `forward()` の註が
+    「短い窓ほど信用できる」「長い窓の `ratio` は台帳の件数で決まる」と
+    言っているので、**1周ごとに読む数として意味があるのは短い窓だけ**です。
+
+    落ちても drift 全体は止めません（**採点器のために門を壊さないこと**）。
+    """
+    try:
+        sys.path.insert(0, str(ROOT))
+        from src import arm_speed  # noqa: PLC0415
+        fw = arm_speed.forward(_ready_by_claim())
+    except Exception as exc:  # pragma: no cover - 台帳が読めない回
+        return [f"    （予定表の θ が出せません: {exc}）"]
+    if fw.get("missing"):
+        return [f"    （予定表の θ が出せません: {fw['missing']}）"]
+    for h in fw.get("horizons") or []:
+        if h.get("days") == 14:
+            return [
+                f"    いまの予定表の θ（14日窓）: **{h['per_day']:.2f}/日**"
+                f"（判定日の付いた前提 {h['n']}件）"
+                " ← **この数を JOURNAL に残すこと。次の回はここと比べます**"
+            ]
+    return []
 
 
 def supply_report(today: str, horizon: int = SUPPLY_HORIZON) -> tuple[str, bool]:

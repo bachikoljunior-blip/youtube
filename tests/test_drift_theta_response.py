@@ -114,3 +114,30 @@ def test_閉じた前提が0件でも落ちない(tmp_path, monkeypatch):
     ])
     out = "\n".join(drift.theta_response("2026-08-27", 0, None))
     assert "0.00件/日" in out
+
+
+def test_代わりに読む数を同じ画面に出す(tmp_path, monkeypatch):
+    """**「読むな」だけでは、次の回は何も比べられません。**
+
+    予定表の θ（14日窓）を同じ節に出すのが、この検査の守るもの。
+    """
+    _rounds(tmp_path, monkeypatch, [
+        "2026-08-27T00:00:00+00:00",
+        "2026-08-27T01:00:00+00:00",
+    ])
+    monkeypatch.setattr(drift, "_forward_theta_line",
+                        lambda: ["    いまの予定表の θ（14日窓）: **0.64/日**"])
+    out = "\n".join(drift.theta_response("2026-08-27", 6, "2026-08-30"))
+    assert "予定表の θ（14日窓）" in out
+
+
+def test_予定表のθが出せなくても門を壊さない(monkeypatch):
+    """**採点器のために、漂流の門を落とさないこと。**"""
+    import src.arm_speed as arm_speed
+
+    def boom(*a, **kw):
+        raise RuntimeError("台帳が読めません")
+
+    monkeypatch.setattr(arm_speed, "forward", boom)
+    out = "\n".join(drift._forward_theta_line())
+    assert "出せません" in out
