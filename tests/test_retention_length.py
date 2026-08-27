@@ -67,3 +67,29 @@ def test_導出で埋めた本には旗が立つ():
     vs = retention.videos()
     derived = [v for v in vs if v["尺_導出"]]
     assert derived, "いまの走査は `尺` を持たないので、全部 導出のはずです"
+
+
+def test_四分位のばらつきは尾に負けない():
+    """**変動係数は尾に負けます**（2026-08-27・生き返らせた初日に踏んだ）。
+
+    実測 n=87: 秒の変動係数 0.429 / 割合 0.542 で「どちらとも言えません」と
+    出ていましたが、同じ87本の **87% は 4〜7秒 の3秒の窓**に入っていました。
+    引きずっていたのは 24.2秒 が1本・12秒台 が2本。
+    """
+    # 真ん中がそろっていて、尾が1本だけ長い分布
+    xs = [5.0, 5.1, 5.2, 5.3, 5.4, 5.5, 60.0]
+    assert retention._spread(xs) > 1.0, "変動係数は尾で膨らむ（これが問題の姿）"
+    assert retention._robust_spread(xs) < 0.1, "四分位は尾に引きずられない"
+
+
+def test_四分位は本数が足りないと_inf():
+    """**4本 未満で四分位を出さないこと。** 出すと1本で向きが変わります。"""
+    assert retention._robust_spread([1.0, 2.0, 3.0]) == float("inf")
+    assert retention._robust_spread([]) == float("inf")
+
+
+def test_quantile_が端で壊れない():
+    xs = [1.0, 2.0, 3.0, 4.0, 5.0]
+    assert retention._quantile(xs, 0.0) == 1.0
+    assert retention._quantile(xs, 1.0) == 5.0
+    assert retention._quantile(xs, 0.5) == 3.0

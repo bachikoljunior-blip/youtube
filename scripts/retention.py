@@ -199,7 +199,13 @@ def half_point(curve: list, length: int) -> tuple[float, float] | None:
 
 
 def _spread(xs: list[float]) -> float:
-    """ばらつき（変動係数）。**単位が違うものを比べるので、平均で割る。**"""
+    """ばらつき（変動係数）。**単位が違うものを比べるので、平均で割る。**
+
+    **外れ値に弱いことを承知で残しています**（2026-08-27）——
+    尺の固まり具合を見る側（`_spread(lengths)`）は、外れ値も込みで
+    「振れているか」を知りたいので、こちらが正しい道具です。
+    **落差の位置の比較には `_robust_spread()` を使うこと** —— 下の理由。
+    """
     if len(xs) < 2:
         return float("inf")
     m = sum(xs) / len(xs)
@@ -207,6 +213,55 @@ def _spread(xs: list[float]) -> float:
         return float("inf")
     var = sum((x - m) ** 2 for x in xs) / (len(xs) - 1)
     return var ** 0.5 / m
+
+
+def _quantile(xs: list[float], p: float) -> float:
+    ys = sorted(xs)
+    i = (len(ys) - 1) * p
+    lo, hi = int(i), min(int(i) + 1, len(ys) - 1)
+    return ys[lo] + (ys[hi] - ys[lo]) * (i - lo)
+
+
+def _robust_spread(xs: list[float]) -> float:
+    """**四分位範囲 ÷ 中央値。** 外れ値に引きずられないばらつき。
+
+    ## なぜ要るか（2026-08-27。**生き返らせた初日に踏んだ**）
+
+    `_spread`（変動係数）は**平均と二乗**を使うので、**尾が長い分布で壊れます。**
+    この道具が生き返った初回（n=87・ショート）の実測:
+
+        秒    4.2〜24.2  中央 5.2   変動係数 **0.429**   四分位範囲÷中央 **0.234**
+        割合   8%〜 97%  中央 17%   変動係数 **0.542**   四分位範囲÷中央 **0.294**
+
+    変動係数どうしの比は **1.27倍**しかなく、この関数の呼び手は
+    **「どちらとも言えません」**と印字しました（門は `sv < rv * 0.8`）。
+
+    **ところが、同じ87本のヒストグラムはこうです:**
+
+        4〜5秒 **36本** ／ 5〜6秒 **32本** ／ 6〜7秒 8本
+        → **4〜7秒に 76本 ＝ 87%**
+
+    **87% が3秒の窓に入っているのに「どちらとも言えない」と出ていました。**
+    引きずっていたのは **24.2秒 が1本・12秒台 が2本**の尾です。
+    **データは黙っていません。計器が外れ値に負けていました。**
+
+    **これは `docs/JOURNAL.md` 2026-08-27 の調査が旧21本で出した
+    「秒でそろって、割合ではそろわない」を、現行87本で裏づけます** ——
+    あちらの数（0.156 対 0.405）は変動係数で、
+    **旧21本にはたまたま尾が無かった**ということです。
+
+    ## 覆る条件
+
+    四分位範囲は**真ん中の半分しか見ません**。尾のほうに意味がある問い
+    （「いちばん遅く落ちる本は何が違うのか」）には使わないこと。
+    そのときは生の並びを見ること（この道具は1本ずつ全部 印字しています）。
+    """
+    if len(xs) < 4:
+        return float("inf")
+    med = _quantile(xs, 0.5)
+    if not med:
+        return float("inf")
+    return (_quantile(xs, 0.75) - _quantile(xs, 0.25)) / med
 
 
 def report(vs: list[dict], cache: dict) -> None:
@@ -250,11 +305,18 @@ def report(vs: list[dict], cache: dict) -> None:
               "`config/watches.yaml` の `維持率-尺のばらつき` が見張っていて、"
               "満ちた回の `scripts/status.py` に出ます。**")
     elif len(secs) >= 4:
-        sv, rv = _spread(secs), _spread(ratios)
+        # **判定は四分位で。** 変動係数は尾に負けます（`_robust_spread` の実測:
+        # 87% が3秒の窓に入っているのに「どちらとも言えない」と出ていました）。
+        sv, rv = _robust_spread(secs), _robust_spread(ratios)
+        cv_s, cv_r = _spread(secs), _spread(ratios)
         print(f"\n  最大の落差の位置: 秒で見ると {min(secs):.1f}〜{max(secs):.1f}秒"
-              f"（ばらつき {sv:.2f}） / 割合で見ると "
+              f"（**四分位 {_quantile(secs, .25):.1f}〜{_quantile(secs, .75):.1f}秒**"
+              f"・ばらつき {sv:.2f}） / 割合で見ると "
               f"{min(ratios) * 100:.0f}〜{max(ratios) * 100:.0f}%"
-              f"（ばらつき {rv:.2f}）")
+              f"（**四分位 {_quantile(ratios, .25) * 100:.0f}〜"
+              f"{_quantile(ratios, .75) * 100:.0f}%**・ばらつき {rv:.2f}）")
+        print(f"     （変動係数で見ると 秒 {cv_s:.2f} / 割合 {cv_r:.2f} ——"
+              f" **こちらは尾に負けます。判定には使いません**）")
         if sv < rv * 0.8:
             print("  → **秒のほうがそろっています。落ちる時刻は尺に依存しない。**")
             print("     **尺を縮めても、落ちる時刻は動きません**"
@@ -269,7 +331,17 @@ def report(vs: list[dict], cache: dict) -> None:
 
     # **尺を振らなくても言えること。** 落差の位置そのもの。
     if secs:
-        print(f"\n  **最大の落差は全本 {min(secs):.1f}〜{max(secs):.1f}秒に集まっています。**")
+        # **「全本 a〜b秒に集まっています」は、集まり方ではなく幅の話でした**
+        # （2026-08-27）。実測 n=87 で、この行は「4.2〜24.2秒」と出ます ——
+        # **24.2秒 は1本**で、実際は **4〜7秒 に 87%** が入っています。
+        # 幅を「集まっている」と読むと、尾の1本が結論を薄めます。
+        # **数えるのは、中央の±中央値半分に何%が入るか。**
+        med = _quantile(secs, 0.5)
+        lo, hi = med * 0.5, med * 1.5
+        inside = sum(1 for x in secs if lo <= x <= hi)
+        print(f"\n  **最大の落差は {lo:.1f}〜{hi:.1f}秒 に "
+              f"{inside}本 / {len(secs)}本 ＝ **{inside * 100 // len(secs)}%** が入ります**"
+              f"（中央 {med:.1f}秒・全体では {min(secs):.1f}〜{max(secs):.1f}秒）。")
         print("  旧設計の1枚目は 7.9〜13.8秒あったので、"
               "**落ちている時点でまだ画面が変わっていません。**")
         print("  つまり視聴者は「次の画面」を見る前に抜けている"
