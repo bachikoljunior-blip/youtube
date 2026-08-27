@@ -58,8 +58,79 @@ CACHE = config.ROOT / "data" / "retention.json"
 SNAP = config.ROOT / "data" / "scan.jsonl"
 
 
+def length_of(row: dict) -> float | None:
+    """その本の尺（秒）。**3つの出どころを、この順で当てます**（2026-08-27 に足した）。
+
+    ## なぜ要るか —— **道具が黙って死んでいました**
+
+    ここは長らく `r.get("尺")` の**1本道**でした。ところが
+    **`data/scan.jsonl` の最新の一枚には `尺` が1本も入っていません** ——
+    実測 2026-08-27: **130本 中 0本**。だから `videos()` は
+    **130 → 0本** を返し、`python scripts/retention.py` は
+    **見出しだけ出して、1本も描かずに終わります。**
+
+    **落ちません。空で正常終了します。** これがいちばん見つけにくい壊れ方で、
+    **最終更新は 2026-08-20 のまま**、`data/retention.json` の21本は
+    **全部 2026-08-15 以前 ＝ 旧設計**でした。つまり
+    **いまの作りの維持率カーブは、1本も測られていません**
+    （`docs/JOURNAL.md` 2026-08-27 の読み取り専用の調査が見つけた）。
+
+    ## 3つの出どころ
+
+        1. 走査の `尺`                          いちばん確か。**いまは 0本**
+        2. 控え `data/uploaded.jsonl` の `duration_s`   投稿した瞬間に書かれる
+                                                （`src/watches._durations()` が正本）
+        3. **`averageViewDuration ÷ averageViewPercentage × 100`**  ← 導出
+
+    実測 2026-08-27 の重なり: 1 は **0本**、2 は走査の130本と **1本も重ならず**
+    （控えに尺が在る87本は、まだ走査に載っていない新しい本）、
+    **3 だけが 123/130本** を埋めます。**3 が無いとこの道具は生き返りません。**
+
+    ## 3 の誤差を、隠さないこと
+
+    `averageViewDuration` は**秒の整数**で返ります。だから導出した尺は
+    **±0.5 ÷ (割合/100) 秒**ずれます —— 30秒・割合76.85% の本で **±0.65秒**。
+    カーブの横軸（`点 × 尺`）に使うぶんには足りますが、
+    **「4.6〜8.6秒に落差が集まる」のような秒の議論に使うときは、この幅を書くこと。**
+    割合が 0 か欠けている本は `None` を返します（**当て推量をしない**）。
+
+    ## 覆る条件
+
+    走査がまた `尺` を持つようになったら 1 で埋まるので、
+    **3 は自動で使われなくなります**（順番がそうなっています）。**消さないこと** ——
+    走査の欄は 2026-08-27 に実際に消えており、また消えます。
+    """
+    got = row.get("尺")
+    if got:
+        try:
+            return float(got)
+        except (TypeError, ValueError):
+            pass
+    vid = row.get("id")
+    if vid:
+        try:
+            from src import watches
+            sec = watches._durations().get(vid)
+            if sec:
+                return float(sec)
+        except Exception:                                      # noqa: BLE001
+            pass
+    dur, pct = row.get("averageViewDuration"), row.get("averageViewPercentage")
+    try:
+        if dur and pct and float(pct) > 0:
+            return float(dur) / float(pct) * 100.0
+    except (TypeError, ValueError):
+        pass
+    return None
+
+
 def videos() -> list[dict]:
-    """走査の最後の一枚から、再生のあった本を尺つきで拾う。"""
+    """走査の最後の一枚から、再生のあった本を尺つきで拾う。
+
+    **尺は `length_of()` が3つの出どころから当てます**（2026-08-27）——
+    走査の `尺` だけを見ていた頃、この関数は **130本 → 0本** を返し、
+    道具が**空で正常終了**していました。理由は `length_of()` の docstring。
+    """
     rows: dict[str, dict] = {}
     lines = [l for l in SNAP.read_text(encoding="utf-8").splitlines() if l.strip()]
     vals = json.loads(lines[-1])["values"]
@@ -67,7 +138,18 @@ def videos() -> list[dict]:
         if k.startswith("動画.") and k.count(".") >= 2:
             _, vid, m = k.split(".", 2)
             rows.setdefault(vid, {"id": vid})[m] = v
-    out = [r for r in rows.values() if r.get("views", 0) > 0 and r.get("尺")]
+    out = []
+    for r in rows.values():
+        if not r.get("views", 0) > 0:
+            continue
+        sec = length_of(r)
+        if not sec:
+            continue
+        # **導出で埋めたかを残す**（`length_of()` の誤差の節）。
+        # 秒の議論に使う回は、この旗を見て幅を書くこと。
+        r["尺_導出"] = not r.get("尺")
+        r["尺"] = sec
+        out.append(r)
     return sorted(out, key=lambda r: -r["views"])
 
 
