@@ -466,19 +466,29 @@ def record_estimates(vs: list["Verdict"], path: Path | None = None,
     p = path or RATE_LOG
     day = (as_of or today_jst()).isoformat()
     seen: set[tuple[str, str]] = set()
+    # **`have` の無い今日の行は、まだ「済み」にしません**（2026-08-27 夜）。
+    #   `have` を控え始めた日は、その日の行が既に `have` 無しで在ります。
+    #   そこを飛ばすと、**最初の点が1日 遅れて立つ** ＝ 止まりに気づけるのが
+    #   1日 遅くなります。**1鍵1日1行は保ったまま**、欄の足りない行だけ
+    #   もう一度 書かせます（`_recent_rate` は `have` の無い行を捨てるので、
+    #   古いほうは残っていても害がありません）。
+    #
+    # **ただし「もう一度 書かせる」の条件が半分でした**（2026-08-28 に直した）。
+    #   古い行に `have` が無いことだけを見て、**新しい行が `have` を持つか**を
+    #   見ていませんでした。`have` が None のままの鍵（数を持たない要件）は、
+    #   撃つたびに `have: null` の行を1本ずつ足します ——
+    #   **控えが「この機械が何回 撃たれたか」を数える**、この関数の註が
+    #   まさに禁じている形です。`tests/test_deadline_band_from_rate_scatter.py::
+    #   test_控えは1鍵1日1行` はそこで赤のままでした。
+    refill: set[str] = set()
     if p.exists():
         for ln in p.read_text(encoding="utf-8").splitlines():
             try:
                 r = json.loads(ln)
             except ValueError:
                 continue
-            # **`have` の無い今日の行は、まだ「済み」にしません**（2026-08-27 夜）。
-            #   `have` を控え始めた日は、その日の行が既に `have` 無しで在ります。
-            #   そこを飛ばすと、**最初の点が1日 遅れて立つ** ＝ 止まりに気づけるのが
-            #   1日 遅くなります。**1鍵1日1行は保ったまま**、欄の足りない行だけ
-            #   もう一度 書かせます（`_recent_rate` は `have` の無い行を捨てるので、
-            #   古いほうは残っていても害がありません）。
             if str(r.get("at")) == day and r.get("have") is None:
+                refill.add(str(r.get("key")))
                 continue
             seen.add((str(r.get("key")), str(r.get("at"))))
     add = []
@@ -487,6 +497,11 @@ def record_estimates(vs: list["Verdict"], path: Path | None = None,
             if not a.rate_key or a.rate is None:
                 continue
             if (a.rate_key, day) in seen:
+                continue
+            # **欄を埋められない書き直しはしません。** 今日の行が `have` 無しで
+            # 在って、こちらも `have` を持っていないなら、書いても同じ行が増えるだけ。
+            if a.rate_key in refill and a.have is None:
+                seen.add((a.rate_key, day))
                 continue
             seen.add((a.rate_key, day))
             add.append({"at": day, "key": a.rate_key, "rate": round(a.rate, 6),
