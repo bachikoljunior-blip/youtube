@@ -106,3 +106,73 @@ def test_metric_の既定は_engaged_であること():
     assert ab_power.Verdict(
         sample=5, n_per_group=16, ratio=1.3, null_median=0.5,
         null_ranksum=0.2, power=0.8, need_n=16).metric == "engaged"
+
+
+# --- **`status.py` にも同じ穴があった**（2026-08-27・同じ穴の5件目） ---
+#
+# `scripts/status.py` の `_ab_power_verdict()` は `lru_cache(maxsize=1)` で
+# `verdict(_ab.MIN_PER_GROUP)` を**1回だけ**撃ち、その1つを
+# **全部の実験の下に**印字していました。註にも「実験ごとに同じ数が出ます」と
+# 書いてあり、**当時は本当でした。**
+#
+# **`ab_split.floor_of()` が入った 2026-08-27 に、偽になりました。**
+# `request_form` の床は 72本 です。それでもここは 16本 の数を出し続けていて、
+# つまり `status.py`（**CLAUDE.md が「毎回 読む」と言っている道具**）の
+# `request_form` の節には::
+#
+#     床でない本数（16）で、  測っていない値（engaged）で 解いた検出力
+#
+# が出ていました。**2つとも間違いです。** `--outlook` の側は同じ日に
+# 直しましたが、**読まれる回数の多いこちらが残っていました。**
+
+
+def test_status_の当てっこが_実験ごとの床と値で撃たれること():
+    """**`status.py` は毎回 読まれます。** ここが `--outlook` より重い。"""
+    import importlib.util
+    import sys
+
+    from src import ab_split as ab
+
+    spec = importlib.util.spec_from_file_location(
+        "t_status", ab.ROOT / "scripts" / "status.py")
+    st = importlib.util.module_from_spec(spec)
+    sys.modules["t_status"] = st
+    spec.loader.exec_module(st)
+
+    for name, exp in ab.EXPERIMENTS.items():
+        c = ab.split_counts(exp)
+        v = st._ab_power_verdict(c.floor, exp.metric)
+        assert v is not None, f"{name} の当てっこが出ていません"
+        assert v.n_per_group == c.floor, (
+            f"**{name} の床は {c.floor}本 なのに、{v.n_per_group}本 で解いています。**"
+            " `lru_cache(1)` で全部に同じ数を当てていた形です")
+        assert v.metric == exp.metric, (
+            f"**{name} が測るのは {exp.metric} なのに、{v.metric} で解いています。**")
+        text = "\n".join(v.lines())
+        if exp.metric != "engaged":
+            assert "（要る本数は" not in text and "要ります。" not in text, (
+                f"**{name} に engaged の本数が出ています。**\n" + text)
+
+
+def test_status_の当てっこは実験ごとに別の答えを返しうること():
+    """**`lru_cache(maxsize=1)` に戻したら、ここが落ちます。**
+
+    引数の違う2回が同じ返りになるなら、キャッシュが鍵を見ていません。
+    """
+    import importlib.util
+    import sys
+
+    from src import ab_split as ab
+
+    spec = importlib.util.spec_from_file_location(
+        "t_status2", ab.ROOT / "scripts" / "status.py")
+    st = importlib.util.module_from_spec(spec)
+    sys.modules["t_status2"] = st
+    spec.loader.exec_module(st)
+
+    a = st._ab_power_verdict(16, "engaged")
+    b = st._ab_power_verdict(72, "登録")
+    assert a is not None and b is not None
+    assert (a.n_per_group, a.metric) != (b.n_per_group, b.metric), (
+        "**引数が違うのに同じ答えが返っています。**"
+        " `lru_cache(maxsize=1)` か、引数を捨てている形です")

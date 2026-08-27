@@ -43,11 +43,32 @@ from src import judgeable as _judge  # noqa: E402
 from src import watches as _watches  # noqa: E402
 
 
-@_functools.lru_cache(maxsize=1)
-def _ab_power_verdict():
-    """判定規則の当てっこ。**撃つのは1回だけ**（実験ごとに同じ数が出ます）。"""
+@_functools.lru_cache(maxsize=8)
+def _ab_power_verdict(floor: int = 0, metric: str = "engaged"):
+    """判定規則の当てっこ。**実験ごとに、その実験の床と測る値で**撃つ。
+
+    ## `lru_cache(1)` で `MIN_PER_GROUP` を全部に当てていました（2026-08-27 に直した）
+
+    ここは長らく `verdict(_ab.MIN_PER_GROUP)` を**1回だけ**撃って、
+    その1つを**全部の実験の下に**印字していました。註にも
+    「実験ごとに同じ数が出ます」と書いてあり、**当時は本当でした。**
+
+    **2026-08-27 に `ab_split.floor_of()` が入って、偽になりました。**
+    `request_form` の床は 72本 です（`judgeable.MEMBER_SOURCES`）。
+    それでもここは 16本 の数を出し続けていました —— つまり
+    `status.py`（**毎回 読む道具**）の `request_form` の節には、
+
+        床でない本数（16）で、  測っていない値（engaged）で 解いた検出力
+
+    が出ていたことになります。**2つとも間違いです。**
+    `--outlook` の側は同じ日に直しましたが、**こちらは残っていました**
+    （`src/ab_split.floor_of()` の註が数えている「同じ穴」の**5件目**）。
+
+    `metric` が `"engaged"` でなければ `Verdict.lines()` は数を出さず、
+    床の出どころと「下げると腕ごと畳む」ことだけを言います。
+    """
     try:
-        return _ab_power.verdict(_ab.MIN_PER_GROUP)
+        return _ab_power.verdict(floor or _ab.MIN_PER_GROUP, metric=metric)
     except Exception:  # 状態を見る道具が、状態のせいで死んではいけない
         return None
 from src import alerts as _alerts  # noqa: E402
@@ -546,7 +567,11 @@ def print_hypotheses() -> None:
             # **効きがゼロのときに何と言うか**は一度も測られていませんでした ——
             # 中央値の大小には閾値が無いので、差がゼロなら**コイン投げ**で、
             # **本数を増やしても 50% のままです**（`src/ab_power.py`）。
-            _v = _ab_power_verdict()
+            # **その実験の床と、その実験が測る値で撃つこと。**
+            #     `_c.floor` は `ab_split.floor_of()`（request_form は 72本）、
+            #     `_exp.metric` は engaged か登録か。**片方でも渡し忘れると、
+            #     床でない本数か、測っていない値の検出力が出ます**（上の註）。
+            _v = _ab_power_verdict(_c.floor, _exp.metric)
             if _v is not None:
                 print("        " + "\n        ".join(x.strip() for x in _v.lines()[1:]))
             # **足りない本には、公開の締切があります**（2026-08-20 04:4x に足した）。
