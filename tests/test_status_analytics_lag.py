@@ -100,7 +100,14 @@ def test_遅れの日数はJSTで数える(monkeypatch):
     **数える場所が1つであることを、ここで固定します。**
     """
     import inspect
-    src = inspect.getsource(status.print_channel_signals)
+    # **`inspect.getsource` を直に呼ばないこと**（2026-08-27 に踏んだ）。
+    #     20分の走りの最中に同じ木へ `git merge` を撃つと、ファイルが下へずれ、
+    #     **import 時の行番号で別の場所を切り出します** —— この検査が
+    #     **コードは無傷のまま赤くなります**（実測: 兄弟が `scripts/status.py` に
+    #     60行 入れた回。単体では緑なので「気まぐれ」と読まれます）。
+    #     `conftest.source_of()` が、そのときは**そう言って**落とします。
+    from conftest import source_of
+    src = source_of(status.print_channel_signals, "print_channel_signals")
     assert "_lag_days(" in src, "遅れの数え方が写されています（2か所目）"
     assert "date.today() - date.fromisoformat" not in src, "UTC で数え直しています"
 
