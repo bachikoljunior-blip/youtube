@@ -203,6 +203,68 @@ def _check_slide_hold(work: Path, duration: float) -> list[str]:
     ]
 
 
+#: **完成した図が画面に残らなければならない秒数**（2026-08-27 に足した）。
+#: `src/pipeline.SHORT_SLIDE_SECONDS` と同じ 2.5秒。**別の数にしないこと** ——
+#: あちらが割り当て、こちらが確かめる、同じ1つの約束です。
+MIN_COMPLETE_SECONDS = 2.5
+
+
+def _check_reveal_hold(work: Path) -> list[str]:
+    """**説明している図が、説明のあいだ画面に居るか。**（2026-08-27）
+
+    ## なぜ要るか（オーナーの指摘）
+
+    > **「動画についてまず何言ってるか分かんないね。音声だけで理解できない
+    > 説明なのに画面はすぐ切り替わるし。説明を理解するにはかなり視聴者側の
+    > 推論が必要だと思う。」**
+
+    このファイルの速さの検査は、2026-08-27 まで**全部が上限**でした:
+
+        MAX_SECONDS_PER_PICTURE = 5.0    1枚が止まってよい上限
+        MAX_SECONDS_PER_SLIDE  = 12.0    1文あたりの上限
+        MAX_SHORT_SECONDS      = 70.0    尺の上限
+
+    **下限は1つもありません。** 0.3秒 のコマは全部 通ります。そのうえ、
+    上限に落ちたときの文言は「**セグメントを増やして画を動かすこと**」
+    「`reveal_variants` が割れる形にすること」で、**速いほうへ押しています。**
+    つまりオーナーが見た形は、検査を通った結果ではなく、**検査が作った形**です。
+
+    `reveal_variants` は図を「要素を1つずつ足す」コマ列に割り、
+    **完成形は最後の1コマにしかありません。** 等分だと、6秒の文は
+    3コマ × 2秒 で、**完成形が居るのは最後の2秒**です。読み上げが
+    その図について話しているあいだ、画面には未完成の図しかありません。
+
+    ここで見るのは1つだけ ——
+    **各文の完成形が `MIN_COMPLETE_SECONDS` 以上 画面に残っているか。**
+
+    `slide_complete.json` が無ければ何も言いません（長尺・古い build）。
+
+    **覆る条件**: 完成形を長く置くほうが `engaged` を下げると実測で出たとき
+    （`config/hypotheses.yaml` の `reveal_hold` が測っています）。
+    """
+    secs_path, idx_path = work / "slide_seconds.json", work / "slide_complete.json"
+    if not secs_path.exists() or not idx_path.exists():
+        return []
+    try:
+        seconds = [float(x) for x in json.loads(secs_path.read_text(encoding="utf-8"))]
+        idx = [int(x) for x in json.loads(idx_path.read_text(encoding="utf-8"))]
+    except (json.JSONDecodeError, TypeError, ValueError) as exc:
+        return [f"slide_complete.json / slide_seconds.json が読めない: {exc}"]
+    short = [(i, seconds[i]) for i in idx
+             if 0 <= i < len(seconds) and seconds[i] + 1e-6 < MIN_COMPLETE_SECONDS]
+    if not short:
+        return []
+    worst = min(short, key=lambda p: p[1])
+    return [
+        f"**説明の相手の図が {worst[1]:.1f}秒 で消えている**"
+        f"（下限 {MIN_COMPLETE_SECONDS:.1f}秒 / 該当 {len(short)}文 / 全{len(idx)}文）。"
+        "`reveal_variants` の**完成形**は最後の1コマにしかないので、"
+        "ここが短いと**読み上げが説明しているあいだ、画面に完成形がありません**。"
+        "`pipeline.reveal_durations` が割り当てます —— "
+        "**等分に戻っていないか**を見ること"
+    ]
+
+
 def _check_short_pace(script: dict | None, duration: float) -> list[str]:
     """ショートで同じ絵が長く止まりすぎていないか。
 
@@ -1777,6 +1839,9 @@ def check(path: Path, video_cfg: dict, min_minutes: float, work: Path,
         problems += _check_headline_from_calc(work, script)
         problems += _check_short_pace(script, duration)
         problems += _check_slide_hold(work, duration)
+        # **上限と下限は必ず並べて置くこと**（2026-08-27）。
+        # 片方だけだと、検査そのものが速いほうへ押します（`_check_reveal_hold`）。
+        problems += _check_reveal_hold(work)
         problems += _check_assumptions_on_screen(work)
     # **これは `portrait` の外に出しています**（2026-08-26 に実測して移した）。
     # 中に置いていた間、**長尺は1本も通っていませんでした** ——

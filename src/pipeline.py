@@ -165,6 +165,69 @@ MAX_SHORT_SEGMENT_CHARS = SHORT_SEGMENT_CHARS
 # その上限側に置いた。1文（5〜6秒）はこれで2〜3枚に割れる。
 SHORT_SLIDE_SECONDS = 2.5
 
+#: **めくりの途中の1コマが止まる秒数**（2026-08-27 に足した）。
+#: `docs/JOURNAL.md` の `opening_motion` が「絵そのものの動き」に使っている
+#: 0.9秒 と同じ値です。**新しく思いついた数ではありません** ——
+#: この企画が既に「見ている側が変化に気づく長さ」として使っている唯一の実測値。
+REVEAL_STEP_SECONDS = 0.9
+
+
+def reveal_durations(dur: float, n: int) -> list[float]:
+    """1文の尺 `dur` を、めくりの `n` コマへ割る。**等分しないこと。**
+
+    ## なぜ等分をやめたか（2026-08-27。オーナーの指摘）
+
+    オーナー原文:
+
+    > **「動画についてまず何言ってるか分かんないね。音声だけで理解できない
+    > 説明なのに画面はすぐ切り替わるし。説明を理解するにはかなり視聴者側の
+    > 推論が必要だと思う。」**
+
+    ここは 2026-08-15 から `dur / len(parts)` の**等分**でした。
+    `reveal_variants` は図を**要素を1つずつ足していく**形に割るので、
+    **完成した図はいちばん最後のコマにしかありません。** 等分だと、
+    その完成形が画面に居るのは**文の最後の 1/n** です:
+
+        6.0秒 の文 → want=ceil(6.0/2.5)=3コマ → **完成形は最後の 2.0秒 だけ**
+
+    つまり**文がその図を説明しているあいだ、画面に完成形はありません。**
+    読み上げは「21万2027円 と 31万9677円 の差が…」と言っているのに、
+    画面はまだ棒1本目です。**「かなり視聴者側の推論が必要」はこれです。**
+
+    そして**この向きに押していたのは検査のほうです。** `verify.py` の
+    `_check_slide_hold` / `_check_short_pace` は**どちらも上限しか持たず**
+    （`MAX_SECONDS_PER_PICTURE=5.0` / `MAX_SECONDS_PER_SLIDE=12.0`）、
+    落ちたときの文言は「**セグメントを増やして画を動かすこと**」です。
+    **下限は1つもありませんでした** —— 0.3秒 のコマも全部 通ります。
+
+    ## 割り方
+
+    途中のコマは `REVEAL_STEP_SECONDS`（0.9秒）ずつ。**残りは全部 完成形へ。**
+    合計は `dur` のまま変えません（音とずれるので）。
+
+    - 完成形が `SHORT_SLIDE_SECONDS`（2.5秒）に満たないなら、**コマを減らします**
+      （減らす先は**頭のほう** ＝ いちばん中身の少ないコマ）
+    - 完成形が `MAX_SECONDS_PER_PICTURE`（5.0秒）を超えるなら、**途中のコマを
+      伸ばして**引き取ります（止まって見える側に落ちないため）
+
+    **覆る条件**: 完成形を長く置くほうが `engaged` を下げると実測で出たとき。
+    それを測る前提が `config/hypotheses.yaml` の `reveal_hold` です。
+    """
+    if n <= 1 or dur <= 0:
+        return [dur] * max(1, n)
+    # 完成形が 2.5秒 に届くところまで、頭のコマを落とす
+    while n > 1 and dur - REVEAL_STEP_SECONDS * (n - 1) < SHORT_SLIDE_SECONDS:
+        n -= 1
+    if n <= 1:
+        return [dur]
+    step = REVEAL_STEP_SECONDS
+    last = dur - step * (n - 1)
+    if last > verify.MAX_SECONDS_PER_PICTURE:
+        # 完成形が長すぎる。**余りは途中のコマが引き取る**（等分に戻さない）
+        step = (dur - verify.MAX_SECONDS_PER_PICTURE) / (n - 1)
+        last = verify.MAX_SECONDS_PER_PICTURE
+    return [step] * (n - 1) + [last]
+
 
 def _check_short_script(script, topic_id: str = "") -> None:
     """ショートの台本を、**音声合成の前に**落とす。
@@ -322,6 +385,11 @@ def main(argv: list[str] | None = None) -> int:
         for visual, dur in zip(plan, durations):
             want = max(1, math.ceil(dur / SHORT_SLIDE_SECONDS))
             parts = visuals.reveal_variants(visual, want)
+            secs = reveal_durations(dur, len(parts))
+            # **落とすのは頭のコマ**（要素を1つずつ足す形なので、頭がいちばん空）。
+            # `reveal_durations` が「完成形に 2.5秒 が要る」と言って減らした分。
+            if len(secs) < len(parts):
+                parts = parts[len(parts) - len(secs):]
             expanded.extend(parts)
             # **その文の「全部出ている」コマを指す**（2026-08-15 22:2x に先頭から変更）。
             #
@@ -334,8 +402,8 @@ def main(argv: list[str] | None = None) -> int:
             # 先頭のままだと**サムネから数字が消えます。**（気づいたのは、
             # この行を読んだからです。実物を作る前に見つかりました）
             slide_index_of_segment.append(len(expanded) - 1)
-            # その文の尺を、割れた枚数で等分する。合計は変わらない。
-            expanded_durations.extend([dur / len(parts)] * len(parts))
+            # **等分をやめました**（2026-08-27。理由は `reveal_durations`）。
+            expanded_durations.extend(secs)
         held = max(d for d in expanded_durations)
         print(f"[pipeline] 絵を {len(plan)} 枚 → {len(expanded)} 枚に割りました"
               f"（1枚の最長 {held:.1f}秒 / 目標 {SHORT_SLIDE_SECONDS}秒）")
@@ -347,6 +415,12 @@ def main(argv: list[str] | None = None) -> int:
         # 平均 5.0秒 で上限12秒を通った）。**実際の割り当てを渡す。**
         (work / "slide_seconds.json").write_text(
             json.dumps([round(d, 3) for d in durations]), encoding="utf-8"
+        )
+        # **どのコマが「完成形」かも渡すこと**（2026-08-27）。
+        # 秒数の並びだけでは、`verify` は「短い1コマ」がめくりの途中なのか
+        # 説明の相手なのかを見分けられません。**下限を当てる先はここです。**
+        (work / "slide_complete.json").write_text(
+            json.dumps(slide_index_of_segment), encoding="utf-8"
         )
     else:
         slide_index_of_segment = list(range(len(plan)))
