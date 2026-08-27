@@ -247,6 +247,127 @@ class Answer:
     #: `lines()` がそのまま出します。
     todo: str = ""
 
+    #: **この答えを出した伸び率**（`accrual` だけ。他は `None`）。
+    #: `record_estimates()` が積み、次の回の帯がこれの散らばりから決まります。
+    rate: float | None = None
+    #: 伸び率を積むときの鍵（`count_expr`。前提ごとに一意で、動かない）
+    rate_key: str = ""
+
+
+#: 伸び率の控え。**1鍵1日1行**（`record_estimates()`）
+RATE_LOG = ROOT / "data" / "deadline_est.jsonl"
+
+
+def _rate_scatter(key: str, path: Path | None = None) -> float | None:
+    """**その要件の伸び率が、実際にどれだけ散らばってきたか**（相対）。
+
+    ## なぜ要るか（2026-08-27 夜・最適化の回。**実測で4回の空振りが出ていた**）
+
+    `_ans_accrual` の帯は `1/√have` です —— **数え上げの誤差だけ**を見ています。
+    ところが `days = (want - have) / rate` を動かしているのは **`rate` のほう**で、
+    こちらは公開本数で日ごとに大きく振れます。
+
+    実測（前提「長尺の登録率はショートより1桁以上高い」・`config/hypotheses.yaml`
+    が自分で履歴を書いています）:
+
+        08-25  あと 80日  → 期限 11-13
+        08-25  （同じ日に）→ 11-09
+        08-26  → 11-16                      （+7日）
+        08-26  伸び率 7日で 10.57/日（have 74）→ 11-22   （+6日・帯 ±7）
+        08-27  伸び率 8日で 13.38/日（have 107）→ 11-02  （**-20日**・帯 ±7）
+
+    **伸び率が1日で +27% 動いています。** `1/√107` は **9.7%** なので、
+    帯は ±7日。**実際の振れはその3倍**でした。だから毎回「帯の外だ、
+    書き換えろ」と出て、**3日で4回 期限だけが書き換わりました。**
+    その4回で、前提も、データの来る日も、**1日も動いていません。**
+
+    `waits` の註は「**帯の中の待ちは数えません**（数えると、推定のゆらぎのぶんだけ
+    『縮めること』と言い続け、書き換えても次の回にまた言われます）」と、
+    **この失敗の形を正確に予言していました。** 足りなかったのは**帯の幅**です。
+
+    ## 何を返すか
+
+    `(相対的な広がり, 点の数)`。広がりは `(max - min) / median`。
+    2点 未満なら `None`（散らばりを名乗れない）。
+    **上限 2.0** —— 立ち上がりで 0 に近い点があると比が発散するので押さえます。
+
+    **点の数を一緒に返すのは、少ない点の広がりが「下限」だから**です。
+    2点 の範囲は真の散らばりを**必ず小さく見積もります**（点が増えるほど
+    範囲は広がる一方）。だから `n` を印字して、
+    **読む側が「この帯はまだ狭い側だ」と分かるように**します ——
+    さもないと、2点 から出た帯を確定値として読んで、また書き換えが始まります。
+
+    **覆る条件**: 控えが 1日1行 なので、**日ごとより速い振れは見えません。**
+    1日のうちに大きく動く要件が出てきたら、鍵を「日」から「時」へ落とすこと。
+    逆に、伸び率が落ち着いた要件では散らばりが縮み、帯は `1/√have` へ戻ります
+    （**帯は狭くなる方向にも動きます。固定した幅ではありません**）。
+    """
+    p = path or RATE_LOG
+    if not key or not p.exists():
+        return None
+    rates: list[float] = []
+    for ln in p.read_text(encoding="utf-8").splitlines():
+        ln = ln.strip()
+        if not ln:
+            continue
+        try:
+            r = json.loads(ln)
+        except ValueError:
+            continue
+        if r.get("key") != key:
+            continue
+        try:
+            v = float(r.get("rate"))
+        except (TypeError, ValueError):
+            continue
+        if v > 0:
+            rates.append(v)
+    if len(rates) < 2:
+        return None
+    rates.sort()
+    mid = rates[len(rates) // 2]
+    if mid <= 0:
+        return None
+    return min(2.0, (rates[-1] - rates[0]) / mid), len(rates)
+
+
+def record_estimates(vs: list["Verdict"], path: Path | None = None,
+                     as_of: date | None = None) -> int:
+    """**この回の伸び率を控える**（1鍵1日1行）。返りは足した行数。
+
+    **`_ans_accrual` の中では書きません。** あれは純粋な関数で、検査からも
+    他の道具からも何度も呼ばれます。**呼ぶたびに repo へ書き足す作りにすると、
+    控えは「この機械が何回 撃たれたか」を数えるようになり、
+    伸び率の散らばりではなくなります。** 積むのは印字する道の1か所だけ。
+    """
+    p = path or RATE_LOG
+    day = (as_of or today_jst()).isoformat()
+    seen: set[tuple[str, str]] = set()
+    if p.exists():
+        for ln in p.read_text(encoding="utf-8").splitlines():
+            try:
+                r = json.loads(ln)
+            except ValueError:
+                continue
+            seen.add((str(r.get("key")), str(r.get("at"))))
+    add = []
+    for v in vs:
+        for a in v.answers:
+            if not a.rate_key or a.rate is None:
+                continue
+            if (a.rate_key, day) in seen:
+                continue
+            seen.add((a.rate_key, day))
+            add.append({"at": day, "key": a.rate_key, "rate": round(a.rate, 6),
+                        "ready": a.ready.isoformat() if a.ready else None,
+                        "claim": v.claim[:80]})
+    if add:
+        p.parent.mkdir(parents=True, exist_ok=True)
+        with p.open("a", encoding="utf-8") as fh:
+            for r in add:
+                fh.write(json.dumps(r, ensure_ascii=False) + "\n")
+    return len(add)
+
 
 def _ans_now() -> Answer:
     return Answer(today_jst(), "手元のデータだけで判定できます")
@@ -421,6 +542,31 @@ def _ans_accrual(need: dict, as_of: date) -> Answer:
     # **帯の幅**: 積み上げの数え上げ誤差 ≒ 1/√have（件数の相対標準誤差）を日数へ移す。
     # have=74・days=88 なら ±11日。**この幅の中で期限を書き換えても、何も動きません。**
     slack = max(1, math.ceil(days / max(1.0, have ** 0.5)))
+    # **帯は、数え上げの誤差だけでは足りません**（2026-08-27 夜・`_rate_scatter`）。
+    # `days = (want - have) / rate` を動かしているのは `rate` のほうで、
+    # そちらは公開本数で日ごとに振れます。実測: ある前提の伸び率が1日で
+    # **+27%** 動き、`1/√have` の 9.7% ＝ ±7日 では受け止められず、
+    # **3日で4回 期限だけが書き換わりました**（前提もデータの来る日も1日も動かず）。
+    # だから**その要件自身の、これまでの伸び率の散らばり**でも帯を張ります。
+    # **広いほうを採ります** —— 狭いほうを採ると、churn がそのまま残ります。
+    got = _rate_scatter(str(need.get("count_expr") or ""))
+    note = ""
+    if got is not None:
+        scatter, n_pts = got
+        wide = max(1, math.ceil(days * scatter))
+        if wide > slack:
+            # **点が少ないうちは「下限」だと言うこと。** 2点 の範囲は真の
+            # 散らばりを必ず小さく見積もるので、確定値として読まれると
+            # また書き換えが始まります（この帯は、それを止めるために在ります）。
+            floor = ("。**まだ {n}点 なので、この幅は下限です**"
+                     "（点が増えるほど広がります。**狭いと読まないこと**）"
+                     ).format(n=n_pts) if n_pts < 3 else ""
+            note = (f"。**うち ±{wide}日 は、この要件自身の伸び率の振れ**"
+                    f"（{n_pts}点 の実測の広がり {scatter * 100:.0f}%。"
+                    "数え上げの誤差だけなら "
+                    f"±{slack}日 でした ——**狭いほうを使うと、書き換えても"
+                    f"次の回にまた言われます**）{floor}")
+            slack = wide
     # **日が出る道にも、古い計器の申告を載せます。** ここは `warming` ではないので
     # `todo` は印字されません —— だから `why` のほうへ足します。
     # **この推定は「計器を取り直しつづけたら」の話**で、止めれば伸び率は落ち、
@@ -428,9 +574,11 @@ def _ans_accrual(need: dict, as_of: date) -> Answer:
     tail = f"  ／ {stale}" if stale else ""
     return Answer(as_of + timedelta(days=days),
                   f"要 {want} ／ いま {have}（{elapsed}日で {rate:.2f}/日）→ あと {days}日"
-                  f"（**±{slack}日**。伸び率からの推定なので、この幅の中の書き換えは意味を持ちません）"
+                  f"（**±{slack}日**。伸び率からの推定なので、この幅の中の書き換えは"
+                  f"意味を持ちません{note}）"
                   + tail,
-                  slack=slack, todo=stale)
+                  slack=slack, todo=stale,
+                  rate=rate, rate_key=str(need.get("count_expr") or ""))
 
 
 def _project_nth(rows: list[dict], pub: list[str], count: int, after: str,
@@ -1226,6 +1374,9 @@ def main(argv: list[str] | None = None) -> int:
               "もっと n が要るなら、動かすのは `needs.count` のほうです")
         return 0
     vs = check(load(), as_of=as_of, lag=lag)
+    # **印字する道の1か所だけで積みます**（`record_estimates()` の註）。
+    # 純粋な関数の中で書くと、控えは「この機械が何回 撃たれたか」を数えます。
+    record_estimates(vs, as_of=as_of)
     print("\n".join(lines(vs, lag)))
     return 0
 
