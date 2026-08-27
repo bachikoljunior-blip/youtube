@@ -1854,16 +1854,44 @@ def physical_caps(a0: dict, density: float = PLAN_PUBLISH_PER_DAY,
             caps["density"]["confounded"] = True
             caps["density"]["factor_if_window"] = fork_factor
             caps["density"]["answer_on"] = fork["answer_on"]
-            caps["density"]["why"] += (
-                f"。ただし**この上限は「本数」と「時刻の窓」に切り分けられていません**"
-                f"（`day_cap.window()` が `confounded`）——"
-                f" **(B) 時刻の窓なら上限は {arm_cap:.0f}本 → {fork['cap']}本（×{fork_factor:.2f}）**"
-                f"（{fork['earliest']}→{fork['T']}・{fork['step_min']}分きざみ）。"
-                f"**作る本数は1本も増えません** —— いま {fork['T']} より後ろで"
-                f"0再生になっているぶんを、前へ置き直すだけです。"
-                f"上の「引き代なし」は **(A) 本数モデルを固定した場合**の数で、"
-                f"切り分けは **{fork['answer_on']}** に出ます"
-            )
+            edge = fork.get("left_edge")
+            if fork_factor > 1.0:
+                caps["density"]["why"] += (
+                    f"。ただし**この上限は「本数」と「時刻の窓」に切り分けられていません**"
+                    f"（`day_cap.window()` が `confounded`）——"
+                    f" **(B) 時刻の窓なら上限は {arm_cap:.0f}本 → {fork['cap']}本"
+                    f"（×{fork_factor:.2f}）**"
+                    f"（{fork['earliest']}→{fork['T']}・{fork['step_min']}分きざみ）。"
+                    f"**作る本数は1本も増えません** —— いま {fork['T']} より後ろで"
+                    f"0再生になっているぶんを、前へ置き直すだけです。"
+                    f"上の「引き代なし」は **(A) 本数モデルを固定した場合**の数で、"
+                    f"切り分けは **{fork['answer_on']}** に出ます"
+                )
+            else:
+                # **(B) の側にも引き代が無いと分かった場合**（2026-08-27 に測った）。
+                # ここは長らく「(B) なら ×1.80」を**無条件で**印字していました。
+                # その 18枠 は 05:00〜13:30 から数えた数で、**05:00 が生きるかは
+                # 測っていませんでした**（`collisions.LIVE_FROM_MIN` は
+                # 切り分けの日を作るために広げてあった値）。
+                # 2026-08-27 に実際に置いたら **05:00〜08:30 の 8本 が全部 0再生**で、
+                # 窓の左端は 08:59 でした。08:59〜13:30 は30分きざみで
+                # **ちょうど 10枠** ＝ (A) と同じです。
+                # **賭かっているものが無いなら、そう言うこと** ——
+                # 「切り分けが済んでいない」と「どちらでも同じ」は別の話で、
+                # 前者だけを印字すると、次の回が**無い上振れ**を取りにいきます。
+                caps["density"]["why"] += (
+                    f"。**モデルの切り分けは済んでいません**"
+                    f"（`day_cap.window()` が `confounded`）が、"
+                    f"**(B) 時刻の窓の側にも引き代はありません** ——"
+                    f" 窓の左端は実測で **{edge['by'] if edge else fork['earliest']}**"
+                    + (f"（{edge['from']} に {edge['from_dead']}本 置いて、"
+                       f"**全部 0再生**）" if edge else "")
+                    + f"で、{fork['earliest']}→{fork['T']} は"
+                    f"{fork['step_min']}分きざみで **{fork['cap']}枠** ＝ "
+                    f"(A) の {arm_cap:.0f}本 と同じです（×{fork_factor:.2f}）。"
+                    f"**早い時刻へ倒しても本が増えません。倒すと死にます。**"
+                    f"残っているのは**右端**（{fork['T']} より後ろ）だけです"
+                )
         # --- **長尺の面は、別の天井です**（2026-08-26。**3回続けて申し送られていた**）---
         #     上の `day_cap.cap()` は **ショートの面**の数です（`SHORTS_FEED` に
         #     1日に差し込まれる本数）。**長尺はその枠を1つも使いません**し、
