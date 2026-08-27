@@ -1600,9 +1600,19 @@ def unready_claims(items: list[dict] | None = None, as_of: date | None = None,
 # だからここは、**印字と同じ内容を、自分で書き戻す手**を持ちます。
 
 
-def shrink(path: Path | None = None, as_of: date | None = None,
-           lag: int | None = None, dry_run: bool = False) -> list[tuple[str, str, str]]:
-    """**遅すぎる期限を、判定できる日（`ready`）まで縮めて書き戻す。**
+def _rewrite(want: str, path: Path | None = None, as_of: date | None = None,
+             lag: int | None = None, dry_run: bool = False) -> list[tuple[str, str, str]]:
+    """**期限の1行だけを、判定できる日（`ready`）へ寄せて書き戻す。**
+
+    `want` は向き —— `"waits"`（遅すぎる期限を縮める）か
+    `"slips"`（早すぎる期限を延ばす）。返りは `[(claim, 前, 後), ...]`。
+
+    **2つの向きは同じ書き換えです。** 読むのも書くのも `deadline:` の1行で、
+    寄せ先はどちらも `v.ready`（データが実際に揃う日）です。
+    **違うのは「どちらへ動くか」だけ**なので、guard を2つに分けません ——
+    分けたほうが、片方だけ直る事故が起きます。
+
+    **`--shrink` の側の註**（この関数を2つの向きで共有する前からのもの）:
 
     返り: `[(claim, 前の期限, 後の期限), ...]`。**API 0単位・本は0本。**
 
@@ -1653,7 +1663,20 @@ def shrink(path: Path | None = None, as_of: date | None = None,
         by_claim[c] = k
     done: list[tuple[str, str, str]] = []
     for v in check(items, as_of=as_of, lag=lag):
-        if not v.waits or v.ready is None or v.deadline is None:
+        if v.ready is None or v.deadline is None:
+            continue
+        # **向きは1か所でだけ決めます。** `waits` は「データは揃うのに期限が後ろ」、
+        # `slips` は「期限がデータの来る日より前」。どちらも寄せ先は `v.ready` です。
+        if want == "waits" and not v.waits:
+            continue
+        if want == "slips" and not v.slips:
+            continue
+        # **逆向きへは1日も動かしません。** `ready` は推定なので、帯の揺れで
+        # 向きが裏返ることがあります。裏返ったぶんを書くと、
+        # 「縮めたつもりで延ばした」が黙って通ります。
+        if want == "waits" and v.ready >= v.deadline:
+            continue
+        if want == "slips" and v.ready <= v.deadline:
             continue
         k = by_claim.get(v.claim)
         j = dl_at.get(k) if k is not None else None
@@ -1679,31 +1702,112 @@ def shrink(path: Path | None = None, as_of: date | None = None,
     return done
 
 
+def shrink(path: Path | None = None, as_of: date | None = None,
+           lag: int | None = None, dry_run: bool = False) -> list[tuple[str, str, str]]:
+    """**遅すぎる期限を、判定できる日まで縮める**（`waits` の側）。"""
+    return _rewrite("waits", path=path, as_of=as_of, lag=lag, dry_run=dry_run)
+
+
+def extend(path: Path | None = None, as_of: date | None = None,
+           lag: int | None = None, dry_run: bool = False) -> list[tuple[str, str, str]]:
+    """**早すぎる期限を、判定できる日（`ready`）まで延ばす**（`slips` の側）。
+
+    ## なぜ足したか（2026-08-28）
+
+    この道具は `slips` の1件ごとに **``deadline: "YYYY-MM-DD"`` へ延ばすこと**と
+    印字し、`tests/test_deadline_check.py::test_期限が_判定できる日より前に置かれていない`
+    が**赤で止めます。** それでも、この回に撃った時点で **5件が赤のまま**でした:
+
+        長尺の再生シェア…        09-10 < 09-11
+        長尺の生成が落ちる主因…   08-27 < 08-29   ← **期限は昨日**
+        冒頭1枚目の主役…          09-09 < 09-10
+        engaged 比率は…           10-02 < 10-03
+        冒頭0.9秒に絵の動き…      10-06 < 10-07
+
+    上の註は「**延ばす向き 赤い検査あり → 20時間で 2回 起きた**」と書いています。
+    **その観測は、直す手が1件のときのものです。** 5件を直すには
+    3,300行の YAML を**手で5か所**書き換えることになり、
+    `config/hypotheses.yaml` には手で動かした跡が **33件** 残っています。
+    **赤い検査は「判断を要求しない」が、「手を要求しない」わけではありません。**
+    縮める向きに手があって延ばす向きに無いのは、ただの非対称です。
+
+    ## 緩めていないこと
+
+    - 寄せ先は **`v.ready`**（データが実際に揃う日）だけです。1日も先へは置きません。
+    - **`falsified_if` にも `needs.count` にも触りません。** n が足りないのなら、
+      動かすのは `needs` のほうです（`shrink()` の註）。
+    - **`slips` は帯の下向きの幅を見ています**（`Verdict.slips`）。
+      推定のゆらぎの中では、この手は1件も動かしません。
+
+    ## **これは「待てばよい」ではありません**
+
+    `ready` が**毎回 後ろへ逃げる**前提は、積みが止まっています
+    （`Answer.have` が動いていない）。この手はそれを**印字で名指しします** ——
+    延ばした先が動かない保証はここには無いので、
+    **同じ claim が何度も出てきたら、疑うのは期限ではなく `needs` のほう**です。
+    """
+    return _rewrite("slips", path=path, as_of=as_of, lag=lag, dry_run=dry_run)
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--as-of", help="この日に判定するつもりで解く（YYYY-MM-DD）")
     ap.add_argument("--shrink", action="store_true",
                     help="**遅すぎる期限を、判定できる日まで縮めて書き戻す**"
                          "（`falsified_if` は触りません。**API 0単位**）")
+    ap.add_argument("--extend", action="store_true",
+                    help="**早すぎる期限を、判定できる日まで延ばして書き戻す**"
+                         "（`falsified_if` は触りません。**API 0単位**）"
+                         "—— `tests/test_deadline_check.py` の赤を、そのまま消す手です")
+    ap.add_argument("--fit", action="store_true",
+                    help="**両方の向きを1手で寄せる**（`--shrink` と `--extend`）。"
+                         "期限は置いた回の勘・`ready` はデータの来る日なので、"
+                         "**普通の回はこれでよい**")
     ap.add_argument("--dry-run", action="store_true",
-                    help="`--shrink` が何を書くかだけ出す（書きません）")
+                    help="`--shrink` / `--extend` / `--fit` が何を書くかだけ出す（書きません）")
     a = ap.parse_args(argv)
     as_of = date.fromisoformat(a.as_of) if a.as_of else today_jst()
     lag = analytics_lag_days(as_of)
-    if a.shrink:
-        done = shrink(as_of=as_of, lag=lag, dry_run=a.dry_run)
-        if not done:
-            print("  **縮める期限はありません**（`waits` が 0件）")
-            return 0
+    if a.shrink or a.extend or a.fit:
         head = "**書いていません**（--dry-run）" if a.dry_run else "書きました"
-        total = sum((date.fromisoformat(b) - date.fromisoformat(af)).days
-                    for _c, b, af in done)
-        print(f"=== 遅すぎた期限を {len(done)}件 縮めました（{head}）—— 合計 **{total}日** ===")
-        for c, b, af in done:
-            d = (date.fromisoformat(b) - date.fromisoformat(af)).days
-            print(f"  {b} → **{af}**（{d}日）  {c[:44]}")
-        print("  **`falsified_if` は1文字も触っていません。**"
-              "もっと n が要るなら、動かすのは `needs.count` のほうです")
+        moved = 0
+        # **縮めるほうを先に撃ちます。** どちらも `deadline:` の1行を書き戻すので、
+        # 同じ読み込みを2回またぐと、あとの回が前の回の書き換えを踏みます。
+        # `_rewrite` は毎回 読み直すので、順に撃てば安全です。
+        if a.shrink or a.fit:
+            done = shrink(as_of=as_of, lag=lag, dry_run=a.dry_run)
+            moved += len(done)
+            if not done:
+                print("  **縮める期限はありません**（`waits` が 0件）")
+            else:
+                total = sum((date.fromisoformat(b) - date.fromisoformat(af)).days
+                            for _c, b, af in done)
+                print(f"=== 遅すぎた期限を {len(done)}件 縮めました（{head}）"
+                      f"—— 合計 **{total}日** ===")
+                for c, b, af in done:
+                    d = (date.fromisoformat(b) - date.fromisoformat(af)).days
+                    print(f"  {b} → **{af}**（{d}日）  {c[:44]}")
+        if a.extend or a.fit:
+            # **`--fit` で `--dry-run` のときは、縮めた側が書かれていません。**
+            # だから2手目は1手目の結果を見ていません —— 向きが別なので、
+            # 同じ claim が両方に出ることはありません（`slips` と `waits` は排他）。
+            done = extend(as_of=as_of, lag=lag, dry_run=a.dry_run)
+            moved += len(done)
+            if not done:
+                print("  **延ばす期限はありません**（`slips` が 0件）")
+            else:
+                total = sum((date.fromisoformat(af) - date.fromisoformat(b)).days
+                            for _c, b, af in done)
+                print(f"=== 早すぎた期限を {len(done)}件 延ばしました（{head}）"
+                      f"—— 合計 **{total}日** ===")
+                for c, b, af in done:
+                    d = (date.fromisoformat(af) - date.fromisoformat(b)).days
+                    print(f"  {b} → **{af}**（+{d}日）  {c[:44]}")
+                print("  **延ばしたのは期限だけです。** 同じ claim が次の回にもここへ出たら、"
+                      "疑うのは期限ではなく `needs`（積みが止まっている）ほうです")
+        if moved:
+            print("  **`falsified_if` は1文字も触っていません。**"
+                  "もっと n が要るなら、動かすのは `needs.count` のほうです")
         return 0
     vs = check(load(), as_of=as_of, lag=lag)
     # **印字する道の1か所だけで積みます**（`record_estimates()` の註）。

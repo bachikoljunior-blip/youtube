@@ -441,11 +441,101 @@ def test_shrink_は_期限だけを縮めて_註を残すこと(tmp_path):
 
 
 def test_shrink_は_期限が早すぎる側を動かさないこと(tmp_path):
-    """**この手は縮める向き専用です。** 延ばす側には、もう赤い検査があります。"""
+    """**`--shrink` は縮める向き専用です。** 延ばす側は `--extend`（下）。
+
+    **2つを1つの旗にまとめないこと。** 向きが違えば意味も違います ——
+    縮めるのは「もう判定できるのに待っている」、
+    延ばすのは「その日にはデータが無い」。`--fit` は両方を順に撃つだけです。
+    """
     p = tmp_path / "h.yaml"
     p.write_text(_mini_yaml("2026-08-05", "2026-09-30"), encoding="utf-8")
     assert J.shrink(path=p, as_of=date(2026, 8, 26), lag=0) == []
     assert 'deadline: "2026-08-05"' in p.read_text(encoding="utf-8")
+
+
+def test_extend_は_期限だけを延ばして_註を残すこと(tmp_path):
+    """**早すぎる期限に、印字ではなく手を当てる**（2026-08-28 に足した）。
+
+    この道具は `slips` の1件ごとに「`deadline:` へ延ばすこと」と印字し、
+    `test_期限が_判定できる日より前に置かれていない` が赤で止めます。
+    **それでも 5件が赤のまま残っていました** —— 3,300行の YAML を
+    手で5か所 直す作業だからです（手で動かした跡が台帳に 33件）。
+    """
+    p = tmp_path / "h.yaml"
+    p.write_text(_mini_yaml("2026-08-05", "2026-09-30"), encoding="utf-8")
+    done = J.extend(path=p, as_of=date(2026, 8, 26), lag=0)
+    assert [(b, a) for _c, b, a in done] == [("2026-08-05", "2026-09-30")]
+    out = p.read_text(encoding="utf-8")
+    assert 'deadline: "2026-09-30"' in out
+    assert "# 先頭の註" in out and "# 中の註" in out, "註が消えました"
+    assert 'falsified_if: "触らないこと"' in out, "`falsified_if` に触っています"
+
+
+def test_extend_は_期限が遅すぎる側を動かさないこと(tmp_path):
+    """**延ばす手が縮めたら、判定を先送りできてしまいます。**"""
+    p = tmp_path / "h.yaml"
+    p.write_text(_mini_yaml("2026-12-31", "2026-08-01"), encoding="utf-8")
+    assert J.extend(path=p, as_of=date(2026, 8, 26), lag=0) == []
+    assert 'deadline: "2026-12-31"' in p.read_text(encoding="utf-8")
+
+
+def test_extend_の_dry_run_は書かないこと(tmp_path):
+    p = tmp_path / "h.yaml"
+    before = _mini_yaml("2026-08-05", "2026-09-30")
+    p.write_text(before, encoding="utf-8")
+    done = J.extend(path=p, as_of=date(2026, 8, 26), lag=0, dry_run=True)
+    assert done, "何を書くかは返すこと"
+    assert p.read_text(encoding="utf-8") == before, "--dry-run なのに書きました"
+
+
+def test_extend_は_閉じた前提を書き換えないこと(tmp_path):
+    p = tmp_path / "h.yaml"
+    p.write_text(_mini_yaml("2026-08-05", "2026-09-30"), encoding="utf-8")
+    J.extend(path=p, as_of=date(2026, 8, 26), lag=0)
+    doc = yaml.safe_load(p.read_text(encoding="utf-8"))
+    closed = next(h for h in doc["hypotheses"] if h.get("closed_on"))
+    assert str(closed["deadline"]) == "2026-01-01", "閉じた前提の期限を書き換えました"
+
+
+def test_extend_は_ready_より先へは置かないこと(tmp_path):
+    """**寄せ先は `ready` だけ。** 1日でも先へ置けるなら、それは水増しです。"""
+    p = tmp_path / "h.yaml"
+    p.write_text(_mini_yaml("2026-08-05", "2026-09-30"), encoding="utf-8")
+    J.extend(path=p, as_of=date(2026, 8, 26), lag=0)
+    vs = J.check(yaml.safe_load(p.read_text(encoding="utf-8"))["hypotheses"],
+                 as_of=date(2026, 8, 26), lag=0)
+    v = next(x for x in vs if x.ready is not None)
+    assert v.deadline == v.ready, "`ready` ちょうどに置くこと"
+    assert not v.slips and not v.waits
+
+
+def test_fit_は両方の向きを1手で寄せること(tmp_path):
+    """`--fit` ＝ `--shrink` と `--extend` を順に。**普通の回はこれでよい。**"""
+    p = tmp_path / "h.yaml"
+    p.write_text("""hypotheses:
+  - claim: "早すぎる側"
+    deadline: "2026-08-05"
+    lever: per_video
+    needs:
+      - kind: after
+        on_date: "2026-09-30"
+    falsified_if: "触らないこと"
+  - claim: "遅すぎる側"
+    deadline: "2026-12-31"
+    lever: per_video
+    needs:
+      - kind: after
+        on_date: "2026-08-01"
+    falsified_if: "触らないこと"
+""", encoding="utf-8")
+    # **`main(["--fit"])` をここから撃たないこと** —— あれは実物の
+    # `config/hypotheses.yaml` を書きます。ここでは `--fit` が呼ぶ2手を、
+    # 同じ順で仮の台帳に当てます。
+    J.shrink(path=p, as_of=date(2026, 8, 26), lag=0)
+    J.extend(path=p, as_of=date(2026, 8, 26), lag=0)
+    doc = yaml.safe_load(p.read_text(encoding="utf-8"))
+    got = {h["claim"]: str(h["deadline"]) for h in doc["hypotheses"]}
+    assert got == {"早すぎる側": "2026-09-30", "遅すぎる側": "2026-08-01"}
 
 
 def test_shrink_の_dry_run_は書かないこと(tmp_path):
