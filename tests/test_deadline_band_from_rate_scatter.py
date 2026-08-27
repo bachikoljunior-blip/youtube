@@ -169,3 +169,35 @@ def test_slack_downを書かない答えはこれまでどおり対称():
     a = dc.Answer(date(2026, 9, 20), "推定", slack=15)
     v = dc.Verdict(claim="c", deadline=date(2026, 9, 10), ready=a.ready, answers=[a])
     assert v.slack_down == 15 and not v.slips
+
+
+def test_haveの無い行の書き直しは1回だけ(tmp_path):
+    """**移行の1回は書き直す。2回目からは足さない。**（2026-08-27 夜・最適化の回）
+
+    `have` を控え始めた日は、その日の行が既に `have` 無しで在ります。
+    それを1回だけ書き直すのは正しい —— **ただし条件を「その行に `have` が
+    無いか」に置くと、`have` を持たない答えでは毎周1行ずつ増えます。**
+
+    増えると害が出るのは行数ではなく**帯**です。`_rate_scatter()` は点の
+    散らばりで ±N日 を出すので、**同じ値の行が増えるほど帯が狭く出ます** ——
+    狭い帯は「書き換えてよい」に読めて、churn（3日に4回 期限が書き換わる）が
+    戻ります。
+    """
+    p = tmp_path / "deadline_est.jsonl"
+    p.write_text(json.dumps({"at": "2026-08-27", "key": "k", "rate": 1.5},
+                            ensure_ascii=False) + "\n", encoding="utf-8")
+
+    # `have` を持つ答えなら、1回だけ書き直す
+    a = dc.Answer(date(2026, 9, 1), "why", rate=1.5, rate_key="k", have=5)
+    v = dc.Verdict(claim="c", deadline=date(2026, 9, 1), ready=a.ready, answers=[a])
+    assert dc.record_estimates([v], path=p, as_of=date(2026, 8, 27)) == 1
+    assert dc.record_estimates([v], path=p, as_of=date(2026, 8, 27)) == 0, \
+        "**書き直しは1回だけ。**2回目からは (鍵, 日) に `have` を持つ行が在ります"
+
+    # `have` を持たない答えは、その日の1行目だけ（毎周 足さない）
+    q = tmp_path / "b.jsonl"
+    b = dc.Answer(date(2026, 9, 1), "why", rate=1.5, rate_key="k")
+    w = dc.Verdict(claim="c", deadline=date(2026, 9, 1), ready=b.ready, answers=[b])
+    assert dc.record_estimates([w], path=q, as_of=date(2026, 8, 27)) == 1
+    assert dc.record_estimates([w], path=q, as_of=date(2026, 8, 27)) == 0
+    assert dc.record_estimates([w], path=q, as_of=date(2026, 8, 27)) == 0
