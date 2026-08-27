@@ -442,6 +442,42 @@ def ties(times: list[dt.datetime], gap_min: float = TIE_GAP_MIN) -> list[list[dt
     return groups
 
 
+DECIDE_GAP_MIN = 3     # 2つのモデルの予測がこれだけ離れていない日からは決めない
+
+
+def split_power(times: list[dt.datetime], c: int, t_min: int,
+                gap_min: float = MIN_GAP_MIN) -> dict:
+    """**その日の形が (A)/(B) をどれだけ切り分けるか**（2026-08-27 に足した）。
+
+    `window()` は日を決めるときに2つの門を通しています ——
+    **予測の差が `DECIDE_GAP_MIN` 以上**（`abs(pc - pw)`）と、
+    **同じ分の組が無いこと**（`ties()`）。どちらも**予約の形だけで先に分かります。**
+
+    ところが `booked_split_day()` は長らく「**`first_pub` より前に出す本が
+    1本でもある日**」で切り分けの日を選んでいました。**それは必要でも十分でも
+    ありません**（2026-08-27 に実測で分かった）:
+
+        2026-08-28  早い本 0本 だが 差 0 —— 早い本が無くても切り分かる日はある…
+        2026-09-07  早い本 0本・差 **5**  ←（13:30 より後ろが多い日は、
+                    **窓のほうが少なく**予測するので、それだけで切り分きます）
+        2026-09-02  早い本 2本・差 **3**（ぎりぎり。1本 動けば消える）
+        2026-08-27  早い本 8本・差 **8**（05:00〜13:30 の18本 ＋ 16:00 の1本）
+
+    **差の大きい日を選ぶこと。** 「早い本があるか」は、差を作る**片方の道**に
+    すぎません（もう片方は「13:30 より後ろに出す本があるか」）。
+
+    返り: `kept`（間隔で残る本数）／`count`（(A) の予測）／`window`（(B) の予測）
+    ／`gap`（その差）／`ties`（同じ分の組の数）／`decisive`（門を2つとも通るか）
+    """
+    kept = _spaced(times, gap_min)
+    pc = min(len(kept), c)
+    pw = sum(1 for x in kept if x.hour * 60 + x.minute <= t_min)
+    tied = ties(times)
+    return {"kept": len(kept), "count": pc, "window": pw, "gap": abs(pc - pw),
+            "ties": len(tied),
+            "decisive": abs(pc - pw) >= DECIDE_GAP_MIN and not tied}
+
+
 def window(path: pathlib.Path | None = None) -> dict:
     """**上限が「1日N本」なのか「時刻の窓」なのかを、切り分けられているか。**
 
@@ -548,7 +584,7 @@ def window(path: pathlib.Path | None = None) -> dict:
             continue                      # 前の日が無い ＝ 比べる相手がいない
         c_d, _t_d, t_min_d, _fp_d = held
         pc, pw = predict(rows, c_d, t_min_d)
-        if abs(pc - pw) < 3:
+        if abs(pc - pw) < DECIDE_GAP_MIN:
             continue                      # 2つの予測が近い日は、どちらにも読める
         if d in tied_days:
             # **同じ分の組がある日からは決めません。** そこで死んだ本が
@@ -606,7 +642,8 @@ def lines(path: pathlib.Path | None = None) -> list[str]:
 
 
 def booked_split_day(first_pub: str, today: dt.date | None = None,
-                     uploaded: pathlib.Path | None = None) -> dict | None:
+                     uploaded: pathlib.Path | None = None,
+                     c: int | None = None, t_min: int | None = None) -> dict | None:
     """**その切り分けの日は、もう予約されていないか**（2026-08-25 に足した）。
 
     `window_lines()` は「**`first_pub` より前から公開する日を1日作れ**」と
@@ -636,45 +673,84 @@ def booked_split_day(first_pub: str, today: dt.date | None = None,
     `scripts/eta.py` の `blocking` にあったのと**同じ形の欠陥**です
     （そちらは「もう測っている値」を「まだ測っていない」と言っていた）。
 
-    返すのは `{"day", "before", "total", "answer"}`、無ければ `None`。
+    返すのは `{"day", "before", "total", "answer", ...}`、無ければ `None`。
 
         day     いちばん早い切り分けの日（JST）
         before  そのうち `first_pub` より前に置かれている本数
         total   その日の予約の合計
-        answer  生きた本数を**読めるようになる日**（伸びきる2日 + Analytics 3日）
+        answer  生きた本数を**読めるようになる日**（その日の最後の本が `MIN_AGE_H`
+                に達する日。**Analytics の3日遅れは掛かりません** —— 下の註）
+        count / window / gap / ties / decisive   `split_power()` の中身
+        running True ＝ **その日は今日**（もう動いている ＝ 置き直せないが、答えは返る）
 
-    **`before` が 0 の日は返しません。** 早い本が1本も無ければ切り分かりません。
+    ## **2026-08-27 に、この関数が2つの理由で答えを6日 遅らせていました**
+
+    **(1) 今日を飛ばしていました。** `<= today` で切っていたので、
+    **その日が今日になった瞬間、対照日が視界から消えます。** 実測 ——
+    08/27 の予約は **19本・05:00 から30分きざみ・同じ分の組は0**で、
+    (A) 本数なら **10本 生き**、(B) 窓なら **18本 生き**ます（**差 8**）。
+    **これ以上の切り分けの日は帳面のどこにもありません。**
+    それでもこの関数は 08/27 を飛ばし、**差 3 しかない 09/02** を名指しして、
+    `window_lines()` は「読めるのは **2026-09-07**」「**答えが返るまで
+    他の日の本数を増やさないこと**」と毎回 印字していました。
+    **11日 ぶん、`density` の 1.8倍 が宙に浮きます。**
+
+    「置き直せない日は名指ししない」は**作る側の理屈**です。この関数の
+    読み手（`window_lines` / `measure_window.split_day_window` / `cap_if_window`）が
+    要るのは「**どの日が答えるのか・いつ読めるのか**」で、
+    **走っている日はまさにそれです**（守るほうも、まだ間に合います ——
+    08/27 は 16:00 の1本がこの時点でまだ公開前でした）。
+
+    **(2) 「Analytics 3日遅れ」を足していました。** `window()` が読むのは
+    `data/views.jsonl` で、あれは **Data API（`videos.list` の `statistics`）**を
+    `scripts/snapshot.py` が積んだものです —— **Analytics は1行も通りません。**
+    `_readings()` の齢の下限は `MIN_AGE_H`（6時間）なので、
+    **その日の最後の本が6時間 たてば読めます**（08/27 なら 16:00 + 6h ＝ 22:00 JST）。
+    足していた5日は、**どこからも来ていない数**でした。
+
+    **覆る条件**: `_readings()` の齢の下限がショート側でも 24時間 に上がったら、
+    `answer` はその齢で計算し直すこと（この関数は `MIN_AGE_H` を読んでいます）。
     """
-    if not first_pub:
-        return None
-    try:
-        cut = dt.datetime.strptime(first_pub, "%H:%M").time()
-    except ValueError:
-        return None
     today = today or dt.datetime.now(JST).date()
+    try:
+        cut = dt.datetime.strptime(first_pub, "%H:%M").time() if first_pub else None
+    except ValueError:
+        cut = None
 
     # **帳面の読み手を増やさないこと**（`docs/JOURNAL.md` 2026-08-25）。
     # 「後の行を採る・JST で割る」の2規則は `src.motion_groups` が持っています。
     from src import motion_groups
 
     at = motion_groups.scheduled_at(uploaded) if uploaded else motion_groups.scheduled_at()
-    per_day: dict[str, list[dt.time]] = collections.defaultdict(list)
+    per_day: dict[str, list[dt.datetime]] = collections.defaultdict(list)
     for when in at.values():
         day = motion_groups.jst_day(when)
         if not day:
             continue
         t = dt.datetime.fromisoformat(when.replace("Z", "+00:00")).astimezone(JST)
-        per_day[day].append(t.time())
+        per_day[day].append(t)
+
+    if c is None or t_min is None:
+        w = window()
+        if not w.get("C") or not w.get("T"):
+            return None
+        c = int(w["C"])
+        t_min = int(str(w["T"])[:2]) * 60 + int(str(w["T"])[3:])
 
     for day in sorted(per_day):
-        if dt.date.fromisoformat(day) <= today:
-            continue                       # **もう過ぎた日では置き直せません**
-        early = [t for t in per_day[day] if t < cut]
-        if not early:
-            continue
-        return {"day": day, "before": len(early), "total": len(per_day[day]),
-                "answer": (dt.date.fromisoformat(day)
-                           + dt.timedelta(days=5)).isoformat()}
+        if dt.date.fromisoformat(day) < today:
+            continue                       # **過ぎた日は、もう読みのほうで数えています**
+        times = sorted(per_day[day])
+        power = split_power(times, c, t_min)
+        if not power["decisive"]:
+            continue                       # 予測が離れない日・同じ分の組がある日
+        early = [t for t in times if cut and t.time() < cut]
+        last = max(times) + dt.timedelta(hours=MIN_AGE_H)
+        return {"day": day, "before": len(early), "total": len(times),
+                "answer": last.date().isoformat(),
+                "answer_at": last.strftime("%H:%M"),
+                "running": dt.date.fromisoformat(day) == today,
+                **{k: power[k] for k in ("count", "window", "gap", "ties", "kept")}}
     return None
 
 
@@ -806,14 +882,23 @@ def _booked_lines(first_pub: str) -> list[str]:
     except Exception:                      # 帳面が読めない回でも出力を止めない
         return []
     if not b:
-        return ["        [!] **その日はまだ予約されていません。**"
-                "この回に置けば、そのぶん早く切り分きます"]
+        return ["        [!] **切り分けられる日が、予約のどこにもありません。**"
+                f"（門は2つ ——(A)/(B) の予測差が **{DECIDE_GAP_MIN}本 以上**・"
+                "**同じ分の組が無い**。`src.day_cap.split_power()`）"
+                "この回に1日 置けば、そのぶん早く切り分きます"]
+    where = "**その日は、いま走っています**" if b.get("running") else "**その日はもう予約されています**"
     return [
-        f"        **その日はもう予約されています: {b['day']}**"
-        f"（{b['total']}本・うち {b['before']}本 が {first_pub} より前）。",
-        f"        → 生きた本数を読めるのは **{b['answer']}** ごろ"
-        f"（伸びきる2日 + Analytics 3日遅れ）。**もう1日作らないこと**"
-        "（日を増やすほど交絡が増えます）。",
+        f"        {where}: **{b['day']}**"
+        f"（{b['total']}本・うち {b['before']}本 が {first_pub} より前）"
+        f" → **(A) 本数なら {b['count']}本 生き ／ (B) 窓なら {b['window']}本 生き**"
+        f"（差 {b['gap']}本・同じ分の組 {b['ties']}）。",
+        f"        → 生きた本数を読めるのは **{b['answer']} {b.get('answer_at', '')}** 以降"
+        f"（その日の最後の本が 齢 {MIN_AGE_H:.0f}時間 になる時刻）。"
+        "**もう1日作らないこと**（日を増やすほど交絡が増えます）。",
+        "        **読むには、その時刻より後に `python scripts/status.py` が1回 走ること** ——"
+        "`data/views.jsonl` は **Data API**（`videos.list`）で積んでいます。"
+        "**Analytics の3日遅れは掛かりません**（2026-08-27 に直した。"
+        "ここは長らく +5日 を足していて、答えを6日 遅らせていました）。",
         "        [!] **答えが返るまで、他の日の本数を増やさないこと** ——"
         "その日が対照です。",
     ]
