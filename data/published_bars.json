@@ -85,6 +85,22 @@
     ],
     "video_id": ""
   },
+  "haito-1000man-6505pt": {
+    "charts": [
+      [
+        "13.01%",
+        "6.505%",
+        "6.505ポイント"
+      ],
+      [
+        "10%",
+        "5%",
+        "2.8%",
+        "1.4%"
+      ]
+    ],
+    "video_id": "a21yvpWHuRM"
+  },
   "haito-bunkiten-695man": {
     "charts": [
       [
@@ -140,6 +156,22 @@
       ]
     ],
     "video_id": "AFfHrkaAHzk"
+  },
+  "haito-jitsugaku-8dan": {
+    "charts": [
+      [
+        "17万4552円",
+        "35万4200円"
+      ],
+      [
+        "−17万9648円",
+        "−5万9680円",
+        "−2万9050円",
+        "＋1580円",
+        "＋13万6205円"
+      ]
+    ],
+    "video_id": "n6vbjM1xQGk"
   },
   "haito-kojo-kirisute-5man": {
     "charts": [
@@ -747,6 +779,22 @@
     ],
     "video_id": "yx2Ix9zsNYU"
   },
+  "keihi-aoiro-saka-450000": {
+    "charts": [
+      [
+        "3700円",
+        "7500円",
+        "1万1200円",
+        "1万5000円",
+        "1万8700円"
+      ],
+      [
+        "1万1200円",
+        "1万1300円"
+      ]
+    ],
+    "video_id": "m_uUwS0Tsy0"
+  },
   "keihi-choboo-919en": {
     "charts": [
       [
@@ -953,6 +1001,23 @@
       ]
     ],
     "video_id": ""
+  },
+  "kokuho-gendogaku-kuware-nininzu": {
+    "charts": [
+      [
+        "8万2600円",
+        "9万2400円",
+        "4万5624円",
+        "0円"
+      ],
+      [
+        "20万6500円",
+        "31万1800円",
+        "32万9525円",
+        "16万5960円"
+      ]
+    ],
+    "video_id": "mmgb36T4fic"
   },
   "kokuho-hitori-fuete-sagaru": {
     "charts": [
@@ -1326,6 +1391,20 @@
     ],
     "video_id": ""
   },
+  "nenkin-kurisage-toku-tani-374886": {
+    "charts": [
+      [
+        "49万5643円",
+        "37万4886円",
+        "513万5000円"
+      ],
+      [
+        "年126.8万円",
+        "年246万円"
+      ]
+    ],
+    "video_id": "j9fn0x4xG9U"
+  },
   "nenkin-saidai-torikoboshi-69-7": {
     "charts": [
       [
@@ -1356,6 +1435,18 @@
       ]
     ],
     "video_id": "HmRqkHLaXp0"
+  },
+  "nenkin-tani-uchigawa-70sai": {
+    "charts": [
+      [
+        "36万4635円",
+        "59万4064円",
+        "69万740円",
+        "65万7115円",
+        "37万4886円"
+      ]
+    ],
+    "video_id": "sLpF129koN8"
   },
   "nenmatsu-chosei": {
     "charts": [
@@ -2912,6 +3003,15 @@
       ]
     ],
     "video_id": "Fu4wUU2uOX4"
+  },
+  "s-juminzei-200000-en-sa": {
+    "charts": [
+      [
+        "200,000円",
+        "0円"
+      ]
+    ],
+    "video_id": "5oActL0uzuQ"
   },
   "s-juminzei-3kyuchi-setai3nin-8333en": {
     "charts": [
@@ -7119,6 +7219,17 @@
       ]
     ],
     "video_id": "SLeIwUJa36A"
+  },
+  "s-zasson-kurikoshi-zero": {
+    "charts": [
+      [
+        "138万7594円",
+        "143万3371円",
+        "181万8655円",
+        "172万8056円"
+      ]
+    ],
+    "video_id": "O9lRBzCLAAI"
   },
   "s-zasson-oitsuku-songaku-500man": {
     "charts": [

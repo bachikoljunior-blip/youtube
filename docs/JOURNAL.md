@@ -62596,3 +62596,41 @@ push の直前に `818c7ef` と衝突しました。**同じ1文（オーナー�
 **1.62倍 で差が出なかったのか、2倍 を試せていないのか**は別物です。
 `MAX_SECONDS_PER_PICTURE` を腕ごとに上げれば 2.0倍 まで行けます
 （`SHORT_SLIDE_SECONDS_SLOW` の註に、その手順があります）。
+
+### 追記3 —— **A/B の最初の8本を出しました**（ship・`upload`・腕 `per_video`）
+
+`python scripts/batch_build.py --count 8` → **8/8 予約**。
+**振り分けが実物で効いていることを、生成ログで確認しました**（写しではありません）:
+
+    [s-zasson-kurikoshi-zero]           ショートの刻み: **1コマ 4.5秒**
+    [s-juminzei-200000-en-sa]           ショートの刻み: **1コマ 2.5秒**
+    [nenkin-kurisage-toku-tani-374886]  ショートの刻み: **1コマ 4.5秒**
+    [haito-1000man-6505pt]              ショートの刻み: **1コマ 2.5秒**
+    [haito-jitsugaku-8dan]              ショートの刻み: **1コマ 2.5秒**
+
+    遅い（4.5秒）**3本**  nenkin-kurisage-toku-tani-374886 / s-zasson-kurikoshi-zero
+                          keihi-aoiro-saka-450000
+    速い（2.5秒）**5本**  s-juminzei-200000-en-sa / haito-1000man-6505pt
+                          haito-jitsugaku-8dan / nenkin-tani-uchigawa-70sai
+                          kokuho-gendogaku-kuware-nininzu
+
+**公開は 08/30〜09/01 JST**（`live_ring` が生きる帯の空きへ置いたので、
+**45日先の列の最後尾ではなく3日後**です）。落ち着き3日＋実データの遅れ3日 ＝
+**09/07 ごろには最初の8本ぶんが読めます** —— 期限 09/24 のずっと手前。
+
+**この8本は、床（片群16本）の半分にも届きません。** 次の回が積むこと（下）。
+
+### この回の ship（**最終・7件**）
+
+    1. fix      「読める時刻」に読む口（日枠）の話が無かった                  none      0
+    2. upload   長尺3本を 09/04・09/05・09/09 JST に予約                      rpm       0
+    3. fix      耳に載せる数の上限（オーナー指摘の前半）                        per_video -3
+    4. fix      ショートの刻みを A/B に載せた（オーナー指摘の後半）             per_video -5
+    5. fix      きょうだいの前提に watch: が無く3件 赤だった                    none      0
+    6. fix      維持率の道具が空で正常終了していた（130本 → 0本）＋判定が尾に負けていた  per_video 0
+    7. upload   ショート8本を 08/30〜09/01 JST に予約（A/B の最初の8本）        per_video 0
+
+**到達予測は 2026-12-24 のまま（+0日）。** 3・4 の -3日 / -5日 は**宣言**で、
+**軌跡の腕が動くのは前提を1件 閉じたときだけ**です（`eta.py` が自分でそう印字します）。
+`slide_pace` の期限は 09-24。**この回に動くはずがありません。**
+**次の回が、宣言と実際を並べます**（`levers.reconcile`）。
