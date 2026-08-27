@@ -625,6 +625,12 @@ def measured_budget(now: datetime | None = None) -> dict:
 #: 窓の残り 23時間・1周 1.56時間 ＝ 15周 で、**1周あたり 26回**の読み。
 #: `snapshot.py` 1回（5呼び出し）を毎周 撃っても余ります。
 #:
+#: **この 400 は「帳面に載る通貨」での 400 です。**`note_quota_ok` を呼ぶのは
+#: `videos.update` と `thumbnails.set` の2か所だけなので、`playlistItems.insert`
+#: （50単位）と通った読みは `spent` に**1単位も載りません。** `floor` も同じ
+#: 数え方なので比は保たれ（実測 9,150／公表 10,000 ＝ 0.92）、止めた時点の
+#: 本当の残りは **400 ÷ 0.92 ≒ 435単位**です。
+#:
 #: ## 覆る条件
 #:
 #: - `measured_budget()["floor"]` が 0（＝ 過去の窓に 403 の前の成功が1行も無い）
@@ -633,6 +639,11 @@ def measured_budget(now: datetime | None = None) -> dict:
 #:   ＝ 焼き方が変わったので、この数を測り直すこと
 #: - `videos.insert` が同じ 403 で落ちるようになったら（＝枠が1つに統合された）、
 #:   **投稿が減る側に効きはじめます。**そのときは大きさを測り直すこと
+#: - **帳面に載らない消費（`playlistItems.insert` の連打など）が増えたら、
+#:   `spent` が 400 を残していても本当は 0 になりえます。** 症状は
+#:   「関門が止めていないのに 403」。そのときは `note_quota_ok` を
+#:   その呼び出しにも足すこと（**`videos.insert` にだけは足さない** ——
+#:   `tests/test_insert_never_marked_ok.py` が理由ごと見ています）
 RESERVE_UNITS = 400
 
 
