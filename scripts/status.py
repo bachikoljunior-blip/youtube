@@ -358,6 +358,24 @@ def print_queue_lag() -> None:
         from scripts import queue_lag
         plan = queue_lag.Plan()
         lines = queue_lag.lag_lines(plan.rows, plan.now)
+        # **「その枠が、開いている前提に効くか」まで出すこと**（2026-08-27 に足した）。
+        #
+        #   `queue_lag.py` を手で撃った回だけが読めていました。**この道具は
+        #   `CLAUDE.md` が「分析は毎回やる」と名指ししている唯一の道具**なので、
+        #   ここに無い節は、主実行から見て**存在しません**。
+        #
+        #   実測 2026-08-27、その節にしか出ていなかったもの:
+        #     ・開いた10群のうち、本が足りないのは `request_form` の2群だけ
+        #       （他8群は床の 3〜20倍。**「本を作れ」が効く先は1件しかない**）
+        #     ・その 114本 を**作れるか**（材料 × ショート率 と引き算）
+        #     ・帯に置くと**期限を越えるか**（越えるなら `deadline_check` と突き合わせ）
+        #
+        #   実測 **2.2秒**・API 0単位（`_walk_days` が1周ぶん控えを持つので、
+        #   同じ `live_plan()` を2度 解きません）。
+        #
+        #   **覆る条件**: この節が 25行 を超えて `status.py` の他の節を押しのけたら、
+        #   足りない群だけの要約に落とすこと（全文は `python scripts/queue_lag.py`）。
+        lines += queue_lag.answering_lines(plan.rows, plan.now)
         plan.improve()
         lines += plan.gain_lines()
         if plan.swaps:

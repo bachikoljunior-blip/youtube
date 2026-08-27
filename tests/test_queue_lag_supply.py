@@ -265,3 +265,36 @@ def test_どの群にも入らない本を_作りすぎと読ませない(monkey
     assert "「作りすぎ」ではありません" in out
     assert "作り続ける" in out
     assert "91%" in out
+
+
+def test_毎回_読む道具に_この節が載っていること():
+    """**`status.py` に無い節は、主実行から見て存在しません**（2026-08-27）。
+
+    `CLAUDE.md` が「分析は毎回やる」と名指ししているのは `scripts/status.py` だけです。
+    この節（材料の引き算・期限の超過・「作りすぎではない」）は、
+    長いあいだ `queue_lag.py` を**手で撃った回だけ**が読めていました ——
+    前の回の日誌が「書き足した所が読まれていない」と言っていた形そのものです。
+
+    **`status.py` は `lag_lines` しか呼んでいませんでした。**
+    """
+    src = (ROOT / "scripts" / "status.py").read_text(encoding="utf-8")
+    assert "answering_lines(" in src, (
+        "`status.py` が `queue_lag.answering_lines()` を呼んでいません。"
+        "呼ばないと、材料と期限の引き算は主実行から見えません"
+    )
+
+
+def test_足りない前提が2件_以上なら_合計だと断る(monkeypatch):
+    """**黙って1件の話にしないこと。** `need` は足りない群ぜんぶの合計です。"""
+    _fake_supply(monkeypatch, total=500)
+    monkeypatch.setattr(QL, "_shorts_only", lambda _keys: [])
+    monkeypatch.setattr(QL, "_short_share", lambda *_a, **_k: None)
+    monkeypatch.setattr(QL.judgeable, "deadlines",
+                        lambda: {"a": date(2026, 10, 6), "b": date(2026, 10, 8)})
+    monkeypatch.setattr(QL, "_walk_days", lambda *_a, **_k: (date(2026, 9, 1), 5))
+    out = "\n".join(QL.supply_lines([("a", "g1", 40), ("b", "g2", 20)]))
+    assert "足りない群ぜんぶの合計" in out and "2件" in out
+
+    # 1件だけの回には、その断りは出さない（雑音になる）
+    out1 = "\n".join(QL.supply_lines([("a", "g1", 40)]))
+    assert "足りない群ぜんぶの合計" not in out1

@@ -3825,3 +3825,8 @@
 {"at": "2026-08-27T02:33:44+00:00", "detail": "channels.list mine"}
 {"at": "2026-08-27T02:37:39+00:00", "ok": true, "detail": "videos.update vid1"}
 {"at": "2026-08-27T02:37:39+00:00", "ok": true, "detail": "videos.update vid1"}
+{"at": "2026-08-27T02:32:48+00:00", "detail": "status: Data API 読み"}
+{"at": "2026-08-27T02:33:19+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-27T02:33:21+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-27T02:34:18+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-27T02:36:39+00:00", "detail": "channels.list mine"}
