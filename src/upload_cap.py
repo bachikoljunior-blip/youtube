@@ -40,8 +40,10 @@
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
 # **観測した最大です。上限そのものではありません**（2026-08-17 11:4x に直した）。
@@ -147,9 +149,70 @@ def _parse(value) -> datetime | None:
     return when
 
 
+#: **この repo の本物の場所**（`config.ROOT` を差し替えても動きません）。
+#: 下の `_write_path` だけが使います。
+_REPO = Path(__file__).resolve().parent.parent
+
+
+def _write_path(name: str) -> Path | None:
+    """書き込み先。**検査が本物の帳面を指していたら `None`**（＝1行も書かない）。
+
+    ## なぜ要るか（2026-08-27 に実測して足した。**`tests/conftest.py` の8件目**）
+
+    `tests/conftest.py` の冒頭は 2026-08-17 にこう書かれています ——
+    **「検査は、本物の台帳に書かないこと」**、そして
+    **「検査では `ledger=` を渡す」を約束にすると、一覧を足した回が必ず片方だけ
+    忘れます（通算7回）。`conftest.py` は全部の検査に自動で掛かります。**
+
+    **`data/day_quota.jsonl` は、その自動の掛かりに入っていませんでした。**
+    実測（2026-08-27 に数えた）:
+
+        本物の `data/day_quota.jsonl` 4,338行 のうち **97行** が検査の書いた行
+        （08/26 に 37行・08/27 に 60行。`videos.update vid1` ＝
+         `tests/test_unschedule_ledger.py` が偽の service で `_update` を呼ぶ）
+
+    **これは統計の汚れでは済みません。** `note_quota_ok` が書く行は
+    `{"ok": true}` で、`day_quota()` はそれを見て
+
+        **「403 のあとに通っている ＝ あの 403 は日枠ではない。押してよい」**
+
+    と答えます（`quota_ok_after_hits`）。つまり **`pytest` を1回 走らせるたびに、
+    本当に尽きている日枠が「開いている」に化けます。** そこから
+    `queue_lag`・`live_slots`・`refresh_thumbnail`・`batch_build` が
+    いっせいに撃ち、**全部 403 で落ちて、また閉じる** ——
+    この窓で 403 を **29回** 観測しているのは、その往復です
+    （尽きた時点で降りていれば 1回 で済みます）。
+
+    ## なぜ「呼ぶ側で気をつける」ではないのか
+
+    `tests/test_day_quota.py` は `config.ROOT` を tmp へ差し替えていて、正しい。
+    **忘れたのは、日枠とは関係のない検査のほう**です ——
+    予約を動かす検査が、たまたま `_update` を通ったので帳面に載りました。
+    **関係のない検査に「日枠の帳面に気をつけろ」と約束させるのは無理**なので、
+    書く側を機械で閉じます。`config.ROOT` を差し替えた検査は今までどおり通ります
+    （差し替え先は `_REPO` と違うので）。
+
+    ## 覆る条件
+
+    本物の帳面へ**わざと**書く検査が要るようになったら、
+    `YT_QUOTA_LEDGER_WRITE=1` を立てること（そのときは理由を JOURNAL に）。
+    """
+    root = _root()
+    if os.environ.get("PYTEST_CURRENT_TEST") and not os.environ.get(
+            "YT_QUOTA_LEDGER_WRITE"):
+        try:
+            if Path(root).resolve() == _REPO:
+                return None
+        except OSError:                                        # noqa: BLE001
+            return None
+    return Path(root) / name
+
+
 def _note(name: str, now: datetime | None, detail: str) -> None:
     now = now or datetime.now(timezone.utc)
-    path = _root() / name
+    path = _write_path(name)
+    if path is None:
+        return
     path.parent.mkdir(parents=True, exist_ok=True)
     rec = {"at": now.astimezone(timezone.utc).isoformat(timespec="seconds"),
            "detail": detail[:200]}
@@ -251,7 +314,9 @@ def note_quota_ok(now: datetime | None = None, detail: str = "") -> None:
     外す向きは今までどおり「押してみて 403 が返れば分かる」側です。
     """
     now = now or datetime.now(timezone.utc)
-    path = _root() / DAY_QUOTA_HITS
+    path = _write_path(DAY_QUOTA_HITS)      # **検査は本物の帳面に書きません**（その註）
+    if path is None:
+        return
     path.parent.mkdir(parents=True, exist_ok=True)
     rec = {"at": now.astimezone(timezone.utc).isoformat(timespec="seconds"),
            "ok": True, "detail": detail[:200]}

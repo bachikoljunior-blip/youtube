@@ -324,11 +324,34 @@ def long_pack_plan(rows: list[dict], durations: dict[str, float], *,
     （作る側は `batch_build._long_ring()` で直してあります。**こちらは
     もう予約に入っている本の後始末**で、そちらの直しは効きません。）
 
+    ## **日が縮まない入れ替えは、1つも出しません**（2026-08-27 に測って直した）
+
+    08-26 版は「動かす長尺の枠は空いている」として**全部を並べ替え**ていました。
+    実測（08/27・本物の控えで撃った）:
+
+        14手 ／ **前倒しの合計 0日**   08/28 21:00 → 08/28 **19:00**
+                                       08/28 22:00 → 08/28 **18:00** …
+
+    **同じ日の中で時刻をずらしているだけ**です。`batch_build._pack_long_form()` は
+    これを毎周 撃つので、**1周あたり 14手 × 50単位 ＝ 700単位** が
+    「前倒し 0日」に消えていました。日枠は 10,000単位・`videos.insert` は
+    1本 1,600単位なので、**上げられたはずの本に換算して 1周 0.4本**です。
+
+    **長尺の時刻に意味はありません**（`LONG_HOURS_JST` の註 ——
+    長尺は `SHORTS_FEED` の枠を使わないので、夜に置いても生死に掛からない）。
+    **意味があるのは日付だけ**なので、日が縮まない手は値打ちが 0 です。
+
+    いまは (1) **本当に空いている枠にだけ置き**、(2) **後ろの本から順に
+    いちばん早い空き枠へ**割り当てます。(2) が要るのは、08-26 版が
+    「早い本から早い枠へ」だったため —— 早い本はもう早い日に居るので
+    `slot >= old` で捨てられ、**穴の後ろに取り残された本まで順番が回りません。**
+
     ## 守っている不変条件
 
     - **新しい時刻は必ず今より前か同じ。** 後ろへ下げる本は1つも作りません
       （`compact_plan` と同じ理由 —— 途中で止まっても、もう一度走らせれば
       同じ割り当てになるため）
+    - **公開日が1日も縮まない手は出しません**（すぐ上の節）
     - **埋まっている枠は使いません**（ショートの枠も含めて全部避ける）
     - 測定の窓（`src.measure_window`）の日は置き先から外します
     - `per_day` を超えて同じ日に置きません。**既定 5 は実測の上限**
@@ -340,52 +363,70 @@ def long_pack_plan(rows: list[dict], durations: dict[str, float], *,
     `day_cap.long_form()` の `collapsed` が True になったら（＝いちばん多く
     出した日に「出したのに付かない」本が出たら）、`per_day` をその日の本数より
     1つ下げること。**黙って上げないこと** —— 上げるのは前提を立てて測る手です。
+
+    **長尺の面で「時刻べつの生死」が測れたら**、上の「時刻に意味はありません」が
+    崩れます。そのときは日付だけでなく時刻も値打ちになるので、
+    「0日 の手を出さない」を測った実測で置き直すこと。
     """
     floor = now.astimezone(JST) + timedelta(minutes=lead_min)
-    longs: list[tuple[datetime, dict]] = []
-    moving: set[str] = set()
     parsed: list[tuple[datetime, dict]] = []
     for r in rows:
         at = _parse_at(r.get("at"))
         if at is None:
             continue
-        at = at.astimezone(JST)
-        parsed.append((at, r))
-        if durations.get(r.get("id"), 0.0) >= long_min_s and at > floor:
-            longs.append((at, r))
-            moving.add(str(r.get("id")))
+        parsed.append((at.astimezone(JST), r))
+    # **埋まっている枠は、長尺の枠も含めて全部です**（2026-08-27 に直した）。
+    #     ここは 08-26 版では「動かさない本が居ない時刻」＝ **動かす長尺の枠は
+    #     空いている**、としていました。全部を並べ替える前提なら筋が通りますが、
+    #     並べ替えは同じ日の 21:00→19:00 のような **0日 の入れ替え**を大量に生み、
+    #     `videos.update` を 1手 50単位 で焼きます（実測 08/27: 14手・**前倒し 0日**）。
+    #     いまは**本当に空いている枠にだけ置きます。**
+    occupied = {at for at, _ in parsed}
+    longs = [(at, r) for at, r in parsed
+             if durations.get(r.get("id"), 0.0) >= long_min_s and at > floor]
     if not longs:
         return []
-    longs.sort(key=lambda t: (t[0], t[1].get("id", "")))
-    # **空いている枠は「動かさない本が居ない時刻」**です（2026-08-26 に検査が捕まえた）。
-    #     ここは最初「全部の時刻から、動かす本の時刻を引く」と書いていました。
-    #     `set` は同じ時刻を1つしか持たないので、**ショートと長尺が同じ時刻に
-    #     二重予約されていると、長尺を引いた拍子にショートの枠まで空きます** ——
-    #     そこへ別の長尺を置くと、**ショートが上書きで消えます。**
-    #     `_say_conflicts` が居るとおり、二重予約は実際に起きています。
-    free = {at for at, r in parsed if str(r.get("id")) not in moving}
+    # その日に**すでに居る長尺**の本数（公開済みも数える。置き先の上限に効きます）
+    per_date: dict = {}
+    for at, r in parsed:
+        if durations.get(r.get("id"), 0.0) >= long_min_s:
+            per_date[at.date()] = per_date.get(at.date(), 0) + 1
 
-    hours = list(LONG_HOURS_JST)[:max(1, per_day)]
+    # **いちばん後ろの本から、いちばん早い空き枠へ。**
+    #     08-26 版は「早い本から順に、早い枠へ」でした ——
+    #     早い本はもう早い日に居るので `slot >= old` で捨てられ、
+    #     **穴の後ろに取り残された本まで順番が回りません**
+    #     （実測 08/27: 長尺 14本 が 09/24〜10/03 の**ショートの帯**に居るのに、
+    #      計画は 08/28〜09/03 の同じ日の入れ替えだけを出していました）。
+    pool = sorted(longs, key=lambda t: (t[0], str(t[1].get("id", ""))), reverse=True)
+    hours = sorted(list(LONG_HOURS_JST)[:max(1, per_day)])
     plan: list[dict] = []
-    day = min(longs[0][0].date(), floor.date())
-    i = 0
+    day = floor.date()
+    last = max(at for at, _ in longs).date()
     guard = 0
-    while i < len(longs) and guard < 400:
+    while pool and day <= last and guard < 400:
         guard += 1
         if measure_window.inside(day.strftime("%Y-%m-%d"), window):
             day += timedelta(days=1)
             continue
         for h in hours:
-            if i >= len(longs):
+            if not pool or per_date.get(day, 0) >= per_day:
                 break
             slot = datetime(day.year, day.month, day.day, h, 0, tzinfo=JST)
-            if slot <= floor or slot in free:
+            if slot <= floor or slot in occupied:
                 continue
-            old, row = longs[i]
-            i += 1
-            if slot >= old:
-                continue                      # **後ろへは下げない**（不変条件）
-            free.add(slot)
+            old, row = pool[0]
+            # **日が縮まない入れ替えは出しません**（50単位 を捨てるだけなので）。
+            #     `pool` は後ろ順なので、先頭で縮まないなら残りも縮みません。
+            #     枠はこの先どんどん後ろになるので、ここで打ち切って構いません。
+            if old.date() <= slot.date():
+                pool = []
+                break
+            pool.pop(0)
+            occupied.add(slot)
+            occupied.discard(old)
+            per_date[day] = per_date.get(day, 0) + 1
+            per_date[old.date()] = per_date.get(old.date(), 1) - 1
             plan.append({"id": row.get("id"), "topic": row.get("topic", ""),
                          "old": old, "new": slot})
         day += timedelta(days=1)
