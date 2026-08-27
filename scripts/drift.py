@@ -585,7 +585,62 @@ def closable_within(today: str, horizon: int = SUPPLY_HORIZON) -> list[dict]:
             # 出していたので、`theta_response()` は判定できない前提について
             # 「期日は1日 過ぎています ＝ **この回に閉じられます**」と
             # 印字していました（実測 08/27）。
-            out.append({**h, "_closable_on": dl, "_closable_est": r is None})
+            # **`ready_at`（その日のうちの、読めるようになる時刻）も持って出ること**
+            # （2026-08-28 08:5x・最適化の回。`_closable_est` と**同じ穴の2件目**）。
+            #
+            # `ready_at` は 2026-08-28 04:0x に `_judge_state_by_claim()` まで
+            # 持ち上がり、`split_overdue()` は正しく使っています —— **こちらには
+            # 来ていませんでした。** そのため同じ `drift.py` の1回の出力が、
+            # 同じ前提について**逆のことを2か所で**言っていました（実測 08/28 08:2x）:
+            #
+            #     期限が来ていて、いま判定できる前提: **なし**
+            #       ↑ `split_overdue()`。「判定できるのは 08-28 の **16:00 JST 以降**」
+            #     次に1件 閉じられるのは **2026-08-28**（**この回に閉じられます**）
+            #       ↑ `theta_response()`。**16:00 がここで落ちています**
+            #
+            # 上を読んだ回は待ち、下を読んだ回は撃ちに行って 403 を1つ買って帰ります。
+            # **`_closable_est` を足したときの註が言っているのと、同じ形の空振り**です。
+            at = _ready_at_by_claim().get(str(h.get("claim") or ""))
+            out.append({**h, "_closable_on": dl, "_closable_est": r is None,
+                        "_ready_at": at})
+    return out
+
+
+def _time_gated(h: dict, today: str, now: datetime | None = None) -> bool:
+    """**その前提は「今日だが、まだ時刻が来ていない」か。**
+
+    `split_overdue()` が同じ判定を持っています（`ready_at > now`）。
+    **2か所に置いてあるのは、片方だけ直る事故を防ぐためではありません** ——
+    実際その事故が起きたのでここに寄せました。片方を直すときは、
+    `tests/test_drift_soonest_time_gate.py` が両方を見ています。
+    """
+    at = h.get("_ready_at")
+    if at is None or str(h.get("_closable_on")) != today:
+        return False
+    try:
+        return at > (now or datetime.now(at.tzinfo))
+    except Exception:                               # noqa: BLE001
+        return False
+
+
+def _ready_at_by_claim() -> dict:
+    """**前提ごとの「その日のうちに、計器が読めるようになる時刻」**（`ready_at`）。
+
+    日付だけでは足りない前提があります —— 例: 日枠が戻る **16:00 JST** まで
+    計器が答えを返さないもの。`Answer.ready` は日付なので、**その 16:00 は
+    日付へ落とした時点で消えます。**
+
+    `_judge_state_by_claim()` はもう持っています（5つ目）。ここはその読み出し口で、
+    **`_ready_by_claim()` と対**になります。片方だけを使うと、この回が踏んだ
+    「同じ出力の2か所が逆を言う」形に戻ります。
+    """
+    st = _judge_state_by_claim()
+    if not st:
+        return {}
+    out = {}
+    for k, v in st.items():
+        if v and v[0] == "ready" and len(v) > 4 and v[4] is not None:
+            out[k] = v[4]
     return out
 
 
@@ -642,7 +697,7 @@ def role_gap_hours(role: str, limit: int = 40) -> float | None:
 
 
 def theta_response(today: str, closed: int, soonest: str | None,
-                   days: int = WINDOW_DAYS) -> list[str]:
+                   days: int = WINDOW_DAYS, gated_note: str = "") -> list[str]:
     """**この θ は、1周ごとの答え合わせに使えるか。**（応答時間を同じ画面に出す）
 
     ## なぜ要るのか（2026-08-27・最適化の回。**5周 続けて誤報していた**）
@@ -743,6 +798,12 @@ def theta_response(today: str, closed: int, soonest: str | None,
                     )
             except ValueError:
                 pass
+        # **時刻待ちは、この行のすぐ下に置くこと**（2026-08-28・最適化の回）。
+        # 上の「次に1件 閉じられるのは」を読んだ回が、そのまま次の行で
+        # 「ただし今日のぶんは HH:MM まで閉じられない」を読むためです。
+        # 離すと、あいだに `_forward_theta_line()` の6行が入って読まれません。
+        if gated_note:
+            out.append(gated_note)
     else:
         out.append("  この役の周の間隔が測れません（`data/rounds.jsonl` に印が足りません）")
     out.append(
@@ -912,9 +973,26 @@ def supply_report(today: str, horizon: int = SUPPLY_HORIZON) -> tuple[str, bool]
         # 「まだ判定できない」と言っている前提です —— そこを渡すと
         # 「期日は1日 過ぎています ＝ **この回に閉じられます**」と出て、
         # **撃ちに行った回が空振りします**（実測 08/27）。
+        # **時刻待ちも同じ理由で外すこと**（2026-08-28 08:5x・最適化の回）。
+        # `_ready_at` が今日で、その時刻がまだ来ていない前提は、
+        # **今日という日付では「閉じられる」に見えますが、この回には閉じられません。**
+        # 外さないと `theta_response()` が「**この回に閉じられます**」と印字し、
+        # 同じ出力の上のほうで `split_overdue()` が
+        # 「判定できるのは 08-28 の **16:00 JST 以降**・**この回は撃たないこと**」と
+        # 言っているのと、正面から食い違います（実測 08/28 08:2x）。
         real = sorted(str(h.get("_closable_on")) for h in stock
-                      if not h.get("_closable_est"))
-        lines += theta_response(today, closed, real[0] if real else None)
+                      if not h.get("_closable_est") and not _time_gated(h, today))
+        gated = sorted(
+            (h.get("_ready_at"), str(h.get("_closable_on")))
+            for h in stock if not h.get("_closable_est") and _time_gated(h, today))
+        note = ""
+        if gated:
+            at, on = gated[0]
+            note = (f"    （**{on} は {at:%H:%M} JST までは閉じられません** ——"
+                    " 計器がそれまで読めません。**この回は撃たないこと**。"
+                    f" 撃つのは **{at:%m/%d %H:%M} JST 以降**）")
+        lines += theta_response(today, closed, real[0] if real else None,
+                                gated_note=note)
         if not real:
             lines.append(
                 "    **次に閉じられる日は出せません** ——"
