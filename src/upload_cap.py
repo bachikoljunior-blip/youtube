@@ -87,6 +87,45 @@ JST = timezone(timedelta(hours=9))
 
 HITS = "data/upload_cap.jsonl"
 
+#: **Data API の日枠（10,000単位）を使う道具**（2026-08-27 に、ここへ集めた）。
+#:
+#: 申し送りや前提の `refresh:` がこの道具を名指ししているなら、
+#: **日枠が尽きている窓では、その手はその時刻に打てません。**
+#: 撃ちに行った回は 403 を1つ買って帰るだけです。
+#:
+#: ## なぜ `upload_cap` に置くか
+#:
+#: **日枠という事実の持ち主がここだから**です（`day_quota()` / `quota_hits_in_window()`）。
+#: この一覧は 2026-08-27 に `scripts/deadline_check.py` の中で
+#: `_DATA_API_REFRESH` として生まれ、**同じ日のうちに読み手が3つになりました**
+#: （`deadline_check` の門・`src/day_cap.readable_at()`・`scripts/retro.py` の持ち越し）。
+#: **写しを3つ作らないため**に、事実の側へ寄せています。
+#:
+#: ## 足すときは、中身を確かめること
+#:
+#: **Analytics API と Reporting API は別の枠**です。ここに入れると、
+#: 読めるのに「読めません」と言う側に外れます。入れてよいのは
+#: `youtube.googleapis.com/youtube/v3` を叩く道具だけ:
+#:
+#:     scripts/snapshot.py          videos.list
+#:     scripts/refresh_thumbnail.py thumbnails.set / videos.list
+#:     scripts/reschedule.py        videos.update / videos.list
+#:     src/channel_page.py          channels.update（`python -m src.channel_page`）
+#:     scripts/live_slots.py        `reschedule.main(["--move", …])` 越し
+#:     scripts/queue_lag.py         同上（`--apply`）
+#:
+#: **`videos.insert`（投稿そのもの）はここに入りません** ——
+#: 日枠が尽きていても通ります（2026-08-17 に実測・以後3度)。
+DATA_API_TOOLS = (
+    "scripts/snapshot.py",
+    "scripts/refresh_thumbnail.py",
+    "scripts/reschedule.py",
+    "src.channel_page",
+    "src/channel_page.py",
+    "scripts/live_slots.py",
+    "scripts/queue_lag.py",
+)
+
 # **Data API の単位枠（10,000単位）を観測した記録**（2026-08-17 22:4x に足した）。
 #
 # 本数枠（上）と**同じ窓・同じ形**ですが、**別々に閉じます**。だから帳面も別です。

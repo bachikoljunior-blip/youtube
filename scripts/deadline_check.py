@@ -752,7 +752,20 @@ def _ans_published_group(need: dict, as_of: date, lag: int) -> Answer:
 #: です（同ファイルの註「571本 なら 12組 ＝ 12単位。日枠は10,000単位」）。
 #: **Analytics API と Reporting API は別の枠**なので、ここに入れないこと ——
 #: 入れると、読めるのに「読めません」と言う側に外れます。
-_DATA_API_REFRESH = ("scripts/snapshot.py",)
+#:
+#: **2026-08-27 に、一覧そのものは `src/upload_cap.DATA_API_TOOLS` へ移しました。**
+#: 同じ日のうちに読み手が3つになったからです（この門・`src/day_cap.readable_at()`・
+#: `scripts/retro.py` の持ち越し）。**ここは名前を残すだけの窓**で、
+#: 足すのは向こうです（`upload_cap` が日枠という事実の持ち主）。
+def _data_api_tools() -> tuple[str, ...]:
+    try:
+        from src import upload_cap
+        return tuple(upload_cap.DATA_API_TOOLS)
+    except Exception:                                          # noqa: BLE001
+        return ("scripts/snapshot.py",)
+
+
+_DATA_API_REFRESH = _data_api_tools()
 
 
 def _quota_gate(need: dict, when: datetime, what: str) -> Answer | None:
