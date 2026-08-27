@@ -4538,3 +4538,4 @@
 {"at": "2026-08-27T20:53:44+00:00", "detail": "thumbnails.set f9WbldIUYpk", "by": "uploader.py:_set_thumbnail"}
 {"at": "2026-08-27T21:02:30+00:00", "detail": "channels.list mine", "by": "history.py:_scan"}
 {"at": "2026-08-27T21:02:31+00:00", "detail": "channels.list mine", "by": "history.py:_scan"}
+{"at": "2026-08-27T21:12:27+00:00", "detail": "scheduled_publish_times", "by": "uploader.py:taken_publish_times"}
