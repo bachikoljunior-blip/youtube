@@ -965,6 +965,9 @@ def supply_lines(short: list[tuple[str, str, int]]) -> list[str]:
     novel = sp.get("sweep_novel")
     if novel:
         body += f" ＋ 掃引の候補 {int(novel):,}件 × {_supply.SWEEP_YIELD:g}"
+    age = sw.get("age_hours")
+    if age is not None:
+        body += f"・掃引の点は **{age:.1f}時間前**"
     out.append(f"{bar}材料 **{total}本**（{body}）"
                + (f"・**{sp['dry_date']} に尽きる**" if sp.get("dry_date") else ""))
     usable = float(total)
@@ -984,7 +987,10 @@ def supply_lines(short: list[tuple[str, str, int]]) -> list[str]:
                    " 枠が空いていても、いまの材料ではこの床に届きません"
                    "（＝その腕は凍ったまま。`python scripts/eta.py --alloc`）")
         und = sp.get("sweep_undecided")
-        fix = [f"{bar}  増やせる所: `python -m src.supply --measure`（掃引を測り直す・約47秒）"]
+        fix = [f"{bar}  **まず測り直すこと**: `python -m src.supply --measure`（約47秒・API 0単位）。"
+               "実測 2026-08-27、**0.4時間前**の点で「14本 足りない」と出たものが、"
+               "測り直すと **10本 余る**に変わりました（候補 568 → 735件）——"
+               "**この節の結論は、点の古さで符号ごと変わります**"]
         if und:
             fix.append(f"{bar}  掃引の候補のうち **判定できていない {int(und):,}件**"
                        "（照合できる点が無いだけで、**無いと分かったのではない**）"
@@ -1027,6 +1033,9 @@ def supply_lines(short: list[tuple[str, str, int]]) -> list[str]:
                            f" {last}（+{days_n}日）で、期限を {(last - due).days}日"
                            " 越えます** —— 材料を足しても、この床は期限内に埋まりません"
                            "（`band_lines` の帯／`src/day_cap.py` の上限）")
+                out.append(f"{bar}      この {(last - due).days}日 は**下限**です ——"
+                           " `live_plan()` は**今日から全部 詰めた場合**を解いています。"
+                           "実際は1周ずつ置くので、**遅れこそすれ早まりません**")
             else:
                 out.append(f"{bar}    枠の側は間に合います"
                            f"（最後の1本 {last} ≤ {due}）")

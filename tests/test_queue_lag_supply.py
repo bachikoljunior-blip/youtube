@@ -168,3 +168,52 @@ def test_実物で落ちない():
     assert isinstance(out, list)
     if short:
         assert any("材料" in s for s in out)
+
+
+def test_掃引の点の古さを出す(monkeypatch):
+    """**この節の結論は、点の古さで符号ごと変わります**（実測 2026-08-27）。
+
+    0.4時間前 の点で「14本 足りない」→ 測り直すと「10本 余る」（候補 568 → 735件）。
+    古さを出さないと、**24本 ずれた数で符号が決まります。**
+    """
+    from src import supply as _supply
+
+    monkeypatch.setattr(_supply, "sweep_novel",
+                        lambda **_kw: {"novel": 100, "undecided": 20, "total": 100,
+                                       "at": None, "age_hours": 3.5})
+    monkeypatch.setattr(_supply, "supply",
+                        lambda *_a, **_kw: {"supply_total": 500, "stock": 10,
+                                            "sweep_novel": 100, "sweep_undecided": 20,
+                                            "dry_date": date(2026, 9, 9)})
+    monkeypatch.setattr(QL, "_shorts_only", lambda _keys: [])
+    monkeypatch.setattr(QL, "_short_share", lambda *_a, **_k: None)
+    monkeypatch.setattr(QL, "_walk_days", lambda *_a, **_k: None)
+    monkeypatch.setattr(QL.judgeable, "deadlines", lambda: {})
+    out = "\n".join(QL.supply_lines([("k", "g", 114)]))
+    assert "3.5時間前" in out
+
+
+def test_足りないときは_先に測り直させる(monkeypatch):
+    """**測らずに「足りない」を信じないこと。** 実測で符号が変わっています。"""
+    _fake_supply(monkeypatch, total=100)
+    monkeypatch.setattr(QL, "_shorts_only", lambda _keys: [])
+    monkeypatch.setattr(QL, "_short_share", lambda *_a, **_k: None)
+    monkeypatch.setattr(QL, "_walk_days", lambda *_a, **_k: None)
+    monkeypatch.setattr(QL.judgeable, "deadlines", lambda: {})
+    out = "\n".join(QL.supply_lines([("k", "g", 114)]))
+    assert "まず測り直すこと" in out and "--measure" in out
+    assert "符号ごと変わります" in out
+
+
+def test_帯の超過は下限だと言う(monkeypatch):
+    """`live_plan()` は**今日から全部 詰めた場合**。実際は遅れこそすれ早まりません。"""
+    _fake_supply(monkeypatch, total=500)
+    monkeypatch.setattr(QL, "_shorts_only", lambda _keys: [])
+    monkeypatch.setattr(QL, "_short_share", lambda *_a, **_k: None)
+    monkeypatch.setattr(QL.judgeable, "deadlines",
+                        lambda: {"request_form": date(2026, 10, 6)})
+    lag = QL.SETTLE_DAYS + QL.judgeable.ANALYTICS_LAG_DAYS
+    due = date(2026, 10, 6) - timedelta(days=lag)
+    monkeypatch.setattr(QL, "_walk_days", lambda *_a, **_k: (due + timedelta(days=1), 35))
+    out = "\n".join(QL.supply_lines([("request_form", "途中あり", 114)]))
+    assert "**下限**です" in out
