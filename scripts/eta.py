@@ -1979,6 +1979,58 @@ def _capped_arms(a0: dict, arms: dict | None = None,
     return out
 
 
+def cap_lines(arms: dict, indent: str = "      ") -> list[str]:
+    """腕べつの**天井**と、その出どころを1行ずつ。**正本はここ1か所です。**
+
+    ## なぜ関数にしたか（2026-08-27 に実測して足した）
+
+    `alloc_search` の docstring は自分でこう言っています ——
+    **「その2本の順位は天井の遠さだけで決まっています」**。
+    ところが `--alloc` の出力には、**天井が1つも印字されていませんでした。**
+    印字していたのは軌跡の側（`_trajectory_lines`）だけです。
+
+    実測 2026-08-27 の `--alloc`:
+
+        次の1件を `per_video` に   2027-01-07
+        次の1件を `sub_rate` に    2027-01-03   ← **いちばん早い**
+        次の1件を `rpm` に         2027-01-12
+        次の1件を `density` に     2027-01-07
+
+    同じ日の同じプログラムが、軌跡の側ではこう言っています:
+
+        天井 `sub_rate` ×3,231.43 …… 登録率 100%（定義上の上限）← **実測の天井ではありません**
+        天井 `density`  ×1.00 …… **引き代なし。この腕は何をしても上の日付を1日も動かしません**
+
+    **順位を決めている当の数が、順位表に出ていない。**
+    `density` は `per_video` と**同着**の顔で並び、「引き代0」とは1文字も
+    書いてありません。実際 `data/runs.jsonl` の直近8件の ship のうち
+    **2件が `lever=density`**（同じ行に `"lever_cap": 1.0` が記録済み）——
+    **機械は知っていて、選ぶ側には見えていませんでした。**
+    そして `--alloc` は **3回 続けて `sub_rate` を名指し**しています
+    （`docs/JOURNAL.md` 2026-08-27）。その天井は「登録率100%」＝
+    **定義上の上限**で、実測ではありません。
+
+    **覆る条件**: `sub_rate` と `rpm` が `MIN_N`（3件）に届いて
+    p・g が自前になったら、順位は天井だけでは決まらなくなります
+    （`alloc_search` の「覆る条件」と同じ1件）。そのときもこの表は残すこと ——
+    **消える理由は「天井が効かなくなった」ではなく「他も効くようになった」**です。
+    """
+    out: list[str] = []
+    for lever, a in arms.items():
+        cap = a.get("cap")
+        if not cap or not a.get("cap_why"):
+            continue
+        if cap <= 1.0:
+            mark = ("  ← **引き代なし。この腕に立てても、"
+                    "上の日付は1日も動きません**")
+        elif not a.get("cap_measured"):
+            mark = "  ← **実測の天井ではありません**"
+        else:
+            mark = ""
+        out.append(f"{indent}天井 `{lever}` ×{cap:,.2f} …… {a['cap_why']}{mark}")
+    return out
+
+
 #: 軌跡を追う地平（日）。ここより先は「届かない」と同じに扱う。
 #: 3年 ＝ 目標の「最短」から見ればとっくに別の道を選んでいる長さです。
 TRAJECTORY_HORIZON_DAYS = 1_095
@@ -4376,10 +4428,8 @@ def _report_trajectory(tr: dict, pl: dict) -> list[str]:
     P = out.append
     for line in arm_speed.lines(tr["arms"], st, bd, tr.get("unread", 0)):
         P(line)
-    for lever, a in tr["arms"].items():
-        if a.get("cap") and a.get("cap_why"):
-            mark = "" if a.get("cap_measured") else "  ← **実測の天井ではありません**"
-            P(f"      天井 `{lever}` ×{a['cap']:,.2f} …… {a['cap_why']}{mark}")
+    for line in cap_lines(tr["arms"]):
+        P(line)
 
     P("")
     if base["date"] is not None:
@@ -5341,6 +5391,12 @@ def alloc_search(with_speed: bool = False) -> int:
           + f"  ← {arm_speed.MIN_N}件 未満は**全体の値で代用**しています"
           "（代用どうしは速さが同値になるので、順位が天井の遠さだけで決まります）")
 
+    # --- **その「天井の遠さ」そのものを出す**（2026-08-27 に足した） ---
+    #     上の1行が「順位は天井の遠さだけで決まります」と言っているのに、
+    #     **天井は1つも印字されていませんでした。** 理由と実測は `cap_lines`。
+    for line in cap_lines(arms, indent="    "):
+        print(line)
+
     # --- **腕べつの「予定表 θ」を出す**（2026-08-27 に足した） ---
     #     代用の腕どうしは p も g も θ も同値になるので、上の1行だけでは
     #     **順位が天井の遠さだけ**で決まります。台帳の予定表（開いている前提の
@@ -5405,6 +5461,15 @@ def alloc_search(with_speed: bool = False) -> int:
         share = {k: (pln["share"].get(k, 0.0) * n + (1 if k == lever else 0)) / (n + 1)
                  for k in arm_speed.ARMS}
         d = _solve(share, f"次の1件を `{lever}` に")
+        # **引き代0の腕を、同着の顔で並べないこと。** `density` は ×1.00 で
+        #     「何をしても日付は動かない」と軌跡の側が言っているのに、ここでは
+        #     `per_video` と同じ日付で並びます（実測 2026-08-27・どちらも 2027-01-07）。
+        #     **同着に見えるのは「効く」からではなく、5% の付け替えでは
+        #     どちらも動かないから**です。理由は `cap_lines`。
+        cap = (arms.get(lever) or {}).get("cap")
+        if cap is not None and cap <= 1.0:
+            print("      ↑ **この腕は天井 ×1.00（引き代なし）です。**"
+                  "立てても、閉じても、上の日付は1日も動きません")
         if d < best[0]:
             best = (d, lever)
     # **符号は「早い／遅い」の字で出すこと。** `+6日` は
@@ -5414,6 +5479,21 @@ def alloc_search(with_speed: bool = False) -> int:
     print(f"\n  **いちばん早いのは `{best[1]}`**"
           + (f"（そのままより **{gap:,.0f}日 早い**）" if gap >= 1
              else "（そのままと同じ。**どの腕に立てても日付は動きません**）"))
+    # **勝った腕の天井が実測でないなら、勝ちの理由がそこにあります。**
+    #     この順位は天井の遠さで決まる（上の docstring）ので、
+    #     **天井が作り物なら、勝ちも作り物**です。軌跡の側には同じ注意が
+    #     既にありました（`_trajectory_lines` の `[!] … 測った天井ではありません`）——
+    #     **`--alloc` にだけ無かった**ので、ここに置きます。
+    top_arm = arms.get(best[1]) or {}
+    if best[1] != "そのまま（足さない）" and top_arm.get("cap") \
+            and not top_arm.get("cap_measured"):
+        print(f"  [!] ただし `{best[1]}` の天井 ×{top_arm['cap']:,.2f} は"
+              f"**測った天井ではありません**（{top_arm.get('cap_why', '')}）。"
+              "**この順位は天井の遠さで決まっています**（上の docstring）ので、"
+              "**天井が作り物なら、勝ちも作り物**です。"
+              f"この腕で閉じた前提は {top_arm.get('n', 0)}件"
+              f"（{arm_speed.MIN_N}件 で自前になります）——"
+              "**1件 閉じるだけで、この順位そのものが引き直せます。**")
     print("  立てるときは `config/hypotheses.yaml` に `lever:` を**その腕で**書くこと ——"
           " 空欄だと `arm_speed.closed()` が閉じたときに行ごと飛ばします。")
     return 0
