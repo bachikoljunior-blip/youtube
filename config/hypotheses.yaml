@@ -755,7 +755,11 @@ hypotheses:
         # `data_file:` を書くと、`deadline_check.newest_point()` が
         # **その計器に直接 訊きます**（散文からパスを拾わない）。
         data_file: "data/views.jsonl"
-        refresh: "python scripts/snapshot.py"
+        # **`scripts/snapshot.py` を名指ししないこと**（書いた30分後に踏んだ）。
+        # あれは `record()` を持つだけの**部品**で、`__main__` がありません ——
+        # 直に走らせると **exit 0 で1行も書かずに終わります。**
+        # 実際に `views.jsonl` へ書くのは `scripts/status.py` の側です。
+        refresh: "python scripts/status.py"
         what: "05/06/07/08時に足した4本の、公開から6時間の読み（`data/views.jsonl`）"
     falsified_if: >
       2026-08-27 に **05/06/07/08時 JST の4本**を足した（09:00〜13:30 の10本は
