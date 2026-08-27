@@ -3983,5 +3983,13 @@
 {"at": "2026-08-27T05:22:53+00:00", "detail": "channels.list mine"}
 {"at": "2026-08-27T05:22:55+00:00", "detail": "channels.list mine"}
 {"at": "2026-08-27T05:24:01+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-27T05:34:57+00:00", "detail": "status: Data API 読み"}
+{"at": "2026-08-27T05:35:30+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-27T05:35:32+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-27T05:36:39+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-27T05:38:55+00:00", "detail": "status: Data API 読み"}
 {"at": "2026-08-27T05:34:12+00:00", "detail": "videos.list snapshot"}
+{"at": "2026-08-27T05:39:27+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-27T05:39:29+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-27T05:40:33+00:00", "detail": "channels.list mine"}
 {"at": "2026-08-27T05:36:27+00:00", "detail": "channels.list mine"}

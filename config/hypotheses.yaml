@@ -761,6 +761,12 @@ hypotheses:
         # `data_file:` を書くと、`deadline_check.newest_point()` が
         # **その計器に直接 訊きます**（散文からパスを拾わない）。
         data_file: "data/views.jsonl"
+        # **`refresh:` は「撃てば実際にデータが増える」ものだけ。**
+        # 最初 `python scripts/snapshot.py` と書いて、その30分後に踏みました ——
+        # 当時あれは `record()` を持つだけの部品で `__main__` が無く、
+        # 直に走らせると **exit 0 で1行も書かずに終わりました。**
+        # **同じ周の主実行が `__main__` と `_ids_from_ledger()` を足した**ので、
+        # いまは撃てます（`videos.list` だけ ＝ **12単位**。`status.py` より軽い）。
         refresh: "python scripts/snapshot.py"
         what: "この日の**19本すべて**の、公開から6時間 以上の読み（`data/views.jsonl`）。最後の本が 16:00 JST なので **22:00 JST 以降**に `python scripts/snapshot.py` を1回"
     falsified_if: >
