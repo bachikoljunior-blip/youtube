@@ -748,6 +748,14 @@ hypotheses:
         # そのとき `confounded=True` / `verdict=None`）。
         # 早撃ちは一度 起きています（下の `note` の「確信つきで逆」）。
         at_time_jst: "14:00"
+        # **時計が来た ≠ データが在る**（2026-08-27 14:24 JST に踏んだ）。
+        # 上の `at_time_jst` は時計しか見ていないので、14:00 を過ぎた瞬間に
+        # 「判定できる」と出ます。実際は `data/views.jsonl` のいちばん新しい点が
+        # **36時間 前**で、要る「6時間の読み」は1点も在りませんでした。
+        # `data_file:` を書くと、`deadline_check.newest_point()` が
+        # **その計器に直接 訊きます**（散文からパスを拾わない）。
+        data_file: "data/views.jsonl"
+        refresh: "python scripts/snapshot.py"
         what: "05/06/07/08時に足した4本の、公開から6時間の読み（`data/views.jsonl`）"
     falsified_if: >
       2026-08-27 に **05/06/07/08時 JST の4本**を足した（09:00〜13:30 の10本は

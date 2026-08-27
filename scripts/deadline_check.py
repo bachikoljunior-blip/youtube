@@ -237,6 +237,15 @@ class Answer:
     #:
     #: だから**点ではなく帯**で見ます。帯の中なら「ずれ」と言いません。
     slack: int = 0
+    #: **待っている側に渡す、具体的な次の手**（2026-08-27・最適化の回）。
+    #:
+    #: `warming` の行は「待てば出ます」しか言えませんでした。ところが
+    #: **待ち方は2つあります** —— 時刻がまだ来ていない（＝本当に待つだけ）と、
+    #: **時刻は来たがデータを取っていない**（＝待っても永久に出ない）。
+    #: 後者を「待つこと」と印字すると、次の回は何もせずに帰り、
+    #: **その前提は期限を過ぎたまま止まります。** ここに手を入れておくと、
+    #: `lines()` がそのまま出します。
+    todo: str = ""
 
 
 def _ans_now() -> Answer:
@@ -479,6 +488,63 @@ def _ans_published_group(need: dict, as_of: date, lag: int) -> Answer:
                   slack=band)
 
 
+def newest_point(path: Path) -> datetime | None:
+    """`data/*.jsonl` の中で **いちばん新しい観測時刻**。読めなければ `None`。
+
+    **なぜ要るか**（2026-08-27・最適化の回。**その日のうちに踏みました**）
+
+    `at_time_jst` は「**時計**が来たか」しか見ていませんでした。同じファイルの
+    `_ans_after` の註が、その 14時間 前に自分でこう書いています ——
+    『`falsified_if` が「`data/views.jsonl` が **08-27 14:00 JST 以降**の点を
+    持っていること。持っていなければ判定せず、期限だけ延ばすこと」と**散文で**
+    書いています。**正しい文はあって、門が読んでいたのは日付だけ**でした』。
+
+    **時刻の粒に直しても、読んでいるのは時計のままです。**
+    実測 2026-08-27 **14:24 JST**（時計は通った）:
+
+        `data/views.jsonl` のいちばん新しい点  **08-26 01:53 JST**（**36時間 前**）
+        `scripts/deadline_check.py`            [OK] 判定できるのは **08-27**
+        `scripts/drift.py`                     **この回は verdict を出すこと**
+
+    要るのは「05/06/07/08時に足した4本の、公開から6時間の読み」で、
+    **その点は1つも在りません。** 同じ前提の `note` には、前回この門が早撃ちして
+    「`verdict='count' confounded=False` を印字しました —— **確信つきで逆**です」
+    と残っています。**時計だけの門は、同じ穴を時刻の粒で作り直しただけ**でした。
+
+    だから `needs` に `data_file:` があるときは、**その計器に直接 訊きます**
+    （＝この関数）。これは上の註が自分で書いた覆る条件そのものです ——
+    『時刻の粒でも足りない要件が出てきたら、**その計器に直接 訊く `kind`** を足すこと』。
+
+    **散文からパスを拾わないこと。** `what` の中の `` `data/views.jsonl` `` を
+    正規表現で拾う手もありますが、この repo は同じ形で6回 転んでいます
+    （**読み手が読まない欄に書いてある**）。だから `data_file:` という
+    **機械が読む欄**にします。書いていない要件は、今までどおり時計だけで通します。
+    """
+    if not path.exists():
+        return None
+    newest: datetime | None = None
+    for ln in path.read_text(encoding="utf-8").splitlines():
+        ln = ln.strip()
+        if not ln:
+            continue
+        try:
+            r = json.loads(ln)
+        except Exception:                                        # noqa: BLE001
+            continue
+        at = r.get("at") or r.get("ts") or r.get("time")
+        if not isinstance(at, str):
+            continue
+        try:
+            dt = datetime.fromisoformat(at.replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        if newest is None or dt > newest:
+            newest = dt
+    return newest
+
+
 def _ans_after(need: dict, lag: int) -> Answer:
     """**その日が来るのを待っているだけ**の要件。
 
@@ -532,6 +598,25 @@ def _ans_after(need: dict, lag: int) -> Answer:
                 f"{what} は **{on:%m/%d} {when:%H:%M} JST** に出ます"
                 f"（いま {now:%m/%d %H:%M} JST。**まだ出ていません** ——"
                 "日は来ていますが、この要件は日の粒ではありません）")
+    # **時計が来た ＝ データが在る、ではありません**（2026-08-27・`newest_point` の註）。
+    # `data_file:` が書いてあるときは、その計器に直接 訊きます。
+    src = need.get("data_file")
+    if src:
+        when_data = when if at else datetime(on.year, on.month, on.day, tzinfo=JST)
+        newest = newest_point(ROOT / str(src))
+        if newest is None or newest < when_data:
+            seen = (f"いちばん新しい点は **{newest.astimezone(JST):%m/%d %H:%M} JST**"
+                    f"（**{(datetime.now(JST) - newest).total_seconds() / 3600:.0f}時間 前**）"
+                    if newest else "**1点も読めません**")
+            how = str(need.get("refresh") or "").strip()
+            return Answer(
+                None,
+                f"{what} は **{when_data:%m/%d %H:%M} JST** の点が要りますが、"
+                f"`{src}` にまだ在りません（{seen}）",
+                todo=("**時計は来ています。足りないのはデータのほうです** —— "
+                      f"`{src}` を取り直すまで、待っても永久に出ません。"
+                      + (f"  `{how}`" if how else f"  `{src}` を取り直すこと")
+                      + "  **取れるまで判定しないこと**"))
     if need.get("plus_lag"):
         band = analytics_lag_band()
         tail = (f"（**±{band}日**。遅れは1日の中で {lag}日 と {lag + band}日 の"
@@ -795,9 +880,16 @@ def lines(vs: list[Verdict], lag: int) -> list[str]:
             # 「伸び率が出れば」を**無条件**で言っていましたが、`at_time_jst` の
             # 要件は**今日の決まった時刻に出る**もので、伸び率とは関係ありません。
             # 待ち方を1つに丸めると、**次の回が「まだ何日も先だ」と読みます。**
+            # **手が在るなら、待ち方より手を出すこと**（2026-08-27・`Answer.todo`）。
+            # ここは `at_time_jst` が在れば無条件に「その時刻まで待つこと」と
+            # 出していました。**時刻が過ぎた後も同じ文を出します** ——
+            # 実測 14:24 JST に「今日の 14:00 JST に出ます。その時刻まで待つこと」。
+            todo = next((a.todo for a in v.answers if a.todo), "")
             when = next((str(x.get("at_time_jst")) for x in (v.needs or [])
                          if x.get("at_time_jst")), "")
-            if when:
+            if todo:
+                out.append(f"         → {todo}")
+            elif when:
                 out.append(f"         → **今日の {when} JST に出ます。**"
                            "伸び率の話ではありません —— **その時刻まで待つこと**"
                            "（畳まないこと・条件を緩めないこと）")

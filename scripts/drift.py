@@ -299,7 +299,14 @@ def _judge_state_cached(_key: tuple) -> dict[str, tuple] | None:
             elif getattr(v, "unchecked", False):
                 out[v.claim] = ("unchecked", None)
             else:
-                out[v.claim] = ("warming", None)
+                # **`todo` も持って上がること**（2026-08-27・最適化の回。`slips` と同じ穴）。
+                # `warming` を一律に「待てば日が出ます」と印字していましたが、
+                # **待ち方は2つ**あります —— 時計待ち（本当に待つだけ）と、
+                # **データを取っていない**（＝待っても永久に出ない）。
+                # 後者に「待つこと」と言うと、その前提は期限を過ぎたまま止まります。
+                todo = next((a.todo for a in (getattr(v, "answers", None) or [])
+                             if getattr(a, "todo", "")), "")
+                out[v.claim] = ("warming", None, None, 0, todo)
         return out
     except Exception:                               # noqa: BLE001
         return None
@@ -350,10 +357,15 @@ def split_overdue(od: list[dict], today: str) -> tuple[list[dict], list[tuple[di
                     "**期限を延ばすこと**（`falsified_if` は1文字も触らない）。"
                     "`python scripts/deadline_check.py` がその日を出します"))
         elif kind == "warming":
-            blocked.append((
-                h, "まだ数えはじめたところ（伸び率が出ないので日が出せない）",
-                "**この回は何もしないのが正解です**（畳まない・条件を緩めない）。"
-                "待てば日が出ます"))
+            todo = got[4] if len(got) > 4 else ""
+            if todo:
+                # **待っても出ない側。** 手が在るので、そのまま渡します。
+                blocked.append((h, "時計は来たが、要るデータが在りません", str(todo)))
+            else:
+                blocked.append((
+                    h, "まだ数えはじめたところ（伸び率が出ないので日が出せない）",
+                    "**この回は何もしないのが正解です**（畳まない・条件を緩めない）。"
+                    "待てば日が出ます"))
         elif kind == "unreachable":
             now.append(h)          # 止める。ただし「verdict を出せ」ではない（下で分ける）
         else:                      # unchecked
@@ -405,9 +417,18 @@ def report(today: str, window_days: int = WINDOW_DAYS) -> tuple[str, bool]:
 
     if od_blocked:
         # **止めません。印字だけします。**（`split_overdue` の註）
+        #
+        # **ただし「できることが無い」は、もう全部には掛かりません**
+        # （2026-08-27・最適化の回）。`warming` のうち **時計は来たがデータが
+        # 無い**側は、**取り直せばその回のうちに判定できます** ——
+        # そこへ「できることが無い」と書くと、読んだ回はそのまま帰ります。
+        acts = sum(1 for _, why, _ in od_blocked if "要るデータが在りません" in why)
+        tail = ("（**門には載せません** —— その回にできることが無いので）"
+                if not acts else
+                f"（**門には載せません**。ただし **{acts}件 は、この回に手が在ります** ——"
+                "『→』の行がその手です）")
         lines.append(
-            f"  期限は来たが、まだ判定できない前提: {len(od_blocked)}件"
-            "（**門には載せません** —— その回にできることが無いので）")
+            f"  期限は来たが、まだ判定できない前提: {len(od_blocked)}件{tail}")
         for h, why, todo in od_blocked[:5]:
             claim = str(h.get("claim") or h.get("q") or "")[:56]
             lines.append(f"    {h.get('deadline', '?')}  {claim}")
