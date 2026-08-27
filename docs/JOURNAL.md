@@ -63694,3 +63694,46 @@ merge で片方に寄せました（幸い、こちらは理由つきだった�
    飛ばしは 07:55Z 以降に入ったので、**この窓には1回も乗っていません**）。
    **次の窓の `repeats` を見ること** —— 0 に近づかないなら、
    **2つの道具が同じ本を別々の時刻へ取り合っています**（`by` に名前が2つ出ます）
+
+### ⑦ 追記 —— **全体の検査は赤で押されています（7件）。どれもこの回のものではありません**
+
+この回は**全体 `pytest` を1度 通しました**（**20分57秒**。4,053 passed / **7 failed** / 3 skipped）。
+**7件とも、この回が触っていないファイル**です（確かめ方: この回が触った6ファイルを
+`git checkout efe4813^ --` で戻して同じ7件を撃つと、**同じ7件が同じように落ちます**）。
+
+    tests/test_collisions.py::test_plan_does_not_push_past_the_days_last_slot_on_a_window_day
+    tests/test_long_pack_no_zero_day_moves.py::test_詰まりきっているなら1手も出さない
+    tests/test_long_pack_no_zero_day_moves.py::test_穴の後ろに取り残された本を前へ出す
+    tests/test_measure_window.py::test_実物の窓は前提の期限を写している
+    tests/test_doc_numbers.py::test_topics_yamlには掛けない
+    tests/test_request_form_excludes_long_form.py::test_split_counts_と_judgeable_が同じ数を言う
+    tests/test_request_form_excludes_long_form.py::test_絞り込みの無い実験は_今までどおり全部数える
+
+**直していません。** 理由は2つで、**どれも 08/27 の別の回が意図して変えた側**
+（`collisions` の帯の下端・`measure_window` の動的な窓・`slide_pace` の `eligible`）で、
+**主実行のサブがいま `slide_pace` を触っています**（この回の `--claim` が見せた
+00:42 の宣言）。前の回の ⑦ が「同じ5件を2つの役が別々に直した」と書いた形そのものなので、
+**名指しだけ残します。**
+
+### ⑧ **門は在るのに、赤が通りました** —— `fast_tests.py` の選び方を測った
+
+`scripts/fast_tests.py` は「その回の diff から `-k` の語を作る」道具で、
+**まさにこれを止めるために 08/26 に作られています。** 実測すると、
+**上の7件のうち 2件 は、その選び方では選ばれません:**
+
+    tests/test_doc_numbers.py                   触ったのは `config/topics.yaml`
+                                                → `keywords()` は **.py 以外を1件も見ません**
+    …::test_絞り込みの無い実験は_今までどおり…  触ったのは `src/judgeable.py`
+                                                → `-k judgeable` は**同じファイルの 3件中 1件**しか採りません
+                                                  （実測 `--collect-only`: 1/3 collected, 2 deselected）
+
+**語で選ぶと、名前に語が入っている検査しか採れません。**
+`judgeable` を**本文で参照している**検査ファイルは **18件** あります（grep）。
+同じ数え方で `collisions` 4件・`measure_window` 11件・`topics.yaml` 11件 ——
+**どれも走る量としては現実的**です（検査ファイルは全部で 316件）。
+
+**次にこの道具を触る回へ**: 選ぶ単位を「`-k` の語」から
+**「その語を本文に持つ検査ファイルのパス」**に変えること（`.py` 以外の
+触ったファイルは、拡張子つきの名前で引く）。**芯（`CORE`）まで同じ引き方にすると
+`eta` だけで 61件**になるので、**そこは測ってから決めること。**
+**この回はやっていません** —— 理由は⑦と同じで、道具の持ち主の側が動いている最中だからです。
