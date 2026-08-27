@@ -2584,17 +2584,55 @@ def frozen_days(m: dict, a0: dict, tr: dict, levers_: list[str], *,
     return out
 
 
-def _realloc_arms(arms: dict, share: dict[str, float]) -> dict:
+def _arm_rotation() -> tuple[dict, dict]:
+    """**腕べつの「予定表 θ」と、その重み。**読めなくても回を止めない。
+
+    `deadline_check` が落ちても `--alloc` は出ます（重みが全部 1.0 になり、
+    `missing` に理由が残る ＝ **黙って 1.0 にしない**）。
+    """
+    ready: dict = {}
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        import deadline_check                                   # noqa: PLC0415
+
+        ready = deadline_check.ready_by_claim()
+    except Exception as exc:                                    # noqa: BLE001
+        by_arm = arm_speed.forward_by_arm({})
+        return by_arm, {"weights": {k: 1.0 for k in arm_speed.ARMS}, "raw": {},
+                        "mean": None, "window": arm_speed.SPEED_WINDOW_DAYS,
+                        "missing": f"`deadline_check` が読めません（{exc}）"}
+    by_arm = arm_speed.forward_by_arm(ready)
+    return by_arm, arm_speed.speed_weights(by_arm)
+
+
+def _realloc_arms(arms: dict, share: dict[str, float],
+                  speed: dict[str, float] | None = None) -> dict:
     """腕の束を、**別の配分**で解けるように組み直す。
 
     `rate = focus_rate × share` は `src/arm_speed.arm()` が置いている形です。
     ここは `share` だけを差し替えて `rate` を引き直します ——
     **`focus_rate`（その腕に全部振ったときの速さ）は配分に依りません。**
+
+    ## `speed` ——**腕べつの「回転の重み」**（2026-08-27 に足した）
+
+    `focus_rate = p · log(g) · θ` の **θ は `arm_speed.throughput()`**、
+    つまり**全体の実測ひとつ**です。4本とも同じ値なので、
+    `--alloc` の順位は（代用の腕どうしでは）**天井の遠さだけ**で決まります。
+
+    `speed` は `arm_speed.speed_weights()` が返す、**平均1に正規化した倍率**。
+    掛けると、台帳の予定表が言っている**腕どうしの回転の差**が順位に入ります。
+    **水準は動きません**（平均が1なので）。渡さなければ、いままでどおり。
+
+    実測 2026-08-27 —— これを掛ける前の `--alloc` は
+    「いちばん早いのは `sub_rate`」と言い、同じ日の予定表では
+    **`sub_rate` だけが今後14日 に1件も閉じられません**（`forward_by_arm()`）。
     """
     out = {}
     for k, a in arms.items():
         w = float(share.get(k, 0.0) or 0.0)
-        out[k] = {**a, "share": w, "rate": (a.get("focus_rate") or 0.0) * w}
+        sp = 1.0 if speed is None else float(speed.get(k, 1.0) or 1.0)
+        out[k] = {**a, "share": w, "speed_weight": sp,
+                  "rate": (a.get("focus_rate") or 0.0) * w * sp}
     return out
 
 
@@ -5180,8 +5218,48 @@ def _reflect_recap(limit: int = 3) -> list[str]:
     return out
 
 
-def alloc_search() -> int:
+def alloc_search(with_speed: bool = False) -> int:
     """**次の前提をどの腕に立てるのが、いちばん早いか。**（2026-08-26・最適化の回）
+
+    ## **順位を決めているのは回転ではなく天井です**（2026-08-27 に測って足した）
+
+    ここが解いているのは `rate = focus_rate × share` の `share` だけで、
+    `focus_rate = p · log(g) · θ` の **θ は `arm_speed.throughput()`
+    ＝ 全体の実測ひとつ**です。しかも `arm()` は閉じた前提が `MIN_N`（=3）に
+    満たない腕の `p` と `g` を**全体で代用**するので、
+    `sub_rate`（2件）と `rpm`（1件）は **p も g も θ も同値**になります。
+    **つまり、その2本の順位は天井の遠さだけで決まっています。**
+
+    **そこで、台帳の予定表から腕べつの回転を測って掛けてみました**
+    （`arm_speed.forward_by_arm()` / `speed_weights()`・`--alloc-speed`）。
+    実測 2026-08-27（30日 窓）:
+
+        per_video 0.100/日（×1.05）   sub_rate 0.033/日（**×0.68**）
+        rpm       0.133/日（×1.23）   density  0.100/日（×1.05）
+
+    **順位は変わりませんでした** —— `sub_rate` が 4日 早い → **5日 早い**。
+    **回転を 3分の2 に落としても勝ちます。** 動かしているのは天井のほうです。
+
+    だから既定では掛けません（掛けると水準がずれて、
+    「過去の配分（＝頭の3行の日付）」の行が**頭の日付と一致しなくなります** ——
+    実測 2026-12-23 → 2027-01-05。**同じプログラムが同じ日に別の日付を出す形**は、
+    この道具がいちばん嫌っている壊れ方です）。
+
+    **代わりに、回転そのものを表で出します。** 実測 2026-08-27 の
+    `sub_rate` は**今後14日 に1件も閉じられません**（いちばん早い判定日が
+    2026-09-16 ＝ 20日 先。他の3本は density 08-28 ／ rpm 09-01 ／
+    per_video 09-05）。**「いちばん早い」は「次の2週間で動く」ではありません。**
+    そこを黙って出すと、`sub_rate` に立て続けて 20日 間 何も動かない回が続きます
+    —— 2026-08-27 06:1x の回が別の道から測った
+    「`sub_rate` の実験は 15倍 遠い・**約20周** かかる」と同じ話です。
+
+    ## 覆る条件
+
+    - **`sub_rate` と `rpm` が `MIN_N`（3件）に届いたら**、p と g が自前になるので
+      順位が天井だけで決まらなくなります。そのとき `--alloc-speed` を撃ち直して、
+      順位が変わるかを見ること（変われば既定を掛ける側にする）
+    - **予定表が過去に追いついたら**（`forward()` の 14日 窓の比が 0.8 以上）、
+      この表は要りません
 
     ## なぜ別の口にしたか（毎回は撃たない）
 
@@ -5235,8 +5313,49 @@ def alloc_search() -> int:
           + f"  ← {arm_speed.MIN_N}件 未満は**全体の値で代用**しています"
           "（代用どうしは速さが同値になるので、順位が天井の遠さだけで決まります）")
 
+    # --- **腕べつの「予定表 θ」を出す**（2026-08-27 に足した） ---
+    #     代用の腕どうしは p も g も θ も同値になるので、上の1行だけでは
+    #     **順位が天井の遠さだけ**で決まります。台帳の予定表（開いている前提の
+    #     「判定できる日」）は、腕によって回転がまるで違うと言っています ——
+    #     この日の実測では `sub_rate` だけが**今後14日 に1件も閉じられません**。
+    #     **既定では掛けません**（掛けると水準がずれて「過去の配分（＝頭の3行の
+    #     日付）」が頭と食い違う。docstring の実測を読むこと）。`--alloc-speed` で掛かります。
+    by_arm, sw = _arm_rotation()
+    speed = (sw.get("weights") or {}) if with_speed else None
+    if sw.get("missing"):
+        print(f"  [!] **腕べつの回転が取れません**: {sw['missing']}"
+              " —— 4本とも同じ θ（全体の実測）で解いています。"
+              "**順位は天井の遠さだけで決まっているかもしれません。**")
+    else:
+        w = sw.get("weights") or {}
+        raw = sw.get("raw") or {}
+        cells = " ／ ".join(
+            f"{k} **{raw.get(k, 0.0):.3f}/日**（×{w.get(k, 1.0):.2f}）"
+            for k in arm_speed.ARMS)
+        print(f"  腕べつの回転（台帳の予定表・今後{sw['window']}日 に判定できる件数 ÷ {sw['window']}）: "
+              + cells)
+        near = [k for k in arm_speed.ARMS
+                if not [h for h in ((by_arm.get(k) or {}).get("horizons") or [])
+                        if h.get("days") == 14 and h.get("n")]]
+        if near:
+            print(f"    [!] **今後14日 に1件も閉じられない腕: {', '.join(near)}**"
+                  " —— 下の『いちばん早い』がその腕を指していても、"
+                  "**次の2週間は1日も動きません**（その腕の`判定できる日`が全部 14日 より先）。")
+        back = (by_arm.get(arm_speed.ARMS[0]) or {}).get("backward")
+        if with_speed:
+            print("    **下の日付は、この回転を掛けた側です**（`--alloc-speed`）。"
+                  "頭の3行（`python scripts/eta.py`）は掛けていないので、"
+                  "**『過去の配分』の行は頭の日付と一致しません。**")
+        else:
+            print("    **下の日付は、この回転を掛けていません**"
+                  + (f"（4本とも θ＝{back:.2f}/日 ＝ 全体の実測）" if back else "")
+                  + "。掛けた版は `--alloc --alloc-speed`。"
+                  " **実測 2026-08-27: 掛けても順位は変わりませんでした**"
+                  "（`sub_rate` のまま・差は 4日 → 5日）。"
+                  "**×0.68 に落としても勝つ ＝ この順位を決めているのは回転ではなく天井のほうです。**")
+
     def _solve(share: dict[str, float], label: str) -> float:
-        t = trajectory(m, a, arms=_realloc_arms(arms, share), **kw)
+        t = trajectory(m, a, arms=_realloc_arms(arms, share, speed), **kw)
         d = t["date"].isoformat() if t["date"] else "出ません"
         print(f"  {label:36s} {d}  ({_share_str(share)})", flush=True)
         return t["days"]
@@ -5289,10 +5408,15 @@ def main() -> int:
                          " 付けると『十分でない腕』と『要らない腕』が区別できません）")
     ap.add_argument("--alloc", action="store_true",
                     help="次の前提をどの腕に立てるのが早いか、腕べつに解く（API 0単位・**実測 4分**）")
+    ap.add_argument("--alloc-speed", action="store_true",
+                    help="`--alloc` を、**腕べつの回転**（台帳の予定表・"
+                         "`arm_speed.speed_weights()`）を掛けて解く。"
+                         "**水準がずれるので『過去の配分』の行は頭の日付と一致しません** ——"
+                         " 見るのは順位だけ。2026-08-27 の実測では順位は変わりませんでした")
     args = ap.parse_args()
 
-    if args.alloc:
-        return alloc_search()
+    if args.alloc or args.alloc_speed:
+        return alloc_search(with_speed=args.alloc_speed)
 
     if args.reflect:
         return reflect(args.note, record=not args.no_record)[0]
