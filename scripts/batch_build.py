@@ -1998,7 +1998,22 @@ def _pack_long_form() -> None:
                       f"{str(exc)[:100]}", flush=True)
                 break
             dupes.retime(p["id"], stamp)
-            upload_cap.note_quota_ok(detail=f"videos.update {p['id']}")
+            # **ここで `note_quota_ok` を呼ばないこと**（2026-08-28 に実測して外した）。
+            # `reschedule._update` が**通ったときだけ**自分で1行 書きます。
+            # ここでも書くと、**同じ呼び出しが同じ秒に2行**になり、しかも
+            # `_update` が「もうその値です」と**撃たずに帰った回**まで
+            # 「通った」として載ります。実測（窓 08/27 07:00Z〜）:
+            #
+            #     `videos.update` の ok 行     **273行**
+            #     うち (時刻, 本) が同じ行     **100行 ＝ 5,000単位ぶんの幻**
+            #     → 実際に通ったのは          **173回 ＝ 8,650単位**
+            #
+            # この幻が `upload_cap.measured_budget()` の枠の実測を
+            # **14,150単位** に見せていました。08/27 の回はそれを読んで
+            # 「**枠は既定の 10,000 ではない**」と結論し、コードの註に残しています
+            # （`measured_budget` の docstring）。**逆です** —— 二重に数えた側の
+            # 誤りで、8,650＋500 ＝ 9,150単位（＋帳面に載らない
+            # `playlistItems.insert` と読み）は **10,000 とよく合います。**
             done += 1
             time.sleep(1.2)     # **短い間に撃ちすぎると 403**（08/26 に 120本 で踏んだ）
         if done:

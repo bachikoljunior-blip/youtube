@@ -377,6 +377,47 @@ def quota_hits_in_window(now: datetime | None = None) -> list[dict]:
     return [r for r in _in_window(DAY_QUOTA_HITS, now) if not r.get("ok")]
 
 
+def dedupe_ok(rows: list[dict]) -> list[dict]:
+    """**同じ秒に同じ `detail` で載った成功の行を、1回にまとめる。**（API 0単位）
+
+    ## なぜ要るか（2026-08-28 に実測して足した）
+
+    `scripts/batch_build.py` の長尺の詰め直しは、`reschedule._update`（**通ったら
+    自分で1行 書く**）を呼んだ**あとにもう1行**書いていました。実測（窓 08/27）:
+
+        `videos.update` の ok 行      **273行**
+        うち (時刻, 本) が同じ行       **100行**
+        → 実際に通ったのは            **173回 ＝ 8,650単位**
+
+    **これは統計の汚れでは済みません。** `measured_budget()` は
+    「403 の前に通った単位の最大」を**枠の実測**として返すので、幻の 100行 は
+    枠を **9,150 → 14,150単位** に見せます。08/27 の回はその数を読んで
+    **「日枠は既定の 10,000 ではない」**と結論し、コードの註に残しました。
+    **二重に数えた側の誤りです。**
+
+    呼び出し側は直しましたが（`batch_build`）、**入口は増えます** ——
+    `note_quota_ok` を呼ぶ場所は現在3つで、次に4つ目ができたときに
+    同じ穴が開きます。**だから数える側で潰します**（この repo が通算11回
+    踏んでいる「片方だけ」の形）。
+
+    ## 覆る条件
+
+    **同じ秒に、同じ本へ `videos.update` を2回 撃つのが正しい**ようになったら
+    （いまは意味がありません —— 2回目は1回目と同じ値を書きます）。
+    書き込みの入口はどれも 1.0〜1.2秒 待つので、**同じ秒の2行は二重書きだけ**です。
+    `tests/test_quota_ok_dedupe.py` が、この2つを見ています。
+    """
+    seen: set[tuple[str, str]] = set()
+    out: list[dict] = []
+    for r in rows:
+        key = (str(r.get("at") or ""), str(r.get("detail") or ""))
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(r)
+    return out
+
+
 def spend_in_window(now: datetime | None = None) -> dict:
     """**この窓で、単位を使う書き込みを誰が何回 通したか。**（API 0単位）
 
@@ -384,9 +425,9 @@ def spend_in_window(now: datetime | None = None) -> dict:
 
     窓 08/27 07:00Z 〜 の `data/day_quota.jsonl`:
 
-        通った `videos.update`   **273回**（13,650単位・日枠は 1万）
+        通った `videos.update`   **173回**（8,650単位・日枠は 1万）
         撃たれた本の数            **58本**
-        → 同じ本の2回目以降      **215回 ＝ 10,750単位**（**79%**）
+        → 同じ本の2回目以降      **115回 ＝ 5,750単位**（**66%**）
 
     **枠が尽きた理由が「同じ値の書き直し」だと、数えて初めて分かりました。**
     それまでの読み方は「403 が N回」だけで、**尽きた原因を1つも言っていません。**
@@ -395,12 +436,17 @@ def spend_in_window(now: datetime | None = None) -> dict:
     飛ばし損ねか、2つの道具が同じ本を別々の時刻へ取り合っています**
     （後者なら `by` の並びに2つの名前が出ます）。
 
+    **この数は 2026-08-28 に数え直したものです。** それまでここには
+    「273回・13,650単位・同じ本の2回目以降 215回」と書いてありました ——
+    **うち 100回 は同じ呼び出しの二重書き**で、実際に通ったのは 173回 です
+    （`dedupe_ok` の註）。**枠が「1万ではない」ように見えていたのは、これです。**
+
     返り: `{"ok", "videos", "repeats", "hits", "by"}`。
     `by` は `<ファイル名>:<関数>` → 回数（`caller_label`。古い行には無いので
     `"(不明)"` に落とします）。
     """
     rows = _in_window(DAY_QUOTA_HITS, now)
-    ok = [r for r in rows if r.get("ok")]
+    ok = dedupe_ok([r for r in rows if r.get("ok")])
     seen: dict[str, int] = {}
     by: dict[str, int] = {}
     for r in ok:
@@ -425,10 +471,17 @@ def spend_in_window(now: datetime | None = None) -> dict:
 #: 「273回 通った」とは言えても「**それが1日ぶんの予算だった**」とは
 #: 言えませんでした。値段を掛けると、その窓の姿は一行で出ます:
 #:
-#:     videos.update  269回 × 50 = **13,450単位**
-#:     thumbnails.set  10回 × 50 =     500単位
+#:     videos.update  173回 × 50 = **8,650単位**
+#:     thumbnails.set  10回 × 50 =    500単位
 #:     ------------------------------------------
-#:                                 **13,950単位 で 403**
+#:                                 **9,150単位 で 403**
+#:
+#: **【2026-08-28 に、この表の数を直しました】** ここには
+#: 「`videos.update` 269回 × 50 ＝ 13,450単位／**13,950単位 で 403**」と
+#: 書いてありました。**同じ呼び出しが同じ秒に2行 載っていたぶん**（100行）を
+#: 二重に数えた数です（`dedupe_ok` の註）。**実測は 9,150単位**で、
+#: **公表の既定 10,000 とよく合います**（帳面に載らない
+#: `playlistItems.insert` と読みが、残りを埋めます）。
 #:
 #: そして `videos.insert` は**この予算に入っていません** —— 実測 08/27、
 #: 最初の 403 は 07:47Z なのに、**10:33Z と 10:37Z の投稿は通っています**
@@ -480,8 +533,15 @@ def measured_budget(now: datetime | None = None) -> dict:
     窓をまたいでその最大を取れば、**枠の下限が実測で出ます**（上限ではない ——
     使い切らずに終わった窓は、それより低い数しか見せません）。
 
-    実測（2026-08-27 時点）: 08/27 の窓は **13,950単位** で 403。
-    **既定の 10,000 ではありません。**
+    実測（**2026-08-28 に数え直した**）: 08/27 の窓は **9,150単位** で 403。
+    **既定の 10,000 とよく合います。**
+
+    **ここには「13,950単位。既定の 10,000 ではありません」と書いてありました。**
+    `scripts/batch_build.py` が `reschedule._update`（通ったら自分で書く）の
+    **あとにもう1行**書いていたので、**同じ呼び出しが同じ秒に2行**（100行 ＝
+    5,000単位）載っていました。**枠を 55% 高く見せていたのは、その幻です。**
+    数える側で `dedupe_ok()` に通すよう直してあります（入口は増えるので、
+    呼び出し側だけ直しても次の4つ目で同じ穴が開きます）。
 
     返り: `{"floor", "spent", "left", "from"}`
       floor  過去の窓で 403 の前に通った単位の**最大**（＝枠の下限・実測）
@@ -515,15 +575,99 @@ def measured_budget(now: datetime | None = None) -> dict:
     for start, rows in by_window.items():
         rows = sorted(rows, key=lambda r: str(r.get("at")))
         first_hit = next((str(r.get("at")) for r in rows if not r.get("ok")), None)
-        spent = sum(unit_cost(r.get("detail")) for r in rows
-                    if r.get("ok") and (not first_hit or str(r.get("at")) < first_hit))
+        # **二重書きを1回にまとめてから足すこと**（2026-08-28。`dedupe_ok` の註）。
+        # まとめないと、08/27 の窓は 9,150 ではなく **14,150単位** に見え、
+        # **枠の実測が 55% 高く出ます**（＝ この上に立つ `reserve_hold` は
+        # 一度も止まりません）。
+        spent = sum(unit_cost(r.get("detail")) for r in dedupe_ok(
+            [r for r in rows
+             if r.get("ok") and (not first_hit or str(r.get("at")) < first_hit)]))
         if start != here and spent > floor:
             floor, came_from = spent, start
-    spent_here = sum(unit_cost(r.get("detail"))
-                     for r in by_window.get(here, []) if r.get("ok"))
+    spent_here = sum(unit_cost(r.get("detail")) for r in dedupe_ok(
+        [r for r in by_window.get(here, []) if r.get("ok")]))
     return {"floor": floor, "spent": spent_here,
             "left": max(0, floor - spent_here),
             "from": came_from.astimezone(JST).strftime("%m/%d") if came_from else None}
+
+
+#: **計測のために、窓の単位を必ず残す量**（2026-08-28 の最適化の回に足した）。
+#:
+#: ## なぜ要るか（実測。この数は帳面から出ています）
+#:
+#: 窓 08/27 07:00Z（＝ **16:00 JST**）〜 の `data/day_quota.jsonl`:
+#:
+#:     16:11 JST  最初の `videos.update`
+#:     16:47 JST  **最初の 403**（通った 183回 ＝ **9,150単位**・枠は 10,000）
+#:     ↓
+#:     **残りの 23.2時間、読みも書きも 403**（この窓で 403 を **194回** 観測）
+#:
+#: **枠は「1日ぶん」ですが、実際に使えるのは窓が開いてからの 47分 だけ**でした。
+#: そして `config/hypotheses.yaml` の 08-28 の前提が要る読みは
+#: **「22:00 JST 以降に `python scripts/snapshot.py` を1回」** ——
+#: **4単位**です。**9,150単位 を 47分 で焼いて、そのあと 4単位 が撃てません。**
+#:
+#: `eta.py` は毎回「**軌跡の腕が動くのは、前提を1件閉じたときだけ**」と印字します。
+#: つまり **到達日を動かす唯一の操作が、到達日を 0日 しか動かさない操作に
+#: 先を越されて、毎日 23時間 不可能になっていました。**
+#: 実際にこれで **2回 続けて**（08/27 夕・08/28 未明）前提が閉じていません。
+#:
+#: ## 何を止めるか
+#:
+#: 止めるのは**書き込みだけ**（`videos.update` / `thumbnails.set`）。
+#: **読みは止めません** —— 読みは 1単位 で、ここが守ろうとしている当のものです。
+#: `videos.insert`（投稿）は**この枠を1単位も使わない**ので、
+#: **投稿は1本も減りません**（`UNIT_COST` の註・実測 08/17 以後3度）。
+#:
+#: ## 大きさ（400単位 ＝ 書き込み 8回 ＝ 実測の窓 9,150 の **4.4%**）
+#:
+#: 読みは 1単位 なので、400単位 ＝ **読み 400回**。
+#: 窓の残り 23時間・1周 1.56時間 ＝ 15周 で、**1周あたり 26回**の読み。
+#: `snapshot.py` 1回（5呼び出し）を毎周 撃っても余ります。
+#:
+#: ## 覆る条件
+#:
+#: - `measured_budget()["floor"]` が 0（＝ 過去の窓に 403 の前の成功が1行も無い）
+#:   なら、**何も止めません。** 推測で書き込みを止めないため
+#: - この窓の 403 が「窓が開いて 47分」ではなく**窓の終わりに寄る**ようになったら、
+#:   ＝ 焼き方が変わったので、この数を測り直すこと
+#: - `videos.insert` が同じ 403 で落ちるようになったら（＝枠が1つに統合された）、
+#:   **投稿が減る側に効きはじめます。**そのときは大きさを測り直すこと
+RESERVE_UNITS = 400
+
+
+def reserve_hold(now: datetime | None = None) -> str | None:
+    """**この窓の単位が、計測のぶんまで減っていないか**（API 0単位）。
+
+    書き込み（`videos.update` / `thumbnails.set`）を撃つ**前**に呼ぶこと。
+    返りが文字列なら、それが「止めた理由」です。`None` なら撃ってよい。
+
+    **推測では止めません** —— 枠の実測（`measured_budget()["floor"]`）が
+    無い窓では必ず `None` を返します。`RESERVE_UNITS` の註に理由。
+
+    `YT_NO_RESERVE=1` で外せます（**外した回は理由を JOURNAL に**）。
+    """
+    if os.environ.get("YT_NO_RESERVE"):
+        return None
+    try:
+        b = measured_budget(now)
+    except Exception:                                          # noqa: BLE001
+        return None
+    floor = int(b.get("floor") or 0)
+    if not floor:
+        return None                    # 実測が無い窓では止めない（推測で止めない）
+    spent = int(b.get("spent") or 0)
+    if spent < floor - RESERVE_UNITS:
+        return None
+    tail = window_end(now or datetime.now(timezone.utc))
+    back = tail.astimezone(JST).strftime("%m/%d %H:%M JST")
+    return (f"**この窓の単位は、計測のぶんを残して止めています**"
+            f"（使った {spent:,} ／ 実測の枠 {floor:,} ／ 残す {RESERVE_UNITS}）。"
+            f" 残しているのは、**前提を閉じる読み**のためです"
+            f"（`videos.list` は 1単位。`eta.py`: 軌跡の腕が動くのは前提を1件"
+            f"閉じたときだけ）。窓が変わるのは {back}。"
+            f" **投稿（`videos.insert`）はこの枠を使わないので、止まりません。**"
+            f" どうしても書くなら `YT_NO_RESERVE=1`（理由を JOURNAL に）")
 
 
 def note_quota_ok(now: datetime | None = None, detail: str = "") -> None:
@@ -790,8 +934,10 @@ def day_quota(now: datetime | None = None) -> DayQuota:
     # 尽きています」と書いていました。**実測でそうではありません** ——
     # 08/27 は最初の 403 が 07:47Z、投稿は 10:33Z と 10:37Z で**通っています**。
     # **投稿は別の枠から出ていて、この枠を1単位も食いません。**
-    # 食っていたのは `videos.update` 269回 ＝ **13,450単位**（うち 215回が
-    # 同じ本の撃ち直し ＝ 10,750単位）。**名指しを間違えると、止める先も間違えます。**
+    # 食っていたのは `videos.update` **173回 ＝ 8,650単位**（うち 115回が
+    # 同じ本の撃ち直し ＝ 5,750単位）。**名指しを間違えると、止める先も間違えます。**
+    # （**2026-08-28 に数え直した** —— それまでここは 269回／13,450単位。
+    #   `batch_build` の二重書き 100行 を数えていました。`dedupe_ok` の註）
     try:
         b = measured_budget(now)
     except Exception:                                          # noqa: BLE001

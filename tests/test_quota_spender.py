@@ -110,13 +110,23 @@ def test_detail_は1文字も変えないこと(tmp_path, monkeypatch):
 # ------------------------------------------------ 数えるところ
 
 def _fill(tmp_path, monkeypatch, details):
+    """**1行ずつ 1秒 ずらして積むこと**（2026-08-28 に直した）。
+
+    ここは長らく全部の行を**同じ秒**で積んでいました。**実物はそうなりません** ——
+    書き込みの入口はどれも 1.0〜1.2秒 待つので、同じ秒に同じ `detail` が
+    2行 載るのは**帳面への二重書きのときだけ**です（実測 08/27: 273行 のうち
+    100行 が二重書き ＝ 5,000単位ぶんの幻。`upload_cap.dedupe_ok` の註）。
+    `spend_in_window` はその写しを1回にまとめるので、**同じ秒で積むと
+    ここの撃ち直しまで消えます。**
+    """
     _root(tmp_path, monkeypatch)
     now = datetime.now(timezone.utc)
-    for detail, ok in details:
+    for i, (detail, ok) in enumerate(details):
+        at = now + timedelta(seconds=i)
         if ok:
-            upload_cap.note_quota_ok(now=now, detail=detail)
+            upload_cap.note_quota_ok(now=at, detail=detail)
         else:
-            upload_cap.note_quota_hit(now=now, detail=detail)
+            upload_cap.note_quota_hit(now=at, detail=detail)
     return now
 
 
