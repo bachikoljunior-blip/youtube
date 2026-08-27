@@ -389,10 +389,22 @@ def split_overdue(od: list[dict], today: str) -> tuple[list[dict], list[tuple[di
                     f"**今日の {when} JST に出ます**（伸び率の話ではありません）。"
                     "**その時刻を過ぎた回が拾うこと** —— 畳まない・条件を緩めない"))
             else:
-                blocked.append((
-                    h, "まだ数えはじめたところ（伸び率が出ないので日が出せない）",
-                    "**この回は何もしないのが正解です**（畳まない・条件を緩めない）。"
-                    "待てば日が出ます"))
+                # **待ち方を1つに丸めないこと**（2026-08-27・`deadline_check.lines()`
+                # は既に3つに分けています。ここだけが1つのままで、
+                # **時計待ちの前提に「伸び率が出ないので日が出せない」**と
+                # 印字していました —— 読んだ回は「まだ何日も先だ」と読みます）。
+                at = next((str(n.get("at_time_jst")) for n in (h.get("needs") or [])
+                           if n.get("at_time_jst")), "")
+                if at:
+                    blocked.append((
+                        h, f"時計待ち（**今日の {at} JST** に出ます）",
+                        "**伸び率の話ではありません** —— その時刻まで待つこと"
+                        "（畳まない・条件を緩めない）"))
+                else:
+                    blocked.append((
+                        h, "まだ数えはじめたところ（伸び率が出ないので日が出せない）",
+                        "**この回は何もしないのが正解です**（畳まない・条件を緩めない）。"
+                        "待てば日が出ます"))
         elif kind == "unreachable":
             now.append(h)          # 止める。ただし「verdict を出せ」ではない（下で分ける）
         else:                      # unchecked
@@ -545,7 +557,15 @@ def closable_within(today: str, horizon: int = SUPPLY_HORIZON) -> list[dict]:
         r = ready.get(str(h.get("claim") or ""))
         dl = str(r) if r else str(h.get("deadline") or h.get("settle_by") or "")
         if dl and dl <= end:
-            out.append({**h, "_closable_on": dl})
+            # **その日が「勘」なのか「計器の答え」なのかを、持って出ること**
+            # （2026-08-27・最適化の回）。`deadline` へ落ちた行は、
+            # `deadline_check` が「まだ判定できない」と言っている前提です ——
+            # 在庫としては数えてよい（窓の中で判定できるようになりうる）が、
+            # **「いま閉じられる」とは言えません。** ここが区別を持たずに
+            # 出していたので、`theta_response()` は判定できない前提について
+            # 「期日は1日 過ぎています ＝ **この回に閉じられます**」と
+            # 印字していました（実測 08/27）。
+            out.append({**h, "_closable_on": dl, "_closable_est": r is None})
     return out
 
 
@@ -780,6 +800,14 @@ def _forward_sign_lines(n: int, per: float, days: int = 14) -> list[str]:
     14日で 11件 閉じうる）。壊れているのは**読み方**なので、
     その場の数で「どちらへ動くと上がるのか」を並べます。
 
+    ## **`queue_lag.py` の使い方は、これに当たりません**（消しに行かないこと）
+
+    あちらは**同じ台帳の前後**で `forward()` を2回 呼び、
+    「入れ替えで判定日を手前に倒すと、窓に何件 入るか」を見ています ——
+    **前提の数は変わりません。** 符号が逆になるのは、
+    **回をまたいで「この回は良かったか」を採点するとき**だけです。
+    **中身が動く A/B と、時をまたぐ成績表を、同じ数で兼ねないこと。**
+
     **覆る条件**: `forward()` の分子が「開いた前提」から
     「**この窓の中に決着が付く（付いた）前提**」に変わって、
     閉じても分子から出ていかなくなったら、この3行は要りません。
@@ -859,7 +887,19 @@ def supply_report(today: str, horizon: int = SUPPLY_HORIZON) -> tuple[str, bool]
             f" **{len(stock)}件** → {ratio}"
         )
         lines.append(f"    期日: {' / '.join(dls[:6])}")
-        lines += theta_response(today, closed, dls[0] if dls else None)
+        # **「次に1件 閉じられるのは」には、計器が日を出した前提だけを渡すこと。**
+        # `deadline` へ落ちた行（`_closable_est`）は `deadline_check` が
+        # 「まだ判定できない」と言っている前提です —— そこを渡すと
+        # 「期日は1日 過ぎています ＝ **この回に閉じられます**」と出て、
+        # **撃ちに行った回が空振りします**（実測 08/27）。
+        real = sorted(str(h.get("_closable_on")) for h in stock
+                      if not h.get("_closable_est"))
+        lines += theta_response(today, closed, real[0] if real else None)
+        if not real:
+            lines.append(
+                "    **次に閉じられる日は出せません** ——"
+                " 在庫の期日は全部`deadline`（置いた回の勘）で、"
+                "`deadline_check` は「まだ判定できない」と言っています")
     else:
         lines.append(
             f"  見込み（今後{horizon}日）: 期日の来る前提 **0件** →"
