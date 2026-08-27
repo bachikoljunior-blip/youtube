@@ -236,7 +236,7 @@ def overdue(today: str) -> list[dict]:
 _LOUD_WHEN_UNKNOWN = True
 
 
-def _judge_state_by_claim() -> dict[str, tuple[str, object]] | None:
+def _judge_state_by_claim() -> dict[str, tuple] | None:
     """`_judge_state_cached` の入口。**台帳が差し替わったら読み直します。**
 
     `HYPS` は検査が `monkeypatch` で差し替えます。素の `lru_cache` だと
@@ -251,7 +251,7 @@ def _judge_state_by_claim() -> dict[str, tuple[str, object]] | None:
 
 
 @functools.lru_cache(maxsize=8)
-def _judge_state_cached(_key: tuple) -> dict[str, tuple[str, object]] | None:
+def _judge_state_cached(_key: tuple) -> dict[str, tuple] | None:
     """claim → (`ready` / `warming` / `unreachable` / `unchecked`, 判定できる日 or None)。
 
     読めなければ `None`。**呼び手はそのとき門を鳴らす側へ倒します**
