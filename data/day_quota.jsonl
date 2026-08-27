@@ -4460,3 +4460,8 @@
 {"at": "2026-08-27T12:57:08+00:00", "detail": "scheduled_publish_times", "by": "uploader.py:taken_publish_times"}
 {"at": "2026-08-27T12:57:10+00:00", "detail": "playlistItems.insert", "by": "uploader.py:_post_actions"}
 {"at": "2026-08-27T12:57:11+00:00", "detail": "thumbnails.set mmgb36T4fic", "by": "uploader.py:_set_thumbnail"}
+{"at": "2026-08-27T13:27:02+00:00", "detail": "status: Data API 読み", "by": "status.py:main"}
+{"at": "2026-08-27T13:27:36+00:00", "detail": "channels.list mine", "by": "history.py:_scan"}
+{"at": "2026-08-27T13:27:38+00:00", "detail": "channels.list mine", "by": "history.py:_scan"}
+{"at": "2026-08-27T13:27:49+00:00", "detail": "videos.list snapshot", "by": "snapshot.py:main"}
+{"at": "2026-08-27T13:28:44+00:00", "detail": "channels.list mine", "by": "history.py:_scan"}
