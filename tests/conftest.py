@@ -23,8 +23,68 @@
 from __future__ import annotations
 
 import os
+import re
 
 import pytest
+
+
+# ---- `-k` の網が広すぎる回に、その場で値札を出す（2026-08-28 に踏んで足した）----
+#
+# **申し送りは、撃つ瞬間には効きません。**
+# 08/28 04:5x の回が申し送り⑥でこう名指ししていました ——
+#
+#   > **検査の `-k` を広げないこと。** `calc` を1語 入れると
+#   > `test_calc_sections_still_hit.py` が 63本の calc を `runpy` で回して **8分22秒**。
+#   > 実測: `-k "iryohi or furusato or calc or section"` **502秒** に対し
+#   > `-k "test_section_depth"` **0.5秒**。
+#
+# **その申し送りを読んだ回（08/28 06:3x）が、そのまま踏みました。**
+# `-k "shougai or shobyo or calc or section or assumption or topic"` を撃って、
+# **30分 待っています。** 読んでいて、撃つ瞬間には効いていません。
+#
+# だから**呼ぶ側に何も約束させず**、`pytest` 自身に言わせます
+# （このファイルの冒頭が、まさにその理由で書かれています）。
+#
+# **止めません。** CI と `fast_tests.py --all` は広い網で正しく、
+# 「遅いと知ったうえで撃つ」も正しい判断です。**知らずに撃つのだけを潰します。**
+#
+# **覆る条件**: この行が出ても2回続けて広い `-k` が撃たれたら、原因は
+# 「見えないこと」ではありません（＝ 値札を読んでも選べない）。
+# そのときは既定で除外して、`--slow` で戻すこと。
+_WIDE_K = {
+    # 語: (何に当たるか, 実測)
+    "calc": ("test_calc_sections_still_hit.py が 63本の calc を `runpy` で回します",
+             "8分22秒"),
+    "section": ("同上 ＋ test_section_sweep.py（118件）", "8分10秒"),
+    "sweep": ("test_section_sweep.py / test_pair_sweep.py", "8分10秒"),
+}
+
+
+def pytest_configure(config):
+    """`-k` に網の広い語が入っていたら、**撃つ前に**値札を出す。"""
+    expr = getattr(config.option, "keyword", "") or ""
+    if not expr:
+        return
+    words = {w for w in re.split(r"[^0-9A-Za-z_]+", expr) if w}
+    hits = sorted(words & set(_WIDE_K))
+    if not hits:
+        return
+    lines = ["",
+             "[conftest] **`-k` に網の広い語が入っています。**"
+             " 撃つ前に値札を読むこと:"]
+    for w in hits:
+        what, cost = _WIDE_K[w]
+        lines.append(f"    `{w}`  → {what}（**{cost}**）")
+    lines += [
+        "  **`test_calc_sections_still_hit.py` は表ごとに割ってあります**"
+        "（`@pytest.mark.parametrize`）。",
+        "  `-k <族名>`（例 `-k shougai`）だけで、その表のぶんが選ばれます ——"
+        " 網を広げる必要はありません。",
+        "  この回が触った所から `-k` を作るなら: `python scripts/fast_tests.py`",
+        "  **承知で撃つならそのまま進みます**（止めていません）。",
+        "",
+    ]
+    print("\n".join(lines))
 
 
 @pytest.fixture(autouse=True, scope="session")
