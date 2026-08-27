@@ -27,14 +27,67 @@
 
 `gassan` の形は (1) です。**(2) しか実装しなければ、既知の当たりは出ません。**
 
-## 拾う形は3つだけ（**単独の掃引では出ない形に限る**）
+## 拾う形は4つだけ（**単独の掃引では出ない形に限る**）
 
+- **比の形**: A が動いても、**A ÷ (A＋B) がほとんど動かない**。
+  ＝「相手を足しても、A が占める割合は 95〜97% のまま」。
+  **これがこの手段の唯一の既知の当たり（`gassan`）の形**です（下）
 - **崖の近さ**: A のいちばん深い崖と、B のいちばん深い崖が、**同じ高さ（円）**で
   起きている。1% 以内なら「一致」、1〜5% なら「ニアミス（わざと外れている）」。
   *どちらも節になります* —— 一致は「2つの制度が同じ額で切り替わる」、
   ニアミスは「**ほとんど同じなのに、わずかにずれている**」
 - **和の平坦**: A＋B が動かない区間（片方の増えが片方の減りで消える）
 - **順序の逆転**: A＞B だった区間が、x のどこかで入れ替わる
+
+## 「比の形」を 2026-08-28 に足した理由（**測ってから足しています**）
+
+`tests/test_pair_sweep.py` は 2026-08-19 から**赤い検査を1本わざと残して**いて、
+そこにこう書いてありました ——
+
+> 母数には入るようになりましたが、**拾う形**のどれにも当たりません。
+> `gassan` の7節は「**医療だけで年間限度額の 95.0〜96.4% が埋まる**」という
+> **和に対する割合**で、いまの3つはどれもその形を見ていないからです。
+> **つまり足りないのは母数ではなく形のほうです。**
+
+**その1文が9日 放置されていました。** 実測（08/28 03:5x）:
+
+    kogaku × kaigo で `A ÷ (A + B の代表値)` の帯を数える
+      → `year_with_multi_hit(cost) → 1年の合計` ÷ (それ＋`household(cap)`)
+        ＝ **95.7%〜97.0%（幅 1.32pt）**
+      → `multi_hit_gap(cost) → ふだんの自己負担` ÷ (それ＋`pay(used_units)`)
+        ＝ **94.5%〜96.0%（幅 1.52pt）**
+
+**`gassan` の 95.0〜96.4% と同じ帯**です。**既知の当たりが、初めて道具から出ました。**
+
+### だから `SHAPES` の**先頭**に置いています
+
+`sweep_pairs` は**1組につき1件**しか返しません（M19）。順位は `SHAPES` の並び順です。
+**当たり率で並べています** —— 既知の当たり（n=1）に対して
+
+    比の形       **1/1**   （この節の実測）
+    崖の近さ      0/1      （`_cliff` は `gassan` の形を見ていない）
+    和の平坦      0/1
+    順序の逆転    0/1
+
+そして `docs/JOURNAL.md` 2026-08-28 01:4x の実測では、**掃引の候補の当たり率は 0/23**。
+**当たっていない形を上位に置き続ける理由がありません。**
+
+**覆る条件**: `比の形` から作った節が3件 続けて没になったら、この並びを戻すこと
+（`run_marker.py --ship` に「掃引の候補を使ったか」を1行 残す約束が
+`docs/JOURNAL.md` 2026-08-28 01:4x にあります。そこが当たり率の実測になります）。
+
+### 「割る側」は**片方だけ動かします**（対称にしないこと）
+
+`gassan` の形は「医療費が動いても、介護を足したぶんは 3〜5% のまま」です。
+つまり**片方（A）を振って、もう片方（B）は代表値（中央値）で止める**。
+両方を同じ x で並走させると、`kogaku` と `kaigo` は**共有する軸がゼロ**なので
+（このファイルの冒頭）**組そのものが作れません。**
+`崖の近さ` と同じく、**単位が合っているかどうかだけ**を見ます。
+
+**動かない側を A にしないこと**（`_span(A) < MOVES` は捨てます）。
+定数 ÷ (定数＋定数) は必ず帯の幅 0pt で、**実測でそれが上位を丸ごと埋めました**
+（試作の 260件 中、上位12件すべてが `year_with_multi_hit` の定数欄）。
+`_echoes` と同じ穴が、割り算の形で出てきたものです。
 
 ## 割り引いて読むこと（**足す前に測ること**・`docs/trigger_main.md` §4）
 
@@ -58,6 +111,7 @@ import importlib
 import inspect
 import io
 import itertools
+import statistics
 from typing import Any, Callable
 
 from src import calc_axes
@@ -65,7 +119,10 @@ from src.section_sweep import (GRID, _enum_containers, _family, _grid,
                                _scalars, calc_modules)
 
 #: 拾う形。**足したら、ここに足すこと**（`--shape` の選択肢もここを見ます）。
-SHAPES = ("崖の近さ", "和の平坦", "順序の逆転")
+#: **並び順が、1組から1件を選ぶときの優先順位です**（`sweep_pairs`）。
+#: `比の形` が先頭なのは、**既知の当たり（`gassan`）を出す唯一の形だから**
+#: （上の docstring に実測）。**好みで並べ替えないこと。**
+SHAPES = ("比の形", "崖の近さ", "和の平坦", "順序の逆転")
 
 #: 意味の軸 → 他の引数を埋めるときの代表値。**正本は `calc_axes` にあります**
 #: （2026-08-19 に移した。`section_sweep` からも同じ表を読ませるため。写しません）。
@@ -90,6 +147,12 @@ FLAT_SUM = 0.01
 MOVES = 0.05
 #: 素の整数を「円」と見なす下限。**これ未満は単位を推定しません。**
 YEN_FLOOR = 1_000
+#: 「比の形」で、`A ÷ (A＋B)` が「張り付いている」と見なす帯の幅（**ポイント**）。
+#: `gassan` の実測は 95.0〜96.4%（1.4pt）なので、そこを含む幅にしてあります。
+SHARE_BAND = 0.05
+#: 割合がこれだけ 0 / 1 に寄っていたら**節にしません**（片方が無視できるだけで、
+#: 「2つの制度を並べた」ことになっていない）。`gassan` の 96.4% はこの内側です。
+SHARE_EDGE = 0.02
 
 
 def _fill(fn: Callable, sweep: str) -> dict[str, Any] | None:
@@ -292,10 +355,61 @@ def _span(ys: list[float]) -> float:
     return (hi - lo) / scale
 
 
+def _share_band(sa: dict, sb: dict) -> tuple[float, float, float] | None:
+    """`A ÷ (A ＋ B の代表値)` が張り付く帯 `(下, 上, B の代表値)`。無ければ `None`。
+
+    **`gassan`（この手段の唯一の既知の当たり）の形**です ——
+    「医療費がいくら動いても、介護を足したぶんは 3〜5% のまま」。
+
+    **A は動くこと（`_span >= MOVES`）が要ります。** 定数 ÷ (定数＋定数) は
+    必ず帯の幅 0pt になり、**それだけで上位が埋まります**
+    （試作の実測: 帯 260件 の上位12件が全部 `year_with_multi_hit` の定数欄）。
+    `_echoes` が塞いだのと同じ穴が、割り算の形で出てきたものです。
+
+    **B は代表値（中央値）で止めます。** 同じ x で並走させないのは、
+    `kogaku` と `kaigo` が**共有する軸を1つも持たない**ためです
+    （このファイルの冒頭。`gassan` は入力ではなく出力で繋がっています）。
+    """
+    ys = sa["ys"]
+    if _span(ys) < MOVES:
+        return None
+    rep = statistics.median(sb["ys"])
+    if rep <= 0:
+        return None
+    shares: list[float] = []
+    for y in ys:
+        total = y + rep
+        if total <= 0:
+            return None
+        shares.append(y / total)
+    lo, hi = min(shares), max(shares)
+    if hi - lo > SHARE_BAND:
+        return None
+    if lo < SHARE_EDGE or hi > 1.0 - SHARE_EDGE:
+        return None
+    return lo, hi, rep
+
+
 def pair_hits(a: dict, b: dict) -> list[dict]:
     """並び2本から拾えた形。"""
     hits: list[dict] = []
     if a["unit"] == b["unit"]:
+        # **どちらが「占める側」かは分からない**ので、両向きに当てます。
+        # 先に当たったほうだけ出します（1つの組から2件 出さないため・M19）。
+        for one, other, side in ((a, b, "A"), (b, a, "B")):
+            band = _share_band(one, other)
+            if band is None:
+                continue
+            lo, hi, rep = band
+            hits.append({
+                "形": "比の形",
+                "詳しく": {
+                    "占める側": side,
+                    "割合": f"{lo * 100:.1f}%〜{hi * 100:.1f}%",
+                    "帯の幅": f"{(hi - lo) * 100:.2f}pt",
+                    "相手の代表値": round(rep, 2),
+                }})
+            break
         ca, cb = _cliff(a["ys"]), _cliff(b["ys"])
         if ca and cb:
             scale = max(ca[0], cb[0])
@@ -330,8 +444,21 @@ def pair_hits(a: dict, b: dict) -> list[dict]:
     return hits
 
 
-def sweep_pairs(calcs: list[str] | None = None) -> list[dict]:
-    """表の全組を並走させて、拾えた形を返す。**1組につき1件まで**（M19）。"""
+def sweep_pairs(calcs: list[str] | None = None,
+                shape: str | None = None) -> list[dict]:
+    """表の全組を並走させて、拾えた形を返す。**1組につき1件まで**（M19）。
+
+    `shape` を渡すと、**絞ってから1件に畳みます**。
+
+    **順番が本体です**（2026-08-28 に直した）。長らく `_main` の側で
+    「全部を1件に畳んでから `--shape` で絞る」形になっていて、
+    **上位の形に隠れた組は `--shape` からも見えませんでした** ——
+    実測（08/28・この直しの前）: `崖の近さ` 493 ／ `順序の逆転` 517 ／
+    **`和の平坦` 14**（1,953組 中）。14件は「和が平らな組が14しか無い」ではなく、
+    **「他の形が先に当たらなかった組が14しか無い」**という意味です。
+    新しく足した `比の形` は `SHAPES` の先頭なので、
+    **この直しが無いと、逆に他の3つが `--shape` から消えていました。**
+    """
     names = sorted(calcs or calc_modules())
     series = {n: series_of(n) for n in names}
     out: list[dict] = []
@@ -340,6 +467,8 @@ def sweep_pairs(calcs: list[str] | None = None) -> list[dict]:
         for sa in series[a]:
             for sb in series[b]:
                 for hit in pair_hits(sa, sb):
+                    if shape and hit["形"] != shape:
+                        continue
                     hit["組"] = f"{a} × {b}"
                     hit["A"] = f"{sa['fn']}({sa['x']}) → {sa['key'] or '値'}"
                     hit["B"] = f"{sb['fn']}({sb['x']}) → {sb['key'] or '値'}"
@@ -358,11 +487,9 @@ def _main() -> None:
     ap.add_argument("--limit", type=int, default=40)
     args = ap.parse_args()
 
-    hits = sweep_pairs()
+    hits = sweep_pairs(shape=args.shape)
     if args.calc:
         hits = [h for h in hits if args.calc in h["組"].split(" × ")]
-    if args.shape:
-        hits = [h for h in hits if h["形"] == args.shape]
 
     tally = collections.Counter(h["形"] for h in hits)
     print(f"組から拾えた形: **{len(hits)}件**"
