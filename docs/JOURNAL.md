@@ -58560,6 +58560,13 @@ N を下げると検出力がそのまま落ちます:
          検査2件を追加（7件 緑／`-k "status or ab_ or judgeable"` 152件 緑）
     fix  `watches._k_ab_group()` の落ち枝も写していた（**6件目**・いまは死に枝／30件 緑）
 
+**全体の検査を最後に2回 撃ちました: `3735 passed / 3 skipped / 0 failed`**
+（`python -m pytest tests/` と `scripts/fast_tests.py --all`。どちらも 20分半）。
+**途中の1回は2件 赤でした**（`test_status_analytics_lag` / `test_status_blind_path`）——
+**その回は `scripts/status.py` を書き換えている最中に走っていました。**
+最終の木では両方 緑です。**20分の検査を、編集と並行して撃たないこと** ——
+`fast_tests.py` が「押す前に1度は撃つこと」と言っているのは、**編集が終わってから**の意味です。
+
 `--lever` の考え方: **この回は前提を1件も閉じません**ので軌跡は動きません（`--moves 0`）。
 動かしたのは**「どちらを撃てば θ が上がるか」を読める回の数**です。
 
