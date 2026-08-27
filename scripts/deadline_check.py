@@ -272,6 +272,24 @@ class Answer:
     rate: float | None = None
     #: 伸び率を積むときの鍵（`count_expr`。前提ごとに一意で、動かない）
     rate_key: str = ""
+    #: **その回に数えた実数**（`accrual` だけ）。2026-08-27 夜・最適化の回に足した。
+    #:
+    #: `rate` だけを控えていたので、**「その数が今日は1つも増えていない」を
+    #: 誰も言えませんでした。** `rate = have / (今日 - since)` は**生涯の平均**で、
+    #: 積みが完全に止まっても分母が伸びるぶんゆっくり下がるだけなので、
+    #: **止まった当日も「あと1日」と出続けます。**
+    #:
+    #: 実例（2026-08-27 22:3x・前提「長尺の生成が落ちる主因は…」）:
+    #:
+    #:     台帳     要 6 ／ いま 5（3日で **1.67/日**）→ **あと 1日 ＝ 08-28**
+    #:     実物     この要件が数えるのは**長尺の生成失敗**。
+    #:              08/24 は 7/21 しか通らず（失敗 14）、
+    #:              **08/26 は 25/28（89%）・08/27 は 15/15（100%）**
+    #:              → **今日の失敗は 0件。** 1.67/日 は 08/24〜08/26 の平均です
+    #:
+    #: **`have` を控えれば、次の回は「前の点からいくつ増えたか」で解けます。**
+    #: それが本当の伸び率で、`rate` はその上限にすぎません。
+    have: int | None = None
 
 
 #: 伸び率の控え。**1鍵1日1行**（`record_estimates()`）
@@ -351,6 +369,79 @@ def _rate_scatter(key: str, path: Path | None = None) -> float | None:
     return min(2.0, (rates[-1] - rates[0]) / mid), len(rates)
 
 
+def _recent_rate(key: str, have: int, as_of: date,
+                 path: Path | None = None) -> tuple[float, int, int] | None:
+    """**直近の実測の伸び率**（`(1日あたり, 何日ぶん, いくつ増えたか)`）。
+
+    ## なぜ要るか（2026-08-27 夜・最適化の回。**同じ形の3件目**）
+
+    `_ans_accrual` の `rate = have / (as_of - since).days` は**生涯の平均**です。
+    積みが完全に止まっても、分母が伸びるぶんゆっくり下がるだけなので、
+    **止まった当日も「あと1日」と出続けます。**
+
+    実測 2026-08-27 22:3x（前提「長尺の生成が落ちる主因は『過去の図と
+    重なっています』の門で、公開が増えるほど落ちる率が上がる」）::
+
+        台帳   要 6 ／ いま 5（3日で **1.67/日**）→ **あと 1日 ＝ 08-28**
+        実物   この要件が数えるのは**長尺の生成失敗**（`batch_runs.jsonl`）。
+               08/24  7/21 通過（失敗 14）
+               08/26  25/28 通過（89%）
+               08/27  **15/15 通過（100%）→ 今日の失敗は 0件**
+
+    **1.67/日 は 08/24〜08/26 の平均**で、いまの実測ではありません。
+    しかもこの要件は**失敗を数えている**ので、生成が直るほど**永久に満ちません**
+    —— それでも台帳は毎周「あと1日」と言います。
+
+    **同じ形は、今日だけで3件目**です:
+
+        `arm_speed.throughput()`        θ ＝ 閉じた件数 ÷ 経過日数（生涯平均）
+        `deadline_check._project_nth()` 伸び率 ＝ 本数 ÷ 経過日数（窓 0日 でも名乗る）
+        ここ                            伸び率 ＝ 実数 ÷ 経過日数（止まっても下がらない）
+
+    ## 何を返すか / 何を返さないか
+
+    控えは **1鍵1日1行**なので、**日をまたいだ2点**が要ります。
+    `have` を控え始めたのが 2026-08-27 なので、**それ以前の行からは出せません**
+    （`have` が無い行は捨てます。**推定で埋めないこと** —— `since` が控えに無く、
+    `rate × 経過` を逆算すると、丸めのぶんだけ偽の増減が生まれます）。
+
+    返すのは**いちばん新しい点との差**だけです。窓の取り方を増やさないのは、
+    増やすと「どの窓を読むか」が次の回の仕事になるからです。
+
+    **覆る条件**: 1日より速く動く要件が出てきたら、鍵を「日」から「時」へ落とすこと
+    （`_rate_scatter` の註と同じ）。
+    """
+    p = path or RATE_LOG
+    if not key or not p.exists():
+        return None
+    pts: list[tuple[str, int]] = []
+    for ln in p.read_text(encoding="utf-8").splitlines():
+        ln = ln.strip()
+        if not ln:
+            continue
+        try:
+            r = json.loads(ln)
+        except ValueError:
+            continue
+        if r.get("key") != key or r.get("have") is None:
+            continue
+        try:
+            pts.append((str(r["at"])[:10], int(r["have"])))
+        except (KeyError, TypeError, ValueError):
+            continue
+    if not pts:
+        return None
+    pts.sort()
+    at0, have0 = pts[-1]
+    try:
+        days = (as_of - date.fromisoformat(at0)).days
+    except ValueError:
+        return None
+    if days < 1:                       # 同じ日の点どうしは「率」になりません
+        return None
+    return (have - have0) / days, days, have - have0
+
+
 def record_estimates(vs: list["Verdict"], path: Path | None = None,
                      as_of: date | None = None) -> int:
     """**この回の伸び率を控える**（1鍵1日1行）。返りは足した行数。
@@ -369,6 +460,14 @@ def record_estimates(vs: list["Verdict"], path: Path | None = None,
                 r = json.loads(ln)
             except ValueError:
                 continue
+            # **`have` の無い今日の行は、まだ「済み」にしません**（2026-08-27 夜）。
+            #   `have` を控え始めた日は、その日の行が既に `have` 無しで在ります。
+            #   そこを飛ばすと、**最初の点が1日 遅れて立つ** ＝ 止まりに気づけるのが
+            #   1日 遅くなります。**1鍵1日1行は保ったまま**、欄の足りない行だけ
+            #   もう一度 書かせます（`_recent_rate` は `have` の無い行を捨てるので、
+            #   古いほうは残っていても害がありません）。
+            if str(r.get("at")) == day and r.get("have") is None:
+                continue
             seen.add((str(r.get("key")), str(r.get("at"))))
     add = []
     for v in vs:
@@ -379,6 +478,10 @@ def record_estimates(vs: list["Verdict"], path: Path | None = None,
                 continue
             seen.add((a.rate_key, day))
             add.append({"at": day, "key": a.rate_key, "rate": round(a.rate, 6),
+                        # **実数も控えます**（2026-08-27 夜）。`rate` は生涯の平均で、
+                        # 積みが止まっても分母が伸びるぶん下がるだけ ——
+                        # **止まった当日も「あと1日」と出ます**（`Answer.have` の註）。
+                        "have": a.have,
                         "ready": a.ready.isoformat() if a.ready else None,
                         "claim": v.claim[:80]})
     if add:
@@ -592,13 +695,32 @@ def _ans_accrual(need: dict, as_of: date) -> Answer:
     # **この推定は「計器を取り直しつづけたら」の話**で、止めれば伸び率は落ち、
     # 判定日は毎日 後ろへ滑ります。**滑っている理由が、同じ行に出ること。**
     tail = f"  ／ {stale}" if stale else ""
+    # **「あと N日」は生涯の平均から出ています。止まっていたら、そう言うこと。**
+    #   （2026-08-27 夜・最適化の回。`_recent_rate` の註に実測があります）
+    #   **日付は動かしません** —— 2点 の差で動かすと、この repo が 3日で4回
+    #   踏んだ churn（`_rate_scatter` の註）がそのまま戻ります。
+    #   `CLAUDE.md`「**裸の『届きません』を出さないこと。何を固定したせいで
+    #   そう出たのかを同じ行に並べること**」の、同じ扱いです。
+    key = str(need.get("count_expr") or "")
+    rec = _recent_rate(key, have, as_of)
+    if rec is not None:
+        r_rate, r_days, r_delta = rec
+        if r_delta <= 0:
+            note += (f"。**直近 {r_days}日 は1件も増えていません**"
+                     f"（前の点も {have}）—— この「あと {days}日」は、"
+                     "**止まる前の平均**から出ています。"
+                     "**その要件が数えているものが、まだ起きているか**を見ること")
+        elif r_rate < rate * 0.5:
+            note += (f"。**直近の実測は {r_days}日 で +{r_delta}件 ＝ "
+                     f"{r_rate:.2f}/日**（生涯の平均 {rate:.2f}/日 の半分以下）"
+                     "—— この「あと」は**速いほうの平均**で出ています")
     return Answer(as_of + timedelta(days=days),
                   f"要 {want} ／ いま {have}（{elapsed}日で {rate:.2f}/日）→ あと {days}日"
                   f"（**±{slack}日**。伸び率からの推定なので、この幅の中の書き換えは"
                   f"意味を持ちません{note}）"
                   + tail,
                   slack=slack, todo=stale,
-                  rate=rate, rate_key=str(need.get("count_expr") or ""))
+                  rate=rate, rate_key=key, have=have)
 
 
 def _project_nth(rows: list[dict], pub: list[str], count: int, after: str,

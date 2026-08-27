@@ -1,0 +1,90 @@
+"""**積みが止まった要件が「あと1日」と言い続けないこと。**（2026-08-27・最適化の回）
+
+## 何が見えていなかったか
+
+`_ans_accrual` の `rate = have / (as_of - since).days` は**生涯の平均**です。
+積みが完全に止まっても分母が伸びるぶんゆっくり下がるだけなので、
+**止まった当日も「あと N日」と出続けます。**
+
+実測 2026-08-27 22:3x（前提「長尺の生成が落ちる主因は『過去の図と重なっています』の
+門で、公開が増えるほど落ちる率が上がる」）::
+
+    台帳   要 6 ／ いま 5（3日で **1.67/日**）→ **あと 1日 ＝ 08-28**
+    実物   この要件が数えるのは**長尺の生成失敗**（`data/batch_runs.jsonl`）:
+           08/24  7/21 通過（失敗 14）／ 08/26  25/28（89%）／ **08/27  15/15（100%）**
+           → **今日の失敗は 0件。** 1.67/日 は 08/24〜08/26 の平均
+
+しかもこの要件は**失敗を数えている**ので、生成が直るほど**永久に満ちません** ——
+それでも台帳は毎周「あと1日」と言います。**「待てば来る」と読めます。**
+
+## 直し方（**日付は動かしません**）
+
+控えに `have`（その回の実数）を足し、**日をまたいだ前の点との差**を出します。
+差が 0 なら、その場で「**直近 N日 は1件も増えていません**」を同じ行に並べます。
+
+**日付を 2点 の差で動かさないのは、churn を戻さないため**です
+（`_rate_scatter` の註: 伸び率の見積りが揺れただけで **3日に4回** 期限が
+書き換わり、前提もデータの来る日も1日も動きませんでした）。
+`CLAUDE.md`「**裸の『届きません』を出さないこと。何を固定したせいでそう出たのかを
+同じ行に並べること**」と同じ扱いです。
+
+## 覆る条件
+
+止まりを**日付に**反映してよくなるのは、`_recent_rate` が2点ではなく
+**窓（3点以上）**で解けるようになったときです。それまでは印字だけ。
+1日より速く動く要件が出てきたら、控えの鍵を「日」から「時」へ落とすこと。
+"""
+from __future__ import annotations
+
+import json
+import sys
+from datetime import date
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(ROOT / "scripts"))
+
+import deadline_check                                          # noqa: E402
+
+KEY = "sum(1 for r in rows('x.jsonl'))"
+
+
+def _log(tmp_path: Path, rows: list[dict]) -> Path:
+    p = tmp_path / "est.jsonl"
+    p.write_text("".join(json.dumps(r, ensure_ascii=False) + "\n" for r in rows),
+                 encoding="utf-8")
+    return p
+
+
+def test_stall_is_detected(tmp_path: Path) -> None:
+    """前の点と同じ数なら、`delta <= 0` を返すこと。"""
+    p = _log(tmp_path, [{"at": "2026-08-26", "key": KEY, "rate": 1.67, "have": 5}])
+    got = deadline_check._recent_rate(KEY, 5, date(2026, 8, 28), path=p)
+    assert got is not None, "日をまたいだ点が在るのに、直近の伸び率が出ていません"
+    r_rate, r_days, r_delta = got
+    assert r_delta == 0 and r_days == 2 and r_rate == 0.0, (
+        f"止まりを見つけられていません: {got}")
+
+
+def test_same_day_points_are_not_a_rate(tmp_path: Path) -> None:
+    """同じ日の点どうしから「1日あたり」を作らないこと（0除算と偽の 0件）。"""
+    p = _log(tmp_path, [{"at": "2026-08-27", "key": KEY, "rate": 1.67, "have": 5}])
+    assert deadline_check._recent_rate(KEY, 5, date(2026, 8, 27), path=p) is None
+
+
+def test_rows_without_have_are_dropped_not_guessed(tmp_path: Path) -> None:
+    """`have` を控える前の行から、`rate × 経過` を逆算して埋めないこと。
+
+    控えに `since` が無いので、逆算すると丸めのぶんだけ**偽の増減**が生まれます。
+    """
+    p = _log(tmp_path, [{"at": "2026-08-25", "key": KEY, "rate": 1.0},
+                        {"at": "2026-08-26", "key": KEY, "rate": 1.5}])
+    assert deadline_check._recent_rate(KEY, 5, date(2026, 8, 28), path=p) is None
+
+
+def test_growth_is_reported_as_growth(tmp_path: Path) -> None:
+    """伸びている回は、その伸び率をそのまま返すこと（止まり扱いにしない）。"""
+    p = _log(tmp_path, [{"at": "2026-08-26", "key": KEY, "rate": 1.0, "have": 4}])
+    r_rate, r_days, r_delta = deadline_check._recent_rate(KEY, 10, date(2026, 8, 28), path=p)
+    assert (r_delta, r_days) == (6, 2) and abs(r_rate - 3.0) < 1e-9
