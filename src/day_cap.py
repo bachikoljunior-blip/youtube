@@ -872,9 +872,80 @@ def booked_split_day(first_pub: str, today: dt.date | None = None,
         return {"day": day, "before": len(early), "total": len(times),
                 "answer": last.date().isoformat(),
                 "answer_at": last.strftime("%H:%M"),
+                "answer_ts": last.isoformat(),
                 "running": dt.date.fromisoformat(day) == today,
                 **{k: power[k] for k in ("count", "window", "gap", "ties", "kept")}}
     return None
+
+
+def readable_at(b: dict, now: dt.datetime | None = None) -> dict:
+    """**その「読める時刻」に、本当に読めるのか**（2026-08-27 に足した）。
+
+    ## 何が起きていたか（**申し送りが3周 連続で外していた**）
+
+    `booked_split_day()` の `answer` / `answer_at` は **齢だけ**で出ています ——
+    「その日の最後の本が `MIN_AGE_H`（6時間）になる時刻」。**読む口のことは
+    1文字も見ていません。**
+
+    ところが `data/views.jsonl` を積むのは `scripts/snapshot.py` ＝
+    **Data API の `videos.list`** で、**日枠が尽きている窓では 403 しか返りません。**
+    `snapshot.py` 自身が「1本も読めませんでした（日枠は JST 16:00 に戻ります）」と
+    印字して終了コード1で降ります。
+
+    実測 2026-08-27 20:5x JST —— この窓の 403 は **88回** 観測ずみで、
+    枠が戻るのは **08/28 16:00 JST**。それでも `_booked_lines()` は
+    「読めるのは **2026-08-27 22:00** 以降」と印字し、
+    `docs/JOURNAL.md` の申し送りは **3周 続けて**
+    「**22:00 JST を過ぎていたら、まず `python scripts/snapshot.py` を撃つこと**」を
+    運んでいました。**22:00 に撃っても 403 です。**
+
+    **これは `docs/JOURNAL.md` が (N-1) の回で名指しした形そのもの**です ——
+    「**主実行が『撃て』と言われている手が、その時刻に本当に撃てるか**」。
+    そこでは「口は開いているか」を問い、**この関数は「いつ開くか」を答えます。**
+
+    ## 何を返すか
+
+        at          実際に読める、いちばん早い時刻（JST・aware）
+        binding     "age" ＝ 齢が縛っている ／ "quota" ＝ 日枠が縛っている
+        quota_at    日枠が戻る時刻（JST。読めたときだけ。読めなければ None）
+
+    **`answer` のほうは変えません** —— あちらは「齢としては足りる時刻」で、
+    それ自体は正しい事実です。**遅いほうを採るのが、実際に読める時刻**です。
+
+    ## 覆る条件
+
+    - `data/views.jsonl` を Data API 以外（Analytics や手元の控え）から積めるように
+      なったら、日枠は縛らなくなります。そのときこの関数は `binding="age"` を
+      返し続けるので、**消してよい**（`upload_cap.day_quota().open` が常に True）
+    - `upload_cap.day_quota()` が読めない回は、**縛っていない側へ倒します**
+      （読めないことを「閉じている」と読むと、押せる回まで押さなくなる ——
+      `day_quota()` 自身と同じ考え方）
+    """
+    now = now or dt.datetime.now(JST)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=JST)
+    try:
+        age_at = dt.datetime.fromisoformat(str(b.get("answer_ts") or ""))
+    except ValueError:
+        return {"at": None, "binding": "age", "quota_at": None}
+    if age_at.tzinfo is None:
+        age_at = age_at.replace(tzinfo=JST)
+
+    try:
+        from src import upload_cap
+        dq = upload_cap.day_quota()
+    except Exception:                      # noqa: BLE001 — 読めない回は縛らない側へ
+        return {"at": age_at, "binding": "age", "quota_at": None}
+
+    if dq.open:
+        # いま開いている ＝ 齢が来れば読める（窓は毎日 戻るので、
+        # 齢のほうが先なら、その時点で開いているかは別の回が見ます）
+        return {"at": age_at, "binding": "age", "quota_at": None}
+
+    quota_at = dq.resets_at.astimezone(JST)
+    if quota_at <= age_at:
+        return {"at": age_at, "binding": "age", "quota_at": quota_at}
+    return {"at": quota_at, "binding": "quota", "quota_at": quota_at}
 
 
 def cap_if_window(path: pathlib.Path | None = None,
@@ -1081,8 +1152,30 @@ def _booked_lines(first_pub: str, w: dict | None = None) -> list[str]:
         "`data/views.jsonl` は **Data API**（`videos.list`）で積んでいます。"
         "**Analytics の3日遅れは掛かりません**（2026-08-27 に直した。"
         "ここは長らく +5日 を足していて、答えを6日 遅らせていました）。",
+    ] + _readable_lines(b) + [
         "        [!] **答えが返るまで、他の日の本数を増やさないこと** ——"
         "その日が対照です。",
+    ]
+
+
+def _readable_lines(b: dict) -> list[str]:
+    """**齢が足りても、口が閉じていれば読めません**（2026-08-27 に足した）。
+
+    上の行は「齢としては足りる時刻」を出します。**そこで撃てるとは言っていません。**
+    `data/views.jsonl` を積むのは `scripts/snapshot.py` ＝ `videos.list`（Data API）で、
+    **日枠の尽きている窓では 403** です。理由と実測は `readable_at()` の docstring。
+    """
+    r = readable_at(b)
+    if not r.get("at") or r.get("binding") != "quota":
+        return []
+    return [
+        f"        [!] **その時刻には読めません。** `videos.list`（Data API）の"
+        f"**日枠がこの窓では尽きています** —— `scripts/snapshot.py` も"
+        f"`scripts/status.py` も、いま撃つと 403 で1本も積めません"
+        f"（`snapshot.py` は『1本も読めませんでした』で降ります）。",
+        f"        → **実際に読めるのは {r['at']:%Y-%m-%d %H:%M} JST 以降**"
+        f"（日枠が戻る時刻。齢のほうは {b['answer']} {b.get('answer_at', '')} に足ります）。"
+        f"**その前に撃たないこと** —— 撃った回は 403 を1つ足すだけで、答えは1分も早まりません。",
     ]
 
 
