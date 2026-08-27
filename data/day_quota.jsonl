@@ -4521,3 +4521,8 @@
 {"at": "2026-08-27T18:18:58+00:00", "detail": "videos.list snippet", "by": "history.py:_scan"}
 {"at": "2026-08-27T18:19:00+00:00", "detail": "channels.list mine", "by": "history.py:_scan"}
 {"at": "2026-08-27T18:19:59+00:00", "detail": "channels.list mine", "by": "history.py:_scan"}
+{"at": "2026-08-27T20:00:45+00:00", "detail": "playlistItems.list uploads", "by": "history.py:channel_video_ids"}
+{"at": "2026-08-27T20:00:47+00:00", "detail": "status: Data API 読み", "by": "status.py:main"}
+{"at": "2026-08-27T20:01:30+00:00", "detail": "channels.list mine", "by": "history.py:_scan"}
+{"at": "2026-08-27T20:01:32+00:00", "detail": "channels.list mine", "by": "history.py:_scan"}
+{"at": "2026-08-27T20:03:11+00:00", "detail": "channels.list mine", "by": "history.py:_scan"}
