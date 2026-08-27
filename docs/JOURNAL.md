@@ -61765,3 +61765,23 @@ nenkin shobyo shougai yukyu zasson）。**つまり掘ればその場で長尺�
    実際この回は 0件 と出た直後に、`data/runs.jsonl` で 18:0x〜18:4x の ship 4件
    （長尺の在庫を掘る回）を見つけ、claim の中身を捨てています。
    → **直すのは `run_marker.claims()` の側**（直近の ship も並べる）。
+
+### 追記 —— 申し送り4番を、その場で潰した（腕 `none`・道具の整備なので日付は動きません）
+
+上の「次の回へ 4」を書いた直後に、**申し送りに置いても5周 流れる**のがこの輪の
+実測（08/27 16:0x の `refresh_thumbnail --missing` が6周ぶん流れた）なので、
+**同じ回のうちに塞ぎました。**
+
+`run_marker.py` に `recent_ships()` を足し、`--write` / `--claim` が
+**claim が0件でも、他の回の直近の `ship`** を並べるようにしました。
+
+実物（この回の締めに撃った `--claim`）——**さっきまで 0件 だった所に3件**出ます:
+
+    18:59  …779308d9  fix premise の _header が f 文字列の見出しを…
+    19:17  …779308d9  upload 長尺 ideco-deguchi-taishokukin-doujinen-38nen を 09/08 20:00 JST に予約…
+    19:32  …1173889f  fix: 予約の詰め直しが同じ値を撃ち直し、窓が開いて47分で日枠を焼いていた…
+
+**3件とも claim を打っていません。** `--claim` は任意で `--ship` は必須なので、
+**意図だけを見ている限り、この3件は永久に見えません。**
+`tests/test_recent_ships_visible.py`（4件）。うち
+`test_claim_が0件でも_ship_があれば黙らない` が、この回に踏んだ形そのものです。
