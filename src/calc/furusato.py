@@ -156,7 +156,15 @@ ASSUMPTIONS = [
     "住民税の基礎控除は43万円、所得税の基礎控除は48万円で計算しています",
     "社会保険料率はこの計算での仮定で、15パーセントとして置いています。"
     "加入している健康保険や介護保険の対象かどうかで実際は変わります",
-    "ふるさと納税以外の所得控除は入れていません。医療費控除や住宅ローン控除があると上限は下がります",
+    "ふるさと納税以外の所得控除は、`Person.other_deduction` に入れた額だけを見ています。"
+    "既定は0円で、そのときは基礎控除・配偶者控除・扶養控除だけで計算しています。"
+    "ここに入れてよいのは、所得税と住民税で額が変わらない所得控除"
+    "（医療費控除・小規模企業共済等掛金控除・地震保険料控除）だけです。"
+    "生命保険料控除や配偶者特別控除は所得税と住民税で額が違うので、"
+    "同じ額を入れると住民税側が過大に引かれます",
+    "住宅ローン控除は税額控除なので、この上限額の計算には入れていません。"
+    "ただし住宅ローン控除で所得税が0円まで減っている人は、"
+    "ふるさと納税の所得税ぶんが戻らないことがあります",
     "ワンストップ特例ではなく確定申告した場合で計算しています",
     "上限を超えた寄付の計算では、寄付金控除の枠を入れています。"
     "所得税は総所得金額等の40パーセントまで、住民税の基本分は30パーセントまでです",
@@ -196,6 +204,14 @@ class Person:
     social_rate: float       # 社会保険料の実効率
     dependents_general: int = 0   # 一般の扶養（16歳以上19歳未満・23歳以上）
     spouse: bool = False          # 配偶者控除の対象がいるか
+    other_deduction: int = 0      # **所得税・住民税で同額の所得控除**（既定0＝従来と同じ）
+    # ↑ 医療費控除・小規模企業共済等掛金控除・地震保険料控除のうち
+    #   **所得税と住民税で額が変わらないもの**だけを入れること。
+    #   生命保険料控除や配偶者特別控除は所得税と住民税で額が違うので、
+    #   ここに入れると住民税側が過大に引かれます（`ASSUMPTIONS` にも書いた）。
+    #   **2026-08-28 に足しました。**それまで `ASSUMPTIONS` は
+    #   「医療費控除があると上限は下がります」と書くだけで、
+    #   **いくら下がるかを出す口が1つもありませんでした**（`src/calc/iryohi.py` の主題13）。
 
 
 def salary_deduction(income: int) -> int:
@@ -228,7 +244,9 @@ def _deductions(p: Person, *, resident: bool) -> int:
         basic, spouse, dependent = BASIC_RESIDENT, 330_000, 330_000
     else:
         basic, spouse, dependent = BASIC_INCOME, 380_000, 380_000
-    return basic + (spouse if p.spouse else 0) + dependent * p.dependents_general
+    return (basic + (spouse if p.spouse else 0)
+            + dependent * p.dependents_general
+            + max(0, p.other_deduction))
 
 
 def resident_tax_income_levy(p: Person) -> int:
