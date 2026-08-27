@@ -4526,3 +4526,8 @@
 {"at": "2026-08-27T20:01:30+00:00", "detail": "channels.list mine", "by": "history.py:_scan"}
 {"at": "2026-08-27T20:01:32+00:00", "detail": "channels.list mine", "by": "history.py:_scan"}
 {"at": "2026-08-27T20:03:11+00:00", "detail": "channels.list mine", "by": "history.py:_scan"}
+{"at": "2026-08-27T20:24:23+00:00", "detail": "channels.list mine", "by": "history.py:_scan"}
+{"at": "2026-08-27T20:24:25+00:00", "detail": "channels.list mine", "by": "history.py:_scan"}
+{"at": "2026-08-27T20:37:58+00:00", "detail": "scheduled_publish_times", "by": "uploader.py:taken_publish_times"}
+{"at": "2026-08-27T20:38:00+00:00", "detail": "playlistItems.insert", "by": "uploader.py:_post_actions"}
+{"at": "2026-08-27T20:38:01+00:00", "detail": "thumbnails.set 8hJnwkC8NU0", "by": "uploader.py:_set_thumbnail"}
