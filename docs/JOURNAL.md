@@ -61268,3 +61268,41 @@ calc 単位で候補から落とすが、**`--topics` で名指しすれば通�
 
 **問3 次の回に渡すべきものは何か。** ⑥ と ⑧ に書いた。要点は1つ ——
 **`ASSUMPTIONS` の「〜より増えます／減ります」で数の無い行が、掃引の視野の外にある在庫**。
+
+### ⑩ ⑧ の見立てを、数で置いた（**23件 / 15族**）
+
+⑧ で「`ASSUMPTIONS` の穴を掃くほうが安い」と書いたので、掃いて数を出した
+（`src/calc/*.py` の `ASSUMPTIONS` から、**比較の言葉があって数字が1つも無い行**を拾う）:
+
+    23件 / 15族
+    furusato 3 ／ ideco 2 ／ iryohi 2 ／ kafunenkin 2 ／ yukyu 2（← この回で潰した）
+    haiguusha ideco_deguchi ikuji jidou kokuho nenkin ninikeizoku tedori tousan yoteinozei 各1
+
+**全部が節になるわけではありません** —— 「事業所得があると変わります」のように
+**新しい入力が要るもの**は、掘るのに表を1本書くのと同じ値段になります。
+**そのまま計算できるのはこの形**（引数を1つ足すか、既にある関数を2回 呼べば出る）:
+
+    ideco          「扶養控除や保険料控除があると、節税額はここより小さくなります」
+    ideco_deguchi  「重なると控除を分け合うので出口の税はここより増えます」
+    ikuji          「賞与は給付の基礎に入らないため、賞与がある人は比率はこれより低くなります」
+    haiguusha      「境目の年収は、丸めたあとの値と数千円ずれます」
+
+**この4族は、どれも「これから7日ぶんの長尺に出ている calc」に入っていません**
+（tail は haito iryohi izoku jouto jutaku kakyu keihi kogaku kokuho kouki
+nenkin shobyo shougai yukyu zasson）。**つまり掘ればその場で長尺が1本 出せます。**
+`ikuji` `ideco_deguchi` `haiguusha` は**長尺の族にも入っていない**ので、
+1件つき **7日ぶんの上限 +2本**。
+
+**次の回への一手**（⑥.3 と ⑧ を、この4行に畳みます）:
+
+    python - <<'PY'   ← 掃き方（20秒・API 0単位）
+    import re, pathlib
+    for p in sorted(pathlib.Path('src/calc').glob('*.py')):
+        if p.name.startswith('_'): continue
+        m = re.search(r'ASSUMPTIONS\s*=\s*\[(.*?)\n\]', p.read_text(encoding='utf-8'), re.S)
+        if not m: continue
+        for line in re.findall(r'"([^"]{10,})"', m.group(1)):
+            if re.search(r'(より(増え|減り|高く|低く|多く|少なく)|変わります|ずれ|ここより)', line) \
+               and not re.search(r'\d', line):
+                print(p.stem, line[:90])
+    PY
