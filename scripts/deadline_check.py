@@ -264,6 +264,74 @@ def _ans_external(need: dict) -> Answer:
 _MIN_SPAN_DAYS = 2
 
 
+#: `data_file:` を書いた `accrual` を「古い」と呼ぶまでの時間（時）。
+#: **24時間**。1周 1.5時間 のこの機械なら、毎周 取り直している計器は黙ります。
+_STALE_AFTER_HOURS = 24.0
+
+
+def _stale_todo(need: dict) -> str:
+    """**その数が伸びないのは、計器を取り直していないからではないか。**
+
+    ## なぜ `accrual` にも要るのか（2026-08-27 夜・最適化の回）
+
+    同じ日の朝の回が、この穴を **`kind: on_date` にだけ**塞ぎました
+    （`needs.data_file:`。「**時計は来ています。足りないのはデータのほうです**」）。
+    **`accrual` には同じ穴がそのまま残っていました。** そして `accrual` のほうが
+    危ないのは、**返す文が「待てば出ます」だから**です:
+
+        要 3 ／ いま **0**（8日ぶん。**伸び率が出せないので、いつ届くか言えません**）
+        → **まだ数えはじめたところです。この回は何もしないのが正解です**
+
+    実測 2026-08-27（前提「深い題のショートは `s-` の題のショートより上」）:
+
+        `deep_short_days()` が読む `data/video_forms.json`  取り直したのは **08-26**
+        その控えが分類し終えている いちばん新しい公開日      **08-24**
+        深い題のショートを**公開しはじめた**日              **08-25**
+        08/25・08/26・08/27 の公開（両群とも在る）          **控えには1本も無い**
+
+    **`falsified_if` が要る「両群がそろう公開日」は、もう 3日 ぶん公開済み**です。
+    0 なのは日が足りないからではなく、**分類の控えが 08-24 で止まっている**から。
+    `data/video_forms.json` を書き直すのは `src/rpm_mix` の主処理だけで、
+    **1周の中で誰も撃ちません。待っても永久に 0 のまま**でした。
+
+    「この回は何もしないのが正解です」は、その状態で**毎周 出続けます** ——
+    これは `zero_means_never`（こちらから作らないかぎり来ない）と同じ形で、
+    **違うのは「作る」ではなく「取り直す」で解けるところ**だけです。
+
+    ## 何を門にするか
+
+    **`count_expr` の中身は読みません**（読めません）。要件の側が
+    `data_file:` でどの計器を読んでいるかを申告し、その計器の `at` が
+    `_STALE_AFTER_HOURS`（既定 24時間）より古ければ、**取り直す手**を `todo` にします。
+    `refresh:` にコマンドを書いておけば、そのまま撃てます。
+
+    **書いていない要件は、今までどおり時計だけで通します**（`on_date` と同じ方針）。
+
+    **覆る条件**: 1周ごとに全計器を取り直す作りにしたら、この門は毎回 黙るので
+    外してよい。逆に「取り直したのに数が伸びない」が続くなら、
+    見るべきは控えではなく `count_expr` のほうです。
+    """
+    src = str(need.get("data_file") or "").strip()
+    if not src:
+        return ""
+    try:
+        hours = float(need.get("stale_after_hours") or _STALE_AFTER_HOURS)
+    except (TypeError, ValueError):
+        hours = _STALE_AFTER_HOURS
+    newest = newest_point(ROOT / src)
+    now = datetime.now(timezone.utc)
+    if newest is not None and (now - newest).total_seconds() / 3600.0 < hours:
+        return ""                                   # **新しい。待つのが正しい**
+    seen = (f"取り直したのは **{newest.astimezone(JST):%m/%d %H:%M} JST**"
+            f"（**{(now - newest).total_seconds() / 3600:.0f}時間 前**）"
+            if newest else "**いつ取り直したか読めません**")
+    how = str(need.get("refresh") or "").strip()
+    return ("**待ち方が違います。足りないのは日ではなく、計器のほうです** —— "
+            f"この数が読んでいる `{src}` は {seen}。"
+            "**取り直すまで、待っても増えません。**"
+            + (f"  `{how}`" if how else f"  `{src}` を取り直すこと"))
+
+
 def _ans_accrual(need: dict, as_of: date) -> Answer:
     expr = str(need.get("count_expr") or "")
     want = int(need.get("need") or 0)
@@ -294,10 +362,21 @@ def _ans_accrual(need: dict, as_of: date) -> Answer:
         #   （`src/watches.deep_short_days()` がその例）。**ここに一般の門は置けません** ——
         #   何を数えるべきかは、前提ごとに `falsified_if` が決めるからです。
         return Answer(as_of, f"要 {want} ／ いま **{have}** → 足りています")
+    # **足りていない道は、全部ここを通ります。** 古い計器の申告は1度だけ引いて、
+    # **日が出る道にも出ない道にも**同じものを載せます（下の3か所）。
+    #
+    # **`have == 0` の道にだけ載せて済ませないこと**（2026-08-27 夜に踏みかけた）。
+    # 取り直して 0 → 1 になった瞬間、この要件は**日の出る道**へ移ります ——
+    # そこに載せないと、翌日ふたたび控えが古びても**誰も言いません。**
+    # 数は 1 のまま、伸び率だけが 0.50/日 → 0.33 → 0.25 と落ち、
+    # **判定日が毎日 後ろへ滑るのに、理由がどこにも出ない**形になります。
+    # **`have >= want` の道には載せません**（もう足りているので、取り直す用が無い）。
+    stale = _stale_todo(need)
     try:
         spanned = (as_of - date.fromisoformat(since_s)).days
     except ValueError:
-        return Answer(None, f"要 {want} ／ いま {have}（`since` が読めないので伸び率が出せません）")
+        return Answer(None, f"要 {want} ／ いま {have}（`since` が読めないので伸び率が出せません）",
+                      todo=stale)
     # **1日の窓から伸び率を出さないこと**（2026-08-26 夕・最適化の回に踏んだ）。
     #
     #     実測: `since: 2026-08-26` の前提が、立った **1時間後**に
@@ -324,7 +403,7 @@ def _ans_accrual(need: dict, as_of: date) -> Answer:
         return Answer(None, f"要 {want} ／ いま {have}"
                             f"（`since` から {spanned}日。**{_MIN_SPAN_DAYS}日 ぶん"
                             "たまるまで伸び率を出しません** —— 1日の窓からの見通しは、"
-                            "帯の外れ方が読めません）")
+                            "帯の外れ方が読めません）", todo=stale)
     elapsed = max(1, spanned)
     rate = have / elapsed
     if rate <= 0:
@@ -336,15 +415,22 @@ def _ans_accrual(need: dict, as_of: date) -> Answer:
             return Answer(None, f"要 {want} ／ いま **0**（{elapsed}日で1件も積んでいません。"
                                 "**こちらから作らないかぎり来ません**）", unreachable=True)
         return Answer(None, f"要 {want} ／ いま **0**（{elapsed}日ぶん。"
-                            "**伸び率が出せないので、いつ届くか言えません**）")
+                            "**伸び率が出せないので、いつ届くか言えません**）",
+                      todo=stale)
     days = math.ceil((want - have) / rate)
     # **帯の幅**: 積み上げの数え上げ誤差 ≒ 1/√have（件数の相対標準誤差）を日数へ移す。
     # have=74・days=88 なら ±11日。**この幅の中で期限を書き換えても、何も動きません。**
     slack = max(1, math.ceil(days / max(1.0, have ** 0.5)))
+    # **日が出る道にも、古い計器の申告を載せます。** ここは `warming` ではないので
+    # `todo` は印字されません —— だから `why` のほうへ足します。
+    # **この推定は「計器を取り直しつづけたら」の話**で、止めれば伸び率は落ち、
+    # 判定日は毎日 後ろへ滑ります。**滑っている理由が、同じ行に出ること。**
+    tail = f"  ／ {stale}" if stale else ""
     return Answer(as_of + timedelta(days=days),
                   f"要 {want} ／ いま {have}（{elapsed}日で {rate:.2f}/日）→ あと {days}日"
-                  f"（**±{slack}日**。伸び率からの推定なので、この幅の中の書き換えは意味を持ちません）",
-                  slack=slack)
+                  f"（**±{slack}日**。伸び率からの推定なので、この幅の中の書き換えは意味を持ちません）"
+                  + tail,
+                  slack=slack, todo=stale)
 
 
 def _project_nth(rows: list[dict], pub: list[str], count: int, after: str,
@@ -519,10 +605,39 @@ def newest_point(path: Path) -> datetime | None:
     正規表現で拾う手もありますが、この repo は同じ形で6回 転んでいます
     （**読み手が読まない欄に書いてある**）。だから `data_file:` という
     **機械が読む欄**にします。書いていない要件は、今までどおり時計だけで通します。
+
+    ## 1行1件でない計器も読みます（2026-08-27 夜・最適化の回に足した）
+
+    最初の版は `.jsonl` しか読めませんでした。**控え型の計器はそうではありません** ——
+    `data/video_forms.json` は「いつ取り直したか」を**ファイル全体の `at`** で
+    1つだけ持ちます（`src/rpm_mix.save_video_forms`）。行ごとに JSON として
+    読もうとすると全行が落ちて、**`None`（＝1点も読めません）** に化けます。
+    その化け方は「取り直せ」と同じ向きなので害は小さいのですが、
+    **「いつ取り直したか」が出ないと、次の回が古さを測れません。**
+    だから**まずファイル全体を JSON として読み**、駄目なら1行1件へ落とします。
     """
     if not path.exists():
         return None
     newest: datetime | None = None
+    # **控え型（ファイル全体で1つの JSON）を先に試す。**
+    try:
+        whole = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        whole = None
+    if isinstance(whole, dict):
+        at = whole.get("at") or whole.get("ts") or whole.get("time")
+        if isinstance(at, str):
+            try:
+                dt = datetime.fromisoformat(at.replace("Z", "+00:00"))
+            except ValueError:
+                dt = None
+            if dt is not None:
+                if dt.tzinfo is None:
+                    # **日付だけの `at` は、その日の終わりではなく始まりで読む。**
+                    # 「08-26 に取った」を 08-26 00:00 と読めば、古さは長めに出ます。
+                    # **短く見積もって「まだ新しい」と言うほうが危険**です。
+                    dt = dt.replace(tzinfo=timezone.utc)
+                return dt
     for ln in path.read_text(encoding="utf-8").splitlines():
         ln = ln.strip()
         if not ln:
