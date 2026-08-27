@@ -52,3 +52,31 @@ def _alerts_ledger_to_tmp(tmp_path_factory):
 
     yield
     alerts.LEDGER, alerts.RUNS = keep
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _measure_window_dynamic_off():
+    """**`measure_window` の動的な窓を、検査のあいだ止める**（2026-08-27 に足した）。
+
+    `WINDOWS` は手で書いた日付なので、`inside()` は純粋な関数でした。
+    2026-08-27 に `day_cap` の**切り分けの対照日**を動的に守るようにしたので、
+    **`inside()` は本物の予約（`data/uploaded.jsonl`）に依ります。**
+
+    そうすると、**「適当な未来の日」を定数に使っている検査**が、
+    たまたまその日が対照日になった回だけ落ちます ——
+    実測 2026-08-27: `tests/test_live_slots.py` の5件が `2026-09-02` を
+    使っていて、まとめて赤くなりました。**中身は1行も変わっていません。**
+
+    **呼ぶ側に「その日は避けて書いてね」と約束させないこと** ——
+    このファイルの冒頭が、まさにその理由で書かれています
+    （「一覧を足した回が必ず片方だけ忘れる」通算7回）。
+
+    動的な窓そのものは `tests/test_measure_window_split_day.py` が
+    **旗を降ろして**見張ります（あちらは `day_cap` を差し替えて呼びます）。
+    """
+    from src import measure_window
+
+    keep = measure_window.DISABLE_DYNAMIC
+    measure_window.DISABLE_DYNAMIC = True
+    yield
+    measure_window.DISABLE_DYNAMIC = keep

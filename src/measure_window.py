@@ -217,11 +217,130 @@ def active(today: str | None = None) -> tuple[dict[str, str], ...]:
     return tuple(w for w in WINDOWS if day <= w["until"])
 
 
+def split_day_window(today: str | None = None) -> dict[str, str] | None:
+    """**`day_cap` の切り分けの日**を、窓として出す（`WINDOWS` に手で書かない側）。
+
+    ## なぜ手の一覧に足さないのか（2026-08-27 に足した）
+
+    `src/day_cap.py` は毎回、**自分で切り分けの日を選んで印字しています**
+    （`booked_split_day()`。「`08:59` より前に出す本がある、いちばん早い予約日」）。
+    そして `scripts/eta.py` の出力の中で、こう言っています:
+
+        **その日はもう予約されています: 2026-09-02**（10本・うち 2本 が 08:59 より前）
+        [!] **答えが返るまで、他の日の本数を増やさないこと** ——その日が対照です。
+
+    **守る仕掛けは、このファイルにありました。繋がっていませんでした。**
+    `reschedule.py --spread/--compact` ／ `live_slots.py --apply` ／
+    `batch_build` の `live_plan()` は、どれも `measure_window.inside()` を見て
+    避けます —— **`WINDOWS` に書いてある日だけを。**
+
+    **同じことが 08/24 に起きています。** `reschedule.py --spread` が
+    2026-08-27 を「14本 ＝ 上限超え」と読んで本を後ろへ送り、
+    窓に残ったのは **1本だけ**でした（`WINDOWS` の 08-27 の項に実測が残っています）。
+    そのときの直しは「**この一覧に入れておけば、どの旗で撃っても止まります**」
+    ——**入れる作業が手だったので、次の切り分けの日には引き継がれませんでした。**
+
+    実測 2026-08-27: 対照日 **2026-09-02** は `WINDOWS` に無く、
+    予約は **10本／13:30 より前 7本／08:59 より前 2本**。
+    この形は (A) 1日10本 なら **10本 生き**、(B) 13:30 の窓 なら **7本 生き**ます
+    ——**3本の差でしか切り分かりません。** どれか1本が動けば消えます。
+
+    **だから日付を写しません。** 選んでいる側（`day_cap`）に毎回 聞きます。
+
+    ## いつ消えるか（**手で消す作業を残さない**）
+
+    - `day_cap.window()` が **切り分け済み**を返したら、その場で消えます
+    - 切り分けの日が過ぎて `booked_split_day()` が別の日を返したら、そちらへ移ります
+    - `day_cap` が読めない回は **`None`**（窓を増やさない）。
+      **黙って全部を守る側に倒さないこと** —— 置き先が消えると投稿が止まります
+
+    ## 覆る条件
+
+    **`until` は「読める日」（`answer`）です。** 生きた本数を読むまで守ります。
+    読んだあとも守り続けると、対照日のぶんだけ枠が死んだままになります ——
+    `day_cap.window()` が決まれば自動で消えるので、**手で消さないこと。**
+    """
+    if DISABLE_DYNAMIC:
+        return None
+    day_now = today or _today_jst()
+    if day_now in _SPLIT_CACHE:
+        return _SPLIT_CACHE[day_now]
+    out = _split_day_window_uncached(today)
+    _SPLIT_CACHE[day_now] = out
+    return out
+
+
+#: `split_day_window()` の覚え書き。**1周のあいだだけ**（プロセスが変われば消えます）。
+#  `find()` は置き先を探すたびに呼ばれます（`live_plan()` は最大90日ぶん）。
+#  中身は `data/uploaded.jsonl` を読むので、**掛け算になると1周ぶんの時間が飛びます。**
+_SPLIT_CACHE: dict[str, dict[str, str] | None] = {}
+
+#: **検査のあいだ、動的な窓を止める旗**（`tests/conftest.py` が立てます）。
+#
+# `WINDOWS` は手で書いた日付なので、`inside()` は純粋な関数でした。
+# **動的な窓を足した瞬間、`inside()` は本物の予約（`data/uploaded.jsonl`）に
+# 依ります** —— 検査が「適当な未来の日」として選んだ日付が、
+# たまたまその日の対照日と一致すると、**関係のない検査が赤くなります。**
+# 実測 2026-08-27: `tests/test_live_slots.py` の5件が
+# `2026-09-02` を定数に使っていて、まとめて落ちました。
+#
+# **呼ぶ側に「その日は避けて書いてね」と約束させないこと** ——
+# `tests/conftest.py` の冒頭がまさにその理由で書かれています
+# （「一覧を足した回が必ず片方だけ忘れる」通算7回）。
+#
+# **この旗を production で立てないこと。** 立てると対照日が守られません。
+DISABLE_DYNAMIC = False
+
+
+def _split_day_window_uncached(today: str | None = None) -> dict[str, str] | None:
+    try:
+        from src import day_cap                                 # noqa: PLC0415
+
+        w = day_cap.window()
+        if isinstance(w, dict) and w.get("verdict"):
+            # **もう切り分いています。** 守る理由がありません。
+            return None
+        first_pub = (w or {}).get("first_pub")
+        b = day_cap.booked_split_day(first_pub) if first_pub else None
+    except Exception:                                           # noqa: BLE001
+        return None
+    if not b or not b.get("day"):
+        return None
+    day = str(b["day"])
+    until = str(b.get("answer") or day)
+    day_now = today or _today_jst()
+    if day_now > until:
+        return None
+    return {
+        "from": day, "to": day, "until": until,
+        "label": "day_cap_split",
+        "why": ("**`day_cap` の (A)/(B) を切り分ける対照日**です"
+                f"（`src/day_cap.booked_split_day()` が選んでいます）。"
+                f"予約 {b.get('total')}本・うち {b.get('before')}本 が"
+                f" {first_pub} より前。**この形でしか切り分かりません** ——"
+                "1本 足しても引いても、(A) と (B) の予測が同じ数になります。\n"
+                f"生きた本数を読めるのは **{until}** ごろ"
+                "（伸びきる2日 + Analytics 3日遅れ）。"
+                "**それまで、この日の本数も時刻も動かさないこと。**\n"
+                "**この窓は手の一覧（`WINDOWS`）にありません** —— "
+                "選んでいるのは `day_cap` 側なので、毎回そちらに聞いています"
+                "（2026-08-24 に、手の一覧へ写し忘れた 08/27 が "
+                "`reschedule --spread` に 14本 → 1本 まで削られました）。"),
+    }
+
+
 def find(date_jst: str, today: str | None = None) -> dict[str, str] | None:
-    """その日を守っている窓（無ければ `None`）。**理由ごと返します。**"""
+    """その日を守っている窓（無ければ `None`）。**理由ごと返します。**
+
+    **手の一覧（`WINDOWS`）だけでは足りません。** `day_cap` が毎回 自分で選ぶ
+    切り分けの対照日も、ここで守ります（`split_day_window()`）。
+    """
     for w in active(today):
         if w["from"] <= date_jst <= w["to"]:
             return w
+    dyn = split_day_window(today)
+    if dyn is not None and dyn["from"] <= date_jst <= dyn["to"]:
+        return dyn
     return None
 
 

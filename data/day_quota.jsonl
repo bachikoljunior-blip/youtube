@@ -3554,3 +3554,7 @@
 {"at": "2026-08-27T00:30:11+00:00", "detail": "channels.list mine"}
 {"at": "2026-08-27T00:30:12+00:00", "detail": "channels.list mine"}
 {"at": "2026-08-27T00:31:10+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-27T01:03:00+00:00", "ok": true, "detail": "videos.update vid1"}
+{"at": "2026-08-27T01:03:44+00:00", "detail": "videos.update -rNsh53STNw"}
+{"at": "2026-08-27T01:10:16+00:00", "ok": true, "detail": "videos.update vid1"}
+{"at": "2026-08-27T01:11:01+00:00", "detail": "videos.update -rNsh53STNw"}
