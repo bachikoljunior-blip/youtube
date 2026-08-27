@@ -1454,6 +1454,8 @@ def _spend_lines(spend: dict) -> list[str]:
     効いていないか、**2つの道具が同じ本を別々の時刻へ取り合っています。**
     どちらかは `by` の並びで分かります（名前が2つ出るなら後者）。
     """
+    from src import upload_cap
+
     if not spend.get("ok"):
         return []
     out = [f"  この窓で通った書き込み **{spend['ok']}回**"
@@ -1463,6 +1465,17 @@ def _spend_lines(spend: dict) -> list[str]:
         out.append("  [!] **撃ち直しが本数を超えています。**"
                    "`reschedule._update` の飛ばしが効いていないか、"
                    "2つの道具が同じ本を取り合っています（下の名前が2つなら後者）")
+        # **2026-08-28 に、どちらかを実測で決めました ——「取り合い」のほうです。**
+        # 窓 08/27 で2回以上 撃たれた 29本 を `data/uploaded.jsonl` の
+        # `retimed_at` で割ると、**14本 は同じ時刻へ**（＝ 08/27 10:22Z の関門が
+        # 捕まえる側）、**15本 は違う時刻へ**（＝ 素通りする側）。
+        # しかも 15本 は食い違いではなく**振動**です（中央値 30日）——
+        # 1つの掃きが1か月 先へ置き、19分後の掃きが1か月 手前へ引き戻します。
+        # `src.upload_cap.MOVE_CAP`（1本 2回まで）で3つ目以降を落としています。
+        out.append(f"       ↑ 実測 08/28: これは「取り合い」の側でした"
+                   f"（違う時刻へ 15本／同じ時刻へ 14本・振動の幅 中央値 30日）。"
+                   f" **1本 {upload_cap.MOVE_CAP}回まで**に切ってあります"
+                   f"（`src.upload_cap.MOVE_CAP`）")
     top = list(spend.get("by", {}).items())[:4]
     if top:
         out.append("  撃ち手: " + " ／ ".join(f"{k} {v}回" for k, v in top))
