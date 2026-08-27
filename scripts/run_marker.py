@@ -272,15 +272,68 @@ def claims(window_min: int = CLAIM_WINDOW_MIN, me: str | None = None) -> list[di
     return out
 
 
+def recent_ships(window_min: int = CLAIM_WINDOW_MIN, me: str | None = None) -> list[dict]:
+    """**直近 window_min 分に、自分以外が実際に出したもの。**
+
+    ## なぜ `claims()` だけでは足りないか（2026-08-27 19:0x に踏んだ）
+
+    `--claim` は**任意**です。`--ship` は**必須**です（§4 の最低ライン）。
+    だから「claim を打たずに走っているきょうだい」は、`claims()` から
+    **1件も見えません。**
+
+    実測（この回）: `run_marker.py --write` は
+    **「直近60分の claim: 0件」**を返しました。同じ時刻の `data/runs.jsonl` には、
+    **18:0x〜18:4x にきょうだいの ship が4件**（長尺の在庫を掘る回）ありました。
+    この回はそれを見ずに「在庫の底」を claim し、**中身を捨てています。**
+
+    **`claims()` が見ているのは意図で、ここが見ているのは実物です。**
+    重なりを避けるのに効くのは、**実際に触られた所**のほう。
+
+    **覆る条件**: `--claim` が全部の回で打たれるようになったら、この2つは
+    同じものを指します（そのときは `claims()` だけで足ります）。
+    **数え方は写していません** —— どちらも `_records()` の同じ行を読み、
+    `kind` だけが違います。
+    """
+    me = me if me is not None else (actor_id() or "")
+    cut = datetime.now(JST) - timedelta(minutes=window_min)
+    out = []
+    for r in _records():
+        if r.get("kind") != "ship":
+            continue
+        if str(r.get("session") or "") == me:
+            continue
+        try:
+            at = datetime.fromisoformat(str(r.get("at")))
+        except ValueError:
+            continue
+        if at.tzinfo is None:
+            at = at.replace(tzinfo=JST)
+        if at >= cut:
+            out.append(r)
+    return out
+
+
 def _claim_lines(window_min: int = CLAIM_WINDOW_MIN) -> list[str]:
     rows = claims(window_min)
-    if not rows:
+    ships = recent_ships(window_min)
+    if not rows and not ships:
         return []
-    out = [f"[marker] **直近 {window_min}分 に、他の回が取りかかると書いたもの: "
-           f"{len(rows)}件**（`--claim`）"]
-    for r in rows[-5:]:
-        who = str(r.get("session") or "")[-8:]
-        out.append(f"         {str(r.get('at'))[11:16]}  …{who}  {r.get('what')}")
+    out: list[str] = []
+    if rows:
+        out.append(f"[marker] **直近 {window_min}分 に、他の回が取りかかると書いたもの: "
+                   f"{len(rows)}件**（`--claim`）")
+        for r in rows[-5:]:
+            who = str(r.get("session") or "")[-8:]
+            out.append(f"         {str(r.get('at'))[11:16]}  …{who}  {r.get('what')}")
+    # **`--claim` は任意、`--ship` は必須。** 打たれていない claim は
+    #     見えないので、**実際に出したもの**も並べます（`recent_ships` の註）。
+    if ships:
+        out.append(f"[marker] **直近 {window_min}分 に、他の回が実際に出したもの: "
+                   f"{len(ships)}件**（`--ship`。**claim を打たない回は、上には出ません**）")
+        for r in ships[-5:]:
+            who = str(r.get("session") or "")[-8:]
+            out.append(f"         {str(r.get('at'))[11:16]}  …{who}  "
+                       f"{str(r.get('what'))[:96]}")
     out.append("         **予約ではありません。**避けるか重ねるかはこちらが決めること"
                "（同じ所を2つの回が直して、片方の誤りが見つかった例が 08-26 にあります）。"
                "**ただし、ぶつかると片方は捨てになります。**")
