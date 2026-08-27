@@ -240,10 +240,17 @@ def split_day_window(today: str | None = None) -> dict[str, str] | None:
     そのときの直しは「**この一覧に入れておけば、どの旗で撃っても止まります**」
     ——**入れる作業が手だったので、次の切り分けの日には引き継がれませんでした。**
 
-    実測 2026-08-27: 対照日 **2026-09-02** は `WINDOWS` に無く、
+    実測 2026-08-27（**朝の回**）: 対照日 **2026-09-02** は `WINDOWS` に無く、
     予約は **10本／13:30 より前 7本／08:59 より前 2本**。
     この形は (A) 1日10本 なら **10本 生き**、(B) 13:30 の窓 なら **7本 生き**ます
     ——**3本の差でしか切り分かりません。** どれか1本が動けば消えます。
+
+    実測 2026-08-27（**昼の回。上の 09/02 は、そもそも対照日ではありませんでした**）:
+    `booked_split_day()` が `<= today` で今日を飛ばしていたので、
+    **その日の朝に 09/02 へ移っていました。** 08/27 自身の予約は
+    **19本・05:00 から30分きざみ・同分の組 0** で、
+    (A) なら **10本**・(B) なら **18本** ——**差 8本**。守るべき日は 08/27 でした。
+    （`day_cap.booked_split_day()` の docstring に、直した中身があります）
 
     **だから日付を写しません。** 選んでいる側（`day_cap`）に毎回 聞きます。
 
@@ -301,7 +308,15 @@ def _split_day_window_uncached(today: str | None = None) -> dict[str, str] | Non
             # **もう切り分いています。** 守る理由がありません。
             return None
         first_pub = (w or {}).get("first_pub")
-        b = day_cap.booked_split_day(first_pub) if first_pub else None
+        # **当てはめ済みの2つのモデルの値を渡します** —— 渡さないと
+        # `booked_split_day()` が `window()` をもう1度 呼び、`data/views.jsonl`
+        # （2万行）を2度 読みます。
+        t = str((w or {}).get("T") or "")
+        b = day_cap.booked_split_day(
+            first_pub,
+            c=(w or {}).get("C"),
+            t_min=(int(t[:2]) * 60 + int(t[3:])) if len(t) == 5 else None,
+        ) if first_pub else None
     except Exception:                                           # noqa: BLE001
         return None
     if not b or not b.get("day"):
@@ -317,10 +332,13 @@ def _split_day_window_uncached(today: str | None = None) -> dict[str, str] | Non
         "why": ("**`day_cap` の (A)/(B) を切り分ける対照日**です"
                 f"（`src/day_cap.booked_split_day()` が選んでいます）。"
                 f"予約 {b.get('total')}本・うち {b.get('before')}本 が"
-                f" {first_pub} より前。**この形でしか切り分かりません** ——"
-                "1本 足しても引いても、(A) と (B) の予測が同じ数になります。\n"
-                f"生きた本数を読めるのは **{until}** ごろ"
-                "（伸びきる2日 + Analytics 3日遅れ）。"
+                f" {first_pub} より前 → **(A) 本数なら {b.get('count')}本 生き ／"
+                f" (B) 窓なら {b.get('window')}本 生き**（差 {b.get('gap')}本）。"
+                "**この形でしか切り分かりません。**\n"
+                f"生きた本数を読めるのは **{until} {b.get('answer_at', '')}** 以降"
+                f"（その日の最後の本が 齢 {day_cap.MIN_AGE_H:.0f}時間 になる時刻。"
+                "**Analytics の3日遅れは掛かりません** —— `data/views.jsonl` は"
+                " Data API で積んでいます。2026-08-27 まで +5日 を足していました）。"
                 "**それまで、この日の本数も時刻も動かさないこと。**\n"
                 "**この窓は手の一覧（`WINDOWS`）にありません** —— "
                 "選んでいるのは `day_cap` 側なので、毎回そちらに聞いています"
