@@ -3783,3 +3783,31 @@
 {"at": "2026-08-27T01:52:14+00:00", "detail": "videos.update -rNsh53STNw"}
 {"at": "2026-08-27T01:52:16+00:00", "detail": "videos.update -rNsh53STNw"}
 {"at": "2026-08-27T01:52:17+00:00", "detail": "videos.update -rNsh53STNw"}
+{"at": "2026-08-27T02:12:08+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-27T02:16:23+00:00", "detail": "status: Data API 読み"}
+{"at": "2026-08-27T02:16:51+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-27T02:16:53+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-27T02:17:47+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-27T02:21:01+00:00", "ok": true, "detail": "videos.update vid1"}
+{"at": "2026-08-27T02:25:24+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-27T02:26:16+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-27T02:26:18+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-27T02:26:19+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-27T02:27:12+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-27T02:28:03+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-27T02:28:05+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-27T02:28:07+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-27T02:28:59+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-27T02:29:00+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-27T02:29:01+00:00", "ok": true, "detail": "videos.update vid1"}
+{"at": "2026-08-27T02:29:01+00:00", "ok": true, "detail": "videos.update vid1"}
+{"at": "2026-08-27T02:29:44+00:00", "detail": "videos.update -rNsh53STNw"}
+{"at": "2026-08-27T02:29:45+00:00", "detail": "videos.update -rNsh53STNw"}
+{"at": "2026-08-27T02:29:46+00:00", "detail": "videos.update -rNsh53STNw"}
+{"at": "2026-08-27T02:29:47+00:00", "detail": "videos.update -rNsh53STNw"}
+{"at": "2026-08-27T02:29:48+00:00", "detail": "videos.update -rNsh53STNw"}
+{"at": "2026-08-27T02:29:49+00:00", "detail": "videos.update -rNsh53STNw"}
+{"at": "2026-08-27T02:29:50+00:00", "detail": "videos.update -rNsh53STNw"}
+{"at": "2026-08-27T02:29:51+00:00", "detail": "videos.update -rNsh53STNw"}
+{"at": "2026-08-27T02:29:53+00:00", "detail": "videos.update -rNsh53STNw"}
+{"at": "2026-08-27T02:29:54+00:00", "detail": "videos.update -rNsh53STNw"}
