@@ -3733,3 +3733,10 @@
 {"at": "2026-08-27T01:52:14+00:00", "detail": "videos.update -rNsh53STNw"}
 {"at": "2026-08-27T01:52:16+00:00", "detail": "videos.update -rNsh53STNw"}
 {"at": "2026-08-27T01:52:17+00:00", "detail": "videos.update -rNsh53STNw"}
+{"at": "2026-08-27T02:02:44+00:00", "detail": "status: Data API 読み"}
+{"at": "2026-08-27T02:03:13+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-27T02:03:15+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-27T02:04:12+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-27T02:07:48+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-27T02:07:50+00:00", "detail": "channels.list mine"}
+{"at": "2026-08-27T02:07:52+00:00", "detail": "channels.list mine"}
