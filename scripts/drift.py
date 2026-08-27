@@ -57,6 +57,8 @@ from src import levers  # noqa: E402
 ROOT = Path(__file__).resolve().parent.parent
 RUNS = ROOT / "data" / "runs.jsonl"
 HYPS = ROOT / "config" / "hypotheses.yaml"
+#: 役ごとの周の印（`scripts/next_round.py` が書く）。**θ の応答時間を出すのに使います。**
+ROUNDS = ROOT / "data" / "rounds.jsonl"
 
 JST = timezone(timedelta(hours=9))
 
@@ -491,6 +493,135 @@ def _ready_by_claim() -> dict:
     return {k: v[1] for k, v in st.items() if v[0] == "ready" and v[1] is not None}
 
 
+def role_gap_hours(role: str, limit: int = 40) -> float | None:
+    """**その役の、周と周のあいだは実測で何時間か。**（`data/rounds.jsonl` の中央値）
+
+    書いているのは `scripts/next_round.py` だけです。**時刻を当てません** ——
+    直近 `limit` 周の実測の中央値を返します（周が2つ未満なら `None`）。
+    """
+    if not ROUNDS.exists():
+        return None
+    seen: list[str] = []
+    for ln in ROUNDS.read_text(encoding="utf-8").splitlines():
+        if not ln.strip():
+            continue
+        try:
+            r = json.loads(ln)
+        except Exception:
+            continue
+        if r.get("role") != role:
+            continue
+        at = str(r.get("round") or r.get("at") or "")
+        if at and at not in seen:
+            seen.append(at)
+    seen = sorted(seen)[-limit:]
+    ts = []
+    for s in seen:
+        try:
+            ts.append(datetime.fromisoformat(s))
+        except ValueError:
+            continue
+    if len(ts) < 2:
+        return None
+    gaps = sorted((ts[i + 1] - ts[i]).total_seconds() / 3600.0 for i in range(len(ts) - 1))
+    mid = len(gaps) // 2
+    return gaps[mid] if len(gaps) % 2 else (gaps[mid - 1] + gaps[mid]) / 2.0
+
+
+def theta_response(today: str, closed: int, soonest: str | None,
+                   days: int = WINDOW_DAYS) -> list[str]:
+    """**この θ は、1周ごとの答え合わせに使えるか。**（応答時間を同じ画面に出す）
+
+    ## なぜ要るのか（2026-08-27・最適化の回。**5周 続けて誤報していた**）
+
+    `docs/spawn_prompt.md` は最適化の役に、毎周こう自己採点させていました:
+
+        答えが毎回変わるのに θ（前提を閉じる速さ）が改善しない
+          → **問いではなく、答え方が外れています**
+
+    **この採点は、ほぼ確実に「外れています」と出ます。** 理由は2つとも
+    このファイルの中にあります:
+
+    - `rounds_per_day()` は**今日を数えません**（半端な日を混ぜないため）。
+      つまり θ の**分子は、同じ日のあいだ1度も動きません。**
+    - 分母 `closed_per_day()` が動くのは、実際に前提が閉じた日だけ ——
+      実測 **0.86件/日**（直近7日で6件）。
+
+    一方この役の周は実測 **1.14時間ごと**（`data/rounds.jsonl`・35周）＝ 1日 21周。
+    **1周のあいだに θ が動く見込みは 4%。96% の回は、何をしても
+    「改善していません」と読みます。** 実際、8/26〜8/27 の最適化の回は
+    **5周 続けて同じ 22周/26周 を読み**、そのたびに「答え方が外れている」と
+    判定して**前の回の答えを捨て、新しい答えを立てていました。**
+    答えが毎回変わっていたのは、**採点器が毎回 誤報していたから**です。
+
+    ## 応答時間を測ると、そもそも桁が合っていません
+
+    直近7日に閉じた6件を、`config/hypotheses.yaml` へ**立てた日**（git 履歴）と
+    突き合わせた実測 —— 立ててから閉じるまで **0 / 7 / 10 / 10 / 11 / 14日**
+    （中央値 **10日**）。この役の周に直すと **中央値 210周**。
+    **210周 かかって届く数を、1周ごとに読んでいた**わけです。
+
+    ## だから、この行を θ の隣に置きます
+
+    消すのではありません —— θ は 7日の窓では正しい数です。
+    **1周ごとの合否に使うな**と、読む場所に書いてあれば足ります。
+    **1周で応えるのは予定表の θ**（`src/arm_speed.forward()`。
+    `scripts/queue_lag.py` が毎回 印字しています）—— 入れ替え・期限・
+    群への割り当てを触ると、**その回のうちに動きます。**
+
+    **覆る条件**: 周の間隔が伸びて、`p_move`（下で印字する数）が
+    **50% を超える** —— そこまで来たら θ は1周ごとに読める数になるので、
+    この節ごと外すこと。
+    """
+    gap = role_gap_hours("optimizer")
+    per_day = (closed / float(days)) if days else 0.0
+    out = ["", "  --- **この θ を、1周ごとの答え合わせに使わないこと**（応答が遅すぎる） ---"]
+    out.append(
+        "  分子（周）は `rounds_per_day()` が**今日を数えません** →"
+        " **同じ日のあいだ1度も動きません**（このファイルの事実）"
+    )
+    out.append(
+        f"  分母が動くのは、実際に前提が閉じた日だけ ＝ 実測 **{per_day:.2f}件/日**"
+        f"（直近{days}日で {closed}件）"
+    )
+    if gap:
+        rounds_day = 24.0 / gap
+        p = min(1.0, per_day / rounds_day) if rounds_day else 0.0
+        out.append(
+            f"  この役の周は実測 **{gap:.2f}時間**ごと（`data/rounds.jsonl`）＝ 1日 **{rounds_day:.0f}周**"
+        )
+        out.append(
+            f"  → **1周のあいだに θ が動く見込みは {p * 100:.0f}%。**"
+            f" 残り **{(1 - p) * 100:.0f}% の回は、何をしても「改善していません」と読みます**"
+        )
+        if soonest:
+            try:
+                d = (date.fromisoformat(soonest) - date.fromisoformat(today)).days
+                if d <= 0:
+                    # **期日は過ぎています。** 負の日数を「-21周 後」と印字しないこと
+                    # （2026-08-27 に出しました）。過ぎた期日は**いま閉じられる**ので、
+                    # この回に θ を動かす道が実際に在るという意味です。
+                    out.append(
+                        f"  次に1件 閉じられるのは **{soonest}**（期日は{-d}日 過ぎています"
+                        " ＝ **この回に閉じられます**）"
+                    )
+                else:
+                    out.append(
+                        f"  次に1件 閉じられるのは **{soonest}**（+{d}日 ＝ この役の"
+                        f" **{d * rounds_day:.0f}周** 後）"
+                    )
+            except ValueError:
+                pass
+    else:
+        out.append("  この役の周の間隔が測れません（`data/rounds.jsonl` に印が足りません）")
+    out.append(
+        "  **1周で応えるのは予定表の θ**（`src/arm_speed.forward()`・"
+        "`scripts/queue_lag.py` が印字）—— 入れ替え・期限・群への割り当ては"
+        "**その回のうちに動きます**"
+    )
+    return out
+
+
 def supply_report(today: str, horizon: int = SUPPLY_HORIZON) -> tuple[str, bool]:
     """**到達日は「何周に1回」動きうるか。** 本文と「在庫が尽きている」かを返す。
 
@@ -554,6 +685,7 @@ def supply_report(today: str, horizon: int = SUPPLY_HORIZON) -> tuple[str, bool]
             f" **{len(stock)}件** → {ratio}"
         )
         lines.append(f"    期日: {' / '.join(dls[:6])}")
+        lines += theta_response(today, closed, dls[0] if dls else None)
     else:
         lines.append(
             f"  見込み（今後{horizon}日）: 期日の来る前提 **0件** →"
