@@ -4500,3 +4500,7 @@
 {"at": "2026-08-27T15:59:20+00:00", "detail": "scheduled_publish_times", "by": "uploader.py:taken_publish_times"}
 {"at": "2026-08-27T15:59:22+00:00", "detail": "playlistItems.insert", "by": "uploader.py:_post_actions"}
 {"at": "2026-08-27T15:59:22+00:00", "detail": "thumbnails.set tYnLi1uaJOc", "by": "uploader.py:_set_thumbnail"}
+{"at": "2026-08-27T16:42:22+00:00", "detail": "status: Data API 読み", "by": "status.py:main"}
+{"at": "2026-08-27T16:42:56+00:00", "detail": "channels.list mine", "by": "history.py:_scan"}
+{"at": "2026-08-27T16:42:57+00:00", "detail": "channels.list mine", "by": "history.py:_scan"}
+{"at": "2026-08-27T16:43:55+00:00", "detail": "channels.list mine", "by": "history.py:_scan"}

@@ -194,15 +194,34 @@ def kyu_tadashigaki(shotoku: int) -> int:
     return max(0, shotoku - KISO_KOJO)
 
 
-def part(name: str, shotoku: int, members: int, *, keigen: bool = True) -> dict:
+def part(name: str, shotoku: int, members: int, *, keigen: bool = True,
+         hantei: int | None = None) -> dict:
     """1本ぶんの保険料。**所得割と均等割を出してから、限度額で頭を切ります。**
 
     軽減は**均等割にだけ**掛かります（所得割は軽減されません）。
+
+    `hantei` は**軽減の判定にだけ使う所得**です。既定の `None` は
+    「総所得金額等をそのまま判定に使う」＝ **これまでと1円も変わりません。**
+
+    **なぜ口を開けたか**（2026-08-28 に足した）。軽減の判定所得は総所得と
+    同じではありません —— **65歳以上の公的年金等所得者は、そこから15万円を
+    引きます**（地方税法施行令29条の7）。この表は既定の `age=45` を土台に
+    書かれているので、これまでその15万円が要る場面がありませんでした。
+    ところが **74歳の国保**（＝75歳の後期高齢者医療と並べる相手）では効きます:
+    年金収入168万円の人は、総所得58万円で見ると**5割軽減**、
+    15万円を引いた43万円で見ると**7割軽減**。**1段ちがいます。**
+    `src/calc/kouki.py` の「75歳の誕生日で保険料はいくら変わるか」が、
+    実際にここへ15万円を引いた額を渡します。
+
+    **既定を変えていないのは、この表の他の14節が全部 `age=45` 側だから**です
+    （そちらでは15万円は引きません）。**覆る条件**: この表に65歳以上を
+    土台にした節が増えたら、`age` から自動で引く側へ寄せること。
     """
     r = RATES[name]
     shotokuwari = round(kyu_tadashigaki(shotoku) * float(r["所得割"]))
     kintowari_full = int(r["均等割"]) * members
-    pct = keigen_rate(shotoku, members) if keigen else 0
+    judge = shotoku if hantei is None else hantei
+    pct = keigen_rate(judge, members) if keigen else 0
     kintowari = round(kintowari_full * (100 - pct) / 100)
     raw = shotokuwari + kintowari
     limit = int(r["限度額"])
@@ -226,15 +245,21 @@ def parts_for(age: int) -> list[str]:
 
 
 def premium(shotoku: int, members: int = 1, age: int = 45,
-            *, keigen: bool = True) -> dict:
-    """世帯の国民健康保険料。"""
-    rows = [part(n, shotoku, members, keigen=keigen) for n in parts_for(age)]
+            *, keigen: bool = True, hantei: int | None = None) -> dict:
+    """世帯の国民健康保険料。
+
+    `hantei` は**軽減の判定にだけ使う所得**（`part` の註）。既定の `None` は
+    これまでと同じで、総所得金額等をそのまま判定に使います。
+    """
+    rows = [part(n, shotoku, members, keigen=keigen, hantei=hantei)
+            for n in parts_for(age)]
+    judge = shotoku if hantei is None else hantei
     return {
         "所得": shotoku,
         "被保険者数": members,
         "年齢": age,
         "内訳": rows,
-        "軽減の割合": keigen_rate(shotoku, members) if keigen else 0,
+        "軽減の割合": keigen_rate(judge, members) if keigen else 0,
         "保険料": sum(r["保険料"] for r in rows),
         "頭打ちの本数": sum(1 for r in rows if r["頭打ちか"]),
         "かかる上限": sum(r["限度額"] for r in rows),
