@@ -456,6 +456,22 @@ def apply_moves(board: Board) -> int:
         try:
             reschedule.main(["--move", vid, f"{when:%Y-%m-%dT%H:%M}"])
         except SystemExit as e:
+            # **枠切れは「飛ばす」ではなく「止める」**（2026-08-27 に見つけた）。
+            #
+            # 下の `except Exception` に「枠が尽きたら、そこで止めること」と
+            # 書いてありますが、**そこへは永久に来ません** ——
+            # `reschedule._update` は日枠の 403 を **`SystemExit`** に変えて
+            # 投げ、`SystemExit` は `Exception` の子ではないので、
+            # **必ずこちらの handler が先に捕まえます。**
+            # そしてこちらは `skipped` に積んで **`continue`** していました ＝
+            # **尽きた窓で、残りの手ぜんぶを撃ち続けます。**
+            # （この repo が通算11回 踏んでいる「言っていることと、
+            #   している所が別」の形。08/27 の 403 が窓の中で 29→60回 に
+            #   育っているのは、この往復です）
+            if reschedule.is_quota_exit(e):
+                print(f"[live_slots] 日枠が尽きました（{done}回 動かした時点）。"
+                      " **窓が変わってから `--plan` を撃ち直すこと**", flush=True)
+                return 1
             if e.code:
                 skipped.append((vid, f"終了コード {e.code}"))
                 continue
@@ -463,6 +479,7 @@ def apply_moves(board: Board) -> int:
             text = str(e)
             if "quotaExceeded" in text or "dailyLimitExceeded" in text:
                 # **枠が尽きたら、そこで止めること。** 撃つほど悪くなります。
+                # （生の `HttpError` が素通りしてきた回のため。日枠は上で止めます）
                 print(f"[live_slots] 日枠が尽きました（{done}回 動かした時点）。"
                       " **窓が変わってから `--plan` を撃ち直すこと**", flush=True)
                 return 1

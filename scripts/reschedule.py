@@ -215,6 +215,31 @@ def _show(rows: list[dict]) -> None:
         print("\n二重予約はありません。")
 
 
+#: **日枠切れの `SystemExit` を、呼ぶ側が見分けるための印**（2026-08-27）。
+#:
+#: `_update` は日枠の 403 を `SystemExit` に変えて投げます。**`SystemExit` は
+#: `Exception` の子ではありません** —— だから呼ぶ側が
+#: `except Exception` に「枠が尽きたら止める」と書いても、**そこへは永久に来ません。**
+#: 実際 `scripts/live_slots.apply_moves` はそう書いてあり、
+#: `except SystemExit` の側で **`continue` していました** ＝
+#: **尽きた窓で、残りの手ぜんぶを撃ち続けます。**
+#:
+#: 印を文で持たせるのは、`SystemExit` が「終了コード」しか運べないからです。
+#: **この語をメッセージから消さないこと**（`tests/test_quota_exit_stops.py`）。
+QUOTA_MARK = "（日枠切れ）"
+
+
+def is_quota_exit(exc: BaseException) -> bool:
+    """その `SystemExit` は**日枠切れ**か（＝撃つほど悪くなるので、そこで止める）。
+
+    ほかの `SystemExit`（過去の時刻・見つからない本・公開済み）は
+    **1本ずつ飛ばして進んでよい** ものです。**混ぜないこと** ——
+    飛ばしてよいものを止めると残りが当たらず、止めるべきものを飛ばすと
+    403 を人数ぶん買います。
+    """
+    return isinstance(exc, SystemExit) and QUOTA_MARK in str(exc.code or "")
+
+
 def _same_instant(a, b) -> bool:
     """2つの時刻表記が**同じ瞬間**か（`Z` と `+00:00`、秒の小数を吸収する）。
 
@@ -318,7 +343,7 @@ def _update(svc, video_id: str, publish_at: str | None,
         # と答え続け、次の回が同じ 403 をもう一度買います。
         auth.note_day_quota(exc, f"videos.update {video_id}")
         raise SystemExit(
-            f"[reschedule] **{video_id} の予約は、いま外せません（日枠切れ）。**\n"
+            f"[reschedule] **{video_id} の予約は、いま外せません{QUOTA_MARK}。**\n"
             "  `videos.update` は日枠に当たります。**`videos.insert` とは違います** ——\n"
             "  投稿（insert・1600単位）は日枠が切れていても通るのに、\n"
             "  差し替え（update・50単位）は 403 で止まります。**安いほうが先に閉じます。**\n"
