@@ -247,6 +247,26 @@ class Answer:
     #: `lines()` がそのまま出します。
     todo: str = ""
 
+    #: **`ready` が、この帯のぶん「早くなりうる」日数。** `None` ＝ `slack` と同じ。
+    #:
+    #: **帯は、いつも左右対称ではありません**（2026-08-27 夜・最適化の回）。
+    #: 遅れから作った日はその典型で、`analytics_lag_band()` の実測は
+    #: **3日が 381観測・4日が 57観測。2日は1度もありません。**
+    #: そして印字する `ready` は**小さいほう（3日）で作っています** ——
+    #: つまりその日は**もう最速**で、帯は **+1／−0** です。
+    #:
+    #: それを ±1 として扱うと、`slips` が `ready - 1` まで許します。
+    #: **実測でそこが割れました**（`title_form`）:
+    #:
+    #:     `src/judgeable.py`      16本目 08/31 ＋ 3 ＋ 3 → **09/06 へ延ばすこと**
+    #:     `deadline_check`        判定できるのは 09-06（±1日）→ **書き換えないこと**
+    #:
+    #: **同じ機械の2か所が、同じ数から逆の指示**を出していました。
+    #: `docs/JOURNAL.md` が何度も書いている形です。**`judgeable` が正しい** ——
+    #: 遅れが 2日 だった観測が1つも無い以上、09/05 に判定できる目は
+    #: **ありません**。だから下向きの幅を別に持ちます。
+    slack_down: int | None = None
+
     #: **この答えを出した伸び率**（`accrual` だけ。他は `None`）。
     #: `record_estimates()` が積み、次の回の帯がこれの散らばりから決まります。
     rate: float | None = None
@@ -715,11 +735,11 @@ def _ans_published_group(need: dict, as_of: date, lag: int) -> Answer:
     nth = date.fromisoformat(pub[count - 1])
     ready = nth + timedelta(days=settle + lag)
     band = analytics_lag_band()
-    tail = f"（**±{band}日** —— 遅れは1日の中で動きます）" if band else ""
+    tail = (f"（**＋{band}日／−0日** —— 遅れは1日の中で動きますが、**上にしか動きません**。実測 3日 が 381・4日 が 57・**2日 は 0**）" if band else "")
     return Answer(ready,
                   f"{after[:10]} 以降に作った本の **{count}本目の公開 {nth:%m/%d}** "
                   f"＋ 落ち着く {settle}日 ＋ 実データの遅れ {lag}日{tail}",
-                  slack=band)
+                  slack=band, slack_down=0)
 
 
 def newest_point(path: Path) -> datetime | None:
@@ -882,11 +902,13 @@ def _ans_after(need: dict, lag: int) -> Answer:
                       + "  **取れるまで判定しないこと**"))
     if need.get("plus_lag"):
         band = analytics_lag_band()
-        tail = (f"（**±{band}日**。遅れは1日の中で {lag}日 と {lag + band}日 の"
-                "間を動くので、この幅の中の書き換えは意味を持ちません）" if band else "")
+        tail = (f"（**＋{band}日／−0日**。遅れは1日の中で {lag}日 と {lag + band}日 の"
+                "間を動きますが、**下へは動きません**"
+                f"（実測で {lag}日 未満の観測が1つもない）。"
+                "だから期限をこの日より前に置かないこと）" if band else "")
         return Answer(on + timedelta(days=lag),
                       f"{what} は {on:%m/%d} の分 ＋ 実データの遅れ {lag}日{tail}",
-                      slack=band)
+                      slack=band, slack_down=0)
     return Answer(on, f"{what} は {on:%m/%d} に出ます")
 
 
@@ -975,10 +997,10 @@ def _ans_group_key(need: dict, as_of: date) -> Answer:
                         "書き換えは意味を持ちません）",
                       slack=band)
     band = analytics_lag_band()
-    tail = f"（**±{band}日** —— 遅れは1日の中で動きます）" if band else ""
+    tail = (f"（**＋{band}日／−0日** —— 遅れは1日の中で動きますが、**上にしか動きません**。実測 3日 が 381・4日 が 57・**2日 は 0**）" if band else "")
     return Answer(ready, body + f" ＋ 落ち着く {SJ.SETTLE_DAYS}日 "
                                 f"＋ 遅れ {SJ.ANALYTICS_LAG_DAYS}日{tail}",
-                  slack=band)
+                  slack=band, slack_down=0)
 
 
 def answer(need: dict, as_of: date, lag: int) -> Answer:
@@ -1066,10 +1088,35 @@ class Verdict:
         return max([a.slack for a in self.answers if a.ready == self.ready] or [0])
 
     @property
+    def slack_down(self) -> int:
+        """**`ready` が早くなりうる幅**（`slack` は遅くなりうる幅）。
+
+        **帯は左右対称ではありません**（`Answer.slack_down` の註）。
+        遅れから作った日は **+1／−0** —— 遅れの実測は 3日 と 4日 だけで、
+        **2日 だった観測が1つもない**のに、`ready` は小さいほう（3日）で
+        作っているからです。**その日はもう最速**で、下へは動きません。
+        """
+        if self.ready is None:
+            return 0
+        got = [a.slack if a.slack_down is None else a.slack_down
+               for a in self.answers if a.ready == self.ready]
+        return max(got or [0])
+
+    @property
     def slips(self) -> bool:
-        """期限が、データの来る日より前に置かれているか。**帯の中なら言いません。**"""
+        """期限が、データの来る日より前に置かれているか。**帯の中なら言いません。**
+
+        **見るのは下向きの幅です**（2026-08-27 夜に分けた）。ここが `slack`
+        （上向き）だったせいで、**同じ機械の2か所が逆の指示**を出しました:
+
+            `src/judgeable.py`  title_form 16本目 08/31 ＋3＋3 → **09/06 へ延ばすこと**
+            ここ                判定できるのは 09-06（±1日）→ **書き換えないこと**
+
+        遅れが 2日 だった観測は1つも無いので、**09/05 に判定できる目はありません。**
+        `judgeable` が正しく、こちらが 1日 甘くしていました。
+        """
         return (self.ready is not None and self.deadline is not None
-                and (self.ready - timedelta(days=self.slack)) > self.deadline)
+                and (self.ready - timedelta(days=self.slack_down)) > self.deadline)
 
     @property
     def waits(self) -> int:
