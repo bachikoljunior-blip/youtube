@@ -125,3 +125,47 @@ def test_伸び率を持たない答えは積まない(tmp_path):
     v = dc.Verdict(claim="c", deadline=None, ready=a.ready, answers=[a])
     assert dc.record_estimates([v], path=p, as_of=date(2026, 8, 27)) == 0
     assert not p.exists()
+
+
+# ---------------------------------------------------------------------------
+# **帯は左右対称ではない**（2026-08-27 夜・最適化の回）
+# ---------------------------------------------------------------------------
+#
+# 遅れから作った日は **＋1／−0** です。`analytics_lag_band()` の実測は
+# **3日 が 381観測・4日 が 57・2日 は 0**、そして印字する `ready` は
+# **小さいほう（3日）で作っています** —— つまりその日はもう最速。
+#
+# ±1 として扱うと `slips` が `ready - 1` まで許し、**同じ機械の2か所が
+# 同じ数から逆の指示**を出しました（実測・`title_form`）:
+#
+#     `src/judgeable.py`  16本目 08/31 ＋3＋3 → **09/06 へ延ばすこと**
+#     `deadline_check`    判定できるのは 09-06（±1日）→ **書き換えないこと**
+#
+# **`judgeable` が正しい** —— 遅れが 2日 だった観測が1つも無い以上、
+# 09/05 に判定できる目はありません。
+#
+# **この検査が落ちてよいとき**: `src/settle.analytics_lag_band()` の実測に
+# **2日 が現れたら**。そのときは下向きの幅を 0 でなくすこと。
+
+
+def test_遅れ由来の帯は下へ効かない():
+    """`slack_down=0` の答えは、期限が1日でも前なら `slips`。"""
+    a = dc.Answer(date(2026, 9, 6), "遅れ由来", slack=1, slack_down=0)
+    v = dc.Verdict(claim="c", deadline=date(2026, 9, 5), ready=a.ready, answers=[a])
+    assert v.slack == 1, "上向きの幅は残すこと（`waits` はこちらを見ます）"
+    assert v.slack_down == 0
+    assert v.slips, "**judgeable と逆の指示**に戻っています"
+
+
+def test_遅れ由来の帯は上へは効く():
+    """**`waits` は上向きのまま。** 下だけを締めて、上まで締めないこと。"""
+    a = dc.Answer(date(2026, 9, 5), "遅れ由来", slack=1, slack_down=0)
+    v = dc.Verdict(claim="c", deadline=date(2026, 9, 6), ready=a.ready, answers=[a])
+    assert v.waits == 0, "帯の中の待ちを数えると、書き換えの往復が戻ります"
+
+
+def test_slack_downを書かない答えはこれまでどおり対称():
+    """**伸び率の推定は左右対称のまま**（上にも下にも外れます）。"""
+    a = dc.Answer(date(2026, 9, 20), "推定", slack=15)
+    v = dc.Verdict(claim="c", deadline=date(2026, 9, 10), ready=a.ready, answers=[a])
+    assert v.slack_down == 15 and not v.slips
