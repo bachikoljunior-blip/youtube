@@ -866,10 +866,10 @@ def window_lines(path: pathlib.Path | None = None) -> list[str]:
         "（作る本数は1本も増えません）。",
         f"        切り分けるには、**{w['first_pub']} より前から公開する日**を1日作り、"
         "その日の**生きた本数**を数えること。",
-    ] + _booked_lines(w["first_pub"])
+    ] + _booked_lines(w["first_pub"], w)
 
 
-def _booked_lines(first_pub: str) -> list[str]:
+def _booked_lines(first_pub: str, w: dict | None = None) -> list[str]:
     """**その日がもう予約されているなら、そう言うこと**（2026-08-25 に足した）。
 
     このファイルの冒頭の註には「2026-08-27 に 05/06/07/08時 の4本を置いてあります」と
@@ -877,8 +877,16 @@ def _booked_lines(first_pub: str) -> list[str]:
     「**1日作り**」で終わっており、**道具は知っているのに黙っていました。**
     註は読まれません。**出力に出ていないものは、無いのと同じです。**
     """
+    # **当てはめ済みの C / T を渡すこと**（2026-08-27）。渡さないと
+    # `booked_split_day()` が `window()` を呼び直し、`data/views.jsonl`
+    # （2万行）を**同じ回のうちに2度**読みます。
+    t = str((w or {}).get("T") or "")
     try:
-        b = booked_split_day(first_pub)
+        b = booked_split_day(
+            first_pub,
+            c=(w or {}).get("C"),
+            t_min=(int(t[:2]) * 60 + int(t[3:])) if len(t) == 5 else None,
+        )
     except Exception:                      # 帳面が読めない回でも出力を止めない
         return []
     if not b:
