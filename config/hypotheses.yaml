@@ -177,6 +177,7 @@ hypotheses:
   - claim: "登録は本の作りではなく配信の広さで決まる。再生が伸びなかった本からは、何本 積んでも登録は入らない"
     deadline: "2026-10-22"
     lever: sub_rate           # subscribersGained ÷ 再生 で判定する
+    watch: 低再生の帯-20000再生
     needs:
       - kind: accrual
         count_expr: "sum(v for v in latest_views().values() if v < 342)"
@@ -220,8 +221,28 @@ hypotheses:
   # ここまで「族を外へ振る」が一度も試せなかったのは、外の族が無かったからです。
   - claim: "1本あたり再生の天井は配信の側で決まっている。題材の族を税・年金・社会保険の外へ出しても、1本あたり再生は変わらない"
     deadline: "2026-09-19"
+    watch: 族を外へ-ribo8本
     lever: rpm                # 題材の族＝ニッチ。`CLAUDE.md`「rpm（ニッチ・尺・形式）」
     needs:
+      # **`falsified_if` の床（片群 8本）が、`needs` に無いままでした**
+      #   （2026-08-29 06:5x・最適化の回に足した）。
+      #   `needs` は `on_date: 09-15` の1件だけで、**時計しか見ていません** ——
+      #   実測: `s-ribo-` のショートは **2本しか存在せず、どちらも 09-11 の予約**で
+      #   **公開済みは 0本**。それでも門は「判定できるのは 09-19」と出していました。
+      #   **8本 に届かないまま 09-19 が来れば、判定できないか、床を割って判定します。**
+      #   （床を割るのがどれだけ危ないかは、この `falsified_if` 自身が
+      #    `rank_sum_rule` の註で書いています ——「効きが無くても 49% で
+      #    『上回った』と出ます」）
+      #   **`falsified_if` は1文字も緩めていません。** 床を `needs` へ写しました。
+      #   **覆る条件**: 群の作り方が「`s-ribo-` で始まる」から変わったら、
+      #   同じ回のうちにこの式も直すこと。
+      - kind: accrual
+        count_expr: len({r['video_id'] for r in uploaded()
+          if r.get('video_id')
+          and str(r.get('topic', '')).startswith('s-ribo-')
+          and str(r.get('at', ''))[:10] <= str(date.today())})
+        need: 8
+        since: "2026-08-28"
       - kind: after
         on_date: "2026-09-15"
         plus_lag: true
