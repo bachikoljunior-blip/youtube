@@ -2706,6 +2706,27 @@ id を `s-` に強制していた）。ところが `eta.py` の逆算はこう�
 
 ## 5. 作成（§4 で `upload` を選んだとき。**予約まで入れて初めて1件です**）
 
+##### **`batch_build` は、決めた直後に背景で撃つこと**（2026-08-29 に測って足した）
+
+    python scripts/batch_build.py --count N [--long] > <scratch>/build.log 2>&1 &
+
+**実測（長尺2本・2026-08-29 の回）: 38分。** 内訳は台本を書く `claude -p` の
+書き直しの輪と、本あたり19セグメントぶんのクリップ焼き。
+**この回のいちばんの待ちで、`setup.sh` の 3分半 の 11倍**です。
+
+**待っているあいだにやることは、手順の側に全部あります** —— この回は
+前提の起草（`config/hypotheses.yaml`）・判定の道具（`scripts/family_gap.py`）・
+`pytest` の部分実行・日誌の下書きを、**まるごとこの38分の中でやりました。**
+
+**節の順に前から撃つと、この38分は素の待ちになります**（§2.5 の `setup.sh` と同じ形）。
+**位置は動かしません** —— 作成の話は §5 に在るべきです。**動かすのは撃つ時刻のほう。**
+
+**ただし `--dry-run` の並列生成が走っている間に、作業木を触らないこと**
+（§0 の実測: 背景で `eta.py` が走っている最中に `switch` して、
+その回の出力が別の日のデータを読みました）。**`config/topics.yaml` も同じ** ——
+`topic_forge` を同じ窓で撃つと、`batch_build` が読んでいる最中に書き換わります。
+**ショートの forge は、`batch_build` が終わってからにすること**（この回はそうしました）。
+
     python -m src.pipeline --topic <ID> --dry-run       # ショートは --short
     python scripts/inspect_build.py <ID>                # contact sheet
     python scripts/upload_only.py <ID> "" <時>          # 第3引数が予約時刻（JST）
