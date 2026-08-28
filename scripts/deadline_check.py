@@ -1090,6 +1090,65 @@ def _quota_gate(need: dict, when: datetime, what: str) -> Answer | None:
               f"  `{how}`  **条件は緩めないこと**"))
 
 
+#: **観測の時刻が入っている欄**（先に見る順）。
+#:
+#: ## なぜ `at` を先頭にしないか（2026-08-28 13:5x に実測して直した）
+#:
+#: `at` は、この repo では**2つの意味**で使われています ——
+#: 「**観測した時刻**」（`data/views.jsonl` / `data/day_quota.jsonl`）と、
+#: 「**予約した公開時刻**」（`data/uploaded.jsonl`）。後者は**未来**です。
+#:
+#: 実測 2026-08-28 13:4x JST:
+#:
+#:     data/uploaded.jsonl の `newest_point()`  **2026-10-12 09:00**（**1,075時間 先**）
+#:
+#: この計器は `config/hypotheses.yaml` に `data_file:` として**申告済み**の3件の
+#: 1つです。読み手はどちらも「新しいほど良い」向きに使います ——
+#:
+#:     `_ans_after`   `newest < when_data` が **偽** → **門を素通り**
+#:     `_stale_note`  `(now - newest) < hours` が **真** → 「新しい。待つのが正しい」
+#:
+#: **つまり、何週間 取り直さなくても、この計器だけは永久に「新しい」と答えます。**
+#: `newest_point` の註が「時計だけの門は、同じ穴を時刻の粒で作り直しただけ」と
+#: 書いている、その穴を**計器の側で作り直していました。**
+#: 同じ行に `uploaded_at`（＝**実際に上げた時刻**）が在るので、そちらを先に見ます。
+#:
+#: `_report_end` は Reporting API の「**この時刻までのぶんが入っている**」で、
+#: `data/reach.jsonl` はこれしか時刻を持ちません（`date` は `"20260815"` で
+#: `fromisoformat` が読めない）。**そのせいで 226KB・数千行 の計器が
+#: `None`（＝1点も読めません）**と出ていました —— 向きは安全側ですが、
+#: **在るデータを「取り直せ」と言い続ける**ので、Reporting の単位が毎回 出ていきます。
+_POINT_KEYS = ("uploaded_at", "_report_end", "at", "ts", "time")
+
+
+def _point_at(rec: dict) -> datetime | None:
+    """1件の記録の**観測時刻**。読めなければ `None`。
+
+    **未来の時刻は観測ではありません**（＝予約・期限）。落とします ——
+    残すと、上の2つの読み手が**どちらも「いちばん新しい」側に外れます。**
+    落とした結果 `None` になるなら、それが正しい答えです
+    （「この計器は観測を1点も持っていない」）。
+    """
+    now = datetime.now(timezone.utc)
+    for key in _POINT_KEYS:
+        at = rec.get(key)
+        if not isinstance(at, str):
+            continue
+        try:
+            dt = datetime.fromisoformat(at.replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        if dt.tzinfo is None:
+            # **日付だけの `at` は、その日の終わりではなく始まりで読む。**
+            # 「08-26 に取った」を 08-26 00:00 と読めば、古さは長めに出ます。
+            # **短く見積もって「まだ新しい」と言うほうが危険**です。
+            dt = dt.replace(tzinfo=timezone.utc)
+        if dt > now:
+            continue                     # 予約・期限。**観測ではない**
+        return dt
+    return None
+
+
 def newest_point(path: Path) -> datetime | None:
     """`data/*.jsonl` の中で **いちばん新しい観測時刻**。読めなければ `None`。
 
@@ -1141,19 +1200,9 @@ def newest_point(path: Path) -> datetime | None:
     except (OSError, ValueError):
         whole = None
     if isinstance(whole, dict):
-        at = whole.get("at") or whole.get("ts") or whole.get("time")
-        if isinstance(at, str):
-            try:
-                dt = datetime.fromisoformat(at.replace("Z", "+00:00"))
-            except ValueError:
-                dt = None
-            if dt is not None:
-                if dt.tzinfo is None:
-                    # **日付だけの `at` は、その日の終わりではなく始まりで読む。**
-                    # 「08-26 に取った」を 08-26 00:00 と読めば、古さは長めに出ます。
-                    # **短く見積もって「まだ新しい」と言うほうが危険**です。
-                    dt = dt.replace(tzinfo=timezone.utc)
-                return dt
+        dt = _point_at(whole)
+        if dt is not None:
+            return dt
     for ln in path.read_text(encoding="utf-8").splitlines():
         ln = ln.strip()
         if not ln:
@@ -1162,15 +1211,9 @@ def newest_point(path: Path) -> datetime | None:
             r = json.loads(ln)
         except Exception:                                        # noqa: BLE001
             continue
-        at = r.get("at") or r.get("ts") or r.get("time")
-        if not isinstance(at, str):
+        dt = _point_at(r)
+        if dt is None:
             continue
-        try:
-            dt = datetime.fromisoformat(at.replace("Z", "+00:00"))
-        except ValueError:
-            continue
-        if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
         if newest is None or dt > newest:
             newest = dt
     return newest
