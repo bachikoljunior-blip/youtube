@@ -1611,7 +1611,64 @@ def lines(vs: list[Verdict], lag: int) -> list[str]:
                    "データは揃っているのに、期限がまだ先だという理由だけで止まっています。")
         out.append(f"    最大: {worst.ready:%m-%d} に判定できるのに"
                    f" {worst.deadline:%m-%d}  {worst.claim[:44]}")
+    out.extend(_data_file_coverage(vs))
     return out
+
+
+def _data_file_coverage(vs: list[Verdict]) -> list[str]:
+    """**「時計だけで判定できると言っている」要件が、いま何件あるか。**
+
+    ## なぜ要るか（2026-08-28 の2周目に測った）
+
+    `needs.data_file:` は「時計は来ています。足りないのはデータのほうです」を
+    言うための欄で、08/27 の2つの回が `on_date` と `accrual` の両方に足しました。
+    **門としては正しい。** ただし `_stale_todo` も `_on_date_todo` も
+    「**書いていない要件は、今までどおり時計だけで通します**」と書いてあり、
+    **申告は任意**です。実測 2026-08-28（`config/hypotheses.yaml`）:
+
+        前提                            **39件**
+        `data_file:` を申告している     ** 3件**（**8%**）
+        `needs:` はあるが申告なし       **21件**
+        `needs:` そのものが無い         **15件**
+
+    **つまり守りの当たる範囲は 8% です。** 残り 36件 は、08/27 の回が
+    「偽の判定日」と呼んだものを、いまも出しえます。
+
+    ## ここは埋めません。**数を出すだけ**にします
+
+    どの計器を読むかは要件ごとに違い、機械には決められません
+    （`count_expr` の中身は読めない ——`_stale_todo` の註）。
+    **推測で `data_file:` を書くと、こんどは「在ることになっている点」で
+    判定します。** それは黙って通すより悪い。
+
+    だから `eta.py` の (イ) と同じ形にします ——
+    **裸で「判定できます」と言うたびに、何を確かめていないかを並べる。**
+
+    **覆る条件**: 申告が 39件 に届いたら、この行は毎回 0 を出すので外してよい。
+    逆に**申告した件でだけ「取り直せ」が出続ける**なら、
+    見るべきは申告の数ではなく `count_expr` のほうです。
+    """
+    total = declared = 0
+    for v in vs:
+        for need in (v.needs or []):
+            if not isinstance(need, dict):
+                continue
+            total += 1
+            if str(need.get("data_file") or "").strip():
+                declared += 1
+    if not total or declared >= total:
+        return []
+    return ["",
+            f"  **時計だけで「判定できる」と言っている要件: "
+            f"{total - declared}/{total}件**"
+            f"（`needs.data_file:` の申告は {declared}件）。"
+            " 申告した件だけ、その計器の点が古ければ「取り直す手」が上に出ます ——"
+            " **残りは、点が1つも無くても期限だけで通ります**"
+            "（08/27 に取り下げた『偽の判定日』と同じ形）。",
+            "    **推測で埋めないこと。** どの計器かは要件ごとに違い、"
+            "外すと『在ることになっている点』で判定します。"
+            " 閉じられなかった要件が出るたびに、**その1件だけ**"
+            "`data_file:` を足すのが安いやり方です。"]
 
 
 def ready_by_claim(items: list[dict] | None = None, as_of: date | None = None,

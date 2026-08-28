@@ -108,3 +108,52 @@ def test_待ち方が2つに分かれて印字される(tmp_path):
     out = "\n".join(J.lines(vs, lag=3))
     assert "その時刻まで待つこと" not in out, "時計は過ぎているのに、待てと言っています"
     assert "足りないのはデータのほうです" in out
+
+
+# --------------------------------------------------------------------------
+# **その門は、いま何件に当たっているか**（2026-08-28 の2周目に足した）
+#
+# `data_file:` の申告は**任意**です（`_stale_todo` / `_on_date_todo` の
+# 「書いていない要件は、今までどおり時計だけで通します」）。実測 08/28:
+#
+#     前提 39件 ／ `data_file:` を申告している **3件**（**8%**）
+#
+# **門は正しく、当たる範囲が 8% でした。** 埋めるのは推測になるので
+# （どの計器かは要件ごとに違う）、**数を出すだけ**にしてあります。
+# ここはその行が消えないようにする門です。
+# --------------------------------------------------------------------------
+
+
+def test_時計だけの要件の数を_印字に出すこと():
+    """裸で「判定できます」と言うたびに、何を確かめていないかを並べること。
+
+    `eta.py` の (イ)（裸の「届きません」を出さない）と同じ形です。
+    """
+    import scripts.deadline_check as dc
+
+    class _V:
+        needs = [{"kind": "on_date"}, {"kind": "accrual", "data_file": "data/x.jsonl"}]
+
+    got = dc._data_file_coverage([_V()])
+    text = "\n".join(got)
+    assert "1/2件" in text, text
+    assert "推測で埋めないこと" in text
+
+
+def test_全部が申告していれば_黙ること():
+    """**覆る条件がそのまま検査になっていること。** 申告が揃えば行は出ません。"""
+    import scripts.deadline_check as dc
+
+    class _V:
+        needs = [{"kind": "accrual", "data_file": "data/x.jsonl"}]
+
+    assert dc._data_file_coverage([_V()]) == []
+
+
+def test_needs_が無い回に_割り算をしないこと():
+    import scripts.deadline_check as dc
+
+    class _V:
+        needs = None
+
+    assert dc._data_file_coverage([_V()]) == []
