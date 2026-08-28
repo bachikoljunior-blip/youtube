@@ -90,29 +90,48 @@ def transferred(mine: float, yours: float, months: int,
 
 
 def by_partner_reward(months: int = 20 * 12) -> list[dict]:
-    """相手の平均標準報酬額べつに、移る年金額。自分は0円。"""
+    """相手の平均標準報酬額べつに、移る年金額。自分は0円。
+
+    **隣り合う行の差も印字します**（`docs/JOURNAL.md` 2026-08-29 の線
+    ——「差が表の主題なら表に印字する」）。この表を題にした企画は
+    「報酬が50,000円 上がるごとに年額がいくら増えるか」を言うので、
+    **その差が表に出ていないと `_checks.numbers_backed` の裏が取れません。**
+    見出しは「1円あたり」の形にしていません（割っていないため。
+    `_checks.per_unit_steps` の註と同じ罠を避ける）。
+    """
     rows = []
+    prev_year = prev_month = None
     for monthly in (200_000, 250_000, 300_000, 350_000, 400_000, 450_000, 500_000):
         year = transferred(0, monthly, months)
+        month = round(year / 12)
         rows.append({
             "相手の平均標準報酬額": int(monthly),
             "移る年金の年額": round(year),
-            "移る年金の月額": round(year / 12),
+            "移る年金の月額": month,
+            "前の行との差（年額）": None if prev_year is None else round(year) - prev_year,
+            "前の行との差（月額）": None if prev_month is None else month - prev_month,
         })
+        prev_year, prev_month = round(year), month
     return rows
 
 
 def by_my_reward(partner: float = 400_000, months: int = 20 * 12) -> list[dict]:
     """自分の平均標準報酬額べつに、移る年金額。**相手の額は動かしていない。**"""
     rows = []
+    base = transferred(0, partner, months)
+    prev_year = prev_ratio = None
     for monthly in (0, 50_000, 100_000, 150_000, 200_000, 250_000, 300_000):
         year = transferred(monthly, partner, months)
-        base = transferred(0, partner, months)
+        ratio = round(year / base, 4) if base else 0.0
         rows.append({
             "自分の平均標準報酬額": int(monthly),
             "移る年金の年額": round(year),
-            "自分が0円のときとの比": round(year / base, 4) if base else 0.0,
+            "自分が0円のときとの比": ratio,
+            # **落ち幅そのものが主題**なので印字します（上の `by_partner_reward` の註）
+            "前の行との差（年額）": None if prev_year is None else prev_year - round(year),
+            "前の行との差（比）": None if prev_ratio is None else round(prev_ratio - ratio, 4),
         })
+        prev_year, prev_ratio = round(year), ratio
     return rows
 
 
