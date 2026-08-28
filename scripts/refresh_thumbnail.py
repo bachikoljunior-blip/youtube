@@ -57,6 +57,18 @@ def main(topic: str, video_id: str, theme_index: int) -> int:
     )
     print(f"[thumb] 作り直しました: {out} accent={theme['accent']}")
 
+    # **1本だけの道もここを通ること**（2026-08-28）。
+    # この行は、手で並べた検査からは**6つ目として抜けていました** ——
+    # 数え上げに変えた `tests/test_quota_reserve.py` がその場で見つけています。
+    # **絵はもう作ってあります**（上で `thumbnail.create`）。捨てないので、
+    # 窓が変わった回に同じ1行で押し直せます。
+    hold = upload_cap.reserve_hold()
+    if hold:
+        print(f"[thumb] {hold}")
+        print(f"[thumb] **押しません。** 絵は {out} に残っています。"
+              " 窓が変わった回に同じ1行で押し直すこと（`YT_NO_RESERVE=1` で外せます）。")
+        return 1
+
     y = build("youtube", "v3", credentials=credentials(), cache_discovery=False)
     y.thumbnails().set(videoId=video_id, media_body=MediaFileUpload(str(out))).execute()
     print(f"[thumb] 差し替え完了: https://youtu.be/{video_id}")
@@ -191,6 +203,28 @@ def push_missing(dry_run: bool = False, force: bool = False,
             print(f"[thumb] {line}")
             return 3
         print(f"[thumb] {line}")
+
+    # **計測のぶんを残して止める**（2026-08-28 の最適化の回・2枚目）。
+    #
+    # すぐ上の `day_quota()` は **403 を実際に観測してから**閉じます。
+    # `reserve_hold()` はその手前で止める門で、**別の事実を見ています** ——
+    # 「まだ 403 は出ていないが、この窓で使った単位が実測の枠まであと
+    # `RESERVE_UNITS` を切った」。**片方だけでは、最後の 400単位 を
+    # ここが 50単位/本 で持っていけます**（8本で使い切ります）。
+    #
+    # **この口は `scripts/batch_build.py` が毎周 直接 呼びます**
+    # （`refresh_thumbnail.push_missing()`）。門の付いた入口は
+    # `reschedule._update` と `uploader._set_thumbnail` の2つで、
+    # **ここは3つ目の、いちばん熱い入口でした。**
+    #
+    # 残しているのは**前提を閉じる読み**です（`videos.list` は 1単位）。
+    # `eta.py`: 軌跡の腕が動くのは前提を1件 閉じたときだけ。
+    hold = upload_cap.reserve_hold()
+    if hold:
+        print(f"[thumb] {hold}")
+        print("[thumb] **押しません**（`--force` ではなく `YT_NO_RESERVE=1` で外せます）。"
+              " 控えは消えないので、窓が変わった回に同じ1行で押し直せます。")
+        return 1
 
     y = build("youtube", "v3", credentials=credentials(), cache_discovery=False)
     ok = 0

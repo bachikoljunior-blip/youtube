@@ -106,6 +106,21 @@ def main(argv: list[str] | None = None) -> int:
         if not tok:
             break
 
+    # **計測のぶんを残して止める**（2026-08-28 の最適化の回・2枚目）。
+    # `videos.update` は **50単位**。ここは1回で何十本も書き換えうるので、
+    # 門が無いと**残しておいた 400単位 を、この1コマンドで丸ごと持っていけます。**
+    # 読み（`videos.list` 1単位）は止めません —— 残しているのが当のそれです。
+    # `--dry-run` は書かないので通します。
+    if not args.dry_run:
+        from src import upload_cap                             # noqa: PLC0415
+
+        hold = upload_cap.reserve_hold()
+        if hold:
+            print(f"[link] {hold}")
+            print("[link] **書きません**（`YT_NO_RESERVE=1` で外せます）。"
+                  " 導線は消えないので、窓が変わった回に同じ1行で入れ直せます。")
+            return 1
+
     done = skipped = 0
     for i in range(0, len(ids), 50):
         items = y.videos().list(part="snippet",
