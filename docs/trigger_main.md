@@ -1887,11 +1887,35 @@ Stop フックが引き止めます（`config/watches.yaml` / `src/watches.py`�
 
 #### **`calc` を足した回は、全体の前に `tests/test_subject.py` を叩くこと**（2026-08-18 に測って足した）
 
-    python -m pytest tests/test_subject.py tests/test_premise.py tests/test_<足したもの>.py -q   # **数秒**
+    python -m pytest tests/test_subject.py tests/test_premise.py tests/test_assumption_has_value.py tests/test_<足したもの>.py -q   # **数秒**
+
+**`test_assumption_has_value.py` を落とさないこと**（2026-08-28 13:3x に踏んだ。**この行が育つのは3回目**）。
+13:3x の回は `nenkin` に節を3つ足し、`check_tables` も `test_subject` も `test_premise` も
+**全部 緑**（72 passed）のまま `batch_build` に入って、**3本とも生成で落ちました**（0/3）。
+止めたのは `_checks.assumption_values` で、**呼び口が `script_writer.calc_block`**
+—— つまり**動画を1本 作りにいくまで当たりません。**
+
+    TableError: ASSUMPTIONS が『自己負担割合』を仮定だと名乗っているのに、
+                **その値が書いてありません**
+
+**`check_tables` が通ったことは、この門の証拠になりません**（別の場所から呼ばれています）。
+`tests/test_assumption_has_value.py::test_every_calc_passes` は
+**`src/calc/` の全ファイルを自動で拾う**ので、上の1行に足すだけで、
+**生成に入る前に 2秒で**同じことを言います。**落ちる場所が生成の中でした。**
+もっと安いのは、その族だけを1行で撃つこと（**1秒未満**）:
+
+    python -c "from src.calc import _checks, nenkin; _checks.assumption_values(nenkin.ASSUMPTIONS, name='nenkin')"
 
 **`test_premise.py` も一緒に叩くこと**（2026-08-18 12:0x に踏んだ）。ここには長らく `test_subject.py` しかなく、**`calc` を足すたびに効く検査がもう1つあることが、手順のどこにも書いてありませんでした。**
 12:0x の回は `tokutei` の新しい節が「その節が使っている引数の値」を行の列に持っておらず（＝**画面に出しようがない前提**）、**それを 6分35秒の全体実行で**知りました。
 `-k tokutei` なら **2.5秒**で同じことを言います。**落ちる場所が6分先**でした。
+
+> **同じ形が3回 続いています**（`test_subject` だけ → `test_premise` を足す →
+> `test_assumption_has_value` を足す）。**塞ぐべきは穴ではなく、穴を作っている側**です ——
+> **`calc` に効く検査の一覧を、手で持っていること**がその側。
+> **覆る条件**: 4回目が来たら、この行を手で並べるのをやめて
+> `scripts/fast_tests.py` に「`src/calc/` を触った回はこれ」を持たせること
+> （手で持つ一覧は、足し忘れで素通りします —— `SUBJECT_WORDS` が通算4回そうでした）。
 
 ##### **撃つ前に `ps` を1回。きょうだいが同じものを回しています**（2026-08-26 07:4x に踏んだ）
 
