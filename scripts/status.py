@@ -1248,10 +1248,17 @@ def _print_deepening(all_sections: dict[str, dict[str, str]]) -> None:
     hits = _sweep_hits()
     counts: dict[str, int] = {}
     novel: dict[str, int] = {}
+    writable: dict[str, int] = {}
     try:
         from src import section_sweep
 
         counts, novel = section_sweep.novel_counts(hits, all_sections)
+        # **「新しい」は「書ける」ではありません**（2026-08-28 に足した）。
+        # `[未]`（照合できていない）と `片効き`・`不変` を引いた数を、
+        # 同じ行に並べて出します。実測 furusato は 新しい5件 で**書けたのは0件**、
+        # kafunenkin は 新しい6件 で 2件。**この差が見えないので、選ぶ側は
+        # 撃って確かめていました**（同日の実測で3族・20分）。
+        writable = section_sweep.writable_counts(hits, all_sections)
     except Exception as exc:                    # 既出の判定が壊れても順番は出す
         print(f"    （掃引の既出判定が読めません: {str(exc)[:80]}）")
         for h in hits:
@@ -1263,6 +1270,7 @@ def _print_deepening(all_sections: dict[str, dict[str, str]]) -> None:
     for line in section_depth.report_lines(all_sections, scores, base,
                                            sweep_counts=counts,
                                            novel_counts=novel,
+                                           writable_counts=writable,
                                            long_families=section_depth
                                            .long_form_families()):
         print(line)

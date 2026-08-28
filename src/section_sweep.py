@@ -2276,6 +2276,58 @@ def novel_counts(hits: list[dict],
     return total, novel
 
 
+def writable_counts(hits: list[dict],
+                    all_sections: dict[str, dict[str, str]] | None,
+                    ) -> dict[str, int]:
+    """表ごとの「**この回に実際に節を書ける候補**」の数。（2026-08-28 に足した）
+
+    `novel_counts()` の2つめ（＝ まだ節が言っていない数）から、
+    **書けないと分かっている2つ**を引きます:
+
+        `undecided()` が真   照合できる点が無い（`[未]` の印）。**新しいと分かって
+                            いない**ので、これを在庫に数えると過大に振れます
+        `形` が `SHAPE_LAST` `片効き` と `不変`。**実測 32枠中14枠を占めて、
+                            そこから書けた節は0件**（`SHAPE_LAST` の註）
+
+    ## なぜ要るか（2026-08-28 に、20分 使ってから足した）
+
+    `status.py` の「(B) の候補」は **`novel_counts` の生の数**を印字します。
+    **その数は「書ける数」ではありません。** 同じ日の実測:
+
+        kafunenkin  新しい 6件 → **書けた 2件**
+        furusato    新しい 5件 → **書けた 0件**（4件が「不変」）
+        yukyu       新しい 55件 → 11節が既に掘っており、書けたのは 0件
+        shitsugyo   新しい **0件** ← ここは印字も正しい
+
+    **一覧の並びに「書ける数」が無いので、選ぶ側は撃って確かめるしかありません。**
+    2026-08-28 の回は `yukyu → furusato → kafunenkin` と**3族 撃って 20分**
+    使いました（`--calc` つきの掃引は1族 30秒 前後）。
+    **`status.py` の一覧に1列 足せば、この20分は 1手 になります。**
+
+    **`novel_counts` は変えていません**（在庫の数え方 `src/supply.py` の
+    `SWEEP_YIELD` がそちらを見ており、**同じ回に2つ動かすと、どちらが効いたのか
+    分からなくなる**ため）。ここは**並べ替えと印字のためだけ**の数です。
+
+    **覆る条件**: `SHAPE_LAST` の族から節が書けた回が出たら、
+    引く対象から `形` を外すこと（`undecided` のほうは残す）。
+    """
+    sections = all_sections or {}
+    out: dict[str, int] = {}
+    for hit in dedupe(hits):
+        name = hit.get("表", "?")
+        out.setdefault(name, 0)
+        if hit.get("形") in SHAPE_LAST:
+            continue
+        sec = sections.get(name)
+        try:
+            if is_covered(hit, sec) or undecided(hit, sec):
+                continue
+        except Exception:
+            continue
+        out[name] = out[name] + 1
+    return out
+
+
 def _fmt(v: float) -> str:
     if isinstance(v, str):
         return v

@@ -221,6 +221,7 @@ def candidates(all_sections: dict[str, dict[str, str]],
                limit: int = 5,
                sweep_counts: dict[str, int] | None = None,
                novel_counts: dict[str, int] | None = None,
+               writable_counts: dict[str, int] | None = None,
                ) -> list[tuple[str, int, int, float]]:
     """掘り甲斐の順に (モジュール, いまの節数, 中央値まであと何節, 値) を返す。
 
@@ -242,6 +243,9 @@ def candidates(all_sections: dict[str, dict[str, str]],
     scores = scores or {}
     counts = sweep_counts or {}
     novel = novel_counts or {}
+    # **書ける数**（`section_sweep.writable_counts()`）。渡されなければ空 ＝
+    # 今までどおり `novel` から破ります（掃引が読めない回の振る舞いは変わりません）。
+    writable = writable_counts or {}
     tgt = target_depth(all_sections)
     out = []
     for mod, n in depths(all_sections).items():
@@ -265,7 +269,13 @@ def candidates(all_sections: dict[str, dict[str, str]],
     # **破る順は「新しい候補 → 拾えた候補 → 名前」**。
     # 新しい数だけで破ると、掃引が読めない回に全部 0 で並んで名前順に戻るので、
     # 拾えた数を控えに残してあります（`novel` を渡さない呼び方も今までどおり通る）。
-    out.sort(key=lambda r: (-r[3], -novel.get(r[0], 0), -counts.get(r[0], 0), r[0]))
+    # **破る順は「書ける候補 → 新しい候補 → 拾えた候補 → 名前」**（2026-08-28 に
+    # 先頭へ1つ足した）。`novel` の生の数には `[未]`（照合できていない）と
+    # `片効き`・`不変`（実測で0件しか書けていない形）が混ざっており、
+    # **並べ替えの第1同点破りがその混ざった数だった**ので、
+    # 選ぶ側は撃って確かめるしかありませんでした（実測 3族・20分）。
+    out.sort(key=lambda r: (-r[3], -writable.get(r[0], 0), -novel.get(r[0], 0),
+                            -counts.get(r[0], 0), r[0]))
     return out[:limit]
 
 
@@ -326,6 +336,7 @@ def report_lines(all_sections: dict[str, dict[str, str]],
                  limit: int = 5,
                  sweep_counts: dict[str, int] | None = None,
                  novel_counts: dict[str, int] | None = None,
+                 writable_counts: dict[str, int] | None = None,
                  long_families: set[str] | None = None) -> list[str]:
     """`status.py` がそのまま印刷する行。**空のリストを返すことがあります。**
 
@@ -339,8 +350,10 @@ def report_lines(all_sections: dict[str, dict[str, str]],
     deep = max(got.items(), key=lambda kv: kv[1]) if got else ("—", 0)
     counts = sweep_counts or {}
     novel = novel_counts or {}
-    rows = candidates(all_sections, scores, base, limit, counts, novel)
-    whole = candidates(all_sections, scores, base, len(all_sections), counts, novel)
+    writable = writable_counts or {}
+    rows = candidates(all_sections, scores, base, limit, counts, novel, writable)
+    whole = candidates(all_sections, scores, base, len(all_sections), counts, novel,
+                       writable)
     total = sum(len(v) for v in all_sections.values())
     out = [
         f"  **道は2つあります。**（いま {total}節 / {len(all_sections)}本・"
@@ -391,6 +404,14 @@ def report_lines(all_sections: dict[str, dict[str, str]],
             if novel:
                 nv = novel.get(mod, 0)
                 line += f" ・掃引 {c}件のうち**新しい {nv}件**"
+                if writable:
+                    # **「新しい」は書ける数ではありません**（2026-08-28 に足した）。
+                    # `[未]`（照合できていない）と `片効き`・`不変` を引いた数を
+                    # 並べて出します —— 実測 furusato は 新しい5件 で**書けたのは0件**。
+                    w = writable.get(mod, 0)
+                    line += (f"・そのうち**書ける {w}件**"
+                             if w else "・**書けるものは0件**"
+                                       "（`[未]`か`片効き`か`不変`）")
                 if not nv:
                     line += (" ← **全部、いまの節がもう言っています**"
                              if c else " ← **機械には1つも見えていません**")
