@@ -215,6 +215,61 @@ def _unready_claims() -> set:
         pass                            # **読めないときは黙る**（門を増やさない）
     return out
 
+
+#: `day_cap.cap()` の答えを、この走りのあいだ持ち回るための1組
+#: `(そのとき呼んだ関数そのもの, その返り)`。**関数を持っておくのが本体**です（下）。
+_DAY_CAP_MEMO: tuple | None = None
+
+
+def _view_cap_per_day() -> float:
+    """**1日に再生が付く本数の上限**（`src/day_cap.py`）を、1回だけ読む。
+
+    ## なぜ要るか（2026-08-28 に測った。**軌跡の 38% がこの1行でした**）
+
+    `day_cap.cap()` は `measure()` → `by_day()` と降りて、
+    **`data/views.jsonl` を毎回まるごと読み直します**（実測 **59.1 ms/回**）。
+    ところがこの関数は `analyse()` と `plan()` の**中**にあり、
+    その2つは `trajectory()` のループが `t` の日数ぶん回します。実測::
+
+        analyse           58.0 ms/回   ← **うち day_cap.cap() が 59.1 ms**（＝ほぼ全部）
+        plan(sens=False)  93.6 ms/回   ← ここにも1回 入っている
+        軌跡 base 1本     20.0秒 ＝ 約131回まわる
+
+    **1回の `eta.py` で 1,000回 前後 読み直しています。** 答えは毎回同じです ——
+    `eta.py` は `data/views.jsonl` に**1行も書きません**（積むのは `data/eta.jsonl` だけ）。
+
+    畳んだ後の実測（同じ機械・同じ点）::
+
+        plan(sensitivity=True)   4.1秒 → 1.1秒
+        軌跡 base               20.0秒 → 2.7秒
+        solve() 合計           107.5秒 → **16.6秒**（**-85%**）
+
+    **`§2.6`（4分）も `--reflect` も `--alloc`（6分）も、同じ道を通ります。**
+    直近8回の「設計の見直し」問い1 は、**7回が「道具が答えを返すのを待つところ」**
+    （体感 4〜6割）でした。**穴ではなく、穴を作っている側**がここです。
+
+    ## なぜ `lru_cache` ではないか（**検査が `day_cap.cap` を差し替えます**）
+
+    `tests/_eta_pin.py` と `tests/test_eta_day_cap.py` は
+    **同じ関数の中で `day_cap.cap` を 10 → 1,000 と差し替えて**、
+    天井が効いているかを見ます。`lru_cache` だと2つ目が素通りします。
+
+    だから**差し替えを見て畳み直します** —— 覚えているのは
+    「どの関数から取った答えか」で、`day_cap.cap` が別の関数になったら取り直す。
+    **関数そのものを持っておくこと**（`id()` で覚えると、
+    差し替えが GC された後に同じ id が別の関数へ回って、静かに誤答します）。
+
+    **覆る条件**: `eta.py` が走っている最中に `data/views.jsonl` が
+    書き換わるようになったら、この畳み方は外すこと（いまは誰も書きません）。
+    **`tests/test_eta_day_cap_memo.py` が、差し替えを見落としたら落とします。**
+    """
+    global _DAY_CAP_MEMO
+    fn = day_cap.cap
+    if _DAY_CAP_MEMO is None or _DAY_CAP_MEMO[0] is not fn:
+        _DAY_CAP_MEMO = (fn, fn())
+    return _DAY_CAP_MEMO[1]
+
+
 # --- 門（YouTube の公表値。守るのではなく、通らないと収入が0になる事実）---
 SUBS_GATE = 1_000
 LONG_HOURS_GATE = 4_000          # 直近12か月・長尺のみ
@@ -1152,7 +1207,7 @@ def analyse(m: dict, points: list[dict] | None = None,
     #   08/20 は 25本 公開して **#11から先の15本が 0〜3再生**。#10 は 1,111再生。
     #   時刻ではなく**その日の通し番号**で割れます（08/16 の14時 #4 は 1,361再生）。
     # つまり段1 の日付は、上限を超えて出したぶんだけ**楽観に倒れて**いました。
-    a["view_cap_per_day"] = day_cap.cap()
+    a["view_cap_per_day"] = _view_cap_per_day()
     a["days_subs_at"] = {
         n: _days_to(a["subs_remaining"],
                     min(n, a["view_cap_per_day"]) * _per_video(m)
@@ -1820,7 +1875,7 @@ def physical_caps(a0: dict, density: float = PLAN_PUBLISH_PER_DAY,
         #     08/20 は 25本 公開して #11から先の15本が 0〜3再生（`src/day_cap.py`）。
         #     天井を口の側で立てると、**腕を ×3.7 まで歩けると出て、
         #     実際には1日も縮まない**という形になります。
-        arm_cap = min(float(UPLOAD_CAP_PER_DAY), float(day_cap.cap()))
+        arm_cap = min(float(UPLOAD_CAP_PER_DAY), float(_view_cap_per_day()))
         raw = arm_cap / density
         # **倍率が 1 を下回るのは「引き代がマイナス」ではありません** ——
         #     **すでに上限より多く出している**、という意味です。そのまま返すと
@@ -1940,13 +1995,13 @@ def physical_caps(a0: dict, density: float = PLAN_PUBLISH_PER_DAY,
         #     **軌跡は歩きません。使うのは `src/levers.py` の「死んだ腕」の判定だけ**で、
         #     そこが**面ごとに割れる**ようにするために置いています ——
         #     ショートの面が天井でも、**長尺を増やす作業を `none` へ落とさない**ため。
-        long_cap = max(0.0, float(UPLOAD_CAP_PER_DAY) - float(day_cap.cap()))
+        long_cap = max(0.0, float(UPLOAD_CAP_PER_DAY) - float(_view_cap_per_day()))
         long_now = _long_form_per_day()
         long_raw = (long_cap / long_now) if long_now > 0 else None
         caps["density_long"] = {
             "factor": long_raw,
             "why": (f"口が通す {UPLOAD_CAP_PER_DAY}本/日 から、ショートの面で死ぬ"
-                    f" {day_cap.cap()}本 を引いた {long_cap:.0f}本"
+                    f" {_view_cap_per_day()}本 を引いた {long_cap:.0f}本"
                     "（**定義上の上限。測った天井ではありません** ——"
                     " 長尺の面が崩れるところは一度も観測していない）"
                     + (f" ÷ いま出している長尺 {long_now:.2f}本/日"
@@ -2596,20 +2651,27 @@ def trajectory_all(m: dict, a0: dict, *, supply: dict | None = None,
     （読むのは `base` / `choice` / `arms` / `band` の4つだけ）。
     ところが `reflect()` は 10行しか印字しないので、**3本ぶんが丸ごと捨てられます。**
 
-    実測（2026-08-28・この機械の上で1本ずつ時間を取った）::
+    実測（2026-08-28・この機械の上で1本ずつ時間を取った）。
+    **同じ回に `_view_cap_per_day()`（`day_cap.cap()` を1回に畳む）も入れた**ので、
+    2つの列を並べます::
 
-        analyse + supply_state   0.3秒
-        plan(sensitivity=True)   4.1秒
-        軌跡 base               20.0秒
-        軌跡 fast               16.1秒   ← `--reflect` は捨てる
-        軌跡 slow               30.6秒   ← `--reflect` は捨てる
-        軌跡 planned            21.9秒   ← `--reflect` は捨てる
-        軌跡 choice（腕4本で）   14.5秒   ← `focus` の線は天井に早く着くので安い
-                               ------
-        solve() 合計           107.5秒 → **`full=False` で 38.9秒**（**-68.6秒・-64%**）
+                              畳む前     畳んだ後
+        analyse + supply_state   0.3秒     0.3秒
+        plan(sensitivity=True)   4.1秒     1.1秒
+        軌跡 base               20.0秒     2.7秒
+        軌跡 fast               16.1秒     2.5秒   ← `--reflect` は捨てる
+        軌跡 slow               30.6秒     4.0秒   ← `--reflect` は捨てる
+        軌跡 planned            21.9秒     3.1秒   ← `--reflect` は捨てる
+        軌跡 choice（腕4本で）   14.5秒     2.9秒
+                               ------    ------
+        solve(full=True)       107.5秒    16.6秒
+        solve(full=False)       38.9秒   **7.0秒** ← `--reflect` が通る道
+
+    **`--reflect` は 107.5秒 → 7.0秒（-93%）**。2つの直しは別々に効きます ——
+    `full=False` が「解く本数」を、`_view_cap_per_day()` が「1本の重さ」を削ります。
 
     **幅の両端（`fast`/`slow`）がいちばん高い**のは、当たる確率を下げた線ほど
-    腕が遅く伸びて、`t` の探索が長く回るからです（`slow` 単独で 30.6秒）。
+    腕が遅く伸びて、`t` の探索が長く回るからです。
     **捨てる3本のほうが、印字する本線より高い**という配分でした。
 
     **なぜ「日付が変わらない」と言えるか。** `full` は
@@ -3077,7 +3139,7 @@ def solve_gate1(a: dict, *, density: float, supply: dict | None,
     #     0再生のままなので、ここは倍率の**後**に掛けます。
     #     **これが `density` の腕の天井そのもの**で、`tests/test_eta_day_cap.py`
     #     が「上限を無視した側へ戻ったら」落とします。
-    view_cap = day_cap.cap() if view_cap is None else view_cap
+    view_cap = _view_cap_per_day() if view_cap is None else view_cap
     density = min(float(density), float(view_cap))
     # **使ってよいのは「1日続けられる速さ」だけ**（2026-08-20 20:0x に踏んだ）。
     #     `rate_per_day` をそのまま使うと、**3.3時間で +5本 ＝ 1日36.5本**という
@@ -5379,7 +5441,8 @@ def reflect(note: str | None = None, *, record: bool = True) -> tuple[int, dict]
             # **印字にしか使わない軌跡3本（`fast`/`slow`/`planned`）も解きません**
             #     （2026-08-28。同じ理由の続き —— 反映は 10行しか出しません）。
             #     `_row()` はこの3つを1つも読まないので、**積む行は 1文字も変わりません**
-            #     （`tests/test_eta_reflect_light.py` が固定）。実測 **-68.6秒（-64%）**。
+            #     （`tests/test_eta_reflect_light.py` が固定）。
+            #     **実測 107.5秒 → 7.0秒**（`_view_cap_per_day()` と合わせて **-93%**）。
             s = solve(dict(m), points, full=False)
         finally:
             FROZEN_ARMS = _keep
