@@ -182,23 +182,6 @@ def _uploaded_ats() -> dict[str, datetime]:
     return out
 
 
-def _topics() -> dict[str, str]:
-    """動画ID → 題の id（`topic`）。**後の行が勝ち**（付け替えの控え）。
-
-    **`topic_prefix:` を持つ待ちが要ります**（2026-08-29 に足した）。
-    `falsified_if` が「`s-ribo-` で始まるショートを 8本以上」のように
-    **題の族**で床を書いている前提が2件あり、どちらも `watch:` を持てず、
-    `tests/test_watches.py::test_数の門を持つ未判定の仮説は台帳を指している`
-    が赤いままでした。**尺では絞れません**（族はショートも長尺も持つ）。
-    """
-    out: dict[str, str] = {}
-    for r in _uploaded():
-        vid, topic = r.get("video_id"), r.get("topic")
-        if vid and topic:
-            out[str(vid)] = str(topic)
-    return out
-
-
 def _publish_dates() -> dict[str, date]:
     """動画ID → 公開日（JST）。**予約ぶんも入ります**（`at` は予約時刻）。
 
@@ -300,15 +283,11 @@ def _k_published_count(p: dict) -> Gauge:
         return Gauge(0, float(p["need"]), "本", err="実データの最終日が読めません")
     lo, hi = p.get("min_duration_s"), p.get("max_duration_s")
     secs = _durations() if (lo is not None or hi is not None) else {}
-    pref = str(p.get("topic_prefix") or "")
-    topics = _topics() if pref else {}
     n = 0
     for vid, d in dates.items():
         if d < since or (until and d > until):
             continue
         if p.get("data_ready") and last and d > last:
-            continue
-        if pref and not topics.get(vid, "").startswith(pref):
             continue
         if lo is not None or hi is not None:
             sec = secs.get(vid)
@@ -320,8 +299,6 @@ def _k_published_count(p: dict) -> Gauge:
                 continue
         n += 1
     note = f"{since}〜{until or '以降'}"
-    if pref:
-        note += f" / 題が `{pref}` で始まる本だけ"
     if lo is not None or hi is not None:
         note += f" / 尺 {lo or 0:.0f}〜{hi if hi is not None else '∞'}秒"
     if p.get("data_ready") and last:
