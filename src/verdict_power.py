@@ -113,6 +113,34 @@ def zero_means(baseline: float, n: int) -> dict:
     }
 
 
+def gate_for(baseline: float, n: int, target: float = 2.0) -> int | None:
+    """**いまの n のまま、見分けられる門はあるか。** 無ければ `None`。
+
+    `power()` は「この門は駄目だ」しか言いません。**駄目なのが n なのか
+    門の置き場所なのかを、一度も切り分けていませんでした**（2026-08-28 に踏んだ）。
+    実測では、**駄目な門 4件 のうち 3件 は n が足りていて、門だけが外れて**いました:
+
+        チャンネルのホーム   n=22,549  門 8人 → alpha 43%   **門 10人 なら 19%/9%**
+        途中の依頼          n=30,000  門 10人 → alpha 48%  **門 14人 なら 10%/10%**
+        族べつの登録率       n=13,015  門 5人 → alpha 40%   **どの門でも駄目**（n が足りない）
+
+    **門が null の期待値のすぐ上に置かれると、alpha はほぼ 50% になります。**
+    「効きなし」の半分が生き残るので、**その前提は、効かない処置を通します。**
+    上の2件は率（`0.0355%` / `0.0318%`）で門を書いており、
+    **その率が実測の率とほぼ同じ**でした ＝ 門を「平均どおり」に置いた形です。
+
+    **同じ n=30,000 の隣の前提は `14人未満` と人数で書いてあり、通っています。**
+    答えは、最初から1件 隣に在りました。
+    """
+    if baseline <= 0 or n <= 0:
+        return None
+    for gate in range(1, int(n * baseline * max(target, 1.0) * 4) + 12):
+        q = power(baseline, n, gate, target)
+        if not q["detects_nothing"]:
+            return gate
+    return None
+
+
 def n_for(baseline: float, multiple: float, confidence: float = 0.95) -> int:
     """「0人」で `multiple` 倍の効きを棄却するのに要る再生数。"""
     if baseline <= 0 or multiple <= 1:
@@ -191,6 +219,7 @@ def main() -> int:
     if not rows:
         print("  （反証条件が「N再生でX%／N人未満」の形の前提は見つかりませんでした）")
     bad = 0
+    fixable = 0
     for r in rows:
         q = power(base, r["n"], r["gate"], r["target"])
         ok = "見分けられます" if not q["detects_nothing"] else "**見分けられません**"
@@ -204,8 +233,28 @@ def main() -> int:
         if q["detects_nothing"]:
             bad += 1
             z = zero_means(base, r["n"])
-            print(f"      0人が出ても、否定できるのは実測の **{z['rules_out_multiple']:.1f}倍超**まで。"
-                  f" {r['target']:g}倍を見分けるには **{n_for(base, r['target']):,}再生** 要ります")
+            # **n が足りないのか、門の置き場所が悪いのかを切り分ける**（2026-08-28）。
+            # ここは長らく「N再生 要ります」しか出しておらず、**実測 3/4 件で
+            # 既に持っている再生数より小さい数**を「要ります」と言っていました
+            # （22,549 持っている前提に「9,425再生 要ります」）。
+            # `n_for()` は「**0人**で棄却する」ための数で、
+            # **人数の門で棄却するこの前提とは、別の問い**です。
+            g = gate_for(base, r["n"], r["target"])
+            if g is not None:
+                qg = power(base, r["n"], g, r["target"])
+                fixable += 1
+                print(f"      → **n は足りています。門の置き場所が外れています。**"
+                      f" **門を {g}人未満 に直せば見分けられます**"
+                      f"（効きなしで生き残る {qg['alpha']:.0%} ／ "
+                      f"{r['target']:g}倍あるのに外す {qg['beta']:.0%}）")
+                if r["gate_label"].endswith("%未満"):
+                    print(f"         いまは率（{r['gate_label']}）で書いてあり、"
+                          f"**実測の率 {base*100:.4f}% とほぼ同じ ＝ 門を「平均どおり」に置いた形**です。"
+                          f" **人数で書き直すこと。**")
+            else:
+                print(f"      0人が出ても、否定できるのは実測の **{z['rules_out_multiple']:.1f}倍超**まで。"
+                      f" **どの門に置いても、この n では見分けられません** —— "
+                      f"{r['target']:g}倍を見分けるには **{n_for(base, r['target']):,}再生** 要ります")
         print()
 
     print("=== 実測の率で引き直した必要数（「0人」で棄却する場合）===")
@@ -215,6 +264,11 @@ def main() -> int:
     if bad:
         print(f"  → **見分けられない門が {bad} 件あります。**"
               " ここで閉じた前提は証拠ではありません。**開け直すこと。**")
+        if fixable:
+            print(f"  → **うち {fixable} 件は、再生を1回も足さずに直せます**"
+                  " —— 門の数字を上の行のとおりに書き換えるだけ"
+                  "（`config/hypotheses.yaml` の `falsified_if`）。"
+                  " **待つ必要はありません。**")
     return 0
 
 
