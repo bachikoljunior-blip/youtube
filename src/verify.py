@@ -962,7 +962,89 @@ def _check_adjacent_repeat(script: dict | None) -> list[str]:
                 f"（棒が{len(grew)}本増えるだけ: {'・'.join(grew[:3])}…）。"
                 "**同じ図の描き直しになっている。** 軸か切り口を変えるか、1枚にまとめること"
             )
+        # 3. **隣り合う表が、枠も行数も同じで、本文まで似ている**（2026-08-29 に足した）
+        for p in _same_shaped_table(i, va, vb):
+            problems.append(p)
     return problems
+
+
+#: 隣り合う表を「同じ絵」とみなす、本文の一致率のしきい値。
+#:
+#: **1〜2 は見出しと棒しか見ておらず、表は素通りでした。** 2026-08-29 の実測で、
+#: 長尺の生成失敗の主因が `_check_slides` の
+#: 「隣り合う図解が**見た目には変わっていない**」に入れ替わっており
+#: （08-25 以降 2/3。`config/hypotheses.yaml` の判定）、その落ちた組は
+#: **どちらも表** —— 見出し行が同じ・行数も同じで、**桁の並びだけが違う**ものでした:
+#:
+#:     6枚目  亡くなった日 / 未支給の月数 / 未支給年金の額
+#:            1日 3か月 450000円 ／ 10日 3か月 450000円 ／ 13日… ／ 14日…
+#:     7枚目  亡くなった日 / 未支給の月数 / 未支給年金の額
+#:            15日 1か月 150000円 ／ 16日… ／ 20日… ／ 28日…
+#:     → 128px の灰色で比べた差は **画面の 0.60%**（門は 1.0%）
+#:
+#: **これは段階表示ではありません。** `visuals.reveal_variants` が作る
+#: 「行が1つずつ増える」組は**行数が違う**ので、ここには当たりません。
+#:
+#: **しきい値の測り方**（`data/critique_queue/*.plan.json` の公開ずみ 540本）:
+#:
+#:     隣り合う table で見出し行が同一                  924組  ← 段階表示。**当てない**
+#:       そのうち行数も同じ                              18組
+#:         本文の一致率が 70% 以上                        0組   ← **誤報 0/540**
+#:     この回に落ちた 1組                                       **73.8%**
+#:
+#: 公開ずみ側の最大は **60.8%** で、落ちた側は **73.8%**。あいだは 13ポイント 空いています。
+#: **ただし当たりは n=1 です。** しきい値をこの1件から置いていることを隠しません。
+#:
+#: **覆る条件**: (1) 誤報が1件でも出たら戻すこと（通る台本が書き直しの3回を
+#: 使い切ると、かえって歩留りが下がります —— `script_writer.long_script_problems`
+#: の「厳しくしないこと」）。(2) 2件目の当たりが 70% を下回ったら、
+#: しきい値を下げるのではなく**別の量**が要ります（一致率は「ink がどれだけ
+#: 塗り替わるか」の代理でしかありません）。
+#: **検査**: `tests/test_adjacent_table_shape.py`。
+SAME_TABLE_TEXT_RATIO = 0.70
+
+
+def _same_shaped_table(i: int, va: dict, vb: dict) -> list[str]:
+    """隣り合う2枚が「枠も行数も同じで、本文まで似ている表」なら1件 返す。
+
+    **レンダリング前に分かるものを、レンダリング後まで持ち越さないため**です
+    （`script_writer.long_script_problems` の冒頭と同じ理由 ——
+    ここで言えば同じセッションが3回まで書き直せますが、`_check_slides` で
+    落ちると `claude -p` と合成とレンダリングを全部 捨てます）。
+    """
+    import difflib
+
+    if va.get("kind") != "table" or vb.get("kind") != "table":
+        return []
+
+    def norm(text: str) -> str:
+        return "".join(str(text or "").split()).replace("　", "")
+
+    ha = [norm(h) for h in (va.get("headers") or [])]
+    hb = [norm(h) for h in (vb.get("headers") or [])]
+    if not ha or ha != hb:
+        return []
+    ra = va.get("rows") or []
+    rb = vb.get("rows") or []
+    # **行数が違えば段階表示**（`visuals.reveal_variants` は先頭からの部分列）。
+    # 実測で 924組 中 906組 がこちらです。**当てません。**
+    if not ra or len(ra) != len(rb):
+        return []
+
+    ta = "".join(norm(c) for row in ra for c in row)
+    tb = "".join(norm(c) for row in rb for c in row)
+    if not ta or not tb:
+        return []
+    ratio = difflib.SequenceMatcher(None, ta, tb).ratio()
+    if ratio < SAME_TABLE_TEXT_RATIO:
+        return []
+    return [
+        f"{i}枚目と{i + 1}枚目の表が、見出し行（{' / '.join(ha)}）も行数（{len(ra)}行）も同じで、"
+        f"本文の {ratio * 100:.0f}% が同じ文字です。"
+        "**離れて見ると同じ絵に見えます**（実測でこの形は画面の1%も塗り替わりません）。"
+        "片方の**列そのもの**を変えるか（別の量を並べる）、"
+        "2枚を1枚の表にまとめて、行を増やすこと"
+    ]
 
 
 def _plan_frames(work: Path, script: dict | None,
