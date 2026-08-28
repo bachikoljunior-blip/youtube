@@ -125,6 +125,26 @@ def apply(start: str, end: str, banner: Path | None, dry_run: bool = False) -> d
 
     **`channels.update` は 50単位**、`channelBanners.insert` は 50単位です
     （`videos.insert` の 1,600単位に比べれば無視できる）。
+
+    ## **書いた直後に読み返さないこと**（2026-08-28 17:0x に踏んだ。**実測**）
+
+    `channels.update` は**すぐには読み返せません。** 実測の並び:
+
+        17:0x  channel_page が置いた           紹介動画 None → CdX2oIb7BG8
+        直後   channels.list(brandingSettings)  **unsubscribedTrailer: None**  ← 古い値
+        数分後 同じ呼び出し                     **CdX2oIb7BG8**               ← 届いた
+
+    **バナーのほうは同じ瞬間に新しい値を返します**（`channelBanners.insert` が
+    URL を返し、それを書くので）。**片方だけ遅れるので、いちばん読み違えやすい形**です。
+
+    17:0x の回はこれを「**ショートは紹介動画にできない**」という欠陥だと読みかけ、
+    長尺（`_Mz5rg6jQ_A`）で試して**そちらも読み返しは古い値**でした ——
+    つまり**ショートは問題ではありません。** 試した長尺はそのあと
+    `python -m src.channel_page --no-banner` で実測の本（`CdX2oIb7BG8`）へ戻しています。
+
+    **確かめるなら、数分あけて `channels.list` を1回。**
+    **`--dry-run` の「None → X」は「まだ X ではない」という意味ではありません** ——
+    `--dry-run` は `before_trailer` を読むだけで、置きません。
     """
     from googleapiclient.discovery import build
     from googleapiclient.http import MediaFileUpload
