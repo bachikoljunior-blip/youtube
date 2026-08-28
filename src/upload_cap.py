@@ -1156,11 +1156,27 @@ def thumbnail_yield_to_schedule(ahead, queued: int, *, today=None):
     units = queued * _THUMB_UNITS
     head = " ".join(f"{d:%m/%d}" for d in holes[:5])
     more = f" ほか{len(holes) - 5}日" if len(holes) > 5 else ""
+    # **代替案の大きさは、穴の数で言うこと**（2026-08-28 に踏んだ）。
+    #
+    # ここは長らく「同じ単位で**詰め直しが {queued}本**できます」と言っていました。
+    # `queued` は**サムネイルの溜まり数**で、詰め直しに要る本数ではありません。
+    # 実測 2026-08-28: 穴は 10/11 の **1日だけ**、埋めるのに要るのは
+    # **`--move` 1回**。それでも文面は「70本 できます」と言い、
+    # `reschedule --spread` は「1日 10本を超えている日はありません」と答えました
+    # —— **勧めている代替案が、その大きさでは存在しません。**
+    #
+    # 読む側は「70本ぶんの詰め直しがある」と読んで `--spread` / `--compact` を
+    # 撃ち、空振りして戻ってきます（この回で実際に起きた）。**撃つ行を書くこと。**
+    fix = " ".join(f"{d:%Y-%m-%d}" for d in holes[:3])
     return False, (
         f"**押しません。** 予約に0本の日が {len(holes)}日あります（{head}{more}）。"
-        f" サムネイル {queued}本 ＝ **{units:,}単位** で、"
-        f"同じ単位で**詰め直しが {queued}本**できます。"
+        f" サムネイル {queued}本 ＝ **{units:,}単位**。"
+        f" **埋めるのに要るのは {len(holes)}本の移動**"
+        f"（{len(holes) * _THUMB_UNITS:,}単位）です ——"
+        f" `python scripts/reschedule.py --move <動画ID> {fix.split()[0]}T09:00`。"
         " 再生の 99.9% は SHORTS_FEED（サムネイルの出ない面）で、"
         "0本の日を埋めるほうが `eta.py` の日付を動かします。"
+        " **`--spread` は当てにしないこと** —— あれは1日の上限を超えた日だけを見るので、"
+        "上限内に収まっている穴には何も返しません。"
         " **穴が無くなったら自動で押します**（`--force` で今すぐ押せます）"
     )
