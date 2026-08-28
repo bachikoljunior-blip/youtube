@@ -4159,7 +4159,7 @@ hypotheses:
     #   伸び率は上がって日は前へ来ます。そのとき**縮め直すこと**。
     #   逆に控えを取り直さなければ 1日 のまま止まり、この日は毎日 後ろへ滑ります
     #   （そのときは `_stale_todo()` が同じ行で理由を言います）。
-    deadline: "2026-08-31"
+    deadline: "2026-09-02"
     lever: per_video          # 2026-08-26 に rpm から直した。理由は note の末尾
     watch: 深い題のショート-16本
     needs:
@@ -4183,14 +4183,20 @@ hypotheses:
       # **`video_id` で畳むこと。** `uploaded.jsonl` は足すだけの帳面で、
       # `reschedule.py` が公開時刻を動かすと同じ本がもう1行 増えます
       # （`src/ab_split.published()` の同じ註）。実測 8行 / 7本。
+      # **2026-08-29 06:3x に、もう一度 数え直した（最適化の回）。**
+      #   上の式は「公開済みで `s-` でない本」を数え、**15本 → 足りています**と
+      #   出していました。**`falsified_if` が要求している群ではありません** ——
+      #   あれは (1) その日の**生きた帯**の中（`day_cap.live_ids`。帯の外は0再生）
+      #   (2) **齢48時間 の読み**が在る (3) `video_forms` が「ショート」の3つを
+      #   掛けた本です。**実測 4本**（要 8本）。
+      #   門は「作った／公開した」を、手順は「**比べられる**」を数えていました。
+      #   `src/deep_short.py` に寄せて、**門と判定が同じ数を見る**ようにしました。
+      #   **覆る条件**: `falsified_if` の群の作り方が変わったら、
+      #   同じ回のうちに `src/deep_short.py` も直すこと。
       - kind: accrual
-        count_expr: len({r['video_id'] for r in uploaded()
-          if r.get('video_id') and r.get('at')
-          and not str(r.get('topic', '')).startswith('s-')
-          and str(r['at'])[:10] >= '2026-08-19'
-          and str(r['at'])[:10] <= str(date.today())})
+        count_expr: "deep_short_arm('処置')"
         need: 8
-        since: "2026-08-19"
+        since: "2026-08-25"
       # **本数が満ちても、判定できるとは限りません。**
       # `falsified_if` は「**使える日が 3日 未満なら判定できない**」と書いています
       # （1本あたり再生を動かしている最大の要因は、その日に何本 出したか。
@@ -4210,8 +4216,14 @@ hypotheses:
       #   だから 08/25 以降の公開は**1本も数に入らず 0日**。
       #   門は「まだ数えはじめたところ。待てば日が出ます」と言っていましたが、
       #   **取り直さないかぎり永久に 0** でした。
+      # **`deep_short_days()` → `deep_short_usable_days()`**（2026-08-29 06:3x）。
+      #   前者は「両群とも分類が付いた公開日」しか見ておらず、
+      #   `falsified_if` の (1) 生きた帯 と (2) 齢48時間 を落としていました。
+      #   **実測 2026-08-29: 前者 3日 ／ 後者 2日。** 前者の 3日 が
+      #   `[OK] 判定できるのは 08-29`（＝その日）を出し、`drift.py` が
+      #   **「外れています」**まで鳴らしていました —— **判定できないのに、です。**
       - kind: accrual
-        count_expr: "deep_short_days()"
+        count_expr: "deep_short_usable_days()"
         need: 3
         since: "2026-08-25"
         data_file: "data/video_forms.json"
