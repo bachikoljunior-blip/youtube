@@ -93,6 +93,8 @@
 """
 from __future__ import annotations
 
+from functools import lru_cache as _lru_cache
+
 from . import _checks, kokuho
 from .jutaku import BRACKETS, income_tax as _income_tax_bracket
 
@@ -172,9 +174,27 @@ def after_aoiro(profit: int, aoiro: int = AOIRO_ETAX) -> int:
     return max(0, profit - aoiro)
 
 
+@_lru_cache(maxsize=65_536)
 def kokuho_premium(profit: int, aoiro: int = AOIRO_ETAX,
                    members: int = 1, age: int = 45) -> int:
-    """国民健康保険料。**総所得金額等は青色申告特別控除を引いたあとの額です。**"""
+    """国民健康保険料。**総所得金額等は青色申告特別控除を引いたあとの額です。**
+
+    ## なぜ控えるのか（2026-08-28・最適化の回。**値は1円も変わりません**）
+
+    **`int` を返す純関数**です（引数だけで決まり、外を叩かない）。
+    そして `burden()` は、同じ `(profit, aoiro, members, age)` で
+    **4回ここへ来ます** —— `income_tax` と `resident_tax` がそれぞれ
+    `social_insurance()` を呼び、`burden` 自身も呼ぶためです。
+
+    実測 `check_tables()`: **2.06秒 → 0.26秒**
+    （`kokuho.premium` の呼び出し 263,814回 → 約 66,000回。
+    すぐ下の `_kojo_dead_bands` の控えと合わせて、**2.24秒 → 0.26秒**）。
+    `tests/test_reschedule_move_ledger.py` の門は 1.0秒 で、
+    `src/calc/keihi.py` はそこを **2.24秒** で割っていました。
+
+    **覆る条件**: 返りが `dict` や `list` になったら、この控えは**同じ物**を
+    配るので外すこと（呼ぶ側が書き換えたら、全員のぶんが変わります）。
+    """
     return int(kokuho.premium(after_aoiro(profit, aoiro), members, age)["保険料"])
 
 
@@ -1116,6 +1136,28 @@ def kojo_dead_bands(amount: int = STEP, lo: int = 500_000,
     **覆る条件**: `coarse` より狭い帯があると、粗いほうで見落とします。
     いまの軽減の段（5割・2割）の幅は 数万円 なので 100円 で足りますが、
     **段の数が増えたら、この幅を疑うこと。**
+    """
+    return _kojo_dead_bands(amount, lo, hi, coarse, aoiro, members, age)
+
+
+@_lru_cache(maxsize=64)
+def _kojo_dead_bands(amount: int, lo: int, hi: int, coarse: int,
+                     aoiro: int, members: int, age: int) -> list[tuple[int, int]]:
+    """`kojo_dead_bands()` の中身。**控えを効かせるためだけに分けてあります。**
+
+    ## なぜ分けるのか（2026-08-28・最適化の回）
+
+    `lru_cache` は**呼び出しの字**で控えます。`kojo_dead_bands()`（引数なし）と
+    `kojo_dead_edge()` の中の `kojo_dead_bands(amount, lo, hi, ...)`（位置引数）は
+    **値が全部おなじでも、別の鍵**になります。だから公開の関数の側で既定を
+    埋めきってから、**必ず7つの位置引数**でここを呼びます。
+
+    実測: `check_tables()` は 2.06秒 → **1.14秒**（同じ盤面を2度 走っていた）。
+    **これだけでは門（1.0秒）を割れません** —— 効いたのは
+    `kokuho_premium` の控えのほうで、合わせて **0.26秒** です。
+    **両方 残すこと**: 片方だけだと、盤面が広がった日にまた越えます。
+
+    **返り値を書き換えないこと。** 控えは同じリストを配ります。
     """
     def dead(p: int) -> bool:
         return kojo_vs_keihi(p, amount, aoiro, members, age)[
