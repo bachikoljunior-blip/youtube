@@ -141,6 +141,40 @@ def gate_for(baseline: float, n: int, target: float = 2.0) -> int | None:
     return None
 
 
+def n_for_gate(baseline: float, target: float = 2.0, start: int = 0,
+               cap: int = 2_000_000) -> int | None:
+    """**門で棄却する設計**が成り立ちはじめる n。無ければ `None`。
+
+    `n_for()` は「**0人**が出たら棄却する」ための数です。ここの前提は
+    どれも **人数の門**で棄却するので、**答えるべき問いが違います。**
+    実測では `n_for()` のほうが小さく出るため、**既に持っている再生数より
+    小さい数を「要ります」と印字**していました（15,000 持っている前提に
+    「9,425再生 要ります」）。**それを読んだ回は、待てば直ると考えます。**
+
+    実測（登録率 0.0318%・2倍を見分ける）: `n_for()` **9,425** に対し、
+    **門で見分けられるようになるのは 20,000 前後**。**2倍 以上ちがいます。**
+
+    **`start` より大きい n しか返しません。** 返り値が「いま持っている数」以下だと、
+    読んだ回は「もう足りている」と読み、**実際には見分けられないまま判定します。**
+
+    **飛び石になります**（ポアソンは整数の門しか置けない）。実測 2026-08-28:
+    **n=14,293 では門 7人 が通る**（alpha 17% ／ beta **19.94%**）のに、
+    **n=15,000 では通りません**（門 7人 の alpha が 20.3%・門 8人 の beta が 26.5%）。
+    **増やしたのに見分けられなくなります。** 崖の上を答えにしないため、
+    **n と n×1.05 の両方で門が立つところ**まで進みます。
+    """
+    if baseline <= 0 or target <= 1:
+        return None
+    n = max(start + 1, int(1 / baseline))
+    step = max(1, n // 200)
+    while n <= cap:
+        if (gate_for(baseline, n, target) is not None
+                and gate_for(baseline, int(n * 1.05), target) is not None):
+            return n
+        n += step
+    return None
+
+
 def n_for(baseline: float, multiple: float, confidence: float = 0.95) -> int:
     """「0人」で `multiple` 倍の効きを棄却するのに要る再生数。"""
     if baseline <= 0 or multiple <= 1:
@@ -149,6 +183,18 @@ def n_for(baseline: float, multiple: float, confidence: float = 0.95) -> int:
 
 
 _VIEWS = re.compile(r"([0-9][0-9,]{2,})\s*再生")
+#: **括弧の中は、その前提の標本ではありません。**（2026-08-28 に踏んだ）
+#: `falsified_if` は「いくつ集まったら判定するか」と並べて、
+#: **比べる相手の出どころ**を括弧で書きます:
+#:
+#:     合計再生が 15,000 に達した時点で … **0.0355%（… 22,549再生 → 8人）を上回らなければ**
+#:
+#: 素直に「最初の N再生」を取ると **22,549**（＝ 2026-05-01〜08-17 の参照母集団）を
+#: 標本の大きさだと読みます。**実際の標本は 15,000。** 1.5倍 ちがい、
+#: そこから出す門は 10人 対 7人 で**別の数**になります。
+#: 診断だけの頃は「N再生 要ります」が少しずれるだけでしたが、
+#: **門の数字を名指しするようになった以上、ここがずれると嘘を出します。**
+_PARENS = re.compile(r"[（(][^（()）]*[）)]")
 _PCT = re.compile(r"([0-9]*\.?[0-9]+)\s*%")
 #: 「**14人未満**なら外れ」のように、**人数で置いた門**。率より優先して読む
 #: （率で書くと、地の文にある実測の率を拾ってしまう。2026-08-24 に実際に誤読した）。
@@ -183,7 +229,10 @@ def scan_hypotheses() -> list[dict]:
         cond = m.group(1)
         if "登録" not in cond and "登録" not in claim:
             continue
-        vm = _VIEWS.search(cond)
+        # **括弧を落としてから標本を探す**（`_PARENS` の註）。
+        # 落とした側で見つからないときだけ、元の文へ戻る。
+        bare = _PARENS.sub("", cond)
+        vm = _VIEWS.search(bare) or _VIEWS.search(cond)
         if not vm:
             continue
         n = int(vm.group(1).replace(",", ""))
@@ -252,9 +301,15 @@ def main() -> int:
                           f"**実測の率 {base*100:.4f}% とほぼ同じ ＝ 門を「平均どおり」に置いた形**です。"
                           f" **人数で書き直すこと。**")
             else:
+                need = n_for_gate(base, r["target"], start=r["n"])
+                # **`n_for()` を出さないこと。**あれは「0人で棄却する」ための数で、
+                # 人数の門で棄却するこの前提には小さすぎます
+                # （実測: 15,000 持っている前提に「9,425 要ります」と出していた）。
+                more = f"**あと {need - r['n']:,}再生**" if need and need > r["n"] else "**さらに**"
+                tail = (f"**門で見分けられるようになるのは {need:,}再生 から**（{more}）"
+                        if need else "**この倍率は、現実的な n では門で見分けられません**")
                 print(f"      0人が出ても、否定できるのは実測の **{z['rules_out_multiple']:.1f}倍超**まで。"
-                      f" **どの門に置いても、この n では見分けられません** —— "
-                      f"{r['target']:g}倍を見分けるには **{n_for(base, r['target']):,}再生** 要ります")
+                      f" **どの門に置いても、この n では見分けられません** —— {tail}")
         print()
 
     print("=== 実測の率で引き直した必要数（「0人」で棄却する場合）===")
