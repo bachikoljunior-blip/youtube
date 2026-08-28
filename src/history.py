@@ -423,7 +423,11 @@ def _scan(want_map: bool):
     # **控えるのは、チャンネルから来たぶんだけ**（`found`。和を取る前）。
     # 和のほうを控えると、控えが控えを食べて、チャンネルの答えが
     # どれだったか二度と分からなくなります。
-    if not partial:
+    # **空の読みを控えないこと。** `channel_video_ids` が1本も返さない回は
+    # `partial` が立たない（例外が出ていない）ので、そのまま控えると
+    # **その窓じゅう、チャンネルを1度も読み直しません。**
+    # 控えとの和があるので答えは壊れませんが、**直った瞬間に気づけなくなります。**
+    if not partial and video_ids:
         _put_cached_topics(found, len(video_ids))
 
     found = _with_ledger(found)

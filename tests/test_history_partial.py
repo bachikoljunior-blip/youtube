@@ -283,3 +283,20 @@ def test_hitting_the_cap_says_so(capsys):
     got = history.channel_video_ids(_Yt(), "UUx", cap=50)
     assert len(got) >= 50
     assert "上限" in capsys.readouterr().out
+
+
+def test_an_empty_channel_read_is_never_cached(monkeypatch):
+    """**1本も返らなかった回を控えると、その窓じゅう読み直しません。**
+
+    `channel_video_ids` が空を返す道は例外を出さない（＝ `partial` は False）ので、
+    ここを守らないと `cap` 切りと同じ形の欠けが、こんどは控えの側にできます。
+    控えとの和があるので答えは壊れませんが、**直った瞬間に気づけません。**
+    """
+    monkeypatch.setattr(history, "build",
+                        lambda *a, **k: _yt_all_ok({}))
+    monkeypatch.setattr(history, "credentials", lambda: None)
+    monkeypatch.setattr(history, "channel_video_ids", lambda *a, **k: [])
+    monkeypatch.setattr(history, "ledger_topics", lambda: {"s-a": "v1"})
+
+    assert history._scan(want_map=False) == {"s-a"}
+    assert history._cached_topics() is None, "空の読みを控えています"
