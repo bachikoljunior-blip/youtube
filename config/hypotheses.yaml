@@ -329,7 +329,16 @@ hypotheses:
         # `what` の中のパスは `yaml.safe_load` では拾われません（拾うなと
         # `newest_point` の註が言っています）。**推測ではなく転記**です。
         data_file: "data/rpm_mix.jsonl"
-        refresh: "python -m src.rpm_mix"
+        # **`--record` が要ります。**（2026-08-29 05:5x に踏んで直した）
+        # 最初 `python -m src.rpm_mix` と書いて、その5分後に実際に撃ったら
+        # **67時間 前の点をそのまま印字して exit 0**（`main()` の
+        # `if args.show or not args.record: print(render(last()))`）。
+        # しかも印字の中身は「**この日に撃ち直すこと**」——
+        # **撃ち直した回に、撃ち直せと出ていました。**
+        # 上の 972行 が「`refresh:` は撃てば実際にデータが増えるものだけ」と
+        # 書いて、`snapshot.py` で同じ穴を踏んだ記録を残しています。
+        # **同じ穴です。読んでいたのに、確かめる前に書きました。**
+        refresh: "python -m src.rpm_mix --record"
         what: "`data/rpm_mix.jsonl` の `long_share_now`（Analytics は3日遅れ）"
     falsified_if: >
       **08/27〜09/07 に長尺を 14本以上 公開したうえで**、
