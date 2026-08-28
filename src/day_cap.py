@@ -744,6 +744,190 @@ def effective(per_day: float, path: pathlib.Path | None = None) -> float:
     return min(float(per_day), float(cap(path)))
 
 
+# ---------------------------------------------------------------------------
+# **本数を増やすと、その日の再生は増えるのか**（2026-08-28 18:xx に測って足した）
+#
+# この上の `measure()` が答えているのは「**その日の何本に再生が付くか**」で、
+# **「その日いくつ再生が付くか」ではありません。** 2つは別の問いです ——
+# 上限 10本 は「11本目から 0」と言うだけで、**その 10本の合計が
+# 本数によって動くかどうかについては、何も言っていません。**
+#
+# 実測（`data/views.jsonl`・齢24時間でそろえた・公開日ごとの合計）:
+#
+#     08/19   8本 → 8,147     08/23  13本 → 9,798
+#     08/20  25本 → 6,329     08/24  10本 → 7,897
+#     08/21  21本 → 6,605     08/25  10本 → 2,385
+#     08/22  25本 → 5,845     08/26  14本 → 1,495     08/27  19本 → 3,484
+#
+# **8本の日と25本の日で、合計はほとんど変わりません。**
+# 08/19〜08/24 の6日だけを見ると、本数と合計の順位相関は **負**です
+# （本数を3倍にした日のほうが、合計は少ない）。
+#
+# **これが効くのは `density` の腕です。** `scripts/eta.py` は
+# 「1日 n本 × 1本あたり再生」で段1を解いており、`measure()` の上限で
+# n を 10本 に頭打ちにしています。**ですが上の実測は、10本の中でも
+# 合計が動いていないと言っています** —— つまり縛っているのは本数ではなく
+# **その日にチャンネルへ配られる総量**のほうです。
+#
+# **ここは「密度は無駄だ」と決めつける道具ではありません。** 日数が9日しか
+# 無く、08/25 に別の段差（下の `SPLIT` の註）が入っています。
+# **出すのは相関と、その日数と、段差の位置だけ**です。判断はそれを読む側がします。
+#
+# **覆る条件**: 本数を上限より大きく振った日が増えて、相関が正へ寄ったら
+# この註は要りません（`day_total()` が毎回 数え直します。定数はありません）。
+# ---------------------------------------------------------------------------
+
+DAY_TOTAL_MIN_AGE_H = 24.0   # 合計を数えるときの齢。**6時間では半分しか付いていません**
+DAY_TOTAL_MIN_DAYS = 4       # 相関を出すのに要る最低の日数
+
+
+def _rank(xs: list[float]) -> list[float]:
+    """同順位は平均順位。**scipy を入れないため**（依存を増やさない）。"""
+    order = sorted(range(len(xs)), key=lambda i: xs[i])
+    out = [0.0] * len(xs)
+    i = 0
+    while i < len(order):
+        j = i
+        while j + 1 < len(order) and xs[order[j + 1]] == xs[order[i]]:
+            j += 1
+        avg = (i + j) / 2.0 + 1.0
+        for k in range(i, j + 1):
+            out[order[k]] = avg
+        i = j + 1
+    return out
+
+
+def _spearman(xs: list[float], ys: list[float]) -> float | None:
+    """順位相関。**動かない列があれば None**（0 と区別が付かないため）。"""
+    if len(xs) < 3 or len(xs) != len(ys):
+        return None
+    rx, ry = _rank(xs), _rank(ys)
+    mx, my = statistics.fmean(rx), statistics.fmean(ry)
+    num = sum((a - mx) * (b - my) for a, b in zip(rx, ry))
+    dx = sum((a - mx) ** 2 for a in rx)
+    dy = sum((b - my) ** 2 for b in ry)
+    if dx <= 0 or dy <= 0:
+        return None
+    return num / (dx * dy) ** 0.5
+
+
+def day_total(path: pathlib.Path | None = None,
+              forms_path: pathlib.Path | None = None,
+              min_age_h: float = DAY_TOTAL_MIN_AGE_H,
+              include_long: bool = False,
+              since: dt.date | None = None) -> dict:
+    """**その日に何本 出したかで、その日の再生の合計は動くのか。**
+
+    `measure()` は「何本に付くか」、ここは「**いくつ付くか**」です。
+    上の註のとおり、**2つは別々に動きます。**
+
+    返り:
+      days       [{"date": …, "n": 本数, "total": 合計, "med": 中央値}]（古い順）
+      rho        本数 と 合計 の順位相関（**全部の日**。日数が足りなければ None）
+      rho_scale  **上限まで出した日だけ**（n >= cap）の同じ相関
+      n_scale    その日数
+      n_days     数えた日数
+      age_h      そろえた齢
+      drop       合計がいちばん大きく落ちた境目 `{"at": 日, "before": …, "after": …}`
+                 （前後3日ずつの中央値で見る。見つからなければ None）
+
+    **`rho` と `rho_scale` は逆の符号になることがあります**（実測 08/28:
+    全24日 **+0.75** ／ 上限まで出した8日 **-0.01** ／ 08/19〜08/24 の6日 **-0.76**）。
+    **`rho` のほうは立ち上がりを含んでいるから**です —— 08/15〜08/18 は
+    1〜4本/日 で合計も数百回。**「本数が少ないから再生も少ない」ではなく、
+    その頃はチャンネルがまだ面に載っていなかった**だけ。
+    **`rho` 単独を density の根拠にしないこと。**
+    """
+    skip = set() if include_long else _long_ids(forms_path)
+    per: dict[dt.date, list[int]] = collections.defaultdict(list)
+    for vid, (pub, _h, n) in _readings(path, min_age_h).items():
+        if vid in skip:
+            continue
+        d = pub.date()
+        if since is not None and d < since:
+            continue
+        per[d].append(n)
+    days = [{"date": d, "n": len(v), "total": sum(v), "med": statistics.median(v)}
+            for d, v in sorted(per.items())]
+    rho = None
+    if len(days) >= DAY_TOTAL_MIN_DAYS:
+        rho = _spearman([float(r["n"]) for r in days],
+                        [float(r["total"]) for r in days])
+    # **上限まで出した日だけで数え直す。** 立ち上がり（1〜4本/日）を混ぜると
+    # 「本数が多い日は合計も多い」が出ますが、それは面に載る前の日を
+    # 本数の効きとして数えているだけです（上の docstring の実測）。
+    c = measure(path, forms_path, include_long)["cap"]
+    at_cap = [r for r in days if r["n"] >= c]
+    rho_scale = None
+    if len(at_cap) >= DAY_TOTAL_MIN_DAYS:
+        rho_scale = _spearman([float(r["n"]) for r in at_cap],
+                              [float(r["total"]) for r in at_cap])
+    # **段差は「前後3日ずつの中央値の比」がいちばん大きい所**。
+    # 平均ではなく中央値なのは、1日の跳ねで境目が動くのを避けるため。
+    drop = None
+    if len(days) >= 6:
+        best = 0.0
+        for i in range(3, len(days) - 2):
+            before = statistics.median([r["total"] for r in days[max(0, i - 3):i]])
+            after = statistics.median([r["total"] for r in days[i:i + 3]])
+            if after <= 0:
+                continue
+            ratio = before / after
+            if ratio > best:
+                best = ratio
+                drop = {"at": days[i]["date"], "before": before,
+                        "after": after, "ratio": ratio}
+        if drop is not None and drop["ratio"] < 1.5:
+            drop = None
+    return {"days": days, "rho": rho, "rho_scale": rho_scale,
+            "n_scale": len(at_cap), "n_days": len(days),
+            "age_h": min_age_h, "drop": drop}
+
+
+def day_total_lines(path: pathlib.Path | None = None,
+                    forms_path: pathlib.Path | None = None) -> list[str]:
+    """**本数と、その日の合計。**上限とは別の問いなので、別の行で出す。"""
+    m = day_total(path, forms_path)
+    if m["n_days"] < DAY_TOTAL_MIN_DAYS:
+        return [f"  **本数 → その日の合計**: 読める日が {m['n_days']}日 しかありません"
+                f"（要る日数 {DAY_TOTAL_MIN_DAYS}）"]
+    out = []
+    rho, rho_s = m["rho"], m["rho_scale"]
+    # **読むのは `rho_scale` のほうです**（`rho` は立ち上がりを含む。docstring の実測）
+    show = rho_s if rho_s is not None else rho
+    if show is None:
+        out.append("  **本数 → その日の合計**: 順位相関が出せません（列が動いていない）")
+    else:
+        verdict = ("**本数を増やしても合計は増えていません**" if show < 0.3
+                   else "本数と合計は同じ向きに動いています")
+        if rho_s is not None:
+            out.append(f"  **本数 → その日の合計の順位相関: {rho_s:+.2f}**"
+                       f"（**上限 {m['n_scale']}日ぶんだけ**・齢 {m['age_h']:.0f}時間）"
+                       f"—— {verdict}")
+            if rho is not None:
+                out.append(f"    **全 {m['n_days']}日 で数えると {rho:+.2f} です。"
+                           "そちらを使わないこと** —— 立ち上がり（1〜4本/日・合計 数百回）を"
+                           "混ぜており、**面に載る前の日を「本数が少ないから」と数えます**")
+        else:
+            out.append(f"  **本数 → その日の合計の順位相関: {rho:+.2f}**（{m['n_days']}日・"
+                       f"齢 {m['age_h']:.0f}時間）—— {verdict}"
+                       "（**上限まで出した日が足りません**。立ち上がりが混ざっています）")
+        out.append("    **上の『上限 n本』とは別の問いです。** 上限は"
+                   "「その日の**何本に**付くか」、ここは「その日**いくつ**付くか」。"
+                   "**`density` の腕が効くのは、ここが正のときだけ**です")
+    for r in m["days"][-8:]:
+        out.append(f"      {r['date']}  {r['n']:2d}本 → 合計 {r['total']:6d}"
+                   f"（中央値 {r['med']:.0f}）")
+    if m["drop"] is not None:
+        d = m["drop"]
+        out.append(f"    [!] **合計が {d['at']} を境に {d['ratio']:.1f}倍 落ちています**"
+                   f"（前3日の中央値 {d['before']:.0f} → 後3日 {d['after']:.0f}）。"
+                   "**本数は境目で変わっていません** —— 落ちたのは1本あたりのほうです")
+        out.append("    **段差があるあいだ、上の相関は2つの群を混ぜています。**"
+                   "本数の効きだけを見るなら、境目の**片側だけ**で数え直すこと")
+    return out
+
+
 def lines(path: pathlib.Path | None = None) -> list[str]:
     m = measure(path)
     out = [f"  **1日に再生が付く本数の上限: {m['cap']}本**（**ショートの面**）"
@@ -759,6 +943,7 @@ def lines(path: pathlib.Path | None = None) -> list[str]:
     else:
         out.append(f"    **上限より多く出した日がまだありません**（見えている最大 {m['floor']}本）。"
                    "崩れを観測するまで、この数は既定値です")
+    out.extend(day_total_lines(path))
     out.extend(long_form_lines(path))
     return out
 
