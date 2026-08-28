@@ -112,3 +112,68 @@ def test_same_day_rows_count_as_one_point(tmp_path: Path) -> None:
     assert got is not None
     _spread, n_pts = got
     assert n_pts == 2, f"同じ日を2回 数えています（{n_pts}点）"
+
+
+# --- **今日の点と比べないこと**（2026-08-29 に足した。**自分と比べていた**） ---
+#
+# `record_estimates()` は **1鍵1日1行**を、印字する道で毎回 書きます。
+# だから**その日の最初の回**が今日の行を積んだ瞬間、`pts[-1]` は今日の行になり、
+# `days = 0` → `days < 1` で **`None`** —— 上の警告は**その日の2回目以降、
+# 1度も出ません。** この機械は毎日 15周 前後 走るので、
+# **14/15 の回が警告なしの版**を読んでいました。
+#
+# 実測 2026-08-29 02:5x（この関数が 08-27 夜に作られた、まさにその前提）::
+#
+#     控え  08-27 have=5 ／ 08-28 have=5 ／ 08-29 have=5   ← **3日 動いていない**
+#     印字  「要 6 ／ いま 5（5日で 1.00/日）→ **あと 1日**」（**警告なし**）
+#     実物  長尺の生成失敗は 08/27 **0/15**・08/28 **0/7**・08/29 **0/4**
+#           ＝ **26本 連続で失敗ゼロ**。1.00/日 は 08/24 と 08/26 の平均
+
+
+def test_今日の行が在っても_前の日の点と比べる(tmp_path) -> None:
+    """**その日の最初の回が控えを書いた後も、警告が出ること。**"""
+    p = _log(tmp_path, [{"at": "2026-08-28", "key": KEY, "rate": 1.25, "have": 5},
+                        {"at": "2026-08-29", "key": KEY, "rate": 1.0, "have": 5}])
+    got = deadline_check._recent_rate(KEY, 5, date(2026, 8, 29), path=p)
+    assert got is not None, "今日の行が在るだけで、止まりの警告が消えています"
+    r_rate, r_days, r_delta = got
+    assert (r_delta, r_days, r_rate) == (0, 1, 0.0)
+
+
+def test_今日の行しか無ければ_これまでどおり出さない(tmp_path) -> None:
+    # 日をまたいだ2点が無いので「率」になりません（元からの規則）
+    p = _log(tmp_path, [{"at": "2026-08-29", "key": KEY, "rate": 1.0, "have": 5}])
+    assert deadline_check._recent_rate(KEY, 5, date(2026, 8, 29), path=p) is None
+
+
+def test_止まりの長さは_いちばん新しい点との差ではない(tmp_path) -> None:
+    """3日 止まっていたら「3日」と言うこと（2点だけ見ると「1日」になります）。"""
+    p = _log(tmp_path, [{"at": "2026-08-26", "key": KEY, "rate": 1.7, "have": 5},
+                        {"at": "2026-08-27", "key": KEY, "rate": 1.6, "have": 5},
+                        {"at": "2026-08-28", "key": KEY, "rate": 1.2, "have": 5},
+                        {"at": "2026-08-29", "key": KEY, "rate": 1.0, "have": 5}])
+    # 2点しか見ない側は「1日」
+    assert deadline_check._recent_rate(KEY, 5, date(2026, 8, 29), path=p)[1] == 1
+    # 連なりで数える側は 08-26 まで遡る（今日の行は入れない）
+    assert deadline_check._stall_days(KEY, 5, date(2026, 8, 29), path=p) == 3
+
+
+def test_止まっていなければ_止まりの長さは出ない(tmp_path) -> None:
+    p = _log(tmp_path, [{"at": "2026-08-27", "key": KEY, "rate": 1.6, "have": 4},
+                        {"at": "2026-08-28", "key": KEY, "rate": 1.2, "have": 5}])
+    # 直前の点が 5、その前は 4 → 止まりは 1日 ぶんだけ
+    assert deadline_check._stall_days(KEY, 5, date(2026, 8, 29), path=p) == 1
+    # いまの数が控えのどれとも違えば、連なりは無い
+    assert deadline_check._stall_days(KEY, 9, date(2026, 8, 29), path=p) is None
+
+
+def test_止まりの長さは_日付を動かさない(tmp_path) -> None:
+    """**印字だけ。** 日付に効かせてよくなるのは、窓で解けるようになったとき
+    （このファイルの冒頭の「覆る条件」）。"""
+    import inspect
+
+    src = inspect.getsource(deadline_check._ans_accrual)
+    i = src.index("_stall_days")
+    # `days` を組み立てている行より後ろでしか使っていないこと
+    assert "days = " not in src[i:i + 400].split("note +=")[0], \
+        "止まりの長さが、判定日の計算に混ざっています"

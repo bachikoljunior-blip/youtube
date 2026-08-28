@@ -463,7 +463,32 @@ def _recent_rate(key: str, have: int, as_of: date,
     if not pts:
         return None
     pts.sort()
-    at0, have0 = pts[-1]
+    # **今日の点と比べないこと**（2026-08-29 に直した。**この関数は自分と比べていました**）。
+    #
+    #   `record_estimates()` は **1鍵1日1行**を、印字する道で毎回 書きます。
+    #   だから**その日の最初の回**が今日の行を積んだ瞬間、`pts[-1]` は
+    #   **今日の行**になり、`days = 0` → `days < 1` で **`None`**。
+    #   この註が名指ししている警告（「直近 N日 は1件も増えていません」）は、
+    #   **その日の2回目以降、1度も出ません。**
+    #
+    #   実測 2026-08-29 02:5x（この関数が 08-27 夜に作られた、まさにその前提）::
+    #
+    #       控え  08-27 have=5 ／ 08-28 have=5 ／ 08-29 have=5   ← **3日 動いていない**
+    #       印字  「要 6 ／ いま 5（5日で **1.00/日**）→ **あと 1日**」（警告なし）
+    #       実物  失敗の実測は 08/27 **0/15**・08/28 **0/7**・08/29 **0/4**
+    #             ＝ **26本 連続で失敗ゼロ**。1.00/日 は 08/24 と 08/26 の平均
+    #
+    #   この機械は毎日 15周 前後 走るので、**14/15 の回が警告なしの版**を読みます。
+    #   `_rate_scatter` の註が同じ帳面について書いている
+    #   「**控えは、この機械が何回 撃たれたかを数えるようになる**」の、読む側の形です。
+    #
+    #   **覆る条件**: `record_estimates()` が1日1行をやめて、
+    #   `have` の変わった回だけ積むようになったら、この選り分けは要らなくなります
+    #   （`tests/test_deadline_recent_rate_same_day.py` がそこを見ています）。
+    prev = [p for p in pts if p[0] < as_of.isoformat()]
+    if not prev:
+        return None
+    at0, have0 = prev[-1]
     try:
         days = (as_of - date.fromisoformat(at0)).days
     except ValueError:
@@ -471,6 +496,57 @@ def _recent_rate(key: str, have: int, as_of: date,
     if days < 1:                       # 同じ日の点どうしは「率」になりません
         return None
     return (have - have0) / days, days, have - have0
+
+
+def _stall_days(key: str, have: int, as_of: date,
+                path: Path | None = None) -> int | None:
+    """**その数が動いていない日数**（控えの点で数える。動いていれば `None`）。
+
+    `_recent_rate()` が返すのは**いちばん新しい点との差**だけなので、
+    3日 止まっていても「**直近 1日 は増えていません**」と出ます
+    （実測 2026-08-29: 控えは 08-27／08-28／08-29 とも `have=5`、
+    印字は「直近 1日」）。**1日 と 3日 では、読む側の扱いが変わります。**
+
+    ここは**窓を選びません** —— 数えるのは「`have` が同じまま連なっている
+    いちばん古い点まで」で、答えは1つです（`_recent_rate` の註が避けている
+    「どの窓を読むか」は増えません）。
+
+    **日付は動かしません。印字だけ**（`tests/test_accrual_stall.py` の覆る条件:
+    日付に効かせてよくなるのは、2点 ではなく窓で解けるようになったとき）。
+    """
+    p = path or RATE_LOG
+    if not key or not p.exists():
+        return None
+    by_day: dict[str, int] = {}
+    for ln in p.read_text(encoding="utf-8").splitlines():
+        ln = ln.strip()
+        if not ln:
+            continue
+        try:
+            r = json.loads(ln)
+        except ValueError:
+            continue
+        if r.get("key") != key or r.get("have") is None:
+            continue
+        try:
+            by_day[str(r["at"])[:10]] = int(r["have"])
+        except (KeyError, TypeError, ValueError):
+            continue
+    # **今日の行は入れません**（`_recent_rate` と同じ理由 —— 自分と比べない）
+    days = sorted(d for d in by_day if d < as_of.isoformat())
+    if not days:
+        return None
+    oldest = None
+    for d in reversed(days):
+        if by_day[d] != have:
+            break
+        oldest = d
+    if oldest is None:
+        return None
+    try:
+        return (as_of - date.fromisoformat(oldest)).days
+    except ValueError:
+        return None
 
 
 def record_estimates(vs: list["Verdict"], path: Path | None = None,
@@ -831,7 +907,10 @@ def _ans_accrual(need: dict, as_of: date) -> Answer:
     if rec is not None:
         r_rate, r_days, r_delta = rec
         if r_delta <= 0:
-            note += (f"。**直近 {r_days}日 は1件も増えていません**"
+            # **止まりの長さは、いちばん新しい点との差ではありません**（2026-08-29）。
+            #   `_recent_rate` は2点しか見ないので、3日 止まっていても「1日」と出ます。
+            stalled = _stall_days(key, have, as_of) or r_days
+            note += (f"。**直近 {stalled}日 は1件も増えていません**"
                      f"（前の点も {have}）—— この「あと {days}日」は、"
                      "**止まる前の平均**から出ています。"
                      "**その要件が数えているものが、まだ起きているか**を見ること")
