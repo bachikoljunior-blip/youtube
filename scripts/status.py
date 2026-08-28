@@ -662,9 +662,13 @@ def print_hypotheses() -> None:
     try:
         from src import verdict_power as _vp
         _base, _v, _s = _vp.baseline_rate()
-        _weak = [(r, _vp.power(_base, r["n"], r["gate"], r["target"]))
-                 for r in _vp.scan_hypotheses()]
-        _weak = [(r, q) for r, q in _weak if q["detects_nothing"]]
+        # **`power()` を直接 撃たないこと**（2026-08-28 に踏んだ）。
+        # ここは全部の行を片側の門として数えており、**2群の前提**
+        # （`途中の依頼`）を別の規則で採点していた。同じ1件について
+        # `verdict_power` は「見分けられます」、ここは「48%」と出て、
+        # **毎周 出るこちらが、直したばかりの条件を『壊れている』と鳴らす**。
+        # 設計ごとの分岐は `verdict_power.assess()` の1か所に置いてある。
+        _weak = _vp.weak_rows(_base)
         if _weak:
             print(f"\n  --- [!] **見分けられない反証条件 {len(_weak)}件** ---")
             print(f"  実測の登録率 **{_base*100:.4f}%**（{_v:,}再生→{_s}人）にかけると、"
@@ -672,7 +676,7 @@ def print_hypotheses() -> None:
             for r, q in _weak:
                 print(f"    効きなしで生き残る {q['alpha']:.0%} ／ "
                       f"{r['target']:g}倍あるのに外す {q['beta']:.0%}  "
-                      f"（n={r['n']:,}再生・門 {r['gate_label']}）  {r['claim'][:34]}")
+                      f"（n={r['n']:,}再生・{q['label']}）  {r['claim'][:34]}")
             print("  **ここで閉じた前提は証拠ではありません。**"
                   " `python -m src.verdict_power` で必要な再生数が出ます。")
     except Exception as _e:      # 計器が欠けても status は止めない

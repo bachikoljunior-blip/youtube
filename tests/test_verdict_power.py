@@ -272,3 +272,55 @@ def test_直した前提は道具の一覧で見分けられる側に出る(caps
     assert "対照を 5人 以上 上回れば通る" in out
     block = out.split("途中にも1回")[-1].split("\n\n")[0]
     assert "見分けられます" in block and "**見分けられません**" not in block
+
+
+# ---------------------------------------------------------------------------
+# **判定の規則が2か所にあると、片方だけが直る**（2026-08-28 に踏んだ）
+#
+# `scripts/status.py` は全部の行に `power()` を当てていて、2群の前提を
+# 片側の門として採点していた。同じ1件について
+#   `verdict_power` → 見分けられます（15%/17%）
+#   `status.py`     → 見分けられません（48%）
+# と出て、**毎周 出る status のほうが、直した条件を「壊れている」と鳴らす。**
+# ---------------------------------------------------------------------------
+
+def test_assessは設計ごとに数え方を変える():
+    one = {"n": 30000, "gate": 10, "gate_label": "0.0318%未満",
+           "target": 2.0, "two_group": False, "margin": 1}
+    two = dict(one, two_group=True, margin=5)
+    q1, q2 = vp.assess(one, BASE), vp.assess(two, BASE)
+    assert q1["two_group"] is False and q2["two_group"] is True
+    assert q1["detects_nothing"] is True      # 片側の門としては壊れている
+    assert q2["detects_nothing"] is False     # 2群＋余白5人なら通る
+    assert q1["alpha"] != q2["alpha"], "設計を無視して同じ数を出しています"
+
+
+def test_余白ゼロの2群はassessでも壊れている扱い():
+    row = {"n": 30000, "gate": 10, "gate_label": "0.0318%未満",
+           "target": 2.0, "two_group": True, "margin": 1}
+    q = vp.assess(row, BASE)
+    assert q["detects_nothing"] is True
+    assert "余白ゼロ" in q["label"]
+
+
+def test_status_と_verdict_power_が同じ件数を見る():
+    """**2つの計器が同じ一覧を見ていること。** ここがずれたのが穴だった。"""
+    base = vp.baseline_rate()[0]
+    shared = vp.weak_rows(base)
+    mine = [(r, vp.assess(r, base)) for r in vp.scan_hypotheses()]
+    mine = [(r, q) for r, q in mine if q["detects_nothing"]]
+    assert len(shared) == len(mine)
+    assert [r["claim"] for r, _ in shared] == [r["claim"] for r, _ in mine]
+
+
+def test_直した2群の前提は弱い一覧に出てこない():
+    """**直したものが毎周 鳴り続けないこと。**"""
+    claims = [r["claim"] for r, _ in vp.weak_rows()]
+    assert not any("途中にも1回" in c for c in claims), \
+        "直した条件が、まだ『見分けられない』側にいます"
+
+
+def test_weak_rowsはlabelを持っている():
+    """`status.py` が `gate_label` を直に読むと、2群で嘘の見出しになる。"""
+    for r, q in vp.weak_rows():
+        assert q.get("label"), "印字用の label がありません"

@@ -330,6 +330,54 @@ def scan_hypotheses() -> list[dict]:
     return found
 
 
+def assess(row: dict, baseline: float) -> dict:
+    """**その前提の設計に合った数え方で、取り違え率を返す。**
+
+    片側の門なら `power()`、2群の比べ合いなら `two_group_power()`。
+    返りには `two_group` と、印字に使う `label` を足します。
+
+    **この関数を通すこと。呼ぶ側で `power()` を直接 撃たないこと**
+    （2026-08-28 に踏んだ）。`scripts/status.py` は全部の行に
+    `power()` を当てており、**2群の前提を片側の門として数えていました。**
+    その結果、同じ1件について
+
+        `python -m src.verdict_power`  → **見分けられます**（余白5人・15%/17%）
+        `python scripts/status.py`     → **見分けられません**（48%）
+
+    と、**2つの計器が別のことを言う**状態になった。
+    しかも status のほうが毎周 出るので、**直したばかりの条件が
+    毎回「壊れている」と鳴り、次の回がそれを『直し』にきます。**
+
+    **これは、この回に直した穴（文と実装のずれ）と同じ形です** ——
+    判定の規則が2か所にあると、片方だけが直る。
+    """
+    if row.get("two_group"):
+        q = two_group_power(baseline, row["n"], row.get("margin", 1), row["target"])
+        m = row.get("margin", 1)
+        q["label"] = ("対照を1人でも上回れば通る（**余白ゼロ**）" if m <= 1
+                      else f"対照を {m}人 以上 上回れば通る")
+        q["two_group"] = True
+        return q
+    q = power(baseline, row["n"], row["gate"], row["target"])
+    q["label"] = f"門 {row['gate_label']}"
+    q["two_group"] = False
+    return q
+
+
+def weak_rows(baseline: float | None = None) -> list[tuple[dict, dict]]:
+    """**見分けられない前提だけ**を（行, 取り違え率）で返す。
+
+    `status.py` と `main()` が同じ一覧を見るための、ひとつの入口。
+    """
+    base = baseline_rate()[0] if baseline is None else baseline
+    out = []
+    for r in scan_hypotheses():
+        q = assess(r, base)
+        if q["detects_nothing"]:
+            out.append((r, q))
+    return out
+
+
 def main() -> int:
     base, views, subs = baseline_rate()
     print("=== その判定は、何かを見分けられたのか（登録率・ポアソン）===")
@@ -348,10 +396,9 @@ def main() -> int:
         # **2群を比べる前提は、片側の門とは数え方が違う**（2026-08-28 に足した）。
         # 混ぜると「門を 13人未満 に」のような、**別の実験に化ける指示**を出します。
         if r["two_group"]:
-            q = two_group_power(base, r["n"], r["margin"], r["target"])
+            q = assess(r, base)
             ok = "見分けられます" if not q["detects_nothing"] else "**見分けられません**"
-            cur = ("「対照を1人でも上回れば通る」（**余白ゼロ**）" if r["margin"] <= 1
-                   else f"「対照を {r['margin']}人 以上 上回れば通る」")
+            cur = f"「{q['label']}」"
             print(f"  [{r['outcome'] or '未判定'}] {r['claim'][:44]}")
             print(f"      **2群**・片群 n={r['n']:,}再生・いまの条件は"
                   f"{cur}  "
@@ -378,7 +425,7 @@ def main() -> int:
             print()
             continue
 
-        q = power(base, r["n"], r["gate"], r["target"])
+        q = assess(r, base)
         ok = "見分けられます" if not q["detects_nothing"] else "**見分けられません**"
         print(f"  [{r['outcome'] or '未判定'}] {r['claim'][:44]}")
         print(f"      n={r['n']:,}再生・門 {r['gate_label']}  "
