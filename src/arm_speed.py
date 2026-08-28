@@ -153,6 +153,84 @@ def closed(doc: dict | None = None) -> list[dict]:
     return rows
 
 
+#: 台帳が「次の1件はこの腕に立てるな」と言っている行の目印。
+#: **文言そのもの**を探します（欄を新設しなかったのは、既に散文で書かれていて、
+#: 欄を足すと**書いた側の1件だけが埋まって、残りが黙る**から）。
+BAN_MARKS = ("立てないこと", "立てるな")
+
+
+def standing_bans(doc: dict | None = None) -> dict[str, list[dict]]:
+    """**台帳が「次の1件はこの腕に立てるな」と言っている行**を、腕べつに返す。
+
+    返りは `{lever: [{"claim", "open", "deadline", "line"}]}`。
+
+    ## なぜ要るか（2026-08-29 に足した。**5回 続けて手で引き直していました**）
+
+    `eta.py --alloc` は「いちばん早いのは `sub_rate`」を **2026-08-27 から
+    5回 続けて**名指ししており、**5回とも回の側が手で打ち消しています。**
+    打ち消す根拠は台帳の中にあります ——
+
+        `lever: sub_rate` の「チャンネルのホームに…」の `next_if_false`:
+        「`eta.py --alloc` が `sub_rate` を名指ししていても、
+          **次の1件はそこに立てないこと**」
+
+    **機械が読める所に、機械が読める字で書いてあります。** 読まないので、
+    毎回 人が思い出しています。**道具が言わないものは、毎回 人が思い出すことになります。**
+
+    ## 何を返さないか
+
+    - **開いている前提の `next_if_false` は条件つきです**（外れたときの手）。
+      **消しません** —— `open=True` を付けて返し、読む側が重みを決めます。
+      潰すと、5回 打ち消してきた根拠そのものが見えなくなります。
+    - `note` や `#` のコメントは見ません。**`next_if_false` / `next_done` だけ**です
+      （散文の全体を拾うと、「立てないこと」を**引用している**行まで当たります）。
+
+    **覆る条件**: `BAN_MARKS` の文言を含む行が 0件 になったら、この関数は
+    毎回 空を返します（＝ 費用だけ）。そのときは呼び出し側ごと外すこと。
+    """
+    doc = _load() if doc is None else doc
+    out: dict[str, list[dict]] = {}
+    for key, day_key in (("hypotheses", "closed_on"), ("confirmed", "confirmed_on")):
+        for h in doc.get(key) or []:
+            if not isinstance(h, dict) or not h.get("lever"):
+                continue
+            for field in ("next_if_false", "next_done"):
+                raw = h.get(field)
+                items = raw if isinstance(raw, list) else ([raw] if raw else [])
+                for item in items:
+                    text = str(item)
+                    if not any(mark in text for mark in BAN_MARKS):
+                        continue
+                    out.setdefault(str(h["lever"]), []).append({
+                        "claim": str(h.get("claim", ""))[:60],
+                        "open": h.get(day_key) is None and h.get("closed_on") is None,
+                        "deadline": str(h.get("deadline") or ""),
+                        "field": field,
+                        "line": text,
+                    })
+    return out
+
+
+def ban_lines(lever: str, doc: dict | None = None) -> list[str]:
+    """`standing_bans` の1腕ぶんを、印字できる形にする（無ければ空）。"""
+    rows = standing_bans(doc).get(lever) or []
+    if not rows:
+        return []
+    out = [f"  [!] **台帳が `{lever}` について「次の1件はそこに立てるな」と言っています"
+           f"（{len(rows)}件）。** この名指しを採る前に、下を読むこと:"]
+    for r in rows:
+        state = (f"**まだ開いています**・期限 {r['deadline']}" if r["open"]
+                 else "**閉じています**")
+        out.append(f"      ・「{r['claim']}」（{state}）の `{r['field']}`:")
+        out.append(f"        {r['line'][:300]}")
+    if any(r["open"] for r in rows):
+        out.append("      **開いている前提の `next_if_false` は条件つきです**"
+                   "（その前提が外れたときの手）。**そのまま従う理由にはなりません** ——"
+                   "ただし、同じ腕で既に外れた回数がそこに書いてあるなら、"
+                   "**それは条件つきではありません。**")
+    return out
+
+
 def unreadable(doc: dict | None = None) -> int:
     """**欄が足りなくて数えられなかった、閉じた前提の件数。**
 
