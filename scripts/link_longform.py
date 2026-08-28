@@ -154,7 +154,13 @@ def main(argv: list[str] | None = None) -> int:
             # 何十本も書くので、数えないと門は**自分が通した数千単位を
             # 1つも知りません**（＝ 止めるべき回に止まりません）。
             from src import upload_cap as _cap          # noqa: PLC0415
-            _cap.note_quota_ok(detail=f"videos.update {it['id']}")
+            # **末尾に印を付けること**（2026-08-28）。`moves_in_window()` は
+            # `videos.update <vid>` で**終わる**行を「その本を動かした」と
+            # 数え、`MOVE_CAP`（1本 2回/窓）に効かせます。ここは説明欄の
+            # 書き換えで、**予約を動かしていません** —— 印を付けないと、
+            # 導線を入れただけで入れ替えの持ち手を2回ぶん奪います。
+            # `unit_cost` は前方一致なので 50単位 のままです。
+            _cap.note_quota_ok(detail=f"videos.update {it['id']} link")
             done += 1
 
     print(f"\n入れた {done}件 / すでに入っていた {skipped}件"
