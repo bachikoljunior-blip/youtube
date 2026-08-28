@@ -2473,7 +2473,8 @@ def _recent_surface() -> tuple[float, int, str] | None:
                 reach_split.surface_forecast(
                     reach_split.summary(rows, reach_split.long_ids()),
                     make_per_day=_long_make_per_day(),
-                    slots_per_day=_long_slots_per_day()),
+                    slots_per_day=_long_slots_per_day(),
+                    stock=_long_stock()),
                 float(long.get("ctr") or 0.0))
     except Exception:  # noqa: BLE001  （測れないことで回を止めない）
         return None
@@ -2494,6 +2495,31 @@ def _long_make_per_day() -> float | None:
             return None
         v = float(got.get("rate") or 0.0)
         return v if v > 0 else None
+    except Exception:                                  # noqa: BLE001 — 回を止めない
+        return None
+
+
+def _long_stock() -> int | None:
+    """**いま在る長尺向けのテーマ**（本）。読めなければ `None`。**API 0単位。**
+
+    `src/supply.py` の `surfaces()["long"]["stock"]` ＝ 未投稿・`calc` あり・
+    **`s-` で始まらない**題（`batch_build.pick` の `long_usable` と同じ数え方。
+    `scripts/batch_build.py`「`long_usable = [t for t in usable if not
+    t["id"].startswith("s-")]`」）。
+
+    **なぜ要るか**: `_long_make_per_day()` が測っているのは**描画の速さ**で、
+    描く題材が在るかは1つも見ていません。2026-08-29 の実測は
+    **描画 9.14本/日 ／ 在庫 0本** —— それで `dry_fill` は
+    「放っておいて埋まります」と出していました（`reach_split.dry_fill` の docstring）。
+
+    **`None` は「在庫0」ではありません。** 読めなかった回に 0 を返すと、
+    その回は全部「題材が無い」になります。`dry_fill` は `None` を
+    「測っていない」として、これまでどおりの枝へ落とします。
+    """
+    try:
+        from src import supply                          # noqa: PLC0415
+        v = (supply.surfaces() or {}).get("long", {}).get("stock")
+        return None if v is None else int(v)
     except Exception:                                  # noqa: BLE001 — 回を止めない
         return None
 
@@ -2656,7 +2682,36 @@ def _gate2_surface_note(imp_day: float, need_day: float,
                      f"判定が遅れるぶん損します。"
                      f"**割れる線は作る速さ {(fill.get('need_per_day') or 0):.2f}本/日**"
                      f"（いま {fill['make_per_day']:.2f}。"
-                     f"余裕 {fill['gap_days'] - fill['reach_days']:.1f}日））")
+                     f"余裕 {fill['gap_days'] - fill['reach_days']:.1f}日）"
+                     # **題材の側も一緒に出すこと**（2026-08-29）。ここが
+                     #     「埋まります」だけだった回、在庫は 0本 でした。
+                     + (f"。**題材の在庫 {fill['stock']}本**（空き枠 "
+                        f"{fill['open_slots']}本 ぶんは在ります）"
+                        if fill.get("stock") is not None
+                        else "。**題材の在庫は読めていません**"
+                             "（`src/supply.py` が返さなかった回）")
+                     + "）")
+        elif fill.get("bound") == "topics":
+            # **描画は速いが、描くものが無い枝**（2026-08-29 に足した）。
+            #     ここを「作る速さです」と言うと、9.14本/日 出ている描画を
+            #     さらに速くしにいきます —— 律速は `src/calc/` の節のほうです。
+            span += (f"　[!] **{head_dry}** "
+                     f"面は公開で立つので、**そこで {imp_day:,.0f}回/日 は保ちません。**"
+                     f" 手前の空き枠 {fill['open_slots']}本 に対し、"
+                     f"**長尺向けのテーマの在庫は {fill['stock']}本**です"
+                     f"（`s-` で始まらない未投稿の題／`src/supply.py`）。"
+                     f"**描く速さは足りています**"
+                     f"（{fill['make_per_day']:.2f}本/日 ＝ 空き枠なら"
+                     f" {fill['reach_days']:.1f}日 ・穴まで {fill['gap_days']}日）——"
+                     f" **足りないのは題材のほうです。**"
+                     f" あと **{fill['topics_needed']}本**"
+                     f"（{(fill.get('topics_per_day_needed') or 0):.2f}本/日 × "
+                     f"{fill['gap_days']}日）。"
+                     f"**直す先は描画でも予定表でもなく `src/calc/` の節です** ——"
+                     f" `python scripts/topic_forge.py --list` の"
+                     f"「(2) 既にある表に節を足して `--count N --long`」"
+                     f"（**4,000時間の門に入るのは長尺だけ**なので、"
+                     f"ショートを足してもこの穴は1本も埋まりません）")
         else:
             span += (f"　[!] **{head_dry}** "
                      f"面は公開で立つので、**そこで {imp_day:,.0f}回/日 は保ちません。**"
