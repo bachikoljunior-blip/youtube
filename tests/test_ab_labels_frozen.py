@@ -125,6 +125,21 @@ def test_群を読む口が全部_凍結を通っていること():
         "（凍らせた名札が効きません）:\n  " + "\n  ".join(bad))
 
 
+def test_作る側が名札を焼くこと():
+    """**焼く場所が無ければ、名札は必ず古くなります。**
+
+    実測 2026-08-28 —— 手で1回 焼いた **30分 後**に主実行が 2本 作り、
+    上の `test_share_を_0_にしても群が消えないこと` が **遅い 9 → 7** で落ちました
+    （新しい2本が名札を持たず、生の関数へ落ちた）。
+    **腕はテーマIDの純関数なので、作る前に確定しています** ——
+    だから作る側が、作る前に焼きます。
+    """
+    body = (ROOT / "scripts" / "batch_build.py").read_text(encoding="utf-8")
+    assert "freeze_labels(" in body, (
+        "`scripts/batch_build.py` が `ab_split.freeze_labels()` を呼んでいません。"
+        "**焼き直す口が無いと、新しい本は凍結の外に落ちます**")
+
+
 def test_名札を上書きしないこと(tmp_path, monkeypatch):
     """**開いている実験の名札が動いたら、群を作り直したのと同じ**です。"""
     monkeypatch.setattr(ab_split, "ROOT", tmp_path)
