@@ -148,3 +148,74 @@ def test_the_escape_hatch_works(monkeypatch):
     assert history._cached_topics() == {"s-a"}
     monkeypatch.setenv("YT_NO_SCAN_CACHE", "1")
     assert history._cached_topics() is None
+
+
+# ---------------------------------------------------------------------------
+# **控えは、作業コピーごとではなく機械にひとつ**（2026-08-28 に実測して移した）
+#
+# 足した回の見積りは「窓ごとに1回 ＝ 17単位。残してある 400単位 は保つ」でした。
+# ところが `config.ROOT` は**作業コピーの根**で、控えは `.gitignore` にあるので
+# 配られません。実測 2026-08-28: この機械の作業コピー **48個**・
+# 直近24時間に走ったもの **30個** → 30 × 17 ＝ **510単位** ＞ 守っている 400単位。
+# **門の大きさが「作業コピー1つ」で測られ、守っている枠は
+# Google のプロジェクトにひとつ**でした（`upload_cap.RESERVE_UNITS` ⑦ と同じ形）。
+# ---------------------------------------------------------------------------
+
+
+def test_worktrees_share_one_cache(tmp_path, monkeypatch):
+    """**別々の作業コピーが、同じ1つの控えを指すこと。**
+
+    落ちたら、控えは作業コピーの数だけ増えます（＝ `_scan` も同じ数だけ走る）。
+    """
+    common = tmp_path / ".git"
+    (common / "worktrees" / "w1").mkdir(parents=True)
+    (common / "worktrees" / "w2").mkdir(parents=True)
+
+    seen = []
+    for name in ("w1", "w2"):
+        tree = tmp_path / name
+        tree.mkdir()
+        (tree / ".git").write_text(f"gitdir: {common / 'worktrees' / name}\n")
+        monkeypatch.setattr(history, "_REPO", tree)
+        assert history._git_common_dir() == common
+        monkeypatch.setattr(history.config, "ROOT", tree)
+        monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
+        monkeypatch.setattr(history, "_shared_cache_path", None)
+        seen.append(history._scan_cache_path())
+
+    assert seen[0] == seen[1], f"作業コピーごとに別の控えを指しています: {seen}"
+    assert seen[0].parent == common, "共通の `.git` の中に置くこと（git に載せない）"
+
+
+def test_the_main_worktree_and_a_worktree_agree(tmp_path, monkeypatch):
+    """本体（`.git` が**ディレクトリ**）も、同じ場所を指すこと。"""
+    common = tmp_path / ".git"
+    (common / "worktrees" / "w1").mkdir(parents=True)
+    monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
+
+    monkeypatch.setattr(history, "_REPO", tmp_path)
+    monkeypatch.setattr(history.config, "ROOT", tmp_path)
+    monkeypatch.setattr(history, "_shared_cache_path", None)
+    main = history._scan_cache_path()
+
+    tree = tmp_path / "w1"
+    tree.mkdir()
+    (tree / ".git").write_text(f"gitdir: {common / 'worktrees' / 'w1'}\n")
+    monkeypatch.setattr(history, "_REPO", tree)
+    monkeypatch.setattr(history.config, "ROOT", tree)
+    monkeypatch.setattr(history, "_shared_cache_path", None)
+
+    assert history._scan_cache_path() == main
+
+
+def test_tests_never_touch_the_shared_cache(monkeypatch):
+    """**検査は本物の `.git` に書かないこと**（`upload_cap._write_path` と同じ理屈）。
+
+    `config.ROOT` を差し替えていない検査でも、`PYTEST_CURRENT_TEST` の側で
+    作業コピーへ落ちます。落ちたら、`pytest` 1回ごとに本物の控えが偽の
+    テーマ集合で塗り替わり、**その窓じゅう投稿するテーマが選べなくなります。**
+    """
+    monkeypatch.setattr(history.config, "ROOT", history._REPO)
+    monkeypatch.setenv("PYTEST_CURRENT_TEST", "x")
+    monkeypatch.setattr(history, "_shared_cache_path", None)
+    assert history._scan_cache_path() == history._REPO / history._SCAN_CACHE
