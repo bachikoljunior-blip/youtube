@@ -7,12 +7,15 @@
 """
 from __future__ import annotations
 
+import json
+import os
 import re
+from datetime import datetime, timezone
 
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 
-from . import auth
+from . import auth, config
 from .auth import credentials
 
 MARKER = "[t:{}]"
@@ -152,6 +155,28 @@ def channel_video_ids(youtube, uploads: str, cap: int = 400) -> list[str]:
         auth.note_day_quota(exc, "search.list forMine")
         print(f"[history] 予約中の動画を search で拾えませんでした（続行）: {exc}")
 
+    # **上限に当たった回は、黙って古いほうを捨てています**（2026-08-28 に測って足した）。
+    #
+    # `cap` は 400 で、uploads プレイリストは**新しい順**です。チャンネルが
+    # 400本 を超えた日から、`_scan` は**いちばん古い側を1本も見ていません。**
+    # 実測（`data/uploaded.jsonl` の distinct video_id）:
+    #
+    #     チャンネルの本数            **608本**
+    #     `cap=400` で見えない本      **208本**
+    #     そのせいで「未投稿」に見えるテーマ  **188件**
+    #     400本 を超えた日            **2026-08-19**（＝9日 前から効いていた）
+    #
+    # **落ちてもいないのに欠ける**ので、`partial` は False のままでした ——
+    # 下の「控えで埋める」も、`HttpError` を捕まえる3か所も、**どれも当たりません。**
+    # 印字も `チャンネルの動画 400本` で、**満杯なのか丁度なのか区別が付きません。**
+    #
+    # ここでは**言うだけ**にします（切るのは呼ぶ側の判断）。埋めるのは `_scan` の
+    # 末尾で、そちらを**無条件**にしました（同じ回。理由はそこの註）。
+    if len(ids) >= cap:
+        print(f"[history] [!] **上限 {cap}本 で切りました**（チャンネルはこれより多い）。"
+              "**古い側は見えていません** —— 投稿済みの復元は"
+              "`_scan` の末尾で控え（`data/uploaded.jsonl`）と和を取ります")
+
     return ids
 
 
@@ -184,7 +209,120 @@ def _only_ledger(want_map: bool, why: str):
     return extra if want_map else set(extra)
 
 
+#: **チャンネルの読みを、日枠の窓ごとに1回だけにする控え**（2026-08-28）。
+#:
+#: ## なぜ要るか —— **これが無いと `RESERVE_UNITS` が窓を越えられません**
+#:
+#: `src/upload_cap.py` は今朝、計測のぶんに **400単位** を残す門を足しました。
+#: 残している相手は「**前提を閉じる読み**」で、`eta.py` が毎回
+#: 「軌跡の腕が動くのは前提を1件 閉じたときだけ」と言う、その唯一の操作です。
+#:
+#: **ところが `_scan` 1回は 17単位 です**（`cap=400` のとき ——
+#: `channels.list` 1 ＋ `playlistItems.list` 8ページ ＋ `videos.list` 8束。
+#: `search.list`（100単位）は `len(ids) >= cap` で回りません）。
+#: そして実測 `data/day_quota.jsonl` の窓 08/27 で、`_scan` は
+#: **1時間あたり 15回** 呼ばれています（403 の側で数えた ＝ 下限）。
+#:
+#:     15回/時 × 17単位 ＝ **255単位/時**
+#:     残してある 400単位 ÷ 255 ＝ **1.6時間**
+#:
+#: 窓は 23時間 あります。**残した 400単位 は、窓が開いて 2時間 で消えます。**
+#: 今夜の例で言うと: 窓は 08/28 16:00 JST に開き、`config/hypotheses.yaml` の
+#: 08-28 の前提が要る読み（`snapshot.py` ＝ **4単位**）は **22:00 JST**。
+#: **18:00 には残りがありません。** これで前提が閉じないのは
+#: 08/27 夕・08/28 未明に続いて **3回目**になります。
+#:
+#: ## なぜ控えてよいか
+#:
+#: `_scan` の答えが窓の途中で変わるのは、**この機械が投稿したとき**だけです
+#: （動画を消す道は1本もない ——`docs/FOR_OWNER.md` 済み3）。
+#: そして投稿した本は、その場で `data/uploaded.jsonl` に書かれ、
+#: `_scan` の末尾で**無条件に和を取ります**（同じ回に直した。上の註）。
+#: **だから「窓の頭のチャンネル ∪ いまの控え」は、いま読み直した答えと同じです。**
+#:
+#: ## `want_map=False`（`posted_topic_ids`）だけに掛けます
+#:
+#: 写像（`topic_video_map`）は「テーマ→**どの動画**」なので、
+#: 撮り直しがあると古い動画IDを返しえます。集合の和は順番を持たないので
+#: その問題がありません。**呼ぶ回数が多いのも集合の側**です
+#: （`batch_build` / `pipeline` / `preflight` / `bars` / `analytics`。
+#: 写像を使うのは `critique_record` だけ）。
+#:
+#: ## 覆る条件
+#:
+#: - 動画を消す道ができたら（`videos().delete` か private 落とし）、
+#:   控えは「もう無い本」を投稿済みと言い続けます
+#: - `_scan` の呼び出しが窓あたり数回まで落ちたら、この控えは要りません
+#: - **`YT_NO_SCAN_CACHE=1` で外せます**（外した回は理由を JOURNAL に）
+_SCAN_CACHE = "data/scan_topics.json"
+
+
+def _scan_window() -> str:
+    """いまの日枠の窓の頭（文字列）。読めなければ空 ＝ 控えを使わない。"""
+    try:
+        from . import upload_cap
+
+        return upload_cap.window_start().isoformat()
+    except Exception:                                          # noqa: BLE001
+        return ""
+
+
+def _cached_topics() -> set[str] | None:
+    """この窓のチャンネルの読み。無ければ None。**API 0単位。**"""
+    if os.environ.get("YT_NO_SCAN_CACHE"):
+        return None
+    window = _scan_window()
+    if not window:
+        return None
+    try:
+        rec = json.loads((config.ROOT / _SCAN_CACHE).read_text(encoding="utf-8"))
+    except Exception:                                          # noqa: BLE001
+        return None
+    if rec.get("window") != window:
+        return None
+    topics = rec.get("topics")
+    return set(topics) if isinstance(topics, list) else None
+
+
+def _put_cached_topics(topics: set[str], video_ids: int) -> None:
+    """**欠けた回は書かないこと**（呼ぶ側が `partial` を見ています）。"""
+    window = _scan_window()
+    if not window or os.environ.get("YT_NO_SCAN_CACHE"):
+        return
+    try:
+        (config.ROOT / _SCAN_CACHE).write_text(
+            json.dumps({"window": window, "at": datetime.now(timezone.utc).isoformat(),
+                        "videos": video_ids, "topics": sorted(topics)},
+                       ensure_ascii=False), encoding="utf-8")
+    except OSError as exc:
+        print(f"[history] 読みの控えを書けませんでした（続行）: {str(exc)[:80]}")
+
+
+def _with_ledger(found: set[str]) -> set[str]:
+    """チャンネルの答えに、手元の控えを足す。**足し算だけ**（引かない）。"""
+    try:
+        extra = ledger_topics()
+    except Exception as exc:                                  # noqa: BLE001
+        print(f"[history] 控えを読めませんでした（続行）: {str(exc)[:80]}")
+        return found
+    new = set(extra) - found
+    if new:
+        print(f"[history] 控えから {len(new)}件のテーマを足しました"
+              "（チャンネルの読みと**和**を取ります。二重に作らないため）")
+    return found | set(extra)
+
+
 def _scan(want_map: bool):
+    if not want_map:
+        cached = _cached_topics()
+        if cached is not None:
+            out = _with_ledger(cached)
+            print(f"[history] この窓のチャンネルの読みを再利用しました"
+                  f"（投稿済みテーマ {len(out)}件・**API 0単位**）。"
+                  " 窓ごとに1回だけ読みます（`_SCAN_CACHE` の註）。"
+                  " 読み直すなら `YT_NO_SCAN_CACHE=1`")
+            return out
+
     youtube = build("youtube", "v3", credentials=credentials(), cache_discovery=False)
     try:
         channels = youtube.channels().list(part="contentDetails", mine=True).execute()
@@ -233,24 +371,75 @@ def _scan(want_map: bool):
     # （`channel_video_ids` の「何が起きたか」が、まさにその事故の記録）。
     #
     # 控え（`data/uploaded.jsonl`）は**自分が上げたときに書いた行**なので、
-    # 外の口の都合では欠けません。**CLAUDE.md の「ファイルに持たない」は
-    # 変えていません** —— 健全な回はこれまでどおりチャンネルから復元し、
-    # ここが効くのは**口が欠けた回だけ**です（`src/dupes.py` と同じ切り分け）。
-    if partial or not video_ids:
-        try:
-            extra = ledger_topics()
-            new = set(extra) - found
-            if new:
-                print(f"[history] 控えから {len(new)}件のテーマを足しました"
-                      "（口が欠けた回だけ。二重に作らないため）")
-            found.update(extra)
-            for topic_id, video_id in extra.items():
-                mapping.setdefault(topic_id, video_id)
-        except Exception as exc:                              # noqa: BLE001
-            print(f"[history] 控えを読めませんでした（続行）: {str(exc)[:80]}")
+    # 外の口の都合では欠けません。
+    #
+    # ## ここは `if partial or not video_ids:` でした（2026-08-28 に外した）
+    #
+    # 「効くのは口が欠けた回だけ」と書いてありました。**欠け方を1種類しか
+    # 数えていません** —— `partial` が True になるのは `videos.list` が
+    # `HttpError` を投げた回だけで、**`channel_video_ids` の `cap=400` で
+    # 切られた回は、例外が1つも出ないので False のまま**です。
+    #
+    # 実測 2026-08-28（`data/uploaded.jsonl`・API 0単位）:
+    #
+    #     チャンネルの本数                    **608本**
+    #     `cap=400` で見えない本              **208本**
+    #     「未投稿」に見えるテーマ            **188件**
+    #     こうなった日                        **2026-08-19**
+    #
+    # **9日 間、`posted_topic_ids()` は 188件 を「未投稿」と答えていました。**
+    # 静かに壊れる先は3つあり、どれも門に直接 掛かります:
+    #
+    #   `src/bars.py:_alive()`      `published_charts()` が、見えない 188件 の
+    #                               図を「チャンネルから消えた」として落とす
+    #                               → **同じ絵を出さない**という守りが、
+    #                                 いちばん新しい 400本 としか比べていない。
+    #                                 CLAUDE.md の根幹（「同じ絵を続けないこと」）が
+    #                                 効かないのは、**収益化の対象外**の側です
+    #   `scripts/preflight.py`      「未投稿テーマ N件」が最大 188件 多く出る。
+    #                               あそこの註は「**分からないをたくさんあると
+    #                               書かないこと**」と書いていますが、
+    #                               守っているのは例外の道だけでした
+    #   `src/analytics.py:optimize` `unused >= 12` なら題を足さずに帰ります。
+    #                               在庫が本当に 0 でも「12件 ある」と見えます
+    #                               （実測 08/28 の `src.supply`: 長尺の在庫 **0本**）
+    #
+    # `scripts/batch_build.py:_posted_including_ledger()` は 2026-08-16 から
+    # **まさにこの和**を取っており、そこには「混ぜない費用は実測で生成の 25%」
+    # と書いてあります。**同じ事実を2か所が持っていて、片方だけが直っていた**形です
+    # （この repo が繰り返している壊れ方）。**こちらへ寄せます。**
+    #
+    # **CLAUDE.md の「ファイルに持たない」は変えていません** —— 正本はチャンネルで、
+    # 控えは**引き算ではなく足し算**にしか使っていません（`update` と `setdefault`）。
+    # 控えが嘘になるのは動画を消したときだけで、**消す道が1本もありません**
+    # （`docs/FOR_OWNER.md` 済み3。`_posted_including_ledger` の docstring に同じ議論）。
+    #
+    # **覆る条件**: 動画を消す道ができたら（`videos().delete` か private 落とし）、
+    # 控えは「もう無い本」を投稿済みと言い続けます。そのときは
+    # `_alive()` の側だけチャンネル単独に戻すこと（`pick` の側は戻さない ——
+    # 二重に作るほうが高い）。**`tests/test_history_partial.py` の
+    # `test_cap_truncation_is_filled_from_the_ledger` が、外したら落ちます。**
+    #
+    # **控えるのは、チャンネルから来たぶんだけ**（`found`。和を取る前）。
+    # 和のほうを控えると、控えが控えを食べて、チャンネルの答えが
+    # どれだったか二度と分からなくなります。
+    if not partial:
+        _put_cached_topics(found, len(video_ids))
 
+    found = _with_ledger(found)
+    try:
+        for topic_id, video_id in ledger_topics().items():
+            mapping.setdefault(topic_id, video_id)
+    except Exception as exc:                                  # noqa: BLE001
+        print(f"[history] 控えを写像に足せませんでした（続行）: {str(exc)[:80]}")
+
+    # **欠けた回かどうかを、印字に出すこと。** 上の `cap` の註のとおり、
+    # 「チャンネルの動画 400本」だけでは満杯なのか丁度なのか読めません。
+    note = "（説明欄の読みが途中で落ちた回）" if partial else ""
     if want_map:
-        print(f"[history] チャンネルの動画 {len(video_ids)}本 / テーマ→動画 {len(mapping)}件")
+        print(f"[history] チャンネルの動画 {len(video_ids)}本 "
+              f"/ テーマ→動画 {len(mapping)}件{note}")
         return mapping
-    print(f"[history] チャンネルの動画 {len(video_ids)}本 / 投稿済みテーマ {len(found)}件")
+    print(f"[history] チャンネルの動画 {len(video_ids)}本 "
+          f"/ 投稿済みテーマ {len(found)}件{note}")
     return found

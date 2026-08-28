@@ -62,7 +62,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from src import arm_speed, day_cap, levers, motion_groups, rpm_mix, settle  # noqa: E402  （`sys.path` を通した後でないと読めません）
+from src import arm_speed, day_cap, levers, motion_groups, rpm_mix, settle, subs_cap  # noqa: E402  （`sys.path` を通した後でないと読めません）
 
 LOG = ROOT / "data" / "eta.jsonl"
 
@@ -1795,12 +1795,19 @@ def physical_caps(a0: dict, density: float = PLAN_PUBLISH_PER_DAY,
 
         density    `UPLOAD_CAP_PER_DAY`（92本/日・**実測**）÷ いまの密度
         rpm        `RPM_SCENARIOS` の最大（**推測の幅の上端**）÷ いま立てている帯
-        sub_rate   登録率 100%（**定義上の上限**。測った天井ではありません）
+        sub_rate   `src/subs_cap.py`（**1本あたり登録率の実測の最大**）。
+                   測れない回だけ 登録率 100%（**定義上の上限**）へ落ちます
         per_video  ここでは付けません（`config/hypotheses.yaml` の `ceiling` が実測で持っています）
 
-    **`rpm` と `sub_rate` は実測の天井ではありません。** どちらも
-    「これ以上は誰も主張していない」という線で、**測れば動きます**
-    （`sub_rate` の実測は仮説「長尺の登録率はショートより1桁以上高い」・期限 2026-09-15）。
+    **`rpm` は実測の天井ではありません。**
+    「これ以上は誰も主張していない」という線で、**測れば動きます**。
+
+    **`sub_rate` は 2026-08-28 に実測へ替えました。** それまでは
+    「登録率 100%」だけで、天井が **×3,153.91** と出ていました ——
+    同じ日の軌跡は 56日目に `sub_rate` ×10.36 を歩いており、
+    **その倍率が実在の幅の中かを誰も確かめられない**形です（100% は
+    どんな倍率も下に入れます）。`per_video` の天井は実測の最大なので、
+    **同じ物差しを当てます**: 実測 0.2066% ÷ いま 0.0317% ＝ **×6.5**。
     """
     caps: dict[str, dict] = {}
     # **分母は「天井が立っている密度」**（`sustained_density`）。
@@ -1975,6 +1982,31 @@ def physical_caps(a0: dict, density: float = PLAN_PUBLISH_PER_DAY,
         caps["sub_rate"] = {"factor": 1.0 / sr,
                             "why": "登録率 100%（定義上の上限）",
                             "measured": False}
+        # **測れた回は、定義の上限ではなく実測の最大を採る**（2026-08-28）。
+        #     ここは長らく「登録率 100%」だけで、`sub_rate` の天井が
+        #     **×3,153.91** と出ていました。同じ日の軌跡は 56日目に
+        #     `sub_rate` ×10.36 を歩いており、**その倍率が実在の幅の中かを
+        #     誰も確かめられない**（100% はどんな倍率も下に入れてしまう）。
+        #     `per_video` の天井は実測の最大（1本あたり再生 1,891回）なので、
+        #     **同じ物差しを登録率にも当てます**（`src/subs_cap.py`）。
+        #     実測 2026-08-28: 最大 0.2066%（`CdX2oIb7BG8` 1,452再生 3人）
+        #     ÷ いま 0.0317% ＝ **×6.5**。門に要るのは ×2.08 なので、
+        #     **これは「届かない」ではありません** —— 要る倍率と実在の幅を、
+        #     同じ物差しで並べられるようにしただけです。
+        best = subs_cap.best_per_video()
+        if best and best.get("rate", 0) > 0:
+            f = best["rate"] / sr
+            if f < caps["sub_rate"]["factor"]:
+                over = f < 1.0
+                caps["sub_rate"] = {
+                    # **1 を下回るのは「引き代がマイナス」ではありません** ——
+                    #     いまの登録率が、実測の最大より上にある（＝ 引き代なし）。
+                    #     `density` と同じ扱いで、超えていること自体は `why` に残します。
+                    "factor": max(1.0, f),
+                    "why": (subs_cap.why(best)
+                            + ("。**いまの登録率が実測の最大を超えています ＝ 引き代なし**"
+                               if over else "")),
+                    "measured": True}
     return caps
 
 
@@ -4462,6 +4494,25 @@ def _report_trajectory(tr: dict, pl: dict) -> list[str]:
           + " ／ ".join(f"`{k}` ×{v:,.2f}" for k, v in (base["factors"] or {}).items())
           + f"）、そこから {base['plan_days']:,.0f}日 で届く")
         P(f"     そのとき縛っているのは **{base['binding']}**")
+        # **軌跡が実際に歩いた腕の天井が、測った数かどうかをここで言う**（2026-08-28）。
+        #     下の `_report_trajectory` の末尾には同じ趣旨の `[!]` が既にありますが、
+        #     見ているのは **`choice` の1位（＝この回に振る腕）だけ**です。
+        #     `sub_rate` は「全部振っても出ません」なので1位に**なりません** ——
+        #     ところが軌跡はその腕を **×10.36** まで歩いていました
+        #     （天井が「登録率 100%」＝ ×3,153.91 だったので、何倍でも下に入る）。
+        #     **1位でない腕は、誰も測っていないまま日付を押していた**わけです。
+        #     だから見る対象を「振る腕」から**「実際に歩いた腕」**に変えます。
+        #     2026-08-28 に `sub_rate` を実測へ替えて 4本とも measured になりましたが、
+        #     **同じ形は次の腕を足したときに必ず戻ります**（`physical_caps` の
+        #     既定は「定義上の上限」に落ちる形なので、静かに再発します）。
+        for _k, _v in sorted((base["factors"] or {}).items(),
+                             key=lambda kv: -kv[1]):
+            _a = (tr["arms"] or {}).get(_k) or {}
+            if _v > 1.05 and _a.get("cap") and not _a.get("cap_measured"):
+                P(f"     [!] **この内訳の `{_k}` ×{_v:,.2f} は、測っていない天井の上を歩いています**"
+                  f"（天井 ×{_a['cap']:,.2f} …… {_a.get('cap_why', '出どころなし')}）。"
+                  " **上の日付は、その倍率が実在するという前提の上に乗っています** ——"
+                  "測れば動きます（`per_video` の天井は実測の最大です。同じ物差しを当てること）")
     else:
         P("  → **軌跡でも到達日が出ません。** 塞いでいるのは次のものです:")
         for why in base["blocking"]:
