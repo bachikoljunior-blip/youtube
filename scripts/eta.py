@@ -4109,8 +4109,15 @@ def headline(pl: dict, prev: dict | None = None,
     out.extend(_planned_lines(bar, tr, base))
     # **天井の齢を、天井を名指しした行のすぐ隣に置く**（2026-08-28）。
     #   しきい値は置きません —— 理由は `instrument_ages()` の註。
-    if base is None:
-        out.extend(instrument_ages())
+    #
+    #   **`base` で分けないこと**（同じ日に踏んで直した）。足したときは
+    #   `if base is None` で括っていました —— 「据え置いた線の側に二重に
+    #   出さない」つもりでしたが、**`base` が None なのは軌跡が解けなかった
+    #   回だけ**です。ふだんは軌跡が解けるので `base` は埋まっており、
+    #   **この行は一度も出ませんでした**（実測: `eta.py` の出力に1行も無し）。
+    #   `headline()` は頭と末尾で2回 呼ばれますが、**同じ引数の同じ塊**なので、
+    #   分ける理由はそもそもありません。
+    out.extend(instrument_ages())
     top = next((r for r in (tr or {}).get("choice", []) if r["reachable"]), None)
     if top is not None:
         gain = (base["days"] - top["days"]) if base and base["days"] < NEVER else None

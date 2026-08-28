@@ -82,12 +82,42 @@ def test_しきい値で黙らない(monkeypatch):
     assert eta.instrument_ages(), "**追いついている日に黙ると、天井の齢が見えなくなります**"
 
 
-def test_headlineが齢を連れてくる():
-    """**入口はこちら。** 3行を組む側が `instrument_ages()` を呼んでいること。"""
-    src = (ROOT / "scripts" / "eta.py").read_text(encoding="utf-8")
-    body = src.split("def headline(", 1)[1]
-    assert "instrument_ages()" in body, \
-        "**齢が、毎回読む3行の側に降りていません**（読まれない場所に置くと、08/24 に戻ります）"
+def _plan(**over):
+    pl = {"target_date": None, "days_to_target": None,
+          "binding": "再生数が天井に当たっている", "lever_hint": "per_video",
+          "lever_hint_binding": "per_video", "lever_from": "軌跡",
+          "lever_hint_covered": None}
+    pl.update(over)
+    return pl
+
+
+def test_headlineが齢を実際に描く():
+    """**源を grep するだけにしないこと。**（2026-08-28 に、これで1件 逃しました）
+
+    最初の版はこの検査を「`eta.py` の `headline` の本文に
+    `instrument_ages()` という字が在るか」で書いていました。**通りました。**
+    ところが呼び出しが `if base is None:` で括られていて、**`base` が None なのは
+    軌跡が解けなかった回だけ** —— ふだんは埋まっているので、
+    **実際の出力には1行も出ていませんでした。**
+    **字が在ることと、描かれることは別です。** だから描かせて見ます。
+    """
+    for base in (None, {"days": 999.0, "date": None, "binding": "門", "blocking": []}):
+        tr = {"choice": [], "arms": {}}
+        if base is not None:
+            tr["base"] = base
+        lines = eta.headline(_plan(), None, tr)
+        joined = "\n".join(lines)
+        assert "控えの齢" in joined, (
+            "**齢が、毎回読む3行の側に描かれていません**"
+            f"（base={base!r} の枝。読まれない場所に置くと、08/24 に戻ります）")
+
+
+def test_齢は軌跡が解けた回にも出る():
+    """**`base` で分けないこと。** 分けた版は、ふだんの回で黙っていました。"""
+    lines = eta.headline(_plan(), None,
+                         {"choice": [], "arms": {},
+                          "base": {"days": 999.0, "date": None, "binding": "門", "blocking": []}})
+    assert any("控えの齢" in ln for ln in lines)
 
 
 def test_控えが壊れていてもetaを落とさない(monkeypatch, tmp_path):
