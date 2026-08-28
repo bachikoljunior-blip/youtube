@@ -146,6 +146,19 @@ def main(argv: list[str] | None = None) -> int:
             print(f"  {it['id']}  {sn['title'][:30]}  → {url}")
             if args.dry_run:
                 continue
+            # **輪の中でも訊くこと**（2026-08-28 の2周目に直した）。
+            # 門は輪の**手前**に1回だけ置いてありました。ここは1回で
+            # 何十本も書く口なので、**通ったあとに残りを全部 焼けます** ——
+            # 門が読む `spent` は、この輪が自分で増やしている数です。
+            # **1回だけ訊く門は、増えていく数に対しては門になりません。**
+            from src import upload_cap as _cap0         # noqa: PLC0415
+            _hold = _cap0.reserve_hold()
+            if _hold:
+                print(f"  {_hold}")
+                print(f"  **ここで止めます**（入れた {done}件）。"
+                      " 導線は消えないので、窓が変わった回に同じ1行で続けられます。")
+                print(f"\n入れた {done}件 / すでに入っていた {skipped}件")
+                return 1
             sn["description"] = new
             y.videos().update(part="snippet", body={
                 "id": it["id"], "snippet": sn}).execute()

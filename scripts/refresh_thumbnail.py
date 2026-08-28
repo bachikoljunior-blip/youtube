@@ -232,6 +232,17 @@ def push_missing(dry_run: bool = False, force: bool = False,
     y = build("youtube", "v3", credentials=credentials(), cache_discovery=False)
     ok = 0
     for row in rows:
+        # **輪の中でも訊くこと**（2026-08-28 の2周目に直した）。
+        # 上の門は輪の**手前**に1回だけです。ここは1回で何十本も押す口なので、
+        # 一度 通ると残りを全部 焼けます —— 門が読む `spent` は、
+        # **この輪が自分で増やしている数**です。
+        # **1回だけ訊く門は、増えていく数に対しては門になりません。**
+        hold_now = upload_cap.reserve_hold()
+        if hold_now:
+            print(f"[thumb] {hold_now}")
+            print(f"[thumb] **ここで止めます**（押せた {ok}本）。"
+                  " 控えは消えないので、窓が変わった回に同じ1行で続けられます。")
+            break
         try:
             y.thumbnails().set(
                 videoId=row["video_id"],

@@ -360,6 +360,20 @@ def _set_thumbnail(youtube, video_id: str, path: Path, tries: int = 4) -> bool:
               "窓が変わった回に `refresh_thumbnail.py --missing` で押せます。")
         return False
     for attempt in range(1, tries + 1):
+        # **輪の中でも訊くこと**（2026-08-28 の2周目）。
+        #
+        # ここは同じ1本の撃ち直しなので、**単位の上では手前の1回で足ります**
+        # （403 は単位を使わず、通れば下で `return` します）。
+        # それでも入れるのは、**規則を単純に保つため**です ——
+        # 「輪の中で書くなら、輪の中で訊く」。
+        # 例外を1つ許すと、次に来た側は**自分の輪もその例外だ**と読みます。
+        # 費用は 19ms／回（実測）で、`thumbnails.set` 1回よりずっと安い。
+        # `tests/test_loop_write_gate.py` が、この規則の側を見ています。
+        if attempt > 1 and _cap.reserve_hold():
+            print("[upload] **撃ち直しません**（枠は計測のぶんを残して止めています）。"
+                  " 控えに bytes は残るので、窓が変わった回に"
+                  " `refresh_thumbnail.py --missing` で押せます。")
+            return False
         try:
             youtube.thumbnails().set(
                 videoId=video_id, media_body=MediaFileUpload(str(path))
