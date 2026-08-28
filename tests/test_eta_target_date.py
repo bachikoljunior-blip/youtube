@@ -229,7 +229,11 @@ def test_到達予測は出力の最初と最後に出る():
     assert "到達予測" in text
     assert "引く腕" in text
     src = (ROOT / "scripts" / "eta.py").read_text(encoding="utf-8")
-    assert src.count("for line in headline(pl, prev, tr):") == 2, (
+    # **閉じ括弧まで当てないこと**（2026-08-29 に3件 まとめて赤くなった）。
+    # `headline()` に引数を1つ足すだけで、この検査は落ちます —— 落ちても
+    # 「頭と尾で2回 呼んでいるか」は1文字も変わっていません。**守りたいのは
+    # 呼ぶ回数と場所であって、引数の並びではない。**
+    assert src.count("for line in headline(pl, prev, tr") == 2, (
         "`headline` は最初と最後の2回出すこと（片方だけになっています）"
     )
 

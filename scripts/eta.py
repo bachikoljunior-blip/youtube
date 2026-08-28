@@ -3948,6 +3948,240 @@ def _points(*, reflect: bool = False, offline: bool = False) -> list[dict]:
     return out
 
 
+#: **累計の窓（日）。`scripts/drift.py` の窓と同じにしてあります** ——
+#: 別々にすると「343 ship で +33日 遠のいた」を並べて読めません。
+TREND_DAYS = 7
+
+
+def ships_in_window(days: int = TREND_DAYS, *, now: datetime | None = None) -> int:
+    """`data/runs.jsonl` の ship を、直近 `days` 日ぶん数える。**落ちないこと。**
+
+    数そのものが要るのではなく、**「これだけ撃って、日付はこれだけ動いた」**の
+    右辺を出すために在ります。読めなければ 0 を返して黙ります
+    （予測を、記録の欠けで止めないこと）。
+    """
+    path = ROOT / "data" / "runs.jsonl"
+    if not path.exists():
+        return 0
+    cut = (now or datetime.now(timezone.utc)) - timedelta(days=days)
+    n = 0
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return 0
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if row.get("kind") != "ship":
+            continue
+        at = str(row.get("at") or "")
+        try:
+            when = datetime.fromisoformat(at)
+        except ValueError:
+            continue
+        if when.tzinfo is None:
+            when = when.replace(tzinfo=timezone.utc)
+        if when >= cut:
+            n += 1
+    return n
+
+
+def traj_trend(points: list[dict], cur_date: date | None,
+               *, days: int = TREND_DAYS,
+               now: datetime | None = None) -> dict | None:
+    """**この `days` 日で、到達日は正味どちらへ動いたか。**
+
+    ## なぜ要るか（2026-08-29 04:0x・最適化の回の実測）
+
+    `headline()` は「**前の回の予測 → ±N日**」しか出しません。**1歩ぶん**です。
+    実測 2026-08-28 の回は **+3日**。読んだ回は誤差として通します。
+
+    **同じ台帳（`data/eta.jsonl`）を 7日 ぶん足すと、こうなっていました**::
+
+        08/21 の最後の点  2026-12-10（残り 111日）
+        08/28 の最後の点  2027-01-12（残り 136日）
+        → **+33日 遠のいた**（残りの距離は **+25日**）
+
+    そのあいだに **147周・343 ship**（`scripts/drift.py` の同じ窓）。
+    **1周ごとの ±N日 では、この向きは1度も見えません** ——
+    9日ぶんの点を1つずつ見ても、日ごとの差は −9〜+15日 の振れにしか見えないからです。
+
+    ## 何を並べるか（**「遠のいた」だけを出さない**）
+
+    `CLAUDE.md` は「**裸の『届きません』を出さないこと**」と書いています。
+    向きだけ出して理由を出さないのは、その最小版の違反です。だから
+    **同じ行に、天井の分子と分母を並べます**（下の `headline()` が組みます）。
+
+    実測 2026-08-21 → 08-28::
+
+        月の再生 `views_28d`                33,405 → 69,386   **+108%**
+        分母 `videos_with_views_28d`            29 → 126      **+334%**
+        比  `per_video_now`                    982 → 550      **−44%**
+        天井 `ceiling_views_month`           2.71e6 → 1.65e5
+
+    **再生は2倍 になったのに、比は 44% 落ちています。** 落ちたのは分母のほうです
+    （**齢で揃えていない**。公開した翌日の本も、分母には丸ごと1本 入ります）。
+    そして `ceiling_views_month` は **その比 × 上限10本/日 × 30日**（08/25 以降）なので、
+    **出すほど天井が下がり、`lever_hint` は `per_video` を指し続けます。**
+
+    ## 返り
+
+    `None`（比べられる点が無い・窓が短すぎる）か、
+    `{from_date, from_at, to_date, delta, span_days, n, was, now}`。
+    `was` / `now` は、その両端の点そのもの（呼ぶ側が中身を選ぶ）。
+
+    ## 覆る条件
+
+    - **物差しが変わった回は、この差に混ざります。** 08/24〜08/25 に
+      `ceiling_views_month` が 1.69e6 → 1.84e5 と 9倍 落ちたのは式の入れ替えで、
+      チャンネルは何も変わっていません。**だから `traj_date` どうしだけを比べ**、
+      入力の内訳は「％」で並べて、日付の差とは別の欄に出します
+    - `per_video_now` が**齢で揃った**推定に変わったら（`data/views.jsonl` の
+      齢 48〜120h の読み。`_members_by_*` と同じ揃え方）、上の「分母」の行は
+      要らなくなります。**そのときこの docstring の表ごと書き換えること**
+    """
+    if not points:
+        return None
+    rows = [r for r in points if r.get("traj_date") and r.get("at")]
+    if len(rows) < 2 or cur_date is None:
+        return None
+    rows.sort(key=lambda r: str(r["at"]))
+    cut = (now or datetime.now(timezone.utc)) - timedelta(days=days)
+    inside = []
+    for r in rows:
+        try:
+            when = datetime.fromisoformat(str(r["at"]))
+        except ValueError:
+            continue
+        if when.tzinfo is None:
+            when = when.replace(tzinfo=timezone.utc)
+        if when >= cut:
+            inside.append((when, r))
+    if len(inside) < 2:
+        return None
+    # **起点は「窓の中でいちばん古い1点」ではなく、その日の中央値**
+    # （2026-08-29 に測って変えた）。
+    #
+    # 1点だと、**同じ日の中の振れをそのまま起点にします。** 実測 08/21::
+    #
+    #     その日の点 9つ  2026-12-02 〜 2026-12-10（**同じ日で 8日 の幅**）
+    #     16:28 の1点     2026-12-28   ← 端を掴むと、累計が 18日 ずれる
+    #
+    # 中央値なら、掴む点が1つ ずれても累計はほとんど動きません。
+    # **「中央値どうし」であることを、印字にも出すこと**（下の `basis`）。
+    first_day = inside[0][0].date()
+    same_day = [(w, r) for w, r in inside if w.date() == first_day]
+    dates = []
+    for _, r in same_day:
+        try:
+            dates.append(date.fromisoformat(str(r["traj_date"])))
+        except ValueError:
+            continue
+    if not dates:
+        return None
+    dates.sort()
+    was = dates[len(dates) // 2]
+    first_at = same_day[len(same_day) // 2][0]
+    span = (inside[-1][0] - first_at).total_seconds() / 86400.0
+    # **1日 未満の窓から「7日の累計」と名乗らないこと**（`_project_nth` が
+    # 同じ穴で偽の伸び率を出していた —— この repo で通算13回目）。
+    if span < 1.0:
+        return None
+    spread = (dates[-1] - dates[0]).days
+    return {"from_date": was, "from_at": first_at, "to_date": cur_date,
+            "delta": (cur_date - was).days, "span_days": span,
+            "n": len(inside), "n_base": len(dates), "base_spread": spread,
+            "was": same_day[len(same_day) // 2][1], "now": inside[-1][1]}
+
+
+def _trend_why(tre: dict) -> str:
+    """累計の向きの**隣に置く理由**。**「遠のきました」を裸で出さないため**に在ります。
+
+    `CLAUDE.md` は「**裸の『届きません』を出さないこと**」「何を固定したせいで
+    そう出たのかを**同じ行に**並べること」と書いています。向きだけ出して
+    理由を出さないのは、その最小版の違反です。
+
+    ## 何を並べるか —— **天井の分子と分母**（2026-08-29 の実測でここに決めた）
+
+    軌跡が遠のく理由は原理的にいくつもありますが、**この台帳で実際に効いていたのは
+    1つ**でした。08/21 → 08/28 の点::
+
+        月の再生 `views_28d`                 33,405 → 69,386   **+108%**
+        分母 `videos_with_views_28d`             29 → 126      **+334%**
+        比  `per_video_now`（＝ 分子÷分母）      982 → 550      **−44%**
+
+    **再生は2倍 になったのに、比は 44% 落ちています。落ちたのは分母のほう**です。
+    `videos_with_views_28d` は**齢で揃っていません** —— 昨日 公開した本も、
+    28日 回った本と同じ「1本」として分母に入ります。だから**公開を増やすほど
+    比は下がります**。
+
+    そしてこの比は捨て置かれません。`ceiling_views_month`（08/25 以降）は
+
+        天井 = `per_video_now` × `view_cap_per_day`(10) × 30日
+
+    なので、**出すほど天井が下がり**、`lever_hint` は `per_video` を指し続け、
+    尾には「**どの帯でも届きません。いまの構成は、上限そのものが目標の下に
+    あります**」が出ます。**主実行が毎周やっていること（出す）が、
+    その回の採点を下げる形**です —— `src/arm_speed.forward()` の符号が
+    逆だったのと同じ形（`scripts/drift.py` の註・2026-08-27 の実測）。
+
+    ## なぜ比のほうを直さないのか（**この回は直しません**）
+
+    齢で揃えた推定に替えるのは、**入力の総取り替え**です。実測 2026-08-29 に
+    `data/views.jsonl` の齢 48〜120h の読みで公開日べつに出すと、標本は
+    **1日 1〜32本**でばらつき、中央値は **08/20〜08/22 に 3・2・5回**まで落ちます
+    （平均は 256・209・233）—— **上限10本/日 に当たった日は、大半の本が 0 に張り付く**
+    ので、中央値と平均が二桁ちがいます。**どちらを取るかで天井が桁で変わる**入力を、
+    確かめずに差し替えないこと。
+
+    **だからこの回は「見えるようにする」だけ**にしてあります。
+    直す側は、まず「齢を揃えた per_video の定義」を1件の前提として
+    `config/hypotheses.yaml` に立て、判定日を付けてから替えること。
+
+    ## 覆る条件
+
+    - `per_video_now` が齢を揃えた推定になったら、この関数の分母の行は
+      **意味を失います**（そのとき `tests/test_eta_trend_line.py` の
+      「分母を名指しする」検査を、新しい入力の名前へ書き換えること）
+    - `ceiling_views_month` が `per_video_now` を掛けなくなったら、
+      ここが名指ししている経路そのものが消えます
+    """
+    was, now = tre.get("was") or {}, tre.get("now") or {}
+
+    def pct(k: str) -> tuple[float, float, float] | None:
+        a, b = was.get(k), now.get(k)
+        try:
+            a, b = float(a), float(b)
+        except (TypeError, ValueError):
+            return None
+        if a <= 0 or b <= 0 or a > 1e8 or b > 1e8:
+            return None
+        return a, b, (b - a) / a * 100.0
+
+    v = pct("views_28d")
+    n = pct("videos_with_views_28d")
+    r = pct("per_video_now")
+    if not (v and n and r):
+        return ""
+    # **分子が増えたのに比が減った回だけ、名指しします。**
+    # 両方 減った回は、本当に世界が悪くなっています（そこは名指ししない）。
+    if not (v[2] > 0 and r[2] < 0):
+        return ""
+    return ("[!] **内訳: 月の再生 {vp:+.0f}%（{v0:,.0f}→{v1:,.0f}）**なのに "
+            "**1本あたり再生 {rp:+.0f}%（{r0:,.0f}→{r1:,.0f}）** —— "
+            "落ちたのは**分母**（`videos_with_views_28d` {np:+.0f}%・{n0:,.0f}→{n1:,.0f}・"
+            "**齢で揃っていません**）。天井 ＝ その比 × 上限{cap:,.0f}本/日 × 30 なので、"
+            "**出すほど天井が下がります**").format(
+        vp=v[2], v0=v[0], v1=v[1], rp=r[2], r0=r[0], r1=r[1],
+        np=n[2], n0=n[0], n1=n[1],
+        cap=float(now.get("view_cap_per_day") or 0))
+
+
 #: `flagged()` が尾に運ぶ本数の上限。**多いほど尾が読まれなくなる**ので、
 #: 増やす前に「頭と尾しか読まれない」という前提のほうを疑うこと。
 FLAG_LIMIT = 12
@@ -4117,7 +4351,8 @@ def instrument_ages(now: datetime | None = None) -> list[str]:
 
 
 def headline(pl: dict, prev: dict | None = None,
-             tr: dict | None = None) -> list[str]:
+             tr: dict | None = None,
+             points: list[dict] | None = None) -> list[str]:
     """**この回のいちばん最初と、いちばん最後に出す3行。**
 
     ## なぜ2回出すか（2026-08-20 08:0x・オーナー指示3回目）
@@ -4407,6 +4642,30 @@ def headline(pl: dict, prev: dict | None = None,
     elif prev_date and cur_date is None:
         out.append(f"{bar} 前の回は {prev_date.isoformat()} → **今回は日付が出ません**"
                    "（前提が変わったか、実測が落ちた）")
+    # **1歩ぶんの差だけを出さないこと**（2026-08-29・最適化の回）。
+    #
+    # すぐ上の行は「前の回 → いま」で、実測 2026-08-28 は **+3日**。
+    # **同じ台帳を 7日 足すと +33日** です（`traj_trend()` の docstring に実測）。
+    # 1周ごとの差は −9〜+15日 で振れるので、**向きは1歩では出ません。**
+    # そして頭と尾しか読まれない以上、ここに出さないと誰も足しません。
+    tre = traj_trend(points or [], cur_date if key == "traj_date" else None)
+    if tre and abs(tre["delta"]) >= 1:
+        d = tre["delta"]
+        mk = "**遠のきました**" if d > 0 else "**早まりました**"
+        ships = ships_in_window()
+        why = _trend_why(tre)
+        base = (f"（起点は {tre['from_at']:%m/%d} の**中央値**"
+                f"・その日 {tre.get('n_base', 0)}点"
+                + (f"・**同じ日の幅 {tre['base_spread']}日**"
+                   if tre.get("base_spread") else "")
+                + f"／窓の中 {tre['n']}点）")
+        out.append(
+            f"{bar} **{tre['span_days']:.0f}日の累計**: "
+            f"{tre['from_date'].isoformat()} → {tre['to_date'].isoformat()} = "
+            f"**{d:+d}日** {mk}"
+            + (f"（このあいだ ship **{ships}件**）" if ships else "")
+            + "。**1周ごとの ±N日 では、この向きは見えません** " + base
+            + (f"　{why}" if why else ""))
     # **物差しを取り替えた回は、その差を「遠のいた」と読ませない**（`_scale_note` と同じ形）。
     #     密度の入力が「1日25本という前提」から「作る速さの実測」に替わった回は、
     #     チャンネルは何も変わっていないのに日付が大きく動きます。
@@ -4419,7 +4678,19 @@ def headline(pl: dict, prev: dict | None = None,
 
     elif prev and prev.get(key) is None and cur_date:
         out.append(f"{bar} 前の回は日付が出ていませんでした → **道が開きました**")
-    else:
+    elif prev_date is None:
+        # **「前の点が無い」と言えるのは、本当に無いときだけ**（2026-08-29 に直した）。
+        #
+        # ここは長らく `else:` でした。上の `if` は
+        # 「**密度の入力が入れ替わった回か**」を訊いており、**前の点の有無とは
+        # 別の問い**です。だから前の点が在っても、入れ替えが無ければ `else` に落ち、
+        #
+        #     ### 前の回の予測 2027-01-09 → **+3日** **遠のきました**（軌跡どうし）
+        #     ### （比べられる前の点がまだありません）
+        #
+        # が**同じ枠に並んで**出ていました（実測 2026-08-28 の回。**頭と尾の両方**）。
+        # 読んだ回は、下の行を信じれば上の +3日 を捨てます。
+        # `docs/JOURNAL.md` 2026-08-28「**枠の2行が食い違っていないか**」の型そのもの。
         out.append(f"{bar} （比べられる前の点がまだありません）")
     out.append("=" * 66)
     return out
@@ -5994,7 +6265,7 @@ def main() -> int:
         said.append(str(line))
         print(line)
 
-    for line in headline(pl, prev, tr):
+    for line in headline(pl, prev, tr, points):
         say(line)
 
     for line in report(m, a):
@@ -6031,7 +6302,7 @@ def main() -> int:
     for line in _report_plan(m, a, pl):
         say(line)
     # **最後にもう一度、日付と腕。** 真ん中を読み飛ばしても、ここだけで決まる形にする。
-    for line in headline(pl, prev, tr):
+    for line in headline(pl, prev, tr, points):
         print(line)
     # **`[!]` を尾へ運ぶ**（2026-08-26・最適化の回）。日付は 08-20 に運びましたが、
     # **欠陥の名指しは真ん中に置いたまま**でした。実測: `[!]` 10本／頭にも尾にも 0本。
