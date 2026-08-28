@@ -66752,3 +66752,26 @@ surface を名乗らせること（`surface: short|long` の欄を足すのが�
 赤のまま渡すのは、次の回に「この赤は既知」を1つ覚えさせることです。
 **そして直せる形でした**（値を変えない機械的な控え）。**直せない形なら、
 プロファイルだけ置いて渡すつもりでした** —— そちらのほうが安全なので。
+
+### 申し送り（追記）—— **`RESERVE_UNITS = 400` を、次の窓で測り直すこと**
+
+400 は「`snapshot.py` 1回 ＝ 4単位」から引いた数です（`src/upload_cap.py`）。
+**その見積もりには、`history._scan` が入っていません** ——
+窓 08/27 でこの呼び出しは **108回**（1回 ≒ 25単位）＝ **約2,700単位** の需要でした。
+**400 は、その 15%** です。
+
+②の直しで、この 108回 は **batch の1回 + 主実行の読み**まで落ちるはずです。
+**落ちたかどうかは、次の窓の `data/day_quota.jsonl` を `by` で割れば出ます**:
+
+    python - <<'PY'
+    import json, collections
+    from src import upload_cap as uc
+    rows=[json.loads(l) for l in open('data/day_quota.jsonl') if l.strip()]
+    w=uc.window_start(__import__('datetime').datetime.now(__import__('datetime').timezone.utc))
+    sel=[r for r in rows if uc._parse(r.get('at')) and uc.window_start(uc._parse(r['at']))==w]
+    print(collections.Counter(str(r.get('by')) for r in sel).most_common(10))
+    PY
+
+**108 のままなら、②は効いていません**（`YT_THEME_INDEX` が渡っていないか、
+`--topic` 無しで呼ばれている）。**そのときは 400 を上げるのではなく、
+まず渡っていない理由を見ること** —— 枠を広げるのは、無駄を認めることです。
