@@ -70182,7 +70182,7 @@ grep すると、**`upload_cap` と `history` の2つが見えません** ——
    その群の本が1本 遠のくだけの純損**になります。
    （**後半だけが公開済み**だった組は、前半をそのまま残します。早めた側は当たっている。）
 5. `cJw79xThyTY` の控えを実物へ直した（**幻が1本 消えた**）。
-6. `tests/test_already_public_skip.py`（**11件**）。
+6. `tests/test_already_public_skip.py`（**10件**）。
    守っているのは「**黙らせただけにしないこと**」——
    ④予約中の本は今までどおり動く／⑤`--unschedule`（公開済みを private へ戻す道）は
    塞がない／⑥現状を読めなかった回は今までどおり／⑨**本物の失敗（枠切れ・権限）では
@@ -70315,7 +70315,7 @@ grep すると、**`upload_cap` と `history` の2つが見えません** ——
   止まった回こそ、次の回が理由を帳面から言えないと困ります。
 - `_note_apply` は `moves` に**当たった数**を書き、飛ばした本を
   `skipped_public` に名前で残す（数だけだと「幻がまだ在るのか」を言えない）。
-- 検査2件（`tests/test_already_public_skip.py` に追記・**通算13件**）。
+- 検査2件（`tests/test_already_public_skip.py` に追記・**通算12件**）。
 
 **効き目**: 0手 の回は `moves: 0` になるので、`stuck_lines` の
 `not last.get("moves")` が**真**になり、**門は開きます。**
