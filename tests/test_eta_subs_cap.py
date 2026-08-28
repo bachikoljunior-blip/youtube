@@ -136,3 +136,43 @@ def test_実物の帳面から天井が出る():
         pytest.skip("data/shorts_subs.json がまだありません（口が 403 の回）")
     assert 0 < best["rate"] < 0.05, "1本あたり登録率が 5% を超えるなら、下限の置き方を疑うこと"
     assert best["views"] >= subs_cap.MIN_VIEWS
+
+
+def test_天井の行に分子の人数と1人ぶんの揺れが出る(monkeypatch, tmp_path):
+    """**判断する側が読む行に、分子の桁を出すこと**（2026-08-29 に足した）。
+
+    このモジュールの docstring は最初からこう断っていました ——
+    「1本の登録者数は小さい整数です。3人／1,452再生なので、±1人で ±0.07% 動きます」。
+    **断りは docstring にしか無く、判断する側が読む行には出ていませんでした。**
+
+    その行（`scripts/eta.py --alloc`）は
+    「**`per_video` と同じ物差し**」だけを強調します。物差し（実測の最大）は
+    同じですが、**分子の桁が違います** —— 向こうは再生 1,891回、こちらは 3人。
+
+    実測: `--alloc` の名指し（`sub_rate` がいちばん早い）は
+    **4回 続けて見送られています**（08-28 19:5x / 21:3x / 08-29 00:5x / 04:0x）。
+    4回とも理由は別々でしたが、**見送る側が毎回この揺れを手で確かめ直していました。**
+    **手で確かめ直すものは、印字する側に置くこと。**
+    """
+    p = _write(tmp_path, [{"id": "best", "views": 1000.0, "subs_gained": 3}])
+    monkeypatch.setattr(subs_cap, "SRC", p)
+
+    best = subs_cap.best_per_video()
+    assert best is not None
+    low, high = subs_cap.swing(best)
+    assert low == pytest.approx(0.002), "3人 → 2人 で 0.2%"
+    assert high == pytest.approx(0.004), "3人 → 4人 で 0.4%"
+
+    line = subs_cap.why(best)
+    assert "分子は 3人 の整数です" in line, "分子の人数そのものを出すこと"
+    assert "0.2000%〜0.4000%" in line, "±1人 ぶんの幅を出すこと"
+
+
+def test_分子が1人でも揺れの下は0で止まる(monkeypatch, tmp_path):
+    """**下側は負にならないこと。** 率が負の天井は意味を持ちません。"""
+    p = _write(tmp_path, [{"id": "best", "views": 1000.0, "subs_gained": 1}])
+    monkeypatch.setattr(subs_cap, "SRC", p)
+    best = subs_cap.best_per_video()
+    assert best is not None
+    low, _ = subs_cap.swing(best)
+    assert low == 0.0
