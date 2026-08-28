@@ -212,8 +212,42 @@ def deep_short_days() -> int:
     return sum(1 for sides in days.values() if len(sides) == 2)
 
 
+def _deep_short():
+    """`src/deep_short.py` を遅延で読む（`day_cap` が `views.jsonl` を舐めるので重い）。"""
+    if str(ROOT) not in sys.path:
+        sys.path.insert(0, str(ROOT))
+    from src import deep_short
+    return deep_short
+
+
+def deep_short_arm(side: str = "処置") -> int:
+    """**比べられる本**の数（`falsified_if` の群の作り方そのまま）。
+
+    **`uploaded` の本数を数えないこと**（2026-08-29 06:3x に踏んだ）。
+    台帳の `count_expr` は「`s-` で始まらない公開済みの本」を数えていて
+    **15本 → 足りています**と出していましたが、`falsified_if` が要求する群
+    （**その日の生きた帯 ＋ 齢48時間 の読み ＋ ショートに分類済み**）は
+    **4本**でした。門は「作った／公開した」を、手順は「**比べられる**」を
+    数えています。
+    """
+    return _deep_short().arm_n(side)
+
+
+def deep_short_usable_days() -> int:
+    """**比が出せる公開日**の数（生きた帯 ＋ 齢48時間 ＋ 両群そろい）。
+
+    すぐ上の `deep_short_days()` は、そのうち**分類だけ**を見ています ——
+    実測 2026-08-29: あちらは **3日**、こちらは **2日**。
+    **`falsified_if` が数えているのはこちら**なので、門はこれを読みます。
+    `deep_short_days()` は古い台帳の行が残っているあいだ置いてあります。
+    """
+    return _deep_short().usable_days()
+
+
 EXPR_NS = {"json": json, "rows": _rows, "date": date, "ab_members": ab_members,
            "deep_short_days": deep_short_days,
+           "deep_short_arm": deep_short_arm,
+           "deep_short_usable_days": deep_short_usable_days,
            "latest_views": latest_views, "uploaded": uploaded, "long_ids": long_ids}
 
 

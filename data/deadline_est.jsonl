@@ -11,3 +11,5 @@
 {"at": "2026-08-29", "key": "sum(1 for r in rows('batch_runs.jsonl') if r.get('long') for x in r.get('results', []) or [] if x.get('error_reason'))", "rate": 1.0, "have": 5, "ready": "2026-08-30", "claim": "長尺の生成が落ちる主因は「過去の図と重なっています」の門で、公開が増えるほど落ちる率が上がる"}
 {"at": "2026-08-29", "key": "sum(latest_views().get(v, 0) for v in long_ids())", "rate": 16.7, "have": 167, "ready": "2026-10-18", "claim": "長尺の登録率はショートより1桁以上高い（律速の登録者は長尺でしか動かない）"}
 {"at": "2026-08-29", "key": "deep_short_days()", "rate": 0.5, "have": 2, "ready": "2026-08-31", "claim": "深い題（`s-` で始まらない・節を持つ題）をショートとして出すと、1本あたり再生が `s-` の題のショートより上がる"}
+{"at": "2026-08-29", "key": "deep_short_arm('処置')", "rate": 1.0, "have": 4, "ready": "2026-09-02", "claim": "深い題（`s-` で始まらない・節を持つ題）をショートとして出すと、1本あたり再生が `s-` の題のショートより上がる"}
+{"at": "2026-08-29", "key": "deep_short_usable_days()", "rate": 0.5, "have": 2, "ready": "2026-08-31", "claim": "深い題（`s-` で始まらない・節を持つ題）をショートとして出すと、1本あたり再生が `s-` の題のショートより上がる"}

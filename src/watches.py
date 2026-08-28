@@ -182,6 +182,23 @@ def _uploaded_ats() -> dict[str, datetime]:
     return out
 
 
+def _topics() -> dict[str, str]:
+    """動画ID → 題の id（`topic`）。**後の行が勝ち**（付け替えの控え）。
+
+    **`topic_prefix:` を持つ待ちが要ります**（2026-08-29 に足した）。
+    `falsified_if` が「`s-ribo-` で始まるショートを 8本以上」のように
+    **題の族**で床を書いている前提が2件あり、どちらも `watch:` を持てず、
+    `tests/test_watches.py::test_数の門を持つ未判定の仮説は台帳を指している`
+    が赤いままでした。**尺では絞れません**（族はショートも長尺も持つ）。
+    """
+    out: dict[str, str] = {}
+    for r in _uploaded():
+        vid, topic = r.get("video_id"), r.get("topic")
+        if vid and topic:
+            out[str(vid)] = str(topic)
+    return out
+
+
 def _publish_dates() -> dict[str, date]:
     """動画ID → 公開日（JST）。**予約ぶんも入ります**（`at` は予約時刻）。
 
@@ -283,11 +300,15 @@ def _k_published_count(p: dict) -> Gauge:
         return Gauge(0, float(p["need"]), "本", err="実データの最終日が読めません")
     lo, hi = p.get("min_duration_s"), p.get("max_duration_s")
     secs = _durations() if (lo is not None or hi is not None) else {}
+    pref = str(p.get("topic_prefix") or "")
+    topics = _topics() if pref else {}
     n = 0
     for vid, d in dates.items():
         if d < since or (until and d > until):
             continue
         if p.get("data_ready") and last and d > last:
+            continue
+        if pref and not topics.get(vid, "").startswith(pref):
             continue
         if lo is not None or hi is not None:
             sec = secs.get(vid)
@@ -299,6 +320,8 @@ def _k_published_count(p: dict) -> Gauge:
                 continue
         n += 1
     note = f"{since}〜{until or '以降'}"
+    if pref:
+        note += f" / 題が `{pref}` で始まる本だけ"
     if lo is not None or hi is not None:
         note += f" / 尺 {lo or 0:.0f}〜{hi if hi is not None else '∞'}秒"
     if p.get("data_ready") and last:
@@ -601,9 +624,71 @@ def _k_deep_shorts(p: dict) -> Gauge:
                  f"{since or '全期間'} 以降・ショートの車線に載った深い題")
 
 
+def _k_hypothesis_needs(p: dict) -> Gauge:
+    """**その前提自身の `needs` を、そのまま目盛りにする**（2026-08-29 に足した）。
+
+    ## なぜ要るか
+
+    `tests/test_watches.py::test_数の門を持つ未判定の仮説は台帳を指している` が
+    2件で赤いままでした（09-19「族を外へ出しても1本あたり再生は変わらない」／
+    10-22「登録は配信の広さで決まる」）。どちらも `falsified_if` に数の床が
+    ありますが、**既存の kind では書けません** ——
+    片方は「**題が `s-ribo-` で始まるショート 8本**」、
+    もう片方は「**累計再生 342回 未満の本の再生合計が 20,000回**」。
+
+    **写して新しい kind を増やすのは、同じ数を2箇所で持つことです。**
+    このファイルは 2026-08-27 に、まさにそれで食い違っています
+    （`_hypothesis_judge_state` の上の註 ——「数え方を写し直すのは、
+    同じ事故をもう一度 予約すること」）。だから写さず、
+    **`config/hypotheses.yaml` の `needs` に直接 訊きます。**
+
+    いちばん足りていない `needs` を目盛りにします（`have / need` の最小）。
+    `count_expr` を持たない `needs` しか無い前提は、床が数ではないので
+    **読めません**と返します（黙らせません）。
+
+    **覆る条件**: `deadline_check` が `count_expr` の評価をやめたら、ここも
+    そこへ合わせること。**この関数の中で数え直さないこと。**
+    """
+    claim = str(p.get("claim") or "")
+    if not claim:
+        return Gauge(0, 1.0, "", err="`claim:` が書かれていません")
+    try:
+        import sys as _sys
+        if str(ROOT / "scripts") not in _sys.path:
+            _sys.path.insert(0, str(ROOT / "scripts"))
+        import yaml
+
+        import deadline_check as J
+        doc = yaml.safe_load(
+            (ROOT / "config" / "hypotheses.yaml").read_text(encoding="utf-8"))
+    except Exception as exc:                                   # noqa: BLE001
+        return Gauge(0, 1.0, "", err=f"台帳が読めません: {exc}")
+    hit = next((h for h in doc.get("hypotheses", [])
+                if str(h.get("claim", "")).startswith(claim[:24])), None)
+    if hit is None:
+        return Gauge(0, 1.0, "", err=f"台帳にこの claim がありません: {claim[:24]}")
+    worst: tuple[float, int, float, str] | None = None
+    for need in hit.get("needs") or []:
+        if not isinstance(need, dict) or not need.get("count_expr"):
+            continue
+        want = float(need.get("need") or 0) or 1.0
+        try:
+            have = int(eval(str(need["count_expr"]), dict(J.EXPR_NS)))  # noqa: S307
+        except Exception as exc:                               # noqa: BLE001
+            return Gauge(0, want, "", err=f"`count_expr` が解けません: {exc}")
+        ratio = have / want
+        if worst is None or ratio < worst[0]:
+            worst = (ratio, have, want, str(need["count_expr"])[:40])
+    if worst is None:
+        return Gauge(0, 1.0, "", err="数の床を持つ `needs` がありません（`count_expr` が無い）")
+    _r, have, want, expr = worst
+    return Gauge(have, want, "", f"`config/hypotheses.yaml` の needs: `{expr}`")
+
+
 KINDS = {
     "ab_group": _k_ab_group,
     "deep_shorts": _k_deep_shorts,
+    "hypothesis_needs": _k_hypothesis_needs,
     "length_spread": _k_length_spread,
     "published_count": _k_published_count,
     "scan_sum": _k_scan_sum,
