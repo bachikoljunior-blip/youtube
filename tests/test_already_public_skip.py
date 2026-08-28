@@ -294,3 +294,35 @@ def test_止まった回も当たった数を残す(monkeypatch):
 
     assert queue_lag.apply_moves(plan) == 1
     assert plan.applied == 2, "止まる前に当たった2手が残っていない"
+
+
+# ------------------------------------------------ 門は、原因を言い切らないこと
+
+def test_止まった門が原因を言い切らない(monkeypatch):
+    """**`stuck_lines` は長らく「直すのは印字の側です」と言い切っていました。**
+
+    実測 2026-08-28、それは少なくとも半分 誤りです —— 印字は正しく、
+    **手が1つも当たっていなかった**（`--plan` の1手目が幻の予約で、
+    `apply_moves` が最初の失敗で全部を止めていた）。
+
+    **間違った所を名指しした門が、正しい手を止めます** ――
+    次の回はその文を読んで「印字を直す」ほうへ行きます。
+
+    （きょうだいの回が同じ日に見つけた形の、こちら側の例:
+    **毎周 出る計器と、撃ったときだけ出る計器が食い違うと、毎周のほうが勝つ。**）
+    """
+    plan = _Plan([])
+    plan.before = {"opening_motion": None}
+    monkeypatch.setattr(
+        queue_lag, "_last_apply",
+        lambda: {"moves": 20, "before": queue_lag._stamp(plan.before),
+                 "skipped_public": ["cJw79xThyTY"]})
+
+    lines, moving = queue_lag.stuck_lines(plan)
+    text = "\n".join(lines)
+
+    assert moving is False, "門は今までどおり閉じること（ここは変えていない）"
+    assert "直すのは印字の側**です" not in text, \
+        "原因を1つに言い切っている（実測で少なくとも2つある）"
+    assert "手が当たっていない" in text, "もう一方の原因を挙げていない"
+    assert "skipped_public" in text, "見分け方を書いていない"
