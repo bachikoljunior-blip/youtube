@@ -29,7 +29,7 @@ from __future__ import annotations
 
 import json
 from collections import Counter
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 #: **腕の語彙。`scripts/eta.py` が印字するものと1対1にすること。**
@@ -74,12 +74,113 @@ def recent(path: Path, limit: int = 10) -> list[dict]:
     return out[-limit:][::-1]
 
 
+#: **合計を採る窓（日）。`scripts/drift.py` / `scripts/eta.py` と同じにしてあります。**
+#: 別々にすると、「343 ship で +33日」と「宣言 −915日」を並べて読めません。
+TOTAL_DAYS = 7
+
+
+def since(path: Path, days: int = TOTAL_DAYS,
+          *, now: datetime | None = None) -> list[dict]:
+    """直近 `days` 日の ship を**古い順**に返す。**合計はこちらで採ること。**
+
+    ## なぜ「直近10件」ではいけないか（2026-08-29・最適化の回の実測）
+
+    `recent(path, 10)` が返す 10件 は、いまの回転では **1.4〜5.2時間**しかありません
+    （実測。ship は 7日 で 342件 ＝ 1時間に 2件 前後）。
+    そして **`eta_target` は Analytics 由来で1日に1度しか動きません**
+    （このファイルの冒頭が、その裏取りです）。
+
+    **つまり 10件 の窓では、`実際` は構造上ほぼ 0 です。** 実測（末尾 60件 を
+    3件ずつずらして 21箇所）::
+
+        実際が 0 か −1        21箇所 中 **18箇所**
+        `[!] 言ったより遠のいています` が出た  **11箇所（52%）**
+        そのほとんどは 宣言が負・実際が 0
+
+    **`--moves` に負を書く ＝ 腕を引いて日付を早めると宣言する**ことなので、
+    **手順どおりに宣言した回ほど、この門が鳴ります。**
+    `src/arm_speed.forward()` が「閉じると下がる」だった のと同じ形の符号違いです
+    （`scripts/drift.py` の註）。
+
+    ## 7日 で採ると、何が見えるか（同じ実測）
+
+        宣言の合計 **−915日** ／ 実際の合計 **+33日**（329件）
+
+    **これは本物の赤字**です。窓が 1.5時間 だと、この 948日 の差が
+    「宣言 −3 ／ 実際 0」に化けて、**鳴ったり鳴らなかったりします。**
+
+    ## 覆る条件
+
+    - `eta_target` が1日に何度も動くようになったら（実測の取り直しが回ごとに
+      入るようになったら）、窓を短くしてよい。**そのときは
+      `tests/test_levers_window.py` の「10件 では 1.4〜5.2時間 にしかならない」を
+      測り直すこと**（あの数は回転の速さで変わります）
+    """
+    if not path.exists():
+        return []
+    cut = (now or datetime.now(timezone.utc)) - timedelta(days=days)
+    out: list[dict] = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            rec = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if rec.get("kind") != "ship":
+            continue
+        try:
+            when = datetime.fromisoformat(str(rec.get("at") or ""))
+        except ValueError:
+            continue
+        if when.tzinfo is None:
+            when = when.replace(tzinfo=timezone.utc)
+        if when >= cut:
+            out.append(rec)
+    return out
+
+
 def tally(rows: list[dict]) -> Counter:
     """腕べつの回数。宣言の無い行は `未宣言` に落とす（0 にしない）。"""
     return Counter(r.get("lever") or "未宣言" for r in rows)
 
 
-def reconcile(rows: list[dict]) -> list[str]:
+def _pairs(chrono: list[dict]):
+    """`(行, 実際に動いた日数 or None, 理由)` を古い順に返す。**印字と合計で共有する。**
+
+    実際に動いた日数は、**次の ship が残した予測日との差**です
+    （予測の入力は Analytics 由来で1日1回しか動かないので、
+    回ごとではなく ship ごとに見るのがいちばん細かい目盛りになります）。
+    """
+    for i, r in enumerate(chrono):
+        mv = r.get("moves")
+        if mv is None:
+            continue
+        cur = r.get("eta_target")
+        nxt_row = next((c for c in chrono[i + 1:] if c.get("eta_target")), None)
+        nxt = nxt_row.get("eta_target") if nxt_row else None
+        # **物差しの違う2点を引き算しないこと**（2026-08-20 18:xx に足した）。
+        #     予測日は「腕を据え置いた線」から「軌跡」へ替わりました。
+        #     替わった前後を引くと、**チャンネルは何も変わっていないのに
+        #     149日ぶん動いた**と出ます。`eta_basis` が違う組は飛ばします
+        #     （**古い行に `eta_basis` はありません** —— 後から書き足さないこと)。
+        same_basis = (nxt_row is not None
+                      and r.get("eta_basis") == nxt_row.get("eta_basis"))
+        act = None
+        if cur and nxt and same_basis:
+            try:
+                act = (date.fromisoformat(str(nxt)) - date.fromisoformat(str(cur))).days
+            except ValueError:
+                act = None
+        why = ""
+        if act is None:
+            why = ("次の ship がまだ" if nxt is None or not cur
+                   else "**物差しが替わった**（据え置きの線 → 軌跡）")
+        yield r, act, why
+
+
+def reconcile(rows: list[dict], totals: list[dict] | None = None) -> list[str]:
     """**宣言（`--moves`）と、実際に動いた日数を並べる。**（2026-08-20 08:0x）
 
     オーナー指示（原文・3回目）——
@@ -101,37 +202,12 @@ def reconcile(rows: list[dict]) -> list[str]:
     """
     chrono = list(reversed(rows))  # 古い順
     lines: list[str] = []
-    sum_declared = sum_actual = 0
-    hits = 0
-    for i, r in enumerate(chrono):
-        mv = r.get("moves")
-        if mv is None:
-            continue
-        cur = r.get("eta_target")
-        nxt_row = next((c for c in chrono[i + 1:] if c.get("eta_target")), None)
-        nxt = nxt_row.get("eta_target") if nxt_row else None
-        # **物差しの違う2点を引き算しないこと**（2026-08-20 18:xx に足した）。
-        #     予測日は「腕を据え置いた線」から「軌跡」へ替わりました。
-        #     替わった前後を引くと、**チャンネルは何も変わっていないのに
-        #     149日ぶん動いた**と出ます。`eta_basis` が違う組は飛ばします
-        #     （**古い行に `eta_basis` はありません** —— 後から書き足さないこと)。
-        same_basis = (nxt_row is not None
-                      and r.get("eta_basis") == nxt_row.get("eta_basis"))
-        act = None
-        if cur and nxt and same_basis:
-            try:
-                act = (date.fromisoformat(str(nxt)) - date.fromisoformat(str(cur))).days
-            except ValueError:
-                act = None
+    for r, act, why in _pairs(chrono):
+        mv = r["moves"]
         when = str(r.get("at", ""))[5:16].replace("T", " ")
         if act is None:
-            why = ("次の ship がまだ" if nxt is None or not cur
-                   else "**物差しが替わった**（据え置きの線 → 軌跡）")
             lines.append(f"    {when}  {r.get('lever', '?'):<9} 宣言 {mv:+3d}日   実際 —（{why}）")
         else:
-            sum_declared += mv
-            sum_actual += act
-            hits += 1
             mark = "" if mv == act else ("  ← **外した**" if abs(act - mv) >= 3 else "")
             lines.append(f"    {when}  {r.get('lever', '?'):<9} 宣言 {mv:+3d}日   実際 {act:+3d}日{mark}")
     if not lines:
@@ -139,12 +215,40 @@ def reconcile(rows: list[dict]) -> list[str]:
                 "**次の ship から、宣言と実際が並びます**）"]
     out = ["", "--- **宣言と実際**（`--moves` で先に言った日数と、次の ship までに動いた日数）---"]
     out += lines[-10:]
+    # **合計は、行と同じ窓では採りません**（2026-08-29・最適化の回に分けた）。
+    #
+    # 上の 10行 は **1.4〜5.2時間**ぶんしかなく（実測）、`eta_target` は
+    # 1日に1度しか動かないので、**その窓の「実際」は構造上ほぼ 0** です。
+    # そこへ合計と門を載せると、**宣言に負を書いた回ほど門が鳴ります** ——
+    # 手順が「腕を引いて早めると宣言せよ」と言っているのに、です
+    # （実測: 末尾60件を3件ずつずらした 21箇所 のうち **11箇所（52%）で
+    #  `[!]` が鳴り、そのほとんどが 宣言が負・実際が 0**）。
+    #
+    # だから**行は直近10件・合計は `since()` の 7日**にします。
+    # 呼ぶ側が `totals` を渡さない回は、今までどおり同じ行から採ります
+    # （道具を単体で呼ぶ回を落とさないため。ただし窓は名乗ります）。
+    if totals is None:
+        span = chrono
+        label = f"直近 {len(rows)}件"
+    else:
+        span = totals
+        label = f"直近 {TOTAL_DAYS}日・{len(totals)}件"
+    sum_declared = sum_actual = hits = 0
+    for r, act, _ in _pairs(span):
+        if act is None:
+            continue
+        sum_declared += r["moves"]
+        sum_actual += act
+        hits += 1
     if hits:
-        out.append(f"    → 宣言の合計 {sum_declared:+d}日 ／ **実際の合計 {sum_actual:+d}日**"
-                   f"（{hits}件）")
+        out.append(f"    → **{label}**の 宣言の合計 {sum_declared:+d}日 ／"
+                   f" **実際の合計 {sum_actual:+d}日**（{hits}件）")
         if sum_actual > sum_declared + 2:
             out.append("      [!] **言ったより遠のいています。** 選んでいる腕が効いていないか、"
-                       "予測の前提のほうが動いています。")
+                       "予測の前提のほうが動いています。"
+                       f"（**上の10行の窓ではありません** —— あちらは {TOTAL_DAYS}日 より"
+                       "ずっと短く、`eta_target` は1日に1度しか動かないので、"
+                       "**その窓の「実際」は構造上ほぼ 0** です）")
     return out
 
 
@@ -166,7 +270,7 @@ def report(path: Path, limit: int = 10) -> list[str]:
     if moving == 0:
         out.append("      [!] **1回もありません。** 予測は、動かす腕を選ばないかぎり動きません。")
         out.append("          **この回で選ぶこと。** 何を選ぶかは、上の「早めるには、どれを何倍にするか」から。")
-    out.extend(reconcile(rows))
+    out.extend(reconcile(rows, since(path)))
     return out
 
 
