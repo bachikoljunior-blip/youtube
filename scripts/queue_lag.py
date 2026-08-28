@@ -1767,11 +1767,21 @@ def apply_moves(plan: Plan) -> int:
             return "skip"
         return "ok"
 
+    def _record() -> None:
+        """**当たった数を、呼ぶ側から読める所へ置く**（`_note_apply` が使う）。
+        予定の数を帳面へ書いていたのを 2026-08-28 に直した ―― あの docstring。"""
+        try:
+            plan.applied = done                    # type: ignore[attr-defined]
+            plan.skipped_public = list(skipped)    # type: ignore[attr-defined]
+        except Exception:                          # noqa: BLE001
+            pass
+
     moves = plan.moves()
     for i in range(0, len(moves), 2):
         pair = moves[i:i + 2]
         first = _one(*pair[0])
         if first == "stop":
+            _record()
             return 1
         if first == "skip":
             skipped.append(pair[0][0])
@@ -1781,12 +1791,14 @@ def apply_moves(plan: Plan) -> int:
             continue
         second = _one(*pair[1])
         if second == "stop":
+            _record()
             return 1
         if second == "skip":
             skipped.append(pair[1][0])
             continue
         done += 1
 
+    _record()
     print(f"[queue_lag] {done}回 動かしました（{done * 50}単位）")
     if skipped:
         print(f"[queue_lag] **もう公開済みで飛ばした本: {len(skipped)}本**"
@@ -1873,7 +1885,25 @@ def _last_apply() -> dict | None:
     return last
 
 
-def _note_apply(before: dict, promised: dict, moves: int) -> None:
+def _note_apply(before: dict, promised: dict, moves: int,
+                skipped: list[str] | None = None) -> None:
+    """**`moves` は「実際に当たった手の数」です。予定の数ではありません。**
+
+    2026-08-28 に直しました。ここは長らく `len(plan.swaps) * 2`（＝**組んだ手の
+    数**）を書いていて、`apply_moves` が途中で止まった回も**満額で記録**して
+    いました。実測（`data/queue_lag.jsonl`・08/27 の4行）:
+
+        帳面   moves 28 / 24 / 20 / 20 …… `opening_motion` を 09/06〜09/07 と約束
+        実際   判定日は **10/07 のまま**。08/28 に撃ち直しても同じ手が出てくる
+
+    **止まった理由は、その窓の1手目が「もう公開済み」だったこと**でした
+    （`reschedule.AlreadyPublic`）。**帳面のほうは、それを1文字も書いていません。**
+    「約束したのに動かない」の原因を探す側が、**当たった数が 0 だったことを
+    帳面から知れませんでした。**
+
+    **覆る条件**: `apply_moves` が「途中で止まる」形をやめたとき
+    （全部の手が独立に当たるようになったら、予定と実績は一致します）。
+    """
     import json
 
     from src import dupes
@@ -1886,7 +1916,12 @@ def _note_apply(before: dict, promised: dict, moves: int) -> None:
         return
     PROGRESS.parent.mkdir(parents=True, exist_ok=True)
     rec = {"at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-           "before": _stamp(before), "promised": _stamp(promised), "moves": moves}
+           "before": _stamp(before), "promised": _stamp(promised),
+           "moves": moves}
+    if skipped:
+        # **飛ばした本を名前で残すこと。** 数だけだと、次の回が
+        # 「幻がまだ在るのか、もう直ったのか」を帳面から言えません。
+        rec["skipped_public"] = list(skipped)
     with PROGRESS.open("a", encoding="utf-8") as fh:
         fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
 
@@ -1998,7 +2033,9 @@ def main(argv: list[str] | None = None) -> int:
         # **撃った回は、必ず残すこと**（途中で止まった回も。次の回が
         # 「動いたか」を、この行と自分の姿で比べます）。
         try:
-            _note_apply(plan.before, plan.readies(), len(plan.swaps) * 2)
+            _note_apply(plan.before, plan.readies(),
+                        getattr(plan, "applied", 0),
+                        getattr(plan, "skipped_public", None))
         except Exception:                                      # noqa: BLE001
             pass
         return rc

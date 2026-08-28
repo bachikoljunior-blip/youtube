@@ -262,3 +262,35 @@ def test_本物の失敗では今までどおり止まる(monkeypatch):
 
     assert rc == 1
     assert calls == ["A", "B"], "止まるべき所で先へ進んでいる"
+
+
+# ------------------------------------------------ 帳面は「当たった数」を書くこと
+
+def test_当たった数を呼ぶ側から読める(monkeypatch):
+    """`_note_apply` は長らく **`len(plan.swaps) * 2`（＝予定の数）**を
+    書いていました。実測（`data/queue_lag.jsonl`・08/27 の4行）は
+    **moves 28 / 24 / 20 / 20** と満額で、**`opening_motion` の判定日は
+    10/07 のまま**です。**止まったことが帳面に1文字も残りません。**"""
+    calls: list[tuple] = []
+    monkeypatch.setattr(_sched, "main", _fake_main(calls, {"C"}))
+    plan = _Plan([("A", "t1"), ("B", "t2"), ("C", "t3"), ("D", "t4")])
+
+    queue_lag.apply_moves(plan)
+
+    assert plan.applied == 2, "当たったのは A・B の2手だけ"
+    assert plan.skipped_public == ["C"]
+
+
+def test_止まった回も当たった数を残す(monkeypatch):
+    """**途中で止まった回こそ残すこと** —— 次の回が「約束したのに動かない」の
+    理由を、帳面から言えるように。"""
+    def main(argv):
+        if argv[1] == "C":
+            raise SystemExit("枠が尽きました")
+        return 0
+
+    monkeypatch.setattr(_sched, "main", main)
+    plan = _Plan([("A", "t1"), ("B", "t2"), ("C", "t3"), ("D", "t4")])
+
+    assert queue_lag.apply_moves(plan) == 1
+    assert plan.applied == 2, "止まる前に当たった2手が残っていない"
