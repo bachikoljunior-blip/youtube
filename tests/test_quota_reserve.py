@@ -35,6 +35,7 @@
 """
 from __future__ import annotations
 
+import ast
 import sys
 from pathlib import Path
 
@@ -77,19 +78,96 @@ def test_外せること(monkeypatch):
     assert upload_cap.reserve_hold() is None
 
 
-def test_書き込みの入口が関門を通っていること():
-    """**入口ごとに1回ずつ。** どちらかが抜けると、そちらから全部 焼けます。"""
-    resched = (ROOT / "scripts" / "reschedule.py").read_text(encoding="utf-8")
-    body = resched.split("def _update(")[1].split("\ndef ")[0]
-    assert "reserve_hold()" in body.split("videos().update(")[0], (
-        "`reschedule._update` が `videos.update` を撃つ前に "
-        "`upload_cap.reserve_hold()` を見ていません")
+#: **日枠を焼く書き込み**（`src/upload_cap.UNIT_COST` の 50単位 の2つ）。
+#: `X.videos().update(...)` / `X.thumbnails().set(...)` の形で拾います。
+WRITE_CALLS = {("videos", "update"), ("thumbnails", "set")}
 
-    up = (ROOT / "src" / "uploader.py").read_text(encoding="utf-8")
-    thumb = up.split("def _set_thumbnail(")[1].split("\ndef ")[0]
-    assert "reserve_hold()" in thumb.split("thumbnails().set(")[0], (
-        "`uploader._set_thumbnail` が `thumbnails.set` を撃つ前に "
-        "`upload_cap.reserve_hold()` を見ていません")
+
+def _write_sites() -> list[tuple[Path, int, ast.FunctionDef | None, str]]:
+    """**木を歩いて、書き込みの入口を全部 数え上げる。**（`src/` と `scripts/`）
+
+    返り: (ファイル, 行, 囲っている関数（無ければ None）, 呼び出しの名前)
+
+    **手で並べないこと。** この検査は 2026-08-28 に、入口を2つ
+    （`reschedule._update` / `uploader._set_thumbnail`）だけ字で並べていました。
+    そのとき木には **5つ**あり、**残る3つは素通り**でした ——
+    しかもそのうち `scripts/refresh_thumbnail.py` は
+    `scripts/batch_build.py` が**毎周 直接 呼ぶ**、いちばん熱い入口です。
+    自分の docstring は「**入口ごとに1回ずつ。どちらかが抜けると、
+    そちらから全部 焼けます**」と書いてあり、**その「どちらか」が
+    2つしか無いと決めていたのは、この検査自身**でした。
+
+    数え上げにしておけば、**入口が6つ目になった日に、ここが落ちて教えます。**
+    """
+    out = []
+    for base in ("src", "scripts"):
+        for path in sorted((ROOT / base).glob("*.py")):
+            try:
+                tree = ast.parse(path.read_text(encoding="utf-8"))
+            except SyntaxError:                                # pragma: no cover
+                continue
+            funcs = [n for n in ast.walk(tree)
+                     if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.Call):
+                    continue
+                fn = node.func
+                if not isinstance(fn, ast.Attribute):
+                    continue
+                inner = fn.value
+                if not (isinstance(inner, ast.Call)
+                        and isinstance(inner.func, ast.Attribute)):
+                    continue
+                name = (inner.func.attr, fn.attr)
+                if name not in WRITE_CALLS:
+                    continue
+                # **いちばん内側の関数**（入れ子は狭いほうが入口）
+                owner = None
+                for f in funcs:
+                    if (f.lineno <= node.lineno
+                            and node.lineno <= (f.end_lineno or f.lineno)
+                            and (owner is None or f.lineno > owner.lineno)):
+                        owner = f
+                out.append((path, node.lineno, owner, f"{name[0]}.{name[1]}"))
+    return out
+
+
+def test_書き込みの入口を数え上げられること():
+    """**空になったら、この検査は何も守っていません。**（呼び出しの形が変わった合図）"""
+    sites = _write_sites()
+    assert len(sites) >= 3, (
+        f"`videos().update` / `thumbnails().set` が {len(sites)}件 しか見つかりません。"
+        " 呼び出しの書き方が変わったなら `_write_sites()` を直すこと ——"
+        " **見つからないことを『入口が無い』と読まないこと。**")
+
+
+def test_書き込みの入口が全部_関門を通っていること():
+    """**入口ごとに1回ずつ。1つ抜けると、そこから全部 焼けます。**
+
+    実測（2026-08-28。この検査が2つだけ見ていたときの木）:
+
+        scripts/reschedule.py        videos.update    ✓ 門あり
+        src/uploader.py              thumbnails.set   ✓ 門あり
+        scripts/refresh_thumbnail.py thumbnails.set   ✗ **`batch_build` が毎周 呼ぶ**
+        scripts/link_longform.py     videos.update    ✗
+        scripts/retitle.py           videos.update    ✗
+    """
+    bad = []
+    for path, line, owner, name in _write_sites():
+        if owner is None:                       # 段の外＝モジュールの字ぜんぶを見る
+            body = path.read_text(encoding="utf-8")
+        else:
+            src = path.read_text(encoding="utf-8").splitlines()
+            body = "\n".join(src[owner.lineno - 1:line])
+        if "reserve_hold" not in body:
+            bad.append(f"{path.relative_to(ROOT)}:{line} {name}"
+                       f"（{owner.name if owner else '<module>'}）")
+    assert not bad, (
+        "**日枠を焼く書き込みが、`upload_cap.reserve_hold()` を見ずに撃っています**:\n  "
+        + "\n  ".join(bad)
+        + "\n\n残しているのは**前提を閉じる読み**です（`videos.list` は 1単位。"
+          "`eta.py`: 軌跡の腕が動くのは前提を1件 閉じたときだけ）。"
+          "\n**逃げ道は `YT_NO_RESERVE=1`** —— 門を外すのではなく、そちらを使うこと。")
 
 
 def test_投稿そのものは止めないこと():
