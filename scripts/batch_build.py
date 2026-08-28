@@ -1040,7 +1040,8 @@ def live_ring(count: int, now: datetime | None = None) -> list[str] | None:
 def live_plan(count: int, now: datetime | None = None,
               grid: list[tuple[int, int]] | None = None,
               horizon: int = 90,
-              cap: int | str | None = "auto") -> list[tuple[str, date]]:
+              cap: int | str | None = "auto",
+              taken: dict | None = None) -> list[tuple[str, date]]:
     """`live_ring()` の中身。**時刻と、置くことになる日**を返す（API 0単位）。
 
     `live_ring()` は時刻しか返さないので、**日は `uploader.next_publish_at()` が
@@ -1061,6 +1062,20 @@ def live_plan(count: int, now: datetime | None = None,
     **帯を広げる値打ちを数えるときは両方を出すこと** —— (A) では
     帯を広げても**1日に生きる本数は増えません**（上限のほうが先に当たる）。
 
+    `taken`（日 → 埋まっている時刻の集合）を渡すと、**予約の側を差し替えて**
+    数えられます。**反実仮想の唯一の継ぎ目です** —— 既定は今までどおり
+    `queue_lag.scheduled()` を読みます。渡した辞書は書き換えません（写します）。
+
+        なぜ要るか（2026-08-29・最適化の回）: `queue_lag.band_lines()` は
+        「この群だけを最優先しても間に合いません」と印字しますが、それは
+        **いまの予約を動かせないものとした場合**の話です。動かす道具は
+        同じファイルに在る（`--apply` の `--move`）ので、**「何本 どければ
+        間に合うか」**を数えるには、予約の側を差し替えて歩けることが要ります。
+        `queue_lag.scheduled` を差し替える手もありますが、あれは
+        **呼ぶたびに新しい dict を作る**ので、外から本を落とすと
+        `id()` では取りこぼします（この回に実際に踏んで、
+        **「145本 どけても1日も動きません」という偽の答え**が出ました）。
+
     読めなければ `[]` —— 呼ぶ側は今までどおりに倒すこと（黙って粗くしない）。
     """
     if count <= 0:
@@ -1068,10 +1083,12 @@ def live_plan(count: int, now: datetime | None = None,
     try:
         sys.path.insert(0, str(Path(__file__).resolve().parent))
         import queue_lag                                        # noqa: PLC0415
-        rows = queue_lag.scheduled()
-        if not rows:
-            return []
-        taken = {d: set(s) for d, s in queue_lag._taken(rows).items()}
+        if taken is None:
+            rows = queue_lag.scheduled()
+            if not rows:
+                return []
+            taken = queue_lag._taken(rows)
+        taken = {d: set(s) for d, s in taken.items()}
         today = (now or datetime.now(JST)).date()
         if cap == "auto":
             try:

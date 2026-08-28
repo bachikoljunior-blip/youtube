@@ -211,18 +211,62 @@ def test_足りないときは_先に測り直させる(monkeypatch):
     assert "符号ごと変わります" in out
 
 
-def test_帯の超過は下限だと言う(monkeypatch):
-    """`live_plan()` は**今日から全部 詰めた場合**。実際は遅れこそすれ早まりません。"""
+def _over(monkeypatch, days_over: int = 1):
+    """帯の歩きが期限を `days_over` 日 越える形に倒す。返り `due`。"""
     _fake_supply(monkeypatch, total=500)
     monkeypatch.setattr(QL, "_shorts_only", lambda _keys: [])
     monkeypatch.setattr(QL, "_short_share", lambda *_a, **_k: None)
+    monkeypatch.setattr(QL, "_starved_share", lambda *_a, **_k: None)
     monkeypatch.setattr(QL.judgeable, "deadlines",
                         lambda: {"request_form": date(2026, 10, 6)})
     lag = QL.SETTLE_DAYS + QL.judgeable.ANALYTICS_LAG_DAYS
     due = date(2026, 10, 6) - timedelta(days=lag)
-    monkeypatch.setattr(QL, "_walk_days", lambda *_a, **_k: (due + timedelta(days=1), 35))
+    monkeypatch.setattr(QL, "_walk_days",
+                        lambda *_a, **_k: (due + timedelta(days=days_over), 35))
+    monkeypatch.setattr(QL, "answering", lambda _rows: ({}, set(), []))
+    return due
+
+
+def test_帯の超過を_下限だと言わない(monkeypatch):
+    """**「間に合いません」は、予約を動かせない場合の話でしかありません。**
+
+    ここには長らく「この N日 は**下限**です —— 実際は1周ずつ置くので、
+    **遅れこそすれ早まりません**」と書いてありました。**実測で偽**です
+    （2026-08-29・最適化の回）。`live_plan()` は**いまの予約を固定**して歩きますが、
+    **動かす道具は同じファイルに在ります**（`--apply` の `--move`）。
+
+        いまのまま                    最後の1本 10/02（3日 越え）
+        死に枠を **13本** 後ろへ動かす  最後の1本 **09/29** ← 間に合う
+
+    偽の「間に合いません」は、腕 `sub_rate` の**ただ1つ 走っている実験**を
+    捨てさせます。**だから「下限」と言わせないこと。**
+    """
+    due = _over(monkeypatch)
+    monkeypatch.setattr(QL, "dead_slots", lambda *_a, **_k: [{}] * 145)
+    monkeypatch.setattr(QL, "relief", lambda *_a, **_k: (13, due))
     out = "\n".join(QL.supply_lines([("request_form", "途中あり", 114)]))
-    assert "**下限**です" in out
+    assert "**下限**です" not in out
+    assert "遅れこそすれ早まりません" not in out
+    assert "13本 どければ間に合います" in out
+    assert "1,300単位" in out                    # `--move` 1手 100単位
+    # **古い偽の断定そのものを見張ること。** 「材料を足しても」だけを見ると、
+    #   すぐ上の**打ち消しの文**（「…ではありません」）にも当たります。
+    assert "材料を足しても、この床は期限内に埋まりません" not in out
+
+
+def test_どけても間に合わないときだけ_順番では消えないと言う(monkeypatch):
+    """**逆向きも守ること。** `relief()` が `None` を返す回だけ、断定してよい。
+
+    ここを緩めると、今度は「どければ必ず間に合う」に倒れます ——
+    **`None` は「全部どけても間に合わない」で、`0` とは別**です
+    （`relief()` の docstring）。
+    """
+    _over(monkeypatch)
+    monkeypatch.setattr(QL, "dead_slots", lambda *_a, **_k: [{}] * 145)
+    monkeypatch.setattr(QL, "relief", lambda *_a, **_k: None)
+    out = "\n".join(QL.supply_lines([("request_form", "途中あり", 114)]))
+    assert "どければ間に合います" not in out
+    assert "ぜんぶ後ろへ動かしても間に合いません" in out
 
 
 def test_期限を越えると出したら_突き合わせ先も同じ所に出す(monkeypatch):
@@ -264,13 +308,21 @@ def test_どの群にも入らない本を_作りすぎと読ませない(monkey
     monkeypatch.setattr(QL, "open_floors",
                         lambda: [("request_form", "途中あり", 72,
                                   [(now.date(), "v0")])])
-    monkeypatch.setattr(QL, "_short_share", lambda *_a, **_k: (91, 100))
+    # **`_short_share` を証拠にしないこと**（2026-08-29 に直した）。
+    #   あれは「作った本のうち**ショートだった**割合」で、この文が言っている
+    #   「**群に入るか**」とは別の問いです。実測 2026-08-29 は
+    #   印字 87%（＝ short_share）／ 本当の数 **100%**（82/82）——
+    #   **証拠のほうが結論より弱く、「87% しか入らない」と読めました。**
+    monkeypatch.setattr(QL, "_short_share", lambda *_a, **_k: (55, 100))
+    monkeypatch.setattr(QL, "_starved_share", lambda *_a, **_k: (91, 100))
     monkeypatch.setattr(QL, "band_lines", lambda *_a, **_k: [])
     monkeypatch.setattr(QL, "supply_lines", lambda *_a, **_k: [])
     out = "\n".join(QL.answering_lines(rows))
     assert "「作りすぎ」ではありません" in out
     assert "作り続ける" in out
     assert "91%" in out
+    # **ショート率のほうを出していたら落とすこと**（それが 08/29 の欠陥そのもの）
+    assert "55%" not in out
 
 
 def test_毎回_読む道具に_この節が載っていること():
