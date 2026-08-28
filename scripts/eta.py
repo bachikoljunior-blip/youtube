@@ -2806,9 +2806,31 @@ def _gate2_surface_note(imp_day: float, need_day: float,
                      f" あと **{fill['topics_needed']}本**"
                      f"（{(fill.get('topics_per_day_needed') or 0):.2f}本/日 × "
                      f"{fill['gap_days']}日）。"
-                     f"**直す先は描画でも予定表でもなく `src/calc/` の節です** ——"
-                     f" `python scripts/topic_forge.py --list` の"
-                     f"「(2) 既にある表に節を足して `--count N --long`」"
+                     # **「節を足せ」は、この穴には効きません**（2026-08-29 に踏んだ）。
+                     #     ここは長らく「直す先は `src/calc/` の節です ——
+                     #     (2) 既にある表に節を足して」と言っていました。
+                     #     **同じ repo の `topic_forge.print_long_stock()` は、
+                     #     同じ穴について逆を言っています**:
+                     #       「**いま在庫は 17件 あるのに 8本 しか取れません** ——
+                     #         詰まっているのは節ではなく**族の数**です。
+                     #         **同じ族に節を足しても、この数は1本も増えません。**」
+                     #     実物はあちらのほうです（`ceiling = min(len(longs),
+                     #     len(families) * PER_CALC_DEFAULT)` を実際に計算している）。
+                     #     `batch_build` は1つの calc から `--per-calc`（既定2）本まで
+                     #     しか取らないので、**7日ぶんの上限は族の数で決まります。**
+                     #     字面どおりに従うと、在庫（`fill['stock']`）だけ増えて
+                     #     **穴は1本も埋まりません**。
+                     #     **覆る条件**: `PER_CALC_DEFAULT` が 1 に落ちるか
+                     #     `_drop_queue_tail_calcs` が消えたら、上限は族の数で
+                     #     決まらなくなります（`print_long_stock()` の式ごと変わる）。
+                     f"**直す先は描画でも予定表でもなく、"
+                     f"`src/calc/` の**族**のほうです** ——"
+                     f" 在庫を増やしても、`batch_build` は1つの calc から"
+                     f" 2本 までしか取りません。"
+                     f"**7日ぶんの上限は族の数で決まります**"
+                     f"（`python scripts/topic_forge.py --list` の末尾。"
+                     f"**「(2) 既にある表に節を足す」は族を増やしますが、"
+                     f"長尺のテーマを既に持っている族に足しても1本も増えません**）。"
                      f"（**4,000時間の門に入るのは長尺だけ**なので、"
                      f"ショートを足してもこの穴は1本も埋まりません）")
         else:
@@ -6341,11 +6363,19 @@ def alloc_search(with_speed: bool = False) -> int:
     #     1件は 7pt —— **この回に実際にできる手の大きさ**そのもの。
     n = pln["n"]
     best = (now_days, "そのまま（足さない）")
+    # **腕ごとの日数を捨てないこと**（2026-08-29 に足した）。
+    #     下の `ban_lines` が1位を止めた回に、**次に読むべき行がありません** ——
+    #     表は上に出ていますが、「いちばん早いのは」の1行だけを読む手順
+    #     （この文書の冒頭「見出しと箇条書きだけ」）には届きません。
+    #     実測 2026-08-29: 1位 `sub_rate` が禁じられ、回の側が表を
+    #     縦に読み直して 2位 を手で拾っています。
+    days_by_lever: dict[str, float] = {}
     print(f"\n  --- そこへ **前提を1件** 足したら（いま {n}件 ＝ 1件は {1 / (n + 1):.0%}）---")
     for lever in arm_speed.ARMS:
         share = {k: (pln["share"].get(k, 0.0) * n + (1 if k == lever else 0)) / (n + 1)
                  for k in arm_speed.ARMS}
         d = _solve(share, f"次の1件を `{lever}` に")
+        days_by_lever[lever] = d
         # **引き代0の腕を、同着の顔で並べないこと。** `density` は ×1.00 で
         #     「何をしても日付は動かない」と軌跡の側が言っているのに、ここでは
         #     `per_video` と同じ日付で並びます（実測 2026-08-27・どちらも 2027-01-07）。
@@ -6383,8 +6413,40 @@ def alloc_search(with_speed: bool = False) -> int:
     #     台帳の `next_if_false` にあり、**機械が読める字で書いてあります。**
     #     読まないので、毎回 人が思い出していました。
     #     **道具が言わないものは、毎回 人が思い出すことになります。**
-    for line in arm_speed.ban_lines(best[1]):
+    ban = arm_speed.ban_lines(best[1])
+    for line in ban:
         print(line)
+    # **止めるだけで終わらせないこと**（2026-08-29 に足した）。
+    #     `next_if_false` は「そこに立てるな」の続きに **どこへ振り直すか**まで
+    #     書いています（実測 08/29: 「per_video か rpm へ振り直す」）。
+    #     ところが `ban_lines` は `line` をそのまま貼るだけで、
+    #     **この道具が持っている腕べつの日数と突き合わせていません。**
+    #     **1位が禁じられている回に、次に読むべき行が無い**のがそれまでの形でした。
+    #     ここで出すのは「禁じられていない腕のうち、いちばん早いもの」1行だけ。
+    #     **覆る条件**: 全腕に ban が立ったら（＝ `rest` が空）、
+    #     出せるものがありません。そのときは台帳のほうが袋小路なので、
+    #     **`next_if_false` を書き直す回**です（この関数ではなく `config/` の話）。
+    if ban:
+        rest = sorted(
+            ((d, k) for k, d in days_by_lever.items()
+             if k != best[1] and not arm_speed.ban_lines(k)),
+            key=lambda t: t[0])
+        if rest:
+            d2, k2 = rest[0]
+            gap2 = now_days - d2
+            print(f"  → **禁じられていない腕でいちばん早いのは `{k2}`**"
+                  + (f"（そのままより **{gap2:,.0f}日 早い**"
+                     f"・`{best[1]}` との差は {d2 - best[0]:,.0f}日）" if gap2 >= 1
+                     else f"（そのままと同じ。`{best[1]}` との差は"
+                          f" {d2 - best[0]:,.0f}日）")
+                  + "。**この行は表を縦に読み直さなくても済むように出しています** ——"
+                  " 上の `next_if_false` が振り直し先を名指ししているなら、"
+                  "**そちらが優先**です（台帳のほうが、この道具より事情を知っています）。")
+        else:
+            print("  → **禁じられていない腕がありません。**"
+                  " 台帳の `next_if_false` が全腕を塞いでいます ——"
+                  "**そのときは腕を選ぶ話ではなく、`config/hypotheses.yaml` の"
+                  "`next_if_false` を書き直す回**です。")
     # **勝った腕の天井が実測でないなら、勝ちの理由がそこにあります。**
     #     この順位は天井の遠さで決まる（上の docstring）ので、
     #     **天井が作り物なら、勝ちも作り物**です。軌跡の側には同じ注意が
