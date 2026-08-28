@@ -269,6 +269,55 @@ def _same_instant(a, b) -> bool:
         return str(a) == str(b)
 
 
+class AlreadyPublic(RuntimeError):
+    """**もう公開されている本**を、予約へ動かそうとした（2026-08-28 に実測で踏んだ）。
+
+    YouTube は公開済みの本に `publishAt` を立てさせません（**400
+    `invalidPublishAt`**）。それ自体は正しい拒否ですが、**こちらの控えは
+    その本を「まだ先の予約」として数え続けます** —— そして控えを読む道具
+    （`queue_lag` ・`day_cap` ・`live_ring` ・群の床）は、全部その幻を
+    本物の枠として勘定します。
+
+    ## 実測（2026-08-28 21:3x JST・この例外を足した回）
+
+        `cJw79xThyTY`   控え `data/uploaded.jsonl` … `at` = **2026-10-04**
+                        YouTube 実物 …………………… **public**・
+                                                     `publishedAt` = **2026-08-28T11:00:08Z**
+
+    **控えときょうだいの回**の話です（`dupes.retime` の `retimed_at` の註）——
+    同じチャンネルを触る回が並行で走っていて、控えは git で配られるので、
+    **相手が動かした本は、こちらの控えには merge されるまで入りません。**
+
+    ## なぜ例外にするか（**黙って `publishAt` を書きに行かせない**）
+
+    ここを素通りさせると `videos.update` を1回 撃って 400 を買います
+    （**50単位。しかも何も直りません**）。さらに `queue_lag.apply_moves` は
+    **最初の失敗で全部を止める**ので、**幻が1行あるだけで入れ替えが 0/16 になります**
+    —— 実測 2026-08-28、`--plan` の**1手目**がこの本でした。
+    合計 34日（`opening_motion` だけで 30日）の前倒しが、**3周 印字されて
+    1度も当たっていない**のは、これが理由の一つです。
+
+    **投げる前に、控えを実物へ直します**（`_update` の中でやります。
+    入口は6つある（`--move`・`--compact`・`--spread`・`long_pack`・
+    `live_slots`・`queue_lag`）ので、**直す場所はこの関門ひとつ**）。
+    """
+
+    def __init__(self, video_id: str, published_at: str | None = None) -> None:
+        self.video_id = video_id
+        self.published_at = published_at
+        super().__init__(
+            f"{video_id} は**もう公開済み**です"
+            f"（publishedAt={published_at or '不明'}）。"
+            " 予約へは戻せません（YouTube が 400 invalidPublishAt を返します）。"
+            " **控えのほうを実物に合わせました。**")
+
+
+#: `main()` が `--move` でこの例外を握ったときの終了コード。
+#: **`queue_lag.apply_moves` は、これを「この組は飛ばす」と読みます**
+#: （止めない ―― 残りの手は当たります）。
+RC_ALREADY_PUBLIC = 3
+
+
 def _update(svc, video_id: str, publish_at: str | None,
             fallback_status: dict | None = None) -> bool:
     """`status` だけを差し替える。**snippet を触らないこと** —— 部分更新なので、
@@ -322,7 +371,11 @@ def _update(svc, video_id: str, publish_at: str | None,
     """
     read_ok = True
     try:
-        cur = svc.videos().list(part="status", id=video_id).execute()["items"]
+        # `snippet` も取ります。**単位は変わりません**（`videos.list` は
+        # part の数によらず 1単位）。公開済みだったときに、控えへ書き戻す
+        # `publishedAt` がここにしか無いためです（`AlreadyPublic` の註）。
+        cur = svc.videos().list(part="status,snippet",
+                                id=video_id).execute()["items"]
     except Exception as exc:                                  # noqa: BLE001
         if fallback_status is None:
             raise
@@ -334,6 +387,18 @@ def _update(svc, video_id: str, publish_at: str | None,
     if not cur:
         raise SystemExit(f"動画が見つかりません: {video_id}")
     before = dict(cur[0]["status"])
+    # **もう公開されている本は、予約へ戻せません。** ここで止めるのは
+    # 「YouTube が拒否するから」ではなく、**控えが幻を数え続けるから**です
+    # （`AlreadyPublic` の註に実測）。**読めた回だけ**判定します ——
+    # `fallback_status` で代えた回は実物を知らないので、今までどおり通します。
+    if read_ok and publish_at and before.get("privacyStatus") == "public":
+        published_at = (cur[0].get("snippet") or {}).get("publishedAt")
+        if published_at:
+            # **控えを実物へ合わせる**（ここが唯一の関門なので、ここで直す）。
+            # 直すと `queue_lag.scheduled()` の `at > now` から外れ、
+            # 幻の予約が**全部の道具から**消えます。
+            dupes.retime(video_id, published_at)
+        raise AlreadyPublic(video_id, published_at)
     status = dict(cur[0]["status"])
     for k in ("uploadStatus", "failureReason", "rejectionReason"):
         status.pop(k, None)
@@ -1411,7 +1476,14 @@ def main(argv: list[str] | None = None) -> int:
         if at <= datetime.now(timezone.utc):
             raise SystemExit(f"過去の時刻です: {when} JST")
         iso = at.strftime("%Y-%m-%dT%H:%M:%SZ")
-        _update(svc, vid, iso)
+        try:
+            _update(svc, vid, iso)
+        except AlreadyPublic as exc:
+            # **落としません。** 呼ぶ側（`queue_lag.apply_moves`）に
+            # 「この本は飛ばして、残りは当てろ」と言うための終了コードです。
+            # 控えは `_update` の中でもう直っています。
+            print(f"[reschedule] {exc}", flush=True)
+            return RC_ALREADY_PUBLIC
         # **控えにも書き戻すこと**（2026-08-18 に実測で見つけた）。
         # `--compact` は控えだけを見るので、ここを飛ばすと
         # **実物は動いたのに、次の回は古い時刻のまま割り当てを組みます。**
