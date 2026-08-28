@@ -1814,6 +1814,14 @@ def _last_apply() -> dict | None:
 def _note_apply(before: dict, promised: dict, moves: int) -> None:
     import json
 
+    from src import dupes
+
+    # **検査から本物の帳面へは書きません**（2026-08-28 に踏んだ。
+    # 理由と実測は `src/dupes._may_write_ledger`）。この行が読まれるのは
+    # `stuck_lines()` の「前の `--apply` が1日も動かしていないなら撃ち直さない」で、
+    # **検査の書いた約束が1行 入るだけで、本物の手が「もう撃った」に化けます。**
+    if not dupes.may_write_path(PROGRESS):
+        return
     PROGRESS.parent.mkdir(parents=True, exist_ok=True)
     rec = {"at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
            "before": _stamp(before), "promised": _stamp(promised), "moves": moves}
