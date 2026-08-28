@@ -56,6 +56,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import re
 import subprocess
 import sys
@@ -156,6 +157,90 @@ def survey() -> tuple[dict[str, dict[str, str]], dict[str, list[str]], set[str]]
 
     free = {m: [h for h in all_sections[m] if h not in claimed[m]] for m in all_sections}
     return all_sections, free, known_ids
+
+
+#: 節を掘るときに実際に使われた「形」を、`data/runs.jsonl` の ship の1行から数える。
+#: **散文を数えています**（構造の欄ではありません）。だから**当たった行を必ず出します** ——
+#: 数だけ出すと、次の回が検算できないので。
+DIG_METHODS: tuple[tuple[str, str, str], ...] = (
+    ("族をまたいだ比較",
+     r"族をまた",
+     "別の族の `ASSUMPTIONS` が自分で名指ししている穴を、金額表にする"),
+    ("掃引の候補から",
+     r"掃引(の候補)?(から|を使っ)(?!.{0,6}(いない|ていない|ません))",
+     "`python -m src.section_sweep --calc <族>` が出す形の候補を採る"),
+)
+
+
+def dig_method_lines(path: Path | None = None, limit: int = 400) -> list[str]:
+    """**「節をどう掘るか」の道を、実績つきで出す。**
+
+    ## なぜ要るか（2026-08-28 に測って足した）
+
+    ここは長らく「`section_sweep --calc <族>` が形の候補を出します」の**1行だけ**で、
+    **在庫切れの回が読む助言はそれしかありませんでした。**
+
+    ところが実測では、その候補の当たり率は **0/23**（`docs/JOURNAL.md`
+    2026-08-28 01:4x が「候補は 2,476件 積んであって、当たり率は実測 0/23」）で、
+    **直近の在庫掘りは5回とも別の道を採っています**
+    （08/27 kouki・08/28 iryohi／nenkin／shougai／keihi は
+    どれも「族をまたいだ比較」で、ship の1行に「掃引の候補は使っていない」と
+    書いてあります）。
+
+    **助言の文は、閉じても自分では黙りません**（`docs/trigger_main.md` §2.7）。
+    ここが1つの道しか名指ししていないせいで、**在庫切れの回はまず
+    当たり率 0/23 の一覧を開くところから始めます。**
+
+    ## なぜ「構造がある側」ではなく散文を数えているか
+
+    `run_marker.py --ship` に道の欄はありません。足すこともできますが、
+    **足した日から先しか数えられない**ので、いま効いている差
+    （5回 対 0回）が見えません。だから既にある `what` の散文を数えます。
+
+    **散文なので外れます。** だから数だけでなく**当たった行の頭**を出し、
+    次の回がその場で検算できるようにしてあります。
+
+    **覆る条件**: `run_marker.py --ship` に道の欄が入ったら、そちらで数えること
+    （散文は言い回しが変わると黙って0になります）。
+    """
+    p = path or (ROOT / "data" / "runs.jsonl")
+    if not p.exists():
+        return ["  （`data/runs.jsonl` が無いので、道の実績は出せません）"]
+    ships: list[str] = []
+    claims: list[str] = []
+    for line in p.read_text(encoding="utf-8").splitlines():
+        try:
+            row = json.loads(line)
+        except Exception:
+            continue
+        what = row.get("what") or ""
+        if not what:
+            continue
+        if row.get("kind") == "ship":
+            ships.append(what)
+        elif row.get("kind") == "claim":
+            claims.append(what)
+    ships, claims = ships[-limit:], claims[-limit:]
+
+    out = ["  **節の掘り方には道が2つあり、実績が違います**"
+           f"（`data/runs.jsonl` の直近 {len(ships)}件 の ship の散文から）:"]
+    for name, pattern, how in DIG_METHODS:
+        hit = [w for w in ships if re.search(pattern, w)]
+        want = [w for w in claims if re.search(pattern, w)]
+        tail = (f"（**取りかかると宣言した回は {len(want)}回**）"
+                if len(want) > len(hit) else "")
+        out.append(f"    {name:<12} **出した {len(hit)}回**{tail} …… {how}")
+        for w in hit[-2:]:
+            out.append(f"        └ {w[:70]}")
+    out.append("    → **数えているのは `ship` だけです。** `claim` は"
+               "「取りかかる」の宣言で、**そのまま出せたとは限りません** ——"
+               "実際、掃引を claim した回が、掃引を使わずに ship しています。")
+    out.append("    → **`section_sweep` はその族の中だけを振るので、"
+               "族をまたいだ形はそもそも候補に出てきません。**"
+               "掃引の候補の当たり率は実測 0/23（`docs/JOURNAL.md` 2026-08-28 01:4x）。")
+    out.append("    → **どちらを採ってもよい。ただし採った道を "
+               "`--ship` の1行に書くこと** —— ここの数がそれで動きます。")
+    return out
 
 
 def assign(free: dict[str, list[str]], count: int) -> list[tuple[str, str]]:
@@ -1127,9 +1212,10 @@ def main() -> int:
             print("\n**未使用が0件です。** ここが本当の在庫切れなので、"
                   "`src/calc/` の表に節を足すこと（この道具では増えません）。"
                   "\n  **新しい表を書く必要はありません** —— 既にある表に"
-                  "節を1つ足せば、その族から1本ぶんの在庫が出ます"
-                  "（`python -m src.section_sweep --calc <族>` が形の候補を出します）。"
-                  "\n  **長尺の在庫を増やすなら、足す先を"
+                  "節を1つ足せば、その族から1本ぶんの在庫が出ます。")
+            for line in dig_method_lines():
+                print(line)
+            print("  **長尺の在庫を増やすなら、足す先を"
                   "「まだ長尺のテーマを持っていない族」から選ぶこと** ——"
                   "上の族の数がそのまま7日ぶんの上限です。")
         return 0
