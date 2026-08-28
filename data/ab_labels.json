@@ -2,6 +2,7 @@
  "hook_form": {
   "bunkatsu-heikinhoushu-tsukigaku": "問い",
   "bunkatsu-jibun-hoshu-genshou": "条件",
+  "bunkatsu-konin-nensu-13154": "条件",
   "fudosanshutoku-zei": "問い",
   "haito-1000man-6505pt": "条件",
   "haito-bunkiten-695man": "条件",
@@ -69,6 +70,7 @@
   "kouki-keigen-dan-zure-zero": "条件",
   "kouki-nenkin-10man-tani-tani": "条件",
   "kouki-reiritsu-8gyou-yasui": "条件",
+  "mishikyu-getsugaku-betsu-sa": "問い",
   "mishikyu-hi-betsu-sanbai": "問い",
   "mishikyu-tsuki-betsu-2ka3ka": "問い",
   "nenkin-fueta-bun-no-teduke-767": "問い",
@@ -583,6 +585,7 @@
  "request_form": {
   "bunkatsu-heikinhoushu-tsukigaku": "終端のみ",
   "bunkatsu-jibun-hoshu-genshou": "途中あり",
+  "bunkatsu-konin-nensu-13154": "途中あり",
   "fudosanshutoku-zei": "途中あり",
   "haito-1000man-6505pt": "終端のみ",
   "haito-bunkiten-695man": "終端のみ",
@@ -650,6 +653,7 @@
   "kouki-keigen-dan-zure-zero": "終端のみ",
   "kouki-nenkin-10man-tani-tani": "途中あり",
   "kouki-reiritsu-8gyou-yasui": "途中あり",
+  "mishikyu-getsugaku-betsu-sa": "終端のみ",
   "mishikyu-hi-betsu-sanbai": "途中あり",
   "mishikyu-tsuki-betsu-2ka3ka": "途中あり",
   "nenkin-fueta-bun-no-teduke-767": "終端のみ",
@@ -1164,6 +1168,7 @@
  "slide_pace": {
   "bunkatsu-heikinhoushu-tsukigaku": "速い",
   "bunkatsu-jibun-hoshu-genshou": "遅い",
+  "bunkatsu-konin-nensu-13154": "遅い",
   "fudosanshutoku-zei": "遅い",
   "haito-1000man-6505pt": "速い",
   "haito-bunkiten-695man": "遅い",
@@ -1231,6 +1236,7 @@
   "kouki-keigen-dan-zure-zero": "遅い",
   "kouki-nenkin-10man-tani-tani": "速い",
   "kouki-reiritsu-8gyou-yasui": "速い",
+  "mishikyu-getsugaku-betsu-sa": "遅い",
   "mishikyu-hi-betsu-sanbai": "速い",
   "mishikyu-tsuki-betsu-2ka3ka": "速い",
   "nenkin-fueta-bun-no-teduke-767": "速い",
@@ -1745,6 +1751,7 @@
  "title_form": {
   "bunkatsu-heikinhoushu-tsukigaku": "断定",
   "bunkatsu-jibun-hoshu-genshou": "断定",
+  "bunkatsu-konin-nensu-13154": "問い",
   "fudosanshutoku-zei": "断定",
   "haito-1000man-6505pt": "断定",
   "haito-bunkiten-695man": "断定",
@@ -1812,6 +1819,7 @@
   "kouki-keigen-dan-zure-zero": "問い",
   "kouki-nenkin-10man-tani-tani": "問い",
   "kouki-reiritsu-8gyou-yasui": "問い",
+  "mishikyu-getsugaku-betsu-sa": "問い",
   "mishikyu-hi-betsu-sanbai": "断定",
   "mishikyu-tsuki-betsu-2ka3ka": "断定",
   "nenkin-fueta-bun-no-teduke-767": "問い",
