@@ -552,6 +552,42 @@ def main(argv: list[str] | None = None) -> int:
         (work / "slide_complete.json").write_text(
             json.dumps(slide_index_of_segment), encoding="utf-8"
         )
+        # **`verify` が確実に落とす形を、描く前にここで落とす**（2026-08-28 に測って足した）。
+        #
+        # `verify._check_reveal_hold` は「完成形が 2.5秒 以上 画面に残っているか」を
+        # 見ます。ところが**文そのものが 2.5秒 より短いと、`reveal_durations` は
+        # 1コマ（＝文の全長）を返すしかありません** —— 完成形は文の 100% を
+        # 占めていて、**割り方をどう変えても直りません。**
+        #
+        # 実測（`reveal_durations` を総当たり）: `dur < 2.5` の文は
+        # `want` が 1 でも 4 でも `[dur]` の1コマになり、**必ず落ちます。**
+        # 直せるのは台本（文を長くする）だけです。
+        #
+        # それが分かるのは**ここ**（音声の尺が出たあと・絵を描く前）なのに、
+        # 判定は `verify`（final.mp4 のあと）でした。実測でこの回は
+        # **スライド描画とクリップの ffmpeg を全部やってから 2.3秒 で落ちて**、
+        # まるごと作り直しています（08/28 00:0x にも同じ落ち方が1件）。
+        # `_check_short_script` の docstring が言っている
+        # 「**同じことを、始まる前に judge できる**」の、もう1件です。
+        #
+        # **`verify` の下限は下げません**（あちらは最後の砦のまま）。
+        # 早めているだけです。
+        too_short = [
+            (i, expanded_durations[ci])
+            for i, ci in enumerate(slide_index_of_segment)
+            if expanded_durations[ci] + 1e-6 < verify.MIN_COMPLETE_SECONDS
+        ]
+        if too_short:
+            worst = min(too_short, key=lambda p: p[1])
+            raise RuntimeError(
+                f"**{worst[0]}番目の文が {worst[1]:.1f}秒 しかありません**"
+                f"（完成形の下限 {verify.MIN_COMPLETE_SECONDS}秒 / "
+                f"該当 {len(too_short)}文 / 全{len(slide_index_of_segment)}文）。\n"
+                "  **めくりの割り方の問題ではありません** —— 文が下限より短いと、"
+                "完成形は文の全長を占めていて、それでも下限に届きません。\n"
+                "  **直せるのは台本のほうだけです**（その文を長くする）。"
+                "描く前に止めました（`verify` なら final.mp4 のあとで落ちます）。"
+            )
     else:
         slide_index_of_segment = list(range(len(plan)))
 
