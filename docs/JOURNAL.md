@@ -66357,12 +66357,23 @@ shobyo 06:58）ので、**残る最上位が `keihi`** です。
 
     到達予測（`eta.py` 軌跡）      **2027-01-07**（132日後）／ 名指しの腕 `per_video`
     この回が閉じた前提              **0件**（いちばん早い期日は 08-29）
-    ship                            **3件**（means / fix / upload）・全部 `--moves 0`
+    ship                            **4件**（means / fix×2 / upload）・全部 `--moves 0`
     在庫（未投稿のテーマ）          1本 → **4本** → 使い切って **1本**
-    `slide_pace` の床               速い 10/16 ／ 遅い 8/16（**この回で3本 足した**）
+    `slide_pace` の床               速い 10 → **11**／16 ・ 遅い 8 → **10**／16
+                                    （この回の3本は 速い1 / 遅い2 に入った ——
+                                     **あと 速い5・遅い6**・公開の締切 09/21）
+    予約                            **3本**（09/12 09:30 / 10:30 / 11:30 JST・
+                                     `j8blV-trqZw` / `OQ0P0W65lKA` / `PDIbdT-UmRY`）
+                                    **サムネイルは3本とも載っていません**（403）
     節                              553 → **556**（`keihi` 20 → 23）
+    作る速さ（実測）                3/3本 **20.7分**（同時3）＝ 1本 11.6分。
+                                    **1本が `verify` に落ちて作り直し**（⑧-b）
     検査                            `test_subject`＋`test_premise` 72 passed ／
-                                    `test_dig_methods` 8 passed
+                                    `test_dig_methods` 8 ／
+                                    `test_reveal_hold_unreachable` 52 ／
+                                    `test_reveal_hold`＋`test_slide_pace` 15 ／
+                                    `test_pair_sweep` ほか 18 ／
+                                    きょうだいの新しい2本 12 —— **全部 緑**
 
 ### ⑦ 次の回へ
 
