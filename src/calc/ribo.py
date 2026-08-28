@@ -272,6 +272,77 @@ def method_grid(balance: int = 300_000, unit: int = 10_000) -> list[dict]:
     ]
 
 
+def principal_grid(balance: int = 300_000,
+                   units: tuple[int, ...] = (5_000, 8_000, 10_000,
+                                             15_000, 25_000)) -> list[dict]:
+    """**元金定額**で、毎月いくら元金に当てるかべつの初回支払額と総手数料。
+
+    `payment_grid()` とは切り口が違う。あちらは**元利定額**で「支払額」を振り、
+    こちらは**元金定額**で「元金充当額」を振る。**同じ数字は出ない。**
+    """
+    rows = []
+    for unit in units:
+        sch = schedule_principal(balance, unit)
+        rows.append({
+            "unit": unit,
+            "first_paid": sch[0]["paid"],
+            "last_paid": sch[-1]["paid"],
+            "months": len(sch),
+            "total_fee": sum(r["fee"] for r in sch),
+        })
+    return rows
+
+
+def first_year_grid(pay: int = 10_000,
+                    balances: tuple[int, ...] = (100_000, 300_000, 500_000,
+                                                 700_000, 800_000)) -> list[dict]:
+    """**残高べつ、最初の12か月で元金がいくら減るか**（元利定額）。
+
+    「元金が減らない」を**12か月ぶんの実額**で出す。凍る残高（`frozen_balance`）
+    ちょうどなら、12万円 払って元金は **0円** しか減らない。
+    """
+    rows = []
+    for balance in balances:
+        left, fee_sum = balance, 0
+        for _ in range(12):
+            fee = monthly_fee(left)
+            principal = pay - fee
+            if principal <= 0:
+                principal = 0
+            principal = min(principal, left)
+            left -= principal
+            fee_sum += fee
+        rows.append({
+            "balance": balance,
+            "paid": pay * 12,
+            "fee": fee_sum,
+            "cut": balance - left,
+            "left": left,
+        })
+    return rows
+
+
+def prepay_amount_grid(balance: int = 300_000, pay: int = 10_000,
+                       at: int = 6,
+                       extras: tuple[int, ...] = (30_000, 50_000,
+                                                  100_000, 150_000)) -> list[dict]:
+    """**繰上返済の額べつ**に、総手数料がいくら減るか（入れる月は固定）。
+
+    `prepay_grid()` は**入れる月**を振る。こちらは**額**を振る。
+    """
+    base = total_fee(balance, pay)
+    rows = []
+    for extra in extras:
+        fee = total_fee(balance, pay, APR, extra, at)
+        rows.append({
+            "extra": extra,
+            "total_fee": fee,
+            "saved": base - fee,
+            "months": months(balance, pay, APR, extra, at),
+        })
+    return rows
+
+
 def prepay_grid(balance: int = 300_000, pay: int = 10_000,
                 extra: int = 50_000,
                 at: tuple[int, ...] = (1, 3, 6, 12, 18)) -> list[dict]:
@@ -357,6 +428,33 @@ def check_tables() -> None:
     _checks.ascending([-s for s in saved], "繰上返済の効き（早いほど大きい）")
     assert all(s > 0 for s in saved), "繰上返済で総手数料が減っていない"
 
+    # 7.5 元金定額の表。元金充当を上げれば初回は高くなり、総手数料は減る
+    _checks.increases_with(lambda u: principal_grid(units=(u,))[0]["first_paid"],
+                           [5_000, 10_000, 25_000],
+                           "元金充当を上げたのに初回の支払額が増えていない")
+    _checks.decreases_with(lambda u: principal_grid(units=(u,))[0]["total_fee"],
+                           [5_000, 10_000, 25_000],
+                           "元金充当を上げたのに総手数料が減っていない")
+    for row in principal_grid():
+        assert row["first_paid"] > row["last_paid"], (
+            f"元金定額なのに初回 {row['first_paid']} が最終回 {row['last_paid']} 以下")
+
+    # 7.6 最初の12か月。**凍る残高では元金が1円も減らない**
+    year = {r["balance"]: r for r in first_year_grid()}
+    assert year[800_000]["cut"] == 0, "凍る残高で元金が減っている"
+    assert year[800_000]["paid"] == year[800_000]["fee"], "凍る残高で支払額が全部 手数料になっていない"
+    _checks.decreases_with(lambda b: first_year_grid(balances=(b,))[0]["cut"],
+                           [100_000, 300_000, 500_000, 700_000],
+                           "残高が増えたのに、12か月で減る元金が減っていない")
+    for row in first_year_grid():
+        assert row["cut"] + row["left"] == row["balance"], "12か月の元金が合わない"
+
+    # 7.7 繰上返済の額。多く入れるほど減る額は大きい
+    _checks.increases_with(
+        lambda e: prepay_amount_grid(extras=(e,))[0]["saved"],
+        [30_000, 50_000, 100_000, 150_000],
+        "繰上返済を増やしたのに、減る総手数料が増えていない")
+
     # 8. 法定上限の段差。**10万円ちょうどで上限が20%から18%に下がる**
     _checks.greater(legal_cap(99_999), legal_cap(100_000),
                     "10万円未満の上限が10万円以上の上限以下")
@@ -379,9 +477,20 @@ def main() -> None:
 
     print("\n=== 毎月の支払額を上げると、総手数料はいくら減るか（残高30万円） ===")
     print(f"{'毎月の支払額':>12}{'月数':>7}{'総手数料':>11}{'総支払額':>12}")
-    for row in payment_grid():
+    grid_rows = payment_grid()
+    for row in grid_rows:
         print(f"{row['pay']:>11,}円{row['months']:>6}月"
               f"{row['total_fee']:>10,}円{row['total_paid']:>11,}円")
+    # **上下の開きも印字すること**（2026-08-29 に踏んだ）。この表の主題は
+    # 「支払額を変えるといくら変わるか」なので、**差そのものが主役の数**です。
+    # 印字しないと、差を言った題が `_checks.numbers_backed` の裏を取れません
+    # （実測: `ribo-300000-payment-step` の `title_seed` の 84,809円 が
+    #  `tests/test_doc_numbers.py::test_topics_yamlには掛けない` で鳴った）。
+    top, bottom = grid_rows[0], grid_rows[-1]
+    print(f"  上下の開き: 手数料 {top['total_fee'] - bottom['total_fee']:,}円"
+          f"（{top['pay']:,}円 の {top['total_fee']:,}円 と"
+          f" {bottom['pay']:,}円 の {bottom['total_fee']:,}円）"
+          f"・月数 {top['months'] - bottom['months']}月")
 
     print("\n=== 元金が1円も減らなくなる残高（手数料が支払額に追いつく点） ===")
     print(f"{'毎月の支払額':>12}{'凍る残高':>13}")
@@ -405,6 +514,24 @@ def main() -> None:
     for row in prepay_grid():
         print(f"{row['at']:>8}月{row['total_fee']:>10,}円{row['saved']:>9,}円"
               f"{row['months']:>6}月{row['saved_months']:>9}月")
+
+    print("\n=== 元金定額で、毎月いくら元金に当てるかべつの初回と総手数料（残高30万円） ===")
+    print(f"{'元金充当':>10}{'初回の支払額':>14}{'最終回':>10}{'月数':>7}{'総手数料':>11}")
+    for row in principal_grid():
+        print(f"{row['unit']:>9,}円{row['first_paid']:>13,}円"
+              f"{row['last_paid']:>9,}円{row['months']:>6}月{row['total_fee']:>10,}円")
+
+    print("\n=== 残高べつ 毎月1万円払いで、最初の12か月に元金がいくら減るか ===")
+    print(f"{'残高':>10}{'12か月の支払額':>16}{'うち手数料':>12}{'減った元金':>12}{'残り':>10}")
+    for row in first_year_grid():
+        print(f"{row['balance']:>9,}円{row['paid']:>15,}円{row['fee']:>11,}円"
+              f"{row['cut']:>11,}円{row['left']:>9,}円")
+
+    print("\n=== 繰上返済の額べつ 総手数料はいくら減るか（残高30万円・毎月1万円・6か月目） ===")
+    print(f"{'繰上返済':>10}{'総手数料':>11}{'減る額':>10}{'月数':>7}")
+    for row in prepay_amount_grid():
+        print(f"{row['extra']:>9,}円{row['total_fee']:>10,}円"
+              f"{row['saved']:>9,}円{row['months']:>6}月")
 
     print("\n=== 借入額が10万円と100万円をまたぐと、法定上限が変わる ===")
     print(f"{'借入額':>11}{'法定上限':>10}{'毎月の支払額':>14}{'月数':>7}{'総手数料':>11}")
