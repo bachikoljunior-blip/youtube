@@ -73344,3 +73344,26 @@ JOURNAL に書いて終わっていました。**
 （`ready == today` かつ `ready_at` が 14:00）。
 **覆る条件**は `_ans_after` の註と同じ文にしてあります ——
 `split_overdue()` が `ready_at` を見なくなったら、元の `assert a.ready is None` へ戻すこと。
+
+### 追記3（同じ回・08:3x）—— **この容器では「全体が緑か」を判定できません**
+
+`pytest tests/` を通しているあいだに、**きょうだい（主実行）が同じ容器で
+別の `pytest` を回していました**（実測 `pgrep`:
+`pytest tests/ -q -x -k "calc or subject or doc_numbers or topic_forge or supply or live_ids"`）。
+そして**両方の回が `data/*.jsonl` に書きます**（`run_marker --ship` が
+`runs.jsonl` / `eta.jsonl` / `supply.jsonl`、`batch_build` が
+`batch_runs.jsonl` / `uploaded.jsonl`）。
+
+実測: 全体の走りで赤が2件 出ましたが、**2件とも単体では緑**でした。
+1件目（`test_after_at_time`）は本物の置き去りで、上の追記2 で直しました。
+**2件目（`test_eta_reflect_light` あたり）は、走っているあいだに
+こちらが `--ship` を2回 撃って `data/` を書き換えたぶん**です。
+
+**だから「全体を撃って緑」を、この容器での合格条件にしないこと。**
+**触ったところの検査を名指しで撃つのが、いまの唯一 意味のある確かめ方**です
+（この回: `test_floor_topics` 9件・`test_hypothesis_deadline_reachable` 5件・
+`test_after_at_time` 5件・`test_after_time_keeps_date` 7件・
+`test_eta_headline_alloc_hand` ほか 14件 —— 全部 緑）。
+
+**覆る条件**: 検査が `data/` を読まなくなるか（実物ではなく仮の台帳から読む）、
+きょうだいと容器が分かれたら、全体の走りが合格条件として使えるようになります。
