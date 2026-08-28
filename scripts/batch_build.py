@@ -2168,13 +2168,43 @@ def _push_thumbnails_first() -> None:
 
     **落ちても投稿は続けます。** ここで止めると、サムネイル（あれば良いもの）の
     ために投稿（途切れるのが最大の損失）を止めることになります。**順番が逆です。**
+
+    ## **長尺だけを押します**（2026-08-28 に直した）
+
+    ここは長らく `push_missing()` を素で呼んでいました。ショートを止めていたのは
+    `upload_cap.thumbnail_yield_to_schedule()` の**穴の門**だけで、
+    **あれは「単位の行き先が他に在る」という代理の理由**です。
+
+    実測 2026-08-28: 予約の穴は **10/11 の1日だけ**で、埋めるのに要るのは
+    **`--move` 1回（50単位）**。ところが門の文面は
+    「同じ単位で**詰め直しが 70本**できます」と言い、`--spread` は
+    「1日 10本を超えている日はありません」と答えます ——
+    **勧めている代替案の側が、その大きさでは存在しません。**
+    そして穴を1本の `--move` で埋めた瞬間、門は開き、
+    **ショート 58本 ＝ 2,900単位**がここから黙って出ていきます。
+
+    **本当の理由は穴ではなく面のほうです**（`LONG_FORM_SEC` の上の註）:
+
+        再生の 99.9% は `SHORTS_FEED` ＝ **サムネイルの出ない面**
+        門2a（4,000時間）に入るのは長尺だけで、そこは **CTR が縛っている**
+        （実測 1.44% ／ 要る 19.2%）。**サムネイルはその CTR そのもの**
+
+    だから `only_long=True` で呼びます。**穴の有無に左右されません**
+    （`only_long` は穴の門を通しません）。単位は投稿（`videos.insert`）と
+    詰め直し（`videos.update`）と分け合うので、**0.1% の面のために
+    2,900単位 を先に持っていかせないこと。**
+
+    **覆る条件**: `SHORTS_FEED` 以外の面が再生の1割を超えたら、ここを素の
+    `push_missing()` に戻すこと（`thumbnail_yield_to_schedule` の註と同じ条件）。
+    人手で押したいときは `python scripts/refresh_thumbnail.py --missing` が
+    そのまま残っています。**検査は `tests/test_thumbnail_long_only.py`。**
     """
     try:
         import refresh_thumbnail
 
         if not upload_cap.day_quota().open and not upload_cap.worth_a_try():
             return                      # 観測済みで閉じている。撃つだけ無駄
-        refresh_thumbnail.push_missing()
+        refresh_thumbnail.push_missing(only_long=True)
     except Exception as exc:                                   # noqa: BLE001
         print(f"[batch] サムネイルの押し直しは飛ばします: {str(exc)[:120]}", flush=True)
 
