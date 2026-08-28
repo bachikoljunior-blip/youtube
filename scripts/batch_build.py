@@ -441,7 +441,14 @@ def _drop_queue_tail_calcs(usable: list[dict], pool: list[dict],
               " 偏りが続くなら QUEUE_TAIL_DAYS を下げること。")
         return usable
     if len(kept) < len(usable):
-        print(f"[pick] これから7日ぶんの長尺に出ている calc を避けました: {sorted(tail)}"
+        # **「これから7日ぶん」と書かないこと**（2026-08-29 に直した）。
+        #     窓は着地点のまわりで、`land` を渡さない回だけ今日が中心です。
+        #     字面が固定だと、**避けた先が読み手に見えません** ——
+        #     この回は「15件 避けました」と読んで、避けるべき2件が
+        #     窓の外にあることに気づけませんでした。
+        where = (f"着地（{land.isoformat()}）の前後 {QUEUE_TAIL_DAYS}日"
+                 if land is not None else f"今日から {QUEUE_TAIL_DAYS}日")
+        print(f"[pick] {where} の長尺に出ている calc を避けました: {sorted(tail)}"
               f"（候補 {len(usable)} → {len(kept)}件）")
     return kept
 
