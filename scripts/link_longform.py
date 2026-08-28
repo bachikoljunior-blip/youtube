@@ -151,8 +151,8 @@ def main(argv: list[str] | None = None) -> int:
             # 何十本も書く口なので、**通ったあとに残りを全部 焼けます** ——
             # 門が読む `spent` は、この輪が自分で増やしている数です。
             # **1回だけ訊く門は、増えていく数に対しては門になりません。**
-            from src import upload_cap as _cap0         # noqa: PLC0415
-            _hold = _cap0.reserve_hold()
+            from src import upload_cap as _cap         # noqa: PLC0415
+            _hold = _cap.reserve_hold()
             if _hold:
                 print(f"  {_hold}")
                 print(f"  **ここで止めます**（入れた {done}件）。"
@@ -166,7 +166,6 @@ def main(argv: list[str] | None = None) -> int:
             # `spent` を作るのは `note_quota_ok` だけです。ここは1回で
             # 何十本も書くので、数えないと門は**自分が通した数千単位を
             # 1つも知りません**（＝ 止めるべき回に止まりません）。
-            from src import upload_cap as _cap          # noqa: PLC0415
             # **末尾に印を付けること**（2026-08-28）。`moves_in_window()` は
             # `videos.update <vid>` で**終わる**行を「その本を動かした」と
             # 数え、`MOVE_CAP`（1本 2回/窓）に効かせます。ここは説明欄の
