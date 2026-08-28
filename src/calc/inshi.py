@@ -562,6 +562,75 @@ def split_turning_points(kind: str = "1号本則") -> list[dict]:
     return out
 
 
+def best_split_by_kind(total: int, n_max: int = 12) -> list[dict]:
+    """**同じ総額で、種別ごとに「いちばん安い通数」を並べる。**（2026-08-28 に足した）
+
+    既存の節は `split_grid("1号本則")` だけを出しており、**通数の話が
+    1号本則の中で閉じていました。** ところが最安の通数は種別で変わります ——
+    掃引が `best_split（いちばん安い通数）… いちばん高いのは端ではなく
+    kind=2号本則 のとき（3／端では 1）` と拾ったのがここです。
+
+    段の刻みが種別ごとに違うので、**同じ総額でも「何通に分けるのが最安か」が
+    種別ごとに別の答えになります。** 実測（総額2,000万）:
+
+        1号本則  4通    2号本則  10通    17号  1通（分けても1円も変わらない）
+
+    **17号（領収書）がほぼ1通なのは、金額の段が細かいから**です。
+    段が細かいほど、分けても同じ段の中に落ちるだけで得になりません。
+    """
+    return [dict(best_split(total, kind, n_max), 種別=kind) for kind in TABLES]
+
+
+#: `split_plateaus` の刻み。**帯の端は、この刻みまでの精度で出ます。**
+#: 実際の境目は表の段（`TABLES`）の倍数なので、1,000円 刻みで足ります。
+PLATEAU_STEP = 1_000
+
+
+def split_plateaus(n: int, kind: str = "1号本則",
+                   lo: int = 1_000_000, hi: int = 60_000_000,
+                   step: int = PLATEAU_STEP) -> list[dict]:
+    """**n 通に分けたとき、印紙代が同じままでいる総額の帯。**（2026-08-28 に足した）
+
+    掃引が `split_cost（返り値）… total が 3,084,314 から上は 6,000 で止まる`
+    と拾った形です。**「止まる」は上限ではなく、帯の入口**でした ——
+    分けたあとの1通が同じ段に落ちているあいだ、総額がいくら増えても
+    印紙代は1円も動きません。
+
+    実測（1号本則・3通）: **総額 300万 から 1,500万 まで 6,000円 のまま**。
+    同じ幅を1通で払うと **2,000円 → 20,000円** と10倍に跳ねます。
+    **5倍の総額の幅で、印紙代が同額。**
+
+    `step` の刻みで走査します（境目は表の段の倍数なので 1,000円 で足ります）。
+    """
+    out: list[dict] = []
+    prev: int | None = None
+    start = lo
+    total = lo
+    while total <= hi:
+        cost = split_cost(total, n, kind)
+        if prev is None:
+            prev, start = cost, total
+        elif cost != prev:
+            out.append({"通数": n, "印紙代": prev, "総額の下": start,
+                        "総額の上": total - step,
+                        "幅（倍）": (total - step) / start if start else 0.0,
+                        "1通なら下": stamp(start, kind),
+                        "1通なら上": stamp(total - step, kind)})
+            prev, start = cost, total
+        total += step
+    if prev is not None:
+        out.append({"通数": n, "印紙代": prev, "総額の下": start, "総額の上": hi,
+                    "幅（倍）": hi / start if start else 0.0,
+                    "1通なら下": stamp(start, kind), "1通なら上": stamp(hi, kind)})
+    return out
+
+
+def widest_plateau(n: int, kind: str = "1号本則") -> dict:
+    """`split_plateaus` のうち、**総額の幅がいちばん広い帯**。"""
+    rows = split_plateaus(n, kind)
+    return max(rows, key=lambda r: r["幅（倍）"])
+
+
 def check_tables() -> None:
     """制度の値と計算の向きを確かめる。"""
     # 1. 法令が名指ししている値
@@ -668,6 +737,37 @@ def check_tables() -> None:
                     split_cost(10_000_000, 2, "1号本則"),
                     "1,000万円は2通に分けたほうが安いはず")
 
+    # **最安の通数は、種別で変わります**（2026-08-28 に足した）。
+    # ここが割れたら `best_split_by_kind` が1号本則の値を写しているだけです。
+    by_kind = {r["種別"]: r["いちばん安い通数"] for r in best_split_by_kind(20_000_000)}
+    if len({*by_kind.values()}) < 3:
+        raise _checks.TableError(
+            f"総額2,000万で最安の通数が種別ごとに割れていません: {by_kind}")
+    if by_kind["17号"] != 1:
+        raise _checks.TableError(
+            f"17号は総額2,000万で1通が最安のはず: {by_kind['17号']}通")
+    _checks.greater(by_kind["2号本則"], by_kind["1号本則"],
+                    "2号本則の最安通数が1号本則より")
+
+    # **分けた後は、総額が増えても印紙代が動かない帯があります**。
+    # 1号本則・3通は 300万〜1,500万 で 6,000円 のまま（**5倍の幅**）。
+    wide = widest_plateau(3, "1号本則")
+    if wide["印紙代"] != 6_000:
+        raise _checks.TableError(
+            f"1号本則・3通のいちばん広い帯の印紙代が 6,000円 ではありません: "
+            f"{wide['印紙代']}")
+    _checks.greater(wide["幅（倍）"], 4.0, "いちばん広い帯の総額の幅が")
+    # 同じ帯を1通で払うと、跳ねること（帯の値打ちはこの差です）
+    _checks.greater(stamp(wide["総額の上"], "1号本則"),
+                    stamp(wide["総額の下"], "1号本則"),
+                    "帯の上端を1通で払ったときの印紙代が、下端より")
+    # 帯は重ならず、隙間なく並ぶこと（走査の取りこぼしを弾く）
+    rows = split_plateaus(3, "1号本則")
+    for a, b in zip(rows, rows[1:]):
+        if b["総額の下"] != a["総額の上"] + PLATEAU_STEP:
+            raise _checks.TableError(
+                f"帯が繋がっていません: {a['総額の上']} → {b['総額の下']}")
+
     _checks.assumption_values(ASSUMPTIONS, name="inshi")
 
 
@@ -701,6 +801,53 @@ if __name__ == "__main__":
     for row in zeinuki_grid("17号"):
         print(row)
     print("1位:", zeinuki_top("17号"))
+
+    print("\n=== 「何通に分けるのが最安か」は種別で変わる。同じ2,000万で1通・4通・10通 ===")
+    print("  既存の節は1号本則の中だけで通数を見ています。**段の刻みが種別ごとに違う**ので、")
+    print("  同じ総額でも答えが変わります（総額2,000万・12通まで試した）:")
+    print("    種別        1通の印紙代   いちばん安い通数   そのときの印紙代      浮く額")
+    for row in best_split_by_kind(20_000_000):
+        print(f"    {row['種別']:<10}  {row['1通の印紙代']:>9,}円"
+              f"  {row['いちばん安い通数']:>10}通"
+              f"  {row['そのときの印紙代']:>11,}円"
+              f"  **{row['差']:>8,}円**")
+    print("  **17号（領収書）だけ1通のまま**です —— 金額の段がいちばん細かいので、")
+    print("  分けても同じ段の中に落ちるだけで、得になりません。")
+    print("  他の総額でも見ます（いちばん安い通数だけ並べます）:")
+    print("    総額            " + "  ".join(f"{k:>8}" for k in TABLES))
+    for total in (1_000_000, 3_000_000, 6_000_000, 10_000_000,
+                  20_000_000, 50_000_000, 100_000_000):
+        cells = "  ".join(f"{r['いちばん安い通数']:>7}通"
+                          for r in best_split_by_kind(total))
+        print(f"    {total:>12,}円  {cells}")
+    print("  **5,000万だけ、どの種別も1通が最安**です（段の上端がそろうため）。")
+    print("  ※ 分けられるのは、契約そのものが本当に分かれているときだけです"
+          "（実体の無い分割は課税上みとめられません）。")
+
+    print("\n=== 3通に分けると、総額300万から1,500万まで印紙代は6,000円で動かない ===")
+    print("  分けたあとの1通が同じ段に落ちているあいだ、**総額がいくら増えても")
+    print("  印紙代は1円も動きません**（1号本則・3通・1,000円 刻みで走査）:")
+    print("    印紙代      総額の帯                       幅      1通で払うと")
+    # **`is` で比べないこと**（2026-08-28 に踏んだ）。`split_plateaus` は毎回
+    # 新しい辞書を作るので、`row is max(split_plateaus(...))` は永久に偽 ——
+    # **印が1つも出ませんでした。** 下端で照合します。
+    _wide = widest_plateau(3, "1号本則")
+    for row in split_plateaus(3, "1号本則"):
+        mark = ("  ← **いちばん広い**"
+                if row["総額の下"] == _wide["総額の下"] else "")
+        print(f"    {row['印紙代']:>7,}円  {row['総額の下']:>11,}〜"
+              f"{row['総額の上']:>11,}円  {row['幅（倍）']:>5.2f}倍"
+              f"  {row['1通なら下']:>7,}〜{row['1通なら上']:>7,}円{mark}")
+    w = widest_plateau(3, "1号本則")
+    print(f"  **{w['総額の下']:,}円 と {w['総額の上']:,}円 は、3通に分ければ同じ "
+          f"{w['印紙代']:,}円**です（{w['幅（倍）']:.1f}倍の幅）。")
+    print(f"  同じ2つを1通で払うと {w['1通なら下']:,}円 と {w['1通なら上']:,}円 ＝ "
+          f"**{w['1通なら上'] / w['1通なら下']:.0f}倍**に跳ねます。")
+    print("  通数を変えると帯も動きます（1号本則・いちばん広い帯だけ）:")
+    for n in (2, 3, 4, 5, 6):
+        b = widest_plateau(n, "1号本則")
+        print(f"    {n}通  {b['印紙代']:>7,}円  総額 {b['総額の下']:>11,}〜"
+              f"{b['総額の上']:>11,}円（{b['幅（倍）']:.2f}倍）")
 
     print("\n=== 契約を2通に分けると安くなる金額と、逆に高くなる金額がある ===")
     for row in split_grid("1号本則"):
