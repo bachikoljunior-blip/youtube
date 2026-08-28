@@ -11,6 +11,7 @@ import json
 import os
 import re
 from datetime import datetime, timezone
+from pathlib import Path
 
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
@@ -256,6 +257,97 @@ def _only_ledger(want_map: bool, why: str):
 #: - **`YT_NO_SCAN_CACHE=1` で外せます**（外した回は理由を JOURNAL に）
 _SCAN_CACHE = "data/scan_topics.json"
 
+#: **この repo の本物の場所**（`config.ROOT` を差し替えても動きません。
+#: `src/upload_cap._REPO` と同じ作法）。下の `_scan_cache_path` だけが使います。
+_REPO = Path(__file__).resolve().parent.parent
+
+#: 作業コピーをまたいで共有する控えの名前（`.git` の中に置くので、
+#: **git に載らず・衝突せず・作業コピー全部から同じ1つが見えます**）。
+_SHARED_SCAN_CACHE = "yt-scan-topics.json"
+
+_shared_cache_path: Path | None = None
+
+
+def _git_common_dir() -> Path | None:
+    """この作業コピーが相乗りしている `.git`（＝機械にひとつ）を返す。
+
+    `git` は呼びません（`posted_topic_ids()` は1周に何度も呼ばれます）。
+    作業コピーの `.git` は**ファイル**で、中身は
+    `gitdir: <共通の .git>/worktrees/<名前>` の1行です。
+    本体の作業コピーでは `.git` が**ディレクトリ**で、それがそのまま共通の場所。
+    """
+    dot = _REPO / ".git"
+    try:
+        if dot.is_dir():
+            return dot
+        text = dot.read_text(encoding="utf-8").strip()
+    except OSError:                                            # noqa: BLE001
+        return None
+    if not text.startswith("gitdir:"):
+        return None
+    here = Path(text.split(":", 1)[1].strip())
+    for parent in [here, *here.parents]:                  # …/.git/worktrees/<名前>
+        if parent.name == ".git":
+            return parent
+    return None
+
+
+def _scan_cache_path() -> Path:
+    """控えの置き場。**既定は機械にひとつ**（2026-08-28 に実測して移した）。
+
+    ## なぜ作業コピーごとではいけないか
+
+    この控えを足した回（同じ日の 11:47 JST）は、こう見積もっていました ——
+    「`_scan` は 17単位。窓ごとに1回だけ読むので、残してある **400単位** は保つ」。
+    **`config.ROOT` は作業コピーの根**です（`Path(__file__).parent.parent`）。
+    そして控えは `.gitignore` に入れてあるので、**配られません**（意図どおり ——
+    毎周ここで衝突するため）。つまり実際の回数は「窓ごとに1回」ではなく
+    **「窓ごと・作業コピーごとに1回」**です。
+
+    実測（2026-08-28 13:1x JST・この機械）:
+
+        作業コピー                        **48個**
+        直近24時間に走ったもの（`.git` の mtime）  **30個**
+        → 控えが効いても  30 × 17単位 ＝ **510単位**
+
+    **守っている 400単位 より大きい。** 門の大きさは「1つの作業コピー」で
+    測られていて、守っている枠は **Google のプロジェクトにひとつ**でした。
+    （`src/upload_cap.RESERVE_UNITS` ⑦ と同じ形の外し方です ——
+    測った単位と、守っている単位が違う。）
+
+    ## なぜ `.git` の中か
+
+    `.git`（共通のほう）は**全部の作業コピーから同じ1つが見え**、
+    **git に載らず**（＝ 配ったときの衝突が起きない）、
+    **窓が変われば `_cached_topics` が自分で捨てます**（`window` 違い）。
+    足したときの「配りません」という判断は、そのまま生きています ——
+    **配るのではなく、1つを見に行く形に変えただけ**です。
+
+    ## 覆る条件
+
+    - `.git` の共通の場所が読めない置かれ方（別の機械で `config.ROOT` だけを
+      渡される等）では、**今までどおり作業コピーの中**に落ちます（下の `return`）
+    - **検査は今までどおり `config.ROOT` の下に書きます**（`config.ROOT` を
+      差し替えた検査は、差し替え先が `_REPO` と違うので自動で当たります）。
+      差し替えていない検査が本物の `.git` を汚さないよう、`PYTEST_CURRENT_TEST`
+      の側でも作業コピーへ落とします（`upload_cap._write_path` と同じ理屈）
+    """
+    global _shared_cache_path
+    local = config.ROOT / _SCAN_CACHE
+    if os.environ.get("YT_SCAN_CACHE_LOCAL"):
+        return local
+    try:
+        if Path(config.ROOT).resolve() != _REPO:
+            return local                    # 差し替えられている（検査・別の置かれ方）
+    except OSError:                                            # noqa: BLE001
+        return local
+    if os.environ.get("PYTEST_CURRENT_TEST"):
+        return local
+    if _shared_cache_path is None:
+        common = _git_common_dir()
+        _shared_cache_path = (common / _SHARED_SCAN_CACHE) if common else local
+    return _shared_cache_path
+
 
 def _scan_window() -> str:
     """いまの日枠の窓の頭（文字列）。読めなければ空 ＝ 控えを使わない。"""
@@ -275,7 +367,7 @@ def _cached_topics() -> set[str] | None:
     if not window:
         return None
     try:
-        rec = json.loads((config.ROOT / _SCAN_CACHE).read_text(encoding="utf-8"))
+        rec = json.loads(_scan_cache_path().read_text(encoding="utf-8"))
     except Exception:                                          # noqa: BLE001
         return None
     if rec.get("window") != window:
@@ -289,11 +381,19 @@ def _put_cached_topics(topics: set[str], video_ids: int) -> None:
     window = _scan_window()
     if not window or os.environ.get("YT_NO_SCAN_CACHE"):
         return
+    body = json.dumps({"window": window, "at": datetime.now(timezone.utc).isoformat(),
+                       "videos": video_ids, "topics": sorted(topics)},
+                      ensure_ascii=False)
     try:
-        (config.ROOT / _SCAN_CACHE).write_text(
-            json.dumps({"window": window, "at": datetime.now(timezone.utc).isoformat(),
-                        "videos": video_ids, "topics": sorted(topics)},
-                       ensure_ascii=False), encoding="utf-8")
+        # **置き換えは一手で**（`os.replace`）。共有の置き場には、並行して走る
+        # 作業コピーが同時に書きます。素の `write_text` だと、読む側が
+        # 途中の中身を見て `json.loads` で落ちます（落ちても控えを使わないだけ
+        # ですが、そのぶん 17単位 が毎回 出ていきます）。
+        path = _scan_cache_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
+        tmp.write_text(body, encoding="utf-8")
+        os.replace(tmp, path)
     except OSError as exc:
         print(f"[history] 読みの控えを書けませんでした（続行）: {str(exc)[:80]}")
 
