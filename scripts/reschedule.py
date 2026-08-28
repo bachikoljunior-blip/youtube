@@ -76,6 +76,20 @@ def _measured_per_day(fallback: int = 10) -> int:
 
 
 DEFAULT_PER_DAY = 10          # **読めない回の既定**。実際に使う数は `_measured_per_day()`
+
+
+def _live_edge_min(hour: int, step_min: int) -> int:
+    """**その日の「生きる目盛り」の右端**（JST の分）。
+
+    `spread_plan` が中で立てているのと**同じ式**です
+    （`hour * 60 + (per_day - 1) * step_min`）。既定の 9時・30分きざみ・
+    上限10本 なら **13:30**。
+
+    **定数を書かないこと。** 上限は `day_cap` の実測で動きます
+    （08/24 に 17 → 10 へ動いた）。ここが定数だと、
+    **帯が広がっても置き方が付いていきません。**
+    """
+    return hour * 60 + (_measured_per_day() - 1) * step_min
 MARKER = re.compile(r"\[t:([a-z0-9\-]+)\]")
 
 
@@ -545,8 +559,30 @@ def long_pack_plan(rows: list[dict], durations: dict[str, float], *,
 def compact_plan(rows: list[dict], *, now: datetime, step_min: int = 30,
                  hour: int = 9, until_hour: int = 21, max_days: int = DEFAULT_MAX_DAYS,
                  lead_min: int = 60,
-                 window: tuple[str, str] | None = None) -> list[dict]:
+                 window: tuple[str, str] | None = None,
+                 live_edge_min: int | None = None) -> list[dict]:
     """**予約を前に詰める割り当てを作る**（API 0単位・純関数）。
+
+    ## `live_edge_min` —— **置き先を「生きる目盛り」に限る**（2026-08-28 に足した）
+
+    **`spread_plan` は 2026-08-24 にこれを直しました。こちらは直っていません
+    でした。** あちらの docstring が「置き先は『生きる目盛り』の中だけ
+    （2026-08-24 に直した。それまで0再生へ送っていた）」と過去形で書いており、
+    **同じ穴が同じファイルの、すぐ上の関数に残っていました。**
+
+    ここの目盛りは `hour`〜`until_hour`（既定 9〜21時）の全部から作られます。
+    実測では **08:59〜13:30 の外に置いた本は、ほぼ 0再生**です
+    （公開済みショート: 08〜13時 は 95本中 93本 が生存・1本あたり 566〜744再生／
+    14〜21時 は 31本中 5本・ほとんどの時が 1本あたり 0.5〜2.0）。
+    つまり `--compact` は、11本目から先を**0再生の枠へ詰めていました。**
+
+    `live_edge_min`（JST の分）を渡すと、目盛りをその分までに切ります。
+    `None` なら今までどおり `until_hour` まで（**純関数のままにするため、
+    ここでは計器を読みません**。読むのは CLI 側 ＝ `_measured_per_day()`）。
+
+    **覆る条件**: `day_cap` の帯が広がったら、CLI が渡す数がそのまま広がります
+    （`hour * 60 + (per_day - 1) * step_min`）。**ここに数を書かないこと。**
+    検査は `tests/test_compact_live_edge.py`。
 
     `rows` は控え（`src.dupes.ledger_rows`）の形。返すのは
     `{"id", "topic", "title", "old", "new"}` の並びで、**動かす本だけ**です。
@@ -615,6 +651,9 @@ def compact_plan(rows: list[dict], *, now: datetime, step_min: int = 30,
     while days_used < max_days:
         if not measure_window.inside(day.isoformat(), window):
             for m in range(hour * 60, until_hour * 60 + 1, step_min):
+                # **生きる目盛りの外へは置かない**（上の `live_edge_min` の節）
+                if live_edge_min is not None and m > live_edge_min:
+                    break
                 slot = datetime(day.year, day.month, day.day,
                                 m // 60, m % 60, tzinfo=JST)
                 if slot > floor:
@@ -1077,7 +1116,8 @@ def suggest_max_days(rows: list[dict], now: datetime, args, *,
         try:
             plan = compact_plan(rows, now=now, step_min=args.step_min, hour=args.hour,
                                 until_hour=args.until_hour, max_days=md,
-                                lead_min=args.lead_min, window=window)
+                                lead_min=args.lead_min, window=window,
+                                live_edge_min=_live_edge_min(args.hour, args.step_min))
         except SystemExit:
             continue
         if hole_days(rows, plan, now):
@@ -1117,9 +1157,10 @@ def _compact(args) -> int:
             args.max_days = found
         # 見つからなかったときは床のまま進みます。
         # **下の穴の節が、そのまま「どれだけ増やしても埋まりません」と言います。**
+    edge = _live_edge_min(args.hour, args.step_min)
     plan = compact_plan(rows, now=now, step_min=args.step_min, hour=args.hour,
                         until_hour=args.until_hour, max_days=args.max_days,
-                        lead_min=args.lead_min)
+                        lead_min=args.lead_min, live_edge_min=edge)
     where, days = _horizon(rows, plan, now)
     per_day: dict[str, int] = defaultdict(int)
     for p in plan:
@@ -1127,7 +1168,8 @@ def _compact(args) -> int:
         per_day[jst.strftime("%m/%d")] += 1
 
     print(f"[compact] 控えの予約 {len(rows)}本のうち、**動かすのは {len(plan)}本**"
-          f"（{args.step_min}分きざみ・{args.hour}〜{args.until_hour}時・{args.max_days}日ぶん）")
+          f"（{args.step_min}分きざみ・{args.hour}:00〜{edge // 60}:{edge % 60:02d}"
+          f"（**生きる帯**・`day_cap` の実測）・{args.max_days}日ぶん）")
     for p in plan:
         o = datetime.fromisoformat(p["old"].replace("Z", "+00:00")).astimezone(JST)
         n = datetime.fromisoformat(p["new"].replace("Z", "+00:00")).astimezone(JST)
