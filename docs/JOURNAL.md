@@ -70485,3 +70485,20 @@ grep すると、**`upload_cap` と `history` の2つが見えません** ——
 3. **`--alloc` の名指しに従う前に、その腕の開いている前提が
    判定できる形かを見ること。** この回はそれで穴が出た。
    **「どの腕に賭けるか」と「その腕の計器が動くか」は別の問い。**
+
+### この回の確認（**緑であることと、書いていないことは別の事実**）
+
+    pytest tests/test_queue_lag{,_answering,_stuck,_live,_lane,_supply,
+                                _band_per_key,_band_walk}.py
+           tests/test_already_public_skip.py
+      → **72件・8分59秒・全部 緑**
+    pytest tests/test_queue_lag.py …（上と同じ8本）＋ reschedule 系 ＋ dupes
+      → **95件・72秒・全部 緑**（1件目の直しの確認）
+    `git status`  → **空**（`data/` に1バイトも書いていない）
+
+**`git status` を必ず見ること** —— 08/28 の9件目は「620件 緑・しかし
+`data/critique_queue/` の19本が書き換わっていた」形でした。
+
+**そして、この回の直しは `--apply` を1度も撃っていません**（日枠が尽きている）。
+**検査は「止まらずに飛ばす」ことしか確かめていません。**
+「**当たる**」ことを確かめるのは、08/29 16:00 JST 以降の回です。
