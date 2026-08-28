@@ -112,3 +112,54 @@ def test_直せる件は道具の印字に出る(capsys):
     assert "門の置き場所が外れています" in out
     assert "再生を1回も足さずに直せます" in out
     assert "人数で書き直すこと" in out
+
+
+# ---------------------------------------------------------------------------
+# **括弧の中を標本の大きさだと読んでいた**（2026-08-28 に踏んだ）
+#
+# 診断だけの頃は「N再生 要ります」が少しずれるだけだった。
+# **門の数字を名指しするようになった以上、ここがずれると嘘を出す。**
+# ---------------------------------------------------------------------------
+
+def test_括弧の中の参照母集団を標本と読まない():
+    """M22 の標本は **15,000**。22,549 は 05-01〜08-17 の参照母集団。"""
+    hit = [r for r in vp.scan_hypotheses() if "チャンネルのホーム" in r["claim"]]
+    assert hit, "M22 の前提が読めていません"
+    assert hit[0]["n"] == 15000, "括弧の中の 22,549 を拾っています"
+
+
+def test_括弧を落としても他の前提の標本は動かない():
+    ns = [r["n"] for r in vp.scan_hypotheses()]
+    assert 30000 in ns, "n=30,000 の前提が消えました"
+    assert 1000 in ns, "n=1,000 の前提が消えました"
+
+
+def test_n_for_gateはいま持っている数より小さい答えを返さない():
+    """**ここがこの道具の壊れ方そのもの。** 15,000 に「9,425 要ります」と言っていた。"""
+    for start in (3000, 15000, 30000):
+        need = vp.n_for_gate(BASE, 2.0, start=start)
+        assert need is None or need > start, f"start={start} に {need} を返しました"
+
+
+def test_n_for_gateは崖の上を答えにしない():
+    """**増やすと見分けられなくなる n がある**（ポアソンは整数の門しか置けない）。
+
+    実測: n=14,293 は門 7人 が通る（beta 19.94%）が、**n=15,000 は通らない**。
+    """
+    assert vp.gate_for(BASE, 14293, 2.0) is not None
+    assert vp.gate_for(BASE, 15000, 2.0) is None      # **増やしたのに駄目になる**
+    need = vp.n_for_gate(BASE, 2.0, start=3000)
+    assert vp.gate_for(BASE, need, 2.0) is not None
+    assert vp.gate_for(BASE, int(need * 1.05), 2.0) is not None
+
+
+def test_n_for_gateとn_forは別の問いに答えている():
+    """**混ぜると、既に足りている前提に「足りない」と言う。**"""
+    assert vp.n_for_gate(BASE, 2.0, start=0) > vp.n_for(BASE, 2.0)
+
+
+def test_見分けられない件に足りない再生数が出る(capsys):
+    vp.main()
+    out = capsys.readouterr().out
+    assert "門で見分けられるようになるのは" in out
+    assert "9,425再生 要ります" not in out, "`n_for` を門の答えに使っています"
