@@ -2286,6 +2286,9 @@ def writable_counts(hits: list[dict],
 
         `undecided()` が真   照合できる点が無い（`[未]` の印）。**新しいと分かって
                             いない**ので、これを在庫に数えると過大に振れます
+        `unnameable()` が真  `[並 N点]` と `[坂]`。**その x を名指しできません**
+        `_unrefined()` が真  `[未刻]`。印字が「そのまま節に書かないこと」
+                            「崖かどうかは未判定です」と言っている側
         `形` が `SHAPE_LAST` `片効き` と `不変`。**実測 32枠中14枠を占めて、
                             そこから書けた節は0件**（`SHAPE_LAST` の註）
 
@@ -2318,6 +2321,10 @@ def writable_counts(hits: list[dict],
         out.setdefault(name, 0)
         if hit.get("形") in SHAPE_LAST:
             continue
+        if unnameable(hit):                     # `[並 N点]` と `[坂]`
+            continue
+        if _unrefined(hit):                     # `[未刻]`
+            continue
         sec = sections.get(name)
         try:
             if is_covered(hit, sec) or undecided(hit, sec):
@@ -2326,6 +2333,28 @@ def writable_counts(hits: list[dict],
             continue
         out[name] = out[name] + 1
     return out
+
+
+def _unrefined(hit: dict) -> bool:
+    """`[未刻]` —— **細かく引き直せなかった候補**。（2026-08-28 の同じ回に足した）
+
+    印字の側は、この2つをはっきり「書くな」と言っています:
+
+        頭打ち `[未刻]` … **この x は格子の点です。そのまま節に書かないこと**
+        崖    `[未刻]` … **崖かどうかは未判定です**
+
+    **言っているのに、`writable_counts` の最初の版はこれを数えていました。**
+    同じ回の実測で見つかっています —— `ideco_deguchi` は「書ける 8件」と出て、
+    **中を開けると 8件 のうち大半が `[未刻]` の崖**（`years` を 20→22 と振って
+    残高が 17億円 跳ぶ、という格子の点そのもの）で、**節にできるものは
+    ほとんど残りませんでした。**
+
+    **`unnameable()` と同じ側の判定です**（あちらは `[並 N点]` と `[坂]`）。
+    別関数にしてあるのは、`unnameable` が**並び順**にも使われており、
+    そちらの意味を変えたくないためです。
+    """
+    d = hit.get("詳しく") or {}
+    return bool(d.get("細かく刻めなかった") or d.get("止まり際を刻めなかった"))
 
 
 def _fmt(v: float) -> str:
