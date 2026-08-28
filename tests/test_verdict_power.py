@@ -105,13 +105,40 @@ def test_同じnの隣の前提が既に正しい門を持っていた():
     assert vp.gate_for(BASE, 30000, 2.0) <= 14
 
 
-def test_直せる件は道具の印字に出る(capsys):
-    """**診断だけで終わらせない。** 出口（`main`）まで通っていること。"""
+def test_直せる件は道具の印字に出る(monkeypatch, capsys):
+    """**診断だけで終わらせない。** 出口（`main`）まで通っていること。
+
+    **台帳の中身に依存させないこと**（2026-08-28）——
+    ここは実物を読んでいたので、**台帳を直した瞬間に落ちました。**
+    落ちたのは枝が壊れたからではなく、**該当が無くなったから**です。
+    """
+    monkeypatch.setattr(vp, "scan_hypotheses", lambda: [{
+        "claim": "作り物・片側の門", "n": 30000, "gate": 10,
+        "gate_label": "0.0318%未満", "target": 2.0,
+        "two_group": False, "margin": 1, "outcome": "",
+    }])
+    vp.main()
+    out = capsys.readouterr().out
+    assert "再生を1回も足さずに直せます" in out
+
+
+def test_片側の門の直しかたも印字に出る(monkeypatch, capsys):
+    """**いまの台帳に該当が無いだけで、枝は生きていること。**
+
+    2026-08-28 に括弧の読みを直した結果、片側の門で「n は足りている」に
+    当たる前提が台帳から消えた（唯一の該当が 2群 の前提だった）。
+    **台帳の中身で枝が死んだように見えるので、ここは差し替えて撃つ。**
+    """
+    monkeypatch.setattr(vp, "scan_hypotheses", lambda: [{
+        "claim": "作り物・片側の門", "n": 30000, "gate": 10,
+        "gate_label": "0.0318%未満", "target": 2.0,
+        "two_group": False, "outcome": "",
+    }])
     vp.main()
     out = capsys.readouterr().out
     assert "門の置き場所が外れています" in out
-    assert "再生を1回も足さずに直せます" in out
     assert "人数で書き直すこと" in out
+    assert "再生を1回も足さずに直せます" in out
 
 
 # ---------------------------------------------------------------------------
@@ -163,3 +190,85 @@ def test_見分けられない件に足りない再生数が出る(capsys):
     out = capsys.readouterr().out
     assert "門で見分けられるようになるのは" in out
     assert "9,425再生 要ります" not in out, "`n_for` を門の答えに使っています"
+
+
+# ---------------------------------------------------------------------------
+# **2群を比べる前提に、片側の門の数字を出していた**（2026-08-28）
+#
+# 「途中の依頼」は処置群 対 対照群。そこへ `gate_for()` の答え
+# （「門を 13人未満 に」）を出すと、**別の実験に化ける。**
+# ---------------------------------------------------------------------------
+
+def test_上回れば通るは効きが無くても半分通る():
+    """**2つの独立なポアソンは、引き分け以外は半々。**"""
+    q = vp.two_group_power(BASE, 30000, margin=1, target=2.0)
+    assert 0.40 < q["alpha"] < 0.50, "余白ゼロの alpha は約 45%"
+    assert q["beta"] < 0.10
+    assert q["detects_nothing"] is True
+
+
+def test_余白を置くと2群でも見分けられる():
+    m = vp.margin_for(BASE, 30000, 2.0)
+    assert m is not None and m > 1, "余白ゼロのままでは門になりません"
+    q = vp.two_group_power(BASE, 30000, m, 2.0)
+    assert q["alpha"] <= vp.MAX_ERR and q["beta"] <= vp.MAX_ERR
+    # **いちばん緩い余白**（1つ手前は通らない）
+    assert vp.two_group_power(BASE, 30000, m - 1, 2.0)["detects_nothing"] is True
+
+
+def test_2群の余白は片側の門の数字とは別物():
+    """**ここを混ぜたのが、この直しの理由。**"""
+    assert vp.margin_for(BASE, 30000, 2.0) != vp.gate_for(BASE, 30000, 2.0)
+
+
+def test_2群の前提を2群として読んでいる():
+    rows = {r["claim"][:24]: r for r in vp.scan_hypotheses()}
+    mid = [r for k, r in rows.items() if "途中にも1回" in r["claim"]]
+    assert mid and mid[0]["two_group"] is True
+    one = [r for k, r in rows.items() if "チャンネルのホーム" in r["claim"]]
+    assert one and one[0]["two_group"] is False
+
+
+def test_2群には片側の門の指示を出さない(monkeypatch, capsys):
+    """**余白ゼロの2群**を出口まで通し、片側の門の指示が出ないことを見る。"""
+    monkeypatch.setattr(vp, "scan_hypotheses", lambda: [{
+        "claim": "作り物・2群・余白ゼロ", "n": 30000, "gate": 10,
+        "gate_label": "0.0318%未満", "target": 2.0,
+        "two_group": True, "margin": 1, "outcome": "",
+    }])
+    vp.main()
+    out = capsys.readouterr().out
+    assert "対照を 5人 以上 上回る" in out
+    assert "余白がゼロなのが外れです" in out
+    assert "片側の門の数字（N人未満）をここに書かないこと" in out
+    assert "門を 13人未満 に直せば" not in out, "2群に片側の門の数字を出しています"
+
+
+def test_台帳に置いた余白を読む():
+    """**道具と台帳が同じ数を見ていること。**
+
+    余白を台帳に書いても道具が 1 と決め打っていた間は、
+    直した後も「見分けられません」と鳴り続けた（2026-08-28）。
+    """
+    mid = [r for r in vp.scan_hypotheses() if "途中にも1回" in r["claim"]]
+    assert mid, "途中の依頼の前提が読めていません"
+    assert mid[0]["margin"] == 5, "台帳の『5人 以上 上回』を読めていません"
+    q = vp.two_group_power(BASE, mid[0]["n"], mid[0]["margin"], mid[0]["target"])
+    assert q["detects_nothing"] is False, "直した条件が、まだ見分けられません"
+
+
+def test_余白の書いていない2群は余白ゼロとして数える():
+    """**書き忘れを「1人でも上回れば通る」と読む。** 甘い側へ倒さない。"""
+    rows = [r for r in vp.scan_hypotheses() if r["two_group"]]
+    assert rows, "2群の前提が1件もありません"
+    for r in rows:
+        assert r["margin"] >= 1
+
+
+def test_直した前提は道具の一覧で見分けられる側に出る(capsys):
+    """**台帳の実物**を読む。直した条件が、見分けられる側に出ていること。"""
+    vp.main()
+    out = capsys.readouterr().out
+    assert "対照を 5人 以上 上回れば通る" in out
+    block = out.split("途中にも1回")[-1].split("\n\n")[0]
+    assert "見分けられます" in block and "**見分けられません**" not in block
