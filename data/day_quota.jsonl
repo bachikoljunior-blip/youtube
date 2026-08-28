@@ -4670,3 +4670,4 @@
 {"at": "2026-08-28T04:41:14+00:00", "detail": "scheduled_publish_times", "by": "uploader.py:taken_publish_times"}
 {"at": "2026-08-28T04:41:15+00:00", "detail": "playlistItems.insert", "by": "uploader.py:_post_actions"}
 {"at": "2026-08-28T04:41:16+00:00", "detail": "thumbnails.set gNXjL6ElAFg", "by": "uploader.py:_set_thumbnail"}
+{"at": "2026-08-28T04:45:08+00:00", "detail": "channels.list mine", "by": "history.py:_scan"}
