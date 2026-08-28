@@ -3847,6 +3847,92 @@ def flagged(said: list[str], width: int = 116) -> list[str]:
     return out
 
 
+#: **天井が乗っている控えと、それを取り直す手**（2026-08-28・最適化の回）。
+#:
+#: 値は `(表示名, 取り直す手)`。**手の名前だけ**を持ちます —— どの手がどの枠を
+#: 使うかは `src.upload_cap.DATA_API_TOOLS` が持っているので、ここには写しません。
+_CEILING_SOURCES: tuple[tuple[str, str, str], ...] = (
+    ("面（インプレッション）", "data/reach.jsonl", "python scripts/reach.py"),
+    ("混ざり方（RPM）", "data/rpm_mix.jsonl", "python -m src.rpm_mix"),
+    ("1本あたり再生", "data/views.jsonl", "python scripts/snapshot.py"),
+    ("本べつの形", "data/video_forms.json", "python -m src.rpm_mix --forms"),
+)
+
+
+def instrument_ages(now: datetime | None = None) -> list[str]:
+    """**天井が、いつの控えに乗っているか。** API 0単位・ファイルを読むだけ。
+
+    ## なぜ3行の側に出すか（2026-08-28）
+
+    天井は **2つの実測の積**（混ざり方 × 面）です。そのどちらかが止まっても、
+    **天井は黙って低く出ます** —— 実測 2026-08-24: `data/reach.jsonl` が 08/17 で
+    止まったまま出た天井が **¥184**、`scripts/reach.py` を撃ち直したら **¥287**
+    （**56% 低い**）。**止まっていたことは、どこにも表示されていませんでした。**
+
+    `src.rpm_mix._reach_freshness_lines` は、この遅れを正しく測る書き方を
+    **2026-08-24 に既に持っています**（「今日と比べないこと。比べるのは
+    Analytics の中身の最終日」）。**それが読まれる場所に無いだけ**でした ——
+    あれが出るのは `rpm_mix` 自身の出力で、**1周の中で誰も撃ちません。**
+    ここは「同じことを2か所が別々に言っていて、片方しか読まれていない」の
+    3例目です（`CLAUDE.md`）。
+
+    ## 門にしないこと（**しきい値を置きません**）
+
+    **「何時間で古い」を決めません。** 控えごとに追いつける最前線が違い
+    （Reporting は3日、Analytics は3日、`views` は日枠しだい）、
+    **時間で切ると、追いついている日にも鳴ります**（`_reach_freshness_lines`
+    の註がそう言っています）。鳴りっぱなしの警告は読まれません。
+    **だからここは事実だけを並べます** —— 天井の隣に、その控えの齢を置く。
+    **どれを取り直すかは、その回が決めます。**
+
+    ## いま撃てるかは、枠の持ち主に訊く
+
+    `python scripts/snapshot.py` だけが Data API の日枠を使います
+    （`src.upload_cap.DATA_API_TOOLS`）。**日枠が尽きていても、
+    Analytics と Reporting は別の枠なので通ります** —— 2026-08-28 に
+    実際に通り、要件1件の判定日が 09-03 → 08-30 へ動きました。
+    **一覧をここに写さないこと**（写した日から古くなります）。
+
+    **覆る条件**: 1周ごとに全部の控えを取り直す作りにしたら、この行は
+    毎回おなじ齢を出すだけになるので外してよい。
+    `tests/test_eta_instrument_ages.py` が、いまの向きを留めています。
+    """
+    now = now or datetime.now(timezone.utc)
+    try:
+        import deadline_check                                   # noqa: PLC0415
+    except Exception:                                          # noqa: BLE001
+        return []
+    try:
+        from src import upload_cap                             # noqa: PLC0415
+        q = upload_cap.day_quota()
+        dead = not q.open
+        tools = tuple(upload_cap.DATA_API_TOOLS)
+    except Exception:                                          # noqa: BLE001
+        dead, tools = False, ()
+    parts: list[str] = []
+    for label, rel, how in _CEILING_SOURCES:
+        path = ROOT / rel
+        if not path.exists():
+            parts.append(f"{label} **無し**")
+            continue
+        point = deadline_check.newest_point(path)
+        if point is None:
+            parts.append(f"{label} **齢が読めません**")
+            continue
+        hours = (now - point).total_seconds() / 3600.0
+        blocked = dead and any(t in how for t in tools)
+        parts.append(f"{label} **{hours:,.0f}時間**"
+                     + ("（日枠が尽きるまで取り直せません）" if blocked else ""))
+    if not parts:
+        return []
+    return ["   天井が乗っている控えの齢: " + " ／ ".join(parts)
+            + "  ← **古いほど天井は低く出ます**"
+            " （実測 08/24: 面が 7日 遅れて ¥184、取り直して ¥287）。"
+            " 取り直す手は `scripts/reach.py` / `-m src.rpm_mix [--forms]`"
+            " / `scripts/snapshot.py`。"
+            "**日枠が尽きていても、前の3つは別の枠なので通ります**"]
+
+
 def headline(pl: dict, prev: dict | None = None,
              tr: dict | None = None) -> list[str]:
     """**この回のいちばん最初と、いちばん最後に出す3行。**
@@ -3953,6 +4039,10 @@ def headline(pl: dict, prev: dict | None = None,
     #     解かれています。**未来の配分を決めているのは、開いている前提のほう**です。
     #     食い違っていたら、上の日付は**台帳が用意していない世界**の日付です。
     out.extend(_planned_lines(bar, tr, base))
+    # **天井の齢を、天井を名指しした行のすぐ隣に置く**（2026-08-28）。
+    #   しきい値は置きません —— 理由は `instrument_ages()` の註。
+    if base is None:
+        out.extend(instrument_ages())
     top = next((r for r in (tr or {}).get("choice", []) if r["reachable"]), None)
     if top is not None:
         gain = (base["days"] - top["days"]) if base and base["days"] < NEVER else None

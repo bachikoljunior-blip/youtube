@@ -631,7 +631,74 @@ def _stale_todo(need: dict) -> str:
     return ("**待ち方が違います。足りないのは日ではなく、計器のほうです** —— "
             f"この数が読んでいる `{src}` は {seen}。"
             "**取り直すまで、待っても増えません。**"
-            + (f"  `{how}`" if how else f"  `{src}` を取り直すこと"))
+            + (f"  `{how}`" if how else f"  `{src}` を取り直すこと")
+            + _refresh_pool_note(need))
+
+
+def _refresh_pool_note(need: dict) -> str:
+    """取り直す手が、**いまこの回で撃てるか**。撃てるなら、そう言う。
+
+    ## なぜ要るか（2026-08-28 14:5x・最適化の回。**この回が実際に拾った**）
+
+    `_stale_note` は「取り直せ」とコマンド名だけを出していました。
+    **そのコマンドがいま通るかは、一言も言っていません。** 一方 `_quota_gate`
+    は、同じファイルの中で**どの道具が Data API の日枠を使うかを正確に
+    知っています**（`upload_cap.DATA_API_TOOLS`）。
+    **同じことを2か所が別々に持っていて、下流が上流を読んでいない形**です。
+
+    実害は、日枠が死んでいる窓で出ます。同じ出力の中に
+
+        08-28 の行  「**この窓ではもう尽きています**（403 を 364回）。
+                     枠が戻るのは 08/28 16:00 JST」
+        08-31 の行  「取り直すまで、待っても増えません。 `python -m src.rpm_mix --forms`」
+
+    が並びます。**後者には枠の話が1文字もありません。** 直前に「尽きている」を
+    読んだ回は、**後者も尽きていると読みます** —— そして待ちます。
+    2026-08-28 の前の回がそう読んで、**この1件を丸ごと飛ばしました。**
+
+    **`rpm_mix --forms` は Analytics だけを引きます**（同関数の註
+    「**Data API は0単位です**」）。**Analytics と Reporting は別の枠**なので、
+    日枠が 403 を 364回 返していても**そのまま通ります。** 実際にこの回が
+    撃って通り、要件の判定日が **09-03 → 08-30** へ 3日 手前に来ました。
+
+    ## 黙るとき
+
+    **日枠が開いているあいだは、何も足しません。** そのときは
+    どちらの枠の道具も撃てるので、区別に意味がないからです。
+    **口を開くのは、日枠が閉じている窓だけ** —— つまり
+    「読み違えようがある場面」だけに出ます。
+
+    **覆る条件**: Analytics / Reporting 側にも日枠と同じ「窓の中で尽きる」
+    観測が入ったら、ここは「撃てます」と言い切れなくなります。
+    そのときは `upload_cap` に枠べつの `day_quota()` を持たせて、
+    **枠の名前で引く**形にすること。`tests/test_deadline_refresh_pool.py`
+    が、いまの2つの向き（Data API の道具 / そうでない道具）を留めています。
+    """
+    how = str(need.get("refresh") or "").strip()
+    if not how:
+        return ""
+    kind = str(need.get("quota") or "").strip()
+    if kind == "data_api":
+        uses_day_quota = True
+    elif kind == "none":
+        uses_day_quota = False
+    else:
+        uses_day_quota = any(tool in how for tool in _DATA_API_REFRESH)
+    try:
+        from src import upload_cap
+        q = upload_cap.day_quota()
+    except Exception:                                          # noqa: BLE001
+        return ""                       # **読めないときは黙る**（門を増やさない）
+    if q.open:
+        return ""                       # 区別に意味がない ＝ 何も足さない
+    back = q.resets_at.astimezone(JST)
+    if uses_day_quota:
+        return (f"  ← **この窓では撃てません**（Data API の日枠。403 を {q.hits}回 観測）。"
+                f" 撃つのは **{back:%m/%d %H:%M} JST 以降**")
+    return ("  ← **いま撃てます。この回で撃つこと**"
+            f" —— Data API の日枠は尽きています（403 を {q.hits}回）が、"
+            "**この手はその枠を使いません**（Analytics / Reporting は別の枠）。"
+            "**同じ出力の他の行の「尽きています」を、ここへ持ち込まないこと**")
 
 
 def _ans_accrual(need: dict, as_of: date) -> Answer:
