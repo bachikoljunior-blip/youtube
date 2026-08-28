@@ -410,6 +410,57 @@ def _drop_queue_tail_calcs(usable: list[dict], pool: list[dict]) -> list[dict]:
     return kept
 
 
+def _hoist_floor_topics(usable: list[dict]) -> list[dict]:
+    """**開いた前提の床が待っている題を、並びの先頭へ**（順番だけを変えます）。
+
+    どの題が待たれているかは `src/floor_topics.starved()` が返します
+    （API 0単位・`config/hypotheses.yaml` と `data/uploaded.jsonl` と
+    `config/topics.yaml` だけを読む）。**なぜ要るかの実測は、あちらの
+    docstring** —— 要点だけ言うと、実績の順は「どれがよく回るか」であって
+    「どれを作らないと前提が閉じないか」ではありません。
+
+    **落とすものはありません。** 持ち上げるだけなので、床の題が尽きても
+    残りはそのままの順で残り、**投稿が止まることはありません**。
+
+    **`per_calc` は迂回しません。** 1回に同じ族から取れる本数は変わらず、
+    先頭に来ても `_sweep()` が同じように切ります（同じ制度の本が1日に
+    何本も並ぶのは、収益化の側の事実。`CLAUDE.md`）。だから
+    **床 6本 は「1回で6本」ではなく「3回で6本」**として埋まります。
+
+    持ち上げる本数は `short`（床までの残り）で切ります。**切らないと、
+    床が埋まったあとも同じ族が先頭に居座り**、実績の順が死にます。
+
+    覆る条件: 床のある接頭辞が同時に3つ以上 開いたら、先頭は取り合いに
+    なります（`floor_topics` の docstring の3つ目）。
+    `tests/test_floor_topics.py` の 3番目が、その形を見ています。
+    """
+    try:
+        from src import floor_topics
+        rows = floor_topics.starved()
+    except Exception as exc:                                   # noqa: BLE001
+        print(f"[pick] 台帳の床が読めませんでした（実績の順だけで並べます）: {exc}")
+        return usable
+    if not rows:
+        return usable
+
+    front: list[dict] = []
+    taken: set[str] = set()
+    for r in rows:
+        hit = [t for t in usable
+               if str(t["id"]).startswith(r["prefix"]) and t["id"] not in taken]
+        if not hit:
+            continue
+        for t in hit[:r["short"]]:
+            front.append(t)
+            taken.add(t["id"])
+        print(f"[pick] {floor_topics.lines([r])[0]}"
+              f"　→ **この回の並びで {min(len(hit), r['short'])}件 を先頭へ**",
+              flush=True)
+    if not front:
+        return usable
+    return front + [t for t in usable if t["id"] not in taken]
+
+
 def pick(count: int, explicit: list[str], per_calc: int = DEFAULT_PER_CALC,
          long_form: bool = False) -> list[dict]:
     """未投稿・`calc` あり・**計算の節が全部ちがう** テーマを score の高い順に取る。
@@ -507,6 +558,15 @@ def pick(count: int, explicit: list[str], per_calc: int = DEFAULT_PER_CALC,
         print(f"[pick] 実績が読めませんでした（手書きの score だけで並べます）: {exc}")
         family_score = lambda calc: 1.0   # noqa: E731
     usable.sort(key=lambda t: -float(t.get("score", 1.0)) * family_score(t["calc"]))
+
+    # **台帳の床が待っている題を、先頭へ持ち上げる**（2026-08-29・最適化の回）。
+    #     実績の順（`score × family_perf`）は「どれがよく回るか」の順で、
+    #     **「どれを作らないと前提が閉じないか」を1文字も見ていません。**
+    #     実測: `s-ribo-` の床 8本 に対し、題は 8件 在るのに **2件しか
+    #     作られておらず**、`ribo` は実績の無い族なので順位は真ん中でした。
+    #     そのあいだ `deadline_check.py` は「この回は何もしないのが正解です」。
+    #     **なぜそれが高くつくかは `src/floor_topics.py` の docstring。**
+    usable = _hoist_floor_topics(usable)
 
     if per_calc < 1:
         raise SystemExit(f"--per-calc は1以上です: {per_calc}")
