@@ -157,3 +157,89 @@ def test_needs_が無い回に_割り算をしないこと():
         needs = None
 
     assert dc._data_file_coverage([_V()]) == []
+
+
+# ---------------------------------------------------------------------------
+# **計器そのものが嘘の点を返していた**（2026-08-28 13:5x・最適化の回）
+#
+# 上の門は正しく作られました。**訊かれた計器のほうが嘘を返していました。**
+# 実測 2026-08-28 13:4x JST（`newest_point()` を全計器に当てた）:
+#
+#     data/uploaded.jsonl  **2026-10-12 09:00**（**1,075時間 先**）  ← 申告済みの3件の1つ
+#     data/reach.jsonl     **(1点も読めません)**                     ← 226KB・数千行
+#
+# `uploaded.jsonl` の `at` は「**予約した公開時刻**」（未来）で、
+# 同じ行の `uploaded_at` が「実際に上げた時刻」です。読み手は2つとも
+# 「新しいほど良い」向きに使うので、**この計器だけ永久に「新しい」**と答えます:
+#
+#     `_ans_after`   `newest < when_data` が偽   → 門を素通り
+#     `_stale_note`  `(now-newest) < hours` が真 → 「新しい。待つのが正しい」
+#
+# `reach.jsonl` は `at`/`ts`/`time` を1つも持たず、`_report_end`（Reporting API の
+# 「この時刻までのぶん」）しか持ちません。向きは安全側ですが、
+# **在るデータを「取り直せ」と言い続ける**ので Reporting の単位が毎回 出ていきます。
+# ---------------------------------------------------------------------------
+
+
+def test_a_future_stamp_is_not_an_observation(tmp_path):
+    """**未来の時刻を「いちばん新しい点」にしないこと。**
+
+    落ちたら、予約の時刻を持つ計器（`data/uploaded.jsonl`）は
+    **何週間 取り直さなくても「新しい」**と答え続けます。
+    """
+    import json
+    from datetime import datetime, timedelta, timezone
+
+    now = datetime.now(timezone.utc)
+    f = tmp_path / "uploaded.jsonl"
+    f.write_text(
+        json.dumps({"at": (now + timedelta(days=45)).isoformat(),
+                    "uploaded_at": (now - timedelta(hours=3)).isoformat()}) + "\n",
+        encoding="utf-8")
+
+    got = J.newest_point(f)
+    assert got is not None, "観測の欄（`uploaded_at`）が在るのに読めていません"
+    assert got < now, f"未来の点を返しています: {got}"
+    assert (now - got).total_seconds() / 3600 < 4
+
+
+def test_only_a_future_stamp_means_no_observation(tmp_path):
+    """未来しか無い計器は **`None`**（＝観測を1点も持っていない）。
+
+    **`None` は安全側**です（「取り直せ」と同じ向き）。
+    未来をそのまま返すと、**逆向き**に外れます。
+    """
+    import json
+    from datetime import datetime, timedelta, timezone
+
+    now = datetime.now(timezone.utc)
+    f = tmp_path / "sched.jsonl"
+    f.write_text(json.dumps({"at": (now + timedelta(days=9)).isoformat()}) + "\n",
+                 encoding="utf-8")
+    assert J.newest_point(f) is None
+
+
+def test_report_end_counts_as_a_point(tmp_path):
+    """`_report_end` しか持たない計器（`data/reach.jsonl`）を読めること。
+
+    落ちたら、数千行 在る計器が「**1点も読めません**」に化けます。
+    """
+    f = tmp_path / "reach.jsonl"
+    f.write_text('{"date": "20260815", "video_id": "x", '
+                 '"_report_end": "2026-08-16T07:00:00Z"}\n', encoding="utf-8")
+    got = J.newest_point(f)
+    assert got is not None and got.year == 2026 and got.month == 8 and got.day == 16
+
+
+def test_the_plain_at_still_wins_where_it_is_the_observation(tmp_path):
+    """**`at` が観測時刻の計器は、今までどおり**（`data/views.jsonl` ほか）。"""
+    import json
+    from datetime import datetime, timedelta, timezone
+
+    now = datetime.now(timezone.utc)
+    when = now - timedelta(hours=5)
+    f = tmp_path / "views.jsonl"
+    f.write_text(json.dumps({"at": when.isoformat(), "video_id": "x"}) + "\n",
+                 encoding="utf-8")
+    got = J.newest_point(f)
+    assert got is not None and abs((got - when).total_seconds()) < 2
