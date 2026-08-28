@@ -73518,3 +73518,62 @@ bunkatsu 3 ・ mishikyu 3 になります。**
 8. **`--date` を渡す回は、`[batch] この回の本が着くのは …` の1行を読むこと。**
    そこに出る日と、避けている calc の一覧が食い違っていたら、
    **その回は門が効いていません。**
+
+### 追記4（同じ回・08:3x〜）—— **直した門のうえで撃ち直した**
+
+    [pick] この回の本が着くのは **2026-09-16** ごろ —— 同じ calc を避けるのは、その前後 7日 です
+    [pick] 着地（2026-09-16）の前後 7日 の長尺に出ている calc を避けました:
+           ['bunkatsu', 'mishikyu', 'ribo']（候補 26 → 10件）
+    [batch] 3 本を **2026-09-16 の1日に**入れます（20:00, 22:00, 23:00 JST）
+            teiji-zangyo-5000en-dan          calc=teiji
+            shokyu-1pt-38nen-shogai-chingin  calc=shokyu
+            teiji-zangyo-3kagetsu-hikizan    calc=teiji
+
+**直す前は bunkatsu 2 ／ mishikyu 1 でした。** 同じ台帳・同じ控え・同じ引数で、
+**選ばれる族が変わりました** —— これが門が効いているということです。
+
+**「避けました」の行も直しました。** 字面が「これから7日ぶんの」で固定だったので、
+**避けた先が読み手に見えませんでした**（この回はそれを「15件 避けました」と読んで、
+避けるべき2件が窓の外にあることに気づけていません）。いまは窓そのものを印字します。
+
+    ✓ teiji-zangyo-5000en-dan          a3eMYxK-OAg  2026-09-16 20:00 JST
+    ✓ shokyu-1pt-38nen-shogai-chingin  vQc3Jx6rSyA  2026-09-16 22:00 JST
+    ✓ teiji-zangyo-3kagetsu-hikizan    8kHUT9Z8JNo  2026-09-16 23:00 JST
+    予約できたのは **3 / 3 本**（1本目の回は 2/3 —— 21時 が埋まっていた）
+
+この回の長尺 6本 の並び（**族が3日で入れ替わります**）:
+
+    09/14  mishikyu ／ mishikyu
+    09/15  bunkatsu
+    09/16  teiji ／ shokyu ／ teiji
+
+**長尺の控えの最後は 09/13 → 09/16。** 穴は 09/17〜10/01 の 15日 に縮みました。
+
+#### 検査（この回で撃った範囲）
+
+    test_pick_long / test_pick_deep_family / test_queue_tail_land   16
+    test_eta / test_eta_target_date / test_eta_realloc / live_ids   94
+    test_deadline_check / deadline_reachable / floor_topics         60
+    test_drift / run_marker_claim / arm_speed                       53
+    subject / doc_numbers / uploaded_ledger                         93
+    collisions / day_cap / uploader / upload_cap                   117
+    topic_forge / supply / means / for_owner                       137
+    verify / visual / thumbnail / script_writer                     41
+    calc・subject・doc_numbers・topic_forge・supply・live_ids       465
+
+**全部 緑。**（`pytest tests/` の全体は、きょうだいが同時に走らせているうえ
+生成が3本 走っていて 10分 で終わりません。**この容器で「全体が緑か」を
+合格条件にできない**のは 08/29 08:0x の回が別に測って日誌に書いています。）
+
+### 次の回へ（追記3）
+
+9. **穴は 09/17〜10/01 の 15日。** 同じやり方で埋められます ——
+   `--date <その日> --hours 20,22,23`。**門は直っているので、
+   `[pick] 着地（…）の前後 7日 の長尺に出ている calc を避けました` の行を読んで、
+   避けた先が着地点のまわりになっていることだけ確かめること。**
+   在庫は 22件・族5・1族2本まで。teiji と shokyu は 09/16 で使ったので、
+   次は **shogaku**（この回に足した族）と bunkatsu / mishikyu が空きます。
+10. **`--per-calc` は「1回の batch の中」しか効きません**（`_queue_tail_calcs` の
+   docstring）。**同じ日に同じ族が2本 入るのは、いまの既定では通ります**
+   （09/16 の teiji 2本）。日をまたぐ偏りは門が見るようになりましたが、
+   **1日の中の偏りは誰も見ていません。** 次に気になったら、そこが手つかずです。
