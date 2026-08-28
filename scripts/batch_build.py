@@ -2408,6 +2408,27 @@ def main(argv: list[str] | None = None) -> int:
     # 本ごとに +1 するので、1回で作った本が同じ色になりません
     # （実測 08/27 21:56 は **8本すべて同じ色**でした）。
     _base = theme_base()
+    # **この回で作る本の A/B の名札を、作る前に焼く**（2026-08-28・API 0単位）。
+    #
+    # 腕はテーマIDの純関数なので、**作る前に確定しています。**
+    # 焼いておかないと、`SLOW_PACE_SHARE = 0`（`config/hypotheses.yaml` が
+    # 書いている畳み方）を撃った回に、その本の群が消えます
+    # （`src/ab_split.group_of` に実測 —— 凍結なしなら 遅い 7 → 0）。
+    #
+    # **ここに置く理由**: 焼く場所を1か所にしないと、名札は必ず古くなります。
+    # 実測 2026-08-28 —— 焼いた 30分 後に主実行が 2本 作り、
+    # `tests/test_ab_labels_frozen.py` が **遅い 9 → 7** で落ちました
+    # （新しい2本が名札を持っていない ＝ 生の関数へ落ちる）。
+    #
+    # **競合について**: 同じ枝で複数の回が走ると、読んで書くあいだに
+    # 別の回の追記が消えることがあります。**足すだけなので、
+    # 消えても次の回がもう一度 足します**（`freeze_labels` は上書きしません）。
+    try:
+        from src import ab_split as _ab
+
+        _ab.freeze_labels([t["id"] for t in topics])
+    except Exception as _exc:                                  # noqa: BLE001
+        print(f"[batch] A/B の名札を焼けませんでした（続行）: {_exc}", flush=True)
     with ThreadPoolExecutor(max_workers=jobs) as pool:
         results = list(pool.map(
             lambda tm: build_one(tm[0][0], args.long, tm[0][1], _base + tm[1]),
