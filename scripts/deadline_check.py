@@ -1219,6 +1219,25 @@ def newest_point(path: Path) -> datetime | None:
     return newest
 
 
+def _after_tail(need: dict, on: date, what: str, lag: int) -> Answer:
+    """`after` の要件の**答えそのもの**（`plus_lag` を足すかどうかだけ）。
+
+    `_ans_after` の末尾から切り出しました（2026-08-28）。理由は
+    **`data_file:` の枝から、同じ答えへ早く帰りたいから**です ——
+    その時刻がまだ来ていない要件に、計器の古さを訊いても意味がありません。
+    """
+    if need.get("plus_lag"):
+        band = analytics_lag_band()
+        tail = (f"（**＋{band}日／−0日**。遅れは1日の中で {lag}日 と {lag + band}日 の"
+                "間を動きますが、**下へは動きません**"
+                f"（実測で {lag}日 未満の観測が1つもない）。"
+                "だから期限をこの日より前に置かないこと）" if band else "")
+        return Answer(on + timedelta(days=lag),
+                      f"{what} は {on:%m/%d} の分 ＋ 実データの遅れ {lag}日{tail}",
+                      slack=band, slack_down=0)
+    return Answer(on, f"{what} は {on:%m/%d} に出ます")
+
+
 def _ans_after(need: dict, lag: int) -> Answer:
     """**その日が来るのを待っているだけ**の要件。
 
@@ -1281,6 +1300,36 @@ def _ans_after(need: dict, lag: int) -> Answer:
     src = need.get("data_file")
     if src:
         when_data = when if at else datetime(on.year, on.month, on.day, tzinfo=JST)
+        # **その時刻がまだ来ていないなら、計器には訊かないこと**（2026-08-28 14:2x）。
+        #
+        # この枝は `data_file:` が在れば**日付に関係なく**回っていました。
+        # いま `data_file:` を持つ `after` の要件は1件だけで、その `on_date` は
+        # 過ぎているので、**今日までは一度も踏んでいません。**
+        # ところが同じ日の回が、`data_file:` を足す候補を **6件** 数えており
+        # （散文が計器を1つだけ名指ししている要件）、**うち5件の `on_date` は
+        # 未来**です（09/05・09/10・09/11・09/11・09/12）。足した瞬間、
+        # 5件ともこう答えます ——
+        #
+        #     「**時計は来ています。足りないのはデータのほうです** ——
+        #       取り直すまで、待っても永久に出ません」
+        #
+        # **2つとも偽です。** 時計は来ていない（09/07 の点を 08/28 に訊いている）し、
+        # **待てば出ます**（Reporting が毎日 足していく）。しかも `ready=None` を
+        # 返すので、要件は「判定できる日が出せません」の側 ——
+        # **収益化の審査待ちと同じ棚**に落ちます。
+        # そして `refresh:` を撃つ回は、**在りようのないデータのために
+        # Reporting の単位を毎回 捨てます。**
+        #
+        # 上の `at_time_jst` の枝が `now < when` で先に帰るのと同じ理屈です。
+        # **古さを問えるのは、その時刻が来てからだけ。**
+        #
+        # **覆る条件**: 「その日より前に、その日ぶんの点が在るべき」計器が
+        # 出てきたら（先取りで書く帳面）、この門はその計器を素通りさせます。
+        # そのときは `need` 側に印を足すこと（この行の判定を全部の要件に
+        # 広げないこと）。`tests/test_deadline_data_file.py` の
+        # `test_a_future_on_date_does_not_ask_the_instrument` が見ています。
+        if when_data > datetime.now(JST):
+            return _after_tail(need, on, what, lag)
         newest = newest_point(ROOT / str(src))
         if newest is None or newest < when_data:
             seen = (f"いちばん新しい点は **{newest.astimezone(JST):%m/%d %H:%M} JST**"
@@ -1295,16 +1344,7 @@ def _ans_after(need: dict, lag: int) -> Answer:
                       f"`{src}` を取り直すまで、待っても永久に出ません。"
                       + (f"  `{how}`" if how else f"  `{src}` を取り直すこと")
                       + "  **取れるまで判定しないこと**"))
-    if need.get("plus_lag"):
-        band = analytics_lag_band()
-        tail = (f"（**＋{band}日／−0日**。遅れは1日の中で {lag}日 と {lag + band}日 の"
-                "間を動きますが、**下へは動きません**"
-                f"（実測で {lag}日 未満の観測が1つもない）。"
-                "だから期限をこの日より前に置かないこと）" if band else "")
-        return Answer(on + timedelta(days=lag),
-                      f"{what} は {on:%m/%d} の分 ＋ 実データの遅れ {lag}日{tail}",
-                      slack=band, slack_down=0)
-    return Answer(on, f"{what} は {on:%m/%d} に出ます")
+    return _after_tail(need, on, what, lag)
 
 
 def _ans_group_key(need: dict, as_of: date) -> Answer:

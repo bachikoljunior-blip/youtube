@@ -243,3 +243,55 @@ def test_the_plain_at_still_wins_where_it_is_the_observation(tmp_path):
                  encoding="utf-8")
     got = J.newest_point(f)
     assert got is not None and abs((got - when).total_seconds()) < 2
+
+
+# ---------------------------------------------------------------------------
+# **古さを問えるのは、その時刻が来てからだけ**（2026-08-28 14:2x・最適化の回）
+#
+# `data_file:` の枝は、`on_date` が未来でも回っていました。いま `data_file:` を
+# 持つ `after` の要件は1件だけで、その `on_date` は過ぎているので**今日までは
+# 一度も踏んでいません** —— ところが同じ日の回が、足す候補を **6件** 数えており
+# （散文が計器を1つだけ名指ししている要件）、**うち5件の `on_date` は未来**です。
+# 足した瞬間、5件ともこう答えます:
+#
+#     「時計は来ています。足りないのはデータのほうです ——
+#       取り直すまで、待っても永久に出ません」
+#
+# **2つとも偽**（時計は来ていないし、待てば出る）。しかも `ready=None` なので
+# 「判定できる日が出せません」＝ **収益化の審査待ちと同じ棚**に落ち、
+# `refresh:` を撃つ回は**在りようのないデータに Reporting の単位を捨てます。**
+# ---------------------------------------------------------------------------
+
+
+def test_a_future_on_date_does_not_ask_the_instrument(tmp_path):
+    """**`on_date` が未来なら、計器の古さを訊かないこと。**
+
+    落ちたら、未来の要件が全部「取り直すまで永久に出ません」になります。
+    """
+    from datetime import date, timedelta
+
+    later = date.today() + timedelta(days=10)
+    p = tmp_path / "reach.jsonl"
+    # **わざと古い点**（4日 前）。それでも、時刻が来ていないので訊いてはいけない。
+    old = date.today() - timedelta(days=4)
+    p.write_text('{"_report_end": "%sT07:00:00Z"}\n' % old.isoformat(), encoding="utf-8")
+
+    ans = J._ans_after({"on_date": later.isoformat(), "data_file": str(p),
+                        "what": "その日の面"}, 3)
+    assert ans.ready is not None, f"未来の要件に計器を訊いています: {ans.why}"
+    assert "取り直す" not in (ans.todo or ""), ans.todo
+
+
+def test_a_past_on_date_still_asks_the_instrument(tmp_path):
+    """**過ぎた要件は、今までどおり計器に訊くこと**（この門の本体）。"""
+    from datetime import date, timedelta
+
+    passed = date.today() - timedelta(days=2)
+    p = tmp_path / "reach.jsonl"
+    old = date.today() - timedelta(days=9)
+    p.write_text('{"_report_end": "%sT07:00:00Z"}\n' % old.isoformat(), encoding="utf-8")
+
+    ans = J._ans_after({"on_date": passed.isoformat(), "data_file": str(p),
+                        "what": "その日の面"}, 0)
+    assert ans.ready is None, "点が無いのに日を出しています"
+    assert "取り直す" in (ans.todo or "")
