@@ -2575,7 +2575,7 @@ def trajectory_choice(m: dict, a0: dict, base: dict, **kw) -> list[dict]:
 
 def trajectory_all(m: dict, a0: dict, *, supply: dict | None = None,
                    points: list[dict] | None = None,
-                   today: date | None = None) -> dict:
+                   today: date | None = None, full: bool = True) -> dict:
     """**軌跡を1回で全部解く**（本線・幅・腕べつ）。`main` と検査の入口はここ1つ。
 
     返り:
@@ -2585,6 +2585,46 @@ def trajectory_all(m: dict, a0: dict, *, supply: dict | None = None,
         choice   「全部この腕に振ったら」を腕べつに解いたもの（早い順）
         streak   いま何連続で外しているか
         band     当たり件数と確率の幅（出どころ）
+
+    ## `full=False` ——**印字しない呼び手のために、印字にしか使わない線を解かない**
+    ##                 （2026-08-28。**`retro.py` の持ち越し① / (a2) 問い1 が8回中7回**）
+
+    **`--reflect` は、この関数が解く7本の軌跡のうち3本を捨てています。**
+    `fast` / `slow`（幅の両端）と `planned`（台帳の配分）は
+    **`headline()` と `_report_trajectory()` の印字にしか使われません** ——
+    `data/eta.jsonl` に積む行を組む `_row()` は、この3つを1つも読みません
+    （読むのは `base` / `choice` / `arms` / `band` の4つだけ）。
+    ところが `reflect()` は 10行しか印字しないので、**3本ぶんが丸ごと捨てられます。**
+
+    実測（2026-08-28・この機械の上で1本ずつ時間を取った）::
+
+        analyse + supply_state   0.3秒
+        plan(sensitivity=True)   4.1秒
+        軌跡 base               20.0秒
+        軌跡 fast               16.1秒   ← `--reflect` は捨てる
+        軌跡 slow               30.6秒   ← `--reflect` は捨てる
+        軌跡 planned            21.9秒   ← `--reflect` は捨てる
+        軌跡 choice（腕4本で）   14.5秒   ← `focus` の線は天井に早く着くので安い
+                               ------
+        solve() 合計           107.5秒 → **`full=False` で 38.9秒**（**-68.6秒・-64%**）
+
+    **幅の両端（`fast`/`slow`）がいちばん高い**のは、当たる確率を下げた線ほど
+    腕が遅く伸びて、`t` の探索が長く回るからです（`slow` 単独で 30.6秒）。
+    **捨てる3本のほうが、印字する本線より高い**という配分でした。
+
+    **なぜ「日付が変わらない」と言えるか。** `full` は
+    **どの線を解くかだけ**を決めます。`base` も `choice` も `arms` も
+    まったく同じ引数で同じ関数を通るので、**`_row()` が組む行は 1文字も変わりません**
+    （`tests/test_eta_reflect_light.py` が、`fast`/`slow`/`planned` に
+    でたらめを入れた行と入れない行が**同一**であることを固定します。
+    誰かが `_row()` にこの3つを読ませたら、その検査が落ちます）。
+
+    **`solve()` の docstring が「2つの道が別々に古びる」と言っているのは、
+    `reflect()` が自前で解き直す形のことです。** ここは道を分けていません ——
+    通る関数は同じ1本で、**末端の3本を解くか解かないか**だけが違います。
+
+    **覆る条件**: `_row()` が `fast` / `slow` / `planned` のどれかを積むように
+    なったら、`reflect()` は `full=True` に戻すこと（検査が先に落ちます）。
     """
     today = today or today_jst()
     rows = arm_speed.closed()
@@ -2594,7 +2634,7 @@ def trajectory_all(m: dict, a0: dict, *, supply: dict | None = None,
     base = trajectory(m, a0, **kw)
     p = bd.get("p") or 0.0
     fast = slow = None
-    if p > 0 and bd.get("lo") and bd.get("hi"):
+    if full and p > 0 and bd.get("lo") and bd.get("hi"):
         # **速さは当たる確率に比例します**（`rate = p·log g·θ`）。だから幅は
         # 確率の幅をそのまま倍率にして入れます。**腕ごとの p は別ですが、
         # 幅の出どころは1つ**（標本15件）なので、同じ比を当てています。
@@ -2623,7 +2663,7 @@ def trajectory_all(m: dict, a0: dict, *, supply: dict | None = None,
     # 「次の前提をどの腕に立てるか」で動く日数**そのものになります。
     pln = None
     try:
-        pl_share = arm_speed.planned()
+        pl_share = arm_speed.planned() if full else {}
         if pl_share.get("n"):
             # **`kw` は既に `arms` を持っています。** そのまま `arms=` を足すと
             #     `TypeError: got multiple values for keyword argument 'arms'` になり、
@@ -4925,7 +4965,7 @@ def _scale_note(prev: dict, current: dict) -> list[str]:
     return out
 
 
-def solve(m: dict, points: list[dict]) -> dict:
+def solve(m: dict, points: list[dict], *, full: bool = True) -> dict:
     """**実測 `m` から、予測を最後まで解く。**（2026-08-20 に `main()` から出した）
 
     出したのは、**周の終わりの「反映」が同じ道を通るため**です
@@ -4935,6 +4975,11 @@ def solve(m: dict, points: list[dict]) -> dict:
 
     返すのは `{"a", "sup", "pl", "tr", "row"}`。**印字はしません**
     （`main()` は 200行出し、`reflect()` は 10行しか出さないため）。
+
+    `full=False` は**印字にしか使わない軌跡3本を解きません**
+    （`trajectory_all` の docstring に、なぜ日付が変わらないかと実測）。
+    **道は分けていません** —— 上の「2つの道が別々に古びる」は
+    `reflect()` が**自前で解き直す**形のことで、ここは同じ1本の関数を通ります。
     """
     a = analyse(m, points)
     m["per_video_now"] = a["per_video_now"]
@@ -4949,7 +4994,7 @@ def solve(m: dict, points: list[dict]) -> dict:
     #     ここが出ないと、印字される日付は「腕が1ミリも動かない未来」になります。
     #     **回を止めないこと** —— 軌跡が解けなくても、据え置きの線だけで出します。
     try:
-        tr = trajectory_all(m, a, supply=sup, points=points)
+        tr = trajectory_all(m, a, supply=sup, points=points, full=full)
     except Exception as exc:                                   # noqa: BLE001
         print(f"[eta] 軌跡を解けませんでした: {type(exc).__name__}: {exc}")
         tr = None
@@ -5241,7 +5286,11 @@ def reflect(note: str | None = None, *, record: bool = True) -> tuple[int, dict]
         global FROZEN_ARMS
         _keep, FROZEN_ARMS = FROZEN_ARMS, False
         try:
-            s = solve(dict(m), points)
+            # **印字にしか使わない軌跡3本（`fast`/`slow`/`planned`）も解きません**
+            #     （2026-08-28。同じ理由の続き —— 反映は 10行しか出しません）。
+            #     `_row()` はこの3つを1つも読まないので、**積む行は 1文字も変わりません**
+            #     （`tests/test_eta_reflect_light.py` が固定）。実測 **-68.6秒（-64%）**。
+            s = solve(dict(m), points, full=False)
         finally:
             FROZEN_ARMS = _keep
     except Exception as exc:                                   # noqa: BLE001

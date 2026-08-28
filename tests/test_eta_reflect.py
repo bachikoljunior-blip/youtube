@@ -85,7 +85,7 @@ def test_reflect_records_the_date_before_and_after(log, monkeypatch):
     """**「この回で入れた実測 → 日付 ○ → △（±N日）」が1行で読めること。**"""
     _write(log, _point())
 
-    def fake_solve(m, points):
+    def fake_solve(m, points, **kw):
         row = dict(m)
         row.update(traj_date="2026-11-14", traj_days=85.4,
                    target_date="2027-01-09", days_to_target=141.9,
@@ -115,7 +115,7 @@ def test_reflect_records_the_date_before_and_after(log, monkeypatch):
 def test_moved_does_not_list_the_date_itself(log, monkeypatch):
     """**日付は「動いた入力」ではなく「結果」です。** 混ぜると入力が動いたように見える。"""
     _write(log, _point())
-    monkeypatch.setattr(eta, "solve", lambda m, points: {
+    monkeypatch.setattr(eta, "solve", lambda m, points, **kw: {
         "a": {}, "sup": None, "pl": {}, "tr": _TR,
         "row": {**m, "traj_date": "2026-11-14", "make_rate_per_day": 9.0}})
     _, rec = eta.reflect()
@@ -147,7 +147,7 @@ def test_reflect_compares_against_the_prediction_not_another_reflect(log, monkey
            _point(),
            {"at": "2026-08-20T11:20:00+00:00", "kind": "reflect",
             "traj_date": "2026-11-14", "traj_days": 85.4})
-    monkeypatch.setattr(eta, "solve", lambda m, points: {
+    monkeypatch.setattr(eta, "solve", lambda m, points, **kw: {
         "a": {}, "sup": None, "pl": {}, "tr": _TR,
         "row": {**m, "traj_date": "2026-11-14"}})
     _, rec = eta.reflect()
@@ -162,7 +162,7 @@ def test_reflect_compares_against_the_prediction_not_another_reflect(log, monkey
 def test_no_movable_input_is_not_called_ineffective(log, monkeypatch, capsys):
     """`_drift` と同じ断り。**混同すると、読む側が日付を動かす作業から離れます。**"""
     _write(log, _point())
-    monkeypatch.setattr(eta, "solve", lambda m, points: {
+    monkeypatch.setattr(eta, "solve", lambda m, points, **kw: {
         "a": {}, "sup": None, "pl": {}, "tr": _TR, "row": dict(m)})
     _, rec = eta.reflect()
     assert rec["no_movable_input"] is True
@@ -177,7 +177,7 @@ def test_no_movable_input_is_not_called_ineffective(log, monkeypatch, capsys):
 def test_input_moved_but_date_did_not_says_it_is_outside_the_binding(log, monkeypatch, capsys):
     """入力が動いて日付が動かないのは、**いまの律速の外**という情報です。"""
     _write(log, _point())
-    monkeypatch.setattr(eta, "solve", lambda m, points: {
+    monkeypatch.setattr(eta, "solve", lambda m, points, **kw: {
         "a": {}, "sup": None, "pl": {}, "tr": _TR,
         "row": {**m, "make_rate_per_day": 9.0}})
     _, rec = eta.reflect()
@@ -189,7 +189,7 @@ def test_reflect_never_stops_the_cycle(log, monkeypatch, capsys):
     """**反映は記録であって門ではありません。** 解けなくても 0 を返すこと。"""
     _write(log, _point())
 
-    def boom(m, points):
+    def boom(m, points, **kw):
         raise RuntimeError("解けない")
 
     monkeypatch.setattr(eta, "solve", boom)
@@ -237,7 +237,7 @@ def test_unsolved_trajectory_is_not_read_as_zero(log, monkeypatch, capsys):
     **差が黙って +0日**になります。いちばん悪い形なので、ここで落とします。
     """
     _write(log, _point())
-    monkeypatch.setattr(eta, "solve", lambda m, points: {
+    monkeypatch.setattr(eta, "solve", lambda m, points, **kw: {
         "a": {}, "sup": None, "pl": {}, "tr": None, "row": dict(m)})
     _, rec = eta.reflect()
     assert rec["traj_solved"] is False
