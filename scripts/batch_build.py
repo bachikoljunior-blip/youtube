@@ -1557,7 +1557,79 @@ def motion_plan(n: int, shortfall: tuple[int, str] | None = None) -> list[bool |
     return plan
 
 
-def build_one(topic: dict, long_form: bool, motion: bool | None = None) -> dict:
+_THEME_ENV = "YT_THEME_INDEX"
+
+
+def theme_base() -> int:
+    """**この回の配色の起点**（チャンネルの投稿済み本数）。読むのは1回だけ。
+
+    ## なぜ「1回だけ」が要るのか（2026-08-28 の最適化の回・実測）
+
+    `build_one()` は1本につき子プロセスを立て、その全部が
+    `src/pipeline.py` で `history.posted_topic_ids()` を呼んでいました
+    （1回 ≒ **25単位**）。窓 08/27 16:00 JST の `data/day_quota.jsonl` で
+    **108回**（`by` が `history.py:_scan`・間隔の中央値 **2.0秒**）——
+    枠が生きていれば **約2,700単位 ＝ 日枠の 27%** です。
+
+    ## そして、読み直しても**答えは動きません**。だから色が揃っていました
+
+    `build_one` は `--dry-run` で、**作っているあいだ1本も投稿されません。**
+    つまり `len(posted_topic_ids())` は**この回のあいだ定数**で、
+    `visuals.theme_for(topic_id, index)` は `index` が来ると
+    **テーマIDを見ません**（`THEMES[index % 5]`）。
+    → **1回で作った本は、全部おなじ配色**になります。
+
+    実測（`data/critique_queue/` の実物の1コマ目・背景色で判定）:
+
+        08/27 21:56-21:57  **8本すべて** THEMES[2]
+        08/28 08:40        4本すべて THEMES[1]
+        08/28 00:59        4本すべて THEMES[0]
+        08/27 10:34        4本すべて THEMES[0]
+        08/27 08:07        4本すべて THEMES[1]
+        08/27 20:58        3本すべて THEMES[4]
+
+    `visuals.theme_for` の docstring は「index を渡すと**連続する回が
+    必ず違う色になる**ので、こちらを使うこと」と書いてあり、
+    **渡し方のほうが、その保証を外していました。**
+    `CLAUDE.md` は「**同じ絵を続けないこと**」を収益化の条件として挙げ、
+    ポリシーの引用は「同じチャンネルの動画を続けて数本視聴した後、
+    繰り返しのように感じられる可能性のあるコンテンツ」です。
+
+    **読み直しをやめるのと、色を散らすのは、同じ1つの直しです** ——
+    起点を1回だけ読んで、**本ごとに +1 して渡します。**
+
+    ## 覆る条件
+
+    - `visuals.theme_for` が `index` でもテーマIDを混ぜるようになったら、
+      ここで散らす必要は無くなります（**起点を1回だけ読むほうは残すこと**）
+    - 読めなかった回は **0** を返します。色は回の中では散りますが、
+      回をまたぐと重なりえます —— **読めないことを、作らない理由にはしません。**
+
+    ## **API を1単位も使いません**（手元の控えを数えるだけ）
+
+    最初この関数は `history.posted_topic_ids()` を呼んでいました。**1回で足りる**
+    ので 108回 が 1回 にはなりますが、**その1回が並列の手前に立ちます** ——
+    `tests/test_batch_parallel.py::test_builds_actually_overlap` が
+    **1.1秒 の増**で落ちて、そう教えました（枠切れの窓では 403 まで待つ）。
+
+    起点に要るのは「**回をまたいで違う数**」だけで、正確な投稿本数ではありません。
+    `data/uploaded.jsonl` の行数は投稿のたびに増えるので、**それで足ります。**
+    控えは git で配られるので、枠が尽きた窓でも読めます。
+    """
+    try:
+        path = ROOT / "data" / "uploaded.jsonl"
+        if not path.exists():
+            return 0
+        return sum(1 for line in path.read_text(encoding="utf-8").splitlines()
+                   if line.strip())
+    except Exception as exc:                                   # noqa: BLE001
+        print(f"[batch] 配色の起点を読めませんでした（0 から回します）: {exc}",
+              flush=True)
+        return 0
+
+
+def build_one(topic: dict, long_form: bool, motion: bool | None = None,
+              theme_index: int | None = None) -> dict:
     """**作るところまで**を1本ぶん。予約はしない（呼ぶ側が直列でやる）。
 
     ここが並列に走る部分です。**予約を混ぜないこと** —— `upload_only.py` は
@@ -1577,8 +1649,12 @@ def build_one(topic: dict, long_form: bool, motion: bool | None = None) -> dict:
     cmd = [sys.executable, "-m", "src.pipeline", "--topic", tid, "--dry-run"]
     if not long_form:
         cmd.append("--short")
-    env = None if motion is None else {_MOTION_ENV: "1" if motion else "0"}
-    code, out = run(cmd, BUILD_TIMEOUT, tid, env=env)
+    env = {} if motion is None else {_MOTION_ENV: "1" if motion else "0"}
+    # **配色の番号を渡す**（`theme_base()` の docstring に実測と理由）。
+    # 渡した回は、子プロセスがチャンネルを読み直しません（1本 ≒ 25単位）。
+    if theme_index is not None:
+        env[_THEME_ENV] = str(theme_index)
+    code, out = run(cmd, BUILD_TIMEOUT, tid, env=env or None)
     row["build_sec"] = round((datetime.now(JST) - started).total_seconds(), 1)
     if code != 0:
         row["error"] = f"生成が失敗（exit {code}）"
@@ -2328,9 +2404,14 @@ def main(argv: list[str] | None = None) -> int:
         # **足りないのが本なのか枠なのかは、次の手をまるごと変えます。**
         print(f"\n[batch] [!] `opening_motion` の対照は作りません —— {_why}", flush=True)
 
+    # **配色の起点は、この回で1度だけ読む**（`theme_base()` に実測と理由）。
+    # 本ごとに +1 するので、1回で作った本が同じ色になりません
+    # （実測 08/27 21:56 は **8本すべて同じ色**でした）。
+    _base = theme_base()
     with ThreadPoolExecutor(max_workers=jobs) as pool:
-        results = list(pool.map(lambda tm: build_one(tm[0], args.long, tm[1]),
-                                zip(topics, motion)))
+        results = list(pool.map(
+            lambda tm: build_one(tm[0][0], args.long, tm[0][1], _base + tm[1]),
+            zip(zip(topics, motion), range(len(topics)))))
 
     # ---- 1b. 落ちた本を、その場でもう一度だけ作る ---------------------------
     #
@@ -2361,8 +2442,11 @@ def main(argv: list[str] | None = None) -> int:
             # **撃ち直しは、同じ腕で作ること。** ここで腕を選び直すと、
             # 同じテーマが `data/build_flags.jsonl` に両方の値で並び、
             # `motion_groups.motion_by_topic()` が**そのテーマを両群から落とします**。
+            # **撃ち直しも同じ番号で。** 番号を振り直すと、1回目に作った本と
+            # 色がぶつかりえます（起点は同じなので、位置だけが色を決めます）。
             again = list(pool.map(
-                lambda n: build_one(topics[n], args.long, motion[n]), retry_at))
+                lambda n: build_one(topics[n], args.long, motion[n], _base + n),
+                retry_at))
         recovered = 0
         for n, row in zip(retry_at, again):
             row["retried"] = True

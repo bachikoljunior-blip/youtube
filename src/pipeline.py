@@ -381,15 +381,37 @@ def main(argv: list[str] | None = None) -> int:
         channel["publish"]["visibility"] = override
         print(f"[pipeline] 公開設定を {override} で上書き")
 
+    topic_id = args.topic or config.env("TOPIC_ID", required=False)
     # 投稿済みはチャンネルから読む。ファイルには持たない。
     # --dry-run でも本数だけは実際に数える。配色を投稿済み本数で回しているので、
     # ここを 0 にすると dry-run と本番で色が変わってしまう。
     # dry-run で作った final.mp4 をそのまま投稿する運用（scripts/upload_only.py）
     # なので、dry-run 側が本番の色でなければ意味がない。
-    already = history.posted_topic_ids()
-    posted: set[str] = set() if dry else already
-    theme_index = len(already)
-    topic_id = args.topic or config.env("TOPIC_ID", required=False)
+    #
+    # ## **配色の番号を渡されたら、チャンネルを読み直さない**（2026-08-28・実測）
+    #
+    # `scripts/batch_build.build_one()` は **1本につき1つ子プロセス**を立て、
+    # その全部がここで `posted_topic_ids()` を呼びます（1回 ≒ **25単位** ——
+    # `channels.list` 1 ＋ `playlistItems.list` 約12 ＋ `videos.list` 約12）。
+    # `data/day_quota.jsonl` の窓 08/27 16:00 JST で、この呼び出しは
+    # **108回**（403 の `by` が `history.py:_scan`。間隔の中央値 **2.0秒**）。
+    # **枠が生きていれば 約2,700単位 ＝ 日枠 1万 の 27%** を、
+    # 毎回おなじチャンネル一覧の読み直しに使っていたことになります。
+    # 残してある計測のぶん（`upload_cap.RESERVE_UNITS` 400単位）の **6.75倍**です。
+    #
+    # そして**この経路で、その 25単位 が要るのは `theme_index` だけ**です:
+    #   - `posted` は `dry` なら `set()`（ここは必ず `--dry-run`）
+    #   - `pick_topic()` は `topic_id` が来ていれば**その場で返る**（`posted` を見ない）
+    # だから番号を渡された回は読みません。**渡されない回は今までどおり読みます。**
+    idx = config.env("THEME_INDEX", required=False)
+    if idx and topic_id and dry:
+        already: set[str] = set()
+        theme_index = int(idx)
+        posted: set[str] = set()
+    else:
+        already = history.posted_topic_ids()
+        posted = set() if dry else already
+        theme_index = len(already)
     if args.script and not topic_id:
         raise RuntimeError("--script を使うときは --topic でテーマIDを指定してください")
     topic = pick_topic(pool, posted, topic_id)
