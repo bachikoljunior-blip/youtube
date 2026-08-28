@@ -757,6 +757,77 @@ def split_per_video(rows) -> tuple[list[int], list[int]]:
     return sorted(shorts), sorted(longs)
 
 
+def live_band_views(rows, published=None, forms=None) -> list[int]:
+    """**再生が付く帯に居た本だけ**の、1本あたり再生（ショート・昇順）。API 0単位。
+
+    `rows` は `dimensions=video` の Analytics の行（`row[0]` が video_id）。
+    帯は `src/day_cap.live_ids()`（間隔 → その日の先頭 `cap()` 本）で引きます。
+    **上限を測っているのと同じ2段**なので、天井の掛け算と分母がそろいます。
+
+    ## なぜ要るか（2026-08-29 に測って足した。**天井が同じ死を2回 数えていました**）
+
+    天井は
+
+        1本あたり再生 **×** 再生が付く上限（実測 10本/日・`src/day_cap.py`）**×** 30日
+
+    です。**右の 10本/日 が「上限を超えて出した本は 0再生」を既に言っています。**
+    ところが左の「1本あたり再生」は、**その死んだ本を分母に入れたままの平均**でした。
+    **同じ死を、式の左と右で2回 引いています。**
+
+    実測（`data/views.jsonl`・齢48時間 以上の 168本。2026-08-29）:
+
+        0再生            24本   合計       0
+        1〜9再生         42本   合計     126   ← **Analytics には出ます**（分母に入る）
+        10〜49再生        4本   合計     105
+        50再生 以上      98本   合計  69,081
+
+    **1〜9再生 の 42本は、分母の 29% を占めて、再生の 0.18% しか持っていません。**
+    薄まったぶんだけ天井が下がり、`eta.py` は7日の差を
+    **「出すほど天井が下がります」**と印字していました。**それは実績ではなく、
+    上限を 2.3倍 超えて出したぶんが平均を薄めた跡**です。
+
+    帯で割った実測（同じ168本）:
+
+        帯の中  n=84  平均 **678回**      帯の外  n=84  平均 168回
+        帯の中で実際に生きた（50再生 以上） **82/84**（98%）
+        帯の外で死んだ **68/84**（81%）  ← 一致 150/168 ＝ **89%**
+
+    公開日ごとに見ると、**生きた本数は出した本数によらず 10本 前後で止まります**:
+
+        08/20  25本 → 生 10本 / 6,445再生      08/23  13本 → 生 10本 / 10,232再生
+        08/21  32本 → 生 11本 / 6,791再生      08/24  10本 → 生 10本 /  8,386再生
+        08/22  25本 → 生 10本 / 5,892再生
+
+    **32本 出した日より、10〜13本 の日のほうが再生は多い。** 分母だけが増えています。
+
+    ## この関数が言えないこと
+
+    - **帯は公開時刻から引いた予測**で、実測の生死ではありません（89% で一致）。
+      帯の外で生きた 16本 を捨てているので、**帯の中の平均は上振れ側**です。
+    - `day_cap.live_ids()` は長尺を除きません。**ここで先に除いてから渡します**
+      （`cap()` が測っているのはショートの面で、長尺はその枠を1つも使わないため）。
+
+    **覆る条件**: `day_cap.measure()` の `cap` が上がれば帯は自動で広がります。
+    帯の中の平均が、帯の外の平均の **2倍 を下回ったら**、この切り方は効いていません
+    （いまは 678 対 168 ＝ **4.0倍**）。そのときは分母を戻すこと。
+    """
+    try:
+        from src import ab_split, day_cap
+    except Exception:
+        return []
+    try:
+        long_ids = day_cap._long_ids(forms)
+        pub = published if published is not None else ab_split.published()
+        band = day_cap.live_ids([r for r in pub
+                                 if str(r.get("video_id") or "") not in long_ids])
+    except Exception:
+        return []
+    if not band:
+        return []
+    shorts, _ = split_per_video([r for r in rows if str(r[0]) in band])
+    return shorts
+
+
 def _measure() -> dict:
     """YouTube Analytics から、予測に要る実測値だけを取る。"""
     from googleapiclient.discovery import build
@@ -814,6 +885,8 @@ def _measure() -> dict:
     # そして「いちばん近い帯」の倍率は **1.1倍 → 1.33倍** に変わります。
     mean_views = round(sum(vals) / len(vals)) if vals else 0
     long_mean = round(sum(long_sorted) / len(long_sorted)) if long_sorted else None
+    live_vals = live_band_views(per_video)
+    live_mean = round(sum(live_vals) / len(live_vals)) if live_vals else None
 
     def row(rows, i):
         return rows[0][i] if rows else 0
@@ -833,6 +906,11 @@ def _measure() -> dict:
         "views_per_video": mean_views,
         "median_views_per_video": median_views,
         "videos_with_views_28d": len(vals),
+        # **天井の分母は、再生が付く帯に居た本だけ**（2026-08-29 に足した。
+        # `live_band_views` の docstring に、なぜ薄めた平均だと二重に数えるか）。
+        # `None` ＝ 帯が引けなかった（`data/uploaded.jsonl` が無い等）。**その回は前の式に落ちます。**
+        "views_per_video_live": live_mean,
+        "videos_live_28d": len(live_vals) if live_vals else 0,
         # **長尺だけの1本あたり再生**（`None` ＝ 直近28日に長尺の再生が1本も無い）
         "long_per_video": long_mean,
         "long_median_per_video": long_median,
@@ -846,11 +924,24 @@ def _measure() -> dict:
 def _per_video(m: dict) -> float:
     """1本あたり再生（ショート）。**天井を動かす数なので、平均のほうを使います。**
 
-    `data/eta.jsonl` の古い点には `views_per_video` がありません（8点目まで）。
+    **採るのは「再生が付く帯に居た本だけ」の平均**です（2026-08-29 に直した。
+    理由と実測は `live_band_views` の docstring）。天井は
+    `1本あたり再生 × 再生が付く上限（10本/日） × 30日` なので、
+    **上限を超えて死んだ本を分母にも入れると、同じ死を2回 引きます。**
+
+    落ちる先は2段:
+
+        views_per_video_live  帯の中だけの平均（**この点から既定**）
+        views_per_video       帯を引けなかった点・2026-08-29 より前の点
+        median_views_per_video  `views_per_video` も無い古い点（8点目まで）
+
     **無い点を 0 と読むと、差の節が「1,092 → 0」＝ -100% と印字します**ので、
     落ちる先を中央値に置いています。**中央値は上振れ側**なので、
     古い点との差は「縮んだ」側に寄って見えることに注意すること。
     """
+    live = m.get("views_per_video_live")
+    if live:
+        return live
     v = m.get("views_per_video")
     return v if v is not None else m.get("median_views_per_video", 0)
 
@@ -1381,8 +1472,16 @@ def report(m: dict, a: dict) -> list[str]:
     P(f"  登録率            {a['sub_rate']*100:>10.4f} %   ＝ 再生 {1/a['sub_rate']:,.0f} 回につき1人" if a["sub_rate"] else "  登録率            **0** ＝ 何回再生されても増えていない")
     P(f"  長尺の視聴時間    {m['long_hours_365']:>10,.1f} 時間（直近365日。門は {LONG_HOURS_GATE:,}）")
     P(f"  ショート90日      {m['shorts_views_90d']:>10,} 回（門は {SHORTS_VIEWS_GATE:,}）")
-    P(f"  1本あたり再生     {a['per_video_now']:>10,} 回（**ショート**・**平均**・"
-      f"直近28日に再生のあった本のうち、**標本に残った {m['videos_with_views_28d']} 本**）")
+    if m.get("views_per_video_live"):
+        P(f"  1本あたり再生     {a['per_video_now']:>10,} 回（**ショート**・**平均**・"
+          f"**再生が付く帯に居た {m.get('videos_live_28d', 0)} 本**）")
+        P(f"    （帯の外まで入れた平均は {m['views_per_video']:,} 回／{m['videos_with_views_28d']} 本。"
+          "**天井には帯の中だけを使います** —— 天井は「1本あたり再生 × 再生が付く上限（"
+          f"{a.get('view_cap_per_day', 0):.0f}本/日）」なので、"
+          "**帯の外の本を分母に残すと、同じ死を2回 引きます**。`live_band_views` に実測）")
+    else:
+        P(f"  1本あたり再生     {a['per_video_now']:>10,} 回（**ショート**・**平均**・"
+          f"直近28日に再生のあった本のうち、**標本に残った {m['videos_with_views_28d']} 本**）")
     if m.get("median_views_per_video") and m["median_views_per_video"] != a["per_video_now"]:
         P(f"    （中央値は {m['median_views_per_video']:,} 回 ＝ **典型的な1本**。"
           "**天井には平均のほうを使います** —— 天井は N本ぶんの合計で、合計 ＝ N × 平均）")
@@ -5563,6 +5662,14 @@ def _scale_note(prev: dict, current: dict) -> list[str]:
         out += ["    [!] **1本あたり再生の物差しが、この点から変わりました**"
                 "（床つきの中央値 → 床なしの平均）。",
                 "        **上の変化は実績ではありません。** 実績として読めるのは、次の点からです。"]
+    if prev.get("views_per_video_live") is None and current.get("views_per_video_live") is not None:
+        out += ["    [!] **1本あたり再生の分母が、この点から変わりました**"
+                "（`day_cap` の帯の外に落ちた本 ＝ 上限を超えて出した 0再生の側 を、分母から外した）。",
+                "        **上の変化は実績ではありません。** 天井は"
+                "「1本あたり再生 × 再生が付く上限」なので、"
+                "**帯の外の本を分母に残すと、同じ死を2回 引きます**"
+                "（`live_band_views` の docstring に実測）。",
+                "        実績として読めるのは、次の点からです。"]
     if prev.get("per_video_dropped") is None and current.get("per_video_dropped") is not None:
         out += ["    [!] **1本あたり再生の標本が、この点から変わりました**"
                 "（予約のまま公開していない本・公開から48時間未満の本・28日の窓より前の本を落とした）。",
