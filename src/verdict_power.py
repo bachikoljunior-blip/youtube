@@ -141,7 +141,78 @@ def gate_for(baseline: float, n: int, target: float = 2.0) -> int | None:
     return None
 
 
+#: **2群を比べている前提**（処置群 対 対照群）。片側の門とは数え方が違う。
+#: 「群」と「上回／下回」が同じ条件文に出てきたら、こちら。
+_TWO_GROUP = re.compile(r"群.{0,80}?(?:上回|下回)", re.S)
+#: 2群の条件が置いている**余白**（「**5人 以上 上回**っていなければ」）。
+#: **無ければ 1** ＝「1人でも上回れば通る」＝ **余白ゼロ**。
+_MARGIN = re.compile(r"([0-9]+)\s*人\s*以上\s*上回")
+
+
+def _pois_pmf(k: int, lam: float) -> float:
+    return math.exp(-lam) * lam ** k / math.factorial(k)
+
+
+def two_group_power(baseline: float, n: int, margin: int,
+                    target: float = 2.0) -> dict:
+    """**処置群が対照群を `margin` 人 以上 上回ったら生き残る**、の取り違え率。
+
+    片側の門（`power()`）と混ぜないこと。**分母が2つあるので、揺れは2倍**です。
+
+    **`margin=1`（＝「上回っていない なら外れ」）は、効きが無くても約 45% 通ります。**
+    2つの独立なポアソンが同じ平均を持つとき、**引き分け以外は半々**だからです:
+
+        P(A > B) = (1 - P(A = B)) / 2
+
+    実測（片群 30,000再生・登録率 0.0318% ＝ 期待 9.5人）: **alpha 45%**。
+    `config/hypotheses.yaml` の「途中の依頼」が、この形で立っていました
+    （2026-08-28 に数え直した）。**余白を置かないと、門になりません。**
+    """
+    lam0 = n * baseline
+    lam1 = lam0 * target
+    top = max(20, int(lam1 + 12 * math.sqrt(lam1 + 1)))
+    a = [_pois_pmf(k, lam0) for k in range(top)]
+    b = [_pois_pmf(k, lam0) for k in range(top)]
+    t = [_pois_pmf(k, lam1) for k in range(top)]
+
+    def p_ge(treat: list[float], ctrl: list[float], m: int) -> float:
+        tot = 0.0
+        for i, pi in enumerate(treat):
+            if pi <= 0.0:
+                continue
+            hi = i - m                      # 対照が これ以下 なら差は m 以上
+            if hi >= 0:
+                tot += pi * sum(ctrl[: hi + 1])
+        return tot
+
+    alpha = p_ge(a, b, margin)
+    beta = 1.0 - p_ge(t, b, margin)
+    return {
+        "n": n, "margin": margin, "baseline": baseline, "target": target,
+        "expected_null": lam0, "expected_target": lam1,
+        "alpha": alpha, "beta": beta,
+        "detects_nothing": alpha > MAX_ERR or beta > MAX_ERR,
+    }
+
+
+def margin_for(baseline: float, n: int, target: float = 2.0) -> int | None:
+    """**2群の前提で、いまの n のまま通る余白。** 無ければ `None`。
+
+    片側の門に `gate_for()` があるのと同じ役目。**こちらを使うべき前提に
+    `gate_for()` の答え（「門を 13人未満 に」）を出さないこと** ——
+    2群の設計に片側の門の数字を当てると、**別の実験に化けます。**
+    """
+    if baseline <= 0 or n <= 0:
+        return None
+    lam1 = n * baseline * max(target, 1.0)
+    for margin in range(1, int(lam1 + 12 * math.sqrt(lam1 + 1)) + 2):
+        if not two_group_power(baseline, n, margin, target)["detects_nothing"]:
+            return margin
+    return None
+
+
 def n_for_gate(baseline: float, target: float = 2.0, start: int = 0,
+
                cap: int = 2_000_000) -> int | None:
     """**門で棄却する設計**が成り立ちはじめる n。無ければ `None`。
 
@@ -250,6 +321,10 @@ def scan_hypotheses() -> list[dict]:
             "gate": gate,
             "gate_label": label,
             "target": claimed_target(claim, cond),
+            # **2群を比べている前提は、片側の門とは別の数え方**（`_TWO_GROUP`）。
+            "two_group": bool(_TWO_GROUP.search(cond)),
+            # **置いてある余白**。無ければ 1（＝ 余白ゼロ・効きなしでも約45%通る）。
+            "margin": int(mm.group(1)) if (mm := _MARGIN.search(bare)) else 1,
             "outcome": (re.search(r"\n    outcome:\s*(\w+)", block) or [None, ""])[1],
         })
     return found
@@ -270,6 +345,39 @@ def main() -> int:
     bad = 0
     fixable = 0
     for r in rows:
+        # **2群を比べる前提は、片側の門とは数え方が違う**（2026-08-28 に足した）。
+        # 混ぜると「門を 13人未満 に」のような、**別の実験に化ける指示**を出します。
+        if r["two_group"]:
+            q = two_group_power(base, r["n"], r["margin"], r["target"])
+            ok = "見分けられます" if not q["detects_nothing"] else "**見分けられません**"
+            cur = ("「対照を1人でも上回れば通る」（**余白ゼロ**）" if r["margin"] <= 1
+                   else f"「対照を {r['margin']}人 以上 上回れば通る」")
+            print(f"  [{r['outcome'] or '未判定'}] {r['claim'][:44]}")
+            print(f"      **2群**・片群 n={r['n']:,}再生・いまの条件は"
+                  f"{cur}  "
+                  f"（効きなしなら 両群 {q['expected_null']:.1f}人／"
+                  f"{r['target']:g}倍なら {q['expected_target']:.1f}人）")
+            print(f"      効きなしで生き残る **{q['alpha']:.0%}** ／ "
+                  f"{r['target']:g}倍あるのに外す **{q['beta']:.0%}**"
+                  f"  → {ok}")
+            if q["detects_nothing"]:
+                bad += 1
+                m = margin_for(base, r["n"], r["target"])
+                if m is not None:
+                    qm = two_group_power(base, r["n"], m, r["target"])
+                    fixable += 1
+                    print(f"      → **n は足りています。余白がゼロなのが外れです。**"
+                          f" **「対照を {m}人 以上 上回る」に直せば見分けられます**"
+                          f"（効きなしで生き残る {qm['alpha']:.0%} ／ "
+                          f"{r['target']:g}倍あるのに外す {qm['beta']:.0%}）")
+                    print(f"         **2つの独立なポアソンは、引き分け以外は半々**です"
+                          f" —— 「上回れば通る」は、効きが無くても **{q['alpha']:.0%}** 通ります。"
+                          f" **片側の門の数字（N人未満）をここに書かないこと。**")
+                else:
+                    print(f"      → **どの余白でも、この n では見分けられません。**")
+            print()
+            continue
+
         q = power(base, r["n"], r["gate"], r["target"])
         ok = "見分けられます" if not q["detects_nothing"] else "**見分けられません**"
         print(f"  [{r['outcome'] or '未判定'}] {r['claim'][:44]}")
