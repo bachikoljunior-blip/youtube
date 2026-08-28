@@ -226,7 +226,26 @@ def _shorts_only() -> set[str]:
     return judgeable._short_topics()
 
 
-def _deadline_from_yaml(name: str, fallback: date) -> date:
+def _split_ref_of(split, name: str) -> str:
+    """`falsified_if` が名指ししている、**振り分けの実物の在りか**。
+
+    **`tests/test_ab_split._split_ref` と同じ規則です**（あちらは検査の側から
+    独立に引いており、ここは道具の側。**2つが同じ答えを出すことが検査の中身**）。
+
+    包み（`_pace_form`）は `split_ref` を持っているので、それが答え。
+    無ければ、その関数自身の在りか（`__module__` の末尾 ＋ `__name__`）。
+    """
+    ref = getattr(split, "split_ref", None)
+    if ref:
+        return str(ref)
+    mod = (getattr(split, "__module__", "") or "").rsplit(".", 1)[-1]
+    fn_name = getattr(split, "__name__", None)
+    if mod and fn_name:
+        return f"{mod}.{fn_name}"
+    return f"script_writer.{name}"
+
+
+def _deadline_from_yaml(name: str, fallback: date, split=None) -> date:
     """**期限は `config/hypotheses.yaml` が正本**（2026-08-25 22:5x）。
 
     ここは長らく `date(2026, 9, 12)` のような**べた書き**でした。
@@ -240,19 +259,36 @@ def _deadline_from_yaml(name: str, fallback: date) -> date:
     「期限が遅すぎる N件」を毎回出して縮めさせる）。**べた書きのままだと、
     縮めるたびにここが落ちます。** だから写しをやめて、**引く**ようにしました。
 
-    紐づけの鍵は `falsified_if` の中の `script_writer.<name>` です
+    紐づけの鍵は `falsified_if` の中の**振り分けの在りか**です
     （その前提が、この振り分けを名指ししている所）。
+
+    ## **その鍵が `script_writer.<name>` のべた書きでした**（2026-08-28 に踏んだ）
+
+    **`slide_pace` は `src/pipeline.py` に在ります**（`_pace_form.split_ref`）。
+    鍵が `script_writer.slide_pace` 固定だったので、**この前提だけ一度も
+    当たらず、毎回 静かに `fallback` の日付へ落ちていました。**
+    08/28 13:57 の回が yaml の期限を **09-24 → 10-11** に直した直後、
+    `tests/test_ab_split.py::test_期限は_yaml_と同じ` が赤くなって見つかりました
+    （**検査は正しく鳴っており、落ちていたのはこちら**）。
+
+    **同じ穴が 2026-08-27 に検査の側だけ塞がれています** ——
+    `tests/test_ab_split._split_ref` は「**在りかは実物から引くこと**」と
+    書いて `split_ref` を見るようになりましたが、**この関数は写されませんでした。**
+    「同じことを2か所が別々に言っていて、片方しか読まれていない」の形です。
+    いまは両方が `_split_ref_of` と同じ規則で引きます。
 
     **見つからなければ `fallback` に落ちます。** ここで例外を上げると、
     `status.py` ごと止まって**投稿が止まります** ——
     `CLAUDE.md`「投稿を途切れさせないこと」。ずれたことは検査が言います。
+    **ただし「静かに落ちる」ので、検査が唯一の目です。消さないこと。**
     """
+    ref = _split_ref_of(split, name)
     try:
         import yaml
         doc = yaml.safe_load(
             (ROOT / "config" / "hypotheses.yaml").read_text(encoding="utf-8"))
         hit = [h for h in (doc.get("hypotheses") or [])
-               if f"script_writer.{name}" in str(h.get("falsified_if", ""))
+               if ref in str(h.get("falsified_if", ""))
                and not h.get("closed_on")]
         if len(hit) == 1:
             d = hit[0].get("deadline")
@@ -391,7 +427,7 @@ EXPERIMENTS: dict[str, Experiment] = {
         control="断定",
         # 6a7520f「道具は『無関係』でなく『一度も試していない』と言っていた」
         landed=datetime(2026, 8, 19, 16, 50, 5, tzinfo=JST),
-        deadline=_deadline_from_yaml("title_form", date(2026, 9, 12)),
+        deadline=_deadline_from_yaml("title_form", date(2026, 9, 12), split=title_form),
         commit="6a7520f",
     ),
     "hook_form": Experiment(
@@ -401,7 +437,7 @@ EXPERIMENTS: dict[str, Experiment] = {
         control="条件",
         # 443c66b「冒頭1枚目の主役（kind=stat の note）を問いかけに振り分ける A/B」
         landed=datetime(2026, 8, 19, 21, 0, 3, tzinfo=JST),
-        deadline=_deadline_from_yaml("hook_form", date(2026, 9, 16)),
+        deadline=_deadline_from_yaml("hook_form", date(2026, 9, 16), split=hook_form),
         commit="443c66b",
     ),
     "request_form": Experiment(
@@ -417,7 +453,7 @@ EXPERIMENTS: dict[str, Experiment] = {
         # **未来の時刻を書かないこと** —— この行より前に作った本は全部 落ちるので、
         # 書いた回が自分で作った本まで落とします（この行を最初 20:15 と書いて踏みかけた）。
         landed=datetime(2026, 8, 26, 19, 8, 0, tzinfo=JST),
-        deadline=_deadline_from_yaml("request_form", date(2026, 11, 9)),
+        deadline=_deadline_from_yaml("request_form", date(2026, 11, 9), split=request_form),
         commit="",
         # **登録で測ります**（engaged ではない）。上の `metric` の註を読むこと。
         metric="登録",
@@ -435,7 +471,7 @@ EXPERIMENTS: dict[str, Experiment] = {
         # `want` が定数の 2.5 で割られていたので、全部が「速い」側の値です。
         # ただし**群として使えません**（振り分けを通っていない ＝ 選ばれ方が違う）。
         landed=datetime(2026, 8, 27, 21, 30, 0, tzinfo=JST),
-        deadline=_deadline_from_yaml("slide_pace", date(2026, 9, 24)),
+        deadline=_deadline_from_yaml("slide_pace", date(2026, 9, 24), split=_pace_form),
         commit="",
         # **長尺は `reveal_variants` を1度も通りません**（1文＝1コマ）。
         # だから刻みの話はショートにしか掛かりません（`_shorts_only()`）。
