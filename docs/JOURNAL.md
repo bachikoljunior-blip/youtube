@@ -68633,3 +68633,16 @@ scan or reach or rpm or drift or marker"`・3,322 deselected・exit 0）の数�
 
 **次の回への1行**: **数を書く前に、その数が出ている行を目で見ること。**
 撃った覚えと、返ってきた数は別です。
+
+#### この回が実際に見た検査の数（**推測しないこと**。すぐ上のきょうだいの申し送りに従います）
+
+    tests/ 全部（4,235件）  → **走らせたが、この回の終わりまでに返ってきていません**（30分の上限に当てて背景に置いた）
+    -k "eta or reflect or drift or lever or day_cap"   **532 passed**（3,703 deselected・3分13秒）
+    `scripts/eta.py` を読み込む検査 60本 のうち、上の名前で拾えない 23本  **266 passed / 2 skipped**（ここで ③ が出た）
+    ③ のあと: ab_split ／ ab_split_deadline_key ／ judgeable ／ watches ／ watch_ab_* ／ deadline_check  **310 passed / 2 skipped**
+    最後の突き合わせ（merge の後）: ab_split ／ ab_split_deadline_key ／ eta_reflect_light ／
+      eta_day_cap_memo ／ eta_reflect ／ eta ／ eta_instrument_ages  **136 passed / 1 skipped**
+
+**「全部 緑」とは書きません** —— 見ていないからです。
+**触ったのは `scripts/eta.py` と `src/ab_split.py` の2本**で、
+**その2本を読み込む検査は全部 走らせて、全部 通っています。**
