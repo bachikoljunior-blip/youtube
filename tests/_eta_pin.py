@@ -66,7 +66,23 @@ def pin_mix(monkeypatch) -> None:
     monkeypatch.setattr(rpm_mix, "last", lambda *a, **k: None)
 
 
+def pin_subs(monkeypatch) -> None:
+    """登録率の天井の実測を**当てない**（定義上の 100% で解く。2026-08-28 に足した）。
+
+    `scripts/eta.py` の `physical_caps()` は `sub_rate` の天井を
+    `src/subs_cap.best_per_video()`（**1本あたり登録率の実測の最大**）から取ります。
+    **これも `day_cap` / `rpm_mix` と同じで、1回測るたびに動きます** ——
+    構造を測る検査がその値に乗ると、`data/shorts_subs.json` を取り直しただけで
+    赤くなります（`pin_mix` の docstring と同じ形。**3つ目**）。
+
+    天井そのものは `tests/test_eta_subs_cap.py` が主題として持っています。
+    """
+    from src import subs_cap
+    monkeypatch.setattr(subs_cap, "best_per_video", lambda *a, **k: None)
+
+
 def pin_ceilings(monkeypatch, cap: float = 25.0) -> None:
-    """**実測から来る天井を2つとも止める。** 構造を測る file の autouse から呼ぶこと。"""
+    """**実測から来る天井を3つとも止める。** 構造を測る file の autouse から呼ぶこと。"""
     pin_day_cap(monkeypatch, cap)
     pin_mix(monkeypatch)
+    pin_subs(monkeypatch)
