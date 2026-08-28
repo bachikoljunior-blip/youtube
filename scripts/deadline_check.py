@@ -1492,40 +1492,50 @@ def _ans_after(need: dict, lag: int) -> Answer:
     # `data_file:` が書いてあるときは、その計器に直接 訊きます。
     src = need.get("data_file")
     if src:
-        when_data = when if at else datetime(on.year, on.month, on.day, tzinfo=JST)
-        # **`plus_lag` を、門のほうにも足すこと**（2026-08-29 04:5x・最適化の回）。
+        # **「いつ訊いてよいか」と「どの点が要るか」は、別の日です**
+        # （2026-08-29 05:2x・最適化の回。**同じ回のうちに1度 取り違えました**）。
         #
-        # ここは長らく `on_date` の 00:00 に立っていました。**この要件が
-        # 「判定できる」と言う日は `on_date + lag`** です（すぐ下の
-        # `_after_tail`）。**門と、門が守っている日が、`lag` 日 ずれていました。**
+        # ここは長らく、両方を `on_date` の 00:00 でやっていました。
+        # **この要件が「判定できる」と言う日は `on_date + lag`** です
+        # （すぐ下の `_after_tail`）——**門と、門が守っている日が `lag` 日
+        # ずれていました。**
         #
-        # ずれている間に何が起きるか —— `plus_lag: true` は
-        # 「**その日ぶんの点は、`lag` 日 あとに届く**」という意味なので、
-        # `on_date` に計器を訊けば、**要件自身の定義により、まだ在りません。**
+        # `plus_lag: true` は「**その日ぶんの点は、`lag` 日 あとに届く**」の意味
+        # なので、`on_date` に計器へ訊けば、**要件自身の定義により、まだ在りません。**
         # `newest` が古ければ `ready=None` を返し、その claim は
         # 「判定できる日が出せません」の棚（＝収益化の審査待ちと同じ棚）へ落ち、
         # `arm_speed.forward()` と `next_when()` の**両方から消えます**
-        # （3b18766 が時刻の粒で踏んだのと同じ穴です）。
-        # しかも `refresh:` を撃つ回は、**在りようのないデータのために
-        # Reporting／Data API の単位を毎回 捨てます。**
+        # （3b18766 が時刻の粒で踏んだのと同じ穴）。しかも `refresh:` を撃つ回は、
+        # **在りようのないデータのために Reporting／Data API の単位を捨てます。**
         #
-        # **実物で 2件 が、いまこの窓を持っています**（`config/hypotheses.yaml`）:
+        # ff1a8c1 は「**未来の** `on_date` には訊かない」を入れました。
+        # **足りません** ——`on_date` が過ぎていても、`on_date + lag` が
+        # 来ていなければ同じ話です。
         #
-        #     09-19「1本あたり再生の天井は配信の側で…」  on_date 09-15 ＋lag → **09/15〜09/18**
-        #     09-05「1本あたり再生が 08/24 に落ちた…」    `plus_lag: false` ＝ 窓なし
+        # ## **要る点のほうは、動かしてはいけません**
         #
-        # 前者は `data/views.jsonl` を読み、いまその計器は Data API の日枠に
-        # 縛られています（枠切れの日に 4日 早く訊けば、必ず「取り直せ」）。
+        # この回の最初の版は `when_data` を1つのまま `lag` 日 ずらしました。
+        # **訊く時刻と、要る点の日付が、同時に動きます。** それは
+        # `_report_end` を持つ計器で必ず外れます ——
         #
-        # ff1a8c1 は「**未来の** `on_date` に訊かない」を入れました。**足りません** ——
-        # `on_date` が過ぎていても、`on_date + lag` が来ていなければ同じ話です。
+        #     `data/reach.jsonl` は `_POINT_KEYS` の `_report_end`（＝**データの日**）
+        #     を返します。Reporting は3日 遅れなので、09/12 に読める
+        #     いちばん新しい `_report_end` は **09/09 前後**。
+        #     「09/12 以降の点」を要求すれば、**取り直しても永久に通りません。**
         #
-        # **覆る条件**: `plus_lag` が「遅れ」ではなく「熟成」を表すようになったら
-        # （＝その日のうちに点が在るのに、判定だけ待つ）、ここは早く訊いてよい
-        # 場所に戻ります。`tests/test_deadline_data_file.py` の
-        # `test_plus_lag_の要件は遅れのぶん待ってから計器に訊く` が見ています。
-        if need.get("plus_lag"):
-            when_data += timedelta(days=lag)
+        # 要件が名指ししているのは `on_date` の**データ**で、`lag` はそれが
+        # **届くまでの時間**です。だから:
+        #
+        #     訊いてよい時刻  `on_date`（＋時刻）**＋ lag**   ← 遅れを足す
+        #     要る点          `on_date`（＋時刻）             ← **足さない**
+        #
+        # **覆る条件**: `newest_point` が `_report_end` を見なくなり、
+        # どの計器も「取り直した時刻」を返すようになったら、要る点の側にも
+        # `lag` を足してよくなります。`tests/test_deadline_data_file.py` の
+        # `test_遅れの後に訊くが_要る点は_on_date_のまま` が、そこを見ています。
+        want = when if at else datetime(on.year, on.month, on.day, tzinfo=JST)
+        ask_at = want + timedelta(days=lag) if need.get("plus_lag") else want
+        when_data = want
         # **その時刻がまだ来ていないなら、計器には訊かないこと**（2026-08-28 14:2x）。
         #
         # この枝は `data_file:` が在れば**日付に関係なく**回っていました。
@@ -1554,7 +1564,7 @@ def _ans_after(need: dict, lag: int) -> Answer:
         # そのときは `need` 側に印を足すこと（この行の判定を全部の要件に
         # 広げないこと）。`tests/test_deadline_data_file.py` の
         # `test_a_future_on_date_does_not_ask_the_instrument` が見ています。
-        if when_data > datetime.now(JST):
+        if ask_at > datetime.now(JST):
             return _after_tail(need, on, what, lag)
         newest = newest_point(ROOT / str(src))
         if newest is None or newest < when_data:

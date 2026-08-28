@@ -354,11 +354,34 @@ def test_plus_lag_の窓を過ぎたら今までどおり計器に訊く(tmp_pat
     from datetime import date, timedelta
 
     passed = date.today() - timedelta(days=10)
-    p = _stale_reach(tmp_path, days_old=9)
+    p = _stale_reach(tmp_path, days_old=12)     # `on_date` より前で止まっている
     ans = J._ans_after({"on_date": passed.isoformat(), "plus_lag": True,
                         "data_file": str(p), "what": "その日の面"}, 4)
     assert ans.ready is None, "点が無いのに日を出しています"
     assert "取り直す" in (ans.todo or "")
+
+
+def test_遅れの後に訊くが_要る点は_on_date_のまま(tmp_path):
+    """**訊く時刻に `lag` を足す。要る点の日付には足さない。**
+
+    `newest_point` は `_POINT_KEYS` の順で `_report_end`（＝**データの日**）を
+    先に返します。`data/reach.jsonl` がそれで、Reporting は3日 遅れ ——
+    **`on_date + lag` に読めるいちばん新しい `_report_end` は、`on_date` の
+    数日 後まで**です。要る点まで `lag` ずらすと、**取り直しても永久に通りません。**
+
+    ここは `on_date`（10日 前）ぶんの点が在り、`_report_end` は 8日 前で
+    止まっている状態 —— **要件としては足りています。**
+    """
+    from datetime import date, timedelta
+
+    passed = date.today() - timedelta(days=10)
+    p = _stale_reach(tmp_path, days_old=8)      # on_date は満たすが on_date+lag には届かない
+    ans = J._ans_after({"on_date": passed.isoformat(), "plus_lag": True,
+                        "data_file": str(p), "what": "その日の面"}, 4)
+    assert ans.ready == passed + timedelta(days=4), (
+        "**要る点の日付まで `lag` ずらしています。**"
+        f" `_report_end` の計器は永久に通りません: ready={ans.ready} why={ans.why}")
+    assert "取り直す" not in (ans.todo or ""), ans.todo
 
 
 def test_plus_lag_が無ければ門の位置は変わらない(tmp_path):
