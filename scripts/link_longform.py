@@ -149,6 +149,12 @@ def main(argv: list[str] | None = None) -> int:
             sn["description"] = new
             y.videos().update(part="snippet", body={
                 "id": it["id"], "snippet": sn}).execute()
+            # **通ったら数えること**（2026-08-28）。門は `spent` を読み、
+            # `spent` を作るのは `note_quota_ok` だけです。ここは1回で
+            # 何十本も書くので、数えないと門は**自分が通した数千単位を
+            # 1つも知りません**（＝ 止めるべき回に止まりません）。
+            from src import upload_cap as _cap          # noqa: PLC0415
+            _cap.note_quota_ok(detail=f"videos.update {it['id']}")
             done += 1
 
     print(f"\n入れた {done}件 / すでに入っていた {skipped}件"

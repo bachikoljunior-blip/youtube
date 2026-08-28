@@ -71,6 +71,9 @@ def main(topic: str, video_id: str, theme_index: int) -> int:
 
     y = build("youtube", "v3", credentials=credentials(), cache_discovery=False)
     y.thumbnails().set(videoId=video_id, media_body=MediaFileUpload(str(out))).execute()
+    # **通ったら数えること**（2026-08-28。下の一括の口は数えていて、こちらは数えて
+    # いませんでした —— 同じファイルの中で片方だけ）。
+    upload_cap.note_quota_ok(detail=f"thumbnails.set {video_id}")
     print(f"[thumb] 差し替え完了: https://youtu.be/{video_id}")
     return 0
 

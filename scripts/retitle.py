@@ -68,6 +68,10 @@ def main(video_id: str, title: str) -> int:
               " `YT_NO_RESERVE=1` を付けること（理由を JOURNAL に）。")
         return 1
     youtube.videos().update(part="snippet", body={"id": video_id, "snippet": snippet}).execute()
+    # **通ったら数えること**（2026-08-28）。門（`reserve_hold`）は `spent` を読み、
+    # `spent` を作るのは `note_quota_ok` だけです。**門だけ付けて数えないと、
+    # 門は自分が通した 50単位 を1つも知りません。**
+    upload_cap.note_quota_ok(detail=f"videos.update {video_id}")
     print(f"  後: {title}")
     return 0
 

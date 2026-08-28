@@ -78,9 +78,28 @@ def test_外せること(monkeypatch):
     assert upload_cap.reserve_hold() is None
 
 
-#: **日枠を焼く書き込み**（`src/upload_cap.UNIT_COST` の 50単位 の2つ）。
-#: `X.videos().update(...)` / `X.thumbnails().set(...)` の形で拾います。
-WRITE_CALLS = {("videos", "update"), ("thumbnails", "set")}
+#: **日枠を焼く書き込み。値段表から引きます**（2026-08-28 の2周目に直した）。
+#:
+#: ここは `{("videos", "update"), ("thumbnails", "set")}` と**字で2つ**
+#: 書いてありました。**数え上げにしたのは入口のほうだけ**で、
+#: 「何を書き込みと呼ぶか」は手書きのまま残っていました ——
+#: 同じ朝に「手で並べないこと」と書いた検査が、語彙を手で並べています。
+#:
+#: `src/upload_cap.UNIT_COST` は 50単位 の書き込みを **5つ** 持っています:
+#: `videos.update` / `thumbnails.set` / `playlistItems.insert` /
+#: `commentThreads.insert` / `playlists.insert`。**後ろの3つは
+#: この検査から見えていませんでした**（実測: `src/uploader._post_actions` は
+#: 1本の投稿ごとに 150単位 を、数えも止めもされずに使っています）。
+#:
+#: **`videos.insert`（1,600単位）だけは外します** ——
+#: `tests/test_insert_never_marked_ok.py` が理由ごと見ています。
+#: **読みは外します。** `search.list` は 100単位 と高いのですが、
+#: 門が守っている当のものが読みです（`videos.list` 1単位）。
+#: 高い読みを止めるのは別の問いで、ここに混ぜると門の意味が変わります。
+WRITE_CALLS = {
+    tuple(name.split(".")) for name, cost in upload_cap.UNIT_COST.items()
+    if cost >= 50 and name != "videos.insert" and not name.endswith(".list")
+}
 
 
 def _write_sites() -> list[tuple[Path, int, ast.FunctionDef | None, str]]:
@@ -181,3 +200,48 @@ def test_投稿そのものは止めないこと():
         assert "reserve_hold()" not in tail, (
             "`videos.insert` の手前で `reserve_hold()` を見ています。"
             "**投稿はこの枠を1単位も使いません**")
+
+
+def test_書き込みの入口が全部_通ったことを数えていること():
+    """**門は `spent` を読む。`spent` を作るのは `note_quota_ok` だけ。**
+
+    2026-08-28 の朝、`reserve_hold()` の門は入口 **6つ**に付きました。
+    ところが同じ日の昼に数えると、`note_quota_ok` を呼ぶ入口は **2つ**でした:
+
+        門を通る入口          6つ（`reserve_hold`）
+        数える入口            2つ（`reschedule._update` / `refresh_thumbnail` の一括）
+
+    **門は、自分が通した書き込みの 2/3 を知りません。**
+    `reserve_hold` は `spent >= floor - 400` で止めるので、`spent` が
+    実際より小さければ**止めるべき回に止まりません** ——
+    `RESERVE_UNITS` の docstring 自身が
+    「帳面に載らない消費が増えたら、`spent` が 400 を残していても
+    本当は 0 になりえます。症状は『関門が止めていないのに 403』」
+    と書いており、**その症状の作り方がこれ**でした。
+
+    いちばん重かったのは `src/uploader._post_actions` で、
+    **1本の投稿ごとに 150単位**（再生リスト 50 ＋ 項目 50 ＋ コメント 50）を
+    数えも止めもせずに使っています。実測 08/27 の窓は **37本** ＝ **5,550単位**、
+    残してある 400単位 の **13.9倍**です。
+
+    **門と数えは対で置くこと。** 片方だけだと、もう片方が静かに嘘になります。
+    """
+    bad = []
+    for path, line, owner, name in _write_sites():
+        if owner is None:
+            body = path.read_text(encoding="utf-8")
+        else:
+            src = path.read_text(encoding="utf-8").splitlines()
+            body = "\n".join(src[owner.lineno - 1:owner.end_lineno or line])
+        if "note_quota_ok" not in body:
+            bad.append(f"{path.relative_to(ROOT)}:{line} {name}"
+                       f"（{owner.name if owner else '<module>'}）")
+    assert not bad, (
+        "**通った書き込みを数えていない入口があります**:\n  "
+        + "\n  ".join(bad)
+        + "\n\n門（`reserve_hold`）は `spent` を読んで止めます。"
+          "`spent` を作るのは `note_quota_ok` だけなので、"
+          "**数えない口から出た単位は、門にとって存在しません。**"
+          "\n`upload_cap.note_quota_ok(detail=\"<呼び出し名> <id>\")` を"
+          "**通った直後**に置くこと（`detail` の頭が `UNIT_COST` の鍵と"
+          "一致しないと、値段が 1単位 に落ちます）。")

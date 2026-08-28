@@ -232,6 +232,12 @@ def _find_or_create_playlist(youtube, title: str) -> str:
         if not page_token:
             break
 
+    # **ここも 50単位**。`_post_actions` から呼ばれますが、木を歩く検査は
+    # **いちばん内側の関数**を入口と数えるので、ここにも要ります
+    # （別の呼び元ができた日に、この門だけが残ります）。
+    hold = upload_cap.reserve_hold()
+    if hold:
+        raise RuntimeError(f"再生リストを作りません: {hold}")
     created = youtube.playlists().insert(
         part="snippet,status",
         body={
@@ -239,12 +245,37 @@ def _find_or_create_playlist(youtube, title: str) -> str:
             "status": {"privacyStatus": "public"},
         },
     ).execute()
+    upload_cap.note_quota_ok(detail="playlists.insert")
     print(f"[upload] 再生リストを新規作成: {title}")
     return created["id"]
 
 
 def _post_actions(youtube, video_id: str, publish_cfg: dict) -> None:
-    """投稿後の付随処理。ここで失敗しても動画は既に上がっているので落とさない。"""
+    """投稿後の付随処理。ここで失敗しても動画は既に上がっているので落とさない。
+
+    **1本あたり 150単位**（再生リスト作成 50 ＋ 項目 50 ＋ コメント 50）。
+    実測 08/27 の窓は 37本 を上げているので **5,550単位** ——
+    残してある `RESERVE_UNITS` 400 の **13.9倍**を、
+    2026-08-28 の2周目まで**数えも止めもせず**に使っていました。
+
+    **止めてよい理由**: ここは元々「失敗しても落とさない」設計で、
+    やり残しを後から拾う道具が両方あります
+    （`scripts/playlists.py` / `scripts/post_pending_comments.py`）。
+    **動画は上がっています。** 一方、残している 400単位 が守るのは
+    「前提を閉じる読み」で、`eta.py` が毎回「軌跡の腕が動くのは
+    前提を1件 閉じたときだけ」と言う、その唯一の操作です。
+
+    **覆る条件**: 拾い直す道具のどちらかが無くなったら、
+    ここで止めたぶんは永久に埋まりません。そのときは止めないこと。
+    """
+    hold = upload_cap.reserve_hold()
+    if hold:
+        print(f"[upload] {hold}")
+        print("[upload] **再生リストと最初のコメントは後回しにします**"
+              "（動画は投稿済み）。窓が変わった回に"
+              " `python scripts/playlists.py` と"
+              " `python scripts/post_pending_comments.py` が拾います。")
+        return
     playlist = (publish_cfg.get("playlist") or "").strip()
     if playlist:
         try:
@@ -258,6 +289,7 @@ def _post_actions(youtube, video_id: str, publish_cfg: dict) -> None:
                     }
                 },
             ).execute()
+            upload_cap.note_quota_ok(detail=f"playlistItems.insert {video_id}")
             print(f"[upload] 再生リストに追加: {playlist}")
         except HttpError as exc:
             note_day_quota(exc, "playlistItems.insert")
@@ -275,6 +307,7 @@ def _post_actions(youtube, video_id: str, publish_cfg: dict) -> None:
                     }
                 },
             ).execute()
+            upload_cap.note_quota_ok(detail=f"commentThreads.insert {video_id}")
             # 固定だけは API に無い。Studio で1タップしてもらう。
             print("[upload] 最初のコメントを投稿しました。"
                   "固定はAPIでできないので、Studioで「固定」を押してください:")
@@ -325,6 +358,7 @@ def _set_thumbnail(youtube, video_id: str, path: Path, tries: int = 4) -> bool:
             youtube.thumbnails().set(
                 videoId=video_id, media_body=MediaFileUpload(str(path))
             ).execute()
+            upload_cap.note_quota_ok(detail=f"thumbnails.set {video_id}")
             print(f"[upload] サムネイル設定完了{'（%d回目）' % attempt if attempt > 1 else ''}")
             return True
         except HttpError as exc:
