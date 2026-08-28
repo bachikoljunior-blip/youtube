@@ -127,6 +127,31 @@ def test_warmingの印字が今日と決めつけないこと():
     assert "今日ではありません" in text, text
 
 
+def test_checkを通しても_日と時刻が両方そろって出ること():
+    """**`drift.py` が読むのはここです。**`Verdict.ready` と `Verdict.ready_at`。
+
+    `drift._judge_state_by_claim()` は `(kind, ready, slips, slack, ready_at)`
+    を組み、`split_overdue()` がその5つ目で「今日だが時刻はまだ」を止めます
+    （`tests/test_drift_soonest_time_gate.py`）。**`_ans_after` と
+    `split_overdue` の間の配線**を、ここで1回だけ通して見ます ——
+    片側ずつ緑でも、`Verdict.ready_at` が拾い損ねたら早撃ちに戻ります。
+    """
+    now = datetime.now(J.JST)
+    later = now + timedelta(hours=2)
+    if later.date() != now.date():
+        return
+    item = {"claim": "つくりもの・配線の確認",
+            "deadline": now.date().isoformat(),
+            "needs": [{"kind": "after", "on_date": now.date().isoformat(),
+                       "at_time_jst": later.strftime("%H:%M"),
+                       "what": "6時間の読み"}]}
+    v = J.check([item])[0]
+    assert v.ready == now.date(), f"日が落ちています: {v.ready!r}"
+    assert v.ready_at is not None and v.ready_at > now, (
+        "**`Verdict.ready_at` が空です** —— `drift.split_overdue()` は"
+        " `str(ready) <= today` だけを見て、時刻の前に撃ちます")
+
+
 def test_台帳の帯の前提が_判定できる日を持っていること():
     """**現物での確認。** この1件が `unready` に戻ったら、θ から消えています。"""
     doc = yaml.safe_load((ROOT / "config" / "hypotheses.yaml").read_text(encoding="utf-8"))
