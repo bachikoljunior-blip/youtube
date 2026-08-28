@@ -2065,6 +2065,18 @@ def physical_caps(a0: dict, density: float = PLAN_PUBLISH_PER_DAY,
     return caps
 
 
+#: **1つの腕の天井が、面ごとに割れているもの。**（2026-08-28・最適化の回）
+#:
+#: `LEVERS` は4本ですが、`physical_caps` は `density` の天井を**2つ**立てます ——
+#: `density`（ショートの面・実測 ×1.00・**天井**）と
+#: `density_long`（長尺の面・×128・**未測定で開いている**）。
+#: `density_long` を `LEVERS` に入れないのは正しい（軌跡を未測定の天井で
+#: 歩かせない。`physical_caps` の註に 08/21 の実害）のですが、
+#: **「この腕は死んでいる」と印字する側**は、その割れを知らないままでした。
+#: ここはその割れを、印字する側へ運ぶためだけの表です。**軌跡には渡しません。**
+_SURFACE_SIBLINGS: dict[str, tuple[str, ...]] = {"density": ("density_long",)}
+
+
 def _capped_arms(a0: dict, arms: dict | None = None,
                  density: float = PLAN_PUBLISH_PER_DAY,
                  supply: dict | None = None) -> dict:
@@ -2084,7 +2096,101 @@ def _capped_arms(a0: dict, arms: dict | None = None,
         if a.get("cap") is not None and "cap_why" not in a and a.get("ceiling"):
             a["cap_why"] = f"実測の天井 {a['ceiling']['value']:,}（{a['ceiling']['unit']}）"
             a["cap_measured"] = True
+        # --- **その天井が、いくつの面のうちの1つか**（2026-08-28）---
+        #     ここを運ばないと、`cap_lines` と `alloc_search` は
+        #     ショートの面の ×1.00 だけを見て「立てても、閉じても、
+        #     上の日付は1日も動きません」と印字します。**印字だけの欄**で、
+        #     `cap` そのものには触りません（軌跡は今までどおり）。
+        p0 = phys.get(lever) or {}
+        sib = []
+        for key in _SURFACE_SIBLINGS.get(lever, ()):
+            q = phys.get(key)
+            if not q or not q.get("factor"):
+                continue
+            sib.append({"key": key,
+                        "surface": q.get("surface") or key,
+                        "factor": float(q["factor"]),
+                        "measured": bool(q.get("measured")),
+                        "at_ceiling": bool(q.get("at_ceiling")),
+                        "why": q.get("why", "")})
+        if sib:
+            a["cap_surfaces"] = sib
+            a["cap_surface"] = p0.get("surface")
+        if p0.get("confounded"):
+            a["cap_confounded"] = True
+            a["cap_answer_on"] = p0.get("answer_on")
         out[lever] = a
+    return out
+
+
+def cap_caveats(lever: str, a: dict) -> list[str]:
+    """**「この腕は死んでいる」と言い切れない理由**を、その場の数から並べる（0〜2件）。
+
+    ## なぜ要るか（2026-08-28・最適化の回。**実測で見つけた**）
+
+    この日の `--alloc` は、こう印字していました:
+
+        次の1件を `density` に   2027-01-19
+            ↑ **この腕は天井 ×1.00（引き代なし）です。**
+              立てても、閉じても、上の日付は1日も動きません
+
+    同じ回の `physical_caps` は、**density の天井を2つ**立てています:
+
+        density       ×1.00    surface=ショート  measured=True   at_ceiling=True
+        density_long  ×128.13  surface=長尺      measured=False  at_ceiling=False
+
+    そして台帳の**開いている density の前提 6件**のうち **2件は長尺の面**です
+    （「長尺は1日4本 作れる」期限 08-31 ／「長尺の生成が落ちる主因は…」期限 08-29）。
+    **4,000時間の門に入るのは長尺だけ**なので、この2件は門に直結しています。
+    それを「立てても、閉じても動きません」と読ませていました。
+
+    残る4件も無傷ではありません —— **3件は `day_cap` の上限そのものを測る前提**
+    （「上限10本はチャンネルが育っても上がらない」／「本の集合は帯で決まる。
+    本数ではない」／「1日の合計は本数では動かない」）。
+    つまり **×1.00 を作っている当の数を、いま測っている最中**です。
+    `physical_caps` は同じ回に `caps["density"]["confounded"] = True`
+    （`day_cap.window()` が (A)本数 と (B)時刻の窓 を切り分けていない）と
+    立てており、**機械は「この天井は未決着」と知っていました。**
+
+    **凍らせた入力から出した結論を、世界についての結論として印字する形**です ——
+    `CLAUDE.md` が `eta.py` の「届きません」について言っているのと同じ壊れ方で、
+    そちらは直っていて、こちらだけ残っていました。
+
+    ## 何を言い、何を言わないか
+
+    **`cap` は動かしません。** 軌跡は今までどおりショートの面の ×1.00 で歩きます
+    （未測定の天井で歩かせた 08/21 の実害は `physical_caps` の註）。
+    ここが直すのは**印字だけ**です:
+
+        言う      「上の日付が動かない」は**この道具の作りの話**である
+        言う      どの面で測った天井か・別の面はいくつ空いているか
+        言わない  「だから long の面に立てれば日付が動く」（**動きません**。
+                  `density_long` は `LEVERS` に無いので軌跡が歩きません）
+
+    ## 覆る条件
+
+    - `physical_caps` が面ごとに腕を立て、`LEVERS` に長尺の面が入ったら、
+      この関数は要りません（そのとき軌跡が面を歩くので、印字は自動で正しくなる）
+    - `day_cap.window()` が (A)/(B) を切り分けたら、2件目の理由（`confounded`）は
+      自動で消えます。**消えるのが正しい** —— 手で消さないこと
+    - `tests/test_cap_caveat_surface.py` が、裸の「動きません」に戻ったら落とします
+    """
+    out: list[str] = []
+    open_sib = [s for s in (a.get("cap_surfaces") or []) if not s["at_ceiling"]]
+    if open_sib:
+        here = a.get("cap_surface") or "この面"
+        for s in open_sib:
+            out.append(
+                f"**その ×{a.get('cap', 0):,.2f} は「{here}」の面だけの数です。**"
+                f"「{s['surface']}」の面は **×{s['factor']:,.2f}**"
+                + ("（**未測定**）" if not s["measured"] else "")
+                + f" 空いています —— {s['why']}")
+    if a.get("cap_confounded"):
+        out.append(
+            "**その天井そのものが、まだ決着していません**"
+            "（`day_cap.window()` が (A)本数 と (B)時刻の窓 を切り分けていない"
+            + (f"。答えが出るのは {a['cap_answer_on']}" if a.get("cap_answer_on") else "")
+            + "）。**凍らせた入力から出した『動きません』です。**")
     return out
 
 
@@ -2129,14 +2235,23 @@ def cap_lines(arms: dict, indent: str = "      ") -> list[str]:
         cap = a.get("cap")
         if not cap or not a.get("cap_why"):
             continue
-        if cap <= 1.0:
+        caveats = cap_caveats(lever, a) if cap <= 1.0 else []
+        if cap <= 1.0 and not caveats:
             mark = ("  ← **引き代なし。この腕に立てても、"
                     "上の日付は1日も動きません**")
+        elif cap <= 1.0:
+            # **裸の「動きません」を出さないこと**（2026-08-28。理由は `cap_caveats`）。
+            #     ここで言えるのは「**上の日付**が動かない」までで、
+            #     「この腕の作業が目標に効かない」ではありません。
+            mark = ("  ← **上の日付は動きません。ただし『引き代なし』とは"
+                    "言えません**（下の行）")
         elif not a.get("cap_measured"):
             mark = "  ← **実測の天井ではありません**"
         else:
             mark = ""
         out.append(f"{indent}天井 `{lever}` ×{cap:,.2f} …… {a['cap_why']}{mark}")
+        for c in caveats:
+            out.append(f"{indent}    [!] {c}")
     return out
 
 
@@ -5754,10 +5869,23 @@ def alloc_search(with_speed: bool = False) -> int:
         #     `per_video` と同じ日付で並びます（実測 2026-08-27・どちらも 2027-01-07）。
         #     **同着に見えるのは「効く」からではなく、5% の付け替えでは
         #     どちらも動かないから**です。理由は `cap_lines`。
-        cap = (arms.get(lever) or {}).get("cap")
+        arm = arms.get(lever) or {}
+        cap = arm.get("cap")
         if cap is not None and cap <= 1.0:
-            print("      ↑ **この腕は天井 ×1.00（引き代なし）です。**"
-                  "立てても、閉じても、上の日付は1日も動きません")
+            # **正本は `cap_caveats` ひとつ**（2026-08-28）。ここと `cap_lines` が
+            #     別々に文言を持っていると、片方だけが直る ——
+            #     この repo がいちばん多く踏んでいる形です（`CLAUDE.md`
+            #     「同じことを2か所が別々に言っていて、片方しか読まれていない」）。
+            caveats = cap_caveats(lever, arm)
+            if caveats:
+                print(f"      ↑ **`{lever}` は天井 ×{cap:,.2f}。"
+                      "上の日付は動きませんが、それは**この道具の作り**の話です**"
+                      "（軌跡がこの面しか歩かない）")
+                for c in caveats:
+                    print(f"          [!] {c}")
+            else:
+                print("      ↑ **この腕は天井 ×1.00（引き代なし）です。**"
+                      "立てても、閉じても、上の日付は1日も動きません")
         if d < best[0]:
             best = (d, lever)
     # **符号は「早い／遅い」の字で出すこと。** `+6日` は
