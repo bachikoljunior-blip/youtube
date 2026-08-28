@@ -1357,11 +1357,47 @@ def _ans_after(need: dict, lag: int) -> Answer:
             return gate
         now = datetime.now(JST)
         if now < when:
+            # **日を捨てないこと**（2026-08-28 23:3x・最適化の回）。
+            #
+            # ここは長らく `Answer(None, ...)` を返していました。**時刻を足した
+            # せいで、日付が消えます** —— `ready_by_claim()` は `ready is None`
+            # の claim を落とすので、`unready_claims()` へ回り、
+            # `arm_speed.forward()`（予定表の θ）と `next_when()` の**両方から
+            # 見えなくなります。**
+            #
+            # 実測 2026-08-28 23:1x: `unready` 3件 のうち1件がこれ ——
+            # **「1日に再生が付く本の集合は、左端つきの帯で決まる」**
+            # （`day_cap.window()` の (A)/(B)。同じ回の `queue_lag.py` が
+            # **27倍 ちがう**と印字している、いちばん高い前提）。
+            # **台帳でいちばん正確に日の分かっている要件**（時計。伸び率の
+            # 推定ですらない）が、**唯一「日が出せない」側に居ました。**
+            #
+            # そして `warming` に落ちるので、印字は
+            # **「今日の 04:00 JST に出ます。その時刻まで待つこと」** ——
+            # 実際は **09/03** で、**6日 ずれています。**
+            # すぐ上の行が正しく「**09/03 04:00 JST**」と出しているので、
+            # **同じ枠の2行が食い違い、結論を言う側（→ の行）が誤り**でした。
+            #
+            # 日は分かっています。**`ready=on` を返し、その日のうちの時刻は
+            # `ready_at` に載せます** —— `drift.split_overdue()` が
+            # 「`ready == today` かつ `ready_at` がまだ来ていない」を
+            # **既に見ている**ので（2026-08-28 に足った枝）、早撃ちは
+            # そちらで止まります。**日を捨てて止める必要はありません。**
+            #
+            # **覆る条件**: `split_overdue()` が `ready_at` を見なくなったら、
+            # ここは早撃ちの唯一の門に戻ります —— そのときは
+            # `tests/test_after_time_keeps_date.py` が落ちて、そう教えます。
+            if now.date() == on:
+                far = ("**まだ出ていません** ——"
+                       "日は来ていますが、この要件は日の粒ではありません")
+            else:
+                left = (on - now.date()).days
+                far = f"**その日はまだ来ていません**（あと {left}日）"
             return Answer(
-                None,
+                on,
                 f"{what} は **{on:%m/%d} {when:%H:%M} JST** に出ます"
-                f"（いま {now:%m/%d %H:%M} JST。**まだ出ていません** ——"
-                "日は来ていますが、この要件は日の粒ではありません）")
+                f"（いま {now:%m/%d %H:%M} JST。{far}）",
+                ready_at=when)
     # **時計が来た ＝ データが在る、ではありません**（2026-08-27・`newest_point` の註）。
     # `data_file:` が書いてあるときは、その計器に直接 訊きます。
     src = need.get("data_file")
@@ -1707,12 +1743,35 @@ def lines(vs: list[Verdict], lag: int) -> list[str]:
             # 出していました。**時刻が過ぎた後も同じ文を出します** ——
             # 実測 14:24 JST に「今日の 14:00 JST に出ます。その時刻まで待つこと」。
             todo = next((a.todo for a in v.answers if a.todo), "")
-            when = next((str(x.get("at_time_jst")) for x in (v.needs or [])
-                         if x.get("at_time_jst")), "")
+            # **時刻だけを持ち上げないこと**（2026-08-28 23:3x）。
+            #
+            # ここは `at_time_jst`（"04:00"）だけを拾い、**`on_date` を
+            # 見ずに「今日の」と書いていました。** 実測 08/28 23:16 JST、
+            # `on_date: 2026-09-03` の要件が「**今日の 04:00 JST に出ます**」
+            # ——**6日 ずれ**。すぐ上の `why` の行は「**09/03 04:00 JST**」と
+            # 正しく出しており、**結論を言う側だけが誤り**でした。
+            # （`_ans_after` を直したので、この枝は
+            #  「同じ前提の**別の** need が warming」のときにしか通りません。
+            #  そのときこそ日を間違えると読めないので、日ごと出します。）
+            nd = next((x for x in (v.needs or []) if x.get("at_time_jst")), None)
+            when = str(nd.get("at_time_jst")) if nd else ""
+            on_s = str(nd.get("on_date") or "") if nd else ""
             if todo:
                 out.append(f"         → {todo}")
             elif when:
-                out.append(f"         → **今日の {when} JST に出ます。**"
+                try:
+                    on_d = date.fromisoformat(on_s)
+                except ValueError:
+                    on_d = None
+                today_ = datetime.now(JST).date()
+                if on_d is None:
+                    head = f"**{on_s or '（日付なし）'} {when} JST に出ます。**"
+                elif on_d == today_:
+                    head = f"**今日（{on_d:%m/%d}）の {when} JST に出ます。**"
+                else:
+                    head = (f"**{on_d:%m/%d} {when} JST に出ます**"
+                            f"（あと {(on_d - today_).days}日。**今日ではありません**）。")
+                out.append(f"         → {head}"
                            "伸び率の話ではありません —— **その時刻まで待つこと**"
                            "（畳まないこと・条件を緩めないこと）")
             else:
