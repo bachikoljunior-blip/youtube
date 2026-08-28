@@ -459,6 +459,66 @@ def short_share(days: int = 30) -> tuple[int, int] | None:
     return sum(1 for t in rec if t in shorts), len(rec)
 
 
+def starved_share(keys: list[str]) -> tuple[int, int] | None:
+    """**その実験が入った後に作ったショートのうち、実際に群へ入った割合**（実測）。
+
+    返り `(入った本数, 数えた本数)`。標本 8本 未満なら `None`。
+
+    ## なぜ要るか（2026-08-29・最適化の回。**別の数を証拠にしていました**）
+
+    `scripts/queue_lag.py` は
+    「**これから作るショートは、足りない群に自動で入ります**（直近の実測 87%）」
+    と印字していました。**その 87% は `short_share()`** ——
+    「直近30日に作った本のうち、**ショートだった**割合」です。
+    **文と数が別のことを言っています**（片方は「群に入るか」、
+    もう片方は「ショートか長尺か」）。
+
+    実測 2026-08-29 —— 同じ日に3つの数が出ます:
+
+        87%   `short_share()`             作った本のうち ショートだった割合
+        13%   直近30日のショートのうち、いま足りない群に入っているもの
+        100%  **実験が入った後**に作ったショートのうち、群に入ったもの ← これ
+
+    **13% は不当に低い**（30日の窓のうち 28日ぶんは実験が入る前に作った本で、
+    `_members_by_request_form()` の `built < exp.landed` で必ず落ちます）。
+    **87% は無関係。** 文が言っているのは3つ目で、それは **100%** です ——
+    `request_form` 58/58本・`slide_pace` 24/24本。
+
+    **証拠のほうが結論より弱かった**わけです。結論（「作り続ける」）は正しく、
+    弱い数を並べたせいで**「87% しか入らない」と読める**形でした。
+
+    ## 覆る条件
+
+    振り分けが「テーマIDだけを見る純関数」でなくなったら、この 100% は割れます
+    （`src/script_writer.request_form` / `src/pipeline.slide_pace`）。
+    そのときこの関数がそのまま下がって教えます —— **写さずに毎回 撃つこと。**
+    `tests/test_starved_share.py` が「入った後の本だけを数える」ことを留めています。
+    """
+    from src.ab_split import EXPERIMENTS
+
+    builds, shorts = build_times(), _short_topics()
+    vid = _video_by_topic()
+    hit = seen = 0
+    for key in keys:
+        exp = EXPERIMENTS.get(key)
+        if exp is None:
+            continue
+        try:
+            ms = members(key)
+        except Exception:                                        # noqa: BLE001
+            continue
+        joined = {v for g in ms.values() for _d, v in g}
+        for topic, built in builds.items():
+            # **実験が入った後に作ったショートだけ**を分母に置くこと。
+            # 前に作った本は、群に入りようがありません（`built < exp.landed`）。
+            if built < exp.landed or topic not in shorts or topic not in vid:
+                continue
+            seen += 1
+            if vid[topic] in joined:
+                hit += 1
+    return (hit, seen) if seen >= 8 else None
+
+
 def shorts_only(keys: list[str]) -> list[str]:
     """その前提が**ショートだけ**を数えているか。**宣言を写さず、標本から見ます。**
 

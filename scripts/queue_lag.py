@@ -880,6 +880,114 @@ def _walk_days(batch_build, need: int,
     return _WALK[key]
 
 
+def dead_slots(rows: list[dict], ans: set[str], until: date,
+               grid: list[tuple[int, int]],
+               now: datetime | None = None) -> list[dict]:
+    """**どの開いた前提の判定日も動かさない、帯の中の予約**（早い順・API 0単位）。
+
+    判定日は「その群の N本目の公開日」で決まるので（`answering()`）、
+    `ans`（＝ N本目までに入っている video_id）**以外**の本は、
+    後ろへ動かしても**開いている前提の判定日を1日も動かしません。**
+    その代わり、その本が抱えている**帯の枠**が空きます。
+
+    **これが `band_lines()` の「間に合いません」を消す唯一の腕です。**
+    """
+    today = (now or datetime.now(JST)).date()
+    band = set(grid)
+    live = day_cap.live_ids(published())
+    out = []
+    for r in rows:
+        vid = str(r.get("video_id") or "")
+        if vid not in live or vid in ans:
+            continue
+        at = r.get("at")
+        if at is None:
+            continue
+        d = at.astimezone(JST)
+        if today < d.date() <= until and (d.hour, d.minute) in band:
+            out.append(r)
+    out.sort(key=lambda r: r["at"])
+    return out
+
+
+def relief(batch_build, need: int, due: date, cand: list[dict],
+           grid: list[tuple[int, int]], rows: list[dict],
+           cap: int | str | None = "auto") -> tuple[int, date] | None:
+    """**その「間に合いません」は、予約を動かせば消えるか。**（API 0単位）
+
+    返り `(最小で何本 どければ間に合うか, そのときの最後の1本の日)`。
+    どけても間に合わなければ `None`。
+
+    ## なぜ要るか（2026-08-29・最適化の回。**印字が偽でした**）
+
+    `band_lines()` は `live_plan()` を1回 歩いて
+    「**この群だけを最優先しても間に合いません**」「**この N日 は下限です**」と
+    印字していました。**どちらも、いまの予約を動かせないものとした場合の話**です。
+    ところが**動かす道具は同じファイルに在ります**（`--apply` の `--move`）。
+
+    実測 2026-08-29（`request_form`・要 95本・期限までに公開 09/29）:
+
+        いまのまま                    最後の1本 **10/02**（3日 越え）
+        死に枠を **13本** 後ろへ動かす  最後の1本 **09/29** ← **間に合う**
+        死に枠を  60本 後ろへ動かす    最後の1本 09/20
+        死に枠を 145本 後ろへ動かす    最後の1本 09/13
+
+    候補（`dead_slots()`）は 09/29 までの帯だけで **145本** 在り、
+    **13本 ＝ その 9%** です。`--move` は1手 100単位なので **1,300単位** ——
+    同じ道具が既に提案している入れ替え（16手・1,600単位）より安い。
+
+    **「材料を足しても、この床は期限内に埋まりません」は偽**でした。
+    足りないのは材料でも枠でもなく、**枠の中身の並べ替え**です。
+    そしてこの床は `request_form` ＝ 腕 `sub_rate` の**ただ1つ 走っている実験**で、
+    偽の「間に合いません」は、**律速の門（登録者1,000人）を誤って手放させます。**
+
+    ## **`None` と「0本」を混ぜないこと**
+
+    `0` は「どけなくても間に合う」（呼ぶ側はそもそも呼びません）。
+    `None` は「**全部どけても間に合わない**」＝ そのときだけ、
+    元の「間に合いません」が本当になります。
+
+    ## 覆る条件
+
+    `live_plan()` の `taken` の継ぎ目が無くなったら、この関数は歩けません。
+    また `ans` の作り方（`answering()`）が「N本目まで」から変わったら、
+    **`dead_slots()` が安全でなくなります** —— そのときは両方を直すこと。
+    `tests/test_queue_lag_relief.py` が、どけると早まることを実物で留めています。
+    """
+    if not cand:
+        return None
+    taken = _taken(rows)
+
+    def walk(n: int) -> date | None:
+        drop = {str(r.get("video_id")) for r in cand[:n]}
+        t2 = {d: set(s) for d, s in taken.items()}
+        for r in cand[:n]:
+            if str(r.get("video_id")) not in drop:
+                continue
+            d = r["at"].astimezone(JST)
+            t2.get(d.date(), set()).discard((d.hour, d.minute))
+        try:
+            got = batch_build.live_plan(need, grid=grid, horizon=240,
+                                        cap=cap, taken=t2)
+        except Exception:                                        # noqa: BLE001
+            return None
+        return got[-1][1] if len(got) >= need else None
+
+    full = walk(len(cand))
+    if full is None or full > due:
+        return None                     # **全部どけても間に合わない**
+    lo, hi = 1, len(cand)               # 0 は呼ぶ側が既に外している
+    while lo < hi:
+        mid = (lo + hi) // 2
+        got = walk(mid)
+        if got is not None and got <= due:
+            hi = mid
+        else:
+            lo = mid + 1
+    got = walk(lo)
+    return (lo, got) if got is not None else None
+
+
 def answering_lines(rows: list[dict], now: datetime | None = None) -> list[str]:
     """**枠が、開いている前提の判定日を決めているか**（API 0単位）。
 
@@ -938,8 +1046,16 @@ def answering_lines(rows: list[dict], now: datetime | None = None) -> list[str]:
     #   足りない群に**自動で**入ります —— だから答えは「作るのをやめる」ではなく、
     #   「作り続ける」です。**符号が逆になる読み違えなので、同じ所に書くこと。**
     if short:
-        share = _short_share()
-        pct = f"（直近の実測 {share[0] / max(share[1], 1):.0%}）" if share else ""
+        # **`_short_share()` を証拠にしないこと**（2026-08-29 に直した）。
+        #   あれは「作った本のうち**ショートだった**割合」で、
+        #   この文が言っている「**群に入るか**」とは別の問いです。
+        #   実測 2026-08-29: 印字は 87%（＝ short_share）、
+        #   この文の本当の数は **100%**（58/58・24/24）。
+        #   **証拠のほうが結論より弱く、「87% しか入らない」と読めました。**
+        got = _starved_share(sorted({k for k, _g, _n in short}))
+        pct = (f"（**実測 {got[0] / max(got[1], 1):.0%}** ——"
+               f" 実験が入った後に作ったショート {got[1]}本 中 {got[0]}本）"
+               if got else "")
         out.append(f"{bar}  **これは「作りすぎ」ではありません** ——"
                    " ここに居るのは**もう作って予約に入っている本**で、"
                    "群は**作った時刻**で決まります（後から入れ替えても入りません）。"
@@ -960,7 +1076,7 @@ def answering_lines(rows: list[dict], now: datetime | None = None) -> list[str]:
         out.append(f"{bar}[!] **{best[0]} 〜 {best[-1]} の {len(best)}日**は、"
                    f"1日 {cap}本 のうち効くのが **1本 以下**です")
     out += band_lines(rows, short)
-    out += supply_lines(short)
+    out += supply_lines(short, rows)
     # **余っている側も出すこと。** 「足りない」だけだと、
     #   **枠がどこへ行っているか**が見えません。実測 2026-08-27:
     #   `request_form` 以外の 8群 は床の **3〜20倍** に届いていました
@@ -997,6 +1113,14 @@ def _short_share(days: int = 30) -> tuple[int, int] | None:
         return None
 
 
+def _starved_share(keys: list[str]) -> tuple[int, int] | None:
+    """`judgeable.starved_share()` を呼ぶだけ（**群の中身は1か所**）。"""
+    try:
+        return judgeable.starved_share(keys)
+    except Exception:                                            # noqa: BLE001
+        return None
+
+
 def _shorts_only(keys: list[str]) -> list[str]:
     """`judgeable.shorts_only()` を呼ぶだけ（**群の中身は1か所**）。"""
     try:
@@ -1005,7 +1129,8 @@ def _shorts_only(keys: list[str]) -> list[str]:
         return []
 
 
-def supply_lines(short: list[tuple[str, str, int]]) -> list[str]:
+def supply_lines(short: list[tuple[str, str, int]],
+                 rows: list[dict] | None = None) -> list[str]:
     """**その本を、そもそも作れるか。**（`src/supply.py` と突き合わせる。API 0単位）
 
     ## なぜ要るか（2026-08-27。**2つの道具が、半分ずつ言っていました**）
@@ -1179,17 +1304,47 @@ def supply_lines(short: list[tuple[str, str, int]]) -> list[str]:
             s_last, s_days = solo
             if s_last > due:
                 # **順番をどう変えても間に合いません**（この群だけを最優先しても超過）。
-                out.append(f"{bar}    [!] **この群だけを最優先しても間に合いません** ——"
+                out.append(f"{bar}    [!] **いまの予約のままでは間に合いません** ——"
                            f" `{key}` に要る {n_key}本 を帯へ置くと最後の1本は"
                            f" {s_last}（+{s_days}日）で、期限を {(s_last - due).days}日"
-                           " 越えます。**材料を足しても、この床は期限内に埋まりません**"
-                           f"（`band_lines` の帯／`src/day_cap.py` の上限）")
+                           " 越えます（`band_lines` の帯／`src/day_cap.py` の上限）")
                 if multi and last > s_last:
                     out.append(f"{bar}      **最後に回すと {last}（超過"
                                f" {(last - due).days}日）**まで伸びます{whose}")
-                out.append(f"{bar}      この {(s_last - due).days}日 は**下限**です ——"
-                           " `live_plan()` は**今日から全部 詰めた場合**を解いています。"
-                           "実際は1周ずつ置くので、**遅れこそすれ早まりません**")
+                # **ここは長らく「材料を足しても、この床は期限内に埋まりません」
+                #   「この N日 は下限です」と書いていました。両方とも偽です**
+                #   （2026-08-29 に実測で消した。`relief()` の docstring に表）。
+                #   どちらも**いまの予約を動かせないもの**とした場合の話で、
+                #   **動かす道具は同じファイルに在ります**（`--apply` の `--move`）。
+                #   実測: `request_form` は **13本 どければ間に合い**ました
+                #   （候補 145本 の 9%・1,300単位）。
+                #   **偽の「間に合いません」は、腕 `sub_rate` の
+                #   ただ1つ 走っている実験を捨てさせます。**
+                rel = None
+                cand: list[dict] = []
+                _rows = rows if rows is not None else scheduled()
+                try:
+                    _ans = answering(_rows)[1]
+                    cand = dead_slots(_rows, _ans, due, _grid)
+                    rel = relief(batch_build, n_key, due, cand, _grid, _rows)
+                except Exception:                                # noqa: BLE001
+                    rel = None
+                if rel is not None:
+                    n_mv, new_last = rel
+                    out.append(f"{bar}      → **{n_mv}本 どければ間に合います**"
+                               f"（最後の1本 {s_last} → **{new_last}**）。"
+                               f" どけるのは**死に枠**＝ どの開いた前提の判定日も"
+                               f"動かさない本で、{due} までの帯に **{len(cand)}本**"
+                               f" 在ります（{n_mv / max(len(cand), 1):.0%}）。"
+                               f" `--move` は1手 100単位 ＝ **{n_mv * 100:,}単位**")
+                    out.append(f"{bar}      **「材料を足しても埋まりません」ではありません。**"
+                               " 足りないのは材料でも枠でもなく、**枠の中身の"
+                               "並べ替え**です（`relief()`）")
+                elif cand:
+                    out.append(f"{bar}      **{due} までの死に枠 {len(cand)}本 を"
+                               "ぜんぶ後ろへ動かしても間に合いません** ——"
+                               " ここではじめて「順番では消えない」と言えます"
+                               "（`relief()` が `None`）")
                 # **この行だけで期限を書き換えないこと**（2026-08-27 に危うくやりかけた）。
                 #   `scripts/deadline_check.py` は同じ床を**伸び率**から解いていて、
                 #   実測 08/27 は `request_form` を **09/30・±10日** と出し、
