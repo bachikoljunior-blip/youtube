@@ -135,6 +135,28 @@ ASSUMPTIONS = [
     "（この表では後期高齢者医療の保険料）を引いた課税所得に速算表を当て、"
     "復興特別所得税2.1パーセントを掛けています。生命保険料控除や医療費控除は入れていません。"
     "入れれば所得税はさらに減るので、この表の手取り率は下限側です",
+    "介護保険の自己負担割合の判定は、単身で年金以外の所得がない人として"
+    "置いています。本人の合計所得金額が160万円以上で、かつ同じ世帯の"
+    "65歳以上の人の年金収入とその他の合計所得金額の合計が280万円以上だと2割、"
+    "220万円以上かつ340万円以上だと3割です。世帯に65歳以上が2人以上いる場合の"
+    "線は346万円と463万円で、この計算には入れていません",
+    "介護保険の自己負担割合の判定に使う年金収入は、老齢年金だけとしています。"
+    "遺族年金と障害年金は非課税なので合計所得金額には入りませんが、"
+    "介護保険料の段階の判定には入る自治体があります。ここでは扱っていません",
+    "介護の自己負担が増える額は、区分支給限度基準額いっぱいまで保険内で"
+    "使った月で計算しています。実際にそこまで使う人ばかりではありません。"
+    "使う量が少なければ、増える額もその割合で小さくなります",
+    "高額介護サービス費の上限は一般区分の月4万4,400円としています。"
+    "課税所得145万円未満の帯まではこの額です。年金収入280万円のときの"
+    "課税所得はこれを下回るので、割合が上がっても上限の区分は動きません",
+    "介護保険料そのもの（第1号被保険者の保険料段階）は、この計算に"
+    "入れていません。繰下げで年金が増えると保険料の段階も上がるので、"
+    "実際の負担はこの表よりさらに増えます。この表が出しているのは下限側です",
+    "介護が必要になるかどうかは分かりません。ここでは「その要介護度に"
+    "なったら」という仮定を置いて計算しています。要介護にならなければ、"
+    "この表の増え方は1円も起きません",
+    "繰下げで増えた手取りは、後期高齢者医療の保険料と住民税と所得税を"
+    "実際に引いて出しています。前提の手取り率ではありません",
     "kは手取り率の下がり方を何倍にするかで、制度にkという値があるわけではありません。"
     "計算したkは、その年額での「計算した下がり方」を「前提の下がり方」で割ったものです",
 ]
@@ -458,6 +480,8 @@ def check_tables() -> None:
     # 11. 計算した手取り率の向き（2026-08-28。**いちばん最後に置くこと** ——
     #     手取り率そのものを壊す故障注入は、上の 1〜10 の門が先に受けます）。
     _check_net_rate()
+    # 12. 繰下げ × 介護の自己負担割合（2026-08-28・族をまたいだ比較）。
+    _check_kaigo_step()
 
 
 def break_even(months_from_65: int, base_annual_man: float, net: bool = False) -> tuple[int, int] | None:
@@ -1722,6 +1746,271 @@ def flip_vs_computed_grid(base_annual_man: float = 180.0,
             for a in until_ages]
 
 
+
+# ------------------------------------------------------------------------
+# 繰下げ × 介護の自己負担割合（2026-08-28 に足した。**族をまたいだ比較**）
+#
+# `src/calc/kaigo.py` の `ASSUMPTIONS` は自分でこう言っています ——
+#   「自己負担の割合は所得で1割・2割・3割に分かれます。
+#     **ここでは割合そのものを与えて計算しています**」
+# つまり `kaigo` は「誰がその割合になるのか」を一度も出していません。
+# いっぽうこの表は、繰下げの月ごとの**年金の額**を1か月きざみで持っています。
+# **繰下げは年金収入を増やすので、介護の負担割合の段を跨がせます。**
+# 厚労省の繰下げの案内は増額率しか言わず、介護保険の案内は所得の線しか言わない。
+# **その2つを同じ物差しに載せた表が、どこにもありません。**
+#
+# 判定の線（介護保険法施行令22条の2。**単身・年金以外の所得なし**で置く）:
+#   2割 …… 本人の合計所得金額 160万円以上 かつ
+#           世帯の第1号被保険者の「年金収入＋その他の合計所得」が 280万円以上
+#   3割 …… 同 220万円以上 かつ 340万円以上
+# 年金だけの単身では、**後ろの線（280万円・340万円）が必ず先に効きます**
+# （160万円の合計所得に届く年金収入は 270万円なので、280万円のほうが遅い）。
+# この「どちらが縛るか」も、`kaigo` にも `kouki` にも書かれていません。
+KAIGO_COPAY_STEPS: list[tuple[float, int, int]] = [
+    # (負担割合, 本人の合計所得金額の線, 単身の「年金収入＋その他の合計所得」の線)
+    (0.2, 1_600_000, 2_800_000),
+    (0.3, 2_200_000, 3_400_000),
+]
+
+
+def kaigo_income_line(rate: float) -> dict:
+    """その負担割合になる**年金収入**の線（単身・年金以外の所得なし）。
+
+    **2つの線のうち、遅いほうが答えです。** 合計所得金額の線は
+    公的年金等控除を足し戻して年金収入に直します（`kouki.nenkin_shotoku`）。
+    """
+    from . import kouki
+
+    for r, shotoku_line, tanshin_line in KAIGO_COPAY_STEPS:
+        if abs(r - rate) > 1e-9:
+            continue
+        # 合計所得金額の線を、年金収入に直す（1円きざみで詰める。
+        # **控除は帯で率が変わるので、割り算では出ません**）。
+        lo, hi = 0, 20_000_000
+        while lo < hi:
+            mid = (lo + hi) // 2
+            if kouki.nenkin_shotoku(mid) >= shotoku_line:
+                hi = mid
+            else:
+                lo = mid + 1
+        from_shotoku = lo
+        return {
+            "負担割合": rate,
+            "合計所得の線": shotoku_line,
+            "合計所得の線を年金収入に直すと": from_shotoku,
+            "年金収入の線": tanshin_line,
+            "縛っているのは": ("年金収入の線" if tanshin_line >= from_shotoku
+                              else "合計所得の線"),
+            "年金収入で見た境目": max(from_shotoku, tanshin_line),
+        }
+    raise ValueError(f"知らない負担割合: {rate}")
+
+
+def kaigo_step_month(base_annual_man: float, rate: float,
+                     born_before_s37: bool = False) -> dict | None:
+    """繰下げ何か月目で、介護の自己負担割合がその段に上がるか。
+
+    **65歳から75歳まで（0〜120か月）だけを見ます。** 届かなければ `None`。
+    """
+    line = kaigo_income_line(rate)["年金収入で見た境目"]
+    base = base_annual_man * 10_000
+    for m in range(0, (MAX_DEFER_AGE - BASE_AGE) * 12 + 1):
+        annual = base * rate_for(m, born_before_s37)
+        if annual >= line:
+            prev = base * rate_for(m - 1, born_before_s37) if m else None
+            return {
+                "65歳の年額": int(round(base)),
+                "負担割合": rate,
+                "境目の年金収入": line,
+                "跨ぐ月": m,
+                "跨ぐ年齢": Plan(m, rate_for(m, born_before_s37)).age_text,
+                "跨いだ年額": int(round(annual)),
+                "その1か月手前の年額": None if prev is None else int(round(prev)),
+                "その1か月で増える額面": None if prev is None
+                                         else int(round(annual - prev)),
+            }
+    return None
+
+
+def kaigo_step_grid(rate: float = 0.2, born_before_s37: bool = False,
+                    bases: list[float] | None = None) -> list[dict]:
+    """65歳の年額べつに、負担割合が上がる月を並べる。"""
+    bases = bases or [120.0, 140.0, 152.0, 160.0, 180.0, 200.0, 220.0, 250.0, 280.0]
+    rows = []
+    for b in bases:
+        got = kaigo_step_month(b, rate, born_before_s37)
+        rows.append({
+            "65歳の年額_万": b,
+            "跨ぐ月": None if got is None else got["跨ぐ月"],
+            "跨ぐ年齢": None if got is None else got["跨ぐ年齢"],
+            "跨いだ年額": None if got is None else got["跨いだ年額"],
+            "その1か月で増える額面": None if got is None
+                                     else got["その1か月で増える額面"],
+        })
+    return rows
+
+
+def kaigo_safe_base(rate: float = 0.2, born_before_s37: bool = False) -> dict:
+    """**75歳まで繰り下げても、その段に上がらずに済む 65歳の年額の上限。**
+
+    上限の倍率（75歳＝1.84）で割るだけなので式は短いのですが、
+    **この数を出している表がどこにもありません。**
+    """
+    line = kaigo_income_line(rate)["年金収入で見た境目"]
+    top = rate_for((MAX_DEFER_AGE - BASE_AGE) * 12, born_before_s37)
+    # 1円きざみ。「その年額なら75歳まで繰り下げても線に届かない」最大の額。
+    hi = int(line / top)
+    while (hi + 1) * top < line:
+        hi += 1
+    while hi * top >= line:
+        hi -= 1
+    return {
+        "負担割合": rate,
+        "境目の年金収入": line,
+        "75歳の倍率": top,
+        "安全な65歳の年額の上限": hi,
+        "その額を75歳まで繰り下げた年額": int(hi * top),
+    }
+
+
+def kaigo_level_jump(rate_before: float = 0.1, rate_after: float = 0.2,
+                     cap: int | None = None) -> list[dict]:
+    """負担割合が1段 上がったとき、**要介護度ごとに月いくら増えるか**。
+
+    限度額いっぱいまで保険内で使った月で見ます。上限（高額介護サービス費）は
+    `kaigo` の一般区分。**上限が効く段では、増え方が逆に小さくなります。**
+    """
+    from . import kaigo
+
+    cap = kaigo.GENERAL_CAP if cap is None else cap
+    rows = []
+    for level, units in kaigo.LIMIT_UNITS:
+        before = kaigo.pay(level, units, rate_before, cap)
+        after = kaigo.pay(level, units, rate_after, cap)
+        rows.append({
+            "要介護度": level,
+            "限度額": kaigo.limit_yen(level),
+            f"{int(rate_before * 10)}割の月額": before["1か月に払う額"],
+            f"{int(rate_after * 10)}割の月額": after["1か月に払う額"],
+            "月の増え方": after["1か月に払う額"] - before["1か月に払う額"],
+            "年の増え方": (after["1か月に払う額"] - before["1か月に払う額"]) * 12,
+            "上限に当たったか": after["上限で戻る額"] > 0,
+        })
+    return rows
+
+
+def kaigo_step_price(base_annual_man: float = 180.0, rate: float = 0.2,
+                     born_before_s37: bool = False) -> list[dict]:
+    """**境目の「あと1か月」の値段。**
+
+    その1か月ぶん待って増える年金（額面・年）と、
+    その1か月で増える介護費（年）を、要介護度ごとに並べます。
+    **「あと1か月」の値段が、他の月とまるで違うことが出ます。**
+    """
+    step = kaigo_step_month(base_annual_man, rate, born_before_s37)
+    if step is None or step["その1か月で増える額面"] is None:
+        return []
+    gain = step["その1か月で増える額面"]
+    rows = []
+    for r in kaigo_level_jump(0.1, rate):
+        rows.append({
+            "要介護度": r["要介護度"],
+            "その1か月で増える年金_年": gain,
+            "その1か月で増える介護費_年": r["年の増え方"],
+            "何倍": r["年の増え方"] / gain if gain else None,
+            "上限に当たったか": r["上限に当たったか"],
+        })
+    return rows
+
+
+def kaigo_share_of_gain(base_annual_man: float = 180.0, rate: float = 0.2,
+                        level: str = "要介護2",
+                        born_before_s37: bool = False) -> dict | None:
+    """**繰下げで増えた手取りのうち、介護費で消える割合。**
+
+    手取りは `net_breakdown`（後期高齢者医療＋住民税＋所得税を実際に引いた額）で
+    出します。**前提の手取り率ではありません。**
+    """
+    step = kaigo_step_month(base_annual_man, rate, born_before_s37)
+    if step is None:
+        return None
+    at_65 = net_breakdown(int(round(base_annual_man * 10_000)))
+    at_step = net_breakdown(step["跨いだ年額"])
+    gain_net = at_step["手取り"] - at_65["手取り"]
+    jump = next(r for r in kaigo_level_jump(0.1, rate)
+                if r["要介護度"] == level)
+    return {
+        "65歳の年額": at_65["年金収入"],
+        "跨いだ年額": at_step["年金収入"],
+        "跨ぐ年齢": step["跨ぐ年齢"],
+        "増えた額面": at_step["年金収入"] - at_65["年金収入"],
+        "増えた手取り": gain_net,
+        "要介護度": level,
+        "介護費の増え方_年": jump["年の増え方"],
+        "増えた手取りのうち消える割合": (jump["年の増え方"] / gain_net
+                                        if gain_net else None),
+    }
+
+
+def _check_kaigo_step() -> None:
+    """**節の題そのものを守る検査。**
+
+    ここが落ちたら、節に書いた文が嘘になっています。
+    """
+    from . import _checks, kaigo
+
+    # (1) 年金だけの単身では、縛るのは「年金収入の線」のほう。
+    #     **ここが入れ替わったら、節の1行目から書き直しです。**
+    for r in (0.2, 0.3):
+        line = kaigo_income_line(r)
+        if line["縛っているのは"] != "年金収入の線":
+            raise ValueError(
+                f"{int(r * 10)}割: 縛っているのが合計所得の線に変わりました"
+                f"（{line}）")
+    # (2) 2割の境目は年金収入 280万円、3割は 340万円（施行令の額そのもの）。
+    _checks.statutory(kaigo_income_line(0.2)["年金収入で見た境目"], 2_800_000,
+                      "介護 2割 の年金収入の線（単身）",
+                      source="介護保険法施行令22条の2")
+    _checks.statutory(kaigo_income_line(0.3)["年金収入で見た境目"], 3_400_000,
+                      "介護 3割 の年金収入の線（単身）",
+                      source="介護保険法施行令22条の2")
+    # (3) 上限が効くので、**重い要介護度ほど増え方が小さい**（要介護2が最大）。
+    #     この向きが変わったら、節の主役の文が逆になります。
+    jump = kaigo_level_jump(0.1, 0.2)
+    worst = max(jump, key=lambda r: r["月の増え方"])
+    if worst["要介護度"] != "要介護2":
+        raise ValueError(
+            f"1割→2割 の増え方が最大なのは要介護2 のはずが {worst['要介護度']}")
+    heavy = [r["月の増え方"] for r in jump
+             if r["要介護度"] in ("要介護3", "要介護4", "要介護5")]
+    if not (heavy[0] > heavy[1] > heavy[2]):
+        raise ValueError(f"要介護3→5 で増え方が減っていません: {heavy}")
+    # (4) 上限に当たっているのは要介護3以上だけ（`kaigo.first_biting_level`）。
+    biting = kaigo.first_biting_level(0.2)
+    if biting != "要介護3":
+        raise ValueError(f"2割で上限が効き始めるのが要介護3 ではありません: {biting}")
+    # (5) 境目の月は、その1つ手前では線に届いていない（＝本当に境目）。
+    for b in (160.0, 180.0, 200.0):
+        s = kaigo_step_month(b, 0.2)
+        if s is None:
+            raise ValueError(f"65歳で年{b}万円が 2割 の線に届きません")
+        if s["その1か月手前の年額"] is None or \
+                s["その1か月手前の年額"] >= s["境目の年金収入"]:
+            raise ValueError(f"65歳で年{b}万円: 1つ手前でもう線を越えています")
+    # (6) 75歳まで繰り下げても安全な上限は、1円 足すと越える。
+    safe = kaigo_safe_base(0.2)
+    top = safe["75歳の倍率"]
+    if safe["安全な65歳の年額の上限"] * top >= safe["境目の年金収入"]:
+        raise ValueError("安全な上限が、もう線を越えています")
+    if (safe["安全な65歳の年額の上限"] + 1) * top < safe["境目の年金収入"]:
+        raise ValueError("安全な上限が、上限になっていません（もっと上げられます）")
+    # (7) 境目の1か月は、年金の増えぶんより介護費の増えぶんのほうが大きい
+    #     （＝ 節の主役。**逆になったら節ごと消すこと**）。
+    for row in kaigo_step_price(180.0, 0.2):
+        if row["何倍"] is None or row["何倍"] <= 1.0:
+            raise ValueError(
+                f"境目の1か月で、介護費より年金のほうが増えています: {row}")
+
 if __name__ == "__main__":
     check_tables()
     print("制度の値の検査: 通過\n")
@@ -2144,3 +2433,78 @@ if __name__ == "__main__":
     print("  **82歳では逆です** —— 裏返る k が 0.055 しかないので、"
           "**計算した引かれ方（0.904）でも繰下げは負けます。**"
           "**80歳までなら額面でも負けている**ので、k は関係ありません。")
+
+    print("\n=== 繰下げが、介護の自己負担割合を1段 上げる月（単身・年金以外の所得なし）===")
+    print("  **`src/calc/kaigo.py` は「割合そのものを与えて計算しています」と"
+          "自分で書いています** —— 誰がその割合になるのかは、あの表に無い。")
+    print("  **繰下げは年金収入を増やすので、その段を跨がせます。**"
+          "厚労省の繰下げの案内は増額率しか言わず、介護保険の案内は所得の線しか"
+          "言いません。**2つを同じ物差しに載せた表がありません。**")
+    for _r in (0.2, 0.3):
+        _line = kaigo_income_line(_r)
+        print(f"  {int(_r * 10)}割の境目: 年金収入 **{_line['年金収入で見た境目']:,d}円**"
+              f"（合計所得の線 {_line['合計所得の線']:,d}円 を年金収入に直すと "
+              f"{_line['合計所得の線を年金収入に直すと']:,d}円 なので、"
+              f"**{_line['縛っているのは']}のほうが後ろ**）")
+    print(f"{'65歳の年額':>11s} {'跨ぐ月':>7s} {'跨ぐ年齢':>11s} "
+          f"{'跨いだ年額':>12s} {'その1か月で増える額面':>22s}")
+    for _row in kaigo_step_grid(0.2):
+        if _row["跨ぐ月"] is None:
+            print(f"{_row['65歳の年額_万']:10.0f}万 {'—':>7s} "
+                  f"{'75歳でも1割のまま':>11s}")
+            continue
+        _gain = _row["その1か月で増える額面"]
+        print(f"{_row['65歳の年額_万']:10.0f}万 {_row['跨ぐ月']:6d}月 "
+              f"{_row['跨ぐ年齢']:>11s} {_row['跨いだ年額']:11,d}円 "
+              + (f"{_gain:21,d}円" if _gain is not None
+                 else f"{'**65歳の時点でもう2割**':>21s}"))
+    _safe = kaigo_safe_base(0.2)
+    print(f"  **65歳の年額が {_safe['安全な65歳の年額の上限']:,d}円 までなら、"
+          f"75歳まで繰り下げても1割のままです**"
+          f"（75歳で {_safe['その額を75歳まで繰り下げた年額']:,d}円）。"
+          f"**1円でも多いと、繰下げのどこかで2割に上がります。**")
+
+    print("\n=== 割合が1段 上がったときの痛手は、重い人ほど小さい（1割→2割・限度額いっぱい）===")
+    print("  **高額介護サービス費の上限（44,400円）が、重い段では先に効くから**です。"
+          "「重い人ほど大変」の向きが、ここだけ逆になります。")
+    print(f"{'要介護度':>9s} {'限度額':>11s} {'1割の月額':>11s} {'2割の月額':>11s} "
+          f"{'月の増え方':>11s} {'年の増え方':>12s} {'上限'}")
+    for _r in kaigo_level_jump(0.1, 0.2):
+        print(f"{_r['要介護度']:>9s} {_r['限度額']:10,d}円 {_r['1割の月額']:10,d}円 "
+              f"{_r['2割の月額']:10,d}円 {_r['月の増え方']:10,d}円 "
+              f"{_r['年の増え方']:11,d}円  "
+              f"{'**当たっています**' if _r['上限に当たったか'] else '—'}")
+    _jump = [r for r in kaigo_level_jump(0.1, 0.2)
+             if r["要介護度"].startswith("要介護")]
+    _top = max(_jump, key=lambda r: r["月の増え方"])
+    _bot = min(_jump, key=lambda r: r["月の増え方"])
+    print(f"  **要介護でいちばん増えるのは {_top['要介護度']}（月 "
+          f"{_top['月の増え方']:,d}円）で、いちばん少ないのは "
+          f"{_bot['要介護度']}（月 {_bot['月の増え方']:,d}円）** —— "
+          f"**{_top['月の増え方'] / _bot['月の増え方']:.2f}倍**。"
+          f"**いちばん重い人が、いちばん増えません。**"
+          f"（要支援は上限に当たらないので、割合どおり2倍になります）")
+
+    print(f"\n=== 境目の「あと1か月」だけ、値段がまるで違う（65歳で年{base}万円）===")
+    _step = kaigo_step_month(base, 0.2)
+    print(f"  {_step['跨ぐ年齢']}（{_step['跨ぐ月']}か月目）で年額が "
+          f"{_step['その1か月手前の年額']:,d}円 → {_step['跨いだ年額']:,d}円 になり、"
+          f"**{_step['境目の年金収入']:,d}円 の線を越えます。**")
+    print(f"  その1か月で増える年金は **年 {_step['その1か月で増える額面']:,d}円**"
+          f"（額面）。**同じ1か月で、介護費はこれだけ増えます:**")
+    print(f"{'要介護度':>9s} {'増える年金(年)':>15s} {'増える介護費(年)':>17s} "
+          f"{'何倍':>8s}")
+    for _r in kaigo_step_price(base, 0.2):
+        print(f"{_r['要介護度']:>9s} {_r['その1か月で増える年金_年']:14,d}円 "
+              f"{_r['その1か月で増える介護費_年']:16,d}円 {_r['何倍']:7.1f}倍")
+    _share = kaigo_share_of_gain(base, 0.2, "要介護2")
+    print(f"  **繰下げ全体では損ではありません** —— 65歳の "
+          f"{_share['65歳の年額']:,d}円 を {_share['跨ぐ年齢']}まで繰り下げると、"
+          f"手取りは **年 {_share['増えた手取り']:,d}円** 増えます"
+          f"（額面では {_share['増えた額面']:,d}円）。")
+    print(f"  ただし {_share['要介護度']}になった場合、介護費が "
+          f"年 {_share['介護費の増え方_年']:,d}円 増えるので、"
+          f"**増えた手取りの {_share['増えた手取りのうち消える割合']:.1%} が消えます。**")
+    print("  **効くのは境目の1か月だけです。**"
+          "その手前で止めれば1割のまま、1か月 待てば2割 —— "
+          "**増える年金は同じ0.7%なのに、値段だけが桁で変わります。**")
