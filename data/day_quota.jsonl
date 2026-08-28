@@ -4621,3 +4621,7 @@
 {"at": "2026-08-28T01:37:21+00:00", "detail": "channels.list mine", "by": "history.py:_scan"}
 {"at": "2026-08-28T01:37:23+00:00", "detail": "channels.list mine", "by": "history.py:_scan"}
 {"at": "2026-08-28T01:37:25+00:00", "detail": "channels.list mine", "by": "history.py:_scan"}
+{"at": "2026-08-28T02:32:59+00:00", "detail": "status: Data API 読み", "by": "status.py:main"}
+{"at": "2026-08-28T02:33:27+00:00", "detail": "channels.list mine", "by": "history.py:_scan"}
+{"at": "2026-08-28T02:33:28+00:00", "detail": "channels.list mine", "by": "history.py:_scan"}
+{"at": "2026-08-28T02:34:09+00:00", "detail": "channels.list mine", "by": "history.py:_scan"}
