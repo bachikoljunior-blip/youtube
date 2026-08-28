@@ -393,8 +393,18 @@ if __name__ == "__main__":
         print(row)
 
     print("\n=== 請求しないまま2年の期限を過ぎると、生涯でいくら失うか ===")
-    for row in lifetime_loss():
+    rows = lifetime_loss()
+    for row in rows:
         print(row)
+    # **5年ぶんの段そのものを印字すること**（2026-08-29 に踏んだ。`ribo` の
+    # 「上下の開きも印字すること」と同じ形です）。この表の主題は
+    # 「受け取る年数が変わるといくら変わるか」なので、**差が主役の数**です。
+    # 印字しないと、差を言った題が `_checks.numbers_backed` の裏を取れません
+    # （実測: `bunkatsu-2nen-kigen-shogai-son` の angle の 1,315,440円 が
+    #  `tests/test_doc_numbers.py::test_topics_yamlには掛けない` で鳴った）。
+    for a, b in zip(rows, rows[1:]):
+        print(f"  {a['受け取る年数']}年 → {b['受け取る年数']}年 の段: "
+              f"{b['失う生涯額'] - a['失う生涯額']:,}円")
 
     print("\n=== 分割はゼロサム。相手が減る額と自分が増える額は同じ ===")
     for row in zero_sum_table():
