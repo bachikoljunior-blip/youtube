@@ -1,6 +1,7 @@
 {
  "hook_form": {
   "bunkatsu-heikinhoushu-tsukigaku": "問い",
+  "bunkatsu-jibun-hoshu-genshou": "条件",
   "fudosanshutoku-zei": "問い",
   "haito-1000man-6505pt": "条件",
   "haito-bunkiten-695man": "条件",
@@ -69,6 +70,7 @@
   "kouki-nenkin-10man-tani-tani": "条件",
   "kouki-reiritsu-8gyou-yasui": "条件",
   "mishikyu-hi-betsu-sanbai": "問い",
+  "mishikyu-tsuki-betsu-2ka3ka": "問い",
   "nenkin-fueta-bun-no-teduke-767": "問い",
   "nenkin-kuridage-k-baisuu-yoyuu": "問い",
   "nenkin-kurisage-toku-tani-374886": "条件",
@@ -580,6 +582,7 @@
  },
  "request_form": {
   "bunkatsu-heikinhoushu-tsukigaku": "終端のみ",
+  "bunkatsu-jibun-hoshu-genshou": "途中あり",
   "fudosanshutoku-zei": "途中あり",
   "haito-1000man-6505pt": "終端のみ",
   "haito-bunkiten-695man": "終端のみ",
@@ -648,6 +651,7 @@
   "kouki-nenkin-10man-tani-tani": "途中あり",
   "kouki-reiritsu-8gyou-yasui": "途中あり",
   "mishikyu-hi-betsu-sanbai": "途中あり",
+  "mishikyu-tsuki-betsu-2ka3ka": "途中あり",
   "nenkin-fueta-bun-no-teduke-767": "終端のみ",
   "nenkin-kuridage-k-baisuu-yoyuu": "途中あり",
   "nenkin-kurisage-toku-tani-374886": "終端のみ",
@@ -1159,6 +1163,7 @@
  },
  "slide_pace": {
   "bunkatsu-heikinhoushu-tsukigaku": "速い",
+  "bunkatsu-jibun-hoshu-genshou": "遅い",
   "fudosanshutoku-zei": "遅い",
   "haito-1000man-6505pt": "速い",
   "haito-bunkiten-695man": "遅い",
@@ -1227,6 +1232,7 @@
   "kouki-nenkin-10man-tani-tani": "速い",
   "kouki-reiritsu-8gyou-yasui": "速い",
   "mishikyu-hi-betsu-sanbai": "速い",
+  "mishikyu-tsuki-betsu-2ka3ka": "速い",
   "nenkin-fueta-bun-no-teduke-767": "速い",
   "nenkin-kuridage-k-baisuu-yoyuu": "遅い",
   "nenkin-kurisage-toku-tani-374886": "遅い",
@@ -1738,6 +1744,7 @@
  },
  "title_form": {
   "bunkatsu-heikinhoushu-tsukigaku": "断定",
+  "bunkatsu-jibun-hoshu-genshou": "断定",
   "fudosanshutoku-zei": "断定",
   "haito-1000man-6505pt": "断定",
   "haito-bunkiten-695man": "断定",
@@ -1806,6 +1813,7 @@
   "kouki-nenkin-10man-tani-tani": "問い",
   "kouki-reiritsu-8gyou-yasui": "問い",
   "mishikyu-hi-betsu-sanbai": "断定",
+  "mishikyu-tsuki-betsu-2ka3ka": "断定",
   "nenkin-fueta-bun-no-teduke-767": "問い",
   "nenkin-kuridage-k-baisuu-yoyuu": "問い",
   "nenkin-kurisage-toku-tani-374886": "断定",
