@@ -389,6 +389,21 @@ watches:
     unit: 再生
     need: 15000
 
+  - id: 本数と合計-14日
+    # **2026-08-28 18:xx に、`day_cap.day_total()` を足した回が置きました。**
+    # 見ているのは `rho_scale`（**上限まで出した日だけ**の順位相関）で、
+    # 床は本数ではなく**日数**です —— だから `published_count` ではなく
+    # `days_with_min_videos`。**`per_day` は `day_cap.cap()` の実測（10本）**で、
+    # 上限が動いたらここも直すこと（**定数を2箇所で持っています。片方だけ直さない**）。
+    what: 「1日の再生の合計は、その日に出した本数では動かない」の判定（腕 `density`・期限 2026-09-06）
+    cond: "**10本以上 出した日**が 14日。それ未満だと `rho_scale` の n が1桁で、符号が偶然で裏返ります（**いまいくつかは、この行ではなく目盛りが出します**）"
+    then: "python -c \"from src import day_cap; print(day_cap.day_total())\" → `rho_scale` が **+0.30 以上なら外れ**（本数は効いている）。**`rho`（全部の日）で判定しないこと** —— 立ち上がりを混ぜており、同じ実測で符号が逆に出ます（08/28: rho +0.75 ／ rho_scale -0.01）"
+    source: config/hypotheses.yaml
+    kind: days_with_min_videos
+    per_day: 10
+    min_age_days: 1
+    need: 14
+
 # **見張らないと決めたもの**（`tests/test_watches.py` が読みます）。
 # 「まだ判定できません」と印字するのに待ちの台帳に無いファイルは、
 # ここに理由を書くまで検査が落ちます。**黙って放置できない形にするため。**
