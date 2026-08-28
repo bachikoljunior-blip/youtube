@@ -294,7 +294,8 @@ def surface_forecast(sm: dict, pubs: dict[str, int] | None = None,
                      days: int = RECENT_DAYS,
                      today: str | None = None,
                      make_per_day: float | None = None,
-                     slots_per_day: int | None = None) -> dict | None:
+                     slots_per_day: int | None = None,
+                     stock: int | None = None) -> dict | None:
     """**これから先の面（インプレッション/日）を、予約の長尺の本数から出す。**
 
     ## なぜ要るか（2026-08-26。**この帳面の8件目の同じ穴**）
@@ -411,14 +412,15 @@ def surface_forecast(sm: dict, pubs: dict[str, int] | None = None,
             "dry_days": dry,
             "dry_span": best,
             "dry_fill": dry_fill(best, pubs, make_per_day, slots_per_day,
-                                 today=start)}
+                                 today=start, stock=stock)}
 
 
 def dry_fill(span: tuple[str, str, int] | None,
              pubs: dict[str, int] | None,
              make_per_day: float | None,
              slots_per_day: int | None,
-             today=None) -> dict | None:
+             today=None,
+             stock: int | None = None) -> dict | None:
     """**その穴は、作る速さで自然に埋まるか。**（`surface_forecast` の説明を読むこと）
 
     返り（測れなければ `None` —— **どちらにも倒さない**）::
@@ -428,6 +430,49 @@ def dry_fill(span: tuple[str, str, int] | None,
         gap_days     いまから穴の初日までの日数
         ok           reach_days <= gap_days（＝ 放っておいて埋まる）
         short_per_day 足りないとき、作る速さをいくつ上げれば間に合うか（本/日）
+        bound        何が縛っているか（`"render"` ＝ 作る速さ ／ `"topics"` ＝ 題材）
+        stock        いま在る長尺向けのテーマ（本）。渡されなければ `None`
+        topics_needed        穴の手前を埋めるのに、あと何本の**新しい題材**が要るか
+        topics_per_day_needed その本数を `gap_days` で割った、要る題材の速さ（本/日）
+
+    ## `make_per_day` だけで見ると、必ず「埋まります」に倒れます（2026-08-29）
+
+    **`make_per_day` は描画の速さで、題材の有無を1つも見ていません**
+    （`eta.long_supply_per_day()` は `data/batch_runs.jsonl` の
+    「作れた本」を数えます ＝ **題材が在った日の記録**）。
+    実測 2026-08-29: 描画 **9.14本/日**・空き枠 17本 → `reach_days` **1.9日**、
+    穴まで 15日 なので **`ok=True`**。同じ時刻に
+
+        `src/supply.py`        長尺向けの在庫 **0本**
+        `scripts/topic_forge.py --list`  7日ぶんで取れるのは最大 **0本**
+
+    **描画は速いが、描くものが1本も無い状態**です。それでも
+    `scripts/eta.py` は「**放っておいて埋まります／その日に置きにいかないこと**」
+    と印字していました —— **4,000時間の門に入るのは長尺だけ**なので、
+    これは門に直結した面について「手を出すな」と言っていたことになります。
+
+    `eta._long_make_per_day()` の docstring は、この壊れ方を名指ししています ——
+    「**願望で割ると『埋まります』と出て、実際には空のまま公開日が来ます**」。
+    あちらが防いでいたのは `measured: False`（計画値へ落ちる枝）だけで、
+    **実測なのに測っている段が違う**、この枝は素通りでした。
+
+    ## だから、題材の側でも割ります
+
+    `stock` を渡すと、**いま在る題材で埋められる本数**が上限になります::
+
+        埋められる ＝ min(空き枠, 在庫)          ← 新しい題材を作らない場合
+        要る新題材 ＝ max(0, 空き枠 − 在庫)
+
+    **`stock` を渡さなければ、これまでと1文字も変わりません**
+    （`bound` は `None`。測っていないことを、埋まる/埋まらないのどちらにも倒さない）。
+
+    **`ok` は両方を通ったときだけ真**です。`stock` が足りなければ
+    `bound="topics"` を返し、**直す先は描画ではなく `src/calc/` の節**になります
+    （`scripts/topic_forge.py --list` の「(2) 既にある表に節を足して」）。
+
+    覆る条件: 長尺が `s-` 以外の題以外からも作れるようになったら、
+    `stock` の数え方（`src/supply.py` の `surfaces()["long"]["stock"]`）が
+    先に外れます。`tests/test_reach_dry_fill.py` がそこを押さえています。
     """
     from datetime import date, timedelta
 
@@ -448,14 +493,36 @@ def dry_fill(span: tuple[str, str, int] | None,
         open_slots += max(0, int(slots_per_day) - int(pubs.get(d, 0)))
     reach = open_slots / float(make_per_day)
     need = (open_slots / gap) if gap else None
-    return {"open_slots": open_slots, "reach_days": reach, "gap_days": gap,
-            "ok": reach <= gap, "make_per_day": float(make_per_day),
-            "slots_per_day": int(slots_per_day),
-            # **埋まる回でも、どこで割れるかを返すこと。** 「埋まります」だけだと
-            #     次の回は作る速さを落としてよいと読みます（余裕は実測 1.9日 しかない）。
-            "need_per_day": need,
-            "short_per_day": (None if reach <= gap
-                              else max(0.0, need - float(make_per_day)))}
+    render_ok = reach <= gap
+    out = {"open_slots": open_slots, "reach_days": reach, "gap_days": gap,
+           "ok": render_ok, "make_per_day": float(make_per_day),
+           "slots_per_day": int(slots_per_day),
+           # **埋まる回でも、どこで割れるかを返すこと。** 「埋まります」だけだと
+           #     次の回は作る速さを落としてよいと読みます（余裕は実測 1.9日 しかない）。
+           "need_per_day": need,
+           "short_per_day": (None if render_ok
+                             else max(0.0, need - float(make_per_day))),
+           "bound": None, "stock": None,
+           "topics_needed": None, "topics_per_day_needed": None}
+    if stock is None:
+        # **測っていない側へ倒さない。** ここを `0` で埋めると、在庫を
+        #     読めなかった回が全部「題材が無い」になります（docstring 参照）。
+        if not render_ok:
+            out["bound"] = "render"
+        return out
+    stock = max(0, int(stock))
+    short_topics = max(0, open_slots - stock)
+    out["stock"] = stock
+    out["topics_needed"] = short_topics
+    out["topics_per_day_needed"] = (short_topics / gap) if gap else None
+    # **両方 通ったときだけ「埋まります」**。描画が速くても、描くものが無ければ
+    #     公開日は空のまま来ます（2026-08-29 の実測: 描画 9.14本/日・在庫 0本）。
+    out["ok"] = render_ok and short_topics == 0
+    if not out["ok"]:
+        # **縛っている側を名指しすること。** 「埋まりません」だけだと、
+        #     次の回は既定の助言（＝作る速さを上げろ）へ行きます。
+        out["bound"] = "topics" if short_topics > 0 else "render"
+    return out
 
 
 def last_scheduled_day(ledger_path: Path | None = None) -> str | None:
