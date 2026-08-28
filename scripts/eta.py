@@ -2787,7 +2787,7 @@ def frozen_days(m: dict, a0: dict, tr: dict, levers_: list[str], *,
     **`src/levers.py` はこの数を べた書き していました**（「+115日（2026-08-26）」）。
     べた書きは腐ります。**ここで毎回 測り直して渡すこと。**
 
-    費用: 腕1本につき軌跡1本（**API 0単位・実測 15〜20秒**）。
+    費用: 腕1本につき軌跡1本（**API 0単位・実測 2〜4秒**（2026-08-28 に `day_cap.cap()` を畳むまでは 15〜20秒））。
     呼ぶのは「天井まで引いても届かない」と出た腕だけなので、普通は1〜2本です。
     """
     out: dict[str, float | None] = {}
@@ -3763,7 +3763,7 @@ def _planned_lines(bar: str, tr: dict | None, base: dict | None) -> list[str]:
                      " 台帳を書き換えれば配分は変わります"
                      "（`config/hypotheses.yaml` の `lever`）。"
                      " **どの腕が早いかは `python scripts/eta.py --alloc`**"
-                     "（API 0単位・**実測 4分**。毎回は撃たない）")
+                     "（API 0単位・**実測 24秒**（2026-08-28 に `day_cap.cap()` を畳むまでは 4分）。毎回は撃たない）")
         # **`lever_hint` とは別の問いです**（2026-08-26 に足した理由）。
         #     `lever_hint` は「**いま どの床が遅いか**」＝ 診断で、
         #     `--alloc` は「**次の前提をどの腕に立てるか**」＝ 配分の選択。
@@ -5167,7 +5167,7 @@ def solve(m: dict, points: list[dict], *, full: bool = True) -> dict:
     #     この1行が無かったせいで、頭の表は「ここに前提を置いても動きません」と
     #     書き、`--alloc` は同じ日に「次の1件はその腕に置くのが最短」と書いて
     #     いました。**測れば済む話です**（`frozen_days` の docstring に全文）。
-    #     費用は腕1本につき軌跡1本（API 0単位・15〜20秒）。**普通は1〜2本**。
+    #     費用は腕1本につき軌跡1本（API 0単位・**2〜4秒**）。**普通は1〜2本**。
     if tr is not None and FROZEN_ARMS:
         _dead = [r["lever"] for r in (pl.get("lever_days") or [])
                  if r.get("cap") is not None and not r.get("reachable_at_cap")]
@@ -5629,7 +5629,7 @@ def alloc_search(with_speed: bool = False) -> int:
 
     ## なぜ別の口にしたか（毎回は撃たない）
 
-    軌跡は1本ごとに **15〜20秒** かかります。頭の3行では
+    軌跡は1本ごとに **2〜4秒** かかります（2026-08-28 に測り直した。それまでは 15〜20秒）。頭の3行では
     「過去の配分」と「台帳の配分」の**2本だけ**を解いて差を出しています。
     ここは**そこからさらに腕べつ**に解くので、本数ぶん時間が増えます
     （腕4つ ＝ 60〜80秒）。**周は約10分に1回**回るので、毎回は撃ちません。
@@ -5662,7 +5662,7 @@ def alloc_search(with_speed: bool = False) -> int:
     pln = arm_speed.planned()
     past = {k: (v.get("share") or 0.0) for k, v in arms.items()}
     print("=== 次の前提を、どの腕に立てるのがいちばん早いか ===")
-    print("  **API は0単位**（積んである最後の点で解き直すだけ）。1本 15〜20秒。")
+    print("  **API は0単位**（積んである最後の点で解き直すだけ）。1本 2〜4秒。")
     # --- **どの腕の数が「その腕の実測」で、どれが代用か**（2026-08-26 に足した） ---
     #     `arm_speed.arm()` は、その腕で閉じた前提が `MIN_N`（=3）に満たないと
     #     **全体の当たり確率と伸び幅で代用**します。代用の腕どうしは
@@ -5796,14 +5796,14 @@ def main() -> int:
     ap.add_argument("--reflect", action="store_true",
                     help="周の終わり: この回で動いた入力を予測へ入れ直し、日付の前後差を残す")
     ap.add_argument("--note", metavar="1行", help="--reflect に添える1行（何を入れ直したか）")
-    # **毎回は撃ちません**（軌跡1本 15〜20秒 × 腕4つ）。頭の3行が
+    # **毎回は撃ちません**（軌跡1本 2〜4秒 × 腕4つ）。頭の3行が
     # 「過去の配分」と「台帳の配分」の差を出すので、**その差が気になった回だけ。**
     ap.add_argument("--no-frozen", action="store_true",
                     help="「その腕を凍らせたら何日 遠のくか」を測らない"
-                         "（軌跡1本ぶん 15〜20秒 を省く。**普通は付けないこと** ——"
+                         "（軌跡1本ぶん 2〜4秒 を省く。**普通は付けないこと** ——"
                          " 付けると『十分でない腕』と『要らない腕』が区別できません）")
     ap.add_argument("--alloc", action="store_true",
-                    help="次の前提をどの腕に立てるのが早いか、腕べつに解く（API 0単位・**実測 4分**）")
+                    help="次の前提をどの腕に立てるのが早いか、腕べつに解く（API 0単位・**実測 24秒**（2026-08-28 に `day_cap.cap()` を畳むまでは 4分））")
     ap.add_argument("--alloc-speed", action="store_true",
                     help="`--alloc` を、**腕べつの回転**（台帳の予定表・"
                          "`arm_speed.speed_weights()`）を掛けて解く。"
