@@ -53,7 +53,10 @@ def _stub(monkeypatch, topics: list[tuple[str, str]]) -> None:
     monkeypatch.setattr(config, "load_topics", lambda: pool)
     monkeypatch.setattr(batch_build, "_posted_including_ledger", lambda: set())
     monkeypatch.setattr(batch_build, "_drop_doomed", lambda u, p: u)
-    monkeypatch.setattr(batch_build, "_drop_queue_tail_calcs", lambda u, p: u)
+    # `**_` は 2026-08-29 に足した。`_drop_queue_tail_calcs` が `land`（着地する日）を
+    #     取るようになったため。**引数を数える検査ではない**ので、増えても落ちない形にする。
+    monkeypatch.setattr(batch_build, "_drop_queue_tail_calcs",
+                        lambda u, p, **_: u)
     monkeypatch.setattr(dupes, "ledger_rows", lambda: [])
 
 

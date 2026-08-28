@@ -111,6 +111,7 @@ import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timedelta, timezone
+from datetime import time as dtime
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -343,7 +344,8 @@ def _drop_doomed(usable: list[dict], pool: list[dict]) -> list[dict]:
 QUEUE_TAIL_DAYS = 7
 
 
-def _queue_tail_calcs(pool: list[dict], days: int = QUEUE_TAIL_DAYS) -> set[str]:
+def _queue_tail_calcs(pool: list[dict], days: int = QUEUE_TAIL_DAYS,
+                      land: date | None = None) -> set[str]:
     """**これから公開される長尺の calc** を返す（**API を1単位も使いません**）。
 
     ## なぜ要るのか（2026-08-25 に踏んだ）
@@ -370,14 +372,42 @@ def _queue_tail_calcs(pool: list[dict], days: int = QUEUE_TAIL_DAYS) -> set[str]
     候補が枯れます（実測: 全490件のうち、ショート込みで避けると大半が落ちる）。
     そして踏んだ事故も長尺でした ——**題名の頭が同一の長尺が4本続く**形です。
 
+    ## **窓は「今日から」ではなく「着地する日のまわり」です**（2026-08-29 に踏んだ）
+
+    ここは長らく `now` 〜 `now + days` の**固定窓**でした。上の docstring が
+    「**着地点の隣は避けられない**」と正しく言っているのに、
+    **その着地点が今日から7日以内だという前提が、どこにも確かめられていません。**
+
+    実測 2026-08-29 —— **両方の道で外れます**:
+
+        `--date` を渡した回   釘づけした日（この回は 09/14〜09/16）に着く。
+                            窓は 08/29〜09/05 を見ていた ＝ **完全に外**
+        既定（`live_ring`）   `queue_lag.py` の実測で着地は **8〜11日後**。
+                            窓は 7日 なので、**これも外**
+
+    その結果この回は、**09/12〜09/16 の長尺 6本 が bunkatsu 3・mishikyu 3** に
+    なりました。`CLAUDE.md` が引いているポリシー本文そのもの ——
+    「**同じチャンネルの動画を続けて数本視聴した後、繰り返しのように
+    感じられる可能性のあるコンテンツ**」は**収益化の対象外**です。
+    **この関数は、まさにそれを止めるために書かれています。**
+
+    だから `land`（着地する日）を受け取り、**その前後 `days` 日**を見ます。
+    渡されなければ今日を使います（＝ 前と同じ）。
+
     **覆る条件**: 未投稿テーマの calc が偏っていて、避けると毎回 `pick` が
     空になるようなら、`QUEUE_TAIL_DAYS` を下げること
     （下の呼び出し側が、空になった回は避けずに通します）。
+    **検査は `tests/test_queue_tail_land.py`。**
     """
     calc_of = {t["id"]: (t.get("calc") or "") for t in pool}
     now = datetime.now(timezone.utc)
-    until = (now + timedelta(days=days)).isoformat()
-    now_s = now.isoformat()
+    centre = now if land is None else datetime.combine(
+        land, dtime(0, 0), tzinfo=timezone.utc)
+    # **前へも見ます。** 釘づけした日の**手前**に同じ calc が並んでいても、
+    #     見る側には「続けて数本」に見えます（順番は公開日で決まる）。
+    since = max(now, centre - timedelta(days=days)) if land is not None else now
+    until = (centre + timedelta(days=days)).isoformat()
+    now_s = since.isoformat()
     calcs = set()
     for row in dupes.ledger_rows():
         at = row.get("at") or ""
@@ -389,10 +419,16 @@ def _queue_tail_calcs(pool: list[dict], days: int = QUEUE_TAIL_DAYS) -> set[str]
     return calcs - {""}
 
 
-def _drop_queue_tail_calcs(usable: list[dict], pool: list[dict]) -> list[dict]:
-    """末尾の calc を落とす。**全部落ちる回は落とさない**（出すほうが先）。"""
+def _drop_queue_tail_calcs(usable: list[dict], pool: list[dict],
+                           land: date | None = None) -> list[dict]:
+    """末尾の calc を落とす。**全部落ちる回は落とさない**（出すほうが先）。
+
+    `land` は**その回の本が着地する日**（`--date` か `live_plan()` の先頭）。
+    渡さないと今日を中心に見ます —— **それでは着地点の隣を避けられません**
+    （`_queue_tail_calcs` の「窓は着地する日のまわり」）。
+    """
     try:
-        tail = _queue_tail_calcs(pool)
+        tail = _queue_tail_calcs(pool, land=land)
     except Exception as exc:                                  # noqa: BLE001
         print(f"[pick] これからの予約を読めませんでした（避けずに続けます）: {exc}")
         return usable
@@ -405,7 +441,14 @@ def _drop_queue_tail_calcs(usable: list[dict], pool: list[dict]) -> list[dict]:
               " 偏りが続くなら QUEUE_TAIL_DAYS を下げること。")
         return usable
     if len(kept) < len(usable):
-        print(f"[pick] これから7日ぶんの長尺に出ている calc を避けました: {sorted(tail)}"
+        # **「これから7日ぶん」と書かないこと**（2026-08-29 に直した）。
+        #     窓は着地点のまわりで、`land` を渡さない回だけ今日が中心です。
+        #     字面が固定だと、**避けた先が読み手に見えません** ——
+        #     この回は「15件 避けました」と読んで、避けるべき2件が
+        #     窓の外にあることに気づけませんでした。
+        where = (f"着地（{land.isoformat()}）の前後 {QUEUE_TAIL_DAYS}日"
+                 if land is not None else f"今日から {QUEUE_TAIL_DAYS}日")
+        print(f"[pick] {where} の長尺に出ている calc を避けました: {sorted(tail)}"
               f"（候補 {len(usable)} → {len(kept)}件）")
     return kept
 
@@ -462,7 +505,7 @@ def _hoist_floor_topics(usable: list[dict]) -> list[dict]:
 
 
 def pick(count: int, explicit: list[str], per_calc: int = DEFAULT_PER_CALC,
-         long_form: bool = False) -> list[dict]:
+         long_form: bool = False, land: date | None = None) -> list[dict]:
     """未投稿・`calc` あり・**計算の節が全部ちがう** テーマを score の高い順に取る。
 
     ## ここが 2026-08-15 19:5x に変わりました（天井の測り違い）
@@ -532,7 +575,7 @@ def pick(count: int, explicit: list[str], per_calc: int = DEFAULT_PER_CALC,
     usable = [t for t in pool if t["id"] not in posted and t["id"] not in built
               and t.get("calc")]
     usable = _drop_doomed(usable, pool)
-    usable = _drop_queue_tail_calcs(usable, pool)
+    usable = _drop_queue_tail_calcs(usable, pool, land=land)
 
     # **長尺は、長尺向けに書かれた題からしか取らない**（上の docstring）。
     if long_form:
@@ -2417,8 +2460,30 @@ def main(argv: list[str] | None = None) -> int:
                 args.count = cap.remaining
 
 
+    # **この回の本が「どこへ着くか」を先に出す**（2026-08-29 に踏んで足した）。
+    #     `_queue_tail_calcs` は着地点のまわりを見ます —— 今日を中心に見ると、
+    #     `--date` の回も既定の回（実測 8〜11日後に着地）も窓の外になり、
+    #     **同じ calc の長尺が続けて並びます**（この回は 6本 中 bunkatsu 3・mishikyu 3）。
+    land: date | None = None
+    if args.date:
+        try:
+            land = date.fromisoformat(args.date)
+        except ValueError:
+            land = None
+    else:
+        try:
+            # `live_plan()` は (時刻, 置く日) を返します（docstring）。
+            plan = live_plan(args.count if not explicit else len(explicit))
+            if plan:
+                land = min(d for _, d in plan)
+        except Exception as exc:                              # noqa: BLE001
+            print(f"[pick] 着地点が読めませんでした（今日を中心に見ます）: "
+                  f"{str(exc)[:120]}")
+    if land is not None:
+        print(f"[pick] この回の本が着くのは **{land.isoformat()}** ごろ ——"
+              f" 同じ calc を避けるのは、その前後 {QUEUE_TAIL_DAYS}日 です")
     topics = pick(args.count if not explicit else len(explicit), explicit,
-                  per_calc=args.per_calc, long_form=args.long)
+                  per_calc=args.per_calc, long_form=args.long, land=land)
     if not topics:
         print("[batch] 作れるテーマがありません。config/topics.yaml を足すこと。")
         return 1
