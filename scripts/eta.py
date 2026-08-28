@@ -3915,7 +3915,13 @@ def instrument_ages(now: datetime | None = None) -> list[str]:
         if not path.exists():
             parts.append(f"{label} **無し**")
             continue
-        point = deadline_check.newest_point(path)
+        try:
+            point = deadline_check.newest_point(path)
+        except Exception:                                      # noqa: BLE001
+            # **この行のために eta.py を落とさないこと。** 毎回いちばん最初に
+            # 撃つ道具なので、齢が読めない控えが1つあるだけで回が死にます。
+            parts.append(f"{label} **齢が読めません**")
+            continue
         if point is None:
             parts.append(f"{label} **齢が読めません**")
             continue

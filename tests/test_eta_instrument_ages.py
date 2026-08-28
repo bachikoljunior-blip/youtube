@@ -88,3 +88,26 @@ def test_headlineが齢を連れてくる():
     body = src.split("def headline(", 1)[1]
     assert "instrument_ages()" in body, \
         "**齢が、毎回読む3行の側に降りていません**（読まれない場所に置くと、08/24 に戻ります）"
+
+
+def test_控えが壊れていてもetaを落とさない(monkeypatch, tmp_path):
+    """**毎回いちばん最初に撃つ道具です。** 齢の行のために回を殺さないこと。
+
+    `newest_point` は控えを解析するので、壊れた1件で例外が出ます。
+    そこで落ちると、**その回は到達予測を1行も読めないまま終わります。**
+    """
+    import deadline_check
+
+    def boom(_path):
+        raise ValueError("壊れた控え")
+
+    monkeypatch.setattr(deadline_check, "newest_point", boom, raising=False)
+    lines = eta.instrument_ages()
+    assert lines, "**例外を飲んだ結果、行ごと消えています**"
+    assert "齢が読めません" in lines[0]
+
+
+def test_控えが無くても落ちない(monkeypatch):
+    monkeypatch.setattr(eta, "ROOT", Path("/nonexistent-xyz"), raising=False)
+    lines = eta.instrument_ages()
+    assert lines and "無し" in lines[0]
