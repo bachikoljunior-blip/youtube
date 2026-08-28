@@ -69580,3 +69580,9 @@ push の前に、**触った yaml に結ばれた検査だけでも撃つこと*
 **触っていないファイルを M と言ったら、それは検査の書き込みを疑うこと。**
 `data/day_quota.jsonl` に `videos.update` が増えていなければ、
 **実物は動いていない ＝ 戻してよい**という切り分けが1手で付きます。
+
+**証拠（同じ網で撃ち直した）**: 門を入れたあと
+`pytest -k "queue_lag or reschedule or live_slots or move_cap or ledger or dupes or batch"`
+（**392件・3分52秒・緑**）を走らせて、**`git status` は空のまま**でした。
+門を入れる前は、同じ形の走りが `data/uploaded.jsonl` と `data/queue_lag.jsonl` を
+書き換えています。**再現と、止まったことの両方を見ています。**
