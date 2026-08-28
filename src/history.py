@@ -152,6 +152,28 @@ def channel_video_ids(youtube, uploads: str, cap: int = 400) -> list[str]:
         auth.note_day_quota(exc, "search.list forMine")
         print(f"[history] 予約中の動画を search で拾えませんでした（続行）: {exc}")
 
+    # **上限に当たった回は、黙って古いほうを捨てています**（2026-08-28 に測って足した）。
+    #
+    # `cap` は 400 で、uploads プレイリストは**新しい順**です。チャンネルが
+    # 400本 を超えた日から、`_scan` は**いちばん古い側を1本も見ていません。**
+    # 実測（`data/uploaded.jsonl` の distinct video_id）:
+    #
+    #     チャンネルの本数            **608本**
+    #     `cap=400` で見えない本      **208本**
+    #     そのせいで「未投稿」に見えるテーマ  **188件**
+    #     400本 を超えた日            **2026-08-19**（＝9日 前から効いていた）
+    #
+    # **落ちてもいないのに欠ける**ので、`partial` は False のままでした ——
+    # 下の「控えで埋める」も、`HttpError` を捕まえる3か所も、**どれも当たりません。**
+    # 印字も `チャンネルの動画 400本` で、**満杯なのか丁度なのか区別が付きません。**
+    #
+    # ここでは**言うだけ**にします（切るのは呼ぶ側の判断）。埋めるのは `_scan` の
+    # 末尾で、そちらを**無条件**にしました（同じ回。理由はそこの註）。
+    if len(ids) >= cap:
+        print(f"[history] [!] **上限 {cap}本 で切りました**（チャンネルはこれより多い）。"
+              "**古い側は見えていません** —— 投稿済みの復元は"
+              "`_scan` の末尾で控え（`data/uploaded.jsonl`）と和を取ります")
+
     return ids
 
 
@@ -233,24 +255,73 @@ def _scan(want_map: bool):
     # （`channel_video_ids` の「何が起きたか」が、まさにその事故の記録）。
     #
     # 控え（`data/uploaded.jsonl`）は**自分が上げたときに書いた行**なので、
-    # 外の口の都合では欠けません。**CLAUDE.md の「ファイルに持たない」は
-    # 変えていません** —— 健全な回はこれまでどおりチャンネルから復元し、
-    # ここが効くのは**口が欠けた回だけ**です（`src/dupes.py` と同じ切り分け）。
-    if partial or not video_ids:
-        try:
-            extra = ledger_topics()
-            new = set(extra) - found
-            if new:
-                print(f"[history] 控えから {len(new)}件のテーマを足しました"
-                      "（口が欠けた回だけ。二重に作らないため）")
-            found.update(extra)
-            for topic_id, video_id in extra.items():
-                mapping.setdefault(topic_id, video_id)
-        except Exception as exc:                              # noqa: BLE001
-            print(f"[history] 控えを読めませんでした（続行）: {str(exc)[:80]}")
+    # 外の口の都合では欠けません。
+    #
+    # ## ここは `if partial or not video_ids:` でした（2026-08-28 に外した）
+    #
+    # 「効くのは口が欠けた回だけ」と書いてありました。**欠け方を1種類しか
+    # 数えていません** —— `partial` が True になるのは `videos.list` が
+    # `HttpError` を投げた回だけで、**`channel_video_ids` の `cap=400` で
+    # 切られた回は、例外が1つも出ないので False のまま**です。
+    #
+    # 実測 2026-08-28（`data/uploaded.jsonl`・API 0単位）:
+    #
+    #     チャンネルの本数                    **608本**
+    #     `cap=400` で見えない本              **208本**
+    #     「未投稿」に見えるテーマ            **188件**
+    #     こうなった日                        **2026-08-19**
+    #
+    # **9日 間、`posted_topic_ids()` は 188件 を「未投稿」と答えていました。**
+    # 静かに壊れる先は3つあり、どれも門に直接 掛かります:
+    #
+    #   `src/bars.py:_alive()`      `published_charts()` が、見えない 188件 の
+    #                               図を「チャンネルから消えた」として落とす
+    #                               → **同じ絵を出さない**という守りが、
+    #                                 いちばん新しい 400本 としか比べていない。
+    #                                 CLAUDE.md の根幹（「同じ絵を続けないこと」）が
+    #                                 効かないのは、**収益化の対象外**の側です
+    #   `scripts/preflight.py`      「未投稿テーマ N件」が最大 188件 多く出る。
+    #                               あそこの註は「**分からないをたくさんあると
+    #                               書かないこと**」と書いていますが、
+    #                               守っているのは例外の道だけでした
+    #   `src/analytics.py:optimize` `unused >= 12` なら題を足さずに帰ります。
+    #                               在庫が本当に 0 でも「12件 ある」と見えます
+    #                               （実測 08/28 の `src.supply`: 長尺の在庫 **0本**）
+    #
+    # `scripts/batch_build.py:_posted_including_ledger()` は 2026-08-16 から
+    # **まさにこの和**を取っており、そこには「混ぜない費用は実測で生成の 25%」
+    # と書いてあります。**同じ事実を2か所が持っていて、片方だけが直っていた**形です
+    # （この repo が繰り返している壊れ方）。**こちらへ寄せます。**
+    #
+    # **CLAUDE.md の「ファイルに持たない」は変えていません** —— 正本はチャンネルで、
+    # 控えは**引き算ではなく足し算**にしか使っていません（`update` と `setdefault`）。
+    # 控えが嘘になるのは動画を消したときだけで、**消す道が1本もありません**
+    # （`docs/FOR_OWNER.md` 済み3。`_posted_including_ledger` の docstring に同じ議論）。
+    #
+    # **覆る条件**: 動画を消す道ができたら（`videos().delete` か private 落とし）、
+    # 控えは「もう無い本」を投稿済みと言い続けます。そのときは
+    # `_alive()` の側だけチャンネル単独に戻すこと（`pick` の側は戻さない ——
+    # 二重に作るほうが高い）。**`tests/test_history_partial.py` の
+    # `test_cap_truncation_is_filled_from_the_ledger` が、外したら落ちます。**
+    try:
+        extra = ledger_topics()
+        new = set(extra) - found
+        if new:
+            print(f"[history] 控えから {len(new)}件のテーマを足しました"
+                  "（チャンネルの読みと**和**を取ります。二重に作らないため）")
+        found.update(extra)
+        for topic_id, video_id in extra.items():
+            mapping.setdefault(topic_id, video_id)
+    except Exception as exc:                                  # noqa: BLE001
+        print(f"[history] 控えを読めませんでした（続行）: {str(exc)[:80]}")
 
+    # **欠けた回かどうかを、印字に出すこと。** 上の `cap` の註のとおり、
+    # 「チャンネルの動画 400本」だけでは満杯なのか丁度なのか読めません。
+    note = "（説明欄の読みが途中で落ちた回）" if partial else ""
     if want_map:
-        print(f"[history] チャンネルの動画 {len(video_ids)}本 / テーマ→動画 {len(mapping)}件")
+        print(f"[history] チャンネルの動画 {len(video_ids)}本 "
+              f"/ テーマ→動画 {len(mapping)}件{note}")
         return mapping
-    print(f"[history] チャンネルの動画 {len(video_ids)}本 / 投稿済みテーマ {len(found)}件")
+    print(f"[history] チャンネルの動画 {len(video_ids)}本 "
+          f"/ 投稿済みテーマ {len(found)}件{note}")
     return found
