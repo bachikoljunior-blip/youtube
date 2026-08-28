@@ -107,3 +107,52 @@ def test_拾う形は宣言したものだけ():
     hits = pair_sweep.sweep_pairs(["kaigo", "kogaku", "iryohi", "inshi"])
     for h in hits:
         assert h["形"] in pair_sweep.SHAPES, h
+
+
+def test_期間は名前の途中で引く():
+    """**単位とは逆で、期間は欄の名前の途中に出ます**（2026-08-28 に足した）。
+
+    `unit_of` が末尾だけを見るのは正しい（`1か月あたりの医療費` の「か月」は
+    単位ではない）。**その同じ語が、期間としては正しい合図**です。
+    """
+    assert pair_sweep.period_of("1か月あたりの医療費") == "月"
+    assert pair_sweep.period_of("1年の合計") == "年"
+    assert pair_sweep.period_of("多数回の額（1か月）") == "月"
+    # 期間の言い方に見えて、そうではない語（`_PERIOD_NOT`）
+    assert pair_sweep.period_of("年収") is None
+    assert pair_sweep.period_of("39歳の保険料") is None
+    # 名前が黙っている欄は `None`。**推測しないこと**（弾きすぎると当たりが落ちる）
+    assert pair_sweep.period_of("保険料") is None
+
+
+def test_月額と年額は組にしない():
+    """**この検査が、2026-08-28 の実測を固定します。**
+
+    `比の形` の上位に `kogaku × kokuho`（90.3%〜95.1%）が出ていましたが、
+    A は `多数回の額` ＝ **月額 44,400円**、B は `保険料` ＝ **年額 415,415円** で、
+    **12倍の期間ちがいをそのまま割っていました。**
+
+    **片方でも期間が読めないときは止めません**（`periods_clash` の註）。
+    止めると、既知の当たり `kogaku × kaigo` まで落ちます。
+    """
+    tsuki = {"unit": "円", "period": "月", "axis": None,
+             "xs": [1.0, 2.0], "ys": [40_000.0, 44_400.0]}
+    toshi = {"unit": "円", "period": "年", "axis": None,
+             "xs": [1.0, 2.0], "ys": [400_000.0, 415_415.0]}
+    fumei = {"unit": "円", "period": None, "axis": None,
+             "xs": [1.0, 2.0], "ys": [400_000.0, 415_415.0]}
+
+    assert pair_sweep.periods_clash(tsuki, toshi)
+    assert not pair_sweep.periods_clash(tsuki, fumei)
+    assert not pair_sweep.periods_clash(fumei, fumei)
+    assert pair_sweep.pair_hits(tsuki, toshi) == []
+
+
+def test_期間の読めた欄が並びに載る():
+    """`series_of` が `period` を持たない版に戻ったら、ここが落ちます。"""
+    rows = pair_sweep.series_of("kogaku")
+    assert rows, "kogaku から並びが1本も出ていません"
+    assert all("period" in r for r in rows)
+    assert {r["period"] for r in rows} != {None}, (
+        "kogaku の欄から期間が1つも読めていません"
+        "（`多数回の額（1か月）` などの改名が戻っていないか）")
