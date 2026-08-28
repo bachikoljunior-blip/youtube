@@ -1041,12 +1041,30 @@ def kojo_vs_keihi(profit: int, amount: int = STEP, aoiro: int = AOIRO_ETAX,
 
     返す「倍率」は経費 ÷ 所得控除です。**所得控除が0円の帯では出ません**
     （`None` を返します。0で割らないため）。
+
+    ## **差の内訳を、引き算で作らないこと**（2026-08-28 に測って直した）
+
+    ここには最初 `"事業税の差"` という欄があり、中身は
+    **`差 − 国保の減り`** でした。**合いません。**
+
+        事業所得 300万円   欄の値 349円   実際に減った事業税 500円
+        事業所得 900万円   欄の値 196円   実際に減った事業税 500円
+        事業所得 200万円   欄の値 −151円  実際に減った事業税 0円（入口の下）
+
+    **国保は全額が社会保険料控除**なので、経費で国保が減るとその年の
+    課税所得が**上がり**、所得税と住民税がその分だけ戻ってきます
+    （`chain_loss` の節がまさにこれを主題にしています）。
+    だから「差」から国保の減りを引いても、残るのは事業税ではありません ——
+    **戻ってきた税のぶんが混ざります。**
+
+    いまは内訳を**引き算ではなく、それぞれの内訳から直に**取っています。
+    **覆る条件**: `burden` が内訳を返さなくなったら、ここも作り直すこと。
     """
-    base = burden(profit, aoiro, members, age)["年金を除く合計"]
-    by_keihi = burden(profit - amount, aoiro, members, age)["年金を除く合計"]
-    by_kojo = burden_with_kojo(profit, amount, aoiro, members, age)["年金を除く合計"]
-    v_keihi = base - by_keihi
-    v_kojo = base - by_kojo
+    a = burden(profit, aoiro, members, age)
+    b = burden(profit - amount, aoiro, members, age)
+    c = burden_with_kojo(profit, amount, aoiro, members, age)
+    v_keihi = a["年金を除く合計"] - b["年金を除く合計"]
+    v_kojo = a["年金を除く合計"] - c["年金を除く合計"]
     return {
         "所得（青色控除前）": profit,
         "額": amount,
@@ -1056,9 +1074,9 @@ def kojo_vs_keihi(profit: int, amount: int = STEP, aoiro: int = AOIRO_ETAX,
         "倍率": (v_keihi / v_kojo) if v_kojo else None,
         "経費の実効率": v_keihi / amount,
         "所得控除の実効率": v_kojo / amount,
-        "事業税の差": base - by_keihi - (base - by_kojo) - (
-            kokuho_premium(profit, aoiro, members, age)
-            - kokuho_premium(profit - amount, aoiro, members, age)),
+        # **経費でだけ減る2本**（所得控除では、どちらも1円も動きません）
+        "経費で減った事業税": a["事業税"] - b["事業税"],
+        "経費で減った国保": a["国民健康保険料"] - b["国民健康保険料"],
     }
 
 
@@ -1370,6 +1388,25 @@ def check_tables() -> None:
             "国保の賦課限度額が効いていないか、事業税の率が変わっています")
     if kojo_vs_keihi(st["差がここだけになる所得"])["差"] != st["事業税ぶん"]:
         raise ValueError("`kojo_gap_settles` が返した所得で、差が事業税ぶんと合いません")
+    # 15. **内訳の欄は、内訳そのものであること**（引き算で作らないこと）。
+    #     ここは一度「差 − 国保の減り」で作って外しました ——
+    #     国保は社会保険料控除なので、減ると所得税と住民税が戻ってきて混ざります。
+    for p in PROFITS:
+        r = kojo_vs_keihi(p)
+        a, b = burden(p), burden(p - STEP)
+        if r["経費で減った事業税"] != a["事業税"] - b["事業税"]:
+            raise ValueError(
+                f"所得{p:,}円: `経費で減った事業税` {r['経費で減った事業税']} が "
+                f"内訳の差 {a['事業税'] - b['事業税']} と合いません")
+        if r["経費で減った国保"] != a["国民健康保険料"] - b["国民健康保険料"]:
+            raise ValueError(
+                f"所得{p:,}円: `経費で減った国保` {r['経費で減った国保']} が "
+                f"内訳の差 {a['国民健康保険料'] - b['国民健康保険料']} と合いません")
+        # **上の帯では、差がまるごと事業税**（国保がもう減らないので）。
+        if r["経費で減った国保"] == 0 and r["差"] != r["経費で減った事業税"]:
+            raise ValueError(
+                f"所得{p:,}円: 国保が1円も減らないのに、差 {r['差']} が "
+                f"事業税の減り {r['経費で減った事業税']} と違います")
 
 
 if __name__ == "__main__":
