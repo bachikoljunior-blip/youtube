@@ -4792,3 +4792,6 @@
 {"at": "2026-08-28T19:08:41+00:00", "detail": "status: Data API 読み", "by": "status.py:main"}
 {"at": "2026-08-28T19:07:30+00:00", "detail": "playlistItems.list uploads", "by": "history.py:channel_video_ids"}
 {"at": "2026-08-28T19:07:31+00:00", "detail": "status: Data API 読み", "by": "status.py:main"}
+{"at": "2026-08-28T19:45:59+00:00", "detail": "scheduled_publish_times", "by": "uploader.py:taken_publish_times"}
+{"at": "2026-08-28T19:46:02+00:00", "detail": "playlistItems.insert", "by": "uploader.py:_post_actions"}
+{"at": "2026-08-28T19:46:02+00:00", "detail": "thumbnails.set CGt5C0Sni24", "by": "uploader.py:_set_thumbnail"}
