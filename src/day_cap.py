@@ -1406,6 +1406,34 @@ def live_ids(rows: list[dict], path: pathlib.Path | None = None) -> set[str]:
 
     **覆る条件**: `cap()` は実測から動きます（定数ではありません）。
     上限が上がれば、ここが返す集合も自動で広がります。
+
+    ## **ここは長尺を除きません**（2026-08-29 に測った。**差は 0本**）
+
+    `by_day()` は既定で長尺を外します（`include_long=False`）——
+    測っているのが**ショートの面**で、長尺は `SHORTS_FEED` の枠を
+    1つも使わないからです。**ここは外していません。**
+
+    08/29 05:4x の申し送りが「`live_ids()` 自体に `include_long=False` を
+    入れるほうが正しい」と言っていたので、**差を測りました**
+    （控えと公開済み 578本・長尺の分類 18件）:
+
+        live_ids(全部)             **452本**
+        live_ids(長尺を先に除く)    **452本**
+        長尺が帯の枠を取っている数   **0本** ／ そのせいで落ちたショート **0本**
+
+    **だから既定は変えていません。** 意味の変わる直しを 0本 のために
+    6つの呼び手（`judgeable` / `deep_short` / `motion_groups` /
+    `watch_eta` / `live_slots` / `batch_build`）へ同時に流すと、
+    **A/B の標本の切り方が全部 動きます。**
+
+    **ただし機構は在ります** —— 長尺 11本 のうち **7本 が 9〜12時**、
+    つまり帯の中の時刻に公開されています。`_spaced` と `cap()` は
+    **形を見ずに時刻の早い順で切る**ので、長尺が帯へ寄れば
+    ショートが `alive` から落ちます。いま 0本 なのは、
+    **その日の本数が上限に届いていない日にしか長尺が居ない**からです。
+
+    **覆る条件と検査**: `tests/test_live_ids_long_form.py`。
+    **落ちたら、そのときが `include_long` を足す回**です。
     """
     per_day: dict[dt.date, list[tuple[dt.datetime, str]]] = collections.defaultdict(list)
     for row in rows:
