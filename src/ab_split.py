@@ -284,6 +284,98 @@ def _pace_form(topic_id: str) -> str:
 _pace_form.split_ref = "pipeline.slide_pace"
 
 
+#: **群の名札を凍らせた控え**（テーマID → 群名）。`freeze_labels()` が書きます。
+LABELS = "data/ab_labels.json"
+
+_LABEL_CACHE: dict | None = None
+
+
+def frozen_labels() -> dict[str, dict[str, str]]:
+    """凍らせた名札（`{実験名: {テーマID: 群名}}`）。無ければ空。**API 0単位。**"""
+    global _LABEL_CACHE
+    if _LABEL_CACHE is None:
+        path = ROOT / LABELS
+        try:
+            _LABEL_CACHE = json.loads(path.read_text(encoding="utf-8")) \
+                if path.exists() else {}
+        except Exception:                                      # noqa: BLE001
+            _LABEL_CACHE = {}
+    return _LABEL_CACHE
+
+
+def group_of(exp: "Experiment", topic_id: str) -> str:
+    """その本がどちらの群か。**凍らせた名札があれば、そちらが勝ちます。**
+
+    ## なぜ要るか（2026-08-28 の最適化の回・実測）
+
+    `slide_pace` と `request_form` の群は、**読むたびに計算し直されます**
+    （`_pace_form` → `pipeline.slide_pace(topic_id)`、
+    `script_writer.request_form(topic_id)`。どちらも既定の `share` を見る）。
+
+    そして `config/hypotheses.yaml` は、**その2件を閉じるときの手順**を
+    こう書いています:
+
+        1281行  「刻みは畳む（**`SLOW_PACE_SHARE = 0` にする**）」
+        1206行  「**`MID_REQUEST_SHARE = 0` にして畳む**」
+
+    **その1行が、閉じた実験の証拠をその場で消します。** 実測（561テーマ）:
+
+        SLOW_PACE_SHARE   0.5 → 速い 296 ／ 遅い 265
+                          0.0 → **速い 561 ／ 遅い 0**
+        MID_REQUEST_SHARE 0.5 → 途中あり 286 ／ 終端のみ 275
+                          0.0 → **終端のみ 561 ／ 途中あり 0**
+
+    いま `slide_pace` の処置群（遅い）は **7本**です。share を 0 にした瞬間、
+    その7本は「速い」になり、**判定の根拠がどこにも残りません。**
+    `deadline_check` も `queue_lag` も `status` も同じ関数を読むので、
+    **全部そろって、無かったことにします** ——
+    `src/motion_groups.py` が言う「**ラベルが静かに嘘になる**」形そのものです。
+
+    ## どう防ぐか
+
+    名札を1度 `data/ab_labels.json` に書いてしまえば、
+    **share を動かしても過去の本の群は動きません**（新しい本にだけ効く ——
+    それが「振り分けを止める」の本来の意味です）。
+    控えは git で配られるので、枠が尽きた窓でも読めます。
+
+    ## 覆る条件
+
+    - **凍らせた名札は、その実験が開いているあいだ書き換えないこと。**
+      書き換えたら、それは群を作り直したのと同じです（判定はやり直し）
+    - 振り分けの関数そのものを**別の軸に**変えたとき（塩や規則の変更）は、
+      古い名札は意味を失います。**その実験の名札ごと消して、
+      `landed` を今にすること**（＝新しい実験です）
+    """
+    label = frozen_labels().get(exp.name, {}).get(topic_id)
+    return label if label else exp.split(topic_id)
+
+
+def freeze_labels(topic_ids, names=None) -> dict[str, dict[str, str]]:
+    """いまの名札を控えに焼く（**足すだけ。既にある名札は上書きしません**）。
+
+    上書きしないのは、`group_of` の覆る条件そのものだからです ——
+    **開いている実験の名札が動いたら、群を作り直したのと同じ**です。
+    """
+    frozen = {k: dict(v) for k, v in frozen_labels().items()}
+    for name, exp in EXPERIMENTS.items():
+        if names is not None and name not in names:
+            continue
+        cur = frozen.setdefault(name, {})
+        for tid in topic_ids:
+            if tid in cur:
+                continue
+            try:
+                cur[tid] = exp.split(tid)
+            except Exception:                                  # noqa: BLE001
+                continue
+    path = ROOT / LABELS
+    path.write_text(json.dumps(frozen, ensure_ascii=False, indent=1,
+                               sort_keys=True) + "\n", encoding="utf-8")
+    global _LABEL_CACHE
+    _LABEL_CACHE = frozen
+    return frozen
+
+
 #: 走っている実験。**新しく振り分けを足したら、ここにも足すこと。**
 #: 足し忘れると `status.py` が「指示が入った本 0本」を言わないまま、
 #: 中身の同じ2群を突き合わせて外れを出します。
@@ -586,7 +678,7 @@ def split_counts(
             # **`stale` にも入れません。** 作り直しても永久に処置群へ入らない本です
             #（`_shorts_only()` の「なぜ stale ではないか」）。
             continue
-        group = exp.split(topic)
+        group = group_of(exp, topic)
         if group not in c.treated_all:
             continue
         built = bt.get(topic)

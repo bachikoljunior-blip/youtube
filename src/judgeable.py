@@ -272,6 +272,7 @@ def _members_by_split(name: str) -> dict[str, list[Member]]:
     - `judgeable.shorts_only()` は**宣言ではなく標本**からこれを見ます。
       あれが `slide_pace` を返さない回があれば、この門が効いていません
     """
+    from src import ab_split as ab_split_mod
     from src.ab_split import EXPERIMENTS
 
     exp = EXPERIMENTS[name]
@@ -283,7 +284,9 @@ def _members_by_split(name: str) -> dict[str, list[Member]]:
             continue  # 指示が入る前に作った本。IDが何と言おうと処置は入っていない
         if allowed is not None and topic not in allowed:
             continue  # 処置がそもそも掛からない本（長尺など）。上の docstring
-        group = exp.split(topic)
+        # **凍らせた名札が勝ちます**（`ab_split.group_of` に実測と理由 ——
+        # `SLOW_PACE_SHARE = 0` の1行で、処置群 7本 が丸ごと消えます）。
+        group = ab_split_mod.group_of(exp, topic)
         day = pub.get(topic)
         if group in out and day:
             out[group].append((day, vid.get(topic, "")))
@@ -352,8 +355,8 @@ def _members_by_request_form() -> dict[str, list[Member]]:
     （長尺は依頼そのものを書かない ＝ `src/script_writer.ROLE`）。
     落とし方は接頭辞ではなく**控えの `duration_s`**（上の `_short_topics`）。
     """
+    from src import ab_split as ab_split_mod
     from src.ab_split import EXPERIMENTS
-    from src.script_writer import request_form
 
     exp = EXPERIMENTS["request_form"]
     builds, pub, vid = build_times(), _publish_by_topic(), _video_by_topic()
@@ -363,7 +366,13 @@ def _members_by_request_form() -> dict[str, list[Member]]:
         if built < exp.landed or topic not in shorts:
             continue
         day = pub.get(topic)
-        group = request_form(topic)
+        # **ここも凍らせた名札を通すこと**（2026-08-28）。
+        # `_members_by_split()` だけを通しても、`request_form` はこの関数から
+        # 群を作るので素通りします —— **同じ問いを解く関数が2本あって、
+        # 片方だけ直っている**形（この repo でくり返し出ている形）。
+        # 実測: `_members_by_split` だけ直した時点で、`MID_REQUEST_SHARE = 0` は
+        # `slide_pace` を守れて `request_form` は **途中あり 23 → 0** でした。
+        group = ab_split_mod.group_of(exp, topic)
         if group in out and day:
             out[group].append((day, vid.get(topic, "")))
     for rows in out.values():
