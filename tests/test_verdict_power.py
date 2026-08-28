@@ -54,3 +54,61 @@ def test_実測の率は借りてきた一般値ではない():
     assert views > 1000 and subs >= 0
     assert base < 0.003, "0.3% は業界の一般値。**ここに入っていたら壊れています**"
     assert math.isclose(base, subs / views)
+
+
+# ---------------------------------------------------------------------------
+# **n が足りないのか、門の置き場所が悪いのか**（2026-08-28 に足した）
+#
+# `power()` は「駄目だ」しか言わず、道具は「N再生 要ります」だけを出していた。
+# 実測では、駄目な門 4件 のうち **2件 は n が足りていて門だけが外れて**おり、
+# しかも印字は **既に持っている再生数より小さい数**を「要ります」と言っていた
+# （22,549再生 持っている前提に「9,425再生 要ります」）。
+# ---------------------------------------------------------------------------
+
+def test_門が平均どおりに置かれるとalphaはほぼ半分():
+    """**これが 4件 の共通の形。** 率で門を書くと、実測の率と同じ所に置かれる。"""
+    q = vp.power(BASE, 22549, gate=8, target=2.0)      # 0.0355% × 22,549 ≒ 8
+    assert q["alpha"] > 0.40, "門が null の期待値の上なら、半分は素で生き残る"
+    assert q["beta"] < 0.10, "beta は小さい ＝ **片側だけ見ると通ってしまう**"
+    assert q["detects_nothing"] is True
+
+
+def test_nが足りている件は門を動かすだけで直る():
+    """**再生を1回も足さずに直せる。** 待つ必要はない。"""
+    for n, bad_gate in ((22549, 8), (30000, 10)):
+        assert vp.power(BASE, n, bad_gate, 2.0)["detects_nothing"] is True
+        g = vp.gate_for(BASE, n, 2.0)
+        assert g is not None, f"n={n} は足りているのに門が見つからない"
+        assert g > bad_gate, "直した門は、いまの門より厳しい側にある"
+        assert vp.power(BASE, n, g, 2.0)["detects_nothing"] is False
+
+
+def test_gate_forはいちばん緩い側の門を返す():
+    """**厳しすぎる門を返さないこと** —— beta（見落とし）が上がる。"""
+    g = vp.gate_for(BASE, 30000, 2.0)
+    assert vp.power(BASE, 30000, g - 1, 2.0)["detects_nothing"] is True
+    q = vp.power(BASE, 30000, g, 2.0)
+    assert q["alpha"] <= vp.MAX_ERR and q["beta"] <= vp.MAX_ERR
+
+
+def test_本当にnが足りない件はNoneを返す():
+    """**「門を直せ」と言ってはいけない件がある。** ここを混ぜると嘘になる。"""
+    assert vp.gate_for(BASE, 13015, 2.0) is None    # 族べつの登録率
+    assert vp.gate_for(BASE, 3000, 2.0) is None     # 2026-08-08 の判定
+    assert vp.gate_for(BASE, 0, 2.0) is None
+    assert vp.gate_for(0.0, 30000, 2.0) is None
+
+
+def test_同じnの隣の前提が既に正しい門を持っていた():
+    """**答えは1件 隣に在りました。** n=30,000 で 14人 は通っている。"""
+    assert vp.power(BASE, 30000, gate=14, target=2.0)["detects_nothing"] is False
+    assert vp.gate_for(BASE, 30000, 2.0) <= 14
+
+
+def test_直せる件は道具の印字に出る(capsys):
+    """**診断だけで終わらせない。** 出口（`main`）まで通っていること。"""
+    vp.main()
+    out = capsys.readouterr().out
+    assert "門の置き場所が外れています" in out
+    assert "再生を1回も足さずに直せます" in out
+    assert "人数で書き直すこと" in out
