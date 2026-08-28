@@ -325,6 +325,20 @@ hypotheses:
       - kind: after
         on_date: "2026-09-07"
         plus_lag: true
+        # **散文で名指ししていた計器を、機械が読む欄へ写した**（2026-08-29 05:4x）。
+        # `what` の中のパスは `yaml.safe_load` では拾われません（拾うなと
+        # `newest_point` の註が言っています）。**推測ではなく転記**です。
+        data_file: "data/rpm_mix.jsonl"
+        # **`--record` が要ります。**（2026-08-29 05:5x に踏んで直した）
+        # 最初 `python -m src.rpm_mix` と書いて、その5分後に実際に撃ったら
+        # **67時間 前の点をそのまま印字して exit 0**（`main()` の
+        # `if args.show or not args.record: print(render(last()))`）。
+        # しかも印字の中身は「**この日に撃ち直すこと**」——
+        # **撃ち直した回に、撃ち直せと出ていました。**
+        # 上の 972行 が「`refresh:` は撃てば実際にデータが増えるものだけ」と
+        # 書いて、`snapshot.py` で同じ穴を踏んだ記録を残しています。
+        # **同じ穴です。読んでいたのに、確かめる前に書きました。**
+        refresh: "python -m src.rpm_mix --record"
         what: "`data/rpm_mix.jsonl` の `long_share_now`（Analytics は3日遅れ）"
     falsified_if: >
       **08/27〜09/07 に長尺を 14本以上 公開したうえで**、
@@ -744,6 +758,12 @@ hypotheses:
       # `data/batch_runs.jsonl` だけで解く。**Analytics を1行も使わないので遅れない。**
       - kind: after
         on_date: "2026-08-31"
+        # **散文で名指ししていた計器を、機械が読む欄へ写した**（2026-08-29 05:4x）。
+        # **`refresh:` は書きません** —— これは出来事の帳面で、`batch_build` が
+        # 走ったときだけ増えます。「取り直せ」で増えるものではないので、
+        # 点が無いときの正しい読みは「**この7日、長尺を作った回が無い**」です。
+        # `refresh:` は「撃てば実際にデータが増える」ものだけ（この台帳の 972行）。
+        data_file: "data/batch_runs.jsonl"
         what: "直近7日（08/24〜08/30）の長尺の生成（`data/batch_runs.jsonl`）"
     # **2026-08-26 に `rpm` → `density` へ直しました**（最適化の回）。
     # 主張そのものが「長尺は**1日4本 作れる**」＝ **1日に出る本数**です。
@@ -799,6 +819,13 @@ hypotheses:
       - kind: after
         on_date: "2026-09-01"
         plus_lag: true
+        # **散文で名指ししていた計器を、機械が読む欄へ写した**（2026-08-29 05:4x）。
+        # `data/reach.jsonl` の点は `_report_end`（＝**データの日**）で読まれます
+        # （`deadline_check._POINT_KEYS`）。だから門は「09/01 以降の
+        # `_report_end`」を要ります —— **訊きにいくのは `on_date + 遅れ` の日**で、
+        # 要る点は 09/01 のまま（同じ日に踏んで直した。`_ans_after` の註）。
+        data_file: "data/reach.jsonl"
+        refresh: "python scripts/reach.py"
         what: "`data/reach.jsonl` の 09/01 までの日（Reporting は3日遅れ）"
     falsified_if: >
       **2026-09-01 までの日が `data/reach.jsonl` に入った時点**で（Reporting は3日遅れ）、
@@ -847,6 +874,9 @@ hypotheses:
       - kind: after
         on_date: "2026-09-07"
         plus_lag: true
+        # **散文で名指ししていた計器を、機械が読む欄へ写した**（2026-08-29 05:4x）
+        data_file: "data/reach.jsonl"
+        refresh: "python scripts/reach.py"
         what: "`data/reach.jsonl` の 08/26〜09/07（長尺の予約 26本 ＝ 2.0本/日）"
     falsified_if: >
       **08/26〜09/07 の日が `data/reach.jsonl` に入った時点**で（Reporting は3日遅れ）、
@@ -1246,6 +1276,9 @@ hypotheses:
       - kind: after
         on_date: "2026-09-05"
         plus_lag: true
+        # **散文で名指ししていた計器を、機械が読む欄へ写した**（2026-08-29 05:4x）
+        data_file: "data/scan.jsonl"
+        refresh: "python -m src.scan"
         what: "2026-08-29 以降に公開した本の合計再生が 15,000（`data/scan.jsonl`）。**直近6日の実測は 公開日あたり 4,283再生**（若い点を含む中央値）なので、3.5日ぶんの公開 ＋ Analytics の遅れ 3日"
     falsified_if: >
       **2026-08-29 以降に公開した本**の合計再生が 15,000 に達した時点で、
@@ -1295,6 +1328,13 @@ hypotheses:
       # Analytics の遅れは掛からないが、公開から6時間の読みが要る。
       - kind: after
         on_date: "2026-09-10"
+        # **散文で名指ししていた計器を、機械が読む欄へ写した**（2026-08-29 05:4x）。
+        # **これだけでは「公開から6時間」までは守れません**（門が要求するのは
+        # 「09/10 以降の点」まで）。時刻の粒が要るなら `at_time_jst:` を足すこと
+        # —— その日の最後の本の公開時刻＋6時間。**推測で書かないこと**なので、
+        # 予約の実物を見た回が入れてください。
+        data_file: "data/views.jsonl"
+        refresh: "python scripts/snapshot.py"
         what: "09/10（16本 公開）の、公開から6時間たった読み（`data/views.jsonl`）"
     falsified_if: >
       2026-09-11 までに、**その日 11本以上 公開した日**があり、そのうち
@@ -4316,6 +4356,9 @@ hypotheses:
       - kind: after
         on_date: "2026-09-08"
         plus_lag: true
+        # **散文で名指ししていた計器を、機械が読む欄へ写した**（2026-08-29 05:4x）
+        data_file: "data/reach.jsonl"
+        refresh: "python scripts/reach.py"
         what: "`data/reach.jsonl` の 09/08 までの日（Reporting は3日遅れ）"
     falsified_if: >
       **2026-09-08 までの日が `data/reach.jsonl` に入った時点**で、
@@ -4606,6 +4649,12 @@ hypotheses:
       - kind: after
         on_date: "2026-09-05"
         plus_lag: false
+        # **散文で名指ししていた計器を、機械が読む欄へ写した**（2026-08-29 05:4x）。
+        # `what` が「**Data API の日枠が要る**」と言っている要件なので、
+        # ここが空だと「枠切れで1点も積めなかった日」に**気づかないまま**
+        # 判定できる、と出ます。
+        data_file: "data/views.jsonl"
+        refresh: "python scripts/snapshot.py"
         what: "`data/views.jsonl` に 09/05 までの公開日が入っていること（`snapshot.py` で積む。Data API の日枠が要る）"
     watch: "本数と合計-14日"      # 満ちたかは `src/watches.py` が毎周見ています
     falsified_if: |

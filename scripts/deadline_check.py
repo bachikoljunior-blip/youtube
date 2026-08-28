@@ -646,6 +646,17 @@ _MIN_SPAN_DAYS = 2
 #: **24時間**。1周 1.5時間 のこの機械なら、毎周 取り直している計器は黙ります。
 _STALE_AFTER_HOURS = 24.0
 
+#: **`needs.data_file:` が実際に読まれる `kind`。**
+#:
+#: `answer()` の分岐で、この欄へ手が伸びるのは2本だけです ——
+#: `accrual`（`_stale_todo`）と `after`（計器へ直接 訊く枝）。
+#: `group_key` / `published_group` / `external` / `now` に書いても、
+#: **1文字も読まれません**（`_data_file_coverage` の註）。
+#:
+#: **足すときは `answer()` に枝を足してから。** 先にここへ書くと、
+#: 「申告済み」に数えられて、守りは1つも増えません。
+_DATA_FILE_KINDS = ("accrual", "after")
+
 
 def _stale_todo(need: dict) -> str:
     """**その数が伸びないのは、計器を取り直していないからではないか。**
@@ -1481,7 +1492,50 @@ def _ans_after(need: dict, lag: int) -> Answer:
     # `data_file:` が書いてあるときは、その計器に直接 訊きます。
     src = need.get("data_file")
     if src:
-        when_data = when if at else datetime(on.year, on.month, on.day, tzinfo=JST)
+        # **「いつ訊いてよいか」と「どの点が要るか」は、別の日です**
+        # （2026-08-29 05:2x・最適化の回。**同じ回のうちに1度 取り違えました**）。
+        #
+        # ここは長らく、両方を `on_date` の 00:00 でやっていました。
+        # **この要件が「判定できる」と言う日は `on_date + lag`** です
+        # （すぐ下の `_after_tail`）——**門と、門が守っている日が `lag` 日
+        # ずれていました。**
+        #
+        # `plus_lag: true` は「**その日ぶんの点は、`lag` 日 あとに届く**」の意味
+        # なので、`on_date` に計器へ訊けば、**要件自身の定義により、まだ在りません。**
+        # `newest` が古ければ `ready=None` を返し、その claim は
+        # 「判定できる日が出せません」の棚（＝収益化の審査待ちと同じ棚）へ落ち、
+        # `arm_speed.forward()` と `next_when()` の**両方から消えます**
+        # （3b18766 が時刻の粒で踏んだのと同じ穴）。しかも `refresh:` を撃つ回は、
+        # **在りようのないデータのために Reporting／Data API の単位を捨てます。**
+        #
+        # ff1a8c1 は「**未来の** `on_date` には訊かない」を入れました。
+        # **足りません** ——`on_date` が過ぎていても、`on_date + lag` が
+        # 来ていなければ同じ話です。
+        #
+        # ## **要る点のほうは、動かしてはいけません**
+        #
+        # この回の最初の版は `when_data` を1つのまま `lag` 日 ずらしました。
+        # **訊く時刻と、要る点の日付が、同時に動きます。** それは
+        # `_report_end` を持つ計器で必ず外れます ——
+        #
+        #     `data/reach.jsonl` は `_POINT_KEYS` の `_report_end`（＝**データの日**）
+        #     を返します。Reporting は3日 遅れなので、09/12 に読める
+        #     いちばん新しい `_report_end` は **09/09 前後**。
+        #     「09/12 以降の点」を要求すれば、**取り直しても永久に通りません。**
+        #
+        # 要件が名指ししているのは `on_date` の**データ**で、`lag` はそれが
+        # **届くまでの時間**です。だから:
+        #
+        #     訊いてよい時刻  `on_date`（＋時刻）**＋ lag**   ← 遅れを足す
+        #     要る点          `on_date`（＋時刻）             ← **足さない**
+        #
+        # **覆る条件**: `newest_point` が `_report_end` を見なくなり、
+        # どの計器も「取り直した時刻」を返すようになったら、要る点の側にも
+        # `lag` を足してよくなります。`tests/test_deadline_data_file.py` の
+        # `test_遅れの後に訊くが_要る点は_on_date_のまま` が、そこを見ています。
+        want = when if at else datetime(on.year, on.month, on.day, tzinfo=JST)
+        ask_at = want + timedelta(days=lag) if need.get("plus_lag") else want
+        when_data = want
         # **その時刻がまだ来ていないなら、計器には訊かないこと**（2026-08-28 14:2x）。
         #
         # この枝は `data_file:` が在れば**日付に関係なく**回っていました。
@@ -1510,7 +1564,7 @@ def _ans_after(need: dict, lag: int) -> Answer:
         # そのときは `need` 側に印を足すこと（この行の判定を全部の要件に
         # 広げないこと）。`tests/test_deadline_data_file.py` の
         # `test_a_future_on_date_does_not_ask_the_instrument` が見ています。
-        if when_data > datetime.now(JST):
+        if ask_at > datetime.now(JST):
             return _after_tail(need, on, what, lag)
         newest = newest_point(ROOT / str(src))
         if newest is None or newest < when_data:
@@ -1935,11 +1989,42 @@ def _data_file_coverage(vs: list[Verdict]) -> list[str]:
     **覆る条件**: 申告が 39件 に届いたら、この行は毎回 0 を出すので外してよい。
     逆に**申告した件でだけ「取り直せ」が出続ける**なら、
     見るべきは申告の数ではなく `count_expr` のほうです。
+
+    ## 分母に、この欄が**届かない**要件が入っていました（2026-08-29 05:0x）
+
+    上の「覆る条件」は**満たせません。** `data_file:` を読む道は
+    `answer()` の分岐に2本しかなく（`kind: accrual` → `_stale_todo` ／
+    `kind: after` → 計器へ直接 訊く枝）、**残りの kind では1文字も読まれません** ——
+    `group_key` は `src/judgeable.py` に委ねる（`_ans_group_key`）、
+    `published_group` は予約の実物を数える、`external` はこちらの手で
+    起こせないもの。**そこに書いても、何も起きません。**
+
+    実測 2026-08-29（開いている 27件・needs 28件）:
+
+        `accrual` ＋ `after`（この欄が効く）   **19件**  うち申告 **5件**
+        `group_key` / `published_group` / `external`（効かない）  **9件**
+
+    印字は **23/28** でした。**実際の穴は 14/19 です。**
+    差の 9件 は「申告していない」のではなく、**申告する場所が無い**もの。
+    分母に入れると、(1) 穴が 1.6倍 に見え、(2) 覆る条件（分母＝申告数）が
+    **永久に成り立たず**、(3) 「その1件だけ足すのが安い」に従った回が、
+    **足しても何も変わらない要件**を引き当てます。
+
+    **「その数は、鎖のどの段で採られたか」の続きです** ——
+    数（申告 5件）は正しく、支えている文（「28件が確かめられていない」）だけが
+    別の母集団の話でした。
+
+    **覆る条件（差し替え）**: `data_file:` を読む `kind` が増えたら、
+    ここの `_DATA_FILE_KINDS` に足すこと。`tests/test_deadline_data_file.py` の
+    `test_この欄が届かない_kind_を分母に入れないこと` が、
+    `answer()` の分岐と食い違ったら落ちます。
     """
     total = declared = 0
     for v in vs:
         for need in (v.needs or []):
             if not isinstance(need, dict):
+                continue
+            if str(need.get("kind") or "").strip() not in _DATA_FILE_KINDS:
                 continue
             total += 1
             if str(need.get("data_file") or "").strip():
@@ -1949,7 +2034,10 @@ def _data_file_coverage(vs: list[Verdict]) -> list[str]:
     return ["",
             f"  **時計だけで「判定できる」と言っている要件: "
             f"{total - declared}/{total}件**"
-            f"（`needs.data_file:` の申告は {declared}件）。"
+            f"（`needs.data_file:` の申告は {declared}件。"
+            f"分母は **`data_file:` が効く kind だけ**"
+            f"（{'/'.join(sorted(_DATA_FILE_KINDS))}）—— "
+            "ほかの kind に書いても読まれません）。"
             " 申告した件だけ、その計器の点が古ければ「取り直す手」が上に出ます ——"
             " **残りは、点が1つも無くても期限だけで通ります**"
             "（08/27 に取り下げた『偽の判定日』と同じ形）。",

@@ -131,8 +131,13 @@ def test_時計だけの要件の数を_印字に出すこと():
     """
     import scripts.deadline_check as dc
 
+    # **`kind` は `answer()` が知っているものを書くこと**（2026-08-29 に直した）。
+    # ここは長らく `kind: "on_date"` と書いていました —— `answer()` の分岐に
+    # **その名前はありません**（`after` です）。分母が「この欄の効く kind だけ」に
+    # なった瞬間、この検査は 0/0 を数えて落ちました。
+    # **検査の側が、実物に無い形を組み立てていた**わけで、直すのは検査のほうです。
     class _V:
-        needs = [{"kind": "on_date"}, {"kind": "accrual", "data_file": "data/x.jsonl"}]
+        needs = [{"kind": "after"}, {"kind": "accrual", "data_file": "data/x.jsonl"}]
 
     got = dc._data_file_coverage([_V()])
     text = "\n".join(got)
@@ -295,3 +300,131 @@ def test_a_past_on_date_still_asks_the_instrument(tmp_path):
                         "what": "その日の面"}, 0)
     assert ans.ready is None, "点が無いのに日を出しています"
     assert "取り直す" in (ans.todo or "")
+
+
+# --------------------------------------------------------------------------
+# **門は、それが守っている日に立っているか**（2026-08-29 05:0x・最適化の回）
+#
+# `plus_lag: true` の要件が「判定できる」と言う日は `on_date + lag` です
+# （`_after_tail`）。ところが `data_file:` の門は `on_date` の 00:00 に
+# 立っていました —— **`lag` 日 早い。**
+#
+# `plus_lag` の意味は「**その日ぶんの点は `lag` 日 あとに届く**」なので、
+# `on_date` に計器へ訊けば、**要件自身の定義により、まだ在りません。**
+# 返るのは `ready=None`（＝「判定できる日が出せません」）で、その claim は
+# `arm_speed.forward()` と `next_when()` の両方から消えます。
+#
+# 実物で当たっていたのは 09-19「1本あたり再生の天井は配信の側で決まっている」
+# （`on_date: 2026-09-15` ＋ `plus_lag` ＋ `data/views.jsonl`）——
+# **09/15〜09/18 の 4日 が、その窓**でした。
+#
+# ff1a8c1 は「**未来の** `on_date` には訊かない」を入れています。**足りません**
+# —— `on_date` が過ぎていても、`on_date + lag` が来ていなければ同じ話です。
+# --------------------------------------------------------------------------
+
+
+def _stale_reach(tmp_path, days_old: int):
+    from datetime import date as _d, timedelta as _td
+    p = tmp_path / "reach.jsonl"
+    old = _d.today() - _td(days=days_old)
+    p.write_text('{"_report_end": "%sT07:00:00Z"}\n' % old.isoformat(),
+                 encoding="utf-8")
+    return p
+
+
+def test_plus_lag_の要件は遅れのぶん待ってから計器に訊く(tmp_path):
+    """`on_date` は過ぎたが `on_date + lag` はまだ ＝ **訊いてはいけない。**
+
+    落ちたら、`plus_lag` の要件は遅れの日数だけ「判定できる日が出せません」に
+    化け、予定表から消えます。
+    """
+    from datetime import date, timedelta
+
+    passed = date.today() - timedelta(days=2)          # 時計は過ぎている
+    p = _stale_reach(tmp_path, days_old=9)             # 計器はわざと古い
+    ans = J._ans_after({"on_date": passed.isoformat(), "plus_lag": True,
+                        "data_file": str(p), "what": "その日の面"}, 4)
+    assert ans.ready == passed + timedelta(days=4), (
+        f"**遅れの窓の中で計器に訊いています**: ready={ans.ready} why={ans.why}")
+    assert "取り直す" not in (ans.todo or ""), ans.todo
+
+
+def test_plus_lag_の窓を過ぎたら今までどおり計器に訊く(tmp_path):
+    """**門を消してはいけません。** 遅れが明けたら、点の有無を訊くこと。"""
+    from datetime import date, timedelta
+
+    passed = date.today() - timedelta(days=10)
+    p = _stale_reach(tmp_path, days_old=12)     # `on_date` より前で止まっている
+    ans = J._ans_after({"on_date": passed.isoformat(), "plus_lag": True,
+                        "data_file": str(p), "what": "その日の面"}, 4)
+    assert ans.ready is None, "点が無いのに日を出しています"
+    assert "取り直す" in (ans.todo or "")
+
+
+def test_遅れの後に訊くが_要る点は_on_date_のまま(tmp_path):
+    """**訊く時刻に `lag` を足す。要る点の日付には足さない。**
+
+    `newest_point` は `_POINT_KEYS` の順で `_report_end`（＝**データの日**）を
+    先に返します。`data/reach.jsonl` がそれで、Reporting は3日 遅れ ——
+    **`on_date + lag` に読めるいちばん新しい `_report_end` は、`on_date` の
+    数日 後まで**です。要る点まで `lag` ずらすと、**取り直しても永久に通りません。**
+
+    ここは `on_date`（10日 前）ぶんの点が在り、`_report_end` は 8日 前で
+    止まっている状態 —— **要件としては足りています。**
+    """
+    from datetime import date, timedelta
+
+    passed = date.today() - timedelta(days=10)
+    p = _stale_reach(tmp_path, days_old=8)      # on_date は満たすが on_date+lag には届かない
+    ans = J._ans_after({"on_date": passed.isoformat(), "plus_lag": True,
+                        "data_file": str(p), "what": "その日の面"}, 4)
+    assert ans.ready == passed + timedelta(days=4), (
+        "**要る点の日付まで `lag` ずらしています。**"
+        f" `_report_end` の計器は永久に通りません: ready={ans.ready} why={ans.why}")
+    assert "取り直す" not in (ans.todo or ""), ans.todo
+
+
+def test_plus_lag_が無ければ門の位置は変わらない(tmp_path):
+    """遅れを足さない要件は、今までどおり `on_date` に立つこと。"""
+    from datetime import date, timedelta
+
+    passed = date.today() - timedelta(days=2)
+    p = _stale_reach(tmp_path, days_old=9)
+    ans = J._ans_after({"on_date": passed.isoformat(),
+                        "data_file": str(p), "what": "その日の面"}, 4)
+    assert ans.ready is None, "`plus_lag` の無い要件まで待たせています"
+
+
+def test_この欄が届かない_kind_を分母に入れないこと():
+    """**分母は「`data_file:` が実際に読まれる kind」だけ。**
+
+    `_DATA_FILE_KINDS` に無い kind に `data_file:` を書いても、`answer()` は
+    1文字も読みません。分母に入れると (1) 穴が実際より大きく見え、
+    (2) 覆る条件（分母＝申告数）が永久に成り立たず、
+    (3) 「その1件だけ足すのが安い」に従った回が**足しても何も変わらない要件**を
+    引き当てます。
+
+    **ここは名簿を写すのではなく、`answer()` の実際のふるまいで確かめます** ——
+    名簿だけを見る検査は、分岐が増えた日に黙って外れます。
+    """
+    from datetime import date
+
+    missing = "data/__no_such_instrument__.jsonl"
+    probes = {
+        "group_key": {"kind": "group_key", "key": "title_form"},
+        "published_group": {"kind": "published_group", "count": 8,
+                            "created_after": "2026-08-16",
+                            "published_after": "2026-09-08", "settle_days": 4},
+        "external": {"kind": "external", "what": "収益化の審査"},
+    }
+    for kind, need in probes.items():
+        assert kind not in J._DATA_FILE_KINDS, f"{kind} を分母から外しています"
+        plain = J.answer(dict(need), as_of=date.today(), lag=4)
+        withf = J.answer(dict(need, data_file=missing), as_of=date.today(), lag=4)
+        assert (plain.ready, plain.todo) == (withf.ready, withf.todo), (
+            f"**{kind} は `data_file:` を読んでいます。**"
+            f" `_DATA_FILE_KINDS` に足すこと: {plain} / {withf}")
+
+    for kind in J._DATA_FILE_KINDS:
+        assert kind in ("accrual", "after"), (
+            "kind を足したなら、この検査に『書くと変わる』側の実測を足すこと")
