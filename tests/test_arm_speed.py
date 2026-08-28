@@ -31,6 +31,7 @@ _spec.loader.exec_module(eta)
 from src import day_cap  # noqa: E402
 
 from src import arm_speed  # noqa: E402
+from src import subs_cap  # noqa: E402
 
 
 # --- 標本（**手元のファイルを読まないこと**。読むと回ごとに答えが変わります）-------
@@ -169,8 +170,18 @@ def test_実在する幅で腕を止める_1日110525本を歩かない():
         assert caps["density"]["at_ceiling"] is True
         assert "引き代なし" in caps["density"]["why"]
     assert caps["density"]["measured"] is True
-    # 登録率は**測った天井ではありません**。そう言うこと
-    assert caps["sub_rate"]["measured"] is False
+    # `sub_rate` は 2026-08-28 に**実測へ入れ替えました**（`src/subs_cap.py`）。
+    # ここには `assert caps["sub_rate"]["measured"] is False` と書いてあり、
+    # **「登録率 100%」＝ ×3,153.91 を「そう言えていれば正しい」としていました。**
+    # `rpm` を 08/20 に入れ替えたときと**同じ直し方**です —— 言えているだけでは
+    # 足りません（軌跡は断りを読まず、その数をそのまま歩きます）。
+    # **測れた回は実測の最大、測れない回だけ据え置きの 100%** に落ちること。
+    if subs_cap.best_per_video():
+        assert caps["sub_rate"]["measured"] is True
+        assert "実測の最大" in caps["sub_rate"]["why"]
+    else:
+        assert caps["sub_rate"]["measured"] is False
+        assert "100%" in caps["sub_rate"]["why"]
     # `rpm` は 2026-08-20 22:4x に**実測へ入れ替えました**（`src/rpm_mix.py`）。
     # ここには `assert caps["rpm"]["measured"] is False` と書いてあり、
     # **据え置きの ×100（¥2,000 ÷ ¥20）を「そう言えていれば正しい」としていました。**
