@@ -38,6 +38,19 @@ sys.path.insert(0, str(ROOT))
 from src import history  # noqa: E402
 
 
+@pytest.fixture(autouse=True)
+def _sandbox_the_scan_cache(tmp_path, monkeypatch):
+    """**本物の `data/` に書かせないこと**（2026-08-28 に踏んだ）。
+
+    `_scan` は窓ごとの控え（`data/scan_topics.json`）を書きます。
+    この檻を外すと、ここの検査が**本物の控えに `s-new` を書き込み**、
+    次に走った回が「投稿済みテーマ 1件」で動きます —— 実際に、
+    足した直後の実行で `_cached_topics()` が `{'s-new'}` を返しました。
+    """
+    (tmp_path / "data").mkdir()
+    monkeypatch.setattr(history.config, "ROOT", tmp_path)
+
+
 class _Resp:
     def __init__(self, status: int) -> None:
         self.status = status
