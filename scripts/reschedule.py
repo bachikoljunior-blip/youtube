@@ -1478,16 +1478,25 @@ def main(argv: list[str] | None = None) -> int:
         iso = at.strftime("%Y-%m-%dT%H:%M:%SZ")
         try:
             _update(svc, vid, iso)
+            # **控えにも書き戻すこと**（2026-08-18 に実測で見つけた）。
+            # `--compact` は控えだけを見るので、ここを飛ばすと
+            # **実物は動いたのに、次の回は古い時刻のまま割り当てを組みます。**
+            #
+            # **`try` の中に置いてあるのはわざとです**（2026-08-28）。
+            # `tests/test_reschedule_move_ledger.py` は「`_update()` を呼ぶ
+            # ブロックは `dupes.retime()` も呼ぶ」を**ブロック単位**で見ます。
+            # 外へ出すと `try` の本体が `_update` だけになり、
+            # **あの検査が落ちます** —— 落ちるのが正しい形なので、
+            # 検査をゆるめずに、2つを同じブロックへ置きました。
+            dupes.retime(vid, iso)
         except AlreadyPublic as exc:
             # **落としません。** 呼ぶ側（`queue_lag.apply_moves`）に
             # 「この本は飛ばして、残りは当てろ」と言うための終了コードです。
-            # 控えは `_update` の中でもう直っています。
+            # **控えは `_update` の中でもう直っています**（実物の
+            # `publishedAt` へ）。ここで `retime` を撃つと、
+            # **直したばかりの控えを、また幻の時刻へ戻します。**
             print(f"[reschedule] {exc}", flush=True)
             return RC_ALREADY_PUBLIC
-        # **控えにも書き戻すこと**（2026-08-18 に実測で見つけた）。
-        # `--compact` は控えだけを見るので、ここを飛ばすと
-        # **実物は動いたのに、次の回は古い時刻のまま割り当てを組みます。**
-        dupes.retime(vid, iso)
         print(f"[reschedule] {vid} を {when} JST へ移しました")
         return 0
 
