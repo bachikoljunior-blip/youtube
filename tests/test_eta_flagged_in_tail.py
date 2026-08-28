@@ -95,7 +95,11 @@ def test_main_が尾で_flagged_を呼んでいる():
     body = m.group(0)
     assert "for line in flagged(said):" in body, "`main()` が `flagged` を呼んでいない"
     # **尾の `headline` より後ろにあること**（前に置くと、尾3行を読む側に届かない）
-    assert body.index("for line in flagged(said):") > body.rindex("for line in headline(pl, prev, tr):")
+    # **閉じ括弧まで当てないこと**（2026-08-29 に3件 まとめて赤くなった）。
+    # `headline()` に引数を1つ足すだけで、この検査は落ちます —— 落ちても
+    # 「頭と尾で2回 呼んでいるか」は1文字も変わっていません。**守りたいのは
+    # 呼ぶ回数と場所であって、引数の並びではない。**
+    assert body.index("for line in flagged(said):") > body.rindex("for line in headline(pl, prev, tr")
 
 
 def test_say_が印字を1行も落としていない():
