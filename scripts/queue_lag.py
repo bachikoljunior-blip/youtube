@@ -1713,24 +1713,86 @@ def quota_lines(plan: Plan) -> tuple[list[str], bool]:
 
 
 def apply_moves(plan: Plan) -> int:
-    """実物へ当てる。**1手 100単位。**片側で落ちたら、そこで止めて言い残す。"""
+    """実物へ当てる。**1手 50単位。**片側で落ちたら、そこで止めて言い残す。
+
+    ## ただし「もう公開済み」だけは、止めずに飛ばします（2026-08-28）
+
+    **実測**: この日の `--plan` の**1手目**は `cJw79xThyTY` で、控えでは
+    2026-10-04 の予約、**実物は 08-28 11:00:08Z に公開済み**でした
+    （きょうだいの回が動かし、控えはまだ merge されていない）。
+    公開済みの本に `publishAt` は立たないので、そこで 400 が返ります ——
+    そして**この関数は最初の失敗で全部を止める**ので、
+
+        16手（合計 **34日**・`opening_motion` だけで **30日**）→ **0/16**
+
+    **幻が1行あるだけで、入れ替えは丸ごと落ちます。**
+    `queue_lag` の 34日 が **3周 印字されて1度も当たっていない**のは、
+    「この役の口からは `--apply` が通らない」（08/28 の前の回）だけでなく、
+    **通しても1手目で死ぬ**からでした。
+
+    ## 飛ばすのは「組ごと」です（**片側だけ当てないこと**）
+
+    `moves()` は **2行で1組**（早める本 → 後ろへ送る本）。**先の1手が
+    落ちたときに後の1手だけ当てると、後ろへ送る側だけが動きます** ——
+    早める本は動かないので、**その群の本が1本 遠のくだけの純損**です。
+    だから前半が飛んだ組は、後半も撃ちません。
+    （**後半だけが公開済み**だった組は、前半をそのまま残します ——
+    早めた側は当たっており、戻す理由がありません。）
+    """
     from scripts import reschedule
 
     done = 0
-    for vid, when in plan.moves():
+    skipped: list[str] = []
+
+    def _one(vid: str, when: str) -> str:
+        """`ok` / `skip` / `stop` のどれか。"""
         try:
-            reschedule.main(["--move", vid, when])
+            rc = reschedule.main(["--move", vid, when])
+        except reschedule.AlreadyPublic as e:      # pragma: no cover - 念のため
+            print(f"[queue_lag] {vid} は飛ばします: {e}", flush=True)
+            return "skip"
         except SystemExit as e:
             if e.code:
                 print(f"[queue_lag] {vid} で止まりました: {e}."
                       " **`--plan` を撃ち直して残りを当てること**", flush=True)
-                return 1
+                return "stop"
+            return "ok"
         except Exception as e:  # pragma: no cover - 実物の口
             print(f"[queue_lag] {vid} で落ちました: {e}."
                   " **`--plan` を撃ち直して残りを当てること**", flush=True)
+            return "stop"
+        if rc == reschedule.RC_ALREADY_PUBLIC:
+            print(f"[queue_lag] {vid} は**もう公開済み**でした。"
+                  " この組は飛ばします（**控えはもう直っています**）", flush=True)
+            return "skip"
+        return "ok"
+
+    moves = plan.moves()
+    for i in range(0, len(moves), 2):
+        pair = moves[i:i + 2]
+        first = _one(*pair[0])
+        if first == "stop":
             return 1
+        if first == "skip":
+            skipped.append(pair[0][0])
+            continue                      # **後半は撃ちません**（純損になる）
         done += 1
+        if len(pair) < 2:
+            continue
+        second = _one(*pair[1])
+        if second == "stop":
+            return 1
+        if second == "skip":
+            skipped.append(pair[1][0])
+            continue
+        done += 1
+
     print(f"[queue_lag] {done}回 動かしました（{done * 50}単位）")
+    if skipped:
+        print(f"[queue_lag] **もう公開済みで飛ばした本: {len(skipped)}本**"
+              f"（{', '.join(skipped[:8])}）。控えは実物へ直しました ——"
+              " **`--plan` を撃ち直すと、この本は予約から消えています**",
+              flush=True)
     return 0
 
 

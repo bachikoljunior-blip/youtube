@@ -128,11 +128,28 @@ def test_予約を外す回は撃つ(monkeypatch):
 
 
 def test_公開中の本を非公開に戻す回は撃つ(monkeypatch):
-    """時刻が同じでも `privacyStatus` がちがえば飛ばさないこと。"""
+    """時刻が同じでも `privacyStatus` がちがえば飛ばさないこと。
+
+    **2026-08-28 に、この検査の前提のほうを直しました。** もとは
+    「公開中の本に `publishAt` を立て直す」形で書いてありましたが、
+    **YouTube はそれを受け付けません** —— 実測（`cJw79xThyTY`・
+    `2026-08-29T13:30` へ `--move`）:
+
+        HttpError 400 … `invalidPublishAt`
+        「The request metadata specifies an invalid scheduled publishing time.」
+
+    つまりあの形は**通ったことが1度もない道**で、検査だけが通していました。
+    いまは `_update` が手前で `AlreadyPublic` を投げます
+    （`tests/test_already_public_skip.py`）。
+
+    **この検査が見たいのは「privacy がちがえば飛ばさない」ほう**なので、
+    予約を外す形（`publish_at=None`）で見ます。**これは実物でも通る道**です
+    （公開してしまった本を private へ戻す —— `unschedule.py`）。
+    """
     monkeypatch.delenv("YT_FORCE_UPDATE", raising=False)
     videos = _Videos(dict(SCHEDULED, privacyStatus="public"))
 
-    assert reschedule._update(_Svc(videos), "vid1", "2026-08-28T11:00:00Z") is True
+    assert reschedule._update(_Svc(videos), "vid1", None) is True
     assert videos.updated[0]["body"]["status"]["privacyStatus"] == "private"
 
 

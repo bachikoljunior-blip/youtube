@@ -4749,3 +4749,4 @@
 {"at": "2026-08-28T10:54:26+00:00", "ok": true, "detail": "thumbnails.set s7l-9zAcCww", "by": "refresh_thumbnail.py:push_missing"}
 {"at": "2026-08-28T10:54:30+00:00", "ok": true, "detail": "thumbnails.set xaciR1LbaEs", "by": "refresh_thumbnail.py:push_missing"}
 {"at": "2026-08-28T11:02:45+00:00", "ok": true, "detail": "videos.update vdxF0QfsHDg", "by": "reschedule.py:_update"}
+{"at": "2026-08-28T12:40:49+00:00", "detail": "videos.list part=status 50ids (queue ledger audit, optimization round 08-28 21:5x)", "by": "<string>:<module>"}
