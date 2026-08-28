@@ -4749,3 +4749,7 @@
 {"at": "2026-08-28T10:54:26+00:00", "ok": true, "detail": "thumbnails.set s7l-9zAcCww", "by": "refresh_thumbnail.py:push_missing"}
 {"at": "2026-08-28T10:54:30+00:00", "ok": true, "detail": "thumbnails.set xaciR1LbaEs", "by": "refresh_thumbnail.py:push_missing"}
 {"at": "2026-08-28T11:02:45+00:00", "ok": true, "detail": "videos.update vdxF0QfsHDg", "by": "reschedule.py:_update"}
+{"at": "2026-08-28T12:37:57+00:00", "detail": "status: Data API 読み", "by": "status.py:main"}
+{"at": "2026-08-28T12:38:26+00:00", "detail": "status: Data API 読み", "by": "status.py:main"}
+{"at": "2026-08-28T12:41:50+00:00", "detail": "playlistItems.list uploads", "by": "history.py:channel_video_ids"}
+{"at": "2026-08-28T12:41:53+00:00", "detail": "status: Data API 読み", "by": "status.py:main"}
