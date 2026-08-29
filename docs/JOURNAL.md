@@ -76841,8 +76841,16 @@ aoiro haito ideco_deguchi jidou jutaku shitsugyo keihi。
 
 ### 3. 出したもの
 
-`batch_build.py --count 2 --long`（`kouki-jougen-89000-sagaru` /
-`shougai-1kyu-baisu-kazoku5dan`）を予約まで。**これは 2 の前提の入力そのもの**です。
+`batch_build.py --count 2 --long` を**予約まで 2/2 本**:
+
+    kouki-jougen-89000-sagaru      kAAGJrRCnLU   2026-09-13 20:00 JST
+    shougai-1kyu-baisu-kazoku5dan  MiB-qTT7l9k   2026-09-20 21:00 JST
+
+**どちらも 2 の前提の窓（09/13〜09/26）の中**です ——
+この2本が、09-28 の判定の入力そのものになります。
+
+**実測 33.7分**（同時2・直列なら 48.6分 ＝ ×1.44／1本あたり 15.7分）。
+ただし `kouki` は**2回 落ちて3回目で通り**、そのぶんが下の (3) です。
 
 
 ### 4. 同じ回で、あと3件 直した（**全部おなじ形**）
