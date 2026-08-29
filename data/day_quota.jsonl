@@ -5162,3 +5162,21 @@
 {"at": "2026-08-29T20:27:55+00:00", "detail": "thumbnails.set U-i-yoVoLhU", "by": "uploader.py:_set_thumbnail"}
 {"at": "2026-08-29T20:49:42+00:00", "detail": "status: Data API 読み", "by": "status.py:main"}
 {"at": "2026-08-29T20:52:05+00:00", "detail": "status: Data API 読み", "by": "status.py:main"}
+{"at": "2026-08-29T22:00:29+00:00", "detail": "scheduled_publish_times", "by": "uploader.py:taken_publish_times"}
+{"at": "2026-08-29T22:00:32+00:00", "detail": "playlistItems.insert", "by": "uploader.py:_post_actions"}
+{"at": "2026-08-29T22:00:32+00:00", "detail": "thumbnails.set iicEp33dILY", "by": "uploader.py:_set_thumbnail"}
+{"at": "2026-08-29T22:00:35+00:00", "detail": "scheduled_publish_times", "by": "uploader.py:taken_publish_times"}
+{"at": "2026-08-29T22:00:38+00:00", "detail": "playlistItems.insert", "by": "uploader.py:_post_actions"}
+{"at": "2026-08-29T22:00:38+00:00", "detail": "thumbnails.set NWCSrYqtk2w", "by": "uploader.py:_set_thumbnail"}
+{"at": "2026-08-29T22:00:42+00:00", "detail": "scheduled_publish_times", "by": "uploader.py:taken_publish_times"}
+{"at": "2026-08-29T22:00:46+00:00", "detail": "playlistItems.insert", "by": "uploader.py:_post_actions"}
+{"at": "2026-08-29T22:00:46+00:00", "detail": "thumbnails.set UlVbDdxSlsE", "by": "uploader.py:_set_thumbnail"}
+{"at": "2026-08-29T22:00:49+00:00", "detail": "scheduled_publish_times", "by": "uploader.py:taken_publish_times"}
+{"at": "2026-08-29T22:00:53+00:00", "detail": "playlistItems.insert", "by": "uploader.py:_post_actions"}
+{"at": "2026-08-29T22:00:53+00:00", "detail": "thumbnails.set 8l0A_3IHsuY", "by": "uploader.py:_set_thumbnail"}
+{"at": "2026-08-29T22:00:57+00:00", "detail": "scheduled_publish_times", "by": "uploader.py:taken_publish_times"}
+{"at": "2026-08-29T22:01:01+00:00", "detail": "playlistItems.insert", "by": "uploader.py:_post_actions"}
+{"at": "2026-08-29T22:01:01+00:00", "detail": "thumbnails.set G5irAIRXEM4", "by": "uploader.py:_set_thumbnail"}
+{"at": "2026-08-29T22:01:05+00:00", "detail": "scheduled_publish_times", "by": "uploader.py:taken_publish_times"}
+{"at": "2026-08-29T22:01:08+00:00", "detail": "playlistItems.insert", "by": "uploader.py:_post_actions"}
+{"at": "2026-08-29T22:01:08+00:00", "detail": "thumbnails.set neiKOIg_ims", "by": "uploader.py:_set_thumbnail"}
