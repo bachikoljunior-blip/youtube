@@ -167,6 +167,37 @@ def test_凍結が解けなかった腕がNoneでも落ちない():
                                 if "その「別の腕」は" in l][0]
 
 
+def test_densityを塞ぐときは面を割る():
+    """**`density` の 0日 は「ショートの面」だけの数。**
+
+    `arm_caps["density"]` は `day_cap.cap()`（ショートの面）で立っており、
+    長尺はその枠を1つも使いません。**4,000時間の門に入るのは長尺だけ**です。
+    `src/levers.py` の `_long_surface_open()` は既にここを割っている ——
+    **頭の3行だけが割らずに塞ぐと、長尺を増やす作業まで止まります**
+    （3回 申し送って直した所を、こちらから戻すことになる）。
+    """
+    pl = _plan(density_surfaces={
+        "short": {"at_ceiling": True, "measured": True, "why": "10本/日"},
+        "long": {"at_ceiling": False, "measured": True, "why": "上限 6本/日 ÷ いま 0.73本/日"},
+    })
+    line = [l for l in _head(pl).splitlines() if "その「別の腕」は" in l][0]
+    assert "ショートの面" in line
+    assert "長尺を増やす回ではありません" in line
+    assert "上限 6本/日 ÷ いま 0.73本/日" in line
+
+    # **長尺の面も天井なら、但し書きは消える。**
+    pl2 = _plan(density_surfaces={
+        "short": {"at_ceiling": True, "measured": True, "why": "10本/日"},
+        "long": {"at_ceiling": True, "measured": True, "why": "6本/日 に届いた"},
+    })
+    line2 = [l for l in _head(pl2).splitlines() if "その「別の腕」は" in l][0]
+    assert "ショートの面" not in line2
+
+    # **面が読めない回は、但し書きを足さない**（無いものを在るように扱わない）。
+    line3 = [l for l in _head(_plan()).splitlines() if "その「別の腕」は" in l][0]
+    assert "ショートの面" not in line3
+
+
 def test_覆われていない回は何も足さない():
     pl = _plan()
     pl.pop("lever_hint_covered")
