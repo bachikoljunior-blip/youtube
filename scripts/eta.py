@@ -2433,6 +2433,13 @@ def cap_lines(arms: dict, indent: str = "      ") -> list[str]:
 #: 3年 ＝ 目標の「最短」から見ればとっくに別の道を選んでいる長さです。
 TRAJECTORY_HORIZON_DAYS = 1_095
 
+#: **θ を「無限大にしたら」の代わりに撃つ倍率**（2026-08-30・最適化の回）。
+#: `trajectory()` は `t_work` の探索を `saturate = log(cap)/rate` で打ち切るので、
+#: 倍率を上げるほど**速く**なります（実測: ×1.0 が 5.4秒 に対し ×1000 は 0.1秒）。
+#: 1000倍 で `t_work` は 1日 まで潰れる ＝ **腕が一瞬で天井に着いた世界**で、
+#: そこから先は何倍にしても日付が動きません（＝これが θ の天井）。
+THETA_INF_SCALE = 1_000.0
+
 
 def _factors_at(arms: dict, days: float, *, focus: str | None = None,
                 rate_scale: float = 1.0, realloc: bool = True) -> dict:
@@ -3299,10 +3306,106 @@ def trajectory_all(m: dict, a0: dict, *, supply: dict | None = None,
         pln = None
     return {
         "base": base, "fast": fast, "slow": slow, "planned": pln,
+        "theta": _theta_days(m, a0, base, rows, kw) if full else None,
         "choice": trajectory_choice(m, a0, base, **kw),
         "streak": arm_speed.miss_streak(rows),
         "band": bd, "arms": arms, "unread": arm_speed.unreadable(),
     }
+
+
+def _theta_days(m: dict, a0: dict, base: dict, rows: list[dict],
+                kw: dict) -> dict | None:
+    """**θ（前提が閉じる速さ）を、到達日の「日数」に換算する。**
+
+    ## なぜ要るか（2026-08-30・最適化の回。**盤面でいちばん大きい数に、値札が無かった**）
+
+    この出力は、日数の値札を**腕**と**配分**にだけ付けていました ——
+    「次の1件をどの腕に立てるか」で数日、「台帳の配分の振り直し」で +10日。
+    ところが同じプログラムが、その2つより**桁の違う**数を持っています。
+
+    `trajectory()` は `rate = p · log(g) · θ` を積分して
+    `T = min_t [ t + D(x(t)) ]` を解きます。**θ はその式の中で
+    唯一の「速さ」**で、`t_work`（「腕を N日 動かして」）にそのまま反比例します。
+    実測（2026-08-30 の点・`rate_scale` を振って解き直した）::
+
+        θ×0.5   2027-02-25   t_work 85日   **+46日**
+        θ×1.0   2027-01-10   t_work 47日     ——（印字している線）
+        θ×2.0   2026-12-17   t_work 24日   **-24日**
+        θ×5.0   2026-12-03   t_work 10日   **-38日**
+        θ→∞     2026-11-24   t_work  1日   **-47日**   ← 収益化の門＋30日 の床
+
+    **-47日 は、腕の話でも配分の話でもありません。**「前提が閉じる速さ」だけを
+    動かして出た差で、**この機械が1周で選べるどの手より大きい**数です。
+    それが 200行目 にも出ていませんでした —— 出ていたのは θ の**値**
+    （「1日 0.77件 が閉じている」）だけで、**日数への換算がどこにもない。**
+    値だけの数は、他の手と並べて比べられません。
+
+    ## **上げ方は「前提を増やすこと」ではありません**（同じ回に測った）
+
+    `config/hypotheses.yaml` を git の履歴で数え直すと、**在庫は余っています**::
+
+        08/24  開いた前提 15件      08/28  26件
+        08/26  19件                08/30  **32件**   ＝ 6日で +17件（2.8件/日）
+
+    閉じるほうは **0.77件/日** のままです（`arm_speed.throughput()`）。
+    **立てる側は、閉じる側の 3.6倍 の速さで回っています。**
+    だから θ を縛っているのは件数ではなく、**立ててから判定できるまでの日数**
+    （`src/judgeable.py`: 群の床 → **予約の順番待ち** → 落ち着き7日 →
+    Analytics の遅れ3日）。予約は 359本・いちばん後ろは 30日超 で、
+    **新しい実験の本は毎回その最後尾に着きます。**
+
+    つまり `upload` を1本 足すたびに待ち行列が深くなり、**次の前提の判定日が
+    後ろへ動く** ＝ θ が下がる。`data/runs.jsonl` の直近 500回 は
+    `fix` 203件 ／ `upload` 45件 に対し **`verdict` 6件** で、
+    そのあいだ到達予測は **+22日 遠のいて** います（12-19 → 01-10）。
+
+    ## 覆る条件
+
+    ・`t_work` が 0日 になったら（＝いま走らせるのが最短）、この行は
+      「θ をいくつにしても同じ」に落ちます。**そのときは消してよい。**
+    ・在庫（開いた前提）が閉じる速さを**下回った**ら、上の「増やすことではない」は
+      逆になります。**数え直すのは `config/hypotheses.yaml` の open 件数と
+      `arm_speed.throughput()` の2つだけ**（どちらも API 0単位）。
+
+    検査は `tests/test_eta_theta_days.py`。
+    """
+    try:
+        pool = [r for r in rows if r.get("lever") in arm_speed.ARMS]
+        now = arm_speed.throughput(pool, kw.get("today"))
+        if not now.get("per_day"):
+            return None
+        x2 = trajectory(m, a0, rate_scale=2.0, **kw)
+        inf = trajectory(m, a0, rate_scale=THETA_INF_SCALE, **kw)
+    except Exception:                                          # noqa: BLE001 — 回を止めない
+        return None
+    if base.get("days", NEVER) >= NEVER:
+        return None
+
+    def _delta(t: dict) -> float | None:
+        d = t.get("days")
+        return None if d is None or d >= NEVER else d - base["days"]
+
+    return {"per_day": now["per_day"], "n": now["n"], "days": now["days"],
+            "x2": x2, "inf": inf,
+            "x2_delta": _delta(x2), "inf_delta": _delta(inf),
+            "t_work": base.get("t_work"), "open": _open_hypotheses()}
+
+
+def _open_hypotheses() -> int | None:
+    """**いま開いている前提の件数**（`config/hypotheses.yaml`・API 0単位）。
+
+    `arm_speed.planned()` の `total` と同じ数ですが、**あちらは `lever` の
+    付いた分だけを `n` に数えます。** ここで要るのは「在庫が余っているか」で、
+    付け札の有無は関係ないので、**開いている行そのもの**を数えます。
+    読めなければ `None`（**回は止めない**）。
+    """
+    try:
+        import yaml
+        doc = yaml.safe_load((ROOT / "config" / "hypotheses.yaml").read_text(encoding="utf-8"))
+        rows = doc if isinstance(doc, list) else next(iter(doc.values()))
+        return sum(1 for r in rows if isinstance(r, dict) and not r.get("closed_on"))
+    except Exception:                                          # noqa: BLE001
+        return None
 
 
 def frozen_days(m: dict, a0: dict, tr: dict, levers_: list[str], *,
@@ -4906,6 +5009,56 @@ def _ab_side_clause() -> str:
         return ""
 
 
+def _theta_line(tr: dict | None, base: dict | None) -> list[str]:
+    """`_theta_days()` を、頭の3行に並べる1行にする。**読めなければ黙って消える。**
+
+    黙って消してよいのは「解けなかった」ときだけです（`theta` が `None`）。
+    **`t_work == 0` の回は、消さずに『θ をいくつにしても同じ』と言います** ——
+    消えたのが「解けなかった」なのか「効かない」なのか、読む側から
+    区別が付かなくなるので。
+    """
+    th = (tr or {}).get("theta")
+    if not th or base is None:
+        return []
+    bar = "###"
+    if not th.get("t_work"):
+        return [f"{bar} **θ（前提が閉じる速さ ＝ いま {th['per_day']:.2f}件/日）は、"
+                "この回の到達日を動かしません** —— 軌跡の `t_work` が 0日"
+                "（＝**いま走らせるのが最短**）なので、腕を速く動かしても"
+                "同じ日付に着きます。**縛っているのは腕ではなく、下の床のほうです。**"]
+
+    def _d(t: dict, delta: float | None) -> str:
+        if t.get("date") is None or delta is None:
+            return "**出ません**"
+        return f"**{t['date'].isoformat()}**（**{delta:+,.0f}日**）"
+
+    line = (f"{bar} **到達日をいちばん大きく動かすのは θ（前提が閉じる速さ ＝ いま"
+            f" {th['per_day']:.2f}件/日・閉じた {th['n']}件 ÷ {th['days']:,.0f}日）です**"
+            f" —— θ×2 で {_d(th['x2'], th['x2_delta'])}"
+            f" ／ 天井（θ→∞）で {_d(th['inf'], th['inf_delta'])}。"
+            f"（軌跡は θ に反比例する `t_work` を **{th['t_work']}日** 取っています）")
+    # **配分の振り直しと、同じ行で並べること。** 単独で出すと「大きい数」に
+    #     見えるだけで、**この回に選べる他の手より大きいのか**が言えません。
+    pln = (tr or {}).get("planned")
+    if pln and pln.get("days") is not None and pln["days"] < NEVER:
+        alloc = pln["days"] - base["days"]
+        if th.get("inf_delta") and abs(alloc) > 0.5:
+            line += (f" **台帳の配分との差は {alloc:+,.0f}日**"
+                     "（下の「台帳が実際に用意している配分」の行）で、"
+                     f"θ の天井はその **{abs(th['inf_delta'] / alloc):.1f}倍**です。")
+    # **上げ方を、同じ行で名指しすること。** 名前の無い所は「やれること」で埋まります
+    #     （`tests/test_eta_covered_substitute.py` が一度 直した形）。
+    n_open = th.get("open")
+    if n_open:
+        line += (f" **ただし手は『前提を増やすこと』ではありません** —— 開いている"
+                 f" **{n_open}件** は、いまの速さで全部 閉じるだけで"
+                 f" **{n_open / th['per_day']:,.0f}日** かかります（＝在庫は余っている）。"
+                 "縮めるのは**立ててから判定できるまでの日数**のほう"
+                 "（群の床 → **予約の順番待ち** → 落ち着き7日 → Analytics の遅れ3日）"
+                 " → `python scripts/queue_lag.py`")
+    return [line]
+
+
 def headline(pl: dict, prev: dict | None = None,
              tr: dict | None = None,
              points: list[dict] | None = None,
@@ -4986,6 +5139,10 @@ def headline(pl: dict, prev: dict | None = None,
             _fl = None
         if _fl:
             out.append(_fl)
+        # --- **θ に、日数の値札を付ける**（2026-08-30・最適化の回に足した） ---
+        #     値札の付いていない数は、他の手と並べて比べられません。
+        #     理由と実測は `_theta_days()` の docstring。**消す条件もそこ。**
+        out.extend(_theta_line(tr, base))
     # **軌跡が解けなかった回でも、「到達予測」の字は必ず出すこと。**
     #     ここを「据え置いた線」だけにすると、軌跡が落ちた回の出力から
     #     **到達予測という言葉ごと消えます**（検査が1件それを見ています）。
