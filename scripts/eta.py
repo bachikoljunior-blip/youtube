@@ -6848,10 +6848,16 @@ def alloc_search(with_speed: bool = False) -> int:
     #     **覆る条件**: 全腕に ban が立ったら（＝ `rest` が空）、
     #     出せるものがありません。そのときは台帳のほうが袋小路なので、
     #     **`next_if_false` を書き直す回**です（この関数ではなく `config/` の話）。
-    if ban:
+    # **側で限定された禁止は、腕を塞ぎません**（2026-08-30 に足した）。
+    #     `sub_rate` の外れは 2件 とも**中身の側**で、配信の側は 0件。
+    #     それでも `ban_lines` が空でないというだけで腕ごと落としており、
+    #     **配信の側に立てる道まで塞いでいました** ——実測で **3日**
+    #     （`sub_rate` 2027-01-18 対 `per_video` 2027-01-21）。
+    #     見るのは `blocks_arm`（＝側の書いていない禁止が1件でもあるか）です。
+    if arm_speed.blocks_arm(best[1]):
         rest = sorted(
             ((d, k) for k, d in days_by_lever.items()
-             if k != best[1] and not arm_speed.ban_lines(k)),
+             if k != best[1] and not arm_speed.blocks_arm(k)),
             key=lambda t: t[0])
         if rest:
             d2, k2 = rest[0]
@@ -6869,6 +6875,19 @@ def alloc_search(with_speed: bool = False) -> int:
                   " 台帳の `next_if_false` が全腕を塞いでいます ——"
                   "**そのときは腕を選ぶ話ではなく、`config/hypotheses.yaml` の"
                   "`next_if_false` を書き直す回**です。")
+    elif ban:
+        # **側で限定された禁止は、腕を落としません。**
+        #     ただし黙って通すと、上に貼った禁止の行だけが残って
+        #     「1位は禁じられている」と読まれます（それが 5回 起きた形）。
+        sides_banned = sorted({r["side"] for r in arm_speed.standing_bans().get(best[1], [])
+                               if r.get("side")})
+        ja = "／".join(arm_speed.SIDE_JA[x] for x in sides_banned)
+        print(f"  → **上の禁止は {ja} だけに掛かっています。"
+              f"`{best[1]}` は1位のままです** ——"
+              f" 立てる1件を **{ja} 以外**にすること"
+              f"（`config/hypotheses.yaml` の `side:`）。"
+              " **腕ごと落とすのは、側の書いていない禁止があるときだけ**です"
+              "（`arm_speed.blocks_arm`）。")
     # **勝った腕の天井が実測でないなら、勝ちの理由がそこにあります。**
     #     この順位は天井の遠さで決まる（上の docstring）ので、
     #     **天井が作り物なら、勝ちも作り物**です。軌跡の側には同じ注意が
