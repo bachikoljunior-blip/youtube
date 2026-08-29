@@ -149,10 +149,38 @@ def analytics_lag_days(as_of: date | None = None) -> int:
     （`falsified_if` は「上回らなければ外れ」なので、**外れ側に倒れます**）。
     """
     path = ROOT / "data" / "analytics_lag.jsonl"
+    today = as_of or datetime.now(timezone(timedelta(hours=9))).date()
     try:
         rows = [json.loads(x) for x in path.read_text(encoding="utf-8").splitlines() if x.strip()]
-        last = max(r["last_day"] for r in rows)
-        today = as_of or datetime.now(timezone(timedelta(hours=9))).date()
+        # **過去の日を訊かれたら、その日に見えていた分だけで答えること**
+        # （2026-08-29・最適化の回に踏んだ）。
+        #
+        # ここは長らく `max(last_day)` を**台帳ぜんたい**から採っていました。
+        # 台帳には毎周 行が積まれるので、**過去の `as_of` を渡すと、その日には
+        # まだ存在しなかった観測まで混ざります。**
+        # 実測: `analytics_lag_days(date(2026,8,26))` → **0日**
+        # （台帳の最新 `last_day` が 08/26 なので、08/26 − 08/26 ＝ 0）。
+        # **「遅れは無い」と言い切る形**で、`ANALYTICS_LAG_FALLBACK` の註が
+        # 「**0 にしないこと** —— いちばん危ない側へ倒れます」と禁じている、
+        # その値そのものです。
+        #
+        # 何が壊れるか: `readable_by(as_of, s)` が
+        # `as_of - (settle + lag)` なので、**lag が 0 に落ちると
+        # 判定の締切が 3日 うしろへ伸びます** —— つまり
+        # **まだ読めていないデータで判定する**側へ倒れます。
+        # このファイル自身が「A/B だけ**1日 楽観**に出ていました。
+        # 楽観のほうへ期限を寄せると、その日にはまだ来ていないデータで
+        # 判定することになります（`falsified_if` は「上回らなければ外れ」なので、
+        # **外れ側に倒れます**）」と書いている、その 3日 版です。
+        #
+        # **覆る条件**: 台帳の行から `at` が消えたら、この絞り込みは効きません
+        # （そのときは `ANALYTICS_LAG_FALLBACK` へ落ちます。0 にはしないこと）。
+        seen = [r for r in rows
+                if str(r.get("at", ""))[:10] and date.fromisoformat(str(r["at"])[:10]) <= today]
+        use = seen or ([] if as_of is not None else rows)
+        if not use:
+            return ANALYTICS_LAG_FALLBACK
+        last = max(r["last_day"] for r in use)
         return max(0, (today - date.fromisoformat(last)).days)
     except Exception:                                          # noqa: BLE001
         return ANALYTICS_LAG_FALLBACK
@@ -286,9 +314,55 @@ def views_curve(ages: tuple[float, ...] = (24, 48, 72, 168), *, full_at: float =
             shares.append(now[0] / full[0])
         if shares:
             shares.sort()
+            settled = sum(1 for x in shares if x >= SETTLED_SHARE_FLOOR)
             out[age] = {"n": len(shares), "median": statistics.median(shares),
-                        "p10": shares[max(0, int(len(shares) * 0.1))], "min": min(shares)}
+                        "p10": shares[max(0, int(len(shares) * 0.1))], "min": min(shares),
+                        # **`min` を門にしないための欄**（2026-08-29 に足した。下の註）
+                        "share_settled": settled / len(shares),
+                        "n_unsettled": len(shares) - settled}
     return out
+
+
+#: **「伸びきった」と呼ぶ割合。** `share_settled` の分子の条件。
+SETTLED_SHARE_FLOOR = 0.95
+
+#: **`min` を門にしないこと**（2026-08-29・最適化の回に測って足した）。
+#:
+#: `tests/test_settle.py` は長らく `row["min"] >= 0.95` を門にしていました。
+#: **標本が増えるほど、この門は勝手に厳しくなります** —— `min` は n が増えれば
+#: 単調に下がるので、**何も悪くなっていない回でも、いつか必ず落ちます。**
+#:
+#: 実測 2026-08-29（n=60・96h）::
+#:
+#:     中央値 1.0000   p10 0.9967   **min 0.5105**
+#:     0.95 を下回る本  **1本 / 60本（1.7%）**
+#:     その1本 `_Mz5rg6jQ_A` …… 96h で **48再生** → 168h で 94再生
+#:
+#: **48再生 の本の比です。** 分母が小さいので、あと数十再生 拾われただけで
+#: 比が半分になります。**その1本のために `SETTLE_DAYS` を 4 → 7 に上げると、
+#: 開いている前提 27件 の判定日が全部 +3日 動きます** ——
+#: このファイル自身が「**5日待つことは、到達日を5日おくらせることと同じ**」と
+#: 書いている、その 3日 ぶんです。
+#:
+#: 同じ日に `scripts/trajectory.py` でも同じ形を1つ直しました
+#: （後ろカタログの門が、4読みしかない尾の1バケツで赤くなっていた）。
+#: **どちらも「極値を、増える標本の門にした」形です。**
+#:
+#: ## だから門は3つに割ります（**どれも隠さず印字する**）
+#:
+#:     median          全体が伸びきっているか        ≥ 0.99
+#:     p10             下位10% でも伸びきっているか   ≥ 0.95
+#:     share_settled   0.95 以上の本が何割か          ≥ 0.95（＝外れは 5% まで）
+#:
+#: **`min` は今までどおり出します。** 門から外すのと、見えなくするのは別です。
+#:
+#: ## 覆る条件
+#:
+#: - **`share_settled` が 0.95 を割ったら、それは本物**（外れが 3本/60本 を超えた）。
+#:   そのときは `SETTLE_DAYS` を上げること
+#: - `min` が下がっただけの回は上げないこと。**まず何本 外れているかを数える**
+#: - engaged 側の門（`engaged_curve()` の `max`）は**そのまま `max` で置きます** ——
+#:   あちらは pt 差（絶対値）なので、分母の小ささで暴れません
 
 
 def engaged_curve(ages: tuple[float, ...] = (60, 72, 96), *, full_at: float = 120.0,
@@ -346,7 +420,9 @@ def report() -> str:
     lines.append("  --- 再生数（168時間の値を100%として）---")
     for age, row in sorted(curve.items()):
         lines.append(f"    {age:>5.0f}h  中央値 {row['median']*100:6.1f}%  "
-                     f"下位10% {row['p10']*100:6.1f}%  最小 {row['min']*100:6.1f}%  n={row['n']}")
+                     f"下位10% {row['p10']*100:6.1f}%  最小 {row['min']*100:6.1f}%  "
+                     f"伸びきった本 {row['share_settled']*100:5.1f}%"
+                     f"（外れ {row['n_unsettled']}本）  n={row['n']}")
     eng = engaged_curve((60, 72, 84, 96))
     if eng:
         lines.append("  --- engaged 比率（120時間の値との差・pt）---")
@@ -355,11 +431,23 @@ def report() -> str:
                          f"最大 {row['max']*100:5.2f}pt  n={row['n']}")
     hit = curve.get(float(SETTLE_DAYS * 24))
     if hit:
-        lines.append(f"  → {SETTLE_DAYS*24}時間 の時点で、いちばん遅い本でも "
-                     f"**{hit['min']*100:.1f}%** まで来ています")
-        if hit["min"] < 0.95:
-            lines.append("  [!] **最小が 95% を割りました。後から拾われる本が出ています** —— "
-                         "`SETTLE_DAYS` を上げ直すこと（上の「覆る条件」）")
+        # **門と同じ量を印字すること**（2026-08-29 に直した）。
+        #   ここは長らく `min` だけを見て「上げ直すこと」を出しており、
+        #   **門（`tests/test_settle.py`）も `min` でした** ——
+        #   標本が増えれば必ず落ちる形です。いまは3つ並べます。
+        lines.append(f"  → {SETTLE_DAYS*24}時間 の時点で: 中央値 "
+                     f"**{hit['median']*100:.1f}%** ／ 下位10% **{hit['p10']*100:.1f}%** ／ "
+                     f"伸びきった本 **{hit['share_settled']*100:.1f}%**"
+                     f"（外れ {hit['n_unsettled']}本 / {hit['n']}本）")
+        lines.append(f"     （いちばん遅い本は {hit['min']*100:.1f}% ですが、"
+                     "**`min` は門ではありません** —— 標本が増えれば単調に下がるので、"
+                     "何も悪くなっていない回でも必ずいつか割ります。"
+                     "`SETTLED_SHARE_FLOOR` の註に実測）")
+        if hit["p10"] < 0.95 or hit["share_settled"] < 0.95:
+            lines.append("  [!] **後から拾われる本が出ています**（下位10% か 外れの割合が門を割った）"
+                         " —— `SETTLE_DAYS` を上げ直すこと（上の「覆る条件」）")
+        else:
+            lines.append("  → **この日数で足ります。**（中央値・下位10%・外れの割合とも門の内側）")
     return "\n".join(lines)
 
 

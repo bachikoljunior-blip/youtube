@@ -192,13 +192,31 @@ def test_累計の行が読まれる3行に出る():
     eta = _load()
     pts = _why_pts(28339, 30, 69386, 126)
     prev = pts[-1]
-    lines = eta.headline(_plan(), prev, _traj(), pts)
+    # **`now=` を渡すこと。** 渡さないと `headline()` の中の `traj_trend()` が
+    # 実時刻を読み、点は `NOW`（08/28）基準なので、**壁時計が1日 進んだだけで
+    # この検査は黙って赤くなります**（2026-08-29 に実際に踏んだ）。
+    lines = eta.headline(_plan(), prev, _traj(), pts, now=NOW)
     hit = [ln for ln in lines if "の累計" in ln]
     assert hit, (
         "累計の行が頭（＝尾）に出ていません。**`CLAUDE.md` は「読むのは3行だけ」**"
         "と言っており、ここに出さないと誰も 7日 ぶんを足しません"
     )
     assert "1周ごとの ±N日 では、この向きは見えません" in hit[0]
+
+
+def test_headlineは時刻を渡せる():
+    """**`now` を通せること。** 通せないと、この検査群は壁時計で赤くなります。
+
+    実測 2026-08-29: `headline()` が `traj_trend()` に `now` を渡していなかった
+    ため、08/28 に書かれた上の検査が翌日に落ち、**恒久的に赤い検査**の山に
+    積まれていました（中身は1つも壊れていない）。
+    """
+    eta = _load()
+    pts = _why_pts(28339, 30, 69386, 126)
+    # 窓（7日）の外へ時計を進めたら、累計の行は**出ない**こと ＝ 実際に効いている
+    far = NOW + timedelta(days=30)
+    assert not [ln for ln in eta.headline(_plan(), pts[-1], _traj(), pts, now=far)
+                if "の累計" in ln], "`now` が `traj_trend` まで届いていません"
 
 
 def test_前の回と比べておきながら比べる点が無いと言わない():
@@ -214,7 +232,7 @@ def test_前の回と比べておきながら比べる点が無いと言わな�
     """
     eta = _load()
     pts = _why_pts(28339, 30, 69386, 126)
-    lines = eta.headline(_plan(), pts[-1], _traj(), pts)
+    lines = eta.headline(_plan(), pts[-1], _traj(), pts, now=NOW)   # 壁時計に依存させない
     compared = [ln for ln in lines if "前の回の予測" in ln]
     none_yet = [ln for ln in lines if "比べられる前の点がまだありません" in ln]
     assert compared, "前の回との差が出ていません"
