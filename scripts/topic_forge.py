@@ -487,7 +487,14 @@ def build_prompt(picked: list[tuple[str, str]], all_sections, topics,
             floor=float(vid["min_minutes"]), target=float(vid["target_minutes"]))]
     else:
         parts = [PROMPT_HEAD.format(n=len(picked), seen=seen)]
-    used = dupes.used_amounts({t["id"]: t.get("calc", "") for t in topics})
+    calc_of = {t["id"]: t.get("calc", "") for t in topics}
+    used = dupes.used_amounts(calc_of)
+    # **丸い数は `used_amounts()` に載りません**（1つでは門が止めないため）。
+    # ところが **2つ並ぶと止まります**（`find()` の `len(hit) > 1` の枝は
+    # 丸さを一度も見ない）。実測 2026-08-29: `--new-family` を2周して
+    # **2周とも1件ずつ**この枝で落ち、その2件は貼っていた一覧に
+    # **一度も載っていませんでした**（`src/dupes.used_round_amounts` の節）。
+    pairs = dupes.used_round_amounts(calc_of)
     for i, (mod, head) in enumerate(picked, 1):
         body = all_sections[mod][head]
         block = (f"\n--- {i} 件目 / calc={mod} / 節={head}\n"
@@ -498,6 +505,14 @@ def build_prompt(picked: list[tuple[str, str]], all_sections, topics,
             block += (f"**この calc で既に題に出した金額**: {shown}\n"
                       f"→ **この数を title_seed の主役に選ばないこと。**"
                       f"投稿の門が必ず止めます（表の別の数字を使う）\n")
+        combos = pairs.get(mod, [])
+        if combos:
+            shown = "／".join(
+                "・".join(f"{int(v):,}円" for v in combo) for combo in combos[:6])
+            block += (f"**この calc で既に題に並べた「丸い数の組」**: {shown}\n"
+                      f"→ **この組み合わせを title_seed に2つとも入れないこと。**"
+                      f"丸い数は1つなら通りますが、**2つ並ぶと投稿の門が必ず止めます**"
+                      f"（片方だけにするか、表の別の数字を使う）\n")
         parts.append(block)
     return "\n".join(parts)
 
