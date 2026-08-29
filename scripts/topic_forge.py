@@ -353,12 +353,44 @@ def assign_new_families(all_sections: dict[str, dict[str, str]],
         print(f"[forge] 族べつの実績が読めないので名前順に落とします: {exc}")
         order = sorted(fresh)
 
+    # **長尺が既に指している節は、published でも外すこと**（2026-08-29 に踏んだ）。
+    #
+    # `long_form_families()` が数えるのは「**まだ投稿していない**長尺を持つ族」
+    # なので、**投稿ずみの長尺しか無い族はここへ入ってきます。** そこまでは
+    # 正しい（族はもう1本 取れる）のですが、**節まで空いているとは限りません** ——
+    # そのまま1つ目の節を取ると、**投稿ずみの長尺と同じ表**を指します。
+    #
+    # 実測 2026-08-29: 3周まわして **5件**がこれで当たり、
+    # `tests/test_calc_sections_still_hit.py::test_同じ節を指す長尺が2件以上ない`
+    # が落ちました（jidoushazei / koyouhoken / zangyo / jouto / haito）。
+    # あの門がある理由は `CLAUDE.md` の
+    # 「続けて数本 視聴した後、繰り返しのように感じられる」で、
+    # **長尺は「表を最後まで読み切る」形なので、同じ節から2本は同じ表を2回 読みます。**
+    #
+    # ショートは同じ節から何本 切ってもよい（1本で言うのは1つの数だけなので、
+    # 年収や日数を替えれば主役が変わる）。**外すのは長尺が指している節だけ**です。
+    long_claimed: dict[str, set[str]] = {m: set() for m in all_sections}
+    try:
+        for t in config.load_topics()["topics"]:
+            calc = t.get("calc")
+            if not calc or calc not in all_sections or t["id"].startswith("s-"):
+                continue
+            wanted = t.get("calc_sections") or []
+            for head in all_sections[calc]:
+                if any(w in head for w in wanted):
+                    long_claimed[calc].add(head)
+    except Exception:                                          # noqa: BLE001
+        pass
+
     # 節は**未使用を先に**。無ければ使用済みからも取る（それが (3) の要点）。
     pool: dict[str, list[str]] = {}
     for m in order:
-        spare = list(free.get(m) or [])
-        rest = [h for h in all_sections[m] if h not in spare]
+        taken = long_claimed.get(m, set())
+        spare = [h for h in (free.get(m) or []) if h not in taken]
+        rest = [h for h in all_sections[m]
+                if h not in spare and h not in taken]
         pool[m] = spare + rest
+    order = [m for m in order if pool[m]]
 
     picked: list[tuple[str, str]] = []
     for _ in range(max(1, per_family)):
