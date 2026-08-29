@@ -45,10 +45,27 @@ def _row(vid: str, at: datetime, topic: str = "t") -> dict:
 
 
 def _packed_days(days: int, per_day: int = 5) -> tuple[list[dict], dict[str, float]]:
-    """**すでに 1日 `per_day` 本で詰まっている**長尺の並び（08/28 から）。"""
+    """**すでに 1日 `per_day` 本で詰まっている**長尺の並び（**`NOW` の日から**）。
+
+    **【2026-08-29 に、起点を 08/28 から `NOW` の日へ直しました】**
+
+    ここは `head = datetime(2026, 8, 28)` で、`NOW` は **08/27 10:00 JST** ——
+    **今日の夕方（18〜22時）が丸ごと空いたまま「詰まりきっている」と
+    名乗っていました。** `long_pack_plan` が今日の空き枠を使えるようになった時点で、
+    09/03 の本を **08/27 18:00** へ（＝ **7日 手前**へ）出す手が出て、
+    この盤を使う2件が赤くなりました。
+
+    **出ていた手は正しい**（日が7日 縮んでいる）。**偽だったのは盤のほう**です ——
+    「詰まりきっている」と言いながら、いちばん手前の日を空けていました。
+    `LONG_HOURS_JST[:5]` は 18〜22時 なので、`NOW`（10:00）より後ろ ＝
+    **今日も本当に埋められます。**
+
+    **この検査が守っているのは「日が縮まない手を出さないこと」**で、
+    それは `test_同じ日の中の入れ替えは出さない` が別に見ています（そちらは緑のまま）。
+    """
     rows, dur = [], {}
     hours = sorted(reschedule.LONG_HOURS_JST[:per_day])
-    head = datetime(2026, 8, 28, tzinfo=JST)
+    head = NOW.replace(hour=0, minute=0, second=0, microsecond=0)
     for d in range(days):
         day = head + timedelta(days=d)
         for h in hours:
@@ -81,12 +98,13 @@ def test_穴の後ろに取り残された本を前へ出す():
     手前の日は詰まっていて、**ずっと後ろに1本だけ**居る。
     その1本は、詰まりの先にある空き日へ出せます。
     """
-    rows, dur = _packed_days(3)              # 08/28・08/29・08/30 が 5本ずつ
+    rows, dur = _packed_days(3)              # 08/27・08/28・08/29 が 5本ずつ
     rows.append(_row("FAR", datetime(2026, 10, 3, 11, 30, tzinfo=JST), "far"))
     dur["FAR"] = 320.0
     plan = reschedule.long_pack_plan(rows, dur, now=NOW, per_day=5)
     assert [p["id"] for p in plan] == ["FAR"], f"取り残しを出せていません: {plan}"
-    assert plan[0]["new"].date() == datetime(2026, 8, 31).date(), (
+    # **いちばん早い空き日は 08/30**（08/27〜08/29 が満杯・`_packed_days` の註）
+    assert plan[0]["new"].date() == datetime(2026, 8, 30).date(), (
         f"いちばん早い空き日へ出していません: {plan[0]['new']}")
 
 
