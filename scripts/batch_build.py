@@ -2446,14 +2446,18 @@ def report() -> int:
         print("  次に `batch_build.py` を走らせた回から、ここに並びます。")
         return 1
 
-    by_jobs: dict[int, list[float]] = {}
-    print("\n  日時              同時 本数  壁時計   直列なら  倍率  1本あたりの中央値")
+    # **尺の欄を落とさないこと**（2026-08-29 23:xx に足した）。この一覧は
+    # 走りを時刻順に並べるだけですが、**1本あたりは尺で桁がちがいます**
+    # （ショート 3分台／長尺 8〜13分）。尺が見えないと、隣り合う2行の差を
+    # `jobs` の差として読みます —— 下の表がまさにそれで壊れていました
+    # （`_jobs_report` の註）。
+    print("\n  日時              尺  同時 本数  壁時計   直列なら  倍率  1本あたりの中央値")
     for r in timed:
         per = [float(x["build_sec"]) for x in r.get("results", [])
                if x.get("build_sec")]
         med = _median(per)
-        by_jobs.setdefault(int(r["jobs"]), []).extend(per)
-        print(f"  {r['at'][5:16]:<16} {r['jobs']:>3} {r.get('count', len(per)):>4}"
+        print(f"  {r['at'][5:16]:<16} {'長尺' if r.get('long') else 'ショ':<3}"
+              f" {r['jobs']:>3} {r.get('count', len(per)):>4}"
               f" {r['wall_sec']/60:>7.1f}分 {(r.get('serial_sec') or 0)/60:>8.1f}分"
               f" {str(r.get('speedup') or '—'):>5}  {med/60:>6.1f}分")
 
