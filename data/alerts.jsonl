@@ -469,3 +469,4 @@
 {"at": "2026-08-25T23:08:59+09:00", "key": "undeclared_close", "n": 1, "session": "session_01RzmEZySHAZdDMJmD2z9eUb", "by": "run_marker.py"}
 {"at": "2026-08-26T04:40:06+09:00", "key": "missing_thumbnail", "n": 2, "session": "session_01RzmEZySHAZdDMJmD2z9eUb", "by": "status.py"}
 {"at": "2026-08-28T16:41:15+09:00", "key": "status_lines", "n": 1, "session": "session_01RzmEZySHAZdDMJmD2z9eUb", "by": "status.py"}
+{"at": "2026-08-29T17:01:25+09:00", "key": "topic_material_low", "n": 1, "session": "session_01RzmEZySHAZdDMJmD2z9eUb", "by": "status.py"}
