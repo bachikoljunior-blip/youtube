@@ -76652,3 +76652,68 @@ aoiro haito ideco_deguchi jidou jutaku shitsugyo keihi。
 - 「正しい直し方が入った瞬間に検査3件が落ちる」—— 成り立たない。
   検査は読みの記録を**自分で台帳に書いて**再現しているので、
   本当に「読みも台帳に載せる」変更が入っても落ちない。**危険な変更を止める門ではない。**
+
+### （同じ回・追記2）**全体検査が、この回の穴を1つ見つけました**
+
+3周ぶんを push したあとで `python -m pytest -q`（**37分36秒**・12 failed / 4,528 passed）が
+返り、**そのうち2件がこの回のもの**でした。
+
+#### `--new-family` が、投稿ずみの長尺と同じ節を取っていた
+
+`long_form_families()` が数えるのは「**まだ投稿していない**長尺を持つ族」です。
+だから **投稿ずみの長尺しか無い族は `--new-family` の候補に入ります。**
+そこまでは正しい（族はもう1本 取れる）のですが、**節まで空いているとは限りません** ——
+そのまま1つ目の節を取ると、**投稿ずみの長尺と同じ表**を指します。
+
+実測: 3周で **5件**（jidoushazei / koyouhoken / zangyo / jouto / haito）。
+`tests/test_calc_sections_still_hit.py::test_同じ節を指す長尺が2件以上ない` が
+落ちました。あの門がある理由は `CLAUDE.md` の
+「続けて数本 視聴した後、繰り返しのように感じられる」で、
+**長尺は表を最後まで読み切る形なので、同じ節から2本は同じ表を2回 読みます。**
+
+直したのは pool の作り方（長尺が握っている節を published でも外す・検査つき）と、
+**当たった5件を `config/topics.yaml` から落としたこと**です。
+
+    族 30 → 25 ／ 7日ぶんの上限 42本 → 37本
+
+**この回の実質は、族 9 → 25・上限 18本 → 37本（+106%）です。**
+
+#### ついでに、この回のものではない赤も2件 直した
+
+同じ検査が隠していました（`docs/JOURNAL.md` 2026-08-28 06:3x
+「恒久的に赤い検査を1つ置くと、同じファイルの本物の警報が読まれなくなります」）。
+
+- `kouki-jougen-89000-sagaru`（08/29 06:52・別の回）が、
+  **投稿ずみの** `kouki-keigen-dan-zure-zero`（08/27）と同じ節を
+  **2つ目の `calc_sections`** に持っていた。2つ目を外し、
+  その節を読んでいた angle の一段を、1つ目の表の中だけで書き直した
+- `test_doc_numbers::test_topics_yamlには掛けない` の2件を、
+  **中身を目で見てから** `REVIEWED_UNBACKED` に足した
+  （どちらも型1 ＝ 表が両端を印字して差を印字しない導出値。
+  aoiro 349,004−279,500=69,504 ／ kouki 850,000−670,000=180,000）
+
+#### **残りの10件は、この回のものではありません**
+
+    test_deadline_check / test_deadline_queue_gain / test_eta_trend_line
+    test_family_order_verdict / test_long_pack_no_zero_day_moves（2件）
+    test_reschedule_move_cap / test_retention_length / test_settle / test_trajectory
+
+`test_long_pack_no_zero_day_moves` の2件は 08/29 13:4x の回が
+**切り分け済みで日誌に残しています**（`--compact` / `long_pack_plan` を
+触っている回が居る）。**こちらは触っていません。**
+
+#### この回の教訓（(a2) 問い2 への追記）
+
+**「自分の変更に関係する検査だけ」を選んで撃つと、この2件は見つかりませんでした。**
+`test_calc_sections_still_hit` も `test_doc_numbers` も、
+**`scripts/topic_forge.py` も `src/dupes.py` も import していません** ——
+見ているのは `config/topics.yaml` の**中身**のほうです。
+**道具を直した回は、道具ではなく「道具が書いた先」を検査する側を探すこと。**
+
+### （追記2）次の回へ
+
+7. **`--new-family` は、いま「投稿ずみの長尺が居る族」も候補に入れる。**
+   節の重なりは塞いだが、**その族から取れるのは残りの節だけ**です。
+   `--per-family` を上げるときは、`assign_new_families` が
+   `pool[m]` を使い切ると黙って少なく返すことに注意
+   （`--count` に足りなければ、その旨を印字します）。
