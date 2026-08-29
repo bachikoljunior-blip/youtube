@@ -67,3 +67,37 @@ def test_台帳の長尺シェアの待ちは尺で絞っている():
     got = [w for w in watches.load() if w.id == "長尺シェア-14本"]
     assert got, "config/watches.yaml の `長尺シェア-14本` が消えています"
     assert got[0].params.get("min_duration_s") == 180
+
+
+# --------------------------------------------------------------- data_ready
+#
+# **「いま 0」は「まだ数えられていない」であって「出ていない」ではありません。**
+# 2026-08-30 07:4x の実測: `長尺シェア-14本` の画面が「いま 0 / 要る 14」で、
+# 控えの実物は**窓の中に 49本**（要る本数の 3.5倍）でした。
+# 差は `data_ready: true` が Analytics の最終日より後の公開を落としたぶんで、
+# その日（08/27）の長尺がちょうど 0本 だったからです。
+# **窓のあいだじゅう「あと14本」と鳴るので、読んだ回は「供給が足りない」と読み、
+# もう 3.5倍 入っている窓へ長尺を積み増す側に効きます。**
+
+
+def test_実データ待ちのぶんを予約表の数として出す(_fake_uploaded, monkeypatch):
+    from datetime import date
+    monkeypatch.setattr(watches, "analytics_last_day", lambda: date(2026, 8, 27))
+    g = watches._k_published_count(dict(BASE, min_duration_s=180, data_ready=True))
+    assert g.now == 0                      # 08/27 までに公開した長尺は 0本
+    assert "予約表では 2本" in (g.note or "")   # L1 L2 は控えに在る
+    assert "まだ実データが来ていない" in (g.note or "")
+
+
+def test_判定の数そのものは動かさない(_fake_uploaded, monkeypatch):
+    """**note は増やすが `now` は増やさない。**
+
+    実データの来ていない本で前提を閉じるほうが危険なので、
+    満ち具合（`met`）の側は 08/27 までで数えたままにする。
+    """
+    from datetime import date
+    monkeypatch.setattr(watches, "analytics_last_day", lambda: date(2026, 8, 29))
+    g = watches._k_published_count(dict(BASE, min_duration_s=180, need=2,
+                                        data_ready=True))
+    assert g.now == 2 and g.met            # L1(08/28) L2(08/29) は実データ側
+    assert "予約表では" not in (g.note or "")  # 削っていない回は出さない
