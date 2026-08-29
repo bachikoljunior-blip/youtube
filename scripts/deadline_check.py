@@ -1617,6 +1617,66 @@ def _ans_after(need: dict, lag: int) -> Answer:
     return _after_tail(need, on, what, lag)
 
 
+_QUEUE_GAIN: dict | None = None
+
+
+def queue_gain() -> dict:
+    """**その判定日は、予約の並び替えだけで手前に倒せないか。**（API 0単位・1回だけ解く）
+
+    ## なぜ要るか（2026-08-29 に実測で見つけた。**2か所が別々に同じ日を言っていた**）
+
+    この道具は `opening_motion` にこう出していました:
+
+        [OK] 10-08  冒頭0.9秒に…
+             対照(動きなし) 予約10本/**8本目 09/30** ＋ 落ち着く 4日 ＋ 遅れ 3日
+             → 判定できるのは **10-07**。**期限 10-08 はその帯の中** ——
+               **書き換えないこと**
+
+    **正しいのですが、「予約の並びは動かせない」を暗に置いています。**
+    同じ日に `scripts/queue_lag.py` はこう出していました:
+
+        opening_motion  期限 10/08  判定 10/07 → **09/07** → **30日 早まる**
+
+    対照は**ちょうど10本**しかなく、`min_per_group` は 8 —— **8本目 ＝
+    後ろから3本目**です。だから後ろの6本を手前の空き枠へ入れ替えるだけで、
+    8本目は 09/30 から 08/31 へ来ます（**新しい本は1本も要りません**）。
+
+    **`[OK]` と「書き換えないこと」を読んだ回は、そこで手を止めます。**
+    片方は「この日まで待つしかない」と読め、もう片方は「30日 手前に倒せる」と
+    言っている —— **同じことを2か所が別々に言っていて、片方しか読まれていない。**
+
+    ## 何を出すか
+
+    **倒せる日数だけ**。手も、撃つかどうかも `queue_lag` の側にあります
+    （枠の門・判定を壊さないかの門・約束の門が、あちらに3つ並んでいます）。
+    **ここでは「待ちは自分で作っている」ことだけを言います。**
+
+    **覆る条件**: `queue_lag` の入れ替えが実物に着かないままなら、この行は
+    「倒せる」と言い続けます。**着いたかどうかは、あちらの `promise_lines` が
+    帳面（`data/queue_lag.jsonl` の `after`）から言います** —— この行を
+    根拠に期限を書き換えないこと。**倒してから書き換えること。**
+    """
+    global _QUEUE_GAIN
+    if _QUEUE_GAIN is not None:
+        return _QUEUE_GAIN
+    _QUEUE_GAIN = {}
+    try:
+        from scripts import queue_lag as QL                    # 遅く読む
+        plan = QL.Plan()
+        before = dict(plan.before)
+        plan.improve()
+        after = plan.readies()
+        for k, b in before.items():
+            a = after.get(k)
+            if b and a and a < b:
+                _QUEUE_GAIN[k] = (b, a, (b - a).days)
+    except Exception:                                          # noqa: BLE001
+        # **落ちても、この道具そのものは止めません。**
+        # 並び替えの話は「もっと早くできる」であって、期限の正しさではない。
+        _QUEUE_GAIN = {}
+    return _QUEUE_GAIN
+
+
 def _ans_group_key(need: dict, as_of: date) -> Answer:
     """**群の床は `src/judgeable.py` に委ねる**（2026-08-25 の合流でこうした）。
 
@@ -1703,9 +1763,22 @@ def _ans_group_key(need: dict, as_of: date) -> Answer:
                       slack=band)
     band = analytics_lag_band()
     tail = (f"（**＋{band}日／−0日** —— 遅れは1日の中で動きますが、**上にしか動きません**。実測 3日 が 381・4日 が 57・**2日 は 0**）" if band else "")
-    return Answer(ready, body + f" ＋ 落ち着く {SJ.SETTLE_DAYS}日 "
-                                f"＋ 遅れ {SJ.ANALYTICS_LAG_DAYS}日{tail}",
-                  slack=band, slack_down=0)
+    body = body + f" ＋ 落ち着く {SJ.SETTLE_DAYS}日 ＋ 遅れ {SJ.ANALYTICS_LAG_DAYS}日{tail}"
+    # **この日は、予約の並びで決まっています**（`queue_gain()` の docstring）。
+    # 並び替えだけで手前に来るなら、そう言うこと —— 言わないと、`[OK]` と
+    # 「帯の中。書き換えないこと」を読んだ回が、**自分で作った待ちの前で止まります。**
+    gain = queue_gain().get(key)
+    if gain:
+        _b, _a, _d = gain
+        body += (f"　[!] **この日は予約の並びで決まっています** —— "
+                 f"`python scripts/queue_lag.py --plan` は、**新しい本を1本も"
+                 f"作らずに {_b:%m/%d} → {_a:%m/%d}（{_d}日 手前）**へ倒せると"
+                 f"言っています（もう予約に在る本の入れ替えだけ）。"
+                 f"**上の『帯の中。書き換えないこと』は期限の話で、"
+                 f"『この日まで待つしかない』ではありません。**"
+                 f" 撃つ・撃たないの門は3つとも `queue_lag` 側にあります"
+                 f"（枠／判定を壊さないか／**前の約束は守られたか**）")
+    return Answer(ready, body, slack=band, slack_down=0)
 
 
 def answer(need: dict, as_of: date, lag: int) -> Answer:
@@ -1973,6 +2046,24 @@ def lines(vs: list[Verdict], lag: int) -> list[str]:
     out.append("")
     out.append(f"  期限が早すぎる **{len(bad)}件** ／ 判定できる日が出せない **{len(unk)}件** "
                f"／ 確かめていない **{len(non)}件** ／ 開いている {len(vs)}件")
+    # **自分で並べた待ちは、まとめの側にも出すこと**（2026-08-29）。
+    #   群の行にだけ書いた版は、**まとめしか読まない回には届きません** ——
+    #   `CLAUDE.md` が「読むのは3行だけ」と言っているのと同じ形で、
+    #   `eta.py` の `[!]` 18件 が「頭と尾だけ読む手順では1本も読まれない」と
+    #   自分で印字しているのと同じ穴です。
+    gains = queue_gain()
+    if gains:
+        tot = sum(g[2] for g in gains.values())
+        top = max(gains.items(), key=lambda kv: kv[1][2])
+        out.append(f"  **予約の並び替えだけで倒せる待ち: {len(gains)}件・合計 {tot}日**"
+                   f"（最大 {top[0]} の **{top[1][2]}日**: "
+                   f"{top[1][0]:%m/%d} → {top[1][1]:%m/%d}）。"
+                   "**新しい本は1本も要りません** —— もう予約に在る本の入れ替えだけ。"
+                   "`python scripts/queue_lag.py --plan`（API 0単位）が手を出し、"
+                   "門を3つ（枠／判定を壊さないか／**前の約束は守られたか**）並べます")
+        out.append("    **これは「期限が遅すぎる」とは別の話です** —— あちらは"
+                   "データが揃っているのに期限が先の件。**こちらはデータがまだ無く、"
+                   "その『まだ無い』をこちらの予約の並びが作っています。**")
     if warm:
         out.append(f"  まだ数えはじめたところ **{len(warm)}件**"
                    "（**直すところはありません。**待てば日が出ます）: "

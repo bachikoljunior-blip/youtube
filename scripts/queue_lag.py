@@ -2047,9 +2047,16 @@ def _last_apply() -> dict | None:
         if not line:
             continue
         try:
-            last = json.loads(line)
+            rec = json.loads(line)
         except ValueError:
             continue
+        # **撃つ手前で返った回は飛ばします**（2026-08-29 に足した `blocked`）。
+        # あれは「なぜ撃たなかったか」の控えで、**約束はしていません** ——
+        # 混ぜると、`stuck_lines` と `promise_lines` の見る相手が
+        # 「前に撃った回」から「前に撃たなかった回」へすり替わります。
+        if rec.get("blocked"):
+            continue
+        last = rec
     return last
 
 
@@ -2103,6 +2110,52 @@ def _note_apply(before: dict, promised: dict, moves: int,
         rec["skipped_public"] = list(skipped)
     with PROGRESS.open("a", encoding="utf-8") as fh:
         fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
+
+
+def _note_blocked(plan: "Plan", why: str) -> None:
+    """**撃つ手前で返った回を残す。**（2026-08-29 に足した）
+
+    ## なぜ要るか —— **帳面に、2日ぶんの穴が空いていました**
+
+    `_note_apply` は `main()` の中で **`apply_moves` の後にしか呼ばれません。**
+    `main()` は手前で3回 返ります（枠／判定を壊す／前の回で動いていない）——
+    **そのどれかで返った回は、帳面に1文字も残りません。**
+
+    実測 2026-08-29: `data/queue_lag.jsonl` は **全4行、全部 08/27**。
+    2日ぶん1行も無く、**「撃たれていない」のか「撃つ手前で返っていた」のかを、
+    帳面からは言えませんでした**（`--apply` は `batch_build` が投稿より先に
+    自動で撃つので、「誰も撃たなかった」は考えにくい ——
+    同じ窓で `videos.update` は 74回 通っています）。
+
+    **これは `after` が無かったのと同じ穴の親戚です** —— 起きたことは
+    残っているのに、**起きなかったことの理由が残っていない。**
+
+    ## 混ぜないこと
+
+    この行は `moves` を持たず `blocked` を持ちます。`_last_apply()` は
+    **`blocked` の行を飛ばします** —— 飛ばさないと、`stuck_lines` と
+    `promise_lines` の見る相手が「前に撃った回」から「前に撃たなかった回」へ
+    すり替わり、**両方の門が黙ります。**
+
+    **覆る条件**: `main()` が「返る」形をやめたら（全部の門が撃ってから
+    判定するようになったら）、この控えは要りません。
+    """
+    import json
+
+    from src import dupes
+
+    if not dupes.may_write_path(PROGRESS):
+        return
+    try:
+        rec = {"at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+               "blocked": why, "before": _stamp(plan.before),
+               "would_promise": _stamp(plan.readies()),
+               "swaps": len(plan.swaps)}
+        PROGRESS.parent.mkdir(parents=True, exist_ok=True)
+        with PROGRESS.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
+    except Exception:                                          # noqa: BLE001
+        pass
 
 
 def stuck_lines(plan: "Plan") -> tuple[list[str], bool]:
@@ -2359,15 +2412,19 @@ def main(argv: list[str] | None = None) -> int:
         ok = True
     print("\n".join(lines))
     if args.apply:
+        # **返った回も帳面に残すこと**（`_note_blocked` に、2日ぶんの穴の実測）。
         if not moving and not args.force_stuck:
+            _note_blocked(plan, "stuck/promise")
             return 1
         if not safe:
             # **`--force-quota` では抜けられません。** あれは日枠の話で、
             # こちらは**判定そのものを壊すか**の話です。
             print("  [!] **撃ちません。**判定に要る本を割ります"
                   "（上の「割らないか」の節）。`--force-quota` では抜けられません")
+            _note_blocked(plan, "live_cost")
             return 1
         if not ok and not args.force_quota:
+            _note_blocked(plan, "quota")
             return 1
         rc = apply_moves(plan)
         # **撃った回は、必ず残すこと**（途中で止まった回も。次の回が
