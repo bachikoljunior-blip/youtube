@@ -441,14 +441,34 @@ def spend_in_window(now: datetime | None = None) -> dict:
     **うち 100回 は同じ呼び出しの二重書き**で、実際に通ったのは 173回 です
     （`dedupe_ok` の註）。**枠が「1万ではない」ように見えていたのは、これです。**
 
-    返り: `{"ok", "videos", "repeats", "hits", "by"}`。
+    返り: `{"ok", "videos", "repeats", "hits", "by", "ops"}`。
     `by` は `<ファイル名>:<関数>` → 回数（`caller_label`。古い行には無いので
     `"(不明)"` に落とします）。
+
+    ## `ops`（2026-08-29 の最適化の回に足した。**「尽きた」と「先に使った」を分ける**）
+
+    `ops` は `<呼び出し名>` → `{"n": 回数, "units": 単位}`。
+    **`by`（誰が）だけでは、`--apply` を止めてよいかが決まりません** ——
+    知りたいのは「**この窓で、入れ替えと同じ通貨（`videos.update`）が
+    いくら通ったか**」のほうだからです。
+
+    実測 2026-08-29（窓 08/28 07:00Z〜）:
+
+        通った `videos.update`  **62回 ＝ 3,100単位**
+        この窓の `--apply`      **0回**（`data/queue_lag.jsonl` に行が無い）
+        その `--apply` の値段   **1,300単位**（26手・`opening_motion` だけで **30日**）
+
+    **3,100 は在ったのに、1,300 の 30日 は撃たれていません。**
+    そのあと 12:37Z に枠が尽き、`queue_lag` は
+    「**撃たないこと。枠は本当に尽きています**」だけを印字しました ——
+    正しいのですが、**その窓に金が無かったのではなく、先に別の所へ
+    撃たれた**ことは1行も言っていません。`_spent_elsewhere_lines` が言います。
     """
     rows = _in_window(DAY_QUOTA_HITS, now)
     ok = dedupe_ok([r for r in rows if r.get("ok")])
     seen: dict[str, int] = {}
     by: dict[str, int] = {}
+    ops: dict[str, dict] = {}
     for r in ok:
         parts = str(r.get("detail") or "").split(" ")
         vid = parts[1] if len(parts) > 1 else ""
@@ -456,12 +476,17 @@ def spend_in_window(now: datetime | None = None) -> dict:
             seen[vid] = seen.get(vid, 0) + 1
         label = str(r.get("by") or "(不明)")
         by[label] = by.get(label, 0) + 1
+        op = parts[0] if parts and parts[0] else "(不明)"
+        slot = ops.setdefault(op, {"n": 0, "units": 0})
+        slot["n"] += 1
+        slot["units"] += unit_cost(r.get("detail"))
     return {"ok": len(ok),
             "videos": len(seen),
             "repeats": sum(n - 1 for n in seen.values()),
             "units": sum(unit_cost(r.get("detail")) for r in ok),
             "hits": len([r for r in rows if not r.get("ok")]),
-            "by": dict(sorted(by.items(), key=lambda kv: -kv[1]))}
+            "by": dict(sorted(by.items(), key=lambda kv: -kv[1])),
+            "ops": dict(sorted(ops.items(), key=lambda kv: -kv[1]["units"]))}
 
 
 #: **呼び出し1回の値段**（YouTube Data API v3 の公表値）。
