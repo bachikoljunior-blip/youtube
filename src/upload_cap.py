@@ -839,6 +839,10 @@ def moves_in_window(video_id: str, now: datetime | None = None) -> int:
     帳面（`data/day_quota.jsonl`）の成功の行だけを数えます。`dedupe_ok` に
     通すのは、**同じ秒の二重書きを1回と数える**ためです（あれを数えると
     枠が 55% 高く見えたのと同じ幻が、ここでは「もう撃った」の側に出ます）。
+
+    **数えるのは `moves_by_video()` ひとつです**（2026-08-29）。それまで
+    ここは同じ数え方を**別に書いて**いて、篩の側（`move_blocked`）とは
+    「たまたま同じ」でした。**片方だけ直せばずれる形**なので、1か所にしました。
     """
     vid = str(video_id or "").strip()
     if not vid:
@@ -860,10 +864,82 @@ def moves_in_window(video_id: str, now: datetime | None = None) -> int:
                 return 0
         except OSError:                                        # noqa: BLE001
             return 0
+    return moves_by_video(now).get(vid, 0)
+
+
+def moves_by_video(now: datetime | None = None) -> dict[str, int]:
+    """**この窓で `videos.update` が通った回数を、本ごとに1回で数える**（API 0単位）。
+
+    ## なぜ要るか（2026-08-29 に測って足した）
+
+    `moves_in_window()` は**1本 数えるたびに帳面を丸ごと読み直します。**
+    1本ずつ聞く側にはそれで足りますが、**組む前に候補を篩う側**
+    （`scripts/queue_lag.Plan._pull`）は 1周で何百回も聞くので、
+    そこから呼ぶと帳面を何百回 読むことになります。**同じ答えを、1回で返します。**
+
+    返りは `video_id → 回数`。**0回 の本は入りません**（呼ぶ側は `.get(v, 0)`）。
+    数え方（成功の行だけ・`dedupe_ok` で同じ秒の二重書きを1回）と、
+    検査の残骸を読まない門は `moves_in_window()` と**同じもの**です ——
+    **片方だけ直すと食い違います。両方 直すこと。**
+    """
+    if os.environ.get("PYTEST_CURRENT_TEST") and not os.environ.get(
+            "YT_QUOTA_LEDGER_WRITE"):
+        try:
+            if Path(_root()).resolve() == _REPO:
+                return {}
+        except OSError:                                        # noqa: BLE001
+            return {}
+    out: dict[str, int] = {}
     rows = [r for r in _in_window(DAY_QUOTA_HITS, now) if r.get("ok")]
-    return sum(1 for r in dedupe_ok(rows)
-               if str(r.get("detail", "")).startswith("videos.update")
-               and str(r.get("detail", "")).split()[-1:] == [vid])
+    for r in dedupe_ok(rows):
+        parts = str(r.get("detail", "")).split()
+        # **`videos.update <vid>` ちょうど 2語 だけ**を数えます。
+        # 印の付いた行（`… <vid> link` / `… <vid> retitle`）は
+        # **予約を動かしていない**ので除きます（`tests/test_move_cap_scope.py`）。
+        #
+        # 除き方を「末尾の1語を見る」でやると、`videos.update b link` が
+        # **`link` という名の本を1回 動かした**と数えられます。前の版が
+        # そうで、`moves_in_window("link")` は 1 を返していました ——
+        # 無害だったのは、動画IDが 11文字 で `link` になり得ないからだけです。
+        # **印が1つ増えるたびに、その幻も1つ増える形**なので、ここで閉じます。
+        if len(parts) != 2 or parts[0] != "videos.update":
+            continue
+        out[parts[1]] = out.get(parts[1], 0) + 1
+    return out
+
+
+def move_blocked(now: datetime | None = None) -> frozenset[str]:
+    """**この窓で、もう動かせない本の集合**（API 0単位・帳面は1回だけ読みます）。
+
+    `move_hold()` が「止めた理由」を返す本と**同じ集合**です。
+    違うのは向きだけ —— あちらは**撃つ直前に1本を止める**門で、
+    こちらは**組む前に候補から外す**ための集合です。
+
+    ## なぜ両方 要るか（2026-08-29 に、3周ぶん 実測して足した）
+
+    `move_hold()` だけだと、**組んでから止まります。**
+    実測（2026-08-29 15:2x・`scripts/queue_lag.py --plan`）:
+
+        入れ替え 10手（20回の `--move`）・**約束 34日**
+        → そのうち **8回 が `move_hold` で止まる**本（**7手 が落ちる**）
+        → `opening_motion` は対照が 8本ちょうどなので
+          （`Plan.potential()` の註「4本を全部 前へ出すまで 1日も縮みません」）、
+          **その 29日 は丸ごと 0日**
+
+    **止めるのは正しい。約束するのが間違いです。** 止まると分かっている手を
+    数に入れた「34日」は、そのまま `--moves` の宣言へ写され、
+    次の回が「外れ」として記録します（`src/levers.reconcile`）。
+    **落ちる手を最初から組まなければ、印字がそのまま実物になります。**
+
+    **`YT_NO_MOVE_CAP=1` / `YT_FORCE_UPDATE` のときは空**です
+    （`move_hold()` と同じ逃げ道。外した回は理由を JOURNAL に）。
+
+    **覆る条件**: `MOVE_CAP` が上がるか、掃きが収束して
+    `moves_in_window` が 2 に張り付かなくなったら、この集合は自然に空になります。
+    """
+    if os.environ.get("YT_NO_MOVE_CAP") or os.environ.get("YT_FORCE_UPDATE"):
+        return frozenset()
+    return frozenset(v for v, n in moves_by_video(now).items() if n >= MOVE_CAP)
 
 
 def move_hold(video_id: str, now: datetime | None = None) -> str | None:

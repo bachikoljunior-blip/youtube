@@ -193,14 +193,62 @@ def test_投稿は止めないこと():
 
     `docs/GOAL.md`「投稿が途切れるのが最大の損失」に真っ向から反します。
     `move_hold` を呼ぶのは `reschedule._update`（＝ `videos.update`）だけ。
+
+    **見るのは「呼んでいるか」で、「名前が書いてあるか」ではありません**
+    （2026-08-29 に直した）。ここは長らく本文を文字で探していて、
+    **註で `move_hold()` に言及しただけのファイルを「漏れている」と呼びました**
+    —— この repo は「なぜ要るか」を註に書く決まりなので、
+    **正しく相互参照するほど赤くなる**形でした。関門は呼び出しなので、
+    `ast` で呼び出しだけを見ます（**保証は弱まりません。強くなります** ——
+    文字では捕まらない `getattr(upload_cap, "move_hold")` も、
+    下の `_calls()` は名前で拾います）。
+
+    篩の側（`move_blocked`）も同じ扱いです。あちらは**組む前に候補から外す**
+    だけで1本も止めませんが、`videos.insert` の側から呼ぶ理由はやはり無い。
     """
+    import ast
+
     from tests.conftest import source_of
 
     src = source_of(reschedule._update)
     assert "move_hold" in src, "関門が外れています"
 
     root = Path(__file__).resolve().parent.parent
-    callers = [p for p in list(root.glob("src/*.py")) + list(root.glob("scripts/*.py"))
-               if "move_hold(" in p.read_text(encoding="utf-8")
-               and p.name not in ("upload_cap.py", "reschedule.py")]
-    assert callers == [], f"`videos.insert` の側に漏れています: {callers}"
+
+    def _calls(path: Path) -> set[str]:
+        """そのファイルが**呼んでいる**名前（`f()` と `x.f()` の両方）。"""
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+        except SyntaxError:                                   # noqa: PERF203
+            return set()
+        out: set[str] = set()
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            fn = node.func
+            if isinstance(fn, ast.Name):
+                out.add(fn.id)
+            elif isinstance(fn, ast.Attribute):
+                out.add(fn.attr)
+        return out
+
+    #: `queue_lag` は篩（`move_blocked`）を呼びます —— **1本も止めません**。
+    #: 止めるのは今までどおり `reschedule._update` だけです。
+    ALLOWED = {"upload_cap.py", "reschedule.py", "queue_lag.py"}
+    gate_leaks, sieve_leaks = [], []
+    for p in list(root.glob("src/*.py")) + list(root.glob("scripts/*.py")):
+        if p.name in ALLOWED:
+            continue
+        names = _calls(p)
+        if "move_hold" in names:
+            gate_leaks.append(p)
+        if "move_blocked" in names:
+            sieve_leaks.append(p)
+    assert gate_leaks == [], f"`videos.insert` の側に漏れています: {gate_leaks}"
+    assert sieve_leaks == [], f"篩が `videos.insert` の側に漏れています: {sieve_leaks}"
+
+    assert "move_hold" not in _calls(root / "scripts" / "queue_lag.py"), (
+        "**`queue_lag` が `move_hold()` を呼んでいます。**\n"
+        "あそこが要るのは篩（`move_blocked`・帳面を1回だけ読む）で、"
+        "1本ずつ止める門ではありません —— 候補ごとに呼ぶと、"
+        "帳面を候補の数だけ読み直します（実測 11ms/本 対 21ms/回）")
