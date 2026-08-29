@@ -265,6 +265,41 @@ def test_note_apply_records_the_reread(tmp_path, monkeypatch) -> None:
     assert rec["after"] == rec["before"] != rec["promised"]
 
 
+def test_note_apply_records_attempted_and_stopped(tmp_path, monkeypatch) -> None:
+    """**「組んだ手の数」と「なぜ降りたか」が帳面に入ること**（2026-08-29）。
+
+    読む側（`promise_lines`）は別の検査で押さえてありますが、
+    **書く側が落ちたら、読む側は静かに「材料が無い」へ落ちます** ——
+    そのとき出るのは「どちらとも決めません」で、**赤くはなりません。**
+    だから書く側をここで押さえます。
+
+    実測（08:41Z）がこの形でした: 18手 を組んで 0手 が当たり、
+    落ちたのは日枠。**`moves` だけでは、この3つのどれとも区別できません。**
+    """
+    path = tmp_path / "queue_lag.jsonl"
+    monkeypatch.setattr(queue_lag, "PROGRESS", path)
+    from src import dupes
+    monkeypatch.setattr(dupes, "may_write_path", lambda _p: True)
+    queue_lag._note_apply({"a": date(2026, 10, 6)}, {"a": date(2026, 9, 7)}, 0,
+                          None, {"a": date(2026, 10, 6)},
+                          attempted=18, failed=["vidQ"], stopped="quota")
+    rec = json.loads(path.read_text(encoding="utf-8").splitlines()[-1])
+    assert rec["attempted"] == 18, (
+        "**組んだ手の数が帳面に入っていません。** これが無いと"
+        "「一部だけ当たった」を「きょうだいに戻された」と読みます")
+    assert rec["stopped"] == "quota", (
+        "**降りた理由が帳面に入っていません。** これが無いと"
+        "「今日はもう撃てない」を「この手は当たらない」と読みます")
+    assert rec["failed"] == ["vidQ"]
+
+    # **普通に終わった回に、余計な欄を足さないこと**（`stopped` は理由がある回だけ）
+    queue_lag._note_apply({"a": date(2026, 10, 6)}, {"a": date(2026, 9, 7)}, 4,
+                          None, {"a": date(2026, 9, 7)}, attempted=4)
+    rec2 = json.loads(path.read_text(encoding="utf-8").splitlines()[-1])
+    assert "stopped" not in rec2 and "failed" not in rec2
+    assert rec2["attempted"] == 4
+
+
 # ---- 撃つ手前で返った回（`blocked`）----------------------------------------
 #
 # 2026-08-29 の実測: `data/queue_lag.jsonl` は **全4行、全部 08/27**。
