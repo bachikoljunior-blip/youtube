@@ -4835,7 +4835,8 @@ def instrument_ages(now: datetime | None = None) -> list[str]:
 
 def headline(pl: dict, prev: dict | None = None,
              tr: dict | None = None,
-             points: list[dict] | None = None) -> list[str]:
+             points: list[dict] | None = None,
+             *, now: datetime | None = None) -> list[str]:
     """**この回のいちばん最初と、いちばん最後に出す3行。**
 
     ## なぜ2回出すか（2026-08-20 08:0x・オーナー指示3回目）
@@ -5131,7 +5132,14 @@ def headline(pl: dict, prev: dict | None = None,
     # **同じ台帳を 7日 足すと +33日** です（`traj_trend()` の docstring に実測）。
     # 1周ごとの差は −9〜+15日 で振れるので、**向きは1歩では出ません。**
     # そして頭と尾しか読まれない以上、ここに出さないと誰も足しません。
-    tre = traj_trend(points or [], cur_date if key == "traj_date" else None)
+    # **`now` を渡すこと**（2026-08-29 に踏んだ）。渡さないと `traj_trend` は
+    # 実時刻を読むので、**検査は壁時計が進んだ日に、黙って赤くなります** ——
+    # `tests/test_eta_trend_line.py::test_累計の行が読まれる3行に出る` は
+    # 08/28 に書かれ、08/29 に落ちました（点は 08/28 基準・窓は 7日）。
+    # **中身は何も壊れていないのに、恒久的に赤い検査が1つ増える形**です
+    # （`docs/JOURNAL.md` 2026-08-28 06:3x「恒久的に赤い検査を1つ置くと、
+    #   同じファイルの本物の警報が読まれなくなります」）。
+    tre = traj_trend(points or [], cur_date if key == "traj_date" else None, now=now)
     if tre and abs(tre["delta"]) >= 1:
         d = tre["delta"]
         mk = "**遠のきました**" if d > 0 else "**早まりました**"
