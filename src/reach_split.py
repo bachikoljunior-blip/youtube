@@ -237,6 +237,34 @@ def long_ids(pairs_path: Path | None = None,
     return out
 
 
+def _ledger_by_id(ledger_path: Path | None = None) -> dict[str, dict]:
+    """`video_id` → 控えの行。**同じIDが複数行にあるときは後の行が勝ちます。**
+
+    `data/uploaded.jsonl` は追記だけの帳面で、`scripts/reschedule.py` が
+    予約を動かすと**同じ本が別の `at` でもう1行**入ります。だから
+    「いま何日に何本 置いてあるか」を数える側は、**行ではなく id で**数えます
+    （規則の出どころは `src/day_cap._long_by_duration()`「後の行が勝ちます」）。
+
+    **数え直しの実測は `publishes_per_day()` の節**にあります。
+    """
+    out: dict[str, dict] = {}
+    p = ledger_path or LEDGER
+    if not p.exists():
+        return out
+    for line in p.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        vid = row.get("video_id")
+        if vid:
+            out[str(vid)] = row
+    return out
+
+
 def publishes_per_day(longs: set[str] | None = None,
                       ledger_path: Path | None = None) -> dict[str, int]:
     """**その日に公開した長尺の本数**（`YYYYMMDD` → 本数）。
@@ -268,22 +296,46 @@ def publishes_per_day(longs: set[str] | None = None,
     **控えの `at`（予約時刻）から数えます。** `at` の無い本（2026-08-16 より前に
     公開したぶん）は数えられないので、**古い窓では本数が下振れします** ——
     直近の窓（`RECENT_DAYS`）でだけ使うこと。
+
+    ## **1行 ＝ 1本ではありません**（2026-08-30・最適化の回。**実測で見つけた**）
+
+    ここは長らく `out[day] += 1` を**行ごと**に撃っていました。
+    `data/uploaded.jsonl` は**追記だけの帳面**なので、同じ `video_id` が
+    何度も出ます —— 実測（この回に数えた・全 798行）:
+
+        distinct `video_id`   **683**（＝ 余分な行 **115**）
+        同じ行がそのまま2回以上   **81行**
+        `at` の違う行を持つ id     **34件**（`reschedule.py` で動かした本）
+
+    後者が効きます。**予約を動かした本は、古い日と新しい日の両方で数えられます。**
+    実測（この回・`publishes_per_day()` の返りをそのまま比べた）:
+
+        これから7日     行で数える **8.43本/日**  ／  id で数える **4.29本/日**（**1.97倍**）
+        全部の日        行で数える   191本      ／  id で数える   122本（**1.57倍**）
+        いちばん外れた日 20260906  行 **14** ／ 実際 **3**（**4.7倍**）
+
+    **この関数の返りは2か所へ入ります。**`surface_forecast()` が
+    「これから先の面 ＝ 公開1本あたり × 本数/日」で**掛け**、
+    `summary()` 側の `per_publish` は「面 ÷ 本数」で**割り**ます。
+    だから `scripts/eta.py` の段2 に出ていた
+    「公開1本あたり 274.8回 × 長尺 **7.86本/日** ＝ 面 2,159回/日」は、
+    **分子が約2倍、1本あたりが約1.6分の1**でした。
+
+    **同じ帳面の他の読み手は、もうこの規則で読んでいます** ——
+    `src/day_cap._long_by_duration()`「**後の行が勝ちます**」／
+    `src/build_perf.ledger()`／`src/judgeable._publish_by_topic`／
+    `scripts/deadline_check.py`。**ここだけ合流していませんでした**
+    （`day_cap` が 2026-08-30 に合流したのと同じ形の、1つ隣）。
+
+    **覆る条件**: 控えが「1行 ＝ 1本」になったら（追記をやめて上書きにしたら、
+    または `video_id` の無い行を数える必要が出たら）、この節ごと畳むこと。
+    検査は `tests/test_publishes_per_day_dedup.py`。
     """
     longs = long_ids() if longs is None else longs
-    p = ledger_path or LEDGER
     out: dict[str, int] = {}
-    if not p.exists():
-        return out
-    for line in p.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            row = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        vid, at = row.get("video_id"), row.get("at")
-        if not vid or not at or str(vid) not in longs:
+    for vid, row in _ledger_by_id(ledger_path).items():
+        at = row.get("at")
+        if not at or vid not in longs:
             continue
         day = str(at)[:10].replace("-", "")
         out[day] = out.get(day, 0) + 1
@@ -531,19 +583,18 @@ def last_scheduled_day(ledger_path: Path | None = None) -> str | None:
     形は問いません（長尺でもショートでも）。ここが要るのは
     「**予定表がどこまで続いているか**」だけで、その先の空白は
     「長尺を置いていない日」ではなく「まだ何も置いていない日」だからです。
+
+    **`max` を取るので、動かした本の古い予約が末尾に化けます**
+    （2026-08-30 に直した）。`reschedule.py` が本を前へ動かすと、控えには
+    古い `at` の行が残ります。行ごとに `max` を取ると、**もう誰も居ない日**が
+    「予約の先」になります —— 実測（この回）: 行で取ると **20261012**、
+    id で取ると **20261009**（**3日 長く見えていた**）。
+    予約が切れる日を早めに鳴らす側の数字なので、**長く見える向きが危ないほう**です。
+
+    **覆る条件**: `publishes_per_day()` と同じ（控えが追記でなくなったら畳む）。
     """
-    p = ledger_path or LEDGER
-    if not p.exists():
-        return None
     best: str | None = None
-    for line in p.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            row = json.loads(line)
-        except json.JSONDecodeError:
-            continue
+    for row in _ledger_by_id(ledger_path).values():
         at = row.get("at")
         if not at:
             continue
