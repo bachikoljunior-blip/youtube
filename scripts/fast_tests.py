@@ -42,6 +42,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -65,12 +66,82 @@ def _run(args: list[str]) -> str:
         return ""
 
 
+#: 走った印の帳面。**この回がいつ始まったか**がここにしかありません。
+RUNS = ROOT / "data" / "runs.jsonl"
+
+
+def round_start() -> str:
+    """**この回が始まった時刻**（`data/runs.jsonl` の `kind="start"`）。無ければ空。
+
+    ## なぜ `origin` では足りないのか（2026-08-29 に実測で踏んだ）
+
+    `DEFAULT_BASE` は幹（`origin/claude/...`）です。ところが**サブに渡される本文は
+    「節目ごとに commit して push すること。最後にまとめないこと」を要求します**
+    （`docs/spawn_prompt.md`。親のコンテナが畳まれるとサブも道連れになるため、
+    押さなければその回の成果はどこにも残りません）。
+
+    **この2つは正面から食い違います** —— 押した瞬間に、その変更は幹に入ります。
+    だから `git diff origin/<幹>` は**指示どおりに働いた回ほど空になります。**
+
+    実測 2026-08-29（4件 ship した回・`scripts/batch_build.py` ほか5ファイルを変更）:
+
+        [fast_tests] この回が触った .py: 0件（無し）
+        [fast_tests] -k: arm_speed or drift or eta or levers
+        494 passed in 561.55s
+
+    **9分21秒 かけて 494件 緑を出し、その回の変更を1件も見ていません。**
+    しかも印字は緑なので、**撃たないより悪い**（撃った気になれる）。
+    この道具の docstring が言う「16分 かかるから誰も撃たない、が赤を何日も残した
+    原因」の、次の形がこれです。
+
+    **警告の文は出ていました** —— ただし「`--base` が正しいか見ること」で、
+    **「指示どおり押した回は必ずこうなる」とは書いていません。**
+    読む側は自分の設定を疑い、道具の作りのほうは疑いません。
+
+    ## だから、幹ではなく**この回の始まり**に錨を打ちます
+
+    `scripts/run_marker.py --write` が周の頭で
+    `{"at": ..., "session": "...#agent-<札>", "kind": "start"}` を積んでいます。
+    **押しても動かない錨は、いまここにしかありません。**
+
+    **覆る条件**: 印を打たない回（親・オーナーとの会話）では空が返り、
+    そのときは今までどおり幹との diff だけになります。**それで正しい** ——
+    印が無い回は「周ではない」と決めてあります（`run_marker.worktree_tag()`）。
+    """
+    sys.path.insert(0, str(ROOT / "scripts"))
+    try:
+        from run_marker import worktree_tag                    # noqa: PLC0415
+        tag = worktree_tag()
+    except Exception:                                          # noqa: BLE001
+        tag = ""
+    if not tag or not RUNS.exists():
+        return ""
+    at = ""
+    for line in RUNS.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        try:
+            row = json.loads(line)
+        except ValueError:
+            continue
+        if row.get("kind") == "start" and tag in str(row.get("session", "")):
+            at = str(row.get("at") or "")
+    return at
+
+
 def changed_files(base: str) -> list[str]:
     """**この回が触ったファイル。** 積んだぶんも、まだ積んでいないぶんも。"""
     out: set[str] = set()
-    for args in (["git", "diff", "--name-only", base, "--"],
-                 ["git", "diff", "--name-only", "--"],
-                 ["git", "diff", "--name-only", "--cached", "--"],
+    since = round_start()
+    sources = [["git", "diff", "--name-only", base, "--"],
+               ["git", "diff", "--name-only", "--"],
+               ["git", "diff", "--name-only", "--cached", "--"]]
+    if since:
+        # **押したぶんは幹との diff から消えます**（`round_start()` の docstring）。
+        # この回の頭から後の commit を、名前だけ拾い直します。
+        sources.append(["git", "log", f"--since={since}", "--name-only",
+                        "--pretty=format:", "HEAD"])
+    for args in (*sources,
                  # **まだ git に入っていない新しいファイルも触った所です。**
                  #     `git diff` はこれを1件も出しません —— **新しく足した
                  #     `src/*.py` と、その検査が丸ごと落ちます**（この道具自身が
@@ -123,8 +194,15 @@ def main(argv: list[str] | None = None) -> int:
     print(f"[fast_tests] -k: {' or '.join(picked)}")
     if not words:
         print("[fast_tests] **触ったファイルが1つも見つかりません。**"
-              f" `--base {args.base}` が正しいか見ること —— "
-              "見つからないときは芯だけを撃ちます（**この回の変更は見ていません**）")
+              " 芯だけを撃ちます ——"
+              " **この回の変更は1件も見ていません。緑が出ても、それは緑ではありません。**")
+        if not round_start():
+            print("[fast_tests] 走った印がありません（`python scripts/run_marker.py"
+                  " --write` を周の頭で撃つこと）。**印が無いと、押したぶんが"
+                  f"幹（`{args.base}`）に入った時点で見えなくなります** ——"
+                  " 手順は「節目ごとに push」を要求するので、"
+                  "**指示どおり働いた回ほどここが 0件 になります**"
+                  "（`round_start()` の docstring に実測）。")
     if args.list:
         return 0
 
