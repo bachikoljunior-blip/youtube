@@ -328,7 +328,8 @@ def _posted_including_ledger() -> set[str]:
     return posted | extra
 
 
-def _drop_doomed(usable: list[dict], pool: list[dict]) -> list[dict]:
+def _drop_doomed(usable: list[dict], pool: list[dict],
+                 posted: set[str] | None = None) -> list[dict]:
     """**投稿の門が必ず止めるテーマを、作る前に外す**（2026-08-17 に足した）。
 
     `s-menjo-hangaku-10200` は3回続けて申し送りに出ています ——
@@ -403,6 +404,43 @@ def _drop_doomed(usable: list[dict], pool: list[dict]) -> list[dict]:
               "いちばん多い（`tests/test_calc_sections_still_hit.py`）。"
               " 直すのは `config/topics.yaml` の `calc_sections` のほうです"
               "（**短くて動かない語に**）。")
+    # **公開済みの本と、図の棒がまるごと重なるテーマも落ちます**（2026-08-30 に足した）。
+    #
+    #     `_bars_clash` は長らく**この回に選んだ2本どうし**にしか当たっておらず
+    #     （`pick()` の下の `chosen` の輪）、**公開済みとの突き合わせがありませんでした。**
+    #     `script_writer` は `used_bars()` で公開済みの棒を読み、重なると
+    #     **台本の時点で `RuntimeError`** を投げます ——`dupes` の門と同じ
+    #     「作る前に分かる死」なのに、選ぶ側からは見えていませんでした。
+    #
+    #     **実測（2026-08-30 04:5x）**: `nenkin-minimax-69sai7kagetsu` は
+    #     公開済みの `nenkin-saidai-torikoboshi-69-7` と、節に出る4桁以上の数が
+    #     **17個ぜんぶ同じ**（Jaccard **1.00**）。**同じ節を指しています。**
+    #     このテーマは 08/29 23:2x・08/30 03:33 の2回・04:2x と
+    #     **4回 続けて同じ理由で落ち**、そのつど長尺の生成 13〜19分 を捨てています。
+    #     `_drop_doomed` の `dupes.blocking` は種（`title_seed`）しか見ないので
+    #     当たりません（この節の上の docstring）。
+    #
+    #     **`posted` を渡さない回では何もしません**（既定 `None`）——
+    #     突き合わせる相手が無いだけで、門が緩むわけではありません。
+    #     **覆る条件**: `used_bars()` が公開済みを読むのをやめたら（`build/` だけに
+    #     戻ったら）、これは死ではなくなるので外すこと。
+    #     検査は `tests/test_drop_doomed_published_bars.py`。
+    if posted:
+        by_calc: dict[str, list[dict]] = {}
+        for t in pool:
+            if t["id"] in posted and t.get("calc"):
+                by_calc.setdefault(t["calc"], []).append(t)
+        keep2 = []
+        for t in kept:
+            hit = next((p for p in by_calc.get(t.get("calc") or "", [])
+                        if p["id"] != t["id"] and _bars_clash(t, p)), None)
+            if hit is None:
+                keep2.append(t)
+            else:
+                dropped.append((t["id"],
+                                f"公開済みの {hit['id']} と節の数がまるごと重なる"
+                                f"（`script_writer.used_bars` が台本の時点で止めます）"))
+        kept = keep2
     for tid, why in dropped:
         print(f"[pick] **門が必ず止めるので外します**: {tid} — {why}")
     return kept
@@ -749,7 +787,7 @@ def pick(count: int, explicit: list[str], per_calc: int = DEFAULT_PER_CALC,
         if (ROOT / "build").is_dir() else set()
     usable = [t for t in pool if t["id"] not in posted and t["id"] not in built
               and t.get("calc")]
-    usable = _drop_doomed(usable, pool)
+    usable = _drop_doomed(usable, pool, posted)
     usable = _drop_queue_tail_calcs(usable, pool, land=land)
 
     # **長尺は、長尺向けに書かれた題からしか取らない**（上の docstring）。
