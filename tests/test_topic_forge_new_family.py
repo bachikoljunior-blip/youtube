@@ -165,3 +165,52 @@ def test_実物の族でも1件は返る():
     from src import section_depth
     have = section_depth.long_form_families() or set()
     assert not ({m for m, _ in got} & have), (got, sorted(have))
+
+
+def test_着地の窓に居る族は後ろへ回す():
+    """**族を増やしても、着地の窓に既に居る族なら候補は1件も増えません。**
+
+    実測 2026-08-29（`--count 10 --new-family`）: 書けた新しい族 9件 のうち
+    **5件**（kokuho furusato zangyo shitsugyo jidou）が
+    `_drop_queue_tail_calcs` の窓に既に居て、
+    `pick(12, long_form=True)` の候補は **2 → 6件（+4）** ——
+    **増えたのは、窓の外だった 4族 のぶんだけ**でした。
+
+    ここが守るのは2つ:
+
+        1. 窓の外の族が先に出ること（**実績の順より先**）
+        2. **落とさないこと** —— 窓の中の族しか残っていない回に
+           「割り当てられる節がありません」で止まると、族はもう増やせません
+    """
+    all_sections = {
+        "aaa": {"=== A ===": "a"},
+        "bbb": {"=== B ===": "b"},
+        "ccc": {"=== C ===": "c"},
+    }
+    free = {m: list(v) for m, v in all_sections.items()}
+
+    got = forge.assign_new_families(all_sections, free, 2,
+                                    long_families=set(),
+                                    blocked={"aaa", "bbb"})
+    assert [m for m, _ in got][0] == "ccc", got
+
+    only_blocked = forge.assign_new_families(
+        all_sections, free, 3, long_families=set(),
+        blocked={"aaa", "bbb", "ccc"})
+    assert len(only_blocked) == 3, only_blocked
+
+
+def test_窓が読めない置き方でも族は増やせる(monkeypatch):
+    """`landing_blocked_calcs()` が落ちても、族の割り当ては続くこと。
+
+    ここで例外を上げると**族が1つも増えなくなる**（＝ 長尺の律速が固定される）。
+    """
+    def _boom(*a, **k):
+        raise RuntimeError("窓が読めない")
+
+    monkeypatch.setattr(forge, "landing_blocked_calcs", _boom)
+    all_sections = {"aaa": {"=== A ===": "a"}}
+    free = {"aaa": ["=== A ==="]}
+    got = forge.assign_new_families(all_sections, free, 1,
+                                    long_families=set(), blocked=set())
+    assert got == [("aaa", "=== A ===")], got

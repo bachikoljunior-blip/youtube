@@ -291,11 +291,55 @@ def assign(free: dict[str, list[str]], count: int) -> list[tuple[str, str]]:
     return picked
 
 
+def landing_blocked_calcs(count: int = 8) -> set[str]:
+    """**次に `--long` を撃つ回が、着地の前後7日で避ける calc。**
+
+    ## なぜ要るか（2026-08-29 23:xx に測って足した）
+
+    `assign_new_families` は「まだ長尺のテーマを1件も持っていない族」から
+    取ります。**それは『族が増える』ことしか見ていません。**
+    ところが `batch_build.pick()` は、その族の題を選ぶときに
+    **`_drop_queue_tail_calcs` で「着地の前後 7日 の長尺に出ている calc」を
+    丸ごと落とします** —— つまり**その窓に既に居る族へ書いても、
+    次の回の候補は1件も増えません。**
+
+    実測（この関数を書いた回・`--count 10 --new-family`）:
+
+        書けた新しい族            9件
+        うち着地の窓に既に居た族  **5件**（kokuho furusato zangyo shitsugyo jidou）
+        → `pick(12, long_form=True)` の候補   2 → **6件**（**+4** ＝ 残りの4族）
+
+    **9件 書いて、その回に効いたのは 4件 でした。**
+    窓に居た5件は無駄ではありません（窓は動くので、あとの回で効きます）が、
+    **同じ手間で 9件 効かせられたのに 4件 だった**、というのが値札です。
+
+    **落とさずに、後ろへ回すだけ**にします —— 窓の中の族しか残っていない回に
+    「割り当てられる節がありません」で止まると、**族はもう増やせません。**
+
+    **覆る条件**: `QUEUE_TAIL_DAYS` が 0 になる（同じ calc の連続を許す）か、
+    `--per-calc` が族あたりの上限を外したら、この並べ替えは要りません。
+    `batch_build._queue_tail_calcs` が読めない置き方（検査など）では
+    **空を返して黙ります** —— ここで落ちると族が1つも増えなくなります。
+    検査は `tests/test_topic_forge_new_family.py`。
+    """
+    try:
+        import batch_build                                     # noqa: PLC0415
+        pool = config.load_topics()["topics"]
+        plan = batch_build.long_plan(count, batch_build._long_ring())
+        land = min(d for _, d in plan) if plan else None
+        return set(batch_build._queue_tail_calcs(pool, land=land))
+    except Exception as exc:                                   # noqa: BLE001
+        print(f"[forge] 着地の窓が読めないので、族の並べ替えはしません: "
+              f"{str(exc)[:120]}")
+        return set()
+
+
 def assign_new_families(all_sections: dict[str, dict[str, str]],
                         free: dict[str, list[str]],
                         count: int,
                         long_families: set[str] | None = None,
-                        per_family: int = 1) -> list[tuple[str, str]]:
+                        per_family: int = 1,
+                        blocked: set[str] | None = None) -> list[tuple[str, str]]:
     """**道 (3) を、機械が撃てる形にする。**（2026-08-29 に足した）
 
     `print_long_stock()` は 2026-08-29 15:5x から3つの道を印字していますが、
@@ -345,13 +389,26 @@ def assign_new_families(all_sections: dict[str, dict[str, str]],
     have = set(long_families or ())
 
     fresh = [m for m in all_sections if m not in have and all_sections[m]]
+    # **着地の窓に既に居る族は、後ろへ回す**（`landing_blocked_calcs` の註）。
+    # そこへ書いても、次の `--long` の回の候補は1件も増えません。
+    # **落としません** —— 窓の中の族しか残っていない回に止まると、
+    # 族はもう増やせなくなります。
+    if blocked is None:
+        blocked = landing_blocked_calcs()
+    blocked = set(blocked or ())
     try:
         from src import family_perf
         score = family_perf.scorer()
-        order = sorted(fresh, key=lambda m: (-score(m), m))
+        order = sorted(fresh, key=lambda m: (m in blocked, -score(m), m))
     except Exception as exc:                                   # noqa: BLE001
         print(f"[forge] 族べつの実績が読めないので名前順に落とします: {exc}")
-        order = sorted(fresh)
+        order = sorted(fresh, key=lambda m: (m in blocked, m))
+    held = [m for m in fresh if m in blocked]
+    if held:
+        print(f"[forge] 着地の窓に既に居る族 {len(held)}件 を後ろへ回しました"
+              f"（そこへ書いても、次の `--long` の候補は増えません）: "
+              f"{', '.join(sorted(held)[:12])}"
+              f"{' …' if len(held) > 12 else ''}")
 
     # **長尺が既に指している節は、published でも外すこと**（2026-08-29 に踏んだ）。
     #
