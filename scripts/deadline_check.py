@@ -2439,6 +2439,55 @@ def extend(path: Path | None = None, as_of: date | None = None,
     return _rewrite("slips", path=path, as_of=as_of, lag=lag, dry_run=dry_run)
 
 
+def _print_starved_floors() -> None:
+    """**題材の接頭辞で決まる床に、あと何本 足りないか**を一覧で出す（API 0単位）。
+
+    ## なぜここか（2026-08-29 12:0x の申し送りの3番。原文）
+
+    > 開いた前提の「床にあと何本 足りないか」を、一覧で出す道具が要ります。
+    > いまは `status.py` の `pick()` が**副産物として1件だけ**出すので、
+    > **在庫の節を読んだ回しか気づけません。** この回の `s-ribo-` は
+    > 公開 0本 / 床 8本 で、気づかなければ 09-19 に「外れ」と出ていました。
+    > **`deadline_check.py` の隣（同じ `needs` を読む）が置き場所として近い。**
+
+    **物は既に在りました** —— `src/floor_topics.lines()` は最初から全行を返し、
+    その docstring も「**`batch_build` と `deadline_check` が同じ字を出すため**」と
+    書いています。ところが `deadline_check` 側からは**一度も呼ばれておらず**、
+    `batch_build` は `lines([r])[0]`（**1件だけ**）で呼んでいました。
+    **足りなかったのは道具ではなく、呼び口です。**
+
+    ## なぜ `check()` の中に入れないか
+
+    上の一覧は**期限の妥当性**（データが期限までに揃うか）を見ています。
+    こちらは「**その本を誰かが作るか**」で、`falsified_if` の外の話です ——
+    混ぜると `--shrink` / `--extend` が、作られていない床を理由に期限を動かします。
+    **印字だけ隣に並べて、書き戻しには一切 触れません。**
+
+    ## 覆る条件
+
+    `pick()` が床を全件ぶん先頭へ寄せるようになったら（いまは1件だけ）、
+    この印字は「まだ埋まっていない床の確認」に縮みます。
+    """
+    try:
+        from src import floor_topics                            # noqa: PLC0415
+        rows = floor_topics.starved()
+    except Exception as exc:                                    # noqa: BLE001
+        print(f"\n  **題材の床が読めませんでした**: {str(exc)[:120]}")
+        return
+    print("\n=== 題材の接頭辞で決まる床（**作る側が動かないかぎり埋まりません**）===")
+    if not rows:
+        print("  **足りない床はありません。**"
+              " 開いている前提のうち、題材の接頭辞で数えているものは全部 足りています")
+        return
+    for line in floor_topics.lines(rows):
+        print(f"  {line}")
+    print("  **上の一覧（期限）とは別の話です** —— あちらは「期限までにデータが揃うか」、"
+          "ここは「**その本を誰かが作るか**」。"
+          " 埋める手は `python scripts/batch_build.py --topics <id1>,<id2>,…`"
+          "（**`--count` では届きません** —— 床の題は定義上ぜんぶ同じ族なので、"
+          "既定の `--per-calc 2` が2本で切ります。`docs/trigger_main.md` §4 の 5）。")
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--as-of", help="この日に判定するつもりで解く（YYYY-MM-DD）")
@@ -2504,6 +2553,7 @@ def main(argv: list[str] | None = None) -> int:
     # 純粋な関数の中で書くと、控えは「この機械が何回 撃たれたか」を数えます。
     record_estimates(vs, as_of=as_of)
     print("\n".join(lines(vs, lag)))
+    _print_starved_floors()
     return 0
 
 
