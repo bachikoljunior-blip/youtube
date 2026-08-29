@@ -1,4 +1,4 @@
-"""**前の `--apply` の約束が守られていないなら、同じ約束をもう一度 撃たない。**
+"""**前の `--apply` の約束は守られたか。守られていない理由まで言えたときだけ止める。**
 
 `stuck_lines` は「前の回の `before` と、いまの `before` が同じか」を見ます。
 **この帯にはきょうだい（主実行）が毎周 本を足す**ので、判定日は勝手に
@@ -44,11 +44,15 @@ def ledger(tmp_path, monkeypatch):
     return path
 
 
-def _row(before: dict, promised: dict, moves: int = 20) -> str:
-    return json.dumps({"at": "2026-08-27T07:43:36+00:00",
-                       "before": queue_lag._stamp(before),
-                       "promised": queue_lag._stamp(promised),
-                       "moves": moves}, ensure_ascii=False)
+def _row(before: dict, promised: dict, moves: int = 20,
+         after: dict | None = None) -> str:
+    rec = {"at": "2026-08-27T07:43:36+00:00",
+           "before": queue_lag._stamp(before),
+           "promised": queue_lag._stamp(promised),
+           "moves": moves}
+    if after is not None:
+        rec["after"] = queue_lag._stamp(after)
+    return json.dumps(rec, ensure_ascii=False)
 
 
 def test_no_ledger_means_go(ledger) -> None:
@@ -65,34 +69,72 @@ def test_promise_kept_means_go(ledger) -> None:
     assert ok is True and lines == []
 
 
-def test_the_2026_08_29_case_is_refused(ledger) -> None:
-    """**実測そのもの。** 約束 09-07 ／ 実物 10-07 ／ この回もまた 09-07。"""
-    before = {"title_form": date(2026, 9, 6), "stat_split": date(2026, 9, 5),
-              "hook_form": date(2026, 9, 10), "opening_motion": date(2026, 10, 6)}
-    promised = {"title_form": date(2026, 9, 6), "stat_split": date(2026, 9, 5),
-                "hook_form": date(2026, 9, 7), "opening_motion": date(2026, 9, 7)}
-    ledger.write_text(_row(before, promised) + "\n", encoding="utf-8")
-    now = {"title_form": date(2026, 9, 6), "stat_split": date(2026, 9, 6),
-           "hook_form": date(2026, 9, 9), "opening_motion": date(2026, 10, 7)}
-    again = {"title_form": date(2026, 9, 6), "stat_split": date(2026, 9, 6),
+_BEFORE = {"title_form": date(2026, 9, 6), "stat_split": date(2026, 9, 5),
+           "hook_form": date(2026, 9, 10), "opening_motion": date(2026, 10, 6)}
+_PROMISED = {"title_form": date(2026, 9, 6), "stat_split": date(2026, 9, 5),
              "hook_form": date(2026, 9, 7), "opening_motion": date(2026, 9, 7)}
-    lines, ok = queue_lag.promise_lines(_Plan(now, again))
-    assert ok is False
+_NOW = {"title_form": date(2026, 9, 6), "stat_split": date(2026, 9, 6),
+        "hook_form": date(2026, 9, 9), "opening_motion": date(2026, 10, 7)}
+_AGAIN = {"title_form": date(2026, 9, 6), "stat_split": date(2026, 9, 6),
+          "hook_form": date(2026, 9, 7), "opening_motion": date(2026, 9, 7)}
+
+
+def test_the_2026_08_29_case_is_reported(ledger) -> None:
+    """**実測そのもの。** 約束 09-07 ／ 実物 10-07 ／ この回もまた 09-07。
+
+    そして `stuck_lines` はこの回 何も言いません（`before` がずれているため）。
+    **この検査がこの門の存在理由**です —— 落ちたら、片方だけで足りる形に
+    なったということなので、そのときは両方を読み直すこと。
+    """
+    ledger.write_text(_row(_BEFORE, _PROMISED) + "\n", encoding="utf-8")
+    lines, _ok = queue_lag.promise_lines(_Plan(_NOW, _AGAIN))
     assert any("約束は、守られていません" in x for x in lines)
     assert any("+30日" in x for x in lines)          # opening_motion
     assert any("遅れの合計 **33日**" in x for x in lines)
+
+    slines, moving = queue_lag.stuck_lines(_Plan(_NOW, _AGAIN))
+    assert moving is True and slines == []
+
+
+def test_no_after_in_the_ledger_still_fires(ledger) -> None:
+    """**止めないこと。** `after` が無い回の一撃は、原因を分ける測定そのもの。
+
+    最初の版はここで止めていました。**強すぎます** —— 止めると
+    (1) 組み方 / (2) 当たっていない / (3) 戻された が永久に分かれません。
+    """
+    ledger.write_text(_row(_BEFORE, _PROMISED) + "\n", encoding="utf-8")
+    lines, ok = queue_lag.promise_lines(_Plan(_NOW, _AGAIN))
+    assert ok is True
+    assert any("この一撃が、その3つを分ける測定です" in x for x in lines)
+
+
+def test_after_equals_before_and_same_promise_is_refused(ledger) -> None:
+    """`after == before` ＝ **手が1つも当たっていない**。同じ約束なら止める。"""
+    ledger.write_text(_row(_BEFORE, _PROMISED, after=_BEFORE) + "\n",
+                      encoding="utf-8")
+    lines, ok = queue_lag.promise_lines(_Plan(_NOW, _AGAIN))
+    assert ok is False
+    assert any("手が" in x and "当たっていません" in x for x in lines)
     assert any("--force-stuck" in x for x in lines)
 
-    # **`stuck_lines` はこの回 何も言いません**（`before` がずれているため）。
-    # **この検査がこの門の存在理由**です —— 落ちたら、片方だけで足りる形に
-    # なったということなので、そのときは両方を読み直すこと。
-    slines, moving = queue_lag.stuck_lines(_Plan(now, again))
-    assert moving is True and slines == []
+
+def test_after_equals_promised_is_not_blocked(ledger) -> None:
+    """`after != before` ＝ **当たってはいる**。遠のいたのはきょうだい ——
+
+    単位では直らないので止めても意味がありません。**通して、そう言う。**
+    """
+    ledger.write_text(_row(_BEFORE, _PROMISED, after=_PROMISED) + "\n",
+                      encoding="utf-8")
+    lines, ok = queue_lag.promise_lines(_Plan(_NOW, _AGAIN))
+    assert ok is True
+    assert any("手は当たっています" in x for x in lines)
+    assert any("単位では直りません" in x for x in lines)
 
 
 def test_a_different_promise_is_not_blocked(ledger) -> None:
     """守られなかっただけで永久に止めない —— **同じ日付を撃ち直すとき**だけ止める。"""
-    ledger.write_text(_row({"a": date(2026, 10, 6)}, {"a": date(2026, 9, 7)}) + "\n",
+    ledger.write_text(_row({"a": date(2026, 10, 6)}, {"a": date(2026, 9, 7)},
+                           after={"a": date(2026, 10, 6)}) + "\n",
                       encoding="utf-8")
     lines, ok = queue_lag.promise_lines(
         _Plan({"a": date(2026, 10, 7)}, {"a": date(2026, 9, 20)}))
