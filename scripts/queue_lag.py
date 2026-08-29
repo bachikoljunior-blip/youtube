@@ -1431,6 +1431,14 @@ class Plan:
         }
         self.n: dict[str, int] = {f.key: f.min_per_group for f in self.floors}
         self.swaps: list[tuple[str, str]] = []      # (早める本, 後ろへ送る本)
+        #: **この窓でもう動かせない本**（`src.upload_cap.move_blocked`）。
+        #: `_pull()` が候補から外します —— **組んでから止めるのでは遅い**
+        #: からで、理由はあちらの docstring（実測 2026-08-29: 20回の `--move` の
+        #: うち 8回 が止まる本で、**7手／34日 のうち 29日 が丸ごと落ちていました**）。
+        #: **1回だけ読みます**（`move_hold()` を候補ごとに呼ぶと、
+        #: 帳面を候補の数だけ読み直します —— 実測 11ms/本 対 21ms/回）。
+        from src import upload_cap as _uc
+        self.blocked: frozenset[str] = _uc.move_blocked(self.now)
         self.before = self.readies()
         #: **入れ替える前**の割り当て。`live_cost_lines()` が前後を比べるのに使う
         self.before_at: dict[str, datetime] = dict(self.at)
@@ -1540,11 +1548,25 @@ class Plan:
         return bool(live_bad(live_counts(self.before_at, self.at)))
 
     def _pull(self, key: str, group: str, cur: date, keep: set[str]) -> bool:
-        """その群の「N本目 `cur`」を、1つ早い枠へ入れ替える。できたら True。"""
+        """その群の「N本目 `cur`」を、1つ早い枠へ入れ替える。できたら True。
+
+        **この窓でもう動かせない本は、両側とも候補に入れません**
+        （`self.blocked` ＝ `src.upload_cap.move_blocked`。2026-08-29 に足した）。
+        入れると `--apply` がそこで `RC_NOT_MOVED` を返し、**組ごと落ちます** ——
+        落ちても壊れはしません（`apply_moves` が前半を戻します）が、
+        **その組の日数を約束したまま落ちる**のが問題でした。
+        実測（この日 15:2x）: 10手 の約束 34日 のうち、**7手 が落ちる組**で、
+        `opening_motion` はそのうち 1本 でも落ちれば **29日 が丸ごと 0日** です
+        （`potential()` の註「4本を全部 前へ出すまで 1日も縮みません」）。
+
+        **外すのは「この窓では」だけ**です。窓が変われば戻ります
+        （`upload_cap.window_end()`。`blocked_lines()` がその時刻を印字します）。
+        """
         # 早める側: この群の本で、いま `cur` 以降に居るもの（遅い順に試す）
         late = sorted(
             (vid for _, vid in self.groups[key][group]
              if vid in self.at and self.at[vid].date() >= cur
+             and vid not in self.blocked
              and not self._locked(self.at[vid])),
             key=lambda v: self.at[v], reverse=True)
         if not late:
@@ -1552,7 +1574,8 @@ class Plan:
         # 後ろへ送る側: `cur` より前の枠に居て、どの前提にも要っていない本
         free = sorted(
             (vid for vid, when in self.at.items()
-             if when.date() < cur and vid not in keep and not self._locked(when)),
+             if when.date() < cur and vid not in keep
+             and vid not in self.blocked and not self._locked(when)),
             key=lambda v: self.at[v])
         if not free:
             return False
@@ -1621,7 +1644,75 @@ class Plan:
                    f"（{len(self.swaps) * 2}回の `--move` ＝ {len(self.swaps) * 100}単位）")
         if total and not self.swaps:
             out.append("  [!] 手が0なのに日数が動いています。**数え方がずれています**")
+        out.extend(self.blocked_lines())
         out.extend(theta_lines(self))
+        return out
+
+    def blocked_held(self) -> dict[str, list[str]]:
+        """前提 → **この窓でもう動かせない、その前提の本**（早める側だけ）。
+
+        数えるのは「N本目 以降に居て、`self.blocked` に入っている本」——
+        つまり**入れ替えたいのに、この窓では撃てない本**です。
+        N本目 より前の本は動かす理由が無いので、入れません。
+        """
+        out: dict[str, list[str]] = {}
+        for f in self.floors:
+            n = self.n[f.key]
+            held: list[str] = []
+            for group in self.groups[f.key]:
+                cur = _nth(self._days_of(f.key, group), n)
+                if cur is None:
+                    continue
+                held += [vid for _, vid in self.groups[f.key][group]
+                         if vid in self.blocked and vid in self.at
+                         and self.at[vid].date() >= cur]
+            if held:
+                out[f.key] = sorted(set(held))
+        return out
+
+    def blocked_lines(self) -> list[str]:
+        """**「動きません」が、無いのか・いま撃てないだけなのかを分ける。**
+
+        ## なぜ要るか（2026-08-29 に、3周ぶんの実測から足した）
+
+        `_pull()` が `self.blocked` を外すようになって、印字は正直になりました
+        —— **正直すぎて、別の読み違いを作ります。** `opening_motion` は
+        29日 早まる手が**実在する**のに、この窓では撃てないので
+        「（動きません）」と出ます。**次に来た側は「もう縮まない」と読みます。**
+
+        **2つは別のものです**:
+
+            手が無い      群が足りない・入れ替え先が無い → **何をしても動かない**
+            撃てない      手は在るが、この窓の `MOVE_CAP` に当たっている
+                          → **窓が変われば、そのまま撃てます**
+
+        だからここは**窓が変わる時刻**を名前つきで出します。
+        `--apply` を撃つ側は、**その時刻のあとで もう一度 `--plan` を撃つこと。**
+
+        **覆る条件**: `move_blocked()` が空を返すようになったら
+        （掃きが収束して `moves_in_window` が 2 に張り付かなくなったら）、
+        この節は自分で消えます。
+        """
+        held = self.blocked_held()
+        if not held:
+            return []
+        from src import upload_cap
+        back = upload_cap.window_end(self.now).astimezone(JST)
+        out = ["", "  --- **上の「動きません」には、"
+               "『この窓では撃てないだけ』が混ざっています** ---"]
+        for key in sorted(held):
+            vids = held[key]
+            out.append(f"  {key:16s} **{len(vids)}本 が、この窓でもう"
+                       f" {upload_cap.MOVE_CAP}回 動いています**"
+                       f"（{', '.join(vids[:4])}{' …' if len(vids) > 4 else ''}）"
+                       " ← 入れ替えの候補から外しました")
+        out.append(f"  **窓が変わるのは {back:%m/%d %H:%M} JST。"
+                   "そのあとで `--plan` を撃ち直すこと** ——"
+                   "手が消えたのではなく、**この窓の単位を使い切っただけ**です"
+                   "（`src.upload_cap.move_blocked` の註）。")
+        out.append("  **ここに出た本を、いま `YT_NO_MOVE_CAP=1` で押し通さないこと** ——"
+                   "3回目 以降の置き直しは**効くのが最後の1回だけ**なので、"
+                   "定義上むだです（`src.upload_cap.MOVE_CAP`）。")
         return out
 
     def moves(self) -> list[tuple[str, str]]:
