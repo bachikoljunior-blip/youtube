@@ -148,9 +148,149 @@ def closed(doc: dict | None = None) -> list[dict]:
                 "note": h.get("effect_note"),
                 "hit": float(h["effect"]) > 1.0,
                 "ceiling": h.get("ceiling"),
+                "side": h.get("side"),
             })
     rows.sort(key=lambda r: r["closed_on"])
     return rows
+
+
+#: 実験の「側」。**腕（`lever`）とは別の軸**です。
+#: 腕は「どの倍率を動かすか」、側は「**その回に何をいじるか**」。
+SIDES = ("dist", "content", "infra")
+
+#: 側の日本語（印字用）。
+SIDE_JA = {"dist": "配信の側", "content": "中身の側", "infra": "道具の側"}
+
+
+def sides(doc: dict | None = None, rows: list[dict] | None = None) -> dict:
+    """**閉じた前提を「配信の側 / 中身の側」で割った、当たる確率と伸び幅。**
+
+    ## なぜ要るか（2026-08-29・最適化の回に足した。**その回に測った数です**）
+
+    `arm()` は `p`（当たる確率）と `g`（伸び幅）を**腕ごとに1つ**しか持ちません。
+    ところが同じ腕の中に、**当たり方の桁がちがう2種類**が混ざっています ——
+    その回にいじるのが**動画の外側**（形式・時刻・本数・間隔・面）か、
+    **動画の中身**（題・文言・冒頭の絵・コマの速さ・尺）かです。
+
+    実測 2026-08-29（腕の付いた閉じた前提 20件を、この日に1件ずつ札を付けて数えた）::
+
+        側          n    当たり   p      伸び幅（中央値）   最大
+        配信の側     8      3    0.38        ×1.85        ×256
+        中身の側    11      1    0.09        ×1.20        ×1.20
+
+    `rate = p · log(g) · θ` の `p · log(g)` で並べると
+    **配信の側 0.231 ／ 中身の側 0.017 ＝ 13.9倍**。
+    腕ぜんたいで均した値（`p=0.20` `g=1.80` → 0.118）は、この2つの平均です。
+
+    **同じ日に開いていた 27件の内訳は 配信 14 ／ 中身 12 ／ 道具 1** ——
+    **開いている枠の 44% が、13.9倍 遅いほうに乗っています。**
+    枠が余っているなら害はありませんが、実験は同じ公開の流れを取り合うので
+    （題の A/B と冒頭の絵の A/B を同じ本に重ねると交絡します）、
+    **枠は希少**です。だから、どちらに立てるかは選択です。
+
+    ## **この数は到達日を動かしません**（意図してそうしています）
+
+    1/11 と 3/8 のフィッシャー正確検定は **p ≈ 0.13**。
+    **有意ではありません。** ここで `arm()` の `p` を側べつに割ると、
+    n=8 と n=11 の標本で日付が動きます —— このリポジトリが
+    「未測定の数で日付を動かさない」と繰り返し書いているのは、まさにこの形です。
+
+    **だから返すのは印字用の数だけで、`trajectory()` の入力には入れません。**
+    使い道は1つ:**次の1件をどちらの側に立てるかを、選ぶ前に見る。**
+
+    ## 覆る条件（**どれか1つでも起きたら、この節ごと引き直すこと**）
+
+    - **中身の側が ×1.20 を超える当たりを2件 出したら** —— 上の 13.9倍 は崩れます
+    - **どちらかの側が n=20 に届いたら** —— 検定が有意になりうるので、
+      そのときは `arm()` の `p`/`g` を側べつに割るかを測り直すこと
+      （割ると日付が動きます。**動かす前に、割った側で1回 予測して外れ幅を見ること**）
+    - **札の付け方が争われたら** —— 札は「**その実験のために何をいじるか**」で
+      決めています（動画の外側か、中身か）。`config/hypotheses.yaml` の
+      `side:` の節に、そのときの線引きが書いてあります
+
+    返り::
+
+        {"closed": {側: {"n","hits","p","gain","max","score"}},
+         "open":   {側: 件数},
+         "open_by_lever": {(側, 腕): 件数},
+         "ratio":  配信 ÷ 中身（`score` どうし。片方が0なら None）,
+         "missing": 札の無い閉じた前提の件数}
+    """
+    doc = _load() if doc is None else doc
+    rows = closed(doc) if rows is None else rows
+    pool = [r for r in rows if r["lever"] in ARMS]
+
+    out: dict[str, dict] = {}
+    missing = 0
+    for r in pool:
+        if r.get("side") not in SIDES:
+            missing += 1
+    for s in SIDES:
+        mine = [r for r in pool if r.get("side") == s]
+        hits = [r for r in mine if r["hit"]]
+        p = (len(hits) / len(mine)) if mine else None
+        g = _median([r["effect"] for r in hits])
+        score = (p * math.log(g)) if (p and g and g > 1.0) else 0.0
+        out[s] = {"n": len(mine), "hits": len(hits), "p": p, "gain": g,
+                  "max": (max(r["effect"] for r in hits) if hits else None),
+                  "score": score}
+
+    open_n: dict[str, int] = {s: 0 for s in SIDES}
+    open_lv: dict[tuple, int] = {}
+    unlabelled = 0
+    for h in doc.get("hypotheses") or []:
+        if not isinstance(h, dict) or h.get("closed_on"):
+            continue
+        s = h.get("side")
+        if s not in SIDES:
+            unlabelled += 1
+            continue
+        open_n[s] += 1
+        key = (s, str(h.get("lever")))
+        open_lv[key] = open_lv.get(key, 0) + 1
+
+    d_sc, c_sc = out["dist"]["score"], out["content"]["score"]
+    return {"closed": out, "open": open_n, "open_by_lever": open_lv,
+            "ratio": (d_sc / c_sc) if (d_sc and c_sc) else None,
+            "missing": missing, "open_unlabelled": unlabelled}
+
+
+def side_lines(sd: dict | None = None) -> list[str]:
+    """`sides()` を印字の行にする。**読む相手は「次の1件をどこに立てるか」を決める回。**"""
+    sd = sides() if sd is None else sd
+    cl, op = sd["closed"], sd["open"]
+
+    def cell(s: str) -> str:
+        c = cl[s]
+        if not c["n"]:
+            return f"{SIDE_JA[s]} **0件**"
+        p = f"{c['p']:.2f}" if c["p"] is not None else "—"
+        g = f"×{c['gain']:.2f}" if c["gain"] else "—"
+        # **`:.0f` にしないこと** —— 中身の側の最大は ×1.20 で、丸めると「×1」＝
+        # 「1件も当たっていない」に読めます（2026-08-29 に書いた直後に踏んだ）。
+        mx = (f"×{c['max']:,.0f}" if (c["max"] and c["max"] >= 10)
+              else (f"×{c['max']:.2f}" if c["max"] else "—"))
+        return (f"{SIDE_JA[s]} n={c['n']} 当たり{c['hits']} **p={p}** "
+                f"伸び幅 {g}（最大 {mx}）")
+
+    lines = ["  **実験の「側」べつ**（腕とは別の軸。**その回に何をいじるか**）: "
+             + " ／ ".join(cell(s) for s in ("dist", "content"))]
+    r = sd["ratio"]
+    if r:
+        lines.append(
+            f"    `p · log(g)` で並べると **配信の側は中身の側の {r:.1f}倍**"
+            f"（{cl['dist']['score']:.3f} 対 {cl['content']['score']:.3f}）。"
+            f"**いま開いているのは 配信 {op['dist']}件 ／ 中身 {op['content']}件**"
+            + (f" ／ 道具 {op['infra']}件" if op["infra"] else "")
+            + (f" ／ **札なし {sd['open_unlabelled']}件**" if sd["open_unlabelled"] else "")
+            + "。 **この数で日付は動かしていません**"
+            "（1/11 対 3/8 ＝ フィッシャー p≈0.13・有意ではない。"
+            "`src/arm_speed.sides()` の「覆る条件」）。"
+            "**使い道は1つ: 次の1件をどちらの側に立てるかを、選ぶ前に見る。**")
+    if sd["missing"]:
+        lines.append(f"    [!] **閉じた前提のうち {sd['missing']}件 に `side:` の札がありません** "
+                     "—— その件は上の数に入っていません（`config/hypotheses.yaml` の `side:`）。")
+    return lines
 
 
 #: 台帳が「次の1件はこの腕に立てるな」と言っている行の目印。

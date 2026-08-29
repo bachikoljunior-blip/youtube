@@ -14,6 +14,8 @@
 #   claim        いま前提にしていること
 #   deadline     判定する日（JST）
 #   lever        この前提が動かす腕。**立てるときに書くこと**（下の節）
+#   side         この実験のために**何をいじるか**。`dist` / `content` / `infra`
+#                （腕とは別の軸。**立てるときに書くこと**。下の節）
 #   falsified_if これが起きていたら外れ、とみなす条件。**数字で書くこと**
 #   next_if_false 外れていたら次に試すこと。順番に
 #   next_done     その手をどうしたか。**`next_if_false` と同じ並び**で1行ずつ
@@ -146,6 +148,38 @@
 #   ceiling      その前提が**天井を測ってしまった**ときだけ足す（lever/value/unit/escape）。
 #                軌跡は、天井のある腕をそれ以上伸ばしません。
 #
+# --- `side`（2026-08-29・最適化の回に足した。**その回に測った数です**）---
+#
+# **腕（`lever`）とは別の軸です。** 腕は「どの倍率を動かすか」、
+# 側は「**その実験のために何をいじるか**」。
+#
+#   dist     **動画の外側**。形式（ショート／長尺）・公開の時刻・1日の本数・
+#            間隔・面（インプレッション）・チャンネル単位の配分。
+#            **本の中身を1文字も変えずに動かせるもの**が、ここです
+#   content  **動画の中身**。題・文言・冒頭の絵・コマの速さ・尺の秒数・
+#            説明欄・構成・作る題材とその順番
+#   infra    **道具・鎖・枠・収益化の可否**。腕の倍率を直接は動かさない
+#            （`lever: none` と重なることが多いが、同じものではありません）
+#
+# **迷ったら「この実験を回すために、動画ファイルを作り直すか」で切ること。**
+# 作り直すなら `content`、予約表や本数だけ変えるなら `dist`。
+#
+# **なぜ要るか（2026-08-29 に、閉じた20件へ1件ずつ札を付けて数えた）:**
+#
+#     側          n    当たり   p       伸び幅（中央値）   最大
+#     配信の側     8      3    0.38         ×1.85        ×256
+#     中身の側    11      1    0.09         ×1.20        ×1.20
+#
+# `rate = p·log(g)·θ` の `p·log(g)` で並べると **13.9倍** ちがいます。
+# 同じ日に**開いていた 27件は 配信14 ／ 中身12 ／ 道具1** ——
+# **枠の 44% が、13.9倍 遅いほうに乗っていました。**
+# 実験は同じ公開の流れを取り合う（題の A/B と冒頭の絵の A/B を同じ本に
+# 重ねると交絡する）ので、**枠は希少**です。だからここは選択です。
+#
+# **この札で到達日は動きません**（1/11 対 3/8 ＝ フィッシャー p≈0.13・有意ではない）。
+# 印字されるだけです。**日付を動かすかどうかの覆る条件は
+# `src/arm_speed.sides()` の docstring**にあります。
+#
 hypotheses:
   # **2026-08-29 02:5x に足した。腕は `eta.py --alloc` が名指しした `sub_rate`。**
   #
@@ -177,6 +211,7 @@ hypotheses:
   - claim: "登録は本の作りではなく配信の広さで決まる。再生が伸びなかった本からは、何本 積んでも登録は入らない"
     deadline: "2026-10-22"
     lever: sub_rate           # subscribersGained ÷ 再生 で判定する
+    side: dist
     watch: 低再生の帯-20000再生
     needs:
       - kind: accrual
@@ -253,6 +288,7 @@ hypotheses:
     deadline: "2026-09-19"
     watch: 族を外へ-ribo8本
     lever: rpm                # 題材の族＝ニッチ。`CLAUDE.md`「rpm（ニッチ・尺・形式）」
+    side: content
     needs:
       # **`falsified_if` の床（片群 8本）が、`needs` に無いままでした**
       #   （2026-08-29 06:5x・最適化の回に足した）。
@@ -371,6 +407,7 @@ hypotheses:
     # ＝外れ」を作り、`next_if_false` が腕ごと畳みます（`src/ab_split.floor_of()` の註）。
     deadline: "2026-09-11"
     lever: rpm                # 実効RPM ＝ Σ（形べつの再生シェア × その形の帯）。動かすのはシェア
+    side: dist
     watch: 長尺シェア-14本
     needs:
       - kind: after
@@ -450,6 +487,7 @@ hypotheses:
     closed_on: "2026-08-25"     # **期限より前に閉じました。** 反証が1回の呼び出しで出たため
     outcome: falsified
     lever: none                 # 2026-08-26 夕に density から直した。理由は effect_note の末尾
+    side: infra
     effect: 1.0                 # 1日の再生は1倍も動いていません（**倒れた前提です**）
     effect_note: |
       **【`density` → `none` に直した】**（2026-08-26 夕・最適化の回）
@@ -625,6 +663,7 @@ hypotheses:
         settle_days: 0
         note: "30,000再生 ÷ 418.7再生/本（公開済み130本の実測）＝ 72本。**終端が依頼の本だけを数えます**（`endcard: request`）。**在庫が増えれば、この日付は毎回 縮みます**"
     lever: sub_rate
+    side: content
     watch: 登録の依頼-30000再生
     falsified_if: |
       依頼を入れた後に公開したショートが**計30,000再生**に達した時点で、
@@ -735,6 +774,7 @@ hypotheses:
     # 隣の3件（面→実効RPM／WATCH→商品／深い題→ニッチ）は RPM への鎖を
     # `note` に書いてあるので**そのまま**です。**鎖の書いていない2件だけ**を直しました。
     lever: density
+    side: infra
     watch: 長尺の失敗の理由-6本      # 満ちたかは `src/watches.py` が毎周見ています
     closed_on: "2026-08-29"
     outcome: falsified
@@ -877,6 +917,7 @@ hypotheses:
     # `note` も「L ＝ `max(LONG_PER_DAY_SCENARIOS)`（本/日）が段2 の合格点を割っている」
     # と書いており、**RPM は一度も出てきません。** `density` の定義そのものです。
     lever: density
+    side: dist
     falsified_if: |
       2026-08-31 に、直近7日（08/24〜08/30）の長尺の**成功した生成**が
       **28本（＝1日4本）に届かない**なら外れ。判定はこの1行:
@@ -974,9 +1015,11 @@ hypotheses:
       **だからこの前提は、いま軌跡がいちばん重く寄りかかっている1件です。**
       外れたら段4 の期日はそのぶん後ろへ動きます。**n=1 であることを隠さないこと。**
     lever: rpm
+    side: dist
   - claim: "長尺の面（サムネのインプレッション）は、その日の長尺の公開本数で決まる。公開1本あたり 279回 で予測できる"
     deadline: "2026-09-11"
     lever: rpm                # 露出の面そのものを数えている（この帳面の冒頭の表）
+    side: dist
     needs:
       - kind: after
         on_date: "2026-09-07"
@@ -1229,6 +1272,7 @@ hypotheses:
     closed_on: "2026-08-28"
     outcome: mixed
     lever: density
+    side: dist
     effect: 1.0
     effect_note: >
       **本数を 1.9倍（10本 → 19本）にして、生きた本は 10本のままです。**
@@ -1312,6 +1356,7 @@ hypotheses:
   - claim: "1日に再生が付く本の集合は、左端つきの帯（08:59〜13:30 JST）で決まる。本数（先頭10本）ではない"
     deadline: "2026-09-03"
     lever: density              # 帯が真なら、帯の外に置いた本は 0再生 ＝ 密度の天井は「枠」の話になる
+    side: dist
     needs:
       # `data/views.jsonl` は `videos.list` の累計なので **Analytics の3日遅れは掛からない**。
       # その日の最後の本は **22:00 JST** で、`day_cap._readings()` が採るのは
@@ -1378,6 +1423,7 @@ hypotheses:
   - claim: "チャンネルのホームに紹介動画とバナーを置くと、登録率が上がる"
     deadline: "2026-09-09"
     lever: sub_rate
+    side: content
     watch: チャンネルのホーム-15000再生
     needs:
       - kind: after
@@ -1430,6 +1476,7 @@ hypotheses:
     #   **`falsified_if` は緩めていません。動かしたのは期限だけです。**
     deadline: "2026-09-10"
     lever: density                # 1日の公開本数の天井そのもの
+    side: dist
     needs:
       # 観測の日は **2026-09-10（16本）**。`data/views.jsonl` から数えるので
       # Analytics の遅れは掛からないが、公開から6時間の読みが要る。
@@ -1542,6 +1589,7 @@ hypotheses:
     #   （`src/settle.analytics_lag_band()`）。
     deadline: "2026-09-07"
     lever: per_video                # engaged 比率
+    side: content
     needs:
       # 群の作り方は `src/judgeable.SOURCES["title_form"]` に置いてある。
       - kind: group_key
@@ -1654,6 +1702,7 @@ hypotheses:
   # 10-13 ＋ 25日 ＝ **11-07**。帯が縮んだら、そのとき縮めること。
     deadline: "2026-10-06"
     lever: sub_rate               # subscribersGained ÷ 再生 で判定する
+    side: content
     needs:
       # 群の作り方は `src/judgeable.MEMBER_SOURCES["request_form"]`（床 **72本**）。
       # **16本 ではありません** —— 測っているのが engaged ではなく登録だからです。
@@ -1792,6 +1841,7 @@ hypotheses:
     # **次に落ちたときも、延ばすのは期限だけ。**
     deadline: "2026-10-11"
     lever: per_video                # engaged 比率（1本あたり再生の駆動輪）
+    side: content
     needs:
       # 群の作り方は `src/judgeable.MEMBER_SOURCES["slide_pace"]`（床 **16本**）。
       # **72本 ではありません** —— 測るのは engaged で、`request_form` の 72本 は
@@ -1887,6 +1937,7 @@ hypotheses:
     #   また「期限のほうが手前」と言います。**そのときは延ばすこと**（延ばすのも縮めるのも、期限だけ）。
     deadline: "2026-09-10"
     lever: per_video                # engaged 比率
+    side: content
     needs:
       # 群の作り方は `src/judgeable.SOURCES["hook_form"]` に置いてある。
       - kind: group_key
@@ -2076,6 +2127,7 @@ hypotheses:
     closed_on: "2026-08-24"
     outcome: mixed
     lever: density
+    side: dist
     effect: 0.77
     effect_note: >
       1日の再生の合計（12〜48時間の帯でそろえた実測）: 8本の日 8,152 →
@@ -2148,6 +2200,7 @@ hypotheses:
     #   `python scripts/deadline_check.py` の `ready` に合わせただけ。熟成 7日 → 3日（`src/settle.py` の実測）を当てた結果です
     deadline: "2026-09-18"
     lever: sub_rate                # subscribersGained ÷ 再生 で判定する
+    side: content
     needs:
       # 分母は 15,000再生。**1本あたり 418.7再生（公開済み130本の実測）→ 約36本。**
       # 8/16 以降に作って 9/8 以降に公開する本は、いま予約に **189本** 入っている。
@@ -2209,6 +2262,7 @@ hypotheses:
     closed_on: "2026-08-26"
     outcome: falsified
     lever: per_video
+    side: content
     effect: 1.0
     effect_note: "実績を事前分布に使った29本の engaged 中央値 24.5% 対 手書き score の26本 34.8%。順番では上がらなかった"
     verdict: >
@@ -2295,6 +2349,7 @@ hypotheses:
     # 実データの遅れは実測 4日 未満の観測が1つも無いので、**下へは動きません**）。
     deadline: "2026-10-03"
     lever: density                # その日の本数そのものを測っている
+    side: dist
     watch: 密度の交絡-低密度の窓5本
     needs:
       # 09/25・09/26 は予約が 1〜2本/日 しか入っていない日です（`status.py` が
@@ -2361,6 +2416,7 @@ hypotheses:
     # **4,000時間の門に入るのは長尺だけ**なので、ここが唯一開いている門です。
     deadline: "2026-09-28"
     lever: density
+    side: dist
     needs:
       # 今日つくる長尺が着くのは **2026-09-13 ごろ**（`batch_build` の実測。
       # 予約は 41日 先まで埋まっている）。**族が増えた効きは、それより前の
@@ -2505,6 +2561,7 @@ hypotheses:
     closed_on: "2026-08-08"
     outcome: falsified
     lever: sub_rate
+    side: content
     effect: 1.0
     effect_note: "誘導を変えた後の3本 2,720再生で登録0人。文言では登録率は動かなかった"
     verdict: >
@@ -2557,6 +2614,7 @@ hypotheses:
     closed_on: "2026-08-07"
     outcome: mixed
     lever: per_video
+    side: dist
     effect: 1.85
     effect_note: "同じ1日1本で 年金1,257回 対 残業代680回 ＝ 1.85倍。題材の選び方が1本あたりを動かした"
     verdict: >
@@ -2594,6 +2652,7 @@ hypotheses:
     closed_on: "2026-08-10"
     outcome: falsified
     lever: per_video
+    side: content
     effect: 1.0
     effect_note: "倍率を冒頭に置いた本が7時間で1,186回。金額・期間と差が出なかった"
     verdict: >
@@ -2627,6 +2686,7 @@ hypotheses:
     closed_on: "2026-08-15"
     outcome: falsified
     lever: per_video
+    side: content
     effect: 1.0
     effect_note: "7本とも24時間で 395〜1,447回。3,000を超えた本は0。中身ではなく天井だった"
     ceiling:
@@ -2737,6 +2797,7 @@ hypotheses:
     closed_on: "2026-08-20"
     outcome: falsified
     lever: none                 # 2026-08-26 に per_video から直した。理由は effect_note の頭
+    side: dist
     effect: 1.0
     effect_note: |
       **【`per_video` → `none` に直した】**（2026-08-26・最適化の回）
@@ -2830,6 +2891,7 @@ hypotheses:
     #   `python scripts/deadline_check.py` の `ready` に合わせただけ。実データの遅れが伸びて、期限の日には数字が存在しませんでした
     deadline: "2026-09-02"
     lever: rpm                # M3 ＝ AdSense を通さない収益（1再生あたりの実入りを替える）
+    side: dist
     needs:
       # **「08/29 時点の累計」は、08/29 に見ても 08/26 までの累計しか出ていません。**
       #
@@ -2917,6 +2979,7 @@ hypotheses:
     closed_on: "2026-08-20"
     outcome: falsified
     lever: per_video
+    side: content
     effect: 0.71
     effect_note: "engaged 旧34.7% 対 新24.7% ＝ 0.71倍。逆向きも p=0.393 で立たない"
     verdict: >
@@ -3084,6 +3147,7 @@ hypotheses:
     closed_on: "2026-08-20"
     outcome: falsified
     lever: sub_rate
+    side: content
     effect: 1.0
     effect_note: "問いかけ型 3,325再生でコメント0件・共有1件。窓全体でも 20,332再生でコメント0"
     verdict: >
@@ -3278,6 +3342,7 @@ hypotheses:
     # ---------------------------------------------------------------------
     deadline: "2026-09-23"
     lever: sub_rate                # 登録率そのもの
+    side: dist
     needs:
       # **実測 2026-08-25: 長尺 19本で合計 70再生（1本 3.7再生）。**
       # 1000再生に届くには、この率のままだと **約270本** 要ります。
@@ -3322,6 +3387,7 @@ hypotheses:
     closed_on: "2026-08-15"
     outcome: falsified
     lever: per_video
+    side: content
     effect: 1.0
     effect_note: "インプレッション76・4日で頭打ち。題ではなく、そもそも載っていなかった"
     verdict: >
@@ -3524,6 +3590,7 @@ hypotheses:
     # `queue_lag --apply` を撃てば 10-04 まで縮みます —— そのときはこの期限も戻すこと。
     deadline: "2026-10-06"
     lever: per_video                # engaged 比率
+    side: content
     # **09/05 → 10/11 → 09/23（2026-08-25 に2回動かした）。条件は1文字も変えていません。**
     # (1) 09/05 は 29日 早すぎた。`python -m src.judgeable` の実測で、対照(動きなし)は
     #     予約に **8本ちょうど**しかなく、**8本目の公開が 09/24** ＝ 判定できるのは 10/04。
@@ -3640,6 +3707,7 @@ hypotheses:
     closed_on: "2026-08-23"
     outcome: falsified
     lever: per_video
+    side: content
     effect: 1.0
     effect_note: >
       **A（8/16〜18・従来の冒頭）の engaged 中央値 30.1%（公開6本・30再生以上4本＝
@@ -3765,6 +3833,7 @@ hypotheses:
   # 見つかったら**それを新しい前提として別に立てる**こと。**この行の条件は緩めない。**
     deadline: "2027-12-18"
     lever: none                # 収益化の可否であって、腕の倍率を動かさない
+    side: infra
     needs:
       # **この条件は、こちらの手では起こせません。** 収益化の申請には登録者 1,000人 が要り、
       # 2026-08-25 時点で **あと 999人**。09/01 に「審査に落ちる」ことは起こりようがなく、
@@ -3783,6 +3852,7 @@ hypotheses:
     closed_on: "2026-08-12"
     outcome: mixed
     lever: per_video
+    side: content
     effect: 1.0
     effect_note: "年金46.7% 対 非年金45.0%。条件の字面では生き残るが、比べる側が動いていた"
     verdict: >
@@ -3859,6 +3929,7 @@ hypotheses:
     closed_on: "2026-08-20"
     outcome: falsified
     lever: per_video
+    side: content
     effect: 1.0
     effect_note: "導線つき 4,520再生に対し、説明欄に帰せる長尺の再生は +1（条件は +5）"
     verdict: >
@@ -3952,6 +4023,7 @@ hypotheses:
     closed_on: "2026-08-21"
     outcome: falsified
     lever: none                 # 2026-08-26 に per_video から直した。理由は effect_note の頭
+    side: infra
     effect: 1.0
     effect_note: |
       **【`per_video` → `none` に直した】**（2026-08-26・最適化の回）
@@ -4045,6 +4117,7 @@ hypotheses:
     closed_on: "2026-08-15"
     outcome: survived
     lever: density
+    side: dist
     effect: 1.75
     effect_note: "2本出した日の合計3,104回。2本目1,327 ÷ 1本目1,777 ＝ 0.75 ＝ 密度2倍で1日の再生1.75倍"
     verdict: >
@@ -4171,6 +4244,7 @@ hypotheses:
     #   ここを勝手に縮めます（縮める側は自動・延ばす側は手作業のまま）。
     deadline: "2026-09-07"
     lever: per_video                # engaged 比率
+    side: content
     watch: 冒頭のstatの割り方-両群16本
     # **09/05 → 09/20 へ延ばした（2026-08-25）。条件は1文字も変えていません。**
     # `python -m src.judgeable` の実測: 処置(後)の **16本目の公開が 09/03**。
@@ -4274,6 +4348,7 @@ hypotheses:
     closed_on: "2026-08-26"
     outcome: survived
     lever: per_video
+    side: content
     effect: 1.20
     effect_note: "engaged 中央値の差は群の作り方で +4.1pt〜+6.8pt に振れるが、**2つの回が別々の作り方で独立に判定して、どちらも ×1.20**（20.40%→24.54% ／ 17.7%→24.5% から族の混ざり +3.4pt を引いた残り）。再生数そのものは 1.67〜2.11倍だが p=0.068〜0.360 で見分けられない"
     verdict: >
@@ -4450,6 +4525,7 @@ hypotheses:
     #   なったら、この手作業は要りません（そのときは `deadline_check.py` 側の話）。
     deadline: "2026-09-02"
     lever: per_video          # 2026-08-26 に rpm から直した。理由は note の末尾
+    side: content
     watch: 深い題のショート-16本
     needs:
       # **2026-08-26 夜に数え直した。ここは「作った本」を数えていて、
@@ -4653,6 +4729,7 @@ hypotheses:
   - claim: "門2a（長尺4,000時間）は、いまの長尺の枠（5本/日）と面（公開1本あたり 279回）では開かない —— 合格点 178回/日 に要る CTR は 12.8% で、実測 1.44% の 8.9倍"
     deadline: "2026-09-12"
     lever: rpm
+    side: dist
     needs:
       - kind: after
         on_date: "2026-09-08"
@@ -4767,6 +4844,7 @@ hypotheses:
         since: "2026-08-27"
         data_file: "data/uploaded.jsonl"
     lever: per_video
+    side: content
     watch: "完成形の保持-16本"      # 満ちたかは `src/watches.py` が毎周見ています
     falsified_if: |
       2026-10-06 に、**齢48時間でそろえた** engaged 比率を2群で比べ、
@@ -4822,6 +4900,7 @@ hypotheses:
     # 1文字も触っていません**（`deadline_check.py --shrink` と同じ向き）。
     deadline: "2026-09-05"
     lever: per_video          # 数えているのは「帯内ショートの1本あたり再生」
+    side: dist
     watch: 配信抑制-0824
     needs:
       # **`plus_lag: false`** —— 読むのは `data/views.jsonl`（Data API を
@@ -4918,6 +4997,7 @@ hypotheses:
   - claim: "1日の再生の合計は、その日に出した本数では動かない。決めているのはチャンネルへのその日の配分のほうで、本数を増やしても合計は増えない"
     deadline: "2026-09-05"
     lever: density
+    side: dist
     # **なぜ立てたか**（2026-08-28 18:xx）
     #
     # `day_cap.measure()` は「その日の**何本に**再生が付くか」しか答えていません。
@@ -5010,6 +5090,7 @@ hypotheses:
   - claim: "長尺の1本あたり再生 8.0回 は長尺の天井ではない。公開が 0.68本/日 だっただけで、1日8本の帯で出しつづければ、齢をそろえた1本あたり再生は 80回（10倍）に届く"
     deadline: "2026-09-16"
     lever: per_video
+    side: dist
     watch: "長尺1本あたり-30本"
     needs:
       - kind: accrual
@@ -5133,6 +5214,7 @@ confirmed:
     confirmed_on: "2026-08-08"
     outcome: survived
     lever: none
+    side: dist
     effect: 1.0
     effect_note: "48時間で配信が完全に止まる、という構造の事実。腕の倍率は動かない"
     evidence: >
@@ -5162,6 +5244,7 @@ confirmed:
     confirmed_on: "2026-08-05"
     outcome: survived
     lever: density
+    side: dist
     effect: 1.0
     effect_note: "1日1本なら配信は出るが、増産は効かない（＝密度そのものは1日の再生を増やさなかった）"
     evidence: >
@@ -5178,6 +5261,7 @@ confirmed:
     confirmed_on: "2026-08-04"
     outcome: survived
     lever: rpm
+    side: dist
     effect: 256.0
     effect_note: "同じ日の同じ本数で ショート256回 対 長尺1回。形を替えたことが1本あたりを2桁動かした"
     evidence: >
@@ -5201,6 +5285,7 @@ confirmed:
     confirmed_on: "2026-08-05"
     outcome: survived
     lever: density
+    side: dist
     effect: 1.0
     effect_note: "90分に5本固めた日、後発3本が8時間0回。本数を増やしても再生は増えなかった"
     evidence: >
