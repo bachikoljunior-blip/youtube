@@ -5047,6 +5047,18 @@ def headline(pl: dict, prev: dict | None = None,
                  if v is not None and v < 1.0]
         if _alt is not None:
             _th = _alt.get("threshold")
+            # **勝った腕の天井が実測でないなら、勝ちの理由がそこにあります。**
+            #     `--alloc` と `_report_levers` は既にこの注意を出しています
+            #     （`alloc_search` の末尾・`tr["arms"]` の `cap_measured`）。
+            #     **頭の3行にだけ無い**ので、ここへ持ってきます —— 実測 2026-08-30 の
+            #     `rpm` は ×61.35 で、出どころは「長尺の面 × **CTR 100%**」＝
+            #     測った天井ではありません。**黙って名指しすると、作り物の天井に
+            #     回を1つ振らせることになります。**
+            _arm = ((tr or {}).get("arms") or {}).get(_alt["lever"]) or {}
+            _unmeasured = (" [!] ただしその天井は**測ったものではありません**"
+                           f"（{_arm.get('cap_why', '出どころなし')}）——"
+                           "**天井が作り物なら、名指しも作り物です**"
+                           if _arm.get("cap") and not _arm.get("cap_measured") else "")
             out.append(
                 f"{bar} **その「別の腕」は `{_alt['lever']}` です**"
                 f"（天井 ×{_alt['cap']:,.2f} → {_alt['date_at_cap'].isoformat()}"
@@ -5055,7 +5067,8 @@ def headline(pl: dict, prev: dict | None = None,
                 f" `{pl['lever_hint']}` だけ**です（`reachable_at_cap`）。"
                 + (" **" + "／".join(_dead) + " をこの回の `--lever` にしないこと**"
                    " —— この機械が自分で測った「引いても到達日が動かない」腕です"
-                   if _dead else ""))
+                   if _dead else "")
+                + _unmeasured)
         elif _dead:
             out.append(
                 f"{bar} [!] **その「別の腕」がありません** ——"

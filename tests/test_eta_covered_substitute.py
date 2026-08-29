@@ -133,6 +133,26 @@ def test_候補が1本も無い回はそう言う():
     assert "その「別の腕」は" not in out
 
 
+def test_作り物の天井で名指しした回は_そう書く():
+    """`--alloc` と `_report_levers` は既に出している注意。**頭の3行にだけ無かった。**
+
+    実測 2026-08-30 の `rpm` の天井 ×61.35 は「長尺の面 × **CTR 100%**」で、
+    測った天井ではありません。黙って名指しすると、**作り物の天井に回を1つ
+    振らせる**ことになります。"""
+    tr = {"arms": {"rpm": {"cap": 61.35, "cap_measured": False,
+                           "cap_why": "CTR100% を置いた上限"}}}
+    out = "\n".join(eta.headline(_plan(), None, tr, []))
+    assert "その「別の腕」は `rpm` です" in out
+    assert "測ったものではありません" in out
+    assert "CTR100% を置いた上限" in out
+
+    # 実測の天井なら足さない。
+    tr2 = {"arms": {"rpm": {"cap": 61.35, "cap_measured": True, "cap_why": "実測"}}}
+    out2 = "\n".join(eta.headline(_plan(), None, tr2, []))
+    assert "その「別の腕」は `rpm` です" in out2
+    assert "測ったものではありません" not in out2
+
+
 def test_覆われていない回は何も足さない():
     pl = _plan()
     pl.pop("lever_hint_covered")
