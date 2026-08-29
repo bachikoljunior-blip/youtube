@@ -422,8 +422,30 @@ def _drop_doomed(usable: list[dict], pool: list[dict],
     #
     #     **`posted` を渡さない回では何もしません**（既定 `None`）——
     #     突き合わせる相手が無いだけで、門が緩むわけではありません。
-    #     **覆る条件**: `used_bars()` が公開済みを読むのをやめたら（`build/` だけに
-    #     戻ったら）、これは死ではなくなるので外すこと。
+    #
+    #     ## **`_bars_clash` だけでは落としすぎます**（同じ回に測って narrowed）
+    #
+    #     最初は「同じ calc で `_bars_clash`」だけで書きました。**実測で
+    #     未投稿 22件 のうち 11件（半分）が落ちます** ——
+    #     そのうち **9件の相手は `s-` で始まるショート**で、
+    #     **同じ節のショートが公開済みなだけ**でした。
+    #     ショートは節から2〜4本しか棒を取らず、長尺は節ぜんぶを何枚もの図にするので、
+    #     **形がちがえば同じ節でも図は割れます** ——実測: 直前の回は
+    #     `s-` の相手が居る長尺を 11本 予約できています。
+    #     **「同じ節」は死の条件ではありません。**
+    #
+    #     死ぬのは「**同じ形で・同じ節を・同じ言葉で指している**」＝
+    #     **同じ本を二度 書いている**ときだけです。実測でこの3条件を全部 満たすのは
+    #     22件中 **1件**（`nenkin-minimax-69sai7kagetsu` ↔
+    #     `nenkin-saidai-torikoboshi-69-7`。どちらも長尺・`calc_sections` は
+    #     片方がもう片方を丸ごと含む・題も「いちばん損の小さい開始は69歳7か月」で同じ）。
+    #
+    #     **覆る条件**: `s-` の相手しか居ない長尺が、この理由で実際に
+    #     `RuntimeError` になったら、形の条件を外すこと（`data/batch_runs.jsonl`
+    #     に理由ごと残ります）。逆に、この3条件を満たしていない組が落ち続けたら、
+    #     見ているのは節ではなく**題の主張**なので、`title_seed` の側で測ること。
+    #     `used_bars()` が公開済みを読むのをやめたら（`build/` だけに戻ったら）、
+    #     これは死ではなくなるので丸ごと外すこと。
     #     検査は `tests/test_drop_doomed_published_bars.py`。
     if posted:
         by_calc: dict[str, list[dict]] = {}
@@ -433,12 +455,14 @@ def _drop_doomed(usable: list[dict], pool: list[dict],
         keep2 = []
         for t in kept:
             hit = next((p for p in by_calc.get(t.get("calc") or "", [])
-                        if p["id"] != t["id"] and _bars_clash(t, p)), None)
+                        if p["id"] != t["id"]
+                        and _same_form(t, p) and _same_section_words(t, p)
+                        and _bars_clash(t, p)), None)
             if hit is None:
                 keep2.append(t)
             else:
                 dropped.append((t["id"],
-                                f"公開済みの {hit['id']} と節の数がまるごと重なる"
+                                f"公開済みの {hit['id']} と同じ形・同じ節・同じ言葉"
                                 f"（`script_writer.used_bars` が台本の時点で止めます）"))
         kept = keep2
     for tid, why in dropped:
@@ -494,6 +518,30 @@ def _section_numbers(topic: dict) -> set[str]:
 #: **実測で決めた値です**（下の `_bars_clash` の表）。通った 23組 の最大は **0.31**、
 #: 落ちた1組は **0.67**。あいだを取って 0.45 に置いてあります。
 BARS_CLASH_JACCARD = 0.45
+
+
+def _same_form(a: dict, b: dict) -> bool:
+    """**同じ形か**（どちらもショート、またはどちらも長尺）。
+
+    形は `s-` で始まるかどうかで決まります（`topic_forge` の `LONG_ID_RE` / `ID_RE`）。
+    **同じ節でも、形がちがえば図は割れます** —— ショートは節から2〜4本しか棒を取らず、
+    長尺は節ぜんぶを何枚もの図にするからです（`_drop_doomed` の実測）。
+    """
+    return a["id"].startswith("s-") == b["id"].startswith("s-")
+
+
+def _same_section_words(a: dict, b: dict) -> bool:
+    """**同じ節を、同じ言葉で指しているか**（片方がもう片方を丸ごと含む）。
+
+    `calc_sections` は部分一致なので、**別の言葉で同じ節に当たる**ことがあります。
+    そこまで同じなら「同じ本を二度 書いている」と見ます。
+    どちらかが空なら **False**（判定材料が無いので落としません）。
+    """
+    aw = " / ".join(a.get("calc_sections") or [])
+    bw = " / ".join(b.get("calc_sections") or [])
+    if not aw or not bw:
+        return False
+    return aw in bw or bw in aw
 
 
 def _bars_clash(a: dict, b: dict) -> bool:
