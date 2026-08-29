@@ -81,7 +81,11 @@ def views_at(points: list[tuple[float, int, datetime]], target: float) -> int | 
 
 
 def per_day(by_id, *, target: float, min_views: int) -> dict[str, list[int]]:
-    """公開日（JST）→ その日に公開した本の、`target` 時間時点の再生。"""
+    """公開日（JST）→ その日に公開した本の、`target` 時間時点の再生。
+
+    **`min_views` に届かなかった本は入りません。** その日に何本 置いたかは
+    `placed_per_day()` のほうで数えます（下の docstring）。
+    """
     out: dict[str, list[int]] = collections.defaultdict(list)
     for vid, points in by_id.items():
         got = views_at(points, target)
@@ -89,6 +93,48 @@ def per_day(by_id, *, target: float, min_views: int) -> dict[str, list[int]]:
             continue
         out[published_at(points).date().isoformat()].append(got)
     return out
+
+
+def placed_per_day(by_id, *, target: float) -> dict[str, int]:
+    """公開日（JST）→ **その日に置いた本の数**（再生の床を当てない）。
+
+    **`--group` の段は、この数で括ります。** `per_day()` の本数ではありません。
+
+    ## なぜ分けたか（2026-08-29 に踏んだ。**待ちが9回 鳴って、9回とも答えが出ない**）
+
+    `config/watches.yaml` の `予約30分きざみ-3日` は、`src/watches.py` の
+    `_k_days_with_min_videos` で **「その日に置いた本」を数えて**「満ちました」を
+    出します（実測 08/20 **25本** ／ 08/21 **32本** ／ 08/22 **25本**）。
+    ところが `--group 8-13,16-99` は `len(vs)` ——
+    **`min_views` を通った本だけ**で括っていました（同じ3日が **10 / 11 / 12本**）。
+
+    **`16-99本/日` に入る日は、この道具の側には永久に現れません。**
+    実測 2026-08-29: `**該当日0日。判定できません**`。
+    待ちは 00:58 から **9回** 鳴り、`then:` が名指しするこの1行が、
+    **9回とも同じ「判定できません」を返していました。**
+
+    **門と判定が別の母集団を数える**形は、`config/hypotheses.yaml` の
+    「深い題のショート」で一度 直っています（`src/deep_short.py`・
+    2026-08-29 の `fix: 門と判定の手順が、別の母集団を数えていた`）。**同じ形の2件目です。**
+
+    そして**中身の側でも、置いた本数で括るほうが正しい** ——
+    この待ちが問うているのは「**1日に何本 置くと1本あたりが落ちるか**」で、
+    主語は**置いた本数**です。生き残った本数で括ると、
+    実測 08/20（置いた 25本・生きた 10本・中央 374回）と
+    08/23（置いた 13本・生きた 10本・中央 1,046回）が
+    **同じ「10本/日」の段に入ります**（中央値は **2.8倍** ちがう）。
+    **括る軸そのものが、測りたいものと別でした。**
+
+    **覆る条件**: `_k_days_with_min_videos` が床を当てるようになったら、
+    こちらも合わせること（**数え方は片方だけ動かさない**）。
+    検査は `tests/test_per_day_views_group.py`。
+    """
+    out: dict[str, int] = collections.Counter()
+    for vid, points in by_id.items():
+        if views_at(points, target) is None:
+            continue          # その時点の読みが無い本は、置いた数にも入れない
+        out[published_at(points).date().isoformat()] += 1
+    return dict(out)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -101,26 +147,35 @@ def main(argv: list[str] | None = None) -> int:
                     help="本数で括って中央値を比べる。例 1-2,3-6,7-99")
     args = ap.parse_args(argv)
 
-    days = per_day(_load(), target=args.hours, min_views=args.min_views)
+    by_id = _load()
+    days = per_day(by_id, target=args.hours, min_views=args.min_views)
+    placed = placed_per_day(by_id, target=args.hours)
     if not days:
         print("[per_day] 読める点がありません。")
         return 1
 
     print(f"=== 公開日べつ 1本あたりの再生（{args.hours:.0f}時間時点・"
           f"{args.min_views}再生未満は長尺として除外）===")
+    print("  **置いた** は、その日に置いた本の数（床を当てない）。"
+          "**下の段は、この数で括ります。**")
     for day in sorted(days):
         vals = sorted(days[day], reverse=True)
-        print(f"  {day}  {len(vals):>3}本  中央 {statistics.median(vals):>7.0f}   {vals}")
+        print(f"  {day}  置いた {placed.get(day, 0):>3}本 / 生きた {len(vals):>3}本"
+              f"  中央 {statistics.median(vals):>7.0f}   {vals}")
 
     if not args.group:
         return 0
 
     print("\n=== 本数の段べつ（**M14 の物差し。2割以上の下げが上限の合図**）===")
+    print("  **括るのは「置いた本数」です**（`src/watches.py` の"
+          " `_k_days_with_min_videos` と同じ数え方。"
+          "生きた本数で括ると、門が『満ちました』と言う日がこの表に現れません）。")
     bands = []
     for spec in args.group.split(","):
         lo, hi = (int(x) for x in spec.split("-"))
-        vals = [v for d, vs in days.items() if lo <= len(vs) <= hi for v in vs]
-        n_days = sum(1 for vs in days.values() if lo <= len(vs) <= hi)
+        hit = [d for d in days if lo <= placed.get(d, 0) <= hi]
+        vals = [v for d in hit for v in days[d]]
+        n_days = len(hit)
         if not vals:
             print(f"  {spec:>8}本/日  **該当日0日。判定できません**")
             continue

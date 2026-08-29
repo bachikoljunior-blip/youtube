@@ -362,6 +362,142 @@ def prepay_grid(balance: int = 300_000, pay: int = 10_000,
     return rows
 
 
+# ------------------------------------------ 途中で支払額を上げる／ボーナス
+
+def schedule_stepup(balance: int, pay: int, at: int, new_pay: int,
+                    apr: float = APR) -> list[dict]:
+    """**`at` か月目の返済から、毎月の支払額を `new_pay` に上げる。**
+
+    `prepay_grid()` は「まとまった額を1回入れる」表で、こちらは
+    **毎月の額を恒久的に上げる**表。**同じ「追加で払う」でも別の道具**で、
+    リボの解説はどちらも「早く返せ」で済ませて実額を出さない。
+    """
+    rows: list[dict] = []
+    month = 0
+    while balance > 0:
+        month += 1
+        if month > 1200:
+            raise ValueError(f"1200か月で終わらない（支払額 {pay} が小さすぎる）")
+        amount = new_pay if month >= at else pay
+        fee = monthly_fee(balance, apr)
+        principal = amount - fee
+        if principal <= 0:
+            raise ValueError(
+                f"{month}か月目の支払額 {amount:,}円 が手数料 {fee:,}円 以下")
+        paid = amount
+        if principal >= balance:
+            principal = balance
+            paid = principal + fee
+        balance -= principal
+        rows.append({"month": month, "fee": fee, "principal": principal,
+                     "paid": paid, "balance": balance})
+    return rows
+
+
+def schedule_bonus(balance: int, pay: int, bonus: int, every: int = 6,
+                   apr: float = APR) -> list[dict]:
+    """**`every` か月ごとに `bonus` を上乗せする**（ボーナス併用）。
+
+    上乗せは元金にそのまま当たる（手数料はその月の残高だけで決まるため）。
+    """
+    rows: list[dict] = []
+    month = 0
+    while balance > 0:
+        month += 1
+        if month > 1200:
+            raise ValueError("1200か月で終わらない")
+        fee = monthly_fee(balance, apr)
+        principal = pay - fee
+        if principal <= 0:
+            raise ValueError(f"支払額 {pay:,}円 が手数料 {fee:,}円 以下")
+        paid = pay
+        if month % every == 0:
+            principal += bonus
+            paid += bonus
+        if principal >= balance:
+            principal = balance
+            paid = principal + fee
+        balance -= principal
+        rows.append({"month": month, "fee": fee, "principal": principal,
+                     "paid": paid, "balance": balance})
+    return rows
+
+
+# ---------------------------------------------------------------- 表（続き）
+
+def apr_grid(balance: int = 300_000, pay: int = 10_000,
+             aprs: tuple[float, ...] = (0.09, 0.12, 0.15,
+                                        0.18, 0.20)) -> list[dict]:
+    """**実質年率だけを振る**（残高と支払額は固定）。
+
+    `cap_grid()` は借入額をまたいで**法定上限が変わる**表で、支払額を
+    元本の10パーセントに動かしている。**こちらは支払額まで固定**して、
+    **年率の差だけが月数と手数料をいくら動かすか**を出す。
+    広告に出るのは「年率〇〇パーセント」だけで、**それが何か月と何円になるかは
+    どこにも出ていない。**
+    """
+    rows = []
+    for apr in aprs:
+        sch = schedule(balance, pay, apr)
+        fee = sum(r["fee"] for r in sch)
+        rows.append({
+            "apr": apr,
+            "first_fee": sch[0]["fee"],
+            "months": len(sch),
+            "total_fee": fee,
+            "total_paid": balance + fee,
+        })
+    return rows
+
+
+def stepup_grid(balance: int = 300_000, pay: int = 10_000,
+                new_pay: int = 12_000,
+                at: tuple[int, ...] = (1, 6, 12, 24, 36)) -> list[dict]:
+    """**毎月2,000円だけ上げる月を振る**（残高30万円・元は毎月1万円）。
+
+    「いつ上げても同じ」ではない。**上げるのが遅いほど、減る手数料は小さい。**
+    """
+    base_fee = total_fee(balance, pay)
+    base_months = months(balance, pay)
+    rows = []
+    for month in at:
+        sch = schedule_stepup(balance, pay, month, new_pay)
+        fee = sum(r["fee"] for r in sch)
+        rows.append({
+            "at": month,
+            "months": len(sch),
+            "total_fee": fee,
+            "saved": base_fee - fee,
+            "saved_months": base_months - len(sch),
+        })
+    return rows
+
+
+def bonus_grid(balance: int = 300_000, pay: int = 10_000, every: int = 6,
+               bonuses: tuple[int, ...] = (10_000, 20_000, 30_000,
+                                           50_000)) -> list[dict]:
+    """**半年ごとの上乗せ額を振る**（残高30万円・毎月1万円・6か月ごと）。
+
+    年2回の上乗せは、**毎月に均すと上乗せ額の6分の1**でしかない。
+    それでも月数と手数料がどれだけ動くかを出す。
+    """
+    base_fee = total_fee(balance, pay)
+    base_months = months(balance, pay)
+    rows = []
+    for bonus in bonuses:
+        sch = schedule_bonus(balance, pay, bonus, every)
+        fee = sum(r["fee"] for r in sch)
+        rows.append({
+            "bonus": bonus,
+            "per_month": bonus // every,
+            "months": len(sch),
+            "total_fee": fee,
+            "saved": base_fee - fee,
+            "saved_months": base_months - len(sch),
+        })
+    return rows
+
+
 # ---------------------------------------------------------------- 検査
 
 def check_tables() -> None:
@@ -460,6 +596,57 @@ def check_tables() -> None:
                     "10万円未満の上限が10万円以上の上限以下")
     _checks.unique_by(cap_grid(), lambda r: r["principal"], "法定上限の表")
 
+    # 9. 実質年率だけを振る表。**年率が上がれば、月数も総手数料も増える**
+    for row in apr_grid():
+        _checks.ratio(row["apr"], "実質年率")
+        assert row["total_paid"] == 300_000 + row["total_fee"], (
+            f"年率 {row['apr']:.0%} で 総支払額 ≠ 元金＋総手数料（{row}）")
+    _checks.increases_with(lambda a: apr_grid(aprs=(a,))[0]["total_fee"],
+                           [0.09, 0.12, 0.15, 0.18, 0.20],
+                           "年率を上げたのに総手数料が増えていない")
+    _checks.never_decreases(lambda a: apr_grid(aprs=(a,))[0]["months"],
+                            [0.09, 0.12, 0.15, 0.18, 0.20],
+                            "年率を上げたのに月数が増えていない")
+    _checks.unique_by(apr_grid(), lambda r: r["apr"], "年率の表")
+    # 年率15%の行は、既にある `payment_grid()` の毎月1万円の行と同じ数でなければ
+    # おかしい。**同じ前提を2つの関数で解いているので、ここで突き合わせる**
+    fifteen = {r["apr"]: r for r in apr_grid()}[0.15]
+    pay10k = {r["pay"]: r for r in payment_grid()}[10_000]
+    _checks.rounding(fifteen["total_fee"], pay10k["total_fee"],
+                     "年率15%の総手数料（毎月1万円の行と一致すること）")
+
+    # 10. 途中から支払額を上げる表。**上げるのが遅いほど、減る額は小さい**
+    for row in stepup_grid():
+        assert row["saved"] > 0, f"支払額を上げたのに手数料が減っていない（{row}）"
+    _checks.decreases_with(lambda m: stepup_grid(at=(m,))[0]["saved"],
+                           [1, 6, 12, 24, 36],
+                           "上げる月が遅いのに、減る手数料が減っていない")
+    _checks.never_decreases(lambda m: stepup_grid(at=(m,))[0]["months"],
+                            [1, 6, 12, 24, 36],
+                            "上げる月が遅いのに月数が増えていない")
+    # 1か月目から上げるのは「最初から毎月12,000円」と同じ表のはず
+    first = stepup_grid(at=(1,))[0]
+    pay12k = {r["pay"]: r for r in payment_grid()}[12_000]
+    _checks.rounding(first["total_fee"], pay12k["total_fee"],
+                     "1か月目から上げたときの総手数料（毎月12,000円の行と一致すること）")
+
+    # 11. ボーナス併用の表。**上乗せが多いほど、速く終わって安い**
+    _checks.increases_with(lambda b: bonus_grid(bonuses=(b,))[0]["saved"],
+                           [10_000, 20_000, 30_000, 50_000],
+                           "上乗せを増やしたのに、減る手数料が増えていない")
+    _checks.decreases_with(lambda b: bonus_grid(bonuses=(b,))[0]["months"],
+                           [10_000, 20_000, 30_000, 50_000],
+                           "上乗せを増やしたのに月数が減っていない")
+    for row in bonus_grid():
+        sch = schedule_bonus(300_000, 10_000, row["bonus"])
+        assert sum(r["principal"] for r in sch) == 300_000, (
+            f"上乗せ {row['bonus']:,}円 で元金の合計が残高と違う")
+        assert sch[-1]["balance"] == 0, "最後の月に残高が残っている"
+        for r in sch:
+            assert r["paid"] == r["fee"] + r["principal"], (
+                f"上乗せ {row['bonus']:,}円 の {r['month']}か月目で"
+                f" 支払額 ≠ 手数料＋元金（{r}）")
+
     print("制度の値の検査: 通過")
 
 
@@ -532,6 +719,38 @@ def main() -> None:
     for row in prepay_amount_grid():
         print(f"{row['extra']:>9,}円{row['total_fee']:>10,}円"
               f"{row['saved']:>9,}円{row['months']:>6}月")
+
+    print("\n=== 実質年率だけを変えると、月数と総手数料はいくら動くか（残高30万円・毎月1万円） ===")
+    print(f"{'実質年率':>10}{'初月の手数料':>14}{'月数':>7}{'総手数料':>11}{'総支払額':>12}")
+    apr_rows = apr_grid()
+    for row in apr_rows:
+        print(f"{row['apr']:>9.0%}{row['first_fee']:>13,}円{row['months']:>6}月"
+              f"{row['total_fee']:>10,}円{row['total_paid']:>11,}円")
+    top, bottom = apr_rows[-1], apr_rows[0]
+    print(f"  上下の開き: 手数料 {top['total_fee'] - bottom['total_fee']:,}円"
+          f"（{top['apr']:.0%} の {top['total_fee']:,}円 と"
+          f" {bottom['apr']:.0%} の {bottom['total_fee']:,}円）"
+          f"・月数 {top['months'] - bottom['months']}月")
+
+    print("\n=== 毎月2,000円だけ上げるのを、何か月目からにするか（残高30万円・毎月1万円→12,000円） ===")
+    print(f"{'上げる月':>9}{'月数':>7}{'総手数料':>11}{'減る額':>10}{'縮む月数':>10}")
+    step_rows = stepup_grid()
+    for row in step_rows:
+        print(f"{row['at']:>8}月{row['months']:>6}月{row['total_fee']:>10,}円"
+              f"{row['saved']:>9,}円{row['saved_months']:>9}月")
+    print(f"  上下の開き: 減る額 {step_rows[0]['saved'] - step_rows[-1]['saved']:,}円"
+          f"（{step_rows[0]['at']}か月目の {step_rows[0]['saved']:,}円 と"
+          f" {step_rows[-1]['at']}か月目の {step_rows[-1]['saved']:,}円）")
+
+    print("\n=== 半年ごとに上乗せすると、何か月縮んでいくら安くなるか（残高30万円・毎月1万円） ===")
+    print(f"{'半年の上乗せ':>13}{'月あたり':>10}{'月数':>7}{'総手数料':>11}{'減る額':>10}{'縮む月数':>10}")
+    bonus_rows = bonus_grid()
+    for row in bonus_rows:
+        print(f"{row['bonus']:>12,}円{row['per_month']:>9,}円{row['months']:>6}月"
+              f"{row['total_fee']:>10,}円{row['saved']:>9,}円{row['saved_months']:>9}月")
+    print(f"  上下の開き: 減る額 {bonus_rows[-1]['saved'] - bonus_rows[0]['saved']:,}円"
+          f"（{bonus_rows[-1]['bonus']:,}円 の {bonus_rows[-1]['saved']:,}円 と"
+          f" {bonus_rows[0]['bonus']:,}円 の {bonus_rows[0]['saved']:,}円）")
 
     print("\n=== 借入額が10万円と100万円をまたぐと、法定上限が変わる ===")
     print(f"{'借入額':>11}{'法定上限':>10}{'毎月の支払額':>14}{'月数':>7}{'総手数料':>11}")
