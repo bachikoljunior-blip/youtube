@@ -391,6 +391,23 @@ watches:
     kind: hypothesis_needs
     claim: "1本あたり再生の天井は配信の側で決まっている"
 
+  - id: 長尺1本あたり-30本
+    # **2026-08-29（最適化の回）に、前提と同じ回で足しました。**
+    # 前提だけ書いて台帳を空けた回が 08-28 18:5x に起きており
+    # （`配信抑制-0824` の註）、**`tests/test_watches.py` が枝ごと赤**でした。
+    # この回も同じことを踏んでいます —— **`watch:` を書いたら、その場で置くこと。**
+    #
+    # **数をここに写していません**（`kind: hypothesis_needs`）。床の 30本 は
+    # 前提の `needs` にあり、写すと 3箇所で同じ数を持つことになります
+    # （2026-08-27 に実際に食い違った形。`src/watches.py` の
+    #  `_hypothesis_judge_state` の上の註）。
+    what: 「長尺の1本あたり再生 8.0回 は長尺の天井ではない」の判定（腕 `per_video`）
+    cond: "齢をそろえた読みのある長尺が 30本（床は `falsified_if`。数は仮説の `needs` に訊きます）"
+    then: "python -c \"import sys; sys.path.insert(0,'scripts'); import eta; m=eta._measure(); print(m['long_videos_28d'], m['long_per_video'], m['long_median_per_video'])\" → 中央値が **80回 に届かなければ外れ**（＝ 8.0回 は長尺そのものの天井）"
+    source: config/hypotheses.yaml
+    kind: hypothesis_needs
+    claim: "長尺の1本あたり再生 8.0回 は長尺の天井ではない"
+
   - id: 低再生の帯-20000再生
     what: 「登録は本の作りではなく配信の広さで決まる」の判定（腕 `sub_rate`）
     cond: "累計再生 342回 未満の本の再生合計が 20,000回（床は `falsified_if`。数は仮説の `needs` に訊きます）"
