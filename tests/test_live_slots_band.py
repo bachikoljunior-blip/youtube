@@ -115,6 +115,24 @@ def test_測定の窓の日には触らない():
     assert board.moves == []
 
 
+def test_枠を測っているABの本には触らない():
+    """`ab_split.slot_half` は**帯の中のどの枠に置くか**を測っている。
+
+    こちらが枠を動かすと、**その実験が測っている当のものを壊します。**
+    落とすのは `landed` より後に**作った**本だけ（公開日ではない）。
+    """
+    from src import ab_split
+    exp = ab_split.EXPERIMENTS.get("slot_half")
+    if exp is None:
+        pytest.skip("slot_half は閉じています（この門はもう要りません）")
+    board = ls.Board(ls._rows())
+    skip = ls._slot_ab_cohort(board)
+    stray = set(ls.band_stray(board))
+    assert not (skip & stray), (
+        "**枠を測っている A/B の本を、動かす候補に入れています。**"
+        f"{sorted(skip & stray)[:5]}")
+
+
 def test_実物でも生存数が減らない():
     """**控えの実物**で回して、(A) の生存数が落ちないこと（この手の値打ちの根）。"""
     board = ls.Board(ls._rows())

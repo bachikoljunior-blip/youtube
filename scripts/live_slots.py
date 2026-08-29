@@ -446,11 +446,47 @@ def band_stray(board: Board) -> list[str]:
     """
     live = board.live()
     grid = set(GRID)
+    skip = _slot_ab_cohort(board)
     out = [(w, v) for v, w in board.at.items()
            if v in live and w > board.now and board.movable(v)
-           and (w.hour * 60 + w.minute) not in grid]
+           and (w.hour * 60 + w.minute) not in grid and v not in skip]
     out.sort()
     return [v for _, v in out]
+
+
+def _slot_ab_cohort(board: Board) -> set[str]:
+    """**枠そのものを測っている A/B の標本**（`ab_split.slot_half`）の `video_id`。
+
+    ここが要る理由（2026-08-29 23:xx・同じ回の別のサブが `slot_half` を入れた）:
+    あちらは**帯の中のどの枠に置くか**を無作為化して測っています。
+    こちらが枠を勝手に動かすと、**その実験が測っている当のものを壊します。**
+
+    落とすのは「振り分けが実装に入った時刻（`Experiment.landed`）より後に
+    **作った**本」だけです（`falsified_if` が数える群と同じ切り方 ——
+    **公開日ではなく作った時刻**。`ab_split.landed_groups` の節に、
+    公開日で割って 6% しか処置が入っていなかった実測）。
+
+    実測（この関数を足した回）: いま帯の外に居る 78本 は**全部 `landed` より前**に
+    作られており、**1本も落ちません。** これは将来のための門です。
+
+    **覆る条件**: `slot_half` が閉じたら、この門は要りません
+    （`EXPERIMENTS` から消えれば、ここも自動で空になります）。
+    読めない回は空集合 —— **止めないこと**（投稿と逃がしのほうが重い）。
+    """
+    try:
+        from src import ab_split                                # noqa: PLC0415
+        exp = ab_split.EXPERIMENTS.get("slot_half")
+        if exp is None:
+            return set()
+        builds = ab_split.build_times()
+        out = set()
+        for r in _rows():
+            made = builds.get(str(r.get("topic") or ""))
+            if made is not None and made >= exp.landed:
+                out.add(str(r.get("video_id")))
+        return out
+    except Exception:                                           # noqa: BLE001
+        return set()
 
 
 def plan_band(board: Board, limit: int | None = None) -> list[str]:
