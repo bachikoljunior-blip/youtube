@@ -1660,6 +1660,18 @@ def queue_gain() -> dict:
     if _QUEUE_GAIN is not None:
         return _QUEUE_GAIN
     _QUEUE_GAIN = {}
+    # **`queue_lag` から読み込まれた写しでは、解きません**（実測 8.0秒 の丸損）。
+    #   `queue_lag._ready_by_claim()` は、このファイルを `qlag_deadline_check`
+    #   という別名で読み直し、**`ready_by_claim()` の日付だけ**を使います
+    #   （`why` は捨てられる）。そこでこの関数を解くと、
+    #   **`queue_lag` 自身が既に出している数を、誰も読まない所でもう一度**
+    #   組み直すことになります —— しかも `Plan()+improve()` は 8.0秒。
+    #   `queue_lag` は `status.py` と `batch_build` から毎周 呼ばれます。
+    #
+    #   **覆る条件**: `_ready_by_claim()` が `why` も使うようになったら、
+    #   この門は外すこと（そのときは、あちらが読む側になります）。
+    if __name__ == "qlag_deadline_check":
+        return _QUEUE_GAIN
     try:
         from scripts import queue_lag as QL                    # 遅く読む
         plan = QL.Plan()
