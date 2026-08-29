@@ -83,3 +83,56 @@ def test_0件のときの文が原因を名指ししている() -> None:
     src = (ROOT / "scripts" / "fast_tests.py").read_text(encoding="utf-8")
     assert "指示どおり働いた回ほどここが 0件 になります" in src, (
         "0件 のときの文から、原因の名指しが消えています")
+
+
+# --- 錨そのものが打てない役がある（2026-08-29 の同じ日に、次の形で踏んだ）-----
+#
+# 上の `round_start()` は `kind="start"` に錨を打ちますが、**その行を書くのは
+# `run_marker.py --write` だけ**です。ところが最適化の回に渡される本文は
+# `--write` を1文字も言いません（`docs/spawn_prompt.md` が名指しするのは `--ship`）。
+#
+# 実測（`scripts/batch_build.py` と `tests/test_batch_slots.py` を変更し、4回 押した回）:
+#
+#     worktree_tag()          'agent-a40e6e0659b3605fc'   ← 出ている
+#     runs.jsonl の start 行   67件（**うち この札は 0件**）
+#     → round_start()         ''
+#     → keywords()            **[]**（`-k` は CORE だけ）
+#
+# **直した穴が、`--write` を撃たない役では開いたまま**でした。
+
+def test_自分のcommitをreflogから拾えること() -> None:
+    """`own_commits()` が、**この作業コピーが積んだぶん**を返すこと。
+
+    reflog の無い置き方では空 —— そのときは今までどおり `base` との diff だけ。
+    **この関数は足すだけで、選択を狭めることは一度もありません。**
+    """
+    got = F.own_commits()
+    assert isinstance(got, list)
+    assert all(isinstance(x, str) and x for x in got)
+
+
+def test_きょうだいのmergeを混ぜないこと() -> None:
+    """**幹との diff ではなく reflog の `commit:` だけ**を読んでいること。
+
+    `git log --since` や `git diff <幹>` を源にすると、merge で入ってきた
+    きょうだいの変更が全部 `-k` に載り、抜き撃ちが全体撃ちに戻ります
+    （実測: 幹との diff は 30ファイル 超、reflog からは 2ファイル ちょうど）。
+    """
+    src = (ROOT / "scripts" / "fast_tests.py").read_text(encoding="utf-8")
+    assert "reflog" in src, (
+        "`own_commits()` から reflog の源が消えています。"
+        "`--write` を撃たない役では、押した瞬間に『触った 0件』へ戻ります")
+    assert "own_commits" in src
+
+
+def test_錨が無くても選択が空にならないこと() -> None:
+    """**この検査の本体。** 印が無い回でも、自分の commit があれば `-k` は空でない。
+
+    ここが赤いなら、`changed_files()` から `own_commits()` の源が外れています。
+    """
+    if not F.own_commits():
+        return                          # reflog の無い置き方では何も言わない
+    words = F.keywords(F.changed_files(F.DEFAULT_BASE))
+    assert words, (
+        "自分の commit が在るのに `-k` が空です。"
+        "`changed_files()` に `own_commits()` の源が入っているか見ること")
