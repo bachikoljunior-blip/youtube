@@ -2623,6 +2623,85 @@ def _long_stock() -> int | None:
         return None
 
 
+def _long_family_ceiling() -> dict | None:
+    """**長尺を1日に何本まで出せるか、の「構造の天井」**（族の数）。**API 0単位。**
+
+    `_long_make_per_day()`（描く速さ）でも `long_supply_per_day()`（実測の産出）でも
+    ありません。**在庫がいくら在っても、`batch_build.pick` が7日ぶんで取れるのは
+    「族の数 × `per_calc`」まで**です（`scripts/topic_forge.print_long_stock()` と
+    同じ式。`_drop_queue_tail_calcs` が、これから7日の予約に載っている calc を
+    丸ごと落とすため）。
+
+    ## なぜ段2 に要るか（2026-08-29 に足した）
+
+    段2（門2a・長尺4,000時間）の表は L＝1/2/4本/日 の3列しか持たず、実測の
+    1本あたり再生を当てて「**いちばん甘い行でも 5倍 足りない。全部の行を
+    下回っています**」と印字し、そのあと「段2 が測るのは**1本あたりを何倍に
+    できるか**」で閉じていました。**Lを凍らせて、もう一方だけを解いています。**
+
+    **Lは、この機械が自分で動かせる側です。** 1本あたり再生は配信が決めますが、
+    Lは族を1つ足せば `per_calc`本/7日 動きます。だから合格点は**Lの側でも解いて
+    並べる**こと（`CLAUDE.md`「裸の『届きません』を出さないこと」／
+    「何を何倍にすれば、いつ届くか」）。
+
+    返り値:
+
+        families    いま長尺の在庫を持っている族の数
+        ceiling_7d  7日ぶんで `pick` が返せる上限（本）
+        per_day     その 1日あたり
+        spare       `config/topics.yaml` に `calc` が在って、**長尺のテーマを
+                    1件も持っていない族**の数（＝ 表を書かずに族を増やせる余地。
+                    `topic_forge` の実測 15分/件）
+        stock       長尺向けの在庫（本）
+
+    **覆る条件**: `per_calc` か `_drop_queue_tail_calcs` の窓が変わったら、この式ごと
+    変わります —— どちらも `topic_forge` から読んでおり、**ここには写していません**。
+    """
+    try:
+        sys.path.insert(0, str(ROOT / "scripts"))
+        import topic_forge                              # noqa: PLC0415
+        from src import config, dupes                   # noqa: PLC0415
+
+        pool = config.load_topics()["topics"]
+        used = {r["topic"] for r in dupes.ledger_rows() if r.get("topic")}
+        longs = [t for t in pool
+                 if t.get("calc") and t["id"] not in used
+                 and not str(t["id"]).startswith("s-")]
+        families = {t["calc"] for t in longs}
+        per_calc = topic_forge.PER_CALC_DEFAULT
+        window = topic_forge.LONG_WINDOW_DAYS
+        ceiling = min(len(longs), len(families) * per_calc)
+        spare = {t["calc"] for t in pool if t.get("calc")} - families
+        return {"families": len(families), "ceiling_7d": ceiling,
+                "per_day": (ceiling / window) if window else 0.0,
+                "per_calc": per_calc, "window": window,
+                "spare": len(spare), "stock": len(longs)}
+    except Exception:                                  # noqa: BLE001 — 回を止めない
+        return None
+
+
+def _long_needed_per_day(a: dict, lpv: float, days: float) -> list[dict]:
+    """**1本あたり再生を実測で固定したとき、長尺を1日何本 出せば門2a が開くか。**
+
+    `_long_break_even()` の裏返しです。あちらはLを筋書き（1/2/4本/日）で固定して
+    1本あたり再生を解き、こちらは**1本あたり再生を実測で固定してLを解きます。**
+
+        L ＝ 要る視聴分 ÷ (1本あたり再生 × 門1までの日数 × 1再生の視聴分)
+
+    **両方 要ります。** 片方だけだと、**動かせる側が画面に出ません** ——
+    実測 2026-08-29: 表は L≤4本/日 しか持たず「全部の行を下回っています」で
+    終わっており、**Lを上げれば開く**とはどこにも出ていませんでした。
+    """
+    out: list[dict] = []
+    for r in a.get("long_break_even") or []:
+        per_view = r["min_per_view"]
+        slots = lpv * days * per_view
+        out.append({"label": r["label"], "min_per_view": per_view,
+                    "per_day": (a["long_minutes_needed"] / slots)
+                    if slots > 0 else float("inf")})
+    return out
+
+
 def _long_slots_per_day() -> int | None:
     """**1日に長尺を置ける枠の数**（`batch_build._long_ring()` の実測の輪）。
 
@@ -5624,6 +5703,48 @@ def _report_long_gate(m: dict, a: dict) -> list[str]:
           f"登録者 {m['subs_net']} 人のチャンネルに出した本の数です。"
           "**決まったのは「いまのままでは開かない」**で、段2 が測るのは"
           f"**1本あたりを {lpv:,}回 から何倍にできるか**のほうです。")
+        # --- **Lの側でも解く**（2026-08-29 に足した。`_long_needed_per_day`）---
+        #
+        # ここまでの表は L＝1/2/4本/日 しか持たず、上の1行は**Lを凍らせて**
+        # 「1本あたりを何倍にできるか」だけを段2 の的にしています。
+        # **Lはこの機械が自分で動かせる側**（族を1つ足せば +2本/7日）で、
+        # 1本あたり再生は配信が決める側です。**動かせるほうが画面に無い**のは、
+        # 08/26 に踏んだ形の裏返しです（`config/hypotheses.yaml` の
+        # 「『面が足りない』と読んでいるあいだ、`batch_build --long` は
+        #   候補にすら挙がりませんでした」）。
+        need_l = _long_needed_per_day(a, float(lpv), days)
+        fam = _long_family_ceiling()
+        best_l = min((r for r in need_l if r["per_day"] < float("inf")),
+                     key=lambda r: r["per_day"], default=None)
+        if best_l:
+            P(f"    **もう一方の解き方**（1本あたり再生を実測の {lpv:,}回 で固定して、"
+              f"Lのほうを解く）: **いちばん甘い行（{best_l['label']}）で "
+              f"L＝{best_l['per_day']:,.1f}本/日**。"
+              "**表の3列（1/2/4本/日）は、どれもここに届いていません** ——"
+              "「全部の行を下回っています」は、**Lを4本/日 で止めたぶん**でもあります。")
+            if fam and fam["per_day"] > 0:
+                need_fam = int(-(-best_l["per_day"] * fam["window"] // fam["per_calc"]))
+                P(f"    そのLを止めているのは**族の数**です: いま **{fam['families']}族**"
+                  f"（在庫 {fam['stock']}本）→ {fam['window']}日ぶんで取れるのは"
+                  f" **{fam['ceiling_7d']}本 ＝ {fam['per_day']:.2f}本/日**"
+                  f"（1族から {fam['per_calc']}本まで。`scripts/topic_forge.py --list`）。"
+                  f" **要るLとの差は {best_l['per_day'] / fam['per_day']:,.1f}倍**")
+                P(f"      → **要る族は {need_fam}族**（{best_l['per_day']:,.1f}本/日 ×"
+                  f" {fam['window']}日 ÷ {fam['per_calc']}本）。いま {fam['families']}族 なので"
+                  f" **あと {max(0, need_fam - fam['families'])}族**。"
+                  f"**表を書かずに増やせる族が {fam['spare']}件 在ります**"
+                  f"（`src/calc/` に表は在るが、長尺のテーマを1件も持っていない族。"
+                  f"`topic_forge.py --list` の (2)・実測 15分/件）")
+                P("      **これは「開く」と言っているのではありません** ——"
+                  f" L を {fam['per_day']:.2f} → {best_l['per_day']:,.1f}本/日 に上げたとき"
+                  f"1本あたり再生が {lpv:,}回 のまま保つかは**未測定**です"
+                  "（`config/hypotheses.yaml`「長尺の1本あたり再生 8.0回 は長尺の天井ではない」が、"
+                  "その1件を 1日8本 の帯で測っています）。"
+                  "**ここで言えるのは1点だけ: Lの側の天井は族の数で決まっていて、"
+                  "その族は「新しい表を書かずに」増やせる状態で置かれている。**")
+            elif fam:
+                P(f"    そのLを止めているのは**族の数**です"
+                  f"（いま {fam['families']}族・在庫 {fam['stock']}本 ＝ 7日で 0本）。")
     if a.get("long_per_video") is None:
         P("    **長尺を出したら、この表の1行と突き合わせること。** 下回るなら長尺では開きません。")
     return out
