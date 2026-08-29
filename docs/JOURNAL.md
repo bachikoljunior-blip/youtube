@@ -78908,3 +78908,16 @@ jobs 8 が1回だけ）。**まだ既定は動かさない**（下の 6）——
 **08/31 になっても赤いままなら、そのときは配線のほうが壊れています** ——
 `motion_plan()` を撃って `False` が返るか、`queue_lag --plan` に hook_form の手が
 出るかを、まずその順で確かめること。**yaml の期限に手をつけるのは、そのあと。**
+
+**この直しを当てた検査の全景**（99ファイル・`day_cap` / `live_slots` / `queue_lag` /
+`judgeable` / `deep_short` / `motion` / `watch_eta` / `ab_*` / `density` / `eta*` /
+`slot` / `band` / `supply` / `reach` / `rpm` / `drift` / `theta` / `opening` / `hypothesis`）:
+
+    **1,063 passed / 4 failed / 1 skipped**（13分52秒）
+
+4件のうち **3件は上の表のもの**（`hook_form` 1件・`opening_motion` 2件）。
+残る1件 `test_eta_density_confounded.py::test_silent_once_decided` は
+**単体で撃つと緑**です（5 passed）—— 走らせているあいだ、
+**同じ周の別のサブが `data/*.jsonl` を書いています**（`runs.jsonl` はこの回だけで2行 増えた）。
+**この repo の検査は実データを読むので、長いスイートは走っている最中のデータを掴みます。**
+**恒久の赤ではありません。** 疑うときは、まず単体で撃ち直すこと。
