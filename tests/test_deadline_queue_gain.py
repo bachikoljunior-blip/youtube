@@ -78,3 +78,21 @@ def test_the_cache_solves_the_plan_once(monkeypatch) -> None:
     assert deadline_check.queue_gain()["k"][2] == 30
     assert deadline_check.queue_gain()["k"][2] == 30
     assert len(calls) == 1
+
+
+def test_the_summary_line_carries_it_too(monkeypatch) -> None:
+    """**まとめの側にも出すこと。**
+
+    群の行にだけ書いた版は、**まとめしか読まない回には届きません** ——
+    `eta.py` が「`[!]` 18件 は、頭と尾だけ読む手順では1本も読まれない」と
+    自分で印字しているのと同じ穴です。
+    """
+    monkeypatch.setattr(
+        deadline_check, "_QUEUE_GAIN",
+        {"opening_motion": (date(2026, 10, 7), date(2026, 9, 7), 30),
+         "hook_form": (date(2026, 9, 9), date(2026, 9, 7), 2)})
+    out = "\n".join(deadline_check.lines([], 3))
+    assert "予約の並び替えだけで倒せる待ち: 2件・合計 32日" in out
+    assert "最大 opening_motion の **30日**" in out
+    # **「期限が遅すぎる」と混ぜないこと** —— あちらはデータが揃っている件
+    assert "「期限が遅すぎる」とは別の話です" in out
