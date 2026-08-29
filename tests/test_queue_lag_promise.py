@@ -158,3 +158,48 @@ def test_note_apply_records_the_reread(tmp_path, monkeypatch) -> None:
     assert rec["after"] == {"a": "2026-10-06"}
     # `after == before` ＝ **手が当たっていない**の側
     assert rec["after"] == rec["before"] != rec["promised"]
+
+
+# ---- 撃つ手前で返った回（`blocked`）----------------------------------------
+#
+# 2026-08-29 の実測: `data/queue_lag.jsonl` は **全4行、全部 08/27**。
+# `_note_apply` は `apply_moves` の後にしか呼ばれないので、
+# **枠／判定／前の回 のどれかで返った回は、帳面に1文字も残らない** ——
+# 「撃たれていない」のか「撃つ手前で返っていた」のかが言えませんでした。
+
+
+class _P2:
+    """`_note_blocked` が読むのは `before` / `readies()` / `swaps` だけ。"""
+
+    def __init__(self) -> None:
+        self.before = {"a": date(2026, 10, 6)}
+        self.swaps = [("x", "y")]
+
+    def readies(self) -> dict:
+        return {"a": date(2026, 9, 7)}
+
+
+def test_a_blocked_run_is_recorded(ledger, monkeypatch) -> None:
+    from src import dupes
+    monkeypatch.setattr(dupes, "may_write_path", lambda _p: True)
+    queue_lag._note_blocked(_P2(), "quota")
+    rec = json.loads(ledger.read_text(encoding="utf-8").splitlines()[-1])
+    assert rec["blocked"] == "quota"
+    assert rec["would_promise"] == {"a": "2026-09-07"}
+    assert rec["swaps"] == 1
+    assert "moves" not in rec           # **約束はしていません**
+
+
+def test_blocked_rows_never_shadow_the_last_real_apply(ledger, monkeypatch) -> None:
+    """**混ぜないこと。** 飛ばさないと、両方の門が「前に撃たなかった回」を見ます。"""
+    from src import dupes
+    monkeypatch.setattr(dupes, "may_write_path", lambda _p: True)
+    ledger.write_text(_row(_BEFORE, _PROMISED) + "\n", encoding="utf-8")
+    queue_lag._note_blocked(_P2(), "quota")
+    last = queue_lag._last_apply()
+    assert last is not None and last["moves"] == 20
+    assert last["promised"]["opening_motion"] == "2026-09-07"
+    # 門も、撃った行のほうを見ています
+    lines, ok = queue_lag.promise_lines(_Plan(_NOW, _AGAIN))
+    assert ok is True                    # `after` が無いので通す
+    assert any("+30日" in x for x in lines)
