@@ -30,6 +30,7 @@
 from __future__ import annotations
 
 import datetime as dt
+from pathlib import Path
 
 import pytest
 
@@ -131,6 +132,25 @@ def test_枠を測っているABの本には触らない():
     assert not (skip & stray), (
         "**枠を測っている A/B の本を、動かす候補に入れています。**"
         f"{sorted(skip & stray)[:5]}")
+
+
+def test_batch_buildの3段目が2段目の早い_return_で飛ばされない():
+    """**(2) に手が無い回は平常の姿**（逃がし終えた状態）。そこで (3) を落とさないこと。
+
+    最初に書いたときは枠の門を (2) の中に埋めていて、
+    `gain <= 0 or not board.moves` の `return` が **(3) ごと飛ばして**いました。
+    **門は (2) と (3) の手前に1回**。
+    """
+    src = (Path(__file__).resolve().parent.parent
+           / "scripts" / "batch_build.py").read_text(encoding="utf-8")
+    body = src.split("def _rescue_dead_slots", 1)[1].split("\ndef ", 1)[0]
+    gate = body.index("quota_lines")
+    gain = body.index("gain = len(board.live()) - was")
+    band = body.index("plan_band(")
+    assert gate < gain < band, (
+        "枠の門が (2) の中に戻っています。**(2) に手が無い回に (3) が走りません**")
+    assert "plan_band(board, limit=_RESCUE_MAX)" in body, (
+        "(3) が `_RESCUE_MAX` で切られていません（1回で日枠を持っていきます）")
 
 
 def test_実物でも生存数が減らない():

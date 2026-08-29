@@ -3073,28 +3073,33 @@ def _rescue_dead_slots() -> None:
                   flush=True)
             live_slots.main(["--apply"])
 
+        # **`live_slots.main(["--apply"])` が持っている枠の門を、こちらにも掛ける**
+        # （手を `_RESCUE_MAX` で切るために `apply_moves` を直に呼んでいるので、
+        #  門をすり抜けます。**片方だけ直す**が、この repo が繰り返している形）。
+        #
+        # **門は (2) と (3) の手前に1回だけ置きます**（2026-08-30 に直した）。
+        # 最初に書いたときは (2) の中に埋めていて、**(2) に手が無い回
+        # （`gain <= 0 or not board.moves`）は `return` で (3) ごと飛んでいました。**
+        # (2) の手が尽きるのは**平常の姿**（逃がし終えた状態）なので、
+        # そのままだと (3) は「(2) がまだ残っている回」にしか走りません。
+        from scripts import queue_lag                           # noqa: PLC0415
+        _lines, ok = queue_lag.quota_lines(queue_lag.Plan())
+        if not ok:
+            print("[batch] 0再生の枠の逃がしは、**枠が戻ってから**"
+                  "（`--plan` は毎回 組み直すので、手は消えません）", flush=True)
+            return
+
         # **A/B に限らない側**（付け替えではなく、生きる本が実際に増えるぶん）
         board = live_slots.Board(live_slots._rows())
         was = len(board.live())
         live_slots.plan_all(board)      # API 0単位
         gain = len(board.live()) - was
-        if gain <= 0 or not board.moves:
-            return
-        # **`live_slots.main(["--apply"])` が持っている枠の門を、こちらにも掛ける**
-        # （手を `_RESCUE_MAX` で切るために `apply_moves` を直に呼んでいるので、
-        #  門をすり抜けます。**片方だけ直す**が、この repo が繰り返している形）。
-        from scripts import queue_lag                           # noqa: PLC0415
-        _lines, ok = queue_lag.quota_lines(queue_lag.Plan())
-        if not ok:
-            print("[batch] 0再生の枠の逃がしは、**枠が戻ってから**（"
-                  f"手は {len(board.moves)}本 残ります。`--plan` は毎回 組み直します）",
-                  flush=True)
-            return
-        board.moves = board.moves[:_RESCUE_MAX]
-        print(f"[batch] **0再生の枠のショートを {len(board.moves)}本 逃がします**"
-              f"（{len(board.moves) * 50}単位。この回の実測で 帯の中 537.2再生/本 対 "
-              f"帯の外 0.7 ＝ **1単位あたり 投稿の31倍**）", flush=True)
-        live_slots.apply_moves(board)
+        if gain > 0 and board.moves:
+            board.moves = board.moves[:_RESCUE_MAX]
+            print(f"[batch] **0再生の枠のショートを {len(board.moves)}本 逃がします**"
+                  f"（{len(board.moves) * 50}単位。この回の実測で 帯の中 537.2再生/本 対 "
+                  f"帯の外 0.7 ＝ **1単位あたり 投稿の31倍**）", flush=True)
+            live_slots.apply_moves(board)
 
         # --- (3) **帯の外に居る本を、同じ日の帯へ**（2026-08-29・最適化の回）---
         #
