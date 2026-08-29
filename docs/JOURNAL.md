@@ -78868,3 +78868,43 @@ jobs 8 が1回だけ）。**まだ既定は動かさない**（下の 6）——
 7日 の窓ごと測り直すこと（`src/levers.since` の `TOTAL_DAYS`）。
 検査は `tests/test_levers.py::test_reconcile_marks_a_miss`
 （**門の行に「宣言」「実際」と両方の日数が乗っていること**を見ます）。
+
+### 追記（同じ回・02:4x）—— **この直しで、検査が5件 赤くなりました。赤いほうが正しい**
+
+**先に結論**: 5件とも**同じ1つの原因**で、**私の直しが数を正直にしたから**です。
+**期限を延ばして緑にしないこと。床を下げないこと。** どちらも、この回が潰した
+「確かめずに済ませる」に戻る手です。
+
+直す前の姿を再現して、同じ関数を両方 撃ちました（`judgeable.floors()`）:
+
+    【直す前】hook_form       ok=**True**   ready=09/11   間に合う本 問い **17** ／ 不足 **0**
+             opening_motion  ok=**True**   ready=10/07   間に合う本 対照 ** 8** ／ 不足 **0**
+    【直した後】hook_form      ok=**False**  ready=**09/12**  間に合う本 問い **15** ／ 不足 **1**
+             opening_motion  ok=**False**  ready=**None**   間に合う本 対照 ** 6** ／ 不足 **2**
+
+**`ok=True` のほうが嘘でした。** 差は長尺です（`問い` に 2本・`対照` に 2本）。
+
+赤くなった5件と、**緑に戻る道**:
+
+    tests/test_judgeable.py::test_実物で期限が構造的に守れる[hook_form]
+    tests/test_deadline_check.py::test_期限が_判定できる日より前に置かれていない
+      → **枠が戻る 08/30 16:00 JST の入れ替え**（`queue_lag` は hook_form を
+        **09/12 → 09/08** に倒すと言っています ＝ 期限 09/11 の **3日 内側**）。
+        **期限を 09/12 へ延ばして緑にしないこと** —— 入れ替えの 4日 を捨てることになります
+
+    tests/test_judgeable.py::test_実物で期限が構造的に守れる[opening_motion]
+    tests/test_hypothesis_deadline_reachable.py::…[冒頭0.9秒に絵そのものの動き]
+    tests/test_deadline_check.py::test_遅すぎる期限が残っていないこと
+      → **`YT_OPENING_MOTION=0` の本を 2本**。**手で撃つ必要はありません** ——
+        `batch_build.motion_plan()` が既にそう返します（この回に確かめた:
+        直す前 `[True × 8]` → いま `[False, True, True, True, False, True, True, True]`）。
+        **次に `--long` なしの batch が走った回に、自動で入ります**
+
+**「赤い検査を残すな」との折り合い**（`docs/JOURNAL.md` 2026-08-29 の
+「恒久的に赤い検査を1つ置くと、同じファイルの本物の警報が読まれなくなります」）:
+
+**この5件は恒久ではありません。** どちらの道も**この回のうちに配線ずみ**で、
+片方は 16:00 の枠、もう片方は次の batch です。**期日つきの赤**です。
+**08/31 になっても赤いままなら、そのときは配線のほうが壊れています** ——
+`motion_plan()` を撃って `False` が返るか、`queue_lag --plan` に hook_form の手が
+出るかを、まずその順で確かめること。**yaml の期限に手をつけるのは、そのあと。**
