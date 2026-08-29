@@ -692,6 +692,41 @@ def pick(count: int, explicit: list[str], per_calc: int = DEFAULT_PER_CALC,
             print("[pick] 長尺向けのテーマ（`s-` で始まらない id）が在庫にありません。"
                   "**ショート向けの題で長尺を作ります**（投稿を止めないため）。"
                   "`python scripts/topic_forge.py --count N --long` で足すこと")
+            # **ただし、開いた前提が「ショートとして」数えている題は外します**
+            # （2026-08-29 に踏んで足した）。
+            #
+            # `scripts/family_gap.py` の群分けは **id の `s-` だけ**を見ます
+            # （`is_short = topic.startswith("s-")`）—— **尺は見ていません。**
+            # だから `s-ribo-…` を長尺として出すと、**5分の本が
+            # 「ショート」の群に入って**、その前提の判定がそこで壊れます。
+            # 実測 2026-08-29 11:0x: 長尺の在庫が尽きたこの回で、
+            # `_hoist_floor_topics` が `族を外へ-ribo8本`（床 8本・期限 09-19・
+            # 腕 rpm）の `s-ribo-` を先頭へ上げ、**その2本を長尺として作りはじめました。**
+            # `needs` の数え方（`startswith('s-ribo-')`）も尺を見ないので、
+            # **床は「埋まった」と出て、群だけが汚れます。**
+            #
+            # **投稿は止めません** —— 外したあとに何も残らない回は、
+            # 今までどおり在庫の上から取ります（在庫切れで止めるほうが高い）。
+            try:
+                from src import floor_topics
+                claimed = tuple(r["prefix"] for r in floor_topics.starved())
+            except Exception as exc:                          # noqa: BLE001
+                print(f"[pick] 台帳の床が読めませんでした（そのまま続けます）: {exc}")
+                claimed = ()
+            if claimed:
+                keep = [t for t in usable
+                        if not str(t["id"]).startswith(claimed)]
+                dropped = len(usable) - len(keep)
+                if dropped and keep:
+                    print(f"[pick] うち {dropped}件 は**開いた前提がショートとして"
+                          f"数えている題**なので外しました（{', '.join(claimed)}）"
+                          "　—— 長尺として出すと `family_gap.py` の群が汚れます")
+                    usable = keep
+                elif dropped:
+                    print(f"[pick] 残る {dropped}件 は全部**開いた前提が"
+                          "ショートとして数えている題**です（"
+                          f"{', '.join(claimed)}）。**投稿を止めないため通します** ——"
+                          "その前提の群は、この回のぶんだけ汚れます")
 
     # **順番は実績で決める**（2026-08-16 に測って変えた。それまでは手書きの
     # `score` だけで、実績を1つも見ていませんでした ＝ 91件中64件が `1.0`）。
