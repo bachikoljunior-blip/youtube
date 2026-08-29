@@ -5009,6 +5009,61 @@ def headline(pl: dict, prev: dict | None = None,
                    " **この回は別の腕を引くこと。**"
                    f" `--lever` が `{pl['lever_hint']}` でなくても、"
                    "この回は「名指しを外した」ではありません")
+        # --- **「別の腕」に、名前を付ける**（2026-08-30・最適化の回に足した） ---
+        #     ここは長らく「別の腕を引くこと」で終わっていました。**名前が無い**ので、
+        #     回の側は「やれること」の中から選び、結果は毎回おなじ所へ落ちます ——
+        #     実測 2026-08-30 05:5x、`data/runs.jsonl` の **ship 358件（7日ぶん）**:
+        #     `lever_hint` は **358件とも `per_video`**（名指しは1本も変わっていない）、
+        #     `lever_followed` は **False が 312件（87%）**。振り先は
+        #     `none` 152 ／ `density` 106（**`lever_cap` は全件 1.0**）／
+        #     `per_video` 46 ／ `rpm` 29 ／ `sub_rate` 25 ——
+        #     **258件（72%）が、この機械が自分で「動かない」と測った側**です。
+        #     ところが同じ回の `pl["lever_days"]` は `density` を
+        #     **天井 ×1.00・`reachable_at_cap=False`** と出しており、
+        #     `arm_frozen_days["density"]` は **0.0日**（＝丸ごと凍らせても
+        #     到達日は1日も動かない）。**この機械は毎周、自分が 0日 と測った腕を
+        #     引いていました。** 名指しが空欄だったことが、その既定を作っています。
+        #     **そのあいだ到達予測は +20日 遠のいています**（2026-12-21 → 2027-01-10）。
+        #
+        #     出すのは1本だけ: **`reachable_at_cap` が真な腕のうち、
+        #     `gain_at_cap` がいちばん大きいもの**（名指しされた腕は除く）。
+        #     `lever_days` は既にその順で並んでいます（`lever_days()` の `rows.sort`）。
+        #
+        #     **覆る条件**: `reachable_at_cap` の真な腕が、名指しの1本しか
+        #     無くなったら（＝除いたら候補が空）、この行は自分で消えます。
+        #     そのときは腕を選ぶ話ではなく、天井そのものが足りない回です
+        #     （頭の「腕を**据え置いた**線: 出ません」と同じ事情）。
+        #     検査は `tests/test_eta_covered_substitute.py`。
+        _rows = pl.get("lever_days") or []
+        _alt = next((r for r in _rows
+                     if r["lever"] != pl["lever_hint"]
+                     and r.get("reachable_at_cap") and not r.get("at_ceiling")), None)
+        _frz = pl.get("arm_frozen_days") or {}
+        # **0日 の腕を、同じ行で名指しして塞ぐこと。** 代わりを出すだけでは、
+        #     既定（`density`）は残ります —— 名前が2つ並んだときに読み手が
+        #     選べてしまう形は、この道具が `lever_hint` で一度 直しています。
+        _dead = [f"`{k}`（凍らせても **{v:,.0f}日**）"
+                 for k, v in sorted(_frz.items(), key=lambda kv: kv[1])
+                 if v is not None and v < 1.0]
+        if _alt is not None:
+            _th = _alt.get("threshold")
+            out.append(
+                f"{bar} **その「別の腕」は `{_alt['lever']}` です**"
+                f"（天井 ×{_alt['cap']:,.2f} → {_alt['date_at_cap'].isoformat()}"
+                + (f"・日付が出はじめるのは **×{_th:,.2f}** から" if _th else "")
+                + "）—— **天井まで引けば日付が出る腕は、これと"
+                f" `{pl['lever_hint']}` だけ**です（`reachable_at_cap`）。"
+                + (" **" + "／".join(_dead) + " をこの回の `--lever` にしないこと**"
+                   " —— この機械が自分で測った「引いても到達日が動かない」腕です"
+                   if _dead else ""))
+        elif _dead:
+            out.append(
+                f"{bar} [!] **その「別の腕」がありません** ——"
+                f" 天井まで引いて日付が出るのは `{pl['lever_hint']}` だけで、"
+                + "／".join(_dead)
+                + " は**凍らせても到達日が動きません**。"
+                "**この回は腕を選ぶ回ではなく、天井そのものを測り直す回です**"
+                "（上の「天井の齢」の行）")
     # --- **その日付が前提にしている配分を、台帳が用意しているか**（2026-08-26） ---
     #     上の日付は `share`（**閉じた前提の割合 ＝ 過去にどう振ってきたか**）で
     #     解かれています。**未来の配分を決めているのは、開いている前提のほう**です。
