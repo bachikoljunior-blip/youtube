@@ -2054,7 +2054,8 @@ def _last_apply() -> dict | None:
 
 
 def _note_apply(before: dict, promised: dict, moves: int,
-                skipped: list[str] | None = None) -> None:
+                skipped: list[str] | None = None,
+                after: dict | None = None) -> None:
     """**`moves` は「実際に当たった手の数」です。予定の数ではありません。**
 
     2026-08-28 に直しました。ここは長らく `len(plan.swaps) * 2`（＝**組んだ手の
@@ -2086,6 +2087,16 @@ def _note_apply(before: dict, promised: dict, moves: int,
     rec = {"at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
            "before": _stamp(before), "promised": _stamp(promised),
            "moves": moves}
+    if after is not None:
+        # **`promised` は組んだだけの姿（模型）です。** 2026-08-29 まで、
+        # 帳面にはそれしか入っていませんでした —— だから次の回は
+        # 「(1) 組み方が広すぎる」と「(2) 手が当たっていない」を
+        # **帳面からは切り分けられません**（`stuck_lines` が自分でそう書いています）。
+        # ここへ**撃った直後に読み直した実物**を置くと、
+        #   `after == before`     → 手が当たっていない
+        #   `after == promised`   → 当たった（あとで遠のいたなら、きょうだい）
+        # の2つが分かれます。**読み直しは控えからで、API 0単位**です。
+        rec["after"] = _stamp(after)
     if skipped:
         # **飛ばした本を名前で残すこと。** 数だけだと、次の回が
         # 「幻がまだ在るのか、もう直ったのか」を帳面から言えません。
@@ -2156,6 +2167,149 @@ def stuck_lines(plan: "Plan") -> tuple[list[str], bool]:
     ], False)
 
 
+def promise_lines(plan: "Plan") -> tuple[list[str], bool]:
+    """**前の `--apply` は、約束した判定日に着いたか。**（返り: 行, 撃ってよいか）
+
+    ## `stuck_lines` では捕まえられない形（2026-08-29 に実測で見つけた）
+
+    `stuck_lines` が見ているのは「**前の回の `before` と、いまの `before` が
+    同じか**」です。同じなら「あいだの手は何も変えていない」と読めます。
+    **ところが、この帯にはきょうだい（主実行）が毎周 本を足しています。**
+    足せば判定日は勝手に 1〜2日 ずれるので、`before` は**二度と一致しません** ——
+    **門は、開きっぱなしになります。**
+
+    実測（`data/queue_lag.jsonl` の最後の行と、2026-08-29 12:0x の実物）:
+
+        2026-08-27 07:43  **20手**を撃ち、こう約束した
+              title_form 09-06 ／ stat_split 09-05 ／ hook_form 09-07 ／ opening_motion **09-07**
+        2026-08-29 12:0x  実物
+              title_form 09-06 ／ stat_split 09-06 ／ hook_form 09-09 ／ opening_motion **10-07**
+                                   （+1日）        （+2日）           （**+30日**）
+
+        そして**この日の `--plan` は、opening_motion に 09-07 をもう一度 約束**します
+        （13手 ＝ 1,300単位）。**一度も守られたことのない約束**です。
+
+    `stuck_lines` はこの回 何も言いません —— `before` が
+    （09-06 / 09-05 / 09-10 / 10-06）→（09-06 / 09-06 / 09-09 / 10-07）と
+    **ずれている**からで、**ずれた向きは見ていません**（2つは悪化しています）。
+
+    ## だから、比べる相手を替えます
+
+    **`before` どうしではなく、「前の回の `promised`」と「いまの実物」**。
+    これは「動いたか」ではなく「**約束が守られたか**」を訊いています。
+    片方は主実行の足しぶんで毎周 動きますが、もう片方は動きません。
+
+    ## **止めるのは、無駄と分かっているときだけ**（ここが一度 外れました）
+
+    この関数の最初の版は「約束が守られていなければ止める」でした。**強すぎます。**
+    守られなかった理由は3つあり、**帳面はまだそれを分けられません**:
+
+        (1) 組み方が広すぎる   模型が着けない日を約束している
+        (2) 手が当たっていない  `apply_moves` は最初の失敗で止まる ——
+                              幻の予約が1本あるだけで 0/26 になる
+        (3) 当たったが戻された  きょうだいが同じ帯を毎周 書き換えている
+
+    **止めてしまうと、この3つは永久に分かれません。** 分けるのに要るのは
+    「撃った直後に読み直した実物」（`after`）で、**それが帳面に入るのは
+    2026-08-29 からです**。だから:
+
+        `after` が帳面に無い    → **通す。** その一撃が、3つを分ける測定そのもの
+        `after` == `before`     → **(2) が確定。止める。** 当たらないと分かっている
+                                  手に、もう一度 単位を渡さない
+        `after` == `promised`   → **(3)。通す。** 当たってはいる ——
+                                  戻されるのが問題で、それは単位では直りません
+
+    **単位はこの機械のいちばん狭い所です**（同じ窓で `refresh_thumbnail --missing`
+    と `live_slots --all` が 403 で落ちています）。**だからこそ、
+    情報を買える一撃を止めないこと。** 止めるのは (2) だけです。
+
+    ## 止めるときも、**同じ約束を撃ち直すとき**だけ
+
+    守られなかっただけで永久に止めると、きょうだいが遠ざけるかぎり
+    二度と撃てなくなります。**その群に、前と同じ日付をもう一度 約束している**
+    ときだけ止める。別の日付なら別の手なので通します。
+
+    **覆る条件**: 「約束 → 実物」が **1度でも一致**したら、この門は空振りに
+    なります。**それでも消さないこと** —— 一致しない回を見つけるのが仕事です。
+    消してよいのは、`gain_lines()` の印字が実物に着くようになったとき
+    （`stuck_lines` の覆る条件と同じ）。
+    """
+    last = _last_apply()
+    if not last or not last.get("moves"):
+        return [], True
+    promised = last.get("promised") or {}
+    if not promised:
+        return [], True
+    now = _stamp(plan.before)
+    again = _stamp(plan.readies())
+    late: list[tuple[str, str, str, int]] = []
+    for key, want in promised.items():
+        got = now.get(key)
+        if not want or not got:
+            continue
+        slip = (date.fromisoformat(got) - date.fromisoformat(want)).days
+        if slip > 0:
+            late.append((key, want, got, slip))
+    if not late:
+        return [], True
+    total = sum(x[3] for x in late)
+    out = [
+        "",
+        "=== 前の `--apply` の約束は、守られていません ===",
+        f"  前の回（{last['at'][:16]}）: **{last['moves']}手**"
+        f"（{last['moves'] * 50}単位）を撃って、こう約束しました:",
+    ]
+    for key, want, got, slip in sorted(late, key=lambda x: -x[3]):
+        out.append(f"    {key:16s} 約束 {want} → **実物 {got}**（**{slip:+d}日**）")
+    out.append(f"  遅れの合計 **{total}日**。"
+               "**`before` どうしを比べる `stuck_lines` は、この形を捕まえません** ——"
+               "きょうだいが毎周 本を足すので、`before` は二度と一致しません")
+
+    after = last.get("after")
+    if after is None:
+        out.append("  **止めません。** 帳面にまだ `after`"
+                   "（撃った直後に読み直した実物）がありません ——"
+                   " **(1) 組み方が広すぎる / (2) 手が当たっていない /"
+                   " (3) 当たったがきょうだいに戻された** を分けられないのは"
+                   "そのためです。")
+        out.append("  [!] **この一撃が、その3つを分ける測定です。**"
+                   " 撃てば `after` が残り、**次の回は帳面だけで原因を言えます**"
+                   "（`after == before` なら (2)、`after == promised` なら (3)）。"
+                   " **単位を惜しんでここで止めると、この3つは永久に分かれません。**")
+        return out, True
+
+    if after != last.get("before"):
+        out.append("  **止めません。** 帳面の `after` は `before` と違います ＝"
+                   " **手は当たっています**（(2) ではない）。"
+                   "**当たったあとで遠のいた** ＝ (3) きょうだいが同じ帯を"
+                   "書き換えている側です。")
+        out.append("  [!] **これは単位では直りません。** 撃ち直せばまた同じだけ"
+                   "戻されます —— 直すのは**順番のほう**（きょうだいと同じ帯を"
+                   "同時に触らない）です。**撃つ前に、そちらを先に読むこと。**")
+        return out, True
+
+    # `after == before` ＝ **当たっていない**（(2) が確定）
+    repeat = [x for x in late if again.get(x[0]) == x[1]]
+    out.append("  [!] **帳面の `after` は `before` と同じです ＝ 手が"
+               "1つも当たっていません**（(2) が確定。`apply_moves` は最初の"
+               "失敗で止まるので、**幻の予約が1本あるだけで 0/26 になります**）。")
+    if not repeat:
+        out.append("  **それでも止めません** —— この回は、上のどの群にも"
+                   "**前と同じ日付を約束していません**（別の手です）")
+        return out, True
+    out.append("  [!] **止めます。** 当たらないと分かっている手で、"
+               f"**同じ日付をもう一度 約束**しています: "
+               + " ／ ".join(f"{k} → {w}" for k, w, _g, _s in repeat))
+    out.append("  **先に直すのは `apply_moves` の側**です（幻の予約を1本"
+               "飛ばせば残りは当たる ——『もう公開済み』はすでに飛ばしますが、"
+               "**それ以外の失敗は今も全部を止めます**）。"
+               "**単位はこの機械のいちばん狭い所**で、同じ窓の"
+               "`refresh_thumbnail --missing` と `live_slots --all` が"
+               "403 で落ちています")
+    out.append("  どうしても撃つなら `--force-stuck`（**理由を JOURNAL に書くこと**）")
+    return out, False
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(
         description="予約の順番待ちが、判定までの日数をいくら食っているか")
@@ -2195,6 +2349,12 @@ def main(argv: list[str] | None = None) -> int:
         # **その次が「前の回で動いたか」**（`stuck_lines` に実測）。
         slines, moving = stuck_lines(plan)
         lines += slines
+        # **最後が「前の回の約束は守られたか」**（`promise_lines` に実測）。
+        #   `stuck_lines` は `before` どうしを比べるので、きょうだいが毎周
+        #   本を足すこの帯では**二度と一致せず、門が開きっぱなし**になります。
+        plines, kept = promise_lines(plan)
+        lines += plines
+        moving = moving and kept
     else:
         ok = True
     print("\n".join(lines))
@@ -2212,10 +2372,19 @@ def main(argv: list[str] | None = None) -> int:
         rc = apply_moves(plan)
         # **撃った回は、必ず残すこと**（途中で止まった回も。次の回が
         # 「動いたか」を、この行と自分の姿で比べます）。
+        # **`after` は控えを読み直した実物**（API 0単位）。`promised` は模型なので、
+        # これが無いと次の回は「模型が広すぎたのか、手が当たらなかったのか」を
+        # 帳面から言えません（2026-08-29 に足した。`_note_apply` の註）。
+        after = None
+        try:
+            after = Plan(plan.now).readies()
+        except Exception:                                      # noqa: BLE001
+            pass
         try:
             _note_apply(plan.before, plan.readies(),
                         getattr(plan, "applied", 0),
-                        getattr(plan, "skipped_public", None))
+                        getattr(plan, "skipped_public", None),
+                        after)
         except Exception:                                      # noqa: BLE001
             pass
         return rc
