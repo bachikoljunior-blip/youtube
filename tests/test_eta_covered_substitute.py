@@ -184,6 +184,11 @@ def test_densityを塞ぐときは面を割る():
     assert "ショートの面" in line
     assert "長尺を増やす回ではありません" in line
     assert "上限 6本/日 ÷ いま 0.73本/日" in line
+    # **禁止の述語を、但し書きで分断しないこと**（2026-08-30 に踏んだ）。
+    #     いちど `_dead` の要素そのものに足したところ、行が
+    #     「`density`（…）。ただし…（長い） をこの回の `--lever` にしないこと」
+    #     となり、**述語が但し書きの向こう側へ飛びました。**
+    assert line.index("`--lever` にしないこと") < line.index("ただし `density`")
 
     # **長尺の面も天井なら、但し書きは消える。**
     pl2 = _plan(density_surfaces={

@@ -5059,12 +5059,17 @@ def headline(pl: dict, prev: dict | None = None,
         #     **頭の3行だけが割らずに塞ぐと、長尺を増やす作業まで止まります** ——
         #     この repo が3回 申し送って直した所を、こちらから戻すことになります。
         #     **覆る条件**: 長尺の面が `at_ceiling` になったら、この但し書きは消えます。
+        #     **文の途中に差し込まないこと**（2026-08-30 に踏んで直した）。
+        #     いちど `_dead` の要素そのものに足したところ、行が
+        #     「`density`（…）。**ただし…**（長い） **をこの回の `--lever` に
+        #     しないこと**」となり、**禁止の述語が但し書きの向こう側へ飛びました。**
+        #     頭の3行は「読み飛ばしても決まる形」なので、**述語を分断しないこと。**
+        #     但し書きは行の**末尾**に付けます。
         _long = ((pl.get("density_surfaces") or {}).get("long") or {})
-        if _long and not _long.get("at_ceiling"):
-            for _i, _s in enumerate(_dead):
-                if _s.startswith("`density`"):
-                    _dead[_i] = _s + (
-                        "。**ただしその 0日 は「ショートの面」だけの数です** ——"
+        _surface = ""
+        if _dead and _long and not _long.get("at_ceiling") \
+                and any(s.startswith("`density`") for s in _dead):
+            _surface = ("　**ただし `density` のその 0日 は「ショートの面」だけの数です** ——"
                         "長尺の面はまだ天井ではありません"
                         + (f"（{_long.get('why')}）" if _long.get("why") else "")
                         + "。**止めているのはショートの本数を増やす回であって、"
@@ -5093,7 +5098,7 @@ def headline(pl: dict, prev: dict | None = None,
                 + (" **" + "／".join(_dead) + " をこの回の `--lever` にしないこと**"
                    " —— この機械が自分で測った「引いても到達日が動かない」腕です"
                    if _dead else "")
-                + _unmeasured)
+                + _unmeasured + _surface)
         elif _dead:
             out.append(
                 f"{bar} [!] **その「別の腕」がありません** ——"
