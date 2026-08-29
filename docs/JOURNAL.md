@@ -77218,6 +77218,25 @@ n=87・**中央 8.8日**・最短 0.5日・最長 40.7日）。つまりこの�
 bytes は控えに在るので、**枠の戻った回に `refresh_thumbnail.py --missing`**。
 再生リストへの追加も同じ枠で落ちている（動画そのものは投稿済み）。
 
+#### そのあと、**この回の verdict を、この回で実行した**（`--count 7 --long`）
+
+**「1回に何本 頼むか」が律速だと確定したのに、自分が 3本 しか頼んでいない**ので、
+そのまま上限いっぱいまで上げてもう1回 撃った。**頼んだ 7 → 族の除外で 6本**、
+**予約は 6/6**（壁時計 37.3分・直列なら 106.3分・倍率 2.84・jobs 3）。
+
+    shitsugyo-30sai-miman-kyoukai-yonhon   27GfJnGuuyA   **2026-09-15 20:00 JST**
+    aoiro-65man-jikkouritsu-nanadan        -ysIR9m7o_U   **2026-09-22 21:00 JST**
+    jidou-daisanshi-nenreisa-hyou          ErgfKlUaZo8   **2026-09-13 22:00 JST**
+    juminzei-kyuchi-hikaku                 VRv-logigRs   **2026-09-12 19:00 JST**
+    koureikoyou-gendo-todokanai            Iw05SDe1MXI   **2026-09-05 18:00 JST**
+    koureikyushoku-65sai-nissu             RyughHuNO-Q   **2026-09-16 20:00 JST**
+
+**この回の長尺は合わせて 9本。うち 6本 が 09/13〜09/26**（前は **2本**しか無かった窓）。
+**族は1つも足していない。** 足したのは `--count` の数字だけ。
+
+**1本あたりは 12.0〜23.2分**（中央 18.1分）で、**3本の回（13.1分）より太っている** ——
+きょうだいの batch と重なった時間帯なので、`--report` の「太り方」に入る。
+
 **日枠（読みの側）はこの窓で尽きている**（`videos.list` / `thumbnails.set` / `videos.update` が 403・
 戻るのは 08/30 16:00 JST）。**`videos.insert` は別枠なので予約は通る**（本数枠 上限97本・あと91本）。
 だから `queue_lag.py --apply`（5周ぶんの持ち越し・合計30日）と
@@ -77278,11 +77297,10 @@ bytes は控えに在るので、**枠の戻った回に `refresh_thumbnail.py -
 
 ### 次の回へ
 
-1. **`--count` を上げた長尺を、1回 撃って測ること**（上の 3）。
-   `python scripts/batch_build.py --count 8 --long` を背景へ。
-   読むのは `data/batch_runs.jsonl` の最後の行の `wall_sec` / `serial_sec` / `speedup` と、
-   `results[].build_sec`。**落ちた本があればその理由も**（族ではないことは、この回で確定している）。
-   **`timeout` を付けないこと**（§5）。
+1. **（この回で済ませた）** `--count 7 --long` を撃ち、**6/6 予約**。
+   壁時計 37.3分・倍率 2.84・1本あたり中央 18.1分。**次はこの続き** ——
+   **`--jobs 5` で1回**（既定 3 は峰の 40%。上の (5)）。
+   `--count` は `--pick-only` で先に頭打ちを見てから。**`timeout` を付けないこと**（§5）。
 2. **08/30 16:00 JST 以降の回は、まず `python scripts/queue_lag.py --apply`。**
    **6周ぶんの持ち越し。** 合計30日・新しい本は1本も要らない。
    同じ回に `python scripts/refresh_thumbnail.py --missing`（未載 70本）と
