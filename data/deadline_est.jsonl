@@ -14,3 +14,7 @@
 {"at": "2026-08-29", "key": "deep_short_arm('処置')", "rate": 1.0, "have": 4, "ready": "2026-09-02", "claim": "深い題（`s-` で始まらない・節を持つ題）をショートとして出すと、1本あたり再生が `s-` の題のショートより上がる"}
 {"at": "2026-08-29", "key": "deep_short_usable_days()", "rate": 0.5, "have": 2, "ready": "2026-08-31", "claim": "深い題（`s-` で始まらない・節を持つ題）をショートとして出すと、1本あたり再生が `s-` の題のショートより上がる"}
 {"at": "2026-08-29", "key": "sum(1 for r in rows('uploaded.jsonl') if (r.get('uploaded_at') or '') >= '2026-08-27T12:00' and (r.get('at') or '9') <= str(date.today()))", "rate": 1.0, "have": 2, "ready": "2026-09-12", "claim": "完成した図を説明のあいだ画面に残すと、engaged 比率が上がる（＝速すぎて理解されていない）"}
+{"at": "2026-08-30", "key": "len({r['video_id'] for r in uploaded() if r.get('video_id') and str(r.get('topic', '')).startswith('s-ribo-') and str(r.get('at', ''))[:10] <= str(date.today())})", "rate": 0.5, "have": 1, "ready": "2026-09-13", "claim": "1本あたり再生の天井は配信の側で決まっている。題材の族を税・年金・社会保険の外へ出しても、1本あたり再生は変わらない"}
+{"at": "2026-08-30", "key": "sum(latest_views().get(v, 0) for v in long_ids())", "rate": 26.0, "have": 286, "ready": "2026-09-27", "claim": "長尺の登録率はショートより1桁以上高い（律速の登録者は長尺でしか動かない）"}
+{"at": "2026-08-30", "key": "deep_short_arm('処置')", "rate": 1.0, "have": 5, "ready": "2026-09-02", "claim": "深い題（`s-` で始まらない・節を持つ題）をショートとして出すと、1本あたり再生が `s-` の題のショートより上がる"}
+{"at": "2026-08-30", "key": "sum(1 for r in rows('uploaded.jsonl') if (r.get('uploaded_at') or '') >= '2026-08-27T12:00' and (r.get('at') or '9') <= str(date.today()))", "rate": 2.666667, "have": 8, "ready": "2026-09-02", "claim": "完成した図を説明のあいだ画面に残すと、engaged 比率が上がる（＝速すぎて理解されていない）"}
