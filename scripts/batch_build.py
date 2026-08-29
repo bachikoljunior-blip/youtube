@@ -2713,8 +2713,16 @@ def main(argv: list[str] | None = None) -> int:
     # **長尺は、同じ日に `LONG_PER_DAY` 本まで詰めます**（2026-08-26 に足した）。
     # `--date` を渡した回は今までどおり（あちらは日を釘づけする別の道）。
     # `--hours` を明示した回も触りません（**明示は常に通す**）。
+    #
+    # **`--hour` を書いた回も、輪は使いません**（2026-08-29 に踏んで足した）。
+    # すぐ上の `hour_given` の註が「**明示は常に通す**」と書いているのに、
+    # ここだけ `--hours`（複数形）しか見ておらず、`--hour 20` と書いた回に
+    # **18〜22時 の輪で黙って上書き**していました。実測: `--count 4 --long --hour 20`
+    # が 09/19 の 19/20/21/22時 へ4本 —— 頼んだのは「20時に1日1本」です。
+    # 長尺の穴（`eta.py` が名指しする「長尺の予約が0本の日」）を **1日ずつ**
+    # 埋めにいく回は、この道しかありません。**輪は既定のままです**（何も書かない回）。
     ring = None
-    if args.long and not args.date and not hours:
+    if args.long and not args.date and not hours and not hour_given:
         ring = _long_ring()
         if ring and len(ring) > 1:
             days = (len(topics) + len(ring) - 1) // len(ring)

@@ -65,3 +65,19 @@ def test_ショートの帯とは別の日になる():
     assert plan[0][0] == 20
     assert plan[0][1] not in (date(2026, 8, 29), date(2026, 8, 30),
                               date(2026, 8, 31))
+
+
+def test_時刻を明示した回は輪を使わない():
+    """`--hour 20` は「20時に1日1本」。**輪で黙って上書きしないこと。**
+
+    2026-08-29 の実測: `--count 4 --long --hour 20` が 09/19 の
+    19/20/21/22時 へ4本 入りました。`hour_given` の註は
+    「**明示は常に通す**」と書いてあり、`slots(live=…)` はそれを守っています ——
+    守っていなかったのは `ring` の側だけ（`--hours` 複数形しか見ていなかった）。
+
+    **覆る条件**: 長尺を1日に詰めるほうが 面 に効くと実測で出たら、
+    既定（何も書かない回）の輪はそのままなので、この検査は触らなくてよい。
+    """
+    import inspect
+    src = inspect.getsource(b.main)
+    assert "not hours and not hour_given" in src
