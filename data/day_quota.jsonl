@@ -5058,3 +5058,4 @@
 {"at": "2026-08-29T14:03:25+00:00", "detail": "scheduled_publish_times", "by": "uploader.py:taken_publish_times"}
 {"at": "2026-08-29T14:03:28+00:00", "detail": "playlistItems.insert", "by": "uploader.py:_post_actions"}
 {"at": "2026-08-29T14:03:28+00:00", "detail": "thumbnails.set CozaA7GyO00", "by": "uploader.py:_set_thumbnail"}
+{"at": "2026-08-29T14:31:18+00:00", "detail": "status: Data API 読み", "by": "status.py:main"}

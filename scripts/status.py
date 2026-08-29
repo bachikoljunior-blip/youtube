@@ -431,6 +431,18 @@ def print_live_slots() -> None:
                 "**新しい本は1本も要りません。**生きる枠の付け替えです。"
                 "**枠が開いているのに数が残り続けるなら、その段が落ちています** ——"
                 "その回の `[batch] 死に枠の逃がしは飛ばします:` の行を見ること")
+        # **上の数は (A) で数えています**（`day_cap.live_ids` ＝ その日の先頭 `cap()` 本）。
+        # **(B)（13:30 までが生きる）なら、帯の外に居る本はぜんぶ 0再生**です。
+        # 切り分けは未決着（`day_cap.window()` が `confounded`・答えは 2026-09-03）
+        # なので、**どちらでも損をしない手だけ**をここに出します（2026-08-29 に足した）。
+        stray = live_slots.band_stray(live_slots.Board(live_slots._rows()))
+        if stray:
+            lines.append(
+                f"  [!] **(A) では生きているのに、帯の外に居る本が {len(stray)}本**"
+                "（＝ **(B) なら 0再生**）。**同じ日の帯の空き分へ入れ直せます** ——"
+                "(A) なら生存数 ±0・(B) なら生き返るので、**どちらでも損をしません**"
+                f"（`python scripts/live_slots.py --plan --band`・{len(stray) * 50}単位。"
+                "`batch_build` が投稿より先に自動で撃ちます）")
         print("\n" + "\n".join(lines))
     except Exception as e:  # pragma: no cover - 状態しだい
         print(f"\n  [!] A/B の本が生きた枠に居るかを数えられませんでした: {e}")
