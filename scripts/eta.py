@@ -2111,18 +2111,58 @@ def physical_caps(a0: dict, density: float = PLAN_PUBLISH_PER_DAY,
         #     **軌跡は歩きません。使うのは `src/levers.py` の「死んだ腕」の判定だけ**で、
         #     そこが**面ごとに割れる**ようにするために置いています ——
         #     ショートの面が天井でも、**長尺を増やす作業を `none` へ落とさない**ため。
-        long_cap = max(0.0, float(UPLOAD_CAP_PER_DAY) - float(_view_cap_per_day()))
+        #
+        #     **【2026-08-29 に、ここが実物と食い違っていました】**
+        #     上の註は「`day_cap.long_form()` が**常に** `measured: False`」と
+        #     書いていますが、**もう False ではありません。**
+        #     実測（`data/views.jsonl`・齢 48時間 でそろえた読み）:
+        #
+        #         2026-08-21  長尺 **7本** を出して、再生が付いたのは **5本**
+        #         → `collapsed: True` / `most: 7` / `measured: True`
+        #
+        #     **崩れは観測されています。** `day_cap.long_form_lines()` は
+        #     この日から「**7本/日 で崩れました → 上限は 6本/日**」と印字しており、
+        #     `batch_build._long_ring()` も `most - 1` で正しく落としています。
+        #     **ここだけが「一度も観測していない」と言い続けていました** ——
+        #     `day_cap.py` の註が名指ししている
+        #     「**機構は正しく、読まれる側だけが偽**」の3件目です。
+        #
+        #     食い違いの大きさ: 定義上の上限は 82本/日（92 - 10）で **×118**、
+        #     実測の上限は 6本/日 で **×8.7**。**14倍 ちがいます。**
+        #     この行は `eta.py` の頭・`--alloc` の2か所に毎回出て、
+        #     「長尺の面は ×118 空いている」と読ませていました。
+        #
+        #     **測れているなら、測ったほうを使うこと。** 測れていない窓
+        #     （崩れをまだ見ていない）では、これまでどおり定義上の上限に落とします。
+        long_m: dict = {}
+        try:
+            long_m = day_cap.long_form() or {}
+        except Exception:                                      # noqa: BLE001
+            long_m = {}
         long_now = _long_form_per_day()
+        long_measured = bool(long_m.get("measured"))
+        if long_measured:
+            # **崩れた日の1本 手前**が上限（`day_cap.long_form_lines()` と同じ式）。
+            long_cap = float(max(1, int(long_m.get("most") or 1) - 1))
+            long_why = (f"長尺の面は **{long_m.get('most')}本/日 で崩れました**"
+                        f"（最大の日 {long_m.get('alive')}/{long_m.get('most')}本 しか"
+                        f"生存していません・齢 {float(long_m.get('age_h') or 0):.0f}時間 で"
+                        f"そろえた実測）→ 上限 **{long_cap:.0f}本/日**"
+                        "（**測った天井です**。`src/day_cap.long_form()`）")
+        else:
+            long_cap = max(0.0,
+                           float(UPLOAD_CAP_PER_DAY) - float(_view_cap_per_day()))
+            long_why = (f"口が通す {UPLOAD_CAP_PER_DAY}本/日 から、ショートの面で死ぬ"
+                        f" {_view_cap_per_day()}本 を引いた {long_cap:.0f}本"
+                        "（**定義上の上限。測った天井ではありません** ——"
+                        " 長尺の面が崩れるところは一度も観測していない）")
         long_raw = (long_cap / long_now) if long_now > 0 else None
         caps["density_long"] = {
             "factor": long_raw,
-            "why": (f"口が通す {UPLOAD_CAP_PER_DAY}本/日 から、ショートの面で死ぬ"
-                    f" {_view_cap_per_day()}本 を引いた {long_cap:.0f}本"
-                    "（**定義上の上限。測った天井ではありません** ——"
-                    " 長尺の面が崩れるところは一度も観測していない）"
+            "why": (long_why
                     + (f" ÷ いま出している長尺 {long_now:.2f}本/日"
                        if long_now > 0 else "。**長尺をまだ1本も出していません**")),
-            "measured": False,
+            "measured": long_measured,
             "at_ceiling": bool(long_raw is not None and long_raw <= 1.0),
             "surface": "長尺",
             "now_per_day": long_now,
@@ -2185,9 +2225,19 @@ def physical_caps(a0: dict, density: float = PLAN_PUBLISH_PER_DAY,
 #:
 #: `LEVERS` は4本ですが、`physical_caps` は `density` の天井を**2つ**立てます ——
 #: `density`（ショートの面・実測 ×1.00・**天井**）と
-#: `density_long`（長尺の面・×128・**未測定で開いている**）。
-#: `density_long` を `LEVERS` に入れないのは正しい（軌跡を未測定の天井で
-#: 歩かせない。`physical_caps` の註に 08/21 の実害）のですが、
+#: `density_long`（長尺の面・**実測 ×8.7（上限 6本/日）で開いている**）。
+#:
+#: **【2026-08-29 に、ここの「×128・未測定」が古くなりました】**
+#: 長尺の面の崩れは **2026-08-21 に観測されています**（7本 出して生存 5本）。
+#: `physical_caps` は、その日から**実測の上限 6本/日**（`most - 1`）を使います。
+#: **`LEVERS` に入れない理由も、それに合わせて置き直しています** ——
+#: もう「未測定だから」ではありません。**段1（`PLAN_PUBLISH_PER_DAY`）が
+#: ショートの面の上で解かれているから**です。軌跡に長尺の面を歩かせるには、
+#: 先に段1 を面ごとに割る必要があります（そこを割らずに腕だけ足すと、
+#: ショートの段の上を長尺の天井で歩きます）。
+#: **覆る条件**: 段1 が面ごとに割れたら、`density_long` を `LEVERS` へ入れること。
+#: （元の理由は「軌跡を未測定の天井で歩かせない。`physical_caps` の註に 08/21 の実害」）
+#: そして
 #: **「この腕は死んでいる」と印字する側**は、その割れを知らないままでした。
 #: ここはその割れを、印字する側へ運ぶためだけの表です。**軌跡には渡しません。**
 _SURFACE_SIBLINGS: dict[str, tuple[str, ...]] = {"density": ("density_long",)}
