@@ -125,3 +125,35 @@ def test_surface_line_does_not_name_ctr_when_the_need_is_outside_the_interval():
     s2 = eta._gate2_surface_note(2408.7, 175.0, others=wide)
     assert "その区間の中" in s2
     assert "サムネと題では届きません" not in s2
+
+
+def test_needed_per_day_is_reciprocal_in_per_video():
+    """**要るLは1本あたり再生に反比例する** —— 画面の「×N で あと0族」がこの式です。
+
+    この節を足した回が、その場で同じ失敗をしました: 「あと N族」を
+    **1本あたり再生を今日の実測で凍らせて**出し、**直したはずの形をそのまま再演**。
+    いまは両方を同じ行に出します。**その関係が崩れたら、あの行は嘘になります。**
+    """
+    a = _fake_a()
+    days = 491.0
+    base = eta._long_needed_per_day(a, 8.0, days)
+    x10 = eta._long_needed_per_day(a, 80.0, days)
+    for b, t in zip(base, x10):
+        assert abs(b["per_day"] / 10.0 - t["per_day"]) < 1e-9, (b, t)
+
+
+def test_zero_family_multiple_is_required_l_over_the_ceiling():
+    """画面の `×N`（族を1つも足さずに足りる倍率）＝ 要るL ÷ 族の天井。
+
+    **覆る条件**: `_long_family_ceiling()` の式が変われば、この比の意味も変わります
+    （`per_calc` と窓は `topic_forge` から読んでいるので、定数を写した回だけ落ちます）。
+    """
+    a = _fake_a()
+    fam = eta._long_family_ceiling()
+    if fam is None or fam["per_day"] <= 0:
+        return
+    best = min(r["per_day"] for r in eta._long_needed_per_day(a, 8.0, 491.0))
+    x = best / fam["per_day"]
+    # その倍率を1本あたり再生に当てると、要るLは族の天井とちょうど同じになる
+    at_x = min(r["per_day"] for r in eta._long_needed_per_day(a, 8.0 * x, 491.0))
+    assert abs(at_x - fam["per_day"]) < 1e-6, (at_x, fam["per_day"])
