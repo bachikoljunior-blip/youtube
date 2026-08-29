@@ -123,6 +123,36 @@ def test_節は未使用を先に取る():
     assert got == [("kaigo", "=== I ===")], got
 
 
+def test_長尺が既に指している節は返さない(monkeypatch):
+    """**投稿ずみの長尺が居る族は、族としては空いていても節は空いていない。**
+
+    2026-08-29 に踏んだ。`long_form_families()` は「**まだ投稿していない**長尺を
+    持つ族」しか数えないので、**投稿ずみの長尺しか無い族はここへ入ってくる。**
+    そこまでは正しい（族はもう1本 取れる）が、**節まで空いているとは限らない** ——
+    そのまま1つ目の節を取ると、投稿ずみの長尺と同じ表を指す。
+
+    実測: 3周まわして **5件**（jidoushazei / koyouhoken / zangyo / jouto / haito）が
+    `tests/test_calc_sections_still_hit.py::test_同じ節を指す長尺が2件以上ない` に当たった。
+
+    **ショートは対象外です**（`s-` で始まる題は同じ節から何本 切ってもよい）。
+    """
+    from src import config
+
+    monkeypatch.setattr(config, "load_topics", lambda: {"topics": [
+        # 投稿ずみの長尺（`long_families` には出ないが、節は握っている）
+        {"id": "kokuho-jogen", "calc": "kokuho", "calc_sections": ["C"]},
+        # ショートは節を握らない
+        {"id": "s-taishoku-1", "calc": "taishoku", "calc_sections": ["E"]},
+    ]})
+    got = forge.assign_new_families(SECTIONS, FREE, 5, long_families=set())
+    picked = {(m, h) for m, h in got}
+    assert ("kokuho", "=== C ===") not in picked, got
+    # 同じ族の別の節は取ってよい
+    assert ("kokuho", "=== D ===") in picked, got
+    # ショートが指しているだけの節は外さない
+    assert ("taishoku", "=== E ===") in picked, got
+
+
 def test_実物の族でも1件は返る():
     """**実物の `config/topics.yaml` と `src/calc/` で撃って、空にならないこと。**
 
