@@ -1749,6 +1749,22 @@ def slots(count: int, hour: int, date_jst: str | None, hours: list[int],
                   " --hours が明示されているので続けますが、"
                   "取り消し済みの枠でなければ `upload_only.py` が落とします。",
                   flush=True)
+        # **明示は通す。ただし帯の外なら必ず言う**（2026-08-29・最適化の回）。
+        # `--hours` は「取り消し済みの枠へ置き直す道を塞がない」ために通していますが、
+        # **黙って通すと、この節が塞いだ穴が `--hours` 越しに開いたままになります。**
+        if not long_form:
+            lo, hi = _band_bounds()
+            outside = sorted(h for h in hours[:count]
+                             if not lo <= h * 60 <= hi)
+            if outside:
+                print(f"[batch] [!] **{outside} は生きる帯（"
+                      f"{lo // 60}:{lo % 60:02d}〜{hi // 60}:{hi % 60:02d}）の外です。**"
+                      " --hours が明示されているので通しますが、"
+                      "この回の実測で **帯の外は 0.7再生/本**（帯の中 537.2・"
+                      "ショート 159本）—— **その本は 0再生 で公開されます。**"
+                      " 帯へ入れたいなら `--hours` を外すこと（`_band_walk()` が"
+                      "空きを拾い、埋まっていれば次の日の帯へ回します）",
+                      flush=True)
     else:
         # **ショートは帯（09:00〜13:30）の外へこぼさない**（2026-08-29・最適化の回）。
         # `range(hour, 24)` は、帯が埋まると 14:00 以降へ静かにこぼれます。

@@ -478,3 +478,31 @@ def test_slots_output_is_parsed_by_split_when() -> None:
         hour, minute, date = split_when(spec)
         assert date == "2026-09-30"
         assert 0 <= hour <= 23 and minute in (0, 30)
+
+
+def test_explicit_hours_outside_the_band_are_announced(capsys):
+    """**明示は通す。ただし帯の外なら必ず言う**（2026-08-29）。
+
+    `--hours` を黙って通すと、`_band_walk()` が塞いだ穴が
+    **`--hours` 越しに開いたまま**になります。実測の 0.7再生/本 を、
+    その場で読ませること（`_band_walk()` の docstring に測り方と n）。
+    """
+    assert slots(2, 9, "2026-08-24", [15, 21], taken=set()) == [
+        "2026-08-24@15", "2026-08-24@21",
+    ]
+    out = capsys.readouterr().out
+    assert "生きる帯" in out and "0.7再生" in out
+
+
+def test_explicit_hours_inside_the_band_are_quiet(capsys):
+    """帯の中を明示した回は、余計なことを言わない。"""
+    assert slots(2, 9, "2026-08-24", [10, 12], taken=set()) == [
+        "2026-08-24@10", "2026-08-24@12",
+    ]
+    assert "生きる帯" not in capsys.readouterr().out
+
+
+def test_long_form_explicit_hours_are_quiet(capsys):
+    """**長尺には帯を掛けません** —— 19時台に「帯の外だ」と鳴ってはいけません。"""
+    slots(2, 19, "2026-08-24", [19, 20], taken=set(), long_form=True)
+    assert "生きる帯" not in capsys.readouterr().out
