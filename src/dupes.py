@@ -609,6 +609,54 @@ def used_amounts(topics: dict[str, str] | None = None) -> dict[str, list[float]]
     return {k: sorted(v) for k, v in sorted(out.items())}
 
 
+def used_round_amounts(topics: dict[str, str] | None = None
+                       ) -> dict[str, list[list[float]]]:
+    """**丸い数どうしの「組」**を calc ごとに返す（2026-08-29 に足した）。
+
+    `used_amounts()` は `sigdigits <= ROUND_SIGDIGITS` の数を**捨てます**。
+    その理由は正しい —— 丸い数**1つ**は制度の名前でしかなく（`20万円ルール`）、
+    `find()` もそれ1つでは止めません。
+
+    **ところが2つ並ぶと止まります。** `find()` の `same-yen` は
+
+        hit and (len(hit) > 1 or min(sigdigits(x) for x in hit[0]) > ROUND_SIGDIGITS)
+
+    で、**`len(hit) > 1` の枝は丸さを一度も見ません。**
+
+    実測（2026-08-29・`topic_forge --new-family` を2周）: 8件 頼んで
+    **2周とも1件ずつ**、この枝で落ちました ——
+
+        keihi-1man-nedauchi-10dan: `keihi` で金額が入れ子（10,000円・7,000,000円）
+
+    **10,000 も 7,000,000 も丸い数なので、`used_amounts()` には入りません。**
+    つまり `topic_forge.build_prompt()` が貼る「この数を主役にするな」の一覧に
+    **一度も載らず、書き手はそれを避けようがありませんでした。**
+    落ちた1件は `topics.yaml` に1行も書かれないので、**その回の在庫が1件 減ります**
+    （実測 16件 頼んで 14件 ＝ **12.5% の取りこぼし**）。
+
+    返すのは**組**です（1つでは止まらないので、1つずつ並べても意味がない）。
+    `build_prompt()` は「**この2つを同じ題に並べないこと**」として貼ります。
+
+    **これは門ではありません。** 門は `blocking()` の側で、
+    こちらをすり抜けた種はそちらが受けます（`used_amounts()` と同じ立場）。
+
+    **覆る条件**: `find()` の `len(hit) > 1` の枝が丸さを見るようになったら、
+    ここは要りません（そのときは `used_amounts()` だけで足ります）。
+    **検査は `tests/test_forge_doomed.py`。**
+    """
+    rows = ledger_rows(topics)
+    out: dict[str, set[tuple[float, ...]]] = defaultdict(set)
+    for r in rows:
+        calc = r.get("calc") or ""
+        if not calc:
+            continue
+        round_ones = sorted({v for v in _yen(r["title"])
+                             if sigdigits(v) <= ROUND_SIGDIGITS})
+        if len(round_ones) > 1:
+            out[calc].add(tuple(round_ones))
+    return {k: [list(t) for t in sorted(v)] for k, v in sorted(out.items())}
+
+
 def blocking(title: str, topic_id: str, videos: list[dict],
              topics: dict[str, str] | None = None) -> list[dict]:
     """**投稿の直前に呼ぶ。** これから上げる1本が、既にある本と強く重なるか。

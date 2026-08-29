@@ -291,6 +291,85 @@ def assign(free: dict[str, list[str]], count: int) -> list[tuple[str, str]]:
     return picked
 
 
+def assign_new_families(all_sections: dict[str, dict[str, str]],
+                        free: dict[str, list[str]],
+                        count: int,
+                        long_families: set[str] | None = None,
+                        per_family: int = 1) -> list[tuple[str, str]]:
+    """**道 (3) を、機械が撃てる形にする。**（2026-08-29 に足した）
+
+    `print_long_stock()` は 2026-08-29 15:5x から3つの道を印字していますが、
+    **そのうち機械が撃てるのは (1) と (2) だけ**でした ——
+    `assign()` が `free`（**未使用の節**）からしか取らないためです。
+
+    ところが同じ画面がこう言っています:
+
+        (3) **既にある節**に、長尺の題を書く（実測 5分・**いちばん速い**）
+            節も表も足しません。`(calc, 節)` は短尺と**共有できます**
+
+    **その道は、この道具からは撃てませんでした。** 実測 2026-08-29 の
+    「族 8 → 12」は**手で `topics.yaml` に書いた**もので、
+    `--long` を撃った回は「未使用の節がある calc」しか当たらず、
+    **`yoteinozei`（節7・未使用0）のような族は永久に選ばれません。**
+    そして未使用は **全620節のうち 10件**、しかもその10件は
+    `genjokaifuku` / `shogaku` / `teiji` ——**3つとももう長尺の族**です。
+    つまり **`--long` を何回 撃っても、族は1つも増えません。**
+
+    `scripts/eta.py` は長尺の律速をこう名指ししています ——
+    **「族の数: あと 68族（要る 77 ／ いま 9）」**。
+    その律速に対して、**唯一いちばん速い道が機械化されていませんでした。**
+
+    ここが取るのは **`long_form_families()` に入っていない族**だけです
+    （＝ まだ投稿していない長尺のテーマを1件も持っていない族）。
+    1族から `per_family` 件ずつ、**族べつの実績（`family_perf.scorer()`）の
+    高い順**に回ります。節は**未使用を先に**、無ければ使用済みからも取ります
+    —— 使用済みでよいのが (3) の要点で、`realign()` も `validate()` も
+    「未使用であること」を要求していません（どちらも `all_sections` しか見ない）。
+
+    **なぜ 1族1件が既定か。** 7日ぶんの上限は
+    `min(長尺の在庫, 族の数 × 2)` なので、**族が増えないと上限は動きません。**
+    まず族を横に増やし、上限が在庫の側で頭打ちになってから
+    `--per-family 2` で厚くするほうが、同じ件数で上限が高く出ます。
+
+    **覆る条件**: `batch_build` の `--per-calc` が族あたり2本の上限を
+    外したら、族の数は律速でなくなるので、この関数は要りません
+    （`src/section_depth.long_form_families()` の覆る条件と同じ）。
+    **検査は `tests/test_topic_forge_new_family.py`。**
+    """
+    if long_families is None:
+        try:
+            from src import section_depth
+            long_families = section_depth.long_form_families()
+        except Exception:                                      # noqa: BLE001
+            long_families = None
+    have = set(long_families or ())
+
+    fresh = [m for m in all_sections if m not in have and all_sections[m]]
+    try:
+        from src import family_perf
+        score = family_perf.scorer()
+        order = sorted(fresh, key=lambda m: (-score(m), m))
+    except Exception as exc:                                   # noqa: BLE001
+        print(f"[forge] 族べつの実績が読めないので名前順に落とします: {exc}")
+        order = sorted(fresh)
+
+    # 節は**未使用を先に**。無ければ使用済みからも取る（それが (3) の要点）。
+    pool: dict[str, list[str]] = {}
+    for m in order:
+        spare = list(free.get(m) or [])
+        rest = [h for h in all_sections[m] if h not in spare]
+        pool[m] = spare + rest
+
+    picked: list[tuple[str, str]] = []
+    for _ in range(max(1, per_family)):
+        for m in order:
+            if len(picked) >= count:
+                return picked
+            if pool[m]:
+                picked.append((m, pool[m].pop(0)))
+    return picked
+
+
 # ---------------------------------------------------------------- 書かせる
 
 PROMPT_HEAD = """\
@@ -408,17 +487,41 @@ def build_prompt(picked: list[tuple[str, str]], all_sections, topics,
             floor=float(vid["min_minutes"]), target=float(vid["target_minutes"]))]
     else:
         parts = [PROMPT_HEAD.format(n=len(picked), seen=seen)]
-    used = dupes.used_amounts({t["id"]: t.get("calc", "") for t in topics})
+    calc_of = {t["id"]: t.get("calc", "") for t in topics}
+    used = dupes.used_amounts(calc_of)
+    # **丸い数は `used_amounts()` に載りません**（1つでは門が止めないため）。
+    # ところが **2つ並ぶと止まります**（`find()` の `len(hit) > 1` の枝は
+    # 丸さを一度も見ない）。実測 2026-08-29: `--new-family` を2周して
+    # **2周とも1件ずつ**この枝で落ち、その2件は貼っていた一覧に
+    # **一度も載っていませんでした**（`src/dupes.used_round_amounts` の節）。
+    pairs = dupes.used_round_amounts(calc_of)
     for i, (mod, head) in enumerate(picked, 1):
         body = all_sections[mod][head]
         block = (f"\n--- {i} 件目 / calc={mod} / 節={head}\n"
                  f"この節の表（**ここに無い数字は使わない**）:\n```\n{body[:2400]}\n```\n")
         taken = used.get(mod, [])
         if taken:
-            shown = "・".join(f"{int(v):,}円" for v in taken[:12])
-            block += (f"**この calc で既に題に出した金額**: {shown}\n"
+            # **黙って切らないこと**（2026-08-29 に足した。`docs/trigger_main.md`
+            # 「no silent caps」）。ここは長らく `taken[:12]` で、**切ったことを
+            # 何も言いませんでした。** 実測 2026-08-29: `iryohi` が**ちょうど 12件**
+            # ——次に1件 足した回から、**書き手が避けられない数が黙って生まれます**
+            # （落ちた本は `topics.yaml` に1行も書かれないので、在庫が減る）。
+            # 節の表は 2,400字 貼っているので、金額を数十件 並べても費用は小さい。
+            cap = 40
+            shown = "・".join(f"{int(v):,}円" for v in taken[:cap])
+            more = (f"（ほか {len(taken) - cap}件。**多すぎるので切りました** ——"
+                    f" 切った側の数も門は止めます）" if len(taken) > cap else "")
+            block += (f"**この calc で既に題に出した金額**: {shown}{more}\n"
                       f"→ **この数を title_seed の主役に選ばないこと。**"
                       f"投稿の門が必ず止めます（表の別の数字を使う）\n")
+        combos = pairs.get(mod, [])
+        if combos:
+            shown = "／".join(
+                "・".join(f"{int(v):,}円" for v in combo) for combo in combos[:6])
+            block += (f"**この calc で既に題に並べた「丸い数の組」**: {shown}\n"
+                      f"→ **この組み合わせを title_seed に2つとも入れないこと。**"
+                      f"丸い数は1つなら通りますが、**2つ並ぶと投稿の門が必ず止めます**"
+                      f"（片方だけにするか、表の別の数字を使う）\n")
         parts.append(block)
     return "\n".join(parts)
 
@@ -1243,8 +1346,11 @@ def print_long_stock() -> None:
               f" ← 節も表も足しません。`(calc, 節)` は短尺と**共有できます**"
               f"（`yoteinozei-15man` の前例・いま6組）。長尺は「表を最後まで読み切る」形で、"
               f"短尺が1つの数だけを撃つのとは読み方が違います。"
-              f"**族の選び方は `status.py` の族べつ実績の上から**"
-              f"（2026-08-29 は `kouki`・順番の値 61.1）")
+              f"**族の選び方は機械がやります** ——"
+              f" `python scripts/topic_forge.py --count N --new-family`"
+              f"（2026-08-29 に足した。それまで (3) は**手で書く道**しかなく、"
+              f"`--long` は未使用の節を持つ calc しか当てないので"
+              f"**族は1つも増えませんでした**。`assign_new_families` の節）")
     if len(longs) > ceiling:
         print(f"  **いま在庫は {len(longs)}件 あるのに {ceiling}本 しか取れません** —— "
               f"詰まっているのは節ではなく**族の数**です。"
@@ -1261,8 +1367,18 @@ def main() -> int:
                     help="**長尺（8分30秒以上）の企画を作る。**"
                          "既定はショート。門2a（長尺4,000時間）が唯一の門なので、"
                          "面を増やすならこちら（`LONG_PROMPT_HEAD` の節）")
+    ap.add_argument("--new-family", action="store_true",
+                    help="**道 (3)。`--long` を含みます。**まだ長尺のテーマを"
+                         "1件も持っていない族から、**既にある節**（使用済みでよい）に"
+                         "長尺の題を書く。7日ぶんの上限は `族の数 × 2` なので、"
+                         "**族を横に増やすのがいちばん速い**"
+                         "（`assign_new_families` の節）")
+    ap.add_argument("--per-family", type=int, default=1,
+                    help="`--new-family` のとき、1族あたり何件 書かせるか（既定 1）")
     ap.add_argument("--model", default="opus")
     args = ap.parse_args()
+    if args.new_family:
+        args.long = True
 
     all_sections, free, known_ids = survey()
     total = sum(len(v) for v in all_sections.values())
@@ -1288,12 +1404,23 @@ def main() -> int:
                   "上の族の数がそのまま7日ぶんの上限です。")
         return 0
 
-    picked = assign(free, args.count)
+    if args.new_family:
+        picked = assign_new_families(all_sections, free, args.count,
+                                     per_family=args.per_family)
+    else:
+        picked = assign(free, args.count)
     if not picked:
         print("\n割り当てられる節がありません。")
         return 1
     if len(picked) < args.count:
-        print(f"\n**{args.count}件 頼まれましたが、未使用が {len(picked)}件 しかありません。**")
+        if args.new_family:
+            print(f"\n**{args.count}件 頼まれましたが、長尺のテーマを持っていない族が"
+                  f" {len({m for m, _ in picked})}件 しかありません**"
+                  f"（`--per-family` を上げると1族から複数 取れます。"
+                  f"ただし7日ぶんの上限は `族の数 × 2` で頭打ちです）。")
+        else:
+            print(f"\n**{args.count}件 頼まれましたが、"
+                  f"未使用が {len(picked)}件 しかありません。**")
 
     print(f"\n=== 割り当て {len(picked)}件（calc は {len({m for m, _ in picked})}種類）===")
     for mod, head in picked:
