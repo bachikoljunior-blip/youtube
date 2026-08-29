@@ -45,13 +45,23 @@ def ledger(tmp_path, monkeypatch):
 
 
 def _row(before: dict, promised: dict, moves: int = 20,
-         after: dict | None = None) -> str:
+         after: dict | None = None, attempted: int | None = None,
+         failed: list[str] | None = None) -> str:
+    """`moves` は**当たった手の数**、`attempted` は**組んだ手の数**（2026-08-29）。
+
+    2つが要るのは、`after != before` が言うのは「**1手でも**当たった」だけで、
+    「全部 当たった」ではないからです。**その差が (3) と (4) を分けます。**
+    """
     rec = {"at": "2026-08-27T07:43:36+00:00",
            "before": queue_lag._stamp(before),
            "promised": queue_lag._stamp(promised),
            "moves": moves}
     if after is not None:
         rec["after"] = queue_lag._stamp(after)
+    if attempted is not None:
+        rec["attempted"] = attempted
+    if failed is not None:
+        rec["failed"] = failed
     return json.dumps(rec, ensure_ascii=False)
 
 
@@ -119,16 +129,61 @@ def test_after_equals_before_and_same_promise_is_refused(ledger) -> None:
 
 
 def test_after_equals_promised_is_not_blocked(ledger) -> None:
-    """`after != before` ＝ **当たってはいる**。遠のいたのはきょうだい ——
+    """`after != before` かつ **組んだ手が全部 当たった** ＝ (3) きょうだい。
 
     単位では直らないので止めても意味がありません。**通して、そう言う。**
+    """
+    ledger.write_text(
+        _row(_BEFORE, _PROMISED, moves=20, after=_PROMISED, attempted=20) + "\n",
+        encoding="utf-8")
+    lines, ok = queue_lag.promise_lines(_Plan(_NOW, _AGAIN))
+    assert ok is True
+    assert any("全部 当たっています" in x for x in lines)
+    assert any("単位では直りません" in x for x in lines)
+
+
+def test_一部だけ当たった回を_きょうだいのせいにしないこと(ledger) -> None:
+    """**`after != before` は「全部 当たった」ではありません**（2026-08-29）。
+
+    実測: 24手 を撃って **4本 が窓の上限（`MOVE_CAP`）で撃たれず**、
+    `opening_motion` の 29日 が丸ごと 0日 になりました。**帳面の `after` は
+    `before` と違う**（残りは当たっている）ので、道具はこれを
+    「(3) きょうだいに戻された」と読み、**「撃ち直しても無駄」と書いていました。**
+
+    **(3) と (4) では次にやることが逆です** —— (3) は順番を直す、
+    (4) は**そのまま撃ち直せば当たる**。取り違えると、直った `--plan` を
+    次の回が捨てます。
+    """
+    ledger.write_text(
+        _row(_BEFORE, _PROMISED, moves=20, after=_PROMISED,
+             attempted=24, failed=["vidX", "vidY"]) + "\n",
+        encoding="utf-8")
+    lines, ok = queue_lag.promise_lines(_Plan(_NOW, _AGAIN))
+    assert ok is True
+    blob = "\n".join(lines)
+    assert "(3) ではありません" in blob, (
+        "**一部だけ当たった回を (3) と読んでいます。**"
+        "`moves`（当たり）< `attempted`（組んだ）なら、"
+        "戻されたのではなく撃たれていない手が混ざっています")
+    assert "撃ち直しで直ります" in blob
+    assert "vidX" in blob, "落ちた本を名前で出さないと、どの群か分かりません"
+    assert "単位では直りません" not in blob, (
+        "**撃ち直しても無駄、と書いています。** (4) は撃ち直すと当たります")
+
+
+def test_attempted_の無い古い帳面では_どちらとも決めないこと(ledger) -> None:
+    """**材料が無いのに断定しないこと**（2026-08-29 より前の行）。
+
+    ここが断定していたせいで、実測で否定済みの (3) が印字され続けました。
     """
     ledger.write_text(_row(_BEFORE, _PROMISED, after=_PROMISED) + "\n",
                       encoding="utf-8")
     lines, ok = queue_lag.promise_lines(_Plan(_NOW, _AGAIN))
     assert ok is True
-    assert any("手は当たっています" in x for x in lines)
-    assert any("単位では直りません" in x for x in lines)
+    blob = "\n".join(lines)
+    assert "(3) か (4) かは、この行からは言えません" in blob
+    assert "単位では直りません" not in blob, (
+        "材料が無いのに (3) の結論（撃ち直しても無駄）を印字しています")
 
 
 def test_a_different_promise_is_not_blocked(ledger) -> None:

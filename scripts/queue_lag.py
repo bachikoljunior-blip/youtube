@@ -2376,7 +2376,9 @@ def spent_elsewhere_lines(plan: "Plan", spend: dict, now=None) -> list[str]:
 
 def _note_apply(before: dict, promised: dict, moves: int,
                 skipped: list[str] | None = None,
-                after: dict | None = None) -> None:
+                after: dict | None = None,
+                attempted: int | None = None,
+                failed: list[str] | None = None) -> None:
     """**`moves` は「実際に当たった手の数」です。予定の数ではありません。**
 
     2026-08-28 に直しました。ここは長らく `len(plan.swaps) * 2`（＝**組んだ手の
@@ -2418,6 +2420,20 @@ def _note_apply(before: dict, promised: dict, moves: int,
         #   `after == promised`   → 当たった（あとで遠のいたなら、きょうだい）
         # の2つが分かれます。**読み直しは控えからで、API 0単位**です。
         rec["after"] = _stamp(after)
+    if attempted is not None:
+        # **組んだ手の数**。`moves`（＝当たった数）との差が、そのまま
+        # 「撃ったのに動かなかった手」です。2026-08-29 まで帳面には
+        # **当たった数しか**入っておらず、`stuck_lines` は
+        # `after != before`（＝1手でも当たった）を見て
+        # **「(3) きょうだいに戻された」と断定**していました。
+        # 実測はそうではなく、**24手 のうち 4本 が窓の上限で撃たれていない**
+        # ——「一部だけ当たった」という4つ目の姿です（`docs/JOURNAL.md`）。
+        # **この2つを分けるのに要るのは、この1つの数だけ**でした。
+        rec["attempted"] = int(attempted)
+    if failed:
+        # **落ちた本を名前で残すこと**（`skipped_public` と対）。
+        # 数だけだと、次の回は「どの群が落ちたか」を言えません。
+        rec["failed"] = list(failed)
     if skipped:
         # **飛ばした本を名前で残すこと。** 数だけだと、次の回が
         # 「幻がまだ在るのか、もう直ったのか」を帳面から言えません。
@@ -2575,6 +2591,25 @@ def promise_lines(plan: "Plan") -> tuple[list[str], bool]:
         (2) 手が当たっていない  `apply_moves` は最初の失敗で止まる ——
                               幻の予約が1本あるだけで 0/26 になる
         (3) 当たったが戻された  きょうだいが同じ帯を毎周 書き換えている
+        (4) **一部だけ当たった** 残りはこの窓の上限（`MOVE_CAP`）で撃たれていない
+
+    **(4) は、2026-08-29 に実物から足しました。** それまでこの並びは3つで、
+    `after != before` を見た所で **(3) と断定**していました ——
+    けれど `after != before` が言うのは「**1手でも**当たった」だけです。
+    実測は (4) のほうでした（24手 のうち 4本 が窓の上限。`docs/JOURNAL.md`）。
+    そして (3) と (4) では、次にやることが**逆**になります:
+
+        (3) なら  撃ち直しても同じだけ戻される → **順番のほうを直す**
+        (4) なら  落ちた手はまだ在る          → **そのまま撃ち直せば当たる**
+
+    **この並びが3つしか無いあいだ、道具は必ずどちらかを取り違えます。**
+    分けるのに要ったのは `attempted`（組んだ手の数）1つだけで、
+    帳面はそれを持っていませんでした（`_note_apply`）。
+
+    > **教訓は日数ではありません**（`docs/JOURNAL.md` 2026-08-29）——
+    > **この (1)(2)(3) は道具の作者が置いた候補で、実物の候補の全部では
+    > ありませんでした。** 場合分けが尽きている証拠は、どこにもありません。
+    > **次にここを読む側へ: (5) を疑うこと。**
 
     **止めてしまうと、この3つは永久に分かれません。** 分けるのに要るのは
     「撃った直後に読み直した実物」（`after`）で、**それが帳面に入るのは
@@ -2646,8 +2681,46 @@ def promise_lines(plan: "Plan") -> tuple[list[str], bool]:
         return out, True
 
     if after != last.get("before"):
-        out.append("  **止めません。** 帳面の `after` は `before` と違います ＝"
-                   " **手は当たっています**（(2) ではない）。"
+        # **`after != before` が言うのは「1手でも当たった」だけ**です。
+        # 「全部 当たった」ではありません —— ここを取り違えて、2026-08-29 まで
+        # **(3) きょうだいに戻された**と断定し、「撃ち直しても無駄」と
+        # 書いていました。実測はその日のうちに否定されています
+        # （24手 のうち **4本 が窓の上限で撃たれていなかった**。`docs/JOURNAL.md`）。
+        # 分けるのに要るのは `attempted`（組んだ手の数）1つだけです。
+        landed, attempted = last.get("moves"), last.get("attempted")
+        if isinstance(landed, int) and isinstance(attempted, int) and landed < attempted:
+            lost = [str(v) for v in (last.get("failed") or [])][:6]
+            out.append(f"  **止めません。** 帳面は **{attempted}手 を組んで"
+                       f"{landed}手 しか当たっていません**"
+                       f"（{attempted - landed}手 が落ちた）——"
+                       " **(3) ではありません。**"
+                       "「当たったのに戻された」のではなく、"
+                       "**撃たれていない手が混ざっている**側です"
+                       + (f"（落ちた本: {', '.join(lost)}）" if lost else ""))
+            out.append("  [!] **これは撃ち直しで直ります。** 落ちる手を"
+                       "組まなくなったのが 2026-08-29 の直し"
+                       "（`Plan.blocked` ＝ `src.upload_cap.move_blocked`）——"
+                       " **いまの `--plan` に、この窓で撃てない本は入っていません。**"
+                       " 落ちた群がまだ遅いなら、**そのまま撃つこと。**")
+            return out, True
+        if attempted is None:
+            # **ここで (3) と断定しないこと。** 古い帳面（2026-08-29 より前）は
+            # 「組んだ手の数」を持たないので、**(3) と (4) を分ける材料が
+            # ありません。** 断定していたのが、この日 実測で否定された形です。
+            out.append("  **止めません。** 帳面の `after` は `before` と違います ＝"
+                       " **1手でも当たった**（(2) ではない）。"
+                       " **ただし (3) か (4) かは、この行からは言えません** ——"
+                       "この帳面に `attempted`（組んだ手の数）が無いからです"
+                       "（2026-08-29 より前の行）。")
+            out.append("  [!] **`after != before` は「全部 当たった」ではありません。**"
+                       " 実測 2026-08-29: **24手 のうち 4本 が窓の上限で撃たれておらず**、"
+                       "道具はそれを (3) と読んでいました。"
+                       " **次の `--apply` から `attempted` が入り、分かれます。**"
+                       " それまでは、どちらとも決めずに撃つこと。")
+            return out, True
+        out.append("  **止めません。** 帳面の `after` は `before` と違い、"
+                   f"**組んだ {attempted}手 は全部 当たっています**"
+                   f"（当たり {landed}手）。"
                    "**当たったあとで遠のいた** ＝ (3) きょうだいが同じ帯を"
                    "書き換えている側です。")
         out.append("  [!] **これは単位では直りません。** 撃ち直せばまた同じだけ"
@@ -2755,7 +2828,9 @@ def main(argv: list[str] | None = None) -> int:
             _note_apply(plan.before, plan.readies(),
                         getattr(plan, "applied", 0),
                         getattr(plan, "skipped_public", None),
-                        after)
+                        after,
+                        attempted=len(plan.swaps) * 2,
+                        failed=getattr(plan, "failed", None))
         except Exception:                                      # noqa: BLE001
             pass
         return rc
