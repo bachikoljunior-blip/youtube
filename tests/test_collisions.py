@@ -94,13 +94,39 @@ def test_plan_never_places_before_the_live_edge() -> None:
     assert m % collisions.STEP_MIN == 0
 
 
-def test_plan_does_not_push_past_the_days_last_slot_on_a_window_day() -> None:
+def test_plan_does_not_push_past_the_days_last_slot_on_a_window_day(
+        monkeypatch) -> None:
     """**穴を埋めるだけ。** いちばん遅い分より後ろへ出すと T を自分で動かします。
 
     08/27 に入っているのは 09:00 の2本だけ ＝ いちばん遅い分も 09:00 で、
     **帯の下端（09:00）と同じ**です。つまりその日には空き分が1つも無いので、
     **別の日へ出ます**（前は 05:00 が空いていたので同じ日に残っていました）。
+
+    ## **窓は、この検査が自分で立てます**（2026-08-29 に直した）
+
+    ここは `src/measure_window.WINDOWS` に 08/27 の窓が**在ること**に
+    寄りかかっていました。**あれは動く台帳です** —— 支えている前提が閉じれば
+    窓は外れます。実際 2026-08-28 23:3x に別の回が
+    「閉じた前提の窓を外した」で 08/27 の窓を消し、**この検査が赤になりました**
+    （`collisions.plan` は1行も変わっていません）。
+
+    **`today` の注入だけでは足りません。** 08-28 に同じ検査が赤になったとき
+    （`collisions.window()` の註）、直したのは「壁の時計を読んでいた」ほうで、
+    **窓そのものが台帳から消える道**は残っていました。**2回目です。**
+
+    だから窓は `monkeypatch` で立てます。この検査が見たいのは
+    **「窓の日には、いちばん遅い分より後ろへ出さない」という `plan()` の振る舞い**
+    であって、**いまその窓が台帳に在るかどうか**ではありません。
+
+    **覆る条件**: `plan()` が `measure_window` を直に呼ばなくなったら、
+    ここの差し替え先も一緒に動かすこと。
     """
+    from src import measure_window
+
+    monkeypatch.setattr(
+        measure_window, "inside",
+        lambda day, window=None, today=None: day == "2026-08-27")
+
     rows = [row("a", "2026-08-27T00:00:00Z"), row("b", "2026-08-27T00:00:00Z"),
             row("c", "2026-08-29T00:00:00Z")]
     moves = collisions.plan(rows, today=TODAY)
