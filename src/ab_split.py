@@ -48,6 +48,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
@@ -325,6 +326,83 @@ def _pace_form(topic_id: str) -> str:
             else "速い")
 
 
+#: **帯の中で、早い側の枠に置く割合。** 0 にすると振り分けが止まります
+#: （そのとき `slot_half()` は全部 `"遅枠"` を返すので、置き方は前と同じ
+#: 「score の高い順に、手前の枠から」に戻ります）。
+SLOT_EARLY_SHARE = 0.5
+
+#: **塩**。`title_form` / `hook_form` と**同じIDから別の答え**を出すために要ります。
+#: 塩が無いと `sha1(topic_id)` の同じ先頭4バイトを見ることになり、
+#: **配信の側の群が、中身の側の群と完全に相関します** ——
+#: そうなるとこの A/B は「早枠 ＝ 題が問い」を測ることになり、
+#: 側を分けた意味がなくなります（`src/arm_speed.sides()`）。
+SLOT_HALF_SALT = "slot_half:v1:"
+
+
+def slot_half(topic_id: str, share: float = SLOT_EARLY_SHARE) -> str:
+    """この本を、その日の帯の **早い側の枠** に置くか **遅い側** に置くか。
+
+    ## なぜ要るか（2026-08-29 に測って足した。**配信の側の A/B が 0件 だった**）
+
+    同じ日の実測で、**配信の側（形式・時刻・本数・面）は中身の側の 13.9倍**
+    当たっています（`src/arm_speed.sides()`・`p·log(g)` で 0.231 対 0.017）。
+    ところが**無作為化して走っている A/B は 4件 とも中身の側**でした
+    （`side_counts()`）。**枠が希少なほうの資源が、遅いほうに 100% 乗っていた。**
+
+    ## そして、置き方そのものが交絡していました（**こちらが本体**）
+
+    `batch_build` は **`pick()` が返した順**（＝ **score の高い順**）に
+    `slots()` の枠を配ります（`results[n] = row` の註「枠の対応は並び順で決まる」）。
+    `live_plan()` は**手前の日・手前の時刻から**埋めるので、結果はこうなります:
+
+        score 1位 のテーマ → いちばん手前の枠
+        score 最下位       → いちばん後ろの枠
+
+    **つまり「枠の位置」と「題材の見込み」が、いつも同じ向きに並んでいます。**
+    帯の中の位置に効きがあるかどうかを、この控えからは**永久に**分けられません。
+    そして同じ偏りが、中身の側の A/B にも乗ります —— 実測（`scripts/ab_slots.py`）:
+
+        title_form  問い **8本/16**（50%）  ／ 断定 14本/16（88%）
+        hook_form   問い 14本/16（88%）     ／ 条件 **7本/16**（44%）
+
+    **別々の群が痩せています。** 痩せた群に残るのは「たまたま生きた枠に
+    入った本」なので、差が出ても「作りの差」か「枠の差」か分けられません。
+
+    **IDのハッシュで配ると、この相関が切れます。** 中身の側の A/B にとっては
+    そのまま欠陥の修理で、配信の側にとっては**最初の無作為化された枠**です。
+
+    ## 何を賭けているか（**失うものも書くこと**）
+
+    賭けているのは「**score 順に手前の枠を配る**」ことの値打ちです。
+    ただしそれは、**帯の中の位置に効きがある場合にだけ**値打ちがあります ——
+    `src/day_cap.py` のいまの模型 (A) は「その日の先頭 `cap()` 本が生きる」で、
+    **帯の中の 10枠 を全部 同じ**と見ています。**同じなら、失うものはありません。**
+    ちがうなら、それがこの実験の答えです。**どちらでも取れます。**
+
+    **帯の外へは1本も出しません。** 配り直すのは、`slots()` が既に選んだ
+    枠どうしの対応だけです（`batch_build._ab_slot_order()`）。
+    1日の本数も、埋まる時刻も、1つも変わりません。
+
+    ## なぜ乱数にしないか
+
+    `title_form` の docstring と同じ理由です —— 落ちて撃ち直した本が
+    別の群へ移ると、比較が壊れます。IDのハッシュなら作り直しでも動きません。
+
+    判定は `config/hypotheses.yaml`（`ab_split.slot_half`）。
+    """
+    if share <= 0:
+        return "遅枠"
+    if share >= 1:
+        return "早枠"
+    h = hashlib.sha1((SLOT_HALF_SALT + str(topic_id)).encode("utf-8")).digest()
+    return "早枠" if (int.from_bytes(h[:4], "big") % 10_000) < share * 10_000 else "遅枠"
+
+
+#: **在りかは実物から引かれます**（`_split_ref_of`）。`config/hypotheses.yaml` の
+#: `falsified_if` は、この文字列でこの実験を名指しします。
+slot_half.split_ref = "ab_split.slot_half"
+
+
 #: **この包みの中身が、どこに在るか。** `config/hypotheses.yaml` の `falsified_if`
 #: はここを名指しします（`tests/test_ab_split._split_ref`）。
 #: **包みの `__module__` を書かせないこと** —— それは `src.ab_split` で、
@@ -491,6 +569,27 @@ EXPERIMENTS: dict[str, Experiment] = {
         commit="",
         # **長尺は `reveal_variants` を1度も通りません**（1文＝1コマ）。
         # だから刻みの話はショートにしか掛かりません（`_shorts_only()`）。
+        eligible=_shorts_only,
+    ),
+    # **配信の側の、最初の無作為化された枠**（2026-08-29）。
+    # ここまで `EXPERIMENTS` は 4件 とも `content` でした（`side_counts()`）——
+    # 同じ日の実測で、配信の側は中身の側の **13.9倍** 当たっています。
+    # 中身は `slot_half()` の docstring。**動画ファイルは作り直しません**
+    # （`docs/trigger_main.md` の「側」の切り方 ＝ だから `dist`）。
+    "slot_half": Experiment(
+        name="slot_half",
+        side="dist",
+        split=slot_half,
+        treated="早枠",
+        control="遅枠",
+        # **`batch_build._ab_slot_order()` が入った時刻**。
+        # これより前に予約した本は、`pick()` の score 順で枠が決まっているので
+        # **どちらの群でもありません**（`landed` の約束）。
+        landed=datetime(2026, 8, 29, 23, 45, 0, tzinfo=JST),
+        deadline=_deadline_from_yaml("slot_half", date(2026, 10, 2), split=slot_half),
+        commit="",
+        # **長尺は帯を1枠も使いません**（置き先は `_long_ring()` の 18〜22時）。
+        # 帯の中の位置の話なので、掛かるのはショートだけです。
         eligible=_shorts_only,
     ),
 }

@@ -100,6 +100,7 @@
 """
 from __future__ import annotations
 
+import hashlib
 import functools
 import argparse
 import json
@@ -1085,6 +1086,86 @@ def _show_slot(spec: str) -> str:
     """
     text = spec.partition("@")[2] or spec
     return text if ":" in text else f"{text}:00"
+
+
+def _ab_slot_order(topics: list[dict], when: list[str]) -> list[str]:
+    """**枠と題材の対応を、IDのハッシュで配り直す**（`src/ab_split.slot_half`）。
+
+    ## なぜ要るか（2026-08-29 に測って足した。**2つ同時に直ります**）
+
+    ここまで、枠は **`pick()` が返した順**に配られていました
+    （`results[n] = row` の註「**枠の対応は並び順で決まる**」）。
+    `pick()` は **score の高い順**、`live_plan()` は **手前の日・手前の時刻から**。
+    つまり:
+
+        score 1位 のテーマ → いちばん手前の枠
+        score 最下位       → いちばん後ろの枠
+
+    **(1) 配信の側が測れません。** 「帯の中の位置」と「題材の見込み」が
+    いつも同じ向きに並ぶので、控えをどれだけ積んでも分けられません。
+    **(2) 中身の側の A/B が痩せます。** 実測（`scripts/ab_slots.py`）:
+
+        title_form  問い **8本/16**（50%）  ／ 断定 14本/16（88%）
+        hook_form   問い 14本/16（88%）     ／ 条件 **7本/16**（44%）
+
+    **別々の群が痩せています** —— 痩せた群に残るのは「たまたま生きた枠に
+    入った本」なので、差が出ても「作りの差」か「枠の差」か分けられません。
+
+    ハッシュで配ると、この相関が両方 切れます。
+
+    ## 何を変えて、何を変えないか
+
+    **変えるのは対応だけ**です。`when` の中身は1つも作り替えません ——
+    `slots()` が既に選んだ枠を**並べ替えて返すだけ**なので、
+    1日の本数も、埋まる時刻も、帯の外へこぼれる本も、1つも増えません。
+    **`when` の並びは `live_plan()` の埋め順（＝手前から）**なので、
+    **添字がそのまま「早さの順位」**です。
+
+    ## 呼ぶのは `live` の回だけ
+
+    `--date` / `--hours` / `--hour` / `--long`（`_long_ring()`）は
+    どれも「置き先を指示された」回なので触りません
+    （`slots()` の `live` の判定と同じ）。長尺は帯を1枠も使わないので、
+    この実験はショートにしか掛かりません（`ab_split` 側は `eligible=_shorts_only`）。
+
+    ## 覆る条件
+
+    - **`slot_half` が閉じたら**、この配り直しを続けるかを選び直すこと。
+      早枠が勝っていたなら「score 順に手前へ」は正しかったので**戻す**
+      （そのとき失うのは、中身の側の A/B の釣り合いのほう ——
+      代わりに `scripts/ab_slots.py` の入れ替えで釣ること）。
+      差が無ければ、`day_cap` の (A) 模型どおり **帯の 10枠 は同じ**なので、
+      このまま置いておいてよい（釣り合いだけが残る）
+    - `SLOT_EARLY_SHARE` を 0 にすると `slot_half()` が全部 `遅枠` を返し、
+      並べ替えは**ハッシュ順**になります。**元の score 順には戻りません** ——
+      戻すならこの呼び出しごと外すこと
+    """
+    if len(when) != len(topics) or len(topics) < 2:
+        return when
+    try:
+        from src import ab_split
+    except Exception:                                          # noqa: BLE001
+        return when
+
+    def _key(i: int):
+        tid = str(topics[i].get("id") or "")
+        h = hashlib.sha1((ab_split.SLOT_HALF_SALT + tid).encode("utf-8")).digest()
+        # **群が第1鍵、同じ群の中はハッシュ順**（第2鍵）。
+        # 第2鍵まで入れないと、群の中では score 順が残ります。
+        return (0 if ab_split.slot_half(tid) == "早枠" else 1,
+                int.from_bytes(h[4:8], "big"))
+
+    order = sorted(range(len(topics)), key=_key)
+    out: list[str] = [""] * len(topics)
+    for rank, i in enumerate(order):
+        out[i] = when[rank]
+    early = sum(1 for t in topics if ab_split.slot_half(str(t.get("id") or "")) == "早枠")
+    print(f"[batch] 枠は**IDのハッシュ**で配ります（`ab_split.slot_half`・"
+          f"早枠 {early}本 ／ 遅枠 {len(topics) - early}本）。"
+          " **枠そのものは1つも変わりません** —— 変わるのはどの題材がどの枠へ行くか。"
+          " これが配信の側の最初の無作為化された A/B で、"
+          "同時に中身の側の A/B の釣り合いも直します", flush=True)
+    return out
 
 
 # **1日に置く本数の目安**（`scripts/reschedule.py` の `DEFAULT_PER_DAY` と同じ数）。
@@ -3316,6 +3397,14 @@ def main(argv: list[str] | None = None) -> int:
     when = slots(len(topics), args.hour, args.date or None, hours,
                  step_min=args.step_min, ring=ring, live=live,
                  long_form=bool(args.long))
+    # **枠と題材の対応を、IDのハッシュで配り直す**（`_ab_slot_order()` の docstring）。
+    #     `live` の回だけ ＝ 置き先を指示されていない回だけ。
+    #     **落ちてもこの回を止めないこと** —— 配り直しは実験で、投稿は本体です。
+    if live:
+        try:
+            when = _ab_slot_order(topics, when)
+        except Exception as _exc:                              # noqa: BLE001
+            print(f"[batch] 枠の配り直しを飛ばしました（続行）: {_exc}", flush=True)
 
     if args.date:
         # **`+ ':00'` と書かないこと**（2026-08-18 に直した）。`--step-min` を
