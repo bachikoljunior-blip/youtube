@@ -127,11 +127,43 @@ def _last_scan() -> dict[str, dict]:
 
     動く数（`views` など）を古い一枚から混ぜるのは間違いですが、
     **尺は動きません**。だから補ってよいのは `IMMUTABLE_METRICS` だけです。
+
+    ## **補いは「後ろの一枚」で止めないこと**（2026-08-30 に測って直した）
+
+    ここは長らく、**尺を持つ最初の一枚を見つけた時点で `missing.remove(mt)`**
+    していました。**一枚が全部の本を持っている前提**です。持っていません ——
+    走査の一枚は「この窓で再生のあった本」で作られ、Data API が
+    途中で 403 になれば**その一枚は部分的に埋まります。**
+
+    実測（2026-08-30 02:4x・`data/scan.jsonl` 240枚）::
+
+        最後の一枚          156本 ／ 尺を持つ本 **0本**（Data API が日枠で 403）
+        一枚だけ補う（前）   尺が付いた本 **50本** → 180秒以上 **6本** ＝ **19再生**
+        全部の枚を補う（後） 尺が付いた本 **156本** → 180秒以上 **18本** ＝ **137再生**
+
+    **7.2倍 の取りこぼしです。** そしてこれは印字だけの話ではありません ——
+    待ち `長尺-1000再生`（`config/hypotheses.yaml` の「長尺の登録率は
+    ショートより1桁以上高い」＝ 腕 `sub_rate` ／ 側 `dist`。`--alloc` が
+    **いちばん早い腕**と名指ししているもの）が、この数で満ち具合を見ています。
+
+        待ち（`_k_scan_sum`）      **19 / 1000**・伸び **-8.00/日** → **届きません**
+        台帳（`deadline_check`）   **286 / 1000**・伸び 26.0/日 → **2026-09-27**
+
+    同じ閾値を見ている2つが **15倍** ちがっていました。しかも「どの一枚が
+    最初に尺を持つか」は回ごとに変わるので、**満ち具合が上下します** ——
+    再生は減らないのに `伸び -8.00/日` と出ていたのはこれです（実測の増減ではなく、
+    **補いに当たった一枚の当たり外れ**）。**負の伸びは、この関数の影でした。**
+
+    **覆る条件**: `IMMUTABLE_METRICS` に「動くもの」が足されたら、この全走査は
+    そのまま古い値を混ぜる道になります（`setdefault` なので新しい側が勝ちますが、
+    **最後の一枚に欠けている本には古い値が入ります**）。足すときは、
+    そのたびに「本当に動かないか」を確かめること。検査は
+    `tests/test_watches_scan_backfill.py`。
     """
     lines = [l for l in SCAN.read_text(encoding="utf-8").splitlines() if l.strip()]
     rows = _row_metrics(lines[-1])
     missing = [mt for mt in IMMUTABLE_METRICS
-               if not any(mt in v for v in rows.values())]
+               if any(mt not in v for v in rows.values())]
     for line in reversed(lines[:-1]):
         if not missing:
             break
@@ -144,7 +176,10 @@ def _last_scan() -> dict[str, dict]:
                 # **その一枚に居る本にだけ**入れる（消えた本を呼び戻さない）
                 if vid in rows:
                     rows[vid].setdefault(mt, val)
-            missing.remove(mt)
+            # **まだ欠けている本が居るなら、もっと後ろの一枚も読むこと。**
+            # 一枚で打ち切っていたのが 2026-08-30 の欠陥（上の docstring）。
+            if all(mt in v for v in rows.values()):
+                missing.remove(mt)
     return rows
 
 
