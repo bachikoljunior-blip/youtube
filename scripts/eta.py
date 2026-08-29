@@ -4365,6 +4365,48 @@ def _trend_why(tre: dict) -> str:
             return None
         return a, b, (b - a) / a * 100.0
 
+    # **物差しが窓の中で入れ替わっていないか**（2026-08-29・最適化の回。実測で踏んだ）。
+    #
+    # `traj_trend()` の覆る条件は「**物差しが変わった回は、この差に混ざります**」と
+    # 書いており、**日付の側**はそれを `traj_date` どうしで比べることで守っています。
+    # **％の側は守られていませんでした。**
+    #
+    # `_per_video()` は 2026-08-28 に落ち先を替えました（`views_per_video`
+    # ＝帯の外まで入れた平均 → `views_per_video_live` ＝帯の中だけ）。
+    # `data/eta.jsonl` の実測::
+    #
+    #     08/22 05:33  per_video_now 856 ＝ views_per_video 856（`_live` の欄なし）
+    #     08/28 17:28  per_video_now 550 ＝ views_per_video 550（同上）
+    #     08/28 23:57  per_video_now 665 ＝ views_per_video_live 665（views_per_video は 553）
+    #
+    # つまり 7日 の窓は**入れ替えの日をまたぎ**、この行は
+    # 「**856 → 673 で −21%**」を、**左＝帯の外／右＝帯の中**で出していました。
+    # 同じ物差しで並べると 856 → 553（**−35%**）です。
+    #
+    # しかも下の文言は「この行は `views_per_video` どうしの差で」と**名乗って**
+    # いました —— 実際に割っているのは `per_video_now` なので、
+    # **文言のほうが偽**です（`docs/JOURNAL.md`「枠の2行が食い違っていないか」の型）。
+    #
+    # **覆る条件**: 窓の両端がどちらも `views_per_video_live` を持つようになったら
+    # （＝入れ替えから `TREND_DAYS` 日 たったら）、この枝は自分で黙ります。
+    # 落ち先をまた替えたときは、ここの欄の名前も一緒に替えること。
+    swapped = ((was.get("views_per_video_live") is None)
+               != (now.get("views_per_video_live") is None))
+    if swapped:
+        raw = pct("views_per_video")
+        same = ("**同じ物差しで並べると** `views_per_video` "
+                "{a:,.0f} → {b:,.0f}（{p:+.0f}%）。").format(
+                    a=raw[0], b=raw[1], p=raw[2]) if raw else \
+               "**同じ物差しで並べられる点がありません。**"
+        return ("[!] **この窓の中で、1本あたり再生の物差しが入れ替わりました** "
+                "（`_per_video()` の落ち先: 帯の外まで入れた平均 `views_per_video` → "
+                "**帯の中だけ** `views_per_video_live`）。"
+                "**`per_video_now` の両端は、別の数です。比べないこと。** "
+                + same
+                + "**上の日数の差は `traj_date` どうしなので、この入れ替えは入っていません**"
+                "（`traj_trend()` の覆る条件）。"
+                "**窓が入れ替えの日を追い越せば、この行は自分で消えます。**")
+
     v = pct("views_28d")
     n = pct("videos_with_views_28d")
     r = pct("per_video_now")
@@ -4380,9 +4422,11 @@ def _trend_why(tre: dict) -> str:
             "**上限{cap:,.0f}本/日 を超えて出したぶんが、0再生のまま分母に入っています** "
             "（実測 2026-08-29: 1〜9再生 の 42本 が分母の 29%・再生の 0.18%）。"
             "**天井の分母からは外してあります**（`live_band_views`）ので、"
-            "**この行の比と、天井が使う比は別の数です** —— "
-            "この行は `views_per_video`（帯の外まで入れた平均）どうしの差で、"
-            "**帯の中だけで見た比は上の「1本あたり再生」の行**にあります").format(
+            "**この比の分母と、天井が使う分母は別です** —— "
+            "この行が割っているのは `per_video_now`（＝ `_per_video()` の落ち先。"
+            "いまは**帯の中だけ** `views_per_video_live`）で、"
+            "**分母 `videos_with_views_28d` のほうは帯の外まで数えています。"
+            "同じ行の分子と分母が、別の母集団です**").format(
         vp=v[2], v0=v[0], v1=v[1], rp=r[2], r0=r[0], r1=r[1],
         np=n[2], n0=n[0], n1=n[1],
         cap=float(now.get("view_cap_per_day") or 0))
