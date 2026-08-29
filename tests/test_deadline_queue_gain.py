@@ -28,15 +28,27 @@ def _clear_cache(monkeypatch):
 
 
 def test_gain_is_reported_on_the_group_line(monkeypatch) -> None:
+    need = {"kind": "group_key", "key": "opening_motion"}
+    # **比べる相手は、同じ日の「倒し方が無い」ほうです**（2026-08-29 に直した）。
+    #     ここは長らく `assert ans.ready == date(2026, 10, 7)` と
+    #     **その日の実物をべた書き**していました。`ready` は予約の並びから
+    #     毎回 解き直される数なので、**予約が1本 動くだけで赤くなります** ——
+    #     実際 08/29 18:29 の回が `opening_motion` の期限を 10-07 → 10-06 へ
+    #     縮めた時点で、この行だけが落ちました（**直す先はこの検査**で、
+    #     向こうの縮めは正しい）。
+    #     **固定したいのは「`_QUEUE_GAIN` は `ready` を動かさない」という規則**で、
+    #     その日の日付ではありません。だから同じ問いを2回 解いて突き合わせます。
+    monkeypatch.setattr(deadline_check, "_QUEUE_GAIN", {})
+    without = deadline_check.answer(need, date(2026, 8, 29), 3)
+
     monkeypatch.setattr(
         deadline_check, "_QUEUE_GAIN",
         {"opening_motion": (date(2026, 10, 7), date(2026, 9, 7), 30)})
-    ans = deadline_check.answer(
-        {"kind": "group_key", "key": "opening_motion"}, date(2026, 8, 29), 3)
+    ans = deadline_check.answer(need, date(2026, 8, 29), 3)
     assert "10/07 → 09/07（30日 手前）" in ans.why
     assert "予約の並びで決まっています" in ans.why
     # **期限そのものは動かしません** —— 言うのは「待ちは自分で作っている」だけ
-    assert ans.ready == date(2026, 10, 7)
+    assert ans.ready == without.ready
 
 
 def test_no_gain_means_no_extra_line(monkeypatch) -> None:
