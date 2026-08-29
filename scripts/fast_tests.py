@@ -129,6 +129,55 @@ def round_start() -> str:
     return at
 
 
+def own_commits(limit: int = 200) -> list[str]:
+    """**この作業コピーが自分で積んだ commit** を、新しい順に返す（他の回のぶんは入らない）。
+
+    ## なぜ要るか（2026-08-29 に実測で踏んだ。`round_start()` の穴の、次の形）
+
+    `round_start()` は `data/runs.jsonl` の **`kind="start"`** に錨を打ちます。
+    ところがその行を書くのは `run_marker.py --write` **だけ**で、
+    **最適化の回に渡される本文は `--write` を1文字も言いません**
+    （`docs/spawn_prompt.md` が名指しするのは `--ship` のほう）。
+
+    実測 2026-08-29（`scripts/batch_build.py` と `tests/test_batch_slots.py` を
+    変更し、4回 押した回）:
+
+        worktree_tag()                  'agent-a40e6e0659b3605fc'   ← 出ている
+        runs.jsonl の start 行           67件（**うち この札は 0件**）
+        → round_start()                 ''  ← 錨が打てない
+        → git diff origin/<幹>           押した後なので **空**
+        → keywords()                    **[]**（`-k` は CORE だけ）
+
+    **つまり `round_start()` の直した穴が、`--write` を撃たない役では開いたままです。**
+    印字は緑で出るので、docstring の言う「**撃たないより悪い**」がそのまま起きます。
+
+    ## 何に錨を打つか —— **押しても動かないのは reflog のほう**
+
+    `git reflog show HEAD` は、**この作業コピーが行った操作だけ**を持っています。
+    そこから `commit:` の行を拾えば、**きょうだいから merge で入ってきたぶんは
+    1件も混ざりません**（実測: 幹との diff は 30ファイル 超、こちらは 2ファイル ちょうど）。
+    押しても消えません（push は reflog を書き換えないため）。
+
+    **覆る条件**: `git reflog` の無い置き方（浅いクローン・reflog を切った設定）では
+    空が返り、そのときは今までどおり `base` との diff だけになります。**それで正しい**
+    —— この関数は**足すだけ**で、選択を狭めることは一度もありません。
+    """
+    out: list[str] = []
+    for line in _run(["git", "reflog", "show", "HEAD"]).splitlines():
+        # `<sha> HEAD@{N}: commit: …` / `commit (amend): …` / `commit (initial): …`
+        parts = line.split(": ", 2)
+        if len(parts) < 2:
+            continue
+        what = parts[1].strip()
+        if what == "commit" or what.startswith("commit ("):
+            sha = line.split()[0].strip()
+            if sha and sha not in out:
+                out.append(sha)
+        if len(out) >= limit:
+            break
+    return out
+
+
 def changed_files(base: str) -> list[str]:
     """**この回が触ったファイル。** 積んだぶんも、まだ積んでいないぶんも。"""
     out: set[str] = set()
@@ -141,6 +190,12 @@ def changed_files(base: str) -> list[str]:
         # この回の頭から後の commit を、名前だけ拾い直します。
         sources.append(["git", "log", f"--since={since}", "--name-only",
                         "--pretty=format:", "HEAD"])
+    # **錨が打てない回でも、自分の commit は分かります**（`own_commits()`）。
+    # `--write` を撃たない役（最適化の回）は `round_start()` が空を返すので、
+    # ここが無いと**押した瞬間に「触った .py 0件」**になります。
+    mine = own_commits()
+    if mine:
+        sources.append(["git", "show", "--name-only", "--pretty=format:", *mine])
     for args in (*sources,
                  # **まだ git に入っていない新しいファイルも触った所です。**
                  #     `git diff` はこれを1件も出しません —— **新しく足した
