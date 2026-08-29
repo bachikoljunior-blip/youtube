@@ -2677,10 +2677,23 @@ hypotheses:
     lever: rpm                # M3 ＝ AdSense を通さない収益（1再生あたりの実入りを替える）
     needs:
       # **「08/29 時点の累計」は、08/29 に見ても 08/26 までの累計しか出ていません。**
+      #
+      # **`data_file:` は 2026-08-29 の最適化の回に足した**（`deadline_check` の
+      # 末尾「時計だけで『判定できる』と言っている要件: 6/21件」の1件目）。
+      # この要件は `on_date` ＋ 遅れ **だけ**で `[OK]` を出しており、
+      # **その数がどの計器から出るのかを1文字も申告していませんでした** ——
+      # 09/01 に来る回は、`data/watch.jsonl` が何日 前のものでも
+      # 「判定できます」と読みます（08/27 に取り下げた『偽の判定日』と同じ形）。
+      # 実測 2026-08-29 14:0x: `watch: 94`（窓 28日・門は 60）＝ **既に上**。
+      # だから**この1件は、いま古くありません** —— それでも申告するのは、
+      # **古くなった日に黙らないため**です。書く側の値段は1行。
+      # **覆る条件**: WATCH を積む口が `status.py` から移ったら、下の2行も移すこと。
       - kind: after
         on_date: "2026-08-29"
         plus_lag: true
         what: "全走査の insightPlaybackLocationType.WATCH（Analytics 由来）"
+        data_file: "data/watch.jsonl"
+        refresh: "python scripts/status.py"
     falsified_if: "2026-08-29 時点で、全走査の insightPlaybackLocationType.WATCH が 60 未満"
     next_if_false:
       - "M3・M12 を「保留」から「却下」に落とす。**自分だけで届く手段が台帳から全部消えます**"
