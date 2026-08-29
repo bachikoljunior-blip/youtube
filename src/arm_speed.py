@@ -324,6 +324,50 @@ def side_lines(sd: dict | None = None) -> list[str]:
 BAN_MARKS = ("立てないこと", "立てるな")
 
 
+def ban_side(text: str) -> str | None:
+    """**禁止が「側」で限定されているなら、その側**（していなければ `None`）。
+
+    見るのは **`BAN_MARKS` を含む一文だけ**です。散文の他の文には
+    「配信の側は塞ぎません」のような**逆向きの言及**が普通に入るので、
+    全体を見ると当たります（実測 2026-08-30・この関数を書いた文そのもの）。
+
+    ## なぜ要るか（2026-08-30 に足した）
+
+    `side`（配信／中身／道具）は 2026-08-29 に **腕とは別の軸**として入り、
+    `eta.py --alloc` は毎回「配信の側は中身の側の 13.9倍」と印字します。
+    **ところが禁止のほうは腕ごとの全か無かで、側を持っていませんでした。**
+
+    実測: `sub_rate` の外れは 2件、**どちらも中身の側**（動画の中の文言）。
+    配信の側は **0件** しか閉じていません。それでも禁止は腕ごとに掛かるので、
+    **配信の側の `sub_rate` を立てる道まで塞いでいました** ——
+    `eta.py --alloc` は 08/27 から 5回 続けて `sub_rate`（2027-01-18）を
+    落として `per_video`（2027-01-21）へ振り替えています ＝ **3日**。
+
+    **狭めるのは禁止を弱めるためではありません。** 禁止の根拠は
+    「その側で外れた」ことなので、**根拠のある所にだけ掛けるほうが強い**。
+
+    **覆る条件**: 側を書かない禁止が普通になったら（＝ここが毎回 `None`）、
+    この関数は費用だけです。そのときは `side:` の欄を禁止にも持たせること。
+    """
+    for sentence in str(text).split("。"):
+        if not any(mark in sentence for mark in BAN_MARKS):
+            continue
+        for side, ja in SIDE_JA.items():
+            if ja in sentence:
+                return side
+    return None
+
+
+def blocks_arm(lever: str, doc: dict | None = None) -> bool:
+    """**その腕を、まるごと塞いでいる禁止があるか。**
+
+    側で限定された禁止（`ban_side` が答える）は **True にしません** ——
+    塞がっているのはその側だけで、**腕には他の側が残っています。**
+    """
+    rows = standing_bans(doc).get(lever) or []
+    return any(r.get("side") is None for r in rows)
+
+
 def standing_bans(doc: dict | None = None) -> dict[str, list[dict]]:
     """**台帳が「次の1件はこの腕に立てるな」と言っている行**を、腕べつに返す。
 
@@ -372,6 +416,7 @@ def standing_bans(doc: dict | None = None) -> dict[str, list[dict]]:
                         "deadline": str(h.get("deadline") or ""),
                         "field": field,
                         "line": text,
+                        "side": ban_side(text),
                     })
     return out
 
@@ -473,7 +518,12 @@ def ban_lines(lever: str, doc: dict | None = None) -> list[str]:
     for r in rows:
         state = (f"**まだ開いています**・期限 {r['deadline']}" if r["open"]
                  else "**閉じています**")
-        out.append(f"      ・「{r['claim']}」（{state}）の `{r['field']}`:")
+        # **側で限定された禁止は、腕を塞ぎません**（`ban_side` の docstring）。
+        #     ここで言わないと、読む側は全か無かで受け取ります。
+        scope = (f"・**塞いでいるのは {SIDE_JA[r['side']]} だけ**"
+                 f"（この腕の他の側は開いています）" if r.get("side")
+                 else "・**腕ごと**")
+        out.append(f"      ・「{r['claim']}」（{state}{scope}）の `{r['field']}`:")
         out.append(f"        {r['line'][:300]}")
     # **「回数が書いてあるか」が、条件つきの禁止を無条件に格上げする鍵です**
     #     （すぐ下の締めの文）。その回数は散文の中の手書きなので、
