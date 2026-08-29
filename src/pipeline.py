@@ -477,6 +477,28 @@ def main(argv: list[str] | None = None) -> int:
             + " / ".join(repeats)
         )
 
+    # **同じ原則の残り**（2026-08-29 に、同じ本で2回 踏んで足した）。
+    #
+    # 上の3行は `_check_not_repeat` **1件だけ**を早く当てていました。
+    # ところが `verify.check()` が script.json **だけ**で見る検査は、ほかに6件あります
+    # （`verify.script_only_problems`）。**そちらは最後まで待っていました。**
+    #
+    # 実測（`kouki-jougen-89000-sagaru`・この日 2回）: クリップ 22/22 を焼き、
+    # 音声を合成し、字幕を焼き込んだあとで
+    # 「**前提として『率』を出しているのに、その値が画面のどこにもありません**」。
+    # **引数は script だけの検査**で、**16分 前に同じ答えが出せました。**
+    # `batch_build` は1回 作り直すので、1本の失敗に **30分** かかっていました。
+    #
+    # `script_writer.generate()` は書き直しの輪を3回まわしたあと
+    # 「**パイプラインが合成前に止めます**」と印字して台本を返します ——
+    # **その約束が、ここまで守られていませんでした。**
+    early = verify.script_only_problems(script.model_dump(), bool(args.short))
+    if early:
+        raise RuntimeError(
+            "台本の時点で投稿前の検査に落ちます（レンダリング前に止めました）: "
+            + " / ".join(early)
+        )
+
     # 2. 音声（ここで各セグメントの実尺が確定する）
     audios = synthesize_segments(
         [s.narration for s in script.segments],
