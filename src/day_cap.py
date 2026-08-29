@@ -239,6 +239,12 @@ def _long_ids(forms_path: pathlib.Path | None = None,
     return known | _long_by_duration(uploaded_path)
 
 
+#: `_readings()` の控え。鍵は（path・mtime・大きさ・齢の下限）。
+#: **ファイルが変われば鍵が変わる**ので、古い数を返しません。
+_READINGS_MEMO: dict[tuple, dict[str, tuple[dt.datetime, float, int]]] = {}
+_READINGS_MEMO_MAX = 8
+
+
 def _readings(path: pathlib.Path | None = None,
               min_age_h: float | None = None) -> dict[str, tuple[dt.datetime, float, int]]:
     """id → (公開時刻JST, 齢, 再生)。**齢は `min_age_h` にいちばん近いものを採ります。**
@@ -251,6 +257,36 @@ def _readings(path: pathlib.Path | None = None,
     p = path or VIEWS
     if not p.exists():
         return {}
+    # --- **同じファイルを、1回の走りで何十回も読み直さないこと**（2026-08-30 に測って足した）---
+    #     実測（`python -m cProfile scripts/eta.py --reflect`・2026-08-30 06:2x）:
+    #
+    #         eta.py --reflect        65.8秒
+    #           day_cap._readings     **201回・累計 40.8秒**（走り全体の 62%）
+    #           day_cap.long_form     160回・累計 33.7秒（中身はほぼ上）
+    #           json.loads          **5,286,452回**（＝ `data/views.jsonl` を 201回 読み直している）
+    #
+    #     **これは 2026-08-28 に `day_cap.cap()` で直したのと同じ形**です
+    #     （`scripts/eta.py` の `_view_cap_per_day`。あのとき 4分 → 24秒 になった）。
+    #     **あちらは memo を `eta.py` 側に置いた**ので、`_readings` を直に呼ぶ
+    #     `long_form()` / `by_day()` / `day_total()` / `deep_short` には効いていません。
+    #     **1か所で直すこと** —— 呼ぶ側ごとに memo を置くと、次に足された
+    #     呼び口だけがまた 200回 読みます（それがこの 40秒 の由来です）。
+    #
+    #     **鍵にファイルの状態（mtime と大きさ）を入れます。** 走っている最中に
+    #     `scripts/snapshot.py` が追記しても、次の呼びで読み直します ——
+    #     **古い数を返すくらいなら、読み直すほうがいい。**
+    #     **覆る条件**: 同じ mtime のまま中身が変わる積み方をしたら（例: 書き換え）
+    #     ここは古い数を返します。`data/views.jsonl` は追記だけなので、いまは起きません。
+    try:
+        st = p.stat()
+        key = (str(p), st.st_mtime_ns, st.st_size, float(min_age))
+    except OSError:
+        key = None
+    if key is not None and key in _READINGS_MEMO:
+        # **控えそのものを渡さないこと。** 呼ぶ側が触ると、次の呼びに漏れます
+        #     （いまの呼び口は全部 `.items()` を回すだけですが、**次に足される
+        #     呼び口はそうとは限りません**）。値は tuple なので浅い写しで足ります。
+        return dict(_READINGS_MEMO[key])
     first: dict[str, dt.datetime] = {}
     best: dict[str, tuple[float, int]] = {}
     for line in p.read_text(encoding="utf-8").splitlines():
@@ -271,7 +307,16 @@ def _readings(path: pathlib.Path | None = None,
         # 「後ろの本は若いだけ」という別の説明が残ります）
         if cur is None or r["hours"] < cur[0]:
             best[r["id"]] = (r["hours"], r["views"])
-    return {v: (first[v].astimezone(JST), h, n) for v, (h, n) in best.items() if v in first}
+    out = {v: (first[v].astimezone(JST), h, n)
+           for v, (h, n) in best.items() if v in first}
+    if key is not None:
+        # **際限なく積まないこと。** 鍵はファイルの状態 × 齢の下限なので、
+        #     1回の走りで増えるのは高々数件（実測: 6h／24h／48h の3つ）ですが、
+        #     追記のたびに古い鍵が残ります。**新しい順に少しだけ持つこと。**
+        if len(_READINGS_MEMO) >= _READINGS_MEMO_MAX:
+            _READINGS_MEMO.pop(next(iter(_READINGS_MEMO)))
+        _READINGS_MEMO[key] = out
+    return dict(out)
 
 
 def by_day(path: pathlib.Path | None = None,

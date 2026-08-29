@@ -5009,6 +5009,104 @@ def headline(pl: dict, prev: dict | None = None,
                    " **この回は別の腕を引くこと。**"
                    f" `--lever` が `{pl['lever_hint']}` でなくても、"
                    "この回は「名指しを外した」ではありません")
+        # --- **「別の腕」に、名前を付ける**（2026-08-30・最適化の回に足した） ---
+        #     ここは長らく「別の腕を引くこと」で終わっていました。**名前が無い**ので、
+        #     回の側は「やれること」の中から選び、結果は毎回おなじ所へ落ちます ——
+        #     実測 2026-08-30 05:5x、`data/runs.jsonl` の **ship 358件（7日ぶん）**:
+        #     `lever_hint` は **358件とも `per_video`**（名指しは1本も変わっていない）、
+        #     `lever_followed` は **False が 312件（87%）**。振り先は
+        #     `none` 152 ／ `density` 106（**`lever_cap` は全件 1.0**）／
+        #     `per_video` 46 ／ `rpm` 29 ／ `sub_rate` 25 ——
+        #     **258件（72%）が、この機械が自分で「動かない」と測った側**です。
+        #     ところが同じ回の `pl["lever_days"]` は `density` を
+        #     **天井 ×1.00・`reachable_at_cap=False`** と出しており、
+        #     `arm_frozen_days["density"]` は **0.0日**（＝丸ごと凍らせても
+        #     到達日は1日も動かない）。**この機械は毎周、自分が 0日 と測った腕を
+        #     引いていました。** 名指しが空欄だったことが、その既定を作っています。
+        #     **そのあいだ到達予測は +20日 遠のいています**（2026-12-21 → 2027-01-10）。
+        #
+        #     出すのは1本だけ: **`reachable_at_cap` が真な腕のうち、
+        #     `gain_at_cap` がいちばん大きいもの**（名指しされた腕は除く）。
+        #     `lever_days` は既にその順で並んでいます（`lever_days()` の `rows.sort`）。
+        #
+        #     **覆る条件**: `reachable_at_cap` の真な腕が、名指しの1本しか
+        #     無くなったら（＝除いたら候補が空）、この行は自分で消えます。
+        #     そのときは腕を選ぶ話ではなく、天井そのものが足りない回です
+        #     （頭の「腕を**据え置いた**線: 出ません」と同じ事情）。
+        #     検査は `tests/test_eta_covered_substitute.py`。
+        _rows = pl.get("lever_days") or []
+        _alt = next((r for r in _rows
+                     if r["lever"] != pl["lever_hint"]
+                     and r.get("reachable_at_cap") and not r.get("at_ceiling")), None)
+        _frz = pl.get("arm_frozen_days") or {}
+        # **0日 の腕を、同じ行で名指しして塞ぐこと。** 代わりを出すだけでは、
+        #     既定（`density`）は残ります —— 名前が2つ並んだときに読み手が
+        #     選べてしまう形は、この道具が `lever_hint` で一度 直しています。
+        # **`None` を先に落とすこと。** `frozen_days()` の返りは
+        #     `dict[str, float | None]` で、軌跡が解けなかった腕は `None` です。
+        #     並べ替えの鍵に混ぜると `TypeError` で頭の3行ごと落ちます
+        #     （＝この回の入口が消える）。**選別が先、並べ替えが後。**
+        _dead = [f"`{k}`（凍らせても **{v:,.0f}日**）"
+                 for k, v in sorted(((k, v) for k, v in _frz.items()
+                                     if v is not None and v < 1.0),
+                                    key=lambda kv: kv[1])]
+        # **`density` の 0日 は「ショートの面」だけの話です**（2026-08-30）。
+        #     `arm_caps["density"]` は `day_cap.cap()`（ショートの面で1日に
+        #     再生が付く本数）で立っており、**長尺はその枠を1つも使いません。**
+        #     そして **4,000時間の門に入るのは長尺だけ**です。
+        #     `src/levers.py` の `_long_surface_open()` は既にここを割っていて、
+        #     長尺の面が開いていれば `density` を「死んだ腕」に入れません。
+        #     **頭の3行だけが割らずに塞ぐと、長尺を増やす作業まで止まります** ——
+        #     この repo が3回 申し送って直した所を、こちらから戻すことになります。
+        #     **覆る条件**: 長尺の面が `at_ceiling` になったら、この但し書きは消えます。
+        #     **文の途中に差し込まないこと**（2026-08-30 に踏んで直した）。
+        #     いちど `_dead` の要素そのものに足したところ、行が
+        #     「`density`（…）。**ただし…**（長い） **をこの回の `--lever` に
+        #     しないこと**」となり、**禁止の述語が但し書きの向こう側へ飛びました。**
+        #     頭の3行は「読み飛ばしても決まる形」なので、**述語を分断しないこと。**
+        #     但し書きは行の**末尾**に付けます。
+        _long = ((pl.get("density_surfaces") or {}).get("long") or {})
+        _surface = ""
+        if _dead and _long and not _long.get("at_ceiling") \
+                and any(s.startswith("`density`") for s in _dead):
+            _surface = ("　**ただし `density` のその 0日 は「ショートの面」だけの数です** ——"
+                        "長尺の面はまだ天井ではありません"
+                        + (f"（{_long.get('why')}）" if _long.get("why") else "")
+                        + "。**止めているのはショートの本数を増やす回であって、"
+                        "長尺を増やす回ではありません**（長尺は面とシェア ＝"
+                        " `--lever rpm` で押すこと）")
+        if _alt is not None:
+            _th = _alt.get("threshold")
+            # **勝った腕の天井が実測でないなら、勝ちの理由がそこにあります。**
+            #     `--alloc` と `_report_levers` は既にこの注意を出しています
+            #     （`alloc_search` の末尾・`tr["arms"]` の `cap_measured`）。
+            #     **頭の3行にだけ無い**ので、ここへ持ってきます —— 実測 2026-08-30 の
+            #     `rpm` は ×61.35 で、出どころは「長尺の面 × **CTR 100%**」＝
+            #     測った天井ではありません。**黙って名指しすると、作り物の天井に
+            #     回を1つ振らせることになります。**
+            _arm = ((tr or {}).get("arms") or {}).get(_alt["lever"]) or {}
+            _unmeasured = (" [!] ただしその天井は**測ったものではありません**"
+                           f"（{_arm.get('cap_why', '出どころなし')}）——"
+                           "**天井が作り物なら、名指しも作り物です**"
+                           if _arm.get("cap") and not _arm.get("cap_measured") else "")
+            out.append(
+                f"{bar} **その「別の腕」は `{_alt['lever']}` です**"
+                f"（天井 ×{_alt['cap']:,.2f} → {_alt['date_at_cap'].isoformat()}"
+                + (f"・日付が出はじめるのは **×{_th:,.2f}** から" if _th else "")
+                + "）—— **天井まで引けば日付が出る腕は、これと"
+                f" `{pl['lever_hint']}` だけ**です（`reachable_at_cap`）。"
+                + (" **" + "／".join(_dead) + " をこの回の `--lever` にしないこと**"
+                   " —— この機械が自分で測った「引いても到達日が動かない」腕です"
+                   if _dead else "")
+                + _unmeasured + _surface)
+        elif _dead:
+            out.append(
+                f"{bar} [!] **その「別の腕」がありません** ——"
+                f" 天井まで引いて日付が出るのは `{pl['lever_hint']}` だけで、"
+                + "／".join(_dead)
+                + " は**凍らせても到達日が動きません**。"
+                "**この回は腕を選ぶ回ではなく、天井そのものを測り直す回です**"
+                "（上の「天井の齢」の行）")
     # --- **その日付が前提にしている配分を、台帳が用意しているか**（2026-08-26） ---
     #     上の日付は `share`（**閉じた前提の割合 ＝ 過去にどう振ってきたか**）で
     #     解かれています。**未来の配分を決めているのは、開いている前提のほう**です。
@@ -6220,6 +6318,25 @@ def solve(m: dict, points: list[dict], *, full: bool = True) -> dict:
     #     「1日25本」という**満たせない前提**で解かれます（`solve_gate1`）。
     sup = supply_state()
     pl = plan(m, a, supply=sup, sensitivity=True, points=points)
+    # --- **面ごとの引き代を、印字する側にも渡す**（2026-08-30・最適化の回）---
+    #     `_row()` は既にこれを `data/eta.jsonl` へ積んでいて、`src/levers.py` の
+    #     `_long_surface_open()` がそれを読んで「`density` は死んでいない」と
+    #     判定しています。**ところが `headline()` は積んだ行を読みません**
+    #     （その回の行はまだ書かれていない）ので、頭の3行だけが
+    #     「`density` は ×1.00」というショートの面の数で話すことになります。
+    #     **同じことを2か所が別々に言っていて、片方しか読まれていない形**です。
+    #     ここで `pl` に載せて、`headline()` と `_row()` が同じ1つを見ます。
+    try:
+        _ph_s = physical_caps(a, supply=sup)
+        pl["density_surfaces"] = {
+            name: {"at_ceiling": bool(_ph_s[key].get("at_ceiling")),
+                   "measured": bool(_ph_s[key].get("measured")),
+                   "why": _ph_s[key].get("why")}
+            for name, key in (("short", "density"), ("long", "density_long"))
+            if key in _ph_s
+        }
+    except Exception:                                          # noqa: BLE001 — 回を止めない
+        pass
     # **腕が動く速さを含んだ軌跡**（2026-08-20 18:xx・オーナー指示）。
     #     ここが出ないと、印字される日付は「腕が1ミリも動かない未来」になります。
     #     **回を止めないこと** —— 軌跡が解けなくても、据え置きの線だけで出します。
@@ -6276,19 +6393,25 @@ def _row(m: dict, a: dict, pl: dict, tr: dict | None, sup: dict | None) -> dict:
     #     しかも**未測定**なので `LEVERS` には入れていません（軌跡に歩かせない）。
     #     ところが「死んだ腕」の判定は `data/eta.jsonl` しか読まないので、
     #     **ここに積まないかぎり、選ぶ側からは面の割れが永久に見えません。**
-    try:
-        _ph = physical_caps(a, supply=sup)
-        row["density_surfaces"] = {
-            name: {
-                "at_ceiling": bool(_ph[key].get("at_ceiling")),
-                "measured": bool(_ph[key].get("measured")),
-                "why": _ph[key].get("why"),
+    # **`solve()` が先に載せていれば、それを使う**（2026-08-30）。同じ回に
+    #     `physical_caps` を2回 解くと、**頭の3行と積んだ行がずれうる**ので
+    #     （実測の齢が2回のあいだに変わる）、**1つを2か所で読む形**にします。
+    if isinstance(pl.get("density_surfaces"), dict):
+        row["density_surfaces"] = pl["density_surfaces"]
+    else:
+        try:
+            _ph = physical_caps(a, supply=sup)
+            row["density_surfaces"] = {
+                name: {
+                    "at_ceiling": bool(_ph[key].get("at_ceiling")),
+                    "measured": bool(_ph[key].get("measured")),
+                    "why": _ph[key].get("why"),
+                }
+                for name, key in (("short", "density"), ("long", "density_long"))
+                if key in _ph
             }
-            for name, key in (("short", "density"), ("long", "density_long"))
-            if key in _ph
-        }
-    except Exception:                                          # noqa: BLE001 — 回を止めない
-        pass
+        except Exception:                                      # noqa: BLE001 — 回を止めない
+            pass
     # **軌跡そのものを積む。** 積まないと、次の回が「軌跡が早まったか」を測れません
     # （据え置きの線と混ぜないこと ＝ 別の欄にする）。
     if tr is not None:
