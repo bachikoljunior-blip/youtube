@@ -307,6 +307,28 @@ watches:
     source: src/ab_split.py
     kind: ab_group
     experiment: slide_pace
+  - id: 帯の中の位置-両群16本
+    what: 「生きる帯（08:59〜13:30 JST）の中では、置く位置は1本あたり再生に効かない」の判定（腕 `density`・側 `dist`）
+    cond: 早枠・遅枠のどちらの群も、落ち着いた本が16本
+    then: python scripts/ab_split.py --outlook
+    source: src/ab_split.py
+    kind: ab_group
+    experiment: slot_half
+    # **2026-08-30 に足した**（最適化の回）。実験は同じ周の別のサブが
+    # 前の晩に立てており、`config/hypotheses.yaml` は `watch:` でここを
+    # 指していましたが、**台帳の側が空のまま**でした ——
+    # `tests/test_watches.py` の2件がそれで赤でした
+    # （`test_数の門を持つ未判定の仮説は台帳を指している` /
+    #  `test_台帳が指されている仮説は判定済みでも壊れない`）。
+    #
+    # **これが `dist`（配信の側）で無作為化された最初の A/B です。**
+    # `src/arm_speed.sides()` の実測では 配信の側は中身の側の 13.9倍 当たって
+    # いますが、走っている A/B は 4件とも `content` でした。
+    #
+    # [!] **群が積まれるのは `_ab_slot_order()` が入った 2026-08-29 23:45 JST
+    # より後に作った本だけ**です（`ab_split.EXPERIMENTS["slot_half"].landed`）。
+    # 予約の順番待ちがいま 5〜6週 あるので、**満ちるまで日数が要ります。**
+    # 満ちなければ**期限だけ**延ばすこと。`falsified_if` は1文字も緩めない。
   - id: 冒頭の問い-両群16本
     what: 「冒頭1枚目を問いかけにすると engaged が上がる」の判定
     cond: 問い・条件のどちらの群も、落ち着いた本が16本
