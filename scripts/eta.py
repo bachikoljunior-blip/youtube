@@ -3349,8 +3349,15 @@ def _theta_days(m: dict, a0: dict, base: dict, rows: list[dict],
 
     閉じるほうは **0.77件/日** のままです（`arm_speed.throughput()`）。
     **立てる側は、閉じる側の 3.6倍 の速さで回っています。**
-    だから θ を縛っているのは件数ではなく、**立ててから判定できるまでの日数**
-    （`src/judgeable.py`: 群の床 → **予約の順番待ち** → 落ち着き7日 →
+
+    **ただし、これは git を読まないと出ません。** 台帳に「いつ立ったか」の欄が
+    無いので、**この機械の中からは在庫の写真しか撮れません**
+    （その写真は 28件 で、軌跡が要る 36件 を下回ります ＝ 写真だけ見ると
+    「増やせ」に読めます）。**印字する行は、だからどちらが縛っているかを
+    決めつけません** —— 上げ方を2つとも名指しし、数え直す手を添えます。
+
+    その日の実測では、縛っていたのは **立ててから判定できるまでの日数**
+    （`src/judgeable.py`: 群の床 → **予約の順番待ち** → 落ち着き4日（`settle.SETTLE_DAYS`） →
     Analytics の遅れ3日）。予約は 359本・いちばん後ろは 30日超 で、
     **新しい実験の本は毎回その最後尾に着きます。**
 
@@ -3366,6 +3373,19 @@ def _theta_days(m: dict, a0: dict, base: dict, rows: list[dict],
     ・在庫（開いた前提）が閉じる速さを**下回った**ら、上の「増やすことではない」は
       逆になります。**数え直すのは `config/hypotheses.yaml` の open 件数と
       `arm_speed.throughput()` の2つだけ**（どちらも API 0単位）。
+
+    ## 値段（**この2本を解く分だけ、頭の3行が重くなります**）
+
+    実測 2026-08-30・同じ機械で1回ずつ計った端から端まで（API の待ちを含む）::
+
+        `python scripts/eta.py`            1分52秒 → **2分11秒**（+19秒・+17%）
+        `trajectory_all(full=True)`       16.6秒  → **27.5秒**
+        `trajectory_all(full=False)`      **7.9秒**（`--reflect` の道・**素通り**）
+
+    θ×2 は `t_work` を 24日 まで探すので 4秒 前後、θ→∞ は `saturate` が
+    ほぼ 0 に潰れるので **1回の `plan()`** で終わります。
+    **重いのは ×2 のほう。** 頭の3行が 19秒 の価値を持たなくなったら、
+    先に落とすのはこちらです（天井の -47日 だけなら 0.1秒 で出ます）。
 
     検査は `tests/test_eta_theta_days.py`。
     """
@@ -5032,30 +5052,53 @@ def _theta_line(tr: dict | None, base: dict | None) -> list[str]:
             return "**出ません**"
         return f"**{t['date'].isoformat()}**（**{delta:+,.0f}日**）"
 
-    line = (f"{bar} **到達日をいちばん大きく動かすのは θ（前提が閉じる速さ ＝ いま"
+    # **「いちばん大きい」を無条件に書かないこと**（2026-08-30、書いた直後に直した）。
+    #     この回の実測では θ の天井が配分の差の 4.5倍 でしたが、`t_work` が
+    #     縮んだ回は逆になり得ます。**比べてから、比べた結果を名乗ること** ——
+    #     無条件の最上級は、次に読む側が確かめずに済む形です。
+    alloc = None
+    pln = (tr or {}).get("planned")
+    if pln and pln.get("days") is not None and pln["days"] < NEVER:
+        d = pln["days"] - base["days"]
+        alloc = d if abs(d) > 0.5 else None
+    inf_d = th.get("inf_delta")
+    biggest = (alloc is None or inf_d is None or abs(inf_d) > abs(alloc))
+    head = ("**到達日をいちばん大きく動かすのは θ" if biggest
+            else "**θ")
+    line = (f"{bar} {head}（前提が閉じる速さ ＝ いま"
             f" {th['per_day']:.2f}件/日・閉じた {th['n']}件 ÷ {th['days']:,.0f}日）です**"
             f" —— θ×2 で {_d(th['x2'], th['x2_delta'])}"
             f" ／ 天井（θ→∞）で {_d(th['inf'], th['inf_delta'])}。"
             f"（軌跡は θ に反比例する `t_work` を **{th['t_work']}日** 取っています）")
     # **配分の振り直しと、同じ行で並べること。** 単独で出すと「大きい数」に
     #     見えるだけで、**この回に選べる他の手より大きいのか**が言えません。
-    pln = (tr or {}).get("planned")
-    if pln and pln.get("days") is not None and pln["days"] < NEVER:
-        alloc = pln["days"] - base["days"]
-        if th.get("inf_delta") and abs(alloc) > 0.5:
-            line += (f" **台帳の配分との差は {alloc:+,.0f}日**"
-                     "（下の「台帳が実際に用意している配分」の行）で、"
-                     f"θ の天井はその **{abs(th['inf_delta'] / alloc):.1f}倍**です。")
+    if alloc is not None and inf_d:
+        line += (f" **台帳の配分との差は {alloc:+,.0f}日**"
+                 "（下の「台帳が実際に用意している配分」の行）で、"
+                 f"θ の天井はその **{abs(inf_d / alloc):.1f}倍**"
+                 + ("です。" if biggest else "しかありません ——"
+                    " **この回は配分のほうが大きい。**"))
     # **上げ方を、同じ行で名指しすること。** 名前の無い所は「やれること」で埋まります
     #     （`tests/test_eta_covered_substitute.py` が一度 直した形）。
+    #     **在庫が余っている回だけ**この節を出します。下回ったら逆の手なので、
+    #     そのときは黙るのではなく「増やすこと」を出す（下の `else`）。
     n_open = th.get("open")
     if n_open:
-        line += (f" **ただし手は『前提を増やすこと』ではありません** —— 開いている"
-                 f" **{n_open}件** は、いまの速さで全部 閉じるだけで"
-                 f" **{n_open / th['per_day']:,.0f}日** かかります（＝在庫は余っている）。"
-                 "縮めるのは**立ててから判定できるまでの日数**のほう"
-                 "（群の床 → **予約の順番待ち** → 落ち着き7日 → Analytics の遅れ3日）"
-                 " → `python scripts/queue_lag.py`")
+        need = th["per_day"] * th["t_work"]
+        line += (f" **上げ方は2つあり、どちらが縛っているかはここでは言えません** ——"
+                 f" 軌跡は `t_work` のあいだに **{need:,.0f}件** 閉じる前提で"
+                 f" 立っていて、台帳に開いているのは **{n_open}件**"
+                 f"（{'足りない' if n_open < need else '足りる'}）。"
+                 "**(1) 件数** → `python scripts/eta.py --alloc`（どの腕に立てるか）。"
+                 "**(2) 立ててから判定できるまでの日数**（群の床 →"
+                 f" **予約の順番待ち** → 落ち着き{settle.SETTLE_DAYS}日 →"
+                 " Analytics の遅れ3日）→ `python scripts/queue_lag.py`。"
+                 " **`(1)` は在庫の写真で、補充の速さを見ていません** ——"
+                 "立つ速さは `closed_on` のような欄が無いので**この機械からは読めません**。"
+                 " 数えるなら `git log -p config/hypotheses.yaml` の"
+                 " `- claim:` の増え方（実測 2026-08-30: 開いた前提は"
+                 " 08/24 15件 → 08/30 32件 ＝ **2.8件/日**・閉じるのは 0.77件/日 ＝"
+                 " **在庫は増えつづけている** → そのときの縛りは (2) のほうでした）")
     return [line]
 
 
