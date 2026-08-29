@@ -1914,7 +1914,31 @@ def quota_lines(plan: Plan) -> tuple[list[str], bool]:
 
 def apply_moves(plan: Plan) -> int:
     """実物へ当てる。**1手（＝1組）100単位** ＝ `--move` 2回 × 50単位。
-    片側で落ちたら、そこで止めて言い残す。
+    **落ちた組だけを捨てて、残りは当てます。**
+
+    ## 「最初の失敗で全部を止める」をやめた（2026-08-29 に実測で踏んだ）
+
+    ここは長らく **`return 1` で丸ごと中断**していました。下の
+    「もう公開済み」の註が **2026-08-28 に同じ症状を捕まえて、その1つだけ**を
+    飛ばすようにしたのですが、**それ以外の失敗は今も全部を止めていました。**
+
+    **実測 2026-08-29**: この日の `--apply` は3回 通り、`data/queue_lag.jsonl` の
+    `after` は **`before` と1日も違いませんでした** —— 道具自身が
+    「**帳面の `after` は `before` と同じです ＝ 手が1つも当たっていません**
+    （(2) が確定。`apply_moves` は最初の失敗で止まるので、**幻の予約が
+    1本あるだけで 0/26 になります**）」と印字して、**次の `--apply` を
+    自分で止めました。**
+
+    **組どうしは独立です。** `moves()` の1組は2本の (日,時刻) を入れ替えるだけで、
+    ある組を飛ばしても**残りの組の当て先は1つも変わりません。**
+    だから中断する理由がありません。
+
+    **後半で落ちた組だけは、前半を元へ戻します** —— 前半だけ当たると
+    相手の時刻へ移った本が1本 残り、**同じ時刻に2本 並びます。**
+
+    **覆る条件**: `--plan` が失敗する本を組まなくなったら（当て先の実在を
+    撃つ前に確かめるようになったら）、この分岐は死にます。
+    そのときは `failed` が0本 の回が続くので、**帳面から分かります。**
 
     （**下の `done` は「組」ではなく `--move` の回数**なので、
     印字は `done * 50` です。このファイルの「手」は一貫して**組**のほう ——
@@ -1948,9 +1972,24 @@ def apply_moves(plan: Plan) -> int:
 
     done = 0
     skipped: list[str] = []
+    failed: list[str] = []
 
     def _one(vid: str, when: str) -> str:
-        """`ok` / `skip` / `stop` のどれか。"""
+        """`ok` / `skip` / `bad` / `stop` のどれか。
+
+        **`bad` と `stop` を分けるのが、この関数の仕事です**（2026-08-29）。
+
+            bad   その本だけの失敗（幻の予約・当て先が埋まっている・400）
+                  → **その組を捨てて、次の組へ**。残りは当たります
+            stop  **日枠が尽きた**（403 quotaExceeded）
+                  → **この窓では、あと何を撃っても通りません。止めます**
+
+        ここは長らく両方を `stop` にしていて、**幻が1本あるだけで
+        26手が 0手**になっていました（`apply_moves` の註）。
+        逆に両方を `bad` にすると、**枠が尽きた窓で残り全部を撃ちにいきます** ——
+        `tests/test_quota_exit_stops.py` と、下の
+        `test_枠が尽きたら止まる` がその側を押さえています。
+        """
         try:
             rc = reschedule.main(["--move", vid, when])
         except reschedule.AlreadyPublic as e:      # pragma: no cover - 念のため
@@ -1958,14 +1997,19 @@ def apply_moves(plan: Plan) -> int:
             return "skip"
         except SystemExit as e:
             if e.code:
-                print(f"[queue_lag] {vid} で止まりました: {e}."
-                      " **`--plan` を撃ち直して残りを当てること**", flush=True)
-                return "stop"
+                if reschedule.is_quota_exit(e):
+                    print(f"[queue_lag] {vid} で**日枠が尽きました**: {e}."
+                          " **この窓では、あと何を撃っても通りません。止めます**",
+                          flush=True)
+                    return "stop"
+                print(f"[queue_lag] {vid} は落ちました: {e}."
+                      " **この組だけ飛ばして、次の組へ進みます**", flush=True)
+                return "bad"
             return "ok"
         except Exception as e:  # pragma: no cover - 実物の口
-            print(f"[queue_lag] {vid} で落ちました: {e}."
-                  " **`--plan` を撃ち直して残りを当てること**", flush=True)
-            return "stop"
+            print(f"[queue_lag] {vid} は落ちました: {e}."
+                  " **この組だけ飛ばして、次の組へ進みます**", flush=True)
+            return "bad"
         if rc == reschedule.RC_ALREADY_PUBLIC:
             print(f"[queue_lag] {vid} は**もう公開済み**でした。"
                   " この組は飛ばします（**控えはもう直っています**）", flush=True)
@@ -1978,6 +2022,7 @@ def apply_moves(plan: Plan) -> int:
         try:
             plan.applied = done                    # type: ignore[attr-defined]
             plan.skipped_public = list(skipped)    # type: ignore[attr-defined]
+            plan.failed = list(failed)             # type: ignore[attr-defined]
         except Exception:                          # noqa: BLE001
             pass
 
@@ -1985,9 +2030,15 @@ def apply_moves(plan: Plan) -> int:
     for i in range(0, len(moves), 2):
         pair = moves[i:i + 2]
         first = _one(*pair[0])
-        if first == "stop":
+        if first == "stop":               # 日枠が尽きた ＝ 残りも通らない
             _record()
             return 1
+        if first == "bad":
+            # **落ちた組だけを捨てて、次の組へ進みます**（2026-08-29 に直した）。
+            # 組どうしは独立です —— 1組は2本の (日,時刻) を入れ替えるだけなので、
+            # ある組を飛ばしても、残りの組の当て先は1つも変わりません。
+            failed.append(pair[0][0])
+            continue                      # **後半は撃ちません**（純損になる）
         if first == "skip":
             skipped.append(pair[0][0])
             continue                      # **後半は撃ちません**（純損になる）
@@ -1995,9 +2046,26 @@ def apply_moves(plan: Plan) -> int:
         if len(pair) < 2:
             continue
         second = _one(*pair[1])
-        if second == "stop":
-            _record()
-            return 1
+        if second in ("stop", "bad"):
+            # **前半は当たってしまっています。** 相手の時刻へ移した本が1本
+            # 居るので、そのままだと2本が同じ時刻に並びます。**戻します。**
+            back = getattr(plan, "before_at", {}).get(pair[0][0])
+            if back is not None:
+                print(f"[queue_lag] {pair[1][0]} が落ちたので、"
+                      f"**前半 {pair[0][0]} を元へ戻します**"
+                      f"（{back:%Y-%m-%dT%H:%M} JST）", flush=True)
+                if _one(pair[0][0], back.strftime("%Y-%m-%dT%H:%M")) == "ok":
+                    done += 1
+                else:
+                    print(f"[queue_lag] [!] **{pair[0][0]} を戻せませんでした。**"
+                          " 同じ時刻に2本 並んでいる可能性があります ——"
+                          " **次の回は `--plan` の前に控えを読み直すこと**",
+                          flush=True)
+            failed.append(pair[1][0])
+            if second == "stop":          # 日枠が尽きた ＝ 残りも通らない
+                _record()
+                return 1
+            continue
         if second == "skip":
             skipped.append(pair[1][0])
             continue
@@ -2010,7 +2078,12 @@ def apply_moves(plan: Plan) -> int:
               f"（{', '.join(skipped[:8])}）。控えは実物へ直しました ——"
               " **`--plan` を撃ち直すと、この本は予約から消えています**",
               flush=True)
-    return 0
+    if failed:
+        print(f"[queue_lag] **落ちて飛ばした組: {len(failed)}本**"
+              f"（{', '.join(failed[:8])}）。**止めていません** ——"
+              " 組どうしは独立なので、残りは当たっています。"
+              " **`--plan` を撃ち直すと、この組だけが残ります**", flush=True)
+    return 0 if (done or not failed) else 1
 
 
 def live_cost_lines(plan: Plan) -> tuple[list[str], bool]:

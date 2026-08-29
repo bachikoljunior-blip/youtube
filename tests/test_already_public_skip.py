@@ -252,7 +252,7 @@ def test_本物の失敗では今までどおり止まる(monkeypatch):
     def main(argv):
         calls.append(argv[1])
         if argv[1] == "B":
-            raise SystemExit("枠が尽きました")
+            raise SystemExit("枠が尽きました" + _sched.QUOTA_MARK)
         return 0
 
     monkeypatch.setattr(_sched, "main", main)
@@ -286,7 +286,7 @@ def test_止まった回も当たった数を残す(monkeypatch):
     理由を、帳面から言えるように。"""
     def main(argv):
         if argv[1] == "C":
-            raise SystemExit("枠が尽きました")
+            raise SystemExit("枠が尽きました" + _sched.QUOTA_MARK)
         return 0
 
     monkeypatch.setattr(_sched, "main", main)
@@ -326,3 +326,108 @@ def test_止まった門が原因を言い切らない(monkeypatch):
         "原因を1つに言い切っている（実測で少なくとも2つある）"
     assert "手が当たっていない" in text, "もう一方の原因を挙げていない"
     assert "skipped_public" in text, "見分け方を書いていない"
+
+
+# ------------------------------------------------ 5: 公開済み **以外** の失敗
+
+# **2026-08-29 に踏んだ、この穴の2件目。**
+#
+# 上の 3・4 は「もう公開済み」だけを飛ばすようにしました（08/28）。
+# **それ以外の失敗は、そのあとも全部を止めていました** ——
+# `--move` が `SystemExit(1)` を返す形（当て先が埋まっている・口が 400 を返す）は
+# `"stop"` に落ち、`apply_moves` は `return 1` で丸ごと中断します。
+#
+# 実測 2026-08-29: `--apply` はこの日 3回 通ったのに、
+# `data/queue_lag.jsonl` の `after` は `before` と1日も違いませんでした。
+# 道具自身が「**帳面の `after` は `before` と同じです ＝ 手が1つも
+# 当たっていません**（`apply_moves` は最初の失敗で止まるので、**幻の予約が
+# 1本あるだけで 0/26 になります**）」と印字して、次の `--apply` を止めています。
+#
+# **組どうしは独立です**（1組は2本の (日,時刻) を入れ替えるだけ）。
+# だから落ちた組を捨てて、残りは当てること。
+
+
+def _fake_main_failing(calls, bad: set):
+    def main(argv):
+        vid, when = argv[1], argv[2]
+        calls.append((vid, when))
+        if vid in bad:
+            raise SystemExit(1)
+        return 0
+    return main
+
+
+def test_公開済み以外の失敗でも止めない(monkeypatch):
+    """**幻の予約が1本あるだけで 0/26 になっていました。**"""
+    calls: list = []
+    monkeypatch.setattr(_sched, "main", _fake_main_failing(calls, {"A"}))
+
+    rc = queue_lag.apply_moves(_Plan([("A", "t1"), ("B", "t2"),
+                                      ("C", "t3"), ("D", "t4")]))
+
+    assert rc == 0, "落ちた組が1つあるだけで、当たった組まで失敗にしている"
+    assert [c[0] for c in calls] == ["A", "C", "D"], (
+        "1手目の失敗で止まったか、飛ばした組の後半まで撃っている")
+
+
+def test_落ちた組の後半は撃たない(monkeypatch):
+    """早める側が落ちたのに後ろへ送る側だけ撃つと、**1本 遠のくだけの純損**です。"""
+    calls: list = []
+    monkeypatch.setattr(_sched, "main", _fake_main_failing(calls, {"A"}))
+
+    queue_lag.apply_moves(_Plan([("A", "t1"), ("B", "t2")]))
+
+    assert "B" not in [c[0] for c in calls], (
+        "早める本が落ちたのに、後ろへ送る本だけを動かしている")
+
+
+def test_後半が落ちたら前半を元へ戻す(monkeypatch):
+    """前半だけ当たると、**相手の時刻へ移った本が1本 残って2本 並びます。**"""
+    from datetime import datetime
+
+    class _P(_Plan):
+        before_at = {"A": datetime(2026, 9, 1, 9, 0)}
+
+    calls: list = []
+    monkeypatch.setattr(_sched, "main", _fake_main_failing(calls, {"B"}))
+
+    queue_lag.apply_moves(_P([("A", "t1"), ("B", "t2")]))
+
+    assert calls[-1] == ("A", "2026-09-01T09:00"), (
+        "後半が落ちたのに、前半を元へ戻していない（同じ時刻に2本 並びます）")
+
+
+def test_落ちた組は帳面に残る(monkeypatch):
+    """`skipped_public` と混ぜないこと —— **原因が別**です。"""
+    monkeypatch.setattr(_sched, "main", _fake_main_failing([], {"A"}))
+    plan = _Plan([("A", "t1"), ("B", "t2"), ("C", "t3"), ("D", "t4")])
+    queue_lag.apply_moves(plan)
+
+    assert getattr(plan, "failed", None) == ["A"]
+    assert getattr(plan, "skipped_public", None) == []
+
+
+def test_枠が尽きたら止まる(monkeypatch):
+    """**`bad` と `stop` を分ける、もう片方の側。**
+
+    その本だけの失敗（過去の時刻・見つからない本）は飛ばしますが、
+    **日枠（403 quotaExceeded）は別**です —— この窓では、あと何を撃っても
+    通りません。**残りを撃ちにいかないこと**（403 を人数ぶん買います）。
+
+    印は `reschedule.QUOTA_MARK`。**`SystemExit` は終了コードしか運べない**ので、
+    文で持たせています（`reschedule.is_quota_exit` の註）。
+    """
+    calls: list = []
+
+    def main(argv):
+        calls.append(argv[1])
+        if argv[1] == "C":
+            raise SystemExit("もう通りません" + _sched.QUOTA_MARK)
+        return 0
+
+    monkeypatch.setattr(_sched, "main", main)
+    plan = _Plan([("A", "t1"), ("B", "t2"), ("C", "t3"), ("D", "t4")])
+
+    assert queue_lag.apply_moves(plan) == 1, "日枠切れでも先へ進んでいる"
+    assert calls == ["A", "B", "C"], "止まるべき所で先へ進んでいる"
+    assert plan.applied == 2, "止まる前に当たった2手が残っていない"
