@@ -2488,6 +2488,82 @@ def _print_starved_floors() -> None:
           "既定の `--per-calc 2` が2本で切ります。`docs/trigger_main.md` §4 の 5）。")
 
 
+def gate(vs: list["Verdict"]) -> int:
+    """**期限が実データとずれていたら 2 で落ちる。**（2026-08-30・最適化の回）
+
+    ## なぜ「印字」でも「検査」でもなく、門なのか
+
+    この症状は、この repo で**3つの置き方を順に試して、3つとも素通りしました。**
+
+        (1) この道具の印字             `deadline_check.py` の末尾に出る
+        (2) `status.py` の印字         `test_status_も_遅すぎる側を出すこと` が守っている
+        (3) `tests/test_deadline_check.py::test_遅すぎる期限が残っていないこと`
+
+    **(3) は 2026-08-30 の実測で、赤いまま 358回 の ship を通過していました。**
+    理由は `scripts/fast_tests.py` の作りです —— あれは **その回の `git diff` の
+    basename から `-k` を組む**ので、`deadline_check` を触らない回はこの検査を
+    1件も走らせません。そして全体の `pytest` は 16分 かかるので、どの回も撃ちません。
+
+    **ここが、この repo でいちばん見落としやすい形です**:
+    diff から検査を選ぶ仕掛けは、**コードが変わって赤くなる検査**しか拾えません。
+    この検査が赤くなるのは**世界のほうが動いたとき**（予約が公開され、データが
+    揃い、`ready` が手前へ来る）で、**diff は空です。** 構造上、永久に選ばれません。
+
+    ## 止める価値（実測 2026-08-30）
+
+        opening_motion（冒頭0.9秒の動き）  判定できるのは 09-22 ／ 期限 10-07
+        → **15日**。`eta.py` は毎回「軌跡の腕が動くのは前提を1件閉じたときだけ」と
+          印字しているので、**この 15日 は到達日がまるごと止まっていた日数**です。
+
+    同じ 6日間の実測: ship **358件**・到達予測 2026-12-21 → 2027-01-10（**+20日**）。
+    **止まっていた 15日 は、その遠のいた 20日 と同じ桁です。**
+
+    ## 直し方は1手（だから門にしてよい）
+
+        python scripts/deadline_check.py --fit     # 両方の向きを寄せる
+        python scripts/deadline_check.py --shrink  # 遅すぎる側だけ
+        python scripts/deadline_check.py --extend  # 早すぎる側だけ
+
+    **`falsified_if` は触りません。** 動くのは `deadline:` の1行だけです。
+    「もっと n が要る」なら、動かすのは `needs.count` のほう。
+
+    ## 覆る条件
+
+    - **`--fit` を撃った直後にまた赤い**なら、効いていないのは門ではなく
+      `Verdict.slack`（帯）の幅です。**帯を広げること。門を消さないこと。**
+    - 「期限を意図して先に置きたい」回が出てきたら、そのときは `needs` に書くこと。
+      期限は日付の欄で、設計の欄ではありません。
+    - `fast_tests.py` が **diff に依らず走る芯**（`CORE`）に `deadline_check` を
+      入れ、かつ**その芯が毎周 実際に撃たれる**ようになったら、この門は重複です。
+      2026-08-30 時点では `fast_tests.py` は手順のどこからも呼ばれていません
+      （`docs/trigger_main.md` にも `stop_check.sh` にも名前がありません）。
+    """
+    late = sorted((v for v in vs if v.waits), key=lambda v: -v.waits)
+    early = [v for v in vs if v.slips]
+    if not late and not early:
+        return 0
+    out: list[str] = []
+    if late:
+        total = sum(v.waits for v in late)
+        out.append(f"**データは揃うのに期限が先の前提 {len(late)}件・合計 {total}日。**"
+                   " 軌跡の腕は前提を1件閉じたときだけ動くので、"
+                   "**この合計は到達日がまるごと止まっている日数**です:")
+        for v in late:
+            out.append(f"  {v.deadline} → 判定できるのは **{v.ready}**"
+                       f"（{v.waits}日）  {v.claim[:52]}")
+        out.append("  → `python scripts/deadline_check.py --shrink`")
+    if early:
+        out.append(f"**判定できる日より前に置かれた期限 {len(early)}件。**"
+                   " その日に言えることは無いので、"
+                   "**対照群が空のまま「外れ」が確定します**（腕を1本 測らずに捨てる形）:")
+        for v in early:
+            out.append(f"  {v.deadline} → 判定できるのは **{v.ready}**  {v.claim[:52]}")
+        out.append("  → `python scripts/deadline_check.py --extend`")
+    out.append("  **`falsified_if` は緩めないこと。動かすのは `deadline:` の1行だけです。**")
+    print("\n".join(out))
+    return 2
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--as-of", help="この日に判定するつもりで解く（YYYY-MM-DD）")
@@ -2504,6 +2580,9 @@ def main(argv: list[str] | None = None) -> int:
                          "**普通の回はこれでよい**")
     ap.add_argument("--dry-run", action="store_true",
                     help="`--shrink` / `--extend` / `--fit` が何を書くかだけ出す（書きません）")
+    ap.add_argument("--gate", action="store_true",
+                    help="**期限が実データとずれていたら 2 で落ちる**"
+                         "（`scripts/stop_check.sh` が読む。**API 0単位**）")
     a = ap.parse_args(argv)
     as_of = date.fromisoformat(a.as_of) if a.as_of else today_jst()
     lag = analytics_lag_days(as_of)
@@ -2548,6 +2627,8 @@ def main(argv: list[str] | None = None) -> int:
             print("  **`falsified_if` は1文字も触っていません。**"
                   "もっと n が要るなら、動かすのは `needs.count` のほうです")
         return 0
+    if a.gate:
+        return gate(check(load(), as_of=as_of, lag=lag))
     vs = check(load(), as_of=as_of, lag=lag)
     # **印字する道の1か所だけで積みます**（`record_estimates()` の註）。
     # 純粋な関数の中で書くと、控えは「この機械が何回 撃たれたか」を数えます。
