@@ -1008,6 +1008,94 @@ def swallows(sections: dict[str, str], candidate: str, assigned: str,
     return bool(mine) and mine <= theirs
 
 
+def money_owner(text: str, mod: str, mods: list[str],
+                all_sections) -> tuple[str, str, int] | None:
+    """**題の金額を1つも持っていない calc に貼られていたら、持っている calc を返す。**
+
+    ## なぜ `CROSS_MARGIN` だけでは足りないのか（2026-08-30 に踏んだ・実測）
+
+    下の `cross` は `best_section` の一致数を calc どうしで比べます。
+    **その数は、calc ごとに別の段（rung）で数えられています** ——
+    `best_section` は「下限 1000 → 10 → 小数」と**その calc の中だけで**降り、
+    **どこかで当たったところで止まる**から（`rungs` の註）。
+    **段がちがう数を大小で比べると、答えは段のほうで決まります。**
+
+    実測 `sankyu-14nichi-michi-ga-nai`（2026-08-29 の `--new-family` が書いた）::
+
+        題の金額（下限1000）  {27,450}   ＝ 産休・育休の免除の差額
+        sankyu     下限1000 で 一致 **1**（`産休には「14日以上」の道が無い`）
+        kafunenkin 下限1000 で 一致 0 → **段を落として** 一致 **3**（20年・25年・35年…）
+
+    **貼られたのは `kafunenkin` のほう**です（3 > 1）。`CROSS_MARGIN` は
+    「2個以上 多いとき」なので、**正しい族のほうが数で負けていれば、永久に動きません。**
+    そのまま作れば、**語るのは産休の免除、画面に出る表は寡婦年金**になります ——
+    `realign` の docstring が 2026-08-16 と 08-25 に2回 書いている
+    「語っている制度と、画面に出る表が別の制度」の**3回目で、1つ上の粒度**です。
+
+    見つけたのは `tests/test_doc_numbers.py::test_topics_yamlには掛けない` の赤で、
+    **同じ回に鳴った7件のうち6件は本物ではありません**（型1 ＝ 導出値）。
+    **本物はこの1件だけ**でした。
+
+    ## 何を見るか（**金額だけ**。段を落としません）
+
+    `numbers(text, MONEY_FLOOR)` ＝ **下限1000の数だけ**を、段を落とさずに見ます。
+    小さい整数は `rungs` の註のとおり「どの表にも出る」ので、名指しに使えません。
+
+    動かすのは、**次の3つが全部そろったときだけ**です:
+
+      1. 題に下限1000の数がある（無ければ何も言えない）
+      2. **貼られた calc は、その数を1つも持っていない**
+      3. この回の別の calc が、1つ以上 持っている
+
+    2 が効いています —— 導出値（`244,000 − 220,000 = 24,000` のような
+    表に印字されない差）を持つ題でも、**両端は表に在る**ので 2 が成り立たず、
+    **この関数は黙ります**（実測: 同じ回に鳴った `koureikoyou` / `taishoku` /
+    `souzoku` / `kyoiku` / `nenkinmenjo` / `yoteinozei` の6件とも動きません）。
+
+    **覆る条件**: 金額を1円も印字しない calc（年齢と月数だけの表）へ
+    誤って動かす回が出たら、3 の側に「移った先も金額の表であること」を足すこと。
+    いまは 3 が「その数を持っている」なので、金額の表でなければ成り立ちません。
+    **検査は `tests/test_forge_money_owner.py`。**
+    """
+    want = numbers(text, MONEY_FLOOR)
+    if not want:
+        return None
+    # **同じ金額を2つの表が持つことがあります**（2026-08-30 の実測 —— `27,450` は
+    # `sankyu` と `koyouhoken` の両方に在る。制度の定数は calc をまたぎます）。
+    # 金額の数で並べたあと、**同じ段（`SMALL_FLOOR`）で数え直して**ほどきます。
+    # 段をそろえるのがこの関数の主題なので、ほどき方も同じ段でやること。
+    small = numbers(text, SMALL_FLOOR)
+
+    def body_of(m: str) -> str:
+        return "\n".join((all_sections.get(m) or {}).values())
+
+    def owned(m: str) -> int:
+        return len(want & numbers(body_of(m), MONEY_FLOOR))
+
+    def small_hits(m: str) -> int:
+        return len(small & numbers(body_of(m), SMALL_FLOOR))
+
+    if owned(mod):
+        return None
+    best: tuple[str, str, int] | None = None
+    rank: tuple[int, int] | None = None
+    for m in mods:
+        if m == mod:
+            continue
+        n = owned(m)
+        if not n:
+            continue
+        here = (n, small_hits(m))
+        if rank is None or here > rank:
+            heads = all_sections.get(m) or {}
+            head = max(heads, key=lambda h: (len(want & numbers(heads[h],
+                                                                MONEY_FLOOR)),
+                                             len(small & numbers(heads[h],
+                                                                 SMALL_FLOOR))))
+            best, rank = (m, head, n), here
+    return best
+
+
 def realign(forged: ForgedSet, picked, all_sections,
             dropped: list[str]) -> list[tuple[str, str] | None]:
     """**書かせた順に節を貼らない。**中身の数字が載っている節へ貼り直す。
@@ -1089,7 +1177,18 @@ def realign(forged: ForgedSet, picked, all_sections,
             # （2026-08-25 に踏んだ。下の `CROSS_MARGIN` の節）。
             cross = [(best_section(text, all_sections[m])[0], m)
                      for m in mods if m != mod]
-            if cross:
+            moved = money_owner(text, mod, mods, all_sections)
+            if moved:
+                cmod, cbest, cn = moved
+                print(f"  [calc ごと貼り直し・金額で] {item.id}\n"
+                      f"      書かせた順の calc: {mod} / {head}"
+                      f"（**題の金額を1つも持っていません**）\n"
+                      f"      金額が載っている calc: {cmod} / {cbest}"
+                      f"（{cn} 個 一致）")
+                mod, head = cmod, cbest
+                ranked = best_section(text, all_sections[mod])
+                top, best = ranked[0][0], ranked[0][1]
+            elif cross:
                 (ctop, cbest), cmod = max(cross, key=lambda c: c[0][0])
                 if ctop >= top + CROSS_MARGIN:
                     print(f"  [calc ごと貼り直し] {item.id}\n"
