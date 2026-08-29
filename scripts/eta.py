@@ -2574,7 +2574,14 @@ def _recent_surface() -> tuple[float, int, str] | None:
                     make_per_day=_long_make_per_day(),
                     slots_per_day=_long_slots_per_day(),
                     stock=_long_stock()),
-                float(long.get("ctr") or 0.0))
+                float(long.get("ctr") or 0.0),
+                # **CTR の分母と分子**（2026-08-29 に足した）。率だけを渡すと、
+                #     「要る CTR に届きうるか」を**振れの外か中か**で言えません。
+                #     実測 08/29: 67/4,001 ＝ 1.67%・95%区間 [1.32%, 2.13%] に対し
+                #     要る CTR は 7.3% —— **区間の外**です。それを言わずに
+                #     「ここから先で効くのは CTR」と出していました。
+                (float(long.get("impressions") or 0.0),
+                 float(long.get("clicks") or 0.0)))
     except Exception:  # noqa: BLE001  （測れないことで回を止めない）
         return None
 
@@ -2736,7 +2743,30 @@ def _with_recent_surface(mix: dict) -> dict:
         out["imp_day_dry_fill"] = fc.get("dry_fill")
     if len(got) > 5 and got[5]:
         out["imp_ctr_long"] = got[5]
+    if len(got) > 6 and got[6]:
+        out["imp_ctr_n"], out["imp_ctr_k"] = got[6]
     return out
+
+
+def _wilson(k: float, n: float, z: float = 1.96) -> tuple[float, float] | None:
+    """**割合の95%区間**（Wilson）。`k` 回のうち `n` 回。読めなければ `None`。
+
+    正規近似（`p ± z√(p(1-p)/n)`）ではなく Wilson を使うのは、**分子が小さい側で
+    区間が負に食い込まないから**です。ここで測るのは CTR で、実測は 1〜2% ——
+    正規近似が最も外れる帯です。
+
+    **なぜ要るか**（2026-08-29）: 段2 は「要る CTR 7.3%・サムネと題」と、
+    **次に引く腕を名指し**していました。実測は 67/4,001 ＝ 1.67% で、
+    区間は [1.32%, 2.13%]。**7.3% は区間の 3.4倍 外**です。
+    「サムネを直せば届く」と読める字面が、**実測が否定している的**に向いていました。
+    """
+    if n <= 0 or k < 0:
+        return None
+    p = k / n
+    d = 1.0 + z * z / n
+    c = p + z * z / (2 * n)
+    r = z * ((p * (1 - p) / n + z * z / (4 * n * n)) ** 0.5)
+    return (max(0.0, (c - r) / d), min(1.0, (c + r) / d))
 
 
 def _gate2_surface_basis(mix: dict) -> tuple[float | None, str, dict]:
@@ -2776,7 +2806,8 @@ def _gate2_surface_basis(mix: dict) -> tuple[float | None, str, dict]:
               "per_publish": mix.get("imp_day_per_publish"),
               "dry_span": mix.get("imp_day_dry_span"),
               "dry_fill": mix.get("imp_day_dry_fill"),
-              "ctr": mix.get("imp_ctr_long")}
+              "ctr": mix.get("imp_ctr_long"),
+              "ctr_n": mix.get("imp_ctr_n"), "ctr_k": mix.get("imp_ctr_k")}
     # **窓が「公開を止めていた日」で埋まっているなら、中央値は段2 の答えではありません**
     #     （2026-08-26。`src/reach_split.surface_forecast()` の docstring に実測）。
     #     段2 の問いは「門2a を 450日 かけて開けられるか」で、
@@ -2945,12 +2976,57 @@ def _gate2_surface_note(imp_day: float, need_day: float,
     if got_ctr > 0:
         gap_ctr = (f"　**実測の CTR は {got_ctr:.2f}%** ＝ いまのままなら"
                    f" 長尺の再生は 1日 {imp_day * got_ctr / 100:,.1f}回 で、"
-                   f"合格点に **{need_ctr / got_ctr:,.1f}倍 足りません**"
-                   "（面ではなく CTR が縛っている、と読むこと）")
+                   f"合格点に **{need_ctr / got_ctr:,.1f}倍 足りません**")
+        # --- **要る CTR が、実測の振れの中か外か**（2026-08-29 に足した）---
+        #
+        # ここは長らく「（面ではなく CTR が縛っている、と読むこと）」で閉じ、
+        # **次に引く腕を「サムネと題」と名指し**していました。
+        # **要る CTR が実測の区間に入るかを、1度も見ていません。**
+        # 実測 08/29: 67/4,001 ＝ 1.67%・95%区間 [1.32%, 2.13%]、要る CTR 7.3%
+        # ＝ **区間の 3.4倍 外**。サムネを直して届く帯ではありません。
+        #
+        # **同じ不足は、面の側でも閉じられます。** 面は長尺の公開本数に比例し
+        # （`others["per_publish"]` ＝ 公開1本あたりのインプレッション・実測）、
+        # **本数はこの機械が動かせる側**です（族の数。`_long_family_ceiling`）。
+        # だから「CTR では届きません」で終えず、**面の側の倍率を同じ行に出します**
+        # （`CLAUDE.md`「裸の『届きません』を出さないこと」）。
+        #
+        # **覆る条件**: 区間の上端が要る CTR を超えたら（＝ 標本が薄い／CTR が
+        # 上がった）、この枝は自分で「区間の中」と印字して名指しをやめます。
+        n = float(others.get("ctr_n") or 0.0)
+        k = float(others.get("ctr_k") or 0.0)
+        ci = _wilson(k, n) if n > 0 else None
+        if ci:
+            lo, hi = ci[0] * 100, ci[1] * 100
+            gap_ctr += (f"　（実測 {k:,.0f}/{n:,.0f}・**95%区間 [{lo:.2f}%, {hi:.2f}%]**）")
+            if need_ctr > hi:
+                short = need_ctr / hi
+                gap_ctr += (f"　[!] **要る CTR {need_ctr:.1f}% は、その区間の外です"
+                            f"（上端の {short:,.1f}倍）** ——"
+                            "**サムネと題では届きません。**"
+                            "「ここから先で効くのは CTR」と読まないこと")
+                per_pub = float(others.get("per_publish") or 0.0)
+                pubs = float(others.get("planned_pubs") or 0.0)
+                if per_pub > 0:
+                    need_imp = need_day / (got_ctr / 100)
+                    line = (f"　**同じ不足を面の側で閉じるなら**: 要る面は"
+                            f" {need_imp:,.0f}回/日（いま {imp_day:,.0f}）＝"
+                            f" **{need_imp / imp_day:,.1f}倍**")
+                    if pubs > 0:
+                        line += (f"、公開1本あたり {per_pub:,.1f}回 なので"
+                                 f" **長尺 {need_imp / per_pub:,.1f}本/日**"
+                                 f"（いま {pubs:.2f}本/日）")
+                    line += ("。**そちらは動かせる側です**（族の数。"
+                             "下の「門2a を長尺で開けるなら」の節）")
+                    gap_ctr += line
+            else:
+                gap_ctr += (f"　要る CTR {need_ctr:.1f}% は**その区間の中**です ——"
+                            "サムネと題で届きうる帯（標本を増やすと分かれます）")
+        else:
+            gap_ctr += "（面ではなく CTR が縛っている、と読むこと）"
     return (head + f" **面は足りています（{imp_day / need_day:,.1f}倍）** —— "
-            f"ここから先で効くのは CTR のほうです"
-            f"（要る CTR {need_ctr:.1f}%・"
-            f"サムネと題。`src/reach_split.py`）" + gap_ctr + span)
+            f"**ただしそれは CTR 100% を置いた話です**"
+            f"（要る CTR {need_ctr:.1f}%。`src/reach_split.py`）" + gap_ctr + span)
 
 
 def _trajectory_blocking(arms: dict, out: dict) -> list[str]:
@@ -5722,6 +5798,16 @@ def _report_long_gate(m: dict, a: dict) -> list[str]:
               f"L＝{best_l['per_day']:,.1f}本/日**。"
               "**表の3列（1/2/4本/日）は、どれもここに届いていません** ——"
               "「全部の行を下回っています」は、**Lを4本/日 で止めたぶん**でもあります。")
+            # **段2 の面の行も、同じLを別の道から出します**（`_gate2_surface_basis`）。
+            #     あちらは「面 × 実測CTR」＝ 公開1本あたり 5.3回 で解き、こちらは
+            #     Analytics の1本あたり再生 8.0回 で解くので、**数は 1.5倍 ちがいます。**
+            #     **食い違いではありません** —— Analytics の1本あたり再生には
+            #     サムネの面を通らない再生（関連・外部）が入り、面の側には入りません。
+            #     **どちらも「Lは20本/日 台が要る」に着きます。**
+            P("      （段2 の面の行は同じLを別の道から出します —— "
+              "あちらは面×実測CTR、こちらは Analytics の1本あたり再生。"
+              "**サムネの面を通らない再生のぶんだけ、こちらが小さく出ます。**"
+              "食い違いではありません）")
             if fam and fam["per_day"] > 0:
                 need_fam = int(-(-best_l["per_day"] * fam["window"] // fam["per_calc"]))
                 P(f"    そのLを止めているのは**族の数**です: いま **{fam['families']}族**"
@@ -5729,12 +5815,18 @@ def _report_long_gate(m: dict, a: dict) -> list[str]:
                   f" **{fam['ceiling_7d']}本 ＝ {fam['per_day']:.2f}本/日**"
                   f"（1族から {fam['per_calc']}本まで。`scripts/topic_forge.py --list`）。"
                   f" **要るLとの差は {best_l['per_day'] / fam['per_day']:,.1f}倍**")
-                P(f"      → **要る族は {need_fam}族**（{best_l['per_day']:,.1f}本/日 ×"
-                  f" {fam['window']}日 ÷ {fam['per_calc']}本）。いま {fam['families']}族 なので"
-                  f" **あと {max(0, need_fam - fam['families'])}族**。"
-                  f"**表を書かずに増やせる族が {fam['spare']}件 在ります**"
-                  f"（`src/calc/` に表は在るが、長尺のテーマを1件も持っていない族。"
-                  f"`topic_forge.py --list` の (2)・実測 15分/件）")
+                # **この行だけ `[!]` を付けます**（2026-08-29）。
+                #     この道具の手順は「頭と尾の3行だけ読む」で、真ん中は読まれません。
+                #     尾の `[!]` 集めだけが中を運びます —— そこは**先頭 120字で切られる**ので、
+                #     **動かす数（あと何族・在庫が何件）を頭に置くこと。**
+                P(f"      [!] **長尺の律速は族の数: あと {max(0, need_fam - fam['families'])}族"
+                  f"（要る {need_fam} ／ いま {fam['families']}）。"
+                  f"表を書かずに増やせる族が {fam['spare']}件**"
+                  f"（`topic_forge.py --list` の (2)・実測 15分/件）。"
+                  f"要るLは {best_l['per_day']:,.1f}本/日、いまの天井は {fam['per_day']:.2f}本/日"
+                  f"（{best_l['per_day']:,.1f} × {fam['window']}日 ÷ {fam['per_calc']}本 ＝"
+                  f" {need_fam}族。`src/calc/` に表は在るが長尺のテーマを持っていない族が"
+                  f" {fam['spare']}件）")
                 P("      **これは「開く」と言っているのではありません** ——"
                   f" L を {fam['per_day']:.2f} → {best_l['per_day']:,.1f}本/日 に上げたとき"
                   f"1本あたり再生が {lpv:,}回 のまま保つかは**未測定**です"
