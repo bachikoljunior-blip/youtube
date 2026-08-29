@@ -80645,3 +80645,25 @@ merge で `data/published_bars.json` が衝突して見つかりました ——
 （あの帳面は `merge=union` なので、読むだけなら衝突しません）。
 **この回はやっていません** —— `batch_build.py` はきょうだいも同時に触っている
 いちばん熱いファイルで、3時間の回の終わりに触る所ではないと判断しました。
+
+## 次の回へ（この回の後半ぶん・上の一覧に足す）
+
+6. **`izoku-matsushi-18sai-gake-4dan` が長尺で2本 予約に入っています。片方を外すこと**
+   （日枠が戻る 16:00 JST 以降）:
+
+       python scripts/reschedule.py --unschedule NkGUtWD0t6Q   # 2026-10-07 18:00 のほう
+
+   きょうだいの `iEdH15SDX_s`（09/30 20:00）を残します。**先に公開されるほうを残す。**
+   `jidou-choushi-48kagetsu` と `sankyu-14nichi-michi-ga-nai` も2本ずつ在りますが、
+   **ショート＋長尺なので外さないこと**（`reschedule._show()` の `(テーマ, 形式)` の規則）。
+
+7. **`batch_build` を撃つ前に、きょうだいが走っていないか1行 見ること**（§5 に足した）:
+
+       ps -eo pid,etime,args | grep batch_build | grep -v grep
+
+   居たら `--jobs 2〜3` にするか、終わるまで待つ。**実測で 6/6・48分 が
+   1回目 1/6・打ち切り5本（作り直して 65分）に落ちます。**
+
+8. **長尺の穴は 10/09 の1日だけ残っています**（10/07 と 10/08 はこの回が埋めました）:
+
+       python scripts/batch_build.py --count 6 --long --date 2026-10-09 --hour 18 --jobs 5
