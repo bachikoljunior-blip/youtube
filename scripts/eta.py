@@ -2305,6 +2305,11 @@ def cap_caveats(lever: str, a: dict) -> list[str]:
         density       ×1.00    surface=ショート  measured=True   at_ceiling=True
         density_long  ×128.13  surface=長尺      measured=False  at_ceiling=False
 
+    **【この2行目は 2026-08-26 の実物です。2026-08-29 に数が動きました】**
+    長尺の面の崩れが `day_cap.long_form()` に入り（08/21・7本 出して生存 5本）、
+    いまは `×8.67  surface=長尺  measured=True  at_ceiling=False`
+    （実測の上限 6本/日 ÷ 0.69本/日）。**×128 は定義上の上限の名残**です。
+
     そして台帳の**開いている density の前提 6件**のうち **2件は長尺の面**です
     （「長尺は1日4本 作れる」期限 08-31 ／「長尺の生成が落ちる主因は…」期限 08-29）。
     **4,000時間の門に入るのは長尺だけ**なので、この2件は門に直結しています。

@@ -2024,6 +2024,53 @@ def _check_form_tag(script: dict | None, duration: float) -> list[str]:
     return []
 
 
+#: **動画を作らなくても分かる検査**（`check` と `src/pipeline.py` が同じものを撃つ）。
+def script_only_problems(script: dict | None, portrait: bool) -> list[str]:
+    """**script.json だけで判定できる不備。レンダリングの前に当てるためのもの。**
+
+    ## なぜ要るか（2026-08-29 に、同じ本で **2回** 踏んで足した）
+
+    `src/script_writer.generate()` は書き直しの輪を **3回**まわし、
+    それでも残ったときに、こう印字して**台本をそのまま返します**:
+
+        [script] 警告: N件がまだ残っています。パイプラインが合成前に止めます
+
+    **止まりません。** `src/pipeline.py` は、そのあと
+    スライドを焼き、22本のクリップを焼き、音声を合成し、字幕を焼き込んで、
+    **いちばん最後の `check()` で落とします**（実測 **1本 15分**）。
+    `batch_build` は1回 作り直すので、**1本の失敗に 30分**かかります。
+
+    実測（2026-08-29 18:5x・`kouki-jougen-89000-sagaru`）:
+
+        [render] クリップ 22/22 → 字幕焼き込み + 音声合成
+        VerificationError: **前提として『率』を出しているのに、
+                            その値が画面のどこにもありません。**
+
+    **この指摘は `_check_assumption_value_shown(script)` で、引数は script だけ**です
+    —— 動画も画像も見ていません。**16分 前に同じ答えが出せました。**
+
+    ## ここに何を入れるか
+
+    **`check()` が `script` **だけ**を引数に取る検査**です。
+    `work`（焼いた画像・過去の控え）や `duration`（尺）を要るものは入れません
+    —— それらは作らないと分からないので、**早く当てようがありません。**
+
+    **`check()` は、この関数を呼びます。** 並べ直さないこと ——
+    ここと向こうで別々に並べると、**片方だけ増えたときに静かにずれます**
+    （`tests/test_script_gate_before_render.py` が、その日に赤くなります）。
+    """
+    problems: list[str] = []
+    if portrait:
+        problems += _check_short_opening(script)
+    problems += _check_visual_wrap(script, portrait)
+    problems += _check_count_matches(script)
+    problems += _check_adjacent_repeat(script)
+    problems += _check_formula_shown(script)
+    problems += _check_assumption_value_shown(script)
+    problems += _check_yomi(script)
+    return problems
+
+
 def check(path: Path, video_cfg: dict, min_minutes: float, work: Path,
           topic: dict | None = None) -> float:
     """問題があれば VerificationError。無ければ尺（秒）を返す。"""
@@ -2072,8 +2119,12 @@ def check(path: Path, video_cfg: dict, min_minutes: float, work: Path,
     # 代わりに、冒頭が大きい数字1つで始まっているかを見る。
     portrait = height > width
     problems += _check_slides(work, None if portrait else script)
+    # **動画を作らなくても分かるぶんは、1か所にまとめてあります**（2026-08-29）。
+    #     `src/pipeline.py` が**レンダリングの前に**同じ関数を撃つので、
+    #     ここと向こうが別々に並べていると、**片方だけ増えたときに静かにずれます。**
+    #     （実害は `script_only_problems` の docstring。1本 15分 × 2回）
+    problems += script_only_problems(script, portrait)
     if portrait:
-        problems += _check_short_opening(script)
         problems += _check_headline_from_calc(work, script)
         problems += _check_short_pace(script, duration)
         problems += _check_slide_hold(work, duration)
@@ -2089,17 +2140,11 @@ def check(path: Path, video_cfg: dict, min_minutes: float, work: Path,
     # **収益化を背負っている側だけが無検査**でした。
     # 誤報は 10件を目で確かめて 0件（詳しくは関数の docstring）。
     problems += _check_narrated_shown(work, script)
-    problems += _check_visual_wrap(script, portrait)
-    problems += _check_count_matches(script)
     problems += _check_title_from_calc(work, script, topic)
     problems += _check_form_tag(script, duration)
     problems += _check_not_repeat(work, script)
-    problems += _check_adjacent_repeat(script)
     problems += _check_adjacent_frames(work)
-    problems += _check_formula_shown(script)
-    problems += _check_assumption_value_shown(script)
     problems += _check_law_citation_verbatim(work, script)
-    problems += _check_yomi(script)
 
     if problems:
         raise VerificationError("投稿前の検査に落ちました: " + " / ".join(problems))
