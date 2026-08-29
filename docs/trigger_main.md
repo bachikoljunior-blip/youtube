@@ -2735,6 +2735,21 @@ id を `s-` に強制していた）。ところが `eta.py` の逆算はこう�
 `topic_forge` を同じ窓で撃つと、`batch_build` が読んでいる最中に書き換わります。
 **ショートの forge は、`batch_build` が終わってからにすること**（この回はそうしました）。
 
+###### **ただし「きょうだいの `batch_build`」は待たなくてよい**（2026-08-29 に測って足した）
+
+上の理由は「**同じファイル**が読まれている最中に書き換わる」です。
+**サブはそれぞれ別のワークツリーに居るので、読んでいる `config/topics.yaml` は別物**
+——実測（`/proc/<pid>/cwd`）: きょうだいの `batch_build` は
+`…/worktrees/agent-a4025ee36686e3e21`、こちらは `…/agent-a4267fec57c3f0cec`。
+**待つと、その batch のぶん（実測 13〜20分）まるごと素の待ちになります。**
+
+    ps -o args= -p <pid>            # きょうだいの batch か、自分のか
+    ls -l /proc/<pid>/cwd           # **どのワークツリーを読んでいるか**
+
+**待つのは「自分が撃った `batch_build`」だけ。** ぶつかるのは `git merge` のときだけで、
+`topics.yaml` は末尾に追記するので、ふつうに和集合になります。
+**この規則は、単一チェックアウトだった頃のものです。**
+
     python -m src.pipeline --topic <ID> --dry-run       # ショートは --short
     python scripts/inspect_build.py <ID>                # contact sheet
     python scripts/upload_only.py <ID> "" <時>          # 第3引数が予約時刻（JST）
