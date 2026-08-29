@@ -1860,7 +1860,12 @@ def quota_lines(plan: Plan) -> tuple[list[str], bool]:
              f"  この入れ替え **{need:,}単位**",
              f"  **日枠の 403 をこの窓で観測した回数: {len(hits)}回**（これが門）",
              f"  窓が変わるのは {st.resets_at.astimezone(JST):%m/%d %H:%M} JST"]
-    lines += _spend_lines(upload_cap.spend_in_window())
+    spend = upload_cap.spend_in_window()
+    lines += _spend_lines(spend)
+    # **「尽きた」と「先に別の所へ撃った」を分ける**（`spent_elsewhere_lines`）。
+    #     403 のあとに読む回は、この下の「枠は本当に尽きています」しか
+    #     見ません —— **金が無かった窓に見えます。無かったのは順番のほう**です。
+    lines += spent_elsewhere_lines(plan, spend)
     if ok:
         lines.append("  → **撃てます**（403 をまだ1回も観測していません）")
     else:
@@ -2058,6 +2063,111 @@ def _last_apply() -> dict | None:
             continue
         last = rec
     return last
+
+
+def _applies_in_window(now=None) -> dict:
+    """**この窓に、`--apply` の行が何本あるか。**（API 0単位）
+
+    返り: `{"applied": 撃った回, "blocked": 返った回, "why": [理由]}`。
+
+    `at` が素（時差なし）の古い行は UTC として読みます。**窓の内側に
+    入るのは今日の行だけ**なので、ここで9時間ずれても答えは変わりません
+    （素の行は 08/27 の4行しかなく、どちらに寄せても窓の外です）。
+    """
+    import json
+
+    from src import upload_cap
+
+    head = upload_cap.window_start(now)
+    tail = upload_cap.window_end(now)
+    out = {"applied": 0, "blocked": 0, "why": []}
+    if not PROGRESS.exists():
+        return out
+    for line in PROGRESS.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            rec = json.loads(line)
+            when = datetime.fromisoformat(str(rec.get("at")).replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        if when.tzinfo is None:
+            when = when.replace(tzinfo=timezone.utc)
+        if not (head <= when < tail):
+            continue
+        if rec.get("blocked"):
+            out["blocked"] += 1
+            out["why"].append(str(rec.get("blocked")))
+        else:
+            out["applied"] += 1
+    return out
+
+
+def spent_elsewhere_lines(plan: "Plan", spend: dict, now=None) -> list[str]:
+    """**「枠が尽きた」と「先に別の所へ撃った」を分ける。**（API 0単位）
+
+    ## なぜ要るか（2026-08-29 の最適化の回。**その場で測った**）
+
+    `quota_lines` は 403 を1回でも観測したら
+    「**撃たないこと。枠は本当に尽きています**」と印字します。**正しい。**
+    ただしそれが答えているのは「**いま撃てるか**」だけで、
+    「**この窓に、この入れ替えを買う金が在ったか**」には1文字も答えません。
+
+    窓 08/28 07:00Z〜 の実測（`data/day_quota.jsonl` と `data/queue_lag.jsonl`）:
+
+        通った `videos.update`   **62回 ＝ 3,100単位**（07:00Z〜11:02Z）
+        この窓の `--apply`       **0行**（撃った回も、返った回も無い）
+        その `--apply` の値段    **1,300単位**（26手／`opening_motion` **30日**）
+        最初の 403               **12:37Z**（以後 110回）
+
+    **3,100単位 が同じ通貨で通ったあとに、1,300単位 の 30日 が撃たれていません。**
+    そして 12:37Z 以後の回が読むのは「枠は本当に尽きています」だけです ——
+    **金が無かった窓に見えます。無かったのは順番のほうです。**
+
+    12:37Z 以後にこの窓で上がった **28本** は、`_post_actions` も
+    `_set_thumbnail` も全部 403 でした（サムネ未着 **86本**・うち長尺 **22本**）。
+    **先に安い書き込みへ流した窓は、後ろの全部を落とします。**
+
+    ## 何を言い、何を言わないか
+
+    **止めません。** 言うのは事実3つだけ —— この窓で同じ通貨がいくら通ったか、
+    この入れ替えの値段、この窓に `--apply` の行が何本あるか。
+    **「だから次はこうしろ」を機械が決めないこと** ——
+    どちらが先かは、その回の `--plan` が出す日数で変わります
+    （2026-08-27 の窓のように、入れ替えの利得が 0日 の回もあります）。
+
+    ## 覆る条件
+
+    - `data/queue_lag.jsonl` にこの窓の行が在るようになったら、この行の
+      後半（「1行も無い」）は自分で消えます。**残るのは値段の並びだけ**で、
+      それは毎回 見る価値があります
+    - `videos.insert` と同じ袋になったら（＝投稿が同じ 403 で落ちるように
+      なったら）、`videos.update` だけを数えるのをやめること
+      （`src/upload_cap.UNIT_COST` の註と同じ覆り方）
+    """
+    ops = (spend or {}).get("ops") or {}
+    upd = ops.get("videos.update") or {"n": 0, "units": 0}
+    need = len(plan.swaps) * 2 * 50
+    if not need:
+        return []
+    seen = _applies_in_window(now)
+    if upd["units"] < need:
+        return []
+    out = [f"  **この窓で `videos.update` は {upd['n']}回・{upd['units']:,}単位"
+           f" 通っています**（この入れ替えは {need:,}単位）"]
+    if seen["applied"] or seen["blocked"]:
+        out.append(f"    この窓の `--apply`: 撃った {seen['applied']}回 ／"
+                   f" 手前で返った {seen['blocked']}回"
+                   + (f"（{'・'.join(sorted(set(seen['why'])))}）"
+                      if seen["why"] else ""))
+    else:
+        out.append("    [!] **この窓の `--apply` は 0行です**"
+                   "（撃った回も、手前で返った回も無い）。"
+                   " ＝ **枠が無かったのではなく、同じ通貨が先に別の所へ"
+                   "流れました。** 次の窓では、`--plan` の日数と"
+                   "`videos.update` の行き先を並べてから決めること")
+    return out
 
 
 def _note_apply(before: dict, promised: dict, moves: int,
