@@ -74073,3 +74073,65 @@ bunkatsu 3 ・ mishikyu 3 になります。**
    過去の振り方より **10日 遅い**。次の1件は `per_video`
    （`sub_rate` は `--alloc` が名指ししているが、台帳の `next_if_false` が
    「そこに立てるな」と**条件なしで**言っている）。
+
+---
+
+### 追記7（同じ回・09:4x）—— **この回の締め。長尺の控えが 09/13 → 09/18 まで繋がった**
+
+    ✓ genjokaifuku-cross-6nen  mcI6dOHstHE  2026-09-18 20:00 JST
+      → 門は候補 29 → **2件**。**この族が無ければ 09/18 は 0族 ＝ 0本**でした
+
+長尺の控え（`duration_s >= 240`）:
+
+    09/11 3 ／ 09/12 2 ／ 09/13 1 ／ **09/14 2 ／ 09/15 1 ／ 09/16 3 ／ 09/17 1 ／ 09/18 1**
+    （太字がこの回の8本）  そのあと 10/02 まで空き
+
+**この回の入口では、控えの最後が 09/13 で、09/14〜10/01 の 18日 が0本**でした。
+いまは **09/19〜10/01 の 13日**です。**5日ぶん詰めました。**
+
+#### この回で動かした「族」の数
+
+    入口   4族（bunkatsu mishikyu shokyu teiji）        7日ぶんの上限 **8本**
+    出口   7族（＋ shogaku ＋ genjokaifuku ＋ ribo）    7日ぶんの上限 **14本**
+
+（`ribo` はきょうだいが forge しました。こちらが足したのは
+`shogaku` と `genjokaifuku` の2族です。）
+
+**上限が 8 → 14 になったことのほうが、8本 出したことより効きます** ——
+本は1回ぶん、上限は毎回ぶんだからです。
+
+#### 赤をもう1件 塞いだ（`tests/test_collisions.py`）
+
+きょうだいが 08/28 23:3x に「閉じた前提の窓を外した」ため、
+`src/measure_window.WINDOWS` から 08/27 の窓が消え、
+`test_plan_does_not_push_past_the_days_last_slot_on_a_window_day` が赤に。
+**`src/collisions.py` も検査も1行も変わっていません。**
+
+**同じ形の2回目です。** 1回目は 08-28 に「壁の時計を読んでいた」で、
+そのとき直したのは `today` の注入 —— **窓そのものが台帳から消える道**は
+残っていました（`collisions.window()` の註が1回目の実測を持っています）。
+**窓は検査が `monkeypatch` で立てる**ように直しました。見たいのは
+`plan()` の振る舞いで、**いまその窓が台帳に在るかどうか**ではありません。
+
+**この形は、まだ他にもあるはずです** —— 「動く台帳を読む検査」は
+`config/watches.yaml` `config/hypotheses.yaml` `src/measure_window.py` の
+どれを触った回でも、離れた検査を赤にします。
+**次に台帳を閉じる回は、閉じたあとに `-k "collisions or measure_window or watches"`
+を撃つこと**（実測 2分41秒・78件）。
+
+### この回に出したもの（まとめ）
+
+    ① fix     長尺の律速だった族の数 4 → 5（`src/calc/shogaku.py`）＋ 長尺テーマ5件
+    ② upload  長尺3本（09/14 ×2・09/15）
+    ③ fix     `_queue_tail_calcs` が着地点ではなく今日を見ていた（＋検査）
+    ④ upload  長尺3本（09/16。直した門のうえで族が入れ替わった）
+    ⑤ upload  長尺1本（09/17。通る族が `shogaku` だけだった日）
+    ⑥ upload  長尺1本（09/18。通る族が `genjokaifuku` だけだった日）
+              ＋ 族 6 → 7（`src/calc/genjokaifuku.py`）＋ 長尺テーマ4件
+
+    ほかに: `eta.py` の穴の直し先（節→族）と、禁じられた1位の次を印字
+            `day_cap.live_ids` の長尺を測って門にした（差は 0本）
+            `falsified_if` の日付を `deadline` に合わせた
+            `trigger_main` §5「forge は batch の後で」はきょうだいには当たらない
+            `tests/test_collisions.py` の窓の依存を切った
+            `FOR_OWNER.md` の過ぎた窓を `--expire`
