@@ -2098,6 +2098,19 @@ def apply_moves(plan: Plan) -> int:
                 return "bad"
             return "ok"
         except Exception as e:  # pragma: no cover - 実物の口
+            # **裸の 403 も日枠です**（2026-08-29 に踏んだ）。
+            # `is_quota_exit` は `SystemExit` しか見ないので、
+            # `--move` が**書く前の読み**（`videos.list`）で 403 を食うと、
+            # `HttpError` がここまで素通りして **`bad`（その1本だけの失敗）**に
+            # 化けていました。実測: 枠が尽きた窓で1手目が
+            # `videos.list … quotaExceeded` を返し、**次の組を撃ちにいって**
+            # そこで初めて止まっています（＝ 403 を1回ぶん 余計に買った）。
+            from src import auth                              # noqa: PLC0415
+            if auth.is_day_quota(e):
+                print(f"[queue_lag] {vid} で**日枠が尽きました**（読みの 403）: {e}."
+                      " **この窓では、あと何を撃っても通りません。止めます**",
+                      flush=True)
+                return "stop"
             print(f"[queue_lag] {vid} は落ちました: {e}."
                   " **この組だけ飛ばして、次の組へ進みます**", flush=True)
             return "bad"
@@ -2115,9 +2128,22 @@ def apply_moves(plan: Plan) -> int:
             return "bad"
         return "ok"
 
-    def _record() -> None:
+    def _record(stopped: str = "") -> None:
         """**当たった数を、呼ぶ側から読める所へ置く**（`_note_apply` が使う）。
-        予定の数を帳面へ書いていたのを 2026-08-28 に直した ―― あの docstring。"""
+        予定の数を帳面へ書いていたのを 2026-08-28 に直した ―― あの docstring。
+
+        **`stopped` は「なぜ途中で降りたか」**（2026-08-29 に足した）。
+        これが無いと、帳面には `moves: 0` と `after == before` だけが残り、
+        次の回の `promise_lines` は **(2) 手が当たらない** と読んで
+        **同じ約束を止めます** —— 実測（この日 08:41Z）は
+        **日枠が尽きただけ**で、手そのものは1つも試されていません。
+        **止める理由が「この手は当たらない」なら止めてよい。
+        「今日はもう撃てない」なら、明日そのまま撃てばよい。**
+        """
+        try:
+            plan.stopped = stopped                 # type: ignore[attr-defined]
+        except Exception:                          # noqa: BLE001
+            pass
         try:
             plan.applied = done                    # type: ignore[attr-defined]
             plan.skipped_public = list(skipped)    # type: ignore[attr-defined]
@@ -2130,7 +2156,7 @@ def apply_moves(plan: Plan) -> int:
         pair = moves[i:i + 2]
         first = _one(*pair[0])
         if first == "stop":               # 日枠が尽きた ＝ 残りも通らない
-            _record()
+            _record("quota")
             return 1
         if first == "bad":
             # **落ちた組だけを捨てて、次の組へ進みます**（2026-08-29 に直した）。
@@ -2162,7 +2188,7 @@ def apply_moves(plan: Plan) -> int:
                           flush=True)
             failed.append(pair[1][0])
             if second == "stop":          # 日枠が尽きた ＝ 残りも通らない
-                _record()
+                _record("quota")
                 return 1
             continue
         if second == "skip":
@@ -2376,7 +2402,10 @@ def spent_elsewhere_lines(plan: "Plan", spend: dict, now=None) -> list[str]:
 
 def _note_apply(before: dict, promised: dict, moves: int,
                 skipped: list[str] | None = None,
-                after: dict | None = None) -> None:
+                after: dict | None = None,
+                attempted: int | None = None,
+                failed: list[str] | None = None,
+                stopped: str = "") -> None:
     """**`moves` は「実際に当たった手の数」です。予定の数ではありません。**
 
     2026-08-28 に直しました。ここは長らく `len(plan.swaps) * 2`（＝**組んだ手の
@@ -2418,6 +2447,26 @@ def _note_apply(before: dict, promised: dict, moves: int,
         #   `after == promised`   → 当たった（あとで遠のいたなら、きょうだい）
         # の2つが分かれます。**読み直しは控えからで、API 0単位**です。
         rec["after"] = _stamp(after)
+    if attempted is not None:
+        # **組んだ手の数**。`moves`（＝当たった数）との差が、そのまま
+        # 「撃ったのに動かなかった手」です。2026-08-29 まで帳面には
+        # **当たった数しか**入っておらず、`stuck_lines` は
+        # `after != before`（＝1手でも当たった）を見て
+        # **「(3) きょうだいに戻された」と断定**していました。
+        # 実測はそうではなく、**24手 のうち 4本 が窓の上限で撃たれていない**
+        # ——「一部だけ当たった」という4つ目の姿です（`docs/JOURNAL.md`）。
+        # **この2つを分けるのに要るのは、この1つの数だけ**でした。
+        rec["attempted"] = int(attempted)
+    if stopped:
+        # **なぜ途中で降りたか。** `moves: 0` の理由が
+        #   「この手は当たらない」  → 止めてよい（(2)）
+        #   「今日はもう撃てない」  → **明日そのまま撃てばよい**（(5)）
+        # のどちらかを、帳面から言えるようにします。無いと (2) に化けます。
+        rec["stopped"] = str(stopped)
+    if failed:
+        # **落ちた本を名前で残すこと**（`skipped_public` と対）。
+        # 数だけだと、次の回は「どの群が落ちたか」を言えません。
+        rec["failed"] = list(failed)
     if skipped:
         # **飛ばした本を名前で残すこと。** 数だけだと、次の回が
         # 「幻がまだ在るのか、もう直ったのか」を帳面から言えません。
@@ -2575,6 +2624,25 @@ def promise_lines(plan: "Plan") -> tuple[list[str], bool]:
         (2) 手が当たっていない  `apply_moves` は最初の失敗で止まる ——
                               幻の予約が1本あるだけで 0/26 になる
         (3) 当たったが戻された  きょうだいが同じ帯を毎周 書き換えている
+        (4) **一部だけ当たった** 残りはこの窓の上限（`MOVE_CAP`）で撃たれていない
+
+    **(4) は、2026-08-29 に実物から足しました。** それまでこの並びは3つで、
+    `after != before` を見た所で **(3) と断定**していました ——
+    けれど `after != before` が言うのは「**1手でも**当たった」だけです。
+    実測は (4) のほうでした（24手 のうち 4本 が窓の上限。`docs/JOURNAL.md`）。
+    そして (3) と (4) では、次にやることが**逆**になります:
+
+        (3) なら  撃ち直しても同じだけ戻される → **順番のほうを直す**
+        (4) なら  落ちた手はまだ在る          → **そのまま撃ち直せば当たる**
+
+    **この並びが3つしか無いあいだ、道具は必ずどちらかを取り違えます。**
+    分けるのに要ったのは `attempted`（組んだ手の数）1つだけで、
+    帳面はそれを持っていませんでした（`_note_apply`）。
+
+    > **教訓は日数ではありません**（`docs/JOURNAL.md` 2026-08-29）——
+    > **この (1)(2)(3) は道具の作者が置いた候補で、実物の候補の全部では
+    > ありませんでした。** 場合分けが尽きている証拠は、どこにもありません。
+    > **次にここを読む側へ: (5) を疑うこと。**
 
     **止めてしまうと、この3つは永久に分かれません。** 分けるのに要るのは
     「撃った直後に読み直した実物」（`after`）で、**それが帳面に入るのは
@@ -2645,9 +2713,67 @@ def promise_lines(plan: "Plan") -> tuple[list[str], bool]:
                    " **単位を惜しんでここで止めると、この3つは永久に分かれません。**")
         return out, True
 
+    # **枠が尽きて降りた回は、手について何も言っていません**（(5)。2026-08-29 に
+    # 実測して足した）。`after == before` は「その手は当たらない」ではなく
+    # **「今日はもう撃てなかった」**です —— 実物（08:41Z）は `attempted: 18` /
+    # `moves: 0` / `failed: 1本` で、**17手 は一度も試されていません。**
+    # ここを通さないと、次の回が (2) と読んで**同じ約束を止めます**。
+    if str(last.get("stopped") or "") == "quota":
+        from src import upload_cap                             # noqa: PLC0415
+        back = upload_cap.window_end(datetime.now(timezone.utc)).astimezone(JST)
+        attempted = last.get("attempted")
+        out.append("  **止めません。** 前の回は**日枠が尽きて降りました**"
+                   f"（組んだ {attempted}手 のうち 当たり {last.get('moves')}手）——"
+                   " **手について何も分かっていません。**"
+                   " `after == before` なのは「その手が当たらない」からではなく、"
+                   "**撃つ前に枠が閉じたから**です。")
+        out.append(f"  [!] **日枠は太平洋時間の0時に戻ります（{back:%m/%d %H:%M} JST）。**"
+                   " それまでは `videos.update` が1回も通りません"
+                   "（`videos.insert` は別枠なので**投稿は続きます**）。"
+                   " **戻ったら、同じ `--plan` をそのまま撃つこと。**")
+        return out, True
+
     if after != last.get("before"):
-        out.append("  **止めません。** 帳面の `after` は `before` と違います ＝"
-                   " **手は当たっています**（(2) ではない）。"
+        # **`after != before` が言うのは「1手でも当たった」だけ**です。
+        # 「全部 当たった」ではありません —— ここを取り違えて、2026-08-29 まで
+        # **(3) きょうだいに戻された**と断定し、「撃ち直しても無駄」と
+        # 書いていました。実測はその日のうちに否定されています
+        # （24手 のうち **4本 が窓の上限で撃たれていなかった**。`docs/JOURNAL.md`）。
+        # 分けるのに要るのは `attempted`（組んだ手の数）1つだけです。
+        landed, attempted = last.get("moves"), last.get("attempted")
+        if isinstance(landed, int) and isinstance(attempted, int) and landed < attempted:
+            lost = [str(v) for v in (last.get("failed") or [])][:6]
+            out.append(f"  **止めません。** 帳面は **{attempted}手 を組んで"
+                       f"{landed}手 しか当たっていません**"
+                       f"（{attempted - landed}手 が落ちた）——"
+                       " **(3) ではありません。**"
+                       "「当たったのに戻された」のではなく、"
+                       "**撃たれていない手が混ざっている**側です"
+                       + (f"（落ちた本: {', '.join(lost)}）" if lost else ""))
+            out.append("  [!] **これは撃ち直しで直ります。** 落ちる手を"
+                       "組まなくなったのが 2026-08-29 の直し"
+                       "（`Plan.blocked` ＝ `src.upload_cap.move_blocked`）——"
+                       " **いまの `--plan` に、この窓で撃てない本は入っていません。**"
+                       " 落ちた群がまだ遅いなら、**そのまま撃つこと。**")
+            return out, True
+        if attempted is None:
+            # **ここで (3) と断定しないこと。** 古い帳面（2026-08-29 より前）は
+            # 「組んだ手の数」を持たないので、**(3) と (4) を分ける材料が
+            # ありません。** 断定していたのが、この日 実測で否定された形です。
+            out.append("  **止めません。** 帳面の `after` は `before` と違います ＝"
+                       " **1手でも当たった**（(2) ではない）。"
+                       " **ただし (3) か (4) かは、この行からは言えません** ——"
+                       "この帳面に `attempted`（組んだ手の数）が無いからです"
+                       "（2026-08-29 より前の行）。")
+            out.append("  [!] **`after != before` は「全部 当たった」ではありません。**"
+                       " 実測 2026-08-29: **24手 のうち 4本 が窓の上限で撃たれておらず**、"
+                       "道具はそれを (3) と読んでいました。"
+                       " **次の `--apply` から `attempted` が入り、分かれます。**"
+                       " それまでは、どちらとも決めずに撃つこと。")
+            return out, True
+        out.append("  **止めません。** 帳面の `after` は `before` と違い、"
+                   f"**組んだ {attempted}手 は全部 当たっています**"
+                   f"（当たり {landed}手）。"
                    "**当たったあとで遠のいた** ＝ (3) きょうだいが同じ帯を"
                    "書き換えている側です。")
         out.append("  [!] **これは単位では直りません。** 撃ち直せばまた同じだけ"
@@ -2755,7 +2881,10 @@ def main(argv: list[str] | None = None) -> int:
             _note_apply(plan.before, plan.readies(),
                         getattr(plan, "applied", 0),
                         getattr(plan, "skipped_public", None),
-                        after)
+                        after,
+                        attempted=len(plan.swaps) * 2,
+                        failed=getattr(plan, "failed", None),
+                        stopped=getattr(plan, "stopped", ""))
         except Exception:                                      # noqa: BLE001
             pass
         return rc

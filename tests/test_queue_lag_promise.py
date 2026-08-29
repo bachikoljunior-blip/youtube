@@ -45,13 +45,25 @@ def ledger(tmp_path, monkeypatch):
 
 
 def _row(before: dict, promised: dict, moves: int = 20,
-         after: dict | None = None) -> str:
+         after: dict | None = None, attempted: int | None = None,
+         failed: list[str] | None = None, stopped: str = "") -> str:
+    """`moves` は**当たった手の数**、`attempted` は**組んだ手の数**（2026-08-29）。
+
+    2つが要るのは、`after != before` が言うのは「**1手でも**当たった」だけで、
+    「全部 当たった」ではないからです。**その差が (3) と (4) を分けます。**
+    """
     rec = {"at": "2026-08-27T07:43:36+00:00",
            "before": queue_lag._stamp(before),
            "promised": queue_lag._stamp(promised),
            "moves": moves}
     if after is not None:
         rec["after"] = queue_lag._stamp(after)
+    if attempted is not None:
+        rec["attempted"] = attempted
+    if failed is not None:
+        rec["failed"] = failed
+    if stopped:
+        rec["stopped"] = stopped
     return json.dumps(rec, ensure_ascii=False)
 
 
@@ -119,16 +131,109 @@ def test_after_equals_before_and_same_promise_is_refused(ledger) -> None:
 
 
 def test_after_equals_promised_is_not_blocked(ledger) -> None:
-    """`after != before` ＝ **当たってはいる**。遠のいたのはきょうだい ——
+    """`after != before` かつ **組んだ手が全部 当たった** ＝ (3) きょうだい。
 
     単位では直らないので止めても意味がありません。**通して、そう言う。**
+    """
+    ledger.write_text(
+        _row(_BEFORE, _PROMISED, moves=20, after=_PROMISED, attempted=20) + "\n",
+        encoding="utf-8")
+    lines, ok = queue_lag.promise_lines(_Plan(_NOW, _AGAIN))
+    assert ok is True
+    assert any("全部 当たっています" in x for x in lines)
+    assert any("単位では直りません" in x for x in lines)
+
+
+def test_一部だけ当たった回を_きょうだいのせいにしないこと(ledger) -> None:
+    """**`after != before` は「全部 当たった」ではありません**（2026-08-29）。
+
+    実測: 24手 を撃って **4本 が窓の上限（`MOVE_CAP`）で撃たれず**、
+    `opening_motion` の 29日 が丸ごと 0日 になりました。**帳面の `after` は
+    `before` と違う**（残りは当たっている）ので、道具はこれを
+    「(3) きょうだいに戻された」と読み、**「撃ち直しても無駄」と書いていました。**
+
+    **(3) と (4) では次にやることが逆です** —— (3) は順番を直す、
+    (4) は**そのまま撃ち直せば当たる**。取り違えると、直った `--plan` を
+    次の回が捨てます。
+    """
+    ledger.write_text(
+        _row(_BEFORE, _PROMISED, moves=20, after=_PROMISED,
+             attempted=24, failed=["vidX", "vidY"]) + "\n",
+        encoding="utf-8")
+    lines, ok = queue_lag.promise_lines(_Plan(_NOW, _AGAIN))
+    assert ok is True
+    blob = "\n".join(lines)
+    assert "(3) ではありません" in blob, (
+        "**一部だけ当たった回を (3) と読んでいます。**"
+        "`moves`（当たり）< `attempted`（組んだ）なら、"
+        "戻されたのではなく撃たれていない手が混ざっています")
+    assert "撃ち直しで直ります" in blob
+    assert "vidX" in blob, "落ちた本を名前で出さないと、どの群か分かりません"
+    assert "単位では直りません" not in blob, (
+        "**撃ち直しても無駄、と書いています。** (4) は撃ち直すと当たります")
+
+
+def test_枠が尽きて降りた回を_手が当たらないと読まないこと(ledger) -> None:
+    """**(5) 日枠が尽きた**（2026-08-29 08:41Z に実物で踏んだ）。
+
+    帳面はこう残りました —— `attempted: 18` / `moves: 0` / `after == before`。
+    **17手 は一度も試されていません。** 枠は太平洋時間の0時に戻り、
+    **戻ればそのまま当たります。**
+
+    止める理由が「この手は当たらない」なら止めてよい。
+    **「今日はもう撃てない」なら、明日そのまま撃てばよい。**
+
+    **効くのは「途中まで当たってから尽きた」回**です —— そこは
+    `after != before` なので、**(4) MOVE_CAP のせいだ**と読まれます。
+    理由が違えば次の手も違うので、ここで先に分けます。
+    （`moves: 0` の回は `promise_lines` が手前で降りるので、そもそも止めません。
+    下の `test_枠切れで1手も当たらなかった回は止めないこと` がその側です。）
+    """
+    ledger.write_text(
+        _row(_BEFORE, _PROMISED, moves=4, after=_PROMISED, attempted=18,
+             failed=["vidQ"], stopped="quota") + "\n", encoding="utf-8")
+    lines, ok = queue_lag.promise_lines(_Plan(_NOW, _AGAIN))
+    assert ok is True, (
+        "**枠切れで止めています。** 手について何も分かっていない回で"
+        "止めると、枠が戻っても次の回が撃ちません")
+    blob = "\n".join(lines)
+    assert "日枠が尽きて降りました" in blob
+    assert "手について何も分かっていません" in blob
+    assert "MOVE_CAP" not in blob and "move_blocked" not in blob, (
+        "**(4) の理由（窓の上限）を印字しています。** 尽きたのは日枠のほうで、"
+        "次にやることが違います（(4) は今すぐ撃ち直せる／(5) は枠が戻るまで待つ）")
+
+
+def test_枠切れで1手も当たらなかった回は止めないこと(ledger) -> None:
+    """`moves: 0` ＝ **約束そのものが立っていない**。門は手前で降ります。
+
+    実測（2026-08-29 08:41Z）がこの形でした。ここが止めると、
+    **枠が戻った翌日に、直った `--plan` を誰も撃ちません。**
+    """
+    ledger.write_text(
+        _row(_BEFORE, _PROMISED, moves=0, after=_BEFORE, attempted=18,
+             failed=["vidQ"], stopped="quota") + "\n", encoding="utf-8")
+    _lines, ok = queue_lag.promise_lines(_Plan(_NOW, _AGAIN))
+    assert ok is True
+    _slines, moving = queue_lag.stuck_lines(_Plan(_NOW, _AGAIN))
+    assert moving is True, (
+        "**`stuck_lines` が枠切れの回で止めています。**"
+        "枠は太平洋時間の0時に戻ります —— 手は消えていません")
+
+
+def test_attempted_の無い古い帳面では_どちらとも決めないこと(ledger) -> None:
+    """**材料が無いのに断定しないこと**（2026-08-29 より前の行）。
+
+    ここが断定していたせいで、実測で否定済みの (3) が印字され続けました。
     """
     ledger.write_text(_row(_BEFORE, _PROMISED, after=_PROMISED) + "\n",
                       encoding="utf-8")
     lines, ok = queue_lag.promise_lines(_Plan(_NOW, _AGAIN))
     assert ok is True
-    assert any("手は当たっています" in x for x in lines)
-    assert any("単位では直りません" in x for x in lines)
+    blob = "\n".join(lines)
+    assert "(3) か (4) かは、この行からは言えません" in blob
+    assert "単位では直りません" not in blob, (
+        "材料が無いのに (3) の結論（撃ち直しても無駄）を印字しています")
 
 
 def test_a_different_promise_is_not_blocked(ledger) -> None:
@@ -158,6 +263,41 @@ def test_note_apply_records_the_reread(tmp_path, monkeypatch) -> None:
     assert rec["after"] == {"a": "2026-10-06"}
     # `after == before` ＝ **手が当たっていない**の側
     assert rec["after"] == rec["before"] != rec["promised"]
+
+
+def test_note_apply_records_attempted_and_stopped(tmp_path, monkeypatch) -> None:
+    """**「組んだ手の数」と「なぜ降りたか」が帳面に入ること**（2026-08-29）。
+
+    読む側（`promise_lines`）は別の検査で押さえてありますが、
+    **書く側が落ちたら、読む側は静かに「材料が無い」へ落ちます** ——
+    そのとき出るのは「どちらとも決めません」で、**赤くはなりません。**
+    だから書く側をここで押さえます。
+
+    実測（08:41Z）がこの形でした: 18手 を組んで 0手 が当たり、
+    落ちたのは日枠。**`moves` だけでは、この3つのどれとも区別できません。**
+    """
+    path = tmp_path / "queue_lag.jsonl"
+    monkeypatch.setattr(queue_lag, "PROGRESS", path)
+    from src import dupes
+    monkeypatch.setattr(dupes, "may_write_path", lambda _p: True)
+    queue_lag._note_apply({"a": date(2026, 10, 6)}, {"a": date(2026, 9, 7)}, 0,
+                          None, {"a": date(2026, 10, 6)},
+                          attempted=18, failed=["vidQ"], stopped="quota")
+    rec = json.loads(path.read_text(encoding="utf-8").splitlines()[-1])
+    assert rec["attempted"] == 18, (
+        "**組んだ手の数が帳面に入っていません。** これが無いと"
+        "「一部だけ当たった」を「きょうだいに戻された」と読みます")
+    assert rec["stopped"] == "quota", (
+        "**降りた理由が帳面に入っていません。** これが無いと"
+        "「今日はもう撃てない」を「この手は当たらない」と読みます")
+    assert rec["failed"] == ["vidQ"]
+
+    # **普通に終わった回に、余計な欄を足さないこと**（`stopped` は理由がある回だけ）
+    queue_lag._note_apply({"a": date(2026, 10, 6)}, {"a": date(2026, 9, 7)}, 4,
+                          None, {"a": date(2026, 9, 7)}, attempted=4)
+    rec2 = json.loads(path.read_text(encoding="utf-8").splitlines()[-1])
+    assert "stopped" not in rec2 and "failed" not in rec2
+    assert rec2["attempted"] == 4
 
 
 # ---- 撃つ手前で返った回（`blocked`）----------------------------------------
