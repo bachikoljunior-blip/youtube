@@ -58,6 +58,69 @@ CORE = ("eta", "levers", "arm_speed", "drift")
 DEFAULT_BASE = "origin/claude/youtube-auto-post-revenue-ggedij"
 
 
+def _pytest(extra: list[str]) -> tuple[int, list[str]]:
+    """`pytest` を流しながら、落ちた名前だけ拾って返す。（2026-08-30 に足した）
+
+    ## なぜ要るか（**この道具の判定が、読まれる所に無かった**）
+
+    実測 2026-08-30 06:1x —— この道具が出した最後の12行:
+
+        ...............F........................................................ [ 55%]
+        ........................................................................ [ 69%]
+        ...................................................
+        [fast_tests] **これは全体の検査ではありません。** …
+        [fast_tests] 全体は `python scripts/fast_tests.py --all`（16分）。…
+
+    **`F` が1つ出ているのに、名前がどこにもありません。**
+    `pytest -q` は落ちた名前を進捗の**後ろ**に出しますが、この道具は
+    そのあとに自分の2行を足すので、**端末で `| tail -N` すると
+    名前だけが押し出されます**（この repo の走らせ方は必ず尾を読みます）。
+    結果、**赤い走りと緑の走りが、いちばん下だけ見ると同じ顔**になります。
+
+    この道具の docstring は自分でこう言っています ——
+    「**16分の検査は、実質 走っていない検査です**」。
+    **判定が尾に無い検査も、実質 走っていない検査**です。同じ形の1段 上です。
+
+    実測: この `F` の名前を突き止めるのに、**別の走りを7本**（約35分）使いました。
+
+    ## 何をするか
+
+    `-rf` を付けて `FAILED` / `ERROR` の行を拾い、**いちばん下**で言い直します。
+    流しながら出すので、進捗はこれまでどおり見えます。
+
+    **覆る条件**: `pytest` の短い要約の書式（`FAILED tests/x.py::y`）が変わったら
+    ここは何も拾えません。そのときは `code != 0` の側だけが残ります
+    （**それでも「赤」とは言えます**。名前が出ないだけ）。
+    検査 `tests/test_fast_tests_verdict.py`。
+    """
+    proc = subprocess.Popen([sys.executable, "-m", "pytest", *extra],
+                            cwd=ROOT, stdout=subprocess.PIPE,
+                            stderr=subprocess.STDOUT, text=True, bufsize=1)
+    failed: list[str] = []
+    assert proc.stdout is not None
+    for line in proc.stdout:
+        sys.stdout.write(line)
+        sys.stdout.flush()
+        if line.startswith(("FAILED ", "ERROR ")):
+            failed.append(line.rstrip())
+    return proc.wait(), failed
+
+
+def _verdict(code: int, failed: list[str]) -> None:
+    """**いちばん下に、この道具の言葉で判定を置く。**（`_pytest` の docstring に理由）"""
+    if code == 0:
+        print("[fast_tests] **緑**（この `-k` の範囲で）。")
+        return
+    print(f"[fast_tests] **赤 {len(failed)}件**（pytest exit={code}）"
+          if failed else
+          f"[fast_tests] **赤**（pytest exit={code}・名前が拾えませんでした）")
+    for line in failed:
+        print(f"    {line}")
+    print("[fast_tests] **緑にしてから押すこと。**"
+          " 直せないなら、**何が赤いかを `docs/JOURNAL.md` に名前で書くこと** ——"
+          "名前の無い赤は、次に来た側から見て「無い」のと同じです。")
+
+
 def _run(args: list[str]) -> str:
     try:
         return subprocess.run(args, cwd=ROOT, capture_output=True,
@@ -237,7 +300,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.all:
         print("[fast_tests] **全体を撃ちます（16分）。**")
-        return subprocess.call([sys.executable, "-m", "pytest", "-q"], cwd=ROOT)
+        code, failed = _pytest(["-q", "-rf"])
+        _verdict(code, failed)
+        return code
 
     files = changed_files(args.base)
     words = keywords(files)
@@ -261,8 +326,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.list:
         return 0
 
-    code = subprocess.call(
-        [sys.executable, "-m", "pytest", "-q", "-k", " or ".join(picked)], cwd=ROOT)
+    code, failed = _pytest(["-q", "-rf", "-k", " or ".join(picked)])
 
     print()
     print("[fast_tests] **これは全体の検査ではありません。**"
@@ -270,6 +334,7 @@ def main(argv: list[str] | None = None) -> int:
     print("[fast_tests] 全体は `python scripts/fast_tests.py --all`（16分）。"
           "**押す前に1度は撃つこと** —— "
           "16分 かかるから誰も撃たない、が赤を何日も残した原因です。")
+    _verdict(code, failed)
     return code
 
 
