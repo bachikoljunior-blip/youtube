@@ -1926,11 +1926,50 @@ class Verdict:
         `slips`（期限が早すぎる）だけを見ていて、逆向きは
         「**期限に間に合います**」という緑の行になっていたからです。
 
-        **軌跡の腕は、前提を1件閉じたときだけ動きます**（`src/arm_speed.py`）。
-        だから「データは揃っているが期限がまだ先」の日数は、
-        **到達日がまるごと止まっている日数**そのものです。
         実測（2026-08-25・開いている16件）: **10件・合計 46日・平均 4.6日**、
         いちばん大きいもので **14日**。
+
+        ## **【2026-08-30 に、この欄の意味を測り直しました】**
+
+        ここには長らく「**この日数は到達日がまるごと止まっている日数そのもの**」と
+        書いてありました。**それは、書いた日（2026-08-25 22:5x）には本当で、
+        その翌日に本当でなくなりました。**
+
+        2026-08-26 20:4x に `ready` が `src/arm_speed.py` へ配線され、
+        いまは **`deadline` より `ready` が優先**されます
+        （`arm_speed.next_close()` の `r = ready.get(...); if r: when, src = r, "ready"`、
+        `forward()` / `forward_by_arm()` は `ready` だけを読む）。
+        `scripts/drift.py` の `split_overdue()` / `_closable` も同じく `ready` 側です。
+
+        **実測 2026-08-30**: `opening_motion` の `deadline` を 10-07 → 09-22 へ
+        15日 縮めて、`python scripts/eta.py --alloc` を撃ち直した ——
+
+            腕べつの回転   per_video 0.233/日   （**変化なし**）
+            台帳の配分     2027-01-21           （**変化なし**）
+            過去との差     +11日                （**変化なし**）
+
+        **`deadline` を動かしても、印字される到達日は1日も動きません。**
+
+        ## では、この日数は何の日数か
+
+        **`deadline` だけを読んでいる所が、1つ残っています** ——
+        `drift.overdue()`（`dl = h["deadline"]; if dl <= today`）。
+        これは `scripts/stop_check.sh` (1.7) の「期限の来た問いの置き去り」門の入力で、
+        **「この回は verdict を出せ」と回に言う唯一の仕掛け**です。
+
+        つまり `waits` は:
+
+            **データはもう揃っているのに、どの門もまだ「閉じろ」と言わない日数**
+
+        軌跡の腕は前提を1件閉じたときだけ動くので、これは
+        **閉じるのが遅れる日数の上限**です。**「到達日が止まっている」とは違います**
+        —— 閉じた時点で日付は動くので、失うのは日付ではなく**その日数ぶんの前倒し**。
+        それでも縮める価値はありますが、**15日 縮めても `eta.py` の印字は動きません。**
+        動いたかどうかを `eta.py` で確かめようとして「効かなかった」と結論しないこと。
+
+        **覆る条件**: `drift.overdue()` が `ready` を読むようになったら、
+        `deadline` はどの門の入力でもなくなります。そのときこの欄は
+        **ただの記録**になるので、門（`--gate`）ごと畳んでよい。
         """
         if self.ready is None or self.deadline is None:
             return 0
@@ -2488,6 +2527,94 @@ def _print_starved_floors() -> None:
           "既定の `--per-calc 2` が2本で切ります。`docs/trigger_main.md` §4 の 5）。")
 
 
+def gate(vs: list["Verdict"]) -> int:
+    """**期限が実データとずれていたら 2 で落ちる。**（2026-08-30・最適化の回）
+
+    ## なぜ「印字」でも「検査」でもなく、門なのか
+
+    この症状は、この repo で**3つの置き方を順に試して、3つとも素通りしました。**
+
+        (1) この道具の印字             `deadline_check.py` の末尾に出る
+        (2) `status.py` の印字         `test_status_も_遅すぎる側を出すこと` が守っている
+        (3) `tests/test_deadline_check.py::test_遅すぎる期限が残っていないこと`
+
+    **(3) は 2026-08-30 の実測で、赤いまま 358回 の ship を通過していました。**
+    理由は `scripts/fast_tests.py` の作りです —— あれは **その回の `git diff` の
+    basename から `-k` を組む**ので、`deadline_check` を触らない回はこの検査を
+    1件も走らせません。そして全体の `pytest` は 16分 かかるので、どの回も撃ちません。
+
+    **ここが、この repo でいちばん見落としやすい形です**:
+    diff から検査を選ぶ仕掛けは、**コードが変わって赤くなる検査**しか拾えません。
+    この検査が赤くなるのは**世界のほうが動いたとき**（予約が公開され、データが
+    揃い、`ready` が手前へ来る）で、**diff は空です。** 構造上、永久に選ばれません。
+
+    ## 止める価値（実測 2026-08-30）
+
+        opening_motion（冒頭0.9秒の動き）  判定できるのは 09-22 ／ 期限 10-07 → **15日**
+
+    **その 15日 が何の日数かは、同じ回に測り直しました**（`Verdict.waits` の註）。
+    `deadline` を 10-07 → 09-22 へ縮めて `eta.py --alloc` を撃ち直すと、
+    **腕べつの回転も台帳の配分も1つも動きません** —— `arm_speed` も
+    `drift.split_overdue()` も、いまは `ready` のほうを読むからです。
+
+    **`deadline` だけを読んでいる所は1つ残っています**: `drift.overdue()`。
+    それが `stop_check.sh` (1.7) の「期限の来た問いの置き去り」門の入力で、
+    **「この回は verdict を出せ」と回に言う唯一の仕掛け**です。
+    だから 15日 は「到達日が止まった日数」ではなく、
+    **データが揃っているのに、どの門も閉じろと言わない日数**
+    ＝ **閉じるのが遅れる日数**。軌跡の腕は閉じたときだけ動くので、遅れはそのまま前倒しの損です。
+
+    同じ 6日間の実測: ship **358件**・verdict **6件**・到達予測 2026-12-21 → 2027-01-10
+    （**+20日 遠のいた**）。**閉じる回が 1.7% しかない輪で、閉じる合図を 15日 遅らせていました。**
+
+    ## 直し方は1手（だから門にしてよい）
+
+        python scripts/deadline_check.py --fit     # 両方の向きを寄せる
+        python scripts/deadline_check.py --shrink  # 遅すぎる側だけ
+        python scripts/deadline_check.py --extend  # 早すぎる側だけ
+
+    **`falsified_if` は触りません。** 動くのは `deadline:` の1行だけです。
+    「もっと n が要る」なら、動かすのは `needs.count` のほう。
+
+    ## 覆る条件
+
+    - **`--fit` を撃った直後にまた赤い**なら、効いていないのは門ではなく
+      `Verdict.slack`（帯）の幅です。**帯を広げること。門を消さないこと。**
+    - 「期限を意図して先に置きたい」回が出てきたら、そのときは `needs` に書くこと。
+      期限は日付の欄で、設計の欄ではありません。
+    - `fast_tests.py` が **diff に依らず走る芯**（`CORE`）に `deadline_check` を
+      入れ、かつ**その芯が毎周 実際に撃たれる**ようになったら、この門は重複です。
+      2026-08-30 時点では `fast_tests.py` は手順のどこからも呼ばれていません
+      （`docs/trigger_main.md` にも `stop_check.sh` にも名前がありません）。
+    """
+    late = sorted((v for v in vs if v.waits), key=lambda v: -v.waits)
+    early = [v for v in vs if v.slips]
+    if not late and not early:
+        return 0
+    out: list[str] = []
+    if late:
+        total = sum(v.waits for v in late)
+        out.append(f"**データは揃うのに期限が先の前提 {len(late)}件・合計 {total}日。**"
+                   " 軌跡の腕は前提を1件閉じたときだけ動き、"
+                   "**「閉じろ」と回に言う門（`drift.overdue()`）は `deadline` だけを読みます** ——"
+                   "**この合計は、閉じるのが遅れる日数**です"
+                   "（`eta.py` の印字は `ready` 側なので動きません。`Verdict.waits` の実測）:")
+        for v in late:
+            out.append(f"  {v.deadline} → 判定できるのは **{v.ready}**"
+                       f"（{v.waits}日）  {v.claim[:52]}")
+        out.append("  → `python scripts/deadline_check.py --shrink`")
+    if early:
+        out.append(f"**判定できる日より前に置かれた期限 {len(early)}件。**"
+                   " その日に言えることは無いので、"
+                   "**対照群が空のまま「外れ」が確定します**（腕を1本 測らずに捨てる形）:")
+        for v in early:
+            out.append(f"  {v.deadline} → 判定できるのは **{v.ready}**  {v.claim[:52]}")
+        out.append("  → `python scripts/deadline_check.py --extend`")
+    out.append("  **`falsified_if` は緩めないこと。動かすのは `deadline:` の1行だけです。**")
+    print("\n".join(out))
+    return 2
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--as-of", help="この日に判定するつもりで解く（YYYY-MM-DD）")
@@ -2504,6 +2631,9 @@ def main(argv: list[str] | None = None) -> int:
                          "**普通の回はこれでよい**")
     ap.add_argument("--dry-run", action="store_true",
                     help="`--shrink` / `--extend` / `--fit` が何を書くかだけ出す（書きません）")
+    ap.add_argument("--gate", action="store_true",
+                    help="**期限が実データとずれていたら 2 で落ちる**"
+                         "（`scripts/stop_check.sh` が読む。**API 0単位**）")
     a = ap.parse_args(argv)
     as_of = date.fromisoformat(a.as_of) if a.as_of else today_jst()
     lag = analytics_lag_days(as_of)
@@ -2548,6 +2678,8 @@ def main(argv: list[str] | None = None) -> int:
             print("  **`falsified_if` は1文字も触っていません。**"
                   "もっと n が要るなら、動かすのは `needs.count` のほうです")
         return 0
+    if a.gate:
+        return gate(check(load(), as_of=as_of, lag=lag))
     vs = check(load(), as_of=as_of, lag=lag)
     # **印字する道の1か所だけで積みます**（`record_estimates()` の註）。
     # 純粋な関数の中で書くと、控えは「この機械が何回 撃たれたか」を数えます。
