@@ -78921,3 +78921,61 @@ jobs 8 が1回だけ）。**まだ既定は動かさない**（下の 6）——
 **同じ周の別のサブが `data/*.jsonl` を書いています**（`runs.jsonl` はこの回だけで2行 増えた）。
 **この repo の検査は実データを読むので、長いスイートは走っている最中のデータを掴みます。**
 **恒久の赤ではありません。** 疑うときは、まず単体で撃ち直すこと。
+
+### この回の結末（`upload` は **10 / 11本** 予約まで通りました）
+
+    09/15 09:00  shogaku-10nen-20nen-827065en           fRX6DNH5CsE
+    09/16 09:00  shienkyufu-noufu360-35304              EXwYyJgoeec
+    09/16 10:00  genjokaifuku-24000en-72month-chokusen  GmjZ-9ALLoI
+    09/17 13:00  shogaku-riritsu-1166625                xzLBjZGhcXo
+    09/18 10:00  shahoken-2kyu-haba-7999                7iw5tSFK4H4
+    09/18 13:00  serufu-88000-hikizan                   h8AzogGHyqU
+    09/21 11:00  ideco-deguchi-nensu-nobasu-yondan      CSvf4UTZKFE
+    09/22 11:00  tokurou-danjo-48kagetsu-4800000        AxcqoUJHHMk
+    09/28 12:00  kafunenkin-119tsuki-120tsuki-gake      p8kitfEsNEE
+    09/29 12:00  sankyu-getsumatsu-1nichi-14nichi       Z0kIGfHVlEo
+    （時刻は UTC。JST では 18:00〜22:00 の長尺の輪）
+
+**落ちた1本**は `nenkin-minimax-69sai7kagetsu` で、**2回とも同じ理由**
+（図の棒が公開済みの `nenkin-saidai-torikoboshi-69-7` と 4本 共通）。
+**`dupes.blocking` の「金額の入れ子」を種で見る門（`_drop_doomed`）は、
+これを拾えません** —— 種（`title_seed`）に主役の数字が出ていないと当たらないからです。
+**同じ形の持ち越しが 16:5x の申し送り (3) にあります**（`build_prompt()` が
+「この calc で既に題に出した金額」は貼るが、入れ子は貼らない）。**まだ潰れていません。**
+
+**④の直しが、この回のうちに効きました。** `tokurou-danjo-48kagetsu-4800000` は
+`calc_sections` の直し**なしでは `script_writer` で必ず落ちていた本**です。
+実際には別の門（過去の図と重なる）に1回 当たり、**作り直しで通って予約まで行きました**。
+**直していなければ、作り直しても2回とも `calc_sections` で落ちています。**
+
+### **16:00 JST 以降の回へ（日枠が戻ってから）**
+
+**この10本には、サムネイルが1枚も載っていません**（`thumbnails.set` が 403）。
+bytes は控えに残っているので、**`python scripts/refresh_thumbnail.py --missing` 1回**で押せます。
+
+**これは見た目の話ではありません。** `eta.py` のこの回の印字:
+
+    長尺の実測 CTR **1.58%**（84/5,310・95%区間 [1.28%, 1.95%]）
+    要る CTR **8.1%** ← 区間の外（上端の 4.1倍）
+
+**サムネと題だけでは要る CTR には届きません**（同じ行がそう言っています）。
+それでも**サムネイルが無い本の CTR は、その 1.58% よりさらに下**です。
+**押す価値があるのは、届くからではなく、押さないと下振れするから**です。
+
+同じ回の持ち越し（`retro.py` が **4回** 数えている・全部 日枠待ち）:
+
+    python scripts/queue_lag.py --apply          帯の外の本を帯へ戻す
+    python scripts/refresh_thumbnail.py --missing サムネイル未載（この10本を含む）
+    python scripts/live_slots.py --plan --all     0再生の枠に居る本を逃がす（+62本・10.7再生/単位）
+
+### この回の全体スイート
+
+    4,613件 → **4 failed / 4,609 passed**（40分50秒）
+    4件とも **走らせ始めた時点の木**のもので、**いまの木では4件とも緑**
+    （きょうだいの merge が走行中に入ったため。`test_eta_density_confounded` /
+      `test_eta_reflect_light` / `test_long_plan_land` / `test_reach_dry_fill`）
+
+**背景に投げた `pytest` は「落ちたか」より先に「走ったか」を見ること**
+（08/29 16:5x の申し送り 4）——この回は 4,613件 走っており、`-x` を外したので
+最後まで読めています。**ただし 40分 かかるので、走り始めの木で判定しないこと。**
+**落ちた4件は、必ず現在の木で撃ち直すこと**（この回は撃ち直して4件とも緑でした）。
