@@ -501,8 +501,17 @@ def build_prompt(picked: list[tuple[str, str]], all_sections, topics,
                  f"この節の表（**ここに無い数字は使わない**）:\n```\n{body[:2400]}\n```\n")
         taken = used.get(mod, [])
         if taken:
-            shown = "・".join(f"{int(v):,}円" for v in taken[:12])
-            block += (f"**この calc で既に題に出した金額**: {shown}\n"
+            # **黙って切らないこと**（2026-08-29 に足した。`docs/trigger_main.md`
+            # 「no silent caps」）。ここは長らく `taken[:12]` で、**切ったことを
+            # 何も言いませんでした。** 実測 2026-08-29: `iryohi` が**ちょうど 12件**
+            # ——次に1件 足した回から、**書き手が避けられない数が黙って生まれます**
+            # （落ちた本は `topics.yaml` に1行も書かれないので、在庫が減る）。
+            # 節の表は 2,400字 貼っているので、金額を数十件 並べても費用は小さい。
+            cap = 40
+            shown = "・".join(f"{int(v):,}円" for v in taken[:cap])
+            more = (f"（ほか {len(taken) - cap}件。**多すぎるので切りました** ——"
+                    f" 切った側の数も門は止めます）" if len(taken) > cap else "")
+            block += (f"**この calc で既に題に出した金額**: {shown}{more}\n"
                       f"→ **この数を title_seed の主役に選ばないこと。**"
                       f"投稿の門が必ず止めます（表の別の数字を使う）\n")
         combos = pairs.get(mod, [])

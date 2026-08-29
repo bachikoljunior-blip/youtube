@@ -181,6 +181,26 @@ def test_丸い数が1つだけなら組にしない(monkeypatch):
     assert dupes.used_round_amounts({"s-a": "fukugyo"}) == {}
 
 
+def test_既出の金額を黙って切らない(monkeypatch):
+    """**切ったなら、切ったと言うこと**（`docs/trigger_main.md`「no silent caps」）。
+
+    ここは長らく `taken[:12]` で、切ったことを何も言わなかった。
+    実測 2026-08-29: `iryohi` が**ちょうど 12件**——次に1件 足した回から、
+    **書き手が避けられない数が黙って生まれる**（落ちた本は `topics.yaml` に
+    1行も書かれないので、在庫が減る）。
+    """
+    rows = [{"id": f"v{i}", "title": f"税額は{100001 + i * 7}円になる",
+             "topic": f"s-x-{i}", "calc": "keihi", "at": None, "scheduled": False}
+            for i in range(50)]
+    monkeypatch.setattr(dupes, "ledger_rows", lambda topics=None: rows)
+    prompt = forge.build_prompt(
+        [("keihi", "=== 表 ===")], {"keihi": {"=== 表 ===": "…"}},
+        [{"id": r["topic"], "title_seed": "既出", "calc": "keihi"} for r in rows])
+    assert "多すぎるので切りました" in prompt, prompt[-600:]
+    # 12件で切っていた頃の数（13件目）が、いまは載っていること
+    assert "100,085円" in prompt, prompt[-600:]
+
+
 def test_貼る文に丸い数の組が入る(monkeypatch):
     """**これが貼られていなければ、書き手は同じ組を選び続けます。**"""
     monkeypatch.setattr(dupes, "ledger_rows", lambda topics=None: _ROUND_LEDGER)
