@@ -30,6 +30,30 @@
     ],
     "video_id": "-ysIR9m7o_U"
   },
+  "aoiro-etax-jikkouritsu": {
+    "charts": [
+      [
+        "5,105円",
+        "6,126円",
+        "10,210円",
+        "20,420円",
+        "23,483円",
+        "33,693円"
+      ],
+      [
+        "26.13%",
+        "30.21%",
+        "43.48%"
+      ],
+      [
+        "26,126円",
+        "30,210円",
+        "40,420円",
+        "43,483円"
+      ]
+    ],
+    "video_id": "UPVqfnb5_Pc"
+  },
   "bunkatsu-anbun-wariai-sa": {
     "charts": [
       [
@@ -799,6 +823,24 @@
     ],
     "video_id": "NPag7xobhTo"
   },
+  "izoku-kokakusan-dan": {
+    "charts": [
+      [
+        "105万800円",
+        "128万5600円",
+        "136万3900円"
+      ],
+      [
+        "81万6000円",
+        "23万4800円"
+      ],
+      [
+        "144万2200円",
+        "152万500円"
+      ]
+    ],
+    "video_id": "ZCBd6NfUdcc"
+  },
   "izoku-suetsuko-nenrei-kabe": {
     "charts": [
       [
@@ -841,6 +883,30 @@
       ]
     ],
     "video_id": "ErgfKlUaZo8"
+  },
+  "jidoushazei-kei-juuka-haba": {
+    "charts": [
+      [
+        "7,200円",
+        "4,000円",
+        "34,500円"
+      ],
+      [
+        "50.0%",
+        "20.0%"
+      ],
+      [
+        "34,500円",
+        "34,500円",
+        "39,600円"
+      ],
+      [
+        "12,900円",
+        "6,000円",
+        "39,600円"
+      ]
+    ],
+    "video_id": "F_-nn7flcPs"
   },
   "jouto-3000man-wa-jouto-eki": {
     "charts": [
@@ -1254,6 +1320,33 @@
       ]
     ],
     "video_id": "ONvXI2r4-4A"
+  },
+  "keihi-jikkouritsu-hyou-zenbu": {
+    "charts": [
+      [
+        "10,000円",
+        "7,346円",
+        "6,386円",
+        "5,131円"
+      ],
+      [
+        "6,386円",
+        "5,467円",
+        "5,692円"
+      ],
+      [
+        "0円",
+        "2,654円",
+        "3,155円"
+      ],
+      [
+        "26.54%",
+        "36.14%",
+        "43.08%",
+        "48.69%"
+      ]
+    ],
+    "video_id": "FGZ1NPuwWxc"
   },
   "keihi-keihi-vs-kojo-22500": {
     "charts": [
@@ -8820,6 +8913,30 @@
     ],
     "video_id": "13TynquQzQU"
   },
+  "shougai-kasan-bairitsu": {
+    "charts": [
+      [
+        "144万2200円",
+        "164万6200円",
+        "20万4000円"
+      ],
+      [
+        "102万円",
+        "125万4800円",
+        "148万9600円",
+        "156万7900円",
+        "164万6200円"
+      ],
+      [
+        "20万4000円",
+        "20万4000円",
+        "20万4000円",
+        "20万4000円",
+        "20万4000円"
+      ]
+    ],
+    "video_id": "DjXL4OmsUN0"
+  },
   "shougai-sabungaku-shoubyou": {
     "charts": [
       [
@@ -9087,6 +9204,25 @@
       ]
     ],
     "video_id": "Bdia0jOorKw"
+  },
+  "yukyu-shitei-shukujitsusu": {
+    "charts": [
+      [
+        "勤続0.5年",
+        "勤続3.5年",
+        "勤続5.5年"
+      ],
+      [
+        "10日",
+        "上限7日",
+        "上限3日"
+      ],
+      [
+        "あと3日",
+        "あと7日"
+      ]
+    ],
+    "video_id": "EXsGSCztLDc"
   },
   "yukyu-shohi-junjo-hantengata": {
     "charts": [

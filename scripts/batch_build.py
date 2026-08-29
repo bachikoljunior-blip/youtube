@@ -2446,14 +2446,18 @@ def report() -> int:
         print("  次に `batch_build.py` を走らせた回から、ここに並びます。")
         return 1
 
-    by_jobs: dict[int, list[float]] = {}
-    print("\n  日時              同時 本数  壁時計   直列なら  倍率  1本あたりの中央値")
+    # **尺の欄を落とさないこと**（2026-08-29 23:xx に足した）。この一覧は
+    # 走りを時刻順に並べるだけですが、**1本あたりは尺で桁がちがいます**
+    # （ショート 3分台／長尺 8〜13分）。尺が見えないと、隣り合う2行の差を
+    # `jobs` の差として読みます —— 下の表がまさにそれで壊れていました
+    # （`_jobs_report` の註）。
+    print("\n  日時              尺  同時 本数  壁時計   直列なら  倍率  1本あたりの中央値")
     for r in timed:
         per = [float(x["build_sec"]) for x in r.get("results", [])
                if x.get("build_sec")]
         med = _median(per)
-        by_jobs.setdefault(int(r["jobs"]), []).extend(per)
-        print(f"  {r['at'][5:16]:<16} {r['jobs']:>3} {r.get('count', len(per)):>4}"
+        print(f"  {r['at'][5:16]:<16} {'長尺' if r.get('long') else 'ショ':<3}"
+              f" {r['jobs']:>3} {r.get('count', len(per)):>4}"
               f" {r['wall_sec']/60:>7.1f}分 {(r.get('serial_sec') or 0)/60:>8.1f}分"
               f" {str(r.get('speedup') or '—'):>5}  {med/60:>6.1f}分")
 
@@ -2506,72 +2510,143 @@ def report() -> int:
         """
         return [x for x in res if x.get("build_sec") and not x.get("error")]
 
-    per_run_thru: dict[int, list[float]] = {}
-    for r in timed:
-        ok = _made(r.get("results") or [])
-        if ok and r.get("wall_sec"):
-            per_run_thru.setdefault(int(r["jobs"]), []).append(
-                len(ok) / float(r["wall_sec"]))
-
-    def _thru(j: int) -> float:
-        """その jobs の1時間あたり。**max ではなく中央値**（上の註）。"""
-        return _median(per_run_thru.get(j, [0.0])) * 3600.0
-
-    js = sorted(by_jobs)
-    base = _median(by_jobs[js[0]])
-    base_thru = _thru(js[0])
-
-    print("\n  **jobs 別**（1本あたりが太り始めた点と、実際に出た本数）")
-    print("    **1時間あたりは走りの中央値で、失敗した本は数えません**"
-          "（max ＋ 失敗こみだと、2.2秒 で落ちた1本が 1636本/時 に化けます）")
-    print("    同時  本数 走り  1本あたり  太り方   1時間あたり  空いているときの何倍")
-    for j in js:
-        med = _median(by_jobs[j])
-        swell = med / base if base else 0.0
-        thru = _thru(j)
-        gain = (thru / base_thru) if base_thru else 0.0
-        print(f"    {j:>3} {len(by_jobs[j]):>5}本 {len(per_run_thru.get(j, [])):>3}回"
-              f" {med/60:>8.1f}分 {swell:>7.2f}倍"
-              f" {thru:>10.1f}本 {gain:>13.2f}倍")
-
-    if len(js) < 2:
-        print("\n  **まだ1種類の `jobs` しか走っていません。** 上限は言えません。")
-        print("  別の `--jobs` で1回走らせると、上の行が2行になって比べられます。")
-        return 0
-
-    top = max(js, key=_thru)
-    worst = max(js, key=lambda j: _median(by_jobs[j]))
-    swell = _median(by_jobs[worst]) / base if base else 0.0
-
-    if swell >= 1.3:
-        print(f"\n  **同時 {worst} で1本あたりが {swell:.2f}倍に太っています。**"
-              " 待ち時間だけでなく、こちらの資源も取り合い始めています。")
-    else:
-        print(f"\n  1本あたりは最大でも {swell:.2f}倍で、**まだ太っていません。**")
-
-    # **太り始めた ≠ 上限。** 1本あたりが遅くなっても、同時に走る本数が
-    # それ以上に増えていれば、**1時間あたりに出る本数は増え続けます。**
-    # 止めるのは「太ったから」ではなく「**出る本数が増えなくなったから**」。
-    runs_at_top = len(per_run_thru.get(top, []))
-    if top == max(js):
-        print(f"  それでも**いちばん出たのは同時 {top}**です"
-              f"（1時間あたり {_thru(top):.1f}本・走り {runs_at_top}回）。"
-              " **太り始めた点は上限ではありません。**")
-        print(f"  まだ上げられます。次は同時 {max(js)*2} を1回。"
-              " **出る本数が増えなくなったところが上限**です。")
-    else:
-        print(f"  **出る本数がいちばん多いのは同時 {top}**"
-              f"（1時間あたり {_thru(top):.1f}本・走り {runs_at_top}回）で、"
-              "それより上げると減っています。**そこが上限です。**")
-        if DEFAULT_JOBS != top and _thru(top) > 0 and _thru(DEFAULT_JOBS) > 0:
-            print(f"  **既定は同時 {DEFAULT_JOBS}（1時間あたり {_thru(DEFAULT_JOBS):.1f}本）**"
-                  f" ＝ 峰の {_thru(DEFAULT_JOBS)/_thru(top):.0%}。"
-                  f" **`--jobs {top}` を1回 試すこと。**")
-    if runs_at_top < 5:
-        print(f"  [!] **その峰の走りは {runs_at_top}回 しかありません。**"
-              " 走りの少ない峰を、そのまま既定にしないこと"
-              "（1回 走らせるたびに、この行は自分で消えます）。")
+    _jobs_report(timed)
     return 0
+
+
+def _jobs_report(timed: list[dict]) -> None:
+    """**jobs べつの表を、尺ごとに分けて出す。**（2026-08-29 23:xx に測って直した）
+
+    ## なぜ分けるか —— **分けないと、尺の差が jobs の差に化けます**
+
+    ここは長らく、ショートと長尺を**1つの表にまとめて**いました。
+    ところが1本あたりの時間は尺で桁がちがいます（実測・中央値）:
+
+        ショート  **3.2〜3.7分**（jobs 1〜8 で ほぼ平ら）
+        長尺      **8.7〜13.1分**
+
+    そして **jobs べつの走りが、尺で偏っています**:
+
+        jobs 4 / 5 / 6 / 8   ほぼ全部が**ショート**（08-16〜08-21）
+        jobs 1 / 2 / 3       長尺 61本 のほとんどがここ（08-22〜08-29）
+
+    だから混ぜた表は「jobs を上げると 1本あたりが速くなる」と出ます。
+    **速いのは jobs ではなく、その jobs で走ったのがショートだったから**です。
+    実際、この形で出た結論は
+
+        **出る本数がいちばん多いのは同時 5**（1時間あたり 86.5本・走り 2回）
+        …… **そこが上限です。** `--jobs 5` を1回 試すこと
+
+    でしたが、**その「同時 5」の走り 2回 は 08-16 のショート 5本 ずつ**です。
+    尺で割ると峰は消えます（下の表）。
+
+    **同じ形が、この repo で3件目です**（`build_perf._time_split` の
+    「尺 × 再生 = -0.33」＝ 08/15 の切替の言い換え／
+    2026-08-29 の `--report` の `max` ＝ 2.2秒 で落ちた1本）。
+    **共通するのは「一斉に切り替えた作りは、全部この形になる」。**
+
+    ## 覆る条件
+
+    - **同じ尺の中で jobs が 4以上 の走りが 5回 たまったら**、そちらだけで
+      峰が言えます。いまは長尺の jobs 4以上 が **1回**（08-20 の 8）しかないので、
+      **長尺の側の上限は「まだ測っていない」**が正しい答えです
+    - 1本あたりが尺で桁ちがいでなくなったら（形式を変えたときなど）、
+      この分けは要らなくなります
+    - **検査は `tests/test_batch_timing.py`**
+    """
+    def _made(res: list[dict]) -> list[dict]:
+        """**実際に本になったものだけ。** 失敗は本ではありません。
+
+        **見るのは `error` だけ**です。`video_id` の有無で判じないこと ——
+        古い行と検査の仕掛けは `video_id` を持たないので、
+        そちらを門にすると**全部 落ちて「走り 0回」**になります
+        （2026-08-29 に踏んだ。`tests/test_batch_timing.py` が2件 赤くなった）。
+        """
+        return [x for x in res if x.get("build_sec") and not x.get("error")]
+
+    groups: list[tuple[str, list[dict]]] = [
+        ("ショート", [r for r in timed if not r.get("long")]),
+        ("長尺", [r for r in timed if r.get("long")]),
+    ]
+    groups = [(name, rs) for name, rs in groups if rs]
+    if len(groups) > 1:
+        print("\n  **尺ごとに分けて出します**（混ぜると、尺の差が jobs の差に化けます ——"
+              " 1本あたりはショート 3分台・長尺 8〜13分 で桁がちがい、"
+              "**jobs 4以上 の走りはほぼ全部ショート**です。`_jobs_report` の註）")
+
+    for name, rs in groups:
+        by_jobs: dict[int, list[float]] = {}
+        per_run_thru: dict[int, list[float]] = {}
+        for r in rs:
+            per = [float(x["build_sec"]) for x in r.get("results", [])
+                   if x.get("build_sec")]
+            if per:
+                by_jobs.setdefault(int(r["jobs"]), []).extend(per)
+            ok = _made(r.get("results") or [])
+            if ok and r.get("wall_sec"):
+                per_run_thru.setdefault(int(r["jobs"]), []).append(
+                    len(ok) / float(r["wall_sec"]))
+        if not by_jobs:
+            continue
+
+        def _thru(j: int, _t=per_run_thru) -> float:
+            """その jobs の1時間あたり。**max ではなく中央値**（上の註）。"""
+            return _median(_t.get(j, [0.0])) * 3600.0
+
+        js = sorted(by_jobs)
+        base = _median(by_jobs[js[0]])
+        base_thru = _thru(js[0])
+
+        print(f"\n  **jobs 別・{name}**（1本あたりが太り始めた点と、実際に出た本数）")
+        print("    **1時間あたりは走りの中央値で、失敗した本は数えません**"
+              "（max ＋ 失敗こみだと、2.2秒 で落ちた1本が 1636本/時 に化けます）")
+        print("    同時  本数 走り  1本あたり  太り方   1時間あたり  空いているときの何倍")
+        for j in js:
+            med = _median(by_jobs[j])
+            swell = med / base if base else 0.0
+            thru = _thru(j)
+            gain = (thru / base_thru) if base_thru else 0.0
+            print(f"    {j:>3} {len(by_jobs[j]):>5}本 {len(per_run_thru.get(j, [])):>3}回"
+                  f" {med/60:>8.1f}分 {swell:>7.2f}倍"
+                  f" {thru:>10.1f}本 {gain:>13.2f}倍")
+
+        if len(js) < 2:
+            print(f"    **{name}は、まだ1種類の `jobs` しか走っていません。** 上限は言えません。")
+            continue
+
+        top = max(js, key=_thru)
+        worst = max(js, key=lambda j: _median(by_jobs[j]))
+        swell = _median(by_jobs[worst]) / base if base else 0.0
+
+        if swell >= 1.3:
+            print(f"    **同時 {worst} で1本あたりが {swell:.2f}倍に太っています。**"
+                  " 待ち時間だけでなく、こちらの資源も取り合い始めています。")
+        else:
+            print(f"    1本あたりは最大でも {swell:.2f}倍で、**まだ太っていません。**")
+
+        # **太り始めた ≠ 上限。** 1本あたりが遅くなっても、同時に走る本数が
+        # それ以上に増えていれば、**1時間あたりに出る本数は増え続けます。**
+        # 止めるのは「太ったから」ではなく「**出る本数が増えなくなったから**」。
+        runs_at_top = len(per_run_thru.get(top, []))
+        if top == max(js):
+            print(f"    それでも**いちばん出たのは同時 {top}**です"
+                  f"（1時間あたり {_thru(top):.1f}本・走り {runs_at_top}回）。"
+                  " **太り始めた点は上限ではありません。**")
+            print(f"    まだ上げられます。次は同時 {max(js)*2} を1回。"
+                  " **出る本数が増えなくなったところが上限**です。")
+        else:
+            print(f"    **出る本数がいちばん多いのは同時 {top}**"
+                  f"（1時間あたり {_thru(top):.1f}本・走り {runs_at_top}回）で、"
+                  "それより上げると減っています。**そこが上限です。**")
+            if DEFAULT_JOBS != top and _thru(top) > 0 and _thru(DEFAULT_JOBS) > 0:
+                print(f"    **既定は同時 {DEFAULT_JOBS}"
+                      f"（1時間あたり {_thru(DEFAULT_JOBS):.1f}本）**"
+                      f" ＝ 峰の {_thru(DEFAULT_JOBS)/_thru(top):.0%}。"
+                      f" **`--jobs {top}` を1回 試すこと。**")
+        if runs_at_top < 5:
+            print(f"    [!] **その峰の走りは {runs_at_top}回 しかありません。**"
+                  " 走りの少ない峰を、そのまま既定にしないこと"
+                  "（1回 走らせるたびに、この行は自分で消えます）。")
 
 
 def _pull_verdicts_first() -> None:

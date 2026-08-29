@@ -148,6 +148,61 @@ def worktree_tag() -> str:
     return ""
 
 
+# 一時置き場の親。**検査が差し替えるので定数にしてあります**（`/tmp` 直書きだと
+# 検査が本物の `/tmp` を掘りに行き、きょうだいの置き場に触ります）。
+_TMP = Path("/tmp")
+
+
+def scratch_dir(make: bool = True) -> str:
+    """**この回だけの一時置き場**を掘って、その道を返す。無ければ空。
+
+    ## なぜ道具の側に置くか（2026-08-29 23:xx に踏んだ。**これで3回目**）
+
+    `docs/trigger_main.md` の §「サブの回は、scratchpad をきょうだいと
+    共有しています」は 2026-08-26 から**正しい逃げ方をそのまま書いています**:
+
+        mkdir -p <scratch>/<自分のID の末尾6文字>
+
+    **それでも踏みます。** この回は `status.py`（40〜60秒）の出力を
+    共有の `<scratch>/status.txt` へ落とし、**読んでいる途中で
+    きょうだいに上書きされました**（266行 → 24行）。
+    一時置き場を覗くと、`a04186` `a50d3c` … と**きょうだいの掘った
+    ディレクトリが40個 並んでいる隣に**、`JOURNAL_live.md`
+    `177d27b0.html` のような**共有の直下に書かれたファイル**が残っています
+    —— つまり**掘った回と掘らなかった回が混ざっています。**
+
+    この repo の他の場所が同じ形について既に答を出しています ——
+    **「人の記憶と手写しに依存する門は、この輪では毎回落ちる側」**
+    （`batch_build.slots()` の註）。だから**手順ではなく道具に持たせます。**
+    `--write` は §1 でその回のいちばん最初に撃たれるので、
+    **何かを書く前に道が出ます。**
+
+    道の作り: 一時置き場は `CLAUDE_CODE_SESSION_ID` から作られていて、
+    **同じ親から立ったサブは全員 同じ ID を持ちます**（`worktree_tag()` の註と
+    同じ理由 —— 環境変数はコンテナに1つ）。だから**セッションIDでは分かれません。**
+    分かれるのは作業コピーの名前のほうなので、その末尾6文字で掘ります。
+
+    **覆る条件**: 一時置き場の場所が環境変数で降ってくるようになったら、
+    glob をやめてそれを読むこと。glob が1件も当たらない置き方（検査・親）では
+    **空を返して黙ります** —— ここで落ちると、印そのものが打てなくなります。
+    検査は `tests/test_run_marker_scratch.py`。
+    """
+    tag = worktree_tag()
+    sid = os.environ.get("CLAUDE_CODE_SESSION_ID", "")
+    if not tag or not sid:
+        return ""
+    hits = sorted(_TMP.glob(f"claude-*/*/{sid}/scratchpad"))
+    if not hits:
+        return ""
+    out = hits[0] / tag[-6:]
+    if make:
+        try:
+            out.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            return ""
+    return str(out)
+
+
 def actor_id() -> str:
     """**この回を回している当人**の識別子。印に残すのはこちら。
 
@@ -372,6 +427,14 @@ def write() -> int:
         "kind": "start",
     })
     print(f"[marker] 走った印を付けました: {line}")
+    # **この回だけの一時置き場を、ここで掘って見せること**（2026-08-29 に足した）。
+    # 共有の直下へ書くと、きょうだいが同じ名前で上書きします
+    # （実測: `status.py` の出力 266行 → 24行）。`scratch_dir()` の註。
+    scratch = scratch_dir()
+    if scratch:
+        print(f"[marker] **この回の一時置き場: {scratch}**"
+              "（きょうだいと共有の直下へ書かないこと。"
+              "`status.txt` `eta.txt` `build.log` は全員が同じ名前を使います）")
     # **ここで出すこと。** §1 はその回のいちばん最初のコマンドで、
     # **何をやるか決める前**です。決めた後に見せても、払った時間は戻りません。
     for ln in _claim_lines():
