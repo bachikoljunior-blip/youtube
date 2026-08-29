@@ -4838,6 +4838,31 @@ def instrument_ages(now: datetime | None = None) -> list[str]:
             "**日枠が尽きていても、前の3つは別の枠なので通ります**"]
 
 
+def _ab_side_clause() -> str:
+    """**走っている A/B の内訳**を、頭の3行に入る長さで1節にする。
+
+    **台帳の枠より、こちらが希少です** —— 開いている前提は 27件 ありますが、
+    無作為化されて同じ本の流れに乗っているのは `ab_split.EXPERIMENTS` の数件だけ。
+    実測 2026-08-29 は **4件とも `content`**（＝速いほうの枠が 0）。
+
+    **読めなくても回を止めません**（空文字を返す）。
+    """
+    try:
+        from src import ab_split                                # noqa: PLC0415
+
+        ac = ab_split.side_counts()
+        tot = sum(ac.values())
+        if not tot:
+            return ""
+        if not ac.get("dist"):
+            return (f"／ **無作為化して走っている A/B {tot}件 は、"
+                    "配信の側 0件**（`src/ab_split.EXPERIMENTS`）")
+        return (f"／ 走っている A/B {tot}件 は 配信 {ac.get('dist', 0)}件 ／"
+                f" 中身 {ac.get('content', 0)}件")
+    except Exception:                                           # noqa: BLE001
+        return ""
+
+
 def headline(pl: dict, prev: dict | None = None,
              tr: dict | None = None,
              points: list[dict] | None = None,
@@ -5006,8 +5031,9 @@ def headline(pl: dict, prev: dict | None = None,
                     f" {sd['closed']['content']['p']:.0%}"
                     f"・n={sd['closed']['dist']['n']} 対 {sd['closed']['content']['n']}）。"
                     f"**いま開いているのは 配信 {sd['open']['dist']}件 ／"
-                    f" 中身 {sd['open']['content']}件**。"
-                    "**この数で上の日付は動かしていません**（有意ではない ——"
+                    f" 中身 {sd['open']['content']}件**"
+                    + _ab_side_clause() +
+                    "。**この数で上の日付は動かしていません**（有意ではない ——"
                     " `src/arm_speed.sides()` の「覆る条件」）")
         except Exception:                                       # noqa: BLE001
             pass
