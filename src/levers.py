@@ -396,11 +396,25 @@ def arm_state(eta_row: dict | None) -> dict:
     #     `dead_why["density"]` が裸の「天井」に戻り、
     #     `tests/test_levers_density_surface.py` が 3件 赤いまま 20時間 残りました。
     #     **名前は、旗が立っても消えません。** 分けて言います。
+    #
+    #     **【2026-08-29 に、下の3行を直しました】** ここは `measured` を
+    #     **「長尺の面も天井」と読んでいました。別の量です** ——
+    #     `measured` は「崩れる所を**見たか**」で、
+    #     `at_ceiling` は「**いま**その天井に当たっているか」。
+    #     実物（08/29）は **measured=True かつ at_ceiling=False**
+    #     （実測の上限 6本/日 に対し、出しているのは 0.69本/日 ＝ ×8.7 空き）で、
+    #     この枝は「**長尺の面も測って天井**」と印字します —— **偽です。**
+    #     同じ関数の 20行 下では `density_open_why` が
+    #     「**長尺の面は開いています**」と言うので、
+    #     **同じ出力の中で、自分の言っていることを自分で否定していました。**
     if dead_why.get("density") == "天井":
-        if _long_surface_measured():
-            dead_why["density"] = "天井（**ショートの面の数。長尺の面も測って天井**）"
-        else:
+        if not _long_surface_measured():
             dead_why["density"] = "天井（**ショートの面だけ。長尺の面は未測定**）"
+        elif _long_surface_open(row):
+            dead_why["density"] = (
+                "天井（**ショートの面の数。長尺の面は実測して、まだ開いています**）")
+        else:
+            dead_why["density"] = "天井（**ショートの面の数。長尺の面も実測して天井**）"
     # **そして、面が割れているなら `density` は死んでいません**（2026-08-26）。
     #     上の1行は**名前を正すだけ**で、`density` は「死んだ腕」に入ったままでした。
     #     だから `--ship --lever density` はいまも叱られ、
@@ -413,9 +427,16 @@ def arm_state(eta_row: dict | None) -> dict:
     #: **面が割れているから外した腕**。下の `reaches` の輪が入れ直さないため。
     rescued: set[str] = set()
     if "density" in dead_why and _long_surface_open(row):
+        # **「（未測定）」を、ここに焼き込まないこと**（2026-08-29 に直した）。
+        #     長尺の面の崩れは **2026-08-21 に観測されています**
+        #     （7本 出して生存 5本 → 上限 6本/日・`src/day_cap.long_form()`）。
+        #     それでもこの行は「開いています（**未測定**）」と言い続けていました ——
+        #     **開いていることと、測っていないことは別の話**です。
         density_open_why = (
-            "ショートの面は天井ですが、**長尺の面は開いています（未測定）**。"
-            " 長尺は `SHORTS_FEED` の枠を1つも使わず、"
+            "ショートの面は天井ですが、**長尺の面は開いています**"
+            + ("（**実測の上限**まで、まだ引き代があります）"
+               if _long_surface_measured() else "（未測定）")
+            + "。 長尺は `SHORTS_FEED` の枠を1つも使わず、"
             "**4,000時間の門に入るのは長尺だけ**です。"
             " **長尺を増やす作業を `none` へ落とさないこと。**")
         dead_why.pop("density")

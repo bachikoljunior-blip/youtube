@@ -20,6 +20,22 @@
 **数は作っていません** —— 長尺の側の天井は `sub_rate` と同じ
 **定義上の上限**で、`measured: False` のまま `LEVERS` にも入れていません
 （軌跡に歩かせない）。
+
+## 2026-08-29 —— **`measured` を「天井」と読まないこと**
+
+上の段落は**もう古い**です。`day_cap.long_form()` は 08/21 の実測
+（長尺 7本 を出して生存 5本）から `measured: True` を返し、
+`scripts/eta.physical_caps` はその日から**実測の上限 6本/日**を使います。
+
+そのとき `levers.arm_state` は、同じ出力の中で2つの逆のことを言っていました:
+
+    dead_why["density"]  「ショートの面の数。**長尺の面も測って天井**」   ← 偽
+    open_why["density"]  「長尺の面は**開いています（未測定）**」          ← 「未測定」が偽
+
+**`measured` と `at_ceiling` は別の量です** ——
+前者は「崩れる所を**見たか**」、後者は「**いま**その天井に当たっているか」。
+実物は **measured=True かつ at_ceiling=False**（6本/日 に対し 0.69本/日）。
+**下の2件が、この取り違えを止めます。**
 """
 from __future__ import annotations
 
@@ -147,3 +163,36 @@ def test_実物の値は_day_capのcollapsedをそのまま映す():
     """
     from src import day_cap
     assert levers._long_surface_measured() is bool(day_cap.long_form().get("collapsed"))
+
+
+MEASURED_OPEN = {"short": {"at_ceiling": True, "measured": True},
+                 "long": {"at_ceiling": False, "measured": True}}
+
+
+def test_測ってあっても開いていれば天井と言わない(monkeypatch):
+    """**`measured` は「天井」ではありません**（2026-08-29 に踏んだ）。
+
+    `day_cap.long_form()` が `measured: True` を返した瞬間、
+    `dead_why["density"]` が「**長尺の面も測って天井**」に化けていました。
+    見るべきなのは `at_ceiling` のほうです。
+    """
+    monkeypatch.setattr(levers, "_long_surface_measured", lambda: True)
+    st = levers.arm_state(_row(surfaces=MEASURED_OPEN))
+    # 開いているので、そもそも死んだ腕から外れる
+    assert "density" not in st["dead"]
+    why = st["open_why"]["density"]
+    assert "長尺の面は開いています" in why
+    assert "未測定" not in why, "測ってあるのに『未測定』と言っています: " + why
+
+
+def test_測ってあって天井に当たっているときだけ天井と言う(monkeypatch):
+    monkeypatch.setattr(levers, "_long_surface_measured", lambda: True)
+    st = levers.arm_state(_row(surfaces=CLOSED))
+    why = st["dead_why"]["density"]
+    assert "長尺の面も実測して天井" in why, why
+
+
+def test_測っていなければ未測定と名乗る(monkeypatch):
+    monkeypatch.setattr(levers, "_long_surface_measured", lambda: False)
+    st = levers.arm_state(_row(surfaces=CLOSED))
+    assert "長尺の面は未測定" in st["dead_why"]["density"]
