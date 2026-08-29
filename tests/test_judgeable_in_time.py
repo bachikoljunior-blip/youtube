@@ -48,45 +48,50 @@ def test_間に合う日は期限から落ち着きと遅れを引いた日():
         date(2026, 9, 13) - timedelta(days=J.SETTLE_DAYS + J.ANALYTICS_LAG_DAYS))
 
 
-def _split_days(limit: date, in_time: int, late: int) -> list[str]:
-    """`limit` に**間に合う本**を `in_time` 本、**間に合わない本**を `late` 本。
+#: **間に合う側／間に合わない側に、何本ずつ置くか。** 下の2件が共有します。
+#: 日付そのものは `_split_days()` が定数から組み立てます（べた書きしないこと）。
+IN_TIME, LATE = 4, 4
 
-    ## なぜ日付をべた書きしないか（2026-08-30 に、同じ形で2度目を踏んだ）
 
-    `last_useful_day` は `SETTLE_DAYS + ANALYTICS_LAG_DAYS` から決まり、
-    **`ANALYTICS_LAG_DAYS` は定数ではなく実測です**（`settle.analytics_lag_days()`）。
-    だから日付をべた書きすると、**遅れを測り直した日に、何も壊れていないのに
-    検査のほうが赤くなります。**
+def _split_days(limit: date) -> list[str]:
+    """`limit` に**間に合う `IN_TIME` 本**と、**間に合わない `LATE` 本**の公開日。
 
-    すぐ下の `test_間に合っていれば両方とも0` の docstring が、
-    **その事故（3日 → 4日）を 2026-08-27 に記録しています。**
-    ところがあの回が組み立て直したのは**自分の検査だけ**で、
-    同じファイルの上下2件は `== 4` を写したまま残りました ——
-    そして 2026-08-30 に遅れが **4日** になり、**2件そろって赤**になりました
-    （`in_time` は 4 ではなく 2、`shortfall_in_time` は 4 ではなく 6）。
-    **`Floor` の側は1行も壊れていません。**
+    ## なぜ日付をべた書きしないか（2026-08-30 に踏んだ。**同じ形の3件目**）
 
-    **この repo が繰り返している「片方だけ直す」です。**
-    ここに畳んだので、次に遅れが動いても3件とも付いていきます。
+    ここには `2026-08-28 … 2026-10-10` の8つがべた書きしてあり、
+    「間に合うのは4本」という数はその並びと
+    `SETTLE_DAYS + ANALYTICS_LAG_DAYS` の**両方**から出ていました。
+    遅れは**測る値**です（`src/settle.py`）。実測が **3日 → 4日** に動いた日、
+    `last_useful_day` が1日 前へ寄り、**何も壊れていないのに 4 が 6 になりました。**
+
+    **同じファイルが、同じことを一度 直しています** ——
+    `test_間に合っていれば両方とも0` の docstring が
+    「**遅れは測る値です。写すと、測り直すたびに検査のほうが壊れます**」と書いて、
+    自分のぶんだけ定数から組み立てるように書き換えました（2026-08-27）。
+    **残りの2件は写されていません。** オーナーの問い（受け取り帳 `e6d3be89`）
+    「**失敗したならそこだけ直すんじゃなくて応用しないの？**」がまさにこの形です。
+
+    **覆る条件**: `Floor.last_useful_day` が2つの定数以外から出るようになったら、
+    ここも同時に直すこと（**数を2箇所で持たない**）。
     """
     last = limit - timedelta(days=J.SETTLE_DAYS + J.ANALYTICS_LAG_DAYS)
-    days = [last - timedelta(days=i) for i in range(in_time)]
-    days += [last + timedelta(days=i + 1) for i in range(late)]
-    return sorted(d.isoformat() for d in days)
+    ok = [(last - timedelta(days=i)).isoformat() for i in range(IN_TIME)]
+    late = [(last + timedelta(days=1 + i)).isoformat() for i in range(LATE)]
+    return sorted(ok + late)
 
 
 def test_本数はそろっているのに期限に間に合わない形():
     """**これが 2026-08-26 に踏んだ形そのもの。**"""
     limit = date(2026, 9, 13)
-    # **8本そろっているが、間に合うのは半分**（日付は定数から組み立てます）
-    ctrl = _split_days(limit, in_time=4, late=4)
-    treat = _split_days(limit, in_time=8, late=0)
-    f = _floor({"対照": ctrl, "処置": treat}, limit.isoformat())
+    ctrl = _split_days(limit)
+    last = limit - timedelta(days=J.SETTLE_DAYS + J.ANALYTICS_LAG_DAYS)
+    treat = [(last - timedelta(days=i)).isoformat() for i in range(IN_TIME + LATE)]
+    f = _floor({"対照": ctrl, "処置": treat}, limit.isoformat(), n=IN_TIME + LATE)
     # 本数だけを見る側は「足りている」と言う
     assert f.shortfall()["対照"] == 0
     # 期限を見る側は足りていない
-    assert f.in_time()["対照"] == 4
-    assert f.shortfall_in_time()["対照"] == 4
+    assert f.in_time()["対照"] == IN_TIME
+    assert f.shortfall_in_time()["対照"] == LATE
     assert not f.ok
 
 
@@ -127,15 +132,21 @@ def test_間に合っていれば両方とも0():
 
 
 def test_期限を延ばすと自動でゆるむ():
-    """**期限をこちら側に書き写さないこと。** 延ばした回に、ここも動くこと。"""
+    """**期限をこちら側に書き写さないこと。** 延ばした回に、ここも動くこと。
+
+    緩めるほうの期限も**定数から組み立てます**（`_split_days()` の docstring）——
+    `2026-10-20` のべた書きは、いまの遅れではたまたま足りているだけで、
+    遅れが2日 伸びれば黙って足りなくなります。
+    """
     limit = date(2026, 9, 13)
-    ctrl = _split_days(limit, in_time=4, late=4)
-    # **延ばす先も定数から**（いちばん遅い本が、ちょうど間に合う所まで）
-    far = (date.fromisoformat(ctrl[-1])
-           + timedelta(days=J.SETTLE_DAYS + J.ANALYTICS_LAG_DAYS))
-    tight = _floor({"対照": ctrl}, limit.isoformat())
-    loose = _floor({"対照": ctrl}, far.isoformat())
-    assert tight.shortfall_in_time()["対照"] == 4
+    ctrl = _split_days(limit)
+    n = IN_TIME + LATE
+    # **いちばん遅い本が間に合う**ところまで延ばす（＝ 全部そろう最小の期限）
+    far = max(date.fromisoformat(d) for d in ctrl) + timedelta(
+        days=J.SETTLE_DAYS + J.ANALYTICS_LAG_DAYS)
+    tight = _floor({"対照": ctrl}, limit.isoformat(), n=n)
+    loose = _floor({"対照": ctrl}, far.isoformat(), n=n)
+    assert tight.shortfall_in_time()["対照"] == LATE
     assert loose.shortfall_in_time()["対照"] == 0
 
 
