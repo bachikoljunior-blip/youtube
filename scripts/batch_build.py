@@ -692,6 +692,41 @@ def pick(count: int, explicit: list[str], per_calc: int = DEFAULT_PER_CALC,
             print("[pick] 長尺向けのテーマ（`s-` で始まらない id）が在庫にありません。"
                   "**ショート向けの題で長尺を作ります**（投稿を止めないため）。"
                   "`python scripts/topic_forge.py --count N --long` で足すこと")
+            # **ただし、開いた前提が「ショートとして」数えている題は外します**
+            # （2026-08-29 に踏んで足した）。
+            #
+            # `scripts/family_gap.py` の群分けは **id の `s-` だけ**を見ます
+            # （`is_short = topic.startswith("s-")`）—— **尺は見ていません。**
+            # だから `s-ribo-…` を長尺として出すと、**5分の本が
+            # 「ショート」の群に入って**、その前提の判定がそこで壊れます。
+            # 実測 2026-08-29 11:0x: 長尺の在庫が尽きたこの回で、
+            # `_hoist_floor_topics` が `族を外へ-ribo8本`（床 8本・期限 09-19・
+            # 腕 rpm）の `s-ribo-` を先頭へ上げ、**その2本を長尺として作りはじめました。**
+            # `needs` の数え方（`startswith('s-ribo-')`）も尺を見ないので、
+            # **床は「埋まった」と出て、群だけが汚れます。**
+            #
+            # **投稿は止めません** —— 外したあとに何も残らない回は、
+            # 今までどおり在庫の上から取ります（在庫切れで止めるほうが高い）。
+            try:
+                from src import floor_topics
+                claimed = tuple(r["prefix"] for r in floor_topics.starved())
+            except Exception as exc:                          # noqa: BLE001
+                print(f"[pick] 台帳の床が読めませんでした（そのまま続けます）: {exc}")
+                claimed = ()
+            if claimed:
+                keep = [t for t in usable
+                        if not str(t["id"]).startswith(claimed)]
+                dropped = len(usable) - len(keep)
+                if dropped and keep:
+                    print(f"[pick] うち {dropped}件 は**開いた前提がショートとして"
+                          f"数えている題**なので外しました（{', '.join(claimed)}）"
+                          "　—— 長尺として出すと `family_gap.py` の群が汚れます")
+                    usable = keep
+                elif dropped:
+                    print(f"[pick] 残る {dropped}件 は全部**開いた前提が"
+                          "ショートとして数えている題**です（"
+                          f"{', '.join(claimed)}）。**投稿を止めないため通します** ——"
+                          "その前提の群は、この回のぶんだけ汚れます")
 
     # **順番は実績で決める**（2026-08-16 に測って変えた。それまでは手書きの
     # `score` だけで、実績を1つも見ていませんでした ＝ 91件中64件が `1.0`）。
@@ -1255,6 +1290,87 @@ def live_ring(count: int, now: datetime | None = None) -> list[str] | None:
     """
     plan = live_plan(count, now)
     return [t for t, _ in plan] or None
+
+
+def long_plan(count: int, ring: tuple[int, ...] | list[int] | None = None,
+              now: datetime | None = None,
+              taken: dict[str, set[int]] | None = None) -> list[tuple[int, date]]:
+    """`--long` の回が **実際にどの日へ着くか**を返す（時, 日）。API 0単位。
+
+    ## なぜ要るか（2026-08-29 に踏んで足した。**門が効いていませんでした**）
+
+    `_drop_queue_tail_calcs` は「着地点の前後 7日 に出ている calc を避ける」
+    ための門で、その着地点を `main()` が渡します。ところがそこは
+    **`--date` が無ければ `live_plan()`**（＝ **ショートの生きる帯** 09:00〜13:30）
+    を読んでいました。**長尺はその帯へは1本も置きません** ——
+    置き先は `_long_ring()` の 18〜22時 で、`next_publish_at()` が
+    「その時刻が空いている最初の日」を返します。
+
+    実測 2026-08-29 10:4x（`--count 4 --long`）:
+
+        印字された着地点   2026-09-06   ← `live_plan()`（ショートの帯）
+        実際に着く日       2026-09-19   ← 長尺の 19〜22時 が最初に空く日
+        門が選んだ4本      teiji×2 ＋ shokyu×2
+        09/16 に既に在る   teiji×2 ＋ shokyu×1   ← **どちらも着地点の 3日前**
+
+    **13日 ずれた窓で門を掛けたので、避けるべき calc が1つも見えていません。**
+    そのまま置けば「同じ制度の長尺が3日おきに4本」になり、これは
+    `CLAUDE.md` が名指ししている「続けて数本 視聴すると繰り返しに感じられる」
+    そのものです。**門は在るのに、別の日を見ていた**だけでした。
+
+    ## 何を写しているか
+
+    `uploader.next_publish_at()` の自動の枝（`date_jst` なし）そのものです ——
+    その時刻の今日ぶんが 20分 以内なら翌日から始め、
+    **控えで埋まっている日と `measure_window` の窓を飛ばして**最初の空きへ置く。
+    `ring` が複数の時刻を持つ回は、`slots()` が時刻を順に配るので、
+    ここも同じ順で配ってから日を解きます。
+
+    `taken`（日 → 埋まっている時（JST））を渡さなければ控えから読みます
+    （`ledger_hours` と同じ `data/uploaded.jsonl`。**API 0単位**）。
+    **控えは上限側**なので、空いている枠を「埋まっている」と読むことがあります ——
+    外す向きは安全（門の窓が1日ずれるだけ）で、逆は起きません。
+
+    読めない回は `[]` を返します。**呼ぶ側は今までどおりに倒すこと**
+    （＝ `land=None` ＝ 今日を中心に見る）。**黙って粗くしない。**
+    """
+    ring = tuple(ring or (LONG_HOUR_JST,))
+    if count <= 0 or not ring:
+        return []
+    now = now or datetime.now(JST)
+    if taken is None:
+        taken = {}
+        try:
+            for row in dupes.ledger_rows():
+                if not row.get("at"):
+                    continue
+                for at in _row_times(row):
+                    when = at.astimezone(JST)
+                    taken.setdefault(when.strftime("%Y-%m-%d"), set()).add(when.hour)
+        except Exception as exc:                              # noqa: BLE001
+            print(f"[batch] 控えが読めませんでした（着地点は今日を中心に見ます）: "
+                  f"{str(exc)[:80]}", flush=True)
+            return []
+    else:
+        taken = {k: set(v) for k, v in taken.items()}
+
+    out: list[tuple[int, date]] = []
+    for i in range(count):
+        hour = int(ring[i % len(ring)])
+        target = now.replace(hour=hour, minute=0, second=0, microsecond=0)
+        if target <= now + timedelta(minutes=20):
+            target += timedelta(days=1)
+        for _ in range(60):
+            day_jst = target.strftime("%Y-%m-%d")
+            if measure_window.inside(day_jst) or hour in taken.get(day_jst, set()):
+                target += timedelta(days=1)
+                continue
+            taken.setdefault(day_jst, set()).add(hour)
+            out.append((hour, target.date()))
+            break
+        else:
+            break
+    return out
 
 
 def live_plan(count: int, now: datetime | None = None,
@@ -2589,8 +2705,29 @@ def main(argv: list[str] | None = None) -> int:
             land = None
     else:
         try:
-            # `live_plan()` は (時刻, 置く日) を返します（docstring）。
-            plan = live_plan(args.count if not explicit else len(explicit))
+            # **長尺とショートでは、置き先の帯そのものが別です**
+            # （2026-08-29 に踏んで足した。それまでは長尺の回も `live_plan()` を
+            #  読んでいて、**着地点が 13日 ずれた**まま門を掛けていました ——
+            #  印字 2026-09-06 に対し、実際に着いたのは 2026-09-19。
+            #  実測と再現は `long_plan()` の docstring）。
+            #
+            #     `--long`（時刻を明示していない回）  `long_plan()`  18〜22時 の輪
+            #     それ以外                            `live_plan()`  09:00〜13:30 の帯
+            #
+            # **時刻を明示した回（`--hour` / `--hours`）は、輪を使いません** ——
+            # `slots()` がその時刻を全本に配り、`next_publish_at()` が
+            # 「その時刻が空いている最初の日」を1本ずつ返します。
+            # `long_plan()` に1つだけの輪を渡すと、そこも同じ形になります。
+            want = args.count if not explicit else len(explicit)
+            given = [int(h) for h in args.hours.split(",") if h.strip()]
+            if args.long:
+                ring0 = tuple(given) if given else (
+                    (args.hour,) if hour_given else _long_ring())
+                # `long_plan()` は (時, 置く日) を返します（docstring）。
+                plan = [(str(h), d) for h, d in long_plan(want, ring0)]
+            else:
+                # `live_plan()` は (時刻, 置く日) を返します（docstring）。
+                plan = live_plan(want)
             if plan:
                 land = min(d for _, d in plan)
         except Exception as exc:                              # noqa: BLE001
@@ -2611,8 +2748,16 @@ def main(argv: list[str] | None = None) -> int:
     # **長尺は、同じ日に `LONG_PER_DAY` 本まで詰めます**（2026-08-26 に足した）。
     # `--date` を渡した回は今までどおり（あちらは日を釘づけする別の道）。
     # `--hours` を明示した回も触りません（**明示は常に通す**）。
+    #
+    # **`--hour` を書いた回も、輪は使いません**（2026-08-29 に踏んで足した）。
+    # すぐ上の `hour_given` の註が「**明示は常に通す**」と書いているのに、
+    # ここだけ `--hours`（複数形）しか見ておらず、`--hour 20` と書いた回に
+    # **18〜22時 の輪で黙って上書き**していました。実測: `--count 4 --long --hour 20`
+    # が 09/19 の 19/20/21/22時 へ4本 —— 頼んだのは「20時に1日1本」です。
+    # 長尺の穴（`eta.py` が名指しする「長尺の予約が0本の日」）を **1日ずつ**
+    # 埋めにいく回は、この道しかありません。**輪は既定のままです**（何も書かない回）。
     ring = None
-    if args.long and not args.date and not hours:
+    if args.long and not args.date and not hours and not hour_given:
         ring = _long_ring()
         if ring and len(ring) > 1:
             days = (len(topics) + len(ring) - 1) // len(ring)
