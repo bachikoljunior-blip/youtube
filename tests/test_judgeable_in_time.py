@@ -48,13 +48,40 @@ def test_間に合う日は期限から落ち着きと遅れを引いた日():
         date(2026, 9, 13) - timedelta(days=J.SETTLE_DAYS + J.ANALYTICS_LAG_DAYS))
 
 
+def _split_days(limit: date, in_time: int, late: int) -> list[str]:
+    """`limit` に**間に合う本**を `in_time` 本、**間に合わない本**を `late` 本。
+
+    ## なぜ日付をべた書きしないか（2026-08-30 に、同じ形で2度目を踏んだ）
+
+    `last_useful_day` は `SETTLE_DAYS + ANALYTICS_LAG_DAYS` から決まり、
+    **`ANALYTICS_LAG_DAYS` は定数ではなく実測です**（`settle.analytics_lag_days()`）。
+    だから日付をべた書きすると、**遅れを測り直した日に、何も壊れていないのに
+    検査のほうが赤くなります。**
+
+    すぐ下の `test_間に合っていれば両方とも0` の docstring が、
+    **その事故（3日 → 4日）を 2026-08-27 に記録しています。**
+    ところがあの回が組み立て直したのは**自分の検査だけ**で、
+    同じファイルの上下2件は `== 4` を写したまま残りました ——
+    そして 2026-08-30 に遅れが **4日** になり、**2件そろって赤**になりました
+    （`in_time` は 4 ではなく 2、`shortfall_in_time` は 4 ではなく 6）。
+    **`Floor` の側は1行も壊れていません。**
+
+    **この repo が繰り返している「片方だけ直す」です。**
+    ここに畳んだので、次に遅れが動いても3件とも付いていきます。
+    """
+    last = limit - timedelta(days=J.SETTLE_DAYS + J.ANALYTICS_LAG_DAYS)
+    days = [last - timedelta(days=i) for i in range(in_time)]
+    days += [last + timedelta(days=i + 1) for i in range(late)]
+    return sorted(d.isoformat() for d in days)
+
+
 def test_本数はそろっているのに期限に間に合わない形():
     """**これが 2026-08-26 に踏んだ形そのもの。**"""
-    ctrl = ["2026-08-28", "2026-09-02", "2026-09-06", "2026-09-06",
-            "2026-09-12", "2026-10-02", "2026-10-04", "2026-10-10"]
-    treat = ["2026-08-21", "2026-08-22", "2026-08-23", "2026-08-24",
-             "2026-08-25", "2026-08-26", "2026-08-27", "2026-08-28"]
-    f = _floor({"対照": ctrl, "処置": treat}, "2026-09-13")
+    limit = date(2026, 9, 13)
+    # **8本そろっているが、間に合うのは半分**（日付は定数から組み立てます）
+    ctrl = _split_days(limit, in_time=4, late=4)
+    treat = _split_days(limit, in_time=8, late=0)
+    f = _floor({"対照": ctrl, "処置": treat}, limit.isoformat())
     # 本数だけを見る側は「足りている」と言う
     assert f.shortfall()["対照"] == 0
     # 期限を見る側は足りていない
@@ -101,10 +128,13 @@ def test_間に合っていれば両方とも0():
 
 def test_期限を延ばすと自動でゆるむ():
     """**期限をこちら側に書き写さないこと。** 延ばした回に、ここも動くこと。"""
-    ctrl = ["2026-08-28", "2026-09-02", "2026-09-06", "2026-09-06",
-            "2026-09-12", "2026-10-02", "2026-10-04", "2026-10-10"]
-    tight = _floor({"対照": ctrl}, "2026-09-13")
-    loose = _floor({"対照": ctrl}, "2026-10-20")
+    limit = date(2026, 9, 13)
+    ctrl = _split_days(limit, in_time=4, late=4)
+    # **延ばす先も定数から**（いちばん遅い本が、ちょうど間に合う所まで）
+    far = (date.fromisoformat(ctrl[-1])
+           + timedelta(days=J.SETTLE_DAYS + J.ANALYTICS_LAG_DAYS))
+    tight = _floor({"対照": ctrl}, limit.isoformat())
+    loose = _floor({"対照": ctrl}, far.isoformat())
     assert tight.shortfall_in_time()["対照"] == 4
     assert loose.shortfall_in_time()["対照"] == 0
 
