@@ -1312,6 +1312,16 @@
     ],
     "video_id": "bpdCgOhmGzo"
   },
+  "kogakukaigo-jogen": {
+    "charts": [
+      [
+        "2万4600円",
+        "9万3000円",
+        "14万100円"
+      ]
+    ],
+    "video_id": "9WWpJUWjs4E"
+  },
   "kojo-shogaisha": {
     "charts": [
       [
@@ -1665,6 +1675,35 @@
       ]
     ],
     "video_id": "9H6nOuWNFMc"
+  },
+  "koyouhokenryo-ritsu": {
+    "charts": [
+      [
+        "8400円",
+        "1万2600円",
+        "1万6800円",
+        "2万5200円",
+        "4万2000円"
+      ]
+    ],
+    "video_id": "dg-5ml7GRZQ"
+  },
+  "kuruma-zei-juka": {
+    "charts": [
+      [
+        "4400円",
+        "5900円",
+        "7600円",
+        "16600円"
+      ],
+      [
+        "22000円",
+        "29500円",
+        "38000円",
+        "83000円"
+      ]
+    ],
+    "video_id": "75KVaJ_na4I"
   },
   "mishikyu-getsugaku-betsu-sa": {
     "charts": [
@@ -8788,6 +8827,16 @@
       ]
     ],
     "video_id": "1xPjpFwG8qk"
+  },
+  "yoteinozei-15man": {
+    "charts": [
+      [
+        "247万5000円",
+        "244万4150円",
+        "3万850円"
+      ]
+    ],
+    "video_id": "178_WLomK4Y"
   },
   "yukyu-shohi-junjo-hantengata": {
     "charts": [
