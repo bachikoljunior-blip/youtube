@@ -77204,10 +77204,19 @@ n=87・**中央 8.8日**・最短 0.5日・最長 40.7日）。つまりこの�
 
 ### 4. この回の upload
 
-`batch_build.py --count 3 --long`（背景・20:1x 開始）。
-`kokuho-jogen-4hon-tomaru-shotoku` / `yukyu-nen5nichi-jiko-ruikei-12dan` /
-`furusato-jogen-nenshu7dan-fuyou-sa` の3本。**着地は 2026-09-12 前後**で、
-上の (3) の空いている側の手前に落ちる。
+`batch_build.py --count 3 --long`（背景・20:1x 開始 → 21:0x に **3/3 予約**）。
+
+    kokuho-jogen-4hon-tomaru-shotoku     eNvZ9ripndA   **2026-09-14 20:00 JST**
+    yukyu-nen5nichi-jiko-ruikei-12dan    Bdia0jOorKw   **2026-09-21 21:00 JST**
+    furusato-jogen-nenshu7dan-fuyou-sa   xCYA8EAIK7s   **2026-09-12 22:00 JST**
+
+**うち2本（09/14・09/21）が、上の (3) で空いていた 09/13〜09/26 の側に落ちた。**
+`--count 3` は、上で測った頭打ち（`land` ありで 10本）の **3割**でしかない ——
+**次の回は上げること**（下の「次の回へ」1）。
+
+**サムネイルは3本とも載っていない**（`thumbnails.set` が 403・日枠切れ）。
+bytes は控えに在るので、**枠の戻った回に `refresh_thumbnail.py --missing`**。
+再生リストへの追加も同じ枠で落ちている（動画そのものは投稿済み）。
 
 **日枠（読みの側）はこの窓で尽きている**（`videos.list` / `thumbnails.set` / `videos.update` が 403・
 戻るのは 08/30 16:00 JST）。**`videos.insert` は別枠なので予約は通る**（本数枠 上限97本・あと91本）。

@@ -171,6 +171,32 @@
     ],
     "video_id": ""
   },
+  "furusato-jogen-nenshu7dan-fuyou-sa": {
+    "charts": [
+      [
+        "1万5549円",
+        "1万6544円",
+        "1万8971円"
+      ],
+      [
+        "6万1656円",
+        "13万485円",
+        "17万7912円"
+      ],
+      [
+        "17万3000円",
+        "44万7000円",
+        "61万2000円"
+      ],
+      [
+        "1万3308円",
+        "4万2520円",
+        "11万1514円",
+        "21万7283円"
+      ]
+    ],
+    "video_id": "xCYA8EAIK7s"
+  },
   "genjokaifuku-cross-6nen": {
     "charts": [
       [
@@ -1412,6 +1438,27 @@
       ]
     ],
     "video_id": "NQFpuf7LMP0"
+  },
+  "kokuho-jogen-4hon-tomaru-shotoku": {
+    "charts": [
+      [
+        "724万7778円",
+        "850万6524円",
+        "947万893円"
+      ],
+      [
+        "7.71%",
+        "2.69%",
+        "2.25%",
+        "0.30%"
+      ],
+      [
+        "850万6524円",
+        "947万893円",
+        "979万6667円"
+      ]
+    ],
+    "video_id": "eNvZ9ripndA"
   },
   "kokuho-keigen-gakumen-nokoru": {
     "charts": [
@@ -8874,6 +8921,30 @@
       ]
     ],
     "video_id": "178_WLomK4Y"
+  },
+  "yukyu-nen5nichi-jiko-ruikei-12dan": {
+    "charts": [
+      [
+        "7日",
+        "9日",
+        "11日",
+        "15日"
+      ],
+      [
+        "11日",
+        "14日",
+        "18日",
+        "20日"
+      ],
+      [
+        "13日",
+        "33日",
+        "61日",
+        "91日",
+        "121日"
+      ]
+    ],
+    "video_id": "Bdia0jOorKw"
   },
   "yukyu-shohi-junjo-hantengata": {
     "charts": [
