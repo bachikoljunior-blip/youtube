@@ -1077,6 +1077,12 @@ def _per_day_soft(fallback: int = 10) -> int:
 
 _PER_DAY_SOFT = 10            # **読めない回の既定**。実際に使う数は `_per_day_soft()`
 
+#: **1回に逃がす死に枠の上限**（`_rescue_dead_slots()`）。1手 50単位。
+#: 日枠 10,000 のうち `videos.insert` が 1本 1,600単位 ＝ 1日 6本 が限度なので、
+#: ここを大きくすると**その日の投稿が減ります**。20手 ＝ 1,000単位 ＝ 投稿 0.6本ぶん。
+#: **残りは次の回が続けます**（`--plan` は毎回 実物の控えから組み直す）。
+_RESCUE_MAX = 20
+
 
 def _band_bounds() -> tuple[int, int]:
     """**生きる帯の両端**（0時からの分）。**写さずに引く。**
@@ -2800,19 +2806,61 @@ def _rescue_dead_slots() -> None:
     撃つこと**」と書いていた手で、**待っているあいだ `tests/test_judgeable.py`
     の `stat_split` は赤のまま**でした。
 
-    **`--all` は撃ちません。** あれは A/B に限らず全部を逃がす広い手で、
-    ここが自動でやってよい範囲を超えます（人が見て撃つこと）。
+    ## **`--all` も撃ちます**（2026-08-29・最適化の回。**理由が測れたので変えた**）
+
+    ここには長らく「**`--all` は撃ちません。** あれは A/B に限らず全部を逃がす
+    広い手で、ここが自動でやってよい範囲を超えます（人が見て撃つこと）」と
+    書いてありました。**その「範囲」は、当時 数字で決めていません。**
+
+    **この回に測った数字**（`data/uploaded.jsonl` × `data/views.jsonl`・
+    08-19 以降・齢 20〜120時間 の最初の読み・題の `#Shorts` で形を分けた）:
+
+        ショート 帯の中   99本  1本あたり **537.2再生**
+        ショート 帯の外   60本  1本あたり **  0.7再生**
+
+    そして `live_slots.py --plan --all` はこの回、
+    **生きている本 444 → 506（+62本）／62手（3,100単位）** と出しました。
+
+        1手 50単位 で **+537再生** ＝ **10.7再生/単位**
+        `videos.insert` は 1,600単位 で 1本（帯に入れば 537再生）＝ **0.34再生/単位**
+
+    **同じ単位で 31倍**です。「人が見て撃つ」ために待たせる理由は、
+    この比の側にはありません。**待っているあいだ、その本は 0.7再生 で公開されます。**
+
+    ## ただし、投稿を止めないこと（**上限を置く理由**）
+
+    日枠は 10,000単位、`videos.insert` は 1本 1,600単位 ＝ **1日 6本**が限度です。
+    62手（3,100単位）を1回で撃つと、**その日の投稿が2本 減ります。**
+    だから1回に撃つのは `_RESCUE_MAX` 手まで。**残りは次の回が続けます**
+    （`--plan` は毎回 実物の控えから組み直すので、手は消えません）。
+
+    **覆る条件**: `day_cap.cap()` が上がって帯に余りが出たら、この手は要らなくなります
+    （`live_slots.plan_all()` の覆る条件と同じ）。
+    帯の中の1本あたりが帯の外を**下回ったら**、逃がすのをやめること。
     """
     try:
         from scripts import live_slots
 
         board = live_slots.Board(live_slots._rows())
         live_slots.plan(board)          # API 0単位。`board.moves` を埋める
-        if not board.moves:
+        if board.moves:
+            print(f"[batch] **死に枠の A/B を {len(board.moves)}本 逃がします**"
+                  f"（{len(board.moves) * 50}単位。**投稿より先に撃ちます**）",
+                  flush=True)
+            live_slots.main(["--apply"])
+
+        # **A/B に限らない側**（付け替えではなく、生きる本が実際に増えるぶん）
+        board = live_slots.Board(live_slots._rows())
+        was = len(board.live())
+        live_slots.plan_all(board)      # API 0単位
+        gain = len(board.live()) - was
+        if gain <= 0 or not board.moves:
             return
-        print(f"[batch] **死に枠の A/B を {len(board.moves)}本 逃がします**"
-              f"（{len(board.moves) * 50}単位。**投稿より先に撃ちます**）", flush=True)
-        live_slots.main(["--apply"])
+        board.moves = board.moves[:_RESCUE_MAX]
+        print(f"[batch] **0再生の枠のショートを {len(board.moves)}本 逃がします**"
+              f"（{len(board.moves) * 50}単位。この回の実測で 帯の中 537.2再生/本 対 "
+              f"帯の外 0.7 ＝ **1単位あたり 投稿の31倍**）", flush=True)
+        live_slots.apply_moves(board)
     except Exception as exc:                                   # noqa: BLE001
         print(f"[batch] 死に枠の逃がしは飛ばします: {str(exc)[:120]}", flush=True)
 
@@ -3119,9 +3167,19 @@ def main(argv: list[str] | None = None) -> int:
     if args.date:
         # **`+ ':00'` と書かないこと**（2026-08-18 に直した）。`--step-min` を
         # 足すまで時しか無かったので足していましたが、いまは `10:30` が来ます。
-        shown = ", ".join(_show_slot(w) for w in when)
-        print(f"[batch] {len(topics)} 本を **{args.date} の1日に**入れます"
-              f"（{shown} JST）")
+        # **日をまたいだら、そう言うこと**（2026-08-29）。`_show_slot()` は
+        # 日付を落とすので、`_band_walk()` が次の日の帯へ回した回は
+        # 「**{date} の1日に**入れます」と印字したまま、実際は別の日に着きます
+        # —— この repo が通算11回 踏んでいる「言っている所と、している所が別」。
+        days = sorted({w.split("@")[0] for w in when if "@" in w})
+        if len(days) > 1:
+            shown = ", ".join(f"{w.split('@')[0]} {_show_slot(w)}" for w in when)
+            print(f"[batch] {len(topics)} 本を **{len(days)}日に分けて**入れます"
+                  f"（{shown} JST）　—— {args.date} の帯が埋まっているぶんです")
+        else:
+            shown = ", ".join(_show_slot(w) for w in when)
+            print(f"[batch] {len(topics)} 本を **{args.date} の1日に**入れます"
+                  f"（{shown} JST）")
     else:
         # **`args.hour` を印字しないこと**（2026-08-27）。`live` の回は
         # `slots()` が帯の空きから別の時刻を選んでいるので、ここが `9:00` と
