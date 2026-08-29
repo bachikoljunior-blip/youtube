@@ -23,6 +23,11 @@ sys.path.insert(0, str(ROOT / "scripts"))
 from scripts.batch_build import check_window, ledger_hours, slots  # noqa: E402
 from src.uploader import JST, next_publish_at  # noqa: E402
 
+#: **時計を釘づけする**（2026-08-29 に足した）。`_band_walk()` は
+#: **過ぎた帯を翌日へ送る**ので、検査の日付が「今日」を過ぎると
+#: 答えが変わります。固定の日付を書いた検査は、そのままだと**いつか勝手に赤くなります。**
+NOW = datetime(2026, 8, 24, 8, 0, tzinfo=JST)
+
 
 # --- slots: 1日にN本を置けるか -------------------------------------------
 #
@@ -42,7 +47,7 @@ def test_date_spreads_hours_on_one_day():
     それまでは `range(hour, 24)` で、帯が埋まると 14:00 以降へこぼれていました。
     実測は `batch_build._band_walk()` の docstring）。
     """
-    assert slots(4, 10, "2026-08-24", [], taken=set(), lanes_n=1) == [
+    assert slots(4, 10, "2026-08-24", [], taken=set(), lanes_n=1, now=NOW) == [
         "2026-08-24@10:00", "2026-08-24@10:30",
         "2026-08-24@11:00", "2026-08-24@11:30",
     ]
@@ -108,7 +113,7 @@ def test_taken_hours_skipped_for_several():
     **14:00 は帯の外**で、実測の1本あたりは **0.7再生**（帯の中は 537.2）——
     `batch_build._band_walk()` の docstring に測り方と n を書いてあります。
     """
-    got = slots(3, 9, "2026-08-24", [], taken={9, 11, 13}, lanes_n=1)
+    got = slots(3, 9, "2026-08-24", [], taken={9, 11, 13}, lanes_n=1, now=NOW)
     assert got == ["2026-08-24@9:30", "2026-08-24@10:00", "2026-08-24@10:30"]
 
 
@@ -121,7 +126,7 @@ def test_shorts_never_leave_the_live_band():
     from scripts.batch_build import _band_walk
 
     band = {h * 60 for h in (9, 10, 11, 12, 13)} | {12 * 60 + 30, 13 * 60 + 30}
-    got = slots(2, 9, "2026-08-24", [], step_min=30, taken_min=band, lanes_n=1)
+    got = slots(2, 9, "2026-08-24", [], step_min=30, taken_min=band, lanes_n=1, now=NOW)
     assert got == ["2026-08-24@9:30", "2026-08-24@10:30"]
 
     # 帯が満杯の日は、**次の日の帯**へ（14:00 以降へは1本も置かない）。
@@ -129,7 +134,7 @@ def test_shorts_never_leave_the_live_band():
     full = {m for m in range(9 * 60, 13 * 60 + 31, 30)}
     got = _band_walk(3, "2026-08-24", first_day_taken=full,
                      taken_by_day={"2026-08-24": full, "2026-08-25": set()},
-                     lanes_n=1)
+                     lanes_n=1, now=NOW)
     assert got == ["2026-08-25@9:00", "2026-08-25@9:30", "2026-08-25@10:00"]
 
 
@@ -506,3 +511,49 @@ def test_long_form_explicit_hours_are_quiet(capsys):
     """**長尺には帯を掛けません** —— 19時台に「帯の外だ」と鳴ってはいけません。"""
     slots(2, 19, "2026-08-24", [19, 20], taken=set(), long_form=True)
     assert "生きる帯" not in capsys.readouterr().out
+
+
+# --- 過ぎた枠を返さないこと（2026-08-29。**`_band_walk` を書いた直後に踏んだ**）---
+#
+# 帯は朝だけ（09:00〜13:30）なので、**夕方以降に走った回**が今日を指すと、
+# `_band_walk` は黙って `今日@9:00` を返していました。`next_publish_at()` は
+# 「過去か直近すぎます」で落とし、**作った1本がそのまま捨てられます**
+# （`build/` はコンテナと一緒に消える —— `slots()` の docstring の「3回持ち越された穴」）。
+#
+# 直す前の `range(hour, 24)` は 21:00 を返せたので**落ちはしませんでした**
+# （そのかわり 0.7再生 で公開される）。**どちらでもなく、翌日の帯へ送ること。**
+
+def test_過ぎた帯は翌日へ送る() -> None:
+    from datetime import datetime
+
+    from scripts.batch_build import _band_walk
+    from src.uploader import JST
+
+    taken = {"2026-08-29": set(), "2026-08-30": set()}
+    got = _band_walk(2, "2026-08-29", first_day_taken=set(),
+                     taken_by_day=dict(taken), lanes_n=1,
+                     now=datetime(2026, 8, 29, 20, 56, tzinfo=JST))
+    assert got == ["2026-08-30@9:00", "2026-08-30@9:30"], (
+        "帯を過ぎた時刻に走った回が、今日の朝を返しています"
+        "（`next_publish_at()` が落として1本 捨てます）")
+
+
+def test_帯の途中なら残りの枠だけ使う() -> None:
+    """**まだ帯の中なら、残っている枠は使うこと。** 1日ぶん無駄にしない。"""
+    from datetime import datetime
+
+    from scripts.batch_build import _band_walk
+    from src.uploader import JST
+
+    got = _band_walk(2, "2026-08-29", first_day_taken=set(),
+                     taken_by_day={"2026-08-29": set()}, lanes_n=1,
+                     now=datetime(2026, 8, 29, 11, 0, tzinfo=JST))
+    assert got == ["2026-08-29@12:00", "2026-08-29@12:30"]
+
+
+def test_未来の日は丸ごと使える() -> None:
+    from scripts.batch_build import _band_walk
+
+    got = _band_walk(2, "2026-09-15", first_day_taken=set(),
+                     taken_by_day={"2026-09-15": set()}, lanes_n=1)
+    assert got == ["2026-09-15@9:00", "2026-09-15@9:30"]

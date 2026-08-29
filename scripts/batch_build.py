@@ -1083,6 +1083,10 @@ _PER_DAY_SOFT = 10            # **読めない回の既定**。実際に使う�
 #: **残りは次の回が続けます**（`--plan` は毎回 実物の控えから組み直す）。
 _RESCUE_MAX = 20
 
+#: **いまから何分より後の枠なら置いてよいか。** `uploader.next_publish_at()` の門は
+#: 20分 なので、それより広く取ります（作ってから予約するまでに時間が経つため）。
+_BAND_LEAD_MIN = 45
+
 
 def _band_bounds() -> tuple[int, int]:
     """**生きる帯の両端**（0時からの分）。**写さずに引く。**
@@ -1121,7 +1125,8 @@ def _band_walk(count: int, date_jst: str, from_min: int = 0,
                first_day_taken: set[int] | None = None,
                taken_by_day: dict[str, set[int]] | None = None,
                lanes_n: int | None = None,
-               horizon: int = 120) -> list[str]:
+               horizon: int = 120,
+               now: datetime | None = None) -> list[str]:
     """**ショートの置き先を、生きる帯の空きから日をまたいで拾う**（API 0単位）。
 
     ## なぜ要るか（2026-08-29・最適化の回。**この回に実測して足した**）
@@ -1185,6 +1190,7 @@ def _band_walk(count: int, date_jst: str, from_min: int = 0,
     grid = [m for m in range(lo, hi + 1, step)]
     if not grid or count <= 0:
         return []
+    now = now or datetime.now(JST)
     known: dict[str, set[int]] = dict(taken_by_day or {})
     if first_day_taken is not None:
         known[date_jst] = set(first_day_taken)
@@ -1203,6 +1209,21 @@ def _band_walk(count: int, date_jst: str, from_min: int = 0,
             known[key] = set(ledger.get(key, set()))
         busy = known[key]
         free = [m for m in grid if m not in busy]
+        # **過ぎた枠を返さないこと**（2026-08-29 に、この関数を書いた直後に踏んだ）。
+        #
+        # 帯は朝だけ（09:00〜13:30）なので、**夕方以降に走った回**が今日を指すと、
+        # ここは黙って `今日@9:00` を返します。`uploader.next_publish_at()` は
+        # 「**過去か直近すぎます**」で落とし、**作った1本がそのまま捨てられます**
+        # （`build/` はコンテナと一緒に消えます —— `slots()` の docstring が
+        #  「3回持ち越された穴」として同じ代金を書いています）。
+        #
+        # 直す前の `range(hour, 24)` は 21:00 を返せたので**落ちはしませんでした**
+        # （そのかわり 0.7再生 で公開されます）。**どちらでもなく、翌日の帯へ送ること。**
+        # 余裕は `next_publish_at()` の門（20分）より広く取ります。
+        if day <= now.date():
+            edge = (now.hour * 60 + now.minute + _BAND_LEAD_MIN
+                    if day == now.date() else 24 * 60)
+            free = [m for m in free if m > edge]
         room = min(len(free), max(0, per_day - len(busy & set(grid))))
         if room:
             want = min(room, count - len(out))
@@ -1219,7 +1240,8 @@ def _slots_fine(count: int, hour: int, date_jst: str, hours: list[int],
                 step_min: int, taken: set[int] | None,
                 taken_min: set[int] | None,
                 lanes_n: int | None = None,
-                long_form: bool = False) -> list[str]:
+                long_form: bool = False,
+                now: datetime | None = None) -> list[str]:
     """`step_min` が 60 未満のときの割り当て（0時からの分で数える）。
 
     **`slots()` から呼ばれる前提**です。単体で呼ばないこと（`date_jst` を必須にしてある）。
@@ -1248,7 +1270,7 @@ def _slots_fine(count: int, hour: int, date_jst: str, hours: list[int],
     # 帯が埋まったら 14:00 以降ではなく**次の日の帯**へ進みます。
     if not long_form:
         walked = _band_walk(count, date_jst, hour * 60,
-                            first_day_taken=taken_min, lanes_n=lanes_n)
+                            first_day_taken=taken_min, lanes_n=lanes_n, now=now)
         if len(walked) == count:
             days = sorted({w.split("@")[0] for w in walked})
             if days != [date_jst]:
@@ -1661,7 +1683,8 @@ def slots(count: int, hour: int, date_jst: str | None, hours: list[int],
           taken_min: set[int] | None = None,
           lanes_n: int | None = None,
           ring: tuple[int, ...] | list[int] | None = None,
-          live: bool = False, long_form: bool = False) -> list[str]:
+          live: bool = False, long_form: bool = False,
+          now: datetime | None = None) -> list[str]:
     """各本の予約時刻の指定を返す（`upload_only.py` の第3引数の形）。
 
     `date_jst` が無ければ従来どおり全部同じ時刻 —— `next_publish_at` が
@@ -1738,7 +1761,7 @@ def slots(count: int, hour: int, date_jst: str | None, hours: list[int],
         return [str(hour)] * count
     if step_min != 60:
         return _slots_fine(count, hour, date_jst, hours, step_min, taken, taken_min,
-                           lanes_n=lanes_n, long_form=long_form)
+                           lanes_n=lanes_n, long_form=long_form, now=now)
     if taken is None:
         taken = ledger_hours(date_jst)
     if hours:
@@ -1774,7 +1797,7 @@ def slots(count: int, hour: int, date_jst: str | None, hours: list[int],
             # 09:30 まで塞がないように。`ledger_minutes()` の註と同じ理由）。
             walked = _band_walk(count, date_jst, hour * 60,
                                 first_day_taken={h * 60 for h in taken},
-                                lanes_n=lanes_n)
+                                lanes_n=lanes_n, now=now)
             if len(walked) == count:
                 days = sorted({w.split("@")[0] for w in walked})
                 if days != [date_jst]:
