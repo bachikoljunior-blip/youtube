@@ -90,6 +90,22 @@ def test_sides_does_not_feed_the_target_date() -> None:
     assert "sides()" in src, "`eta.py` が `sides()` を1度も呼んでいません（印字が消えています）"
 
 
+def test_every_running_ab_carries_a_side() -> None:
+    """**走っている A/B にも札があること。**
+
+    台帳の枠より、A/B の枠のほうが希少です（4件が同じ本の流れに同時に乗る）。
+    札が無い実験は「配信 0件」の数え上げから**黙って消えます** ——
+    そのとき「速いほうの枠が空いていない」という所見が、
+    見た目だけ解消します。
+    """
+    from src import ab_split  # noqa: PLC0415
+
+    bad = [n for n, e in ab_split.EXPERIMENTS.items()
+           if e.side not in arm_speed.SIDES]
+    assert not bad, f"`side` の無い A/B: {bad}（`src/ab_split.EXPERIMENTS`）"
+    assert sum(ab_split.side_counts().values()) == len(ab_split.EXPERIMENTS)
+
+
 def test_side_lines_name_both_sides_and_the_open_counts() -> None:
     """印字が「比」と「いま開いている件数」の両方を持つこと。
 

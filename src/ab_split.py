@@ -167,6 +167,18 @@ class Experiment:
     #: **この実験に入れてよいテーマID**を返す関数（`None` なら全部）。
     #: 2026-08-27 に足した。理由は下の `_shorts_only()`。
     eligible: Callable[[], set[str]] | None = None
+    #: **この実験がいじる「側」**（2026-08-29・最適化の回に足した）。
+    #: `dist`（動画の外側: 形式・時刻・本数・間隔・面）／
+    #: `content`（中身: 題・文言・冒頭の絵・コマの速さ・尺）／`infra`。
+    #: `config/hypotheses.yaml` の `side:` と**同じ札**です。
+    #:
+    #: **なぜ実験の側にも要るか** —— A/B の枠は、台帳の枠より希少です。
+    #: 4件が同じ本の流れに同時に乗るので、**ここが実際に取り合っている資源**。
+    #: 実測 2026-08-29: **4件とも `content`**（`side_counts()`）。
+    #: 同じ日の実測で、配信の側は中身の側の **13.9倍** 当たっています
+    #: （`src/arm_speed.sides()`）——
+    #: **つまり、走っている A/B の 100% が、13.9倍 遅いほうに乗っていました。**
+    side: str = ""
 
 
 def _shorts_only() -> set[str]:
@@ -422,6 +434,7 @@ def freeze_labels(topic_ids, names=None) -> dict[str, dict[str, str]]:
 EXPERIMENTS: dict[str, Experiment] = {
     "title_form": Experiment(
         name="title_form",
+        side="content",
         split=title_form,
         treated="問い",
         control="断定",
@@ -432,6 +445,7 @@ EXPERIMENTS: dict[str, Experiment] = {
     ),
     "hook_form": Experiment(
         name="hook_form",
+        side="content",
         split=hook_form,
         treated="問い",
         control="条件",
@@ -442,6 +456,7 @@ EXPERIMENTS: dict[str, Experiment] = {
     ),
     "request_form": Experiment(
         name="request_form",
+        side="content",
         split=request_form,
         treated="途中あり",
         control="終端のみ",
@@ -462,6 +477,7 @@ EXPERIMENTS: dict[str, Experiment] = {
     ),
     "slide_pace": Experiment(
         name="slide_pace",
+        side="content",
         split=_pace_form,
         treated="遅い",
         control="速い",
@@ -478,6 +494,46 @@ EXPERIMENTS: dict[str, Experiment] = {
         eligible=_shorts_only,
     ),
 }
+
+
+def side_counts() -> dict[str, int]:
+    """**走っている A/B を「側」で数える。**（2026-08-29・最適化の回に足した）
+
+    ## なぜ要るか
+
+    `config/hypotheses.yaml` の開いている前提は 27件 ありますが、
+    **実際に本の流れを取り合っているのは、ここに登録された A/B だけ**です。
+    4件が同じ本に同時に乗るので、**これがいちばん希少な資源**。
+
+    実測 2026-08-29（この関数を書いた回）::
+
+        title_form  content   hook_form   content
+        request_form content  slide_pace  content
+        → **配信の側 0件 ／ 中身の側 4件**
+
+    同じ日に閉じた前提を側で割ると、**配信の側は中身の側の 13.9倍**
+    当たっています（`src/arm_speed.sides()`）——
+    **走っている A/B の 100% が、13.9倍 遅いほうに乗っていました。**
+
+    **これは「A/B をやめろ」ではありません。** 配信の側は
+    いま観測（`data/views.jsonl` の突き合わせ）でしか測っておらず、
+    **無作為化された枠を1つも持っていません。** 枠が4つとも埋まっている
+    あいだ、配信の側の実験は「観測でしか測れない」ままです。
+
+    ## 覆る条件
+
+    - **配信の側の A/B が1件でも入ったら** —— この 0/4 は崩れます
+    - **A/B の枠が実は取り合いでないと分かったら**（テーマIDのハッシュで
+      直交していて、4件 同時でも検出力が落ちないと**実測で**出たら）——
+      そのときは「希少」という前提ごと引き直すこと。
+      いま検出力を出しているのは `src/ab_power.py` で、
+      **同時に走る本数は入力に入っていません**
+    """
+    out: dict[str, int] = {}
+    for exp in EXPERIMENTS.values():
+        key = exp.side or "（札なし）"
+        out[key] = out.get(key, 0) + 1
+    return out
 
 
 def build_times(path: Path | None = None) -> dict[str, datetime]:

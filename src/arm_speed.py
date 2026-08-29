@@ -290,6 +290,30 @@ def side_lines(sd: dict | None = None) -> list[str]:
     if sd["missing"]:
         lines.append(f"    [!] **閉じた前提のうち {sd['missing']}件 に `side:` の札がありません** "
                      "—— その件は上の数に入っていません（`config/hypotheses.yaml` の `side:`）。")
+    # **台帳の枠より、A/B の枠のほうが希少です**（2026-08-29 に足した）。
+    # 開いている 27件 のうち、実際に本の流れを取り合っているのは
+    # `src/ab_split.EXPERIMENTS` に登録された数件だけ。
+    # **遅らせて読み込みます** —— `ab_split` は `script_writer` を経由して
+    # 重い枝を引くので、ここが落ちても回を止めないこと。
+    try:
+        from src import ab_split                                # noqa: PLC0415
+
+        ac = ab_split.side_counts()
+        tot = sum(ac.values())
+        if tot:
+            body = " ／ ".join(f"{SIDE_JA.get(k, k)} {v}件"
+                               for k, v in sorted(ac.items()))
+            lines.append(
+                f"    **無作為化して走っている A/B は {tot}件**: {body}"
+                "（`src/ab_split.EXPERIMENTS`）。"
+                "**開いている前提より、こちらが実際に取り合っている枠です**"
+                "（同じ本の流れに同時に乗る）。"
+                + ("　[!] **配信の側の A/B は 0件** ——"
+                   "上の比が正しいなら、無作為化した枠が"
+                   "**1つも速いほうに乗っていません**"
+                   if not ac.get("dist") else ""))
+    except Exception as exc:                                    # noqa: BLE001
+        lines.append(f"    （走っている A/B の内訳は出せませんでした: {exc}）")
     return lines
 
 
