@@ -30,7 +30,7 @@ def test_pick_excludes_topics_already_built(tmp_path, monkeypatch) -> None:
     pool = [{"id": "s-a", "calc": "x", "score": 1.0}, {"id": "s-b", "calc": "y", "score": 1.0}]
     monkeypatch.setattr(bb.config, "load_topics", lambda: {"topics": pool}, raising=False)
     monkeypatch.setattr(bb, "_posted_including_ledger", lambda: set(), raising=False)
-    monkeypatch.setattr(bb, "_drop_doomed", lambda u, p: u, raising=False)
+    monkeypatch.setattr(bb, "_drop_doomed", lambda u, p, posted=None: u, raising=False)
     built = tmp_path / "build"
     (built / "s-a").mkdir(parents=True)
     monkeypatch.setattr(bb, "ROOT", tmp_path, raising=False)
