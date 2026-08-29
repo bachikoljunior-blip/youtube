@@ -71,6 +71,13 @@ import statistics
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 VIEWS = ROOT / "data" / "views.jsonl"
 FORMS = ROOT / "data" / "video_forms.json"
+UPLOADED = ROOT / "data" / "uploaded.jsonl"
+
+#: **長尺と呼ぶ尺の下限（秒）。** `scripts/eta.LONG_FORM_SECONDS` と同じ数です。
+#: ショートの上限は60秒、この作りの長尺は4分以上（`src/verify.py`）なので、
+#: あいだの180秒に置いています。**実測でこの帯に本は1つもありません**
+#: （`_long_by_duration()` の「二山」の節）。
+LONG_MIN_SECONDS = 180.0
 
 JST = dt.timezone(dt.timedelta(hours=9))
 
@@ -143,9 +150,90 @@ def forms(path: pathlib.Path | None = None) -> dict[str, str]:
     return {str(k): str(v) for k, v in got.items()} if isinstance(got, dict) else {}
 
 
-def _long_ids(forms_path: pathlib.Path | None = None) -> set[str]:
-    """**形が分かっている長尺だけ**。不明は落としません（落とすと母集団が消えます）。"""
-    return {v for v, f in forms(forms_path).items() if f == LONG_FORM}
+def _long_by_duration(path: pathlib.Path | None = None) -> set[str]:
+    """**控えの尺で見た長尺**（`data/uploaded.jsonl` の `duration_s`）。
+
+    ## なぜ要るか（2026-08-30・最適化の回。**実測で見つけた**）
+
+    `forms()` が読む `data/video_forms.json` は Analytics の
+    `creatorContentType` です。**あれは公開して再生の付いた本にしか付きません。**
+    だから**予約ぶんの長尺は、1本も入っていません** —— 実測（この回に撃った）:
+
+        `forms()` が「長尺」と言う本            **18本**
+        控えの `duration_s` が 180秒 以上の本   **98本**
+        **重なり                                  1本**
+
+    **予約の側こそ、この関数の相手**です。`live_ids()` は控えの予約行も
+    受け取るので（`ab_split.published()`）、そこを見分けられないと
+    **長尺がショートの帯の枠を取ったことに気づけません。**
+    実測（同じ回・控えと公開済み 629本）:
+
+        `forms()` 由来の 18本 で見る    帯の枠を取っている長尺 **0本** ／ 落ちたショート **0本**
+        控えの尺で見る                  帯の枠を取っている長尺 **16本** ／ 落ちたショート **7本**
+
+    **`tests/test_live_ids_long_form.py` が「落ちたら直す回」と書いていた
+    その条件は、すでに満たされていました。** 検査が気づけなかったのは、
+    **検査も `_long_ids()` を使っていた**からです ——
+    見張りと見張られる側が、同じ目で見ていました。
+
+    ## 尺で割ってよい理由（この回に測った）
+
+    控えの `duration_s`（178本）に、**55秒 と 260秒 のあいだの本は 1本もありません。**
+    分布が二山なので、180秒 の境目はどちらの山も切りません。
+    `forms()` と重なる 1本 でも、両者の答えは一致しています（食い違い 0件）。
+
+    **この repo は既にこの読み方に寄せてあります** ——
+    `src/judgeable._short_topics()`／`src/ab_split._shorts_only()`／
+    `src/watches._durations()` は、どれも控えの `duration_s` で形を割ります
+    （2026-08-27 の結論「`judgeable` のほうが正しい」）。
+    **`day_cap` だけが、そこに合流していませんでした。**
+
+    **後の行が勝ちます**（`published()` と同じ規則。撃ち直しで尺が変わる本のため）。
+
+    **覆る条件**: ショートの上限が 3分 まで伸びたら（YouTube 側の仕様変更）、
+    `LONG_MIN_SECONDS` を測り直すこと。**境目を跨ぐ本が出たら、上の「二山」も
+    測り直すこと** —— そのときは尺だけでは割れません。
+    """
+    p = path or UPLOADED
+    if not p.exists():
+        return set()
+    out: set[str] = set()
+    try:
+        lines = p.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return set()
+    for line in lines:
+        if not line.strip():
+            continue
+        try:
+            r = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        vid, sec = r.get("video_id"), r.get("duration_s")
+        if not vid or sec is None:
+            continue
+        try:
+            long_form = float(sec) >= LONG_MIN_SECONDS
+        except (TypeError, ValueError):
+            continue
+        out.add(str(vid)) if long_form else out.discard(str(vid))
+    return out
+
+
+def _long_ids(forms_path: pathlib.Path | None = None,
+              uploaded_path: pathlib.Path | None = None) -> set[str]:
+    """**形が分かっている長尺だけ**。不明は落としません（落とすと母集団が消えます）。
+
+    出どころは2つ、**足し合わせます**（どちらも「分かっている」側）:
+
+      1. `forms()`   —— Analytics の `creatorContentType`。**公開して再生の付いた本だけ**
+      2. `_long_by_duration()` —— 控えの `duration_s`。**予約ぶんも入る**
+
+    **1 だけでは予約が見えません**（重なりは実測 1本／18本 対 98本）。
+    理由と実測は `_long_by_duration()` の docstring。
+    """
+    known = {v for v, f in forms(forms_path).items() if f == LONG_FORM}
+    return known | _long_by_duration(uploaded_path)
 
 
 def _readings(path: pathlib.Path | None = None,
@@ -1395,7 +1483,10 @@ if __name__ == "__main__":  # pragma: no cover
 # 処置そのものが再生を落としている場合に、その効果を隠します。
 # ここは順番だけを見ます。
 
-def live_ids(rows: list[dict], path: pathlib.Path | None = None) -> set[str]:
+def live_ids(rows: list[dict], path: pathlib.Path | None = None,
+             *, include_long: bool = False,
+             forms_path: pathlib.Path | None = None,
+             uploaded_path: pathlib.Path | None = None) -> set[str]:
     """**再生が付く側の `video_id`** を返す（API 0単位。公開済みも予約も同じ規則）。
 
     `rows` は `ab_split.published()` の行（`at` が JST の datetime、`video_id`）。
@@ -1407,34 +1498,62 @@ def live_ids(rows: list[dict], path: pathlib.Path | None = None) -> set[str]:
     **覆る条件**: `cap()` は実測から動きます（定数ではありません）。
     上限が上がれば、ここが返す集合も自動で広がります。
 
-    ## **ここは長尺を除きません**（2026-08-29 に測った。**差は 0本**）
+    ## **ここは長尺を外します**（2026-08-30・最適化の回に既定を変えた）
 
-    `by_day()` は既定で長尺を外します（`include_long=False`）——
+    `by_day()` はもとから外していました（`include_long=False`）——
     測っているのが**ショートの面**で、長尺は `SHORTS_FEED` の枠を
-    1つも使わないからです。**ここは外していません。**
+    1つも使わないからです。**ここだけが外していませんでした。**
 
-    08/29 05:4x の申し送りが「`live_ids()` 自体に `include_long=False` を
-    入れるほうが正しい」と言っていたので、**差を測りました**
-    （控えと公開済み 578本・長尺の分類 18件）:
+    ### 前の回（2026-08-29）が「差は 0本」と測ったのは、なぜ 0本 だったか
+
+    あの回はこう書いていました（控えと公開済み 578本）:
 
         live_ids(全部)             **452本**
         live_ids(長尺を先に除く)    **452本**
         長尺が帯の枠を取っている数   **0本** ／ そのせいで落ちたショート **0本**
 
-    **だから既定は変えていません。** 意味の変わる直しを 0本 のために
-    6つの呼び手（`judgeable` / `deep_short` / `motion_groups` /
-    `watch_eta` / `live_slots` / `batch_build`）へ同時に流すと、
-    **A/B の標本の切り方が全部 動きます。**
+    **数え方が正しく、長尺の一覧のほうが空でした。** `_long_ids()` は
+    `data/video_forms.json`（Analytics の `creatorContentType`）だけを読んでおり、
+    あれは**公開して再生の付いた本にしか付きません** ——
+    **予約ぶんの長尺が、1本も入っていませんでした**（実測 18本 対 98本・重なり 1本）。
 
-    **ただし機構は在ります** —— 長尺 11本 のうち **7本 が 9〜12時**、
-    つまり帯の中の時刻に公開されています。`_spaced` と `cap()` は
-    **形を見ずに時刻の早い順で切る**ので、長尺が帯へ寄れば
-    ショートが `alive` から落ちます。いま 0本 なのは、
-    **その日の本数が上限に届いていない日にしか長尺が居ない**からです。
+    **「差は 0本」は、長尺を 18本 しか見なかったときの 0本 です。**
+    控えの `duration_s` で数え直すと、同じ日のうちに:
+
+        live_ids(全部)             **446本**
+        live_ids(長尺を先に除く)    **437本**
+        長尺が帯の枠を取っている数  **16本** ／ そのせいで落ちたショート **7本**
+
+    **前の回が「落ちたら直す回」と書いた検査は、すでに落ちる条件を満たしていました。**
+    気づけなかったのは、**検査も同じ `_long_ids()` を使っていた**からです ——
+    見張りと見張られる側が同じ目で見ていた形（`_long_by_duration()` の節）。
+
+    ### 既定を変えると何が動くか（**呼び手を全部 見た**）
+
+    標本は**広がる向き**です（長尺が枠を明け渡し、ショートが `alive` に戻る）。
+
+      `judgeable` / `deep_short` / `motion_groups` / `watch_eta`
+          A/B の群はもともと長尺を入れません（`ab_split._shorts_only`）。
+          **増えるのはショートだけ** ＝ 床に早く届く ＝ **判定が早まる向き**
+      `live_slots` / `ab_slots` / `queue_lag`
+          `_swap_candidates` も `band_stray` も `vid in live` を要求するので、
+          **長尺は入れ替えの対象から外れます**（ショートの帯へ引きずり込まない）。
+          `Board._alive_on()` が下がるぶん、その日に置けるショートが増えます
+      `scripts/eta.py`
+          あちらは 08/29 から**手前で `_long_ids` を引いてから渡して**いました。
+          その手当てはそのまま効き、`_long_ids()` が広がったぶん正しくなります
+
+    **`include_long=True` は、外す前後を比べるとき用**です（`by_day()` と同じ）。
 
     **覆る条件と検査**: `tests/test_live_ids_long_form.py`。
-    **落ちたら、そのときが `include_long` を足す回**です。
+    長尺がショートの面（`SHORTS_FEED`）の枠を実際に食うと分かったら、
+    既定を戻すこと —— そのときは `by_day()` の既定も同時に戻すこと。
+    **片方だけ戻すと、また今日と同じ形になります。**
     """
+    if not include_long:
+        skip = _long_ids(forms_path, uploaded_path)
+        if skip:
+            rows = [r for r in rows if str(r.get("video_id") or "") not in skip]
     per_day: dict[dt.date, list[tuple[dt.datetime, str]]] = collections.defaultdict(list)
     for row in rows:
         when, vid = row.get("at"), str(row.get("video_id") or "")
