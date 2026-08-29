@@ -86,23 +86,33 @@ def test_配り直しは並べ替えだけで_枠を作り替えない() -> None
     assert len(out) == len(when)
 
 
-def test_早枠は遅枠より手前の枠を取る() -> None:
-    """**`when` の並びは `live_plan()` の埋め順**（手前から）なので、添字が早さの順位。
+def test_早枠は遅枠より_時刻の早い枠を取る() -> None:
+    """**並べるのは「時刻」です。`when` の添字ではありません。**
 
-    ここが逆向き・無関係になると、群の名札と実際の枠が食い違います
-    —— 判定は名札で数えるので、**そのまま嘘の結論が出ます。**
+    `live_ring()` が返すのは**埋め順**で、実物はこう来ます（2026-08-30 の実測）:
+
+        13:30, 13:30, 9:30, 10:30, 11:30, 12:30, 13:30
+
+    手前の日は 13:30 しか空いていない、という形です。**添字で配ると、
+    早枠に渡るのは「早い日の遅い時刻」**になり、
+    `config/hypotheses.yaml` の claim（「**帯の中の位置**」＝時刻）と
+    測っているものがずれます。**claim と処置がずれた実験は、
+    どちらに転んでも読めません。**
     """
+    from scripts import batch_build  # noqa: PLC0415  （`_slot_minutes` を使う）
+
     topics = [{"id": f"s-topic-{n}"} for n in range(20)]
-    when = [f"slot-{n:02d}" for n in range(20)]
+    # **わざと埋め順で渡します**（時刻の昇順ではない）
+    when = ["13:30", "13:30"] + [f"{9 + n // 2}:{'00' if n % 2 == 0 else '30'}"
+                                 for n in range(18)]
     out = _order()(topics, when)
-    rank = {w: n for n, w in enumerate(when)}
-    early = [rank[out[n]] for n, t in enumerate(topics)
+    early = [batch_build._slot_minutes(out[n]) for n, t in enumerate(topics)
              if ab_split.slot_half(t["id"]) == "早枠"]
-    late = [rank[out[n]] for n, t in enumerate(topics)
+    late = [batch_build._slot_minutes(out[n]) for n, t in enumerate(topics)
             if ab_split.slot_half(t["id"]) == "遅枠"]
     assert early and late, "この標本では片群が空です（`slot_half` の割合を見ること）"
-    assert max(early) < min(late), (
-        f"早枠 {sorted(early)} と 遅枠 {sorted(late)} が混ざっています"
+    assert max(early) <= min(late), (
+        f"早枠 {sorted(early)} と 遅枠 {sorted(late)} が時刻で分かれていません"
     )
 
 

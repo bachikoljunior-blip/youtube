@@ -1088,6 +1088,21 @@ def _show_slot(spec: str) -> str:
     return text if ":" in text else f"{text}:00"
 
 
+def _slot_minutes(spec: str) -> int:
+    """枠の指定 → **その日の何分めか**（`_show_slot()` と同じ読み方）。
+
+    `_ab_slot_order()` が「時刻の早い順」を作るために使います。
+    読めなければ `0`（＝いちばん手前）に落とします —— **ここで例外を上げると
+    投稿が止まります**（`CLAUDE.md`「投稿を途切れさせないこと」）。
+    並べ替えは実験で、投稿は本体。
+    """
+    try:
+        h, _, m = _show_slot(spec).partition(":")
+        return int(h) * 60 + int(m or 0)
+    except (ValueError, TypeError):                            # noqa: BLE001
+        return 0
+
+
 def _ab_slot_order(topics: list[dict], when: list[str]) -> list[str]:
     """**枠と題材の対応を、IDのハッシュで配り直す**（`src/ab_split.slot_half`）。
 
@@ -1118,8 +1133,17 @@ def _ab_slot_order(topics: list[dict], when: list[str]) -> list[str]:
     **変えるのは対応だけ**です。`when` の中身は1つも作り替えません ——
     `slots()` が既に選んだ枠を**並べ替えて返すだけ**なので、
     1日の本数も、埋まる時刻も、帯の外へこぼれる本も、1つも増えません。
-    **`when` の並びは `live_plan()` の埋め順（＝手前から）**なので、
-    **添字がそのまま「早さの順位」**です。
+    **順位は「時刻」で作ります。`when` の添字ではありません**（2026-08-30 に測った）。
+    `live_ring()` が返すのは**埋め順**で、実物はこう来ます:
+
+        13:30, 13:30, 9:30, 10:30, 11:30, 12:30, 13:30
+
+    手前の日は 13:30 しか空いていない、という形です。**添字で配ると、
+    早枠に渡るのは「早い日の遅い時刻」**になり、`config/hypotheses.yaml` の
+    claim（「**帯の中の位置**」＝時刻）と測っているものがずれます ——
+    **claim と処置がずれた実験は、どちらに転んでも読めません。**
+    時刻で並べれば、同じ日の中で 早枠 が手前・遅枠 が後ろになるので、
+    **日の効き（チャンネルのその日の配分）は両群に等しく乗ります。**
 
     ## 呼ぶのは `live` の回だけ
 
@@ -1155,10 +1179,24 @@ def _ab_slot_order(topics: list[dict], when: list[str]) -> list[str]:
         return (0 if ab_split.slot_half(tid) == "早枠" else 1,
                 int.from_bytes(h[4:8], "big"))
 
+    # **枠は「時刻の早い順」に並べます。添字の順ではありません**（2026-08-30 に測った）。
+    #     `live_ring()` が返すのは**埋め順**で、実物は
+    #     `13:30, 13:30, 9:30, 10:30, 11:30, 12:30, 13:30` のように来ます
+    #     （手前の日は 13:30 しか空いていない、という形）。
+    #     添字で配ると、早枠に渡るのは「**早い日**の遅い時刻」になり、
+    #     `config/hypotheses.yaml` の claim（「**帯の中の位置**」＝時刻）と
+    #     測っているものがずれます —— **claim と処置がずれた実験は、
+    #     どちらに転んでも読めません**（この repo が通算11回 踏んだ
+    #     「言っている所と、している所が別」）。
+    #     時刻で並べれば、同じ日の中で 早枠 が 9:30〜11:30・遅枠 が 12:30〜13:30 に
+    #     なるので、**日の効き（チャンネルのその日の配分）は両群に等しく乗ります。**
+    #     同じ時刻どうしは元の順を保つので、日の割り当ては今までどおり。
+    slot_rank = sorted(range(len(when)),
+                       key=lambda n: (_slot_minutes(when[n]), n))
     order = sorted(range(len(topics)), key=_key)
     out: list[str] = [""] * len(topics)
     for rank, i in enumerate(order):
-        out[i] = when[rank]
+        out[i] = when[slot_rank[rank]]
     early = sum(1 for t in topics if ab_split.slot_half(str(t.get("id") or "")) == "早枠")
     print(f"[batch] 枠は**IDのハッシュ**で配ります（`ab_split.slot_half`・"
           f"早枠 {early}本 ／ 遅枠 {len(topics) - early}本）。"
