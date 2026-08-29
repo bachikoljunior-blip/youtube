@@ -4972,3 +4972,10 @@
 {"at": "2026-08-29T07:40:47+00:00", "ok": true, "detail": "videos.update vdxF0QfsHDg", "by": "reschedule.py:_update"}
 {"at": "2026-08-29T08:41:01+00:00", "detail": "videos.update 5oActL0uzuQ", "by": "reschedule.py:_update"}
 {"at": "2026-08-29T09:34:47+00:00", "detail": "status: Data API 読み", "by": "status.py:main"}
+{"at": "2026-08-29T10:13:25+00:00", "detail": "playlistItems.list uploads", "by": "history.py:channel_video_ids"}
+{"at": "2026-08-29T10:13:30+00:00", "detail": "scheduled_publish_times", "by": "uploader.py:taken_publish_times"}
+{"at": "2026-08-29T10:13:33+00:00", "detail": "playlistItems.insert", "by": "uploader.py:_post_actions"}
+{"at": "2026-08-29T10:13:33+00:00", "detail": "thumbnails.set kAAGJrRCnLU", "by": "uploader.py:_set_thumbnail"}
+{"at": "2026-08-29T10:13:37+00:00", "detail": "scheduled_publish_times", "by": "uploader.py:taken_publish_times"}
+{"at": "2026-08-29T10:13:39+00:00", "detail": "playlistItems.insert", "by": "uploader.py:_post_actions"}
+{"at": "2026-08-29T10:13:39+00:00", "detail": "thumbnails.set MiB-qTT7l9k", "by": "uploader.py:_set_thumbnail"}
