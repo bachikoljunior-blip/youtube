@@ -89,6 +89,7 @@
 from __future__ import annotations
 
 import math
+import re
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
@@ -375,6 +376,93 @@ def standing_bans(doc: dict | None = None) -> dict[str, list[dict]]:
     return out
 
 
+#: 禁止の文が「この腕は**既に** N回 外れた」と主張している所を拾う型。
+#: **`外れ` の直前にある「N回」だけ**を見ます —— 同じ散文に
+#: 「5回 続けて名指しした」のような、腕の実績とは無関係な回数が混ざるので、
+#: 「N回」だけを拾うと別のものを数えます。
+_BAN_COUNT_RE = re.compile(r"(\d+)\s*回[^。]{0,14}?外れ")
+
+
+def falsified_count(lever: str, doc: dict | None = None) -> int:
+    """**その腕で「外れ」と判定ずみの前提の件数**（台帳の実数）。
+
+    `closed()` は使いません —— あちらは `effect` の無い行を落とすので、
+    **判定はしたが効き幅を書かなかった行が数から消えます。**
+    ここが答えるのは「何回 外れたか」なので、`outcome` だけを見ます。
+    """
+    doc = _load() if doc is None else doc
+    n = 0
+    for key in ("hypotheses", "confirmed"):
+        for h in doc.get(key) or []:
+            if not isinstance(h, dict):
+                continue
+            if str(h.get("lever") or "") != lever:
+                continue
+            if str(h.get("outcome") or "") == "falsified":
+                n += 1
+    return n
+
+
+def ban_facts(lever: str, doc: dict | None = None) -> list[dict]:
+    """**禁止の文の中の「N回 外れた」を、台帳の実数と突き合わせる。**
+
+    返りは食い違った分だけ `[{"said": N, "actual": M, "line": …}]`。
+
+    ## なぜ要るか（2026-08-30 に足した。**今週4件目の同じ形**）
+
+    `ban_lines` の締めは、読む側にこう言っています::
+
+        **開いている前提の `next_if_false` は条件つきです** …
+        ただし、**同じ腕で既に外れた回数がそこに書いてあるなら、
+        それは条件つきではありません。**
+
+    **つまり「回数が書いてあること」が、条件つきの禁止を無条件の禁止に
+    格上げする鍵になっています。** ところがその回数は**散文の中の手書き**で、
+    台帳と突き合わせている所がどこにもありませんでした。
+
+    実測 2026-08-30 —— `sub_rate` の禁止の文はこう書いています::
+
+        **`sub_rate` の腕は、動画の外側でも4回 外れたことになる**
+        （動画の中の文言で3回・外側で1回）
+
+    台帳の実数は **2件**（2026-08-08「チャンネルが何をする場所かを言う」/
+    2026-08-20「答えやすい問いかけで終える」。**どちらも中身の側**）で、
+    **動画の外側の1件は、まだ開いている当の前提そのもの**です
+    （期限 2026-09-09・「ホームに紹介動画とバナー」）。
+    **つまり 4 のうち 2 は台帳に無く、1 は「その前提が外れたら」の仮定**。
+    それでも `eta.py --alloc` は 5回 続けて `sub_rate` を1位に出し、
+    5回とも回の側がこの文で打ち消してきました
+    ——**打ち消しの根拠が、台帳の数と合っていません。**
+    その差は実測で **3日**（`sub_rate` 2027-01-18 対 `per_video` 2027-01-21）。
+
+    **これは「禁止をやめろ」ではありません。** 禁止は台帳のもので、
+    台帳のほうが事情を知っています（`eta.py` の註）。
+    ここが足すのは1つだけ ——**書いてある数が台帳と合っているかを、
+    毎回 機械が言う。** 合っていなければ、上の「条件つきではありません」の
+    逃げ道は使えません。
+
+    **覆る条件**: 散文から回数を書くのをやめて欄にしたら（例
+    `ban_because: {falsified: 4}`）、この正規表現は要りません。
+    **いまは欄にしていません** —— `BAN_MARKS` の註と同じ理由で、
+    欄を足すと**書いた側の1件だけが埋まって、残りが黙る**からです。
+    """
+    doc = _load() if doc is None else doc
+    actual = falsified_count(lever, doc)
+    out: list[dict] = []
+    for r in standing_bans(doc).get(lever) or []:
+        said = [int(m.group(1)) for m in _BAN_COUNT_RE.finditer(str(r["line"]))]
+        if not said:
+            continue
+        # **1つでも実数と合っていれば通します。** 直した文は、直す前の数を
+        #     引用したまま残すのが普通で（この repo の「消さないこと」）、
+        #     **最初の1つだけを見ると、引用のほうに当たります**
+        #     （実測 2026-08-30: 直した直後に、引用の「4回」で鳴りました）。
+        if actual in said:
+            continue
+        out.append({"said": said[0], "all": said, "actual": actual, "line": r["line"]})
+    return out
+
+
 def ban_lines(lever: str, doc: dict | None = None) -> list[str]:
     """`standing_bans` の1腕ぶんを、印字できる形にする（無ければ空）。"""
     rows = standing_bans(doc).get(lever) or []
@@ -387,11 +475,24 @@ def ban_lines(lever: str, doc: dict | None = None) -> list[str]:
                  else "**閉じています**")
         out.append(f"      ・「{r['claim']}」（{state}）の `{r['field']}`:")
         out.append(f"        {r['line'][:300]}")
+    # **「回数が書いてあるか」が、条件つきの禁止を無条件に格上げする鍵です**
+    #     （すぐ下の締めの文）。その回数は散文の中の手書きなので、
+    #     **台帳と突き合わせてから締めること**（`ban_facts` の docstring）。
+    facts = ban_facts(lever, doc)
+    for f in facts:
+        out.append(f"      [!] **その文が書いている「{f['said']}回 外れた」は、"
+                   f"台帳の実数と合いません（台帳は {f['actual']}件）。**"
+                   " 下の『回数が書いてあるなら条件つきではない』は、**この行には効きません** ——"
+                   " 数が台帳から出ていないので。**禁止を消す話ではありません**"
+                   "（禁止は台帳のもの）。直すのは"
+                   " `config/hypotheses.yaml` の**その文のほう**です。")
     if any(r["open"] for r in rows):
         out.append("      **開いている前提の `next_if_false` は条件つきです**"
                    "（その前提が外れたときの手）。**そのまま従う理由にはなりません** ——"
                    "ただし、同じ腕で既に外れた回数がそこに書いてあるなら、"
-                   "**それは条件つきではありません。**")
+                   "**それは条件つきではありません。**"
+                   + ("（**ただし上の [!] の行は別です。**"
+                      "書いてある回数が台帳と合っていません）" if facts else ""))
     return out
 
 
