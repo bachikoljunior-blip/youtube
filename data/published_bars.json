@@ -1731,6 +1731,20 @@
     ],
     "video_id": "mDnfNF8X9LU"
   },
+  "mishikyu-ichiji-50man-kojo": {
+    "charts": [
+      [
+        "5万円",
+        "12万5千円",
+        "20万円"
+      ],
+      [
+        "0円",
+        "5万円"
+      ]
+    ],
+    "video_id": "kA24tKMQIOc"
+  },
   "mishikyu-tsuki-betsu-2ka3ka": {
     "charts": [
       [
@@ -8420,6 +8434,20 @@
       ]
     ],
     "video_id": "vQc3Jx6rSyA"
+  },
+  "shokyu-inflation-breakeven-raise": {
+    "charts": [
+      [
+        "1億5193万2944円",
+        "1億3759万2319円",
+        "9571万9809円"
+      ],
+      [
+        "9571万9809円",
+        "1億1399万9966円"
+      ]
+    ],
+    "video_id": "LpGIOyidmQM"
   },
   "shougai-1kyu-sagaku-327322": {
     "charts": [

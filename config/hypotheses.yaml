@@ -1790,7 +1790,7 @@ hypotheses:
     # そこは主実行が本を足すほど伸びます（`scripts/queue_lag.py` の (A)）。
     # **幅も ±6日 → ±12日 に開いています。この日付は、まだ落ち着いていません。**
     # **次に落ちたときも、延ばすのは期限だけ。**
-    deadline: "2026-10-11"
+    deadline: "2026-10-13"
     lever: per_video                # engaged 比率（1本あたり再生の駆動輪）
     needs:
       # 群の作り方は `src/judgeable.MEMBER_SOURCES["slide_pace"]`（床 **16本**）。

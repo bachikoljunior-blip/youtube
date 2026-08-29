@@ -4866,3 +4866,9 @@
 {"at": "2026-08-29T05:14:38+00:00", "detail": "scheduled_publish_times", "by": "uploader.py:taken_publish_times"}
 {"at": "2026-08-29T05:14:40+00:00", "detail": "playlistItems.insert", "by": "uploader.py:_post_actions"}
 {"at": "2026-08-29T05:14:41+00:00", "detail": "thumbnails.set -19CJiICv_w", "by": "uploader.py:_set_thumbnail"}
+{"at": "2026-08-29T05:17:26+00:00", "detail": "scheduled_publish_times", "by": "uploader.py:taken_publish_times"}
+{"at": "2026-08-29T05:17:29+00:00", "detail": "playlistItems.insert", "by": "uploader.py:_post_actions"}
+{"at": "2026-08-29T05:17:30+00:00", "detail": "thumbnails.set LpGIOyidmQM", "by": "uploader.py:_set_thumbnail"}
+{"at": "2026-08-29T05:17:32+00:00", "detail": "scheduled_publish_times", "by": "uploader.py:taken_publish_times"}
+{"at": "2026-08-29T05:17:34+00:00", "detail": "playlistItems.insert", "by": "uploader.py:_post_actions"}
+{"at": "2026-08-29T05:17:34+00:00", "detail": "thumbnails.set kA24tKMQIOc", "by": "uploader.py:_set_thumbnail"}
