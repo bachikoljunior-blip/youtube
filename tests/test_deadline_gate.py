@@ -9,9 +9,16 @@
 
 ところが 2026-08-30 に測ると、**その赤い検査自身が ship 358件 を素通り**して
 いました（08/24〜08/30。そのあいだ到達予測は 2026-12-21 → 2027-01-10 ＝ **+20日
-遠のいた**）。中身は `opening_motion` —— 判定できるのは 09-22 なのに期限 10-07 で
-**15日**。`eta.py` は毎回「軌跡の腕が動くのは前提を1件閉じたときだけ」と印字して
-いるので、**その 15日 は到達日がまるごと止まっていた日数**です。
+遠のいた**・**verdict は 6件**）。中身は `opening_motion` —— 判定できるのは 09-22
+なのに期限 10-07 で **15日**。
+
+**その 15日 が何の日数かは、下の3件で測り直しました**（最初はここにも
+「到達日がまるごと止まっていた日数」と書いていて、**それは偽でした**）。
+`eta.py` の印字は `ready` 側で解かれているので、`deadline` を 15日 縮めても
+1日も動きません。動くのは `drift.overdue()` ——
+**「この回は verdict を出せ」と回に言う唯一の仕掛け**だけが `deadline` を読みます。
+だから 15日 は、**データが揃っているのに誰も閉じに行かない日数**です。
+**閉じる回が 1.7%（6/358）しかない輪で、閉じる合図を 15日 遅らせていました。**
 
 **素通りした理由は、検査の中身ではなく「誰が撃つか」でした。**
 
@@ -75,11 +82,11 @@ def test_ずれが無ければ通すこと():
 
 
 def test_遅すぎる期限で落ちること(capsys):
-    """データは揃うのに期限が先 ＝ 到達日がまるごと止まっている日数。"""
+    """データは揃うのに期限が先 ＝ **誰も閉じに行かない日数**（`Verdict.waits` の実測）。"""
     v = _V(15, False, date(2026, 10, 7), date(2026, 9, 22), "冒頭0.9秒の動き")
     assert J.gate([v]) == 2
     out = capsys.readouterr().out
-    assert "15日" in out, "止まっている日数を言っていません"
+    assert "15日" in out, "遅れている日数を言っていません"
     assert "--shrink" in out, "直す手を名指ししていません"
 
 
@@ -134,3 +141,75 @@ def test_診断だけの道が壊れていないこと():
     j = src.index("record_estimates(vs, as_of=as_of)")
     assert i < j, "門が印字の道より後ろにあります"
     assert "return gate(" in src[i:j], "門が gate() を呼んでいません"
+
+
+# --- **この門が乗っている前提を、字で固定する**（2026-08-30・同じ回に測り直した） ---
+#
+# この門を足した最初の版は、`Verdict.waits` の docstring をそのまま根拠にして
+# 「**この日数は到達日がまるごと止まっている日数そのもの**」と書いていました。
+# **同じ回に撃って、それが偽だと分かりました** ——
+# `deadline` を 15日 縮めても `eta.py --alloc` は1つも動きません。
+#
+# 書き置かれた結論は、それを書いた回の姿でできています。
+# `waits` の一文は 2026-08-25 22:5x には本当で、**その翌日**（08-26 20:4x に
+# `ready` が `arm_speed` へ配線された時点）に本当でなくなりました。
+# **結論より先に、その根拠のほうが腐ります。**
+#
+# だから、この門が実際に乗っている2つの事実を字で留めます。
+
+
+def test_到達日は_ready_側で解かれていること():
+    """**`deadline` を動かしても `eta.py` の印字は動きません。**
+
+    `src/arm_speed.py` は `ready` を `deadline` より優先し、
+    `forward()` / `forward_by_arm()` は `ready` だけを読みます。
+
+    **覆る条件**: ここが `deadline` に戻ったら、`waits` は再び
+    「到達日が止まっている日数」になります。そのときは
+    `Verdict.waits` と `gate()` と `stop_check.sh` の3か所を戻すこと。
+    """
+    src = (ROOT / "src" / "arm_speed.py").read_text(encoding="utf-8")
+    i = src.index("def next_close(")
+    j = src.index("def forward(")
+    body = src[i:j]
+    assert 'src = "ready"' in body or '"ready"' in body, \
+        "arm_speed が ready を持っていません（waits の意味が変わります）"
+    fwd = src[src.index("def forward_by_arm("):]
+    assert "ready.get(claim)" in fwd, "forward_by_arm が ready を読んでいません"
+
+
+def test_閉じろと言う門だけが_deadline_を読んでいること():
+    """**`drift.overdue()` が `deadline` だけを読む** —— これがこの門の存在理由です。
+
+    `overdue()` は `stop_check.sh` (1.7)「期限の来た問いの置き去り」の入力で、
+    **「この回は verdict を出せ」と回に言う唯一の仕掛け**。だから期限が
+    `ready` より先にあるあいだ、**データは揃っているのに誰も閉じに行きません。**
+
+    **覆る条件**: `overdue()` が `ready` を読むようになったら、`deadline` は
+    どの門の入力でもなくなります。**そのときは `--gate` ごと畳んでよい** ——
+    残す理由が無くなるので。
+    """
+    import inspect
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("dg_drift", ROOT / "scripts" / "drift.py")
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules["dg_drift"] = mod
+    spec.loader.exec_module(mod)
+    body = inspect.getsource(mod.overdue)
+    assert 'h.get("deadline")' in body, "overdue が deadline を読んでいません"
+    assert "ready" not in body, (
+        "overdue が ready を読むようになりました —— `deadline` はもうどの門の"
+        "入力でもありません。`deadline_check.py --gate` と stop_check.sh (1.9) を畳むこと")
+
+
+def test_止まっている日数だとは言わないこと():
+    """**測り直した結果を、字で戻させない。**
+
+    「到達日がまるごと止まっている」は、2026-08-26 以降は偽です。
+    この文言が戻ったら、次に来た側はまた `eta.py` で確かめて
+    「効かなかった」と結論し、門ごと捨てます。
+    """
+    for rel in ("scripts/deadline_check.py", "scripts/stop_check.sh"):
+        src = (ROOT / rel).read_text(encoding="utf-8")
+        assert "到達日がまるごと止まっている日数**そのもの" not in src, \
+            f"{rel} に測り直す前の文言が戻っています（`Verdict.waits` の実測を読むこと）"
