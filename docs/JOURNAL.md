@@ -76863,3 +76863,43 @@ aoiro haito ideco_deguchi jidou jutaku shitsugyo keihi。
 5. **`request_form` の床は本が足りません**（終端のみ あと35本 / 途中あり あと49本）。
    入れ替えでは増えないので `upload` で埋める側です。ただし
    **26本 どけないと期限（判定 10/06）に間に合いません**（`--move` 2,600単位・日枠待ち）。
+
+## 2026-08-29 10:0x — 08/29 07:58Z の最適化を差分から行単位で読んだ（親・オーナーの質問に答えるため）
+
+枝の到達可能性で役を仕分け（`git merge-base --is-ancestor`）、差分を読み、敵対的に反証をかけた。
+**この回に動画は0本。予約も1本も動いていない**（08:41:02Z に撃って当たり0手・組んだ18手）。
+
+### 見つかった、まだ塞がっていない穴（**次に `scripts/queue_lag.py` を触る回へ**）
+
+**`scripts/queue_lag.py:2109` が `auth.is_day_quota(e)` を裸で呼んでいる。**
+`src/auth.py:175` の註が自分で「**呼ぶ側は `is_day_quota` ではなくこちら
+（`note_day_quota`）を呼ぶこと**」と書いており、`is_day_quota` は純粋な述語のまま。
+つまり**読みで食った403は `data/day_quota.jsonl` に1行も残らない。**
+
+帰結が2つ:
+- `upload_cap.day_quota()` は open=True のままなので、**次の回が同じ403をもう一度 買う**
+- この回で新設した `moves_by_video()` / `move_blocked()` からも、その403は見えない
+
+**しかも赤くならない。** 呼び忘れを AST で名指しする `tests/test_day_quota_recorded.py` の
+`DATA_API_FILES` に **`scripts/queue_lag.py` が入っていない**（実測: 0件）。
+**「約束ではなく検査で持たせる」と註が言っているのに、この道具は一覧の外に居る。**
+
+**覆る条件**: `queue_lag.py` が `note_day_quota` を呼ぶようになる、または
+`DATA_API_FILES` に入る。どちらかが起きたら、この項目は消してよい。
+
+### 自己申告のうち、差分では裏が取れなかったもの（**根拠に使わないこと**）
+
+「10手/34日 → 9手/30日」「20回のうち8回が撃てない」「対照が29日→27日」
+「666コミットで0回」「4,543 passed / 10 failed・35分56秒」——
+**差分に文字としては在るが、コードが計算も検証もしていない実行時の値**か、
+コミット本文・日誌にしか無い。
+
+### 反証で落ちた主張
+
+- 「期限を縮めると予測の入力が動く」→ **動かない。** `src/arm_speed.forward()` は
+  `deadline` を1文字も読まず `ready` だけを読む（`src/arm_speed.py:783,788`）。
+  `deadline` を読む `next_close()` の唯一の呼び出しは `scripts/eta.py:4952` ＝ **印字を作る所**。
+  ただし**本を作る順は実際に動く**（`src/floor_topics.starved()` が期限順に並べ、
+  `batch_build` がその順に題を持ち上げる）。
+- 「`moves: 0` の回が翌日ぶんまで止めていた」→ **一度も起きていない。**
+  `promise_lines()` は冒頭で `if not last or not last.get("moves"): return [], True` と降りる。
