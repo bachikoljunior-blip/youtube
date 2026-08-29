@@ -1958,11 +1958,18 @@ hypotheses:
       # `tests/test_judgeable.py::test_実物で期限が構造的に守れる` が赤で居座ります
       # （`request_form` / `slide_pace` が同じ所を踏んでいます ＝ `ACCRUING`）。
       # 積み終わったら `MEMBER_SOURCES` へ載せ、`group_key` に戻すこと。
+      #
+      # **数えるのは「予約の日」ではなく「作った時刻」です**（2026-08-29 に踏んだ）。
+      # 最初この式は `uploaded()` の `at`（＝公開する日）で数えており、
+      # **既に予約に入っている 426本 がそのまま満ちて**、`deadline_check` が
+      # 「もう判定できる」（ready 2026-08-29）と言いました。
+      # **その 426本 は score 順で枠が決まっている本**で、この実験の群ではありません
+      # （`landed` の約束そのもの）。`tests/test_deadline_check.py` の
+      # `test_遅すぎる期限が残っていないこと` が赤くなって見つかっています。
       - kind: accrual
-        count_expr: len({r['video_id'] for r in uploaded()
-          if r.get('video_id')
-          and str(r.get('topic', '')).startswith('s-')
-          and str(r.get('at', ''))[:10] >= '2026-08-30'})
+        count_expr: len({x['topic'] for r in rows('batch_runs.jsonl')
+          if str(r.get('at', '')) >= '2026-08-29T23:45' and not r.get('long')
+          for x in r.get('results', []) or [] if x.get('video_id')})
         need: 32
         since: "2026-08-29"
     falsified_if: >
