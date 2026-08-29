@@ -1078,10 +1078,142 @@ def _per_day_soft(fallback: int = 10) -> int:
 _PER_DAY_SOFT = 10            # **読めない回の既定**。実際に使う数は `_per_day_soft()`
 
 
+def _band_bounds() -> tuple[int, int]:
+    """**生きる帯の両端**（0時からの分）。**写さずに引く。**
+
+    下端は `PROVEN_FROM_MIN`（この節の註）、上端は `src/collisions.LIVE_TO_MIN`。
+    どちらかが測り直しで動いたら、帯を使う所は全部いっしょに動きます。
+    """
+    try:
+        from src import collisions                              # noqa: PLC0415
+        return PROVEN_FROM_MIN, int(collisions.LIVE_TO_MIN)
+    except Exception:                                           # noqa: BLE001
+        return PROVEN_FROM_MIN, 13 * 60 + 30
+
+
+def _ledger_by_day() -> dict[str, set[int]]:
+    """控えを **1回だけ**読んで、日 → 埋まっている分（0時から）にする（API 0単位）。
+
+    `ledger_minutes()` は1日ぶんを返すために**控えを丸ごと読み直します**。
+    帯が埋まった日から次の日へ歩くと日数ぶん呼ぶことになるので、ここで1回に畳みます。
+    """
+    out: dict[str, set[int]] = {}
+    try:
+        rows = [r for r in dupes.ledger_rows() if r.get("at")]
+    except Exception as exc:                                    # noqa: BLE001
+        print(f"[batch] 控えが読めませんでした（続行）: {str(exc)[:80]}", flush=True)
+        return out
+    for row in rows:
+        for at in _row_times(row):
+            when = at.astimezone(JST)
+            out.setdefault(when.strftime("%Y-%m-%d"),
+                           set()).add(when.hour * 60 + when.minute)
+    return out
+
+
+def _band_walk(count: int, date_jst: str, from_min: int = 0,
+               first_day_taken: set[int] | None = None,
+               taken_by_day: dict[str, set[int]] | None = None,
+               lanes_n: int | None = None,
+               horizon: int = 120) -> list[str]:
+    """**ショートの置き先を、生きる帯の空きから日をまたいで拾う**（API 0単位）。
+
+    ## なぜ要るか（2026-08-29・最適化の回。**この回に実測して足した**）
+
+    `_slots_fine()` の枠は長らく `range(hour * 60, 24 * 60, step_min)` で、
+    **1日の終わりまで**でした。だから `--date` を渡した回は、帯（09:00〜13:30）が
+    埋まると **14:00 以降の枠へ静かにこぼれます。** こぼれた本は死にます。
+
+    **この回の実測**（`data/uploaded.jsonl` × `data/views.jsonl`・
+    08-19 以降・齢 20〜120時間 の最初の読み・**題の `#Shorts` で形を分けた**）:
+
+        ショート 帯の中 09:00〜13:30    99本  合計 53,185再生   1本あたり **537.2**
+        ショート 帯の外               60本  合計     43再生   1本あたり **0.7**
+
+    **同じ形・同じ作り方で 768倍**です。切り分けも1組あります ——
+    08/27 の 05:00〜08:30 に置いた **8本**（全部ショート）は**8本とも 0再生**、
+    同じ日の 09:00〜13:30 の 10本 は 56〜918再生。**違うのは時刻だけ**です。
+
+    そして 2026-08-29 の予約には、**帯の外のショートが 99本** 残っていました
+    （14:00 に12本・15:00 に17本・16:00 に11本・21:00 に10本・05:00 台に11本…）。
+    そのうち **66本 は、同じ日の帯に空き枠があるのに外へ置かれています。**
+    本数の取り合いですらなく、**枠の選び方だけ**で捨てていました。
+
+    ## 何をするか
+
+    `date_jst` の帯から拾い、足りなければ**次の日の帯へ**進みます
+    （`24:00` へではなく）。1日に取る本数は `day_cap.cap()` まで ——
+    帯に枠が残っていても、上限を超えたぶんは 0再生 だからです。
+
+    **`--long` には掛けません。** 長尺は `SHORTS_FEED` の枠を1つも使わず、
+    上限も別（`day_cap.long_form()`）で、置き先は `_long_ring()` の 18〜22時 です。
+
+    **覆る条件**: `src/day_cap.window()` が **(B)「T までに出した本は全部生きる」**
+    と決着したら、上端 `collisions.LIVE_TO_MIN` を測り直すこと ——
+    そのときは帯が広がり、1日に置ける本数も増えます。
+    左端 `PROVEN_FROM_MIN` を下げるのは (B) が出てからです
+    （**08:30 より前は測って 0再生**。`src/day_cap.py` の窓の節）。
+    帯の中の1本あたりが、帯の外の1本あたりを**下回ったら**この関数を外すこと。
+    検査は `tests/test_band_walk_shorts.py`。
+
+    ## 渡された埋まりを、必ず先に使うこと
+
+    `first_day_taken` は**呼ぶ側が明示した `date_jst` の埋まり**（`taken_min`/`taken`）で、
+    渡されたらそちらが正です。**控えを読みに行かないこと** ——
+    ここは 2026-08-29 に一度 踏みました（渡された `taken_min=set()` を無視して
+    `data/uploaded.jsonl` を読み、**検査の答えが実物の予約で変わりました**）。
+    控えは、**`date_jst` より後ろの日を初めて見るときにだけ**、遅れて1回 読みます。
+    """
+    lo, hi = _band_bounds()
+    # **きざみは `day_cap.MIN_GAP_MIN` そのもの**（呼ぶ側の `--step-min` ではない）。
+    # これより詰めた本は死に（08/21 の :15/:45 が7本とも0）、
+    # これより空けると帯の枠を捨てます（1時間きざみだと 10枠 が 5枠 になる）。
+    # **帯の枠数 10 と `day_cap.cap()` の 10本/日 は、同じ実測から来ています。**
+    try:
+        from src import day_cap                                 # noqa: PLC0415
+        step = max(1, int(day_cap.MIN_GAP_MIN))
+        per_day = max(1, int(day_cap.cap()))
+    except Exception:                                           # noqa: BLE001
+        step, per_day = 30, _PER_DAY_SOFT
+    lo = max(lo, int(from_min))          # `--hour` は**下端**として効かせる
+    grid = [m for m in range(lo, hi + 1, step)]
+    if not grid or count <= 0:
+        return []
+    known: dict[str, set[int]] = dict(taken_by_day or {})
+    if first_day_taken is not None:
+        known[date_jst] = set(first_day_taken)
+    ledger: dict[str, set[int]] | None = taken_by_day if taken_by_day else None
+    n_lanes = lanes.LANES if lanes_n is None else lanes_n
+
+    day = datetime.strptime(date_jst, "%Y-%m-%d").date()
+    out: list[str] = []
+    for _ in range(horizon):
+        if len(out) >= count:
+            break
+        key = day.strftime("%Y-%m-%d")
+        if key not in known:
+            if ledger is None:
+                ledger = _ledger_by_day()      # **後ろの日を見るときだけ読む**
+            known[key] = set(ledger.get(key, set()))
+        busy = known[key]
+        free = [m for m in grid if m not in busy]
+        room = min(len(free), max(0, per_day - len(busy & set(grid))))
+        if room:
+            want = min(room, count - len(out))
+            # **車線から取る**（同じ回に走るきょうだいと同じ分を選ばないため。
+            # 理由は `src/lanes.py`）。控えは互いに見えないので、避けるだけでは足りません。
+            picked = sorted(lanes.order(free, step_min=step, lanes=n_lanes)[:want])
+            out += [f"{key}@{m // 60}:{m % 60:02d}" for m in picked]
+            known[key].update(picked)
+        day += timedelta(days=1)
+    return out
+
+
 def _slots_fine(count: int, hour: int, date_jst: str, hours: list[int],
                 step_min: int, taken: set[int] | None,
                 taken_min: set[int] | None,
-                lanes_n: int | None = None) -> list[str]:
+                lanes_n: int | None = None,
+                long_form: bool = False) -> list[str]:
     """`step_min` が 60 未満のときの割り当て（0時からの分で数える）。
 
     **`slots()` から呼ばれる前提**です。単体で呼ばないこと（`date_jst` を必須にしてある）。
@@ -1105,6 +1237,24 @@ def _slots_fine(count: int, hour: int, date_jst: str, hours: list[int],
                 "**それがこの目盛りの相手そのもの**です。"
             )
         taken_min = ledger_minutes(date_jst)
+    # **ショートは、生きる帯の外へこぼさない**（2026-08-29・最適化の回）。
+    # 実測は `_band_walk()` の docstring —— 帯の中 537.2再生/本 対 帯の外 0.7再生/本。
+    # 帯が埋まったら 14:00 以降ではなく**次の日の帯**へ進みます。
+    if not long_form:
+        walked = _band_walk(count, date_jst, hour * 60,
+                            first_day_taken=taken_min, lanes_n=lanes_n)
+        if len(walked) == count:
+            days = sorted({w.split("@")[0] for w in walked})
+            if days != [date_jst]:
+                print(f"[batch] **{date_jst} の帯（09:00〜13:30）が埋まっているので、"
+                      f"次の日の帯へ回します**: {', '.join(days)}"
+                      "　—— 帯の外は実測 0.7再生/本（帯の中 537.2）。"
+                      "**同じ日の 14:00 以降へは置きません**", flush=True)
+            return walked
+        print(f"[batch] [!] 帯の空きが {len(walked)}枠 しか読めませんでした"
+              f"（{count}本 要ります）。**今までどおり時刻で埋めます** —— "
+              "帯の外に落ちたぶんは 0再生 になります（`_band_walk` の実測）",
+              flush=True)
     grid = [m for m in range(hour * 60, 24 * 60, step_min) if m not in taken_min]
     if len(grid) < count:
         busy = sorted(f"{m // 60}:{m % 60:02d}" for m in taken_min)
@@ -1505,7 +1655,7 @@ def slots(count: int, hour: int, date_jst: str | None, hours: list[int],
           taken_min: set[int] | None = None,
           lanes_n: int | None = None,
           ring: tuple[int, ...] | list[int] | None = None,
-          live: bool = False) -> list[str]:
+          live: bool = False, long_form: bool = False) -> list[str]:
     """各本の予約時刻の指定を返す（`upload_only.py` の第3引数の形）。
 
     `date_jst` が無ければ従来どおり全部同じ時刻 —— `next_publish_at` が
@@ -1582,7 +1732,7 @@ def slots(count: int, hour: int, date_jst: str | None, hours: list[int],
         return [str(hour)] * count
     if step_min != 60:
         return _slots_fine(count, hour, date_jst, hours, step_min, taken, taken_min,
-                           lanes_n=lanes_n)
+                           lanes_n=lanes_n, long_form=long_form)
     if taken is None:
         taken = ledger_hours(date_jst)
     if hours:
@@ -1594,6 +1744,24 @@ def slots(count: int, hour: int, date_jst: str | None, hours: list[int],
                   "取り消し済みの枠でなければ `upload_only.py` が落とします。",
                   flush=True)
     else:
+        # **ショートは帯（09:00〜13:30）の外へこぼさない**（2026-08-29・最適化の回）。
+        # `range(hour, 24)` は、帯が埋まると 14:00 以降へ静かにこぼれます。
+        # 実測は `_band_walk()` の docstring —— 帯の中 537.2再生/本 対 帯の外 0.7再生/本。
+        if not long_form:
+            # `taken` は**時**なので、分に開いて渡します（09:00 の1本が
+            # 09:30 まで塞がないように。`ledger_minutes()` の註と同じ理由）。
+            walked = _band_walk(count, date_jst, hour * 60,
+                                first_day_taken={h * 60 for h in taken},
+                                lanes_n=lanes_n)
+            if len(walked) == count:
+                days = sorted({w.split("@")[0] for w in walked})
+                if days != [date_jst]:
+                    print(f"[batch] **{date_jst} の帯が埋まっているので、次の日の帯へ"
+                          f"回します**: {', '.join(days)}　—— 帯の外は実測 0.7再生/本",
+                          flush=True)
+                return walked
+            print(f"[batch] [!] 帯の空きが {len(walked)}枠 しか読めませんでした"
+                  f"（{count}本 要ります）。**今までどおり時刻で埋めます**", flush=True)
         picked = [h for h in range(hour, 24) if h not in taken]
         if len(picked) < count:
             raise SystemExit(
@@ -2885,7 +3053,8 @@ def main(argv: list[str] | None = None) -> int:
     # `ring`（長尺の輪）は、どれも「置き先を指示された」回なので触りません。
     live = not args.date and not hours and not ring and not hour_given
     when = slots(len(topics), args.hour, args.date or None, hours,
-                 step_min=args.step_min, ring=ring, live=live)
+                 step_min=args.step_min, ring=ring, live=live,
+                 long_form=bool(args.long))
 
     if args.date:
         # **`+ ':00'` と書かないこと**（2026-08-18 に直した）。`--step-min` を
