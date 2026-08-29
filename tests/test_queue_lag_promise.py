@@ -46,7 +46,7 @@ def ledger(tmp_path, monkeypatch):
 
 def _row(before: dict, promised: dict, moves: int = 20,
          after: dict | None = None, attempted: int | None = None,
-         failed: list[str] | None = None) -> str:
+         failed: list[str] | None = None, stopped: str = "") -> str:
     """`moves` は**当たった手の数**、`attempted` は**組んだ手の数**（2026-08-29）。
 
     2つが要るのは、`after != before` が言うのは「**1手でも**当たった」だけで、
@@ -62,6 +62,8 @@ def _row(before: dict, promised: dict, moves: int = 20,
         rec["attempted"] = attempted
     if failed is not None:
         rec["failed"] = failed
+    if stopped:
+        rec["stopped"] = stopped
     return json.dumps(rec, ensure_ascii=False)
 
 
@@ -169,6 +171,54 @@ def test_一部だけ当たった回を_きょうだいのせいにしないこ�
     assert "vidX" in blob, "落ちた本を名前で出さないと、どの群か分かりません"
     assert "単位では直りません" not in blob, (
         "**撃ち直しても無駄、と書いています。** (4) は撃ち直すと当たります")
+
+
+def test_枠が尽きて降りた回を_手が当たらないと読まないこと(ledger) -> None:
+    """**(5) 日枠が尽きた**（2026-08-29 08:41Z に実物で踏んだ）。
+
+    帳面はこう残りました —— `attempted: 18` / `moves: 0` / `after == before`。
+    **17手 は一度も試されていません。** 枠は太平洋時間の0時に戻り、
+    **戻ればそのまま当たります。**
+
+    止める理由が「この手は当たらない」なら止めてよい。
+    **「今日はもう撃てない」なら、明日そのまま撃てばよい。**
+
+    **効くのは「途中まで当たってから尽きた」回**です —— そこは
+    `after != before` なので、**(4) MOVE_CAP のせいだ**と読まれます。
+    理由が違えば次の手も違うので、ここで先に分けます。
+    （`moves: 0` の回は `promise_lines` が手前で降りるので、そもそも止めません。
+    下の `test_枠切れで1手も当たらなかった回は止めないこと` がその側です。）
+    """
+    ledger.write_text(
+        _row(_BEFORE, _PROMISED, moves=4, after=_PROMISED, attempted=18,
+             failed=["vidQ"], stopped="quota") + "\n", encoding="utf-8")
+    lines, ok = queue_lag.promise_lines(_Plan(_NOW, _AGAIN))
+    assert ok is True, (
+        "**枠切れで止めています。** 手について何も分かっていない回で"
+        "止めると、枠が戻っても次の回が撃ちません")
+    blob = "\n".join(lines)
+    assert "日枠が尽きて降りました" in blob
+    assert "手について何も分かっていません" in blob
+    assert "MOVE_CAP" not in blob and "move_blocked" not in blob, (
+        "**(4) の理由（窓の上限）を印字しています。** 尽きたのは日枠のほうで、"
+        "次にやることが違います（(4) は今すぐ撃ち直せる／(5) は枠が戻るまで待つ）")
+
+
+def test_枠切れで1手も当たらなかった回は止めないこと(ledger) -> None:
+    """`moves: 0` ＝ **約束そのものが立っていない**。門は手前で降ります。
+
+    実測（2026-08-29 08:41Z）がこの形でした。ここが止めると、
+    **枠が戻った翌日に、直った `--plan` を誰も撃ちません。**
+    """
+    ledger.write_text(
+        _row(_BEFORE, _PROMISED, moves=0, after=_BEFORE, attempted=18,
+             failed=["vidQ"], stopped="quota") + "\n", encoding="utf-8")
+    _lines, ok = queue_lag.promise_lines(_Plan(_NOW, _AGAIN))
+    assert ok is True
+    _slines, moving = queue_lag.stuck_lines(_Plan(_NOW, _AGAIN))
+    assert moving is True, (
+        "**`stuck_lines` が枠切れの回で止めています。**"
+        "枠は太平洋時間の0時に戻ります —— 手は消えていません")
 
 
 def test_attempted_の無い古い帳面では_どちらとも決めないこと(ledger) -> None:
