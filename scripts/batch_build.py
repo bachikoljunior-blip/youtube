@@ -2872,6 +2872,16 @@ def _rescue_dead_slots() -> None:
         gain = len(board.live()) - was
         if gain <= 0 or not board.moves:
             return
+        # **`live_slots.main(["--apply"])` が持っている枠の門を、こちらにも掛ける**
+        # （手を `_RESCUE_MAX` で切るために `apply_moves` を直に呼んでいるので、
+        #  門をすり抜けます。**片方だけ直す**が、この repo が繰り返している形）。
+        from scripts import queue_lag                           # noqa: PLC0415
+        _lines, ok = queue_lag.quota_lines(queue_lag.Plan())
+        if not ok:
+            print("[batch] 0再生の枠の逃がしは、**枠が戻ってから**（"
+                  f"手は {len(board.moves)}本 残ります。`--plan` は毎回 組み直します）",
+                  flush=True)
+            return
         board.moves = board.moves[:_RESCUE_MAX]
         print(f"[batch] **0再生の枠のショートを {len(board.moves)}本 逃がします**"
               f"（{len(board.moves) * 50}単位。この回の実測で 帯の中 537.2再生/本 対 "
