@@ -149,3 +149,34 @@ def test_窓の外の観測は帯に入れない(tmp_path):
     assert b["hi"] == 4 and b["lo"] == 3, "窓の中に残るのは 08/26 の2件だけ"
     assert b["band"] == 1, ("古い 31日 を混ぜて帯を 28日 にしないこと —— "
                             "**もう起きない幅で今日の判定を黙らせる**ことになります")
+
+
+def test_過去の日の遅れは0にならない():
+    """**過去の `as_of` に、その日にはまだ無かった観測を混ぜないこと。**
+
+    実測 2026-08-29: `analytics_lag_days(date(2026,8,26))` は **0日** を返していた
+    （`max(last_day)` を台帳ぜんたいから採っていたため）。
+    `ANALYTICS_LAG_FALLBACK` の註が「**0 にしないこと** —— いちばん危ない側へ
+    倒れます」と禁じている、その値そのもの。
+
+    何が壊れるか: `readable_by(as_of, s)` は `as_of - (settle + lag)` なので、
+    **lag が 0 に落ちると判定の締切が 3日 うしろへ伸び、まだ読めていない
+    データで判定する側へ倒れます**（`falsified_if` は「上回らなければ外れ」）。
+    """
+    from datetime import date as _date
+
+    for d in (_date(2026, 8, 20), _date(2026, 8, 26), _date(2026, 8, 29)):
+        got = settle.analytics_lag_days(d)
+        assert got > 0, (
+            f"{d} の遅れが {got}日 —— **「遅れは無い」と言い切っています。** "
+            "台帳ぜんたいの `max(last_day)` を採っていませんか"
+            "（その日以降に積まれた行が混ざります）"
+        )
+
+    # 台帳より前の日を訊かれたら、控えへ落ちること（0 にしない）
+    assert settle.analytics_lag_days(_date(2026, 1, 1)) == settle.ANALYTICS_LAG_FALLBACK
+
+
+def test_遅れは今日でも0にならない():
+    """いまの日でも 0 にならないこと（Analytics は日次で遅れる）。"""
+    assert settle.analytics_lag_days() > 0

@@ -149,10 +149,38 @@ def analytics_lag_days(as_of: date | None = None) -> int:
     （`falsified_if` は「上回らなければ外れ」なので、**外れ側に倒れます**）。
     """
     path = ROOT / "data" / "analytics_lag.jsonl"
+    today = as_of or datetime.now(timezone(timedelta(hours=9))).date()
     try:
         rows = [json.loads(x) for x in path.read_text(encoding="utf-8").splitlines() if x.strip()]
-        last = max(r["last_day"] for r in rows)
-        today = as_of or datetime.now(timezone(timedelta(hours=9))).date()
+        # **過去の日を訊かれたら、その日に見えていた分だけで答えること**
+        # （2026-08-29・最適化の回に踏んだ）。
+        #
+        # ここは長らく `max(last_day)` を**台帳ぜんたい**から採っていました。
+        # 台帳には毎周 行が積まれるので、**過去の `as_of` を渡すと、その日には
+        # まだ存在しなかった観測まで混ざります。**
+        # 実測: `analytics_lag_days(date(2026,8,26))` → **0日**
+        # （台帳の最新 `last_day` が 08/26 なので、08/26 − 08/26 ＝ 0）。
+        # **「遅れは無い」と言い切る形**で、`ANALYTICS_LAG_FALLBACK` の註が
+        # 「**0 にしないこと** —— いちばん危ない側へ倒れます」と禁じている、
+        # その値そのものです。
+        #
+        # 何が壊れるか: `readable_by(as_of, s)` が
+        # `as_of - (settle + lag)` なので、**lag が 0 に落ちると
+        # 判定の締切が 3日 うしろへ伸びます** —— つまり
+        # **まだ読めていないデータで判定する**側へ倒れます。
+        # このファイル自身が「A/B だけ**1日 楽観**に出ていました。
+        # 楽観のほうへ期限を寄せると、その日にはまだ来ていないデータで
+        # 判定することになります（`falsified_if` は「上回らなければ外れ」なので、
+        # **外れ側に倒れます**）」と書いている、その 3日 版です。
+        #
+        # **覆る条件**: 台帳の行から `at` が消えたら、この絞り込みは効きません
+        # （そのときは `ANALYTICS_LAG_FALLBACK` へ落ちます。0 にはしないこと）。
+        seen = [r for r in rows
+                if str(r.get("at", ""))[:10] and date.fromisoformat(str(r["at"])[:10]) <= today]
+        use = seen or ([] if as_of is not None else rows)
+        if not use:
+            return ANALYTICS_LAG_FALLBACK
+        last = max(r["last_day"] for r in use)
         return max(0, (today - date.fromisoformat(last)).days)
     except Exception:                                          # noqa: BLE001
         return ANALYTICS_LAG_FALLBACK
