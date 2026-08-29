@@ -431,3 +431,43 @@ def test_枠が尽きたら止まる(monkeypatch):
     assert queue_lag.apply_moves(plan) == 1, "日枠切れでも先へ進んでいる"
     assert calls == ["A", "B", "C"], "止まるべき所で先へ進んでいる"
     assert plan.applied == 2, "止まる前に当たった2手が残っていない"
+
+
+# ------------------------------------------------ 6: **撃たなかった回**を数えない
+
+# **2026-08-29 に実測で見つけた、幻の作りかた。**
+#
+# `reschedule._update` は **False** を返す道が2つあります ——
+# 「もうその値です」と、**`move_hold` の上限**（1つの窓で同じ本は2回まで）。
+# 後者は **YouTube を1文字も変えていません。** それなのに `main` は
+# `dupes.retime()` で**新しい時刻を控えへ書き**、「移しました」と印字して
+# `return 0` を返していました。
+#
+# **控えだけが動く ＝ 幻の予約を、こちらの手で作る**ということです。
+# ⑦（`docs/JOURNAL.md` 2026-08-29）で `queue_lag --apply` を丸ごと 0/26 に
+# していた「幻」と、**同じ形の在庫をここが生産していました。**
+#
+# 実測: この回の `--apply` 1回で上限に当たったのは **4本**。
+# `apply_moves` はその4本も「動かした」と数え、**24手 全部 当たった**と
+# 印字して、守れない約束（`opening_motion` 09/07）を帳面へ書いています。
+
+
+def test_撃たなかった手を当たったと数えない(monkeypatch):
+    """`RC_NOT_MOVED` は **`ok` ではありません**。"""
+    calls: list = []
+
+    def main(argv):
+        calls.append(argv[1])
+        if argv[1] == "A":
+            return _sched.RC_NOT_MOVED
+        return 0
+
+    monkeypatch.setattr(_sched, "main", main)
+    plan = _Plan([("A", "t1"), ("B", "t2"), ("C", "t3"), ("D", "t4")])
+    queue_lag.apply_moves(plan)
+
+    assert plan.applied == 2, (
+        "上限で撃たなかった手を「動かした」と数えている"
+        "（守れない約束を帳面へ書きます）")
+    assert "B" not in calls, "前半が動いていないのに、後半だけ撃っている"
+    assert getattr(plan, "failed", None) == ["A"]

@@ -2014,6 +2014,14 @@ def apply_moves(plan: Plan) -> int:
             print(f"[queue_lag] {vid} は**もう公開済み**でした。"
                   " この組は飛ばします（**控えはもう直っています**）", flush=True)
             return "skip"
+        if rc == getattr(reschedule, "RC_NOT_MOVED", object()):
+            # **撃っていません**（1つの窓で同じ本は2回まで、の上限）。
+            # ここを "ok" と数えていたので、**24手 全部 当たった**と印字して
+            # 守れない約束を帳面へ書いていました（2026-08-29 の実測: 1回の
+            # `--apply` で上限に当たったのは 4本）。
+            print(f"[queue_lag] {vid} は**動いていません**（この窓の上限）。"
+                  " この組は飛ばします", flush=True)
+            return "bad"
         return "ok"
 
     def _record() -> None:

@@ -317,6 +317,11 @@ class AlreadyPublic(RuntimeError):
 #: （止めない ―― 残りの手は当たります）。
 RC_ALREADY_PUBLIC = 3
 
+#: **撃たなかった**（`move_hold` の上限、または「もうその値」）。
+#: 実物も控えも動いていません —— 呼ぶ側は「当たった」と数えないこと
+#: （`queue_lag.apply_moves` が 2026-08-29 まで数えていました）。
+RC_NOT_MOVED = 4
+
 
 def _update(svc, video_id: str, publish_at: str | None,
             fallback_status: dict | None = None) -> bool:
@@ -1477,7 +1482,7 @@ def main(argv: list[str] | None = None) -> int:
             raise SystemExit(f"過去の時刻です: {when} JST")
         iso = at.strftime("%Y-%m-%dT%H:%M:%SZ")
         try:
-            _update(svc, vid, iso)
+            wrote = _update(svc, vid, iso)
             # **控えにも書き戻すこと**（2026-08-18 に実測で見つけた）。
             # `--compact` は控えだけを見るので、ここを飛ばすと
             # **実物は動いたのに、次の回は古い時刻のまま割り当てを組みます。**
@@ -1488,7 +1493,31 @@ def main(argv: list[str] | None = None) -> int:
             # 外へ出すと `try` の本体が `_update` だけになり、
             # **あの検査が落ちます** —— 落ちるのが正しい形なので、
             # 検査をゆるめずに、2つを同じブロックへ置きました。
-            dupes.retime(vid, iso)
+            #
+            # **ただし「撃たなかった回」に書かないこと**（2026-08-29 に実測で見つけた）。
+            # `_update` は **False** を返す道が2つあります ——
+            # 「もうその値です」と、**`move_hold` の上限（1つの窓で同じ本は2回まで）**。
+            # 後者は **YouTube を1文字も変えていない**のに、ここは
+            # `retime` で**新しい時刻を控えへ書き**、下で「移しました」と印字し、
+            # `return 0` を返していました。
+            #
+            # **控えだけが動く ＝ 幻の予約を、こちらの手で作る**ということです。
+            # ⑦（`docs/JOURNAL.md` 2026-08-29）で `queue_lag --apply` を
+            # 丸ごと 0/26 にしていた「幻」と、**同じ形の在庫をここが生産します。**
+            #
+            # 実測 2026-08-29: この回の `--apply` 1回で上限に当たったのは **4本**。
+            # `apply_moves` はその4本も「動かした」と数え、**24手 全部 当たった**と
+            # 印字して、守れない約束を帳面へ書いています。
+            #
+            # **覆る条件**: `move_hold` を撤去するか、上限に当たった本を
+            # `Plan.improve()` が最初から選ばなくなったら、この分岐は死にます。
+            if wrote:
+                dupes.retime(vid, iso)
+            else:
+                print(f"[reschedule] {vid} は**撃っていないので、控えも直しません**"
+                      "（控えだけ動かすと、次の回が読む予約が幻になります）",
+                      flush=True)
+                return RC_NOT_MOVED
         except AlreadyPublic as exc:
             # **落としません。** 呼ぶ側（`queue_lag.apply_moves`）に
             # 「この本は飛ばして、残りは当てろ」と言うための終了コードです。
