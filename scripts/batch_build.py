@@ -364,6 +364,45 @@ def _drop_doomed(usable: list[dict], pool: list[dict]) -> list[dict]:
             dropped.append((t["id"], hits[0]["why"]))
         else:
             kept.append(t)
+    # **`calc_sections` が1つも当たらないテーマも、必ず落ちます**（2026-08-30 に足した）。
+    #     `script_writer` は当たる節が無いと `RuntimeError` を投げるので、
+    #     **台本を書く前に、確実に、毎回**落ちます ——`dupes` の門と同じ
+    #     「作る前に分かる死」です。ここで外さないと、その1本ぶんの
+    #     生成（長尺で 13〜19分）がまるごと捨てになります。
+    #
+    #     **実測 2026-08-30**: `tokurou-danjo-48kagetsu-4800000` は、
+    #     同じ日の別の回が `calc: saishushoku → tokurou` を直したとき
+    #     **`calc_sections` を写し忘れて**おり、再就職手当の見出しを
+    #     指したままでした。`--count 11 --long` がそれを 11本目に選んでいます。
+    #     見つかったのは**全体スイートを別件で回したから**で、
+    #     `pick()` からは見えていませんでした。
+    #
+    #     **`_section_numbers` が既に同じ表を読んでいます**（`_calc_sections_cached`）。
+    #     追加の費用は、**`calc_sections` を持つテーマの calc だけ**・
+    #     キャッシュ済みなら 0 です。
+    #     **覆る条件**: `script_writer` が当たらないときに全節を渡す形に変わったら、
+    #     これは死ではなくなるので、ここで落とさないこと。
+    missing = []
+    for t in list(kept):
+        words = t.get("calc_sections") or []
+        calc = t.get("calc") or ""
+        if not words or not calc:
+            continue
+        try:
+            heads = [h for h, _ in _calc_sections_cached(calc)]
+        except SystemExit:
+            continue                    # 表そのものが落ちるのは別の話（門が受ける）
+        if not any(w in h for w in words for h in heads):
+            kept.remove(t)
+            missing.append((t["id"], calc, words, heads))
+    for tid, calc, words, heads in missing:
+        print(f"[pick] **`calc_sections` が `src.calc.{calc}` の見出しに"
+              f"1つも当たりません。作る前に外します**: {tid} — {words}")
+        print(f"       見出しは {heads}。"
+              " **`calc:` を差し替えた回が `calc_sections` を写し忘れた形**が"
+              "いちばん多い（`tests/test_calc_sections_still_hit.py`）。"
+              " 直すのは `config/topics.yaml` の `calc_sections` のほうです"
+              "（**短くて動かない語に**）。")
     for tid, why in dropped:
         print(f"[pick] **門が必ず止めるので外します**: {tid} — {why}")
     return kept
