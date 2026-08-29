@@ -4860,3 +4860,6 @@
 {"at": "2026-08-29T03:24:27+00:00", "detail": "playlistItems.insert", "by": "uploader.py:_post_actions"}
 {"at": "2026-08-29T03:24:28+00:00", "detail": "thumbnails.set 0dE4yKF_fL4", "by": "uploader.py:_set_thumbnail"}
 {"at": "2026-08-29T04:48:27+00:00", "detail": "status: Data API 読み", "by": "status.py:main"}
+{"at": "2026-08-29T05:08:06+00:00", "detail": "scheduled_publish_times", "by": "uploader.py:taken_publish_times"}
+{"at": "2026-08-29T05:08:08+00:00", "detail": "playlistItems.insert", "by": "uploader.py:_post_actions"}
+{"at": "2026-08-29T05:08:09+00:00", "detail": "thumbnails.set iml9AQ_Uvdw", "by": "uploader.py:_set_thumbnail"}

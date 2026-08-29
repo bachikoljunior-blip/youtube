@@ -2788,6 +2788,26 @@ id を `s-` に強制していた）。ところが `eta.py` の逆算はこう�
 
     python scripts/batch_build.py --count N [--long] > <scratch>/build.log 2>&1 &
 
+###### **`timeout` を付けないこと**（2026-08-29 13:4x に踏んだ。**pytest と同じ形の2度目**）
+
+**`timeout 590 python scripts/batch_build.py …` は、9分50秒で `Terminated` します。**
+実測: 1本目が「3番目の文が 2.2秒 しかありません」で落ち、
+**`--no-retry` が無いので作り直しに入った、その途中で切れました** ——
+控えには何も入らず、**予約は0本**。ログの最後の行は
+`[batch] **1 本を、もう一度だけ作り直します**` で、
+**成功の顔をして終わります**（外側の `; echo` が 0 を返す）。
+
+**同じ罠が「全体を回すなら `timeout` を付けないこと」に既に書いてあります**
+（§4）。**あちらは `pytest` の話**で、`batch_build` の側には1行もありませんでした。
+**`Bash` の `timeout` の上限は10分、`batch_build` は1本 10〜20分**なので、
+**前面では構造的に間に合いません。**
+
+    nohup python scripts/batch_build.py --topics … > <scratch>/build.log 2>&1 &
+    ps -eo pid,etime,args | grep 'batch_build.py --topics' | grep -v grep
+
+**`timeout` で切られた回は、孫の `python -m src.pipeline` が生き残ることがあります。**
+次に撃つ前に上の `ps` を1回。
+
 **実測（長尺2本・2026-08-29 の回）: 38分。** 内訳は台本を書く `claude -p` の
 書き直しの輪と、本あたり19セグメントぶんのクリップ焼き。
 **この回のいちばんの待ちで、`setup.sh` の 3分半 の 11倍**です。
