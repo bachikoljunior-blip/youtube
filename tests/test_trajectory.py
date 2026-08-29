@@ -271,12 +271,61 @@ def test_coverage_without_a_ledger_refuses_to_judge(monkeypatch):
 
 
 def test_no_back_catalogue(m):
-    """齢2日を超えた本が、中央値で **0回/日** のままであること。"""
-    old = [c for c in m["decay"]["curve"] if c["age_days"] >= 2]
-    assert old, "齢2日以上の点がありません"
-    assert max(c["median"] for c in old) == 0.0, (
-        "古い本が回り始めました。**後ろカタログができています** —— "
+    """齢2日を超えた本が、中央値で **0回/日** のままであること。
+
+    **`curve` の生の `max()` で読まないこと**（2026-08-29 に直した）。
+    `curve` に載る下限は 3読み なので、**尾の1バケツ**で門が赤くなります ——
+    実測 2026-08-29: 齢24日 が **4読みで 0.57回/日**、他の 22バケツは全部 0.00。
+    そして赤の文面は「軌跡を組み直すこと」なので、**従うと、生涯の 1.5% しか
+    運んでいない尾のために減衰項を入れることになります。**
+    `coverage()` の註にある 2026-08-21 の -27.6% と**同じ形**です。
+
+    判定は `decay()` が持っている門のほうを読みます（読み数の下限つき）。
+    """
+    dec = m["decay"]
+    assert dec["judgeable"], "門にかけられるバケツがありません（読み数不足）"
+    assert dec["old_max_median"] == 0.0, (
+        f"古い本が回り始めました（齢 {dec['guard_ages']} の最大 "
+        f"{dec['old_max_median']} 回/日）。**後ろカタログができています** —— "
         "恒等式が成り立たなくなるので、軌跡を組み直すこと")
+    assert dec["frac24_median"] >= traj.BACK_CATALOGUE_MIN_FRAC24, (
+        f"生涯再生のうち24時間以内が {dec['frac24_median']:.1%} まで落ちました。"
+        "**後ろが太っています** —— 軌跡に減衰項が要ります")
+    assert dec["back_catalogue"] is False
+
+
+def test_back_catalogue_guard_ignores_a_thin_tail_bucket():
+    """**読み数の足りない尾のバケツで、門が鳴らないこと。**
+
+    これが 2026-08-29 まで実際に起きていた形です（齢24日・4読み・0.57回/日）。
+    """
+    curve = [{"age_days": d, "n": 100, "median": 0.0, "mean": 0.1} for d in range(2, 8)]
+    curve.append({"age_days": 24, "n": 4, "median": 0.57, "mean": 0.57})
+    dec = _decay_from_curve(curve, frac24=0.985)
+    assert dec["back_catalogue"] is False, "尾の1バケツで門が鳴っています"
+    assert dec["old_max_median"] == 0.0
+    assert dec["thin_nonzero"], "**外したことを隠さないこと**（印字に出す）"
+
+
+def test_back_catalogue_guard_still_fires_on_a_real_one():
+    """**本物の後ろカタログでは、必ず鳴ること。**（門を緩めていない証拠）"""
+    # (1) 読み数の足りるバケツが 0 を離れた
+    curve = [{"age_days": d, "n": 100, "median": 0.0, "mean": 0.1} for d in range(2, 8)]
+    curve[2]["median"] = 1.5
+    got = _decay_from_curve(curve, frac24=0.985)
+    assert got["back_catalogue"] is True
+    assert got["back_catalogue_why"] == ["動き"]
+
+    # (2) 動きは出ていないが、**後ろが太った**（生涯の 12% が24時間より後）
+    flat = [{"age_days": d, "n": 100, "median": 0.0, "mean": 0.1} for d in range(2, 8)]
+    got = _decay_from_curve(flat, frac24=0.88)
+    assert got["back_catalogue"] is True
+    assert got["back_catalogue_why"] == ["大きさ"]
+
+
+def _decay_from_curve(curve, frac24):
+    """**実物の門を呼ぶこと。** 式を書き写すと、実装が変わっても検査だけ通ります。"""
+    return traj.back_catalogue_guard(curve, frac24)
 
 
 # --- 3. 札 ------------------------------------------------------------------

@@ -236,8 +236,39 @@ def coverage(n_snapshots: int) -> dict:
             "comparable": ratio >= IDENTITY_MIN_COVERAGE}
 
 
+#: **後ろカタログの門を、齢べつの1バケツで判定してよい下限の読み数。**
+#:
+#: `curve` に載る下限は 3読み です（**絵にするには足りる**）。**門には足りません。**
+#: 実測 2026-08-29: 齢24日 は **4読み**、中央値 **0.57回/日** ——
+#: 齢2日以上の他の 22バケツは全部 **0.00** で、`old_median_per_day` も **0.0**。
+#: それでも `max()` で読むと、この1バケツだけで門が赤くなります。
+#: **そして赤の文面は「軌跡を組み直すこと」です** —— 従うと、
+#: 生涯の 1.5% しか運んでいない尾に、日付を動かす減衰項を入れることになります。
+#:
+#: **同じ形をこのファイルは一度 踏んでいます**（`coverage()` の註・2026-08-21 の
+#: -27.6%）。あれも「後ろカタログが効き始めた」の顔をした標本の穴でした。
+#:
+#: 20 に置いた理由: 今日の実測で残るのは 齢2〜9日 と 12日 の **9バケツ**
+#: （n=23〜125）。**後ろカタログが本当にできるなら、まずここに出ます** ——
+#: 本の大半がこの齢に居るからです。**尾だけが動く形は、標本の穴のほうです。**
+#: **覆る条件**: 齢2〜9日 のどれかが 0 を離れたら、それは本物。門が鳴ります。
+BACK_CATALOGUE_MIN_READINGS = 20
+
+#: **後ろカタログの「大きさ」の門。** 上の門は「動いているか」しか見ません。
+#: こちらは **1本の生涯再生のうち、24時間より後に来る割合** で大きさを見ます
+#: （実測 2026-08-29: 24時間以内が **98.5%**・n=118 ＝ 後ろは **1.5%**）。
+#: 0.95 は、いまの 1.5% の **3倍以上** 太ったら鳴る線です。
+#: **恒等式の実測の差は -0.56%** なので、後ろが 5% を運びはじめたら
+#: 恒等式のほうが先に開きます —— そのときは減衰項が本当に要ります。
+BACK_CATALOGUE_MIN_FRAC24 = 0.95
+
+
 def decay(vs: dict) -> dict:
-    """**後ろカタログがあるか。** 齢べつの「再生/日」と、生涯のうち24時間に来る割合。"""
+    """**後ろカタログがあるか。** 齢べつの「再生/日」と、生涯のうち24時間に来る割合。
+
+    **判定に使うのは `back_catalogue` です。`curve` の生の `max()` ではありません。**
+    理由は `BACK_CATALOGUE_MIN_READINGS` の註（**尾の1バケツで門が赤くなります**）。
+    """
     buckets: dict[int, list[float]] = collections.defaultdict(list)
     for v in vs.values():
         for a, b in zip(v["points"], v["points"][1:]):
@@ -256,12 +287,49 @@ def decay(vs: dict) -> dict:
                           "median": statistics.median(xs), "mean": statistics.mean(xs)})
     mature = [v for v in vs.values() if v["age"] >= MATURE_AGE_DAYS and v["term"] > 0]
     fr24 = [v["at24"] / v["term"] for v in mature if v["at24"] is not None]
+    frac24 = statistics.median(fr24) if fr24 else None
     return {
         "curve": curve, "n_mature": len(mature),
-        "frac24_median": statistics.median(fr24) if fr24 else None,
+        "frac24_median": frac24,
         "frac24_n": len(fr24),
         "old_median_per_day": statistics.median(
             [c["median"] for c in curve if c["age_days"] >= 2]) if curve else None,
+        **back_catalogue_guard(curve, frac24),
+    }
+
+
+def back_catalogue_guard(curve: list[dict], frac24: float | None) -> dict:
+    """**後ろカタログの門。** `decay()` と検査が、同じ1つの式を読むための関数。
+
+    **分けてある理由**: 検査の側で式を書き写すと、実装が変わっても検査は
+    書き写したほうを試すので、**通ったまま実物だけがずれます。**
+
+    門は2つあり、**どちらか一方でも出たら「在る」**とします:
+
+        動き   読み数 `BACK_CATALOGUE_MIN_READINGS` 以上のバケツの中央値が 0 を離れた
+        大きさ 生涯再生の 24時間以内の割合が `BACK_CATALOGUE_MIN_FRAC24` を割った
+
+    **`curve` の生の `max()` で読まないこと** —— `curve` に載る下限は 3読みで、
+    尾の1バケツ（実測 2026-08-29: 齢24日・4読み・0.57回/日）で門が赤くなります。
+    """
+    guarded = [c for c in curve
+               if c["age_days"] >= 2 and c["n"] >= BACK_CATALOGUE_MIN_READINGS]
+    old_max = max((c["median"] for c in guarded), default=None)
+    thin = [c for c in curve
+            if c["age_days"] >= 2 and c["n"] < BACK_CATALOGUE_MIN_READINGS
+            and c["median"] > 0]
+    moved = bool(guarded and old_max is not None and old_max > 0.0)
+    fat = bool(frac24 is not None and frac24 < BACK_CATALOGUE_MIN_FRAC24)
+    return {
+        "guard_buckets": len(guarded),
+        "guard_ages": [c["age_days"] for c in guarded],
+        "old_max_median": old_max,
+        # 読み数が足りずに門から外した、0 でないバケツ。**印字はします**（隠さない）
+        "thin_nonzero": [{"age_days": c["age_days"], "n": c["n"], "median": c["median"]}
+                         for c in thin],
+        "back_catalogue": moved or fat,
+        "back_catalogue_why": ([] if not moved else ["動き"]) + ([] if not fat else ["大きさ"]),
+        "judgeable": bool(guarded) and frac24 is not None,
     }
 
 
@@ -1000,7 +1068,33 @@ def render(m: dict, today: dt.date) -> list[str]:
         for c in dec["curve"][:6]:
             P(f"           齢 {c['age_days']:>2}日  n={c['n']:>3}  中央値 {c['median']:>7.1f} 回/日"
               f"   平均 {c['mean']:>8.1f}")
-        P("         → **齢2日を超えた本は、中央値で 0.0 回/日。**")
+        # **ここは長らく「齢2日を超えた本は、中央値で 0.0 回/日。」を
+        # `dec` を1つも読まずに印字していました**（2026-08-29 に直した）。
+        # 上の `identity()` の側で 2026-08-21 に直したのと**同じ形**です ——
+        # 「数字と結論が別々に印字されていたので、食い違っても誰も気づきません」。
+        # **食い違っていました**: 齢24日 が 0.57回/日 に動いた日も、この行は 0.0 と
+        # 言い続け、`tests/test_trajectory.py::test_no_back_catalogue` だけが赤で、
+        # その文面は「軌跡を組み直すこと」でした。**印字と門が逆を向いていた。**
+        if not dec.get("judgeable"):
+            P("         → [測れません] 読み数が足りるバケツがありません"
+              f"（下限 {BACK_CATALOGUE_MIN_READINGS}読み）。**0.0 と読まないこと。**")
+        else:
+            om = dec.get("old_max_median")
+            P(f"         → **齢2日を超えた本は、中央値で いちばん大きいバケツでも "
+              f"{om:.1f} 回/日**"
+              f"（門にかけた {dec['guard_buckets']}バケツ・"
+              f"齢 {min(dec['guard_ages'])}〜{max(dec['guard_ages'])}日・"
+              f"各 {BACK_CATALOGUE_MIN_READINGS}読み以上）")
+            for t in dec.get("thin_nonzero", []):
+                P(f"           （齢 {t['age_days']}日 は 中央値 {t['median']:.2f} 回/日 ですが、"
+                  f"**{t['n']}読みしかないので門から外しています**。"
+                  "尾の1バケツで軌跡を組み直さないこと）")
+            if dec.get("back_catalogue"):
+                P("         → [!] **後ろカタログができています。** 恒等式が成り立たなく"
+                  "なるので、**軌跡に減衰項が要ります**（`decay()` の註）")
+            else:
+                P("         → **後ろカタログはありません。**"
+                  "（動きの門・大きさの門とも通っています）")
     P("")
     P("  **だから、複利で伸びる項は「V が時間とともに伸びるとき」にしか立ちません。**")
     P("  伸ばせるのは **供給** と **V** の2つだけ。どちらにも実測の天井があります。")
