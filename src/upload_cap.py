@@ -155,9 +155,34 @@ DATA_API_TOOLS = (
 # この repo で通算9回出ている「**片方だけ**」の10件目です。
 #: **この帳面は失敗しか載らない帳面です。成功の記録として読まないこと**（2026-08-27）。
 #:
-#: `note_day_quota` は **403 のときだけ**書きます。`note_quota_ok` を呼ぶのは
-#: `videos.update` と `thumbnails.set` の2か所だけで、**`videos.insert` は
+#: `note_day_quota` は **403 のときだけ**書きます。**`videos.insert` は
 #: 1度も書きません** —— 実測: 4,360行 のうち `videos.insert` の行は **0件**。
+#:
+#: **【2026-08-29 に数え直しました】** ここには「`note_quota_ok` を呼ぶのは
+#: `videos.update` と `thumbnails.set` の**2か所だけ**」と書いてあり、
+#: 同じ file の `dedupe_ok` は「呼ぶ場所は**現在3つ**」と書いていました ——
+#: **同じ事実を2か所が別々の数で言っていた**（この repo の通算12件目）。
+#: **実測は6か所**です: `uploader.py` の `playlists.insert` /
+#: `playlistItems.insert` / `commentThreads.insert` / `thumbnails.set`、
+#: `scripts/reschedule.py` の `videos.update`、
+#: `scripts/post_pending_comments.py` の `commentThreads.insert`。
+#:
+#: **数を覚えるより、境目を覚えること** —— **6つとも書き込みで、
+#: 通った読みは1件も載りません。** 読みは 1〜100単位（`search.list` は 100）で、
+#: 尽きた窓では読みのほうが先に 403 を返します（実測 窓 08/28 の 403 の出どころ:
+#: `uploader.taken_publish_times` 30回・`status.py:main` 16回・
+#: `history.channel_video_ids` 6回 —— **どれも読み**）。
+#:
+#: **だから `measured_budget()["spent"]` は、窓ごとに違う量だけ低く出ます**:
+#:
+#:     窓 08/27  403 の前に通った単位 **9,050**（403 は 07:47Z）
+#:     窓 08/28  403 の前に通った単位 **3,700**（403 は 12:37Z・以後 110回）
+#:
+#: `RESERVE_UNITS` の覆る条件「**関門が止めていないのに 403**」は、
+#: **08/28 の窓で既に成立しています**（`reserve_hold()` はこの窓 1度も
+#: 止めていません）。直す先は同じ註が名指ししているとおり
+#: 「`note_quota_ok` をその呼び出しにも足す」で、
+#: **`videos.insert` にだけは足さないこと**（`tests/test_insert_never_marked_ok.py`）。
 #:
 #: 2026-08-27 の回は、その 0 を「今日は1本も投稿できなかった」と読み、
 #: **その回の いちばん大きい発見**として日誌に残しました。**逆です** ——
@@ -396,9 +421,14 @@ def dedupe_ok(rows: list[dict]) -> list[dict]:
     **二重に数えた側の誤りです。**
 
     呼び出し側は直しましたが（`batch_build`）、**入口は増えます** ——
-    `note_quota_ok` を呼ぶ場所は現在3つで、次に4つ目ができたときに
-    同じ穴が開きます。**だから数える側で潰します**（この repo が通算11回
-    踏んでいる「片方だけ」の形）。
+    `note_quota_ok` を呼ぶ場所は **6か所**（一覧は `DAY_QUOTA_HITS` の註）で、
+    次に7つ目ができたときに同じ穴が開きます。**だから数える側で潰します**
+    （この repo が通算11回 踏んでいる「片方だけ」の形）。
+
+    （**ここは 2026-08-29 まで「現在3つ」と書いていました。**同じ file の
+    `DAY_QUOTA_HITS` の註は「2か所だけ」で、**実測は6か所** ——
+    同じ事実を2か所が別々の数で言っていた形そのものです。
+    **一覧は1か所にだけ置き、ここからは指すだけにしました。**）
 
     ## 覆る条件
 
