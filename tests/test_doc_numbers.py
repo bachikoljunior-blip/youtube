@@ -239,6 +239,40 @@ REVIEWED_UNBACKED = {
     # それは外れです** —— 60,600 はこの表の別の節の値で、`60,000` とは無関係。
     # **丸めの候補を鵜呑みにしないこと**（`ribo-300000-payment-step` の註と同じ）。
     "furusato-hokenryoritsu-jougen",
+    # 2026-08-30 に増えたぶん（**6件とも型1。中身を実際に見て足しています**）。
+    # 08/30 02:12 の `topic_forge --new-family` が 11族ぶん書いた回で、
+    # **7件が鳴りました。本物は1件だけ**でした（下）。
+    # **6件はどれも「同じ文の中に両端が書いてあり、その差か比だけが表に無い」形**で、
+    # 引き算・割り算をこちらで当て直して確かめてあります:
+    #
+    #   koureikoyou   244,000 − 220,000 = **24,000**（両端とも表に在る）
+    #   kyoiku        250,000 − 200,000 = **50,000**（上限額の差。両端とも表に在る）
+    #   nenkinmenjo   20,400 → 17,850 → 15,300 → 12,750 → 10,200 の
+    #                 **きざみ 2,550**（5行とも表に在る。`ribo` と同じ形）
+    #   souzoku       66,000,000 − 36,000,000 = **30,000,000**（両端とも表に在る）
+    #   taishoku      22,000,000 − 8,000,000 = **14,000,000**（両端とも表に在る）
+    #   yoteinozei    72.8 − 26.9 = **45.9** ポイント ／
+    #                 5,313,283 ÷ 206,752 = **25.7倍**（「25倍以上」と書いている）
+    #
+    # [!] `_checks.near_candidates` は `taishoku` に「13,668,283 を丸めたのでは」、
+    # `souzoku` に「32,000,000 / 27,000,000 を丸めたのでは」と勧めますが、
+    # **3件とも外れです** —— 上の引き算がぴったり合います。
+    # **丸めの候補を鵜呑みにしないこと**（`ribo-300000-payment-step` の註と同じ・4例目）。
+    "koureikoyou-sagehaba-modoru-wariai",
+    "kyoiku-jougen-ni-ataru-jugyouryou",
+    "nenkinmenjo-hanei-wariai-6dan",
+    "souzoku-kisokoujo-nin-zu",
+    "taishoku-muzei-jougen-nobi",
+    "yoteinozei-gensen-de-kieru",
+    # **7件目（`sankyu-14nichi-michi-ga-nai`）は、ここへ足していません。**
+    # あれは型1ではなく**本物**でした —— 題は産休・育休の免除（主役 27,450円 は
+    # `src/calc/sankyu.py` の `差の額(円)`）なのに、`calc:` が `kafunenkin`
+    # （寡婦年金）に貼られていました。**直したのは angle ではなく `calc:` のほう**で、
+    # 原因は `topic_forge.realign` が段のちがう一致数を比べていたこと
+    # （`scripts/topic_forge.money_owner` と `tests/test_forge_money_owner.py`）。
+    #
+    # **この検査が、その1件を見つけた道具です。** 6件の型1に埋もれていました ——
+    # **「鳴った件が全部 型1だった」は、次の回も型1である理由になりません。**
 }
 
 
@@ -269,9 +303,17 @@ def test_topics_yamlには掛けない():
     new = sorted(hits - REVIEWED_UNBACKED)
     assert not new, (
         f"topics.yaml の未裏取りに、**見ていないテーマ**が増えました: {new}\n"
-        "  **この検査を angle に掛ける根拠にはなりません** —— これまでの件は全部、"
-        "calc が1つの数として印字しない導出値でした。**中身を目で見てから** "
-        "`REVIEWED_UNBACKED` に足すこと。**実物に当たっていたら、直すのは angle のほう。**"
+        "  **中身を目で見てから** `REVIEWED_UNBACKED` に足すこと。\n"
+        "  多いのは**型1**（calc が1つの数として印字しない導出値 —— 同じ文の中に"
+        "両端が書いてあり、差か比だけが表に無い）。引き算・割り算を当て直して"
+        "合えば、註つきで `REVIEWED_UNBACKED` へ。\n"
+        "  **ただし『全部 型1』ではありません**（2026-08-30 に取り消した）—— "
+        "同じ回に鳴った7件のうち **1件は `calc:` そのものが別の制度に貼られて**いました"
+        "（`sankyu` の題が `kafunenkin` に。`scripts/topic_forge.money_owner`）。\n"
+        "  **見分け方**: 題の主役の金額が**どの calc の表に在るか**を先に引くこと。\n"
+        "      python -c \"from tests.test_doc_numbers import backing;"
+        " print('27450' in backing('sankyu'))\"\n"
+        "  貼られた calc に無くて別の calc に在るなら、直すのは **`calc:` のほう**です。"
     )
 
 
