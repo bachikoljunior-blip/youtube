@@ -192,7 +192,25 @@ def test_thumbnails_yield_while_a_day_is_empty():
         ahead, 107, today=_dt.date(2026, 8, 19))
     assert okay is False
     assert "5,350単位" in line          # 107本 × 50単位
-    assert "詰め直しが 107本" in line
+
+
+def test_thumbnails_yield_names_the_real_size_of_the_alternative():
+    """**代替案の大きさは、穴の数で言うこと**（2026-08-28 に踏んだ）。
+
+    ここは長らく「同じ単位で**詰め直しが {queued}本**できます」と言っていました。
+    `queued` は**サムネイルの溜まり数**で、詰め直しに要る本数ではありません。
+    実測 2026-08-28: 穴は 1日 だけ・要るのは `--move` 1回 なのに、
+    文面は「70本 できます」と言い、`--spread` は「超えている日はありません」。
+    **勧めている代替案が、その大きさでは存在しませんでした。**
+    """
+    ahead = [_at(2026, 8, 20), _at(2026, 8, 22)]     # 穴は 08/21 の1日だけ
+    okay, line = _uc.thumbnail_yield_to_schedule(
+        ahead, 70, today=_dt.date(2026, 8, 19))
+    assert okay is False
+    assert "1日あります" in line
+    assert "1本の移動" in line, "要る本数は穴の数。queued を書かないこと"
+    assert "70本の移動" not in line
+    assert "--move" in line, "撃つ行を書くこと（読む側が --spread で空振りする）"
 
 
 def test_thumbnails_go_when_there_is_no_hole():

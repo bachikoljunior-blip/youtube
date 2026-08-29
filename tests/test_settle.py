@@ -32,10 +32,41 @@ def test_待つ日数は実データに支えられている():
         f"{settle.SETTLE_DAYS*24}時間 で中央値 {row['median']:.3f} —— "
         "**待つ日数が短すぎます。** `src/settle.py` の「覆る条件」を読んで上げ直すこと"
     )
-    assert row["min"] >= 0.95, (
-        f"{settle.SETTLE_DAYS*24}時間 でいちばん遅い本が {row['min']:.3f} —— "
+    # **`min` を門にしないこと**（2026-08-29 に直した。`src/settle.py` の
+    #   `SETTLED_SHARE_FLOOR` の註に実測）。`min` は標本が増えれば単調に下がるので、
+    #   **何も悪くなっていない回でも、いつか必ず落ちます** ——
+    #   実測 96h: 中央値 1.0000・p10 0.9967 なのに **min 0.5105**（外れは 1本/60本、
+    #   その1本は 96h で 48再生 の本）。その1本のために `SETTLE_DAYS` を 4 → 7 に
+    #   上げると、開いている前提 27件 の判定日が全部 +3日 動きます。
+    assert row["p10"] >= 0.95, (
+        f"{settle.SETTLE_DAYS*24}時間 で下位10% が {row['p10']:.3f} —— "
         "**後から拾われる本が出ています。** `SETTLE_DAYS` を上げ直すこと"
+        f"（いちばん遅い本は {row['min']:.3f}）"
     )
+    assert row["share_settled"] >= 0.95, (
+        f"{settle.SETTLE_DAYS*24}時間 で伸びきっている本が "
+        f"{row['share_settled']:.1%}（外れ {row['n_unsettled']}本 / {row['n']}本）—— "
+        "**外れが 5% を超えました。これは本物です。**`SETTLE_DAYS` を上げ直すこと"
+    )
+
+
+def test_極値だけでは門にしない():
+    """**`min` が下がっただけの回で `SETTLE_DAYS` を上げないこと。**
+
+    `min` は標本が増えれば単調に下がります。**増えること自体が門を厳しくする**ので、
+    そのまま門にすると「何も悪くなっていないのに必ずいつか落ちる検査」になります
+    （2026-08-29 に実際にそうなっていた。同じ日に `scripts/trajectory.py` の
+    後ろカタログの門でも同じ形を直した）。
+    """
+    curve = settle.views_curve((float(settle.SETTLE_DAYS * 24),))
+    row = curve.get(float(settle.SETTLE_DAYS * 24))
+    if not row:
+        pytest.skip("標本なし")
+    assert "share_settled" in row and "n_unsettled" in row, (
+        "**何本 外れているか**を数えていません。数えないと、"
+        "1本の外れと 20本 の外れが同じ顔で出ます"
+    )
+    assert "min" in row, "**`min` を消さないこと。** 門から外すのと、隠すのは別です"
 
 
 def test_engaged_比率もその時点で確定している():
@@ -118,3 +149,34 @@ def test_窓の外の観測は帯に入れない(tmp_path):
     assert b["hi"] == 4 and b["lo"] == 3, "窓の中に残るのは 08/26 の2件だけ"
     assert b["band"] == 1, ("古い 31日 を混ぜて帯を 28日 にしないこと —— "
                             "**もう起きない幅で今日の判定を黙らせる**ことになります")
+
+
+def test_過去の日の遅れは0にならない():
+    """**過去の `as_of` に、その日にはまだ無かった観測を混ぜないこと。**
+
+    実測 2026-08-29: `analytics_lag_days(date(2026,8,26))` は **0日** を返していた
+    （`max(last_day)` を台帳ぜんたいから採っていたため）。
+    `ANALYTICS_LAG_FALLBACK` の註が「**0 にしないこと** —— いちばん危ない側へ
+    倒れます」と禁じている、その値そのもの。
+
+    何が壊れるか: `readable_by(as_of, s)` は `as_of - (settle + lag)` なので、
+    **lag が 0 に落ちると判定の締切が 3日 うしろへ伸び、まだ読めていない
+    データで判定する側へ倒れます**（`falsified_if` は「上回らなければ外れ」）。
+    """
+    from datetime import date as _date
+
+    for d in (_date(2026, 8, 20), _date(2026, 8, 26), _date(2026, 8, 29)):
+        got = settle.analytics_lag_days(d)
+        assert got > 0, (
+            f"{d} の遅れが {got}日 —— **「遅れは無い」と言い切っています。** "
+            "台帳ぜんたいの `max(last_day)` を採っていませんか"
+            "（その日以降に積まれた行が混ざります）"
+        )
+
+    # 台帳より前の日を訊かれたら、控えへ落ちること（0 にしない）
+    assert settle.analytics_lag_days(_date(2026, 1, 1)) == settle.ANALYTICS_LAG_FALLBACK
+
+
+def test_遅れは今日でも0にならない():
+    """いまの日でも 0 にならないこと（Analytics は日次で遅れる）。"""
+    assert settle.analytics_lag_days() > 0

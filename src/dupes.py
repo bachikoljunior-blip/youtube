@@ -80,6 +80,8 @@ YouTube のチャンネル収益化ポリシーは、これを**収益化の対�
 from __future__ import annotations
 
 import json
+import os
+import pathlib
 import re
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
@@ -287,6 +289,76 @@ def find(rows: list[dict]) -> list[dict]:
 
 
 LEDGER = "data/uploaded.jsonl"
+
+#: このファイルが置かれている repo。**`config.ROOT` を差し替えた検査と見分けるため**
+#: （`src/upload_cap.py::_write_path` と同じ形。理由は下の `_may_write_ledger`）。
+_REPO = pathlib.Path(__file__).resolve().parent.parent
+
+
+def _may_write_ledger(root) -> bool:
+    """**検査は、本物の `data/uploaded.jsonl` に書かないこと**（2026-08-28 に踏んだ）。
+
+    ## 何が起きたか（**統計の汚れでは済みません**）
+
+    `pytest tests/ -k "day_cap or day_total or eta or density or supply or batch or status"`
+    （637件・8分42秒・**全部 緑**）を背景で走らせている最中に、
+    手元の `data/uploaded.jsonl` が書き換わりました。実測:
+
+        WcTl11_5Khw  2026-09-30T00:30Z → **2026-08-28T12:00Z**（＝ 21:00 JST）
+        cJw79xThyTY  2026-10-04T00:00Z → **2026-08-28T11:00Z**（＝ 20:00 JST）
+        NEOkkCKHhSY  2026-09-29T22:30Z → **2026-08-28T13:00Z**（＝ 22:00 JST）
+
+    3本とも `#Shorts` で、移った先は **14:00〜21:00 JST の帯**です ——
+    `docs/JOURNAL.md`（08/28 16:3x）の実測で **31本中 5本しか生存しない**帯。
+    **`data/queue_lag.jsonl` にも「moves: 30 / moves: 20」の約束が2行**入りました。
+
+    **そして `data/day_quota.jsonl` に `videos.update` の行は1つも増えていません** ——
+    つまり **YouTube 側は動いておらず、控えだけが嘘になりました。**
+    そのまま push すれば、次の回は「9/30 の予約が今夜 21:00 に出る」と読み、
+    `--compact` も `live_slots` もその幻の埋まりの上で動きます。
+
+    ## なぜ「呼ぶ側で気をつける」ではないのか
+
+    `src/upload_cap.py::_write_path` が 2026-08-27 に同じ理由で入っており、
+    そこにこう書いてあります ——「**関係のない検査に『日枠の帳面に気をつけろ』と
+    約束させるのは無理**なので、書く側を機械で閉じます」。
+    **`data/uploaded.jsonl` は、その掛かりに入っていませんでした**（通算8件目）。
+    `config.ROOT` を tmp へ差し替えた検査は今までどおり通ります
+    （差し替え先が `_REPO` と違うので、ここは False を返しません）。
+
+    ## 覆る条件
+
+    本物の控えへ**わざと**書く検査が要るようになったら `YT_LEDGER_WRITE=1`
+    （そのときは理由を `docs/JOURNAL.md` に）。
+    """
+    if not os.environ.get("PYTEST_CURRENT_TEST"):
+        return True
+    if os.environ.get("YT_LEDGER_WRITE"):
+        return True
+    try:
+        return pathlib.Path(root).resolve() != _REPO
+    except OSError:                                            # noqa: BLE001
+        return False
+
+
+def may_write_path(path) -> bool:
+    """**そのファイルが repo の中なら、検査からは書かない。**
+
+    `_may_write_ledger` は `config.ROOT` を見ますが、**差し替え先が
+    `PROGRESS` のような1本のパスだけの道具**もあります
+    （`scripts/queue_lag.py` の帳面は `monkeypatch.setattr(queue_lag, "PROGRESS", …)`
+    で差し替えられており、`ROOT` は本物のまま）。**そこを `ROOT` で見ると、
+    正しく差し替えている検査まで塞ぎます**（2026-08-28 に1件 落とした）。
+    **見るのは、書こうとしている先そのもの**です。
+    """
+    if not os.environ.get("PYTEST_CURRENT_TEST"):
+        return True
+    if os.environ.get("YT_LEDGER_WRITE"):
+        return True
+    try:
+        return _REPO not in pathlib.Path(path).resolve().parents
+    except OSError:                                            # noqa: BLE001
+        return False
 
 
 def ledger_rows(topics: dict[str, str] | None = None) -> list[dict]:
@@ -537,6 +609,54 @@ def used_amounts(topics: dict[str, str] | None = None) -> dict[str, list[float]]
     return {k: sorted(v) for k, v in sorted(out.items())}
 
 
+def used_round_amounts(topics: dict[str, str] | None = None
+                       ) -> dict[str, list[list[float]]]:
+    """**丸い数どうしの「組」**を calc ごとに返す（2026-08-29 に足した）。
+
+    `used_amounts()` は `sigdigits <= ROUND_SIGDIGITS` の数を**捨てます**。
+    その理由は正しい —— 丸い数**1つ**は制度の名前でしかなく（`20万円ルール`）、
+    `find()` もそれ1つでは止めません。
+
+    **ところが2つ並ぶと止まります。** `find()` の `same-yen` は
+
+        hit and (len(hit) > 1 or min(sigdigits(x) for x in hit[0]) > ROUND_SIGDIGITS)
+
+    で、**`len(hit) > 1` の枝は丸さを一度も見ません。**
+
+    実測（2026-08-29・`topic_forge --new-family` を2周）: 8件 頼んで
+    **2周とも1件ずつ**、この枝で落ちました ——
+
+        keihi-1man-nedauchi-10dan: `keihi` で金額が入れ子（10,000円・7,000,000円）
+
+    **10,000 も 7,000,000 も丸い数なので、`used_amounts()` には入りません。**
+    つまり `topic_forge.build_prompt()` が貼る「この数を主役にするな」の一覧に
+    **一度も載らず、書き手はそれを避けようがありませんでした。**
+    落ちた1件は `topics.yaml` に1行も書かれないので、**その回の在庫が1件 減ります**
+    （実測 16件 頼んで 14件 ＝ **12.5% の取りこぼし**）。
+
+    返すのは**組**です（1つでは止まらないので、1つずつ並べても意味がない）。
+    `build_prompt()` は「**この2つを同じ題に並べないこと**」として貼ります。
+
+    **これは門ではありません。** 門は `blocking()` の側で、
+    こちらをすり抜けた種はそちらが受けます（`used_amounts()` と同じ立場）。
+
+    **覆る条件**: `find()` の `len(hit) > 1` の枝が丸さを見るようになったら、
+    ここは要りません（そのときは `used_amounts()` だけで足ります）。
+    **検査は `tests/test_forge_doomed.py`。**
+    """
+    rows = ledger_rows(topics)
+    out: dict[str, set[tuple[float, ...]]] = defaultdict(set)
+    for r in rows:
+        calc = r.get("calc") or ""
+        if not calc:
+            continue
+        round_ones = sorted({v for v in _yen(r["title"])
+                             if sigdigits(v) <= ROUND_SIGDIGITS})
+        if len(round_ones) > 1:
+            out[calc].add(tuple(round_ones))
+    return {k: [list(t) for t in sorted(v)] for k, v in sorted(out.items())}
+
+
 def blocking(title: str, topic_id: str, videos: list[dict],
              topics: dict[str, str] | None = None) -> list[dict]:
     """**投稿の直前に呼ぶ。** これから上げる1本が、既にある本と強く重なるか。
@@ -731,6 +851,8 @@ def retime(video_id: str, at: str | None) -> bool:
     """
     from . import config
 
+    if not _may_write_ledger(config.ROOT):
+        return False                      # 検査から本物の控えへは書きません（上の節）
     path = config.ROOT / LEDGER
     if not path.exists():
         return False
@@ -803,7 +925,9 @@ def compact_ledger(path=None) -> dict:
             ats.setdefault(vid, []).append(rec["at"])
         out.append(line)
     conflicts = {v: a for v, a in ats.items() if len(set(a)) > 1}
-    if removed:
+    # `path` を渡された回は、渡された先へ書きます（検査はそちら）。
+    # 渡されていない回だけ、本物の控えかどうかを見ます（`retime` と同じ節）。
+    if removed and (path is not None or _may_write_ledger(config.ROOT)):
         tmp = p.with_suffix(p.suffix + ".tmp")
         tmp.write_text("\n".join(out) + "\n", encoding="utf-8")
         tmp.replace(p)

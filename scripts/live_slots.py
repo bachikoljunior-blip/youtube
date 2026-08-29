@@ -40,7 +40,9 @@
 
 - **測定の窓の日**（`src/measure_window.py`）は、**動かす側にも置き先にもしません**
 - **公開済みの本**は動きません（`publishAt` が過ぎている）
-- 置き先は `src/collisions.py` の**生きる帯**（05:00〜13:30 の30分きざみ）の空き分だけ
+- 置き先は `src/collisions.py` の**生きる帯**（`LIVE_FROM_MIN`〜`LIVE_TO_MIN` の
+  30分きざみ）の空き分だけ。**ここに数を写さないこと** —— 下端は実測で動きます
+  （2026-08-27 に 05:00 → 09:00。朝に置いた8本が全部0再生だった）
 - 置き先の日の**帯の中の本数が `day_cap.cap()` を超えない**こと
   （同じ日の中で動かすぶんは本数が変わらないので、この門に掛かりません）
 """
@@ -268,7 +270,9 @@ def report(board: Board | None = None) -> list[str]:
     board = board or Board(_rows())
     live = board.live()
     out = ["=== A/B の本のうち、再生が付く枠に居るのは何本か"
-           f"（1日 {board.cap}本・間隔 {day_cap.MIN_GAP_MIN:.0f}分・帯 05:00〜13:30）==="]
+           f"（1日 {board.cap}本・間隔 {day_cap.MIN_GAP_MIN:.0f}分・"
+           f"帯 {collisions.LIVE_FROM_MIN // 60:02d}:{collisions.LIVE_FROM_MIN % 60:02d}"
+           f"〜{collisions.LIVE_TO_MIN // 60:02d}:{collisions.LIVE_TO_MIN % 60:02d}）==="]
     short_total = 0
     for key, (groups, n) in sorted(_groups().items()):
         for g, vids in sorted(groups.items()):
@@ -424,24 +428,223 @@ def plan_all(board: Board) -> list[str]:
     return out
 
 
+def band_stray(board: Board) -> list[str]:
+    """**(A) では生きているのに、帯の外に居る本**（＝ (B) なら 0再生 の本）。
+
+    `board.live()`（＝ `day_cap.live_ids`）が実装しているのは
+    **(A)「その日の先頭 `cap()` 本」だけ**です。帯（09:00〜13:30）は1文字も
+    見ていません。だから **1日ちょうど10本 の日は、何時に置いても全部「生きている」**
+    と数えます。**(B)「13:30 までに出した本が生きる」なら、そのうち帯の外は全部 0再生**です。
+
+    実測（2026-08-29・この関数を足した回。控えの予約ぶん）:
+
+        (A) で生きている本                446本
+        **そのうち帯の外に居る本          78本**   ← (B) なら全部 0再生
+        同じ日の帯に空き分があった本       78本   ← **全部 入る**
+
+    返すのは `video_id` の一覧（公開の早い順）。**API 0単位。**
+    """
+    live = board.live()
+    grid = set(GRID)
+    skip = _slot_ab_cohort(board)
+    out = [(w, v) for v, w in board.at.items()
+           if v in live and w > board.now and board.movable(v)
+           and (w.hour * 60 + w.minute) not in grid and v not in skip]
+    out.sort()
+    return [v for _, v in out]
+
+
+def _slot_ab_cohort(board: Board) -> set[str]:
+    """**枠そのものを測っている A/B の標本**（`ab_split.slot_half`）の `video_id`。
+
+    ここが要る理由（2026-08-29 23:xx・同じ回の別のサブが `slot_half` を入れた）:
+    あちらは**帯の中のどの枠に置くか**を無作為化して測っています。
+    こちらが枠を勝手に動かすと、**その実験が測っている当のものを壊します。**
+
+    落とすのは「振り分けが実装に入った時刻（`Experiment.landed`）より後に
+    **作った**本」だけです（`falsified_if` が数える群と同じ切り方 ——
+    **公開日ではなく作った時刻**。`ab_split.landed_groups` の節に、
+    公開日で割って 6% しか処置が入っていなかった実測）。
+
+    実測（この関数を足した回）: いま帯の外に居る 78本 は**全部 `landed` より前**に
+    作られており、**1本も落ちません。** これは将来のための門です。
+
+    **覆る条件**: `slot_half` が閉じたら、この門は要りません
+    （`EXPERIMENTS` から消えれば、ここも自動で空になります）。
+    読めない回は空集合 —— **止めないこと**（投稿と逃がしのほうが重い）。
+    """
+    try:
+        from src import ab_split                                # noqa: PLC0415
+        exp = ab_split.EXPERIMENTS.get("slot_half")
+        if exp is None:
+            return set()
+        builds = ab_split.build_times()
+        out = set()
+        for r in _rows():
+            made = builds.get(str(r.get("topic") or ""))
+            if made is not None and made >= exp.landed:
+                out.add(str(r.get("video_id")))
+        return out
+    except Exception:                                           # noqa: BLE001
+        return set()
+
+
+def plan_band(board: Board, limit: int | None = None) -> list[str]:
+    """**帯の外に居る本を、同じ日の帯の空き分へ入れ直す**（`--band`）。
+
+    ## なぜ `plan_all()` と別なのか（2026-08-29・最適化の回。**実測で見つけた**）
+
+    `plan_all()` は `same_day_first=False` で走り、その理由をこう書いています ——
+    「**同じ日へは置き直しません**。上限を超えている日で同じ日へ動かしても、
+    別の1本を押し出すだけで**生きる本は増えません**」。
+
+    **その「増えません」は、(A) を真としたときだけ成り立ちます。**
+    `board.live()` は `day_cap.live_ids()` で、あれが実装しているのは
+    **(A)「先頭 `cap()` 本」だけ**です（`live_ids` の節に「2段 ＝ 間隔 と 本数」）。
+    ところが `day_cap.window()` は **(A)/(B) を切り分けていません**
+    （`confounded`。答えが出るのは 2026-09-03）。
+    **つまりここは、未決着の片方だけを真として「動かす価値が無い」と結論しています。**
+    `eta.py` が自分について「**凍らせた入力から出した結論**」と呼んでいるのと同じ形です。
+
+    ## この手は、**どちらの説明でも損をしません**
+
+        (A) 先頭 `cap()` 本が生きる   同じ日の中で時刻を早めるだけなので、
+                                     **その日の生きる本数は変わりません**（±0）
+        (B) 13:30 までが生きる        帯の外 → 帯の中 ＝ **その1本は生き返ります**
+
+    だから `live_ring()` の註と同じ理屈で、**賭けになりません。**
+    実測（2026-08-29・控えの予約ぶん）: **78本が対象／78本とも同じ日の帯に入り、
+    (A) の生存数は 446 → 446（±0）。** (B) なら **+78本 ＝ 約5万再生**
+    （帯の中の実測 655回/本）で、**いまのチャンネルの 14日ぶんの産出**にあたります。
+
+    ## 門は1つだけ置いています
+
+    **1手ごとに `board.live()` を数え直し、減ったら戻します。**
+    (A) では ±0 のはずですが、`_spaced()`（`MIN_GAP_MIN` 未満は落とす）が
+    絡むので、**「はず」で撃たないこと。** 減る手が出たら、その本は飛ばします。
+
+    ## 覆る条件
+
+    - **`day_cap.window()` が (A) と決めたら、この関数は要りません**（消してよい）。
+      **(B) と決まったら、`plan_all()` の `same_day_first=False` のほうを直すこと**
+    - 帯の外でも再生が付くと実測で出たら、`plan_all()` ごと要りません
+    - **検査は `tests/test_live_slots_band.py`**
+    """
+    out = ["", "=== 帯の外に居る本を、同じ日の帯へ入れ直す"
+                "（**(A) では ±0・(B) なら生き返る**。どちらでも損をしません）==="]
+    grid = sorted(GRID)
+    before = len(board.live())
+    moved = 0
+    stuck = 0
+    for vid in band_stray(board):
+        if limit is not None and moved >= limit:
+            break
+        was = board.at[vid]
+        day = was.date()
+        taken = board._taken(day)
+        placed = None
+        for m in grid:
+            if m in taken:
+                continue
+            when = dt.datetime.combine(day, dt.time(m // 60, m % 60), tzinfo=JST)
+            if when <= board.now:
+                continue
+            board.at[vid] = when
+            if len(board.live()) < before:
+                board.at[vid] = was          # **減る手は撃たない**（上の「門」）
+                continue
+            placed = when
+            break
+        if placed is None:
+            board.at[vid] = was
+            stuck += 1
+            continue
+        board.moves.append((vid, placed))
+        moved += 1
+        out.append(f"  python scripts/reschedule.py --move {vid} "
+                   f"{placed:%Y-%m-%dT%H:%M}   # {was:%m/%d %H:%M} から（帯の外）")
+    after = len(board.live())
+    out.append(f"  → 帯の中へ入れ直せるのは **{moved}本**"
+               + (f"／同じ日に空き分が無いのが {stuck}本" if stuck else "")
+               + f"（{moved * 50}単位）。**(A) の生存数 {before} → {after}**"
+               + ("（±0 ＝ 押し出していません）" if after >= before else
+                  "  [!] **減っています。撃たないこと**"))
+    if moved:
+        out.append("  **(B)（13:30 までが生きる）なら、この本数がそのまま生き返ります。**"
+                   "(A) なら ±0 ——`day_cap.window()` の切り分けは 2026-09-03")
+    return out
+
+
+#: **1本で全部を止めない**（2026-08-27 16:xx に踏んだ）。
+#:
+#: ここは最初の1本が落ちた時点で `return 1` していました。実測で
+#: `kH-2eghxy2w` が **`invalidPublishAt`（400）** を返し、**残り 43手が
+#: 1つも当たりませんでした** —— しかもその本は毎回いちばん前に並ぶので、
+#: **撃ち直しても同じ所で止まります。** 「`--plan` を撃ち直して残りを当てること」
+#: という案内は、この場合ぜんぶ空振りです。
+#:
+#: 落ちた本の正体は**もう公開済みの本**でした（`publishAt` は公開後には置けない）。
+#: 控え（`data/uploaded.jsonl`）は 08/29 13:30 と言っていますが、実物は
+#: **08/26 20:00 に公開済み**です。**控えと実物が食い違っている本は、
+#: これからも出ます**（`git merge` で2行入った本・手で動かした本）。
+#:
+#: だから止め方を変えます —— **その本を飛ばして次へ進み、最後にまとめて言う。**
+#: **枠が尽きた合図（403）は別**です。あれは撃つほど悪くなるので、そこで止めます。
+_SKIP_REASONS = ("invalidPublishAt", "invalidVideoId", "videoNotFound",
+                 "forbidden", "videoRatingDisabled")
+
+
 def apply_moves(board: Board) -> int:
     from scripts import reschedule
 
     done = 0
+    skipped: list[tuple[str, str]] = []
     for vid, when in board.moves:
         try:
             reschedule.main(["--move", vid, f"{when:%Y-%m-%dT%H:%M}"])
         except SystemExit as e:
-            if e.code:
-                print(f"[live_slots] {vid} で止まりました。"
-                      " **`--plan` を撃ち直して残りを当てること**", flush=True)
+            # **枠切れは「飛ばす」ではなく「止める」**（2026-08-27 に見つけた）。
+            #
+            # 下の `except Exception` に「枠が尽きたら、そこで止めること」と
+            # 書いてありますが、**そこへは永久に来ません** ——
+            # `reschedule._update` は日枠の 403 を **`SystemExit`** に変えて
+            # 投げ、`SystemExit` は `Exception` の子ではないので、
+            # **必ずこちらの handler が先に捕まえます。**
+            # そしてこちらは `skipped` に積んで **`continue`** していました ＝
+            # **尽きた窓で、残りの手ぜんぶを撃ち続けます。**
+            # （この repo が通算11回 踏んでいる「言っていることと、
+            #   している所が別」の形。08/27 の 403 が窓の中で 29→60回 に
+            #   育っているのは、この往復です）
+            if reschedule.is_quota_exit(e):
+                print(f"[live_slots] 日枠が尽きました（{done}回 動かした時点）。"
+                      " **窓が変わってから `--plan` を撃ち直すこと**", flush=True)
                 return 1
+            if e.code:
+                skipped.append((vid, f"終了コード {e.code}"))
+                continue
         except Exception as e:                            # noqa: BLE001
+            text = str(e)
+            if "quotaExceeded" in text or "dailyLimitExceeded" in text:
+                # **枠が尽きたら、そこで止めること。** 撃つほど悪くなります。
+                # （生の `HttpError` が素通りしてきた回のため。日枠は上で止めます）
+                print(f"[live_slots] 日枠が尽きました（{done}回 動かした時点）。"
+                      " **窓が変わってから `--plan` を撃ち直すこと**", flush=True)
+                return 1
+            if any(r in text for r in _SKIP_REASONS):
+                skipped.append((vid, text.split('"')[1] if '"' in text else text[:60]))
+                continue
             print(f"[live_slots] {vid} で落ちました: {e}."
                   " **`--plan` を撃ち直して残りを当てること**", flush=True)
             return 1
         done += 1
     print(f"[live_slots] {done}回 動かしました（{done * 50}単位）")
+    if skipped:
+        print(f"[live_slots] **飛ばした {len(skipped)}本**"
+              "（控えと実物が食い違っている ＝ もう公開済みなど）:")
+        for vid, why in skipped:
+            print(f"    {vid}  {why}")
+        print("    → **控えのほうが古い**ので、`python scripts/snapshot.py` で"
+              "実物を積み直すこと（`videos.list` だけ ＝ 12単位）")
     return 0
 
 
@@ -452,12 +655,18 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--all", action="store_true",
                     help="A/B に限らず、0再生の枠に居る本を**全部**逃がす"
                          "（上限に余りのある日へ。**生きる本が実際に増えます**）")
+    ap.add_argument("--band", action="store_true",
+                    help="帯の外に居る本を、**同じ日の帯の空き分**へ入れ直す"
+                         "（(A) では ±0・(B) なら生き返る。どちらでも損をしない）")
     args = ap.parse_args(argv)
 
     board = Board(_rows())
     lines = report(board)
     if args.plan or args.apply:
-        lines += plan(board) if not args.all else plan_all(board)
+        if args.band:
+            lines += plan_band(board)
+        else:
+            lines += plan(board) if not args.all else plan_all(board)
         lines += ["", *day_cap.live_lines(_rows())]
     print("\n".join(lines))
     if args.apply:

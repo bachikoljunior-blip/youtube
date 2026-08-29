@@ -45,6 +45,7 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -105,10 +106,59 @@ class Floor:
         return r is not None and r <= self.deadline
 
     def shortfall(self) -> dict[str, int]:
-        """群名 → 予約の中にあと何本足りないか（0 なら足りている）。"""
+        """群名 → 予約の中にあと何本足りないか（0 なら足りている）。
+
+        **本数しか見ません。** ここが 0 でも `ok` が False のことがあります ——
+        本はそろっているが、**N本目が期限より後ろ**という形です。
+        作る側が読むのは、下の `shortfall_in_time()` のほうです。
+        """
         return {
             g: max(0, self.min_per_group - len(days)) for g, days in self.groups.items()
         }
+
+    @property
+    def last_useful_day(self) -> date:
+        """**この日までに公開された本だけが、期限までの判定に間に合います。**
+
+        期限から、落ち着き（`SETTLE_DAYS`）と Analytics の遅れを引いた日。
+        `ready` の逆算なので、**同じ2つの定数から出しています**（写さないこと）。
+        """
+        return self.deadline - timedelta(days=SETTLE_DAYS + ANALYTICS_LAG_DAYS)
+
+    def in_time(self) -> dict[str, int]:
+        """群名 → **期限までの判定に間に合う**本数（`last_useful_day` 以前の公開）。"""
+        cut = self.last_useful_day
+        return {g: sum(1 for d in days if d <= cut) for g, days in self.groups.items()}
+
+    def shortfall_in_time(self) -> dict[str, int]:
+        """群名 → **期限に間に合う本**が、あと何本 足りないか。
+
+        ## なぜ `shortfall()` と別に要るのか（2026-08-26 に踏んだ）
+
+        **同じ床を、2つの口が別々に数えていました。**
+
+            scripts/batch_build.motion_shortfall()   対照 **8本** ／ 床 8 → **足りています**
+            src/judgeable.Floor.ok                   8本目 **10/10** → 判定 10/16
+                                                     → **期限 09/13 を 33日 超えます**
+
+        どちらも嘘ではありません。**前者は本数だけを数え、期限を見ていない**だけです。
+        実測（`opening_motion` の対照8本の公開日）——
+
+            08/28 ／ 09/02 ／ 09/06 ／ 09/06 ／ 09/12 ／ **10/02 ／ 10/04 ／ 10/10**
+
+        **期限 09/13 に間に合うのは 5本**で、残り3本は判定のあとに公開されます。
+
+        **この食い違いは、実際に1本ぶんの生成を空振りさせました。** 08/26 の回が
+        `motion_shortfall()` の「**あと 1本**」を読んで対照を1本 作り、床は 7→8本 に
+        なりましたが、**赤い検査は3件とも赤のまま**でした（本数ではなく日付が縛り）。
+
+        **だから作る側は、こちらを読むこと。** そうすれば「あと 3本」と出て、
+        `--long` を付けない回が**期限の内側の枠**へ自動で寄せます。
+
+        **覆る条件**: 期限を延ばす判断をした回は、`last_useful_day` が後ろへ動くので、
+        ここも自動でゆるみます。**この関数の側に期限を書き写さないこと。**
+        """
+        return {g: max(0, self.min_per_group - n) for g, n in self.in_time().items()}
 
     def lines(self) -> list[str]:
         out = [f"  {self.key}  期限 {self.deadline:%m/%d}"]
@@ -178,17 +228,151 @@ Member = tuple[date, str]
 
 
 def _members_by_split(name: str) -> dict[str, list[Member]]:
-    """`ab_split.EXPERIMENTS` の A/B（IDで振り分け・指示より前の本は落とす）。"""
+    """`ab_split.EXPERIMENTS` の A/B（IDで振り分け・指示より前の本は落とす）。
+
+    ## **`Experiment.eligible` を読みます**（2026-08-28 に足した。最適化の回）
+
+    `ab_split` は 2026-08-27 に `eligible=_shorts_only` を **`request_form` と
+    `slide_pace` の両方**へ足しました。`ab_split.split_counts()` はそれを読みます。
+    **ここは読んでいませんでした。** 同じ問い（「その本は群に入るか」）を
+    2か所が別々に解いて、**片方だけが `eligible` を見ていた**形です
+    （`docs/JOURNAL.md` にある、この repo で通算13回目）。
+
+    ### 実測（塞ぐ前に、実際に出ていた害）
+
+    `slide_pace` の群に、**長尺が3本**入っていました —— どれも
+    2026-08-27 夜に主実行が作った長尺です:
+
+        8hJnwkC8NU0  iryohi-furusato-joge-nenshubetsu  285.9s  → 速い  10/06
+        KfQeYEJwL7Q  iryohi-zeiritsu-dan-kaidan        302.8s  → 速い  10/11
+        f9WbldIUYpk  iryohi-jikofutan-2percent         363.2s  → 遅い  10/07
+
+    **長尺は `reveal_variants` を1度も通らない**ので、この3本には
+    刻みの処置が**入っていません**。IDのハッシュだけで群を名乗っていました。
+
+    害は標本の汚れだけでは済みません。`scripts/deadline_check._project_nth()` は
+    群がまだ N本 に満たないとき **`max(積み上がる日, pub[-1])`** で N本目を出します。
+    `pub[-1]` がこの長尺（10/11・10/07）なので:
+
+        長尺こみ（旧）  16本目 10/11・10/07 → 判定 **10-17**
+                        → 門が「**`deadline: "2026-10-17"` へ延ばすこと**」と印字
+        長尺を落とす    16本目 09/13・09/17 → 判定 **09-23**（期限 09-24 の**内側**）
+
+    **`eta.py` の到達日が動くのは前提を1件 閉じたときだけ**なので、
+    あの `[!!]` に従った回は、**期限を 23日 後ろへ送っていました。**
+    処置の入っていない3本が、軌跡から 24日 を持って行っていた形です。
+
+    ### 覆る条件
+
+    - `eligible` を持たない実験（いまは `title_form` / `hook_form` /
+      `stat_split` / `opening_motion`）は、**1本も落ちません**（`None` で素通り）。
+      あれらが長尺を含むべきかは、**この回では測っていません** ——
+      含むべきでないと分かったら、`ab_split` 側に `eligible` を足すこと。
+      **ここに条件を書き足さないこと**（それが上の「2か所」を作ります）
+    - `judgeable.shorts_only()` は**宣言ではなく標本**からこれを見ます。
+      あれが `slide_pace` を返さない回があれば、この門が効いていません
+    """
+    from src import ab_split as ab_split_mod
     from src.ab_split import EXPERIMENTS
 
     exp = EXPERIMENTS[name]
     builds, pub, vid = build_times(), _publish_by_topic(), _video_by_topic()
+    allowed = exp.eligible() if exp.eligible is not None else None
     out: dict[str, list[Member]] = {exp.treated: [], exp.control: []}
     for topic, built in builds.items():
         if built < exp.landed:
             continue  # 指示が入る前に作った本。IDが何と言おうと処置は入っていない
-        group = exp.split(topic)
+        if allowed is not None and topic not in allowed:
+            continue  # 処置がそもそも掛からない本（長尺など）。上の docstring
+        # **凍らせた名札が勝ちます**（`ab_split.group_of` に実測と理由 ——
+        # `SLOW_PACE_SHARE = 0` の1行で、処置群 7本 が丸ごと消えます）。
+        group = ab_split_mod.group_of(exp, topic)
         day = pub.get(topic)
+        if group in out and day:
+            out[group].append((day, vid.get(topic, "")))
+    for rows in out.values():
+        rows.sort()
+    return out
+
+
+#: ショートの上限（秒）。`config/hypotheses.yaml` の「ショート(3分以下)」と同じ数。
+SHORT_MAX_S = 180.0
+
+
+def _short_topics() -> set[str]:
+    """**ショートとして出したテーマID**（控えの `duration_s` から。3分以下）。
+
+    ## `s-` の接頭辞では割れません（2026-08-26 に実測）
+
+    控えのうち `duration_s` を持つ 56件を数えると:
+
+        `s-` で始まるのに **3分超** が **3件**
+        `s-` で始まらないのに 3分以下 が **6件**（＝ 深い題ショート）
+
+    **`request_form` の A/B は「ショートの終端の依頼」を測っています。**
+    接頭辞で割ると、深い題ショート（`batch_build` が毎回 半分ぐらい混ぜる）が
+    **処置も対照も無い所へ落ち**、群が半分の速さでしか積みません。
+
+    `duration_s` は新しい欄なので、**無い行は接頭辞に落とします**（568件中 512件）。
+    それらは全部 `landed`（2026-08-26 19:08）より前の本なので、この前提には入りません。
+    """
+    out: set[str] = set()
+    for row in _ledger_rows():
+        topic = str(row.get("topic") or "")
+        if not topic:
+            continue
+        d = row.get("duration_s")
+        if isinstance(d, (int, float)) and d > 0:
+            if float(d) <= SHORT_MAX_S:
+                out.add(topic)
+            else:
+                out.discard(topic)          # **後の行が勝ち**（`published()` と同じ）
+        elif topic.startswith("s-"):
+            out.add(topic)
+    return out
+
+
+def _ledger_rows() -> list[dict]:
+    """`data/uploaded.jsonl` を素で。**`published()` は `duration_s` を捨てます。**"""
+    path = ROOT / "data" / "uploaded.jsonl"
+    out: list[dict] = []
+    if not path.exists():
+        return out
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        try:
+            out.append(json.loads(line))
+        except ValueError:
+            continue
+    return out
+
+
+def _members_by_request_form() -> dict[str, list[Member]]:
+    """登録の依頼を途中にも入れる A/B。**ショートだけ**を、テーマIDのハッシュで割る。
+
+    `_members_by_split()` を使わないのは、**長尺を落とす必要がある**からです
+    （長尺は依頼そのものを書かない ＝ `src/script_writer.ROLE`）。
+    落とし方は接頭辞ではなく**控えの `duration_s`**（上の `_short_topics`）。
+    """
+    from src import ab_split as ab_split_mod
+    from src.ab_split import EXPERIMENTS
+
+    exp = EXPERIMENTS["request_form"]
+    builds, pub, vid = build_times(), _publish_by_topic(), _video_by_topic()
+    shorts = _short_topics()
+    out: dict[str, list[Member]] = {exp.treated: [], exp.control: []}
+    for topic, built in builds.items():
+        if built < exp.landed or topic not in shorts:
+            continue
+        day = pub.get(topic)
+        # **ここも凍らせた名札を通すこと**（2026-08-28）。
+        # `_members_by_split()` だけを通しても、`request_form` はこの関数から
+        # 群を作るので素通りします —— **同じ問いを解く関数が2本あって、
+        # 片方だけ直っている**形（この repo でくり返し出ている形）。
+        # 実測: `_members_by_split` だけ直した時点で、`MID_REQUEST_SHARE = 0` は
+        # `slide_pace` を守れて `request_form` は **途中あり 23 → 0** でした。
+        group = ab_split_mod.group_of(exp, topic)
         if group in out and day:
             out[group].append((day, vid.get(topic, "")))
     for rows in out.values():
@@ -211,10 +395,34 @@ def _members_by_landed(landed: datetime) -> dict[str, list[Member]]:
 
 
 def _members_by_opening_motion() -> dict[str, list[Member]]:
-    """`YT_OPENING_MOTION` の値で割る（`src/motion_groups.py` が実物から引きます）。"""
+    """`YT_OPENING_MOTION` の値で割る（`src/motion_groups.py` が実物から引きます）。
+
+    ## **共有日だけを数えます**（2026-08-27 に直した。**同じ穴の4件目**）
+
+    ここは長らく `motion_groups.groups()`（**生の合計**）を読んでいました。
+    ところが `falsified_if` は「**動きありと同じ日に交互で予約する**」と言っており、
+    **片方しか居ない日の本は使えません**（動きの差と、その日の配信の差を
+    分けられない —— 1日に配信されるのは 10本ちょうど・`src/day_cap.py`）。
+    `motion_groups.paired()` の docstring が同じことを3件ぶん書いています。
+
+    **食い違いは、期限の側に出ていました**（2026-08-27 の実測）:
+
+        `deadline_check.py`（ここ・生の合計）        判定できるのは **09/21**
+        `tests/test_hypothesis_deadline_reachable`   判定できるのは **09/26**
+                                                     （`earliest_opening_motion`＝共有日）
+
+    **どの期限を書いても、必ずどちらかの検査が赤くなる状態**でした
+    （09/21 なら「まだ判定できない」、09/26 なら「データは揃うのに期限が先」）。
+    `test_遅すぎる期限が残っていないこと` の docstring が
+    「**期限を意図して先に置きたいなら `needs` に書くこと**」と言っているとおり、
+    直すのは日付ではなく**数え方**のほうです。
+
+    **覆る条件**: `falsified_if` から「同じ日に交互」が外れたら、`groups()` に戻すこと
+    （そのときは片方しか居ない日の本も標本になります）。
+    """
     from src import motion_groups
 
-    off, on = motion_groups.groups()
+    off, on = motion_groups.paired(*motion_groups.groups())
     pub = _publish_by_video()
     return {
         "対照(動きなし)": sorted((d, v) for v in off if (d := pub.get(v))),
@@ -228,9 +436,127 @@ def _days(rows: dict[str, list[Member]]) -> dict[str, list[date]]:
 
 
 #: yaml の `key:` → (**群べつの本**を作る関数, 片群あたりの必要本数)
+def short_share(days: int = 30) -> tuple[int, int] | None:
+    """直近に作った本のうち、**ショートだったもの**（実測。返り `(ショート数, 数えた数)`）。
+
+    **べた書きしないこと。** 長尺の比率は回ごとに動きます（実測 2026-08-27 は 9%）。
+    数が少なすぎる回は `None` —— 引きの偏りで反対を言うので、言わないほうが安全です。
+
+    ここに置いてあるのは、`_short_topics()` と `build_times()` が
+    **この1か所にしか無い**からです（`tests/test_queue_lag.py` の
+    「群の作り方を、この道具の中で持ち直していない」が門）。
+    """
+    builds = build_times()
+    if not builds:
+        return None
+    shorts = _short_topics()
+    known = set(_video_by_topic())
+    newest = max(builds.values())
+    cut = newest - timedelta(days=days)
+    rec = [t for t, b in builds.items() if b >= cut and t in known]
+    if len(rec) < 8:
+        return None
+    return sum(1 for t in rec if t in shorts), len(rec)
+
+
+def starved_share(keys: list[str]) -> tuple[int, int] | None:
+    """**その実験が入った後に作ったショートのうち、実際に群へ入った割合**（実測）。
+
+    返り `(入った本数, 数えた本数)`。標本 8本 未満なら `None`。
+
+    ## なぜ要るか（2026-08-29・最適化の回。**別の数を証拠にしていました**）
+
+    `scripts/queue_lag.py` は
+    「**これから作るショートは、足りない群に自動で入ります**（直近の実測 87%）」
+    と印字していました。**その 87% は `short_share()`** ——
+    「直近30日に作った本のうち、**ショートだった**割合」です。
+    **文と数が別のことを言っています**（片方は「群に入るか」、
+    もう片方は「ショートか長尺か」）。
+
+    実測 2026-08-29 —— 同じ日に3つの数が出ます:
+
+        87%   `short_share()`             作った本のうち ショートだった割合
+        13%   直近30日のショートのうち、いま足りない群に入っているもの
+        100%  **実験が入った後**に作ったショートのうち、群に入ったもの ← これ
+
+    **13% は不当に低い**（30日の窓のうち 28日ぶんは実験が入る前に作った本で、
+    `_members_by_request_form()` の `built < exp.landed` で必ず落ちます）。
+    **87% は無関係。** 文が言っているのは3つ目で、それは **100%** です ——
+    `request_form` 58/58本・`slide_pace` 24/24本。
+
+    **証拠のほうが結論より弱かった**わけです。結論（「作り続ける」）は正しく、
+    弱い数を並べたせいで**「87% しか入らない」と読める**形でした。
+
+    ## 覆る条件
+
+    振り分けが「テーマIDだけを見る純関数」でなくなったら、この 100% は割れます
+    （`src/script_writer.request_form` / `src/pipeline.slide_pace`）。
+    そのときこの関数がそのまま下がって教えます —— **写さずに毎回 撃つこと。**
+    `tests/test_starved_share.py` が「入った後の本だけを数える」ことを留めています。
+    """
+    from src.ab_split import EXPERIMENTS
+
+    builds, shorts = build_times(), _short_topics()
+    vid = _video_by_topic()
+    hit = seen = 0
+    for key in keys:
+        exp = EXPERIMENTS.get(key)
+        if exp is None:
+            continue
+        try:
+            ms = members(key)
+        except Exception:                                        # noqa: BLE001
+            continue
+        joined = {v for g in ms.values() for _d, v in g}
+        for topic, built in builds.items():
+            # **実験が入った後に作ったショートだけ**を分母に置くこと。
+            # 前に作った本は、群に入りようがありません（`built < exp.landed`）。
+            if built < exp.landed or topic not in shorts or topic not in vid:
+                continue
+            seen += 1
+            if vid[topic] in joined:
+                hit += 1
+    return (hit, seen) if seen >= 8 else None
+
+
+def shorts_only(keys: list[str]) -> list[str]:
+    """その前提が**ショートだけ**を数えているか。**宣言を写さず、標本から見ます。**
+
+    `_members_by_request_form()` の「長尺は群に入らない」を別の道具へ書き写すと、
+    **片方が腐ります**（この repo で6回 起きた形。
+    `docs/JOURNAL.md` 2026-08-27「1つの定数を全部に当てて、註に同じ数が出ると書いた」）。
+    だから**いまの群の中身**を見て、全部ショートなら「ショートだけ」と読みます。
+
+    **標本 8本 未満では言いません**（引きの偏りで反対を言います）。
+    """
+    shorts = _short_topics()
+    topic_by_vid = {v: t for t, v in _video_by_topic().items() if v}
+    out: list[str] = []
+    for key in keys:
+        try:
+            ms = members(key)
+        except Exception:                                        # noqa: BLE001
+            continue
+        ts = [topic_by_vid.get(v) for g in ms.values() for _d, v in g]
+        ts = [t for t in ts if t]
+        if len(ts) >= 8 and all(t in shorts for t in ts):
+            out.append(key)
+    return out
+
+
 MEMBER_SOURCES: dict[str, tuple[Callable[[], dict[str, list[Member]]], int]] = {
     "title_form": (lambda: _members_by_split("title_form"), MIN_PER_GROUP),
     "hook_form": (lambda: _members_by_split("hook_form"), MIN_PER_GROUP),
+    # 登録の依頼を途中にも入れるか（`src/script_writer.request_form`）。
+    # **ショートだけ**が群に入ります（長尺は `"長尺"` が返り、`out` に無いので落ちます）。
+    #
+    # **床が 16本 ではなく 72本 なのは、測っているのが engaged ではなく登録だから**です。
+    # 登録率の実測は **0.0318%**（3,066再生に1人）。片群 16本 ＝ 約 6,700再生 では
+    # 期待 2.1人 で、2群を比べても**効きが2倍でも見分けられません**。
+    # 30,000再生 ÷ 418.7再生/本（公開済み130本の実測）＝ **72本**。
+    # ここは `config/hypotheses.yaml` の期限 2026-10-11 と同じ引き方です
+    # （あちらは対照群が無いので絶対値、こちらは2群）。
+    "request_form": (_members_by_request_form, 72),
     # d14dbf7「冒頭の stat を 前提を先・数字を後 に割る」 2026-08-23 22:03:31 JST
     "stat_split": (
         lambda: _members_by_landed(datetime(2026, 8, 23, 22, 3, 31, tzinfo=JST)),
@@ -238,7 +564,45 @@ MEMBER_SOURCES: dict[str, tuple[Callable[[], dict[str, list[Member]]], int]] = {
     ),
     # `falsified_if` の「対照 8本以上・動きあり 8本以上」がこの前提の N
     "opening_motion": (_members_by_opening_motion, 8),
+    # ショートの刻み（1コマの秒数）を 2.5 と 4.5 に振り分ける
+    # （`src/pipeline.slide_pace`・2026-08-27 オーナー指摘）。
+    # **測るのは engaged** なので、床は `MIN_PER_GROUP` のまま
+    # （`request_form` の 72本 は登録を測るためで、ここには当たりません）。
+    # **長尺は `reveal_variants` を1度も通らない**ので、群はショートだけです
+    # （`ab_split` 側の `eligible=_shorts_only`）。
+    "slide_pace": (lambda: _members_by_split("slide_pace"), MIN_PER_GROUP),
+    # 帯の中の枠を、早い側／遅い側へ振り分ける
+    # （`src/ab_split.slot_half`・`scripts/batch_build._ab_slot_order`）。
+    # **測るのは1本あたり再生**ですが、床は `MIN_PER_GROUP` のまま ——
+    # `request_form` の 72本 は**登録**（3,066再生に1人）を見分けるための数で、
+    # 再生そのものを比べるここには当たりません。
+    # **長尺は帯を1枠も使いません**（置き先は `_long_ring()` の 18〜22時）ので、
+    # 群はショートだけです（`ab_split` 側の `eligible=_shorts_only`）。
+    "slot_half": (lambda: _members_by_split("slot_half"), MIN_PER_GROUP),
 }
+
+#: `MEMBER_SOURCES` には在るが、**期限は `kind: accrual`（伸び率）で解く**もの。
+#:
+#: `Floor.ready` は「片群 N本 が予約にそろって初めて日が出る」形なので、
+#: **これから積む群**を `SOURCES` に入れると `ready is None` のまま
+#: `tests/test_judgeable.py::test_実物で期限が構造的に守れる` が**赤で居座ります**。
+#: 実際、`request_form` は立てた回に 0本 / 0本 で、床は 72本 —— 赤が2週間 続きます。
+#:
+#: **群の数え方は捨てません**（`members("request_form")` はそのまま使えます。
+#: `scripts/deadline_check.py` の `ab_members()` がここから数え、
+#: 伸び率で「72本目はいつか」を出します）。
+#:
+#: **積み終わったらここから外すこと。** そのとき yaml の `needs` を
+#: `kind: group_key` に戻せば、`Floor` の側で期限が守れるか見張られます。
+#:
+#: **`slide_pace` も同じ形です**（2026-08-27）—— 振り分けが入ったのは 21:30 JST で、
+#: **予約に入っている本は全部それより前に作られています**（両群 0本 / 床 16本）。
+#: `Floor.ready` は「片群 N本 が**予約に**そろって初めて日が出る」形なので、
+#: ここに入れないと `test_実物で期限が構造的に守れる` が**赤で居座ります**。
+#: **群の数え方は捨てません** —— `members("slide_pace")` はそのまま使えます。
+#: **積み終わったらここから外すこと**（`needs` を `kind: group_key` のまま戻せば、
+#: `Floor` の側で期限が守れるか見張られます）。
+ACCRUING: set[str] = {"request_form", "slide_pace", "slot_half"}
 
 #: yaml の `key:` → (群べつの**公開日**を作る関数, 片群あたりの必要本数)。
 #: **`members()` から畳んで作ります。ここに直接足さないこと** ——
@@ -246,6 +610,7 @@ MEMBER_SOURCES: dict[str, tuple[Callable[[], dict[str, list[Member]]], int]] = {
 SOURCES: dict[str, tuple[Callable[[], dict[str, list[date]]], int]] = {
     key: ((lambda k=key: _days(members(k))), n)
     for key, (_make, n) in MEMBER_SOURCES.items()
+    if key not in ACCRUING
 }
 
 
@@ -298,14 +663,44 @@ def _hypotheses() -> list[dict]:
 
 
 def deadlines() -> dict[str, date]:
-    """yaml の `key:` → 期限（**閉じた前提は返しません**）。"""
+    """yaml の群の key → 期限（**閉じた前提は返しません**）。
+
+    ## **`needs:` の側の `key:` も拾います**（2026-08-27 に測って足した）
+
+    ここは長らく**前提の直下の `key:` だけ**を読んでいました。ところが
+    `request_form`（腕 `sub_rate`）は、直下に `key:` を**わざと付けていません** ——
+    yaml のその行に理由が書いてあります（「立てた時点で両群 0本・床 72本 なので、
+    `key:` を付けると `tests/test_judgeable.py` がそろうまで赤で居座る」）。
+    群そのものは `needs: [{kind: group_key, key: request_form}]` に在ります。
+
+    **その置き場所の都合が、群の一覧ごと消していました。** 実測 2026-08-27:
+    `deadlines()` は4件を返し、`request_form` だけが落ちていました。
+    落ちた1件は **`eta.py` が「凍らせると軌跡は +118日」と言う唯一の腕**の、
+    ただ1つの走っている実験で、**床がいちばん遠い**（片群 72本 に対し 9本/7本）。
+    **いちばん足りない群が、群の一覧から消えていた**ということです。
+
+    **`floors()` は1件も変わりません** —— あちらは `SOURCES` を回り、
+    `request_form` は `ACCRUING` で最初から外れています（実測で確認済み。
+    `tests/test_judgeable.py::test_実物で期限が構造的に守れる` は緑のまま）。
+    変わるのは「**群の一覧を訊く側**」（`scripts/queue_lag.py` の枠の節）だけです。
+
+    **覆る条件**: `request_form` の群がそろって `ACCRUING` から外れ、
+    yaml の直下に `key:` が戻ったら、この二重読みは要りません。
+    """
     out: dict[str, date] = {}
     for h in _hypotheses():
-        key = h.get("key")
-        if not key or h.get("closed_on"):
+        if h.get("closed_on"):
             continue
         raw = h.get("deadline")
-        out[str(key)] = raw if isinstance(raw, date) else date.fromisoformat(str(raw))
+        if not raw:
+            continue
+        when = raw if isinstance(raw, date) else date.fromisoformat(str(raw))
+        keys = [str(h["key"])] if h.get("key") else []
+        for need in (h.get("needs") or []):
+            if isinstance(need, dict) and need.get("kind") == "group_key" and need.get("key"):
+                keys.append(str(need["key"]))
+        for key in keys:
+            out.setdefault(key, when)
     return out
 
 

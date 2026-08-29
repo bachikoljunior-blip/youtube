@@ -141,7 +141,7 @@ def main() -> None:
     print("  1. `python scripts/status.py` を読む（日枠・在庫・待ち）")
     print("  2. `python scripts/eta.py` の3行（--full なら下に出します）")
     print("  3. 上の「満ちた待ち」「埋まらない待ち」「閉じていない依頼」を潰す")
-    print("  4. 出したら `python scripts/run_marker.py --ship … --lever … --moves …`")
+    print("  4. 出したら `python scripts/run_marker.py --ship … --kind … --lever … --moves …`")
     print()
     print("  **予約の位置は `python scripts/reschedule.py --list` を見ること。**")
     print("  `data/uploaded.jsonl` は古い行を持ちます（8/23 実測: 台帳17本／実物8本）")

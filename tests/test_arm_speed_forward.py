@@ -131,3 +131,84 @@ def test_実物で落ちないこと():
     for h in fw["horizons"]:
         assert 0 <= h["n"] <= fw["dated"]
         assert h["per_day"] >= 0
+
+
+# --- **窓を伸ばすほど倍率が下がるのは、予定表のせいではない**（2026-08-27） ---
+#
+# 上の `test_窓が長いほど1日あたりは下がること` は正しい —— ただし
+# **その単調さこそが、印字していた倍率を読めなくしていました。**
+# 分子は「開いた前提のうち窓の内側に判定日があるもの」で `n_open` が頭打ち、
+# 分母 `h` だけが伸びるので、**予定表が完璧でも**倍率は窓とともに 0 へ行きます。
+#
+# 実測 2026-08-27（開いた前提 19件・過去 θ 0.913/日）::
+#
+#     窓    実際      取りうる最大   実際/最大   印字していた倍率
+#     14日  0.643/日  1.357/日      **47%**     0.70倍
+#     60日  0.250/日  0.317/日      **79%**     0.27倍
+#
+# **印字していた倍率と「実際/最大」は、窓に対して逆を向いています。**
+# 「遠くほど予定表が悪い」と読める行が出ていましたが、遠い窓ほど予定表は
+# 最大に近く、縛っているのは**台帳の件数**のほうでした。
+# **そこを直しに行くと空振りします**（60日窓は予定を1日も動かせない）。
+
+
+def test_取りうる最大を同じ行に出すこと():
+    """**裸の倍率を出さないこと。** `n_open / h` が、その窓の天井です。"""
+    ready = {"C": date(2026, 8, 27), "D": date(2026, 9, 20),
+             "E": date(2026, 10, 20)}
+    fw = arm_speed.forward(ready, doc=DOC, today=TODAY, horizons=(14, 30, 60))
+    assert fw["open"] == 3, "開いている前提の件数を返していません"
+    for h in fw["horizons"]:
+        assert h["cap_per_day"] == pytest.approx(3 / h["days"]), (
+            "その窓で取りうる最大が `n_open / h` になっていません")
+        assert h["per_day"] <= h["cap_per_day"] + 1e-9, (
+            f"実際が天井を超えています: {h}")
+
+
+def test_窓が長いほど天井に近づくこと_倍率とは逆を向く():
+    """**この検査が本体です。**
+
+    `ratio` は窓とともに必ず下がりますが、`head`（実際/取りうる最大）は
+    そうではありません。**両方を並べないと、台帳の件数の制約が
+    予定表の失敗に見えます。**
+    """
+    ready = {"C": date(2026, 8, 27), "D": date(2026, 9, 20),
+             "E": date(2026, 10, 20)}
+    fw = arm_speed.forward(ready, doc=DOC, today=TODAY, horizons=(14, 30, 60))
+    ratio = [h["ratio"] for h in fw["horizons"]]
+    head = [h["head"] for h in fw["horizons"]]
+    assert ratio == sorted(ratio, reverse=True), f"倍率が単調に下がっていません: {ratio}"
+    assert head == sorted(head), (
+        f"**この置き方では `head` が上がるはずです**: {head}／{ratio}")
+    assert head[-1] > ratio[-1] / ratio[0], (
+        "天井に対する近さが、倍率の落ち方に引きずられています")
+
+
+def test_予定表が完璧でも長い窓の倍率は下がること():
+    """**予定表のせいではない**ことの直接の証拠。
+
+    開いた前提を**全部 明日**に置いても（＝これ以上 手前に倒せない）、
+    60日窓の倍率は 1.0 に届きません。**倍率を「予定表の失敗」と読まないこと。**
+    """
+    tomorrow = date(2026, 8, 27)
+    ready = {k: tomorrow for k in ("C", "D", "E")}
+    fw = arm_speed.forward(ready, doc=DOC, today=TODAY, horizons=(14, 60))
+    for h in fw["horizons"]:
+        assert h["head"] == pytest.approx(1.0), (
+            f"全部を明日に置いても天井に届いていません: {h}")
+    assert fw["horizons"][-1]["ratio"] < 0.1, (
+        "**完璧な予定表なのに 0.05倍 と出るのが、この行の読みにくさの正体です**")
+
+
+def test_行が_どちらの直し方かを名指しすること():
+    """**上げ方は窓で違います。** 片方しか言わないと、空振りする側へ行きます。"""
+    ready = {"C": date(2026, 8, 27), "D": date(2026, 9, 20),
+             "E": date(2026, 10, 20)}
+    fw = arm_speed.forward(ready, doc=DOC, today=TODAY, horizons=(14, 30, 60))
+    line = arm_speed.forward_line(fw)
+    assert line, "合っていないのに黙っています"
+    assert "取りうる最大" in line, f"天井を出していません: {line}"
+    assert "queue_lag" in line, (
+        "**予定を手前に倒して上がる窓**を名指ししていません")
+    assert "--alloc" in line and "前提を増やす" in line, (
+        "**予定を動かしても上がらない窓**の直し方を名指ししていません")

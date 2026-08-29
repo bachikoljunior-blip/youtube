@@ -20,6 +20,22 @@
 **数は作っていません** —— 長尺の側の天井は `sub_rate` と同じ
 **定義上の上限**で、`measured: False` のまま `LEVERS` にも入れていません
 （軌跡に歩かせない）。
+
+## 2026-08-29 —— **`measured` を「天井」と読まないこと**
+
+上の段落は**もう古い**です。`day_cap.long_form()` は 08/21 の実測
+（長尺 7本 を出して生存 5本）から `measured: True` を返し、
+`scripts/eta.physical_caps` はその日から**実測の上限 6本/日**を使います。
+
+そのとき `levers.arm_state` は、同じ出力の中で2つの逆のことを言っていました:
+
+    dead_why["density"]  「ショートの面の数。**長尺の面も測って天井**」   ← 偽
+    open_why["density"]  「長尺の面は**開いています（未測定）**」          ← 「未測定」が偽
+
+**`measured` と `at_ceiling` は別の量です** ——
+前者は「崩れる所を**見たか**」、後者は「**いま**その天井に当たっているか」。
+実物は **measured=True かつ at_ceiling=False**（6本/日 に対し 0.69本/日）。
+**下の2件が、この取り違えを止めます。**
 """
 from __future__ import annotations
 
@@ -119,10 +135,64 @@ def test_読めないときは未測定の側へ倒す(monkeypatch):
     assert levers._long_surface_measured() is False
 
 
-def test_実物でも未測定のまま():
-    """長尺の面の上限を測ったと言い出したら、この検査が落ちます。
+def test_実物の値は_day_capのcollapsedをそのまま映す():
+    """**値をべた書きしない。関係のほうを縛る。**（2026-08-26 夜に書き換えた）
 
-    落ちたのが**本当に測れたから**なら、`src/day_cap.long_form()` の
-    `measured` を見直したうえで、この検査ごと書き換えること。
+    もとは `assert levers._long_surface_measured() is False` でした。
+    docstring は「落ちたのが**本当に測れたから**なら書き換えること」と
+    断ってあり、**実際にそうなりました**:
+
+        4af0005（08-25 23:38）  day_cap が長尺を齢48時間でそろえて数え直し、
+                                08/21 の **7本（生きた 5本）** を拾って
+                                `collapsed` を True にした
+        1b601a8（08-25 23:44・6分後）
+                                levers 側の docstring を直したが、
+                                **「値は False のまま」と書いた** ——
+                                6分前に True になっていた
+        → この検査は **20時間 赤いまま**残り、
+          `dead_why["density"]` から「ショートの面」の名前が消えたことも
+          道連れで隠れていました（同じファイルの2件）
+
+    **べた書きは、その日の姿を検査に焼き付けます。** 焼き付けた値は
+    データが動いた日に落ち、落ちた検査は「実装が壊れた」と読まれます。
+    ここが本当に守りたいのは **`levers` が `day_cap` の答えをそのまま映すこと**なので、
+    それを縛ります。**この検査は、データが動いても落ちません。**
+
+    **覆る条件**: `_long_surface_measured()` が `collapsed` 以外のものを
+    見るようになったら（例: 日数の下限を足す）、ここもその定義に合わせること。
     """
-    assert levers._long_surface_measured() is False
+    from src import day_cap
+    assert levers._long_surface_measured() is bool(day_cap.long_form().get("collapsed"))
+
+
+MEASURED_OPEN = {"short": {"at_ceiling": True, "measured": True},
+                 "long": {"at_ceiling": False, "measured": True}}
+
+
+def test_測ってあっても開いていれば天井と言わない(monkeypatch):
+    """**`measured` は「天井」ではありません**（2026-08-29 に踏んだ）。
+
+    `day_cap.long_form()` が `measured: True` を返した瞬間、
+    `dead_why["density"]` が「**長尺の面も測って天井**」に化けていました。
+    見るべきなのは `at_ceiling` のほうです。
+    """
+    monkeypatch.setattr(levers, "_long_surface_measured", lambda: True)
+    st = levers.arm_state(_row(surfaces=MEASURED_OPEN))
+    # 開いているので、そもそも死んだ腕から外れる
+    assert "density" not in st["dead"]
+    why = st["open_why"]["density"]
+    assert "長尺の面は開いています" in why
+    assert "未測定" not in why, "測ってあるのに『未測定』と言っています: " + why
+
+
+def test_測ってあって天井に当たっているときだけ天井と言う(monkeypatch):
+    monkeypatch.setattr(levers, "_long_surface_measured", lambda: True)
+    st = levers.arm_state(_row(surfaces=CLOSED))
+    why = st["dead_why"]["density"]
+    assert "長尺の面も実測して天井" in why, why
+
+
+def test_測っていなければ未測定と名乗る(monkeypatch):
+    monkeypatch.setattr(levers, "_long_surface_measured", lambda: False)
+    st = levers.arm_state(_row(surfaces=CLOSED))
+    assert "長尺の面は未測定" in st["dead_why"]["density"]

@@ -161,3 +161,45 @@ def test_道具が落ちても_status全体を止めない(monkeypatch, capsys):
     out = _run(capsys)
     assert "読めませんでした" in out
     assert "calc が落ちました" in out
+
+
+def test_未使用の節が0でも_長尺の上限は族の数で別に出る(patched, capsys, monkeypatch):
+    """**「未使用0件 ＝ 余地がありません」は、長尺については誤りです**（2026-08-26）。
+
+    長尺の上限は節ではなく**族の数**で決まります ——
+    `batch_build` の `--per-calc 2` と `_drop_queue_tail_calcs` が、
+    どちらも**族の単位**で効くためです。だから
+    **未使用の節が0件でも、族を1つ増やせば +2本 になります。**
+
+    実測（この検査を書いた回）: 未使用0件・長尺向けのテーマ 30件 / 族 11
+    → 7日ぶんで取れるのは 22本。`jutaku` に節を1つ足して `--long` で forge したら
+    **族 12・上限 24本**。**同じ族に節を足していたら 0本 でした。**
+
+    そして **その数字は `topic_forge --list` を撃った回にしか見えませんでした** ——
+    1周の手順は `status.py` を毎回撃たせるのに、`--list` はどこにも書いていません。
+    **毎回読むほうに出ていなければ、無いのと同じです。**
+    """
+    patched({}, n_pick=6)
+    called = []
+    import topic_forge
+    monkeypatch.setattr(topic_forge, "print_long_stock",
+                        lambda: called.append(True))
+    out = _run(capsys)
+    # **0件を「余地がありません」と言い切らないこと**（ショートの側の話だと断る）
+    assert "テーマを増やす余地がありません" not in out
+    assert "ショートの側の話" in out
+    # **長尺の上限は、毎回ここから出すこと**（数え方は写さず、道具を呼ぶ）
+    assert called == [True]
+
+
+def test_長尺の在庫が読めなくても_在庫の節を止めない(patched, capsys, monkeypatch):
+    """**長尺の数字が読めないことは、在庫表示をやめる理由になりません。**"""
+    patched({"a": ["=== x ==="] * 9}, n_pick=6)
+    import topic_forge
+    monkeypatch.setattr(
+        topic_forge, "print_long_stock",
+        lambda: (_ for _ in ()).throw(RuntimeError("控えが壊れています")))
+    out = _run(capsys)
+    assert "長尺の在庫が読めませんでした" in out
+    assert "控えが壊れています" in out
+    assert "`pick(8)` が返す本数" in out

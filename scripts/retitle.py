@@ -54,7 +54,26 @@ def main(video_id: str, title: str) -> int:
     snippet = items[0]["snippet"]
     print(f"  前: {snippet['title']}")
     snippet["title"] = title
+    # **計測のぶんを残して止める**（2026-08-28 の最適化の回・2枚目）。
+    # `videos.update` は **50単位**。1本だけの道具ですが、門を外しておくと
+    # 「1本ずつなら安い」で最後の 400単位 が8回で消えます。
+    # **誤ったタイトルを直す道は塞ぎません** —— `YT_NO_RESERVE=1` で通ります
+    # （ポリシー違反を直す回は、それを使うこと。理由を JOURNAL に）。
+    from src import upload_cap                                 # noqa: PLC0415
+
+    hold = upload_cap.reserve_hold()
+    if hold:
+        print(f"[retitle] {hold}")
+        print("[retitle] **書きません。** 誤解を与えるタイトルを今すぐ直す回は"
+              " `YT_NO_RESERVE=1` を付けること（理由を JOURNAL に）。")
+        return 1
     youtube.videos().update(part="snippet", body={"id": video_id, "snippet": snippet}).execute()
+    # **通ったら数えること**（2026-08-28）。門（`reserve_hold`）は `spent` を読み、
+    # `spent` を作るのは `note_quota_ok` だけです。**門だけ付けて数えないと、
+    # 門は自分が通した 50単位 を1つも知りません。**
+    # **末尾に印**（`link_longform` と同じ理由）。タイトルの書き換えは
+    # 予約を動かしていないので、`MOVE_CAP` の持ち手を奪わないこと。
+    upload_cap.note_quota_ok(detail=f"videos.update {video_id} retitle")
     print(f"  後: {title}")
     return 0
 

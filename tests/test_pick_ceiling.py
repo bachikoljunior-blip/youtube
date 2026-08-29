@@ -59,6 +59,28 @@ def pool(monkeypatch):
         # 順番のほうは `tests/test_family_perf.py` が別に見ています。
         monkeypatch.setattr(family_perf, "scorer", lambda *a, **k: (lambda calc: 1.0))
 
+        # **節の見出しも、作り物どうしでそろえること**（2026-08-30 に足した）。
+        #
+        # 2026-08-30 01:19 に `pick()` へ門が1つ入りました ——
+        # 「`calc_sections` が実物の見出しに1つも当たらないテーマは、作る前に外す」
+        # （`script_writer` が当たる節無しで `RuntimeError` を投げるため。正しい門です）。
+        #
+        # **この検査の題は全部 作り物**（`節1` `勤続年数の境界`）なので、
+        # 実物の `src/calc/` の見出しには当たりません。**15件中13件が赤**になり、
+        # 門が入った回から**この検査は何も測っていませんでした。**
+        #
+        # **門を消しません。** 見出しの側を、この検査の作り物にそろえます ——
+        # ここが見ているのは `pick()` の**天井**（何本 取れるか）であって、
+        # 見出しが実在するかではありません。あちらは
+        # `tests/test_calc_sections_still_hit.py` が実データで見ています。
+        heads: dict[str, list[str]] = {}
+        for t in holder["topics"]:
+            for w in (t.get("calc_sections") or []):
+                heads.setdefault(t.get("calc") or "", []).append(f"=== {w} ===")
+        monkeypatch.setattr(
+            batch_build, "_calc_sections_cached",
+            lambda calc: [(h, "") for h in heads.get(calc, [])])
+
     return _install
 
 

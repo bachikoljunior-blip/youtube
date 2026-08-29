@@ -77,6 +77,118 @@ def is_ask(narration: list[str]) -> bool:
     return bool(ASK.search(narration[-1]))
 
 
+def is_request(narration: list[str]) -> bool:
+    """読み上げの**最後の1行**が「登録の依頼」か。（2026-08-26 夕に足した）
+
+    ## なぜ `is_ask` の裏ではないのか
+
+    **両方 入っている本があります。** `src/script_writer.py` は
+    「**問いかけを残す余裕があるなら残してよいが、優先は依頼のほう**」と
+    書いています。だから「問いかけでない ＝ 依頼」ではありません ——
+    **依頼が在るかどうかを、独立に見ること。**
+
+    そして「問いかけでない」の側には**長尺の「明日やること」型**も落ちます
+    （長尺は依頼を書かない ＝ `src/script_writer.py`「維持率が落ちる」）。
+    `not_ask` を依頼の群として数えると、**長尺の手順型が混ざります。**
+
+    ## 何に使うか
+
+    `config/hypotheses.yaml` 期限 2026-10-11
+    「**ショートの最後で登録を直接1回頼むと、登録率が上がる**」の**処置群**は、
+    これが真の本です。`scripts/deadline_check.py` の `published_group` に
+    `endcard: request` を書くと、ここで絞ります。
+
+    **覆る条件**: 依頼の文言が「登録」を含まない形（「チャンネルを追加して」など）に
+    変わったら、ここに足すこと。**変えた回が足さないと、処置群が黙って空になります。**
+    """
+    if not narration:
+        return False
+    return "登録" in narration[-1]
+
+
+def narration_of(video_id: str, queue: Path | None = None) -> list[str] | None:
+    """その本の読み上げ全文。**読めなければ `None`**（空リストと区別すること）。
+
+    `form_of()` がここを2度 読んでいたのを、1か所にまとめました。
+    """
+    path = (queue or QUEUE) / f"{video_id}.json"
+    if not path.exists():
+        return None
+    try:
+        nar = (json.loads(path.read_text(encoding="utf-8")) or {}).get("narration")
+    except (OSError, ValueError):
+        return None
+    return list(nar) if isinstance(nar, list) else None
+
+
+def is_mid_request(narration: list[str]) -> bool:
+    """読み上げの**最後より前の行**に、登録の依頼が在るか。（2026-08-26 夜に足した）
+
+    `src/script_writer.request_form()` の A/B の**処置**がこれです ——
+    「終端の依頼はそのまま残したうえで、途中にもう1回」。
+
+    ## `is_request` の否定ではありません
+
+    `is_request` は `narration[-1]` **だけ**を見ます。ここは `narration[:-1]` を見ます。
+    **両方 真の本が処置群**、**`is_request` だけ真の本が対照群**です。
+    どちらも偽の本（依頼そのものが無い＝長尺・08/24 より前の本）は、
+    **どちらの群でもありません**（`src/judgeable.py` が落とします）。
+
+    ## 見分けの語を `is_request` と揃えてあること
+
+    どちらも「登録」の1語で見ています。**片方だけ語を足さないこと** ——
+    足すと、終端の判定と途中の判定で別の物差しになります。
+    **覆る条件**: 依頼の文言が「登録」を含まない形に変わったら、**両方に**足すこと。
+    """
+    if len(narration) < 2:
+        return False
+    return any("登録" in str(line) for line in narration[:-1])
+
+
+def mid_request_compliance(video_ids: list[str], queue: Path | None = None) -> dict:
+    """処置群として作った本のうち、**実際に途中の依頼が入った割合**。
+
+    ## なぜ要るか（`config/hypotheses.yaml` の `mid_request` が読みます）
+
+    群はテーマIDのハッシュで割っています（`request_form`）。**割り当ては正しくても、
+    モデルが指示に従ったとは限りません。** 従っていない本が処置群に混ざると、
+    差は薄まり、`falsified_if` は「上回らなければ外れ」なので**外れに化けます**。
+    2026-08-26 の `endcard: request` が、まさにその形で 51本中 46本を取り違えていました。
+
+    **判定の前にここを見ること。** 8割を切っていたら、判定ではなく
+    `MID_REQUEST_RULE` の書き方を直すのが先です。
+    """
+    seen = ok = missing = no_end = 0
+    for vid in video_ids:
+        nar = narration_of(vid, queue)
+        if nar is None or not nar:
+            missing += 1
+            continue
+        if not is_request(nar):
+            no_end += 1          # 終端の依頼そのものが無い（＝群に入れない本）
+            continue
+        seen += 1
+        ok += 1 if is_mid_request(nar) else 0
+    return {
+        "数えた": seen, "途中あり": ok, "控えが無い": missing, "終端の依頼が無い": no_end,
+        "従った率": (ok / seen) if seen else None,
+    }
+
+
+def form_of(video_id: str, queue: Path | None = None) -> str | None:
+    """その本の終端の型。`"request"` / `"ask"` / `"other"`、読めなければ `None`。
+
+    **読めない本を `"other"` にしないこと** —— 型が分からないだけで、
+    数えると群が実際より大きく見えます（`population()` の同じ注意）。
+    """
+    nar = narration_of(video_id, queue)
+    if not nar:
+        return None
+    if is_request(nar):
+        return "request"
+    return "ask" if is_ask(nar) else "other"
+
+
 def population(ledger: list[dict], queue: Path | None = None) -> tuple[list[str], dict]:
     """判定の母集団（**問いかけ型のショートの動画ID**）と、その内訳を返す。
 

@@ -142,18 +142,51 @@ SHAPE_LAST = ("片効き", "不変")
 #: だから並びは1つに集約して、**読む側を2か所とも、ここから引きます**
 #: （`_hit_points` と、`sweep_rows` の見出し直し）。
 X_KEYS = ("止まる x", "x", "x の手前", "x の先", "帯の入口", "帯の出口", "並ぶ x",
-          "いちばん低い", "いちばん高い")
+          "いちばん低い", "いちばん高い",
+          "細かく刻んだ手前", "細かく刻んだ先",
+          # 頭打ちを刻み直した結果（`_refine_plateau`。2026-08-27）
+          "止まる x の手前", "細かくした止まる x", "細かくした止まる x の手前",
+          # 帯を刻み直した結果（`_refine_band`。2026-08-27）
+          "帯の入口の手前", "帯の出口の先",
+          "細かくした帯の入口", "細かくした帯の入口の外",
+          "細かくした帯の出口", "細かくした帯の出口の外")
 
 #: そのうち「**この候補を名指ししている**点」。同点の一覧は、名指しの点ではない
 #: （既出の判定を厳しくすると意味が変わるので、`_hit_points` からは外す）。
-NAMING_X_KEYS = tuple(k for k in X_KEYS if k != "並ぶ x")
+#:
+#: **崖を刻み直した区間も外します**（2026-08-27。`_refine_cliff`）。
+#: あれは元の `x の手前 → x の先` を**狭めたもの**で、別の主張ではありません。
+#: 入れると「粗い x と細かい x の両方が印字されていなければ既出でない」になり、
+#: **刻み直した候補だけ既出の判定が厳しくなります** —— `並ぶ x` と同じ理由。
+NAMING_X_KEYS = tuple(k for k in X_KEYS
+                      if k not in ("並ぶ x", "細かく刻んだ手前", "細かく刻んだ先",
+                                   # `頭打ち` を刻み直した区間も、元の
+                                   # `止まる x` を**狭めたもの**で別の主張ではない
+                                   "止まる x の手前", "細かくした止まる x",
+                                   "細かくした止まる x の手前",
+                                   # `帯` も同じ（`_refine_band`。2026-08-27）——
+                                   # 刻み直しは `帯の入口 / 帯の出口` を**広げ直した
+                                   # もの**で、別の主張ではない。入れると
+                                   # 「粗い x と細かい x の両方が印字されていなければ
+                                   # 既出でない」になり、刻み直した候補だけ
+                                   # 既出の判定が厳しくなる
+                                   "帯の入口の手前", "帯の出口の先",
+                                   "細かくした帯の入口", "細かくした帯の入口の外",
+                                   "細かくした帯の出口", "細かくした帯の出口の外"))
 
 #: `詳しく` のうち、**y（結果の値）や註**を持つ欄。x でも y でもない欄が出たら、
 #: `tests/test_section_sweep.py` が止めます —— **形を足した回に、その欄が
 #: x なのか y なのかを宣言させるため**（宣言しないと、行番号のまま印字されます）。
 Y_KEYS = ("止まった値", "値", "跳ぶ幅", "動かない値", "帯の中", "帯の外",
           "端では", "差", "中央の段差", "並ぶ点", "数え上げ", "動く", "動かない",
-          "どこ", "倍率", "並び")
+          "どこ", "倍率", "並び",
+          # 崖を刻み直した結果（`_refine_cliff`。2026-08-27）
+          "細かくすると崖ではない", "細かくした最大の段差",
+          "細かくしたほかの段差の平均", "細かく刻めなかった",
+          # 頭打ちを刻み直した結果（`_refine_plateau`。2026-08-27）
+          "止まり際を刻めなかった",
+          # 帯を刻み直した結果（`_refine_band`。2026-08-27）
+          "帯の入口を刻めなかった", "帯の出口を刻めなかった")
 
 
 def _family(fn: Callable) -> str:
@@ -863,15 +896,42 @@ def _classify(xs: list[float], ys: list[float],
         (_, _, outer), (b0, b1, inner), (_, _, back) = runs
         if (abs(outer - back) / scale <= FLAT_TOL
                 and abs(inner - outer) / scale >= MEANINGFUL):
-            return "帯", {"帯の入口": xs[b0], "帯の出口": xs[b1],
-                         "帯の中": inner, "帯の外": outer,
-                         "差": inner - outer}
+            # **両端の外側の点も返します**（`_refine_band` が刻み直す相手。2026-08-27）。
+            # `帯の入口` は「帯の中に入った**最初の格子点**」であって、
+            # 帯が始まった点ではありません。本当の入口は
+            # `(入口の手前, 入口]`、出口は `[出口, 出口の先)` のどこかにあります。
+            out = {"帯の入口": xs[b0], "帯の出口": xs[b1],
+                   "帯の中": inner, "帯の外": outer,
+                   "差": inner - outer}
+            if b0 > 0:
+                out["帯の入口の手前"] = xs[b0 - 1]
+            if b1 + 1 < len(xs):
+                out["帯の出口の先"] = xs[b1 + 1]
+            return "帯", out
 
     # 頭打ち: 後ろの3分の1が動かない（前は動いている）
     tail = ys[-max(3, len(ys) // 3):]
     if (max(tail) - min(tail)) / scale <= FLAT_TOL and len(moving) >= 2:
         start = len(ys) - len(tail)
-        return "頭打ち", {"止まる x": xs[start], "止まった値": ys[-1]}
+        # **平らの始まりまで左へ伸ばします**（2026-08-27）。
+        #
+        # ここは長らく `start = 後ろ3分の1の先頭` のままでした。**そこは
+        # 「平らが始まった点」ではなく、「平らを判定するのに使った窓の左端」**です。
+        # 平らが窓より左から始まっていれば、`止まる x` はそのぶん右へずれます。
+        #
+        # 実物: `jutaku.relief_room（住民税から引ける上限）` は
+        # 「`taxable` が **7,135,242** から上は 97,500」と出ていました。
+        # **本当の境目は 1,950,000円**（97,500 ÷ 5%）で、**3.7倍 のずれ**です。
+        # 同じ 7,135,242 は `keihi` の掃引にも出ます —— **同じ数が別の表に出るなら、
+        # それは制度の境目ではなく格子の点**という合図でした。
+        while start > 0 and abs(ys[start - 1] - ys[-1]) / scale <= FLAT_TOL:
+            start -= 1
+        # **手前の点も返します**（`_refine_plateau` が刻み直す相手）。
+        # 格子の点である以上、本当の止まり際は `(手前, 止まる x]` のどこかです。
+        out = {"止まる x": xs[start], "止まった値": ys[-1]}
+        if start > 0:
+            out["止まる x の手前"] = xs[start - 1]
+        return "頭打ち", out
 
     # 逆転: 最大か最小が端ではなく途中にある。
     # **端との差が MEANINGFUL 未満なら採らない** —— 円未満の切り捨てだけで
@@ -1021,7 +1081,14 @@ def sweep_function(fn: Callable, *, name: str = "") -> list[dict]:
     base = {**{pn: d for pn, d in params}, **base}
 
     # **先に全部の引数を掃引します**（`table_constants` が横に並べて見るため）。
-    swept: list[tuple[str, list[float], list[dict]]] = []
+    #
+    # **`default` を各行に持たせること**（2026-08-27 に直した）。ここは長らく
+    # `(pname, xs, rows)` の3つ組で、下の刻み直しは**上の for が抜けたあとに
+    # 残っている `default`**（＝ `params` の最後の引数の既定値）を渡していました。
+    # `_cast` は「既定値が int なら int で渡す」ので、**最後の引数が int で、
+    # いま刻んでいる引数が率（float）なら、刻み直しの点が全部 0 か 1 に潰れます。**
+    # 症状は「刻むと1つも動きません」＝ 未判定で、**当たっている崖ほど黙って落ちます。**
+    swept: list[tuple[str, float, list[float], list[dict]]] = []
     for pname, default in params:
         xs, rows = [], []
         for x in _grid(default, pname, _family(fn)):
@@ -1036,10 +1103,10 @@ def sweep_function(fn: Callable, *, name: str = "") -> list[dict]:
             rows.append(scal)
         if len(xs) < 4:
             continue
-        swept.append((pname, xs, rows))
+        swept.append((pname, default, xs, rows))
 
-    consts = table_constants(swept)
-    for pname, xs, rows in swept:
+    consts = table_constants([(p, x, r) for p, _d, x, r in swept])
+    for pname, default, xs, rows in swept:
         keys = set(rows[0])
         for r in rows[1:]:
             keys &= set(r)
@@ -1048,6 +1115,18 @@ def sweep_function(fn: Callable, *, name: str = "") -> list[dict]:
             hit = _classify(xs, ys)
             if hit:
                 shape, detail = hit
+                if shape == "崖":
+                    detail = {**detail,
+                              **_refine_cliff(fn, base, pname, default, key,
+                                              detail)}
+                if shape == "頭打ち":
+                    detail = {**detail,
+                              **_refine_plateau(fn, base, pname, default, key,
+                                                detail)}
+                if shape == "帯":
+                    detail = {**detail,
+                              **_refine_band(fn, base, pname, default, key,
+                                             detail)}
                 if shape == "不変" and (key in consts
                                       or _is_echo(ys[0], defaults, xs)):
                     continue
@@ -1059,6 +1138,305 @@ def sweep_function(fn: Callable, *, name: str = "") -> list[dict]:
                                 name or getattr(fn, "__name__", "?"), pname,
                                 consts))
     return found
+
+
+#: 崖を細かく刻み直すときの分割数。**8 は「1周ぶんの時間を足さない」側で決めた値**
+#: （関数を 7回 余分に呼ぶだけ。実測 `nenkin` 全体で +0.4秒）。
+#: 大きくすると本物の崖の位置がより細く出ますが、掃引そのものが遅くなります。
+CLIFF_REFINE_STEPS = 8
+
+
+def _fine_xs(x_a: float, x_b: float, steps: int) -> list[float]:
+    """`x_a` → `x_b` を刻む点。**行のあいだに点を置かないこと。**
+
+    ## なぜ要るか（2026-08-27 に踏んだ。**刻み直し3つに共通の穴**）
+
+    刻み直しは「粗い格子のせいで境目がずれる」を直す道具です。ところが
+    **等分した点をそのまま渡すと、整数の軸に小数を渡します。**
+
+    実物: `keihi.care_age_gap（young）` の帯を等分すると 64.5歳 が出ます。
+    `_sweepable_params` は既定値を **`39.0`（float）**で返すので `_cast` は
+    小数のまま渡し、**64.5歳 は「介護保険が乗らない」側に落ちます**
+    （介護は 40〜64歳）。刻み直した出口は **63.625** と出ました ——
+    **粗い格子を直しにいって、行のあいだの数を作っています。**
+    そのまま節にすれば「63.625歳から」と画面に出る種類の誤りで、
+    これは 08/26 の「帯 age 46〜62」と**同じ誤情報**です。
+
+    ## やること
+
+    両端がどちらも整数なら、**整数だけを返します**（重複は畳む）。
+    そうでなければ従来どおり等分します。**新しいしきい値は持ち込みません** ——
+    見ているのは「軸が整数か」だけです。
+
+    ## 覆る条件
+
+    整数の軸に小数の意味がある表が出てきたら（0.5人・0.5か月など）、
+    ここは軸の刻み幅を表側から受け取る形に変えること。
+    いまの `src/calc/` に、そういう軸はありません。
+    """
+    span = x_b - x_a
+    if float(x_a).is_integer() and float(x_b).is_integer() and abs(span) >= 1:
+        out: list[float] = []
+        for i in range(steps + 1):
+            x = float(round(x_a + span * i / steps))
+            if not out or x != out[-1]:
+                out.append(x)
+        return out
+    return [x_a + span * i / steps for i in range(steps + 1)]
+
+
+def _refine_cliff(fn, base: dict, pname: str, default: float, key: str,
+                  detail: dict, steps: int = CLIFF_REFINE_STEPS) -> dict:
+    """**その「崖」は、細かく刻んでも崖か。** 連続量の軸だけに掛けます。
+
+    ## なぜ要るか（2026-08-27 に踏んだ。**同じ形を2周 続けて踏んでいます**）
+
+    `_classify` の崖は「**隣り合う2点の段差が、中央の段差の5倍以上**」です。
+    x が数え上げ（表の行）ならそれで正しい —— 行と行のあいだには何もありません。
+    **連続量では違います。** 格子が粗いと、**傾きが急なところから
+    平らなところへ移るだけの滑らかな曲線が、必ず崖に見えます。**
+
+    実物（2026-08-27）: `nenkin.assumption_flip（余裕_倍）` は
+    「`base_annual_man` が 90→123 で -0.3692 跳ぶ（ふだんの段差は 0.0043）」
+    と出ました。**格子は 33万きざみ**です。1万きざみで引き直すと
+    0.706 → 0.674 → 0.653 …… と**1本の滑らかな坂**で、崖はありません。
+    段差の比 86倍 は、曲線の左半分が急で右半分が平ら、というだけでした。
+
+    **同じ形は 2026-08-26 の回も踏んでいます**（`keihi` の「帯 age 46〜62」——
+    介護保険は実際には 40〜64歳 で、46〜62 は掃引の目盛りが粗いだけ）。
+    手順の側には「**1件ずつ当たり直すこと**」と書いてあり、
+    **書いてあるのに2周とも踏みました。** `逆転` は同じ問題に
+    `[並 N点]` の印を付けて一覧の後ろへ回しています ——
+    **崖にだけ、その印がありませんでした。**
+
+    ## やること
+
+    崖と言われた区間 `[x の手前, x の先]` を `steps` 等分して引き直し、
+    **段差がまだ1つに集まっているか**を見ます。
+
+        集まっている → 本物。**崖の位置が細く出る**ので、それも返す
+        散らばった   → 傾きです。`細かくすると崖ではない` を立てる
+
+    ## 中央ではなく「**ほかの段差の平均**」で割る理由（2026-08-27 に検査が捕まえた）
+
+    最初は `_classify` と同じ「最大 ÷ **中央**」で書きました。**本物の崖で落ちます** ——
+    きれいな階段を8等分すると、動く段は**1つだけ**で残り7つは 0 です。
+    0 を除くと標本が1つになり、「刻んでも段が3つ未満です」＝ 未判定に化けます。
+    **いちばん確かな崖が、いちばん判定できない**という逆立ちでした。
+
+    だから割る相手を「**最大を除いた段差の平均**」にします。
+
+        きれいな階段  ほかが全部 0 → 割る相手が 0 ＝ **崖**（∞倍）
+        一様な坂      最大 ≒ ほかの平均 ＝ 1倍 → **坂**
+        実物の坂      0.055 ÷ 0.046 ＝ 1.2倍 → **坂**（`assumption_flip`）
+
+    倍率のしきい値は `CLIFF_RATIO` を使い回します。
+    **新しいしきい値を持ち込まないこと** —— 2つの物差しが別々に古びます。
+
+    返り: 元の `詳しく` に足す欄だけ。`fn` が呼べなければ
+    `{"細かく刻めなかった": 理由}` を返し、**黙って通しません**
+    （呼べなかったことと、崖でなかったことは別です）。
+    """
+    x0, x1 = detail.get("x の手前"), detail.get("x の先")
+    if x0 is None or x1 is None or x1 == x0:
+        return {"細かく刻めなかった": "区間が取れません"}
+    fine_x, fine_y = [], []
+    # **行のあいだに点を置かないこと**（`_fine_xs`。2026-08-27 に `_refine_band` と
+    # 同じ穴をここでも塞いだ）。返す `細かく刻んだ手前 / 先` はそのまま節の数字に
+    # なるので、整数の軸に小数の崖を出すと誤情報になります。
+    #
+    # **整数の軸で区間が狭いと、刻んでも点が増えません**（`[5, 7]` に 8等分の
+    # 余地はない）。そのときは下の「刻んでも段が3つ未満です」に落ちます ——
+    # **格子がもう解像度いっぱいだ、という意味で正しい**ので、
+    # 「崖だ」と言い切らずに未判定にします。
+    for x in _fine_xs(x0, x1, steps):
+        try:
+            value = fn(**{**base, pname: _cast(default, x)})
+        except Exception as exc:                       # noqa: BLE001
+            return {"細かく刻めなかった": f"{type(exc).__name__}"}
+        scal = _scalars(value)
+        if key not in scal:
+            return {"細かく刻めなかった": "同じ欄が出ませんでした"}
+        fine_x.append(x)
+        fine_y.append(scal[key])
+    diffs = [abs(b - a) for a, b in zip(fine_y, fine_y[1:])]
+    if len(diffs) < 3:
+        return {"細かく刻めなかった": "刻んでも段が3つ未満です"}
+    biggest = max(diffs)
+    if biggest == 0:
+        return {"細かく刻めなかった": "刻むと1つも動きません"}
+    others = sorted(diffs)[:-1]
+    rest = sum(others) / len(others)
+    survives = bool(rest == 0 or biggest / rest >= CLIFF_RATIO)
+    out = {"細かくすると崖ではない": not survives,
+           "細かくしたほかの段差の平均": rest, "細かくした最大の段差": biggest}
+    if survives:
+        j = diffs.index(biggest)
+        out["細かく刻んだ手前"] = fine_x[j]
+        out["細かく刻んだ先"] = fine_x[j + 1]
+    return out
+
+
+def _refine_plateau(fn, base: dict, pname: str, default: float, key: str,
+                    detail: dict, steps: int = CLIFF_REFINE_STEPS) -> dict:
+    """**その「◯◯から上は同じ」の◯◯は、掃引の格子の点です。**
+
+    ## なぜ要るか（2026-08-27 に踏んだ。**同じ形を3周 続けて踏んでいます**）
+
+    `_classify` の頭打ちは「**後ろの3分の1が動かない**」で、返す `止まる x` は
+    **その3分の1の先頭にある格子の点**です。本当の止まり際は
+    `(手前の格子点, その点]` のどこかにあり、**格子が粗いほど右へずれます。**
+
+    実物（2026-08-27）: `jutaku.relief_room（住民税から引ける上限）` は
+    「`taxable` が **7,135,242** から上は 97,500 で止まる」と出ました。
+    **本当の境目は 1,950,000円**です（住民税からの控除上限は
+    課税総所得の5% と 97,500円 の低いほう ＝ 97,500 ÷ 0.05）。**3.7倍 ずれています。**
+
+    そして **7,135,242 は `keihi` の掃引にも同じ数で出ます**
+    （`keihi.aoiro_vs_keihi（事業税の差）… profit 7,135,242 から上は 22,500`）。
+    **同じ数が別々の表に出るなら、それは制度の境目ではなく格子の点です。**
+
+    **同じ形は 2回 直っています** —— `崖` は 2026-08-27 に `_refine_cliff`、
+    `帯` は 08/26 の「帯 age 46〜62（介護保険は実際には 40〜64歳）」で
+    名指しされました。**`頭打ち` にだけ、その刻み直しがありませんでした。**
+
+    ## やること
+
+    `(手前, 止まる x]` を `steps` 等分して引き直し、
+    **止まった値と同じになる、いちばん左の点**を返します。
+
+        細かくした止まる x        そこから上は同じ（狭めた位置）
+        細かくした止まる x の手前  まだ動いている最後の点
+
+    **狭めるだけで、頭打ちかどうかの判定は変えません** —— 崖と違い、
+    「後ろが平ら」であること自体は格子が粗くても正しいからです
+    （粗い格子は止まり際を**右へ**ずらすだけで、平らを作りはしません）。
+
+    ## 覆る条件
+
+    `手前` が無い（1点目から平ら）ときは刻めません。そのときは
+    `止まり際を刻めなかった` を立てて、**黙って通しません** ——
+    刻めなかったことと、格子が正しかったことは別です。
+    """
+    x_stop = detail.get("止まる x")
+    x_prev = detail.get("止まる x の手前")
+    y_stop = detail.get("止まった値")
+    if x_prev is None or x_stop is None or x_stop == x_prev:
+        return {"止まり際を刻めなかった": "手前の点がありません（1点目から平ら）"}
+    scale = max(abs(y_stop), 1.0)
+    fine: list[tuple[float, float]] = []
+    # **行のあいだに点を置かないこと**（`_fine_xs`。2026-08-27 に `_refine_band` と
+    # 同じ穴をここでも塞いだ）。等分した点をそのまま渡すと、整数の軸に小数が渡り、
+    # 「**63.625歳から上は同じ**」のような、そのまま節にすれば誤情報になる x を返します。
+    for x in _fine_xs(x_prev, x_stop, steps):
+        try:
+            value = fn(**{**base, pname: _cast(default, x)})
+        except Exception as exc:                       # noqa: BLE001
+            return {"止まり際を刻めなかった": f"{type(exc).__name__}"}
+        scal = _scalars(value)
+        if key not in scal:
+            return {"止まり際を刻めなかった": "同じ欄が出ませんでした"}
+        fine.append((x, scal[key]))
+    # **末尾から見て、平らが続いているあいだ左へ伸ばします。**
+    # 途中で1点だけ一致するような並びに引きずられないため
+    # （左端まで一致してしまう回は、そもそも頭打ちの始まりが手前より左にある）。
+    idx = len(fine) - 1
+    while idx > 0 and abs(fine[idx - 1][1] - y_stop) / scale <= FLAT_TOL:
+        idx -= 1
+    if idx == 0:
+        return {"止まり際を刻めなかった": "手前の点からもう平らです（格子より左に始まり）"}
+    return {"細かくした止まる x": fine[idx][0],
+            "細かくした止まる x の手前": fine[idx - 1][0]}
+
+
+def _refine_band(fn, base: dict, pname: str, default: float, key: str,
+                 detail: dict, steps: int = CLIFF_REFINE_STEPS) -> dict:
+    """**その帯の両端は、掃引の格子の点です。**
+
+    ## なぜ要るか（**同じ形を、この輪は3つの形で踏んでいます**）
+
+    `_classify` の帯は「途中の一続きだけ値が違い、両端は同じ値に戻る」で、
+    返す `帯の入口` は **帯の中に入った最初の格子点**、`帯の出口` は
+    **まだ帯の中にある最後の格子点**です。本当の境目は
+    `(入口の手前, 入口]` と `[出口, 出口の先)` のどこかにあり、
+    **格子が粗いほど帯は内側へ縮んで見えます。**
+
+    実物（2026-08-26 に踏んだ）: `keihi` の掃引が
+    「**帯 age 46〜62**」と出しました。**介護保険は実際には 40〜64歳**です。
+    46〜62 は目盛りが粗いだけで、**そのまま節にすると誤情報になります**
+    （`docs/JOURNAL.md` 2026-08-26／その回の申し送りが名指ししています）。
+
+    **同じ形は 2回 直っています** —— `崖` は `_refine_cliff`（2026-08-27）、
+    `頭打ち` は `_refine_plateau`（同日）。**`帯` にだけ刻み直しがなく、
+    08/26・08/27 03:0x・08/27 04:4x と 3周 続けて申し送りに残っていました。**
+
+    ## やること
+
+    両端の外側の1区間ずつを `steps` 等分して引き直し、
+    **帯の中と同じ値になる、いちばん外側の点**を返します。
+
+        細かくした帯の入口      そこから帯の中（＝ 左へ広がる）
+        細かくした帯の入口の外  まだ帯の外にある最後の点
+        細かくした帯の出口      そこまで帯の中（＝ 右へ広がる）
+        細かくした帯の出口の外  もう帯の外にある最初の点
+
+    **帯かどうかの判定は変えません。** 崖と違い、「途中だけ値が違う」こと自体は
+    格子が粗くても正しく、粗い格子は**帯を内側へ縮めて見せるだけ**だからです。
+
+    ## 覆る条件
+
+    **連続量の軸だけに掛けること。** x が数え上げ（表の行）なら行と行のあいだに
+    何も無いので、刻み直す余地はありません —— この関数は `sweep_function`
+    （連続量の掃引）からしか呼ばれません（`sweep_rows` / `sweep_enums` は
+    `_classify(..., enumerated=True)` を通り、ここへは来ない）。
+    外側の点が無い（帯が掃引の端から始まっている）ときは刻めません。
+    そのときは `帯の端を刻めなかった` を立てて、**黙って通しません** ——
+    刻めなかったことと、格子が正しかったことは別です。
+    """
+    inner, outer = detail.get("帯の中"), detail.get("帯の外")
+    if inner is None or outer is None:
+        return {"帯の端を刻めなかった": "帯の値が取れません"}
+    scale = max(abs(inner), abs(outer), 1.0)
+
+    def _walk(x_out: float, x_in: float) -> tuple[list[float], list[float]] | str:
+        """`x_out`（帯の外）→ `x_in`（帯の中）を steps 等分して値を引く。"""
+        fx, fy = [], []
+        for x in _fine_xs(x_out, x_in, steps):
+            try:
+                value = fn(**{**base, pname: _cast(default, x)})
+            except Exception as exc:                   # noqa: BLE001
+                return f"{type(exc).__name__}"
+            scal = _scalars(value)
+            if key not in scal:
+                return "同じ欄が出ませんでした"
+            fx.append(x)
+            fy.append(scal[key])
+        return fx, fy
+
+    out: dict = {}
+    pairs = (("入口", detail.get("帯の入口の手前"), detail.get("帯の入口")),
+             ("出口", detail.get("帯の出口の先"), detail.get("帯の出口")))
+    for side, x_out, x_in in pairs:
+        if x_out is None or x_in is None or x_out == x_in:
+            out[f"帯の{side}を刻めなかった"] = "外側の点がありません（掃引の端）"
+            continue
+        walked = _walk(float(x_out), float(x_in))
+        if isinstance(walked, str):
+            out[f"帯の{side}を刻めなかった"] = walked
+            continue
+        fx, fy = walked
+        # **帯の中の端（i = steps）から外へ向かって、帯の中が続くあいだ伸ばします。**
+        idx = len(fy) - 1
+        while idx > 0 and abs(fy[idx - 1] - inner) / scale <= FLAT_TOL:
+            idx -= 1
+        if idx == 0:
+            # 外側の格子点そのものが帯の中でした。`_classify` の段の切り方と
+            # 食い違っているので、**狭めずに合図だけ返します。**
+            out[f"帯の{side}を刻めなかった"] = "外側の点からもう帯の中です"
+            continue
+        out[f"細かくした帯の{side}"] = fx[idx]
+        out[f"細かくした帯の{side}の外"] = fx[idx - 1]
+    return out
 
 
 def _one_sided(xs: list[float], rows: list[dict], keys: list[str],
@@ -1812,6 +2190,30 @@ def is_covered(hit: dict, sections: dict[str, str] | None) -> bool:
     return _point_printed(out, lines) is True if out is not None else False
 
 
+def unnameable(hit: dict) -> bool:
+    """**その候補は、この目盛りのままでは節にできない**（`[並 N点]` の側）。
+
+    `逆転` は「いちばん高いのは端ではなく x のとき」と言いますが、
+    **同じ高さが他にもあると、その x を名指しできません** ——
+    印字の側も「細かく刻み直すまで、この x を名指しする節は書けません」と
+    言っています。**言っているのに、一覧の並び順には入っていませんでした**
+    （2026-08-26 に測って足した。`逆転` の 12件中7件 ＝ 58%）。
+
+    **`数え上げ` の同点は別です。** 行が数え上げなので同点が「それが全部」＝
+    「1つだけ名指さず、N件を全部書くこと」で**節になります。** 沈めません。
+
+    **崖の `[坂]` も同じ側です**（2026-08-27。`_refine_cliff`）。
+    細かく引き直して段が1つに集まらなかった候補は、**その x を名指しできません** ——
+    `逆転` の `[並 N点]` とまったく同じ理由です。
+    **`[崖◎]`（細かくしても崖）は沈めません** —— あちらは位置がより細く出た側で、
+    むしろ書きやすくなっています。
+    """
+    d = hit.get("詳しく") or {}
+    if d.get("細かくすると崖ではない"):
+        return True
+    return bool(d.get("並ぶ点", 1) > 1 and not d.get("数え上げ"))
+
+
 def undecided(hit: dict, sections: dict[str, str] | None) -> bool:
     """その候補は「**新しいと分かった**」のか、「**判定できなかった**」のか。
 
@@ -1874,6 +2276,87 @@ def novel_counts(hits: list[dict],
     return total, novel
 
 
+def writable_counts(hits: list[dict],
+                    all_sections: dict[str, dict[str, str]] | None,
+                    ) -> dict[str, int]:
+    """表ごとの「**この回に実際に節を書ける候補**」の数。（2026-08-28 に足した）
+
+    `novel_counts()` の2つめ（＝ まだ節が言っていない数）から、
+    **書けないと分かっている2つ**を引きます:
+
+        `undecided()` が真   照合できる点が無い（`[未]` の印）。**新しいと分かって
+                            いない**ので、これを在庫に数えると過大に振れます
+        `unnameable()` が真  `[並 N点]` と `[坂]`。**その x を名指しできません**
+        `_unrefined()` が真  `[未刻]`。印字が「そのまま節に書かないこと」
+                            「崖かどうかは未判定です」と言っている側
+        `形` が `SHAPE_LAST` `片効き` と `不変`。**実測 32枠中14枠を占めて、
+                            そこから書けた節は0件**（`SHAPE_LAST` の註）
+
+    ## なぜ要るか（2026-08-28 に、20分 使ってから足した）
+
+    `status.py` の「(B) の候補」は **`novel_counts` の生の数**を印字します。
+    **その数は「書ける数」ではありません。** 同じ日の実測:
+
+        kafunenkin  新しい 6件 → **書けた 2件**
+        furusato    新しい 5件 → **書けた 0件**（4件が「不変」）
+        yukyu       新しい 55件 → 11節が既に掘っており、書けたのは 0件
+        shitsugyo   新しい **0件** ← ここは印字も正しい
+
+    **一覧の並びに「書ける数」が無いので、選ぶ側は撃って確かめるしかありません。**
+    2026-08-28 の回は `yukyu → furusato → kafunenkin` と**3族 撃って 20分**
+    使いました（`--calc` つきの掃引は1族 30秒 前後）。
+    **`status.py` の一覧に1列 足せば、この20分は 1手 になります。**
+
+    **`novel_counts` は変えていません**（在庫の数え方 `src/supply.py` の
+    `SWEEP_YIELD` がそちらを見ており、**同じ回に2つ動かすと、どちらが効いたのか
+    分からなくなる**ため）。ここは**並べ替えと印字のためだけ**の数です。
+
+    **覆る条件**: `SHAPE_LAST` の族から節が書けた回が出たら、
+    引く対象から `形` を外すこと（`undecided` のほうは残す）。
+    """
+    sections = all_sections or {}
+    out: dict[str, int] = {}
+    for hit in dedupe(hits):
+        name = hit.get("表", "?")
+        out.setdefault(name, 0)
+        if hit.get("形") in SHAPE_LAST:
+            continue
+        if unnameable(hit):                     # `[並 N点]` と `[坂]`
+            continue
+        if _unrefined(hit):                     # `[未刻]`
+            continue
+        sec = sections.get(name)
+        try:
+            if is_covered(hit, sec) or undecided(hit, sec):
+                continue
+        except Exception:
+            continue
+        out[name] = out[name] + 1
+    return out
+
+
+def _unrefined(hit: dict) -> bool:
+    """`[未刻]` —— **細かく引き直せなかった候補**。（2026-08-28 の同じ回に足した）
+
+    印字の側は、この2つをはっきり「書くな」と言っています:
+
+        頭打ち `[未刻]` … **この x は格子の点です。そのまま節に書かないこと**
+        崖    `[未刻]` … **崖かどうかは未判定です**
+
+    **言っているのに、`writable_counts` の最初の版はこれを数えていました。**
+    同じ回の実測で見つかっています —— `ideco_deguchi` は「書ける 8件」と出て、
+    **中を開けると 8件 のうち大半が `[未刻]` の崖**（`years` を 20→22 と振って
+    残高が 17億円 跳ぶ、という格子の点そのもの）で、**節にできるものは
+    ほとんど残りませんでした。**
+
+    **`unnameable()` と同じ側の判定です**（あちらは `[並 N点]` と `[坂]`）。
+    別関数にしてあるのは、`unnameable` が**並び順**にも使われており、
+    そちらの意味を変えたくないためです。
+    """
+    d = hit.get("詳しく") or {}
+    return bool(d.get("細かく刻めなかった") or d.get("止まり際を刻めなかった"))
+
+
 def _fmt(v: float) -> str:
     if isinstance(v, str):
         return v
@@ -1894,9 +2377,35 @@ def line_of(hit: dict) -> str:
     elif hit["形"] == "頭打ち":
         tail = (f"{hit['動かした引数']} が {_fmt(d['止まる x'])} から上は "
                 f"{_fmt(d['止まった値'])} で止まる")
+        # **頭打ちの `止まる x` は掃引の格子の点です**（2026-08-27。`_refine_plateau`）。
+        # 崖の `[坂]` と同じ扱い —— 印字で言い、名指しできる幅まで狭めます。
+        if d.get("細かくした止まる x") is not None:
+            tail += (f"  **[止◎]** {CLIFF_REFINE_STEPS}等分して引き直すと、"
+                     f"止まるのは **{_fmt(d['細かくした止まる x'])} から上**"
+                     f"（まだ動いている最後は {_fmt(d['細かくした止まる x の手前'])}）"
+                     f" —— **節に書くのはこちらの x です**")
+        elif d.get("止まり際を刻めなかった"):
+            tail += (f"  **[未刻]** 止まり際を引き直せませんでした"
+                     f"（{d['止まり際を刻めなかった']}）—— "
+                     f"**この x は格子の点です。そのまま節に書かないこと**")
     elif hit["形"] == "崖":
         tail = (f"{hit['動かした引数']} が {_fmt(d['x の手前'])}→{_fmt(d['x の先'])} で "
                 f"{_fmt(d['跳ぶ幅'])} 跳ぶ（ふだんの段差は {_fmt(d['中央の段差'])}）")
+        # **崖にも「目盛りが粗いだけ」があります**（2026-08-27。`_refine_cliff`）。
+        # `逆転` の `[並 N点]` と同じ扱い —— 印字で言い、一覧の後ろへ回します。
+        if d.get("細かくすると崖ではない"):
+            tail += (f"  **[坂]** {CLIFF_REFINE_STEPS}等分して引き直すと、"
+                     f"最大の段差 {_fmt(d['細かくした最大の段差'])} に対して"
+                     f"ほかの段差の平均が {_fmt(d['細かくしたほかの段差の平均'])} —— "
+                     f"**段が1つに集まりません。崖ではなく傾きです。**"
+                     f"この x を名指しする節は書けません")
+        elif d.get("細かく刻んだ手前") is not None:
+            tail += (f"  **[崖◎]** {CLIFF_REFINE_STEPS}等分しても段は1つ —— "
+                     f"**跳ぶのは {_fmt(d['細かく刻んだ手前'])}→"
+                     f"{_fmt(d['細かく刻んだ先'])} のあいだ**（ここまで細く言えます）")
+        elif d.get("細かく刻めなかった"):
+            tail += (f"  **[未刻]** 細かく引き直せませんでした"
+                     f"（{d['細かく刻めなかった']}）—— **崖かどうかは未判定です**")
     elif hit["形"] == "逆転":
         tail = (f"{d['どこ']}のは端ではなく {hit['動かした引数']}="
                 f"{_fmt(d['x'])} のとき（{_fmt(d['値'])}／端では {_fmt(d['端では'])}）")
@@ -2096,11 +2605,20 @@ def report_lines(hits: list[dict], *, top: int = 40) -> list[str]:
         # 表ごとに6件で切るので、`片効き`・`不変` が先頭に混ざるぶんだけ
         # 書ける候補が `…ほか N件` に沈みます（実測 14/32 ＝ 44%）。
         # **既出かどうかが先**（既出は何をしても書けない）、その中で自明を後ろへ。
+        # **`[並 N点]` も後ろへ回すこと**（2026-08-26。`SHAPE_LAST` と同じ理由）。
+        # あの印が付いた候補は、道具自身が
+        # 「**細かく刻み直すまで、この x を名指しする節は書けません**」と
+        # 印字しています ＝ **その回では書けません。**
+        # それが `逆転` の 12件中7件（58%）に付いていて、
+        # **書ける候補を `…ほか N件` に沈めていました。**
+        # `数え上げ` の同点は「それが全部」なので**書けます** —— 沈めません。
         if covered:
             group = sorted(group, key=lambda h: (covered.get(id(h)) is not False,
-                                                 h.get("形") in SHAPE_LAST))
+                                                 h.get("形") in SHAPE_LAST,
+                                                 unnameable(h)))
         else:
-            group = sorted(group, key=lambda h: h.get("形") in SHAPE_LAST)
+            group = sorted(group, key=lambda h: (h.get("形") in SHAPE_LAST,
+                                                 unnameable(h)))
         for hit in group[:per_group]:
             mark = ("[既]" if covered.get(id(hit))
                     else ("[未]" if id(hit) in _UNDECIDED else "   "))

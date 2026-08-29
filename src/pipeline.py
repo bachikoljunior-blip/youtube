@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 import random
@@ -165,6 +166,171 @@ MAX_SHORT_SEGMENT_CHARS = SHORT_SEGMENT_CHARS
 # その上限側に置いた。1文（5〜6秒）はこれで2〜3枚に割れる。
 SHORT_SLIDE_SECONDS = 2.5
 
+#: **遅い側の秒数**（2026-08-27・オーナー指摘で足した A/B の片方）。
+#:
+#: 上の 2.5 は **M13（独立評価）の言い分だけ**で決まっています —— `MEANS.md` の
+#: M13 は**終わった**手段で、そこから来た数は**視聴者の実データで一度も
+#: 確かめられていません。**`CLAUDE.md` A14「昔そう決まったから」は理由になりません。**
+#:
+#: **なぜ 4.5 で、それ以上にしないか**（2026-08-27・実物2,544文で測った）。
+#: 実測の文の長さ（控えの台本 ÷ 話速 5.2字/秒）は **中央 4.42秒・四分位 3.85〜5.00秒**。
+#: `want = ceil(尺 / 刻み)` なので、刻みを上げるほど1文あたりのコマが減ります:
+#:
+#:     刻み 2.5秒 → 1コマ **2.02秒**（中央）    ← いまの既定
+#:     刻み 3.5秒 → 1コマ  2.31秒              （2.5 とほぼ同じ ＝ 振ったことにならない）
+#:     刻み 4.5秒 → 1コマ **3.27秒**            ← **これ。1.62倍**
+#:     刻み 5.5秒 → 1コマ  4.04秒              （2.0倍。ただし下の理由で撃てない）
+#:
+#: **5.5 以上にできないのは `verify.MAX_SECONDS_PER_PICTURE = 5.0` があるから**です。
+#: `want == 1` の文は `reveal_durations()` が尺をそのまま1枚に渡す（＝上限を掛けない）ので、
+#: **刻み 5.5 だと 5.0〜5.5秒 の文が1枚に乗り、投稿前の検査で落ちます。**
+#: 実測の Q3 が **5.00秒** なので、**上位25%前後がそこに当たります。**
+#: 4.5 なら1枚の最長が 4.5秒 で、**5.0 を超えません。**
+#:
+#: **つまり 4.5 は「安全に振れる最大」です。** これより大きく振るには、
+#: **`MAX_SECONDS_PER_PICTURE` を腕ごとに上げる**必要があります ——
+#: そしてあれは**上限しか無い門**で、`docs/JOURNAL.md` 2026-08-27 の調査が
+#: 「**短すぎて読み切れないを落とす下限は1つもない**」と名指ししている側です。
+#: **腕の分離が足りないと出たら、そこを触ること**（この定数だけ上げても落ちます）。
+#:
+#: 実測の分離: **2.5 と 4.5 で `want` が変わる文が 80%**（2,544文中 2,015文）。
+SHORT_SLIDE_SECONDS_SLOW = 4.5
+
+#: 遅い側に振る割合。**0 にすると振り分けが止まります**（`hook_form` と同じ）。
+SLOW_PACE_SHARE = 0.5
+
+
+def slide_pace(topic_id: str, share: float = SLOW_PACE_SHARE) -> float:
+    """ショートの絵1枚が画面に残る秒数。**テーマIDで決まります。**
+
+    ## なぜ置いたか（2026-08-27 21:0x・オーナー指摘）
+
+    オーナー原文:
+
+    > 「動画についてまず何言ってるか分かんないね。音声だけで理解できない説明なのに
+    > **画面はすぐ切り替わるし。**説明を理解するにはかなり視聴者側の推論が必要だと思う」
+
+    実測（`data/critique_queue/` の控え **502本**）:
+
+        ショート（コマ>文）439本  尺 26.3秒 ／ 13.0コマ
+                                 → **1コマ 2.06秒**（中央値）
+                                 **3秒 未満が 100%・2秒 未満が 30%**
+        長尺  （コマ=文） 63本   尺 322.9秒 ／ 17.0コマ → 1コマ 19.5秒
+
+    **そして再生の 99.8% は `SHORTS_FEED`、1再生あたり 20秒**（`status.py`）。
+    **視聴者が見ている20秒のあいだに、画面は約10回 変わります。**
+
+    ## なぜ「直す」ではなく「振り分ける」のか
+
+    **2.5 は理由があって置かれた数**です（上の註 —— 独立評価3体が
+    「同じ絵が2コマ続く」「実質4〜5画面」と書き、中央値4で落ちた）。
+    **片方の言い分だけで戻すと、同じ間違いを向きだけ変えてやり直します。**
+
+    そして**その3体は視聴者ではありません。** `docs/MEANS.md` の M13 は
+    **終わった**手段で、ここから来た 2.5 は**実データで一度も確かめられていません。**
+    向きを知る道は1つしかなく、**違う値の本を作って出すこと**です
+    （`hook_form` / `title_form` / `request_form` と同じ形）。
+
+    ## 割り振り（`hook_form` を写しています。**塩だけ変えてあります**）
+
+    - **乱数にしない**（作り直しで群が移ると比較が壊れる）
+    - **日付や順番にしない**（`batch_build` は1日ぶんをまとめて撃つので題材と混ざる）
+    - **塩を他の実験と変えること。** 同じにすると2つが完全に重なり、
+      どちらが効いたのか永久に分かりません
+    - **テーマIDだけの純関数**なので、**控えに何も記録しなくても
+      後から群を数え直せます**（`config/hypotheses.yaml` の判定がそうします）
+
+    ## この実験が触らないもの（**対照を汚さないこと**）
+
+    読み上げ・台本・字幕・見出し・サムネイル・公開時刻は**1文字も変えません。**
+    変わるのは「同じ絵を何枚に割るか」だけです
+    （`visuals.reveal_variants` の `want`）。字幕は文の側（`segment_timeline`）に
+    付くので、**枚数を変えても字幕はずれません。**
+
+    ## 覆る条件
+
+    - 判定は `config/hypotheses.yaml`（`ショートの刻み-engaged`）。
+      **遅い側の engaged が速い側を上回らなければ、2.5 が正しかった**ので
+      `SLOW_PACE_SHARE` を 0 にして振り分けを止めること（**定数は消さない** ——
+      消すと、次に同じ話が出たときに測り直しになります）
+    - 逆に遅い側が勝ったら、`SHORT_SLIDE_SECONDS` を勝った値にして
+      振り分けを止めること
+    - **どちらも 4.5 と 2.5 の2点しか見ていません。** 勝ったほうの側で
+      さらに刻むかは、そのとき別に立てること
+    """
+    if share <= 0:
+        return SHORT_SLIDE_SECONDS
+    if share >= 1:
+        return SHORT_SLIDE_SECONDS_SLOW
+    # **塩 `pace:`**。他の実験と同じ塩にしないこと（docstring の割り振りの項）。
+    h = hashlib.sha1(("pace:" + str(topic_id)).encode("utf-8")).digest()
+    slow = (int.from_bytes(h[:4], "big") % 10_000) < share * 10_000
+    return SHORT_SLIDE_SECONDS_SLOW if slow else SHORT_SLIDE_SECONDS
+
+
+#: **めくりの途中の1コマが止まる秒数**（2026-08-27 に足した）。
+#: `docs/JOURNAL.md` の `opening_motion` が「絵そのものの動き」に使っている
+#: 0.9秒 と同じ値です。**新しく思いついた数ではありません** ——
+#: この企画が既に「見ている側が変化に気づく長さ」として使っている唯一の実測値。
+REVEAL_STEP_SECONDS = 0.9
+
+
+def reveal_durations(dur: float, n: int) -> list[float]:
+    """1文の尺 `dur` を、めくりの `n` コマへ割る。**等分しないこと。**
+
+    ## なぜ等分をやめたか（2026-08-27。オーナーの指摘）
+
+    オーナー原文:
+
+    > **「動画についてまず何言ってるか分かんないね。音声だけで理解できない
+    > 説明なのに画面はすぐ切り替わるし。説明を理解するにはかなり視聴者側の
+    > 推論が必要だと思う。」**
+
+    ここは 2026-08-15 から `dur / len(parts)` の**等分**でした。
+    `reveal_variants` は図を**要素を1つずつ足していく**形に割るので、
+    **完成した図はいちばん最後のコマにしかありません。** 等分だと、
+    その完成形が画面に居るのは**文の最後の 1/n** です:
+
+        6.0秒 の文 → want=ceil(6.0/2.5)=3コマ → **完成形は最後の 2.0秒 だけ**
+
+    つまり**文がその図を説明しているあいだ、画面に完成形はありません。**
+    読み上げは「21万2027円 と 31万9677円 の差が…」と言っているのに、
+    画面はまだ棒1本目です。**「かなり視聴者側の推論が必要」はこれです。**
+
+    そして**この向きに押していたのは検査のほうです。** `verify.py` の
+    `_check_slide_hold` / `_check_short_pace` は**どちらも上限しか持たず**
+    （`MAX_SECONDS_PER_PICTURE=5.0` / `MAX_SECONDS_PER_SLIDE=12.0`）、
+    落ちたときの文言は「**セグメントを増やして画を動かすこと**」です。
+    **下限は1つもありませんでした** —— 0.3秒 のコマも全部 通ります。
+
+    ## 割り方
+
+    途中のコマは `REVEAL_STEP_SECONDS`（0.9秒）ずつ。**残りは全部 完成形へ。**
+    合計は `dur` のまま変えません（音とずれるので）。
+
+    - 完成形が `SHORT_SLIDE_SECONDS`（2.5秒）に満たないなら、**コマを減らします**
+      （減らす先は**頭のほう** ＝ いちばん中身の少ないコマ）
+    - 完成形が `MAX_SECONDS_PER_PICTURE`（5.0秒）を超えるなら、**途中のコマを
+      伸ばして**引き取ります（止まって見える側に落ちないため）
+
+    **覆る条件**: 完成形を長く置くほうが `engaged` を下げると実測で出たとき。
+    それを測る前提が `config/hypotheses.yaml` の `reveal_hold` です。
+    """
+    if n <= 1 or dur <= 0:
+        return [dur] * max(1, n)
+    # 完成形が 2.5秒 に届くところまで、頭のコマを落とす
+    while n > 1 and dur - REVEAL_STEP_SECONDS * (n - 1) < SHORT_SLIDE_SECONDS:
+        n -= 1
+    if n <= 1:
+        return [dur]
+    step = REVEAL_STEP_SECONDS
+    last = dur - step * (n - 1)
+    if last > verify.MAX_SECONDS_PER_PICTURE:
+        # 完成形が長すぎる。**余りは途中のコマが引き取る**（等分に戻さない）
+        step = (dur - verify.MAX_SECONDS_PER_PICTURE) / (n - 1)
+        last = verify.MAX_SECONDS_PER_PICTURE
+    return [step] * (n - 1) + [last]
+
 
 def _check_short_script(script, topic_id: str = "") -> None:
     """ショートの台本を、**音声合成の前に**落とす。
@@ -215,15 +381,37 @@ def main(argv: list[str] | None = None) -> int:
         channel["publish"]["visibility"] = override
         print(f"[pipeline] 公開設定を {override} で上書き")
 
+    topic_id = args.topic or config.env("TOPIC_ID", required=False)
     # 投稿済みはチャンネルから読む。ファイルには持たない。
     # --dry-run でも本数だけは実際に数える。配色を投稿済み本数で回しているので、
     # ここを 0 にすると dry-run と本番で色が変わってしまう。
     # dry-run で作った final.mp4 をそのまま投稿する運用（scripts/upload_only.py）
     # なので、dry-run 側が本番の色でなければ意味がない。
-    already = history.posted_topic_ids()
-    posted: set[str] = set() if dry else already
-    theme_index = len(already)
-    topic_id = args.topic or config.env("TOPIC_ID", required=False)
+    #
+    # ## **配色の番号を渡されたら、チャンネルを読み直さない**（2026-08-28・実測）
+    #
+    # `scripts/batch_build.build_one()` は **1本につき1つ子プロセス**を立て、
+    # その全部がここで `posted_topic_ids()` を呼びます（1回 ≒ **25単位** ——
+    # `channels.list` 1 ＋ `playlistItems.list` 約12 ＋ `videos.list` 約12）。
+    # `data/day_quota.jsonl` の窓 08/27 16:00 JST で、この呼び出しは
+    # **108回**（403 の `by` が `history.py:_scan`。間隔の中央値 **2.0秒**）。
+    # **枠が生きていれば 約2,700単位 ＝ 日枠 1万 の 27%** を、
+    # 毎回おなじチャンネル一覧の読み直しに使っていたことになります。
+    # 残してある計測のぶん（`upload_cap.RESERVE_UNITS` 400単位）の **6.75倍**です。
+    #
+    # そして**この経路で、その 25単位 が要るのは `theme_index` だけ**です:
+    #   - `posted` は `dry` なら `set()`（ここは必ず `--dry-run`）
+    #   - `pick_topic()` は `topic_id` が来ていれば**その場で返る**（`posted` を見ない）
+    # だから番号を渡された回は読みません。**渡されない回は今までどおり読みます。**
+    idx = config.env("THEME_INDEX", required=False)
+    if idx and topic_id and dry:
+        already: set[str] = set()
+        theme_index = int(idx)
+        posted: set[str] = set()
+    else:
+        already = history.posted_topic_ids()
+        posted = set() if dry else already
+        theme_index = len(already)
     if args.script and not topic_id:
         raise RuntimeError("--script を使うときは --topic でテーマIDを指定してください")
     topic = pick_topic(pool, posted, topic_id)
@@ -289,6 +477,28 @@ def main(argv: list[str] | None = None) -> int:
             + " / ".join(repeats)
         )
 
+    # **同じ原則の残り**（2026-08-29 に、同じ本で2回 踏んで足した）。
+    #
+    # 上の3行は `_check_not_repeat` **1件だけ**を早く当てていました。
+    # ところが `verify.check()` が script.json **だけ**で見る検査は、ほかに6件あります
+    # （`verify.script_only_problems`）。**そちらは最後まで待っていました。**
+    #
+    # 実測（`kouki-jougen-89000-sagaru`・この日 2回）: クリップ 22/22 を焼き、
+    # 音声を合成し、字幕を焼き込んだあとで
+    # 「**前提として『率』を出しているのに、その値が画面のどこにもありません**」。
+    # **引数は script だけの検査**で、**16分 前に同じ答えが出せました。**
+    # `batch_build` は1回 作り直すので、1本の失敗に **30分** かかっていました。
+    #
+    # `script_writer.generate()` は書き直しの輪を3回まわしたあと
+    # 「**パイプラインが合成前に止めます**」と印字して台本を返します ——
+    # **その約束が、ここまで守られていませんでした。**
+    early = verify.script_only_problems(script.model_dump(), bool(args.short))
+    if early:
+        raise RuntimeError(
+            "台本の時点で投稿前の検査に落ちます（レンダリング前に止めました）: "
+            + " / ".join(early)
+        )
+
     # 2. 音声（ここで各セグメントの実尺が確定する）
     audios = synthesize_segments(
         [s.narration for s in script.segments],
@@ -319,9 +529,19 @@ def main(argv: list[str] | None = None) -> int:
         expanded: list[dict] = []
         expanded_durations: list[float] = []
         slide_index_of_segment: list[int] = []
+        # **1コマの秒数は、テーマIDで2つに振り分けます**（2026-08-27・オーナー指摘）。
+        # 理由と実測は `slide_pace()` の docstring。**ここ以外は1文字も変えません。**
+        pace = slide_pace(args.topic or "")
+        print(f"[pipeline] ショートの刻み: **1コマ {pace}秒**"
+              f"（テーマIDで決まる。遅い側の割合 {SLOW_PACE_SHARE:.0%}）")
         for visual, dur in zip(plan, durations):
-            want = max(1, math.ceil(dur / SHORT_SLIDE_SECONDS))
+            want = max(1, math.ceil(dur / pace))
             parts = visuals.reveal_variants(visual, want)
+            secs = reveal_durations(dur, len(parts))
+            # **落とすのは頭のコマ**（要素を1つずつ足す形なので、頭がいちばん空）。
+            # `reveal_durations` が「完成形に 2.5秒 が要る」と言って減らした分。
+            if len(secs) < len(parts):
+                parts = parts[len(parts) - len(secs):]
             expanded.extend(parts)
             # **その文の「全部出ている」コマを指す**（2026-08-15 22:2x に先頭から変更）。
             #
@@ -334,8 +554,8 @@ def main(argv: list[str] | None = None) -> int:
             # 先頭のままだと**サムネから数字が消えます。**（気づいたのは、
             # この行を読んだからです。実物を作る前に見つかりました）
             slide_index_of_segment.append(len(expanded) - 1)
-            # その文の尺を、割れた枚数で等分する。合計は変わらない。
-            expanded_durations.extend([dur / len(parts)] * len(parts))
+            # **等分をやめました**（2026-08-27。理由は `reveal_durations`）。
+            expanded_durations.extend(secs)
         held = max(d for d in expanded_durations)
         print(f"[pipeline] 絵を {len(plan)} 枚 → {len(expanded)} 枚に割りました"
               f"（1枚の最長 {held:.1f}秒 / 目標 {SHORT_SLIDE_SECONDS}秒）")
@@ -348,6 +568,48 @@ def main(argv: list[str] | None = None) -> int:
         (work / "slide_seconds.json").write_text(
             json.dumps([round(d, 3) for d in durations]), encoding="utf-8"
         )
+        # **どのコマが「完成形」かも渡すこと**（2026-08-27）。
+        # 秒数の並びだけでは、`verify` は「短い1コマ」がめくりの途中なのか
+        # 説明の相手なのかを見分けられません。**下限を当てる先はここです。**
+        (work / "slide_complete.json").write_text(
+            json.dumps(slide_index_of_segment), encoding="utf-8"
+        )
+        # **`verify` が確実に落とす形を、描く前にここで落とす**（2026-08-28 に測って足した）。
+        #
+        # `verify._check_reveal_hold` は「完成形が 2.5秒 以上 画面に残っているか」を
+        # 見ます。ところが**文そのものが 2.5秒 より短いと、`reveal_durations` は
+        # 1コマ（＝文の全長）を返すしかありません** —— 完成形は文の 100% を
+        # 占めていて、**割り方をどう変えても直りません。**
+        #
+        # 実測（`reveal_durations` を総当たり）: `dur < 2.5` の文は
+        # `want` が 1 でも 4 でも `[dur]` の1コマになり、**必ず落ちます。**
+        # 直せるのは台本（文を長くする）だけです。
+        #
+        # それが分かるのは**ここ**（音声の尺が出たあと・絵を描く前）なのに、
+        # 判定は `verify`（final.mp4 のあと）でした。実測でこの回は
+        # **スライド描画とクリップの ffmpeg を全部やってから 2.3秒 で落ちて**、
+        # まるごと作り直しています（08/28 00:0x にも同じ落ち方が1件）。
+        # `_check_short_script` の docstring が言っている
+        # 「**同じことを、始まる前に judge できる**」の、もう1件です。
+        #
+        # **`verify` の下限は下げません**（あちらは最後の砦のまま）。
+        # 早めているだけです。
+        too_short = [
+            (i, expanded_durations[ci])
+            for i, ci in enumerate(slide_index_of_segment)
+            if expanded_durations[ci] + 1e-6 < verify.MIN_COMPLETE_SECONDS
+        ]
+        if too_short:
+            worst = min(too_short, key=lambda p: p[1])
+            raise RuntimeError(
+                f"**{worst[0]}番目の文が {worst[1]:.1f}秒 しかありません**"
+                f"（完成形の下限 {verify.MIN_COMPLETE_SECONDS}秒 / "
+                f"該当 {len(too_short)}文 / 全{len(slide_index_of_segment)}文）。\n"
+                "  **めくりの割り方の問題ではありません** —— 文が下限より短いと、"
+                "完成形は文の全長を占めていて、それでも下限に届きません。\n"
+                "  **直せるのは台本のほうだけです**（その文を長くする）。"
+                "描く前に止めました（`verify` なら final.mp4 のあとで落ちます）。"
+            )
     else:
         slide_index_of_segment = list(range(len(plan)))
 

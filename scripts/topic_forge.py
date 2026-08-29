@@ -56,6 +56,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import re
 import subprocess
 import sys
@@ -158,6 +159,90 @@ def survey() -> tuple[dict[str, dict[str, str]], dict[str, list[str]], set[str]]
     return all_sections, free, known_ids
 
 
+#: 節を掘るときに実際に使われた「形」を、`data/runs.jsonl` の ship の1行から数える。
+#: **散文を数えています**（構造の欄ではありません）。だから**当たった行を必ず出します** ——
+#: 数だけ出すと、次の回が検算できないので。
+DIG_METHODS: tuple[tuple[str, str, str], ...] = (
+    ("族をまたいだ比較",
+     r"族をまた",
+     "別の族の `ASSUMPTIONS` が自分で名指ししている穴を、金額表にする"),
+    ("掃引の候補から",
+     r"掃引(の候補)?(から|を使っ)(?!.{0,6}(いない|ていない|ません))",
+     "`python -m src.section_sweep --calc <族>` が出す形の候補を採る"),
+)
+
+
+def dig_method_lines(path: Path | None = None, limit: int = 400) -> list[str]:
+    """**「節をどう掘るか」の道を、実績つきで出す。**
+
+    ## なぜ要るか（2026-08-28 に測って足した）
+
+    ここは長らく「`section_sweep --calc <族>` が形の候補を出します」の**1行だけ**で、
+    **在庫切れの回が読む助言はそれしかありませんでした。**
+
+    ところが実測では、その候補の当たり率は **0/23**（`docs/JOURNAL.md`
+    2026-08-28 01:4x が「候補は 2,476件 積んであって、当たり率は実測 0/23」）で、
+    **直近の在庫掘りは5回とも別の道を採っています**
+    （08/27 kouki・08/28 iryohi／nenkin／shougai／keihi は
+    どれも「族をまたいだ比較」で、ship の1行に「掃引の候補は使っていない」と
+    書いてあります）。
+
+    **助言の文は、閉じても自分では黙りません**（`docs/trigger_main.md` §2.7）。
+    ここが1つの道しか名指ししていないせいで、**在庫切れの回はまず
+    当たり率 0/23 の一覧を開くところから始めます。**
+
+    ## なぜ「構造がある側」ではなく散文を数えているか
+
+    `run_marker.py --ship` に道の欄はありません。足すこともできますが、
+    **足した日から先しか数えられない**ので、いま効いている差
+    （5回 対 0回）が見えません。だから既にある `what` の散文を数えます。
+
+    **散文なので外れます。** だから数だけでなく**当たった行の頭**を出し、
+    次の回がその場で検算できるようにしてあります。
+
+    **覆る条件**: `run_marker.py --ship` に道の欄が入ったら、そちらで数えること
+    （散文は言い回しが変わると黙って0になります）。
+    """
+    p = path or (ROOT / "data" / "runs.jsonl")
+    if not p.exists():
+        return ["  （`data/runs.jsonl` が無いので、道の実績は出せません）"]
+    ships: list[str] = []
+    claims: list[str] = []
+    for line in p.read_text(encoding="utf-8").splitlines():
+        try:
+            row = json.loads(line)
+        except Exception:
+            continue
+        what = row.get("what") or ""
+        if not what:
+            continue
+        if row.get("kind") == "ship":
+            ships.append(what)
+        elif row.get("kind") == "claim":
+            claims.append(what)
+    ships, claims = ships[-limit:], claims[-limit:]
+
+    out = ["  **節の掘り方には道が2つあり、実績が違います**"
+           f"（`data/runs.jsonl` の直近 {len(ships)}件 の ship の散文から）:"]
+    for name, pattern, how in DIG_METHODS:
+        hit = [w for w in ships if re.search(pattern, w)]
+        want = [w for w in claims if re.search(pattern, w)]
+        tail = (f"（**取りかかると宣言した回は {len(want)}回**）"
+                if len(want) > len(hit) else "")
+        out.append(f"    {name:<12} **出した {len(hit)}回**{tail} …… {how}")
+        for w in hit[-2:]:
+            out.append(f"        └ {w[:70]}")
+    out.append("    → **数えているのは `ship` だけです。** `claim` は"
+               "「取りかかる」の宣言で、**そのまま出せたとは限りません** ——"
+               "実際、掃引を claim した回が、掃引を使わずに ship しています。")
+    out.append("    → **`section_sweep` はその族の中だけを振るので、"
+               "族をまたいだ形はそもそも候補に出てきません。**"
+               "掃引の候補の当たり率は実測 0/23（`docs/JOURNAL.md` 2026-08-28 01:4x）。")
+    out.append("    → **どちらを採ってもよい。ただし採った道を "
+               "`--ship` の1行に書くこと** —— ここの数がそれで動きます。")
+    return out
+
+
 def assign(free: dict[str, list[str]], count: int) -> list[tuple[str, str]]:
     """calc を1つずつ回りながら (モジュール, 見出し) を count 件とる。
 
@@ -203,6 +288,174 @@ def assign(free: dict[str, list[str]], count: int) -> list[tuple[str, str]]:
             picked.append((m, pool[m].pop(0)))
             if len(picked) == count:
                 break
+    return picked
+
+
+def landing_blocked_calcs(count: int = 8) -> set[str]:
+    """**次に `--long` を撃つ回が、着地の前後7日で避ける calc。**
+
+    ## なぜ要るか（2026-08-29 23:xx に測って足した）
+
+    `assign_new_families` は「まだ長尺のテーマを1件も持っていない族」から
+    取ります。**それは『族が増える』ことしか見ていません。**
+    ところが `batch_build.pick()` は、その族の題を選ぶときに
+    **`_drop_queue_tail_calcs` で「着地の前後 7日 の長尺に出ている calc」を
+    丸ごと落とします** —— つまり**その窓に既に居る族へ書いても、
+    次の回の候補は1件も増えません。**
+
+    実測（この関数を書いた回・`--count 10 --new-family`）:
+
+        書けた新しい族            9件
+        うち着地の窓に既に居た族  **5件**（kokuho furusato zangyo shitsugyo jidou）
+        → `pick(12, long_form=True)` の候補   2 → **6件**（**+4** ＝ 残りの4族）
+
+    **9件 書いて、その回に効いたのは 4件 でした。**
+    窓に居た5件は無駄ではありません（窓は動くので、あとの回で効きます）が、
+    **同じ手間で 9件 効かせられたのに 4件 だった**、というのが値札です。
+
+    **落とさずに、後ろへ回すだけ**にします —— 窓の中の族しか残っていない回に
+    「割り当てられる節がありません」で止まると、**族はもう増やせません。**
+
+    **覆る条件**: `QUEUE_TAIL_DAYS` が 0 になる（同じ calc の連続を許す）か、
+    `--per-calc` が族あたりの上限を外したら、この並べ替えは要りません。
+    `batch_build._queue_tail_calcs` が読めない置き方（検査など）では
+    **空を返して黙ります** —— ここで落ちると族が1つも増えなくなります。
+    検査は `tests/test_topic_forge_new_family.py`。
+    """
+    try:
+        import batch_build                                     # noqa: PLC0415
+        pool = config.load_topics()["topics"]
+        plan = batch_build.long_plan(count, batch_build._long_ring())
+        land = min(d for _, d in plan) if plan else None
+        return set(batch_build._queue_tail_calcs(pool, land=land))
+    except Exception as exc:                                   # noqa: BLE001
+        print(f"[forge] 着地の窓が読めないので、族の並べ替えはしません: "
+              f"{str(exc)[:120]}")
+        return set()
+
+
+def assign_new_families(all_sections: dict[str, dict[str, str]],
+                        free: dict[str, list[str]],
+                        count: int,
+                        long_families: set[str] | None = None,
+                        per_family: int = 1,
+                        blocked: set[str] | None = None) -> list[tuple[str, str]]:
+    """**道 (3) を、機械が撃てる形にする。**（2026-08-29 に足した）
+
+    `print_long_stock()` は 2026-08-29 15:5x から3つの道を印字していますが、
+    **そのうち機械が撃てるのは (1) と (2) だけ**でした ——
+    `assign()` が `free`（**未使用の節**）からしか取らないためです。
+
+    ところが同じ画面がこう言っています:
+
+        (3) **既にある節**に、長尺の題を書く（実測 5分・**いちばん速い**）
+            節も表も足しません。`(calc, 節)` は短尺と**共有できます**
+
+    **その道は、この道具からは撃てませんでした。** 実測 2026-08-29 の
+    「族 8 → 12」は**手で `topics.yaml` に書いた**もので、
+    `--long` を撃った回は「未使用の節がある calc」しか当たらず、
+    **`yoteinozei`（節7・未使用0）のような族は永久に選ばれません。**
+    そして未使用は **全620節のうち 10件**、しかもその10件は
+    `genjokaifuku` / `shogaku` / `teiji` ——**3つとももう長尺の族**です。
+    つまり **`--long` を何回 撃っても、族は1つも増えません。**
+
+    `scripts/eta.py` は長尺の律速をこう名指ししています ——
+    **「族の数: あと 68族（要る 77 ／ いま 9）」**。
+    その律速に対して、**唯一いちばん速い道が機械化されていませんでした。**
+
+    ここが取るのは **`long_form_families()` に入っていない族**だけです
+    （＝ まだ投稿していない長尺のテーマを1件も持っていない族）。
+    1族から `per_family` 件ずつ、**族べつの実績（`family_perf.scorer()`）の
+    高い順**に回ります。節は**未使用を先に**、無ければ使用済みからも取ります
+    —— 使用済みでよいのが (3) の要点で、`realign()` も `validate()` も
+    「未使用であること」を要求していません（どちらも `all_sections` しか見ない）。
+
+    **なぜ 1族1件が既定か。** 7日ぶんの上限は
+    `min(長尺の在庫, 族の数 × 2)` なので、**族が増えないと上限は動きません。**
+    まず族を横に増やし、上限が在庫の側で頭打ちになってから
+    `--per-family 2` で厚くするほうが、同じ件数で上限が高く出ます。
+
+    **覆る条件**: `batch_build` の `--per-calc` が族あたり2本の上限を
+    外したら、族の数は律速でなくなるので、この関数は要りません
+    （`src/section_depth.long_form_families()` の覆る条件と同じ）。
+    **検査は `tests/test_topic_forge_new_family.py`。**
+    """
+    if long_families is None:
+        try:
+            from src import section_depth
+            long_families = section_depth.long_form_families()
+        except Exception:                                      # noqa: BLE001
+            long_families = None
+    have = set(long_families or ())
+
+    fresh = [m for m in all_sections if m not in have and all_sections[m]]
+    # **着地の窓に既に居る族は、後ろへ回す**（`landing_blocked_calcs` の註）。
+    # そこへ書いても、次の `--long` の回の候補は1件も増えません。
+    # **落としません** —— 窓の中の族しか残っていない回に止まると、
+    # 族はもう増やせなくなります。
+    if blocked is None:
+        blocked = landing_blocked_calcs()
+    blocked = set(blocked or ())
+    try:
+        from src import family_perf
+        score = family_perf.scorer()
+        order = sorted(fresh, key=lambda m: (m in blocked, -score(m), m))
+    except Exception as exc:                                   # noqa: BLE001
+        print(f"[forge] 族べつの実績が読めないので名前順に落とします: {exc}")
+        order = sorted(fresh, key=lambda m: (m in blocked, m))
+    held = [m for m in fresh if m in blocked]
+    if held:
+        print(f"[forge] 着地の窓に既に居る族 {len(held)}件 を後ろへ回しました"
+              f"（そこへ書いても、次の `--long` の候補は増えません）: "
+              f"{', '.join(sorted(held)[:12])}"
+              f"{' …' if len(held) > 12 else ''}")
+
+    # **長尺が既に指している節は、published でも外すこと**（2026-08-29 に踏んだ）。
+    #
+    # `long_form_families()` が数えるのは「**まだ投稿していない**長尺を持つ族」
+    # なので、**投稿ずみの長尺しか無い族はここへ入ってきます。** そこまでは
+    # 正しい（族はもう1本 取れる）のですが、**節まで空いているとは限りません** ——
+    # そのまま1つ目の節を取ると、**投稿ずみの長尺と同じ表**を指します。
+    #
+    # 実測 2026-08-29: 3周まわして **5件**がこれで当たり、
+    # `tests/test_calc_sections_still_hit.py::test_同じ節を指す長尺が2件以上ない`
+    # が落ちました（jidoushazei / koyouhoken / zangyo / jouto / haito）。
+    # あの門がある理由は `CLAUDE.md` の
+    # 「続けて数本 視聴した後、繰り返しのように感じられる」で、
+    # **長尺は「表を最後まで読み切る」形なので、同じ節から2本は同じ表を2回 読みます。**
+    #
+    # ショートは同じ節から何本 切ってもよい（1本で言うのは1つの数だけなので、
+    # 年収や日数を替えれば主役が変わる）。**外すのは長尺が指している節だけ**です。
+    long_claimed: dict[str, set[str]] = {m: set() for m in all_sections}
+    try:
+        for t in config.load_topics()["topics"]:
+            calc = t.get("calc")
+            if not calc or calc not in all_sections or t["id"].startswith("s-"):
+                continue
+            wanted = t.get("calc_sections") or []
+            for head in all_sections[calc]:
+                if any(w in head for w in wanted):
+                    long_claimed[calc].add(head)
+    except Exception:                                          # noqa: BLE001
+        pass
+
+    # 節は**未使用を先に**。無ければ使用済みからも取る（それが (3) の要点）。
+    pool: dict[str, list[str]] = {}
+    for m in order:
+        taken = long_claimed.get(m, set())
+        spare = [h for h in (free.get(m) or []) if h not in taken]
+        rest = [h for h in all_sections[m]
+                if h not in spare and h not in taken]
+        pool[m] = spare + rest
+    order = [m for m in order if pool[m]]
+
+    picked: list[tuple[str, str]] = []
+    for _ in range(max(1, per_family)):
+        for m in order:
+            if len(picked) >= count:
+                return picked
+            if pool[m]:
+                picked.append((m, pool[m].pop(0)))
     return picked
 
 
@@ -323,17 +576,41 @@ def build_prompt(picked: list[tuple[str, str]], all_sections, topics,
             floor=float(vid["min_minutes"]), target=float(vid["target_minutes"]))]
     else:
         parts = [PROMPT_HEAD.format(n=len(picked), seen=seen)]
-    used = dupes.used_amounts({t["id"]: t.get("calc", "") for t in topics})
+    calc_of = {t["id"]: t.get("calc", "") for t in topics}
+    used = dupes.used_amounts(calc_of)
+    # **丸い数は `used_amounts()` に載りません**（1つでは門が止めないため）。
+    # ところが **2つ並ぶと止まります**（`find()` の `len(hit) > 1` の枝は
+    # 丸さを一度も見ない）。実測 2026-08-29: `--new-family` を2周して
+    # **2周とも1件ずつ**この枝で落ち、その2件は貼っていた一覧に
+    # **一度も載っていませんでした**（`src/dupes.used_round_amounts` の節）。
+    pairs = dupes.used_round_amounts(calc_of)
     for i, (mod, head) in enumerate(picked, 1):
         body = all_sections[mod][head]
         block = (f"\n--- {i} 件目 / calc={mod} / 節={head}\n"
                  f"この節の表（**ここに無い数字は使わない**）:\n```\n{body[:2400]}\n```\n")
         taken = used.get(mod, [])
         if taken:
-            shown = "・".join(f"{int(v):,}円" for v in taken[:12])
-            block += (f"**この calc で既に題に出した金額**: {shown}\n"
+            # **黙って切らないこと**（2026-08-29 に足した。`docs/trigger_main.md`
+            # 「no silent caps」）。ここは長らく `taken[:12]` で、**切ったことを
+            # 何も言いませんでした。** 実測 2026-08-29: `iryohi` が**ちょうど 12件**
+            # ——次に1件 足した回から、**書き手が避けられない数が黙って生まれます**
+            # （落ちた本は `topics.yaml` に1行も書かれないので、在庫が減る）。
+            # 節の表は 2,400字 貼っているので、金額を数十件 並べても費用は小さい。
+            cap = 40
+            shown = "・".join(f"{int(v):,}円" for v in taken[:cap])
+            more = (f"（ほか {len(taken) - cap}件。**多すぎるので切りました** ——"
+                    f" 切った側の数も門は止めます）" if len(taken) > cap else "")
+            block += (f"**この calc で既に題に出した金額**: {shown}{more}\n"
                       f"→ **この数を title_seed の主役に選ばないこと。**"
                       f"投稿の門が必ず止めます（表の別の数字を使う）\n")
+        combos = pairs.get(mod, [])
+        if combos:
+            shown = "／".join(
+                "・".join(f"{int(v):,}円" for v in combo) for combo in combos[:6])
+            block += (f"**この calc で既に題に並べた「丸い数の組」**: {shown}\n"
+                      f"→ **この組み合わせを title_seed に2つとも入れないこと。**"
+                      f"丸い数は1つなら通りますが、**2つ並ぶと投稿の門が必ず止めます**"
+                      f"（片方だけにするか、表の別の数字を使う）\n")
         parts.append(block)
     return "\n".join(parts)
 
@@ -731,6 +1008,94 @@ def swallows(sections: dict[str, str], candidate: str, assigned: str,
     return bool(mine) and mine <= theirs
 
 
+def money_owner(text: str, mod: str, mods: list[str],
+                all_sections) -> tuple[str, str, int] | None:
+    """**題の金額を1つも持っていない calc に貼られていたら、持っている calc を返す。**
+
+    ## なぜ `CROSS_MARGIN` だけでは足りないのか（2026-08-30 に踏んだ・実測）
+
+    下の `cross` は `best_section` の一致数を calc どうしで比べます。
+    **その数は、calc ごとに別の段（rung）で数えられています** ——
+    `best_section` は「下限 1000 → 10 → 小数」と**その calc の中だけで**降り、
+    **どこかで当たったところで止まる**から（`rungs` の註）。
+    **段がちがう数を大小で比べると、答えは段のほうで決まります。**
+
+    実測 `sankyu-14nichi-michi-ga-nai`（2026-08-29 の `--new-family` が書いた）::
+
+        題の金額（下限1000）  {27,450}   ＝ 産休・育休の免除の差額
+        sankyu     下限1000 で 一致 **1**（`産休には「14日以上」の道が無い`）
+        kafunenkin 下限1000 で 一致 0 → **段を落として** 一致 **3**（20年・25年・35年…）
+
+    **貼られたのは `kafunenkin` のほう**です（3 > 1）。`CROSS_MARGIN` は
+    「2個以上 多いとき」なので、**正しい族のほうが数で負けていれば、永久に動きません。**
+    そのまま作れば、**語るのは産休の免除、画面に出る表は寡婦年金**になります ——
+    `realign` の docstring が 2026-08-16 と 08-25 に2回 書いている
+    「語っている制度と、画面に出る表が別の制度」の**3回目で、1つ上の粒度**です。
+
+    見つけたのは `tests/test_doc_numbers.py::test_topics_yamlには掛けない` の赤で、
+    **同じ回に鳴った7件のうち6件は本物ではありません**（型1 ＝ 導出値）。
+    **本物はこの1件だけ**でした。
+
+    ## 何を見るか（**金額だけ**。段を落としません）
+
+    `numbers(text, MONEY_FLOOR)` ＝ **下限1000の数だけ**を、段を落とさずに見ます。
+    小さい整数は `rungs` の註のとおり「どの表にも出る」ので、名指しに使えません。
+
+    動かすのは、**次の3つが全部そろったときだけ**です:
+
+      1. 題に下限1000の数がある（無ければ何も言えない）
+      2. **貼られた calc は、その数を1つも持っていない**
+      3. この回の別の calc が、1つ以上 持っている
+
+    2 が効いています —— 導出値（`244,000 − 220,000 = 24,000` のような
+    表に印字されない差）を持つ題でも、**両端は表に在る**ので 2 が成り立たず、
+    **この関数は黙ります**（実測: 同じ回に鳴った `koureikoyou` / `taishoku` /
+    `souzoku` / `kyoiku` / `nenkinmenjo` / `yoteinozei` の6件とも動きません）。
+
+    **覆る条件**: 金額を1円も印字しない calc（年齢と月数だけの表）へ
+    誤って動かす回が出たら、3 の側に「移った先も金額の表であること」を足すこと。
+    いまは 3 が「その数を持っている」なので、金額の表でなければ成り立ちません。
+    **検査は `tests/test_forge_money_owner.py`。**
+    """
+    want = numbers(text, MONEY_FLOOR)
+    if not want:
+        return None
+    # **同じ金額を2つの表が持つことがあります**（2026-08-30 の実測 —— `27,450` は
+    # `sankyu` と `koyouhoken` の両方に在る。制度の定数は calc をまたぎます）。
+    # 金額の数で並べたあと、**同じ段（`SMALL_FLOOR`）で数え直して**ほどきます。
+    # 段をそろえるのがこの関数の主題なので、ほどき方も同じ段でやること。
+    small = numbers(text, SMALL_FLOOR)
+
+    def body_of(m: str) -> str:
+        return "\n".join((all_sections.get(m) or {}).values())
+
+    def owned(m: str) -> int:
+        return len(want & numbers(body_of(m), MONEY_FLOOR))
+
+    def small_hits(m: str) -> int:
+        return len(small & numbers(body_of(m), SMALL_FLOOR))
+
+    if owned(mod):
+        return None
+    best: tuple[str, str, int] | None = None
+    rank: tuple[int, int] | None = None
+    for m in mods:
+        if m == mod:
+            continue
+        n = owned(m)
+        if not n:
+            continue
+        here = (n, small_hits(m))
+        if rank is None or here > rank:
+            heads = all_sections.get(m) or {}
+            head = max(heads, key=lambda h: (len(want & numbers(heads[h],
+                                                                MONEY_FLOOR)),
+                                             len(small & numbers(heads[h],
+                                                                 SMALL_FLOOR))))
+            best, rank = (m, head, n), here
+    return best
+
+
 def realign(forged: ForgedSet, picked, all_sections,
             dropped: list[str]) -> list[tuple[str, str] | None]:
     """**書かせた順に節を貼らない。**中身の数字が載っている節へ貼り直す。
@@ -812,7 +1177,18 @@ def realign(forged: ForgedSet, picked, all_sections,
             # （2026-08-25 に踏んだ。下の `CROSS_MARGIN` の節）。
             cross = [(best_section(text, all_sections[m])[0], m)
                      for m in mods if m != mod]
-            if cross:
+            moved = money_owner(text, mod, mods, all_sections)
+            if moved:
+                cmod, cbest, cn = moved
+                print(f"  [calc ごと貼り直し・金額で] {item.id}\n"
+                      f"      書かせた順の calc: {mod} / {head}"
+                      f"（**題の金額を1つも持っていません**）\n"
+                      f"      金額が載っている calc: {cmod} / {cbest}"
+                      f"（{cn} 個 一致）")
+                mod, head = cmod, cbest
+                ranked = best_section(text, all_sections[mod])
+                top, best = ranked[0][0], ranked[0][1]
+            elif cross:
                 (ctop, cbest), cmod = max(cross, key=lambda c: c[0][0])
                 if ctop >= top + CROSS_MARGIN:
                     print(f"  [calc ごと貼り直し] {item.id}\n"
@@ -1082,21 +1458,92 @@ def print_long_stock() -> None:
     # `--count N --long` を撃てば、その族がそのまま1つ増えます。
     # 実測（08/26 03:2x）: `shougai` に節を3つ足して長尺で forge —— 族 3→4、
     # 7日ぶんの上限 6本→8本。**新しい表は1本も書いていません。**
+    # **「下のほうが速い」だけを読むと、族はいつまでも同じ題材の中に閉じます**
+    # （2026-08-29 に踏んだ。**この行が 08/26 から効いていました**）。
+    # (2) は既にある表に節を足すので、**族は増えても題材は増えません。**
+    # 実測 2026-08-29: `src/calc/` の **63本 が全部 税・年金・社会保険**でした ——
+    # そのあいだ「この題材の見込み客が尽きた」という原因の候補は、
+    # **切り分けようがありませんでした**（比べる相手が1本も無い）。
+    # **速さで選ぶのは、題材の幅が要らない回だけにすること。**
+    # **道は3つです**（2026-08-29 15:5x に足した。**2つしか出していませんでした**）。
+    #
+    # ここは長らく「道は2つあり」で、(1) 新しい表を書く 20〜25分 と
+    # (2) 既にある表に**節を足して** 15分 しか出していませんでした。
+    # **どちらも「節が足りない」を前提にしています。** ところが節は足りています ——
+    # この回の実測は **全620節のうち未使用は10件**で、**残り610節は在るのに、
+    # 長尺のテーマを持っている族は8つだけ**でした。
+    #
+    # **節は短尺と共有できます。** 実測（`config/topics.yaml`）:
+    # 同じ `(calc, 節)` を2件以上の題が持つ組が **6組**あり、そのうち
+    # `yoteinozei-15man`（**長尺**）は `yoteinozei` の3節を短尺3本と共有しています。
+    # 長尺は「表を最後まで読み切る」形で、短尺が1つの数だけを撃つのとは
+    # **読み方が違う**ので、同じ節から別の本が立ちます。
+    #
+    # だから **(3) 既にある節に、長尺の題を書く（実測 5分）**。
+    # 節を足す必要も、表を書く必要もありません。
+    # 実測 2026-08-29: この道で族 **8 → 12**・7日ぶんの上限 **16本 → 24本**。
+    #
+    # **覆る条件**: 節を共有した長尺と短尺が同じ族で続けて公開されて `engaged` が
+    # 落ちたら（＝視聴者から見て繰り返しに見えている）、(3) は閉じます。
+    # 見るのは `status.py` の族べつ実績の行。
     print(f"  **族を1つ増やすと、ここが {PER_CALC_DEFAULT}本 増えます。**"
-          f" 道は2つあり、**下のほうが速い**:")
-    print(f"    (1) `src/calc/` に**新しい表**を書く（実測 20〜25分）")
+          f" 道は3つあり、**1周を速く終えたいだけなら (3)**:")
+    print(f"    (1) `src/calc/` に**新しい表**を書く"
+          f"（実測 20〜25分。**条文の少ない題材なら 18分**・2026-08-29 の `ribo`）")
+    # **(1) には、候補の一覧がありませんでした**（2026-08-29 に足した）。
+    #
+    # (2) だけが「選べる族 64件」を出していて、(1) は「新しい表を書く」としか
+    # 言いません。**候補が並んでいるほうが選ばれます** ——
+    # 実測で、この節を読んだ回は 08/26 01:5x・02:3x・08/29 04:0x と
+    # **3回とも (1) を選ぶのに、題材を自分でゼロから考えています。**
+    #
+    # ところが候補は `config/topics.yaml` に**ずっと在りました** ——
+    # `calc` が空のまま残っている長尺のテーマ7件で、`angle` には
+    # 「排気量の帯 × 経過年数の表」「一部支給の逓減 ＝ 実質の限界税率」のような
+    # **表の設計そのもの**が書いてあります。
+    #
+    # **その7件は、これまで「死に在庫」と呼ばれていました**
+    # （`docs/JOURNAL.md` 2026-08-29 02:2x —— `pick()` は `calc` を要求するので
+    #  永久に選ばれず、`topics.yaml` を手で数えた回が「在庫が7件ある」と読み違える）。
+    # 申し送りは2回続けて「`calc` を当てるか、行ごと消すか」と言っていましたが、
+    # **どちらも中身を捨てます。** ここに出せば、
+    # **読み違えは消えて、中身は (1) の候補として残ります。**
+    #
+    # **覆る条件**: この一覧から実際に表が書かれた回が3回 続けて0なら、
+    # 候補が足りないのではなく**候補の質**の問題です（そのときは消してよい）。
+    ideas = [t for t in pool
+             if not t.get("calc") and t["id"] not in used
+             and not t["id"].startswith("s-")]
+    if ideas:
+        print(f"      **(1) の候補: {len(ideas)}件**"
+              f"（`config/topics.yaml` に `calc` が空のまま在る長尺の題。"
+              f"**在庫ではありません** —— `pick()` は `calc` を要求するので"
+              f"永久に選ばれません。`angle` に表の設計が書いてあります）")
+        for t in ideas:
+            print(f"        {t['id']:28} {t.get('title_seed', '')}")
     print(f"    (2) **既にある表**のうち、まだ長尺のテーマを持っていない族に"
-          f"**節を足して** `--count N --long`（実測 15分・08/26 03:2x に `shougai` で）")
+          f"**節を足して** `--count N --long`（実測 15分・08/26 03:2x に `shougai` で）"
+          f" ← **題材の幅は増えません**（族だけ増えます）")
     rest = sorted({t["calc"] for t in pool if t.get("calc")} - set(families))
     if rest:
         print(f"  **(2) で選べる族: {len(rest)}件**"
               f"（長尺のテーマをまだ1件も持っていない族。ここから選べば族が増えます）")
         print("    " + " ".join(rest[:12])
               + (" …" if len(rest) > 12 else ""))
+        print(f"    (3) **既にある節**に、長尺の題を書く（実測 5分・**いちばん速い**）"
+              f" ← 節も表も足しません。`(calc, 節)` は短尺と**共有できます**"
+              f"（`yoteinozei-15man` の前例・いま6組）。長尺は「表を最後まで読み切る」形で、"
+              f"短尺が1つの数だけを撃つのとは読み方が違います。"
+              f"**族の選び方は機械がやります** ——"
+              f" `python scripts/topic_forge.py --count N --new-family`"
+              f"（2026-08-29 に足した。それまで (3) は**手で書く道**しかなく、"
+              f"`--long` は未使用の節を持つ calc しか当てないので"
+              f"**族は1つも増えませんでした**。`assign_new_families` の節）")
     if len(longs) > ceiling:
         print(f"  **いま在庫は {len(longs)}件 あるのに {ceiling}本 しか取れません** —— "
               f"詰まっているのは節ではなく**族の数**です。"
-              f"**同じ族に節を足しても、この数は1本も増えません。**")
+              f"**同じ族に節を足しても、この数は1本も増えません**"
+              f"（足すのは節ではなく、上の (3) の**長尺の題**のほう）。")
 
 
 def main() -> int:
@@ -1108,8 +1555,18 @@ def main() -> int:
                     help="**長尺（8分30秒以上）の企画を作る。**"
                          "既定はショート。門2a（長尺4,000時間）が唯一の門なので、"
                          "面を増やすならこちら（`LONG_PROMPT_HEAD` の節）")
+    ap.add_argument("--new-family", action="store_true",
+                    help="**道 (3)。`--long` を含みます。**まだ長尺のテーマを"
+                         "1件も持っていない族から、**既にある節**（使用済みでよい）に"
+                         "長尺の題を書く。7日ぶんの上限は `族の数 × 2` なので、"
+                         "**族を横に増やすのがいちばん速い**"
+                         "（`assign_new_families` の節）")
+    ap.add_argument("--per-family", type=int, default=1,
+                    help="`--new-family` のとき、1族あたり何件 書かせるか（既定 1）")
     ap.add_argument("--model", default="opus")
     args = ap.parse_args()
+    if args.new_family:
+        args.long = True
 
     all_sections, free, known_ids = survey()
     total = sum(len(v) for v in all_sections.values())
@@ -1127,19 +1584,31 @@ def main() -> int:
             print("\n**未使用が0件です。** ここが本当の在庫切れなので、"
                   "`src/calc/` の表に節を足すこと（この道具では増えません）。"
                   "\n  **新しい表を書く必要はありません** —— 既にある表に"
-                  "節を1つ足せば、その族から1本ぶんの在庫が出ます"
-                  "（`python -m src.section_sweep --calc <族>` が形の候補を出します）。"
-                  "\n  **長尺の在庫を増やすなら、足す先を"
+                  "節を1つ足せば、その族から1本ぶんの在庫が出ます。")
+            for line in dig_method_lines():
+                print(line)
+            print("  **長尺の在庫を増やすなら、足す先を"
                   "「まだ長尺のテーマを持っていない族」から選ぶこと** ——"
                   "上の族の数がそのまま7日ぶんの上限です。")
         return 0
 
-    picked = assign(free, args.count)
+    if args.new_family:
+        picked = assign_new_families(all_sections, free, args.count,
+                                     per_family=args.per_family)
+    else:
+        picked = assign(free, args.count)
     if not picked:
         print("\n割り当てられる節がありません。")
         return 1
     if len(picked) < args.count:
-        print(f"\n**{args.count}件 頼まれましたが、未使用が {len(picked)}件 しかありません。**")
+        if args.new_family:
+            print(f"\n**{args.count}件 頼まれましたが、長尺のテーマを持っていない族が"
+                  f" {len({m for m, _ in picked})}件 しかありません**"
+                  f"（`--per-family` を上げると1族から複数 取れます。"
+                  f"ただし7日ぶんの上限は `族の数 × 2` で頭打ちです）。")
+        else:
+            print(f"\n**{args.count}件 頼まれましたが、"
+                  f"未使用が {len(picked)}件 しかありません。**")
 
     print(f"\n=== 割り当て {len(picked)}件（calc は {len({m for m, _ in picked})}種類）===")
     for mod, head in picked:

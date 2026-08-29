@@ -136,3 +136,73 @@ def test_足りないときは腕をCTRに向けない():
                                   {"mean": 73.0, "max": 1285.0})
     assert "サムネと題（CTR）では動きません" in note
     assert "要る CTR" not in note
+
+
+# ---------------------------------------------------------------------------
+# **2026-08-26 に足した。上の 4件目 と同じ形の、8件目。**
+#
+# 上の検査は「最大の1日ではなく、続いている量で読め」と言っています。**正しい。**
+# ところが `per_day_sustained` が返す「続いている量」は**カレンダーの1日あたり**で、
+# 実測（2026-08-26）では**その窓の7日のうち5日が、長尺の公開0本**でした。
+#
+#     08/17 5 ／ 08/18 7 ／ 08/19 8 ／ 08/20 17 ／ 08/21 1,368 ／ 08/22 335 ／ 08/23 492
+#     → 中央値 **17.0回/日** → 段2「**10.5倍 足りません**」
+#
+# **公開が0本の日の面は、「続いている量」ではなく「公開を止めていた量」です。**
+# 段2 の問い（門2a を 450日 かけて開けられるか）は、**これから公開する予定**の上に
+# 乗ります。予定は控えにあり（`data/uploaded.jsonl` の `at`）、API は1単位も要りません。
+# ---------------------------------------------------------------------------
+
+def test_窓が公開0本の日で埋まっていたら予定のほうで読む():
+    """**中央値は消さない。** どちらも正しく、問いが別。"""
+    eta = _eta()
+    imp, basis, span = eta._gate2_surface_basis({
+        "imp_day": 1368.0, "imp_day_max": 1368.0, "imp_day_mean": 85.9,
+        "imp_day_recent": 17.0, "imp_day_recent_days": 7,
+        "imp_day_recent_dry": 5,
+        "imp_day_planned": 677.6, "imp_day_planned_pubs": 2.43,
+        "imp_day_per_publish": 279.0,
+        "imp_day_dry_span": ("20260908", "20260920", 13)})
+    assert imp == 677.6
+    assert "予約" in basis and "公開1本あたり" in basis
+    # **中央値がどこへ行ったかを、同じ行に残すこと**
+    assert "17.0" in basis
+    assert span["recent"] == 17.0
+
+
+def test_窓に公開0本の日が無ければ_いままでどおり続いている量():
+    eta = _eta()
+    imp, basis, _ = eta._gate2_surface_basis({
+        "imp_day": 1368.0, "imp_day_max": 1368.0, "imp_day_mean": 85.9,
+        "imp_day_recent": 300.0, "imp_day_recent_days": 7,
+        "imp_day_recent_dry": 0,
+        "imp_day_planned": 677.6, "imp_day_planned_pubs": 2.43,
+        "imp_day_per_publish": 279.0})
+    assert imp == 300.0
+
+
+def test_予定表の穴を同じ行で名指しする():
+    """**足りている/足りないより先に、どこで落ちるか。**"""
+    eta = _eta()
+    note = eta._gate2_surface_note(
+        677.6, 178.0, "これから7日の予約から",
+        {"mean": 85.9, "max": 1368.0, "ctr": 1.44,
+         "dry_span": ("20260908", "20260920", 13)})
+    assert "2026-09-08〜2026-09-20 の 13日" in note
+    assert "長尺の予約が0本" in note
+
+
+def test_足りていると書くときは実測のCTRを並べる():
+    """**「面は足りています」を裸で出さないこと。**
+
+    この節は CTR 100% を仮に置いた面の話で、再生になるのは `面 × 実測の CTR`。
+    要る CTR（26.3%）と実測（1.44%）を並べないと、
+    「もう手はいらない」と読めます。
+    """
+    eta = _eta()
+    note = eta._gate2_surface_note(
+        677.6, 178.0, "これから7日の予約から",
+        {"mean": 85.9, "max": 1368.0, "ctr": 1.44})
+    assert "面は足りています" in note
+    assert "実測の CTR は 1.44%" in note
+    assert "倍 足りません" in note

@@ -190,7 +190,14 @@ def test_節の一覧は1か所にしかない(monkeypatch, capsys):
     # 落ちる場所より後ろなので呼ばれていなくてよい。
     # **見たいのは「`_channel_main` が自分で節を並べていない」ことのほう**です。
     import inspect
-    src = inspect.getsource(status._channel_main)
+    # **`inspect.getsource` を直に呼ばないこと**（2026-08-27 に踏んだ）。
+    #     20分の走りの最中に同じ木へ `git merge` を撃つと、ファイルが下へずれ、
+    #     **import 時の行番号で別の場所を切り出します** —— この検査が
+    #     **コードは無傷のまま赤くなります**（実測: 兄弟が `scripts/status.py` に
+    #     60行 入れた回。単体では緑なので「気まぐれ」と読まれます）。
+    #     `conftest.source_of()` が、そのときは**そう言って**落とします。
+    from conftest import source_of
+    src = source_of(status._channel_main, "_channel_main")
     assert "print_analytics_sections" in src
     assert "fetch_traffic" not in src, "節の中身が `_channel_main` に写っています（2か所目）"
     assert "print_where_watched" not in src, "節の一覧が `_channel_main` に写っています（2か所目）"

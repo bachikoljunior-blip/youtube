@@ -272,3 +272,128 @@ def test_新しい一枚に居ない本は_呼び戻さない(tmp_path, monkeypa
     rows = watches._last_scan()
     assert set(rows) == {"aaa"}
     assert rows["aaa"]["尺"] == 29
+
+
+# --- 2026-08-26 夜（最適化の回）に足した「満ちた ≠ 判定できる」の検査 ---
+#
+# `config/watches.yaml` の「深い題のショート-16本」には、こう書いてあった:
+#
+#     **数え方は仮説の `needs.count_expr` と同じ**にしてあります。
+#     片方だけ直すと、鳴る日と判定できる日がずれます。
+#
+# **その日のうちに、片方だけが直った。** きょうだいの回が `needs` を
+# 「作った16本」→「公開して分類が付いた8本 ＋ 使える日3日」に直し、
+# `_k_deep_shorts`（作った本を数える）はそのままだった。結果:
+#
+#     deadline_check.py   「[..] まだ数えはじめたところ。**何もしないのが正解**」
+#     drift.py --gate     exit 2 →「**この回は verdict を出すこと**」
+#     watches --pending   「**満ちました。この回で判定すること**」（3回まで止める）
+#
+# **数え方を写し直すのは、同じ事故をもう一度 予約すること。**
+# だから「判定できるか」の答えは `deadline_check` の1か所に訊く。
+# 下の検査は、その配線が両向きに効いていることを縛る。
+
+
+def _w(wid="試験"):
+    return watches.Watch(id=wid, what="試し", cond="0以上", then="何かする",
+                         source="config/hypotheses.yaml", kind="length_spread",
+                         params={"need": 0.0})
+
+
+def test_仮説がまだ判定できない待ちは鳴らさない(monkeypatch):
+    """`deadline_check` が `warming` と言う待ちは、目盛りが満ちても鳴らさない。
+
+    **その回にできることが1つも無いので、止めても損しかしない。**
+    """
+    monkeypatch.setattr(watches, "_hypothesis_judge_state",
+                        lambda: {"試験": ("warming", None)})
+    assert watches.unanswered([_w()]) == []
+
+
+def test_鳴らさなかった待ちは_理由つきで必ず印字する(monkeypatch):
+    """**黙って消さないこと。** 消すと、次の回には存在しなかったことになる。"""
+    monkeypatch.setattr(watches, "_hypothesis_judge_state",
+                        lambda: {"試験": ("warming", None)})
+    out = watches.render([_w()])
+    assert "まだ判定できません" in out
+    assert "何もしないのが正解" in out
+    assert "満ちました" not in out
+
+
+def test_判定できる日が未来の待ちも鳴らさない(monkeypatch):
+    from datetime import date as _d, timedelta as _td
+    later = _d.today() + _td(days=30)
+    monkeypatch.setattr(watches, "_hypothesis_judge_state",
+                        lambda: {"試験": ("ready", later)})
+    assert watches.unanswered([_w()]) == []
+    assert str(later) in watches.render([_w()])
+
+
+def test_いま判定できる待ちは_これまでどおり鳴る(monkeypatch):
+    """**片側だけ緩めないための検査。**"""
+    from datetime import date as _d, timedelta as _td
+    monkeypatch.setattr(watches, "_hypothesis_judge_state",
+                        lambda: {"試験": ("ready", _d.today() - _td(days=1))})
+    assert [x.id for x in watches.unanswered([_w()])] == ["試験"]
+    assert "満ちました" in watches.render([_w()])
+
+
+def test_計器が読めないときは鳴らす側へ倒す(monkeypatch):
+    """`deadline_check` が読めないことは、「判定できない」ことの証拠ではない。
+
+    ここを逆に倒すと、**計器を壊すだけで待ちが全部 黙る。**
+    """
+    monkeypatch.setattr(watches, "_hypothesis_judge_state", lambda: None)
+    assert [x.id for x in watches.unanswered([_w()])] == ["試験"]
+
+
+def test_仮説と結ばれていない待ちは_これまでどおり(monkeypatch):
+    """`config/hypotheses.yaml` の `watch:` に無い待ちは、自分の目盛りだけで鳴る。"""
+    monkeypatch.setattr(watches, "_hypothesis_judge_state",
+                        lambda: {"別の待ち": ("warming", None)})
+    assert [x.id for x in watches.unanswered([_w()])] == ["試験"]
+
+
+def test_判定できる日が出せない待ちは抑えない(monkeypatch):
+    """`unreachable` / `unchecked` は抑えない。
+
+    前者は**前提の立て方ごと**変える必要があり、後者は分からないだけ。
+    **どちらも人が読む価値がある** —— 抑えると、直す機会ごと消える。
+    """
+    for kind in ("unreachable", "unchecked"):
+        monkeypatch.setattr(watches, "_hypothesis_judge_state",
+                            lambda k=kind: {"試験": (k, None)})
+        assert [x.id for x in watches.unanswered([_w()])] == ["試験"], kind
+
+
+def test_待ちの門と_deadline_check_が逆を言っていないこと():
+    """**本物の台帳で、2つの道具が食い違っていないこと。**
+
+    合成では捕まらない。2026-08-26 に実際に起きたのは実物の側。
+
+    落ちたときの直し方: `src/watches.py` の `_split_rung` が
+    `deadline_check` の答えを読めていない。**`_k_*` の数え方を
+    仮説に合わせて写し直すのは直し方ではありません** ——
+    「同じにしてある」と註に書いてあって、それでもずれたのが由来です。
+    """
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "twdc", Path(__file__).resolve().parent.parent / "scripts" / "deadline_check.py")
+    dc = importlib.util.module_from_spec(spec)
+    sys.modules["twdc"] = dc
+    spec.loader.exec_module(dc)
+
+    rows = dc.load()
+    warming_claims = {v.claim for v in dc.check(rows) if v.warming}
+    warming_watch_ids = {str(h.get("watch") or "").strip()
+                         for h in rows if isinstance(h, dict)
+                         and str(h.get("claim") or "") in warming_claims}
+    warming_watch_ids.discard("")
+
+    rung = {w.id for w in watches.unanswered()}
+    clash = sorted(rung & warming_watch_ids)
+    assert not clash, (
+        "`src/watches.py` が「この回で判定すること」と言っている待ちを、"
+        "`scripts/deadline_check.py` は「まだ数えはじめたところ・"
+        f"何もしないのが正解」と言っています: {clash}"
+    )

@@ -67,6 +67,17 @@
   減らしても切られたまま**です。いちばん極端なのは**被保険者9人の2割軽減**で、
   額面14万8,680円 のうち **14万6,707円 が限度額に吸われ、手元に残るのは1,973円**
   （額面の1.3パーセント）。この目減りは、軽減の判定にも割合にも書かれていません
+- **保険料が1円も違わない、人数のちがう世帯があります**（2026-08-26 に足した）。
+  軽減は「割合」で書いてあるので人数と掛け合わせられ、
+  **実質の頭数 ＝ 被保険者数 × （1 − 軽減の割合）**になります。
+  **所得割は被保険者数で1円も動かない**ので、保険料は
+  **所得割 ＋ 均等割の単価 × 実質の頭数**の形になり、
+  **実質の頭数が同じなら、人数が違っても保険料は同じ**です。
+  所得350万円・45歳なら、**5人世帯と10人世帯がどちらも81万565円**
+  （5×1.00 も 10×0.50 も 5.0）。**あいだの5人は保険料を1円も増やしていません。**
+  並ぶ比は軽減の割合の比だけで決まる（無軽減:2割 = 1:1.25、2割:5割 = 1:1.6、
+  無軽減:5割 = 1:2）ので、**組は (4人,5人) (5人,8人) (5人,10人) のような形に限られ**、
+  どれが起きるかは所得が決めます
 """
 from __future__ import annotations
 
@@ -183,15 +194,34 @@ def kyu_tadashigaki(shotoku: int) -> int:
     return max(0, shotoku - KISO_KOJO)
 
 
-def part(name: str, shotoku: int, members: int, *, keigen: bool = True) -> dict:
+def part(name: str, shotoku: int, members: int, *, keigen: bool = True,
+         hantei: int | None = None) -> dict:
     """1本ぶんの保険料。**所得割と均等割を出してから、限度額で頭を切ります。**
 
     軽減は**均等割にだけ**掛かります（所得割は軽減されません）。
+
+    `hantei` は**軽減の判定にだけ使う所得**です。既定の `None` は
+    「総所得金額等をそのまま判定に使う」＝ **これまでと1円も変わりません。**
+
+    **なぜ口を開けたか**（2026-08-28 に足した）。軽減の判定所得は総所得と
+    同じではありません —— **65歳以上の公的年金等所得者は、そこから15万円を
+    引きます**（地方税法施行令29条の7）。この表は既定の `age=45` を土台に
+    書かれているので、これまでその15万円が要る場面がありませんでした。
+    ところが **74歳の国保**（＝75歳の後期高齢者医療と並べる相手）では効きます:
+    年金収入168万円の人は、総所得58万円で見ると**5割軽減**、
+    15万円を引いた43万円で見ると**7割軽減**。**1段ちがいます。**
+    `src/calc/kouki.py` の「75歳の誕生日で保険料はいくら変わるか」が、
+    実際にここへ15万円を引いた額を渡します。
+
+    **既定を変えていないのは、この表の他の14節が全部 `age=45` 側だから**です
+    （そちらでは15万円は引きません）。**覆る条件**: この表に65歳以上を
+    土台にした節が増えたら、`age` から自動で引く側へ寄せること。
     """
     r = RATES[name]
     shotokuwari = round(kyu_tadashigaki(shotoku) * float(r["所得割"]))
     kintowari_full = int(r["均等割"]) * members
-    pct = keigen_rate(shotoku, members) if keigen else 0
+    judge = shotoku if hantei is None else hantei
+    pct = keigen_rate(judge, members) if keigen else 0
     kintowari = round(kintowari_full * (100 - pct) / 100)
     raw = shotokuwari + kintowari
     limit = int(r["限度額"])
@@ -215,15 +245,21 @@ def parts_for(age: int) -> list[str]:
 
 
 def premium(shotoku: int, members: int = 1, age: int = 45,
-            *, keigen: bool = True) -> dict:
-    """世帯の国民健康保険料。"""
-    rows = [part(n, shotoku, members, keigen=keigen) for n in parts_for(age)]
+            *, keigen: bool = True, hantei: int | None = None) -> dict:
+    """世帯の国民健康保険料。
+
+    `hantei` は**軽減の判定にだけ使う所得**（`part` の註）。既定の `None` は
+    これまでと同じで、総所得金額等をそのまま判定に使います。
+    """
+    rows = [part(n, shotoku, members, keigen=keigen, hantei=hantei)
+            for n in parts_for(age)]
+    judge = shotoku if hantei is None else hantei
     return {
         "所得": shotoku,
         "被保険者数": members,
         "年齢": age,
         "内訳": rows,
-        "軽減の割合": keigen_rate(shotoku, members) if keigen else 0,
+        "軽減の割合": keigen_rate(judge, members) if keigen else 0,
         "保険料": sum(r["保険料"] for r in rows),
         "頭打ちの本数": sum(1 for r in rows if r["頭打ちか"]),
         "かかる上限": sum(r["限度額"] for r in rows),
@@ -554,6 +590,79 @@ def reversal_by_shotoku(
     return [members_reversal(s, upto, age) for s in shotokus]
 
 
+# ---- 節14: 実質の頭数（2026-08-26 に足した）-----------------------------
+# **軽減は「割合」で書いてあるので、人数と掛け合わせられます。**
+# 保険料は「所得割 ＋ 均等割の単価 × 人数 × (1 − 軽減の割合)」なので、
+# 後ろの `人数 × (1 − 軽減の割合)` を1つの数として読めます。
+# これを **実質の頭数** と呼びます（この表だけの言い方です。法令用語ではありません）。
+#
+# **所得割は被保険者数で1円も動きません**（`part()` は `members` を
+# 均等割にしか掛けていない）。だから **実質の頭数が同じ2つの世帯は、
+# 人数が違っても保険料が1円も違いません。**
+#
+# **限度額に当たっている世帯では成り立ちません**（そこで頭を切られるため）。
+# 下の関数は `限度額に当たったか` を必ず一緒に返します。
+def jisshitsu(shotoku: int, members: int, age: int = 45) -> dict:
+    """**実質の頭数 ＝ 被保険者数 × （1 − 軽減の割合）。**"""
+    p = premium(shotoku, members, age)
+    pct = p["軽減の割合"]
+    tanka = sum(int(RATES[n]["均等割"]) for n in parts_for(age))
+    return {
+        "所得": shotoku,
+        "被保険者数": members,
+        "軽減の割合": pct,
+        "実質の頭数": members * (100 - pct) / 100,
+        "均等割の単価": tanka,
+        "所得割の合計": sum(r["所得割"] for r in p["内訳"]),
+        "保険料": p["保険料"],
+        "限度額に当たったか": p["頭打ちの本数"] > 0,
+    }
+
+
+def onaji_ryou(shotoku: int, upto: int = 12, age: int = 45) -> dict:
+    """**同じ所得で、保険料が1円も違わない「人数のちがう世帯」を探す。**
+
+    軽減が深くなる人数をこえると、**実質の頭数はいったん減ってから増え直します。**
+    その戻る途中で、**軽減の浅い少人数の世帯とぴったり並ぶ点**が出ます。
+
+    実質の頭数が一致する比は、軽減の割合の比だけで決まります ——
+    無軽減 : 2割 ＝ 1 : 1.25 ／ 2割 : 5割 ＝ 1 : 1.6 ／ 無軽減 : 5割 ＝ 1 : 2。
+    **だから並ぶのは (4人, 5人) (5人, 8人) (8人, 10人) のような組だけ**で、
+    どれが実際に起きるかは所得で決まります。
+
+    **限度額に当たっている人数は外します**（そこは頭を切られて同額になるので、
+    実質の頭数の話ではありません）。
+    """
+    rows = [jisshitsu(shotoku, m, age) for m in range(1, upto + 1)]
+    live = [r for r in rows if not r["限度額に当たったか"]]
+    by_price: dict[int, list[int]] = {}
+    for r in live:
+        by_price.setdefault(r["保険料"], []).append(r["被保険者数"])
+    pairs = [{"保険料": v, "人数": ms,
+              "実質の頭数": rows[ms[0] - 1]["実質の頭数"],
+              "軽減の割合": [rows[m - 1]["軽減の割合"] for m in ms]}
+             for v, ms in sorted(by_price.items()) if len(ms) > 1]
+    return {
+        "所得": shotoku,
+        "年齢": age,
+        "行": rows,
+        "同額の組": pairs,
+        "ただ乗りできる人数": max(
+            (max(p["人数"]) - min(p["人数"]) for p in pairs), default=0),
+    }
+
+
+def onaji_ryou_table(
+    shotokus: tuple[int, ...] = (
+        1_000_000, 1_500_000, 2_000_000, 2_500_000, 3_000_000,
+        3_500_000, 4_000_000),
+    upto: int = 12,
+    age: int = 45,
+) -> list[dict]:
+    """**同額の組を、所得べつに並べる。**所得によって組そのものが変わります。"""
+    return [onaji_ryou(s, upto, age) for s in shotokus]
+
+
 def keigen_value(shotoku: int, members: int = 1, age: int = 45) -> dict:
     """**軽減はいくらの値打ちか。**軽減を外して同じ世帯を計算し、差を取ります。
 
@@ -587,6 +696,57 @@ def keigen_value_table(members: int = 1, age: int = 45) -> list[dict]:
         limit = keigen_threshold(pct, members)
         out.append(keigen_value(limit, members, age))
     return out
+
+def keigen_value_by_members(pct: int, upto: int = 12, age: int = 45) -> list[dict]:
+    """**その軽減の割合の境目ちょうどにいる世帯**の値打ちを、被保険者数の順に並べる。
+
+    `keigen_value_table` は「1つの世帯人数で、3つの割合を縦に」並べます。
+    こちらは**軸を入れ替えて**「1つの割合で、人数を横に」並べたものです。
+
+    **人数を動かすと、境目の所得も一緒に動きます**（`keigen_threshold`）——
+    5割は「43万円＋31万円×人数」、2割は「43万円＋57万円×人数」。
+    **7割の基準額 43万円だけは人数で動きません。**
+    だから3本の並びは、同じ形になりません。
+    """
+    out = []
+    for m in range(1, upto + 1):
+        limit = keigen_threshold(pct, m)
+        r = keigen_value(limit, m, age)
+        r["境目の所得"] = limit
+        out.append(r)
+    return out
+
+
+def keigen_value_shape(pct: int, upto: int = 12, age: int = 45) -> dict:
+    """上の並びの**形**。額面どおりの最後・頂点・0円になる最初の人数を返す。
+
+    **`頂点の人数` が `上限まで見た人数` と同じなら、まだ折り返していません** ——
+    そのときは `頂点は端か` が真になります。**端の値を「頂点」と呼ばないこと**
+    （ここを区別しないと、7割軽減が「12人で頂点」に見えます。実際は
+    12人までのどこでも折り返していないだけです）。
+    """
+    rows = keigen_value_by_members(pct, upto, age)
+    full = [r for r in rows if r["限度額で消えた値打ち"] == 0]
+    zero = [r for r in rows if r["値打ち"] == 0]
+    top = max(rows, key=lambda r: r["値打ち"])
+    return {
+        "軽減の割合": pct,
+        "額面どおりの最後の人数": full[-1]["被保険者数"] if full else None,
+        "頂点の人数": top["被保険者数"],
+        "頂点の値打ち": top["値打ち"],
+        "頂点は端か": top["被保険者数"] == upto,
+        "0円になる最初の人数": zero[0]["被保険者数"] if zero else None,
+        "上限まで見た人数": upto,
+        "境目の所得の増え方": (rows[-1]["境目の所得"] - rows[0]["境目の所得"])
+        // (upto - 1) if upto > 1 else 0,
+        "行": rows,
+    }
+
+
+def keigen_value_shapes(upto: int = 12, age: int = 45) -> list[dict]:
+    """3つの割合の形を、薄いほうから並べる。**7割・5割・2割で消え方が違います。**"""
+    return [keigen_value_shape(pct, upto, age) for pct in (20, 50, 70)]
+
 
 def check_tables() -> None:
     """制度の値と計算の向きを確かめる。**壊れた数字で台本を書かせない。**"""
@@ -937,6 +1097,84 @@ def check_tables() -> None:
     _checks.rounding(four["値打ち"], one["値打ち"] * 4,
                      "4人世帯の7割軽減の値打ちが、単身の4倍であること")
 
+    # --- 節14（2026-08-26）: 実質の頭数 --------------------------------
+    # (1) **所得割は被保険者数で1円も動かない**（動くのは均等割だけ）。
+    #     ここが崩れると、この節の式そのものが成り立ちません
+    for shotoku in (2_000_000, 3_500_000):
+        wari = {sum(r["所得割"] for r in premium(shotoku, m, 45)["内訳"])
+                for m in range(1, 13)}
+        if len(wari) != 1:
+            raise _checks.TableError(
+                f"所得{shotoku:,}円で、所得割の合計が人数で動いている: {sorted(wari)}")
+    # (2) **実質の頭数が同じなら、保険料が1円も違わない**
+    tanka35 = sum(int(RATES[n]["均等割"]) for n in parts_for(45))
+    j35 = onaji_ryou(3_500_000, 12, 45)
+    if not j35["同額の組"]:
+        raise _checks.TableError(
+            "所得350万円・45歳で、保険料が同額になる人数の組が1つも出ない")
+    for pair in j35["同額の組"]:
+        for m in pair["人数"]:
+            row = j35["行"][m - 1]
+            _checks.rounding(row["実質の頭数"], pair["実質の頭数"],
+                             f"{m}人世帯の実質の頭数")
+            # 保険料 ＝ 所得割 ＋ 均等割の単価 × 実質の頭数（**式そのもの**）
+            _checks.rounding(row["保険料"],
+                             row["所得割の合計"] + round(tanka35 * row["実質の頭数"]),
+                             f"{m}人世帯の保険料が『所得割＋単価×実質の頭数』と合わない")
+    # 5人と10人がそろっていること（**節が名指ししている組**）
+    if [5, 10] not in [p["人数"] for p in j35["同額の組"]]:
+        raise _checks.TableError(
+            f"所得350万円で (5人, 10人) が同額になっていない: "
+            f"{[p['人数'] for p in j35['同額の組']]}")
+    # (3) **実質の頭数は人数について単調ではない**（軽減が深くなる所で下がる）
+    jis = [r["実質の頭数"] for r in j35["行"]]
+    if all(b >= a for a, b in zip(jis, jis[1:])):
+        raise _checks.TableError(
+            f"実質の頭数が単調に増えている（節の主張と逆）: {jis}")
+    # (4) 並ぶ組の比は、軽減の割合の比だけで決まる（1.25 / 1.6 / 2 のどれか）
+    want_ratios = {1.25, 1.6, 2.0, 10 / 3, 8 / 3, 5 / 3}
+    for row in onaji_ryou_table():
+        for pair in row["同額の組"]:
+            lo, hi = min(pair["人数"]), max(pair["人数"])
+            if not any(abs(hi / lo - w) < 1e-9 for w in want_ratios):
+                raise _checks.TableError(
+                    f"所得{row['所得']:,}円の同額の組 {pair['人数']} の比 "
+                    f"{hi / lo} が、軽減の割合の比のどれとも一致しない")
+            # 比は、そのまま「1 − 軽減の割合」の逆比であること
+            lo_pct, hi_pct = pair["軽減の割合"]
+            _checks.rounding(hi / lo, (100 - lo_pct) / (100 - hi_pct),
+                             f"所得{row['所得']:,}円の同額の組 {pair['人数']} の比")
+
+    # 12. **主題その6**: 軽減が薄いほど、限度額に早く食べられる
+    #     （`keigen_value_shapes`。2026-08-26 に足した節の裏）
+    shapes = {s["軽減の割合"]: s for s in keigen_value_shapes(12, 45)}
+    last = [shapes[p]["額面どおりの最後の人数"] for p in (20, 50, 70)]
+    if not all(x is not None for x in last):
+        raise _checks.TableError(
+            "12人まで見て、額面どおり受け取れる人数が出ない割合がある")
+    _checks.ascending(last, "額面どおり受け取れる最後の人数（2割→5割→7割）",
+                      strict=True)
+    # 額面どおりの区間では、値打ちは「均等割の合計 × 割合」ぴったりであること
+    for pct, s in shapes.items():
+        for r in s["行"]:
+            if r["限度額で消えた値打ち"] != 0:
+                continue
+            _checks.rounding(r["値打ち"], int(r["均等割の合計"] * pct / 100),
+                             f"{pct // 10}割軽減・被保険者{r['被保険者数']}人の値打ち")
+    # **7割の境目だけ、人数で1円も動かない**（上の 3 と同じことを、この軸でも当てる）
+    if shapes[70]["境目の所得の増え方"] != 0:
+        raise _checks.TableError("7割軽減の境目が、人数で動いている")
+    for pct in (20, 50):
+        if shapes[pct]["境目の所得の増え方"] <= 0:
+            raise _checks.TableError(f"{pct // 10}割軽減の境目が、人数で上がっていない")
+    # 2割だけが、12人までのうちに **完全に0円** になること
+    if shapes[20]["0円になる最初の人数"] is None:
+        raise _checks.TableError("2割軽減の値打ちが、12人まで見ても0円にならない")
+    for pct in (50, 70):
+        if shapes[pct]["0円になる最初の人数"] is not None:
+            raise _checks.TableError(
+                f"{pct // 10}割軽減の値打ちが、12人までのうちに0円になっている")
+
     _checks.assumption_values(ASSUMPTIONS, name="kokuho")
 
 
@@ -1194,3 +1432,87 @@ if __name__ == "__main__":
           f"{worst['値打ち']:,}円**。"
           f"この目減りは、**軽減の判定にも軽減の割合にも書かれていません** ——"
           f"限度額のほうから来ます")
+
+    print("\n=== 軽減が薄いほど、限度額に早く食べられる —— 7割は10人まで無傷、2割は10人で0円（45歳）===")
+    _shapes = keigen_value_shapes(12, 45)
+    for _s in _shapes:
+        _pct = _s["軽減の割合"]
+        print(f"  --- {_pct // 10}割軽減の境目ちょうどにいる世帯 ---")
+        for _r in _s["行"]:
+            _eaten = ("" if _r["限度額で消えた値打ち"] == 0
+                      else f"  ← **限度額が {_r['限度額で消えた値打ち']:>9,}円 食べた**")
+            print(f"    被保険者{_r['被保険者数']:>2}人  境目の所得 {_r['境目の所得']:>10,}円"
+                  f"  額面 {_r['切られる前の値打ち']:>8,}円"
+                  f"  **手元に残る {_r['値打ち']:>8,}円**{_eaten}")
+        _zero = _s["0円になる最初の人数"]
+        _top = ("**まだ折り返していません**（12人まで見て、いちばん高いのが12人）"
+                if _s["頂点は端か"]
+                else f"頂点は**{_s['頂点の人数']}人の {_s['頂点の値打ち']:,}円**")
+        print(f"    → 額面どおり受け取れるのは **{_s['額面どおりの最後の人数']}人まで**。{_top}。"
+              + (f"**{_zero}人からは1円も安くなりません**"
+                 if _zero else "12人まで見ても0円にはなりません"))
+    _thin, _mid, _thick = _shapes           # 2割・5割・7割の順
+    print(f"  → **薄い軽減ほど、早く食べられます。** 額面どおり受け取れる最後の人数は "
+          f"**2割 {_thin['額面どおりの最後の人数']}人 ／ 5割 {_mid['額面どおりの最後の人数']}人 ／ "
+          f"7割 {_thick['額面どおりの最後の人数']}人**。"
+          f"**割合が厚いほうが、人数に強い**という向きです")
+    print(f"    理由は**軽減の判定基準額のほう**にあります —— "
+          f"境目の所得は1人ふえるごとに **2割 {_thin['境目の所得の増え方']:,}円 ／ "
+          f"5割 {_mid['境目の所得の増え方']:,}円 ／ 7割 {_thick['境目の所得の増え方']:,}円** 動きます。"
+          f"**7割だけが1円も動きません**（基準額 {KEIGEN_BASE:,}円 は人数で加算されない）。"
+          f"薄い軽減ほど**高い所得で当たる**ので、当たった時点でもう限度額の側にいます")
+    print(f"    軽減は均等割を減らしますが、**減らす前に限度額で切られていた区分は、"
+          f"減らしても切られたまま**です。だから"
+          f"**「対象になる所得の上限」は薄い軽減ほど速く上がるのに、"
+          f"「実際に安くなる額」は薄い軽減ほど早く消えます** —— 向きが逆です")
+    _z = _thin["行"][_thin["0円になる最初の人数"] - 1]
+    print(f"    いちばん極端なのが**被保険者{_z['被保険者数']}人の2割軽減**"
+          f"（境目の所得 {_z['境目の所得']:,}円）—— "
+          f"額面 {_z['切られる前の値打ち']:,}円 が**まるごと限度額に吸われ、手元に残るのは0円**。"
+          f"軽減があってもなくても保険料は {_z['軽減ありの保険料']:,}円 で、"
+          f"**1円も違いません**")
+    print(f"    **この並びは「境目ちょうどの所得」で揃えています** —— "
+          f"人数を動かすと境目も動くので、**所得を固定した比較ではありません。**"
+          f"所得を固定すると軽減の割合そのものが変わるため、"
+          f"「同じ割合の中で人数だけを動かす」にはこの揃え方しかありません")
+
+    print("\n=== 保険料が1円も違わない、人数のちがう世帯がある（45歳・所得350万円）===")
+    _j = onaji_ryou(3_500_000, 12, 45)
+    for r in _j["行"]:
+        mark = "  ← **限度額に当たっている**" if r["限度額に当たったか"] else ""
+        print(f"  被保険者{r['被保険者数']:>2}人  軽減 {r['軽減の割合']:>2}パーセント"
+              f"  **実質の頭数 {r['実質の頭数']:>4.1f}**"
+              f"  所得割の合計 {r['所得割の合計']:>9,}円"
+              f"  保険料 {r['保険料']:>9,}円{mark}")
+    _pair = _j["同額の組"][0]
+    _lo, _hi = min(_pair["人数"]), max(_pair["人数"])
+    _tanka = _j["行"][0]["均等割の単価"]
+    print(f"  → **{_lo}人世帯と{_hi}人世帯が、どちらも {_pair['保険料']:,}円。1円も違いません。**"
+          f"あいだの {_hi - _lo}人 は、世帯の保険料を1円も増やしていません")
+    print(f"    軽減は「割合」で書いてあるので、人数と掛け合わせられます ——"
+          f"**実質の頭数 ＝ 被保険者数 × （1 − 軽減の割合）**。"
+          f"{_lo}人は軽減 {_pair['軽減の割合'][0]}パーセントで {_lo} × 1.00 = {_pair['実質の頭数']:.1f}、"
+          f"{_hi}人は軽減 {_pair['軽減の割合'][1]}パーセントで {_hi} × 0.50 = {_pair['実質の頭数']:.1f}")
+    print(f"    そして**所得割は被保険者数で1円も動きません**"
+          f"（この所得ならどの人数でも {_j['行'][0]['所得割の合計']:,}円）。"
+          f"保険料は **所得割 ＋ 均等割の単価 {_tanka:,}円 × 実質の頭数** なので、"
+          f"**実質の頭数が同じなら保険料も同じ**になります")
+    print("\n  --- 所得を変えると、並ぶ組そのものが変わります（45歳・12人まで）---")
+    for _row in onaji_ryou_table():
+        if not _row["同額の組"]:
+            print(f"  所得 {_row['所得']:>10,}円  同額の組は無し")
+            continue
+        for _p in _row["同額の組"]:
+            _ms = "人と".join(str(m) for m in _p["人数"]) + "人"
+            print(f"  所得 {_row['所得']:>10,}円  **{_ms}** が同額 "
+                  f"{_p['保険料']:>9,}円"
+                  f"  （実質の頭数 {_p['実質の頭数']:.1f}"
+                  f" / 軽減 {_p['軽減の割合'][0]}→{_p['軽減の割合'][1]}パーセント）")
+    print(f"    並ぶ比は**軽減の割合の比だけ**で決まります ——"
+          f"無軽減 : 2割 ＝ 1 : 1.25、2割 : 5割 ＝ 1 : 1.6、無軽減 : 5割 ＝ 1 : 2。"
+          f"**だから並ぶのは (4人, 5人) (5人, 8人) (5人, 10人) のような組だけ**で、"
+          f"どれが起きるかは所得が決めます")
+    print(f"    **限度額に当たっている人数は外してあります** ——"
+          f"そこは頭を切られて同額になるので、実質の頭数の話ではありません")
+    print(f"    **この結論も、こちらが置いた前提で決まっています** ——"
+          f"所得を世帯主1人がまるごと得ていて、**ふえる人には所得が無い**という置き方です")

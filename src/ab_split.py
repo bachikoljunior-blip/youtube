@@ -48,6 +48,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
@@ -56,7 +57,7 @@ from typing import Callable
 
 from src import ab_power
 from src.settle import SETTLE_DAYS  # noqa: F401  （**ここでは定義しません**。下の註）
-from src.script_writer import hook_form, title_form
+from src.script_writer import hook_form, request_form, title_form
 
 ROOT = Path(__file__).resolve().parent.parent
 BATCH = ROOT / "data" / "batch_runs.jsonl"
@@ -74,6 +75,47 @@ JST = timezone(timedelta(hours=9))
 #: **80% に届かせるには片群 32本**要りますが、そこは在庫が尽きます —— だから
 #: yaml の「満たないときは**期限だけを延ばす**」のほうを使うこと。
 MIN_PER_GROUP = 16
+
+
+def floor_of(name: str) -> int:
+    """その実験の、**片群あたりの床**。`MIN_PER_GROUP` を全部に当てないこと。
+
+    ## なぜ要るか（2026-08-27 に踏んだ。**同じ形の3件目**）
+
+    床は実験ごとに違います。**`request_form` は 72本**です ——
+    測っているのが engaged ではなく**登録**だから（登録率の実測 0.0318% ＝
+    3,066再生に1人。片群 16本 ＝ 約 6,700再生 では期待 2.1人で、
+    **効きが2倍でも見分けられません**）。理由ごと
+    `src/judgeable.MEMBER_SOURCES` に書いてあります。
+
+    ところが**この帳面の道具は、全部に 16 を当てていました。** 実測（この回）:
+
+        scripts/ab_split.py    途中あり 12本 → **まだ判定しない（あと4本）**
+        deadline_check.py      途中あり  9本 → **あと 63本**（床 72）
+
+    **`config/hypotheses.yaml` の `falsified_if` は、数える道具として
+    `scripts/ab_split.py` を名指ししています。** その道具が「あと4本」と言えば、
+    次の回は「もう埋まる」と読んで別の腕へ移ります —— **6,700再生で登録率を
+    比べる標本のまま「判定できます」が出て、`falsified_if` は
+    「上回らなければ外れ（同点も外れ）」なので、そのまま『外れ』に化けます。**
+    `next_if_false` は腕ごと畳むので、**見分けられなかっただけの実験が、
+    効かない実験として閉じます。**
+
+    **同じ穴は `src/watches.py` が 2026-08-26 22:5x に踏んで直しています**
+    （`_k_ab_group`。「`ab_split.MIN_PER_GROUP` を床に使わないこと」）。
+    **直したのはあちらの1か所だけで、こちらは残っていました。**
+
+    ## 覆る条件
+
+    `judgeable.MEMBER_SOURCES` に無い実験は `MIN_PER_GROUP` に落とします。
+    そこへ載せた回は、床もそちらに書くこと（**同じ数を2箇所で持たない**）。
+    """
+    # **遅らせて読み込みます** —— `src/judgeable.py` はこの帳面を読み込むので、
+    # 上で import すると輪になります。
+    from src import judgeable
+
+    src = judgeable.MEMBER_SOURCES.get(name)
+    return int(src[1]) if src else MIN_PER_GROUP
 
 #: 「初速だけを見ない」ための日数は **`src/settle.py` が持ちます**（上で読み込み済み）。
 #: yaml の「公開から3日以上たっていること」と同じ数で、`tests/test_ab_split.py` が
@@ -104,9 +146,119 @@ class Experiment:
     deadline: date
     #: 由来（`git log -S` で引ける commit）
     commit: str = ""
+    #: **この実験が比べている値**（2026-08-27 に足した。既定は `"engaged"`）。
+    #:
+    #: `src/ab_power.py` の当てっこは、**実データ 90本の engaged 比率**を
+    #: ブートストラップして作っています。**engaged で測っていない実験に
+    #: 当てると、要る本数が嘘になります。**
+    #:
+    #: 実測 2026-08-27 —— `request_form`（測るのは**登録**）の出力::
+    #:
+    #:     片群 72本で 1.3倍は当てられます（**要る本数は 25本**）
+    #:
+    #: 床 72本 は `judgeable.MEMBER_SOURCES` が**登録率 0.0318%**（3,066再生に
+    #: 1人）から引いた数です。engaged の当てっこが出す 25本 は
+    #: **約 10,500再生 ＝ 期待 3.3人** で、効きが2倍でも見分けられません。
+    #: そして `falsified_if` は「上回らなければ外れ（同点も外れ）」、
+    #: `next_if_false` は**腕ごと畳みます** —— つまりこの1行は、
+    #: **`--alloc` が3回 続けて名指ししている `sub_rate` の腕を、
+    #: 見分けられなかっただけで畳ませる形**で置かれていました。
+    #: `src/ab_split.floor_of()` が2026-08-27 に直したのと**同じ穴の4件目**です。
+    metric: str = "engaged"
+    #: **この実験に入れてよいテーマID**を返す関数（`None` なら全部）。
+    #: 2026-08-27 に足した。理由は下の `_shorts_only()`。
+    eligible: Callable[[], set[str]] | None = None
+    #: **この実験がいじる「側」**（2026-08-29・最適化の回に足した）。
+    #: `dist`（動画の外側: 形式・時刻・本数・間隔・面）／
+    #: `content`（中身: 題・文言・冒頭の絵・コマの速さ・尺）／`infra`。
+    #: `config/hypotheses.yaml` の `side:` と**同じ札**です。
+    #:
+    #: **なぜ実験の側にも要るか** —— A/B の枠は、台帳の枠より希少です。
+    #: 4件が同じ本の流れに同時に乗るので、**ここが実際に取り合っている資源**。
+    #: 実測 2026-08-29: **4件とも `content`**（`side_counts()`）。
+    #: 同じ日の実測で、配信の側は中身の側の **13.9倍** 当たっています
+    #: （`src/arm_speed.sides()`）——
+    #: **つまり、走っている A/B の 100% が、13.9倍 遅いほうに乗っていました。**
+    side: str = ""
 
 
-def _deadline_from_yaml(name: str, fallback: date) -> date:
+def _shorts_only() -> set[str]:
+    """**ショートとして出したテーマIDだけ**（控えの `duration_s` で 3分以下）。
+
+    ## なぜ要るか（2026-08-27 に測って足した。**同じ穴の5件目**）
+
+    `request_form` の A/B は「**ショートの登録の依頼**を途中にも入れるか」です。
+    長尺は依頼そのものを1文字も書きません（`src/script_writer.ROLE`）——
+    **どちらの群にも入れてはいけない本**です。
+
+    ところが `Experiment.split`（＝ `script_writer.request_form()`）は
+    **テーマIDのハッシュだけ**を見ており、長尺にも `途中あり` / `終端のみ` を返します。
+    `src/ab_split.py` のこの行のすぐ上には長らく
+
+        **長尺は `request_form` が `"長尺"` を返し、どちらの群にも入りません。**
+
+    と書いてありましたが、**そんな枝は関数にありません**（2026-08-27 に実物を読んだ）。
+    註だけが正しく、実装が黙って長尺を数えていました。
+
+    実測（同じ日・同じ枝・API 0単位）::
+
+        split_counts   途中あり **17本** ／ 終端のみ **20本**
+        judgeable      途中あり   14本  ／ 終端のみ   16本
+
+    差の 7本 は全部 長尺でした（`duration_s` 298〜442秒）::
+
+        jutaku-mochibun-13nen-389546     keihi-kokuho-zero-ryoutan
+        keihi-zero-taiki-1080000         jouto-kyouyu-mochibun-852600
+        jutaku-kuriage-tadade-11600000   keihi-keihi-vs-kojo-22500
+        keihi-kokuho-hihokensha-195280
+
+    **`judgeable` のほうが正しい。** `src/judgeable._members_by_request_form()` は
+    控えの `duration_s` で長尺を落としています。**負けたほうを消すのがこの関数**です
+    —— 数え方を2つ並べて残すと、次の回がまた両方読みます
+    （`src/watches.py` が 2026-08-26 に同じ結論を出しています:
+    「`MEMBER_SOURCES` に在る群は、床も数え方もそちらに訊くこと」）。
+
+    ## なぜ「数えない」であって「stale」ではないか
+
+    `stale` は「**指示より前に作ったのにこの群にいる本**」で、作り直せば処置群に入ります。
+    長尺は作り直しても**永久に依頼を書きません**。混ぜると
+    「あと N本」の N が実際より小さく見え、**床に届く前に判定できると読みます** ——
+    `falsified_if` は「上回らなければ外れ（同点も外れ）」で、`next_if_false` は
+    腕ごと畳むので、**見分けられなかっただけの実験が、効かない実験として閉じます**
+    （`floor_of()` の註と同じ壊れ方です）。
+
+    ## 覆る条件
+
+    長尺にも依頼を書くようになったら（`src/script_writer.ROLE` を変えたら）、
+    この絞り込みを外すこと。**そのときは `judgeable._short_topics()` の側も同時に。**
+    """
+    # **遅らせて読み込みます** —— `src/judgeable.py` はこの帳面を読み込むので、
+    # 上で import すると輪になります（`floor_of()` と同じ）。
+    from src import judgeable
+
+    return judgeable._short_topics()
+
+
+def _split_ref_of(split, name: str) -> str:
+    """`falsified_if` が名指ししている、**振り分けの実物の在りか**。
+
+    **`tests/test_ab_split._split_ref` と同じ規則です**（あちらは検査の側から
+    独立に引いており、ここは道具の側。**2つが同じ答えを出すことが検査の中身**）。
+
+    包み（`_pace_form`）は `split_ref` を持っているので、それが答え。
+    無ければ、その関数自身の在りか（`__module__` の末尾 ＋ `__name__`）。
+    """
+    ref = getattr(split, "split_ref", None)
+    if ref:
+        return str(ref)
+    mod = (getattr(split, "__module__", "") or "").rsplit(".", 1)[-1]
+    fn_name = getattr(split, "__name__", None)
+    if mod and fn_name:
+        return f"{mod}.{fn_name}"
+    return f"script_writer.{name}"
+
+
+def _deadline_from_yaml(name: str, fallback: date, split=None) -> date:
     """**期限は `config/hypotheses.yaml` が正本**（2026-08-25 22:5x）。
 
     ここは長らく `date(2026, 9, 12)` のような**べた書き**でした。
@@ -120,19 +272,36 @@ def _deadline_from_yaml(name: str, fallback: date) -> date:
     「期限が遅すぎる N件」を毎回出して縮めさせる）。**べた書きのままだと、
     縮めるたびにここが落ちます。** だから写しをやめて、**引く**ようにしました。
 
-    紐づけの鍵は `falsified_if` の中の `script_writer.<name>` です
+    紐づけの鍵は `falsified_if` の中の**振り分けの在りか**です
     （その前提が、この振り分けを名指ししている所）。
+
+    ## **その鍵が `script_writer.<name>` のべた書きでした**（2026-08-28 に踏んだ）
+
+    **`slide_pace` は `src/pipeline.py` に在ります**（`_pace_form.split_ref`）。
+    鍵が `script_writer.slide_pace` 固定だったので、**この前提だけ一度も
+    当たらず、毎回 静かに `fallback` の日付へ落ちていました。**
+    08/28 13:57 の回が yaml の期限を **09-24 → 10-11** に直した直後、
+    `tests/test_ab_split.py::test_期限は_yaml_と同じ` が赤くなって見つかりました
+    （**検査は正しく鳴っており、落ちていたのはこちら**）。
+
+    **同じ穴が 2026-08-27 に検査の側だけ塞がれています** ——
+    `tests/test_ab_split._split_ref` は「**在りかは実物から引くこと**」と
+    書いて `split_ref` を見るようになりましたが、**この関数は写されませんでした。**
+    「同じことを2か所が別々に言っていて、片方しか読まれていない」の形です。
+    いまは両方が `_split_ref_of` と同じ規則で引きます。
 
     **見つからなければ `fallback` に落ちます。** ここで例外を上げると、
     `status.py` ごと止まって**投稿が止まります** ——
     `CLAUDE.md`「投稿を途切れさせないこと」。ずれたことは検査が言います。
+    **ただし「静かに落ちる」ので、検査が唯一の目です。消さないこと。**
     """
+    ref = _split_ref_of(split, name)
     try:
         import yaml
         doc = yaml.safe_load(
             (ROOT / "config" / "hypotheses.yaml").read_text(encoding="utf-8"))
         hit = [h for h in (doc.get("hypotheses") or [])
-               if f"script_writer.{name}" in str(h.get("falsified_if", ""))
+               if ref in str(h.get("falsified_if", ""))
                and not h.get("closed_on")]
         if len(hit) == 1:
             d = hit[0].get("deadline")
@@ -145,6 +314,194 @@ def _deadline_from_yaml(name: str, fallback: date) -> date:
     return fallback
 
 
+def _pace_form(topic_id: str) -> str:
+    """`src/pipeline.slide_pace()` の返り（秒）を、群の名前に直す。
+
+    **`Experiment.split` は文字列を返す約束**なので、ここで翻訳します。
+    **秒のほうを写さないこと** —— 値は `pipeline` が持っています。
+    """
+    from src import pipeline
+
+    return ("遅い" if pipeline.slide_pace(topic_id) == pipeline.SHORT_SLIDE_SECONDS_SLOW
+            else "速い")
+
+
+#: **帯の中で、早い側の枠に置く割合。** 0 にすると振り分けが止まります
+#: （そのとき `slot_half()` は全部 `"遅枠"` を返すので、置き方は前と同じ
+#: 「score の高い順に、手前の枠から」に戻ります）。
+SLOT_EARLY_SHARE = 0.5
+
+#: **塩**。`title_form` / `hook_form` と**同じIDから別の答え**を出すために要ります。
+#: 塩が無いと `sha1(topic_id)` の同じ先頭4バイトを見ることになり、
+#: **配信の側の群が、中身の側の群と完全に相関します** ——
+#: そうなるとこの A/B は「早枠 ＝ 題が問い」を測ることになり、
+#: 側を分けた意味がなくなります（`src/arm_speed.sides()`）。
+SLOT_HALF_SALT = "slot_half:v1:"
+
+
+def slot_half(topic_id: str, share: float = SLOT_EARLY_SHARE) -> str:
+    """この本を、その日の帯の **早い側の枠** に置くか **遅い側** に置くか。
+
+    ## なぜ要るか（2026-08-29 に測って足した。**配信の側の A/B が 0件 だった**）
+
+    同じ日の実測で、**配信の側（形式・時刻・本数・面）は中身の側の 13.9倍**
+    当たっています（`src/arm_speed.sides()`・`p·log(g)` で 0.231 対 0.017）。
+    ところが**無作為化して走っている A/B は 4件 とも中身の側**でした
+    （`side_counts()`）。**枠が希少なほうの資源が、遅いほうに 100% 乗っていた。**
+
+    ## そして、置き方そのものが交絡していました（**こちらが本体**）
+
+    `batch_build` は **`pick()` が返した順**（＝ **score の高い順**）に
+    `slots()` の枠を配ります（`results[n] = row` の註「枠の対応は並び順で決まる」）。
+    `live_plan()` は**手前の日・手前の時刻から**埋めるので、結果はこうなります:
+
+        score 1位 のテーマ → いちばん手前の枠
+        score 最下位       → いちばん後ろの枠
+
+    **つまり「枠の位置」と「題材の見込み」が、いつも同じ向きに並んでいます。**
+    帯の中の位置に効きがあるかどうかを、この控えからは**永久に**分けられません。
+    そして同じ偏りが、中身の側の A/B にも乗ります —— 実測（`scripts/ab_slots.py`）:
+
+        title_form  問い **8本/16**（50%）  ／ 断定 14本/16（88%）
+        hook_form   問い 14本/16（88%）     ／ 条件 **7本/16**（44%）
+
+    **別々の群が痩せています。** 痩せた群に残るのは「たまたま生きた枠に
+    入った本」なので、差が出ても「作りの差」か「枠の差」か分けられません。
+
+    **IDのハッシュで配ると、この相関が切れます。** 中身の側の A/B にとっては
+    そのまま欠陥の修理で、配信の側にとっては**最初の無作為化された枠**です。
+
+    ## 何を賭けているか（**失うものも書くこと**）
+
+    賭けているのは「**score 順に手前の枠を配る**」ことの値打ちです。
+    ただしそれは、**帯の中の位置に効きがある場合にだけ**値打ちがあります ——
+    `src/day_cap.py` のいまの模型 (A) は「その日の先頭 `cap()` 本が生きる」で、
+    **帯の中の 10枠 を全部 同じ**と見ています。**同じなら、失うものはありません。**
+    ちがうなら、それがこの実験の答えです。**どちらでも取れます。**
+
+    **帯の外へは1本も出しません。** 配り直すのは、`slots()` が既に選んだ
+    枠どうしの対応だけです（`batch_build._ab_slot_order()`）。
+    1日の本数も、埋まる時刻も、1つも変わりません。
+
+    ## なぜ乱数にしないか
+
+    `title_form` の docstring と同じ理由です —— 落ちて撃ち直した本が
+    別の群へ移ると、比較が壊れます。IDのハッシュなら作り直しでも動きません。
+
+    判定は `config/hypotheses.yaml`（`ab_split.slot_half`）。
+    """
+    if share <= 0:
+        return "遅枠"
+    if share >= 1:
+        return "早枠"
+    h = hashlib.sha1((SLOT_HALF_SALT + str(topic_id)).encode("utf-8")).digest()
+    return "早枠" if (int.from_bytes(h[:4], "big") % 10_000) < share * 10_000 else "遅枠"
+
+
+#: **在りかは実物から引かれます**（`_split_ref_of`）。`config/hypotheses.yaml` の
+#: `falsified_if` は、この文字列でこの実験を名指しします。
+slot_half.split_ref = "ab_split.slot_half"
+
+
+#: **この包みの中身が、どこに在るか。** `config/hypotheses.yaml` の `falsified_if`
+#: はここを名指しします（`tests/test_ab_split._split_ref`）。
+#: **包みの `__module__` を書かせないこと** —— それは `src.ab_split` で、
+#: 読んだ回がそこを開いても振り分けの中身はありません。
+_pace_form.split_ref = "pipeline.slide_pace"
+
+
+#: **群の名札を凍らせた控え**（テーマID → 群名）。`freeze_labels()` が書きます。
+LABELS = "data/ab_labels.json"
+
+_LABEL_CACHE: dict | None = None
+
+
+def frozen_labels() -> dict[str, dict[str, str]]:
+    """凍らせた名札（`{実験名: {テーマID: 群名}}`）。無ければ空。**API 0単位。**"""
+    global _LABEL_CACHE
+    if _LABEL_CACHE is None:
+        path = ROOT / LABELS
+        try:
+            _LABEL_CACHE = json.loads(path.read_text(encoding="utf-8")) \
+                if path.exists() else {}
+        except Exception:                                      # noqa: BLE001
+            _LABEL_CACHE = {}
+    return _LABEL_CACHE
+
+
+def group_of(exp: "Experiment", topic_id: str) -> str:
+    """その本がどちらの群か。**凍らせた名札があれば、そちらが勝ちます。**
+
+    ## なぜ要るか（2026-08-28 の最適化の回・実測）
+
+    `slide_pace` と `request_form` の群は、**読むたびに計算し直されます**
+    （`_pace_form` → `pipeline.slide_pace(topic_id)`、
+    `script_writer.request_form(topic_id)`。どちらも既定の `share` を見る）。
+
+    そして `config/hypotheses.yaml` は、**その2件を閉じるときの手順**を
+    こう書いています:
+
+        1281行  「刻みは畳む（**`SLOW_PACE_SHARE = 0` にする**）」
+        1206行  「**`MID_REQUEST_SHARE = 0` にして畳む**」
+
+    **その1行が、閉じた実験の証拠をその場で消します。** 実測（561テーマ）:
+
+        SLOW_PACE_SHARE   0.5 → 速い 296 ／ 遅い 265
+                          0.0 → **速い 561 ／ 遅い 0**
+        MID_REQUEST_SHARE 0.5 → 途中あり 286 ／ 終端のみ 275
+                          0.0 → **終端のみ 561 ／ 途中あり 0**
+
+    いま `slide_pace` の処置群（遅い）は **7本**です。share を 0 にした瞬間、
+    その7本は「速い」になり、**判定の根拠がどこにも残りません。**
+    `deadline_check` も `queue_lag` も `status` も同じ関数を読むので、
+    **全部そろって、無かったことにします** ——
+    `src/motion_groups.py` が言う「**ラベルが静かに嘘になる**」形そのものです。
+
+    ## どう防ぐか
+
+    名札を1度 `data/ab_labels.json` に書いてしまえば、
+    **share を動かしても過去の本の群は動きません**（新しい本にだけ効く ——
+    それが「振り分けを止める」の本来の意味です）。
+    控えは git で配られるので、枠が尽きた窓でも読めます。
+
+    ## 覆る条件
+
+    - **凍らせた名札は、その実験が開いているあいだ書き換えないこと。**
+      書き換えたら、それは群を作り直したのと同じです（判定はやり直し）
+    - 振り分けの関数そのものを**別の軸に**変えたとき（塩や規則の変更）は、
+      古い名札は意味を失います。**その実験の名札ごと消して、
+      `landed` を今にすること**（＝新しい実験です）
+    """
+    label = frozen_labels().get(exp.name, {}).get(topic_id)
+    return label if label else exp.split(topic_id)
+
+
+def freeze_labels(topic_ids, names=None) -> dict[str, dict[str, str]]:
+    """いまの名札を控えに焼く（**足すだけ。既にある名札は上書きしません**）。
+
+    上書きしないのは、`group_of` の覆る条件そのものだからです ——
+    **開いている実験の名札が動いたら、群を作り直したのと同じ**です。
+    """
+    frozen = {k: dict(v) for k, v in frozen_labels().items()}
+    for name, exp in EXPERIMENTS.items():
+        if names is not None and name not in names:
+            continue
+        cur = frozen.setdefault(name, {})
+        for tid in topic_ids:
+            if tid in cur:
+                continue
+            try:
+                cur[tid] = exp.split(tid)
+            except Exception:                                  # noqa: BLE001
+                continue
+    path = ROOT / LABELS
+    path.write_text(json.dumps(frozen, ensure_ascii=False, indent=1,
+                               sort_keys=True) + "\n", encoding="utf-8")
+    global _LABEL_CACHE
+    _LABEL_CACHE = frozen
+    return frozen
+
+
 #: 走っている実験。**新しく振り分けを足したら、ここにも足すこと。**
 #: 足し忘れると `status.py` が「指示が入った本 0本」を言わないまま、
 #: 中身の同じ2群を突き合わせて外れを出します。
@@ -155,25 +512,127 @@ def _deadline_from_yaml(name: str, fallback: date) -> date:
 EXPERIMENTS: dict[str, Experiment] = {
     "title_form": Experiment(
         name="title_form",
+        side="content",
         split=title_form,
         treated="問い",
         control="断定",
         # 6a7520f「道具は『無関係』でなく『一度も試していない』と言っていた」
         landed=datetime(2026, 8, 19, 16, 50, 5, tzinfo=JST),
-        deadline=_deadline_from_yaml("title_form", date(2026, 9, 12)),
+        deadline=_deadline_from_yaml("title_form", date(2026, 9, 12), split=title_form),
         commit="6a7520f",
     ),
     "hook_form": Experiment(
         name="hook_form",
+        side="content",
         split=hook_form,
         treated="問い",
         control="条件",
         # 443c66b「冒頭1枚目の主役（kind=stat の note）を問いかけに振り分ける A/B」
         landed=datetime(2026, 8, 19, 21, 0, 3, tzinfo=JST),
-        deadline=_deadline_from_yaml("hook_form", date(2026, 9, 16)),
+        deadline=_deadline_from_yaml("hook_form", date(2026, 9, 16), split=hook_form),
         commit="443c66b",
     ),
+    "request_form": Experiment(
+        name="request_form",
+        side="content",
+        split=request_form,
+        treated="途中あり",
+        control="終端のみ",
+        # **長尺を落とすのは `eligible` です**（下の行）。2026-08-27 まで、ここには
+        # 「長尺は `request_form` が `"長尺"` を返し、どちらの群にも入りません」と
+        # 書いてありました。**そんな枝は関数にありません** —— 註だけが正しく、
+        # 実装は長尺を 7本 数えていました（`_shorts_only()` に実測）。
+        # 2026-08-26 19:08 JST に `MID_REQUEST_RULE` が `generate()` に入った。
+        # **未来の時刻を書かないこと** —— この行より前に作った本は全部 落ちるので、
+        # 書いた回が自分で作った本まで落とします（この行を最初 20:15 と書いて踏みかけた）。
+        landed=datetime(2026, 8, 26, 19, 8, 0, tzinfo=JST),
+        deadline=_deadline_from_yaml("request_form", date(2026, 11, 9), split=request_form),
+        commit="",
+        # **登録で測ります**（engaged ではない）。上の `metric` の註を読むこと。
+        metric="登録",
+        # **長尺は依頼を1文字も書かないので、どちらの群にも入れません**（`_shorts_only()`）。
+        eligible=_shorts_only,
+    ),
+    "slide_pace": Experiment(
+        name="slide_pace",
+        side="content",
+        split=_pace_form,
+        treated="遅い",
+        control="速い",
+        # 2026-08-27・オーナー指摘（「音声だけで理解できない説明なのに
+        # 画面はすぐ切り替わるし」）で入れた振り分け。`src/pipeline.slide_pace()`。
+        # **この時刻より前に作った本は、どちらの群でもありません** ——
+        # `want` が定数の 2.5 で割られていたので、全部が「速い」側の値です。
+        # ただし**群として使えません**（振り分けを通っていない ＝ 選ばれ方が違う）。
+        landed=datetime(2026, 8, 27, 21, 30, 0, tzinfo=JST),
+        deadline=_deadline_from_yaml("slide_pace", date(2026, 9, 24), split=_pace_form),
+        commit="",
+        # **長尺は `reveal_variants` を1度も通りません**（1文＝1コマ）。
+        # だから刻みの話はショートにしか掛かりません（`_shorts_only()`）。
+        eligible=_shorts_only,
+    ),
+    # **配信の側の、最初の無作為化された枠**（2026-08-29）。
+    # ここまで `EXPERIMENTS` は 4件 とも `content` でした（`side_counts()`）——
+    # 同じ日の実測で、配信の側は中身の側の **13.9倍** 当たっています。
+    # 中身は `slot_half()` の docstring。**動画ファイルは作り直しません**
+    # （`docs/trigger_main.md` の「側」の切り方 ＝ だから `dist`）。
+    "slot_half": Experiment(
+        name="slot_half",
+        side="dist",
+        split=slot_half,
+        treated="早枠",
+        control="遅枠",
+        # **`batch_build._ab_slot_order()` が入った時刻**。
+        # これより前に予約した本は、`pick()` の score 順で枠が決まっているので
+        # **どちらの群でもありません**（`landed` の約束）。
+        landed=datetime(2026, 8, 29, 23, 45, 0, tzinfo=JST),
+        deadline=_deadline_from_yaml("slot_half", date(2026, 10, 2), split=slot_half),
+        commit="",
+        # **長尺は帯を1枠も使いません**（置き先は `_long_ring()` の 18〜22時）。
+        # 帯の中の位置の話なので、掛かるのはショートだけです。
+        eligible=_shorts_only,
+    ),
 }
+
+
+def side_counts() -> dict[str, int]:
+    """**走っている A/B を「側」で数える。**（2026-08-29・最適化の回に足した）
+
+    ## なぜ要るか
+
+    `config/hypotheses.yaml` の開いている前提は 27件 ありますが、
+    **実際に本の流れを取り合っているのは、ここに登録された A/B だけ**です。
+    4件が同じ本に同時に乗るので、**これがいちばん希少な資源**。
+
+    実測 2026-08-29（この関数を書いた回）::
+
+        title_form  content   hook_form   content
+        request_form content  slide_pace  content
+        → **配信の側 0件 ／ 中身の側 4件**
+
+    同じ日に閉じた前提を側で割ると、**配信の側は中身の側の 13.9倍**
+    当たっています（`src/arm_speed.sides()`）——
+    **走っている A/B の 100% が、13.9倍 遅いほうに乗っていました。**
+
+    **これは「A/B をやめろ」ではありません。** 配信の側は
+    いま観測（`data/views.jsonl` の突き合わせ）でしか測っておらず、
+    **無作為化された枠を1つも持っていません。** 枠が4つとも埋まっている
+    あいだ、配信の側の実験は「観測でしか測れない」ままです。
+
+    ## 覆る条件
+
+    - **配信の側の A/B が1件でも入ったら** —— この 0/4 は崩れます
+    - **A/B の枠が実は取り合いでないと分かったら**（テーマIDのハッシュで
+      直交していて、4件 同時でも検出力が落ちないと**実測で**出たら）——
+      そのときは「希少」という前提ごと引き直すこと。
+      いま検出力を出しているのは `src/ab_power.py` で、
+      **同時に走る本数は入力に入っていません**
+    """
+    out: dict[str, int] = {}
+    for exp in EXPERIMENTS.values():
+        key = exp.side or "（札なし）"
+        out[key] = out.get(key, 0) + 1
+    return out
 
 
 def build_times(path: Path | None = None) -> dict[str, datetime]:
@@ -345,12 +804,14 @@ class Counts:
     stale: dict[str, int] = field(default_factory=dict)
     #: 公開日が控えから読めなかった本
     unknown_publish: int = 0
+    #: **この実験の床**（片群あたり。`floor_of()`。**`MIN_PER_GROUP` を写さないこと**）
+    floor: int = MIN_PER_GROUP
 
     @property
     def judgeable(self) -> bool:
-        """両群とも `MIN_PER_GROUP` に届いているか。"""
+        """両群とも**この実験の床**に届いているか（`floor_of()`）。"""
         return bool(self.treated_ready) and all(
-            n >= MIN_PER_GROUP for n in self.treated_ready.values()
+            n >= self.floor for n in self.treated_ready.values()
         )
 
     def short(self) -> str:
@@ -360,11 +821,13 @@ class Counts:
         if self.judgeable:
             return head + "  → **判定できます**"
         need = ", ".join(
-            f"{g} あと{MIN_PER_GROUP - n}本"
+            f"{g} あと{self.floor - n}本"
             for g, n in sorted(self.treated_ready.items())
-            if n < MIN_PER_GROUP
+            if n < self.floor
         )
-        return head + f"  → **まだ判定しない**（{need}）"
+        # **床を必ず書くこと。** 16 でない実験があるので、「あと N本」だけでは
+        # 読む側が 16 を思い浮かべます（2026-08-27）。
+        return head + f"  → **まだ判定しない**（{need} ／ 床 片群 {self.floor}本）"
 
 
 def split_counts(
@@ -383,8 +846,11 @@ def split_counts(
     settled_by = when - timedelta(days=SETTLE_DAYS)
     bt = build_times() if builds is None else builds
     rows = published() if ledger is None else ledger
+    # **この実験に入れてよい本だけを数えます**（2026-08-27 に足した）。
+    # `request_form` は長尺を落とします —— 理由と実測は `_shorts_only()`。
+    allowed = exp.eligible() if exp.eligible is not None else None
 
-    c = Counts(experiment=exp.name)
+    c = Counts(experiment=exp.name, floor=floor_of(exp.name))
     for g in (exp.treated, exp.control):
         c.treated_ready[g] = 0
         c.treated_all[g] = 0
@@ -399,7 +865,11 @@ def split_counts(
         assert isinstance(pub, date)
         if pub > when:
             continue  # 判定日より後に公開する本は、この判定には入らない
-        group = exp.split(topic)
+        if allowed is not None and topic not in allowed:
+            # **`stale` にも入れません。** 作り直しても永久に処置群へ入らない本です
+            #（`_shorts_only()` の「なぜ stale ではないか」）。
+            continue
+        group = group_of(exp, topic)
         if group not in c.treated_all:
             continue
         built = bt.get(topic)
@@ -512,7 +982,9 @@ def outlook(
     `batch_build.pick` から数えます）。**API を1単位も使いません。**
     """
     c = counts or split_counts(exp, as_of=as_of)
-    need = {g: max(0, MIN_PER_GROUP - n) for g, n in c.treated_ready.items()}
+    # **床は実験ごと**（`floor_of()`）。`MIN_PER_GROUP` を写すと `request_form`
+    # （床 72本）が「あと4本」に見えます —— 2026-08-27 に踏んだ。
+    need = {g: max(0, c.floor - n) for g, n in c.treated_ready.items()}
     return Outlook(
         experiment=exp.name,
         settle_by=settle_by(exp, as_of),
@@ -537,7 +1009,10 @@ def report(as_of: date | None = None, stock: dict[str, dict[str, int]] | None = 
         lines.append("  " + c.short())
         if stock is not None and exp.name in stock:
             lines.extend(outlook(exp, stock[exp.name], as_of=as_of, counts=c).lines())
-        v = ab_power.verdict(MIN_PER_GROUP)
+        # **`metric` を渡すこと。** engaged で測っていない実験に、engaged の
+        #     ブートストラップから出した「要る本数」を出すと嘘になります
+        #     （`Experiment.metric` の註。実測 2026-08-27 に `request_form` で踏んだ）。
+        v = ab_power.verdict(c.floor, metric=exp.metric)
         if v is not None:
             lines.extend(v.lines())
         if c.unknown_publish:

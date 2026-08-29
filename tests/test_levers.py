@@ -144,7 +144,17 @@ def test_reconcile_marks_a_miss():
     ]
     text = "\n".join(levers.reconcile(rows))
     assert "外した" in text
-    assert "言ったより遠のいています" in text
+    assert "遠のいています" in text
+    # **門の行そのものに数が乗っていること**（2026-08-30・最適化の回に足した）。
+    #     `eta.flagged()` が尾へ運ぶのは **`[!]` の付いた行だけ**なので、
+    #     すぐ上の「宣言の合計 …」は置いていかれます。`CLAUDE.md` の読み方
+    #     （頭と尾の3行）だと、**警告は届くが、いくら外したかは届きません。**
+    #     実測 2026-08-30: 尾に並んだのは文言だけで、
+    #     **宣言 -63日 ／ 実際 +3日 は本文の 151行目**にありました。
+    gate = next(l for l in levers.reconcile(rows) if "[!]" in l)
+    assert "宣言" in gate and "実際" in gate, gate
+    assert "-30日" in gate and "+7日" in gate, gate      # 12-23 → 12-30 で 7日 遠のいた
+    assert "+37日 遠のいて" in gate, gate                # 実際 − 宣言
 
 
 def test_reconcile_is_quiet_before_the_first_declaration():

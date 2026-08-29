@@ -106,6 +106,21 @@ def main(argv: list[str] | None = None) -> int:
         if not tok:
             break
 
+    # **計測のぶんを残して止める**（2026-08-28 の最適化の回・2枚目）。
+    # `videos.update` は **50単位**。ここは1回で何十本も書き換えうるので、
+    # 門が無いと**残しておいた 400単位 を、この1コマンドで丸ごと持っていけます。**
+    # 読み（`videos.list` 1単位）は止めません —— 残しているのが当のそれです。
+    # `--dry-run` は書かないので通します。
+    if not args.dry_run:
+        from src import upload_cap                             # noqa: PLC0415
+
+        hold = upload_cap.reserve_hold()
+        if hold:
+            print(f"[link] {hold}")
+            print("[link] **書きません**（`YT_NO_RESERVE=1` で外せます）。"
+                  " 導線は消えないので、窓が変わった回に同じ1行で入れ直せます。")
+            return 1
+
     done = skipped = 0
     for i in range(0, len(ids), 50):
         items = y.videos().list(part="snippet",
@@ -131,9 +146,33 @@ def main(argv: list[str] | None = None) -> int:
             print(f"  {it['id']}  {sn['title'][:30]}  → {url}")
             if args.dry_run:
                 continue
+            # **輪の中でも訊くこと**（2026-08-28 の2周目に直した）。
+            # 門は輪の**手前**に1回だけ置いてありました。ここは1回で
+            # 何十本も書く口なので、**通ったあとに残りを全部 焼けます** ——
+            # 門が読む `spent` は、この輪が自分で増やしている数です。
+            # **1回だけ訊く門は、増えていく数に対しては門になりません。**
+            from src import upload_cap as _cap         # noqa: PLC0415
+            _hold = _cap.reserve_hold()
+            if _hold:
+                print(f"  {_hold}")
+                print(f"  **ここで止めます**（入れた {done}件）。"
+                      " 導線は消えないので、窓が変わった回に同じ1行で続けられます。")
+                print(f"\n入れた {done}件 / すでに入っていた {skipped}件")
+                return 1
             sn["description"] = new
             y.videos().update(part="snippet", body={
                 "id": it["id"], "snippet": sn}).execute()
+            # **通ったら数えること**（2026-08-28）。門は `spent` を読み、
+            # `spent` を作るのは `note_quota_ok` だけです。ここは1回で
+            # 何十本も書くので、数えないと門は**自分が通した数千単位を
+            # 1つも知りません**（＝ 止めるべき回に止まりません）。
+            # **末尾に印を付けること**（2026-08-28）。`moves_in_window()` は
+            # `videos.update <vid>` で**終わる**行を「その本を動かした」と
+            # 数え、`MOVE_CAP`（1本 2回/窓）に効かせます。ここは説明欄の
+            # 書き換えで、**予約を動かしていません** —— 印を付けないと、
+            # 導線を入れただけで入れ替えの持ち手を2回ぶん奪います。
+            # `unit_cost` は前方一致なので 50単位 のままです。
+            _cap.note_quota_ok(detail=f"videos.update {it['id']} link")
             done += 1
 
     print(f"\n入れた {done}件 / すでに入っていた {skipped}件"

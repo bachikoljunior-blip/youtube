@@ -136,3 +136,77 @@ def test_既出が無い族には余計な行を貼らない(monkeypatch):
         {"yukyu": {"=== 出勤率 ===": "8割 …"}},
         TOPICS)
     assert "既に題に出した金額" not in prompt
+
+
+# --- **丸い数は1つでは止まらないが、2つ並ぶと止まる**（2026-08-29 に足した）---
+#
+# 実測: `topic_forge --count 8 --new-family` を2周して、**2周とも1件ずつ**
+# `same-yen` の「入れ子」で落ちた:
+#
+#     keihi-1man-nedauchi-10dan: `keihi` で金額が入れ子（10,000円・7,000,000円）
+#
+# **10,000 も 7,000,000 も丸い数**なので `used_amounts()` には入らず、
+# 書かせるプロンプトに**一度も載っていませんでした**。書き手は避けようがない。
+# 落ちた件は `topics.yaml` に1行も書かれないので、**在庫がそのぶん減ります**
+# （16件 頼んで 14件 ＝ **12.5% の取りこぼし**）。
+#
+# 止めているのは `find()` の
+# `hit and (len(hit) > 1 or min(sigdigits(x) for x in hit[0]) > ROUND_SIGDIGITS)`
+# の **`len(hit) > 1` の枝**で、そこは丸さを一度も見ません。
+#
+# **覆る条件**: その枝が丸さを見るようになったら、`used_round_amounts()` は
+# 要りません（`used_amounts()` だけで足ります）。
+
+_ROUND_LEDGER = [
+    {"id": "v1", "title": "経費1万円の値打ちは700万円の所得で何円か",
+     "topic": "s-keihi-1", "calc": "keihi", "at": None, "scheduled": False},
+    {"id": "v2", "title": "有給は年10日から", "topic": "s-b",
+     "calc": "yukyu", "at": None, "scheduled": False},
+]
+
+
+def test_丸い数の組を族ごとに出す(monkeypatch):
+    monkeypatch.setattr(dupes, "ledger_rows", lambda topics=None: _ROUND_LEDGER)
+    got = dupes.used_round_amounts({"s-keihi-1": "keihi", "s-b": "yukyu"})
+    assert got["keihi"] == [[10000.0, 7000000.0]], got
+    # 1つしか丸い数が無い本は組にならない（1つでは門が止めないので）
+    assert "yukyu" not in got, got
+
+
+def test_丸い数が1つだけなら組にしない(monkeypatch):
+    monkeypatch.setattr(dupes, "ledger_rows", lambda topics=None: [
+        {"id": "v1", "title": "副業は20万円ルール", "topic": "s-a",
+         "calc": "fukugyo", "at": None, "scheduled": False},
+    ])
+    assert dupes.used_round_amounts({"s-a": "fukugyo"}) == {}
+
+
+def test_既出の金額を黙って切らない(monkeypatch):
+    """**切ったなら、切ったと言うこと**（`docs/trigger_main.md`「no silent caps」）。
+
+    ここは長らく `taken[:12]` で、切ったことを何も言わなかった。
+    実測 2026-08-29: `iryohi` が**ちょうど 12件**——次に1件 足した回から、
+    **書き手が避けられない数が黙って生まれる**（落ちた本は `topics.yaml` に
+    1行も書かれないので、在庫が減る）。
+    """
+    rows = [{"id": f"v{i}", "title": f"税額は{100001 + i * 7}円になる",
+             "topic": f"s-x-{i}", "calc": "keihi", "at": None, "scheduled": False}
+            for i in range(50)]
+    monkeypatch.setattr(dupes, "ledger_rows", lambda topics=None: rows)
+    prompt = forge.build_prompt(
+        [("keihi", "=== 表 ===")], {"keihi": {"=== 表 ===": "…"}},
+        [{"id": r["topic"], "title_seed": "既出", "calc": "keihi"} for r in rows])
+    assert "多すぎるので切りました" in prompt, prompt[-600:]
+    # 12件で切っていた頃の数（13件目）が、いまは載っていること
+    assert "100,085円" in prompt, prompt[-600:]
+
+
+def test_貼る文に丸い数の組が入る(monkeypatch):
+    """**これが貼られていなければ、書き手は同じ組を選び続けます。**"""
+    monkeypatch.setattr(dupes, "ledger_rows", lambda topics=None: _ROUND_LEDGER)
+    prompt = forge.build_prompt(
+        [("keihi", "=== 経費1万円の値打ち ===")],
+        {"keihi": {"=== 経費1万円の値打ち ===": "10,000円 … 7,000,000円 …"}},
+        [{"id": "s-keihi-1", "title_seed": "既出", "calc": "keihi"}])
+    assert "10,000円・7,000,000円" in prompt, prompt[-800:]
+    assert "2つ並ぶと投稿の門が必ず止めます" in prompt, prompt[-800:]
