@@ -3952,6 +3952,30 @@ tip is behind its remote counterpart`）。
 「途中で死んでも成果を残す」ですが、それは commit で足ります。**
 `git stash` が要るのは rebase の直前だけで、**rebase は待てます。**
 
+**そしてもう1つ、こちらのほうが危ない** —— **stash の山は、worktree をまたいで共有です**
+（2026-08-30・最適化の回に踏んだ）。`.git` が1つなので、
+**`git stash pop` は「自分が積んだもの」ではなく「山のいちばん上」を取ります。**
+
+    git stash list
+    stash@{0}: On worktree-agent-a4aa56fc96de12779: interrupted-merge-partial
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ **別のサブの、途中で死んだ merge**
+
+こちらは `git stash push -- data/` で data だけを積んだつもりで、
+**pop したら 20ファイルが `UU`（config・docs・scripts・src・tests まで）**になりました。
+**相手の未完の merge を、こちらの作業ツリーへ展開した**わけです。
+そのまま commit していたら、**相手の途中の姿がこちらの成果として押されます。**
+
+**やること**:
+
+    1. **pop の前に必ず `git stash list` を読む。** 頭の `On <名前>` が
+       **自分の worktree の名前でなければ、それは自分のものではありません**
+    2. 取り違えたら **`git reset --hard HEAD`**（衝突した pop は
+       **stash を消しません** ——「kept in case you need it again」と出ます。
+       相手のぶんは山に残るので、**drop しないこと**）
+    3. そもそも **stash を使わないこと。** 上に書いてあるとおり、
+       退避が要る場面は commit で足ります。**commit は名前が付いていて、
+       他人のものと取り違えようがありません**
+
 **`git checkout --ours` / `--theirs` を使わないこと。** どちらも片側を捨てます。
 **順番は気にしなくてよい**（読む側は全部 `at` で並べ直します）。
 
