@@ -216,7 +216,10 @@ def _long_by_duration(path: pathlib.Path | None = None) -> set[str]:
             long_form = float(sec) >= LONG_MIN_SECONDS
         except (TypeError, ValueError):
             continue
-        out.add(str(vid)) if long_form else out.discard(str(vid))
+        if long_form:
+            out.add(str(vid))
+        else:
+            out.discard(str(vid))       # **後の行が勝ち**（撃ち直しで尺が変わる本）
     return out
 
 
