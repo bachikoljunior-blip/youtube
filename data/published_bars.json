@@ -1091,6 +1091,16 @@
     ],
     "video_id": "1Nyl3aLUOgo"
   },
+  "jidou-choushi-48kagetsu": {
+    "charts": [
+      [
+        "月30,000円",
+        "月10,000円",
+        "月20,000円"
+      ]
+    ],
+    "video_id": "GbRRvae3nEE"
+  },
   "jidou-daisanshi-nenreisa-hyou": {
     "charts": [
       [
@@ -1614,6 +1624,17 @@
     ],
     "video_id": "yx2Ix9zsNYU"
   },
+  "kakyu-nenreisa-souaku-10dan": {
+    "charts": [
+      [
+        "0年",
+        "1年",
+        "7年",
+        "15年"
+      ]
+    ],
+    "video_id": "0oe5V5V8VGQ"
+  },
   "kakyu-seinengappi-tsukisu": {
     "charts": [
       [
@@ -2063,6 +2084,22 @@
       ]
     ],
     "video_id": "6TK2jXQsB5s"
+  },
+  "koteishisan-obi-mittsu-tanka": {
+    "charts": [
+      [
+        "210,000円",
+        "210,700円",
+        "560,000円",
+        "910,000円"
+      ],
+      [
+        "200㎡",
+        "800㎡",
+        "500㎡"
+      ]
+    ],
+    "video_id": "vyAfKSetkN0"
   },
   "koteishisan-zei": {
     "charts": [
@@ -2839,6 +2876,25 @@
       ]
     ],
     "video_id": "U-i-yoVoLhU"
+  },
+  "nenkinmenjo-tsuinou-kaishu-nenchi": {
+    "charts": [
+      [
+        "4,245円",
+        "8,490円",
+        "12,735円",
+        "16,980円",
+        "16,980円"
+      ],
+      [
+        "年212.5円",
+        "年425.0円",
+        "年637.5円",
+        "年850.0円",
+        "年1,700円"
+      ]
+    ],
+    "video_id": "2akxZoGqVY8"
   },
   "nenmatsu-chosei": {
     "charts": [
@@ -9239,6 +9295,29 @@
     ],
     "video_id": "CozaA7GyO00"
   },
+  "saishushoku-futatsu-no-gake-hiritsu": {
+    "charts": [
+      [
+        "2.73倍",
+        "2.83倍",
+        "2.88倍",
+        "2.92倍"
+      ]
+    ],
+    "video_id": "8xQvkPxi3O8"
+  },
+  "sankyu-14nichi-michi-ga-nai": {
+    "charts": [
+      [
+        "育休も0か月",
+        "育休は1か月",
+        "育休は1か月",
+        "育休は1か月",
+        "育休は1か月"
+      ]
+    ],
+    "video_id": "JZ0n90eQ238"
+  },
   "sankyu-getsumatsu-1nichi-14nichi": {
     "charts": [
       [
@@ -10319,6 +10398,24 @@
       ]
     ],
     "video_id": "E53Lh0NsFkw"
+  },
+  "zaishoku-hyojunhoshu-13dan": {
+    "charts": [
+      [
+        "16万9308円",
+        "15万4308円",
+        "12万4308円",
+        "9万4308円",
+        "6万9308円"
+      ],
+      [
+        "16万9308円",
+        "15万4308円",
+        "57万9308円",
+        "59万4308円"
+      ]
+    ],
+    "video_id": "bE75m_NxyTE"
   },
   "zaishoku-nokoru-wariai-50": {
     "charts": [

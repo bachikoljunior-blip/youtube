@@ -310,6 +310,27 @@ def _k_published_count(p: dict) -> Gauge:
     尺の分からない本（控えに `duration_s` が無い古い行）は、
     **絞りを指定した回では数えません** —— 満ちていないものを満ちたと
     言うより、遅れて満ちるほうが安全なので。
+
+    ## **`data_ready` で削ったぶんを、同じ行に出します**（2026-08-30 に足した）
+
+    **「いま 0」は「まだ数えられていない」であって「出ていない」ではありません。**
+    ところが画面ではその2つが同じ字で出ます。実測（08/30 07:4x・`長尺シェア-14本`）:
+
+        画面        あと **14本**（いま **0** / 要る 14）  2026-08-27〜2026-09-07
+        控えの実物  窓の中に **49本**（08/28=8・08/31=5・09/03=5 …）＝ 要る本数の **3.5倍**
+
+    0 なのは `data_ready: true` が「Analytics の最終日（08/27）より後の公開」を
+    落とすからで、**08/27 の長尺がちょうど 0本**だったためです。
+    **窓のあいだじゅう「あと14本」と鳴り続けるので、読んだ回は
+    「供給が足りない」と読み、もう 3.5倍 入っている窓へ長尺を積み増す側に効きます。**
+
+    だから `data_ready` が削ったときは、**削る前の数を note に出します**
+    （「予約表では N本」）。**判定の数（`now`）は動かしません** ——
+    実データの来ていない本で前提を閉じるほうが危険です。
+
+    **覆る条件**: `data_ready` を使う待ちが「予約表の数 ＜ 要る数」の側で
+    使われるようになったら、この行は毎回 同じことを言うだけになります
+    （そのときは `need` に届いていない回だけ出すこと）。
     """
     dates = _publish_dates()
     since, until = _day(p["since"]), (_day(p["until"]) if p.get("until") else None)
@@ -319,10 +340,9 @@ def _k_published_count(p: dict) -> Gauge:
     lo, hi = p.get("min_duration_s"), p.get("max_duration_s")
     secs = _durations() if (lo is not None or hi is not None) else {}
     n = 0
+    placed = 0
     for vid, d in dates.items():
         if d < since or (until and d > until):
-            continue
-        if p.get("data_ready") and last and d > last:
             continue
         if lo is not None or hi is not None:
             sec = secs.get(vid)
@@ -332,12 +352,18 @@ def _k_published_count(p: dict) -> Gauge:
                 continue
             if hi is not None and sec > float(hi):
                 continue
+        placed += 1
+        if p.get("data_ready") and last and d > last:
+            continue
         n += 1
     note = f"{since}〜{until or '以降'}"
     if lo is not None or hi is not None:
         note += f" / 尺 {lo or 0:.0f}〜{hi if hi is not None else '∞'}秒"
     if p.get("data_ready") and last:
         note += f" / 実データは {last} まで"
+        if placed > n:
+            note += (f" / **予約表では {placed}本**（差 {placed - n}本 は"
+                     "「出ていない」ではなく「まだ実データが来ていない」）")
     return Gauge(n, float(p["need"]), "本", note)
 
 
