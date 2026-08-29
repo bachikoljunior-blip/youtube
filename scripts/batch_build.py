@@ -118,7 +118,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from src import auth, config, dupes, history, lanes, measure_window, upload_cap, uploader  # noqa: E402
-from src import renderer
+from src import renderer, verify
 
 JST = timezone(timedelta(hours=9))
 LOG = ROOT / "data" / "batch_runs.jsonl"
@@ -342,6 +342,112 @@ def _drop_doomed(usable: list[dict], pool: list[dict]) -> list[dict]:
 #: 着地点のまわり何日ぶんの calc を避けるか（**長尺だけ**）。
 #: 新しい本は「いちばん早い空き日」に入るので、そこから数日ぶんを見ます。
 QUEUE_TAIL_DAYS = 7
+
+
+#: 節の本文から数を拾う型。**4桁以上の整数だけ**を見ます。
+#: 3桁以下（年数・パーセント・段の番号）は、どの表にも出てくるので当たり前に被ります。
+_BIG_NUMBER = re.compile(r"\d[\d,]{3,}")
+
+
+@functools.lru_cache(maxsize=None)
+def _calc_sections_cached(calc: str) -> tuple[tuple[str, str], ...]:
+    """`src.calc.<calc>` を1回だけ走らせて `(見出し, 本文)` を返す。
+
+    **`topic_forge.sections()` と同じものです**（あちらが正本）。
+    ここで呼び直すのは、`pick()` が `topic_forge` を import すると
+    `config.load_topics()` まで連れてくるためです。
+    """
+    import topic_forge                                   # noqa: PLC0415
+    return tuple(topic_forge.sections(calc).items())
+
+
+def _section_numbers(topic: dict) -> set[str]:
+    """そのテーマの節に出てくる**4桁以上の数**の集合。
+
+    **`calc_sections` は部分一致**です（`topic_forge.sections_for` の docstring）。
+    読めない calc は空集合を返します —— **この門で投稿を止めないため。**
+    """
+    calc = topic.get("calc")
+    if not calc:
+        return set()
+    try:
+        secs = dict(_calc_sections_cached(calc))
+    except (Exception, SystemExit):
+        # **`SystemExit` も受けること。** `topic_forge.sections()` は
+        # 表が落ちたときに `raise SystemExit` します（あちらは道具の入口なので正しい）。
+        # **`except Exception` では受からず、pick ごと落ちます**（2026-08-29 に踏んだ）。
+        return set()                     # 表が落ちても pick は止めない
+    words = topic.get("calc_sections") or []
+    body = "\n".join(b for h, b in secs.items()
+                     if not words or any(w in h for w in words))
+    return {m.group(0).replace(",", "") for m in _BIG_NUMBER.finditer(body)}
+
+
+#: 節の数がここまで重なったら「同じ表を別の見出しで出している」と見る。
+#: **実測で決めた値です**（下の `_bars_clash` の表）。通った 23組 の最大は **0.31**、
+#: 落ちた1組は **0.67**。あいだを取って 0.45 に置いてあります。
+BARS_CLASH_JACCARD = 0.45
+
+
+def _bars_clash(a: dict, b: dict) -> bool:
+    """**この2本は、同じ図を出すか。**（`src/verify.py` の門を、選ぶ前に当てる）
+
+    ## なぜ要るのか（2026-08-29 に踏んだ。**2本 作って 0本**）
+
+    `--per-calc 2` は「同じ制度が並びすぎないように」の上限で、
+    **選んだ2本が同じ数を出すかどうかを1文字も見ていません。**
+    `used_sections` は節が違うことしか見ず、**節が違っても数は被ります。**
+
+    実測: `shogaku-murishi-sa-1458282` と `shogaku-years-total-repay` は
+    別の節ですが、どちらも **4,474,969円 と 8,949,938円**（3年と6年の返還総額）を
+    出します。並べて作った結果:
+
+        shogaku-years-total-repay    RuntimeError: 台本の時点で過去の図と重なっています
+        shogaku-murishi-sa-1458282   VerificationError: 投稿前の検査に落ちました
+
+    **2本とも落ちました。** しかも `--jobs 2` で**同時に**作っているので、
+    `script_writer.used_bars()` が読む `build/*/script.json` は
+    **相手の台本がまだ存在しません** —— 書き手には避けようがありませんでした。
+    そして `--no-retry` を付けていない回は、**もう一度 同じ2本を作り直します。**
+    落ち方は決まっているので、**作り直しも必ず落ちます**（この回で実測 約13分 × 2 を捨てた）。
+
+    ## 何を見ているか —— **共通の本数ではなく、重なりの割合**
+
+    節の本文に出る**4桁以上の数**の集合を2本ぶん取り、
+    **Jaccard**（共通 ÷ 合併）が `BARS_CLASH_JACCARD` 以上なら「当たる」と言います。
+
+    **最初は「共通が `verify.REPEAT_BARS`（2）以上」で書いて、外しました。**
+    同じ calc の節は、入力の定数（上限額・年収の刻み）を当たり前に共有するので、
+    **実際に通って予約に入っている 23組 のうち 15組**がその線に当たります。
+    予約の実物で測り直したのが、この表です（同じ日・同じ calc・別のテーマ）:
+
+        実際に通った 23組    Jaccard の最大 **0.31**（`inshi` の2本・共通11/合併36）
+                             共通の本数だけ見ると最大 **11本**（＝2本の線は使えない）
+                             `mishikyu` の1組は**片側を全部 含んで**いるのに通っている
+                             （共通2 / 片方が2個しか持たない ＝ 包含率 1.00・Jaccard 0.18）
+        この回に落ちた1組    Jaccard **0.67**（共通12 / 18と12 ＝ **片方は丸ごと部分集合**）
+
+    **0.31 と 0.67 のあいだ**に線を引いています。
+    包含率（共通 ÷ 小さいほう）で引かなかったのは、`mishikyu` の組が
+    **1.00 なのに通っている**からです —— 数を2つしか持たない節は、
+    包含率では必ず 1.00 になります。
+
+    **これは近似です**（`verify` が見るのは台本が書いた棒の `display` で、
+    こちらは表の生の数）。**表に無い数を棒にすることはできない**ので
+    （`_checks.numbers_backed`）、見落とす向きにしか外れません。
+
+    **覆る条件**: この線で落ちた組が実際には通ったと分かったら、上げること。
+    逆に `verify` の「図の棒が … と N本 共通」が**同じ回の相手**を名指しして
+    落ちたら、その組の Jaccard を測って下げること。
+    **どちらも `data/batch_runs.jsonl` に理由ごと残ります。**
+    検査は `tests/test_batch_bars_clash.py`。
+    """
+    if a.get("calc") != b.get("calc"):
+        return False                     # 別の calc は `_queue_tail_calcs` の担当
+    na, nb = _section_numbers(a), _section_numbers(b)
+    if not na or not nb:
+        return False                     # 読めなかった回は止めない
+    return len(na & nb) / len(na | nb) >= BARS_CLASH_JACCARD
 
 
 def _queue_tail_calcs(pool: list[dict], days: int = QUEUE_TAIL_DAYS,
@@ -669,6 +775,17 @@ def pick(count: int, explicit: list[str], per_calc: int = DEFAULT_PER_CALC,
             deep = not topic["id"].startswith("s-")
             if protect and deep and deep_left.get(calc, 0) <= 1:
                 continue                  # **この一手で族が消える。後回し**
+
+            # **同じ calc の2本目は、節の数が被っていないことを先に見る**
+            # （2026-08-29 に踏んだ。**0/2 になった**）。理由は `_bars_clash`。
+            clash = next((t for t in chosen if _bars_clash(t, topic)), None)
+            if clash is not None:
+                print(f"[pick] **同じ表を別の見出しで出すので外します**: {topic['id']} —— "
+                      f"この回に取った `{clash['id']}` と節の数が"
+                      f" {BARS_CLASH_JACCARD:.0%} 以上 重なります"
+                      f"（`src/verify.py` の『図の棒が … と N本 共通』に当たる側）",
+                      flush=True)
+                continue
 
             chosen.append(topic)
             used_sections.add(key)
