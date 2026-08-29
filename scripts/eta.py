@@ -3374,6 +3374,19 @@ def _theta_days(m: dict, a0: dict, base: dict, rows: list[dict],
       逆になります。**数え直すのは `config/hypotheses.yaml` の open 件数と
       `arm_speed.throughput()` の2つだけ**（どちらも API 0単位）。
 
+    ## 値段（**この2本を解く分だけ、頭の3行が重くなります**）
+
+    実測 2026-08-30・同じ機械で1回ずつ計った端から端まで（API の待ちを含む）::
+
+        `python scripts/eta.py`            1分52秒 → **2分11秒**（+19秒・+17%）
+        `trajectory_all(full=True)`       16.6秒  → **27.5秒**
+        `trajectory_all(full=False)`      **7.9秒**（`--reflect` の道・**素通り**）
+
+    θ×2 は `t_work` を 24日 まで探すので 4秒 前後、θ→∞ は `saturate` が
+    ほぼ 0 に潰れるので **1回の `plan()`** で終わります。
+    **重いのは ×2 のほう。** 頭の3行が 19秒 の価値を持たなくなったら、
+    先に落とすのはこちらです（天井の -47日 だけなら 0.1秒 で出ます）。
+
     検査は `tests/test_eta_theta_days.py`。
     """
     try:
