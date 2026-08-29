@@ -5042,9 +5042,14 @@ def headline(pl: dict, prev: dict | None = None,
         # **0日 の腕を、同じ行で名指しして塞ぐこと。** 代わりを出すだけでは、
         #     既定（`density`）は残ります —— 名前が2つ並んだときに読み手が
         #     選べてしまう形は、この道具が `lever_hint` で一度 直しています。
+        # **`None` を先に落とすこと。** `frozen_days()` の返りは
+        #     `dict[str, float | None]` で、軌跡が解けなかった腕は `None` です。
+        #     並べ替えの鍵に混ぜると `TypeError` で頭の3行ごと落ちます
+        #     （＝この回の入口が消える）。**選別が先、並べ替えが後。**
         _dead = [f"`{k}`（凍らせても **{v:,.0f}日**）"
-                 for k, v in sorted(_frz.items(), key=lambda kv: kv[1])
-                 if v is not None and v < 1.0]
+                 for k, v in sorted(((k, v) for k, v in _frz.items()
+                                     if v is not None and v < 1.0),
+                                    key=lambda kv: kv[1])]
         if _alt is not None:
             _th = _alt.get("threshold")
             # **勝った腕の天井が実測でないなら、勝ちの理由がそこにあります。**

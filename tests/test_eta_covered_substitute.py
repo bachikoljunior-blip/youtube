@@ -153,6 +153,20 @@ def test_作り物の天井で名指しした回は_そう書く():
     assert "測ったものではありません" not in out2
 
 
+def test_凍結が解けなかった腕がNoneでも落ちない():
+    """`frozen_days()` の返りは `dict[str, float | None]`。**`None` は来ます。**
+
+    並べ替えの鍵に混ぜると `TypeError` で **頭の3行ごと落ちます**
+    ＝ その回の入口が消えます。ここが落ちないことは、この行の中身より重い。"""
+    pl = _plan(arm_frozen_days={"sub_rate": None, "density": 0.0, "rpm": None})
+    out = _head(pl)
+    assert "その「別の腕」は `rpm` です" in out
+    assert "`density`" in out
+    # `None` の腕は塞がない（測れていない ＝ 0日 とは言えない）。
+    assert "`sub_rate`" not in [l for l in out.splitlines()
+                                if "その「別の腕」は" in l][0]
+
+
 def test_覆われていない回は何も足さない():
     pl = _plan()
     pl.pop("lever_hint_covered")
