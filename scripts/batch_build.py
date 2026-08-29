@@ -2093,6 +2093,113 @@ def _median(xs: list[float]) -> float:
     return xs[n // 2] if n % 2 else (xs[n // 2 - 1] + xs[n // 2]) / 2
 
 
+def _print_ab_groups(topics: list[dict]) -> None:
+    """選んだ本が、走っている A/B のどちらの群に落ちるかを出す（**API 0単位**）。
+
+    ## なぜ要るか（2026-08-29 13:4x に測って足した）
+
+    **振り分けは全部テーマIDだけの純関数**です（`ab_split.EXPERIMENTS[*].split`）。
+    つまり**作る前に、どちらの群になるか分かります。** ところがそれを見る口が
+    どこにも無く、13:4x の回は `slide_pace` の床（速い あと2本 ／ 遅い あと2本）を
+    埋めるのに、**`python -c` で `pick()` を呼んで手で割りました。**
+
+    `live_slots.py --plan` は「どの群があと何本 足りないか」を出しますが、
+    **その群に落ちる題がどれかは言いません。** 逆にこの道具は題を選びますが、
+    **選んだ題がどの群かを言いませんでした。** 床を埋める回は、
+    その2つを毎回 人が突き合わせています。
+
+    ## 覆る条件
+
+    `pick()` が「足りない群」を見て並べるようになったら、この印字は要りません
+    （そのときは `_hoist_floor_topics()` の隣に置くのが近い）。
+    """
+    try:
+        from src import ab_split
+    except Exception as exc:                                  # noqa: BLE001
+        print(f"[pick] 群が読めませんでした: {str(exc)[:120]}")
+        return
+    ids = [str(t["id"]) for t in topics]
+    print("\n[pick] **この本が落ちる A/B の群**"
+          "（振り分けはテーマIDだけの純関数なので、作る前に決まっています）")
+    for name, exp in sorted(ab_split.EXPERIMENTS.items()):
+        try:
+            labels = [ab_split.group_of(exp, i) for i in ids]
+        except Exception as exc:                              # noqa: BLE001
+            print(f"        {name:<14} 読めません: {str(exc)[:80]}")
+            continue
+        tally: dict[str, int] = {}
+        for lab in labels:
+            tally[lab] = tally.get(lab, 0) + 1
+        shown = " / ".join(f"{k} {v}本" for k, v in sorted(tally.items()))
+        print(f"        {name:<14} {shown}")
+        for i, lab in zip(ids, labels):
+            print(f"          {lab:<8} {i}")
+    print("        **あと何本 要るかは `python scripts/live_slots.py --plan`**"
+          "（『あと N本 足りません』の行）。**入れ替えで埋まらない群は、"
+          "本を足すしかありません**（`docs/trigger_main.md` §4 の 4）。")
+
+
+def _print_live_days(days: int = 45, want: int = 8) -> None:
+    """**本当に生きる枠が残っている日**を、早い順に出す（API 0単位）。
+
+    ## なぜ `live_plan()` の答えと別に要るか（2026-08-29 13:4x に測って足した）
+
+    `live_plan()` の上限は「**その日の帯に何本 置いたか**」で数えており、
+    **その日のショートが既に上限に達しているかは見ていません**（同関数の中の註。
+    直そうとして入れ、`+34日 → +163日` の悪化で外した経緯もそこに在ります）。
+    だから既定の置き先は、**もう上限に達している日**を選ぶことがあります ——
+    実測 2026-08-27: 今後60日の帯の空き 402枠 のうち **105枠（26%）**がそれ。
+
+    `scripts/live_slots.py` の `Board` は `day_cap.live_ids()` を通してから
+    数えるので、**そちらは取り違えません。** ここはその読みを借りて
+    **印字だけ**します（置き先は変えません）。**呼ぶ側が `--date` / `--hours` で
+    釘づけするための材料**で、`live_plan()` の挙動は1文字も動かしていません。
+
+    実測 2026-08-29 13:4x: **09/23 までは全日が上限（10本）で満杯**、
+    いちばん早い生きた枠は **09/24（1枠）**、次が 09/28（4枠）・09/30（3枠）。
+    同じ回の既定（`live_plan`）は **09/08 の 9:30/10:30/13:30** を返しており、
+    **そこへ置いた本は 0再生の側（595本 中 143本）に入るところ**でした。
+
+    ## 覆る条件
+
+    `live_plan()` が `Board` と同じ数え方になったら、この印字は要りません
+    （そのときは「既定のままで置ける」と1行 書いて、この関数を消すこと）。
+    """
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        import live_slots                                       # noqa: PLC0415
+        board = live_slots.Board(live_slots._rows())
+        live = board.live()
+    except Exception as exc:                                    # noqa: BLE001
+        print(f"[pick] 生きた枠が読めませんでした: {str(exc)[:120]}")
+        return
+    today = board.now.date()
+    found: list[str] = []
+    for i in range(days + 1):
+        d = today + timedelta(days=i)
+        free = board._slots(d, same_day=False, live=live)
+        if not free:
+            continue
+        shown = ", ".join(f"{m // 60}:{m % 60:02d}" for m in free[:6])
+        found.append(f"        {d.isoformat()}  空き {len(free)}枠  {shown}")
+        if len(found) >= want:
+            break
+    print("\n[pick] **本当に生きる枠が残っている日**"
+          f"（`live_slots.Board`。上限 {board.cap}本/日・帯 09:00〜13:30 JST）")
+    if not found:
+        print(f"        {days}日 先まで、生きた枠は1つも空いていません。"
+              " **足した本はその日の誰かを押し出すだけ**です"
+              "（`python scripts/live_slots.py --plan --all`）。")
+    else:
+        for line in found:
+            print(line)
+        print("        **既定（`--date` も `--hours` も無い回）はこの表を見ません** ——"
+              "`live_plan()` は帯の枠しか数えないので、"
+              "**もう上限に達している日を選ぶことがあります**。"
+              " 判定の床を埋める回は、上の日を `--date` / `--hours` で釘づけすること"
+              "（`--hours` は**時だけ**なので、:30 の空きは掴めません）。")
+
+
 def report() -> int:
     """台帳を `jobs` 別に並べる。**生成しません**（数秒で終わります）。
 
@@ -2600,6 +2707,10 @@ def main(argv: list[str] | None = None) -> int:
                          "作る段は並列なので、落ちた1本の巻き添えで他を捨てません）")
     ap.add_argument("--report", action="store_true",
                     help="台帳を jobs 別に並べるだけ（**生成も予約もしません**・数秒）")
+    ap.add_argument("--pick-only", action="store_true",
+                    help="`pick()` を通して**選んだ本と置き先と A/B の群を出して終わる**"
+                         "（生成も予約もしない・API 0単位）。`--report` とは別物："
+                         "あちらは台帳を並べるだけで `pick()` を通しません")
     args = ap.parse_args(argv)
 
     # **`--hour` を書いたかどうか**を、既定を入れる前に覚えます。
@@ -2671,10 +2782,14 @@ def main(argv: list[str] | None = None) -> int:
     #
     # 一覧が悪いのではありません。**押せる時刻に、押す手順が無かった**だけです。
     # 5本ぶんで 250単位（投稿0.16本ぶん）なので、**投稿の本数は減りません。**
-    _pull_verdicts_first()
-    _push_thumbnails_first()
+    # **`--pick-only` の回は、この2つを撃ちません**（2026-08-29 13:4x に足した）。
+    # どちらも単位を使う手で、**見るだけの回が単位を減らすと、
+    # 同じ窓の投稿がそのぶん減ります**（`videos.insert` は 1本 1,600単位）。
+    if not args.pick_only:
+        _pull_verdicts_first()
+        _push_thumbnails_first()
 
-    if not args.skip_upload:
+    if not args.skip_upload and not args.pick_only:
         cap = upload_cap.state()
         print(f"[batch] {cap.line}", flush=True)
         if cap.remaining <= 0:
@@ -2786,6 +2901,14 @@ def main(argv: list[str] | None = None) -> int:
               f"（予約は {', '.join(sorted(set(_show_slot(w) for w in when)))} JST の空き枠へ）")
     for t in topics:
         print(f"        {t['id']}  calc={t['calc']}  {t['title_seed'][:38]}")
+
+    if args.pick_only:
+        _print_ab_groups(topics)
+        _print_live_days()
+        print("[batch] **`--pick-only` なので、ここで終わります**"
+              "（生成も予約もしていません）。"
+              " この並びでよければ、同じ引数から `--pick-only` を外して撃つこと。")
+        return 0
 
     # ---- 1. 作る（**ここだけ並列**）----------------------------------------
     #
