@@ -1768,6 +1768,31 @@ CLOSING_RULES = {
 """,
 }
 
+#: **締め方の型は、画面の見出しにも当てること**（2026-08-30 夜に足した）。
+#:
+#: 上の8通りは、どれも**読み上げ（narration）だけ**を指定していました。
+#: ところが控えの `*.plan.json` を測ると、揃っているのは画面のほうです
+#: （`python -m src.frames`・API 0単位）:
+#:
+#:     長尺 134本    読み上げの最終行の頭「明日やる」 61%
+#:                   **最後のコマの見出し「明日やる」 83%**（実効 2.1本ぶん）
+#:     ショート 521本 最後のコマの見出しが「あなたの」29% ＋「あなたは」25%
+#:
+#: **読み上げだけ4通りに散らしても、画面に同じ見出しが並べば同じ動画に見えます。**
+#: 出口は `verify._check_screen_frame_repeat()`（`script_only_problems()` の中 ＝
+#: **クリップを焼く前**）。**入口と出口の両方に置くのは、解除条件1・2 と同じ形です。**
+CLOSING_HEADLINE_RULE = """
+# 最後のコマの**見出し**（`visual.headline`）について
+
+- **上で指定した締め方の型を、見出しのほうにも当てること。**
+  読み上げだけ変えて、見出しを前と同じ言葉にしないこと
+- **「明日やること」「あなたの◯◯」を見出しに置かないこと。**
+  実測で、最後のコマの見出しは長尺の **83%** が同じ4文字で始まっていました
+  （読み上げの 61% より揃っています ＝ **目のほうが先に気づきます**）
+- 見出しはその回の**題材の語**を入れて言い換えること
+  （型の名前をそのまま書かない。「限界」「置換」は見出しではありません）
+"""
+
 
 def generate(channel: dict, topic: dict) -> VideoScript:
     """台本を1本生成する。尺が足りなければ同じセッションで書き足させる。"""
@@ -1851,7 +1876,7 @@ def generate(channel: dict, topic: dict) -> VideoScript:
     # 「どちらが効くか」の実験ではなく、**同じ入り方が並ばないようにする**ためです。
     opening = opening_form(topic.get("id", ""))
     closing = closing_form(topic.get("id", ""), portrait=is_short)
-    prompt += OPENING_RULES[opening] + CLOSING_RULES[closing]
+    prompt += OPENING_RULES[opening] + CLOSING_RULES[closing] + CLOSING_HEADLINE_RULE
     print(f"[script] 入り方: {opening} ／ 締め方: {closing}"
           f"（テーマIDで決まる。`python -m src.frames --forms` で散り方を数える）")
 
