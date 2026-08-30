@@ -82443,3 +82443,32 @@ spawn_prompt / spawn_gate_overrun / quota_gauge）。
   **鎖は親の `scripts/next_round.py` が回します。**
   `stop_check.sh` の「次の回を立てていません」は、**サブの回では既定でそうなります** ——
   この行を見た次の回も、立てにいかないこと。
+
+### 追記（同じ回・§6 のあと）—— 背後の全件走りは、**走り終わったときの木で読み直した**
+
+`-k "resume or gate or eta"`（4,838件のうち 525件）を背後に投げていたのが、
+16分3秒 で返りました。**赤 5件。そのうち この回のぶんは 0件。**
+
+**そして 5件のうち 3件は、返ってきた時点でもう赤くありませんでした**:
+
+    test_eta_growth_ceiling::test_バーストの速さを入れると13倍が埋まってしまう
+    test_eta_reflect_light::test_reflect_is_wired_to_full_false
+    test_reach_dry_fill::test_eta_は在庫を読んでいる
+
+**走らせている最中に、きょうだいの `b328e860` / `4cd46bf8` を merge しています**
+（どちらも `scripts/eta.py` を触る）。**投げた時の木と、返った時の木が違います。**
+これは 08/30 の前の回が「**全件の結果を、走り終わったときの木と突き合わせずに
+読まないこと**」と書いたのと同じ形で、**今回はそれに従って読み直しました**（実測 3.1秒）。
+
+**現在の木で残る赤は 2件**、どちらも前の回が日誌に挙げているものです:
+
+    test_eta_supply_density  2件  `eta.PLAN_PUBLISH_PER_DAY` が 25→13 になり、
+                                  `_supply(13.0)` と一致して「写しでない」が言えなくなった
+
+**この回の `scripts/eta.py` の差分は `--open-gate` の口と印字1文だけ**で、
+`plan()` にも供給にも密度にも触れていません（`git diff 8828e110~1 65920d3d -- scripts/eta.py`）。
+
+**次の回への1行**: `test_eta_supply_density` の2件は、
+**検査が `PLAN_PUBLISH_PER_DAY` を直に読んでいる**のが原因です
+（同じ回が構造の検査には `_PINNED_DENSITY = 25` を置いたのに、直読みの2件が残った）。
+**直すのは実装ではなく検査のほう** —— 25 を固定値で持たせること。
