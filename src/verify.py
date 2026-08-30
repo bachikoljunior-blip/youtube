@@ -1985,6 +1985,128 @@ def _check_yomi(script: dict | None) -> list[str]:
     return problems
 
 
+#: **人間の職業・資格の名前**。ここに無い肩書きは素通りします（下の「覆る条件」）。
+_PROFESSION_WORDS = (
+    "経理", "人事", "労務", "総務", "財務",
+    "税理士", "公認会計士", "会計士", "社会保険労務士", "社労士",
+    "行政書士", "司法書士", "弁護士", "弁理士", "中小企業診断士",
+    "ファイナンシャルプランナー", "ファイナンシャル・プランナー", "FP",
+    "銀行員", "証券マン", "保険外交員", "保険募集人",
+    "キャリアアドバイザー", "キャリアコンサルタント", "採用担当",
+    "コンサルタント", "アドバイザー", "専門家", "プロ",
+)
+_PROF = "|".join(re.escape(w) for w in _PROFESSION_WORDS)
+#: 話し手が自分を指す語。**視聴者を指す語（あなた・皆さん）は入れないこと。**
+_FIRST_PERSON = "私|僕|俺|自分|筆者|当方|わたし|ぼく"
+
+#: 「人間の専門家として語っている」形。**当てるのは話し手の側だけ**です。
+#:
+#: 落とさないもの（実例で確かめた・下の docstring の「落とさないもの」）:
+#:   「税理士に確認してください」  ← 相手が専門家。話し手の名乗りではない
+#:   「会社員として働く人は」      ← 主語が視聴者。職業語も一覧に無い
+#:   「専門家にご確認ください」    ← 説明欄の定型文（config/channel.yaml の footer）
+_HUMAN_EXPERT_PATTERNS: tuple[tuple[str, str], ...] = (
+    (rf"元[・\s]?(?:{_PROF})",
+     "「元・<職業>」と、実在しない経歴を名乗っています"),
+    (rf"(?:{_FIRST_PERSON})[はがも、]?[^。！？\n]{{0,14}}(?:{_PROF})"
+     rf"(?:として|の担当|の仕事|畑|部門|歴)?(?:でした|です|だった|をしてい|を担当|にい)",
+     "一人称で職業・肩書きを名乗っています"),
+    (rf"(?:{_PROF})として(?:の)?(?:経験|立場|視点|目線|感覚)",
+     "職業の立場から語る形になっています"),
+    (r"(?:専門家|プロ)として",
+     "専門家を名乗っています"),
+    (rf"(?:実務|現場)[でをのは][^。！？\n]{{0,12}}"
+     rf"(?:回して|担当して|扱って|やって|見て|回した|担当した)"
+     rf"(?:き|い)?(?:た|ました|ています)",
+     "実務経験を持っていると書いています"),
+    (rf"(?:{_FIRST_PERSON})の(?:経験|実務|現場|担当)(?:上|では|から|だと)",
+     "自分の経験を根拠にしています"),
+    (rf"(?:{_FIRST_PERSON})[はがも、]?[^。！？\n]{{0,14}}"
+     rf"(?:年間|年ほど|年)[、]?[^。！？\n]{{0,8}}(?:勤め|在籍し|担当し|やってき)",
+     "勤続年数という経歴を名乗っています"),
+)
+
+
+def _check_no_human_expert_claim(script: dict | None) -> list[str]:
+    """**人間の専門家を装っていないか**（2026-08-30 に足した。**停止の解除条件 1・2**）。
+
+    ## なぜ要るか
+
+    2026-08-30、オーナーが `AUTOMATION_PAUSED.md` を `origin/main` へ直接 push して、
+    いまの作り方を止めました。挙がっている理由の中心は次の2行です。
+
+        - AI-generated personas presenting themselves as human experts on sensitive topics
+        - AI personas providing financial guidance or interpreting legal rules
+
+    実物がありました。`config/channel.yaml` の `persona` が
+    **「元・事業会社の経理／人事で、制度を実務で回してきた立場」**と名乗り、
+    `src/script_writer.py:1086` から**毎本の台本の指示文**に入っていました。
+    **そんな人はいません。** 合成音声が、税・保険・キャリアという
+    **視聴者が自分の金で動く題**を、架空の実務経歴を根拠に語る形です。
+    `CLAUDE.md` が「手段として成立しない」と名指ししている2つの片方
+    （**なりすまし**）でもあります。
+
+    ## **設定を直しただけでは閉じません。だからここに置きます**
+
+    `persona` は**台本を書かせる指示文の一部**でしかありません。
+    書き手（LLM）は、そこに無い経歴を自分で足すことがあります ——
+    「元・経理」を消しても、narration に
+    **「私が担当していたころは」**と書かれれば、視聴者から見える形は同じです。
+
+    **設定は入口、ここは出口です。** 出口に置くと、
+    `persona` が将来どう書き換わっても、**出来上がった台本のほうで落ちます。**
+    `script_only_problems()` に入れてあるので、**レンダリングの前**に当たります
+    （動画1本 15分を焼いてから落とすのではなく、台本の時点で作り直しへ回る）。
+
+    ## 落とさないもの（**視聴者と第三者の側は当てません**）
+
+        「税理士に確認してください」    相手が専門家。話し手の名乗りではない
+        「会社員として働く人は」        主語が視聴者
+        「専門家にご確認ください」      説明欄の定型文（`channel.yaml` の footer）
+
+    ## 覆る条件（3つ）
+
+    1. **実在する人間が実名で出演し、その経歴が事実になったら**、これは
+       「装う」に当たりません。**そのときはこの検査ごと外すこと**
+       （`config/channel.yaml` の `persona` の「覆る条件」と対です）
+    2. **語の一覧（`_PROFESSION_WORDS`）は網羅ではありません。**
+       ここに無い肩書き（例:「元・国税調査官」の *調査官*）は素通りします。
+       **踏んだら足すこと** —— 網羅を先に書こうとすると、
+       視聴者を指す語まで拾って偽陽性で投稿が止まります（そちらのほうが高い）
+    3. **偽陽性が出て投稿が止まったら、パターンを狭めること。**
+       `CLAUDE.md`「投稿が途切れるのが最大の損失」より —— ただし
+       **`persona` に経歴を戻すことでは直さないこと。** それは元の穴です
+    """
+    if not script:
+        return []
+    problems: list[str] = []
+    fields: list[tuple[str, str]] = [
+        ("タイトル", str(script.get("title") or "")),
+        ("説明欄", str(script.get("description_body") or "")),
+    ]
+    for alt in script.get("title_alternatives") or []:
+        fields.append(("タイトルの別案", str(alt or "")))
+    for i, seg in enumerate(script.get("segments") or []):
+        fields.append((f"セグメント{i + 1}", str(seg.get("narration") or "")))
+        for line in _visual_texts(seg):
+            fields.append((f"セグメント{i + 1} の画面", str(line or "")))
+
+    for where, text in fields:
+        if not text:
+            continue
+        for pattern, why in _HUMAN_EXPERT_PATTERNS:
+            hit = re.search(pattern, text)
+            if hit:
+                problems.append(
+                    f"**{where}が人間の専門家を装っています**（{why}）: "
+                    f"「{hit.group(0)}」。"
+                    "**このチャンネルに実在の経歴はありません。**"
+                    "根拠は経験ではなく、置いた前提と計算式のほうに書くこと"
+                    "（AUTOMATION_PAUSED.md の解除条件 1・2）")
+                break
+    return problems
+
+
 def _check_form_tag(script: dict | None, duration: float) -> list[str]:
     """**長尺に `#Shorts` の札を付けて出さない**（2026-08-25 に実測で見つけた）。
 
@@ -2068,6 +2190,7 @@ def script_only_problems(script: dict | None, portrait: bool) -> list[str]:
     problems += _check_formula_shown(script)
     problems += _check_assumption_value_shown(script)
     problems += _check_yomi(script)
+    problems += _check_no_human_expert_claim(script)
     return problems
 
 
