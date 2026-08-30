@@ -283,6 +283,69 @@ def summary(text: str | None = None, path: Path | None = None,
     }
 
 
+def queue(path: Path | None = None, now: datetime | None = None) -> dict:
+    """**停止しても、まだ公開され続ける本**を数える（API 0単位・実測 0.1秒）。
+
+    ## なぜ門の隣に置くか（2026-08-30）
+
+    `AUTOMATION_PAUSED.md` が止めたのは「**新しく作って足すこと**」で、
+    **すでに YouTube 側へ入っている予約の列ではありません。**
+    実測（`data/uploaded.jsonl` を `video_id` で重複排除・後の行が勝つ）:
+
+        控えにある本            691本（`video_id` と `at` の両方を持つ行だけ。
+                                 台帳の重複排除後は 735本 で、44本 は `at` を持たない
+                                 —— **数えられないものを数えたことにしない**）
+        **これから公開される     482本**（2026-08-30 11:00 〜 2026-10-09 23:00 JST）
+        ペース                  **12.1本/日**
+
+    **機械が1回も起きなくても公開されます。** その全部が、停止の理由になった
+    旧 `persona` で作られています。つまり **`p_pass` は、こちらが何もしなくても
+    毎日 下がりうる** —— 門は「開いている」だけでなく、**時計が回っています。**
+
+    そして引っ込める道具（`reschedule.py`）は `src/pause_guard` の対象なので、
+    **この機械からは止められません。** ここが出すのは数だけです。
+
+    **覆る条件**: 予約が尽きる（`upcoming` が 0）か、停止が明けたら、この行は消えます。
+    """
+    p = (ROOT / "data" / "uploaded.jsonl") if path is None else path
+    if not p.is_file():
+        return {"held": 0, "upcoming": 0, "first": None, "last": None, "per_day": None}
+    seen: dict[str, str] = {}
+    for ln in p.read_text(encoding="utf-8").splitlines():
+        ln = ln.strip()
+        if not ln:
+            continue
+        try:
+            r = json.loads(ln)
+        except json.JSONDecodeError:
+            continue
+        vid, at = r.get("video_id"), r.get("at")
+        if vid and at:
+            seen[vid] = at  # **後の行が勝つ**（`retimed_at` で予定が動くため）
+    ref = now or datetime.now(timezone.utc)
+    future = []
+    for at in seen.values():
+        try:
+            t = datetime.fromisoformat(str(at).replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        if t.tzinfo is None:
+            t = t.replace(tzinfo=timezone.utc)
+        if t > ref:
+            future.append(t)
+    future.sort()
+    if not future:
+        return {"held": len(seen), "upcoming": 0, "first": None, "last": None, "per_day": None}
+    span = max((future[-1] - future[0]).days, 1)
+    return {
+        "held": len(seen),
+        "upcoming": len(future),
+        "first": future[0].astimezone(_JST),
+        "last": future[-1].astimezone(_JST),
+        "per_day": len(future) / span,
+    }
+
+
 def close(n: int, evidence: str, *, path: Path | None = None,
           at: datetime | None = None) -> dict:
     """門を1件 閉じる。**根拠の文が要ります**（空なら受け付けない）。

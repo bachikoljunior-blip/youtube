@@ -212,3 +212,33 @@ def test_a_mark_without_evidence_is_not_a_record(tmp_path):
     # 印だけの1件は、速さの実績に数えない
     assert resume_gate.rate_per_day(text, led, date(2026, 9, 5)) is None
     assert resume_gate.summary(text, led)["unrecorded"], "食い違いが summary に出ていない"
+
+
+def test_the_queue_is_counted_after_dedupe(tmp_path):
+    """**予約の列は、`video_id` で重複排除して後の行を勝たせること。**
+
+    `retimed_at` で予定が動くので、**同じ本が何度も出ます。** 素で数えると
+    「これから公開される本数」が水増しされ、**急ぐ理由の大きさが嘘になります。**
+    """
+    from datetime import datetime, timezone
+    led = tmp_path / "uploaded.jsonl"
+    led.write_text(
+        '{"video_id": "a", "at": "2026-09-01T10:00:00Z"}\n'
+        '{"video_id": "a", "at": "2026-09-05T10:00:00Z"}\n'   # 同じ本を後ろへ動かした
+        '{"video_id": "b", "at": "2026-08-01T10:00:00Z"}\n'   # もう公開ずみ
+        '{"video_id": "c"}\n',                                 # `at` が無い（数えない）
+        encoding="utf-8")
+    q = resume_gate.queue(led, now=datetime(2026, 8, 30, tzinfo=timezone.utc))
+    assert q["held"] == 2, "`at` を持たない行まで控えに数えている"
+    assert q["upcoming"] == 1, "重複排除できていない（同じ本を2回 数えた）"
+    assert q["first"].date().isoformat() == "2026-09-05", "後の行が勝っていない"
+
+
+def test_an_empty_queue_says_nothing(tmp_path):
+    """**予約が尽きたら、この行は自分で消えること。**（覆る条件）"""
+    from datetime import datetime, timezone
+    led = tmp_path / "uploaded.jsonl"
+    led.write_text('{"video_id": "b", "at": "2026-08-01T10:00:00Z"}\n', encoding="utf-8")
+    q = resume_gate.queue(led, now=datetime(2026, 8, 30, tzinfo=timezone.utc))
+    assert q["upcoming"] == 0
+    assert q["per_day"] is None, "0本 なのにペースを言っている"
