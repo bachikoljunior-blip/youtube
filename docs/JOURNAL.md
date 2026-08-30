@@ -82092,3 +82092,52 @@ import していないので `enforce_current_process()` が走る機会が無�
 **この回が触った所は緑です**: `tests/test_paused_supply.py` 7件 ／
 `tests/test_deadline_check.py` 46件。
 そして `--shrink` の後も **`期限が早すぎる 0件`**（縮めすぎていない）。
+
+## 2026-08-30 07:2x — 下限を1か所に集め、`sibling_check` の素通しを塞いだ（親）
+
+**画面を積んだ副作用で、親の側の検査が4件 赤くなりました。** 追ったら、
+赤は表示の話ではなく**素通しの穴**でした。
+
+    scripts/sibling_check.py  `recommended_floor_minutes()` が `None` を返す回に
+                              「下限なし」と読んで**待ちを丸ごと飛ばして**いた
+                              ＝ **計器が黙った回だけ、いちばん速く回る形**
+
+`recommended_floor_minutes()` は「誕生から誕生」を数えて出すので、
+`data/quota.jsonl` が薄いと `None` になります（実測 `births=0`）。
+**呼ぶ側はそれぞれ別の定数へ落ちていました** —— `next_round.py` は
+`FALLBACK_MIN`（90分）、`sibling_check.py` は**下限そのものを外す**。
+
+### 直したこと
+
+`scripts/quota.py` に口を2つ足して、比の計算を**1か所**にしました。
+
+    gauge_floor_minutes(base)      画面の%から `(分, 何倍)` を出す。要らなければ None
+    effective_floor_minutes(base)  「結局いくつで回すのか」。誕生 → 駄目なら画面
+
+`recommended_floor_minutes()` の契約（数えられなければ `None`）は**変えていません** ——
+`None` を返すこと自体に意味を持たせている検査があります（`tests/test_pace.py`）。
+`next_round.py` と `sibling_check.py` は、どちらもこの口を見ます。
+
+### 検査を「分数」から「枝」へ直した
+
+赤かった4件は、どれも**年齢を固定値で書いていました**（8分・60分・90分）。
+下限が 90 → 275分 に動いた日に、全部が別の枝へ落ちています。
+
+    test_pace.py            8分 → `floor//2` ／ 90分 → `floor+30`
+    test_spawn_gate_overrun 60分 → `floor-30`（親の発火は58分後のまま）
+
+**`tests/test_pace.py` の1つ上の回が 08/22 に同じ直しをしていました**
+（「**「60分」と書かないこと**。下限は実測で動きます」）。**同じ教訓を、
+隣の3件には適用していなかった**という形です。いまは全部 `effective_floor_minutes()`
+から作り、目盛りが無い回は skip します。
+
+**85件 緑**（pace / pace_window_rollover / next_round / next_round_gauge_floor /
+spawn_prompt / spawn_gate_overrun / quota_gauge）。
+
+### 覆る条件
+
+- 誕生が数えられるようになったら `recommended_floor_minutes()` が先に返り、
+  画面の比は使われません（そちらが正）
+- 新しい画面で「いまの速さ ≦ 許される速さ」になれば `gauge_floor_minutes()` が
+  `None` を返し、**呼ぶ側は自分で元に戻ります**（手で戻さない）
+- 1周の重さを大きく変えたら、比の前提が変わるので測り直すこと

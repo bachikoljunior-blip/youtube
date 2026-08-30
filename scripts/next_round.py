@@ -211,43 +211,20 @@ def floor_minutes() -> tuple[float, str]:
     return float(got), "quota.py の実測"
 
 
-#: 速さの比で伸ばすときの上限（分）。**6時間**。これを超えると、
-#: オーナーが画面を送ってから次の周までが1日に2回を切り、目盛りのほうが先に腐ります。
-GAUGE_FLOOR_CAP = 360.0
-
-
 def _floor_from_gauge() -> tuple[float, str]:
     """**誕生が数えられない回に、オーナーの画面の%から間隔を出す。**
 
-    `quota.py` の `floor_min` は「誕生から誕生」を数えて出しますが、
-    `data/quota.jsonl` が薄い回は `None` になります（2026-08-30 の実測: `births=0`）。
-    そこで長らく `FALLBACK_MIN`（90分）の定数に落ちていました。
-    **定数は、速すぎるか遅すぎるかを言いません。**
+    比の計算そのものは `quota.gauge_floor_minutes()` にあります
+    （`sibling_check.py` も同じ口を見るので、**2か所に書かない**）。
+    ここがやるのは、`FALLBACK_MIN` を基準として渡すことと、
+    **なぜその数になったかを1行で言うこと**だけです。
 
-    **画面の%からは、比なら出せます。** `pace()` は
-    「いまの速さ `rate`」と「この先に許される速さ `forward_rate`」を両方 持っています。
-    **1周の重さが変わらないなら、間隔はその比のぶんだけ伸ばせば釣り合います。**
-
-        2026-08-30 15:40 JST の画面: 週 42%（枠は 08/29 07:00 → 09/05 07:00）
-          いまの速さ   1.286 %/時
-          許される速さ 0.428 %/時（残り 58% ÷ 残り 135時間）
-          比 3.0 → **90分 × 3.0 = 270分**
-        このままなら 100% は 09/01 12:46 JST。**リセットまで 90時間、鎖が止まります**
-        —— 止まるのはこのループだけではありません。**オーナー自身も使えなくなります。**
-
-    **仮定**: 枠を減らしているのは、ほぼこのループだということ。
-    `CLAUDE.md` は「アカウント全体から決めないこと（他の運転が混ざる）」と言っており、
-    それは正しい。**ただし混ざっているぶんは、こちらを速くする理由にはなりません** ——
-    他の運転が乗っているなら、こちらはなおさら遅くする側です。
-
-    **覆る条件**: (a) `quota.jsonl` が誕生を数えられるようになったら、
-    `floor_min` が先に返るのでこの関数は呼ばれません（そちらが正）。
-    (b) 新しい画面で `rate <= forward_rate` になったら、比が1以下になり
-    `FALLBACK_MIN` に戻ります —— **自分で縮みます。手で戻す必要はありません。**
-    (c) 1周の重さを大きく変えたら、比の前提が変わるので測り直すこと。
+    2026-08-30 の実測: 週 42%・いま 1.286 %/時 ÷ 許される 0.428 = ×3.0 → **270分**。
+    **覆る条件は `quota.gauge_floor_minutes()` の docstring にあります**
+    （速さが線の内側に戻れば `None` が返り、ここは自分で `FALLBACK_MIN` に戻ります）。
     """
     try:
-        from scripts.quota import pace
+        from scripts.quota import gauge_floor_minutes
     except Exception:                                          # noqa: BLE001
         try:
             import importlib.util
@@ -255,25 +232,18 @@ def _floor_from_gauge() -> tuple[float, str]:
                 "quota", ROOT / "scripts" / "quota.py")
             mod = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(mod)
-            pace = mod.pace
+            gauge_floor_minutes = mod.gauge_floor_minutes
         except Exception:                                      # noqa: BLE001
             return FALLBACK_MIN, "quota.py を読めませんでした（目盛りも見られません）"
     try:
-        p = pace()
+        got = gauge_floor_minutes(FALLBACK_MIN)
     except Exception as exc:                                   # noqa: BLE001
-        return FALLBACK_MIN, f"quota.py の pace が答えませんでした（{str(exc)[:60]}）"
-    if not p:
-        return FALLBACK_MIN, "quota.py が「まだ出せない」と答えました（目盛りが足りない）"
-    rate, fwd = p.get("rate"), p.get("forward_rate")
-    if not rate or not fwd or fwd <= 0 or rate <= fwd:
-        return FALLBACK_MIN, "目盛りはありますが、いまの速さは許される速さの内側です"
-    ratio = float(rate) / float(fwd)
-    got = min(GAUGE_FLOOR_CAP, FALLBACK_MIN * ratio)
-    why = (f"目盛りから（誕生が数えられないので速さの比で伸ばした。"
-           f"いま {float(rate):.3f} ÷ 許される {float(fwd):.3f} = ×{ratio:.1f}"
-           + ("・上限6時間で頭打ち" if FALLBACK_MIN * ratio > GAUGE_FLOOR_CAP else "")
-           + "）")
-    return got, why
+        return FALLBACK_MIN, f"quota.py の目盛りが答えませんでした（{str(exc)[:60]}）"
+    if not got:
+        return FALLBACK_MIN, "目盛りが無いか、いまの速さは許される速さの内側です"
+    minutes, ratio = got
+    return float(minutes), (f"目盛りから（誕生が数えられないので速さの比で伸ばした。"
+                            f"×{ratio:.1f}）")
 
 
 def decide(now: datetime | None = None) -> dict:
