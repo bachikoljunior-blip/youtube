@@ -85,6 +85,8 @@ import statistics
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
+from . import frames
+
 ROOT = Path(__file__).resolve().parent.parent
 LEDGER = ROOT / "data" / "uploaded.jsonl"
 STASH = ROOT / "data" / "critique_queue"
@@ -170,6 +172,8 @@ def corpus(ledger: Path | None = None, stash: Path | None = None,
             "narration": list(s.get("narration") or []),
             "change_ratios": list(s.get("change_ratios") or []),
             "orientation": s.get("orientation"),
+            # **画面に出る文字**（割った後のコマ）。`<id>.json` とは別々に欠けます。
+            "plan": frames.plan_of(vid, st),
         })
     return out
 
@@ -183,10 +187,29 @@ def coverage(ledger: Path | None = None, stash: Path | None = None) -> dict:
 
 
 def _as_script(rec: dict) -> dict:
-    """`verify` が読む形へ。**説明欄と画面の文字は控えに無いので入りません。**"""
+    """`verify` が読む形へ。**説明欄は控えに無いので入りません。**
+
+    **画面の文字は入ります**（2026-08-30 夜に直した）。ここには長らく
+    「説明欄と**画面の文字**は控えに無い」と書いてありましたが、
+    **画面のほうは在ります** —— `data/critique_queue/<video_id>.plan.json`
+    （655本ぶん）が、割った後のコマをそのまま持っています。
+    `<id>.json` の `slides_plan` が `true`（**在るという印**）なのを
+    「中身が無い」と読んだのが、この註の出どころだと思われます。
+
+    **見ていないと書いてあるものは、本当に見ていないのかを確かめること** ——
+    見ていない側に置いたまま `AUTOMATION_PAUSED.md` の解除条件1・2・5 が
+    閉じられており、**画面は一度も測られていませんでした**（実測は 0件でしたが、
+    それは測ったから言えることです）。
+
+    **説明欄だけは、いまも読めません** —— 控えに `description_body` が無く、
+    正本は Data API（`videos.list` の `snippet.description`）です。
+    """
     return {
         "title": rec["title"],
-        "segments": [{"narration": n} for n in rec["narration"]],
+        "segments": (
+            [{"narration": n} for n in rec["narration"]]
+            + [{"visual": v} for v in (rec.get("plan") or [])]
+        ),
     }
 
 
@@ -206,11 +229,34 @@ def persona_defects(recs: list[dict]) -> list[dict]:
     return out
 
 
+def screen_texts(rec: dict) -> list[str]:
+    """1本の**画面に出る文字**を全部。`verify._visual_texts()` と同じ読み方。
+
+    **無い本は空**です（`*.plan.json` は `<id>.json` と別々に欠けます）。
+    """
+    from src import verify  # 遅延 import（`verify` は重い）
+
+    out: list[str] = []
+    for v in rec.get("plan") or []:
+        out += verify._visual_texts({"visual": v})
+    return out
+
+
+def screen_coverage(recs: list[dict]) -> dict:
+    """**画面を数えられる本が何本あるか**。分母を先に出すためのもの。"""
+    have = sum(1 for r in recs if r.get("plan"))
+    return {"n": len(recs), "with_screen": have, "without_screen": len(recs) - have}
+
+
 def advice_defects(recs: list[dict]) -> list[dict]:
-    """**行動を指図している本**（`channel.yaml` の `avoid` に 08/30 に足した形）。"""
+    """**行動を指図している本**（`channel.yaml` の `avoid` に 08/30 に足した形）。
+
+    **画面の文字も入れます**（2026-08-30 夜）。実測では画面の側の当たりは
+    **0 / 655本** でしたが、**入れて 0 なのと、見ていないのは別**です。
+    """
     out = []
     for r in recs:
-        text = r["title"] + "\n" + "\n".join(r["narration"])
+        text = "\n".join([r["title"], *r["narration"], *screen_texts(r)])
         hits = []
         for pat, why in _ADVICE_PATTERNS:
             m = re.search(pat, text)
@@ -319,6 +365,10 @@ def report(verbose: bool = False) -> str:
         a(f"  予約は {d['first']:%m/%d %H:%M} 〜 {d['last']:%m/%d %H:%M} JST・"
           f"**{d['per_day']:.1f}本/日** —— **混在の窓はここまで開いています**")
 
+    sc = screen_coverage(recs)
+    a(f"  そのうち**画面の文字が読める {sc['with_screen']}本**"
+      f"（`*.plan.json`。読めない {sc['without_screen']}本 は 1)2) の画面の側だけ分母から外れます）")
+
     a("")
     a("--- 1) 人間の専門家を装っているか（解除条件 1・2）---")
     pd = persona_defects(recs)
@@ -361,8 +411,14 @@ def report(verbose: bool = False) -> str:
     a("  名乗りの側（1）が 0 なら、**引っ込める理由はそこにはありません** ——")
     a("  残る欠陥は（3）で、これは**これから作る本の型を変えれば直り、")
     a("  すでに出た本を消しても直りません**（消しても型は変わらないため）。")
-    a("  **見ていないもの: 説明欄・画面の文字・控えの無い"
-      f"{cov['without_script']}本。**「無かった」ではありません。")
+    a("  **画面の文字は 2026-08-30 夜から見ています**（1)2) の分母に入っています）——")
+    a("  それまでは「控えに無い」と書いてありましたが、**在りました**"
+      f"（`*.plan.json` {sc['with_screen']}本）。")
+    a("  そして測ったら、揃っているのは**読み上げより画面のほう**でした ——")
+    a("  最後のコマの見出しは長尺の **83%** が同じ4文字（`python -m src.frames`）。")
+    a("  **見ていないもの: 説明欄（正本は Data API）・控えの無い"
+      f"{cov['without_script']}本・画面の読めない {sc['without_screen']}本。**"
+      "「無かった」ではありません。")
     return "\n".join(lines)
 
 

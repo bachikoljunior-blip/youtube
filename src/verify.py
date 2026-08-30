@@ -2266,6 +2266,82 @@ def _check_frame_repeat(script: dict | None, portrait: bool,
                 f"（型そのものは `script_writer.{'opening' if ax == 'opening' else 'closing'}_form()`"
                 f" がテーマIDで決めていて、変えられません）"
             )
+    problems += _check_screen_frame_repeat(script, history)
+    return problems
+
+
+def _check_screen_frame_repeat(script: dict | None,
+                               history: list[dict]) -> list[str]:
+    """**画面の側**の同じ門（2026-08-30 夜に足した。上の門の続き）。
+
+    ## なぜ別に要るか（**実測で、読み上げより揃っていました**）
+
+    上の門は `frames.axes()` ＝ **読み上げ**しか見ていません。
+    控えの `*.plan.json` を同じ 4文字で測ると、こうです
+    （`python -m src.frames`・API 0単位）:
+
+        長尺 134本    読み上げの最終行の頭「明日やる」 61%
+                      **画面の最後のコマの見出し「明日やる」 83%**（実効 2.1本ぶん）
+        ショート 521本 画面の同じ所が「あなたの」29% ＋「あなたは」25%
+
+    **視聴者が続けて数本 見て最初に気づくのは、耳より目のほうです。**
+    そして解除条件3を閉じた回は、入口（`OPENING_RULES`/`CLOSING_RULES`）も
+    出口（上の門）も**読み上げの文だけ**を相手にしていました ——
+    つまり **「読み上げは4通りに散ったが、画面には同じ見出しが並ぶ」が素通り**します。
+
+    ## 比べ方（上の門と同じ。**定数を写さないこと**）
+
+    窓・閾値・頭の文字数は上と同じものを使います（`FRAME_WINDOW` /
+    `FRAME_MAX_SHARE` / `frames.SCREEN_CLOSE_HEAD`）。
+    **履歴の側は `<video_id>.plan.json`** で、`<id>.json` とは**別々に欠けます**
+    （`build_perf` の註）。読めた本が `FRAME_MIN_HISTORY` に足りなければ、
+    **「合格」ではなく「判定していない」と印字して黙ります**（`src/bars.py` と同じ扱い）。
+
+    ## この門が見ないもの
+
+    **1枚目の `kind`**（実測で長尺もショートも 100% `stat`）は、揃っていても
+    落としません —— 4通りの入り方が**どれも結論の数字を先に言い切れ**と
+    言っているので、そこは維持率の要件そのものです（`frames.screen_axes` の docstring）。
+
+    ## 覆る条件
+
+    - 割った後のコマ（`slides_plan.json`）は見出しに `2/2` や `＋…` が付きますが、
+      **頭4文字は動きません。** 付く場所が頭に変わったら、この門は誤検知します
+    - 画面の軸を増やすなら `frames.SCREEN_AXES` に足すこと。**ここに写さない**
+    """
+    if not script:
+        return []
+    plan = [dict(s.get("visual") or {}) for s in (script.get("segments") or [])]
+    mine = frames.screen_axes([p for p in plan if p])
+    if not mine:
+        return []
+
+    sigs = []
+    for h in history:
+        vid = str(h.get("video_id") or "")
+        if not vid:
+            continue
+        s = frames.screen_axes(frames.plan_of(vid))
+        if s:
+            sigs.append(s)
+    if len(sigs) < FRAME_MIN_HISTORY:
+        print(f"[verify] 画面の枠の重なりは判定していません（直近の控えのうち "
+              f"*.plan.json が読めたのは {len(sigs)}本 で、{FRAME_MIN_HISTORY}本 に足りません）")
+        return []
+
+    problems: list[str] = []
+    for ax in frames.SCREEN_AXES:
+        same = sum(1 for s in sigs if s.get(ax) == mine[ax])
+        share = same / len(sigs)
+        if share > FRAME_MAX_SHARE:
+            problems.append(
+                f"**最後のコマの見出し**が {mine[ax]!r} で、**直近{len(sigs)}本のうち "
+                f"{same}本（{share:.0%}）が同じ**です。"
+                "**読み上げを変えても、画面に同じ見出しが並べば同じ動画に見えます**"
+                "（実測で、画面の側のほうが読み上げより揃っていました: 83% 対 61%）。"
+                "締め方の型（`script_writer.closing_form()`）に合わせて、"
+                "**見出しのほうも書き換えること**"
+            )
     return problems
 
 

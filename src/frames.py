@@ -94,6 +94,13 @@ CLOSE_TAIL = 6
 
 AXES = ("opening", "closing", "closing_tail")
 
+#: **画面に出る文字**の側の見る場所（2026-08-30 夜に足した。下の `screen_axes`）。
+#: 読み上げと同じ 4文字で切ります —— **同じ物差しでないと、
+#: 「読み上げは散ったが画面は揃ったまま」が読めません。**
+SCREEN_CLOSE_HEAD = 4
+
+SCREEN_AXES = ("screen_closing",)
+
 
 def norm(text: str) -> str:
     """数字を `N` に潰す。**中身ではなく型を見るため**（`legacy_corpus._shape` と同じ考え）。"""
@@ -138,6 +145,81 @@ def concentration(rows: list[dict]) -> dict:
     sigs = [s for s in sigs if s]
     out: dict = {"n": len(sigs)}
     for ax in AXES:
+        vals = [s[ax] for s in sigs]
+        c = collections.Counter(vals)
+        top, cnt = c.most_common(1)[0] if c else ("", 0)
+        out[ax] = {
+            "distinct": len(c),
+            "top": top,
+            "top_share": (cnt / len(vals)) if vals else 0.0,
+            "effective": effective(vals),
+        }
+    return out
+
+
+def screen_axes(plan: list[dict] | None) -> dict[str, str]:
+    """1本の**画面の枠の署名**。いまは**最後のコマの見出しの頭4文字**だけ。
+
+    ## なぜ画面の側にも要るか（2026-08-30 夜に実測して足した）
+
+    `axes()` は**読み上げ**しか見ていません。解除条件3を閉じた回は、
+    その3軸だけを入口（4×4）と出口（`verify._check_frame_repeat`）で塞ぎました。
+    **画面に出る文字は、どちらの門にも入っていませんでした。**
+
+    ところが控えの `*.plan.json`（655本ぶん・**API 0単位で読めます**）を
+    同じ物差しで測ると、そこに同じ形が残っています:
+
+        長尺 134本    最後のコマの見出しの頭4文字「明日やる」 **83%**（実効 **2.1本ぶん**）
+        ショート 521本 同じ所が「あなたの」29% ＋「あなたは」25% ＝ **54%**
+
+    **読み上げ側の「明日やる」61% より、画面側の 83% のほうが揃っています。**
+    視聴者が続けて数本 見たときに最初に気づくのは、**耳より先に目**のほうです。
+
+    ## 見ないもの（**測って、揃っていなかったので入れていません**）
+
+        コマの並び（kind の列）  長尺 実効 134.0／134本・ショート 393.3／521本 ＝ 散っている
+        1枚目の見出しの頭4文字   長尺 実効 106.6・ショート 138.7 ＝ 散っている
+        1枚目の kind             **長尺もショートも 100% `stat`**（実効 1.0）
+
+    **1枚目の `kind` は、揃っていても門にしません。** 4通りの入り方が
+    **どれも「結論の数字を先に言い切る」を要求している**（`script_writer.OPENING_RULES`）
+    ので、1枚目が数字のカードになるのは**維持率の要件そのもの**です。
+    ここを散らすと、収益化の門ではなく視聴維持のほうが崩れます。
+    **覆る条件**: 1枚目の `kind` を散らしても維持率が落ちないと実測できたら、足すこと。
+    """
+    rows = [p for p in (plan or []) if isinstance(p, dict)]
+    if not rows:
+        return {}
+    last = norm(str(rows[-1].get("headline") or ""))
+    if not last.strip():
+        return {}
+    return {"screen_closing": last[:SCREEN_CLOSE_HEAD]}
+
+
+def plan_of(video_id: str, stash: Path | None = None) -> list[dict]:
+    """`data/critique_queue/<video_id>.plan.json`。**無ければ空**。
+
+    **`<id>.json` と `<id>.plan.json` は別々に欠けます**
+    （`build_perf` の docstring と同じ註）。だから呼ぶ側は
+    「空 ＝ 画面が無い」ではなく「**この本は画面を数えられない**」と読むこと。
+    """
+    st = STASH if stash is None else stash
+    p = st / f"{video_id}.plan.json"
+    if not p.is_file():
+        return []
+    try:
+        d = json.loads(p.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, UnicodeDecodeError, OSError):
+        return []
+    return [v for v in d if isinstance(v, dict)] if isinstance(d, list) else []
+
+
+def screen_concentration(plans: list[list[dict]]) -> dict:
+    """一群の**画面の枠**を軸ごとに数える。`concentration()` と同じ形で返します。"""
+    sigs = [screen_axes(p) for p in plans]
+    sigs = [s for s in sigs if s]
+    out: dict = {"n": len(sigs)}
+    for ax in SCREEN_AXES:
         vals = [s[ax] for s in sigs]
         c = collections.Counter(vals)
         top, cnt = c.most_common(1)[0] if c else ("", 0)
@@ -206,6 +288,18 @@ def report(verbose: bool = False) -> str:
                 f"（{c['n']}本中）  いちばん多い型 {a['top']!r} が {a['top_share']:.0%}"
                 f" ／ 種類 {a['distinct']}"
             )
+        plans = [plan_of(r["video_id"]) for r in sub]
+        sc = screen_concentration([p for p in plans if p])
+        if sc["n"]:
+            a = sc["screen_closing"]
+            out.append(
+                f"  {'screen_closing':<13} 実効 **{a['effective']:6.1f}本ぶん**"
+                f"（{sc['n']}本中）  いちばん多い型 {a['top']!r} が {a['top_share']:.0%}"
+                f" ／ 種類 {a['distinct']}   ← **画面の文字**"
+            )
+        else:
+            out.append("  screen_closing  **測っていません**"
+                       "（`*.plan.json` が1本も読めない ＝ 画面の枠は判定不能）")
         if verbose:
             for ax, idx in (("opening", 0), ("closing", -1)):
                 out.append(f"  [{ax}] 頭を何文字で切るか:")
@@ -219,6 +313,8 @@ def report(verbose: bool = False) -> str:
         "  **実効の型数が本数に近ければ散っています。1に近いほど同じ型です。**\n"
         "  この3つが低いのは書き手の癖ではなく、`src/script_writer.py` の\n"
         "  指示文に文句が直書きされていたためです。\n"
+        "  **`screen_closing` は画面に出る文字**（最後のコマの見出し）で、\n"
+        "  読み上げとは**別に揃います** —— 実測で長尺は読み上げ 61% に対し画面 83%。\n"
         "  振り分けが実際に何割に散るかは `python -m src.frames --forms`。"
     )
     return "\n".join(out)
@@ -258,7 +354,11 @@ def forms_report() -> str:
         "\n  --- 読み方（**ここを取り違えないこと**）---\n"
         "  **上の実効と、`python -m src.frames` の実効は別の数です。比べないこと。**\n"
         "  向こうは**出来上がった文の頭4文字**を数えていて、こちらは**割り当てた型の名前**です。\n"
-        "  1つの型の中でも文言は本ごとに変わるので、**出来上がりの実効は必ずこれ以上**になります。\n"
+        "  **ここには『出来上がりの実効は必ずこれ以上になる』と書いてありました。誤りです**\n"
+        "  （2026-08-30 夜に取り消した）。**別の型が同じ文字に潰れれば、出来上がりは下に出ます。**\n"
+        "  実物があります —— 控えの `*.plan.json` を見ると、**最後のコマの見出し**は\n"
+        "  長尺 134本の **83%** が「明日やる」で、**実効 2.1本ぶん**（`python -m src.frames`）。\n"
+        "  だから**割り当ての散りは、出来上がりの下限ではありません。上限の根拠にだけ使うこと。**\n"
         "\n"
         f"  **言えるのは上限のほうです**: 型を1つに揃える本は、多くても **{worst:.0%}**。\n"
         "  いまの控えの最頻は 長尺の入り **84%**・長尺の締め **61%**・ショートの締め **45%**\n"
