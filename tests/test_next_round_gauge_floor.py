@@ -47,16 +47,20 @@ def _load():
 nr = _load()
 
 
-def _pace(rate, fwd):
-    return {"rate": rate, "forward_rate": fwd}
+def _gauge(rate, fwd, base):
+    """`quota.gauge_floor_minutes()` と同じ返り: `(分, 何倍)` か `None`。"""
+    if rate <= fwd:
+        return None
+    ratio = rate / fwd
+    return min(360.0, base * ratio), ratio
 
 
-def _patch(monkeypatch, *, floor, pace):
+def _patch(monkeypatch, *, floor, gauge):
     import sys
     import types
     fake = types.ModuleType("scripts.quota")
-    fake.recommended_floor_minutes = lambda: floor
-    fake.pace = lambda *a, **k: pace
+    fake.recommended_floor_minutes = lambda *a, **k: floor
+    fake.gauge_floor_minutes = lambda base=90.0, *a, **k: gauge
     pkg = sys.modules.get("scripts") or types.ModuleType("scripts")
     pkg.quota = fake
     monkeypatch.setitem(sys.modules, "scripts", pkg)
@@ -65,7 +69,7 @@ def _patch(monkeypatch, *, floor, pace):
 
 def test_誕生が数えられる回はそちらが勝つ(monkeypatch):
     """**`floor_min` が出ているなら、画面の比は使いません。**"""
-    _patch(monkeypatch, floor=41.0, pace=_pace(9.9, 0.1))
+    _patch(monkeypatch, floor=41.0, gauge=(999.0, 9.9))
     got, why = nr.floor_minutes()
     assert got == 41.0
     assert "実測" in why
@@ -73,7 +77,8 @@ def test_誕生が数えられる回はそちらが勝つ(monkeypatch):
 
 def test_速すぎる回は比のぶんだけ間隔が伸びる(monkeypatch):
     """08/30 の実物: 1.286 ÷ 0.428 = ×3.0 → 90分 が 270分 になる。"""
-    _patch(monkeypatch, floor=None, pace=_pace(1.2857142857142858, 0.4283302072178486))
+    _patch(monkeypatch, floor=None,
+           gauge=_gauge(1.2857142857142858, 0.4283302072178486, nr.FALLBACK_MIN))
     got, why = nr.floor_minutes()
     assert 265.0 <= got <= 275.0, got
     assert "比" in why
@@ -81,7 +86,7 @@ def test_速すぎる回は比のぶんだけ間隔が伸びる(monkeypatch):
 
 def test_内側に入ったら自分で戻る(monkeypatch):
     """**手で戻さないこと。** 速さが許される線の内側なら定数に戻ります。"""
-    _patch(monkeypatch, floor=None, pace=_pace(0.30, 0.43))
+    _patch(monkeypatch, floor=None, gauge=_gauge(0.30, 0.43, nr.FALLBACK_MIN))
     got, why = nr.floor_minutes()
     assert got == nr.FALLBACK_MIN
     assert "内側" in why
@@ -89,13 +94,13 @@ def test_内側に入ったら自分で戻る(monkeypatch):
 
 def test_伸ばしすぎない(monkeypatch):
     """**上限6時間。** これを超えると、画面のほうが先に腐ります。"""
-    _patch(monkeypatch, floor=None, pace=_pace(50.0, 0.4))
+    _patch(monkeypatch, floor=None, gauge=_gauge(50.0, 0.4, nr.FALLBACK_MIN))
     got, _ = nr.floor_minutes()
-    assert got == nr.GAUGE_FLOOR_CAP == 360.0
+    assert got == 360.0
 
 
 def test_目盛りが無い回は止めない(monkeypatch):
     """**測れないことを理由に鎖を止めないこと**（`quota.py` の docstring と同じ理由）。"""
-    _patch(monkeypatch, floor=None, pace=None)
+    _patch(monkeypatch, floor=None, gauge=None)
     got, _ = nr.floor_minutes()
     assert got == nr.FALLBACK_MIN
