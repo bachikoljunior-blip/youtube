@@ -1350,6 +1350,134 @@ def _per_day_soft(fallback: int = 10) -> int:
 
 _PER_DAY_SOFT = 10            # **読めない回の既定**。実際に使う数は `_per_day_soft()`
 
+
+# --- **1日の公開本数の、機械の上限**（2026-08-30。解除条件4）-----------------
+#
+# **文書だけの上限は、上限ではありません。** `docs/MEANS.md` M14 は 2026-08-25 から
+# 「崩れる点は 10本/日」と書いてあり、`config/hypotheses.yaml` の `next_done` も
+# 08-28 に「頭打ちと確定させた」と書いています。**それでも機械は 08/27 に 19本、
+# 08/28 に 22本 置きました。** 書いてある数と、出している数が別だった、という形です。
+#
+# ## なぜ `_per_day_soft()` があるのに足りなかったか
+#
+# あれが効くのは `_band_walk()` の**帯の中だけ**です。数えているのは
+# `busy & set(grid)` ＝ **帯（09:00〜13:30）の枠に入っている本だけ**なので、
+#
+#     長尺の `ring`（20:00〜）           日を名指ししないので `_band_walk` を通らない
+#     `--hours` の明示                  `slots()` が「明示は通す」で素通しする
+#     `--step-min 30` の `_slots_fine`  別の道
+#     **同じ日に2回 走った回**          2回目は、1回目が帯の外に置いた本を数えない
+#
+# の4つが素通りします。19〜22本/日 は、この4つの足し算です。
+#
+# **だからここは `slots()` が返した後**に当てます。置き先を決める道が何本あっても、
+# 出口はこの1本だからです（`main()` の「0.7」）。**そして生成の前に当てます** ——
+# 作ってから捨てると、その本は `build/` ごとコンテナと一緒に消えます。
+#
+# ## 上限の出どころ（**定数を書かないこと**）
+#
+# `src.density_verdict.HOUR_HI` ＝ **測れている帯の上端 13本/日**。
+# 同じ数を `scripts/eta.py` の `PLAN_PUBLISH_PER_DAY` が使っています ——
+# **計画が立てている本数と、機械が出せる本数を、同じ1か所から取る**ためです
+# （検査 `tests/test_density_cap.py`。ずれたら赤くなります）。
+#
+# 2026-08-30 の判定（`python -m src.density_verdict`・API 0単位）:
+#
+#     詰めた日（1日16本以上）    1本あたり再生の中央値   2回（5日・119本）
+#     1時間きざみの日（8〜13本）                      716回（4日・42本）
+#     倍率 **0.003**（`falsified_if` は 0.5 未満）→ **falsified**
+#
+# **覆る条件**: `density_verdict` を撃ち直して倍率が 0.5 以上に戻ったら、
+# この門ごと外してよい。上端が動けば上限も動きます（`HOUR_HI` を読むだけなので、
+# ここを書き換える必要はありません）。
+
+#: **上限が読めなかった回の既定。** `density_verdict.HOUR_HI` と同じ数を書きます
+#: （検査が一致を見ています）。**読めない回に無制限へ落ちないこと** ——
+#: 落ちると、計器が壊れた回だけ 22本/日 に戻ります。
+_DENSITY_CAP_FALLBACK = 13
+
+
+@functools.cache
+def density_cap() -> int:
+    """**1日に置いてよい本数**（`src.density_verdict.HOUR_HI`）。API 0単位。"""
+    try:
+        from src import density_verdict                          # noqa: PLC0415
+        return max(1, int(density_verdict.HOUR_HI))
+    except Exception:                                            # noqa: BLE001
+        return _DENSITY_CAP_FALLBACK
+
+
+def cap_by_density(when: list[str], cap: int | None = None,
+                   ledger: dict[str, set[int]] | None = None
+                   ) -> tuple[list[int], list[str]]:
+    """`slots()` の返りから、**1日の上限を超えるぶんを落とす**（API 0単位）。
+
+    返り: `(残す添字, 印字する行)`。呼ぶ側は `topics` と `when` を
+    **同じ添字で**絞ること（対応が崩れると別の本が別の枠へ行きます）。
+
+    ## 2種類の指定を、別々に数えます
+
+    `"YYYY-MM-DD@H"` / `"…@H:MM"`
+        **日が名指しされている。** その日の控えの本数に足して数え、
+        上限を超えたぶんを落とす。控えは取り消し済みの本も埋まりに数える
+        **上限側の見積り**です（`slots()` の docstring と同じ扱い）。
+
+    `"9"`（時だけ）
+        **日が名指しされていない。** `uploader.next_publish_at()` が
+        「その時刻で最初に空いている**日**」を返すので、
+        **1日に着きうる本数は、この回が使う相異なる時刻の数**が上限になります
+        （同じ時刻を n 回 返す回は 1日1本ずつ n日 に散る ＝ 落とすものはありません）。
+        だから数えるのは本数ではなく**時刻の種類**です。
+
+    **控えが読めなかった回は、この回の本だけで数えます**（0本 とみなす）。
+    黙って素通しするより、少なくともこの回の中の詰め込みは止まります。
+    """
+    cap = density_cap() if cap is None else int(cap)
+    notes: list[str] = []
+    if cap <= 0 or not when:
+        return list(range(len(when))), notes
+    if ledger is None:
+        try:
+            ledger = _ledger_by_day()
+        except Exception as exc:                                 # noqa: BLE001
+            notes.append("[batch] 控えが読めないので、1日の上限は"
+                         f"**この回の本だけ**で数えます（続行）: {str(exc)[:60]}")
+            ledger = {}
+    used = {d: len(v) for d, v in (ledger or {}).items()}
+    before = dict(used)
+    keep: list[int] = []
+    dropped: dict[str, int] = {}
+    hours_seen: set[str] = set()
+    for i, w in enumerate(when):
+        if "@" in w:
+            day = w.split("@", 1)[0]
+            if used.get(day, 0) >= cap:
+                dropped[day] = dropped.get(day, 0) + 1
+                continue
+            used[day] = used.get(day, 0) + 1
+        else:
+            if w not in hours_seen and len(hours_seen) >= cap:
+                dropped["(時刻だけの指定)"] = dropped.get("(時刻だけの指定)", 0) + 1
+                continue
+            hours_seen.add(w)
+        keep.append(i)
+    if dropped:
+        detail = "／".join(
+            (f"{d} は控え {before.get(d, 0)}本 ＋ この回 "
+             f"{used.get(d, 0) - before.get(d, 0)}本 で上限 → **{n}本 落とす**"
+             if d in used else f"{d} で **{n}本 落とす**")
+            for d, n in sorted(dropped.items()))
+        notes.append(
+            f"[batch] **1日の上限 {cap}本/日 に当てて、{sum(dropped.values())}本 を"
+            f"この回から外します**（{detail}）。"
+            " 上限は `src.density_verdict.HOUR_HI`（測れている帯の上端）で、"
+            "**16本以上の日は1本あたり再生の中央値が 2回**（1時間きざみの日は 716回・"
+            "倍率 0.003 ＝ `falsified_if` を桁で下回る）。"
+            " **落とした本は作っていません** —— 題材は在庫に残るので、"
+            "次の回が別の日へ置けます。")
+    return keep, notes
+
+
 #: **1回に逃がす死に枠の上限**（`_rescue_dead_slots()`）。1手 50単位。
 #: 日枠 10,000 のうち `videos.insert` が 1本 1,600単位 ＝ 1日 6本 が限度なので、
 #: ここを大きくすると**その日の投稿が減ります**。20手 ＝ 1,000単位 ＝ 投稿 0.6本ぶん。
@@ -3603,6 +3731,27 @@ def main(argv: list[str] | None = None) -> int:
     when = slots(len(topics), args.hour, args.date or None, hours,
                  step_min=args.step_min, ring=ring, live=live,
                  long_form=bool(args.long))
+    # ---- 0.7 **1日の本数の上限を、ここで当てる**（2026-08-30。解除条件4）--------
+    #
+    # **置き先を決める道は5本ありますが、出口はここ1本です**（`cap_by_density()` の
+    # docstring に、どれが `_per_day_soft()` を素通りするかの一覧）。
+    # **生成の前**に当てるので、落とした本は1秒も作りません（題材は在庫に残ります）。
+    #
+    # **`--skip-upload` の回は当てません** —— 予約しない回は、その日の公開本数を
+    # 1本も増やさないからです（作るだけで `build/` ごと消えます）。
+    if not args.skip_upload:
+        _keep, _cap_notes = cap_by_density(when)
+        for _line in _cap_notes:
+            print(_line, flush=True)
+        if len(_keep) < len(when):
+            topics = [topics[i] for i in _keep]
+            when = [when[i] for i in _keep]
+        if not topics:
+            print("[batch] **この回は1本も置けません**（行き先の日が全部 "
+                  f"{density_cap()}本/日 で埋まっています）。"
+                  " `--date` で先の日を指すか、次の回に回すこと。"
+                  " **生成はしていません。**", flush=True)
+            return 0
     # **枠と題材の対応を、IDのハッシュで配り直す**（`_ab_slot_order()` の docstring）。
     #     `live` の回だけ ＝ 置き先を指示されていない回だけ。
     #     **落ちてもこの回を止めないこと** —— 配り直しは実験で、投稿は本体です。
