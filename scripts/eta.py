@@ -62,7 +62,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from src import arm_speed, day_cap, levers, motion_groups, pause_guard, rpm_mix, settle, subs_cap  # noqa: E402  （`sys.path` を通した後でないと読めません）
+from src import arm_speed, day_cap, levers, motion_groups, pause_guard, resume_gate, rpm_mix, settle, subs_cap  # noqa: E402  （`sys.path` を通した後でないと読めません）
 
 LOG = ROOT / "data" / "eta.jsonl"
 
@@ -4390,6 +4390,38 @@ def plan(m: dict, a: dict, density: int = PLAN_PUBLISH_PER_DAY,
     if _rc and out.get("lever_hint") == "per_video":
         out["lever_hint_covered"] = (_rc.isoformat() if hasattr(_rc, "isoformat")
                                      else str(_rc))
+    # --- **止まっている間の名指しは `gate`**（2026-08-30・最適化の回が足した）---
+    #
+    # ここまでで選ばれる4本（`per_video` / `rpm` / `density` / `sub_rate`）は、
+    # **どれも本を出さないと引けません。** 08/30 から `src/pause_guard` が
+    # 生成・投稿・チャンネルの書き換えを塞いでいるので、**この回には1本も引けない
+    # 腕を名指ししている**ことになります。
+    #
+    # **実害は「読み手が無視する」ことではありません。** `run_marker.py` が
+    # `lever_followed = (lever == lever_hint)` を残すので、
+    # **引けない腕を名指しし続けると、その比が全部 False で埋まります** ——
+    # 実測 08/30 の ship 40件 は `lever_hint` が **40件とも `per_video`**、
+    # `lever_followed` は直近200件で **29/200（14.5%）**。
+    # 名指しが外れているのに、外したのは選ぶ側だと記録されます。
+    #
+    # そして `p_pass`（審査に受かる確率）は到達日に**掛かる**項なので、
+    # **門が律速です**（`src/resume_gate.py` の docstring に実測）。
+    #
+    # **覆る条件**: `AUTOMATION_PAUSED.md` が消える、または門が全部 閉じたら、
+    # この上書きは自分で黙り、名指しは床の診断（4本のどれか）へ戻ります。
+    # 検査は `tests/test_resume_gate.py`。
+    if resume_gate.is_paused() and resume_gate.open_items():
+        out["lever_hint_binding"] = out.get("lever_hint")
+        out["lever_hint"] = "gate"
+        # **`date` のまま積まないこと**（同じ罠を 2026-08-26 に `lever_hint_covered` で
+        # 踏んでいます）。この dict は `data/eta.jsonl` へ書き戻されるので、
+        # `date` を残すと **反映だけが `TypeError` で落ちて ship は残る**という形で出ます。
+        _g = dict(resume_gate.summary())
+        _g["since"] = _g["since"].isoformat() if _g.get("since") else None
+        out["gate"] = _g
+        # **`lever_hint_covered` は消すこと。** あれは「名指しの測定が予約済みの
+        # 本で答えが返る」という意味で、`gate` には掛かりません（本が出ないので）。
+        out.pop("lever_hint_covered", None)
     return out
 
 
@@ -5102,6 +5134,113 @@ def _theta_line(tr: dict | None, base: dict | None) -> list[str]:
     return [line]
 
 
+def gate_lines(bar: str = "###", tr: dict | None = None) -> list[str]:
+    """**審査の門（`AUTOMATION_PAUSED.md` の Resume gate）を、床として印字する。**
+
+    ## なぜ要るか（2026-08-30・最適化の回が足した）
+
+    ここには長らく、次の1行が**手書きで**ありました。
+
+        **その項はまだこの機械に入っていません。**
+
+    正しい記述でしたが、**記述は床になりません。** 実測（`data/runs.jsonl`）:
+    08/26→08/30 の ship **359件**、そのあいだ到達日は **+13日 遠のいた**。
+    停止後の 08/30 は ship 40件 のうち **20件が `--lever none`** ——
+    引ける腕が語彙に無いので、律速を進めた回まで「動かさない回」に落ちます。
+
+    **`p_pass`（審査に受かる確率）は、到達日に掛かる項です。**
+    受からなければ再生がいくつでも収入は 0 円（`CLAUDE.md`）。
+    だから腕（`per_video` / `rpm` / `density` / `sub_rate`）は**その内側**にあり、
+    **外側が 0 なら内側を何倍にしても 0** です。
+
+    ## この関数が**しない**こと
+
+    **確率の数字を作りません。** 審査に出した実績が 0回 なので測れません
+    （`src/resume_gate.p_pass()` は常に `None`）。言うのは
+    「**1.0 と置く根拠がどこにも無い**」ことだけです。
+    同じ理由で、門が閉じる速さも**閉じた実績が 3件 未満のうちは `None`**
+    ——「**測れないことを誤りゼロとして印字する**」のがこの仕掛けの最悪の壊れ方
+    （`docs/JOURNAL.md` 2026-08-30 の覆る条件4）。
+
+    ## 覆る条件
+
+    `AUTOMATION_PAUSED.md` が消えれば、呼び元の分岐ごと黙ります。
+    門を 6件 閉じても審査に落ちたら、直すのは**あちらのファイル**であって、ここではない。
+    """
+    g = resume_gate.summary()
+    out: list[str] = []
+    if not g["total"]:
+        out.append(f"{bar} [!] **Resume gate の条件が 1件も読めませんでした** ——"
+                   f" `AUTOMATION_PAUSED.md` の `## Resume gate` の番号つき箇条書きが"
+                   f"見つかりません。**0件 を「全部 閉じた」と読まないこと。**")
+        return out
+    closed, total, opened = g["closed"], g["total"], g["open"]
+    cap = g["cap"]
+    out.append(
+        f"{bar} **その項を、この回から床として入れました**（`src/resume_gate.py`）——"
+        f" **審査の門 {closed}/{total} 件 が閉じています**"
+        + (f"（天井まで **×{cap:.2f}**）" if cap is not None
+           else "（**0/6 なので倍率は定義できません** —— 0倍 では 6件 になりません。要るのは 6件）")
+        + f" **`p_pass` は値を返しません**（審査に出した実績 0回 ＝ 測れない）。"
+        f" **返さないこと自体が答え**で、`1.0` と置く根拠がどこにも無い、という意味です。")
+    if opened:
+        names = " ／ ".join(f"**{r['n']}** {r['text']}" for r in g["open_items"])
+        out.append(f"{bar} 開いている {opened}件: {names}")
+    # **正本が「閉じた」と言っているのに、根拠の1行が台帳に無い件**（2026-08-30 に踏んだ）。
+    #     `AUTOMATION_PAUSED.md` の原文は「次の全条件が**記録される**まで解除しない」。
+    #     **印だけ付いて根拠が無い状態は、まだ記録されていません。**
+    if g.get("unrecorded"):
+        ns = "／".join(str(r["n"]) for r in g["unrecorded"])
+        out.append(
+            f"{bar} [!] **{ns} は `AUTOMATION_PAUSED.md` の側で「閉じた」と印が付いていますが、"
+            f"根拠の1行が `data/resume_gate.jsonl` にありません。** 原文は"
+            f"「次の全条件が**記録される**まで解除しない」——"
+            f" **印は記録ではありません。** `--close-gate {g['unrecorded'][0]['n']}"
+            f" --evidence \"…\"` で、どこに何を残したかを1行 積むこと"
+            f"（積むまで、閉じる速さの分母に入りません）。")
+    rate, left_days = g["rate_per_day"], g["days_to_close"]
+    if left_days is None:
+        traj = ((tr or {}).get("base") or {}).get("date")
+        # **分母に入るのは、日付の付いた閉じ方だけ**（正本の印には日付が無い）。
+        _dated = closed - len(g.get("unrecorded") or [])
+        out.append(
+            f"{bar} **床(d)＝門が閉じる日 ＋ 軌跡の日数。いまは日付が出ません** ——"
+            f" 閉じた実績が {_dated}件（速さを言うのに要るのは"
+            f" {g['min_closed_for_rate']}件）なので、**閉じる速さが測れていません。**"
+            f" **これは「0日」でも「永遠」でもありません。**"
+            + (f" 固定して言えるのは1つだけ: **門が今日 全部 閉じたとしたら {traj.isoformat()}**"
+               f"（下の軌跡の日付）。**門が閉じるまで、その線は始まりません** ——"
+               f"停止中は本が1本も出ないので、軌跡の作業日数は門の後から数え直しです。"
+               if traj is not None else ""))
+    else:
+        out.append(
+            f"{bar} **床(d)＝門が閉じる日 ＋ 軌跡の日数**: 残り {opened}件 ÷"
+            f" **{rate:.2f}件/日**（閉じた {closed}件 ÷ 停止からの日数）＝"
+            f" **{left_days:,.1f}日**。**この日数は、軌跡の 48日 より前に来ます。**")
+    # **門には時計が回っています**（2026-08-30 に測って足した）。
+    #     止めたのは「新しく作って足すこと」で、**すでに入っている予約の列ではありません。**
+    #     `p_pass` は、こちらが何もしなくても毎日 下がりうる —— だから
+    #     「開いている件数」だけを出すと、**急ぐ理由が出力から抜けます。**
+    q = resume_gate.queue()
+    if q.get("upcoming"):
+        out.append(
+            f"{bar} [!] **止まっていても、予約済み {q['upcoming']:,}本 は公開され続けます** ——"
+            f" {q['first'].strftime('%m/%d %H:%M')} 〜 {q['last'].strftime('%m/%d %H:%M')} JST・"
+            f"**{q['per_day']:.1f}本/日**（控え {q['held']:,}本）。"
+            f" **機械が1回も起きなくても公開されます**し、その全部が停止の理由になった"
+            f"作りのままです ＝ **`p_pass` は、何もしなくても毎日 下がりうる。**"
+            f" **門は「開いている」だけでなく、時計が回っています。**"
+            f"（引っ込める `reschedule.py` は `src/pause_guard` の対象で、"
+            f"この機械からは止められません。**数だけを出しています。**）")
+    out.append(
+        f"{bar} **だから、この回に到達日を動かすのは4本の腕ではありません** ——"
+        f" 動かせるのは **審査に通る形を1つ決めること**（この {total}件）だけで、"
+        f"それが `--lever gate` です（`src/levers.py`）。**腕は、その後でなければ効きません**"
+        f" —— 塞がったまま本数を積んでも、審査に落ちれば**再生は1円にもなりません。**"
+        f" 閉じるときは `python scripts/eta.py --close-gate <番号> --evidence \"<どこに何を記録したか>\"`。")
+    return out
+
+
 def headline(pl: dict, prev: dict | None = None,
              tr: dict | None = None,
              points: list[dict] | None = None,
@@ -5155,17 +5294,13 @@ def headline(pl: dict, prev: dict | None = None,
             f" 止めた理由はそこで、**いまの構成が審査の除外側に当たる**というものです"
             f"（合成音声・型どおりの量産。**名乗りのほうは 2026-08-30 に落としました** ——"
             f" `config/channel.yaml` の `persona` から実務経歴が消え、"
-            f"`verify._check_no_human_expert_claim()` が台本の側でも塞いでいます"
-            f" ＝ Resume gate の **1・2 は閉じています**。"
-            f" **残りは 3〜6 の4件**: 本ごとの差／公式ポリシーとの突き合わせ／"
-            f"既存と予約済みの扱い／採算の解き直し）。"
-            f" **受かる確率を 1.0 から下げると、この日付は後ろに動きます。**"
-            f" **その項はまだこの機械に入っていません。**")
-        out.append(
-            f"{bar} **だから、この回に到達日を動かすのは腕ではありません** ——"
-            f" 動かせるのは **審査に通る形を1つ決めること**（`AUTOMATION_PAUSED.md`"
-            f" の Resume gate の6件）だけです。**腕は、その後でなければ効きません**"
-            f" —— 塞がったまま本数を積んでも、審査に落ちれば**再生は1円にもなりません。**")
+            f"`verify._check_no_human_expert_claim()` が台本の側でも塞いでいます）。"
+            f" **受かる確率を 1.0 から下げると、この日付は後ろに動きます。**")
+        # **「1・2 は閉じています／残りは 3〜6」を、ここに手で書かないこと**
+        #     （2026-08-30 に2つの回が同じ日に別々にここへ着き、合流させた）。
+        #     手書きの件数は、閉じた翌回から嘘になります。**下は台帳を読みます**
+        #     （`data/resume_gate.jsonl` ／ 正本は `AUTOMATION_PAUSED.md`）。
+        out.extend(gate_lines(bar, tr))
     # **いちばん上に出す日付は「軌跡」のほうです**（2026-08-20 18:xx・オーナー指示）。
     #     腕を据え置いた線（`pl["target_date"]`）は、**腕が1ミリも動かない未来**の
     #     日付です。この機械は毎周かならず腕を1つ引いているので、それは
@@ -5236,11 +5371,20 @@ def headline(pl: dict, prev: dict | None = None,
     else:
         out.append(f"{bar} {label}: **出ません**"
                    "（天井が足りない。下に「どの腕をいくつにすれば出るか」）")
-    out.append(f"{bar} 縛っているのは **{pl['binding']}**"
-               f" → **この回に引く腕は `{pl['lever_hint']}`**"
+    # **門が開いている回は、床の名前を「模型の中で」と断ること**（2026-08-30）。
+    #     `pl["binding"]` は (a)(b)(c) の3つの床のうち、いちばん遅いものの名前です。
+    #     **門（床(d)）はそのどれよりも遅く、しかも掛け算の外側**にあるので、
+    #     断らずに並べると「再生数が縛っている → だから `gate`」という
+    #     読めない1行になります（実測 2026-08-30 の出力13行目）。
+    _paused_gate = (pl.get("lever_hint") == "gate")
+    out.append(f"{bar} 縛っているのは "
+               + ("**審査の門**（`AUTOMATION_PAUSED.md` の Resume gate）——"
+                  f" 模型の中の床は `{pl['binding']}` ですが、**門はその外側に掛かります**"
+                  if _paused_gate else f"**{pl['binding']}**")
+               + f" → **この回に引く腕は `{pl['lever_hint']}`**"
                + (f"（**軌跡が名指し**。床の名前は `{pl['lever_hint_binding']}` ですが、"
                   "それは診断であって、引いて何日縮むかは言っていません）"
-                  if pl.get("lever_from") == "軌跡" else ""))
+                  if pl.get("lever_from") == "軌跡" and not _paused_gate else ""))
     if pl.get("lever_hint_covered"):
         out.append(f"{bar} **その `{pl['lever_hint']}` の測定は、予約済みの本が"
                    f" {pl['lever_hint_covered']} に答えます** →"
@@ -5942,9 +6086,21 @@ def _report_levers(pl: dict) -> list[str]:
               f"（この腕は、いまの縛りに触っていません）")
 
     if pl.get("lever_measured"):
-        P(f"    → **この回に引く腕は `{pl['lever_measured']}`。**"
-          f" 床の名前（{pl.get('lever_hint_binding')}）ではなく、"
-          f"**天井まで引いたときの差の大きさで選んでいます**")
+        # **門が開いている回は、この表の勝者を「この回に引く腕」と書かないこと**
+        #     （2026-08-30 に足した）。上の4本は**審査に受かった世界の中**の順位で、
+        #     `p_pass` はその外側に掛かる項です（`src/resume_gate.py`）。
+        #     頭の3行が `gate` と言っている横で、ここが `per_video` と書くと、
+        #     **同じ道具が同じ回に2つの腕を名指しします** —— この repo が
+        #     「道具が自分と食い違っていた」として3回 直している形そのものです。
+        if pl.get("lever_hint") == "gate":
+            P(f"    → **この表の勝者は `{pl['lever_measured']}` ですが、"
+              f"それは「審査に受かった世界の中」の順位です。**"
+              f" いま引く腕は `gate`（頭の3行）—— **`p_pass` は掛け算の外側**で、"
+              f"外側が塞がっているあいだ、この4本はどれも引けません。")
+        else:
+            P(f"    → **この回に引く腕は `{pl['lever_measured']}`。**"
+              f" 床の名前（{pl.get('lever_hint_binding')}）ではなく、"
+              f"**天井まで引いたときの差の大きさで選んでいます**")
     dead = [r["lever"] for r in rows
             if r.get("cap") is not None and not r.get("reachable_at_cap")]
     if dead:
@@ -6598,7 +6754,14 @@ def solve(m: dict, points: list[dict], *, full: bool = True) -> dict:
     #     `plan()` の `lever_hint` は「いちばん遅い床の名前」＝**診断**で、
     #     **引いたら何日縮むか**は言っていません。同じ見出しに2つの腕が並ぶと、
     #     読み手はどちらでも選べてしまい、**後から理由を付ける**側に戻ります。
-    if tr is not None:
+    #
+    # **ただし門が開いている間は、ここが後ろから上書きしないこと**（2026-08-30 に足した）。
+    #     `plan()` が最後に `gate` へ倒しているのに、この段は `tr["choice"]` の
+    #     4本しか見ていないので、**そのまま通すと名指しが `rpm` などへ戻ります。**
+    #     軌跡の4本は「審査に受かった世界の中」の腕で、**受かる確率は掛け算の外側**です
+    #     （`src/resume_gate.py`）。外側が塞がっている回に内側を名指しすると、
+    #     **この回には引けない腕**を毎周 名指しすることになります。
+    if tr is not None and pl.get("lever_hint") != "gate":
         _top = next((r for r in tr["choice"] if r["reachable"]), None)
         if _top is not None and _top["lever"] != pl["lever_hint"]:
             pl["lever_hint_binding"] = pl["lever_hint"]
@@ -7348,7 +7511,42 @@ def main() -> int:
                          "`arm_speed.speed_weights()`）を掛けて解く。"
                          "**水準がずれるので『過去の配分』の行は頭の日付と一致しません** ——"
                          " 見るのは順位だけ。2026-08-27 の実測では順位は変わりませんでした")
+    # **審査の門を1件 閉じる**（2026-08-30・`src/resume_gate.py`）。
+    #     停止中は4本の腕が1本も引けないので、到達日に効く唯一の手がこれです。
+    #     **口をここに置いた理由**: 閉じた瞬間に、同じ道具が日付を出し直せるから。
+    #     別の script にすると「閉じた」と「日付が動いた」が別の回に落ちます。
+    ap.add_argument("--close-gate", metavar="番号", type=int,
+                    help="`AUTOMATION_PAUSED.md` の Resume gate を1件 閉じる"
+                         "（`--evidence` が要ります）")
+    ap.add_argument("--evidence", metavar="1行",
+                    help="`--close-gate` の根拠 —— **どこに何を記録したか**"
+                         "（ファイル名・commit・実測）。"
+                         "門は「決めた」ではなく「**記録した**」ときに閉じます")
+    ap.add_argument("--gate", action="store_true",
+                    help="審査の門のいまの姿だけを出して終わる（API 0単位・**1秒未満**）")
     args = ap.parse_args()
+
+    if args.close_gate is not None:
+        if not args.evidence:
+            print("[eta] `--evidence` が要ります —— どこに何を記録したかを1行で。")
+            return 2
+        try:
+            rec = resume_gate.close(args.close_gate, args.evidence)
+        except ValueError as exc:
+            print(f"[eta] 閉じられません: {exc}")
+            return 2
+        g = resume_gate.summary()
+        print(f"[eta] 門 **{rec['n']}** を閉じました —— {rec['evidence']}")
+        print(f"[eta] **{g['closed']}/{g['total']} 件**"
+              + (f"（天井まで ×{g['cap']:.2f}）" if g["cap"] is not None else ""))
+        for r in g["open_items"]:
+            print(f"       開: {r['n']} {r['text']}")
+        return 0
+
+    if args.gate:
+        for line in gate_lines("###"):
+            print(line)
+        return 0
 
     if args.alloc or args.alloc_speed:
         return alloc_search(with_speed=args.alloc_speed)
