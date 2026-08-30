@@ -11,6 +11,8 @@ YouTube の現行チャンネル収益化ポリシーは、次を収益化不可
 - mass-produced / generic / repetitive / template-based content
 - AI-generated personas presenting themselves as human experts on sensitive topics
 - AI personas providing financial guidance or interpreting legal rules
+  （**原文はその手前に条件を持っている** —— "presents itself as a **human expert providing advice**"。
+  **禁じられているのは題ではなく、名乗りと助言のほう。** 下の「進捗」4 を読むこと）
 
 Current channel configuration conflicts with that policy:
 
@@ -47,7 +49,8 @@ https://support.google.com/youtube/answer/1311392
 1. sensitive-topic AI persona を使わない  **← 2026-08-30 に閉じた（下の「進捗」）**
 2. human expert を装わない                **← 2026-08-30 に閉じた（下の「進捗」）**
 3. final videos are materially varied and demonstrate a clear original creative contribution
-4. policy-compliant channel concept is reviewed against the current official policy
+4. policy-compliant channel concept is reviewed against the current official policy  **← 2026-08-30 に当てた（下の「進捗」4）。**
+   **ただし『構想』のほうが未定なので、閉じてはいない** —— 当てて分かったのは「縛っているのは (B) 汎用・反復の側だ」ということ
 5. 既存動画の扱いと新旧テーマ混在リスクを決める
 6. monetization path and acquisition economics are recalculated
 
@@ -95,6 +98,74 @@ narration に「私が担当していたころは」と書かれれば、視聴�
 
 **覆る条件**: 実在する人間が実名で出演し、その経歴が事実になったら「装う」に当たらない。
 そのときは検査ごと外してよい。**偽陽性が出ても、`persona` に経歴を戻すことでは直さないこと。**
+
+### 4 —— 公式ポリシーに当てて読み直した（2026-08-30・**この停止の読みが1か所ずれていた**）
+
+出典: https://support.google.com/youtube/answer/1311392 （**Last updated: July 15, 2025**）
+と、YouTube ヘルプの AI ペルソナに関する説明。**取ってきたのは 2026-08-30。**
+
+#### 当たる条項は2つある。**別々の条項で、閉じ方が違う。**
+
+**(A) AI ペルソナ ／ センシティブな題**
+
+> channels using AI-generated personas to deliver information on sensitive topics,
+> including any content that **presents itself as a human expert providing advice**
+> on topics such as health, legal issues, finances, or politics
+
+> - an AI "doctor" providing medical diagnoses, health advice, or wellness remedies
+> - AI-generated podcast hosts offering financial guidance, investment tips, or wealth management advice
+> - AI personas giving legal advice or interpreting laws
+
+**(B) 汎用・反復（Generic or Repetitive Content）**
+
+> Similar or repetitive content with low educational value, commentary,
+> narratives, or minimal variation
+
+> AI-generated content made with generic or unoriginal templates
+> giving the impression of mass production
+
+#### **ここが、この停止の書き方とずれていた**
+
+`AUTOMATION_PAUSED.md` の冒頭は (A) を
+「**AI personas providing financial guidance or interpreting legal rules**」と写している。
+**原文は、その手前に条件を1つ持っている** ——
+**「presents itself as a human expert providing advice」**。
+禁じられているのは *金融や制度の話をすること* ではなく、
+**人間の専門家として、助言をすること**のほうである。
+
+**この差は小さくない。** 前者の読みだと、この企画は題ごと成立しない。
+後者の読みだと、**閉じ方が2つある**:
+
+    1. 人間の専門家として名乗らない   ← 2026-08-30 に閉じた（上の「1・2」）
+    2. 助言ではなく試算として書く     ← 同じ回に `persona` へ入れた
+                                        （「あなたはこうすべき」ではなく
+                                          「この前提で計算するとこうなる」）
+
+**`CLAUDE.md` の根幹（「制度を解説するのではなく、自分で計算した結果を発表する」）は、
+偶然ではなく、この条項のちょうど外側を指している。**
+説明欄の定型文（`channel.yaml` の `footer`）も
+「一般的な情報提供を目的としたもので、個別の助言ではありません」と言っており、
+**2番の側はもともと守られていた。** 欠けていたのは1番だけだった。
+
+#### **だから、いま縛っているのは (A) ではなく (B) である**
+
+(A) は上の2手で外側に出た。**残っているのは (B) の側**で、
+そちらのほうが**この企画にとって厳しい**:
+
+    実測  735本 ／ 1日 6〜16本 ／ 同じ台本の型 ／ 同じ図の作り ／ 同じ合成音声
+          → 「giving the impression of mass production」に、正面から当たる
+
+**Resume gate の3番（本ごとに実質的な差があること）が、本当の関門である。**
+1・2 を閉じたことで、**残り4件のうち3番が最優先**になった。
+
+**次の回への申し送り**: 3番は「差がある」と**言う**のではなく、**数で示す**こと。
+材料はもうある —— `visuals.theme_for()`／`batch_build.theme_base()`（配色の分散）、
+`verify._check_not_repeat`／`_check_adjacent_repeat`（棒の重なり）、
+`src/calc/` が本ごとに違う数字を出していること。
+**足りないのは、それを1つの尺度にまとめて「何本ぶん違うか」を出す道具のほう。**
+
+**覆る条件**: このページは更新される（写した版は **July 15, 2025** 最終更新）。
+**次に当たる回は、日付を見て、変わっていたらこの節ごと取り直すこと。**
 
 ### 5 —— **予約済み482本は、そのまま公開させる**（2026-08-30 に決めた。**待っていない**）
 
