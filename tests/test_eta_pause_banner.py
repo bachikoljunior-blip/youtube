@@ -86,8 +86,18 @@ def test_paused_names_what_was_frozen(monkeypatch):
     """
     body = "\n".join(_lines(monkeypatch, paused=True))
     assert "1.0" in body, "受かる確率を固定していることが書かれていない"
-    assert "なりすまし" in body, "止めた理由（人間の実務経歴を名乗る）が書かれていない"
     assert "pause_guard" in body, "どこが塞いでいるのかが名指しされていない"
+    # **止めた理由は、いま何件 開いているかで言うこと**（2026-08-30 に直した）。
+    #     ここには長らく `assert "なりすまし" in body` と書いてありました。
+    #     **その語は、止めた日の理由の写しです** —— 同じ日のうちに
+    #     `config/channel.yaml` から実務経歴が落ち、`verify` に出口の門が付き、
+    #     Resume gate の 1・2 が閉じたので、**印字から消えるのが正しい姿**です。
+    #     語を固定していたせいで、直した側が赤くなりました。
+    #     **固定するのは語ではなく、「門の状態が同じ所に出ていること」のほう。**
+    assert "審査の門" in body, "審査の門が名指しされていない"
+    assert "/6" in body or "/6 件" in body, (
+        "何件 開いているかが出ていない —— 件数が無いと、閉じても出力が変わりません")
+    assert "--lever gate" in body, "この回に引ける腕の名前が出ていない"
 
 
 def test_silent_when_not_paused(monkeypatch):
