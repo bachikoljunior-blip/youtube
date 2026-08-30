@@ -179,6 +179,34 @@ def _gate_state_block() -> str:
         out.append("    開いている（**ここが、いまの最短です**）: "
                    + "／".join(f"**{r['n']}** {r['text'][:44]}" for r in g["open_items"]))
     out.append("")
+    if not g["open_items"]:
+        # **開いている件が 0 の回に、やることが1つも書かれない形だった**
+        #     （2026-08-30 15:4x に 6/6 になって踏んだ）。上の段は
+        #     「解除条件を1つ進めること」と言い、下は「閉じるときは…」と言うので、
+        #     **閉じ切った回の子は、出すものを名指しされないまま立ちます。**
+        #     `AUTOMATION_PAUSED.md` が在る＝生成も投稿もできないので、
+        #     **その回は何も出せずに終わります。**
+        #
+        #     **覆る条件**: `AUTOMATION_PAUSED.md` が消えたら `_pause_block()` ごと
+        #     出なくなるので、この段も自動で消えます。
+        out.append("**6件とも閉じています。だから、この回に閉じるものはありません。**"
+                   " **正本の `AUTOMATION_PAUSED.md` はまだ在ります** ——"
+                   "つまり生成も投稿も塞がったままです。"
+                   " **消して再開するかどうかは、この機械の判断で決めないこと**"
+                   "（理由3つは `AUTOMATION_PAUSED.md` の"
+                   "「6件とも記録されました」の節と `CLAUDE.md`）。")
+        out.append("")
+        out.append("**この回に出せるもの**（`--lever gate` で積むこと。上から順に見る）:")
+        out.append("")
+        out.append("    - 閉じた6件の根拠を、**実測で当て直す**"
+                   "（`python -m src.frames` ／ `python -m src.density_verdict` ／"
+                   " `python -m src.legacy_corpus`）。"
+                   "**閉じた根拠は上限であって、出来上がりの実測ではありません** ——"
+                   "外れていたら、その件を `--close-gate` の逆で開き直すこと")
+        out.append("    - **停止中でも動く道**を1つ進める（`docs/MEANS.md` の未着手・"
+                   "収益化できる別の形の調査・チャンネルを変えない試算）")
+        out.append("    - 実測で見つかった欠陥を1つ塞ぐ（`fix`）")
+        out.append("")
     out.append("閉じるときは、根拠の1行を添えて撃つこと（**印は記録ではありません**）:")
     out.append("")
     out.append('    python scripts/eta.py --close-gate <番号> --evidence "<どこに何を記録したか>"')
