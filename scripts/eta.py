@@ -5524,6 +5524,36 @@ def gate_lines(bar: str = "###", tr: dict | None = None) -> list[str]:
             f"（混在の窓は予約が尽きるまで）。"
             f"（引っ込める `reschedule.py` は `src/pause_guard` の対象で、"
             f"この機械からは止められません。**数だけを出しています。**）")
+    # **説明欄は、まだ1本も測れていません**（2026-08-30 夜に足した）。
+    #     `legacy_corpus` が 1・2・5 を閉じたのは**台本の控え694本**についてで、
+    #     **説明欄（`description_body`）は 0本**です。ところが
+    #     `verify._check_no_human_expert_claim()` は、**これから作る本では
+    #     説明欄も見ています** —— 既にある735本だけが見られていない。
+    #     審査する側から見ると、説明欄は**再生しなくても読める面**です。
+    #     **穴が見えないと、次の回はここへ来ません。** だから門の節に出します。
+    try:
+        from src import descriptions as _desc
+        _d = _desc.load() or {}
+    except Exception:                                        # noqa: BLE001
+        _d = {}
+    _got = len(_d.get("videos") or [])
+    _asked = int(_d.get("asked") or 0)
+    if _got < _asked or not _d:
+        _seen = f"{_got:,} / {_asked:,}本" if _d else "**1度も取っていません**"
+        out.append(
+            f"{bar} [!] **説明欄は、まだ測れていません**（{_seen}）——"
+            f" 1・2・5 を閉じた `legacy_corpus` が見たのは**台本の控えだけ**で、"
+            f"説明欄は分母に入っていません。**同じ関数"
+            f"（`verify._check_no_human_expert_claim()`）を、これから作る本では"
+            f"説明欄にも当てています** ＝ **既にある本だけが見られていない面**です。"
+            f"（審査する側から見ると、説明欄は**再生しなくても読めます**。）"
+            f" 撃つのは `python -m src.descriptions --refresh`（**約15単位**・"
+            f"日枠は JST 16:00 に戻る)。"
+            f" **名乗りが1本でも出たら、1・2 を開き直すこと**"
+            f"（`--open-gate 1 --evidence \"...\"`）。"
+            + (f" 前の回は日枠（`quotaExceeded`）で止まっています ——"
+               f" **「チャンネルに無い」ではありません。**"
+               if _d.get("partial") else ""))
     out.append(
         f"{bar} **だから、この回に到達日を動かすのは4本の腕ではありません** ——"
         f" 動かせるのは **審査に通る形を1つ決めること**（この {total}件）だけで、"

@@ -194,3 +194,61 @@ def test_force_overrides():
 
 def test_report_says_it_has_never_been_taken(tmp_path):
     assert "まだ1度も取っていません" in D.report(cache=tmp_path / "none.json")
+
+
+# --- 日枠で途中で止まった回を、「チャンネルに無い」と言わないこと ---
+#
+# **2026-08-30 22:31Z の実測。** `--refresh` が `quotaExceeded`（403）で
+# 0/735 を持ち帰った回に、`report()` はこう印字していました:
+#
+#     台帳 735本 ／ 説明欄が返った 0本（差 735本 は**チャンネルに無い本**）
+#     **735本 はチャンネルに返りませんでした** ——消したか、台帳にしか無い本です。
+#     **1) 説明欄で人間の専門家を装っているか**  **0 / 0本**
+#
+# **3行とも嘘です。** 1本も問い合わせていません（`fetch()` は最初の束で break）。
+# そして `0 / 0本` は、解除条件1・2 の根拠として読めてしまう形です。
+# **測っていないことは「0件」ではありません。**
+
+def _partial(asked: int = 735) -> dict:
+    return {"at": "2026-08-30T22:31:54Z", "asked": asked, "got": 0,
+            "partial": True, "videos": []}
+
+
+def _write(tmp_path, payload: dict):
+    p = tmp_path / "descriptions.json"
+    p.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    return p
+
+
+def test_partial_run_does_not_call_the_rest_missing(tmp_path):
+    out = D.report(cache=_write(tmp_path, _partial()))
+    assert "チャンネルに無い本" not in out
+    assert "チャンネルに返りませんでした" not in out
+    assert "まだ問い合わせていません" in out
+
+
+def test_partial_run_names_the_day_quota_and_how_to_retry(tmp_path):
+    out = D.report(cache=_write(tmp_path, _partial()))
+    assert "quotaExceeded" in out
+    assert "--refresh" in out
+
+
+def test_empty_denominator_is_not_printed_as_zero_defects(tmp_path):
+    """**`0 / 0本` を出さないこと。** 解除条件1・2 の根拠に読めてしまう。"""
+    out = D.report(cache=_write(tmp_path, _partial()))
+    assert "0 / 0本" not in out
+    assert "測っていません" in out
+    assert "「0件」ではありません" in out
+
+
+def test_a_complete_run_still_says_which_books_are_gone(tmp_path):
+    """**逆は残すこと。** 全部 問い合わせて返らなかった本は、本当に穴です。"""
+    payload = {"at": "2026-08-30T00:00:00Z", "asked": 3, "got": 2,
+               "partial": False,
+               "videos": [{"video_id": "a", "title": "t", "description": "本文",
+                           "privacy": "public"},
+                          {"video_id": "b", "title": "t", "description": "本文",
+                           "privacy": "public"}]}
+    out = D.report(cache=_write(tmp_path, payload))
+    assert "チャンネルに無い本" in out
+    assert "1本 はチャンネルに返りませんでした" in out
