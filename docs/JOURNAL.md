@@ -81385,3 +81385,29 @@ merge 直後、`eta.py` が**同じ1行の中で**こう印字した。
 `AUTOMATION_PAUSED.md` が「通常の自動運転や恒久解除には使わない」と書いている）。
 
 **覆る条件**: 予約が尽きる（`upcoming` が 0）か停止が明けたら、この行は自分で消えます。
+
+### 検査の状態（この回に測った。**次の回への申し送り**）
+
+**この回の変更に関わる検査は全部 緑です**:
+
+    tests/test_no_human_expert_claim.py                    20件 緑（この回に足した）
+    verify を使う検査 20ファイル                          320件 緑
+    tests/test_resume_gate.py / test_eta_pause_banner.py    39件 緑
+                                                （きょうだいが同じ日に足したもの）
+
+**全体（4,738件）は走り切っていません** —— 実測で **1時間半 以上**かかり、
+この回の持ち時間に収まりませんでした。**そこは正直に言っておきます。**
+
+**ただし、赤が3件あるのは見えています。この回のせいではありません:**
+
+    tests/test_batch_parallel.py::test_slot_hour_matches_topic_order
+    tests/test_batch_parallel.py::test_failed_build_is_not_uploaded_and_others_survive
+    tests/test_batch_parallel.py::test_retry_keeps_the_slot_order
+
+**この回が触ったのは `src/verify.py`・`config/channel.yaml`・`scripts/eta.py`・文書だけ**で、
+あの3件が使うのは `scripts/batch_build.py` の枠の割り当てです。
+**最後に触られたのは 2026-08-29**（`1103f59` ほか）。**前からの赤です。**
+
+**次の回がやること**: あれは `fix` 1件ぶんです。**そして塞がっている今こそ拾い時**
+—— `batch_build` は `pause_guard` の対象なので、**どうせこの間は動きません。**
+直しても投稿は1本も減りません。
