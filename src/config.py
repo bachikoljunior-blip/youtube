@@ -6,6 +6,8 @@ from pathlib import Path
 
 import yaml
 
+from .pause_guard import enforce_call_stack
+
 ROOT = Path(__file__).resolve().parent.parent
 CONFIG_DIR = ROOT / "config"
 BUILD_DIR = ROOT / "build"
@@ -71,6 +73,9 @@ _StrictLoader.add_constructor(
 
 
 def load_channel() -> dict:
+    # `src.__init__` の entry-point guard を迂回して import された場合も、
+    # pipeline/uploader 等の call stack から channel 設定を読んだ時点で止める。
+    enforce_call_stack()
     return yaml.load((CONFIG_DIR / "channel.yaml").read_text(encoding="utf-8"), _StrictLoader)
 
 
