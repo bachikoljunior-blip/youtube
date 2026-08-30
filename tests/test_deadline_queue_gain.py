@@ -27,7 +27,62 @@ def _clear_cache(monkeypatch):
     monkeypatch.setattr(deadline_check, "_QUEUE_GAIN", None)
 
 
-def test_gain_is_reported_on_the_group_line(monkeypatch) -> None:
+@pytest.fixture(autouse=True)
+def _machine_is_running(monkeypatch):
+    """**この検査は「機械が動いているとき」の話をしています。**（2026-08-30 に足した）
+
+    2026-08-30 から `AUTOMATION_PAUSED.md` が在り、`deadline_check._paused_supply()`
+    が**群の足りない前提を「停止中は埋まりません」で打ち切ります**（`unreachable`）。
+    `opening_motion` の対照は **あと2本** なので、まさにそれに当たります ——
+    `why` は「**予約の並びで決まっています**」ではなく「**停止中は埋まりません**」に
+    なり、この検査は赤くなりました。
+
+    **`_paused_supply()` のほうが正しい振る舞い**です。ここが守っているのは
+    **走っているときに `_QUEUE_GAIN` が群の行に出ること**（出ないと、
+    自分で作った 30日 の待ちの前で回が手を止める）なので、世界を1つに固定します。
+    `tests/test_deadline_check.py` の同名 fixture と同じ判断・同じ理由です。
+
+    **これは 2026-08-30 の `00dd270d` から赤で、この回まで誰も直していません**
+    （＝ 全体の走りを読んだ回が無かった）。**停止中の振る舞いは
+    `tests/test_paused_supply.py` と `tests/test_paused_accrual.py` が別に見ています。**
+
+    **覆る条件**: `AUTOMATION_PAUSED.md` が消えたら、この fixture は何もしなくなります
+    （そのとき外してよい）。
+    """
+    import src.pause_guard as PG
+
+    monkeypatch.setattr(PG, "is_paused", lambda: False)
+
+
+@pytest.fixture
+def _full_groups(monkeypatch):
+    """**群を、実物ではなく合成で満たす。**（2026-08-30 に足した）
+
+    ここが固定したいのは「**`_QUEUE_GAIN` が群の行に出る**」という規則だけです。
+    ところが `_ans_group_key` は `src/judgeable.SOURCES` 越しに**予約の実物**を読むので、
+    **対照群が床（8本）を割った日に、この検査は規則と関係なく赤くなります。**
+
+    実測 2026-08-30: 対照(動きなし) は **6本**（床 8本）——
+    `why` は「**群がそろわないので日が出ません**」になり、
+    `_QUEUE_GAIN` の行はそもそも出る場所へ届きませんでした。
+
+    **これはこのファイルが一度 踏んだ穴の、1段 上です。** 下の註が
+    「`ready` の実物をべた書きしていて、予約が1本 動くだけで赤くなった」と
+    書いていますが、**日付を外しても、群の本数のほうが実物のまま残っていました。**
+    **規則を測る検査は、実物の在庫に依存させないこと。**
+
+    **覆る条件**: `_ans_group_key` が `SOURCES` 以外から群を取るようになったら、
+    ここも一緒に移すこと（`src/judgeable.SOURCES` の1か所に置く、という
+    2026-08-25 の合流の約束が生きているあいだは、ここで足ります）。
+    """
+    from src import judgeable as SJ
+
+    days = [date(2026, 9, 20 + i) for i in range(8)]            # 8本目 = 09/27
+    monkeypatch.setitem(SJ.SOURCES, "opening_motion",
+                        (lambda: {"処置": list(days), "対照": list(days)}, 8))
+
+
+def test_gain_is_reported_on_the_group_line(monkeypatch, _full_groups) -> None:
     need = {"kind": "group_key", "key": "opening_motion"}
     # **比べる相手は、同じ日の「倒し方が無い」ほうです**（2026-08-29 に直した）。
     #     ここは長らく `assert ans.ready == date(2026, 10, 7)` と
