@@ -82065,9 +82065,16 @@ import していないので `enforce_current_process()` が走る機会が無�
       `sys.argv[0]` の名前だけを見るので、**読むだけの `--help` も塞ぎます。**
       直すのは「止め方を緩める」ことになるので、**この回では触っていません。**
 
-    tests/test_deadline_check.py  2件 ／ tests/test_deadline_queue_gain.py  1件
-      どれも `Answer(... paused_short=N, ready=None)` ＝「**停止中は埋まりません**」の枝。
+    tests/test_deadline_check.py::test_群が足りなくても_伸び率から判定日を出す
+    tests/test_deadline_queue_gain.py::test_gain_is_reported_on_the_group_line
+      どちらも `Answer(... paused_short=N, ready=None)` ＝「**停止中は埋まりません**」の枝。
       本が1本も出ないので、判定に要る群がそろいません
+
+    tests/test_deadline_check.py::test_遅すぎる期限が残っていないこと
+      **これだけ別の原因**です —— 並走した回が `config/hypotheses.yaml` の期限を
+      2行 動かしており、その2件（「ショートの刻み」10/05 判定に 10/12 期限／
+      「作る題材の順番」09/16 判定に 09/18 期限）が拾われています。
+      **`python scripts/deadline_check.py --shrink`**（`falsified_if` は緩めないこと）
 
     tests/test_doc_numbers.py::test_topics_yamlには掛けない
       別の回が `topics.yaml` に足した題（`izoku-masshi-nenrei-kabefuka`）の裏取り待ち
