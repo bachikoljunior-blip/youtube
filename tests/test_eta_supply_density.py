@@ -186,16 +186,29 @@ def test_窓が短すぎるときも速さを名乗らない():
 
 # ------------------------------------------------- 予測の側（scripts/eta.py）
 
-def test_段1は25の写しではなく作る速さから出る():
+# **速さは、詰め方より遅い値でなければ何も言いません**（2026-08-30 夜に直した）。
+#     この2件は `_supply(13.0)` を「詰め方より遅い供給」として書いていました。
+#     `PLAN_PUBLISH_PER_DAY` が **25** だったころは 13 < 25 なので縛り、
+#     日数は写しと**ずれて**いました。2026-08-30 に上限が **25 → 13** へ落ちた日、
+#     **13 == 13** になり、供給は縛らなくなって2件とも赤くなりました。
+#     **壊れたのは実装ではなく、この値のほうです** ——
+#     `eta.solve_gate1()` は「2本の直線の低いほう」を正しく選んでいます。
+#     だから固定値をやめ、**上限から引いて作ります。** 上限が次に動いても、
+#     この2件は「遅い供給」を指したままになります。
+SLOWER_THAN_CAP = eta.PLAN_PUBLISH_PER_DAY / 2.0
+
+
+def test_段1は上限の写しではなく作る速さから出る():
     """**これが落ちたら、到達日がまた「満たせない前提」に戻っています。**"""
     m = _metrics()
     a = eta.analyse(m)
-    g1 = eta.solve_gate1(a, density=eta.PLAN_PUBLISH_PER_DAY, supply=_supply(13.0))
+    g1 = eta.solve_gate1(a, density=eta.PLAN_PUBLISH_PER_DAY,
+                         supply=_supply(SLOWER_THAN_CAP))
     assert g1["measured"] is True
-    # 25本/日 で解いた日数（＝写し）と**同じであってはならない**
+    # 上限いっぱいで解いた日数（＝写し）と**同じであってはならない**
     assert g1["days"] != pytest.approx(a["days_subs_at"][eta.PLAN_PUBLISH_PER_DAY])
     assert g1["days"] > a["days_subs_at"][eta.PLAN_PUBLISH_PER_DAY]
-    assert g1["density_sustained"] == pytest.approx(13.0)
+    assert g1["density_sustained"] == pytest.approx(SLOWER_THAN_CAP)
 
 
 def test_作る速さが詰め方を上回るなら詰め方が効く():
@@ -234,9 +247,19 @@ def test_供給を入れると到達日が動く():
     m = _metrics()
     a = eta.analyse(m)
     なし = eta.plan(m, a, supply=None)
-    あり = eta.plan(m, a, supply=_supply(13.0))
-    assert あり["days_to_target"] != pytest.approx(なし["days_to_target"])
+    あり = eta.plan(m, a, supply=_supply(SLOWER_THAN_CAP))
+    # **供給が動かすのは段1 です。** ここを先に見ること。
     assert あり["gate1"]["days"] > なし["gate1"]["days"]
+    # **`days_to_target` は、天井が合格点に届かない帯では両方 `NEVER` に飽和します**
+    #     （2026-08-30 夜。上限が 25 → 13 に落ちて天井が下がった日に、
+    #       この行だけが赤くなりました —— **形は1行も壊れていません。**
+    #       `scripts/eta.py` の `mix` の註が、同じ壊れ方を 08/20 に記録しています）。
+    #     飽和した番人どうしを引き算しても、何も言っていません。
+    #     **だから、飽和していない回にだけ当てます。**
+    飽和 = (なし["days_to_target"] >= eta.NEVER
+            and あり["days_to_target"] >= eta.NEVER)
+    if not 飽和:
+        assert あり["days_to_target"] != pytest.approx(なし["days_to_target"])
 
 
 # ------------------------------------------------- 腕が予測を動かすか
