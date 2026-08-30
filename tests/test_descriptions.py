@@ -96,18 +96,17 @@ def test_persona_uses_the_same_function_as_new_scripts():
     assert D.persona_defects([ok]) == []
 
 
-@pytest.mark.xfail(reason="2026-08-30 に測って見つけた穴。"
-                          "`verify._HUMAN_EXPERT_PATTERNS` が言い換えを取りこぼす —— "
-                          "解除条件1・2 を閉じた『0/694本』は、"
-                          "この検査の網の広さの上に乗っている", strict=True)
 def test_persona_catches_the_obvious_rewordings():
-    """**「元・事業会社の人事です」が素通りします。**
+    """**言い換えでも当たること**（2026-08-30 夜に塞いだ穴）。
 
-    実測（`python -m src.descriptions` を書いた回に、10通りを当てた）:
+    塞ぐ前の実測（`python -m src.descriptions` を書いた回に、10通りを当てた）:
     当たったのは旧 persona の原文 1件だけで、**残り 9件 は素通り**でした。
     しかもその1件は `元[・]?<職業>` ではなく
-    「制度を**実務で回してきた**」のほうで当たっています ——
-    つまり **`元・<会社>の<職業>` の形は、1件も見ていません。**
+    「制度を**実務で回してきた**」のほうで当たっており、
+    **`元・<会社>の<職業>` の形は、閉じたときから1件も見ていません**でした。
+
+    **この検査が守っているのは、解除条件1・2 の『0/694本』の意味です** ——
+    網が狭ければ、0件 は「無い」ではなく「見えていない」になります。
     """
     misses = [
         "元・事業会社の人事です。",
@@ -119,6 +118,27 @@ def test_persona_catches_the_obvious_rewordings():
     ]
     for text in misses:
         assert D.persona_defects([{"title": "x", "description": _desc(text)}]), text
+
+
+def test_persona_still_lets_the_safe_forms_through():
+    """**偽陽性が出ると投稿が止まります**（`CLAUDE.md`「途切れるのが最大の損失」）。
+
+    網を広げた回に、実物で当て直した数:
+    `python -m src.legacy_corpus` の控え694本で **0件**（広げる前と同じ）。
+    """
+    safe = [
+        "税理士に確認してください。",
+        "会社員として働く人は対象になります。",
+        "専門家にご確認ください。",
+        "元の経理処理に戻します。",
+        "税務署に提出してください。",
+        "年金事務所で確認できます。",
+        "ハローワークに申請します。",
+        "労基署に相談する道もあります。",
+        "専門家に相談するのが確実です。",
+    ]
+    for text in safe:
+        assert D.persona_defects([{"title": "x", "description": _desc(text)}]) == [], text
 
 
 def test_persona_does_not_fire_on_the_footer():
