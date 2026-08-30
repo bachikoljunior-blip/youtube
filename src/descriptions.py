@@ -288,10 +288,22 @@ def report(cache: Path | None = None, show: int = 5) -> str:
     ap("=== 説明欄を、停止の理由で測る（解除条件1・2・3・5 の最後の面）===")
     asked = d.get("asked", 0)
     miss = asked - len(recs)
-    ap(f"  台帳 {asked}本 ／ 説明欄が返った {len(recs)}本"
-       f"（差 {miss}本 は**チャンネルに無い本**）")
-    if d.get("partial"):
-        ap("  [!] **途中で止まっています**（日枠）。取れたところまでの数です")
+    # **「返らなかった」を「無い」と言わないこと**（2026-08-30 夜に踏んだ）。
+    # `fetch()` は日枠に当たると **その束で break** します。0本 で止まった回に
+    # 「差 735本 はチャンネルに無い本」と書くと、**台帳が実際より小さいという
+    # 嘘**になり、解除条件5（既存の扱い）の判断がその嘘の上に乗ります。
+    # 実測 2026-08-30 22:31Z: `quotaExceeded` で 0/735。**1本も問い合わせて
+    # いません。** 分けるのは `partial`（＝途中で落ちた）です。
+    partial = bool(d.get("partial"))
+    if partial:
+        ap(f"  台帳 {asked}本 ／ 説明欄が返った {len(recs)}本"
+           f"（**残り {miss}本 は、まだ問い合わせていません**）")
+        ap("  [!] **途中で止まっています**（日枠 `quotaExceeded`。JST 16:00 に戻る）。"
+           "取れたところまでの数です —— **返らなかった本を「チャンネルに無い」と"
+           "読まないこと。** 取り直しは `python -m src.descriptions --refresh`")
+    else:
+        ap(f"  台帳 {asked}本 ／ 説明欄が返った {len(recs)}本"
+           f"（差 {miss}本 は**チャンネルに無い本**）")
     priv = collections.Counter(r.get("privacy") for r in recs)
     ap("  内訳: " + " ／ ".join(f"{k} {v}本" for k, v in priv.most_common()))
     bodies = sum(1 for r in recs if body(r.get("description")))
@@ -301,8 +313,15 @@ def report(cache: Path | None = None, show: int = 5) -> str:
     pd = persona_defects(recs)
     ap("")
     ap("--- 1) 説明欄で人間の専門家を装っているか（解除条件 1・2）---")
-    ap(f"  **{len(pd)} / {len(recs)}本**  ← `verify._check_no_human_expert_claim()`"
-       "（**本文に当てているのと同じ関数**）")
+    if not recs:
+        # **`0 / 0本` を「0件でした」と読ませないこと。** 分母が 0 の回に
+        # 「**0 / 0本**」とだけ出すと、解除条件1・2 の根拠に見えます。
+        # ここで言えるのは「**まだ測っていない**」だけです。
+        ap("  **測っていません**（説明欄が1本も返っていない）。"
+           "**「0件」ではありません** —— 解除条件1・2 の根拠にしないこと")
+    else:
+        ap(f"  **{len(pd)} / {len(recs)}本**  ← `verify._check_no_human_expert_claim()`"
+           "（**本文に当てているのと同じ関数**）")
     for r in pd[:show]:
         ap(f"    - [{r.get('privacy')}] {r.get('title', '')[:34]}"
            f" … {r['problems'][0][:60]}")
@@ -312,8 +331,11 @@ def report(cache: Path | None = None, show: int = 5) -> str:
     ad = advice_defects(recs)
     ap("")
     ap("--- 2) 説明欄で行動を指図しているか（`channel.yaml` の `avoid`）---")
-    share = f"（{len(ad) / len(recs) * 100:.1f}%）" if recs else ""
-    ap(f"  **{len(ad)} / {len(recs)}本**{share}")
+    if not recs:
+        ap("  **測っていません**（説明欄が1本も返っていない）")
+    else:
+        share = f"（{len(ad) / len(recs) * 100:.1f}%）"
+        ap(f"  **{len(ad)} / {len(recs)}本**{share}")
     for r in ad[:show]:
         ap(f"    - [{r.get('privacy')}] {r['hits'][0][1][:24]}"
            f" … {r.get('title', '')[:32]}")
@@ -340,9 +362,13 @@ def report(cache: Path | None = None, show: int = 5) -> str:
     ap("  **定型文（`▼ 目次`・footer・`[t:` の印）は分母から外してあります** ——"
        "あれは `pipeline.build_description()` が全本に足すもので、"
        "数えると 100% が1つの型に見えます。")
-    if miss:
+    if miss and not partial:
         ap(f"  **{miss}本 はチャンネルに返りませんでした** ——"
            "消したか、台帳にしか無い本です。**この測定の穴です。**")
+    elif miss:
+        ap(f"  **{miss}本 は、まだ問い合わせていません**（日枠で途中で止まった）。"
+           "**消えたのではありません** —— この節の数は、"
+           f"取れた {len(recs)}本 についてだけのものです。")
     ap(f"  取った時刻: {d.get('at')}（`--refresh` で取り直し・約15単位）")
     return "\n".join(a)
 
