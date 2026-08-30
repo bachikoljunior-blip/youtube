@@ -61,15 +61,20 @@ def _ledger(tmp_path, closes):
 
 
 def test_same_day_closes_do_not_become_a_rate(tmp_path):
-    """**同じ日に3件 閉じても、翌日「残り3件は明日」とは言わないこと。**"""
+    """**同じ日に3件 閉じても、「残り3件は明日」とは言わないこと。**
+
+    門は2つ重なっています —— 窓（`MIN_SPAN_DAYS`。停止からの経過）と、
+    間隔そのもの。**窓が開いた後も、同じ日に固まった3件は速さになりません。**
+    """
     led = _ledger(tmp_path, [(1, "2026-08-30"), (2, "2026-08-30"), (3, "2026-08-30")])
 
-    # 閉じたその日は、まだ何も測れていない（間隔が 0日）
+    # 閉じたその日と翌日は、まだ何も測れていない（窓が薄い／間隔が 0日）
     assert resume_gate.days_per_close(_PAUSE_TEXT, led, date(2026, 8, 30)) is None
-    assert resume_gate.days_to_close(_PAUSE_TEXT, led, date(2026, 8, 30)) is None
+    assert resume_gate.days_to_close(_PAUSE_TEXT, led, date(2026, 8, 31)) is None
 
-    # 翌日。**直す前はここが 1.0日**（残り3件が明日 閉じる）でした。
-    assert resume_gate.days_to_close(_PAUSE_TEXT, led, date(2026, 8, 31)) == pytest.approx(3.0)
+    # 窓が開いた日。**直す前はここが「3件 ÷ 3日 ＝ 残り 3.0日」**でした。
+    # いまは「最後に閉じてから 3日」を1件あたりの下限に採るので 9.0日。
+    assert resume_gate.days_to_close(_PAUSE_TEXT, led, date(2026, 9, 2)) == pytest.approx(9.0)
 
 
 def test_no_news_never_improves_the_estimate(tmp_path):
@@ -82,7 +87,7 @@ def test_no_news_never_improves_the_estimate(tmp_path):
     """
     led = _ledger(tmp_path, [(1, "2026-08-30"), (2, "2026-08-30"), (3, "2026-08-30")])
     prev = None
-    for d in range(1, 21):
+    for d in range(resume_gate.MIN_SPAN_DAYS, 21):
         day = date(2026, 8, 30) + timedelta(days=d)
         left = resume_gate.days_to_close(_PAUSE_TEXT, led, day)
         assert left is not None
@@ -96,12 +101,13 @@ def test_no_news_never_improves_the_estimate(tmp_path):
 def test_a_burst_of_cheap_closes_cannot_make_the_last_gate_hours_away(tmp_path):
     """**安い門を5件まとめて閉じても、残り1件が「5時間後」にはならないこと。**
 
-    直す前は `5件 ÷ 1日 ＝ 5.00件/日` → 残り1件は **0.2日**。
+    直す前は窓が開いた日に `5件 ÷ 3日 ＝ 1.67件/日` → 残り1件は **0.6日**。
     主実行はそれを読んで「門は ほぼ 済んでいる」と判断できてしまいます。
+    **残り1件が、いちばん高い1件かもしれません。**
     """
     led = _ledger(tmp_path, [(n, "2026-08-30") for n in range(1, 6)])
-    left = resume_gate.days_to_close(_PAUSE_TEXT, led, date(2026, 8, 31))
-    assert left == pytest.approx(1.0), f"残り1件が {left}日 になっている"
+    left = resume_gate.days_to_close(_PAUSE_TEXT, led, date(2026, 9, 2))
+    assert left == pytest.approx(3.0), f"残り1件が {left}日 になっている"
 
 
 def test_the_wait_since_the_last_close_is_a_floor(tmp_path):

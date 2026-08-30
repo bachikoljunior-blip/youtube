@@ -80,6 +80,27 @@ LEDGER = ROOT / "data" / "resume_gate.jsonl"
 #: **1件で割ると、たまたま早かった1件が全部の予定になります。**
 MIN_CLOSED_FOR_RATE = 3
 
+#: **分母のほうの下限**（2026-08-30・解除条件5の回に足した。**実際に踏む1日前に見つけた**）。
+#:
+#: 件数の門（上）だけでは足りません。**3件が同じ日にまとめて閉じる**からです ——
+#: 実測: 門1・2・5 は**3件とも 2026-08-30 に閉じました**（`data/resume_gate.jsonl`）。
+#: 停止の開始も 08/30 なので、翌日には
+#:
+#:     span = 1日 ／ 閉じた 3件 → **3.0件/日** → 残り3件は **1.0日で閉じる**
+#:
+#: と印字されます。**同じ瞬間に起きた3件は、間隔について何も言っていません。**
+#: しかもこの数は日が経つほど下がる（3.0 → 1.5 → 0.5）ので、
+#: **測っているのは閉じる速さではなく、停止が始まってからの経過**です。
+#:
+#: この module は「**測れないことを 0 と印字しない**」ために作られています
+#: （`p_pass()` が値を返さないのと同じ理由）。**小さすぎる分母で割った数を
+#: 『測った』と印字するのは、同じ壊れ方の裏返し**です。
+#:
+#: **覆る条件**: 窓を広げれば当然 鈍くなります。閉じた実績が
+#: 十分たまって（例えば 6件・14日）から、`(k-1) / (最後の close - 最初の close)`
+#: のような、間隔そのものを見る推定へ替えてよい。**そのときここは消すこと。**
+MIN_SPAN_DAYS = 3
+
 _JST = timezone(timedelta(hours=9))
 
 
@@ -300,9 +321,17 @@ def days_per_close(text: str | None = None, path: Path | None = None,
     ds = _closed_dates(text, path)
     if len(ds) < MIN_CLOSED_FOR_RATE:
         return None
+    day = today or datetime.now(_JST).date()
+    # **窓の門は残します**（`MIN_SPAN_DAYS`。同じ日に別の回が足したもの）。
+    #     間隔で数えても、停止した直後の窓は薄いままです ——
+    #     `2026-08-30` に3件が固まって閉じた翌日、こちらは
+    #     「1件あたり 1日」（打ち切りの間隔）から始めます。**それは
+    #     『1日 待った』としか言っていません。** 窓が開くまでは黙るほうが素直です。
+    start = paused_since(text)
+    if start is not None and (day - start).days < MIN_SPAN_DAYS:
+        return None
     gaps = [(b - a).days for a, b in zip(ds, ds[1:])]
     done = (sum(gaps) / len(gaps)) if gaps else 0.0
-    day = today or datetime.now(_JST).date()
     trailing = max((day - ds[-1]).days, 0)
     per = max(done, float(trailing))
     return per if per > 0 else None
@@ -314,6 +343,10 @@ def rate_per_day(text: str | None = None, path: Path | None = None,
 
     中身は `1 ÷ days_per_close()` です（**割り算の向きだけの違い**）。
     印字が「件/日」で来た側のために残してあります。
+
+    薄いかどうかは**3つ**見ます —— 件数（`MIN_CLOSED_FOR_RATE`）、
+    **割る窓**（`MIN_SPAN_DAYS`）、そして**間隔そのもの**
+    （`days_per_close()`。同じ日に固まっていれば 0日 ＝ 測れていない）。
     """
     per = days_per_close(text, path, today)
     if not per:

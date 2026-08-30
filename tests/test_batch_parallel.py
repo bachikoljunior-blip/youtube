@@ -20,6 +20,7 @@
 """
 from __future__ import annotations
 
+import json
 import sys
 import threading
 import time
@@ -126,6 +127,33 @@ def _ledger(written: list[str]) -> str:
     raise AssertionError(f"記録の行が1つも書かれていません: {written!r}")
 
 
+def _slots(written: list[str]) -> list[str]:
+    """**その回が実際に使った枠**を、記録の行から読む（2026-08-30 に足した）。
+
+    ここには長らく `assert "vid-a-2026-08-30@9" in row` と**時刻がべた書き**して
+    ありました。**枠の並べ方は 08/30 00:17 に「添字」から「時刻」へ変わり**
+    （`live_ring()` が返すのは埋め順 13:30, 13:30, 9:30 …）、
+    **この3件だけが古い語彙のまま赤くなりました。**
+
+    この3件が守りたいのは「枠が 9時・10時・11時 であること」ではありません ——
+    **`n` 番目のテーマが `n` 番目の枠に載ること**（完了順に積むとずれる）です。
+    だから**その回の `slots` と突き合わせます。** 次に枠の作り方が変わっても、
+    この3件は意味のほうを見つづけます。
+
+    **覆る条件**: 記録の行が `slots` を持たなくなったら、ここで落ちます
+    （そのときは、何を突き合わせるかを決め直すこと）。
+    """
+    row = json.loads(_ledger(written))
+    slots = row.get("slots")
+    assert slots, f"記録の行に `slots` がありません: {row!r}"
+    return list(slots)
+
+
+def _vid(topic: str, slot: str) -> str:
+    """検査の偽 uploader が返す動画ID（`vid-{topic}-{slot}`。同ファイル上部）。"""
+    return f"vid-{topic}-{slot}"
+
+
 # --- 1. 順番が崩れないこと -------------------------------------------------
 
 def test_slow_first_video_does_not_lose_its_slot(monkeypatch):
@@ -146,10 +174,14 @@ def test_slot_hour_matches_topic_order(monkeypatch):
     _, rec, written = _run(
         monkeypatch, ["a", "b", "c"], delays={"a": 0.2, "b": 0.1},
     )
-    row = _ledger(written)
-    assert "vid-a-2026-08-30@9" in row
-    assert "vid-b-2026-08-30@10" in row
-    assert "vid-c-2026-08-30@11" in row
+    row, slots = _ledger(written), _slots(written)
+    # **`zip` は黙って短いほうに合わせます。** 枠が2つしか出なかった回は、
+    # ここが**素通り**になります（検査が消えたことに誰も気づかない形）。
+    assert len(slots) >= 3, f"枠が3つ出ていません（検査が素通りになります）: {slots}"
+    for topic, slot in zip(("a", "b", "c"), slots):
+        assert _vid(topic, slot) in row, (
+            f"{topic} が自分の枠（{slot}）に載っていません —— "
+            f"完了順に積むと、ここでずれます。使った枠: {slots}")
 
 
 # --- 2. 予約は同時に走らないこと -------------------------------------------
@@ -188,11 +220,12 @@ def test_failed_build_is_not_uploaded_and_others_survive(monkeypatch):
     _, rec, written = _run(monkeypatch, ["a", "b", "c"], fail_build={"b"})
     uploaded = [t for k, t in rec.calls if k == "upload"]
     assert uploaded == ["a", "c"]
-    # **b の枠（10時）は誰も取らない。** c は自分の 11時 のまま。
-    # 記録の `slots` には 10時 が残るので、見るのは**動画IDのほう**です。
-    assert "vid-c-2026-08-30@11" in _ledger(written)
-    assert "vid-c-2026-08-30@10" not in written[0]
-    assert "vid-a-2026-08-30@10" not in written[0]
+    # **b の枠（2番目）は誰も取らない。** c は自分の3番目のまま。
+    # 記録の `slots` には b の枠が残るので、見るのは**動画IDのほう**です。
+    slots = _slots(written)
+    assert _vid("c", slots[2]) in _ledger(written), "c が自分の枠を離れています"
+    assert _vid("c", slots[1]) not in written[0], "c が b の空き枠へ繰り上がっています"
+    assert _vid("a", slots[1]) not in written[0], "a が b の空き枠へずれています"
 
 
 def test_failed_build_skips_its_contact_sheet(monkeypatch):
@@ -281,10 +314,13 @@ def test_retry_does_not_consume_another_topic(monkeypatch):
 def test_retry_keeps_the_slot_order(monkeypatch):
     """作り直した本が、**自分の枠**に戻ること（完了順に積むと枠がずれる）。"""
     _, _, written = _run_flaky(monkeypatch, ["a", "b", "c"], flaky={"a"})
-    row = _ledger(written)
-    assert "vid-a-2026-08-30@9" in row
-    assert "vid-b-2026-08-30@10" in row
-    assert "vid-c-2026-08-30@11" in row
+    row, slots = _ledger(written), _slots(written)
+    # **`zip` は黙って短いほうに合わせます。** 枠が2つしか出なかった回は、
+    # ここが**素通り**になります（検査が消えたことに誰も気づかない形）。
+    assert len(slots) >= 3, f"枠が3つ出ていません（検査が素通りになります）: {slots}"
+    for topic, slot in zip(("a", "b", "c"), slots):
+        assert _vid(topic, slot) in row, (
+            f"作り直した本が自分の枠（{topic} → {slot}）に戻っていません。使った枠: {slots}")
 
 
 def test_no_retry_flag_restores_the_old_behaviour(monkeypatch):
