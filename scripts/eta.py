@@ -271,9 +271,60 @@ def _view_cap_per_day() -> float:
 
 
 # --- 門（YouTube の公表値。守るのではなく、通らないと収入が0になる事実）---
+#
+# ## **門は1つではありません。2段あります**（2026-08-30・最適化の回に実測して直した）
+#
+# ここは長らく「門 ＝ 登録者1,000人 ＋ 4,000時間/1,000万回」の**1段だけ**を
+# 持っていました。**YouTube の公表値は2段です**（`support.google.com/youtube/answer/13429240`
+# を 2026-08-30 に直接 読んだ。以下は引用の数字):
+#
+#     expanded YPP（下の段）  登録者 **500人** ＋ 直近90日に公開3本
+#                             ＋（直近12か月 **3,000時間** ／ 直近90日 ショート **300万回**）
+#                             → **メンバーシップ・Super Thanks・Super Chat・
+#                                Jewels・Shopping**（＝ ファン課金）
+#     YPP（上の段）           登録者 **1,000人**
+#                             ＋（直近12か月 4,000時間 ／ 直近90日 ショート 1,000万回）
+#                             → **上に加えて 広告と Premium の分け前**
+#
+# **下の段は、上の段より全部の脚で手前にあります**: 登録者 1/2・時間 3/4・
+# ショート **3/10**。**「同じ門の後ろ」ではありません。**
+#
+# ## なぜこれが効くか（**この定数が無かったこと自体が所見**）
+#
+# `docs/MEANS.md` の M23 は「メンバーシップと Super Thanks は、AdSense と
+# **同じ門の後ろ**にあります（要確認）。**門を早める効果は 0**」と判定して、
+# 着手を「登録者10,000人」まで送っていました。**その要確認は、外れです。**
+# M23 自身の「覆る条件」が
+# 「**門の前でも使えると分かったら、判定1 は崩れる。段取りごと組み直すこと**」
+# と書いてあります —— 2026-08-30 に、その条件が満ちました。
+#
+# ## **数は1つも足していません**
+#
+# ここに入れたのは**公表値だけ**です。ファン課金の**単価も加入率も入れていません**
+# （未測定の数を足すと、日付がその推測で動きます —— M23 の「帯を増やさない」）。
+# だからこの定数は**到達日を1日も動かしません**。動かすのは
+# 「**どの門を目指しているか**」の側で、そこが2段あることを毎回 印字させます。
+#
+# ## 覆る条件
+#
+# - **公表値が変わったら**（YouTube は 2023 にこの下の段を足しました）取り直すこと。
+#   出どころは `support.google.com/youtube/answer/13429240` の1枚だけ
+# - **ファン課金の分子が実測で1件でも入ったら**、ここは定数ではなく段になります
+#   —— そのとき `RPM_SCENARIOS` の外に帯が増え、`_ceiling` の「どの帯でも
+#   届きません」は書き直すこと（`docs/MEANS.md` M23）
+# - **日本で下の段が使えないと分かったら**（国べつの可用性は未確認）この段は消すこと。
+#   **未確認なのは「使えるか」であって、「同じ門か」ではありません** ——
+#   後者はもう外れが確定しています
 SUBS_GATE = 1_000
 LONG_HOURS_GATE = 4_000          # 直近12か月・長尺のみ
 SHORTS_VIEWS_GATE = 10_000_000   # 直近90日・ショート
+
+# --- 下の段（expanded YPP）＝ ファン課金だけが開く門。**広告は開きません** ---
+FAN_SUBS_GATE = 500
+FAN_HOURS_GATE = 3_000           # 直近12か月
+FAN_SHORTS_VIEWS_GATE = 3_000_000  # 直近90日
+FAN_GATE_UNLOCKS = "メンバーシップ・Super Thanks・Super Chat・Jewels・Shopping"
+
 TARGET_YEN = 200_000             # 月収の目標
 
 # --- 1日に出せる本数の上限（実測。data/upload_cap.jsonl の窓と同じ）---
@@ -1380,6 +1431,24 @@ def analyse(m: dict, points: list[dict] | None = None,
     # 収益化はどちらかの門2 ＋ 門1
     a["days_monetized"] = max(a["days_subs"], min(a["days_long_hours"], a["days_shorts_gate"]))
 
+    # --- 下の段（expanded YPP）＝ ファン課金の門。**広告は開きません** ---
+    #
+    # **同じ式を、公表値だけ差し替えて解きます。** 新しい仮定は1つも入れません
+    # （加入率も単価も持っていません —— 持たせると日付が推測で動きます）。
+    # 出すのは「**どの門が手前にあるか**」だけです。
+    a["fan_subs_remaining"] = max(0, FAN_SUBS_GATE - m["subs_net"])
+    a["days_fan_subs"] = _days_to(a["fan_subs_remaining"], subs_per_day)
+    a["days_fan_hours"] = _days_to(FAN_HOURS_GATE - m["long_hours_365"], long_hours_per_day)
+    a["fan_shorts_needed_per_day"] = FAN_SHORTS_VIEWS_GATE / 90
+    a["days_fan_shorts"] = (
+        0.0 if views_day >= a["fan_shorts_needed_per_day"] else NEVER
+    )
+    a["days_fan_gate"] = max(
+        a["days_fan_subs"], min(a["days_fan_hours"], a["days_fan_shorts"])
+    )
+    # **手前にある日数の差**。ここが正なら、ファン課金の門のほうが早く開きます。
+    a["fan_gate_lead_days"] = a["days_monetized"] - a["days_fan_gate"]
+
     # --- 門2a を「長尺を足して」開けるなら、長尺1本に何回の再生が要るか ---
     #
     # **これが無かったので、この道具は 8/19 の初回から「届きません」しか言えず、
@@ -1556,6 +1625,32 @@ def report(m: dict, a: dict) -> list[str]:
                        f"／いま {a['views_per_day']:,.0f}回）")
     P(f"  [門2b] ショート90日で{SHORTS_VIEWS_GATE:,}回    {shorts_line}")
     P(f"  → **収益化そのもの: {_fmt_days(a['days_monetized'])}**")
+    P("")
+    P(f"  [下の段] **ファン課金だけの門（expanded YPP）** ＝ {FAN_GATE_UNLOCKS}"
+      "　**広告は開きません**")
+    P(f"    [門1'] 登録者 {FAN_SUBS_GATE:,}人（上の段の**半分**）  "
+      f"{_fmt_days(a['days_fan_subs'])}"
+      f"　**あと {a['fan_subs_remaining']:,} 人**")
+    P(f"    [門2a'] 長尺 {FAN_HOURS_GATE:,}時間（上の段の 3/4）    "
+      f"{_fmt_days(a['days_fan_hours'])}")
+    if a["views_per_day"] >= a["fan_shorts_needed_per_day"]:
+        _fs = "**通っています**"
+    else:
+        _fs = (f"**届きません**（1日 {a['fan_shorts_needed_per_day']:,.0f}回 要る"
+               f"／いま {a['views_per_day']:,.0f}回 ＝ "
+               f"{a['views_per_day'] / a['fan_shorts_needed_per_day']:.2f}倍）")
+    P(f"    [門2b'] ショート90日で{FAN_SHORTS_VIEWS_GATE:,}回（上の段の **3/10**）  {_fs}")
+    if a["fan_gate_lead_days"] > 0 and a["days_fan_gate"] < NEVER:
+        P(f"    → **ファン課金の門そのもの: {_fmt_days(a['days_fan_gate'])}**"
+          f"（広告の門より **{a['fan_gate_lead_days']:,.0f}日 手前**）")
+    else:
+        P(f"    → **ファン課金の門そのもの: {_fmt_days(a['days_fan_gate'])}**")
+    P("    **この段に、この機械はまだ分子を1つも持っていません**"
+      "（加入率も単価も未測定）。**だから上の到達日は、この段を 0円 として解いています。**"
+      "　`docs/MEANS.md` の M23 は 2026-08-30 まで「メンバーシップは広告と**同じ門の後ろ**"
+      "だから門を早める効果は 0」と判定していました —— **公表値を読んだら外れでした**"
+      "（`support.google.com/youtube/answer/13429240`）。**M23 の着手条件は、"
+      "その外れた判定の上に立っています。**")
     if a["long_untried"] and a["days_monetized"] >= NEVER:
         P("       **この「届きません」を、諦める理由に使わないこと。** 門2a の無限が"
           "そのまま出ているだけで、**未着手を測った数ではありません**。")
