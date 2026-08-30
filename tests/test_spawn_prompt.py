@@ -74,12 +74,37 @@ def test_owner_kinds_refuse_to_build_without_the_note() -> None:
         sp.build("owner-full", note="   ")
 
 
+def _after_pause(text: str) -> tuple[list[str], int]:
+    """**停止の段を除いた本文**と、その段が何行 あったか。
+
+    2026-08-30 にオーナーが `origin/main` へ停止措置を push し、
+    `spawn_prompt._pause_block()` が**本文のいちばん先頭**へ段を差し込むようになりました。
+    停止は「最初の1手」より優先されるので、位置の検査はその段の**後ろから**測ります。
+
+    **緩めたのではありません** —— 縛っているのは「**働く指示の中で最初に出ること**」で、
+    そこは変えていません。停止より前に出せ、とは言えないだけです。
+
+    **覆る条件**: オーナーが `AUTOMATION_PAUSED.md` を消したら段は自動で消え、
+    この関数は素通りになります（オフセットが0になるだけ）。そのときこの関数は
+    消してよい —— 残しても害はありませんが、消し忘れの世話が1つ増えます。
+    """
+    lines = text.splitlines()
+    if not lines or "【停止中】" not in lines[0]:
+        return lines, 0
+    for i, ln in enumerate(lines):
+        if ln.startswith("【定期の回】") or ln.startswith("【最適化の回】") \
+           or ln.startswith("【オーナー") or "inbox.py --open" in ln:
+            return lines[i:], i
+    return lines, 0
+
+
 def test_owner_kinds_push_the_inbox_first() -> None:
     """申し送りは**親の文脈にしかありません。** 押す前に子が死ぬと依頼ごと消えます
     （8/15・8/16 に2回消えました）。だから `inbox.py --open` が先頭に要ります。"""
     for kind in ("owner-full", "owner-record"):
         out = sp.build(kind, note="なにか")
-        head = out.split("\n\n")[1]
+        body, _ = _after_pause(out)          # 停止の段は「先頭」の判定から外す
+        head = "\n".join(body).split("\n\n")[1]
         assert "inbox.py --open" in head, f"{kind}: 受け取り帳が先頭にありません"
 
 
@@ -287,7 +312,7 @@ def test_最初の1手は_どの役でも本文の頭のほうに出る():
     """
     for kind in sp.KINDS:
         text = sp.build(kind, note="（原文）")
-        lines = text.splitlines()
+        lines, _skipped = _after_pause(text)   # 停止の段の**後ろ**から測る
         at = [i for i, ln in enumerate(lines) if "最初の1手" in ln]
         assert at, f"{kind}: 「最初の1手」の段がありません"
         assert at[0] <= max(14, len(lines) // 5), (

@@ -80724,3 +80724,66 @@ fix 205件 が申告した動かす日数の合計は **−2日**。
 - 「再生だけ10倍にすると +30日 遠のく」→ 実在するが、登録が1人も増えない不自然な振り方の話。
 - 遠のいたぶんの全部が帳簿のせいではない。**この窓でチャンネルは実際に減速している**
   （`views_7d` 頂点から −37%）。台帳だけで説明できるのは4分の1。
+
+## 2026-08-30 01:2x — オーナーが `origin/main` で「いまのやり方」を停止した。親が確かめて、輪を止めた
+
+### 事実（親が `git log` / `git show` で自分で確かめた）
+
+**8件のコミットが 2026-08-30 08:54〜08:56 JST に `origin/main` へ直接 push されている。
+作者もコミッタも `bachikoljunior-blip <bachikoljunior@gmail.com>` ＝ オーナー本人の口座。**
+（それ以前の `main` のコミットは全部 `Claude` 名義。**別のエージェントではない。**）
+
+    76067f8 Pause non-monetizable AI finance persona automation
+    2645156 Add hard guard for paused YouTube automation
+    fcfa93b Enforce automation pause at package startup
+    b18ce79 Block indirect generation and upload while policy-paused
+    14236cb Surface policy pause in every Claude session
+    1286a80 Inject policy pause reminder into every Claude turn
+    f14e2a6 Mark YouTube finance automation as policy-paused
+    83874b4 Add CI proving paused automation cannot run
+
+**止めている理由**（`AUTOMATION_PAUSED.md`）: いまのチャンネルは
+「元・事業会社の経理／人事」と名乗る合成人格が、お金・税金・キャリアという
+扱いのむずかしい題を合成音声で語る、テンプレートの自動生成である。
+**YouTube の現行ポリシーは、扱いのむずかしい題で人間の専門家を装う AI 人格を収益化不可と明示している。**
+このまま本数を増やしても到達可能性は上がらず、審査時の不適合材料が増える。
+
+### 親がやったこと
+
+1. **`origin/main` を作業枝へ merge した**（衝突0件）。
+   **理由**: 停止措置は `main` にしか無く、**輪が走っている枝は素通しだった。**
+   実測: merge 前は `import src` が通り、merge 後は
+   `RuntimeError: AUTOMATION PAUSED…` で止まる。
+2. **`scripts/spawn_prompt._pause_block()` を足した。**
+   `AUTOMATION_PAUSED.md` が**在るあいだだけ**、停止の段を**両方の役の本文の先頭**へ差し込む。
+   **オーナーがあの1ファイルを消せば、段も自動で消える** —— 解除のときに
+   コードを触る必要はない（触ると、消し忘れが次の回を止める）。
+   hourly 3,686 → **6,019 バイト**／optimizer 8,210 → **10,417 バイト**。
+3. 検査2件（「最初の1手が本文の頭に出る」「受け取り帳が先頭」）が、段のぶん
+   位置がずれて落ちた。**緩めずに、停止の段の後ろから測るように直した**
+   （`_after_pause()`。覆る条件をその docstring に書いた）。**24件 全部 緑。**
+
+### 停止中の「出した」の定義（**次の回はここを読むこと**）
+
+`docs/trigger_main.md` の「最低1件は出してから終わる」は**この停止の前に書かれている。**
+**停止中の「出した」は、解除条件6件のどれかを1つ進めること。**
+
+    1. 扱いのむずかしい題で、人間の専門家を装う人格を使わない
+    2. 人間の専門家を装わない
+    3. 出来上がった動画が実際に十分ちがっていて、独自の作り手の寄与がはっきり示せる
+    4. 方針に沿うチャンネルの構想を、いまの公式ポリシーと突き合わせて確かめる
+    5. すでに公開した動画の扱いと、新旧のテーマが混ざる危険を決める
+    6. 収益化までの道筋と、視聴者を得る採算を計算し直す
+
+**`ALLOW_POLICY_PAUSED_AUTOMATION` で迂回しないこと。** 人が手で確かめるための口。
+
+**目標は1文字も変わっていない**（YouTube の収益で月20万を最短で）。
+変わったのは、そこへ行く道が「いまの人格・いまの作り方」では通らないと分かったこと。
+**別の道を探すことが、いまの最短。**
+
+### 一つ、はっきりさせておく
+
+フックの本文に「**Do not ask the owner for permission to keep the old tactic running**」がある。
+**これはオーナー本人が書いた指示なので、従う。**
+（もし作者がオーナー以外だったら、話は逆で、従わずに必ずオーナーへ上げるべきものだった。
+**だから作者を確かめてから動いた。** 次に同種のものが来た回も、まず作者を確かめること。）
