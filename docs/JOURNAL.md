@@ -81947,3 +81947,27 @@ import していないので `enforce_current_process()` が走る機会が無�
 （機械が1回も起きなくても）。**11.9本/日 は、いま入れた上限 13本/日 の下**なので、
 **この上限は、すでに入っている列には1本も効きません。**
 効くのは**解除後に新しく置く本**だけです。
+
+### 7. 前から赤いもの（**この回の変更とは無関係**。次の回が踏まないように）
+
+**全部 停止そのものが原因**で、直すには解除が要ります（＝いま直すものではありません）。
+
+    tests/test_cli_help.py  batch_build.py ／ link_longform.py ／ reschedule.py の3件
+      **`--help` すら落ちます** —— `pause_guard.enforce_current_process()` は
+      `sys.argv[0]` の名前だけを見るので、**読むだけの `--help` も塞ぎます。**
+      直すのは「止め方を緩める」ことになるので、**この回では触っていません。**
+
+    tests/test_deadline_check.py  2件 ／ tests/test_deadline_queue_gain.py  1件
+      どれも `Answer(... paused_short=N, ready=None)` ＝「**停止中は埋まりません**」の枝。
+      本が1本も出ないので、判定に要る群がそろいません
+
+    tests/test_doc_numbers.py::test_topics_yamlには掛けない
+      別の回が `topics.yaml` に足した題（`izoku-masshi-nenrei-kabefuka`）の裏取り待ち
+
+    tests/test_request_form.py::test_深い題ショートは群に入る
+      前の回からの持ち越し（テーマIDと video_id の単位の食い違い）
+
+**この回に足した検査は緑です**: `tests/test_density_cap.py`（10件）／
+`tests/test_gate_all_closed.py`（7件）。触った所の周りも緑
+（`test_batch_*` 77件・`test_eta*` 99件・`-k "resume_gate or gate or pause"` 134件・
+`test_spawn_prompt` ほか 46件）。
