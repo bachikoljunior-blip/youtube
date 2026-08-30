@@ -192,6 +192,67 @@ def _deadline_check_mod():
     return mod
 
 
+def _fit_deadlines() -> list[str]:
+    """**期限を、データの来る日へ寄せ直す**（`deadline_check.shrink()` / `extend()`）。
+
+    API 0単位・実測 **42秒**。返すのは印字する行だけ（無ければ空）。
+
+    ## なぜ `eta.py` が撃つのか（2026-08-30・最適化の回に実測して配線した）
+
+    **`deadline_check` は `docs/trigger_main.md`（314KB）に1度も名前が出ていません**
+    でした（実測 `grep -c` → **0**）。道具は 2026-08-25 から在り、
+    `--shrink` / `--extend` / `--fit` まで実装されていて、**撃つ側だけが無い。**
+    そのあいだに溜まっていたもの（実測 2026-08-30）::
+
+        データは揃うのに期限が先    **2件・合計 50日**
+        データが来る前に期限がある  **3件・合計 6日**
+
+    **この 50日 は、到達日がまるごと止まっていた日数です。** この道具自身が
+    「**軌跡の腕は、前提を1件 閉じたときだけ動く**」と印字するので、
+    データが揃っていても期限が先なら、腕は1日も動きません。
+    そして到達日をいちばん大きく動かすのは **θ（前提が閉じる速さ）**です
+    （同じ回の実測: θ×2 で -25日／天井で -50日）。
+
+    ## **手順に書くだけでは飛ばされます**
+
+    この docstring の上のほう（このファイルの冒頭）が、同じことを言っています ——
+
+    > **文書に手順として書くだけでは飛ばされます。** … だから**道具にして、
+    > 数字が勝手に出る形**にしました。
+
+    `docs/trigger_main.md` §2.6 にも並べましたが、**効いているのはこちら**です。
+    `scripts/status.py` は 2026-08-25 から「縮めること」と印字していて、
+    **それでも 50日 溜まりました。印字は撃たれません。**
+
+    ## 撃たない場面
+
+    - `--offline`（積んだ点から読むだけの回。42秒 を足す用がありません）
+    - `--gate` / `--alloc` / `--reflect`（早い出口。上の `main()` で先に返ります）
+
+    ## 覆る条件
+
+    - **毎周ここが 0件 でない**なら、効いていないのは配線ではなく
+      `deadline_check.Verdict.slack`（帯）の幅です。帯を広げること
+    - `deadline_check` が読めない回は**黙って通します**（`eta.py` は
+      「予測で回を止めない」を既定にしています）。
+      **門を増やさないこと** —— ここが落ちて回が止まると、失うのは 50日 より大きい
+    - 検査は `tests/test_eta_fits_deadlines.py`
+    """
+    try:
+        mod = _deadline_check_mod()
+        moved = mod.shrink() + mod.extend()
+    except Exception as exc:                                   # noqa: BLE001
+        return [f"[eta] 期限の寄せ直しは撃てませんでした（{type(exc).__name__}: {exc}）"
+                "。**回は止めません。**"]
+    if not moved:
+        return []
+    out = [f"[eta] **期限を {len(moved)}件 寄せ直しました**"
+           "（`deadline_check` の `waits`／`slips`。"
+           "**`falsified_if` は1文字も触っていません**）:"]
+    out += [f"[eta]   {before} → **{after}**  {claim[:44]}" for claim, before, after in moved]
+    return out
+
+
 @functools.lru_cache(maxsize=1)
 def _unready_claims() -> set:
     """**判定できる日が出せない claim**（`deadline_check.unready_claims()`）。
@@ -7853,6 +7914,10 @@ def main() -> int:
 
     if args.reflect:
         return reflect(args.note, record=not args.no_record)[0]
+
+    if not args.offline:
+        for line in _fit_deadlines():
+            print(line)
 
     if args.offline:
         if not LOG.exists():

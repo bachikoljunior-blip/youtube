@@ -209,7 +209,7 @@ hypotheses:
   # 10,000 まで下げると λ＝2.74・検出力 75% に落ちるので、下げません
   # （同じ判断を `長尺の登録率` の前提が 2026-08-27 にしています）。
   - claim: "登録は本の作りではなく配信の広さで決まる。再生が伸びなかった本からは、何本 積んでも登録は入らない"
-    deadline: "2026-10-22"
+    deadline: "2026-09-03"
     lever: sub_rate           # subscribersGained ÷ 再生 で判定する
     side: dist
     watch: 低再生の帯-20000再生
@@ -1851,7 +1851,7 @@ hypotheses:
     #     1日 後ろへずれた（`tests/test_deadline_check.py` の
     #     `test_期限が_判定できる日より前に置かれていない` が赤くして見つけた）。
     #     **この検査が落ちたら、延ばすのは期限だけ。条件は緩めないこと。**
-    deadline: "2026-10-05"
+    deadline: "2026-10-06"
     lever: per_video                # engaged 比率（1本あたり再生の駆動輪）
     side: content
     needs:
@@ -2365,7 +2365,7 @@ hypotheses:
   - claim: "作る題材の順番は、engaged だけでなく族べつの登録率でも重み付けるべき（門は登録者）"
     # **09-20 → 09-17 へ縮めた（2026-08-26）。`falsified_if` は1文字も変えていません。**
     #   `python scripts/deadline_check.py` の `ready` に合わせただけ。熟成 7日 → 3日（`src/settle.py` の実測）を当てた結果です
-    deadline: "2026-09-16"
+    deadline: "2026-09-17"
     lever: sub_rate                # subscribersGained ÷ 再生 で判定する
     side: content
     needs:
@@ -5026,7 +5026,7 @@ hypotheses:
     # 作ってから公開までの中央値は 15日（`deadline_check` の実測）＋
     # 落ち着き3日 ＋ Analytics の遅れ3日。**`queue_lag --move` で手前へ倒せば
     # 縮みます**（枠が戻る 08/28 16:00 JST 以降）。**縮んだら期限も縮めること。**
-    deadline: "2026-08-31"
+    deadline: "2026-09-04"
     needs:
       - kind: accrual
         # この回より後に作られ、**もう公開日が過ぎている**ショートの数。
@@ -5279,7 +5279,7 @@ hypotheses:
       戻すこと。**検査は `tests/test_eta_live_band_per_video.py`。**
 
   - claim: "長尺の1本あたり再生 8.0回 は長尺の天井ではない。公開が 0.68本/日 だっただけで、1日8本の帯で出しつづければ、齢をそろえた1本あたり再生は 80回（10倍）に届く"
-    deadline: "2026-09-16"
+    deadline: "2026-09-13"
     lever: per_video
     side: dist
     watch: "長尺1本あたり-30本"

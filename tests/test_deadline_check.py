@@ -51,6 +51,42 @@ def _machine_is_running(monkeypatch):
     monkeypatch.setattr(PG, "is_paused", lambda: False)
 
 
+#: **本物の `is_paused`**（上の autouse が差し替える前に捕まえておく）。
+import src.pause_guard as _PG  # noqa: E402
+
+_REAL_IS_PAUSED = _PG.is_paused
+
+
+@pytest.fixture
+def _real_world(monkeypatch):
+    """**実物の台帳を読む検査は、実物の世界で回すこと。**（2026-08-30・最適化の回）
+
+    上の autouse は「機械が動いているとき」に世界を固定します。**合成した控えを
+    読む検査にはそれが正しい**のですが、`_open_items()`（＝ `config/hypotheses.yaml`
+    の実物）を読む検査には**嘘の世界を渡します。**
+
+    実測してここへ落ちました。`slot_half`（腕 `density`）の `count_expr` は
+    `data/batch_runs.jsonl`（＝ **作った本**）を数えており、停止中は 1件も増えません。
+    ところが `is_paused → False` の世界では `_ans_accrual` が停止前の 2日ぶんの
+    平均（3.50/日）を未来へ延ばし、**「判定できるのは 09-08」**と答えます。
+    そこで `test_遅すぎる期限が残っていないこと` が
+    **「11-10 は 59日 遅すぎる。`--shrink` せよ」**と要求しました。
+
+    **従うと、判定できる本が 0本 のまま期限だけが 59日 手前へ来ます** ——
+    その日に処置群が空で判定に入り「上回っていない＝外れ」で前提が倒れ、
+    `arm_speed` が `density` を「当たらなかった腕」として数えます
+    （`src/judgeable.py` 冒頭が数えている、まさにその壊れ方）。
+
+    **検査が、台帳の禁じている行為を要求していた**わけです。世界を実物へ戻すと、
+    その1件は `_ledger_frozen()` に捕まって「停止中は埋まりません」へ落ち、
+    残る待ちは**本当にデータが揃うもの**だけになります（実測 109日 → 50日）。
+
+    **覆る条件**: `AUTOMATION_PAUSED.md` が消えたら、この fixture は
+    autouse と同じ世界になり、何もしなくなります（外してよい）。
+    """
+    monkeypatch.setattr(_PG, "is_paused", _REAL_IS_PAUSED)
+
+
 def _open_items() -> list[dict]:
     items = yaml.safe_load((ROOT / "config" / "hypotheses.yaml").read_text(encoding="utf-8"))
     return [h for h in items["hypotheses"] if not h.get("closed_on") and not h.get("verdict")]
@@ -66,7 +102,7 @@ def test_開いている前提には全部_needs_が書いてある():
     assert not missing, f"`needs:` が無い前提: {missing}"
 
 
-def test_期限が_判定できる日より前に置かれていない():
+def test_期限が_判定できる日より前に置かれていない(_real_world):
     """**この検査が落ちたら、期限を延ばすこと。`falsified_if` は緩めないこと。**
 
     緩めると、外れない条件になります（このファイルが防ごうとしているのは
@@ -345,7 +381,7 @@ def test_ready_by_claim_は_claimごとの最早の日を返す():
     assert got["A"] == J.check(items, as_of=date(2026, 8, 25), lag=3)[0].ready
 
 
-def test_実物にも待ちが残っていないか_数えられること():
+def test_実物にも待ちが残っていないか_数えられること(_real_world):
     """**数え方が実物で回ること。**（主張しているのは下の
     `test_遅すぎる期限が残っていないこと` のほうです —— ここは形だけ見ます）"""
     vs = J.check(_open_items())
@@ -369,7 +405,7 @@ def test_status_も_遅すぎる側を出すこと():
     assert "縮めること" in src, "何をすればいいかを言っていません"
 
 
-def test_遅すぎる期限が残っていないこと():
+def test_遅すぎる期限が残っていないこと(_real_world):
     """**印字は 666 commits 効きませんでした。赤い検査は同じ日に効きました。**
 
     2026-08-25 13:54Z、`scripts/deadline_check.py` が
