@@ -5186,12 +5186,26 @@ def gate_lines(bar: str = "###", tr: dict | None = None) -> list[str]:
     if opened:
         names = " ／ ".join(f"**{r['n']}** {r['text']}" for r in g["open_items"])
         out.append(f"{bar} 開いている {opened}件: {names}")
+    # **正本が「閉じた」と言っているのに、根拠の1行が台帳に無い件**（2026-08-30 に踏んだ）。
+    #     `AUTOMATION_PAUSED.md` の原文は「次の全条件が**記録される**まで解除しない」。
+    #     **印だけ付いて根拠が無い状態は、まだ記録されていません。**
+    if g.get("unrecorded"):
+        ns = "／".join(str(r["n"]) for r in g["unrecorded"])
+        out.append(
+            f"{bar} [!] **{ns} は `AUTOMATION_PAUSED.md` の側で「閉じた」と印が付いていますが、"
+            f"根拠の1行が `data/resume_gate.jsonl` にありません。** 原文は"
+            f"「次の全条件が**記録される**まで解除しない」——"
+            f" **印は記録ではありません。** `--close-gate {g['unrecorded'][0]['n']}"
+            f" --evidence \"…\"` で、どこに何を残したかを1行 積むこと"
+            f"（積むまで、閉じる速さの分母に入りません）。")
     rate, left_days = g["rate_per_day"], g["days_to_close"]
     if left_days is None:
         traj = ((tr or {}).get("base") or {}).get("date")
+        # **分母に入るのは、日付の付いた閉じ方だけ**（正本の印には日付が無い）。
+        _dated = closed - len(g.get("unrecorded") or [])
         out.append(
             f"{bar} **床(d)＝門が閉じる日 ＋ 軌跡の日数。いまは日付が出ません** ——"
-            f" 閉じた実績が {closed}件（速さを言うのに要るのは"
+            f" 閉じた実績が {_dated}件（速さを言うのに要るのは"
             f" {g['min_closed_for_rate']}件）なので、**閉じる速さが測れていません。**"
             f" **これは「0日」でも「永遠」でもありません。**"
             + (f" 固定して言えるのは1つだけ: **門が今日 全部 閉じたとしたら {traj.isoformat()}**"

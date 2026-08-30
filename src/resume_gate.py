@@ -123,6 +123,21 @@ def conditions(text: str | None = None) -> list[tuple[int, str]]:
     return out
 
 
+#: **正本の側に付く「閉じた」の印。**（2026-08-30 に踏んで足した）
+#:
+#: 同じ日に2つの回が別々にここへ着きました。片方は `data/resume_gate.jsonl` に
+#: 積み、もう片方は `AUTOMATION_PAUSED.md` の箇条書きに
+#: **「← 2026-08-30 に閉じた」と直接 書き足しました。**
+#: 合流した直後の実測 —— `eta.py` が
+#:
+#:     開いている 5件: **1** sensitive-topic AI persona を使わない
+#:     **← 2026-08-30 に閉じた（下の「進捗」）** ／ …
+#:
+#: と印字しました。**同じ1行の中で「開いている」と「閉じた」を両方 言っています。**
+#: 正本はオーナーが push したファイルなので、**そちらの印を勝たせます。**
+_CLOSED_MARK = re.compile(r"←\s*[^／\n]*?閉じた|\*\*?closed\*\*?", re.I)
+
+
 def _ledger_rows(path: Path | None = None) -> list[dict]:
     p = LEDGER if path is None else path
     if not p.is_file():
@@ -157,13 +172,24 @@ def state(text: str | None = None, path: Path | None = None) -> list[dict]:
     out = []
     for n, body in conds:
         r = last.get(n) or {}
-        closed = (r.get("state") == "closed")
+        by_ledger = (r.get("state") == "closed")
+        # **正本の印を勝たせる**（`_CLOSED_MARK` の註）。
+        by_file = bool(_CLOSED_MARK.search(body))
+        clean = _CLOSED_MARK.sub("", body).strip(" 　*")
+        closed = by_ledger or by_file
         out.append({
             "n": n,
-            "text": body,
+            "text": clean or body,
             "closed": closed,
-            "closed_on": (r.get("at") or "")[:10] if closed else None,
-            "evidence": r.get("evidence") if closed else None,
+            # **どちらが閉じたと言っているか。** 食い違いはここから読めます。
+            "by_ledger": by_ledger,
+            "by_file": by_file,
+            # **正本が閉じたと言っているのに、根拠の1行が台帳に無い状態。**
+            #     `AUTOMATION_PAUSED.md` は「次の全条件が**記録される**まで
+            #     解除しない」と書いているので、これは未完了です。
+            "unrecorded": by_file and not by_ledger,
+            "closed_on": (r.get("at") or "")[:10] if by_ledger else None,
+            "evidence": r.get("evidence") if by_ledger else None,
         })
     return out
 
@@ -252,6 +278,8 @@ def summary(text: str | None = None, path: Path | None = None,
         "days_to_close": days_to_close(text, path, today),
         "cap": cap(text, path),
         "min_closed_for_rate": MIN_CLOSED_FOR_RATE,
+        # **正本が閉じたと言っているのに、根拠が台帳に無い件**（`state()` の註）。
+        "unrecorded": [r for r in st if r.get("unrecorded")],
     }
 
 

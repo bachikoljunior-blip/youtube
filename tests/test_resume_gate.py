@@ -180,3 +180,35 @@ def test_gate_row_is_json_safe():
     g = dict(resume_gate.summary())
     g["since"] = g["since"].isoformat() if g.get("since") else None
     json.dumps(g, ensure_ascii=False)
+
+
+def test_a_closed_mark_in_the_owners_file_wins(tmp_path):
+    """**正本の印を勝たせること。**（2026-08-30 に実際に踏んだ）
+
+    同じ日に2つの回が別々にここへ着き、片方は `data/resume_gate.jsonl` に積み、
+    もう片方は `AUTOMATION_PAUSED.md` の箇条書きへ直接 印を書きました。
+    合流直後の実測 —— `eta.py` が **同じ1行の中で**こう印字しました。
+
+        開いている 5件: **1** sensitive-topic AI persona を使わない
+        **← 2026-08-30 に閉じた（下の「進捗」）** ／ …
+    """
+    text = _PAUSE_TEXT.replace(
+        "1. 条件いち", "1. 条件いち  **← 2026-08-30 に閉じた（下の「進捗」）**")
+    st = resume_gate.state(text, tmp_path / "gate.jsonl")
+    one = next(r for r in st if r["n"] == 1)
+    assert one["closed"], "正本が「閉じた」と言っているのに、開いていることになっている"
+    assert "閉じた" not in one["text"], "印が条件の本文に残っている（そのまま印字されます）"
+    assert one["unrecorded"], "根拠が台帳に無いことが立っていない"
+
+
+def test_a_mark_without_evidence_is_not_a_record(tmp_path):
+    """**印は記録ではない。** 原文は「次の全条件が**記録される**まで解除しない」。
+
+    日付の無い閉じ方を速さの分母に入れると、**測っていない速さ**が出ます。
+    """
+    text = _PAUSE_TEXT.replace("1. 条件いち", "1. 条件いち **← 閉じた**")
+    led = tmp_path / "gate.jsonl"
+    assert resume_gate.closed_count(text, led) == 1
+    # 印だけの1件は、速さの実績に数えない
+    assert resume_gate.rate_per_day(text, led, date(2026, 9, 5)) is None
+    assert resume_gate.summary(text, led)["unrecorded"], "食い違いが summary に出ていない"
