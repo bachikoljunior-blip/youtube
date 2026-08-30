@@ -443,8 +443,19 @@ def description_line() -> str:
                 "`python -m src.descriptions --refresh`（約15単位・"
                 "**Data API の日枠は JST 16:00 に戻ります**）")
     hits = len(descriptions.persona_defects(d["videos"]))
+    asked = int(d.get("asked") or 0)
+    # **途中で止まった回を「測れています」で終わらせないこと**（2026-08-31）。
+    # 日枠の 403 は 1本目で来ることも 700本目で来ることもあり、
+    # **どちらも `got > 0` なら同じ文**になっていました。
+    # 「50本 測れています（名乗り 0本）」は、**台帳735本が綺麗**に読めます。
+    rest = ""
+    if asked and got < asked:
+        rest = (f"・**台帳 {asked}本 の {got / asked * 100:.0f}% だけ**"
+                f"（残り {asked - got}本 は未測定"
+                + ("・日枠で途中で止まりました" if d.get("partial") else "")
+                + "）")
     return (f"**説明欄は {got}本 測れています**（名乗り {hits}本"
-            f"・{d.get('at', '')[:10]} 取得）—— `python -m src.descriptions`")
+            f"・{d.get('at', '')[:10]} 取得{rest}）—— `python -m src.descriptions`")
 
 
 def main() -> None:

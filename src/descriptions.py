@@ -277,21 +277,78 @@ def frame(recs: list[dict]) -> dict:
     return out
 
 
+#: **1本も取れていない回に出す文**（2026-08-31 に足した）。
+#:
+#: ## なぜ要るか —— **0本を「0件」と印字すると、合格に読めます**
+#:
+#: 2026-08-31 07:3x にこの道具を撃ったら、日枠の 403 で **0本** 持ち帰り、
+#: それでも下の節がこう出ました:
+#:
+#:     --- 1) 説明欄で人間の専門家を装っているか（解除条件 1・2）---
+#:       **0 / 0本**
+#:     --- 2) 説明欄で行動を指図しているか ---
+#:       **0 / 0本**
+#:
+#: **「0 / 0本」は「測って0件」と1文字も違いません。** 番号の付いた節だけを
+#: 読んだ回は、**停止の理由そのもの（解除条件1・2）が、最後に残った面でも
+#: 綺麗だった**と読みます。**測っていないのに。**
+#:
+#: `src/bars.py` と `verify._check_frame_repeat` が同じ形で先に決めています ——
+#: **比較対象が無いのは「合格」ではなく「判定していない」。**
+#: ここだけが、そこから外れていました。
+#:
+#: **覆る条件**: 台帳が本当に空になった回（本を1本も上げていないチャンネル）は、
+#: ここが邪魔をします。そのときは `asked` が 0 なので、文言を分けること。
+_UNMEASURED = (
+    "  [!] **説明欄は、まだ1本も測れていません。**\n"
+    "      **下の 1) 2) 3) は出しません** —— 0本の分母で「0件」と出すと、"
+    "**測って0件だった**と読めるからです（`src/bars.py` と同じ決まり:"
+    " 比較対象が無いのは合格ではなく **判定していない**）。\n"
+    "      **解除条件1・2 は、この面については閉じていません**"
+    "（`src/legacy_corpus.py` が測った 694本 は台本・画面の側で、"
+    "説明欄は `verify._check_no_human_expert_claim()` が"
+    "**新しい本には当てている第2の欄**です）。\n"
+    "      取り直す手: `python -m src.descriptions --refresh`（約15単位）"
+)
+
+
+def _coverage(got: int, asked: int) -> str:
+    """**分母が台帳の何割か**を、節ごとの数のすぐ隣に置く。
+
+    途中で止まった回は「50 / 735本」ではなく「50本」しか出ないので、
+    **50本ぜんぶ綺麗**が**735本ぜんぶ綺麗**に読めます。割合を隣に置けば読めません。
+    """
+    if not asked or got >= asked:
+        return ""
+    return f"  ← **台帳 {asked}本 の {got / asked * 100:.0f}% だけ**です"
+
+
 def report(cache: Path | None = None, show: int = 5) -> str:
     d = load(cache)
     if not d:
         return ("=== 説明欄 ===\n  **まだ1度も取っていません。**"
                 " `python -m src.descriptions --refresh`（約15単位）")
     recs = d.get("videos") or []
+    partial = bool(d.get("partial"))
     a: list[str] = []
     ap = a.append
     ap("=== 説明欄を、停止の理由で測る（解除条件1・2・3・5 の最後の面）===")
     asked = d.get("asked", 0)
     miss = asked - len(recs)
+    # **差の理由を決めつけないこと**（2026-08-31 に踏んだ。下の `_UNMEASURED` の註）。
+    # 日枠で途中で止まった回の差は「チャンネルに無い本」ではなく「まだ訊いていない本」です。
     ap(f"  台帳 {asked}本 ／ 説明欄が返った {len(recs)}本"
-       f"（差 {miss}本 は**チャンネルに無い本**）")
-    if d.get("partial"):
+       + (f"（差 {miss}本 は**まだ訊いていません** —— 日枠で途中で止まりました。"
+          "**チャンネルに無い、ではありません**）" if partial and miss
+          else f"（差 {miss}本 は**チャンネルに無い本**）" if miss else ""))
+    if partial:
         ap("  [!] **途中で止まっています**（日枠）。取れたところまでの数です")
+    if not recs:
+        ap("")
+        ap(_UNMEASURED)
+        ap(f"  取った時刻: {d.get('at')}"
+           "（日枠は **JST 16:00** に戻ります。`--refresh` で取り直し・約15単位）")
+        return "\n".join(a)
     priv = collections.Counter(r.get("privacy") for r in recs)
     ap("  内訳: " + " ／ ".join(f"{k} {v}本" for k, v in priv.most_common()))
     bodies = sum(1 for r in recs if body(r.get("description")))
@@ -301,7 +358,8 @@ def report(cache: Path | None = None, show: int = 5) -> str:
     pd = persona_defects(recs)
     ap("")
     ap("--- 1) 説明欄で人間の専門家を装っているか（解除条件 1・2）---")
-    ap(f"  **{len(pd)} / {len(recs)}本**  ← `verify._check_no_human_expert_claim()`"
+    ap(f"  **{len(pd)} / {len(recs)}本**{_coverage(len(recs), asked)}"
+       "  ← `verify._check_no_human_expert_claim()`"
        "（**本文に当てているのと同じ関数**）")
     for r in pd[:show]:
         ap(f"    - [{r.get('privacy')}] {r.get('title', '')[:34]}"
@@ -313,7 +371,7 @@ def report(cache: Path | None = None, show: int = 5) -> str:
     ap("")
     ap("--- 2) 説明欄で行動を指図しているか（`channel.yaml` の `avoid`）---")
     share = f"（{len(ad) / len(recs) * 100:.1f}%）" if recs else ""
-    ap(f"  **{len(ad)} / {len(recs)}本**{share}")
+    ap(f"  **{len(ad)} / {len(recs)}本**{share}{_coverage(len(recs), asked)}")
     for r in ad[:show]:
         ap(f"    - [{r.get('privacy')}] {r['hits'][0][1][:24]}"
            f" … {r.get('title', '')[:32]}")
