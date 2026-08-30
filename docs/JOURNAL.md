@@ -82610,9 +82610,11 @@ spawn_prompt / spawn_gate_overrun / quota_gauge）。
 `scripts/deadline_check.py` は **2026-08-25 から**在り、
 `--shrink` / `--extend` / `--fit` まで実装されています。実測::
 
-    grep -c deadline_check docs/trigger_main.md   →  **0**
+    grep -c deadline_check docs/trigger_main.md   →  **0**   ← **配線する前**
 
 **314KB の手順に、この道具の名前が1度も出ていませんでした。**
+（**いま同じ行を撃つと 0 ではありません** —— この回が足した §2.6 の節が数に入ります。
+**数え直して「書いてあるじゃないか」と読まないこと。**）
 そのあいだに溜まっていたもの（実測 2026-08-30）::
 
     データは揃うのに期限が先    **2件・合計 50日**
