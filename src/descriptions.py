@@ -277,6 +277,17 @@ def frame(recs: list[dict]) -> dict:
     return out
 
 
+def _coverage(got: int, asked: int) -> str:
+    """**分母が台帳の何割か**を、節ごとの数のすぐ隣に置く。
+
+    途中で止まった回は「50 / 735本」ではなく「50本」しか出ないので、
+    **50本ぜんぶ綺麗**が**735本ぜんぶ綺麗**に読めます。割合を隣に置けば読めません。
+    """
+    if not asked or got >= asked:
+        return ""
+    return f"  ← **台帳 {asked}本 の {got / asked * 100:.0f}% だけ**です"
+
+
 def report(cache: Path | None = None, show: int = 5) -> str:
     d = load(cache)
     if not d:
@@ -320,7 +331,10 @@ def report(cache: Path | None = None, show: int = 5) -> str:
         ap("  **測っていません**（説明欄が1本も返っていない）。"
            "**「0件」ではありません** —— 解除条件1・2 の根拠にしないこと")
     else:
-        ap(f"  **{len(pd)} / {len(recs)}本**  ← `verify._check_no_human_expert_claim()`"
+        # `_coverage()` は**途中まで取れた回**の穴（上の枝は 0本 しか見ていない）。
+        # 「50本ぜんぶ綺麗」が「735本ぜんぶ綺麗」に読めるので、割合を隣に置きます。
+        ap(f"  **{len(pd)} / {len(recs)}本**{_coverage(len(recs), asked)}"
+           "  ← `verify._check_no_human_expert_claim()`"
            "（**本文に当てているのと同じ関数**）")
     for r in pd[:show]:
         ap(f"    - [{r.get('privacy')}] {r.get('title', '')[:34]}"
@@ -335,7 +349,7 @@ def report(cache: Path | None = None, show: int = 5) -> str:
         ap("  **測っていません**（説明欄が1本も返っていない）")
     else:
         share = f"（{len(ad) / len(recs) * 100:.1f}%）"
-        ap(f"  **{len(ad)} / {len(recs)}本**{share}")
+        ap(f"  **{len(ad)} / {len(recs)}本**{share}{_coverage(len(recs), asked)}")
     for r in ad[:show]:
         ap(f"    - [{r.get('privacy')}] {r['hits'][0][1][:24]}"
            f" … {r.get('title', '')[:32]}")
