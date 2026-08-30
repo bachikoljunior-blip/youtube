@@ -57,6 +57,7 @@
 from __future__ import annotations
 
 import argparse
+import functools
 import json
 import math
 import re
@@ -773,6 +774,7 @@ def _ledger_frozen(expr: str) -> bool:
     return now_n == before_n
 
 
+@functools.lru_cache(maxsize=1)
 def _pause_started() -> str | None:
     """**停止が入った時刻**（ISO・`data/batch_runs.jsonl` の `at` と比べられる形）。
 
