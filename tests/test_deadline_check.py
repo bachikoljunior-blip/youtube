@@ -26,6 +26,30 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 import deadline_check as J  # noqa: E402
 
+import pytest  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def _machine_is_running(monkeypatch):
+    """**このファイルは「機械が動いているとき」の話をしています。**
+
+    2026-08-30 から `AUTOMATION_PAUSED.md` が在り、`deadline_check._paused_supply()`
+    が「床に足りない群は、停止中は埋まらない」で打ち切ります（`unreachable`）。
+    **それは正しい振る舞い**ですが、下の検査が守っているのは
+    **走っているときに `_project_nth()` が日を出すこと**（出さないと
+    `arm_speed.forward()` の `undated` に落ちて腕が丸ごと凍る）です。
+
+    **止めないと、`test_群が足りなくても_伸び率から判定日を出す` は
+    停止のあいだ赤のままになり、`test_1本も作っていない群には_日を出さない` は
+    「停止だから None」で**空回りして通ります。** どちらも守っているものを
+    測らなくなるので、ここで世界を1つに固定します。
+
+    **停止中の振る舞いは `tests/test_paused_supply.py` が別に見ています。**
+    """
+    import src.pause_guard as PG
+
+    monkeypatch.setattr(PG, "is_paused", lambda: False)
+
 
 def _open_items() -> list[dict]:
     items = yaml.safe_load((ROOT / "config" / "hypotheses.yaml").read_text(encoding="utf-8"))
