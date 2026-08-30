@@ -4390,38 +4390,6 @@ def plan(m: dict, a: dict, density: int = PLAN_PUBLISH_PER_DAY,
     if _rc and out.get("lever_hint") == "per_video":
         out["lever_hint_covered"] = (_rc.isoformat() if hasattr(_rc, "isoformat")
                                      else str(_rc))
-    # --- **止まっている間の名指しは `gate`**（2026-08-30・最適化の回が足した）---
-    #
-    # ここまでで選ばれる4本（`per_video` / `rpm` / `density` / `sub_rate`）は、
-    # **どれも本を出さないと引けません。** 08/30 から `src/pause_guard` が
-    # 生成・投稿・チャンネルの書き換えを塞いでいるので、**この回には1本も引けない
-    # 腕を名指ししている**ことになります。
-    #
-    # **実害は「読み手が無視する」ことではありません。** `run_marker.py` が
-    # `lever_followed = (lever == lever_hint)` を残すので、
-    # **引けない腕を名指しし続けると、その比が全部 False で埋まります** ——
-    # 実測 08/30 の ship 40件 は `lever_hint` が **40件とも `per_video`**、
-    # `lever_followed` は直近200件で **29/200（14.5%）**。
-    # 名指しが外れているのに、外したのは選ぶ側だと記録されます。
-    #
-    # そして `p_pass`（審査に受かる確率）は到達日に**掛かる**項なので、
-    # **門が律速です**（`src/resume_gate.py` の docstring に実測）。
-    #
-    # **覆る条件**: `AUTOMATION_PAUSED.md` が消える、または門が全部 閉じたら、
-    # この上書きは自分で黙り、名指しは床の診断（4本のどれか）へ戻ります。
-    # 検査は `tests/test_resume_gate.py`。
-    if resume_gate.is_paused() and resume_gate.open_items():
-        out["lever_hint_binding"] = out.get("lever_hint")
-        out["lever_hint"] = "gate"
-        # **`date` のまま積まないこと**（同じ罠を 2026-08-26 に `lever_hint_covered` で
-        # 踏んでいます）。この dict は `data/eta.jsonl` へ書き戻されるので、
-        # `date` を残すと **反映だけが `TypeError` で落ちて ship は残る**という形で出ます。
-        _g = dict(resume_gate.summary())
-        _g["since"] = _g["since"].isoformat() if _g.get("since") else None
-        out["gate"] = _g
-        # **`lever_hint_covered` は消すこと。** あれは「名指しの測定が予約済みの
-        # 本で答えが返る」という意味で、`gate` には掛かりません（本が出ないので）。
-        out.pop("lever_hint_covered", None)
     return out
 
 
@@ -6761,12 +6729,51 @@ def solve(m: dict, points: list[dict], *, full: bool = True) -> dict:
     #     軌跡の4本は「審査に受かった世界の中」の腕で、**受かる確率は掛け算の外側**です
     #     （`src/resume_gate.py`）。外側が塞がっている回に内側を名指しすると、
     #     **この回には引けない腕**を毎周 名指しすることになります。
-    if tr is not None and pl.get("lever_hint") != "gate":
+    if tr is not None:
         _top = next((r for r in tr["choice"] if r["reachable"]), None)
         if _top is not None and _top["lever"] != pl["lever_hint"]:
             pl["lever_hint_binding"] = pl["lever_hint"]
             pl["lever_hint"] = _top["lever"]
             pl["lever_from"] = "軌跡"
+    # --- **止まっている間の名指しは `gate`**（2026-08-30・最適化の回が足した）---
+    #
+    # ここまでで選ばれる4本（`per_video` / `rpm` / `density` / `sub_rate`）は、
+    # **どれも本を出さないと引けません。** 08/30 から `src/pause_guard` が
+    # 生成・投稿・チャンネルの書き換えを塞いでいるので、**この回には1本も引けない
+    # 腕を名指ししている**ことになります。
+    #
+    # **実害は「読み手が無視する」ことではありません。** `run_marker.py` が
+    # `lever_followed = (lever == lever_hint)` を残すので、
+    # **引けない腕を名指しし続けると、その比が全部 False で埋まります** ——
+    # 実測 08/30 の ship 40件 は `lever_hint` が **40件とも `per_video`**、
+    # `lever_followed` は直近200件で **29/200（14.5%）**。
+    # 名指しが外れているのに、外したのは選ぶ側だと記録されます。
+    #
+    # そして `p_pass`（審査に受かる確率）は到達日に**掛かる**項なので、
+    # **門が律速です**（`src/resume_gate.py` の docstring に実測）。
+    #
+    # **`plan()` の中でやらないこと**（2026-08-30 に移した）。あちらは
+    # **4本の腕の模型**で、`test_eta_supply_density` / `test_eta_lever_cap` /
+    # `test_eta_target_date` が「床の名前ではなく差の大きさで決まる」を
+    # 直接 見ています。**模型の出力を書き換えると、模型の検査が赤くなります** ——
+    # 門は模型の**外側**に掛かる項なので、**その外側であるここで倒すのが正しい位置**です。
+    #
+    # **覆る条件**: `AUTOMATION_PAUSED.md` が消える、または門が全部 閉じたら、
+    # この上書きは自分で黙り、名指しは4本のどれかへ戻ります。
+    # 検査は `tests/test_resume_gate.py`。
+    if resume_gate.is_paused() and resume_gate.open_items():
+        pl["lever_hint_binding"] = pl.get("lever_hint")
+        pl["lever_hint"] = "gate"
+        pl["lever_from"] = "門"
+        # **`date` のまま積まないこと**（同じ罠を 2026-08-26 に `lever_hint_covered` で
+        # 踏んでいます）。この dict は `data/eta.jsonl` へ書き戻されるので、
+        # `date` を残すと **反映だけが `TypeError` で落ちて ship は残る**という形で出ます。
+        _g = dict(resume_gate.summary())
+        _g["since"] = _g["since"].isoformat() if _g.get("since") else None
+        pl["gate"] = _g
+        # **`lever_hint_covered` は消すこと。** あれは「名指しの測定が予約済みの
+        # 本で答えが返る」という意味で、`gate` には掛かりません（本が出ないので）。
+        pl.pop("lever_hint_covered", None)
     return {"a": a, "sup": sup, "pl": pl, "tr": tr,
             "row": _row(m, a, pl, tr, sup)}
 

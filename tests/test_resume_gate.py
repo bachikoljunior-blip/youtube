@@ -168,8 +168,17 @@ def test_paused_hint_is_gate_and_survives_the_trajectory_override():
     **この回には引けない腕**です。
     """
     src = (ROOT / "scripts" / "eta.py").read_text(encoding="utf-8")
-    assert 'if tr is not None and pl.get("lever_hint") != "gate":' in src, (
-        "軌跡の上書きに、門の除外が入っていない")
+    traj = src.index('pl["lever_from"] = "軌跡"')
+    gate = src.index('pl["lever_from"] = "門"')
+    assert gate > traj, (
+        "門の名指しが、軌跡の上書きより**前**にある —— 後ろから 4本のどれかに戻されます")
+    # **`plan()` の中で倒さないこと。** あちらは4本の模型で、
+    # `test_eta_supply_density` などが「床の名前ではなく差の大きさで決まる」を
+    # 直接 見ています。門は模型の外側の項なので、外側で倒すこと。
+    plan_at = src.index("def plan(")
+    solve_at = src.index("def solve(")
+    assert plan_at < solve_at, "この検査は plan が solve より前にある前提で書いています"
+    assert gate > solve_at, "門の上書きが `plan()` の中にある（模型の出力を書き換えている）"
 
 
 def test_gate_row_is_json_safe():
