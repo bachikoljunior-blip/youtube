@@ -134,6 +134,78 @@ FIRST_MOVE = """
 #:
 #: **なぜ本文の先頭か**: 型の途中に置くと、受け取った側が
 #: 「1周してください」を先に読んで生成へ向かいます。**先に読まれる側が勝ちます。**
+def _gate_state_block() -> str:
+    """**解除条件の「いまの姿」を、写しではなく台帳から出す**（2026-08-30 に足した）。
+
+    ここには 6件が**べた書き**されていました。書いた時点では正しく、
+    **その日のうちに 1・2 が閉じました**（`config/channel.yaml` から実務経歴が落ち、
+    `src/verify._check_no_human_expert_claim()` が出口にも門を置いた）。
+    べた書きのままだと、**次に立つ子は全員「6件とも開いている」と読みます** ——
+    `CLAUDE.md` が「**1・2 をもう一度やらないこと**」とわざわざ書いているのは、
+    この形が実際に起きるからです。**本文の先頭は、いちばん強く効く場所です。**
+
+    **覆る条件**: `data/resume_gate.jsonl` と `AUTOMATION_PAUSED.md` が
+    正本なので、あちらが動けばここは自動で追随します。読めなければ黙ります
+    （**読めないことを「全部 閉じた」として印字しないこと**）。
+    """
+    # **`sys.path` を自分で通すこと**（2026-08-30 に踏んだ）。この script は
+    # `python scripts/spawn_prompt.py` で走るので `sys.path[0]` は `scripts/` ——
+    # リポジトリの根は入っていません。通さないと `from src import ...` が静かに
+    # 失敗し、**この段まるごとが空で出ます**（下の `except` が飲み込む）。
+    # 実測: 入れた直後の1回目が、それで空でした。
+    import sys
+    if str(ROOT) not in sys.path:
+        sys.path.insert(0, str(ROOT))
+    try:
+        from src import resume_gate
+    except Exception:  # noqa: BLE001 — 型の生成で回を止めない
+        return ""
+    try:
+        g = resume_gate.summary()
+        q = resume_gate.queue()
+    except Exception:  # noqa: BLE001
+        return ""
+    if not g.get("total"):
+        return ""
+    out = [f"**いまの姿: {g['closed']}/{g['total']} 件 が閉じています**"
+           "（正本は `AUTOMATION_PAUSED.md`・根拠は `data/resume_gate.jsonl`。"
+           "`python scripts/eta.py --gate` で、その場で読めます）。"]
+    closed = [r for r in resume_gate.state() if r["closed"]]
+    if closed:
+        out.append("")
+        out.append("    閉じている（**もう一度やらないこと**）: "
+                   + "／".join(f"{r['n']} {r['text'][:36]}" for r in closed))
+    if g["open_items"]:
+        out.append("    開いている（**ここが、いまの最短です**）: "
+                   + "／".join(f"**{r['n']}** {r['text'][:44]}" for r in g["open_items"]))
+    out.append("")
+    out.append("閉じるときは、根拠の1行を添えて撃つこと（**印は記録ではありません**）:")
+    out.append("")
+    out.append('    python scripts/eta.py --close-gate <番号> --evidence "<どこに何を記録したか>"')
+    out.append("")
+    out.append("そして ship は **`--lever gate`** で積むこと ——"
+               "停止中は4本の腕がどれも引けないので、`none` で積むと"
+               "**律速を進めた回が「予測日を動かさない回」として数えられます**。")
+    if q.get("upcoming"):
+        # **本数と時刻をここに焼き込まないこと**（2026-08-30 に踏んで直した）。
+        #     この段は `docs/spawn_prompt.rendered.md` に**写し**として保存され、
+        #     親はそれを読んで子を立てます（`scripts/next_round.py`「親は写すだけ」）。
+        #     予約は**毎時 公開されて減る**ので、焼き込むと
+        #     `test_rendered_copy_for_the_parent_is_current` が **1時間で赤**になります
+        #     —— 中身と関係のない理由で毎時 赤くなる検査は、次の回に外されます。
+        #     **動くものは、動かない指示に置き換えること。**
+        out.append("")
+        out.append("**[!] 止まっていても、予約済みの本は公開され続けます** ——"
+                   " 機械が1回も起きなくても公開され、その全部が停止の理由になった作りのままです"
+                   " ＝ **`p_pass` は、何もしなくても毎日 下がりうる。**"
+                   " **本数と時刻は `python scripts/eta.py --gate` が出します**"
+                   "（**ここには焼き込みません。写した瞬間に古くなります**）。"
+                   " 引っ込める `reschedule.py` は停止の対象なので、"
+                   "**この機械からは止められません**（迂回しないこと）。"
+                   " **門には時計が回っています。**")
+    return "\n".join(out) + "\n"
+
+
 def _pause_block(root: Path) -> str:
     doc = root / "AUTOMATION_PAUSED.md"
     if not doc.exists():
@@ -166,6 +238,7 @@ def _pause_block(root: Path) -> str:
     5. すでに公開した動画の扱いと、新旧のテーマが混ざる危険を決める
     6. 収益化までの道筋と、視聴者を得る採算を計算し直す
 
+""" + _gate_state_block() + """
 **目標は1文字も変わっていません**（YouTube の収益で月20万を最短で）。
 変わったのは、そこへ行く道が「いまの人格・いまの作り方」では通らないと分かったことです。
 **別の道を探すことが、いまの仕事です。**

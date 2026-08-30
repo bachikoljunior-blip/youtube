@@ -411,3 +411,21 @@ def test_型に歴史が溜まっていない():
     # 実測値の写し。**数字は腐るので、型には置かないこと。**
     nums = re.findall(r"\d[\d,]{2,}\s*(?:本|件|回|人|時間|バイト|行|日)", body)
     assert not nums, f"型に実測値が戻っています: {nums[:5]}"
+
+
+def test_the_rendered_copy_carries_no_hourly_numbers() -> None:
+    """**親の写しに、毎時 動く数を焼き込まないこと。**（2026-08-30 に踏んで足した）
+
+    停止の段は、審査の門のいまの姿を出します。門の開閉は人が動かすので写せますが、
+    **予約の本数は毎時 公開されて減ります。** 焼き込むと
+    `test_rendered_copy_for_the_parent_is_current` が**1時間で赤**になり、
+    しかも赤の理由は「誰も何もしていないこと」です ——
+    **中身と関係のない理由で毎時 赤くなる検査は、次の回に外されます。**
+
+    **覆る条件**: 停止が明けてこの段ごと消えたら、この検査も要りません。
+    """
+    text = sp.RENDERED.read_text(encoding="utf-8")
+    for volatile in ("本/日", "予約済み 4", "予約済み 3"):
+        assert volatile not in text, (
+            f"写しに毎時 動く数（{volatile}）が焼き込まれています —— "
+            "`python scripts/eta.py --gate` を撃たせる形にすること")
