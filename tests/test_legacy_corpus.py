@@ -144,3 +144,25 @@ def test_report_names_what_it_did_not_look_at():
     out = lc.report()
     assert "見ていないもの" in out
     assert "説明欄" in out
+
+
+def test_説明欄の行は写しではなく読んだ結果(monkeypatch):
+    """**「見ていないもの: 説明欄」を、文字列で持たないこと。**
+
+    あの1行は 2026-08-30 の夜まで固定文で入っており、
+    **書いてあるのに誰も測らないまま**、解除条件1・2・5 が閉じました。
+    いまは `data/descriptions.json` を読んで、測れていなければ
+    **撃つ命令**を、測れていれば**本数と名乗りの件数**を出します。
+    """
+    from src import descriptions
+
+    monkeypatch.setattr(descriptions, "load", lambda *a, **k: {})
+    assert "まだ1本も測れていません" in lc.description_line()
+
+    monkeypatch.setattr(descriptions, "load", lambda *a, **k: {
+        "at": "2026-09-01T00:00:00+00:00",
+        "videos": [{"title": "x", "description": "計算します。"}],
+    })
+    line = lc.description_line()
+    assert "1本 測れています" in line
+    assert "名乗り 0本" in line
