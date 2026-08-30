@@ -5146,6 +5146,63 @@ def _theta_line(tr: dict | None, base: dict | None) -> list[str]:
     return [line]
 
 
+def paused_premise_line(bar: str = "###") -> str | None:
+    """**停止が、開いた前提のどれを凍らせているか。**（`AUTOMATION_PAUSED.md` が無ければ `None`）
+
+    ## なぜ要るか（2026-08-30・最適化の回に実測して足した）
+
+    `scripts/deadline_check.py` の `_project_nth()` は「**いまの作る速さが
+    続いたら**」で群の埋まる日を出します。**08/30 から、作る速さは 0 です**
+    （`src/pause_guard`）。それでも停止前に作った本から率を読み、
+
+        opening_motion（腕 `per_video`）  対照 あと **2本**  → 判定 **09-22**
+        request_form  （腕 `sub_rate`）   両群 あと **79本** → 判定 **10-11**
+
+    と日付を出していました。**合わせて 81本 は、解除するまで 1本も作れません。**
+    `request_form` は **`sub_rate` の唯一 走っている A/B** です
+    （`sub_rate` の閉じた前提は 2件 ＝ `arm_speed.MIN_N` 未満）。
+
+    ## この行が言っているのは「値段」です
+
+    **門を1日 早く閉じれば、ここに出た前提の判定も1日 早く来ます。**
+    逆に、解除が N日 遅れれば N日 遅れます。上の「腕は引けません」は
+    **この回に本が出せない**という話ですが、こちらは
+    **止まっているあいだ、腕の実験そのものが進まない**という話で、別の損です。
+
+    **覆る条件**: `AUTOMATION_PAUSED.md` が消えれば、この行は自分で黙ります
+    （`deadline_check.paused_claims()` が空で返ります）。
+    検査は `tests/test_paused_supply.py`。
+    """
+    if not pause_guard.is_paused():
+        return None
+    try:
+        frozen = _deadline_check_mod().paused_claims()
+    except Exception as exc:                                   # noqa: BLE001
+        return (f"{bar} [!] **停止が前提を凍らせていないか、確かめられませんでした** —— "
+                f"`deadline_check.paused_claims()` が読めません（{exc}）")
+    if not frozen:
+        return None
+    lever_of = {}
+    try:
+        doc = arm_speed._load()        # `config/hypotheses.yaml`（あちらが正本）
+        for h in (doc.get("hypotheses") or []):
+            if isinstance(h, dict):
+                lever_of[str(h.get("claim") or "")] = str(h.get("lever") or "?")
+    except Exception:                                          # noqa: BLE001
+        pass
+    parts = []
+    for claim, short in sorted(frozen.items(), key=lambda kv: -kv[1]):
+        parts.append(f"**{claim[:26]}**（腕 `{lever_of.get(claim, '?')}`・あと **{short}本**）")
+    total = sum(frozen.values())
+    return (f"{bar} [!] **停止は、開いた前提 {len(frozen)}件 の判定も止めています** —— "
+            + " ／ ".join(parts)
+            + f"。 合わせて **{total}本** 要りますが、`src/pause_guard` が生成を"
+              f"塞いでいるので **1本も増えません**（`deadline_check.paused_claims()`）。"
+              f" **これは「この回に腕が引けない」とは別の損です** —— 腕の実験そのものが"
+              f"止まっているので、**解除が N日 遅れれば、この {len(frozen)}件 の判定も"
+              f"N日 遅れます ＝ 門を1日 早く閉じることの値段**です。")
+
+
 def gate_lines(bar: str = "###", tr: dict | None = None) -> list[str]:
     """**審査の門（`AUTOMATION_PAUSED.md` の Resume gate）を、床として印字する。**
 
@@ -5379,6 +5436,10 @@ def headline(pl: dict, prev: dict | None = None,
         #     手書きの件数は、閉じた翌回から嘘になります。**下は台帳を読みます**
         #     （`data/resume_gate.jsonl` ／ 正本は `AUTOMATION_PAUSED.md`）。
         out.extend(gate_lines(bar, tr))
+        # **腕が引けないことと、腕の実験が止まることは別の損です**（2026-08-30 に足した）。
+        _frozen = paused_premise_line(bar)
+        if _frozen:
+            out.append(_frozen)
     # **いちばん上に出す日付は「軌跡」のほうです**（2026-08-20 18:xx・オーナー指示）。
     #     腕を据え置いた線（`pl["target_date"]`）は、**腕が1ミリも動かない未来**の
     #     日付です。この機械は毎周かならず腕を1つ引いているので、それは
