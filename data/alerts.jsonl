@@ -471,3 +471,4 @@
 {"at": "2026-08-28T16:41:15+09:00", "key": "status_lines", "n": 1, "session": "session_01RzmEZySHAZdDMJmD2z9eUb", "by": "status.py"}
 {"at": "2026-08-29T17:01:25+09:00", "key": "topic_material_low", "n": 1, "session": "session_01RzmEZySHAZdDMJmD2z9eUb", "by": "status.py"}
 {"at": "2026-08-30T20:23:04+09:00", "key": "carry_over", "n": 3, "session": "session_01AHfq4FUVAd5fxDM29yG1Cm", "by": "retro.py"}
+{"at": "2026-08-30T20:44:59+09:00", "key": "undeclared_close", "n": 1, "session": "session_01AHfq4FUVAd5fxDM29yG1Cm", "by": "run_marker.py"}

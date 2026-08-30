@@ -316,3 +316,77 @@ def test_a_progress_note_is_stripped_but_does_not_close(tmp_path):
     two = next(r for r in st if r["n"] == 2)
     assert not two["closed"], "「当てた」を「閉じた」と読んでいる"
     assert two["text"] == "条件に", f"書き込みが本文に残っている: {two['text']!r}"
+
+
+# ---------------------------------------------------------------------------
+# **開き直す口**（2026-08-30 夜に足した）
+#
+# `resume_gate.state()` は 08/30 の朝から「開き直しも書けます」と言っていましたが、
+# **書く関数が無く、手で台帳へ積んでも門 1・2・5・6 では効きませんでした**
+# （正本の註が同じ行にあると `by_file` が勝つ）。
+# `docs/spawn_prompt.md` は毎回のサブに「閉じた根拠を実測で当て直し、
+# **外れていたら開き直せ**」と渡しています。**その手が無かった**、という形です。
+# ---------------------------------------------------------------------------
+
+def _fresh(tmp_path):
+    return tmp_path / "resume_gate.jsonl"
+
+
+@pytest.mark.parametrize("n", [1, 3])
+def test_reopen_beats_the_note_in_the_pause_file(tmp_path, n):
+    """**番号によって効いたり効かなかったりしないこと。**
+
+    `1` は正本の註が条件と同じ行にあり（`by_file=True`）、`3` は次の行にあります。
+    直す前は **1 だけ開き直せませんでした**。
+    """
+    path = _fresh(tmp_path)
+    resume_gate.close(n, "根拠", path=path)
+    assert {r["n"]: r for r in resume_gate.state(path=path)}[n]["closed"]
+
+    resume_gate.reopen(n, "画面の側が揃っていた", path=path)
+    row = {r["n"]: r for r in resume_gate.state(path=path)}[n]
+    assert not row["closed"], "開き直しが効いていません（正本の註に負けています）"
+    assert row["reopened"]
+    assert not row["unrecorded"], "開いた門は『未記録』ではありません"
+    assert n in [r["n"] for r in resume_gate.open_items(path=path)]
+
+
+def test_reopen_needs_a_reason(tmp_path):
+    """**印は記録ではありません**（`close()` と同じ門）。"""
+    with pytest.raises(ValueError):
+        resume_gate.reopen(3, "  ", path=_fresh(tmp_path))
+
+
+def test_reopen_rejects_a_number_that_is_not_a_gate(tmp_path):
+    with pytest.raises(ValueError):
+        resume_gate.reopen(99, "根拠", path=_fresh(tmp_path))
+
+
+def test_reopen_can_be_closed_again(tmp_path):
+    """**最後の行が勝つこと**（追記だけで直せる形を壊さない）。"""
+    path = _fresh(tmp_path)
+    resume_gate.close(3, "1回目", path=path)
+    resume_gate.reopen(3, "外れた", path=path)
+    resume_gate.close(3, "測り直して閉じた", path=path)
+    row = {r["n"]: r for r in resume_gate.state(path=path)}[3]
+    assert row["closed"] and not row["reopened"]
+    assert row["evidence"] == "測り直して閉じた"
+
+
+def test_untouched_gate_is_not_treated_as_reopened(tmp_path):
+    """**「開き直した」と「まだ触っていない」を混ぜないこと。**
+
+    混ぜると、正本の註だけで閉じている門が全部 開いて見えます。
+    """
+    rows = {r["n"]: r for r in resume_gate.state(path=_fresh(tmp_path))}
+    assert not any(r["reopened"] for r in rows.values())
+
+
+def test_eta_exposes_the_inverse_of_close_gate():
+    """**手順に書いてある逃げ道が、実装にもあること。**
+
+    `docs/spawn_prompt.md` の「`--close-gate` の逆」が実在するかを見ます。
+    """
+    src = (ROOT / "scripts" / "eta.py").read_text(encoding="utf-8")
+    assert "--open-gate" in src, "`--close-gate` の逆が CLI にありません"
+    assert "resume_gate.reopen(" in src, "`--open-gate` が台帳へ書いていません"
