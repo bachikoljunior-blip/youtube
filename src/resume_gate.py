@@ -75,6 +75,27 @@ LEDGER = ROOT / "data" / "resume_gate.jsonl"
 #: **1件で割ると、たまたま早かった1件が全部の予定になります。**
 MIN_CLOSED_FOR_RATE = 3
 
+#: **分母のほうの下限**（2026-08-30・解除条件5の回に足した。**実際に踏む1日前に見つけた**）。
+#:
+#: 件数の門（上）だけでは足りません。**3件が同じ日にまとめて閉じる**からです ——
+#: 実測: 門1・2・5 は**3件とも 2026-08-30 に閉じました**（`data/resume_gate.jsonl`）。
+#: 停止の開始も 08/30 なので、翌日には
+#:
+#:     span = 1日 ／ 閉じた 3件 → **3.0件/日** → 残り3件は **1.0日で閉じる**
+#:
+#: と印字されます。**同じ瞬間に起きた3件は、間隔について何も言っていません。**
+#: しかもこの数は日が経つほど下がる（3.0 → 1.5 → 0.5）ので、
+#: **測っているのは閉じる速さではなく、停止が始まってからの経過**です。
+#:
+#: この module は「**測れないことを 0 と印字しない**」ために作られています
+#: （`p_pass()` が値を返さないのと同じ理由）。**小さすぎる分母で割った数を
+#: 『測った』と印字するのは、同じ壊れ方の裏返し**です。
+#:
+#: **覆る条件**: 窓を広げれば当然 鈍くなります。閉じた実績が
+#: 十分たまって（例えば 6件・14日）から、`(k-1) / (最後の close - 最初の close)`
+#: のような、間隔そのものを見る推定へ替えてよい。**そのときここは消すこと。**
+MIN_SPAN_DAYS = 3
+
 _JST = timezone(timedelta(hours=9))
 
 
@@ -233,7 +254,13 @@ def p_pass(text: str | None = None, path: Path | None = None) -> float | None:
 
 def rate_per_day(text: str | None = None, path: Path | None = None,
                  today: date | None = None) -> float | None:
-    """門が閉じる速さ（件/日）。**実績が薄い間は `None`。**"""
+    """門が閉じる速さ（件/日）。**実績が薄い間は `None`。**
+
+    薄いかどうかは**2つ**見ます —— 件数（`MIN_CLOSED_FOR_RATE`）と、
+    **割る窓のほう**（`MIN_SPAN_DAYS`）。片方だけでは、
+    **同じ日にまとめて閉じた3件**が「1日で全部 閉じる」に化けます
+    （`MIN_SPAN_DAYS` の註に実物）。
+    """
     rows = [r for r in state(text, path) if r["closed"] and r["closed_on"]]
     if len(rows) < MIN_CLOSED_FOR_RATE:
         return None
@@ -242,7 +269,7 @@ def rate_per_day(text: str | None = None, path: Path | None = None,
         return None
     day = today or datetime.now(_JST).date()
     span = (day - start).days
-    if span <= 0:
+    if span < MIN_SPAN_DAYS:
         return None
     return len(rows) / span
 

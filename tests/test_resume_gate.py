@@ -27,7 +27,7 @@
 from __future__ import annotations
 
 import importlib.util
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 
 import pytest
@@ -110,6 +110,42 @@ def test_rate_appears_once_there_is_enough_evidence(tmp_path):
     assert rate == pytest.approx(3 / 3)
     # 全部 閉じているので残りは 0日（**`None` ではありません** —— 測れているので）
     assert resume_gate.days_to_close(_PAUSE_TEXT, led, date(2026, 9, 2)) == 0.0
+
+
+def test_a_same_day_burst_of_closes_is_not_a_measured_rate(tmp_path):
+    """**同じ日にまとめて閉じた3件は、間隔について何も言っていません。**
+
+    実物（2026-08-30・この検査を足した回）: 門 1・2・5 が**3件とも同じ日**に閉じ、
+    停止の開始も同じ日でした。件数の門（`MIN_CLOSED_FOR_RATE`）だけだと、
+    **その翌日に**こう出ます:
+
+        span = 1日 ／ 閉じた 3件 → 3.0件/日 → 残り3件は **1.0日** で閉じる
+
+    しかもその数は日が経つほど下がる（3.0 → 1.5 → 0.5）ので、
+    **測っているのは閉じる速さではなく、停止が始まってからの経過**です。
+    `MIN_SPAN_DAYS` が分母の側を止めます。
+    """
+    # 実物と同じ形（6件のうち3件が同じ日に閉じ、3件 開いている）。
+    text = _PAUSE_TEXT.replace("3. 条件さん\n",
+                              "3. 条件さん\n4. 条件よん\n5. 条件ご\n6. 条件ろく\n")
+    led = tmp_path / "gate.jsonl"
+    led.write_text(
+        '{"at": "2026-08-30T10:51:00+09:00", "n": 1, "state": "closed", "evidence": "x"}\n'
+        '{"at": "2026-08-30T10:53:00+09:00", "n": 2, "state": "closed", "evidence": "y"}\n'
+        '{"at": "2026-08-30T12:10:00+09:00", "n": 5, "state": "closed", "evidence": "z"}\n',
+        encoding="utf-8")
+    assert resume_gate.closed_count(text, led) == 3, "件数の門は越えている"
+    assert len(resume_gate.open_items(text, led)) == 3
+
+    # **翌日**。ここが、直す前は 3.0件/日 ＝「残り 1.0日」と出ていた所。
+    assert resume_gate.rate_per_day(text, led, date(2026, 8, 31)) is None
+    assert resume_gate.days_to_close(text, led, date(2026, 8, 31)) is None
+
+    # 窓が `MIN_SPAN_DAYS` に届いたら、はじめて口にする。
+    assert resume_gate.MIN_SPAN_DAYS == 3
+    ok = date(2026, 8, 30) + timedelta(days=resume_gate.MIN_SPAN_DAYS)
+    assert resume_gate.rate_per_day(text, led, ok) == pytest.approx(1.0)
+    assert resume_gate.days_to_close(text, led, ok) == pytest.approx(3.0)
 
 
 def test_reopening_is_possible(tmp_path):
