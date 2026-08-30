@@ -59,6 +59,11 @@
    写した瞬間に、向こうを直しても効かなくなります
 4. 閉じる速さが 3件 以上の実績で測れたら、`days_to_close()` の推定が立ちます。
    それまでは `None`（「測れていません」）を返し続けます
+5. **速さは「件数 ÷ 経過」では作りません**（2026-08-30 に実測して直した）。
+   同じ日にまとめて閉じた分は速さを1つも言わないのに、その割り算は数を返し、
+   **「残り全部が明日 閉じる」→ その後は1日 経つごとに2日 遠のく**、という
+   2段の壊れ方をしました（`days_per_close()` の docstring に実測の表）。
+   いまは**間隔**で数えます。種別ごとの実績が貯まったら、種別で分けること
 """
 from __future__ import annotations
 
@@ -231,32 +236,102 @@ def p_pass(text: str | None = None, path: Path | None = None) -> float | None:
     return None
 
 
+def _closed_dates(text: str | None = None, path: Path | None = None) -> list[date]:
+    """**日付の付いた閉じ方**だけを、古い順に。（正本の印には日付がありません）"""
+    out: list[date] = []
+    for r in state(text, path):
+        if not (r["closed"] and r["closed_on"]):
+            continue
+        try:
+            y, m, d = (int(x) for x in str(r["closed_on"]).split("-"))
+        except (TypeError, ValueError):
+            continue
+        out.append(date(y, m, d))
+    return sorted(out)
+
+
+def days_per_close(text: str | None = None, path: Path | None = None,
+                   today: date | None = None) -> float | None:
+    """**1件 閉じるのに何日かかっているか。** 測れなければ `None`。
+
+    ## なぜ「件数 ÷ 停止からの日数」をやめたか（2026-08-30・最適化の回が実測して直した）
+
+    直す前は `閉じた件数 ÷ 停止からの経過日数` でした。**分母は経過で、分子は件数**
+    なので、**分子が全部おなじ日に入っていても、そのまま割ります。**
+    実測 —— 門1・2 は `2026-08-30`、つまり**停止したその日**に閉じています。
+    ここへ3件目を同じ日に足して、その後1件も閉じなかった線を引くと:
+
+        today       rate/日   残り日数   門が閉じる日
+        2026-08-30   ——        ——        （span=0 なので黙る）
+        2026-08-31     3.00       1.0   2026-09-01   ← **「残り3件は明日 閉じる」**
+        2026-09-01     1.50       2.0   2026-09-03
+        2026-09-02     1.00       3.0   2026-09-05
+        …
+        2026-09-14     0.20      15.0   2026-09-29
+
+    **壊れ方が2つ、続けて出ます。**
+
+    1. **3件目が閉じた翌日、残り全部が「あと1日」になります。** 停止中に動く床は
+       この床だけなので、主実行はそこを読んで「門は ほぼ ただ」と判断し、
+       **塞がっている腕のほうへ戻ります。** その回は到達日を1日も動かしません。
+    2. その後は **1日 経つごとに、閉じる日が2日 遠のきます**（`T → 2T`）。
+       **追いつかないので、この日付は永久に来ません。**
+
+    どちらも根は同じで、**同じ日にまとめて閉じた分は「速さ」を1つも言っていない**
+    のに、割り算が数を返してしまうことです。**測れているのは間隔のほう**です。
+
+    ## いまの数え方
+
+        完了した間隔  閉じた日どうしの差の平均（同じ日に固まっていれば 0日）
+        打ち切りの間隔 最後に閉じてから今日までの日数（**次の1件は「最低でも」これ**）
+        1件あたり     その2つの**大きいほう**
+
+    打ち切りのほうを下限に採るのは、**すでに待った日数より速く閉じると言わせない**
+    ためです（10日 止まっているのに「次は0.3日」とは言えません）。
+    どちらも 0 なら **`None`**（＝「測れていません」。0 でも ∞ でもない）。
+
+    ## この数え方が置いていること（**覆る条件**）
+
+    **6件が同じ難しさだと置いています。** 実際には閉じた1・2 は
+    `config/channel.yaml` の1行と検査1つで閉じ、残る 3〜6 は**チャンネルの形そのもの**
+    を決める話です。**安いほうから閉じた実績で、高いほうの日数を見積もっています。**
+    種別ごとの実績が貯まったら、ここは種別で分けること。
+    """
+    ds = _closed_dates(text, path)
+    if len(ds) < MIN_CLOSED_FOR_RATE:
+        return None
+    gaps = [(b - a).days for a, b in zip(ds, ds[1:])]
+    done = (sum(gaps) / len(gaps)) if gaps else 0.0
+    day = today or datetime.now(_JST).date()
+    trailing = max((day - ds[-1]).days, 0)
+    per = max(done, float(trailing))
+    return per if per > 0 else None
+
+
 def rate_per_day(text: str | None = None, path: Path | None = None,
                  today: date | None = None) -> float | None:
-    """門が閉じる速さ（件/日）。**実績が薄い間は `None`。**"""
-    rows = [r for r in state(text, path) if r["closed"] and r["closed_on"]]
-    if len(rows) < MIN_CLOSED_FOR_RATE:
+    """門が閉じる速さ（件/日）。**実績が薄い間は `None`。**
+
+    中身は `1 ÷ days_per_close()` です（**割り算の向きだけの違い**）。
+    印字が「件/日」で来た側のために残してあります。
+    """
+    per = days_per_close(text, path, today)
+    if not per:
         return None
-    start = paused_since(text)
-    if start is None:
-        return None
-    day = today or datetime.now(_JST).date()
-    span = (day - start).days
-    if span <= 0:
-        return None
-    return len(rows) / span
+    return 1.0 / per
 
 
 def days_to_close(text: str | None = None, path: Path | None = None,
                   today: date | None = None) -> float | None:
     """門が全部 閉じるまでの日数。**測れなければ `None`**（0 ではありません）。"""
-    rate = rate_per_day(text, path, today)
-    if not rate:
-        return None
-    left = len(open_items(text, path))
-    if left <= 0:
+    # **残りが 0件 なら、速さが測れていなくても 0日** です（閉じるものがない）。
+    #     速さを先に見ると、同じ日に6件とも閉じた回が `None` を返します。
+    if len(open_items(text, path)) <= 0:
         return 0.0
-    return left / rate
+    per = days_per_close(text, path, today)
+    if not per:
+        return None
+    return len(open_items(text, path)) * per
 
 
 def cap(text: str | None = None, path: Path | None = None) -> float | None:
@@ -292,7 +367,13 @@ def summary(text: str | None = None, path: Path | None = None,
         "since": paused_since(text),
         "p_pass": p_pass(text, path),
         "rate_per_day": rate_per_day(text, path, today),
+        "days_per_close": days_per_close(text, path, today),
         "days_to_close": days_to_close(text, path, today),
+        # **最後に閉じてから何日 経ったか**（打ち切りの間隔）。
+        #     印字がここを出さないと、「残り N日」がどこから来たのか読めません。
+        "since_last_close": (
+            max(((today or datetime.now(_JST).date()) - _closed_dates(text, path)[-1]).days, 0)
+            if _closed_dates(text, path) else None),
         "cap": cap(text, path),
         "min_closed_for_rate": MIN_CLOSED_FOR_RATE,
         # **正本が閉じたと言っているのに、根拠が台帳に無い件**（`state()` の註）。
