@@ -683,6 +683,123 @@ def _ans_external(need: dict) -> Answer:
 _MIN_SPAN_DAYS = 2
 
 
+#: **`count_expr` が「作った本」の台帳そのものを数えている印。**
+#: `long_ids()` / `latest_views()` 越しに触るものは入りません —— あちらは
+#: **既に予約に在る本に再生が積む**ので、停止中でも数は動きます。
+_BUILD_LEDGER = "rows('batch_runs.jsonl')"
+
+
+def _ledger_frozen(expr: str) -> bool:
+    """**その `count_expr` は、停止中に1件も増えないか。**（`_ans_accrual` が読む）
+
+    ## なぜ要るか（2026-08-30・最適化の回に実測して足した）
+
+    すぐ隣の `_paused_supply()` は、同じ穴を **`_project_nth()` の側**（`group_key`）
+    だけで塞ぎました。**`_ans_accrual` は素通りです。** こちらも
+    「**いまの伸び率が続いたら**」で日を出しますが、`count_expr` が
+    `data/batch_runs.jsonl` を数えているとき、その伸び率を作っているのは
+    **本を作る速さ**で、`src/pause_guard` はそれを **0 にしています。**
+
+    **実測（この関数を足した回・`slot_half`／腕 `density`）**::
+
+        count_expr が数える 作った本   **7本**（`batch_runs.jsonl`）
+        そのうち 既に公開済み          **0本**
+        齢4日以上（`falsified_if` が要る「落ち着き」）  **0本**
+        予約に入ったまま未公開         **7本**
+
+        → `since` からの平均で「**2日で 3.50/日 → あと 8日**」
+        → `--shrink` が **2026-11-10 → 2026-09-08（63日）** 縮めろと出す
+
+    **その 3.50/日 は、停止が入る前の2日ぶんです。** 停止後は 0 なので、
+    32本 には永久に届きません。それでも機械は日付を出し、
+    `arm_speed.forward()` の θ に**閉じる見込みとして数えられます。**
+
+    ## これは「入力の側に、同じ強さの門を置く」ほうの直しです
+
+    `docs/JOURNAL.md` 2026-08-26 が `--shrink` について残した1行:
+
+    > **判断を抜くと、入力の質がそのまま結果になります。**
+    > 印字だけの頃は誰も従わなかったので、悪い入力は無害でした。
+    > **従わせる仕組みを入れた瞬間、入力の誤りが「機械が実行した誤り」に変わります。**
+
+    同じ回に `--fit` を主実行へ配線しています（`docs/trigger_main.md` §2.6）。
+    **配線だけを入れると、速くなるのは間違いのほうです** —— だから同じ回に、
+    その入力を止める門をここへ置きます。**片方だけ入れないこと。**
+
+    ## 覆る条件
+
+    - `AUTOMATION_PAUSED.md` が消えたら、`pause_guard.is_paused()` が False になり黙ります
+    - **台帳が停止後にも伸びていたら黙ります**（＝ 実際には作れている、という実測が
+      文書より強い）。**「止まっているはず」で判断しません**
+    - 検査は `tests/test_paused_accrual.py`
+    """
+    if _BUILD_LEDGER not in expr.replace('"', "'"):
+        return False
+    from src import pause_guard                                # 遅く読む（`sys.path` の後）
+
+    if not pause_guard.is_paused():
+        return False
+    stamp = _pause_started()
+    if stamp is None:
+        return False
+    # **「止まっているはず」で判断しません。実際に伸びたかを数え直します。**
+    #   停止の時刻で台帳を切って、**同じ式をもう一度 評価**し、
+    #   数が動いていなければ「この式は停止で凍っている」と言えます。
+    #
+    #   **式の絞り込みを、こちらで真似しないこと**（2026-08-30 に踏んだ）。
+    #   最初は「台帳のいちばん新しい行 < 停止時刻」で見ていましたが、
+    #   停止の 52分 後に `long: True` の回が1件 積まれており（停止を merge して
+    #   いない作業コピーから走った回）、**`slot_half` の式は `not r.get('long')`
+    #   でそれを外す**ので、台帳全体で見ると「伸びている」に化けました。
+    #   **式が何を数えているかは、式に聞くのがいちばん確かです。**
+    try:
+        now_n = int(eval(expr, dict(EXPR_NS)))                 # noqa: S307
+    except Exception:                                          # noqa: BLE001
+        return False
+    real_rows = _rows
+
+    def _truncated(name: str) -> list[dict]:
+        got = real_rows(name)
+        if name != "batch_runs.jsonl":
+            return got
+        return [r for r in got if str(r.get("at") or "") < stamp]
+
+    ns = dict(EXPR_NS)
+    ns["rows"] = _truncated
+    try:
+        before_n = int(eval(expr, ns))                         # noqa: S307
+    except Exception:                                          # noqa: BLE001
+        return False
+    return now_n == before_n
+
+
+def _pause_started() -> str | None:
+    """**停止が入った時刻**（ISO・`data/batch_runs.jsonl` の `at` と比べられる形）。
+
+    出どころは **git**（`AUTOMATION_PAUSED.md` を足した commit の author 時刻）です。
+
+    **mtime を読まないこと** —— まっさらなコンテナでは clone した時刻になります。
+    **見出しの日付だけでも足りません** —— 停止は 2026-08-30 08:54 JST に入っており、
+    **同じ日の 08:40 と 08:51 に本を作っています。** 日付までしか無いと、
+    その2件が「停止の後に作った」に化けます（実測してここへ落ちた）。
+
+    **覆る条件**: git が読めない木では `None` を返し、`_ledger_frozen()` は
+    **False**（＝ 何も言わない）に倒れます。**黙るほうへ倒すこと** ——
+    ここが誤って True に倒れると、動いている前提まで「停止中は埋まりません」
+    になり、`arm_speed` から消えます。
+    """
+    import subprocess
+
+    try:
+        out = subprocess.run(
+            ["git", "log", "--diff-filter=A", "--format=%aI", "--", "AUTOMATION_PAUSED.md"],
+            cwd=ROOT, capture_output=True, text=True, timeout=20, check=False).stdout
+    except (OSError, subprocess.SubprocessError):
+        return None
+    stamps = [x.strip() for x in out.splitlines() if x.strip()]
+    return stamps[-1] if stamps else None
+
+
 #: `data_file:` を書いた `accrual` を「古い」と呼ぶまでの時間（時）。
 #: **24時間**。1周 1.5時間 のこの機械なら、毎周 取り直している計器は黙ります。
 _STALE_AFTER_HOURS = 24.0
@@ -896,6 +1013,16 @@ def _ans_accrual(need: dict, as_of: date) -> Answer:
     if have == 0 and need.get("zero_means_never"):
         return Answer(None, f"要 {want} ／ いま **0**（`since` から {spanned}日。"
                             "**こちらから作らないかぎり来ません**）", unreachable=True)
+    # **停止中は、作った本の台帳が1件も伸びません**（2026-08-30・最適化の回）。
+    #   ここを通す前に見ること —— 下の `rate = have / elapsed` は
+    #   **停止が入る前の平均**を未来へ延ばし、`--shrink` がそれに従って
+    #   期限を数十日 手前へ動かします（実測: `slot_half` を 11-10 → 09-08）。
+    #   **`_MIN_SPAN_DAYS` の門より先に見ること** —— あちらは「窓が短い」の話で、
+    #   こちらは「**窓がいくら長くても、もう増えない**」の話です。
+    if _ledger_frozen(expr):
+        paused = _paused_supply(f"要 {want} ／ いま {have}", want - have)
+        if paused is not None:
+            return paused
     if spanned < _MIN_SPAN_DAYS:
         return Answer(None, f"要 {want} ／ いま {have}"
                             f"（`since` から {spanned}日。**{_MIN_SPAN_DAYS}日 ぶん"
