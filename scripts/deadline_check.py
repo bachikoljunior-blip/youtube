@@ -261,6 +261,13 @@ class Answer:
     why: str
     #: 待っても来ない種類か（外の出来事）
     unreachable: bool = False
+    #: **停止（`src/pause_guard`）のせいで埋まらないとき、あと何本 要るか。**
+    #:
+    #: `unreachable` だけだと「収益化の審査（こちらでは起こせない）」と区別が
+    #: 付きません。**こちらは解除すれば動きます** —— 直し方が正反対なので、
+    #: 別の欄で持ちます（`Verdict.unreachable` の docstring と同じ理由）。
+    #: 立てたのは `_paused_supply()`。読むのは `paused_claims()`。
+    paused_short: int | None = None
     #: **`ready` の日のうち、この時刻まで計器が読めない**（`None` ＝ 一日じゅう読める）。
     #:
     #: **2026-08-28 03:5x に足した。** `_quota_gate` は「枠が戻るのは
@@ -972,6 +979,69 @@ def _ans_accrual(need: dict, as_of: date) -> Answer:
                   rate=rate, rate_key=key, have=have)
 
 
+def _paused_supply(body: str, short: int) -> "Answer | None":
+    """**停止中は、群に本が1本も足されない。**（`Answer` を返したら、そちらで打ち切る）
+
+    ## なぜ要るか（2026-08-30・最適化の回に実測して足した）
+
+    すぐ下の `_project_nth()` は「**いまの作る速さが続いたら**」で日を出します
+    （その docstring が自分でそう言っています ——「作る速さが落ちれば伸びます」）。
+    **2026-08-30 から、作る速さは 0 です** —— `src/pause_guard` が生成も投稿も
+    塞いでいて、`AUTOMATION_PAUSED.md` が在るあいだ **1本も増えません。**
+
+    それでも `_project_nth()` は**停止前に作った本**から率を読み、そのまま
+    未来へ延ばしていました。**実測 2026-08-30 15:3x（この関数を足した回）**::
+
+        opening_motion（腕 per_video）  対照(動きなし) あと **2本**
+                                       → 「**0.86本/日**」で 8本目 09/15 → 判定 **09-22**
+        request_form  （腕 sub_rate）   終端のみ あと **32本** ／ 途中あり あと **47本**
+                                       → 「10.00本/日」「6.25本/日」で 72本目 09/30・10/04
+                                       → 判定 **10-11**
+
+    **合わせて 81本**。どれも `src/pause_guard` が塞いでいるので、
+    **停止が解けるまで 1本も作れません。** それでも機械は日付を出し、
+    `arm_speed.forward()` の予定表 θ に**閉じる見込みとして数えられていました。**
+    `request_form` は **`sub_rate` の唯一 走っている A/B** です
+    （`sub_rate` は閉じた前提が 2件 ＝ `arm_speed.MIN_N` 未満）。
+
+    ## 何を返すか
+
+    `unreachable=True` の `Answer` です。**`warming`（待てば来る）ではありません** ——
+    `_ans_accrual` の `zero_means_never` と同じ形で、
+    **「こちらが解除しないかぎり来ない」**という宣言です。
+    `unready_claims()` がこれを拾い、`ready_by_claim()` から落ちます。
+
+    ## **これは「遅らせる」変更です**
+
+    到達日は後ろに動きます。**それが実測です** —— `scripts/eta.py` 自身が
+    「止まっている間の到達日は上振れです」と印字しているのと同じ向きで、
+    ここはその上振れの**具体的な出どころ**を1つ塞ぎます。
+    そして塞いだぶんが、**門（`AUTOMATION_PAUSED.md` の Resume gate）を
+    1日 早く閉じることの値段**として出ます。
+
+    ## 覆る条件
+
+    - `AUTOMATION_PAUSED.md` が消えたら、この関数は自分で黙ります
+    - **既に予約に在る本は数に入っています**（`floor.groups` は予約を含む）。
+      塞いでいるのは「これから作る本」だけです
+    - 検査は `tests/test_paused_supply.py`
+    """
+    from src import pause_guard                                # 遅く読む（`sys.path` の後）
+
+    if not pause_guard.is_paused():
+        return None
+    return Answer(
+        None,
+        body + f" → **停止中は埋まりません**（あと **{short}本** 要りますが、"
+        "`AUTOMATION_PAUSED.md` が在るあいだ `src/pause_guard` が生成と投稿を"
+        "塞いでいるので **1本も増えません**。**待っても来ません** —— "
+        "来るのは門を閉じて解除したときで、**解除が N日 遅れれば、"
+        "この前提の判定も N日 遅れます**）",
+        unreachable=True,
+        paused_short=short,
+    )
+
+
 def _project_nth(rows: list[dict], pub: list[str], count: int, after: str,
                  as_of: date) -> tuple[date, float, int, int] | None:
     """群がまだ `count` 本に満たないとき、**`count` 本目が公開される日を推定する。**
@@ -1134,6 +1204,10 @@ def _ans_published_group(need: dict, as_of: date, lag: int) -> Answer:
         tail = f"（{since_pub} 以降に公開する本だけ）" if since_pub else ""
         form = f"・**終端が {endcard} の本だけ**" if endcard else ""
         head = (f"{after[:10]} 以降に作った本{tail}{form} **{len(pub)}本** ／ 要 {count}本")
+        # **停止中は、あと {count - len(pub)}本 が 1本も作れません**（`_paused_supply`）。
+        paused = _paused_supply(head, count - len(pub))
+        if paused is not None:
+            return paused
         proj = _project_nth(rows, pub, count, after, as_of)
         if proj is None:
             return Answer(None, f"{head} —— **予約にまだ在りません**（作れば動きます）")
@@ -1741,6 +1815,14 @@ def _ans_group_key(need: dict, as_of: date) -> Answer:
         # **推定に要るのは「群を作りはじめた日」だけ**なので、`needs` の `since:`
         # から取ります。**書いていない前提は、今までどおり `None`** ——
         # 勝手に日を作らないため（`landed` を推測すると、群ごとに別の日が出ます）。
+        # **停止中は、床に足りない群がこれ以上 埋まりません**（`_paused_supply`）。
+        # `since` の有無より先に見ること —— 停止中は「`since` を足せば推定できます」も
+        # 嘘になります（推定の入力である「作る速さ」が 0 だからです）。
+        short_all = sum(n - len(floor.groups[g]) for g in floor.groups
+                        if floor.nth[g] is None)
+        paused = _paused_supply(body, short_all)
+        if paused is not None:
+            return paused
         since = str(need.get("since") or "")
         if not since:
             return Answer(None, body + " → **群がそろわないので日が出ません**"
@@ -1848,6 +1930,12 @@ class Verdict:
         「直し方が違うものに同じ札が付く」と書いているのと同じ形）。
         """
         return any(a.unreachable for a in self.answers)
+
+    @property
+    def paused_short(self) -> int | None:
+        """**停止のせいで埋まらない本数**（`Answer.paused_short` の合計）。`None` ＝ 停止は効いていない。"""
+        ns = [a.paused_short for a in self.answers if a.paused_short is not None]
+        return sum(ns) if ns else None
 
     @property
     def warming(self) -> bool:
@@ -2233,6 +2321,28 @@ def ready_by_claim(items: list[dict] | None = None, as_of: date | None = None,
     """
     vs = check(items if items is not None else load(), as_of=as_of, lag=lag)
     return {v.claim: v.ready for v in vs if v.ready is not None}
+
+
+def paused_claims(items: list[dict] | None = None, as_of: date | None = None,
+                  lag: int | None = None) -> dict[str, int]:
+    """**停止のせいで判定日が出せない claim → あと何本 要るか。**（`scripts/eta.py` の頭が読みます）
+
+    `unready_claims()` は「日が出せない」を全部まとめて返しますが、
+    **直し方は3つに割れます**（`Verdict.unreachable` の docstring と同じ話）:
+
+        warming        今日 立てたばかり           …… **何もしないのが正解**
+        unreachable    収益化の審査（あと 999人）  …… **こちらでは起こせない**
+        **paused**     群があと N本 足りない       …… **門を閉じて解除すれば動く**
+
+    3つ目だけが、**この回の作業で動かせます。** だから別に数えます ——
+    ここに出る本数は、`AUTOMATION_PAUSED.md` の Resume gate を
+    1日 早く閉じることの**値段**そのものです（解除が N日 遅れれば、
+    ここに出た前提の判定も N日 遅れます）。
+
+    **覆る条件**: `AUTOMATION_PAUSED.md` が消えれば、これは空で返ります。
+    """
+    vs = check(items if items is not None else load(), as_of=as_of, lag=lag)
+    return {v.claim: v.paused_short for v in vs if v.paused_short is not None}
 
 
 def unready_claims(items: list[dict] | None = None, as_of: date | None = None,
