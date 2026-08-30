@@ -135,7 +135,22 @@ def conditions(text: str | None = None) -> list[tuple[int, str]]:
 #:
 #: と印字しました。**同じ1行の中で「開いている」と「閉じた」を両方 言っています。**
 #: 正本はオーナーが push したファイルなので、**そちらの印を勝たせます。**
-_CLOSED_MARK = re.compile(r"←\s*[^／\n]*?閉じた|\*\*?closed\*\*?", re.I)
+#:
+#: **印は行末まで捨てること。** `←` から `閉じた` までだけを消すと
+#: 「（下の「進捗」）**」が本文に残り、そのまま親の型へ印字されます
+#: （実測 2026-08-30: 「1 sensitive-topic AI persona を使わない  **」）。
+#: **2つに分けること**（2026-08-30 に2回 踏んだ）。
+#:
+#:     `_NOTE` …… `←` 以降の**書き込み全部**。条件の本文ではないので、必ず落とす
+#:     `_CLOSED` … その書き込みが「**閉じた**」と言っているか
+#:
+#: 1回目は「閉じた」までしか落とさず、「（下の「進捗」）**」が本文に残りました。
+#: 2回目は、きょうだいが 4番 に **「← 2026-08-30 に当てた」**（＝ 閉じてはいない）
+#: と書き、**落とす条件と閉じる条件を同じ正規表現で見ていたせいで、
+#: 開いている条件の本文に書き込みがそのまま印字されました。**
+#: **見た目の話ではありません** —— この本文は親の型にも入り、次の子が読みます。
+_NOTE = re.compile(r"\s*\*{0,2}←[^\n]*$", re.M)
+_CLOSED = re.compile(r"閉じた|\bclosed\b", re.I)
 
 
 def _ledger_rows(path: Path | None = None) -> list[dict]:
@@ -173,9 +188,11 @@ def state(text: str | None = None, path: Path | None = None) -> list[dict]:
     for n, body in conds:
         r = last.get(n) or {}
         by_ledger = (r.get("state") == "closed")
-        # **正本の印を勝たせる**（`_CLOSED_MARK` の註）。
-        by_file = bool(_CLOSED_MARK.search(body))
-        clean = _CLOSED_MARK.sub("", body).strip(" 　*")
+        # **正本の印を勝たせる**（`_NOTE` / `_CLOSED` の註）。
+        #     書き込みは**閉じていなくても落とす**（本文ではないので）。
+        note = _NOTE.search(body)
+        by_file = bool(note and _CLOSED.search(note.group(0)))
+        clean = _NOTE.sub("", body).strip(" 　*")
         closed = by_ledger or by_file
         out.append({
             "n": n,
