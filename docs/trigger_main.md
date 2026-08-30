@@ -1904,6 +1904,31 @@ else:
     verdict  期限の来た前提を、**実データで判定する**（`config/hypotheses.yaml`）
     fix      実測で見つかった欠陥を1つ塞ぐ（道具・生成・投稿のどれか）
 
+### **止まっている間の「出した」は、この4つの上に1件あります**（2026-08-30 に足した）
+
+**`AUTOMATION_PAUSED.md` が在るあいだ、`upload` は選べません**（`src/pause_guard` が
+`pipeline.py` / `uploader.py` / `batch_build.py` / `reschedule.py` などを
+import した時点で `RuntimeError`）。そして **`means` / `verdict` / `fix` を積んでも、
+審査に落ちれば再生は1円にもなりません** —— `p_pass`（審査に受かる確率）は
+到達日に**掛かる**項で、4本の腕はその内側にあるからです。
+
+**だから止まっている間の最低ラインは、`AUTOMATION_PAUSED.md` の Resume gate を
+1件 進めることです。**
+
+    python scripts/eta.py --gate          いま何件 閉じていて、何が開いているか（1秒未満）
+    python scripts/eta.py --close-gate <番号> --evidence "<どこに何を記録したか>"
+
+**根拠の1行が要ります**（原文「次の全条件が**記録される**まで解除しない」——
+**印は記録ではありません**）。閉じたら `--lever gate` で ship を積むこと。
+
+**実測 2026-08-30**: 停止後の ship 40件 は `lever_hint` が **40件とも `per_video`**
+（＝ この回には引けない腕）で、**20件が `--lever none`** に落ちていました。
+**`none` は「予測日を動かさない」という意味なので、律速そのものを進めた回まで
+「動かさない回」として数えられます。**
+
+**覆る条件**: `AUTOMATION_PAUSED.md` が消えたら `eta.py` の名指しは4本へ戻り、
+この節は読まなくてよくなります（`gate_lines()` が自分で黙ります）。
+
 **そして `--kind <その4つのどれか>` を付けて記録すること**（2026-08-26 に足した）:
 
     python scripts/run_marker.py --ship "..." --kind verdict --lever <腕> --moves <日数>
