@@ -251,3 +251,19 @@ def test_an_empty_queue_says_nothing(tmp_path):
     q = resume_gate.queue(led, now=datetime(2026, 8, 30, tzinfo=timezone.utc))
     assert q["upcoming"] == 0
     assert q["per_day"] is None, "0本 なのにペースを言っている"
+
+
+def test_a_progress_note_is_stripped_but_does_not_close(tmp_path):
+    """**「当てた」は「閉じた」ではない。**（2026-08-30 に2回目を踏んだ）
+
+    きょうだいが 4番 に **「← 2026-08-30 に当てた（下の「進捗」4）」** と書きました。
+    落とす条件と閉じる条件を同じ正規表現で見ていたので、
+    **開いている条件の本文に、その書き込みがそのまま印字されました。**
+    この本文は親の型にも入り、次の子が読みます。**見た目の話ではありません。**
+    """
+    text = _PAUSE_TEXT.replace(
+        "2. 条件に", "2. 条件に  **← 2026-08-30 に当てた（下の「進捗」4）**")
+    st = resume_gate.state(text, tmp_path / "gate.jsonl")
+    two = next(r for r in st if r["n"] == 2)
+    assert not two["closed"], "「当てた」を「閉じた」と読んでいる"
+    assert two["text"] == "条件に", f"書き込みが本文に残っている: {two['text']!r}"
