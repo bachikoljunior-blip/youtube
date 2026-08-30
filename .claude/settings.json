@@ -5,6 +5,11 @@
         "hooks": [
           {
             "type": "command",
+            "command": "bash scripts/policy_pause.sh",
+            "timeout": 10
+          },
+          {
+            "type": "command",
             "command": "bash scripts/env_guard.sh",
             "timeout": 300
           }
@@ -16,6 +21,11 @@
         "hooks": [
           {
             "type": "command",
+            "command": "bash scripts/policy_pause.sh",
+            "timeout": 10
+          },
+          {
+            "type": "command",
             "command": "bash scripts/goal_reminder.sh",
             "timeout": 10
           }
@@ -25,6 +35,11 @@
     "PostCompact": [
       {
         "hooks": [
+          {
+            "type": "command",
+            "command": "bash scripts/policy_pause.sh",
+            "timeout": 10
+          },
           {
             "type": "command",
             "command": "bash scripts/goal_reminder.sh",
@@ -76,10 +91,9 @@
       "Bash(find *)",
       "Bash(wc *)",
       "Bash(jq *)",
-            "mcp__bf7c680d-5fdc-5ef4-b4a0-abadb619bf0a",
+      "mcp__bf7c680d-5fdc-5ef4-b4a0-abadb619bf0a",
       "mcp__Claude_Code_Remote",
       "mcp__github",
-
       "Bash(rm -rf build/*)"
     ],
     "deny": [
