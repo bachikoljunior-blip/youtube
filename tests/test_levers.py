@@ -33,7 +33,14 @@ def test_vocabulary_matches_what_eta_prints():
     src = (ROOT / "scripts" / "eta.py").read_text(encoding="utf-8")
     assert "1本あたりの再生数" in src and "RPM" in src, "天井の2つが eta から消えています"
     assert "登録率" in src and "公開の密度" in src, "門1の2つが eta から消えています"
-    assert set(levers.LEVERS) == {"per_video", "rpm", "density", "sub_rate", "none"}
+    # **`gate` は 2026-08-30 に足した5本目**（`src/resume_gate.py`）。
+    #     この検査の趣旨は「腕の数」ではなく「**eta が印字しない腕を語彙に置かない**」
+    #     ことなので、`gate` にも同じ門を掛けます —— `eta.py` に印字の口
+    #     （`gate_lines`）と天井の出どころ（`resume_gate`）があること。
+    assert "gate_lines" in src and "resume_gate" in src, (
+        "`gate` を語彙に置いているのに、eta が門を印字していません")
+    assert set(levers.LEVERS) == {"per_video", "rpm", "density", "sub_rate",
+                                  "gate", "none"}
 
 
 def test_none_is_a_real_choice():
