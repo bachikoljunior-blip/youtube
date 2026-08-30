@@ -245,6 +245,32 @@
     ],
     "video_id": "yuuLK2d-DyI"
   },
+  "fudosanshutoku-choki-gake": {
+    "charts": [
+      [
+        "ゼロ円",
+        "ゼロ円",
+        "6900円"
+      ],
+      [
+        "ゼロ円",
+        "22万9999円",
+        "23万円"
+      ],
+      [
+        "ゼロ円",
+        "ゼロ円",
+        "6900円"
+      ],
+      [
+        "ゼロ円",
+        "6900円",
+        "ゼロ円",
+        "6900円"
+      ]
+    ],
+    "video_id": "r9T2IwTyuz0"
+  },
   "fudosanshutoku-zei": {
     "charts": [
       [
@@ -1123,6 +1149,28 @@
     ],
     "video_id": "ZCBd6NfUdcc"
   },
+  "izoku-masshi-nenrei-kabefuka": {
+    "charts": [
+      [
+        "マイナス45.0日",
+        "マイナス27.0日",
+        "マイナス9.0日",
+        "プラス3.0日"
+      ],
+      [
+        "18.0日分",
+        "42.0日分",
+        "54.0日分"
+      ],
+      [
+        "80日",
+        "100日",
+        "140日",
+        "220日"
+      ]
+    ],
+    "video_id": "W93ao6FRsmM"
+  },
   "izoku-matsushi-18sai-gake-4dan": {
     "charts": [
       [
@@ -1697,6 +1745,24 @@
     ],
     "video_id": "6t0VY4hcncY"
   },
+  "kakyu-240kagetsu-torikaeshi": {
+    "charts": [
+      [
+        "243,800円",
+        "179,900円",
+        "423,700円"
+      ],
+      [
+        "423,700円",
+        "年3,563円"
+      ],
+      [
+        "423,700円",
+        "年822円"
+      ]
+    ],
+    "video_id": "aPz9Ys_wkeo"
+  },
   "kakyu-nanikagetsu-oku-hataraku": {
     "charts": [
       [
@@ -2193,6 +2259,28 @@
       ]
     ],
     "video_id": "6TK2jXQsB5s"
+  },
+  "koteishisan-menseki-2bai-baisu": {
+    "charts": [
+      [
+        "11,667円",
+        "23,333円",
+        "93,333円",
+        "210,000円"
+      ],
+      [
+        "23,333円",
+        "70,000円",
+        "910,000円"
+      ],
+      [
+        "23,333円",
+        "70,000円",
+        "93,333円",
+        "210,000円"
+      ]
+    ],
+    "video_id": "CLiJusPI7gY"
   },
   "koteishisan-obi-mittsu-tanka": {
     "charts": [
@@ -9415,6 +9503,35 @@
     ],
     "video_id": "8xQvkPxi3O8"
   },
+  "saishushoku-obi-de-kimaru": {
+    "charts": [
+      [
+        "150.0日分",
+        "120.0日分",
+        "130.0日分"
+      ],
+      [
+        "90.0日分",
+        "72.0日分",
+        "78.0日分"
+      ],
+      [
+        "-66.0日分",
+        "-44.0日分",
+        "-30.0日分",
+        "-20.0日分",
+        "-18.0日分",
+        "-12.0日分"
+      ],
+      [
+        "72.0日分",
+        "78.0日分",
+        "120.0日分",
+        "130.0日分"
+      ]
+    ],
+    "video_id": "HW0-QFAPl98"
+  },
   "sankyu-14nichi-michi-ga-nai": {
     "charts": [
       [
@@ -10599,6 +10716,29 @@
       ]
     ],
     "video_id": "8whXYb_4shM"
+  },
+  "zangyo-jikou3nen-ichiran": {
+    "charts": [
+      [
+        "1万8367円",
+        "12万3980円"
+      ],
+      [
+        "1万8367円",
+        "3万6735円",
+        "5万5102円",
+        "9万1837円"
+      ],
+      [
+        "9万1837円",
+        "20万6633円"
+      ],
+      [
+        "4万1327円",
+        "3万6735円"
+      ]
+    ],
+    "video_id": "CFMejwEdug4"
   },
   "zangyo-sakanobori": {
     "charts": [
