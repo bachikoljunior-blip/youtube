@@ -215,7 +215,31 @@ def state(text: str | None = None, path: Path | None = None) -> list[dict]:
 
     返すのは `{"n", "text", "closed", "closed_on", "evidence"}`。
     **台帳の最後の行が勝ちます**（追記だけで直せる形にするため）。
-    **開き直しも書けます**（`state="open"` を後から積む）。
+    **開き直しも書けます**（`state="open"` を後から積む ＝ `reopen()`）。
+
+    ## **その「開き直し」は、2026-08-30 夜まで効いていませんでした**
+
+    ここには 08/30 の朝から「開き直しも書けます」と書いてあり、**そう書いてあるのに
+    `closed = by_ledger or by_file` でした** —— 正本の `AUTOMATION_PAUSED.md` に
+    `← 2026-08-30 に閉じた` の註が在る門は、台帳へ `state="open"` を積んでも
+    **閉じたまま**になります。実測（この直しの前）:
+
+        1・2・5・6  註が条件と**同じ行**にある → `by_file=True` → 開き直せない
+        3・4        註が**次の行**にあり `conditions()` が拾わない → 開き直せる
+
+    **同じ台帳の同じ書き方が、門の番号によって効いたり効かなかったりしていました。**
+    しかも効かない側は**黙って**閉じたままになります（`--gate` は 6/6 と出る）。
+
+    `docs/spawn_prompt.md` は毎回のサブに「閉じた根拠を実測で当て直し、
+    **外れていたらその件を開き直せ**」と渡しています。**その手が無かった**、
+    という形です（この repo の一番よくある壊れ方 ——「言っている所と、している所が別」）。
+
+    **いまは台帳の明示の `open` が正本の註に勝ちます。** 註は写しで、
+    台帳のほうが正本だからです（`AUTOMATION_PAUSED.md` 自身が
+    「この一覧は写しです。正本は `data/resume_gate.jsonl`」と書いています）。
+
+    **覆る条件**: 正本を台帳ではなくファイルの側に戻すなら、この向きも戻すこと。
+    そのときは `_NOTE` が条件の**次の行**も拾うようにしないと、番号で挙動が割れます。
     """
     conds = conditions(text)
     last: dict[int, dict] = {}
@@ -229,12 +253,16 @@ def state(text: str | None = None, path: Path | None = None) -> list[dict]:
     for n, body in conds:
         r = last.get(n) or {}
         by_ledger = (r.get("state") == "closed")
+        # **台帳が明示で開き直したか**（`reopen()`）。上の docstring の理由で、
+        #     これは正本の註に**勝ちます**。「書いていない」とは別物なので、
+        #     `not by_ledger` で代用しないこと（まだ1度も触っていない門と混ざります）。
+        reopened = (r.get("state") == "open")
         # **正本の印を勝たせる**（`_NOTE` / `_CLOSED` の註）。
         #     書き込みは**閉じていなくても落とす**（本文ではないので）。
         note = _NOTE.search(body)
         by_file = bool(note and _CLOSED.search(note.group(0)))
         clean = _NOTE.sub("", body).strip(" 　*")
-        closed = by_ledger or by_file
+        closed = by_ledger or (by_file and not reopened)
         out.append({
             "n": n,
             "text": clean or body,
@@ -242,10 +270,12 @@ def state(text: str | None = None, path: Path | None = None) -> list[dict]:
             # **どちらが閉じたと言っているか。** 食い違いはここから読めます。
             "by_ledger": by_ledger,
             "by_file": by_file,
+            "reopened": reopened,
             # **正本が閉じたと言っているのに、根拠の1行が台帳に無い状態。**
             #     `AUTOMATION_PAUSED.md` は「次の全条件が**記録される**まで
             #     解除しない」と書いているので、これは未完了です。
-            "unrecorded": by_file and not by_ledger,
+            #     **開き直した門はここに入りません**（未完了ではなく、開いています）。
+            "unrecorded": by_file and not by_ledger and not reopened,
             "closed_on": (r.get("at") or "")[:10] if by_ledger else None,
             "evidence": r.get("evidence") if by_ledger else None,
         })
@@ -505,8 +535,41 @@ def close(n: int, evidence: str, *, path: Path | None = None,
     valid = {num for num, _ in conditions()}
     if valid and n not in valid:
         raise ValueError(f"{n} は Resume gate の番号ではありません（{sorted(valid)}）")
-    rec = {"at": (at or datetime.now(_JST)).isoformat(timespec="seconds"),
-           "n": int(n), "state": "closed", "evidence": evidence.strip()}
+    return _append({"at": (at or datetime.now(_JST)).isoformat(timespec="seconds"),
+                    "n": int(n), "state": "closed", "evidence": evidence.strip()}, path)
+
+
+def reopen(n: int, evidence: str, *, path: Path | None = None,
+           at: datetime | None = None) -> dict:
+    """門を1件 **開き直す**。`close()` の逆で、**同じく根拠の文が要ります**。
+
+    ## いつ撃つか
+
+    **閉じた根拠を実測で当て直して、外れたとき**です
+    （`docs/spawn_prompt.md` が毎回のサブにそう渡しています ——
+    「閉じた根拠は上限であって、出来上がりの実測ではありません」）。
+
+    **閉じるより開くほうが安い、と読まないこと。** 開き直すのは
+    「もう一度やる」ではなく「**いま出しても審査に通らないと分かった**」の記録です。
+    根拠には**何を測って、どこと食い違ったか**を書くこと。
+
+    ## なぜ関数が要るか（2026-08-30 夜に足した）
+
+    `state()` の docstring は 08/30 の朝から「開き直しも書けます」と言っていましたが、
+    **書く口が無く、手で積んでも 1・2・5・6 では効きませんでした**
+    （`state()` の「その開き直しは効いていませんでした」の節）。
+    **手順に書いてある逃げ道が、実装に無い**のがこの repo の一番よくある壊れ方です。
+    """
+    if not evidence or not evidence.strip():
+        raise ValueError("根拠の文が要ります（何を測って、どこと食い違ったか）")
+    valid = {num for num, _ in conditions()}
+    if valid and n not in valid:
+        raise ValueError(f"{n} は Resume gate の番号ではありません（{sorted(valid)}）")
+    return _append({"at": (at or datetime.now(_JST)).isoformat(timespec="seconds"),
+                    "n": int(n), "state": "open", "evidence": evidence.strip()}, path)
+
+
+def _append(rec: dict, path: Path | None = None) -> dict:
     p = LEDGER if path is None else path
     p.parent.mkdir(parents=True, exist_ok=True)
     with p.open("a", encoding="utf-8") as fh:

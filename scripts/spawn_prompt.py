@@ -202,7 +202,11 @@ def _gate_state_block() -> str:
                    "（`python -m src.frames` ／ `python -m src.density_verdict` ／"
                    " `python -m src.legacy_corpus`）。"
                    "**閉じた根拠は上限であって、出来上がりの実測ではありません** ——"
-                   "外れていたら、その件を `--close-gate` の逆で開き直すこと")
+                   "外れていたら、その件を開き直すこと"
+                   "（`python scripts/eta.py --open-gate <番号> "
+                   '--evidence "<何を測って、どこと食い違ったか>"`。'
+                   "**2026-08-30 夜まで、ここには「`--close-gate` の逆」とだけ書いてあり、"
+                   "その逆は実装にありませんでした**）")
         out.append("    - **停止中でも動く道**を1つ進める（`docs/MEANS.md` の未着手・"
                    "収益化できる別の形の調査・チャンネルを変えない試算）")
         out.append("    - 実測で見つかった欠陥を1つ塞ぐ（`fix`）")

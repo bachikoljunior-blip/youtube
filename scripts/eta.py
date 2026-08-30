@@ -5372,7 +5372,10 @@ def gate_lines(bar: str = "###", tr: dict | None = None) -> list[str]:
         f" 動かせるのは **審査に通る形を1つ決めること**（この {total}件）だけで、"
         f"それが `--lever gate` です（`src/levers.py`）。**腕は、その後でなければ効きません**"
         f" —— 塞がったまま本数を積んでも、審査に落ちれば**再生は1円にもなりません。**"
-        f" 閉じるときは `python scripts/eta.py --close-gate <番号> --evidence \"<どこに何を記録したか>\"`。")
+        f" 閉じるときは `python scripts/eta.py --close-gate <番号> --evidence \"<どこに何を記録したか>\"`。"
+        f" **閉じた根拠を実測で当て直して外れたら、逆も撃てます**"
+        f"（`--open-gate <番号> --evidence \"<何を測って、どこと食い違ったか>\"`。"
+        f"2026-08-30 夜まで、この逆は**手順に書いてあるのに実装にありませんでした**）。")
     return out
 
 
@@ -7696,8 +7699,15 @@ def main() -> int:
     ap.add_argument("--close-gate", metavar="番号", type=int,
                     help="`AUTOMATION_PAUSED.md` の Resume gate を1件 閉じる"
                          "（`--evidence` が要ります）")
+    # **その逆**（2026-08-30 夜に足した）。`docs/spawn_prompt.md` は毎回のサブに
+    #     「閉じた根拠を実測で当て直し、**外れていたら開き直せ**」と渡していますが、
+    #     **その口はどこにもありませんでした**（手で台帳へ積んでも、
+    #     門 1・2・5・6 では正本の註に負けて黙って閉じたまま。`resume_gate.state()`）。
+    ap.add_argument("--open-gate", metavar="番号", type=int,
+                    help="Resume gate を1件 **開き直す**（`--evidence` が要ります）。"
+                         "閉じた根拠を実測で当て直して外れたときに撃つこと")
     ap.add_argument("--evidence", metavar="1行",
-                    help="`--close-gate` の根拠 —— **どこに何を記録したか**"
+                    help="`--close-gate` / `--open-gate` の根拠 —— **どこに何を記録したか**"
                          "（ファイル名・commit・実測）。"
                          "門は「決めた」ではなく「**記録した**」ときに閉じます")
     ap.add_argument("--gate", action="store_true",
@@ -7715,6 +7725,23 @@ def main() -> int:
             return 2
         g = resume_gate.summary()
         print(f"[eta] 門 **{rec['n']}** を閉じました —— {rec['evidence']}")
+        print(f"[eta] **{g['closed']}/{g['total']} 件**"
+              + (f"（天井まで ×{g['cap']:.2f}）" if g["cap"] is not None else ""))
+        for r in g["open_items"]:
+            print(f"       開: {r['n']} {r['text']}")
+        return 0
+
+    if args.open_gate is not None:
+        if not args.evidence:
+            print("[eta] `--evidence` が要ります —— 何を測って、どこと食い違ったかを1行で。")
+            return 2
+        try:
+            rec = resume_gate.reopen(args.open_gate, args.evidence)
+        except ValueError as exc:
+            print(f"[eta] 開き直せません: {exc}")
+            return 2
+        g = resume_gate.summary()
+        print(f"[eta] 門 **{rec['n']}** を開き直しました —— {rec['evidence']}")
         print(f"[eta] **{g['closed']}/{g['total']} 件**"
               + (f"（天井まで ×{g['cap']:.2f}）" if g["cap"] is not None else ""))
         for r in g["open_items"]:
