@@ -21,6 +21,7 @@ from pathlib import Path
 
 from . import narrated
 from . import forms
+from . import frames
 from .subtitles import _NUM_TOKEN, _is_katakana
 from .util import require, run
 from .yomi import remaining_risks
@@ -2146,6 +2147,128 @@ def _check_form_tag(script: dict | None, duration: float) -> list[str]:
     return []
 
 
+#: 直近 何本と見比べるか。**ポリシーの原文が「続けて数本視聴した後」と言っている**ので、
+#: 生涯の平均ではなく**並び**を見ます（`src/frames.recent()`）。
+FRAME_WINDOW = 20
+
+#: 直近の窓のうち、同じ枠が何割を超えたら落とすか。
+#:
+#: **0.5 なのは、振り分けが4通りだからです。** 期待は 25% で、20本の窓で
+#: 半分を超える確率は二項分布で **1.4%** —— つまり「たまたま偏った」で
+#: 落ちるのは 100本に1〜2本、その1本は言い回しを変えれば通ります。
+#: **0.6 や 0.7 にすると、いまの控えの 61%（「明日やる」）が素通りします。**
+FRAME_MAX_SHARE = 0.5
+
+#: 窓がこれより浅ければ**何も言いません**。
+#: `src/bars.py` と同じ理由 —— 新しい実行環境では控えがゼロになることがあり、
+#: そこで「比較対象が無い＝合格」ではなく「**判定していない**」を明示するためです。
+FRAME_MIN_HISTORY = 8
+
+
+def _check_frame_repeat(script: dict | None, portrait: bool,
+                        topic_id: str = "") -> list[str]:
+    """**直近の本と同じ枠で始まって・終わっていないか**（2026-08-30・**解除条件3**）。
+
+    ## なぜ要るか
+
+    `_check_not_repeat` は **chart の数値**、`_check_adjacent_repeat` は
+    **1本の中の隣り合う2枚**を見ています。**どちらも「入り方と締め方」を見ていません。**
+
+    2026-08-30 に測ったら、そこが揃っていました（`python -m src.frames`）:
+
+        長尺 134本   1行目の頭4文字  「計算しま」 **84%** ＝ 実効 **2.4本ぶん**
+                     最終行の頭4文字 「明日やる」 **61%** ＝ 実効 **3.8本ぶん**
+        ショート 558本 最終行の頭4文字「あなたの」 **45%**
+                     最終行の末尾6文字「てください。」**40%**
+
+    **中身は散っています**（題の族 526・出だしの形 689／694本。
+    `legacy_corpus.variety()`）。**揃っていたのは枠だけ**で、
+    YouTube が収益化の対象外に置くのは、まさにそこです ——
+    "generic or unoriginal templates **giving the impression of mass production**"。
+
+    ## **入口だけでは閉じません**（解除条件1・2 と同じ形）
+
+    入口は `script_writer.opening_form()` / `closing_form()` の振り分けです。
+    **が、振り分けは指示文の一部でしかなく、書き手はそこから外れられます。**
+    実際、揃っていた 84% / 61% / 45% は**指示文に直書きされた文句の写し**でした。
+    **入口だけを塞ぐと、次に指示文を書き換えた回が黙って穴を開け直せます。**
+
+    だから出口にも同じ門を置きます。**`script_only_problems()` に入れてあるので、
+    22本のクリップを焼く前**に当たります。
+
+    ## 何と比べるか
+
+    **直近 {FRAME_WINDOW}本の控え**（同じ向きだけ）。生涯の平均ではありません ——
+    ポリシーの原文が「同じチャンネルの動画を**続けて数本視聴した後**、
+    繰り返しのように感じられる」と言っているのは、並びの話だからです。
+
+    **`topic_id` を渡すこと。** 渡さないと、撃ち直した自分の前の案を相手にします
+    （`script_writer.used_bars()` が同じ理由で同じことをしています）。
+
+    ## **この門が当たる所と、当たらない所**（2026-08-30 に実測した。**隠さない**）
+
+    控えの旧い本を「これから出す本」として当て直すと、こうなりました:
+
+        長尺    80本中 **78本 が落ちる**（1行目「計算しま」が窓の 80%、
+                最終行「明日やる」が 55%）
+        ショート 80本中 **0本**
+
+    **ショートに当たらないのは、閾値が 0.5 で、実測が 45% だからです**
+    （最終行の頭「あなたの」）。**これは見落としではなく、そう決めた結果です** ——
+    0.4 まで下げれば当たりますが、4通りの振り分けでは期待 25% に対し
+    20本の窓で 40% を超える確率が **10%** あり、**10本に1本が
+    「たまたま偏った」で書き直しになります**（1回 約250秒）。
+
+    **だからショート側を締めているのは、この門ではなく入口のほう**です ——
+    `script_writer.CLOSING_RULES` の4通りが**全部「あなたの◯◯は」で
+    始めるなと言っている**ので、割り当ての上限がそのまま 30% になります。
+
+    **覆る条件**: 再開後にショートの最頻が 50% を超えたら、この門が拾います。
+    45% のまま動かないなら、**窓と閾値を一緒に動かすこと**
+    （窓 40本・閾値 0.4 なら誤検知は 2.6%）。片方だけ動かすと誤検知が跳ねます。
+
+    ## **覆る条件**
+
+    - 振り分けの通り数を4から増やしたら、`FRAME_MAX_SHARE` を引き下げること
+      （4通りで 0.5 は「期待の2倍」。8通りなら 0.3 が同じ厳しさです）
+    - 見る場所（頭4文字・末尾6文字）は `src/frames.py` の定数です。
+      **こちらに写さないこと** —— 2か所に置くと、片方だけ動かしたときにずれます
+    """
+    if not script:
+        return []
+    segs = script.get("segments") or []
+    narration = [str(s.get("narration") or "") for s in segs]
+    mine = frames.axes(narration)
+    if not mine:
+        return []
+
+    history = frames.recent(k=FRAME_WINDOW, portrait=portrait, exclude=topic_id)
+    if len(history) < FRAME_MIN_HISTORY:
+        print(f"[verify] 枠の重なりは判定していません（直近の控えが {len(history)}本 で、"
+              f"{FRAME_MIN_HISTORY}本 に足りません）")
+        return []
+
+    sigs = [frames.axes(h.get("narration") or []) for h in history]
+    sigs = [s for s in sigs if s]
+    problems: list[str] = []
+    labels = {"opening": "読み上げ1行目の頭", "closing": "最終行の頭",
+              "closing_tail": "最終行の末尾"}
+    for ax, label in labels.items():
+        same = sum(1 for s in sigs if s.get(ax) == mine[ax])
+        share = same / len(sigs)
+        if share > FRAME_MAX_SHARE:
+            problems.append(
+                f"{label}が {mine[ax]!r} で、**直近{len(sigs)}本のうち {same}本"
+                f"（{share:.0%}）が同じ**です。"
+                f"**続けて数本 見た人には、同じ動画の作り直しに見えます**"
+                f"（YouTube はそれを収益化の対象外にしています）。"
+                f"この本だけ、そこの言い回しを変えること"
+                f"（型そのものは `script_writer.{'opening' if ax == 'opening' else 'closing'}_form()`"
+                f" がテーマIDで決めていて、変えられません）"
+            )
+    return problems
+
+
 #: **動画を作らなくても分かる検査**（`check` と `src/pipeline.py` が同じものを撃つ）。
 def script_only_problems(script: dict | None, portrait: bool) -> list[str]:
     """**script.json だけで判定できる不備。レンダリングの前に当てるためのもの。**
@@ -2191,6 +2314,7 @@ def script_only_problems(script: dict | None, portrait: bool) -> list[str]:
     problems += _check_assumption_value_shown(script)
     problems += _check_yomi(script)
     problems += _check_no_human_expert_claim(script)
+    problems += _check_frame_repeat(script, portrait)
     return problems
 
 

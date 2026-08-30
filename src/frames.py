@@ -248,10 +248,22 @@ def forms_report() -> str:
                    f" ／ いちばん多い {top[0]!r} が {top[1] / len(vals):.0%}")
         for k, v in sorted(c.items()):
             out.append(f"      {k:<8} {v:5d}本 {v / len(vals):5.1%}")
+    worst = max(
+        max(collections.Counter(fn(i) for i in ids).values()) / len(ids)
+        for fn in (sw.opening_form,
+                   lambda t: sw.closing_form(t, portrait=False),
+                   lambda t: sw.closing_form(t, portrait=True))
+    )
     out.append(
-        "\n  **比較**: いまの控えの実効は 長尺 opening 2.4通り・closing 3.8通り"
-        "（`python -m src.frames`）。\n"
-        "  振り分けの実効がそれを上回っていなければ、この回の直しは効いていません。"
+        "\n  --- 読み方（**ここを取り違えないこと**）---\n"
+        "  **上の実効と、`python -m src.frames` の実効は別の数です。比べないこと。**\n"
+        "  向こうは**出来上がった文の頭4文字**を数えていて、こちらは**割り当てた型の名前**です。\n"
+        "  1つの型の中でも文言は本ごとに変わるので、**出来上がりの実効は必ずこれ以上**になります。\n"
+        "\n"
+        f"  **言えるのは上限のほうです**: 型を1つに揃える本は、多くても **{worst:.0%}**。\n"
+        "  いまの控えの最頻は 長尺の入り **84%**・長尺の締め **61%**・ショートの締め **45%**\n"
+        "  （`python -m src.frames`）。**上限がその下に来ていなければ、この回の直しは効いていません。**\n"
+        "  出来上がりの実測は、生成が再開して 20本 出てから `python -m src.frames` で撃つこと。"
     )
     return "\n".join(out)
 
