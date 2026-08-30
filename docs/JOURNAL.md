@@ -81200,6 +81200,72 @@ Resume gate の1番と2番はそこで閉じます。**在庫165本の扱い（5
 決定と、それを実行する道具の封を切ることは別の話です。
 **次に「引っ込める」と決めた回は、そこで初めて封の話をすること。**
 
+## 2026-08-30 11:1x — 公式ポリシーに当て直したら、**この停止の写しが1か所ずれていた**（サブ）
+
+### 取ってきたもの
+
+https://support.google.com/youtube/answer/1311392 （**Last updated: July 15, 2025**）
+と、AI ペルソナの条項の説明。**当たる条項は2つあり、閉じ方が違う。**
+
+    (A) AI ペルソナ／センシティブな題
+        "channels using AI-generated personas to deliver information on sensitive topics,
+         including any content that **presents itself as a human expert providing advice**
+         on topics such as health, legal issues, finances, or politics"
+    (B) 汎用・反復
+        "Similar or repetitive content with low educational value, commentary,
+         narratives, or minimal variation"
+        "AI-generated content made with generic or unoriginal templates
+         giving the impression of mass production"
+
+### ずれていた所
+
+`AUTOMATION_PAUSED.md` の冒頭は (A) を
+**「AI personas providing financial guidance or interpreting legal rules」**と写しています。
+**原文はその手前に条件を1つ持っています** ——
+**「presents itself as a human expert providing advice」**。
+
+**禁じられているのは「金融や制度の話をすること」ではなく、
+「人間の専門家として、助言をすること」のほうです。**
+
+**この差は小さくありません。**
+前の写しのままだと、**この企画は題ごと成立しない**ように読めます。
+実際 `CLAUDE.md` の停止の節は「税と保険の話でそれをやると」と書いており、
+**次の回が「ニッチごと捨てる」へ倒れる形**になっていました。
+原文どおりに読むと、閉じ方は2つで、**どちらもこの回に閉じています**:
+
+    1. 人間の専門家として名乗らない  ← persona から経歴を落とした ＋ verify の門
+    2. 助言ではなく試算として書く    ← 同じ回に persona へ入れた。
+                                       説明欄の定型文はもともとそう言っていた
+
+**`CLAUDE.md` の根幹（「制度を解説するのではなく、自分で計算した結果を発表する」）は、
+偶然ではなく、この条項のちょうど外側を指しています。** 2026-08-04 に方針を変えた回は、
+**当時この条項を読んでいないのに、正しい側に置いていた**ことになります。
+
+### **だから、いま縛っているのは (A) ではなく (B) です**
+
+    実測  735本 ／ 1日 6〜16本 ／ 同じ台本の型 ／ 同じ図の作り ／ 同じ合成音声
+          → "giving the impression of mass production" に正面から当たる
+
+**Resume gate の3番（本ごとに実質的な差があること）が、本当の関門です。**
+1・2 を閉じたことで、**残り4件のうち3番が最優先**になりました。
+
+### 次の回へ（3番の作り方）
+
+**「差がある」と*言う*のではなく、*数で示す*こと。** 材料はもうあります ——
+`batch_build.theme_base()`（配色の分散・08/28 に直した）、
+`verify._check_not_repeat` と `_check_adjacent_repeat`（棒の重なり）、
+`src/calc/` が本ごとに違う数字を出していること。
+**足りないのは、それを1つの尺度にまとめて「何本ぶん違うか」を出す道具のほうです。**
+
+### 覆る条件
+
+- **あのページは更新されます**（写した版は July 15, 2025 最終更新）。
+  **次に当たる回は日付を見て、変わっていたら節ごと取り直すこと**
+- 3番が数で示せないなら、**(B) は形式を変えるしかありません**
+  （自分の声・実画面の収録・本数を落として1本の密度を上げる）。
+  **そのときは「1日12〜20本」という density の前提ごと捨てることになります** ——
+  `eta.py` が名指しする腕が変わるので、**予測の入力から見直すこと**
+
 ## 2026-08-30 11:0x — 最適化の回: 「最適化されてんの？」に **いいえ**。審査の門を、到達日の床にした
 
 ### 先に答え: **いいえ。** 根拠は、この回に自分で数えた3つ
