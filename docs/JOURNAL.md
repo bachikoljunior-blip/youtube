@@ -82055,3 +82055,40 @@ import していないので `enforce_current_process()` が走る機会が無�
 （機械が1回も起きなくても）。**11.9本/日 は、いま入れた上限 13本/日 の下**なので、
 **この上限は、すでに入っている列には1本も効きません。**
 効くのは**解除後に新しく置く本**だけです。
+
+### 追記（同じ回）—— 全件を1度 回した。**赤は 13件。うち 0件 がこの回のぶん**
+
+`python -m pytest tests/` は **48分**（4,807件）かかるので、誰も回していません。
+**回したので、いまの赤を置いておきます** —— 次の回が「自分が壊したのか」を
+48分 かけて確かめ直さずに済むように。
+
+**走らせている最中に枝が動くと、結果は読めません。** 1回目は 43件 赤でしたが、
+そのあいだに hourly が `scripts/eta.py` を書き換えており、**現在の木で回し直すと
+30件 は消えました**（`test_eta_pause_banner` など）。**全件の結果を、
+走り終わったときの木と突き合わせずに読まないこと。**
+
+現在の木で赤いもの（**どれもこの回の変更とは無関係**。`git diff 8cee2d9..HEAD`
+は `src/` に触れておらず、`config/hypotheses.yaml` の変更は期限2行だけ）:
+
+    test_eta_supply_density        2件  `eta.PLAN_PUBLISH_PER_DAY` が 25→13 になり、
+                                        `_supply(13.0)` と一致して「写しでない」が言えなくなった。
+                                        **同じ回が構造の検査には `_PINNED_DENSITY = 25` を置いたが、
+                                        `PLAN_PUBLISH_PER_DAY` を直に読む2件が残っている**
+    test_judgeable[opening_motion] 1件  対照(動きなし) が **あと2本**。`Floor.ready` が None。
+    test_hypothesis_deadline_reachable
+                                   1件  同じ opening_motion。同じ理由。
+                                        **この2件が言っているのは、この回に deadline_check へ
+                                        入れた門と同じこと**です —— 床に届かない群がある。
+                                        **停止が解けて2本 作れば、3つとも同時に消えます。**
+    test_request_form              1件  `judgeable._short_topics()` がテーマIDで勝ち負けを決める
+                                        （同じIDでショートと長尺が両方 在る2件が落ちる）。
+                                        **単位を video_id へ**
+    test_request_form_excludes_long_form
+                                   1件  `title_form/断定` が split_counts **74本** 対
+                                        judgeable の素の群 **73本**。**数え方が2つ在る**
+    test_trajectory                1件 ／ test_pace 2件 ／ test_spawn_prompt 1件 ／
+    test_spawn_gate_overrun        2件 ／ test_retention_length 1件
+
+**この回が触った所は緑です**: `tests/test_paused_supply.py` 7件 ／
+`tests/test_deadline_check.py` 46件。
+そして `--shrink` の後も **`期限が早すぎる 0件`**（縮めすぎていない）。
