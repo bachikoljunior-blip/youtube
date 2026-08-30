@@ -416,10 +416,35 @@ def report(verbose: bool = False) -> str:
       f"（`*.plan.json` {sc['with_screen']}本）。")
     a("  そして測ったら、揃っているのは**読み上げより画面のほう**でした ——")
     a("  最後のコマの見出しは長尺の **83%** が同じ4文字（`python -m src.frames`）。")
-    a("  **見ていないもの: 説明欄（正本は Data API）・控えの無い"
+    a("  **見ていないもの: 控えの無い"
       f"{cov['without_script']}本・画面の読めない {sc['without_screen']}本。**"
       "「無かった」ではありません。")
+    a("  " + description_line())
     return "\n".join(lines)
+
+
+def description_line() -> str:
+    """**説明欄が測れているか**を、そのつど読んで1行にする（2026-08-30 夜）。
+
+    ここには長らく「**見ていないもの: 説明欄（正本は Data API）**」と
+    書いてありました。**書いてあるだけでは、誰も測りません** ——
+    実際、解除条件1・2・5 はその1行を残したまま閉じています。
+
+    道具は `python -m src.descriptions`（**キャッシュがあれば API 0単位**）。
+    **この行は写しではなく、`data/descriptions.json` を読んだ結果です** ——
+    測れていれば「測れている」と出て、測れていなければ**撃つ命令が出ます。**
+    """
+    from src import descriptions
+
+    d = descriptions.load()
+    got = len(d.get("videos") or [])
+    if not got:
+        return ("**説明欄は、まだ1本も測れていません** —— "
+                "`python -m src.descriptions --refresh`（約15単位・"
+                "**Data API の日枠は JST 16:00 に戻ります**）")
+    hits = len(descriptions.persona_defects(d["videos"]))
+    return (f"**説明欄は {got}本 測れています**（名乗り {hits}本"
+            f"・{d.get('at', '')[:10]} 取得）—— `python -m src.descriptions`")
 
 
 def main() -> None:
