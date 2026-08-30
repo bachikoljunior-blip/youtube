@@ -55,7 +55,7 @@ from pathlib import Path
 # **`src/` を読めるようにする**（`retro.py` と同じ形）。`levers` は腕の語彙だけを持つ
 # 純粋な module で、API も設定も見ません。
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from src import levers  # noqa: E402
+from src import levers, resume_gate  # noqa: E402
 
 JST = timezone(timedelta(hours=9))
 
@@ -733,8 +733,21 @@ def ship(what: str, closes: list[str] | None = None, lever: str | None = None,
               + (f"（いまの予測 {rec.get('eta_target')}）" if rec.get("eta_target") else "")
               + " —— 次の回が、実際に動いた日数と突き合わせます。")
         if moves == 0 and lever in levers.MOVING:
-            print("         [!] **動かす腕を選んで 0日** と言っています。"
-                  " 効くまでに時差があるなら、それを JOURNAL に1行書くこと。")
+            # **`gate` は 0日 が正しい答えです**（2026-08-30 に足した）。
+            #     床(d)＝門が閉じる日＋軌跡の日数 は、閉じた実績が
+            #     `resume_gate.MIN_CLOSED_FOR_RATE` 件 たまるまで**日付を出しません**。
+            #     つまり門を1件 閉じても、そこまでは到達日が動きようがない。
+            #     ここで叱ると、**次の回は 0 以外を作って黙らせる側**へ倒れます ——
+            #     `--moves` は当てるための欄ではないので、それは台帳を汚すだけです。
+            if lever == "gate":
+                print("         **`gate` の 0日 は正しい答えです。**"
+                      " 床(d) は、閉じた実績が"
+                      f" {resume_gate.MIN_CLOSED_FOR_RATE}件 たまるまで日付を出しません"
+                      "（`src/resume_gate.rate_per_day`）。"
+                      " **0 以外を作って埋めないこと。**")
+            else:
+                print("         [!] **動かす腕を選んで 0日** と言っています。"
+                      " 効くまでに時差があるなら、それを JOURNAL に1行書くこと。")
     _suggest_undeclared(what, closes, known)
     # **出したら、その場で予測へ入れ直す**（2026-08-20・オーナー指示。原文:
     # **「毎回の実行で予測するように言ったはずなので、毎回その予測に反映して」**）。
