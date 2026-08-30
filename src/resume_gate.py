@@ -143,9 +143,24 @@ def conditions(text: str | None = None) -> list[tuple[int, str]]:
     block = tail[: nxt.start()] if nxt else tail
     out: list[tuple[int, str]] = []
     for ln in block.splitlines():
-        mm = re.match(r"^\s*(\d+)\.\s+(.*\S)\s*$", ln)
+        # **字下げした行は条件ではありません**（2026-08-30 夜に踏んだ）。
+        #     ここは長らく `^\s*(\d+)\.` で、**字下げの深さを見ていませんでした。**
+        #     `## Resume gate` の節に「解除したらやること」を
+        #     4字 下げたコードブロックで `1. 2. 3.` と書いた回があり、
+        #     **門が 6件 から 9件 に増えました**（`--gate` が「9/9」と印字）。
+        #     `state()` は番号で台帳と突き合わせるので、**足された 1〜3 は
+        #     本物の 1〜3 の判定をそのまま貰い、閉じたことになります** ——
+        #     つまり**黙って増え、黙って閉じます。**
+        #
+        #     条件は本文の第1階層に書かれる（`1.` が行頭から始まる）ので、
+        #     **字下げ 4字 以上は落とします**（Markdown のコードブロックの下限）。
+        #     箇条書きの中の入れ子（2字）は残します。
+        #
+        #     **覆る条件**: 条件そのものを字下げして書く形に正本が変わったら、
+        #     ここを直すこと。検査は `tests/test_gate_all_closed.py`。
+        mm = re.match(r"^(\s{0,3})(\d+)\.\s+(.*\S)\s*$", ln)
         if mm:
-            out.append((int(mm.group(1)), mm.group(2)))
+            out.append((int(mm.group(2)), mm.group(3)))
     return out
 
 
