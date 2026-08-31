@@ -1851,7 +1851,7 @@ hypotheses:
     #     1日 後ろへずれた（`tests/test_deadline_check.py` の
     #     `test_期限が_判定できる日より前に置かれていない` が赤くして見つけた）。
     #     **この検査が落ちたら、延ばすのは期限だけ。条件は緩めないこと。**
-    deadline: "2026-10-06"
+    deadline: "2026-10-11"
     lever: per_video                # engaged 比率（1本あたり再生の駆動輪）
     side: content
     needs:
@@ -2061,7 +2061,7 @@ hypotheses:
     #     1日 後ろへずれた（`tests/test_deadline_check.py` の
     #     `test_期限が_判定できる日より前に置かれていない` が赤くして見つけた）。
     #     **この検査が落ちたら、延ばすのは期限だけ。条件は緩めないこと。**
-    deadline: "2026-09-12"
+    deadline: "2026-09-14"
     lever: per_video                # engaged 比率
     side: content
     needs:
