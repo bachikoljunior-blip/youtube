@@ -105,3 +105,94 @@ def test_the_stale_sentence_is_gone():
     assert "その外れた判定の上に立っています" not in live, (
         "M23 は 2026-08-30 に着手条件を書き直しています。"
         "**この一文のほうが古い。**まだ印字しています")
+
+
+# --------------------------------------------------------------------------
+# **模型と観測を、頭の門の横に並べる**（2026-08-31・最適化の回の第5手）
+# --------------------------------------------------------------------------
+def test_gate_note_shows_both_rates_and_does_not_swap_the_date():
+    """**門の日付は模型で解いてある。台帳の観測を、横に並べること。**
+
+    `days_subs`（門1）・`days_fan_subs`（門1'）・`days_monetized` は
+    **全部 `subs_per_day` ＝ `views_day x sub_rate` の模型**です。
+
+    実測 2026-08-31（`data/eta.jsonl`・API 0単位）::
+
+        模型 0.86人/日  門1 1,140日 / 門1'  557日
+        観測 0.59人/日  門1 1,652日 / 門1'  807日   （直近6.8日・19->23人）
+        比   **x1.46**  —— 頭の日付は台帳より **1.46倍 早い側**
+
+    **M23 の「0.89人/日 で 30日 以内」も、この模型の側の数でした。**
+    「古くなった」のではなく、**最初から模型を引いていた** ——
+    模型と観測が並んでいなかったので、誰も比べられませんでした。
+
+    **日付は差し替えません**（観測の窓で動いたのは 4人・n が薄い）。
+    薄い観測で頭の日付を動かすほうが、いまより悪い。
+    """
+    a = {"subs_per_day": 0.8638}
+    note = eta.observed_gate_note(977, a)
+    assert note, "観測が並んでいません"
+    assert "模型" in note and "観測" in note, note
+    assert "差し替えないこと" in note, (
+        "**薄い観測で日付を差し替えてよい**と読めます: " + note)
+    assert "動いたのは" in note, note
+
+
+def test_gate_note_is_silent_when_it_has_nothing_to_add():
+    """**言うことが無いときは黙ること**（門を跨いだ後・観測が取れない回）。"""
+    assert eta.observed_gate_note(0, {"subs_per_day": 0.86}) == ""
+    assert eta.observed_gate_note(-5, {"subs_per_day": 0.86}) == ""
+
+
+def test_gate_note_is_wired_into_both_gates():
+    """門1 と 門1' の**両方**に付いていること（片方だけだと比べられません）。"""
+    src = (ROOT / "scripts" / "eta.py").read_text(encoding="utf-8")
+    live = "\n".join(ln for ln in src.splitlines()
+                     if not ln.lstrip().startswith("#"))
+    n = live.count("observed_gate_note(")
+    assert n >= 3, (
+        "門1／門1' の両方に付いていません"
+        f"（定義1 + 呼び出し2 で 3件 のはず・いま {n}件）")
+
+
+# --------------------------------------------------------------------------
+# **2つの但し書きが、同じ門に並ぶ**（2026-08-31・第6手）
+# --------------------------------------------------------------------------
+def test_the_two_notes_compose_instead_of_competing():
+    """**同じ門に、別の軸の但し書きが2つ並びます。掛けるのか選ぶのかを言うこと。**
+
+    同じ日に、別の回が `rule_sustain_lines()` を足しました ——
+    「その再生／日 は**規則の外の本数**が作った数で、規則の下では 1/2.89」。
+    こちらは「模型 0.86 に対し、**実際に返ったのは 0.59**」。
+
+    **2つは別の軸です**::
+
+        こちら  模型の当たり外れ（0.86 -> 実測 0.59）
+        あちら  その 0.59 を出した日々が、**規則の外の本数**だった
+                -> 規則に収めると再生が 1/2.89 になり、さらに下がる
+
+    **どちらかを選ぶと 1.46倍 か 2.89倍 のどちらかを落とし、
+    黙って掛けると根拠のない 4.2倍 が出ます。** だから「順に掛かる」とだけ言い、
+    **掛けた数は出しません**（出すと、それ自体が新しい模型になります）。
+
+    **覆る条件**: 公開本数が規則に収まれば `rule_sustain_lines()` は消え、
+    この但し書きも一緒に消えます（下の2件目がそれを見ています）。
+    """
+    a_now = {"subs_per_day": 0.8638, "views_per_day": 2724.0,
+             "per_video_now": 942.0}
+    assert eta.rule_sustain_lines(a_now), "前提が崩れています（あちらが出ていない）"
+    note = eta.observed_gate_note(977, a_now)
+    assert "順に掛かります" in note, (
+        "**2つの但し書きの関係を言っていません。**読む側が選ぶか掛けるかを迷います: "
+        + note)
+    assert "予約を消化していた" in note, note
+
+
+def test_the_compose_caveat_disappears_with_the_other_note():
+    """**あちらが消えたら、こちらの但し書きも消えること**（写しを残さない）。"""
+    a_ok = {"subs_per_day": 0.30, "views_per_day": 942.0,
+            "per_video_now": 942.0}
+    assert not eta.rule_sustain_lines(a_ok), "前提が崩れています（あちらが残っている）"
+    note = eta.observed_gate_note(977, a_ok)
+    assert "順に掛かります" not in note, (
+        "**あちらが消えたのに、こちらが指し続けています**: " + note)
