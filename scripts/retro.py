@@ -794,6 +794,34 @@ def worked_on(toks: list[str], since: str = "") -> dict[str, int]:
 PROC_DOCS = ("docs/trigger_main.md", "docs/trigger_parent.md",
              "docs/spawn_prompt.md", "CLAUDE.md")
 
+#: **`.py` 以外の撃つ側**（2026-09-01 に踏んだ。**3周 持ち越した2本は、両方とも配線ずみでした**）。
+#:
+#: `_corpus()` は長らく `.py`（`scripts` / `src` / `tests`）と `PROC_DOCS` の4本しか
+#: 読んでいませんでした。**この repo で道具を撃つ口は、それだけではありません**:
+#:
+#:     `scripts/stop_check.sh`      … 停止フックが `--gate` を撃つ
+#:     `.claude/settings.json`      … `statusLine` / `hooks` がコマンドを持つ
+#:     `.github/workflows/*.yml`    … CI が撃つ
+#:
+#: **実測 2026-09-01 08:1x** —— 未決として残っていた2本は、片方が停止フックから、
+#: もう片方がハーネスの `statusLine` から**毎回 撃たれて**いました。
+#: 一覧はそれを「どこからも撃たれていない」と名指しし、**3周 続けて申し送りへ運ばれ**、
+#: そのたび「まだ1周も見られていません」と書かれています
+#: （`docs/JOURNAL.md` 2026-09-01 05:5x / 06:2x / 07:0x）。
+#: **偽陽性は、本物より高くつきます** —— 消すか配線するかの三択を、
+#: 既に配線ずみのものに対して毎周やり直させるからです。
+#:
+#: **足してよいのは「実際にコマンドを組み立てる file」だけです**（`PROC_DOCS` の
+#: 「日誌を入れないこと」と同じ理由 —— 名前が出てくるだけの file を足すと、
+#: 一度でも話題に出た道具が全部「配線ずみ」に化けます）。
+#:
+#: **覆る条件**: 撃つ口が増えたら（`Makefile`・`justfile`・`docker-compose.yml`…）
+#: ここに足すこと。**`unwired_tools()` が 0本 を出し続けたら、まずここを疑う**
+#: —— 名前を含む file を1つ足しただけで、一覧は黙って空になります。
+CALLER_GLOBS = ("scripts/*.sh", "*.sh",
+                ".claude/settings.json", ".claude/settings.local.json",
+                ".github/workflows/*.yml", ".github/workflows/*.yaml")
+
 #: **(c)「わざと寝かせてある」の目印**。道具自身の docstring から拾います。
 #: 語を増やすときは、**その道具の docstring に実際に在る字**にすること
 #: （こちらで言い回しを想像して足すと、当たらないまま増えます）。
@@ -847,6 +875,11 @@ _DECIDED_RE = re.compile(r"^\s*#{1,4}\s.*\(c\).*わざと寝かせてある.*$",
 def _corpus() -> tuple[tuple[Path, ...], dict[Path, str], str]:
     """`unwired_tools()` が読む一式。**1回の走りで1度だけ読みます。**
 
+    返すのは `(道具, .py の中身, 撃つ側の本文)`。3つ目は **`PROC_DOCS`（手順）と
+    `CALLER_GLOBS`（シェル・ハーネス設定・CI）を繋いだもの**です ——
+    どちらも「`.py` ではないが、その道具を毎回 撃つ側」なので同じ袋に入れます
+    （**分ける値打ちがありません** —— `unwired_tools()` はこの袋に名前が在るかしか見ません）。
+
     **憶えているのは速さのためです**（`.py` を 500本 前後 読みます。
     実測 2026-09-01: 憶える前は検査4件で **44秒**、後は **12秒**）。
     `retro.py` も検査も一発ものなので、走っている間に中身が変わることはありません。
@@ -864,7 +897,25 @@ def _corpus() -> tuple[tuple[Path, ...], dict[Path, str], str]:
         f = ROOT / rel
         if f.exists():
             proc += f.read_text(encoding="utf-8", errors="replace")
+    for pattern in CALLER_GLOBS:
+        for f in sorted(ROOT.glob(pattern)):
+            if f.is_file():
+                proc += f.read_text(encoding="utf-8", errors="replace")
     return tools, code, proc
+
+
+def caller_files() -> list[str]:
+    """**`.py` 以外で、いま実際に読んでいる撃つ側**（`CALLER_GLOBS` の当たり）。
+
+    検査が「1本も当たっていない」を見るために出します ——
+    glob を書き間違えても `_corpus()` は**黙って何も足しません**。
+    """
+    out: list[str] = []
+    for pattern in CALLER_GLOBS:
+        for f in sorted(ROOT.glob(pattern)):
+            if f.is_file():
+                out.append(f.relative_to(ROOT).as_posix())
+    return out
 
 
 def unwired_tools() -> list[dict]:
@@ -958,6 +1009,41 @@ def unwired_tools() -> list[dict]:
     return out
 
 
+#: **「潰せないもの」ではなく「偽陽性」を疑う線**（2026-09-01 08:1x に足した。**実測2件**）。
+#:
+#: 持ち越しの各行は既に「**言及 N回 ／ 実物に当たった回 M回**」を出しています
+#: （`worked_on()`）。**その2つの比が読まれていませんでした。**
+#: N が伸びるのに M が伸びない語は、たいてい「難しくて潰せない」のではなく、
+#: **その語を出している道具の側が間違っています**:
+#:
+#:     premise_subject  4周とも「次の回へ」と書かれ、4周とも実物は開かれず、
+#:                      5周目に開いたら**直す先は台帳ではなく道具の側**だった
+#:                      （1関数・14行。2026-09-01 07:1x）
+#:     unwired_tools    「未決2本」が3周 運ばれ、4周目に開いたら**2本とも
+#:                      最初から配線ずみ**だった（`.sh` と `.claude/settings.json`
+#:                      から毎回 撃たれており、`_corpus()` がそこを読んでいなかった。
+#:                      2026-09-01 08:1x）
+#:
+#: **2件とも、実物に当たった回が 1回 以下のまま3周 以上 運ばれています。**
+#: **3件目を待たないこと** —— 待つと、そのぶん次の回が同じ三択をやり直します。
+#:
+#: **これは「その語を選べ」ではありません。** 選ぶ順は `_sinks()` が決めます
+#: （枠や時計で塞がっている語を上へ持ち上げない）。**言っているのは、
+#: その語に取りかかったとき、どこを先に開くか**です ——
+#: **申し送りの本文ではなく、その語を出している道具の実装。**
+#:
+#: **覆る条件**: この線に当たった語を開いて、**道具は正しく、本当に潰せていない
+#: だけ**だった回が2回 出たら、線を上げるか、この印ごと外すこと
+#: （そのときは `docs/JOURNAL.md` に、開いた語と何が正しかったかを書くこと）。
+SUSPECT_MENTIONS = 3
+SUSPECT_TOUCHED = 1
+
+
+def tool_suspect(mentions: int, touched_n: int) -> bool:
+    """**その語ではなく、その語を出している道具を先に疑う線**（`SUSPECT_MENTIONS` の註）。"""
+    return mentions >= SUSPECT_MENTIONS and touched_n <= SUSPECT_TOUCHED
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--n", type=int, default=8, help="さかのぼる回数。既定8")
@@ -1041,6 +1127,9 @@ def main() -> int:
                 tail += (f"  ← **いまは潰せません**（申し送りが時刻を指定。"
                          f"あと {clocked[tok]:.1f} 時間）")
             n_touch = touched.get(tok, 0)
+            if tool_suspect(len(dates), n_touch):
+                tail += (f"  ← **{len(dates)}周 運ばれて、実物に当たったのは {n_touch}回** —— "
+                         "**その語を出している道具の側を先に疑うこと**")
             print(f"  {len(dates)}回  {tok}{tail}")
             print(f"        言及 {len(dates)}回 ／ **実物に当たった回 {n_touch}回**"
                   f"  ·  {' / '.join(dates)}")
@@ -1064,6 +1153,26 @@ def main() -> int:
             # 単位はこちらの投稿が窓の中で使い切ります。
             print(f"  {upload_cap.day_quota().line}")
         print("\n  **これは「毎回言っているのに、まだ潰れていない」ものの候補です。**")
+        # **N が伸びて M が伸びない語は、たいてい偽陽性です**（`SUSPECT_MENTIONS` の註）。
+        # 上の各行にも印は付きますが、**印は 20行 の中に埋もれます** ——
+        # この一覧が5周 手で運ばれたのと同じ理由で、**まとめて1か所に出さないと
+        # 読む側には届きません。**
+        suspect = [t for t, ds in carried.items()
+                   if tool_suspect(len(ds), touched.get(t, 0))]
+        if suspect:
+            print(f"\n  **そのうち {len(suspect)}件 は、{SUSPECT_MENTIONS}周 以上 運ばれて、"
+                  f"実物に当たったのが {SUSPECT_TOUCHED}回 以下 です** ——"
+                  " **その語を出している道具の側を先に疑うこと。**")
+            for t in suspect:
+                print(f"      {t}")
+            print("  **開くのは申し送りの本文ではなく、その語を出している道具の実装です。**"
+                  " 実測2件 —— `premise_subject` は4周ぶんの申し送りの後半が事実と違い"
+                  "（直す先は台帳ではなく道具の側・1関数14行）、"
+                  "`unwired_tools` の「未決2本」は**2本とも最初から配線ずみ**でした"
+                  "（`.sh` と `.claude/settings.json` から毎回 撃たれており、"
+                  "`_corpus()` がそこを読んでいなかった）。")
+            print("  **これは「この語を選べ」ではありません**（選ぶ順は下の日枠／時刻の節が決めます）。"
+                  "**取りかかったときに、どこを先に開くか**です。")
         zero = [t for t in carried if touched.get(t, 0) == 0]
         if zero:
             print(f"  **そのうち {len(zero)}件 は、実物に当たった回が 0 です** ——"

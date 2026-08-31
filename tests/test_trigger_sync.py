@@ -192,3 +192,40 @@ def test_指紋の無い古い観測では余計なことを言わない():
     text, drifted = ts.render(spec, seen)
     assert drifted
     assert "正本がこの観測より後に" not in text
+
+def test_本文のズレは_鳴らすが_命じない() -> None:
+    """**毎周の1行が、誰にもできないことを命じていた**（2026-09-01 08:2x に直した）。
+
+    `diff()` の body の行は長らく「`--emit-body` を当てること」でした。
+    **`--emit-body` は当てません。当てるべき姿を印字するだけ**です。
+    実際に当てるには `update_trigger` が要り、**この repo はその道を意図して
+    閉じてあります**:
+
+        親が撃つ  2026-08-24 12:10Z → `SESSION_STATUS_REQUIRES_ACTION`
+                  ＝ 承認待ちで親が止まり、**次の発火も届かない**
+        子が撃つ  2026-08-20 / 08-24 の2回、道具ごと弾かれている
+
+    `docs/trigger_parent.md`「トリガー本文の正本」は、まさにこれを理由に
+    **節ごと空にしてあります**。**同じ repo の2か所が逆を言っていました。**
+
+    **鳴らすのはよい**（識別子のズレはここでしか見えない）。**命じるのが誤り**でした。
+
+    **覆る条件**: `update_trigger` が承認待ちにならずに通るようになったら、
+    `docs/trigger_parent.md` の同じ節と**両方**を戻すこと（片方だけ戻すと、
+    また逆のことを言う2か所になります）。
+    """
+    spec = ts.load_spec()
+    seen = {k: spec[k] for k in ts.FIELDS if k in spec}
+    seen["body"] = "みじかい"
+    line = next((g for g in ts.diff(spec, seen) if g.startswith("body:")), None)
+    assert line is not None, "本文のズレが鳴っていません（識別子のズレも同じ節で見ます）"
+    assert "当てること" not in line, (
+        "本文のズレの行が、まだ「当てること」と命じています。"
+        "**親は承認待ちで鎖ごと止まり、子は道具ごと弾かれます** —— "
+        "`docs/trigger_parent.md`「トリガー本文の正本」と逆のことを言う2か所目に戻っています"
+    )
+    assert "当て直さないこと" in line
+    assert "trigger_parent.md" in line, (
+        "なぜ当てないかの出どころが行に無いと、次の回が理由を探して自分で考え始めます"
+        "（同じ形が 2026-08-24 12:0x にあります）"
+    )

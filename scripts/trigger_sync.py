@@ -235,8 +235,41 @@ def diff(spec: dict, seen: dict | None, root: Path = ROOT) -> list[str]:
         if a == b:
             continue
         if key == "body":
-            out.append(f"body: **本文が正本と違います**（正本 {len(a)}字 / 実物 "
-                       f"{len(b or '')}字）。`--emit-body` を当てること")
+            # **「当てること」と言わないこと**（2026-09-01 08:2x に直した）。
+            # ここは長らく「`--emit-body` を当てること」と印字していましたが、
+            # **`--emit-body` は当てません。当てるべき姿を印字するだけ**です。
+            # 実際に当てるには `update_trigger` が要り、**この repo は
+            # その道を意図して閉じてあります**:
+            #
+            #   親が撃つ  2026-08-24 12:10Z 実測 → `SESSION_STATUS_REQUIRES_ACTION`
+            #             ＝ 承認待ちで親が止まり、**そこへは次の発火も届きません**
+            #             （`docs/trigger_parent.md`「トリガー本文の正本」——
+            #              この節はそれを理由に**空にしてあります**）
+            #   子が撃つ  2026-08-20 と 08-24 の2回、道具ごと弾かれています
+            #             （"editing the prompt of a routine whose fires deliver
+            #               into a session that is not your own is not available"）
+            #
+            # **つまり、この行は「誰にもできないこと」を毎周 命じていました。**
+            # 同じ文書の中で先に読まれる側が禁を破る形で、`trigger_parent.md` が
+            # 「先に読まれる側が勝つので、禁のほうは効きません」と書いている、
+            # まさにその形です。**鳴らすのはよい。命じるのが誤りでした。**
+            #
+            # **古いままで何も壊れません** —— 本文が持っているのは識別子と
+            # 「`docs/trigger_parent.md` を読め」だけで、**規則は全部 repo にあり、
+            # 子がいつでも書き換えられます。** 壊れるのは識別子が変わったときだけ。
+            #
+            # **覆る条件**: `update_trigger` が承認待ちにならずに通るように
+            # なったら（`docs/trigger_parent.md` の同じ節の覆る条件と対）、
+            # ここは「当てること」に戻してよい。
+            out.append(f"body: 本文が正本と違います（正本 {len(a)}字 / 実物 "
+                       f"{len(b or '')}字）。**当て直さないこと** —— "
+                       "`update_trigger` は親だと承認待ちで鎖ごと止まり"
+                       "（2026-08-24 実測）、子だと道具ごと弾かれます。"
+                       "本文が運ぶのは識別子と『`docs/trigger_parent.md` を読め』"
+                       "だけなので、**古くても壊れません**"
+                       "（`docs/trigger_parent.md`「トリガー本文の正本」）。"
+                       "**識別子（`trigger_id` / `persistent_session_id` / "
+                       "`environment_id`）がズレている行が上に無いかだけ見ること**")
         else:
             out.append(f"{key}: 正本 `{a}` ↔ 実物 `{b}`")
     return out

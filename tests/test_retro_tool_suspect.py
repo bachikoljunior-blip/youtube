@@ -1,0 +1,90 @@
+"""**「潰せないもの」と「偽陽性」を、持ち越しの一覧で分ける。**
+
+## なぜ要るか（2026-09-01 08:1x に、**2件目**を踏んで足した）
+
+持ち越しの各行は既に「**言及 N回 ／ 実物に当たった回 M回**」を出しています
+（`retro.worked_on()`・2026-09-01 07:1x に足った）。
+**その2つの比は、どこにも読まれていませんでした。**
+
+N が伸びるのに M が伸びない語は、たいてい「難しくて潰せない」のではなく、
+**その語を出している道具の側が間違っています**:
+
+    premise_subject  4周とも「次の回へ」と書かれ、4周とも実物は開かれず、
+                     5周目に開いたら**直す先は台帳ではなく道具の側**だった
+    unwired_tools    「未決2本」が3周 運ばれ、4周目に開いたら**2本とも
+                     最初から配線ずみ**だった（`.sh` と `.claude/settings.json`
+                     から毎回 撃たれており、`_corpus()` がそこを読んでいなかった）
+
+**2件とも、実物に当たった回が 1回 以下のまま3周 以上 運ばれています。**
+**3件目を待たないこと。**
+"""
+from __future__ import annotations
+
+import importlib.util
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+
+_spec = importlib.util.spec_from_file_location("retro_mod", ROOT / "scripts" / "retro.py")
+retro = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(retro)
+
+
+def test_線は_実測2件を_両方とも拾う():
+    """**線は、拾いたい実物から決めること**（こちらで数を想像して置かないこと）。"""
+    assert retro.tool_suspect(4, 0), "`premise_subject`（4周・実物 0回）を拾えていません"
+    assert retro.tool_suspect(3, 1), "`unwired_tools`（3周・実物 1回）を拾えていません"
+
+
+def test_よく触られている語は_拾わない():
+    """**「毎周 実物を開いているのに、まだ終わらない」は、道具の欠陥ではありません。**
+
+    そこまで印を付けると、この一覧は「全部 疑え」と言うのと同じになります。
+    """
+    assert not retro.tool_suspect(5, 4)
+    assert not retro.tool_suspect(2, 0), "2周では早い（1回 運ばれ直しただけ）"
+    assert not retro.tool_suspect(3, 2)
+
+
+def test_印字に配線されている():
+    """**読まれない判定は、無い判定と同じです**（この repo で通算11回の形）。
+
+    行ごとの印だけでは 20行 の中に埋もれるので、**まとめの1か所**も要ります
+    —— この一覧が5周 手で運ばれたのと同じ理由です。
+    """
+    src = (ROOT / "scripts" / "retro.py").read_text(encoding="utf-8")
+    body = src[src.index("def main() -> int:"):]
+    assert "tool_suspect(" in body, (
+        "`main()` が `tool_suspect()` を呼んでいません。**呼ばない判定は、"
+        "次の回から手で数え直されます**"
+    )
+    assert body.count("道具の側を先に疑うこと") >= 2, (
+        "行ごとの印か、まとめの1か所かが欠けています。**両方 要ります** ——"
+        "印だけだと 20行 の中に埋もれ、まとめだけだとどの行か分かりません"
+    )
+
+
+def test_選ぶ順を_持ち上げないこと():
+    """**「疑え」は「選べ」ではありません。**
+
+    枠や時計で塞がっている語は `_sinks()` が下へ沈めています。
+    そこへ「先に見ろ」を重ねると、**この回で打てない手を勧めます**
+    （2026-09-01 に `open_zero` で同じ所を踏み、直した跡があります）。
+    """
+    src = (ROOT / "scripts" / "retro.py").read_text(encoding="utf-8")
+    body = src[src.index("def main() -> int:"):]
+    assert "**これは「この語を選べ」ではありません**" in body, (
+        "まとめの節が「選べ」と読まれないための1行が消えています"
+    )
+
+
+def test_線に_覆る条件が書いてある():
+    """**理由と覆る条件の無い線は、次に来た側が判断できず惰性で残ります**（CLAUDE.md）。"""
+    src = (ROOT / "scripts" / "retro.py").read_text(encoding="utf-8")
+    head = src[:src.index("def tool_suspect")]
+    block = head[head.rindex("#: **「潰せないもの」"):]
+    assert "覆る条件" in block
+    assert "premise_subject" in block and "unwired_tools" in block, (
+        "線の根拠にした実測2件が書かれていません。**数だけ残ると、"
+        "次の回はなぜ 3 と 1 なのかを判断できません**"
+    )
