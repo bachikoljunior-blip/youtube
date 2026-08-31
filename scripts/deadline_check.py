@@ -117,7 +117,52 @@ def analytics_lag_band() -> int:
     return int(settle_mod.analytics_lag_band().get("band") or 0)
 
 
+@functools.lru_cache(maxsize=8)
 def _rows(name: str) -> list[dict]:
+    """`data/<name>` を1行1件で読む。**1回の走りにつき1度だけ読みます。**
+
+    ## なぜ `lru_cache` なのか（2026-08-31 に、`eta.py` を profile して足した）
+
+    **`python scripts/eta.py` の 375秒 のうち 297秒（79%）がここでした。**
+    `cProfile` の実測（`--offline` でも同じ。**API ではありません**）:
+
+        deadline_check.check()          297.3秒   ← 全体の 79%
+          latest_views()                285.1秒   （1,665回 呼ばれる）
+            _rows()                     211.9秒   （1,705回）
+              json.loads                197.8秒   **37,991,128回**
+
+    `data/views.jsonl` は **21,055行**。それを **1,705回** 読み直していました
+    （21,055 × 1,705 ≒ 3,590万 ＝ 上の `json.loads` の回数）。
+    **同じファイルを、同じ走りの中で、1,700回 パースし直していた**だけです。
+
+    ## **これは、この repo で2度目です**
+
+    `CLAUDE.md` に前の1件が書いてあります —— `eta.py --reflect` が
+    **1分37秒 → 8.5秒**になったとき、原因は
+    「`day_cap.cap()`（`data/views.jsonl` を丸ごと読む・59ms）を
+    1回の走りで 1,000回 前後 呼び直していた」ことでした。
+    **同じファイル・同じ形・別の入口**です。**直したのは片方だけでした。**
+
+    ## 走っている最中に書き換わらないか
+
+    `data/*.jsonl` は**追記**で、書くのは別の回（別プロセス）です。
+    1回の走りの中で `eta.py` / `deadline_check.py` がここへ書くことはありません
+    （書くのは `config/hypotheses.yaml` の期限の行だけ）。
+    **返りのリストを呼ぶ側が書き換えないこと** —— いまの呼び出しは
+    走査と絞り込みだけで、1か所も書き換えていません（`uploaded()` /
+    `latest_views()` / `long_ids()` / 1334行 / 1986行）。
+
+    ## これが覆る条件
+
+    - **同じプロセスの中で `data/*.jsonl` に追記してから読み直す**手ができたら、
+      そこは `_rows.cache_clear()` を呼ぶこと。**呼ばずに足すと、
+      追記したはずの行が見えません**（いちばん見つけにくい壊れ方）。
+    - 返りを書き換える呼び出しを足すなら、**そこで `list(...)` すること。**
+      ここでコピーを返さないのは、コピー自体が 21,055件 × 呼び出し回数 だからです。
+    - `src/day_cap.py` 側は **`lru_cache` にしていません**（検査が
+      `day_cap.cap` を差し替えるため。`scripts/eta.py:286` の註）。**あちらを
+      同じ形にしないこと** —— 理由が違います。
+    """
     path = ROOT / "data" / name
     try:
         return [json.loads(x) for x in path.read_text(encoding="utf-8").splitlines() if x.strip()]
