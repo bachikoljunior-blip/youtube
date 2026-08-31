@@ -85088,3 +85088,62 @@ subs_cap（08/28）と**まったく同じ壊れ方の4回目**です。
 （3分25秒）。直接あたる4 file（`test_form_record` / `test_per_video_ceiling` /
 `test_eta` / `test_eta_house_rule`）だけなら **89 passed**。
 **赤は1件も増やしていません。**
+
+### 追記（同じ回・20:0x）—— **規則は、置く側にだけ入っていませんでした**
+
+`python scripts/status.py` を読んで見つけました。**これがこの回でいちばん危ない1件**です。
+
+    [!] **予約が1本も無い日が 10日あります**（＝その日は投稿が途切れます）:
+        09/01 09/03 09/04 … 09/11
+        …そうでなければ **`python scripts/reschedule.py --compact`** で詰めること
+
+**規則が入った直後に、道具のほうがそれを元へ戻す案内を出していました。**
+そして `reschedule.py` の `_measured_per_day()` は `day_cap.measure()`
+（＝ **1日に何本まで再生が付くか**という**観測**・実測 10本/日）をそのまま返すので、
+**`--compact` は本当に 1日10本 詰めます** —— 規則1（1日1本）にも
+規則2（作り置きなし）にも正面から反します。
+
+**規則は3か所に入っていました**（作る側 `batch_build.density_cap()`／
+読む側 `eta.PLAN_PUBLISH_PER_DAY`／床 `src/house_rule.py`）。
+**入っていなかったのは「置く側」だけ**です。この repo でいちばん多い壊れ方
+（**言っている所と、している所が別**）が、**規則そのものに対して**起きていました。
+
+    scripts/reschedule.py  `_clamp_per_day()` を足した（`house_rule` を読む1か所）。
+                           **既定も `--per-day` の明示も締める** —— 既定だけ締めて
+                           口を開けると「今日は詰めたいから」で毎回そこを通ります
+                           （`batch_build` の `--count` を締めたのと同じ理由）
+    scripts/status.py      先が空いているのは**規則どおり**だと言う。
+                           「詰めろ」ではなく「**その日の1本を、その日までに入れろ**」へ。
+                           「1日2本以下の日」の警告も、規則の下では黙る
+    tests/test_reschedule_house_rule.py（6件）  観測は消さない・0本/日 にはしない
+
+**そして、ここが今日の2つの指示をつなぎます。** 規則の下では、予約は
+**1日ぶんしか先にありません**。だから「その日の1本」を入れるのは**その日の回**で、
+**回が立たなければ、その日は本当に途切れます。**
+オーナーが同じ日に「**何で止まってんだよ！**」と言ったのは、まさにその形です ——
+`next_round.py` の `--live 0 → GO` は、**規則の下で投稿を切らさないための機構**
+でもあります。2つは別々の指示ですが、**同じ1つの穴の両側**でした。
+
+### 全体の検査（`scripts/fast_tests.py --all`・21分23秒）
+
+**5,053 passed / 32 failed。** 32件の内訳と扱い:
+
+    11件  tests/test_reschedule_{noop,quota}  **日枠切れの環境**（`reserve_hold` が
+          実物の `data/day_quota.jsonl` を読む）。**この回の変更の前から赤**で、
+          09/01 16:00 JST に窓が変われば緑に戻ります。**触っていません**
+    11件  tests/test_batch_{parallel,timing}  規則で `jobs=3` が 1 に潰れ、
+          `serial_sec > wall_sec` が `0.2 > 0.2` になっていた。**形は壊れていない** ——
+          並列の仕掛けを測る file なので、規則を pin して直した（緑）
+     1件  tests/test_retro_noise  種類の4語を**書き写して**いた。`improve` が
+          5語目に足されたとき `retro`/`run_marker` は追随し、検査だけが残った。
+          正本（`run_marker.SHIP_KINDS`）を読む形へ直した（緑）
+     9件  tests/test_{doc_numbers,judgeable,live_slots,request_form,trajectory}
+          **実データが動いて出ている赤**（未裏取りの題が1件増えた・後ろカタログの
+          24時間比が 92.7%＜95%・0再生の枠の逃がし先が無い、など）。
+          **どれも判断が要る中身**なので、この回では触っていません。
+          **次の回への申し送り**: `test_trajectory::test_no_back_catalogue` は
+          「軌跡に減衰項が要る」と言っています —— これは `eta.py` の到達日に
+          直で効く側なので、上の5件より先に見ること。
+
+**この回が触った範囲は全部 緑**です（`-k eta` 419件・`house_rule` 21件・
+`reschedule_house_rule` 6件・`batch_*` 25件・`next_round*` 17件・`parent` 6件）。
