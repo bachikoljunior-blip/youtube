@@ -60,6 +60,7 @@ def main(topic: str, video_id: str, theme_index: int) -> int:
         slides[len(slides) // 2],
         script["thumbnail_line1"], script["thumbnail_line2"],
         work / "thumbnail.jpg", work, accent=accent,
+        kicker=script.get("thumbnail_kicker"),
     )
     print(f"[thumb] 作り直しました: {out} accent={theme['accent']}")
 
