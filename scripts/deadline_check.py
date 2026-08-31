@@ -245,10 +245,36 @@ def deep_short_usable_days() -> int:
     return _deep_short().usable_days()
 
 
+def reveal_hold_arm(side: str = "処置") -> int:
+    """**「完成形の保持」で比べられる本**の数（`src/reveal_hold.arm_n`）。
+
+    **`rows('uploaded.jsonl')` を直接 数えないこと**（2026-08-31 に踏んだ）。
+    控えは**1本につき1行ではありません**（実測 850行 / 735本 —— 予約を動かす
+    たびに行が増える）。この前提の `count_expr` は行を数えていて、
+
+        式の答え          **17** → この関数のすぐ下 `_ans_accrual` が
+                                   「要 16 ／ いま 17 → **足りています**」
+        本で畳むと        **11**（`KfQeYEJwL7Q` だけで4行）
+        うちショート       **8**（長尺は `reveal_variants` を通らない）
+        齢48時間 を超えた  **1** ← `falsified_if` が比べられるのはこれだけ
+
+    そこから `ready_by_claim()` → `arm_speed.next_close()` →
+    `scripts/eta.py` の頭3行「**この回は `verdict` で日付が動かせます**」
+    まで通ります。**頭3行しか読まない回は、処置1本で前提を閉じます。**
+
+    `deep_short_arm()`（すぐ上）と**同じ形の穴で、こちらが2件目**です。
+    """
+    if str(ROOT) not in sys.path:
+        sys.path.insert(0, str(ROOT))
+    from src import reveal_hold                                # noqa: PLC0415
+    return reveal_hold.arm_n(side)
+
+
 EXPR_NS = {"json": json, "rows": _rows, "date": date, "ab_members": ab_members,
            "deep_short_days": deep_short_days,
            "deep_short_arm": deep_short_arm,
            "deep_short_usable_days": deep_short_usable_days,
+           "reveal_hold_arm": reveal_hold_arm,
            "latest_views": latest_views, "uploaded": uploaded, "long_ids": long_ids}
 
 

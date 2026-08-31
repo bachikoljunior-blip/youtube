@@ -1960,7 +1960,7 @@ hypotheses:
     # `_ab_slot_order()` が入った 2026-08-29 23:45 JST より後に作った本だけで、
     # 予約の順番待ち（`scripts/queue_lag.py`）はいま 5〜6週 あります。
     # **満ちなければ期限だけ延ばすこと。`falsified_if` は1文字も緩めない。**
-    deadline: "2026-11-10"
+    deadline: "2026-09-08"
     lever: density                  # 測っているのは `day_cap` の帯の形そのもの
     side: dist                      # 動画ファイルは作り直さない（枠の配り方だけ）
     watch: "帯の中の位置-両群16本"
@@ -5026,11 +5026,37 @@ hypotheses:
     # 作ってから公開までの中央値は 15日（`deadline_check` の実測）＋
     # 落ち着き3日 ＋ Analytics の遅れ3日。**`queue_lag --move` で手前へ倒せば
     # 縮みます**（枠が戻る 08/28 16:00 JST 以降）。**縮んだら期限も縮めること。**
-    deadline: "2026-08-31"
+    deadline: "2026-09-06"
     needs:
       - kind: accrual
-        # この回より後に作られ、**もう公開日が過ぎている**ショートの数。
-        count_expr: "sum(1 for r in rows('uploaded.jsonl') if (r.get('uploaded_at') or '') >= '2026-08-27T12:00' and (r.get('at') or '9') <= str(date.today()))"
+        # **比べられる本**の数（`src/reveal_hold.arm_n`）。両群の少ないほう。
+        #
+        # **2026-08-31 に書き換えました。** ここは長らくこう書いてありました:
+        #
+        #   sum(1 for r in rows('uploaded.jsonl')
+        #       if (r.get('uploaded_at') or '') >= '2026-08-27T12:00'
+        #       and (r.get('at') or '9') <= str(date.today()))
+        #
+        # **`data/uploaded.jsonl` は1本につき1行ではありません**（実測 850行 /
+        # 735本 —— 予約を動かすたびに行が増える）。**行を数えていました。**
+        #
+        #   式の答え          **17** → 「要 16 ／ いま 17 → **足りています**」
+        #   本で畳むと        **11**（`KfQeYEJwL7Q` だけで4行）
+        #   うちショート       **8**（長尺3本は `reveal_variants` を通らない）
+        #   齢48時間 を超えた  **1** ← `falsified_if` が比べられるのはこれだけ
+        #   両群がそろう公開日 **1日**（`falsified_if` は「同じ日の中で比べること」）
+        #
+        # そこから `deadline_check.ready_by_claim()` → `arm_speed.next_close()`
+        # → `scripts/eta.py` の頭3行「**この回は `verdict` で日付が動かせます**
+        # —— いま判定できるのは: 完成した図を…」まで通っていました。
+        # **頭3行しか読まない回は、処置1本 対 対照3本 で中央値を比べ、
+        # 同点も外れの `falsified_if` に当ててこの前提を閉じます** ——
+        # 閉じた前提は軌跡の腕を動かすので、**到達日が在りもしないデータで動きます。**
+        #
+        # 同じ形の穴は 2026-08-29 に `deep_short_arm()` で1度 塞がれています
+        # （「門は『作った／公開した』を、手順は『**比べられる**』を数えている」）。
+        # **これが2件目です。**
+        count_expr: "min(reveal_hold_arm('処置'), reveal_hold_arm('対照'))"
         need: 16
         since: "2026-08-27"
         data_file: "data/uploaded.jsonl"
