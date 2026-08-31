@@ -39,8 +39,23 @@ def test_vocabulary_matches_what_eta_prints():
     #     （`gate_lines`）と天井の出どころ（`resume_gate`）があること。
     assert "gate_lines" in src and "resume_gate" in src, (
         "`gate` を語彙に置いているのに、eta が門を印字していません")
+    # **`theta` は 2026-08-31 に足した6本目。**
+    #
+    # `eta.py` の頭3行は「**到達日をいちばん大きく動かすのは θ**」と印字し、
+    # 倍率まで出しています（実測 2026-08-31: θ×2 で **-26日** ／
+    # 天井 θ→∞ で **-51日** ＝ 上の4本のどれよりも大きい）。
+    # **それを指す語が語彙に無かったので、θ を進めた回は `none`
+    # （＝日付を動かさない）へ落ちていました。** 実測 直近7日:
+    # `none` **147件（41%）** ／ ship 359件 で到達日は **+13日 遠のいた**。
+    #
+    # この検査の趣旨は「腕の数」ではなく「**eta が印字しない腕を語彙に
+    # 置かない**」ことなので、`theta` にも同じ門を掛けます。
+    assert "_theta_line" in src and "到達日をいちばん大きく動かすのは θ" in src, (
+        "`theta` を語彙に置いているのに、eta が θ の倍率を印字していません。"
+        "**印字が消えたら、この腕を選んでも効いたかどうかを誰も測れません** ——"
+        "そのときは腕のほうを語彙から外すこと")
     assert set(levers.LEVERS) == {"per_video", "rpm", "density", "sub_rate",
-                                  "gate", "none"}
+                                  "gate", "theta", "none"}
 
 
 def test_none_is_a_real_choice():
