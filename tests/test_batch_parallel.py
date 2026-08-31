@@ -71,6 +71,30 @@ def _topics(ids):
     return [{"id": i, "calc": "dummy", "title_seed": i} for i in ids]
 
 
+def _pin_rule(monkeypatch, per_day: int = 25) -> None:
+    """**オーナーの規則（1日1本）は、この file の主題ではありません。**（2026-08-31）
+
+    `src/house_rule.PUBLISH_PER_DAY = 1` は 2026-08-31 にオーナーが固定した
+    運転の規則で、`batch_build.density_cap()` と `--count` の門がそこを読みます。
+    **それは正しい振る舞いです。**
+
+    ただしこの file が測っているのは **並列の仕掛け**（3本を同時に走らせたら
+    直列より速いか・失敗した1本が他を巻き込まないか・再試行が題材を食わないか）で、
+    **1本しか通らないと、その形そのものが観測できなくなります**
+    （実測 2026-08-31: `jobs` が `3` ではなく `1` になり、`serial_sec > wall_sec` が
+    `0.2 > 0.2` に潰れて **11件 赤**）。
+
+    **形は1行も壊れていません。** 落ちたのは「標本が、並列が効く帯に居るか」だけで、
+    `tests/_eta_pin.py` の冒頭が記録している day_cap / rpm_mix / subs_cap /
+    house_rule と**まったく同じ壊れ方**です。上の `_open_window()`
+    （本数枠の門を実物の控えから切り離す）と、**同じ理由・同じ扱い**にします。
+
+    **規則そのものは `tests/test_house_rule.py` と `tests/test_density_cap.py` が
+    主題として持ちます**（**隠さず、置き場所を分けています**）。
+    """
+    from src import house_rule
+    monkeypatch.setattr(house_rule, "PUBLISH_PER_DAY", per_day)
+
 def _run(monkeypatch, ids, delays=None, fail_build=None, jobs=3):
     rec = _Recorder(delays, fail_build)
     monkeypatch.setattr(batch_build, "run", rec)
@@ -83,6 +107,7 @@ def _run(monkeypatch, ids, delays=None, fail_build=None, jobs=3):
     # 「今日はもう92本上げた」だけで並列の検査が赤くなります
     # （`test_batch_slots.py` が `taken=` で同じことを塞いでいます）。
     monkeypatch.setattr(batch_build.upload_cap, "state", lambda: _open_window())
+    _pin_rule(monkeypatch)          # 規則（1日1本）は主題ではない（上の註）
     written: list[dict] = []
     monkeypatch.setattr(batch_build.Path, "open",
                         lambda self, *a, **k: _Sink(written))
@@ -283,6 +308,7 @@ def _run_flaky(monkeypatch, ids, flaky, extra=()):
                         lambda c, e, per_calc=None, **k: _topics(ids))
     monkeypatch.setattr(batch_build, "check_window", lambda d, f: None)
     monkeypatch.setattr(batch_build.upload_cap, "state", lambda: _open_window())
+    _pin_rule(monkeypatch)          # 規則（1日1本）は主題ではない（上の註）
     written: list[dict] = []
     monkeypatch.setattr(batch_build.Path, "open",
                         lambda self, *a, **k: _Sink(written))
@@ -341,6 +367,7 @@ def test_two_failures_are_marked_in_the_ledger(monkeypatch):
                         lambda c, e, per_calc=None, **k: _topics(["a", "b", "c"]))
     monkeypatch.setattr(batch_build, "check_window", lambda d, f: None)
     monkeypatch.setattr(batch_build.upload_cap, "state", lambda: _open_window())
+    _pin_rule(monkeypatch)          # 規則（1日1本）は主題ではない（上の註）
     written: list[dict] = []
     monkeypatch.setattr(batch_build.Path, "open",
                         lambda self, *a, **k: _Sink(written))

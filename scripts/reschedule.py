@@ -66,13 +66,46 @@ DEFAULT_MAX_DAYS = 4
 @functools.cache
 def _measured_per_day(fallback: int = 10) -> int:
     """**呼ばれたときに測ります**（import では読みません。`views.jsonl` は1万行あり、
-    ここを import 時に読むと全部の道具の起動が遅くなります）。"""
+    ここを import 時に読むと全部の道具の起動が遅くなります）。
+
+    ## **オーナーの規則が、この数の上に乗っています**（2026-08-31 に踏んだ）
+
+    原文: 「**動画は1日一本作り置きはなしにして。…それは固定にして**」
+
+    `day_cap.measure()` が返すのは「**1日に何本まで再生が付くか**」という
+    **観測**です（実測 10本/日）。**出してよい本数ではありません。**
+    ここが観測をそのまま返していたので、`--compact` / `--spread` は
+    **1日10本 詰める割り当てを組みます** —— **規則1（1日1本）に正面から反します。**
+
+    しかも `scripts/status.py` は「予約が1本も無い日が10日あります」と鳴らし、
+    その場で **`python scripts/reschedule.py --compact` で詰めること**と
+    案内していました。**規則が入った直後に、道具のほうが元へ戻す形**です
+    （この repo でいちばん多い壊れ方 ——「言っている所と、している所が別」）。
+
+    **観測と規則の低いほうを返します。出どころは `src.house_rule` の1か所**
+    （`batch_build.density_cap()` / `eta.PLAN_PUBLISH_PER_DAY` と同じ）。
+
+    **覆る条件**: オーナーが規則を外したら、観測の側だけが残ります
+    （この関数は `house_rule` を読んでいるだけなので、1行も直りません）。
+    **検査は `tests/test_reschedule_house_rule.py`。**
+    """
     try:
         from src import day_cap
         m = day_cap.measure()
-        return int(m["cap"]) if m.get("measured") else fallback
+        got = int(m["cap"]) if m.get("measured") else fallback
     except Exception:
-        return fallback
+        got = fallback
+    return _clamp_per_day(got)
+
+
+def _clamp_per_day(n: int) -> int:
+    """**規則より多く置かない。**（規則1・2026-08-31。出どころは1か所）"""
+    try:
+        from src import house_rule
+        rule = int(house_rule.PUBLISH_PER_DAY)
+    except Exception:                                          # noqa: BLE001
+        return int(n)
+    return max(1, min(int(n), rule))
 
 
 DEFAULT_PER_DAY = 10          # **読めない回の既定**。実際に使う数は `_measured_per_day()`
@@ -1456,6 +1489,19 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     for key, val in lifted.items():
         setattr(args, key, val)
+
+    # **`--per-day` を明示で渡した回も、規則で締めること**（2026-08-31）。
+    #     既定だけ締めて口を開けておくと、「今日は詰めたいから」で毎回そこを通ります
+    #     （`batch_build` の `--count` を規則で締めたのと同じ理由）。
+    #     **規則を外すのはオーナーだけです**（`src/house_rule.py`「覆る条件: ありません」）。
+    want = int(getattr(args, "per_day", 0) or 0)
+    if want > 0:
+        args.per_day = _clamp_per_day(want)
+        if args.per_day != want:
+            print(f"[reschedule] `--per-day {want}` は**オーナーの規則で"
+                  f" {args.per_day}本/日 に締めました**"
+                  "（`src/house_rule.py`・2026-08-31「動画は1日一本」）。"
+                  "**規則を外すのはオーナーだけです。**", flush=True)
 
     if args.spread:
         return _spread(args)

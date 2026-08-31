@@ -2803,9 +2803,23 @@ def _print_per_day(ahead: list, today=None) -> None:
         more = f" ほか{len(gap) - 14}日" if len(gap) > 14 else ""
         print(f"  [!] **予約が1本も無い日が {len(gap)}日あります**（＝その日は投稿が途切れます）: "
               f"{head}{more}")
+        # **2026-08-31: ここは「詰めろ」と言ってはいけない場所になりました。**
+        #     オーナーの規則は「公開は1日1本・作り置きをしない」です。
+        #     **先の日が空いているのは、壊れているのではなく そういう作り**です
+        #     （その日の1本は、その日までの回が作って入れます）。
+        #     ここが `--compact` を案内し続けると、規則が入った直後に
+        #     **道具のほうがそれを元へ戻します**（`tests/test_reschedule_house_rule.py`）。
+        #     **言うべきは「詰めろ」ではなく「毎日1本を切らすな」**です。
+        #     出どころは `src.house_rule` の1か所。
+        from src import house_rule                             # noqa: PLC0415
         print("      **投稿が途切れるのが最大の損失です**（`CLAUDE.md`）。"
-              "空けてあるなら `src/measure_window.py` の窓を見ること。"
-              "そうでなければ **`python scripts/reschedule.py --compact`** で詰めること")
+              f"ただし規則は **1日{house_rule.PUBLISH_PER_DAY}本・作り置きなし**"
+              "（`src/house_rule.py`・2026-08-31）なので、"
+              "**先が空いているのは そういう作りです。詰めないこと** ——"
+              "`--compact` は規則の側で 1本/日 に締まります。"
+              "**要るのは「その日の1本を、その日までに1本 入れること」**"
+              "（`docs/trigger_main.md` §4 の `upload` と `improve`）。"
+              "空けてあるなら `src/measure_window.py` の窓を見ること")
 
     # **薄い日も、印字の窓ではなく予約の最後まで見ること**（同じ理由）。
     # 実測では 09/20〜09/26 の7日が 1本/日 なのに、印字の12日から外れて
@@ -2815,10 +2829,18 @@ def _print_per_day(ahead: list, today=None) -> None:
         head = " ".join(f"{d:%m/%d}" for d in thin[:14])
         more = f" ほか{len(thin) - 14}日" if len(thin) > 14 else ""
         print(f"  [!] **1日{THIN_PER_DAY}本以下の日が {len(thin)}日あります**: {head}{more}")
-        print("      **平均では見えません。**空けてあるなら "
-              "`src/measure_window.py` の窓を見ること。"
-              "そうでなければ、そこは詰められます"
-              "（`python scripts/reschedule.py --compact`）")
+        # **規則（1日1本）の下では、これは警告ではありません**（2026-08-31）。
+        #     `THIN_PER_DAY` 以下の日 ＝ **規則どおりの日**です。
+        from src import house_rule                             # noqa: PLC0415
+        if THIN_PER_DAY <= house_rule.PUBLISH_PER_DAY:
+            print("      **平均では見えません。**空けてあるなら "
+                  "`src/measure_window.py` の窓を見ること。"
+                  "そうでなければ、そこは詰められます"
+                  "（`python scripts/reschedule.py --compact`）")
+        else:
+            print(f"      **これは規則どおりです** —— 公開は"
+                  f" 1日{house_rule.PUBLISH_PER_DAY}本（`src/house_rule.py`・2026-08-31）。"
+                  "**詰めないこと。** この行は、規則が緩んだ日にだけ意味を持ちます")
 
 
 def _print_missing_thumbnails() -> None:
