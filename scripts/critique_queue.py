@@ -28,6 +28,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import sys
 from datetime import datetime, timedelta, timezone
@@ -262,6 +263,51 @@ def stash(topic: str, video_id: str, script: dict, work: Path,
         else:
             print(f"[queue] **{thumb_src} がありません** —— "
                   "この本のサムネイルは後から載せ直せません")
+
+    # **書いただけでは残りません。ここで押します**（2026-08-31 22:xx に足した）。
+    #
+    # **実測**: 09/01 22:00 に出る `UIWHsypOPPg` の控えが、git に1バイトも
+    # ありません。`upload_only.py` はこの関数を確かに呼んでおり、
+    # 落ちれば大きく印字して終了コード 1 を返します。**落ちていません** ——
+    # コンテナのディスクに書けたあと、その回の commit（`f7d3171e`）が
+    # `data/` の**4本しか拾わなかった**だけです。コンテナごと消えました。
+    #
+    # **失ったのは、出る前に中身を確かめる唯一の材料**（読み上げ全文）と、
+    # **サムネイルの bytes** です。控えの無い本は
+    # `missing_thumbnail()` の一覧に出ないので、
+    # `refresh_thumbnail.py --missing` は**その本を黙って飛ばします** ——
+    # 受け取り帳 `e1ea4c96` の (1) は、そうと知らずに空振りを頼んでいました。
+    # つまり **09/01 に出る1本は、サムネイル無しで公開されるところでした。**
+    #
+    # 受け取り帳（`inbox.py --open`）が 2026-08-15/16 に踏んだのと**同じ穴**です。
+    # あちらは「押した後なら、この子が途中で死んでも次の子が拾える」で塞ぎました。
+    # **同じ道具を使います**（`src/inbox.git_save` を paths 付きに一般化した。
+    # オーナー指摘 e6d3be89「失敗したならそこだけ直すんじゃなくて応用しないの？」）。
+    #
+    # **押せなくても投稿は止めません** —— 途切れるほうが高い（`CLAUDE.md`）。
+    # ただし**黙って通しません**。検査は `tests/test_stash_is_pushed.py`。
+    if os.environ.get("YT_NO_STASH_PUSH"):
+        print("[queue] **push していません**（YT_NO_STASH_PUSH）。"
+              "この回が死ぬと控えは消えます。")
+    else:
+        kept = [STASH / f"{video_id}.json", STASH / f"{video_id}.jpg"]
+        if plan_kept:
+            kept.append(STASH / f"{video_id}.plan.json")
+        if thumb_kept:
+            kept.append(STASH / f"{video_id}.thumb.jpg")
+        try:
+            from src import inbox as _inbox
+            ok, detail = _inbox.git_save(
+                f"控え: {video_id}（{topic}）の材料を残した", paths=kept)
+        except Exception as exc:                    # noqa: BLE001
+            ok, detail = False, f"{type(exc).__name__}: {exc}"
+        if ok:
+            print("[queue] push まで済み。**ここで死んでも、次の子が読めます。**")
+        else:
+            print(f"[queue] **控えを push できませんでした: {detail}**")
+            print("[queue] **投稿は済んでいます。** このまま死ぬと、この本の"
+                  "読み上げ文とサムネイルの bytes は失われます。"
+                  "**手で `git add data/critique_queue && git commit && git push` すること。**")
     return STASH / f"{video_id}.jpg"
 
 

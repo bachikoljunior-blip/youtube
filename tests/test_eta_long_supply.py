@@ -169,11 +169,31 @@ def test_門1までの日数は呼ぶ側から差せる():
     **段2 だけが 25 を読み続けると、上限が動いた日に黙って割れます。**
     """
     a = {"long_minutes_needed": 240_000.0,
-         "days_subs_at": {eta.PLAN_PUBLISH_PER_DAY: 100.0}}
-    near = eta._long_break_even(a, days=100.0)
-    far = eta._long_break_even(a, days=400.0)
+         "days_subs_at": {eta.PLAN_PUBLISH_PER_DAY: 90.0}}
+    # **日数は門の窓（`LONG_HOURS_WINDOW_DAYS` ＝ 365日）で頭打ちになります**
+    #     （2026-08-31 に足した）。もとは 100日 と **400日** で比べていて、
+    #     400 は窓の外です。**この検査が見たいのは「差した日数が効くか」**なので、
+    #     窓の内側の2つ（90日 と 360日）で同じ比を見ます —— 検査の中身は
+    #     1つも緩めていません（4倍 の関係はそのまま）。
+    #     窓そのものの検査は `tests/test_gate2a_window.py`。
+    near = eta._long_break_even(a, days=90.0)
+    far = eta._long_break_even(a, days=360.0)
     assert far[0]["views"][1] == pytest.approx(near[0]["views"][1] / 4), \
         "門1 までの日数が合格点に効いていません（差した日数を無視している）"
+
+
+def test_門1が窓より遠い日数は窓で頭打ちになる():
+    """**`LONG_HOURS_GATE` は「直近12か月」の門です。**（2026-08-31 に足した）
+
+    規則（1日1本）の下で門1 は 3,292日後。そこまで散らして積むと、
+    初日に積んだ視聴時間は 8年 前に窓から落ちています。**実測 9.0倍 楽観**でした。
+    """
+    a = {"long_minutes_needed": 240_000.0,
+         "days_subs_at": {eta.PLAN_PUBLISH_PER_DAY: 3_292.0}}
+    at_window = eta._long_break_even(a, days=float(eta.LONG_HOURS_WINDOW_DAYS))
+    beyond = eta._long_break_even(a, days=3_292.0)
+    assert beyond[0]["views"][1] == pytest.approx(at_window[0]["views"][1]), \
+        "窓の外の日数で割っています（合格点が 9倍 甘く出ます）"
 
 
 # ======================================================================
