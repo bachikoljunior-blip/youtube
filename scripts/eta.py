@@ -414,12 +414,24 @@ def _density_elasticity() -> float | None:
     return b
 
 
-def _thin_by_density(per_video: float, density: float) -> tuple[float, float]:
+def _thin_by_density(per_video: float, density: float,
+                     at_rule: bool = True) -> tuple[float, float]:
     """`per_video`（規則の密度で測った数）を、**その密度での数**へ直す。
 
     返り `(直した1本あたり, 掛けた倍率)`。測れない回は `(そのまま, 1.0)`。
     分母は `src.house_rule.PUBLISH_PER_DAY`（＝ `per_video` を測った密度）。
+
+    `at_rule=False`（＝ `per_video` が `views_per_video_rule` **ではない**）
+    なら、何もしません。**この掛け算は「分母が規則の密度である」ことに
+    まるごと乗っています**（`_per_video()` の落ち先は `_live` → 混ぜた平均で、
+    そのどれも「何本/日 の日の数か」を持ちません）。分母を知らずに掛けると、
+    **知らない密度から知らない密度への外挿**になります。
+    実測: 固定具（`views_per_video_rule` 無し・密度 25本/日）に当てると
+    天井が ×0.10 になり、届いていた日付が「出ません」に化けました
+    （`tests/test_eta_target_date.py`）。
     """
+    if not at_rule:
+        return per_video, 1.0
     b = _density_elasticity()
     try:
         base = float(house_rule.PUBLISH_PER_DAY)
@@ -6301,7 +6313,9 @@ def plan(m: dict, a: dict, density: int = PLAN_PUBLISH_PER_DAY,
     #     引くと天井が ×10 と出ますが、**同じ機械が測った弾力性 -0.663 では
     #     ×2.17** です（4.6倍 楽観）。規則の密度（1本/日）では倍率 1.00 なので、
     #     **据え置きの線は1ミリも動きません。** 動くのは腕を引いた線だけです。
-    per_video_at_density, density_thin = _thin_by_density(per_video, density_month)
+    per_video_at_density, density_thin = _thin_by_density(
+        per_video, density_month,
+        at_rule=bool(m.get("views_per_video_rule")))
     ceiling_day = per_video_at_density * density_month
     ceiling_day_long = (a.get("long_per_video") or 0) * density_month
     need_month = sp["views_needed_month"]
