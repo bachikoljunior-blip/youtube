@@ -2329,6 +2329,25 @@ def print_analytics_sections(days: int = 7) -> None:
         for r in rows:
             print(f"  {r.get('insightTrafficSourceType', '?'):18s} 再生{r.get('views', 0):5d}"
                   f"  視聴{r.get('estimatedMinutesWatched', 0):5d}分")
+
+        # **閉じた前提「推薦面は自力で伸びない」を、開け直すかどうか**（2026-08-31 に足した）。
+        # あの前提の覆る条件は「90日窓の RELATED_VIDEO が 10 以上」＝**件数の絶対値**で、
+        # **分母が伸びれば効果が無くても発火します。** 2026-08-31 に発火し、
+        # **占有で当て直したら本当に覆っていました**（量の 2.18倍）。
+        # 同じ日に endcard の「1件でも」も発火して、そちらは覆っていません。
+        # **字面ではなく、閉じたときの占有と比べること**（`src/reversal.py`）。
+        from src import reversal as _rev
+
+        _total = sum(r.get("views", 0) for r in rows)
+        _rv = next((r.get("views", 0) for r in rows
+                    if r.get("insightTrafficSourceType") == "RELATED_VIDEO"), 0)
+        if _total:
+            _r = _rev.share_moved(_rev.MEASURED["RELATED_VIDEO（推薦面は自力で伸びるか）"]["before"],
+                                  (_rv, _total))
+            print(f"  [推薦面] {_r['line']}")
+            if _r["moved"]:
+                print("     **2026-08-31 に、この却下は引き直しました**（`config/hypotheses.yaml`）。"
+                      "`docs/MEANS.md` M12（推薦面に載る）の保留は外れています")
     except Exception as exc:
         print(f"  読めませんでした: {str(exc)[:120]}")
 
@@ -2382,6 +2401,9 @@ def print_local_sections(inventory: bool = True) -> None:
     print_upload_cap()
     if inventory:
         _print_inventory_from_ledger()
+    # **予約の一覧のすぐ下**（2026-08-31 に配線した）。あちらは「何本 予約に在るか」、
+    # こちらは「**その本の主役の数字が、いまの表にまだ在るか**」です。
+    print_stale_scheduled()
     print_means()
     # **`print_means` の隣に置いています。** あちらは「手段が尽きたか」、
     # こちらは「材料が尽きたか」で、**§4 でどれを選べるかを決めるのは両方**です。
@@ -2483,6 +2505,85 @@ def print_trigger_drift() -> None:
     except Exception as exc:                                   # noqa: BLE001
         print("\n=== 親トリガー（正本 ↔ 実物）===")
         print(f"  読めませんでした（続行）: {type(exc).__name__}: {str(exc)[:100]}")
+
+
+def print_stale_scheduled() -> None:
+    """**予約に入っている本の主役の数字が、いまの `src/calc/` の表にまだ在るか。**
+
+    ## なぜ status に配線したか（2026-08-31。**道具は 08-19 から在って、
+    誰も撃っていませんでした**）
+
+    `scripts/stale_scheduled.py` は `retro.py` が名指しした
+    「**どこにも名前が無く、コードからも呼ばれていない 7本**」の1つでした。
+    **配線したその場で、1本 鳴りました**:
+
+        2026-09-13T02:00  E5i0YfIkmnA  s-souzoku-zenbu-haiguusha-4904
+        『相続税 全部配偶者は4904万3334円高い #Shorts』  表に無い数: [49043334]
+
+    **その本は、道具の docstring が実例として名指ししている本そのものです。**
+    08-19 00:07 に `souzoku.best_ratio` を 0.25きざみ → 1%きざみへ直した回が、
+    **直す前に作って予約に入れた本**を残しました（実際は 5014万1334円）。
+    **12日 予約に残り、2026-09-13 02:00 に誤った金額のまま公開される直前**でした。
+
+    **見つけた回が外せなかったのは、`videos.update` が日枠に当たるから**です
+    （`videos.insert` は通るのに、差し替えは 403。**安いほうが先に閉じます**）。
+    この回は受け取り帳へ落としました（`data/inbox.jsonl` 69440f12）。
+
+    ## 何を見ているか（**当たり率を測ってから、この形にしてあります**）
+
+    見るのは題（＝主役の数字）が、そのテーマの `calc_sections` の**いまの本文**に
+    在るか、の1点だけ。しかも**「精密な数」だけ**（万どまり・千どまりの丸めは落とす）。
+    実測の当たり率は **1件 鳴って 1件 本物**（`scripts/stale_scheduled.py` の表）。
+
+    ## 払っている費用（**測ってあります**）
+
+    **19秒**（実測 2026-08-31。`tf.sections()` を予約に出てくる calc モジュールぶん
+    解き直す時間で、**API は1単位も使いません**）。`status.py` 全体は 40〜60秒 なので、
+    **3〜5割 増えます。**
+
+    **それでも毎回 撃つ側に置いたのは、鳴る条件が「誰かが `src/calc/` を直したとき」で、
+    その回が自分で気づけないから**です —— 直した本人には、直す前に作った本が見えません。
+    **「次の回が撃つ」に置くと、今回のように 12日 残ります。**
+
+    ## これが覆る条件
+
+    - **`status.py` の総時間が問題になったら、ここを最初に外すこと**（19秒は、
+      この関数だけの数です。`print_step_days` などと違って**外しても他が壊れません**）。
+      外すなら、**代わりの撃つ側を同じ回のうちに置くこと** —— 置かずに外すと
+      08-19〜08-31 と同じ状態（道具は在る・撃つ側が無い）に戻ります
+    - **3か月 1件も鳴らなかったら、`src/calc/` を直す回のほうに門を移すこと**
+      （そちらのほうが安い）。**いまは移せません** —— 直した回を捕まえる仕掛けが
+      この repo にまだ無いからです
+    """
+    print("\n=== 予約本の主役の数字が、いまの表に在るか（**API 0単位・実測19秒**）===")
+    try:
+        import importlib.util as _ilu
+
+        _spec = _ilu.spec_from_file_location(
+            "_stale", str(Path(__file__).resolve().parent / "stale_scheduled.py"))
+        _m = _ilu.module_from_spec(_spec)
+        _spec.loader.exec_module(_m)
+        bad = _m.check()
+    except Exception as exc:                                   # noqa: BLE001
+        print(f"  読めませんでした: {str(exc)[:120]}")
+        return
+
+    ring = _alerts.ring("stale_scheduled", len(bad))
+    if ring.folded:
+        print(f"  {ring.line}")
+        return
+    if not bad:
+        print("  予約本の主役の数字は、全部いまの表に在ります")
+        return
+    print(f"  [!] **{len(bad)}本の主役の数字が、いまの表にありません。**")
+    print("      表を直した回が、直す前に作った本を残しています。"
+          "**公開の前に外すこと**:")
+    for b in bad:
+        print(f"      {b['at'][:16]}  {b['video_id']}  {b['topic']}")
+        print(f"          『{b['title']}』  表に無い数: {b['miss']}")
+        print(f"          python scripts/unschedule.py {b['video_id']} --why \"...\"")
+    print("      **`videos.update` は日枠に当たります**（`videos.insert` とは違う）。"
+          "403 なら **JST 16:00 以降**にやり直すこと")
 
 
 def print_upload_cap() -> None:

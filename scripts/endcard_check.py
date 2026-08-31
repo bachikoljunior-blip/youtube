@@ -105,7 +105,18 @@ def main() -> int:
     if got["views"]:
         print(f"    コメント率 {got['comments']/got['views']*100:.4f}%／"
               f"共有率 {got['shares']/got['views']*100:.4f}%")
-    return 0 if v["state"] != "falsified" else 0
+
+    # **閉じた判定を開け直すかどうか**（2026-08-31 に足した）。
+    # 前は「コメントが1件でも付いたら覆る」で、**2026-08-31 にそのとおり発火し、
+    # 発火してから条件のほうが壊れていると分かりました** ——
+    # 分母が伸びれば、どんな底の率でもいつか 1件 は出ます。
+    # **率で見ること**（`src/endcard_verdict.reversal` の docstring に実測）。
+    r = ev.reversal(got["views"], got["comments"])
+    print(f"  → 覆る条件（`config/hypotheses.yaml` の 3384行あたり）: {r['line']}")
+    if not r["reversed"]:
+        print("    **開け直さないこと。** この前提は 2026-08-20 に閉じており、"
+              "率はそのとき（0件）より**強く外れ側**に出ています")
+    return 0
 
 
 if __name__ == "__main__":
