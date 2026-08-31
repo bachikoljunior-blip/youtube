@@ -55,7 +55,7 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Callable
 
-from src import ab_power
+from src import ab_power, house_rule
 from src.settle import SETTLE_DAYS  # noqa: F401  （**ここでは定義しません**。下の註）
 from src.script_writer import hook_form, request_form, title_form
 
@@ -904,15 +904,111 @@ class Outlook:
     stock: dict[str, int] = field(default_factory=dict)
     #: 在庫の総数（全部の群の合計）。**0 に近いほど、この判定は一度きりの賭けです**
     stock_total: int = 0
+    #: **今日**（規則の下で、あと何日 公開できるかを数える起点）
+    today: date | None = None
 
     def buildable(self, group: str) -> float:
-        """在庫から**実際に作れる**見込み本数（通過率で割り引いた）。"""
+        """在庫から**実際に作れる**見込み本数（通過率で割り引いた）。
+
+        **【2026-08-31】この数は、もう供給ではありません。**
+        オーナー規則2（`src/house_rule.STOCKPILE_IS_SUPPLY = False`・
+        原文「使わなければ良いだけ前提にも再利用もしない」）で、
+        **作り置きは1本も公開されず、材料としても使い直しません。**
+        残してあるのは、**規則が外れたときの読み**としてだけです。
+        **判定に間に合うかは、下の `reachable_under_rule` が決めます。**
+        """
         return self.stock.get(group, 0) * BUILD_PASS_RATE
 
     @property
     def reachable(self) -> bool:
-        """全部の群が、在庫だけで床に届くか。"""
+        """全部の群が、在庫だけで床に届くか。**規則の下ではこれを使わないこと。**"""
         return all(n <= self.buildable(g) for g, n in self.need.items())
+
+    # --- **規則（1日1本）の下で、この期限に間に合うか**（2026-08-31 に足した） -----
+    #
+    # ## なぜ要るか
+    #
+    # 上の `reachable` は、**未投稿の在庫**（`batch_build.pick`）だけで
+    # 「足ります／足りません」を決めていました。2026-08-31 のオーナー規則で、
+    # **その在庫は供給ではなくなりました**（規則1 公開は1日1本／
+    # 規則2 作り置きをしない ＝ 予約は池へ戻す・再利用もしない）。
+    #
+    # **`scripts/eta.py` と `scripts/reschedule.py` は、同じ日に同じ直しを
+    # 受けています**（`house_rule.drop_stockpile()` ／ 19:43 の `--compact`）。
+    # **A/B の側だけが、消えた供給で「足ります」と言い続けていました。**
+    #
+    # 実測 2026-08-31（この節を足す前の `scripts/ab_split.py --outlook`）:
+    # 在庫を数えて「足ります」と出る一方、**規則の下で判定日までに公開できる本は
+    # `残り日数 × 1本`** しかありません。`slot_half` は両群 0本・床16本＝**32本**で、
+    # 締切まで **8日** ——**24本 足りず、在庫をいくら数えても届きません。**
+    #
+    # ## 数え方（**実験どうしは資源を取り合いません**）
+    #
+    # 5件の A/B は**同じ1本に同時に乗ります**（題材IDから5つの札が同時に決まる
+    # ＝ 要因計画）。だから割り算は実験ごとに独立で、**足し合わせないこと。**
+    # その日の1本はどちらか片方の腕に入るので、**両群の不足の和**が要る本数です。
+    #
+    # **止める仕掛けではありません。印字するだけです。**
+    # 直し方は3つ ——(1) 期限を「いちばん早く判定できる日」まで延ばす
+    #              (2) 床を、測り直した検出力の上で引き直す
+    #              (3) 形を替える（同じ問いを、本数ではなく再生数で解く 等）
+    #
+    # **覆る条件**: オーナーが規則を外したら、`house_rule.cap()` が上がって
+    # この節は自然に「間に合います」に変わります。検査は `tests/test_ab_rule_reach.py`。
+
+    @property
+    def days_left(self) -> int:
+        """**今日から `settle_by` まで、あと何日 公開できるか。**"""
+        base = self.today or datetime.now(JST).date()
+        return max(0, (self.settle_by - base).days)
+
+    @property
+    def allowed_under_rule(self) -> int:
+        """規則の下で、**判定に間に合う形で公開できる本数の上限**。"""
+        return self.days_left * house_rule.cap()
+
+    @property
+    def short_under_rule(self) -> int:
+        """規則の下で、**あと何本 足りないか**（0 なら間に合う）。"""
+        return max(0, sum(self.need.values()) - self.allowed_under_rule)
+
+    @property
+    def reachable_under_rule(self) -> bool:
+        """**この期限に、規則の下で間に合うか。**"""
+        return self.short_under_rule == 0
+
+    @property
+    def earliest_under_rule(self) -> date:
+        """規則の下で、**いちばん早く判定できる日**（公開 ＋ `SETTLE_DAYS`）。
+
+        **期限を延ばす先は、勘ではなくこの日です。**
+        """
+        base = self.today or datetime.now(JST).date()
+        cap = max(1, house_rule.cap())
+        need = sum(self.need.values())
+        days = -(-need // cap)                      # 切り上げ
+        return base + timedelta(days=days + SETTLE_DAYS)
+
+    def rule_lines(self) -> list[str]:
+        """規則の下での間に合い方。**間に合うときも1行 出します**（黙ると素通りする）。"""
+        need = sum(self.need.values())
+        if need == 0:
+            return [f"  **規則（1日{house_rule.cap()}本）の下: いま床に届いています**"
+                    "（あと0本）"]
+        head = (f"  **規則（1日{house_rule.cap()}本）の下**: あと **{need}本**（両群の和）／"
+                f"{self.settle_by:%m/%d} まで **{self.days_left}日** ＝ "
+                f"公開できるのは **{self.allowed_under_rule}本**")
+        if self.reachable_under_rule:
+            return [head + "  → **間に合います**"]
+        return [
+            head + f"  → **{self.short_under_rule}本 足りません**",
+            f"      [!] **この期限は、規則の下では構造的に届きません。**"
+            f"いちばん早く判定できるのは **{self.earliest_under_rule:%Y-%m-%d}**"
+            f"（あと {need}本 ＝ {-(-need // max(1, house_rule.cap()))}日 ＋ "
+            f"落ち着き {SETTLE_DAYS}日）。",
+            "      **在庫の行を根拠にしないこと** —— 作り置きは規則2 で供給から"
+            "外れています（`src/house_rule.STOCKPILE_IS_SUPPLY = False`）。",
+        ]
 
     def lines(self) -> list[str]:
         out = [
@@ -940,6 +1036,9 @@ class Outlook:
                 f"この本を {self.settle_by:%m/%d} より後の日に置くと、**判定には入りません。**"
                 f"\n      `batch_build.py --date` は、**この日以前**を選ぶこと。"
             )
+        # **規則の下での間に合い方を、いちばん最後に置く**（2026-08-31）。
+        # 上の在庫の行は規則2 で供給から外れた数なので、**こちらが勝ちます。**
+        out.extend(self.rule_lines())
         return out
 
 
@@ -954,6 +1053,7 @@ def outlook(
     *,
     as_of: date | None = None,
     counts: Counts | None = None,
+    today: date | None = None,
 ) -> Outlook:
     """`exp` が**この先まだ判定に間に合うか**を返す。
 
@@ -991,11 +1091,17 @@ def outlook(
         need=need,
         stock={g: int(stock.get(g, 0)) for g in c.treated_ready},
         stock_total=int(sum(stock.values())),
+        today=today,
     )
 
 
-def report(as_of: date | None = None, stock: dict[str, dict[str, int]] | None = None) -> str:
-    """全部の実験を、人が読む形で。"""
+def report(as_of: date | None = None, stock: dict[str, dict[str, int]] | None = None,
+           today: date | None = None) -> str:
+    """全部の実験を、人が読む形で。
+
+    `today` は**規則（1日1本）の下で、あと何日 公開できるか**の起点
+    （既定は JST の今日）。検査から日を固定するために外に出しています。
+    """
     lines: list[str] = []
     for exp in EXPERIMENTS.values():
         c = split_counts(exp, as_of=as_of)
@@ -1008,7 +1114,16 @@ def report(as_of: date | None = None, stock: dict[str, dict[str, int]] | None = 
             )
         lines.append("  " + c.short())
         if stock is not None and exp.name in stock:
-            lines.extend(outlook(exp, stock[exp.name], as_of=as_of, counts=c).lines())
+            lines.extend(outlook(exp, stock[exp.name], as_of=as_of, counts=c,
+                                 today=today).lines())
+        else:
+            # **`--outlook` を付けない回でも、規則の下の間に合い方は出します**
+            # （2026-08-31）。在庫を数えるのに数十秒かかるので `--outlook` は
+            # 任意のままですが、**「この期限は規則の下では届きません」は
+            # 在庫を1本も数えずに出せます**（要るのは残り日数と床だけ）。
+            # 黙っていると、届かない期限が「まだ判定しない」に混ざって素通りします。
+            lines.extend(outlook(exp, {}, as_of=as_of, counts=c,
+                                 today=today).rule_lines())
         # **`metric` を渡すこと。** engaged で測っていない実験に、engaged の
         #     ブートストラップから出した「要る本数」を出すと嘘になります
         #     （`Experiment.metric` の註。実測 2026-08-27 に `request_form` で踏んだ）。
@@ -1022,6 +1137,14 @@ def report(as_of: date | None = None, stock: dict[str, dict[str, int]] | None = 
         "**判定の規則そのものが当てられるかは、`src/ab_power.py` が測っています。**"
         "\n中央値の大小だけでは、**効きが無くても 49% で「上回った」と出ます**（コイン投げ）。"
         "\n順位和の門（片側 p ≤ 0.20）を足したうえで、床を片群 16本にしてあります。"
+    )
+    lines.append(
+        "**規則（1日1本）の下で期限に届かない実験は、上の「規則（1日…本）の下」の行が"
+        "\n名指ししています。** 直し方は3つ ——(1) 期限を、その行が出す"
+        "「いちばん早く判定できる日」まで延ばす (2) 床を、測り直した検出力の上で"
+        "引き直す (3) 形を替える（同じ問いを、本数ではなく再生数で解く 等）。"
+        "\n**`falsified_if` を緩めて届かせないこと** —— 見分けられなかっただけの実験が、"
+        "\n効かない実験として閉じ、`next_if_false` が腕ごと畳みます。"
     )
     lines.append(
         "**`stale` の本を混ぜて判定しないこと。** IDが群を決めるので件数は正常に見えますが、"
