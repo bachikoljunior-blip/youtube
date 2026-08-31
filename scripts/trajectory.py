@@ -95,7 +95,20 @@ RPM_SHORTS = {"低": 20, "中": 35, "高": 60}
 RPM_LONG = {"低": 400, "中": 1_000, "高": 2_000}
 
 DUD_VIEWS = 10                        # 生涯これ未満を「空振り」と呼ぶ（分布が二山なので境目は谷）
-MATURE_AGE_DAYS = 3.0                 # 生涯再生を確定と見なす齢（98.4% が24時間以内なので余裕）
+#: **標本に入れてよい齢**（生涯再生の側）。
+#:
+#: **「確定と見なす齢」ではありません**（2026-09-01 に直した）。
+#: ここは長らく「生涯再生を**確定**と見なす齢（**98.4% が24時間以内なので余裕**）」
+#: でした。**その 98.4% は、いま 92.7%** です（`decay()` の `frac24_median`・n=143）。
+#: 齢3日 の時点で来ているのは生涯の **97.9%**（`decay_term()` の生命表）。
+#: **確定していません。**
+#:
+#: いまは `per_video()` が本べつの齢で `uncensor()` を掛けるので、
+#: **この数は「打ち切りの大きさ」ではなく「標本に入れる下限」だけ**を決めます
+#: （若すぎる本は倍率が大きく、分散も大きいので入れない）。
+#: **覆る条件**: 倍率が ×1.2 を超える齢まで下げたくなったら、
+#: そのときは `decay_term()` の下限（`DECAY_TERM_MIN_BUCKETS`）から先に見ること。
+MATURE_AGE_DAYS = 3.0
 
 
 # ----------------------------------------------------------------------------
@@ -280,11 +293,18 @@ BACK_CATALOGUE_MIN_READINGS = 20
 BACK_CATALOGUE_MIN_FRAC24 = 0.95
 
 
-def decay(vs: dict) -> dict:
-    """**後ろカタログがあるか。** 齢べつの「再生/日」と、生涯のうち24時間に来る割合。
+def traj_gate_note() -> str:
+    """門の値を、印字と検査が同じ1か所から読むための1行。"""
+    return f"`BACK_CATALOGUE_MIN_FRAC24` は {BACK_CATALOGUE_MIN_FRAC24:.2f} のまま"
 
-    **判定に使うのは `back_catalogue` です。`curve` の生の `max()` ではありません。**
-    理由は `BACK_CATALOGUE_MIN_READINGS` の註（**尾の1バケツで門が赤くなります**）。
+
+def decay_curve(vs: dict) -> list[dict]:
+    """**齢べつの「再生/日」**（`decay()` と `per_video()` が同じ1本を読むために分けた）。
+
+    **写さないこと。** 2026-09-01 まで、この式は `decay()` の中にしかなく、
+    `per_video()` は「齢3日 以上なら一生ぶん」という**別の憶え**で動いていました。
+    同じ量を2か所が別々に持つと、片方だけ直って黙って食い違います
+    （`identity()` の 2026-08-21・`decay()` の 2026-08-29 と同じ形。**3件目**）。
     """
     buckets: dict[int, list[float]] = collections.defaultdict(list)
     for v in vs.values():
@@ -302,6 +322,16 @@ def decay(vs: dict) -> dict:
         if len(xs) >= 3:
             curve.append({"age_days": d, "n": len(xs),
                           "median": statistics.median(xs), "mean": statistics.mean(xs)})
+    return curve
+
+
+def decay(vs: dict) -> dict:
+    """**後ろカタログがあるか。** 齢べつの「再生/日」と、生涯のうち24時間に来る割合。
+
+    **判定に使うのは `back_catalogue` です。`curve` の生の `max()` ではありません。**
+    理由は `BACK_CATALOGUE_MIN_READINGS` の註（**尾の1バケツで門が赤くなります**）。
+    """
+    curve = decay_curve(vs)
     mature = [v for v in vs.values() if v["age"] >= MATURE_AGE_DAYS and v["term"] > 0]
     fr24 = [v["at24"] / v["term"] for v in mature if v["at24"] is not None]
     frac24 = statistics.median(fr24) if fr24 else None
@@ -312,7 +342,126 @@ def decay(vs: dict) -> dict:
         "old_median_per_day": statistics.median(
             [c["median"] for c in curve if c["age_days"] >= 2]) if curve else None,
         **back_catalogue_guard(curve, frac24),
+        # **後ろが太ったときに要る「減衰の項」**（2026-09-01 に足した）。
+        # 門（上の `back_catalogue_guard`）は1文字も触っていません ——
+        # **門は信号で、こちらが応答**です。`decay_term()` の docstring に理由。
+        **decay_term(curve),
     }
+
+
+#: **減衰の項を「足りている」と言うのに要る、齢バケツの数。**
+#: 齢0日 と、その先が 2バケツ（＝生涯の形が3点で描ける）。
+#: **これ未満のときは項を出しません** —— 出せない回に「補正しました」と
+#: 言わないため（`coverage()` と同じ扱い: 足りないときは「測れない」）。
+DECAY_TERM_MIN_BUCKETS = 3
+
+
+def decay_term(curve: list[dict]) -> dict:
+    """**減衰の項。** 齢べつの「再生/日」から、**齢 a日 までに生涯の何割が来ているか**を出す。
+
+    ## なぜ足したか（2026-09-01）
+
+    **`test_no_back_catalogue` が赤でした** —— 生涯再生のうち24時間以内に来る
+    割合が **92.7%**（門は 95%）。赤の文面は
+    「**後ろが太っています —— 軌跡に減衰項が要ります**」で、
+    **その減衰項がどこにも実装されていませんでした。**
+
+    オーナーの言（この回の与件・原文）:
+
+    > **門を下げて緑にしないこと** —— それは信号を消すことです。**要るのは減衰の項です。**
+
+    だから `BACK_CATALOGUE_MIN_FRAC24` は 1文字も触っていません
+    （`tests/test_trajectory.py::test_the_back_catalogue_gate_is_never_lowered` が
+    下げるのを禁じています）。**足したのは項のほうです。**
+
+    ## 何を返すか
+
+    齢バケツの**平均**（中央値ではありません）を齢の順に足していきます。
+    中央値は齢1日 以降ぜんぶ 0.00 で、**後ろが運んでいる量を1つも持っていません**
+    —— 実測 2026-09-01::
+
+        齢  0日  n= 93  中央値 1.00  平均 245.27      ← 生涯の 88.6%
+        齢  1日  n=148  中央値 0.00  平均  20.90
+        齢  2日  n=135  中央値 0.00  平均   3.61
+        齢  3日  n=122  中央値 0.00  平均   1.12      ← `MATURE_AGE_DAYS` はここ
+        齢  4日  n=108  中央値 0.00  平均   0.48
+        …（齢25日 まで。合計 276.68）
+
+    `share[a]` は「齢 a日 の終わりまでに来ている割合」、
+    `uncensor(age)` はその逆数 ＝ **齢 age日 の読みを一生ぶんに直す倍率**です。
+
+        share[0] = 0.886   uncensor(0) = ×1.129     ← 24時間の読みは 12.9% 低い
+        share[3] = 0.979   uncensor(3) = ×1.021     ← `MATURE_AGE_DAYS` の取りこぼし
+
+    ## **これは下限です**（上限ではありません）
+
+    いちばん古いバケツで `share` は定義上 1.0 になるので、
+    **「観測できた齢までで一生ぶん」と言っています。**
+    `src/settle.py` は「**長尺はどの地平でも伸びきらない**」と測っており
+    （`settles_at('長尺')`）、**本当の一生はこれより長い。**
+    つまり `uncensor` は**小さめに出ます**。
+
+    ## 平均で足す理由と、その弱いところ
+
+    各バケツの `n` は違う本の集合です（齢0日 は 93本、齢25日 は 5本）ので、
+    足し合わせた 276.68 は**実在の1本の一生ではなく、生命表の平均の1本**です。
+    **本べつに足した割合は `decay()` の `frac24_median`（92.7%・n=143）**のほうで、
+    こちらは中央値なので **88.6% とは別の重み**です。両方 印字します
+    （**片方だけ出すと、食い違ったときに誰も気づきません** ——
+    `identity()` が 2026-08-21 に踏んだのと同じ形）。
+
+    **覆る条件**: 本べつに一生を追える標本（齢がそろった本が 20本 以上）が
+    貯まったら、この生命表ではなく**本べつの平均**で置き直すこと。
+    そのとき `share` は本の重みで出るので、上の 88.6% と 92.7% の差は消えます。
+    """
+    buckets = sorted(curve, key=lambda c: c["age_days"])
+    if len(buckets) < DECAY_TERM_MIN_BUCKETS:
+        return {"term_ok": False,
+                "term_why": f"齢バケツが {len(buckets)}件（下限 {DECAY_TERM_MIN_BUCKETS}）"}
+    total = sum(c["mean"] for c in buckets)
+    if total <= 0:
+        return {"term_ok": False, "term_why": "齢べつの平均が全部 0 です"}
+    share: dict[int, float] = {}
+    run = 0.0
+    for c in buckets:
+        run += c["mean"]
+        share[c["age_days"]] = run / total
+    return {
+        "term_ok": True,
+        "share": share,                       # 齢 → その齢の終わりまでに来ている割合
+        "last_age": buckets[-1]["age_days"],
+        "total_mean": total,
+        # **24時間の読みが、一生ぶんの何割か**（生命表の重み。`frac24_median` とは別物）
+        "frac24_curve": share[buckets[0]["age_days"]] if buckets[0]["age_days"] == 0 else None,
+        # `MATURE_AGE_DAYS` で「確定」と呼んだ時点の取りこぼし
+        "mature_share": share_at(share, MATURE_AGE_DAYS),
+    }
+
+
+def share_at(share: dict[int, float], age_days: float) -> float:
+    """齢 `age_days` の時点で、生涯の何割が来ているか（**バケツの境で階段状**）。"""
+    if not share:
+        return 1.0
+    ages = sorted(share)
+    a = int(age_days)
+    if a < ages[0]:
+        return share[ages[0]]
+    for x in reversed(ages):
+        if x <= a:
+            return share[x]
+    return 1.0
+
+
+def uncensor(term: dict, age_days: float) -> float:
+    """**齢 `age_days` の読みを、一生ぶんに直す倍率**（`decay_term()` の項）。
+
+    項が出せない回は **1.0（＝直さない）** を返します ——
+    **測れていないものを補正に化けさせないため**です。
+    """
+    if not term.get("term_ok"):
+        return 1.0
+    sh = share_at(term["share"], age_days)
+    return 1.0 / sh if sh > 0 else 1.0
 
 
 def back_catalogue_guard(curve: list[dict], frac24: float | None) -> dict:
@@ -361,7 +510,23 @@ def per_video(vs: dict, seed: int = 7) -> dict:
     中央値を N倍しても合計にはなりません。
     """
     mature = [v for v in vs.values() if v["age"] >= MATURE_AGE_DAYS]
-    V = [v["term"] for v in mature]
+    # **齢 `MATURE_AGE_DAYS` を「一生ぶん」と読まないこと**（2026-09-01 に直した）。
+    #
+    # ここは長らく `v["term"]`（**その時点までの合計**）をそのまま V にしていました。
+    # `MATURE_AGE_DAYS` の註に「**98.4% が24時間以内なので余裕**」と書いてあり、
+    # それが根拠でした。**その 98.4% は、いま 92.7% です**
+    # （`decay()` の `frac24_median`・n=143。門は 95% で、赤で立っています）。
+    #
+    # 実測 2026-09-01（`decay_term()` の生命表）: 齢3日 の時点で来ているのは
+    # 生涯の **97.9%**。**齢3日ちょうどの本は、2.1% 足りないまま平均に入ります。**
+    # 標本の齢の中央値は 9.4日 なので効きは小さいのですが、
+    # **効きが小さいことと、直っていることは別**です ——
+    # 規則（1日1本）の下では標本は「若い本ばかり」に寄るので、
+    # **これから効きは大きくなる側**にしか動きません。
+    #
+    # **項が出せない回は `uncensor()` が 1.0 を返します**（＝いままでと同じ）。
+    term = decay_term(decay_curve(vs))
+    V = [v["term"] * uncensor(term, v["age"]) for v in mature]
     if not V:
         return {"ok": False}
     rnd = random.Random(seed)
@@ -1187,6 +1352,20 @@ def render(m: dict, today: dt.date) -> list[str]:
     if dec.get("frac24_median") is not None:
         P(f"  [実測] 1本の生涯再生のうち、**公開24時間以内に来る割合 {dec['frac24_median']*100:.1f}%**"
           f"（中央値・n={dec['frac24_n']}）")
+    # **減衰の項**（2026-09-01 に足した）。門が「要る」と言い続けていたもの。
+    if dec.get("term_ok"):
+        P(f"  [実測] **減衰の項**: 24時間で {dec['frac24_curve']*100:.1f}%"
+          f"（生命表の重み。上の中央値 {dec['frac24_median']*100:.1f}% とは重みが違います）"
+          f"／観測できた齢は {dec['last_age']}日 まで")
+        P(f"         → **24時間の読みを一生ぶんに直す倍率 ×{1/dec['frac24_curve']:.3f}**"
+          f"／齢{MATURE_AGE_DAYS:.0f}日 の読みは ×{1/dec['mature_share']:.3f}"
+          f"（`per_video()` は本べつの齢でこれを掛けています）")
+        P("         **これは下限です** —— いちばん古いバケツで割合は定義上 100% に"
+          "なるので、「観測できた齢までで一生ぶん」と言っています。"
+          "`src/settle.py` は長尺がどの地平でも伸びきらないと測っています。")
+    elif dec.get("term_why"):
+        P(f"  [測れません] **減衰の項が出せません**: {dec['term_why']}"
+          "（`per_video()` は補正なしで出ています）")
     if dec.get("curve"):
         P("  [実測] 齢べつの「再生/日」:")
         for c in dec["curve"][:6]:
@@ -1213,9 +1392,20 @@ def render(m: dict, today: dt.date) -> list[str]:
                 P(f"           （齢 {t['age_days']}日 は 中央値 {t['median']:.2f} 回/日 ですが、"
                   f"**{t['n']}読みしかないので門から外しています**。"
                   "尾の1バケツで軌跡を組み直さないこと）")
-            if dec.get("back_catalogue"):
+            if dec.get("back_catalogue") and dec.get("term_ok"):
+                # **要る／要らない ではなく、在る／無い を言うこと**（2026-09-01）。
+                # ここは長らく「減衰項が要ります」と言い続けていて、
+                # **その項がどこにも実装されていませんでした。**
+                P("         → [!] **後ろカタログができています**"
+                  f"（{'・'.join(dec.get('back_catalogue_why') or [])}）。"
+                  f"**減衰項は上に出ています（×{1/dec['frac24_curve']:.3f}）** ——"
+                  "`per_video()` は本べつの齢で掛けています。")
+                P("           **門は下げていません。** 鳴ったままが正しい"
+                  f"（{traj_gate_note()}）。")
+            elif dec.get("back_catalogue"):
                 P("         → [!] **後ろカタログができています。** 恒等式が成り立たなく"
-                  "なるので、**軌跡に減衰項が要ります**（`decay()` の註）")
+                  "なるので、**軌跡に減衰項が要ります**"
+                  f"（いま出せません: {dec.get('term_why')}）")
             else:
                 P("         → **後ろカタログはありません。**"
                   "（動きの門・大きさの門とも通っています）")
