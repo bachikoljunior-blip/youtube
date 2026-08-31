@@ -122,3 +122,41 @@ def test_理由の行が規則を名指しする():
     why = caps["density"]["why"]
     assert "house_rule" in why, why
     assert f"{float(house_rule.PUBLISH_PER_DAY):.0f}本/日" in why, why
+
+
+def test_段2のLは規則を超えない():
+    """**長尺は「1日1本」の内側です。** 段2 の合格点を、出さない本数で割らないこと。
+
+    段2（門2a・長尺4,000時間）の合格点は
+    「要る視聴分 ÷ (**1日L本 公開** × 門1までの日数 × 1再生の視聴分)」で、
+    **L に反比例**します。`long_supply_per_day()` が測っているのは
+    **作る**速さ（2026-08-31 の実測 23.4本/日）で、**出す**本数ではありません。
+
+    `eta.long_supply_per_day` の docstring が自分で書いています ——
+    「**決めた本数を出していないあいだ、その本数で割った合格点は予測ではなく願望**」。
+    **いま本数は決まっていて、規則の 1本/日 です。**
+    実測 2026-08-31: L=4 なら 47回/本、L=1 なら **188回/本**（**4倍**）。
+    甘い側で出すと、`blocking`（＝「これを測れ」の的）が4倍ずれます。
+    """
+    m = _measured()
+    pl = eta.plan(m, eta.analyse(m), view_cap=25.0, mix={})
+    s2 = next(s for s in pl["stages"] if s["no"] == 2)
+    rule = float(house_rule.PUBLISH_PER_DAY)
+    assert s2["long_per_day"] <= rule + 1e-9, (
+        f"段2 が 1日 {s2['long_per_day']} 本 公開する前提で合格点を出しています。"
+        f"規則は {rule}本/日 です（`src/house_rule.py`）")
+
+
+def test_供給が測れなくてもLは規則を超えない(monkeypatch):
+    """**測れない回の落ち先（計画値 4本/日）も、規則の下に入ること。**
+
+    ここを空けると「帳面が無い回だけ規則の外を歩く」という穴になります。
+    """
+    monkeypatch.setattr(eta, "long_supply_per_day",
+                        lambda *_a, **_k: {"rate": 0.0, "built": 0, "attempts": 0,
+                                           "window_days": 7, "fail_rate": None,
+                                           "measured": False})
+    m = _measured()
+    pl = eta.plan(m, eta.analyse(m), view_cap=25.0, mix={})
+    s2 = next(s for s in pl["stages"] if s["no"] == 2)
+    assert s2["long_per_day"] <= float(house_rule.PUBLISH_PER_DAY) + 1e-9, s2["long_per_day"]
