@@ -494,6 +494,21 @@ SHORTS_VIEWS_GATE = 10_000_000   # 直近90日・ショート
 
 # --- 下の段（expanded YPP）＝ ファン課金だけが開く門。**広告は開きません** ---
 FAN_SUBS_GATE = 500
+
+#: **`docs/MEANS.md` M23 の着手条件（下の段の分子）** —— 門の 1/10。
+#:
+#: M23 は「メンバーシップ・Super Thanks は、**登録者が 50人 を超えた回**に
+#: 加入率と単価の**実測を1件 立てること**」と書いています。50 に置く理由も
+#: そちらにあります（門の 1/10 ＝ 加入率 0.5% を当てて加入者が 0人 と 1人 の境
+#: ＝ **測れる標本が立つ最小**。それ以前に立てても返るのは 0 で、0 は実測になりません）。
+#:
+#: **この数は、2026-08-31 まで `docs/MEANS.md` の地の文にしか居ませんでした。**
+#: M23 自身が「この機械が自分で検出できるか」の節で
+#: 「登録者数は `status.py` が毎回 出します。**だから 50人 は検出できます**」と
+#: 書いていますが、**`grep` すると 50 はコードにも `config/` にも1件もありません** ——
+#: 「検出**できる**」と「検出**している**」は別です。跨いだ日に、誰も何も言いません。
+#: `day_cap.py` が名指ししている「**機構は正しく、読まれる側だけが偽**」の形です。
+M23_FAN_TRIAL_SUBS = 50
 FAN_HOURS_GATE = 3_000           # 直近12か月
 FAN_SHORTS_VIEWS_GATE = 3_000_000  # 直近90日
 FAN_GATE_UNLOCKS = "メンバーシップ・Super Thanks・Super Chat・Jewels・Shopping"
@@ -2214,10 +2229,21 @@ def conversion_split(form: str = "長尺") -> dict | None:
     （重なった報告を `dedupe` で落とした後の数です。落とす前は 5,133 / 88。
       **落とす前の数を引かないこと** —— 同じ日の CSV が何度も積まれます。）
 
-    **面は在ります**（手本の本より多く見せている本はありませんが、
-    面の側は 5,012回 出ています）。足りていないのは**押された率**のほうで、
     **いまのインプレッションのまま**、手本の CTR で回すと
     クリックは **84 → 266（×3.2）** になります。
+
+    ## **その ×3.2 は「安い半分」であって、「効く半分」ではありません**
+
+    最初の版はここに「**面は在ります。足りていないのは押された率のほう**」と
+    書いていました。**絶対の量で見ると逆です**（撃って気づいて直した）::
+
+        面は 1本あたり **239回**（5,012 ÷ 21本）
+        **CTR を 100% にしても 239再生** —— 要る 3,333回 には **×14 届きません**
+        手本の率のままで面を **×263** にして、はじめて届きます
+
+    **サムネをいくら直しても、いまの面では目標に届きません。**
+    CTR は「**いまの面の中で取りこぼしている ×3.2**」であって、
+    **面の不足の代わりにはなりません。** 2つは足し算ではなく掛け算の別々の項です。
 
     **手本がこの本になったのは偶然ではありません** —— 1本あたり再生の記録も
     同じ `_Mz5rg6jQ_A`（「任意継続の20日を過ぎると年収1000万でいくら増えるか」）です。
@@ -2571,8 +2597,18 @@ def report(m: dict, a: dict) -> list[str]:
       "（加入率も単価も未測定）。**だから上の到達日は、この段を 0円 として解いています。**"
       "　`docs/MEANS.md` の M23 は 2026-08-30 まで「メンバーシップは広告と**同じ門の後ろ**"
       "だから門を早める効果は 0」と判定していました —— **公表値を読んだら外れでした**"
-      "（`support.google.com/youtube/answer/13429240`）。**M23 の着手条件は、"
-      "その外れた判定の上に立っています。**")
+      "（`support.google.com/youtube/answer/13429240`）。")
+    # --- **M23 の着手条件を、この機械が自分で見ること**（2026-08-31・最適化の回）---
+    #     ここは長らく「**M23 の着手条件は、その外れた判定の上に立っています**」で
+    #     終わっていました。**その一文自身が、同じ日に古くなっています** ——
+    #     M23 は 2026-08-30 に着手条件を書き直しており（10,000人 → **50人**）、
+    #     もう外れた判定の上には立っていません。**結論より先に根拠が腐る**形そのもの。
+    #
+    #     そして書き直した先の **50人 は、コードにも `config/` にも1件もありません**。
+    #     M23 は「`status.py` が毎回 出すから検出できます」と書いていますが、
+    #     **跨いだ日に誰も何も言いません。** ここが言います。
+    for _line in m23_fan_trial_lines(m, a):
+        P(_line)
     P(f"       **その 0円 を、割り算1つで『要る側』に直します**（2026-08-31）——"
       f" 門が開いた瞬間の登録者は公表値で {FAN_SUBS_GATE:,}人 なので、"
       f"月{TARGET_YEN:,}円 ÷ {FAN_SUBS_GATE:,}人 ＝ **1人あたり手取り "
@@ -2710,11 +2746,31 @@ def report(m: dict, a: dict) -> list[str]:
           f"あちらは**生涯の再生**の話です。"
           f" **足すことも掛けることもできません** ——"
           f"同じ窓でそろえ直すまでは、**別々の目盛り**として読むこと。")
-        P(f"      → **面は在ります。足りていないのは押された率のほう** ——"
-          f" いまのインプレッションのまま、いちばん押された本の率で回すと"
+        P(f"      → いまのインプレッションのまま、いちばん押された本の率で回すと"
           f" クリックは {_cs['clicks']:,.0f} → **{_cs['clicks_at_best']:,.0f}"
           f"（×{_cs['headroom']:.1f}）**。"
           f" `src/reach_split` の読み方: **面が少ない→題材・本数／CTR が低い→サムネと題**。")
+        # --- **その ×3.2 は「安い半分」であって、「効く半分」ではありません**（2026-08-31）---
+        #     最初の版はここに「**面は在ります。足りていないのは押された率のほう**」と
+        #     印字していました。**絶対の量で見ると逆です。** 撃って気づいて直した:
+        #         面は 1本あたり **239回**（5,012 ÷ 21本）。
+        #         **CTR を 100% にしても 239再生**で、要る 3,333回 には**×14 届きません。**
+        #     ＝ **サムネをいくら直しても、いまの面では目標に届きません。**
+        #     CTR は「いまの面の中で取りこぼしている ×3.2」であって、
+        #     **面の不足（×263）の代わりにはなりません。**
+        _ipv = _cs["impressions"] / _cs["n"] if _cs["n"] else 0.0
+        _need_pv = (a.get("per_video_needed") or {}).get(nearest) or 0.0
+        if _ipv > 0 and _need_pv > 0:
+            P(f"      [!] **その ×{_cs['headroom']:.1f} は『安い半分』であって"
+              f"『効く半分』ではありません。** 面は1本あたり **{_ipv:,.0f}回**"
+              f"（{_cs['impressions']:,.0f} ÷ {_cs['n']}本）。"
+              f"**CTR を 100% にしても {_ipv:,.0f}再生**で、要る"
+              f" {_need_pv:,.0f}回 には **×{_need_pv/_ipv:,.0f} 届きません。**")
+            P(f"          ＝ **サムネだけでは、この面では目標に届きません。**"
+              f" 面そのものを **×{_need_pv/(_ipv*_cs['ctr_best']):,.0f}**"
+              f"（いちばん押された本の率のままで）増やす必要があります —— "
+              f"**題材・本数・面の側**（`src/reach_split` の左の枝）。"
+              f" CTR は『いまの面の中で取りこぼしているぶん』です。")
         P(f"      [!] **上限でも下限でもありません** —— 押される本には多く見せるので"
           f"面も増えます（×{_cs['headroom']:.1f} は控えめ側）が、"
           f"逆に最高の本の CTR が高いのは**問いの選び方**のせいかもしれません"
@@ -3234,6 +3290,108 @@ def _long_form_per_day() -> float:
     days = sorted(rows)
     span = (date.today() - days[0]).days + 1
     return sum(rows.values()) / max(1, span)
+
+
+def observed_subs_rate(days: float = 7.0, path: Path | None = None) -> dict | None:
+    """**登録者の伸びを、台帳の実測から出す。**（API 0単位）
+
+    `a["subs_per_day"]` は `views_day x sub_rate` の**模型**です。ここは
+    `data/eta.jsonl` に積んだ `subs_net` の**観測**を、そのまま引き算します。
+    **2つが食い違うこと自体が情報**なので、片方に寄せません。
+
+    実測 2026-08-31（404点・12.5日）::
+
+        全期間  9 -> 23人   **1.116 人/日**
+        直近7日 19 -> 23人  **0.593 人/日**   -> 50人 まで **46日**
+        直近3日 22 -> 23人  **0.336 人/日**   -> 50人 まで **80日**
+
+    **減速しています。** `docs/MEANS.md` M23 は「いまの伸び（0.89人/日）で
+    **30日 以内に満ちます**」と書いていますが、**その 0.89 はもう出ていません。**
+    """
+    p = path or LOG
+    if not p.exists():
+        return None
+    rows: list[tuple[str, int]] = []
+    for line in p.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            r = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        at, sn = r.get("at"), r.get("subs_net")
+        if at and sn is not None:
+            try:
+                rows.append((str(at)[:19], int(sn)))
+            except (TypeError, ValueError):
+                continue
+    if len(rows) < 2:
+        return None
+    rows.sort()
+    try:
+        last = datetime.fromisoformat(rows[-1][0])
+    except ValueError:
+        return None
+    win = []
+    for at, sn in rows:
+        try:
+            t = datetime.fromisoformat(at)
+        except ValueError:
+            continue
+        if (last - t).total_seconds() <= days * 86400:
+            win.append((t, sn))
+    if len(win) < 2:
+        return None
+    span = (win[-1][0] - win[0][0]).total_seconds() / 86400
+    if span <= 0:
+        return None
+    return {"rate": (win[-1][1] - win[0][1]) / span, "days": span,
+            "start": win[0][1], "now": win[-1][1], "n": len(win)}
+
+
+def m23_fan_trial_lines(m: dict, a: dict, prefix: str = "    ") -> list[str]:
+    """**M23 の着手条件（登録者 50人）を、跨いだ日に言う。**（API 0単位）
+
+    **覆る条件**: `docs/MEANS.md` M23 が着手条件の数を変えたら、
+    `M23_FAN_TRIAL_SUBS` を合わせること（**出どころは向こうの地の文**で、
+    ここは写しです。写しであることを承知で置いています —— 写さないと
+    跨いだ日に誰も何も言わないので）。
+    """
+    subs = int(m.get("subs_net") or 0)
+    need = max(0, M23_FAN_TRIAL_SUBS - subs)
+    obs = observed_subs_rate()
+    out = []
+    if need <= 0:
+        out.append(
+            f"{prefix}[!] **M23 の着手条件は満ちています** —— 登録者 {subs:,}人 >= "
+            f"**{M23_FAN_TRIAL_SUBS}人**（`docs/MEANS.md` M23）。"
+            "**この回に、加入率と単価の実測を1件 立てること**"
+            "（`config/hypotheses.yaml`・腕は `rpm`。**分子が増える手なので "
+            "`per_video` ではありません**）。"
+            "**M23 の結論『着手しない』は、この条件が満ちるまでの話でした。**")
+        return out
+    model = float(a.get("subs_per_day") or 0.0)
+    d_model = _days_to(need, model) if model > 0 else NEVER
+    line = (f"{prefix}[門1''] **M23 の着手条件 登録者 {M23_FAN_TRIAL_SUBS}人**"
+            f"（下の段の門 {FAN_SUBS_GATE:,}人 の 1/10 ＝ **加入率が測れる最小の標本**・"
+            f"`docs/MEANS.md` M23）　いま {subs:,}人・**あと {need:,}人**　"
+            f"{_fmt_days(d_model)}（模型 {model:.2f}人/日）")
+    if obs and obs["rate"] > 0:
+        d_obs = need / obs["rate"]
+        line += (f"　／ **観測 {obs['rate']:.2f}人/日**"
+                 f"（直近{obs['days']:.1f}日・{obs['start']}→{obs['now']}人）"
+                 f" なら **{d_obs:,.0f}日**")
+        if d_obs > 30:
+            line += ("　[!] **M23 の本文は「いまの伸び（0.89人/日）で 30日 以内に"
+                     "満ちます」と書いていますが、その速さはもう出ていません** ——"
+                     "　**本文の 30日 を引かないこと。この行の数を引くこと。**")
+    elif obs:
+        line += (f"　[!] **観測では増えていません**"
+                 f"（直近{obs['days']:.1f}日・{obs['start']}→{obs['now']}人）——"
+                 "　**この条件は、いまの実績のままなら満ちません。**")
+    out.append(line)
+    return out
 
 
 def physical_caps(a0: dict, density: float = PLAN_PUBLISH_PER_DAY,
@@ -8457,7 +8615,40 @@ def _report_long_gate(m: dict, a: dict) -> list[str]:
 
 
 def _levers(m: dict, a: dict) -> list[tuple[str, str, str]]:
-    """門1（登録者1,000人）を1年以内に通すのに、各数字が何倍要るか。"""
+    """門1（登録者1,000人）を1年以内に通すのに、各数字が何倍要るか。
+
+    ## **最後の行の天井は、規則を見ていませんでした**（2026-08-31・最適化の回）
+
+    前の回からの申し送りは、この一行でした ——
+
+        grep -n "house_rule" scripts/eta.py   ← ここに出てこない天井が、次の候補
+
+    **`_levers()` は、その grep に出てきません。** ここは
+    `a["per_video_now"] * UPLOAD_CAP_PER_DAY`（**92本/日** ＝ API の日枠）で
+    「本数だけで届く上限」を刷っていました。**規則は 1本/日 です**（`src/house_rule.py`）。
+
+    **実測（2026-08-31・`analyse()` の返りに当てた・API 0単位）**::
+
+        本数だけで届く上限   86,676回／日（92本の上限・**×31.8 まで**）
+                          → **942回／日**（規則 1本/日・`_ceiling_per_day()`）
+                            **92分の1**
+
+    **効いていた先が悪い。** この行が乗っている表の見出しは
+    「**早めるには、どれを何倍にするか（倍率が小さいものから手を付ける）**」で、
+    **その回にどの腕を引くかを、読む側がここから選びます。**
+    92本 の天井は「本数を増やせば再生は ×31.8 まで伸ばせる」と読めますが、
+    **規則の下では 1本も増やせません。**
+
+    そして規則を入れると、この行は**向きが変わります** ——
+    いまの再生／日（2,724回）は、規則 1本/日 の定常（942回）より**上**です。
+    差は**予約の在庫が消化されているぶん**で、**在庫が尽きれば下がります。**
+    つまりこの行は「まだ ×31.8 伸ばせる」ではなく
+    「**いまの再生／日 は、規則の下では持続しない**」と言うべき行でした。
+
+    出どころは `_ceiling_per_day()` の1か所です（規則・観測・口 の**いちばん低いもの**）。
+    **ここに定数を書かないこと** —— オーナーが 1本/日 を外せば自動で戻ります。
+    検査は `tests/test_levers_house_rule.py`。
+    """
     rows = []
     need_subs_per_day = a["subs_remaining"] / 365
     if a["subs_per_day"] > 0:
@@ -8469,9 +8660,27 @@ def _levers(m: dict, a: dict) -> list[tuple[str, str, str]]:
                  f"{a['sub_rate']*100*x:.3f}%（再生数を据え置くなら）"))
     rows.append(("　うち 再生／日", f"{a['views_per_day']:,.0f}回",
                  f"{a['views_per_day']*x:,.0f}回（登録率を据え置くなら）"))
-    per_day_cap = a["per_video_now"] * UPLOAD_CAP_PER_DAY
+    # **規則の出どころは `_ceiling_per_day()` の1か所**（規則・観測・口 の最小）。
+    #     **定数を書かないこと** —— オーナーが 1本/日 を外せば、ここは自動で戻ります。
+    cap_per_day = _ceiling_per_day()
+    caps = a.get("ceiling_caps") or {}
+    which = min(caps, key=lambda k: caps[k]) if caps else "規則"
+    per_day_cap = a["per_video_now"] * cap_per_day
+    ratio = per_day_cap / max(a["views_per_day"], 1)
+    if ratio >= 1.0:
+        note = (f"{cap_per_day:,.0f}本/日 の上限（縛るのは「{which}」）。"
+                f"**{ratio:,.2f}倍まで**")
+    else:
+        # **向きが変わる行**（2026-08-31）。規則の下では、いまの再生／日 のほうが上。
+        #     差は**予約の在庫を消化しているぶん**で、**在庫が尽きれば下がります。**
+        note = (f"{cap_per_day:,.0f}本/日 の上限（縛るのは「{which}」）＝ "
+                f"**いまの再生／日 の {ratio:,.2f}倍** —— "
+                f"**本数では1本も増やせません。**"
+                f"いまの {a['views_per_day']:,.0f}回／日 は"
+                f"**規則の下では持続しません**（差は予約の在庫を消化しているぶん）。"
+                f"**この行を「まだ伸ばせる」と読まないこと。**")
     rows.append(("本数だけで届く上限", f"{a['views_per_day']:,.0f}回／日",
-                 f"{per_day_cap:,.0f}回／日（92本の上限。**{per_day_cap/max(a['views_per_day'],1):,.1f}倍まで**）"))
+                 f"{per_day_cap:,.0f}回／日（{note}）"))
     return rows
 
 
