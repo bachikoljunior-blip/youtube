@@ -115,6 +115,43 @@ def test_leverがnoneなら札を付けない(tmp_path):
     assert ps.audit(p)[0]["lever_off"] is False
 
 
+def test_leverがnoneなら主語の食い違いでも鳴らない(tmp_path):
+    """**2026-09-01 に足した。配線した回の最初の `[!]` が、これで空振りだった。**
+
+    実物は `config/hypotheses.yaml` の 2026-09-30
+    「収益化の審査は、門1・門2a の数字が揃えば通る」——
+    `claim` の「**収益**化」で主語が `rpm`、`needs` の「**登録者**1,000人」で
+    数えているのが `sub_rate` になり、交わらないので `[!]` が付いていました。
+
+    **あの行は量を主張していません**（`lever: none` ／ `side: infra` ＝
+    腕を全部 掛ける側の係数）。**直しようのない `[!]` は、計器を読まれなくします。**
+    """
+    p = _yaml(tmp_path, """\
+        - claim: "収益化の審査は、門1・門2a の数字が揃えば通る"
+          deadline: "2026-09-30"
+          lever: none
+          side: infra
+          falsified_if: "門1（登録者1,000人）が通っていないので、その日はまだ申請できません"
+    """)
+    row = ps.audit(p)[0]
+    assert row["subject"] == {"rpm"}          # 語彙は拾えている（拾えないのとは別）
+    assert row["measured"] == {"sub_rate"}    # 交わってもいない
+    assert row["mismatch"] is False           # **それでも鳴らさない**
+    assert row["lever_off"] is False
+
+
+def test_leverがあれば主語の食い違いは今までどおり鳴る(tmp_path):
+    """上の除外が、**腕のある行まで黙らせていないこと**（故障注入の逆向き）。"""
+    p = _yaml(tmp_path, """\
+        - claim: "収益化の審査は、門1・門2a の数字が揃えば通る"
+          deadline: "2026-09-30"
+          lever: rpm
+          side: infra
+          falsified_if: "門1（登録者1,000人）が通っていないので、その日はまだ申請できません"
+    """)
+    assert ps.audit(p)[0]["mismatch"] is True
+
+
 # ---- 閉じた前提は並べない ------------------------------------------------
 
 def test_閉じた前提は出さない(tmp_path):
