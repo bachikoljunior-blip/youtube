@@ -62,7 +62,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from src import arm_speed, day_cap, levers, motion_groups, pause_guard, resume_gate, rpm_mix, settle, subs_cap  # noqa: E402  （`sys.path` を通した後でないと読めません）
+from src import arm_speed, day_cap, house_rule, levers, motion_groups, pause_guard, resume_gate, rpm_mix, settle, subs_cap  # noqa: E402  （`sys.path` を通した後でないと読めません）
 
 LOG = ROOT / "data" / "eta.jsonl"
 
@@ -438,11 +438,22 @@ PUBLISH_SCENARIOS = (4, 10, 13, 25, 92)
 # - ~~**`scripts/batch_build.py` に機械の上限が入るまで、この数は文書上の数です**~~
 #   **2026-08-30 に入りました**（`batch_build.cap_by_density()`。`slots()` の出口で、
 #   **生成の前**に当たります）。**上限はここではなく
-#   `src.density_verdict.HOUR_HI` から読みます** —— 機械と計画が同じ所を見ているかを
-#   `tests/test_density_cap.py` が見ているので、**この 13 を動かすときは
-#   `HOUR_HI` のほうを動かすこと**（片方だけ動かすと赤くなります）。
+#   `src.house_rule.PUBLISH_PER_DAY` から読みます** —— 機械と計画が同じ所を見ているかを
+#   `tests/test_density_cap.py` が見ています（片方だけ動かすと赤くなります）。
 #   入れる前の実績は 08/27 19本・08/28 22本 でした
-PLAN_PUBLISH_PER_DAY = 13
+#
+# ## **2026-08-31: ここは 13 ではなく 1 になりました**（オーナーが固定した規則）
+#
+#     「動画は1日一本作り置きはなしにして。次の投稿予定までにそこで投稿する
+#       動画を改善し続ける。それは固定にして。その上で目標を目指す」
+#
+# **到達日は大きく後ろへ動きます。それが正しい姿です** —— いままでの日付は、
+# 出しても再生の付かない本を数に入れていました（`python -m src.density_verdict`:
+# 詰めた日は1本あたり中央値 2回・1時間きざみの日は 716回）。
+# **動いた日数は `docs/JOURNAL.md` 2026-08-31 に理由つきで残してあります。**
+# 供給の段が細るぶんは、規則3（次の1本を出る瞬間まで改善し続ける）が
+# **1本あたりの再生**の側で取り返す形です —— そちらは `per_video` の腕です。
+PLAN_PUBLISH_PER_DAY = house_rule.PUBLISH_PER_DAY
 
 # --- 収益化の審査にかかる日数（YouTube 公表「通常1か月以内」。**実測ではない**）---
 MONETIZE_REVIEW_DAYS = 30
@@ -2249,7 +2260,18 @@ def physical_caps(a0: dict, density: float = PLAN_PUBLISH_PER_DAY,
         #     08/20 は 25本 公開して #11から先の15本が 0〜3再生（`src/day_cap.py`）。
         #     天井を口の側で立てると、**腕を ×3.7 まで歩けると出て、
         #     実際には1日も縮まない**という形になります。
-        arm_cap = min(float(UPLOAD_CAP_PER_DAY), float(_view_cap_per_day()))
+        # **2026-08-31: 上に、オーナーが固定した規則が乗りました。**
+        #     「動画は1日一本作り置きはなしにして。…それは固定にして」
+        #     腕の天井は「出せる本数」でも「再生が付く本数」でもなく、
+        #     **そのうちいちばん低いもの**です。規則が 1本/日 なので、
+        #     `density` の腕には**引き代がありません** ——
+        #     軌跡がここを ×10 で歩くと、**規則の外の世界**を歩きます
+        #     （この関数の docstring が禁じている形そのもの）。
+        #     **出どころは `src.house_rule` の1か所**（`batch_build` と同じ）。
+        view_cap = min(float(UPLOAD_CAP_PER_DAY), float(_view_cap_per_day()))
+        rule_cap = float(house_rule.PUBLISH_PER_DAY)
+        rule_binds = rule_cap <= view_cap
+        arm_cap = min(view_cap, rule_cap)
         raw = arm_cap / density
         # **倍率が 1 を下回るのは「引き代がマイナス」ではありません** ——
         #     **すでに上限より多く出している**、という意味です。そのまま返すと
@@ -2257,10 +2279,17 @@ def physical_caps(a0: dict, density: float = PLAN_PUBLISH_PER_DAY,
         #     引き代は 0（＝×1.0 が天井）。**超えていること自体は `why` に残します。**
         over = raw < 1.0
         caps["density"] = {"factor": max(1.0, raw),
-                           "why": (f"1日に再生が付く上限 {arm_cap:.0f}本（実測・`src/day_cap.py`）"
-                                   f" ÷ いま続けられる {density:.1f}本/日"
-                                   f"（出せる口の上限は {UPLOAD_CAP_PER_DAY}本ですが、"
-                                   f"そこまで出しても再生は付きません）"
+                           "why": ((f"**オーナーが固定した規則 {rule_cap:.0f}本/日**"
+                                    f"（`src/house_rule.py`・2026-08-31）"
+                                    f" ÷ いま続けられる {density:.1f}本/日"
+                                    f"（再生が付く上限は {view_cap:.0f}本・"
+                                    f"出せる口の上限は {UPLOAD_CAP_PER_DAY}本ですが、"
+                                    f"**どちらも規則より上なので効きません**）"
+                                    if rule_binds else
+                                    f"1日に再生が付く上限 {arm_cap:.0f}本（実測・`src/day_cap.py`）"
+                                    f" ÷ いま続けられる {density:.1f}本/日"
+                                    f"（出せる口の上限は {UPLOAD_CAP_PER_DAY}本ですが、"
+                                    f"そこまで出しても再生は付きません）")
                                    + ("。**すでに上限を {:.1f}倍 超えて出しています ＝ 引き代なし**"
                                       "（超えたぶんは 0再生）".format(1 / raw) if over else "")),
                            "measured": True,
@@ -2286,11 +2315,14 @@ def physical_caps(a0: dict, density: float = PLAN_PUBLISH_PER_DAY,
         #
         #     **覆る条件**: 08/27 の切り分けの日が答えます（`answer_on`）。
         #     決まれば `window()["confounded"]` が False になり、ここは自動で黙ります。
+        #     **2026-08-31 以降、規則が縛っている回はこの枝ごと黙ります** ——
+        #     (B) が言っているのは「置く時刻を前へ寄せろ」で、
+        #     **1日1本の回には、寄せ直す2本目がありません。**
         try:
             fork = day_cap.cap_if_window()
         except Exception:                                      # noqa: BLE001
             fork = None
-        if fork:
+        if fork and not rule_binds:
             # **比べる相手は「作る本数」ではなく「再生が付く本数」**（`arm_cap`）。
             #     (B) の 18本 を、出している 18.2本/日 と比べると ×0.99 と出て
             #     「(B) でも引き代なし」に見えます。**それは別の問いの答え**です ——
