@@ -139,7 +139,147 @@ def per_video_best(views_path: Path | None = None,
             #     長尺 **偽**（地平を 336h へ延ばすと、240h で伸びきった本は 0本）。
             "settled": _settled(form),
         }
+        # --- **打ち切りぶんを、実測で埋める**（2026-08-31・最適化の回の第2手）---
+        #     `settled` は「記録は下限だ」と**言うだけ**で、この回まで
+        #     **誰もその下限を補正していませんでした。** `gaps()` も
+        #     `eta.residual_gap()` も、下限をそのまま分母にして
+        #     「×21.4・どの帯でも届きません」を印字していました。
+        #     ここで、その倍率を**実測で**（定数なしで）足します。下の `censor_factor`。
+        cf = censor_factor(form, views_path=path, forms=forms)
+        out[form]["censor"] = cf
+        out[form]["best_settled"] = out[form]["best"] * cf["factor"]
     return out
+
+
+def _nearest(series: list[tuple[float, int]], hours: float,
+             *, tol: float = 0.35, floor_h: float = 12.0) -> int | None:
+    """`hours` にいちばん近い観測。**遠すぎれば `None`**（無い所を埋めないこと）。"""
+    if not series or hours <= 0:
+        return None
+    d, _, v = min((abs(x - hours), x, v) for x, v in series)
+    return None if d > hours * tol + floor_h else v
+
+
+#: **打ち切り補正を出すのに要る、最低の本数。** これを割ったら補正しません
+#: （n=1〜2 の中央値で記録を2倍にしないこと。**埋めないほうが安全側**です）。
+CENSOR_MIN_N = 5
+
+#: 補正を測る地平（時間）。`src.settle.SETTLE_HORIZONS` より先まで見ます ——
+#: **実測 2026-08-31: 長尺は 480時間 で平らになります**（480/600/720 が同じ ×2.00）。
+#: `settle.SETTLE_HORIZONS` は 480 で終わっており、**その先を見ていませんでした。**
+CENSOR_HORIZONS: tuple[float, ...] = (336.0, 480.0, 600.0, 720.0)
+
+
+def censor_factor(form: str, *, views_path: Path | None = None,
+                  forms: dict[str, str] | None = None,
+                  min_n: int = CENSOR_MIN_N) -> dict:
+    """**記録が打ち切られているぶんの倍率**（実測・API 0単位・**定数を持ちません**）。
+
+    ## この関数が答える問い
+
+    `per_video_best()` の記録は「**観測が止まった時点**の再生数」です。
+    伸びきった本ならそれが生涯ですが、**伸びている途中で観測が止まった本では下限**です。
+    では **その本は、あと何倍 回ったか。**
+
+    ## 数え方（**その記録の本の年齢から**測ること）
+
+    形ぜんぶの平均ではありません。**記録の本が最後に観測された年齢 A** を取り、
+    同じ形の本で「A の読み」と「もっと後の地平 T の読み」が**両方ある**ものだけを集め、
+    **同じ本どうしの比 `T/A` の中央値**を返します（対応のある比。
+    横断で年齢べつの中央値を並べると、**古い本ほど別の群**なので交絡します ——
+    実測 2026-08-31: 横断だとショートが 274→1092 と 4倍 伸びて見えますが、
+    **対応のある比では ×1.00** です）。
+
+    `T` は **n が `min_n` 以上ある中でいちばん遠い地平**を採ります。
+    どの地平も届かなければ **`factor 1.0`**（＝補正しない）を返します
+    —— **埋めないほうが安全側**です（記録は下限のまま）。
+
+    ## 実測（2026-08-31・`data/views.jsonl` 22,667点）
+
+        形        記録の本          A      T       n   中央値   平均
+        ショート  NHKylqsNfTw     372h   720h    10   ×1.00   ×1.00   ← 伸びきっている
+        長尺      _Mz5rg6jQ_A     246h   720h     5   ×2.00   ×2.53   ← **下限だった**
+
+    **ショートの記録の本は 366h〜372h のあいだ 1863 で平ら**です。
+    **長尺の記録の本は 174h→246h で 97→131→156**（+61%）—— **登りながら観測が切れています。**
+    だから長尺の記録 156 は **312**（×2.00）が実測に近く、
+    `gaps()` の隔たりは **×21.4 ではなく ×10.7** です。
+
+    ## 覆る条件
+
+    - **`data/views.jsonl` が伸びれば自動で動きます**（定数を持ちません）。
+      長尺の n=5 は薄いので、**本が増えたら倍率は動きます。**
+    - 中央値ではなく平均を採ると長尺は ×2.53 になります。**中央値のほうが低い**ので、
+      **こちらのほうが安全側**です（隔たりを小さく言い過ぎない）。
+    - `settle.mature_hours_supported(form)` が真になったら、
+      その形は伸びきっているので **`factor` は 1.0 に落ちます**（下の分岐）。
+    """
+    zero = {"factor": 1.0, "n": 0, "from_hours": None, "to_hours": None,
+            "median": 1.0, "mean": 1.0, "why": "測れていません（補正しません）"}
+    # 伸びきっている形は、そもそも打ち切られていません
+    if _settled(form):
+        return dict(zero, why="この形は伸びきっています（補正は要りません）")
+
+    path = views_path or VIEWS
+    forms = _forms.measured_forms() if forms is None else forms
+    if not path.exists():
+        return zero
+
+    series: dict[str, list[tuple[float, int]]] = {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        try:
+            r = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        vid, v, h = r.get("id"), r.get("views"), r.get("hours")
+        if not vid or v is None or h is None or forms.get(vid) != form:
+            continue
+        try:
+            series.setdefault(vid, []).append((float(h), int(v)))
+        except (TypeError, ValueError):
+            continue
+    if not series:
+        return zero
+    for s in series.values():
+        s.sort()
+
+    # 記録の本と、その本が最後に観測された年齢 A
+    rec_id = max(series, key=lambda i: max(v for _, v in series[i]))
+    a_hours = series[rec_id][-1][0]
+    if a_hours <= 0:
+        return zero
+
+    best: dict | None = None
+    for t in CENSOR_HORIZONS:
+        if t <= a_hours:
+            continue
+        ratios = []
+        for s in series.values():
+            a = _nearest(s, a_hours)
+            b = _nearest(s, t)
+            if a is None or b is None or a <= 0:
+                continue
+            ratios.append(b / a)
+        if len(ratios) < min_n:
+            continue
+        ratios.sort()
+        m = len(ratios)
+        best = {
+            "factor": max(1.0, ratios[m // 2]),      # **1.0 を下回らせないこと**
+            "n": m,
+            "from_hours": a_hours,
+            "to_hours": t,
+            "record_id": rec_id,
+            "median": ratios[m // 2],
+            "mean": sum(ratios) / m,
+            "max": ratios[-1],
+            "why": f"{a_hours:.0f}時間（記録の本の最後の読み）→ {t:.0f}時間 の"
+                   f"対応のある比・n={m}",
+        }
+    return best or dict(zero, from_hours=a_hours, record_id=rec_id,
+                        why=f"{a_hours:.0f}時間 より先に n≥{min_n} の地平がありません")
 
 
 @functools.lru_cache(maxsize=None)
@@ -226,10 +366,22 @@ def gaps(rpm_scenarios: dict[str, float], per_video_needed: dict[str, float],
         need = per_video_needed.get(band)
         if not need:
             continue
-        yen = ceiling_yen(rec["best"], rpm, per_day)
+        # **打ち切りを補正した記録で割ること**（2026-08-31・最適化の回の第2手）。
+        #     この回まで、ここは `rec["best"]`（＝**下限**）で割っていました。
+        #     すぐ下の `settled` で「これは下限です」と**印字だけ**していて、
+        #     **補正は誰もしていませんでした**（`censor_factor` の docstring に実測）。
+        #     実測 2026-08-31: 長尺 156 → **312**（×2.00）で、隔たりは ×21.4 → **×10.7**。
+        #     `record_raw` に生の記録を残します —— **消さないこと**（何を足したかが辿れる）。
+        rec_best = float(rec.get("best_settled") or rec["best"])
+        cf = rec.get("censor") or {"factor": 1.0}
+        yen = ceiling_yen(rec_best, rpm, per_day)
         out.append({"band": band, "form": form, "rpm": rpm,
-                    "record": rec["best"], "record_id": rec["id"], "n": rec["n"],
-                    "need": need, "ratio": need / rec["best"],
+                    "record": rec_best, "record_raw": rec["best"],
+                    "censor_factor": float(cf.get("factor") or 1.0),
+                    "censor_n": int(cf.get("n") or 0),
+                    "censor_why": str(cf.get("why") or ""),
+                    "record_id": rec["id"], "n": rec["n"],
+                    "need": need, "ratio": need / rec_best,
                     # **記録が伸びきっていない形では、`ratio` は隔たりの上限です**
                     #     （分母が下限なので、比は必ず上振れします）。
                     "settled": bool(rec.get("settled", False)),
