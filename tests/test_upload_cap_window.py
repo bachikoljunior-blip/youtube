@@ -224,6 +224,29 @@ def test_batch_build_refuses_to_generate_when_the_window_is_closed(monkeypatch, 
     assert "作りません" in capsys.readouterr().out
 
 
+def _pin_rule(monkeypatch, batch_build, per_day: int = 25) -> None:
+    """**オーナー規則（1日1本）を、窓を測るこの検査に当てない。**（2026-08-31）
+
+    この file の主題は **API の窓（`upload_cap.state()`）が本数を縮めること**で、
+    1日に何本 置いてよいかの規則ではありません。ところが 2026-08-31 に
+    オーナーが `house_rule.PUBLISH_PER_DAY = 1` を固定したので、
+    `batch_build` は**窓を見る前に 1 まで縮めます** ――
+    実測: `--count 6` が「規則2。6 を **1** に縮めます」で 1 になり、
+    窓の残り 2本 が**一度も効かなくなりました**（`asked == [1]`）。
+
+    **形は1行も壊れていません。** 落ちたのは「窓が縛る側に居るか」だけで、
+    `tests/_eta_pin.py` が day_cap / rpm_mix / subs_cap / house_rule について
+    記録している壊れ方と同じです。規則を窓より上へ退けて、**窓を縛る側に戻します。**
+
+    規則そのものは `tests/test_house_rule.py` と `tests/test_density_cap.py` が
+    主題として持ちます（**隠さず、置き場所を分けています**）。
+
+    **`density_cap()` は `functools.cache` 付き**なので、`house_rule` 側だけ
+    差し替えても効きません。**関数そのものを差し替えること。**
+    """
+    monkeypatch.setattr(batch_build, "density_cap", lambda: per_day)
+
+
 def test_batch_build_shrinks_to_what_is_left(monkeypatch):
     """残り2本のときに6本を作らないこと（**4本ぶんが捨て札になります**）。"""
     from scripts import batch_build
@@ -234,11 +257,34 @@ def test_batch_build_shrinks_to_what_is_left(monkeypatch):
         asked.append(count)
         return []
 
+    _pin_rule(monkeypatch, batch_build)
     monkeypatch.setattr(batch_build, "pick", _pick)
     monkeypatch.setattr(batch_build.upload_cap, "state", lambda: upload_cap.State(
         False, 90, 2, datetime.now(timezone.utc), "あと2本"))
     batch_build.main(["--count", "6"])
     assert asked == [2]
+
+
+def test_規則は窓より先に縮めること(monkeypatch):
+    """**規則を退けなければ、窓は一度も効きません**（2026-08-31 に足した）。
+
+    上の検査が規則を退けている以上、**退けなかったらどうなるか**も
+    同じ file に置いておくこと。置かないと、次に来た側は
+    「窓が 2本 に縮める」を規則の下でも成り立つと読みます。
+
+    実測: 窓の残りが 2本 でも、`--count 6` は規則で **1本** になります。
+    **規則のほうが小さいので、規則が勝ちます**（`src/house_rule.py` の論法）。
+    """
+    from scripts import batch_build
+
+    asked: list = []
+    monkeypatch.setattr(batch_build, "density_cap", lambda: 1)
+    monkeypatch.setattr(batch_build, "pick",
+                        lambda count, *a, **k: asked.append(count) or [])
+    monkeypatch.setattr(batch_build.upload_cap, "state", lambda: upload_cap.State(
+        False, 90, 2, datetime.now(timezone.utc), "あと2本"))
+    batch_build.main(["--count", "6"])
+    assert asked == [1], "規則 1本/日 より多く作ろうとしています"
 
 
 def test_batch_build_skip_upload_ignores_the_cap(monkeypatch):
@@ -249,6 +295,7 @@ def test_batch_build_skip_upload_ignores_the_cap(monkeypatch):
     from scripts import batch_build
 
     asked: list = []
+    _pin_rule(monkeypatch, batch_build)
     monkeypatch.setattr(batch_build, "pick",
                         lambda count, *a, **k: asked.append(count) or [])
     monkeypatch.setattr(batch_build.upload_cap, "state", lambda: (_ for _ in ()).throw(
