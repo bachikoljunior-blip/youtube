@@ -1,13 +1,73 @@
-親の周です。考える前にこの2行だけ撃ってください。
+親の周です。
 
-    git pull --no-rebase origin claude/youtube-auto-post-revenue-ggedij
-    python scripts/next_round.py
+    cd /home/user/youtube && git pull --no-rebase origin claude/youtube-auto-post-revenue-ggedij
+    timeout 120 python scripts/next_round.py
 
-WAIT なら何もせずに終える（ただし終わる前に必ず send_later で自分を呼び戻すこと）。
-GO <役> なら docs/spawn_prompt.rendered.md の kind: <役> の prompt を1字も変えずに
-Agent ツールへ渡す（isolation: "worktree" と run_in_background: true を必ず付ける）。
-立てたら python scripts/next_round.py --record <役> を撃ち、data/rounds.jsonl を
-commit して push する。
+## **止めないこと**（オーナー 2026-08-31「何で止まってんだよ！」）
 
-手順の正本は docs/trigger_parent.md の第1節。毎回読み直すこと（サブが書き換えている）。
-サブの中身は判断しない。子セッションは立てない（create_session は人のタップを待つ）。
+**サブが1体も走っていないなら、`next_round.py` が WAIT でも立てること。**
+間隔は枠を守るための目安であって、**手を止める理由ではありません**。
+親が「間隔だから待つ」と決めて 191分 空けたことがあり、**オーナーに叱られました。**
+
+    走っているサブが在る    → 何もしない（二重に立てない）
+    1体も走っていない      → **WAIT でも立てる**
+
+**GO でも WAIT でも、立てるときは** `python scripts/spawn_prompt.py` で hourly と optimizer を出し、
+**一字一句そのまま** Agent へ。**2件 並列**で必ず:
+
+    isolation: "worktree"
+    run_in_background: true
+    model: "opus"      ← オーナー指示「一次サブはOpus5でやってね」
+
+**cwd が repo の中でないと worktree が作れません。**「Stage 2 classifier error」は撃ち直すこと。
+立てたら `python scripts/next_round.py --record hourly,optimizer` → `data/` を commit して push。
+
+## **固定の与件**（オーナー原文。**変えない・要約しない**）
+
+> **「言ったこと全部目標と同じ固定指示ね。」**
+
+    1. 目標 —— YouTube の収益で月20万を最短で
+    2. > **「動画は1日一本作り置きはなしにして。次の投稿予定までにそこで投稿する動画を
+       >    改善し続ける。それは固定にして。その上で目標を目指す」**
+    3. > **「前からやってたサブ二台体制でやれ。明日の投稿から一本のみだよ。今日はもう投稿しない」**
+       —— 08/31 は0本。**09/01 から 1日1本のみ**
+    4. > **「消さなくて良いよ時間かかるならわざわざ」**
+       > **「使わなければ良いだけ前提にも再利用もしない」**
+       —— 作り置きは **使わない**（予約を外して private・**1本も削除しない**）／
+          **前提にしない**（予測の供給から外す）／**再利用しない**
+
+床は `src/house_rule.PUBLISH_PER_DAY = 1`、検査は `tests/test_house_rule.py`。**毎周 確かめること。**
+
+## いま進行中
+
+- **09/01 の1本は `UIWHsypOPPg`（09/01 22:00 JST・予約ずみ）。もう入っています。**
+  **入れ直しは要りません** —— 撃つと 09/01 が2本になり、その日に規則1 を破ります。
+  この行は 2026-09-01 00:5x まで「`J67vEIw_VRE` を 09/05 から 09/01 22:00 へ入れ直す」
+  でした。**`J67vEIw_VRE` は控えの `at` が `None`**（＝池へ戻ずみ）で、
+  **同じ題の再投稿が `UIWHsypOPPg`** です。**確かめる1手**（API 0単位）:
+
+      python scripts/pool_drain.py     ← 先頭の「残す」行が、次に公開される1本
+
+- **予約の池化 残 267本 ＝ 13,617単位**（`data/inbox.jsonl`）。日枠待ち。
+  **規則1 が最初に破れるのは 09/12**（26日ぶん・238本 多い）。
+  **最低2日ぶんの枠が要ります。1回では終わりません** ——
+  枠の戻った回は、**投稿を済ませてから残りを全部** `pool_drain.py --apply` に流すこと
+- **Data API の日枠は 09/01 16:00 JST に戻ります。** それまで外の口は 403。**無駄撃ちしないこと**
+- **サムネイルは `--video <ID>` で1本だけ押すこと**（50単位）。
+  裸の `--missing` は **158本 ＝ 7,900単位**で、池化と取り合います
+  （2026-09-01 に、一覧が「次に公開される本から順」に並ぶよう直してあるので、
+  途中で切れても先頭から載ります。**それでも枠は 7,900単位 使います**）
+
+**この節は、書いた瞬間から古くなります。** 数字と ID を信じる前に、
+上の1手（`pool_drain.py`・API 0単位）で実物を見ること。
+
+## 止める仕掛けを足さないこと
+
+> **「勝手にそれで止まるのなし。今後そういうことがないようにして」**
+
+止まるのは `.owner-pause` が在るときだけ／印を作るコードは repo に無い／判定は1か所／
+検査は `tests/test_pause_needs_owner.py`。**作りに問題を見つけたら、止めるのではなく直すこと。**
+
+**報告を書かない。承認を求めない。サブの中身は判定しない。**
+**オーナーはスマホしか持っていません。** ターミナルのコマンドを頼まないこと。
+**手順の正本は `docs/trigger_parent.md` 第1節。毎回 読み直すこと。**
