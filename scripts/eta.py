@@ -3145,6 +3145,30 @@ LEVER_FACTOR = 2.0
 #: 5%。**ここを増やすなら、先に軌跡のほうを速くすること。**
 LEVER_BISECT_ITERS = 8
 
+#: **「その腕を無限大にしたら」の代わりに撃つ倍率**（2026-08-31・最適化の回）。
+#:
+#: オーナー規則2 は「**この改善を無限大にしたら、到達日は何日 早まるか。
+#: 答えがゼロなら、そこは律速ではない**」です。`lever_days` は長らく
+#: **天井までしか**解いておらず、天井で届かない腕は全部 `gain_at_cap = 0` の
+#: 同じ字に潰れていました。**「天井が足りないだけの腕」と「無限大でも 0 の腕」が
+#: 見分けられません。** 実測 2026-08-31（`points` 付き ＝ 本番と同じ道）::
+#:
+#:     per_video  天井 ×2.01  → **×17.69 で日付が出る**（天井を ×8.81 上げれば届く）
+#:     sub_rate   天井 ×6.64  → **×7.1e+09 でも出ない**（再生の天井に触らない腕）
+#:     rpm        天井 ×28.05 → **×3.0e+10 でも出ない**（`rpm_mix` の面で頭打ち）
+#:     density    天井 ×1.00  → **×2.1e+09 でも出ない**（1日1本・オーナーの規則）
+#:
+#: **そして画面が名指ししていたのは `rpm` でした** —— 無限大にしても 0日 の腕を、
+#: 直近 **50 ship 連続**で「この回に引く腕」として出し、選んだ **24回の全部**が
+#: 到達日を1日も動かしていません（`data/runs.jsonl`）。規則2 に真正面から反します。
+#:
+#: 1回の解き直しは実測 **0.02秒**なので、4本 × (1 + 14) ＝ **約0.3秒**です。
+LEVER_INF_SCALE = 1e9
+
+#: 天井の上で「日付が出はじめる倍率」を挟み込む回数（`[cap, LEVER_INF_SCALE]` を
+#: **対数で**二分する。線形だと 1e9 の側に寄って、×17.69 を 14回では当てられません）。
+LEVER_NEED_ITERS = 14
+
 #: 到達日を動かしうる腕。**`none`（道具の整備）はここには入りません** ——
 #: 日付を動かさないと自分で言っている腕なので、比べる意味がありません。
 LEVERS = ("per_video", "sub_rate", "rpm", "density")
@@ -3280,6 +3304,41 @@ def lever_days(m: dict, a: dict, pl0: dict, today: date | None = None,
         reachable_at_cap = d_cap < NEVER
         gain_at_cap = (base - d_cap) if reachable_at_cap else 0.0
 
+        # --- **天井で届かない腕を、そこで捨てないこと**（2026-08-31・最適化の回）---
+        #     ここまでで届かなかった腕は `gain_at_cap = 0` に潰れます。
+        #     **「天井が足りないだけ」と「無限大でも 0」は別の話**なので、
+        #     オーナー規則2 のとおり `LEVER_INF_SCALE` で1回 撃って分けます。
+        #     届くなら、`[cap, INF]` を**対数で**挟んで「日付が出はじめる倍率」
+        #     （`need`）と「天井を何倍にすればよいか」（`need_over_cap`）を出す ——
+        #     **これが、次の回が立てるべき前提の大きさそのもの**です。
+        #     **覆る条件**: 倍率と到達日が単調でなくなったら、挟み込みは使えません
+        #     （いまは `plan()` が倍率を天井にしか通さないので単調）。
+        need = need_over_cap = None
+        dead_at_inf = False
+        if not reachable_at_cap:
+            try:
+                _inf_ok = _days(lever, LEVER_INF_SCALE) < NEVER
+            except Exception:                                  # noqa: BLE001
+                _inf_ok = False
+            if _inf_ok:
+                lo2, hi2 = max(cap or 1.0, 1.0), LEVER_INF_SCALE
+                for _ in range(LEVER_NEED_ITERS):
+                    mid = math.sqrt(lo2 * hi2)
+                    try:
+                        ok = _days(lever, mid) < NEVER
+                    except Exception:                          # noqa: BLE001
+                        break
+                    if ok:
+                        hi2 = mid
+                    else:
+                        lo2 = mid
+                need = hi2
+                if cap and cap > 0:
+                    need_over_cap = need / cap
+            else:
+                # **無限大にしても到達日が出ない ＝ 律速ではない**（規則2）。
+                dead_at_inf = True
+
         rows.append({
             "lever": lever,
             "label": LEVER_LABEL[lever],
@@ -3295,6 +3354,11 @@ def lever_days(m: dict, a: dict, pl0: dict, today: date | None = None,
             "gain_at_cap": max(0.0, gain_at_cap),
             "reachable_at_cap": reachable_at_cap,
             "threshold": threshold,
+            # **天井の上まで見た結果**（2026-08-31）。`reachable_at_cap` が真の
+            # 回は測りません（もう届いているので、上を探す意味がありません）。
+            "need": need,                    # 日付が出はじめる倍率（天井の上）
+            "need_over_cap": need_over_cap,  # 天井を何倍にすれば届くか
+            "dead_at_inf": dead_at_inf,      # **無限大でも 0日 ＝ 律速ではない**
         })
     # **並べ替えは「引けるところまで引いた実力」で。**
     #     同じ倍率の `gain` は、`factor` が合格点に足りない回は4本とも 0 になり、
@@ -6144,6 +6208,54 @@ def plan(m: dict, a: dict, density: int = PLAN_PUBLISH_PER_DAY,
             out["lever_measured"] = best["lever"]
             out["lever_hint_binding"] = out["lever_hint"]
             out["lever_hint"] = best["lever"]
+        else:
+            # --- **上書きが1本も立たなかった回**（2026-08-31・最適化の回）---
+            #
+            #     この状態は、上の注記が「**黙って戻さないこと**」と書いた
+            #     まさにその状態です。**黙って戻っていました。**
+            #     `_key` の fallback（`gain_at_cap` → `gain`）は「天井が
+            #     測れていない回」しか救いません。**4本とも `reachable_at_cap`
+            #     が偽の回は、`gain` も4本とも 0** なので `best[_key] > 0` が
+            #     偽になり、`lever_hint` は 5885行付近の**決め打ちの診断名**
+            #     （`d_revenue >= NEVER` → `"rpm"`）のまま画面へ出ます。
+            #
+            #     **実測 2026-08-31（`points` 付き ＝ 本番と同じ道）**::
+            #
+            #         per_video  天井 ×2.01  → **×17.69 で出る**（天井 ×8.81 上げ）
+            #         sub_rate   天井 ×6.64  → **×7.1e+09 でも出ない**
+            #         rpm        天井 ×28.05 → **×3.0e+10 でも出ない**
+            #         density    天井 ×1.00  → **×2.1e+09 でも出ない**
+            #
+            #     `data/eta.jsonl` は `arm_reaches` 0/4 を **92/278行（33%）**で
+            #     積んでいましたが、**それを読んで名指しを疑う側が居ませんでした。**
+            #     `data/runs.jsonl` では `lever_hint` が直近 **50 ship 連続で
+            #     `rpm`**、その `rpm` を選んだ **24回の全部**が到達日を1日も
+            #     動かしていません。**無限大にしても 0日 の腕を、50回 名指しして
+            #     いた**ということです —— オーナー規則2 に真正面から反します。
+            #
+            #     だから、天井で届かない回は**天井の上まで見て**選び直します。
+            #     選ぶのは「**天井を何倍にすれば届くか**（`need_over_cap`）が
+            #     いちばん小さい腕」＝ **いちばん安く壊せる天井**です。
+            #     それは同時に「次の回が立てるべき前提」そのものになります。
+            #
+            #     **覆る条件**: `reachable_at_cap` が1本でも真に戻れば上の
+            #     `if` が立ち、この枝は自分で消えます。**定数は持ちません。**
+            _alive = [r for r in _rows if r.get("need_over_cap")]
+            out["lever_all_dead"] = bool(_rows) and not any(
+                r.get("reachable_at_cap") for r in _rows)
+            out["lever_dead_at_inf"] = tuple(
+                r["lever"] for r in _rows if r.get("dead_at_inf"))
+            if _alive:
+                _pick = min(_alive, key=lambda r: r["need_over_cap"])
+                out["lever_chosen_by"] = "need_over_cap"
+                out["lever_measured"] = _pick["lever"]
+                out["lever_hint_binding"] = out["lever_hint"]
+                out["lever_hint"] = _pick["lever"]
+                out["lever_need"] = _pick["need"]
+                out["lever_need_over_cap"] = _pick["need_over_cap"]
+            else:
+                # **1本も、無限大でも届かない。** 腕の名前を出してはいけません。
+                out["lever_hint_measured"] = False
     # --- **名指しした腕の測定が、もう予約済みの本で答えが返る回がある** ---
     #     （2026-08-26 に踏んだ。**この道具が自分と食い違っていました**）
     #
@@ -7345,6 +7457,40 @@ def headline(pl: dict, prev: dict | None = None,
                + (f"（**軌跡が名指し**。床の名前は `{pl['lever_hint_binding']}` ですが、"
                   "それは診断であって、引いて何日縮むかは言っていません）"
                   if pl.get("lever_from") == "軌跡" and not _paused_gate else ""))
+    # --- **その名前が、測って出たものかどうか**（2026-08-31・最適化の回に足した）---
+    #     上の行は `lever_hint` を「引く腕」として出しますが、`plan()` の
+    #     上書きが立たなかった回の `lever_hint` は **5885行の決め打ちの診断名**
+    #     です（`d_revenue >= NEVER` → `"rpm"`）。**同じ字で出るので見分けが
+    #     つきません。** 見分けが付かないまま、直近50 ship 連続で `rpm` が出て、
+    #     選んだ24回の**全部**が到達日を1日も動かしませんでした。
+    #     **この行は、その差を頭の3行に出します。**（`plan()` の注記に実測）
+    _dead_inf = pl.get("lever_dead_at_inf") or ()
+    if _dead_inf:
+        out.append(
+            f"{bar} [!] **無限大にしても到達日が 0日 しか動かない腕が"
+            f" {len(_dead_inf)}本 あります: "
+            + "／".join(f"`{k}`" for k in _dead_inf)
+            + "**（この回に `×10^9` まで撃って確かめた。オーナー規則2:"
+              " **ゼロなら、そこは律速ではない**）。**引かないこと。**")
+    if pl.get("lever_chosen_by") == "need_over_cap":
+        _n, _noc = pl.get("lever_need"), pl.get("lever_need_over_cap")
+        out.append(
+            f"{bar}   → **引けるのは `{pl['lever_hint']}` だけです。**"
+            + (f" 日付が出はじめるのは **×{_n:.2f}**、いまの天井は"
+               f" **×{(_n / _noc):.2f}** —— つまり"
+               f" **天井そのものを ×{_noc:.2f} 上げないと、この腕でも出ません。**"
+               if isinstance(_n, (int, float)) and isinstance(_noc, (int, float))
+                  and _noc else "")
+            + " ＝ **この回に立てるべき前提は「その天井は天井ではない」**"
+              "（`config/hypotheses.yaml`）。**腕の値を動かす手では出ません。**")
+    elif pl.get("lever_hint_measured") is False:
+        out.append(
+            f"{bar} [!] **その `{pl['lever_hint']}` は、測って出た名前ではありません。**"
+            " 4本とも**天井まで引いても、`×10^9` まで引いても**日付が出ません"
+            "（`arm_reaches` 0/4・`dead_at_inf` 4/4）。"
+            " 上の名前は `plan()` の**決め打ちの診断名**が残ったものです ——"
+            " **`--lever` をこれに合わせないこと。**"
+            " この回の `lever_followed` は意味を持ちません。")
     # --- **`per_video` の天井から `rpm` へ逃がすとき、逃げ先が測れているか** ---
     #     （2026-08-31・最適化の回に足した。**API 0単位**）
     #
@@ -9230,6 +9376,28 @@ def _row(m: dict, a: dict, pl: dict, tr: dict | None, sup: dict | None) -> dict:
     if _ld:
         row["arm_reaches"] = {r["lever"]: bool(r.get("reachable_at_cap")) for r in _ld}
         row["arm_threshold"] = {r["lever"]: r.get("threshold") for r in _ld}
+    # --- **`lever_hint` が測定か決め打ちかを、行にも残す**（2026-08-31）---
+    #     `arm_reaches` が 0/4 の行は既に積まれていましたが、**それを読んで
+    #     `lever_hint` を疑う側が居ませんでした** —— `src/levers.py` の
+    #     `arm_state()` は `reaches` を「腕ごとの生死」にしか使わず、
+    #     `run_marker.py` は `lever_followed = (lever == hint)` を素通しで
+    #     残します。実測 08/31: `arm_reaches` 0/4 の行が **92/278（33%）**、
+    #     そのあいだ `lever_hint` は決め打ちの `rpm` を出し続けました。
+    #     **この2欄で、読む側が名指しを外せます。**
+    if pl.get("lever_all_dead"):
+        row["lever_all_dead"] = True
+    if pl.get("lever_dead_at_inf"):
+        row["arm_dead_at_inf"] = list(pl["lever_dead_at_inf"])
+    if pl.get("lever_hint_measured") is False:
+        row["lever_hint_measured"] = False
+    if pl.get("lever_chosen_by") == "need_over_cap":
+        row["lever_chosen_by"] = "need_over_cap"
+        row["lever_need"] = pl.get("lever_need")
+        row["lever_need_over_cap"] = pl.get("lever_need_over_cap")
+    if _ld:
+        row["arm_need_over_cap"] = {
+            r["lever"]: (None if r.get("need_over_cap") is None
+                         else round(float(r["need_over_cap"]), 3)) for r in _ld}
     # **「凍らせたら何日 遠のくか」も積む**（2026-08-26）。
     #     `arm_reaches` だけを読むと、`drift.py` はその腕を「引き代なし」に
     #     数えます。**十分でないことと、要らないことは別**なので、
