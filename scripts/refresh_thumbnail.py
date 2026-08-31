@@ -85,6 +85,103 @@ def main(topic: str, video_id: str, theme_index: int) -> int:
     return 0
 
 
+#: 控えに公開時刻の無い本を、いちばん後ろへ送るための番兵（秒）。
+_FAR_SECONDS = float("inf")
+
+
+def publish_times() -> dict:
+    """**本ID → 予定の公開時刻**（控えだけ・**API 0単位**）。
+
+    `_ledger_ahead()` は時刻の一覧しか返しません（門が本数だけ見るので足りていた）。
+    **どの本がいつ出るか**が要るのは `order_by_publish()` です。
+    """
+    from datetime import datetime, timezone
+
+    from src import dupes as _dupes
+
+    out: dict = {}
+    for r in _dupes.ledger_rows():
+        at, vid = r.get("at"), r.get("id")
+        if not at or not vid:
+            continue
+        try:
+            t = datetime.fromisoformat(str(at).replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        if t.tzinfo is None:
+            t = t.replace(tzinfo=timezone.utc)
+        out[vid] = t
+    return out
+
+
+def order_by_publish(rows: list[dict], times: dict | None = None,
+                    now=None) -> list[dict]:
+    """**まだ出ていない本を先に、公開の早い順**に並べ替える（API 0単位）。
+
+    ## なぜ足したか（2026-09-01）
+
+    `critique_queue.missing_thumbnail()` は `sorted(STASH.glob("*.json"))` ——
+    **本IDのアルファベット順**です。公開時刻とは何の関係もありません。
+
+    **押しきれずに止まる回のほうが、押しきる回より多い**（この輪には
+    `day_quota()` ／ `thumbnail_yield_to_schedule()` ／ `reserve_hold()` の
+    3つの門があり、輪の**中**でも毎本 訊きます）。
+    **途中で止まる前提の輪が、順番を持っていませんでした。**
+
+    実測 2026-09-01: 控えに **158本**（7,900単位）。日枠は 10,000単位/日 で、
+    同じ枠を池化（`scripts/pool_drain.py`・残り 13,617単位）と取り合っています。
+    **どこで切れても、次に公開される本から順に載っている**のが正しい形です。
+
+    **これは止める仕掛けではありません。** 押す本数も、押す条件も変えません
+    —— **順番だけ**です（`CLAUDE.md`「作りに問題を見つけたら、止めるのではなく
+    直すこと」）。
+
+    **`--video` の1本絞りは、この上に残ります。** あちらは
+    「いちばん急ぐ1本を、取り合いに負けさせない」ための手で、
+    **こちらは絞らなかった回のための順番**です。片方だけでは足りません ——
+    `--video` は**撃つ側が思い出したときにしか効かない**からです
+    （`batch_build.slots()`「人の記憶と手写しに依存する門は、この輪では毎回落ちる側」）。
+
+    ## **順は3段です。「公開の早い順」ひとつでは足りません**
+
+        1. **まだ出ていない本**  …… 公開の**早い順**
+        2. **もう出た本**        …… 公開の**新しい順**
+        3. 控えに時刻の無い本    …… 最後
+
+    **1 と 2 を1本の物差しで並べると、2 が先に来ます**（過去のほうが早い）。
+    それは逆です —— **サムネイルは、公開の山が来る前に載っていないと効きません。**
+
+    `src/settle.py` の実測: ショートは **48時間で伸びきり**（96.2%）、
+    長尺も 96時間で 62.5%。**3日前に出た本の山は、もう終わっています。**
+    まだ出ていない本は**一生ぶんが丸ごと先**にあり、
+    出た本は**残りだけ**です。だから 2 の中も**新しい順**（山が残っている順）。
+
+    実測 2026-09-01: 控えの 158本 のうち、**130本 は控えに時刻があり、
+    そのほとんどが未来**（09/14〜09/28）。**古い順に並べると、
+    もう山の終わった 08/28 の本から押し始めます。**
+
+    **覆る条件**: `missing_thumbnail()` 自身が公開時刻を持つようになったら、
+    並べ替えはあちらへ移すこと（**2か所で並べないこと**）。
+    そして `settle` が「長尺は何日たっても伸びる」と出し直したら、
+    2段目の向きを見直すこと（そのときは古い本にもまだ山が残っている）。
+    """
+    import datetime as _dt
+
+    times = publish_times() if times is None else times
+    now = now or _dt.datetime.now(_dt.timezone.utc)
+
+    def key(r: dict):
+        t = times.get(r.get("video_id"))
+        if t is None:
+            return (2, _FAR_SECONDS)
+        d = (t - now).total_seconds()
+        if d > 0:
+            return (0, d)          # まだ出ていない → 早い順
+        return (1, -d)             # もう出た → 新しい順（-d が小さいほど新しい）
+
+    return sorted(rows, key=key)
+
+
 def _ledger_ahead() -> list:
     """これから公開される予定時刻（控えだけ・**API 0単位**）。"""
     from datetime import datetime, timezone
@@ -173,6 +270,12 @@ def push_missing(dry_run: bool = False, force: bool = False,
     if not rows:
         print("[thumb] サムネイルの載っていない本はありません")
         return 0
+
+    # **公開が早い順に押すこと**（2026-09-01 に足した。`order_by_publish()` に理由）。
+    # この輪は**途中で止まる前提**（門が3つ・輪の中でも毎本 訊く）なのに、
+    # 一覧は**本IDのアルファベット順**でした。どこで切れても、
+    # **次に公開される本から順に載っている**のが正しい。
+    rows = order_by_publish(rows)
 
     # **1本だけ押す道**（2026-08-31 22:xx に足した）。
     #

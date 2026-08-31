@@ -18,6 +18,8 @@ import importlib.util
 import sys
 from pathlib import Path
 
+import statistics
+
 import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -288,10 +290,77 @@ def test_no_back_catalogue(m):
         f"古い本が回り始めました（齢 {dec['guard_ages']} の最大 "
         f"{dec['old_max_median']} 回/日）。**後ろカタログができています** —— "
         "恒等式が成り立たなくなるので、軌跡を組み直すこと")
-    assert dec["frac24_median"] >= traj.BACK_CATALOGUE_MIN_FRAC24, (
-        f"生涯再生のうち24時間以内が {dec['frac24_median']:.1%} まで落ちました。"
-        "**後ろが太っています** —— 軌跡に減衰項が要ります")
-    assert dec["back_catalogue"] is False
+
+    # **2026-09-01: ここから下は「無いこと」ではなく「応えたこと」を見ます。**
+    #
+    # 実測でこの検査は赤でした —— 24時間以内 **92.7%**（門は 95%）。
+    # 赤の文面が **「軌跡に減衰項が要ります」** で、**その項が無かった**のが
+    # 本当の欠陥です。オーナーの言（2026-09-01・原文）:
+    #
+    #   **門を下げて緑にしないこと** —— それは信号を消すことです。**要るのは減衰の項です。**
+    #
+    # だから `BACK_CATALOGUE_MIN_FRAC24` は 1文字も触っていません
+    # （下の `test_the_back_catalogue_gate_is_never_lowered` が下げるのを禁じます）。
+    # **門は鳴ったままで正しい。**変えたのは、鳴っているときに何を要求するかです。
+    if dec["frac24_median"] < traj.BACK_CATALOGUE_MIN_FRAC24:
+        assert dec.get("term_ok"), (
+            f"生涯再生のうち24時間以内が {dec['frac24_median']:.1%} まで落ちたのに、"
+            f"**減衰項が出ていません**（{dec.get('term_why')}）。"
+            "**門を下げて逃げないこと** —— 要るのは項のほうです（`traj.decay_term()`）")
+        # 項は「24時間より後にも来る」を実際に運んでいること。
+        # 1.0 のままなら、名前だけあって中身が無いのと同じです。
+        assert dec["frac24_curve"] < 1.0, (
+            "減衰項が『24時間で全部 来る』と言っています ——"
+            "上の実測（24時間以内 %.1f%%）と食い違っています" % (dec["frac24_median"] * 100))
+        assert traj.uncensor(dec, 0.0) > 1.0, (
+            "24時間の読みを直す倍率が 1.0 です（補正になっていません）")
+    else:
+        assert dec["back_catalogue"] is False
+
+
+def test_the_back_catalogue_gate_is_never_lowered():
+    """**門を下げて緑にしないこと。**（オーナーの言・2026-09-01）
+
+    > 門を下げて緑にしないこと —— それは信号を消すことです。**要るのは減衰の項です。**
+
+    上の `test_no_back_catalogue` は「後ろカタログが**在る**」回でも通るように
+    直しました（項を出せば通る）。**その直しの代償が、この検査です** ——
+    門そのものを下げる道は、ここで閉じてあります。
+
+    **覆る条件**: 後ろカタログが本当に無くなって（frac24 が 95% を超えて）、
+    かつ**この門を上げたい**とき。**下げる向きに動かす理由は在りません** ——
+    下げると、`decay_term()` を出さないまま緑になります。
+    """
+    assert traj.BACK_CATALOGUE_MIN_FRAC24 >= 0.95, (
+        "後ろカタログの門が下がっています。**信号を消さないこと** ——"
+        "赤いなら `traj.decay_term()` の側を直すこと")
+
+
+def test_the_decay_term_is_actually_used(m):
+    """**項を出しただけで終わらせないこと。** `per_video()` が実際に掛けていること。
+
+    2026-09-01 まで `per_video()` は「齢 `MATURE_AGE_DAYS` 以上なら一生ぶん」と
+    読んでいました（`MATURE_AGE_DAYS` の註の「**98.4% が24時間以内なので余裕**」が
+    根拠。**その 98.4% は、いま 92.7%**）。
+
+    **飾りの項を置いて緑にする道**は、ここで閉じてあります。
+    """
+    vs = traj.videos()
+    term = traj.decay_term(traj.decay_curve(vs))
+    if not term.get("term_ok"):
+        pytest.skip("減衰項が出せない標本です（`term_why` が理由を言っています）")
+    mature = [v for v in vs.values() if v["age"] >= traj.MATURE_AGE_DAYS]
+    if not mature:
+        pytest.skip("齢のそろった本がありません")
+    raw = statistics.mean([v["term"] for v in mature])
+    got = m["per_video"]["mean"]
+    assert got >= raw, (
+        f"打ち切りを直したのに V が減っています（生 {raw:.1f} → {got:.1f}）")
+    # 齢の若い本が1本でも標本に居れば、必ず**上に**動きます。
+    if any(v["age"] < term["last_age"] for v in mature):
+        assert got > raw, (
+            f"齢 {term['last_age']}日 未満の本が標本に居るのに、V が1回も動いていません"
+            f"（{raw:.1f} → {got:.1f}）。項が掛かっていません")
 
 
 def test_back_catalogue_guard_ignores_a_thin_tail_bucket():
