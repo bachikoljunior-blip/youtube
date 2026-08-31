@@ -1172,6 +1172,16 @@ def _measure() -> dict:
     long_mean = round(sum(long_sorted) / len(long_sorted)) if long_sorted else None
     live_vals = live_band_views(per_video)
     live_mean = round(sum(live_vals) / len(live_vals)) if live_vals else None
+    # **規則の公開密度で測った1本あたり再生**（2026-08-31 に足した・`src/rule_per_video.py`）。
+    # 上の `live_mean` は「再生が付く帯に居た本」で絞りますが、**その日に何本 出したか**
+    # では絞りません。標本の 90% は「同じ日に 3〜21本 出した日」の本で、
+    # **規則（`house_rule.PUBLISH_PER_DAY = 1`）と単位が合っていません。**
+    # `None` ＝ 規則の密度で測れない／弾力性の区間が 0 をまたぐ。**その回は前の式に落ちます。**
+    try:
+        from src import rule_per_video as _rule_pv
+        rule_mean = _rule_pv.per_video()
+    except Exception:
+        rule_mean = None
 
     def row(rows, i):
         return rows[0][i] if rows else 0
@@ -1196,6 +1206,10 @@ def _measure() -> dict:
         # `None` ＝ 帯が引けなかった（`data/uploaded.jsonl` が無い等）。**その回は前の式に落ちます。**
         "views_per_video_live": live_mean,
         "videos_live_28d": len(live_vals) if live_vals else 0,
+        # **規則と同じ公開密度の日だけで測った平均**（`src/rule_per_video.py`）。
+        # **これが在るときは、天井の分子はこちらを使います** —— 掛ける本数が
+        # 1本/日 なら、掛けられる1本あたりも 1本/日 の日の数でなければ単位が合いません。
+        "views_per_video_rule": rule_mean,
         # **長尺だけの1本あたり再生**（`None` ＝ 直近28日に長尺の再生が1本も無い）
         "long_per_video": long_mean,
         "long_median_per_video": long_median,
@@ -1222,16 +1236,36 @@ def _per_video(m: dict) -> float:
     `1本あたり再生 × 再生が付く上限（10本/日） × 30日` なので、
     **上限を超えて死んだ本を分母にも入れると、同じ死を2回 引きます。**
 
-    落ちる先は2段:
+    落ちる先は4段:
 
-        views_per_video_live  帯の中だけの平均（**この点から既定**）
+        views_per_video_rule  **規則と同じ公開密度の日だけ**の平均（2026-08-31 から既定）
+        views_per_video_live  帯の中だけの平均（2026-08-29 からの既定）
         views_per_video       帯を引けなかった点・2026-08-29 より前の点
         median_views_per_video  `views_per_video` も無い古い点（8点目まで）
+
+    **なぜ `_rule` が `_live` より先か**（2026-08-31・`src/rule_per_video.py`）。
+    `live_band_views` は「再生が付く帯に居た本」で絞りますが、
+    **その日に何本 出したか**では絞りません。標本 156本 の **90%** は
+    「同じ日に 3〜21本 出した日」の本です。天井の掛け算は
+
+        1本あたり再生 × **1本/日（規則）** × 30日
+
+    なので、**掛ける本数が 1本/日 なら、掛けられる1本あたりも
+    1本/日 の日の数でなければ単位が合いません。**
+    実測（日が単位・n=25日）: 1〜2本/日 の 12日 は **942.1回**、
+    3本以上/日 の 13日 は 212回（中央値）。弾力性 **-0.604**・t=-4.00・
+    95% [-0.900, -0.308] ＝ **0 をまたぎません**。
+
+    **またぐ回は `rule_per_video.per_video()` が `None` を返し、`_live` へ落ちます。**
+    落ちたことは `lines()` の節に出るので、**黙って入れ替わりません。**
 
     **無い点を 0 と読むと、差の節が「1,092 → 0」＝ -100% と印字します**ので、
     落ちる先を中央値に置いています。**中央値は上振れ側**なので、
     古い点との差は「縮んだ」側に寄って見えることに注意すること。
     """
+    rule = m.get("views_per_video_rule")
+    if rule:
+        return rule
     live = m.get("views_per_video_live")
     if live:
         return live
@@ -2041,7 +2075,15 @@ def report(m: dict, a: dict) -> list[str]:
     P(f"  登録率            {a['sub_rate']*100:>10.4f} %   ＝ 再生 {1/a['sub_rate']:,.0f} 回につき1人" if a["sub_rate"] else "  登録率            **0** ＝ 何回再生されても増えていない")
     P(f"  長尺の視聴時間    {m['long_hours_365']:>10,.1f} 時間（直近365日。門は {LONG_HOURS_GATE:,}）")
     P(f"  ショート90日      {m['shorts_views_90d']:>10,} 回（門は {SHORTS_VIEWS_GATE:,}）")
-    if m.get("views_per_video_live"):
+    if m.get("views_per_video_rule"):
+        P(f"  1本あたり再生     {a['per_video_now']:>10,.0f} 回（**ショート**・**平均**・"
+          f"**規則と同じ公開密度（{PLAN_PUBLISH_PER_DAY}本/日）の日だけ**）")
+        if m.get("views_per_video_live"):
+            P(f"    （その日の本数で絞らない平均は {m['views_per_video_live']:,} 回"
+              f"／帯の中 {m.get('videos_live_28d', 0)} 本。**天井には規則の密度のほうを使います** ——"
+              " 掛ける本数が 1本/日 なら、掛けられる1本あたりも 1本/日 の日の数でなければ"
+              "**単位が合いません**。`src/rule_per_video.py` に実測）")
+    elif m.get("views_per_video_live"):
         P(f"  1本あたり再生     {a['per_video_now']:>10,} 回（**ショート**・**平均**・"
           f"**再生が付く帯に居た {m.get('videos_live_28d', 0)} 本**）")
         P(f"    （帯の外まで入れた平均は {m['views_per_video']:,} 回／{m['videos_with_views_28d']} 本。"
@@ -2059,6 +2101,20 @@ def report(m: dict, a: dict) -> list[str]:
     else:
         P(f"  1本あたり再生（長尺）{a['long_per_video']:>10,} 回（平均・n={a['long_videos_28d']}・合計 {a['long_views_28d']:,}回）"
           f"  ← ショートの **1/{(a['per_video_now'] / a['long_per_video']):,.0f}**")
+    # **規則の密度で測り直した節**（2026-08-31・`src/rule_per_video.py`・API 0単位）。
+    # **落ちた回にも出します** —— 黙って入れ替わらないため。
+    try:
+        from src import rule_per_video as _rule_pv
+        _e = _rule_pv.estimate()
+        if _e.get("ok"):
+            P("")
+            for _ln in _rule_pv.lines(_e):
+                P(_ln)
+            if not _e.get("significant"):
+                P("    → **区間が 0 をまたぐので、分子は動かしていません**"
+                  "（`views_per_video_live` のままです）")
+    except Exception:
+        pass
     P("")
     P("--- 門を1つずつ当てる（**最初に落ちるものが、いまの律速**）---")
     P(f"  [門1] 登録者 {SUBS_GATE:,}人      {_fmt_days(a['days_subs'])}")
