@@ -258,14 +258,34 @@ class _Args:
 
 
 def test_穴の空かない詰め方を道具の側が名指しする():
-    """**増やすと消える**ので、人の直感（減らす）と逆向きです。"""
+    """**増やすと消える**ので、人の直感（減らす）と逆向きです。
+
+    ## 割り当てを組み直さないこと（2026-09-01 に直した。**赤が3回 持ち越された**）
+
+    ここは長らく `suggest_max_days()` の**数だけ**を受け取り、`compact_plan` を
+    自分で組み直していました。その数の保証は
+    「**探索と同じ引数で組み立てたなら**穴が空かない」であって、数そのものでは
+    ありません。探索は `live_edge_min=_live_edge_min(...)` を渡しますが、
+    ここは渡していませんでした。
+
+    **2026-08-31 に規則（1日1本）が入るまでは、たまたま同じ形でした** ——
+    上限10本のとき `_live_edge_min(9, 60)` は 9:00〜13:00 で、`until_hour=11` と
+    枠の数が重なるからです。規則で上限が 1本 になった瞬間、生きる帯は
+    **9:00 の1枠**へ縮み、こちらは 3枠/日 のまま。**同じ数で別の割り当てになり、
+    赤が出ました**（11時間・3周 持ち越し）。
+
+    直し方は「検査の引数を合わせる」ではありません（次に引数が増えた回に
+    また落ちます）。**検証ずみの割り当てを返す口** `suggest_compact()` を足して、
+    組み直す道を消しました。
+    """
     rows = [_row(f"v{i}", f"2026-08-{19 + i:02d}T09:00") for i in range(12)]
-    hint = reschedule.suggest_max_days(rows, NOW, _Args(2), ceiling=20,
-                                       window=EMPTY)
+    hint, plan = reschedule.suggest_compact(rows, NOW, _Args(2), ceiling=20,
+                                            window=EMPTY)
     assert hint is not None
-    plan = reschedule.compact_plan(rows, now=NOW, step_min=60, hour=9, until_hour=11,
-                                   max_days=hint, window=EMPTY)
     assert reschedule.hole_days(rows, plan, NOW) == []
+    # **数だけの口も残しますが、同じ答えであること**（呼び側の逃げ道）
+    assert reschedule.suggest_max_days(rows, NOW, _Args(2), ceiling=20,
+                                       window=EMPTY) == hint
 
 
 def test_撃ち切れない回は途中の姿の穴も数えられる():

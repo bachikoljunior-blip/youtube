@@ -1194,10 +1194,65 @@ def hole_days(rows: list[dict], plan: list[dict], now: datetime) -> list[str]:
     return holes
 
 
+def suggest_compact(rows: list[dict], now: datetime, args, *,
+                    ceiling: int = 40, start: int | None = None,
+                    window: tuple[str, str] | None = None
+                    ) -> tuple[int | None, list[dict]]:
+    """**穴が空かない `--max-days` と、その日数で作った割り当て**を一緒に返す。
+
+    ## なぜ数だけ返してはいけなかったか（2026-09-01・**赤が3回 持ち越された**）
+
+    `suggest_max_days()` は **`md` という数だけ**を返します。その数が持っている
+    保証は「**この関数と同じ引数で組み立てた割り当てなら**穴が空かない」であって、
+    数そのものではありません。だから呼ぶ側が1つでも違う引数で組み直すと、
+    **保証の付いていない割り当てが「保証つき」の顔で出てきます。**
+
+    実際そうなりました。ここは `live_edge_min=_live_edge_min(...)` を渡して
+    検証しますが、`tests/test_reschedule_compact.py` の
+    `test_穴の空かない詰め方を道具の側が名指しする` は渡さずに組み直しています。
+    **2026-08-31 に規則（1日1本）が入るまでは、たまたま同じ形でした** ——
+    `_live_edge_min(9, 60)` は上限10本なら 9:00〜13:00、検査の
+    `until_hour=11` と重なるので**枠の数が一致していた**からです。
+    規則が入って上限が 1本 になった瞬間、生きる帯は **9:00 の1枠だけ**に縮み、
+    検査の側は 3枠/日 のまま。**同じ `md` で別の割り当てになり、赤が出ました。**
+
+    「検査を直す」で閉じると、**次に引数が1つ増えた回にまた同じ所へ落ちます**
+    （この repo の最多の壊れ方 ——「言っている所と、している所が別」）。
+    だから**検証した割り当てそのものを返す**形にします。組み直す道が無ければ、
+    ずれようがありません。
+
+    `suggest_max_days()` は数だけを見たい呼び側のために残しますが、
+    **撃つ／数えるために使う割り当ては、必ずこちらの2つ目の返りを使うこと。**
+
+    **覆る条件**: `compact_plan` が純関数でなくなったら（外の計器を読み始めたら）、
+    返した割り当ても時間で腐ります。そのときは「返り値」ではなく
+    「組み立てる関数1つ」を渡す形へ替えること。
+    """
+    first = args.max_days if start is None else start
+    for md in range(first, ceiling + 1):
+        try:
+            plan = compact_plan(rows, now=now, step_min=args.step_min, hour=args.hour,
+                                until_hour=args.until_hour, max_days=md,
+                                lead_min=args.lead_min, window=window,
+                                live_edge_min=_live_edge_min(args.hour, args.step_min))
+        except SystemExit:
+            continue
+        if hole_days(rows, plan, now):
+            continue
+        _, days = _horizon(rows, plan, now)
+        if days >= args.min_days:
+            return md, plan
+    return None, []
+
+
 def suggest_max_days(rows: list[dict], now: datetime, args, *,
                      ceiling: int = 40, start: int | None = None,
                      window: tuple[str, str] | None = None) -> int | None:
-    """**穴が空かない `--max-days`** を探して返す（見つからなければ None）。
+    """**穴が空かない `--max-days`** を返す（見つからなければ None）。
+
+    **割り当ても要るなら `suggest_compact()` を使うこと。** ここが返すのは数だけで、
+    その数の保証は「`suggest_compact` と同じ引数で組み立てたなら」が付きます
+    （組み直してずれた実例は `suggest_compact` の docstring）。
 
     純関数を回すだけなので API は 0単位です。**人に「減らすか増やすか」を
     考えさせないため**に、道具の側で答えまで出します（穴は `--max-days` を
@@ -1214,21 +1269,9 @@ def suggest_max_days(rows: list[dict], now: datetime, args, *,
     3件落ちました（`v2` の置き先が窓の中だったので `None` しか返せなくなった）。
     **検査の日付を動かして直すと、次に窓が増えた回にまた落ちます。**
     """
-    first = args.max_days if start is None else start
-    for md in range(first, ceiling + 1):
-        try:
-            plan = compact_plan(rows, now=now, step_min=args.step_min, hour=args.hour,
-                                until_hour=args.until_hour, max_days=md,
-                                lead_min=args.lead_min, window=window,
-                                live_edge_min=_live_edge_min(args.hour, args.step_min))
-        except SystemExit:
-            continue
-        if hole_days(rows, plan, now):
-            continue
-        _, days = _horizon(rows, plan, now)
-        if days >= args.min_days:
-            return md
-    return None
+    md, _plan = suggest_compact(rows, now, args, ceiling=ceiling, start=start,
+                                window=window)
+    return md
 
 
 def _compact(args) -> int:
@@ -1250,20 +1293,27 @@ def _compact(args) -> int:
         raise SystemExit("控え（data/uploaded.jsonl）に予約の行がありません")
     _say_conflicts(rows)
     now = datetime.now(timezone.utc)
+    edge = _live_edge_min(args.hour, args.step_min)
+    plan = None
     if args.max_days is None:
         args.max_days = DEFAULT_MAX_DAYS
-        found = suggest_max_days(rows, now, args, start=DEFAULT_MAX_DAYS)
+        # **数だけでなく、検証ずみの割り当てを受け取ること**（2026-09-01）。
+        #     組み直すと、`suggest_*` が付けた「穴は空きません」の保証が外れます
+        #     （実例は `suggest_compact` の docstring —— 規則が 1本/日 になった日に
+        #     `live_edge_min` が縮み、組み直した側だけ穴が出た）。
+        found, found_plan = suggest_compact(rows, now, args, start=DEFAULT_MAX_DAYS)
         if found is not None and found != DEFAULT_MAX_DAYS:
             print(f"[compact] **--max-days を {DEFAULT_MAX_DAYS} → {found} に上げました**"
                   f"（穴の空かない最小の日数。API 0単位で数え直した結果）")
         if found is not None:
             args.max_days = found
+            plan = found_plan
         # 見つからなかったときは床のまま進みます。
         # **下の穴の節が、そのまま「どれだけ増やしても埋まりません」と言います。**
-    edge = _live_edge_min(args.hour, args.step_min)
-    plan = compact_plan(rows, now=now, step_min=args.step_min, hour=args.hour,
-                        until_hour=args.until_hour, max_days=args.max_days,
-                        lead_min=args.lead_min, live_edge_min=edge)
+    if plan is None:
+        plan = compact_plan(rows, now=now, step_min=args.step_min, hour=args.hour,
+                            until_hour=args.until_hour, max_days=args.max_days,
+                            lead_min=args.lead_min, live_edge_min=edge)
     where, days = _horizon(rows, plan, now)
     per_day: dict[str, int] = defaultdict(int)
     for p in plan:
