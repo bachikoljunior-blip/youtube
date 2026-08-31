@@ -2736,6 +2736,16 @@ def _print_missing_thumbnails() -> None:
                   " 順番が逆だと、投稿が単位を使い切って**この一覧は永久に減りません。**")
     except Exception as exc:                                   # noqa: BLE001
         print(f"  （単位枠の状態が読めません: {str(exc)[:60]}）")
+    # **「尽きている」の次に要るのは「何が使ったか」です**（2026-08-31 に足した）。
+    # `day_quota()` が言えるのは「403 を N回 見た」だけで、**消費の帳面ではありません。**
+    # 投稿0本の日に `descriptions --refresh` が `quotaExceeded` で 0/735本 になった回が
+    # あり、原因を指せる行がこの出力に1つもありませんでした（`src/quota_ledger`）。
+    try:
+        from src import quota_ledger as _ql
+
+        print(_ql.render())
+    except Exception as exc:                                   # noqa: BLE001
+        print(f"  （消費の帳面が読めません: {str(exc)[:60]}）")
     print("  潰したら `run_marker.py --ship ... --closes missing_thumbnail`。")
 
 

@@ -301,6 +301,40 @@ def _durations() -> dict[str, float]:
     return out
 
 
+def _k_reveal_hold_arm(p: dict) -> Gauge:
+    """**「完成形の保持」で比べられる本**（`src/reveal_hold`）。両群の少ないほう。
+
+    ## なぜ `published_count` では足りないのか（2026-08-31 に測って足した）
+
+    すぐ下の `_k_published_count()` は**公開日**で数えます。ところがこの前提の
+    処置群を決めているのは**作った時刻**（`uploaded_at`）で、予約は 5〜6週 先まで
+    入っているので、**08/27 以降に公開された本の大半は、それ以前に作った本**です。
+
+    実測 2026-08-31 —— この待ちは「**満ちました（17 / 16）**」と出ていましたが、
+
+        公開日で数えた（この待ちの前の数え方）        **17**
+        作った時刻で割った処置群・本で畳んで          **11**
+        うちショート（長尺は `reveal_variants` を通らない） **8**
+        齢48時間 を超えた ＝ `falsified_if` が比べられる  **1**
+
+    **満ちていません。** 満ちた待ちは `status.py` が `[!]` で出し、Stop フックが
+    引き止めるので、**「判定しろ」と毎周 押し続けていました。**
+    `config/hypotheses.yaml` の `count_expr` も同じ日に同じ理由で直しています。
+    """
+    if str(ROOT) not in sys.path:
+        sys.path.insert(0, str(ROOT))
+    from src import reveal_hold                                # noqa: PLC0415
+
+    both = reveal_hold.comparable()
+    now = min(len(both["処置"]), len(both["対照"]))
+    ready = reveal_hold.next_ready(int(p.get("need") or 16))
+    note = (f"処置 {len(both['処置'])} ／ 対照 {len(both['対照'])}"
+            f"（**作った時刻で割る。公開日ではありません**）")
+    if ready:
+        note += f" ／ 予約表では {ready} にそろう"
+    return Gauge(now, float(p["need"]), "本", note)
+
+
 def _k_published_count(p: dict) -> Gauge:
     """窓のなかに公開した本数。`data_ready: true` なら**実データの来た本だけ**。
 
@@ -729,6 +763,7 @@ KINDS = {
     "hypothesis_needs": _k_hypothesis_needs,
     "length_spread": _k_length_spread,
     "published_count": _k_published_count,
+    "reveal_hold_arm": _k_reveal_hold_arm,
     "scan_sum": _k_scan_sum,
     "days_with_min_videos": _k_days_with_min_videos,
     "scored_pairs": _k_scored_pairs,

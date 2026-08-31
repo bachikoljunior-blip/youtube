@@ -283,14 +283,25 @@ watches:
 
   - id: 完成形の保持-16本
     what: 「完成した図を説明のあいだ画面に残すと engaged が上がる」の判定（腕 `per_video`・オーナー指摘）
-    cond: "`reveal_durations` が入った 2026-08-27 12:00 JST より後に作ったショート（尺180秒以下）が16本 公開され、その実データが届いている"
-    then: python scripts/deadline_check.py → 齢48時間でそろえた engaged を、新旧の割り当てで比べる
-    source: config/hypotheses.yaml
-    kind: published_count
-    since: '2026-08-27'
+    cond: "`reveal_durations` が入った 2026-08-27T12:00 より後に**作った**ショート（尺180秒以下）が、処置・対照とも16本 公開され、齢48時間 を過ぎている"
+    then: python -m src.reveal_hold → 満ちていれば `--judge`（同じ公開日の中で engaged を対にする）
+    source: src/reveal_hold.py
+    kind: reveal_hold_arm
     need: 16
-    max_duration_s: 180
-    data_ready: true
+    # **2026-08-31 に `published_count` から替えました。**
+    # あちらは**公開日**で数えます。ところがこの前提の処置群を決めているのは
+    # **作った時刻**（`uploaded_at`）で、予約は 5〜6週 先まで入っているので、
+    # **08/27 以降に公開された本の大半は、それ以前に作った本**でした。
+    #
+    #   公開日で数える（前）                          **17** →「満ちました」
+    #   作った時刻で割った処置群・本で畳んで            **11**
+    #   うちショート（長尺は `reveal_variants` を通らない）  **8**
+    #   齢48時間 を超えた ＝ `falsified_if` が比べられる    **1**
+    #
+    # 満ちた待ちは `status.py` が `[!]` で出し、Stop フックが引き止めるので、
+    # **「判定しろ」と毎周 押していました。** 同じ日に
+    # `config/hypotheses.yaml` の `count_expr` も同じ理由で直しています
+    # （あちらは控えの**行**を数えていて 17 と答えていた）。
     # **尺で絞るのは、この前提が測っているのがショートの割り当てだから**です。
     # 長尺は `reveal_variants` を1度も通らないので、混ぜると門がすぐ満ちて
     # **「対照と同じ中身の処置群」で判定することになります**
