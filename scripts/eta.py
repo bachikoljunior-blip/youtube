@@ -2818,6 +2818,19 @@ def physical_caps(a0: dict, density: float = PLAN_PUBLISH_PER_DAY,
         #     腕を 0.4倍 に「引ける」ことになり、軌跡が**密度を減らす向きに歩きます**。
         #     引き代は 0（＝×1.0 が天井）。**超えていること自体は `why` に残します。**
         over = raw < 1.0
+        # **`at_ceiling` は「上限に**着いた**か」で、`over` は「上限を**超えた**か」です**
+        #     （2026-08-31・最適化の回に直した）。ここは長らく `at_ceiling: over`
+        #     ＝ **`raw < 1.0`** でした。**ちょうど上限のとき（`raw == 1.0`）が
+        #     「まだ引き代がある」と出ます。**
+        #     いまがまさにその姿です —— 規則 1本/日 ÷ いま続けている 1.0本/日 ＝ ×1.00 で、
+        #     `at_ceiling` が **False**。**規則に張り付いている面が「開いている」と名乗ります。**
+        #     20行 下の兄弟（`density_long`）は `long_raw <= 1.0`、
+        #     `lever_days()` も `cap <= 1.0`。**3か所のうちここだけが `<`** でした。
+        #     `cap_surface_lines()` の docstring も
+        #     「density ×1.00 surface=ショート … at_ceiling=True」と書いています
+        #     —— **文書のほうが正しく、実装だけが外れていました。**
+        #     `over`（超過）は `why` の但し書きにそのまま残します。別の量です。
+        at_rule_ceiling = raw <= 1.0
         caps["density"] = {"factor": max(1.0, raw),
                            "why": ((f"**オーナーが固定した規則 {rule_cap:.0f}本/日**"
                                     f"（`src/house_rule.py`・2026-08-31）"
@@ -2833,7 +2846,13 @@ def physical_caps(a0: dict, density: float = PLAN_PUBLISH_PER_DAY,
                                    + ("。**すでに上限を {:.1f}倍 超えて出しています ＝ 引き代なし**"
                                       "（超えたぶんは 0再生）".format(1 / raw) if over else "")),
                            "measured": True,
-                           "at_ceiling": over,
+                           "at_ceiling": at_rule_ceiling,
+                           # **その上限は「観測」か「オーナーの規則」か。**
+                           #     観測（`day_cap`）なら測り直せば動きます。
+                           #     規則（`src/house_rule.py`）は **覆る条件がありません** ——
+                           #     `src/levers.py` はこの1つで、面が開いていても
+                           #     `density` を生き返らせてよいかを決めます。
+                           "rule_binds": bool(rule_binds),
                            "surface": "ショート"}
         # --- **その「引き代なし」は、まだ決まっていない枝の上に立っています** ---
         #     （2026-08-26・最適化の回。`CLAUDE.md` の (イ) が禁じている形）
@@ -7967,6 +7986,11 @@ def solve(m: dict, points: list[dict], *, full: bool = True) -> dict:
         pl["density_surfaces"] = {
             name: {"at_ceiling": bool(_ph_s[key].get("at_ceiling")),
                    "measured": bool(_ph_s[key].get("measured")),
+                   # **その上限が「オーナーの規則」なら、面が開いていても
+                   #   `density` は引けません**（2026-08-31）。`src/levers.py`
+                   #   がこの欄を読みます。**無い行では判定しません**（古い行を
+                   #   あとから足した欄で塗り替えないこと）。
+                   "rule_binds": bool(_ph_s[key].get("rule_binds")),
                    "why": _ph_s[key].get("why")}
             for name, key in (("short", "density"), ("long", "density_long"))
             if key in _ph_s

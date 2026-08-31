@@ -1130,6 +1130,13 @@ def dead_arm_report(today: str, window_days: int = WINDOW_DAYS) -> str:
             #     外した理由（＝長尺の面が開いている・何をすれば引けるか）を
             #     同じ行に置かないと、次の回はまた `none` を選びます。
             mark = f"  ← **{open_why[k]}**"
+        elif (why.get(k) or "").startswith(levers.RULE_DEAD):
+            # **規則で死んだ腕**（2026-08-31）。ここが無いと、この行は
+            #     下の `elif cap is not None` へ落ちて「（天井 ×1.00）」だけになり、
+            #     **分子に数えている腕の行から理由が消えます**（すぐ下の註と同じ穴）。
+            #     **「天井」と同じ字にしないこと** —— 天井は測り直せば動きますが、
+            #     規則はオーナーが外すまで動きません。
+            mark = f"  ← **{why[k]}**"
         elif (why.get(k) or "").startswith("天井") and why.get(k) != "天井まで引いても届かない":
             # **前方一致で見ること**（2026-08-26）。`arm_state` は理由に但し書きを
             #     足すことがあり（「天井（**ショートの面の数**）」）、完全一致だと
