@@ -47,3 +47,8 @@
 {"at": "2026-08-31T05:00:56+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "endcard_check.py:_totals"}
 {"at": "2026-08-31T05:00:56+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "endcard_check.py:_totals"}
 {"at": "2026-08-31T05:00:56+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "endcard_check.py:main"}
+{"at": "2026-08-31T05:02:33+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true}
+{"at": "2026-08-31T05:02:34+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true}
+{"at": "2026-08-31T05:02:34+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true}
+{"at": "2026-08-31T05:05:39+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "status.py:print_channel_signals"}
+{"at": "2026-08-31T05:05:50+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "analytics.py:fetch_traffic"}

@@ -86,8 +86,8 @@ def test_判定文に写しではなく正本の名前が在る():
     """
     text = (ROOT / "config" / "hypotheses.yaml").read_text(encoding="utf-8")
     assert "src/endcard_verdict.reversal()" in text
-    # **「1件でも付いたとき」を、いまの条件として書き戻していないこと。**
-    # （履歴として「前はこう書いてあった」と引用するのは可。だから
-    #   「これが覆る条件」の見出しの直後に来ていないことだけを見る）
-    head = text.split("## **これが覆る条件**", 1)[1][:400]
-    assert "1件でも" not in head
+    # **見出しの直後に正本の名前が来ていること。**
+    # 「1件でも付いたとき」が本文に残っているのは可（履歴として引用しています）。
+    # 見るのは順番のほう —— **正本より先に古い条件が読めたら、そこで読み止まります。**
+    head = text.split("## **これが覆る条件**", 1)[1]
+    assert head.index("src/endcard_verdict.reversal()") < head.index("1件でも")

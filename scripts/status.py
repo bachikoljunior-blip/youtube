@@ -2329,6 +2329,25 @@ def print_analytics_sections(days: int = 7) -> None:
         for r in rows:
             print(f"  {r.get('insightTrafficSourceType', '?'):18s} 再生{r.get('views', 0):5d}"
                   f"  視聴{r.get('estimatedMinutesWatched', 0):5d}分")
+
+        # **閉じた前提「推薦面は自力で伸びない」を、開け直すかどうか**（2026-08-31 に足した）。
+        # あの前提の覆る条件は「90日窓の RELATED_VIDEO が 10 以上」＝**件数の絶対値**で、
+        # **分母が伸びれば効果が無くても発火します。** 2026-08-31 に発火し、
+        # **占有で当て直したら本当に覆っていました**（量の 2.18倍）。
+        # 同じ日に endcard の「1件でも」も発火して、そちらは覆っていません。
+        # **字面ではなく、閉じたときの占有と比べること**（`src/reversal.py`）。
+        from src import reversal as _rev
+
+        _total = sum(r.get("views", 0) for r in rows)
+        _rv = next((r.get("views", 0) for r in rows
+                    if r.get("insightTrafficSourceType") == "RELATED_VIDEO"), 0)
+        if _total:
+            _r = _rev.share_moved(_rev.MEASURED["RELATED_VIDEO（推薦面は自力で伸びるか）"]["before"],
+                                  (_rv, _total))
+            print(f"  [推薦面] {_r['line']}")
+            if _r["moved"]:
+                print("     **2026-08-31 に、この却下は引き直しました**（`config/hypotheses.yaml`）。"
+                      "`docs/MEANS.md` M12（推薦面に載る）の保留は外れています")
     except Exception as exc:
         print(f"  読めませんでした: {str(exc)[:120]}")
 
