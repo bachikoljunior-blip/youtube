@@ -62,7 +62,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from src import arm_speed, day_cap, eligibility, form_record, forms, house_rule, levers, motion_groups, pause_guard, reach_split, resume_gate, rpm_mix, settle, subs_cap  # noqa: E402  （`sys.path` を通した後でないと読めません）
+from src import arm_speed, day_cap, eligibility, form_record, forms, house_rule, joint_cap, levers, motion_groups, pause_guard, reach_split, resume_gate, rpm_mix, settle, subs_cap  # noqa: E402  （`sys.path` を通した後でないと読めません）
 
 LOG = ROOT / "data" / "eta.jsonl"
 
@@ -6256,6 +6256,41 @@ def plan(m: dict, a: dict, density: int = PLAN_PUBLISH_PER_DAY,
             else:
                 # **1本も、無限大でも届かない。** 腕の名前を出してはいけません。
                 out["lever_hint_measured"] = False
+            # --- **1本ずつの数を、残りの距離として読ませないこと** ---
+            #     （2026-09-01・最適化の回に測って足した。**API 0単位**）
+            #
+            #     すぐ上の `need_over_cap` は `lever_ladder()` が出した数で、
+            #     その中身は `scale={lever: f}` —— **1本だけ**動かした線です。
+            #     ところが画面はそれを「**天井そのものを ×8.82 上げないと
+            #     出ません**」と印字し、読む側は**残りの距離**として読みます。
+            #
+            #     **実測 2026-09-01（本番と同じ道）**::
+            #
+            #         腕を据え置き              目標の  5.7%
+            #         per_video だけ天井        目標の 11.3%
+            #         rpm       だけ天井        目標の 17.7%
+            #         **3本とも同時に天井**    目標の **35.5%** → 残り **×2.82**
+            #
+            #     `rpm` は分母（`need_month`）を、`per_video` は分子
+            #     （`ceiling_day`）を動かします。**向きが別なので、1本ずつ
+            #     測ると もう片方の効き目が毎回 捨てられます。**
+            #     ×8.82 と ×2.82 は **3.1倍** ちがい、前者は「測った物理の
+            #     天井を さらに 8.8倍」＝ **手が無い**と読めます。実際この repo は
+            #     その ×8.82 を2回 持ち越し、`長尺` の側を測って外れで閉じました
+            #     （`src/long_ceiling.py`）。
+            #
+            #     **覆る条件**: `lever_ladder()` が組み合わせを測るように
+            #     なったら、この欄は要りません（`joint_cap` の docstring）。
+            try:
+                out["joint_cap"] = joint_cap.solve(
+                    _rows,
+                    lambda _sc: (lambda _p: (_p.get("need_month"),
+                                             _p.get("ceiling_day")))(
+                        plan(m, analyse(m, points=points, scale=_sc),
+                             today=today, supply=supply, sensitivity=False,
+                             points=points, mix=mix)))
+            except Exception:                                  # noqa: BLE001
+                out["joint_cap"] = None
     # --- **名指しした腕の測定が、もう予約済みの本で答えが返る回がある** ---
     #     （2026-08-26 に踏んだ。**この道具が自分と食い違っていました**）
     #
@@ -7483,7 +7518,13 @@ def headline(pl: dict, prev: dict | None = None,
                   and _noc else "")
             + " ＝ **この回に立てるべき前提は「その天井は天井ではない」**"
               "（`config/hypotheses.yaml`）。**腕の値を動かす手では出ません。**")
-    elif pl.get("lever_hint_measured") is False:
+    # --- **すぐ上の倍率は「1本だけ動かした線」です**（2026-09-01・最適化の回）---
+    #     理由と実測は `src/joint_cap.py` の docstring。**消す条件もそこ。**
+    #     `joint_cap` が無い回（軌跡が落ちた・天井が1つも測れていない）は
+    #     **1行も出しません** —— 出ない行は、読む側の手順を増やしません。
+    out.extend(joint_cap.lines(pl.get("joint_cap"),
+                               pl.get("lever_need_over_cap"), bar))
+    if pl.get("lever_hint_measured") is False:
         out.append(
             f"{bar} [!] **その `{pl['lever_hint']}` は、測って出た名前ではありません。**"
             " 4本とも**天井まで引いても、`×10^9` まで引いても**日付が出ません"
@@ -9426,6 +9467,17 @@ def _row(m: dict, a: dict, pl: dict, tr: dict | None, sup: dict | None) -> dict:
         row["arm_need_over_cap"] = {
             r["lever"]: (None if r.get("need_over_cap") is None
                          else round(float(r["need_over_cap"]), 3)) for r in _ld}
+    # **1本ずつではなく、全部いっぺんに天井まで引いた点**（2026-09-01）。
+    #     `arm_need_over_cap` は `scale={lever: f}` の線なので、**残りの距離
+    #     ではありません**（実測 ×8.82 対 ×2.82・3.1倍ちがう）。
+    #     理由と「覆る条件」は `src/joint_cap.py`。
+    _jc = pl.get("joint_cap")
+    if _jc:
+        row["joint_cap_ratio"] = round(float(_jc["ratio"]), 4)
+        row["joint_cap_gap"] = (None if _jc.get("gap") is None
+                                else round(float(_jc["gap"]), 3))
+        row["joint_cap_scale"] = {k: round(float(v), 3)
+                                  for k, v in _jc["scale"].items()}
     # **「凍らせたら何日 遠のくか」も積む**（2026-08-26）。
     #     `arm_reaches` だけを読むと、`drift.py` はその腕を「引き代なし」に
     #     数えます。**十分でないことと、要らないことは別**なので、

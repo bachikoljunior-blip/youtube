@@ -404,6 +404,64 @@ def _doc_index_lines(doc: str = DOC_FOR_INDEX) -> list[str]:
                 f"{type(exc).__name__}: {exc}。`grep -n '^## ' {doc}` を手で撃つこと）"]
 
 
+PREMISE_ROWS_CAP = 4
+
+
+def _premise_subject_lines(cap: int = PREMISE_ROWS_CAP) -> list[str]:
+    """**開いた前提の「主語」と「反証条件が数えている値」が食い違う行**を出す。
+
+    ## なぜ §1 で出すのか（2026-09-01 に足した。**配線の3本目**）
+
+    `scripts/premise_subject.py` は `retro.py` が名指しした
+    **「どこからも呼ばれない」道具**の1本で、**3周 続けて申し送りに出ています**
+    （2026-08-31 16:5x ／ 2026-09-01 01:3x ／ 01:4x）。
+    `doc_usage` ／ `stale_scheduled` ／ `endcard_check` と同じ形で、
+    **道具は在り、答えを出し、撃つ側がどこにも居ませんでした。**
+
+    **なぜ「並べるだけ」の道具が §1 に要るのか。** `eta.py` が毎周
+    印字しているとおり、**到達日が動くのは `config/hypotheses.yaml` の前提を
+    1件 閉じたときだけ**です。その1件を選ぶとき、
+    **「反証条件が、主張の主語を数えているか」を見ないまま閉じると、
+    閉じた腕が実際に動いた腕と別物になります** ——
+    `eta.py --alloc` はこの `lever:` の分布で「次の1件をどの腕に置くか」を出すので、
+    **札が違えば配分そのものが違います。**
+
+    **`[!]`／`[?]` が付いた行だけ**を出します（既定 4行まで）。
+    **全文は `python scripts/premise_subject.py`**（API 0単位・1秒未満）。
+
+    **落ちても回は止めません。** 印が本体で、これは付け足しです
+    （`_doc_index_lines` と同じ）。
+    """
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        import premise_subject                                 # noqa: PLC0415
+        rows = premise_subject.audit()
+    except Exception as exc:                                   # noqa: BLE001
+        return [f"[marker] （前提の主語を並べられませんでした: "
+                f"{type(exc).__name__}: {exc}。"
+                f"`python scripts/premise_subject.py` を手で撃つこと）"]
+    flagged = [r for r in rows if r["mismatch"] or r["lever_off"]]
+    if not flagged:
+        return []
+    bad = sum(1 for r in flagged if r["mismatch"])
+    out = [f"[marker] **開いた前提 {len(rows)}件 のうち、条件が主語を数えていない行: "
+           f"{len(flagged)}件**（主語と交わらない {bad}件 ／ "
+           f"`lever:` が値と合っていない {len(flagged) - bad}件）"
+           "。**閉じる前に当たること** —— 札が違うと `--alloc` の配分ごと違います"]
+    for r in flagged[:cap]:
+        mark = "[!]" if r["mismatch"] else "[?]"
+        out.append(f"         {mark} {r['deadline']}  lever={r['lever'] or '—'}"
+                   f"  主語={premise_subject._fmt(r['subject'])}"
+                   f"  数えている={premise_subject._fmt(r['measured'])}"
+                   f"  — {r['claim'][:56]}")
+    if len(flagged) > cap:
+        out.append(f"         （ほか {len(flagged) - cap}件。全文は "
+                   f"`python scripts/premise_subject.py`）")
+    out.append("         **わざと代理指標を使っている前提があります。"
+               "機械は判定しません** —— 1件ずつ当たること")
+    return out
+
+
 def _claim_lines(window_min: int = CLAIM_WINDOW_MIN) -> list[str]:
     rows = claims(window_min)
     ships = recent_ships(window_min)
@@ -474,6 +532,11 @@ def write() -> int:
     # **手順の当てどころ**（2026-09-01 に足した）。ここで出す理由は下の
     # `_doc_index_lines()` の註。**§1 は手順を読む前の唯一のコマンド**です。
     for ln in _doc_index_lines():
+        print(ln)
+    # **前提の主語と、条件が数えている値の食い違い**（2026-09-01 に足した）。
+    # 理由は `_premise_subject_lines()` の註 —— 到達日を動かすのは
+    # 「前提を1件 閉じる」ことだけなので、**その1件を選ぶ前**に見せます。
+    for ln in _premise_subject_lines():
         print(ln)
     # **ここで出すこと。** §1 はその回のいちばん最初のコマンドで、
     # **何をやるか決める前**です。決めた後に見せても、払った時間は戻りません。
