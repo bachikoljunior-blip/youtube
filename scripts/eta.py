@@ -2125,6 +2125,8 @@ def conversion_split(form: str = "長尺") -> dict | None:
         return None
 
     per: dict[str, list[float]] = {}
+    seen_days: set[str] = set()
+    per_days: dict[str, set[str]] = {}
     for r in rows:
         vid = r.get("video_id")
         if not vid or by_form.get(vid) != form:
@@ -2132,6 +2134,10 @@ def conversion_split(form: str = "長尺") -> dict | None:
         acc = per.setdefault(vid, [0.0, 0.0])
         acc[0] += reach_split._imp(r)
         acc[1] += reach_split._clicks(r)
+        d = str(r.get("date") or "")
+        if d:
+            seen_days.add(d)
+            per_days.setdefault(vid, set()).add(d)
     per = {v: a for v, a in per.items() if a[0] > 0}
     if not per:
         return None
@@ -2145,6 +2151,10 @@ def conversion_split(form: str = "長尺") -> dict | None:
         "form": form, "n": n, "impressions": imp, "clicks": clicks,
         "ctr": (clicks / imp) if imp else 0.0,
         "ctr_median": median,
+        # **この数がどれだけの日を見ているか。** `data/reach.jsonl` は
+        # 報告が来た日ぶんしかありません（実測 2026-08-31: 記録の本は **5日** だけ）。
+        # **1本あたり再生（生涯）と同じ窓ではありません。** 下の `headroom` の註。
+        "window_days": len(seen_days),
     }
 
     # --- **手本にする本は、クリックが薄い本から選ばないこと**（2026-08-31）---
@@ -2178,6 +2188,7 @@ def conversion_split(form: str = "長尺") -> dict | None:
         out.update({
             "ctr_best": best, "ctr_best_id": best_id,
             "ctr_best_clicks": ref[best_id][1], "ctr_best_impressions": ref[best_id][0],
+            "ctr_best_days": len(per_days.get(best_id) or ()),
             # **面はそのままで、いちばん押された本の率で回したら**
             "clicks_at_best": imp * best,
             "headroom": (imp * best / clicks) if clicks else float("inf"),
@@ -2522,7 +2533,18 @@ def report(m: dict, a: dict) -> list[str]:
     if _cs and _cs.get("headroom"):
         P(f"      手本は `{_cs['ctr_best_id']}` の **{_cs['ctr_best']*100:.2f}%**"
           f"（{_cs['ctr_best_impressions']:,.0f}面・{_cs['ctr_best_clicks']:,.0f}クリック"
-          f" ＝ クリック {CTR_REF_MIN_CLICKS}回 以上の本からだけ選んでいます）。")
+          f"・観測 {_cs['ctr_best_days']}日 ＝ クリック {CTR_REF_MIN_CLICKS}回 以上の"
+          f"本からだけ選んでいます）。")
+        # **窓が違うことを、必ず同じ所で言うこと**（2026-08-31）。
+        #     この回いちばん高くついた壊れ方が「分母をそろえずに割る」ことでした。
+        #     ここで同じ穴を掘らないよう、2つの数が別の窓であることを明示します。
+        P(f"      [!] **上の ×{_cs['headroom']:.1f} と、すぐ上の「1本あたりを "
+          f"{nr:,.1f}倍」を掛けないこと。窓も分母も別です** ——"
+          f" こちらは `data/reach.jsonl` の観測 **{_cs['window_days']}日**ぶんの"
+          f"**クリック**の話（手本の本は {_cs['ctr_best_days']}日 しか観測されていません）、"
+          f"あちらは**生涯の再生**の話です。"
+          f" **足すことも掛けることもできません** ——"
+          f"同じ窓でそろえ直すまでは、**別々の目盛り**として読むこと。")
         P(f"      → **面は在ります。足りていないのは押された率のほう** ——"
           f" いまのインプレッションのまま、いちばん押された本の率で回すと"
           f" クリックは {_cs['clicks']:,.0f} → **{_cs['clicks_at_best']:,.0f}"
