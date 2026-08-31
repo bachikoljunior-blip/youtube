@@ -59,6 +59,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
+# **上限の出どころは1か所**（`src/house_rule.py`）。ここに数を写さないこと ——
+# 写した瞬間に、規則を変えても軌跡だけが古い数で走ります。
+from src import house_rule  # noqa: E402
+
 DATA = ROOT / "data"
 TODAY = dt.date(2026, 8, 20)          # `--at` で上書きできます
 
@@ -615,7 +619,8 @@ def trend_decompose(day: dict[str, int], per_day: dict[str, int] | None = None) 
         d log(再生)/dt  ＝  d log(供給)/dt  ＋  d log(V)/dt
 
     **右の第1項は、軌跡がすでに天井付きで持っています**（`stages()` の
-    `supply_cap` ＝ 題材の生成速度 と API の日枠の低いほう）。
+    `supply_cap` ＝ **オーナーの規則（1日1本）**・題材の生成速度・API の日枠 の
+    いちばん低いもの。2026-08-31 まで規則が抜けており、92倍 で走っていました）。
     **複利の項として新しく足してよいのは第2項だけ**です ——
     第2項が 0 と区別できないのに左辺の傾きを複利で伸ばすと、
     **天井のある供給の伸びを、天井の無い複利として二重に数えます。**
@@ -895,8 +900,17 @@ def stages(vs, day, ident, dec, pv, sup, tr, sb, tf, rc, today) -> dict:
     sup_hist = ident["supply"] if ident.get("ok") else None      # 過去14日の実績
     sup_sched = sup["sustained"] if sup.get("ok") else sup_hist  # 予約の実物
     sup_api = UPLOAD_CAP_PER_DAY
-    sup_cap = min(sup_api, mat) if mat else sup_api              # 持続できる供給の天井
-    sup_cap_why = "題材の生成速度" if (mat and mat < sup_api) else "API の日枠"
+    # **オーナーが固定した規則（1日1本）を、天井の候補に入れること**
+    # （2026-08-31 に直した）。ここは長らく `min(API の日枠, 題材の生成速度)`
+    # だけで、**規則を1度も見ていませんでした** —— 規則は 1本/日、日枠は 92本/日 で、
+    # **軌跡ぜんぶが 92倍 の供給の上に乗っていました。**
+    # この repo でいちばん多い壊れ方（言っている所と、している所が別）そのものです。
+    # **出どころは `src/house_rule` の1か所**。ここに数を写さないこと。
+    sup_rule = float(house_rule.planned_publishes_per_day())
+    ceilings = [(sup_rule, "オーナーの規則（1日1本）"), (float(sup_api), "API の日枠")]
+    if mat:
+        ceilings.append((float(mat), "題材の生成速度"))
+    sup_cap, sup_cap_why = min(ceilings, key=lambda kv: kv[0])   # 持続できる供給の天井
 
     views_hist = tr.get("mean_views_day") or 0.0
     views_sched = sup_sched * V if sup_sched else 0.0
@@ -926,7 +940,15 @@ def stages(vs, day, ident, dec, pv, sup, tr, sb, tf, rc, today) -> dict:
     gate2b_yen = {lab: yen(gate2b_day, rpm) for lab, rpm in RPM_SHORTS.items()}
     be_gate2b = breakeven(gate2b_day)      # 門2b の水準で月20万を名乗れる最低の RPM
     # 門2b を通る水準に要る V（供給を日枠いっぱいに置いたとき）
+    # **2つある。混ぜないこと**（2026-08-31 に分けた）。
+    #   `V_for_gate2b`     …… **API の日枠まで出したとき**に要る1本あたり再生。
+    #                          下の「日枠まで出しても届きません」の行が使う。
+    #   `V_for_gate2b_cap` …… **実際に出せる本数（＝持続できる天井）**で要る1本あたり再生。
+    #                          規則が 1本/日 を固定した以上、**こちらが実物**です。
+    # 1本にまとめていた頃は、規則が縛っていても「日枠まで出したときの数」を
+    # 印字していました —— **92倍 薄い要求**で、隔たりが 60分の1 に見えます。
     V_for_gate2b = gate2b_day / sup_api
+    V_for_gate2b_cap = (gate2b_day / sup_cap) if sup_cap else float("inf")
     # 門2b を通る水準に要る題材（V を実測の天井に置いたとき）
     mat_for_gate2b = gate2b_day / V_cap
 
@@ -958,7 +980,8 @@ def stages(vs, day, ident, dec, pv, sup, tr, sb, tf, rc, today) -> dict:
     return {
         "V": V, "V_cap": V_cap, "V_cap_ratio": (V_cap / V) if V else None,
         "supply_hist": sup_hist, "supply_sched": sup_sched,
-        "supply_api": sup_api, "supply_cap": sup_cap, "supply_cap_why": sup_cap_why,
+        "supply_api": sup_api, "supply_rule": sup_rule,
+        "supply_cap": sup_cap, "supply_cap_why": sup_cap_why,
         "material_per_day": mat, "build_per_hour": bld.get("per_hour"),
         "views_hist": views_hist, "views_sched": views_sched,
         "cap_v_now": cap_v_now, "cap_both": cap_both, "cap_api_both": cap_api_both,
@@ -970,7 +993,8 @@ def stages(vs, day, ident, dec, pv, sup, tr, sb, tf, rc, today) -> dict:
         "need": need,
         "gate2b_day": gate2b_day, "gate2b_yen": gate2b_yen, "be_gate2b": be_gate2b,
         "gate2b_reachable": gate2b_reachable, "gate2b_reachable_api": gate2b_reachable_api,
-        "V_for_gate2b": V_for_gate2b, "mat_for_gate2b": mat_for_gate2b,
+        "V_for_gate2b": V_for_gate2b, "V_for_gate2b_cap": V_for_gate2b_cap,
+        "mat_for_gate2b": mat_for_gate2b,
         "subs_sched": subs_days(views_sched), "subs_cap": subs_days(cap_v_now),
         "subs_gate2b": subs_days(gate2b_day),
         "floor_days": floor_days,
@@ -1010,10 +1034,23 @@ def render(m: dict, today: dt.date) -> list[str]:
             h.append("### この床に乗るには **実測の天井まで出しきれば足ります**"
                      f"（供給 {st['supply_cap']:.0f}本/日 × V {st['V_cap']:,.0f}回）")
         elif st["gate2b_reachable_api"]:
-            h.append(f"### [!] **いまの実測の天井では床に乗れません。** "
-                     f"律速は**{st['supply_cap_why']}** —— "
-                     f"題材 {st['material_per_day']:.0f}件/日 → **{st['mat_for_gate2b']:.0f}件/日"
-                     f"（×{st['mat_for_gate2b']/st['material_per_day']:.1f}）**が要ります")
+            # **規則が縛っているときに「題材を増やせ」と書かないこと**（2026-08-31）。
+            # 供給の天井が規則なら、題材を何件 増やしても供給は 1本/日 のままです。
+            # ここは長らく律速の名前だけ差し替えて、要求は題材の側に出していました ——
+            # **読む側を、効かない腕へまっすぐ送る行**でした。
+            if st["supply_cap"] <= st["supply_rule"] + 1e-9 and st["supply_rule"] < st["supply_api"]:
+                h.append(f"### [!] **いまの構成では床に乗れません。** "
+                         f"律速は**{st['supply_cap_why']}** —— "
+                         "**題材を増やしても供給は動きません**（規則は本数の側を固定しています）。"
+                         f"**残る腕は V（1本あたり再生・いま天井 {st['V_cap']:,.0f}回）と RPM だけ**で、"
+                         f"門2b に要るのは **1本あたり {st['V_for_gate2b_cap']:,.0f}回**"
+                         f"（実測の天井 {st['V_cap']:,.0f}回 の "
+                         f"**×{st['V_for_gate2b_cap']/st['V_cap']:.1f}**）です")
+            else:
+                h.append(f"### [!] **いまの実測の天井では床に乗れません。** "
+                         f"律速は**{st['supply_cap_why']}** —— "
+                         f"題材 {st['material_per_day']:.0f}件/日 → **{st['mat_for_gate2b']:.0f}件/日"
+                         f"（×{st['mat_for_gate2b']/st['material_per_day']:.1f}）**が要ります")
         else:
             h.append("### [!] **API の日枠まで出しても、実測の V では門2b に届きません**"
                      f"（要る V {st['V_for_gate2b']:,.0f}回 ／ 実測の天井 {st['V_cap']:,.0f}回）")
@@ -1056,11 +1093,23 @@ def render(m: dict, today: dt.date) -> list[str]:
       " 判断に使うのは `python scripts/eta.py` のほうです")
     P("###     この file を呼ぶものは1つもありません"
       "（手順・親の手順・spawn_prompt・CLAUDE.md・フック・他のコード）")
-    P(f"###     供給を `UPLOAD_CAP_PER_DAY = {UPLOAD_CAP_PER_DAY}本/日`"
-      f"（**API の日枠**）で解いています —— **オーナーの規則は"
-      f" `src/house_rule.PUBLISH_PER_DAY` ＝ {_HOUSE_RULE_PER_DAY}本/日**")
-    P(f"###     つまり下の床の日付は、**規則の {_ratio}倍 の供給**の上に立っています。"
-      " **そのまま読まないこと**")
+    # **2026-08-31 の同じ日の遅くに、供給の側を直しました**（この註の「覆る条件」の
+    # とおり）。註だけ残すと、**直した後も「92倍 の上に立っています」と言い続けます**
+    # —— それがこの repo でいちばん多い壊れ方（言っている所と、している所が別）です。
+    # **だから、いまの姿を言わせます。** 「呼ばれていない」ほうは今も本当です。
+    if st.get("supply_cap", float("inf")) <= _HOUSE_RULE_PER_DAY + 1e-9:
+        P(f"###     供給は **オーナーの規則 {_HOUSE_RULE_PER_DAY}本/日**"
+          f"（`src/house_rule.PUBLISH_PER_DAY`）で解いています。"
+          f" API の日枠 {UPLOAD_CAP_PER_DAY}本/日 は**観測として持っているだけ**です")
+        P(f"###     **2026-08-31 まではその日枠のほうで解いており、床の日付は"
+          f" 規則の {_ratio}倍 の供給の上に立っていました。**"
+          " いまは直っていますが、**判断に使うのは今も `eta.py` のほうです**")
+    else:
+        P(f"###     供給を `UPLOAD_CAP_PER_DAY = {UPLOAD_CAP_PER_DAY}本/日`"
+          f"（**API の日枠**）で解いています —— **オーナーの規則は"
+          f" `src/house_rule.PUBLISH_PER_DAY` ＝ {_HOUSE_RULE_PER_DAY}本/日**")
+        P(f"###     つまり下の床の日付は、**規則の {_ratio}倍 の供給**の上に立っています。"
+          " **そのまま読まないこと**")
     P("=" * 74)
     P("")
     P("=" * 74)
@@ -1169,7 +1218,7 @@ def render(m: dict, today: dt.date) -> list[str]:
         P("           **日次再生 ＝ 供給 × V** なので、log の傾きは必ず足し算に割れます:")
         P("           **d log(再生) ＝ d log(供給) ＋ d log(V)**")
         P("           **供給の側は、軌跡がすでに天井付きで持っています**"
-          "（題材の生成速度と API の日枠の低いほう）。")
+          "（**オーナーの規則（1日1本）**・題材の生成速度・API の日枠 のいちばん低いもの）。")
         P("           **複利の項として足してよいのは V の側だけ**です ——"
           "割らずに左辺を伸ばすと、")
         P("           **天井のある供給の伸びを、天井の無い複利として二重に数えます。**")
@@ -1259,13 +1308,21 @@ def render(m: dict, today: dt.date) -> list[str]:
         P(f"           → {UPLOAD_CAP_PER_DAY}本 作るのに **{bld['hours_for_cap']:.1f}時間**。"
           "**ここは律速ではありません**")
     P(f"    [実測] API の日枠 **{UPLOAD_CAP_PER_DAY}本/日**（`data/upload_cap.jsonl` の 429）")
+    P(f"    [規則] オーナーが固定した公開の上限 **{st['supply_rule']:.0f}本/日**"
+      "（`src/house_rule.PUBLISH_PER_DAY`）")
+    P("           **帯は観測、規則は規則。規則のほうが小さいので、規則が勝ちます。**"
+      " 2026-08-31 まで、ここは規則を1度も見ておらず、"
+      f"**軌跡は {UPLOAD_CAP_PER_DAY}本/日 の供給の上に乗っていました。**")
     if mat.get("ok"):
         thin = "  [!] **窓が {:.1f}時間しかありません**（この軌跡でいちばん薄い実測）".format(
             mat["span_hours"]) if mat.get("thin") else ""
         P(f"    [実測] **題材が増える速さ {mat['per_day']:.1f}件/日**"
           f"（`sweep_novel` {mat['delta']:+d}件 / {mat['span_hours']:.1f}時間・点 {mat['n_points']}）{thin}")
-        P(f"           在庫は {mat['stock_novel']}件 ＝ {UPLOAD_CAP_PER_DAY}本/日 なら "
-          f"**{mat['stock_novel']/UPLOAD_CAP_PER_DAY:.1f}日で尽きます**。"
+        # **割るのは「実際に出す本数」であって、API の日枠ではありません。**
+        # 規則が 1本/日 なので、在庫は 92分の1 の速さでしか減りません。
+        _cap = st["supply_cap"] or 1.0
+        P(f"           在庫は {mat['stock_novel']}件 ＝ {_cap:.0f}本/日（{st['supply_cap_why']}）なら "
+          f"**{mat['stock_novel']/_cap:.1f}日で尽きます**。"
           "在庫が尽きたあとは、この速さが供給そのものです")
     P("")
     P(f"  → **持続できる供給の天井 = {st['supply_cap']:.1f}本/日**"
@@ -1376,8 +1433,12 @@ def render(m: dict, today: dt.date) -> list[str]:
     P("  **段1 供給を、持続できる天井まで**")
     P(f"      いま {st['supply_sched']:.1f}本/日 → **{st['supply_cap']:.1f}本/日**"
       f"（×{st['R_supply_have']:.1f}）")
+    # **件/日 を添えるのは、題材が本当に律速のときだけ。**
+    # 規則が律速のときに「21.4件/日」を並べると、規則の本数と読めます。
+    _mat_binds = st["supply_cap_why"] == "題材の生成速度"
     P(f"      律速: **{st['supply_cap_why']}**"
-      + (f" {st['material_per_day']:.1f}件/日" if st.get("material_per_day") else ""))
+      + (f" {st['material_per_day']:.1f}件/日"
+         if (_mat_binds and st.get("material_per_day")) else ""))
     P(f"      そこでの日次再生 **{st['cap_v_now']:,.0f}回/日**（V はいまのまま）")
     P("")
     P("  **段2 V を、チャンネル内の天井まで**")
@@ -1401,12 +1462,25 @@ def render(m: dict, today: dt.date) -> list[str]:
       f"**{st['gate2b_day']/st['cap_both']:.2f}倍**"
       f" → {'**天井の内側**' if st['gate2b_reachable'] else '[!] **天井の外**'}")
     if not st["gate2b_reachable"]:
-        P(f"             **足りないのは題材です。** V を天井 {st['V_cap']:,.0f}回 に置いても、")
-        P(f"             要る供給は **{st['mat_for_gate2b']:.0f}本/日** ——"
-          f" いま作れているのは {st['material_per_day']:.1f}件/日 で **×"
-          f"{st['mat_for_gate2b']/st['material_per_day']:.1f}** 要ります")
-        P(f"             （API の日枠 {UPLOAD_CAP_PER_DAY}本/日 の内側なので、"
-          "**枠ではなく材料の問題**です）")
+        _rule_binds = (st["supply_cap"] <= st["supply_rule"] + 1e-9
+                       and st["supply_rule"] < st["supply_api"])
+        if _rule_binds:
+            # **規則が縛っている以上、これは材料の問題ではありません。**
+            P(f"             **足りないのは1本あたりの再生です。** 供給は規則で "
+              f"{st['supply_rule']:.0f}本/日 に固定されており、"
+              "**題材をいくつ増やしてもここは1ミリも動きません。**")
+            P(f"             要る V は **{st['V_for_gate2b_cap']:,.0f}回/本** ——"
+              f" 実測の天井 {st['V_cap']:,.0f}回 に対して **×"
+              f"{st['V_for_gate2b_cap']/st['V_cap']:.1f}** 要ります")
+            P("             （＝ 本数では埋まりません。**ニッチ・尺・形式・言語・収益の立て方**"
+              "の側にしか残っていない、ということです）")
+        else:
+            P(f"             **足りないのは題材です。** V を天井 {st['V_cap']:,.0f}回 に置いても、")
+            P(f"             要る供給は **{st['mat_for_gate2b']:.0f}本/日** ——"
+              f" いま作れているのは {st['material_per_day']:.1f}件/日 で **×"
+              f"{st['mat_for_gate2b']/st['material_per_day']:.1f}** 要ります")
+            P(f"             （API の日枠 {UPLOAD_CAP_PER_DAY}本/日 の内側なので、"
+              "**枠ではなく材料の問題**です）")
     P(f"             **この門を通ったときの月の再生 {st['gate2b_day']*30:,.0f}回**。つまり:")
     for lab, y in st["gate2b_yen"].items():
         P(f"               RPM ¥{RPM_SHORTS[lab]:>3} なら **¥{y:,.0f}/月**"
