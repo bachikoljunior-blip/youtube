@@ -1376,33 +1376,45 @@ _PER_DAY_SOFT = 10            # **読めない回の既定**。実際に使う�
 #
 # ## 上限の出どころ（**定数を書かないこと**）
 #
-# `src.density_verdict.HOUR_HI` ＝ **測れている帯の上端 13本/日**。
-# 同じ数を `scripts/eta.py` の `PLAN_PUBLISH_PER_DAY` が使っています ——
-# **計画が立てている本数と、機械が出せる本数を、同じ1か所から取る**ためです
-# （検査 `tests/test_density_cap.py`。ずれたら赤くなります）。
+# `src.house_rule.PUBLISH_PER_DAY` ＝ **1本/日**。
+# **オーナーが 2026-08-31 に固定した規則**です（原文は `src/house_rule.py`・
+# `CLAUDE.md` 冒頭・`docs/GOAL.md`）:
 #
-# 2026-08-30 の判定（`python -m src.density_verdict`・API 0単位）:
+#     「動画は1日一本作り置きはなしにして。次の投稿予定までにそこで投稿する
+#       動画を改善し続ける。それは固定にして。その上で目標を目指す」
+#
+# 同じ所を `scripts/eta.py` の `PLAN_PUBLISH_PER_DAY` が読んでいます ——
+# **計画が立てている本数と、機械が出せる本数を、同じ1か所から取る**ためです
+# （検査 `tests/test_density_cap.py` と `tests/test_house_rule.py`。
+#   ずれたら赤くなります）。
+#
+# **`src.density_verdict.HOUR_HI`（13本/日）は上限ではありません。**
+# あれは**測れている帯の上端**（観測）で、ここは**規則**です。
+# 2026-08-30 まではこの門が `HOUR_HI` を読んでいましたが、
+# 規則のほうが小さいので、**規則が勝ちます**。観測の側は測る道具として残します。
+#
+# 参考（`python -m src.density_verdict`・API 0単位・2026-08-30）:
 #
 #     詰めた日（1日16本以上）    1本あたり再生の中央値   2回（5日・119本）
 #     1時間きざみの日（8〜13本）                      716回（4日・42本）
 #     倍率 **0.003**（`falsified_if` は 0.5 未満）→ **falsified**
 #
-# **覆る条件**: `density_verdict` を撃ち直して倍率が 0.5 以上に戻ったら、
-# この門ごと外してよい。上端が動けば上限も動きます（`HOUR_HI` を読むだけなので、
-# ここを書き換える必要はありません）。
+# **覆る条件**: **ありません**（オーナーが自分の言葉で外すまで固定）。
+# `density_verdict` の倍率が 0.5 以上に戻っても、**この上限は動きません** ——
+# 帯が広がることと、規則が変わることは別ものです。
 
-#: **上限が読めなかった回の既定。** `density_verdict.HOUR_HI` と同じ数を書きます
+#: **上限が読めなかった回の既定。** `house_rule.PUBLISH_PER_DAY` と同じ数を書きます
 #: （検査が一致を見ています）。**読めない回に無制限へ落ちないこと** ——
 #: 落ちると、計器が壊れた回だけ 22本/日 に戻ります。
-_DENSITY_CAP_FALLBACK = 13
+_DENSITY_CAP_FALLBACK = 1
 
 
 @functools.cache
 def density_cap() -> int:
-    """**1日に置いてよい本数**（`src.density_verdict.HOUR_HI`）。API 0単位。"""
+    """**1日に置いてよい本数**（`src.house_rule.PUBLISH_PER_DAY` ＝ 規則1）。API 0単位。"""
     try:
-        from src import density_verdict                          # noqa: PLC0415
-        return max(1, int(density_verdict.HOUR_HI))
+        from src import house_rule                               # noqa: PLC0415
+        return max(1, int(house_rule.PUBLISH_PER_DAY))
     except Exception:                                            # noqa: BLE001
         return _DENSITY_CAP_FALLBACK
 
@@ -3515,7 +3527,9 @@ def _push_thumbnails_first() -> None:
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="複数本をまとめて作って予約する")
-    ap.add_argument("--count", type=int, default=2, help="作る本数（既定 2）")
+    ap.add_argument("--count", type=int, default=1,
+                    help="作る本数（既定 **1**。2026-08-31 の規則2で、"
+                         "上限も1本です＝`src.house_rule.PUBLISH_PER_DAY`）")
     ap.add_argument("--hour", type=int, default=None,
                     help="予約時刻（JST の時。既定 ショート 9／**長尺 20**）。"
                          "埋まっていれば翌日へ送られる")
@@ -3563,6 +3577,33 @@ def main(argv: list[str] | None = None) -> int:
     hour_given = args.hour is not None
     if args.hour is None:
         args.hour = LONG_HOUR_JST if args.long else 9
+
+    # ---- 0.−1 **作り置きの口を、規則に合わせて閉じる**（2026-08-31・オーナーが固定）--
+    #
+    #     「動画は1日一本作り置きはなしにして。次の投稿予定までにそこで投稿する
+    #       動画を改善し続ける。それは固定にして。その上で目標を目指す」
+    #
+    # ここより下は、**1回の走りで何本 作るか**を `args.count` / `--topics` で決めます。
+    # 規則2（作り置きなし）が縛るのはそこです —— `cap_by_density()` は
+    # **予約の側**しか見ないので、`--skip-upload` の束（`build_one` は
+    # `--dry-run`）はそのまま通り抜けていました。**両方 閉じます。**
+    #
+    # **`--report` / `--pick-only` は数えません**（1本も作らない回だから）。
+    # 出どころは `src.house_rule` の1か所です（`density_cap()` と同じ所）。
+    if not (args.report or args.pick_only):
+        _limit = density_cap()
+        _explicit0 = [i.strip() for i in args.topics.split(",") if i.strip()]
+        if _explicit0 and len(_explicit0) > _limit:
+            print(f"[batch] **作り置きはしません**（規則2）。--topics の "
+                  f"{len(_explicit0)}本 を **先頭 {_limit}本** に縮めます。"
+                  " 残りは在庫に残ります（消えません）。", flush=True)
+            args.topics = ",".join(_explicit0[:_limit])
+        if not _explicit0 and args.count > _limit:
+            print(f"[batch] **作り置きはしません**（規則2）。--count "
+                  f"{args.count} を **{_limit}** に縮めます —— "
+                  "次の枠までの時間は、その1本を改善することに使うこと"
+                  "（規則3・`src/house_rule.py`）。", flush=True)
+            args.count = _limit
 
     if args.report:
         return report()

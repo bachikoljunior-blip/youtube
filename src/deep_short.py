@@ -160,3 +160,66 @@ def usable_days() -> int:
     実測 2026-08-29: あちらは **3日**、こちらは **2日**。
     """
     return int(measure()["days"])
+
+
+def by_family(as_of: date | None = None) -> dict:
+    """**族をそろえて、同じ比を出し直す**（`next_if_false` が指した先）。
+
+    `falsified_if` の群の作り方は `measure()` と**同じ**まま、割り方だけを
+    「公開日ごと」から「族ごと」に替えます（`family_perf._video_calc`）。
+
+    ## なぜ要るか（2026-08-31 に、この前提を閉じた回が足した）
+
+    `next_if_false` は外れたときの次の手を1つだけ書いています ——
+    「**次に疑うのは族**。深い題は `calc_sections` を持つぶん族が偏っており
+    （`nenkin` `iryohi` `zangyo` …）、`src/family_perf.py` が実測で族べつに
+    4倍の差を出している。題の『深さ』ではなく族が効いているなら、
+    族を揃えて比べ直すこと」。
+
+    **偏りは実在します**（実測 2026-08-31: 処置 8本 が 8族 に1本ずつ・
+    対照 103本 が 46族）。だから「族が効いているのを題の深さと読み違えた」は
+    真っ当な疑いでした。**答えは救済ではなく追認です**:
+
+        族をそろえない（`measure()`）  比の中央値 **×0.72**
+        族をそろえた（この関数）        比の中央値 **×0.35**  ← **さらに悪い**
+        両群がそろう族 **8件** が、**8件とも 1.0 未満**
+
+    族が交絡していたなら、そろえた時に合格点（×1.2）へ寄るはずでした。
+    **逆に半分になったので、深い題の不利は族では説明できません。**
+
+    **覆る条件**: 処置が族あたり1本しかありません（8族 × 1本）。
+    処置が同じ族で 3本 以上たまったら、**族ごとの平均が1本の当たり外れで
+    振れなくなる**ので、そこで撃ち直すこと。中央値が ×1.2 を超えたら、
+    この結論は覆ります。検査は `tests/test_deep_short_family.py`。
+    """
+    from . import day_cap, family_perf
+
+    today = as_of or datetime.now(JST).date()
+    forms, last = _forms(), _uploaded_last()
+    readings = day_cap._readings(min_age_h=AGE_H)
+
+    rows = [{"at": datetime.fromisoformat(str(r["at"])), "video_id": vid}
+            for vid, r in last.items()]
+    live = day_cap.live_ids([r for r in rows if isinstance(r["at"], datetime)])
+    vcalc = family_perf._video_calc(family_perf.known_calcs())
+
+    per_fam: dict[str, dict[str, list[int]]] = {}
+    for vid, r in last.items():
+        if forms.get(vid) != "ショート":
+            continue
+        if vid not in readings or vid not in live:
+            continue                                   # `measure()` と同じ3条件
+        pub, _h, views = readings[vid]
+        if pub.date() > today:
+            continue
+        side = "対照" if str(r.get("topic", "")).startswith("s-") else "処置"
+        per_fam.setdefault(vcalc.get(vid, ""), {}).setdefault(side, []).append(views)
+
+    usable = {f: s for f, s in per_fam.items()
+              if f and s.get("処置") and s.get("対照")
+              and statistics.fmean(s["対照"]) > 0}
+    ratios = {f: statistics.fmean(s["処置"]) / statistics.fmean(s["対照"])
+              for f, s in usable.items()}
+    return {"as_of": today, "per_family": usable, "ratios": ratios,
+            "families": len(ratios), "bar": BAR,
+            "median": statistics.median(ratios.values()) if ratios else None}

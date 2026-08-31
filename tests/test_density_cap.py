@@ -13,18 +13,30 @@ Resume gate 4（量そのもの）が縛っているのは、まさにこの差�
 
 ## 3つの数が同じ所から来ているか
 
-    src.density_verdict.HOUR_HI          測れている帯の上端（判定の本文と同じ数）
+    src.house_rule.PUBLISH_PER_DAY       **上限の唯一の出どころ**（オーナーの規則1）
     scripts/eta.py PLAN_PUBLISH_PER_DAY  到達日の段1〜4 が乗っている本数
     scripts/batch_build.density_cap()    機械が実際に置く上限
 
 **この3つがずれたら、また「言っている所と、している所が別」に戻ります。**
 ずれた瞬間にここが赤くなります。
 
+## **2026-08-31: 出どころが `HOUR_HI` から `house_rule` へ移りました**
+
+オーナーが規則を固定しました（原文は `src/house_rule.py`・`CLAUDE.md` 冒頭）:
+
+    「動画は1日一本作り置きはなしにして。次の投稿予定までにそこで投稿する
+      動画を改善し続ける。それは固定にして。その上で目標を目指す」
+
+`src.density_verdict.HOUR_HI`（13）は**測れている帯の上端＝観測**であって、
+出してよい本数ではありません。**帯が動いても、規則は動きません。**
+
 ## 覆る条件
 
-`python -m src.density_verdict` を撃ち直して倍率が 0.5 以上に戻ったら、
-`HOUR_HI` ごと動かしてよい（3つとも同じ所を読んでいるので、
-**この検査は上限の値そのものは何も主張していません**）。
+**ありません。** `density_verdict` の倍率が 0.5 以上に戻っても、上限は 1本/日 のままです
+（帯が広がることと、規則が変わることは別ものです）。
+外れるのは、オーナーが自分の言葉で規則を外したときだけ。
+**この検査は上限の値そのものは主張していません** —— 主張しているのは
+`tests/test_house_rule.py` のほうです。
 """
 from __future__ import annotations
 
@@ -41,8 +53,16 @@ from src import density_verdict  # noqa: E402
 
 # --- 上限の出どころが1か所か ---------------------------------------------
 
-def test_上限は測れている帯の上端から来ている():
-    assert density_cap() == density_verdict.HOUR_HI
+def test_上限は規則から来ている():
+    """**2026-08-31 まではここが `density_verdict.HOUR_HI` でした。**
+
+    帯（観測）ではなく規則を読んでいるか。**規則のほうが勝ちます。**
+    """
+    from src import house_rule                              # noqa: PLC0415
+
+    assert density_cap() == house_rule.PUBLISH_PER_DAY
+    assert density_cap() <= density_verdict.HOUR_HI, (
+        "測れている帯の上端より多く置こうとしています")
 
 
 def test_計画の本数と機械の上限が同じ数である():

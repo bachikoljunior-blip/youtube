@@ -45,9 +45,33 @@ def render(m: dict) -> list[str]:
     p.append(f"  比の**中央値**: **×{m['median']:.2f}**（合格点 ×{D.BAR}）")
     p.append(f"  → **{m['verdict']}**")
     if m["verdict"] == "falsified":
-        p.append("     `next_if_false`: 次に疑うのは**族**。深い題は `calc_sections` を"
-                 "持つぶん族が偏っている（`src/family_perf.py` が族べつに4倍の差）。"
-                 "**同じ族の `s-` 題と深い題**で比べ直すこと")
+        p += render_family(D.by_family(m["as_of"]))
+    return p
+
+
+def render_family(f: dict) -> list[str]:
+    """`next_if_false`（族を疑え）の答えを、**同じ回のうちに**並べる。
+
+    **これは 2026-08-31 に、この前提を閉じた回が配線しました。**
+    ここには長らく `next_if_false` の本文を印字するだけの3行がありました ——
+    **「次はこれをやれ」と言うだけで、誰もやらないまま閉じる**のが
+    `src/followup.py` の見つけた壊れ方（外れた前提 14件・31手・実行 0件）です。
+    **数は既にあるので、言うのではなく出します。**
+    """
+    if not f["ratios"]:
+        return ["  族をそろえた比: **両群がそろう族が1件もありません**"]
+    p = ["  --- `next_if_false`（族を疑え）の答え ＝ **族をそろえて出し直した比** ---"]
+    for fam, r in sorted(f["ratios"].items(), key=lambda x: x[1]):
+        s = f["per_family"][fam]
+        p.append(f"    {fam:<16} 処置 {len(s['処置']):>2}本 平均 "
+                 f"{statistics.fmean(s['処置']):>7,.0f} ／ 対照 {len(s['対照']):>2}本 平均 "
+                 f"{statistics.fmean(s['対照']):>7,.0f}  → **×{r:.2f}**")
+    below = sum(1 for r in f["ratios"].values() if r < 1.0)
+    p.append(f"  族をそろえた比の**中央値**: **×{f['median']:.2f}**"
+             f"（合格点 ×{f['bar']}・族 {f['families']}件・うち 1.0未満 {below}件）")
+    p.append("  → **族ではありません。** 族をそろえると比は**さらに下がります**"
+             "（交絡なら合格点へ寄るはずでした）。"
+             "**覆る条件**は `src/deep_short.by_family` の docstring")
     return p
 
 
