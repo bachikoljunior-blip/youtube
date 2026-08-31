@@ -454,7 +454,13 @@ def _stockpiled_ids() -> set[str]:
 def _days(rows: dict[str, list[Member]]) -> dict[str, list[date]]:
     """群べつの本 → 群べつの公開日（昇順）。**`Floor` が要るのはこちらだけ。**
 
+    **ここでは1本も落としません。畳むだけです。**
+    `SOURCES` はこれで `members()` を畳んだものなので、**畳む側で員数を変えると
+    `SOURCES` と `members()` が別の群を見ます**（`tests/test_live_slots.py::
+    test_群の作り方は1か所`）。**絞りは `members()` の側に置くこと。**
+
     ## **作り置きの予約は、床に数えません**（2026-08-31 に足した。オーナー規則2）
+    ##  —— **その絞りは `members()` へ移しました**（上の理由）。以下は経緯です。
 
     `Floor.ready` は「片群 N本 が**予約に**そろって初めて日が出る」形です。
     ところが規則2（原文「**作り置きはなしにして**」「**使わなければ良いだけ
@@ -485,8 +491,7 @@ def _days(rows: dict[str, list[Member]]) -> dict[str, list[date]]:
     が `True` になり、`is_stockpile()` が全件 `False` を返すので、
     ここは自動で素通りになります（**この関数に条件を書き足さないこと**）。
     """
-    drop = _stockpiled_ids()
-    return {g: sorted(d for d, v in ms if v not in drop) for g, ms in rows.items()}
+    return {g: sorted(d for d, _ in ms) for g, ms in rows.items()}
 
 
 #: yaml の `key:` → (**群べつの本**を作る関数, 片群あたりの必要本数)
@@ -719,9 +724,41 @@ def members(key: str) -> dict[str, list[Member]]:
     落とす条件は **その日の何本目か** だけです（予約を置いた側が決める量なので、
     処置とは独立）。**再生数そのものでは落としません** —— 結果で条件付けると、
     処置が再生を落としている場合にその効果を隠します。
+
+    ## **1本も公開されない本も、標本として数えません**（2026-08-31・オーナー規則2）
+
+    上と同じ理由の、もう一段 手前の話です。**0再生の本**を落とすなら、
+    **そもそも公開されない本**はなおさら落ちます —— 規則2
+    （原文「**作り置きはなしにして**」「**使わなければ良いだけ 前提にも再利用もしない**」）
+    の下では、規則より前に作った未公開の予約は**永久に公開されません。**
+
+    実測 2026-08-31: `data/uploaded.jsonl` の未来の予約 **294本 のうち 293本**。
+    塞ぐ前に実際に出ていた害::
+
+        hook_form 問い  予約 21本（うち作り置き 10本）→ 16本目 09/23 → ready 09-30
+                        → `scripts/deadline_check.py` は `[OK]` と印字
+                  実物  公開される見込み 11本（床 16本）＝ **そろわない**
+
+    `scripts/eta.py` は「軌跡の腕が動くのは前提を1件 閉じたときだけ」と印字するので、
+    **閉じられない前提が「閉じられる」側に並ぶと、到達日はそこで止まります。**
+
+    ### **落とすのは `_days()` ではなく、ここです**
+
+    最初 `_days()`（`Floor` が読む口）だけで落としました。**`tests/test_live_slots.py::
+    test_群の作り方は1か所` が赤くして、そちらが誤りだと教えました** ——
+    `SOURCES` は `members()` を畳んだものなので、畳む側で員数を変えると
+    **`SOURCES` と `members()` が別の群を見ます**（実測 title_form 23/19 対 41/43）。
+    **群の作り方は1か所**。だから絞りもここに置きます（`_live_ids()` の隣）。
+
+    **覆る条件**: オーナーが規則2 を外したら `house_rule.STOCKPILE_IS_SUPPLY` が
+    `True` になり、`is_stockpile()` が全件 `False` を返すので、ここは自動で
+    素通りになります（**この関数に条件を書き足さないこと**）。
     """
     make, _ = MEMBER_SOURCES[key]
     rows = make()
+    drop = _stockpiled_ids()
+    if drop:
+        rows = {g: [(d, v) for d, v in ms if v not in drop] for g, ms in rows.items()}
     keep = _live_ids()
     if keep is None:
         return rows
