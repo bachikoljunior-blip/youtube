@@ -66,6 +66,53 @@ from src import arm_speed, day_cap, eligibility, form_record, forms, house_rule,
 
 LOG = ROOT / "data" / "eta.jsonl"
 
+#: **本物の台帳の場所**（import のときに固めます）。`LOG` を tmp へ差し替えた
+#: 検査は、この定数と一致しないので今までどおり書けます。
+_REPO_LOG = (Path(__file__).resolve().parent.parent / "data" / "eta.jsonl")
+
+#: 本物の `data/eta.jsonl` へ**わざと**書く検査が要るときに立てる逃げ道。
+ETA_LOG_WRITE_ENV = "YT_ETA_LOG_WRITE"
+
+
+def _log_path():
+    """書き込み先。**検査が本物の台帳を指していたら `None`**（＝1行も書かない）。
+
+    ## なぜ要るか（2026-09-01 に実測して足した）
+
+    `pytest` を1回 走らせるだけで、**本物の `data/eta.jsonl` に点が増えます。**
+    実測（この回・`tests/test_long_surface_ceiling_named.py` を1件 走らせた）:
+
+        20:27 と 20:28 に1点ずつ ＝ **993点目まで検査が積んでいた**
+
+    **統計の汚れでは済みません。** この台帳は「予測日が前の回から動いたか」を
+    出す唯一の資料で、`run_marker.py --ship` の `moves` の裏取りも、
+    `eta.py --reflect` の「この回で動いた入力」も、ここの**隣り合う2点の差**です。
+    検査の点が挟まると、**その回の作業の成績が、検査の成績に化けます** ——
+    つまり「最適化されてんの？」に答える当の数が汚れます。
+
+    ## なぜ「呼ぶ側で気をつける」ではないのか
+
+    `scripts/run_marker.py` は 2026-08-20 に同じ形を踏み、`YT_SKIP_REFLECT` で
+    **反映の道だけ**塞ぎました。塞がっていないのは**予測そのものを撃つ道**で、
+    そちらは `eta.py` の `main()` を呼ぶ検査すべてが通ります。
+    `src/upload_cap._write_path` の註が同じことを書いています ——
+    **「関係のない検査に『台帳に気をつけろ』と約束させるのは無理なので、
+    書く側を機械で閉じます」。同じ傘に入れます。**
+
+    ## 覆る条件
+
+    本物の台帳へわざと書く検査が要るようになったら `YT_ETA_LOG_WRITE=1` を
+    立てること（そのときは理由を JOURNAL に）。
+    """
+    if os.environ.get("PYTEST_CURRENT_TEST") and not os.environ.get(
+            ETA_LOG_WRITE_ENV):
+        try:
+            if LOG.resolve() == _REPO_LOG.resolve():
+                return None
+        except OSError:
+            return None
+    return LOG
+
 
 def _ledger_reach(need_ratio: float, *, basis: str = "平均",
                   band: str | None = None) -> list[str]:
@@ -9912,12 +9959,16 @@ def reflect(note: str | None = None, *, record: bool = True) -> tuple[int, dict]
             rec[_k] = row[_k]
     if note:
         rec["note"] = note
+    _log = _log_path() if record else None
+    if record and _log is None:
+        # **検査が本物の台帳を指しています**（`_log_path` の註）。回は止めません。
+        record = False
     if record:
-        LOG.parent.mkdir(parents=True, exist_ok=True)
-        with LOG.open("a", encoding="utf-8") as fh:
+        _log.parent.mkdir(parents=True, exist_ok=True)
+        with _log.open("a", encoding="utf-8") as fh:
             fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
         try:
-            where = LOG.relative_to(ROOT)
+            where = _log.relative_to(ROOT)
         except ValueError:                                     # 検査は tmp に積みます
             where = LOG
         print(f"[eta] **反映を残しました**: {where}"
@@ -10445,11 +10496,17 @@ def main() -> int:
     print("  **この回の作業は、上の日付を動かすものを選ぶこと。**"
           " 出したら `run_marker.py --ship \"…\" --lever <腕> --moves <見込みの日数>`。")
 
-    if not args.no_record:
-        LOG.parent.mkdir(parents=True, exist_ok=True)
-        with LOG.open("a", encoding="utf-8") as fh:
+    _log = None if args.no_record else _log_path()
+    if _log is not None:
+        _log.parent.mkdir(parents=True, exist_ok=True)
+        with _log.open("a", encoding="utf-8") as fh:
             fh.write(json.dumps(row, ensure_ascii=False) + "\n")
-        print(f"\n[eta] 積みました: {LOG.relative_to(ROOT)}（{sum(1 for _ in LOG.open(encoding='utf-8'))}点目）")
+        try:
+            _where = _log.relative_to(ROOT)
+        except ValueError:                                     # 検査は tmp に積みます
+            _where = _log
+        print(f"\n[eta] 積みました: {_where}"
+              f"（{sum(1 for _ in _log.open(encoding='utf-8'))}点目）")
     return 0
 
 

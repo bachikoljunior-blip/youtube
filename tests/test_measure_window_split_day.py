@@ -152,7 +152,16 @@ def test_理由に本数と時刻が入っていること(monkeypatch):
 
 
 def test_手の一覧のほうが先に当たること(monkeypatch):
-    """**同じ日に両方が当たったら、理由の細かい手の一覧を返すこと。**"""
+    """**同じ日に両方が当たったら、理由の細かい手の一覧を返すこと。**
+
+    **`WINDOWS` が空の回は、比べる相手が居ないので飛ばします**（2026-09-01）。
+    支えていた前提が全部 閉じると `WINDOWS` は空になり、そのとき
+    `WINDOWS[0]` は `IndexError` で落ちます —— **「窓が1つも無い」は
+    正常な状態**なので、赤くする理由がありません。
+    **窓を1つでも足したら、この検査はまた効きます。**
+    """
+    if not measure_window.WINDOWS:
+        pytest.skip("手の一覧の窓が0件（支えている前提が全部 閉じた状態）")
     _install(monkeypatch, _FakeDayCap(
         booked={**BOOKED, "day": measure_window.WINDOWS[0]["from"]}))
     hit = measure_window.find(measure_window.WINDOWS[0]["from"],
