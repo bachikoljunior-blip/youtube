@@ -1,0 +1,13 @@
+{
+ "video_id": "UIWHsypOPPg",
+ "topic": "hendo-mibarai-risoku",
+ "stashed_at": "2026-08-31T23:05:16+09:00",
+ "orientation": "横",
+ "narration": [],
+ "slides_plan": false,
+ "change_ratios": [],
+ "thumbnail_stashed": true,
+ "thumbnail_set": false,
+ "reconstructed": true,
+ "reconstructed_note": "投稿の回（2026-08-31T11:26Z・commit f7d3171e）の控えが commit されず、コンテナごと失われた。2026-08-31 22:xx の回が、同じテーマ・同じ calc で `python -m src.pipeline --topic hendo-mibarai-risoku --dry-run` を走らせ直し（Data API 0単位・verify 合格 5.5分・chart 7枚）、**サムネイルの bytes だけ**をここへ入れた。サムネイルの字は『元金0円が108回 / 113,608円』——どちらも 5年ルールの二重取りを直した後も動かない値で（src/calc/hendo.py: 元金が動かない回数 108・その月の利息 113,608円）、上がっている本の内容と食い違わない。**読み上げは入れていない**（別の生成なので、入れると嘘になる）。"
+}
