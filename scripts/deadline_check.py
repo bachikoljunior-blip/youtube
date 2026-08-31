@@ -1476,6 +1476,39 @@ def _project_nth(rows: list[dict], pub: list[str], count: int, after: str,
     rate = have / elapsed
     if rate <= 0:
         return None
+    # --- **規則（1日1本）より速い伸び率は名乗らない**（2026-08-31 に足した） -----
+    #
+    # 上の下限（`_MIN_SPAN_DAYS`）は「**窓が短すぎる**」を押さえるものですが、
+    # こちらは「**規則がそれを許さない**」の話です。群が満ちるのは
+    # **本が公開されたとき**で、公開はオーナー規則1 で **1日 1本**です。
+    # どう作っても、群が公開ずみの本を 1日1本 より速く増やすことはできません。
+    #
+    # **塞ぐ前に実際に出ていた数**（実測 2026-08-31・`scripts/deadline_check.py` の末尾）::
+    #
+    #     request_form  終端のみ **4.00本/日** → 72本目 09/30
+    #                   途中あり **3.80本/日** → 72本目 10/04
+    #     slide_pace    速い **1.75本/日** ／ 遅い **2.00本/日** → 16本目 10/04・09/30
+    #
+    # **どれも規則の 4倍・2倍の速さです。** その伸び率は
+    # **作り置きを作っていた頃の平均**で、規則2 でその本は公開されません。
+    # `src/house_rule.needs_beyond_rule()` は散文の `needs` について同じ判定を
+    # していますが、**A/B の推定はその道を通りません** —— 同じ規則を
+    # 2つの経路の片方だけが読んでいた形です（この repo で通算14回目）。
+    #
+    # **上限で押さえるだけです。何も止めません**（`CLAUDE.md`「作りに問題を
+    # 見つけたら、止めるのではなく直すこと」）。1日1本 より遅い群はそのまま。
+    #
+    # **群ごとに割りません**（2群なら実際は 0.5本/日 が上限ですが、
+    # 割り当ては予約を置く側が決める量なので、ここでは**厳しすぎる側へ倒しません**）。
+    #
+    # **覆る条件**: オーナーが規則を外したら `PUBLISH_PER_DAY` が上がり、
+    # この上限は自然にゆるみます（**ここに本数を書き写さないこと**）。
+    from src import house_rule                             # noqa: PLC0415
+
+    cap = float(house_rule.PUBLISH_PER_DAY)
+    raw_rate, capped = rate, rate > cap
+    if capped:
+        rate = cap
     leads = []
     for r in rows:
         at, up = str(r.get("at") or "")[:10], str(r.get("uploaded_at") or "")[:10]
@@ -1500,6 +1533,12 @@ def _project_nth(rows: list[dict], pub: list[str], count: int, after: str,
     warn = ("" if span >= _MIN_SPAN_DAYS else
             f"・**窓が {span}日 しかないので、分母に {_MIN_SPAN_DAYS}日 を当てています**"
             f"（この伸び率は上限です。実測は `since` を {_MIN_SPAN_DAYS}日 またいでから）")
+    # **規則で押さえた回は、そう言うこと。** 言わないと、`1.00本/日` が
+    # 「実測でちょうど1本だった」と読めます（実際は 4.00 を規則で切った数です）。
+    if capped:
+        warn += (f"・**伸び率を規則（1日{house_rule.PUBLISH_PER_DAY}本）で"
+                 f"押さえています**（実測の平均は {raw_rate:.2f}本/日 ですが、"
+                 "その速さは作り置きを作っていた頃のもので、規則2 でその本は公開されません）")
     return nth, rate, max(0, lead), slack, warn
 
 
