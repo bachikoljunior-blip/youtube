@@ -2775,6 +2775,63 @@ def _walk(start, n: int) -> list:
     return [start + timedelta(days=i) for i in range(n)]
 
 
+def _compact_fill() -> int | None:
+    """**その穴を、いま在る予約を動かすだけで埋めるには何本 動かすか。**（API 0単位）
+
+    返すのは `reschedule.compact_plan` が出す**動かす本数**で、穴が残る割り当てなら
+    `None`（＝「詰めれば消える」と言えない）。
+
+    ## なぜ status がここまで数えるか（2026-09-01）
+
+    すぐ上の枝は、08-31 に規則（1日1本）が入った日に**無条件で「詰めないこと」**へ
+    倒れました。**その文が正しいのは、穴の先に作り置きが無いときだけ**です。
+    実測 2026-09-01: 穴 8日 の先に **264本**。無条件の「詰めないこと」は、
+    **その 8日ぶんの公開を捨てろ**と毎周 言っていたことになります。
+
+    **「詰めろ」と言うなら、詰めた姿まで数えてから言うこと。**
+    ここが本数を出さないと、次の回は `--compact` を撃つかどうかを
+    「たぶん穴が残る」で決めます（この repo でいちばん多い形 ——
+    **道具が答えを出せるのに、撃つのは次の手**）。実測 0.4秒・API 0単位です。
+
+    ## 覆る条件
+
+    - `reschedule` が import できない／控えに予約行が無い → `None`（黙る）
+    - 規則が緩んで `_live_edge_min` が広がると、動かす本数は増えます
+      （**ここに数を書いていないので、そのまま付いていきます**）
+    """
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        import reschedule as _rs                               # noqa: PLC0415
+
+        from src import dupes as _dupes                        # noqa: PLC0415
+        rows = [r for r in _dupes.ledger_rows() if r.get("at")]
+        if not rows:
+            return None
+        now = datetime.now(timezone.utc)
+
+        class _A:                                              # `suggest_max_days` が読む欄だけ
+            step_min = 30
+            hour = 9
+            until_hour = 21
+            lead_min = 60
+            min_days = 0.0
+            max_days = _rs.DEFAULT_MAX_DAYS
+
+        args = _A()
+        md = _rs.suggest_max_days(rows, now, args, start=_rs.DEFAULT_MAX_DAYS)
+        if md is None:
+            return None
+        plan = _rs.compact_plan(
+            rows, now=now, step_min=args.step_min, hour=args.hour,
+            until_hour=args.until_hour, max_days=md, lead_min=args.lead_min,
+            live_edge_min=_rs._live_edge_min(args.hour, args.step_min))
+        if _rs.hole_days(rows, plan, now):
+            return None
+        return len(plan)
+    except Exception:                                          # noqa: BLE001
+        return None
+
+
 def _print_per_day(ahead: list, today=None) -> None:
     """予約の**日ごとの本数**を、明日から `PER_DAY_SPAN` 日ぶん1行で出す。
 
@@ -2813,13 +2870,39 @@ def _print_per_day(ahead: list, today=None) -> None:
         #     **言うべきは「詰めろ」ではなく「毎日1本を切らすな」**です。
         #     出どころは `src.house_rule` の1か所。
         from src import house_rule                             # noqa: PLC0415
+        # **2026-09-01: ここは「穴の先に何が在るか」で言うことが変わります。**
+        #     08-31 の枝は、規則が入った日に**無条件で「詰めないこと」**へ倒れました。
+        #     その文は「作り置きが無い状態」でしか正しくありません ——
+        #     **穴の先にもう作ってある予約が並んでいるなら、その日が0本なのは
+        #     『まだ作っていない』ではなく『作ってあるのに出さない』です。**
+        #     実測 2026-09-01 05:5x: 穴 8日（09/03・09/05〜09/11）の**先に 264本**。
+        #     `--compact`（`_live_edge_min` が規則1で 1本/日 に締まる）は
+        #     **12本 動かすだけで穴が0件**になりました（新しい本は0・600単位）。
+        #     **無条件の「詰めないこと」は、その 8日を捨てろと言っていました。**
+        # **穴には、必ず作り置きが後ろに居ます**（この節の穴の定義の帰結）。
+        #     `gap` は `span`（明日〜`last`）の中で0本の日だけで、`last` は
+        #     `max(per)` ＝ **必ず1本以上ある日**です。だから `gap[-1] < last`、
+        #     すなわち **穴の先には最低1本の予約が在る。**
+        #     ＝ **「先が空いているのは そういう作りです」は、ここでは一度も
+        #     正しくありませんでした**（在庫の切れ目より先は
+        #     `test_最後の予約より先は穴と呼ばない` が既に穴から外しています）。
+        stock = sum(n for d, n in per.items() if d > gap[-1])
+        fill = _compact_fill()
         print("      **投稿が途切れるのが最大の損失です**（`CLAUDE.md`）。"
-              f"ただし規則は **1日{house_rule.PUBLISH_PER_DAY}本・作り置きなし**"
-              "（`src/house_rule.py`・2026-08-31）なので、"
-              "**先が空いているのは そういう作りです。詰めないこと** ——"
-              "`--compact` は規則の側で 1本/日 に締まります。"
-              "**要るのは「その日の1本を、その日までに1本 入れること」**"
-              "（`docs/trigger_main.md` §4 の `upload` と `improve`）。"
+              f"**その穴の先に、もう作ってある予約が {stock}本 あります** ——"
+              "その日が0本なのは「まだ作っていない」ではなく"
+              "**「作ってあるのに出さない」**です"
+              f"（規則2『作り置きなし』の側も、既に {stock}本 ぶん破れています）。"
+              "**新しい本は1本も要りません。**"
+              + (f" 実測（いま数えた・API 0単位）: `python scripts/reschedule.py"
+                 f" --compact` は **{fill}本 動かすだけで穴が0件**"
+                 f"（{fill * 50}単位・`--apply` で撃つ）。"
+                 if fill else
+                 " `python scripts/reschedule.py --compact` で割り当てを見ること"
+                 "（いまは穴の残らない `--max-days` が見つかりませんでした）。")
+              + "残った作り置きは `python scripts/pool_drain.py --apply`。"
+              f"詰めた先も **1日{house_rule.PUBLISH_PER_DAY}本**です"
+              "（`_live_edge_min` が `src/house_rule.py` で締まります）。"
               "空けてあるなら `src/measure_window.py` の窓を見ること")
 
     # **薄い日も、印字の窓ではなく予約の最後まで見ること**（同じ理由）。

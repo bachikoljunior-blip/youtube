@@ -202,3 +202,35 @@ def test_鍵ではなく暦を歩いている(capsys):
     st._print_per_day(ahead, today=TODAY)
     line = [x for x in capsys.readouterr().out.splitlines() if "日ごと" in x][0]
     assert line.count("=") == st.PER_DAY_SPAN      # なのに12日ぶん出る
+
+
+def test_穴の先の作り置きを名指しし詰めないこととは言わない(capsys):
+    """**08-31 に入った「詰めないこと」は、この節では一度も正しくありませんでした。**
+
+    規則（1日1本・作り置きなし）が入った日、この枝は**無条件で**
+    「先が空いているのは そういう作りです。詰めないこと」へ倒れました。
+    その文が正しいのは **穴の先に予約が1本も無いとき**だけですが、
+    `gap` は `max(per)`（＝必ず1本以上ある日）より手前の0本の日しか拾わないので、
+    **穴の先には必ず作り置きが居ます**（`test_最後の予約より先は穴と呼ばない`）。
+
+    実測 2026-09-01: 穴 9日（09/03〜09/11）の先に **267本**。
+    `reschedule.py --compact` は **12本 動かすだけで穴が0件**（600単位・新しい本は0）。
+    それでも `status.py` は毎周「詰めないこと」と言っており、
+    **その 9日ぶんの公開を捨てろ**と案内していたことになります。
+
+    **覆る条件**: オーナーが規則を外す／`gap` の定義が「最後の予約より先」も
+    穴に数えるようになったら、この検査ごと書き直すこと。
+    """
+    st._print_per_day(_ahead({"2026-08-20": 1, "2026-08-25": 3}), today=TODAY)
+    out = capsys.readouterr().out
+    assert "予約が1本も無い日が 4日" in out
+    # **薄い日の節と混ぜないこと** —— あちらの「詰めないこと」は
+    #     規則どおりの日（1本/日）に向いた別の文です。
+    hole = out.split("予約が1本も無い日")[1].split("1日2本以下の日")[0]
+    assert "その穴の先に、もう作ってある予約が 3本 あります" in hole
+    assert "新しい本は1本も要りません" in hole
+    assert "reschedule.py --compact" in hole
+    assert "pool_drain" in hole
+    # **ここで「詰めないこと」と言わないことが、この検査の本体です。**
+    assert "詰めないこと" not in hole
+    assert "そういう作りです" not in hole
