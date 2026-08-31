@@ -462,6 +462,68 @@ def _premise_subject_lines(cap: int = PREMISE_ROWS_CAP) -> list[str]:
     return out
 
 
+#: M4 の数がこれより古かったら、撃ち直しをすすめる（時間）。
+#: 判定の窓が 7日 なので、1日ぶん古い数はまだ同じことを言っています。
+M4_STALE_HOURS = 24
+
+
+def _m4_lines(stale_hours: int = M4_STALE_HOURS) -> list[str]:
+    """**M4（検索 → 長尺）の、いまの数と齢**を出す（**API 0単位・台帳を読むだけ**）。
+
+    ## なぜ §1 で出すのか（2026-09-01 に足した。**配線の4本目**）
+
+    `scripts/search_terms.py` は `docs/MEANS.md` **M4 の判定に使う唯一の計器**で、
+    M4 の期限は **9/15** です。それが `retro.py` の
+    「どこからも呼ばれない」に **3周 続けて**載っていました
+    （`doc_usage` ／ `stale_scheduled` ／ `premise_subject` と同じ形 ——
+    **道具は在り、締切のある数を印字し、撃つ側がどこにも居ない**）。
+    `grep -c search_terms docs/trigger_main.md` は **1** で、
+    その1件は「呼ばれていない道具の一覧」そのものでした。
+
+    **ここで道具そのものを撃ちません。** あれは 28秒 かかり、
+    動画1本ずつに Analytics を引きます（実測 121本）。
+    §1 は**手順を読む前の唯一のコマンド**なので、そこへ 28秒 を置くと
+    **毎周 払うことになります。** だから積むのは道具の側、
+    ここは**台帳の最後の1点と、その齢**だけを読みます。
+
+    **齢を出すのが本体です。** 数だけを出すと、
+    **古い数が「いまの数」に見えます** —— `status.py` の `quota_ledger` が
+    「呼び出しは在る・検査も通る・出力に無い」で 101周 黙っていたのと同じ側の穴で、
+    こちらは「**出てはいるが、いつの数か分からない**」ほうです。
+
+    **落ちても回は止めません。** 印が本体で、これは付け足しです
+    （`_doc_index_lines` ／ `_premise_subject_lines` と同じ）。
+    """
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        import search_terms                                    # noqa: PLC0415
+        point = search_terms.latest()
+    except Exception as exc:                                   # noqa: BLE001
+        return [f"[marker] （M4 の台帳を読めませんでした: "
+                f"{type(exc).__name__}: {exc}）"]
+    if not point:
+        return ["[marker] **M4（検索 → 長尺）の数が、まだ1点もありません** —— "
+                "`python scripts/search_terms.py`（**日枠 0単位**・約28秒）。"
+                "**M4 の期限は 9/15**、判定に使う計器はこれだけです"]
+    try:
+        at = datetime.fromisoformat(str(point["at"]))
+        age_h = (datetime.now(timezone.utc) - at).total_seconds() / 3600.0
+    except (ValueError, KeyError, TypeError):
+        age_h = float("inf")
+    long_v = point.get("long_views")
+    short_v = point.get("short_views")
+    days = point.get("days", 7)
+    age = "齢 不明" if age_h == float("inf") else f"**{age_h:.0f}時間 前**の数"
+    verdict = "基準値の上" if isinstance(long_v, int) and long_v > 1 else "基準値のまま"
+    out = [f"[marker] **M4（検索 → 長尺）: 長尺 {long_v}再生 / {days}日**"
+           f"（基準値 **1再生/7日** → {verdict}）／ ショート {short_v}再生は"
+           f"**判定に使いません**（検索面に差し込まれただけ）。{age}"]
+    if age_h > stale_hours:
+        out.append("         **撃ち直すこと**: `python scripts/search_terms.py`"
+                   "（**日枠 0単位**。枠が尽きた回でも通ります）")
+    return out
+
+
 def _claim_lines(window_min: int = CLAIM_WINDOW_MIN) -> list[str]:
     rows = claims(window_min)
     ships = recent_ships(window_min)
@@ -537,6 +599,10 @@ def write() -> int:
     # 理由は `_premise_subject_lines()` の註 —— 到達日を動かすのは
     # 「前提を1件 閉じる」ことだけなので、**その1件を選ぶ前**に見せます。
     for ln in _premise_subject_lines():
+        print(ln)
+    # **M4（検索 → 長尺）の数と齢**（2026-09-01 に足した）。理由は `_m4_lines()` の註 ——
+    # 期限 9/15 の手段で、判定に使う計器は `search_terms.py` の1本だけです。
+    for ln in _m4_lines():
         print(ln)
     # **ここで出すこと。** §1 はその回のいちばん最初のコマンドで、
     # **何をやるか決める前**です。決めた後に見せても、払った時間は戻りません。

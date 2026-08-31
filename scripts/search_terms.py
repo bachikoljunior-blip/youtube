@@ -37,8 +37,10 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
-from datetime import date, timedelta
+import time
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -47,6 +49,12 @@ from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 
 from src.auth import credentials
+
+ROOT = Path(__file__).resolve().parent.parent
+#: M4 の判定に要る数だけを積む台帳。**この道具を撃った回だけ 1行 増えます。**
+#: 読む側（`run_marker.py --write`）は**ここしか見ません** ——
+#: だから §1 は API を1回も叩かずに「M4 はいま何再生で、その数は何時間 前のものか」を出せます。
+LEDGER = ROOT / "data" / "search_terms.jsonl"
 
 # お金・制度に関係する語。**この企画が狙っている面かどうか**だけを分ける。
 MONEY = (
@@ -93,6 +101,31 @@ def fetch(days: int) -> list[tuple[str, int, int]]:
         raise FetchFailed(f"{exc.resp.status} {exc}") from exc
     rows = response.get("rows", []) or []
     return [(r[0], int(r[1]), int(r[2])) for r in rows]
+
+
+def _retry(call, *, where: str, tries: int = 4):
+    """一時的な 5xx を待ち直す。**尽きた枠（403）と混ぜないこと。**
+
+    `scripts/playlists._retry` と同じ形です（あちらは 409 の伝播待ち）。
+
+    **なぜ要るか**（2026-09-01 に踏んだ）。この節は動画1本ずつに Analytics を引くので、
+    実測 **121回**の照会が並びます。**1本でも一時的な 500 を返すと、
+    M4 の判定が丸ごと落ちます** —— 実際に `B3pgxY1Xi1w: 500` で1周ぶん落ちました。
+    直前の同じ問い合わせは通っており、**中身の問題ではありません。**
+
+    **`FetchFailed` に落とす道は残します。** 数を捏造しないため ——
+    取れなかった本を 0再生 として足すと、**長尺の合計が基準値を下回る側へ黙って動きます**
+    （`FetchFailed` の docstring の「失敗と基準値を混ぜるな」そのもの）。
+    **待って駄目なら、判定できないと言うほうが正しい。**
+    """
+    for i in range(tries):
+        try:
+            return call().execute()
+        except HttpError as exc:
+            if exc.resp.status not in (500, 503) or i == tries - 1:
+                raise FetchFailed(f"{where}: {exc.resp.status}") from exc
+            time.sleep(2 ** i)
+    raise AssertionError("到達しません")
 
 
 def candidate_ids(days: int) -> list[str]:
@@ -187,18 +220,15 @@ def by_video(days: int) -> list[tuple[str, str, bool, int, int]]:
     out: list[tuple[str, str, bool, int, int]] = []
     for vid in ids:
         title, short = meta[vid]
-        try:
-            rows = analytics.reports().query(
-                ids="channel==MINE",
-                startDate=start.isoformat(),
-                endDate=end.isoformat(),
-                metrics="views,estimatedMinutesWatched",
-                dimensions="insightTrafficSourceType",
-                filters=f"video=={vid}",
-                sort="-views",
-            ).execute().get("rows", []) or []
-        except HttpError as exc:
-            raise FetchFailed(f"{vid}: {exc.resp.status}") from exc
+        rows = _retry(lambda v=vid: analytics.reports().query(
+            ids="channel==MINE",
+            startDate=start.isoformat(),
+            endDate=end.isoformat(),
+            metrics="views,estimatedMinutesWatched",
+            dimensions="insightTrafficSourceType",
+            filters=f"video=={v}",
+            sort="-views",
+        ), where=vid).get("rows", []) or []
         for source, views, minutes in rows:
             if source == "YT_SEARCH":
                 out.append((vid, title, short, int(views), int(minutes)))
@@ -206,9 +236,53 @@ def by_video(days: int) -> list[tuple[str, str, bool, int, int]]:
     return out
 
 
+def record(days: int, vids: list[tuple[str, str, bool, int, int]]) -> dict:
+    """M4 の判定に要る数だけを台帳へ1行 足して、その点を返す（**API 0単位**）。
+
+    **積むのは数だけ**です（題も語も入れません）。読む側が要るのは
+    「長尺が基準値の 1再生/7日 を超えたか」だけで、
+    **題を積むと、次に題を直した回で同じ本が別物に見えます。**
+    """
+    point = {
+        "at": datetime.now(timezone.utc).isoformat(),
+        "days": days,
+        "long_views": sum(v[3] for v in vids if not v[2]),
+        "short_views": sum(v[3] for v in vids if v[2]),
+        "videos": len(vids),
+    }
+    LEDGER.parent.mkdir(parents=True, exist_ok=True)
+    with LEDGER.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(point, ensure_ascii=False) + "\n")
+    return point
+
+
+def latest() -> dict | None:
+    """台帳の最後の1点（**読むだけ。API を1回も叩きません**）。
+
+    壊れた行は黙って飛ばします —— **M4 の数のために、印そのものを落とさないこと**
+    （`run_marker.py --write` がこれを呼びます）。
+    """
+    if not LEDGER.exists():
+        return None
+    last = None
+    for line in LEDGER.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(row, dict) and "long_views" in row:
+            last = row
+    return last
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--days", type=int, default=7)
+    parser.add_argument("--no-record", action="store_true",
+                        help="台帳へ積まない（既定は積む。積まないと §1 の数が古いままになります）")
     args = parser.parse_args()
 
     try:
@@ -264,6 +338,11 @@ def main() -> int:
     print(f"  **長尺 {long_views}再生 / ショート {short_views}再生**")
     print(f"  **M4 の基準値は 1再生/7日。比べるのは長尺の {long_views} です。**")
     print("  ショートぶんは M4 の成否と無関係です（検索面に差し込まれただけ）。")
+
+    if not args.no_record:
+        record(args.days, vids)
+        print(f"  台帳へ積みました（{LEDGER.name}）—— "
+              "**次の回は `run_marker.py --write` がこの数と齢を出します。**")
     return 0
 
 

@@ -123,6 +123,66 @@ def test_取れなかったら_FetchFailed_で出る(monkeypatch):
         st.candidate_ids(7)
 
 
+def test_一時的な500は待ち直す(monkeypatch):
+    """121本を1本ずつ引くので、**1本の一時的な 500 で判定が丸ごと落ちていた**
+    （2026-09-01 実測 `B3pgxY1Xi1w: 500`。直前の同じ問い合わせは通っている）。"""
+    from googleapiclient.errors import HttpError
+    monkeypatch.setattr(st.time, "sleep", lambda _s: None)
+    calls = {"n": 0}
+
+    def flaky():
+        calls["n"] += 1
+        if calls["n"] < 3:
+            raise HttpError(_Resp(500), b"backend error")
+        return {"rows": [["YT_SEARCH", 4, 1]]}
+
+    got = st._retry(lambda: type("C", (), {"execute": staticmethod(flaky)})(), where="v")
+    assert got == {"rows": [["YT_SEARCH", 4, 1]]}
+    assert calls["n"] == 3
+
+
+def test_待っても駄目なら数を捏造せず_FetchFailed(monkeypatch):
+    """取れなかった本を 0再生 として足すと、**長尺の合計が基準値の下へ黙って動きます。**"""
+    from googleapiclient.errors import HttpError
+    monkeypatch.setattr(st.time, "sleep", lambda _s: None)
+
+    def always_500():
+        raise HttpError(_Resp(503), b"unavailable")
+
+    with pytest.raises(st.FetchFailed):
+        st._retry(lambda: type("C", (), {"execute": staticmethod(always_500)})(), where="v")
+
+
+def test_403は待ち直さない(monkeypatch):
+    """**尽きた枠は待っても戻りません。** 一時的な 5xx と混ぜないこと。"""
+    from googleapiclient.errors import HttpError
+    slept: list[int] = []
+    monkeypatch.setattr(st.time, "sleep", lambda s: slept.append(s))
+
+    def quota():
+        raise HttpError(_Resp(403), b"quota")
+
+    with pytest.raises(st.FetchFailed):
+        st._retry(lambda: type("C", (), {"execute": staticmethod(quota)})(), where="v")
+    assert slept == []
+
+
+def test_台帳は数だけを積み_最後の1点を返す(tmp_path, monkeypatch):
+    """`run_marker.py --write` はこの台帳しか読みません（**API 0単位**）。"""
+    monkeypatch.setattr(st, "LEDGER", tmp_path / "search_terms.jsonl")
+    st.record(7, [("a", "長尺", False, 6, 1), ("b", "ショート", True, 40, 2)])
+    st.record(7, [("a", "長尺", False, 9, 1)])
+    assert st.latest() == {**st.latest(), "long_views": 9, "short_views": 0, "videos": 1}
+    # 壊れた行で印そのものを落とさないこと
+    st.LEDGER.write_text('{"long_views": 3, "short_views": 0}\nこわれた行\n', encoding="utf-8")
+    assert st.latest()["long_views"] == 3
+
+
+def test_台帳が無ければ_None(tmp_path, monkeypatch):
+    monkeypatch.setattr(st, "LEDGER", tmp_path / "nope.jsonl")
+    assert st.latest() is None
+
+
 def test_形は_src_forms_に決めさせる_題名の札に勝つ(monkeypatch):
     """`#Shorts` が付いていても、**実測が長尺と言えば長尺**（`src.forms` の決め方）。
 
