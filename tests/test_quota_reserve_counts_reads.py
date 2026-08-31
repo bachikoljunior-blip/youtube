@@ -5,8 +5,11 @@
 窓 2026-09-01 07:00Z 起点を、2つの計器で同時に読むと:
 
     `upload_cap.measured_budget()["spent"]`   **9,400単位**  ← 書き込みだけ数える
-    `quota_ledger.spent()["data"]`           **13,359単位**  ← `HttpRequest.execute` を1点で包む
-                                              差 **3,959単位**（本当の消費の 30%）
+    `quota_ledger` の**通った行**             **12,859単位**  ← `HttpRequest.execute` を1点で包む
+                                              差 **3,459単位**（本当の消費の 27%）
+
+（帳面の総計は 13,359単位。うち **501単位 は `ok=False`** ＝ 403 ほか。
+**403 は単位を使わない**ので門は数えません —— 数えると早すぎる側に外れます。）
 
 差は**読み**です —— `search.list` 3,300単位（33回・**単価 100**）ほか計 3,859単位。
 `RESERVE_UNITS` の註は「**読みは 1単位**なので 400単位 ＝ 読み 400回」と
@@ -59,11 +62,32 @@ from src import quota_ledger, upload_cap                       # noqa: E402
 _ROOMY = {"floor": 10_000, "spent": 0, "left": 10_000, "from": "08/27"}
 
 
-def _ledger(monkeypatch, *, data: int, n: int = 1, by=None) -> None:
-    monkeypatch.setattr(quota_ledger, "spent",
-                        lambda now=None: {"data": data, "n": n,
-                                          "by": by or {"だれか": data},
-                                          "method": {}, "other": 0})
+def _ledger(monkeypatch, *, data: int, n: int = 1, by=None,
+            failed: int = 0) -> None:
+    """帳面の行をそのまま作ります（**`spent()` は差し替えません**）。
+
+    門は `rows()` を読んで**自分で足します** —— `spent()["data"]` は
+    `ok=False` の行も定価で足すからです（403 は単位を使わないので、
+    それを数えると門が**早すぎる側**に外れます）。
+    ここで `rows()` を作るのは、**門が読んでいる当のもの**を作るためです。
+
+    `failed` は「403 などで落ちた単位」。**足しても門は動かないこと**が、
+    `test_失敗した呼び出しは数えないこと` の見ているところです。
+    """
+    if n <= 0:
+        monkeypatch.setattr(quota_ledger, "rows", lambda now=None: [])
+        return
+    by = by or {"だれか": data}
+    out = []
+    for who, units in by.items():
+        out.append({"at": "2026-09-01T00:00:00+00:00", "api": "data",
+                    "method": "videos.update", "units": units,
+                    "ok": True, "by": who})
+    if failed:
+        out.append({"at": "2026-09-01T00:00:01+00:00", "api": "data",
+                    "method": "videos.update", "units": failed,
+                    "ok": False, "by": "落ちたぶん"})
+    monkeypatch.setattr(quota_ledger, "rows", lambda now=None: out)
 
 
 def test_帳面に行が無い窓では止めない(monkeypatch):
@@ -75,20 +99,22 @@ def test_帳面に行が無い窓では止めない(monkeypatch):
 
 
 def test_書き込みだけの門が余っていると答えても_帳面の側が勝つ(monkeypatch):
-    """**この検査の本体。** 実測の再現 —— 書き込み 9,400／本当 13,359。
+    """**この検査の本体。** 実測の再現 —— 書き込み 9,400／通ったぶん 12,859。
 
     `measured_budget()` は「余っている」と答える形にしてあります。
     それでも止まらなければ、実測 2026-09-01 の窓（403 を 45回）が再現します。
     """
     monkeypatch.setattr(upload_cap, "measured_budget", lambda now=None: dict(_ROOMY))
-    _ledger(monkeypatch, data=13_359, n=2_193,
-            by={"reschedule.py:_update": 9_668,
-                "history.py:channel_video_ids": 3_409})
+    _ledger(monkeypatch, data=12_859, n=2_193,
+            by={"reschedule.py:_update": 9_567,
+                "history.py:channel_video_ids": 3_105,
+                "そのほか": 187},
+            failed=501)
     held = upload_cap.reserve_hold()
-    assert held, ("**帳面が 13,359単位 を数えているのに、門が通しています。**"
+    assert held, ("**帳面が 12,859単位 を数えているのに、門が通しています。**"
                   " 書き込みだけを数える側が『余っている』と答えた窓です ——"
                   " 実測 2026-09-01 の窓は、ここで 403 を 45回 見ました。")
-    assert "帳面" in held and "13,359" in held
+    assert "帳面" in held and "12,859" in held
     # **何が食ったかを名指しすること**（次の回が当てどころを探さずに済む）
     assert "history.py:channel_video_ids" in held
 
@@ -118,6 +144,32 @@ def test_帳面が壊れていても本体を止めないこと(monkeypatch):
     def boom(now=None):
         raise RuntimeError("帳面が読めない")
 
-    monkeypatch.setattr(quota_ledger, "spent", boom)
+    monkeypatch.setattr(quota_ledger, "rows", boom)
     monkeypatch.setattr(upload_cap, "measured_budget", lambda now=None: dict(_ROOMY))
     assert upload_cap.reserve_hold() is None
+
+
+def test_失敗した呼び出しは数えないこと(monkeypatch):
+    """**403 は単位を使いません。** 数えると門が「早すぎる側」に外れます。
+
+    早いのは、遅いのと同じくらい悪い —— 遅ければ窓が死に、
+    早ければ撃てたはずの `improve`（50単位）と `verdict` の読みが撃てません。
+
+    実測 2026-09-01 の窓: 帳面の総計 **13,359単位** のうち
+    **501単位 が `ok=False`**（403 を 45回 ほか）＝ 通ったのは **12,859単位**。
+    """
+    monkeypatch.setattr(upload_cap, "measured_budget", lambda now=None: dict(_ROOMY))
+    room = quota_ledger.DAY_UNITS - upload_cap.RESERVE_UNITS
+    # 通ったぶんは 1単位 足りない。落ちたぶんを足せば超えるが、**超えてはいけない**
+    _ledger(monkeypatch, data=room - 1, failed=5_000)
+    assert upload_cap.reserve_hold() is None, (
+        "**落ちた呼び出しを数えています。** 403 は単位を使わないので、"
+        " 数えると撃てたはずの `improve` と `verdict` を止めます。")
+
+
+def test_通ったぶんだけで超えたら止めること(monkeypatch):
+    """上の裏返し。**緩める向きに外れていないこと**を見ます。"""
+    monkeypatch.setattr(upload_cap, "measured_budget", lambda now=None: dict(_ROOMY))
+    room = quota_ledger.DAY_UNITS - upload_cap.RESERVE_UNITS
+    _ledger(monkeypatch, data=room, failed=0)
+    assert upload_cap.reserve_hold()
