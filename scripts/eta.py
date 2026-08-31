@@ -1493,6 +1493,23 @@ def _long_ceiling_gate() -> int | str:
         return "?"
 
 
+def _arm_pv_ceiling_str() -> str:
+    """腕 `per_video` の天井を、**台帳から**1行の字にする。**写さないこと。**
+
+    2026-09-01 に足しました。`_escape_form()` の `cap`（ショートの実測の最大・
+    全密度）を「いまの天井」と呼んでいた行があり、**腕の天井を規則の密度
+    （1本/日）へ直した回に、1,891 対 3,918 と割れました。**
+    比べている中身（どちらの形が大きいか）は正しかったので、**名前だけ**を直し、
+    腕の天井のほうはここから引きます。
+    """
+    try:
+        c = arm_speed.ceilings().get("per_video") or {}
+        v = float(c.get("value") or 0.0)
+        return f"{v:,.0f}回" if v > 0 else "台帳に無し"
+    except Exception:                                          # noqa: BLE001 — 回を止めない
+        return "読めません"
+
+
 def _print_dropped(P, m: dict) -> None:
     """**標本から何本落としたか**を、天井の行のすぐ下に出す（2026-08-20 03:1x）。
 
@@ -2680,6 +2697,12 @@ def report(m: dict, a: dict) -> list[str]:
         if _e.get("ok"):
             P("")
             for _ln in _rule_pv.lines(_e):
+                P(_ln)
+            # **天井の側も同じ密度で読む**（2026-09-01・最適化の回）。
+            #   分子だけ規則の密度に揃えて、天井（`config/hypotheses.yaml` の
+            #   `per_video` の 1,891）は**全密度の最大**のままでした ——
+            #   ×2.01 の分子と分母が別の母集団です。`ceiling_at_rule()` の註に実測。
+            for _ln in _rule_pv.ceiling_lines():
                 P(_ln)
             if not _e.get("significant"):
                 P("    → **区間が 0 をまたぐので、分子は動かしていません**"
@@ -7786,8 +7809,17 @@ def headline(pl: dict, prev: dict | None = None,
                 f" {_f2}は伸びきっていません（`settled: False`）が、"
                 f"**伸びきったことにして最大まで数えても {_esc['top']:,.0f}回**"
                 f"（`form_record.per_video_best()['{_f2}']['best_settled']`＝記録×打ち切り補正）で、"
-                f"いまの天井 **{_esc['cap']:,.0f}回**（ショート）の"
-                f" **×{_esc['over']:.2f}** です。"
+                # **「いまの天井」と呼ばないこと**（2026-09-01 に直した）。
+                #   `_esc['cap']` は**ショートの実測の最大（全密度）**で、
+                #   腕の天井（`config/hypotheses.yaml` の `per_video`）とは
+                #   別の数です —— 天井を規則の密度へ直した回に 1,891 対 3,918 と
+                #   割れました。**比べているのは「どちらの形が大きいか」なので、
+                #   両側とも全密度の生の最大でよい**（揃っています）。
+                #   **名前だけが、腕の天井を指していました。**
+                f"ショートの実測の最大（全密度）**{_esc['cap']:,.0f}回**の"
+                f" **×{_esc['over']:.2f}** です"
+                f"（腕の天井のほうは、規則の密度へ直して"
+                f" **{_arm_pv_ceiling_str()}** —— **逃げ先はさらに遠くなります**）。"
                 f"**＝ {_f2}を数えきっても天井は上がりません**"
                 f"（オーナー規則2: 無限大にして 0日 なら、そこは律速ではない）。"
                 + _tail +

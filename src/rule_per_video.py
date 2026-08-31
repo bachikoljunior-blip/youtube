@@ -307,3 +307,163 @@ def lines(e: dict | None = None) -> list[str]:
         "言えるのは「**規則と同じ密度の日で測ると、この数だった**」の1点。"
     )
     return out
+
+
+#: **天井を「規則の密度」へ直すとき、どこまでの日を素材にしてよいか。**
+#:
+#: 弾力性は「日が単位」の回帰なので、**n=18本/日 の本を n=1 へ引き伸ばすと
+#: 18倍 の外挿**になります（実測でそれをやると 10,585回 が出ます —— 使いません）。
+#: 規則そのもの（1本/日）から遠すぎる日は素材にしないこと。
+#: **3本/日 までなら、`data/views.jsonl` に 21本 の実測があり、外挿は1段です。**
+CEILING_MAX_PER_DAY = 3
+
+
+def ceiling_at_rule(e: dict | None = None, **kw) -> dict | None:
+    """**`per_video` の天井を、規則と同じ公開密度で読み直す。**（API 0単位）
+
+    ## なぜ要るか（2026-09-01・最適化の回に測って足した）
+
+    `config/hypotheses.yaml` の `per_video` の天井は **1,891回**
+    （`NHKylqsNfTw`）で、`scripts/eta.py` の腕の天井 **×2.01** はここから来ます。
+    **その 1,891 は「全部の日の最大」です。**
+
+    ところが**同じ `eta.py` の分子のほうは、規則の密度へ揃えてあります** ——
+    `per_video()` が返す **942回** は「1〜2本/日 の日だけ」の平均で、
+    混ぜた平均 572回 の **×1.65**。頭3行にも
+    「掛ける本数が 1本/日 なら、掛けられる1本あたりも 1本/日 の日の数でなければ
+    **単位が合いません**」と印字されています。
+
+    **その註が、分母（天井）には当たっていませんでした。**
+    ×2.01 ＝ 1,891（全密度の最大）÷ 942（規則の密度の平均）で、
+    **分子と分母が別の母集団**です。
+
+    ## 実測（2026-09-01・`data/views.jsonl` の伸びきった 160本・API 0単位）
+
+        その日の本数   本数   最大    中央値   平均   **1,500回以上の率**
+        1〜2本/日       15   1,777   1,049    964    **13.3%**
+        3本/日           6   1,891   1,364  1,010    **16.7%**
+        8本以上/日      139   1,857     212    412    ** 1.4%**
+
+    **記録 1,891 は「3本/日 の日」の本です**（2026-08-16・同じ日に3本）。
+    **1本/日 の日の本ではありません。**
+
+    ## **`config/hypotheses.yaml` に書いてあった結論は、これで覆ります**
+
+    そこにはこう書いてありました（2026-09-01）——
+
+    > 同じ帯で数えると **n=39 → 169本**。**130本 増えて、最大は同じ1本のまま**。
+    > ＝ この天井は、標本が小さいせいの下振れ（順序統計量）ではなく、
+    > **いまの形（ショート・このニッチ）の天井です。次の回は、もう数え直さなくてよい。**
+
+    **その 130本 は、ほぼ全部が 8本以上/日 の日の本です**（上の表の 139本）。
+    密度で薄まる母集団を 130本 足して記録が動かなかったことは、
+    **「形の天井だ」の証拠になりません。** 同じ機械が測った弾力性
+    （**b = -0.66・t = -3.96・95% [-0.99, -0.34]**）が、まさにそう予測します。
+
+    **裏取り**: 1,500回以上を出した率は **低密度 3/21（14.3%）対 高密度 2/139（1.4%）**、
+    フィッシャー片側 **p = 0.0166**。**15本しかない低密度側の最大 1,777 が、
+    139本ある高密度側の最大 1,857 とほぼ並びます**（順列検定 p = 0.098 ——
+    **単独では有意ではないので、根拠に使うのは率のほう**）。
+
+    ## 返す数
+
+    素材は **`CEILING_MAX_PER_DAY` 本/日 までの日**に限り、その日の本数 `n` で
+    `views × n^(-b)` として 1本/日 へ直し、その最大を返します。
+    **外挿は1段（3 → 1）だけ**です。
+
+        弱（CI の下端 -0.335）   1,891 × 3^0.335 = **2,733**
+        点推定（-0.663）         1,891 × 3^0.663 = **3,918**
+        強（CI の上端 -0.991）   1,891 × 3^0.991 = **5,617**
+
+    `value` は**点推定**を返します（天井は上振れ側で読む、というこの repo の
+    既定に合わせる）。**幅は捨てずに `lo` / `hi` で返す**ので、
+    呼び手はどちらでも解けます。
+
+    ## これがどこまで動かすか（**日付は出ません。そこは正直に**）
+
+    腕 `per_video` の天井は **×2.01 → ×4.16**。
+    `src/joint_cap.py` の「4本とも天井」は **35.5% → 73.5%**、
+    残りの隔たりは **×2.82 → ×1.36**。
+    **それでも 100% には届かないので、この直しで到達日は出ません。**
+    言えるのは「**残りが半分以下になった**」までです。
+
+    ## 覆る条件（**規則そのものが、これを2〜3週間で判定します**）
+
+    - オーナーの規則（1日1本・2026-08-31）で、**これから出る本は全部 1本/日 の日の本**です。
+      **1本/日 の日が 15日 たまって、どれも 1,900回 を超えないなら、この直しは外れ** ——
+      そのとき `value` は 1,891 へ戻すこと。
+    - **弾力性の区間が 0 をまたいだら**、`per_video()` と同じく `None` を返します。
+      またいだ区間で天井を持ち上げないこと。
+    - `CEILING_MAX_PER_DAY` を 3 より上げたくなったら、**外挿の段数が増えます。**
+      上げるなら、その密度の日が何日あるかを同じ行に出すこと。
+
+    >>> ceiling_at_rule(e={"ok": False})            # 測れなければ黙って None
+    """
+    e = e if e is not None else estimate(**kw)
+    if not e.get("ok") or not e.get("significant"):
+        return None
+    el = e.get("elasticity") or {}
+    if not el.get("ok") or el.get("b") is None:
+        return None
+    b = float(el["b"])
+    if b >= 0:                     # 密度で**増える**なら、この直しは向きが逆
+        return None
+    rows = _settled(**{k: v for k, v in kw.items()
+                       if k in ("views_path", "forms", "form")})
+    if not rows:
+        return None
+    by: dict[Any, list[tuple[str, int]]] = {}
+    for d, vid, life in rows:
+        by.setdefault(d, []).append((vid, life))
+
+    def _best(expo: float):
+        out = None
+        for d, items in by.items():
+            n = len(items)
+            if n > CEILING_MAX_PER_DAY:
+                continue
+            for vid, life in items:
+                c = life * (n ** expo)
+                if out is None or c > out[0]:
+                    out = (c, vid, d, n, life)
+        return out
+
+    mid = _best(-b)
+    if mid is None:
+        return None
+    lo = _best(-float(el["hi"])) if el.get("hi") is not None else None
+    hi = _best(-float(el["lo"])) if el.get("lo") is not None else None
+    raw = max((life for items in by.values() for _, life in items), default=0)
+    n_src = sum(1 for items in by.values() if len(items) <= CEILING_MAX_PER_DAY
+                for _ in items)
+    return {
+        "value": float(mid[0]), "id": mid[1], "day": mid[2],
+        "day_count": mid[3], "raw": int(mid[4]),
+        "lo": float(lo[0]) if lo else None,
+        "hi": float(hi[0]) if hi else None,
+        "b": b, "b_lo": el.get("lo"), "b_hi": el.get("hi"),
+        "raw_max_all": int(raw),
+        "n_source": n_src,
+        "max_per_day": CEILING_MAX_PER_DAY,
+        "why": (f"記録 {mid[4]:,}回（{mid[1]}・{mid[2]}）は "
+                f"**{mid[3]}本/日 の日**の本。弾力性 {b:+.3f} で 1本/日 へ直すと "
+                f"**{mid[0]:,.0f}回**（全密度の最大 {raw:,} の ×{mid[0] / raw:.2f}）"),
+    }
+
+
+def ceiling_lines(c: dict | None = None) -> list[str]:
+    """`ceiling_at_rule()` を、`lines()` に続けて出す数行。**測れなければ空。**"""
+    c = c if c is not None else ceiling_at_rule()
+    if not c:
+        return []
+    span = ""
+    if c.get("lo") and c.get("hi"):
+        span = f"（弾力性の 95% で **{c['lo']:,.0f}〜{c['hi']:,.0f}回**）"
+    return [
+        f"    [!] **天井のほうも、規則の密度で読み直しました**（2026-09-01）。"
+        f"全密度の最大 **{c['raw_max_all']:,}回** は、"
+        f"分子（{c['max_per_day']}本/日 までの平均）と**母集団が別**でした",
+        f"        → {c['why']}{span}。素材は {c['max_per_day']}本/日 までの "
+        f"{c['n_source']}本・**外挿は1段**。"
+        f"**規則が 1本/日 に固定された今、これは 2〜3週間で自分で判定されます**",
+    ]
