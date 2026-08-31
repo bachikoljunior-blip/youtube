@@ -831,6 +831,14 @@ def latest_arm_state(path: Path) -> dict:
     """
     caps_row: dict = {}
     hint_row: dict = {}
+    # **「無限大でも 0日 の腕」は、3つ目の行から拾う**（2026-08-31・最適化の回）。
+    #     `caps_row`（＝`arm_caps` を持つ最後の行）は**軌跡を解いた回にしか
+    #     付きません**。`--ship` が撃つのは `--reflect` だけなので、
+    #     `caps_row` は平気で数十分 古くなります —— 実測 08/31 は 33分 差で、
+    #     **新しい行が `dead_at_inf` を持っているのに、古い `caps_row` を見て
+    #     「そんな腕は無い」と読んでいました。** 別の行として拾います。
+    #     **読めなければ空**（＝「死んだ腕は無い」ではなく「読めない」）。
+    inf_row: dict = {}
     try:
         lines = [ln for ln in path.read_text(encoding="utf-8").splitlines() if ln.strip()]
     except OSError:
@@ -844,7 +852,15 @@ def latest_arm_state(path: Path) -> dict:
             caps_row = row
         if not hint_row and row.get("lever_hint"):
             hint_row = row
-        if caps_row and hint_row:
+        if not inf_row and row.get("arm_dead_at_inf") is not None:
+            inf_row = row
+        if caps_row and hint_row and inf_row:
             break
-    return arm_state({**caps_row, "lever_hint": hint_row.get("lever_hint"),
+    return arm_state({**caps_row,
+                      # **新しいほうが勝つこと。** `caps_row` に古い
+                      # `arm_dead_at_inf` が入っていても、こちらで上書きします。
+                      **{k: v for k, v in inf_row.items()
+                         if k in ("arm_dead_at_inf", "arm_need_over_cap",
+                                  "lever_hint_measured")},
+                      "lever_hint": hint_row.get("lever_hint"),
                       "binding": hint_row.get("binding")})

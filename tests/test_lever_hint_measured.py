@@ -171,6 +171,41 @@ def test_lever_notes_stays_quiet_for_the_arm_that_can_still_be_pulled():
     assert "無限大にしても到達日が1日も動きません" not in txt
 
 
+# --- 4. 選ぶ側に「古い行」が届かないこと（2026-08-31 に踏んだ） ---
+
+def test_dead_at_inf_comes_from_the_newest_row_not_the_stale_caps_row(tmp_path):
+    """**`arm_caps` を持つ行は古い。`dead_at_inf` はそこから拾わないこと。**
+
+    `arm_caps` は**軌跡を解いた回（`full=True`）にしか付きません**。
+    `run_marker.py --ship` が撃つのは4秒の `--reflect` だけなので、
+    `caps_row` は平気で数十分 古くなります —— 実測 2026-08-31 は **33分差**で、
+    新しい行が `arm_dead_at_inf` を持っているのに、古い `caps_row` を見て
+    「そんな腕は無い」と読み、**`--lever rpm` が止められずに通りました。**
+    """
+    log = tmp_path / "eta.jsonl"
+    log.write_text("\n".join([
+        # 古い行（軌跡つき）—— まだ天井の上を測っていなかった頃
+        '{"at": "2026-08-31T17:14:36+00:00", "lever_hint": "rpm",'
+        ' "arm_caps": {"per_video": 2.01, "rpm": 28.05},'
+        ' "arm_reaches": {"per_video": false, "rpm": false}}',
+        # 新しい行（反映）—— 軌跡は解いていないので `arm_caps` を持たない
+        '{"at": "2026-08-31T17:47:55+00:00", "kind": "reflect",'
+        ' "lever_hint": "per_video",'
+        ' "arm_dead_at_inf": ["rpm"],'
+        ' "arm_need_over_cap": {"per_video": 8.82, "rpm": null}}',
+    ]) + "\n", encoding="utf-8")
+
+    st = levers.latest_arm_state(log)
+    assert st["hint"] == "per_video"
+    assert st["caps"] == {"per_video": 2.01, "rpm": 28.05}, "天井は古い行から拾ってよい"
+    assert st["dead_at_inf"] == ("rpm",), (
+        "新しい行の `arm_dead_at_inf` が届いていません —— "
+        "`--lever rpm` が止められずに通ります")
+    assert st["need_over_cap"] == {"per_video": 8.82}
+    assert "無限大にしても到達日が1日も動きません" in "\n".join(
+        levers.lever_notes("rpm", st))
+
+
 def test_no_flag_when_the_row_never_measured_it():
     """**読めないことと「死んだ腕は無い」は別**（`caps` と同じ扱い）。"""
     st = levers.arm_state({"lever_hint": "rpm",

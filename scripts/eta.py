@@ -9670,6 +9670,21 @@ def reflect(note: str | None = None, *, record: bool = True) -> tuple[int, dict]
         "binding": row.get("binding"), "lever_hint": row.get("lever_hint"),
         "traj_solved": s["tr"] is not None,
     }
+    # --- **「無限大でも 0日 の腕」を、反映の行にも載せる**（2026-08-31）---
+    #     この `rec` は手で選んだ欄だけを積みます。`arm_caps` は
+    #     **軌跡を解いた回（`full=True`）にしか付かない**ので、
+    #     `levers.latest_arm_state()` の `caps_row` は**古い行のまま**になります。
+    #     実測 08/31: 反映の行は `lever_hint = per_video`（新しい・正しい）なのに、
+    #     `caps_row` は 33分前の行で、`arm_dead_at_inf` を持っていませんでした ——
+    #     **`run_marker.py --ship --lever rpm` は、止められずに通ります。**
+    #     `--ship` が撃つのは4秒の `--reflect` だけなので、ここに載せないと
+    #     **選ぶ側には永久に届きません**（`row["lever_hint_covered"]` と同じ理由）。
+    #     **覆る条件**: `--reflect` が軌跡まで解くようになったら、
+    #     `arm_caps` が付くのでこの3行は要らなくなります。
+    for _k in ("arm_reaches", "arm_dead_at_inf", "arm_need_over_cap",
+               "lever_chosen_by", "lever_need_over_cap", "lever_hint_measured"):
+        if row.get(_k) is not None:
+            rec[_k] = row[_k]
     if note:
         rec["note"] = note
     if record:
