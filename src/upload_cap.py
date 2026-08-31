@@ -748,6 +748,99 @@ def measured_budget(now: datetime | None = None) -> dict:
 RESERVE_UNITS = 400
 
 
+#: **もう1つの門。こちらは「帳面の側」で、読みも数えます**（2026-09-01 に足した）。
+#:
+#: ## なぜ要るか —— **上の門は、この窓を 3,959単位 低く見ていました**
+#:
+#: 実測 2026-09-01 の窓（07:00Z 起点）を、2つの計器で同時に読むと:
+#:
+#:     `measured_budget()["spent"]`          **9,400単位**  ← 書き込みだけ
+#:     `src.quota_ledger.spent()["data"]`   **13,359単位**  ← `HttpRequest.execute` を1点で包む
+#:                                           差 **3,959単位**（本当の 30%）
+#:
+#: 差の中身は**読み**です: `search.list` 3,300（33回・単価 100）／
+#: `videos.list` 392 ／ `playlistItems.list` 110 ／ `channels.list` 53 ／
+#: `playlists.list` 4 ＝ **3,859単位**。**取り置き 400 の 9.6倍**です。
+#:
+#: `RESERVE_UNITS` の註は「**読みは 1単位**なので、400単位 ＝ 読み 400回」と
+#: 書いています。**`search.list` は 100単位**です。`history.channel_video_ids` の
+#: 1掃引（33回）だけで **3,300単位 ＝ 取り置き 8.25個ぶん**が、
+#: 上の門からは**1単位も見えずに**消えます。
+#:
+#: そして註の「覆る条件」——「**関門が止めていないのに 403**」—— は
+#: **この窓で成立しました**: 403 を **45回** 観測。枠が戻るのは 09/01 16:00 JST で、
+#: **残り 11.2時間、読みも書きも通りません。**
+#:
+#: ## なぜ「読みを数えると円環になる」を踏まないか
+#:
+#: 上に 2026-08-29 の註があり、**読みを `measured_budget()["spent"]` に足すな**と
+#: 言っています。理由は2つとも正しく、**こちらはどちらにも当たりません**:
+#:
+#:   (a) **別々の物差しの引き算になる** ——`floor` は過去の窓・書き込みだけで
+#:       積んだ値。→ **`floor` を触りません。** この門は
+#:       `quota_ledger.DAY_UNITS`（公表 10,000）と帳面の単位を比べます。
+#:       **両辺とも同じ通貨**（本当に使った単位）です。
+#:   (b) **読みを守る門が読みで閉じる（円環）** →
+#:       **`reserve_hold()` を呼ぶのは書き込みの入口だけ**です
+#:       （`tests/test_quota_reserve.py` が数え上げで見ています）。
+#:       読みは**数えますが、止めません。** 数えるのは「いまどこに居るか」、
+#:       止めるのは「何を止めるか」で、**別の問い**です。
+#:       前の註は、その2つを1つに読んでいました。
+#:
+#: 08/29 の註が「先に済ませろ」と書いていた **(2) `queue_lag --apply` を当てて
+#: `after` を帳面に入れる** は、**済んでいます**（`data/queue_lag.jsonl` の
+#: 08/31 08:32 の行に `after` あり・`opening_motion` は `null`）。
+#:
+#: ## 覆る条件
+#:
+#: - **帳面が包まれていない回では、何も止めません**（`spent()["n"] == 0`）。
+#:   推測で書き込みを止めないため —— 上の門と同じ規則です
+#: - 帳面は 2026-08-31 に置いたので、**それ以前の窓は空**です。
+#:   空の窓を「使っていない」と読まないこと（この門は黙ります）
+#: - 単価（`quota_ledger.COST`）は**公表値**で、Google の実数ではありません。
+#:   403 が **9,600単位 より手前**で出るようになったら、この 10,000 が高すぎます ——
+#:   そのときは `quota_ledger.DAY_UNITS` を実測で下げること
+#: - `videos.insert`（1,600単位）は**この枠から出ていません**（実測 08/17 以後3度）。
+#:   帳面は insert も数えるので、**insert が枠を焼き始めた日**は
+#:   この門が投稿を減らす側に効きます。そのときは大きさを測り直すこと
+def _ledger_hold(now: datetime | None = None) -> str | None:
+    """**帳面（漏れない側）で見た取り置き**（API 0単位）。止めてよければ理由の文字列。
+
+    `src/quota_ledger` は `HttpRequest.execute` を1点で包むので、
+    **読みも書きも漏れません。** `measured_budget()` は書き込みしか数えないので、
+    こちらのほうが必ず**同じか、多く**出ます（＝ 門は緩みません）。
+    """
+    try:
+        from . import quota_ledger as _ql                      # noqa: PLC0415
+    except Exception:                                          # noqa: BLE001
+        return None
+    try:
+        s = _ql.spent(now)
+        if not int(s.get("n") or 0):
+            return None            # 帳面に行が無い窓では止めない（推測で止めない）
+        used = int(s.get("data") or 0)
+        cap = int(_ql.DAY_UNITS)
+    except Exception:                                          # noqa: BLE001
+        return None
+    room = cap - RESERVE_UNITS
+    if used < room:
+        return None
+    top = sorted((s.get("by") or {}).items(), key=lambda kv: -kv[1])[:2]
+    who = "／".join(f"{k} {v:,}単位" for k, v in top) or "（名前なし）"
+    tail = window_end(now or datetime.now(timezone.utc))
+    back = tail.astimezone(JST).strftime("%m/%d %H:%M JST")
+    return (f"**この窓の単位は、帳面の側で止めています**"
+            f"（使った {used:,} ／ 公表の枠 {cap:,} ／ 残す {RESERVE_UNITS}）。"
+            f" **こちらは読みも数えます**（`measured_budget()` は書き込みだけ）。"
+            f" いちばん食っているのは {who}。"
+            f" 残しているのは、**前提を閉じる読み**と"
+            f"**次の1本を良くする書き込み**（`improve`・50単位）のためです"
+            f"（`eta.py`: 軌跡の腕が動くのは前提を1件 閉じたときだけ）。"
+            f" 窓が変わるのは {back}。"
+            f" **投稿（`videos.insert`）はこの枠を使わないので、止まりません。**"
+            f" どうしても書くなら `YT_NO_RESERVE=1`（理由を JOURNAL に）")
+
+
 def reserve_hold(now: datetime | None = None) -> str | None:
     """**この窓の単位が、計測のぶんまで減っていないか**（API 0単位）。
 
@@ -761,6 +854,15 @@ def reserve_hold(now: datetime | None = None) -> str | None:
     """
     if os.environ.get("YT_NO_RESERVE"):
         return None
+    # **帳面の側を先に見ること**（2026-09-01）。下の `measured_budget()` は
+    # **書き込みしか数えない**ので、読みで焼けた窓を「まだ余っている」と答えます
+    # （実測 2026-09-01: 9,400 と答えた窓の本当の消費は 13,359単位・403 を45回）。
+    # こちらは `HttpRequest.execute` を1点で包む帳面なので漏れません。
+    # **緩める向きには効きません** —— 帳面が黙る窓（行が0）では `None` を返し、
+    # 判断はそのまま下の門へ落ちます。`_ledger_hold` の註に「なぜ円環でないか」。
+    held = _ledger_hold(now)
+    if held:
+        return held
     try:
         b = measured_budget(now)
     except Exception:                                          # noqa: BLE001

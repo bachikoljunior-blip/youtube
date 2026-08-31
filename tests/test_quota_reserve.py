@@ -41,19 +41,40 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from src import upload_cap                                     # noqa: E402
+from src import quota_ledger, upload_cap                       # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def _ledger_silent(monkeypatch) -> None:
+    """**帳面の側の門を黙らせる**（2026-09-01 に足した）。
+
+    `reserve_hold()` には門が**2つ**あります —— 上が帳面
+    （`_ledger_hold`・読みも数える）、下が `measured_budget()`（書き込みだけ）。
+    **下の3件は下の門の検査**なので、上を黙らせないと
+    「本物の `data/api_calls.jsonl` がいま尽きているかどうか」で結果が変わります
+    （実測 2026-09-01: 黙らせないと3件とも落ちます —— 帳面が 13,359単位 を
+    数えているので、上の門が先に止めるため）。
+
+    **黙らせ方は「行が0の窓」です**（`n=0`）。値を小さくして誤魔化さないこと ——
+    行が0 ＝ 帳面が何も知らない窓 ＝ 推測なので止めない、が
+    `_ledger_hold` の約束そのものです（`tests/test_quota_reserve_counts_reads.py`）。
+    """
+    monkeypatch.setattr(quota_ledger, "spent",
+                        lambda now=None: {"data": 0, "n": 0, "by": {},
+                                          "method": {}, "other": 0})
+
+
 def test_枠の実測が無い窓では止めない(monkeypatch):
     """**推測で書き込みを止めないこと。** 外す向きは、今までどおり 403 を見る側。"""
+    _ledger_silent(monkeypatch)
     monkeypatch.setattr(upload_cap, "measured_budget",
                         lambda now=None: {"floor": 0, "spent": 99_999, "left": 0})
     assert upload_cap.reserve_hold() is None
 
 
 def test_残りが計測のぶんを切ったら止める(monkeypatch):
+    _ledger_silent(monkeypatch)
     monkeypatch.setattr(
         upload_cap, "measured_budget",
         lambda now=None: {"floor": 10_000,
@@ -63,6 +84,7 @@ def test_残りが計測のぶんを切ったら止める(monkeypatch):
 
 
 def test_まだ余っていれば止めない(monkeypatch):
+    _ledger_silent(monkeypatch)
     monkeypatch.setattr(
         upload_cap, "measured_budget",
         lambda now=None: {"floor": 10_000,
