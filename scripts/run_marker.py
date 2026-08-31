@@ -638,6 +638,41 @@ def claim(what: str) -> int:
     return 0
 
 
+def _next_slot_lines() -> list[str]:
+    """**`improve` の当てどころ**（2026-09-01・最適化の回に足した。**API 0単位**）。
+
+    ## なぜ §1 で出すか
+
+    オーナーが 2026-08-31 に固定した規則3（`src/house_rule.py`）は
+    「次の投稿予定までにそこで投稿する動画を改善し続ける」。
+    `docs/trigger_main.md` §4 と `CLAUDE.md` はそれを `improve` として
+    5つの選択肢に足しました。**が、当てどころが印字されていませんでした。**
+
+    実測（`data/runs.jsonl`・規則が固定された 2026-08-31 以降の ship **88件**）:
+
+        fix **56件（64%）** ／ (other) 18 ／ verdict 9 ／ **improve 4件（4.5%）**
+
+    **fix は `eta.py` が毎周 36件 名指しし、verdict は「期日の来た前提」が
+    名指しします。improve だけ、どの本が次かを調べるところから始まります**
+    （`scripts/reschedule.py --list` は API 50単位）。
+    **同じ5択に並べても、探す手間が違えば選ばれません。**
+
+    §1 はその回のいちばん最初のコマンドで、**何をやるか決める前**です。
+    決めた後に見せても、払った時間は戻りません（すぐ上の `_claim_lines()` と同じ理由）。
+
+    **覆る条件**: `improve` の割合が上がらないなら、原因は「見えないこと」では
+    ありません（＝ 見えていても撃てない ＝ 枠か材料の側）。そのときは
+    `src/next_slot.py` を足すのではなく、**`docs/trigger_main.md` §4 の
+    「枠が尽きている回」の節を疑うこと。**
+    """
+    try:
+        from src import next_slot                               # noqa: PLC0415
+        return [f"[marker] {ln}" if not ln.startswith(" ") else f"[marker]{ln}"
+                for ln in next_slot.lines()]
+    except Exception as exc:                                    # noqa: BLE001
+        return [f"[marker] （次の枠を読めませんでした: {exc}）"]
+
+
 def write() -> int:
     me = actor_id() or "(不明)"
     if is_parent():
@@ -675,6 +710,11 @@ def write() -> int:
     # `_unreachable_premise_lines()` の註 —— `eta.py` の「閉じられる前提はありません」は
     # `needs` の期日で数えており、**「その期日は永久に来ない」を見ていません。**
     for ln in _unreachable_premise_lines():
+        print(ln)
+    # **`improve` の当てどころ**（2026-09-01 に足した）。理由は `_next_slot_lines()`
+    # の註 —— 5択のうち improve だけ、当てどころがどこにも印字されていませんでした
+    # （規則が固定された 08-31 以降の ship 88件 中 **4件・4.5%**）。
+    for ln in _next_slot_lines():
         print(ln)
     # **ここで出すこと。** §1 はその回のいちばん最初のコマンドで、
     # **何をやるか決める前**です。決めた後に見せても、払った時間は戻りません。
