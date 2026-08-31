@@ -40,18 +40,46 @@ def _print_call_containing(src: str, needle: str) -> str:
 
     引数がいくつに割れていても（暗黙の連結）1件として拾うため、
     行ではなく**括弧の対応**で切ります。
+
+    ## **最初の1件で決めないこと**（2026-08-31 に踏んだ）
+
+    ここは `src.index(needle)` ＝ **ファイル中の最初の1件**だけを見ていました。
+    ところが `どの帯でも届きません` は、いま `eta.py` に **4か所**あります ——
+    印字は1つで、**残り3つは docstring（この印字を説明している文）**です。
+    そして docstring は印字より**前**に書かれることがあるので、
+    そのとき `rindex("P(")` は**まったく別の印字**を拾い、
+    「メンバーシップが無い」と赤くなりました。**印字は1文字も変わっていません。**
+
+    **説明を書いた回が落とされる**のは、この検査の意図と逆です
+    （この検査は「印字に断りを付けろ」であって「同じ語を書くな」ではない）。
+    だから**全部の出現を見て、`P(...)` の中身に `needle` が実際に入っている
+    ものだけ**を拾います。**docstring の側は、どの `P(` にも入りません。**
     """
-    i = src.index(needle)
-    start = src.rindex("P(", 0, i)
-    depth = 0
-    for j in range(start + 1, len(src)):
-        if src[j] == "(":
-            depth += 1
-        elif src[j] == ")":
-            depth -= 1
-            if depth == 0:
-                return src[start:j + 1]
-    raise AssertionError("`P(` の括弧が閉じていません")
+    hits: list[str] = []
+    pos = 0
+    while True:
+        i = src.find(needle, pos)
+        if i < 0:
+            break
+        pos = i + 1
+        start = src.rfind("P(", 0, i)
+        if start < 0:
+            continue
+        depth = 0
+        for j in range(start + 1, len(src)):
+            if src[j] == "(":
+                depth += 1
+            elif src[j] == ")":
+                depth -= 1
+                if depth == 0:
+                    call = src[start:j + 1]
+                    # **その `P(` の中に本当に入っているものだけ**を採る。
+                    #     docstring の出現は、手前の別の印字を拾ってしまうので落ちる。
+                    if needle in call:
+                        hits.append(call)
+                    break
+    assert hits, f"`{needle}` を含む `P(...)` の印字が1つも見つかりません"
+    return hits[0]
 
 
 def test_届きませんの行が分子を名指ししていること():
