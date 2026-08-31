@@ -101,6 +101,13 @@ LEDGER_MARGIN = timedelta(hours=1)
 #: 1本 外すのに使う単位（`videos.list` 1 ＋ `videos.update` 50）。
 UNITS_PER_VIDEO = 51
 
+#: Data API の日枠（単位／日）。**「何日ぶんの枠が要るか」を言うためだけに使います。**
+#: 既定の 10,000 です —— 2026-08-27 に「日枠は 10,000 ではない」と結論した回が
+#: ありますが、**あれは `videos.update` の ok 行を二重に数えた側の誤り**でした
+#: （全文は `src/upload_cap.measured_budget()` の註）。
+#: **実測の枠が要る判断には、この定数ではなく `upload_cap` を読むこと。**
+DAY_QUOTA = 10_000
+
 
 def _parse(raw: object) -> datetime | None:
     try:
@@ -177,6 +184,41 @@ def by_day(rows: list[dict]) -> dict[str, int]:
     return out
 
 
+def first_breach(days: dict[str, int], today: str | None = None) -> tuple[str, int, int] | None:
+    """**規則1（1日1本）が最初に破れる日**と、そこまでの日数・破れる日数を返す。
+
+    ## なぜ足したか（2026-08-31）
+
+    ここは長らく「外す **267本**（見積り 13,617単位）」までしか言いませんでした。
+    **数は正しいのですが、締切がどこにも出ていません。** 13,617単位 は
+    日枠（10,000）の **1.4日ぶん**で、**1回の回では終わりません** ——
+    つまり「日枠が戻った回に続きを撃つ」を**何日か続けないと終わらない仕事**です。
+
+    締切の無い仕事は後回しになります。実測 2026-08-31 23:5x、
+    池化は 09/04 までしか進んでおらず、**09/12 から 27日ぶん・249本 が
+    規則1 を破ったまま**でした（`data/uploaded.jsonl`）。
+    **09/01・09/02・09/04 は 1本/日 で規則どおり**なので、
+    数だけ見ていると「進んでいる」と読めてしまいます。
+
+    **だから、いつ破れるかを言わせます。**
+
+    **覆る条件**: `--apply` が最後まで通って予約が 1本 になったとき
+    （そのとき、この行は自分で黙ります）。
+    """
+    from datetime import datetime, timedelta, timezone
+
+    jst = timezone(timedelta(hours=9))
+    today = today or datetime.now(jst).strftime("%Y-%m-%d")
+    cap = house_rule.cap()
+    over = sorted(d for d, n in days.items() if d >= today and n > cap)
+    if not over:
+        return None
+    first = over[0]
+    left = (datetime.strptime(first, "%Y-%m-%d").date()
+            - datetime.strptime(today, "%Y-%m-%d").date()).days
+    return first, left, len(over)
+
+
 def _inbox_text(left: int, keep: int) -> str:
     return (
         "予約の池化が途中です（Data API の日枠）。"
@@ -216,6 +258,23 @@ def main(argv: list[str] | None = None) -> int:
         drop = drop[:args.max]
     print(f"[pool] 残す **{len(kept)}本**／外す **{len(drop)}本**"
           f"（見積り {len(drop) * UNITS_PER_VIDEO:,}単位）", flush=True)
+
+    # **締切を言うこと。** 数だけでは、後回しにしてよい仕事に見えます
+    # （`first_breach()` の docstring に、そう読めてしまった実測）。
+    breach = first_breach(days)
+    if breach:
+        first, left, ndays = breach
+        over_n = sum(n - house_rule.cap() for d, n in days.items()
+                     if d >= first and n > house_rule.cap())
+        need_days = (len(drop) * UNITS_PER_VIDEO + DAY_QUOTA - 1) // DAY_QUOTA
+        print(f"[pool] [!] **規則1 が最初に破れるのは {first}**（{left}日後）。"
+              f" そこから **{ndays}日ぶん・{over_n}本 多い**", flush=True)
+        print(f"[pool]     日枠は {DAY_QUOTA:,}単位/日 なので、"
+              f"外しきるのに **最低 {need_days}日ぶんの枠**が要ります"
+              f"（他の用途と取り合います）。**1回では終わりません**", flush=True)
+    else:
+        print("[pool] **これから来る日は、どれも規則1 の内側です**（1日1本）",
+              flush=True)
     for r in kept:
         print(f"[pool]   残す: {r['at'].isoformat()}  {r['id']}  {r['title'][:40]}",
               flush=True)
