@@ -1784,6 +1784,36 @@ def analyse(m: dict, points: list[dict] | None = None,
     long_per_video = m.get("long_per_video")
     if long_per_video is not None:
         long_per_video = long_per_video * sc["per_video"]
+    # --- **比べる前に、打ち切りをそろえること**（2026-08-31・最適化の回の第2手）---
+    #
+    # `long_per_video` は**直近28日の長尺の平均**、`per_video` は**ショートの平均**です。
+    # このすぐ下の `_band_per_video()` が、その2つを**同じ物差しとして** `nearest` に渡し、
+    # `nearest` は「いちばん近い帯」＝ **この機械が主実行に狙わせる帯**を選びます。
+    #
+    # **ところが2つは同じ物差しではありませんでした。**
+    #   ショート  48時間で伸びきる（実測・対応のある比 ×1.00・n=10） ＝ 平均はほぼ生涯
+    #   長尺      伸びきらない  （実測・対応のある比 **×2.00**・n=5） ＝ 平均は**下限**
+    #
+    # つまり長尺だけが下限で比べられ、**その比は必ず 2倍 遠く出ます。**
+    # この機械は同じ走りの中で「`long_per_video` も この記録も、一生ぶんではなく下限」と
+    # **印字していました**（`residual_lines`）。**言うだけで、割る側は直っていませんでした。**
+    # `docs/CLAUDE.md`「言っている所と、している所が別」——ここでは帯の選択が乗っています。
+    #
+    # **補正は定数ではありません**（`form_record.censor_factor`・実測・API 0単位）。
+    # 測れなければ ×1.00 を返すので、**埋まらない回は何も変わりません。**
+    # 記録の本の年齢（246時間）から測った倍率を、それより**若い本を含む平均**に当てるので、
+    # これは**控えめな側**です（若い本ほど、これから伸びるぶんは大きい）。
+    a["long_censor"] = 1.0
+    if long_per_video is not None:
+        try:
+            _cf = form_record.censor_factor("長尺")
+            a["long_censor"] = float(_cf.get("factor") or 1.0)
+            a["long_censor_why"] = str(_cf.get("why") or "")
+            a["long_censor_n"] = int(_cf.get("n") or 0)
+        except Exception:                                      # noqa: BLE001
+            a["long_censor"] = 1.0
+        a["long_per_video_raw"] = long_per_video
+        long_per_video = long_per_video * a["long_censor"]
     a["long_per_video"] = long_per_video
     a["long_videos_28d"] = m.get("long_videos_28d", 0)
     a["long_views_28d"] = m.get("long_views_28d", 0)
@@ -2313,6 +2343,17 @@ def report(m: dict, a: dict) -> list[str]:
       f" ＝ 1本あたりを **{nr:,.1f}倍**（{npv:,}回 → {a['per_video_needed'][nearest]:,.0f}回）")
     P("      **6行とも「届かない」でも、遠さは同じではありません。**"
       "倍率の小さい帯から手を付けること。")
+    # **この帯を選んだ分母が、同じ物差しかどうかを必ず言うこと**（2026-08-31）。
+    if a.get("long_censor", 1.0) > 1.0:
+        P(f"      [!] **この選択は、2026-08-31 まで長尺だけを下限で測っていました。**"
+          f" ショートは 48時間で伸びきる（対応のある比 ×1.00）のに、"
+          f"長尺は伸びきりません（**×{a['long_censor']:.2f}**・n={a.get('long_censor_n', 0)}・"
+          f"{a.get('long_censor_why', '')}）。"
+          f" 長尺の1本あたりは {a.get('long_per_video_raw', 0):,.1f}回 → "
+          f"**{a['long_per_video']:,.1f}回** に直してあります"
+          f"（`src/form_record.censor_factor`・実測・定数なし）。"
+          f" **直さないと、長尺の帯は必ず {a['long_censor']:.2f}倍 遠くに出て、"
+          f"`nearest` はショートへ寄ります。**")
 
     # --- **倍率がいちばん小さい帯と、要る再生数がいちばん少ない帯は、別です**
     #     （2026-08-31・最適化の回に足した。**規則が 1本/日 に固定されて初めて効く**）

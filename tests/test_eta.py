@@ -275,8 +275,17 @@ def test_平均視聴率が0の行は長尺に入れない():
 def test_長尺の帯は長尺の実測で割る():
     """**混ぜると 36倍 が 0.1倍 に見えます。**"""
     a = eta.analyse(_measured(long_per_video=2, long_videos_28d=5, long_views_28d=11))
-    assert a["per_video_by_band"]["長尺 お金 中"] == 2
-    assert a["per_video_by_band"]["ショート 中"] == 1_092
+    # **打ち切り補正が掛かります**（2026-08-31・最適化の回）。長尺は伸びきらないので、
+    # 生の平均は下限です。**倍率を定数で書かないこと** —— `long_censor` は
+    # `data/views.jsonl` の実測（`form_record.censor_factor`）で、本が増えれば動きます。
+    # ここが見ているのは「**ショートの数で割っていないこと**」であって、補正の値ではありません。
+    cf = a["long_censor"]
+    assert cf >= 1.0
+    assert a["per_video_by_band"]["長尺 お金 中"] == pytest.approx(2 * cf)
+    assert a["per_video_by_band"]["長尺 お金 中"] != pytest.approx(1_092), \
+        "長尺の帯にショートの実測が入っています"
+    assert a["per_video_by_band"]["ショート 中"] == 1_092, \
+        "**ショートには補正を掛けないこと**（48時間で伸びきる・対応のある比 ×1.00）"
     assert a["band_measured"]["長尺 お金 中"] == "長尺"
     # **要る回数 ÷ 実測 2回**（ショートの 1,092 で割ると、桁が2つ下がって見える）。
     # **要る回数そのものを定数で書かないこと**（2026-08-25）——
@@ -284,7 +293,7 @@ def test_長尺の帯は長尺の実測で割る():
     # 分母は `day_cap.cap()` へ移っています（実測10本/日）。定数で書くと、
     # **この検査が、直したはずの分母を裏から固定し直します。**
     need = a["per_video_needed"]["長尺 お金 中"]
-    assert a["per_video_ratio"]["長尺 お金 中"] == pytest.approx(need / 2)
+    assert a["per_video_ratio"]["長尺 お金 中"] == pytest.approx(need / (2 * cf))
     assert a["per_video_ratio"]["長尺 お金 中"] != pytest.approx(need / 1_092), \
         "ショートの実測で割っています（**混ぜると桁が2つ変わります**）"
     assert a["ceiling"]["長尺 お金 中"] < eta.TARGET_YEN, \
@@ -1105,7 +1114,12 @@ def test_値が出ている回に_測っていないと言わない():
     assert "まだ一度も測り直していない" not in b["why"]
     assert "登録者が9人だった頃" not in b["now"]
     # **値そのものは名指しで出すこと**（出ているのに隠すと、また測りに行きます）
-    assert "4.0" in b["now"]
+    #     2026-08-31 から、長尺には**打ち切り補正**が掛かります
+    #     （`form_record.censor_factor`・実測）。**倍率を定数で書かないこと** ——
+    #     ここが見ているのは「値が名指しで出ていること」であって、補正の値ではありません。
+    assert f"{4.0 * a['long_censor']:,.1f}" in b["now"], (
+        f"長尺の1本あたりが名指しで出ていません（補正 ×{a['long_censor']:.2f} 込み）: {b['now']}"
+    )
     assert str(eta.LONG_SAMPLE_MIN) in b["how"]
 
 
