@@ -332,6 +332,58 @@ def _view_cap_per_day() -> float:
     return _DAY_CAP_MEMO[1]
 
 
+def _ceiling_per_day() -> float:
+    """**天井の掛け算に使う「1日に何本」。上限の3本立てのうち、いちばん低いもの。**
+
+    ## なぜ在るか（2026-08-31・最適化の回。**同じ量を2か所が別々に持つ形の9件目**）
+
+    ここは長らく `min(UPLOAD_CAP_PER_DAY, _view_cap_per_day())` を
+    **`analyse()` と `_report_long_gate()` がそれぞれ書いて**いました。
+    2026-08-31 に**オーナーが1日の本数を固定**したとき、
+    `physical_caps()` だけがその規則を読み（`rule_cap` / `rule_binds`）、
+    **天井の表は 10本/日 のまま**でした。実測（同日・`analyse()` を直接 叩いた）::
+
+        ceiling_per_day           10.0本/日   ← **規則は 1本/日**
+        house_rule.PUBLISH_PER_DAY 1本/日
+
+    **効いていた先**（この1行が分母です）:
+
+        ceiling（帯ごとの月収の天井）        **10倍 高く**出ていた
+        per_video_needed / per_video_ratio  **10分の1**に見えていた
+                                            （ショート 高 ×19.6 ← 実際は **×196**）
+
+    そして `docs/MEANS.md` M23 の結論（「広告の帯より、メンバーシップは 27倍 遠い」）は、
+    **この ×19.6 を引いています**。規則を入れると ×196 になり、
+    同じ比べ方で **2.6倍** に縮みます。**結論の向きは変わりませんが、余裕は10倍 縮みます。**
+
+    ## 3本立て（**規則・観測・口** の順に低い）
+
+        規則  `house_rule.PUBLISH_PER_DAY`  **1本/日**   オーナーが固定（2026-08-31）
+        観測  `day_cap.cap()`               10本/日      再生が付く本数の実測
+        口    `UPLOAD_CAP_PER_DAY`          92本/日      API の日枠
+
+    **`src/house_rule.py` が書いている論法をそのまま使います** ——
+    「`density_verdict.HOUR_HI = 13` は**測れている帯の上端**であって、
+    出してよい本数ではありません。**帯は観測、ここは規則**です。
+    規則が 13 より小さいので、規則が勝ちます」。
+    `day_cap.cap()` の 10 も同じで、**観測であって、出してよい本数ではありません。**
+
+    印字の「**1日の上限まで出しても月20万に届かない帯**」の「1日の上限」は、
+    **規則が固定されている以上 1本**です。10 で刷ると、
+    その行は**規則の外の世界について**の文になります。
+
+    ## 覆る条件
+
+    **オーナーが自分の言葉で 1本/日 を外したとき**（`src/house_rule.py` の
+    「覆る条件: ありません」と同じ）。そのとき この関数は自動で `day_cap.cap()` へ移ります
+    —— 定数を書いていないので、直す所はありません。
+    `tests/test_eta_day_cap.py` が3本立ての順番を見ています。
+    """
+    return min(float(UPLOAD_CAP_PER_DAY),
+               float(_view_cap_per_day()),
+               float(house_rule.PUBLISH_PER_DAY))
+
+
 # --- 門（YouTube の公表値。守るのではなく、通らないと収入が0になる事実）---
 #
 # ## **門は1つではありません。2段あります**（2026-08-30・最適化の回に実測して直した）
@@ -1620,7 +1672,16 @@ def analyse(m: dict, points: list[dict] | None = None,
     #
     # **覆る条件**: `day_cap.cap()` が上がったとき（登録者が増えれば上がるはず、と
     # `src/day_cap.py` が書いています）。定数ではないので自動で追います。
-    a["ceiling_per_day"] = min(float(UPLOAD_CAP_PER_DAY), float(a["view_cap_per_day"]))
+    # **2026-08-31: ここに「オーナーが固定した 1本/日」が入っていませんでした。**
+    #     `physical_caps()` は同じ日に規則を読むようになりましたが、
+    #     **天井の表だけが 10本/日（観測）のまま**で、
+    #     `ceiling` は 10倍 高く、`per_video_ratio` は 10分の1 に出ていました。
+    #     出どころを `_ceiling_per_day()` の1か所に畳んであります（その docstring に実測）。
+    a["ceiling_per_day"] = _ceiling_per_day()
+    a["ceiling_caps"] = {"規則": float(house_rule.PUBLISH_PER_DAY),
+                         "観測": float(a["view_cap_per_day"]),
+                         "口": float(UPLOAD_CAP_PER_DAY)}
+    a["ceiling_cap_binds"] = min(a["ceiling_caps"], key=lambda k: a["ceiling_caps"][k])
     ceiling_per_day = a["ceiling_per_day"]
     ceiling_views_month = per_video * ceiling_per_day * 30
     a["ceiling_views_month"] = ceiling_views_month
@@ -1796,8 +1857,21 @@ def report(m: dict, a: dict) -> list[str]:
               "平均との差は右に歪んだ分布のぶんです")
             for _ln in _long_ceiling_lines(m):
                 P(f"      {_ln}")
-    P(f"  **再生が付く上限 {a['ceiling_per_day']:.0f}本/日**（実測・`src/day_cap.py`）× 30日 に、"
+    _cb = a.get("ceiling_cap_binds", "観測")
+    _caps = a.get("ceiling_caps", {})
+    _where = {"規則": "**オーナーが固定した規則**・`src/house_rule.py`",
+              "観測": "実測・`src/day_cap.py`",
+              "口": "API の日枠"}.get(_cb, "実測・`src/day_cap.py`")
+    P(f"  **1日の上限 {a['ceiling_per_day']:.0f}本/日**（{_where}）× 30日 に、"
       "**その形の実測**を当てた上限:")
+    P(f"      （**縛っているのは「{_cb}」**。3本立ての内訳 —— "
+      f"規則 {_caps.get('規則', 0):.0f}本／観測（再生が付く上限）{_caps.get('観測', 0):.0f}本／"
+      f"口（API の日枠）{_caps.get('口', 0):.0f}本 の、**いちばん低いもの**を使います）")
+    if _cb == "規則":
+        P("      **2026-08-31 まで、ここは観測の 10本/日 で刷っていました** ——"
+          "規則は同じ日から 1本/日 です。**下の『上限 ¥…』と『要 1本 …回』は、"
+          "それ以前の回では 10倍 楽観／10分の1 に出ています**"
+          "（`docs/MEANS.md` M23 の「広告の帯より 27倍 遠い」も、その ×19.6 を引いています）")
     P(f"      （口が受け付けるのは {UPLOAD_CAP_PER_DAY}本/日 ですが、**それを超えて出したぶんは 0再生**です。"
       "掛けている1本あたり再生は**再生が付いた本だけの平均**なので、")
     P(f"       {UPLOAD_CAP_PER_DAY} を掛けると、付かない本まで「付いた本と同じだけ回る」ことになります。"
@@ -1840,6 +1914,46 @@ def report(m: dict, a: dict) -> list[str]:
       f" ＝ 1本あたりを **{nr:,.1f}倍**（{npv:,}回 → {a['per_video_needed'][nearest]:,.0f}回）")
     P("      **6行とも「届かない」でも、遠さは同じではありません。**"
       "倍率の小さい帯から手を付けること。")
+
+    # --- **倍率がいちばん小さい帯と、要る再生数がいちばん少ない帯は、別です**
+    #     （2026-08-31・最適化の回に足した。**規則が 1本/日 に固定されて初めて効く**）
+    #
+    # `nearest` は `per_video_ratio` ＝ **いまの実測の何倍** で選びます。
+    # 分母はその帯の形の実測で、**長尺のそれは 16回/本**（登録者22人のチャンネルに
+    # 出した本）。M20 が「長尺の実力ではない」と書いている数そのものです。
+    # **ほぼ 0 の分母で割ると、倍率は無限に大きく出ます** ——
+    # 倍率だけで選ぶと、`nearest` は**いつまでもショートを指し続けます。**
+    #
+    # 実測（2026-08-31・規則を天井に入れた直後）::
+    #
+    #     倍率で近い    ショート 高      x196    要る1本あたり **111,111回**
+    #     本数で近い    長尺 お金 高     x208    要る1本あたり   **3,333回**
+    #
+    # **倍率はほぼ同じ（196 対 208）なのに、要る再生数は 33倍 ちがいます。**
+    # 1日1本しか出せない以上、**手を付ける先は「1本で何回 要るか」のほう**です。
+    #
+    # **覆る条件**: 長尺の `per_video` の標本が育って（n が二桁になって）、
+    # 倍率と本数の順位が一致したとき。**そのときこの断りは消してよい。**
+    cheapest = min(RPM_SCENARIOS, key=lambda k: a["per_video_needed"][k])
+    if cheapest != nearest:
+        cn = a["per_video_needed"][cheapest]
+        P("")
+        P(f"  [!] **倍率でいちばん近い帯（{nearest}）と、"
+          f"1本に要る再生数がいちばん少ない帯（{cheapest}）は別です。**")
+        P(f"      倍率で近い  {nearest:<12} x{nr:>7,.1f}  -> 要 1本 "
+          f"**{a['per_video_needed'][nearest]:>9,.0f}回**")
+        P(f"      本数で近い  {cheapest:<12} x{a['per_video_ratio'][cheapest]:>7,.1f}"
+          f"  -> 要 1本 **{cn:>9,.0f}回**"
+          f"（{a['per_video_needed'][nearest] / cn:,.0f}分の1）")
+        P(f"      **倍率の分母がちがいます** —— {cheapest} の分母は"
+          f" **{a['per_video_by_band'][cheapest]:,.0f}回/本**"
+          f"（長尺 n={a.get('long_videos_28d', 0)}・登録者 {m.get('subs_net', 0)}人 の"
+          "チャンネルに出した本。M20 が「長尺の実力ではない」と書いている数です）。"
+          "**ほぼ 0 の分母で割ると倍率は無限に大きく出ます。**")
+        P("      **規則が 1日1本 に固定されている以上、効くのは「1本で何回 要るか」のほうです。**"
+          f"　`{cheapest}` を選ぶなら、**この機械が毎日 追う数は {cn:,.0f}回／本**"
+          "（オーナー規則3「次の投稿予定までにその1本を改善し続ける」の、数での言い換え）。")
+
     for line in _ledger_reach(nr):
         P(line)
     P("")
@@ -6895,7 +7009,10 @@ def _report_long_gate(m: dict, a: dict) -> list[str]:
     # 出していました（0.53倍 と印字。実際は 0.06倍）。
     # `docs/trigger_main.md` §4 の「長尺が唯一の道」は、この 0.53倍 を引いています。
     # **同じ量を2か所が別々に持って、片方だけ直った形**の8件目です。
-    _cap = min(float(UPLOAD_CAP_PER_DAY), float(a["view_cap_per_day"]))
+    # **2026-08-31: ここも規則（1本/日）が抜けていました** —— 上の註が言っている
+    #     「同じ量を2か所が別々に持って、片方だけ直った形」の、まさに次の1件です。
+    #     出どころは `_ceiling_per_day()`（規則・観測・口 のいちばん低いもの）。
+    _cap = _ceiling_per_day()
     _got = a["per_video_now"] * _cap
     P(f"    門2b（ショート90日1,000万）は、**再生が付く上限 {_cap:,.0f}本/日"
       f"（口は92本/日 ですが、**超えたぶんは 0再生**）まで出しても"
