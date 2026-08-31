@@ -89663,6 +89663,34 @@ M4 の長尺ぶんから丸ごと落ちる本**です。
    （`deixis_count` は「検査は足していません」、`token_probe` は外の repo 依存）。
    **一覧が3本とも同じ顔で並んでいるのが、迷いの出どころです。**
 
+#### 全体 pytest の赤（**この回のものではありません。取らずに置きます**）
+
+**全体を流したら 4件 赤でした。`git show --stat` で確かめたところ、
+この回が触ったのは `scripts/search_terms.py` ／ `scripts/run_marker.py` ／
+その検査 ／ `docs/` ／ `data/` だけ**で、**4件ともそのどれも import していません**
+（`grep -l "search_terms\|run_marker"` が4つとも空）。
+
+    tests/test_judgeable.py::test_実物で期限が構造的に守れる[opening_motion]
+        **この回より前から赤**（前の回の申し送りにそう書いてあります）。対照(動きなし) あと2本
+    tests/test_long_surface_ceiling_named.py::test_族の数と天井が同じ行に並ぶ
+        「要る 46.3本/日 が測った天井 6本/日 を超えているのに、`day_cap.long_form()` の
+        上限が同じ行に出ていない」。**中身は `scripts/eta.py` の印字**で、
+        **いま optimizer がそこを続けて直しています**（`6cfbc7c7` 17:55 ／ `45141b58` 18:14 ／
+        `7e639031`）。**こちらは取りません** —— 同じ所を2人で直した 08-31 の
+        `src/descriptions.py`（`d2c4cae2` と `a89ab889`・6分差）と同じ形になります
+    tests/test_live_slots.py::test_全部逃がす手は生きている本を増やす
+    tests/test_measure_window.py::test_実物の窓は前提の期限を写している
+        **どちらも実物の状態（予約の並び・`config/hypotheses.yaml` の期限）を読む検査**です。
+        `hypotheses.yaml` はこの回のあいだに別の回が2度 書き換えています
+        （`889d1f85` の verdict ／ `af5c26e6` の claim「主語と反証条件…を直す」）。
+        **先にその回のぶんが落ち着いてから見ること** —— いま直すと、
+        向こうが同じ台帳を書いている最中に当てることになります
+
+**次の回へ**: 上の3件（judgeable を除く）は、**触っている回が居なくなってから**
+`python -m pytest tests/test_long_surface_ceiling_named.py tests/test_live_slots.py
+tests/test_measure_window.py -q` を撃ち直すこと。**まだ赤なら、そこで取ること。**
+**「前からある赤」として黙って持ち越さないこと** —— この4件は、
+**この回に初めて一覧として書き出されました**（それまでは1件だけが申し送られていました）。
 ## 2026-08-31 18:5x  (session_01AHfq4FUVAd5fxDM29yG1Cm・最適化の回)
 
 ### オーナーの問い「最適化されてんの？」への答え: **部分的に。ただし「いちばん近い帯」は、この回まで作り話でした。**
