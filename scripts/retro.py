@@ -395,7 +395,9 @@ def first_lines(body: list[str], want: str) -> str:
     return ""
 
 
-SHIP_KINDS = {"upload", "means", "verdict", "fix"}
+# **`improve` は 2026-08-31 に足しました**（オーナーの規則3。
+# 正本は `run_marker.SHIP_KINDS`）。
+SHIP_KINDS = {"upload", "improve", "means", "verdict", "fix"}
 
 
 def noise_tokens() -> dict[str, set[str]]:

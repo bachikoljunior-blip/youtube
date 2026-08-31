@@ -85,7 +85,9 @@ def today_jst() -> str:
 
 WINDOW_DAYS = 7
 STALE_ROUNDS = 20
-KINDS = ("upload", "means", "verdict", "fix")
+# **`improve` は 2026-08-31 に足しました**（オーナーの規則3。
+# `run_marker.SHIP_KINDS` と同じ並びにすること —— 片方だけ変えない）。
+KINDS = ("upload", "improve", "means", "verdict", "fix")
 
 # **この先 SUPPLY_HORIZON 日に期日が来る、開いている前提の数**を在庫と呼びます。
 # 期限切れ（期日が過ぎて未判定）も**いま閉じられる**ので在庫に数えます。

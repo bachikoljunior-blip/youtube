@@ -536,9 +536,15 @@ def _eta_target() -> tuple[str | None, float | None, str]:
     return row.get("target_date"), row.get("days_to_target"), "据え置き"
 
 
-#: `CLAUDE.md` §「毎回の実行で必ずやること」が「出した」と呼ぶ4つ。
+#: `CLAUDE.md` §「毎回の実行で必ずやること」が「出した」と呼ぶ5つ。
 #: **`scripts/drift.py` の `KINDS` と同じ並びです**（片方だけ変えないこと）。
-SHIP_KINDS = ("upload", "means", "verdict", "fix")
+#:
+#: **`improve` は 2026-08-31 に足しました**（オーナーが固定した規則3）——
+#: 「次の投稿予定までにそこで投稿する動画を改善し続ける」。
+#: `upload` は**1日1回しか撃てない**ので、そのままだと大半の回が
+#: 「何も出せない回」になります。**次の枠の1本を良くした回も「出した」**です
+#: （`docs/trigger_main.md` §4）。
+SHIP_KINDS = ("upload", "improve", "means", "verdict", "fix")
 
 
 def ship_kind_of(what: str, kind: str | None = None) -> str:
