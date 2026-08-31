@@ -75,7 +75,20 @@ REVENUE_WINDOW_DAYS = 30
 MONETIZE_REVIEW_DAYS = 30             # [代用] YouTube 公表「通常1か月以内」
 
 # --- 1日に出せる本数の上限（実測。`data/upload_cap.jsonl` の 429 が出た窓）---
+#
+# **これは「口が受け付ける数」で、「出してよい数」ではありません。**
+# オーナーの規則は `src/house_rule.PUBLISH_PER_DAY` ＝ 1本/日 です（2026-08-31 固定）。
+# この道具は供給をこの 92 で解くので、**規則の92倍**の上に床の日付が立ちます。
+# 周はこの道具を呼んでいないので判断は汚れていませんが、**手で撃つと出ます** ——
+# だから `main()` の頭で、その差を言わせています。
 UPLOAD_CAP_PER_DAY = 92
+
+#: **規則のほう**（読むだけ。突き合わせて印字するために持ちます）
+try:
+    from src import house_rule as _house_rule
+    _HOUSE_RULE_PER_DAY = int(_house_rule.PUBLISH_PER_DAY)
+except Exception:                                          # noqa: BLE001
+    _HOUSE_RULE_PER_DAY = 1
 
 # --- RPM の幅（[代用]。収益化前なので自分の数字が1つも無い）---
 RPM_SHORTS = {"低": 20, "中": 35, "高": 60}
@@ -1046,6 +1059,47 @@ def render(m: dict, today: dt.date) -> list[str]:
                  "**RPM は [未測定]** —— 収益化するまで自分の数字が出ません")
         return h
 
+    # ##### **この道具は、周の回っている道の上にありません**（2026-08-31 23:xx に測った）
+    #
+    # `grep -rn "trajectory" docs/ CLAUDE.md scripts/ src/` で数えたところ、
+    # **`scripts/trajectory.py` を呼ぶものは1つもありません** ——
+    # 手順（`docs/trigger_main.md`）にも、親の手順にも、`spawn_prompt` にも、
+    # `CLAUDE.md` にも、シェルのフックにも名前が無く、他のコードからも
+    # 呼ばれていません。出てくるのは**過去の日誌**と、自分の検査だけです。
+    # `src/levers.py` と `src/arm_speed.py` が言う `trajectory()` は
+    # **`scripts/eta.py` の中の同名の関数**で、この file ではありません。
+    #
+    # **なぜここに書くか。** 2026-08-31 の申し送りが
+    # 「`scripts/trajectory.py` が `house_rule` を1行も読んでいない
+    # （`UPLOAD_CAP_PER_DAY = 92` ＝ 規則の92倍の供給の上に『床 2027-01-17』が
+    # 立っている）」と名指ししました。**事実です。** ただし
+    # **この道具の出す日付は、どの回の判断にも入っていません** ——
+    # 周が読むのは `scripts/eta.py` のほうで、あちらは
+    # `house_rule.PUBLISH_PER_DAY` を読み、`口 92本/日`（API の日枠）と
+    # `規則 1本/日` を**別の行として並べて `min()` を取っています**。
+    #
+    # **危ないのは「死んでいること」ではなく、「生きているように見えること」です。**
+    # 手で撃つと、規則の92倍の供給を前提にした床の日付が、
+    # `eta.py` とそっくりな字で出ます。**そこで1行 言わせます。**
+    # 消さないのは、恒等式（供給 × 1本あたり生涯再生）の導出と実測が
+    # ここにしか無いからです（`docs/trigger_main.md`「節は1つも消しません」）。
+    #
+    # **覆る条件**: この道具を周のどこかが呼ぶようになったら、
+    # `UPLOAD_CAP_PER_DAY` を `house_rule` と突き合わせること
+    # （そのときは、この註ではなく**供給の側**を直す）。
+    _ratio = UPLOAD_CAP_PER_DAY // max(_HOUSE_RULE_PER_DAY, 1)
+    P("=" * 74)
+    P("### [!] **これは周が読んでいる予測ではありません。**"
+      " 判断に使うのは `python scripts/eta.py` のほうです")
+    P("###     この file を呼ぶものは1つもありません"
+      "（手順・親の手順・spawn_prompt・CLAUDE.md・フック・他のコード）")
+    P(f"###     供給を `UPLOAD_CAP_PER_DAY = {UPLOAD_CAP_PER_DAY}本/日`"
+      f"（**API の日枠**）で解いています —— **オーナーの規則は"
+      f" `src/house_rule.PUBLISH_PER_DAY` ＝ {_HOUSE_RULE_PER_DAY}本/日**")
+    P(f"###     つまり下の床の日付は、**規則の {_ratio}倍 の供給**の上に立っています。"
+      " **そのまま読まないこと**")
+    P("=" * 74)
+    P("")
     P("=" * 74)
     for line in headline():
         P(line)
