@@ -44,6 +44,8 @@
 """
 from __future__ import annotations
 
+import re as _re
+from datetime import date as _date
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -162,3 +164,119 @@ def is_stockpile(row: dict, today: str | None = None) -> bool:
 def drop_stockpile(rows, today: str | None = None) -> list:
     """**控えの行から、作り置きを落とす。** 残るのが供給です（規則2）。"""
     return [r for r in rows if not is_stockpile(r, today)]
+
+
+# --- **規則の下で、その前提はまだ満ちうるか**（2026-08-31 に足した） ---------------
+#
+# `config/hypotheses.yaml` の `needs[].what` には、**未来の日に何本 公開しているか**を
+# 前提にした要件がいくつも入っています（実測 2026-08-31・開いた26件のうち **6件**）:
+#
+#     「2026-09-02 の**12本すべて**の、公開から6時間 以上の読み」
+#     「09/10（16本 公開）の、公開から6時間たった読み」
+#     「`data/reach.jsonl` の 08/26〜09/07（長尺の予約 26本 ＝ 2.0本/日）」
+#     「`data/views.jsonl` の長尺 30本ぶんの、齢をそろえた読み」
+#
+# **どれも 2026-08-31 の規則より前に書かれています。** 規則1（公開は1日1本）と
+# 規則2（作り置きをしない ＝ 予約を池へ戻す）の下では、**その日は来ません。**
+# ところが `scripts/deadline_check.py` はそれを `[OK] …09/10 に出ます` と印字します
+# —— **永久に来ないデータを「その日に出ます」と言っている**状態です。
+#
+# **これは小さい話ではありません。** `scripts/eta.py` は
+# 「**軌跡の腕が動くのは、前提を1件 閉じたときだけ**」と自分で印字しています。
+# 満ちない要件を持った前提は閉じられないので、**到達日はそこで止まります。**
+#
+# **判定は本文を読まずに、数で行います** —— 今日から期日までに規則が許す公開は
+# `(期日 − 今日) × PUBLISH_PER_DAY` 本。要件が名指ししている本数がそれを超えたら、
+# **規則の下では満ちません。** 本数の読み取りは `_COUNT` の1つだけ（`N本`）で、
+# 「N本/日」は日数を掛けずにそのまま比べます。
+#
+# **止める仕掛けではありません。** 何も止めず、**印字するだけ**です
+# （`CLAUDE.md`「作りに問題を見つけたら、止めるのではなく直すこと」）。
+# 直し方は2つ ——(1) 要件を、1日1本で届く形に書き直す
+#              (2) すでに公開ずみの日で判定できるなら、いま閉じる
+#
+# **覆る条件**: オーナーが規則を外したら、許す本数が増えてこの関数は自然に黙ります。
+# 検査は `tests/test_house_rule_reach.py`。
+
+_COUNT_PER_DAY = _re.compile(r"(\d+(?:\.\d+)?)\s*本\s*/\s*日")
+_COUNT = _re.compile(r"(\d+)\s*本")
+
+
+def needs_beyond_rule(what: str, on_date: str, today: str | None = None) -> dict | None:
+    """**その要件は、規則の下でまだ満ちうるか。** 満ちないなら理由を返す。
+
+    返すのは `{"named": 名指しされた本数, "allowed": 規則が許す本数, "kind": …}`。
+    満ちうる（または読み取れない）ときは `None`。**読めないものは通します** ——
+    測っていないことを、落とす側に倒さないこと（`is_stockpile` と同じ姿勢）。
+    """
+    if not what or not on_date:
+        return None
+    t = today or _jst_today()
+    try:
+        d0 = _date.fromisoformat(t[:10])
+        d1 = _date.fromisoformat(str(on_date)[:10])
+    except ValueError:
+        return None
+    if d1 <= d0:
+        return None                      # 過去の日は、もう起きたことなので触らない
+
+    # (1) 「N本/日」—— 日数を掛けずに、そのまま規則と比べる
+    per_day = [float(x) for x in _COUNT_PER_DAY.findall(what)]
+    over = [n for n in per_day if n > PUBLISH_PER_DAY]
+    if over:
+        return {"named": max(over), "allowed": float(PUBLISH_PER_DAY),
+                "kind": "per_day", "on_date": str(on_date)[:10]}
+
+    # (2) 「N本」—— 今日から期日までに、規則が何本 許すかと比べる
+    allowed = (d1 - d0).days * PUBLISH_PER_DAY
+    text = _COUNT_PER_DAY.sub("", what)          # 上で見た形は取り除く
+    counts = [int(x) for x in _COUNT.findall(text)]
+    named = [n for n in counts if n > allowed]
+    if named:
+        return {"named": max(named), "allowed": float(allowed),
+                "kind": "total", "on_date": str(on_date)[:10]}
+    return None
+
+
+def unreachable_needs(rows, today: str | None = None) -> list[dict]:
+    """開いている前提の `needs` から、**規則の下では満ちないもの**を並べる。
+
+    `rows` は `config/hypotheses.yaml` の `hypotheses`（そのままの list）。
+    """
+    out: list[dict] = []
+    for r in rows or []:
+        if r.get("closed_on"):
+            continue
+        for n in (r.get("needs") or []):
+            hit = needs_beyond_rule(str(n.get("what") or ""),
+                                    str(n.get("on_date") or ""), today)
+            if hit:
+                out.append(dict(hit, claim=str(r.get("claim") or ""),
+                                deadline=str(r.get("deadline") or ""),
+                                what=str(n.get("what") or "")))
+    return out
+
+
+def unreachable_lines(rows, today: str | None = None) -> list[str]:
+    """画面に出す形。**満ちない要件が無ければ、1行も出しません。**"""
+    hits = unreachable_needs(rows, today)
+    if not hits:
+        return []
+    out = [f"=== **規則（1日{PUBLISH_PER_DAY}本）の下では、期日までに満ちない要件: "
+           f"{len(hits)}件** ===",
+           "  **`[OK] …に出ます` と並んでいても、その日は来ません。**"
+           " `scripts/eta.py` は「軌跡の腕が動くのは前提を1件 閉じたときだけ」と"
+           "印字しているので、**ここが詰まると到達日が止まります。**",
+           "  直し方は2つ ——(1) 要件を 1日1本 で届く形へ書き直す"
+           " (2) すでに公開ずみの日で判定できるなら、いま閉じる。"]
+    for h in sorted(hits, key=lambda x: x["deadline"]):
+        if h["kind"] == "per_day":
+            why = (f"要件が **{h['named']:g}本/日** を名指ししています"
+                   f"（規則は {h['allowed']:g}本/日）")
+        else:
+            why = (f"要件が **{h['named']}本** を名指ししていますが、"
+                   f"今日から {h['on_date']} までに規則が許すのは **{h['allowed']:g}本**")
+        out.append(f"  [!] {h['deadline']}  {h['claim'][:52]}")
+        out.append(f"        {why}")
+        out.append(f"        要件: {h['what'][:100]}")
+    return out
