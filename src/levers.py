@@ -384,6 +384,56 @@ def _long_surface_measured() -> bool:
 RULE_DEAD = "規則"
 
 
+
+def _rule_lift_gain() -> dict | None:
+    """**規則（1日1本）を外して、物理の上限まで出したら天井は何倍か。**
+
+    ## なぜ要るか（2026-09-01・最適化の回）
+
+    すぐ上の行は「規則が止めている・外せるのはオーナーだけ」までしか言いません。
+    読む側の次の問いは必ず **「では外したら届くのか」** で、そこに数が無いと
+    **オーナーに返すかどうかを誰も決められません。**
+
+    掛け算は2つです。本数は増えますが、**1本あたりは薄まります**::
+
+        天井の倍率 = (上限本数 / 規則の本数) ** (1 + b)
+
+    `b` は「その日の本数 → 1本あたり再生」の弾力性（`src/rule_per_video.py`・
+    実測 -0.663・n=25日・95% [-0.991, -0.335]）。この回に撃った数::
+
+        上限 10本/日   1本あたり ×0.217   天井 **×2.17**
+
+    `scripts/eta.py` の `ceiling_short`（天井の不足）はこの回 **×17.69** なので、
+    **規則を外しても律速にはなりません。** それを言わずに「規則が止めている」
+    だけを出すと、次の回はオーナーへ返す相談を組み立てはじめます。
+
+    `None` を返すのは「弾力性が測れない／95%区間が 0 をまたぐ」回で、
+    そのとき呼び手は**この行を出しません**（測っていない数を出さないこと）。
+
+    **覆る条件**: `day_cap` の上限が測り直されたら倍率は動きます（定数ではなく
+    毎回 読みます）。区間が 0 をまたいだら `None` に戻ります。
+    """
+    try:
+        from . import day_cap, house_rule, rule_per_video
+    except Exception:                                          # noqa: BLE001
+        return None
+    try:
+        e = rule_per_video.estimate()
+        el = (e or {}).get("elasticity") or {}
+        if not (el.get("ok") and e.get("significant")):
+            return None
+        b = float(el["b"])
+        cap = float(day_cap.cap())
+        base = float(house_rule.PUBLISH_PER_DAY)
+    except Exception:                                          # noqa: BLE001
+        return None
+    if not base or cap <= base:
+        return None
+    n = cap / base
+    return {"cap": cap, "base": base, "b": b,
+            "thin": n ** b, "gain": n ** (1.0 + b)}
+
+
 def _density_ceiling_is_rule(row: dict) -> bool:
     """**`density` の天井は、観測ではなく「オーナーが固定した規則」か。**
 
@@ -737,6 +787,21 @@ def lever_notes(lever: str | None, state: dict) -> list[str]:
                    "（`scripts/eta.py` の `PLAN_PUBLISH_PER_DAY` は"
                    " `src.house_rule.PUBLISH_PER_DAY` をそのまま読みます）。"
                    " **天井を上げる前提を立てないこと** —— 外せるのはオーナーだけです。")
+        # --- **「では外したら幾ら？」に、その場で答えること**（2026-09-01）---
+        #     上の1行は「規則が止めている」までしか言いません。読む側の次の問いは
+        #     必ず **「外したら届くのか」** で、答えが無いと毎回そこで止まります
+        #     （＝オーナーに返すかどうかを、誰も数で決められません）。
+        _rule = _rule_lift_gain()
+        if _rule:
+            out.append(
+                f"             **外したら幾らか**: 物理の上限まで"
+                f"（{_rule['cap']:.0f}本/日・`src/day_cap.py` の実測）出しても、"
+                f"1本あたりは薄まるので天井は **×{_rule['gain']:.2f}** です"
+                f"（弾力性 {_rule['b']:+.3f}・`src/rule_per_video.py`。"
+                f"1本あたり ×{_rule['thin']:.3f} × 本数 ×{_rule['cap']:.0f}）。"
+                " **`density` の腕は、規則を外しても律速になりません** ——"
+                " 天井の不足は `scripts/eta.py` の `ceiling_short` を見ること"
+                "（この倍率より大きければ、規則はそもそも答えではありません）。")
         if redirect:
             out.append(f"             {redirect}")
         return out

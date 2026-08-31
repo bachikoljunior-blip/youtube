@@ -427,7 +427,17 @@ def _thin_by_density(per_video: float, density: float) -> tuple[float, float]:
         base = 1.0
     if b is None or not density or density <= 0 or base <= 0:
         return per_video, 1.0
-    thin = (float(density) / base) ** b
+    # **薄めるだけ。太らせないこと**（2026-09-01・`tests/test_eta_lever_cap.py` が
+    #     教えてくれた）。密度が測った所より**下**だと `ratio ** b > 1` になり、
+    #     「規則より少なく出すほど1本あたりが増える」を**天井に足します。**
+    #     `per_video` は規則の密度で測った数なので、その下は**観測の外**です ——
+    #     `rule_per_video.RULE_EXTRAPOLATE` が「1段までしか外挿しない」と
+    #     言っているのと同じ理由で、ここは上へ外挿しません。
+    #     実測: 固定具（測った密度 25本/日・解く密度 13本/日）で ×1.54 が
+    #     天井に乗り、到達日が 243日 に化けていました。
+    #     **覆る条件**: 規則より低い密度の日が貯まって、そこで1本あたりを
+    #     直接 測れるようになったら、この片側の潰しは外せます。
+    thin = min(1.0, (float(density) / base) ** b)
     return per_video * thin, thin
 
 
