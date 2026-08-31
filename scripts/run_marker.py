@@ -842,11 +842,22 @@ def _reflect_now(what: str) -> None:
              "--reflect", "--note", what[:120]],
             cwd=str(Path(__file__).resolve().parent.parent),
             # **180秒では届きません**（2026-08-24 に実測して 900 へ上げた）。
-            # この回の `--reflect` は **330秒** かかった（`eta.py` 全体は約9分）。
+            # 当時の `--reflect` は **330秒**、`eta.py` 全体は約9分。
             # `CLAUDE.md` は「約4秒」と書いているが、それは段が増える前の数字。
             # 180 のままだと `TimeoutExpired` で毎回落ち、**反映が1度も残らない** ——
             # しかも「回は止めません」と出るので、**落ちたことに気づかないまま次へ行く。**
             # 上げすぎても害は小さい（反映が終われば即座に返る）。
+            #
+            # **実測 2026-08-31（最適化の回）: `--reflect` は 330秒 → 28.4秒**
+            # （`eta.py --offline` 全体も「300秒で未完」→ **67.7秒**）。
+            #     直したのは `src/form_record.per_video_best()` の憶えです ——
+            #     鍵が「既定の引数で呼んだか」だったのに、唯一の呼び手が常に引数を
+            #     渡すので **一度も当たっていませんでした**。
+            #     実測: 150秒 のうち **139.4秒（93%）**がその中・**623回** 呼ばれる。
+            #     検査は `tests/test_form_record_memo.py`（直しを戻すと 2件 落ちます）。
+            # **900 は下げません** —— 速くなったのはこの1か所で、他の段が
+            #     重くなったときに黙って落ちるほうが高くつきます。
+            #     **「速くなったから縮める」は、次の回の落ち方を静かにします。**
             capture_output=True, text=True, timeout=900)
     except (OSError, subprocess.SubprocessError) as exc:
         print(f"[marker] 反映を撃てませんでした: {type(exc).__name__}: {exc}")
