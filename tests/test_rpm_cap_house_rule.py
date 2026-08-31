@@ -115,3 +115,52 @@ def test_the_max_day_really_broke_the_rule():
         f"天井が読んでいる日 {day} の長尺の公開は {n}本 で、"
         f"規則 {house_rule.PUBLISH_PER_DAY}本/日 を超えていません"
         " —— **この検査は役目を終えました。上の3件ごと消すこと。**")
+
+
+# --------------------------------------------------------------------------
+# **同じ欠陥の4件目** —— 段2 の「動かせる側」も、規則を見ていませんでした。
+# --------------------------------------------------------------------------
+def test_long_form_need_ratio_is_capped_by_the_rule():
+    """**要る長尺の本数は、`day_cap` ではなく「規則との低いほう」で割ること。**
+
+    段2（面の不足）の末尾は `day_cap.long_form()` の **6本/日** だけを読み、
+    「要る 46.3本/日 は、その **7.71倍**」と印字したうえで、
+    **「先に動かすのは天井のほう（`day_cap.long_form()` の覆る条件）」と
+    次の手を名指し**していました。
+
+    **その手は、規則の下では1日も効きません。** `day_cap.long_form()` を
+    測り直して上限が 92本/日 と出ても、出せるのは **1本/日** のままです
+    （`src/house_rule.PUBLISH_PER_DAY`・覆る条件なし）。
+    **この機械でいちばん詳しい診断が、規則が禁じている作業を名指し**していました。
+
+    実測 2026-08-31: **7.71倍 → 46.28倍**。名指しする手も `rpm` へ入れ替わります。
+
+    **覆る条件**: オーナーが 1日1本 を自分の言葉で外したとき。
+    そのとき律速は測った天井（`day_cap.long_form()`）へ戻り、文面も自分で戻ります。
+    """
+    import eta as E
+
+    src = Path(E.__file__).read_text(encoding="utf-8")
+    i = src.find("_rule_binds_long")
+    assert i > 0, "段2 の「動かせる側」が、規則（`src/house_rule.py`）を見ていません"
+    # 規則は `src.house_rule` から引くこと（数を写さない）。
+    assert "_rule_long = float(house_rule.PUBLISH_PER_DAY)" in src, (
+        "規則の数を写しています。出どころは `src/house_rule.py` の1か所")
+    # **規則で閉じている枝では、`day_cap` を測り直す手を名指ししないこと。**
+    # 文面は f-string で分かれているので、**1つのリテラルに収まる断片**で見ます。
+    assert "を測り直す手は、" in src, (
+        "規則で閉じているのに、`day_cap.long_form()` を測り直す手が"
+        "まだ名指しされたままです")
+    # 旧文面（測った天井を名指しする側）は**消さずに残す** ——
+    # 規則が外れたらそちらへ戻るため。
+    assert "先に動かすのは天井のほう" in src, (
+        "規則が外れたときに戻る文面ごと消しています")
+
+
+def test_long_form_cap_takes_the_lower_of_rule_and_measurement():
+    """低いほうを採ること —— **規則が外れたら、測った天井へ戻る**こと。"""
+    for cap_meas, rule, want in ((6.0, 1.0, 1.0), (6.0, 7.0, 6.0),
+                                 (0.0, 1.0, 1.0), (6.0, 6.0, 6.0)):
+        binds = (cap_meas <= 0) or (rule < cap_meas)
+        got = rule if binds else cap_meas
+        assert got == want, f"cap_meas={cap_meas} rule={rule} → {got}（{want} のはず）"

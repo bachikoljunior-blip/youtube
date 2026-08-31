@@ -882,6 +882,30 @@ def retention() -> dict:
 # 6. 段を組む
 # ----------------------------------------------------------------------------
 
+def supply_ceiling(rule: float, api: float,
+                   material: float | None) -> tuple[float, str]:
+    """**持続できる供給の天井**と、その律速の名前（**いちばん低いものが勝つ**）。
+
+    候補は3つ:
+
+        規則        オーナーが固定した公開の上限（`src/house_rule`）
+        API の日枠  口が1日に受け付ける本数（`data/upload_cap.jsonl` の 429）
+        題材        新しい題材が増える速さ（無ければ候補から外す）
+
+    **2026-08-31 まで、ここに規則が入っていませんでした。** `min(API, 題材)` だけで
+    解いており、規則が 1本/日・日枠が 92本/日 なので、**軌跡ぜんぶが最大 92倍 の
+    供給の上に乗っていました**（段2〜段4 と月の ¥ は全部これを掛けます）。
+
+    **純関数にしてあるのは、検査が3つの並びを直接ためせるようにするため**です ——
+    実データに依る検査だと「いまたまたま規則がいちばん低い」ことしか確かめられず、
+    **題材が候補から外れても気づきません**（それが元の壊れ方でした）。
+    """
+    ceilings = [(float(rule), "オーナーの規則（1日1本）"), (float(api), "API の日枠")]
+    if material:
+        ceilings.append((float(material), "題材の生成速度"))
+    return min(ceilings, key=lambda kv: kv[0])
+
+
 def stages(vs, day, ident, dec, pv, sup, tr, sb, tf, rc, today) -> dict:
     """**段を飛ばさずに並べる。**
 
@@ -907,10 +931,7 @@ def stages(vs, day, ident, dec, pv, sup, tr, sb, tf, rc, today) -> dict:
     # この repo でいちばん多い壊れ方（言っている所と、している所が別）そのものです。
     # **出どころは `src/house_rule` の1か所**。ここに数を写さないこと。
     sup_rule = float(house_rule.planned_publishes_per_day())
-    ceilings = [(sup_rule, "オーナーの規則（1日1本）"), (float(sup_api), "API の日枠")]
-    if mat:
-        ceilings.append((float(mat), "題材の生成速度"))
-    sup_cap, sup_cap_why = min(ceilings, key=lambda kv: kv[0])   # 持続できる供給の天井
+    sup_cap, sup_cap_why = supply_ceiling(sup_rule, sup_api, mat)
 
     views_hist = tr.get("mean_views_day") or 0.0
     views_sched = sup_sched * V if sup_sched else 0.0
@@ -1308,7 +1329,11 @@ def render(m: dict, today: dt.date) -> list[str]:
         P(f"           → {UPLOAD_CAP_PER_DAY}本 作るのに **{bld['hours_for_cap']:.1f}時間**。"
           "**ここは律速ではありません**")
     P(f"    [実測] API の日枠 **{UPLOAD_CAP_PER_DAY}本/日**（`data/upload_cap.jsonl` の 429）")
-    P(f"    [規則] オーナーが固定した公開の上限 **{st['supply_rule']:.0f}本/日**"
+    # **札を増やさないこと**（`tests/test_trajectory.py::test_every_tag_is_one_of_three`）。
+    # 札は [実測] [代用] [未測定] の3つで、**「どうやって知った数か」**を表します。
+    # 規則はそのどれでもない（測ってもいないし、代用でもない ―― **オーナーが決めた**）
+    # ので、**4つ目の札を作るより、札を付けずに書くほうが筋がいい**。
+    P(f"      規則  オーナーが固定した公開の上限 **{st['supply_rule']:.0f}本/日**"
       "（`src/house_rule.PUBLISH_PER_DAY`）")
     P("           **帯は観測、規則は規則。規則のほうが小さいので、規則が勝ちます。**"
       " 2026-08-31 まで、ここは規則を1度も見ておらず、"

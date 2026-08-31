@@ -62,7 +62,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from src import arm_speed, day_cap, eligibility, form_record, forms, house_rule, levers, motion_groups, pause_guard, resume_gate, rpm_mix, settle, subs_cap  # noqa: E402  （`sys.path` を通した後でないと読めません）
+from src import arm_speed, day_cap, eligibility, form_record, forms, house_rule, levers, motion_groups, pause_guard, reach_split, resume_gate, rpm_mix, settle, subs_cap  # noqa: E402  （`sys.path` を通した後でないと読めません）
 
 LOG = ROOT / "data" / "eta.jsonl"
 
@@ -2175,6 +2175,143 @@ def residual_gap(a: dict) -> dict | None:
     return out
 
 
+
+#: **手本にしてよい本の、最低クリック数。**（2026-08-31・撃って足した）
+#:
+#: これを割る本の CTR は、±1クリックで率が倍になります。実測::
+#:
+#:     ショート 最高CTR 100.00% ＝ `MrWXzBLlHok`（1面・1クリック）→ 伸びしろ ×50.4
+#:
+#: **床をインプレッションに置かないのは、確からしさを決めるのが分子だから**です
+#: （1,000面でもクリック1なら同じこと）。`conversion_split` の長い註に、
+#: 床を動かしたときの実測（長尺は動かない・ショートは動く）。
+CTR_REF_MIN_CLICKS = 10
+
+
+def conversion_split(form: str = "長尺") -> dict | None:
+    """**`per_video` の腕を「見せた数 × 押された率」に割る**（2026-08-31・最適化の回）。
+
+    ## なぜ要るか
+
+    腕は `per_video`／`rpm`／`density`／`sub_rate`／`gate`／`theta` の6つで、
+    **`ctr` は1つもありません。** そして `scripts/eta.py` は
+    `video_thumbnail_impressions_ctr` を**1度も読みません**（この回に数えた・grep 0件）。
+    だから「`per_video` を引け」とは言えても、**どちらの半分を引くのかを言えません。**
+
+    `src/reach_split.py` は、その読み方を自分で書いています::
+
+        インプレッションが少ない  → 見せられていない（**題材・本数・面そのもの**）
+        CTR が低い                → 見せたのに押されない（**サムネと題**）
+
+    **この関数は、その2つのどちらが効いているかを数で出すだけ**です。
+
+    ## 実測（2026-08-31・`data/reach.jsonl`・API 0単位）
+
+        長尺 21本   インプレッション 5,012   クリック 84   加重CTR **1.68%**
+          本べつ CTR 中央値 **0.44%**
+          手本 `_Mz5rg6jQ_A` **5.30%**（1,056面・56クリック）＝ **中央値の ×11.9**
+
+    （重なった報告を `dedupe` で落とした後の数です。落とす前は 5,133 / 88。
+      **落とす前の数を引かないこと** —— 同じ日の CSV が何度も積まれます。）
+
+    **面は在ります**（手本の本より多く見せている本はありませんが、
+    面の側は 5,012回 出ています）。足りていないのは**押された率**のほうで、
+    **いまのインプレッションのまま**、手本の CTR で回すと
+    クリックは **84 → 266（×3.2）** になります。
+
+    **手本がこの本になったのは偶然ではありません** —— 1本あたり再生の記録も
+    同じ `_Mz5rg6jQ_A`（「任意継続の20日を過ぎると年収1000万でいくら増えるか」）です。
+    **よく回った本は、よく押された本**でした。
+
+    **ショートでは伸びしろを出しません** —— クリックが `CTR_REF_MIN_CLICKS` 以上の本が
+    1本も無いからです（ショートのクリックは全部で 66回）。**無い所を埋めないこと。**
+
+    ## この数の読み方（**上限でも下限でもありません**）
+
+    - **独立ではありません。** YouTube は押される本により多く見せるので、
+      CTR が上がれば面も増えます ＝ **×3.1 は控えめな側**
+    - **逆に、記録の本の CTR が高いのは題材が探されているから**かもしれません
+      （サムネではなく**問いの選び方**）。そのときサムネを直しても動きません
+    - **クリックは全部で 88回 です。** 薄い。**桁の話として読むこと**
+
+    返り `None` ＝ `data/reach.jsonl` が読めない／その形の行が無い。
+    """
+    try:
+        rows = reach_split.dedupe(reach_split.load_rows())
+    except Exception:                                          # noqa: BLE001
+        return None
+    if not rows:
+        return None
+    try:
+        by_form = forms.measured_forms()
+    except Exception:                                          # noqa: BLE001
+        return None
+
+    per: dict[str, list[float]] = {}
+    for r in rows:
+        vid = r.get("video_id")
+        if not vid or by_form.get(vid) != form:
+            continue
+        acc = per.setdefault(vid, [0.0, 0.0])
+        acc[0] += reach_split._imp(r)
+        acc[1] += reach_split._clicks(r)
+    per = {v: a for v, a in per.items() if a[0] > 0}
+    if not per:
+        return None
+
+    imp = sum(a[0] for a in per.values())
+    clicks = sum(a[1] for a in per.values())
+    ctrs = sorted(a[1] / a[0] for a in per.values())
+    n = len(ctrs)
+    median = ctrs[n // 2] if n % 2 else (ctrs[n // 2 - 1] + ctrs[n // 2]) / 2
+    out = {
+        "form": form, "n": n, "impressions": imp, "clicks": clicks,
+        "ctr": (clicks / imp) if imp else 0.0,
+        "ctr_median": median,
+    }
+
+    # --- **手本にする本は、クリックが薄い本から選ばないこと**（2026-08-31）---
+    #
+    #     最初の版は「いちばん CTR の高い本」を素で採っていました。**噴き出す。**
+    #     実測（この回・撃って気づいた）::
+    #
+    #       ショート 最高CTR **100.00%**  ← `MrWXzBLlHok`（インプレッション **1**・クリック **1**）
+    #                次点      25.00%       （8 / 2）    その次 20.00%（5 / 1）
+    #       → 伸びしろが **×50.4** と出る。**1回 見せて1回 押された本**の率です。
+    #
+    #     `scripts/eta.py` の `nearest` の註が、同じ壊れ方を自分で書いています ——
+    #     「**ほぼ 0 の分母で割ると、倍率は無限に大きく出ます**」。同じ穴。
+    #
+    #     **床はインプレッションではなくクリックに置きます。** CTR の確からしさを
+    #     決めるのは分子のほうで、インプレッションが 1,000 あってもクリックが 1 なら
+    #     ±1 で率が倍になります。実測で、床を動かしたときの安定ぶりが逆でした::
+    #
+    #       長尺    床 30/50/100/200 いずれでも **×3.2**（手本は 1,056面・56クリック）
+    #       ショート 床 30→×3.7  50→×3.0  100→×1.2   ← **床しだいで答えが変わる ＝ 雑音**
+    #
+    #     だから長尺は数として出し、**ショートは出しません**（下の `None`）。
+    #     **無い所を埋めないこと** —— 印字する側は伸びしろが無ければ黙ります。
+    #
+    #     **覆る条件**: `data/reach.jsonl` が伸びて、ショートにもクリックの厚い本が
+    #     出てきたら自動で出るようになります（定数は下の1つだけ）。
+    ref = {v: a for v, a in per.items() if a[1] >= CTR_REF_MIN_CLICKS}
+    if ref:
+        best_id = max(ref, key=lambda v: ref[v][1] / ref[v][0])
+        best = ref[best_id][1] / ref[best_id][0]
+        out.update({
+            "ctr_best": best, "ctr_best_id": best_id,
+            "ctr_best_clicks": ref[best_id][1], "ctr_best_impressions": ref[best_id][0],
+            # **面はそのままで、いちばん押された本の率で回したら**
+            "clicks_at_best": imp * best,
+            "headroom": (imp * best / clicks) if clicks else float("inf"),
+        })
+    else:
+        out["why_no_headroom"] = (
+            f"クリックが {CTR_REF_MIN_CLICKS}回 以上の本が1本もありません"
+            f"（この形のクリックは全部で {clicks:,.0f}回）——"
+            "**薄い本の率を手本にすると、伸びしろは雑音になります**")
+    return out
+
 def residual_lines(a: dict, prefix: str = "  ") -> list[str]:
     """`residual_gap()` を印字する。**`report()` と頭の要約の両方から呼びます。**"""
     r = residual_gap(a)
@@ -2536,6 +2673,35 @@ def report(m: dict, a: dict) -> list[str]:
           f"（`src/form_record.censor_factor`・実測・定数なし）。"
           f" **直さないと、長尺の帯は必ず {a['long_censor']:.2f}倍 遠くに出て、"
           f"`nearest` はショートへ寄ります。**")
+    # --- **その腕の、どちらの半分を引くのか**（2026-08-31・最適化の回）---
+    #     腕は6つあって `ctr` はありません。`per_video` は
+    #     「見せた数 × 押された率」の積なので、**どちらが効いているかを言わないと、
+    #     『1本あたりを 104倍』は手の打ちようがない数**に見えます。
+    _cs = conversion_split("長尺" if nearest.startswith("長尺") else "ショート")
+    if _cs and _cs["clicks"] > 0:
+        P(f"      **その腕は「見せた数 × 押された率」です**"
+          f"（`conversion_split`・`data/reach.jsonl`・API 0単位）——"
+          f" {_cs['form']} {_cs['n']}本: インプレッション **{_cs['impressions']:,.0f}**"
+          f" ／ クリック **{_cs['clicks']:,.0f}** ＝ 加重CTR **{_cs['ctr']*100:.2f}%**"
+          f"（本べつ中央値 {_cs['ctr_median']*100:.2f}%）。")
+    if _cs and _cs.get("headroom"):
+        P(f"      手本は `{_cs['ctr_best_id']}` の **{_cs['ctr_best']*100:.2f}%**"
+          f"（{_cs['ctr_best_impressions']:,.0f}面・{_cs['ctr_best_clicks']:,.0f}クリック"
+          f" ＝ クリック {CTR_REF_MIN_CLICKS}回 以上の本からだけ選んでいます）。")
+        P(f"      → **面は在ります。足りていないのは押された率のほう** ——"
+          f" いまのインプレッションのまま、いちばん押された本の率で回すと"
+          f" クリックは {_cs['clicks']:,.0f} → **{_cs['clicks_at_best']:,.0f}"
+          f"（×{_cs['headroom']:.1f}）**。"
+          f" `src/reach_split` の読み方: **面が少ない→題材・本数／CTR が低い→サムネと題**。")
+        P(f"      [!] **上限でも下限でもありません** —— 押される本には多く見せるので"
+          f"面も増えます（×{_cs['headroom']:.1f} は控えめ側）が、"
+          f"逆に最高の本の CTR が高いのは**問いの選び方**のせいかもしれません"
+          f"（そのときサムネを直しても動きません）。"
+          f"**クリックは全部で {_cs['clicks']:,.0f}回。桁の話として読むこと。**")
+    elif _cs and _cs.get("why_no_headroom"):
+        P(f"      **伸びしろは出しません** —— {_cs['why_no_headroom']}。"
+          f"（薄い本を手本にすると ×50 のような数が出ます —— 実測 `MrWXzBLlHok`"
+          f" 1面・1クリックで CTR 100パーセント。`nearest` の註と同じ「ほぼ 0 の分母」の穴）")
 
     # --- **倍率がいちばん小さい帯と、要る再生数がいちばん少ない帯は、別です**
     #     （2026-08-31・最適化の回に足した。**規則が 1本/日 に固定されて初めて効く**）
@@ -3291,6 +3457,35 @@ def physical_caps(a0: dict, density: float = PLAN_PUBLISH_PER_DAY,
                         f" {_view_cap_per_day()}本 を引いた {long_cap:.0f}本"
                         "（**定義上の上限。測った天井ではありません** ——"
                         " 長尺の面が崩れるところは一度も観測していない）")
+        # --- **その面の上にも、オーナーが固定した規則が乗っています**（2026-08-31）---
+        #     ここは長らく `day_cap.long_form()` の **6本/日** だけで割っていて、
+        #     `eta.py` は毎回こう印字していました ——
+        #     「**その ×1.00 は「ショート」の面だけの数です。「長尺」の面は
+        #       ×6.46 空いています**」。
+        #
+        #     **面は空いていますが、そこへ入れられるのは 1日1本 までです**
+        #     （`src/house_rule.PUBLISH_PER_DAY`・覆る条件なし）。
+        #     ×6.46 は「長尺を1日6本まで増やせる」と読めます —— **規則の外**です。
+        #     30行 上の `density`（ショートの面）は同じ日に規則で止まっており、
+        #     **兄弟のこちらだけが規則を見ていませんでした。**
+        #
+        #     **`at_ceiling` は変わりません**（実測 2026-08-31: 規則 1.0 ÷
+        #     いま出している 0.93本/日 ＝ **×1.08** で、まだ 1.0 より上）。
+        #     つまり `src/levers.py` の「長尺の仕事を `none` へ落とすな →
+        #     指すのは `rpm`」という付け替えは**そのまま生きます**。
+        #     変わるのは**倍率の大きさ**だけで、×6.46 → ×1.08 ＝
+        #     「規則の下で実際に残っている引き代」になります。
+        #
+        #     **覆る条件**: オーナーが 1日1本 を外したとき。`long_rule` が上がり、
+        #     測った天井（6本/日）が低くなった時点で、そちらへ自動で戻ります。
+        long_rule = float(house_rule.PUBLISH_PER_DAY)
+        if long_rule < long_cap:
+            long_why += (f"　[!] **ただし出せるのは 1日{long_rule:.0f}本 まで**"
+                         f"（オーナーが固定した規則・`src/house_rule.py`・"
+                         f"**覆る条件はありません**）。上の {long_cap:.0f}本/日 は"
+                         f"**面の広さ**であって、そこへ入れられる本数ではありません"
+                         f" → 引き代は **{long_rule:.0f}本/日** で解きます")
+            long_cap = long_rule
         long_raw = (long_cap / long_now) if long_now > 0 else None
         caps["density_long"] = {
             "factor": long_raw,
@@ -4316,18 +4511,65 @@ def _gate2_surface_note(imp_day: float, need_day: float,
                         _lf = _dc.long_form()
                     except Exception:                      # 帳面が読めない回は黙って飛ばす
                         _lf = {}
-                    _cap_long = float(_lf.get("most") or 0) - 1 if _lf.get("collapsed") else 0.0
+                    _cap_meas = float(_lf.get("most") or 0) - 1 if _lf.get("collapsed") else 0.0
+                    # --- **その天井の上に、オーナーが固定した規則が乗っています** ---
+                    #     （2026-08-31・最適化の回）
+                    #
+                    #     ここは `day_cap.long_form()` の **6本/日** だけを読み、
+                    #     「要る 46.3本/日 は、その **7.71倍**」と印字し、そのまま
+                    #     **「先に動かすのは天井のほう（`day_cap.long_form()` の
+                    #     覆る条件＝上限より多く出した日に…）」と、次の手を名指し**
+                    #     していました。
+                    #
+                    #     **その手は、規則の下では1日も効きません。** オーナーは
+                    #     2026-08-31 に「動画は1日一本」を固定しています
+                    #     （`src/house_rule.PUBLISH_PER_DAY` ＝ 1本/日・覆る条件なし）。
+                    #     `day_cap.long_form()` を測り直して上限が 92本/日 と出ても、
+                    #     **出せるのは 1本/日 のまま**です。
+                    #     つまりこの行は、**規則が禁じている作業を、この機械で
+                    #     いちばん詳しい診断の末尾から名指し**していました。
+                    #     `physical_caps` の `density`（×10）・`trajectory.py` の
+                    #     供給（×92）・`physical_caps` の `rpm`（×2.13。同じ回に直した）と
+                    #     **同じ欠陥の4件目**です。
+                    #
+                    #     天井は「測った上限」と「規則」の**低いほう**。実測 2026-08-31:
+                    #     測った 6本/日 に対し規則 **1本/日** で、倍率は
+                    #     **7.71倍 → 46.3倍**。名指しする手も入れ替わります。
+                    #
+                    #     **覆る条件**: オーナーが 1日1本 を自分の言葉で外したとき
+                    #     （`src/house_rule.py` に原文を書き足す）。そのとき律速は
+                    #     測った天井へ戻り、下の文面も自分で戻ります（写しではありません）。
+                    _rule_long = float(house_rule.PUBLISH_PER_DAY)
+                    _rule_binds_long = (_cap_meas <= 0) or (_rule_long < _cap_meas)
+                    _cap_long = _rule_long if _rule_binds_long else _cap_meas
                     if _cap_long > 0 and need_pub > _cap_long:
-                        line += (f"　[!] **その「動かせる側」にも、測った天井があります** ——"
-                                 f" 長尺の面は **{_lf.get('most')}本/日 で崩れ**、上限は"
-                                 f" **{_cap_long:,.0f}本/日**（`src/day_cap.long_form()`）。"
-                                 f" 要る {need_pub:,.1f}本/日 は、その"
-                                 f" **{need_pub / _cap_long:,.2f}倍**です ——"
-                                 "**族を増やしても、この段は族では閉じません。**"
-                                 "先に動かすのは天井のほう"
-                                 "（`day_cap.long_form()` の「覆る条件」＝"
-                                 "上限より多く出した日に、上限より後ろの本が再生を取ること。"
-                                 "**前提を1件 立てて測る手**です）")
+                        if _rule_binds_long:
+                            line += (f"　[!] **その「動かせる側」は、規則で閉じています** ——"
+                                     f" オーナーが固定した公開の上限は"
+                                     f" **{_rule_long:,.0f}本/日**"
+                                     f"（`src/house_rule.py`・**覆る条件はありません**）。"
+                                     f" 要る {need_pub:,.1f}本/日 は、その"
+                                     f" **{need_pub / _cap_long:,.2f}倍**です ——"
+                                     "**族を増やしても、この段は族では閉じません。**"
+                                     + (f"（測った面の上限は {_cap_meas:,.0f}本/日"
+                                        f"・`src/day_cap.long_form()` ですが、"
+                                        f"**規則より上なので効きません** ——"
+                                        f" **`day_cap.long_form()` を測り直す手は、"
+                                        f"ここでは1日も効きません**）"
+                                        if _cap_meas > 0 else "")
+                                     + " **規則の下で動かせるのは「その1本をどの形にするか」だけ**"
+                                       "です（腕 `rpm`。`src/levers.py` の付け替えと同じ）。")
+                        else:
+                            line += (f"　[!] **その「動かせる側」にも、測った天井があります** ——"
+                                     f" 長尺の面は **{_lf.get('most')}本/日 で崩れ**、上限は"
+                                     f" **{_cap_long:,.0f}本/日**（`src/day_cap.long_form()`）。"
+                                     f" 要る {need_pub:,.1f}本/日 は、その"
+                                     f" **{need_pub / _cap_long:,.2f}倍**です ——"
+                                     "**族を増やしても、この段は族では閉じません。**"
+                                     "先に動かすのは天井のほう"
+                                     "（`day_cap.long_form()` の「覆る条件」＝"
+                                     "上限より多く出した日に、上限より後ろの本が再生を取ること。"
+                                     "**前提を1件 立てて測る手**です）")
                     gap_ctr += line
             else:
                 gap_ctr += (f"　要る CTR {need_ctr:.1f}% は**その区間の中**です ——"
