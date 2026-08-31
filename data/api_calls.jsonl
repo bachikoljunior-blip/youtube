@@ -2407,3 +2407,59 @@
 {"at": "2026-08-31T19:31:11+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "eta.py:q"}
 {"at": "2026-08-31T19:31:11+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "eta.py:q"}
 {"at": "2026-08-31T19:31:11+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "eta.py:q"}
+{"at": "2026-08-31T19:40:07+00:00", "api": "data", "method": "channels.list", "units": 1, "ok": false, "by": "watch_source.py:_videos"}
+{"at": "2026-08-31T19:40:08+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "watch_source.py:_query"}
+{"at": "2026-08-31T19:40:08+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "watch_source.py:_query"}
+{"at": "2026-08-31T19:40:09+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "watch_source.py:_query"}
+{"at": "2026-08-31T19:40:09+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "watch_source.py:_query"}
+{"at": "2026-08-31T19:40:09+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "watch_source.py:_query"}
+{"at": "2026-08-31T19:40:09+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "watch_source.py:_query"}
+{"at": "2026-08-31T19:40:10+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "watch_source.py:_query"}
+{"at": "2026-08-31T19:40:10+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "watch_source.py:_query"}
+{"at": "2026-08-31T19:40:10+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "watch_source.py:_query"}
+{"at": "2026-08-31T19:40:10+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "watch_source.py:_query"}
+{"at": "2026-08-31T19:40:10+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "watch_source.py:_query"}
+{"at": "2026-08-31T19:40:11+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "watch_source.py:_query"}
+{"at": "2026-08-31T19:40:11+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "watch_source.py:_query"}
+{"at": "2026-08-31T19:40:11+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "watch_source.py:_query"}
+{"at": "2026-08-31T19:40:11+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "watch_source.py:_query"}
+{"at": "2026-08-31T19:40:12+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "watch_source.py:_query"}
+{"at": "2026-08-31T19:40:12+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "watch_source.py:_query"}
+{"at": "2026-08-31T19:40:12+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "watch_source.py:_query"}
+{"at": "2026-08-31T19:41:06+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true}
+{"at": "2026-08-31T19:41:06+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true}
+{"at": "2026-08-31T19:41:06+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true}
+{"at": "2026-08-31T19:41:06+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true}
+{"at": "2026-08-31T19:41:06+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": false}
+{"at": "2026-08-31T19:41:06+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": false}
+{"at": "2026-08-31T19:41:39+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true}
+{"at": "2026-08-31T19:41:39+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true}
+{"at": "2026-08-31T19:41:40+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true}
+{"at": "2026-08-31T19:41:40+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true}
+{"at": "2026-08-31T19:41:40+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true}
+{"at": "2026-08-31T19:41:40+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true}
+{"at": "2026-08-31T19:41:40+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true}
+{"at": "2026-08-31T19:41:41+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true}
+{"at": "2026-08-31T19:41:41+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true}
+{"at": "2026-08-31T19:41:41+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true}
+{"at": "2026-08-31T19:41:41+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true}
+{"at": "2026-08-31T19:41:41+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true}
+{"at": "2026-08-31T19:41:42+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true}
+{"at": "2026-08-31T19:41:42+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true}
+{"at": "2026-08-31T19:41:42+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true}
+{"at": "2026-08-31T19:41:42+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true}
+{"at": "2026-08-31T19:41:42+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true}
+{"at": "2026-08-31T19:41:43+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true}
+{"at": "2026-08-31T19:41:43+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true}
+{"at": "2026-08-31T19:41:43+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true}
+{"at": "2026-08-31T19:41:43+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true}
+{"at": "2026-08-31T19:41:43+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true}
+{"at": "2026-08-31T19:41:44+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true}
+{"at": "2026-08-31T19:41:44+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true}
+{"at": "2026-08-31T19:41:44+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true}
+{"at": "2026-08-31T19:41:44+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true}
+{"at": "2026-08-31T19:41:44+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true}
+{"at": "2026-08-31T19:41:45+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true}
+{"at": "2026-08-31T19:41:45+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true}
+{"at": "2026-08-31T19:41:45+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true}
+{"at": "2026-08-31T19:41:45+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true}
