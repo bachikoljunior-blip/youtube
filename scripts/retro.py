@@ -725,6 +725,112 @@ def carry_over(n: int = 8) -> tuple[dict[str, list[str]], dict[str, list[str]]]:
     return out, dropped
 
 
+#: **「配線されている」と数える口**（`unwired_tools()`）。
+#: 手順の本文は「毎周 撃つ」と同じ意味なので、ここに入れます。**日誌は入れません**
+#: —— 日誌は「この道具の話をした」だけで、撃つ側にはなりません。
+#: **`docs/JOURNAL.md` を足さないこと。** 足すと、一度でも申し送りに書かれた道具が
+#: 全部「配線ずみ」に化けます（この一覧が5周 手で運ばれた原因そのものです）。
+PROC_DOCS = ("docs/trigger_main.md", "docs/trigger_parent.md",
+             "docs/spawn_prompt.md", "CLAUDE.md")
+
+#: **(c)「わざと寝かせてある」の目印**。道具自身の docstring から拾います。
+#: 語を増やすときは、**その道具の docstring に実際に在る字**にすること
+#: （こちらで言い回しを想像して足すと、当たらないまま増えます）。
+DORMANT_MARKS = ("だから検査は足していません", "わざと", "配線しないのが正しい",
+                 "外の repo", "寝かせ")
+
+
+def unwired_tools() -> list[dict]:
+    """**`scripts/*.py` のうち、どこからも撃たれていない道具**を返す。
+
+    ## なぜ要るか（2026-09-01 に測って足した）
+
+    **この一覧は、5周 続けて申し送りに「`retro.py` の『どこからも呼ばれない』」
+    として運ばれていました。ところが `retro.py` にそんな一覧はありませんでした。**
+    `grep -n 呼ばれない scripts/retro.py` → **0件**。
+    毎回、来た側が手で数え直していたということです。
+
+    そして**手で運ぶうちに、中身がずれていました。** 申し送りの最後の値は
+    「**残り 2本**」でしたが、この道具を書いて撃つと **4本**出ます ——
+    2本は**一度も申し送りに出たことがありません。**
+    **一覧を手で運ぶと、運ばれなかったものは存在しないことになります。**
+
+    ## 何を「撃たれている」と数えるか —— **言及ではなく、呼び方の形**
+
+        1. `scripts/<名前>.py` という**道**が、他の `.py` か手順本文にある
+        2. `import <名前>` / `from <名前> import` / `src.<名前>` という**import**がある
+        3. `tests/` がそのどちらかをしている（＝ **全体 `pytest` が毎周 撃つ**）
+
+    **3 を入れているのは、`endcard_check` がその形で「配線した」と宣言されているから**です
+    （`docs/JOURNAL.md` 2026-08-31 13:5x）。検査が撃つなら、それは撃たれています。
+
+    ### **名前が出てくるだけ、を数えないこと**（2026-09-01 に**2回** 踏んだ）
+
+    最初は `\b<名前>\b` の**素の言及**で数えていました。**2回とも同じ形で壊れました。**
+
+        1回目  この docstring が、見つけた道具の名前を実例として書いた
+               → その瞬間 `scripts/retro.py` の中に名前が現れ、**一覧が 4本 → 0本**
+        2回目  検査（`tests/test_unwired_tools.py`）が同じ名前を散文で書いた
+               → **また 0本**
+
+    **一覧に載せる行為そのものが、載せたものを消していました。**
+    「載せた／説明した」は撃つ側ではありません。**だから当てるのは呼び方の形だけ**です。
+    こうすると除外の細工が1つも要らなくなります（`retro.py` も検査も、
+    名前を散文で書くだけなので当たりません）。
+
+    ## **(a) 配線する／(b) 消す の二択に、(c) を戻す**
+
+    申し送りが5周 繰り返し頼んでいたのはここです ——
+    「**(a)/(b) の二択で見ると、(c)『わざと寝かせてある』が落ちます。**
+    `deixis_count` は自分の docstring に『だから検査は足していません』と書き、
+    覆る条件まで置いてある」。
+
+    だから **道具自身の docstring を読んで、その一行をそのまま添えます。**
+    判定はしません —— **「この道具はこう言っています」と見せるだけ**です。
+    寝かせるか起こすかは、読んだ回が決めること。
+
+    ## 覆る条件
+
+    - **`src/` は見ていません。** `src/calc/` の族表は動的に読まれるので、
+      同じ数え方をすると 40本 前後の偽陽性で埋まります（実測 2026-09-01）。
+      `src/` まで広げるなら、**先に「動的に読む口」を申告させること。**
+    - **呼び方の形に当てています。** `subprocess` で組み立てた道や、
+      `getattr` で引く呼び方は見えません。0本が続いたら、まずここを疑うこと。
+    """
+    tools = sorted(p for p in (ROOT / "scripts").glob("*.py") if p.name != "__init__.py")
+    code: dict[Path, str] = {}
+    for d in ("scripts", "src", "tests"):
+        for p in (ROOT / d).rglob("*.py"):
+            if "__pycache__" not in p.parts:
+                code[p] = p.read_text(encoding="utf-8", errors="replace")
+    proc = ""
+    for rel in PROC_DOCS:
+        f = ROOT / rel
+        if f.exists():
+            proc += f.read_text(encoding="utf-8", errors="replace")
+
+    out: list[dict] = []
+    for path in tools:
+        n = re.escape(path.stem)
+        call = re.compile(
+            r"scripts/%s\.py"                       # 道で撃つ
+            r"|(?:^|\n)\s*import\s+%s\b"            # import
+            r"|(?:^|\n)\s*from\s+%s\s+import"       # from ... import
+            r"|\bsrc\.%s\b"                         # src.<名前>
+            r"|-m\s+scripts\.%s\b" % (n, n, n, n, n))
+        if any(call.search(t) for p, t in code.items() if p != path):
+            continue
+        if call.search(proc):
+            continue
+        doc = (re.search(r'"""(.*?)"""', code[path], re.S) or (None, ""))[1]
+        says = next((l.strip() for l in doc.splitlines()
+                     if any(k in l for k in DORMANT_MARKS)), None)
+        out.append({"name": path.stem,
+                    "path": path.relative_to(ROOT).as_posix(),
+                    "dormant_says": says})
+    return out
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--n", type=int, default=8, help="さかのぼる回数。既定8")
@@ -846,6 +952,20 @@ def main() -> int:
         print("  ［日誌の文］は散文から読み取ったもの。**宣言のほうが間違っている"
               "ことがあります**（閉じたつもりで閉じていない）。"
               "\n  疑うなら日誌の宣言を読み、実物に当たること。**言及の回数は証拠になりません。**")
+
+    unwired = unwired_tools()
+    print(f"\n\n## どこからも撃たれていない道具（`scripts/*.py`・{len(unwired)}本）\n")
+    if unwired:
+        print("  **(a) 配線する ／ (b) 消す ／ (c) わざと寝かせてある** の三択で、1本ずつ倒すこと。")
+        for row in unwired:
+            print(f"  - `{row['path']}`")
+            if row["dormant_says"]:
+                print(f"      ← **(c) かもしれません。**その道具自身がこう書いています: "
+                      f"{row['dormant_says'][:100]}")
+        print("\n  **この一覧は、5周 申し送りで手で運ばれていたものです**"
+              "（`unwired_tools()` の docstring）。**手で数え直さないこと。**")
+    else:
+        print("  ありません。")
 
     review_all = blocks_under(journal, REVIEW_RE)
     reviews = review_all[-args.n:]
