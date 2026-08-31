@@ -62,7 +62,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from src import arm_speed, day_cap, eligibility, form_record, forms, house_rule, levers, motion_groups, pause_guard, resume_gate, rpm_mix, settle, subs_cap  # noqa: E402  （`sys.path` を通した後でないと読めません）
+from src import arm_speed, day_cap, eligibility, form_record, forms, house_rule, levers, motion_groups, pause_guard, reach_split, resume_gate, rpm_mix, settle, subs_cap  # noqa: E402  （`sys.path` を通した後でないと読めません）
 
 LOG = ROOT / "data" / "eta.jsonl"
 
@@ -2052,6 +2052,90 @@ def residual_gap(a: dict) -> dict | None:
     return out
 
 
+
+def conversion_split(form: str = "長尺") -> dict | None:
+    """**`per_video` の腕を「見せた数 × 押された率」に割る**（2026-08-31・最適化の回）。
+
+    ## なぜ要るか
+
+    腕は `per_video`／`rpm`／`density`／`sub_rate`／`gate`／`theta` の6つで、
+    **`ctr` は1つもありません。** そして `scripts/eta.py` は
+    `video_thumbnail_impressions_ctr` を**1度も読みません**（この回に数えた・grep 0件）。
+    だから「`per_video` を引け」とは言えても、**どちらの半分を引くのかを言えません。**
+
+    `src/reach_split.py` は、その読み方を自分で書いています::
+
+        インプレッションが少ない  → 見せられていない（**題材・本数・面そのもの**）
+        CTR が低い                → 見せたのに押されない（**サムネと題**）
+
+    **この関数は、その2つのどちらが効いているかを数で出すだけ**です。
+
+    ## 実測（2026-08-31・`data/reach.jsonl`・API 0単位）
+
+        長尺 21本   インプレッション 5,012   クリック 84   加重CTR **1.68%**
+          本べつ CTR 中央値 **0.44%**   最高 **5.36%**（`UHo79-HCOWo`）
+          ＝ **中央値の ×12.1**
+
+    （重なった報告を `dedupe` で落とした後の数です。落とす前は 5,133 / 88。
+      **落とす前の数を引かないこと** —— 同じ日の CSV が何度も積まれます。）
+
+    **面は在ります**（いちばん押された本より多く見せている本が2本あります）。
+    足りていないのは**押された率**のほうで、
+    **いまのインプレッションのまま**、いちばん押された本の CTR で回すと
+    クリックは **84 → 269（×3.2）** になります。
+
+    なお1本あたり再生の記録の本 `_Mz5rg6jQ_A` も CTR **5.30%** で、
+    ほぼ同じ所にいます —— **よく回った本は、よく押された本**でした。
+
+    ## この数の読み方（**上限でも下限でもありません**）
+
+    - **独立ではありません。** YouTube は押される本により多く見せるので、
+      CTR が上がれば面も増えます ＝ **×3.1 は控えめな側**
+    - **逆に、記録の本の CTR が高いのは題材が探されているから**かもしれません
+      （サムネではなく**問いの選び方**）。そのときサムネを直しても動きません
+    - **クリックは全部で 88回 です。** 薄い。**桁の話として読むこと**
+
+    返り `None` ＝ `data/reach.jsonl` が読めない／その形の行が無い。
+    """
+    try:
+        rows = reach_split.dedupe(reach_split.load_rows())
+    except Exception:                                          # noqa: BLE001
+        return None
+    if not rows:
+        return None
+    try:
+        by_form = forms.measured_forms()
+    except Exception:                                          # noqa: BLE001
+        return None
+
+    per: dict[str, list[float]] = {}
+    for r in rows:
+        vid = r.get("video_id")
+        if not vid or by_form.get(vid) != form:
+            continue
+        acc = per.setdefault(vid, [0.0, 0.0])
+        acc[0] += reach_split._imp(r)
+        acc[1] += reach_split._clicks(r)
+    per = {v: a for v, a in per.items() if a[0] > 0}
+    if not per:
+        return None
+
+    imp = sum(a[0] for a in per.values())
+    clicks = sum(a[1] for a in per.values())
+    ctrs = sorted(a[1] / a[0] for a in per.values())
+    n = len(ctrs)
+    median = ctrs[n // 2] if n % 2 else (ctrs[n // 2 - 1] + ctrs[n // 2]) / 2
+    best_id = max(per, key=lambda v: per[v][1] / per[v][0])
+    best = per[best_id][1] / per[best_id][0]
+    return {
+        "form": form, "n": n, "impressions": imp, "clicks": clicks,
+        "ctr": (clicks / imp) if imp else 0.0,
+        "ctr_median": median, "ctr_best": best, "ctr_best_id": best_id,
+        # **面はそのままで、いちばん押された本の率で回したら**
+        "clicks_at_best": imp * best,
+        "headroom": (imp * best / clicks) if clicks else float("inf"),
+    }
+
 def residual_lines(a: dict, prefix: str = "  ") -> list[str]:
     """`residual_gap()` を印字する。**`report()` と頭の要約の両方から呼びます。**"""
     r = residual_gap(a)
@@ -2371,6 +2455,28 @@ def report(m: dict, a: dict) -> list[str]:
           f"（`src/form_record.censor_factor`・実測・定数なし）。"
           f" **直さないと、長尺の帯は必ず {a['long_censor']:.2f}倍 遠くに出て、"
           f"`nearest` はショートへ寄ります。**")
+    # --- **その腕の、どちらの半分を引くのか**（2026-08-31・最適化の回）---
+    #     腕は6つあって `ctr` はありません。`per_video` は
+    #     「見せた数 × 押された率」の積なので、**どちらが効いているかを言わないと、
+    #     『1本あたりを 104倍』は手の打ちようがない数**に見えます。
+    _cs = conversion_split("長尺" if nearest.startswith("長尺") else "ショート")
+    if _cs and _cs["clicks"] > 0:
+        P(f"      **その腕は「見せた数 × 押された率」です**"
+          f"（`conversion_split`・`data/reach.jsonl`・API 0単位）——"
+          f" {_cs['form']} {_cs['n']}本: インプレッション **{_cs['impressions']:,.0f}**"
+          f" ／ クリック **{_cs['clicks']:,.0f}** ＝ 加重CTR **{_cs['ctr']*100:.2f}%**"
+          f"（本べつ中央値 {_cs['ctr_median']*100:.2f}%・最高 {_cs['ctr_best']*100:.2f}%"
+          f" `{_cs['ctr_best_id']}`）。")
+        P(f"      → **面は在ります。足りていないのは押された率のほう** ——"
+          f" いまのインプレッションのまま、いちばん押された本の率で回すと"
+          f" クリックは {_cs['clicks']:,.0f} → **{_cs['clicks_at_best']:,.0f}"
+          f"（×{_cs['headroom']:.1f}）**。"
+          f" `src/reach_split` の読み方: **面が少ない→題材・本数／CTR が低い→サムネと題**。")
+        P(f"      [!] **上限でも下限でもありません** —— 押される本には多く見せるので"
+          f"面も増えます（×{_cs['headroom']:.1f} は控えめ側）が、"
+          f"逆に最高の本の CTR が高いのは**問いの選び方**のせいかもしれません"
+          f"（そのときサムネを直しても動きません）。"
+          f"**クリックは全部で {_cs['clicks']:,.0f}回。桁の話として読むこと。**")
 
     # --- **倍率がいちばん小さい帯と、要る再生数がいちばん少ない帯は、別です**
     #     （2026-08-31・最適化の回に足した。**規則が 1本/日 に固定されて初めて効く**）
