@@ -3086,6 +3086,37 @@ def gate(vs: list["Verdict"]) -> int:
     return 2
 
 
+def _print_unreachable_under_rule(as_of: str | None = None) -> None:
+    """**規則（1日1本）の下では、期日までに満ちない要件**を並べる。（2026-08-31）
+
+    上の一覧は「期限までにデータが揃うか」を、**その日に何本 公開しているか**を
+    疑わずに解きます。2026-08-31 にオーナーが公開を 1日1本 に固定したので、
+    「09/10（16本 公開）の読み」のような要件は**永久に満ちません** ——
+    それでも上の一覧は `[OK] …09/10 に出ます` と印字します。
+
+    `scripts/eta.py` は「**軌跡の腕が動くのは、前提を1件 閉じたときだけ**」と
+    自分で印字しているので、**ここが詰まると到達日がそこで止まります。**
+
+    **止める仕掛けではありません。印字するだけです**
+    （`CLAUDE.md`「作りに問題を見つけたら、止めるのではなく直すこと」）。
+    判定そのものは `src/house_rule.unreachable_lines()`（**規則の出どころ1か所**）。
+    """
+    try:
+        from src import house_rule
+        rows = load() or []
+        if isinstance(rows, dict):
+            rows = rows.get("hypotheses") or []
+        day = None if as_of is None else str(as_of)[:10]
+        out = house_rule.unreachable_lines(rows, today=day)
+    except Exception as exc:                                   # noqa: BLE001
+        print(f"\n  **規則の下での到達可能性が読めませんでした**: {str(exc)[:120]}")
+        return
+    if not out:
+        return
+    print("")
+    print("\n".join(out))
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--as-of", help="この日に判定するつもりで解く（YYYY-MM-DD）")
@@ -3157,6 +3188,7 @@ def main(argv: list[str] | None = None) -> int:
     record_estimates(vs, as_of=as_of)
     print("\n".join(lines(vs, lag)))
     _print_starved_floors()
+    _print_unreachable_under_rule(as_of=as_of)
     return 0
 
 
