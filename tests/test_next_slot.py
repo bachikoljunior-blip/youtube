@@ -113,3 +113,40 @@ def test_stale_commits_needs_a_time() -> None:
 @pytest.mark.parametrize("bad", ["", "not-a-time", "2026-13-40"])
 def test_parse_survives_junk(bad: str) -> None:
     assert next_slot._parse(bad) is None
+
+
+class _Out:
+    returncode = 0
+
+    def __init__(self, text: str) -> None:
+        self.stdout = text
+
+
+def test_stale_commits_drops_what_was_applied_to_this_book(monkeypatch) -> None:
+    """**その本へ当て直したコミットは引くこと**（`_applied_to()` の註）。
+
+    引かないと、`improve` の1手（生成側を直して、**その場で焼き直す**）が
+    次の回から「入っていません」と鳴り続け、**同じ手が2度 撃たれます。**
+    実測 2026-09-01: この道具の1発目が `e598caea` でそうなりました。
+    """
+    calls = {"n": 0}
+
+    def fake_run(cmd, **kw):
+        calls["n"] += 1
+        if "critique_queue" in " ".join(cmd):
+            return _Out("bbbbbbb\n")            # この本へ当て直したほう
+        return _Out("aaaaaaa 09/01 01:00 fix: zukai\n"
+                    "bbbbbbb 09/01 02:00 improve: thumb\n")
+
+    monkeypatch.setattr(next_slot.subprocess, "run", fake_run)
+    since = datetime(2026, 9, 1, tzinfo=timezone.utc)
+    got = next_slot.stale_commits(since, video_id="VID")
+    assert [ln.split(" ", 1)[0] for ln in got] == ["aaaaaaa"]
+    assert calls["n"] == 2, "2回とも撃つこと（生成側 → その本）"
+
+
+def test_stale_commits_without_video_id_keeps_everything(monkeypatch) -> None:
+    monkeypatch.setattr(next_slot.subprocess, "run",
+                        lambda *a, **k: _Out("aaaaaaa 09/01 01:00 fix: zukai\n"))
+    since = datetime(2026, 9, 1, tzinfo=timezone.utc)
+    assert len(next_slot.stale_commits(since)) == 1

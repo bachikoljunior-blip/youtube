@@ -49,8 +49,11 @@
 - `_MAKERS` は**手で並べた一覧**です。`src/pipeline.py` の import から取りました。
   **新しい生成側の module が増えたら、ここに足さないと黙って見落とします**
   （`tests/test_next_slot.py` が pipeline の import と突き合わせます）。
-- 「コミットが在る ＝ その本に効く」ではありません（無関係な直しも数えます）。
-  **上振れ側に外れる計器です。** 0件 のときだけ「入っている」と言えます。
+- 「コミットが在る ＝ その本に効く」ではありません（同じ族の別の題材だけを
+  直したコミットも数えます）。**上振れ側に外れる計器です。**
+  **0件 のときだけ「入っている」と言えます。** 引いてあるのは2種類だけ ——
+  出来上がりを作らない module（`_NOT_MAKERS`）と、
+  **その本へ当て直したコミット**（`_applied_to()`）です。
 """
 from __future__ import annotations
 
@@ -154,11 +157,47 @@ def next_video(now: datetime | None = None,
     return out
 
 
-def stale_commits(since: datetime | None = None, limit: int = 6) -> list[str]:
-    """**その本を焼いたあとに、生成側へ入ったコミット**（`%h %ad %s`）。
+def _applied_to(video_id: str | None, since: datetime) -> set[str]:
+    """**その回のうちに、この本そのものへ当て直したコミット**の短いハッシュ。
+
+    ## なぜ引くか（2026-09-01。**この道具の1発目が、これで空振りしました**）
+
+    `improve` の1手は「生成側を直して、**その場でこの本に焼き直す**」形です
+    （`data/runs.jsonl` の improve 4件のうち3件がそれ）。すると1つのコミットが
+
+        `src/thumbnail.py` を変えた                        ← 生成側なので鳴る
+        `data/critique_queue/<この本>.thumb.jpg` も差し替えた ← **もう入っている**
+
+    の両方を持ちます。**引かないと「入っていません」と出続け、
+    次の回が同じ手をもう一度 撃ちます。**
+
+    **覆る条件**: 焼き直しの控えが `data/critique_queue/<videoId>.*` 以外へ
+    移ったら、ここは黙って 0件 を返します（＝ また空振りが戻ります）。
+    """
+    if not video_id:
+        return set()
+    paths = [f"data/critique_queue/{video_id}{ext}"
+             for ext in (".json", ".jpg", ".thumb.jpg", ".plan.json")]
+    try:
+        out = subprocess.run(
+            ["git", "log", f"--since={since.isoformat()}",
+             "--pretty=format:%h", "--", *paths],
+            cwd=str(ROOT), capture_output=True, text=True, timeout=20)
+    except (OSError, subprocess.SubprocessError):
+        return set()
+    if out.returncode != 0:
+        return set()
+    return {ln.strip() for ln in out.stdout.splitlines() if ln.strip()}
+
+
+def stale_commits(since: datetime | None = None, limit: int = 6,
+                  video_id: str | None = None) -> list[str]:
+    """**その本を焼いたあとに、生成側へ入ったコミット**（`%h %cd %s`）。
 
     `since` は本を焼いた時刻（`uploaded_at`）。**git が読めない所では空**を返します
     （＝「入っている」と同じ字面になります。上の「覆る条件」の3つ目）。
+
+    `video_id` を渡すと、**その本へ当て直したコミットは引きます**（`_applied_to()`）。
     """
     if since is None:
         return []
@@ -180,7 +219,9 @@ def stale_commits(since: datetime | None = None, limit: int = 6) -> list[str]:
         return []
     if out.returncode != 0:
         return []
-    got = [ln for ln in out.stdout.splitlines() if ln.strip()]
+    done = _applied_to(video_id, since)
+    got = [ln for ln in out.stdout.splitlines()
+           if ln.strip() and ln.split(" ", 1)[0] not in done]
     return got[:limit] if limit else got
 
 
@@ -200,7 +241,7 @@ def lines(now: datetime | None = None) -> list[str]:
         f"　題材 `{v.get('topic')}`"
     ]
     built = _parse(v.get("uploaded_at"))
-    cm = stale_commits(built)
+    cm = stale_commits(built, video_id=str(v.get('video_id') or '') or None)
     if built is None:
         out.append("  [?] **焼いた時刻が控えにありません**（`uploaded_at` が空）。"
                    "古さを数えられないので、中身を見て決めること")
