@@ -2179,6 +2179,19 @@ def residual_gap(a: dict) -> dict | None:
         out["form_censor"] = float(best.get("censor_factor") or 1.0)
         out["form_censor_n"] = int(best.get("censor_n") or 0)
         out["form_censor_why"] = str(best.get("censor_why") or "")
+        # --- **その補正は、記録と同じ桁の標本から出たか**（2026-08-31・第2の回）---
+        #     偽なら `form_residual` は**点**です。真なら**帯の片端**でしかなく、
+        #     もう片端は補正しない `form_residual_raw`。
+        #     実測 2026-08-31: 長尺の補正 ×2.00 は**分母 1〜4再生の本 5本**から
+        #     出ていました（記録は 156再生）。中身は `1→2`・`2→4`・`4→8` ——
+        #     **伸びではなく、1桁の整数の刻み**です（1再生 増えるだけで ×2.00）。
+        #     ショートの同じ補正は分母 312〜1,741再生 で ×1.0000（`noisy` 偽）。
+        out["form_censor_noisy"] = bool(best.get("censor_noisy", False))
+        out["form_censor_anchors"] = list(best.get("censor_anchor_views") or [])
+        out["form_censor_clean"] = int(best.get("censor_n_clean") or 0)
+        out["form_residual_raw"] = (
+            (TARGET_YEN / best["yen"] * float(best.get("censor_factor") or 1.0))
+            if best["yen"] else float("inf"))
         out["form_form"] = best["form"]
         out["form_residual"] = (TARGET_YEN / best["yen"]) if best["yen"] else float("inf")
         out["form_price"] = (out["form_residual"] / out["residual"]
@@ -2403,8 +2416,28 @@ def residual_lines(a: dict, prefix: str = "  ") -> list[str]:
             f" **2026-08-31 まで、ここは生の記録で割っていました** ——"
             f" 機械は同じ行で「この記録は下限です」と印字しながら、"
             f"**その下限をそのまま分母にして**いました。補正で隔たりは"
-            f" ×{r['form_residual']*r['form_censor']:.1f} → **×{r['form_residual']:.1f}** です。",
-        ] if r.get("form_censor", 1.0) > 1.0 else []) + [
+            f" ×{r['form_residual_raw']:.1f} → **×{r['form_residual']:.1f}** です。",
+        ] if r.get("form_censor", 1.0) > 1.0 else []) + ([
+            # --- **桁ちがいの標本から出た補正を、点として印字しないこと**（第2の回）---
+            #     この行が無いと、すぐ上の「補正で ×21.4 → ×10.7 です」が
+            #     **実測の1点**に読めます。実物は 1〜4再生の本 5本の整数比です。
+            f"{prefix}    [!] **その補正 ×{r['form_censor']:.2f} は、記録と桁の"
+            f"違う標本から出ています** —— 比の分母は"
+            f" {r['form_censor_anchors']} 再生（記録は {r['form_record_raw']:,.0f}再生）。"
+            f"床 {form_record.CENSOR_MIN_ANCHOR_VIEWS}再生 を超えた本は"
+            f" **{r['form_censor_clean']}本** です。中身は `1→2`・`2→4`・`4→8` ——"
+            f"**伸びではなく1桁の整数の刻み**で、1再生 増えるだけで ×2.00 になります。"
+            f" **だから隔たりは点ではありません: ×{r['form_residual']:.1f}"
+            f"（補正した側）〜 ×{r['form_residual_raw']:.1f}（補正しない側）の帯**"
+            f"として読むこと。**どちらの端も、この帯を選ぶ理由にはなりません。**",
+            f"{prefix}       **長尺が伸び続けること自体は別に実測できています**"
+            f"（168h→480h で中央値 ×2.67・n=5・同じ本を追った比）。"
+            f"**だから補正を 1.0 に落とすのも誤りです** —— 誤っているのは"
+            f"**倍率の大きさが測れていないのに、点で印字していたこと**です。"
+            f" **覆る条件**: 床を超えた長尺が"
+            f" {form_record.CENSOR_MIN_ANCHOR_VIEWS}再生 × 5本 たまったら、"
+            f"`noisy` は自分で偽になり、この行は消えます（定数を持ちません）。",
+        ] if r.get("form_censor_noisy") else []) + [
             f"{prefix}    **その2つの差 ×{r['form_price']:.1f} が、そのまま"
             f"「形を替える」ことの値段です** —— 長尺1本を、ショートの記録と同じだけ"
             f"回すこと。**腕 `rpm` が名指ししているのはここで、値段が数字で出るのは"

@@ -289,18 +289,54 @@ def _tested_by(rows: list[tuple[int, str]], born: dict[str, str]) -> dict:
     }
 
 
+def _nearest_pt(series: list[tuple[float, int]], hours: float,
+                *, tol: float = 0.35, floor_h: float = 12.0) -> tuple[float, int] | None:
+    """`hours` にいちばん近い観測を **(齢, 再生数)** で返す。**遠すぎれば `None`**。
+
+    **齢も返すのは、`hours` が観測の外に出ていても黙って通るから**です
+    （2026-08-31・最適化の回に足した）。許容は `hours * tol + floor_h` ＝
+    `hours=720` なら **±264時間**（[456h, 984h]）。長尺の最古は **648.6時間**なので、
+    `_nearest(s, 720)` は**どの本でも「その本の最後の読み」を返します。**
+    呼び手が `to_hours=720` と印字すると、**観測していない地平の名前が付きます。**
+    返す齢を `to_hours_seen` に載せて、**名前と実物を並べて出すこと。**
+    """
+    if not series or hours <= 0:
+        return None
+    d, x, v = min((abs(x - hours), x, v) for x, v in series)
+    return None if d > hours * tol + floor_h else (x, v)
+
+
 def _nearest(series: list[tuple[float, int]], hours: float,
              *, tol: float = 0.35, floor_h: float = 12.0) -> int | None:
     """`hours` にいちばん近い観測。**遠すぎれば `None`**（無い所を埋めないこと）。"""
-    if not series or hours <= 0:
-        return None
-    d, _, v = min((abs(x - hours), x, v) for x, v in series)
-    return None if d > hours * tol + floor_h else v
+    pt = _nearest_pt(series, hours, tol=tol, floor_h=floor_h)
+    return None if pt is None else pt[1]
 
 
 #: **打ち切り補正を出すのに要る、最低の本数。** これを割ったら補正しません
 #: （n=1〜2 の中央値で記録を2倍にしないこと。**埋めないほうが安全側**です）。
 CENSOR_MIN_N = 5
+
+#: **補正の比を採ってよい「分母の再生数」の床。**（2026-08-31・最適化の回に足した）
+#:
+#: 補正は **記録（長尺 156回・ショート 1,891回）に掛ける倍率**です。
+#: ところが比の分母には床が1つも無く、**1再生の本の `1→2` が ×2.00 として入ります。**
+#: 実測 2026-08-31（この回に撃って確かめた）::
+#:
+#:     形        比に入った本の分母（再生数）              記録    中央値
+#:     ショート  [312,440,537,774,824,1092,1257,1312,1510,1741]  1,891  ×1.0000
+#:     長尺      [1, 1, 2, 3, 4]                                   156  ×2.00
+#:
+#: **ショートの比は記録と同じ桁で測れています。長尺の比は 2桁 下で測っています。**
+#: 長尺の ×2.00 の中身は `1→2`・`2→4`・`4→8`・`3→8`・`1→4` ——
+#: **伸びではなく、1桁の整数の刻み**です（1再生 増えるだけで ×2.00）。
+#: その ×2.00 が記録を 156 → 312 にし、`gaps()` の隔たりを ×21.4 → ×10.7 にして、
+#: `scripts/eta.py` の「**いちばん近い帯**」を作っていました。
+#:
+#: **覆る条件**: 長尺に、この床を超える齢の本が `CENSOR_MIN_N` 本 たまったとき。
+#: そのとき補正は**実測**になり、`noisy` が偽になります（定数は消えません
+#: —— 床は「どの桁で測ったか」の記録として残ります）。
+CENSOR_MIN_ANCHOR_VIEWS = 30
 
 #: 補正を測る地平（時間）。`src.settle.SETTLE_HORIZONS` より先まで見ます ——
 #: **実測 2026-08-31: 長尺は 480時間 で平らになります**（480/600/720 が同じ ×2.00）。
@@ -386,7 +422,9 @@ def censor_factor(form: str, *, views_path: Path | None = None,
       門にすると、`MATURE_HOURS_BY_FORM` を正しく直した回に**補正が黙って消えます。**
     """
     zero = {"factor": 1.0, "n": 0, "from_hours": None, "to_hours": None,
-            "median": 1.0, "mean": 1.0, "why": "測れていません（補正しません）"}
+            "to_hours_seen": None, "median": 1.0, "mean": 1.0,
+            "noisy": False, "anchor_views": [], "n_clean": 0, "record_views": None,
+            "why": "測れていません（補正しません）"}
 
     # --- **憶えの鍵は「同じファイルか」**（2026-08-31・最適化の回に替えた）---
     #
@@ -461,32 +499,62 @@ def censor_factor(form: str, *, views_path: Path | None = None,
     if a_hours <= 0:
         return zero
 
+    rec_views = max(v for _, v in series[rec_id])
+
+    # --- **比は、記録と同じ桁で測れたときだけ「実測」です**（2026-08-31・第2の回）---
+    #
+    #     ここは `a <= 0` しか見ていませんでした。**1再生の本が入ります。**
+    #     その本の `1→2` は ×2.00 ですが、伸びではなく**整数の刻み**です。
+    #     長尺の ×2.00 は、分母 [1,1,2,3,4] の本から出ていました（記録は 156）。
+    #     床を当てた標本が `min_n` に届けば**そちらを採り**、届かなければ
+    #     **床なしの数を返しますが `noisy` を立てます** ——
+    #     **1.0 に落とさないこと**: 長尺が伸び続けているのは別に実測できており
+    #     （168h→480h 中央値 ×2.67・n=5）、補正を 1.0 に落とすと
+    #     **「記録は生涯だ」という、もっと外れた側**に倒れます。
+    #     **数は残し、桁が違うことを添えて出します。**
     best: dict | None = None
     for t in CENSOR_HORIZONS:
         if t <= a_hours:
             continue
-        ratios = []
-        for s in series.values():
-            a = _nearest(s, a_hours)
-            b = _nearest(s, t)
-            if a is None or b is None or a <= 0:
+        pairs: list[tuple[float, int, float]] = []   # (比, 分母の再生数, 実際に読んだ齢)
+        for ser in series.values():
+            pa = _nearest_pt(ser, a_hours)
+            pb = _nearest_pt(ser, t)
+            if pa is None or pb is None or pa[1] <= 0:
                 continue
-            ratios.append(b / a)
-        if len(ratios) < min_n:
+            pairs.append((pb[1] / pa[1], pa[1], pb[0]))
+        clean = [q for q in pairs if q[1] >= CENSOR_MIN_ANCHOR_VIEWS]
+        use, noisy = (clean, False) if len(clean) >= min_n else (pairs, True)
+        if len(use) < min_n:
             continue
-        ratios.sort()
+        use.sort()
+        ratios = [q[0] for q in use]
         m = len(ratios)
+        seen = max(q[2] for q in use)
         best = {
             "factor": max(1.0, ratios[m // 2]),      # **1.0 を下回らせないこと**
             "n": m,
             "from_hours": a_hours,
             "to_hours": t,
+            # **名指しした地平と、実際に読めた齢**（`_nearest` は許容の中で
+            #     いちばん近い観測へ落ちるので、`to_hours` は観測の外に出られます）。
+            "to_hours_seen": seen,
             "record_id": rec_id,
+            "record_views": rec_views,
             "median": ratios[m // 2],
             "mean": sum(ratios) / m,
             "max": ratios[-1],
-            "why": f"{a_hours:.0f}時間（記録の本の最後の読み）→ {t:.0f}時間 の"
-                   f"対応のある比・n={m}",
+            # **この2つが、この補正を読む側のいちばん大事な数です。**
+            "noisy": noisy,
+            "anchor_views": sorted(q[1] for q in use),
+            "n_clean": len(clean),
+            "why": (f"{a_hours:.0f}時間（記録の本の最後の読み）→ {t:.0f}時間"
+                    f"（実際に読めたのは {seen:.0f}時間まで）の対応のある比・n={m}"
+                    + ("" if not noisy else
+                       f"　[!] **分母は {min(q[1] for q in use)}〜"
+                       f"{max(q[1] for q in use)}再生の本で、記録は {rec_views}再生** ——"
+                       f" 桁が違います（床 {CENSOR_MIN_ANCHOR_VIEWS}再生 を超えた本は"
+                       f" {len(clean)}本）。**整数の刻みで、伸びではありません。**")),
         }
     out = best or dict(zero, from_hours=a_hours, record_id=rec_id,
                        why=f"{a_hours:.0f}時間 より先に n≥{min_n} の地平がありません")
@@ -592,8 +660,19 @@ def gaps(rpm_scenarios: dict[str, float], per_video_needed: dict[str, float],
                     "censor_factor": float(cf.get("factor") or 1.0),
                     "censor_n": int(cf.get("n") or 0),
                     "censor_why": str(cf.get("why") or ""),
+                    # --- **補正が「桁ちがいの標本」から出ているか**（2026-08-31・第2の回）---
+                    #     真なら `ratio` は**点ではなく帯の片端**です。もう片端は
+                    #     `ratio_raw`（＝補正しない・生の記録で割った数）。
+                    #     **真の隔たりはこの2つのあいだ**にあります。
+                    #     実測 2026-08-31: 長尺は 真（分母 1〜4再生 対 記録 156再生）／
+                    #     ショートは 偽（分母 312〜1741再生 対 記録 1,891再生）。
+                    "censor_noisy": bool(cf.get("noisy", False)),
+                    "censor_anchor_views": list(cf.get("anchor_views") or []),
+                    "censor_n_clean": int(cf.get("n_clean") or 0),
                     "record_id": rec["id"], "n": rec["n"],
                     "need": need, "ratio": need / rec_best,
+                    # **補正しなかったときの隔たり**（帯のもう片端。生の記録で割る）。
+                    "ratio_raw": need / rec["best"],
                     # **記録が伸びきっていない形では、`ratio` は隔たりの上限です**
                     #     （分母が下限なので、比は必ず上振れします）。
                     "settled": bool(rec.get("settled", False)),
