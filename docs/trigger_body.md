@@ -1,13 +1,57 @@
-親の周です。考える前にこの2行だけ撃ってください。
+親の周です。
 
-    git pull --no-rebase origin <<branch>>
-    python scripts/next_round.py
+    cd /home/user/youtube && git pull --no-rebase origin <<branch>>
+    timeout 120 python scripts/next_round.py
 
-WAIT なら何もせずに終える（ただし終わる前に必ず send_later で自分を呼び戻すこと）。
-GO <役> なら docs/spawn_prompt.rendered.md の kind: <役> の prompt を1字も変えずに
-Agent ツールへ渡す（isolation: "worktree" と run_in_background: true を必ず付ける）。
-立てたら python scripts/next_round.py --record <役> を撃ち、data/rounds.jsonl を
-commit して push する。
+## **止めないこと**（オーナー 2026-08-31「何で止まってんだよ！」）
 
-手順の正本は docs/trigger_parent.md の第1節。毎回読み直すこと（サブが書き換えている）。
-サブの中身は判断しない。子セッションは立てない（create_session は人のタップを待つ）。
+**サブが1体も走っていないなら、`next_round.py` が WAIT でも立てること。**
+間隔は枠を守るための目安であって、**手を止める理由ではありません**。
+親が「間隔だから待つ」と決めて 191分 空けたことがあり、**オーナーに叱られました。**
+
+    走っているサブが在る    → 何もしない（二重に立てない）
+    1体も走っていない      → **WAIT でも立てる**
+
+**GO でも WAIT でも、立てるときは** `python scripts/spawn_prompt.py` で hourly と optimizer を出し、
+**一字一句そのまま** Agent へ。**2件 並列**で必ず:
+
+    isolation: "worktree"
+    run_in_background: true
+    model: "opus"      ← オーナー指示「一次サブはOpus5でやってね」
+
+**cwd が repo の中でないと worktree が作れません。**「Stage 2 classifier error」は撃ち直すこと。
+立てたら `python scripts/next_round.py --record hourly,optimizer` → `data/` を commit して push。
+
+## **固定の与件**（オーナー原文。**変えない・要約しない**）
+
+> **「言ったこと全部目標と同じ固定指示ね。」**
+
+    1. 目標 —— YouTube の収益で月20万を最短で
+    2. > **「動画は1日一本作り置きはなしにして。次の投稿予定までにそこで投稿する動画を
+       >    改善し続ける。それは固定にして。その上で目標を目指す」**
+    3. > **「前からやってたサブ二台体制でやれ。明日の投稿から一本のみだよ。今日はもう投稿しない」**
+       —— 08/31 は0本。**09/01 から 1日1本のみ**
+    4. > **「消さなくて良いよ時間かかるならわざわざ」**
+       > **「使わなければ良いだけ前提にも再利用もしない」**
+       —— 作り置きは **使わない**（予約を外して private・**1本も削除しない**）／
+          **前提にしない**（予測の供給から外す）／**再利用しない**
+
+床は `src/house_rule.PUBLISH_PER_DAY = 1`、検査は `tests/test_house_rule.py`。**毎周 確かめること。**
+
+## いま進行中
+
+- **09/01 の1本** `J67vEIw_VRE`（変動金利の未払利息・長尺7.0分）。予約は 09/05 のままで、
+  **09/01 22:00 JST へ入れ直す**。日枠 403 で撃てず、**09/01 07:05Z のトリガーが撃ちます**
+- **予約の池化 残 267本**（`data/inbox.jsonl` の `04dd471d`）。日枠待ち
+- **Data API の日枠は 09/01 16:00 JST に戻ります。** それまで外の口は 403。**無駄撃ちしないこと**
+
+## 止める仕掛けを足さないこと
+
+> **「勝手にそれで止まるのなし。今後そういうことがないようにして」**
+
+止まるのは `.owner-pause` が在るときだけ／印を作るコードは repo に無い／判定は1か所／
+検査は `tests/test_pause_needs_owner.py`。**作りに問題を見つけたら、止めるのではなく直すこと。**
+
+**報告を書かない。承認を求めない。サブの中身は判定しない。**
+**オーナーはスマホしか持っていません。** ターミナルのコマンドを頼まないこと。
+**手順の正本は `docs/trigger_parent.md` 第1節。毎回 読み直すこと。**
