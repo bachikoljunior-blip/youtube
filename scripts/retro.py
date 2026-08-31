@@ -726,6 +726,66 @@ def carry_over(n: int = 8) -> tuple[dict[str, list[str]], dict[str, list[str]]]:
     return out, dropped
 
 
+def worked_on(toks: list[str], since: str = "") -> dict[str, int]:
+    """その語を本文に含む `--claim` / `--ship` を出した回が、**何回あったか**。
+
+    ## なぜ要るか（2026-09-01。**4周ぶん、誰も実物を開いていませんでした**）
+
+    持ち越しの一覧は **言及の回数**で並んでいます。**言及は、実物に当たった
+    証拠ではありません** —— `retro.py` 自身が閉じた側にはそう書いています
+    （「［日誌の文］は散文から読み取ったもの。**言及の回数は証拠になりません**」）。
+    **開いている側には、その札がありませんでした。**
+
+    実測 `premise_subject`（4周・2026-09-01 01:4x〜06:2x）——
+    **4回とも「次の回へ」と書かれ、4回とも `--claim` が 0件**。
+    5周目に実物を開いたら、**申し送りの後半が事実と違って**いました
+    （「片方は YAML のコメントにしかありません」→ 実際は 2件とも `note:` に写しずみ。
+    2026-08-27〜08-29 に `tests/test_eta_headline_alloc_hand.py` が
+    赤くなって直されていた）。**直す先は台帳ではなく道具の側**で、
+    `scripts/premise_subject.py` の 1関数・14行 でした。
+
+    **4周 負け続けた理由がそこです。** 申し送りが「YAML を書き換える仕事」に
+    見せていたので、枠の尽きた窓で他の1手と比べられるたびに沈みました。
+    **「4回 言及・0回 実物」が1行に並んでいれば、4周 待たずに1周目で目立ちます。**
+
+    ## 数え方
+
+    `data/runs.jsonl` の `kind` が `claim` か `ship` の行で、`what` に
+    その語を含むものを取り、**`session` の異なる数**を返します
+    （同じ回が claim と ship を両方 出すので、行で数えると倍になります）。
+
+    `since`（`YYYY-MM-DD`）を渡すと、その日以降だけ。**持ち越しの一覧は
+    直近 n 件の申し送りから作られる**ので、呼ぶ側はその窓の頭を渡します ——
+    渡さないと、**半年前に一度 触った語まで「当たっている」に見えます。**
+
+    **覆る条件**: `--claim` を打たない回が増えたら、この数は下振れします
+    （`--claim` は予約ではなく任意です）。**0 が「誰も見ていない」の証拠として
+    使えなくなったら、`data/runs.jsonl` ではなく `git log --name-only` の
+    ファイル名の側で数え直すこと。**
+    """
+    out = {t: set() for t in toks}
+    if not toks or not RUNS.exists():
+        return {t: 0 for t in toks}
+    for line in RUNS.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            r = json.loads(line)
+        except Exception:                                      # noqa: BLE001
+            continue
+        if r.get("kind") not in ("claim", "ship"):
+            continue
+        if since and str(r.get("at", "")) < since:
+            continue
+        what = str(r.get("what") or "")
+        who = str(r.get("session") or r.get("at") or "")
+        for t in toks:
+            if t and t in what:
+                out[t].add(who)
+    return {t: len(v) for t, v in out.items()}
+
+
 #: **「配線されている」と数える口**（`unwired_tools()`）。
 #: 手順の本文は「毎周 撃つ」と同じ意味なので、ここに入れます。**日誌は入れません**
 #: —— 日誌は「この道具の話をした」だけで、撃つ側にはなりません。
@@ -962,8 +1022,16 @@ def main() -> int:
             return ((tok in blocked) and not back) or (tok in clocked)
         order = sorted(carried.items(),
                        key=lambda kv: (_sinks(kv[0]), -len(kv[1])))
+        # **「言及」と「実物に当たった」を分けて出す**（2026-09-01。`worked_on()` の註）。
+        # 窓の頭は、この一覧を作っている申し送りの**いちばん古い日**にすること ——
+        # 渡さないと、半年前に一度 触った語まで「当たっている」に見えます。
+        since = min((d for ds in carried.values() for d in ds), default="")[:10]
+        touched = worked_on(list(carried), since=since)
         for tok, dates in order:
             tail = "  ← **一度閉じた後の再発**" if tok in closed else ""
+            if touched.get(tok, 0) == 0:
+                tail += ("  ← **実物に当たった回は 0**"
+                         "（`--claim`／`--ship` の本文にこの語がありません）")
             if tok in blocked:
                 tail += ("  ← **いまなら潰せます**（403 をまだ観測していません）" if back else
                          f"  ← **いまは潰せません**（単位枠。窓が変わるまであと {hours_to_quota():.1f} 時間）")
@@ -972,8 +1040,10 @@ def main() -> int:
             if tok in clocked and not (tok in blocked and not back):
                 tail += (f"  ← **いまは潰せません**（申し送りが時刻を指定。"
                          f"あと {clocked[tok]:.1f} 時間）")
+            n_touch = touched.get(tok, 0)
             print(f"  {len(dates)}回  {tok}{tail}")
-            print(f"        {' / '.join(dates)}")
+            print(f"        言及 {len(dates)}回 ／ **実物に当たった回 {n_touch}回**"
+                  f"  ·  {' / '.join(dates)}")
         clock_only = [t for t in clocked if not (t in blocked and not back)]
         if clock_only:
             print(f"\n  **この {len(clock_only)}件 は、申し送り自身が「【HH:MM JST 以降の回へ】」"
@@ -994,6 +1064,25 @@ def main() -> int:
             # 単位はこちらの投稿が窓の中で使い切ります。
             print(f"  {upload_cap.day_quota().line}")
         print("\n  **これは「毎回言っているのに、まだ潰れていない」ものの候補です。**")
+        zero = [t for t in carried if touched.get(t, 0) == 0]
+        if zero:
+            print(f"  **そのうち {len(zero)}件 は、実物に当たった回が 0 です** ——"
+                  " **申し送りの本文だけが 2回以上 運ばれています。**")
+            print("  **その本文を、証拠として読まないこと**（`worked_on()` の註）。"
+                  "実測 `premise_subject`: 4周とも「次の回へ」と書かれ、"
+                  "**4周とも実物は開かれず、5周目に開いたら本文の後半が事実と違って**いました"
+                  "（直す先は台帳ではなく道具の側で、1関数・14行）。")
+            # **沈めた語を「既定」に持ち上げないこと**（2026-09-01 に踏んだ）。
+            # 枠や時計で塞がっている語は、`_sinks()` が既に下へ沈めています ——
+            # そこへ「0回 だから先に選べ」を重ねると、**この回で打てない手を勧めます。**
+            open_zero = [t for t in zero if not _sinks(t)]
+            if open_zero:
+                print(f"  **この {len(open_zero)}件 から選ぶのが既定です。**"
+                      " 撃つのは実物 —— 語ではなく、その語の指すファイル。")
+            else:
+                print(f"  **ただし {len(zero)}件 とも、いまは塞がっています**"
+                      "（下の日枠／時刻の節）。**この回では選べません** ——"
+                      "**「0回」は、そのぶん次の窓の回への申し送りです。**")
         print("  この回で1件は潰すこと。潰せないなら、なぜ潰さないかを JOURNAL に書く。")
         print("  潰したら **`run_marker.py --ship ... --closes carry_over`** と、"
               "潰した語そのものを両方書くこと（前者がこの一覧の当たり率になります）。")
