@@ -62,7 +62,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from src import arm_speed, day_cap, form_record, house_rule, levers, motion_groups, pause_guard, resume_gate, rpm_mix, settle, subs_cap  # noqa: E402  （`sys.path` を通した後でないと読めません）
+from src import arm_speed, day_cap, eligibility, form_record, house_rule, levers, motion_groups, pause_guard, resume_gate, rpm_mix, settle, subs_cap  # noqa: E402  （`sys.path` を通した後でないと読めません）
 
 LOG = ROOT / "data" / "eta.jsonl"
 
@@ -4615,7 +4615,17 @@ def plan(m: dict, a: dict, density: int = PLAN_PUBLISH_PER_DAY,
     gate2_bar = _gate2_bar(a, best, per_day_long, g1["days"])
 
     # --- 段3: 収益化の審査 ---
-    d_monetized = d_gate1 + MONETIZE_REVIEW_DAYS if d_gate1 < NEVER else NEVER
+    #
+    # **ここは長らく「待つだけの段」でした**（2026-08-31 に直した）。
+    # `d_gate1 + MONETIZE_REVIEW_DAYS` は、**審査が必ず通る（P(承認)=1.0）** と置いています。
+    # `grep -c 'policy' scripts/eta.py` は **0** でした —— 門1・門2a の数字しか見ておらず、
+    # **合否そのものが式に入っていません。** 落ちたら到達日は「遅れる」ではなく **来ない**。
+    # `CLAUDE.md` は既に「この審査に受かる確率を 1.0 に置いたまま出ています」と
+    # **書いてありました**が、**書いてあるだけで、式は直っていませんでした。**
+    # `src/eligibility.py` が `config/channel.yaml` を読んで、期待日数を入れます。
+    elig = eligibility.state()
+    d_monetized = (d_gate1 + MONETIZE_REVIEW_DAYS + elig["cost_days"]
+                   if d_gate1 < NEVER else NEVER)
 
     # --- 段4: 月20万に届く日を、**解いて出す**（2026-08-20 08:0x と 08:3x の合流）---
     #
@@ -4787,9 +4797,19 @@ def plan(m: dict, a: dict, density: int = PLAN_PUBLISH_PER_DAY,
         },
         {
             "no": 3, "lever": "none", "when": d_monetized,
-            "title": f"収益化の審査（公表「通常1か月以内」＝ {MONETIZE_REVIEW_DAYS}日と置く）",
-            "bar": "門1・門2a の両方を満たしたら申請。**待つだけの段**",
+            "title": (f"収益化の審査（公表「通常1か月以内」＝ {MONETIZE_REVIEW_DAYS}日"
+                      + (f" ＋ **落ちる見込みぶん {elig['cost_days']:.0f}日**"
+                         if not elig["clean"] else "。**構成に落ちる材料なし**")
+                      + "）"),
+            "bar": ("門1・門2a の両方を満たしたら申請。**待つだけの段ではありません** —— "
+                    "審査は本数と時間の検算ではなく、**中身の合否判定**です"
+                    + (f"（いま p(却下)＝{elig['p_deny']:.0%}・**推測**。材料 "
+                       f"{len(elig['findings'])}件: "
+                       + "／".join(f["id"] for f in elig["findings"])
+                       + "。**`config/channel.yaml` を直すと、そのぶん日付が早まります**）"
+                       if not elig["clean"] else "")),
             "measured": False,
+            "eligibility": elig,
         },
         {
             "no": 4, "lever": ("rpm" if ceiling_short > 1 else "per_video"),
