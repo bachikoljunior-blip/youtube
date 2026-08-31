@@ -111,22 +111,50 @@ def audit(path: Path | None = None) -> list[dict]:
 
     `mismatch` が `True` になるのは、**両方とも拾えていて、かつ交わらない**とき
     だけです（片方が空なら `False` —— 拾えなかっただけかもしれないので）。
+
+    ## **`lever: none` の行は、どちらの札も付けません**（2026-09-01 に足した）
+
+    **配線した回に、いちばん最初に出た `[!]` が、これで空振りでした。**
+    実物（`config/hypotheses.yaml` 2026-09-30「収益化の審査は、門1・門2a の
+    数字が揃えば通る（＝段3 は待つだけの段）」）:
+
+        主語 = rpm       ← `claim` の「**収益**化」を `rpm` の語彙が拾う
+        数えている = sub_rate ← `needs` の「門1（**登録者**1,000人）」を拾う
+
+    **どちらも、この前提が主張している量ではありません。** あの行は
+    `lever: none` ／ `side: infra` ——「腕を全部 掛ける側の係数」で、
+    **量そのものを主張していません**（その行自身の註がそう書いています）。
+    量を持たない行に「主語と値が交わらない」と言っても、**直しようがありません。**
+
+    `lever_off` はもともと `none` を外していました（`config/hypotheses.yaml` 冒頭で
+    `none` は**正しい札**なので）。**`mismatch` だけがその除外を持っていませんでした。**
+
+    **これを直さずに配線すると、毎周 同じ空振りの `[!]` が1件 出続けます** ——
+    そして「鳴っているのに誰も直さない計器」は、次に来た側が読まなくなります
+    （`docs/JOURNAL.md` に同じ壊れ方が何度も出てきます）。
+
+    **覆る条件**: `lever: none` の行が「量の主張」を持つようになったら
+    （＝ 腕の札を付け直せるようになったら）、この除外は要りません。
+    そのときは `lever:` のほうを直すこと —— **除外を消すのではなく。**
     """
     out: list[dict] = []
     for h in open_rows(path):
         claim = str(h.get("claim") or "")
         cond = " ".join([str(h.get("falsified_if") or ""), needs_text(h)])
         subj, meas = measures(claim), measures(cond)
+        lever = str(h.get("lever") or "")
+        armless = lever == "none"
         out.append({
             "claim": claim,
             "deadline": str(h.get("deadline") or ""),
-            "lever": str(h.get("lever") or ""),
+            "lever": lever,
             "side": str(h.get("side") or ""),
             "subject": subj,
             "measured": meas,
-            "mismatch": bool(subj and meas and not (subj & meas)),
-            "lever_off": bool(meas and h.get("lever") and str(h["lever"]) != "none"
-                              and str(h["lever"]) not in meas),
+            # **`lever: none` の行は鳴らしません**（2026-09-01 に足した。下の註）。
+            "mismatch": bool(subj and meas and not (subj & meas)) and not armless,
+            "lever_off": bool(meas and lever and not armless
+                              and lever not in meas),
         })
     return out
 
