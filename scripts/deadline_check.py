@@ -1381,7 +1381,7 @@ def _paused_supply(body: str, short: int) -> "Answer | None":
 
 
 def _project_nth(rows: list[dict], pub: list[str], count: int, after: str,
-                 as_of: date) -> tuple[date, float, int, int] | None:
+                 as_of: date, share: int = 1) -> tuple[date, float, int, int] | None:
     """群がまだ `count` 本に満たないとき、**`count` 本目が公開される日を推定する。**
 
     ## なぜ要るか（2026-08-26 夕・サブの回。**`sub_rate` の腕が丸ごと止まっていた**）
@@ -1476,6 +1476,47 @@ def _project_nth(rows: list[dict], pub: list[str], count: int, after: str,
     rate = have / elapsed
     if rate <= 0:
         return None
+    # --- **規則（1日1本）より速い伸び率は名乗らない**（2026-08-31 に足した） -----
+    #
+    # 上の下限（`_MIN_SPAN_DAYS`）は「**窓が短すぎる**」を押さえるものですが、
+    # こちらは「**規則がそれを許さない**」の話です。群が満ちるのは
+    # **本が公開されたとき**で、公開はオーナー規則1 で **1日 1本**です。
+    # どう作っても、群が公開ずみの本を 1日1本 より速く増やすことはできません。
+    #
+    # **塞ぐ前に実際に出ていた数**（実測 2026-08-31・`scripts/deadline_check.py` の末尾）::
+    #
+    #     request_form  終端のみ **4.00本/日** → 72本目 09/30
+    #                   途中あり **3.80本/日** → 72本目 10/04
+    #     slide_pace    速い **1.75本/日** ／ 遅い **2.00本/日** → 16本目 10/04・09/30
+    #
+    # **どれも規則の 4倍・2倍の速さです。** その伸び率は
+    # **作り置きを作っていた頃の平均**で、規則2 でその本は公開されません。
+    # `src/house_rule.needs_beyond_rule()` は散文の `needs` について同じ判定を
+    # していますが、**A/B の推定はその道を通りません** —— 同じ規則を
+    # 2つの経路の片方だけが読んでいた形です（この repo で通算14回目）。
+    #
+    # **上限で押さえるだけです。何も止めません**（`CLAUDE.md`「作りに問題を
+    # 見つけたら、止めるのではなく直すこと」）。1日1本 より遅い群はそのまま。
+    #
+    # **まだ埋まっていない群の数で割ります**（`share`）。1日に公開できる1本は
+    # **群ぜんぶで分け合う1本**なので、2群がどちらも足りないなら、
+    # 片群が埋まる速さの上限は **0.5本/日** です。
+    #
+    # 割らないと `scripts/ab_split.py --outlook` と食い違います —— あちらは
+    # **両群の和**を日数と比べて「`request_form` は **43本 足りません**」と
+    # 出しているのに、こちらは「片群 1.00本/日 → 11/15 に間に合う」と
+    # 言っていました。**同じ規則を2つの口が別々に解いた形**です。
+    #
+    # `share` を渡さない呼び手（`_ans_published_group`）は1群ぶんなので既定 1。
+    #
+    # **覆る条件**: オーナーが規則を外したら `PUBLISH_PER_DAY` が上がり、
+    # この上限は自然にゆるみます（**ここに本数を書き写さないこと**）。
+    from src import house_rule                             # noqa: PLC0415
+
+    cap = float(house_rule.PUBLISH_PER_DAY) / max(1, share)
+    raw_rate, capped = rate, rate > cap
+    if capped:
+        rate = cap
     leads = []
     for r in rows:
         at, up = str(r.get("at") or "")[:10], str(r.get("uploaded_at") or "")[:10]
@@ -1500,6 +1541,14 @@ def _project_nth(rows: list[dict], pub: list[str], count: int, after: str,
     warn = ("" if span >= _MIN_SPAN_DAYS else
             f"・**窓が {span}日 しかないので、分母に {_MIN_SPAN_DAYS}日 を当てています**"
             f"（この伸び率は上限です。実測は `since` を {_MIN_SPAN_DAYS}日 またいでから）")
+    # **規則で押さえた回は、そう言うこと。** 言わないと、`1.00本/日` が
+    # 「実測でちょうど1本だった」と読めます（実際は 4.00 を規則で切った数です）。
+    if capped:
+        split = (f"・その1本を**まだ足りない {share}群 で分け合う**ので {cap:.2f}本/日"
+                 if share > 1 else "")
+        warn += (f"・**伸び率を規則（1日{house_rule.PUBLISH_PER_DAY}本）で"
+                 f"押さえています**{split}（実測の平均は {raw_rate:.2f}本/日 ですが、"
+                 "その速さは作り置きを作っていた頃のもので、規則2 でその本は公開されません）")
     return nth, rate, max(0, lead), slack, warn
 
 
@@ -2170,13 +2219,18 @@ def _ans_group_key(need: dict, as_of: date) -> Answer:
         nths: list[date] = []
         slacks: list[int] = []
         notes: list[str] = []
+        # **1日に公開できる1本を、まだ足りない群で分け合います**（2026-08-31）。
+        # 2群ともに足りないなら、片群が埋まる上限は 0.5本/日 ——
+        # `_project_nth` の `share` がこれを受けます（規則の出どころは
+        # `src/house_rule.PUBLISH_PER_DAY` の1か所）。
+        share = sum(1 for g in floor.groups if floor.nth[g] is None) or 1
         for g in sorted(floor.groups):
             got = floor.nth[g]
             if got is not None:
                 nths.append(got)
                 continue
             pub = sorted(d.isoformat() for d in floor.groups[g])
-            proj = _project_nth(rows_all, pub, n, since, as_of)
+            proj = _project_nth(rows_all, pub, n, since, as_of, share=share)
             if proj is None:
                 return Answer(None, body + f" → **{g} がまだ1本もありません**"
                                            "（作れば動きます）")

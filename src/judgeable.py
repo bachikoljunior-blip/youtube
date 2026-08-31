@@ -430,9 +430,63 @@ def _members_by_opening_motion() -> dict[str, list[Member]]:
     }
 
 
+def _stockpiled_ids() -> set[str]:
+    """**規則2 で1本も公開されない本の `video_id`**。読めなければ空（＝落とさない）。
+
+    札は `src/ab_split.published()` が `house_rule.is_stockpile()` で付けています。
+    **ここで判定を書き直さないこと** —— 条件（未公開 かつ 規則より前に作った）は
+    `src/house_rule.is_stockpile()` の1か所です。
+
+    読めない回は空集合を返し、**1本も落としません。**
+    「測っていないことを、落とす側に倒さないこと」——
+    控えが読めないだけで群が空になると、`ready` が消えて期限が壊れます
+    （`_live_ids()` が `None` で絞らないのと同じ姿勢）。
+    """
+    try:
+        from src.ab_split import published                 # noqa: PLC0415
+
+        return {str(r["video_id"]) for r in published()
+                if r.get("stockpile") and r.get("video_id")}
+    except Exception:                                       # noqa: BLE001
+        return set()
+
+
 def _days(rows: dict[str, list[Member]]) -> dict[str, list[date]]:
-    """群べつの本 → 群べつの公開日（昇順）。**`Floor` が要るのはこちらだけ。**"""
-    return {g: sorted(d for d, _ in ms) for g, ms in rows.items()}
+    """群べつの本 → 群べつの公開日（昇順）。**`Floor` が要るのはこちらだけ。**
+
+    ## **作り置きの予約は、床に数えません**（2026-08-31 に足した。オーナー規則2）
+
+    `Floor.ready` は「片群 N本 が**予約に**そろって初めて日が出る」形です。
+    ところが規則2（原文「**作り置きはなしにして**」「**使わなければ良いだけ
+    前提にも再利用もしない**」）の下では、**規則より前に作った未公開の予約は
+    1本も公開されません。** 実測 2026-08-31: 未来の予約 294本 のうち **293本**
+    が作り置きでした。
+
+    **数えると、来ない本で期限が守れていることになります。** 実測（塞ぐ前）::
+
+        hook_form  問い  予約 21本（うち作り置き 10本）→ 16本目 **09/23**
+                         → ready **09-30**・期限 09-30 → **`[OK]` と印字**
+                   実物  公開される見込みの本は **11本**（床 16本）→ **そろいません**
+
+    `scripts/deadline_check.py` はこれを `[OK] 09-30 …に出ます` と出し、
+    `scripts/eta.py` は「軌跡の腕が動くのは前提を1件 閉じたときだけ」と
+    印字しているので、**閉じられない前提が「閉じられる」側に並びます。**
+    さらに `scripts/queue_lag.py --plan` の「並び替えだけで 11日 手前へ倒せる」も
+    **同じ 10本の上に乗っていました。**
+
+    ## **`members()` の側では落としません**
+
+    落とすのはここ（`Floor` が読む公開日）だけです。`members()` と
+    `ab_split.published()` は `scripts/queue_lag.py` も読んでおり、
+    あちらは**予約の実物**（何本目か・入れ替え先）が要ります
+    （`published()` の「札を付けるだけです」の節）。
+
+    **覆る条件**: オーナーが規則2 を外したら `house_rule.STOCKPILE_IS_SUPPLY`
+    が `True` になり、`is_stockpile()` が全件 `False` を返すので、
+    ここは自動で素通りになります（**この関数に条件を書き足さないこと**）。
+    """
+    drop = _stockpiled_ids()
+    return {g: sorted(d for d, v in ms if v not in drop) for g, ms in rows.items()}
 
 
 #: yaml の `key:` → (**群べつの本**を作る関数, 片群あたりの必要本数)
@@ -602,7 +656,20 @@ MEMBER_SOURCES: dict[str, tuple[Callable[[], dict[str, list[Member]]], int]] = {
 #: **群の数え方は捨てません** —— `members("slide_pace")` はそのまま使えます。
 #: **積み終わったらここから外すこと**（`needs` を `kind: group_key` のまま戻せば、
 #: `Floor` の側で期限が守れるか見張られます）。
-ACCRUING: set[str] = {"request_form", "slide_pace", "slot_half"}
+#: **`hook_form` は 2026-08-31 にここへ入りました**（オーナー規則2）。
+#:
+#: 問いの群は**予約 21本 で床 16本 を満たしていました** —— ところが 21本 のうち
+#: **10本 は作り置き**で、規則2 の下では1本も公開されません（`_days()` の節）。
+#: 公開される見込みは **11本**。**これから積む群**に変わったということです。
+#:
+#: `Floor.ready` は「予約にそろって初めて日が出る」形なので、ここに入れないと
+#: `test_実物で期限が構造的に守れる` が**赤で居座ります**（上の2件と同じ形）。
+#: `needs` に `since: 2026-08-19`（`ASK_HOOK_RULE` が入った日）を足したので、
+#: `scripts/deadline_check.py` が**規則で押さえた伸び率**から 16本目を推定します。
+#:
+#: **覆る条件**: 規則の下で作った本が積み上がって問いの群が 16本 に届いたら、
+#: ここから外すこと（`Floor` の側で期限が守れるか見張られます）。
+ACCRUING: set[str] = {"request_form", "slide_pace", "slot_half", "hook_form"}
 
 #: yaml の `key:` → (群べつの**公開日**を作る関数, 片群あたりの必要本数)。
 #: **`members()` から畳んで作ります。ここに直接足さないこと** ——
