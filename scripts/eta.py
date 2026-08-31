@@ -62,7 +62,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from src import arm_speed, day_cap, eligibility, form_record, house_rule, levers, motion_groups, pause_guard, resume_gate, rpm_mix, settle, subs_cap  # noqa: E402  （`sys.path` を通した後でないと読めません）
+from src import arm_speed, day_cap, eligibility, form_record, forms, house_rule, levers, motion_groups, pause_guard, resume_gate, rpm_mix, settle, subs_cap  # noqa: E402  （`sys.path` を通した後でないと読めません）
 
 LOG = ROOT / "data" / "eta.jsonl"
 
@@ -884,7 +884,9 @@ def published_at(views_path: Path | None = None,
 
 
 def drop_unripe(rows, pub: dict[str, datetime], now: datetime,
-                window_days: int = 28) -> tuple[list, dict[str, list[str]]]:
+                window_days: int = 28,
+                video_forms: dict[str, str] | None = None
+                ) -> tuple[list, dict[str, list[str]]]:
     """**1本あたり再生の標本から、数えてはいけない本を落とす。**
 
     返すのは `(残した行, 落とした理由 → video_id の一覧)`。
@@ -919,13 +921,45 @@ def drop_unripe(rows, pub: dict[str, datetime], now: datetime,
     標本を空にすると、この道具の本体（天井）が黙って 0 になります。**
     そのときは**落とさずに全部返し、理由に `落とし先なし` を立てます。**
     """
+    # --- **「未熟」の境目は、形ごとに違います**（2026-08-31・最適化の回に測った）---
+    #
+    #     ここは長らく `MATURE_HOURS = 48` の1本でした。**その 48 はショートの数**で、
+    #     `src/settle.py` の覆る条件が最初から「**長尺には当てていません**」と
+    #     書いています（そして測り直されていませんでした）。実測（API 0単位・
+    #     `settle.views_curve(form=...)`）:
+    #
+    #         48h で「伸びきった本」  ショート **96.2%**（n=79） ／ 長尺 **25.0%**（n=8）
+    #         96h で                  ショート 100.0%           ／ 長尺 **62.5%**
+    #
+    #     **48時間の長尺は、一生ぶんではなく4〜7割ぶんを持って標本に入ります。**
+    #     この関数の docstring が「(2) …一生ぶんではなく数時間ぶんを持って平均に
+    #     入ります」と禁じている形の、**長尺ぶん**です。
+    #
+    #     **効き目**: 下振れした長尺の1本あたり再生は、`analyse()` の
+    #     `per_video_by_band` を通って `長尺 お金 高` の帯を実際より遠くに出します。
+    #     **その帯は、ショートの天井（`ceiling.value: 1891`）から出る唯一の逃げ道**
+    #     です（`config/hypotheses.yaml` の `escape_note`）。
+    #
+    #     **形が分からない本は、これまでどおり 48時間** で判定します
+    #     （`settle.mature_hours(None)`）。`data/video_forms.json` は公開済みだけを
+    #     持つので、**新しく出した本はしばらく形が分かりません** ——
+    #     そこを長尺の 96時間 に倒すと、**ショートが2日ぶん余計に落ちます。**
+    #
+    #     **覆る条件**: `MATURE_HOURS_BY_FORM` が動いたとき（自動で追います）。
+    #     検査は `tests/test_mature_hours_by_form.py`。
+    if video_forms is None:
+        try:
+            video_forms = forms.measured_forms()
+        except Exception:                                      # noqa: BLE001
+            video_forms = {}
     kept: list = []
     dropped: dict[str, list[str]] = {"未公開": [], "未熟": [], "窓の外": []}
-    ripe_before = now - timedelta(hours=MATURE_HOURS)
     window_open = now - timedelta(days=window_days)
     for r in rows:
         vid = r[0]
         born = pub.get(vid)
+        ripe_before = now - timedelta(
+            hours=settle.mature_hours(video_forms.get(vid)))
         if born is None or born > now:
             dropped["未公開"].append(vid)
         elif born > ripe_before:
@@ -1269,7 +1303,12 @@ def _print_dropped(P, m: dict) -> None:
     order = ("未公開", "未熟", "窓の外")
     why = {
         "未公開": "**まだ公開されていない**（予約のまま Analytics に行が立つ。予約は 359本ある）",
-        "未熟": f"公開から **{MATURE_HOURS}時間**が経っていない（伸びが終わっていない）",
+        # **形ごとに違う数です**（2026-08-31）。1つの数で刷ると、長尺のぶんが嘘になります。
+        "未熟": ("公開から "
+                 + " ／ ".join(f"**{f} {h}時間**"
+                               for f, h in settle.MATURE_HOURS_BY_FORM.items())
+                 + f"（形が分からない本は {MATURE_HOURS}時間）が経っていない"
+                   "（伸びが終わっていない）"),
         "窓の外": "**28日の窓より前**に公開（窓に落ちているのは伸びた後の尻尾だけ）",
     }
     P("      標本から落とした本（**一生ぶんの再生数を持っていない本**）:")
