@@ -2523,7 +2523,8 @@ def report(m: dict, a: dict) -> list[str]:
         pass
     P("")
     P("--- 門を1つずつ当てる（**最初に落ちるものが、いまの律速**）---")
-    P(f"  [門1] 登録者 {SUBS_GATE:,}人      {_fmt_days(a['days_subs'])}")
+    P(f"  [門1] 登録者 {SUBS_GATE:,}人      {_fmt_days(a['days_subs'])}"
+      + observed_gate_note(int(a.get("subs_remaining") or 0), a))
     P(f"        いまの速さ ＝ 1日 {a['subs_per_day']:.2f} 人（再生 {a['views_per_day']:,.0f}／日 × 登録率 {a['sub_rate']*100:.4f}%）")
     # --- **その「再生／日」は、規則の外の本数が作った数です**（2026-08-31・最適化の回）---
     #
@@ -2563,7 +2564,8 @@ def report(m: dict, a: dict) -> list[str]:
       "　**広告は開きません**")
     P(f"    [門1'] 登録者 {FAN_SUBS_GATE:,}人（上の段の**半分**）  "
       f"{_fmt_days(a['days_fan_subs'])}"
-      f"　**あと {a['fan_subs_remaining']:,} 人**")
+      f"　**あと {a['fan_subs_remaining']:,} 人**"
+      + observed_gate_note(int(a.get("fan_subs_remaining") or 0), a))
     P(f"    [門2a'] 長尺 {FAN_HOURS_GATE:,}時間（上の段の 3/4）    "
       f"{_fmt_days(a['days_fan_hours'])}")
     _fb = a.get("fan_hours_bar") or {}
@@ -3408,6 +3410,49 @@ def observed_subs_rate(days: float = 7.0, path: Path | None = None) -> dict | No
         return None
     return {"rate": (win[-1][1] - win[0][1]) / span, "days": span,
             "start": win[0][1], "now": win[-1][1], "n": len(win)}
+
+
+def observed_gate_note(remaining: int, a: dict) -> str:
+    """**その門の日付は「模型の速さ」で解いてあります。台帳の観測だと何日か。**（API 0単位）
+
+    `a["subs_per_day"]` は `views_day x sub_rate` の**模型**で、
+    `days_subs`（門1）・`days_fan_subs`（門1'）・`days_monetized` は**全部それ**です。
+
+    **実測 2026-08-31（`data/eta.jsonl`・API 0単位）**::
+
+        模型  0.86 人/日   門1 **1,140日** / 門1' **557日**
+        観測  0.59 人/日   門1 **1,647日** / 門1' **804日**   （直近6.7日・19->23人）
+        比    **x1.46**    —— 頭の日付は、台帳より **1.46倍 早い側**
+
+    **`docs/MEANS.md` M23 の「いまの伸び（0.89人/日）で 30日 以内に満ちます」も、
+    この模型の側の数でした。** 観測は 0.59 で 46日 です。
+    **つまり「古い」のではなく、最初から模型を引いていた** ——
+    模型と観測が並んでいなかったので、誰も比べられませんでした。
+
+    **日付は差し替えません。** 観測の窓は直近7日で、動いた登録者は **4人** です
+    （n が薄い）。薄い観測で頭の日付を動かすほうが、いまより悪い。
+    **並べて出すだけにして、判断は読む側に残します。**
+
+    **覆る条件**: 観測の窓で動いた人数が増えて（目安 20人以上）、模型との比が
+    まだ 1.2倍 以上 開いていたら、**そのときは `subs_per_day` の側を疑うこと。**
+    """
+    obs = observed_subs_rate()
+    if not obs or obs["rate"] <= 0 or remaining <= 0:
+        return ""
+    model = float(a.get("subs_per_day") or 0.0)
+    d_obs = remaining / obs["rate"]
+    if model <= 0:
+        return f"　/ **観測 {obs['rate']:.2f}人/日 なら {d_obs:,.0f}日**"
+    d_model = remaining / model
+    ratio = d_obs / d_model if d_model > 0 else 0.0
+    note = (f"　/ **台帳の観測 {obs['rate']:.2f}人/日 なら {d_obs:,.0f}日**"
+            f"（左は**模型** {model:.2f}人/日 ＝ `views_day x sub_rate`）")
+    if ratio >= 1.2:
+        note += (f"　[!] **左の日付は、台帳より {ratio:.2f}倍 早い側です**"
+                 f"（観測は直近{obs['days']:.1f}日・{obs['start']}→{obs['now']}人"
+                 f"＝ **動いたのは {obs['now'] - obs['start']}人** なので、"
+                 "**これで日付を差し替えないこと。並べてあるだけです**）")
+    return note
 
 
 def m23_fan_trial_lines(m: dict, a: dict, prefix: str = "    ") -> list[str]:
