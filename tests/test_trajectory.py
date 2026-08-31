@@ -375,15 +375,34 @@ def test_gate2b_and_target_are_the_same_level(m):
 
 
 def test_supply_ceiling_is_not_the_api_cap_alone(m):
-    """**供給の天井に、題材の生成速度が効いていること。**
+    """**供給の天井が、3つのうちいちばん低いものであること。**
 
     API の日枠 92本/日 だけを天井に置くと、**出す材料が無い日を数えません。**
+    そして 2026-08-31 に、その上に**オーナーが固定した規則**が乗りました
+    （`src/house_rule.PUBLISH_PER_DAY` ＝ 1本/日）。
+
+    **この検査は 2026-08-31 に赤いまま残っていました。** 本体（`stages()`）は
+    同じ日に規則を読むよう直りましたが、こちらは「題材が API より低ければ
+    **必ず**題材が律速」と書いたままで、**規則がいちばん低い今は必ず落ちます**
+    （実測 supply_cap 1.0 対 material 21.3）。直したのは検査の側です ——
+    本体は3つの `min` で正しい。
+
+    **覆る条件**: オーナーが 1日1本 を自分の言葉で外したとき。そのときは
+    `supply_rule` が上がり、律速は題材か日枠へ戻ります（下の分岐がそう書けています）。
     """
     st = m["stages"]
     assert st["supply_cap"] <= traj.UPLOAD_CAP_PER_DAY
-    if st["material_per_day"] and st["material_per_day"] < traj.UPLOAD_CAP_PER_DAY:
-        assert st["supply_cap"] == pytest.approx(st["material_per_day"])
-        assert st["supply_cap_why"] == "題材の生成速度"
+    # **天井は3つのいちばん低いもの**。写した数ではなく、その `min` を検査する。
+    ceilings = {"オーナーの規則（1日1本）": st["supply_rule"],
+                "API の日枠": st["supply_api"]}
+    if st["material_per_day"]:
+        ceilings["題材の生成速度"] = st["material_per_day"]
+    low = min(ceilings.values())
+    assert st["supply_cap"] == pytest.approx(low), (
+        f"天井 {st['supply_cap']} が、3つのいちばん低い {low} と違います（{ceilings}）")
+    assert ceilings[st["supply_cap_why"]] == pytest.approx(low), (
+        f"律速の名前が `{st['supply_cap_why']}` ですが、その数は"
+        f" {ceilings[st['supply_cap_why']]} でいちばん低い {low} ではありません")
 
 
 def test_long_form_ceiling_is_not_borrowed_from_shorts(m):
