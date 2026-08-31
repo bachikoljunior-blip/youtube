@@ -54,9 +54,21 @@ _PINNED_DENSITY = 25
 import _eta_pin  # noqa: E402  （pytest が tests/ を sys.path に入れます）
 
 
+# --- **2026-08-31: 4つ目が乗りました —— オーナーの規則（1日1本）** ---
+#
+# `src/house_rule.PUBLISH_PER_DAY = 1` を `eta.PLAN_PUBLISH_PER_DAY` が読みます。
+# この file の `ceiling`（帯ごとの月商の上限）は **per_video × 密度 × 30 × RPM**
+# なので、密度が 25 → 1 に落ちた瞬間に **25分の1**（長尺お金中 819,000円 →
+# 32,760円）になり、「本数では天井は動かない」を測っている検査が
+# **目標額に届かない側へ落ちて赤**になります。**形は1行も壊れていません。**
+# `pin_mix` / `_UNCAPPED` / `_PINNED_DENSITY` と**まったく同じ扱い**にします。
+#
+# **規則そのものの効きは `tests/test_eta_house_rule.py` が主題として持ちます**
+# （表に「いま計画が乗っている本数」の行が出ること・腕が規則で頭打ちになること）。
 @pytest.fixture(autouse=True)
 def _天井は主題ではない(monkeypatch):
     _eta_pin.pin_mix(monkeypatch)
+    _eta_pin.pin_house_rule(monkeypatch, eta, _PINNED_DENSITY)
 
 
 

@@ -33,10 +33,28 @@ from __future__ import annotations
 import importlib.util
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parent.parent
 spec = importlib.util.spec_from_file_location("eta_mod", ROOT / "scripts" / "eta.py")
 eta = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(eta)
+
+import _eta_pin  # noqa: E402
+
+
+# --- **オーナーの規則（1日1本）は、この file の主題ではありません**（2026-08-31）---
+#
+# `src/house_rule.PUBLISH_PER_DAY = 1` が乗ると `sustained_density()` は
+# `min(1, 続けられる速さ)` ＝ 1.0 を返し、`density` の腕の伸びしろは ×1.0 になります。
+# **それは正しい振る舞いです**（規則の外の世界を軌跡に歩かせないための天井）。
+# 落ちたのは形ではなく「合成データが、腕の動く帯に居るか」だけ ——
+# `_eta_pin` の冒頭にある day_cap / rpm_mix / subs_cap と**同じ壊れ方の4回目**です。
+# **規則の効きは `tests/test_house_rule.py` / `tests/test_density_cap.py` が持ちます。**
+@pytest.fixture(autouse=True)
+def _no_house_rule_ceiling(monkeypatch):
+    _eta_pin.pin_house_rule(monkeypatch, eta, _eta_pin.PLAN_DENSITY)
+
 
 from src import day_cap  # noqa: E402
 

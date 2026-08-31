@@ -1992,9 +1992,20 @@ def report(m: dict, a: dict) -> list[str]:
     P("")
     P("--- **公開の密度を上げたら、門1はいつ通るか**（1本あたり再生を据え置いた見積り）---")
     P(f"    ＝ 1日に公開する本数 × {a['per_video_now']:,}回 × 登録率 {a['sub_rate']*100:.4f}%")
-    for n in PUBLISH_SCENARIOS:
+    # **いま計画が乗っている本数を、必ず1行 出すこと**（2026-08-31 に踏んだ）。
+    #     ここは `PUBLISH_SCENARIOS`（4/10/13/25/92）だけを回していました。
+    #     オーナーの規則で `PLAN_PUBLISH_PER_DAY` が **1** になった瞬間、
+    #     **この表から「実際に走っている本数」の行が消えました** ——
+    #     読む側には 4本/日 が最小に見えるのに、機械は 1本/日 で解いています。
+    #     `analyse()` は 1567行 で同じ和集合を作っており、**そちらには在ります**
+    #     （`days_subs_at` に鍵はある／表には出ない）。**同じ和集合をここでも回すこと。**
+    #     検査は `tests/test_eta.py::test_公開密度の行は_門2aの逆算と同じ日数を使う`。
+    for n in sorted(set(PUBLISH_SCENARIOS) | {PLAN_PUBLISH_PER_DAY}):
         v = n * a["per_video_now"]
-        P(f"    1日 {n:>3}本 公開 → 再生 {v:>9,.0f}／日 → 門1 {_fmt_days(a['days_subs_at'][n])}")
+        mark = "  ← **規則（`src/house_rule.py`）。いまの計画はこの行**" \
+            if n == PLAN_PUBLISH_PER_DAY else ""
+        P(f"    1日 {n:>3}本 公開 → 再生 {v:>9,.0f}／日 → 門1 "
+          f"{_fmt_days(a['days_subs_at'][n])}{mark}")
     P("    **これは推測です**（1日N本でも1本あたりが保つかは未測定＝M14 の「配信の壁」）。")
     P("    ただし 4本/日 までは崩れないことが実測済み（2026-08-19 04:4x・中央値 +50.5%）。")
     out.extend(_report_long_gate(m, a))
