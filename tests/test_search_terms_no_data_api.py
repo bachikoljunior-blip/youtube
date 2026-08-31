@@ -178,6 +178,20 @@ def test_台帳は数だけを積み_最後の1点を返す(tmp_path, monkeypatc
     assert st.latest()["long_views"] == 3
 
 
+def test_窓の違う点を_7日_の基準値と並べない(tmp_path, monkeypatch):
+    """M4 の基準値は「**1再生/7日**」で、窓の長さと対。
+
+    `--days 28` の点をそのまま並べると、**4倍 の窓の数を 7日 の基準値と比べる**ことになり、
+    黙って「超えた」側へ倒れます。
+    """
+    monkeypatch.setattr(st, "LEDGER", tmp_path / "search_terms.jsonl")
+    st.record(7, [("a", "長尺", False, 2, 0)])
+    st.record(28, [("a", "長尺", False, 40, 0)])
+    assert st.latest(7)["long_views"] == 2          # 28日 の点に引きずられない
+    assert st.latest(28)["long_views"] == 40
+    assert st.latest(90) is None
+
+
 def test_台帳が無ければ_None(tmp_path, monkeypatch):
     monkeypatch.setattr(st, "LEDGER", tmp_path / "nope.jsonl")
     assert st.latest() is None
