@@ -375,20 +375,29 @@ def test_gate2b_and_target_are_the_same_level(m):
 
 
 def test_supply_ceiling_is_not_the_api_cap_alone(m):
-    """**供給の天井が、候補を1つも落としていないこと。**
+    """**供給の天井が、3つのうちいちばん低いもので、候補を1つも落としていないこと。**
 
     API の日枠 92本/日 だけを天井に置くと、**出す材料が無い日を数えません。**
     もとはそれを言うために「題材がいちばん低ければ題材が勝つ」を見ていました。
 
     **2026-08-31 に候補が1つ増えました** —— オーナーが固定した公開の上限
-    （`src/house_rule.PUBLISH_PER_DAY` ＝ 1日1本）。それまで `stages()` は
+    （`src/house_rule.PUBLISH_PER_DAY` ＝ 1本/日）。それまで `stages()` は
     `min(API, 題材)` だけで解いており、**軌跡ぜんぶが最大 92倍 の供給の上**に
-    乗っていました。いまは規則がいちばん低いので、**実データでは規則が勝ちます。**
+    乗っていました。本体は同じ日に直りましたが、**この検査は「題材が API より
+    低ければ必ず題材が律速」と書いたまま赤く残っていました**
+    （実測 supply_cap 1.0 対 material 21.3）。**直したのは検査の側です。**
 
-    **そこで、実データの1つの並びだけを見るのをやめました。** それだと
+    **そして、実データの1つの並びだけを見るのをやめました。** それだと
     「いまたまたま規則がいちばん低い」ことしか確かめられず、**題材が候補から
     落ちても気づきません**（それが元の壊れ方そのものです）。純関数
     `traj.supply_ceiling()` に3つの並びを直接ためします。
+
+    **(4) は二重に見ています。** 片方は `supply_ceiling()` と突き合わせ、
+    もう片方は**そこを通さずに** `min` を自分で取ります ——
+    **道具そのものが間違っているときは、道具と突き合わせても見つかりません。**
+
+    **覆る条件**: オーナーが 1日1本 を自分の言葉で外したとき。そのときは
+    `supply_rule` が上がり、律速は題材か日枠へ戻ります（下の分岐がそう書けています）。
     """
     # (1) 3つの候補それぞれが、いちばん低いときに勝てること
     assert traj.supply_ceiling(50, 92, 10) == pytest.approx((10, "題材の生成速度"))
@@ -407,10 +416,24 @@ def test_supply_ceiling_is_not_the_api_cap_alone(m):
     # (4) 実データでも、天井は候補ぜんぶの最小に一致すること
     st = m["stages"]
     assert st["supply_cap"] <= traj.UPLOAD_CAP_PER_DAY
+    # 片方は道具と突き合わせ……
     expect, why = traj.supply_ceiling(
         st["supply_rule"], st["supply_api"], st["material_per_day"])
     assert st["supply_cap"] == pytest.approx(expect)
     assert st["supply_cap_why"] == why
+
+    # ……もう片方は、その道具を通さずに `min` を自分で取る。
+    # **天井は3つのいちばん低いもの**。写した数ではなく、その `min` を検査する。
+    ceilings = {"オーナーの規則（1日1本）": st["supply_rule"],
+                "API の日枠": st["supply_api"]}
+    if st["material_per_day"]:
+        ceilings["題材の生成速度"] = st["material_per_day"]
+    low = min(ceilings.values())
+    assert st["supply_cap"] == pytest.approx(low), (
+        f"天井 {st['supply_cap']} が、3つのいちばん低い {low} と違います（{ceilings}）")
+    assert ceilings[st["supply_cap_why"]] == pytest.approx(low), (
+        f"律速の名前が `{st['supply_cap_why']}` ですが、その数は"
+        f" {ceilings[st['supply_cap_why']]} でいちばん低い {low} ではありません")
 
 
 def test_long_form_ceiling_is_not_borrowed_from_shorts(m):

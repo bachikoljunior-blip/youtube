@@ -546,6 +546,113 @@ def record(mix: dict, ceiling: dict, path: Path | None = None) -> dict:
     return rec
 
 
+def rule_capped(point: dict, per_publish: float | None,
+                per_day_rule: float,
+                bands: dict[str, int] | None = None) -> dict | None:
+    """**その天井は、オーナーが固定した「1日1本」の下でも立つか。**（API 0単位）
+
+    `surface_ceiling()` は長尺の面を **「いちばん大きかった1日」**で読みます。
+    実測（2026-08-31）だと、その日は **20260821・長尺 1,368回/日**です。
+
+        その日に公開した長尺は **7本**（`reach_split.publishes_per_day`）。
+        オーナーが固定した規則は **1本/日**（`src/house_rule.PUBLISH_PER_DAY`）。
+
+    **つまり `rpm` の天井は、規則の 7倍 の供給の上に立っています。**
+    `scripts/eta.physical_caps` の docstring は自分の仕事をこう書いています ——
+    「**腕を「実在する幅」で止める。（軌跡が実在しない世界を歩かないため）**」。
+    そこは `density` を `house_rule` で止めていますが、**`rpm` は規則を
+    1度も見ていませんでした。** `trajectory.py` の供給の天井（×92）・
+    `physical_caps` の `density`（×10）と**同じ欠陥の3件目**です。
+
+    ## 何で置き換えるか（**新しい推測を1つも足しません**）
+
+    面は公開で立ちます。だから規則の下で立つ面は::
+
+        規則の下の長尺の面/日 ＝ per_publish × PUBLISH_PER_DAY
+
+    `per_publish` は `reach_split.summary()["長尺"]["per_publish"]`
+    ＝ **直近の窓で、長尺の公開1本あたり何回サムネが見られたか**（実測）。
+    **これは平均へ落とすことではありません** —— 直近の窓は
+    「公開が0本の日」を分母に数えており（実測 7日中 4日）、
+    公開1本あたりで読み直すと **毎日1本 出す世界**の面になります。
+
+    ## 実測（2026-08-31・`data/reach.jsonl` 42日・**API 0単位**）
+
+        置き方                              面/日     長尺の割合   実効RPM    倍率
+        いま（最大の1日 20260821・7本公開） 1,368.0    61.5%     ¥1,252   ×59.77
+        **規則 1本/日 × 公開1本あたり 320.6**  320.6    27.2%     ¥  588   **×28.05**
+        （参考）その日の公開1本あたり 195.4    195.4    18.6%     ¥  420   ×20.04
+        （参考）全期間の平均                 126.4    12.8%     ¥  309   ×14.76
+
+    **×59.77 は ×28.05 の 2.13倍 甘い数でした。**
+    「腕の天井を全部 同時に当てても 目標の 56.7%」も、この倍率をそのまま
+    引いています（→ **26.6%**）。
+
+    ## 覆る条件
+
+    - **オーナーが 1日1本 を自分の言葉で外したとき**（`src/house_rule.py`)。
+      `per_day_rule` が上がれば、ここは自動でゆるみます。
+    - `per_publish` が測れないとき（長尺の公開が窓に0本）。そのときは
+      **`None` を返します** —— 黙って元の天井へ戻さず、呼ぶ側が
+      「規則で止められていない」と言えるようにするためです。
+    - 規則の下の面が、いま読んでいる天井より**上**になったとき。
+      そのときは止める意味がないので、そのまま `None` を返します。
+
+    **短い側の再生（`short_views_day`）は動かしていません。** 点に欄が無いので
+    保存済みの `imp_day` と `long_share_max` から復元します
+    （`S = L × (1 - share) / share`）。**規則の下では、その1枠を長尺に
+    使うほどショートは減ります** —— つまりここは**まだ甘い側**です。
+    """
+    bands = bands or BANDS
+    if not point or not per_day_rule or per_day_rule <= 0:
+        return None
+    try:
+        L = float(point.get("imp_day") or 0.0)
+        share = float(point.get("long_share_max") or 0.0)
+        now = float(point.get("rpm_now") or 0.0)
+    except (TypeError, ValueError):
+        return None
+    if L <= 0 or now <= 0 or not (0.0 < share < 1.0):
+        return None
+    if per_publish is None or float(per_publish) <= 0:
+        return None
+    short_views_day = L * (1.0 - share) / share
+    capped = float(per_publish) * float(per_day_rule)
+    if capped >= L:
+        # 規則の下の面のほうが広い ＝ 止める意味がありません。
+        return None
+    denom = capped + short_views_day
+    share_max = (capped / denom) if denom > 0 else 0.0
+    rpm_max = (share_max * float(bands["長尺 お金 高"])
+               + (1.0 - share_max) * float(bands["ショート 高"]))
+    return {
+        "factor": rpm_max / now,
+        "rpm_now": now,
+        "rpm_max": rpm_max,
+        "long_share_max": share_max,
+        "imp_day": capped,
+        "imp_day_basis": "規則 1日{:.0f}本 × 公開1本あたりの面".format(per_day_rule),
+        "imp_day_before": L,
+        "imp_day_before_basis": point.get("imp_day_basis"),
+        "imp_day_before_on": point.get("imp_day_max_on"),
+        "per_publish": float(per_publish),
+        "factor_before": float(point.get("factor") or 0.0),
+        "short_views_day": short_views_day,
+        "why": (f"長尺の面 {capped:,.1f}回/日"
+                f"（**オーナーが固定した規則 {per_day_rule:.0f}本/日**"
+                f"・`src/house_rule.py` × 公開1本あたり {float(per_publish):,.1f}回・実測）"
+                f" × CTR100% ＝ 再生の {share_max * 100:.1f}% が上限"
+                f" → 実効RPM ¥{rpm_max:,.0f}。"
+                f"**据え置きの {L:,.1f}回/日 は"
+                + (f"「{point.get('imp_day_basis')}」"
+                   f"（{point.get('imp_day_max_on')}"
+                   if point.get("imp_day_max_on") else
+                   f"「{point.get('imp_day_basis')}」（")
+                + "・長尺を **7本** 公開した日）で、"
+                  "**規則の 7倍 の供給の上に立っていました**"),
+    }
+
+
 def last(path: Path | None = None) -> dict | None:
     """最後に積んだ実測。**無ければ None**（呼ぶ側が「測っていない」と言えるように）。"""
     p = path or LOG
