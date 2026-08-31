@@ -707,7 +707,8 @@ def landed_groups(landed: datetime, builds: dict[str, datetime] | None = None,
     return sorted(before), sorted(after)
 
 
-def published(path: Path | None = None) -> list[dict[str, object]]:
+def published(path: Path | None = None,
+              today: str | None = None) -> list[dict[str, object]]:
     """控えの1本1件。`topic` と **公開日（JST）** だけ取り出す。
 
     `at` が無い行（実測 44/491）は**公開日が分からない**ので `publish=None` で返し、
@@ -786,9 +787,65 @@ def published(path: Path | None = None) -> list[dict[str, object]]:
                         .astimezone(JST))
             except ValueError:
                 when = None
+        # --- **作り置きの札**（2026-08-31 に足した） -------------------------
+        #
+        # `True` なら、**この本は1本も公開されません** —— オーナー規則2
+        # （`src/house_rule.is_stockpile`・原文「使わなければ良いだけ
+        # 前提にも再利用もしない」）で、予約は池へ戻し、材料としても使い直しません。
+        #
+        # **ここでは落としません。札を付けるだけです。** `published()` は
+        # `judgeable._live_ids()` と `scripts/queue_lag.py` も読んでおり、
+        # あちらは**上限の観測**（何本目か）に使うので、**予約の実物が要ります。**
+        # 落とすのは、標本として数える側（`split_counts`）だけ。
         out.append({"topic": row.get("topic"), "video_id": row.get("video_id"),
-                    "publish": pub, "at": when})
+                    "publish": pub, "at": when,
+                    "stockpile": house_rule.is_stockpile(row, today=today)})
     return out
+
+
+def live_video_ids(rows: list[dict[str, object]] | None = None) -> set[str] | None:
+    """**帯に生きている本の `video_id`**。読めなければ `None`（＝絞らない）。
+
+    ## なぜ、標本をここで絞るか（2026-08-31 に足した）
+
+    `src/day_cap.py` は「**1日 10本を超えたぶんと、30分より詰めた本は 0再生**」を
+    実測で持っています（帯に入る本は再生の中央値 **718**・入らない本は **2**）。
+    **0再生の本を標本に1本と数えると、`falsified_if` は「上回らなければ外れ」なので、
+    足りない標本がそのまま『外れ』に化けます。**
+
+    **`src/judgeable.members()` は 2026-08-26 にこれを入れています。**
+    ところが `ab_split.split_counts()` には入っていませんでした ——
+    **同じ実験の本数を、2つの経路が別々に数えていた**ということです。
+    実測 2026-08-31（この関数を足す前）:
+
+        title_form  問い  **48本** → 帯に生きているのは **23本**   （床 16本）
+                    断定  **36本** → 帯に生きているのは **19本**
+        hook_form   問い  **38本** → 帯に生きているのは **11本**   ← **床を割る**
+                    条件  **33本** → 帯に生きているのは **18本**
+
+    `Counts.judgeable()` は絞る前の数を床に当てるので、**両方とも
+    「判定できます」と出ていました。** `judgeable` の側は同じ日に
+    「まだ足りない」と言っています。**割れているのは実験ではなく、数える側です。**
+
+    ## 落とす条件は「その日の何本目か」だけです
+
+    **再生数そのものでは落としません。** 結果で条件付けると、
+    処置が再生を落としている場合にその効果を隠します
+    （`src/judgeable.members()` の同じ註）。何本目かは**予約を置いた側が
+    決める量**なので、処置とは独立です。
+
+    **覆る条件**: `day_cap.cap()` が上がって死に枠が消えたら、
+    この関数は全部を返すようになり、絞りは自然に消えます。
+    検査は `tests/test_ab_rule_reach.py`。
+    """
+    try:
+        from src import day_cap
+        src_rows = published() if rows is None else rows
+        return day_cap.live_ids([r for r in src_rows if r.get("at")])
+    except Exception:                                     # noqa: BLE001
+        # **読めない回は絞りません。** 観測していないものを、無いことにしない
+        # （`src/judgeable._live_ids()` と同じ姿勢）。
+        return None
 
 
 @dataclass
@@ -849,6 +906,9 @@ def split_counts(
     # **この実験に入れてよい本だけを数えます**（2026-08-27 に足した）。
     # `request_form` は長尺を落とします —— 理由と実測は `_shorts_only()`。
     allowed = exp.eligible() if exp.eligible is not None else None
+    # **帯の外（0再生と分かっている本）は標本に数えません**（2026-08-31）。
+    # 理由と実測は `live_video_ids()`。`None` なら絞りません。
+    live = live_video_ids(rows)
 
     c = Counts(experiment=exp.name, floor=floor_of(exp.name))
     for g in (exp.treated, exp.control):
@@ -858,9 +918,38 @@ def split_counts(
 
     for row in rows:
         topic = str(row.get("topic") or "")
+        # --- **作り置きは、標本ではありません**（2026-08-31 に足した） --------
+        #
+        # ## 実測（この行を足す前）
+        #
+        #     title_form  問い   期限で数えて **49本** ／ **今日までに公開ずみ 9本**
+        #                 断定   期限で数えて **36本** ／ **今日までに公開ずみ 7本**
+        #     hook_form   問い   期限で数えて **73本** ／ **今日までに公開ずみ 7本**
+        #                 条件   期限で数えて **58本** ／ **今日までに公開ずみ 9本**
+        #
+        # 差はぜんぶ**未来の予約 269本**（規則2 の作り置き **293行**）です。
+        # `Counts.judgeable()` はこの数を床（16本）に当てるので、
+        # **両方とも「判定できます」と出ていました。実際は片群 7〜9本 です。**
+        #
+        # `falsified_if` は「**上回っていない（同点も外れ）**」なので、
+        # **足りない標本は、そのまま『外れ』に化けます** ——
+        # そして `next_if_false` は `per_video` の腕ごと畳みます。
+        # `src/judgeable.members()` の冒頭が、2026-08-26 に
+        # **0再生の本**で同じ穴を塞いでいます。**これはその同じ穴の、
+        # 作り置き版**（規則が 08-31 に変わって開いた）。
+        #
+        # **`published()` の側では落としません**（`_live_ids()` と
+        # `queue_lag.py` は予約の実物が要る）。落とすのはここだけ。
+        if row.get("stockpile"):
+            continue
         pub = row.get("publish")
         if pub is None:
+            # **帯の絞りより先に数えること。** `at` が無い行は帯にも入らないので、
+            # 先に絞ると `unknown_publish` が黙って 0 になります
+            # （2026-08-31 にこの順で1回 踏んだ）。
             c.unknown_publish += 1
+            continue
+        if live is not None and row.get("video_id") not in live:
             continue
         assert isinstance(pub, date)
         if pub > when:
