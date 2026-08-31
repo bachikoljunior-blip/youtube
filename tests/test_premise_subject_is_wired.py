@@ -72,6 +72,19 @@ def test_食い違う行だけを出す(monkeypatch):
     assert "合っていない 1件" in out
 
 
+def test_noteの鎖で外れた行は印に出さない(monkeypatch):
+    """**2026-09-01。** `[n]`（`note:` に腕への鎖がある行）は**決まった行**なので、
+    毎周 §1 に貼りません —— 貼る対象は「**この回に決めるもの**」だけです
+    （`retro.py` の「(c) に倒しずみ」を未決と分けたのと同じ形）。
+    全文は `python scripts/premise_subject.py` に `[n]` で出ます。
+    """
+    rows = [_row("鎖が本文にある行", lever_off=False)]
+    rows[0]["note_backed"] = True
+    rows[0]["note_line"] = "実効RPM ＝ Σ_形（再生の割合 × その形の帯）"
+    monkeypatch.setattr(premise_subject, "audit", lambda *a, **k: rows)
+    assert run_marker._premise_subject_lines() == []
+
+
 def test_多い回は打ち切って全文の撃ち方を出す(monkeypatch):
     rows = [_row(f"行{i}", lever_off=True) for i in range(9)]
     monkeypatch.setattr(premise_subject, "audit", lambda *a, **k: rows)

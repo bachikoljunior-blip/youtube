@@ -31,12 +31,43 @@
 `falsified_if` と `needs`（`count_expr` / `watch`）からも同じ語彙を拾い、
 **両者が交わらない行を `[!]` で出します。**
 
+## **`lever:` の札は、`note:` も読んでから判定します**（2026-09-01 に足した）
+
+**`[?]`（`lever:` が数えている値と合っていない）が、4周 持ち越されました**
+（`retro.py` の持ち越し `premise_subject` 4回。2026-09-01 01:4x ／ 次の回へ ／
+05:5x ／ 06:2x —— **4回とも「次の回へ」と書かれ、4回とも触られていません**）。
+
+**当たっていたのは道具のほうでした。** 鳴っていた2件は、どちらも
+`lever: rpm` への鎖を**本文に書いてあります**:
+
+    長尺の再生シェア…（09-11）  note: 「実効RPM ＝ Σ_形（再生の割合 × その形の帯）。
+                                     この前提が動かす `long_share_now` は、その式の重み」
+    1本あたり再生の天井…（09-19） note: 「題材の族＝**ニッチ**（`CLAUDE.md`
+                                     「rpm（ニッチ・尺・形式）」）」
+
+**どちらも 2026-08-27〜08-29 に、YAML のインラインの註から `note:` へ写されています**
+（`tests/test_eta_headline_alloc_hand.py` が「註は `yaml.safe_load` に読まれない」で
+赤くなったため）。**写した先を、この道具だけが読んでいませんでした。**
+
+**だから `lever_off` は `note:` も見ます。** `mismatch`（主語と数えている値）は
+**見ません** —— `note:` は「なぜこの腕か」であって、**数えている値ではない**からです。
+混ぜると、印字の「数えている＝」の欄が実物と食い違います。
+
+**黙って消しません。** 本文で救われた行は `main()` が `[n]` で出し、
+**鎖の書いてある行そのもの**を並べます（語が通りすがりに1つ出ただけの
+「救い」を、次の回が目で捨てられるように）。
+
 ## 覆る条件
 
 **`[!]` が出た行を1件ずつ当たって、3回続けて「わざとの代理指標だった」なら、
 この道具は当たっていません** —— そのときは語彙ではなく `lever:` との
 食い違いで並べ直すこと（`lever` は既に機械が読んでいる欄です）。
 検査は `tests/test_premise_subject.py`。
+
+**`[n]` の側にも覆る条件があります**: `[n]` の行を1件ずつ当たって、
+鎖が「語が通りすがりに出ただけ」だったなら、**`note:` を読ませたのが誤り**です ——
+そのときは `note:` ではなく、**機械が読む専用の欄**（`lever_chain:` など）を
+立てること。**本文は人が読む所で、語彙の一致は根拠になりません。**
 """
 
 from __future__ import annotations
@@ -98,6 +129,26 @@ def needs_text(h: dict) -> str:
     return " ".join(parts)
 
 
+def lever_chain(h: dict, lever: str) -> str:
+    """`note:` の中で、**その腕の量を名指ししている行**を1つ返す（無ければ空文字）。
+
+    **救った根拠を、その場で見せるためのもの**です。`lever_off` を `note:` で
+    外すだけだと、**語が通りすがりに1つ出ただけの行**も黙って消えます ——
+    そのときに次の回が目で捨てられるよう、`main()` が `[n]` の隣にこれを出します。
+
+    引くのは**行**です（`note:` は 20行 を超えることがあり、全文を貼ると
+    毎周 台帳を丸ごと印字することになります）。
+    """
+    words = VOCAB.get(lever, ())
+    if not words:
+        return ""
+    for line in str(h.get("note") or "").splitlines():
+        line = line.strip()
+        if line and any(w in line for w in words):
+            return line
+    return ""
+
+
 def open_rows(path: Path | None = None) -> list[dict]:
     """**開いている前提だけ**（`effect` も `closed` も書かれていないもの）。"""
     p = path or HYPOTHESES
@@ -136,6 +187,17 @@ def audit(path: Path | None = None) -> list[dict]:
     **覆る条件**: `lever: none` の行が「量の主張」を持つようになったら
     （＝ 腕の札を付け直せるようになったら）、この除外は要りません。
     そのときは `lever:` のほうを直すこと —— **除外を消すのではなく。**
+
+    ## **`lever_off` は `note:` も読みます。`mismatch` は読みません**（2026-09-01）
+
+    **`note:` は「なぜこの腕か」を書く欄**で、実物の 82件 のうち多くが
+    そこに鎖を持っています（`tests/test_eta_headline_alloc_hand.py` が
+    「註は `yaml.safe_load` に読まれない」で赤くなって以来、**註から本文へ
+    写す運用**になっています）。**この道具だけが、その写し先を読んでいませんでした。**
+
+    `mismatch` には**足しません** —— `note:` は数えている値ではないので、
+    足すと印字の「数えている＝」の欄が実物と食い違います。
+    **救った行は消さず、`note_backed` を立てて `main()` が `[n]` で出します。**
     """
     out: list[dict] = []
     for h in open_rows(path):
@@ -144,6 +206,9 @@ def audit(path: Path | None = None) -> list[dict]:
         subj, meas = measures(claim), measures(cond)
         lever = str(h.get("lever") or "")
         armless = lever == "none"
+        # **`note:` に鎖が書いてあるか**（`lever_off` だけがこれを見ます。上の註）。
+        chain = "" if armless else lever_chain(h, lever)
+        off = bool(meas and lever and not armless and lever not in meas)
         out.append({
             "claim": claim,
             "deadline": str(h.get("deadline") or ""),
@@ -153,8 +218,10 @@ def audit(path: Path | None = None) -> list[dict]:
             "measured": meas,
             # **`lever: none` の行は鳴らしません**（2026-09-01 に足した。下の註）。
             "mismatch": bool(subj and meas and not (subj & meas)) and not armless,
-            "lever_off": bool(meas and lever and not armless
-                              and lever not in meas),
+            "lever_off": off and not chain,
+            # **黙って消さないための欄。** `off` だったが `note:` の鎖で救われた行。
+            "note_backed": off and bool(chain),
+            "note_line": chain if off else "",
         })
     return out
 
@@ -165,25 +232,42 @@ def _fmt(s: set[str]) -> str:
 
 def main(argv: list[str]) -> int:
     rows = audit()
-    rows.sort(key=lambda r: (not r["mismatch"], not r["lever_off"], r["deadline"]))
+    rows.sort(key=lambda r: (not r["mismatch"], not r["lever_off"],
+                             not r["note_backed"], r["deadline"]))
     bad = [r for r in rows if r["mismatch"]]
     off = [r for r in rows if r["lever_off"] and not r["mismatch"]]
+    backed = [r for r in rows if r["note_backed"] and not r["mismatch"]]
 
     print("=== 開いた前提の「主語」と「反証条件が数えている値」 ===")
     print(f"  開いているのは **{len(rows)}件**。"
           f"**主語と値が交わらない: {len(bad)}件** ／ "
-          f"**`lever:` が値と合っていない: {len(off)}件**")
+          f"**`lever:` が値と合っていない: {len(off)}件**"
+          f"（うち **`note:` の鎖で外したもの: {len(backed)}件**・下の `[n]`）")
     print("  **判定はしません。** わざと代理指標を使っている前提があります —— "
           "1件ずつ当たること（この道具の docstring の「覆る条件」）。")
     print()
     for r in rows:
-        mark = "[!]" if r["mismatch"] else ("[?]" if r["lever_off"] else "   ")
+        if r["mismatch"]:
+            mark = "[!]"
+        elif r["lever_off"]:
+            mark = "[?]"
+        elif r["note_backed"]:
+            mark = "[n]"
+        else:
+            mark = "   "
         print(f"{mark} {r['deadline']}  lever={r['lever'] or '—':<9} "
               f"side={r['side'] or '—':<7} "
               f"主語={_fmt(r['subject']):<24} 数えている={_fmt(r['measured'])}")
         print(f"      {r['claim'][:96]}")
+        if mark == "[n]":
+            # **救った根拠を、その場で見せる**（黙って消さないこと。docstring の「覆る条件」）。
+            print(f"      └ note: {r['note_line'][:120]}")
     if not bad and not off:
         print("\n  **食い違いはありません。**")
+    if backed:
+        print(f"\n  **`[n]` の {len(backed)}件 は、`note:` に腕への鎖が書いてあるので "
+              "`[?]` から外しました。** 鎖が「語が通りすがりに出ただけ」だったら、"
+              "**`note:` を読ませたのが誤り**です（docstring の「覆る条件」）。")
     return 0
 
 
