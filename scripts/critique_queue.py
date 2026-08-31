@@ -296,9 +296,37 @@ def mark_thumbnail_set(video_id: str) -> bool:
 
     呼ぶのは `scripts/refresh_thumbnail.py --missing` が**実際に載せたあと**だけ。
     先に消すと、落ちた本が一覧から消えて**二度と拾われません。**
+
+    ## **検査からは書きません**（2026-08-28 に踏んで足した。**通算9件目**）
+
+    `pytest tests/ -k "eta or cap or lever or drift or arm or forward"`
+    （**620件・13分00秒・全部 緑**）を背景で走らせている最中に、
+    `data/critique_queue/*.json` の **19本**が
+    `thumbnail_set: false → **true**` に書き換わりました（実測 11:15:15）。
+    **同じ時刻の `data/day_quota.jsonl` に `thumbnails.set` は1行も増えていません**
+    （最後は 10:54:30）—— **YouTube 側は動いておらず、控えだけが嘘になりました。**
+
+    **この嘘は「統計の汚れ」では済みません。** `pending_thumbnails()` は
+    `thumbnail_set is False` だけを返すので、push していれば
+    **その19本は `--missing` の一覧から永久に消え、サムネイル無しのまま**残ります。
+    サムネイルは面（インプレッション）そのもので、`rpm` と `per_video` の
+    両方の腕がその上に立っています。
+
+    掛かりは `src/dupes.may_write_path()`（`src/upload_cap.py::_write_path`
+    と同じ理由・同じ形）。**`STASH` を tmp へ差し替えた検査は今までどおり通ります**
+    （差し替え先が repo の外なので True を返す）。
+
+    **覆る条件**: 本物の控えへ**わざと**書く検査が要るようになったら
+    `YT_LEDGER_WRITE=1`（そのときは理由を `docs/JOURNAL.md` に）。
+    `tests/test_critique_queue_not_written_by_tests.py` が、外れたら落とします。
     """
     meta_path = STASH / f"{video_id}.json"
     if not meta_path.exists():
+        return False
+    # **遅延 import**（このファイルの他の口と同じ形。読み込み時の輪を作らない）。
+    from src import dupes as _dupes                            # noqa: PLC0415
+
+    if not _dupes.may_write_path(meta_path):
         return False
     try:
         meta = json.loads(meta_path.read_text(encoding="utf-8"))

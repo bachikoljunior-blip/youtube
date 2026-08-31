@@ -38,6 +38,19 @@ sys.path.insert(0, str(ROOT))
 from src import history  # noqa: E402
 
 
+@pytest.fixture(autouse=True)
+def _sandbox_the_scan_cache(tmp_path, monkeypatch):
+    """**本物の `data/` に書かせないこと**（2026-08-28 に踏んだ）。
+
+    `_scan` は窓ごとの控え（`data/scan_topics.json`）を書きます。
+    この檻を外すと、ここの検査が**本物の控えに `s-new` を書き込み**、
+    次に走った回が「投稿済みテーマ 1件」で動きます —— 実際に、
+    足した直後の実行で `_cached_topics()` が `{'s-new'}` を返しました。
+    """
+    (tmp_path / "data").mkdir()
+    monkeypatch.setattr(history.config, "ROOT", tmp_path)
+
+
 class _Resp:
     def __init__(self, status: int) -> None:
         self.status = status
@@ -173,3 +186,117 @@ def test_partial_description_scan_is_filled_from_the_ledger(monkeypatch, capsys)
     monkeypatch.setattr(history, "ledger_topics", lambda: {"s-a": "vid1"})
     assert history._scan(want_map=False) == {"s-a"}
     assert "控えから" in capsys.readouterr().out
+
+
+# --------------------------------------------------------------------------
+# **落ちていないのに欠ける道**（2026-08-28 に足した）
+#
+# 上の検査は全部 `HttpError` から入ります。ところが実際に9日 効いていた欠けは
+# 例外を1つも出しません —— `channel_video_ids(cap=400)` が、チャンネルの
+# 608本 のうち**古い 208本 を黙って切って**いました（`partial` は False のまま）。
+#
+# 実測 2026-08-28（`data/uploaded.jsonl`・API 0単位）:
+#     チャンネル 608本 ／ 見えない 208本 ／「未投稿」に見えるテーマ 188件
+#     こうなった日 2026-08-19
+#
+# だから `_scan` の控え合流を**無条件**にしました。ここはその門です。
+# --------------------------------------------------------------------------
+
+
+def _yt_all_ok(descriptions):
+    """説明欄の読みが**全部 通る**チャンネル（例外は1つも出ない）。"""
+    class _Videos:
+        def list(self, **kw):
+            want = set(kw["id"].split(","))
+            return _Req({"items": [{"id": v, "snippet": {"description": d}}
+                                   for v, d in descriptions.items() if v in want]})
+
+    class _Ch:
+        def list(self, **_kw):
+            return _Req({"items": [{"contentDetails":
+                                    {"relatedPlaylists": {"uploads": "UUx"}}}]})
+
+    class _Yt:
+        def channels(self):
+            return _Ch()
+
+        def videos(self):
+            return _Videos()
+
+    return _Yt()
+
+
+def test_cap_truncation_is_filled_from_the_ledger(monkeypatch, capsys):
+    """**上限で切られた回**も、控えと和を取ること（例外は1つも出ない）。
+
+    ここが落ちたら `_scan` の合流がまた `if partial or not video_ids:` に
+    戻っています。**戻すと 188件 が「未投稿」に化けます** ——
+    `src/bars.py` の「同じ絵を出さない」守りが、そのぶん比べなくなります。
+    """
+    monkeypatch.setattr(history, "build",
+                        lambda *a, **k: _yt_all_ok({"new": "[t:s-new]"}))
+    monkeypatch.setattr(history, "credentials", lambda: None)
+    # 上限で切られた ＝ **新しい1本しか返らない**（古い本は見えない）
+    monkeypatch.setattr(history, "channel_video_ids", lambda *a, **k: ["new"])
+    monkeypatch.setattr(history, "ledger_topics",
+                        lambda: {"s-old": "vid-old", "s-new": "new"})
+
+    got = history._scan(want_map=False)
+    assert got == {"s-new", "s-old"}, "上限で切られた古い側が未投稿に化けています"
+    assert "説明欄の読みが途中で落ちた回" not in capsys.readouterr().out
+
+
+def test_cap_truncation_is_filled_in_the_map_too(monkeypatch):
+    """テーマ→動画の写像でも同じこと（`critique_record` がこちらを使います）。"""
+    monkeypatch.setattr(history, "build",
+                        lambda *a, **k: _yt_all_ok({"new": "[t:s-new]"}))
+    monkeypatch.setattr(history, "credentials", lambda: None)
+    monkeypatch.setattr(history, "channel_video_ids", lambda *a, **k: ["new"])
+    monkeypatch.setattr(history, "ledger_topics",
+                        lambda: {"s-old": "vid-old", "s-new": "vid-stale"})
+
+    got = history._scan(want_map=True)
+    assert got["s-old"] == "vid-old"
+    # **チャンネルの答えを控えで上書きしないこと**（`setdefault`）。
+    # チャンネルのほうが新しいので、撮り直した本はそちらが正しい。
+    assert got["s-new"] == "new"
+
+
+def test_hitting_the_cap_says_so(capsys):
+    """**満杯なのか丁度なのかを、印字で区別できること。**
+
+    `チャンネルの動画 400本` だけでは読めません。読めないと、
+    次に来た側は9日 気づきません（実測: 08/19 → 08/28）。
+    """
+    class _PI:
+        def list(self, **_kw):
+            return _Req({"items": [{"contentDetails": {"videoId": f"v{i}"}}
+                                   for i in range(50)]})
+
+    class _Yt:
+        def playlistItems(self):
+            return _PI()
+
+        def search(self):
+            raise AssertionError("上限に達したら search は要りません")
+
+    got = history.channel_video_ids(_Yt(), "UUx", cap=50)
+    assert len(got) >= 50
+    assert "上限" in capsys.readouterr().out
+
+
+def test_an_empty_channel_read_is_never_cached(monkeypatch):
+    """**1本も返らなかった回を控えると、その窓じゅう読み直しません。**
+
+    `channel_video_ids` が空を返す道は例外を出さない（＝ `partial` は False）ので、
+    ここを守らないと `cap` 切りと同じ形の欠けが、こんどは控えの側にできます。
+    控えとの和があるので答えは壊れませんが、**直った瞬間に気づけません。**
+    """
+    monkeypatch.setattr(history, "build",
+                        lambda *a, **k: _yt_all_ok({}))
+    monkeypatch.setattr(history, "credentials", lambda: None)
+    monkeypatch.setattr(history, "channel_video_ids", lambda *a, **k: [])
+    monkeypatch.setattr(history, "ledger_topics", lambda: {"s-a": "v1"})
+
+    assert history._scan(want_map=False) == {"s-a"}
+    assert history._cached_topics() is None, "空の読みを控えています"

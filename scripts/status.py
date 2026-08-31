@@ -43,11 +43,32 @@ from src import judgeable as _judge  # noqa: E402
 from src import watches as _watches  # noqa: E402
 
 
-@_functools.lru_cache(maxsize=1)
-def _ab_power_verdict():
-    """判定規則の当てっこ。**撃つのは1回だけ**（実験ごとに同じ数が出ます）。"""
+@_functools.lru_cache(maxsize=8)
+def _ab_power_verdict(floor: int = 0, metric: str = "engaged"):
+    """判定規則の当てっこ。**実験ごとに、その実験の床と測る値で**撃つ。
+
+    ## `lru_cache(1)` で `MIN_PER_GROUP` を全部に当てていました（2026-08-27 に直した）
+
+    ここは長らく `verdict(_ab.MIN_PER_GROUP)` を**1回だけ**撃って、
+    その1つを**全部の実験の下に**印字していました。註にも
+    「実験ごとに同じ数が出ます」と書いてあり、**当時は本当でした。**
+
+    **2026-08-27 に `ab_split.floor_of()` が入って、偽になりました。**
+    `request_form` の床は 72本 です（`judgeable.MEMBER_SOURCES`）。
+    それでもここは 16本 の数を出し続けていました —— つまり
+    `status.py`（**毎回 読む道具**）の `request_form` の節には、
+
+        床でない本数（16）で、  測っていない値（engaged）で 解いた検出力
+
+    が出ていたことになります。**2つとも間違いです。**
+    `--outlook` の側は同じ日に直しましたが、**こちらは残っていました**
+    （`src/ab_split.floor_of()` の註が数えている「同じ穴」の**5件目**）。
+
+    `metric` が `"engaged"` でなければ `Verdict.lines()` は数を出さず、
+    床の出どころと「下げると腕ごと畳む」ことだけを言います。
+    """
     try:
-        return _ab_power.verdict(_ab.MIN_PER_GROUP)
+        return _ab_power.verdict(floor or _ab.MIN_PER_GROUP, metric=metric)
     except Exception:  # 状態を見る道具が、状態のせいで死んではいけない
         return None
 from src import alerts as _alerts  # noqa: E402
@@ -337,6 +358,24 @@ def print_queue_lag() -> None:
         from scripts import queue_lag
         plan = queue_lag.Plan()
         lines = queue_lag.lag_lines(plan.rows, plan.now)
+        # **「その枠が、開いている前提に効くか」まで出すこと**（2026-08-27 に足した）。
+        #
+        #   `queue_lag.py` を手で撃った回だけが読めていました。**この道具は
+        #   `CLAUDE.md` が「分析は毎回やる」と名指ししている唯一の道具**なので、
+        #   ここに無い節は、主実行から見て**存在しません**。
+        #
+        #   実測 2026-08-27、その節にしか出ていなかったもの:
+        #     ・開いた10群のうち、本が足りないのは `request_form` の2群だけ
+        #       （他8群は床の 3〜20倍。**「本を作れ」が効く先は1件しかない**）
+        #     ・その 114本 を**作れるか**（材料 × ショート率 と引き算）
+        #     ・帯に置くと**期限を越えるか**（越えるなら `deadline_check` と突き合わせ）
+        #
+        #   実測 **2.2秒**・API 0単位（`_walk_days` が1周ぶん控えを持つので、
+        #   同じ `live_plan()` を2度 解きません）。
+        #
+        #   **覆る条件**: この節が 25行 を超えて `status.py` の他の節を押しのけたら、
+        #   足りない群だけの要約に落とすこと（全文は `python scripts/queue_lag.py`）。
+        lines += queue_lag.answering_lines(plan.rows, plan.now)
         plan.improve()
         lines += plan.gain_lines()
         if plan.swaps:
@@ -392,6 +431,18 @@ def print_live_slots() -> None:
                 "**新しい本は1本も要りません。**生きる枠の付け替えです。"
                 "**枠が開いているのに数が残り続けるなら、その段が落ちています** ——"
                 "その回の `[batch] 死に枠の逃がしは飛ばします:` の行を見ること")
+        # **上の数は (A) で数えています**（`day_cap.live_ids` ＝ その日の先頭 `cap()` 本）。
+        # **(B)（13:30 までが生きる）なら、帯の外に居る本はぜんぶ 0再生**です。
+        # 切り分けは未決着（`day_cap.window()` が `confounded`・答えは 2026-09-03）
+        # なので、**どちらでも損をしない手だけ**をここに出します（2026-08-29 に足した）。
+        stray = live_slots.band_stray(live_slots.Board(live_slots._rows()))
+        if stray:
+            lines.append(
+                f"  [!] **(A) では生きているのに、帯の外に居る本が {len(stray)}本**"
+                "（＝ **(B) なら 0再生**）。**同じ日の帯の空き分へ入れ直せます** ——"
+                "(A) なら生存数 ±0・(B) なら生き返るので、**どちらでも損をしません**"
+                f"（`python scripts/live_slots.py --plan --band`・{len(stray) * 50}単位。"
+                "`batch_build` が投稿より先に自動で撃ちます）")
         print("\n" + "\n".join(lines))
     except Exception as e:  # pragma: no cover - 状態しだい
         print(f"\n  [!] A/B の本が生きた枠に居るかを数えられませんでした: {e}")
@@ -546,7 +597,11 @@ def print_hypotheses() -> None:
             # **効きがゼロのときに何と言うか**は一度も測られていませんでした ——
             # 中央値の大小には閾値が無いので、差がゼロなら**コイン投げ**で、
             # **本数を増やしても 50% のままです**（`src/ab_power.py`）。
-            _v = _ab_power_verdict()
+            # **その実験の床と、その実験が測る値で撃つこと。**
+            #     `_c.floor` は `ab_split.floor_of()`（request_form は 72本）、
+            #     `_exp.metric` は engaged か登録か。**片方でも渡し忘れると、
+            #     床でない本数か、測っていない値の検出力が出ます**（上の註）。
+            _v = _ab_power_verdict(_c.floor, _exp.metric)
             if _v is not None:
                 print("        " + "\n        ".join(x.strip() for x in _v.lines()[1:]))
             # **足りない本には、公開の締切があります**（2026-08-20 04:4x に足した）。
@@ -619,9 +674,13 @@ def print_hypotheses() -> None:
     try:
         from src import verdict_power as _vp
         _base, _v, _s = _vp.baseline_rate()
-        _weak = [(r, _vp.power(_base, r["n"], r["gate"], r["target"]))
-                 for r in _vp.scan_hypotheses()]
-        _weak = [(r, q) for r, q in _weak if q["detects_nothing"]]
+        # **`power()` を直接 撃たないこと**（2026-08-28 に踏んだ）。
+        # ここは全部の行を片側の門として数えており、**2群の前提**
+        # （`途中の依頼`）を別の規則で採点していた。同じ1件について
+        # `verdict_power` は「見分けられます」、ここは「48%」と出て、
+        # **毎周 出るこちらが、直したばかりの条件を『壊れている』と鳴らす**。
+        # 設計ごとの分岐は `verdict_power.assess()` の1か所に置いてある。
+        _weak = _vp.weak_rows(_base)
         if _weak:
             print(f"\n  --- [!] **見分けられない反証条件 {len(_weak)}件** ---")
             print(f"  実測の登録率 **{_base*100:.4f}%**（{_v:,}再生→{_s}人）にかけると、"
@@ -629,7 +688,7 @@ def print_hypotheses() -> None:
             for r, q in _weak:
                 print(f"    効きなしで生き残る {q['alpha']:.0%} ／ "
                       f"{r['target']:g}倍あるのに外す {q['beta']:.0%}  "
-                      f"（n={r['n']:,}再生・門 {r['gate_label']}）  {r['claim'][:34]}")
+                      f"（n={r['n']:,}再生・{q['label']}）  {r['claim'][:34]}")
             print("  **ここで閉じた前提は証拠ではありません。**"
                   " `python -m src.verdict_power` で必要な再生数が出ます。")
     except Exception as _e:      # 計器が欠けても status は止めない
@@ -654,7 +713,13 @@ def print_hypotheses() -> None:
         import deadline_check as _reach                         # noqa: PLC0415
         _vs = _reach.check(open_)
         _bad = [v for v in _vs if v.slips]
-        _unk = [v for v in _vs if v.ready is None and not v.unchecked]
+        # **「まだ数えはじめたところ」を「判定できない」に混ぜないこと**
+        #   （2026-08-26 夕）。直し方が正反対です ——
+        #   前者は**何もしないのが正解**、後者は前提の立て方ごと変えるしかない。
+        #   実測: きょうだいの回が 19:08 JST に立てた前提が、その 11分後 に
+        #   `[!!] 判定できる日が出せません` として並んでいました。
+        _unk = [v for v in _vs if v.ready is None and not v.unchecked and not v.warming]
+        _warm = [v for v in _vs if v.warming]
         _non = [v for v in _vs if v.unchecked]
         # **逆向きも出すこと**（2026-08-25 22:5x）。ここは長らく「期限が早すぎる」
         # 側しか出していませんでした。**データはもう揃うのに期限がまだ先**の側は、
@@ -662,7 +727,7 @@ def print_hypotheses() -> None:
         # ここには1行も出てきませんでした。実測 **10件・合計46日**。
         # **腕は前提を1件閉じたときだけ動く**ので、その待ちは到達日ごと止まります。
         _late = [v for v in _vs if v.waits]
-        if _bad or _unk or _non or _late:
+        if _bad or _unk or _non or _late or _warm:
             print(f"\n  --- [!] **その期限にデータは在るか** "
                   f"（早すぎる {len(_bad)}件 ／ **遅すぎる {len(_late)}件** ／ "
                   f"日が出せない {len(_unk)}件 ／ 確かめていない {len(_non)}件）---")
@@ -674,6 +739,9 @@ def print_hypotheses() -> None:
                 for a in v.answers:
                     if a.ready is None:
                         print(f"        {a.why[:110]}")
+            for v in _warm:
+                print(f"    **まだ数えはじめたところ**（直すところはありません）"
+                      f"  {v.claim[:36]}")
             for v in _non:
                 print(f"    **`needs:` が無い**  {v.claim[:44]}")
             if _late:
@@ -683,7 +751,14 @@ def print_hypotheses() -> None:
                 for v in sorted(_late, key=lambda x: -x.waits)[:5]:
                     print(f"      {v.ready} に判定できるのに {v.deadline}"
                           f"（{v.waits}日）  {v.claim[:36]}")
-                print("      → `deadline` をその日まで**縮めること**。"
+                # **手で直せと言わないこと**（2026-08-26・最適化の回）。
+                # ここは 08-25 22:5x から「縮めること」と言い続け、
+                # **666 commits のあいだ 1件も縮みませんでした**（待ちは 46日 → 67日）。
+                # 印字が読まれていないのではなく、**印字は判断を要求します。**
+                # 毎周「1件 出す」に追われている側では、判断の要る行は必ず負けます。
+                print("      → `python scripts/deadline_check.py --shrink` で"
+                      "**縮めること**（**判断は要りません・API 0単位**。"
+                      "`falsified_if` には触りません）。"
                       "**この回の成果になります**（`verdict` を1件 前倒しできます）")
             print("  詳しくは `python scripts/deadline_check.py`。"
                   "**動かすのは期限だけ。`falsified_if` は緩めないこと。**")
@@ -958,6 +1033,13 @@ def print_means() -> None:
     untried = []
     held = []
     rejected = []
+    # **どの札にも当たらなかった項**（2026-08-26 に足した。下の註）
+    unlabelled = []
+    # **もう選べない項**（2026-08-27 に足した）。`done` は終わった手、
+    # `running` は動いている手。**どちらも符号だけ出します** ——
+    # 選べない手を全文で出すと、選べる手が埋もれます。
+    done: list[tuple[str, str, str]] = []
+    running: list[tuple[str, str, str]] = []
     for code, name, body in entries:
         m = re.search(r"\*\*状態\*\*: (.+)", body)
         state = m.group(1).strip() if m else "?"
@@ -991,7 +1073,67 @@ def print_means() -> None:
             #
             # **覆る条件のほうを出します。** 状態の一行ではなく、
             # 「何が起きたら復活するか」が判断に要る側だからです。
+            #
+            # **この枝は「済」「着手」より先に置くこと**（2026-08-27）。
+            # 下の2つを後ろに足した回、いったん逆に置いて **M11 が「終わった」へ
+            # 落ちました** —— 状態の一行が
+            # 「M14 の8の段待ち（2026-08-15 16:0x に『却下』を**取り消し済み**…」で、
+            # **「取り消し済み」の「済」に当たった**からです。
+            # **律速そのものが、語の部分一致で一覧から消えます。**
             rejected.append((code, name, state, body))
+        elif "済" in state or "閉じた" in state or "判定ずみ" in state:
+            # **終わった手**（2026-08-27 に足した。**「どの札にも当たらない」の8件**）。
+            #
+            # すぐ下の註が「札を足すのはやめました」と書いていますが、
+            # あれが言っているのは **「新しい言い回しを追いかけて札を足す」** ——
+            # M22 の「道具は書いて…日枠に止められています」のような**1件かぎりの
+            # 自由文**のことです。**ここは違います。**
+            #
+            # 実測 2026-08-27 の「どの札にも当たらない 15件」は、
+            # **中身が2種類しかありませんでした**:
+            #
+            #     終わった手  M6 済 ／ M9 判定ずみ ／ M13 閉じた ／ M14 答えが出た
+            #                 M20 足した  … **どれも、もう選べません**
+            #     動いている手 M1 M4 実行中 ／ M12 M15 M16 M17 M19 M21 着手ずみ
+            #                 M2 オーナー待ち  … **もう選ばれています**
+            #
+            # **15件とも「未着手ではない」ことだけが共通で、それが答えです。**
+            # ところがこの節は毎回
+            # 「**中身を読んで、どれかに振り直すこと**」と出し、
+            # **3周 続けて誰も振り直しませんでした**（`retro.py` の持ち越し）。
+            # 振り直す先が無かったからです —— 未着手でも保留でも却下でもない。
+            #
+            # **だから「終わった」と「動いている」の2つを足します。**
+            # 出すのは**符号だけ**（本文は出しません）——
+            # 選べない手を毎回 全文で出すと、選べる手が埋もれます。
+            done.append((code, name, state))
+        elif "着手" in state or "実行中" in state or "進行中" in state:
+            running.append((code, name, state))
+        else:
+            # **ここが3回目です。**
+            #
+            # すぐ上の2つの註は、どちらも同じ壊れ方の記録です ——
+            # 「保留を出していなかったので M3 が3日 消えた」
+            # 「却下を出していなかったので M11 が毎回 消えた」。
+            # **どちらも『札を1つ足す』で塞ぎました。** その形では、
+            # **次に出てくる新しい言い回しが、また丸ごと落ちます。**
+            #
+            # 実測 2026-08-26: **M22 の状態は
+            # 「道具は書いて、選ぶところまで走らせました…置くところが
+            # この環境の判定に止められています」**で、
+            # 未着手・未検討・保留・却下・待ち のどれも含みません。
+            # **6日間（08/20〜08/26）、この節から見えていませんでした。**
+            # そのあいだに詰まりの中身は変わっていて（判定 → 日枠）、
+            # **叩き直せば通る状態**でしたが、誰の目にも入っていません。
+            #
+            # **だから札を足すのはやめました。** 落ちた項を落ちたまま
+            # 数えて出します —— **どの札にも当たらない状態は、
+            # これから先も必ず出てくるからです。**
+            #
+            # **覆る条件**: `docs/MEANS.md` の状態欄が
+            # 選択肢の決まった語彙になったら（自由文をやめたら）、
+            # この枝は要りません。**それまでは消さないこと。**
+            unlabelled.append((code, name, state))
     # 棚卸しからの経過。**視界の外は、定期的に数え直さないと戻る。**
     import json as _json
     st = Path(__file__).resolve().parent.parent / "data" / "audit.json"
@@ -1021,6 +1163,32 @@ def print_means() -> None:
             cond = state.split("着手条件")[-1].lstrip("はがのを:： ") if "着手条件" in state else state
             print(f"    {code} {name}")
             print(f"        条件: {cond[:90]}")
+    # **符号だけの1行にまとめないこと**（2026-08-27 に一度やって戻した）。
+    # `tests/test_means_no_entry_is_invisible.py` が
+    # 「**1件でも印字から消えたら落ちる**」を見ています ——
+    # `M1 M4 M12 …` と並べると、正規表現 `^\s+M4 ` に当たるのは先頭の1件だけで、
+    # **残りは「消えた」と数えられます。** その検査は
+    # **22件のうち16件が消えていた**日に足されたもので、正しい。
+    # **短くするのは状態の本文の側**（下は名前だけ・状態は出さない）。
+    if running:
+        print(f"  --- 動いている {len(running)}件（**もう選ばれています。"
+              "選び直すなら、まず止まっている理由を見ること**）---")
+        for code, name, _state in running:
+            print(f"    {code} {name}")
+    if done:
+        print(f"  --- 終わった {len(done)}件（**選べません。"
+              "掘り返すなら、その節の『覆る条件』から**）---")
+        for code, name, _state in done:
+            print(f"    {code} {name}")
+    if unlabelled:
+        print(f"  --- **どの札にも当たらない {len(unlabelled)}件"
+              f"（＝この節から見えていなかった項）** ---")
+        print("      **状態の一行が自由文なので、どの札にも入りませんでした。**"
+              " 中身を読んで、どれかに振り直すこと"
+              "（未着手／保留／却下・待ち／着手・実行中／済・閉じた）。")
+        for code, name, state in unlabelled:
+            print(f"    {code} {name}")
+            print(f"        状態: {state[:110]}")
     if rejected:
         print(f"  --- 却下・待ち {len(rejected)}件"
               f"（**覆る条件を毎回見ること。ここに律速そのものが入っています**）---")
@@ -1092,10 +1260,17 @@ def _print_deepening(all_sections: dict[str, dict[str, str]]) -> None:
     hits = _sweep_hits()
     counts: dict[str, int] = {}
     novel: dict[str, int] = {}
+    writable: dict[str, int] = {}
     try:
         from src import section_sweep
 
         counts, novel = section_sweep.novel_counts(hits, all_sections)
+        # **「新しい」は「書ける」ではありません**（2026-08-28 に足した）。
+        # `[未]`（照合できていない）と `片効き`・`不変` を引いた数を、
+        # 同じ行に並べて出します。実測 furusato は 新しい5件 で**書けたのは0件**、
+        # kafunenkin は 新しい6件 で 2件。**この差が見えないので、選ぶ側は
+        # 撃って確かめていました**（同日の実測で3族・20分）。
+        writable = section_sweep.writable_counts(hits, all_sections)
     except Exception as exc:                    # 既出の判定が壊れても順番は出す
         print(f"    （掃引の既出判定が読めません: {str(exc)[:80]}）")
         for h in hits:
@@ -1107,6 +1282,7 @@ def _print_deepening(all_sections: dict[str, dict[str, str]]) -> None:
     for line in section_depth.report_lines(all_sections, scores, base,
                                            sweep_counts=counts,
                                            novel_counts=novel,
+                                           writable_counts=writable,
                                            long_families=section_depth
                                            .long_form_families()):
         print(line)
@@ -1303,7 +1479,19 @@ def print_topic_stock() -> None:
           f"（`src/calc/` {len(_all)}本）")
 
     if n_free == 0:
-        print("  **未使用の節が0件 ＝ テーマを増やす余地がありません。**")
+        # **「0件 ＝ 余地がありません」は、長尺については誤りです**（2026-08-26 09:5x に踏んだ）。
+        #
+        # この行は**ショートの側だけ**を言っています。長尺の上限は節ではなく
+        # **族の数**で決まり（`--per-calc 2` と `_drop_queue_tail_calcs` が族の単位で効く）、
+        # **未使用の節が0件でも、族を1つ増やせば +2本 になります。**
+        #
+        # 実測（この行に引っかかった回）: 未使用0件・長尺向けのテーマ **30件 / 族 11**
+        # → 7日ぶんで取れるのは **22本**。**在庫30件のうち8件は、
+        # 節をいくら足しても永久に取れません。** `jutaku` に節を1つ足して
+        # `--long` で forge したら、**族 12・上限 24本**（+2本）。
+        # **同じ族に節を足していたら 0本 でした。**
+        print("  **未使用の節が0件です。**"
+              "（**これはショートの側の話です。**長尺の上限は下の族の数のほう）")
         print("  `topic_forge` は節を掘る道具で、**節そのものは作りません。**")
         # **ここは長らく「増やす道は1つだけ」と言っていました**（2026-08-17 に直した）。
         # 嘘です。既にある表に節を足す道があり、**そちらは題材の作り直しが要りません。**
@@ -1331,6 +1519,23 @@ def print_topic_stock() -> None:
     if n_pick < 8 and n_free > 0:
         print(f"  → いま打つ手: `python scripts/topic_forge.py`"
               f"（未使用の節 {n_free}件からテーマを起こす）")
+
+    # **長尺の上限は、ここまでの数字のどれにも出ていませんでした**（2026-08-26 09:5x）。
+    #
+    # `topic_forge.print_long_stock()` は「長尺向けのテーマ N件 / 族 M /
+    # 7日ぶんで最大 X本」を出しますが、**`topic_forge --list` を撃った回にしか
+    # 見えません** —— そして1周の手順（`docs/trigger_main.md`）は
+    # `status.py` は毎回撃たせるのに、`--list` はどこにも書いていません。
+    # 実測: この回は「未使用0件 → (B) 既にある表に節を足す」の候補5件のうち
+    # **4件が『長尺の族にもう入っています（足しても上限は 0本）』**でした。
+    # **正しい行はそこに出ていたのに、上限そのものの数字が無いので判断できません。**
+    #
+    # **数え方は写しません**（`print_long_stock` を呼びます）——
+    # この輪は「同じことを2か所が別々に言っていて、片方が古い」で何度も外しています。
+    try:
+        topic_forge.print_long_stock()
+    except Exception as exc:                       # 在庫の本体を止めない
+        print(f"  （長尺の在庫が読めませんでした: {str(exc)[:100]}）")
 
     # **`calc:` が繋がっていないテーマを名指しする**（2026-08-18 に足した）。
     # 前の回が `topics.yaml` に「表を書いた回がこの行を書き換え忘れると

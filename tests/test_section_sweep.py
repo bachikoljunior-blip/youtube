@@ -1651,3 +1651,34 @@ def test_実物の全掃引を直に呼ぶ検査は_壊れた表の1件だけ():
         f"許しているのは {sorted(直呼びしてよい)} だけです —— "
         "1回 46〜48秒 かかるので `sweep_once()` に替えること"
     )
+
+
+# ---- `[並 N点]` は後ろへ回す（2026-08-26） --------------------------------
+#
+# **道具自身が「この x を名指しする節は書けません」と印字している候補**が、
+# 一覧の前のほうに残って、書ける候補を `…ほか N件` に沈めていました。
+
+
+def test_名指しできない同点は節にできない扱い():
+    tie = {"形": "逆転", "詳しく": {"並ぶ点": 3, "並ぶ x": [1, 2, 3]}}
+    enum = {"形": "逆転", "詳しく": {"並ぶ点": 2, "並ぶ x": [1, 2], "数え上げ": True}}
+    alone = {"形": "逆転", "詳しく": {"並ぶ点": 1, "並ぶ x": [1]}}
+    assert ss.unnameable(tie) is True
+    # **数え上げの同点は「それが全部」＝ 全部書けば節になる。** 沈めない。
+    assert ss.unnameable(enum) is False
+    assert ss.unnameable(alone) is False
+    assert ss.unnameable({"形": "崖"}) is False
+
+
+def test_名指しできない同点は一覧の後ろへ回る():
+    def hit(fn, ties):
+        return {"形": "逆転", "表": "t", "関数": fn, "見た値": "v",
+                "動かした引数": "a",
+                "詳しく": {"どこ": "いちばん高い", "x": 1, "値": 2, "端では": 1,
+                           "並ぶ点": ties, "並ぶ x": list(range(1, ties + 1))}}
+
+    lines = ss.report_lines([hit("f", 3), hit("g", 1)], top=40)
+    body = [ln for ln in lines if ".f（" in ln or ".g（" in ln]
+    assert len(body) == 2
+    # 名指しできる `g` が先。
+    assert ".g（" in body[0] and ".f（" in body[1]

@@ -38,8 +38,11 @@ def _stub(monkeypatch, *ids: str) -> None:
 
     monkeypatch.setattr(config, "load_topics", lambda: _topics(*ids))
     monkeypatch.setattr(batch_build, "_posted_including_ledger", lambda: set())
-    monkeypatch.setattr(batch_build, "_drop_doomed", lambda u, p: u)
-    monkeypatch.setattr(batch_build, "_drop_queue_tail_calcs", lambda u, p: u)
+    monkeypatch.setattr(batch_build, "_drop_doomed", lambda u, p, posted=None: u)
+    # `**_` は 2026-08-29 に足した。`_drop_queue_tail_calcs` が `land`（着地する日）を
+    #     取るようになったため。**引数を数える検査ではない**ので、増えても落ちない形にする。
+    monkeypatch.setattr(batch_build, "_drop_queue_tail_calcs",
+                        lambda u, p, **_: u)
 
 
 def test_長尺はショート向けの題を取らない(monkeypatch):
@@ -59,3 +62,87 @@ def test_既定は両方から取る(monkeypatch):
     _stub(monkeypatch, "s-alpha", "charlie")
     got = [t["id"] for t in batch_build.pick(2, [])]
     assert sorted(got) == ["charlie", "s-alpha"], got
+
+
+# ---- ショートの回が、長尺の在庫を食うときの値札（2026-08-26 09:5x に踏んだ）----
+#
+# `--long` を付けない `pick` は `s-` で始まらない題も候補に残します
+# （そうでないと「深い題をショートで出す」前提が永久に溜まりません）。
+# ですが `s-` で始まらない題は、**そのまま長尺の在庫**でもあります。
+# 族の最後の1件をショートで使うと、**7日ぶんの長尺の上限が2本 落ちます。**
+#
+# 実測: `topic_forge --count 2 --long` で `jutaku` の族を作って
+# 上限を 22本 → 24本 にした直後、同じ回の `batch_build --count 2`（`--long` なし）が
+# `jutaku-hanbun-jougen` を取りました。**どこにも印字されません。**
+#
+# **止めません。** どちらの使い道にも理由があるので、**値札を出すだけ**にします。
+
+
+def _stub_ledger(monkeypatch, used: set[str]) -> None:
+    from src import dupes
+
+    monkeypatch.setattr(dupes, "ledger_rows",
+                        lambda: [{"topic": t} for t in used])
+
+
+def test_ショート向けの題があるなら_族の最後の1件は残す(monkeypatch):
+    """**2026-08-26 12:0x に向きを変えた検査です。消していません。**
+
+    ここは長らく「`charlie`（族の最後の深い題）を取って、**値札を出す**」を
+    固定していました。09:5x の回が値札を足したときの検査です。
+
+    ですが値札は**選んだ後**に出ます。同じ在庫に `s-delta` が居るのだから、
+    **そちらを取れば族は死にません** —— 値札を読む人は要らなかった。
+    実測（12:0x の `pick(8)`）: **同じ深い題3件**を取りながら、
+    落ちる上限が **2本 → 0本** になりました。
+
+    だから固定するものを裏返しました。**値札そのものは消していません** ——
+    逃げ場が無い回には、下の `test_逃げ場が無い回は_値札を出して取る` で出ます。
+    """
+    _stub(monkeypatch, "charlie", "s-delta")
+    _stub_ledger(monkeypatch, set())
+    got = [t["id"] for t in batch_build.pick(1, [])]
+    assert got == ["s-delta"], got
+
+
+def test_逃げ場が無い回は_値札を出して取る(monkeypatch, capsys):
+    """**在庫が尽きているときは止めません**（投稿が途切れるのが最大の損失）。
+
+    守りは1周目だけで、埋まらなければ2周目が同じ手を取ります。
+    そのときは 09:5x の値札が、今までどおり出ること。
+    """
+    _stub(monkeypatch, "charlie")
+    _stub_ledger(monkeypatch, set())
+    got = [t["id"] for t in batch_build.pick(1, [])]
+    assert got == ["charlie"], got
+    out = capsys.readouterr().out
+    assert "7日ぶんの長尺の上限が 2本 落ちます" in out
+    # **止めないこと**（深い題ショートは 09/03 の前提に積む）
+    assert "止めません" in out
+    assert "topic_forge.py --count N --long" in out
+
+
+def test_族に長尺の題がまだ残るなら_上限は動かないと言う(monkeypatch, capsys):
+    # 同じ族（calc は id の最後の語）に2件ある ＝ 1件使っても族は残る
+    _stub(monkeypatch, "alpha-charlie", "bravo-charlie", "s-delta")
+    _stub_ledger(monkeypatch, set())
+    batch_build.pick(1, [])
+    out = capsys.readouterr().out
+    assert "7日ぶんの長尺の上限は動きません" in out
+
+
+def test_ショート向けの題だけの回は_何も言わない(monkeypatch, capsys):
+    _stub(monkeypatch, "s-alpha", "s-bravo")
+    _stub_ledger(monkeypatch, set())
+    batch_build.pick(2, [])
+    out = capsys.readouterr().out
+    assert "長尺の在庫" not in out
+
+
+def test_長尺の回では値札を出さない(monkeypatch, capsys):
+    """`--long` の回は、そもそも長尺として使っているので値札は要りません。"""
+    _stub(monkeypatch, "charlie", "s-delta")
+    _stub_ledger(monkeypatch, set())
+    batch_build.pick(1, [], long_form=True)
+    out = capsys.readouterr().out
+    assert "長尺の在庫" not in out

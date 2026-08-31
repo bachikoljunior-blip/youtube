@@ -752,6 +752,68 @@ def recommended_floor_minutes(now: datetime | None = None) -> float | None:
     return p["floor_min"] if p else None
 
 
+#: 画面の%から間隔を伸ばすときの、伸ばす前の基準（分）と上限（分）。
+#: 上限を **6時間**にしてあるのは、これを超えるとオーナーが画面を送ってから
+#: 次の周までが1日に2回を切り、**目盛りのほうが先に腐る**からです。
+GAUGE_FLOOR_BASE = 90.0
+GAUGE_FLOOR_CAP = 360.0
+
+
+def gauge_floor_minutes(base_min: float = GAUGE_FLOOR_BASE,
+                        now: datetime | None = None) -> tuple[float, float] | None:
+    """**誕生を数えられない回に、オーナーの画面の%だけで間隔を出す。**
+
+    返り: `(間隔の分, 何倍に伸ばしたか)`。伸ばす必要が無ければ `None`。
+
+    `recommended_floor_minutes()` は「誕生から誕生」を数えて出すので、
+    `data/quota.jsonl` が薄い回は `None` を返します（2026-08-30 の実測: `births=0`）。
+    **そこで長らく、呼ぶ側がそれぞれの定数（90分）へ落ちていました。**
+    `next_round.py` は `FALLBACK_MIN`、`sibling_check.py` は下限そのものを外す。
+    **定数は、速すぎるか遅すぎるかを言いません。**
+
+    **画面の%からは、比なら出せます。** `pace()` は「いまの速さ」と
+    「この先に許される速さ」を両方 持っているので、1周の重さが変わらないなら、
+    **間隔をその比のぶんだけ伸ばせば釣り合います。**
+
+        2026-08-30 15:40 JST の画面: 週 42%（枠 08/29 07:00 → 09/05 07:00）
+          いまの速さ 1.286 %/時 ／ 許される 0.428 %/時 → 比 3.0
+          → 90分 × 3.0 = **270分**
+        このままなら 100% は 09/01 12:46 JST。**リセットまで90時間 鎖が止まる** ——
+        止まるのはこのループだけではなく、**オーナー自身も使えなくなります。**
+
+    **覆る条件**: (a) 誕生が数えられるようになったら `recommended_floor_minutes()`
+    が先に返るので、ここは呼ばれません（そちらが正）。(b) 新しい画面で
+    「いまの速さ ≦ 許される速さ」になれば `None` を返し、**自分で元に戻ります**
+    （手で戻さないこと）。(c) 1周の重さを大きく変えたら比の前提が変わるので測り直すこと。
+    """
+    try:
+        p = pace(now)
+    except Exception:                                          # noqa: BLE001
+        return None
+    if not p:
+        return None
+    rate, fwd = p.get("rate"), p.get("forward_rate")
+    if not rate or not fwd or fwd <= 0 or rate <= fwd:
+        return None
+    ratio = float(rate) / float(fwd)
+    return min(GAUGE_FLOOR_CAP, float(base_min) * ratio), ratio
+
+
+def effective_floor_minutes(base_min: float = GAUGE_FLOOR_BASE,
+                            now: datetime | None = None) -> float | None:
+    """**呼ぶ側が見るべき下限。** 誕生が数えられればそれ、駄目なら画面の比。
+
+    `recommended_floor_minutes()` の契約（数えられなければ `None`）は変えません ——
+    あれが `None` を返すことに意味を持たせている検査があります。
+    **ここは「結局いくつで回すのか」を1か所に集めるための口**です。
+    """
+    got = recommended_floor_minutes(now)
+    if got is not None:
+        return float(got)
+    g = gauge_floor_minutes(base_min, now)
+    return g[0] if g else None
+
+
 def pace_report(now: datetime | None = None) -> None:
     now = now or datetime.now(timezone.utc)
     p = pace(now)

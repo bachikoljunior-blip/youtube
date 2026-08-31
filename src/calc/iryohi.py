@@ -64,6 +64,19 @@ ASSUMPTIONS = [
     "最初の3か月は通常の限度額で計算しています",
     "多数回該当の計算では、同じ額の医療費が毎月続いたものとして置いています。"
     "実際は月ごとに額が変わり、その月の自己負担も変わります",
+    "ふるさと納税と並べる計算では、給与収入だけの人として置いています。"
+    "社会保険料は年収の15パーセント、住民税の所得割は標準税率10パーセント、"
+    "ふるさと納税の特例分の上限は所得割額の20パーセントです。"
+    "超過課税のある自治体では所得割の率が変わるので、上限も変わります",
+    "ふるさと納税と並べる計算では、寄付額を「医療費控除を入れずに引いた上限額」に"
+    "置いています。医療費控除を入れた上限額まで寄付を減らせば、"
+    "自己負担は2,000円のままです。この計算が出しているのは"
+    "「上限が下がったことに気づかずに、そのまま寄付したとき」の額です",
+    "ふるさと納税と並べる計算では、ワンストップ特例ではなく確定申告した場合で"
+    "計算しています。医療費控除を受けるには確定申告が要るので、"
+    "ワンストップ特例を出していても、その申請は無効になります",
+    "医療費控除で戻る額は、所得税率に1.021を掛けたものと住民税10パーセントの合計です。"
+    "所得税率はその人の課税所得で決まるもので、足切りを決める総所得金額等ではありません",
 ]
 
 # 制度の値。**改正が続くものは入力に逃がす**（docs/CONSTRAINTS.md B4）が、
@@ -262,6 +275,41 @@ def check_tables() -> None:
     _high = multi_hit_after_tax(1_000_000, 12, 3_000_000, 0.45, "ウ")
     if not _high["net_gain"] < _low["net_gain"]:
         raise ValueError("税率が高いほうが、割引の取り分が大きくなっている")
+
+    # --- ふるさと納税と並べる（主題13）-----------------------------------
+    # **率によらない側だけを固定します。** 上限の下がる額そのものは
+    # 社会保険料率15%の仮定に乗るので、ここには入れません。
+    if abs(FURUSATO_SELF_PAY_SHARE - 0.02) > 1e-12:
+        raise ValueError(f"自己負担の増える割合が2%でない: {FURUSATO_SELF_PAY_SHARE}")
+    # 増える自己負担は控除額の2%ちょうど（**税率にも年収にもよらない**）。
+    # 段をまたぐ点と、所得割が0に着く点を避けた所で確かめること。
+    for _inc in (4_000_000, 6_000_000, 10_000_000):
+        _g = furusato_gap(_inc, 200_000)
+        if _g["税率が下がったか"]:
+            raise ValueError(f"年収{_inc}・控除20万で税率の段をまたいでいる（検査の置き所が悪い）")
+        if abs(_g["自己負担の増え"] - furusato_self_pay_rise(200_000)) > 3.0:
+            raise ValueError(
+                f"年収{_inc}: 自己負担の増えが控除額の2%になっていない: {_g['自己負担の増え']}")
+        # 上限の下がる「割合」のほうには税率が残る（2%より大きい）
+        if not _g["上限の下がる割合"] > FURUSATO_SELF_PAY_SHARE:
+            raise ValueError(f"年収{_inc}: 上限の下がる割合が2%以下になっている")
+    # 税率が高いほうが、上限は大きく下がる（分母 0.90−率×1.021 が小さくなるので）
+    if not (furusato_gap(10_000_000, 200_000)["上限の下がる割合"]
+            > furusato_gap(4_000_000, 200_000)["上限の下がる割合"]):
+        raise ValueError("税率が高いほうで、上限の下がり方が大きくなっていない")
+    # 正味は、どの税率でもプラス（戻りは最低でも15.11%、損は2%）
+    for _r in INCOME_TAX_RATES:
+        if furusato_net_per_yen(_r)["正味"] <= 0:
+            raise ValueError(f"所得税率{_r} で、正味がプラスになっていない")
+    # 崖は「1段だけ下がる」向き（またぐと上限も自己負担も悪くなる）
+    _c = furusato_cliff(8_000_000)
+    if not _c:
+        raise ValueError("年収800万で、税率の段をまたぐ点が1つも出ていない")
+    for _row in _c:
+        if _row["またいだ後の税率"] >= _row["税率"]:
+            raise ValueError("控除を増やしたのに所得税率が下がっていない")
+        if _row["上限の段差"] >= 0 or _row["自己負担の段差"] <= 0:
+            raise ValueError(f"崖の向きが逆: {_row}")
 
 
 def floor_amount(total_income: int) -> int:
@@ -1124,6 +1172,239 @@ def multi_hit_rate_grid(cost: int, months: int, total_income: int,
             for r in INCOME_TAX_RATES]
 
 
+# ---- 主題13: 医療費控除を取ると、ふるさと納税の上限が下がる（**族をまたいだ比較**）----
+#
+# **この2つを並べた金額表は、どこにも公表されていません。**
+# 総務省のふるさと納税ポータルも、各サイトの「控除上限額シミュレーション」も、
+# **医療費控除の欄をそもそも持っていません**（`src/calc/furusato.py` の
+# `ASSUMPTIONS` は 2026-08-28 まで「医療費控除があると上限は下がります」と
+# 書くだけで、**いくら下がるかを出す口が1つもありませんでした**）。
+# 国税庁側も同じで、医療費控除の解説にふるさと納税は出てきません。
+# **払う本人にとっては同じ1回の確定申告なのに、境目を並べた表が無い。**
+#
+# ここで出すのは3つです。
+#
+#   1. **上限は、控除額の 2.4〜3.6パーセント 下がる。**
+#      下がり方は所得税率で変わります（`limit()` の分母が `0.90 − 率×1.021` なので、
+#      **税率が高い人ほど大きく下がる**）
+#   2. **上限が下がって増える自己負担は、控除額の 2パーセント ちょうど。**
+#      **税率にも年収にも扶養にもよりません。**
+#      理由は下の `FURUSATO_SELF_PAY_SHARE` の註（住民税率 × 特例分の上限で、
+#      **分母が約分で消えます**）
+#   3. **その 2パーセント が破れる所が2つある。**
+#      (i) 医療費控除で所得税率が1段 下がる点（**控除が1,000円 増えただけで
+#      自己負担が1万円 増える**）／(ii) 住民税の所得割が0になって上限が
+#      2,000円の床に着く点（そこから先はもう下がらない）
+#
+# **結論の向きは「取ったほうが得」です** —— 戻りは控除額の
+# `税率×1.021 + 10%`（税率5%でも15.11パーセント）で、損は2パーセントだから。
+# **世間の「医療費控除を取るとふるさと納税で損する」は、額を出すと 2パーセント です。**
+
+# 住民税の所得割の標準税率 × ふるさと納税の特例分の上限（所得割額に対する割合）。
+# **この積が、そのまま「増える自己負担 ÷ 医療費控除額」になります。**
+#
+#     上限   = 所得割額 × 0.20 ÷ (0.90 − 税率×1.021) ＋ 2,000
+#     控除 D で所得割額が D×0.10 減る
+#       → 上限が D×0.10×0.20 ÷ (0.90 − 税率×1.021) 下がる  ← ここに税率が残る
+#     旧上限のまま寄付すると、その下がったぶんが超過額になり、
+#     超過額のうち自己負担になるのは (0.90 − 税率×1.021) 倍
+#       → 自己負担の増え = D×0.10×0.20 = **D × 2パーセント**  ← 税率が約分で消える
+#
+# **上限の下がり方には税率が残るのに、自己負担の増え方には残りません。**
+# ここが、この主題でいちばん出す値打ちのある所です。
+FURUSATO_SELF_PAY_SHARE = 0.10 * 0.20
+
+# 医療費控除の額を振るときの刻み（円）。崖を探すときに使います。
+FURUSATO_CLIFF_STEP = 1_000
+
+
+def _furusato():
+    from . import furusato
+
+    return furusato
+
+
+def furusato_limit(income: int, deduction: int = 0, *,
+                   social_rate: float = 0.15,
+                   dependents: int = 0) -> int:
+    """医療費控除を `deduction` 円 取ったときの、ふるさと納税の上限額。"""
+    fu = _furusato()
+    return fu.limit(fu.Person(income=income, social_rate=social_rate,
+                              dependents_general=dependents,
+                              other_deduction=max(0, deduction)))
+
+
+def furusato_gap(income: int, deduction: int, *,
+                 social_rate: float = 0.15, dependents: int = 0) -> dict:
+    """**医療費控除を取ると、ふるさと納税はいくら変わるか。**
+
+    寄付額は「医療費控除を入れずに引いた上限額」に置きます ——
+    **目安表を引くときに医療費控除を入れる人はほとんどいない**からで、
+    そこが、この主題が答えようとしている場面そのものです。
+    """
+    fu = _furusato()
+    p0 = fu.Person(income=income, social_rate=social_rate,
+                   dependents_general=dependents)
+    p1 = fu.Person(income=income, social_rate=social_rate,
+                   dependents_general=dependents,
+                   other_deduction=max(0, deduction))
+    before, after = fu.limit(p0), fu.limit(p1)
+    r0 = fu.income_tax_rate(fu.taxable_income(p0))
+    r1 = fu.income_tax_rate(fu.taxable_income(p1))
+    o0 = fu.out_of_pocket(p0, before)["自己負担"]
+    o1 = fu.out_of_pocket(p1, before)["自己負担"]
+    back = deduction * (r0 * (1 + RECONSTRUCTION) + RESIDENT_RATE)
+    return {
+        "年収": income,
+        "医療費控除": deduction,
+        "上限・控除なし": before,
+        "上限・控除あり": after,
+        "上限の下がり": before - after,
+        "上限の下がる割合": (before - after) / deduction if deduction else 0.0,
+        "所得税率・控除なし": r0,
+        "所得税率・控除あり": r1,
+        "税率が下がったか": r1 != r0,
+        "自己負担・控除なし": o0,
+        "自己負担・控除あり": o1,
+        "自己負担の増え": o1 - o0,
+        "自己負担の増える割合": (o1 - o0) / deduction if deduction else 0.0,
+        "医療費控除で戻る額": back,
+        "正味": back - (o1 - o0),
+    }
+
+
+def furusato_self_pay_rise(deduction: int) -> float:
+    """**上限が下がって増える自己負担**（税率にも年収にもよらない側）。
+
+    `FURUSATO_SELF_PAY_SHARE` の註のとおり、**控除額の2パーセント ちょうど**です。
+    段をまたぐ点と、所得割が0に着く点では、この式は当たりません
+    （`furusato_invariance` がその点を名指しします）。
+    """
+    return max(0, deduction) * FURUSATO_SELF_PAY_SHARE
+
+
+def furusato_invariance(incomes: list[int] | None = None,
+                        deductions: list[int] | None = None,
+                        social_rates: tuple[float, ...] = (0.13, 0.15, 0.17),
+                        dependents: tuple[int, ...] = (0, 1, 2)) -> dict:
+    """**2パーセントが当たらない点を、名指しして返す。**
+
+    当たらないのは2つの場合だけのはずです（どちらも上の註）。
+    **3つ目が出たら、それはこちらの読み違いです。**
+    """
+    fu = _furusato()
+    incomes = incomes or list(range(2_500_000, 20_000_001, 500_000))
+    deductions = deductions or [50_000, 100_000, 250_000, 500_000]
+    seen = 0
+    bracket: list[dict] = []
+    floored: list[dict] = []
+    other: list[dict] = []
+    for income in incomes:
+        for sr in social_rates:
+            for dep in dependents:
+                for d in deductions:
+                    seen += 1
+                    row = furusato_gap(income, d, social_rate=sr,
+                                       dependents=dep)
+                    want = furusato_self_pay_rise(d)
+                    if abs(row["自己負担の増え"] - want) <= max(3.0, want * 0.002):
+                        continue
+                    row = dict(row, 社会保険料率=sr, 扶養=dep)
+                    if row["税率が下がったか"]:
+                        bracket.append(row)
+                    elif fu.resident_tax_income_levy(
+                            fu.Person(income=income, social_rate=sr,
+                                      dependents_general=dep,
+                                      other_deduction=d)) == 0:
+                        floored.append(row)
+                    else:
+                        other.append(row)
+    return {"見た点": seen, "段をまたいだ点": bracket,
+            "所得割が0に着いた点": floored, "説明のつかない点": other,
+            "2パーセントで説明できる割合":
+                (seen - len(bracket) - len(floored) - len(other)) / seen}
+
+
+def furusato_cliff(income: int, *, social_rate: float = 0.15,
+                   dependents: int = 0, upto: int = 3_000_000,
+                   step: int = FURUSATO_CLIFF_STEP) -> list[dict]:
+    """**医療費控除で所得税率が1段 下がる点**（＝上限が階段状に落ちる点）。
+
+    `step` 円 刻みで医療費控除を増やし、**率が変わった1段だけ**を返します。
+    """
+    fu = _furusato()
+    out: list[dict] = []
+    prev = fu.income_tax_rate(fu.taxable_income(
+        fu.Person(income=income, social_rate=social_rate,
+                  dependents_general=dependents)))
+    for d in range(step, upto + 1, step):
+        now = fu.income_tax_rate(fu.taxable_income(
+            fu.Person(income=income, social_rate=social_rate,
+                      dependents_general=dependents, other_deduction=d)))
+        if now == prev:
+            continue
+        lo = furusato_gap(income, d - step, social_rate=social_rate,
+                          dependents=dependents)
+        hi = furusato_gap(income, d, social_rate=social_rate,
+                          dependents=dependents)
+        out.append({
+            "年収": income, "刻み": step,
+            "手前の控除": d - step, "またいだ控除": d,
+            "税率": prev, "またいだ後の税率": now,
+            "上限・手前": lo["上限・控除あり"], "上限・後": hi["上限・控除あり"],
+            "上限の段差": hi["上限・控除あり"] - lo["上限・控除あり"],
+            "自己負担・手前": lo["自己負担・控除あり"],
+            "自己負担・後": hi["自己負担・控除あり"],
+            "自己負担の段差": hi["自己負担・控除あり"] - lo["自己負担・控除あり"],
+        })
+        prev = now
+    return out
+
+
+def furusato_net_per_yen(rate: float) -> dict:
+    """**医療費控除1円につき、正味いくら残るか。**
+
+    戻りは `税率×1.021 ＋ 住民税10%`、損は **2パーセント固定**。
+    **どの税率でもプラスです** —— そこがこの主題の結論になります。
+    """
+    back = rate * (1 + RECONSTRUCTION) + RESIDENT_RATE
+    return {"所得税率": rate, "戻り": back,
+            "ふるさと納税で減る": FURUSATO_SELF_PAY_SHARE,
+            "正味": back - FURUSATO_SELF_PAY_SHARE}
+
+
+def furusato_grid(deduction: int = 300_000, *, social_rate: float = 0.15,
+                  incomes: list[int] | None = None) -> list[dict]:
+    check_tables()
+    return [furusato_gap(i, deduction, social_rate=social_rate)
+            for i in (incomes or [3_000_000, 4_000_000, 5_000_000, 6_000_000,
+                                  8_000_000, 10_000_000, 15_000_000])]
+
+
+def furusato_deduction_grid(income: int = 6_000_000, *,
+                            social_rate: float = 0.15,
+                            deductions: list[int] | None = None) -> list[dict]:
+    check_tables()
+    return [furusato_gap(income, d, social_rate=social_rate)
+            for d in (deductions or [50_000, 100_000, 200_000, 300_000,
+                                     500_000, 1_000_000, 2_000_000])]
+
+
+def furusato_cliff_grid(incomes: list[int] | None = None, *,
+                        social_rate: float = 0.15) -> list[dict]:
+    check_tables()
+    out: list[dict] = []
+    for i in (incomes or [5_000_000, 6_000_000, 7_000_000, 8_000_000,
+                          9_000_000, 10_000_000, 12_000_000]):
+        out.extend(furusato_cliff(i, social_rate=social_rate))
+    return out
+
+
+def furusato_rate_grid() -> list[dict]:
+    check_tables()
+    return [furusato_net_per_yen(r) for r in INCOME_TAX_RATES]
+
+
 if __name__ == "__main__":
     check_tables()
     print("制度の値の検査: 通過")
@@ -1423,3 +1704,66 @@ if __name__ == "__main__":
               f"{r['net_gain']:11,d}円 {r['eaten_share']:8.2%}")
     print("  **「高額療養費と医療費控除は両取りできる」は、額のうえでは半分正しくありません。**"
           "高額療養費で戻った額は補填なので、医療費控除の対象から差し引かれます。")
+
+    D_F = 300_000
+    print(f"\n=== 医療費控除{D_F:,}円で、ふるさと納税の上限はいくら下がるか"
+          f"（年収べつ・社会保険料率15%）===")
+    print("  **ふるさと納税の上限額は、住民税の所得割で決まります。**"
+          "医療費控除は所得控除なので、所得割そのものを下げます。")
+    print("  **下がり方は所得税率で変わります** —— 上限の式の分母が"
+          "「90% − 所得税率×1.021」なので、税率が高い人ほど分母が小さく、下がりが大きい。")
+    print(f"{'年収':>11s} {'所得税率':>7s} {'上限・控除なし':>13s} {'上限・控除あり':>13s} "
+          f"{'下がった額':>10s} {'控除に対する割合':>15s}")
+    for r in furusato_grid(D_F):
+        print(f"{r['年収']:10,d}円 {r['所得税率・控除なし']:6.0%} "
+              f"{r['上限・控除なし']:12,d}円 {r['上限・控除あり']:12,d}円 "
+              f"{r['上限の下がり']:9,d}円 {r['上限の下がる割合']:14.2%}")
+    print("  **どのサイトの「控除上限額シミュレーション」にも医療費控除の欄はありません。**"
+          "上限を引いたときに医療費控除を入れる人はほとんどいないので、"
+          "**この差はそのまま超過額になります。**")
+
+    print("\n=== 上限が下がって増える自己負担は、控除額の2%ちょうど"
+          "（年収にも税率にもよらない）===")
+    print("  **上限の下がり方には所得税率が残るのに、増える自己負担には残りません。**")
+    print("    上限の下がり ＝ 控除 × 10% × 20% ÷ (90% − 率×1.021)")
+    print("    超過額のうち自己負担になるのは (90% − 率×1.021) 倍")
+    print("    → 自己負担の増え ＝ 控除 × 10% × 20% ＝ **控除の2%**（分母が約分で消える）")
+    print(f"{'医療費控除':>11s} {'上限の下がり':>12s} {'自己負担・控除なし':>17s} "
+          f"{'自己負担・控除あり':>17s} {'増えた額':>9s} {'控除に対する割合':>15s}")
+    for r in furusato_deduction_grid():
+        mark = "  ← 所得税率が1段 下がった（下の崖）" if r["税率が下がったか"] else ""
+        print(f"{r['医療費控除']:10,d}円 {r['上限の下がり']:11,d}円 "
+              f"{r['自己負担・控除なし']:16,.0f}円 {r['自己負担・控除あり']:16,.0f}円 "
+              f"{r['自己負担の増え']:8,.0f}円 {r['自己負担の増える割合']:14.2%}" + mark)
+    _inv = furusato_invariance()
+    print(f"  **{_inv['見た点']:,}点を振って確かめました**（年収250万〜2,000万・"
+          f"社会保険料率3通り・扶養3通り・控除4通り）: "
+          f"2%で説明できたのは {_inv['2パーセントで説明できる割合']:.1%}。"
+          f"外れたのは「所得税率の段をまたいだ点 {len(_inv['段をまたいだ点'])}件」と"
+          f"「住民税の所得割が0になって上限が2,000円の床に着いた点"
+          f" {len(_inv['所得割が0に着いた点'])}件」だけで、"
+          f"説明のつかない点は {len(_inv['説明のつかない点'])}件 です。")
+    print(f"{'所得税率':>7s} {'控除1円で戻る額':>14s} {'ふるさと納税で減る':>17s} {'正味':>8s}")
+    for r in furusato_rate_grid():
+        print(f"{r['所得税率']:6.0%} {r['戻り']:13.2%} "
+              f"{r['ふるさと納税で減る']:16.2%} {r['正味']:7.2%}")
+    print("  **「医療費控除を取るとふるさと納税で損をする」は、額を出すと2%です。**"
+          "いちばん低い所得税率5%の人でも、戻りは15.11%。**正味は必ずプラスになります。**")
+
+    print("\n=== 医療費控除で所得税率が1段 下がると、上限が階段状に落ちる"
+          "（控除1,000円で自己負担が1万円 増える点）===")
+    print("  **医療費控除は課税所得を下げるので、所得税率そのものを1段 下げることがあります。**"
+          "ところが上限の式の分母は「90% − 所得税率×1.021」なので、"
+          "**税率が下がると分母が大きくなり、上限は逆に落ちます。**")
+    print(f"{'年収':>11s} {'手前の控除':>11s} {'またいだ控除':>12s} {'税率':>11s} "
+          f"{'上限の段差':>10s} {'自己負担の段差':>13s}")
+    for r in furusato_cliff_grid():
+        print(f"{r['年収']:10,d}円 {r['手前の控除']:10,d}円 {r['またいだ控除']:11,d}円 "
+              f"{r['税率']:4.0%}→{r['またいだ後の税率']:4.0%} "
+              f"{r['上限の段差']:9,d}円 {r['自己負担の段差']:12,.0f}円")
+    print(f"  **刻みは{FURUSATO_CLIFF_STEP:,}円です。**"
+          "控除がその1刻み ふえただけで、この段差が丸ごと乗ります。")
+    print("  **逃げ方は1つだけ**: 医療費控除を入れて上限を引き直し、"
+          "**その上限まで寄付を減らすこと。**そうすれば自己負担は2,000円のままです。"
+          "**順番が逆だと直せません** —— 寄付は年内、医療費控除は翌年の申告なので、"
+          "**12月31日を過ぎたら寄付の額はもう動かせません。**")

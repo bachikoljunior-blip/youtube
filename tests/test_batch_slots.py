@@ -23,6 +23,11 @@ sys.path.insert(0, str(ROOT / "scripts"))
 from scripts.batch_build import check_window, ledger_hours, slots  # noqa: E402
 from src.uploader import JST, next_publish_at  # noqa: E402
 
+#: **時計を釘づけする**（2026-08-29 に足した）。`_band_walk()` は
+#: **過ぎた帯を翌日へ送る**ので、検査の日付が「今日」を過ぎると
+#: 答えが変わります。固定の日付を書いた検査は、そのままだと**いつか勝手に赤くなります。**
+NOW = datetime(2026, 8, 24, 8, 0, tzinfo=JST)
+
 
 # --- slots: 1日にN本を置けるか -------------------------------------------
 #
@@ -36,9 +41,15 @@ def test_no_date_keeps_old_behaviour():
 
 
 def test_date_spreads_hours_on_one_day():
-    """日付を渡すと、**同じ日**の別々の時刻になる。これが8の段。"""
-    assert slots(4, 10, "2026-08-24", [], taken=set()) == [
-        "2026-08-24@10", "2026-08-24@11", "2026-08-24@12", "2026-08-24@13",
+    """日付を渡すと、**同じ日**の別々の時刻になる。これが8の段。
+
+    **時刻は帯（09:00〜13:30）から採ります**（2026-08-29 に直した。
+    それまでは `range(hour, 24)` で、帯が埋まると 14:00 以降へこぼれていました。
+    実測は `batch_build._band_walk()` の docstring）。
+    """
+    assert slots(4, 10, "2026-08-24", [], taken=set(), lanes_n=1, now=NOW) == [
+        "2026-08-24@10:00", "2026-08-24@10:30",
+        "2026-08-24@11:00", "2026-08-24@11:30",
     ]
 
 
@@ -84,20 +95,68 @@ def test_taken_hours_are_skipped():
 
     実物（2026-08-17 の控え）の 09-01 と同じ形: 9,10,12〜16 が埋まり → 空きは 11。
     既定の `hour + i` なら 9,10 とぶつけて**先頭2本を捨てていた**。
+
+    **きざみは 30分 になりました**（2026-08-29）—— 控えが「9時が埋まり」と言っても
+    **9:30 は空き**です。きざみは `day_cap.MIN_GAP_MIN`（これより詰めた本は死ぬ）
+    から引いており、帯の枠数 10 は `day_cap.cap()` の 10本/日 と同じ実測です。
+    **11:00 はもう選びません** —— 9:30 のほうが早く、どちらも帯の中だからです。
     """
-    got = slots(1, 9, "2026-09-01", [], taken={9, 10, 12, 13, 14, 15, 16})
-    assert got == ["2026-09-01@11"]
+    got = slots(1, 9, "2026-09-01", [], taken={9, 10, 12, 13, 14, 15, 16},
+                lanes_n=1)
+    assert got == ["2026-09-01@9:30"]
 
 
 def test_taken_hours_skipped_for_several():
-    got = slots(3, 9, "2026-08-24", [], taken={9, 11, 13})
-    assert got == ["2026-08-24@10", "2026-08-24@12", "2026-08-24@14"]
+    """**空きは帯（09:00〜13:30）の中からだけ**採ります（2026-08-29 に直した）。
+
+    ここは長らく `["…@10", "…@12", "…@14"]` を期待していました。
+    **14:00 は帯の外**で、実測の1本あたりは **0.7再生**（帯の中は 537.2）——
+    `batch_build._band_walk()` の docstring に測り方と n を書いてあります。
+    """
+    got = slots(3, 9, "2026-08-24", [], taken={9, 11, 13}, lanes_n=1, now=NOW)
+    assert got == ["2026-08-24@9:30", "2026-08-24@10:00", "2026-08-24@10:30"]
+
+
+def test_shorts_never_leave_the_live_band():
+    """**帯が埋まったら、同じ日の 14:00 ではなく次の日の帯へ**（2026-08-29）。
+
+    これが `_band_walk()` の要点です。**時刻を後ろへ倒すより、日を送るほうが速い**
+    —— 帯の外は 0.7再生/本 なので、1日 待つ代わりに 537.2倍 になります。
+    """
+    from scripts.batch_build import _band_walk
+
+    band = {h * 60 for h in (9, 10, 11, 12, 13)} | {12 * 60 + 30, 13 * 60 + 30}
+    got = slots(2, 9, "2026-08-24", [], step_min=30, taken_min=band, lanes_n=1, now=NOW)
+    assert got == ["2026-08-24@9:30", "2026-08-24@10:30"]
+
+    # 帯が満杯の日は、**次の日の帯**へ（14:00 以降へは1本も置かない）。
+    # `taken_by_day` を渡すのは、実物の予約で答えが変わらないようにするため。
+    full = {m for m in range(9 * 60, 13 * 60 + 31, 30)}
+    got = _band_walk(3, "2026-08-24", first_day_taken=full,
+                     taken_by_day={"2026-08-24": full, "2026-08-25": set()},
+                     lanes_n=1, now=NOW)
+    assert got == ["2026-08-25@9:00", "2026-08-25@9:30", "2026-08-25@10:00"]
+
+
+def test_long_form_still_uses_its_own_hours():
+    """**長尺は帯に掛けません。** `SHORTS_FEED` の枠を1つも使わないため。
+
+    掛けると 18〜22時 の置き先（`_long_ring()`）が消え、長尺の上限
+    （`day_cap.long_form()`）とも食い違います。
+    """
+    got = slots(3, 19, "2026-08-24", [], taken=set(), long_form=True)
+    assert got == ["2026-08-24@19", "2026-08-24@20", "2026-08-24@21"]
 
 
 def test_not_enough_free_hours_is_refused():
-    """**足りないなら作る前に止める。** 作ってから落ちると1本まるごと捨てます。"""
+    """**足りないなら作る前に止める。** 作ってから落ちると1本まるごと捨てます。
+
+    **長尺の側だけの門になりました**（2026-08-29）。ショートは帯が埋まっても
+    止まらず、**次の日の帯へ送ります** —— 上の `test_shorts_never_leave_the_live_band`。
+    「作ってから落ちる」を避けるのが元の理由なので、**送れるなら送るほうが安い**。
+    """
     with pytest.raises(SystemExit):
-        slots(3, 22, "2026-08-24", [], taken={23})
+        slots(3, 22, "2026-08-24", [], taken={23}, long_form=True)
 
 
 def test_explicit_hours_pass_through_a_clash(capsys):
@@ -310,9 +369,14 @@ def test_step_min_30_packs_twice_per_hour() -> None:
 
 
 def test_step_min_60_is_unchanged() -> None:
-    """**既定は1文字も変えていないこと。** 変えると既存の予約とぶつかります。"""
-    assert slots(3, 9, "2026-09-30", [], taken=set()) == [
-        "2026-09-30@9", "2026-09-30@10", "2026-09-30@11",
+    """既定の目盛りは1時間のまま（**帯の中で** 09:00 から順に）。
+
+    2026-08-29 に `@9` → `@9:00` へ変わりました。**同じ時刻です** ——
+    `upload_only.parse_when()` は `@H` も `@H:MM` も同じに読みます
+    （`test_show_slot_reads_both_forms` と同じ2形）。
+    """
+    assert slots(3, 9, "2026-09-30", [], taken=set(), lanes_n=1) == [
+        "2026-09-30@9:00", "2026-09-30@9:30", "2026-09-30@10:00",
     ]
 
 
@@ -351,9 +415,17 @@ def test_step_min_must_divide_an_hour() -> None:
 
 
 def test_step_min_runs_out_of_room() -> None:
-    """**足りないときは黙って翌日へ送らない**（1日あたりの本数を測っているため）。"""
+    """**長尺は、足りなければ止まる**（黙って翌日へ送らない）。
+
+    **ショートはもう送ります**（2026-08-29）。当時の理由は「1日あたりの本数を
+    測っている最中だから」でしたが、**その測定はもう終わっています** ——
+    `src/day_cap.py` が 1日 10本・帯 09:00〜13:30 を出しており、
+    帯の外に置いた本は実測 0.7再生/本（帯の中 537.2）。
+    **測るために残していた枠が、いまは捨てる枠になっています。**
+    """
     with pytest.raises(SystemExit) as err:
-        slots(4, 23, "2026-09-30", [], step_min=30, taken_min=set())
+        slots(4, 23, "2026-09-30", [], step_min=30, taken_min=set(),
+              long_form=True)
     assert "30分きざみ" in str(err.value)
 
 
@@ -411,3 +483,77 @@ def test_slots_output_is_parsed_by_split_when() -> None:
         hour, minute, date = split_when(spec)
         assert date == "2026-09-30"
         assert 0 <= hour <= 23 and minute in (0, 30)
+
+
+def test_explicit_hours_outside_the_band_are_announced(capsys):
+    """**明示は通す。ただし帯の外なら必ず言う**（2026-08-29）。
+
+    `--hours` を黙って通すと、`_band_walk()` が塞いだ穴が
+    **`--hours` 越しに開いたまま**になります。実測の 0.7再生/本 を、
+    その場で読ませること（`_band_walk()` の docstring に測り方と n）。
+    """
+    assert slots(2, 9, "2026-08-24", [15, 21], taken=set()) == [
+        "2026-08-24@15", "2026-08-24@21",
+    ]
+    out = capsys.readouterr().out
+    assert "生きる帯" in out and "0.7再生" in out
+
+
+def test_explicit_hours_inside_the_band_are_quiet(capsys):
+    """帯の中を明示した回は、余計なことを言わない。"""
+    assert slots(2, 9, "2026-08-24", [10, 12], taken=set()) == [
+        "2026-08-24@10", "2026-08-24@12",
+    ]
+    assert "生きる帯" not in capsys.readouterr().out
+
+
+def test_long_form_explicit_hours_are_quiet(capsys):
+    """**長尺には帯を掛けません** —— 19時台に「帯の外だ」と鳴ってはいけません。"""
+    slots(2, 19, "2026-08-24", [19, 20], taken=set(), long_form=True)
+    assert "生きる帯" not in capsys.readouterr().out
+
+
+# --- 過ぎた枠を返さないこと（2026-08-29。**`_band_walk` を書いた直後に踏んだ**）---
+#
+# 帯は朝だけ（09:00〜13:30）なので、**夕方以降に走った回**が今日を指すと、
+# `_band_walk` は黙って `今日@9:00` を返していました。`next_publish_at()` は
+# 「過去か直近すぎます」で落とし、**作った1本がそのまま捨てられます**
+# （`build/` はコンテナと一緒に消える —— `slots()` の docstring の「3回持ち越された穴」）。
+#
+# 直す前の `range(hour, 24)` は 21:00 を返せたので**落ちはしませんでした**
+# （そのかわり 0.7再生 で公開される）。**どちらでもなく、翌日の帯へ送ること。**
+
+def test_過ぎた帯は翌日へ送る() -> None:
+    from datetime import datetime
+
+    from scripts.batch_build import _band_walk
+    from src.uploader import JST
+
+    taken = {"2026-08-29": set(), "2026-08-30": set()}
+    got = _band_walk(2, "2026-08-29", first_day_taken=set(),
+                     taken_by_day=dict(taken), lanes_n=1,
+                     now=datetime(2026, 8, 29, 20, 56, tzinfo=JST))
+    assert got == ["2026-08-30@9:00", "2026-08-30@9:30"], (
+        "帯を過ぎた時刻に走った回が、今日の朝を返しています"
+        "（`next_publish_at()` が落として1本 捨てます）")
+
+
+def test_帯の途中なら残りの枠だけ使う() -> None:
+    """**まだ帯の中なら、残っている枠は使うこと。** 1日ぶん無駄にしない。"""
+    from datetime import datetime
+
+    from scripts.batch_build import _band_walk
+    from src.uploader import JST
+
+    got = _band_walk(2, "2026-08-29", first_day_taken=set(),
+                     taken_by_day={"2026-08-29": set()}, lanes_n=1,
+                     now=datetime(2026, 8, 29, 11, 0, tzinfo=JST))
+    assert got == ["2026-08-29@12:00", "2026-08-29@12:30"]
+
+
+def test_未来の日は丸ごと使える() -> None:
+    from scripts.batch_build import _band_walk
+
+    got = _band_walk(2, "2026-09-15", first_day_taken=set(),
+                     taken_by_day={"2026-09-15": set()}, lanes_n=1)
+    assert got == ["2026-09-15@9:00", "2026-09-15@9:30"]

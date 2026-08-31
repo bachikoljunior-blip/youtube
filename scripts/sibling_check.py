@@ -647,8 +647,14 @@ def main() -> int:
         floor = None
         try:
             sys.path.insert(0, str(Path(__file__).resolve().parent))
-            from quota import recommended_floor_minutes
-            floor = recommended_floor_minutes()
+            # **`effective_floor_minutes` を見ること**（2026-08-30）。
+            # `recommended_floor_minutes()` は誕生を数えられない回に `None` を返し、
+            # ここはそれを「下限なし」と読んで**素通しして**いました ——
+            # 計器が黙った回だけ、いちばん速く回る形です。
+            # いまは同じ口がオーナーの画面の%から比で出します
+            # （`quota.gauge_floor_minutes()` の docstring に覆る条件）。
+            from quota import effective_floor_minutes
+            floor = effective_floor_minutes()
         except Exception as exc:                 # 計器が壊れても鎖は止めない
             print(f"速さ: **測れませんでした**（{exc}）。間隔は空けません")
         now = datetime.now(timezone.utc)

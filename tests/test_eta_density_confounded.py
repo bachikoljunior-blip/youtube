@@ -88,9 +88,21 @@ def test_trajectory_still_walks_the_conservative_branch():
     density = eta.sustained_density(None, eta.PLAN_PUBLISH_PER_DAY)
     assert d["factor"] == max(1.0, arm_cap / density), (
         "factor が (B) を混ぜている。印字だけを変えること")
-    assert d["factor_if_window"] > d["factor"], (
-        "(B) の側が (A) 以下なら、この節そのものが要らない —— "
-        "賭かっているものが無いことになる")
+    # **(B) の側に引き代が無いこともあります**（2026-08-27 に測って分かった）。
+    # ここは長らく `factor_if_window > factor` を**無条件で**要求していました
+    # ——「(B) が (A) 以下なら、この節そのものが要らない」という理屈です。
+    # **その前提のほうが外れました。** 05:00〜08:30 に置いた 8本 は全部 0再生で、
+    # 窓の左端は 08:59。08:59〜13:30 は30分きざみで**ちょうど10枠** ＝ (A) と同じです。
+    #
+    # **節は要ります。** 要らなくなるのは「上振れがある」という**主張**のほうで、
+    # そのときは**無いと言う**のが仕事です（次の回が、無い上振れを取りにいかないように）。
+    if d["factor_if_window"] > d["factor"]:
+        assert "(A)" in d["why"] and "(B)" in d["why"], "2つの枝を両方 出すこと"
+    else:
+        assert d["factor_if_window"] == d["factor"], "(B) が (A) を下回るのは数え方の誤り"
+        assert "引き代はありません" in d["why"], (
+            "(B) に上振れが無いなら、**そう言うこと** —— "
+            "「切り分けが済んでいない」とだけ書くと、次の回が無い上振れを取りにいく")
 
 
 def test_the_two_branches_are_measured_against_the_same_baseline():

@@ -221,8 +221,39 @@ class Verdict:
     power: float
     #: `ratio` を `TARGET_POWER` で当てるのに要る片群の本数
     need_n: int | None
+    #: **その実験が比べている値**（2026-08-27）。`"engaged"` 以外は、
+    #: この当てっこが当たりません（下の `lines()` の註）。
+    metric: str = "engaged"
 
     def lines(self) -> list[str]:
+        # --- **engaged で測っていない実験に、この数を出さないこと**（2026-08-27） ---
+        #     ここの当てっこは、**実データ 90本の engaged 比率**をブートストラップ
+        #     して作っています。`request_form` は**登録**で測るので、当たりません。
+        #
+        #     実測 2026-08-27、`request_form`（床 72本）にこう出ていました::
+        #
+        #         片群 72本で 1.3倍は当てられます（**要る本数は 25本**）
+        #
+        #     床 72本 は登録率 0.0318%（3,066再生に1人）から引いた数です。
+        #     25本 ＝ 約 10,500再生 ＝ **期待 3.3人** で、効きが2倍でも
+        #     見分けられません。**「72は過剰、25でよい」と読めるこの1行は、
+        #     `falsified_if`（上回らなければ外れ・同点も外れ）を通って
+        #     `next_if_false` に届き、腕ごと畳みます** —— その腕は `sub_rate` で、
+        #     `scripts/eta.py --alloc` が3回 続けて「次の1件はここ」と
+        #     名指ししている腕です。**黙って数だけ出さないこと。**
+        if self.metric != "engaged":
+            return [
+                f"  判定の当てっこ: **出しません**（この実験が比べているのは"
+                f"**{self.metric}**で、engaged ではありません）",
+                f"    `src/ab_power.py` は**実データ {self.sample}本の engaged 比率**から"
+                "作った当てっこです。**別の値に当てると、要る本数が嘘になります。**",
+                f"    床 {self.n_per_group}本 の出どころは `src/judgeable.MEMBER_SOURCES`"
+                "（そこに理由ごと書いてあります）。**床を下げるなら、"
+                f"{self.metric}で検出力を引き直してから**下げること —— "
+                "`falsified_if` は「上回らなければ外れ」なので、"
+                "**見分けられなかっただけの実験が、効かない実験として閉じます**"
+                "（`next_if_false` が腕ごと畳みます）。",
+            ]
         out = [
             f"  判定の当てっこ（実データ {self.sample}本の engaged 比率から・API 0単位）",
             f"    いまの規則（中央値だけ）: 効きが無くても **{self.null_median:.0%}** で「上回った」と出ます"
@@ -256,8 +287,14 @@ def verdict(
     ratio: float = TARGET_RATIO,
     trials: int = TRIALS,
     seed: int = SEED,
+    metric: str = "engaged",
 ) -> Verdict | None:
-    """実データで測った、判定規則の当てっこ。標本が取れなければ `None`。"""
+    """実データで測った、判定規則の当てっこ。標本が取れなければ `None`。
+
+    `metric` は**その実験が比べている値**（既定 `"engaged"`）。
+    ここの当てっこは engaged 比率のブートストラップなので、
+    **別の値の実験に数を出さないこと** —— `Verdict.lines()` の註。
+    """
     vals = observed_ratios() if values is None else values
     if len(vals) < 5:
         return None
@@ -265,6 +302,7 @@ def verdict(
         sample=len(vals),
         n_per_group=n_per_group,
         ratio=ratio,
+        metric=metric,
         null_median=hit_rate(vals, n_per_group, 1.0, rule=median_rule, trials=trials, seed=seed),
         null_ranksum=hit_rate(vals, n_per_group, 1.0, trials=trials, seed=seed),
         power=hit_rate(vals, n_per_group, ratio, trials=trials, seed=seed),

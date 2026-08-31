@@ -32,7 +32,11 @@ from __future__ import annotations
 
 import json
 import sys
+from datetime import date
 from pathlib import Path
+
+#: 偽の公開日。**どの前提の `last_useful_day` よりも前**（＝どれも「間に合う」側）。
+_EARLY = date(2026, 8, 1)
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
@@ -85,10 +89,23 @@ def test_明示された指示を上書きしない(monkeypatch):
 
 
 def _stock(monkeypatch, live: int, pending_off: int, room):
+    """**公開日は本物の `date` を渡すこと**（2026-08-26 に踏んだ）。
+
+    ここは長らく `[("d", "v")]` と、**日付の所に文字列**を置いていました。
+    `motion_shortfall()` は `members()` の本数しか見ていなかったので通っていましたが、
+    同じ日に入った `Floor.in_time()`（**床を「本数」ではなく「期限に間に合う本数」で
+    数える**）が `day <= last_useful_day` を撃つので、そこで落ちます:
+
+        TypeError: '<=' not supported between instances of 'str' and 'datetime.date'
+
+    **production の `judgeable.members()` は `date` を返します**（実測で確認）。
+    落ちても `motion_shortfall()` は `except` で 0 を返すので、
+    **本番は静かに「足りています」と言い続けます** —— 検査だけが赤くなる形でした。
+    """
     from src import judgeable
     monkeypatch.delenv("YT_OPENING_MOTION", raising=False)
     monkeypatch.setattr(judgeable, "members",
-                        lambda k: {"対照(動きなし)": [("d", "v")] * live})
+                        lambda k: {"対照(動きなし)": [(_EARLY, "v")] * live})
     flags = {f"t{i}": False for i in range(pending_off)}
     flags["t-on"] = True
     monkeypatch.setattr(motion_groups, "motion_by_topic", lambda *a, **k: flags)

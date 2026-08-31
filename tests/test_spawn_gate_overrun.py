@@ -59,14 +59,35 @@ def _run(tmp_path: Path, born_minutes_ago: float, cron_minute: int) -> tuple[int
     return p.returncode, p.stdout + p.stderr
 
 
+def _floor() -> float | None:
+    """**いま実際に効いている下限**（`quota.effective_floor_minutes()`）。
+
+    **ここを固定値で書かないこと**（2026-08-30 に踏んだ）。
+    子は本物の `data/usage.jsonl` を読むので下限は実測で動きます ——
+    オーナーの画面を積んだ日に 90分 → 275分 になり、
+    「誕生は60分前・親は58分後」で作っていたこの回は**またぐ側**へ落ちて、
+    待つ枝ではなく畳む枝（6）を測っていました。**見たいのは分数ではなく枝です。**
+    """
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "quota_for_gate", ROOT / "scripts" / "quota.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod.effective_floor_minutes()
+
+
 def test_gate_before_parent_fire_waits(tmp_path):
     """明けるのが親の発火より**前**なら、いつもどおり 5（待つ）。"""
+    import pytest
     now = datetime.now(timezone.utc)
-    # 親の発火を「いまから58分後」に置く。誕生は1分前なので、
-    # 下限（65分前後）が明けるのは64分後 → **またぐ**。またがない側を作るため、
-    # 誕生を十分に古くして「あと数分」にする。
+    floor = _floor()
+    if floor is None:
+        pytest.skip("目盛りが無い ＝ 下限そのものが無い")
+    # 親の発火を「いまから58分後」に置き、**下限が明けるのを30分後**にする
+    # ＝ またがない側。誕生の古さは下限から作ること（固定値にしない）。
     cron = (now + timedelta(minutes=58)).minute
-    code, out = _run(tmp_path, born_minutes_ago=60.0, cron_minute=cron)
+    code, out = _run(tmp_path, born_minutes_ago=max(1.0, floor - 30.0),
+                     cron_minute=cron)
     assert code in (0, 5), out
     if code == 5:
         assert "秒 待ってから" in out, out

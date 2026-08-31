@@ -31,6 +31,11 @@
   自己都合・勤続20年なら **3回・3.0年** かかります
 - **勤続1年未満・自己都合のときだけ、65歳以降のほうが多くなります。**
   65歳未満では受給資格が立たず 0日 ですが、65歳以降は 30日 出ます（**+30日**）
+- **「解雇されると何日多いか」は 90日 が既定で、勤続1年以上5年未満だけ 60日 に沈みます。**
+  0.99年でも 90日（0日 対 90日）、5年でも 90日（90日 対 180日）なのに、
+  そのあいだの 1〜4.99年 だけ 60日（90日 対 150日）。
+  **条文にそう書いてあるのではなく、2つの表の段の位置がずれているだけ**です ——
+  1年で自己都合は 90日 跳び、解雇は 60日 しか跳ばない。5年で解雇だけ +30 して戻る
 """
 from __future__ import annotations
 
@@ -152,6 +157,51 @@ def reason_table() -> list[dict]:
             "65歳以降の理由差": reason_gap(y, over65=True),
         })
     return out
+
+
+def reason_gap_dip_table() -> list[dict]:
+    """**「解雇されると何日多いか」は、勤続1年以上5年未満だけ 60日 に落ちます。**
+
+    その外はどこを取っても 90日 ちょうどです。**理由は2つの表の段の位置がずれている
+    ことだけ**で、条文にそう書いてあるわけではありません:
+
+        自己都合（22条1項）  1年で 0 → 90 と、**90日 跳ぶ**
+        倒産・解雇（23条2項） 1年で 90 → 150 と、**60日 しか跳ばない**
+        → 1年をまたぐと、差は 90 から 60 へ**縮む**
+        倒産・解雇は 5年で 150 → 180 と **+30**、自己都合は動かない
+        → 5年で差は 60 から 90 へ**戻る**
+
+    **10年でも20年でも、両方が同じだけ跳ぶ**（+30 と +30）ので、差は 90日 のままです。
+
+    **掃引が見つけました**（`src.section_sweep` の `帯`。2026-08-27）。
+    「離職理由の差は 90日」と読める表を、勤続を軸に振ると
+    **1〜5年 のところだけ 60日 に沈んでいます。**
+    格子は 0.5 / 1 / 3 / 5 / 10 / 20 / 30年 で、刻み直すと**入口 1.0年・出口 4.99年**。
+    """
+    out = []
+    for y in (0.5, 0.99, 1.0, 3.0, 4.99, 5.0, 10.0, 20.0, 30.0):
+        out.append({
+            "勤続年数": y,
+            "自己都合": kihon_days(y),
+            "倒産・解雇": kihon_days(y, kaiko=True),
+            "解雇のほうが多い日数": reason_gap(y, over65=False),
+        })
+    return out
+
+
+def reason_gap_dip_range() -> tuple[float, float]:
+    """差が 60日 に沈んでいる帯の、**入口と出口**（勤続年数）。
+
+    表の段そのものから引きます。**数を写さないこと** ——
+    `KIHON_JIKO` / `KIHON_KAIKO_60` を動かせば、ここも一緒に動きます。
+    """
+    edges = sorted({y for y, _ in KIHON_JIKO} | {y for y, _ in KIHON_KAIKO_60})
+    outer = max(reason_gap(y, over65=False) for y in edges)
+    dipped = [y for y in edges if reason_gap(y, over65=False) < outer]
+    lo = min(dipped)
+    # 出口は「次の段の直前」。段の刻みは年なので、1日ぶん手前を 0.01年 で置く。
+    nxt = min((y for y in edges if y > max(dipped)), default=max(dipped))
+    return lo, round(nxt - 0.01, 2)
 
 
 def money(days: int, daily: float) -> float:
@@ -343,6 +393,22 @@ def check_tables() -> None:
     _checks.rounding(reason_gap(20, over65=False), 90,
                      "勤続20年の離職理由の差（65歳未満）")
 
+    # 4b. **主題その6**（2026-08-27 に掃引が見つけた）: 理由差は 90日 が既定で、
+    #     **勤続1年以上5年未満だけ 60日 に沈む。**
+    _checks.rounding(reason_gap(3, over65=False), 60,
+                     "勤続3年の離職理由の差（65歳未満）")
+    _checks.rounding(reason_gap(0.5, over65=False), 90,
+                     "勤続0.5年の離職理由の差（65歳未満）")
+    _checks.rounding(reason_gap(5, over65=False), 90,
+                     "勤続5年の離職理由の差（65歳未満）")
+    lo, hi = reason_gap_dip_range()
+    _checks.rounding(lo, 1.0, "理由差が沈む帯の入口")
+    _checks.rounding(hi, 4.99, "理由差が沈む帯の出口")
+    for row in reason_gap_dip_table():
+        want = 60 if lo <= row["勤続年数"] <= hi else 90
+        _checks.rounding(row["解雇のほうが多い日数"], want,
+                         f"勤続{row['勤続年数']}年の理由差")
+
     # 5. 金額は日額に比例して増えること。
     _checks.increases_with(lambda d: money(lost_days(20, kaiko=True), d),
                            [3_000, 4_000, 5_000, 6_000, 7_000],
@@ -412,6 +478,15 @@ if __name__ == "__main__":
         print(f"  勤続 {row['勤続年数']:>4}年"
               f"  65歳未満は解雇のほうが {row['65歳未満の理由差']:>3}日 多い"
               f"  / 65歳以降の差 {row['65歳以降の理由差']:>3}日")
+
+    _lo, _hi = reason_gap_dip_range()
+    print(f"\n=== 解雇のほうが多い日数は 90日 が既定で、勤続{_lo:g}年以上{_hi:g}年以下だけ 60日 に沈む ===")
+    for row in reason_gap_dip_table():
+        mark = "  ← 沈んでいる" if _lo <= row["勤続年数"] <= _hi else ""
+        print(f"  勤続 {row['勤続年数']:>5}年"
+              f"  自己都合 {row['自己都合']:>4}日"
+              f"  解雇 {row['倒産・解雇']:>4}日"
+              f"  → 解雇のほうが {row['解雇のほうが多い日数']:>3}日 多い{mark}")
 
     print("\n=== 勤続20年の人が、65歳をまたいで失う金額（基本手当日額べつ）===")
     for row in money_table():

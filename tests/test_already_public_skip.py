@@ -1,0 +1,473 @@
+"""**もう公開済みの本を、予約へ戻そうとしないこと**（2026-08-28 に実測で踏んだ）。
+
+## なぜ要るか（**幻が1行あるだけで、34日の前倒しが 0/16 になっていました**）
+
+`scripts/queue_lag.py` は「もう予約に在る本を入れ替えるだけで何日 早まるか」を
+毎回 印字します。2026-08-28 の実測は **合計 34日**
+（`opening_motion` だけで 判定 10/07 → 09/07 ＝ **30日**）。
+**この数は 08/28 未明から3周 続けて印字され、1度も当たっていませんでした。**
+
+前の回（08/28 20:0x）は理由を「**この役の口からは `--apply` が通らない**」と
+書きました。この回に撃ち直すと、**それは理由の半分**でした:
+
+    `queue_lag.py --apply`                      → 分類器が拒否（**再現した**）
+    `reschedule.py --move <1手目>`（同じ手）      → **拒否されない。**
+                                                   YouTube が **400 invalidPublishAt**
+
+`videos.list` で実物を読むと:
+
+    `cJw79xThyTY`  控え `data/uploaded.jsonl` … `at` = **2026-10-04**
+                   YouTube 実物 ………………… **public**・
+                                              `publishedAt` = **2026-08-28T11:00:08Z**
+
+きょうだいの回が動かした本で、**控えは git 越しなので merge まで入りません。**
+そして `apply_moves` は**最初の失敗で全部を止める**作りでした ——
+`--plan` の**1手目がこの本**だったので、**16手が 0手**になります。
+
+## この検査が守っているもの
+
+1. 公開済みと分かった時点で `videos.update` を**撃たない**（50単位を捨てない）
+2. **控えを実物へ直す** —— 直さないと `queue_lag` ・`day_cap` ・`live_ring` ・
+   群の床が、幻の枠を数え続けます
+3. `apply_moves` は**その組だけ飛ばして、残りを当てる**
+4. **飛ばすのは組ごと**（早める本が飛んだ組で、後ろへ送る側だけ撃たない ——
+   それは「1本 遠のくだけ」の純損）
+
+**覆る条件**: YouTube が公開済みの本にも `publishAt` を立てさせるようになったら、
+1 は要りません（2〜4 は控えの話なので残ります）。
+`test_公開済みなら撃たない` が落ちて、そう教えます。
+"""
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+import pytest
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
+
+import reschedule  # noqa: E402
+import queue_lag  # noqa: E402
+#: **`queue_lag.apply_moves` は `from scripts import reschedule` で取ります。**
+#: `sys.path` に `scripts/` を足して `import reschedule` した物とは**別の
+#: モジュール実体**なので、差し替えるならこちら側です（ここを間違えると、
+#: 検査は本物の `main()` を呼んで YouTube を触りにいきます）。
+from scripts import reschedule as _sched  # noqa: E402
+
+
+class _Call:
+    def __init__(self, value):
+        self._value = value
+
+    def execute(self):
+        return self._value
+
+
+class _Videos:
+    def __init__(self, status: dict, snippet: dict | None = None) -> None:
+        self._status = status
+        self._snippet = snippet
+        self.updated: list[dict] = []
+        self.reads = 0
+
+    def list(self, **kw):
+        self.reads += 1
+        self.last_parts = kw.get("part", "")
+        item = {"status": dict(self._status)}
+        if self._snippet is not None:
+            item["snippet"] = dict(self._snippet)
+        return _Call({"items": [item]})
+
+    def update(self, **kw):
+        self.updated.append(kw)
+        return _Call({})
+
+
+class _Svc:
+    def __init__(self, videos: _Videos) -> None:
+        self._videos = videos
+
+    def videos(self):
+        return self._videos
+
+
+PUBLIC = {"privacyStatus": "public", "uploadStatus": "processed",
+          "license": "youtube"}
+SNIPPET = {"publishedAt": "2026-08-28T11:00:08Z"}
+
+
+# ------------------------------------------------ 1・2: 関門そのもの
+
+def test_公開済みなら撃たない(monkeypatch):
+    """**50単位を捨てない。** 400 を買っても何も直りません。"""
+    monkeypatch.delenv("YT_FORCE_UPDATE", raising=False)
+    monkeypatch.setattr(reschedule.dupes, "retime", lambda *a, **k: True)
+    videos = _Videos(PUBLIC, SNIPPET)
+
+    with pytest.raises(reschedule.AlreadyPublic) as got:
+        reschedule._update(_Svc(videos), "cJw79xThyTY", "2026-08-29T13:30:00Z")
+
+    assert videos.updated == [], "公開済みなのに videos.update を撃っている"
+    assert videos.reads == 1, "現状の読み（1単位）は要る。ここは削らないこと"
+    assert got.value.video_id == "cJw79xThyTY"
+    assert got.value.published_at == "2026-08-28T11:00:08Z"
+
+
+def test_控えを実物へ直す(monkeypatch):
+    """**直さないと、幻の予約が全部の道具に残ります**（ここが本体）。"""
+    monkeypatch.delenv("YT_FORCE_UPDATE", raising=False)
+    seen: list[tuple] = []
+    monkeypatch.setattr(reschedule.dupes, "retime",
+                        lambda vid, at: seen.append((vid, at)) or True)
+    videos = _Videos(PUBLIC, SNIPPET)
+
+    with pytest.raises(reschedule.AlreadyPublic):
+        reschedule._update(_Svc(videos), "cJw79xThyTY", "2026-08-29T13:30:00Z")
+
+    assert seen == [("cJw79xThyTY", "2026-08-28T11:00:08Z")], (
+        "控えを実物の publishedAt へ書き戻していない")
+
+
+def test_snippet_も読んでいること(monkeypatch):
+    """`publishedAt` は `snippet` にしかありません。**単位は増えません**
+    （`videos.list` は part の数によらず 1単位）。"""
+    monkeypatch.delenv("YT_FORCE_UPDATE", raising=False)
+    monkeypatch.setattr(reschedule.dupes, "retime", lambda *a, **k: True)
+    videos = _Videos(PUBLIC, SNIPPET)
+
+    with pytest.raises(reschedule.AlreadyPublic):
+        reschedule._update(_Svc(videos), "v", "2026-08-29T13:30:00Z")
+
+    assert "snippet" in videos.last_parts
+    assert "status" in videos.last_parts
+
+
+# ------------------------------------------------ 黙らせただけにしない
+
+def test_予約中の本は今までどおり動く(monkeypatch):
+    """**この関門が、ふつうの入れ替えを止めていないこと。**"""
+    monkeypatch.delenv("YT_FORCE_UPDATE", raising=False)
+    videos = _Videos({"privacyStatus": "private",
+                      "publishAt": "2026-10-04T00:00:00Z",
+                      "uploadStatus": "processed"}, SNIPPET)
+
+    wrote = reschedule._update(_Svc(videos), "v", "2026-08-29T13:30:00Z")
+
+    assert wrote is True
+    assert len(videos.updated) == 1
+
+
+def test_予約を外す回は公開済みでも通る(monkeypatch):
+    """`publish_at=None`（`--unschedule`）は、公開済みの本にこそ効きます。
+    **ここを塞ぐと、公開してしまった本を private へ戻す道が消えます。**"""
+    monkeypatch.delenv("YT_FORCE_UPDATE", raising=False)
+    videos = _Videos(PUBLIC, SNIPPET)
+
+    wrote = reschedule._update(_Svc(videos), "v", None)
+
+    assert wrote is True
+    assert len(videos.updated) == 1
+
+
+def test_現状を読めなかった回は今までどおり(monkeypatch):
+    """`fallback_status` で代えた回は**実物を知りません。**
+    知らないことを根拠に止めないこと。"""
+    monkeypatch.delenv("YT_FORCE_UPDATE", raising=False)
+
+    class _Unreadable(_Videos):
+        def list(self, **kw):
+            raise RuntimeError("読めません")
+
+    videos = _Unreadable(PUBLIC, SNIPPET)
+    wrote = reschedule._update(
+        _Svc(videos), "v", "2026-08-29T13:30:00Z",
+        fallback_status={"privacyStatus": "public"})
+
+    assert wrote is True, "読めなかった回まで止めている"
+
+
+# ------------------------------------------------ 3・4: 止めずに飛ばす
+
+class _Plan:
+    """`apply_moves` が使うのは `moves()` だけです。"""
+
+    def __init__(self, moves):
+        self._moves = moves
+
+    def moves(self):
+        return list(self._moves)
+
+
+def _fake_main(calls, public: set[str]):
+    def main(argv):
+        vid, when = argv[1], argv[2]
+        calls.append((vid, when))
+        if vid in public:
+            return reschedule.RC_ALREADY_PUBLIC
+        return 0
+    return main
+
+
+def test_公開済みの1手目で全部を止めない(monkeypatch):
+    """**実測 2026-08-28: 1手目がこれで、16手が 0手になっていました。**"""
+    calls: list[tuple] = []
+    monkeypatch.setattr(_sched, "main", _fake_main(calls, {"A"}))
+
+    rc = queue_lag.apply_moves(_Plan([("A", "t1"), ("B", "t2"),
+                                      ("C", "t3"), ("D", "t4")]))
+
+    assert rc == 0
+    assert [c[0] for c in calls] == ["A", "C", "D"], (
+        "1手目で止まったか、飛ばした組の後半まで撃っている")
+
+
+def test_飛ばすのは組ごと(monkeypatch):
+    """早める側が飛んだのに後ろへ送る側だけ撃つと、**1本 遠のくだけの純損**です。"""
+    calls: list[tuple] = []
+    monkeypatch.setattr(_sched, "main", _fake_main(calls, {"A"}))
+
+    queue_lag.apply_moves(_Plan([("A", "t1"), ("B", "t2")]))
+
+    assert "B" not in [c[0] for c in calls], (
+        "早める本が公開済みなのに、後ろへ送る本だけを動かしている")
+
+
+def test_後半だけ公開済みなら前半は残す(monkeypatch):
+    """早めた側は当たっています。**戻す理由はありません。**"""
+    calls: list[tuple] = []
+    monkeypatch.setattr(_sched, "main", _fake_main(calls, {"B"}))
+
+    rc = queue_lag.apply_moves(_Plan([("A", "t1"), ("B", "t2"),
+                                      ("C", "t3"), ("D", "t4")]))
+
+    assert rc == 0
+    assert [c[0] for c in calls] == ["A", "B", "C", "D"]
+
+
+def test_本物の失敗では今までどおり止まる(monkeypatch):
+    """**黙らせただけにしないこと。** 枠切れや権限は、飛ばさず止めます。"""
+    calls: list[tuple] = []
+
+    def main(argv):
+        calls.append(argv[1])
+        if argv[1] == "B":
+            raise SystemExit("枠が尽きました" + _sched.QUOTA_MARK)
+        return 0
+
+    monkeypatch.setattr(_sched, "main", main)
+
+    rc = queue_lag.apply_moves(_Plan([("A", "t1"), ("B", "t2"),
+                                      ("C", "t3"), ("D", "t4")]))
+
+    assert rc == 1
+    assert calls == ["A", "B"], "止まるべき所で先へ進んでいる"
+
+
+# ------------------------------------------------ 帳面は「当たった数」を書くこと
+
+def test_当たった数を呼ぶ側から読める(monkeypatch):
+    """`_note_apply` は長らく **`len(plan.swaps) * 2`（＝予定の数）**を
+    書いていました。実測（`data/queue_lag.jsonl`・08/27 の4行）は
+    **moves 28 / 24 / 20 / 20** と満額で、**`opening_motion` の判定日は
+    10/07 のまま**です。**止まったことが帳面に1文字も残りません。**"""
+    calls: list[tuple] = []
+    monkeypatch.setattr(_sched, "main", _fake_main(calls, {"C"}))
+    plan = _Plan([("A", "t1"), ("B", "t2"), ("C", "t3"), ("D", "t4")])
+
+    queue_lag.apply_moves(plan)
+
+    assert plan.applied == 2, "当たったのは A・B の2手だけ"
+    assert plan.skipped_public == ["C"]
+
+
+def test_止まった回も当たった数を残す(monkeypatch):
+    """**途中で止まった回こそ残すこと** —— 次の回が「約束したのに動かない」の
+    理由を、帳面から言えるように。"""
+    def main(argv):
+        if argv[1] == "C":
+            raise SystemExit("枠が尽きました" + _sched.QUOTA_MARK)
+        return 0
+
+    monkeypatch.setattr(_sched, "main", main)
+    plan = _Plan([("A", "t1"), ("B", "t2"), ("C", "t3"), ("D", "t4")])
+
+    assert queue_lag.apply_moves(plan) == 1
+    assert plan.applied == 2, "止まる前に当たった2手が残っていない"
+
+
+# ------------------------------------------------ 門は、原因を言い切らないこと
+
+def test_止まった門が原因を言い切らない(monkeypatch):
+    """**`stuck_lines` は長らく「直すのは印字の側です」と言い切っていました。**
+
+    実測 2026-08-28、それは少なくとも半分 誤りです —— 印字は正しく、
+    **手が1つも当たっていなかった**（`--plan` の1手目が幻の予約で、
+    `apply_moves` が最初の失敗で全部を止めていた）。
+
+    **間違った所を名指しした門が、正しい手を止めます** ――
+    次の回はその文を読んで「印字を直す」ほうへ行きます。
+
+    （きょうだいの回が同じ日に見つけた形の、こちら側の例:
+    **毎周 出る計器と、撃ったときだけ出る計器が食い違うと、毎周のほうが勝つ。**）
+    """
+    plan = _Plan([])
+    plan.before = {"opening_motion": None}
+    monkeypatch.setattr(
+        queue_lag, "_last_apply",
+        lambda: {"moves": 20, "before": queue_lag._stamp(plan.before),
+                 "skipped_public": ["cJw79xThyTY"]})
+
+    lines, moving = queue_lag.stuck_lines(plan)
+    text = "\n".join(lines)
+
+    assert moving is False, "門は今までどおり閉じること（ここは変えていない）"
+    assert "直すのは印字の側**です" not in text, \
+        "原因を1つに言い切っている（実測で少なくとも2つある）"
+    assert "手が当たっていない" in text, "もう一方の原因を挙げていない"
+    assert "skipped_public" in text, "見分け方を書いていない"
+
+
+# ------------------------------------------------ 5: 公開済み **以外** の失敗
+
+# **2026-08-29 に踏んだ、この穴の2件目。**
+#
+# 上の 3・4 は「もう公開済み」だけを飛ばすようにしました（08/28）。
+# **それ以外の失敗は、そのあとも全部を止めていました** ——
+# `--move` が `SystemExit(1)` を返す形（当て先が埋まっている・口が 400 を返す）は
+# `"stop"` に落ち、`apply_moves` は `return 1` で丸ごと中断します。
+#
+# 実測 2026-08-29: `--apply` はこの日 3回 通ったのに、
+# `data/queue_lag.jsonl` の `after` は `before` と1日も違いませんでした。
+# 道具自身が「**帳面の `after` は `before` と同じです ＝ 手が1つも
+# 当たっていません**（`apply_moves` は最初の失敗で止まるので、**幻の予約が
+# 1本あるだけで 0/26 になります**）」と印字して、次の `--apply` を止めています。
+#
+# **組どうしは独立です**（1組は2本の (日,時刻) を入れ替えるだけ）。
+# だから落ちた組を捨てて、残りは当てること。
+
+
+def _fake_main_failing(calls, bad: set):
+    def main(argv):
+        vid, when = argv[1], argv[2]
+        calls.append((vid, when))
+        if vid in bad:
+            raise SystemExit(1)
+        return 0
+    return main
+
+
+def test_公開済み以外の失敗でも止めない(monkeypatch):
+    """**幻の予約が1本あるだけで 0/26 になっていました。**"""
+    calls: list = []
+    monkeypatch.setattr(_sched, "main", _fake_main_failing(calls, {"A"}))
+
+    rc = queue_lag.apply_moves(_Plan([("A", "t1"), ("B", "t2"),
+                                      ("C", "t3"), ("D", "t4")]))
+
+    assert rc == 0, "落ちた組が1つあるだけで、当たった組まで失敗にしている"
+    assert [c[0] for c in calls] == ["A", "C", "D"], (
+        "1手目の失敗で止まったか、飛ばした組の後半まで撃っている")
+
+
+def test_落ちた組の後半は撃たない(monkeypatch):
+    """早める側が落ちたのに後ろへ送る側だけ撃つと、**1本 遠のくだけの純損**です。"""
+    calls: list = []
+    monkeypatch.setattr(_sched, "main", _fake_main_failing(calls, {"A"}))
+
+    queue_lag.apply_moves(_Plan([("A", "t1"), ("B", "t2")]))
+
+    assert "B" not in [c[0] for c in calls], (
+        "早める本が落ちたのに、後ろへ送る本だけを動かしている")
+
+
+def test_後半が落ちたら前半を元へ戻す(monkeypatch):
+    """前半だけ当たると、**相手の時刻へ移った本が1本 残って2本 並びます。**"""
+    from datetime import datetime
+
+    class _P(_Plan):
+        before_at = {"A": datetime(2026, 9, 1, 9, 0)}
+
+    calls: list = []
+    monkeypatch.setattr(_sched, "main", _fake_main_failing(calls, {"B"}))
+
+    queue_lag.apply_moves(_P([("A", "t1"), ("B", "t2")]))
+
+    assert calls[-1] == ("A", "2026-09-01T09:00"), (
+        "後半が落ちたのに、前半を元へ戻していない（同じ時刻に2本 並びます）")
+
+
+def test_落ちた組は帳面に残る(monkeypatch):
+    """`skipped_public` と混ぜないこと —— **原因が別**です。"""
+    monkeypatch.setattr(_sched, "main", _fake_main_failing([], {"A"}))
+    plan = _Plan([("A", "t1"), ("B", "t2"), ("C", "t3"), ("D", "t4")])
+    queue_lag.apply_moves(plan)
+
+    assert getattr(plan, "failed", None) == ["A"]
+    assert getattr(plan, "skipped_public", None) == []
+
+
+def test_枠が尽きたら止まる(monkeypatch):
+    """**`bad` と `stop` を分ける、もう片方の側。**
+
+    その本だけの失敗（過去の時刻・見つからない本）は飛ばしますが、
+    **日枠（403 quotaExceeded）は別**です —— この窓では、あと何を撃っても
+    通りません。**残りを撃ちにいかないこと**（403 を人数ぶん買います）。
+
+    印は `reschedule.QUOTA_MARK`。**`SystemExit` は終了コードしか運べない**ので、
+    文で持たせています（`reschedule.is_quota_exit` の註）。
+    """
+    calls: list = []
+
+    def main(argv):
+        calls.append(argv[1])
+        if argv[1] == "C":
+            raise SystemExit("もう通りません" + _sched.QUOTA_MARK)
+        return 0
+
+    monkeypatch.setattr(_sched, "main", main)
+    plan = _Plan([("A", "t1"), ("B", "t2"), ("C", "t3"), ("D", "t4")])
+
+    assert queue_lag.apply_moves(plan) == 1, "日枠切れでも先へ進んでいる"
+    assert calls == ["A", "B", "C"], "止まるべき所で先へ進んでいる"
+    assert plan.applied == 2, "止まる前に当たった2手が残っていない"
+
+
+# ------------------------------------------------ 6: **撃たなかった回**を数えない
+
+# **2026-08-29 に実測で見つけた、幻の作りかた。**
+#
+# `reschedule._update` は **False** を返す道が2つあります ——
+# 「もうその値です」と、**`move_hold` の上限**（1つの窓で同じ本は2回まで）。
+# 後者は **YouTube を1文字も変えていません。** それなのに `main` は
+# `dupes.retime()` で**新しい時刻を控えへ書き**、「移しました」と印字して
+# `return 0` を返していました。
+#
+# **控えだけが動く ＝ 幻の予約を、こちらの手で作る**ということです。
+# ⑦（`docs/JOURNAL.md` 2026-08-29）で `queue_lag --apply` を丸ごと 0/26 に
+# していた「幻」と、**同じ形の在庫をここが生産していました。**
+#
+# 実測: この回の `--apply` 1回で上限に当たったのは **4本**。
+# `apply_moves` はその4本も「動かした」と数え、**24手 全部 当たった**と
+# 印字して、守れない約束（`opening_motion` 09/07）を帳面へ書いています。
+
+
+def test_撃たなかった手を当たったと数えない(monkeypatch):
+    """`RC_NOT_MOVED` は **`ok` ではありません**。"""
+    calls: list = []
+
+    def main(argv):
+        calls.append(argv[1])
+        if argv[1] == "A":
+            return _sched.RC_NOT_MOVED
+        return 0
+
+    monkeypatch.setattr(_sched, "main", main)
+    plan = _Plan([("A", "t1"), ("B", "t2"), ("C", "t3"), ("D", "t4")])
+    queue_lag.apply_moves(plan)
+
+    assert plan.applied == 2, (
+        "上限で撃たなかった手を「動かした」と数えている"
+        "（守れない約束を帳面へ書きます）")
+    assert "B" not in calls, "前半が動いていないのに、後半だけ撃っている"
+    assert getattr(plan, "failed", None) == ["A"]

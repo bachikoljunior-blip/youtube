@@ -1,6 +1,6 @@
 """投稿済みの動画に、サムネイルを載せ直す。**入口は2つあります。**
 
-    python scripts/refresh_thumbnail.py --missing [--force]
+    python scripts/refresh_thumbnail.py --missing [--long] [--force]
         **控えに残した bytes を、載っていない本すべてに押す**（2026-08-17 に追加）。
         `build/` は要りません。ふつうはこちらです
 
@@ -57,8 +57,23 @@ def main(topic: str, video_id: str, theme_index: int) -> int:
     )
     print(f"[thumb] 作り直しました: {out} accent={theme['accent']}")
 
+    # **1本だけの道もここを通ること**（2026-08-28）。
+    # この行は、手で並べた検査からは**6つ目として抜けていました** ——
+    # 数え上げに変えた `tests/test_quota_reserve.py` がその場で見つけています。
+    # **絵はもう作ってあります**（上で `thumbnail.create`）。捨てないので、
+    # 窓が変わった回に同じ1行で押し直せます。
+    hold = upload_cap.reserve_hold()
+    if hold:
+        print(f"[thumb] {hold}")
+        print(f"[thumb] **押しません。** 絵は {out} に残っています。"
+              " 窓が変わった回に同じ1行で押し直すこと（`YT_NO_RESERVE=1` で外せます）。")
+        return 1
+
     y = build("youtube", "v3", credentials=credentials(), cache_discovery=False)
     y.thumbnails().set(videoId=video_id, media_body=MediaFileUpload(str(out))).execute()
+    # **通ったら数えること**（2026-08-28。下の一括の口は数えていて、こちらは数えて
+    # いませんでした —— 同じファイルの中で片方だけ）。
+    upload_cap.note_quota_ok(detail=f"thumbnails.set {video_id}")
     print(f"[thumb] 差し替え完了: https://youtu.be/{video_id}")
     return 0
 
@@ -84,13 +99,66 @@ def _ledger_ahead() -> list:
     return sorted(out)
 
 
-def push_missing(dry_run: bool = False, force: bool = False) -> int:
+#: **長尺だけを押す道**（2026-08-27 16:xx に足した）。
+#:
+#: 下の「穴のほうが先」の門は、**ショートについては正しい** ——
+#: 再生の 99.9% は `SHORTS_FEED` で、**そこにサムネイルは出ません。**
+#: だから同じ50単位なら詰め直しのほうが効きます。
+#:
+#: **その理屈は長尺には掛かりません。** 長尺は `SHORTS_FEED` の枠を
+#: 1つも使わず、**門2a（4,000時間）に入るのは長尺だけ**です。そして
+#: `status.py` は「**面ではなく CTR が縛っている**」と印字しています ——
+#: 面は合格点の 5.2倍 あるのに、**実測 CTR 1.44%**（要る CTR 19.2%）。
+#: **サムネイルはその CTR そのもの**です。
+#:
+#: 実測 2026-08-27: サムネイルの無い 40本 のうち **10本が長尺**でした。
+#: `day_cap.forms()` はこれを**0本**と答えます（571本 中 130本 しか
+#: 覚えていないので、残りは「不明」に落ちる）。**尺は API に訊くこと**
+#: （`videos.list` の `contentDetails`。50本で1単位）。
+#:
+#: この10本は **6周 続けて「段2 の本体」として申し送られながら、
+#: 一度も押されていません** —— 門がショートの理屈で 40本まとめて
+#: 止めていたからです。**群を分ければ、門は正しいまま通ります。**
+LONG_FORM_SEC = 180
+
+
+def _long_form_ids(video_ids: list[str]) -> set[str]:
+    """**尺を API に訊く**（50本で1単位）。`forms()` の控えは当てにしません。"""
+    import re as _re
+
+    def _secs(d: str) -> int:
+        m = _re.match(r"PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?", d or "")
+        if not m:
+            return 0
+        h, mi, s = (int(x or 0) for x in m.groups())
+        return h * 3600 + mi * 60 + s
+
+    y = build("youtube", "v3", credentials=credentials(), cache_discovery=False)
+    out: set[str] = set()
+    for i in range(0, len(video_ids), 50):
+        try:
+            got = y.videos().list(part="contentDetails",
+                                  id=",".join(video_ids[i:i + 50])).execute()
+        except Exception as exc:                               # noqa: BLE001
+            print(f"[thumb] 尺が読めませんでした: {str(exc)[:120]}")
+            return out
+        for it in got.get("items", []):
+            if _secs(it["contentDetails"]["duration"]) >= LONG_FORM_SEC:
+                out.add(it["id"])
+    return out
+
+
+def push_missing(dry_run: bool = False, force: bool = False,
+                 only_long: bool = False) -> int:
     """控えに残した bytes を、載っていない本すべてに押す。**`build/` は要りません。**
 
     **予約に0本の日があるあいだは押しません**（2026-08-19。理由は
     `src/upload_cap.thumbnail_yield_to_schedule` の本文）。同じ50単位で
     詰め直しが1本できて、そちらのほうが `eta.py` の日付を動かすからです。
     `force=True` で今すぐ押せます。
+
+    `only_long=True` は**長尺だけ**に絞り、その門を通しません
+    （理由は `LONG_FORM_SEC` の上の註 —— あの門はショートの理屈です）。
     """
     import critique_queue
 
@@ -98,6 +166,17 @@ def push_missing(dry_run: bool = False, force: bool = False) -> int:
     if not rows:
         print("[thumb] サムネイルの載っていない本はありません")
         return 0
+
+    if only_long:
+        longs = _long_form_ids([r["video_id"] for r in rows])
+        skipped = len(rows) - len(longs)
+        rows = [r for r in rows if r["video_id"] in longs]
+        print(f"[thumb] **長尺だけに絞りました**: {len(rows)}本"
+              f"（ショート {skipped}本 は押しません —— `SHORTS_FEED` に"
+              "サムネイルは出ないので、同じ単位なら詰め直しのほうが効きます）")
+        if not rows:
+            print("[thumb] サムネイルの載っていない長尺はありません")
+            return 0
 
     print(f"[thumb] サムネイルの載っていない本: **{len(rows)}本**")
     for row in rows:
@@ -121,16 +200,49 @@ def push_missing(dry_run: bool = False, force: bool = False) -> int:
     # 値段は同じ50単位、効きは桁で違います（再生の 99.9% は
     # サムネイルの出ない SHORTS_FEED）。**門は押す側に置いてあります** ——
     # `batch_build` にだけ置くと、`reschedule` から見えません。
-    if not force:
+    if not force and not only_long:
         okay, line = upload_cap.thumbnail_yield_to_schedule(_ledger_ahead(), len(rows))
         if not okay:
             print(f"[thumb] {line}")
             return 3
         print(f"[thumb] {line}")
 
+    # **計測のぶんを残して止める**（2026-08-28 の最適化の回・2枚目）。
+    #
+    # すぐ上の `day_quota()` は **403 を実際に観測してから**閉じます。
+    # `reserve_hold()` はその手前で止める門で、**別の事実を見ています** ——
+    # 「まだ 403 は出ていないが、この窓で使った単位が実測の枠まであと
+    # `RESERVE_UNITS` を切った」。**片方だけでは、最後の 400単位 を
+    # ここが 50単位/本 で持っていけます**（8本で使い切ります）。
+    #
+    # **この口は `scripts/batch_build.py` が毎周 直接 呼びます**
+    # （`refresh_thumbnail.push_missing()`）。門の付いた入口は
+    # `reschedule._update` と `uploader._set_thumbnail` の2つで、
+    # **ここは3つ目の、いちばん熱い入口でした。**
+    #
+    # 残しているのは**前提を閉じる読み**です（`videos.list` は 1単位）。
+    # `eta.py`: 軌跡の腕が動くのは前提を1件 閉じたときだけ。
+    hold = upload_cap.reserve_hold()
+    if hold:
+        print(f"[thumb] {hold}")
+        print("[thumb] **押しません**（`--force` ではなく `YT_NO_RESERVE=1` で外せます）。"
+              " 控えは消えないので、窓が変わった回に同じ1行で押し直せます。")
+        return 1
+
     y = build("youtube", "v3", credentials=credentials(), cache_discovery=False)
     ok = 0
     for row in rows:
+        # **輪の中でも訊くこと**（2026-08-28 の2周目に直した）。
+        # 上の門は輪の**手前**に1回だけです。ここは1回で何十本も押す口なので、
+        # 一度 通ると残りを全部 焼けます —— 門が読む `spent` は、
+        # **この輪が自分で増やしている数**です。
+        # **1回だけ訊く門は、増えていく数に対しては門になりません。**
+        hold_now = upload_cap.reserve_hold()
+        if hold_now:
+            print(f"[thumb] {hold_now}")
+            print(f"[thumb] **ここで止めます**（押せた {ok}本）。"
+                  " 控えは消えないので、窓が変わった回に同じ1行で続けられます。")
+            break
         try:
             y.thumbnails().set(
                 videoId=row["video_id"],
@@ -149,6 +261,12 @@ def push_missing(dry_run: bool = False, force: bool = False) -> int:
         # **押せた本だけ印を消す。** 消してから押すと、落ちた本が
         # 一覧から消えて二度と拾われません
         critique_queue.mark_thumbnail_set(row["video_id"])
+        # **通ったことも残すこと**（2026-08-26）。403 のあとに通った呼び出しは、
+        # **その 403 が日枠でなかった証拠**です（`upload_cap.note_quota_ok`）。
+        try:
+            upload_cap.note_quota_ok(detail=f"thumbnails.set {row['video_id']}")
+        except Exception:                                      # noqa: BLE001
+            pass
         ok += 1
         print(f"[thumb] ✓ {row['video_id']}  https://youtu.be/{row['video_id']}")
     print(f"[thumb] **{ok} / {len(rows)} 本に載せました**")
@@ -158,7 +276,8 @@ def push_missing(dry_run: bool = False, force: bool = False) -> int:
 if __name__ == "__main__":
     if "--missing" in sys.argv:
         raise SystemExit(push_missing(dry_run="--dry-run" in sys.argv,
-                                      force="--force" in sys.argv))
+                                      force="--force" in sys.argv,
+                                      only_long="--long" in sys.argv))
     if len(sys.argv) != 4:
         print(__doc__)
         raise SystemExit(2)

@@ -407,7 +407,18 @@ def test_早すぎても親が先に来るなら畳む(tmp_path):
     （`awaiting sleep timer (~35 min); next: spawn child & archive`）。
     待って切れると1時間まるごと失い、待たずに畳めば親が60分周期で立てます。
     """
-    r = _spawn_check(_sessions_file(tmp_path, 8), cron_minute=_cron_minute_in(3))
+    # **「8分」と書かないこと**（2026-08-30 に直した。すぐ上の
+    # `test_早すぎる子は待たされる` が 08/22 に学んだのと同じ話です）。
+    # 子は本物の `data/usage.jsonl` を読むので**下限は実測で動き**、
+    # 固定の年齢は下限が動いた日に別の枝へ落ちます。
+    # 実際に落ちました —— 08/30 にオーナーの画面を積んで下限が 90 → 275分 になり、
+    # `recommended_floor_minutes()` が `None` を返す状態も重なって、
+    # **この2件だけが赤のまま残りました。** 見たいのは分数ではなく**枝**です。
+    floor = quota.effective_floor_minutes()
+    if floor is None:
+        pytest.skip("目盛りが無い ＝ 下限そのものが無い（`pace()` は None を返す）")
+    r = _spawn_check(_sessions_file(tmp_path, max(1, int(floor) // 2)),
+                     cron_minute=_cron_minute_in(3))
     assert r.returncode == 6, r.stdout
     assert "待たずに畳むこと" in r.stdout
     assert "sleep " not in r.stdout      # **両方やろうとさせない**
@@ -418,7 +429,12 @@ def test_十分あいた子はそのまま立てられる(tmp_path):
 
     待ちは「間隔の下限」であって上乗せではない。
     """
-    r = _spawn_check(_sessions_file(tmp_path, 90))
+    # **「90分」と書かないこと**（2026-08-30 に直した。理由は1つ上と同じ ——
+    # 下限が 275分 になった日に、90分の子は「十分あいた子」ではなくなりました）。
+    floor = quota.effective_floor_minutes()
+    if floor is None:
+        pytest.skip("目盛りが無い ＝ 下限そのものが無い（`pace()` は None を返す）")
+    r = _spawn_check(_sessions_file(tmp_path, int(floor) + 30))
     assert r.returncode == 0, r.stdout
     assert "待ち不要" in r.stdout
     assert "立ててよい" in r.stdout

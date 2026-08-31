@@ -232,3 +232,34 @@ def test_render_は2つの倍率を並べて出す():
     assert "上限" in text and "×0.60" in text
     assert "間隔について" in text          # 向きが違うので、強い断りが出る
     assert "2026-08-27" in text            # 切り分けの日を必ず指す
+
+
+def test_帯の既定は2つとも_day_cap_から引く():
+    """**写した数を持たないこと**（2026-08-26 に踏んだ）。
+
+    `live_band()` は `cap_n` を `day_cap.cap()` から引いていたのに、
+    `gap_min` だけ **`30.0` と写して**ありました。一致していたのは
+    いまの `day_cap.MIN_GAP_MIN` が 30.0 だからで、
+    **向こうは実測から動く数**です（`cap()` と同じ）。
+
+    動いた日に、**この判定だけが古い帯で数え続けます** —— しかも docstring は
+    「`day_cap.py` と同じ2段です」と書いてあるので、**読んでも気づけません。**
+
+    **覆る条件**: `day_cap` が間隔で落とすのをやめたら（`_spaced` が消えたら）、
+    この検査ごと要りません。**数字は写さないこと** —— 下は値を比べていません。
+    """
+    from src import day_cap
+
+    when = datetime(2026, 8, 21, 9, 0, tzinfo=JST)
+    # `MIN_GAP_MIN` のちょうど半分 ＝ **必ず間隔で落ちる**並びを作る
+    half = timedelta(minutes=day_cap.MIN_GAP_MIN / 2.0)
+    published = {f"v{i}": when + half * i for i in range(4)}
+    values = {v: 100 for v in published}
+
+    got = dv.live_band(published, values)
+    day = when.date().isoformat()
+    # 間隔で1本おきに落ちるので、4本 → 2本
+    assert len(got[day]) == 2, got
+
+    # 明示で渡した側が勝つこと（既定を引くのは「渡されなかったとき」だけ）
+    assert len(dv.live_band(published, values, gap_min=0.0)[day]) == 4

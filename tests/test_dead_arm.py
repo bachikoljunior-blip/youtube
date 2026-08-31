@@ -149,6 +149,12 @@ REACH_ROW = {**ROW, "arm_reaches": {"per_video": True, "rpm": True,
                                "sub_rate": None, "density": None}}
 
 
+#: **凍らせた線を積んだ行**（2026-08-26）。`arm_frozen_days` は
+#: 「その腕の `rate` を 0 にして軌跡を解き直したときの、到達日の差（日）」。
+#: **正なら必要な腕**（回転をよその腕へ配り直しても遠のく）、0 なら要らない。
+FROZEN_ROW = {**REACH_ROW, "arm_frozen_days": {"sub_rate": 130.0, "density": 0.0}}
+
+
 def test_天井まで引いても届かない腕も死んでいると言う():
     st = levers.arm_state(REACH_ROW)
     assert set(st["dead"]) == {"density", "sub_rate"}
@@ -188,7 +194,26 @@ def test_届かない腕を_要らない腕と読ませないこと():
     assert "「要らない」という意味ではありません" in ぜんぶ
     assert "十分でない" in ぜんぶ
     assert "AND の門" in ぜんぶ, "登録者が AND の門であることを、この行で言うこと"
-    assert "+115日" in ぜんぶ, "凍らせたときの実測を添えること（言い分ではなく数字で）"
+
+    # **凍らせた実測は、毎回 測り直した数を出すこと**（2026-08-26 に べた書き をやめた）。
+    #     ここは長らく `assert "+115日" in ぜんぶ` でした ——
+    #     **道具のほうに 8/26 の数を焼き込ませる検査**です。
+    #     この本文が名指ししている「べた書きが判断をひっくり返す」の、検査版でした。
+    ふゆ = levers.lever_notes("sub_rate", levers.arm_state(FROZEN_ROW))
+    assert any("+130日" in n for n in ふゆ), "行に積まれた実測をそのまま出すこと"
+    assert any("必要な腕です" in n for n in ふゆ)
+    # **数が変われば文言も変わること**（焼き込みなら、ここが落ちます）
+    べつ = levers.lever_notes(
+        "sub_rate", levers.arm_state({**REACH_ROW,
+                                      "arm_frozen_days": {"sub_rate": 7.0}}))
+    assert any("+7日" in n for n in べつ)
+
+
+def test_凍らせても動かない腕は_要らないと言い切る():
+    """**判別の逆側。** 回転をよそへ回しても日付が同じなら、その腕は要りません。"""
+    st = levers.arm_state({**REACH_ROW, "arm_frozen_days": {"sub_rate": 0.0}})
+    ぜんぶ = "\n".join(levers.lever_notes("sub_rate", st))
+    assert "この腕は要りません" in ぜんぶ
 
 
 def test_届く腕には何も足さない():
@@ -220,6 +245,50 @@ def test_drift_は届かない腕も数える(tmp_path, monkeypatch):
     monkeypatch.setattr(levers, "_long_surface_measured", lambda: True)
     monkeypatch.setattr(levers, "_long_surface_open", lambda _row: False)
     text = drift.dead_arm_report("2026-08-24")
-    # **sub_rate も数に入ること**（天井 ×3,147 でも届かない）
-    assert "**引き代が無かった回: 2/3**" in text
-    assert "天井まで引いても到達日に届きません" in text
+    # **判別できていない回は、分子に入れないこと。ただし黙って外さないこと**
+    #     （2026-08-26。それまでは理由を問わず 2/3 に足していました ——
+    #      同じ日の `eta.py --alloc` が「次の1件は `sub_rate` が最短」と
+    #      言っている腕を、`drift` が「無駄に選んだ回」と数えていた形です）
+    # density は天井 ×1.00（＝確定した引き代なし）なので、そのまま分子。
+    # sub_rate は「届かない」だけで、凍らせた線がこの行に無い ＝ **判別できていない**。
+    assert "**引き代が無かった回: 1/3**" in text
+    assert "この腕だけを天井まで引いても届きません" in text
+    assert "要らないという意味ではありません" in text
+    # **読めなかったことと、数えたらいくつかを、両方 出すこと**
+    assert "凍らせた線がこの行にありません" in text
+    assert "数えた場合は **2/3**" in text
+
+
+def test_drift_は必要な腕を漂流に数えない(tmp_path, monkeypatch):
+    """**十分でないことは、無駄に選んだことではありません。**（2026-08-26）
+
+    同じ日・同じ点で、`eta.py` の腕の表は「`sub_rate` に前提を置いても
+    到達日は動かない」と印字し、`eta.py --alloc` は「**次の1件は
+    `sub_rate` に置くのが最短**（3日 早い）」と印字していました。
+    **同じプログラムが正反対**で、`drift` は前者だけを読んで
+    「到達日が動きえない回 70%」の分子に足していました。
+
+    判別は測ればつきます（`eta.frozen_days`）—— 凍らせて遠のくなら必要。
+    """
+    runs = tmp_path / "runs.jsonl"
+    ships = [
+        {"at": "2026-08-23T10:00:00+09:00", "kind": "ship", "what": "a", "lever": "sub_rate"},
+        {"at": "2026-08-23T11:00:00+09:00", "kind": "ship", "what": "b", "lever": "density"},
+        {"at": "2026-08-23T12:00:00+09:00", "kind": "ship", "what": "c", "lever": "rpm"},
+    ]
+    runs.write_text("\n".join(json.dumps(s, ensure_ascii=False) for s in ships) + "\n",
+                    encoding="utf-8")
+    monkeypatch.setattr(drift, "RUNS", runs)
+    monkeypatch.setattr(drift, "ROOT", tmp_path)
+    (tmp_path / "data").mkdir()
+    (tmp_path / "data" / "eta.jsonl").write_text(
+        json.dumps(FROZEN_ROW, ensure_ascii=False) + "\n", encoding="utf-8")
+    monkeypatch.setattr(levers, "_long_surface_measured", lambda: True)
+    monkeypatch.setattr(levers, "_long_surface_open", lambda _row: False)
+    text = drift.dead_arm_report("2026-08-24")
+    # sub_rate は凍らせると +130日 ＝ 必要 → 分子から外す。density は 0日 ＝ 引き代なし
+    assert "**引き代が無かった回: 1/3**" in text
+    assert "**十分ではないが必要な腕を選んだ回: 1/3**" in text
+    assert "+130日" in text
+    # **判別がついた回に、判別できていない旨を出さないこと**
+    assert "凍らせた線がこの行にありません" not in text

@@ -131,19 +131,20 @@ def _forms(tmp_path, mapping):
 def test_測った控えと対応表を足す(tmp_path):
     pairs = _pairs(tmp_path, ["A", "B"])
     forms = _forms(tmp_path, {"B": "長尺", "C": "長尺", "S": "ショート"})
-    assert R.long_ids(pairs, forms) == {"A", "B", "C"}
+    assert R.long_ids(pairs, forms, tmp_path / "no-batch.jsonl") == {"A", "B", "C"}
 
 
 def test_控えが無ければ対応表だけ_いままでと同じ答え(tmp_path):
     pairs = _pairs(tmp_path, ["A", "B"])
-    assert R.long_ids(pairs, tmp_path / "no-such.json") == {"A", "B"}
+    assert R.long_ids(pairs, tmp_path / "no-such.json",
+                      tmp_path / "no-batch.jsonl") == {"A", "B"}
 
 
 def test_対応表に無い長尺を落とさない(tmp_path):
     """**これが 2026-08-24 の欠陥そのもの。** 6本しか数えていなかった。"""
     pairs = _pairs(tmp_path, ["A"])
     forms = _forms(tmp_path, {f"L{i}": "長尺" for i in range(12)})
-    got = R.long_ids(pairs, forms)
+    got = R.long_ids(pairs, forms, tmp_path / "no-batch.jsonl")
     assert len(got) == 13 and "A" in got
 
 
@@ -154,7 +155,7 @@ def test_再生0の長尺は控えに出ないので対応表の側で残る(tmp
     """
     pairs = _pairs(tmp_path, ["SSI1MVb12Ng"])
     forms = _forms(tmp_path, {"other": "長尺"})
-    assert "SSI1MVb12Ng" in R.long_ids(pairs, forms)
+    assert "SSI1MVb12Ng" in R.long_ids(pairs, forms, tmp_path / "no-batch.jsonl")
 
 
 def test_ショートは長尺に混ぜない(tmp_path):
@@ -211,3 +212,50 @@ def test_平均は消さない_保存済みの点と比べられなくなるた�
     long = R.summary(_series([4, 8, 5, 7, 8, 17, 1285]), {"L"})["長尺"]
     assert long["per_day_recent"] > long["per_day_sustained"]
     assert long["per_day_recent_top_share"] > 0.9
+
+
+# ---------------------------------------------------------------------------
+# **「続いている量」の分母に、公開が0本の日が入っていた**（2026-08-26 に足した）
+#
+# `BURST_SHARE` の註は「長尺の面は立ち上がりだけ」と書いている。**そこまでは正しい。**
+# ところが次の行が、その量を**カレンダーの1日あたり**で測る。実物の直近7日
+# （08/15〜08/21）で長尺を公開したのは **08/21 の1日だけ**で、残り6日は0本。
+# 中央値はその6日のほうを拾い、`scripts/eta.py` は 8.0回/日 を読んで
+# 「**22.4倍 足りません**」と印字していた。
+# **公開1本あたりでは 266.8回**（1,334回 ÷ 5本）。
+# 数は変えない（保存済みの点と比べられなくなる）。**足すのは読みと断りだけ。**
+# ---------------------------------------------------------------------------
+def test_公開1本あたりの面を出す():
+    long = R.summary(_series([4, 8, 5, 7, 8, 17, 1285]), {"L"},
+                     publishes={"20260816": 5})["長尺"]
+    assert long["recent_publishes"] == 5
+    assert long["recent_publish_days"] == 1
+    assert long["recent_zero_publish_days"] == 6
+    assert abs(long["per_publish"] - 1334 / 5) < 1e-6
+
+
+def test_公開が0本の日を数えたことを断り書きに出す():
+    long = R.summary(_series([4, 8, 5, 7, 8, 17, 1285]), {"L"},
+                     publishes={"20260816": 5})["長尺"]
+    basis = long["per_day_sustained_basis"]
+    assert "6日は長尺を1本も公開していません" in basis
+    assert "266.8" in basis          # 公開1本あたり
+    # **数そのものは動かさない**（保存済みの点と比べられなくなるため）
+    assert long["per_day_sustained"] == 8.0
+
+
+def test_公開が毎日あるなら断りは付かない():
+    every_day = dict.fromkeys(
+        (f"202608{10 + i:02d}" for i in range(7)), 2)
+    long = R.summary(_series([10, 12, 11, 9, 10, 13, 11]), {"L"},
+                     publishes=every_day)["長尺"]
+    assert long["recent_zero_publish_days"] == 0
+    assert "公開していません" not in long["per_day_sustained_basis"]
+    assert abs(long["per_publish"] - 76 / 14) < 1e-6
+
+
+def test_控えから数えると公開日と本数が出る():
+    """**実物の控えで動くこと。**（`data/uploaded.jsonl` を読むだけ・API 0単位）"""
+    got = R.publishes_per_day(R.long_ids())
+    assert all(len(d) == 8 and d.isdigit() for d in got)
+    assert all(isinstance(n, int) and n > 0 for n in got.values())

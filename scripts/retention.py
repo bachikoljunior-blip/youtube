@@ -58,8 +58,79 @@ CACHE = config.ROOT / "data" / "retention.json"
 SNAP = config.ROOT / "data" / "scan.jsonl"
 
 
+def length_of(row: dict) -> float | None:
+    """その本の尺（秒）。**3つの出どころを、この順で当てます**（2026-08-27 に足した）。
+
+    ## なぜ要るか —— **道具が黙って死んでいました**
+
+    ここは長らく `r.get("尺")` の**1本道**でした。ところが
+    **`data/scan.jsonl` の最新の一枚には `尺` が1本も入っていません** ——
+    実測 2026-08-27: **130本 中 0本**。だから `videos()` は
+    **130 → 0本** を返し、`python scripts/retention.py` は
+    **見出しだけ出して、1本も描かずに終わります。**
+
+    **落ちません。空で正常終了します。** これがいちばん見つけにくい壊れ方で、
+    **最終更新は 2026-08-20 のまま**、`data/retention.json` の21本は
+    **全部 2026-08-15 以前 ＝ 旧設計**でした。つまり
+    **いまの作りの維持率カーブは、1本も測られていません**
+    （`docs/JOURNAL.md` 2026-08-27 の読み取り専用の調査が見つけた）。
+
+    ## 3つの出どころ
+
+        1. 走査の `尺`                          いちばん確か。**いまは 0本**
+        2. 控え `data/uploaded.jsonl` の `duration_s`   投稿した瞬間に書かれる
+                                                （`src/watches._durations()` が正本）
+        3. **`averageViewDuration ÷ averageViewPercentage × 100`**  ← 導出
+
+    実測 2026-08-27 の重なり: 1 は **0本**、2 は走査の130本と **1本も重ならず**
+    （控えに尺が在る87本は、まだ走査に載っていない新しい本）、
+    **3 だけが 123/130本** を埋めます。**3 が無いとこの道具は生き返りません。**
+
+    ## 3 の誤差を、隠さないこと
+
+    `averageViewDuration` は**秒の整数**で返ります。だから導出した尺は
+    **±0.5 ÷ (割合/100) 秒**ずれます —— 30秒・割合76.85% の本で **±0.65秒**。
+    カーブの横軸（`点 × 尺`）に使うぶんには足りますが、
+    **「4.6〜8.6秒に落差が集まる」のような秒の議論に使うときは、この幅を書くこと。**
+    割合が 0 か欠けている本は `None` を返します（**当て推量をしない**）。
+
+    ## 覆る条件
+
+    走査がまた `尺` を持つようになったら 1 で埋まるので、
+    **3 は自動で使われなくなります**（順番がそうなっています）。**消さないこと** ——
+    走査の欄は 2026-08-27 に実際に消えており、また消えます。
+    """
+    got = row.get("尺")
+    if got:
+        try:
+            return float(got)
+        except (TypeError, ValueError):
+            pass
+    vid = row.get("id")
+    if vid:
+        try:
+            from src import watches
+            sec = watches._durations().get(vid)
+            if sec:
+                return float(sec)
+        except Exception:                                      # noqa: BLE001
+            pass
+    dur, pct = row.get("averageViewDuration"), row.get("averageViewPercentage")
+    try:
+        if dur and pct and float(pct) > 0:
+            return float(dur) / float(pct) * 100.0
+    except (TypeError, ValueError):
+        pass
+    return None
+
+
 def videos() -> list[dict]:
-    """走査の最後の一枚から、再生のあった本を尺つきで拾う。"""
+    """走査の最後の一枚から、再生のあった本を尺つきで拾う。
+
+    **尺は `length_of()` が3つの出どころから当てます**（2026-08-27）——
+    走査の `尺` だけを見ていた頃、この関数は **130本 → 0本** を返し、
+    道具が**空で正常終了**していました。理由は `length_of()` の docstring。
+    """
     rows: dict[str, dict] = {}
     lines = [l for l in SNAP.read_text(encoding="utf-8").splitlines() if l.strip()]
     vals = json.loads(lines[-1])["values"]
@@ -67,7 +138,18 @@ def videos() -> list[dict]:
         if k.startswith("動画.") and k.count(".") >= 2:
             _, vid, m = k.split(".", 2)
             rows.setdefault(vid, {"id": vid})[m] = v
-    out = [r for r in rows.values() if r.get("views", 0) > 0 and r.get("尺")]
+    out = []
+    for r in rows.values():
+        if not r.get("views", 0) > 0:
+            continue
+        sec = length_of(r)
+        if not sec:
+            continue
+        # **導出で埋めたかを残す**（`length_of()` の誤差の節）。
+        # 秒の議論に使う回は、この旗を見て幅を書くこと。
+        r["尺_導出"] = not r.get("尺")
+        r["尺"] = sec
+        out.append(r)
     return sorted(out, key=lambda r: -r["views"])
 
 
@@ -117,7 +199,13 @@ def half_point(curve: list, length: int) -> tuple[float, float] | None:
 
 
 def _spread(xs: list[float]) -> float:
-    """ばらつき（変動係数）。**単位が違うものを比べるので、平均で割る。**"""
+    """ばらつき（変動係数）。**単位が違うものを比べるので、平均で割る。**
+
+    **外れ値に弱いことを承知で残しています**（2026-08-27）——
+    尺の固まり具合を見る側（`_spread(lengths)`）は、外れ値も込みで
+    「振れているか」を知りたいので、こちらが正しい道具です。
+    **落差の位置の比較には `_robust_spread()` を使うこと** —— 下の理由。
+    """
     if len(xs) < 2:
         return float("inf")
     m = sum(xs) / len(xs)
@@ -125,6 +213,55 @@ def _spread(xs: list[float]) -> float:
         return float("inf")
     var = sum((x - m) ** 2 for x in xs) / (len(xs) - 1)
     return var ** 0.5 / m
+
+
+def _quantile(xs: list[float], p: float) -> float:
+    ys = sorted(xs)
+    i = (len(ys) - 1) * p
+    lo, hi = int(i), min(int(i) + 1, len(ys) - 1)
+    return ys[lo] + (ys[hi] - ys[lo]) * (i - lo)
+
+
+def _robust_spread(xs: list[float]) -> float:
+    """**四分位範囲 ÷ 中央値。** 外れ値に引きずられないばらつき。
+
+    ## なぜ要るか（2026-08-27。**生き返らせた初日に踏んだ**）
+
+    `_spread`（変動係数）は**平均と二乗**を使うので、**尾が長い分布で壊れます。**
+    この道具が生き返った初回（n=87・ショート）の実測:
+
+        秒    4.2〜24.2  中央 5.2   変動係数 **0.429**   四分位範囲÷中央 **0.234**
+        割合   8%〜 97%  中央 17%   変動係数 **0.542**   四分位範囲÷中央 **0.294**
+
+    変動係数どうしの比は **1.27倍**しかなく、この関数の呼び手は
+    **「どちらとも言えません」**と印字しました（門は `sv < rv * 0.8`）。
+
+    **ところが、同じ87本のヒストグラムはこうです:**
+
+        4〜5秒 **36本** ／ 5〜6秒 **32本** ／ 6〜7秒 8本
+        → **4〜7秒に 76本 ＝ 87%**
+
+    **87% が3秒の窓に入っているのに「どちらとも言えない」と出ていました。**
+    引きずっていたのは **24.2秒 が1本・12秒台 が2本**の尾です。
+    **データは黙っていません。計器が外れ値に負けていました。**
+
+    **これは `docs/JOURNAL.md` 2026-08-27 の調査が旧21本で出した
+    「秒でそろって、割合ではそろわない」を、現行87本で裏づけます** ——
+    あちらの数（0.156 対 0.405）は変動係数で、
+    **旧21本にはたまたま尾が無かった**ということです。
+
+    ## 覆る条件
+
+    四分位範囲は**真ん中の半分しか見ません**。尾のほうに意味がある問い
+    （「いちばん遅く落ちる本は何が違うのか」）には使わないこと。
+    そのときは生の並びを見ること（この道具は1本ずつ全部 印字しています）。
+    """
+    if len(xs) < 4:
+        return float("inf")
+    med = _quantile(xs, 0.5)
+    if not med:
+        return float("inf")
+    return (_quantile(xs, 0.75) - _quantile(xs, 0.25)) / med
 
 
 def report(vs: list[dict], cache: dict) -> None:
@@ -168,11 +305,18 @@ def report(vs: list[dict], cache: dict) -> None:
               "`config/watches.yaml` の `維持率-尺のばらつき` が見張っていて、"
               "満ちた回の `scripts/status.py` に出ます。**")
     elif len(secs) >= 4:
-        sv, rv = _spread(secs), _spread(ratios)
+        # **判定は四分位で。** 変動係数は尾に負けます（`_robust_spread` の実測:
+        # 87% が3秒の窓に入っているのに「どちらとも言えない」と出ていました）。
+        sv, rv = _robust_spread(secs), _robust_spread(ratios)
+        cv_s, cv_r = _spread(secs), _spread(ratios)
         print(f"\n  最大の落差の位置: 秒で見ると {min(secs):.1f}〜{max(secs):.1f}秒"
-              f"（ばらつき {sv:.2f}） / 割合で見ると "
+              f"（**四分位 {_quantile(secs, .25):.1f}〜{_quantile(secs, .75):.1f}秒**"
+              f"・ばらつき {sv:.2f}） / 割合で見ると "
               f"{min(ratios) * 100:.0f}〜{max(ratios) * 100:.0f}%"
-              f"（ばらつき {rv:.2f}）")
+              f"（**四分位 {_quantile(ratios, .25) * 100:.0f}〜"
+              f"{_quantile(ratios, .75) * 100:.0f}%**・ばらつき {rv:.2f}）")
+        print(f"     （変動係数で見ると 秒 {cv_s:.2f} / 割合 {cv_r:.2f} ——"
+              f" **こちらは尾に負けます。判定には使いません**）")
         if sv < rv * 0.8:
             print("  → **秒のほうがそろっています。落ちる時刻は尺に依存しない。**")
             print("     **尺を縮めても、落ちる時刻は動きません**"
@@ -187,7 +331,17 @@ def report(vs: list[dict], cache: dict) -> None:
 
     # **尺を振らなくても言えること。** 落差の位置そのもの。
     if secs:
-        print(f"\n  **最大の落差は全本 {min(secs):.1f}〜{max(secs):.1f}秒に集まっています。**")
+        # **「全本 a〜b秒に集まっています」は、集まり方ではなく幅の話でした**
+        # （2026-08-27）。実測 n=87 で、この行は「4.2〜24.2秒」と出ます ——
+        # **24.2秒 は1本**で、実際は **4〜7秒 に 87%** が入っています。
+        # 幅を「集まっている」と読むと、尾の1本が結論を薄めます。
+        # **数えるのは、中央の±中央値半分に何%が入るか。**
+        med = _quantile(secs, 0.5)
+        lo, hi = med * 0.5, med * 1.5
+        inside = sum(1 for x in secs if lo <= x <= hi)
+        print(f"\n  **最大の落差は {lo:.1f}〜{hi:.1f}秒 に "
+              f"{inside}本 / {len(secs)}本 ＝ **{inside * 100 // len(secs)}%** が入ります**"
+              f"（中央 {med:.1f}秒・全体では {min(secs):.1f}〜{max(secs):.1f}秒）。")
         print("  旧設計の1枚目は 7.9〜13.8秒あったので、"
               "**落ちている時点でまだ画面が変わっていません。**")
         print("  つまり視聴者は「次の画面」を見る前に抜けている"

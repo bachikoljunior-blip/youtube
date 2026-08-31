@@ -52,6 +52,7 @@ import functools
 import json
 import math
 import os
+import re
 import subprocess
 import sys
 from collections import deque
@@ -61,7 +62,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from src import arm_speed, day_cap, levers, motion_groups, rpm_mix, settle  # noqa: E402  （`sys.path` を通した後でないと読めません）
+from src import arm_speed, day_cap, levers, motion_groups, pause_guard, resume_gate, rpm_mix, settle, subs_cap  # noqa: E402  （`sys.path` を通した後でないと読めません）
 
 LOG = ROOT / "data" / "eta.jsonl"
 
@@ -176,18 +177,216 @@ def _ready_by_claim() -> dict:
     **2度読むと素直に2倍かかります。** 同じ回の中で答えは変わらないので
     `lru_cache` で1回に畳みます（2026-08-26）。
     """
+    return _deadline_check_mod().ready_by_claim()
+
+
+@functools.lru_cache(maxsize=1)
+def _deadline_check_mod():
+    """`scripts/deadline_check.py` を1回だけ読み込む。**兄弟なので遅延で。**"""
     import importlib.util
     spec = importlib.util.spec_from_file_location(
         "eta_deadline_check", ROOT / "scripts" / "deadline_check.py")
     mod = importlib.util.module_from_spec(spec)
     sys.modules["eta_deadline_check"] = mod        # dataclass が __module__ を引きます
     spec.loader.exec_module(mod)
-    return mod.ready_by_claim()
+    return mod
+
+
+def _fit_deadlines() -> list[str]:
+    """**期限を、データの来る日へ寄せ直す**（`deadline_check.shrink()` / `extend()`）。
+
+    API 0単位・実測 **42秒**。返すのは印字する行だけ（無ければ空）。
+
+    ## なぜ `eta.py` が撃つのか（2026-08-30・最適化の回に実測して配線した）
+
+    **`deadline_check` は `docs/trigger_main.md`（314KB）に1度も名前が出ていません**
+    でした（実測 **配線する前** の `grep -c` → **0**。いま撃つと 0 ではありません ——
+    **配線した節自身が数に入ります**）。道具は 2026-08-25 から在り、
+    `--shrink` / `--extend` / `--fit` まで実装されていて、**撃つ側だけが無い。**
+    そのあいだに溜まっていたもの（実測 2026-08-30）::
+
+        データは揃うのに期限が先    **2件・合計 50日**
+        データが来る前に期限がある  **3件・合計 6日**
+
+    **この 50日 は、到達日がまるごと止まっていた日数です。** この道具自身が
+    「**軌跡の腕は、前提を1件 閉じたときだけ動く**」と印字するので、
+    データが揃っていても期限が先なら、腕は1日も動きません。
+    そして到達日をいちばん大きく動かすのは **θ（前提が閉じる速さ）**です
+    （同じ回の実測: θ×2 で -25日／天井で -50日）。
+
+    ## **手順に書くだけでは飛ばされます**
+
+    この docstring の上のほう（このファイルの冒頭）が、同じことを言っています ——
+
+    > **文書に手順として書くだけでは飛ばされます。** … だから**道具にして、
+    > 数字が勝手に出る形**にしました。
+
+    `docs/trigger_main.md` §2.6 にも並べましたが、**効いているのはこちら**です。
+    `scripts/status.py` は 2026-08-25 から「縮めること」と印字していて、
+    **それでも 50日 溜まりました。印字は撃たれません。**
+
+    ## 撃たない場面
+
+    - `--offline`（積んだ点から読むだけの回。42秒 を足す用がありません）
+    - `--gate` / `--alloc` / `--reflect`（早い出口。上の `main()` で先に返ります）
+
+    ## 覆る条件
+
+    - **毎周ここが 0件 でない**なら、効いていないのは配線ではなく
+      `deadline_check.Verdict.slack`（帯）の幅です。帯を広げること
+    - `deadline_check` が読めない回は**黙って通します**（`eta.py` は
+      「予測で回を止めない」を既定にしています）。
+      **門を増やさないこと** —— ここが落ちて回が止まると、失うのは 50日 より大きい
+    - 検査は `tests/test_eta_fits_deadlines.py`
+    """
+    try:
+        mod = _deadline_check_mod()
+        moved = mod.shrink() + mod.extend()
+    except Exception as exc:                                   # noqa: BLE001
+        return [f"[eta] 期限の寄せ直しは撃てませんでした（{type(exc).__name__}: {exc}）"
+                "。**回は止めません。**"]
+    if not moved:
+        return []
+    out = [f"[eta] **期限を {len(moved)}件 寄せ直しました**"
+           "（`deadline_check` の `waits`／`slips`。"
+           "**`falsified_if` は1文字も触っていません**）:"]
+    out += [f"[eta]   {before} → **{after}**  {claim[:44]}" for claim, before, after in moved]
+    return out
+
+
+@functools.lru_cache(maxsize=1)
+def _unready_claims() -> set:
+    """**判定できる日が出せない claim**（`deadline_check.unready_claims()`）。
+
+    `_ready_by_claim()` はこれを黙って落とし、`next_close()` が
+    その claim を **`deadline` のほうへ流していました** ——
+    「今日が期限 ＝ **この回は `verdict` で日付が動かせます**」という嘘の頭3行が、
+    判定に要る本が0本の日に出ます（2026-08-26 20:4x に踏んだ）。
+    """
+    mod = _deadline_check_mod()
+    out = set(mod.unready_claims())
+    # **「日は出た。今日だ。ただし読めるのは 16:00 から」も、ここで外すこと**
+    #   （2026-08-28 03:1x に踏んだ。`deadline_check.not_open_yet` の註）。
+    #   `Answer.ready` は日付なので **時刻がそこで落ちます** —— 落ちたぶん、
+    #   その日の 00:00〜16:00 に走る回は全部この頭3行で
+    #   「この回は `verdict` で日付が動かせます」と言われます（**16時間ぶん**）。
+    #   同じ回に `status.py` は「いま判定できる前提: なし」と正しく出していました。
+    try:
+        out |= set(mod.not_open_yet())
+    except Exception:                                          # noqa: BLE001
+        pass                            # **読めないときは黙る**（門を増やさない）
+    return out
+
+
+#: `day_cap.cap()` の答えを、この走りのあいだ持ち回るための1組
+#: `(そのとき呼んだ関数そのもの, その返り)`。**関数を持っておくのが本体**です（下）。
+_DAY_CAP_MEMO: tuple | None = None
+
+
+def _view_cap_per_day() -> float:
+    """**1日に再生が付く本数の上限**（`src/day_cap.py`）を、1回だけ読む。
+
+    ## なぜ要るか（2026-08-28 に測った。**軌跡の 38% がこの1行でした**）
+
+    `day_cap.cap()` は `measure()` → `by_day()` と降りて、
+    **`data/views.jsonl` を毎回まるごと読み直します**（実測 **59.1 ms/回**）。
+    ところがこの関数は `analyse()` と `plan()` の**中**にあり、
+    その2つは `trajectory()` のループが `t` の日数ぶん回します。実測::
+
+        analyse           58.0 ms/回   ← **うち day_cap.cap() が 59.1 ms**（＝ほぼ全部）
+        plan(sens=False)  93.6 ms/回   ← ここにも1回 入っている
+        軌跡 base 1本     20.0秒 ＝ 約131回まわる
+
+    **1回の `eta.py` で 1,000回 前後 読み直しています。** 答えは毎回同じです ——
+    `eta.py` は `data/views.jsonl` に**1行も書きません**（積むのは `data/eta.jsonl` だけ）。
+
+    畳んだ後の実測（同じ機械・同じ点）::
+
+        plan(sensitivity=True)   4.1秒 → 1.1秒
+        軌跡 base               20.0秒 → 2.7秒
+        solve() 合計           107.5秒 → **16.6秒**（**-85%**）
+
+    **`§2.6`（4分）も `--reflect` も `--alloc`（6分）も、同じ道を通ります。**
+    直近8回の「設計の見直し」問い1 は、**7回が「道具が答えを返すのを待つところ」**
+    （体感 4〜6割）でした。**穴ではなく、穴を作っている側**がここです。
+
+    ## なぜ `lru_cache` ではないか（**検査が `day_cap.cap` を差し替えます**）
+
+    `tests/_eta_pin.py` と `tests/test_eta_day_cap.py` は
+    **同じ関数の中で `day_cap.cap` を 10 → 1,000 と差し替えて**、
+    天井が効いているかを見ます。`lru_cache` だと2つ目が素通りします。
+
+    だから**差し替えを見て畳み直します** —— 覚えているのは
+    「どの関数から取った答えか」で、`day_cap.cap` が別の関数になったら取り直す。
+    **関数そのものを持っておくこと**（`id()` で覚えると、
+    差し替えが GC された後に同じ id が別の関数へ回って、静かに誤答します）。
+
+    **覆る条件**: `eta.py` が走っている最中に `data/views.jsonl` が
+    書き換わるようになったら、この畳み方は外すこと（いまは誰も書きません）。
+    **`tests/test_eta_day_cap_memo.py` が、差し替えを見落としたら落とします。**
+    """
+    global _DAY_CAP_MEMO
+    fn = day_cap.cap
+    if _DAY_CAP_MEMO is None or _DAY_CAP_MEMO[0] is not fn:
+        _DAY_CAP_MEMO = (fn, fn())
+    return _DAY_CAP_MEMO[1]
+
 
 # --- 門（YouTube の公表値。守るのではなく、通らないと収入が0になる事実）---
+#
+# ## **門は1つではありません。2段あります**（2026-08-30・最適化の回に実測して直した）
+#
+# ここは長らく「門 ＝ 登録者1,000人 ＋ 4,000時間/1,000万回」の**1段だけ**を
+# 持っていました。**YouTube の公表値は2段です**（`support.google.com/youtube/answer/13429240`
+# を 2026-08-30 に直接 読んだ。以下は引用の数字):
+#
+#     expanded YPP（下の段）  登録者 **500人** ＋ 直近90日に公開3本
+#                             ＋（直近12か月 **3,000時間** ／ 直近90日 ショート **300万回**）
+#                             → **メンバーシップ・Super Thanks・Super Chat・
+#                                Jewels・Shopping**（＝ ファン課金）
+#     YPP（上の段）           登録者 **1,000人**
+#                             ＋（直近12か月 4,000時間 ／ 直近90日 ショート 1,000万回）
+#                             → **上に加えて 広告と Premium の分け前**
+#
+# **下の段は、上の段より全部の脚で手前にあります**: 登録者 1/2・時間 3/4・
+# ショート **3/10**。**「同じ門の後ろ」ではありません。**
+#
+# ## なぜこれが効くか（**この定数が無かったこと自体が所見**）
+#
+# `docs/MEANS.md` の M23 は「メンバーシップと Super Thanks は、AdSense と
+# **同じ門の後ろ**にあります（要確認）。**門を早める効果は 0**」と判定して、
+# 着手を「登録者10,000人」まで送っていました。**その要確認は、外れです。**
+# M23 自身の「覆る条件」が
+# 「**門の前でも使えると分かったら、判定1 は崩れる。段取りごと組み直すこと**」
+# と書いてあります —— 2026-08-30 に、その条件が満ちました。
+#
+# ## **数は1つも足していません**
+#
+# ここに入れたのは**公表値だけ**です。ファン課金の**単価も加入率も入れていません**
+# （未測定の数を足すと、日付がその推測で動きます —— M23 の「帯を増やさない」）。
+# だからこの定数は**到達日を1日も動かしません**。動かすのは
+# 「**どの門を目指しているか**」の側で、そこが2段あることを毎回 印字させます。
+#
+# ## 覆る条件
+#
+# - **公表値が変わったら**（YouTube は 2023 にこの下の段を足しました）取り直すこと。
+#   出どころは `support.google.com/youtube/answer/13429240` の1枚だけ
+# - **ファン課金の分子が実測で1件でも入ったら**、ここは定数ではなく段になります
+#   —— そのとき `RPM_SCENARIOS` の外に帯が増え、`_ceiling` の「どの帯でも
+#   届きません」は書き直すこと（`docs/MEANS.md` M23）
+# - **日本で下の段が使えないと分かったら**（国べつの可用性は未確認）この段は消すこと。
+#   **未確認なのは「使えるか」であって、「同じ門か」ではありません** ——
+#   後者はもう外れが確定しています
 SUBS_GATE = 1_000
 LONG_HOURS_GATE = 4_000          # 直近12か月・長尺のみ
 SHORTS_VIEWS_GATE = 10_000_000   # 直近90日・ショート
+
+# --- 下の段（expanded YPP）＝ ファン課金だけが開く門。**広告は開きません** ---
+FAN_SUBS_GATE = 500
+FAN_HOURS_GATE = 3_000           # 直近12か月
+FAN_SHORTS_VIEWS_GATE = 3_000_000  # 直近90日
+FAN_GATE_UNLOCKS = "メンバーシップ・Super Thanks・Super Chat・Jewels・Shopping"
+
 TARGET_YEN = 200_000             # 月収の目標
 
 # --- 1日に出せる本数の上限（実測。data/upload_cap.jsonl の窓と同じ）---
@@ -195,11 +394,55 @@ UPLOAD_CAP_PER_DAY = 92
 
 # --- 公開の密度（1日に何本「公開」するか。投稿＝予約とは別物）---
 #     いまの予約は 246本が39.5日に散って 1日6.4本。詰めれば25本（受け取り帳 3c7e12a3）
-PUBLISH_SCENARIOS = (4, 10, 25, 92)
+PUBLISH_SCENARIOS = (4, 10, 13, 25, 92)
 
-# --- いま計画している密度（受け取り帳 3c7e12a3 の詰め直しが着地する所）---
-#     門2a の逆算は「門1 が通る日まで」で割るので、この1つを正本にします
-PLAN_PUBLISH_PER_DAY = 25
+# --- いま計画している密度（**2026-08-30 に 25 → 13 へ落とした**）---
+#
+# 門2a の逆算は「門1 が通る日まで」で割るので、この1つを正本にします。
+#
+# ## なぜ 25 をやめたか —— **その帯は、前提として外れています**
+#
+# `python -m src.density_verdict` は `config/hypotheses.yaml` の
+# 「予約の間隔を1時間より詰めても、1本あたりの再生は落ちない」を判定する道具で、
+# **2026-08-30 に falsified** になりました（API 0単位・年齢12〜48時間で揃えた実測）:
+#
+#     詰めた日（1日16本以上）    1本あたり再生の中央値 **2回**（5日・119本）
+#     1時間きざみの日（8〜13本）  1本あたり再生の中央値 **716回**（4日・42本）
+#     倍率 **0.003**（`falsified_if` は 0.5 未満）
+#
+# **25本/日 は、その外れた帯の中の数字です。** 段1〜4 はこの1つの上に全部
+# 乗っているので、**外れた帯の本数で日付を出し続けると、予測そのものが嘘になります。**
+#
+# ## なぜ 13 か
+#
+# **測れている帯の上端**だからです（「1時間きざみの日」＝ 8〜13本）。
+# 8 まで落とす根拠はありません —— **その向きは1度も測っていません**
+# （`scripts/eta.py` の「推測」4番「1日N本出しても1本あたりが保つか」は、
+#   いまも未測定のまま。落ちることは分かりましたが、**どこまでなら保つか**は
+#   分かっていません）。**測れている端を取り、下は次の実測に任せます。**
+#
+# ## **これは到達日を後ろへ動かします。それが正しい姿です**
+#
+# 密度を下げれば必要な日数は伸びます。**伸びた日付が本当の予測**で、
+# 25本/日 で出ていた日付は「1本あたり中央値2回の帯で出し続けたら」という意味でした。
+# なお `scripts/shorts_subs.py` の解き直し（解除条件6）は
+# **いちばん近い門を縛っているのは密度ではなく変換**だと出しています ——
+# 天井まで密度を上げても登録の門は 10% しか早まりません。
+# **落とす側の損も、その裏返しで小さい**はずですが、**そこは未測定です。**
+#
+# ## 覆る条件
+#
+# - `density_verdict` を撃ち直して倍率が 0.5 を超えたら、25 に戻してよい
+# - 8本/日 より下でも1本あたりが保つと測れたら、そちらへ落とすこと
+#   （落とせるほど、量そのものが `AUTOMATION_PAUSED.md` の (B) から遠ざかります）
+# - ~~**`scripts/batch_build.py` に機械の上限が入るまで、この数は文書上の数です**~~
+#   **2026-08-30 に入りました**（`batch_build.cap_by_density()`。`slots()` の出口で、
+#   **生成の前**に当たります）。**上限はここではなく
+#   `src.density_verdict.HOUR_HI` から読みます** —— 機械と計画が同じ所を見ているかを
+#   `tests/test_density_cap.py` が見ているので、**この 13 を動かすときは
+#   `HOUR_HI` のほうを動かすこと**（片方だけ動かすと赤くなります）。
+#   入れる前の実績は 08/27 19本・08/28 22本 でした
+PLAN_PUBLISH_PER_DAY = 13
 
 # --- 収益化の審査にかかる日数（YouTube 公表「通常1か月以内」。**実測ではない**）---
 MONETIZE_REVIEW_DAYS = 30
@@ -253,6 +496,17 @@ LONG_SHAPES = (
 LONG_PER_DAY_SCENARIOS = (1, 2, 4)
 
 NEVER = 10 ** 9  # 「届かない」を日数で表すときの番人
+
+#: **凍らせた線（`frozen_days`）を、この走りで測るか。**（2026-08-26）
+#:
+#: **引数ではなく旗で持っています。** `solve(m, points)` の形は
+#: `tests/test_eta_reflect.py` など**6つの検査が monkeypatch で差し替えて**おり、
+#: キーワード引数を足した版は `TypeError` で7件 落ちました（同日に踏んだ）。
+#: **呼び口の形は、検査ごと動かさないこと。**
+#:
+#: 落とすのは2か所だけです —— `--no-frozen` と、`--reflect`
+#: （積み直すのは日付で、**腕の要否は問うていない**。軌跡1〜2本ぶんの節約）。
+FROZEN_ARMS = True
 
 # --- **1本あたり再生の標本に、入れてよい本の条件**（2026-08-20 03:1x に足した） ---
 #
@@ -660,6 +914,80 @@ def split_per_video(rows) -> tuple[list[int], list[int]]:
     return sorted(shorts), sorted(longs)
 
 
+def live_band_views(rows, published=None, forms=None) -> list[int]:
+    """**再生が付く帯に居た本だけ**の、1本あたり再生（ショート・昇順）。API 0単位。
+
+    `rows` は `dimensions=video` の Analytics の行（`row[0]` が video_id）。
+    帯は `src/day_cap.live_ids()`（間隔 → その日の先頭 `cap()` 本）で引きます。
+    **上限を測っているのと同じ2段**なので、天井の掛け算と分母がそろいます。
+
+    ## なぜ要るか（2026-08-29 に測って足した。**天井が同じ死を2回 数えていました**）
+
+    天井は
+
+        1本あたり再生 **×** 再生が付く上限（実測 10本/日・`src/day_cap.py`）**×** 30日
+
+    です。**右の 10本/日 が「上限を超えて出した本は 0再生」を既に言っています。**
+    ところが左の「1本あたり再生」は、**その死んだ本を分母に入れたままの平均**でした。
+    **同じ死を、式の左と右で2回 引いています。**
+
+    実測（`data/views.jsonl`・齢48時間 以上の 168本。2026-08-29）:
+
+        0再生            24本   合計       0
+        1〜9再生         42本   合計     126   ← **Analytics には出ます**（分母に入る）
+        10〜49再生        4本   合計     105
+        50再生 以上      98本   合計  69,081
+
+    **1〜9再生 の 42本は、分母の 29% を占めて、再生の 0.18% しか持っていません。**
+    薄まったぶんだけ天井が下がり、`eta.py` は7日の差を
+    **「出すほど天井が下がります」**と印字していました。**それは実績ではなく、
+    上限を 2.3倍 超えて出したぶんが平均を薄めた跡**です。
+
+    帯で割った実測（同じ168本）:
+
+        帯の中  n=84  平均 **678回**      帯の外  n=84  平均 168回
+        帯の中で実際に生きた（50再生 以上） **82/84**（98%）
+        帯の外で死んだ **68/84**（81%）  ← 一致 150/168 ＝ **89%**
+
+    公開日ごとに見ると、**生きた本数は出した本数によらず 10本 前後で止まります**:
+
+        08/20  25本 → 生 10本 / 6,445再生      08/23  13本 → 生 10本 / 10,232再生
+        08/21  32本 → 生 11本 / 6,791再生      08/24  10本 → 生 10本 /  8,386再生
+        08/22  25本 → 生 10本 / 5,892再生
+
+    **32本 出した日より、10〜13本 の日のほうが再生は多い。** 分母だけが増えています。
+
+    ## この関数が言えないこと
+
+    - **帯は公開時刻から引いた予測**で、実測の生死ではありません（89% で一致）。
+      帯の外で生きた 16本 を捨てているので、**帯の中の平均は上振れ側**です。
+    - **長尺は帯に入れません**（`cap()` が測っているのはショートの面で、
+      長尺はその枠を1つも使わないため）。落とすのは `day_cap.live_ids()` の
+      既定になりました（2026-08-30。それまでは**ここだけが手前で落として**いて、
+      他の呼び手は落としていませんでした）。**ここの前置きは二重ですが残します**
+      —— `forms` を差し替えて呼ぶ道（検査・比べ物）が、この引数に乗っています。
+
+    **覆る条件**: `day_cap.measure()` の `cap` が上がれば帯は自動で広がります。
+    帯の中の平均が、帯の外の平均の **2倍 を下回ったら**、この切り方は効いていません
+    （いまは 678 対 168 ＝ **4.0倍**）。そのときは分母を戻すこと。
+    """
+    try:
+        from src import ab_split, day_cap
+    except Exception:
+        return []
+    try:
+        long_ids = day_cap._long_ids(forms)
+        pub = published if published is not None else ab_split.published()
+        band = day_cap.live_ids([r for r in pub
+                                 if str(r.get("video_id") or "") not in long_ids])
+    except Exception:
+        return []
+    if not band:
+        return []
+    shorts, _ = split_per_video([r for r in rows if str(r[0]) in band])
+    return shorts
+
+
 def _measure() -> dict:
     """YouTube Analytics から、予測に要る実測値だけを取る。"""
     from googleapiclient.discovery import build
@@ -717,6 +1045,8 @@ def _measure() -> dict:
     # そして「いちばん近い帯」の倍率は **1.1倍 → 1.33倍** に変わります。
     mean_views = round(sum(vals) / len(vals)) if vals else 0
     long_mean = round(sum(long_sorted) / len(long_sorted)) if long_sorted else None
+    live_vals = live_band_views(per_video)
+    live_mean = round(sum(live_vals) / len(live_vals)) if live_vals else None
 
     def row(rows, i):
         return rows[0][i] if rows else 0
@@ -736,9 +1066,22 @@ def _measure() -> dict:
         "views_per_video": mean_views,
         "median_views_per_video": median_views,
         "videos_with_views_28d": len(vals),
+        # **天井の分母は、再生が付く帯に居た本だけ**（2026-08-29 に足した。
+        # `live_band_views` の docstring に、なぜ薄めた平均だと二重に数えるか）。
+        # `None` ＝ 帯が引けなかった（`data/uploaded.jsonl` が無い等）。**その回は前の式に落ちます。**
+        "views_per_video_live": live_mean,
+        "videos_live_28d": len(live_vals) if live_vals else 0,
         # **長尺だけの1本あたり再生**（`None` ＝ 直近28日に長尺の再生が1本も無い）
         "long_per_video": long_mean,
         "long_median_per_video": long_median,
+        # **分布そのものも積む**（2026-08-31 に足した）。
+        #     判定（`長尺1本あたり-30本`）が読むのは**中央値**で、門は 80回 です。
+        #     ところが積んでいたのは中央値と平均の2つだけで、**「あと何本 積めば
+        #     覆りうるか」を後から解ける形が、どこにも残っていませんでした。**
+        #     実測 2026-08-31: 21本の中央値 4回 に対し、残り9本を**この
+        #     チャンネルの最良の長尺（133回）**で埋めても 30本の中央値は 6.5回。
+        #     **その計算に要るのは分布**です（`src/long_ceiling.py`）。
+        "long_values_28d": list(long_sorted),
         "long_videos_28d": len(long_sorted),
         "long_views_28d": sum(long_sorted),
         # **標本から落とした本**（理由 → 本数）。0件でも鍵は残す（黙って消えないため）
@@ -749,11 +1092,24 @@ def _measure() -> dict:
 def _per_video(m: dict) -> float:
     """1本あたり再生（ショート）。**天井を動かす数なので、平均のほうを使います。**
 
-    `data/eta.jsonl` の古い点には `views_per_video` がありません（8点目まで）。
+    **採るのは「再生が付く帯に居た本だけ」の平均**です（2026-08-29 に直した。
+    理由と実測は `live_band_views` の docstring）。天井は
+    `1本あたり再生 × 再生が付く上限（10本/日） × 30日` なので、
+    **上限を超えて死んだ本を分母にも入れると、同じ死を2回 引きます。**
+
+    落ちる先は2段:
+
+        views_per_video_live  帯の中だけの平均（**この点から既定**）
+        views_per_video       帯を引けなかった点・2026-08-29 より前の点
+        median_views_per_video  `views_per_video` も無い古い点（8点目まで）
+
     **無い点を 0 と読むと、差の節が「1,092 → 0」＝ -100% と印字します**ので、
     落ちる先を中央値に置いています。**中央値は上振れ側**なので、
     古い点との差は「縮んだ」側に寄って見えることに注意すること。
     """
+    live = m.get("views_per_video_live")
+    if live:
+        return live
     v = m.get("views_per_video")
     return v if v is not None else m.get("median_views_per_video", 0)
 
@@ -768,6 +1124,36 @@ def _days_to(need: float, per_day: float) -> float:
     # 100年より先は「届かない」と同じに畳む。**桁の大きい数を残すと、
     # 前の回との差（縮んだぶん）がその桁に埋もれて読めなくなります。**
     return NEVER if days > 36_500 else days
+
+
+def _long_ceiling_lines(m: dict) -> list[str]:
+    """**中央値の上限**（`src/long_ceiling.py`）を、天井の行の下に出す形にする。
+
+    **見出しの1行は落とします** —— ここは既に「天井」の節の中で、
+    もう1つ見出しを立てると読み手が節の切れ目と取り違えます。
+
+    **回を止めません。** 解けなければ空を返します（`long_values_28d` が
+    積まれていない古い点でも、`long_ceiling.lines()` が「測っていない」を出します）。
+    """
+    try:
+        from src import long_ceiling
+        return long_ceiling.lines(m)[1:]
+    except Exception:                                          # noqa: BLE001 — 回を止めない
+        return []
+
+
+def _long_ceiling_gate() -> int | str:
+    """**判定の門（80回）の正本を1か所から読む。** 読めなければ `?` を出す。
+
+    ここに数を書かないのは、`config/hypotheses.yaml` の `falsified_if` と
+    `src/long_ceiling.MEDIAN_GATE` で**もう2か所**あるからです。
+    3か所目を作ると、片方だけ動いたときにこの行が黙って古くなります。
+    """
+    try:
+        from src import long_ceiling
+        return long_ceiling.MEDIAN_GATE
+    except Exception:                                          # noqa: BLE001 — 回を止めない
+        return "?"
 
 
 def _print_dropped(P, m: dict) -> None:
@@ -1110,7 +1496,7 @@ def analyse(m: dict, points: list[dict] | None = None,
     #   08/20 は 25本 公開して **#11から先の15本が 0〜3再生**。#10 は 1,111再生。
     #   時刻ではなく**その日の通し番号**で割れます（08/16 の14時 #4 は 1,361再生）。
     # つまり段1 の日付は、上限を超えて出したぶんだけ**楽観に倒れて**いました。
-    a["view_cap_per_day"] = day_cap.cap()
+    a["view_cap_per_day"] = _view_cap_per_day()
     a["days_subs_at"] = {
         n: _days_to(a["subs_remaining"],
                     min(n, a["view_cap_per_day"]) * _per_video(m)
@@ -1144,6 +1530,24 @@ def analyse(m: dict, points: list[dict] | None = None,
 
     # 収益化はどちらかの門2 ＋ 門1
     a["days_monetized"] = max(a["days_subs"], min(a["days_long_hours"], a["days_shorts_gate"]))
+
+    # --- 下の段（expanded YPP）＝ ファン課金の門。**広告は開きません** ---
+    #
+    # **同じ式を、公表値だけ差し替えて解きます。** 新しい仮定は1つも入れません
+    # （加入率も単価も持っていません —— 持たせると日付が推測で動きます）。
+    # 出すのは「**どの門が手前にあるか**」だけです。
+    a["fan_subs_remaining"] = max(0, FAN_SUBS_GATE - m["subs_net"])
+    a["days_fan_subs"] = _days_to(a["fan_subs_remaining"], subs_per_day)
+    a["days_fan_hours"] = _days_to(FAN_HOURS_GATE - m["long_hours_365"], long_hours_per_day)
+    a["fan_shorts_needed_per_day"] = FAN_SHORTS_VIEWS_GATE / 90
+    a["days_fan_shorts"] = (
+        0.0 if views_day >= a["fan_shorts_needed_per_day"] else NEVER
+    )
+    a["days_fan_gate"] = max(
+        a["days_fan_subs"], min(a["days_fan_hours"], a["days_fan_shorts"])
+    )
+    # **手前にある日数の差**。ここが正なら、ファン課金の門のほうが早く開きます。
+    a["fan_gate_lead_days"] = a["days_monetized"] - a["days_fan_gate"]
 
     # --- 門2a を「長尺を足して」開けるなら、長尺1本に何回の再生が要るか ---
     #
@@ -1284,8 +1688,16 @@ def report(m: dict, a: dict) -> list[str]:
     P(f"  登録率            {a['sub_rate']*100:>10.4f} %   ＝ 再生 {1/a['sub_rate']:,.0f} 回につき1人" if a["sub_rate"] else "  登録率            **0** ＝ 何回再生されても増えていない")
     P(f"  長尺の視聴時間    {m['long_hours_365']:>10,.1f} 時間（直近365日。門は {LONG_HOURS_GATE:,}）")
     P(f"  ショート90日      {m['shorts_views_90d']:>10,} 回（門は {SHORTS_VIEWS_GATE:,}）")
-    P(f"  1本あたり再生     {a['per_video_now']:>10,} 回（**ショート**・**平均**・"
-      f"直近28日に再生のあった本のうち、**標本に残った {m['videos_with_views_28d']} 本**）")
+    if m.get("views_per_video_live"):
+        P(f"  1本あたり再生     {a['per_video_now']:>10,} 回（**ショート**・**平均**・"
+          f"**再生が付く帯に居た {m.get('videos_live_28d', 0)} 本**）")
+        P(f"    （帯の外まで入れた平均は {m['views_per_video']:,} 回／{m['videos_with_views_28d']} 本。"
+          "**天井には帯の中だけを使います** —— 天井は「1本あたり再生 × 再生が付く上限（"
+          f"{a.get('view_cap_per_day', 0):.0f}本/日）」なので、"
+          "**帯の外の本を分母に残すと、同じ死を2回 引きます**。`live_band_views` に実測）")
+    else:
+        P(f"  1本あたり再生     {a['per_video_now']:>10,} 回（**ショート**・**平均**・"
+          f"直近28日に再生のあった本のうち、**標本に残った {m['videos_with_views_28d']} 本**）")
     if m.get("median_views_per_video") and m["median_views_per_video"] != a["per_video_now"]:
         P(f"    （中央値は {m['median_views_per_video']:,} 回 ＝ **典型的な1本**。"
           "**天井には平均のほうを使います** —— 天井は N本ぶんの合計で、合計 ＝ N × 平均）")
@@ -1313,6 +1725,32 @@ def report(m: dict, a: dict) -> list[str]:
                        f"／いま {a['views_per_day']:,.0f}回）")
     P(f"  [門2b] ショート90日で{SHORTS_VIEWS_GATE:,}回    {shorts_line}")
     P(f"  → **収益化そのもの: {_fmt_days(a['days_monetized'])}**")
+    P("")
+    P(f"  [下の段] **ファン課金だけの門（expanded YPP）** ＝ {FAN_GATE_UNLOCKS}"
+      "　**広告は開きません**")
+    P(f"    [門1'] 登録者 {FAN_SUBS_GATE:,}人（上の段の**半分**）  "
+      f"{_fmt_days(a['days_fan_subs'])}"
+      f"　**あと {a['fan_subs_remaining']:,} 人**")
+    P(f"    [門2a'] 長尺 {FAN_HOURS_GATE:,}時間（上の段の 3/4）    "
+      f"{_fmt_days(a['days_fan_hours'])}")
+    if a["views_per_day"] >= a["fan_shorts_needed_per_day"]:
+        _fs = "**通っています**"
+    else:
+        _fs = (f"**届きません**（1日 {a['fan_shorts_needed_per_day']:,.0f}回 要る"
+               f"／いま {a['views_per_day']:,.0f}回 ＝ "
+               f"{a['views_per_day'] / a['fan_shorts_needed_per_day']:.2f}倍）")
+    P(f"    [門2b'] ショート90日で{FAN_SHORTS_VIEWS_GATE:,}回（上の段の **3/10**）  {_fs}")
+    if a["fan_gate_lead_days"] > 0 and a["days_fan_gate"] < NEVER:
+        P(f"    → **ファン課金の門そのもの: {_fmt_days(a['days_fan_gate'])}**"
+          f"（広告の門より **{a['fan_gate_lead_days']:,.0f}日 手前**）")
+    else:
+        P(f"    → **ファン課金の門そのもの: {_fmt_days(a['days_fan_gate'])}**")
+    P("    **この段に、この機械はまだ分子を1つも持っていません**"
+      "（加入率も単価も未測定）。**だから上の到達日は、この段を 0円 として解いています。**"
+      "　`docs/MEANS.md` の M23 は 2026-08-30 まで「メンバーシップは広告と**同じ門の後ろ**"
+      "だから門を早める効果は 0」と判定していました —— **公表値を読んだら外れでした**"
+      "（`support.google.com/youtube/answer/13429240`）。**M23 の着手条件は、"
+      "その外れた判定の上に立っています。**")
     if a["long_untried"] and a["days_monetized"] >= NEVER:
         P("       **この「届きません」を、諦める理由に使わないこと。** 門2a の無限が"
           "そのまま出ているだけで、**未着手を測った数ではありません**。")
@@ -1331,6 +1769,22 @@ def report(m: dict, a: dict) -> list[str]:
     else:
         P(f"    長尺      **{lpv:,}回**／本（**平均**・n={a['long_videos_28d']}・合計 {a['long_views_28d']:,}回・"
           "**30再生の床は当てていません**。当てると1本も残りません）")
+        # --- **中央値も出す**（2026-08-31 に足した。**測っていたのに1行も出ていなかった**）---
+        #     `_measure()` は `long_median_per_video` を 8/19 から積んでいますが、
+        #     **印字は平均だけ**でした。実測 2026-08-31 は 平均 16回 に対し
+        #     **中央値 4回（4倍）**で、**判定（`長尺1本あたり-30本`）が読むのは
+        #     中央値のほう**です。読まれる側と判定する側が別の数だった、という形。
+        # **門の数（80回）はここに書きません** —— 正本は `src/long_ceiling.MEDIAN_GATE` で、
+        #     そこが `config/hypotheses.yaml` の `falsified_if` と同じであることは
+        #     `tests/test_long_ceiling.py::test_門の数は仮説と同じ` が見ています。
+        #     **3か所目を作らないこと。**
+        _lmed = m.get("long_median_per_video")
+        if _lmed is not None:
+            P(f"              中央値 **{_lmed:,}回**／本（**判定 `長尺1本あたり-30本` が"
+              f"読むのはこちら。門は {_long_ceiling_gate()}回**）。"
+              "平均との差は右に歪んだ分布のぶんです")
+            for _ln in _long_ceiling_lines(m):
+                P(f"      {_ln}")
     P(f"  **再生が付く上限 {a['ceiling_per_day']:.0f}本/日**（実測・`src/day_cap.py`）× 30日 に、"
       "**その形の実測**を当てた上限:")
     P(f"      （口が受け付けるのは {UPLOAD_CAP_PER_DAY}本/日 ですが、**それを超えて出したぶんは 0再生**です。"
@@ -1385,7 +1839,24 @@ def report(m: dict, a: dict) -> list[str]:
         P("      この帯にいる限り、**本数を増やしても在庫を増やしても、日付は動きません。**")
         P("      動くのは **1本あたりの再生数** か **RPM（＝ニッチと尺）** の2つだけです。")
     if not reachable:
-        P("  [!] **どの帯でも届きません。いまの構成は、上限そのものが目標の下にあります。**")
+        # **「いまの構成」が何を指すかを、同じ行に書くこと**（2026-08-29 12:4x に足した）。
+        # ここに並ぶ 6帯 は `RPM_SCENARIOS` そのもの ＝ **分子は「再生 × 広告 RPM」の1つだけ**
+        # です（`TARGET_YEN ÷ RPM × 1000`。`src/reach_split.py` 88行）。
+        # **メンバーシップ・Super Thanks・企業案件は、この機械のどこにも入っていません**
+        # （実測 2026-08-29: 4語とも `scripts/eta.py` / `src/*.py` / `docs/MEANS.md` /
+        #  `docs/STRATEGY.md` / `docs/CONSTRAINTS.md` に **0件**）。
+        # 断りが無いと、読む側はこの行を「**YouTube では届かない**」と読みます ——
+        # `CLAUDE.md`「(イ) **裸の『届きません』を出さないこと**」の、この形ぶんの手です。
+        # **帯は1つも増やしていません**（未測定の数を足すと、日付がその推測で動く）。
+        # **覆る条件**: `RPM_SCENARIOS` の外の分子が1つでも入ったら、この断りは書き直すこと
+        # （足し先・掛け算・着手条件は `docs/MEANS.md` の M23）。
+        P("  [!] **どの帯でも届きません。いまの構成は、上限そのものが目標の下にあります。**"
+          "　**その「構成」は帯だけの話ではありません** —— 上の6帯は `RPM_SCENARIOS`"
+          " ＝ **分子が「再生 × 広告 RPM」の1つだけ**の模型です。"
+          "**メンバーシップ・Super Thanks・企業案件は、この機械に入っていません**"
+          "（`CLAUDE.md` は4つとも名指ししています）。"
+          "だからこの行は『YouTube では届かない』ではなく"
+          "**『広告だけを分子にすると届かない』**です（`docs/MEANS.md` の M23）。")
     else:
         P(f"  上限で届く帯: {', '.join(reachable)}")
         P("      **ただし RPM は実測ではありません。** 収益化後に自分の数字で測り直すこと。")
@@ -1753,12 +2224,19 @@ def physical_caps(a0: dict, density: float = PLAN_PUBLISH_PER_DAY,
 
         density    `UPLOAD_CAP_PER_DAY`（92本/日・**実測**）÷ いまの密度
         rpm        `RPM_SCENARIOS` の最大（**推測の幅の上端**）÷ いま立てている帯
-        sub_rate   登録率 100%（**定義上の上限**。測った天井ではありません）
+        sub_rate   `src/subs_cap.py`（**1本あたり登録率の実測の最大**）。
+                   測れない回だけ 登録率 100%（**定義上の上限**）へ落ちます
         per_video  ここでは付けません（`config/hypotheses.yaml` の `ceiling` が実測で持っています）
 
-    **`rpm` と `sub_rate` は実測の天井ではありません。** どちらも
-    「これ以上は誰も主張していない」という線で、**測れば動きます**
-    （`sub_rate` の実測は仮説「長尺の登録率はショートより1桁以上高い」・期限 2026-09-15）。
+    **`rpm` は実測の天井ではありません。**
+    「これ以上は誰も主張していない」という線で、**測れば動きます**。
+
+    **`sub_rate` は 2026-08-28 に実測へ替えました。** それまでは
+    「登録率 100%」だけで、天井が **×3,153.91** と出ていました ——
+    同じ日の軌跡は 56日目に `sub_rate` ×10.36 を歩いており、
+    **その倍率が実在の幅の中かを誰も確かめられない**形です（100% は
+    どんな倍率も下に入れます）。`per_video` の天井は実測の最大なので、
+    **同じ物差しを当てます**: 実測 0.2066% ÷ いま 0.0317% ＝ **×6.5**。
     """
     caps: dict[str, dict] = {}
     # **分母は「天井が立っている密度」**（`sustained_density`）。
@@ -1771,7 +2249,7 @@ def physical_caps(a0: dict, density: float = PLAN_PUBLISH_PER_DAY,
         #     08/20 は 25本 公開して #11から先の15本が 0〜3再生（`src/day_cap.py`）。
         #     天井を口の側で立てると、**腕を ×3.7 まで歩けると出て、
         #     実際には1日も縮まない**という形になります。
-        arm_cap = min(float(UPLOAD_CAP_PER_DAY), float(day_cap.cap()))
+        arm_cap = min(float(UPLOAD_CAP_PER_DAY), float(_view_cap_per_day()))
         raw = arm_cap / density
         # **倍率が 1 を下回るのは「引き代がマイナス」ではありません** ——
         #     **すでに上限より多く出している**、という意味です。そのまま返すと
@@ -1824,16 +2302,54 @@ def physical_caps(a0: dict, density: float = PLAN_PUBLISH_PER_DAY,
             caps["density"]["confounded"] = True
             caps["density"]["factor_if_window"] = fork_factor
             caps["density"]["answer_on"] = fork["answer_on"]
-            caps["density"]["why"] += (
-                f"。ただし**この上限は「本数」と「時刻の窓」に切り分けられていません**"
-                f"（`day_cap.window()` が `confounded`）——"
-                f" **(B) 時刻の窓なら上限は {arm_cap:.0f}本 → {fork['cap']}本（×{fork_factor:.2f}）**"
-                f"（{fork['earliest']}→{fork['T']}・{fork['step_min']}分きざみ）。"
-                f"**作る本数は1本も増えません** —— いま {fork['T']} より後ろで"
-                f"0再生になっているぶんを、前へ置き直すだけです。"
-                f"上の「引き代なし」は **(A) 本数モデルを固定した場合**の数で、"
-                f"切り分けは **{fork['answer_on']}** に出ます"
-            )
+            edge = fork.get("left_edge")
+            if fork_factor > 1.0:
+                caps["density"]["why"] += (
+                    f"。ただし**この上限は「本数」と「時刻の窓」に切り分けられていません**"
+                    f"（`day_cap.window()` が `confounded`）——"
+                    f" **(B) 時刻の窓なら上限は {arm_cap:.0f}本 → {fork['cap']}本"
+                    f"（×{fork_factor:.2f}）**"
+                    f"（{fork['earliest']}→{fork['T']}・{fork['step_min']}分きざみ）。"
+                    f"**作る本数は1本も増えません** —— いま {fork['T']} より後ろで"
+                    f"0再生になっているぶんを、前へ置き直すだけです。"
+                    f"上の「引き代なし」は **(A) 本数モデルを固定した場合**の数で、"
+                    f"切り分けは **{fork['answer_on']}** に出ます"
+                )
+            else:
+                # **(B) の側にも引き代が無いと分かった場合**（2026-08-27 に測った）。
+                # ここは長らく「(B) なら ×1.80」を**無条件で**印字していました。
+                # その 18枠 は 05:00〜13:30 から数えた数で、**05:00 が生きるかは
+                # 測っていませんでした**（`collisions.LIVE_FROM_MIN` は
+                # 切り分けの日を作るために広げてあった値）。
+                # 2026-08-27 に実際に置いたら **05:00〜08:30 の 8本 が全部 0再生**で、
+                # 窓の左端は 08:59 でした。08:59〜13:30 は30分きざみで
+                # **ちょうど 10枠** ＝ (A) と同じです。
+                # **賭かっているものが無いなら、そう言うこと** ——
+                # 「切り分けが済んでいない」と「どちらでも同じ」は別の話で、
+                # 前者だけを印字すると、次の回が**無い上振れ**を取りにいきます。
+                caps["density"]["why"] += (
+                    f"。**モデルの切り分けは済んでいません**"
+                    f"（`day_cap.window()` が `confounded`）が、"
+                    f"**(B) 時刻の窓の側にも引き代はありません** ——"
+                    f" 窓の左端は実測で **{edge['by'] if edge else fork['earliest']}**"
+                    + (f"（{edge['from']} に {edge['from_dead']}本 置いて、"
+                       f"**全部 0再生**）" if edge else "")
+                    + f"で、{fork['earliest']}→{fork['T']} は"
+                    f"{fork['step_min']}分きざみで **{fork['cap']}枠** ＝ "
+                    f"(A) の {arm_cap:.0f}本 と同じです（×{fork_factor:.2f}）。"
+                    f"**早い時刻へ倒しても本が増えません。倒すと死にます。**"
+                    f"残っているのは**右端**（{fork['T']} より後ろ）だけで、"
+                    f"その切り分けは **{fork['answer_on']}** に出ます"
+                )
+                # **この枝にだけ `answer_on` が入っていませんでした**（2026-08-28）。
+                #     上の (B) に引き代がある枝は最後に「切り分けは ○○ に出ます」と
+                #     言うのに、こちらは「残っているのは右端だけです」で終わっており、
+                #     **いつその右端が答えるかがどこにも出ません。**
+                #     `tests/test_eta_density_confounded.py` は両方の枝に同じ行を
+                #     求めていて、**その検査は赤のままでした。**
+                #     日付が本文に無いと、次の回はそれを申し送りから読むことになり、
+                #     申し送りの日付は腐ります（`retro.py` の持ち越しに
+                #     「日枠が戻ったら」が3周 並んだのと同じ形）。
         # --- **長尺の面は、別の天井です**（2026-08-26。**3回続けて申し送られていた**）---
         #     上の `day_cap.cap()` は **ショートの面**の数です（`SHORTS_FEED` に
         #     1日に差し込まれる本数）。**長尺はその枠を1つも使いません**し、
@@ -1853,18 +2369,58 @@ def physical_caps(a0: dict, density: float = PLAN_PUBLISH_PER_DAY,
         #     **軌跡は歩きません。使うのは `src/levers.py` の「死んだ腕」の判定だけ**で、
         #     そこが**面ごとに割れる**ようにするために置いています ——
         #     ショートの面が天井でも、**長尺を増やす作業を `none` へ落とさない**ため。
-        long_cap = max(0.0, float(UPLOAD_CAP_PER_DAY) - float(day_cap.cap()))
+        #
+        #     **【2026-08-29 に、ここが実物と食い違っていました】**
+        #     上の註は「`day_cap.long_form()` が**常に** `measured: False`」と
+        #     書いていますが、**もう False ではありません。**
+        #     実測（`data/views.jsonl`・齢 48時間 でそろえた読み）:
+        #
+        #         2026-08-21  長尺 **7本** を出して、再生が付いたのは **5本**
+        #         → `collapsed: True` / `most: 7` / `measured: True`
+        #
+        #     **崩れは観測されています。** `day_cap.long_form_lines()` は
+        #     この日から「**7本/日 で崩れました → 上限は 6本/日**」と印字しており、
+        #     `batch_build._long_ring()` も `most - 1` で正しく落としています。
+        #     **ここだけが「一度も観測していない」と言い続けていました** ——
+        #     `day_cap.py` の註が名指ししている
+        #     「**機構は正しく、読まれる側だけが偽**」の3件目です。
+        #
+        #     食い違いの大きさ: 定義上の上限は 82本/日（92 - 10）で **×118**、
+        #     実測の上限は 6本/日 で **×8.7**。**14倍 ちがいます。**
+        #     この行は `eta.py` の頭・`--alloc` の2か所に毎回出て、
+        #     「長尺の面は ×118 空いている」と読ませていました。
+        #
+        #     **測れているなら、測ったほうを使うこと。** 測れていない窓
+        #     （崩れをまだ見ていない）では、これまでどおり定義上の上限に落とします。
+        long_m: dict = {}
+        try:
+            long_m = day_cap.long_form() or {}
+        except Exception:                                      # noqa: BLE001
+            long_m = {}
         long_now = _long_form_per_day()
+        long_measured = bool(long_m.get("measured"))
+        if long_measured:
+            # **崩れた日の1本 手前**が上限（`day_cap.long_form_lines()` と同じ式）。
+            long_cap = float(max(1, int(long_m.get("most") or 1) - 1))
+            long_why = (f"長尺の面は **{long_m.get('most')}本/日 で崩れました**"
+                        f"（最大の日 {long_m.get('alive')}/{long_m.get('most')}本 しか"
+                        f"生存していません・齢 {float(long_m.get('age_h') or 0):.0f}時間 で"
+                        f"そろえた実測）→ 上限 **{long_cap:.0f}本/日**"
+                        "（**測った天井です**。`src/day_cap.long_form()`）")
+        else:
+            long_cap = max(0.0,
+                           float(UPLOAD_CAP_PER_DAY) - float(_view_cap_per_day()))
+            long_why = (f"口が通す {UPLOAD_CAP_PER_DAY}本/日 から、ショートの面で死ぬ"
+                        f" {_view_cap_per_day()}本 を引いた {long_cap:.0f}本"
+                        "（**定義上の上限。測った天井ではありません** ——"
+                        " 長尺の面が崩れるところは一度も観測していない）")
         long_raw = (long_cap / long_now) if long_now > 0 else None
         caps["density_long"] = {
             "factor": long_raw,
-            "why": (f"口が通す {UPLOAD_CAP_PER_DAY}本/日 から、ショートの面で死ぬ"
-                    f" {day_cap.cap()}本 を引いた {long_cap:.0f}本"
-                    "（**定義上の上限。測った天井ではありません** ——"
-                    " 長尺の面が崩れるところは一度も観測していない）"
+            "why": (long_why
                     + (f" ÷ いま出している長尺 {long_now:.2f}本/日"
                        if long_now > 0 else "。**長尺をまだ1本も出していません**")),
-            "measured": False,
+            "measured": long_measured,
             "at_ceiling": bool(long_raw is not None and long_raw <= 1.0),
             "surface": "長尺",
             "now_per_day": long_now,
@@ -1895,7 +2451,54 @@ def physical_caps(a0: dict, density: float = PLAN_PUBLISH_PER_DAY,
         caps["sub_rate"] = {"factor": 1.0 / sr,
                             "why": "登録率 100%（定義上の上限）",
                             "measured": False}
+        # **測れた回は、定義の上限ではなく実測の最大を採る**（2026-08-28）。
+        #     ここは長らく「登録率 100%」だけで、`sub_rate` の天井が
+        #     **×3,153.91** と出ていました。同じ日の軌跡は 56日目に
+        #     `sub_rate` ×10.36 を歩いており、**その倍率が実在の幅の中かを
+        #     誰も確かめられない**（100% はどんな倍率も下に入れてしまう）。
+        #     `per_video` の天井は実測の最大（1本あたり再生 1,891回）なので、
+        #     **同じ物差しを登録率にも当てます**（`src/subs_cap.py`）。
+        #     実測 2026-08-28: 最大 0.2066%（`CdX2oIb7BG8` 1,452再生 3人）
+        #     ÷ いま 0.0317% ＝ **×6.5**。門に要るのは ×2.08 なので、
+        #     **これは「届かない」ではありません** —— 要る倍率と実在の幅を、
+        #     同じ物差しで並べられるようにしただけです。
+        best = subs_cap.best_per_video()
+        if best and best.get("rate", 0) > 0:
+            f = best["rate"] / sr
+            if f < caps["sub_rate"]["factor"]:
+                over = f < 1.0
+                caps["sub_rate"] = {
+                    # **1 を下回るのは「引き代がマイナス」ではありません** ——
+                    #     いまの登録率が、実測の最大より上にある（＝ 引き代なし）。
+                    #     `density` と同じ扱いで、超えていること自体は `why` に残します。
+                    "factor": max(1.0, f),
+                    "why": (subs_cap.why(best)
+                            + ("。**いまの登録率が実測の最大を超えています ＝ 引き代なし**"
+                               if over else "")),
+                    "measured": True}
     return caps
+
+
+#: **1つの腕の天井が、面ごとに割れているもの。**（2026-08-28・最適化の回）
+#:
+#: `LEVERS` は4本ですが、`physical_caps` は `density` の天井を**2つ**立てます ——
+#: `density`（ショートの面・実測 ×1.00・**天井**）と
+#: `density_long`（長尺の面・**実測 ×8.7（上限 6本/日）で開いている**）。
+#:
+#: **【2026-08-29 に、ここの「×128・未測定」が古くなりました】**
+#: 長尺の面の崩れは **2026-08-21 に観測されています**（7本 出して生存 5本）。
+#: `physical_caps` は、その日から**実測の上限 6本/日**（`most - 1`）を使います。
+#: **`LEVERS` に入れない理由も、それに合わせて置き直しています** ——
+#: もう「未測定だから」ではありません。**段1（`PLAN_PUBLISH_PER_DAY`）が
+#: ショートの面の上で解かれているから**です。軌跡に長尺の面を歩かせるには、
+#: 先に段1 を面ごとに割る必要があります（そこを割らずに腕だけ足すと、
+#: ショートの段の上を長尺の天井で歩きます）。
+#: **覆る条件**: 段1 が面ごとに割れたら、`density_long` を `LEVERS` へ入れること。
+#: （元の理由は「軌跡を未測定の天井で歩かせない。`physical_caps` の註に 08/21 の実害」）
+#: そして
+#: **「この腕は死んでいる」と印字する側**は、その割れを知らないままでした。
+#: ここはその割れを、印字する側へ運ぶためだけの表です。**軌跡には渡しません。**
+_SURFACE_SIBLINGS: dict[str, tuple[str, ...]] = {"density": ("density_long",)}
 
 
 def _capped_arms(a0: dict, arms: dict | None = None,
@@ -1917,13 +2520,180 @@ def _capped_arms(a0: dict, arms: dict | None = None,
         if a.get("cap") is not None and "cap_why" not in a and a.get("ceiling"):
             a["cap_why"] = f"実測の天井 {a['ceiling']['value']:,}（{a['ceiling']['unit']}）"
             a["cap_measured"] = True
+        # --- **その天井が、いくつの面のうちの1つか**（2026-08-28）---
+        #     ここを運ばないと、`cap_lines` と `alloc_search` は
+        #     ショートの面の ×1.00 だけを見て「立てても、閉じても、
+        #     上の日付は1日も動きません」と印字します。**印字だけの欄**で、
+        #     `cap` そのものには触りません（軌跡は今までどおり）。
+        p0 = phys.get(lever) or {}
+        sib = []
+        for key in _SURFACE_SIBLINGS.get(lever, ()):
+            q = phys.get(key)
+            if not q or not q.get("factor"):
+                continue
+            sib.append({"key": key,
+                        "surface": q.get("surface") or key,
+                        "factor": float(q["factor"]),
+                        "measured": bool(q.get("measured")),
+                        "at_ceiling": bool(q.get("at_ceiling")),
+                        "why": q.get("why", "")})
+        if sib:
+            a["cap_surfaces"] = sib
+            a["cap_surface"] = p0.get("surface")
+        if p0.get("confounded"):
+            a["cap_confounded"] = True
+            a["cap_answer_on"] = p0.get("answer_on")
         out[lever] = a
+    return out
+
+
+def cap_caveats(lever: str, a: dict) -> list[str]:
+    """**「この腕は死んでいる」と言い切れない理由**を、その場の数から並べる（0〜2件）。
+
+    ## なぜ要るか（2026-08-28・最適化の回。**実測で見つけた**）
+
+    この日の `--alloc` は、こう印字していました:
+
+        次の1件を `density` に   2027-01-19
+            ↑ **この腕は天井 ×1.00（引き代なし）です。**
+              立てても、閉じても、上の日付は1日も動きません
+
+    同じ回の `physical_caps` は、**density の天井を2つ**立てています:
+
+        density       ×1.00    surface=ショート  measured=True   at_ceiling=True
+        density_long  ×128.13  surface=長尺      measured=False  at_ceiling=False
+
+    **【この2行目は 2026-08-26 の実物です。2026-08-29 に数が動きました】**
+    長尺の面の崩れが `day_cap.long_form()` に入り（08/21・7本 出して生存 5本）、
+    いまは `×8.67  surface=長尺  measured=True  at_ceiling=False`
+    （実測の上限 6本/日 ÷ 0.69本/日）。**×128 は定義上の上限の名残**です。
+
+    そして台帳の**開いている density の前提 6件**のうち **2件は長尺の面**です
+    （「長尺は1日4本 作れる」期限 08-31 ／「長尺の生成が落ちる主因は…」期限 08-29）。
+    **4,000時間の門に入るのは長尺だけ**なので、この2件は門に直結しています。
+    それを「立てても、閉じても動きません」と読ませていました。
+
+    残る4件も無傷ではありません —— **3件は `day_cap` の上限そのものを測る前提**
+    （「上限10本はチャンネルが育っても上がらない」／「本の集合は帯で決まる。
+    本数ではない」／「1日の合計は本数では動かない」）。
+    つまり **×1.00 を作っている当の数を、いま測っている最中**です。
+    `physical_caps` は同じ回に `caps["density"]["confounded"] = True`
+    （`day_cap.window()` が (A)本数 と (B)時刻の窓 を切り分けていない）と
+    立てており、**機械は「この天井は未決着」と知っていました。**
+
+    **凍らせた入力から出した結論を、世界についての結論として印字する形**です ——
+    `CLAUDE.md` が `eta.py` の「届きません」について言っているのと同じ壊れ方で、
+    そちらは直っていて、こちらだけ残っていました。
+
+    ## 何を言い、何を言わないか
+
+    **`cap` は動かしません。** 軌跡は今までどおりショートの面の ×1.00 で歩きます
+    （未測定の天井で歩かせた 08/21 の実害は `physical_caps` の註）。
+    ここが直すのは**印字だけ**です:
+
+        言う      「上の日付が動かない」は**この道具の作りの話**である
+        言う      どの面で測った天井か・別の面はいくつ空いているか
+        言わない  「だから long の面に立てれば日付が動く」（**動きません**。
+                  `density_long` は `LEVERS` に無いので軌跡が歩きません）
+
+    ## 覆る条件
+
+    - `physical_caps` が面ごとに腕を立て、`LEVERS` に長尺の面が入ったら、
+      この関数は要りません（そのとき軌跡が面を歩くので、印字は自動で正しくなる）
+    - `day_cap.window()` が (A)/(B) を切り分けたら、2件目の理由（`confounded`）は
+      自動で消えます。**消えるのが正しい** —— 手で消さないこと
+    - `tests/test_cap_caveat_surface.py` が、裸の「動きません」に戻ったら落とします
+    """
+    out: list[str] = []
+    open_sib = [s for s in (a.get("cap_surfaces") or []) if not s["at_ceiling"]]
+    if open_sib:
+        here = a.get("cap_surface") or "この面"
+        for s in open_sib:
+            out.append(
+                f"**その ×{a.get('cap', 0):,.2f} は「{here}」の面だけの数です。**"
+                f"「{s['surface']}」の面は **×{s['factor']:,.2f}**"
+                + ("（**未測定**）" if not s["measured"] else "")
+                + f" 空いています —— {s['why']}")
+    if a.get("cap_confounded"):
+        out.append(
+            "**その天井そのものが、まだ決着していません**"
+            "（`day_cap.window()` が (A)本数 と (B)時刻の窓 を切り分けていない"
+            + (f"。答えが出るのは {a['cap_answer_on']}" if a.get("cap_answer_on") else "")
+            + "）。**凍らせた入力から出した『動きません』です。**")
+    return out
+
+
+def cap_lines(arms: dict, indent: str = "      ") -> list[str]:
+    """腕べつの**天井**と、その出どころを1行ずつ。**正本はここ1か所です。**
+
+    ## なぜ関数にしたか（2026-08-27 に実測して足した）
+
+    `alloc_search` の docstring は自分でこう言っています ——
+    **「その2本の順位は天井の遠さだけで決まっています」**。
+    ところが `--alloc` の出力には、**天井が1つも印字されていませんでした。**
+    印字していたのは軌跡の側（`_trajectory_lines`）だけです。
+
+    実測 2026-08-27 の `--alloc`:
+
+        次の1件を `per_video` に   2027-01-07
+        次の1件を `sub_rate` に    2027-01-03   ← **いちばん早い**
+        次の1件を `rpm` に         2027-01-12
+        次の1件を `density` に     2027-01-07
+
+    同じ日の同じプログラムが、軌跡の側ではこう言っています:
+
+        天井 `sub_rate` ×3,231.43 …… 登録率 100%（定義上の上限）← **実測の天井ではありません**
+        天井 `density`  ×1.00 …… **引き代なし。この腕は何をしても上の日付を1日も動かしません**
+
+    **順位を決めている当の数が、順位表に出ていない。**
+    `density` は `per_video` と**同着**の顔で並び、「引き代0」とは1文字も
+    書いてありません。実際 `data/runs.jsonl` の直近8件の ship のうち
+    **2件が `lever=density`**（同じ行に `"lever_cap": 1.0` が記録済み）——
+    **機械は知っていて、選ぶ側には見えていませんでした。**
+    そして `--alloc` は **3回 続けて `sub_rate` を名指し**しています
+    （`docs/JOURNAL.md` 2026-08-27）。その天井は「登録率100%」＝
+    **定義上の上限**で、実測ではありません。
+
+    **覆る条件**: `sub_rate` と `rpm` が `MIN_N`（3件）に届いて
+    p・g が自前になったら、順位は天井だけでは決まらなくなります
+    （`alloc_search` の「覆る条件」と同じ1件）。そのときもこの表は残すこと ——
+    **消える理由は「天井が効かなくなった」ではなく「他も効くようになった」**です。
+    """
+    out: list[str] = []
+    for lever, a in arms.items():
+        cap = a.get("cap")
+        if not cap or not a.get("cap_why"):
+            continue
+        caveats = cap_caveats(lever, a) if cap <= 1.0 else []
+        if cap <= 1.0 and not caveats:
+            mark = ("  ← **引き代なし。この腕に立てても、"
+                    "上の日付は1日も動きません**")
+        elif cap <= 1.0:
+            # **裸の「動きません」を出さないこと**（2026-08-28。理由は `cap_caveats`）。
+            #     ここで言えるのは「**上の日付**が動かない」までで、
+            #     「この腕の作業が目標に効かない」ではありません。
+            mark = ("  ← **上の日付は動きません。ただし『引き代なし』とは"
+                    "言えません**（下の行）")
+        elif not a.get("cap_measured"):
+            mark = "  ← **実測の天井ではありません**"
+        else:
+            mark = ""
+        out.append(f"{indent}天井 `{lever}` ×{cap:,.2f} …… {a['cap_why']}{mark}")
+        for c in caveats:
+            out.append(f"{indent}    [!] {c}")
     return out
 
 
 #: 軌跡を追う地平（日）。ここより先は「届かない」と同じに扱う。
 #: 3年 ＝ 目標の「最短」から見ればとっくに別の道を選んでいる長さです。
 TRAJECTORY_HORIZON_DAYS = 1_095
+
+#: **θ を「無限大にしたら」の代わりに撃つ倍率**（2026-08-30・最適化の回）。
+#: `trajectory()` は `t_work` の探索を `saturate = log(cap)/rate` で打ち切るので、
+#: 倍率を上げるほど**速く**なります（実測: ×1.0 が 5.4秒 に対し ×1000 は 0.1秒）。
+#: 1000倍 で `t_work` は 1日 まで潰れる ＝ **腕が一瞬で天井に着いた世界**で、
+#: そこから先は何倍にしても日付が動きません（＝これが θ の天井）。
+THETA_INF_SCALE = 1_000.0
 
 
 def _factors_at(arms: dict, days: float, *, focus: str | None = None,
@@ -2134,18 +2904,206 @@ def _recent_surface() -> tuple[float, int, str] | None:
         if recent <= 0:
             return None
         return (recent, int(long.get("recent_days") or reach_split.RECENT_DAYS),
-                str(long.get("per_day_sustained_basis") or ""))
+                str(long.get("per_day_sustained_basis") or ""),
+                int(long.get("recent_zero_publish_days") or 0),
+                reach_split.surface_forecast(
+                    reach_split.summary(rows, reach_split.long_ids()),
+                    make_per_day=_long_make_per_day(),
+                    slots_per_day=_long_slots_per_day(),
+                    stock=_long_stock()),
+                float(long.get("ctr") or 0.0),
+                # **CTR の分母と分子**（2026-08-29 に足した）。率だけを渡すと、
+                #     「要る CTR に届きうるか」を**振れの外か中か**で言えません。
+                #     実測 08/29: 67/4,001 ＝ 1.67%・95%区間 [1.32%, 2.13%] に対し
+                #     要る CTR は 7.3% —— **区間の外**です。それを言わずに
+                #     「ここから先で効くのは CTR」と出していました。
+                (float(long.get("impressions") or 0.0),
+                 float(long.get("clicks") or 0.0)))
     except Exception:  # noqa: BLE001  （測れないことで回を止めない）
         return None
 
 
+def _long_make_per_day() -> float | None:
+    """**長尺を1日に何本 作れているか**（実測。読めなければ `None`）。
+
+    `long_supply_per_day()` の `per_day`。**計画値へは落としません** ——
+    ここが要るのは「予定表の穴が、放っておいて埋まるか」の判定で、
+    **願望で割ると『埋まります』と出て、実際には空のまま公開日が来ます。**
+    """
+    try:
+        got = long_supply_per_day()
+        # **`rate` です**（`per_day` ではありません）。**測れていない回は使わない** ——
+        # `measured: False` のときの数は計画値で、そこで割ると「埋まります」と出ます。
+        if not got.get("measured"):
+            return None
+        v = float(got.get("rate") or 0.0)
+        return v if v > 0 else None
+    except Exception:                                  # noqa: BLE001 — 回を止めない
+        return None
+
+
+def _long_stock() -> int | None:
+    """**いま在る長尺向けのテーマ**（本）。読めなければ `None`。**API 0単位。**
+
+    `src/supply.py` の `surfaces()["long"]["stock"]` ＝ 未投稿・`calc` あり・
+    **`s-` で始まらない**題（`batch_build.pick` の `long_usable` と同じ数え方。
+    `scripts/batch_build.py`「`long_usable = [t for t in usable if not
+    t["id"].startswith("s-")]`」）。
+
+    **なぜ要るか**: `_long_make_per_day()` が測っているのは**描画の速さ**で、
+    描く題材が在るかは1つも見ていません。2026-08-29 の実測は
+    **描画 9.14本/日 ／ 在庫 0本** —— それで `dry_fill` は
+    「放っておいて埋まります」と出していました（`reach_split.dry_fill` の docstring）。
+
+    **`None` は「在庫0」ではありません。** 読めなかった回に 0 を返すと、
+    その回は全部「題材が無い」になります。`dry_fill` は `None` を
+    「測っていない」として、これまでどおりの枝へ落とします。
+    """
+    try:
+        from src import supply                          # noqa: PLC0415
+        v = (supply.surfaces() or {}).get("long", {}).get("stock")
+        return None if v is None else int(v)
+    except Exception:                                  # noqa: BLE001 — 回を止めない
+        return None
+
+
+def _long_family_ceiling() -> dict | None:
+    """**長尺を1日に何本まで出せるか、の「構造の天井」**（族の数）。**API 0単位。**
+
+    `_long_make_per_day()`（描く速さ）でも `long_supply_per_day()`（実測の産出）でも
+    ありません。**在庫がいくら在っても、`batch_build.pick` が7日ぶんで取れるのは
+    「族の数 × `per_calc`」まで**です（`scripts/topic_forge.print_long_stock()` と
+    同じ式。`_drop_queue_tail_calcs` が、これから7日の予約に載っている calc を
+    丸ごと落とすため）。
+
+    ## なぜ段2 に要るか（2026-08-29 に足した）
+
+    段2（門2a・長尺4,000時間）の表は L＝1/2/4本/日 の3列しか持たず、実測の
+    1本あたり再生を当てて「**いちばん甘い行でも 5倍 足りない。全部の行を
+    下回っています**」と印字し、そのあと「段2 が測るのは**1本あたりを何倍に
+    できるか**」で閉じていました。**Lを凍らせて、もう一方だけを解いています。**
+
+    **Lは、この機械が自分で動かせる側です。** 1本あたり再生は配信が決めますが、
+    Lは族を1つ足せば `per_calc`本/7日 動きます。だから合格点は**Lの側でも解いて
+    並べる**こと（`CLAUDE.md`「裸の『届きません』を出さないこと」／
+    「何を何倍にすれば、いつ届くか」）。
+
+    返り値:
+
+        families    いま長尺の在庫を持っている族の数
+        ceiling_7d  7日ぶんで `pick` が返せる上限（本）
+        per_day     その 1日あたり
+        spare       `config/topics.yaml` に `calc` が在って、**長尺のテーマを
+                    1件も持っていない族**の数（＝ 表を書かずに族を増やせる余地。
+                    `topic_forge` の実測 15分/件）
+        stock       長尺向けの在庫（本）
+
+    **覆る条件**: `per_calc` か `_drop_queue_tail_calcs` の窓が変わったら、この式ごと
+    変わります —— どちらも `topic_forge` から読んでおり、**ここには写していません**。
+    """
+    try:
+        sys.path.insert(0, str(ROOT / "scripts"))
+        import topic_forge                              # noqa: PLC0415
+        from src import config, dupes                   # noqa: PLC0415
+
+        pool = config.load_topics()["topics"]
+        used = {r["topic"] for r in dupes.ledger_rows() if r.get("topic")}
+        longs = [t for t in pool
+                 if t.get("calc") and t["id"] not in used
+                 and not str(t["id"]).startswith("s-")]
+        families = {t["calc"] for t in longs}
+        per_calc = topic_forge.PER_CALC_DEFAULT
+        window = topic_forge.LONG_WINDOW_DAYS
+        ceiling = min(len(longs), len(families) * per_calc)
+        spare = {t["calc"] for t in pool if t.get("calc")} - families
+        return {"families": len(families), "ceiling_7d": ceiling,
+                "per_day": (ceiling / window) if window else 0.0,
+                "per_calc": per_calc, "window": window,
+                "spare": len(spare), "stock": len(longs)}
+    except Exception:                                  # noqa: BLE001 — 回を止めない
+        return None
+
+
+def _long_needed_per_day(a: dict, lpv: float, days: float) -> list[dict]:
+    """**1本あたり再生を実測で固定したとき、長尺を1日何本 出せば門2a が開くか。**
+
+    `_long_break_even()` の裏返しです。あちらはLを筋書き（1/2/4本/日）で固定して
+    1本あたり再生を解き、こちらは**1本あたり再生を実測で固定してLを解きます。**
+
+        L ＝ 要る視聴分 ÷ (1本あたり再生 × 門1までの日数 × 1再生の視聴分)
+
+    **両方 要ります。** 片方だけだと、**動かせる側が画面に出ません** ——
+    実測 2026-08-29: 表は L≤4本/日 しか持たず「全部の行を下回っています」で
+    終わっており、**Lを上げれば開く**とはどこにも出ていませんでした。
+    """
+    out: list[dict] = []
+    for r in a.get("long_break_even") or []:
+        per_view = r["min_per_view"]
+        slots = lpv * days * per_view
+        out.append({"label": r["label"], "min_per_view": per_view,
+                    "per_day": (a["long_minutes_needed"] / slots)
+                    if slots > 0 else float("inf")})
+    return out
+
+
+def _long_slots_per_day() -> int | None:
+    """**1日に長尺を置ける枠の数**（`batch_build._long_ring()` の実測の輪）。
+
+    定数を写さないこと —— `_long_ring()` は `day_cap.long_form()` が
+    崩れを見つけたら自動で1つ下げます。**写した瞬間に古くなります。**
+    """
+    try:
+        sys.path.insert(0, str(ROOT / "scripts"))
+        import batch_build                             # noqa: PLC0415
+        return len(batch_build._long_ring())
+    except Exception:                                  # noqa: BLE001 — 回を止めない
+        return None
+
+
 def _with_recent_surface(mix: dict) -> dict:
-    """点に「いま続いている量」を足す。足せなければ**そのまま返す**。"""
+    """点に「いま続いている量」と「**これからの予定で立つ量**」を足す。
+
+    足せなければ**そのまま返す**（推測で埋めない）。
+    `imp_day_planned` の中身は `src/reach_split.surface_forecast()` の docstring。
+    """
     got = _recent_surface()
     if not got:
         return mix
-    return {**mix, "imp_day_recent": got[0], "imp_day_recent_days": got[1],
-            "imp_day_recent_basis": got[2]}
+    out = {**mix, "imp_day_recent": got[0], "imp_day_recent_days": got[1],
+           "imp_day_recent_basis": got[2], "imp_day_recent_dry": got[3]}
+    fc = got[4]
+    if fc:
+        out["imp_day_planned"] = fc["per_day_planned"]
+        out["imp_day_planned_pubs"] = fc["pubs_per_day"]
+        out["imp_day_per_publish"] = fc["per_publish"]
+        out["imp_day_dry_span"] = fc["dry_span"]
+        out["imp_day_dry_fill"] = fc.get("dry_fill")
+    if len(got) > 5 and got[5]:
+        out["imp_ctr_long"] = got[5]
+    if len(got) > 6 and got[6]:
+        out["imp_ctr_n"], out["imp_ctr_k"] = got[6]
+    return out
+
+
+def _wilson(k: float, n: float, z: float = 1.96) -> tuple[float, float] | None:
+    """**割合の95%区間**（Wilson）。`k` 回のうち `n` 回。読めなければ `None`。
+
+    正規近似（`p ± z√(p(1-p)/n)`）ではなく Wilson を使うのは、**分子が小さい側で
+    区間が負に食い込まないから**です。ここで測るのは CTR で、実測は 1〜2% ——
+    正規近似が最も外れる帯です。
+
+    **なぜ要るか**（2026-08-29）: 段2 は「要る CTR 7.3%・サムネと題」と、
+    **次に引く腕を名指し**していました。実測は 67/4,001 ＝ 1.67% で、
+    区間は [1.32%, 2.13%]。**7.3% は区間の 3.4倍 外**です。
+    「サムネを直せば届く」と読める字面が、**実測が否定している的**に向いていました。
+    """
+    if n <= 0 or k < 0:
+        return None
+    p = k / n
+    d = 1.0 + z * z / n
+    c = p + z * z / (2 * n)
+    r = z * ((p * (1 - p) / n + z * z / (4 * n * n)) ** 0.5)
+    return (max(0.0, (c - r) / d), min(1.0, (c + r) / d))
 
 
 def _gate2_surface_basis(mix: dict) -> tuple[float | None, str, dict]:
@@ -2176,8 +3134,33 @@ def _gate2_surface_basis(mix: dict) -> tuple[float | None, str, dict]:
     recent = float(mix.get("imp_day_recent") or 0.0)
     mean = float(mix.get("imp_day_mean") or 0.0)
     top = float(mix.get("imp_day_max") or 0.0)
+    planned = float(mix.get("imp_day_planned") or 0.0)
+    dry_in_window = int(mix.get("imp_day_recent_dry") or 0)
     others = {"recent": recent or None, "mean": mean or None, "max": top or None,
-              "recent_days": mix.get("imp_day_recent_days")}
+              "recent_days": mix.get("imp_day_recent_days"),
+              "planned": planned or None,
+              "planned_pubs": mix.get("imp_day_planned_pubs"),
+              "per_publish": mix.get("imp_day_per_publish"),
+              "dry_span": mix.get("imp_day_dry_span"),
+              "dry_fill": mix.get("imp_day_dry_fill"),
+              "ctr": mix.get("imp_ctr_long"),
+              "ctr_n": mix.get("imp_ctr_n"), "ctr_k": mix.get("imp_ctr_k")}
+    # **窓が「公開を止めていた日」で埋まっているなら、中央値は段2 の答えではありません**
+    #     （2026-08-26。`src/reach_split.surface_forecast()` の docstring に実測）。
+    #     段2 の問いは「門2a を 450日 かけて開けられるか」で、
+    #     **これから長尺を何本 公開するかは控えに入っています**（API 0単位）。
+    #     公開が0本の日を1日でも窓に含んだ中央値は、
+    #     **「公開を止めたら面はいくつか」**の答えで、別の問いです。
+    #     **中央値のほうは消しません** —— `others["recent"]` にそのまま残り、
+    #     印字は両方を同じ行に並べます（どちらも正しく、問いが別だから）。
+    if planned > 0 and dry_in_window > 0:
+        pubs = float(mix.get("imp_day_planned_pubs") or 0.0)
+        per_pub = float(mix.get("imp_day_per_publish") or 0.0)
+        basis = (f"これから{mix.get('imp_day_recent_days') or 7}日の予約から"
+                 f"（公開1本あたり {per_pub:,.1f}回 × 長尺 {pubs:.2f}本/日）"
+                 f"。**直近の中央値 {recent:,.1f}回/日 は、"
+                 f"窓の{dry_in_window}日が長尺の公開0本だったぶん**")
+        return planned, basis, others
     if recent > 0:
         basis = (mix.get("imp_day_recent_basis")
                  or f"直近{mix.get('imp_day_recent_days') or 7}日の平均")
@@ -2211,6 +3194,102 @@ def _gate2_surface_note(imp_day: float, need_day: float,
         span = (f"　（同じ帳面の他の読み: 全期間の平均 {others['mean']:,.1f}"
                 f"／最大の1日 {others['max']:,.1f}回/日。"
                 "**天井にだけ最大を使い、段取りには使わないこと**）")
+    # **予定表の穴を、同じ行に出すこと**（2026-08-26）。面が公開で立つ以上、
+    #     長尺の予約が0本の日は面も0に近づきます。**足りている/足りないより先に、
+    #     どこで落ちるか**を見せる —— 直す先はサムネでも題でもなく、予定表です。
+    dry = others.get("dry_span")
+    if dry and dry[2] >= 3:
+        a, b, n = dry
+        head_dry = (f"{a[:4]}-{a[4:6]}-{a[6:]}〜{b[:4]}-{b[4:6]}-{b[6:]} の {n}日 は"
+                    f"長尺の予約が0本です（控えの実物）。")
+        # **「その日に置け」と言わないこと**（2026-08-26 夜に直した）。
+        #     予約の時刻を決めているのは `uploader.next_publish_at()` だけで、
+        #     **手前から順に**埋めます。だから未来の空き日は「穴」ではなく
+        #     「**まだ順番が来ていない日**」で、作りつづけていれば頭が通過します。
+        #     実測（`data/uploaded.jsonl` 長尺28本・全部 08/24 以降のアップ）:
+        #     08/29 は 3.2〜3.7日前・09/06 は 10.9〜11.7日前・09/20〜10/10 は 25〜45日前
+        #     （最後のは 1日1本 だった頃の残り）。空いているのは**その2つのあいだ**。
+        #     **既にある本を後ろへ動かして埋めると、判定が遅れるぶん必ず損します。**
+        fill = others.get("dry_fill")
+        if not fill:
+            span += (f"　[!] **{head_dry}** "
+                     "**埋まるかどうかは、まだ数えていません**"
+                     "（作る速さか、1日の枠のどちらかが読めていません）。"
+                     "**『その日に置く』と読まないこと** —— "
+                     "予約は手前から埋まるので、**未来の空き日は"
+                     "『順番が来ていない日』かもしれません**")
+        elif fill["ok"]:
+            span += (f"　（{head_dry}"
+                     f"ただし**放っておいて埋まります** ——"
+                     f" 手前の空き枠 {fill['open_slots']}本 ÷ 作る速さ"
+                     f" {fill['make_per_day']:.2f}本/日 ＝ **{fill['reach_days']:.1f}日** で"
+                     f"頭が通過し、穴の初日までは {fill['gap_days']}日 あります。"
+                     f"**その日に置きにいかないこと** —— 既にある本を後ろへ動かすので、"
+                     f"判定が遅れるぶん損します。"
+                     f"**割れる線は作る速さ {(fill.get('need_per_day') or 0):.2f}本/日**"
+                     f"（いま {fill['make_per_day']:.2f}。"
+                     f"余裕 {fill['gap_days'] - fill['reach_days']:.1f}日）"
+                     # **題材の側も一緒に出すこと**（2026-08-29）。ここが
+                     #     「埋まります」だけだった回、在庫は 0本 でした。
+                     + (f"。**題材の在庫 {fill['stock']}本**（空き枠 "
+                        f"{fill['open_slots']}本 ぶんは在ります）"
+                        if fill.get("stock") is not None
+                        else "。**題材の在庫は読めていません**"
+                             "（`src/supply.py` が返さなかった回）")
+                     + "）")
+        elif fill.get("bound") == "topics":
+            # **描画は速いが、描くものが無い枝**（2026-08-29 に足した）。
+            #     ここを「作る速さです」と言うと、9.14本/日 出ている描画を
+            #     さらに速くしにいきます —— 律速は `src/calc/` の節のほうです。
+            span += (f"　[!] **{head_dry}** "
+                     f"面は公開で立つので、**そこで {imp_day:,.0f}回/日 は保ちません。**"
+                     f" 手前の空き枠 {fill['open_slots']}本 に対し、"
+                     f"**長尺向けのテーマの在庫は {fill['stock']}本**です"
+                     f"（`s-` で始まらない未投稿の題／`src/supply.py`）。"
+                     f"**描く速さは足りています**"
+                     f"（{fill['make_per_day']:.2f}本/日 ＝ 空き枠なら"
+                     f" {fill['reach_days']:.1f}日 ・穴まで {fill['gap_days']}日）——"
+                     f" **足りないのは題材のほうです。**"
+                     f" あと **{fill['topics_needed']}本**"
+                     f"（{(fill.get('topics_per_day_needed') or 0):.2f}本/日 × "
+                     f"{fill['gap_days']}日）。"
+                     # **「節を足せ」は、この穴には効きません**（2026-08-29 に踏んだ）。
+                     #     ここは長らく「直す先は `src/calc/` の節です ——
+                     #     (2) 既にある表に節を足して」と言っていました。
+                     #     **同じ repo の `topic_forge.print_long_stock()` は、
+                     #     同じ穴について逆を言っています**:
+                     #       「**いま在庫は 17件 あるのに 8本 しか取れません** ——
+                     #         詰まっているのは節ではなく**族の数**です。
+                     #         **同じ族に節を足しても、この数は1本も増えません。**」
+                     #     実物はあちらのほうです（`ceiling = min(len(longs),
+                     #     len(families) * PER_CALC_DEFAULT)` を実際に計算している）。
+                     #     `batch_build` は1つの calc から `--per-calc`（既定2）本まで
+                     #     しか取らないので、**7日ぶんの上限は族の数で決まります。**
+                     #     字面どおりに従うと、在庫（`fill['stock']`）だけ増えて
+                     #     **穴は1本も埋まりません**。
+                     #     **覆る条件**: `PER_CALC_DEFAULT` が 1 に落ちるか
+                     #     `_drop_queue_tail_calcs` が消えたら、上限は族の数で
+                     #     決まらなくなります（`print_long_stock()` の式ごと変わる）。
+                     f"**直す先は描画でも予定表でもなく、"
+                     f"`src/calc/` の**族**のほうです** ——"
+                     f" 在庫を増やしても、`batch_build` は1つの calc から"
+                     f" 2本 までしか取りません。"
+                     f"**7日ぶんの上限は族の数で決まります**"
+                     f"（`python scripts/topic_forge.py --list` の末尾。"
+                     f"**「(2) 既にある表に節を足す」は族を増やしますが、"
+                     f"長尺のテーマを既に持っている族に足しても1本も増えません**）。"
+                     f"（**4,000時間の門に入るのは長尺だけ**なので、"
+                     f"ショートを足してもこの穴は1本も埋まりません）")
+        else:
+            span += (f"　[!] **{head_dry}** "
+                     f"面は公開で立つので、**そこで {imp_day:,.0f}回/日 は保ちません。**"
+                     f" 手前の空き枠 {fill['open_slots']}本 を、作る速さ"
+                     f" {fill['make_per_day']:.2f}本/日 で埋めるには"
+                     f" **{fill['reach_days']:.0f}日** かかり、穴の初日まで"
+                     f" {fill['gap_days']}日 しかありません。"
+                     f"**直す先はサムネでも題でも予定表でもなく、作る速さです** ——"
+                     f" あと **{(fill.get('short_per_day') or 0):.2f}本/日**"
+                     f"（既にある本を後ろへ動かして穴を埋めると、判定が遅れるぶん必ず損します）")
     ratio = (need_day / imp_day) if imp_day else float("inf")
     # **「1.0倍 足りません」を印字しないこと。** 191 対 190.6 は倍率にすると
     #     ×1.00 で、丸めると「足りている」と読める字面になります。
@@ -2224,10 +3303,107 @@ def _gate2_surface_note(imp_day: float, need_day: float,
         return (head + f" **{ratio:,.1f}倍 足りません**。"
                 "**足りないのはインプレッションで、サムネと題（CTR）では動きません**"
                 "（`src/reach_split.py`）" + span)
+    # **「足りています」を裸で出さないこと**（2026-08-26）。この節は
+    #     **CTR 100% を仮に置いた面**の話で、実際に再生になるのは
+    #     `面 × 実測の CTR` です。要る CTR と実測を並べないと、
+    #     「面は足りている ＝ もう手はいらない」と読めます。
+    got_ctr = float(others.get("ctr") or 0.0)
+    need_ctr = need_day / imp_day * 100
+    gap_ctr = ""
+    if got_ctr > 0:
+        gap_ctr = (f"　**実測の CTR は {got_ctr:.2f}%** ＝ いまのままなら"
+                   f" 長尺の再生は 1日 {imp_day * got_ctr / 100:,.1f}回 で、"
+                   f"合格点に **{need_ctr / got_ctr:,.1f}倍 足りません**")
+        # --- **要る CTR が、実測の振れの中か外か**（2026-08-29 に足した）---
+        #
+        # ここは長らく「（面ではなく CTR が縛っている、と読むこと）」で閉じ、
+        # **次に引く腕を「サムネと題」と名指し**していました。
+        # **要る CTR が実測の区間に入るかを、1度も見ていません。**
+        # 実測 08/29: 67/4,001 ＝ 1.67%・95%区間 [1.32%, 2.13%]、要る CTR 7.3%
+        # ＝ **区間の 3.4倍 外**。サムネを直して届く帯ではありません。
+        #
+        # **同じ不足は、面の側でも閉じられます。** 面は長尺の公開本数に比例し
+        # （`others["per_publish"]` ＝ 公開1本あたりのインプレッション・実測）、
+        # **本数はこの機械が動かせる側**です（族の数。`_long_family_ceiling`）。
+        # だから「CTR では届きません」で終えず、**面の側の倍率を同じ行に出します**
+        # （`CLAUDE.md`「裸の『届きません』を出さないこと」）。
+        #
+        # **覆る条件**: 区間の上端が要る CTR を超えたら（＝ 標本が薄い／CTR が
+        # 上がった）、この枝は自分で「区間の中」と印字して名指しをやめます。
+        n = float(others.get("ctr_n") or 0.0)
+        k = float(others.get("ctr_k") or 0.0)
+        ci = _wilson(k, n) if n > 0 else None
+        if ci:
+            lo, hi = ci[0] * 100, ci[1] * 100
+            gap_ctr += (f"　（実測 {k:,.0f}/{n:,.0f}・**95%区間 [{lo:.2f}%, {hi:.2f}%]**）")
+            if need_ctr > hi:
+                short = need_ctr / hi
+                gap_ctr += (f"　[!] **要る CTR {need_ctr:.1f}% は、その区間の外です"
+                            f"（上端の {short:,.1f}倍）** ——"
+                            "**サムネと題では届きません。**"
+                            "「ここから先で効くのは CTR」と読まないこと")
+                per_pub = float(others.get("per_publish") or 0.0)
+                pubs = float(others.get("planned_pubs") or 0.0)
+                if per_pub > 0:
+                    need_imp = need_day / (got_ctr / 100)
+                    line = (f"　**同じ不足を面の側で閉じるなら**: 要る面は"
+                            f" {need_imp:,.0f}回/日（いま {imp_day:,.0f}）＝"
+                            f" **{need_imp / imp_day:,.1f}倍**")
+                    need_pub = need_imp / per_pub
+                    if pubs > 0:
+                        line += (f"、公開1本あたり {per_pub:,.1f}回 なので"
+                                 f" **長尺 {need_pub:,.1f}本/日**"
+                                 f"（いま {pubs:.2f}本/日）")
+                    line += ("。**そちらは動かせる側です**（族の数。"
+                             "下の「門2a を長尺で開けるなら」の節）")
+                    # --- **その「動かせる側」にも、測った天井があります** ---
+                    #     （2026-08-30・最適化の回。**同じ出力の2行が 5.75倍 離れていた**）
+                    #
+                    #     ここは長らく「そちらは動かせる側です（族の数）」で終わっていました。
+                    #     ところが**同じ走りの下のほう**に、こう出ています ——
+                    #
+                    #       「長尺の面: 7本/日 で崩れました → **上限は 6本/日**」
+                    #        （`src/day_cap.long_form()`・齢48時間でそろえた実測）
+                    #
+                    #     実測 2026-08-30: 要る本数 **34.5本/日** に対し、測った天井 **6本/日**。
+                    #     **5.75倍 足りません。** つまり族をいくら増やしても、
+                    #     この段は族では閉じません。**それでも上の行だけが読まれ、
+                    #     直近の ship は2件とも長尺の族と長尺の予約**でした
+                    #     （`data/runs.jsonl` 08/30 01:58 と 02:12）。
+                    #
+                    #     **天井そのものは動かせます**（`day_cap.long_form()` の「覆る条件」
+                    #     ＝ 上限より多く出した日に、上限より後ろの本が再生を取ったとき）。
+                    #     **だからこれは「無理」ではなく「先に天井を測り直す前提が要る」**です。
+                    #     天井を据え置いたまま族だけ足す道は、そこで止まります。
+                    #
+                    #     **覆る条件**: `day_cap.long_form()` の上限が要る本数を上回ったら、
+                    #     この断りは自分で消えます（数で書いてあるので、写しではありません）。
+                    try:
+                        from src import day_cap as _dc
+                        _lf = _dc.long_form()
+                    except Exception:                      # 帳面が読めない回は黙って飛ばす
+                        _lf = {}
+                    _cap_long = float(_lf.get("most") or 0) - 1 if _lf.get("collapsed") else 0.0
+                    if _cap_long > 0 and need_pub > _cap_long:
+                        line += (f"　[!] **その「動かせる側」にも、測った天井があります** ——"
+                                 f" 長尺の面は **{_lf.get('most')}本/日 で崩れ**、上限は"
+                                 f" **{_cap_long:,.0f}本/日**（`src/day_cap.long_form()`）。"
+                                 f" 要る {need_pub:,.1f}本/日 は、その"
+                                 f" **{need_pub / _cap_long:,.2f}倍**です ——"
+                                 "**族を増やしても、この段は族では閉じません。**"
+                                 "先に動かすのは天井のほう"
+                                 "（`day_cap.long_form()` の「覆る条件」＝"
+                                 "上限より多く出した日に、上限より後ろの本が再生を取ること。"
+                                 "**前提を1件 立てて測る手**です）")
+                    gap_ctr += line
+            else:
+                gap_ctr += (f"　要る CTR {need_ctr:.1f}% は**その区間の中**です ——"
+                            "サムネと題で届きうる帯（標本を増やすと分かれます）")
+        else:
+            gap_ctr += "（面ではなく CTR が縛っている、と読むこと）"
     return (head + f" **面は足りています（{imp_day / need_day:,.1f}倍）** —— "
-            f"ここから先で効くのは CTR のほうです"
-            f"（要る CTR {need_day / imp_day * 100:.1f}%・"
-            f"サムネと題。`src/reach_split.py`）" + span)
+            f"**ただしそれは CTR 100% を置いた話です**"
+            f"（要る CTR {need_ctr:.1f}%。`src/reach_split.py`）" + gap_ctr + span)
 
 
 def _trajectory_blocking(arms: dict, out: dict) -> list[str]:
@@ -2277,7 +3453,7 @@ def trajectory_choice(m: dict, a0: dict, base: dict, **kw) -> list[dict]:
 
 def trajectory_all(m: dict, a0: dict, *, supply: dict | None = None,
                    points: list[dict] | None = None,
-                   today: date | None = None) -> dict:
+                   today: date | None = None, full: bool = True) -> dict:
     """**軌跡を1回で全部解く**（本線・幅・腕べつ）。`main` と検査の入口はここ1つ。
 
     返り:
@@ -2287,6 +3463,53 @@ def trajectory_all(m: dict, a0: dict, *, supply: dict | None = None,
         choice   「全部この腕に振ったら」を腕べつに解いたもの（早い順）
         streak   いま何連続で外しているか
         band     当たり件数と確率の幅（出どころ）
+
+    ## `full=False` ——**印字しない呼び手のために、印字にしか使わない線を解かない**
+    ##                 （2026-08-28。**`retro.py` の持ち越し① / (a2) 問い1 が8回中7回**）
+
+    **`--reflect` は、この関数が解く7本の軌跡のうち3本を捨てています。**
+    `fast` / `slow`（幅の両端）と `planned`（台帳の配分）は
+    **`headline()` と `_report_trajectory()` の印字にしか使われません** ——
+    `data/eta.jsonl` に積む行を組む `_row()` は、この3つを1つも読みません
+    （読むのは `base` / `choice` / `arms` / `band` の4つだけ）。
+    ところが `reflect()` は 10行しか印字しないので、**3本ぶんが丸ごと捨てられます。**
+
+    実測（2026-08-28・この機械の上で1本ずつ時間を取った）。
+    **同じ回に `_view_cap_per_day()`（`day_cap.cap()` を1回に畳む）も入れた**ので、
+    2つの列を並べます::
+
+                              畳む前     畳んだ後
+        analyse + supply_state   0.3秒     0.3秒
+        plan(sensitivity=True)   4.1秒     1.1秒
+        軌跡 base               20.0秒     2.7秒
+        軌跡 fast               16.1秒     2.5秒   ← `--reflect` は捨てる
+        軌跡 slow               30.6秒     4.0秒   ← `--reflect` は捨てる
+        軌跡 planned            21.9秒     3.1秒   ← `--reflect` は捨てる
+        軌跡 choice（腕4本で）   14.5秒     2.9秒
+                               ------    ------
+        solve(full=True)       107.5秒    16.6秒
+        solve(full=False)       38.9秒   **7.0秒** ← `--reflect` が通る道
+
+    **`--reflect` は 107.5秒 → 7.0秒（-93%）**。2つの直しは別々に効きます ——
+    `full=False` が「解く本数」を、`_view_cap_per_day()` が「1本の重さ」を削ります。
+
+    **幅の両端（`fast`/`slow`）がいちばん高い**のは、当たる確率を下げた線ほど
+    腕が遅く伸びて、`t` の探索が長く回るからです。
+    **捨てる3本のほうが、印字する本線より高い**という配分でした。
+
+    **なぜ「日付が変わらない」と言えるか。** `full` は
+    **どの線を解くかだけ**を決めます。`base` も `choice` も `arms` も
+    まったく同じ引数で同じ関数を通るので、**`_row()` が組む行は 1文字も変わりません**
+    （`tests/test_eta_reflect_light.py` が、`fast`/`slow`/`planned` に
+    でたらめを入れた行と入れない行が**同一**であることを固定します。
+    誰かが `_row()` にこの3つを読ませたら、その検査が落ちます）。
+
+    **`solve()` の docstring が「2つの道が別々に古びる」と言っているのは、
+    `reflect()` が自前で解き直す形のことです。** ここは道を分けていません ——
+    通る関数は同じ1本で、**末端の3本を解くか解かないか**だけが違います。
+
+    **覆る条件**: `_row()` が `fast` / `slow` / `planned` のどれかを積むように
+    なったら、`reflect()` は `full=True` に戻すこと（検査が先に落ちます）。
     """
     today = today or today_jst()
     rows = arm_speed.closed()
@@ -2296,7 +3519,7 @@ def trajectory_all(m: dict, a0: dict, *, supply: dict | None = None,
     base = trajectory(m, a0, **kw)
     p = bd.get("p") or 0.0
     fast = slow = None
-    if p > 0 and bd.get("lo") and bd.get("hi"):
+    if full and p > 0 and bd.get("lo") and bd.get("hi"):
         # **速さは当たる確率に比例します**（`rate = p·log g·θ`）。だから幅は
         # 確率の幅をそのまま倍率にして入れます。**腕ごとの p は別ですが、
         # 幅の出どころは1つ**（標本15件）なので、同じ比を当てています。
@@ -2325,7 +3548,7 @@ def trajectory_all(m: dict, a0: dict, *, supply: dict | None = None,
     # 「次の前提をどの腕に立てるか」で動く日数**そのものになります。
     pln = None
     try:
-        pl_share = arm_speed.planned()
+        pl_share = arm_speed.planned() if full else {}
         if pl_share.get("n"):
             # **`kw` は既に `arms` を持っています。** そのまま `arms=` を足すと
             #     `TypeError: got multiple values for keyword argument 'arms'` になり、
@@ -2338,23 +3561,253 @@ def trajectory_all(m: dict, a0: dict, *, supply: dict | None = None,
         pln = None
     return {
         "base": base, "fast": fast, "slow": slow, "planned": pln,
+        "theta": _theta_days(m, a0, base, rows, kw) if full else None,
         "choice": trajectory_choice(m, a0, base, **kw),
         "streak": arm_speed.miss_streak(rows),
         "band": bd, "arms": arms, "unread": arm_speed.unreadable(),
     }
 
 
-def _realloc_arms(arms: dict, share: dict[str, float]) -> dict:
+def _theta_days(m: dict, a0: dict, base: dict, rows: list[dict],
+                kw: dict) -> dict | None:
+    """**θ（前提が閉じる速さ）を、到達日の「日数」に換算する。**
+
+    ## なぜ要るか（2026-08-30・最適化の回。**盤面でいちばん大きい数に、値札が無かった**）
+
+    この出力は、日数の値札を**腕**と**配分**にだけ付けていました ——
+    「次の1件をどの腕に立てるか」で数日、「台帳の配分の振り直し」で +10日。
+    ところが同じプログラムが、その2つより**桁の違う**数を持っています。
+
+    `trajectory()` は `rate = p · log(g) · θ` を積分して
+    `T = min_t [ t + D(x(t)) ]` を解きます。**θ はその式の中で
+    唯一の「速さ」**で、`t_work`（「腕を N日 動かして」）にそのまま反比例します。
+    実測（2026-08-30 の点・`rate_scale` を振って解き直した）::
+
+        θ×0.5   2027-02-25   t_work 85日   **+46日**
+        θ×1.0   2027-01-10   t_work 47日     ——（印字している線）
+        θ×2.0   2026-12-17   t_work 24日   **-24日**
+        θ×5.0   2026-12-03   t_work 10日   **-38日**
+        θ→∞     2026-11-24   t_work  1日   **-47日**   ← 収益化の門＋30日 の床
+
+    **-47日 は、腕の話でも配分の話でもありません。**「前提が閉じる速さ」だけを
+    動かして出た差で、**この機械が1周で選べるどの手より大きい**数です。
+    それが 200行目 にも出ていませんでした —— 出ていたのは θ の**値**
+    （「1日 0.77件 が閉じている」）だけで、**日数への換算がどこにもない。**
+    値だけの数は、他の手と並べて比べられません。
+
+    ## **上げ方は「前提を増やすこと」ではありません**（同じ回に測った）
+
+    `config/hypotheses.yaml` を git の履歴で数え直すと、**在庫は余っています**::
+
+        08/24  開いた前提 15件      08/28  26件
+        08/26  19件                08/30  **32件**   ＝ 6日で +17件（2.8件/日）
+
+    閉じるほうは **0.77件/日** のままです（`arm_speed.throughput()`）。
+    **立てる側は、閉じる側の 3.6倍 の速さで回っています。**
+
+    **ただし、これは git を読まないと出ません。** 台帳に「いつ立ったか」の欄が
+    無いので、**この機械の中からは在庫の写真しか撮れません**
+    （その写真は 28件 で、軌跡が要る 36件 を下回ります ＝ 写真だけ見ると
+    「増やせ」に読めます）。**印字する行は、だからどちらが縛っているかを
+    決めつけません** —— 上げ方を2つとも名指しし、数え直す手を添えます。
+
+    その日の実測では、縛っていたのは **立ててから判定できるまでの日数**
+    （`src/judgeable.py`: 群の床 → **予約の順番待ち** → 落ち着き4日（`settle.SETTLE_DAYS`） →
+    Analytics の遅れ3日）。予約は 359本・いちばん後ろは 30日超 で、
+    **新しい実験の本は毎回その最後尾に着きます。**
+
+    つまり `upload` を1本 足すたびに待ち行列が深くなり、**次の前提の判定日が
+    後ろへ動く** ＝ θ が下がる。`data/runs.jsonl` の直近 500回 は
+    `fix` 203件 ／ `upload` 45件 に対し **`verdict` 6件** で、
+    そのあいだ到達予測は **+22日 遠のいて** います（12-19 → 01-10）。
+
+    ## 覆る条件
+
+    ・`t_work` が 0日 になったら（＝いま走らせるのが最短）、この行は
+      「θ をいくつにしても同じ」に落ちます。**そのときは消してよい。**
+    ・在庫（開いた前提）が閉じる速さを**下回った**ら、上の「増やすことではない」は
+      逆になります。**数え直すのは `config/hypotheses.yaml` の open 件数と
+      `arm_speed.throughput()` の2つだけ**（どちらも API 0単位）。
+
+    ## 値段（**この2本を解く分だけ、頭の3行が重くなります**）
+
+    実測 2026-08-30・同じ機械で1回ずつ計った端から端まで（API の待ちを含む）::
+
+        `python scripts/eta.py`            1分52秒 → **2分11秒**（+19秒・+17%）
+        `trajectory_all(full=True)`       16.6秒  → **27.5秒**
+        `trajectory_all(full=False)`      **7.9秒**（`--reflect` の道・**素通り**）
+
+    θ×2 は `t_work` を 24日 まで探すので 4秒 前後、θ→∞ は `saturate` が
+    ほぼ 0 に潰れるので **1回の `plan()`** で終わります。
+    **重いのは ×2 のほう。** 頭の3行が 19秒 の価値を持たなくなったら、
+    先に落とすのはこちらです（天井の -47日 だけなら 0.1秒 で出ます）。
+
+    検査は `tests/test_eta_theta_days.py`。
+    """
+    try:
+        pool = [r for r in rows if r.get("lever") in arm_speed.ARMS]
+        now = arm_speed.throughput(pool, kw.get("today"))
+        if not now.get("per_day"):
+            return None
+        x2 = trajectory(m, a0, rate_scale=2.0, **kw)
+        inf = trajectory(m, a0, rate_scale=THETA_INF_SCALE, **kw)
+    except Exception:                                          # noqa: BLE001 — 回を止めない
+        return None
+    if base.get("days", NEVER) >= NEVER:
+        return None
+
+    def _delta(t: dict) -> float | None:
+        d = t.get("days")
+        return None if d is None or d >= NEVER else d - base["days"]
+
+    return {"per_day": now["per_day"], "n": now["n"], "days": now["days"],
+            "x2": x2, "inf": inf,
+            "x2_delta": _delta(x2), "inf_delta": _delta(inf),
+            "t_work": base.get("t_work"), "open": _open_hypotheses()}
+
+
+def _open_hypotheses() -> int | None:
+    """**いま開いている前提の件数**（`config/hypotheses.yaml`・API 0単位）。
+
+    `arm_speed.planned()` の `total` と同じ数ですが、**あちらは `lever` の
+    付いた分だけを `n` に数えます。** ここで要るのは「在庫が余っているか」で、
+    付け札の有無は関係ないので、**開いている行そのもの**を数えます。
+    読めなければ `None`（**回は止めない**）。
+    """
+    try:
+        import yaml
+        doc = yaml.safe_load((ROOT / "config" / "hypotheses.yaml").read_text(encoding="utf-8"))
+        rows = doc if isinstance(doc, list) else next(iter(doc.values()))
+        return sum(1 for r in rows if isinstance(r, dict) and not r.get("closed_on"))
+    except Exception:                                          # noqa: BLE001
+        return None
+
+
+def frozen_days(m: dict, a0: dict, tr: dict, levers_: list[str], *,
+                supply: dict | None = None, points: list[dict] | None = None,
+                today: date | None = None) -> dict[str, float | None]:
+    """**その腕を凍らせたら、軌跡は何日 遠のくか。**（2026-08-26・最適化の回）
+
+    ## なぜ要るか（**この関数が無かったせいで、同じ日に正反対が印字されていました**）
+
+    `lever_days()` の表は「**他の3本を今日の実測で凍らせたまま、1本だけを
+    天井まで引く**」モデルです。そこで届かなかった腕に、`_report_levers` は
+    こう書いていました（原文・2026-08-26 に消した）:
+
+        **上の日付を動かせない腕: `sub_rate`／`density`**
+        —— **ここに前提を置いても、到達日は動きません**
+
+    ところが同じプログラムの `--alloc` は、同じ日・同じ点で
+
+        **いちばん早いのは `sub_rate`**（そのままより **3日 早い**）
+        立てるときは `hypotheses.yaml` に `lever:` をその腕で書くこと
+
+    と出します。**「置いても動かない」と「次はここに置くのが最短」が、
+    同じプログラムから同時に出ていました。**
+
+    正しいのは `--alloc` の側です。頭に出る日付は**軌跡**（4本とも動かす）で、
+    その内訳は実測で `sub_rate` ×13.41、**そのとき縛っているのは
+    収益化の門（登録者 1,000人 の AND）**——`sub_rate` はその床に直に触ります。
+    `CLAUDE.md` が「凍らせた企画についての恒真式であって予測ではない」と
+    名指ししているのが、まさに `lever_days` の側です。
+
+    ## 何を測るか
+
+    **その腕の `rate` を 0 にして、軌跡を解き直すだけ**です。
+    `_factors_at()` は `rate == 0` の腕を `live` から外すので、
+    **空いた配分は残りの腕へ配り直されます** —— つまりこれは
+    「**この腕に回していた回転を、全部よその腕へ回したら**」の線です。
+    **それが「必要か」の正しい問いの形**です（「十分か」ではなく）。
+
+        戻り値 > 0   凍らせると遠のく ＝ **その腕は必要**（十分でなくても）
+        戻り値 = 0   回転をよそへ回しても同じ ＝ **この腕は要らない**
+        戻り値 None  base が届かない回など、比べられない
+
+    **`src/levers.py` はこの数を べた書き していました**（「+115日（2026-08-26）」）。
+    べた書きは腐ります。**ここで毎回 測り直して渡すこと。**
+
+    費用: 腕1本につき軌跡1本（**API 0単位・実測 2〜4秒**（2026-08-28 に `day_cap.cap()` を畳むまでは 15〜20秒））。
+    呼ぶのは「天井まで引いても届かない」と出た腕だけなので、普通は1〜2本です。
+    """
+    out: dict[str, float | None] = {}
+    base = (tr or {}).get("base") or {}
+    base_days = base.get("days")
+    arms = (tr or {}).get("arms") or {}
+    if not levers_ or not arms or base_days is None or base_days >= NEVER:
+        return {k: None for k in levers_}
+    kw = dict(supply=supply, points=points, today=today or today_jst())
+    for lv in levers_:
+        if lv not in arms:
+            out[lv] = None
+            continue
+        cold = {k: (dict(v) if k != lv else {**v, "rate": 0.0}) for k, v in arms.items()}
+        try:
+            t = trajectory(m, a0, arms=cold, **kw)
+        except Exception:                                      # noqa: BLE001 — 回を止めない
+            out[lv] = None
+            continue
+        d = t.get("days")
+        if d is None:
+            out[lv] = None
+            continue
+        # **凍らせたら届かなくなる腕**は、差が `NEVER`（10億）になります。
+        #     そのまま出すと「+1,000,000,000日」と印字され、**欠陥に見えます**
+        #     （読み手はまず数字を疑い、主張のほうを読みません）。
+        #     地平（3年）で頭打ちにします —— **意味は変わりません**
+        #     「3年 先まで見ても戻ってこない ＝ 必要」。
+        out[lv] = min(float(d), float(TRAJECTORY_HORIZON_DAYS)) - base_days
+    return out
+
+
+def _arm_rotation() -> tuple[dict, dict]:
+    """**腕べつの「予定表 θ」と、その重み。**読めなくても回を止めない。
+
+    `deadline_check` が落ちても `--alloc` は出ます（重みが全部 1.0 になり、
+    `missing` に理由が残る ＝ **黙って 1.0 にしない**）。
+    """
+    ready: dict = {}
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        import deadline_check                                   # noqa: PLC0415
+
+        ready = deadline_check.ready_by_claim()
+    except Exception as exc:                                    # noqa: BLE001
+        by_arm = arm_speed.forward_by_arm({})
+        return by_arm, {"weights": {k: 1.0 for k in arm_speed.ARMS}, "raw": {},
+                        "mean": None, "window": arm_speed.SPEED_WINDOW_DAYS,
+                        "missing": f"`deadline_check` が読めません（{exc}）"}
+    by_arm = arm_speed.forward_by_arm(ready)
+    return by_arm, arm_speed.speed_weights(by_arm)
+
+
+def _realloc_arms(arms: dict, share: dict[str, float],
+                  speed: dict[str, float] | None = None) -> dict:
     """腕の束を、**別の配分**で解けるように組み直す。
 
     `rate = focus_rate × share` は `src/arm_speed.arm()` が置いている形です。
     ここは `share` だけを差し替えて `rate` を引き直します ——
     **`focus_rate`（その腕に全部振ったときの速さ）は配分に依りません。**
+
+    ## `speed` ——**腕べつの「回転の重み」**（2026-08-27 に足した）
+
+    `focus_rate = p · log(g) · θ` の **θ は `arm_speed.throughput()`**、
+    つまり**全体の実測ひとつ**です。4本とも同じ値なので、
+    `--alloc` の順位は（代用の腕どうしでは）**天井の遠さだけ**で決まります。
+
+    `speed` は `arm_speed.speed_weights()` が返す、**平均1に正規化した倍率**。
+    掛けると、台帳の予定表が言っている**腕どうしの回転の差**が順位に入ります。
+    **水準は動きません**（平均が1なので）。渡さなければ、いままでどおり。
+
+    実測 2026-08-27 —— これを掛ける前の `--alloc` は
+    「いちばん早いのは `sub_rate`」と言い、同じ日の予定表では
+    **`sub_rate` だけが今後14日 に1件も閉じられません**（`forward_by_arm()`）。
     """
     out = {}
     for k, a in arms.items():
         w = float(share.get(k, 0.0) or 0.0)
-        out[k] = {**a, "share": w, "rate": (a.get("focus_rate") or 0.0) * w}
+        sp = 1.0 if speed is None else float(speed.get(k, 1.0) or 1.0)
+        out[k] = {**a, "share": w, "speed_weight": sp,
+                  "rate": (a.get("focus_rate") or 0.0) * w * sp}
     return out
 
 
@@ -2625,7 +4078,7 @@ def solve_gate1(a: dict, *, density: float, supply: dict | None,
     #     0再生のままなので、ここは倍率の**後**に掛けます。
     #     **これが `density` の腕の天井そのもの**で、`tests/test_eta_day_cap.py`
     #     が「上限を無視した側へ戻ったら」落とします。
-    view_cap = day_cap.cap() if view_cap is None else view_cap
+    view_cap = _view_cap_per_day() if view_cap is None else view_cap
     density = min(float(density), float(view_cap))
     # **使ってよいのは「1日続けられる速さ」だけ**（2026-08-20 20:0x に踏んだ）。
     #     `rate_per_day` をそのまま使うと、**3.3時間で +5本 ＝ 1日36.5本**という
@@ -2781,7 +4234,37 @@ def plan(m: dict, a: dict, density: int = PLAN_PUBLISH_PER_DAY,
         #     **点そのものが無い回では測り直しません** —— 「測っていない」を
         #     「面だけ測れている」に変えると、段2 の注記が推測で出ます
         #     （`tests/test_eta_surface_cap.py`「面が測れていなければ出ない」）。
-        if mix and not mix.get("imp_day_recent"):
+        #
+        # **`imp_day_recent` が既に在っても、測り直します**（2026-08-27 に直した）。
+        #     長らくここは `not mix.get("imp_day_recent")` で畳んでいました ——
+        #     「もう続いている量を持っているなら、測り直す必要はない」。
+        #     **持っている数が別の統計でした。**
+        #
+        #     積んである点（`rpm_mix --record` が書く）の `imp_day_recent` は
+        #     **直近7日の平均**です。段2 が読みたいのは
+        #     `reach_split.summary()` の `per_day_sustained`（**中央値**。
+        #     窓の1日が半分以上を占めたら平均から落とす、と同 file が書いています）。
+        #     実測 2026-08-27 の同じ帳面: 平均 **318.9回/日**／中央値 **17.0回/日**。
+        #     **18.8倍** ちがい、合格点 178回/日 をまたぎます ——
+        #     平均で読むと「**面は足りています（1.8倍）**」、
+        #     中央値で読むと「**10.5倍 足りません。足りないのはインプレッションで、
+        #     サムネと題（CTR）では動きません**」。**次の回に引く腕が正反対になります。**
+        #
+        #     そして畳んだ回は `_with_recent_surface()` が付ける**連れも全部**
+        #     落としていました —— `imp_ctr_long`（実測 CTR）・
+        #     `imp_day_recent_basis`（burst だと言う一行）・`imp_day_planned`・
+        #     `imp_day_dry_span` / `imp_day_dry_fill`。
+        #     とくに CTR が無いせいで、`_gate2_surface_note()` の
+        #     **「『足りています』を裸で出さないこと」**の枝（実測 CTR 2.20% ＝
+        #     **25.4倍 足りません**）が **一度も印字されていませんでした。**
+        #     **正しい注記が、入力が無いというだけで黙っていた**形です。
+        #
+        #     **覆る条件**: `rpm_mix --record` が `per_day_sustained` と
+        #     `imp_ctr_long` まで点に書くようになったら、ここは畳んでよい
+        #     （そのときは点のほうが `data/reach.jsonl` より新しいことがある）。
+        #     **それまでは、帳面が読める回は必ず測り直すこと**
+        #     —— `_with_recent_surface()` は読めなければ `mix` をそのまま返します。
+        if mix:
             mix = _with_recent_surface(mix)
     else:
         mix = dict(mix)
@@ -3219,7 +4702,7 @@ def _planned_lines(bar: str, tr: dict | None, base: dict | None) -> list[str]:
                      " 台帳を書き換えれば配分は変わります"
                      "（`config/hypotheses.yaml` の `lever`）。"
                      " **どの腕が早いかは `python scripts/eta.py --alloc`**"
-                     "（API 0単位・約80秒。毎回は撃たない）")
+                     "（API 0単位・**実測 24秒**（2026-08-28 に `day_cap.cap()` を畳むまでは 4分）。**毎回 撃ってよい** —— 「毎回は撃たない」は 2026-08-28 に取り消した）")
         # **`lever_hint` とは別の問いです**（2026-08-26 に足した理由）。
         #     `lever_hint` は「**いま どの床が遅いか**」＝ 診断で、
         #     `--alloc` は「**次の前提をどの腕に立てるか**」＝ 配分の選択。
@@ -3289,8 +4772,890 @@ def _points(*, reflect: bool = False, offline: bool = False) -> list[dict]:
     return out
 
 
+#: **累計の窓（日）。`scripts/drift.py` の窓と同じにしてあります** ——
+#: 別々にすると「343 ship で +33日 遠のいた」を並べて読めません。
+TREND_DAYS = 7
+
+
+def ships_in_window(days: int = TREND_DAYS, *, now: datetime | None = None) -> int:
+    """`data/runs.jsonl` の ship を、直近 `days` 日ぶん数える。**落ちないこと。**
+
+    数そのものが要るのではなく、**「これだけ撃って、日付はこれだけ動いた」**の
+    右辺を出すために在ります。読めなければ 0 を返して黙ります
+    （予測を、記録の欠けで止めないこと）。
+    """
+    path = ROOT / "data" / "runs.jsonl"
+    if not path.exists():
+        return 0
+    cut = (now or datetime.now(timezone.utc)) - timedelta(days=days)
+    n = 0
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return 0
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if row.get("kind") != "ship":
+            continue
+        at = str(row.get("at") or "")
+        try:
+            when = datetime.fromisoformat(at)
+        except ValueError:
+            continue
+        if when.tzinfo is None:
+            when = when.replace(tzinfo=timezone.utc)
+        if when >= cut:
+            n += 1
+    return n
+
+
+def traj_trend(points: list[dict], cur_date: date | None,
+               *, days: int = TREND_DAYS,
+               now: datetime | None = None) -> dict | None:
+    """**この `days` 日で、到達日は正味どちらへ動いたか。**
+
+    ## なぜ要るか（2026-08-29 04:0x・最適化の回の実測）
+
+    `headline()` は「**前の回の予測 → ±N日**」しか出しません。**1歩ぶん**です。
+    実測 2026-08-28 の回は **+3日**。読んだ回は誤差として通します。
+
+    **同じ台帳（`data/eta.jsonl`）を 7日 ぶん足すと、こうなっていました**::
+
+        08/21 の最後の点  2026-12-10（残り 111日）
+        08/28 の最後の点  2027-01-12（残り 136日）
+        → **+33日 遠のいた**（残りの距離は **+25日**）
+
+    そのあいだに **147周・343 ship**（`scripts/drift.py` の同じ窓）。
+    **1周ごとの ±N日 では、この向きは1度も見えません** ——
+    9日ぶんの点を1つずつ見ても、日ごとの差は −9〜+15日 の振れにしか見えないからです。
+
+    ## 何を並べるか（**「遠のいた」だけを出さない**）
+
+    `CLAUDE.md` は「**裸の『届きません』を出さないこと**」と書いています。
+    向きだけ出して理由を出さないのは、その最小版の違反です。だから
+    **同じ行に、天井の分子と分母を並べます**（下の `headline()` が組みます）。
+
+    実測 2026-08-21 → 08-28::
+
+        月の再生 `views_28d`                33,405 → 69,386   **+108%**
+        分母 `videos_with_views_28d`            29 → 126      **+334%**
+        比  `per_video_now`                    982 → 550      **−44%**
+        天井 `ceiling_views_month`           2.71e6 → 1.65e5
+
+    **再生は2倍 になったのに、比は 44% 落ちています。** 落ちたのは分母のほうです
+    （**齢で揃えていない**。公開した翌日の本も、分母には丸ごと1本 入ります）。
+    そして `ceiling_views_month` は **その比 × 上限10本/日 × 30日**（08/25 以降）なので、
+    **出すほど天井が下がり、`lever_hint` は `per_video` を指し続けます。**
+
+    ## 返り
+
+    `None`（比べられる点が無い・窓が短すぎる）か、
+    `{from_date, from_at, to_date, delta, span_days, n, was, now}`。
+    `was` / `now` は、その両端の点そのもの（呼ぶ側が中身を選ぶ）。
+
+    ## 覆る条件
+
+    - **物差しが変わった回は、この差に混ざります。** 08/24〜08/25 に
+      `ceiling_views_month` が 1.69e6 → 1.84e5 と 9倍 落ちたのは式の入れ替えで、
+      チャンネルは何も変わっていません。**だから `traj_date` どうしだけを比べ**、
+      入力の内訳は「％」で並べて、日付の差とは別の欄に出します
+    - `per_video_now` が**齢で揃った**推定に変わったら（`data/views.jsonl` の
+      齢 48〜120h の読み。`_members_by_*` と同じ揃え方）、上の「分母」の行は
+      要らなくなります。**そのときこの docstring の表ごと書き換えること**
+    """
+    if not points:
+        return None
+    rows = [r for r in points if r.get("traj_date") and r.get("at")]
+    if len(rows) < 2 or cur_date is None:
+        return None
+    rows.sort(key=lambda r: str(r["at"]))
+    cut = (now or datetime.now(timezone.utc)) - timedelta(days=days)
+    inside = []
+    for r in rows:
+        try:
+            when = datetime.fromisoformat(str(r["at"]))
+        except ValueError:
+            continue
+        if when.tzinfo is None:
+            when = when.replace(tzinfo=timezone.utc)
+        if when >= cut:
+            inside.append((when, r))
+    if len(inside) < 2:
+        return None
+    # **起点は「窓の中でいちばん古い1点」ではなく、その日の中央値**
+    # （2026-08-29 に測って変えた）。
+    #
+    # 1点だと、**同じ日の中の振れをそのまま起点にします。** 実測 08/21::
+    #
+    #     その日の点 9つ  2026-12-02 〜 2026-12-10（**同じ日で 8日 の幅**）
+    #     16:28 の1点     2026-12-28   ← 端を掴むと、累計が 18日 ずれる
+    #
+    # 中央値なら、掴む点が1つ ずれても累計はほとんど動きません。
+    # **「中央値どうし」であることを、印字にも出すこと**（下の `basis`）。
+    first_day = inside[0][0].date()
+    same_day = [(w, r) for w, r in inside if w.date() == first_day]
+    dates = []
+    for _, r in same_day:
+        try:
+            dates.append(date.fromisoformat(str(r["traj_date"])))
+        except ValueError:
+            continue
+    if not dates:
+        return None
+    dates.sort()
+    was = dates[len(dates) // 2]
+    first_at = same_day[len(same_day) // 2][0]
+    span = (inside[-1][0] - first_at).total_seconds() / 86400.0
+    # **1日 未満の窓から「7日の累計」と名乗らないこと**（`_project_nth` が
+    # 同じ穴で偽の伸び率を出していた —— この repo で通算13回目）。
+    if span < 1.0:
+        return None
+    spread = (dates[-1] - dates[0]).days
+    return {"from_date": was, "from_at": first_at, "to_date": cur_date,
+            "delta": (cur_date - was).days, "span_days": span,
+            "n": len(inside), "n_base": len(dates), "base_spread": spread,
+            "was": same_day[len(same_day) // 2][1], "now": inside[-1][1]}
+
+
+def _trend_why(tre: dict) -> str:
+    """累計の向きの**隣に置く理由**。**「遠のきました」を裸で出さないため**に在ります。
+
+    `CLAUDE.md` は「**裸の『届きません』を出さないこと**」「何を固定したせいで
+    そう出たのかを**同じ行に**並べること」と書いています。向きだけ出して
+    理由を出さないのは、その最小版の違反です。
+
+    ## 何を並べるか —— **天井の分子と分母**（2026-08-29 の実測でここに決めた）
+
+    軌跡が遠のく理由は原理的にいくつもありますが、**この台帳で実際に効いていたのは
+    1つ**でした。08/21 → 08/28 の点::
+
+        月の再生 `views_28d`                 33,405 → 69,386   **+108%**
+        分母 `videos_with_views_28d`             29 → 126      **+334%**
+        比  `per_video_now`（＝ 分子÷分母）      982 → 550      **−44%**
+
+    **再生は2倍 になったのに、比は 44% 落ちています。落ちたのは分母のほう**です。
+
+    **その理由は「齢で揃っていない」ではありませんでした**（2026-08-29 に測り直した。
+    ここには長らくそう書いてありました）。`data/views.jsonl` を齢でそろえて読むと、
+    **ショートは 24時間 でほぼ伸びきります** —— 08/19 の8本は
+    **齢24h で平均 1,018回・齢168h で 1,015回**（+0%）。**昨日の本も 28日 回った本も、
+    同じ「1本」として入れて構いません。**
+
+    **本当の理由は、上限を超えて出したぶんが 0再生 のまま分母に入ることです。**
+    実測（齢48時間 以上の 168本）: **1〜9再生 の 42本 が、分母の 29% を占めて、
+    再生の 0.18% しか持っていません。** 公開日ごとに見ると、
+    **生きた本数は出した本数によらず 10本 前後で止まります**:
+
+        08/20  25本 → 生 10本 / 6,445再生      08/23  13本 → 生 10本 / 10,232再生
+        08/21  32本 → 生 11本 / 6,791再生      08/24  10本 → 生 10本 /  8,386再生
+
+    **32本 出した日より、10〜13本 の日のほうが再生は多い。**
+
+    そしてこの比は捨て置かれません。`ceiling_views_month`（08/25 以降）は
+
+        天井 = `per_video_now` × `view_cap_per_day`(10) × 30日
+
+    なので、**出すほど天井が下がり**、`lever_hint` は `per_video` を指し続け、
+    尾には「**どの帯でも届きません。いまの構成は、上限そのものが目標の下に
+    あります**」が出ます。**主実行が毎周やっていること（出す）が、
+    その回の採点を下げる形**です —— `src/arm_speed.forward()` の符号が
+    逆だったのと同じ形（`scripts/drift.py` の註・2026-08-27 の実測）。
+
+    ## **比のほうは 2026-08-29 に直しました**（この節は、直す前の記録です）
+
+    齢で揃えた推定に替えるのは、**入力の総取り替え**です。実測 2026-08-29 に
+    `data/views.jsonl` の齢 48〜120h の読みで公開日べつに出すと、標本は
+    **1日 1〜32本**でばらつき、中央値は **08/20〜08/22 に 3・2・5回**まで落ちます
+    （平均は 256・209・233）—— **上限10本/日 に当たった日は、大半の本が 0 に張り付く**
+    ので、中央値と平均が二桁ちがいます。**どちらを取るかで天井が桁で変わる**入力を、
+    確かめずに差し替えないこと。
+
+    **その心配は当たっていましたが、替え先が違いました。** 齢で揃える必要は無く
+    （上のとおり 24時間 で伸びきる）、替えるべきは**分母から「上限を超えて死んだ本」を
+    外すこと**でした。中央値と平均が二桁ちがって見えたのは、
+    **その日の大半が 0 に張り付いていたから**です ——
+    **帯の中だけで見れば、中央値と平均は同じ桁に戻ります**（帯の中 n=84 平均 678回）。
+    替えた側の定義と実測は `live_band_views` の docstring、
+    検査は `tests/test_eta_live_band_per_video.py`。
+    **判定日つきの前提は、もう立っています** —— `config/hypotheses.yaml` の
+    「**1日の再生の合計は、その日に出した本数では動かない**」
+    （`lever: density`・期限 **2026-09-05**・道具 `day_cap.day_total()`）。
+    **同じことを二度 立てないこと。** あちらが「出す本数を増やしても
+    その日の合計は増えない」を判定し、こちらは**その帰結を天井の式に写しただけ**です
+    （分母から、増やしても 0再生 にしかならない本を外した）。
+    あちらが **外れた**（`rho_scale` ≥ +0.30 ＝ 本数は合計を動かす）なら、
+    **この分母の切り方も同時に外れます。** そのときは `_per_video()` の
+    落ちる先を `views_per_video` に戻すこと。
+
+    ## 覆る条件
+
+    - `per_video_now` が齢を揃えた推定になったら、この関数の分母の行は
+      **意味を失います**（そのとき `tests/test_eta_trend_line.py` の
+      「分母を名指しする」検査を、新しい入力の名前へ書き換えること）
+    - `ceiling_views_month` が `per_video_now` を掛けなくなったら、
+      ここが名指ししている経路そのものが消えます
+    """
+    was, now = tre.get("was") or {}, tre.get("now") or {}
+
+    def pct(k: str) -> tuple[float, float, float] | None:
+        a, b = was.get(k), now.get(k)
+        try:
+            a, b = float(a), float(b)
+        except (TypeError, ValueError):
+            return None
+        if a <= 0 or b <= 0 or a > 1e8 or b > 1e8:
+            return None
+        return a, b, (b - a) / a * 100.0
+
+    # **物差しが窓の中で入れ替わっていないか**（2026-08-29・最適化の回。実測で踏んだ）。
+    #
+    # `traj_trend()` の覆る条件は「**物差しが変わった回は、この差に混ざります**」と
+    # 書いており、**日付の側**はそれを `traj_date` どうしで比べることで守っています。
+    # **％の側は守られていませんでした。**
+    #
+    # `_per_video()` は 2026-08-28 に落ち先を替えました（`views_per_video`
+    # ＝帯の外まで入れた平均 → `views_per_video_live` ＝帯の中だけ）。
+    # `data/eta.jsonl` の実測::
+    #
+    #     08/22 05:33  per_video_now 856 ＝ views_per_video 856（`_live` の欄なし）
+    #     08/28 17:28  per_video_now 550 ＝ views_per_video 550（同上）
+    #     08/28 23:57  per_video_now 665 ＝ views_per_video_live 665（views_per_video は 553）
+    #
+    # つまり 7日 の窓は**入れ替えの日をまたぎ**、この行は
+    # 「**856 → 673 で −21%**」を、**左＝帯の外／右＝帯の中**で出していました。
+    # 同じ物差しで並べると 856 → 553（**−35%**）です。
+    #
+    # しかも下の文言は「この行は `views_per_video` どうしの差で」と**名乗って**
+    # いました —— 実際に割っているのは `per_video_now` なので、
+    # **文言のほうが偽**です（`docs/JOURNAL.md`「枠の2行が食い違っていないか」の型）。
+    #
+    # **覆る条件**: 窓の両端がどちらも `views_per_video_live` を持つようになったら
+    # （＝入れ替えから `TREND_DAYS` 日 たったら）、この枝は自分で黙ります。
+    # 落ち先をまた替えたときは、ここの欄の名前も一緒に替えること。
+    swapped = ((was.get("views_per_video_live") is None)
+               != (now.get("views_per_video_live") is None))
+    if swapped:
+        raw = pct("views_per_video")
+        same = ("**同じ物差しで並べると** `views_per_video` "
+                "{a:,.0f} → {b:,.0f}（{p:+.0f}%）。").format(
+                    a=raw[0], b=raw[1], p=raw[2]) if raw else \
+               "**同じ物差しで並べられる点がありません。**"
+        # **入れ替えの窓のあいだも、分母の話を落とさないこと**（2026-08-29・
+        # この枝を足した回が、その場で気づいて足した）。
+        # ここで早く返すと、7日 のあいだ「落ちたのは分母」が1度も出ません ——
+        # **この行は輪が効いているかを読む唯一の行**なので、
+        # 物差しの註を足す代わりに理由を消すのは、差し引きで悪くなります。
+        den = pct("videos_with_views_28d")
+        if den:
+            same += ("**分母 `videos_with_views_28d` は {a:,.0f} → {b:,.0f}（{p:+.0f}%）** ——"
+                     "**上限を超えて出したぶんが 0再生 のまま入ります**"
+                     "（天井の分母からは `live_band_views` で外してあります）。").format(
+                a=den[0], b=den[1], p=den[2])
+        return ("[!] **この窓の中で、1本あたり再生の物差しが入れ替わりました** "
+                "（`_per_video()` の落ち先: 帯の外まで入れた平均 `views_per_video` → "
+                "**帯の中だけ** `views_per_video_live`）。"
+                "**`per_video_now` の両端は、別の数です。比べないこと。** "
+                + same
+                + "**上の日数の差は `traj_date` どうしなので、この入れ替えは入っていません**"
+                "（`traj_trend()` の覆る条件）。"
+                "**窓が入れ替えの日を追い越せば、この行は自分で消えます。**")
+
+    v = pct("views_28d")
+    n = pct("videos_with_views_28d")
+    r = pct("per_video_now")
+    if not (v and n and r):
+        return ""
+    # **分子が増えたのに比が減った回だけ、名指しします。**
+    # 両方 減った回は、本当に世界が悪くなっています（そこは名指ししない）。
+    if not (v[2] > 0 and r[2] < 0):
+        return ""
+    return ("[!] **内訳: 月の再生 {vp:+.0f}%（{v0:,.0f}→{v1:,.0f}）**なのに "
+            "**1本あたり再生 {rp:+.0f}%（{r0:,.0f}→{r1:,.0f}）** —— "
+            "落ちたのは**分母**（`videos_with_views_28d` {np:+.0f}%・{n0:,.0f}→{n1:,.0f}）。"
+            "**上限{cap:,.0f}本/日 を超えて出したぶんが、0再生のまま分母に入っています** "
+            "（実測 2026-08-29: 1〜9再生 の 42本 が分母の 29%・再生の 0.18%）。"
+            "**天井の分母からは外してあります**（`live_band_views`）ので、"
+            "**この比の分母と、天井が使う分母は別です** —— "
+            "この行が割っているのは `per_video_now`（＝ `_per_video()` の落ち先。"
+            "いまは**帯の中だけ** `views_per_video_live`）で、"
+            "**分母 `videos_with_views_28d` のほうは帯の外まで数えています。"
+            "同じ行の分子と分母が、別の母集団です**").format(
+        vp=v[2], v0=v[0], v1=v[1], rp=r[2], r0=r[0], r1=r[1],
+        np=n[2], n0=n[0], n1=n[1],
+        cap=float(now.get("view_cap_per_day") or 0))
+
+
+#: `flagged()` が尾に運ぶ本数の上限。**多いほど尾が読まれなくなる**ので、
+#: 増やす前に「頭と尾しか読まれない」という前提のほうを疑うこと。
+FLAG_LIMIT = 12
+
+#: `[!]` を**印として**打った所だけを拾う。行頭か、composed な行の区切り（全角空白）の直後。
+#: **文の途中の `[!]` は、たいてい他人の文言の引き写しです**（ship の1行など）。
+FLAG_MARK = re.compile(r"(?:^|　)[ \t]*\[!\][ \t]*")
+
+
+def flagged(said: list[str], width: int = 116) -> list[str]:
+    """**この回の出力の中で `[!]` が付いた所を、尾（読まれる場所）へ運ぶ。**
+
+    ## なぜ要るか（2026-08-26・最適化の回の実測）
+
+    `CLAUDE.md` は「**読むのは、出力の最初と最後に同じ字で出る3行だけ**」と
+    書いています。**そのとおりに読むと、`[!]` は1本も読まれません。**
+
+        実測 2026-08-26 …… 出力 297行・`[!]` **10本**（80〜289行目）
+                            頭 8行 に **0本** ／ 尾 25行 に **0本**
+
+    そのうち1本は、直す先を名指ししていました ——
+    「**2026-09-06〜2026-09-18 の 13日 は長尺の予約が0本**です。
+    直す先はサムネでも題でもなく、**その 13日 に長尺を置くこと**」。
+    **どの回も読んでいません。**
+
+    ## これは `headline()` が一度 学んだのと同じ話です
+
+    `headline()` の説明が、その理由をこう書いています ——
+    「**その日付が、出力の 200行目あたりにあった**。読み手が最初に見るのは
+    天井の表です」。**そこで運んだのは日付だけで、警告は置いてきました。**
+    **1つ上の階の同じ欠陥**で、この repo が「いちばん当たる」と言っている形
+    （同じことを2か所が別々に言っていて、片方しか読まれていない）そのものです。
+
+    ## 何をしないか
+
+    **選り分けません。** 重要かどうかを決める規則を置くと、次の回はその規則の
+    世話をします。ここは「`[!]` と書いた側が重要だと言っている」をそのまま
+    信じて、**在り処と頭を運ぶだけ**です。全文は本文の側にあります。
+
+    **覆る条件**: `[!]` が FLAG_LIMIT 本を超えて出るのが常態になったら、
+    運ぶ側ではなく**付ける側**が緩んでいます（`[!]` を足した回が、
+    尾に載るかを見て書かなくなったとき）。そのときはここを直すのではなく、
+    **`[!]` を打つ場所を減らすこと。**
+    """
+    hits: list[tuple[int, str]] = []
+    seen: set[str] = set()
+    for i, line in enumerate(said):
+        if "[!]" not in line:
+            continue
+        # **文の途中の `[!]` は拾わないこと**（2026-08-26 夜、入れた直後に踏んだ）。
+        #     `levers.report()` は `data/runs.jsonl` の ship の1行をそのまま印字します。
+        #     私自身が `--ship "eta の [!] 11本 を尾へ運び…"` と書いたので、
+        #     **自分の ship の文言が「名指しされた欠陥」として尾に並びました。**
+        #     印である `[!]` は、行頭か、composed な行の区切り（全角空白）の直後にしか出ません。
+        for m in FLAG_MARK.finditer(line):
+            t = " ".join(line[m.end():].split())
+            if not t:
+                continue
+            key = t[:40]
+            if key in seen:
+                continue
+            seen.add(key)
+            hits.append((i, t))
+    if not hits:
+        return []
+    bar = "###"
+    out = [f"{bar} **この回に名指しされた欠陥: {len(hits)}件**"
+           "（本文の真ん中に出ます。**頭と尾だけ読む手順では1本も読まれません**）"]
+    for i, t in hits[:FLAG_LIMIT]:
+        body = t if len(t) <= width else t[:width] + "…"
+        out.append(f"{bar}   ・{body}")
+    if len(hits) > FLAG_LIMIT:
+        out.append(f"{bar}   （ほか {len(hits) - FLAG_LIMIT}件。全文は本文の `[!]` を見ること）")
+    # --- **値札を、名前の隣に置く**（2026-08-31・最適化の回に実測して足した）---
+    #
+    # ここは欠陥を**名前つきで**並べます。同じ頭3行の中で、日付を動かす手
+    # （`verdict`）は 2026-08-31 の朝まで**日付と件数だけ**でした。
+    # **片方は名前つき、もう片方は名無し。** 実測（`data/runs.jsonl`・直近7日）:
+    #
+    #     ship 359件   `fix` **219件（61%）** ／ `verdict` **11件（3%）**
+    #     lever        `none` **147件（41%）** ／ `gate` 17件（5%）
+    #     `--moves`    **305件 が 0**（機械自身が「動かない」と申告して撃っている）
+    #     到達日        2027-01-02 → 2027-01-15（**+13日 遠のいた**。宣言は -55日）
+    #
+    # `eta.py` は「**軌跡の腕が動くのは前提を1件 閉じたときだけ。作る・出す・
+    # 直すは、軌跡の入力に入りません**」と、この 200行 下で自分に言っています。
+    # **その1行は、名前の並びより 200行 遠い所にあります。**
+    #
+    # だから値札をここへ持ってきます。**「塞ぐな」ではありません** ——
+    # 欠陥は本物で、実際に偽の合格を何度も止めています。言っているのは
+    # **これを塞ぐ回の `--moves` は 0 で、到達日は動かない**ということだけです。
+    #
+    # **置くのは `out[1]`**（件数のすぐ下）です。**末尾ではありません** ——
+    # 末尾は「ほか N件」の場所で、`tests/test_eta_flagged_in_tail.py` が
+    # そこを見ています。値札は**数字の隣**にあるときだけ値札です。
+    # **200字 を超えないこと**（同じ検査が「尾が長すぎると尾も読まれなくなる」
+    # と言っています）。
+    #
+    # **覆る条件**: 停止が解け、`upload` が段の側を動かせるようになっても、
+    # **`fix` の係数は 0 のままです**（腕は前提でしか動かない）。
+    # この行が要らなくなるのは、`fix` が軌跡の入力に入るようになったときだけ。
+    out.insert(1, f"{bar}   **塞ぐ回の `--moves` は定義上 0日**"
+                  "（腕は前提を1件 閉じたときだけ動く）。"
+                  "**実測 直近7日: `fix` 61% ／ `verdict` 3%、到達日 +13日**。"
+                  " **動かすのは上の『期日の来た前提』に名前が出ているほう。**")
+    return out
+
+
+#: **天井が乗っている控えと、それを取り直す手**（2026-08-28・最適化の回）。
+#:
+#: 値は `(表示名, 取り直す手)`。**手の名前だけ**を持ちます —— どの手がどの枠を
+#: 使うかは `src.upload_cap.DATA_API_TOOLS` が持っているので、ここには写しません。
+_CEILING_SOURCES: tuple[tuple[str, str, str], ...] = (
+    ("面（インプレッション）", "data/reach.jsonl", "python scripts/reach.py"),
+    ("混ざり方（RPM）", "data/rpm_mix.jsonl", "python -m src.rpm_mix"),
+    ("1本あたり再生", "data/views.jsonl", "python scripts/snapshot.py"),
+    ("本べつの形", "data/video_forms.json", "python -m src.rpm_mix --forms"),
+)
+
+
+def instrument_ages(now: datetime | None = None) -> list[str]:
+    """**天井が、いつの控えに乗っているか。** API 0単位・ファイルを読むだけ。
+
+    ## なぜ3行の側に出すか（2026-08-28）
+
+    天井は **2つの実測の積**（混ざり方 × 面）です。そのどちらかが止まっても、
+    **天井は黙って低く出ます** —— 実測 2026-08-24: `data/reach.jsonl` が 08/17 で
+    止まったまま出た天井が **¥184**、`scripts/reach.py` を撃ち直したら **¥287**
+    （**56% 低い**）。**止まっていたことは、どこにも表示されていませんでした。**
+
+    `src.rpm_mix._reach_freshness_lines` は、この遅れを正しく測る書き方を
+    **2026-08-24 に既に持っています**（「今日と比べないこと。比べるのは
+    Analytics の中身の最終日」）。**それが読まれる場所に無いだけ**でした ——
+    あれが出るのは `rpm_mix` 自身の出力で、**1周の中で誰も撃ちません。**
+    ここは「同じことを2か所が別々に言っていて、片方しか読まれていない」の
+    3例目です（`CLAUDE.md`）。
+
+    ## 門にしないこと（**しきい値を置きません**）
+
+    **「何時間で古い」を決めません。** 控えごとに追いつける最前線が違い
+    （Reporting は3日、Analytics は3日、`views` は日枠しだい）、
+    **時間で切ると、追いついている日にも鳴ります**（`_reach_freshness_lines`
+    の註がそう言っています）。鳴りっぱなしの警告は読まれません。
+    **だからここは事実だけを並べます** —— 天井の隣に、その控えの齢を置く。
+    **どれを取り直すかは、その回が決めます。**
+
+    ## いま撃てるかは、枠の持ち主に訊く
+
+    `python scripts/snapshot.py` だけが Data API の日枠を使います
+    （`src.upload_cap.DATA_API_TOOLS`）。**日枠が尽きていても、
+    Analytics と Reporting は別の枠なので通ります** —— 2026-08-28 に
+    実際に通り、要件1件の判定日が 09-03 → 08-30 へ動きました。
+    **一覧をここに写さないこと**（写した日から古くなります）。
+
+    **覆る条件**: 1周ごとに全部の控えを取り直す作りにしたら、この行は
+    毎回おなじ齢を出すだけになるので外してよい。
+    `tests/test_eta_instrument_ages.py` が、いまの向きを留めています。
+    """
+    now = now or datetime.now(timezone.utc)
+    try:
+        import deadline_check                                   # noqa: PLC0415
+    except Exception:                                          # noqa: BLE001
+        return []
+    try:
+        from src import upload_cap                             # noqa: PLC0415
+        q = upload_cap.day_quota()
+        dead = not q.open
+        tools = tuple(upload_cap.DATA_API_TOOLS)
+    except Exception:                                          # noqa: BLE001
+        dead, tools = False, ()
+    parts: list[str] = []
+    for label, rel, how in _CEILING_SOURCES:
+        path = ROOT / rel
+        if not path.exists():
+            parts.append(f"{label} **無し**")
+            continue
+        try:
+            point = deadline_check.newest_point(path)
+        except Exception:                                      # noqa: BLE001
+            # **この行のために eta.py を落とさないこと。** 毎回いちばん最初に
+            # 撃つ道具なので、齢が読めない控えが1つあるだけで回が死にます。
+            parts.append(f"{label} **齢が読めません**")
+            continue
+        if point is None:
+            parts.append(f"{label} **齢が読めません**")
+            continue
+        hours = (now - point).total_seconds() / 3600.0
+        blocked = dead and any(t in how for t in tools)
+        parts.append(f"{label} **{hours:,.0f}時間**"
+                     + ("（日枠が尽きるまで取り直せません）" if blocked else ""))
+    if not parts:
+        return []
+    return ["   天井が乗っている控えの齢: " + " ／ ".join(parts)
+            + "  ← **古いほど天井は低く出ます**"
+            " （実測 08/24: 面が 7日 遅れて ¥184、取り直して ¥287）。"
+            " 取り直す手は `scripts/reach.py` / `-m src.rpm_mix [--forms]`"
+            " / `scripts/snapshot.py`。"
+            "**日枠が尽きていても、前の3つは別の枠なので通ります**"]
+
+
+def _ab_side_clause() -> str:
+    """**走っている A/B の内訳**を、頭の3行に入る長さで1節にする。
+
+    **台帳の枠より、こちらが希少です** —— 開いている前提は 27件 ありますが、
+    無作為化されて同じ本の流れに乗っているのは `ab_split.EXPERIMENTS` の数件だけ。
+    実測 2026-08-29 は **4件とも `content`**（＝速いほうの枠が 0）。
+
+    **読めなくても回を止めません**（空文字を返す）。
+    """
+    try:
+        from src import ab_split                                # noqa: PLC0415
+
+        ac = ab_split.side_counts()
+        tot = sum(ac.values())
+        if not tot:
+            return ""
+        if not ac.get("dist"):
+            return (f"／ **無作為化して走っている A/B {tot}件 は、"
+                    "配信の側 0件**（`src/ab_split.EXPERIMENTS`）")
+        return (f"／ 走っている A/B {tot}件 は 配信 {ac.get('dist', 0)}件 ／"
+                f" 中身 {ac.get('content', 0)}件")
+    except Exception:                                           # noqa: BLE001
+        return ""
+
+
+def _theta_line(tr: dict | None, base: dict | None) -> list[str]:
+    """`_theta_days()` を、頭の3行に並べる1行にする。**読めなければ黙って消える。**
+
+    黙って消してよいのは「解けなかった」ときだけです（`theta` が `None`）。
+    **`t_work == 0` の回は、消さずに『θ をいくつにしても同じ』と言います** ——
+    消えたのが「解けなかった」なのか「効かない」なのか、読む側から
+    区別が付かなくなるので。
+    """
+    th = (tr or {}).get("theta")
+    if not th or base is None:
+        return []
+    bar = "###"
+    if not th.get("t_work"):
+        return [f"{bar} **θ（前提が閉じる速さ ＝ いま {th['per_day']:.2f}件/日）は、"
+                "この回の到達日を動かしません** —— 軌跡の `t_work` が 0日"
+                "（＝**いま走らせるのが最短**）なので、腕を速く動かしても"
+                "同じ日付に着きます。**縛っているのは腕ではなく、下の床のほうです。**"]
+
+    def _d(t: dict, delta: float | None) -> str:
+        if t.get("date") is None or delta is None:
+            return "**出ません**"
+        return f"**{t['date'].isoformat()}**（**{delta:+,.0f}日**）"
+
+    # **「いちばん大きい」を無条件に書かないこと**（2026-08-30、書いた直後に直した）。
+    #     この回の実測では θ の天井が配分の差の 4.5倍 でしたが、`t_work` が
+    #     縮んだ回は逆になり得ます。**比べてから、比べた結果を名乗ること** ——
+    #     無条件の最上級は、次に読む側が確かめずに済む形です。
+    alloc = None
+    pln = (tr or {}).get("planned")
+    if pln and pln.get("days") is not None and pln["days"] < NEVER:
+        d = pln["days"] - base["days"]
+        alloc = d if abs(d) > 0.5 else None
+    inf_d = th.get("inf_delta")
+    biggest = (alloc is None or inf_d is None or abs(inf_d) > abs(alloc))
+    head = ("**到達日をいちばん大きく動かすのは θ" if biggest
+            else "**θ")
+    line = (f"{bar} {head}（前提が閉じる速さ ＝ いま"
+            f" {th['per_day']:.2f}件/日・閉じた {th['n']}件 ÷ {th['days']:,.0f}日）です**"
+            f" —— θ×2 で {_d(th['x2'], th['x2_delta'])}"
+            f" ／ 天井（θ→∞）で {_d(th['inf'], th['inf_delta'])}。"
+            f"（軌跡は θ に反比例する `t_work` を **{th['t_work']}日** 取っています）")
+    # **配分の振り直しと、同じ行で並べること。** 単独で出すと「大きい数」に
+    #     見えるだけで、**この回に選べる他の手より大きいのか**が言えません。
+    if alloc is not None and inf_d:
+        line += (f" **台帳の配分との差は {alloc:+,.0f}日**"
+                 "（下の「台帳が実際に用意している配分」の行）で、"
+                 f"θ の天井はその **{abs(inf_d / alloc):.1f}倍**"
+                 + ("です。" if biggest else "しかありません ——"
+                    " **この回は配分のほうが大きい。**"))
+    # **上げ方を、同じ行で名指しすること。** 名前の無い所は「やれること」で埋まります
+    #     （`tests/test_eta_covered_substitute.py` が一度 直した形）。
+    #     **在庫が余っている回だけ**この節を出します。下回ったら逆の手なので、
+    #     そのときは黙るのではなく「増やすこと」を出す（下の `else`）。
+    n_open = th.get("open")
+    if n_open:
+        need = th["per_day"] * th["t_work"]
+        line += (f" **上げ方は2つあり、どちらが縛っているかはここでは言えません** ——"
+                 f" 軌跡は `t_work` のあいだに **{need:,.0f}件** 閉じる前提で"
+                 f" 立っていて、台帳に開いているのは **{n_open}件**"
+                 f"（{'足りない' if n_open < need else '足りる'}）。"
+                 "**(1) 件数** → `python scripts/eta.py --alloc`（どの腕に立てるか）。"
+                 "**(2) 立ててから判定できるまでの日数**（群の床 →"
+                 f" **予約の順番待ち** → 落ち着き{settle.SETTLE_DAYS}日 →"
+                 " Analytics の遅れ3日）→ `python scripts/queue_lag.py`。"
+                 " **`(1)` は在庫の写真で、補充の速さを見ていません** ——"
+                 "立つ速さは `closed_on` のような欄が無いので**この機械からは読めません**。"
+                 " 数えるなら `git log -p config/hypotheses.yaml` の"
+                 " `- claim:` の増え方（実測 2026-08-30: 開いた前提は"
+                 " 08/24 15件 → 08/30 32件 ＝ **2.8件/日**・閉じるのは 0.77件/日 ＝"
+                 " **在庫は増えつづけている** → そのときの縛りは (2) のほうでした）")
+    return [line]
+
+
+def paused_premise_line(bar: str = "###") -> str | None:
+    """**停止が、開いた前提のどれを凍らせているか。**（`AUTOMATION_PAUSED.md` が無ければ `None`）
+
+    ## なぜ要るか（2026-08-30・最適化の回に実測して足した）
+
+    `scripts/deadline_check.py` の `_project_nth()` は「**いまの作る速さが
+    続いたら**」で群の埋まる日を出します。**08/30 から、作る速さは 0 です**
+    （`src/pause_guard`）。それでも停止前に作った本から率を読み、
+
+        opening_motion（腕 `per_video`）  対照 あと **2本**  → 判定 **09-22**
+        request_form  （腕 `sub_rate`）   両群 あと **79本** → 判定 **10-11**
+
+    と日付を出していました。**合わせて 81本 は、解除するまで 1本も作れません。**
+    `request_form` は **`sub_rate` の唯一 走っている A/B** です
+    （`sub_rate` の閉じた前提は 2件 ＝ `arm_speed.MIN_N` 未満）。
+
+    ## この行が言っているのは「値段」です
+
+    **門を1日 早く閉じれば、ここに出た前提の判定も1日 早く来ます。**
+    逆に、解除が N日 遅れれば N日 遅れます。上の「腕は引けません」は
+    **この回に本が出せない**という話ですが、こちらは
+    **止まっているあいだ、腕の実験そのものが進まない**という話で、別の損です。
+
+    **覆る条件**: `AUTOMATION_PAUSED.md` が消えれば、この行は自分で黙ります
+    （`deadline_check.paused_claims()` が空で返ります）。
+    検査は `tests/test_paused_supply.py`。
+    """
+    if not pause_guard.is_paused():
+        return None
+    try:
+        frozen = _deadline_check_mod().paused_claims()
+    except Exception as exc:                                   # noqa: BLE001
+        return (f"{bar} [!] **停止が前提を凍らせていないか、確かめられませんでした** —— "
+                f"`deadline_check.paused_claims()` が読めません（{exc}）")
+    if not frozen:
+        return None
+    lever_of = {}
+    try:
+        doc = arm_speed._load()        # `config/hypotheses.yaml`（あちらが正本）
+        for h in (doc.get("hypotheses") or []):
+            if isinstance(h, dict):
+                lever_of[str(h.get("claim") or "")] = str(h.get("lever") or "?")
+    except Exception:                                          # noqa: BLE001
+        pass
+    parts = []
+    for claim, short in sorted(frozen.items(), key=lambda kv: -kv[1]):
+        parts.append(f"**{claim[:26]}**（腕 `{lever_of.get(claim, '?')}`・あと **{short}本**）")
+    total = sum(frozen.values())
+    return (f"{bar} [!] **停止は、開いた前提 {len(frozen)}件 の判定も止めています** —— "
+            + " ／ ".join(parts)
+            + f"。 合わせて **{total}本** 要りますが、`src/pause_guard` が生成を"
+              f"塞いでいるので **1本も増えません**（`deadline_check.paused_claims()`）。"
+              f" **これは「この回に腕が引けない」とは別の損です** —— 腕の実験そのものが"
+              f"止まっているので、**解除が N日 遅れれば、この {len(frozen)}件 の判定も"
+              f"N日 遅れます ＝ 門を1日 早く閉じることの値段**です。")
+
+
+def gate_lines(bar: str = "###", tr: dict | None = None) -> list[str]:
+    """**審査の門（`AUTOMATION_PAUSED.md` の Resume gate）を、床として印字する。**
+
+    ## なぜ要るか（2026-08-30・最適化の回が足した）
+
+    ここには長らく、次の1行が**手書きで**ありました。
+
+        **その項はまだこの機械に入っていません。**
+
+    正しい記述でしたが、**記述は床になりません。** 実測（`data/runs.jsonl`）:
+    08/26→08/30 の ship **359件**、そのあいだ到達日は **+13日 遠のいた**。
+    停止後の 08/30 は ship 40件 のうち **20件が `--lever none`** ——
+    引ける腕が語彙に無いので、律速を進めた回まで「動かさない回」に落ちます。
+
+    **`p_pass`（審査に受かる確率）は、到達日に掛かる項です。**
+    受からなければ再生がいくつでも収入は 0 円（`CLAUDE.md`）。
+    だから腕（`per_video` / `rpm` / `density` / `sub_rate`）は**その内側**にあり、
+    **外側が 0 なら内側を何倍にしても 0** です。
+
+    ## この関数が**しない**こと
+
+    **確率の数字を作りません。** 審査に出した実績が 0回 なので測れません
+    （`src/resume_gate.p_pass()` は常に `None`）。言うのは
+    「**1.0 と置く根拠がどこにも無い**」ことだけです。
+    同じ理由で、門が閉じる速さも**閉じた実績が 3件 未満のうちは `None`**
+    ——「**測れないことを誤りゼロとして印字する**」のがこの仕掛けの最悪の壊れ方
+    （`docs/JOURNAL.md` 2026-08-30 の覆る条件4）。
+
+    ## 覆る条件
+
+    `AUTOMATION_PAUSED.md` が消えれば、呼び元の分岐ごと黙ります。
+    門を 6件 閉じても審査に落ちたら、直すのは**あちらのファイル**であって、ここではない。
+    """
+    g = resume_gate.summary()
+    out: list[str] = []
+    if not g["total"]:
+        out.append(f"{bar} [!] **Resume gate の条件が 1件も読めませんでした** ——"
+                   f" `AUTOMATION_PAUSED.md` の `## Resume gate` の番号つき箇条書きが"
+                   f"見つかりません。**0件 を「全部 閉じた」と読まないこと。**")
+        return out
+    closed, total, opened = g["closed"], g["total"], g["open"]
+    cap = g["cap"]
+    out.append(
+        f"{bar} **その項を、この回から床として入れました**（`src/resume_gate.py`）——"
+        f" **審査の門 {closed}/{total} 件 が閉じています**"
+        + (f"（天井まで **×{cap:.2f}**）" if cap is not None
+           else "（**0/6 なので倍率は定義できません** —— 0倍 では 6件 になりません。要るのは 6件）")
+        + f" **`p_pass` は値を返しません**（審査に出した実績 0回 ＝ 測れない）。"
+        f" **返さないこと自体が答え**で、`1.0` と置く根拠がどこにも無い、という意味です。")
+    if opened:
+        names = " ／ ".join(f"**{r['n']}** {r['text']}" for r in g["open_items"])
+        out.append(f"{bar} 開いている {opened}件: {names}")
+    # **正本が「閉じた」と言っているのに、根拠の1行が台帳に無い件**（2026-08-30 に踏んだ）。
+    #     `AUTOMATION_PAUSED.md` の原文は「次の全条件が**記録される**まで解除しない」。
+    #     **印だけ付いて根拠が無い状態は、まだ記録されていません。**
+    if g.get("unrecorded"):
+        ns = "／".join(str(r["n"]) for r in g["unrecorded"])
+        out.append(
+            f"{bar} [!] **{ns} は `AUTOMATION_PAUSED.md` の側で「閉じた」と印が付いていますが、"
+            f"根拠の1行が `data/resume_gate.jsonl` にありません。** 原文は"
+            f"「次の全条件が**記録される**まで解除しない」——"
+            f" **印は記録ではありません。** `--close-gate {g['unrecorded'][0]['n']}"
+            f" --evidence \"…\"` で、どこに何を残したかを1行 積むこと"
+            f"（積むまで、閉じる速さの分母に入りません）。")
+    rate, left_days = g["rate_per_day"], g["days_to_close"]
+    if left_days is None:
+        traj = ((tr or {}).get("base") or {}).get("date")
+        # **分母に入るのは、日付の付いた閉じ方だけ**（正本の印には日付が無い）。
+        _dated = closed - len(g.get("unrecorded") or [])
+        # **止めているのが件数か窓かを、名指しで言うこと**（2026-08-30 に踏んだ）。
+        #     「閉じた実績が 3件（要るのは 3件）なので測れていません」と出た日がある ——
+        #     **条件を満たしているのに満たしていないと読める**。止めていたのは
+        #     分母のほう（`resume_gate.MIN_SPAN_DAYS`）だった。
+        _need = g["min_closed_for_rate"]
+        _span = (date.today() - g["since"]).days if g.get("since") else None
+        if _dated < _need:
+            _why = (f" 閉じた実績が {_dated}件（速さを言うのに要るのは {_need}件）なので、"
+                    f"**閉じる速さが測れていません。**")
+        else:
+            _why = (f" 閉じた実績は {_dated}件 で足りていますが、"
+                    f"**停止からまだ {_span}日**（割る窓は"
+                    f" {resume_gate.MIN_SPAN_DAYS}日 から）——"
+                    f" **同じ日にまとめて閉じた件数は、間隔について何も言いません。**")
+        out.append(
+            f"{bar} **床(d)＝門が閉じる日 ＋ 軌跡の日数。いまは日付が出ません** ——"
+            + _why
+            + f" **これは「0日」でも「永遠」でもありません。**"
+            + (f" 固定して言えるのは1つだけ: **門が今日 全部 閉じたとしたら {traj.isoformat()}**"
+               f"（下の軌跡の日付）。**門が閉じるまで、その線は始まりません** ——"
+               f"停止中は本が1本も出ないので、軌跡の作業日数は門の後から数え直しです。"
+               if traj is not None else ""))
+    else:
+        # **出どころを同じ行に並べること**（2026-08-30 に直した）。
+        #     直す前は「閉じた件数 ÷ 停止からの日数」で割っていて、
+        #     **同じ日にまとめて閉じた分が、そのまま速さになりました** ——
+        #     3件目が閉じた翌日に「残り全部が あと1日」と印字し、その後は
+        #     1日 経つごとに2日 遠のきます（`src/resume_gate.days_per_close`）。
+        #     いまは**間隔**で数えるので、`since_last_close` を必ず添えます。
+        _per = g.get("days_per_close")
+        _since = g.get("since_last_close")
+        # **残り 0件 の日に、ここで落ちていました**（2026-08-30 夜に踏んだ）。
+        #     `days_to_close()` は「残りが 0件 なら、速さが測れていなくても 0日」と
+        #     **自分の docstring でそう言って 0.0 を返します**。ところが下の行は
+        #     `days_per_close()`（＝ `_per`）を `:.1f` で組み立てるので、
+        #     **同じ日に全部 閉じた回**（窓が `MIN_SPAN_DAYS` に満たない）は
+        #     `_per is None` で `TypeError` になります。
+        #
+        #     **落ちるのが `scripts/eta.py` なのが、いちばん高い代金です** ——
+        #     `CLAUDE.md`「毎回の実行で必ずやること」の1番がこれで、
+        #     **門を閉じ切った次の回から、毎周いちばん最初に落ちます。**
+        #     門を閉じるほど壊れる形だったので、**最後の1件を閉じるまで誰も踏めません。**
+        #
+        #     **検査は `tests/test_gate_all_closed.py`。**
+        if opened <= 0:
+            out.append(
+                f"{bar} **門は {closed}件 とも閉じました（残り 0件）。床(d) は 0日 です**"
+                f" —— **床(d) はもう到達日を縛っていません**（縛っているのは下の"
+                f"軌跡のほう）。**ただし `AUTOMATION_PAUSED.md` が在るあいだ、"
+                f"本は1本も出ません** —— 閉じたのは条件で、**解除はまだ別の1手**です"
+                f"（人の手で `origin/main` へ直接 入った停止なので、"
+                f"`AUTOMATION_PAUSED.md` の「6件とも記録されました」の節を読むこと）。"
+                f" **解除した最初の1周で `python -m src.density_verdict` と"
+                f" `python -m src.frames` を撃ち直すこと** ——"
+                f"閉じた根拠は**上限であって、出来上がりの実測ではありません。**")
+        elif not _per:
+            out.append(
+                f"{bar} **床(d)＝門が閉じる日 ＋ 軌跡の日数**: 残り {opened}件 ですが、"
+                f"**1件あたりの日数が測れていません**（同じ日にまとめて閉じた分は、"
+                f"速さを1つも言っていないため）。**これは「0日」でも「永遠」でもありません。**")
+        else:
+            out.append(
+                f"{bar} **床(d)＝門が閉じる日 ＋ 軌跡の日数**: 残り {opened}件 ×"
+                f" **{_per:.1f}日/件**＝ **{left_days:,.1f}日**"
+                f"（{rate:.2f}件/日）。**分母は「閉じた件数 ÷ 経過」ではありません** ——"
+                f" 閉じた日どうしの**間隔**と、**最後に閉じてから経った"
+                f"{'—' if _since is None else f'{_since}日'}**の、大きいほうです"
+                f"（同じ日にまとめて閉じた分は、速さを1つも言っていないため）。"
+                f" [!] **閉じた {closed}件 と残り {opened}件 が同じ難しさだと置いています** ——"
+                f"閉じたのは設定1行と検査で済んだ側で、残りは**チャンネルの形そのもの**です。")
+    # **門には時計が回っています**（2026-08-30 に測って足した）。
+    #     止めたのは「新しく作って足すこと」で、**すでに入っている予約の列ではありません。**
+    #     `p_pass` は、こちらが何もしなくても毎日 下がりうる —— だから
+    #     「開いている件数」だけを出すと、**急ぐ理由が出力から抜けます。**
+    q = resume_gate.queue()
+    if q.get("upcoming"):
+        out.append(
+            f"{bar} [!] **止まっていても、予約済み {q['upcoming']:,}本 は公開され続けます** ——"
+            f" {q['first'].strftime('%m/%d %H:%M')} 〜 {q['last'].strftime('%m/%d %H:%M')} JST・"
+            f"**{q['per_day']:.1f}本/日**（控え {q['held']:,}本）。"
+            f" **機械が1回も起きなくても公開されます。**"
+            # **「その全部が停止の理由になった作りのまま」と書いてありました。**
+            #     2026-08-30 に本文を測ったら**ちがいました** —— 名乗りの側は
+            #     控え694本に **0件**。それは作った時の設定の話で、本文の話ではない。
+            #     **残っているのは型のほう**（`src/legacy_corpus.py`）。
+            #     判断は `docs/CONSTRAINTS.md` B14（引っ込めない）。
+            f" **本文は測ってあります**（`python -m src.legacy_corpus`）——"
+            f" 名乗り（解除条件1・2）は控え694本に **0件**。"
+            f" 残るのは**型**（締めの定型 60%・6行 58%）で、"
+            f" **これは出た本を消しても直りません**。"
+            f" だから引っ込めない、と決めてあります（`docs/CONSTRAINTS.md` B14）。"
+            f" **門は「開いている」だけでなく、時計が回っています**"
+            f"（混在の窓は予約が尽きるまで）。"
+            f"（引っ込める `reschedule.py` は `src/pause_guard` の対象で、"
+            f"この機械からは止められません。**数だけを出しています。**）")
+    # **説明欄は、まだ1本も測れていません**（2026-08-30 夜に足した）。
+    #     `legacy_corpus` が 1・2・5 を閉じたのは**台本の控え694本**についてで、
+    #     **説明欄（`description_body`）は 0本**です。ところが
+    #     `verify._check_no_human_expert_claim()` は、**これから作る本では
+    #     説明欄も見ています** —— 既にある735本だけが見られていない。
+    #     審査する側から見ると、説明欄は**再生しなくても読める面**です。
+    #     **穴が見えないと、次の回はここへ来ません。** だから門の節に出します。
+    try:
+        from src import descriptions as _desc
+        _d = _desc.load() or {}
+    except Exception:                                        # noqa: BLE001
+        _d = {}
+    _got = len(_d.get("videos") or [])
+    _asked = int(_d.get("asked") or 0)
+    if _got < _asked or not _d:
+        _seen = f"{_got:,} / {_asked:,}本" if _d else "**1度も取っていません**"
+        out.append(
+            f"{bar} [!] **説明欄は、まだ測れていません**（{_seen}）——"
+            f" 1・2・5 を閉じた `legacy_corpus` が見たのは**台本の控えだけ**で、"
+            f"説明欄は分母に入っていません。**同じ関数"
+            f"（`verify._check_no_human_expert_claim()`）を、これから作る本では"
+            f"説明欄にも当てています** ＝ **既にある本だけが見られていない面**です。"
+            f"（審査する側から見ると、説明欄は**再生しなくても読めます**。）"
+            f" 撃つのは `python -m src.descriptions --refresh`（**約15単位**・"
+            f"日枠は JST 16:00 に戻る)。"
+            f" **名乗りが1本でも出たら、1・2 を開き直すこと**"
+            f"（`--open-gate 1 --evidence \"...\"`）。"
+            + (f" 前の回は日枠（`quotaExceeded`）で止まっています ——"
+               f" **「チャンネルに無い」ではありません。**"
+               if _d.get("partial") else ""))
+    out.append(
+        f"{bar} **だから、この回に到達日を動かすのは4本の腕ではありません** ——"
+        f" 動かせるのは **審査に通る形を1つ決めること**（この {total}件）だけで、"
+        f"それが `--lever gate` です（`src/levers.py`）。**腕は、その後でなければ効きません**"
+        f" —— 塞がったまま本数を積んでも、審査に落ちれば**再生は1円にもなりません。**"
+        f" 閉じるときは `python scripts/eta.py --close-gate <番号> --evidence \"<どこに何を記録したか>\"`。"
+        f" **閉じた根拠を実測で当て直して外れたら、逆も撃てます**"
+        f"（`--open-gate <番号> --evidence \"<何を測って、どこと食い違ったか>\"`。"
+        f"2026-08-30 夜まで、この逆は**手順に書いてあるのに実装にありませんでした**）。")
+    return out
+
+
 def headline(pl: dict, prev: dict | None = None,
-             tr: dict | None = None) -> list[str]:
+             tr: dict | None = None,
+             points: list[dict] | None = None,
+             *, now: datetime | None = None) -> list[str]:
     """**この回のいちばん最初と、いちばん最後に出す3行。**
 
     ## なぜ2回出すか（2026-08-20 08:0x・オーナー指示3回目）
@@ -3313,6 +5678,44 @@ def headline(pl: dict, prev: dict | None = None,
     """
     bar = "###"
     out = ["", "=" * 66]
+    # **止まっている間は、裸の到達日を先に出さないこと**（2026-08-30 に足した）。
+    #
+    # `CLAUDE.md` は「**裸の『届きません』を出さないこと**」と言っています ——
+    # 何を固定したせいでその出力になったのかを、同じ行に並べろ、という規則です。
+    # **裸の到達日は、その規則の鏡像**で、同じ欠陥の符号違いです。
+    # 実測 2026-08-30: 生成と投稿は `src/pause_guard` が塞いでいるのに、
+    # この関数は **2027-01-10（133日後）** と、引く腕（`rpm`）まで
+    # 名指しして印字していました。**どちらもこの回には引けません。**
+    # 読み手が最初に見るのはこの3行なので（下の docstring）、
+    # **塞がっていることが、日付より先に出る必要があります。**
+    #
+    # **覆る条件**: `AUTOMATION_PAUSED.md` が消えれば、この段は自分で黙ります。
+    if pause_guard.is_paused():
+        out.append(
+            f"{bar} [!] **止まっています** —— `AUTOMATION_PAUSED.md` が在り、"
+            f"**生成・投稿・チャンネルの書き換えは `src/pause_guard` が塞いでいます。**"
+            f" **下の日付は、それが無いものとして解いた線です。**"
+            f" 名指しされる腕（`rpm` / `per_video` / `density`）は、"
+            f"**この回には1つも引けません** —— 引くには本を出す必要があり、"
+            f"その入口が塞がっているからです。")
+        out.append(
+            f"{bar} **固定してこの日付が出ています**: "
+            f"**収益化の審査に受かる確率を 1.0** に置いたまま"
+            f"（下の「推測」2番は日数だけを推測していて、**落ちる目を持っていません**）。"
+            f" 止めた理由はそこで、**いまの構成が審査の除外側に当たる**というものです"
+            f"（合成音声・型どおりの量産。**名乗りのほうは 2026-08-30 に落としました** ——"
+            f" `config/channel.yaml` の `persona` から実務経歴が消え、"
+            f"`verify._check_no_human_expert_claim()` が台本の側でも塞いでいます）。"
+            f" **受かる確率を 1.0 から下げると、この日付は後ろに動きます。**")
+        # **「1・2 は閉じています／残りは 3〜6」を、ここに手で書かないこと**
+        #     （2026-08-30 に2つの回が同じ日に別々にここへ着き、合流させた）。
+        #     手書きの件数は、閉じた翌回から嘘になります。**下は台帳を読みます**
+        #     （`data/resume_gate.jsonl` ／ 正本は `AUTOMATION_PAUSED.md`）。
+        out.extend(gate_lines(bar, tr))
+        # **腕が引けないことと、腕の実験が止まることは別の損です**（2026-08-30 に足した）。
+        _frozen = paused_premise_line(bar)
+        if _frozen:
+            out.append(_frozen)
     # **いちばん上に出す日付は「軌跡」のほうです**（2026-08-20 18:xx・オーナー指示）。
     #     腕を据え置いた線（`pl["target_date"]`）は、**腕が1ミリも動かない未来**の
     #     日付です。この機械は毎周かならず腕を1つ引いているので、それは
@@ -3344,6 +5747,22 @@ def headline(pl: dict, prev: dict | None = None,
         #     `CLAUDE.md` の (イ)「**何を固定したせいでそう出たのかを同じ行に並べる**」を、
         #     **θ にも当てます** —— 幅の遅い側（2027-03-14）でさえ、
         #     30日窓の θ が出す日付（≒2027-03-31）を含んでいませんでした。
+        #
+        #     ### **その「含んでいない」は、直しに行かないこと**（2026-08-27 に測った）
+        #
+        #     上の1行を「幅が狭すぎる欠陥だ」と読んで広げに行くと、空振りします。
+        #     `forward()` の `per_day = n / h` は**分子が開いた前提の件数で頭打ち**、
+        #     分母 `h` だけが伸びるので、**予定表が完璧でも**窓とともに 0 へ行きます。
+        #     実測 2026-08-27（軌跡 2026-12-23・幅 2026-12-02〜**2027-03-01**）::
+        #
+        #         14日窓 θ×0.70 → 2027-01-11   最大の 47%  ← **幅の内側**
+        #         30日窓 θ×0.40 → 2027-02-21   最大の 58%  ← **幅の内側**（08/26 は外だった）
+        #         60日窓 θ×0.27 → 2027-03-31   最大の 79%  ← 外。**ただし artifact**
+        #
+        #     **外に出ているのは60日窓だけで、それは既に天井の 79%**（開いた前提が
+        #     19件しか無い ＝ 60日窓で取りうる最大が 0.35倍）。**予定を1日も
+        #     動かせないので、幅を広げても読みが良くなりません。**
+        #     上げ方は `forward_line()` が窓ごとに名指しします。
         try:
             _fw = arm_speed.forward(_ready_by_claim())
             _fl = arm_speed.forward_line(_fw)
@@ -3351,6 +5770,10 @@ def headline(pl: dict, prev: dict | None = None,
             _fl = None
         if _fl:
             out.append(_fl)
+        # --- **θ に、日数の値札を付ける**（2026-08-30・最適化の回に足した） ---
+        #     値札の付いていない数は、他の手と並べて比べられません。
+        #     理由と実測は `_theta_days()` の docstring。**消す条件もそこ。**
+        out.extend(_theta_line(tr, base))
     # **軌跡が解けなかった回でも、「到達予測」の字は必ず出すこと。**
     #     ここを「据え置いた線」だけにすると、軌跡が落ちた回の出力から
     #     **到達予測という言葉ごと消えます**（検査が1件それを見ています）。
@@ -3363,22 +5786,140 @@ def headline(pl: dict, prev: dict | None = None,
     else:
         out.append(f"{bar} {label}: **出ません**"
                    "（天井が足りない。下に「どの腕をいくつにすれば出るか」）")
-    out.append(f"{bar} 縛っているのは **{pl['binding']}**"
-               f" → **この回に引く腕は `{pl['lever_hint']}`**"
+    # **門が開いている回は、床の名前を「模型の中で」と断ること**（2026-08-30）。
+    #     `pl["binding"]` は (a)(b)(c) の3つの床のうち、いちばん遅いものの名前です。
+    #     **門（床(d)）はそのどれよりも遅く、しかも掛け算の外側**にあるので、
+    #     断らずに並べると「再生数が縛っている → だから `gate`」という
+    #     読めない1行になります（実測 2026-08-30 の出力13行目）。
+    _paused_gate = (pl.get("lever_hint") == "gate")
+    out.append(f"{bar} 縛っているのは "
+               + ("**審査の門**（`AUTOMATION_PAUSED.md` の Resume gate）——"
+                  f" 模型の中の床は `{pl['binding']}` ですが、**門はその外側に掛かります**"
+                  if _paused_gate else f"**{pl['binding']}**")
+               + f" → **この回に引く腕は `{pl['lever_hint']}`**"
                + (f"（**軌跡が名指し**。床の名前は `{pl['lever_hint_binding']}` ですが、"
                   "それは診断であって、引いて何日縮むかは言っていません）"
-                  if pl.get("lever_from") == "軌跡" else ""))
+                  if pl.get("lever_from") == "軌跡" and not _paused_gate else ""))
     if pl.get("lever_hint_covered"):
         out.append(f"{bar} **その `{pl['lever_hint']}` の測定は、予約済みの本が"
                    f" {pl['lever_hint_covered']} に答えます** →"
                    " **この回は別の腕を引くこと。**"
                    f" `--lever` が `{pl['lever_hint']}` でなくても、"
                    "この回は「名指しを外した」ではありません")
+        # --- **「別の腕」に、名前を付ける**（2026-08-30・最適化の回に足した） ---
+        #     ここは長らく「別の腕を引くこと」で終わっていました。**名前が無い**ので、
+        #     回の側は「やれること」の中から選び、結果は毎回おなじ所へ落ちます ——
+        #     実測 2026-08-30 05:5x、`data/runs.jsonl` の **ship 358件（7日ぶん）**:
+        #     `lever_hint` は **358件とも `per_video`**（名指しは1本も変わっていない）、
+        #     `lever_followed` は **False が 312件（87%）**。振り先は
+        #     `none` 152 ／ `density` 106（**`lever_cap` は全件 1.0**）／
+        #     `per_video` 46 ／ `rpm` 29 ／ `sub_rate` 25 ——
+        #     **258件（72%）が、この機械が自分で「動かない」と測った側**です。
+        #     ところが同じ回の `pl["lever_days"]` は `density` を
+        #     **天井 ×1.00・`reachable_at_cap=False`** と出しており、
+        #     `arm_frozen_days["density"]` は **0.0日**（＝丸ごと凍らせても
+        #     到達日は1日も動かない）。**この機械は毎周、自分が 0日 と測った腕を
+        #     引いていました。** 名指しが空欄だったことが、その既定を作っています。
+        #     **そのあいだ到達予測は +20日 遠のいています**（2026-12-21 → 2027-01-10）。
+        #
+        #     出すのは1本だけ: **`reachable_at_cap` が真な腕のうち、
+        #     `gain_at_cap` がいちばん大きいもの**（名指しされた腕は除く）。
+        #     `lever_days` は既にその順で並んでいます（`lever_days()` の `rows.sort`）。
+        #
+        #     **覆る条件**: `reachable_at_cap` の真な腕が、名指しの1本しか
+        #     無くなったら（＝除いたら候補が空）、この行は自分で消えます。
+        #     そのときは腕を選ぶ話ではなく、天井そのものが足りない回です
+        #     （頭の「腕を**据え置いた**線: 出ません」と同じ事情）。
+        #     検査は `tests/test_eta_covered_substitute.py`。
+        _rows = pl.get("lever_days") or []
+        _alt = next((r for r in _rows
+                     if r["lever"] != pl["lever_hint"]
+                     and r.get("reachable_at_cap") and not r.get("at_ceiling")), None)
+        _frz = pl.get("arm_frozen_days") or {}
+        # **0日 の腕を、同じ行で名指しして塞ぐこと。** 代わりを出すだけでは、
+        #     既定（`density`）は残ります —— 名前が2つ並んだときに読み手が
+        #     選べてしまう形は、この道具が `lever_hint` で一度 直しています。
+        # **`None` を先に落とすこと。** `frozen_days()` の返りは
+        #     `dict[str, float | None]` で、軌跡が解けなかった腕は `None` です。
+        #     並べ替えの鍵に混ぜると `TypeError` で頭の3行ごと落ちます
+        #     （＝この回の入口が消える）。**選別が先、並べ替えが後。**
+        _dead = [f"`{k}`（凍らせても **{v:,.0f}日**）"
+                 for k, v in sorted(((k, v) for k, v in _frz.items()
+                                     if v is not None and v < 1.0),
+                                    key=lambda kv: kv[1])]
+        # **`density` の 0日 は「ショートの面」だけの話です**（2026-08-30）。
+        #     `arm_caps["density"]` は `day_cap.cap()`（ショートの面で1日に
+        #     再生が付く本数）で立っており、**長尺はその枠を1つも使いません。**
+        #     そして **4,000時間の門に入るのは長尺だけ**です。
+        #     `src/levers.py` の `_long_surface_open()` は既にここを割っていて、
+        #     長尺の面が開いていれば `density` を「死んだ腕」に入れません。
+        #     **頭の3行だけが割らずに塞ぐと、長尺を増やす作業まで止まります** ——
+        #     この repo が3回 申し送って直した所を、こちらから戻すことになります。
+        #     **覆る条件**: 長尺の面が `at_ceiling` になったら、この但し書きは消えます。
+        #     **文の途中に差し込まないこと**（2026-08-30 に踏んで直した）。
+        #     いちど `_dead` の要素そのものに足したところ、行が
+        #     「`density`（…）。**ただし…**（長い） **をこの回の `--lever` に
+        #     しないこと**」となり、**禁止の述語が但し書きの向こう側へ飛びました。**
+        #     頭の3行は「読み飛ばしても決まる形」なので、**述語を分断しないこと。**
+        #     但し書きは行の**末尾**に付けます。
+        _long = ((pl.get("density_surfaces") or {}).get("long") or {})
+        _surface = ""
+        if _dead and _long and not _long.get("at_ceiling") \
+                and any(s.startswith("`density`") for s in _dead):
+            _surface = ("　**ただし `density` のその 0日 は「ショートの面」だけの数です** ——"
+                        "長尺の面はまだ天井ではありません"
+                        + (f"（{_long.get('why')}）" if _long.get("why") else "")
+                        + "。**止めているのはショートの本数を増やす回であって、"
+                        "長尺を増やす回ではありません**（長尺は面とシェア ＝"
+                        " `--lever rpm` で押すこと）")
+        if _alt is not None:
+            _th = _alt.get("threshold")
+            # **勝った腕の天井が実測でないなら、勝ちの理由がそこにあります。**
+            #     `--alloc` と `_report_levers` は既にこの注意を出しています
+            #     （`alloc_search` の末尾・`tr["arms"]` の `cap_measured`）。
+            #     **頭の3行にだけ無い**ので、ここへ持ってきます —— 実測 2026-08-30 の
+            #     `rpm` は ×61.35 で、出どころは「長尺の面 × **CTR 100%**」＝
+            #     測った天井ではありません。**黙って名指しすると、作り物の天井に
+            #     回を1つ振らせることになります。**
+            _arm = ((tr or {}).get("arms") or {}).get(_alt["lever"]) or {}
+            _unmeasured = (" [!] ただしその天井は**測ったものではありません**"
+                           f"（{_arm.get('cap_why', '出どころなし')}）——"
+                           "**天井が作り物なら、名指しも作り物です**"
+                           if _arm.get("cap") and not _arm.get("cap_measured") else "")
+            out.append(
+                f"{bar} **その「別の腕」は `{_alt['lever']}` です**"
+                f"（天井 ×{_alt['cap']:,.2f} → {_alt['date_at_cap'].isoformat()}"
+                + (f"・日付が出はじめるのは **×{_th:,.2f}** から" if _th else "")
+                + "）—— **天井まで引けば日付が出る腕は、これと"
+                f" `{pl['lever_hint']}` だけ**です（`reachable_at_cap`）。"
+                + (" **" + "／".join(_dead) + " をこの回の `--lever` にしないこと**"
+                   " —— この機械が自分で測った「引いても到達日が動かない」腕です"
+                   if _dead else "")
+                + _unmeasured + _surface)
+        elif _dead:
+            out.append(
+                f"{bar} [!] **その「別の腕」がありません** ——"
+                f" 天井まで引いて日付が出るのは `{pl['lever_hint']}` だけで、"
+                + "／".join(_dead)
+                + " は**凍らせても到達日が動きません**。"
+                "**この回は腕を選ぶ回ではなく、天井そのものを測り直す回です**"
+                "（上の「天井の齢」の行）")
     # --- **その日付が前提にしている配分を、台帳が用意しているか**（2026-08-26） ---
     #     上の日付は `share`（**閉じた前提の割合 ＝ 過去にどう振ってきたか**）で
     #     解かれています。**未来の配分を決めているのは、開いている前提のほう**です。
     #     食い違っていたら、上の日付は**台帳が用意していない世界**の日付です。
     out.extend(_planned_lines(bar, tr, base))
+    # **天井の齢を、天井を名指しした行のすぐ隣に置く**（2026-08-28）。
+    #   しきい値は置きません —— 理由は `instrument_ages()` の註。
+    #
+    #   **`base` で分けないこと**（同じ日に踏んで直した）。足したときは
+    #   `if base is None` で括っていました —— 「据え置いた線の側に二重に
+    #   出さない」つもりでしたが、**`base` が None なのは軌跡が解けなかった
+    #   回だけ**です。ふだんは軌跡が解けるので `base` は埋まっており、
+    #   **この行は一度も出ませんでした**（実測: `eta.py` の出力に1行も無し）。
+    #   `headline()` は頭と末尾で2回 呼ばれますが、**同じ引数の同じ塊**なので、
+    #   分ける理由はそもそもありません。
+    out.extend(instrument_ages())
     top = next((r for r in (tr or {}).get("choice", []) if r["reachable"]), None)
     if top is not None:
         gain = (base["days"] - top["days"]) if base and base["days"] < NEVER else None
@@ -3406,6 +5947,34 @@ def headline(pl: dict, prev: dict | None = None,
             "**作る・出す・直すは、軌跡の入力に入りません** ——"
             "段の側（`--reflect` が測る入力）は動きますが、"
             "**上の日付は動きません**")
+        # **腕を名指ししたら、その隣で「側」も名指しすること**（2026-08-29 に足した）。
+        #
+        # 上の行は「前提を1件 閉じないと日付は動かない」と言いますが、
+        # **どの前提を立てるかまでは言いません。** 同じ腕の中で、その回に
+        # いじるのが**動画の外側**（形式・時刻・本数・間隔・面）か
+        # **中身**（題・文言・冒頭の絵・尺）かで、実測の当たり方が
+        # **13.9倍** ちがいます（`src/arm_speed.sides()`）。
+        # **この1行を `--alloc` の中だけに置かないこと** —— `CLAUDE.md` が
+        # 「読むのは頭と末尾の3行だけ」と書いている以上、
+        # **決め手が本文の中にあると、決める回には届きません。**
+        try:
+            sd = arm_speed.sides()
+            r = sd["ratio"]
+            if r:
+                out.append(
+                    f"{bar} **その1件を、どちらの側に立てるか**: 実測で"
+                    f" **配信の側（形式・時刻・本数・面）は中身の側（題・文言・絵・尺）の"
+                    f" {r:.1f}倍**"
+                    f"（当たり {sd['closed']['dist']['p']:.0%} 対"
+                    f" {sd['closed']['content']['p']:.0%}"
+                    f"・n={sd['closed']['dist']['n']} 対 {sd['closed']['content']['n']}）。"
+                    f"**いま開いているのは 配信 {sd['open']['dist']}件 ／"
+                    f" 中身 {sd['open']['content']}件**"
+                    + _ab_side_clause() +
+                    "。**この数で上の日付は動かしていません**（有意ではない ——"
+                    " `src/arm_speed.sides()` の「覆る条件」）")
+        except Exception:                                       # noqa: BLE001
+            pass
         # **そのうえで「いつなら動くのか」を出す**（2026-08-21 06:xx）。
         # 期日の来た前提が1件も無い回は、**何をしても到達日は動きません。**
         # それを先に言わないと、その回は外れる `--moves` を立てるだけで終わります。
@@ -3419,23 +5988,131 @@ def headline(pl: dict, prev: dict | None = None,
             ready = _ready_by_claim()
         except Exception:
             ready = None
+        # **`ready` が出せなかった claim を、`deadline` へ落とさないこと**
+        # （`_unready_claims` の註。判定に要る本が0本の日に
+        #   「この回は `verdict` で日付が動かせます」と出ていました）
         try:
-            nc = arm_speed.next_close(ready=ready)
+            unready = _unready_claims()
+        except Exception:
+            unready = None
+        try:
+            nc = arm_speed.next_close(ready=ready, unready=unready)
         except Exception:
             nc = None
         if nc and nc.get("on") is not None:
             if (nc.get("days") or 0) > 0:
-                out.append(
-                    f"{bar} **この回に閉じられる前提はありません** ——"
-                    f" いちばん早い期日は **{nc['on'].isoformat()}**"
-                    f"（{nc['days']}日後・開いている前提 {nc['open']}件）。"
-                    "**それまでは、どんな作業をしても上の日付は動きません**"
-                    "（`--moves 0` が正しい回です）")
+                # --- **「どんな作業をしても動きません」は嘘でした**（2026-08-26・最適化の回） ---
+                #
+                # ここは 2026-08-25 まで、こう印字していました::
+                #
+                #     **それまでは、どんな作業をしても上の日付は動きません**
+                #     （`--moves 0` が正しい回です）
+                #
+                # **前提を1件も閉じなくても動くものが、すぐ上に1つ印字されています** ——
+                # **配分**です（`_planned_lines`）。上の日付は「過去にどう振ってきたか」で
+                # 解かれていて、これから閉じるのは**台帳に開いている分だけ**なので、
+                # 2つが食い違っているぶん、日付はそのまま後ろへずれます。
+                # **台帳は書き換えられます。閉じるのを待つ必要がありません。**
+                #
+                # 実測 2026-08-26（同じ回に実際にやった。API 0単位）::
+                #
+                #     過去の配分   2026-12-28      台帳のまま   2027-01-19（+22日）
+                #     `lever: rpm` の開いた前提5件のうち**2件が RPM を測っていなかった**
+                #     （「長尺の生成が落ちる主因」「長尺は1日4本 作れる」＝ どちらも本数）
+                #     → `density` へ直して            2027-01-07（+10日）＝ **12日**
+                #
+                # **この回に閉じられる前提は0件でした。** それでも 12日 動いています。
+                # 古い行はその手を**名指しで打ち消していました** ——
+                # 実測で、到達日が動きえない回は 146/211（69%）・直近20回の
+                # `verdict` は 0件。**読んだ側は正しく読んで、正しく手を止めています。**
+                #
+                # **覆る条件**: 配分の差が1日 未満になったら、この分岐は
+                # 古い文面（「どんな作業をしても動きません」）に戻して構いません。
+                # そのときは本当に動かせるものがありません。
+                pln = (tr or {}).get("planned")
+                gap = None
+                if pln is not None and base is not None:
+                    if pln["days"] < NEVER and base.get("days", NEVER) < NEVER:
+                        gap = pln["days"] - base["days"]
+                head = (f"{bar} **この回に閉じられる前提はありません** ——"
+                        f" いちばん早い期日は **{nc['on'].isoformat()}**"
+                        f"（{nc['days']}日後・開いている前提 {nc['open']}件）。")
+                if gap is not None and abs(gap) >= 1:
+                    # **「付け札を照合しろ」は、もう既定にしません**（2026-08-27 に直した）。
+                    #
+                    # ここは長らく無条件に「**付け札が実際に測っているものと
+                    # 合っているかを、先に見ること** —— 2026-08-26 は、それだけで
+                    # 12日 動きました」と印字していました。**その掃除は終わっています** ——
+                    # `docs/JOURNAL.md` に2回、**開いた15件／21件を1件ずつ当たって
+                    # 付け替え0件**と記録があります（2026-08-26 の最適化の回）。
+                    #
+                    # **頭の3行しか読まない手順では、この文が「次の一手」に見えます。**
+                    # 実測 2026-08-27 07:5x のサブは、この行に従って
+                    # `config/hypotheses.yaml` の開いた19件を並べ直し、
+                    # **JOURNAL に「一巡ずみ・0件」と書いてあるのを見つけて捨てました**
+                    # （約8分）。`retro.py` の持ち越しに `eta.py` が3回 並んでいるのも
+                    # 同じ形です。**閉じた仕事を、道具が毎回 名指ししていました。**
+                    #
+                    # 空欄（`unassigned`）は**機械で数えられる**ので、そこだけ残します。
+                    # 空欄は `arm_speed.closed()` から丸ごと落ち、θ にも入りません。
+                    #
+                    # **覆る条件**: `unassigned` が0のままでも付け替えが要る回が来たら、
+                    # それは「意味の照合」であって空欄の話ではありません。そのときは
+                    # 台帳側に「いつ照合したか」の欄を作ること（いまは日誌にしかない）。
+                    unfilled = int((pln.get("planned") or {}).get("unassigned") or 0)
+                    if unfilled:
+                        tail = (" **`lever` の空欄が {n}件 あります。先にそこを"
+                                "埋めること** —— 空欄の前提は `arm_speed.closed()` から"
+                                "丸ごと落ち、θ にも配分にも入りません"
+                                ).format(n=unfilled)
+                    else:
+                        tail = ("（**付け札の照合は一巡ずみです**: 空欄0件・"
+                                "2026-08-26 に開いた21件を1件ずつ当たって付け替え0件。"
+                                "**数え直さないこと** —— 見るのは、そのあとに"
+                                "足した前提だけ。`docs/JOURNAL.md` 2026-08-26）")
+                    out.append(
+                        head + "**ただし『何をしても動かない』ではありません** ——"
+                        f" **配分は、1件も閉じずに動きます**（いま **{gap:+,.0f}日**"
+                        " ぶん、台帳は上の日付が前提にしていない振り方をしています）。"
+                        " **次の1件をどの腕に立てるかを選ぶこと**"
+                        "（`config/hypotheses.yaml` の `lever`。"
+                        "どの腕が早いかは `python scripts/eta.py --alloc`）。" + tail)
+                else:
+                    out.append(
+                        head + "**そして配分の差も1日 未満です** ——"
+                        " この回は本当に上の日付が動きません（`--moves 0` が正しい回です）")
             else:
+                # **名前を出すこと**（2026-08-31・最適化の回に実測して足した）。
+                #
+                # ここは長らく日付と件数だけを出していました。**どの前提かが
+                # 書いていないので、読んだ回はそのまま撃てません** ——
+                # 撃つには `deadline_check.py`（実測 40秒）を回して 60行 読む
+                # 必要があり、頭3行しか読まない手順では読まれません。
+                #
+                # そのあいだ、**名前の付いた欠陥は 18件** 印字されています
+                # （この関数のすぐ下）。実測 2026-08-31 の直近7日:
+                # ship 359件 のうち `fix` **219件（61%）**・`verdict` **11件（3%）**。
+                # `fix` は軌跡の係数 0（この機械自身がそう印字している）。
+                # **名前が付いている側へ 61% が流れるのは、置かれ方の帰結です。**
+                #
+                # **覆る条件**: 判定できる前提が 4件 以上 出る回が続いたら、
+                # 頭3行が読めなくなります（そのときは上位2件 ＋ 件数へ）。
+                names = [c for c in (nc.get("claims") or []) if c][:3]
+                if names:
+                    more = len(nc.get("claims") or []) - len(names)
+                    which = ("**いま判定できるのは**: "
+                             + " ／ ".join(f"**{c[:52]}**" for c in names)
+                             + (f"（ほか {more}件）" if more > 0 else "")
+                             + "。**この名前で `config/hypotheses.yaml` を引くこと**"
+                             "（`python scripts/deadline_check.py` を"
+                             "回さなくても、ここから撃てます）")
+                else:
+                    which = ("**どの前提かは `python scripts/deadline_check.py`**"
+                             "（`next_close()` が名前を返していません）")
                 out.append(
                     f"{bar} **期日の来た前提があります**"
                     f"（{nc['on'].isoformat()}・開いている前提 {nc['open']}件）→"
-                    " **この回は `verdict` で日付が動かせます**")
+                    " **この回は `verdict` で日付が動かせます** —— " + which)
     # **腕の名前だけで終わらせない。** その腕を引いたら日付が何日動くかを、
     # 同じ3行の中に出します（オーナー指示 2026-08-20 16:0x「分析して制作に
     # 活かして視聴回数などを上げることが予測に使えることじゃない？」）。
@@ -3472,6 +6149,37 @@ def headline(pl: dict, prev: dict | None = None,
     elif prev_date and cur_date is None:
         out.append(f"{bar} 前の回は {prev_date.isoformat()} → **今回は日付が出ません**"
                    "（前提が変わったか、実測が落ちた）")
+    # **1歩ぶんの差だけを出さないこと**（2026-08-29・最適化の回）。
+    #
+    # すぐ上の行は「前の回 → いま」で、実測 2026-08-28 は **+3日**。
+    # **同じ台帳を 7日 足すと +33日** です（`traj_trend()` の docstring に実測）。
+    # 1周ごとの差は −9〜+15日 で振れるので、**向きは1歩では出ません。**
+    # そして頭と尾しか読まれない以上、ここに出さないと誰も足しません。
+    # **`now` を渡すこと**（2026-08-29 に踏んだ）。渡さないと `traj_trend` は
+    # 実時刻を読むので、**検査は壁時計が進んだ日に、黙って赤くなります** ——
+    # `tests/test_eta_trend_line.py::test_累計の行が読まれる3行に出る` は
+    # 08/28 に書かれ、08/29 に落ちました（点は 08/28 基準・窓は 7日）。
+    # **中身は何も壊れていないのに、恒久的に赤い検査が1つ増える形**です
+    # （`docs/JOURNAL.md` 2026-08-28 06:3x「恒久的に赤い検査を1つ置くと、
+    #   同じファイルの本物の警報が読まれなくなります」）。
+    tre = traj_trend(points or [], cur_date if key == "traj_date" else None, now=now)
+    if tre and abs(tre["delta"]) >= 1:
+        d = tre["delta"]
+        mk = "**遠のきました**" if d > 0 else "**早まりました**"
+        ships = ships_in_window()
+        why = _trend_why(tre)
+        base = (f"（起点は {tre['from_at']:%m/%d} の**中央値**"
+                f"・その日 {tre.get('n_base', 0)}点"
+                + (f"・**同じ日の幅 {tre['base_spread']}日**"
+                   if tre.get("base_spread") else "")
+                + f"／窓の中 {tre['n']}点）")
+        out.append(
+            f"{bar} **{tre['span_days']:.0f}日の累計**: "
+            f"{tre['from_date'].isoformat()} → {tre['to_date'].isoformat()} = "
+            f"**{d:+d}日** {mk}"
+            + (f"（このあいだ ship **{ships}件**）" if ships else "")
+            + "。**1周ごとの ±N日 では、この向きは見えません** " + base
+            + (f"　{why}" if why else ""))
     # **物差しを取り替えた回は、その差を「遠のいた」と読ませない**（`_scale_note` と同じ形）。
     #     密度の入力が「1日25本という前提」から「作る速さの実測」に替わった回は、
     #     チャンネルは何も変わっていないのに日付が大きく動きます。
@@ -3484,7 +6192,19 @@ def headline(pl: dict, prev: dict | None = None,
 
     elif prev and prev.get(key) is None and cur_date:
         out.append(f"{bar} 前の回は日付が出ていませんでした → **道が開きました**")
-    else:
+    elif prev_date is None:
+        # **「前の点が無い」と言えるのは、本当に無いときだけ**（2026-08-29 に直した）。
+        #
+        # ここは長らく `else:` でした。上の `if` は
+        # 「**密度の入力が入れ替わった回か**」を訊いており、**前の点の有無とは
+        # 別の問い**です。だから前の点が在っても、入れ替えが無ければ `else` に落ち、
+        #
+        #     ### 前の回の予測 2027-01-09 → **+3日** **遠のきました**（軌跡どうし）
+        #     ### （比べられる前の点がまだありません）
+        #
+        # が**同じ枠に並んで**出ていました（実測 2026-08-28 の回。**頭と尾の両方**）。
+        # 読んだ回は、下の行を信じれば上の +3日 を捨てます。
+        # `docs/JOURNAL.md` 2026-08-28「**枠の2行が食い違っていないか**」の型そのもの。
         out.append(f"{bar} （比べられる前の点がまだありません）")
     out.append("=" * 66)
     return out
@@ -3808,15 +6528,52 @@ def _report_levers(pl: dict) -> list[str]:
               f"（この腕は、いまの縛りに触っていません）")
 
     if pl.get("lever_measured"):
-        P(f"    → **この回に引く腕は `{pl['lever_measured']}`。**"
-          f" 床の名前（{pl.get('lever_hint_binding')}）ではなく、"
-          f"**天井まで引いたときの差の大きさで選んでいます**")
+        # **門が開いている回は、この表の勝者を「この回に引く腕」と書かないこと**
+        #     （2026-08-30 に足した）。上の4本は**審査に受かった世界の中**の順位で、
+        #     `p_pass` はその外側に掛かる項です（`src/resume_gate.py`）。
+        #     頭の3行が `gate` と言っている横で、ここが `per_video` と書くと、
+        #     **同じ道具が同じ回に2つの腕を名指しします** —— この repo が
+        #     「道具が自分と食い違っていた」として3回 直している形そのものです。
+        if pl.get("lever_hint") == "gate":
+            P(f"    → **この表の勝者は `{pl['lever_measured']}` ですが、"
+              f"それは「審査に受かった世界の中」の順位です。**"
+              f" いま引く腕は `gate`（頭の3行）—— **`p_pass` は掛け算の外側**で、"
+              f"外側が塞がっているあいだ、この4本はどれも引けません。")
+        else:
+            P(f"    → **この回に引く腕は `{pl['lever_measured']}`。**"
+              f" 床の名前（{pl.get('lever_hint_binding')}）ではなく、"
+              f"**天井まで引いたときの差の大きさで選んでいます**")
     dead = [r["lever"] for r in rows
             if r.get("cap") is not None and not r.get("reachable_at_cap")]
     if dead:
-        P(f"    **上の日付を動かせない腕: {'／'.join(f'`{d}`' for d in dead)}** ——"
-          "  天井まで引いても届きません。**ここに前提を置いても、到達日は動きません**"
-          "（門1 など、別の段には効くことがあります）。")
+        # **ここには長らく「ここに前提を置いても、到達日は動きません」と
+        #     書いてありました。偽です**（2026-08-26・最適化の回に消した）。
+        #     同じプログラムの `--alloc` が、同じ日・同じ点で
+        #     「**いちばん早いのは `sub_rate`**（そのままより 3日 早い）。
+        #     立てるときは `hypotheses.yaml` に `lever:` をその腕で書くこと」
+        #     と出していました。**「置いても動かない」と「次はここに置け」**です。
+        #     上の表は**他の3本を今日の実測で凍らせた**モデルで、
+        #     `CLAUDE.md` が「凍らせた企画についての恒真式」と名指ししている側。
+        #     **十分でないことは、要らないことではありません。**
+        frz = pl.get("arm_frozen_days") or {}
+        P(f"    **この腕**だけ**を天井まで引いても届かない腕: "
+          f"{'／'.join(f'`{d}`' for d in dead)}**"
+          " —— 言っているのは**十分でない**ことだけです。"
+          "**「ここに前提を置いても動かない」ではありません**"
+          "（門1 など、別の段には効きます）。")
+        for d in dead:
+            v = frz.get(d)
+            if v is None:
+                P(f"      `{d:<10}` 凍らせた線が出ていません"
+                  "（`--no-frozen` か、軌跡が解けなかった回）。"
+                  " **『要らない』と読まないこと。**")
+            elif v > 0.5:
+                P(f"      `{d:<10}` **この腕を凍らせると軌跡は {v:+,.0f}日**"
+                  "（回転はよその腕へ配り直したうえで）→ **必要な腕です。**"
+                  " 次の1件をどの腕に立てるかは `python scripts/eta.py --alloc`")
+            else:
+                P(f"      `{d:<10}` 凍らせても軌跡は {v:+,.0f}日 ＝"
+                  " **回転をよそへ回しても同じ。この腕は要りません。**")
     P("    **「その倍率にできる」とは言っていません。** 言っているのは"
       "「そこまで引けたら何日縮むか」だけで、**引けるかどうかは別の話**です。")
     return out
@@ -3842,10 +6599,8 @@ def _report_trajectory(tr: dict, pl: dict) -> list[str]:
     P = out.append
     for line in arm_speed.lines(tr["arms"], st, bd, tr.get("unread", 0)):
         P(line)
-    for lever, a in tr["arms"].items():
-        if a.get("cap") and a.get("cap_why"):
-            mark = "" if a.get("cap_measured") else "  ← **実測の天井ではありません**"
-            P(f"      天井 `{lever}` ×{a['cap']:,.2f} …… {a['cap_why']}{mark}")
+    for line in cap_lines(tr["arms"]):
+        P(line)
 
     P("")
     if base["date"] is not None:
@@ -3856,6 +6611,25 @@ def _report_trajectory(tr: dict, pl: dict) -> list[str]:
           + " ／ ".join(f"`{k}` ×{v:,.2f}" for k, v in (base["factors"] or {}).items())
           + f"）、そこから {base['plan_days']:,.0f}日 で届く")
         P(f"     そのとき縛っているのは **{base['binding']}**")
+        # **軌跡が実際に歩いた腕の天井が、測った数かどうかをここで言う**（2026-08-28）。
+        #     下の `_report_trajectory` の末尾には同じ趣旨の `[!]` が既にありますが、
+        #     見ているのは **`choice` の1位（＝この回に振る腕）だけ**です。
+        #     `sub_rate` は「全部振っても出ません」なので1位に**なりません** ——
+        #     ところが軌跡はその腕を **×10.36** まで歩いていました
+        #     （天井が「登録率 100%」＝ ×3,153.91 だったので、何倍でも下に入る）。
+        #     **1位でない腕は、誰も測っていないまま日付を押していた**わけです。
+        #     だから見る対象を「振る腕」から**「実際に歩いた腕」**に変えます。
+        #     2026-08-28 に `sub_rate` を実測へ替えて 4本とも measured になりましたが、
+        #     **同じ形は次の腕を足したときに必ず戻ります**（`physical_caps` の
+        #     既定は「定義上の上限」に落ちる形なので、静かに再発します）。
+        for _k, _v in sorted((base["factors"] or {}).items(),
+                             key=lambda kv: -kv[1]):
+            _a = (tr["arms"] or {}).get(_k) or {}
+            if _v > 1.05 and _a.get("cap") and not _a.get("cap_measured"):
+                P(f"     [!] **この内訳の `{_k}` ×{_v:,.2f} は、測っていない天井の上を歩いています**"
+                  f"（天井 ×{_a['cap']:,.2f} …… {_a.get('cap_why', '出どころなし')}）。"
+                  " **上の日付は、その倍率が実在するという前提の上に乗っています** ——"
+                  "測れば動きます（`per_video` の天井は実測の最大です。同じ物差しを当てること）")
     else:
         P("  → **軌跡でも到達日が出ません。** 塞いでいるのは次のものです:")
         for why in base["blocking"]:
@@ -4115,6 +6889,85 @@ def _report_long_gate(m: dict, a: dict) -> list[str]:
           f"登録者 {m['subs_net']} 人のチャンネルに出した本の数です。"
           "**決まったのは「いまのままでは開かない」**で、段2 が測るのは"
           f"**1本あたりを {lpv:,}回 から何倍にできるか**のほうです。")
+        # --- **Lの側でも解く**（2026-08-29 に足した。`_long_needed_per_day`）---
+        #
+        # ここまでの表は L＝1/2/4本/日 しか持たず、上の1行は**Lを凍らせて**
+        # 「1本あたりを何倍にできるか」だけを段2 の的にしています。
+        # **Lはこの機械が自分で動かせる側**（族を1つ足せば +2本/7日）で、
+        # 1本あたり再生は配信が決める側です。**動かせるほうが画面に無い**のは、
+        # 08/26 に踏んだ形の裏返しです（`config/hypotheses.yaml` の
+        # 「『面が足りない』と読んでいるあいだ、`batch_build --long` は
+        #   候補にすら挙がりませんでした」）。
+        need_l = _long_needed_per_day(a, float(lpv), days)
+        fam = _long_family_ceiling()
+        best_l = min((r for r in need_l if r["per_day"] < float("inf")),
+                     key=lambda r: r["per_day"], default=None)
+        if best_l:
+            P(f"    **もう一方の解き方**（1本あたり再生を実測の {lpv:,}回 で固定して、"
+              f"Lのほうを解く）: **いちばん甘い行（{best_l['label']}）で "
+              f"L＝{best_l['per_day']:,.1f}本/日**。"
+              "**表の3列（1/2/4本/日）は、どれもここに届いていません** ——"
+              "「全部の行を下回っています」は、**Lを4本/日 で止めたぶん**でもあります。")
+            # **段2 の面の行も、同じLを別の道から出します**（`_gate2_surface_basis`）。
+            #     あちらは「面 × 実測CTR」＝ 公開1本あたり 5.3回 で解き、こちらは
+            #     Analytics の1本あたり再生 8.0回 で解くので、**数は 1.5倍 ちがいます。**
+            #     **食い違いではありません** —— Analytics の1本あたり再生には
+            #     サムネの面を通らない再生（関連・外部）が入り、面の側には入りません。
+            #     **どちらも「Lは20本/日 台が要る」に着きます。**
+            P("      （段2 の面の行は同じLを別の道から出します —— "
+              "あちらは面×実測CTR、こちらは Analytics の1本あたり再生。"
+              "**サムネの面を通らない再生のぶんだけ、こちらが小さく出ます。**"
+              "食い違いではありません）")
+            if fam and fam["per_day"] > 0:
+                need_fam = int(-(-best_l["per_day"] * fam["window"] // fam["per_calc"]))
+                P(f"    そのLを止めているのは**族の数**です: いま **{fam['families']}族**"
+                  f"（在庫 {fam['stock']}本）→ {fam['window']}日ぶんで取れるのは"
+                  f" **{fam['ceiling_7d']}本 ＝ {fam['per_day']:.2f}本/日**"
+                  f"（1族から {fam['per_calc']}本まで。`scripts/topic_forge.py --list`）。"
+                  f" **要るLとの差は {best_l['per_day'] / fam['per_day']:,.1f}倍**")
+                # **この行だけ `[!]` を付けます**（2026-08-29）。
+                #     この道具の手順は「頭と尾の3行だけ読む」で、真ん中は読まれません。
+                #     尾の `[!]` 集めだけが中を運びます —— そこは**先頭 120字で切られる**ので、
+                #     **動かす数（あと何族・在庫が何件）を頭に置くこと。**
+                P(f"      [!] **長尺の律速は族の数: あと {max(0, need_fam - fam['families'])}族"
+                  f"（要る {need_fam} ／ いま {fam['families']}）。"
+                  f"表を書かずに増やせる族が {fam['spare']}件**"
+                  f"（`topic_forge.py --list` の (2)・実測 15分/件）。"
+                  f"要るLは {best_l['per_day']:,.1f}本/日、いまの天井は {fam['per_day']:.2f}本/日"
+                  f"（{best_l['per_day']:,.1f} × {fam['window']}日 ÷ {fam['per_calc']}本 ＝"
+                  f" {need_fam}族。`src/calc/` に表は在るが長尺のテーマを持っていない族が"
+                  f" {fam['spare']}件）")
+                P("      **これは「開く」と言っているのではありません** ——"
+                  f" L を {fam['per_day']:.2f} → {best_l['per_day']:,.1f}本/日 に上げたとき"
+                  f"1本あたり再生が {lpv:,}回 のまま保つかは**未測定**です"
+                  "（`config/hypotheses.yaml`「長尺の1本あたり再生 8.0回 は長尺の天井ではない」が、"
+                  "その1件を 1日8本 の帯で測っています）。"
+                  "**ここで言えるのは1点だけ: Lの側の天井は族の数で決まっていて、"
+                  "その族は「新しい表を書かずに」増やせる状態で置かれている。**")
+                # **この節を足した回が、その場で同じ失敗をしました**（2026-08-29）。
+                #
+                # 上の「あと N族」は、**1本あたり再生を今日の実測で凍らせて**
+                # 出した数です —— **直したはずの形の、そのままの再演**です
+                # （直前の行が「Lを4本/日で凍らせていた」と言っている）。
+                # **要るLは1本あたり再生に反比例する**ので、その倍率が動けば
+                # 族の数は桁で変わります。**両方を同じ行に出すこと。**
+                #
+                # ここに倍率の相手（台帳が測っている「×10」など）を**写さないこと** ——
+                # 写した瞬間に古くなります。**この機械が持っている数だけ**で言えます:
+                # 「族を1つも足さずに足りるのは、1本あたり再生が ×(要るL ÷ 天井) のとき」。
+                x = best_l["per_day"] / fam["per_day"]
+                P(f"      **要るLは1本あたり再生に反比例します。** 族を1つも足さずに"
+                  f"足りるのは、1本あたり再生が **×{x:,.1f}**"
+                  f"（{lpv:,} → {lpv * x:,.0f}回）になったとき。"
+                  f"**1本あたり再生が動かないなら あと {max(0, need_fam - fam['families'])}族、"
+                  f"×{x:,.1f} が出れば あと0族** —— **桁が変わるのは、この2つのどちらが"
+                  f"先に動くか**です。**倍率を測っている前提が台帳で開いているあいだ、"
+                  f"族を {need_fam} まで積む理由はありません**"
+                  f"（上の「あと {max(0, need_fam - fam['families'])}族」は、"
+                  f"**1本あたり再生を今日の実測で凍らせた数**です）")
+            elif fam:
+                P(f"    そのLを止めているのは**族の数**です"
+                  f"（いま {fam['families']}族・在庫 {fam['stock']}本 ＝ 7日で 0本）。")
     if a.get("long_per_video") is None:
         P("    **長尺を出したら、この表の1行と突き合わせること。** 下回るなら長尺では開きません。")
     return out
@@ -4260,6 +7113,14 @@ def _scale_note(prev: dict, current: dict) -> list[str]:
         out += ["    [!] **1本あたり再生の物差しが、この点から変わりました**"
                 "（床つきの中央値 → 床なしの平均）。",
                 "        **上の変化は実績ではありません。** 実績として読めるのは、次の点からです。"]
+    if prev.get("views_per_video_live") is None and current.get("views_per_video_live") is not None:
+        out += ["    [!] **1本あたり再生の分母が、この点から変わりました**"
+                "（`day_cap` の帯の外に落ちた本 ＝ 上限を超えて出した 0再生の側 を、分母から外した）。",
+                "        **上の変化は実績ではありません。** 天井は"
+                "「1本あたり再生 × 再生が付く上限」なので、"
+                "**帯の外の本を分母に残すと、同じ死を2回 引きます**"
+                "（`live_band_views` の docstring に実測）。",
+                "        実績として読めるのは、次の点からです。"]
     if prev.get("per_video_dropped") is None and current.get("per_video_dropped") is not None:
         out += ["    [!] **1本あたり再生の標本が、この点から変わりました**"
                 "（予約のまま公開していない本・公開から48時間未満の本・28日の窓より前の本を落とした）。",
@@ -4268,7 +7129,7 @@ def _scale_note(prev: dict, current: dict) -> list[str]:
     return out
 
 
-def solve(m: dict, points: list[dict]) -> dict:
+def solve(m: dict, points: list[dict], *, full: bool = True) -> dict:
     """**実測 `m` から、予測を最後まで解く。**（2026-08-20 に `main()` から出した）
 
     出したのは、**周の終わりの「反映」が同じ道を通るため**です
@@ -4278,6 +7139,11 @@ def solve(m: dict, points: list[dict]) -> dict:
 
     返すのは `{"a", "sup", "pl", "tr", "row"}`。**印字はしません**
     （`main()` は 200行出し、`reflect()` は 10行しか出さないため）。
+
+    `full=False` は**印字にしか使わない軌跡3本を解きません**
+    （`trajectory_all` の docstring に、なぜ日付が変わらないかと実測）。
+    **道は分けていません** —— 上の「2つの道が別々に古びる」は
+    `reflect()` が**自前で解き直す**形のことで、ここは同じ1本の関数を通ります。
     """
     a = analyse(m, points)
     m["per_video_now"] = a["per_video_now"]
@@ -4288,24 +7154,100 @@ def solve(m: dict, points: list[dict]) -> dict:
     #     「1日25本」という**満たせない前提**で解かれます（`solve_gate1`）。
     sup = supply_state()
     pl = plan(m, a, supply=sup, sensitivity=True, points=points)
+    # --- **面ごとの引き代を、印字する側にも渡す**（2026-08-30・最適化の回）---
+    #     `_row()` は既にこれを `data/eta.jsonl` へ積んでいて、`src/levers.py` の
+    #     `_long_surface_open()` がそれを読んで「`density` は死んでいない」と
+    #     判定しています。**ところが `headline()` は積んだ行を読みません**
+    #     （その回の行はまだ書かれていない）ので、頭の3行だけが
+    #     「`density` は ×1.00」というショートの面の数で話すことになります。
+    #     **同じことを2か所が別々に言っていて、片方しか読まれていない形**です。
+    #     ここで `pl` に載せて、`headline()` と `_row()` が同じ1つを見ます。
+    try:
+        _ph_s = physical_caps(a, supply=sup)
+        pl["density_surfaces"] = {
+            name: {"at_ceiling": bool(_ph_s[key].get("at_ceiling")),
+                   "measured": bool(_ph_s[key].get("measured")),
+                   "why": _ph_s[key].get("why")}
+            for name, key in (("short", "density"), ("long", "density_long"))
+            if key in _ph_s
+        }
+    except Exception:                                          # noqa: BLE001 — 回を止めない
+        pass
     # **腕が動く速さを含んだ軌跡**（2026-08-20 18:xx・オーナー指示）。
     #     ここが出ないと、印字される日付は「腕が1ミリも動かない未来」になります。
     #     **回を止めないこと** —— 軌跡が解けなくても、据え置きの線だけで出します。
     try:
-        tr = trajectory_all(m, a, supply=sup, points=points)
+        tr = trajectory_all(m, a, supply=sup, points=points, full=full)
     except Exception as exc:                                   # noqa: BLE001
         print(f"[eta] 軌跡を解けませんでした: {type(exc).__name__}: {exc}")
         tr = None
+    # --- **「天井まで引いても届かない」腕を、必要／不要で割る**（2026-08-26）---
+    #     この1行が無かったせいで、頭の表は「ここに前提を置いても動きません」と
+    #     書き、`--alloc` は同じ日に「次の1件はその腕に置くのが最短」と書いて
+    #     いました。**測れば済む話です**（`frozen_days` の docstring に全文）。
+    #     費用は腕1本につき軌跡1本（API 0単位・**2〜4秒**）。**普通は1〜2本**。
+    if tr is not None and FROZEN_ARMS:
+        _dead = [r["lever"] for r in (pl.get("lever_days") or [])
+                 if r.get("cap") is not None and not r.get("reachable_at_cap")]
+        if _dead:
+            pl["arm_frozen_days"] = frozen_days(m, a, tr, _dead,
+                                                supply=sup, points=points)
     # **引く腕は1つに絞ること。** 軌跡が出た回は、そちらが名指しした腕を採ります。
     #     `plan()` の `lever_hint` は「いちばん遅い床の名前」＝**診断**で、
     #     **引いたら何日縮むか**は言っていません。同じ見出しに2つの腕が並ぶと、
     #     読み手はどちらでも選べてしまい、**後から理由を付ける**側に戻ります。
+    #
+    # **ただし門が開いている間は、ここが後ろから上書きしないこと**（2026-08-30 に足した）。
+    #     `plan()` が最後に `gate` へ倒しているのに、この段は `tr["choice"]` の
+    #     4本しか見ていないので、**そのまま通すと名指しが `rpm` などへ戻ります。**
+    #     軌跡の4本は「審査に受かった世界の中」の腕で、**受かる確率は掛け算の外側**です
+    #     （`src/resume_gate.py`）。外側が塞がっている回に内側を名指しすると、
+    #     **この回には引けない腕**を毎周 名指しすることになります。
     if tr is not None:
         _top = next((r for r in tr["choice"] if r["reachable"]), None)
         if _top is not None and _top["lever"] != pl["lever_hint"]:
             pl["lever_hint_binding"] = pl["lever_hint"]
             pl["lever_hint"] = _top["lever"]
             pl["lever_from"] = "軌跡"
+    # --- **止まっている間の名指しは `gate`**（2026-08-30・最適化の回が足した）---
+    #
+    # ここまでで選ばれる4本（`per_video` / `rpm` / `density` / `sub_rate`）は、
+    # **どれも本を出さないと引けません。** 08/30 から `src/pause_guard` が
+    # 生成・投稿・チャンネルの書き換えを塞いでいるので、**この回には1本も引けない
+    # 腕を名指ししている**ことになります。
+    #
+    # **実害は「読み手が無視する」ことではありません。** `run_marker.py` が
+    # `lever_followed = (lever == lever_hint)` を残すので、
+    # **引けない腕を名指しし続けると、その比が全部 False で埋まります** ——
+    # 実測 08/30 の ship 40件 は `lever_hint` が **40件とも `per_video`**、
+    # `lever_followed` は直近200件で **29/200（14.5%）**。
+    # 名指しが外れているのに、外したのは選ぶ側だと記録されます。
+    #
+    # そして `p_pass`（審査に受かる確率）は到達日に**掛かる**項なので、
+    # **門が律速です**（`src/resume_gate.py` の docstring に実測）。
+    #
+    # **`plan()` の中でやらないこと**（2026-08-30 に移した）。あちらは
+    # **4本の腕の模型**で、`test_eta_supply_density` / `test_eta_lever_cap` /
+    # `test_eta_target_date` が「床の名前ではなく差の大きさで決まる」を
+    # 直接 見ています。**模型の出力を書き換えると、模型の検査が赤くなります** ——
+    # 門は模型の**外側**に掛かる項なので、**その外側であるここで倒すのが正しい位置**です。
+    #
+    # **覆る条件**: `AUTOMATION_PAUSED.md` が消える、または門が全部 閉じたら、
+    # この上書きは自分で黙り、名指しは4本のどれかへ戻ります。
+    # 検査は `tests/test_resume_gate.py`。
+    if resume_gate.is_paused() and resume_gate.open_items():
+        pl["lever_hint_binding"] = pl.get("lever_hint")
+        pl["lever_hint"] = "gate"
+        pl["lever_from"] = "門"
+        # **`date` のまま積まないこと**（同じ罠を 2026-08-26 に `lever_hint_covered` で
+        # 踏んでいます）。この dict は `data/eta.jsonl` へ書き戻されるので、
+        # `date` を残すと **反映だけが `TypeError` で落ちて ship は残る**という形で出ます。
+        _g = dict(resume_gate.summary())
+        _g["since"] = _g["since"].isoformat() if _g.get("since") else None
+        pl["gate"] = _g
+        # **`lever_hint_covered` は消すこと。** あれは「名指しの測定が予約済みの
+        # 本で答えが返る」という意味で、`gate` には掛かりません（本が出ないので）。
+        pl.pop("lever_hint_covered", None)
     return {"a": a, "sup": sup, "pl": pl, "tr": tr,
             "row": _row(m, a, pl, tr, sup)}
 
@@ -4333,19 +7275,25 @@ def _row(m: dict, a: dict, pl: dict, tr: dict | None, sup: dict | None) -> dict:
     #     しかも**未測定**なので `LEVERS` には入れていません（軌跡に歩かせない）。
     #     ところが「死んだ腕」の判定は `data/eta.jsonl` しか読まないので、
     #     **ここに積まないかぎり、選ぶ側からは面の割れが永久に見えません。**
-    try:
-        _ph = physical_caps(a, supply=sup)
-        row["density_surfaces"] = {
-            name: {
-                "at_ceiling": bool(_ph[key].get("at_ceiling")),
-                "measured": bool(_ph[key].get("measured")),
-                "why": _ph[key].get("why"),
+    # **`solve()` が先に載せていれば、それを使う**（2026-08-30）。同じ回に
+    #     `physical_caps` を2回 解くと、**頭の3行と積んだ行がずれうる**ので
+    #     （実測の齢が2回のあいだに変わる）、**1つを2か所で読む形**にします。
+    if isinstance(pl.get("density_surfaces"), dict):
+        row["density_surfaces"] = pl["density_surfaces"]
+    else:
+        try:
+            _ph = physical_caps(a, supply=sup)
+            row["density_surfaces"] = {
+                name: {
+                    "at_ceiling": bool(_ph[key].get("at_ceiling")),
+                    "measured": bool(_ph[key].get("measured")),
+                    "why": _ph[key].get("why"),
+                }
+                for name, key in (("short", "density"), ("long", "density_long"))
+                if key in _ph
             }
-            for name, key in (("short", "density"), ("long", "density_long"))
-            if key in _ph
-        }
-    except Exception:                                          # noqa: BLE001 — 回を止めない
-        pass
+        except Exception:                                      # noqa: BLE001 — 回を止めない
+            pass
     # **軌跡そのものを積む。** 積まないと、次の回が「軌跡が早まったか」を測れません
     # （据え置きの線と混ぜないこと ＝ 別の欄にする）。
     if tr is not None:
@@ -4384,6 +7332,13 @@ def _row(m: dict, a: dict, pl: dict, tr: dict | None, sup: dict | None) -> dict:
     if _ld:
         row["arm_reaches"] = {r["lever"]: bool(r.get("reachable_at_cap")) for r in _ld}
         row["arm_threshold"] = {r["lever"]: r.get("threshold") for r in _ld}
+    # **「凍らせたら何日 遠のくか」も積む**（2026-08-26）。
+    #     `arm_reaches` だけを読むと、`drift.py` はその腕を「引き代なし」に
+    #     数えます。**十分でないことと、要らないことは別**なので、
+    #     判別できる数を同じ行に置きます（`frozen_days`）。
+    if pl.get("arm_frozen_days"):
+        row["arm_frozen_days"] = {k: (None if v is None else round(float(v), 1))
+                                  for k, v in pl["arm_frozen_days"].items()}
     row["videos_needed_gate1"] = pl.get("gate1", {}).get("need_videos")
     # --- **天井（面と混ざり方）も積む**（2026-08-20 23:3x。前の周の申し送り②）---
     #     `--reflect` は「出発点の行」と「解き直した行」の差を取ります。
@@ -4560,7 +7515,20 @@ def reflect(note: str | None = None, *, record: bool = True) -> tuple[int, dict]
     # **出発点と同じ実測で解き直す**（上のコメント参照）。`solve()` は `m` を書き換えるので複製。
     m = {k: v for k, v in base.items() if k not in _REFLECT_IGNORE or k == "at"}
     try:
-        s = solve(dict(m), points)
+        # **`--reflect` では凍らせた線を測りません**（2026-08-26）。
+        #     積み直すのは日付で、**腕の要否は問うていない** ——
+        #     `--ship` は毎回ここを通るので、軌跡1〜2本ぶんが毎回の税になります。
+        global FROZEN_ARMS
+        _keep, FROZEN_ARMS = FROZEN_ARMS, False
+        try:
+            # **印字にしか使わない軌跡3本（`fast`/`slow`/`planned`）も解きません**
+            #     （2026-08-28。同じ理由の続き —— 反映は 10行しか出しません）。
+            #     `_row()` はこの3つを1つも読まないので、**積む行は 1文字も変わりません**
+            #     （`tests/test_eta_reflect_light.py` が固定）。
+            #     **実測 107.5秒 → 7.0秒**（`_view_cap_per_day()` と合わせて **-93%**）。
+            s = solve(dict(m), points, full=False)
+        finally:
+            FROZEN_ARMS = _keep
     except Exception as exc:                                   # noqa: BLE001
         print(f"[eta] 反映を解けませんでした: {type(exc).__name__}: {exc}")
         print("[eta] **回は止めないこと。** 理由を docs/JOURNAL.md に1行書いて進むこと。")
@@ -4686,15 +7654,74 @@ def _reflect_recap(limit: int = 3) -> list[str]:
     return out
 
 
-def alloc_search() -> int:
+def alloc_search(with_speed: bool = False) -> int:
     """**次の前提をどの腕に立てるのが、いちばん早いか。**（2026-08-26・最適化の回）
 
-    ## なぜ別の口にしたか（毎回は撃たない）
+    ## **順位を決めているのは回転ではなく天井です**（2026-08-27 に測って足した）
 
-    軌跡は1本ごとに **15〜20秒** かかります。頭の3行では
+    ここが解いているのは `rate = focus_rate × share` の `share` だけで、
+    `focus_rate = p · log(g) · θ` の **θ は `arm_speed.throughput()`
+    ＝ 全体の実測ひとつ**です。しかも `arm()` は閉じた前提が `MIN_N`（=3）に
+    満たない腕の `p` と `g` を**全体で代用**するので、
+    `sub_rate`（2件）と `rpm`（1件）は **p も g も θ も同値**になります。
+    **つまり、その2本の順位は天井の遠さだけで決まっています。**
+
+    **そこで、台帳の予定表から腕べつの回転を測って掛けてみました**
+    （`arm_speed.forward_by_arm()` / `speed_weights()`・`--alloc-speed`）。
+    実測 2026-08-27（30日 窓）:
+
+        per_video 0.100/日（×1.05）   sub_rate 0.033/日（**×0.68**）
+        rpm       0.133/日（×1.23）   density  0.100/日（×1.05）
+
+    **順位は変わりませんでした** —— `sub_rate` が 4日 早い → **5日 早い**。
+    **回転を 3分の2 に落としても勝ちます。** 動かしているのは天井のほうです。
+
+    だから既定では掛けません（掛けると水準がずれて、
+    「過去の配分（＝頭の3行の日付）」の行が**頭の日付と一致しなくなります** ——
+    実測 2026-12-23 → 2027-01-05。**同じプログラムが同じ日に別の日付を出す形**は、
+    この道具がいちばん嫌っている壊れ方です）。
+
+    **代わりに、回転そのものを表で出します。** 実測 2026-08-27 の
+    `sub_rate` は**今後14日 に1件も閉じられません**（いちばん早い判定日が
+    2026-09-16 ＝ 20日 先。他の3本は density 08-28 ／ rpm 09-01 ／
+    per_video 09-05）。**「いちばん早い」は「次の2週間で動く」ではありません。**
+    そこを黙って出すと、`sub_rate` に立て続けて 20日 間 何も動かない回が続きます
+    —— 2026-08-27 06:1x の回が別の道から測った
+    「`sub_rate` の実験は 15倍 遠い・**約20周** かかる」と同じ話です。
+
+    ## 覆る条件
+
+    - **`sub_rate` と `rpm` が `MIN_N`（3件）に届いたら**、p と g が自前になるので
+      順位が天井だけで決まらなくなります。そのとき `--alloc-speed` を撃ち直して、
+      順位が変わるかを見ること（変われば既定を掛ける側にする）
+    - **予定表が過去に追いついたら**（`forward()` の 14日 窓の比が 0.8 以上）、
+      この表は要りません
+
+    ## なぜ別の口にしたか（**「毎回は撃たない」は 2026-08-28 に取り消しました**）
+
+    軌跡は1本ごとに **2〜4秒** かかります（2026-08-28 に測り直した。それまでは 15〜20秒）。頭の3行では
     「過去の配分」と「台帳の配分」の**2本だけ**を解いて差を出しています。
-    ここは**そこからさらに腕べつ**に解くので、本数ぶん時間が増えます
-    （腕4つ ＝ 60〜80秒）。**周は約10分に1回**回るので、毎回は撃ちません。
+    ここは**そこからさらに腕べつ**に解きます。
+
+    **ここには「腕4つ ＝ 60〜80秒 なので毎回は撃たない」と書いてありました。
+    その根拠はもうありません** —— `day_cap.cap()` を畳んだ 2026-08-28 の実測で
+    **24秒**（それまで 3〜6分）。**毎回 撃ってよい費用です。**
+
+    取り消しの条件は、08/28 14:4x の回が先に書いていました ——
+    「**2周 続けて撃って、答え（いま `sub_rate`）が変わらないかを見ること。
+    変わらないなら『毎回は撃たない』を外してよい**」。**満ちました**:
+
+        2026-08-27        いちばん早いのは `sub_rate`
+        2026-08-28 14:4x  いちばん早いのは `sub_rate`
+        2026-08-28 19:5x  いちばん早いのは `sub_rate`   ← 3周 連続・順位も同じ
+
+    **日付そのものは動きます**（08/26 の sub_rate 2027-01-07 → この回 2027-01-15）。
+    動かないのは**順位**のほうで、`--alloc` が答えるのはそちらです。
+
+    **覆る条件**: 順位が周ごとに入れ替わりはじめたら、それは
+    「配分が毎周ぶれている」＝ `arm_speed.planned()` の側の話です。
+    そのときは撃つ回数ではなく、**planned() が何本の前提で割っているか**を見ること
+    （実測 24件。1件足すと 4% 動く ＝ **1件の増減で順位が変わりうる細さ**）。
 
     ## 何を解いているか
 
@@ -4724,7 +7751,7 @@ def alloc_search() -> int:
     pln = arm_speed.planned()
     past = {k: (v.get("share") or 0.0) for k, v in arms.items()}
     print("=== 次の前提を、どの腕に立てるのがいちばん早いか ===")
-    print("  **API は0単位**（積んである最後の点で解き直すだけ）。1本 15〜20秒。")
+    print("  **API は0単位**（積んである最後の点で解き直すだけ）。1本 2〜4秒。")
     # --- **どの腕の数が「その腕の実測」で、どれが代用か**（2026-08-26 に足した） ---
     #     `arm_speed.arm()` は、その腕で閉じた前提が `MIN_N`（=3）に満たないと
     #     **全体の当たり確率と伸び幅で代用**します。代用の腕どうしは
@@ -4741,8 +7768,58 @@ def alloc_search() -> int:
           + f"  ← {arm_speed.MIN_N}件 未満は**全体の値で代用**しています"
           "（代用どうしは速さが同値になるので、順位が天井の遠さだけで決まります）")
 
+    # --- **その「天井の遠さ」そのものを出す**（2026-08-27 に足した） ---
+    #     上の1行が「順位は天井の遠さだけで決まります」と言っているのに、
+    #     **天井は1つも印字されていませんでした。** 理由と実測は `cap_lines`。
+    for line in cap_lines(arms, indent="    "):
+        print(line)
+
+    # --- **腕べつの「予定表 θ」を出す**（2026-08-27 に足した） ---
+    #     代用の腕どうしは p も g も θ も同値になるので、上の1行だけでは
+    #     **順位が天井の遠さだけ**で決まります。台帳の予定表（開いている前提の
+    #     「判定できる日」）は、腕によって回転がまるで違うと言っています ——
+    #     この日の実測では `sub_rate` だけが**今後14日 に1件も閉じられません**。
+    #     **既定では掛けません**（掛けると水準がずれて「過去の配分（＝頭の3行の
+    #     日付）」が頭と食い違う。docstring の実測を読むこと）。`--alloc-speed` で掛かります。
+    by_arm, sw = _arm_rotation()
+    speed = (sw.get("weights") or {}) if with_speed else None
+    if sw.get("missing"):
+        print(f"  [!] **腕べつの回転が取れません**: {sw['missing']}"
+              " —— 4本とも同じ θ（全体の実測）で解いています。"
+              "**順位は天井の遠さだけで決まっているかもしれません。**")
+    else:
+        w = sw.get("weights") or {}
+        raw = sw.get("raw") or {}
+        cells = " ／ ".join(
+            f"{k} **{raw.get(k, 0.0):.3f}/日**（×{w.get(k, 1.0):.2f}）"
+            for k in arm_speed.ARMS)
+        print(f"  腕べつの回転（台帳の予定表・今後{sw['window']}日 に判定できる件数 ÷ {sw['window']}）: "
+              + cells)
+        near = [k for k in arm_speed.ARMS
+                if not [h for h in ((by_arm.get(k) or {}).get("horizons") or [])
+                        if h.get("days") == 14 and h.get("n")]]
+        if near:
+            print(f"    [!] **今後14日 に1件も閉じられない腕: {', '.join(near)}**"
+                  " —— 下の『いちばん早い』がその腕を指していても、"
+                  "**次の2週間は1日も動きません**（その腕の`判定できる日`が全部 14日 より先）。")
+        back = (by_arm.get(arm_speed.ARMS[0]) or {}).get("backward")
+        if with_speed:
+            print("    **下の日付は、この回転を掛けた側です**（`--alloc-speed`）。"
+                  "頭の3行（`python scripts/eta.py`）は掛けていないので、"
+                  "**『過去の配分』の行は頭の日付と一致しません。**")
+        else:
+            print("    **下の日付は、この回転を掛けていません**"
+                  + (f"（4本とも θ＝{back:.2f}/日 ＝ 全体の実測）" if back else "")
+                  + "。掛けた版は `--alloc --alloc-speed`。"
+                  " **実測 2026-08-27 と 2026-08-30: どちらも掛けても順位は変わりませんでした**"
+                  "（`sub_rate` のまま・差は 08-27 が 4日 → 5日、08-30 が 3日 → 3日）。"
+                  "**×0.68 に落としても勝つ ＝ この順位を決めているのは回転ではなく天井のほうです。**"
+                  " **08-30 に測り直したのは、3日 前の1点で「掛けない」を決め続けていたから**です ——"
+                  "`--alloc --alloc-speed` は 24秒・API 0単位 なので、"
+                  "**この行が古いと思ったら、思った回が測り直すこと。**")
+
     def _solve(share: dict[str, float], label: str) -> float:
-        t = trajectory(m, a, arms=_realloc_arms(arms, share), **kw)
+        t = trajectory(m, a, arms=_realloc_arms(arms, share, speed), **kw)
         d = t["date"].isoformat() if t["date"] else "出ません"
         print(f"  {label:36s} {d}  ({_share_str(share)})", flush=True)
         return t["days"]
@@ -4759,11 +7836,41 @@ def alloc_search() -> int:
     #     1件は 7pt —— **この回に実際にできる手の大きさ**そのもの。
     n = pln["n"]
     best = (now_days, "そのまま（足さない）")
+    # **腕ごとの日数を捨てないこと**（2026-08-29 に足した）。
+    #     下の `ban_lines` が1位を止めた回に、**次に読むべき行がありません** ——
+    #     表は上に出ていますが、「いちばん早いのは」の1行だけを読む手順
+    #     （この文書の冒頭「見出しと箇条書きだけ」）には届きません。
+    #     実測 2026-08-29: 1位 `sub_rate` が禁じられ、回の側が表を
+    #     縦に読み直して 2位 を手で拾っています。
+    days_by_lever: dict[str, float] = {}
     print(f"\n  --- そこへ **前提を1件** 足したら（いま {n}件 ＝ 1件は {1 / (n + 1):.0%}）---")
     for lever in arm_speed.ARMS:
         share = {k: (pln["share"].get(k, 0.0) * n + (1 if k == lever else 0)) / (n + 1)
                  for k in arm_speed.ARMS}
         d = _solve(share, f"次の1件を `{lever}` に")
+        days_by_lever[lever] = d
+        # **引き代0の腕を、同着の顔で並べないこと。** `density` は ×1.00 で
+        #     「何をしても日付は動かない」と軌跡の側が言っているのに、ここでは
+        #     `per_video` と同じ日付で並びます（実測 2026-08-27・どちらも 2027-01-07）。
+        #     **同着に見えるのは「効く」からではなく、5% の付け替えでは
+        #     どちらも動かないから**です。理由は `cap_lines`。
+        arm = arms.get(lever) or {}
+        cap = arm.get("cap")
+        if cap is not None and cap <= 1.0:
+            # **正本は `cap_caveats` ひとつ**（2026-08-28）。ここと `cap_lines` が
+            #     別々に文言を持っていると、片方だけが直る ——
+            #     この repo がいちばん多く踏んでいる形です（`CLAUDE.md`
+            #     「同じことを2か所が別々に言っていて、片方しか読まれていない」）。
+            caveats = cap_caveats(lever, arm)
+            if caveats:
+                print(f"      ↑ **`{lever}` は天井 ×{cap:,.2f}。"
+                      "上の日付は動きませんが、それは**この道具の作り**の話です**"
+                      "（軌跡がこの面しか歩かない）")
+                for c in caveats:
+                    print(f"          [!] {c}")
+            else:
+                print("      ↑ **この腕は天井 ×1.00（引き代なし）です。**"
+                      "立てても、閉じても、上の日付は1日も動きません")
         if d < best[0]:
             best = (d, lever)
     # **符号は「早い／遅い」の字で出すこと。** `+6日` は
@@ -4773,8 +7880,93 @@ def alloc_search() -> int:
     print(f"\n  **いちばん早いのは `{best[1]}`**"
           + (f"（そのままより **{gap:,.0f}日 早い**）" if gap >= 1
              else "（そのままと同じ。**どの腕に立てても日付は動きません**）"))
-    print("  立てるときは `config/hypotheses.yaml` に `lever:` を**その腕で**書くこと ——"
-          " 空欄だと `arm_speed.closed()` が閉じたときに行ごと飛ばします。")
+    # **台帳が「その腕には立てるな」と言っていないか**（2026-08-29 に足した）。
+    #     この名指しは 08/27 から **5回 続けて `sub_rate`** で、
+    #     **5回とも回の側が手で打ち消しています。** 打ち消す根拠は
+    #     台帳の `next_if_false` にあり、**機械が読める字で書いてあります。**
+    #     読まないので、毎回 人が思い出していました。
+    #     **道具が言わないものは、毎回 人が思い出すことになります。**
+    ban = arm_speed.ban_lines(best[1])
+    for line in ban:
+        print(line)
+    # **止めるだけで終わらせないこと**（2026-08-29 に足した）。
+    #     `next_if_false` は「そこに立てるな」の続きに **どこへ振り直すか**まで
+    #     書いています（実測 08/29: 「per_video か rpm へ振り直す」）。
+    #     ところが `ban_lines` は `line` をそのまま貼るだけで、
+    #     **この道具が持っている腕べつの日数と突き合わせていません。**
+    #     **1位が禁じられている回に、次に読むべき行が無い**のがそれまでの形でした。
+    #     ここで出すのは「禁じられていない腕のうち、いちばん早いもの」1行だけ。
+    #     **覆る条件**: 全腕に ban が立ったら（＝ `rest` が空）、
+    #     出せるものがありません。そのときは台帳のほうが袋小路なので、
+    #     **`next_if_false` を書き直す回**です（この関数ではなく `config/` の話）。
+    # **側で限定された禁止は、腕を塞ぎません**（2026-08-30 に足した）。
+    #     `sub_rate` の外れは 2件 とも**中身の側**で、配信の側は 0件。
+    #     それでも `ban_lines` が空でないというだけで腕ごと落としており、
+    #     **配信の側に立てる道まで塞いでいました** ——実測で **3日**
+    #     （`sub_rate` 2027-01-18 対 `per_video` 2027-01-21）。
+    #     見るのは `blocks_arm`（＝側の書いていない禁止が1件でもあるか）です。
+    if arm_speed.blocks_arm(best[1]):
+        rest = sorted(
+            ((d, k) for k, d in days_by_lever.items()
+             if k != best[1] and not arm_speed.blocks_arm(k)),
+            key=lambda t: t[0])
+        if rest:
+            d2, k2 = rest[0]
+            gap2 = now_days - d2
+            print(f"  → **禁じられていない腕でいちばん早いのは `{k2}`**"
+                  + (f"（そのままより **{gap2:,.0f}日 早い**"
+                     f"・`{best[1]}` との差は {d2 - best[0]:,.0f}日）" if gap2 >= 1
+                     else f"（そのままと同じ。`{best[1]}` との差は"
+                          f" {d2 - best[0]:,.0f}日）")
+                  + "。**この行は表を縦に読み直さなくても済むように出しています** ——"
+                  " 上の `next_if_false` が振り直し先を名指ししているなら、"
+                  "**そちらが優先**です（台帳のほうが、この道具より事情を知っています）。")
+        else:
+            print("  → **禁じられていない腕がありません。**"
+                  " 台帳の `next_if_false` が全腕を塞いでいます ——"
+                  "**そのときは腕を選ぶ話ではなく、`config/hypotheses.yaml` の"
+                  "`next_if_false` を書き直す回**です。")
+    elif ban:
+        # **側で限定された禁止は、腕を落としません。**
+        #     ただし黙って通すと、上に貼った禁止の行だけが残って
+        #     「1位は禁じられている」と読まれます（それが 5回 起きた形）。
+        sides_banned = sorted({r["side"] for r in arm_speed.standing_bans().get(best[1], [])
+                               if r.get("side")})
+        ja = "／".join(arm_speed.SIDE_JA[x] for x in sides_banned)
+        print(f"  → **上の禁止は {ja} だけに掛かっています。"
+              f"`{best[1]}` は1位のままです** ——"
+              f" 立てる1件を **{ja} 以外**にすること"
+              f"（`config/hypotheses.yaml` の `side:`）。"
+              " **腕ごと落とすのは、側の書いていない禁止があるときだけ**です"
+              "（`arm_speed.blocks_arm`）。")
+    # **勝った腕の天井が実測でないなら、勝ちの理由がそこにあります。**
+    #     この順位は天井の遠さで決まる（上の docstring）ので、
+    #     **天井が作り物なら、勝ちも作り物**です。軌跡の側には同じ注意が
+    #     既にありました（`_trajectory_lines` の `[!] … 測った天井ではありません`）——
+    #     **`--alloc` にだけ無かった**ので、ここに置きます。
+    top_arm = arms.get(best[1]) or {}
+    if best[1] != "そのまま（足さない）" and top_arm.get("cap") \
+            and not top_arm.get("cap_measured"):
+        print(f"  [!] ただし `{best[1]}` の天井 ×{top_arm['cap']:,.2f} は"
+              f"**測った天井ではありません**（{top_arm.get('cap_why', '')}）。"
+              "**この順位は天井の遠さで決まっています**（上の docstring）ので、"
+              "**天井が作り物なら、勝ちも作り物**です。"
+              f"この腕で閉じた前提は {top_arm.get('n', 0)}件"
+              f"（{arm_speed.MIN_N}件 で自前になります）——"
+              "**1件 閉じるだけで、この順位そのものが引き直せます。**")
+    # **腕を選んだあとに、まだ1つ選ぶものが残っています**（2026-08-29 に足した）。
+    # 上の表は「どの腕に立てるか」しか言いません。同じ腕の中で、
+    # **その回に何をいじるか**（動画の外側か・中身か）で当たり方が桁ちがいです。
+    # 数と「日付を動かさない理由」は `src/arm_speed.sides()`。
+    try:
+        for _l in arm_speed.side_lines():
+            print(_l)
+    except Exception as _exc:                                   # noqa: BLE001
+        print(f"  （側べつの実測は出せませんでした: {_exc}）")
+    print("  立てるときは `config/hypotheses.yaml` に `lever:` を**その腕で**、"
+          "`side:` を **`dist`（配信の側）／`content`（中身の側）／`infra`（道具の側）**で書くこと ——"
+          " `lever:` が空欄だと `arm_speed.closed()` が閉じたときに行ごと飛ばし、"
+          "`side:` が空欄だと上の2つの数から**その1件だけが黙って消えます**。")
     return 0
 
 
@@ -4787,17 +7979,89 @@ def main() -> int:
     ap.add_argument("--reflect", action="store_true",
                     help="周の終わり: この回で動いた入力を予測へ入れ直し、日付の前後差を残す")
     ap.add_argument("--note", metavar="1行", help="--reflect に添える1行（何を入れ直したか）")
-    # **毎回は撃ちません**（軌跡1本 15〜20秒 × 腕4つ）。頭の3行が
+    # **毎回は撃ちません**（軌跡1本 2〜4秒 × 腕4つ）。頭の3行が
     # 「過去の配分」と「台帳の配分」の差を出すので、**その差が気になった回だけ。**
+    ap.add_argument("--no-frozen", action="store_true",
+                    help="「その腕を凍らせたら何日 遠のくか」を測らない"
+                         "（軌跡1本ぶん 2〜4秒 を省く。**普通は付けないこと** ——"
+                         " 付けると『十分でない腕』と『要らない腕』が区別できません）")
     ap.add_argument("--alloc", action="store_true",
-                    help="次の前提をどの腕に立てるのが早いか、腕べつに解く（API 0単位・約80秒）")
+                    help="次の前提をどの腕に立てるのが早いか、腕べつに解く（API 0単位・**実測 24秒**（2026-08-28 に `day_cap.cap()` を畳むまでは 4分））")
+    ap.add_argument("--alloc-speed", action="store_true",
+                    help="`--alloc` を、**腕べつの回転**（台帳の予定表・"
+                         "`arm_speed.speed_weights()`）を掛けて解く。"
+                         "**水準がずれるので『過去の配分』の行は頭の日付と一致しません** ——"
+                         " 見るのは順位だけ。2026-08-27 の実測では順位は変わりませんでした")
+    # **審査の門を1件 閉じる**（2026-08-30・`src/resume_gate.py`）。
+    #     停止中は4本の腕が1本も引けないので、到達日に効く唯一の手がこれです。
+    #     **口をここに置いた理由**: 閉じた瞬間に、同じ道具が日付を出し直せるから。
+    #     別の script にすると「閉じた」と「日付が動いた」が別の回に落ちます。
+    ap.add_argument("--close-gate", metavar="番号", type=int,
+                    help="`AUTOMATION_PAUSED.md` の Resume gate を1件 閉じる"
+                         "（`--evidence` が要ります）")
+    # **その逆**（2026-08-30 夜に足した）。`docs/spawn_prompt.md` は毎回のサブに
+    #     「閉じた根拠を実測で当て直し、**外れていたら開き直せ**」と渡していますが、
+    #     **その口はどこにもありませんでした**（手で台帳へ積んでも、
+    #     門 1・2・5・6 では正本の註に負けて黙って閉じたまま。`resume_gate.state()`）。
+    ap.add_argument("--open-gate", metavar="番号", type=int,
+                    help="Resume gate を1件 **開き直す**（`--evidence` が要ります）。"
+                         "閉じた根拠を実測で当て直して外れたときに撃つこと")
+    ap.add_argument("--evidence", metavar="1行",
+                    help="`--close-gate` / `--open-gate` の根拠 —— **どこに何を記録したか**"
+                         "（ファイル名・commit・実測）。"
+                         "門は「決めた」ではなく「**記録した**」ときに閉じます")
+    ap.add_argument("--gate", action="store_true",
+                    help="審査の門のいまの姿だけを出して終わる（API 0単位・**1秒未満**）")
     args = ap.parse_args()
 
-    if args.alloc:
-        return alloc_search()
+    if args.close_gate is not None:
+        if not args.evidence:
+            print("[eta] `--evidence` が要ります —— どこに何を記録したかを1行で。")
+            return 2
+        try:
+            rec = resume_gate.close(args.close_gate, args.evidence)
+        except ValueError as exc:
+            print(f"[eta] 閉じられません: {exc}")
+            return 2
+        g = resume_gate.summary()
+        print(f"[eta] 門 **{rec['n']}** を閉じました —— {rec['evidence']}")
+        print(f"[eta] **{g['closed']}/{g['total']} 件**"
+              + (f"（天井まで ×{g['cap']:.2f}）" if g["cap"] is not None else ""))
+        for r in g["open_items"]:
+            print(f"       開: {r['n']} {r['text']}")
+        return 0
+
+    if args.open_gate is not None:
+        if not args.evidence:
+            print("[eta] `--evidence` が要ります —— 何を測って、どこと食い違ったかを1行で。")
+            return 2
+        try:
+            rec = resume_gate.reopen(args.open_gate, args.evidence)
+        except ValueError as exc:
+            print(f"[eta] 開き直せません: {exc}")
+            return 2
+        g = resume_gate.summary()
+        print(f"[eta] 門 **{rec['n']}** を開き直しました —— {rec['evidence']}")
+        print(f"[eta] **{g['closed']}/{g['total']} 件**"
+              + (f"（天井まで ×{g['cap']:.2f}）" if g["cap"] is not None else ""))
+        for r in g["open_items"]:
+            print(f"       開: {r['n']} {r['text']}")
+        return 0
+
+    if args.gate:
+        for line in gate_lines("###"):
+            print(line)
+        return 0
+
+    if args.alloc or args.alloc_speed:
+        return alloc_search(with_speed=args.alloc_speed)
 
     if args.reflect:
         return reflect(args.note, record=not args.no_record)[0]
+
+    if not args.offline:
+        for line in _fit_deadlines():
+            print(line)
 
     if args.offline:
         if not LOG.exists():
@@ -4815,14 +8079,25 @@ def main() -> int:
             return 1
 
     points = _points()
+    if args.no_frozen:
+        global FROZEN_ARMS
+        FROZEN_ARMS = False
     _s = solve(m, points)
     a, sup, pl, tr = _s["a"], _s["sup"], _s["pl"], _s["tr"]
     prev = points[-1] if points else None
-    for line in headline(pl, prev, tr):
+    # **この回が印字した行を、そのまま控えておく**（`flagged()` が尾へ運びます）。
+    # `print` を差し替えているだけで、出る中身も順番も1文字も変えていません。
+    said: list[str] = []
+
+    def say(line: str) -> None:
+        said.append(str(line))
         print(line)
 
+    for line in headline(pl, prev, tr, points):
+        say(line)
+
     for line in report(m, a):
-        print(line)
+        say(line)
     row = _row(m, a, pl, tr, sup)
     # **`--offline` の点だと分かる形で積む**（2026-08-20）。中身は最後の実測の**写し**で、
     # 新しい実測ではありません。印が無いと、次の回は写しを実測として数えます
@@ -4830,32 +8105,36 @@ def main() -> int:
     if args.offline:
         row["offline"] = True
     for line in _drift(row):
-        print(line)
+        say(line)
     # **周の中で動いた入力は `_drift` には出ません**（あれは点どうしの比較）。
     # 反映の読み口はこちら。**残す所と読む所の両方が要ります。**
     for line in _reflect_recap():
-        print(line)
+        say(line)
     # **「予測 → 腕を選ぶ → 進む」の、選んだ側の実績**（オーナー指示 2026-08-19 21:2x）。
     # 1周ごとに動くのは日付ではなく**ここ**です（`src/levers.py` の説明）。
     for line in levers.report(ROOT / "data" / "runs.jsonl"):
-        print(line)
+        say(line)
     # **腕を「日数の差」で並べる**（2026-08-20 16:0x）。ここが無いと、
     # 引く腕は `binding`（どの床が遅いか）という診断からしか決まりません。
     for line in _report_levers(pl):
-        print(line)
+        say(line)
     # **「×2 にしたら」の表の、すぐ下に軌跡を置くこと。**
     #     表だけを見た読み手は「2倍にすればいい」で終わります。
     #     2倍に何日かかるかは、ここにしかありません。
     if tr is not None:
         for line in _report_trajectory(tr, pl):
-            print(line)
+            say(line)
     # **段取りは、いちばん最後に出すこと**（オーナー指示 2026-08-20 06:2x）。
     # 読み手が最後に見たものが、そのまま次の回の入口になります。
     # ここより後ろに「届きません」を置かないこと。
     for line in _report_plan(m, a, pl):
-        print(line)
+        say(line)
     # **最後にもう一度、日付と腕。** 真ん中を読み飛ばしても、ここだけで決まる形にする。
-    for line in headline(pl, prev, tr):
+    for line in headline(pl, prev, tr, points):
+        print(line)
+    # **`[!]` を尾へ運ぶ**（2026-08-26・最適化の回）。日付は 08-20 に運びましたが、
+    # **欠陥の名指しは真ん中に置いたまま**でした。実測: `[!]` 10本／頭にも尾にも 0本。
+    for line in flagged(said):
         print(line)
     print("  **この回の作業は、上の日付を動かすものを選ぶこと。**"
           " 出したら `run_marker.py --ship \"…\" --lever <腕> --moves <見込みの日数>`。")

@@ -29,7 +29,7 @@ from __future__ import annotations
 
 import json
 from collections import Counter
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 #: **腕の語彙。`scripts/eta.py` が印字するものと1対1にすること。**
@@ -40,6 +40,52 @@ LEVERS: dict[str, str] = {
     "rpm": "RPM を上げる（＝ニッチ・尺・形式を変える）",
     "density": "公開の密度を上げる（1日に公開する本数。門1の日数に直で効く）",
     "sub_rate": "登録率を上げる（門1 ＝ 再生／日 × 登録率）",
+    # **2026-08-30 に足した腕**（`src/resume_gate.py`）。
+    #
+    # 上の4本は**審査に受かった世界の中**にあります。受からなければ再生が
+    # いくつでも収入は 0 円なので（`CLAUDE.md`）、`p_pass` は到達日に**掛かる**項で、
+    # 4本はその内側です。**外側が 0 なら、内側を何倍にしても 0。**
+    #
+    # そして 08/30 の停止中は、4本とも**1つも引けません**（`src/pause_guard` が
+    # 生成と投稿を塞いでいる）。語彙に引ける腕が無いので、停止中の回は
+    # `--lever none` へ落ちます —— 実測 08/30 の ship 40件 中 **20件**。
+    # **`none` は「予測日を動かさない」という意味なので、
+    #   律速そのものを進めた回が、動かさない回として数えられていました。**
+    #
+    # 天井の倍率（この dict に載せる条件）は `resume_gate.cap()`: 閉じた k件 に対し
+    # **×(6/k)**、k=0 では定義できないので `None`（**0倍 では 6件 になりません**）。
+    "gate": "収益化の審査に通る形を決める（`AUTOMATION_PAUSED.md` の Resume gate 6件）",
+    # **2026-08-31 に足した腕**（最適化の回に実測して足した）。
+    #
+    # `scripts/eta.py` の頭3行は、**θ（前提が閉じる速さ）を到達日の
+    # いちばん大きい動かし手として印字しています**（実測 2026-08-31:
+    # θ×2 で **-26日** ／ 天井 θ→∞ で **-51日**。上の4本のどれよりも大きい）。
+    # **その θ を指す語が、この語彙にありませんでした。**
+    #
+    # だから θ を進めた回は `none`（＝日付を動かさない）か、意味の合わない
+    # `gate` に落ちます。実測（`data/runs.jsonl`・直近7日・ship 359件）:
+    #
+    #     `none` **147件（41%）** ／ `gate` 17件（5%）
+    #     `fix` **219件（61%）** ／ `verdict` **11件（3%）**
+    #     同じ7日で到達日は **+13日 遠のいた**（宣言は -55日）
+    #
+    # **`none` は「予測日を動かさない」という意味なので、律速そのものを
+    # 進めた回が、動かさない回として数えられます。** 08/30 に `gate` を
+    # 足したのと**同じ形の穴**が、もう1つ空いていました。
+    #
+    # **この dict に載せる条件**（すぐ上の註）は「`eta.py` の側に
+    # 『その腕を何倍にすればいいか』が出ていること」です。**θ は出ています** ——
+    # 頭3行の「到達日をいちばん大きく動かすのは θ」の行がそれです。
+    #
+    # **`gate` との違い**: `gate` は審査に**通るかどうか**（掛かる項）。
+    # `theta` は前提が**閉じる速さ**（`t_work` が反比例する項）。別の項です。
+    # **4本の腕との違い**: 4本は「閉じた前提が何を動かすか」。
+    # `theta` は「閉じるのが何日に1件か」。**分子と分母**です。
+    #
+    # **覆る条件**: `eta.py` が θ の倍率を印字しなくなったら、この腕は
+    # 選んでも効いたかどうかを誰も測れません（上の註）。そのときは外すこと。
+    "theta": "前提が閉じる速さを上げる（判定できる前提を見つけやすくする・"
+             "立ててから判定できるまでの日数を縮める。`eta.py` の θ）",
     "none": "この回は予測日を動かさない（道具・手順・記録の整備）",
 }
 
@@ -74,12 +120,113 @@ def recent(path: Path, limit: int = 10) -> list[dict]:
     return out[-limit:][::-1]
 
 
+#: **合計を採る窓（日）。`scripts/drift.py` / `scripts/eta.py` と同じにしてあります。**
+#: 別々にすると、「343 ship で +33日」と「宣言 −915日」を並べて読めません。
+TOTAL_DAYS = 7
+
+
+def since(path: Path, days: int = TOTAL_DAYS,
+          *, now: datetime | None = None) -> list[dict]:
+    """直近 `days` 日の ship を**古い順**に返す。**合計はこちらで採ること。**
+
+    ## なぜ「直近10件」ではいけないか（2026-08-29・最適化の回の実測）
+
+    `recent(path, 10)` が返す 10件 は、いまの回転では **1.4〜5.2時間**しかありません
+    （実測。ship は 7日 で 342件 ＝ 1時間に 2件 前後）。
+    そして **`eta_target` は Analytics 由来で1日に1度しか動きません**
+    （このファイルの冒頭が、その裏取りです）。
+
+    **つまり 10件 の窓では、`実際` は構造上ほぼ 0 です。** 実測（末尾 60件 を
+    3件ずつずらして 21箇所）::
+
+        実際が 0 か −1        21箇所 中 **18箇所**
+        `[!] 言ったより遠のいています` が出た  **11箇所（52%）**
+        そのほとんどは 宣言が負・実際が 0
+
+    **`--moves` に負を書く ＝ 腕を引いて日付を早めると宣言する**ことなので、
+    **手順どおりに宣言した回ほど、この門が鳴ります。**
+    `src/arm_speed.forward()` が「閉じると下がる」だった のと同じ形の符号違いです
+    （`scripts/drift.py` の註）。
+
+    ## 7日 で採ると、何が見えるか（同じ実測）
+
+        宣言の合計 **−915日** ／ 実際の合計 **+33日**（329件）
+
+    **これは本物の赤字**です。窓が 1.5時間 だと、この 948日 の差が
+    「宣言 −3 ／ 実際 0」に化けて、**鳴ったり鳴らなかったりします。**
+
+    ## 覆る条件
+
+    - `eta_target` が1日に何度も動くようになったら（実測の取り直しが回ごとに
+      入るようになったら）、窓を短くしてよい。**そのときは
+      `tests/test_levers_window.py` の「10件 では 1.4〜5.2時間 にしかならない」を
+      測り直すこと**（あの数は回転の速さで変わります）
+    """
+    if not path.exists():
+        return []
+    cut = (now or datetime.now(timezone.utc)) - timedelta(days=days)
+    out: list[dict] = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            rec = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if rec.get("kind") != "ship":
+            continue
+        try:
+            when = datetime.fromisoformat(str(rec.get("at") or ""))
+        except ValueError:
+            continue
+        if when.tzinfo is None:
+            when = when.replace(tzinfo=timezone.utc)
+        if when >= cut:
+            out.append(rec)
+    return out
+
+
 def tally(rows: list[dict]) -> Counter:
     """腕べつの回数。宣言の無い行は `未宣言` に落とす（0 にしない）。"""
     return Counter(r.get("lever") or "未宣言" for r in rows)
 
 
-def reconcile(rows: list[dict]) -> list[str]:
+def _pairs(chrono: list[dict]):
+    """`(行, 実際に動いた日数 or None, 理由)` を古い順に返す。**印字と合計で共有する。**
+
+    実際に動いた日数は、**次の ship が残した予測日との差**です
+    （予測の入力は Analytics 由来で1日1回しか動かないので、
+    回ごとではなく ship ごとに見るのがいちばん細かい目盛りになります）。
+    """
+    for i, r in enumerate(chrono):
+        mv = r.get("moves")
+        if mv is None:
+            continue
+        cur = r.get("eta_target")
+        nxt_row = next((c for c in chrono[i + 1:] if c.get("eta_target")), None)
+        nxt = nxt_row.get("eta_target") if nxt_row else None
+        # **物差しの違う2点を引き算しないこと**（2026-08-20 18:xx に足した）。
+        #     予測日は「腕を据え置いた線」から「軌跡」へ替わりました。
+        #     替わった前後を引くと、**チャンネルは何も変わっていないのに
+        #     149日ぶん動いた**と出ます。`eta_basis` が違う組は飛ばします
+        #     （**古い行に `eta_basis` はありません** —— 後から書き足さないこと)。
+        same_basis = (nxt_row is not None
+                      and r.get("eta_basis") == nxt_row.get("eta_basis"))
+        act = None
+        if cur and nxt and same_basis:
+            try:
+                act = (date.fromisoformat(str(nxt)) - date.fromisoformat(str(cur))).days
+            except ValueError:
+                act = None
+        why = ""
+        if act is None:
+            why = ("次の ship がまだ" if nxt is None or not cur
+                   else "**物差しが替わった**（据え置きの線 → 軌跡）")
+        yield r, act, why
+
+
+def reconcile(rows: list[dict], totals: list[dict] | None = None) -> list[str]:
     """**宣言（`--moves`）と、実際に動いた日数を並べる。**（2026-08-20 08:0x）
 
     オーナー指示（原文・3回目）——
@@ -101,37 +248,12 @@ def reconcile(rows: list[dict]) -> list[str]:
     """
     chrono = list(reversed(rows))  # 古い順
     lines: list[str] = []
-    sum_declared = sum_actual = 0
-    hits = 0
-    for i, r in enumerate(chrono):
-        mv = r.get("moves")
-        if mv is None:
-            continue
-        cur = r.get("eta_target")
-        nxt_row = next((c for c in chrono[i + 1:] if c.get("eta_target")), None)
-        nxt = nxt_row.get("eta_target") if nxt_row else None
-        # **物差しの違う2点を引き算しないこと**（2026-08-20 18:xx に足した）。
-        #     予測日は「腕を据え置いた線」から「軌跡」へ替わりました。
-        #     替わった前後を引くと、**チャンネルは何も変わっていないのに
-        #     149日ぶん動いた**と出ます。`eta_basis` が違う組は飛ばします
-        #     （**古い行に `eta_basis` はありません** —— 後から書き足さないこと)。
-        same_basis = (nxt_row is not None
-                      and r.get("eta_basis") == nxt_row.get("eta_basis"))
-        act = None
-        if cur and nxt and same_basis:
-            try:
-                act = (date.fromisoformat(str(nxt)) - date.fromisoformat(str(cur))).days
-            except ValueError:
-                act = None
+    for r, act, why in _pairs(chrono):
+        mv = r["moves"]
         when = str(r.get("at", ""))[5:16].replace("T", " ")
         if act is None:
-            why = ("次の ship がまだ" if nxt is None or not cur
-                   else "**物差しが替わった**（据え置きの線 → 軌跡）")
             lines.append(f"    {when}  {r.get('lever', '?'):<9} 宣言 {mv:+3d}日   実際 —（{why}）")
         else:
-            sum_declared += mv
-            sum_actual += act
-            hits += 1
             mark = "" if mv == act else ("  ← **外した**" if abs(act - mv) >= 3 else "")
             lines.append(f"    {when}  {r.get('lever', '?'):<9} 宣言 {mv:+3d}日   実際 {act:+3d}日{mark}")
     if not lines:
@@ -139,12 +261,51 @@ def reconcile(rows: list[dict]) -> list[str]:
                 "**次の ship から、宣言と実際が並びます**）"]
     out = ["", "--- **宣言と実際**（`--moves` で先に言った日数と、次の ship までに動いた日数）---"]
     out += lines[-10:]
+    # **合計は、行と同じ窓では採りません**（2026-08-29・最適化の回に分けた）。
+    #
+    # 上の 10行 は **1.4〜5.2時間**ぶんしかなく（実測）、`eta_target` は
+    # 1日に1度しか動かないので、**その窓の「実際」は構造上ほぼ 0** です。
+    # そこへ合計と門を載せると、**宣言に負を書いた回ほど門が鳴ります** ——
+    # 手順が「腕を引いて早めると宣言せよ」と言っているのに、です
+    # （実測: 末尾60件を3件ずつずらした 21箇所 のうち **11箇所（52%）で
+    #  `[!]` が鳴り、そのほとんどが 宣言が負・実際が 0**）。
+    #
+    # だから**行は直近10件・合計は `since()` の 7日**にします。
+    # 呼ぶ側が `totals` を渡さない回は、今までどおり同じ行から採ります
+    # （道具を単体で呼ぶ回を落とさないため。ただし窓は名乗ります）。
+    if totals is None:
+        span = chrono
+        label = f"直近 {len(rows)}件"
+    else:
+        span = totals
+        label = f"直近 {TOTAL_DAYS}日・{len(totals)}件"
+    sum_declared = sum_actual = hits = 0
+    for r, act, _ in _pairs(span):
+        if act is None:
+            continue
+        sum_declared += r["moves"]
+        sum_actual += act
+        hits += 1
     if hits:
-        out.append(f"    → 宣言の合計 {sum_declared:+d}日 ／ **実際の合計 {sum_actual:+d}日**"
-                   f"（{hits}件）")
+        out.append(f"    → **{label}**の 宣言の合計 {sum_declared:+d}日 ／"
+                   f" **実際の合計 {sum_actual:+d}日**（{hits}件）")
         if sum_actual > sum_declared + 2:
-            out.append("      [!] **言ったより遠のいています。** 選んでいる腕が効いていないか、"
-                       "予測の前提のほうが動いています。")
+            # **数を、この行そのものに入れること**（2026-08-30・最適化の回）。
+            #     `eta.flagged()` が尾へ運ぶのは **`[!]` の付いた行だけ**で、
+            #     すぐ上の「宣言の合計 … ／ 実際の合計 …」は置いていかれます。
+            #     `CLAUDE.md` の読み方（頭と尾の3行）に従うと、**警告は届くが
+            #     いくら外したかは届きません。** この repo の言い方では
+            #     「印字されていない数字は、無い数字と同じ」——
+            #     実測 2026-08-30: 尾には「言ったより遠のいています」だけが並び、
+            #     **宣言 -63日 ／ 実際 +3日（360件）という差は本文の 151行目**にありました。
+            out.append(f"      [!] **言ったより {sum_actual - sum_declared:+d}日 遠のいています**"
+                       f"（{label}: 宣言 **{sum_declared:+d}日** ／ "
+                       f"実際 **{sum_actual:+d}日**・{hits}件）。"
+                       "選んでいる腕が効いていないか、"
+                       "予測の前提のほうが動いています。"
+                       f"（**上の10行の窓ではありません** —— あちらは {TOTAL_DAYS}日 より"
+                       "ずっと短く、`eta_target` は1日に1度しか動かないので、"
+                       "**その窓の「実際」は構造上ほぼ 0** です）")
     return out
 
 
@@ -166,7 +327,7 @@ def report(path: Path, limit: int = 10) -> list[str]:
     if moving == 0:
         out.append("      [!] **1回もありません。** 予測は、動かす腕を選ばないかぎり動きません。")
         out.append("          **この回で選ぶこと。** 何を選ぶかは、上の「早めるには、どれを何倍にするか」から。")
-    out.extend(reconcile(rows))
+    out.extend(reconcile(rows, since(path)))
     return out
 
 
@@ -283,8 +444,34 @@ def arm_state(eta_row: dict | None) -> dict:
     #     **唯一開いている門について何も言っていません。**
     #     数字は足しません（長尺の面の上限は**まだ一度も測っていない**ので、
     #     足せば推測を実測に見せることになります）。**名前だけ正します。**
-    if dead_why.get("density") == "天井" and not _long_surface_measured():
-        dead_why["density"] = "天井（**ショートの面だけ。長尺の面は未測定**）"
+    #     **2026-08-26 夜に直した。** ここは `and not _long_surface_measured()` で
+    #     囲ってありました。**2つの別のことを1つの条件に畳んでいます**:
+    #         (あ) この数字が**どの面のものか**  …… いつでも「ショートの面」
+    #         (い) **もう片方の面を測ったか**    …… 日によって変わる
+    #     `src/day_cap.long_form()` が 08/21 の 7本（生きた 5本）を拾って
+    #     `collapsed` を True にした瞬間、(い) が反転し、**(あ) の名前ごと消えました** ——
+    #     `dead_why["density"]` が裸の「天井」に戻り、
+    #     `tests/test_levers_density_surface.py` が 3件 赤いまま 20時間 残りました。
+    #     **名前は、旗が立っても消えません。** 分けて言います。
+    #
+    #     **【2026-08-29 に、下の3行を直しました】** ここは `measured` を
+    #     **「長尺の面も天井」と読んでいました。別の量です** ——
+    #     `measured` は「崩れる所を**見たか**」で、
+    #     `at_ceiling` は「**いま**その天井に当たっているか」。
+    #     実物（08/29）は **measured=True かつ at_ceiling=False**
+    #     （実測の上限 6本/日 に対し、出しているのは 0.69本/日 ＝ ×8.7 空き）で、
+    #     この枝は「**長尺の面も測って天井**」と印字します —— **偽です。**
+    #     同じ関数の 20行 下では `density_open_why` が
+    #     「**長尺の面は開いています**」と言うので、
+    #     **同じ出力の中で、自分の言っていることを自分で否定していました。**
+    if dead_why.get("density") == "天井":
+        if not _long_surface_measured():
+            dead_why["density"] = "天井（**ショートの面だけ。長尺の面は未測定**）"
+        elif _long_surface_open(row):
+            dead_why["density"] = (
+                "天井（**ショートの面の数。長尺の面は実測して、まだ開いています**）")
+        else:
+            dead_why["density"] = "天井（**ショートの面の数。長尺の面も実測して天井**）"
     # **そして、面が割れているなら `density` は死んでいません**（2026-08-26）。
     #     上の1行は**名前を正すだけ**で、`density` は「死んだ腕」に入ったままでした。
     #     だから `--ship --lever density` はいまも叱られ、
@@ -294,17 +481,59 @@ def arm_state(eta_row: dict | None) -> dict:
     #     殺すのは**両方の面が閉じたとき**だけ。**理由のほうは残します**
     #     （`open_why` として返し、`lever_notes` がそのまま出す）。
     density_open_why = None
+    #: **面が割れているから外した腕**。下の `reaches` の輪が入れ直さないため。
+    rescued: set[str] = set()
     if "density" in dead_why and _long_surface_open(row):
+        # **「（未測定）」を、ここに焼き込まないこと**（2026-08-29 に直した）。
+        #     長尺の面の崩れは **2026-08-21 に観測されています**
+        #     （7本 出して生存 5本 → 上限 6本/日・`src/day_cap.long_form()`）。
+        #     それでもこの行は「開いています（**未測定**）」と言い続けていました ——
+        #     **開いていることと、測っていないことは別の話**です。
         density_open_why = (
-            "ショートの面は天井ですが、**長尺の面は開いています（未測定）**。"
-            " 長尺は `SHORTS_FEED` の枠を1つも使わず、"
+            "ショートの面は天井ですが、**長尺の面は開いています**"
+            + ("（**実測の上限**まで、まだ引き代があります）"
+               if _long_surface_measured() else "（未測定）")
+            + "。 長尺は `SHORTS_FEED` の枠を1つも使わず、"
             "**4,000時間の門に入るのは長尺だけ**です。"
             " **長尺を増やす作業を `none` へ落とさないこと。**")
         dead_why.pop("density")
+        rescued.add("density")
     # **「天井まで引いても届かない」は、天井の大小と別の理由です。**
     #     両方に当たる腕は、天井のほうを理由として残します（そちらが手前の話）。
+    #
+    # **ただし、上で外した腕をここで入れ直さないこと**（2026-08-27・最適化の回）。
+    #     08/26 に入れた上の3行は、実データでは**1行も効いていませんでした。**
+    #     `pop` した2行あとに、この輪が `density` をそのまま戻します:
+    #
+    #         arm_caps    {'density': 1.0, ...}        ← ショートの面の数
+    #         arm_reaches {'density': False, ...}      ← **同じ 1.0 から出た数**
+    #         → dead_why  {'density': '天井まで引いても届かない'}
+    #
+    #     `eta.lever_days()` の `reachable_at_cap` は
+    #     **`cap <= 1.0` なら解き直さず `NEVER` のまま**返します
+    #     （`at_ceiling` の枝）。つまり `reaches["density"] is False` は
+    #     **「天井が ×1.00 だ」の言い直し**で、別の証拠ではありません。
+    #     **同じ数を2回 数えて、2回目で殺していた**ということです。
+    #
+    #     何が起きていたか（実測 2026-08-27・`data/eta.jsonl` の最後の天井の行）:
+    #       `_long_surface_open(row)` は **True**（長尺の面 82枠/日 ÷
+    #       いま出している 0.65本/日 ＝ ×126 空いている）。それでも
+    #       `drift.dead_arm_report` は **`density` 64回（ship の 23%）**を
+    #       「引き代が無かった回」に数え、「この回では到達日が動きえない回
+    #       179/274（65%）」の分子に入れていました。
+    #       **長尺の再生は、台帳でいちばん大きい前提**
+    #       （「長尺の登録率はショートより1桁以上高い」・`sub_rate`・期限 11/22。
+    #        `needs` は「長尺の合計が 1,000再生」で、いま 74・10.6回/日 ＝ あと 88日）
+    #       **の待ち時間そのもの**です。その期限は**すでに3回 延ばされています。**
+    #       つまりこの1行は、**唯一の桁ちがいの前提を遅らせている側の作業を、
+    #       毎回「無駄だった」と記録していました。**
+    #
+    # **覆る条件**: `physical_caps` が `density` の天井を**面ごとに**立てるように
+    #     なったら（いまは `arm_caps["density"]` がショートの面の数ひとつだけ）、
+    #     `reaches["density"]` は独立した証拠になります。**そのときはこの除外を外すこと。**
+    #     見分け方: `arm_caps` に `density_long` が入っているかどうか。
     for k, ok in reaches.items():
-        if not ok and k not in dead_why:
+        if not ok and k not in dead_why and k not in rescued:
             dead_why[k] = "天井まで引いても届かない"
     dead = tuple(k for k in dead_why)
     return {"hint": row.get("lever_hint"), "binding": row.get("binding"),
@@ -313,6 +542,13 @@ def arm_state(eta_row: dict | None) -> dict:
             #     言っている回は、名指しを外すのが**正しい**です。
             "hint_covered": row.get("lever_hint_covered"),
             "caps": caps, "reaches": reaches,
+            # **「その腕を凍らせたら軌跡は何日 遠のくか」**（2026-08-26）。
+            #     `reaches=False`（＝この腕だけを天井まで引いても届かない）は
+            #     **十分でない**ことしか言っていません。**必要かどうかは別の問い**で、
+            #     それに答えるのがこの数です（`scripts/eta.py` の `frozen_days`）。
+            #     `>0` なら、回転をよその腕へ全部 配り直しても遠のく ＝ 必要。
+            "frozen": {k: v for k, v in (row.get("arm_frozen_days") or {}).items()
+                       if isinstance(v, (int, float))},
             "thresholds": row.get("arm_threshold") or {},
             # **面が割れていて生きている腕の、その理由**（`density` だけ）。
             "open_why": ({"density": density_open_why} if density_open_why else {}),
@@ -372,10 +608,20 @@ def lever_notes(lever: str | None, state: dict) -> list[str]:
         #     **凍らせて測ったら、逆でした**（下の1行が誰でも引き直せます）:
         #       いまの軌跡 2026-12-28 → `sub_rate` を凍結すると **2027-04-21（+115日）**。
         #     **門は効いています。** 直したのは模型ではなく、この文言のほうです。
+        # **ここは長らく「+115日（2026-08-26）」と べた書き でした**（同日に直した）。
+        #     べた書きは腐ります —— この本文が名指ししている壊れ方そのものです。
+        #     いまは `eta.py` の `frozen_days` が毎回 測り直した数を運びます。
+        frozen = (state.get("frozen") or {}).get(lever)
+        if frozen is not None and frozen > 0.5:
+            out.append(f"             [!] **ただし、この腕を凍らせると軌跡は {frozen:+,.0f}日**"
+                       "（回転はよその腕へ配り直したうえで）。"
+                       " **十分でないだけで、必要な腕です。**")
+        elif frozen is not None:
+            out.append(f"             凍らせても軌跡は {frozen:+,.0f}日 ＝"
+                       " **回転をよそへ回しても同じ。この腕は要りません。**")
         if lever == "sub_rate":
             out.append("             **登録者は AND の門です**（1,000人）。"
-                       "この行を「登録者は要らない」と読まないこと ——"
-                       " 伸びを凍らせると軌跡は実測で **+115日**（2026-08-26）。")
+                       "この行を「登録者は要らない」と読まないこと。")
         out.append("             **単独で到達日を動かしたいなら、別の腕にすること。**"
                    " 確かめ方（`arms` に `rate=0` を渡して解き直す）:")
         out.append("               `eta.trajectory(m, a, arms=<その腕だけ rate=0>)`"

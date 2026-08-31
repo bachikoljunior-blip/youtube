@@ -40,6 +40,7 @@
 from __future__ import annotations
 
 import argparse
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from PIL import Image, ImageDraw
@@ -124,6 +125,26 @@ def apply(start: str, end: str, banner: Path | None, dry_run: bool = False) -> d
 
     **`channels.update` は 50単位**、`channelBanners.insert` は 50単位です
     （`videos.insert` の 1,600単位に比べれば無視できる）。
+
+    ## **書いた直後に読み返さないこと**（2026-08-28 17:0x に踏んだ。**実測**）
+
+    `channels.update` は**すぐには読み返せません。** 実測の並び:
+
+        17:0x  channel_page が置いた           紹介動画 None → CdX2oIb7BG8
+        直後   channels.list(brandingSettings)  **unsubscribedTrailer: None**  ← 古い値
+        数分後 同じ呼び出し                     **CdX2oIb7BG8**               ← 届いた
+
+    **バナーのほうは同じ瞬間に新しい値を返します**（`channelBanners.insert` が
+    URL を返し、それを書くので）。**片方だけ遅れるので、いちばん読み違えやすい形**です。
+
+    17:0x の回はこれを「**ショートは紹介動画にできない**」という欠陥だと読みかけ、
+    長尺（`_Mz5rg6jQ_A`）で試して**そちらも読み返しは古い値**でした ——
+    つまり**ショートは問題ではありません。** 試した長尺はそのあと
+    `python -m src.channel_page --no-banner` で実測の本（`CdX2oIb7BG8`）へ戻しています。
+
+    **確かめるなら、数分あけて `channels.list` を1回。**
+    **`--dry-run` の「None → X」は「まだ X ではない」という意味ではありません** ——
+    `--dry-run` は `before_trailer` を読むだけで、置きません。
     """
     from googleapiclient.discovery import build
     from googleapiclient.http import MediaFileUpload
@@ -161,10 +182,41 @@ def apply(start: str, end: str, banner: Path | None, dry_run: bool = False) -> d
     return out
 
 
+def latest_end() -> str:
+    """**Analytics で読める、いちばん新しい日**（`--end` の既定）。
+
+    ## なぜ計算するか（2026-08-28 03:5x に足した）
+
+    ここは長らく **`--end="2026-08-17"` のべた書き**でした。書いた日
+    （2026-08-20）には正しい数でしたが、**日が経つほどずれます** ——
+    08/28 の時点で **11日 古い窓**です。M22 は「日枠が戻ったら撃つ」で
+    **10周 持ち越されている**ので、**待つほど窓が古くなる**形でした。
+
+    紹介動画は「**実際にいちばん登録に変えた本**」を選ぶ仕組みなので、
+    窓が古いと**その11日ぶんに出た本が、候補にすら入りません。**
+    いまチャンネルは1日 十数本 公開しているので、11日 ＝ **100本以上**が
+    見えていないことになります。
+
+    遅れは実測から引きます（`src.settle.analytics_lag_days()`。
+    `judgeable` が `ANALYTICS_LAG_DAYS = 3` をべた書きして
+    **A/B だけ1日 楽観**に出していたのと同じ穴を、ここで作らないため）。
+
+    **床（`MIN_VIEWS` / `MIN_SUBS`）は触っていません** —— あちらは
+    掛け算から出した数で、窓の長さとは別の話です。
+    """
+    from datetime import timedelta
+
+    from .settle import analytics_lag_days, ROOT           # noqa: F401
+    lag = analytics_lag_days()
+    today = datetime.now(timezone(timedelta(hours=9))).date()
+    return (today - timedelta(days=lag)).isoformat()
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="チャンネルのホームに、紹介動画とバナーを置く（腕 sub_rate）")
     ap.add_argument("--start", default="2026-05-01", help="Analytics の開始日")
-    ap.add_argument("--end", default="2026-08-17", help="Analytics の終了日（実データは3日遅れ）")
+    ap.add_argument("--end", default=None,
+                    help="Analytics の終了日。**既定は実測の遅れから引いた日**（`latest_end()`）")
     ap.add_argument("--banner", default="build/banner.png", help="バナーの書き出し先")
     ap.add_argument("--no-banner", action="store_true", help="バナーは置かない（紹介動画だけ）")
     ap.add_argument("--dry-run", action="store_true", help="外へ書かない。選んだ本だけ出す")
@@ -175,7 +227,10 @@ def main(argv: list[str] | None = None) -> int:
         banner = render_banner(Path(args.banner))
         print(f"[banner] 描きました: {banner}")
 
-    res = apply(args.start, args.end, banner, dry_run=args.dry_run)
+    end = args.end or latest_end()
+    print(f"[window] Analytics: {args.start} 〜 {end}"
+          + ("" if args.end else "（**実測の遅れから引いた日**）"))
+    res = apply(args.start, end, banner, dry_run=args.dry_run)
     print(f"[channel] {res['channel_id']}")
     print(f"  紹介動画: {res['before_trailer']} → {res['trailer']}")
     print(f"  バナー  : {res['before_banner']} → {res['banner_url']}")

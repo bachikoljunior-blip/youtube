@@ -179,17 +179,41 @@ def sections(source: str) -> list[tuple[str, set[int]]]:
     return out
 
 
+def _header_text(arg: ast.expr) -> str | None:
+    """その引数が見出しなら、**字として書いてある部分**を返す。
+
+    **f 文字列の見出しも見ること**（2026-08-27 に踏んだ）。
+    見出しに計算した数を入れると（`f"=== …{lo}〜{hi}時間だけ ==="`）、
+    構文木では `JoinedStr` になり、`ast.Constant` だけを見ていた頃は
+    **見出しとして数えられませんでした。** そうなると節の切れ目が1つ消え、
+    **その節のリテラルが全部「1つ前の節」の持ち物になります** ——
+    `ideco_deguchi` で、`same_year_break(step=10_000)` の 10,000 が
+    2つ前の「利回り」の節の濡れ衣として出ました。
+    **暗黙の連結も同じです**（`"=== …" f"…"` は全体が1つの `JoinedStr`）。
+
+    返すのは字の部分だけです（`{}` の中身は落とします）。
+    見出しの名前としてはそれで足り、**切れ目を見つけるのが仕事**なので。
+    """
+    if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
+        return arg.value
+    if isinstance(arg, ast.JoinedStr):
+        parts = [v.value for v in arg.values
+                 if isinstance(v, ast.Constant) and isinstance(v.value, str)]
+        return "".join(parts) if parts else None
+    return None
+
+
 def _header(stmt: ast.stmt) -> str | None:
-    """`print("\\n=== 見出し ===")` なら、その見出しを返す。"""
+    """`print("\\n=== 見出し ===")` なら、その見出しを返す（f 文字列も見ます）。"""
     if not isinstance(stmt, ast.Expr) or not isinstance(stmt.value, ast.Call):
         return None
     call = stmt.value
     if not (isinstance(call.func, ast.Name) and call.func.id == "print"):
         return None
     for arg in call.args:
-        if isinstance(arg, ast.Constant) and isinstance(arg.value, str) \
-                and "===" in arg.value:
-            return arg.value.strip()
+        text = _header_text(arg)
+        if text is not None and "===" in text:
+            return text.strip()
     return None
 
 

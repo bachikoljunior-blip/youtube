@@ -102,10 +102,19 @@ def test_控えが読めない回は絞らない(monkeypatch):
 
 
 def test_群の作り方は1か所():
-    """`SOURCES` は `members()` から畳むこと。**別の道で作ると2か所が割れます。**"""
+    """`SOURCES` は `members()` から畳むこと。**別の道で作ると2か所が割れます。**
+
+    **`ACCRUING` の前提は `SOURCES` に入りません**（`src/judgeable.py` の註 ——
+    これから積む群を入れると `Floor.ready` が `None` のまま赤で居座る）。
+    ここは長らく `MEMBER_SOURCES` を全部 引いていて、`request_form` が
+    `ACCRUING` に入った回に `KeyError` で落ちました。**畳み方の門であって、
+    どの鍵が入るかの門ではありません** —— 除外の理由は向こうが持っています。
+    """
     from src import judgeable
 
     for key in judgeable.MEMBER_SOURCES:
+        if key in judgeable.ACCRUING:
+            continue
         make, n = judgeable.SOURCES[key]
         folded = make()
         live = judgeable.members(key)

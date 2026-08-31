@@ -207,8 +207,43 @@ def floor_minutes() -> tuple[float, str]:
     except Exception as exc:                                   # noqa: BLE001
         return FALLBACK_MIN, f"quota.py が答えませんでした（{str(exc)[:60]}）"
     if got is None:
-        return FALLBACK_MIN, "quota.py が「まだ出せない」と答えました（目盛りが足りない）"
+        return _floor_from_gauge()
     return float(got), "quota.py の実測"
+
+
+def _floor_from_gauge() -> tuple[float, str]:
+    """**誕生が数えられない回に、オーナーの画面の%から間隔を出す。**
+
+    比の計算そのものは `quota.gauge_floor_minutes()` にあります
+    （`sibling_check.py` も同じ口を見るので、**2か所に書かない**）。
+    ここがやるのは、`FALLBACK_MIN` を基準として渡すことと、
+    **なぜその数になったかを1行で言うこと**だけです。
+
+    2026-08-30 の実測: 週 42%・いま 1.286 %/時 ÷ 許される 0.428 = ×3.0 → **270分**。
+    **覆る条件は `quota.gauge_floor_minutes()` の docstring にあります**
+    （速さが線の内側に戻れば `None` が返り、ここは自分で `FALLBACK_MIN` に戻ります）。
+    """
+    try:
+        from scripts.quota import gauge_floor_minutes
+    except Exception:                                          # noqa: BLE001
+        try:
+            import importlib.util
+            spec = importlib.util.spec_from_file_location(
+                "quota", ROOT / "scripts" / "quota.py")
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+            gauge_floor_minutes = mod.gauge_floor_minutes
+        except Exception:                                      # noqa: BLE001
+            return FALLBACK_MIN, "quota.py を読めませんでした（目盛りも見られません）"
+    try:
+        got = gauge_floor_minutes(FALLBACK_MIN)
+    except Exception as exc:                                   # noqa: BLE001
+        return FALLBACK_MIN, f"quota.py の目盛りが答えませんでした（{str(exc)[:60]}）"
+    if not got:
+        return FALLBACK_MIN, "目盛りが無いか、いまの速さは許される速さの内側です"
+    minutes, ratio = got
+    return float(minutes), (f"目盛りから（誕生が数えられないので速さの比で伸ばした。"
+                            f"×{ratio:.1f}）")
 
 
 def decide(now: datetime | None = None) -> dict:

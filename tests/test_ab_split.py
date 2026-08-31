@@ -151,12 +151,41 @@ def test_落ちた本は作った記録に数えない(tmp_path):
 
 # --- 実物との突き合わせ（**ここが本番の配線**）-------------------------------
 
+def _split_ref(exp) -> str:
+    """`falsified_if` が名指しすべき、**振り分けの実物の在りか**。
+
+    ここは長らく `f"script_writer.{exp.name}"` のべた書きでした
+    （2026-08-27 まで、振り分けが全部 `src/script_writer.py` にあったから）。
+    **`slide_pace` は `src/pipeline.py` にあります** —— 刻みは台本の話ではなく
+    絵を何枚に割るかの話で、`script_writer` には置き場所がありません。
+
+    **べた書きのままだと、前提の側に嘘の在りかを書かせることになります**
+    （検査を通すために `script_writer.slide_pace` と書く ＝ 読んだ回が
+    そこを開いて見つからない）。**在りかは実物から引くこと。**
+    """
+    fn = exp.split
+    # **包み（`ab_split._pace_form`）は自分の中身の在りかを持っています。**
+    # 持っていなければ、その関数自身の在りかが答えです。
+    ref = getattr(fn, "split_ref", None)
+    if ref:
+        return str(ref)
+    mod = getattr(fn, "__module__", "").rsplit(".", 1)[-1]
+    return f"{mod}.{fn.__name__}"
+
+
+
 def test_走っている実験は全部_hypotheses_から引ける():
     """`EXPERIMENTS` に足したのに yaml に無い（またはその逆）を止める。"""
     text = (ROOT / "config" / "hypotheses.yaml").read_text(encoding="utf-8")
-    for name in EXPERIMENTS:
-        assert f"script_writer.{name}" in text, f"{name} が hypotheses.yaml に居ません"
-    for name in re.findall(r"script_writer\.(\w+)` が", text):
+    for name, exp in EXPERIMENTS.items():
+        # **在りかは実物から引きます**（`_split_ref` の docstring）。
+        assert _split_ref(exp) in text, f"{name} が hypotheses.yaml に居ません"
+    # **`script_writer.` だけを拾わないこと**（2026-08-27）——
+    # `slide_pace` は `src/pipeline.py` に在ります。
+    # **`.py` を除くこと**: 帳面には `src/pipeline.py` という**ファイル名**も
+    # 出てくるので、除かないと `py` という名前の実験を探しにいきます
+    # （この回にいちど落ちました）。
+    for name in re.findall(r"(?:script_writer|pipeline)\.(?!py\b)(\w+)` が", text):
         assert name in EXPERIMENTS, f"{name} が EXPERIMENTS に登録されていません"
 
 
@@ -165,7 +194,7 @@ def test_期限は_yaml_と同じ():
     data = yaml.safe_load((ROOT / "config" / "hypotheses.yaml").read_text(encoding="utf-8"))
     for exp in EXPERIMENTS.values():
         hit = [h for h in data["hypotheses"]
-               if f"script_writer.{exp.name}" in str(h.get("falsified_if", ""))]
+               if _split_ref(exp) in str(h.get("falsified_if", ""))]
         assert len(hit) == 1, f"{exp.name} の前提が {len(hit)}件"
         assert str(hit[0]["deadline"]) == exp.deadline.isoformat()
 
@@ -183,7 +212,7 @@ def test_yaml_の条件に作った時刻の縛りが書いてある():
     data = yaml.safe_load((ROOT / "config" / "hypotheses.yaml").read_text(encoding="utf-8"))
     for exp in EXPERIMENTS.values():
         hit = [h for h in data["hypotheses"]
-               if f"script_writer.{exp.name}" in str(h.get("falsified_if", ""))][0]
+               if _split_ref(exp) in str(h.get("falsified_if", ""))][0]
         cond = str(hit["falsified_if"])
         assert f"{exp.landed:%Y-%m-%d}" in cond or "より後に作った本だけ" in cond, exp.name
         assert "より後に作った本だけで数えること" in cond, exp.name

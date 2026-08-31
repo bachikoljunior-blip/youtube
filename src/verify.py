@@ -21,6 +21,7 @@ from pathlib import Path
 
 from . import narrated
 from . import forms
+from . import frames
 from .subtitles import _NUM_TOKEN, _is_katakana
 from .util import require, run
 from .yomi import remaining_risks
@@ -200,6 +201,68 @@ def _check_slide_hold(work: Path, duration: float) -> list[str]:
         "**離脱は 4.7〜5.7秒 に来ます。**"
         "`visuals.reveal_variants` が割れる形（bars・rows・items、"
         "または stat＋note）にすること"
+    ]
+
+
+#: **完成した図が画面に残らなければならない秒数**（2026-08-27 に足した）。
+#: `src/pipeline.SHORT_SLIDE_SECONDS` と同じ 2.5秒。**別の数にしないこと** ——
+#: あちらが割り当て、こちらが確かめる、同じ1つの約束です。
+MIN_COMPLETE_SECONDS = 2.5
+
+
+def _check_reveal_hold(work: Path) -> list[str]:
+    """**説明している図が、説明のあいだ画面に居るか。**（2026-08-27）
+
+    ## なぜ要るか（オーナーの指摘）
+
+    > **「動画についてまず何言ってるか分かんないね。音声だけで理解できない
+    > 説明なのに画面はすぐ切り替わるし。説明を理解するにはかなり視聴者側の
+    > 推論が必要だと思う。」**
+
+    このファイルの速さの検査は、2026-08-27 まで**全部が上限**でした:
+
+        MAX_SECONDS_PER_PICTURE = 5.0    1枚が止まってよい上限
+        MAX_SECONDS_PER_SLIDE  = 12.0    1文あたりの上限
+        MAX_SHORT_SECONDS      = 70.0    尺の上限
+
+    **下限は1つもありません。** 0.3秒 のコマは全部 通ります。そのうえ、
+    上限に落ちたときの文言は「**セグメントを増やして画を動かすこと**」
+    「`reveal_variants` が割れる形にすること」で、**速いほうへ押しています。**
+    つまりオーナーが見た形は、検査を通った結果ではなく、**検査が作った形**です。
+
+    `reveal_variants` は図を「要素を1つずつ足す」コマ列に割り、
+    **完成形は最後の1コマにしかありません。** 等分だと、6秒の文は
+    3コマ × 2秒 で、**完成形が居るのは最後の2秒**です。読み上げが
+    その図について話しているあいだ、画面には未完成の図しかありません。
+
+    ここで見るのは1つだけ ——
+    **各文の完成形が `MIN_COMPLETE_SECONDS` 以上 画面に残っているか。**
+
+    `slide_complete.json` が無ければ何も言いません（長尺・古い build）。
+
+    **覆る条件**: 完成形を長く置くほうが `engaged` を下げると実測で出たとき
+    （`config/hypotheses.yaml` の `reveal_hold` が測っています）。
+    """
+    secs_path, idx_path = work / "slide_seconds.json", work / "slide_complete.json"
+    if not secs_path.exists() or not idx_path.exists():
+        return []
+    try:
+        seconds = [float(x) for x in json.loads(secs_path.read_text(encoding="utf-8"))]
+        idx = [int(x) for x in json.loads(idx_path.read_text(encoding="utf-8"))]
+    except (json.JSONDecodeError, TypeError, ValueError) as exc:
+        return [f"slide_complete.json / slide_seconds.json が読めない: {exc}"]
+    short = [(i, seconds[i]) for i in idx
+             if 0 <= i < len(seconds) and seconds[i] + 1e-6 < MIN_COMPLETE_SECONDS]
+    if not short:
+        return []
+    worst = min(short, key=lambda p: p[1])
+    return [
+        f"**説明の相手の図が {worst[1]:.1f}秒 で消えている**"
+        f"（下限 {MIN_COMPLETE_SECONDS:.1f}秒 / 該当 {len(short)}文 / 全{len(idx)}文）。"
+        "`reveal_variants` の**完成形**は最後の1コマにしかないので、"
+        "ここが短いと**読み上げが説明しているあいだ、画面に完成形がありません**。"
+        "`pipeline.reveal_durations` が割り当てます —— "
+        "**等分に戻っていないか**を見ること"
     ]
 
 
@@ -900,7 +963,89 @@ def _check_adjacent_repeat(script: dict | None) -> list[str]:
                 f"（棒が{len(grew)}本増えるだけ: {'・'.join(grew[:3])}…）。"
                 "**同じ図の描き直しになっている。** 軸か切り口を変えるか、1枚にまとめること"
             )
+        # 3. **隣り合う表が、枠も行数も同じで、本文まで似ている**（2026-08-29 に足した）
+        for p in _same_shaped_table(i, va, vb):
+            problems.append(p)
     return problems
+
+
+#: 隣り合う表を「同じ絵」とみなす、本文の一致率のしきい値。
+#:
+#: **1〜2 は見出しと棒しか見ておらず、表は素通りでした。** 2026-08-29 の実測で、
+#: 長尺の生成失敗の主因が `_check_slides` の
+#: 「隣り合う図解が**見た目には変わっていない**」に入れ替わっており
+#: （08-25 以降 2/3。`config/hypotheses.yaml` の判定）、その落ちた組は
+#: **どちらも表** —— 見出し行が同じ・行数も同じで、**桁の並びだけが違う**ものでした:
+#:
+#:     6枚目  亡くなった日 / 未支給の月数 / 未支給年金の額
+#:            1日 3か月 450000円 ／ 10日 3か月 450000円 ／ 13日… ／ 14日…
+#:     7枚目  亡くなった日 / 未支給の月数 / 未支給年金の額
+#:            15日 1か月 150000円 ／ 16日… ／ 20日… ／ 28日…
+#:     → 128px の灰色で比べた差は **画面の 0.60%**（門は 1.0%）
+#:
+#: **これは段階表示ではありません。** `visuals.reveal_variants` が作る
+#: 「行が1つずつ増える」組は**行数が違う**ので、ここには当たりません。
+#:
+#: **しきい値の測り方**（`data/critique_queue/*.plan.json` の公開ずみ 540本）:
+#:
+#:     隣り合う table で見出し行が同一                  924組  ← 段階表示。**当てない**
+#:       そのうち行数も同じ                              18組
+#:         本文の一致率が 70% 以上                        0組   ← **誤報 0/540**
+#:     この回に落ちた 1組                                       **73.8%**
+#:
+#: 公開ずみ側の最大は **60.8%** で、落ちた側は **73.8%**。あいだは 13ポイント 空いています。
+#: **ただし当たりは n=1 です。** しきい値をこの1件から置いていることを隠しません。
+#:
+#: **覆る条件**: (1) 誤報が1件でも出たら戻すこと（通る台本が書き直しの3回を
+#: 使い切ると、かえって歩留りが下がります —— `script_writer.long_script_problems`
+#: の「厳しくしないこと」）。(2) 2件目の当たりが 70% を下回ったら、
+#: しきい値を下げるのではなく**別の量**が要ります（一致率は「ink がどれだけ
+#: 塗り替わるか」の代理でしかありません）。
+#: **検査**: `tests/test_adjacent_table_shape.py`。
+SAME_TABLE_TEXT_RATIO = 0.70
+
+
+def _same_shaped_table(i: int, va: dict, vb: dict) -> list[str]:
+    """隣り合う2枚が「枠も行数も同じで、本文まで似ている表」なら1件 返す。
+
+    **レンダリング前に分かるものを、レンダリング後まで持ち越さないため**です
+    （`script_writer.long_script_problems` の冒頭と同じ理由 ——
+    ここで言えば同じセッションが3回まで書き直せますが、`_check_slides` で
+    落ちると `claude -p` と合成とレンダリングを全部 捨てます）。
+    """
+    import difflib
+
+    if va.get("kind") != "table" or vb.get("kind") != "table":
+        return []
+
+    def norm(text: str) -> str:
+        return "".join(str(text or "").split()).replace("　", "")
+
+    ha = [norm(h) for h in (va.get("headers") or [])]
+    hb = [norm(h) for h in (vb.get("headers") or [])]
+    if not ha or ha != hb:
+        return []
+    ra = va.get("rows") or []
+    rb = vb.get("rows") or []
+    # **行数が違えば段階表示**（`visuals.reveal_variants` は先頭からの部分列）。
+    # 実測で 924組 中 906組 がこちらです。**当てません。**
+    if not ra or len(ra) != len(rb):
+        return []
+
+    ta = "".join(norm(c) for row in ra for c in row)
+    tb = "".join(norm(c) for row in rb for c in row)
+    if not ta or not tb:
+        return []
+    ratio = difflib.SequenceMatcher(None, ta, tb).ratio()
+    if ratio < SAME_TABLE_TEXT_RATIO:
+        return []
+    return [
+        f"{i}枚目と{i + 1}枚目の表が、見出し行（{' / '.join(ha)}）も行数（{len(ra)}行）も同じで、"
+        f"本文の {ratio * 100:.0f}% が同じ文字です。"
+        "**離れて見ると同じ絵に見えます**（実測でこの形は画面の1%も塗り替わりません）。"
+        "片方の**列そのもの**を変えるか（別の量を並べる）、"
+        "2枚を1枚の表にまとめて、行を増やすこと"
+    ]
 
 
 def _plan_frames(work: Path, script: dict | None,
@@ -1031,6 +1176,162 @@ def _check_narrated_shown(work: Path, script: dict | None,
                 "**耳で言って目に出していない数です。** 棒か行か見出しに足すこと"
             )
     return problems
+
+
+#: **一息（1コマ）で、耳に持たせてよい数の上限**（2026-08-27 に足した）。
+#:
+#: 5 にしてある理由は下の `_check_ear_load` の実測にあります。
+#: **4 にしないのは、書き直しの輪が3回しかないから**です
+#: （`long_script_problems` の冒頭「厳しくしないこと —— ここで余分に落とすと、
+#: 通る台本が書き直しの回数を使い切って、かえって歩留りが下がります」）。
+EAR_LOAD_MAX = 5
+
+#: **1回の書き直しで、この検査が出す指摘の上限**（2026-08-27）。
+#:
+#: 控え539本に当てた実測では、**捕まる 75本（14%）の1本あたり 6.9件**。
+#: 書き直しの輪は **3回しかありません**（`script_writer.generate`）。
+#: 全部を並べると、他の検査（`_check_not_repeat` など）の指摘が
+#: **同じ画面の下のほうへ押し出されます** —— この repo が何度も踏んでいる
+#: 「言っているのに読まれない」の形です。
+#: **重い順に3件**だけ出し、残りは件数で言います（**消していません**）。
+EAR_LOAD_REPORT = 3
+
+
+def _check_ear_load(script: dict | None) -> list[str]:
+    """**一息で、耳がいくつ数を持たされているか**（2026-08-27・オーナー指摘）。
+
+    ## 出どころ（オーナー原文・2026-08-27 21:0x）
+
+    > 「一つの考えなんだけどさ、動画についてまず何言ってるか分かんないね。
+    > **音声だけで理解できない説明なのに画面はすぐ切り替わるし。**
+    > 説明を理解するにはかなり視聴者側の推論が必要だと思う。」
+
+    ## `narrated.py` と向きが逆です（**両方 要ります**）
+
+        narrated.py   耳が言った数 → **絵に出ているか**（出ていないと検算できない）
+        ここ          耳が言った数 → **いくつ持たされるか**（多いと追えない）
+
+    `narrated` を通した本は「全部 画面に出ている」ので**目では追えます**。
+    ところが**耳だけでは追えません** —— そして
+    `status.py` の実測では、再生の **99.8% が `SHORTS_FEED`**、
+    1再生あたり **20秒（尺の56%）**。**多くの視聴者は最後まで見ていません。**
+
+    ## 数え方 —— **見出しの数も数えます**
+
+    `narrated.numbers()` をそのまま使うので、「2人で16万5千円」は **2個**です
+    （「2人」と「16万5千円」）。**耳はどちらも持たされる**ので、そうしています。
+    つまり上限 5個 は、おおよそ「**見出しと値の組が2つを超えたところ**」です。
+
+    ## 実測（`data/critique_queue/` の控え **539本・3,834コマ**）
+
+        1コマあたりの数    中央値 2.0 ／ 平均 2.21 ／ **最大 16**
+        4個以上            781コマ（20.4%）／ 194本（36%）
+        **5個以上**        **514コマ（13.4%）／ 75本（14%）**
+        6個以上            371コマ（ 9.7%）／ 62本（12%）
+
+    いちばん重い1コマ（`xaciR1LbaEs`・**この日に予約した本**）:
+
+        「23パーセントは12万9670円が引かれて25万7600円、33.48パーセント。
+          33パーセントは16万9210円が引かれて21万8060円、43.69パーセント。…」
+
+    **16個。** 画面には全部 出ています（`narrated` を通っています）。
+    **耳では1つも残りません。**
+
+    ## 直し方は「消す」ではなく「置き場所を変える」
+
+    列挙は**画面（`table` / `chart`）の仕事**です。読み上げが言うのは
+    **形**（どちらが大きいか・どこで逆転するか・伸びが鈍るのはどこか）と、
+    **代表の1つか2つ**。`CLAUDE.md` の根幹（「前提と計算式を、画面と説明欄に
+    **全部**出す」）は1文字も緩みません —— **画面には全部 出したまま**、
+    耳の負荷だけを下げます。
+
+    ## なぜ `verify.run` の門にしないか
+
+    **誤報は不投稿**で、しかもこれは「作り直せば直る種類」です。だから
+    `script_writer.{long,short}_script_problems` に置いて、
+    **生成中に3回まで書き直させます**（`_check_narrated_shown` と同じ考え方。
+    あちらの docstring「`verify` で落とすと1本 捨てになる」）。
+
+    ## 覆る条件
+
+    - **歩留りが落ちたら**、まず書き直しの指示文（`LONG_FIX_GUIDANCE` /
+      `SHORT_FIX_GUIDANCE`）が効いていないほうを疑うこと。それでも落ちるなら
+      `EAR_LOAD_MAX` を 6 へ上げる（**外さない** —— 外すと測れなくなります）
+    - **歩留りが落ちないなら 4 へ下げること。** 上の実測では
+      5→4 で当たるコマが 13.4% → 20.4% に広がります
+    - 1本あたり再生（`per_video`）がこれで動かないなら、
+      縛っているのは耳の負荷ではありません。**そのときは
+      `docs/JOURNAL.md` に測った数を書いて、この検査を弱めること**
+
+    ## **隣の仮説は、測って捨てました**（2026-08-28。**検査を足していません**）
+
+    同じオーナー指摘の後半「説明を理解するにはかなり視聴者側の推論が必要」から、
+    2026-08-27 の調査は**もう1つ**の説明を出しています ——
+    **「画面を見ないと指示対象が分からない語で埋まっている」**
+    （実例 `data/critique_queue/E53Lh0NsFkw.json` のコマ12: 4文のあいだに
+    「帯の左端／右端／左端／右端／帯の幅／この2つの線」）。
+    ただしあちらは**数を出していません**（「語彙の取り方で 24〜118回 に散る」ので
+    再現しなかった）。**残した宿題は「語彙一覧を全部 書き出したうえで数えろ」**でした。
+
+    **書き出して数えました。控え 555本・3,984コマ**（`data/critique_queue/`）:
+
+        狭い語彙  1個以上 **95コマ（2.4%）／ 52本（9.4%）**  0個の本 503本
+        広い語彙  1個以上 **359コマ（9.0%）／125本（22.5%）** 0個の本 430本
+
+        狭い = 左端|右端|左側|右側|左から|右から|上のほう|下のほう|真ん中|中央の
+               |上から\\d+|下から\\d+|一番上|一番下|いちばん上|いちばん下
+               |(この|その|あの|こちらの)(線|棒|帯|矢印|枠|列|行|欄|軸|点|グラフ|図|表|色|部分|ところ)
+               |2つの線|2本の棒|画面の|(図|表|グラフ)の(ように|とおり)|ご覧のとおり|見てのとおり
+               |(青|赤|緑|黄色|オレンジ|灰色|グレー)(い)?(の|い)?(線|棒|帯|部分|ところ|ほう|方)
+        広い = 狭い ＋ 帯|棒|棒グラフ|グラフ|この表|その表|縦軸|横軸|凡例|矢印|色分け|ハイライト|太字|囲み
+
+        いちばん多い語: 帯 246 ／ 棒 102 ／ この表 32 ／ この帯 13 ／ この行 9 ／ 真ん中 9
+
+    **`E53Lh0NsFkw` のコマ12（5個）は、3,984コマ中の最大級です。**
+    あの1コマは典型ではなく、**上位 0.1% の外れ値**でした。
+
+    **3つの説明を同じ物差しで並べると、こうなります:**
+
+        コマが読み切れない   ショート 2.27秒/コマ → **88.5%** が読み切れない（08/27 の実測）
+        耳の負荷（この検査）  5個以上 **13.4%** のコマ ／ 14% の本
+        画面ごしの指示語      **2.4〜9.0%** のコマ ／ 9.4〜22.5% の本
+
+    **桁が1つ違います。** だから**指示語の検査は足していません** ——
+    `src/alerts.py` の「一覧が当たりを含まないまま育つ」に当たる形だからです。
+    **縛っているのは、まず『読み切れない』のほう**で、そこは
+    `slide_pace` の A/B（1コマ 2.5秒 対 4.5秒・判定 2026-09-24）が既に振っています。
+
+    **覆る条件**: `slide_pace` が閉じて 1本あたり再生が動かず、
+    この検査（耳の負荷）でも動かないなら、**残るのはここです。**
+    そのときは上の広い語彙で門を作ること（**語彙はここに書いてあるので、
+    数え直しから始めなくて済みます**）。
+    """
+    if not script:
+        return []
+    heavy: list[tuple[int, str]] = []
+    for seg in script.get("segments", []):
+        line = str(seg.get("narration") or "")
+        vals = {v for _t, v, _s in narrated.numbers(line)}
+        if len(vals) >= EAR_LOAD_MAX:
+            heavy.append((len(vals), line))
+    if not heavy:
+        return []
+    heavy.sort(key=lambda x: -x[0])
+    out = [
+        f"読み上げ「{line[:40]}…」が、一息で **{n}個** の数を耳に載せています"
+        f"（上限 {EAR_LOAD_MAX - 1}個）。**列挙は画面（table / chart）の仕事**です —— "
+        "読み上げは『どちらが大きいか・どこで逆転するか・伸びが鈍るのはどこか』の"
+        "**形**と、代表の1〜2個だけにして、残りの数は visual の rows / bars に移すこと。"
+        "**画面から数を減らさないこと**（減らすと検算できなくなります）"
+        for n, line in heavy[:EAR_LOAD_REPORT]
+    ]
+    if len(heavy) > EAR_LOAD_REPORT:
+        out.append(
+            f"（同じ形が **ほか {len(heavy) - EAR_LOAD_REPORT}件** あります。"
+            "**重い順に上から出しています** —— 台本ぜんたいで、"
+            "列挙している文を『形＋代表1〜2個』へ直してください）"
+        )
+    return out
 
 
 def _check_adjacent_frames(work: Path) -> list[str]:
@@ -1685,6 +1986,151 @@ def _check_yomi(script: dict | None) -> list[str]:
     return problems
 
 
+#: **人間の職業・資格の名前**。ここに無い肩書きは素通りします（下の「覆る条件」）。
+_PROFESSION_WORDS = (
+    "経理", "人事", "労務", "総務", "財務",
+    "税理士", "公認会計士", "会計士", "社会保険労務士", "社労士",
+    "行政書士", "司法書士", "弁護士", "弁理士", "中小企業診断士",
+    "ファイナンシャルプランナー", "ファイナンシャル・プランナー", "FP",
+    "銀行員", "証券マン", "保険外交員", "保険募集人",
+    "キャリアアドバイザー", "キャリアコンサルタント", "採用担当",
+    "コンサルタント", "アドバイザー", "専門家", "プロ",
+    # **2026-08-30 夜に足した6語。** `python -m src.descriptions` を書いた回に
+    # 10通りの言い換えを当てたら、当たったのは旧 persona の原文 1件だけでした。
+    # 「元・国税調査官」はこの docstring の「覆る条件」2 が**例として挙げていた語**で、
+    # **例に書いてあるのに一覧に無い**まま、解除条件1・2 が閉じていました。
+    "国税調査官", "調査官", "年金事務所", "ハローワーク", "労基署", "税務署",
+)
+_PROF = "|".join(re.escape(w) for w in _PROFESSION_WORDS)
+#: 「元・**事業会社の**経理」の、あいだに入る所属。**`元の経理` を拾わないため**に、
+#: 組織を表す語で終わるものだけを通します（`元の` は下の `の` に当たりません）。
+_ORG = r"(?:[^\s。、！？\n]{0,10}?(?:社|会社|企業|法人|銀行|役所|署|庁|事務所|部|課)の)?"
+#: 話し手が自分を指す語。**視聴者を指す語（あなた・皆さん）は入れないこと。**
+_FIRST_PERSON = "私|僕|俺|自分|筆者|当方|わたし|ぼく"
+
+#: 「人間の専門家として語っている」形。**当てるのは話し手の側だけ**です。
+#:
+#: 落とさないもの（実例で確かめた・下の docstring の「落とさないもの」）:
+#:   「税理士に確認してください」  ← 相手が専門家。話し手の名乗りではない
+#:   「会社員として働く人は」      ← 主語が視聴者。職業語も一覧に無い
+#:   「専門家にご確認ください」    ← 説明欄の定型文（config/channel.yaml の footer）
+_HUMAN_EXPERT_PATTERNS: tuple[tuple[str, str], ...] = (
+    # **`元` と職業のあいだに所属が入る形を、1件も見ていませんでした**
+    # （2026-08-30 夜）。旧 persona の原文がまさにその形
+    # （「元・**事業会社の**経理／人事」）で、**当たっていたのは
+    # 「制度を実務で回してきた」のほう**でした ——
+    # つまり `元・<会社>の<職業>` は、閉じたときから素通りです。
+    (rf"元[・\s]?{_ORG}(?:{_PROF})",
+     "「元・<職業>」と、実在しない経歴を名乗っています"),
+    # **語尾のあいだに年数などが挟まる形を取りこぼしていました**（同上）。
+    # 「私は経理として**10年**働いていました」——
+    # `として` の直後に `でした|です|…` を要求していたため、素通り。
+    (rf"(?:{_FIRST_PERSON})[はがも、]?[^。！？\n]{{0,14}}(?:{_PROF})"
+     rf"(?:として|の担当|の仕事|畑|部門|歴|職)?[^。！？\n]{{0,10}}"
+     rf"(?:でした|です|だった|をしてい|を担当|にい|働い|勤め|やってい|やってき)",
+     "一人称で職業・肩書きを名乗っています"),
+    # 「**人事部にいたころ**の話をします」—— 一人称が無くても経歴の名乗りです。
+    (rf"(?:{_PROF})(?:部|課|畑|担当)?[にへ](?:い|居)(?:た|ました)",
+     "その職に就いていたと書いています"),
+    # 「**経理の実務経験**から言うと」—— 職業＋経験の名乗り。
+    (rf"(?:{_PROF})(?:として)?の(?:実務|現場)?経験",
+     "職業としての経験を持っていると書いています"),
+    (rf"(?:{_PROF})として(?:の)?(?:経験|立場|視点|目線|感覚)",
+     "職業の立場から語る形になっています"),
+    (r"(?:専門家|プロ)として",
+     "専門家を名乗っています"),
+    (rf"(?:実務|現場)[でをのは][^。！？\n]{{0,12}}"
+     rf"(?:回して|担当して|扱って|やって|見て|回した|担当した)"
+     rf"(?:き|い)?(?:た|ました|ています)",
+     "実務経験を持っていると書いています"),
+    (rf"(?:{_FIRST_PERSON})の(?:経験|実務|現場|担当)(?:上|では|から|だと)",
+     "自分の経験を根拠にしています"),
+    (rf"(?:{_FIRST_PERSON})[はがも、]?[^。！？\n]{{0,14}}"
+     rf"(?:年間|年ほど|年)[、]?[^。！？\n]{{0,8}}(?:勤め|在籍し|担当し|やってき)",
+     "勤続年数という経歴を名乗っています"),
+)
+
+
+def _check_no_human_expert_claim(script: dict | None) -> list[str]:
+    """**人間の専門家を装っていないか**（2026-08-30 に足した。**停止の解除条件 1・2**）。
+
+    ## なぜ要るか
+
+    2026-08-30、オーナーが `AUTOMATION_PAUSED.md` を `origin/main` へ直接 push して、
+    いまの作り方を止めました。挙がっている理由の中心は次の2行です。
+
+        - AI-generated personas presenting themselves as human experts on sensitive topics
+        - AI personas providing financial guidance or interpreting legal rules
+
+    実物がありました。`config/channel.yaml` の `persona` が
+    **「元・事業会社の経理／人事で、制度を実務で回してきた立場」**と名乗り、
+    `src/script_writer.py:1086` から**毎本の台本の指示文**に入っていました。
+    **そんな人はいません。** 合成音声が、税・保険・キャリアという
+    **視聴者が自分の金で動く題**を、架空の実務経歴を根拠に語る形です。
+    `CLAUDE.md` が「手段として成立しない」と名指ししている2つの片方
+    （**なりすまし**）でもあります。
+
+    ## **設定を直しただけでは閉じません。だからここに置きます**
+
+    `persona` は**台本を書かせる指示文の一部**でしかありません。
+    書き手（LLM）は、そこに無い経歴を自分で足すことがあります ——
+    「元・経理」を消しても、narration に
+    **「私が担当していたころは」**と書かれれば、視聴者から見える形は同じです。
+
+    **設定は入口、ここは出口です。** 出口に置くと、
+    `persona` が将来どう書き換わっても、**出来上がった台本のほうで落ちます。**
+    `script_only_problems()` に入れてあるので、**レンダリングの前**に当たります
+    （動画1本 15分を焼いてから落とすのではなく、台本の時点で作り直しへ回る）。
+
+    ## 落とさないもの（**視聴者と第三者の側は当てません**）
+
+        「税理士に確認してください」    相手が専門家。話し手の名乗りではない
+        「会社員として働く人は」        主語が視聴者
+        「専門家にご確認ください」      説明欄の定型文（`channel.yaml` の footer）
+
+    ## 覆る条件（3つ）
+
+    1. **実在する人間が実名で出演し、その経歴が事実になったら**、これは
+       「装う」に当たりません。**そのときはこの検査ごと外すこと**
+       （`config/channel.yaml` の `persona` の「覆る条件」と対です）
+    2. **語の一覧（`_PROFESSION_WORDS`）は網羅ではありません。**
+       ここに無い肩書き（例:「元・国税調査官」の *調査官*）は素通りします。
+       **踏んだら足すこと** —— 網羅を先に書こうとすると、
+       視聴者を指す語まで拾って偽陽性で投稿が止まります（そちらのほうが高い）
+    3. **偽陽性が出て投稿が止まったら、パターンを狭めること。**
+       `CLAUDE.md`「投稿が途切れるのが最大の損失」より —— ただし
+       **`persona` に経歴を戻すことでは直さないこと。** それは元の穴です
+    """
+    if not script:
+        return []
+    problems: list[str] = []
+    fields: list[tuple[str, str]] = [
+        ("タイトル", str(script.get("title") or "")),
+        ("説明欄", str(script.get("description_body") or "")),
+    ]
+    for alt in script.get("title_alternatives") or []:
+        fields.append(("タイトルの別案", str(alt or "")))
+    for i, seg in enumerate(script.get("segments") or []):
+        fields.append((f"セグメント{i + 1}", str(seg.get("narration") or "")))
+        for line in _visual_texts(seg):
+            fields.append((f"セグメント{i + 1} の画面", str(line or "")))
+
+    for where, text in fields:
+        if not text:
+            continue
+        for pattern, why in _HUMAN_EXPERT_PATTERNS:
+            hit = re.search(pattern, text)
+            if hit:
+                problems.append(
+                    f"**{where}が人間の専門家を装っています**（{why}）: "
+                    f"「{hit.group(0)}」。"
+                    "**このチャンネルに実在の経歴はありません。**"
+                    "根拠は経験ではなく、置いた前提と計算式のほうに書くこと"
+                    "（AUTOMATION_PAUSED.md の解除条件 1・2）")
+                break
+    return problems
+
+
 def _check_form_tag(script: dict | None, duration: float) -> list[str]:
     """**長尺に `#Shorts` の札を付けて出さない**（2026-08-25 に実測で見つけた）。
 
@@ -1722,6 +2168,253 @@ def _check_form_tag(script: dict | None, duration: float) -> list[str]:
         print(f"[verify] 注意: {duration:.0f}秒 のショートに `#Shorts` がありません"
               "（投稿は止めません。1日の本数の上限から漏れます）")
     return []
+
+
+#: 直近 何本と見比べるか。**ポリシーの原文が「続けて数本視聴した後」と言っている**ので、
+#: 生涯の平均ではなく**並び**を見ます（`src/frames.recent()`）。
+FRAME_WINDOW = 20
+
+#: 直近の窓のうち、同じ枠が何割を超えたら落とすか。
+#:
+#: **0.5 なのは、振り分けが4通りだからです。** 期待は 25% で、20本の窓で
+#: 半分を超える確率は二項分布で **1.4%** —— つまり「たまたま偏った」で
+#: 落ちるのは 100本に1〜2本、その1本は言い回しを変えれば通ります。
+#: **0.6 や 0.7 にすると、いまの控えの 61%（「明日やる」）が素通りします。**
+FRAME_MAX_SHARE = 0.5
+
+#: 窓がこれより浅ければ**何も言いません**。
+#: `src/bars.py` と同じ理由 —— 新しい実行環境では控えがゼロになることがあり、
+#: そこで「比較対象が無い＝合格」ではなく「**判定していない**」を明示するためです。
+FRAME_MIN_HISTORY = 8
+
+
+def _check_frame_repeat(script: dict | None, portrait: bool,
+                        topic_id: str = "") -> list[str]:
+    """**直近の本と同じ枠で始まって・終わっていないか**（2026-08-30・**解除条件3**）。
+
+    ## なぜ要るか
+
+    `_check_not_repeat` は **chart の数値**、`_check_adjacent_repeat` は
+    **1本の中の隣り合う2枚**を見ています。**どちらも「入り方と締め方」を見ていません。**
+
+    2026-08-30 に測ったら、そこが揃っていました（`python -m src.frames`）:
+
+        長尺 134本   1行目の頭4文字  「計算しま」 **84%** ＝ 実効 **2.4本ぶん**
+                     最終行の頭4文字 「明日やる」 **61%** ＝ 実効 **3.8本ぶん**
+        ショート 558本 最終行の頭4文字「あなたの」 **45%**
+                     最終行の末尾6文字「てください。」**40%**
+
+    **中身は散っています**（題の族 526・出だしの形 689／694本。
+    `legacy_corpus.variety()`）。**揃っていたのは枠だけ**で、
+    YouTube が収益化の対象外に置くのは、まさにそこです ——
+    "generic or unoriginal templates **giving the impression of mass production**"。
+
+    ## **入口だけでは閉じません**（解除条件1・2 と同じ形）
+
+    入口は `script_writer.opening_form()` / `closing_form()` の振り分けです。
+    **が、振り分けは指示文の一部でしかなく、書き手はそこから外れられます。**
+    実際、揃っていた 84% / 61% / 45% は**指示文に直書きされた文句の写し**でした。
+    **入口だけを塞ぐと、次に指示文を書き換えた回が黙って穴を開け直せます。**
+
+    だから出口にも同じ門を置きます。**`script_only_problems()` に入れてあるので、
+    22本のクリップを焼く前**に当たります。
+
+    ## 何と比べるか
+
+    **直近 {FRAME_WINDOW}本の控え**（同じ向きだけ）。生涯の平均ではありません ——
+    ポリシーの原文が「同じチャンネルの動画を**続けて数本視聴した後**、
+    繰り返しのように感じられる」と言っているのは、並びの話だからです。
+
+    **`topic_id` を渡すこと。** 渡さないと、撃ち直した自分の前の案を相手にします
+    （`script_writer.used_bars()` が同じ理由で同じことをしています）。
+
+    ## **この門が当たる所と、当たらない所**（2026-08-30 に実測した。**隠さない**）
+
+    控えの旧い本を「これから出す本」として当て直すと、こうなりました:
+
+        長尺    80本中 **78本 が落ちる**（1行目「計算しま」が窓の 80%、
+                最終行「明日やる」が 55%）
+        ショート 80本中 **0本**
+
+    **ショートに当たらないのは、閾値が 0.5 で、実測が 45% だからです**
+    （最終行の頭「あなたの」）。**これは見落としではなく、そう決めた結果です** ——
+    0.4 まで下げれば当たりますが、4通りの振り分けでは期待 25% に対し
+    20本の窓で 40% を超える確率が **10%** あり、**10本に1本が
+    「たまたま偏った」で書き直しになります**（1回 約250秒）。
+
+    **だからショート側を締めているのは、この門ではなく入口のほう**です ——
+    `script_writer.CLOSING_RULES` の4通りが**全部「あなたの◯◯は」で
+    始めるなと言っている**ので、割り当ての上限がそのまま 30% になります。
+
+    **覆る条件**: 再開後にショートの最頻が 50% を超えたら、この門が拾います。
+    45% のまま動かないなら、**窓と閾値を一緒に動かすこと**
+    （窓 40本・閾値 0.4 なら誤検知は 2.6%）。片方だけ動かすと誤検知が跳ねます。
+
+    ## **覆る条件**
+
+    - 振り分けの通り数を4から増やしたら、`FRAME_MAX_SHARE` を引き下げること
+      （4通りで 0.5 は「期待の2倍」。8通りなら 0.3 が同じ厳しさです）
+    - 見る場所（頭4文字・末尾6文字）は `src/frames.py` の定数です。
+      **こちらに写さないこと** —— 2か所に置くと、片方だけ動かしたときにずれます
+    """
+    if not script:
+        return []
+    segs = script.get("segments") or []
+    narration = [str(s.get("narration") or "") for s in segs]
+    mine = frames.axes(narration)
+    if not mine:
+        return []
+
+    history = frames.recent(k=FRAME_WINDOW, portrait=portrait, exclude=topic_id)
+    if len(history) < FRAME_MIN_HISTORY:
+        print(f"[verify] 枠の重なりは判定していません（直近の控えが {len(history)}本 で、"
+              f"{FRAME_MIN_HISTORY}本 に足りません）")
+        return []
+
+    sigs = [frames.axes(h.get("narration") or []) for h in history]
+    sigs = [s for s in sigs if s]
+    problems: list[str] = []
+    labels = {"opening": "読み上げ1行目の頭", "closing": "最終行の頭",
+              "closing_tail": "最終行の末尾"}
+    for ax, label in labels.items():
+        same = sum(1 for s in sigs if s.get(ax) == mine[ax])
+        share = same / len(sigs)
+        if share > FRAME_MAX_SHARE:
+            problems.append(
+                f"{label}が {mine[ax]!r} で、**直近{len(sigs)}本のうち {same}本"
+                f"（{share:.0%}）が同じ**です。"
+                f"**続けて数本 見た人には、同じ動画の作り直しに見えます**"
+                f"（YouTube はそれを収益化の対象外にしています）。"
+                f"この本だけ、そこの言い回しを変えること"
+                f"（型そのものは `script_writer.{'opening' if ax == 'opening' else 'closing'}_form()`"
+                f" がテーマIDで決めていて、変えられません）"
+            )
+    problems += _check_screen_frame_repeat(script, history)
+    return problems
+
+
+def _check_screen_frame_repeat(script: dict | None,
+                               history: list[dict]) -> list[str]:
+    """**画面の側**の同じ門（2026-08-30 夜に足した。上の門の続き）。
+
+    ## なぜ別に要るか（**実測で、読み上げより揃っていました**）
+
+    上の門は `frames.axes()` ＝ **読み上げ**しか見ていません。
+    控えの `*.plan.json` を同じ 4文字で測ると、こうです
+    （`python -m src.frames`・API 0単位）:
+
+        長尺 134本    読み上げの最終行の頭「明日やる」 61%
+                      **画面の最後のコマの見出し「明日やる」 83%**（実効 2.1本ぶん）
+        ショート 521本 画面の同じ所が「あなたの」29% ＋「あなたは」25%
+
+    **視聴者が続けて数本 見て最初に気づくのは、耳より目のほうです。**
+    そして解除条件3を閉じた回は、入口（`OPENING_RULES`/`CLOSING_RULES`）も
+    出口（上の門）も**読み上げの文だけ**を相手にしていました ——
+    つまり **「読み上げは4通りに散ったが、画面には同じ見出しが並ぶ」が素通り**します。
+
+    ## 比べ方（上の門と同じ。**定数を写さないこと**）
+
+    窓・閾値・頭の文字数は上と同じものを使います（`FRAME_WINDOW` /
+    `FRAME_MAX_SHARE` / `frames.SCREEN_CLOSE_HEAD`）。
+    **履歴の側は `<video_id>.plan.json`** で、`<id>.json` とは**別々に欠けます**
+    （`build_perf` の註）。読めた本が `FRAME_MIN_HISTORY` に足りなければ、
+    **「合格」ではなく「判定していない」と印字して黙ります**（`src/bars.py` と同じ扱い）。
+
+    ## この門が見ないもの
+
+    **1枚目の `kind`**（実測で長尺もショートも 100% `stat`）は、揃っていても
+    落としません —— 4通りの入り方が**どれも結論の数字を先に言い切れ**と
+    言っているので、そこは維持率の要件そのものです（`frames.screen_axes` の docstring）。
+
+    ## 覆る条件
+
+    - 割った後のコマ（`slides_plan.json`）は見出しに `2/2` や `＋…` が付きますが、
+      **頭4文字は動きません。** 付く場所が頭に変わったら、この門は誤検知します
+    - 画面の軸を増やすなら `frames.SCREEN_AXES` に足すこと。**ここに写さない**
+    """
+    if not script:
+        return []
+    plan = [dict(s.get("visual") or {}) for s in (script.get("segments") or [])]
+    mine = frames.screen_axes([p for p in plan if p])
+    if not mine:
+        return []
+
+    sigs = []
+    for h in history:
+        vid = str(h.get("video_id") or "")
+        if not vid:
+            continue
+        s = frames.screen_axes(frames.plan_of(vid))
+        if s:
+            sigs.append(s)
+    if len(sigs) < FRAME_MIN_HISTORY:
+        print(f"[verify] 画面の枠の重なりは判定していません（直近の控えのうち "
+              f"*.plan.json が読めたのは {len(sigs)}本 で、{FRAME_MIN_HISTORY}本 に足りません）")
+        return []
+
+    problems: list[str] = []
+    for ax in frames.SCREEN_AXES:
+        same = sum(1 for s in sigs if s.get(ax) == mine[ax])
+        share = same / len(sigs)
+        if share > FRAME_MAX_SHARE:
+            problems.append(
+                f"**最後のコマの見出し**が {mine[ax]!r} で、**直近{len(sigs)}本のうち "
+                f"{same}本（{share:.0%}）が同じ**です。"
+                "**読み上げを変えても、画面に同じ見出しが並べば同じ動画に見えます**"
+                "（実測で、画面の側のほうが読み上げより揃っていました: 83% 対 61%）。"
+                "締め方の型（`script_writer.closing_form()`）に合わせて、"
+                "**見出しのほうも書き換えること**"
+            )
+    return problems
+
+
+#: **動画を作らなくても分かる検査**（`check` と `src/pipeline.py` が同じものを撃つ）。
+def script_only_problems(script: dict | None, portrait: bool) -> list[str]:
+    """**script.json だけで判定できる不備。レンダリングの前に当てるためのもの。**
+
+    ## なぜ要るか（2026-08-29 に、同じ本で **2回** 踏んで足した）
+
+    `src/script_writer.generate()` は書き直しの輪を **3回**まわし、
+    それでも残ったときに、こう印字して**台本をそのまま返します**:
+
+        [script] 警告: N件がまだ残っています。パイプラインが合成前に止めます
+
+    **止まりません。** `src/pipeline.py` は、そのあと
+    スライドを焼き、22本のクリップを焼き、音声を合成し、字幕を焼き込んで、
+    **いちばん最後の `check()` で落とします**（実測 **1本 15分**）。
+    `batch_build` は1回 作り直すので、**1本の失敗に 30分**かかります。
+
+    実測（2026-08-29 18:5x・`kouki-jougen-89000-sagaru`）:
+
+        [render] クリップ 22/22 → 字幕焼き込み + 音声合成
+        VerificationError: **前提として『率』を出しているのに、
+                            その値が画面のどこにもありません。**
+
+    **この指摘は `_check_assumption_value_shown(script)` で、引数は script だけ**です
+    —— 動画も画像も見ていません。**16分 前に同じ答えが出せました。**
+
+    ## ここに何を入れるか
+
+    **`check()` が `script` **だけ**を引数に取る検査**です。
+    `work`（焼いた画像・過去の控え）や `duration`（尺）を要るものは入れません
+    —— それらは作らないと分からないので、**早く当てようがありません。**
+
+    **`check()` は、この関数を呼びます。** 並べ直さないこと ——
+    ここと向こうで別々に並べると、**片方だけ増えたときに静かにずれます**
+    （`tests/test_script_gate_before_render.py` が、その日に赤くなります）。
+    """
+    problems: list[str] = []
+    if portrait:
+        problems += _check_short_opening(script)
+    problems += _check_visual_wrap(script, portrait)
+    problems += _check_count_matches(script)
+    problems += _check_adjacent_repeat(script)
+    problems += _check_formula_shown(script)
+    problems += _check_assumption_value_shown(script)
+    problems += _check_yomi(script)
+    problems += _check_no_human_expert_claim(script)
+    problems += _check_frame_repeat(script, portrait)
+    return problems
 
 
 def check(path: Path, video_cfg: dict, min_minutes: float, work: Path,
@@ -1772,11 +2465,18 @@ def check(path: Path, video_cfg: dict, min_minutes: float, work: Path,
     # 代わりに、冒頭が大きい数字1つで始まっているかを見る。
     portrait = height > width
     problems += _check_slides(work, None if portrait else script)
+    # **動画を作らなくても分かるぶんは、1か所にまとめてあります**（2026-08-29）。
+    #     `src/pipeline.py` が**レンダリングの前に**同じ関数を撃つので、
+    #     ここと向こうが別々に並べていると、**片方だけ増えたときに静かにずれます。**
+    #     （実害は `script_only_problems` の docstring。1本 15分 × 2回）
+    problems += script_only_problems(script, portrait)
     if portrait:
-        problems += _check_short_opening(script)
         problems += _check_headline_from_calc(work, script)
         problems += _check_short_pace(script, duration)
         problems += _check_slide_hold(work, duration)
+        # **上限と下限は必ず並べて置くこと**（2026-08-27）。
+        # 片方だけだと、検査そのものが速いほうへ押します（`_check_reveal_hold`）。
+        problems += _check_reveal_hold(work)
         problems += _check_assumptions_on_screen(work)
     # **これは `portrait` の外に出しています**（2026-08-26 に実測して移した）。
     # 中に置いていた間、**長尺は1本も通っていませんでした** ——
@@ -1786,17 +2486,11 @@ def check(path: Path, video_cfg: dict, min_minutes: float, work: Path,
     # **収益化を背負っている側だけが無検査**でした。
     # 誤報は 10件を目で確かめて 0件（詳しくは関数の docstring）。
     problems += _check_narrated_shown(work, script)
-    problems += _check_visual_wrap(script, portrait)
-    problems += _check_count_matches(script)
     problems += _check_title_from_calc(work, script, topic)
     problems += _check_form_tag(script, duration)
     problems += _check_not_repeat(work, script)
-    problems += _check_adjacent_repeat(script)
     problems += _check_adjacent_frames(work)
-    problems += _check_formula_shown(script)
-    problems += _check_assumption_value_shown(script)
     problems += _check_law_citation_verbatim(work, script)
-    problems += _check_yomi(script)
 
     if problems:
         raise VerificationError("投稿前の検査に落ちました: " + " / ".join(problems))

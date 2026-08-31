@@ -52,7 +52,12 @@ ASSUMPTIONS = [
     "掛金は毎年おなじ額を、年のはじめに1回入れたものとして積み上げています",
     "利回りは毎年おなじだけ増えるものとして、0パーセント・3パーセント・5パーセント・7パーセントの複利で計算しています。実際の運用は年ごとに上下します",
     "受け取りは一時金1回で、退職所得控除は掛金を10年・20年・30年・40年 出した場合について計算しています",
-    "会社の退職金や、他の一時金と同じ年に受け取る場合は入れていません。重なると控除を分け合うので出口の税はここより増えます",
+    "上の表は iDeCo を一本で受け取る年の話です。会社の退職金と同じ年に受け取る場合は、"
+    "控除に使う年数が「重ならない期間を合わせた年数」になります"
+    "（会社員の上限・20年・利回り3パーセントなら 20年 が 38年 になり、控除は 8,000,000円 が 20,600,000円）。"
+    "そのため退職金が 12,970,000円 までは出口の税が増えず、そこを超えると増えます",
+    "同じ年ではなく別の年に受け取る場合の年数の調整（受け取る順番と間隔で控除が削られる決まり）は、"
+    "この表に1つも入れていません。ここが言えるのは「同じ年に受け取ったとき」だけです",
     "戻った税は、掛けた各年の年収が変わらないものとして同じ額を年数ぶん足しています",
     "新NISA は掛金の所得控除が無く、受け取るときの税も無いので、この表では所得税・住民税ともに0円として置いています",
     "iDeCo・新NISA とも運用益は非課税なので、同じ利回りなら受け取る前の残高は同じです。差がつくのは入口の控除と出口の税だけです",
@@ -145,6 +150,80 @@ def crossover_rate(premium: int = SALARIED_CAP,
     return None
 
 
+#: 会社の退職手当の標本。**0円は入れません**（払われないなら「同じ年に2つ」が起きない）。
+SCAN_SEVERANCE = (1_000_000, 5_000_000, 10_000_000, 13_000_000,
+                  15_000_000, 20_000_000, 30_000_000)
+
+
+def union_years(service_years: int, years: int,
+                overlap_years: int | None = None) -> int:
+    """**同じ年に2つ受け取るときの、控除を出すための年数。**
+
+    重なっている期間は**二度かぞえません**（所得税法施行令69条）。
+    掛金を出していたあいだ会社にも居たのが普通なので、
+    既定の重なりは短いほう（`min`）です。
+    """
+    if overlap_years is None:
+        overlap_years = min(service_years, years)
+    return service_years + years - overlap_years
+
+
+def same_year_exit(severance: int, premium: int, years: int, rate: float,
+                   service_years: int = 38,
+                   overlap_years: int | None = None) -> dict:
+    """**会社の退職金と iDeCo の一時金を、同じ年に受け取ったときの出口。**
+
+    `ASSUMPTIONS` は長らく「重なると控除を分け合うので出口の税はここより増えます」と
+    書いていて、**いくつ増えるかを1度も計算していませんでした。** ここがその数です。
+
+    `iDeCoに乗った税` は、**退職金だけを受け取ったときの税との差**です
+    （その年に iDeCo を足したことで、いくら増えたか）。
+    `単独なら` は、いま表が出している `exit_tax` の数（iDeCo 一本で受け取る場合）。
+    """
+    bal = balance(premium, years, rate)
+    u = union_years(service_years, years, overlap_years)
+    alone_only = tax(severance, service_years)          # 退職金だけの年
+    together = tax(severance + bal, u)                  # 同じ年に2つ
+    ideco_alone = tax(bal, years)                       # iDeCo だけの年
+    added = together["total"] - alone_only["total"]
+    return {
+        "会社の退職金": severance,
+        "会社の勤続年数": service_years,
+        "iDeCoの年数": years,
+        "控除に使う年数": u,
+        "iDeCoの残高": bal,
+        "2つ合わせた控除": together["deduction"],
+        "別々にとった場合の控除の和": alone_only["deduction"] + ideco_alone["deduction"],
+        "同じ年の税の合計": together["total"],
+        "退職金だけの税": alone_only["total"],
+        "iDeCoに乗った税": added,
+        "単独なら": ideco_alone["total"],
+        "重なりで増えた税": added - ideco_alone["total"],
+    }
+
+
+def same_year_table(premium: int = SALARIED_CAP, years: int = 20,
+                    rate: float = 0.03, service_years: int = 38,
+                    severances: tuple[int, ...] = SCAN_SEVERANCE) -> list[dict]:
+    """会社の退職金の額を刻んで、**重なりで増える税がどこから立つか**を出す。"""
+    return [same_year_exit(s, premium, years, rate, service_years)
+            for s in severances]
+
+
+def same_year_break(premium: int = SALARIED_CAP, years: int = 20,
+                    rate: float = 0.03, service_years: int = 38,
+                    step: int = 500_000, top: int = 60_000_000) -> int | None:
+    """**重なりで増える税が、初めて1円以上になる会社の退職金**。無ければ None。
+
+    ここより下では、控除を分け合っても**まだ控除のほうが後ろにいる**ので、
+    同じ年に受け取っても1円も増えません。
+    """
+    for s in range(0, top + 1, step):
+        if same_year_exit(s, premium, years, rate, service_years)["重なりで増えた税"] > 0:
+            return s
+    return None
+
+
 def check_tables() -> None:
     """繋ぎ方と、表の向きを確かめる。"""
 
@@ -199,6 +278,38 @@ def check_tables() -> None:
     # 6. 控除は年数で伸びること。**伸びなければ主題そのものが消えます。**
     _checks.increases_with(deduction, [10, 20, 30, 40],
                            "年数が伸びたのに退職所得控除が増えていない")
+
+    # 7. **主題その4**: 同じ年に受け取ると、控除に使う年数が「union」になる。
+    #    重なりを二度かぞえないこと（38年 と 20年 が重なっていれば 38年 のまま）
+    if union_years(38, 20) != 38:
+        raise _checks.TableError("重なっている20年を、38年に足してしまっている")
+    if union_years(38, 20, overlap_years=0) != 58:
+        raise _checks.TableError("重なりが0年のとき、年数が足し合わされていない")
+    if union_years(10, 20) != 20:
+        raise _checks.TableError("短いほうの勤続で union が決まってしまっている")
+    #    **控除は「分け合う」より広くなることがある** ——
+    #    iDeCo 単独（20年 = 8,000,000円）より、同じ年（38年 = 20,600,000円）のほうが大きい
+    wide = same_year_exit(1_000_000, SALARIED_CAP, 20, 0.03)
+    _checks.greater(wide["2つ合わせた控除"], deduction(20),
+                    "同じ年に受け取ったときの控除が、iDeCo 単独の控除")
+    if wide["2つ合わせた控除"] >= wide["別々にとった場合の控除の和"]:
+        raise _checks.TableError("重なりを二度かぞえていない側のほうが小さくなっている")
+    #    退職金を増やすほど「重なりで増えた税」は増える（減ってはいけない）
+    _checks.never_decreases(
+        lambda s: same_year_exit(s, SALARIED_CAP, 20, 0.03)["重なりで増えた税"],
+        list(SCAN_SEVERANCE),
+        "会社の退職金が増えたのに、重なりで増えた税が減っている")
+    #    分かれ目は刻みを細かくしても、より手前へ寄るだけ（後ろへ動いたら壊れている）
+    coarse = same_year_break(step=1_000_000)
+    fine = same_year_break(step=10_000)
+    if coarse is None or fine is None:
+        raise _checks.TableError("重なりで税が増え始める退職金が見つからない")
+    if fine > coarse:
+        raise _checks.TableError(
+            f"刻みを細かくしたら分かれ目が後ろへ動いた（{coarse:,} → {fine:,}）")
+    #    分かれ目より下では1円も増えない
+    if same_year_exit(fine - 10_000, SALARIED_CAP, 20, 0.03)["重なりで増えた税"] > 0:
+        raise _checks.TableError("分かれ目の1つ手前で、もう税が増えている")
 
     _checks.unique_by(years_table(), lambda r: r["年数"], "年数")
     _checks.unique_by(rate_table(), lambda r: r["利回り"], "利回り")
@@ -256,3 +367,34 @@ if __name__ == "__main__":
                              ("自営業の上限・30年", SELF_CAP, 30)):
         r = crossover_rate(prem, yrs)
         print(f"  {label:<16} → " + ("見つからない" if r is None else f"利回り {r:.1%}"))
+
+    print("\n=== 会社の退職金と同じ年に受け取ると、控除に使う年数は「重ならない期間を合わせた年数」になる"
+          f"（会社員の上限・20年・利回り3パーセント・勤続38年。分かれ目は10,000円きざみで探す）===")
+    fine = same_year_break(step=10_000)
+    self_fine = same_year_break(premium=SELF_CAP, step=10_000)
+    print(f"  iDeCo を一本で受け取る年なら、控除は加入20年ぶんの {deduction(20):,}円。")
+    print(f"  同じ年に会社の退職金も受け取ると、控除は"
+          f" **{union_years(38, 20)}年ぶんの {deduction(union_years(38, 20)):,}円**"
+          f"（重なっている20年は二度かぞえません）。")
+    print(f"  **足し算ではありません** —— 別々にとった場合の控除の和は"
+          f" {deduction(38) + deduction(20):,}円 で、こちらのほうが"
+          f" {deduction(38) + deduction(20) - deduction(union_years(38, 20)):,}円 大きい。")
+    print("    会社の退職金   控除に使う年数     2つ合わせた控除    iDeCoに乗った税   単独なら    差")
+    for row in same_year_table():
+        print(f"    {row['会社の退職金']:>11,}円"
+              f"      {row['控除に使う年数']:>2}年"
+              f"      {row['2つ合わせた控除']:>11,}円"
+              f"  {row['iDeCoに乗った税']:>10,}円"
+              f"  {row['単独なら']:>8,}円"
+              f"  {row['重なりで増えた税']:>+10,}円")
+    print(f"  **1万円きざみで探すと、増え始めるのは会社の退職金 {fine:,}円 から**です"
+          f"（自営業の上限なら {self_fine:,}円）。それより下では1円も増えません。")
+    print("  **自営業の上限では、同じ年のほうが安くなります** ——"
+          f" iDeCo 単独なら {exit_tax(SELF_CAP, 20, 0.03)['出口の税']:,}円 かかるところ、"
+          f" 退職金 {SCAN_SEVERANCE[0]:,}円 と同じ年なら"
+          f" {same_year_exit(SCAN_SEVERANCE[0], SELF_CAP, 20, 0.03)['iDeCoに乗った税']:,}円。"
+          f" **{-same_year_exit(SCAN_SEVERANCE[0], SELF_CAP, 20, 0.03)['重なりで増えた税']:,}円 安い。**")
+    print("  控除に使う年数が、iDeCo の加入年数ではなく**会社の勤続年数のほうに引っぱられる**からです。")
+    print("  **同じ年にまとめると損、はいつも本当ではありません。**"
+          f" 分かれ目は退職金の額で、この前提では {fine:,}円 です。")
+    print("  ※ 別の年に受け取る場合の年数の調整は、この表に1つも入れていません（`ASSUMPTIONS`）。")

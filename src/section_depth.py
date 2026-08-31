@@ -156,6 +156,54 @@ def median_depth(all_sections: dict[str, dict[str, str]]) -> float:
 # **4分の1の表が実際に届いている線**を目標にします ＝ 上位四分位。
 TARGET_QUANTILE = 0.75
 
+# **目標を超えた表の「余地」を、掃引の候補の件数そのものにしないこと**
+# （2026-08-28 に測って直した）。
+#
+# 2026-08-20 に「目標を超えた表を黙って落としていた」のを直したとき、
+# 余地を **`novel_counts` の生の件数**に置きました。**落とさなくなったのは正しい。
+# ですが、件数をそのまま値に使ったせいで、並び順が丸ごとそちらに乗りました。**
+# 実測（2026-08-28 05:0x の `status.py`）:
+#
+#     keihi   いま20節 → 掃引の新しい候補 **96件** → 掘り甲斐 44.6（**1位**・順番の値 46.5）
+#     iryohi  いま23節 → 掃引の新しい候補 **71件** → 掘り甲斐 36.2（2位・順番の値 50.9）
+#     nenkin  いま23節 → 掃引の新しい候補 **38件** → 掘り甲斐 23.0（**4位**・順番の値 60.5）
+#
+# **族べつの実績で1位の `nenkin`（60.5）が4位に落ち、5位の `keihi`（46.5）が1位です。**
+# 差を作っているのは順番の値ではなく、**掃引の件数**のほう。
+#
+# **そして掃引の当たり率は、実測 0/23 です**（2026-08-28 01:4x の申し送り③・
+# 12:3x の実測。**候補は 2,476件 積んであって、そこから書かれた節は0件**）。
+# **当たり率0%の信号が、第1キーを独占していました。**
+#
+# 実際に節が書かれた2回は、どちらも**族をまたいだ比較**です（掃引の候補ではない）:
+#
+#     2026-08-27  kouki（順番の値 59.6・2位）に 3節 —— 74歳の国保 × 75歳の後期
+#     2026-08-28  iryohi（順番の値 50.9・3位）に 3節 —— 医療費控除 × ふるさと納税
+#
+# **どちらの回も、掃引の件数ではなく族の順番の値で選んでいます**（日誌にそう書いてある）。
+# **手で選んだ順番のほうが当たっており、道具の並びは使われていませんでした。**
+#
+# だから余地は、掘り甲斐を計るときだけ **1周で実際に書ける節数で頭打ち**にします。
+# 上の2回とも **3節** でした（`topic_forge --count 3` で長尺テーマ3件まで）。
+#
+# **これは目標超の表だけの話ではありません。** 「あと8節ある」表と「あと3節ある」表は、
+# **この回にとって同じ大きさ**です —— どちらも書けるのは3節だから。
+# 頭打ちにすると、残るのは**どの族に3節を置くか**だけになり、
+# **並び順は族の順番の値そのもの**になります。**上の2回が手でやった選び方と一致します。**
+#
+# **印字は生の数のまま**です（「あと8節」「掃引の新しい候補 33件」）——
+# 頭打ちにするのは掘り甲斐の計算だけ。**見えなくすると、当たり始めたときに気づけません。**
+# 同点破りも掃引の新しい候補の数のままです（`candidates` の `sort`）。
+#
+# **落とす条件は変えていません** —— `novel` が0の目標超の表は今までどおり落ちます
+# （2026-08-20 の直しの目的は「深い表を落とさない」ことで、そこは保ちます）。
+#
+# **覆る条件**: 掃引の候補から実際に節が書かれて当たったら、この見立ては外れます。
+# `run_marker.py --ship` に「掃引の候補を使ったか」を1行 残すことになっているので
+# （2026-08-28 01:4x の申し送り③）、**そこに1件でも「使った」が出たら、
+# 当たり率を数え直して、件数を値に戻すかどうかを決め直すこと。**
+ROUND_YIELD = 3
+
 
 def target_depth(all_sections: dict[str, dict[str, str]],
                  quantile: float = TARGET_QUANTILE) -> int:
@@ -173,6 +221,7 @@ def candidates(all_sections: dict[str, dict[str, str]],
                limit: int = 5,
                sweep_counts: dict[str, int] | None = None,
                novel_counts: dict[str, int] | None = None,
+               writable_counts: dict[str, int] | None = None,
                ) -> list[tuple[str, int, int, float]]:
     """掘り甲斐の順に (モジュール, いまの節数, 中央値まであと何節, 値) を返す。
 
@@ -194,6 +243,9 @@ def candidates(all_sections: dict[str, dict[str, str]],
     scores = scores or {}
     counts = sweep_counts or {}
     novel = novel_counts or {}
+    # **書ける数**（`section_sweep.writable_counts()`）。渡されなければ空 ＝
+    # 今までどおり `novel` から破ります（掃引が読めない回の振る舞いは変わりません）。
+    writable = writable_counts or {}
     tgt = target_depth(all_sections)
     out = []
     for mod, n in depths(all_sections).items():
@@ -211,11 +263,19 @@ def candidates(all_sections: dict[str, dict[str, str]],
             room = novel.get(mod, 0)
             if room <= 0:
                 continue
-        out.append((mod, n, room, room * scores.get(mod, base)))
+        # **掘り甲斐だけ、1周で書ける節数で頭打ちにする**（上の `ROUND_YIELD` の註）。
+        # 3つめ（印字に使う「あと何節」「掃引の新しい候補」）は生の数のままです。
+        out.append((mod, n, room, min(room, ROUND_YIELD) * scores.get(mod, base)))
     # **破る順は「新しい候補 → 拾えた候補 → 名前」**。
     # 新しい数だけで破ると、掃引が読めない回に全部 0 で並んで名前順に戻るので、
     # 拾えた数を控えに残してあります（`novel` を渡さない呼び方も今までどおり通る）。
-    out.sort(key=lambda r: (-r[3], -novel.get(r[0], 0), -counts.get(r[0], 0), r[0]))
+    # **破る順は「書ける候補 → 新しい候補 → 拾えた候補 → 名前」**（2026-08-28 に
+    # 先頭へ1つ足した）。`novel` の生の数には `[未]`（照合できていない）と
+    # `片効き`・`不変`（実測で0件しか書けていない形）が混ざっており、
+    # **並べ替えの第1同点破りがその混ざった数だった**ので、
+    # 選ぶ側は撃って確かめるしかありませんでした（実測 3族・20分）。
+    out.sort(key=lambda r: (-r[3], -writable.get(r[0], 0), -novel.get(r[0], 0),
+                            -counts.get(r[0], 0), r[0]))
     return out[:limit]
 
 
@@ -276,6 +336,7 @@ def report_lines(all_sections: dict[str, dict[str, str]],
                  limit: int = 5,
                  sweep_counts: dict[str, int] | None = None,
                  novel_counts: dict[str, int] | None = None,
+                 writable_counts: dict[str, int] | None = None,
                  long_families: set[str] | None = None) -> list[str]:
     """`status.py` がそのまま印刷する行。**空のリストを返すことがあります。**
 
@@ -289,8 +350,10 @@ def report_lines(all_sections: dict[str, dict[str, str]],
     deep = max(got.items(), key=lambda kv: kv[1]) if got else ("—", 0)
     counts = sweep_counts or {}
     novel = novel_counts or {}
-    rows = candidates(all_sections, scores, base, limit, counts, novel)
-    whole = candidates(all_sections, scores, base, len(all_sections), counts, novel)
+    writable = writable_counts or {}
+    rows = candidates(all_sections, scores, base, limit, counts, novel, writable)
+    whole = candidates(all_sections, scores, base, len(all_sections), counts, novel,
+                       writable)
     total = sum(len(v) for v in all_sections.values())
     out = [
         f"  **道は2つあります。**（いま {total}節 / {len(all_sections)}本・"
@@ -313,8 +376,17 @@ def report_lines(all_sections: dict[str, dict[str, str]],
     over = [r for r in whole if r[1] >= tgt]
     if over:
         out.append(f"       **目標を超えた表も出しています**（{len(over)}本）—— "
-                   "そこの余地は「あと何節」ではなく**掃引がまだ誰も言っていないと数えた形の数**です。"
-                   "**深い表ほど落ちる作りだったので、実績の良い族に在庫が作れませんでした。**")
+                   "**深い表ほど落ちる作りだったので、実績の良い族に在庫が作れませんでした。**"
+                   "そこに**印字している数**は「あと何節」ではなく"
+                   "**掃引がまだ誰も言っていないと数えた形の数**です"
+                   "（掘り甲斐の計算に使う余地とは別のもの。下の行）。")
+    out.append(f"       **掘り甲斐は、余地を「1周で実際に書ける {ROUND_YIELD}節」で頭打ちにして"
+               "計っています**（2026-08-28）——「あと8節」も「あと3節」も、"
+               "**この回に書けるのは3節**なので同じ大きさ。"
+               "**残るのは『どの族に置くか』だけ ＝ 並び順は族の順番の値そのものです。**"
+               "以前は掃引の件数がそのまま値になっていて、**当たり率 0/23 の信号が"
+               "第1キーを独占していました**（keihi 96件 が1位・nenkin 38件 が4位。"
+               "順番の値は逆に 46.5 対 60.5）。**印字の数は生のままです。**")
     tied = ties_at_top(whole)
     if tied > 1:
         out.append(f"       [!] **上位 {tied}本が掘り甲斐で同点です。"
@@ -332,6 +404,14 @@ def report_lines(all_sections: dict[str, dict[str, str]],
             if novel:
                 nv = novel.get(mod, 0)
                 line += f" ・掃引 {c}件のうち**新しい {nv}件**"
+                if writable:
+                    # **「新しい」は書ける数ではありません**（2026-08-28 に足した）。
+                    # `[未]`（照合できていない）と `片効き`・`不変` を引いた数を
+                    # 並べて出します —— 実測 furusato は 新しい5件 で**書けたのは0件**。
+                    w = writable.get(mod, 0)
+                    line += (f"・そのうち**書ける {w}件**"
+                             if w else "・**書けるものは0件**"
+                                       "（`[未]`か`片効き`か`不変`）")
                 if not nv:
                     line += (" ← **全部、いまの節がもう言っています**"
                              if c else " ← **機械には1つも見えていません**")
