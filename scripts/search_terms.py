@@ -256,8 +256,13 @@ def record(days: int, vids: list[tuple[str, str, bool, int, int]]) -> dict:
     return point
 
 
-def latest() -> dict | None:
-    """台帳の最後の1点（**読むだけ。API を1回も叩きません**）。
+def latest(days: int = 7) -> dict | None:
+    """台帳の、**その窓の**最後の1点（**読むだけ。API を1回も叩きません**）。
+
+    **窓で絞るのが本体です。** M4 の基準値は「**1再生/7日**」で、
+    窓の長さと対になっています —— `--days 28` の点をその基準値と並べると、
+    **4倍 の窓の数を 7日 の基準値と比べる**ことになり、黙って「超えた」側へ倒れます。
+    `record()` が `days` を積んでいるのは、このためです。
 
     壊れた行は黙って飛ばします —— **M4 の数のために、印そのものを落とさないこと**
     （`run_marker.py --write` がこれを呼びます）。
@@ -273,7 +278,7 @@ def latest() -> dict | None:
             row = json.loads(line)
         except json.JSONDecodeError:
             continue
-        if isinstance(row, dict) and "long_views" in row:
+        if isinstance(row, dict) and "long_views" in row and row.get("days", 7) == days:
             last = row
     return last
 

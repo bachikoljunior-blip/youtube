@@ -497,7 +497,9 @@ def _m4_lines(stale_hours: int = M4_STALE_HOURS) -> list[str]:
     try:
         sys.path.insert(0, str(Path(__file__).resolve().parent))
         import search_terms                                    # noqa: PLC0415
-        point = search_terms.latest()
+        # **7日 の窓だけを読むこと。** M4 の基準値は「1再生/7日」で窓と対なので、
+        # `--days 28` の点を並べると 4倍 の窓の数を 7日 の基準値と比べることになります。
+        point = search_terms.latest(7)
     except Exception as exc:                                   # noqa: BLE001
         return [f"[marker] （M4 の台帳を読めませんでした: "
                 f"{type(exc).__name__}: {exc}）"]
