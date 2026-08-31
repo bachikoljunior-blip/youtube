@@ -225,6 +225,38 @@ def stale_commits(since: datetime | None = None, limit: int = 6,
     return got[:limit] if limit else got
 
 
+def pending_thumbnail(video_id: str | None) -> bool:
+    """**その本のサムネイルが、控えに在るのに YouTube へ載っていないか。**
+
+    ## なぜここで出すか（2026-09-01。**この道具の1発目が当てました**）
+
+    判定そのものは `scripts/critique_queue.missing_thumbnail()` が持っています
+    （`thumbnail_set is False` かつ bytes が残っているものだけ）。
+    **出どころは1か所**にして、ここは呼ぶだけです。
+
+    実測 2026-09-01: **158本**が「焼いてあるのに載っていない」状態で、
+    **次に公開される1本もその中に居ました。** 日枠が切れている13時間は
+    `thumbnails.set` だけ 403 になり `videos.insert` は通るので、
+    **サムネイルの無い予約が積まれます**（`scripts/refresh_thumbnail.py` の頭）。
+
+    **158本 を全部 押すと 7,900単位**（`--missing`）で1日の枠のほとんどが飛び、
+    `pool_drain` と取り合います。**いちばん急ぐのはいつも次に出る1本**なので、
+    ここはその1本だけを名指しします（**50単位**）。
+
+    **覆る条件**: `missing_thumbnail()` は `None`（分からない）を返しません ——
+    印より前に上げた本は区別が付かないので、そもそも出ません。
+    **「出ていない ＝ 載っている」ではありません。**
+    """
+    if not video_id:
+        return False
+    try:
+        from scripts import critique_queue                    # noqa: PLC0415
+        return any(r.get("video_id") == video_id
+                   for r in critique_queue.missing_thumbnail())
+    except Exception:                                          # noqa: BLE001
+        return False
+
+
 def lines(now: datetime | None = None) -> list[str]:
     """画面へ出す行。**`improve` の当てどころを、fix と同じ形で毎周 出します。**"""
     v = next_video(now=now)
@@ -260,6 +292,14 @@ def lines(now: datetime | None = None) -> list[str]:
                    "（`python -m src.pipeline` で焼き直し、"
                    "`scripts/reschedule.py --unschedule <古い方>` →"
                    " 新しい方を同じ枠へ `--move`）")
+    if pending_thumbnail(str(v.get("video_id") or "") or None):
+        out.append("  [!] **サムネイルの bytes は控えに在りますが、YouTube に"
+                   "載っていません**（`thumbnail_set: false`）。"
+                   "**この1本だけなら 50単位**:")
+        out.append("       python scripts/refresh_thumbnail.py --missing "
+                   f"--video {v.get('video_id')}")
+        out.append("       （`--missing` だけだと実測 158本 ＝ **7,900単位** で、"
+                   "`pool_drain` と枠を取り合います）")
     out.append("  **規則3（`src/house_rule.py`）が言っているのはこの1本のことです。**"
                "　出したら `--ship \"improve: <何を、どう変えたか>\" --lever per_video`")
     return out
