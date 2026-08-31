@@ -1826,7 +1826,7 @@ def residual_gap(a: dict) -> dict | None:
     yen = pv_ceiling * per_day * 30 / 1000 * rpm
     if yen <= 0:
         return None
-    return {
+    out: dict = {
         "per_video_ceiling": pv_ceiling,
         "per_video_ceiling_unit": c.get("unit", ""),
         "per_day": per_day,
@@ -1843,6 +1843,36 @@ def residual_gap(a: dict) -> dict | None:
         "rpm_needed": TARGET_YEN * 1000 / (pv_ceiling * per_day * 30),
         "reaches": yen >= TARGET_YEN,
     }
+    # --- **形をまたがない側の同じ数**（`src/form_record`。2026-08-31）---
+    #
+    #     上の ¥113,460 は **ショートの記録 1,891回 × 長尺の RPM ¥2,000** です。
+    #     **その組み合わせを作れる形は1つもありません**（`form_record` の
+    #     「形をまたがないこと」）。だから隣に、**同じ形の記録と同じ形の RPM だけ**で
+    #     作った最大を並べます —— 実測 **¥9,360/月（目標の 4.7%・残り ×21.4）**。
+    #
+    #     **この2つの差が、そのまま「形を替える」ことの値段**です
+    #     （×21.4 ÷ ×1.76 ＝ **×12.2**）。腕 `rpm` が名指ししているのはここで、
+    #     **その値段が数字で出るのは、この機械でここだけ**です。
+    #
+    #     **覆る条件**: 長尺の記録が更新されたら自動で動きます（定数を持ちません）。
+    #     `data/video_forms.json` は公開済みだけを持つので、形の分からない本は
+    #     どちらにも入りません（入れると、またぐことになります）。
+    try:
+        _g = form_record.gaps(RPM_SCENARIOS, a.get("per_video_needed") or {},
+                              per_day=per_day, target_yen=TARGET_YEN)
+    except Exception:                                          # noqa: BLE001
+        _g = []
+    if _g:
+        best = max(_g, key=lambda x: x["yen"])
+        out["form_yen"] = best["yen"]
+        out["form_share"] = best["share"]
+        out["form_band"] = best["band"]
+        out["form_record"] = best["record"]
+        out["form_form"] = best["form"]
+        out["form_residual"] = (TARGET_YEN / best["yen"]) if best["yen"] else float("inf")
+        out["form_price"] = (out["form_residual"] / out["residual"]
+                             if out["residual"] else float("inf"))
+    return out
 
 
 def residual_lines(a: dict, prefix: str = "  ") -> list[str]:
@@ -1879,6 +1909,23 @@ def residual_lines(a: dict, prefix: str = "  ") -> list[str]:
             f"（`docs/MEANS.md` M23 の3つは、この上端の**外側**の分子）",
             f"{prefix}    **つまり「届きません」を作っているのは、この2つの未実測の定数です。**"
             f" 覆る条件は `residual_gap()` の docstring。",
+        ]
+    # **この ¥ を作れる形が在るかを、必ず同じ所で言うこと**（2026-08-31）。
+    #     上の掛け算は「ショートの記録 × 長尺の RPM」で、**その本は1本もありません。**
+    #     隣に形をまたがない最大を置かないと、¥113,460 が到達可能な数に読めます。
+    if r.get("form_yen"):
+        out += [
+            f"{prefix}    [!] **ただし、その ¥{r['yen']:,.0f} を作れる形は1つもありません**"
+            f" —— {r['per_video_ceiling']:,.0f}回 は**ショート**の記録で、"
+            f"掛けている ¥{r['rpm']:,.0f} は**長尺**の RPM です。"
+            f"**形をまたがない最大は ¥{r['form_yen']:,.0f}/月"
+            f"（目標の {r['form_share']*100:.1f}%・残り ×{r['form_residual']:.1f}）**"
+            f" ＝ `{r['form_band']}` を {r['form_record']:,.0f}回/本（{r['form_form']}の記録）"
+            f"で毎日（`src/form_record`）。",
+            f"{prefix}    **その2つの差 ×{r['form_price']:.1f} が、そのまま"
+            f"「形を替える」ことの値段です** —— 長尺1本を、ショートの記録と同じだけ"
+            f"回すこと。**腕 `rpm` が名指ししているのはここで、値段が数字で出るのは"
+            f"この機械でここだけ**です。",
         ]
     return out
 
