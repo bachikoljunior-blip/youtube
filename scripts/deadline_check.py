@@ -417,6 +417,58 @@ _BUILD_LEDGERS = ("data/uploaded.jsonl", "data/batch_runs.jsonl")
 _ROWS_CALL = re.compile(r"""rows\(\s*['"]([^'"]+)['"]\s*\)""")
 
 
+def _counts_videos(expr: str) -> bool:
+    """その `count_expr` が数えているのが **本（動画）** か。
+
+    ## なぜ要るか（2026-08-31・最適化の回。**同じ規則を、3つ目の口が読んでいなかった**）
+
+    `_project_nth()` は 2026-08-31 に「規則（1日1本）より速い伸び率は名乗らない」を
+    足しました。**入ったのは `kind: group_key` の道だけ**で、
+    **`kind: accrual` の道（`_ans_accrual`）は素通り**でした。
+
+    実測 2026-08-31 —— `slot_half`（1日に再生が付く帯の中で、置く位置は効かない）::
+
+        deadline_check  要 32 ／ いま 7（3日で **2.33本/日**）→ あと 11日
+                        → 判定できるのは **09-12**  [OK]
+        ab_split        規則（1日1本）の下: あと 32本／3日 ＝ **29本 足りません**
+                        いちばん早く判定できるのは **2026-10-07**
+
+    **25日 ちがう日を、2つの道具が同時に印字していました。** そして
+    こちらの `--shrink` は「期限を 09-12 へ**縮めること**」と出します ——
+    `_ledger_frozen` の註にあるとおり、この前提の期限は
+    **一度この道で 11-10 → 09-08 へ縮められています。**
+
+    2.33本/日 は `batch_runs.jsonl` の**作った本**の平均です。規則2
+    （作り置きなし）の下で、作った本は公開されないかぎり群の標本になりません。
+    **公開は1日1本**なので、本を数える要件が 1日1本 より速く満ちることはありません。
+
+    ## 何を「本」と読むか
+
+    **式だけを見ます**（地の文は読みません。`_expr_meters` と同じ約束）:
+
+    - `video_id` を数えている（`len({...video_id...})`）
+    - 群べつの本数を返す関数（`..._arm(`）を使っている
+
+    **再生数・視聴時間の合計（`latest_views()` / `sum(`）は本ではありません** ——
+    そちらを 1日1本 で押さえたら、判定日が桁で後ろへ飛びます。
+    実測の5件では `slot_half` だけが押さえに掛かります
+    （`s-ribo-` 8本 は 0.25本/日・`reveal_hold` 16本 は 0.80本/日 で、どちらも規則より遅い）。
+
+    **上限は `PUBLISH_PER_DAY` そのもの**（群で割りません）。群べつに数える要件でも、
+    1群の速さが**全体の公開の速さ**を超えることはないので、割らない側が安全な上限です。
+    `_project_nth()` はもう1段 絞って `share` で割ります —— あちらは
+    「どの群が足りないか」を持っているからで、ここは持っていません。
+
+    **覆る条件**: オーナーが 1日1本 の規則を外したら `PUBLISH_PER_DAY` が上がり、
+    この上限は自然にゆるみます（**本数をここに書き写さないこと**）。
+    本を数える式の書き方が増えたら、この関数がそのまま見落とします ——
+    **見落としは「押さえない」側に倒れる**ので、日付が手前に出たら疑うこと。
+    """
+    if "latest_views" in expr:
+        return False
+    return "video_id" in expr or "_arm(" in expr
+
+
 def _expr_meters(expr: str) -> list[str]:
     """**その `count_expr` が開くファイル**（`data/` からの相対）。読めなければ空。
 
@@ -1252,6 +1304,19 @@ def _ans_accrual(need: dict, as_of: date) -> Answer:
         return Answer(None, f"要 {want} ／ いま **0**（{elapsed}日ぶん。"
                             "**伸び率が出せないので、いつ届くか言えません**）",
                       todo=stale)
+    # --- **規則（1日1本）より速い伸び率は名乗らない**（2026-08-31・accrual の道）---
+    #     なぜ要るかは `_counts_videos()` の docstring（実測つき）。
+    #     `_project_nth()` の同じ押さえが、この道にだけ入っていませんでした。
+    cap_note = ""
+    if _counts_videos(expr):
+        from src import house_rule                          # noqa: PLC0415
+        cap = float(house_rule.PUBLISH_PER_DAY)
+        if rate > cap:
+            cap_note = (f"。**伸び率を規則（1日{house_rule.PUBLISH_PER_DAY}本）で"
+                        f"押さえています**（実測の平均は {rate:.2f}本/日 ですが、"
+                        "その速さは**作った本**の平均で、規則2 でその本は公開されません"
+                        "——公開されない本は群の標本になりません）")
+            rate = cap
     days = math.ceil((want - have) / rate)
     # **帯の幅**: 積み上げの数え上げ誤差 ≒ 1/√have（件数の相対標準誤差）を日数へ移す。
     # have=74・days=88 なら ±11日。**この幅の中で期限を書き換えても、何も動きません。**
@@ -1264,7 +1329,7 @@ def _ans_accrual(need: dict, as_of: date) -> Answer:
     # だから**その要件自身の、これまでの伸び率の散らばり**でも帯を張ります。
     # **広いほうを採ります** —— 狭いほうを採ると、churn がそのまま残ります。
     got = _rate_scatter(str(need.get("count_expr") or ""))
-    note = ""
+    note = cap_note
     if got is not None:
         scatter, n_pts = got
         wide = max(1, math.ceil(days * scatter))
