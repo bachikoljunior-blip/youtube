@@ -92235,6 +92235,28 @@ Data API の日枠は **13,396 / 10,000単位**（403 を 61回 観測）。戻�
 **規則は全部 repo にあり、本文が運ぶのは識別子と「`trigger_parent.md` を読め」だけ**。
 識別子（`trigger_id` / `persistent_session_id` / `environment_id`）は**一致しています。**
 
+### 全体検査（この回の3件を入れた後）—— **赤は 7件 で、増えていません**
+
+    7 failed, 5,479 passed, 9 skipped in 1120s (18分40秒)
+
+**08/31 23:09 のきょうだいの計測は 5,471 passed / 7 failed** でした。
+**+8 passed はこの回で足した検査ぶん**（`test_unwired_tools` 2件 /
+`test_retro_tool_suspect` 5件 / `test_trigger_sync` 1件）で、**赤は同じ7件**です。
+
+    test_form_record::test_ショートの記録が_hypotheses_の天井と一致する
+    test_judgeable::test_実物で期限が構造的に守れる[opening_motion]
+    test_live_slots::test_全部逃がす手は生きている本を増やす
+    test_long_surface_ceiling_named::test_族の数と天井が同じ行に並ぶ
+    test_queue_lag_publish_cap::test_上限が1本になると床の答えが反転する
+    test_request_form::test_深い題ショートは群に入る
+    test_request_form_excludes_long_form::test_split_counts_と_判定の群が_同じ本を数える
+
+**7件とも、この回が触った file（`scripts/retro.py` / `scripts/trigger_sync.py` /
+`tests/`）とは無関係です。** 触った側だけを絞って撃つと 161件 とも緑
+（`test_unwired_tools` / `test_retro_tool_suspect` / `test_trigger_sync` /
+`test_retro_worked_on` / `test_retro_quota_block` / `test_watches` / `test_doc_index`）。
+**この7件はこの回より前から赤で、触っていません。**
+
 ### 次の回へ
 
 1. **`retro.py` の「どこからも撃たれていない道具」は 未決 0本 になりました。**
