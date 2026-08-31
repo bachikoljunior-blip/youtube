@@ -157,3 +157,50 @@ def test_反映を重ねても補正は1回だけ():
     # 3周目まで見る（2周だけだと、偶然そろった回を通します）
     a3 = eta.analyse(dict(m, **a2))
     assert a3["long_per_video"] == pytest.approx(a1["long_per_video"])
+
+
+def test_settled_を門にしていない():
+    """**正しい直しが、補正を黙って消さないこと。**
+
+    `censor_factor()` の最初の版は、頭でこう返していました::
+
+        if _settled(form):
+            return dict(zero, why="この形は伸びきっています（補正は要りません）")
+
+    `_settled()` は `settle.mature_hours_supported(form)` ＝
+    「その形は **`mature_hours(form)` までに**伸びきるか」です。
+    **ところが打ち切りは形の性質ではなく、その記録の本が何時間 観測されたかです。**
+
+        長尺の記録 `_Mz5rg6jQ_A` が観測されたのは   **246時間** まで
+        長尺が平らになるのは（この回の実測）        **480時間**
+
+    `settle.SETTLE_HORIZONS` は 480 で終わっているので、次に来た側が地平を延ばして
+    `MATURE_HOURS_BY_FORM['長尺'] = 480` に直すのは **正しい直し**です。
+    ところが門があると、その正しい直しで `_settled('長尺')` が真になり、
+    **補正が 1.0 に落ちて隔たりが黙って 2倍（×10.7 → ×21.4）に戻ります。**
+
+    だから門は外し、**測ったほうだけを残しました** —— 伸びきった形は自分で ×1.00 を
+    出します（ショート 実測 ×1.000・n=22）。**門を足し直さないこと。**
+    """
+    import src.settle as settle                               # noqa: PLC0415
+
+    before = form_record.censor_factor("長尺")
+    if before["factor"] <= 1.0:
+        pytest.skip("長尺の補正がまだ測れていません（n 不足）")
+
+    keep = dict(settle.MATURE_HOURS_BY_FORM)
+    try:
+        # 「長尺は 480時間 で伸びきる」と直した世界を作る（＝正しい直し）
+        settle.MATURE_HOURS_BY_FORM["長尺"] = 480
+        form_record._settled.cache_clear()
+        after = form_record.censor_factor("長尺")
+    finally:
+        settle.MATURE_HOURS_BY_FORM.clear()
+        settle.MATURE_HOURS_BY_FORM.update(keep)
+        form_record._settled.cache_clear()
+
+    assert after["factor"] == pytest.approx(before["factor"]), (
+        f"`MATURE_HOURS_BY_FORM` を直したら補正が {before['factor']:.2f} → "
+        f"{after['factor']:.2f} に落ちました。**`settled` を門にしています** ——"
+        " 打ち切りは形の性質ではなく、記録の本が何時間 観測されたかです"
+    )
