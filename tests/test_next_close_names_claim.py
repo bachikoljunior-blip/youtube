@@ -58,18 +58,26 @@ def _doc():
 
 
 def _plan(lever="density"):
-    """`tests/test_eta_arm_source_line.py` と同じ材料。"""
+    """`tests/test_eta_arm_source_line.py` の `_plan()` と同じ材料。"""
     return {
         "target_date": None,
         "days_to_target": 103.0,
-        "lever": lever,
+        "binding": "再生数が天井に当たっている",
+        "lever_hint": lever,
+        "lever_from": "軌跡",
+        "lever_hint_binding": "rpm",
         "lever_days": [],
-        "levers": {},
     }
 
 
-def _traj():
-    return None
+def _traj(lever="density", throughput=0.9, p=0.33):
+    """`tests/test_eta_arm_source_line.py` の `_traj()` と同じ材料。"""
+    return {
+        "choice": [{"lever": lever, "reachable": True, "days": 102.0,
+                    "date": _dt.date(2026, 12, 1), "t_work": 15}],
+        "arms": {lever: {"lever": lever, "throughput": throughput, "p": p,
+                         "n": 3, "hits": 1, "source": "自前"}},
+    }
 
 
 def test_next_closeは判定できる前提の名前を返すこと():
