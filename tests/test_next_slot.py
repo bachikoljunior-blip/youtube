@@ -150,3 +150,76 @@ def test_stale_commits_without_video_id_keeps_everything(monkeypatch) -> None:
                         lambda *a, **k: _Out("aaaaaaa 09/01 01:00 fix: zukai\n"))
     since = datetime(2026, 9, 1, tzinfo=timezone.utc)
     assert len(next_slot.stale_commits(since)) == 1
+
+
+def test_pending_thumbnail_is_false_without_an_id() -> None:
+    assert next_slot.pending_thumbnail(None) is False
+    assert next_slot.pending_thumbnail("") is False
+
+
+def test_pending_thumbnail_asks_the_one_place_that_knows(monkeypatch) -> None:
+    """**判定は `scripts/critique_queue.missing_thumbnail()` の1か所だけ。**
+
+    ここで条件（`thumbnail_set is False` かつ bytes が在る）を書き直すと、
+    **2か所に増えた瞬間から片方だけが直ります**（この repo の通算8件の形）。
+    """
+    from scripts import critique_queue
+
+    monkeypatch.setattr(critique_queue, "missing_thumbnail",
+                        lambda: [{"video_id": "AAA"}, {"video_id": "BBB"}])
+    assert next_slot.pending_thumbnail("AAA") is True
+    assert next_slot.pending_thumbnail("ZZZ") is False
+
+
+def test_pending_thumbnail_survives_a_broken_store(monkeypatch) -> None:
+    """**読めない回でも黙って False**（`improve` の行ごと消さないため）。"""
+    from scripts import critique_queue
+
+    def boom():
+        raise OSError("store is gone")
+
+    monkeypatch.setattr(critique_queue, "missing_thumbnail", boom)
+    assert next_slot.pending_thumbnail("AAA") is False
+
+
+def _stub_quota(monkeypatch, used: int, back_hour_utc: int):
+    from src import quota_ledger, upload_cap
+
+    monkeypatch.setattr(quota_ledger, "spent", lambda *a, **k: {"data": used})
+    monkeypatch.setattr(
+        upload_cap, "window_end",
+        lambda *a, **k: datetime(2026, 9, 1, back_hour_utc, tzinfo=timezone.utc))
+
+
+PUB = datetime(2026, 9, 1, 13, tzinfo=timezone.utc)          # 09/01 22:00 JST
+NOW = datetime(2026, 8, 31, 20, tzinfo=timezone.utc)
+
+
+def test_quota_note_says_it_can_be_pushed_now(monkeypatch) -> None:
+    _stub_quota(monkeypatch, used=1_000, back_hour_utc=7)
+    note = next_slot.quota_note(PUB, NOW)
+    assert note and "この回で押せます" in note
+
+
+def test_quota_note_counts_the_hours_left_before_publication(monkeypatch) -> None:
+    """**「いつか押す」と「この6時間で押す」は別の手です。**"""
+    _stub_quota(monkeypatch, used=13_365, back_hour_utc=7)     # 16:00 JST
+    note = next_slot.quota_note(PUB, NOW)
+    assert note and "残り 6時間" in note and "13,365" in note
+
+
+def test_quota_note_says_when_it_is_already_too_late(monkeypatch) -> None:
+    _stub_quota(monkeypatch, used=13_365, back_hour_utc=20)    # 公開のあと
+    note = next_slot.quota_note(PUB, NOW)
+    assert note and "間に合いません" in note
+
+
+def test_quota_note_is_silent_when_the_ledger_is_unreadable(monkeypatch) -> None:
+    """**読めない回は黙ること**（`improve` の行ごと消さないため）。"""
+    from src import quota_ledger
+
+    def boom(*a, **k):
+        raise OSError("ledger is gone")
+
+    monkeypatch.setattr(quota_ledger, "spent", boom)
+    assert next_slot.quota_note(PUB, NOW) is None

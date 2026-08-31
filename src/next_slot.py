@@ -37,9 +37,16 @@
 
 ## 出るもの
 
-    next_video()     次に公開される1本（`data/uploaded.jsonl` の `at` が未来で最小）
-    stale_commits()  その本を焼いたあとに、生成側へ入ったコミット
-    lines()          画面へ出す行（`scripts/run_marker.py --write` が呼びます）
+    next_video()        次に公開される1本（`data/uploaded.jsonl` の `at` が未来で最小）
+    stale_commits()     その本を焼いたあとに、生成側へ入ったコミット
+    pending_thumbnail() サムネイルが控えに在るのに、まだ載っていないか
+    quota_note()        枠が戻るのは何時で、公開まで何時間 残っているか
+    lines()             画面へ出す行（`scripts/run_marker.py --write` が呼びます）
+
+**行き先が「分類」で終わらないようにしてあります。** 1件目の実装は最後の行が
+「**improve するなら中身のほう**（題・サムネ・台本・計算）」で止まっていました ——
+それは分類であって当てどころではありません。いまは**その本の具体的な欠陥**と、
+**値段（単位）**と、**いつまでに撃てば間に合うか**まで出します。
 
 ## 覆る条件
 
@@ -225,6 +232,77 @@ def stale_commits(since: datetime | None = None, limit: int = 6,
     return got[:limit] if limit else got
 
 
+def pending_thumbnail(video_id: str | None) -> bool:
+    """**その本のサムネイルが、控えに在るのに YouTube へ載っていないか。**
+
+    ## なぜここで出すか（2026-09-01。**この道具の1発目が当てました**）
+
+    判定そのものは `scripts/critique_queue.missing_thumbnail()` が持っています
+    （`thumbnail_set is False` かつ bytes が残っているものだけ）。
+    **出どころは1か所**にして、ここは呼ぶだけです。
+
+    実測 2026-09-01: **158本**が「焼いてあるのに載っていない」状態で、
+    **次に公開される1本もその中に居ました。** 日枠が切れている13時間は
+    `thumbnails.set` だけ 403 になり `videos.insert` は通るので、
+    **サムネイルの無い予約が積まれます**（`scripts/refresh_thumbnail.py` の頭）。
+
+    **158本 を全部 押すと 7,900単位**（`--missing`）で1日の枠のほとんどが飛び、
+    `pool_drain` と取り合います。**いちばん急ぐのはいつも次に出る1本**なので、
+    ここはその1本だけを名指しします（**50単位**）。
+
+    **覆る条件**: `missing_thumbnail()` は `None`（分からない）を返しません ——
+    印より前に上げた本は区別が付かないので、そもそも出ません。
+    **「出ていない ＝ 載っている」ではありません。**
+    """
+    if not video_id:
+        return False
+    try:
+        from scripts import critique_queue                    # noqa: PLC0415
+        return any(r.get("video_id") == video_id
+                   for r in critique_queue.missing_thumbnail())
+    except Exception:                                          # noqa: BLE001
+        return False
+
+
+def quota_note(publish_at: datetime, now: datetime) -> str | None:
+    """**枠が戻るのは何時で、公開まで何時間 残っているか。**（**API 0単位**）
+
+    ## なぜ要るか（2026-09-01。**この回がその状態でした**）
+
+    実測: 日枠は **13,365 / 10,000単位**（403 を47回）で**尽きています**。
+    `thumbnails.set` は 50単位 なので、**この回には押せません。**
+    `docs/trigger_main.md` §4 は、枠の尽きた回に選ぶのは
+    「**次に枠が戻る回の1手を、安くするか・正しい順にする**」だと書いています。
+
+    **そこで効くのが、残り時間です** —— 枠が戻るのは **09/01 16:00 JST**、
+    この本が出るのは **22:00 JST**。**猶予は 6時間**しかありません。
+    その窓の回が押さなければ、**この本はサムネイル無しで公開されます。**
+    「いつか押す」と「この6時間で押す」は別の手なので、数字で出します。
+
+    **覆る条件**: `DAY_UNITS`（10,000）は**公表値で、Google の実数ではありません**
+    （`src/quota_ledger.py`）。尽きたかどうかの本当の答えは 403 の側です。
+    """
+    try:
+        from src import quota_ledger, upload_cap              # noqa: PLC0415
+        used = int(quota_ledger.spent(now).get("data") or 0)
+        cap = int(quota_ledger.DAY_UNITS)
+        back = upload_cap.window_end(now)
+    except Exception:                                          # noqa: BLE001
+        return None
+    if used < cap:
+        return (f"       枠はまだ在ります（**{used:,} / {cap:,}単位**）。"
+                "**この回で押せます。**")
+    slack = (publish_at - back).total_seconds() / 3600.0
+    when = back.astimezone(JST)
+    if slack <= 0:
+        return (f"       [!] **枠が尽きています**（{used:,} / {cap:,}単位）。"
+                f"戻るのは {when:%m/%d %H:%M} JST ＝ **公開に間に合いません。**"
+                "　この本はサムネイル無しで出ます")
+    return (f"       [!] **枠が尽きています**（{used:,} / {cap:,}単位）。"
+            f"戻るのは {when:%m/%d %H:%M} JST ＝ **公開まで残り {slack:.0f}時間。**"
+            "　**その窓の回が押さないと、この本はサムネイル無しで出ます**")
+
+
 def lines(now: datetime | None = None) -> list[str]:
     """画面へ出す行。**`improve` の当てどころを、fix と同じ形で毎周 出します。**"""
     v = next_video(now=now)
@@ -260,6 +338,17 @@ def lines(now: datetime | None = None) -> list[str]:
                    "（`python -m src.pipeline` で焼き直し、"
                    "`scripts/reschedule.py --unschedule <古い方>` →"
                    " 新しい方を同じ枠へ `--move`）")
+    if pending_thumbnail(str(v.get("video_id") or "") or None):
+        out.append("  [!] **サムネイルの bytes は控えに在りますが、YouTube に"
+                   "載っていません**（`thumbnail_set: false`）。"
+                   "**この1本だけなら 50単位**:")
+        out.append("       python scripts/refresh_thumbnail.py --missing "
+                   f"--video {v.get('video_id')}")
+        out.append("       （`--missing` だけだと実測 158本 ＝ **7,900単位** で、"
+                   "`pool_drain` と枠を取り合います）")
+        qn = quota_note(v["_at"], t)
+        if qn:
+            out.append(qn)
     out.append("  **規則3（`src/house_rule.py`）が言っているのはこの1本のことです。**"
                "　出したら `--ship \"improve: <何を、どう変えたか>\" --lever per_video`")
     return out
