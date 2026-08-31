@@ -4317,18 +4317,65 @@ def _gate2_surface_note(imp_day: float, need_day: float,
                         _lf = _dc.long_form()
                     except Exception:                      # 帳面が読めない回は黙って飛ばす
                         _lf = {}
-                    _cap_long = float(_lf.get("most") or 0) - 1 if _lf.get("collapsed") else 0.0
+                    _cap_meas = float(_lf.get("most") or 0) - 1 if _lf.get("collapsed") else 0.0
+                    # --- **その天井の上に、オーナーが固定した規則が乗っています** ---
+                    #     （2026-08-31・最適化の回）
+                    #
+                    #     ここは `day_cap.long_form()` の **6本/日** だけを読み、
+                    #     「要る 46.3本/日 は、その **7.71倍**」と印字し、そのまま
+                    #     **「先に動かすのは天井のほう（`day_cap.long_form()` の
+                    #     覆る条件＝上限より多く出した日に…）」と、次の手を名指し**
+                    #     していました。
+                    #
+                    #     **その手は、規則の下では1日も効きません。** オーナーは
+                    #     2026-08-31 に「動画は1日一本」を固定しています
+                    #     （`src/house_rule.PUBLISH_PER_DAY` ＝ 1本/日・覆る条件なし）。
+                    #     `day_cap.long_form()` を測り直して上限が 92本/日 と出ても、
+                    #     **出せるのは 1本/日 のまま**です。
+                    #     つまりこの行は、**規則が禁じている作業を、この機械で
+                    #     いちばん詳しい診断の末尾から名指し**していました。
+                    #     `physical_caps` の `density`（×10）・`trajectory.py` の
+                    #     供給（×92）・`physical_caps` の `rpm`（×2.13。同じ回に直した）と
+                    #     **同じ欠陥の4件目**です。
+                    #
+                    #     天井は「測った上限」と「規則」の**低いほう**。実測 2026-08-31:
+                    #     測った 6本/日 に対し規則 **1本/日** で、倍率は
+                    #     **7.71倍 → 46.3倍**。名指しする手も入れ替わります。
+                    #
+                    #     **覆る条件**: オーナーが 1日1本 を自分の言葉で外したとき
+                    #     （`src/house_rule.py` に原文を書き足す）。そのとき律速は
+                    #     測った天井へ戻り、下の文面も自分で戻ります（写しではありません）。
+                    _rule_long = float(house_rule.PUBLISH_PER_DAY)
+                    _rule_binds_long = (_cap_meas <= 0) or (_rule_long < _cap_meas)
+                    _cap_long = _rule_long if _rule_binds_long else _cap_meas
                     if _cap_long > 0 and need_pub > _cap_long:
-                        line += (f"　[!] **その「動かせる側」にも、測った天井があります** ——"
-                                 f" 長尺の面は **{_lf.get('most')}本/日 で崩れ**、上限は"
-                                 f" **{_cap_long:,.0f}本/日**（`src/day_cap.long_form()`）。"
-                                 f" 要る {need_pub:,.1f}本/日 は、その"
-                                 f" **{need_pub / _cap_long:,.2f}倍**です ——"
-                                 "**族を増やしても、この段は族では閉じません。**"
-                                 "先に動かすのは天井のほう"
-                                 "（`day_cap.long_form()` の「覆る条件」＝"
-                                 "上限より多く出した日に、上限より後ろの本が再生を取ること。"
-                                 "**前提を1件 立てて測る手**です）")
+                        if _rule_binds_long:
+                            line += (f"　[!] **その「動かせる側」は、規則で閉じています** ——"
+                                     f" オーナーが固定した公開の上限は"
+                                     f" **{_rule_long:,.0f}本/日**"
+                                     f"（`src/house_rule.py`・**覆る条件はありません**）。"
+                                     f" 要る {need_pub:,.1f}本/日 は、その"
+                                     f" **{need_pub / _cap_long:,.2f}倍**です ——"
+                                     "**族を増やしても、この段は族では閉じません。**"
+                                     + (f"（測った面の上限は {_cap_meas:,.0f}本/日"
+                                        f"・`src/day_cap.long_form()` ですが、"
+                                        f"**規則より上なので効きません** ——"
+                                        f" **`day_cap.long_form()` を測り直す手は、"
+                                        f"ここでは1日も効きません**）"
+                                        if _cap_meas > 0 else "")
+                                     + " **規則の下で動かせるのは「その1本をどの形にするか」だけ**"
+                                       "です（腕 `rpm`。`src/levers.py` の付け替えと同じ）。")
+                        else:
+                            line += (f"　[!] **その「動かせる側」にも、測った天井があります** ——"
+                                     f" 長尺の面は **{_lf.get('most')}本/日 で崩れ**、上限は"
+                                     f" **{_cap_long:,.0f}本/日**（`src/day_cap.long_form()`）。"
+                                     f" 要る {need_pub:,.1f}本/日 は、その"
+                                     f" **{need_pub / _cap_long:,.2f}倍**です ——"
+                                     "**族を増やしても、この段は族では閉じません。**"
+                                     "先に動かすのは天井のほう"
+                                     "（`day_cap.long_form()` の「覆る条件」＝"
+                                     "上限より多く出した日に、上限より後ろの本が再生を取ること。"
+                                     "**前提を1件 立てて測る手**です）")
                     gap_ctr += line
             else:
                 gap_ctr += (f"　要る CTR {need_ctr:.1f}% は**その区間の中**です ——"
