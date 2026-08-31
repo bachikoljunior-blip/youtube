@@ -62,6 +62,7 @@
 """
 from __future__ import annotations
 
+import functools
 import json
 from pathlib import Path
 
@@ -141,8 +142,20 @@ def per_video_best(views_path: Path | None = None,
     return out
 
 
+@functools.lru_cache(maxsize=None)
 def _settled(form: str) -> bool:
     """`src.settle` に訊く。**訊けなければ「伸びきっていない」側に倒す。**
+
+    **1プロセスのあいだ憶えます**（`lru_cache`）。`settles_at()` は
+    `data/views.jsonl`（2MB・22,000行）を**地平4つ ぶん**読み直すので 0.25秒/形 かかり、
+    `scripts/eta.py` は1回の走りで `per_video_best()` を何度も呼びます。
+    **憶えないと、同じ答えのために同じファイルを 6〜8回 読みます。**
+
+    **憶えてよい理由**: この道具を呼ぶのは短命な CLI（`eta.py` / `pipeline.py`）で、
+    1回の走りのあいだに `data/views.jsonl` は増えません。
+    **長く生きるプロセスから呼ぶことになったら、ここを外すこと。**
+    測り直したい側（検査・道具）は `settle.settles_at()` を直接 呼べば、
+    **こちらの憶えは通りません。**
 
     倒す向きを偽にしているのは、**偽は「記録は下限」という弱い主張**で、
     真は「この記録が上限」という強い主張だからです。
