@@ -106,8 +106,23 @@ def test_長尺の面は_day_cap_が測れているほうを名乗る():
         assert "定義上の上限" not in d["why"]
         cap = max(1, int(m["most"]) - 1)
         assert f"{cap}本/日" in d["why"], d["why"]
+        # **面の広さと、そこへ入れてよい本数は別**（2026-08-31・最適化の回）。
+        #     ここは長らく測った面（6本/日）だけで割っていて、`eta.py` は
+        #     「長尺の面は **×6.46** 空いています」と印字していました。
+        #     **空いていても、出せるのは規則の 1日1本 まで**です
+        #     （`src/house_rule.PUBLISH_PER_DAY`・覆る条件なし）。
+        #     引き代は**低いほう**で解きます（実測 ×6.46 → **×1.08**）。
+        #     **`at_ceiling` は変わりません**（下の検査がそれを見ます）——
+        #     `src/levers.py` の「長尺の仕事を `rpm` へ付け替える」は生きたままです。
+        from src import house_rule
+        cap_eff = min(float(cap), float(house_rule.PUBLISH_PER_DAY))
+        if cap_eff < cap:
+            assert "オーナーが固定した規則" in d["why"], (
+                "面の広さで割ったままです（規則を見ていません）: " + d["why"])
         if d["now_per_day"] > 0:
-            assert abs(d["factor"] - cap / d["now_per_day"]) < 1e-6
+            assert abs(d["factor"] - cap_eff / d["now_per_day"]) < 1e-6, (
+                f"×{d['factor']:.2f} は、規則と測った面の低いほう"
+                f" {cap_eff:.0f}本/日 ÷ いま {d['now_per_day']:.2f}本/日 と違います")
     else:
         assert "定義上の上限" in d["why"]
         assert "測った天井ではありません" in d["why"]
