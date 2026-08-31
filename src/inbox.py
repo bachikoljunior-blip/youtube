@@ -195,6 +195,34 @@ def render(path: Path | None = None, show_all: bool = False) -> str:
     return "\n".join(lines)
 
 
+#: **セッションごとの使い捨て枝**の名前の形（`.claude/worktrees/<名前>/`）。
+#: ワークツリーに隔離されたサブは、この名前の枝の上で走ります。
+#: **ここへ push しても、誰も読みません。**
+SCRATCH_BRANCH_PREFIX = "worktree-agent-"
+
+
+def is_scratch_branch(name: str) -> bool:
+    """**そこへ押しても誰も読まない枝か。**（2026-08-31 に足した）
+
+    実測 2026-08-31: `git ls-remote --heads origin` に
+    **`worktree-agent-*` が 26本**。`inbox.py --open` を撃ったサブのぶんです。
+    **「origin にも在るか」では止まりません** —— 1回 押した時点で
+    その枝は origin に出来るので、**2回目からは「在る」ので通ります。**
+    （この検査を書いた回が、まさにそれを踏みました。）
+
+    **止めるのは名前の形のほうです。**
+    """
+    return bool(name) and name.startswith(SCRATCH_BRANCH_PREFIX)
+
+
+def in_worktree(root: Path | None = None) -> bool:
+    """**この作業コピーは、隔離されたワークツリーか。**
+
+    `run_marker.worktree_tag()` と同じ見方（**環境変数ではなく置き場所**）。
+    """
+    return ".claude/worktrees/" in (str(root or ROOT).replace("\\", "/") + "/")
+
+
 def git_save(message: str) -> tuple[bool, str]:
     """受け取り帳だけを commit して push する。**ここが要点です。**
 
@@ -222,9 +250,41 @@ def git_save(message: str) -> tuple[bool, str]:
         「手で push すること」だけが出ていました。**依頼の受け渡し経路そのもの**なので、
         気づかずに死ぬと依頼が消えます（この道具が塞ごうとしている穴）。
         """
+        ##### **枝の上に居ても、その枝が origin に無ければ使わないこと**
+        #####                                       （2026-08-31 に踏んだ）
+        #
+        # **ワークツリーに隔離されたサブは、`worktree-agent-<id>` という
+        # 自分だけの枝の上に居ます。** ここは長らく `symbolic-ref` の返りを
+        # そのまま押し先にしていたので、**その名前の枝が origin に新しく作られ、
+        # 誰も読まない所へ push して「push まで済み」と印字していました。**
+        #
+        # **実測 2026-08-31**: `git ls-remote --heads origin` に
+        # **`worktree-agent-*` が 26本**。この道具を撃ったサブのぶんです。
+        #
+        # **これは、この道具が塞ごうとしている穴そのもの**です ——
+        # `docs/trigger_main.md` §1 は「押した後なら、この子が途中で死んでも、
+        # 次の子が `status.py` で見つけます」と書いていますが、
+        # **ワークツリーのサブでは、その保証がずっと成り立っていませんでした。**
+        # 分離 HEAD のほうは 2026-08-19 に直っており、**枝の上に居る形だけが
+        # 残っていました**（`symbolic-ref` が成功するので、下の探索に落ちない）。
+        #
+        # **直し方**: `symbolic-ref` が返した名前でも、**origin にその枝が
+        # 無ければ使わない。** 下の「HEAD の祖先である origin の枝」を探す道は
+        # 分離 HEAD 用にすでに在り、**そのまま正しい答えを出します。**
+        #
+        # **覆る条件**: サブが自分の枝を origin にも持つ運用になったら、
+        # この確かめは要りません（そのときは `--set-upstream` の有無で分けること）。
+        # 検査は `tests/test_inbox_push_target.py`。
         try:
-            name = _git("symbolic-ref", "--quiet", "--short", "HEAD").stdout
-            return name.decode("utf-8", "replace").strip() or None
+            name = (_git("symbolic-ref", "--quiet", "--short", "HEAD").stdout
+                    .decode("utf-8", "replace").strip())
+            if name and not is_scratch_branch(name):
+                try:
+                    _git("show-ref", "--verify", "--quiet",
+                         f"refs/remotes/origin/{name}")
+                    return name
+                except subprocess.CalledProcessError:
+                    pass  # origin に無い枝。下の探索へ落とす
         except subprocess.CalledProcessError:
             pass  # 分離 HEAD。origin 側から探す
         try:
@@ -237,6 +297,11 @@ def git_save(message: str) -> tuple[bool, str]:
             if not full.startswith("origin/") or full == "origin/HEAD":
                 continue
             short = full[len("origin/"):]
+            # **使い捨て枝は候補にしない。** 一度でも押されていると
+            # HEAD の祖先になるので、**ここで弾かないと自分の枝を選び直します**
+            # （2026-08-31 に踏んだ。origin に 26本 溜まっていた）。
+            if is_scratch_branch(short):
+                continue
             try:  # その枝が HEAD の祖先なら、HEAD はその枝の続き
                 _git("merge-base", "--is-ancestor", full, "HEAD")
             except subprocess.CalledProcessError:
@@ -244,8 +309,32 @@ def git_save(message: str) -> tuple[bool, str]:
             cands.append(short)
         if not cands:
             return None
-        # **`main` は最後に見ること。** 作業枝と両方が祖先になる回があります
-        return sorted(cands, key=lambda n: (n == "main", n))[0]
+
+        ##### **選ぶのは「HEAD にいちばん近い枝」です**（2026-08-31 に直した）
+        #
+        # ここは長らく **名前のアルファベット順**（`main` だけ最後）でした。
+        # **祖先になる枝は、たいてい何本もあります** —— 古い作業枝も `main` も
+        # 全部 HEAD の祖先なので、**名前で選ぶのはくじ引き**です。
+        #
+        # 実測 2026-08-31（この回・ワークツリーのサブ）: 祖先は4本 ——
+        # `agent/write-access-test-20260806` / `claude/monthly-income-...` /
+        # **`claude/youtube-auto-post-revenue-ggedij`**（いま走っている枝）/ `main`。
+        # **アルファベット順は `agent/write-access-test-20260806` を選びます** ——
+        # 8月6日の書き込み試験の枝で、**誰も読みません。**
+        #
+        # **「いちばん近い」＝ その枝から HEAD までの commit がいちばん少ない。**
+        # いま走っている枝は、こちらの commit のぶんしか離れていません。
+        # 古い枝や `main` は何百も離れます。**名前を知らなくても決まります。**
+        #
+        # **覆る条件**: 同じ距離の枝が2本 出たら、そこは名前で決めるしかない
+        # （`main` を最後にする既定はそのために残してあります）。
+        def _distance(short: str) -> int:
+            try:
+                out = _git("rev-list", "--count", f"origin/{short}..HEAD")
+                return int(out.stdout.decode("utf-8", "replace").strip() or 0)
+            except (subprocess.CalledProcessError, ValueError):
+                return 1 << 30
+        return sorted(cands, key=lambda n: (_distance(n), n == "main", n))[0]
 
     try:
         _git("add", rel)
