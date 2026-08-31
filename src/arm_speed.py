@@ -242,6 +242,28 @@ def sides(doc: dict | None = None, rows: list[dict] | None = None) -> dict:
     for h in doc.get("hypotheses") or []:
         if not isinstance(h, dict) or h.get("closed_on"):
             continue
+        # **閉じた側と同じ絞り込みを掛けること**（2026-08-31・最適化の回に直した）。
+        #     上の `pool` は `lever in ARMS` で絞っており、**`lever: none` の前提は
+        #     `missing` に数えません。** ところがこの開いた側の loop には
+        #     その絞り込みが無く、同じ形の前提が `open_unlabelled` に落ちていました
+        #     —— **同じ札の無さが、閉じていれば見逃され、開いていれば咎められる。**
+        #
+        #     実害は `tests/test_arm_speed_sides.py::test_open_rows_all_carry_a_side`
+        #     が赤だったことで、落としていたのは
+        #     「収益化の審査は、門1・門2a の数字が揃えば通る」（`lever: none`）1件。
+        #     **この前提に側はありません** —— 側は「その実験のために**何をいじるか**」
+        #     で決める札で、`falsified_if` が「申請して却下されたら外れ。それ以外に
+        #     判定材料はありません」と書くとおり、**いじる所が1つもない**からです。
+        #
+        #     **札を足して黙らせないこと。** 足すと「いま開いているのは 配信N件 ／
+        #     中身N件」に、どちらでもない1件が混ざります。その数は
+        #     `scripts/eta.py` の頭が印字し、**次の1件をどちらの側に立てるかを
+        #     選ぶのに使われます。**
+        #
+        #     **覆る条件**: `ARMS` に腕が増えたとき（自動で追います）。
+        #     腕の付いた前提に札が無ければ、これまでどおり数えます。
+        if str(h.get("lever")) not in ARMS:
+            continue
         s = h.get("side")
         if s not in SIDES:
             unlabelled += 1
