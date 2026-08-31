@@ -121,3 +121,29 @@ def test_ショートは伸びしろを出さない():
     if "headroom" in cs:
         pytest.skip("ショートにもクリックの厚い本が出ました（標本が育った）")
     assert "薄い本" in cs["why_no_headroom"] or "クリック" in cs["why_no_headroom"]
+
+
+def test_窓の広さを一緒に返す():
+    """**その数が何日ぶんかを、数と一緒に出すこと。**（2026-08-31）
+
+    `data/reach.jsonl` は**報告が来た日ぶんしかありません**。実測::
+
+        長尺ぜんたい  観測 **22日**
+        手本の本 `_Mz5rg6jQ_A`  観測 **5日**（20260821..20260826）
+          その5日で 面 1,056・クリック 56
+        いっぽう同じ本の**再生は 156回（齢 246時間）** ＝ **生涯の側**
+
+    **だから伸びしろ（クリックの話・22日）と、`per_video` の倍率（生涯の再生の話）は
+    掛けられません。** この回いちばん高くついた壊れ方が「分母をそろえずに割る」ことで、
+    ここは同じ穴のいちばん掘りやすい所です。
+
+    **窓を返さなくなったら落とすこと** —— 窓の分からない倍率は、必ず誰かが掛けます。
+    """
+    cs = _eta().conversion_split("長尺")
+    if not cs:
+        pytest.skip("data/reach.jsonl に長尺の行がありません")
+    assert cs.get("window_days"), "窓（観測日数）を返していません"
+    assert cs["window_days"] > 0
+    if "headroom" in cs:
+        assert cs.get("ctr_best_days"), "手本の本の観測日数を返していません"
+        assert cs["ctr_best_days"] <= cs["window_days"], "手本の窓が全体より広い"
