@@ -7534,6 +7534,34 @@ def headline(pl: dict, prev: dict | None = None,
                 f" {_f}の1本あたり再生を数えきることは、"
                 f"**API 0単位・新しく1本も出さずに**進みます"
                 f"（`data/views.jsonl` が古い{_f}を観測し続ける限り自動）。")
+    # --- **`per_video` が名指しに変わった回にも、同じことを言う**（2026-08-31）---
+    #     上の枝は `lever_hint == "rpm"` にしか掛かりません。この回に名指しが
+    #     `rpm` → `per_video` へ変わったので、**この行は黙りました。**
+    #     ところが言っている中身（**長尺の1本あたり再生は天井ではなく未計数**）は、
+    #     `per_video` が名指しになった回のほうが**もっと要ります** ——
+    #     画面は「天井を ×N 上げろ」と言い、その天井 1,891 は
+    #     `unit` が自分で「**24時間・ショート**39本の最大」と書いているので、
+    #     **長尺には最初から掛かっていません。** そこを言わないと、次の回は
+    #     「ショートの1本あたり再生を ×8.8 にする」という**測れている天井の
+    #     8.8倍**を目指し、**まだ1回も数えていない側を数えに行きません。**
+    #     **覆る条件**: `settled` が真になったら（＝長尺が伸びきる齢が出たら）
+    #     この行は自分で消えます。**定数を持ちません。**
+    if (pl.get("lever_hint") == "per_video"
+            and isinstance(pl.get("lever_need_over_cap"), (int, float))):
+        try:
+            _recs2 = form_record.per_video_best()
+        except Exception:                                      # noqa: BLE001
+            _recs2 = {}
+        _uns2 = [f for f, v in _recs2.items() if not v.get("settled", True)]
+        if _uns2:
+            _f2 = _uns2[0]
+            out.append(
+                f"{bar}   → **その天井 ×{pl['lever_need_over_cap']:.2f} を、"
+                f"ショートの中で探さないこと。** 天井 1,891 の `unit` は"
+                f"「**24時間・ショート**39本の最大」で、**{_f2} には掛かっていません** ——"
+                f" {_f2}の1本あたり再生は、天井ではなく**まだ1回も数えきっていない**側です"
+                f"（`settle.settles_at('{_f2}')` —— この標本が届くどの地平でも伸びきらない）。"
+                f" **数えきるのは API 0単位・新しく1本も出さずに進みます。**")
     if pl.get("lever_hint_covered"):
         out.append(f"{bar} **その `{pl['lever_hint']}` の測定は、予約済みの本が"
                    f" {pl['lever_hint_covered']} に答えます** →"
