@@ -1911,6 +1911,10 @@ def residual_gap(a: dict) -> dict | None:
         out["form_residual"] = (TARGET_YEN / best["yen"]) if best["yen"] else float("inf")
         out["form_price"] = (out["form_residual"] / out["residual"]
                              if out["residual"] else float("inf"))
+        # **その記録は伸びきった本のものか**（2026-08-31・最適化の回に足した）。
+        #     偽 ＝ 分母が下限なので、**この倍率は隔たりの上限**です。
+        #     `src.settle.settles_at()` の実測（API 0単位）に、地平ごとの表。
+        out["form_settled"] = bool(best.get("settled", False))
     return out
 
 
@@ -1966,6 +1970,40 @@ def residual_lines(a: dict, prefix: str = "  ") -> list[str]:
             f"回すこと。**腕 `rpm` が名指ししているのはここで、値段が数字で出るのは"
             f"この機械でここだけ**です。",
         ]
+        # --- **その隔たりの分母が、伸びきっているか**（2026-08-31・最適化の回）---
+        #     上の倍率は「要る回数 ÷ **その形の記録**」です。
+        #     記録が伸びきっていない形では、**分母が下限なので比は上振れ**します。
+        #     `src.settle.settles_at()` を地平を延ばして当てた実測（API 0単位）:
+        #         ショート  地平 480h でも **48時間で 100%** 伸びきる（n=9）
+        #         長尺      地平を 336h へ延ばすと、**240時間 で伸びきった本は 0本**（n=5）
+        #     **`MATURE_HOURS_BY_FORM["長尺"] = 96` は `full_at=168` からだけ出た数**で、
+        #     168 は長尺の伸びの途中です。**地平を延ばすと答えが消えます。**
+        if not r.get("form_settled", True):
+            try:
+                _s = settle.settles_at(r["form_form"])
+            except Exception:                                  # noqa: BLE001
+                _s = {}
+            _bh = _s.get("by_horizon") or {}
+            _n = max((v["n"] for v in _bh.values()), default=0)
+            _h = max(_bh, default=0.0)
+            out += [
+                f"{prefix}    [!] **その ×{r['form_residual']:.1f} は隔たりの"
+                f"『上限』で、実測の隔たりではありません** —— 分母の"
+                f"{r['form_record']:,.0f}回 は**{r['form_form']}の記録**ですが、"
+                f"**{r['form_form']}は伸びきっていません**"
+                f"（`settle.settles_at('{r['form_form']}')`・地平を {_h:,.0f}時間 まで"
+                f"延ばすと、伸びきる年齢が**1つも出ません**・n={_n}）。",
+                f"{prefix}        `MATURE_HOURS_BY_FORM['{r['form_form']}'] = "
+                f"{settle.mature_hours(r['form_form'])}` は `full_at=168` からだけ出た数で、"
+                f"**168時間は{r['form_form']}の伸びの途中**です。"
+                f"`drop_unripe` はその年齢で標本に入れるので、"
+                f"**`long_per_video` も この記録も、一生ぶんではなく下限**です。",
+                f"{prefix}        **つまり「届きません」の{r['form_form']}側は、"
+                f"打ち切られた分母の上に立っています。** ここは待てば自分で解けます ——"
+                f"`data/views.jsonl` が古い{r['form_form']}を観測し続ける限り、"
+                f"`settles_at()` は定数を持たないので**自動で追います**"
+                f"（**API 0単位・新しく1本も出す必要がありません**）。",
+            ]
     return out
 
 
