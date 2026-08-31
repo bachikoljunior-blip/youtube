@@ -184,6 +184,13 @@ hypotheses:
   - claim: "収益化の審査は、門1・門2a の数字が揃えば通る（＝段3 は待つだけの段）"
     deadline: "2026-09-30"
     lever: none          # **腕ではありません。** 腕を全部 掛ける側の係数なので、ここに腕は無い
+    # `side: infra`（道具の側）—— 2026-08-31 に足した（`tests/test_arm_speed_sides.py::
+    # test_open_rows_all_carry_a_side` が赤だった）。配信でも中身でもありません:
+    # 審査は**動画の外**にあって、腕を全部 掛ける側の門だからです。
+    # **`dist` / `content` に寄せないこと** —— `arm_speed.sides()` は
+    # 「次の1件をどちらの側に立てるか」をこの札の実績から出しており、
+    # どちらかに入れると **12.1倍の比**（配信 対 中身）を1件ぶん汚します。
+    side: infra
     needs:
       # **2026-08-31 に足した**（立った回は `needs:` を書いていませんでした ——
       # `tests/test_deadline_check.py::test_開いている前提には全部_needs_が書いてある`

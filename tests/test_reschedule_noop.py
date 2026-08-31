@@ -78,6 +78,34 @@ SCHEDULED = {"privacyStatus": "private",
 
 # ------------------------------------------------ 撃たない側
 
+
+@pytest.fixture(autouse=True)
+def _枠の番人を外す(monkeypatch):
+    """**日枠の番人を、この検査ファイルのあいだだけ黙らせる。**（2026-08-31・最適化の回）
+
+    `reschedule._update` は `videos.update` の手前で
+    **`upload_cap.reserve_hold()`（実物の日枠の控えを読む番人）**に当たり、
+    枠が尽きている日は `SystemExit` で落ちます。**コードは壊れていません** ——
+    `data/day_quota.jsonl` が「きょうの枠は尽きた」と言っているだけです。
+
+    **番人は本番のまま**（`scripts/reschedule.py` は1文字も変えていません）。
+    外しているのは**検査が実物の可変な状態を読んでいること**のほうです。
+    この検査ファイルが守っているのは番人ではないので、番人はここでは邪魔です。
+
+    **番人そのものの検査は別に在ります** ——
+    `tests/test_quota_reserve.py` ／ `test_reserve_hold_same_yardstick.py` ／
+    `test_quota_ok_call_sites.py`（**`reschedule` が番人を呼ぶこと自体**を釘で留めています）。
+    だからここで外しても、番人の網は1つも減りません。
+
+    **値打ち**: 枠が尽きた日に 10件 以上が赤くなると、**赤の意味が薄れます。**
+    次の回は赤を見て「またこれか」と読み、本物の壊れを同じ顔で見逃します。
+    検査は「いま測れない」と「壊れている」を別の顔で言うこと。
+    """
+    monkeypatch.setattr(reschedule.upload_cap, "reserve_hold",
+                        lambda *a, **k: None, raising=False)
+    monkeypatch.setattr(reschedule.upload_cap, "move_hold",
+                        lambda *a, **k: None, raising=False)
+
 def test_同じ時刻へ動かす回は撃たない(monkeypatch):
     """**この回の 215回・10,750単位**は、全部この形でした。"""
     monkeypatch.delenv("YT_FORCE_UPDATE", raising=False)
