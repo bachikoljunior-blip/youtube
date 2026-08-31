@@ -98,3 +98,62 @@ def test_補正は1倍を下回らない():
     for form, rec in form_record.per_video_best().items():
         assert rec["censor"]["factor"] >= 1.0, f"{form} の補正が 1.0 未満です"
         assert rec["best_settled"] >= rec["best"], f"{form} の補正後が記録より小さい"
+
+
+def test_反映を重ねても補正は1回だけ():
+    """**`reflect()` は `a` の行を、次の `m` として渡してきます。**
+
+    `scripts/eta.py` の `reflect()`::
+
+        base = points[-1]                       # ＝ 前の走りが積んだ **出力の行**
+        m = {k: v for k, v in base.items() if k not in _REFLECT_IGNORE or k == "at"}
+        s = solve(dict(m), points, full=False)  # ← **出力を入力として渡す**
+
+    だから `a["long_per_video"]`（**補正ずみ**）が、次の走りでは
+    `m["long_per_video"]`（**入力**）として戻ってきます。補正をそこに掛け直すと、
+    **反映のたびに ×2 が積み重なります** —— 実測 2026-08-31（この検査を書く前に踏んだ）::
+
+        long_per_video:      32 → 64
+        long_per_video_raw:  16 → 32     ＝ **1回の反映で 2倍**
+
+    放っておくと 16 → 32 → 64 → 128 と際限なく育ち、**長尺の帯が
+    実測の何十倍にも見えます**（`nearest` はそれで帯を選びます）。
+
+    **出力の鍵と入力の鍵が同じ名前で、あいだに倍率がある** ——
+    この repo でいちばん高くつく形の1つです。**緩めないこと。**
+    """
+    import importlib.util
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parent.parent
+    spec = importlib.util.spec_from_file_location("_eta_idem", root / "scripts" / "eta.py")
+    eta = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(eta)
+
+    from tests.test_eta import _measured                      # noqa: PLC0415
+
+    m = _measured(long_per_video=16.0, long_videos_28d=21, long_views_28d=332)
+    a1 = eta.analyse(m)
+    if a1.get("long_per_video") is None:
+        pytest.skip("長尺の実測がありません")
+
+    # 1周目: 生 16 に補正が1回
+    assert a1["long_per_video_raw"] == pytest.approx(16.0)
+    assert a1["long_per_video"] == pytest.approx(16.0 * a1["long_censor"])
+
+    # 2周目: `reflect()` と同じく、**出力の行をそのまま入力として渡す**
+    # 積んだ行は、実測の鍵も出力の鍵も**両方**持ちます（`_row()` が両方 書く）。
+    # だから `m` の上に `a1` を重ねた形が、`reflect()` が渡してくるものです。
+    a2 = eta.analyse(dict(m, **a1))
+    assert a2["long_per_video_raw"] == pytest.approx(a1["long_per_video_raw"]), (
+        f"反映で生の値が動きました {a1['long_per_video_raw']} → {a2['long_per_video_raw']}"
+        " —— 補正が入力へ回り込んでいます"
+    )
+    assert a2["long_per_video"] == pytest.approx(a1["long_per_video"]), (
+        f"反映のたびに補正が積み重なっています {a1['long_per_video']} → {a2['long_per_video']}"
+        f"（×{a1['long_censor']:.2f} が2回 掛かった形）"
+    )
+
+    # 3周目まで見る（2周だけだと、偶然そろった回を通します）
+    a3 = eta.analyse(dict(m, **a2))
+    assert a3["long_per_video"] == pytest.approx(a1["long_per_video"])

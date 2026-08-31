@@ -1781,7 +1781,24 @@ def analyse(m: dict, points: list[dict] | None = None,
     # ショートの 1,092回 とは**546倍ちがいます。** 混ぜると、
     # 「長尺をまだ出していない」が「長尺なら届く」に化けます。
     per_video = _per_video(m) * sc["per_video"]
-    long_per_video = m.get("long_per_video")
+    # **生の側があれば、必ずそちらから解き直すこと**（2026-08-31・同じ回に踏んで直した）。
+    #
+    #     `reflect()` は **`a` の行そのものを次の `m` として渡します**
+    #     （`m = {k: v for k, v in base.items() if k not in _REFLECT_IGNORE}`）。
+    #     だから `a["long_per_video"]`（**補正ずみ**）が、次の走りでは
+    #     `m["long_per_video"]`（**入力**）として戻ってきます。
+    #
+    #     **下で補正を掛けるので、そのままだと反映のたびに ×2 が積み重なります。**
+    #     実測（この回に踏んだ）: `--ship` の反映が
+    #     `long_per_video: 32 → 64` ／ `long_per_video_raw: 16 → 32` を出した。
+    #     **1回の反映で 2倍。** 放っておくと 16 → 32 → 64 → 128 と際限なく育ちます。
+    #
+    #     **出力の鍵と入力の鍵が同じ名前で、あいだに倍率がある**ときの定型の壊れ方です。
+    #     生（`long_per_video_raw`）を先に見ることで、補正は**冪等**になります。
+    #     検査は `tests/test_form_record_censor.py::test_反映を重ねても補正は1回だけ`。
+    long_per_video = m.get("long_per_video_raw")
+    if long_per_video is None:
+        long_per_video = m.get("long_per_video")
     if long_per_video is not None:
         long_per_video = long_per_video * sc["per_video"]
     # --- **比べる前に、打ち切りをそろえること**（2026-08-31・最適化の回の第2手）---
