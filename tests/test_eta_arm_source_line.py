@@ -59,7 +59,7 @@ def _traj(lever="density", throughput=0.9, p=0.33):
 def test_腕を名指ししたら何で動くかも同じ3行に出る():
     eta = _load()
     lines = eta.headline(_plan(), None, _traj())
-    hit = [ln for ln in lines if "hypotheses.yaml" in ln]
+    hit = [ln for ln in lines if _SPEED_MARK in ln]
     assert hit, (
         "3行の中に「軌跡の腕は前提を1件閉じたときだけ動く」が出ていません。"
         "**腕の名前だけを出すと、作る・出す・直すのどれかで動くと読めます** ——"
@@ -76,7 +76,7 @@ def test_腕を名指ししたら何で動くかも同じ3行に出る():
 def test_回転の速さと当たる確率が実測から出る():
     eta = _load()
     line = next(ln for ln in eta.headline(_plan(), None, _traj(throughput=0.5, p=0.5))
-                if "hypotheses.yaml" in ln)
+                if _SPEED_MARK in ln)
     # 1 / 0.5 = 2.0日に1件
     assert "2.0日に1件" in line, f"回転の速さが実測から出ていません: {line}"
     assert "50%" in line, f"当たる確率が実測から出ていません: {line}"
@@ -85,17 +85,28 @@ def test_回転の速さと当たる確率が実測から出る():
 def test_閉じた前提が0件なら実測なしと言う():
     eta = _load()
     line = next(ln for ln in eta.headline(_plan(), None, _traj(throughput=None, p=None))
-                if "hypotheses.yaml" in ln)
+                if _SPEED_MARK in ln)
     assert "実測なし" in line, (
         "閉じた前提が0件のときに、速さを推測で埋めています。"
         "**無いものは無いと言うこと**（`src/arm_speed.py` の註）。"
     )
 
 
+#: **速さの行を引き当てる目印**（2026-08-31 に狭めた）。
+#:
+#: ここは長らく `"hypotheses.yaml"` でした。**台帳の道は、他の行にも書かれます** ——
+#: 2026-08-31 に `headline()` へ「来ない日を待っている前提」の行を足したとき、
+#: その行が同じ字を含んだので、**`test_腕が軌跡に無ければ黙る` が
+#: 正しい変更で落ちました**（速さの行は出ていないのに「出ている」と読んだ）。
+#:
+#: **目印は、その行だけが持つ字にすること。** 速さの行の主語は「軌跡の腕」です。
+_SPEED_MARK = "軌跡の腕が動くのは"
+
+
 def test_腕が軌跡に無ければ黙る():
     eta = _load()
     lines = eta.headline(_plan(lever="rpm"), None, _traj(lever="density"))
-    assert not [ln for ln in lines if "hypotheses.yaml" in ln], (
+    assert not [ln for ln in lines if _SPEED_MARK in ln], (
         "名指しした腕が軌跡の表に無いのに、速さの行を出しています。"
     )
 
