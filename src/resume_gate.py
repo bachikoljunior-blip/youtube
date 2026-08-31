@@ -85,7 +85,22 @@ ROOT = Path(__file__).resolve().parent.parent
 #: この repo でいちばん多い壊れ方（「言っている所と、している所が別」）そのものです。
 #:
 #: いまは `src/pause_guard` が1か所で持ちます。ここは**文書を読むだけ**です。
-PAUSE_FILE = pause_guard.PAUSE_FILE
+#:
+#: **そして、読む先が変わりました**（2026-08-31）。条件の本文は
+#: `AUTOMATION_PAUSED.md` に入っていて、**同じファイルが switch も兼ねていました。**
+#: オーナーが 08-31 にそれを消したので、`conditions()` は 0件 を返し、
+#: `python scripts/eta.py --gate` は **0/0** と印字するようになりました ——
+#: **「測れていない」を「条件が無い」として印字する**、この module が
+#: いちばん避けようとしている形です（冒頭「測れないことを誤りゼロとして
+#: 印字するのが、この仕掛けの最悪の壊れ方」）。**しかも 0/0 は、次に来た側へ
+#: 「消えた正本を戻せ」と言い続けます** —— 戻す先が switch だったのが穴でした。
+#:
+#: だから**条件だけを switch から切り離して** `docs/RESUME_GATE.md` に置きました。
+#: **あのファイルは switch ではありません**（在っても無くても何も止まりません）。
+GATE_DOC = ROOT / "docs" / "RESUME_GATE.md"
+
+#: 後方互換の別名。**停止の判定には使えません**（`is_paused()` を見ること）。
+PAUSE_FILE = GATE_DOC
 LEDGER = ROOT / "data" / "resume_gate.jsonl"
 
 #: 閉じた実績が何件たまれば「閉じる速さ」を口にしてよいか。
@@ -122,8 +137,9 @@ def is_paused() -> bool:
 
 
 def _pause_text() -> str:
+    """条件の本文（`docs/RESUME_GATE.md`）。**有無で停止を判断しないこと。**"""
     try:
-        return PAUSE_FILE.read_text(encoding="utf-8")
+        return GATE_DOC.read_text(encoding="utf-8")
     except OSError:
         return ""
 
