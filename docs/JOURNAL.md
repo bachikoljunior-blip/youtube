@@ -91117,3 +91117,18 @@ merge で相手の作業を残すこと・捨てないこと）。だから**閉
 - **サムネイルを押すと `per_video` が上がる、とは測れていません。** ここが言っているのは
   「**焼いたものが載っていない**」という事実だけです。効いたかどうかは、
   その本の齢がそろってから `data/views.jsonl` で見ること。
+
+### 12. 追記 —— **この回より前から赤い5件**（触っていません・05:5x に数え直した）
+
+    tests/test_live_slots.py::test_全部逃がす手は生きている本を増やす
+    tests/test_request_form.py::test_深い題ショートは群に入る
+    tests/test_request_form_excludes_long_form.py::test_split_counts_と_判定の群が_同じ本を数える
+    tests/test_reschedule_compact.py::test_穴の空かない詰め方を道具の側が名指しする
+    tests/test_judgeable.py::test_実物で期限が構造的に守れる[opening_motion]
+
+**この回が触ったのは `config/hypotheses.yaml`（WATCH の前提・×256 の `lever`）と
+`scripts/retro.py`／`tests/test_arm_speed.py`／`tests/test_unwired_tools.py` だけ**で、
+上の5件はどれもその外です（00:1x と 01:4x の申し送りにも4件が同じ形で載っています）。
+**「無関係だと言い切らないこと」**（08-31 の回が同じ言い方をして、
+流したら13件・うち2件は自分のものでした）——**だから名前を全部 書き出しました。**
+`opening_motion` は**在庫の割り当て**の話で、`ab_split.py --outlook` の側です。
