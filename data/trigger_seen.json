@@ -1,13 +1,13 @@
 {
-  "id": "trig_01CTzKURfdS5LLHPGepXRwvt",
-  "name": "親の心拍（毎時・新しい親に固定）",
-  "cron_expression": "59 * * * *",
+  "id": "trig_01GM4wKqD8aCfrQzsQbRoA4r",
+  "name": "親の心拍（3時間ごと）",
+  "cron_expression": "59 */3 * * *",
   "enabled": true,
-  "persistent_session_id": "session_01RzmEZySHAZdDMJmD2z9eUb",
+  "persistent_session_id": "session_01AHfq4FUVAd5fxDM29yG1Cm",
   "environment_id": "env_01QMJaP2yRCzw4tY5VpJeM1m",
-  "body": "親の周です。考える前にこの2行だけ撃ってください。\n\n    git pull --no-rebase origin claude/youtube-auto-post-revenue-ggedij\n    python scripts/next_round.py\n\nWAIT なら何もせずに終える（ただし終わる前に必ず send_later で自分を呼び戻すこと）。\nGO <役> なら docs/spawn_prompt.rendered.md の kind: <役> の prompt を1字も変えずに\nAgent ツールへ渡す（isolation: \"worktree\" と run_in_background: true を必ず付ける）。\n立てたら python scripts/next_round.py --record <役> を撃ち、data/rounds.jsonl を\ncommit して push する。\n\n手順の正本は docs/trigger_parent.md の第1節。毎回読み直すこと（サブが書き換えている）。\nサブの中身は判断しない。子セッションは立てない（create_session は人のタップを待つ）。",
-  "next_run_at": "2026-08-29T00:59:00Z",
-  "last_fired_at": "2026-08-28T23:59:19.650216Z",
-  "ingested_at": "2026-08-29T00:14:56+00:00",
-  "spec_fingerprint": "4b4a075c00acbe01"
+  "body": "親の周です。\n\n    cd /home/user/youtube && git pull --no-rebase origin claude/youtube-auto-post-revenue-ggedij\n    timeout 120 python scripts/next_round.py\n\n## **止めないこと**（オーナー 2026-08-31「何で止まってんだよ！」）\n\n**サブが1体も走っていないなら、`next_round.py` が WAIT でも立てること。**\n間隔は枠を守るための目安であって、**手を止める理由ではありません**。\n親が「間隔だから待つ」と決めて 191分 空けたことがあり、**オーナーに叱られました。**\n\n    走っているサブが在る    → 何もしない（二重に立てない）\n    1体も走っていない      → **WAIT でも立てる**\n\n**GO でも WAIT でも、立てるときは** `python scripts/spawn_prompt.py` で hourly と optimizer を出し、\n**一字一句そのまま** Agent へ。**2件 並列**で必ず:\n\n    isolation: \"worktree\"\n    run_in_background: true\n    model: \"opus\"      ← オーナー指示「一次サブはOpus5でやってね」\n\n**cwd が repo の中でないと worktree が作れません。**「Stage 2 classifier error」は撃ち直すこと。\n立てたら `python scripts/next_round.py --record hourly,optimizer` → `data/` を commit して push。\n\n## **固定の与件**（オーナー原文。**変えない・要約しない**）\n\n> **「言ったこと全部目標と同じ固定指示ね。」**\n\n    1. 目標 —— YouTube の収益で月20万を最短で\n    2. > **「動画は1日一本作り置きはなしにして。次の投稿予定までにそこで投稿する動画を\n       >    改善し続ける。それは固定にして。その上で目標を目指す」**\n    3. > **「前からやってたサブ二台体制でやれ。明日の投稿から一本のみだよ。今日はもう投稿しない」**\n       —— 08/31 は0本。**09/01 から 1日1本のみ**\n    4. > **「消さなくて良いよ時間かかるならわざわざ」**\n       > **「使わなければ良いだけ前提にも再利用もしない」**\n       —— 作り置きは **使わない**（予約を外して private・**1本も削除しない**）／\n          **前提にしない**（予測の供給から外す）／**再利用しない**\n\n床は `src/house_rule.PUBLISH_PER_DAY = 1`、検査は `tests/test_house_rule.py`。**毎周 確かめること。**\n\n## いま進行中\n\n- **09/01 の1本** `J67vEIw_VRE`（変動金利の未払利息・長尺7.0分）。予約は 09/05 のままで、\n  **09/01 22:00 JST へ入れ直す**。日枠 403 で撃てず、**09/01 07:05Z のトリガーが撃ちます**\n- **予約の池化 残 267本**（`data/inbox.jsonl` の `04dd471d`）。日枠待ち\n- **Data API の日枠は 09/01 16:00 JST に戻ります。** それまで外の口は 403。**無駄撃ちしないこと**\n\n## 止める仕掛けを足さないこと\n\n> **「勝手にそれで止まるのなし。今後そういうことがないようにして」**\n\n止まるのは `.owner-pause` が在るときだけ／印を作るコードは repo に無い／判定は1か所／\n検査は `tests/test_pause_needs_owner.py`。**作りに問題を見つけたら、止めるのではなく直すこと。**\n\n**報告を書かない。承認を求めない。サブの中身は判定しない。**\n**オーナーはスマホしか持っていません。** ターミナルのコマンドを頼まないこと。\n**手順の正本は `docs/trigger_parent.md` 第1節。毎回 読み直すこと。**",
+  "next_run_at": "2026-08-31T15:59:00Z",
+  "last_fired_at": "2026-08-31T12:59:37.232690Z",
+  "ingested_at": "2026-08-31T13:40:16+00:00",
+  "spec_fingerprint": "f9fa351a585bef3d"
 }
