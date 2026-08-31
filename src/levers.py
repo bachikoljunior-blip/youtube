@@ -378,6 +378,73 @@ def _long_surface_measured() -> bool:
         return False
 
 
+#: **`dead_why` の前置き。「天井」ではない死に方**（2026-08-31・最適化の回）。
+#: `scripts/drift.py` は前方一致で読みます。**完全一致で読まないこと** ——
+#: 理由には但し書きが付きます。
+RULE_DEAD = "規則"
+
+
+def _density_ceiling_is_rule(row: dict) -> bool:
+    """**`density` の天井は、観測ではなく「オーナーが固定した規則」か。**
+
+    ## なぜ要るか（2026-08-31・最適化の回。**自分で撃った数**）
+
+    この回の実データ（`data/eta.jsonl` の最後の天井の行）は、こうでした:
+
+        arm_caps    {'per_video': 2.01, 'sub_rate': 6.64, 'rpm': 59.77, 'density': 1.00}
+        dead        ('per_video', 'sub_rate', 'rpm')      ← **動かせる腕が全部 死んでいる**
+        open_why    {'density': '…長尺の面は開いています…'}  ← **`density` だけが生きている**
+
+    そして門1（登録者1,000人）を、腕ごとに解き直すとこうです（`house_rule.cap()` を掛けて）:
+
+        いま                      3,292日
+        per_video を天井 ×2.01     1,640日   （**−1,652日**）
+        sub_rate  を天井 ×6.64       495日   （**−2,797日**）
+        density   を天井 ×1.00     3,292日   （**    0日**）
+        density   を **無限大**    3,292日   （**    0日**）  ← **規則が頭を押さえる**
+
+    **`density` は、無限大にしても到達日を1日も動かしません。**
+    `scripts/eta.py` の `PLAN_PUBLISH_PER_DAY` は
+    `src.house_rule.PUBLISH_PER_DAY` をそのまま読み、その規則の
+    **「覆る条件: ありません」** はオーナーの言葉でしか外れません。
+
+    それでもこの機械は `density` を**唯一の生きた腕**として差し出していました。
+    実測 —— 直近10回の ship の腕は `density` **3回**、過去の配分の **39%** が
+    ここに載っています（`scripts/eta.py` の「上の日付は過去の配分で解いています」）。
+
+    ## 直したのは「面の話」ではありません
+
+    2026-08-26〜27 に入った救済（`_long_surface_open`）は**正しい**ものでした ——
+    当時の天井は `day_cap.cap()` ＝ **観測**で、観測は測り直せば動くからです。
+    **2026-08-31 に、その上に規則が乗りました。** 規則は測り直しても動きません。
+    だから救済の前提（「測り直せば引ける」）が、この腕についてだけ消えています。
+
+    **長尺の面が開いている、という事実は正しいままです。** 変わったのは
+    **その事実がどの腕を指すか**です —— 1日の本数は規則で固定なので、
+    自由なのは**その1本がどの形か**のほうで、それは `rpm`
+    （`LEVERS["rpm"]` ＝「ニッチ・尺・**形式**を変える」）です。
+
+    ## 読み方
+
+    `scripts/eta.physical_caps` が `caps["density"]["rule_binds"]` を立て、
+    `_row()` が `density_surfaces["short"]["rule_binds"]` として積みます。
+
+    **欄が無い行では False**（＝前のまま）。`_long_surface_open` と同じ姿勢で、
+    **済んだ回の判定を、あとから足した欄で塗り替えないこと。**
+    新しい行は毎回この欄を持つので、次の `eta.py` で入ります。
+
+    ## 覆る条件
+
+    **オーナーが自分の言葉で 1日1本 を外したとき。** そのとき
+    `house_rule.PUBLISH_PER_DAY` が上がり、`physical_caps` の `rule_binds` は
+    自然に False になって、この関数は黙ります。**手で消さないこと。**
+    """
+    surfaces = (row or {}).get("density_surfaces")
+    if isinstance(surfaces, dict) and isinstance(surfaces.get("short"), dict):
+        return bool(surfaces["short"].get("rule_binds"))
+    return False
+
+
 def _long_surface_open(row: dict) -> bool:
     """**長尺の面に、まだ引き代があるか。**（2026-08-26。3回続けて申し送られた話の本体）
 
@@ -464,7 +531,19 @@ def arm_state(eta_row: dict | None) -> dict:
     #     同じ関数の 20行 下では `density_open_why` が
     #     「**長尺の面は開いています**」と言うので、
     #     **同じ出力の中で、自分の言っていることを自分で否定していました。**
-    if dead_why.get("density") == "天井":
+    # --- **その天井は、測り直せる観測か。それとも規則か**（2026-08-31・最適化の回）---
+    #     下の名乗り直しも救済も、**天井が観測であること**を前提にしています
+    #     （「ショートの面の数」＝ `day_cap.cap()`）。**2026-08-31 に、その上に
+    #     オーナーの規則が乗りました**（`src/house_rule.PUBLISH_PER_DAY = 1`）。
+    #     規則は測り直しても動かないので、**面がいくつ開いていても引けません。**
+    #     根拠は `_density_ceiling_is_rule` の docstring（この回に自分で撃った数）。
+    rule_pins_density = _density_ceiling_is_rule(row)
+    if rule_pins_density and "density" in dead_why:
+        dead_why["density"] = (
+            f"{RULE_DEAD}（**オーナーが固定した 1日1本**・`src/house_rule.py`。"
+            "**覆る条件はありません**）"
+            " —— 天井ではないので、測り直しても上がりません")
+    if not rule_pins_density and dead_why.get("density") == "天井":
         if not _long_surface_measured():
             dead_why["density"] = "天井（**ショートの面だけ。長尺の面は未測定**）"
         elif _long_surface_open(row):
@@ -481,9 +560,28 @@ def arm_state(eta_row: dict | None) -> dict:
     #     殺すのは**両方の面が閉じたとき**だけ。**理由のほうは残します**
     #     （`open_why` として返し、`lever_notes` がそのまま出す）。
     density_open_why = None
+    #: **規則で `density` が死んでいるとき、長尺の面の話が指す腕**（2026-08-31）。
+    #:     救済の中身（「長尺は `SHORTS_FEED` の枠を使わない・4,000時間の門に
+    #:     入るのは長尺だけ・その作業を `none` へ落とすな」）は**そのまま正しい**
+    #:     ので、捨てません。**指す先だけを、引ける腕へ付け替えます。**
+    redirect_why: dict[str, str] = {}
     #: **面が割れているから外した腕**。下の `reaches` の輪が入れ直さないため。
     rescued: set[str] = set()
-    if "density" in dead_why and _long_surface_open(row):
+    if rule_pins_density and _long_surface_open(row):
+        _note = (
+            "**長尺の面は開いています**"
+            + ("（**実測の上限**まで、まだ引き代があります）"
+               if _long_surface_measured() else "（未測定）")
+            + "。 長尺は `SHORTS_FEED` の枠を1つも使わず、"
+            "**4,000時間の門に入るのは長尺だけ**です。"
+            " **長尺の仕事を `none` へ落とさないこと。**"
+            " ただし **1日の本数は規則で 1本 に固定**なので、"
+            "それを指すのは `density` ではなく **`rpm`**"
+            "（`LEVERS['rpm']` ＝ ニッチ・尺・**形式**を変える）です ——"
+            " 自由なのは**その1本がどの形か**のほうです。")
+        redirect_why["density"] = _note
+        redirect_why["rpm"] = _note
+    if not rule_pins_density and "density" in dead_why and _long_surface_open(row):
         # **「（未測定）」を、ここに焼き込まないこと**（2026-08-29 に直した）。
         #     長尺の面の崩れは **2026-08-21 に観測されています**
         #     （7本 出して生存 5本 → 上限 6本/日・`src/day_cap.long_form()`）。
@@ -552,6 +650,8 @@ def arm_state(eta_row: dict | None) -> dict:
             "thresholds": row.get("arm_threshold") or {},
             # **面が割れていて生きている腕の、その理由**（`density` だけ）。
             "open_why": ({"density": density_open_why} if density_open_why else {}),
+            # **規則で死んだ腕から、引ける腕への付け替え**（2026-08-31）。
+            "redirect_why": redirect_why,
             "dead": dead, "dead_why": dead_why}
 
 
@@ -572,6 +672,22 @@ def lever_notes(lever: str | None, state: dict) -> list[str]:
         return []
     out: list[str] = []
     cap = state.get("caps", {}).get(lever)
+    redirect = (state.get("redirect_why") or {}).get(lever)
+    # --- **規則で死んだ腕は、「天井」と同じ字で叱らないこと**（2026-08-31）---
+    #     「天井に着いています」は「**測り直せば上がる**」と読めます。
+    #     規則（`src/house_rule.py`・覆る条件: ありません）はそうではありません。
+    #     読み違えると、次の回が「天井を上げる前提を1件 立てよう」に向かい、
+    #     **オーナーが外すまで永久に閉じない前提**を積みます。
+    _why = (state.get("dead_why") or {}).get(lever) or ""
+    if _why.startswith(RULE_DEAD):
+        out.append(f"         [!] **`{lever}` を止めているのは天井ではありません。** {_why}")
+        out.append("             **無限大にしても到達日は1日も動きません**"
+                   "（`scripts/eta.py` の `PLAN_PUBLISH_PER_DAY` は"
+                   " `src.house_rule.PUBLISH_PER_DAY` をそのまま読みます）。"
+                   " **天井を上げる前提を立てないこと** —— 外せるのはオーナーだけです。")
+        if redirect:
+            out.append(f"             {redirect}")
+        return out
     # **面が割れていて生きている腕は、叱らないこと**（2026-08-26）。
     #     `arm_state` が `density` を「死んだ腕」から外したのに、ここが
     #     `caps` の生の数（＝ショートの面）だけを見て叱り続けていました。
@@ -626,6 +742,11 @@ def lever_notes(lever: str | None, state: dict) -> list[str]:
                    " 確かめ方（`arms` に `rate=0` を渡して解き直す）:")
         out.append("               `eta.trajectory(m, a, arms=<その腕だけ rate=0>)`"
                    " —— **凍らせて日付が動けば、その腕は効いています。**")
+    # **規則で `density` が死んだとき、その仕事の行き先を引ける腕の側にも出す**
+    #     （2026-08-31）。`density` の側だけに書くと、**`rpm` を選んだ回が
+    #     「長尺を増やす仕事は自分の担当だ」と気づけません。**
+    if redirect and not _why.startswith(RULE_DEAD):
+        out.append(f"         {redirect}")
     hint = state.get("hint")
     if hint and hint in LEVERS and hint != lever:
         why = state.get("binding") or "（床の名前が読めません）"
