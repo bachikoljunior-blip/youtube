@@ -263,6 +263,10 @@ def push_missing(dry_run: bool = False, force: bool = False,
 
     `only_long=True` は**長尺だけ**に絞り、その門を通しません
     （理由は `LONG_FORM_SEC` の上の註 —— あの門はショートの理屈です）。
+
+    `only_video=<動画ID>` も**その門を通しません**（2026-09-01）。
+    門は値段の比べで、1本（50単位）は門が勧める代替（穴の数 × 50単位）より
+    安いので、比べが逆さまになります。**門の呼び出しの上の註**に実測。
     """
     import critique_queue
 
@@ -330,12 +334,48 @@ def push_missing(dry_run: bool = False, force: bool = False,
     # 値段は同じ50単位、効きは桁で違います（再生の 99.9% は
     # サムネイルの出ない SHORTS_FEED）。**門は押す側に置いてあります** ——
     # `batch_build` にだけ置くと、`reschedule` から見えません。
-    if not force and not only_long:
+    # **`--video` の1本は、この門を通しません**（2026-09-01 に踏んだ。**実測**）。
+    #
+    # この門は「7,900単位（158本）を、450単位（穴9本の移動）に譲れ」という
+    # **値段の比べ**です。**1本だけの道では、その比べが逆さまになります** ——
+    # `--video` は **50単位**で、門が代わりに勧める移動は **450単位**。
+    # 止めているほうが 9分の1 安く、譲る先は存在しません。
+    #
+    # 実測 2026-09-01 05:5x（`schedule_holes()` を撃った）: 穴は **9日**
+    # （09/03〜09/11）。§1 の印が「枠の戻る 16:00 に、これを撃つこと」と
+    # 名指しで印字している1行
+    #
+    #     python scripts/refresh_thumbnail.py --missing --video UIWHsypOPPg
+    #
+    # は、**この門で必ず 3 を返して1本も押しません。** その本は同じ日の
+    # 22:00 JST に公開されます —— **印字された手順が、そのままでは効かない。**
+    #
+    # **穴には締切がありません**（いちばん早い 09/03 でも2日先）。
+    # **この1本には 16時間 しかありません。** 門は値段しか見ないので、
+    # 締切の差はどこにも入りませんでした。
+    #
+    # `only_long` を通していたのと同じ形です（あちらは「ショートの理屈だから」、
+    # こちらは「比べが逆さまだから」）。**`--force` で外せ、とは書きません** ——
+    # `batch_build.slots()`「**人の記憶と手写しに依存する門は、この輪では
+    # 毎回落ちる側**」。同じ理由で `order_by_publish()` も入れてあります。
+    #
+    # **覆る条件**: `--video` が2本以上を受けるようになったら、
+    # ここも `len(rows) * 50 < 穴の数 * 50` の比べに直すこと
+    # （1本のあいだは、その比べは必ず通ります）。
+    if not force and not only_long and not only_video:
         okay, line = upload_cap.thumbnail_yield_to_schedule(_ledger_ahead(), len(rows))
         if not okay:
             print(f"[thumb] {line}")
             return 3
         print(f"[thumb] {line}")
+    elif only_video and not force and not only_long:
+        _holes = upload_cap.schedule_holes(_ledger_ahead())
+        if _holes:
+            print(f"[thumb] 予約に0本の日が {len(_holes)}日 ありますが、"
+                  f"**この1本（50単位）は通します** —— 埋めるのに要るのは"
+                  f" {len(_holes)}本の移動（{len(_holes) * 50:,}単位）で、"
+                  "**止めているほうが安い**。穴に締切はありませんが、"
+                  "次に公開される本にはあります")
 
     # **計測のぶんを残して止める**（2026-08-28 の最適化の回・2枚目）。
     #
