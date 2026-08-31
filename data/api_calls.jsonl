@@ -1189,3 +1189,8 @@
 {"at": "2026-08-31T10:58:51+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "analytics.py:fetch_report"}
 {"at": "2026-08-31T10:58:52+00:00", "api": "data", "method": "videos.list", "units": 1, "ok": false, "by": "analytics.py:fetch_report"}
 {"at": "2026-08-31T10:58:53+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "status.py:print_channel_signals"}
+{"at": "2026-08-31T11:26:44+00:00", "api": "data", "method": "channels.list", "units": 1, "ok": true, "by": "upload_only.py:main"}
+{"at": "2026-08-31T11:26:44+00:00", "api": "data", "method": "playlistItems.list", "units": 1, "ok": false, "by": "history.py:channel_video_ids"}
+{"at": "2026-08-31T11:26:44+00:00", "api": "data", "method": "search.list", "units": 100, "ok": false, "by": "history.py:channel_video_ids"}
+{"at": "2026-08-31T11:26:45+00:00", "api": "data", "method": "videos.list", "units": 1, "ok": false, "by": "upload_only.py:main"}
+{"at": "2026-08-31T11:26:45+00:00", "api": "data", "method": "channels.list", "units": 1, "ok": false, "by": "uploader.py:scheduled_publish_times"}
