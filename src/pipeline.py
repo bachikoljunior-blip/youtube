@@ -657,6 +657,9 @@ def main(argv: list[str] | None = None) -> int:
         slides[slide_index_of_segment[pick_thumbnail_slide(script)]],
         script.thumbnail_line1, script.thumbnail_line2,
         work / "thumbnail.jpg", work, accent=accent,
+        # **題材の1行**（省略可）。台本が持っていなければ、これまでと同じ絵。
+        # `src/thumbnail.create()` の docstring に、足した理由の全文。
+        kicker=getattr(script, "thumbnail_kicker", None),
     )
 
     description = build_description(script, spans, channel, topic["id"])
