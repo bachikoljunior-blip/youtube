@@ -107,6 +107,8 @@ def _pin_rule(monkeypatch) -> None:
 def _plan(monkeypatch, mix=MIX, **over):
     monkeypatch.setattr(eta.rpm_mix, "last", lambda *a, **k: mix)
     _pin_surface(monkeypatch)
+    # 規則（1日1本）は、この file の主題ではありません。理由は `_pin_rule` の
+    #     docstring。**規則の効きは `tests/test_eta_house_rule.py` が主題として持ちます。**
     _pin_rule(monkeypatch)
     m = _measured(**over)
     return eta.plan(m, eta.analyse(m))
