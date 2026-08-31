@@ -497,6 +497,11 @@ def test_実物で処置群は門に足りていない() -> None:
 
     足りているのに「足りない」と言い続けるほうが危ないので、
     **足りたらこの検査が落ちます。** 落ちたら判定に入ってよい合図です。
+
+    **数えるのは `judgeable.members("stat_split")` です**（自分で数え直さないこと。
+    理由と実測は下の註 ——「6件目」）。**門は両群**です: `falsified_if` は
+    「**どちらかが 16本 に満たなければ判定しない**」なので、
+    片群だけを見ると対照が足りない回に偽の合図が出ます。
     """
     landed = datetime(2026, 8, 23, 22, 3, 31, tzinfo=ab_split.JST)
     before, after = landed_groups(landed)
@@ -519,15 +524,47 @@ def test_実物で処置群は門に足りていない() -> None:
     # **群の分母が条件と食い違う形は、これで5件目です**
     # （8/19・8/23・8/25 に3件、`published()` の二重計上で4件目）。
     # **門に当てる量は、門の定義に出てくる量そのものにすること。**
+    #
+    # ## **6件目（2026-09-01）。ここは自分で数え直していました**
+    #
+    # 上の直しの後も、この検査は `landed_groups()` と `published()` から
+    # **自分で群を組み直して**いました。その間に、群を作る側（`split_counts()` と
+    # `judgeable.members()`）は**絞りを2つ増やしています**:
+    #
+    #     2026-08-31  `stockpile` を落とす（規則2 ＝ 作り置きは永久に公開されない）
+    #     2026-08-31  `live_video_ids()` で帯の外を落とす（`day_cap` の 0再生の枠）
+    #
+    # **この検査だけが、その2つを知りませんでした。** 実測 2026-09-01 03:5x:
+    #
+    #     この検査の数え方              処置群 **20本** → 門 16 を超え、**赤**
+    #       うち 帯の外（0再生の枠）      **13本**
+    #     `judgeable.members("stat_split")`  処置群 **7本**（対照 84本）／床 16
+    #
+    # **合図は偽でした（2回目）。** そのまま `stat_split` を判定していたら、
+    # `falsified_if` は「上回らなければ外れ（同点も外れ）」なので
+    # **7本の標本がそのまま『外れ』に化け**、`next_if_false` が
+    # **`per_video` の腕ごと畳んでいました** —— `scripts/eta.py` の頭は
+    # 「**引けるのは `per_video` だけ**」と印字しています。
+    #
+    # **だからもう自分で数えません。** `judgeable.members()` は
+    # 「**群の作り方は1か所**」（あの docstring・`tests/test_live_slots.py::
+    # test_群の作り方は1か所` が守っています）で、`stockpile` と帯の絞りが
+    # そこに入っています。**絞りが増えても、この検査は自動で追随します。**
+    #
+    # **覆る条件**: `stat_split` が `judgeable.MEMBER_SOURCES` から外れたら、
+    # ここは数えられなくなります（そのときは `KeyError` で落ちるので気づけます）。
+    from src import judgeable
+
     today = datetime.now(ab_split.JST).date()
     settled_by = today - timedelta(days=SETTLE_DAYS)
-    pub_of = {str(r.get("topic") or ""): r.get("publish") for r in published()}
-    ready = [t for t in after
-             if pub_of.get(t) is not None and pub_of[t] <= settled_by]
+    rows = judgeable.members("stat_split")
+    ready = [v for d, v in rows.get("処置(後)", []) if d <= settled_by]
+    control = [v for d, v in rows.get("対照(前)", []) if d <= settled_by]
 
-    assert len(ready) < MIN_PER_GROUP, (
-        f"処置群の**判定に使える本**が {len(ready)}本 ＝ 門 {MIN_PER_GROUP} に達しました"
-        f"（作っただけの本を含めると {len(after)}本）。"
-        "**判定に入ってよい合図です** —— hypotheses.yaml の 09/05 を判定し、"
+    assert len(ready) < MIN_PER_GROUP or len(control) < MIN_PER_GROUP, (
+        f"両群とも**判定に使える本**が門 {MIN_PER_GROUP} に達しました"
+        f"（処置(後) {len(ready)}本 / 対照(前) {len(control)}本。"
+        f"作っただけの本を含めると処置群は {len(after)}本）。"
+        "**判定に入ってよい合図です** —— hypotheses.yaml の `stat_split` を判定し、"
         "この検査を消すこと"
     )
