@@ -468,15 +468,10 @@ def check_tables() -> None:
         got = simulate(PRINCIPAL, YEARS, ((0, START_RATE), (RISE_AT, rate)),
                        five_year_rule=rule, cap_125=rule)
         interest_sum = sum(row["利息"] for row in got["rows"])
-        want = PRINCIPAL + interest_sum
-        if abs(got["total"] - want) > 1:
-            raise _checks.TableError(
-                f"上がった先 {rate * 100:.1f}%・ルール{'あり' if rule else 'なし'}: "
-                f"総支払額 {got['total']:,}円 が、元金 {PRINCIPAL:,}円 ＋ "
-                f"利息 {interest_sum:,}円 ＝ {want:,}円 と "
-                f"{got['total'] - want:+,}円 ずれています。"
-                "**払った額は、元金と利息のどちらかにしかなりません。**"
-                "見直しの `need` に未払利息を混ぜると、同じものを2回 取ります")
+        _checks.conserves(
+            got["total"], [PRINCIPAL, interest_sum],
+            f"上がった先 {rate * 100:.1f}%・ルール{'あり' if rule else 'なし'} の総支払額",
+            names=["元金", "利息"])
 
     # 8. 表の行が重なっていないこと
     _checks.unique_by(rise_grid(), lambda r: r["上がった先"], "上がった先")
