@@ -970,8 +970,19 @@ def next_close(doc: dict | None = None, today: date | None = None,
     **覆る条件**: 判定できる前提が毎回 10件 を超えるようになったら、
     名前を全部 並べると頭3行が読めなくなります（そのときは上位3件 ＋ 件数へ）。
 
+    ## **腕の名前も返します**（2026-08-31・最適化の回）
+
+    日付だけを見て「**この回は `verdict` で日付が動かせます**」と印字すると、
+    **腕に引き代の無い前提**を名指ししたときに嘘になります。実測 2026-08-31:
+    いちばん早い1件は「長尺は1日4本 作れる」で `lever: density`。
+    ところが `density` はオーナーが同日に **1本/日 に固定**しており、
+    `eta.physical_caps()` は ×1.0（引き代なし）を返します ——
+    **閉じても到達日は1日も動きません。**
+    `claim_levers` を読む側が、その1件を断れるようにします。
+
     返り: `{"on": date|None, "days": int|None, "open": 件数,
-            "source": "ready"|"deadline", "claims": [str, ...]}`
+            "source": "ready"|"deadline", "claims": [str, ...],
+            "claim_levers": {claim: lever}}`
 
     `claims` は **`on` と同じ日に判定できる前提の名前**（`on` が今日なら
     「**いま撃てるもの**」そのもの）。`on` が `None` のときは空。
@@ -981,6 +992,7 @@ def next_close(doc: dict | None = None, today: date | None = None,
     ready = ready or {}
     unready = unready or set()
     days: list[tuple[date, str, str]] = []
+    levers: dict[str, str] = {}
     n_open = 0
     for h in doc.get("hypotheses", []) or []:
         if not isinstance(h, dict) or h.get("closed_on"):
@@ -1000,16 +1012,29 @@ def next_close(doc: dict | None = None, today: date | None = None,
         if isinstance(r, date):
             when, src = r, "ready"
         if isinstance(when, date):
-            days.append((when, src, str(h.get("claim") or "")))
+            claim = str(h.get("claim") or "")
+            days.append((when, src, claim))
+            # **腕の名前も返します**（2026-08-31・最適化の回に足した）。
+            #     日付だけを見て「この回は verdict で日付が動かせます」と印字すると、
+            #     **腕に引き代が無い前提**を名指ししたときに嘘になります。
+            #     実測 2026-08-31: いちばん早い1件は
+            #     「長尺は1日4本 作れる」＝ `lever: density`。
+            #     ところが `density` はオーナー規則で **1本/日 に固定**され、
+            #     `physical_caps()` は ×1.0（引き代なし）を返します ——
+            #     **閉じても到達日は1日も動きません。**
+            #     読む側（`scripts/eta.py`）が腕を見て断れるように、ここで持たせます。
+            if h.get("lever"):
+                levers[claim] = str(h.get("lever"))
     if not days:
         return {"on": None, "days": None, "open": n_open,
-                "source": None, "claims": []}
+                "source": None, "claims": [], "claim_levers": {}}
     soonest, src, _ = min(days, key=lambda x: x[0])
     # **同じ日に判定できるものは全部 返します。** 1件だけ返すと、
     # 撃った次の回に「もう1件あった」が見えません。
     names = [c for (d, _s, c) in days if d == soonest and c]
     return {"on": soonest, "days": (soonest - today).days,
-            "open": n_open, "source": src, "claims": names}
+            "open": n_open, "source": src, "claims": names,
+            "claim_levers": {c: levers[c] for c in names if c in levers}}
 
 
 #: `forward()` が数える窓（日）。**14 を先頭に置くこと** —— いちばん短い窓が

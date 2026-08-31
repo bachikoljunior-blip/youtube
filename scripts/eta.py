@@ -6311,12 +6311,66 @@ def headline(pl: dict, prev: dict | None = None,
                 names = [c for c in (nc.get("claims") or []) if c][:3]
                 if names:
                     more = len(nc.get("claims") or []) - len(names)
+                    # --- **その前提の腕に、引き代はあるか**（2026-08-31・最適化の回） ---
+                    #
+                    #     ここは「**この回は `verdict` で日付が動かせます**」と
+                    #     言い切っていました。**腕を見ていないので、嘘になりえます。**
+                    #
+                    #     実測 2026-08-31（この欄を足した回・`arm_speed.next_close()` を直接 叩いた）:
+                    #
+                    #         判定できる前提  1件「長尺は1日4本 作れる」
+                    #         その `lever`    **density**
+                    #         density の天井  **×1.00**（オーナー規則で 1本/日 に固定・
+                    #                         `physical_caps()` の `rule_binds`）
+                    #
+                    #     **引き代 ×1.00 の腕は、前提を閉じても到達日を1日も動かしません。**
+                    #     つまりこの回の「`verdict` で日付が動かせます」は、
+                    #     **唯一 名指しできる1件について偽**でした。
+                    #     同じ出力の下のほうには `lever_days` が density を
+                    #     「天井 ×1.00・`reachable_at_cap=False`」と出しています ——
+                    #     **2か所が別々に言っている形**の、また1件です。
+                    #
+                    #     腕そのものは消しません（判定は判定として価値があります）。
+                    #     **「日付は動きません」と同じ行に書くだけ**です。
+                    #
+                    #     **覆る条件**: オーナーが 1日1本 を外して `density` に
+                    #     引き代が戻ったら、この断りは自分で消えます（数で見ています）。
+                    _lv = nc.get("claim_levers") or {}
+                    _rows = {r["lever"]: r for r in (pl.get("lever_days") or [])}
+                    _dead = []
+                    for _c in names:
+                        _arm = _lv.get(_c)
+                        _row = _rows.get(_arm) if _arm else None
+                        if _row is not None and (_row.get("at_ceiling")
+                                                 or float(_row.get("factor") or 0) <= 1.0):
+                            _dead.append((_c, _arm))
+                    if _dead and len(_dead) == len(names):
+                        verb = ("—— **ただし、この回に判定できる前提は"
+                                f"{len(names)}件 とも、腕に引き代がありません**"
+                                "（下の `lever_days` が同じ回に"
+                                f"「天井 ×1.00」と出しています: "
+                                + " ／ ".join(f"`{a}`" for _c, a in _dead)
+                                + "）。**閉じても上の日付は動きません** ——"
+                                "判定そのものには値打ちがあるので撃ってよいですが、"
+                                "**`--moves` は 0日 が正しい**です。"
+                                "**日付を動かしたいなら、引き代のある腕"
+                                "（`per_video` / `rpm`）に前提を1件 新しく立てること。**")
+                    elif _dead:
+                        verb = ("—— **うち "
+                                + " ／ ".join(f"「{_c[:24]}…」(`{a}`)" for _c, a in _dead)
+                                + " は腕に引き代がありません**（閉じても日付は動きません）。"
+                                "**残りのほうから撃つこと。**")
+                    else:
+                        verb = ""
                     which = ("**いま判定できるのは**: "
-                             + " ／ ".join(f"**{c[:52]}**" for c in names)
+                             + " ／ ".join(
+                                 f"**{c[:52]}**"
+                                 + (f"（腕 `{_lv[c]}`）" if c in _lv else "")
+                                 for c in names)
                              + (f"（ほか {more}件）" if more > 0 else "")
                              + "。**この名前で `config/hypotheses.yaml` を引くこと**"
                              "（`python scripts/deadline_check.py` を"
-                             "回さなくても、ここから撃てます）")
+                             "回さなくても、ここから撃てます）" + verb)
                 else:
                     which = ("**どの前提かは `python scripts/deadline_check.py`**"
                              "（`next_close()` が名前を返していません）")
