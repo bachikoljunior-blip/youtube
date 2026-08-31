@@ -6748,6 +6748,14 @@ def headline(pl: dict, prev: dict | None = None,
     # **止める仕掛けではありません。1行 印字するだけです。**
     # 判定は `src/house_rule.unreachable_needs()`（**規則の出どころ1か所**）。
     #
+    # ## **この行に `hypotheses` + `.yaml` の字を書かないこと**（2026-08-31 に踏んだ）
+    #
+    # `tests/test_eta_arm_source_line.py` は、**腕の速さの行**を
+    # 「その字を含む行」で引き当てています。同じ字を別の行に書くと、
+    # `test_腕が軌跡に無ければ黙る`（＝ 速さの行が**出ていない**ことを見る検査）が
+    # **正しい変更で落ちます。** 台帳の道はすぐ隣の `deadline_check.py` が出すので、
+    # ここでは「前提の台帳」と書けば足ります。
+    #
     # **覆る条件**: オーナーが規則を外したら、許す本数が増えて
     # `unreachable_needs()` が空になり、この行は自分で黙ります。
     # 検査は `tests/test_eta_unreachable_needs_headline.py`。
@@ -6762,8 +6770,8 @@ def headline(pl: dict, prev: dict | None = None,
             + (f"（ほか {len(_claims) - 3}件）" if len(_claims) > 3 else "")
             + "。一覧は `python scripts/deadline_check.py` の末尾。"
             "**実測 2026-08-31: この形の1件が、公開ずみ8日ぶんのデータだけで"
-            "期限より 10日 早く閉じました**（`config/hypotheses.yaml` の"
-            "「1日に再生が付く本数の上限（10本）は上がらない」）。"
+            "期限より 10日 早く閉じました**"
+            "（前提の台帳の「1日に再生が付く本数の上限（10本）は上がらない」）。"
         )
     # **腕の名前だけで終わらせない。** その腕を引いたら日付が何日動くかを、
     # 同じ3行の中に出します（オーナー指示 2026-08-20 16:0x「分析して制作に
