@@ -323,6 +323,109 @@ EXPR_NS = {"json": json, "rows": _rows, "date": date, "ab_members": ab_members,
            "latest_views": latest_views, "uploaded": uploaded, "long_ids": long_ids}
 
 
+#: **`count_expr` の中の名前 → その数が読んでいる計器**（と、取り直す手）。
+#:
+#: ## なぜ要るか（2026-08-31・最適化の回。**この回に実測して足した**）
+#:
+#: すぐ下の `_stale_todo` は「計器が止まっているのに『あと N日』と出る」を塞ぐ門で、
+#: **要件が `needs.data_file:` で自己申告したときだけ**効きます。
+#: `_data_file_coverage` はその申告率を毎回 印字し、docstring にこう書いています ——
+#: 「**ここは埋めません。数を出すだけにします。どの計器を読むかは要件ごとに違い、
+#: 機械には決められません（`count_expr` の中身は読めない）。推測で `data_file:` を
+#: 書くと、こんどは「在ることになっている点」で判定します。それは黙って通すより悪い**」。
+#:
+#: **前半は正しく、後半は外れています。** 「機械には決められません」の根拠は
+#: 「`count_expr` の中身は読めない」ですが、**`count_expr` が動くのは
+#: すぐ上の `EXPR_NS` の中だけ**です。名前は閉じた集合で、どれがどのファイルを
+#: 開くかは、このファイル自身に書いてあります（`latest_views` → `views.jsonl` …）。
+#: **散文からパスを拾うのとは別物です**（`newest_point` の「散文から拾わないこと」は
+#: `what:` の地の文の話で、**式そのもの**の話ではありません）。
+#:
+#: ## 埋めないでいるあいだに何が起きていたか（実測 2026-08-31 05:0x）
+#:
+#:     `data/views.jsonl` のいちばん新しい点   **2026-08-29T08:31Z**（**45時間 前**）
+#:     08/30・08/31 に積まれた行               **0行**（08/06 以来はじめて2日 続けて0）
+#:     その計器を数えている開いた前提           **3件**（期限 09-02 / 09-03 / 09-23）
+#:     そのどれかが `data_file:` を申告している  **0件**
+#:     そのとき `deadline_check` が出していた文  「あと 3日」「まだ数えはじめたところです」
+#:
+#: **「あと3日」は待てば来る文です。計器は止まっているので、待っても来ません。**
+#: `scripts/eta.py` の頭は、その日「**この回に閉じられる前提はありません**」と
+#: 印字しています —— 到達日をいちばん大きく動かすのは θ（前提が閉じる速さ）で、
+#: **その θ が、止まった計器のぶんだけ低く出ていた**ことになります。
+#:
+#: ## 何を門にするか
+#:
+#: **申告が先。** `data_file:` が書いてあればそちらを使います（人が
+#: 「この式はこの計器で待つ」と決めた場合を、機械が上書きしないため）。
+#: 書いていないときだけ、ここから引きます。**引けなければ、今までどおり黙ります。**
+#:
+#: ## 覆る条件
+#:
+#: - **`EXPR_NS` に名前を足したら、ここにも足すこと。**
+#:   `tests/test_deadline_expr_meters.py` が、片方だけ増えたら落とします
+#:   （計器を開かない名前は `_EXPR_NO_METER` に置くこと）
+#: - 1周ごとに全計器を取り直す作りにしたら、この表ごと外してよい
+#:   （`_stale_todo` の「覆る条件」と同じ）
+_EXPR_METERS: dict[str, tuple[str, ...]] = {
+    # `latest_views()` は `views.jsonl` の累計を読むだけ。**この行が積まれるのは
+    # `snapshot.record()`（＝ `status.py` から毎回）だけ**で、チャンネル側で
+    # 再生が伸びても、取り直さないかぎり1回も動きません。
+    "latest_views": ("data/views.jsonl",),
+    "long_ids": ("data/batch_runs.jsonl",),
+    "uploaded": ("data/uploaded.jsonl",),
+    # `src/deep_short` は3つ読みますが、**止まるのは `views.jsonl`** です
+    # （齢48時間 の読み。`video_forms.json` は `rpm_mix` が別に取り直す）。
+    "deep_short_arm": ("data/views.jsonl", "data/video_forms.json"),
+    "deep_short_days": ("data/video_forms.json",),
+    "deep_short_usable_days": ("data/views.jsonl", "data/video_forms.json"),
+}
+
+#: **計器を開かない名前**（`EXPR_NS` にあるが、この表に載らないもの）。
+#: `rows` は引数でファイルが決まるので、`_expr_meters()` が別に拾います。
+_EXPR_NO_METER = ("json", "date", "rows", "ab_members", "reveal_hold_arm")
+
+#: その計器を取り直す手（`needs.refresh:` を書いていない要件に添える）。
+#:
+#: **`_refresh_pool_note` が読める名前で書くこと。** あちらは
+#: `src.upload_cap.DATA_API_TOOLS` との文字列一致で「いまこの窓で撃てるか」を
+#: 決めるので、同じことをする道具でも**一覧に載っているほうの名前**を書きます ——
+#: `views.jsonl` は `scripts/status.py` でも積めますが、あれは一覧に無く
+#: （Analytics も棚卸しも回すので 40〜60秒）、**日枠を使わない手として印字されます。**
+#: 実際には `channels.list` で 403 を踏んで**表ごと落ち、`record()` まで届きません**
+#: （2026-08-31 05:1x の実測。だから `views.jsonl` が 45時間 止まっていました）。
+#: `scripts/snapshot.py` は `videos.list` だけ・**571本 で 12単位**で、
+#: 一覧にも載っています。
+#:
+#: **作る台帳（`batch_runs.jsonl`）はここに載せません** —— あれは「取り直す」もので
+#: はなく「作ると増える」ものなので、取り直す手を名指しすると嘘になります
+#: （`_ledger_frozen` の註）。載せなければ「…を取り直すこと」に落ちます。
+_METER_REFRESH: dict[str, str] = {
+    "data/views.jsonl": "python scripts/snapshot.py",
+    "data/video_forms.json": "python -m src.rpm_mix --forms",
+    "data/reach.jsonl": "python scripts/reach.py",
+}
+
+_ROWS_CALL = re.compile(r"""rows\(\s*['"]([^'"]+)['"]\s*\)""")
+
+
+def _expr_meters(expr: str) -> list[str]:
+    """**その `count_expr` が開くファイル**（`data/` からの相対）。読めなければ空。
+
+    `EXPR_NS` の名前と `rows('X')` の実引数からだけ引きます。
+    **地の文は1文字も読みません**（`newest_point` の註）。
+    """
+    out: list[str] = []
+    for name, files in _EXPR_METERS.items():
+        if re.search(r"\b" + re.escape(name) + r"\s*\(", expr):
+            out += [f for f in files if f not in out]
+    for m in _ROWS_CALL.finditer(expr):
+        f = "data/" + m.group(1).lstrip("/")
+        if f not in out:
+            out.append(f)
+    return out
+
+
 @dataclass
 class Answer:
     """1つの `needs` に対する答え。"""
@@ -931,26 +1034,47 @@ def _stale_todo(need: dict) -> str:
     外してよい。逆に「取り直したのに数が伸びない」が続くなら、
     見るべきは控えではなく `count_expr` のほうです。
     """
-    src = str(need.get("data_file") or "").strip()
-    if not src:
-        return ""
     try:
         hours = float(need.get("stale_after_hours") or _STALE_AFTER_HOURS)
     except (TypeError, ValueError):
         hours = _STALE_AFTER_HOURS
-    newest = newest_point(ROOT / src)
     now = datetime.now(timezone.utc)
-    if newest is not None and (now - newest).total_seconds() / 3600.0 < hours:
-        return ""                                   # **新しい。待つのが正しい**
+
+    src = str(need.get("data_file") or "").strip()
+    derived = False
+    if src:
+        newest = newest_point(ROOT / src)
+        if newest is not None and (now - newest).total_seconds() / 3600.0 < hours:
+            return ""                               # **新しい。待つのが正しい**
+    else:
+        # **申告が無いときは、式そのものに訊く**（2026-08-31・`_EXPR_METERS`）。
+        # **いちばん古い計器**を採ります —— 1つでも止まっていれば数は伸びません。
+        # **読めない計器では鳴らしません**（申告した場合と違って、ここは
+        # こちらが引き当てた相手なので、「無い」を「取り直せ」に化けさせない）。
+        stale: list[tuple[datetime, str]] = []
+        for f in _expr_meters(str(need.get("count_expr") or "")):
+            pt = newest_point(ROOT / f)
+            if pt is not None and (now - pt).total_seconds() / 3600.0 >= hours:
+                stale.append((pt, f))
+        if not stale:
+            return ""
+        newest, src = min(stale)
+        derived = True
+
     seen = (f"取り直したのは **{newest.astimezone(JST):%m/%d %H:%M} JST**"
             f"（**{(now - newest).total_seconds() / 3600:.0f}時間 前**）"
             if newest else "**いつ取り直したか読めません**")
     how = str(need.get("refresh") or "").strip()
+    if not how and derived:
+        how = _METER_REFRESH.get(src, "")
+    tail = _refresh_pool_note(dict(need, refresh=how) if how else need)
+    mark = ("（`data_file:` の申告はありません。**`count_expr` が呼んでいる名前**"
+            "から引きました ——`_EXPR_METERS`）" if derived else "")
     return ("**待ち方が違います。足りないのは日ではなく、計器のほうです** —— "
-            f"この数が読んでいる `{src}` は {seen}。"
+            f"この数が読んでいる `{src}` は {seen}{mark}。"
             "**取り直すまで、待っても増えません。**"
             + (f"  `{how}`" if how else f"  `{src}` を取り直すこと")
-            + _refresh_pool_note(need))
+            + tail)
 
 
 def _refresh_pool_note(need: dict) -> str:
@@ -2440,14 +2564,32 @@ def _data_file_coverage(vs: list[Verdict]) -> list[str]:
     **つまり守りの当たる範囲は 8% です。** 残り 36件 は、08/27 の回が
     「偽の判定日」と呼んだものを、いまも出しえます。
 
-    ## ここは埋めません。**数を出すだけ**にします
+    ## ~~ここは埋めません。**数を出すだけ**にします~~
 
-    どの計器を読むかは要件ごとに違い、機械には決められません
+    ~~どの計器を読むかは要件ごとに違い、機械には決められません
     （`count_expr` の中身は読めない ——`_stale_todo` の註）。
     **推測で `data_file:` を書くと、こんどは「在ることになっている点」で
-    判定します。** それは黙って通すより悪い。
+    判定します。** それは黙って通すより悪い。~~
 
-    だから `eta.py` の (イ) と同じ形にします ——
+    **半分 取り消します**（2026-08-31・最適化の回）。「推測で書くのは悪い」は
+    正しいままですが、その前の「**機械には決められません**」が外れています ——
+    `count_expr` が動くのは `EXPR_NS` の中だけで、**名前は閉じた集合**、
+    どれがどのファイルを開くかは**このファイル自身**に書いてあります。
+    だから `_EXPR_METERS` から引きます（**推測ではなく、式そのものを読む**）。
+    申告があればそちらが勝つので、人が決めた待ち方は上書きされません。
+
+    **埋めないでいた 4日 の実費**（実測 2026-08-31 05:2x）:
+
+        `data/views.jsonl` のいちばん新しい点  **08-29 17:31 JST**（**45時間 前**）
+        08/30・08/31 に積まれた行              **0行**
+        その計器を数えている開いた前提          **3件**（申告 0件 ＝ 全部 素通り）
+        素通りしていた要件に出ていた文          「あと 3日」「あと 30日」
+        引くようにして鳴った件数                **2件 → 7件**
+
+    そして `eta.py` の頭は、同じ日に「**この回に閉じられる前提はありません**」。
+    到達日をいちばん大きく動かすのは θ（前提が閉じる速さ）です。
+
+    だから残りは `eta.py` の (イ) と同じ形にします ——
     **裸で「判定できます」と言うたびに、何を確かめていないかを並べる。**
 
     **覆る条件**: 申告が 39件 に届いたら、この行は毎回 0 を出すので外してよい。
@@ -2483,7 +2625,7 @@ def _data_file_coverage(vs: list[Verdict]) -> list[str]:
     `test_この欄が届かない_kind_を分母に入れないこと` が、
     `answer()` の分岐と食い違ったら落ちます。
     """
-    total = declared = 0
+    total = declared = derived = 0
     for v in vs:
         for need in (v.needs or []):
             if not isinstance(need, dict):
@@ -2493,16 +2635,21 @@ def _data_file_coverage(vs: list[Verdict]) -> list[str]:
             total += 1
             if str(need.get("data_file") or "").strip():
                 declared += 1
-    if not total or declared >= total:
+            elif _expr_meters(str(need.get("count_expr") or "")):
+                derived += 1
+    covered = declared + derived
+    if not total or covered >= total:
         return []
     return ["",
             f"  **時計だけで「判定できる」と言っている要件: "
-            f"{total - declared}/{total}件**"
-            f"（`needs.data_file:` の申告は {declared}件。"
+            f"{total - covered}/{total}件**"
+            f"（`needs.data_file:` の申告 {declared}件 ＋ "
+            f"`count_expr` から引けた {derived}件（`_EXPR_METERS`）。"
             f"分母は **`data_file:` が効く kind だけ**"
             f"（{'/'.join(sorted(_DATA_FILE_KINDS))}）—— "
             "ほかの kind に書いても読まれません）。"
-            " 申告した件だけ、その計器の点が古ければ「取り直す手」が上に出ます ——"
+            " 申告した件と引けた件だけ、その計器の点が古ければ"
+            "「取り直す手」が上に出ます ——"
             " **残りは、点が1つも無くても期限だけで通ります**"
             "（08/27 に取り下げた『偽の判定日』と同じ形）。",
             "    **推測で埋めないこと。** どの計器かは要件ごとに違い、"
