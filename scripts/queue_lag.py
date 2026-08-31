@@ -1113,6 +1113,168 @@ def answering_lines(rows: list[dict], now: datetime | None = None) -> list[str]:
     return out
 
 
+def publish_cap() -> int:
+    """**1日に公開してよい本数。**（API 0単位）
+
+    `scripts/batch_build.density_cap()` を読むだけです。**ここに数を書かないこと** ——
+    上限は与件のほうで決まるので、写すと片方だけ直る形になります。
+    読めなかった回は `day_cap.cap()`（＝再生が付く上限・実測）へ落ちます。
+    **落ちた回は必ず「読めませんでした」と印字します** ——
+    黙って 10本/日 に戻ると、この節の答えが 10倍 楽観になります。
+    """
+    try:
+        from scripts import batch_build                          # noqa: PLC0415
+        return max(1, int(batch_build.density_cap()))
+    except Exception:                                            # noqa: BLE001
+        pass
+    try:
+        sys.path.insert(0, str(ROOT / "scripts"))
+        import batch_build                                       # type: ignore  # noqa: PLC0415
+        return max(1, int(batch_build.density_cap()))
+    except Exception:                                            # noqa: BLE001
+        return 0
+
+
+def _starved_rate(keys: list[str]) -> float:
+    """**これから公開する1本が、足りない群に入る割合**（実測。読めなければ 1.0）。
+
+    `judgeable.starved_share()` の実測をそのまま使います。**1.0 は楽観側** ——
+    読めない回にここを 0 にすると「永久に埋まらない」と出て、
+    **答えが計器の欠けだけで反転します。**
+    """
+    got = _starved_share(keys)
+    if not got or got[1] <= 0:
+        return 1.0
+    return max(0.05, got[0] / got[1])
+
+
+def rate_lines(short: list[tuple[str, str, int]],
+               rows: list[dict] | None = None,
+               now: datetime | None = None) -> list[str]:
+    """**1日N本の与件の下で、足りない床は期限までに埋まるか。**（API 0単位）
+
+    ## なぜ要るか（2026-08-31・最適化の回。**この回に測って足した**）
+
+    この日、与件が1つ足されました —— **公開は1日1本・作り置きはしない。**
+    処置は `batch_build.cap_by_density()` に入ります（＝**これから作る本**の置き方）。
+
+    **入らないのは、この節の側です。** `band_lines()` は置き先を
+    `batch_build.live_plan()`（**帯 10枠/日**）で数え、`supply_lines()` は
+    「材料が足りるか」だけを見ます。どちらも**1日に何本 公開するか**を見ていません。
+    だから上限が 10 から 1 に変わっても、印字は1文字も動きません。
+
+    実測 2026-08-31（この節を足した回）:
+
+        足りない群   request_form 途中あり あと 47本 ／ 終端のみ あと 32本
+                     opening_motion 対照(動きなし) あと 2本
+        要る新規     **96本**（前提をまたぐので和ではない）
+        帯 10枠/日 で置くと  最後の1本 **2026-10-04**（`band_lines()` の印字）
+        いまの上限 13本/日   最後の1本 2026-09-09 → **間に合います**（余り 20日）
+        **1本/日 で置くと    最後の1本 2026-12-23**（114日）—— 締切は **2026-09-29**
+
+    **85日 越えます**（`publish_cap()` を 1 に差して撃った実測。
+    `96 ÷ (1 × 0.84)` ＝ 114日。**割合を落とすと 96日 と出ます** ——
+    `starved_share()` の 84% を掛けること）。`request_form` は
+    `eta.py` が「凍らせると軌跡は +118日」と
+    言う腕（`sub_rate`）の、**ただ1つの走っている実験**です。
+    上限が 10 から 1 になった瞬間に、この前提は**期限までに判定できなくなりました。**
+    そして、それを言う行はどの道具にもありませんでした。
+
+    ## 何を言っていないか
+
+    **「1日1本をやめろ」ではありません**（与件なので、この節は動かせません）。
+    言っているのは「**その与件の下では、いまの期限は守れない**」だけです。
+    手は2つ —— **期限を延ばす**（`scripts/deadline_check.py`。`falsified_if` は
+    1文字も触らない）か、**群を畳む**か。**床は下げないこと**
+    （`src/ab_split.floor_of()`）。
+
+    ## 覆る条件
+
+    - `batch_build.density_cap()` が 1 以外に戻ったら、この節の日付は自動で動きます
+      （**ここに数を写していません**）
+    - `judgeable.starved_share()` が下がったら、要る日数はさらに伸びます
+      （いまは実測の割合で割っています）
+    - 床の足りない群が無くなったら、この節は「**間に合わない群はありません**」を出します
+    """
+    import math                                                  # noqa: PLC0415
+    cap = publish_cap()
+    out: list[str] = ["", "=== その床は、**1日N本の与件の下で**期限までに埋まるか"
+                          "（API 0単位）==="]
+    bar = "  "
+    if cap <= 0:
+        out.append(f"{bar}[!] **1日の上限が読めませんでした**"
+                   "（`batch_build.density_cap()`）。**この節は答えを出しません** ——"
+                   " 既定へ落として印字すると、10倍 楽観な日付が出ます")
+        return out
+    today = (now or datetime.now(JST)).astimezone(JST).date()
+    out.append(f"{bar}公開の上限 **{cap}本/日**（`batch_build.density_cap()`。"
+               "**ここには写していません**）"
+               f" ／ 再生が付く上限は **{day_cap.cap()}本/日**（実測）")
+    if rows:
+        per_day: dict[date, int] = {}
+        for r in rows:
+            d = r["at"].astimezone(JST).date()                   # type: ignore[union-attr]
+            per_day[d] = per_day.get(d, 0) + 1
+        over = sorted(d for d, n in per_day.items() if n > cap)
+        if over:
+            worst = max(per_day.items(), key=lambda x: x[1])
+            out.append(f"{bar}[!] **もう予約に在る作り置きが、この上限を超えています**"
+                       f" —— {len(over)}日ぶん（{over[0]}〜{over[-1]}）・"
+                       f"いちばん多い日 {worst[0]} の **{worst[1]}本**。"
+                       " **`cap_by_density()` はこれから作る本しか見ません** ——"
+                       " 既に置いた本は、この上限を通っていません"
+                       "（どけるのは `scripts/unschedule.py` / `scripts/reschedule.py`）")
+    if not short:
+        out.append(f"{bar}**床の足りない群はありません** —— この節は何も言いません")
+        return out
+    keys = sorted({k for k, _g, _n in short})
+    rate = _starved_rate(keys)
+    need_tot, per_key = _need_videos(short)
+    got = _starved_share(keys)
+    if got:
+        out.append(f"{bar}公開1本が足りない群に入る割合 **{rate:.0%}**"
+                   f"（実測 {got[0]}/{got[1]}本・`judgeable.starved_share()`）")
+    else:
+        out.append(f"{bar}公開1本が足りない群に入る割合 **読めませんでした →"
+                   " 1.0 で数えます**（楽観側。実際はこれより遅くなります）")
+    want = judgeable.deadlines()
+    late: list[tuple[str, int]] = []
+    for key in sorted(per_key, key=lambda k: -per_key[k]):
+        need = int(per_key[key])
+        days = math.ceil(need / (cap * rate))
+        fill = today + timedelta(days=days)
+        due = want.get(key)
+        cut = None
+        if due is not None:
+            cut = due - timedelta(days=SETTLE_DAYS + judgeable.ANALYTICS_LAG_DAYS)
+        line = (f"{bar}  `{key}` あと **{need}本** →"
+                f" {cap}本/日 なら最後の1本は **{fill}**（{days}日）")
+        if cut is not None:
+            slip = (fill - cut).days
+            if slip > 0:
+                late.append((key, slip))
+                line += (f" ／ 公開の締切 **{cut}**（判定 {due}）"
+                         f" → **{slip}日 越えます**")
+            else:
+                line += f" ／ 公開の締切 {cut} → **間に合います**（余り {-slip}日）"
+        out.append(line)
+    if late:
+        out.append(f"{bar}[!] **間に合わない前提 {len(late)}件**: "
+                   + " / ".join(f"`{k}` 超過 {n}日" for k, n in late))
+        out.append(f"{bar}  **これは「本を作れ」では閉じません** ——"
+                   f" {cap}本/日 が与件なので、日数のほうは動きません。"
+                   " 手は **期限を延ばす**（`python scripts/deadline_check.py`。"
+                   "`falsified_if` は1文字も触らない）か、**群を畳む**かの2つです。"
+                   " **床は下げないこと**（`src/ab_split.floor_of()`）")
+        out.append(f"{bar}  **`band_lines()` の日付と比べること** ——"
+                   " あちらは帯（10枠/日）で置くので、同じ本数がずっと手前に出ます。"
+                   "**手前のほうを判断に使わないこと**")
+    else:
+        out.append(f"{bar}**どの前提も期限までに埋まります**"
+                   f"（{cap}本/日 で数えて）")
+    return out
+
+
 def _short_share(days: int = 30) -> tuple[int, int] | None:
     """`judgeable.short_share()` を呼ぶだけ（**群の中身は1か所**）。"""
     try:
@@ -2257,6 +2419,11 @@ def report(plan: Plan | None = None) -> list[str]:
     plan = plan or Plan()
     out = lag_lines(plan.rows, plan.now)
     out += answering_lines(plan.rows, plan.now)
+    # **与件（1日N本）は、枠の中身より後・入れ替えより前に出すこと。**
+    #   上の節は「どの本が効くか」、ここは「**その本を、そもそも期限までに
+    #   出しきれるか**」です。順番を逆にすると、間に合わない床について
+    #   「入れ替えれば4日 早まる」だけが読まれます。
+    out += rate_lines(answering(plan.rows)[2], plan.rows, plan.now)
     plan.improve()
     out += plan.gain_lines()
     return out
@@ -2827,6 +2994,7 @@ def main(argv: list[str] | None = None) -> int:
     #   在る本しか見ません。**枠を、床の足りない群がそもそも使えていないとき**は、
     #   あちらは「動きません」としか言えず、理由がどこにも出ません。
     lines += answering_lines(plan.rows, plan.now)
+    lines += rate_lines(answering(plan.rows)[2], plan.rows, plan.now)
     plan.improve(args.max_swaps)
     lines += plan.gain_lines()
     if args.plan or args.apply:
