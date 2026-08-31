@@ -2818,14 +2818,11 @@ def _compact_fill() -> int | None:
             max_days = _rs.DEFAULT_MAX_DAYS
 
         args = _A()
-        md = _rs.suggest_max_days(rows, now, args, start=_rs.DEFAULT_MAX_DAYS)
+        # **組み直さないこと。** `suggest_compact` が返す割り当てが、
+        #     「穴が0件」の保証の付いている唯一の並びです
+        #     （組み直してずれた実例は `reschedule.suggest_compact` の docstring）。
+        md, plan = _rs.suggest_compact(rows, now, args, start=_rs.DEFAULT_MAX_DAYS)
         if md is None:
-            return None
-        plan = _rs.compact_plan(
-            rows, now=now, step_min=args.step_min, hour=args.hour,
-            until_hour=args.until_hour, max_days=md, lead_min=args.lead_min,
-            live_edge_min=_rs._live_edge_min(args.hour, args.step_min))
-        if _rs.hole_days(rows, plan, now):
             return None
         return len(plan)
     except Exception:                                          # noqa: BLE001
