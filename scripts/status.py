@@ -2838,9 +2838,22 @@ def _print_per_day(ahead: list, today=None) -> None:
                   "そうでなければ、そこは詰められます"
                   "（`python scripts/reschedule.py --compact`）")
         else:
+            # **`measure_window` の道しるべを落とさないこと**（2026-09-01 に戻した）。
+            #     08/31 に規則（1日1本）が入ったとき、この枝は
+            #     「詰めないこと」だけになり、**測定の窓への道しるべが消えました。**
+            #     `tests/test_schedule_per_day.py::test_窓を見ろと言う` が
+            #     その日から赤で立っており、註にこう書いてあります ——
+            #     「**詰めろとだけ言うと、測定を壊しにいかせます**」。
+            #     規則が入って変わったのは**「詰めろ」を言わないこと**であって、
+            #     **「薄い日は空けてあるかもしれない」は変わっていません。**
+            #     `--compact` は `scripts/reschedule.py` の側で 1本/日 に締まります。
             print(f"      **これは規則どおりです** —— 公開は"
                   f" 1日{house_rule.PUBLISH_PER_DAY}本（`src/house_rule.py`・2026-08-31）。"
-                  "**詰めないこと。** この行は、規則が緩んだ日にだけ意味を持ちます")
+                  "**詰めないこと**（`scripts/reschedule.py --compact` は"
+                  "規則の側で 1本/日 に締まります）。"
+                  "**空けてあるなら `src/measure_window.py` の窓です** ——"
+                  "そこは埋めにいかないこと。"
+                  "この行が「詰められます」に変わるのは、規則が緩んだ日だけです")
 
 
 def _print_missing_thumbnails() -> None:
