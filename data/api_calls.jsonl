@@ -161,3 +161,4 @@
 {"at": "2026-08-31T05:27:29+00:00", "api": "data", "method": "channels.list", "units": 1, "ok": false, "by": "history.py:_scan"}
 {"at": "2026-08-31T05:27:41+00:00", "api": "data", "method": "channels.list", "units": 1, "ok": false, "by": "history.py:_scan"}
 {"at": "2026-08-31T05:27:44+00:00", "api": "data", "method": "channels.list", "units": 1, "ok": false, "by": "history.py:_scan"}
+{"at": "2026-08-31T05:29:36+00:00", "api": "data", "method": "videos.list", "units": 1, "ok": false, "by": "snapshot.py:main"}
