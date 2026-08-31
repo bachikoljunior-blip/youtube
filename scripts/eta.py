@@ -62,7 +62,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from src import arm_speed, day_cap, house_rule, levers, motion_groups, pause_guard, resume_gate, rpm_mix, settle, subs_cap  # noqa: E402  （`sys.path` を通した後でないと読めません）
+from src import arm_speed, day_cap, form_record, house_rule, levers, motion_groups, pause_guard, resume_gate, rpm_mix, settle, subs_cap  # noqa: E402  （`sys.path` を通した後でないと読めません）
 
 LOG = ROOT / "data" / "eta.jsonl"
 
@@ -1953,6 +1953,71 @@ def report(m: dict, a: dict) -> list[str]:
         P("      **規則が 1日1本 に固定されている以上、効くのは「1本で何回 要るか」のほうです。**"
           f"　`{cheapest}` を選ぶなら、**この機械が毎日 追う数は {cn:,.0f}回／本**"
           "（オーナー規則3「次の投稿予定までにその1本を改善し続ける」の、数での言い換え）。")
+
+    # --- **同じ距離を、平均ではなく「これまでの最高」で測り直す**
+    #     （2026-08-31・最適化の回。`src/form_record.py`。**API 0単位**）
+    #
+    # すぐ上の註が、自分でこの節を呼んでいます ——
+    # 「**ほぼ 0 の分母で割ると、倍率は無限に大きく出ます**」。
+    # `per_video_ratio` の分母は**平均**で、長尺のそれは 16.0回/本
+    # （登録者 22人 のチャンネルに出した 21本。M20 が「長尺の実力ではない」と
+    #  書いている数）。**平均で割った ×196.3 は、その分母の性質を測っています。**
+    #
+    # **最高（記録）で割ると、順位も桁も変わります**（この回に自分で数えた実測）::
+    #
+    #     平均で割る    いちばん近い帯 ショート 高    ×196.3
+    #     記録で割る    いちばん近い帯 長尺 お金 高   **×21.4**（9.2分の1・帯が入れ替わる）
+    #
+    # **記録は「この機械が実際に1本で取った数」なので、分母として同じ壊れ方をしません。**
+    # 規則3（次の1本を出る瞬間まで良くし続ける）の言い換えとしても、
+    # 「平均を N倍」より「**もう1回 最高を出し、それを N倍**」のほうが素直です。
+    #
+    # ## **形をまたがないこと**（この節のもう半分の役目）
+    #
+    # `arm_speed.arm()` の `per_video` の天井 ×3.34 は
+    # `hypotheses.yaml` の `ceiling.value: 1891`（**ショートの本** `NHKylqsNfTw`）を
+    # **ショートの平均 566回**で割った数です。ところが段3・段4 は、その 566回 を
+    # **長尺の RPM（¥400・¥2,000）**と掛けます（下の段3 が
+    # 「**物差しはショートの実測 566回/本**」と自分で印字しています）。
+    # **その組み合わせを作れる形は1つもありません** —— ショートは ¥400 を稼がず、
+    # 長尺は 566回 回っていません。ここが出す `yen` は**形をまたがない最大**だけです。
+    #
+    # **覆る条件**: 記録が更新されれば数は自動で動きます（定数を持ちません）。
+    # `tests/test_form_record.py` が、ショートの記録と `hypotheses.yaml` の
+    # `ceiling.value` がずれたら落とします。**この倍率を到達日に入れないこと** ——
+    # 毎日 記録が出る前提の日付は、記録の定義に反します。ここは**距離の目盛り**です。
+    try:
+        _recs = form_record.per_video_best()
+        _gaps = form_record.gaps(RPM_SCENARIOS, a["per_video_needed"],
+                                 per_day=float(house_rule.PUBLISH_PER_DAY),
+                                 target_yen=TARGET_YEN, records=_recs)
+    except Exception:                                          # noqa: BLE001
+        _gaps, _recs = [], {}
+    if _gaps:
+        P("")
+        P("  --- **同じ距離を「平均」ではなく「これまでの最高」で測ると** ---"
+          "（`src/form_record.py`・API 0単位）")
+        for g in _gaps:
+            P(f"    {g['band']:<12} 記録 {g['record']:>6,}回/本（{g['form']}・n={g['n']}）"
+              f"  要 {g['need']:>9,.0f}回  → **×{g['ratio']:,.1f}**"
+              f"  記録を毎日 出しても **¥{g['yen']:>9,.0f}/月**（目標の {g['share'] * 100:.1f}%）")
+        _top = _gaps[0]
+        _unknown = form_record.unknown_form()
+        P(f"    [!] **記録で割ると、いちばん近い帯は `{_top['band']}` の ×{_top['ratio']:,.1f}**"
+          f"（平均で割った `{nearest}` の ×{nr:,.1f} の **{nr / _top['ratio']:,.1f}分の1**）。"
+          "**帯そのものが入れ替わります** —— 平均の分母（長尺 16.0回/本）は"
+          "「登録者22人のチャンネルに出した21本」で、M20 が「長尺の実力ではない」と"
+          "書いている数です。**記録はこの機械が実際に1本で取った数**なので、"
+          "分母として同じ壊れ方をしません。")
+        P(f"    [!] **記録の日を毎日 続けても、形をまたがない最大は ¥{_top['yen']:,.0f}/月"
+          f"（目標の {_top['share'] * 100:.1f}%）です。** "
+          f"段3・段4 が立てている ¥ は**ショートの 1本あたり（{a['per_video_now']:,.0f}回）に"
+          "長尺の RPM を掛けた数**で、**その組み合わせを作れる形はありません**"
+          f"（ショートの記録 {_recs.get('ショート', {}).get('best', 0):,}回 は RPM ¥60 まで・"
+          f"長尺の記録 {_recs.get('長尺', {}).get('best', 0):,}回 が RPM ¥2,000 の側）。")
+        if _unknown:
+            P(f"        （形が実測で分かっていない本 {_unknown}本 は、どの形にも足していません"
+              "。`data/video_forms.json` は公開済みだけを持ちます）")
 
     for line in _ledger_reach(nr):
         P(line)
