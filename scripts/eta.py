@@ -459,6 +459,37 @@ def _ceiling_per_day() -> float:
 #   後者はもう外れが確定しています
 SUBS_GATE = 1_000
 LONG_HOURS_GATE = 4_000          # 直近12か月・長尺のみ
+
+#: **門2a の窓（日）。「直近12か月」の「12か月」がこれです。**
+#:
+#: **2026-08-31（最適化の回）に足しました。** すぐ上の定数は初日から
+#: 「直近12か月」と書いてありましたが、**合格点を解く側はその窓を見ずに、
+#: 門1 が通る日までの日数で割っていました**（`_long_break_even` / `_gate2_bar`）。
+#:
+#: 規則（1日1本）の下で門1 は **3,292日後** です。4,000時間ぶんの視聴分を
+#: 3,292日 に散らすと、**初日に積んだ時間は 8年 も前に窓から落ちています。**
+#: 積んでよいのは**申請の前 365日**のぶんだけです。
+#:
+#: 実測（2026-08-31・API 0単位。この回に自分で撃った数）——
+#: 要る「長尺1本あたり再生」（L=1本/日 ＝ 規則の上限）:
+#:
+#:     形                いまの式    窓365日     ずれ
+#:     尺4分・維持20%       91回      821回    9.0倍
+#:     尺5分・維持40%       36回      329回    9.0倍
+#:     尺7分・維持40%       26回      235回    9.0倍
+#:
+#: **9.0倍 楽観**でした。前の回が分子で踏んだのと同じ形（規則と単位が揃っていない）
+#: が、**分母の窓**にも在ったということです。
+#:
+#: **それでも門2a は、いちばん近い門のままです** —— いちばん甘い行 235回/本 は、
+#: 門2b（ショート90日1,000万 ＝ 1本/日 なら 111,111回/本）の **473倍 近い**。
+#: この機械の長尺の**記録は 156回/本**（`src/form_record.py`）なので、
+#: 合格点 235回 との隔たりは **×1.50** です。**桁ではありません。**
+#:
+#: **覆る条件**: YouTube が窓を変えたら取り直すこと
+#: （出どころは `support.google.com/youtube/answer/72851` の1枚）。
+#: 検査は `tests/test_gate2a_window.py`。
+LONG_HOURS_WINDOW_DAYS = 365
 SHORTS_VIEWS_GATE = 10_000_000   # 直近90日・ショート
 
 # --- 下の段（expanded YPP）＝ ファン課金だけが開く門。**広告は開きません** ---
@@ -1390,6 +1421,15 @@ def _long_break_even(a: dict, days: float | None = None) -> list[dict]:
     #     上限が動いた日に**黙って割れます**（片方だけが動く）。
     #     呼ぶ側から差せるようにして、`plan()` は `g1["days"]` を渡します。
     days = a["days_subs_at"].get(PLAN_PUBLISH_PER_DAY, NEVER) if days is None else days
+    # **積んでよいのは、申請の前 365日 のぶんだけです**（2026-08-31・最適化の回）。
+    #     `LONG_HOURS_GATE` は初日から「**直近12か月**・長尺のみ」と書いてあります。
+    #     ところがここは長らく `days`（＝門1 が通る日までの日数）で丸ごと割っていました。
+    #     規則（1日1本）の下で門1 は 3,292日後 なので、**初日に積んだ視聴時間は
+    #     8年 も前に窓から落ちています。** 実測で **9.0倍 楽観**でした
+    #     （合格点 尺7分・維持40%・L=1本/日 が **26回 → 235回**）。
+    #     **前の回が分子で踏んだのと同じ形が、分母の窓にも在った**ということです。
+    #     詳しくは `LONG_HOURS_WINDOW_DAYS` の註（この回に撃った数つき）。
+    days = min(float(days), float(LONG_HOURS_WINDOW_DAYS))
     minutes = a["long_minutes_needed"]
     rows = []
     for label, length_min, retention in LONG_SHAPES:
@@ -1407,8 +1447,13 @@ def _gate2_bar(a: dict, row: dict, per_day: float, days: float) -> float:
 
     `_long_break_even()` の `views` は筋書き（1・2・4本/日）ぶんしか持ちません。
     **実測の供給は 1.71本/日 のような端数**なので、同じ式をここで1回だけ書きます。
-    式は1つ ——「要る視聴分 ÷ (L本/日 × 門1までの日数 × 1再生の視聴分)」。
+    式は1つ ——「要る視聴分 ÷ (L本/日 × 門の窓の日数 × 1再生の視聴分)」。
+
+    **日数は門の窓（`LONG_HOURS_WINDOW_DAYS` ＝ 直近12か月）で頭打ちにします**
+    （2026-08-31）。`_long_break_even` と**同じ1つの決まり**にすること ——
+    ここだけ門1 までの日数で割ると、2つの合格点が 9倍 ずれます。
     """
+    days = min(float(days), float(LONG_HOURS_WINDOW_DAYS))
     slots = per_day * days
     per_view = row["min_per_view"]
     if slots <= 0 or per_view <= 0:
@@ -3621,13 +3666,18 @@ def _long_needed_per_day(a: dict, lpv: float, days: float) -> list[dict]:
     `_long_break_even()` の裏返しです。あちらはLを筋書き（1/2/4本/日）で固定して
     1本あたり再生を解き、こちらは**1本あたり再生を実測で固定してLを解きます。**
 
-        L ＝ 要る視聴分 ÷ (1本あたり再生 × 門1までの日数 × 1再生の視聴分)
+        L ＝ 要る視聴分 ÷ (1本あたり再生 × **門の窓の日数** × 1再生の視聴分)
+
+    **日数は `LONG_HOURS_WINDOW_DAYS`（直近12か月）で頭打ち**（2026-08-31）。
+    `_long_break_even` / `_gate2_bar` と**同じ1つの決まり**にすること ——
+    ここだけ門1 までの日数で割ると、裏返しの答えが 9倍 ずれます。
 
     **両方 要ります。** 片方だけだと、**動かせる側が画面に出ません** ——
     実測 2026-08-29: 表は L≤4本/日 しか持たず「全部の行を下回っています」で
     終わっており、**Lを上げれば開く**とはどこにも出ていませんでした。
     """
     out: list[dict] = []
+    days = min(float(days), float(LONG_HOURS_WINDOW_DAYS))
     for r in a.get("long_break_even") or []:
         per_view = r["min_per_view"]
         slots = lpv * days * per_view
@@ -7667,8 +7717,16 @@ def _report_long_gate(m: dict, a: dict) -> list[str]:
       f"（口は92本/日 ですが、**超えたぶんは 0再生**）まで出しても"
       f"{a['shorts_needed_per_day']:,.0f}回/日に対し {_got:,.0f}回/日"
       f" ＝ {_got / a['shorts_needed_per_day']:.2f}倍**。門2a のほうを見ます。")
+    # **「門1 までに」ではなく「門の窓のあいだに」**（2026-08-31・最適化の回）。
+    #     `LONG_HOURS_GATE` は「**直近12か月**」の門です。門1 が通る日まで
+    #     （規則 1本/日 なら 3,292日）に散らして埋めると、**初日に積んだ時間は
+    #     8年 前に窓から落ちています。** 実測 9.0倍 楽観でした。
+    _win = min(float(days), float(LONG_HOURS_WINDOW_DAYS))
     P(f"    残り {a['long_minutes_needed']:,.0f}分（{a['long_minutes_needed']/60:,.0f}時間）を、"
-      f"**門1 が通る日（1日{PLAN_PUBLISH_PER_DAY}本公開で {_fmt_days(days)}）までに**埋める。")
+      f"**申請の前 {_win:,.0f}日 のあいだに**埋める"
+      f"（門は**直近12か月**。門1 が通るのは 1日{PLAN_PUBLISH_PER_DAY}本公開で"
+      f" {_fmt_days(days)} ですが、**そこまで散らして積むことはできません** ——"
+      f" 早く積んだぶんは窓から落ちます）。")
     P("")
     P("    **要る「長尺1本あたり再生」**（長尺を1日L本足したとき。**これが合格点**）:")
     P(f"      {'形（推測）':<18}{'1再生の視聴分':>12}" + "".join(f"{'L=' + str(n) + '本/日':>12}" for n in LONG_PER_DAY_SCENARIOS))
@@ -7691,9 +7749,22 @@ def _report_long_gate(m: dict, a: dict) -> list[str]:
         P(f"    **長尺の1本あたり再生は測れています: 1本 {lpv:,}回**"
           f"（直近28日・n={a['long_videos_28d']}・合計 {a['long_views_28d']:,}回）。"
           "**上の合格点と、いま突き合わせます:**")
+        # --- **規則が許すLの中から選ぶこと**（2026-08-31・最適化の回）---
+        #     `LONG_PER_DAY_SCENARIOS` は (1, 2, 4) で、**規則は 1本/日**です
+        #     （`src/house_rule.PUBLISH_PER_DAY`。「覆る条件: ありません」）。
+        #     ここは長らく 3列 ぜんぶから いちばん小さい数を拾っていたので、
+        #     **「いちばん甘い行」はいつも L=4本/日 の列**でした ——
+        #     **規則が禁じている供給の上に立った合格点**を、この機械が毎日
+        #     追う数として印字していたということです（規則の 4倍 楽観）。
+        #     出どころは `src.house_rule` の1か所（`PLAN_PUBLISH_PER_DAY` と同じ）。
+        #     **覆る条件**: オーナーが 1日1本 を外したら、許すLが増えて
+        #     この絞り込みは自然にゆるみます。**手で消さないこと。**
+        _rule_l = float(house_rule.PUBLISH_PER_DAY)
+        _allowed = [n for n in LONG_PER_DAY_SCENARIOS if n <= _rule_l] \
+            or [min(LONG_PER_DAY_SCENARIOS)]
         worst = None
         for shape in a["long_break_even"]:
-            for per_day in LONG_PER_DAY_SCENARIOS:
+            for per_day in _allowed:
                 need = shape["views"][per_day]
                 if need == float("inf"):
                     continue
@@ -7703,7 +7774,13 @@ def _report_long_gate(m: dict, a: dict) -> list[str]:
         if worst:
             short_by, label, per_day, need = worst
             P(f"    **いちばん甘い行でも {label}・L={per_day}本/日 で {need:,.0f}回 ＝ "
-              f"実測の {short_by:,.0f}倍**。全部の行を下回っています。")
+              f"実測の {short_by:,.1f}倍**。全部の行を下回っています。")
+            if len(_allowed) < len(LONG_PER_DAY_SCENARIOS):
+                _off = [n for n in LONG_PER_DAY_SCENARIOS if n > _rule_l]
+                P(f"      （表の L={'/'.join(str(n) for n in _off)}本/日 の列は"
+                  f"**規則（1日{_rule_l:.0f}本・`src/house_rule.py`）の外**です。"
+                  " **そこから「いちばん甘い行」を拾わないこと** ——"
+                  f" 拾うと合格点が {max(_off) / max(1.0, _rule_l):.0f}分の1 に出ます）")
         P(f"    **これは「長尺では開かない」ではありません**（M20）。n={a['long_videos_28d']} で、"
           f"登録者 {m['subs_net']} 人のチャンネルに出した本の数です。"
           "**決まったのは「いまのままでは開かない」**で、段2 が測るのは"
