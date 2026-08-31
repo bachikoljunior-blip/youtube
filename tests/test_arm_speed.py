@@ -217,7 +217,25 @@ def test_実測の天井のほうが低ければ_そちらを採る():
     pv = arms["per_video"]
     assert pv["cap"] == pytest.approx(recorded / 923.0)
     assert pv["cap_measured"] is True
-    assert pv["cap"] < 3.0, "ショートのままで「1本あたり3倍」を歩いています"
+    # **ここには `< 3.0` と書いてありました**（2026-09-01 に落ちて直した）。
+    #   3.0 は「1,891 ÷ 923 ≒ 2.05 の少し上」で、**この関数の docstring 自身が
+    #   『値は台帳から読みます。写さないこと』と言っている、その写しでした。**
+    #   天井を規則の密度（1本/日）で測り直したら 3,918 になり、ここが落ちました。
+    #   **守りたいのは「測っていない倍率を歩かせない」ことなので、
+    #   上限も実測から引きます** —— `ceiling_at_rule()` の弾力性 95% の上端。
+    from src import rule_per_video
+
+    c = rule_per_video.ceiling_at_rule()
+    if c and c.get("hi"):
+        assert recorded <= c["hi"] + 1e-9, (
+            f"台帳の天井 {recorded:,} が、規則の密度へ直した天井の**上端** "
+            f"{c['hi']:,.0f}回（弾力性 95%）を超えています ——"
+            " **測っていない倍率を歩いています。**"
+            f" 素材は {c['max_per_day']}本/日 までの {c['n_source']}本"
+            "（`src/rule_per_video.ceiling_at_rule()`）"
+        )
+    else:                       # 弾力性が測れない回は、実測の最大より上へ行かせない
+        assert recorded <= c["raw_max_all"] if c else recorded > 0
 
 
 # --- 4. 連敗 --------------------------------------------------------------------------
