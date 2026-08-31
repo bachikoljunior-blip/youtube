@@ -70,15 +70,82 @@ def test_極値だけでは門にしない():
 
 
 def test_engaged_比率もその時点で確定している():
-    """判定がじっさいに使うのは engaged 比率のほう。**確定値との差が 2pt 未満か。**"""
-    eng = settle.engaged_curve((float(settle.SETTLE_DAYS * 24),))
-    row = eng.get(float(settle.SETTLE_DAYS * 24))
+    """判定がじっさいに使うのは engaged 比率のほう。**確定値との差が 2pt 未満か。**
+
+    **2026-08-31 に、形で割りました。** それまで形を混ぜて測っており、
+    混ぜた最大 17.08pt で落ちていました。落ちたときの文面は
+    「**`SETTLE_DAYS` を上げ直すこと**」でしたが、**上げてはいけませんでした** ——
+    形で割ると、そのずれは全部 長尺のものです（齢 96h ／ 確定 120h・門 2pt）::
+
+        形        n    最大ずれ   中央    門超え
+        ショート  49    1.01pt   0.00pt   **0本**
+        長尺       2   17.08pt   9.19pt     1本
+
+    外れは `13TynquQzQU`（長尺）で、**96h → 120h に再生が 30 → 82**（窓の中で 2.7倍）。
+    `settles_at("長尺")` が「どの地平でも伸びきらない」と出す本そのものです。
+
+    **`SETTLE_DAYS` は θ（腕の動く速さ）の分母**です
+    （`src/judgeable.py` の「判定できる日」に足され、`scripts/eta.py` は毎回
+    「軌跡の腕が動くのは前提を1件 閉じたときだけ」と印字します）。
+    **長尺2本のために上げると、ショートの A/B 49本ぶんが道連れで遅くなります。**
+
+    だからこの検査は `SETTLE_DAYS` を測った形＝**ショートで**当てます。
+    """
+    age = float(settle.settle_days("ショート") * 24)
+    eng = settle.engaged_curve((age,), form="ショート")
+    row = eng.get(age)
     if not row or row["n"] < 10:
-        pytest.skip("scan の標本が薄い —— 判定しない")
+        pytest.skip("scan のショートの標本が薄い —— 判定しない")
     assert row["max"] < 0.02, (
-        f"engaged 比率が確定値から最大 {row['max']*100:.2f}pt ずれています —— "
-        "**この年齢では判定が入れ替わります。**`SETTLE_DAYS` を上げ直すこと"
+        f"**ショートの** engaged 比率が確定値から最大 {row['max']*100:.2f}pt "
+        f"ずれています（n={row['n']}）—— **この年齢では判定が入れ替わります。**"
+        " `SETTLE_DAYS_BY_FORM['ショート']` を上げ直すこと"
+        "（**混ざった数で上げないこと。形で割ってから**）"
     )
+
+
+def test_長尺は判定の窓の中でまだ動く():
+    """**長尺は、`SETTLE_DAYS` の年齢で確定していません。**（2026-08-31 に測って足した）
+
+    この検査は「落ちたら直す」ではなく **「落ちたら消してよい」**側です ——
+    落ちる ＝ 長尺も窓の中で動かなくなった ＝ `SETTLE_DAYS_BY_FORM` に
+    長尺を載せてよくなった、という**良い知らせ**です。
+
+    **数そのものは守りません**（標本が増えれば動きます）。守るのは
+    **「長尺の不確定さを、ショートの門に混ぜないこと」**。
+    """
+    age = float(settle.SETTLE_DAYS * 24)
+    eng = settle.engaged_curve((age,), form="長尺")
+    row = eng.get(age)
+    if not row:
+        pytest.skip("scan に長尺の標本がありません")
+    s_row = settle.engaged_curve((age,), form="ショート").get(age)
+    if not s_row:
+        pytest.skip("比べるショートの標本がありません")
+    assert row["max"] > s_row["max"], (
+        f"**長尺のずれ {row['max']*100:.2f}pt が、ショート {s_row['max']*100:.2f}pt "
+        f"を下回りました。良い知らせです。**"
+        f" `SETTLE_DAYS_BY_FORM` に長尺を載せられるか見直し、この検査を消すこと"
+    )
+
+
+def test_長尺を混ぜた門で_ショートの待ちを延ばさない():
+    """**混ぜた数を門にすると、ショートの A/B が長尺の道連れで遅くなる。**
+
+    混ぜた `engaged_curve()` の最大は、形で割ったショートの最大より
+    **必ず大きいか等しい**（長尺が外れているあいだ）。
+    その混ざった数で `SETTLE_DAYS` を決めると、**θ の分母が長尺2本で決まります。**
+    """
+    age = float(settle.SETTLE_DAYS * 24)
+    mixed = settle.engaged_curve((age,)).get(age)
+    short = settle.engaged_curve((age,), form="ショート").get(age)
+    if not mixed or not short:
+        pytest.skip("標本が薄い")
+    assert short["max"] <= mixed["max"], (
+        "形で割ったショートのずれが、混ぜたものより大きくなりました。"
+        " `engaged_curve(form=...)` の絞り込みを見ること"
+    )
+    assert short["n"] <= mixed["n"]
 
 
 def test_同じ数を他所で定義していない():

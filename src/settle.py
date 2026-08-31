@@ -168,6 +168,37 @@ def mature_hours(form: str | None = None) -> int:
 #: 次の回にまた上げることになります —— 08/26→08/28 がその形でした）。
 SETTLE_DAYS = math.ceil(96 / 24)
 
+#: **形ごとの「判定を待つ日数」**（2026-08-31・最適化の回に測って足した）。
+#:
+#: `SETTLE_DAYS` は `engaged_curve()` を**形を混ぜて**測った数でした。
+#: 混ぜた最大は 17.08pt（門は 2pt）ですが、**そのずれは全部 長尺のもの**です ——
+#: 実測（齢 96h ／ 確定 120h）::
+#:
+#:     ショート  n=49   最大 **1.01pt**   中央 0.00pt   門超え **0本**
+#:     長尺      n= 2   最大 17.08pt     中央 9.19pt   門超え  1本
+#:
+#: **ショートは 96時間 で確定しています。** 長尺は確定しません
+#: （`settles_at("長尺")`: どの地平でも伸びきる年齢が出ない）。
+#:
+#: **長尺をここに載せていないのは、載せる数が無いからです。**
+#: `settle_days(None)` / `settle_days("長尺")` は `SETTLE_DAYS` へ落ちます ——
+#: **「長尺は 4日 で確定する」という意味ではありません。**
+#: 意味は「**長尺で A/B を判定してよい日数は、まだ測れていない**」です。
+#: 長尺で判定する前提を置くときは、`settles_at("長尺")` を先に見ること。
+SETTLE_DAYS_BY_FORM: dict[str, int] = {"ショート": SETTLE_DAYS}
+
+
+def settle_days(form: str | None = None) -> int:
+    """**その形の「判定を待つ日数」**。
+
+    形が分からなければ `SETTLE_DAYS`（＝ショートの数）へ落ちます。
+    **落とす先をショートにしているのは、この機械が出している本の大半が
+    ショートだから**で、正しいからではありません（`mature_hours()` と同じ扱い）。
+    """
+    if form in SETTLE_DAYS_BY_FORM:
+        return SETTLE_DAYS_BY_FORM[form]
+    return SETTLE_DAYS
+
 
 #: Analytics の遅れが読めなかったときの控え。**0 にしないこと** ——
 #: 0 は「遅れは無い」と言い切ることで、いちばん危ない側へ倒れます。
@@ -591,11 +622,52 @@ def mature_hours_supported(form: str | None = None, **kw) -> bool:
 
 
 def engaged_curve(ages: tuple[float, ...] = (60, 72, 96), *, full_at: float = 120.0,
-                  min_views: float = 30.0) -> dict[float, dict]:
+                  min_views: float = 30.0,
+                  form: str | None = None) -> dict[float, dict]:
     """**engaged 比率が、確定値からどれだけ離れているか**（pt）。`data/scan.jsonl` を読む。
 
     判定がじっさいに使うのはこちらの値です。`scan.jsonl` は 08/19 からなので、
     **若い本ほど標本に入りません**（覆っている帯は 60h〜120h）。
+
+    `form` に `"ショート"` / `"長尺"` を渡すと、**その形の本だけ**で数え直します
+    （`views_curve(form=...)` と同じ形。形の分からない本はどちらにも入りません）。
+    **渡さなければ、これまでどおり形を混ぜます。**
+
+    ## **なぜ形で割れるようにしたか**（2026-08-31・最適化の回に測った）
+
+    `tests/test_settle.py::test_engaged_比率もその時点で確定している` が
+    **落ちていました** —— 「確定値から最大 **17.08pt** ずれています ——
+    この年齢では判定が入れ替わります。**`SETTLE_DAYS` を上げ直すこと**」。
+
+    **上げてはいけません。** 形で割ると、そのずれは全部 長尺のものです
+    （実測 2026-08-31・齢 96h ／ 確定 120h・門 2.00pt）::
+
+        形        n    最大ずれ   中央    門(2pt)超え
+        ショート  49    1.01pt   0.00pt      **0本**
+        長尺       2   17.08pt   9.19pt        1本
+
+    外れの正体は `13TynquQzQU`（長尺）で、**96h → 120h のあいだに再生が
+    30 → 82 に増えています**（判定の窓の中で 2.7倍）。同じ本は
+    `views.jsonl` でも齢 117時間 で 16 → 121回（×7.56）と伸び続けており、
+    `settles_at("長尺")` が「**どの地平でも伸びきらない**」と出す本そのものです。
+
+    ## **上げると、到達日が遠のきます**
+
+    `SETTLE_DAYS` は「判定を待つ日数」で、`src/judgeable.py` の
+    「判定できる日」に足されます。`scripts/eta.py` は毎回
+    **「軌跡の腕が動くのは、前提を1件 閉じたときだけ」**と印字するので、
+    **待つ日数はそのまま θ（腕の動く速さ）の分母**です。
+
+    **長尺2本のために上げると、ショートの A/B 49本ぶんが道連れで遅くなります。**
+    このファイルの冒頭が 2026-08-26 に書いたのと同じ形 ——
+    「**5日待つことは、到達日を5日おくらせることと同じです**」。
+
+    **落ちていた検査が言っていたのは「上げろ」ではなく「形で割れ」でした。**
+
+    ## 覆る条件
+
+    - **ショートのずれが 2pt を超えたとき。** そのときは本当に上げること
+    - 長尺の標本が増えたとき（いま n=2）。**2本で門を動かさないこと**
     """
     pub = _publish_times()
     if not SCAN.exists():
@@ -620,6 +692,13 @@ def engaged_curve(ages: tuple[float, ...] = (60, 72, 96), *, full_at: float = 12
             age = (at - pub[vid]) / 3600
             if age >= 0:
                 series.setdefault(vid, []).append((age, float(v), float(vals[key])))
+    if form is not None:
+        try:
+            from . import forms as _forms
+            known = _forms.measured_forms()
+        except Exception:                                      # noqa: BLE001
+            known = {}
+        series = {k: v for k, v in series.items() if known.get(k) == form}
     sample = {k: v for k, v in series.items()
               if max(a for a, _, _ in v) >= full_at
               and (value_at(v, full_at) or (0,))[0] >= min_views}
