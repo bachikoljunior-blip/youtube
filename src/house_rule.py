@@ -288,8 +288,11 @@ def unreachable_claims(today: str | None = None, path: Path | None = None) -> li
 def unreachable_lines(rows, today: str | None = None) -> list[str]:
     """画面に出す形。**満ちない要件が無ければ、1行も出しません。**"""
     hits = unreachable_needs(rows, today)
+    # **期日を延ばしても満ちないほう**は、上の節が黙っても出します
+    # （上は期日で解いており、延ばせば黙るため。下の節の冒頭に理由）。
+    win = window_unreachable_lines(rows)
     if not hits:
-        return []
+        return win
     out = [f"=== **規則（1日{PUBLISH_PER_DAY}本）の下では、期日までに満ちない要件: "
            f"{len(hits)}件** ===",
            "  **`[OK] …に出ます` と並んでいても、その日は来ません。**"
@@ -307,4 +310,151 @@ def unreachable_lines(rows, today: str | None = None) -> list[str]:
         out.append(f"  [!] {h['deadline']}  {h['claim'][:52]}")
         out.append(f"        {why}")
         out.append(f"        要件: {h['what'][:100]}")
+    return out + win
+
+
+# --- **期日を延ばしても満ちない要件**（2026-09-01 に足した） -------------------
+#
+# 上の `needs_beyond_rule()` は **期日までの日数**で解いています ——
+# `allowed = (期日 − 今日) × PUBLISH_PER_DAY`。
+# **だから期日を延ばすと、この関数は黙ります。** そして `falsified_if` の側は、
+# たとえば `長尺1本あたり-30本` がこう書いています ——
+#
+#     **30本 に満たなければ判定せず、期限だけ延ばすこと**
+#
+# **指示と検査が、同じ向きに壊れています。** 延ばせば警告は消え、前提は
+# 永久に開いたまま残ります。**「確かめずに済んでしまう」形**です。
+#
+# ここが見るのは別の軸です —— **判定が読む窓**。窓が「直近28日」なら、
+# 規則（1日1本）の下でその窓に入りうる本は **28本 が上限**で、
+# **期日をどこまで延ばしても 30本 にはなりません。**
+#
+# 実測 2026-09-01（開いた25件を走査）:
+#
+#     `長尺1本あたり-30本`  need 30本 ／ 窓 直近28日 ／ 規則が許す 28本 → **永久に満ちない**
+#
+# **`長尺-1000再生` は当たりません**（`need: 1000` は `sum(latest_views()…)` ＝
+# **再生数**で、公開本数の上限には縛られない）。**単位を見ずに数だけ比べると、
+# ここが偽陽性になります** —— 実際、単位を見ない版では 2件 出ました。
+#
+# ## なぜ、これが到達日に効くか
+#
+# `scripts/eta.py` は「**軌跡の腕が動くのは、前提を1件 閉じたときだけ**」と
+# 印字します。そして `長尺1本あたり-30本` の腕は **`per_video`** ——
+# 実測 2026-09-01 で、道具が「この腕を引け」と印字した 357回 のうち
+# **298回（83%）が `per_video`** です。その腕の、**長尺の側で唯一の測定**が
+# これでした。永久に閉じないので、**`per_video` は永久に測り終わりません。**
+#
+# ## 覆る条件
+#
+# オーナーが規則を外して `PUBLISH_PER_DAY` が上がれば、窓に入る本数が増えて
+# 自然に黙ります。**窓のほうを広げても黙ります** —— ただしそれは
+# 「判定が読む窓」を変えることなので、`falsified_if` の書き換えです。
+# 検査は `tests/test_house_rule_window.py`。
+
+#: 「直近28日」の形。**判定が読む窓**を、前提の本文から拾う。
+_WINDOW_DAYS = _re.compile(r"直近\s*(\d+)\s*日")
+
+#: `count_expr` が**本数**を数えている形（`sum(1 for …)` / `len(…)`）。
+_EXPR_COUNTS_ITEMS = _re.compile(r"sum\(\s*1\s+for\b|len\(")
+
+
+def counts_published_items(count_expr: str | None) -> bool | None:
+    """その `count_expr` は**本数**を数えているか。
+
+    `True`  …… `sum(1 for …)` / `len(…)` ＝ 1件ずつ数えている。
+                **公開本数の上限（規則1）に縛られる**側。
+    `False` …… `sum(<値> for …)` ＝ 再生数などの**量**を足している。
+                本数の上限には縛られない（`長尺-1000再生` がこれ）。
+    `None`  …… 読み取れない。**通します**（`is_stockpile` と同じ姿勢 ——
+                測っていないことを、落とす側に倒さないこと）。
+    """
+    if not count_expr:
+        return None
+    s = str(count_expr)
+    if _EXPR_COUNTS_ITEMS.search(s):
+        return True
+    if "sum(" in s:
+        return False
+    return None
+
+
+def window_of(row) -> int | None:
+    """その前提の**判定が読む窓**は何日か。書いていなければ `None`。
+
+    前提の本文（`claim` / `falsified_if` / `note` / `needs[].what`）から
+    「直近N日」を拾い、**いちばん狭い窓**を返します —— 狭いほうが効くので。
+    """
+    if not isinstance(row, dict):
+        return None
+    txt = " ".join(str(row.get(k) or "") for k in ("claim", "falsified_if", "note"))
+    for n in (row.get("needs") or []):
+        if isinstance(n, dict):
+            txt += " " + str(n.get("what") or "")
+    found = [int(x) for x in _WINDOW_DAYS.findall(txt)]
+    return min(found) if found else None
+
+
+def window_unreachable(rows, per_day: float | None = None) -> list[dict]:
+    """**期日をいくら延ばしても満ちない要件**を並べる。
+
+    条件が3つ揃ったときだけ ——
+      (1) `needs[].need` が数で置いてある
+      (2) その `count_expr` が**本数**を数えている（`counts_published_items`）
+      (3) 前提の本文に**判定が読む窓**（「直近N日」）がある
+    そのうえで `need > 窓 × PUBLISH_PER_DAY` なら、**永久に満ちません。**
+
+    **日付を1つも見ません。** だから期日を延ばしても黙りません。
+    """
+    cap = float(PUBLISH_PER_DAY if per_day is None else per_day)
+    out: list[dict] = []
+    for r in rows or []:
+        if not isinstance(r, dict) or r.get("closed_on"):
+            continue
+        w = window_of(r)
+        if not w or w <= 0:
+            continue
+        for n in (r.get("needs") or []):
+            if not isinstance(n, dict):
+                continue
+            need = n.get("need")
+            if isinstance(need, bool) or not isinstance(need, (int, float)):
+                continue
+            if counts_published_items(n.get("count_expr")) is not True:
+                continue
+            allowed = w * cap
+            if need > allowed:
+                out.append({"claim": str(r.get("claim") or ""),
+                            "deadline": str(r.get("deadline") or ""),
+                            "watch": str(r.get("watch") or ""),
+                            "lever": str(r.get("lever") or ""),
+                            "need": need, "window_days": w, "allowed": allowed})
+    return out
+
+
+def window_unreachable_lines(rows, per_day: float | None = None) -> list[str]:
+    """画面に出す形。**1件も無ければ、1行も出しません。**"""
+    hits = window_unreachable(rows, per_day)
+    if not hits:
+        return []
+    cap = float(PUBLISH_PER_DAY if per_day is None else per_day)
+    out = [f"=== **期日を延ばしても満ちない要件: {len(hits)}件**"
+           f"（規則 1日{cap:g}本 × 窓）===",
+           "  **上の節とは別の軸です。** 上は「期日までに満ちるか」なので、"
+           "**期日を延ばせば黙ります。** ここは**判定が読む窓**で解いているので、"
+           "**延ばしても黙りません** —— 窓に入る本数のほうが足りていません。",
+           "  **`falsified_if` に「満たなければ期限だけ延ばすこと」と書いてある前提は、"
+           "ここに出たら永久に閉じません。**"
+           " 直し方は2つ ——(1) 門の本数を、窓に入る数まで下げる（下げた分の"
+           "**検出力**を `src/verdict_power.py` で示すこと）"
+           " (2) 判定が読む窓を広げる（`falsified_if` の書き換え）。"]
+    for h in sorted(hits, key=lambda x: str(x.get("deadline") or "")):
+        out.append(f"  [!!] {h['deadline']}  {h['claim'][:52]}")
+        out.append(f"        要件は **{h['need']:g}本** ／ 判定が読む窓は "
+                   f"**直近{h['window_days']}日** ＝ 規則が窓に入れられるのは "
+                   f"**{h['allowed']:g}本**。**{h['need']:g} > {h['allowed']:g} なので、"
+                   f"待っても順番が入れ替わっても満ちません**")
+        if h["lever"]:
+            out.append(f"        この前提が止めている腕: **{h['lever']}**"
+                       f"（`{h['watch']}`）")
     return out
