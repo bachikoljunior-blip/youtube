@@ -8,6 +8,14 @@
     dead        ('per_video', 'sub_rate', 'rpm')      ← **動かせる腕が全部 死んでいる**
     open_why    {'density': '…長尺の面は開いています…'} ← **`density` だけが生きている**
 
+**その `rpm` 59.77 は、同じ日のうちに古くなりました** —— `physical_caps` の
+`rpm` の天井が規則（1日1本）を1度も見ておらず、20260821（長尺を **7本** 公開した日）の
+面の上に立っていたためです。規則で止め直して **×28.05**
+（`src/rpm_mix.rule_capped` / `tests/test_rpm_cap_house_rule.py`）。
+**下の `_row()` の数は、この検査の入力（据え置きの手本）であって、いまの実測ではありません。**
+この検査が見ているのは `density` の生き死にだけなので、`rpm` の値は何でも通ります
+—— **上の表を「いまの読み」として引かないこと。**
+
 門1（登録者1,000人）を腕ごとに解き直すと（`house_rule.cap()` を掛けて）:
 
     いま                      3,292日
@@ -52,6 +60,9 @@ OBSERVED = {"short": {"at_ceiling": True, "measured": True, "rule_binds": False}
 
 
 def _row(surfaces: dict | None) -> dict:
+    # **手本の数です（いまの実測ではありません）。** `rpm` は 2026-08-31 に
+    #     規則で止め直して ×59.77 → ×28.05。ここは `density` の生き死にだけを
+    #     見るので、`rpm` の値は結果を変えません。**現状として引かないこと。**
     row = {"arm_caps": {"per_video": 2.01, "sub_rate": 6.64,
                         "rpm": 59.77, "density": 1.0},
            "arm_reaches": {"per_video": False, "sub_rate": False,
