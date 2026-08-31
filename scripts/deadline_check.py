@@ -3169,6 +3169,22 @@ def _print_unreachable_under_rule(as_of: str | None = None) -> None:
         return
     print("")
     print("\n".join(out))
+    # **「(2) すでに公開ずみの日で判定できるなら、いま閉じる」に、探す手を付ける**
+    # （2026-09-01 に足した）。上の一覧は直し方を2つ挙げますが、**(2) の日を探す
+    # 手はどこにもありませんでした** —— 2026-09-01 の回は使い捨ての script を書いて
+    # 手で探し、1件（「左端つきの帯」）を survived で閉じています。
+    # **書いておかないと、次の回が同じ探索をやり直します。**
+    # **API 0単位・数秒。** 落ちても一覧は出したままにします。
+    try:
+        from src import day_cap
+        extra = day_cap.past_split_lines()
+    except Exception as exc:                                   # noqa: BLE001
+        extra = [f"  （公開ずみの日を数えられませんでした: {str(exc)[:80]}）"]
+    if extra:
+        print("")
+        print("  **(2) の『公開ずみの日』を探す手**"
+              "（規則1 の下では、切り分けの日は**新しくは作れません**）:")
+        print("\n".join(extra))
 
 
 def main(argv: list[str] | None = None) -> int:

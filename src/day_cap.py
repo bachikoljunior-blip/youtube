@@ -1085,6 +1085,117 @@ def lines(path: pathlib.Path | None = None) -> list[str]:
 
 
 
+def past_split_days(path: pathlib.Path | None = None,
+                    c: int | None = None, t_min: int | None = None,
+                    after_min: int | None = None) -> list[dict]:
+    """**公開ずみの日のうち、3つのモデルを切り分けた日**（API 0単位・2026-09-01 に足した）。
+
+    ## なぜ要るか（**手で1回やった跡です**）
+
+    `booked_split_day()` は **`if day < today: continue`** で過ぎた日を飛ばします。
+    註は「過ぎた日は、もう読みのほうで数えています」——
+    **それは上限（`measure()`）の話で、「どのモデルが当たったか」ではありません。**
+
+    そして **規則1（1日1本）の下では、切り分けの日は二度と予約できません** ——
+    3つのモデルが別々の集合を予測するには、**1日に十数本**要ります。
+    `scripts/deadline_check.py` の末尾は、期日までに満ちない前提について
+    「**(2) すでに公開ずみの日で判定できるなら、いま閉じる**」と言いますが、
+    **その日を探す手がどこにもありませんでした**（2026-09-01 の回は、
+    使い捨ての script を書いて手で探しています。**次の回が同じことをやり直します**）。
+
+    ## 3つのモデル（`window()` の2つ ＋ `left_edge()` の帯）
+
+        本数  間隔で残った本の**先頭 C 本**            → 早い本ほど生きる
+        窓    間隔で残った本のうち **T まで**の本 全部 → 早い本は全部生きる
+        帯    そのうち **左端より後ろ**だけ            → 早すぎる本は死ぬ
+
+    **比べるのは本数ではなく集合です**（`window()` が 2026-08-27 に直した所）。
+    生きた本数が合っていても、**生きた本が入れ替わっている**ことがあります。
+
+    ## 返り
+
+    日ごとに `{"day", "n", "ties", "kept", "alive", "pred", "diff", "separates"}`。
+    `diff` は**対称差**（取り違えた本の数）で、`falsified_if` の門と同じ単位です。
+    `separates` は **3つの予測集合が互いに別**（＝ その日で決められる）。
+
+    **`ties` が 0 でない日と、生きた本が 3本 未満の日は、そのまま返しますが
+    `separates` を立てません** —— `config/hypotheses.yaml` の「判定しない条件」
+    (1)(2) と同じ門です。**呼ぶ側で数え直さないこと。**
+
+    ## **割り引いて読むこと**
+
+    **左端は、いちばん早い死をいちばん多く見た日から測っています**
+    （`left_edge().from`）。**その日で当てはめて、その日で当てると、
+    帯の対称差 0 は「良く当たった」ではなく「当てはめた」に近い。**
+    独立に見たいのは「**早い本ほど生きる**」（本数・窓が両方 言うこと）が
+    **別の日でも外れているか**のほうで、それは `left_edge().days` が並べます。
+    """
+    w = window(path)
+    if c is None:
+        c = int(w["C"]) if w.get("C") else None
+    if t_min is None and w.get("T"):
+        t_min = int(str(w["T"])[:2]) * 60 + int(str(w["T"])[3:])
+    if c is None or t_min is None:
+        return []
+    if after_min is None:
+        le = left_edge(path)
+        if le:
+            after_min = int(le["after"][:2]) * 60 + int(le["after"][3:])
+
+    def _m(t: dt.datetime) -> int:
+        return t.hour * 60 + t.minute
+
+    out: list[dict] = []
+    for d, rows, line in _qual_days(path):
+        times = [p for p, _v, _n in rows]
+        kept = _spaced(times)
+        keptset = set(kept)
+        tied = ties(times)
+        pred_count = set(kept[:c])
+        pred_win = {t for t in kept if _m(t) <= t_min}
+        pred_band = ({t for t in pred_win if _m(t) > after_min}
+                     if after_min is not None else set(pred_win))
+        alive = {p for p, _v, n in rows if n >= line and p in keptset}
+        preds = {"band": pred_band, "window": pred_win, "count": pred_count}
+        distinct = (pred_band != pred_win and pred_win != pred_count
+                    and pred_band != pred_count)
+        out.append({
+            "day": str(d),
+            "n": len(rows),
+            "ties": len(tied),
+            "kept": len(kept),
+            "alive": len(alive),
+            "pred": {k: len(v) for k, v in preds.items()},
+            "diff": {k: len(v ^ alive) for k, v in preds.items()},
+            "separates": bool(distinct and not tied and len(alive) >= 3),
+        })
+    return out
+
+
+def past_split_lines(path: pathlib.Path | None = None) -> list[str]:
+    """`past_split_days()` の印字。**切り分けた日が無ければ、そう言います。**"""
+    days = past_split_days(path)
+    sep = [d for d in days if d["separates"]]
+    if not days:
+        return []
+    out = [f"  **公開ずみの日で、3つのモデル（帯／窓／本数）を切り分けた日: "
+           f"{len(sep)}日**（数えた {len(days)}日・API 0単位）"]
+    if not sep:
+        out.append("    **1日もありません。** 規則1（1日1本）の下では"
+                   "**新しくは作れません** —— 切り分けには1日に十数本 要ります。"
+                   "**期日を待つ前提は、待っても閉じません。**")
+        return out
+    for d in sep:
+        best = min(d["diff"], key=lambda k: d["diff"][k])
+        out.append(f"    {d['day']}  出した {d['n']}本 ／ 生きた {d['alive']}本  "
+                   f"取り違え 帯{d['diff']['band']} / 窓{d['diff']['window']} / "
+                   f"本数{d['diff']['count']}  → **{best}** がいちばん当たっています")
+    out.append("    **左端は、この中の1日から当てはめた値です**（`left_edge().from`）。"
+               "**同じ日で当てて 0本 なのは「当てはめた」に近い。** "
+               "独立に見るのは `left_edge().days`（別の日でも早い本が死んでいるか）。")
+    return out
+
+
 def booked_split_day(first_pub: str, today: dt.date | None = None,
                      uploaded: pathlib.Path | None = None,
                      c: int | None = None, t_min: int | None = None) -> dict | None:
