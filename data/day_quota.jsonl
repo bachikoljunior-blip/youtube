@@ -5263,3 +5263,7 @@
 {"at": "2026-08-30T22:31:54+00:00", "detail": "videos.list snippet (descriptions)", "by": "descriptions.py:fetch"}
 {"at": "2026-08-31T01:52:18+00:00", "detail": "videos.list snippet (descriptions)", "by": "descriptions.py:fetch"}
 {"at": "2026-08-31T01:45:25+00:00", "detail": "videos.list snippet (descriptions)", "by": "descriptions.py:fetch"}
+{"at": "2026-08-31T04:54:31+00:00", "detail": "status: Data API 読み", "by": "status.py:main"}
+{"at": "2026-08-31T04:55:31+00:00", "detail": "channels.list mine", "by": "history.py:_scan"}
+{"at": "2026-08-31T04:55:44+00:00", "detail": "channels.list mine", "by": "history.py:_scan"}
+{"at": "2026-08-31T04:55:47+00:00", "detail": "channels.list mine", "by": "history.py:_scan"}
