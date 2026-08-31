@@ -3357,6 +3357,51 @@ LEVER_INF_SCALE = 1e9
 #: **対数で**二分する。線形だと 1e9 の側に寄って、×17.69 を 14回では当てられません）。
 LEVER_NEED_ITERS = 14
 
+#: **その腕が、模型の中でどの数を動かすか**（2026-09-01・最適化の回に測って足した）。
+#:
+#: ## なぜ要るか（**「無限大にした」と思っていた撃ち方が、届いていませんでした**）
+#:
+#: `LEVER_INF_SCALE`（×10^9）の撃ち方には、**倍率が腕に届く前に切られる**
+#: 経路があります。`solve_gate1()` は 1行目で::
+#:
+#:     density = min(float(density), float(view_cap))   # view_cap = 10（`src/day_cap.py`）
+#:
+#: と切ります。だから `density` を ×10^9 で撃っても、模型の中では **×10** です。
+#: この回に撃って出た数（本番と同じ道・`points` 付き）::
+#:
+#:     density ×1     ceiling_day    942.1   ceiling_short 17.69
+#:     density ×10    ceiling_day  9,421.3   ceiling_short  1.77   ← ここで頭打ち
+#:     density ×50    ceiling_day  9,421.3   ceiling_short  1.77
+#:     density ×10^9  ceiling_day  9,421.3   ceiling_short  1.77
+#:
+#: **×10 の効き目は `per_video` ×10 と1ミリも変わりません**（同じ `ceiling_day`）。
+#: それでも到達日が出ないので `dead_at_inf` が立ち、画面は
+#: 「**無限大にしても 0日 ＝ 律速ではない。引かないこと**」と印字していました。
+#: **これはオーナー規則2 の誤用です** —— 規則2 が「ゼロなら律速ではない」と
+#: 言えるのは、**無限大が本当に腕へ届いたとき**だけ。切られた腕の 0日 は
+#: 「効かない」ではなく「**そこで止められている**」の意味で、
+#: 止めている物（`day_cap` の 10本／`house_rule` の 1本）のほうが律速です。
+#:
+#: `rpm` も同じ形でした（`need_month` が ×10 で 159,709.6 に着地し、
+#: そこから先はどの倍率でも動きません ＝ `RPM_SCENARIOS` の帯の上端）。
+#: `sub_rate` だけは本物の飽和です（`days_monetized` が 30日
+#: ＝ `MONETIZE_REVIEW_DAYS` へ**漸近**するだけで、切られてはいません）。
+#:
+#: ここは「腕 → その腕が動かす `plan()` の欄」の対応表です。
+#: **欄が動かなくなった倍率を挟み込めば、切り所が出ます。**
+#:
+#: **覆る条件**: `plan()` がこの欄の名前を変えたら、ここも変えること
+#: （`tests/test_eta_lever_clip.py` が、欄が消えたら落とします）。
+LEVER_EFFECT_KEY = {
+    "per_video": "ceiling_day",    # 1本あたり再生 × 密度
+    "density": "density_month",    # `solve_gate1` が view_cap で切る所
+    "rpm": "need_month",           # 要る再生/月（分母）
+    "sub_rate": "days_monetized",  # 門1 が開く日
+}
+
+#: 切り所を挟み込む回数（`[1, LEVER_INF_SCALE]` を**対数で**）。
+LEVER_CLIP_ITERS = 14
+
 #: 到達日を動かしうる腕。**`none`（道具の整備）はここには入りません** ——
 #: 日付を動かさないと自分で言っている腕なので、比べる意味がありません。
 LEVERS = ("per_video", "sub_rate", "rpm", "density")
@@ -3436,12 +3481,53 @@ def lever_days(m: dict, a: dict, pl0: dict, today: date | None = None,
         except Exception:                                      # noqa: BLE001
             caps = {}
 
+    def _pl(lever: str, f: float) -> dict:
+        """腕 `lever` を `f` 倍にして、**予測をまるごと**解き直す。"""
+        a2 = analyse(m, points=points, scale={lever: f})
+        return plan(m, a2, today=today, supply=supply, sensitivity=False,
+                    points=points, mix=mix)
+
     def _days(lever: str, f: float) -> float:
         """腕 `lever` を `f` 倍にして、到達日（日数）を解き直す。"""
-        a2 = analyse(m, points=points, scale={lever: f})
-        pl2 = plan(m, a2, today=today, supply=supply, sensitivity=False,
-                   points=points, mix=mix)
-        return pl2.get("days_to_target", NEVER)
+        return _pl(lever, f).get("days_to_target", NEVER)
+
+    def _clip_at(lever: str) -> float | None:
+        """**その腕の倍率が、模型の中で切られる所**（`LEVER_EFFECT_KEY`）。
+
+        返すのは「これ以上 上げても `plan()` の欄が動かなくなる倍率」。
+        切られていない（×10^9 まで動き続ける／そもそも動かない）なら `None`。
+        """
+        key = LEVER_EFFECT_KEY.get(lever)
+        if not key:
+            return None
+        try:
+            lo_v = _pl(lever, 1.0).get(key)
+            hi_v = _pl(lever, LEVER_INF_SCALE).get(key)
+        except Exception:                                      # noqa: BLE001
+            return None
+        if not isinstance(lo_v, (int, float)) or not isinstance(hi_v, (int, float)):
+            return None
+        if lo_v == hi_v:
+            return None          # **その腕は、この欄を1ミリも動かしていない**
+        # 「上端に着いたか」を相対誤差で見る（浮動小数の同値比較は使わない）。
+        span = abs(hi_v - lo_v)
+
+        def _at_top(v) -> bool:
+            return isinstance(v, (int, float)) and abs(v - hi_v) <= span * 1e-9
+
+        lo, hi = 1.0, float(LEVER_INF_SCALE)
+        for _ in range(LEVER_CLIP_ITERS):
+            mid = math.sqrt(lo * hi)
+            try:
+                ok = _at_top(_pl(lever, mid).get(key))
+            except Exception:                                  # noqa: BLE001
+                return None
+            if ok:
+                hi = mid
+            else:
+                lo = mid
+        # **×10^9 の近くで止まったなら、切られてはいません**（漸近しているだけ）。
+        return hi if hi < LEVER_INF_SCALE / 1e3 else None
 
     def _date(d: float):
         return ((today or today_jst()) + timedelta(days=math.ceil(d))
@@ -3503,6 +3589,7 @@ def lever_days(m: dict, a: dict, pl0: dict, today: date | None = None,
         #     （いまは `plan()` が倍率を天井にしか通さないので単調）。
         need = need_over_cap = None
         dead_at_inf = False
+        clip_at = None
         if not reachable_at_cap:
             try:
                 _inf_ok = _days(lever, LEVER_INF_SCALE) < NEVER
@@ -3524,8 +3611,12 @@ def lever_days(m: dict, a: dict, pl0: dict, today: date | None = None,
                 if cap and cap > 0:
                     need_over_cap = need / cap
             else:
-                # **無限大にしても到達日が出ない ＝ 律速ではない**（規則2）。
-                dead_at_inf = True
+                # **無限大にしても到達日が出ない。** ただし規則2 をここで
+                # 名乗る前に、**その無限大が腕へ届いたか**を確かめること ——
+                # 届いていなければ「効かない」ではなく「切られている」です
+                # （`LEVER_EFFECT_KEY` の docstring に、この回の実測）。
+                clip_at = _clip_at(lever)
+                dead_at_inf = clip_at is None
 
         rows.append({
             "lever": lever,
@@ -3547,6 +3638,10 @@ def lever_days(m: dict, a: dict, pl0: dict, today: date | None = None,
             "need": need,                    # 日付が出はじめる倍率（天井の上）
             "need_over_cap": need_over_cap,  # 天井を何倍にすれば届くか
             "dead_at_inf": dead_at_inf,      # **無限大でも 0日 ＝ 律速ではない**
+            # **切り所**（`None` なら切られていない）。ここに数が入る腕は
+            # `dead_at_inf` を名乗れません —— 無限大が届いていないので。
+            "clip_at": clip_at,
+            "clip_key": LEVER_EFFECT_KEY.get(lever) if clip_at else None,
         })
     # **並べ替えは「引けるところまで引いた実力」で。**
     #     同じ倍率の `gain` は、`factor` が合格点に足りない回は4本とも 0 になり、
@@ -6433,6 +6528,14 @@ def plan(m: dict, a: dict, density: int = PLAN_PUBLISH_PER_DAY,
                 r.get("reachable_at_cap") for r in _rows)
             out["lever_dead_at_inf"] = tuple(
                 r["lever"] for r in _rows if r.get("dead_at_inf"))
+            # --- **「無限大でも 0日」と「無限大が届いていない」を分ける** ---
+            #     （2026-09-01・最適化の回に測って足した。**API 0単位**）
+            #     `LEVER_EFFECT_KEY` の docstring に、この回の実測。
+            #     切られた腕を規則2 で「律速ではない・引かないこと」と印字すると、
+            #     **止めている物のほうが律速**なのに、読む側はそこを見ません。
+            out["lever_clipped"] = {
+                r["lever"]: {"at": r["clip_at"], "key": r.get("clip_key")}
+                for r in _rows if r.get("clip_at")}
             if _alive:
                 _pick = min(_alive, key=lambda r: r["need_over_cap"])
                 out["lever_chosen_by"] = "need_over_cap"
@@ -7695,6 +7798,23 @@ def headline(pl: dict, prev: dict | None = None,
             + "／".join(f"`{k}`" for k in _dead_inf)
             + "**（この回に `×10^9` まで撃って確かめた。オーナー規則2:"
               " **ゼロなら、そこは律速ではない**）。**引かないこと。**")
+    # --- **撃った無限大が、腕に届かなかった腕**（2026-09-01・最適化の回）---
+    #     ここは長らく上の行に混ざっていました。混ざると、**規則2 が
+    #     「引かないこと」と言っている腕**の中に、**切られているだけの腕**が
+    #     入ります。切られている腕で見るべきなのは腕ではなく**切っている物**です。
+    _clipped = pl.get("lever_clipped") or {}
+    if _clipped:
+        out.append(
+            f"{bar} [!] **`×10^9` が腕まで届いていない腕が {len(_clipped)}本"
+            " あります —— 規則2 の『ゼロ』をここで名乗れません: "
+            + "／".join(
+                f"`{k}` は **×{v['at']:.3g} で頭打ち**（模型の `{v['key']}` が"
+                f"そこから動きません）" for k, v in _clipped.items())
+            + "**。 **見るのは腕ではなく、切っている物のほうです**"
+              "（`density` は `solve_gate1` の `min(密度, view_cap)` ＝"
+              " 1日に再生が付く上限 10本・`src/day_cap.py`。"
+              " その手前に**オーナーが固定した 1本/日**"
+              "（`src/house_rule.py`）が乗っているので、腕の天井は ×1.00 です）。")
     if pl.get("lever_chosen_by") == "need_over_cap":
         _n, _noc = pl.get("lever_need"), pl.get("lever_need_over_cap")
         out.append(
