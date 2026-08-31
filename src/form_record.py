@@ -62,6 +62,7 @@
 """
 from __future__ import annotations
 
+import copy
 import functools
 import json
 from pathlib import Path
@@ -70,6 +71,27 @@ from . import forms as _forms
 
 ROOT = Path(__file__).resolve().parent.parent
 VIEWS = ROOT / "data" / "views.jsonl"
+
+
+#: **憶えの鍵**（2026-08-31）。**「既定の引数で呼んだか」ではなく「同じファイルか」。**
+#: 中身が1バイトでも動けば鍵が変わるので、**測り直す側は憶えに当たりません。**
+def _file_key(path: Path) -> tuple:
+    try:
+        st = path.stat()
+        return (str(path), st.st_mtime_ns, st.st_size)
+    except OSError:
+        return (str(path), None, None)
+
+
+def _forms_key(forms: dict[str, str] | None) -> int:
+    """`forms` は dict（**ハッシュできない**）なので、中身から鍵を作ります。"""
+    if forms is None:
+        return 0
+    return hash(tuple(sorted(forms.items())))
+
+
+#: `per_video_best()` の憶え。**捨てるのは `censor_memo_clear()` 1か所**。
+_BEST_MEMO: dict[tuple, dict] = {}
 
 
 def per_video_best(views_path: Path | None = None,
@@ -90,11 +112,43 @@ def per_video_best(views_path: Path | None = None,
         median 中央値
 
     **形の分からない本は1本も入りません**（`data/video_forms.json` は公開済みだけ）。
+
+    ## **憶えます**（2026-08-31・最適化の回に足した。**答えは1つも変わりません**）
+
+    この関数は `data/views.jsonl`（2MB・22,667行）と `data/video_forms.json` の
+    **純関数**です。ところが呼ばれる場所が悪い ——
+    `scripts/eta.py` の `_gate_legs()` から呼ばれ、`_gate_legs()` は `analyse()`
+    から、`analyse()` は `trajectory()` の **1日ずつの探索ループの中**から呼ばれます。
+
+    **実測（2026-08-31・この回に撃った）**::
+
+        per_video_best()  1回 **345ms**（暖まった後。初回 1,180ms）
+          内訳 = views.jsonl を **3回** 読む
+                 （自分で1回 ＋ `censor_factor` が形ごとに1回ずつ ＝ 2回）
+        `python scripts/eta.py --offline` は **5分 走っても終わりません**
+          （faulthandler の背骨は 100% ここ: `_gate_legs` → `per_video_best`
+            → `censor_factor` → `json.loads`）
+
+    下の `_CENSOR_MEMO` は、この形を**塞いだつもりで塞げていませんでした** ——
+    憶える条件が `views_path is None and forms is None` なのに、
+    `per_video_best()` は **常に `views_path=path, forms=forms` を渡す**ので、
+    **一度も当たりません**（この回に撃って確かめた）。
+    さらにその註の「1回の走りで 6〜8回」は**外れ**です。実際は探索の深さぶん、
+    百〜千の桁で呼ばれます。
+
+    **だから憶える鍵を「既定の引数で呼んだか」から「ファイルが同じか」に替えます** ——
+    `(道, mtime_ns, 大きさ, forms の中身)`。ファイルが1バイトでも動けば鍵が変わるので、
+    **測り直したい側が憶えに邪魔される道はありません**（検査が別の道を渡す形も同じ）。
+    それでも捨てたい側のために `censor_memo_clear()` が両方を捨てます。
     """
     path = views_path or VIEWS
     forms = _forms.measured_forms() if forms is None else forms
     if not path.exists():
         return {}
+
+    key = ("best", _file_key(path), _forms_key(forms))
+    if key in _BEST_MEMO:
+        return copy.deepcopy(_BEST_MEMO[key])
 
     lifetime: dict[str, int] = {}
     for line in path.read_text(encoding="utf-8").splitlines():
@@ -148,6 +202,7 @@ def per_video_best(views_path: Path | None = None,
         cf = censor_factor(form, views_path=path, forms=forms)
         out[form]["censor"] = cf
         out[form]["best_settled"] = out[form]["best"] * cf["factor"]
+    _BEST_MEMO[key] = copy.deepcopy(out)
     return out
 
 
@@ -170,18 +225,25 @@ CENSOR_MIN_N = 5
 CENSOR_HORIZONS: tuple[float, ...] = (336.0, 480.0, 600.0, 720.0)
 
 
-#: **既定の引数で呼んだときだけ憶える**（`_settled` と同じ理由・同じ寿命）。
+#: **鍵は「同じファイルか」**（2026-08-31 に替えた。前は「既定の引数で呼んだか」）。
 #:
-#: `per_video_best()` は `scripts/eta.py` の1回の走りで **6〜8回** 呼ばれ、
-#: そのたびに `censor_factor()` が形ごとに `data/views.jsonl`（2MB・22,000行）を
-#: 読み直します。**憶えないと、同じ答えのために同じファイルを十数回 読みます。**
+#: **前の版の註は 2か所 外れていました**（どちらもこの回に撃って確かめた）:
+#:
+#:   1. 「1回の走りで **6〜8回**」 → 実測 **623回 で、まだ終わっていない**
+#:      （`python scripts/eta.py --offline` を 150秒 で切った時点の数）。
+#:      呼ばれる場所は `eta._gate_legs()` で、そこは `analyse()` の中、
+#:      `analyse()` は `trajectory()` の **1日ずつの探索ループの中**です。
+#:   2. 「道を差した呼び方は通しません」 → **唯一の呼び手が道を差していました。**
+#:      `per_video_best()` は常に `views_path=path, forms=forms` を渡すので、
+#:      **この憶えは一度も当たっていませんでした。**
+#:
+#: 実測: 150秒 のうち **139.4秒（93%）**が `per_video_best()` の中。
 #:
 #: `lru_cache` を使わないのは、`forms` が dict（**ハッシュできない**）だからです。
-#: **道を差した呼び方（`views_path` / `forms` / `min_n` を渡す側）は通しません** ——
-#: 検査や道具が測り直したいときに、憶えが邪魔をしないこと。
-#:
-#: **長く生きるプロセスから呼ぶことになったら、ここを外すこと**（`_settled` と同じ）。
-_CENSOR_MEMO: dict[str, dict] = {}
+#: 代わりに `_file_key()`（道・mtime_ns・大きさ）と `_forms_key()`（中身）で鍵を作ります ——
+#: **ファイルが1バイトでも動けば鍵が変わる**ので、測り直す側は憶えに当たりません。
+#: 捨てたい側は `censor_memo_clear()`（`_BEST_MEMO` と `_settled` も一緒に捨てます）。
+_CENSOR_MEMO: dict[tuple, dict] = {}
 
 
 def censor_memo_clear() -> None:
@@ -191,6 +253,7 @@ def censor_memo_clear() -> None:
     **片方の古い答えの上で測り直す**ことになります。
     """
     _CENSOR_MEMO.clear()
+    _BEST_MEMO.clear()
     _settled.cache_clear()
 
 
@@ -242,10 +305,20 @@ def censor_factor(form: str, *, views_path: Path | None = None,
     zero = {"factor": 1.0, "n": 0, "from_hours": None, "to_hours": None,
             "median": 1.0, "mean": 1.0, "why": "測れていません（補正しません）"}
 
-    # **既定の呼び方だけ憶える**（`_CENSOR_MEMO` の註に実測）。
-    memoing = views_path is None and forms is None and min_n == CENSOR_MIN_N
-    if memoing and form in _CENSOR_MEMO:
-        return dict(_CENSOR_MEMO[form])
+    # --- **憶えの鍵は「同じファイルか」**（2026-08-31・最適化の回に替えた）---
+    #
+    #     前の版は `views_path is None and forms is None` ＝ **既定の引数で呼んだときだけ**
+    #     憶えていました。ところが唯一の呼び手 `per_video_best()` は
+    #     **常に `views_path=path, forms=forms` を渡します** ——
+    #     **この憶えは一度も当たっていませんでした**（この回に撃って確かめた）。
+    #     実測: `python scripts/eta.py --offline` の 150秒 のうち **139.4秒（93%）**が
+    #     `per_video_best()` の中（**623回** 呼ばれて、まだ終わっていない）。
+    #
+    #     鍵をファイルの同一性（道・mtime_ns・大きさ・`forms` の中身・`min_n`）に
+    #     替えます。**中身が動けば鍵が変わる**ので、測り直す側は憶えに当たりません。
+    #     **鍵は解いた後の値で作ります** —— `censor_factor("長尺")` と
+    #     `censor_factor("長尺", forms=measured_forms())` は**同じ答え**なので、
+    #     同じ鍵に落ちること（解く前に作ると、同じ答えを2回 測ります）。
 
     # --- **`settled` で先に返さないこと**（2026-08-31・入れた同じ回に外した）---
     #
@@ -273,6 +346,9 @@ def censor_factor(form: str, *, views_path: Path | None = None,
 
     path = views_path or VIEWS
     forms = _forms.measured_forms() if forms is None else forms
+    memo_key = (form, _file_key(path), _forms_key(forms), min_n)
+    if memo_key in _CENSOR_MEMO:
+        return dict(_CENSOR_MEMO[memo_key])
     if not path.exists():
         return zero
 
@@ -331,8 +407,7 @@ def censor_factor(form: str, *, views_path: Path | None = None,
         }
     out = best or dict(zero, from_hours=a_hours, record_id=rec_id,
                        why=f"{a_hours:.0f}時間 より先に n≥{min_n} の地平がありません")
-    if memoing:
-        _CENSOR_MEMO[form] = dict(out)
+    _CENSOR_MEMO[memo_key] = dict(out)
     return out
 
 
