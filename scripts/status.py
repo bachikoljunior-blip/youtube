@@ -2775,56 +2775,57 @@ def _walk(start, n: int) -> list:
     return [start + timedelta(days=i) for i in range(n)]
 
 
-def _compact_fill() -> int | None:
-    """**その穴を、いま在る予約を動かすだけで埋めるには何本 動かすか。**（API 0単位）
+def _upload_pace() -> tuple[int, int] | None:
+    """**規則が入ってから、`upload` は1日に何本 出ているか。**（`data/runs.jsonl`・API 0単位）
 
-    返すのは `reschedule.compact_plan` が出す**動かす本数**で、穴が残る割り当てなら
-    `None`（＝「詰めれば消える」と言えない）。
+    返りは `(upload の件数, 経過日数)`。読めなければ `None`。
 
-    ## なぜ status がここまで数えるか（2026-09-01）
+    ## なぜ穴の節でこれを出すか（2026-09-01）
 
-    すぐ上の枝は、08-31 に規則（1日1本）が入った日に**無条件で「詰めないこと」**へ
-    倒れました。**その文が正しいのは、穴の先に作り置きが無いときだけ**です。
-    実測 2026-09-01: 穴 8日 の先に **264本**。無条件の「詰めないこと」は、
-    **その 8日ぶんの公開を捨てろ**と毎周 言っていたことになります。
+    規則2（作り置きなし）の下では、**穴は「詰めて埋める」ものではありません。**
+    `--compact` が動かすのは `at` だけで `uploaded_at` は残るので、
+    詰めた本は `house_rule.is_stockpile()` の下で作り置きのまま ——
+    **`pool_drain` が同じ本を、同じ日枠で外します**（この回に実測: 詰める 12本 のうち
+    **11本** が池化の 267本 の中。残る1本は規則の下で作った本）。
+    **詰めるのは 600単位を捨てる手**です。
 
-    **「詰めろ」と言うなら、詰めた姿まで数えてから言うこと。**
-    ここが本数を出さないと、次の回は `--compact` を撃つかどうかを
-    「たぶん穴が残る」で決めます（この repo でいちばん多い形 ——
-    **道具が答えを出せるのに、撃つのは次の手**）。実測 0.4秒・API 0単位です。
+    穴を埋める道は1つしかありません ——**その日の回が `upload` を1本 出すこと。**
+    だからここに要るのは「詰められるか」ではなく「**出せているか**」の数です。
+
+    実測 2026-09-01 06:1x（`STOCKPILE_SINCE` = 2026-08-31 以降の ship）:
+
+        ship 93件 ／ そのうち `upload` **1件** ／ 経過 2日（要るのは 2件）
+
+    **規則が要る速さの半分です。** そして穴は 9日 あります。
+    この数を出さないと、「その日の1本を、その日までに入れること」は
+    **誰も数えていない指示**のまま残ります（この repo の最多の壊れ方）。
 
     ## 覆る条件
 
-    - `reschedule` が import できない／控えに予約行が無い → `None`（黙る）
-    - 規則が緩んで `_live_edge_min` が広がると、動かす本数は増えます
-      （**ここに数を書いていないので、そのまま付いていきます**）
+    - `run_marker.py` の `--kind ship --ship-kind upload` の付け方が変わったら、
+      ここは黙って 0 を数えます。**印の側を変えたら、ここも直すこと。**
+    - オーナーが規則を外したら、分母（1日1本）の意味が変わります。
     """
     try:
-        sys.path.insert(0, str(Path(__file__).resolve().parent))
-        import reschedule as _rs                               # noqa: PLC0415
-
-        from src import dupes as _dupes                        # noqa: PLC0415
-        rows = [r for r in _dupes.ledger_rows() if r.get("at")]
-        if not rows:
-            return None
-        now = datetime.now(timezone.utc)
-
-        class _A:                                              # `suggest_max_days` が読む欄だけ
-            step_min = 30
-            hour = 9
-            until_hour = 21
-            lead_min = 60
-            min_days = 0.0
-            max_days = _rs.DEFAULT_MAX_DAYS
-
-        args = _A()
-        # **組み直さないこと。** `suggest_compact` が返す割り当てが、
-        #     「穴が0件」の保証の付いている唯一の並びです
-        #     （組み直してずれた実例は `reschedule.suggest_compact` の docstring）。
-        md, plan = _rs.suggest_compact(rows, now, args, start=_rs.DEFAULT_MAX_DAYS)
-        if md is None:
-            return None
-        return len(plan)
+        from src import house_rule                             # noqa: PLC0415
+        since = str(house_rule.STOCKPILE_SINCE)
+        path = Path(__file__).resolve().parent.parent / "data" / "runs.jsonl"
+        n = 0
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            try:
+                r = json.loads(line)
+            except ValueError:
+                continue
+            if r.get("kind") != "ship" or r.get("ship_kind") != "upload":
+                continue
+            if str(r.get("at") or "")[:10] >= since:
+                n += 1
+        jst = timezone(timedelta(hours=9))
+        y, m, d = (int(x) for x in since.split("-"))
+        days = (datetime.now(jst).date() - date(y, m, d)).days + 1
+        return n, max(1, days)
     except Exception:                                          # noqa: BLE001
         return None
 
@@ -2884,22 +2885,20 @@ def _print_per_day(ahead: list, today=None) -> None:
         #     正しくありませんでした**（在庫の切れ目より先は
         #     `test_最後の予約より先は穴と呼ばない` が既に穴から外しています）。
         stock = sum(n for d, n in per.items() if d > gap[-1])
-        fill = _compact_fill()
+        pace = _upload_pace()
         print("      **投稿が途切れるのが最大の損失です**（`CLAUDE.md`）。"
               f"**その穴の先に、もう作ってある予約が {stock}本 あります** ——"
               "その日が0本なのは「まだ作っていない」ではなく"
-              "**「作ってあるのに出さない」**です"
-              f"（規則2『作り置きなし』の側も、既に {stock}本 ぶん破れています）。"
-              "**新しい本は1本も要りません。**"
-              + (f" 実測（いま数えた・API 0単位）: `python scripts/reschedule.py"
-                 f" --compact` は **{fill}本 動かすだけで穴が0件**"
-                 f"（{fill * 50}単位・`--apply` で撃つ）。"
-                 if fill else
-                 " `python scripts/reschedule.py --compact` で割り当てを見ること"
-                 "（いまは穴の残らない `--max-days` が見つかりませんでした）。")
+              f"**「作ってあるのに出さない」**です（規則2の側も {stock}本 ぶん破れています）。"
+              "**それでも詰めないこと** —— `--compact` が動かすのは `at` だけで"
+              "`uploaded_at` は残るので、詰めた本は作り置きのままで"
+              "`pool_drain` が同じ本を外します（`src/house_rule.is_stockpile`）。"
+              "**穴を埋める道は1つだけ: その日の回が `upload` を1本 出すこと**"
+              "（`docs/trigger_main.md` §4）。"
+              + (f" **実測: 規則が入ってからの `upload` は {pace[0]}件／{pace[1]}日"
+                 f"（要るのは {pace[1]}件）** —— この速さでは、この {len(gap)}日 は"
+                 "埋まりません。" if pace else "")
               + "残った作り置きは `python scripts/pool_drain.py --apply`。"
-              f"詰めた先も **1日{house_rule.PUBLISH_PER_DAY}本**です"
-              "（`_live_edge_min` が `src/house_rule.py` で締まります）。"
               "空けてあるなら `src/measure_window.py` の窓を見ること")
 
     # **薄い日も、印字の窓ではなく予約の最後まで見ること**（同じ理由）。

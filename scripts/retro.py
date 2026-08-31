@@ -750,6 +750,38 @@ _CALL_RE = re.compile(
 DORMANT_MARKS = ("だから検査は足していません", "わざと", "配線しないのが正しい",
                  "外の repo", "寝かせ")
 
+#: **「(c) に倒しずみ」の目印**（2026-09-01 06:2x に足した。**上の目印との違いが要点です**）。
+#:
+#: `DORMANT_MARKS` が拾うのは「**その道具が、寝ている理由を書いている**」だけで、
+#: **誰かが決めたかどうかを1文字も言っていません。** 実測 2026-09-01 06:0x ——
+#: `token_probe` は 06:01 に (c) へ倒され（`--closes token_probe` つきで ship 済み）、
+#: その **4分後**の `retro.py` の出力で、まだ決まっていない3本と**同じ字**で並んでいました:
+#:
+#:     - `<その道具への道>`
+#:         ← **(c) かもしれません。**その道具自身がこう書いています: …
+#:
+#: （**実物の道をここに貼っていません。** 貼ると `_CALL_RE` が拾って、
+#:  貼った道具が一覧から消えます —— この註を書いた回が一度 消しました）
+#:
+#: **倒しても一覧が縮まないので、次の回は同じ三択をやり直します。**
+#: `deixis_count` が6周 持ち越しているのは、これが理由です ——
+#: 01:3x の回が「(c) かもしれない」と書き、以後5周 誰も**決めた形**を残せませんでした。
+#:
+#: だから「決めた」を**見出しの形**で当てます（散文では当たりません。上の
+#: 「名前が出てくるだけ、は数えない」と同じ理由 —— **この docstring 自身が
+#: `(c) わざと寝かせてある` と書いても、`#` で始まる見出し行ではないので当たりません**）。
+#: 倒す側が書く1行は、`token_probe` の docstring がその形です
+#: （**その道への書き方をここに貼らないこと** —— `_CALL_RE` が拾って、
+#:  貼った道具が一覧から消えます。**この註を書いた回が実際に消しました。通算3回目**）:
+#:
+#:     ## **(c) わざと寝かせてある —— <なぜ>**（<日付> に決めた）
+#:
+#: **覆る条件**: 倒し方の書式が変わったら、ここを直すこと。
+#: **書式を増やす前に、実物の docstring に在る字か確かめること**（上の註と同じ）。
+#: **行の末尾まで拾うこと** —— 「なぜ」と日付は見出しの後半に在り、
+#: そこを切ると、読む側には「決まった」しか届きません（決めた回の理由が消えます）。
+_DECIDED_RE = re.compile(r"^\s*#{1,4}\s.*\(c\).*わざと寝かせてある.*$", re.M)
+
 
 @lru_cache(maxsize=1)
 def _corpus() -> tuple[tuple[Path, ...], dict[Path, str], str]:
@@ -856,9 +888,13 @@ def unwired_tools() -> list[dict]:
         doc = (re.search(r'"""(.*?)"""', code[path], re.S) or (None, ""))[1]
         says = next((l.strip() for l in doc.splitlines()
                      if any(k in l for k in DORMANT_MARKS)), None)
+        # **「決めた」と「そう書いてある」を分けること**（`_DECIDED_RE` の註）。
+        # 分けないと、倒しても一覧が縮まず、次の回が同じ三択をやり直します。
+        hit = _DECIDED_RE.search(doc)
         out.append({"name": name,
                     "path": path.relative_to(ROOT).as_posix(),
-                    "dormant_says": says})
+                    "dormant_says": says,
+                    "decided": hit.group(0).strip() if hit else None})
     return out
 
 
@@ -985,10 +1021,14 @@ def main() -> int:
               "\n  疑うなら日誌の宣言を読み、実物に当たること。**言及の回数は証拠になりません。**")
 
     unwired = unwired_tools()
-    print(f"\n\n## どこからも撃たれていない道具（`scripts/*.py`・{len(unwired)}本）\n")
-    if unwired:
+    # **倒しずみを、未決と同じ行で並べないこと**（`_DECIDED_RE` の註に実測）。
+    settled = [r for r in unwired if r["decided"]]
+    todo = [r for r in unwired if not r["decided"]]
+    print(f"\n\n## どこからも撃たれていない道具（`scripts/*.py`・{len(unwired)}本）"
+          f" —— **未決 {len(todo)}本 ／ (c) に倒しずみ {len(settled)}本**\n")
+    if todo:
         print("  **(a) 配線する ／ (b) 消す ／ (c) わざと寝かせてある** の三択で、1本ずつ倒すこと。")
-        for row in unwired:
+        for row in todo:
             print(f"  - `{row['path']}`")
             if row["dormant_says"]:
                 print(f"      ← **(c) かもしれません。**その道具自身がこう書いています: "
@@ -996,7 +1036,15 @@ def main() -> int:
         print("\n  **この一覧は、5周 申し送りで手で運ばれていたものです**"
               "（`unwired_tools()` の docstring）。**手で数え直さないこと。**")
     else:
-        print("  ありません。")
+        print("  **未決はありません。**（下の倒しずみは、決めた回の跡です）")
+    if settled:
+        print("\n  --- **(c) に倒しずみ（この三択はもう済んでいます。やり直さないこと）** ---")
+        for row in settled:
+            print(f"  - `{row['path']}`\n      {row['decided'][:120]}")
+        print("  **倒すときは、その道具の docstring に見出しで1行 残すこと** ——"
+              "\n  `## **(c) わざと寝かせてある —— <なぜ>**（<日付> に決めた）`。"
+              "\n  **散文で書くとここには出ず、次の回が同じ三択をやり直します**"
+              "（`token_probe` が 06:01 に倒され、06:0x の出力でまだ未決に並んでいました）。")
 
     review_all = blocks_under(journal, REVIEW_RE)
     reviews = review_all[-args.n:]
