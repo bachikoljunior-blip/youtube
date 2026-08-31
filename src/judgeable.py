@@ -546,6 +546,43 @@ def starved_share(keys: list[str]) -> tuple[int, int] | None:
     **証拠のほうが結論より弱かった**わけです。結論（「作り続ける」）は正しく、
     弱い数を並べたせいで**「87% しか入らない」と読める**形でした。
 
+    ## **規則の下で起きえない落ち方を、分母に置かないこと**（2026-08-31・最適化の回）
+
+    同じ日の 12:56 と 13:33 に `members()` が2つ絞りを足しました ——
+    **作り置き**（規則2 の下では1本も公開されない予約）と、
+    **帯の外の本**（`day_cap`。1日10本超・30分より詰めた本は 0再生）。
+    **正しい直しです。** ただし絞ったのは `members()` だけで、
+    **この関数の分母はそのまま**でした。落ちた本は全部「群に入らなかった」側に
+    数えられ、上の 100% が **35.5%（100/282本）** に落ちています。
+
+    実測 2026-08-31（この節を足す前）:
+
+        title_form    40/111   外れ 71本 ＝ 作り置き 42 ／ 帯の外 29
+        hook_form     29/ 95   外れ 66本 ＝ 作り置き 37 ／ 帯の外 29
+        request_form  22/ 54   外れ 32本 ＝ 作り置き 17 ／ 帯の外 15
+        slide_pace     9/ 22   外れ 13本 ＝ 作り置き  6 ／ 帯の外  7
+
+    **外れ 182本 は1本残らず、この2つのどちらかです。**
+    どちらも**規則（1日1本・作り置きなし）の下では二度と起きません** ——
+    作り置きは公開されず、1本/日 は `day_cap` の 10本 を超えようがない。
+    つまり 35.5% は「**これから作る本が群に入る率**」ではなく、
+    「**規則より前に作った本のうち、規則が公開を取り消したぶんを引いた率**」です。
+
+    **害は `scripts/queue_lag.py` に出ていました。** あちらは要る本数を
+    この率で割ります（124本 ÷ 0.355 ＝ 354日）。その結果:
+
+        queue_lag   間に合わない前提 3件 —— request_form 超過219日 /
+                    slide_pace 40日 / hook_form 11日
+        ab_split    同じ3件とも **間に合います**（122本／139日・23本／36日・…）
+                    構造的に届かないのは **`slot_half` 1件だけ**（29本 足りません）
+
+    **同じ与件から、2つの道具が反対を印字していました。** そして queue_lag が
+    名指しする直し方は「**期限を延ばす**か**群を畳む**」——
+    元気な前提3件をそのどちらかにかけ、**本当に届かない1件は見逃す**形です。
+    `eta.py` は「軌跡の腕が動くのは前提を1件 閉じたときだけ」・
+    「今後60日 の θ は**台帳が 23件 しか無いのが天井**」と印字するので、
+    **台帳を誤って 3件 削ることは、そのまま到達日の側に効きます。**
+
     ## 覆る条件
 
     振り分けが「テーマIDだけを見る純関数」でなくなったら、この 100% は割れます
@@ -557,6 +594,12 @@ def starved_share(keys: list[str]) -> tuple[int, int] | None:
 
     builds, shorts = build_times(), _short_topics()
     vid = _video_by_topic()
+    # **`members()` が構造で落とす本は、分母にも置かないこと**（2026-08-31）。
+    # 理由は上の「規則の下で起きえない落ち方」の節。ここは同じ2つの口を使います
+    # （**群の作り方は1か所** ——`members()` の本文と同じ `_stockpiled_ids()` /
+    # `_live_ids()`。片方に条件を書き足したら、もう片方も同じ日に直すこと）。
+    drop = _stockpiled_ids()
+    keep = _live_ids()
     hit = seen = 0
     for key in keys:
         exp = EXPERIMENTS.get(key)
@@ -572,8 +615,13 @@ def starved_share(keys: list[str]) -> tuple[int, int] | None:
             # 前に作った本は、群に入りようがありません（`built < exp.landed`）。
             if built < exp.landed or topic not in shorts or topic not in vid:
                 continue
+            video = vid[topic]
+            if video in drop:
+                continue        # 作り置き ——規則2 の下で1本も公開されません
+            if keep is not None and video not in keep:
+                continue        # 帯の外（`day_cap`）——1本/日 では起きません
             seen += 1
-            if vid[topic] in joined:
+            if video in joined:
                 hit += 1
     return (hit, seen) if seen >= 8 else None
 

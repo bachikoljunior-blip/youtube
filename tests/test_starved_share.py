@@ -29,6 +29,10 @@
 1. **分母は「実験が入った後に作ったショート」だけ**（前の本を混ぜない）
 2. 標本 8本 未満では**言わない**（引きの偏りで反対を言うので）
 3. `queue_lag` がこの数を**ショート率と取り違えない**
+4. **`members()` が構造で落とす本を、分母に置かない**（2026-08-31 に足した。
+   作り置き・帯の外。**規則の下では二度と起きない落ち方**なので、
+   これから作る本の率には掛かりません） —— ただし
+   **絞ったあとも、漏れがあれば下がること**（5番目の検査）
 
 ## 覆る条件
 
@@ -55,7 +59,8 @@ class _Exp:
     landed = LANDED
 
 
-def _stub(monkeypatch, builds: dict, joined: set[str]) -> None:
+def _stub(monkeypatch, builds: dict, joined: set[str],
+          drop: set[str] | None = None, keep: set[str] | None = None) -> None:
     from src import ab_split
 
     monkeypatch.setattr(ab_split, "EXPERIMENTS", {"k": _Exp()}, raising=False)
@@ -63,6 +68,10 @@ def _stub(monkeypatch, builds: dict, joined: set[str]) -> None:
     monkeypatch.setattr(SJ, "_short_topics", lambda: set(builds))
     monkeypatch.setattr(SJ, "_video_by_topic", lambda: {t: f"vid-{t}" for t in builds})
     monkeypatch.setattr(SJ, "members", lambda _k: {"g": [(None, v) for v in joined]})
+    # **`members()` と同じ2つの口**。既定は「1本も落とさない」——
+    # 実物を読ませると、この検査が控えの中身で揺れます（4件が実際に赤くなった）。
+    monkeypatch.setattr(SJ, "_stockpiled_ids", lambda: set(drop or ()))
+    monkeypatch.setattr(SJ, "_live_ids", lambda: keep)
 
 
 def test_実験が入る前に作った本を_分母に入れない(monkeypatch):
@@ -105,6 +114,42 @@ def test_長尺は分母に入らない(monkeypatch):
     # 4本 を「ショートではない」に倒す
     monkeypatch.setattr(SJ, "_short_topics", lambda: {f"new{i}" for i in range(8)})
     assert SJ.starved_share(["k"]) == (8, 8)
+
+
+def test_作り置きと帯の外は_分母に入らない(monkeypatch):
+    """**4: `members()` が構造で落とす本を、分母に置かないこと**（2026-08-31）。
+
+    同じ日の 12:56／13:33 に `members()` が2つ絞りを足しました ——
+    **作り置き**（規則2 の下では公開されない）と **帯の外**（`day_cap`）。
+    分母だけそのままだったので、落ちた本が全部「群に入らなかった」に化け、
+    実物で **100% → 35.5%（100/282本）** に落ちていました。
+
+    **どちらも規則（1日1本・作り置きなし）の下では二度と起きません** ——
+    だからこの率の分母に置くと、`queue_lag` が要る日数を **2.8倍** に見ます
+    （実測 124本 ÷ 0.355 ＝ 354日 → 「間に合わない前提 3件」。
+    `ab_split --outlook` は同じ3件を「間に合います」と印字していました）。
+    """
+    after = {f"new{i}": LANDED + timedelta(hours=i + 1) for i in range(12)}
+    live = {f"vid-new{i}" for i in range(10)}          # 2本 が帯の外
+    _stub(monkeypatch, after,
+          joined={f"vid-new{i}" for i in range(2, 10)},
+          drop={"vid-new0", "vid-new1"},               # 2本 が作り置き
+          keep=live)
+    # 12本 − 作り置き2 − 帯の外2 ＝ 8本。その8本は全部 群に入っている
+    assert SJ.starved_share(["k"]) == (8, 8)
+
+
+def test_絞ったあとも_漏れは下がって出る(monkeypatch):
+    """**分母を絞ったせいで、いつでも 100% になるのでは意味がありません。**
+
+    この関数の存在理由は「振り分けが純関数でなくなったら教える」ことなので、
+    **公開ずみ・帯の中・作り置きでない本が群から漏れていれば、下がること。**
+    """
+    after = {f"new{i}": LANDED + timedelta(hours=i + 1) for i in range(12)}
+    _stub(monkeypatch, after,
+          joined={f"vid-new{i}" for i in range(6)},
+          drop=set(), keep={f"vid-new{i}" for i in range(12)})
+    assert SJ.starved_share(["k"]) == (6, 12)
 
 
 def test_queue_lag_は_ショート率と取り違えない():
