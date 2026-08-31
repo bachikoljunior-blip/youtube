@@ -156,6 +156,9 @@ def per_video_best(views_path: Path | None = None,
     #:     `data/views.jsonl` だけから出ます（**API 0単位・別のファイルを読みません**）。
     #:     使い道は下の `tested_by`（記録が何本の反証に耐えたか）1つだけです。
     born: dict[str, str] = {}
+    #: `at` の読み直しを憶える。**1回の snapshot は同じ時刻を何十行も書く**ので、
+    #:     ここを憶えないと `strptime` が 22,667回 走ります（実測 +380ms）。
+    _t_of: dict[str, datetime] = {}
     for line in path.read_text(encoding="utf-8").splitlines():
         if not line.strip():
             continue
@@ -174,10 +177,16 @@ def per_video_best(views_path: Path | None = None,
             lifetime[vid] = v
         at, h = r.get("at"), r.get("hours")
         if at and h is not None:
+            base = _t_of.get(at)
+            if base is None:
+                try:
+                    base = datetime.strptime(at, "%Y-%m-%dT%H:%M:%SZ")
+                except (TypeError, ValueError):
+                    continue
+                _t_of[at] = base
             try:
-                t = (datetime.strptime(at, "%Y-%m-%dT%H:%M:%SZ")
-                     - timedelta(hours=float(h))).isoformat()
-            except (TypeError, ValueError):
+                t = (base - timedelta(hours=float(h))).isoformat()
+            except (TypeError, ValueError, OverflowError):
                 continue
             if vid not in born or t < born[vid]:
                 born[vid] = t
