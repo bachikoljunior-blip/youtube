@@ -26,11 +26,20 @@ def _write(tmp_path: Path, rows: list[dict]) -> Path:
     return p
 
 
+#: **`uploaded_at` は 2026-08-31 に足しました**（規則2・作り置きを供給から外す手）。
+#: `publishes_per_day()` は `src.house_rule.is_stockpile()` を通すようになり、
+#: **未来の予約で、規則より前に作った本**を落とします。ここの行は
+#: 「予約を動かした本」を作るために `at` が未来なので、**作った日を入れないと
+#: 作り置きとして落ち**、数えているものが dedup から変わってしまいます。
+#: **この検査の主題は dedup のままです。**
+MADE = "2026-09-01T00:00:00+09:00"
+
+
 def test_同じ本を2回書いても1本と数える(tmp_path: Path) -> None:
     p = _write(tmp_path, [
-        {"video_id": "A", "at": "2026-09-04T11:00:00Z"},
-        {"video_id": "A", "at": "2026-09-04T11:00:00Z"},   # そのままの重複
-        {"video_id": "B", "at": "2026-09-04T12:00:00Z"},
+        {"video_id": "A", "at": "2026-09-04T11:00:00Z", "uploaded_at": MADE},
+        {"video_id": "A", "at": "2026-09-04T11:00:00Z", "uploaded_at": MADE},
+        {"video_id": "B", "at": "2026-09-04T12:00:00Z", "uploaded_at": MADE},
     ])
     got = reach_split.publishes_per_day(longs={"A", "B"}, ledger_path=p)
     assert got == {"20260904": 2}, got
@@ -39,8 +48,8 @@ def test_同じ本を2回書いても1本と数える(tmp_path: Path) -> None:
 def test_予約を動かした本は古い日に残らない(tmp_path: Path) -> None:
     """`reschedule.py` が前へ動かした本。**後の行が勝つ。**"""
     p = _write(tmp_path, [
-        {"video_id": "A", "at": "2026-10-12T11:00:00Z"},
-        {"video_id": "A", "at": "2026-09-01T11:00:00Z"},   # 前倒しした
+        {"video_id": "A", "at": "2026-10-12T11:00:00Z", "uploaded_at": MADE},
+        {"video_id": "A", "at": "2026-09-01T11:00:00Z", "uploaded_at": MADE},
     ])
     got = reach_split.publishes_per_day(longs={"A"}, ledger_path=p)
     assert got == {"20260901": 1}, got

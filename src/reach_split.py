@@ -51,6 +51,8 @@ from pathlib import Path
 
 import yaml
 
+from . import house_rule
+
 ROOT = Path(__file__).resolve().parent.parent
 
 #: 「いま続いている量」を測る窓（日）。**平均でも最大でもない、段取りが乗る数。**
@@ -336,6 +338,15 @@ def publishes_per_day(longs: set[str] | None = None,
     for vid, row in _ledger_by_id(ledger_path).items():
         at = row.get("at")
         if not at or vid not in longs:
+            continue
+        # ---- **作り置きは供給ではありません**（規則2・2026-08-31 のオーナー原文
+        #      「使わなければ良いだけ前提にも再利用もしない」の2つ目）。
+        #      ここは `surface_forecast()` が「これから先の面」を掛ける分母 ＝
+        #      **この行を落とさないと、外して非公開にする本で面が立ちます。**
+        #      落とすのは **未来の予約 かつ 規則より前に作った本**だけで、
+        #      公開済み（実績）と、規則の下で作る本は残ります。
+        #      判定は `src.house_rule.is_stockpile()` の1か所です（写さないこと）。
+        if house_rule.is_stockpile(row):
             continue
         day = str(at)[:10].replace("-", "")
         out[day] = out.get(day, 0) + 1

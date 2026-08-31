@@ -86,3 +86,79 @@ def verbatim_missing_from(root: Path | None = None) -> list[str]:
 def cap() -> int:
     """**1日の上限**（規則1）。呼ぶ側は定数を書かず、ここを読むこと。"""
     return max(0, int(PUBLISH_PER_DAY))
+
+
+# ---------------------------------------------------------------- 規則2の実装
+#
+# **オーナー原文（2026-08-31・追加）**:
+#
+#     「使わなければ良いだけ前提にも再利用もしない」
+#
+# 中身は3つで、**そのうち2つ目がここです**。
+#
+#     1. 使わない      予約を外して非公開のまま置く（**削除はしない**）
+#     2. 前提にしない  **予測の計算から、作り置きを全部 外す**  ← ここ
+#     3. 再利用しない  新しい本の材料に、作り置きの台本・図・題材を使わない
+#
+# **作り置きは、もう供給ではありません。** 供給は **1日1本、これから作る分だけ**です。
+# 予約に在る 400本超は、外して非公開のまま置きます ＝ **1本も公開されません。**
+# だから「これから出る本」として数えると、**在りもしない供給で日付が早く出ます。**
+#
+# **外した結果、到達日は後ろへ動きます。それが正しい姿です。隠さないこと。**
+
+#: **作り置き（予約済み・未公開）を供給として数えてよいか。** 規則2。
+#: **`False` から動かさないこと** —— 動かすと、公開しない本で日付が早く出ます。
+STOCKPILE_IS_SUPPLY = False
+
+#: **この日より前に作った本が「作り置き」です**（規則が入った日）。
+#: この日以降に作る本は、1日1本の規則の下で作った本なので、**供給です**。
+#: 日付を写さないこと —— 判定は下の `is_stockpile()` の1か所です。
+STOCKPILE_SINCE = "2026-08-31"
+
+
+def planned_publishes_per_day() -> int:
+    """**これから1日に公開する本数。** 作り置きは1本も数えません（規則2）。
+
+    予測の「これから」の側は、**必ずここを読むこと。**
+    `data/uploaded.jsonl` の未来の `at` を数えて「これから N本/日 出る」と
+    するのは、**外して非公開にする本を供給に数える**ことです。
+    """
+    return cap()
+
+
+def _jst_today() -> str:
+    from datetime import datetime, timedelta, timezone
+    return datetime.now(timezone(timedelta(hours=9))).strftime("%Y-%m-%d")
+
+
+def is_stockpile(row: dict, today: str | None = None) -> bool:
+    """**その控えの行は「作り置き」か。**（`data/uploaded.jsonl` の1行）
+
+    作り置きの条件は**2つとも**満たすことです:
+
+        1. まだ公開されていない（`at` が今日より後）
+        2. **規則より前に作った**（`uploaded_at` が `STOCKPILE_SINCE` より前）
+
+    2 が要ります。**規則の下で作った本まで落とすと、これから出す1本が
+    供給から消えます** —— そうなると「1日1本 作っても面は 0回/日」と
+    印字することになり、実物と食い違います。
+
+    読めない行（`at` が無い・形が違う）は **False**（＝落とさない）。
+    **測っていないことを、落とす側に倒さないこと。**
+    """
+    if STOCKPILE_IS_SUPPLY:
+        return False
+    at = str(row.get("at") or "")[:10]
+    if not at:
+        return False
+    if at <= (today or _jst_today()):
+        return False                      # もう公開になっている ＝ 実績
+    made = str(row.get("uploaded_at") or "")[:10]
+    if not made:
+        return True                       # 作った日が分からない未来の予約 ＝ 作り置き
+    return made < STOCKPILE_SINCE
+
+
+def drop_stockpile(rows, today: str | None = None) -> list:
+    """**控えの行から、作り置きを落とす。** 残るのが供給です（規則2）。"""
+    return [r for r in rows if not is_stockpile(r, today)]
