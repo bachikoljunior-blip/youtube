@@ -96,14 +96,21 @@ def test_the_ledger_fills_in_what_was_uploaded_after_the_window_opened(monkeypat
     （＝ 収益化の対象外。`channel_video_ids` の「何が起きたか」）。
     """
     history._put_cached_video_ids("UUx", 400, ["old1", "old2"])
+    at = history._cached_video_ids("UUx", 400)[1]
     from src import dupes
 
-    monkeypatch.setattr(dupes, "ledger_rows",
-                        lambda: [{"id": "old2"}, {"id": "fresh"}])
+    monkeypatch.setattr(dupes, "ledger_rows", lambda: [
+        {"id": "old2", "uploaded_at": "2000-01-01T00:00:00+00:00"},
+        {"id": "ancient", "uploaded_at": "2000-01-01T00:00:00+00:00"},  # 控える前
+        {"id": "fresh", "uploaded_at": at[:-1] + "Z"},                  # 控えた後
+    ])
 
     out = history.channel_video_ids(_Boom(), "UUx")
 
     assert out == ["fresh", "old1", "old2"]      # **新しいほうが先**（新しい順）
+    assert "ancient" not in out, (
+        "控える前に上げた本を足すと、`cap=400` で切った古い側が先頭に戻り、"
+        "`_scan(want_map=True)` が一番古い本を『新しい』と読みます")
     assert len(out) == len(set(out))             # 二重に入れない
 
 
@@ -129,7 +136,7 @@ def test_a_different_playlist_or_cap_is_a_different_answer():
     """鍵は 窓・uploads・`cap` の3つ。**切られ方が違えば別の答え**です。"""
     history._put_cached_video_ids("UUx", 400, ["v1"])
 
-    assert history._cached_video_ids("UUx", 400) == ["v1"]
+    assert history._cached_video_ids("UUx", 400)[0] == ["v1"]
     assert history._cached_video_ids("UUy", 400) is None
     assert history._cached_video_ids("UUx", 50) is None
 
@@ -159,4 +166,4 @@ def test_the_cache_is_written_after_a_clean_read():
     """欠けなかった回は控える —— そこが無いと2回目が効きません。"""
     history.channel_video_ids(_Fake(["v1", "v2"], search_ids=["v3"]), "UUx")
 
-    assert history._cached_video_ids("UUx", 400) == ["v1", "v2", "v3"]
+    assert history._cached_video_ids("UUx", 400)[0] == ["v1", "v2", "v3"]
