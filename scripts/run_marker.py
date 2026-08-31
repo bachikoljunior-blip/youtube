@@ -798,6 +798,27 @@ def near_deadlines(limit: int = 3) -> list[str]:
     門が「代わりに何をするか」を**名指しできないと、種別の語を書き換えて
     通されるだけ**になります。だから、その場で読んで並べます。
     読めなければ黙って空を返します（**門そのものは止めません**）。
+
+    ## **閉じた印は `closed_on:` です**（2026-09-01 に踏んだ）
+
+    ここは長らく `verdict` / `closed` / `result` の3つを見ていました。
+    **この台帳のどれでもありません** —— 閉じた前提は `closed_on:` と `outcome:` で
+    印を付けます（`src/judgeable.deadlines()` が同じ所を読んでいます）。
+
+    実測 2026-09-01 03:5x: この関数の言う「開いている前提」は **25件**、
+    実物は **23件**（`eta.py` も `deadline_check.py` も 23件 と印字）。
+    そして期限の近い順に並べるので、**こぼれた2件がちょうど先頭に来ます** ——
+    門が名指しした3つのうち2つが、**8日前・9日前に閉じた前提**でした:
+
+        2026-08-26 [per_video] engaged を決めているのは…（`closed_on: 2026-08-23`）
+        2026-08-27 [none]      許可の一覧に MCP サーバ名を…（閉じている）
+
+    **この関数の docstring が警告しているとおりの形です** ——
+    名指しが偽なら、止められた回は「代わりの手」を探して空振りし、
+    結局 種別の語を書き換えて通します。
+
+    **覆る条件**: 台帳が閉じ方を変えたら（`closed_on` をやめたら）、ここも変えること。
+    **`judgeable.deadlines()` と同じ鍵を読むこと** —— 2か所が別々の鍵を見た結果が、上の実測です。
     """
     try:
         import yaml  # 遅延 import。この門以外では要りません
@@ -805,6 +826,7 @@ def near_deadlines(limit: int = 3) -> list[str]:
         d = yaml.safe_load(p.read_text(encoding="utf-8"))
         items = d if isinstance(d, list) else (d.get("hypotheses") or list(d.values())[0])
         op = [h for h in items if isinstance(h, dict) and h.get("claim")
+              and not h.get("closed_on") and not h.get("outcome")
               and not h.get("verdict") and not h.get("closed") and not h.get("result")]
         op.sort(key=lambda h: str(h.get("deadline") or "9999"))
         return [f"{h.get('deadline')} [{h.get('lever') or '?'}] {str(h.get('claim'))[:52]}"
@@ -813,7 +835,61 @@ def near_deadlines(limit: int = 3) -> list[str]:
         return []
 
 
-def note_fix_gate(what: str, run_len: int) -> None:
+def quota_is_out() -> tuple[bool, str]:
+    """**Data API の日枠が、この窓でもう尽きているか**（`(尽きているか, 1行)`）。
+
+    ## なぜ `fix` の門がこれを読むか（2026-09-01 に踏んだ）
+
+    `FIX_RUN_CAP` の註は、自分の逃げ場をこう書いています ——
+    「**オーナーが固定した規則（1日1本）は毎日 `upload` を要求しているので、
+    逃げ場のない門にはなりません。**」
+
+    **枠が尽きている窓では、その前提が成り立ちません。**
+    `docs/trigger_main.md` §4 が同じことを実測つきで書いています:
+
+        upload   `videos.insert` 1,600単位          ← 枠
+        improve  サムネ 50単位／題名・説明 50単位   ← 枠（**物が変わるまでが improve**）
+        verdict  期日の来た前提が1件も無ければ撃てない
+        means    `docs/MEANS.md` の未着手が、たいてい枠を要る
+        fix      ← **枠が尽きている回に残るのは、事実上これだけ**
+
+    **だから「枠が尽きた回は fix に偏る」は、判断ではなく構造です。**
+    実測 2026-09-01 03:5x（この関数を足した回）: 積んだ消費 **13,353単位** /
+    枠 10,000・**403 を 43回** 観測。`scripts/reschedule.py --list` は
+    `channels.list` の 403 で traceback、`eta.py` は
+    「**この回に閉じられる前提はありません**（いちばん早い期日は1日後）」。
+    **5つのうち4つが、最初から選べませんでした。**
+    それでも門は「`verdict` / `upload` / `means` / `improve` に使え」と言って
+    止めます —— **名指しされた4つが全部 枠の向こう側にあるのに、です。**
+
+    ## **これは門の骨抜きではありません**（そのつもりで足したら、意味がない）
+
+    - 判定は**観測した 403** です（`upload_cap.day_quota().open`）。
+      **こちらの見積りではありません** —— 「尽きたことにする」ことはできません
+    - **通した回は残ります**（`note_fix_gate(..., waived=True)`）。
+      `kind="fix_gate"` の行に `waived` が立つので、**次に来た回は
+      「止めた回数」と「枠のせいで通した回数」を別々に数えられます**
+    - 枠が戻っている窓では、門はいままでどおり止めます
+
+    ## 覆る条件
+
+    `upload_cap.day_quota()` が読めない回は「開いている」を返します
+    （あの関数の姿勢と同じ ——「読めないことを閉じていると読まない」）。
+    枠が広がって 403 が出なくなれば、ここは自動で黙ります。
+    **`FIX_RUN_CAP` の註の3つの覆る条件は、そのまま生きています。**
+    """
+    try:
+        from src import upload_cap                              # noqa: PLC0415
+
+        q = upload_cap.day_quota()
+    except Exception as exc:                                    # noqa: BLE001
+        return False, f"（日枠は読めませんでした: {str(exc)[:60]}）"
+    if getattr(q, "open", True):
+        return False, ""
+    return True, str(getattr(q, "line", "") or "**日枠が尽きています**")
+
+
+def note_fix_gate(what: str, run_len: int, waived: bool = False) -> None:
     """**止めたことを残す。**
 
     **止めた回数を数えられない門は、効いたかどうかも数えられません。**
@@ -829,6 +905,10 @@ def note_fix_gate(what: str, run_len: int) -> None:
                 "session": actor_id() or "(不明)",
                 "kind": "fix_gate",
                 "run_len": run_len,
+                # **止めたのか、枠のせいで通したのか。** これが無いと、
+                # 次の回は `fix_gate` の行数を「効いた回数」と読みます
+                # （`quota_is_out()` の註）。
+                "waived": bool(waived),
                 "what": what[:200],
             }, ensure_ascii=False) + "\n")
     except Exception:
@@ -1513,7 +1593,22 @@ def main(argv: list[str] | None = None) -> int:
         _fk = run_marker_ship_kind(args.ship, args.kind)
         if _fk == "fix":
             _run = fix_run_len()
-            if _run >= FIX_RUN_CAP:
+            # **枠が尽きている窓では、この門は止めません**（2026-09-01 に踏んだ。
+            # 理由と実測は `quota_is_out()` の註）。門が名指しする4つ
+            # （`verdict` / `upload` / `means` / `improve`）は、
+            # **どれも枠の向こう側**にあります。**通したことは残します。**
+            _out, _qline = quota_is_out()
+            if _run >= FIX_RUN_CAP and _out:
+                note_fix_gate(args.ship, _run, waived=True)
+                print(f"[marker] **`fix` が {_run}回 続いています**（上限 {FIX_RUN_CAP}）が、"
+                      f"**この窓は Data API の日枠が尽きているので通します** —— {_qline}")
+                print("[marker]   門が名指しする `upload`（1,600単位）/ `improve`（50単位）は"
+                      "枠を要り、`verdict` は期日の来た前提が要ります"
+                      "（`docs/trigger_main.md` §4 の同じ節）。")
+                print("[marker]   **その回の JOURNAL に「枠が尽きていた」と書くこと** —— "
+                      "書かないと、次に `retro.py` を読んだ回が"
+                      "「fix に偏っている」だけを見て、偏りの理由を「選び方が悪い」と読みます。")
+            elif _run >= FIX_RUN_CAP:
                 note_fix_gate(args.ship, _run)
                 _alt = near_deadlines()
                 _lines = "\n                     ".join(_alt) if _alt else "（`config/hypotheses.yaml` が読めませんでした）"
