@@ -72,8 +72,20 @@ import re
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
+from . import pause_guard
+
 ROOT = Path(__file__).resolve().parent.parent
-PAUSE_FILE = ROOT / "AUTOMATION_PAUSED.md"
+
+#: **判定は持ちません。写しもしません。**（2026-08-31）
+#:
+#: ここには `PAUSE_FILE = ROOT / "AUTOMATION_PAUSED.md"` と
+#: `def is_paused(): return PAUSE_FILE.is_file()` が**独立に**書いてありました。
+#: `src/pause_guard` にも同じ2行があり、**同じ問いに2つの答えがある状態**でした。
+#: 片方だけ直した回が「**動いているのに停止中と印字する**」形を作れます ——
+#: この repo でいちばん多い壊れ方（「言っている所と、している所が別」）そのものです。
+#:
+#: いまは `src/pause_guard` が1か所で持ちます。ここは**文書を読むだけ**です。
+PAUSE_FILE = pause_guard.PAUSE_FILE
 LEDGER = ROOT / "data" / "resume_gate.jsonl"
 
 #: 閉じた実績が何件たまれば「閉じる速さ」を口にしてよいか。
@@ -105,7 +117,8 @@ _JST = timezone(timedelta(hours=9))
 
 
 def is_paused() -> bool:
-    return PAUSE_FILE.is_file()
+    """**`src/pause_guard` へ委譲します。ここで独立に判定しないこと**（上の註）。"""
+    return pause_guard.is_paused()
 
 
 def _pause_text() -> str:
