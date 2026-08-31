@@ -755,8 +755,10 @@ RESERVE_UNITS = 400
 #: 実測 2026-09-01 の窓（07:00Z 起点）を、2つの計器で同時に読むと:
 #:
 #:     `measured_budget()["spent"]`          **9,400単位**  ← 書き込みだけ
-#:     `src.quota_ledger.spent()["data"]`   **13,359単位**  ← `HttpRequest.execute` を1点で包む
-#:                                           差 **3,959単位**（本当の 30%）
+#:     `src.quota_ledger` の**通った行**            **12,859単位**  ← `HttpRequest.execute` を1点で包む
+#:                                           差 **3,459単位**（本当の 27%）
+#:     （帳面の総計は 13,359単位。うち **501単位 は `ok=False`** ＝ 403 ほかで、
+#:       **403 は単位を使わないので数えません**。`_ledger_hold` は自分で足します）
 #:
 #: 差の中身は**読み**です: `search.list` 3,300（33回・単価 100）／
 #: `videos.list` 392 ／ `playlistItems.list` 110 ／ `channels.list` 53 ／
@@ -822,17 +824,31 @@ def _ledger_hold(now: datetime | None = None) -> str | None:
     except Exception:                                          # noqa: BLE001
         return None
     try:
-        s = _ql.spent(now)
-        if not int(s.get("n") or 0):
+        # **通った呼び出しだけを足すこと**（2026-09-01。`spent()` は使いません）。
+        # `quota_ledger.spent()["data"]` は `ok=False` の行も**定価で**足します ——
+        # 403 は単位を使わないので、それを数えると門が**早すぎる側**に外れます。
+        # 実測 2026-09-01 の窓: 総計 13,359単位 のうち **501単位 が失敗**
+        # （403 を 45回 ほか）＝ 通ったのは **12,859単位**。
+        # **早く止めるのは、遅く止めるのと同じくらい悪い** —— 遅ければ窓が死に、
+        # 早ければ撃てたはずの `improve` と `verdict` が撃てません。
+        rows = _ql.rows(now)
+        if not rows:
             return None            # 帳面に行が無い窓では止めない（推測で止めない）
-        used = int(s.get("data") or 0)
+        used, by = 0, {}
+        for r in rows:
+            if str(r.get("api")) != "data" or not r.get("ok"):
+                continue
+            u = int(r.get("units") or 0)
+            used += u
+            who_r = str(r.get("by") or "（名前なし）")
+            by[who_r] = by.get(who_r, 0) + u
         cap = int(_ql.DAY_UNITS)
     except Exception:                                          # noqa: BLE001
         return None
     room = cap - RESERVE_UNITS
     if used < room:
         return None
-    top = sorted((s.get("by") or {}).items(), key=lambda kv: -kv[1])[:2]
+    top = sorted(by.items(), key=lambda kv: -kv[1])[:2]
     who = "／".join(f"{k} {v:,}単位" for k, v in top) or "（名前なし）"
     tail = window_end(now or datetime.now(timezone.utc))
     back = tail.astimezone(JST).strftime("%m/%d %H:%M JST")
@@ -863,7 +879,7 @@ def reserve_hold(now: datetime | None = None) -> str | None:
         return None
     # **帳面の側を先に見ること**（2026-09-01）。下の `measured_budget()` は
     # **書き込みしか数えない**ので、読みで焼けた窓を「まだ余っている」と答えます
-    # （実測 2026-09-01: 9,400 と答えた窓の本当の消費は 13,359単位・403 を45回）。
+    # （実測 2026-09-01: 9,400 と答えた窓で、通った消費は 12,859単位・403 を45回）。
     # こちらは `HttpRequest.execute` を1点で包む帳面なので漏れません。
     # **緩める向きには効きません** —— 帳面が黙る窓（行が0）では `None` を返し、
     # 判断はそのまま下の門へ落ちます。`_ledger_hold` の註に「なぜ円環でないか」。

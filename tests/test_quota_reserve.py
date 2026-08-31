@@ -56,13 +56,11 @@ def _ledger_silent(monkeypatch) -> None:
     （実測 2026-09-01: 黙らせないと3件とも落ちます —— 帳面が 13,359単位 を
     数えているので、上の門が先に止めるため）。
 
-    **黙らせ方は「行が0の窓」です**（`n=0`）。値を小さくして誤魔化さないこと ——
+    **黙らせ方は「行が0の窓」です**（`rows()` が空）。値を小さくして誤魔化さないこと ——
     行が0 ＝ 帳面が何も知らない窓 ＝ 推測なので止めない、が
     `_ledger_hold` の約束そのものです（`tests/test_quota_reserve_counts_reads.py`）。
     """
-    monkeypatch.setattr(quota_ledger, "spent",
-                        lambda now=None: {"data": 0, "n": 0, "by": {},
-                                          "method": {}, "other": 0})
+    monkeypatch.setattr(quota_ledger, "rows", lambda now=None: [])
 
 
 def test_枠の実測が無い窓では止めない(monkeypatch):
