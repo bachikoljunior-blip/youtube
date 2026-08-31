@@ -30,8 +30,31 @@ from src.ab_split import (
 ROOT = Path(__file__).resolve().parent.parent
 
 
+#: 帯の中で、1本ずつ空ける分数。**`src/day_cap.MIN_GAP_MIN`（30分）より広く取ること。**
+_GAP_MIN = 60
+
+
 def _fake(tmp_path: Path, rows: list[tuple[str, str, str]]) -> tuple[Path, Path]:
-    """(topic, 作った時刻, 公開日) から控え2つを組み立てる。"""
+    """(topic, 作った時刻, 公開日) から控え2つを組み立てる。
+
+    ## **同じ日の本は、時刻をずらして置きます**（2026-08-31 に直した）
+
+    ここは長らく、**同じ日の本を全部 `09:00Z` の同じ1分**に置いていました。
+    `src/ab_split.split_counts()` が 2026-08-31 に
+    **帯の絞り**（`live_video_ids()` ＝ `src/judgeable.members()` が
+    2026-08-26 から使っているのと同じもの）を入れたところ、
+    **16本 置いた群が「1本」と数えられました。**
+
+    **道具のほうが正しい。** `src/day_cap.py` の実測は
+    「**`MIN_GAP_MIN`（30分）より詰めて出した本は死ぬ**」
+    （08/21 の :15/:45 は 7本とも 0再生）。**同じ1分に置いた 16本 は、
+    このチャンネルでは 1本 しか再生が付きません。**
+    仕込みのほうが実物とかけ離れていました。
+
+    だから **`_GAP_MIN` ずつ空けて置きます。** 1日に置ける本数は
+    `day_cap.cap()`（実測 10本）までなので、**それを超える仕込みは
+    公開日のほうを分けること**（下の `_spread()`）。
+    """
     batch, ledger = tmp_path / "batch.jsonl", tmp_path / "up.jsonl"
     batch.write_text(
         "\n".join(
@@ -40,14 +63,32 @@ def _fake(tmp_path: Path, rows: list[tuple[str, str, str]]) -> tuple[Path, Path]
         ),
         encoding="utf-8",
     )
-    ledger.write_text(
-        "\n".join(
-            json.dumps({"topic": t, "video_id": "v" + t, "at": pub + "T09:00:00Z"})
-            for t, _, pub in rows
-        ),
-        encoding="utf-8",
-    )
+    built_at = {t: built for t, built, _ in rows}
+    seen: dict[str, int] = {}
+    lines = []
+    for t, _, pub in rows:
+        nth = seen.get(pub, 0)
+        seen[pub] = nth + 1
+        when = f"T{nth * _GAP_MIN // 60:02d}:{nth * _GAP_MIN % 60:02d}:00Z"
+        # **`uploaded_at` を書くこと**（2026-08-31）。`src/house_rule.is_stockpile()`
+        # が読む欄で、無いと**未来の予約が全部「作り置き」**になり、
+        # `split_counts()` が1本も数えません。
+        lines.append(json.dumps({"topic": t, "video_id": "v" + t,
+                                 "at": pub + when, "uploaded_at": built_at[t]}))
+    ledger.write_text("\n".join(lines), encoding="utf-8")
     return batch, ledger
+
+
+def _spread(n: int, prefix: str, suffix: str, built: str, first: date,
+            per_day: int = 5) -> list[tuple[str, str, str]]:
+    """`n`本を、**1日 `per_day` 本ずつ**日をまたいで並べる。
+
+    `day_cap.cap()` は実測 10本/日 なので、**1日にそれ以上 仕込むと
+    超えたぶんは帯から落ちます**（そして落ちるのが正しい）。
+    """
+    return [(f"{prefix}{i}{suffix}", built,
+             (first + timedelta(days=i // per_day)).isoformat())
+            for i in range(n)]
 
 
 def _exp(**kw) -> Experiment:
@@ -85,8 +126,15 @@ def test_控えに作った記録が無い本は指示なし側に数える(tmp_
 
 
 def test_公開から7日たっていない本はまだ数えない(tmp_path):
-    """`SETTLE_DAYS`。初速だけを見ないための床。"""
-    when = date(2026, 9, 12)
+    """`SETTLE_DAYS`。初速だけを見ないための床。
+
+    **判定日は公開ずみの日で取ります**（2026-08-31 に直した）。
+    未来の日に置くと `src/house_rule.is_stockpile()` が「作り置き」と読み、
+    **規則2 で供給から外れて 1本も数えられません** ——
+    それはそれで正しい挙動なので、**ここでは混ぜないこと。**
+    作り置きのほうは `tests/test_ab_stockpile_sample.py` が別に見ています。
+    """
+    when = date(2026, 8, 26)
     late = (when - timedelta(days=SETTLE_DAYS - 1)).isoformat()
     ok = (when - timedelta(days=SETTLE_DAYS)).isoformat()
     b, l = _fake(
@@ -114,12 +162,19 @@ def test_公開日の無い行は数に入れず件数だけ出す(tmp_path):
 
 
 def test_両群が床に届いて初めて判定できる(tmp_path):
-    rows = [(f"a{i}-a", "2026-08-19T20:00:00+09:00", "2026-08-25") for i in range(MIN_PER_GROUP)]
+    """**仕込みは日をまたいで並べること。**
+
+    `day_cap.cap()` は実測 10本/日 で、`MIN_GAP_MIN` は 30分 ——
+    **同じ日の同じ分に 16本 置いても、帯に生きるのは 1本**です
+    （`_fake()` の註）。床に届くかを見る検査なので、**届く形で仕込みます。**
+    """
+    built = "2026-08-19T20:00:00+09:00"
+    rows = _spread(MIN_PER_GROUP, "a", "-a", built, date(2026, 8, 21))
     b, l = _fake(tmp_path, rows)
     c = split_counts(_exp(), builds=build_times(b), ledger=published(l))
     assert c.treated_ready["問い"] == MIN_PER_GROUP
     assert not c.judgeable, "片群だけ届いても判定できないこと"
-    rows += [(f"b{i}-x", "2026-08-19T20:00:00+09:00", "2026-08-25") for i in range(MIN_PER_GROUP)]
+    rows += _spread(MIN_PER_GROUP, "b", "-x", built, date(2026, 8, 21))
     b, l = _fake(tmp_path, rows)
     assert split_counts(_exp(), builds=build_times(b), ledger=published(l)).judgeable
 

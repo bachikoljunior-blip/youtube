@@ -620,12 +620,16 @@ def _live_ids() -> set[str] | None:
     読めない回は `None` を返し、**絞りません**。
     「観測していないものを、無いことにしない」——
     控えが読めないだけで群が空になると、`ready` が消えて期限が壊れます。
+
+    **【2026-08-31】出どころを `src/ab_split.live_video_ids()` の1か所にしました。**
+    ここと `ab_split.split_counts()` が**別々に数えていた**のが、同じ実験について
+    2つの本数（`judgeable` は「まだ足りない」／`ab_split` は「判定できます」）を
+    出していた理由です。**同じ絞りを2か所に書かないこと。**
     """
     try:
-        from src import day_cap
-        from src.ab_split import published
+        from src.ab_split import live_video_ids
 
-        return day_cap.live_ids([r for r in published() if r.get("at")])
+        return live_video_ids()
     except Exception:                                    # noqa: BLE001
         return None
 
