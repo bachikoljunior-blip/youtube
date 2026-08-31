@@ -940,13 +940,47 @@ def next_close(doc: dict | None = None, today: date | None = None,
     まるごと外します** —— 開いている件数（`open`）には残しますが、
     「次に閉じられる日」の候補にはしません。渡さなければ従来どおり。
 
-    返り: `{"on": date|None, "days": int|None, "open": 件数, "source": "ready"|"deadline"}`
+    ## **日付だけ返して、claim の名前を捨てていました**（2026-08-31・最適化の回）
+
+    ここは `min(days)` を取って**日付だけ**を返し、`h["claim"]` はその場で
+    捨てていました。読む側の `scripts/eta.py` は、だから
+
+        **期日の来た前提があります**（2026-08-31・開いている前提 28件）→
+        **この回は `verdict` で日付が動かせます**
+
+    としか印字できません。**どの前提かが書いていないので、そのまま撃てません。**
+    撃つには `python scripts/deadline_check.py`（実測 40秒）を回して
+    60行 読む必要があり、**読まなければ何が判定できるのか分かりません。**
+
+    実測 2026-08-31 01:5x（この欄を足した回）:
+
+        判定できる前提            **1件**（「完成した図を説明のあいだ画面に
+                                  残すと、engaged 比率が上がる」・要16／いま17）
+        直近7日の ship            **359件**（うち `verdict` は **11件 ＝ 3%**）
+        同じ7日の `fix`           **219件 ＝ 61%**
+        同じ7日の到達日           **+17日 遠のいた**（宣言は -55日）
+
+    **`fix` は、この機械自身のモデルでは係数 0 です**（軌跡の腕が動くのは
+    前提を1件 閉じたときだけ ——`eta.py` 自身がそう印字しています）。
+    名前の付いた欠陥は 18件 印字され、名前の無い `verdict` は1行で流れる ——
+    **61% が係数 0 の側へ行くのは、置かれ方の帰結です。**
+
+    だから `claims` を返します。**日付は行き先を教えず、名前は教えます。**
+
+    **覆る条件**: 判定できる前提が毎回 10件 を超えるようになったら、
+    名前を全部 並べると頭3行が読めなくなります（そのときは上位3件 ＋ 件数へ）。
+
+    返り: `{"on": date|None, "days": int|None, "open": 件数,
+            "source": "ready"|"deadline", "claims": [str, ...]}`
+
+    `claims` は **`on` と同じ日に判定できる前提の名前**（`on` が今日なら
+    「**いま撃てるもの**」そのもの）。`on` が `None` のときは空。
     """
     doc = _load() if doc is None else doc
     today = today or today_jst()
     ready = ready or {}
     unready = unready or set()
-    days: list[tuple[date, str]] = []
+    days: list[tuple[date, str, str]] = []
     n_open = 0
     for h in doc.get("hypotheses", []) or []:
         if not isinstance(h, dict) or h.get("closed_on"):
@@ -966,12 +1000,16 @@ def next_close(doc: dict | None = None, today: date | None = None,
         if isinstance(r, date):
             when, src = r, "ready"
         if isinstance(when, date):
-            days.append((when, src))
+            days.append((when, src, str(h.get("claim") or "")))
     if not days:
-        return {"on": None, "days": None, "open": n_open, "source": None}
-    soonest, src = min(days, key=lambda x: x[0])
+        return {"on": None, "days": None, "open": n_open,
+                "source": None, "claims": []}
+    soonest, src, _ = min(days, key=lambda x: x[0])
+    # **同じ日に判定できるものは全部 返します。** 1件だけ返すと、
+    # 撃った次の回に「もう1件あった」が見えません。
+    names = [c for (d, _s, c) in days if d == soonest and c]
     return {"on": soonest, "days": (soonest - today).days,
-            "open": n_open, "source": src}
+            "open": n_open, "source": src, "claims": names}
 
 
 #: `forward()` が数える窓（日）。**14 を先頭に置くこと** —— いちばん短い窓が
