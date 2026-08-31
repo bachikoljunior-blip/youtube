@@ -31,6 +31,8 @@ _spec = importlib.util.spec_from_file_location("eta_surface_mod", ROOT / "script
 eta = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(eta)
 
+import _eta_pin  # noqa: E402
+
 # 2026-08-20 の実測（`data/rpm_mix.jsonl` の最後の点）
 MIX = {
     "at": "2026-08-20",
@@ -87,6 +89,13 @@ def _pin_surface(monkeypatch) -> None:
 def _plan(monkeypatch, mix=MIX, **over):
     monkeypatch.setattr(eta.rpm_mix, "last", lambda *a, **k: mix)
     _pin_surface(monkeypatch)
+    # **オーナーの規則（1日1本）も、この file の主題ではありません**（2026-08-31）。
+    #     `ceiling_short` は per_video × 密度 × … なので、密度が 25 → 1 に落ちると
+    #     **25分の1**になり、この file が見張っている「天井が足りている側の枝」が
+    #     標本から丸ごと消えます（`test_天井が足りていれば逆算は出ない`）。
+    #     上の `MIX` / `_pin_surface` とまったく同じ理由・同じ扱いです。
+    #     規則の効きは `tests/test_eta_house_rule.py` が主題として持ちます。
+    _eta_pin.pin_house_rule(monkeypatch, eta, _eta_pin.PLAN_DENSITY)
     m = _measured(**over)
     return eta.plan(m, eta.analyse(m))
 

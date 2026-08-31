@@ -132,12 +132,20 @@ def test_段4の期日は段3の写しではない(monkeypatch):
     )
 
 
-def test_1本あたり再生を上げると段4の期日が動く():
-    """**写しだと、ここが動きません。** 動かない数字に向かって「早めろ」は成立しない。"""
+def test_1本あたり再生を上げると段4の期日が動く(monkeypatch):
+    """**写しだと、ここが動きません。** 動かない数字に向かって「早めろ」は成立しない。
+
+    **2026-08-31: ここだけ `_pinned()` を通っていませんでした。** 天井を3つとも
+    明示する道が同じ file の上に在るのに、この1件は素の `eta.plan()` を撃っており、
+    オーナーの規則で `PLAN_PUBLISH_PER_DAY` が 1 になった瞬間、**両側とも `NEVER`**
+    （＝ `fast < slow` が偽）へ落ちました。**形は1行も壊れていません** ——
+    この file の冒頭が3回 書いている「構造を測る検査は、計画の数の上に乗らないこと」
+    の、**4回目**です。**`_pinned()` を通すこと。**
+    """
     m = _measured()
-    slow = eta.plan(m, eta.analyse(m))["days_revenue"]
+    slow = _pinned(m, monkeypatch)["days_revenue"]
     m2 = _measured(views_per_video=952 * 4, views_7d=11_324 * 4, views_28d=20_332 * 4)
-    fast = eta.plan(m2, eta.analyse(m2))["days_revenue"]
+    fast = _pinned(m2, monkeypatch)["days_revenue"]
     assert fast < slow, "1本あたり再生を4倍にしても段4 が動きません"
 
 
