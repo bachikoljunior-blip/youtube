@@ -114,3 +114,44 @@ def test_say_が印字を1行も落としていない():
         i = body.index(name)
         chunk = body[i:i + 200]
         assert "say(line)" in chunk, f"{name} の行が控えに入っていない"
+
+
+# --- **値札を、名前の隣に置く**（2026-08-31・最適化の回に実測して足した）--------
+#
+# この節（`flagged`）は欠陥を**名前つきで**並べます。同じ頭3行の中で、
+# 到達日を動かす手（`verdict`）は 2026-08-31 の朝まで**日付と件数だけ**でした。
+# **片方は名前つき、もう片方は名無し。** 実測（`data/runs.jsonl`・直近7日）:
+#
+#     ship 359件   `fix` **219件（61%）** ／ `verdict` **11件（3%）**
+#     lever        `none` **147件（41%）** ／ `gate` 17件（5%）
+#     `--moves`    **305件 が 0**（機械自身が「動かない」と申告して撃っている）
+#     到達日        2027-01-02 → 2027-01-15（**+13日 遠のいた**。宣言は -55日）
+#
+# `eta.py` は「軌跡の腕が動くのは前提を1件 閉じたときだけ」と**200行 下**で
+# 自分に言っています。**その1行は、名前の並びより 200行 遠い所にあります。**
+#
+# **これは「塞ぐな」ではありません。** 欠陥は本物で、実際に偽の合格を
+# 何度も止めています。留めているのは **`--moves` が 0 だと同じ所に書いてある**
+# ことだけです。
+def test_欠陥の並びの隣にmovesが0だと書いてあること():
+    eta = _load() if "_load" in globals() else None
+    if eta is None:                                            # pragma: no cover
+        import importlib.util
+        from pathlib import Path
+        root = Path(__file__).resolve().parent.parent
+        spec = importlib.util.spec_from_file_location("eta_mod", root / "scripts" / "eta.py")
+        eta = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(eta)
+    out = eta.flagged(["[!] 欠陥A の話です", "[!] 欠陥B の話です"])
+    joined = "\n".join(out)
+    assert "0日" in out[1], (
+        "**値札が件数のすぐ下にありません。** 末尾へ置くと『ほか N件』と"
+        "入れ替わり、しかも**数字から離れます**。値札は数字の隣にあるときだけ"
+        "値札です: " + joined)
+    assert "`--moves` は定義上 0日" in joined, (
+        "**欠陥の名前の隣に、その値札がありません。** 名前つきの欠陥 18件 と、"
+        "名無しの `verdict` 1件 が並ぶと、実測で 61% が名前のある側へ行きます:\n"
+        + joined)
+    assert "期日の来た前提" in joined, (
+        "**代わりにどこを見ればよいか**を書いていません。"
+        "値札だけを置くと、その回は何も撃たずに終わります: " + joined)
