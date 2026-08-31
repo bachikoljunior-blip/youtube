@@ -115,4 +115,22 @@ def test_次に公開される本の控えがgitに在る(video_id: str):
         "サムネイルの bytes も押し直せません"
     )
     d = json.loads(meta.read_text(encoding="utf-8"))
-    assert d.get("narration"), f"{video_id} の控えに読み上げ文が入っていません"
+
+    # **読み上げが空でよいのは、出どころを申告している控えだけ。**
+    #
+    # `UIWHsypOPPg` の控えは 2026-08-31 22:xx に**入れ直したもの**です。
+    # 投稿の回の控えは失われており、作り直した build から
+    # **サムネイルの bytes だけ**を取りました。読み上げは別の生成なので、
+    # **入れると「この本はこう喋っている」という嘘になります。**
+    # 空のまま、`reconstructed` で出どころを申告しています。
+    if not d.get("narration"):
+        assert d.get("reconstructed"), (
+            f"{video_id} の控えに読み上げ文が無く、出どころの申告もありません。"
+            "**空の控えを黙って置かないこと** —— 次の回が本物と読みます"
+        )
+        assert d.get("reconstructed_note"), (
+            "reconstructed の控えには、何をどう作り直したかを書くこと"
+        )
+        assert (ROOT / "data" / "critique_queue" / f"{video_id}.thumb.jpg").exists(), (
+            f"{video_id} の控えは、せめてサムネイルの bytes を持っていること"
+        )

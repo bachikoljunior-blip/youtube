@@ -4,6 +4,12 @@
         **控えに残した bytes を、載っていない本すべてに押す**（2026-08-17 に追加）。
         `build/` は要りません。ふつうはこちらです
 
+    python scripts/refresh_thumbnail.py --missing --video <動画ID>
+        **その1本だけ押す**（50単位。2026-08-31 に追加）。
+        `--missing` は実測 158本 ＝ 7,900単位 で、1日の枠のほとんどを持っていき、
+        **池化（`pool_drain`）と取り合います。** いちばん急ぐのはいつも1本
+        ——**次に公開される本**——なので、そこだけ押せる道を分けてあります
+
     python scripts/refresh_thumbnail.py <テーマID> <動画ID> <配色の番号>
         `build/<テーマID>/` から**作り直して**差し替える。
         サムネイルの作りそのものを変えたときだけ
@@ -149,7 +155,7 @@ def _long_form_ids(video_ids: list[str]) -> set[str]:
 
 
 def push_missing(dry_run: bool = False, force: bool = False,
-                 only_long: bool = False) -> int:
+                 only_long: bool = False, only_video: str = "") -> int:
     """控えに残した bytes を、載っていない本すべてに押す。**`build/` は要りません。**
 
     **予約に0本の日があるあいだは押しません**（2026-08-19。理由は
@@ -166,6 +172,26 @@ def push_missing(dry_run: bool = False, force: bool = False,
     if not rows:
         print("[thumb] サムネイルの載っていない本はありません")
         return 0
+
+    # **1本だけ押す道**（2026-08-31 22:xx に足した）。
+    #
+    # `--missing` は控えに溜まったぶんを**全部**押します。実測 158本 ＝ 7,900単位で、
+    # 1日の枠 10,000単位 のほとんどです。**池化（`pool_drain`）と取り合います。**
+    #
+    # ところが、いちばん急ぐのは**いつも1本**です ——
+    # **次に公開される本**。09/01 22:00 に出る `UIWHsypOPPg` は、
+    # 枠が戻る 16:00 から公開まで6時間しかなく、その1本に要るのは **50単位**です。
+    # **「全部押す」か「1本も押さない」しか無いと、いちばん急ぐ1本が
+    # 池化に負けます。**
+    #
+    # **覆る条件**: 枠のほうが広くなって取り合いが消えたら、この絞りは要りません。
+    if only_video:
+        rows = [r for r in rows if r["video_id"] == only_video]
+        if not rows:
+            print(f"[thumb] **{only_video} は控えにありません**"
+                  "（サムネイルは載っている／控えが git に無い、のどちらか）")
+            return 1
+        print(f"[thumb] **{only_video} の1本だけ押します**（50単位）")
 
     if only_long:
         longs = _long_form_ids([r["video_id"] for r in rows])
@@ -275,9 +301,17 @@ def push_missing(dry_run: bool = False, force: bool = False,
 
 if __name__ == "__main__":
     if "--missing" in sys.argv:
+        _only = ""
+        if "--video" in sys.argv:
+            _i = sys.argv.index("--video")
+            if _i + 1 >= len(sys.argv):
+                print("--video のあとに動画IDを書くこと")
+                raise SystemExit(2)
+            _only = sys.argv[_i + 1]
         raise SystemExit(push_missing(dry_run="--dry-run" in sys.argv,
                                       force="--force" in sys.argv,
-                                      only_long="--long" in sys.argv))
+                                      only_long="--long" in sys.argv,
+                                      only_video=_only))
     if len(sys.argv) != 4:
         print(__doc__)
         raise SystemExit(2)
