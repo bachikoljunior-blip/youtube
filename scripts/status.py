@@ -2685,7 +2685,28 @@ def _print_inventory_from_ledger() -> None:
             print("  [!] **先の予約が1本もありません。** この回は `upload` を選ぶこと")
             return
         days = (ahead[-1] - now).total_seconds() / 86400
+        # **2026-09-01: ここは「いちばん後ろ」しか見ていませんでした。**
+        #     作り置きが先のほうに固まっていると `days` は大きいまま
+        #     （実測 39.0日）で、**手前の 9日 が0本でも印は付きません。**
+        #     §4 の1番目もこの数を条件にしていたので、
+        #     **規則が入ってからの `upload` は 2日で1件**（要るのは2件）でした。
+        #     見るべきは「どこまで届いているか」ではなく
+        #     **「今日から2日 のうちに0本の日が在るか」**です。
+        #     出どころは `scripts/slot_gate.py` の1か所（API 0単位）。
         mark = "" if days >= 5 else "  ← **5日を切っています。§4 は `upload`**"
+        try:
+            import importlib.util as _ilu                       # noqa: PLC0415
+            _sg_spec = _ilu.spec_from_file_location(
+                "slot_gate_mod", Path(__file__).resolve().parent / "slot_gate.py")
+            _sg = _ilu.module_from_spec(_sg_spec)
+            _sg_spec.loader.exec_module(_sg)
+            _gap = _sg.empty_days()
+        except Exception:                                       # noqa: BLE001
+            _gap = []
+        if _gap:
+            mark = ("  ← **手前が空です（"
+                    + " ".join(f"{d:%m/%d}" for d in _gap)
+                    + "）。§4 は `upload`**")
         print(f"  控えの最後 {_fmt(ahead[-1].isoformat())}"
               f"（**あと {days:.1f}日** / {len(ahead)}本）{mark}")
         print("  **上限側の見積りです**（取り消した本も控えには残ります）。"
