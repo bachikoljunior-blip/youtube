@@ -394,23 +394,54 @@ def test_gate2b_and_target_are_the_same_level(m):
 
 
 def test_supply_ceiling_is_not_the_api_cap_alone(m):
-    """**供給の天井が、3つのうちいちばん低いものであること。**
+    """**供給の天井が、3つのうちいちばん低いもので、候補を1つも落としていないこと。**
 
     API の日枠 92本/日 だけを天井に置くと、**出す材料が無い日を数えません。**
-    そして 2026-08-31 に、その上に**オーナーが固定した規則**が乗りました
-    （`src/house_rule.PUBLISH_PER_DAY` ＝ 1本/日）。
+    もとはそれを言うために「題材がいちばん低ければ題材が勝つ」を見ていました。
 
-    **この検査は 2026-08-31 に赤いまま残っていました。** 本体（`stages()`）は
-    同じ日に規則を読むよう直りましたが、こちらは「題材が API より低ければ
-    **必ず**題材が律速」と書いたままで、**規則がいちばん低い今は必ず落ちます**
-    （実測 supply_cap 1.0 対 material 21.3）。直したのは検査の側です ——
-    本体は3つの `min` で正しい。
+    **2026-08-31 に候補が1つ増えました** —— オーナーが固定した公開の上限
+    （`src/house_rule.PUBLISH_PER_DAY` ＝ 1本/日）。それまで `stages()` は
+    `min(API, 題材)` だけで解いており、**軌跡ぜんぶが最大 92倍 の供給の上**に
+    乗っていました。本体は同じ日に直りましたが、**この検査は「題材が API より
+    低ければ必ず題材が律速」と書いたまま赤く残っていました**
+    （実測 supply_cap 1.0 対 material 21.3）。**直したのは検査の側です。**
+
+    **そして、実データの1つの並びだけを見るのをやめました。** それだと
+    「いまたまたま規則がいちばん低い」ことしか確かめられず、**題材が候補から
+    落ちても気づきません**（それが元の壊れ方そのものです）。純関数
+    `traj.supply_ceiling()` に3つの並びを直接ためします。
+
+    **(4) は二重に見ています。** 片方は `supply_ceiling()` と突き合わせ、
+    もう片方は**そこを通さずに** `min` を自分で取ります ——
+    **道具そのものが間違っているときは、道具と突き合わせても見つかりません。**
 
     **覆る条件**: オーナーが 1日1本 を自分の言葉で外したとき。そのときは
     `supply_rule` が上がり、律速は題材か日枠へ戻ります（下の分岐がそう書けています）。
     """
+    # (1) 3つの候補それぞれが、いちばん低いときに勝てること
+    assert traj.supply_ceiling(50, 92, 10) == pytest.approx((10, "題材の生成速度"))
+    assert traj.supply_ceiling(50, 9, 92)[0] == pytest.approx(9)
+    assert traj.supply_ceiling(1, 92, 21)[0] == pytest.approx(1)
+
+    # (2) 題材が無い日は候補から外れ、残りで決まること
+    assert traj.supply_ceiling(50, 92, None)[0] == pytest.approx(50)
+    assert traj.supply_ceiling(50, 92, 0)[0] == pytest.approx(50)
+
+    # (3) 律速の名前が、実際に勝った候補を指すこと
+    assert traj.supply_ceiling(50, 92, 10)[1] == "題材の生成速度"
+    assert traj.supply_ceiling(1, 92, 21)[1] == "オーナーの規則（1日1本）"
+    assert traj.supply_ceiling(50, 9, 92)[1] == "API の日枠"
+
+    # (4) 実データでも、天井は候補ぜんぶの最小に一致すること
     st = m["stages"]
     assert st["supply_cap"] <= traj.UPLOAD_CAP_PER_DAY
+    # 片方は道具と突き合わせ……
+    expect, why = traj.supply_ceiling(
+        st["supply_rule"], st["supply_api"], st["material_per_day"])
+    assert st["supply_cap"] == pytest.approx(expect)
+    assert st["supply_cap_why"] == why
+
+    # ……もう片方は、その道具を通さずに `min` を自分で取る。
     # **天井は3つのいちばん低いもの**。写した数ではなく、その `min` を検査する。
     ceilings = {"オーナーの規則（1日1本）": st["supply_rule"],
                 "API の日枠": st["supply_api"]}
