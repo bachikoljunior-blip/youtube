@@ -1074,6 +1074,14 @@ def _measure() -> dict:
         # **長尺だけの1本あたり再生**（`None` ＝ 直近28日に長尺の再生が1本も無い）
         "long_per_video": long_mean,
         "long_median_per_video": long_median,
+        # **分布そのものも積む**（2026-08-31 に足した）。
+        #     判定（`長尺1本あたり-30本`）が読むのは**中央値**で、門は 80回 です。
+        #     ところが積んでいたのは中央値と平均の2つだけで、**「あと何本 積めば
+        #     覆りうるか」を後から解ける形が、どこにも残っていませんでした。**
+        #     実測 2026-08-31: 21本の中央値 4回 に対し、残り9本を**この
+        #     チャンネルの最良の長尺（133回）**で埋めても 30本の中央値は 6.5回。
+        #     **その計算に要るのは分布**です（`src/long_ceiling.py`）。
+        "long_values_28d": list(long_sorted),
         "long_videos_28d": len(long_sorted),
         "long_views_28d": sum(long_sorted),
         # **標本から落とした本**（理由 → 本数）。0件でも鍵は残す（黙って消えないため）
@@ -1116,6 +1124,22 @@ def _days_to(need: float, per_day: float) -> float:
     # 100年より先は「届かない」と同じに畳む。**桁の大きい数を残すと、
     # 前の回との差（縮んだぶん）がその桁に埋もれて読めなくなります。**
     return NEVER if days > 36_500 else days
+
+
+def _long_ceiling_lines(m: dict) -> list[str]:
+    """**中央値の上限**（`src/long_ceiling.py`）を、天井の行の下に出す形にする。
+
+    **見出しの1行は落とします** —— ここは既に「天井」の節の中で、
+    もう1つ見出しを立てると読み手が節の切れ目と取り違えます。
+
+    **回を止めません。** 解けなければ空を返します（`long_values_28d` が
+    積まれていない古い点でも、`long_ceiling.lines()` が「測っていない」を出します）。
+    """
+    try:
+        from src import long_ceiling
+        return long_ceiling.lines(m)[1:]
+    except Exception:                                          # noqa: BLE001 — 回を止めない
+        return []
 
 
 def _print_dropped(P, m: dict) -> None:
@@ -1731,6 +1755,17 @@ def report(m: dict, a: dict) -> list[str]:
     else:
         P(f"    長尺      **{lpv:,}回**／本（**平均**・n={a['long_videos_28d']}・合計 {a['long_views_28d']:,}回・"
           "**30再生の床は当てていません**。当てると1本も残りません）")
+        # --- **中央値も出す**（2026-08-31 に足した。**測っていたのに1行も出ていなかった**）---
+        #     `_measure()` は `long_median_per_video` を 8/19 から積んでいますが、
+        #     **印字は平均だけ**でした。実測 2026-08-31 は 平均 16回 に対し
+        #     **中央値 4回（4倍）**で、**判定（`長尺1本あたり-30本`）が読むのは
+        #     中央値のほう**です。読まれる側と判定する側が別の数だった、という形。
+        _lmed = m.get("long_median_per_video")
+        if _lmed is not None:
+            P(f"              中央値 **{_lmed:,}回**／本（**判定 `長尺1本あたり-30本` が"
+              f"読むのはこちら。門は 80回**）。平均との差は右に歪んだ分布のぶんです")
+            for _ln in _long_ceiling_lines(m):
+                P(f"      {_ln}")
     P(f"  **再生が付く上限 {a['ceiling_per_day']:.0f}本/日**（実測・`src/day_cap.py`）× 30日 に、"
       "**その形の実測**を当てた上限:")
     P(f"      （口が受け付けるのは {UPLOAD_CAP_PER_DAY}本/日 ですが、**それを超えて出したぶんは 0再生**です。"
