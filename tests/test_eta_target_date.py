@@ -49,6 +49,7 @@ _spec.loader.exec_module(eta)
 # `tests/test_eta_day_cap.py` が持ちます（**隠さず、置き場所を分けています**）。
 _UNCAPPED = eta.UPLOAD_CAP_PER_DAY
 
+import _eta_pin  # noqa: E402
 from src import day_cap  # noqa: E402
 
 # --- **同じことが、RPM の混ざり方でも起きていました**（2026-08-22 に直した） ---
@@ -85,7 +86,16 @@ _PINNED_DENSITY = 25
 
 
 def _pinned(m, monkeypatch, **kw):
-    """**天井を3つとも明示して**段取りを解く（1日の本数・RPM の混ざり方・公開の密度）。"""
+    """**天井を4つとも明示して**段取りを解く（1日の本数・RPM の混ざり方・公開の密度・規則）。
+
+    4つ目（オーナー規則 1日1本）は 2026-08-31 に足しました。**上の3つと同じ壊れ方の4回目**です
+    —— `src/house_rule.PUBLISH_PER_DAY = 1` が乗ると `analyse()` の天井
+    （`_ceiling_per_day()`）が 1本/日 に落ち、この file の合成データが
+    **どの帯にも届かなくなって** `days_revenue` が全部 `NEVER` になります。
+    **形は1行も壊れていません。** 規則そのものは
+    `tests/test_house_rule.py` / `tests/test_eta_day_cap.py` が主題として持ちます。
+    """
+    _eta_pin.pin_house_rule(monkeypatch, eta, _PINNED_DENSITY)
     monkeypatch.setattr(day_cap, "cap", lambda *a, **k: _UNCAPPED)
     kw.setdefault("view_cap", _UNCAPPED)
     kw.setdefault("mix", _BAND_ONLY)
@@ -135,17 +145,21 @@ def test_段4の期日は段3の写しではない(monkeypatch):
 def test_1本あたり再生を上げると段4の期日が動く(monkeypatch):
     """**写しだと、ここが動きません。** 動かない数字に向かって「早めろ」は成立しない。
 
-    **2026-08-31: ここだけ `_pinned()` を通っていませんでした。** 天井を3つとも
-    明示する道が同じ file の上に在るのに、この1件は素の `eta.plan()` を撃っており、
-    オーナーの規則で `PLAN_PUBLISH_PER_DAY` が 1 になった瞬間、**両側とも `NEVER`**
-    （＝ `fast < slow` が偽）へ落ちました。**形は1行も壊れていません** ——
+    **2026-08-31: ここだけ `_pinned()` を通っていませんでした。** 天井を明示する道が
+    同じ file の上に在るのに、この1件は素の `eta.plan()` を撃っており、オーナー規則
+    （1日1本）が乗った瞬間に**両側とも `NEVER`** へ落ちて、`fast < slow` が
+    `NEVER < NEVER` になっていました。**形は1行も壊れていません** ——
     この file の冒頭が3回 書いている「構造を測る検査は、計画の数の上に乗らないこと」
-    の、**4回目**です。**`_pinned()` を通すこと。**
+    の、**4回目**です。測っているのは「段4 が段3 の写しでないこと」なので、
+    合成データは届く帯に置きます（`_UNCAPPED` / `_BAND_ONLY` と同じ扱い）。
+
+    **（この節は 2026-08-31 に2つの回が同時に直し、merge で両方を残しました。）**
     """
     m = _measured()
     slow = _pinned(m, monkeypatch)["days_revenue"]
     m2 = _measured(views_per_video=952 * 4, views_7d=11_324 * 4, views_28d=20_332 * 4)
     fast = _pinned(m2, monkeypatch)["days_revenue"]
+    assert slow < eta.NEVER, "合成データが届く帯から外れています（検査のほうを直すこと）"
     assert fast < slow, "1本あたり再生を4倍にしても段4 が動きません"
 
 

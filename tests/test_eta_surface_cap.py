@@ -86,16 +86,30 @@ def _pin_surface(monkeypatch) -> None:
     monkeypatch.setattr(eta, "_recent_surface", lambda *a, **k: None)
 
 
+def _pin_rule(monkeypatch) -> None:
+    """**オーナー規則（1日1本）を、この検査に当てない。**（2026-08-31）
+
+    この file の主題は**面**（インプレッション）と**混ざり方の天井**で、
+    1日に何本 置くかではありません。ところが 2026-08-31 に
+    `analyse()` の天井（`_ceiling_per_day()`）が規則を読むようになり、
+    分母が **10本/日 → 1本/日** に落ちました。`ceiling_short` はその逆数なので
+    **10倍**（実測: `views_per_video=2,400` の点で 0.89 → **8.87**）——
+    「天井が足りている側の枝」が標本から消えます。
+
+    **形は1行も壊れていません。** `_pin_surface` / `MIX` とまったく同じ扱いで、
+    規則を `day_cap` の上へ退けて、**天井を観測（10本/日）に戻します**。
+    規則そのものは `tests/test_house_rule.py` / `tests/test_eta_day_cap.py` が
+    主題として持ちます（**隠さず、置き場所を分けています**）。
+    """
+    _eta_pin.pin_house_rule(monkeypatch, eta, _eta_pin.PLAN_DENSITY)
+
+
 def _plan(monkeypatch, mix=MIX, **over):
     monkeypatch.setattr(eta.rpm_mix, "last", lambda *a, **k: mix)
     _pin_surface(monkeypatch)
-    # **オーナーの規則（1日1本）も、この file の主題ではありません**（2026-08-31）。
-    #     `ceiling_short` は per_video × 密度 × … なので、密度が 25 → 1 に落ちると
-    #     **25分の1**になり、この file が見張っている「天井が足りている側の枝」が
-    #     標本から丸ごと消えます（`test_天井が足りていれば逆算は出ない`）。
-    #     上の `MIX` / `_pin_surface` とまったく同じ理由・同じ扱いです。
-    #     規則の効きは `tests/test_eta_house_rule.py` が主題として持ちます。
-    _eta_pin.pin_house_rule(monkeypatch, eta, _eta_pin.PLAN_DENSITY)
+    # 規則（1日1本）は、この file の主題ではありません。理由は `_pin_rule` の
+    #     docstring。**規則の効きは `tests/test_eta_house_rule.py` が主題として持ちます。**
+    _pin_rule(monkeypatch)
     m = _measured(**over)
     return eta.plan(m, eta.analyse(m))
 
