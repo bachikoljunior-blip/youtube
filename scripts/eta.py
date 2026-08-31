@@ -358,6 +358,79 @@ def _unready_claims() -> set:
 _DAY_CAP_MEMO: tuple | None = None
 
 
+#: 弾力性（その日の本数 → 1本あたり再生）を、この走りのあいだ持ち回る1組。
+_DENSITY_ELASTICITY_MEMO: tuple | None = None
+
+
+def _density_elasticity() -> float | None:
+    """**密度を上げたとき、1本あたりが薄まる指数**（`src/rule_per_video.py`）。
+
+    ## なぜ要るか（2026-09-01・最適化の回に撃って出た）
+
+    同じ機械が、同じ弾力性を**片方向にしか**使っていませんでした。
+
+    - `rule_per_video.ceiling_at_rule()` は、記録 1,891回（**3本/日 の日**の本）を
+      `1,891 × 3^0.663 = 3,918回` と **1本/日 へ引き戻して**天井にしています。
+    - ところが `plan()` の密度の腕は **線形**で、`density` を ×10 にすると
+      `ceiling_day` を素直に ×10（942 → 9,421）にしていました。
+
+    **同じ法則を、上げる向きには当てて、下げる向きには当てていません。**
+    この回に撃って出た数（`rule_per_video.estimate()`・n=25日・
+    b=-0.663・t=-3.96・95% [-0.991, -0.335]・0 をまたがない）::
+
+        N=2 本/日   1本あたり ×0.632   合計/日 ×1.263
+        N=5 本/日   1本あたり ×0.344   合計/日 ×1.720
+        N=10本/日   1本あたり ×0.217   合計/日 **×2.172**   ← `view_cap` の所
+
+    つまり密度の腕を切り所（×10）まで引いても、天井は **×10 ではなく ×2.17**。
+    線形のままだと **4.6倍 楽観**です。同じファイルの `report()` は既に
+    「**合計/日 は `本数^+0.34` で増えます**」と印字していました ——
+    **画面のほうが正しく、模型だけが外れていました。**
+
+    `None` を返すのは「測れない／区間が 0 をまたぐ」回で、そのとき呼び手は
+    **線形のまま**に落ちます（`rule_per_video` 自身の決まりと同じ:
+    **区間が 0 をまたいだら分子を動かさない**）。
+
+    **覆る条件**: 規則の密度で出し続けた日が増えて `b` の区間が 0 をまたいだら、
+    ここは自動で `None` に戻り、天井は線形へ戻ります。**定数は持ちません。**
+    """
+    global _DENSITY_ELASTICITY_MEMO
+    try:
+        from src import rule_per_video as _rule_pv
+    except Exception:                                          # noqa: BLE001
+        return None
+    if (_DENSITY_ELASTICITY_MEMO is not None
+            and _DENSITY_ELASTICITY_MEMO[0] is _rule_pv.estimate):
+        return _DENSITY_ELASTICITY_MEMO[1]
+    b = None
+    try:
+        e = _rule_pv.estimate()
+        el = (e or {}).get("elasticity") or {}
+        if el.get("ok") and e.get("significant"):
+            b = float(el["b"])
+    except Exception:                                          # noqa: BLE001
+        b = None
+    _DENSITY_ELASTICITY_MEMO = (_rule_pv.estimate, b)
+    return b
+
+
+def _thin_by_density(per_video: float, density: float) -> tuple[float, float]:
+    """`per_video`（規則の密度で測った数）を、**その密度での数**へ直す。
+
+    返り `(直した1本あたり, 掛けた倍率)`。測れない回は `(そのまま, 1.0)`。
+    分母は `src.house_rule.PUBLISH_PER_DAY`（＝ `per_video` を測った密度）。
+    """
+    b = _density_elasticity()
+    try:
+        base = float(house_rule.PUBLISH_PER_DAY)
+    except Exception:                                          # noqa: BLE001
+        base = 1.0
+    if b is None or not density or density <= 0 or base <= 0:
+        return per_video, 1.0
+    thin = (float(density) / base) ** b
+    return per_video * thin, thin
+
+
 def _view_cap_per_day() -> float:
     """**1日に再生が付く本数の上限**（`src/day_cap.py`）を、1回だけ読む。
 
@@ -3394,7 +3467,11 @@ LEVER_NEED_ITERS = 14
 #: （`tests/test_eta_lever_clip.py` が、欄が消えたら落とします）。
 LEVER_EFFECT_KEY = {
     "per_video": "ceiling_day",    # 1本あたり再生 × 密度
-    "density": "density_month",    # `solve_gate1` が view_cap で切る所
+    # **`density_month`（枠の数）ではなく `ceiling_day`（天井そのもの）で見ること。**
+    #     枠だけ見ると「×10 で頭打ち」と出て、読む側は **天井が ×10 取れる**と
+    #     読みます。実際は弾力性 -0.663 が掛かるので **×2.17** です
+    #     （`_density_elasticity`）。切る所は同じ ×10 で、**買える物が違います。**
+    "density": "ceiling_day",      # `solve_gate1` が view_cap で切る所
     "rpm": "need_month",           # 要る再生/月（分母）
     "sub_rate": "days_monetized",  # 門1 が開く日
 }
@@ -3491,11 +3568,13 @@ def lever_days(m: dict, a: dict, pl0: dict, today: date | None = None,
         """腕 `lever` を `f` 倍にして、到達日（日数）を解き直す。"""
         return _pl(lever, f).get("days_to_target", NEVER)
 
-    def _clip_at(lever: str) -> float | None:
+    def _clip_at(lever: str) -> tuple | None:
         """**その腕の倍率が、模型の中で切られる所**（`LEVER_EFFECT_KEY`）。
 
-        返すのは「これ以上 上げても `plan()` の欄が動かなくなる倍率」。
+        返り `(切られる倍率, 据え置きの欄, 切り所の欄)`。
         切られていない（×10^9 まで動き続ける／そもそも動かない）なら `None`。
+        **欄の2つを一緒に返すのは、「切られている」だけでは
+        『そこまで引くと何が変わるか』が言えないから**です。
         """
         key = LEVER_EFFECT_KEY.get(lever)
         if not key:
@@ -3527,7 +3606,7 @@ def lever_days(m: dict, a: dict, pl0: dict, today: date | None = None,
             else:
                 lo = mid
         # **×10^9 の近くで止まったなら、切られてはいません**（漸近しているだけ）。
-        return hi if hi < LEVER_INF_SCALE / 1e3 else None
+        return (hi, lo_v, hi_v) if hi < LEVER_INF_SCALE / 1e3 else None
 
     def _date(d: float):
         return ((today or today_jst()) + timedelta(days=math.ceil(d))
@@ -3590,6 +3669,7 @@ def lever_days(m: dict, a: dict, pl0: dict, today: date | None = None,
         need = need_over_cap = None
         dead_at_inf = False
         clip_at = None
+        clip_span = None
         if not reachable_at_cap:
             try:
                 _inf_ok = _days(lever, LEVER_INF_SCALE) < NEVER
@@ -3615,8 +3695,10 @@ def lever_days(m: dict, a: dict, pl0: dict, today: date | None = None,
                 # 名乗る前に、**その無限大が腕へ届いたか**を確かめること ——
                 # 届いていなければ「効かない」ではなく「切られている」です
                 # （`LEVER_EFFECT_KEY` の docstring に、この回の実測）。
-                clip_at = _clip_at(lever)
-                dead_at_inf = clip_at is None
+                _clip = _clip_at(lever)
+                clip_at = _clip[0] if _clip else None
+                clip_span = (_clip[1], _clip[2]) if _clip else None
+                dead_at_inf = _clip is None
 
         rows.append({
             "lever": lever,
@@ -3642,6 +3724,7 @@ def lever_days(m: dict, a: dict, pl0: dict, today: date | None = None,
             # `dead_at_inf` を名乗れません —— 無限大が届いていないので。
             "clip_at": clip_at,
             "clip_key": LEVER_EFFECT_KEY.get(lever) if clip_at else None,
+            "clip_span": clip_span,   # （据え置きの欄, 切り所の欄）
         })
     # **並べ替えは「引けるところまで引いた実力」で。**
     #     同じ倍率の `gain` は、`factor` が合格点に足りない回は4本とも 0 になり、
@@ -6203,7 +6286,13 @@ def plan(m: dict, a: dict, density: int = PLAN_PUBLISH_PER_DAY,
     # **どれが縛っているかが、次に引く腕を決めます。**
     # 天井も**持続する密度**で。予約の詰め方で掛けると、在庫の無い先まで
     # 「1日25本」が続く天井を印字します。
-    ceiling_day = per_video * density_month
+    # **密度を上げたら、1本あたりは薄まる**（2026-09-01・`_density_elasticity`）。
+    #     ここは長らく線形でした。`density` の腕を切り所（×10・`view_cap`）まで
+    #     引くと天井が ×10 と出ますが、**同じ機械が測った弾力性 -0.663 では
+    #     ×2.17** です（4.6倍 楽観）。規則の密度（1本/日）では倍率 1.00 なので、
+    #     **据え置きの線は1ミリも動きません。** 動くのは腕を引いた線だけです。
+    per_video_at_density, density_thin = _thin_by_density(per_video, density_month)
+    ceiling_day = per_video_at_density * density_month
     ceiling_day_long = (a.get("long_per_video") or 0) * density_month
     need_month = sp["views_needed_month"]
     growth = a.get("growth") or growth_per_day(m)
@@ -6223,7 +6312,7 @@ def plan(m: dict, a: dict, density: int = PLAN_PUBLISH_PER_DAY,
     n_long = a.get("long_videos_28d", 0)
     proxy = spine.startswith("長尺") and (lpv is None or n_long < LONG_SAMPLE_MIN)
 
-    s4 = _stage4(m, a, sp, density_month, per_video, d_monetized,
+    s4 = _stage4(m, a, sp, density_month, per_video_at_density, d_monetized,
                  today or today_jst(), proxy=proxy, d_revenue=d_revenue)
     d_target = s4["when"]
 
@@ -6455,6 +6544,9 @@ def plan(m: dict, a: dict, density: int = PLAN_PUBLISH_PER_DAY,
         "lever_hint": hint,
         "growth": growth,
         "ceiling_day": ceiling_day,
+        # **その天井に掛かっている「薄まり」**（1.0 なら効いていない）。
+        "density_thin": density_thin,
+        "per_video_at_density": per_video_at_density,
         "ceiling_day_long": ceiling_day_long,
         "ceiling_short": ceiling_short,
         "surface_needed": surface_needed,
@@ -6534,7 +6626,8 @@ def plan(m: dict, a: dict, density: int = PLAN_PUBLISH_PER_DAY,
             #     切られた腕を規則2 で「律速ではない・引かないこと」と印字すると、
             #     **止めている物のほうが律速**なのに、読む側はそこを見ません。
             out["lever_clipped"] = {
-                r["lever"]: {"at": r["clip_at"], "key": r.get("clip_key")}
+                r["lever"]: {"at": r["clip_at"], "key": r.get("clip_key"),
+                             "span": r.get("clip_span")}
                 for r in _rows if r.get("clip_at")}
             if _alive:
                 _pick = min(_alive, key=lambda r: r["need_over_cap"])
@@ -7809,7 +7902,7 @@ def headline(pl: dict, prev: dict | None = None,
             " あります —— 規則2 の『ゼロ』をここで名乗れません: "
             + "／".join(
                 f"`{k}` は **×{v['at']:.3g} で頭打ち**（模型の `{v['key']}` が"
-                f"そこから動きません）" for k, v in _clipped.items())
+                f"{_clip_span_txt(v)}で止まります）" for k, v in _clipped.items())
             + "**。 **見るのは腕ではなく、切っている物のほうです**"
               "（`density` は `solve_gate1` の `min(密度, view_cap)` ＝"
               " 1日に再生が付く上限 10本・`src/day_cap.py`。"
@@ -8721,6 +8814,17 @@ def _report_plan(m: dict, a: dict, pl: dict | None = None) -> list[str]:
         P("  門をいくら早く開けても、20万に届く日は動きません。"
           "**上の1行の測定が、その倍率を確定させます。**")
     return out
+
+
+def _clip_span_txt(v: dict) -> str:
+    """切り所の欄を「A → B（×n）」で1行に。**倍率だけだと何が変わるか言えません。**"""
+    span = v.get("span")
+    if not span or not all(isinstance(x, (int, float)) for x in span):
+        return "そこ"
+    lo, hi = float(span[0]), float(span[1])
+    rate = (hi / lo) if lo else None
+    return (f"{lo:,.0f} → **{hi:,.0f}**"
+            + (f"（**×{rate:.2f}**）" if rate else ""))
 
 
 def _report_levers(pl: dict) -> list[str]:
