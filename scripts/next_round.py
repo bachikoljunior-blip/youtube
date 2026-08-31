@@ -417,6 +417,58 @@ def _join_round(role: str, now: datetime) -> str:
     return rid                                      # 穴埋め
 
 
+def refresh_rendered() -> list[str]:
+    """**親が読む写しを、親の周のたびに焼き直す**（API 0単位・数十ミリ秒）。
+
+    ## なぜ足したか（2026-09-01）
+
+    **親が実際に読むのは `docs/trigger_body.rendered.md` です**（写し）。
+    正本は `docs/trigger_body.md` で、焼き直すのは
+    `scripts/trigger_sync.py --write-rendered` の1手 ——
+    **その1手を、誰も打っていませんでした。**
+
+    実測 2026-09-01: 写しは**64行ぶん古く**、次のものが**全部 入っていません**でした:
+
+        「**止めないこと**」（オーナー 2026-08-31「何で止まってんだよ！」）
+        「サブが1体も走っていないなら、WAIT でも立てること」
+        固定の与件4件（1日1本・作り置きなし・サブ二台・消さない）
+        `model: "opus"` の指定／`isolation: "worktree"`
+
+    **親は、その古い写しを毎周 当てていました。**
+    `tests/test_trigger_sync.py::test_rendered_copy_is_current` は赤で立っており、
+    文面は「`--write-rendered` を打つこと」でした ——
+    **打つ側が居ない検査**です（`deadline_check`・`pool_drain` と同じ形の3件目）。
+
+    **だから、打つ側をここに置きます。** `next_round.py` は親が毎周
+    いちばん最初に撃つ道具で、**写しを読む直前**に走ります。
+
+    **止める仕掛けではありません** —— 焼けなくても親は進みます
+    （返り値は「何を焼いたか」の行だけで、例外は外へ出しません）。
+
+    **覆る条件**: 親が正本（`docs/trigger_body.md`）を直に読むようになったら、
+    写しごと要らなくなります。そのときは、この関数と
+    `--write-rendered` の両方を消すこと（**片方だけ消さないこと**）。
+    """
+    out: list[str] = []
+    for mod, flag in (("trigger_sync", "--write-rendered"),
+                      ("spawn_prompt", "--write-rendered")):
+        try:
+            import subprocess
+            r = subprocess.run(
+                [sys.executable, str(ROOT / "scripts" / f"{mod}.py"), flag],
+                capture_output=True, text=True, timeout=90, cwd=str(ROOT))
+            if r.returncode == 0:
+                out.append(f"  写しを焼き直しました: scripts/{mod}.py {flag}")
+            else:
+                out.append(f"  [!] 写しが焼けません（{mod}）: "
+                           f"{(r.stderr or r.stdout).strip()[:120]}")
+        except Exception as exc:                               # noqa: BLE001
+            # **ここで止めないこと。** 写しが古いのは損ですが、
+            # 親が動かないほうがもっと損です（A10）。
+            out.append(f"  [!] 写しが焼けません（{mod}）: {str(exc)[:120]}")
+    return out
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="次の周を立ててよいか／どの役か")
     ap.add_argument("--record", metavar="ROLE[,ROLE]",
@@ -427,6 +479,12 @@ def main() -> int:
     ap.add_argument("--live-set", type=int, default=None, metavar="N",
                     help="その数を台帳（data/live_subs.json）へ置くだけ")
     args = ap.parse_args()
+
+    # **親が読む写しを、読む直前に焼き直す**（`refresh_rendered()` に理由）。
+    # 記録だけの呼び（`--record` / `--live-set`）でも焼きます ——
+    # そちらは立てた**あと**に走るので、次の周の写しが新しくなります。
+    for line in refresh_rendered():
+        print(line)
 
     if args.live_set is not None:
         row = live_write(args.live_set)
