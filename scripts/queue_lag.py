@@ -1114,23 +1114,25 @@ def answering_lines(rows: list[dict], now: datetime | None = None) -> list[str]:
 
 
 def publish_cap() -> int:
-    """**1日に公開してよい本数。**（API 0単位）
+    """**1日に公開してよい本数**（`src.house_rule.cap()` ＝ 規則1）。API 0単位。
 
-    `scripts/batch_build.density_cap()` を読むだけです。**ここに数を書かないこと** ——
-    上限は与件のほうで決まるので、写すと片方だけ直る形になります。
-    読めなかった回は `day_cap.cap()`（＝再生が付く上限・実測）へ落ちます。
-    **落ちた回は必ず「読めませんでした」と印字します** ——
-    黙って 10本/日 に戻ると、この節の答えが 10倍 楽観になります。
+    **ここに数を書かないこと。** 上限の出どころは `src/house_rule.py` の1か所で、
+    `batch_build.density_cap()` も `eta.PLAN_PUBLISH_PER_DAY` も同じ所を読みます。
+    写すと、規則が動いた回に**片方だけ**直る形になります
+    （この repo でいちばん多い壊れ方 ＝「言っている所と、している所が別」）。
+
+    読めなかった回は **0 を返します**（`day_cap.cap()` ＝ 10本/日 へは落ちません）。
+    **落ちた回は答えを出さないこと** —— 黙って観測の帯に戻ると、
+    この節の日付が 10倍 楽観になります。
     """
     try:
-        from scripts import batch_build                          # noqa: PLC0415
-        return max(1, int(batch_build.density_cap()))
+        from src import house_rule                               # noqa: PLC0415
+        return max(0, int(house_rule.cap()))
     except Exception:                                            # noqa: BLE001
         pass
     try:
-        sys.path.insert(0, str(ROOT / "scripts"))
-        import batch_build                                       # type: ignore  # noqa: PLC0415
-        return max(1, int(batch_build.density_cap()))
+        from scripts import batch_build                          # noqa: PLC0415
+        return max(0, int(batch_build.density_cap()))
     except Exception:                                            # noqa: BLE001
         return 0
 
@@ -1190,7 +1192,7 @@ def rate_lines(short: list[tuple[str, str, int]],
 
     ## 覆る条件
 
-    - `batch_build.density_cap()` が 1 以外に戻ったら、この節の日付は自動で動きます
+    - `src.house_rule.PUBLISH_PER_DAY` が 1 以外に戻ったら、この節の日付は自動で動きます
       （**ここに数を写していません**）
     - `judgeable.starved_share()` が下がったら、要る日数はさらに伸びます
       （いまは実測の割合で割っています）
@@ -1203,11 +1205,11 @@ def rate_lines(short: list[tuple[str, str, int]],
     bar = "  "
     if cap <= 0:
         out.append(f"{bar}[!] **1日の上限が読めませんでした**"
-                   "（`batch_build.density_cap()`）。**この節は答えを出しません** ——"
+                   "（`src.house_rule.cap()`）。**この節は答えを出しません** ——"
                    " 既定へ落として印字すると、10倍 楽観な日付が出ます")
         return out
     today = (now or datetime.now(JST)).astimezone(JST).date()
-    out.append(f"{bar}公開の上限 **{cap}本/日**（`batch_build.density_cap()`。"
+    out.append(f"{bar}公開の上限 **{cap}本/日**（`src/house_rule.py` の規則1。"
                "**ここには写していません**）"
                f" ／ 再生が付く上限は **{day_cap.cap()}本/日**（実測）")
     if rows:
