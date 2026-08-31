@@ -160,7 +160,29 @@ def simulate(principal: int = 35_000_000,
             due = (m % REVIEW_MONTHS == 0) if five_year_rule else \
                 (rate != rate_at(m - 1, path))
             if due:
-                need = level_payment(balance + unpaid, rate, months - m)
+                # **未払利息を、ここに足さないこと**（2026-08-31 に踏んだ）。
+                # 未払利息は「最終回のあとに一括で払う」前提で `balloon` に
+                # 乗せています（`ASSUMPTIONS` にそう書いてあり、動画でもそう
+                # 読み上げています）。ここで `balance + unpaid` を月々へ
+                # 割り付けると、**同じ未払利息を2回 取ります** ——
+                # 月々の返済額がそのぶん重くなり、残高は予定より早く尽き、
+                # それでも `balloon` は満額を請求します。
+                #
+                # 実測（3,500万円・35年・0.5%→4.0%・13回目から）:
+                #   直す前 …… 414回目で残高が0になり、そこから **6回**
+                #              205,012円 を取り続けたうえで、未払利息
+                #              1,094,544円 を満額 請求していた。
+                #              総支払額は 元金＋利息 より **1,324,334円 多い**
+                #   直した後 … 420回目ちょうどで残高が0。
+                #              総支払額 ＝ 元金 ＋ 利息（過不足 0円）
+                #
+                # **動画の冒頭の数字が、これで動きます**:
+                #   ルールあり／なしの総支払額の差 6,611,976円 → 5,716,767円
+                #
+                # 検査は下の `check_tables()` の 9（**保存則**）。
+                # 未払利息を月々へ割り付ける約款を出すなら、そのときは
+                # `balloon` から外すこと。**両方に乗せないこと。**
+                need = level_payment(balance, rate, months - m)
                 capped = math.floor(payment * CAP_RATIO)
                 new = min(need, capped) if cap_125 else need
                 payments.append({"月": m + 1, "返済額": new, "必要額": need,
@@ -173,11 +195,17 @@ def simulate(principal: int = 35_000_000,
         if payment >= interest:
             to_principal = min(payment - interest, balance)
             balance -= to_principal
+            # **残高より多くは取れません。** 最終盤で `payment - interest` が
+            # 残高を上回る回、実際に動く現金は「利息＋充当した元金」だけです。
+            # ここを `payment` のままにすると、完済ずみの月まで満額を数えます。
+            cash = interest + to_principal
         else:
             to_principal = 0
             unpaid += interest - payment
             frozen += 1
-        paid_sum += payment
+            # 払えるだけ払う（全額が利息に消え、足りないぶんが未払へ積む）
+            cash = payment
+        paid_sum += cash
         rows.append({"月": m + 1, "年利": rate, "返済額": payment,
                      "利息": interest, "元金": to_principal,
                      "残高": balance, "未払利息": unpaid})
@@ -420,6 +448,35 @@ def check_tables() -> None:
                                      y * MONTHS_PER_YEAR)),
         [20, 25, 30, 35],
         "期間が長いのに、元金が止まる金利が下がっていない")
+
+    # 9. **保存則 —— 払った総額は、元金と利息の合計と1円もずれない。**
+    #
+    # **この検査が無かったせいで、2026-08-31 まで総支払額が過大でした**
+    # （3,500万円・35年・0.5%→4.0% で **1,324,334円**。動画の冒頭に出る
+    #  「ルールあり／なしの差」が 6,611,976円 と、90万円ほど大きく出ていた）。
+    # 原因は見直しの `need` に未払利息を混ぜていたことで、**残高が予定より
+    # 早く尽き、そのあとも満額を数え、さらに未払利息を満額 請求**していました。
+    #
+    # 1〜8 はどれも**向き**（増えるか・減るか・重なっていないか）しか見ておらず、
+    # **量が合っているか**を見る検査が1つもありませんでした。
+    # 向きの検査は、全部の行が同じ倍率でずれても通ります。
+    #
+    # 上下 1円 は許します（利息は切り捨て・返済額は切り上げなので、
+    # 端数が最終回に寄ります）。
+    for rate, rule in ((0.040, True), (0.040, False),
+                       (0.030, True), (0.050, True), (0.005, True)):
+        got = simulate(PRINCIPAL, YEARS, ((0, START_RATE), (RISE_AT, rate)),
+                       five_year_rule=rule, cap_125=rule)
+        interest_sum = sum(row["利息"] for row in got["rows"])
+        want = PRINCIPAL + interest_sum
+        if abs(got["total"] - want) > 1:
+            raise _checks.TableError(
+                f"上がった先 {rate * 100:.1f}%・ルール{'あり' if rule else 'なし'}: "
+                f"総支払額 {got['total']:,}円 が、元金 {PRINCIPAL:,}円 ＋ "
+                f"利息 {interest_sum:,}円 ＝ {want:,}円 と "
+                f"{got['total'] - want:+,}円 ずれています。"
+                "**払った額は、元金と利息のどちらかにしかなりません。**"
+                "見直しの `need` に未払利息を混ぜると、同じものを2回 取ります")
 
     # 8. 表の行が重なっていないこと
     _checks.unique_by(rise_grid(), lambda r: r["上がった先"], "上がった先")
