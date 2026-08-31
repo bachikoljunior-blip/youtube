@@ -1461,6 +1461,115 @@ def _gate2_bar(a: dict, row: dict, per_day: float, days: float) -> float:
     return a["long_minutes_needed"] / (slots * per_view)
 
 
+# --- **門の脚を、ぜんぶ同じ物差し（この機械の記録の何倍か）で並べる** ---
+#
+# **2026-08-31（最適化の回）に足しました。** ここが無かったせいで、
+# この道具は**同じ門を2つの解き方で解いて**いました:
+#
+#     門2a （上の段・4,000時間）  `_long_break_even()` で **合格点**（235回/本）を出す
+#     門2a'（下の段・3,000時間）  `_days_to(残り, いまの伸び)` ＝ **伸び率の外挿**
+#
+# 長尺の直近365日は 2.5時間 ＝ 伸びが 0 と区別できないので、**外挿は必ず
+# 「届きません」を返します**（0で割る）。同じことを上の段では
+# 「延ばした数が無限なのは、長尺が弱いからではなく**まだ出していない**から」と
+# 自分で印字しているのに、**下の段だけ その断りが付いていませんでした。**
+#
+# **下の段は、3つの脚すべてで上の段より手前です**（登録者 1/2・時間 3/4・
+# ショート 3/10）。**いちばん手前の門を、いちばん悲観的な解き方で解いていた**
+# ということです。
+#
+# ## この回に自分で撃った数（API 0単位）
+#
+#     脚                                合格点(1本/日)   この機械の記録    倍率
+#     門2a' 下の段 3,000時間・尺7分維持40%      176回/本   長尺 156回     **×1.13**
+#     門2a  上の段 4,000時間・尺7分維持40%      235回/本   長尺 156回       ×1.51
+#     門2b' 下の段 ショート90日 300万回      33,333回/本   ショート1,891回  ×17.6
+#     門2b  上の段 ショート90日1,000万回    111,111回/本   ショート1,891回  ×58.8
+#
+# **×1.13 が、この機械のどの門の脚よりも近い数です。** そこに「届きません」と
+# 印字していました。
+#
+# ## **これは「開く」と言っているのではありません**
+#
+# 合格点は **1本/日 を 365日 続けたときの、1本ごとの数**です。記録は **1本**の数
+# （n=22 のうちの最大）。1本で出せたことと、365日 出し続けられることは別です。
+# **平均（32.0回/本）で割れば ×5.5** で、そちらが典型です。
+# ここが言うのは1点だけ —— **隔たりは桁ではない。**
+#
+# ## 覆る条件
+#
+# - `LONG_SHAPES`（尺×維持率）は**推測**です。維持率の実測が入ったら取り直すこと
+# - 長尺の記録 156回 は**打ち切られた下限**です（`settle.settles_at('長尺')` は
+#   どの地平でも伸びきる年齢を返しません）。**倍率は上限側**に出ています
+# - 公表値（3,000時間／365日窓）が変わったら取り直すこと
+def _fan_hours_bar(a: dict) -> dict:
+    """**下の段（expanded YPP・3,000時間）の合格点を、上の段と同じ式で解く。**
+
+    式は `_gate2_bar()` と1文字も違いません —— 分子の門だけ差し替えます。
+    **新しい定数は1つも足していません**（公表値の `FAN_HOURS_GATE` と、
+    もう在る `LONG_SHAPES` / `LONG_HOURS_WINDOW_DAYS` / 規則の 1本/日 だけ）。
+    **だから到達日は1日も動きません**（検査 `tests/test_fan_hours_bar.py`）。
+    """
+    minutes = max(0.0, a.get("fan_minutes_needed") or 0.0)
+    per_day = float(house_rule.PUBLISH_PER_DAY)
+    days = float(LONG_HOURS_WINDOW_DAYS)
+    rows = []
+    for label, length_min, retention in LONG_SHAPES:
+        per_view = length_min * retention
+        slots = per_day * days
+        bar = (minutes / (slots * per_view)) if slots > 0 and per_view > 0 else float("inf")
+        rows.append({"label": label, "min_per_view": per_view, "bar": bar})
+    best = min(rows, key=lambda r: r["bar"]) if rows else None
+    out = {"rows": rows, "per_day": per_day, "days": days,
+           "bar": best["bar"] if best else float("inf"),
+           "label": best["label"] if best else ""}
+    rec = (form_record.per_video_best() or {}).get("長尺") or {}
+    out["record"] = float(rec.get("best") or 0.0)
+    out["record_settled"] = float(rec.get("best_settled") or rec.get("best") or 0.0)
+    out["mean"] = float(rec.get("mean") or 0.0)
+    for key, denom in (("ratio", out["record"]),
+                       ("ratio_settled", out["record_settled"]),
+                       ("ratio_mean", out["mean"])):
+        out[key] = (out["bar"] / denom) if denom > 0 else float("inf")
+    return out
+
+
+def _gate_legs(a: dict) -> list[dict]:
+    """**4つの門の脚を、「この機械の記録の何倍か」の1つの物差しで並べる。**
+
+    **並べないと、どの脚が近いか決められません。** この道具は脚ごとに違う単位
+    （時間／再生／人）で印字していて、**倍率で並べた行が1つもありませんでした。**
+    倍率が付いていない「届きません」は、桁の情報を落とします。
+
+    登録者の脚（門1 / 門1'）はここに入れません —— あちらは**日数で既に有限**
+    （1,140日 / 557日）で、倍率ではなく日で比べるほうが正しいからです。
+    """
+    best = form_record.per_video_best() or {}
+    rec_long = float((best.get("長尺") or {}).get("best") or 0.0)
+    rec_short = float((best.get("ショート") or {}).get("best") or 0.0)
+    per_day = float(house_rule.PUBLISH_PER_DAY)
+    fan = a.get("fan_hours_bar") or {}
+    legs = []
+
+    def _add(name, bar, form, record):
+        legs.append({"name": name, "bar": float(bar), "form": form, "record": record,
+                     "ratio": (float(bar) / record) if record > 0 else float("inf")})
+
+    _add("門2a' 下の段 長尺%s時間（%s）" % (format(FAN_HOURS_GATE, ","), fan.get("label", "")),
+         fan.get("bar") or float("inf"), "長尺", rec_long)
+    ypp_rows = a.get("long_break_even") or []
+    if ypp_rows:
+        ypp = min(_gate2_bar(a, r, per_day, float(LONG_HOURS_WINDOW_DAYS)) for r in ypp_rows)
+        _add("門2a  上の段 長尺%s時間" % format(LONG_HOURS_GATE, ","), ypp, "長尺", rec_long)
+    if per_day > 0:
+        _add("門2b' 下の段 ショート90日%s回" % format(FAN_SHORTS_VIEWS_GATE, ","),
+             (FAN_SHORTS_VIEWS_GATE / 90.0) / per_day, "ショート", rec_short)
+        _add("門2b  上の段 ショート90日%s回" % format(SHORTS_VIEWS_GATE, ","),
+             (SHORTS_VIEWS_GATE / 90.0) / per_day, "ショート", rec_short)
+    legs.sort(key=lambda r: r["ratio"])
+    return legs
+
+
 # --- 到達日を「解く」ための道具（2026-08-20 08:0x。**オーナー指示3回目**）---
 #
 # > 「20万達成までのプランを作って**達成日時を予測**して、
@@ -1772,6 +1881,20 @@ def analyse(m: dict, points: list[dict] | None = None,
     # **未知は「長尺1本あたり再生」だけ**なので、そこを解いて出します。
     a["long_minutes_needed"] = max(0.0, (LONG_HOURS_GATE - m["long_hours_365"]) * 60)
     a["long_break_even"] = _long_break_even(a)
+
+    # **下の段（3,000時間）も、同じ式で合格点を出します**（2026-08-31・最適化の回）。
+    #     ここが無かったあいだ、門2a' は `days_fan_hours`（伸び率の外挿）だけで
+    #     「届きません」と印字されていました。**同じ門を、上の段は合格点で、
+    #     下の段は外挿で解いていた**ということです。詳しくは `_fan_hours_bar` の註。
+    #     **到達日はここでは1日も動きません**（`days_fan_*` に触っていません）。
+    a["fan_minutes_needed"] = max(0.0, (FAN_HOURS_GATE - m["long_hours_365"]) * 60)
+    a["fan_hours_bar"] = _fan_hours_bar(a)
+    a["gate_legs"] = _gate_legs(a)
+    # **下の段の分子を 0円 のままにしないための、いちばん小さい1手** ——
+    #     単価も加入率も持っていないので、**要る側**を解きます（M20「推測を測れる形に」）。
+    #     門が開いた瞬間の登録者は公表値で 500人 なので、
+    #     月20万 ÷ 500人 ＝ **1人あたり月 ¥400（手取り）**。これは仮定ではなく割り算です。
+    a["fan_yen_per_sub_needed"] = TARGET_YEN / FAN_SUBS_GATE if FAN_SUBS_GATE else float("inf")
 
     # --- 天井: いまの構成で出せる最大の月収 ---
     #
@@ -2251,6 +2374,23 @@ def report(m: dict, a: dict) -> list[str]:
       f"　**あと {a['fan_subs_remaining']:,} 人**")
     P(f"    [門2a'] 長尺 {FAN_HOURS_GATE:,}時間（上の段の 3/4）    "
       f"{_fmt_days(a['days_fan_hours'])}")
+    _fb = a.get("fan_hours_bar") or {}
+    if _fb and _fb.get("bar", float("inf")) < float("inf"):
+        P(f"         ↑ **これは伸び率の外挿です。合格点で解くと有限です**"
+          f"（2026-08-31 に足しました）—— 上の段（門2a）は初日から合格点で解いていて、"
+          f"**同じ門の下の段だけが外挿のまま**でした。長尺の直近365日は "
+          f"{a['long_hours_365_seen']:,.1f}時間 ＝ 伸びが 0 と区別できないので、"
+          f"**外挿は必ず「届きません」を返します**（0で割る）。")
+        P(f"         **合格点**（規則 {_fb['per_day']:.0f}本/日 × 窓 {_fb['days']:,.0f}日・"
+          f"いちばん甘い行 `{_fb['label']}`）: **{_fb['bar']:,.0f}回/本**"
+          f"　対 この機械の長尺の**記録 {_fb['record']:,.0f}回/本** → **×{_fb['ratio']:.2f}**"
+          f"（打ち切り補正ずみの記録 {_fb['record_settled']:,.0f}回 で割れば "
+          f"×{_fb['ratio_settled']:.2f}／**平均 {_fb['mean']:,.1f}回 で割れば "
+          f"×{_fb['ratio_mean']:.1f}** ＝ こちらが典型）")
+        P(f"         **「開く」と言っているのではありません** —— 合格点は "
+          f"{_fb['per_day']:.0f}本/日 を {_fb['days']:,.0f}日 続けたときの**1本ごと**の数、"
+          f"記録は**1本**の数です。言えるのは1点だけ: **隔たりは桁ではない。**"
+          f"（`LONG_SHAPES` の維持率は**推測**・記録は**打ち切られた下限**）")
     if a["views_per_day"] >= a["fan_shorts_needed_per_day"]:
         _fs = "**通っています**"
     else:
@@ -2263,12 +2403,37 @@ def report(m: dict, a: dict) -> list[str]:
           f"（広告の門より **{a['fan_gate_lead_days']:,.0f}日 手前**）")
     else:
         P(f"    → **ファン課金の門そのもの: {_fmt_days(a['days_fan_gate'])}**")
+    _legs = a.get("gate_legs") or []
+    if _legs:
+        P("")
+        P("    --- **門の脚を、1つの物差し（この機械の記録の何倍か）で並べる** ---"
+          "（2026-08-31 に足しました。**倍率で並べた行が、この道具に1つもありませんでした**）")
+        for _lg in _legs:
+            _r = _lg["ratio"]
+            _rs = "**×%.2f**" % _r if _r < 2 else "×%.1f" % _r
+            P(f"      {_lg['name']:<38} 合格点 {_lg['bar']:>9,.0f}回/本"
+              f"  対 {_lg['form']}の記録 {_lg['record']:>6,.0f}回  → {_rs}")
+        _near = _legs[0]
+        P(f"      → **いちばん近い脚は `{_near['name'].split('（')[0].strip()}` の "
+          f"×{_near['ratio']:.2f}** です。**そこに「届きません」と印字していました。**"
+          "　登録者の脚（門1 / 門1'）は日数で既に有限なので、この表には入れていません"
+          f"（門1' は {_fmt_days(a['days_fan_subs'])}）。")
+        P("")
     P("    **この段に、この機械はまだ分子を1つも持っていません**"
       "（加入率も単価も未測定）。**だから上の到達日は、この段を 0円 として解いています。**"
       "　`docs/MEANS.md` の M23 は 2026-08-30 まで「メンバーシップは広告と**同じ門の後ろ**"
       "だから門を早める効果は 0」と判定していました —— **公表値を読んだら外れでした**"
       "（`support.google.com/youtube/answer/13429240`）。**M23 の着手条件は、"
       "その外れた判定の上に立っています。**")
+    P(f"       **その 0円 を、割り算1つで『要る側』に直します**（2026-08-31）——"
+      f" 門が開いた瞬間の登録者は公表値で {FAN_SUBS_GATE:,}人 なので、"
+      f"月{TARGET_YEN:,}円 ÷ {FAN_SUBS_GATE:,}人 ＝ **1人あたり手取り "
+      f"¥{a['fan_yen_per_sub_needed']:,.0f}／月**。**これは仮定ではなく割り算です**"
+      "（単価も加入率も、まだ1つも足していません）。"
+      "　**門が開いただけでは足りない**、が この1行の中身です —— "
+      "メンバーシップの標準的な階層は月¥490・取り分70% ＝ 手取り ¥343 なので、"
+      "**登録者の全員が最上位で加入して、やっと同じ桁**。"
+      "**下の段が近いことと、下の段で20万に届くことは別**です。")
     if a["long_untried"] and a["days_monetized"] >= NEVER:
         P("       **この「届きません」を、諦める理由に使わないこと。** 門2a の無限が"
           "そのまま出ているだけで、**未着手を測った数ではありません**。")
