@@ -257,6 +257,34 @@ def unreachable_needs(rows, today: str | None = None) -> list[dict]:
     return out
 
 
+#: 前提の置き場。**呼ぶ側に道を書かせないこと** —— 写した道は古くなります。
+HYPOTHESES = ROOT / "config" / "hypotheses.yaml"
+
+
+def unreachable_claims(today: str | None = None, path: Path | None = None) -> list[str]:
+    """**来ない日を待っている前提**の claim を、期日の順に（重複なし）。
+
+    `unreachable_needs()` は `rows` を受け取りますが、**呼ぶ側の大半は
+    yaml を読むところから書く必要があります**（`scripts/eta.py` は
+    `yaml` を import していません）。**読むところまでここに置きます。**
+
+    読めない回は空を返します —— **測っていないことを、止める側に倒さないこと。**
+    """
+    try:
+        import yaml                                    # noqa: PLC0415
+        doc = yaml.safe_load((path or HYPOTHESES).read_text(encoding="utf-8")) or {}
+        rows = list(doc.get("hypotheses") or [])
+    except Exception:                                   # noqa: BLE001
+        return []
+    out: list[str] = []
+    for hit in sorted(unreachable_needs(rows, today),
+                      key=lambda x: str(x.get("deadline") or "")):
+        claim = str(hit.get("claim") or "")
+        if claim and claim not in out:
+            out.append(claim)
+    return out
+
+
 def unreachable_lines(rows, today: str | None = None) -> list[str]:
     """画面に出す形。**満ちない要件が無ければ、1行も出しません。**"""
     hits = unreachable_needs(rows, today)
