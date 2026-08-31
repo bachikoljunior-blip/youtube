@@ -111,10 +111,33 @@ def _parse(raw: object) -> datetime | None:
 
 
 def pool(now: datetime | None = None, rows: list[dict] | None = None) -> list[dict]:
-    """**まだ公開されていないと控えで示せる予約**を、公開時刻の順に返す（API 0単位）。
+    """**池に落とす作り置き**を、公開時刻の順に返す（API 0単位）。
 
     示せない行（`at` が無い／読めない／もう先ではない）は**落とします** ——
     落とすほうが安全です（触らなければ、公開済みを private にする事故が起きない）。
+
+    ## **規則の下で作った本は、池に入れません**（2026-08-31 に実物で踏んだ）
+
+    ここは長らく「未来の予約」を全部 池に入れていました。**その日に作って
+    予約したばかりの1本も、同じ扱いで外れます。**
+
+    実測（2026-08-31 08:41 UTC・この註を書いた回）:
+    その回の1本 `J67vEIw_VRE`（09/05 20:00 JST に予約）は、
+    前の回が 09/01〜09/11 を先に外し終えていたせいで **公開の早い順で3番目**に
+    並び、**14本のうちの1本として外れました。** 同じ回が「きょうの1本を
+    予約まで入れた」と commit した 90秒後です。日枠はその時点で尽きており、
+    **入れ直しは次の窓（09/01 16:00 JST）まで待ち**になりました。
+
+    **「公開が近い順」は正しい。間違っていたのは、池の中身のほうです。**
+    池に入れてよいのは **作り置き**（規則より前に作った、まだ公開していない本）
+    だけで、**規則の下で作った本は「きょうの1本」です**。
+    判定は `src.house_rule.is_stockpile()` の1か所に置いてあります
+    （`src/reach_split.publishes_per_day()` と同じ所を読みます。写さないこと）。
+
+    **覆る条件**: `house_rule.STOCKPILE_SINCE` より後に作った本を、
+    それでも池へ入れたくなったら —— そのときは規則3
+    （次の枠までその1本を改善し続ける）を先に読み直すこと。
+    検査は `tests/test_pool_drain_keeps_new.py`。
     """
     now = now or datetime.now(timezone.utc)
     rows = dupes.ledger_rows() if rows is None else rows
@@ -124,6 +147,13 @@ def pool(now: datetime | None = None, rows: list[dict] | None = None) -> list[di
         if at is None or at <= now + LEDGER_MARGIN:
             continue
         if not row.get("id"):
+            continue
+        # **規則の下で作った本は、作り置きではありません**（上の註）。
+        # `is_stockpile` は `video_id` と `at` を見るので、控えの `id` を写して渡します。
+        if not house_rule.is_stockpile({**row, "video_id": row["id"]},
+                                       today=now.astimezone(
+                                           timezone(timedelta(hours=9))
+                                       ).strftime("%Y-%m-%d")):
             continue
         out.append({"id": row["id"], "at": at,
                     "title": row.get("title", ""), "topic": row.get("topic", "")})
