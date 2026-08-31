@@ -587,6 +587,123 @@ def _eta_target() -> tuple[str | None, float | None, str]:
 SHIP_KINDS = ("upload", "improve", "means", "verdict", "fix")
 
 
+#: **`fix` の連（続けて何回 `fix` で終わったか）の上限。**
+#:
+#: ## なぜ要るか（2026-09-01・最適化の回に足した）
+#:
+#: `scripts/drift.py` は 2026-08-24 から、この輪が目標から外れていることを
+#: **正しく印字し続けています。** その docstring は原因まで名指ししています ——
+#: **「サボりではなく、合格の定義が目標とつながっていなかっただけ」。**
+#: **それでも 7日 後の実測は変わっていませんでした**（下）。
+#: **印字は行動を変えません。** このファイル自身が、同じことを
+#: `--kind` の門の註で書いています ——
+#: **「註や警告ではなく、通さないことだけが効いています」**（2026-08-19 の `--lever`）。
+#:
+#: 実測 2026-09-01（直近7日・ship 358件・`data/runs.jsonl`）:
+#:
+#:     fix 269件（75%）／ verdict 16件（4%）／ **直近20回の verdict 0件**
+#:     到達日が動きえない回 230/358（64%）／ 名指しの腕に従った回 7/71（10%）
+#:
+#: そして `eta.py` は毎回こう印字しています ——
+#: **「軌跡の腕が動くのは、前提を1件 閉じたときだけ。作る・出す・直すは
+#: 軌跡の入力に入りません」。** つまり **`fix` の回の `--moves` は定義上 0** です。
+#: **75% の回が、自分で「到達日は動かない」と宣言しながら通っていました。**
+#:
+#: ## しきいを 4 に置いた理由（**勘ではありません**）
+#:
+#: `fix` の連の長さは実測で 中央 **2**・平均 3.8・**最長 15**。
+#: **そして、その最長の連は「いま」でした**（この門を書いた時点の末尾15件が全部 `fix`）。
+#: しきい 4 で止まるのは **90/269件（33%）**で、**中央 2 の普通の連は1件も触りません**。
+#: 止まるのは長い連の**後ろ側だけ**です。
+#:
+#: ## **これは `fix` の禁止ではありません**
+#:
+#: 直す回は要ります（計器が壊れていれば、その先の判断が全部ずれる）。
+#: 止めているのは**連**だけ ——「4回 続けて直した」なら、次の1回は
+#: **到達日を動かしうる側**（`verdict` / `upload` / `means` / `improve`）に
+#: 使うこと、という門です。オーナーが固定した規則（**1日1本**・`docs/GOAL.md`）は
+#: 毎日 `upload` を要求しているので、**逃げ場のない門にはなりません。**
+#:
+#: ## **覆る条件**（次に来た回へ）
+#:
+#: 1. **`drift.py` の `fix` 比が下がらないまま、`fix_gate` の行だけが増える**なら、
+#:    種別の語を書き換えて通されています。**門が効いていないので、外すか作り直すこと。**
+#: 2. `fix` 比が 30日 continuous で 40% を下回ったら、この門は役目を終えています。
+#: 3. **`verdict` が増えたのに到達日が動かない**なら、律速は `fix` ではありません
+#:    （＝ 前提の熟す速さのほう。実測 1.14件/日 に対し、回は 15周/日）。
+FIX_RUN_CAP = 4
+
+
+def fix_run_len(path: Path | None = None) -> int:
+    """**末尾から数えて、`fix` が何回 続いているか。**（他の種別が出たら止まる）
+
+    `drift.py` の「直近20回の verdict」と同じ欄（`ship_kind`）を読みます。
+    **`kind != "ship"` の行は数に入れません**（`--write` の印や、この門の記録）。
+    """
+    p = path or MARKS
+    if not p.exists():
+        return 0
+    n = 0
+    for line in reversed(p.read_text(encoding="utf-8").splitlines()):
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            r = json.loads(line)
+        except Exception:
+            continue
+        if r.get("kind") != "ship":
+            continue
+        if r.get("ship_kind") == "fix":
+            n += 1
+            continue
+        break
+    return n
+
+
+def near_deadlines(limit: int = 3) -> list[str]:
+    """**開いている前提を、期限の近い順に。**（`config/hypotheses.yaml` を読むだけ・API 0単位）
+
+    門が「代わりに何をするか」を**名指しできないと、種別の語を書き換えて
+    通されるだけ**になります。だから、その場で読んで並べます。
+    読めなければ黙って空を返します（**門そのものは止めません**）。
+    """
+    try:
+        import yaml  # 遅延 import。この門以外では要りません
+        p = Path(__file__).resolve().parent.parent / "config" / "hypotheses.yaml"
+        d = yaml.safe_load(p.read_text(encoding="utf-8"))
+        items = d if isinstance(d, list) else (d.get("hypotheses") or list(d.values())[0])
+        op = [h for h in items if isinstance(h, dict) and h.get("claim")
+              and not h.get("verdict") and not h.get("closed") and not h.get("result")]
+        op.sort(key=lambda h: str(h.get("deadline") or "9999"))
+        return [f"{h.get('deadline')} [{h.get('lever') or '?'}] {str(h.get('claim'))[:52]}"
+                for h in op[:limit]]
+    except Exception:
+        return []
+
+
+def note_fix_gate(what: str, run_len: int) -> None:
+    """**止めたことを残す。**
+
+    **止めた回数を数えられない門は、効いたかどうかも数えられません。**
+    次に来た回は、`fix` の割合が下がったのか、それとも種別の語を
+    書き換えて通しただけなのかを、この行と `drift.py` の比で見分けます
+    （`kind="fix_gate"`。`drift.py` は `kind != "ship"` を読み飛ばすので、
+    漂流の比そのものは汚しません）。
+    """
+    try:
+        with MARKS.open("a", encoding="utf-8") as f:
+            f.write(json.dumps({
+                "at": datetime.now(JST).isoformat(timespec="seconds"),
+                "session": actor_id() or "(不明)",
+                "kind": "fix_gate",
+                "run_len": run_len,
+                "what": what[:200],
+            }, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+
+
 def ship_kind_of(what: str, kind: str | None = None) -> str:
     """ship の種別。**明示された欄があればそれ。無ければ `what` の頭の語。**
 
@@ -1256,6 +1373,34 @@ def main(argv: list[str] | None = None) -> int:
                      "`what` の頭がその語で始まっていれば書かなくて通ります。"
                      "**`drift.py` の漂流の門（直近20回の verdict）がこの欄を数えます** —— "
                      "空けると、その回は門から見えません")
+        # **`fix` の連を、ここで止めます**（2026-09-01。理由は `FIX_RUN_CAP` の註）。
+        #
+        # **`--lever` / `--kind` と同じ形の門です。** あの2つは
+        # 「無いと通らない」にしたことだけが効きました（註と警告は3回 戻りました）。
+        # ここも同じで、**「連が長い」と印字するだけなら `drift.py` が
+        # 2026-08-24 から毎回やっていて、7日 後の比は変わっていません。**
+        _fk = run_marker_ship_kind(args.ship, args.kind)
+        if _fk == "fix":
+            _run = fix_run_len()
+            if _run >= FIX_RUN_CAP:
+                note_fix_gate(args.ship, _run)
+                _alt = near_deadlines()
+                _lines = "\n                     ".join(_alt) if _alt else "（`config/hypotheses.yaml` が読めませんでした）"
+                ap.error(
+                    f"**`fix` が {_run}回 続いています**（上限 {FIX_RUN_CAP}）。"
+                    "`eta.py` は毎回「作る・出す・直すは軌跡の入力に入りません」と"
+                    "印字しているので、**`fix` の回の `--moves` は定義上 0** です。"
+                    f"直前の {_run}回 は、どれも到達日を動かしていません。\n"
+                    "  **この1回は、到達日を動かしうる側に使うこと** —— "
+                    "`verdict`（前提を1件 閉じる。**腕が動く唯一の道**）／"
+                    "`upload`（規則は1日1本。今日の1本は出したか）／`means`／`improve`。\n"
+                    "  期限の近い前提（`python scripts/deadline_check.py` に全文）:\n"
+                    f"                     {_lines}\n"
+                    "  **規則（1日1本）の下では永久に閉じない前提**が別に数件あります —— "
+                    "`deadline_check.py` の末尾。**書き直すか、公開ずみの日で閉じるか**の"
+                    "どちらかで、そこも `verdict` の回になります。\n"
+                    "  **直しが本当に要るなら、それは次の回でも要ります。** "
+                    "順番だけの門です（`FIX_RUN_CAP` の「覆る条件」を読むこと）")
         return ship(args.ship, args.closes, args.lever, args.moves,
                     reflect=not args.no_reflect, kind=args.kind)
     if args.moves is not None:
