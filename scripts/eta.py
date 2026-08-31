@@ -8615,7 +8615,40 @@ def _report_long_gate(m: dict, a: dict) -> list[str]:
 
 
 def _levers(m: dict, a: dict) -> list[tuple[str, str, str]]:
-    """門1（登録者1,000人）を1年以内に通すのに、各数字が何倍要るか。"""
+    """門1（登録者1,000人）を1年以内に通すのに、各数字が何倍要るか。
+
+    ## **最後の行の天井は、規則を見ていませんでした**（2026-08-31・最適化の回）
+
+    前の回からの申し送りは、この一行でした ——
+
+        grep -n "house_rule" scripts/eta.py   ← ここに出てこない天井が、次の候補
+
+    **`_levers()` は、その grep に出てきません。** ここは
+    `a["per_video_now"] * UPLOAD_CAP_PER_DAY`（**92本/日** ＝ API の日枠）で
+    「本数だけで届く上限」を刷っていました。**規則は 1本/日 です**（`src/house_rule.py`）。
+
+    **実測（2026-08-31・`analyse()` の返りに当てた・API 0単位）**::
+
+        本数だけで届く上限   86,676回／日（92本の上限・**×31.8 まで**）
+                          → **942回／日**（規則 1本/日・`_ceiling_per_day()`）
+                            **92分の1**
+
+    **効いていた先が悪い。** この行が乗っている表の見出しは
+    「**早めるには、どれを何倍にするか（倍率が小さいものから手を付ける）**」で、
+    **その回にどの腕を引くかを、読む側がここから選びます。**
+    92本 の天井は「本数を増やせば再生は ×31.8 まで伸ばせる」と読めますが、
+    **規則の下では 1本も増やせません。**
+
+    そして規則を入れると、この行は**向きが変わります** ——
+    いまの再生／日（2,724回）は、規則 1本/日 の定常（942回）より**上**です。
+    差は**予約の在庫が消化されているぶん**で、**在庫が尽きれば下がります。**
+    つまりこの行は「まだ ×31.8 伸ばせる」ではなく
+    「**いまの再生／日 は、規則の下では持続しない**」と言うべき行でした。
+
+    出どころは `_ceiling_per_day()` の1か所です（規則・観測・口 の**いちばん低いもの**）。
+    **ここに定数を書かないこと** —— オーナーが 1本/日 を外せば自動で戻ります。
+    検査は `tests/test_levers_house_rule.py`。
+    """
     rows = []
     need_subs_per_day = a["subs_remaining"] / 365
     if a["subs_per_day"] > 0:
@@ -8627,9 +8660,27 @@ def _levers(m: dict, a: dict) -> list[tuple[str, str, str]]:
                  f"{a['sub_rate']*100*x:.3f}%（再生数を据え置くなら）"))
     rows.append(("　うち 再生／日", f"{a['views_per_day']:,.0f}回",
                  f"{a['views_per_day']*x:,.0f}回（登録率を据え置くなら）"))
-    per_day_cap = a["per_video_now"] * UPLOAD_CAP_PER_DAY
+    # **規則の出どころは `_ceiling_per_day()` の1か所**（規則・観測・口 の最小）。
+    #     **定数を書かないこと** —— オーナーが 1本/日 を外せば、ここは自動で戻ります。
+    cap_per_day = _ceiling_per_day()
+    caps = a.get("ceiling_caps") or {}
+    which = min(caps, key=lambda k: caps[k]) if caps else "規則"
+    per_day_cap = a["per_video_now"] * cap_per_day
+    ratio = per_day_cap / max(a["views_per_day"], 1)
+    if ratio >= 1.0:
+        note = (f"{cap_per_day:,.0f}本/日 の上限（縛るのは「{which}」）。"
+                f"**{ratio:,.2f}倍まで**")
+    else:
+        # **向きが変わる行**（2026-08-31）。規則の下では、いまの再生／日 のほうが上。
+        #     差は**予約の在庫を消化しているぶん**で、**在庫が尽きれば下がります。**
+        note = (f"{cap_per_day:,.0f}本/日 の上限（縛るのは「{which}」）＝ "
+                f"**いまの再生／日 の {ratio:,.2f}倍** —— "
+                f"**本数では1本も増やせません。**"
+                f"いまの {a['views_per_day']:,.0f}回／日 は"
+                f"**規則の下では持続しません**（差は予約の在庫を消化しているぶん）。"
+                f"**この行を「まだ伸ばせる」と読まないこと。**")
     rows.append(("本数だけで届く上限", f"{a['views_per_day']:,.0f}回／日",
-                 f"{per_day_cap:,.0f}回／日（92本の上限。**{per_day_cap/max(a['views_per_day'],1):,.1f}倍まで**）"))
+                 f"{per_day_cap:,.0f}回／日（{note}）"))
     return rows
 
 
