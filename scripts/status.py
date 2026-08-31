@@ -727,10 +727,40 @@ def print_hypotheses() -> None:
         # ここには1行も出てきませんでした。実測 **10件・合計46日**。
         # **腕は前提を1件閉じたときだけ動く**ので、その待ちは到達日ごと止まります。
         _late = [v for v in _vs if v.waits]
-        if _bad or _unk or _non or _late or _warm:
+        # **「日は出た。ただし計器が止まっている」を、この節に出すこと**
+        #   （2026-08-31・最適化の回）。
+        #
+        #   `deadline_check` は `Answer.todo` に「**取り直す手**」を持ちます
+        #   （`_stale_todo` / `_on_date_todo`）。持っている前提は `ready` が
+        #   **出ている**ので、上の5つの籠（早すぎる／遅すぎる／日が出せない／
+        #   まだ数えはじめ／`needs:` が無い）に**1つも入りません。**
+        #   つまり **この節からは完全に見えませんでした。**
+        #
+        #   実測 2026-08-31 05:2x —— `data/views.jsonl` は **45時間** 止まり、
+        #   その計器を数えている前提 3件 に `deadline_check` は
+        #   「要 20000 ／ いま 9706 → **あと 3日**」と出していました。
+        #   **「あと N日」は待てば来る文です。計器は止まっているので来ません。**
+        #   そして手順 §3 が全部 読めと言っているのは**この出力**で、
+        #   `deadline_check.py`（60行）のほうではありません。
+        #
+        #   **`todo` は「判断の要らない手」です**（上の `--shrink` と同じ形）。
+        #   だから件数ではなく**手そのもの**を出します。
+        _named = {v.claim for v in (_bad + _unk + _warm + _non + _late)}
+        _frozen = [v for v in _vs
+                   if v.claim not in _named and any(a.todo for a in v.answers)]
+        if _bad or _unk or _non or _late or _warm or _frozen:
             print(f"\n  --- [!] **その期限にデータは在るか** "
                   f"（早すぎる {len(_bad)}件 ／ **遅すぎる {len(_late)}件** ／ "
-                  f"日が出せない {len(_unk)}件 ／ 確かめていない {len(_non)}件）---")
+                  f"日が出せない {len(_unk)}件 ／ 確かめていない {len(_non)}件 ／ "
+                  f"**計器が止まっている {len(_frozen)}件**）---")
+            if _frozen:
+                print(f"    **計器が止まっている {len(_frozen)}件 ——"
+                      " 「あと N日」と出ていますが、待っても来ません。**"
+                      "（取り直す手は判断が要りません）")
+                for v in _frozen:
+                    _t = next((a.todo for a in v.answers if a.todo), "")
+                    print(f"      {v.claim[:36]}")
+                    print(f"        → {_t[:180]}")
             for v in _bad:
                 print(f"    **期限 {v.deadline} は {(v.ready - v.deadline).days}日 早い** "
                       f"→ {v.ready} へ  {v.claim[:40]}")

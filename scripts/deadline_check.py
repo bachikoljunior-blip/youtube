@@ -397,14 +397,22 @@ _EXPR_NO_METER = ("json", "date", "rows", "ab_members", "reveal_hold_arm")
 #: `scripts/snapshot.py` は `videos.list` だけ・**571本 で 12単位**で、
 #: 一覧にも載っています。
 #:
-#: **作る台帳（`batch_runs.jsonl`）はここに載せません** —— あれは「取り直す」もので
+#: **作る台帳（`_BUILD_LEDGERS`）はここに載せません** —— あれは「取り直す」もので
 #: はなく「作ると増える」ものなので、取り直す手を名指しすると嘘になります
-#: （`_ledger_frozen` の註）。載せなければ「…を取り直すこと」に落ちます。
+#: （`_ledger_frozen` の註）。
 _METER_REFRESH: dict[str, str] = {
     "data/views.jsonl": "python scripts/snapshot.py",
     "data/video_forms.json": "python -m src.rpm_mix --forms",
     "data/reach.jsonl": "python scripts/reach.py",
 }
+
+#: **「取り直す」ものではなく「作ると増える」もの。**
+#:
+#: 載せないと「`data/uploaded.jsonl` を取り直すこと」と出ます —— **撃てる手が
+#: 無いのに手を名指しする形**で、この repo が何度も踏んでいる向きです
+#: （`_refresh_pool_note` の「潰せない回に潰せと言っていた」）。
+#: 止まっているのは事実なので黙りはしません。**言い方だけ変えます。**
+_BUILD_LEDGERS = ("data/uploaded.jsonl", "data/batch_runs.jsonl")
 
 _ROWS_CALL = re.compile(r"""rows\(\s*['"]([^'"]+)['"]\s*\)""")
 
@@ -1070,6 +1078,12 @@ def _stale_todo(need: dict) -> str:
     tail = _refresh_pool_note(dict(need, refresh=how) if how else need)
     mark = ("（`data_file:` の申告はありません。**`count_expr` が呼んでいる名前**"
             "から引きました ——`_EXPR_METERS`）" if derived else "")
+    if not how and src in _BUILD_LEDGERS:
+        # **作る台帳。取り直す手は無い** —— 名指しすると、撃てない手を配ります。
+        return ("**待ち方が違います。足りないのは日ではなく、供給のほうです** —— "
+                f"この数が読んでいる `{src}` は**作ると増える台帳**で、{seen}{mark}。"
+                "**作らないかぎり、待っても増えません。**"
+                "  取り直す手はありません ——**本を作ること**")
     return ("**待ち方が違います。足りないのは日ではなく、計器のほうです** —— "
             f"この数が読んでいる `{src}` は {seen}{mark}。"
             "**取り直すまで、待っても増えません。**"
