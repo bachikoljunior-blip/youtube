@@ -179,28 +179,42 @@ def test_settled_を門にしていない():
     ところが門があると、その正しい直しで `_settled('長尺')` が真になり、
     **補正が 1.0 に落ちて隔たりが黙って 2倍（×10.7 → ×21.4）に戻ります。**
 
-    だから門は外し、**測ったほうだけを残しました** —— 伸びきった形は自分で ×1.00 を
-    出します（ショート 実測 ×1.000・n=22）。**門を足し直さないこと。**
+    ## この検査が実際に撃つもの（**書いた版が空振りしたので、直した**）
+
+    最初に書いた版は `MATURE_HOURS_BY_FORM['長尺']` だけを 480 に差し替えました。
+    **門を戻した変異体を入れても、その版は通ってしまいました**（実測 2026-08-31）——
+    `settles_at()` は `SETTLE_HORIZONS`（480 止まり）で**伸びきる年齢を返さない**ので、
+    `mature_hours` をいくつにしても `mature_hours_supported` は偽のままだったからです。
+    **「直したつもりの検査が、直っていないことを見ていない」**の実例。
+
+    だから、この検査は**主題そのもの**を撃ちます ——
+    「`censor_factor()` は `settled` を門にしていないか」。
+    `settle.mature_hours_supported` を**真を返すものに差し替えて**、
+    それでも補正が生き残ることを見ます（`settle` がどう真を作るかに依存しません）。
+
+    **門を足し直さないこと。**
     """
     import src.settle as settle                               # noqa: PLC0415
 
+    form_record.censor_memo_clear()
     before = form_record.censor_factor("長尺")
     if before["factor"] <= 1.0:
         pytest.skip("長尺の補正がまだ測れていません（n 不足）")
 
-    keep = dict(settle.MATURE_HOURS_BY_FORM)
+    keep = settle.mature_hours_supported
     try:
-        # 「長尺は 480時間 で伸びきる」と直した世界を作る（＝正しい直し）
-        settle.MATURE_HOURS_BY_FORM["長尺"] = 480
-        form_record._settled.cache_clear()
+        # **「この形は伸びきっている」と言う世界**を作る（どう作られたかは問わない）
+        settle.mature_hours_supported = lambda *a, **k: True   # noqa: ARG005
+        form_record.censor_memo_clear()
+        assert form_record._settled("長尺") is True, "前提: settled を真にできている"
         after = form_record.censor_factor("長尺")
     finally:
-        settle.MATURE_HOURS_BY_FORM.clear()
-        settle.MATURE_HOURS_BY_FORM.update(keep)
-        form_record._settled.cache_clear()
+        settle.mature_hours_supported = keep
+        form_record.censor_memo_clear()
 
     assert after["factor"] == pytest.approx(before["factor"]), (
-        f"`MATURE_HOURS_BY_FORM` を直したら補正が {before['factor']:.2f} → "
-        f"{after['factor']:.2f} に落ちました。**`settled` を門にしています** ——"
+        f"`settled` が真になったら補正が {before['factor']:.2f} → {after['factor']:.2f}"
+        " に落ちました。**`settled` を門にしています** ——"
         " 打ち切りは形の性質ではなく、記録の本が何時間 観測されたかです"
     )
+    assert after["n"] == before["n"]
