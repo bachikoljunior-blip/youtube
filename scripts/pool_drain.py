@@ -101,6 +101,9 @@ LEDGER_MARGIN = timedelta(hours=1)
 #: 1本 外すのに使う単位（`videos.list` 1 ＋ `videos.update` 50）。
 UNITS_PER_VIDEO = 51
 
+#: **サムネイルを1本 載せるのに使う単位**（`thumbnails.set`）。
+THUMB_UNITS = 50
+
 #: Data API の日枠（単位／日）。**「何日ぶんの枠が要るか」を言うためだけに使います。**
 #: 既定の 10,000 です —— 2026-08-27 に「日枠は 10,000 ではない」と結論した回が
 #: ありますが、**あれは `videos.update` の ok 行を二重に数えた側の誤り**でした
@@ -230,6 +233,76 @@ def _inbox_text(left: int, keep: int) -> str:
     )
 
 
+#: **池化より先に押す1本**（2026-09-01 に足した。**順番の門**）。
+#:
+#: ## なぜ要るか（**手順に書いてあり、そのとおりに撃たれ、それでも負けた**）
+#:
+#: 実測 2026-08-31 の窓（`python -m src.quota_ledger`）:
+#:
+#:     reschedule.py:_update          **9,668単位**  ← `pool_drain --apply`
+#:     history.py:channel_video_ids    3,409単位
+#:     thumbnails.set                     50単位（**1回だけ**）
+#:
+#: 同じ窓で、**09/01 22:00 JST に公開される本（`UIWHsypOPPg`）は
+#: `thumbnail_set: false` のまま**でした。要る単位は **50**、
+#: 焼けた単位は **13,388**。**0.4% が取れませんでした。**
+#:
+#: 順番そのものは、この repo の中で3回 書かれています ——
+#: `docs/trigger_main.md` §2.6、`retro.py` の申し送り
+#: 「**16:00 JST 以降の窓の回は、`refresh_thumbnail --video <次の1本>` を
+#: その窓の最初に撃つこと。`reschedule` より先に**」、そして
+#: `scripts/refresh_thumbnail.py` の `only_video` の註。
+#: **3つとも「次に来た側が覚えていること」に頼っています。**
+#: `batch_build.slots()`:「**人の記憶と手写しに依存する門は、
+#: この輪では毎回落ちる側**」。だから門を、単位を焼く側へ移します。
+#:
+#: ## なぜ「止める」ではなく「先に押す」か
+#:
+#: 止める形（「サムネが載るまで `--apply` を断る」）にすると、
+#: **押せない事情が1つでもあると池化が永久に止まります** ——
+#: そして池化には締切があります（`first_breach()`: 規則1 が
+#: 最初に破れるのは 2026-09-12・238本 多い）。
+#: **先に押す形なら、押せても押せなくても池化は進みます。**
+#: 費用は 13,617単位 のうち **50単位（0.4%）**です。
+#:
+#: ## 覆る条件
+#:
+#: - 枠が広がって取り合いが消えたら、この門は要りません
+#: - `refresh_thumbnail.push_missing()` が「次に公開される1本」を
+#:   自分で先に押すようになったら、ここは呼ぶだけに縮みます
+#: - **`--no-thumbnail-first` で外せます**（外した回は理由を JOURNAL に）
+
+
+def thumbnail_first(now: datetime | None = None) -> str:
+    """**この回、池化より先に押すべき1本の動画ID**（無ければ空文字）。**API 0単位**。
+
+    出どころは1か所です（`src/next_slot`）—— 次に公開される本と、
+    その本のサムネイルが控えに在るのに載っていないか。
+    **ここでは判定を書き直しません**（書き直すと2つの答えができます）。
+    """
+    try:
+        from src import next_slot                              # noqa: PLC0415
+        row = next_slot.next_video(now)
+        if not row:
+            return ""
+        vid = str(row.get("video_id") or "")
+        if vid and next_slot.pending_thumbnail(vid):
+            return vid
+    except Exception:                                          # noqa: BLE001
+        return ""
+    return ""
+
+
+def _push_thumbnail_first(video_id: str) -> int:
+    """その1本を押す（**50単位**）。返りは `refresh_thumbnail.push_missing` のまま。
+
+    **落ちても池化は止めません**（返り値で伝えるだけ）。理由は
+    `thumbnail_first` の註「止める形にすると池化が永久に止まる」。
+    """
+    import refresh_thumbnail                                   # noqa: PLC0415
+    return refresh_thumbnail.push_missing(only_video=video_id)
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(
         description="予約を外して private のまま残し、下書きの池にする")
@@ -242,6 +315,9 @@ def main(argv: list[str] | None = None) -> int:
                     help="この回で外す上限（0 ＝ 日枠が尽きるまで）")
     ap.add_argument("--no-inbox", action="store_true",
                     help="途中で止まっても受け取り帳に置かない")
+    ap.add_argument("--no-thumbnail-first", action="store_true",
+                    help="次に公開される本のサムネイル（50単位）を先に押さない"
+                         "（**外した回は理由を JOURNAL に**）")
     args = ap.parse_args(argv)
 
     rows = pool()
@@ -284,6 +360,32 @@ def main(argv: list[str] | None = None) -> int:
     if not args.apply:
         print("[pool] **数えただけです**（API 0単位）。撃つには `--apply`。", flush=True)
         return 0
+
+    # **池化より先に、次に公開される本のサムネイルを押すこと**（2026-09-01）。
+    # 13,617単位 のうち **50単位（0.4%）**です。理由は `thumbnail_first` の註 ——
+    # 順番は3か所に書いてあり、そのとおりに撃たれ、それでも 08/31 の窓は
+    # 9,668単位 を先に焼いて、**50単位 が残りませんでした。**
+    if not args.no_thumbnail_first:
+        first = thumbnail_first()
+        if first:
+            print(f"[pool] **池化より先に、次に公開される本のサムネイルを押します**"
+                  f"（{first}・{THUMB_UNITS}単位 ＝ この回の見積りの"
+                  f" {THUMB_UNITS * 100.0 / max(1, len(drop) * UNITS_PER_VIDEO):.1f}%）",
+                  flush=True)
+            try:
+                rc = _push_thumbnail_first(first)
+            except (KeyboardInterrupt, MemoryError):
+                raise
+            except BaseException as exc:                       # noqa: BLE001
+                rc = 1
+                print(f"[pool] [!] サムネイルで落ちました（池化は続けます）:"
+                      f" {str(exc)[:160]}", flush=True)
+            if rc:
+                print("[pool] [!] **サムネイルは載りませんでした。**"
+                      " 池化は続けます（止めると 09/12 の締切が動きません）"
+                      " —— 単位が理由なら、窓が変わった回に"
+                      f" `python scripts/refresh_thumbnail.py --missing --video {first}`",
+                      flush=True)
 
     svc = uploader._service()
     # **控えで示せた本だけがここに来ています**（`pool()`）。だから

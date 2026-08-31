@@ -73,7 +73,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 from src import upload_cap
 
@@ -155,6 +155,62 @@ def method_of(uri: str, http_verb: str) -> tuple[str, str]:
     return "other", (segs[-1] if segs else host)
 
 
+#: 対象の本（動画・再生リスト）を指す欄。**URI の query と、body の両方に現れます。**
+_TARGET_KEYS = ("videoId", "playlistId", "id")
+
+
+def target_of(uri: str, body: object = None) -> str:
+    """**この呼び出しが、どの本に当たったか**（分からなければ空文字）。
+
+    ## なぜ要るか（2026-09-01 に踏んだ）
+
+    実測 `data/api_calls.jsonl`（窓 08/31）: `videos.update` **409行 が全部
+    `detail` 無し**。同じ窓で `videos.update` は **9,450単位（枠の 94%）**です。
+    **何にいくつ使ったかは分かるのに、同じ本を何度 書いたかが分かりません。**
+
+    `src/upload_cap.RESHOOT_CAP` の註は、08/27 の窓で
+    「**1つの掃きが1か月 先へ置き、19分後の掃きが1か月 手前へ引き戻す**」振動を
+    実測して 8,900単位（ほぼ1日ぶん）を数えており、覆る条件に
+    「`by`（`caller_label`）で2つの掃きを名指しできます」と書いています。
+    **実物の `by` は `reschedule.py:_update` の1種類だけ**でした ——
+    **名指しできるのは撃った側で、当たった先ではありません。**
+    だからここは**当たった先**を残します。
+
+    ## どこから引くか
+
+        URI の query   `videoId=` / `id=` / `playlistId=`（`thumbnails.set` はこちら）
+        body の JSON   `{"id": ...}`（`videos.update` はこちら。**URI には出ません**）
+
+    **推測しません** —— どちらにも無ければ空文字。**`by` と同じで、
+    空でも本体は1ミリも止まりません。**
+
+    ## 覆る条件
+
+    - 1回の呼び出しが複数の本に当たる手（`videos.list?id=a,b,c`）は、
+      **そのまま `a,b,c` を残します**（先頭だけを採ると、読む側が数を誤ります）
+    - 本ID以外の主語（チャンネル・字幕）が要るようになったら `_TARGET_KEYS` に足すこと
+    """
+    try:
+        q = parse_qs(urlsplit(str(uri)).query)
+    except Exception:                                          # noqa: BLE001
+        q = {}
+    for key in _TARGET_KEYS:
+        vals = q.get(key) or []
+        if vals and str(vals[0]).strip():
+            return str(vals[0]).strip()[:120]
+    if body:
+        try:
+            data = json.loads(body) if isinstance(body, (str, bytes)) else body
+        except Exception:                                      # noqa: BLE001
+            return ""
+        if isinstance(data, dict):
+            for key in _TARGET_KEYS:
+                val = data.get(key)
+                if isinstance(val, str) and val.strip():
+                    return val.strip()[:120]
+    return ""
+
+
 def cost_of(api: str, method: str, http_verb: str = "GET") -> int:
     """**単価**。表に無ければ動作から既定を当てます（0 では埋めません）。"""
     if api != "data":
@@ -187,8 +243,13 @@ def _by() -> str:
 
 
 def note(api: str, method: str, units: int, ok: bool = True,
-         by: str = "", now: datetime | None = None) -> None:
-    """1回ぶんを帳面に足す。**検査は本物の帳面に書きません**（`_write_path` の門）。"""
+         by: str = "", now: datetime | None = None, detail: str = "") -> None:
+    """1回ぶんを帳面に足す。**検査は本物の帳面に書きません**（`_write_path` の門）。
+
+    `detail` は**当たった先**（本ID。`target_of()` が引きます）。
+    空なら欄ごと入れません —— **「無い」と「空」を区別できる形に**しておくこと
+    （`src/upload_cap.note_quota_ok` の本文が、`trigger_sync` で同じ所を踏んでいます）。
+    """
     path = upload_cap._write_path(LEDGER)                      # noqa: SLF001
     if path is None:
         return
@@ -197,6 +258,8 @@ def note(api: str, method: str, units: int, ok: bool = True,
            "api": api, "method": method, "units": int(units), "ok": bool(ok)}
     if by:
         rec["by"] = by
+    if detail:
+        rec["detail"] = str(detail)[:120]
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         with path.open("a", encoding="utf-8") as fh:
@@ -229,23 +292,28 @@ def install() -> bool:
         api = method = ""
         units = 0
         by = ""
+        target = ""
         try:
             api, method = method_of(getattr(self, "uri", ""),
                                     getattr(self, "method", "GET"))
             units = cost_of(api, method, getattr(self, "method", "GET"))
             by = _by()
+            # **当たった先**（本ID）。`videos.update` は URI ではなく body に居ます。
+            target = target_of(getattr(self, "uri", ""), getattr(self, "body", None))
         except Exception:                                      # noqa: BLE001
             pass
         try:
             out = original(self, *args, **kwargs)
         except Exception:
             try:
-                note(api or "other", method or "?", units, ok=False, by=by)
+                note(api or "other", method or "?", units, ok=False, by=by,
+                     detail=target)
             except Exception:                                  # noqa: BLE001
                 pass
             raise
         try:
-            note(api or "other", method or "?", units, ok=True, by=by)
+            note(api or "other", method or "?", units, ok=True, by=by,
+                 detail=target)
         except Exception:                                      # noqa: BLE001
             pass
         return out
@@ -314,7 +382,70 @@ def render(now: datetime | None = None) -> str:
     for m, units in sorted(s["method"].items(), key=lambda kv: -kv[1])[:12]:
         n = sum(1 for r in rows(now) if r.get("method") == m)
         lines.append(f"    {units:>7,}単位  {m}（{n}回・単価 {COST.get(m, '既定')}）")
+    lines.extend(reshoot_lines(now))
     return "\n".join(lines)
+
+
+def reshoots(now: datetime | None = None) -> list[tuple[str, int, int]]:
+    """**この窓で、同じ本に何度 書き込んだか**（`(本ID, 回数, 単位)` の多い順）。
+
+    数えるのは**書き込みだけ**です（`videos.update` / `thumbnails.set` …）。
+    読みは同じ本を何度 読んでも 1単位/回なので、混ぜると振動が薄まります。
+
+    **1回しか書いていない本は返しません** —— この一覧が答える問いは
+    「**同じ窓の後の書き込みが、前の書き込みを上書きしていないか**」だからです
+    （`src/upload_cap.RESHOOT_CAP` の実測: 窓 08/26 は **1本あたり 32.5回**・
+    捨てた 3,150単位／窓 08/27 は 2.98回・5,750単位。**窓に効いたのは最後の1回だけ**）。
+    """
+    seen: dict[str, list[int]] = {}
+    for r in rows(now):
+        if str(r.get("api") or "") != "data":
+            continue
+        if int(r.get("units") or 0) < 50:      # 読み（1単位）は数えない
+            continue
+        vid = str(r.get("detail") or "")
+        if not vid:
+            continue
+        cell = seen.setdefault(vid, [0, 0])
+        cell[0] += 1
+        cell[1] += int(r.get("units") or 0)
+    out = [(v, c[0], c[1]) for v, c in seen.items() if c[0] > 1]
+    out.sort(key=lambda t: (-t[2], t[0]))
+    return out
+
+
+def reshoot_lines(now: datetime | None = None) -> list[str]:
+    """**同じ本への撃ち直し**を画面へ（無ければ、無いと言うこと）。
+
+    ## なぜ「無い」も印字するか（2026-09-01）
+
+    `detail` の欄は 2026-09-01 に足しました。**それ以前の窓の行には入っていません。**
+    黙って何も出さないと、次の回は「**振動は無かった**」と読みます ——
+    実際には「**この窓の帳面が、まだ答えられない**」だけです。
+    **区別できる形にしておくこと**（`upload_cap.note_quota_ok` が
+    `trigger_sync` で踏んだのと同じ穴）。
+    """
+    hot = reshoots(now)
+    marked = sum(1 for r in rows(now)
+                 if str(r.get("api") or "") == "data"
+                 and int(r.get("units") or 0) >= 50
+                 and str(r.get("detail") or ""))
+    if not marked:
+        return ["  --- 同じ本への撃ち直し ---",
+                "    **この窓には、当たった先の載っている書き込みがありません**"
+                "（`detail` は 2026-09-01 に足したので、それ以前の窓は空です）。"
+                "**「振動が無い」ではありません。**"]
+    if not hot:
+        return ["  --- 同じ本への撃ち直し ---",
+                f"    **ありません**（当たった先の載っている書き込み {marked}件 は、"
+                "どれも1本につき1回）"]
+    lines = ["  --- 同じ本への撃ち直し（**窓に効いたのは最後の1回だけ**）---"]
+    waste = sum(u - u // n for _, n, u in hot)
+    for vid, n, units in hot[:8]:
+        lines.append(f"    {units:>7,}単位  {vid}（{n}回）")
+    lines.append(f"    [!] **捨てた見込み {waste:,}単位**"
+                 f"（{len(hot)}本・`upload_cap.RESHOOT_CAP` の註と同じ数え方）")
+    return lines
 
 
 def main(argv: list[str] | None = None) -> None:  # pragma: no cover - 画面出力だけ
