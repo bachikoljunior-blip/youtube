@@ -2696,6 +2696,7 @@ def _print_inventory_from_ledger() -> None:
 
     _print_collisions()
     _print_missing_thumbnails()
+    print_quota_ledger()
 
 
 def _print_collisions() -> None:
@@ -2902,17 +2903,44 @@ def _print_missing_thumbnails() -> None:
                   " 順番が逆だと、投稿が単位を使い切って**この一覧は永久に減りません。**")
     except Exception as exc:                                   # noqa: BLE001
         print(f"  （単位枠の状態が読めません: {str(exc)[:60]}）")
-    # **「尽きている」の次に要るのは「何が使ったか」です**（2026-08-31 に足した）。
-    # `day_quota()` が言えるのは「403 を N回 見た」だけで、**消費の帳面ではありません。**
-    # 投稿0本の日に `descriptions --refresh` が `quotaExceeded` で 0/735本 になった回が
-    # あり、原因を指せる行がこの出力に1つもありませんでした（`src/quota_ledger`）。
+    print("  潰したら `run_marker.py --ship ... --closes missing_thumbnail`。")
+
+
+def print_quota_ledger() -> None:
+    """**この窓の日枠を、何が・いくつ 使ったか**（`src/quota_ledger`・API 0単位）。
+
+    ## この節が独立している理由（2026-09-01 に踏んだ）
+
+    **この呼び出しは、`_print_missing_thumbnails()` の本体の中にありました** ——
+    しかも `if _r.folded: return` の**後ろ**です。あの警告は
+    **101回 続けて鳴って手が打たれていない**ので畳まれており、つまり
+    **足された 2026-08-31 から、消費の帳面は1度も印字されていません。**
+
+    見つけ方は `python scripts/status.py | grep 何が消費したか` → **0件**。
+    ここは「言っている所と、している所が別」の、いちばん静かな形です ——
+    **呼び出しは在る。検査も通る。出力に無い。**
+
+    ## なぜ独立させる値打ちがあるか（実測）
+
+    2026-09-01 の回は「枠が尽きた回に何を直すか」を探すのに1周の4割を使い、
+    答えは `python -m src.quota_ledger` の1行が丸ごと持っていました:
+
+        history.py:channel_video_ids  **3,409単位**（枠 10,000 の **34%**）
+
+    **`docs/trigger_main.md` §4 の「探し方」3つは、どれもここに当たりません**
+    （順番でも・名指しでも・全部押す形でもない ＝ **同じ答えを10回 買い直していた**）。
+
+    ## 覆る条件
+
+    - 帳面（`data/api_calls.jsonl`）が空の回は、`render()` が自分でそう言います。
+      **鳴らない節は畳まないこと** —— 畳んだ結果がこの節の由来です
+    """
     try:
         from src import quota_ledger as _ql
 
-        print(_ql.render())
+        print("\n" + _ql.render())
     except Exception as exc:                                   # noqa: BLE001
-        print(f"  （消費の帳面が読めません: {str(exc)[:60]}）")
-    print("  潰したら `run_marker.py --ship ... --closes missing_thumbnail`。")
+        print(f"\n=== 日枠の消費 ===\n  （消費の帳面が読めません: {str(exc)[:60]}）")
 
 
 # **節ごとに時計を掛ける**（2026-08-21 03:4x）。定義のあとで包むので、
@@ -2934,6 +2962,7 @@ for _fn_name, _fn_label in (
     ("print_alert_hit_rate", "警告の当たり率"),
     ("_print_inventory_from_ledger", "予約の先（控え）"),
     ("_print_missing_thumbnails", "サムネの欠け"),
+    ("print_quota_ledger", "日枠の消費（帳面）"),
     ("print_step_days", "予約のきざみ"),
 ):
     if _fn_name in globals():
