@@ -368,6 +368,42 @@ def recent_ships(window_min: int = CLAIM_WINDOW_MIN, me: str | None = None) -> l
     return out
 
 
+DOC_FOR_INDEX = "docs/trigger_main.md"
+
+
+def _doc_index_lines(doc: str = DOC_FOR_INDEX) -> list[str]:
+    """**手順書の当てどころ**（節の名前 → 行番号）を、読む前に出す。
+
+    ## なぜ §1 で出すのか（2026-09-01 に足した）
+
+    `retro.py` の (a2) 問い1（この回でいちばん時間を食ったのはどこか）を縦に読むと、
+    **直近9件のうち6件、直近5件は5件とも「手順の読み」か「何を出すか決めるところ」**
+    でした。`docs/trigger_main.md` は **1日 約190行**増え、**名前から場所は引けません。**
+
+    あちらの「読む前に、この1行を撃つこと」は、**行番号の表を手で貼ろうとして
+    2回 失敗した跡**です —— 貼った瞬間に、貼ったぶんだけ全部ズレました。
+    そこの **覆る条件がこれ**です:「`scripts/doc_usage.py` が毎周この一覧を
+    印字するようになったら、`grep` を手で撃つ必要もなくなります」。
+
+    **`--write` に置く理由**: §1 は**その回のいちばん最初のコマンド**で、
+    かつ**手順を読む前**に撃たれる唯一のものです。ここ以外に置くと、
+    「読む前に要るもの」が読んだ後に出ます（`_claim_lines` を §1 に置いたのと同じ理由）。
+
+    **落ちても回は止めません。** 印は本体、これは付け足しです。
+    """
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        import doc_usage                                       # noqa: PLC0415
+        path = Path(__file__).resolve().parent.parent / doc
+        if not path.is_file():
+            return []
+        text = path.read_text(encoding="utf-8")
+        return doc_usage.index_lines(text, doc, only_read=True, prefix="[marker] ")
+    except Exception as exc:                                   # noqa: BLE001
+        return [f"[marker] （手順の当てどころを出せませんでした: "
+                f"{type(exc).__name__}: {exc}。`grep -n '^## ' {doc}` を手で撃つこと）"]
+
+
 def _claim_lines(window_min: int = CLAIM_WINDOW_MIN) -> list[str]:
     rows = claims(window_min)
     ships = recent_ships(window_min)
@@ -435,6 +471,10 @@ def write() -> int:
         print(f"[marker] **この回の一時置き場: {scratch}**"
               "（きょうだいと共有の直下へ書かないこと。"
               "`status.txt` `eta.txt` `build.log` は全員が同じ名前を使います）")
+    # **手順の当てどころ**（2026-09-01 に足した）。ここで出す理由は下の
+    # `_doc_index_lines()` の註。**§1 は手順を読む前の唯一のコマンド**です。
+    for ln in _doc_index_lines():
+        print(ln)
     # **ここで出すこと。** §1 はその回のいちばん最初のコマンドで、
     # **何をやるか決める前**です。決めた後に見せても、払った時間は戻りません。
     for ln in _claim_lines():

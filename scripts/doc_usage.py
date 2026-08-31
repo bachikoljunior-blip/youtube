@@ -87,6 +87,102 @@ def tokens_of(body: str) -> set[str]:
             and " " not in t.strip()}
 
 
+# 節の頭の番号（`## 2.6 **いつ届くか…` → `2.6`）。**見出しの字面から引きます。**
+_SEC_NUM = re.compile(r"^(\d+(?:\.\d+)?)[.\s]")
+# 「普通の回の読む順」の箇条書きを見つける目印。**この文書の中の語です。**
+_READ_ORDER_MARK = "普通の回に読むのは"
+
+
+def reading_order(text: str) -> list[tuple[str, str]]:
+    """**「普通の回の読む順」が名指ししている節番号**と、その但し書き。
+
+    手で並べていません —— 文書の中のあの箇条書き（`§0 の冒頭 ／ §1 ／ …`）から
+    機械で引きます。**手で写すと、あちらが節を足した日に黙って古くなります**
+    （このリポジトリで通算11回の形。`tokens_of` の註と同じ理由）。
+
+    返すのは `[("0", "冒頭（repo が在るか → `git status -sb`）"), ("1", ""), …]`。
+    """
+    lines = text.splitlines()
+    start = next((i for i, ln in enumerate(lines) if _READ_ORDER_MARK in ln), None)
+    if start is None:
+        return []
+    out: list[tuple[str, str]] = []
+    for ln in lines[start + 1:start + 8]:
+        if "§" not in ln:
+            if out:
+                break
+            continue
+        for m in re.finditer(r"§(\d+(?:\.\d+)?)([^§]*)", ln):
+            note = m.group(2).strip().strip("／").strip()
+            out.append((m.group(1), note[1:].strip() if note.startswith("の") else note))
+    return out
+
+
+def index_rows(text: str) -> list[dict]:
+    """**大見出し（`## `）を、文書に出てくる順**で。行番号と行数つき。
+
+    **並べ替えないこと。** `docs/trigger_main.md` は §2.7 が §2.6 より
+    **前**にあります（2026-09-01 の実測: L1349 対 L1584）。番号順に直して見せると、
+    `sed` の当てどころが実物とずれます。**要るのは番号ではなく行番号です。**
+    """
+    tops = [s for s in sections(text) if s["depth"] == 2]
+    order = dict(reading_order(text))
+    total = len(text.splitlines())
+    rows = []
+    for n, s in enumerate(tops):
+        m = _SEC_NUM.match(s["title"])
+        num = m.group(1) if m else None
+        # **行数は、次の大見出しまで**。`sections()` の `lines` は次の
+        # **どの深さの**見出しまでなので、ここで使うと §0 が 493行 を 2行 と言います
+        # （2026-09-01 に実際にそう出ました）。**当てどころの広さが伝わらなくなります。**
+        nxt = tops[n + 1]["line"] - 1 if n + 1 < len(tops) else total
+        rows.append({
+            "num": num,
+            "line": s["line"],
+            "lines": nxt - s["line"] + 1,
+            "title": s["title"],
+            "read": bool(num) and num in order,
+            "note": order.get(num, "") if num else "",
+        })
+    return rows
+
+
+def index_lines(text: str, doc: str = "docs/trigger_main.md",
+                only_read: bool = False, prefix: str = "") -> list[str]:
+    """印字用の行。`run_marker.py --write` が毎周 これを出します。
+
+    **なぜ道具が出すのか**（2026-09-01 に足した）。`docs/trigger_main.md` の
+    「読む前に、この1行を撃つこと」は、**行番号の表を手で貼ろうとして2回 失敗した**
+    跡です —— 貼った瞬間に、貼ったぶんだけ全部ズレました。文書は1日 約190行 増えます。
+    **だから正本は道具の出力のほうです**（同じ文書の冒頭「道具の出力のほうが、
+    この文書より新しい」）。**この関数がその一覧を出す限り、`grep` を手で撃つ必要は
+    ありません。**
+    """
+    rows = index_rows(text)
+    named = [r for r in rows if r["read"]]
+    total = len(text.splitlines())
+    out = []
+    if only_read and named:
+        out.append(f"{prefix}**手順の読む順 —— この{len(named)}節だけ**"
+                   f"（`{doc}` は {total:,}行・大見出し {len(rows)}件。"
+                   f"**行番号は実物から。`grep` を手で撃つ必要はありません**）")
+        shown = named
+    else:
+        out.append(f"{prefix}=== {doc}（{total:,}行 / 大見出し {len(rows)}件・"
+                   f"**文書に出てくる順**。番号順ではありません）===")
+        shown = rows
+    for r in shown:
+        mark = "⭑" if r["read"] else " "
+        num = f"§{r['num']}" if r["num"] else ""
+        note = f"  ← {r['note']}" if r["note"] else ""
+        out.append(f"{prefix} {mark} {num:<5s} L{r['line']:<5d} {r['lines']:5,d}行  "
+                   f"sed -n '{r['line']},+80p'  {r['title'][:44]}{note}")
+    if only_read:
+        out.append(f"{prefix}   （残りの節も含めた全 {len(rows)}件は "
+                   f"`python scripts/doc_usage.py --index`）")
+    return out
+
+
 def haystack(recent: int = 0) -> str:
     """**その回が実際にやったこと**の記録。日誌と ship の本文。
 
@@ -135,6 +231,9 @@ def main() -> int:
     ap.add_argument("--top", type=int, default=15)
     ap.add_argument("--recent", type=int, default=20,
                     help="直近この回数ぶんの日誌と ship だけを相手にする（0で全文）")
+    ap.add_argument("--index", action="store_true",
+                    help="大見出しと**行番号**だけを出す（`grep -n '^## '` の代わり。"
+                         "`run_marker.py --write` が毎周これを印字します）")
     args = ap.parse_args()
 
     path = ROOT / args.doc
@@ -142,6 +241,10 @@ def main() -> int:
         print(f"[!] ありません: {args.doc}")
         return 1
     text = path.read_text(encoding="utf-8")
+    if args.index:
+        for ln in index_lines(text, args.doc):
+            print(ln)
+        return 0
     secs = sections(text)
     hay = haystack(args.recent)
 
