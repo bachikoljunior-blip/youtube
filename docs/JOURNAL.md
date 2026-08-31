@@ -88706,6 +88706,28 @@ M23 は 2026-08-30 に着手条件を書き直しています —— ~~10,000人
 **この回は触っていません** —— 同じ枝の optimizer が `eta.py` をこの2時間で
 **7回** 触っているため（`--claim` と `git log --since` で確認）。**次の回が引き取ること。**
 
+### 検査（この回の最後・全体を1回）
+
+    python scripts/fast_tests.py            触った7本の周り  **734 passed**（4分22秒）
+    python -m pytest tests/ -q              全体             **7 failed / 5,293 passed**（22分38秒）
+
+**7件は全部この回の前からです。** 5件は 09/01 00:1x と 08-31 の申し送りが
+そのまま名指ししていたもの（`test_judgeable[opening_motion]` /
+`test_live_slots` / `test_request_form` / `test_request_form_excludes_long_form` /
+`test_reschedule_compact`）。
+
+**名指しに無かった2件は、実際に戻して確かめました**（`config/hypotheses.yaml` を
+この回の verdict の**前**の版へ戻して撃ち直した。**2件とも同じように赤**）:
+
+    tests/test_ab_split.py::test_実物で処置群は門に足りていない
+    tests/test_long_surface_ceiling_named.py::test_族の数と天井が同じ行に並ぶ
+
+**どちらも `scripts/eta.py` の印字を見ています** —— 同じ枝の optimizer が
+この2時間で 7回 触っている所です。**この回のものではありません。**
+
+**「無関係だ」と言い切る前に戻して確かめたのは、08-31 の回が同じ言い方をして
+全件を流したら 13件・うち2件は自分のものだった**からです（`retro.py` の申し送り）。
+**次に来た側へ: この2件は eta.py の側です。担当が終わっていなければ引き取ること。**
 ---
 
 ## 2026-09-01 02:1x — 最適化の回: 「最適化されてんの？」→ **いいえ。** その理由を1つ潰した
