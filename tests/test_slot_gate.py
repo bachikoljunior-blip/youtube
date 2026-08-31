@@ -118,3 +118,24 @@ def test_stop_check_のメニューに_improve_が在る():
     menu = hook.split("この回はまだ何も出していません】")[1][:1200]
     for kind in ("upload", "improve", "means", "verdict", "fix"):
         assert f"  {kind}" in menu, kind
+
+
+def test_選び方の1番目が_いちばん後ろではなく_手前を見ている():
+    """**戻したら赤くなること。**
+
+    2026-09-01 まで `docs/trigger_main.md` §4 の1番目は
+    「予約が5日先を切っている → `upload`」でした。見ているのは
+    `ahead[-1]`（予約のいちばん後ろ）で、**作り置きが先に固まっていると
+    手前が真っ暗でも偽**になります（実測: いちばん後ろ 10/10・手前 9日 が0本）。
+    """
+    md = (ROOT / "docs" / "trigger_main.md").read_text(encoding="utf-8")
+    head = md.split("### 何を選ぶか（迷ったらこの順）")[1][:1400]
+    assert "scripts/slot_gate.py" in head
+    assert "予約が5日先を切っている → `upload`。** 投稿が途切れる" not in head
+
+
+def test_status_の印も_手前を見ている():
+    """同じ与件で2つの道具が別のことを言わないこと（この repo の最多の壊れ方）。"""
+    src = (ROOT / "scripts" / "status.py").read_text(encoding="utf-8")
+    assert "slot_gate.py" in src
+    assert "手前が空です" in src
