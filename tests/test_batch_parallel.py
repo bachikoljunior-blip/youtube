@@ -94,6 +94,14 @@ def _pin_rule(monkeypatch, per_day: int = 25) -> None:
     """
     from src import house_rule
     monkeypatch.setattr(house_rule, "PUBLISH_PER_DAY", per_day)
+    # **`density_cap()` は `functools.cache` です。**（2026-08-31 に踏んだ）
+    #     `house_rule` だけ差し替えると、**この file が先に走った回だけ
+    #     `density_cap()` に 25 が焼き付き**、あとから走る
+    #     `tests/test_house_rule.py` が `assert 25 == 1` で落ちます
+    #     （実測: 単体では緑、`test_batch_parallel` の後だと4件 赤）。
+    #     **キャッシュを触らず、関数そのものを差し替えます** ——
+    #     `monkeypatch` が終わりに戻すので、本物のキャッシュは汚れません。
+    monkeypatch.setattr(batch_build, "density_cap", lambda: int(per_day))
 
 def _run(monkeypatch, ids, delays=None, fail_build=None, jobs=3):
     rec = _Recorder(delays, fail_build)
