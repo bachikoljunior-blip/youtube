@@ -239,14 +239,31 @@ def _gate_state_block() -> str:
 
 
 def _pause_block(root: Path) -> str:
-    doc = root / "AUTOMATION_PAUSED.md"
-    if not doc.exists():
+    """**停止中に、サブへ配る本文の先頭に入る段。**
+
+    **判定はここに持ちません**（2026-08-31）。2026-08-30 まで、この関数は
+    停止の文書が根の下に在るかどうかを**独立に**見ていました ——
+    `src/pause_guard` とは別の答えを出せる形です。**親は動くのに、子だけが
+    「止まっている」と読んで1周を捨てる**、いちばん気づきにくい壊れ方でした。
+    いまは `src/pause_guard.is_paused()`（＝ オーナーが手で置いた `.owner-pause`）
+    にだけ従います。読めなければ「止まっていない」側に倒します。
+    """
+    import sys
+    if str(root) not in sys.path:
+        sys.path.insert(0, str(root))
+    try:
+        from src import pause_guard
+    except Exception:  # noqa: BLE001 — 型の生成で回を止めない
+        return ""
+    if not pause_guard.is_paused():
         return ""
     return """# **【停止中】この回は、動画を作らない・出さない・予約を触らない**
 
-**オーナーが 2026-08-30 に、いまのやり方を止めました**（`AUTOMATION_PAUSED.md`・
-`origin/main` へ直接 push した8件。作者もコミッタも bachikoljunior-blip）。
+**オーナーが、手で `.owner-pause` を置いています。**
+**この印は、この repo のどのコードも作りません** —— つまり人が置いたものです。
 **推測ではありません。止まっているのは「いまのやり方」であって、目標ではありません。**
+**この印を、この回の判断で外さないこと。** 作りに問題を見つけたなら、
+**止めるのではなく直すこと**（`CLAUDE.md` の冒頭）。
 
     止まっているもの  生成・アップロード・予約の変更・題やサムネの変更・再生リスト
                       （`src/pause_guard.py` と `src/config.py` が二重に止めます。

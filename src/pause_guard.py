@@ -1,8 +1,41 @@
-"""Hard stop for the paused YouTube generation/upload tactic.
+"""**止まるかどうかを決める、ただ1か所。**（`is_paused()`）
 
-Analytics and repository inspection remain available. Content-changing entry points are
-blocked while AUTOMATION_PAUSED.md exists, unless a deliberately explicit one-process
-override is set.
+**2026-08-31: 機械は、自分で自分を止められません。** オーナー直接指示です。
+
+    > **「だから俺はそんなの決めてないから、勝手にそれで止まるのなし。
+    >    今後そういうことがないようにして」**
+    > **「既存のもの外すだけじゃなくて同じことが起こらないようにして」**
+
+**何が起きたか（事実だけ）**: 2026-08-30、`AUTOMATION_PAUSED.md` という
+**ファイル1枚**が置かれ、生成・投稿・予約の変更が全部 止まりました。
+**約22時間・4周ぶんの生成が落ちています。** 2026-08-31、オーナー本人が
+GitHub の画面からそのファイルを削除しました（commit `1aa1e65a`）。
+
+**穴はどこだったか**: 判定が `PAUSE_FILE.is_file()` **だけ**でした。
+**その1枚は、この repo のどの回でも書けます。** つまり機械が、自分の判断で
+自分を丸ごと止められる状態でした。**それが「勝手に止まる」ことそのもの**です。
+
+**いま何が要るか**: 止まるのは `OWNER_PAUSE_MARKER`（`.owner-pause`）が
+在るときだけです。**この印を作るコードは、この repo に1行もありません**
+（足せば、それは「勝手に止まる」の再発です。`tests/test_pause_needs_owner.py`
+ が、印を作る書き込みが repo に無いことを検査しています）。
+
+**なぜ「文書 AND 印」ではなく「印だけ」にしたか**（下書きからの意図的な変更）:
+下書きは `PAUSE_FILE.is_file() and OWNER_PAUSE_MARKER.exists()` でした。
+それだと**オーナーが `.owner-pause` を手で置いても、何も止まりません** ——
+`AUTOMATION_PAUSED.md` はもう存在しないからです。**オーナーの「止めろ」が
+黙って空振りする形**は、今回いちばん作ってはいけないものです。
+文書を判定から**完全に外す**ほうが、「1枚では止まらない」より強い床です
+（1枚あっても止まらない、ではなく、**その1枚はもう switch ではない**）。
+
+`PAUSE_FILE` は**理由を書いた文書の置き場所**として残します（`src/resume_gate`
+が Resume gate の本文をここから読みます）。**switch ではありません。**
+
+**覆る条件**: オーナーが「止めろ」と言ったとき。そのときは `.owner-pause` を
+**人の手で**置くこと（GitHub の画面から足せます）。**機械が置いてはいけません。**
+
+止めている中身（何を止めるかの一覧 = `BLOCKED_ENTRYPOINTS`）は**残してあります**。
+外したのは「機械が自分で全部を止められる」経路だけです。
 """
 from __future__ import annotations
 
@@ -12,7 +45,19 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+
+#: **止める印。人の手でしか置きません。**
+#:
+#: この repo のコードは、このファイルを**作りません・触りません**。
+#: 検査: `tests/test_pause_needs_owner.py::test_この印を作るコードが repo に無い`。
+#: **`.gitignore` に入れないこと** —— オーナーは GitHub の画面から repo を
+#: 触ります（08/31 の削除も画面からでした）。無視されると、置いても届きません。
+OWNER_PAUSE_MARKER = ROOT / ".owner-pause"
+
+#: **理由を書く文書の置き場所。switch ではありません**（上の註）。
+#: 2026-08-31 時点で、このファイルは存在しません（オーナーが削除）。
 PAUSE_FILE = ROOT / "AUTOMATION_PAUSED.md"
+
 OVERRIDE_NAME = "ALLOW_POLICY_PAUSED_AUTOMATION"
 OVERRIDE_VALUE = "I_ACCEPT_YPP_POLICY_RISK"
 
@@ -54,15 +99,23 @@ BLOCKED_ENTRYPOINTS = {
 }
 
 MESSAGE = (
-    "AUTOMATION PAUSED: the current synthetic finance/tax/career persona conflicts "
-    "with YouTube's monetization policy for AI personas on sensitive topics. "
+    "AUTOMATION PAUSED BY THE OWNER: the marker file `.owner-pause` is present. "
+    "Only a human places it - no code in this repository creates it. "
     "Generation, upload and channel-modification entry points are blocked. "
-    "Read AUTOMATION_PAUSED.md."
+    "Read AUTOMATION_PAUSED.md if it exists, and ask the owner before removing "
+    "the marker."
 )
 
 
 def is_paused() -> bool:
-    return PAUSE_FILE.is_file()
+    """**止まるかどうかの判定は、ここ1つだけです。**
+
+    他の場所で `.owner-pause` や `AUTOMATION_PAUSED.md` の有無を**独立に**
+    見ないこと。2026-08-31 まで `src/resume_gate`・`scripts/policy_pause.sh`・
+    `scripts/spawn_prompt.py` が別々に見ていて、**片方だけ直した回が
+    「動いているのに停止中と印字する」形**を作れました。
+    """
+    return OWNER_PAUSE_MARKER.exists()
 
 
 def override_enabled() -> bool:
