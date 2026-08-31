@@ -85019,3 +85019,10 @@ subs_cap（08/28）と**まったく同じ壊れ方の4回目**です。
 「軌跡の腕が動くのは前提を1件 閉じたときだけ。作る・出す・直すは軌跡の入力に入りません」
 と印字しているので、`fix` の回は定義上 0日。**日付を動かしたのではなく、
 次の回が日付を動かすときに読む目盛りを替えました。**
+
+### 検査（この回の後始末）
+
+`pytest tests/ -k "eta or form_record or per_video_ceiling"` → **428 passed / 0 failed**
+（3分25秒）。直接あたる4 file（`test_form_record` / `test_per_video_ceiling` /
+`test_eta` / `test_eta_house_rule`）だけなら **89 passed**。
+**赤は1件も増やしていません。**
