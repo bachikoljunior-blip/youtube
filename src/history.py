@@ -98,8 +98,18 @@ def channel_video_ids(youtube, uploads: str, cap: int = 400) -> list[str]:
     もう片方が拾い、**両方が落としたときだけ穴が残ります。**
     費用は1回ぶんの追加呼び出しだけです。
     """
+    cached = _cached_video_ids(uploads, cap)
+    if cached is not None:
+        out = _with_ledger_ids(cached)
+        print(f"[history] この窓のチャンネルの動画IDを再利用しました"
+              f"（{len(out)}本・**API 0単位**）。"
+              " 窓ごとに1回だけ読みます（`_VIDEO_IDS_CACHE` の註）。"
+              " 読み直すなら `YT_NO_SCAN_CACHE=1`")
+        return out
+
     ids: list[str] = []
     seen: set[str] = set()
+    partial = False                      # **口が欠けた回は控えない**（下の末尾）
 
     def _add(vid: str) -> None:
         if vid and vid not in seen:
@@ -135,6 +145,7 @@ def channel_video_ids(youtube, uploads: str, cap: int = 400) -> list[str]:
                 break
     except HttpError as exc:
         auth.note_day_quota(exc, "playlistItems.list uploads")
+        partial = True
         print(f"[history] uploads プレイリストを最後まで読めませんでした"
               f"（{len(ids)}本まで／続行）: {str(exc)[:90]}")
 
@@ -154,6 +165,7 @@ def channel_video_ids(youtube, uploads: str, cap: int = 400) -> list[str]:
                 break
     except HttpError as exc:
         auth.note_day_quota(exc, "search.list forMine")
+        partial = True
         print(f"[history] 予約中の動画を search で拾えませんでした（続行）: {exc}")
 
     # **上限に当たった回は、黙って古いほうを捨てています**（2026-08-28 に測って足した）。
@@ -177,6 +189,12 @@ def channel_video_ids(youtube, uploads: str, cap: int = 400) -> list[str]:
         print(f"[history] [!] **上限 {cap}本 で切りました**（チャンネルはこれより多い）。"
               "**古い側は見えていません** —— 投稿済みの復元は"
               "`_scan` の末尾で控え（`data/uploaded.jsonl`）と和を取ります")
+
+    # **控えるのは、口が両方とも欠けなかった回だけ**（`_put_cached_topics` と同じ）。
+    # `cap` で切られた回は控えます —— 切られ方は `cap` が同じなら毎回 同じで、
+    # **控えの鍵に `cap` が入っている**からです。
+    if not partial:
+        _put_cached_video_ids(uploads, cap, ids)
 
     return ids
 
@@ -267,6 +285,48 @@ _SHARED_SCAN_CACHE = "yt-scan-topics.json"
 
 _shared_cache_path: Path | None = None
 
+#: **動画IDの読みを、日枠の窓ごとに1回だけにする控え**（2026-09-01）。
+#:
+#: ## なぜ足したか（実測。上の `_SCAN_CACHE` は、ここを守っていません）
+#:
+#: `_SCAN_CACHE` が控えているのは `_scan(want_map=False)` の**答え（テーマID）**
+#: だけです。その中で呼ばれる `channel_video_ids` は素通しで、
+#: **`_scan` を通らない呼び手が5つあります**（`status._channel_main` /
+#: `reschedule._scheduled`（＝`pool_drain`）/ `upload_only` / `critique_queue` /
+#: `descriptions` の註）。**そちらは1単位も守られていませんでした。**
+#:
+#: 実測 2026-09-01（窓 2026-08-31 00:00 PT・`data/api_calls.jsonl` 1,494行）:
+#:
+#:     `history.py:channel_video_ids`  **3,409単位**（窓 10,000 の **34%**）
+#:       内訳: `search.list` 30回 ＝ 3,000単位 ／ `playlistItems.list` 109回
+#:       呼ばれた回数: **10回**（＝ 1回ぶんを残して **約 3,100単位** が重複）
+#:
+#: **`search.list` は 100単位/ページ**です。`channel_video_ids` は
+#: `len(ids) < cap` のあいだ 8ページ めくるので、**1回で最大 808単位** ——
+#: `_scan` 1回（17単位）の **47倍**。守る値打ちは、こちらのほうが大きい。
+#:
+#: ## これが何を止めているか（締切のある話です）
+#:
+#: `scripts/pool_drain.py` は残り 267本 を外すのに **13,617単位** 要り、
+#: 日枠は 10,000 なので「**最低2日ぶんの枠**が要る」と自分で印字します。
+#: **規則1 が最初に破れるのは 2026-09-12。** 1日 3,100単位 を返せば、
+#: その2日が1日に縮む見込みです（`videos.update` 62本ぶん）。
+#:
+#: ## なぜ控えてよいか（`_SCAN_CACHE` と同じ理屈）
+#:
+#: 答えが窓の途中で変わるのは**この機械が投稿したとき**だけで（動画を消す道は
+#: 1本もない ——`docs/FOR_OWNER.md` 済み3）、上げた本はその場で
+#: `data/uploaded.jsonl` に書かれます。**だから「窓の頭の読み ∪ 手元の控え」は、
+#: いま読み直した答えと同じ**です（`_with_ledger_ids`）。
+#:
+#: ## 覆る条件
+#:
+#: - 動画を消す道ができたら、控えは「もう無い本」を返し続けます
+#: - `YT_NO_SCAN_CACHE=1` で**両方の控えが同時に外れます**（1つの栓）
+_VIDEO_IDS_CACHE = "data/scan_video_ids.json"
+_SHARED_VIDEO_IDS_CACHE = "yt-scan-video-ids.json"
+_shared_ids_cache_path: Path | None = None
+
 
 def _git_common_dir() -> Path | None:
     """この作業コピーが相乗りしている `.git`（＝機械にひとつ）を返す。
@@ -333,7 +393,25 @@ def _scan_cache_path() -> Path:
       の側でも作業コピーへ落とします（`upload_cap._write_path` と同じ理屈）
     """
     global _shared_cache_path
-    local = config.ROOT / _SCAN_CACHE
+    local = _cache_local_override(_SCAN_CACHE)
+    if local is not None:
+        return local
+    if _shared_cache_path is None:
+        common = _git_common_dir()
+        _shared_cache_path = ((common / _SHARED_SCAN_CACHE) if common
+                              else config.ROOT / _SCAN_CACHE)
+    return _shared_cache_path
+
+
+def _cache_local_override(local_name: str) -> Path | None:
+    """**機械にひとつの置き場を使えない条件**を1か所に集める。使えるなら `None`。
+
+    条件そのものは `_scan_cache_path` の docstring にあります（差し替えられた
+    `config.ROOT` ／ 検査 ／ `YT_SCAN_CACHE_LOCAL`）。**控えが2つになったので
+    切り出しました** —— 同じ判断を2か所に写すと、片方が黙って古びます
+    （`docs/JOURNAL.md` 2026-08-25 15:5x）。
+    """
+    local = config.ROOT / local_name
     if os.environ.get("YT_SCAN_CACHE_LOCAL"):
         return local
     try:
@@ -343,10 +421,20 @@ def _scan_cache_path() -> Path:
         return local
     if os.environ.get("PYTEST_CURRENT_TEST"):
         return local
-    if _shared_cache_path is None:
+    return None
+
+
+def _video_ids_cache_path() -> Path:
+    """**動画IDの控え**の置き場。`_scan_cache_path` と同じ作法・別のファイル。"""
+    global _shared_ids_cache_path
+    local = _cache_local_override(_VIDEO_IDS_CACHE)
+    if local is not None:
+        return local
+    if _shared_ids_cache_path is None:
         common = _git_common_dir()
-        _shared_cache_path = (common / _SHARED_SCAN_CACHE) if common else local
-    return _shared_cache_path
+        _shared_ids_cache_path = ((common / _SHARED_VIDEO_IDS_CACHE) if common
+                                  else config.ROOT / _VIDEO_IDS_CACHE)
+    return _shared_ids_cache_path
 
 
 def _scan_window() -> str:
@@ -359,9 +447,40 @@ def _scan_window() -> str:
         return ""
 
 
+def _cache_is_off() -> bool:
+    """控えを**読みも書きもしない**条件（2026-09-01 に踏んで足した）。
+
+    ## なぜ `_scan_cache_path` の `PYTEST_CURRENT_TEST` だけでは足りないか
+
+    あちらは**置き場を作業コピーへ落とすだけ**です。落とした先の
+    `config.ROOT/data/scan_topics.json` は、**その作業コピーの本物の控え**
+    —— 同じ repo の本番の読みが、次にそれを使います。
+    `tests/test_scan_cache.py::test_tests_never_touch_the_shared_cache` の
+    docstring は「pytest 1回ごとに本物の控えが偽の集合で塗り替わる」のを
+    防いでいるつもりですが、**防いでいるのは共有の `.git` の側だけ**でした。
+
+    **実測 2026-09-01**: 動画IDの控えを足した直後に `pytest` を流したら、
+    `config.ROOT` を差し替えていない `tests/test_channel_scan_union.py` が
+    `data/scan_video_ids.json` に `["a", "b", "private1"]` を書き、
+    **次の検査がそれを読んで落ちました。** 本番なら、その窓じゅう
+    チャンネルの動画は3本だと答えます。
+
+    **差し替えている検査（`config.ROOT` が tmp）は今までどおり効きます** ——
+    控えそのものを試す検査は、そちらの形だからです。
+    """
+    if os.environ.get("YT_NO_SCAN_CACHE"):
+        return True
+    if not os.environ.get("PYTEST_CURRENT_TEST"):
+        return False
+    try:
+        return Path(config.ROOT).resolve() == _REPO
+    except OSError:                                            # noqa: BLE001
+        return True
+
+
 def _cached_topics() -> set[str] | None:
     """この窓のチャンネルの読み。無ければ None。**API 0単位。**"""
-    if os.environ.get("YT_NO_SCAN_CACHE"):
+    if _cache_is_off():
         return None
     window = _scan_window()
     if not window:
@@ -379,7 +498,7 @@ def _cached_topics() -> set[str] | None:
 def _put_cached_topics(topics: set[str], video_ids: int) -> None:
     """**欠けた回は書かないこと**（呼ぶ側が `partial` を見ています）。"""
     window = _scan_window()
-    if not window or os.environ.get("YT_NO_SCAN_CACHE"):
+    if not window or _cache_is_off():
         return
     body = json.dumps({"window": window, "at": datetime.now(timezone.utc).isoformat(),
                        "videos": video_ids, "topics": sorted(topics)},
@@ -396,6 +515,76 @@ def _put_cached_topics(topics: set[str], video_ids: int) -> None:
         os.replace(tmp, path)
     except OSError as exc:
         print(f"[history] 読みの控えを書けませんでした（続行）: {str(exc)[:80]}")
+
+
+def _cached_video_ids(uploads: str, cap: int) -> list[str] | None:
+    """この窓のチャンネルの動画ID。無ければ `None`。**API 0単位。**
+
+    **窓・uploads プレイリスト・`cap` の3つが一致した控えだけ**を使います
+    （`cap` が違えば切られ方が違うので、別の答えです）。
+    """
+    if _cache_is_off():
+        return None
+    window = _scan_window()
+    if not window:
+        return None
+    try:
+        rec = json.loads(_video_ids_cache_path().read_text(encoding="utf-8"))
+    except Exception:                                          # noqa: BLE001
+        return None
+    if (rec.get("window") != window or rec.get("uploads") != uploads
+            or rec.get("cap") != cap):
+        return None
+    ids = rec.get("ids")
+    if not isinstance(ids, list) or not ids:
+        return None                       # **空の読みは控えとして使わない**
+    return [str(v) for v in ids if v]
+
+
+def _put_cached_video_ids(uploads: str, cap: int, ids: list[str]) -> None:
+    """**欠けた回は書かないこと**（呼ぶ側が口の欠けを見ています）。"""
+    window = _scan_window()
+    if not window or _cache_is_off() or not ids:
+        return
+    body = json.dumps({"window": window, "at": datetime.now(timezone.utc).isoformat(),
+                       "uploads": uploads, "cap": cap, "ids": ids},
+                      ensure_ascii=False)
+    try:
+        # 置き換えは一手で（`_put_cached_topics` と同じ理由。共有の置き場には
+        # 並行して走る作業コピーが同時に書きます）。
+        path = _video_ids_cache_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
+        tmp.write_text(body, encoding="utf-8")
+        os.replace(tmp, path)
+    except OSError as exc:
+        print(f"[history] 動画IDの控えを書けませんでした（続行）: {str(exc)[:80]}")
+
+
+def _with_ledger_ids(found: list[str]) -> list[str]:
+    """控えにしか無い本を**前に**足す。**足し算だけ**（引かない）。
+
+    uploads プレイリストは**新しい順**で、控えに足された本は窓の頭より**後**に
+    上げたものなので、**前に置くのが正しい順**です（`_scan` の `setdefault` が
+    「先に見たほうが新しい」を前提にしています）。
+    """
+    try:
+        from . import dupes
+
+        extra = [r.get("id") for r in dupes.ledger_rows()]
+    except Exception as exc:                                  # noqa: BLE001
+        print(f"[history] 控えを読めませんでした（続行）: {str(exc)[:80]}")
+        return found
+    seen = set(found)
+    new: list[str] = []
+    for vid in reversed(extra):           # 控えは追記なので、末尾ほど新しい
+        if vid and vid not in seen:
+            seen.add(vid)
+            new.append(vid)
+    if new:
+        print(f"[history] 控えから {len(new)}本 を足しました"
+              "（窓の頭より後に上げた本。**引き算はしません**）")
+    return new + found
 
 
 def _with_ledger(found: set[str]) -> set[str]:
