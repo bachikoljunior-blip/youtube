@@ -223,17 +223,49 @@ def in_worktree(root: Path | None = None) -> bool:
     return ".claude/worktrees/" in (str(root or ROOT).replace("\\", "/") + "/")
 
 
-def git_save(message: str) -> tuple[bool, str]:
-    """受け取り帳だけを commit して push する。**ここが要点です。**
+def git_save(message: str, paths: "list[Path] | None" = None) -> tuple[bool, str]:
+    """指定したファイルだけを commit して push する。**ここが要点です。**
 
     **手元のファイルに書いただけでは、コンテナが消えた時点で無くなります。**
-    他の変更を巻き込まないよう、**この1ファイルだけをパス指定で commit** します
+    他の変更を巻き込まないよう、**渡されたパスだけを指定して commit** します
     （`git commit -- <path>` は index ではなく作業ツリーのそのパスを見ます）。
+    `paths` を省くと受け取り帳（`data/inbox.jsonl`）1本です。
 
     失敗しても例外にしません —— **依頼を受け取った直後に道具が落ちるのが
     いちばん高い**ので、**大きく警告して先へ通します。**
+
+    ##### **なぜ受け取り帳の外にも効かせたか**（2026-08-31 22:xx に踏んだ）
+    #
+    # オーナー指摘 e6d3be89「**失敗したならそこだけ直すんじゃなくて応用しないの？**」。
+    #
+    # **実測**: 09/01 22:00 に出る `UIWHsypOPPg` の控え
+    # （`data/critique_queue/UIWHsypOPPg.json` と `.thumb.jpg`）が
+    # **git に1バイトも残っていません。** `scripts/upload_only.py` は
+    # `critique_queue.stash()` を確かに呼んでおり、失敗すれば大きく印字して
+    # 終了コード 1 を返す作りです。**落ちてはいません** —— コンテナの
+    # ディスクに書けたあと、その回の commit（`f7d3171e`）が
+    # `data/api_calls.jsonl` `data/day_quota.jsonl` `data/published_bars.json`
+    # `data/uploaded.jsonl` の**4本しか拾わなかった**だけです。
+    # コンテナが畳まれて、控えは消えました。
+    #
+    # **これは「押し忘れ」ではなく、受け取り帳とまったく同じ穴です** ——
+    # 「書いた」と「残った」の間に、**人の記憶と手写しに依存する門**がある。
+    # `docs/trigger_main.md` §1 が受け取り帳について書いていることが、
+    # そのまま当てはまります: 「**押した後なら、この子が途中で死んでも、
+    # 次の子が拾えます。**」
+    #
+    # **失ったもの**（699本中4本だけですが、当たったのが悪い）:
+    #   - 読み上げ全文 …… 出る前に中身を確かめる唯一の材料（`docs/CRITIQUE.md`）
+    #   - サムネイルの bytes …… `refresh_thumbnail.py --missing` が押す先。
+    #     **控えが無い本は一覧に出ないので、押す手そのものが空振りします**
+    #     （受け取り帳 `e1ea4c96` の (1) が、まさにこれを頼んでいました）
+    #
+    # **覆る条件**: 投稿の口が控えを YouTube 側から引き直せるようになったら、
+    # ここで押す必要はありません（いまは読み上げ文もサムネの原本も手元にしかない）。
+    # 検査は `tests/test_stash_is_pushed.py`。
     """
-    rel = str(LEDGER.relative_to(ROOT))
+    targets = [LEDGER] if paths is None else list(paths)
+    rels = [str(Path(p).resolve().relative_to(ROOT)) for p in targets]
 
     def _git(*argv: str, timeout: int = 60) -> subprocess.CompletedProcess:
         return subprocess.run(["git", "-C", str(ROOT), *argv], check=True,
@@ -337,8 +369,8 @@ def git_save(message: str) -> tuple[bool, str]:
         return sorted(cands, key=lambda n: (_distance(n), n == "main", n))[0]
 
     try:
-        _git("add", rel)
-        _git("commit", "-m", message, "--", rel)
+        _git("add", "--", *rels)
+        _git("commit", "-m", message, "--", *rels)
         branch = _target_branch()
         refspec = ["origin", f"HEAD:{branch}"] if branch else []
         try:
