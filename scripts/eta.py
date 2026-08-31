@@ -1142,6 +1142,20 @@ def _long_ceiling_lines(m: dict) -> list[str]:
         return []
 
 
+def _long_ceiling_gate() -> int | str:
+    """**判定の門（80回）の正本を1か所から読む。** 読めなければ `?` を出す。
+
+    ここに数を書かないのは、`config/hypotheses.yaml` の `falsified_if` と
+    `src/long_ceiling.MEDIAN_GATE` で**もう2か所**あるからです。
+    3か所目を作ると、片方だけ動いたときにこの行が黙って古くなります。
+    """
+    try:
+        from src import long_ceiling
+        return long_ceiling.MEDIAN_GATE
+    except Exception:                                          # noqa: BLE001 — 回を止めない
+        return "?"
+
+
 def _print_dropped(P, m: dict) -> None:
     """**標本から何本落としたか**を、天井の行のすぐ下に出す（2026-08-20 03:1x）。
 
@@ -1760,10 +1774,15 @@ def report(m: dict, a: dict) -> list[str]:
         #     **印字は平均だけ**でした。実測 2026-08-31 は 平均 16回 に対し
         #     **中央値 4回（4倍）**で、**判定（`長尺1本あたり-30本`）が読むのは
         #     中央値のほう**です。読まれる側と判定する側が別の数だった、という形。
+        # **門の数（80回）はここに書きません** —— 正本は `src/long_ceiling.MEDIAN_GATE` で、
+        #     そこが `config/hypotheses.yaml` の `falsified_if` と同じであることは
+        #     `tests/test_long_ceiling.py::test_門の数は仮説と同じ` が見ています。
+        #     **3か所目を作らないこと。**
         _lmed = m.get("long_median_per_video")
         if _lmed is not None:
             P(f"              中央値 **{_lmed:,}回**／本（**判定 `長尺1本あたり-30本` が"
-              f"読むのはこちら。門は 80回**）。平均との差は右に歪んだ分布のぶんです")
+              f"読むのはこちら。門は {_long_ceiling_gate()}回**）。"
+              "平均との差は右に歪んだ分布のぶんです")
             for _ln in _long_ceiling_lines(m):
                 P(f"      {_ln}")
     P(f"  **再生が付く上限 {a['ceiling_per_day']:.0f}本/日**（実測・`src/day_cap.py`）× 30日 に、"
