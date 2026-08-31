@@ -49,7 +49,7 @@ import _eta_pin  # noqa: E402
 # 「直す前の姿」を再現する検査が落ちました（`tests/_eta_pin.py` に全文）。
 @pytest.fixture(autouse=True)
 def _天井は主題ではない(monkeypatch):
-    _eta_pin.pin_ceilings(monkeypatch, eta.PLAN_PUBLISH_PER_DAY)
+    _eta_pin.pin_ceilings(monkeypatch, _eta_pin.PLAN_DENSITY, eta)
 
 
 def _trailing30(views_day_now: float, growth: float, cap: float, days: int) -> float:

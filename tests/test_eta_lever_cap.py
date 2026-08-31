@@ -50,7 +50,7 @@ import _eta_pin  # noqa: E402
 def _天井は主題ではない(monkeypatch):
     """**実測から来る天井は止める。** ここの主題は「天井を読むかどうか」で、
     天井の値そのものではありません（`tests/_eta_pin.py`）。"""
-    _eta_pin.pin_ceilings(monkeypatch, eta.UPLOAD_CAP_PER_DAY)
+    _eta_pin.pin_ceilings(monkeypatch, eta.UPLOAD_CAP_PER_DAY, eta)
 
 
 def _metrics(**kw) -> dict:

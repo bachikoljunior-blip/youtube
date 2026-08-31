@@ -44,7 +44,7 @@ TODAY = date(2026, 8, 20)
 # 天井そのものは `tests/test_eta_surface_cap.py` / `test_eta_day_cap.py` が持ちます。
 @pytest.fixture(autouse=True)
 def _天井は主題ではない(monkeypatch):
-    _eta_pin.pin_ceilings(monkeypatch, eta.PLAN_PUBLISH_PER_DAY)
+    _eta_pin.pin_ceilings(monkeypatch, _eta_pin.PLAN_DENSITY, eta)
 
 
 def _measured(**over):

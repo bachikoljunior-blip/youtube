@@ -62,7 +62,7 @@ import _eta_pin  # noqa: E402  （pytest が tests/ を sys.path に入れます
 # **天井は2つあるので、2つとも止めます**（`tests/_eta_pin.py` に理由と置き場所）。
 @pytest.fixture(autouse=True)
 def _天井は主題ではない(monkeypatch):
-    _eta_pin.pin_ceilings(monkeypatch, eta.UPLOAD_CAP_PER_DAY)
+    _eta_pin.pin_ceilings(monkeypatch, eta.UPLOAD_CAP_PER_DAY, eta)
 
 
 JST = timezone(timedelta(hours=9))
