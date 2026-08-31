@@ -74,9 +74,15 @@ def test_しきいは実測で置いた値のまま() -> None:
 
 
 def test_連が上限に達したら_fixは通らない(tmp_path: Path, monkeypatch) -> None:
-    """**この検査が本体です。** 註ではなく `ap.error` が生きているかを見ます。"""
+    """**この検査が本体です。** 註ではなく `ap.error` が生きているかを見ます。
+
+    **枠は「開いている」に固定します**（2026-09-01）。実物の
+    `data/api_calls.jsonl` を読ませると、**枠が尽きている窓で走らせた回だけ
+    この検査が赤くなります** —— 見ているのは門であって、その日の枠ではありません。
+    """
     p = _write(tmp_path, ["fix"] * rm.FIX_RUN_CAP)
     monkeypatch.setattr(rm, "MARKS", p)
+    monkeypatch.setattr(rm, "quota_is_out", lambda: (False, ""))
     with pytest.raises(SystemExit) as e:
         rm.main(["--ship", "fix: 通ってはいけない", "--kind", "fix",
                  "--lever", "none", "--moves", "0", "--no-reflect"])
@@ -115,3 +121,71 @@ def test_代わりの手を名指ししている() -> None:
     alt = rm.near_deadlines()
     assert alt, "`config/hypotheses.yaml` から期限の近い前提が引けていない"
     assert all("[" in a for a in alt), "腕（lever）が出ていない"
+
+
+def test_名指しに_閉じた前提を混ぜない() -> None:
+    """**閉じた前提を「代わりの手」に出さないこと**（2026-09-01 に踏んだ）。
+
+    実測: この関数は `verdict` / `closed` / `result` を見ていましたが、
+    この台帳の印は **`closed_on:`** です。開いている前提は 25件 と出て、
+    実物は 23件（`eta.py` / `deadline_check.py` と同じ数）。
+    期限の近い順なので、**こぼれた2件がそのまま先頭**に来ていました ——
+    門が名指しした3つのうち2つが、8日前・9日前に閉じた前提です。
+
+    **正本は `src/judgeable.deadlines()` と同じ鍵**（`closed_on`）。
+    """
+    import yaml
+
+    doc = yaml.safe_load((ROOT / "config" / "hypotheses.yaml").read_text(encoding="utf-8"))
+    closed = {str(h.get("claim"))[:52] for h in doc["hypotheses"] if h.get("closed_on")}
+    named = rm.near_deadlines(limit=8)
+    assert named, "期限の近い前提が1件も引けていない"
+    for line in named:
+        claim = line.split("] ", 1)[-1]
+        assert claim not in closed, f"閉じた前提を名指ししています: {line}"
+
+
+def test_枠が尽きている窓では_連の門は止めない(tmp_path: Path, monkeypatch) -> None:
+    """**逃げ場のない門にしないこと**（2026-09-01 に踏んだ）。
+
+    門が名指しする4つは、どれも枠を要ります（`upload` 1,600単位／
+    `improve` 50単位／`means` はたいてい枠／`verdict` は期日の来た前提）。
+    **枠が尽きた窓で止めると、その回は何も出せません** ——
+    `docs/trigger_main.md` §4 が「枠が尽きた回に残るのは事実上 `fix` だけ」と
+    実測つきで書いています（2026-09-01 00:1x の回: 5つのうち4つが最初から選べず、
+    ship は5件とも `fix`）。
+
+    **判定は観測した 403 です**（`upload_cap.day_quota().open`）——
+    こちらの見積りでは緩められません。
+    """
+    p = _write(tmp_path, ["fix"] * 20)
+    monkeypatch.setattr(rm, "MARKS", p)
+    monkeypatch.setattr(rm, "quota_is_out", lambda: (True, "**尽きています**（テスト）"))
+    calls: list = []
+    monkeypatch.setattr(rm, "ship", lambda *a, **k: calls.append((a, k)) or 0)
+    rm.main(["--ship", "fix: 枠が尽きた窓なので通る", "--kind", "fix",
+             "--lever", "none", "--moves", "0", "--no-reflect"])
+    assert calls, "枠が尽きている窓では、連の門は止めてはいけない"
+    # **通したことが残ること。** 残らないと、次の回は `fix_gate` の行数を
+    # 「門が効いた回数」と読みます。
+    tail = [json.loads(x) for x in p.read_text(encoding="utf-8").splitlines() if x.strip()]
+    gates = [r for r in tail if r.get("kind") == "fix_gate"]
+    assert gates and gates[-1].get("waived") is True, (
+        "枠のせいで通した回に `waived` が立っていない"
+    )
+
+
+def test_枠が読めない回は_門は今までどおり止める(monkeypatch) -> None:
+    """**読めないことを「尽きている」と読まないこと**（`upload_cap.day_quota()` と同じ姿勢）。
+
+    ここが逆向きだと、**帳面が壊れた回は毎回この門を素通り**します。
+    """
+    from src import upload_cap
+
+    def boom(*a, **k):
+        raise RuntimeError("帳面が読めない（テスト）")
+
+    monkeypatch.setattr(upload_cap, "day_quota", boom)
+    out, line = rm.quota_is_out()
+    assert out is False, "読めない回を『尽きている』と読んではいけない"
+    assert "読めません" in line
