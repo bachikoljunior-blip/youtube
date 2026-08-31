@@ -4482,16 +4482,35 @@ def plan(m: dict, a: dict, density: int = PLAN_PUBLISH_PER_DAY,
     #     （実測 1.71本/日 のとき 46回/本 → **107回/本**）。
     #     そしてこの数は、下の `blocking` が「**この段取りを止めている、
     #     まだ測っていない入力**」と名指ししている当のものです。
+    # **2026-08-31: L の天井に、オーナーの規則が乗りました。**
+    #     規則1 は「公開は1日に1本」。**長尺はその1本の内側**なので、
+    #     長尺が1日に出る本数は `house_rule.PUBLISH_PER_DAY` を超えられません。
+    #     `long_supply_per_day()` が測っているのは **作る**速さ（実測 23.4本/日）で、
+    #     **出す**本数ではありません —— 段2 の合格点は「1日L本 **公開する**」で
+    #     割っているので、作る側の数で割ると **そのぶん甘く**出ます。
+    #     この関数の docstring が自分でそう書いています ——
+    #     「**決めた本数を出していないあいだ、その本数で割った合格点は
+    #       予測ではなく願望**」。**いま本数は決まっていて、1本/日 です。**
+    #     実測 2026-08-31: L=4 なら合格点 47回/本、L=1 なら **188回/本**（**4倍**）。
+    #     甘い側で出すと、`blocking` が「これを測れ」と名指しする的が4倍ずれます。
+    #     **出どころは `src.house_rule` の1か所**（`PLAN_PUBLISH_PER_DAY` と同じ）。
+    #     **覆る条件**: オーナーが規則を外したら、この項は自動で効かなくなります。
     long_sup = long_supply_per_day(today=today or today_jst())
-    plan_long = max(LONG_PER_DAY_SCENARIOS)
+    plan_long = min(max(LONG_PER_DAY_SCENARIOS), float(house_rule.PUBLISH_PER_DAY))
     per_day_long = (min(float(plan_long), long_sup["rate"])
                     if long_sup["measured"] else float(plan_long))
     # **0本/日 を通さない。** 窓に1本も作れていない回に合格点を無限大にすると、
     #     画面には「届きません」だけが残り、**何を固定してそうなったかが消えます**
     #     （`CLAUDE.md`「裸の『届きません』を出さないこと」）。
     #     いちばん低い筋書き（1本/日）を床にして、**足りない事実は文言で言います。**
-    long_dry = per_day_long < min(LONG_PER_DAY_SCENARIOS)
-    per_day_long = max(per_day_long, float(min(LONG_PER_DAY_SCENARIOS)))
+    # **床は「規則」と「いちばん低い筋書き」の低いほう**（2026-08-31）。
+    #     床をここで 1本/日 に持ち上げるのは「0本/日 で無限大にしない」ためですが、
+    #     規則が 1本/日 より下がった日に床が規則を上書きすると、
+    #     **規則の外の本数で合格点が出ます。**
+    long_floor = min(float(min(LONG_PER_DAY_SCENARIOS)),
+                     float(house_rule.PUBLISH_PER_DAY))
+    long_dry = per_day_long < long_floor
+    per_day_long = max(per_day_long, long_floor)
     best = min(rows, key=lambda r: -r["min_per_view"])
     gate2_bar = _gate2_bar(a, best, per_day_long, g1["days"])
 

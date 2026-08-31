@@ -47,6 +47,23 @@ _spec = importlib.util.spec_from_file_location("eta_long_supply_mod",
 eta = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(eta)
 
+import _eta_pin  # noqa: E402
+
+
+# --- **オーナーの規則（1日1本）は、この file の主題ではありません**（2026-08-31）---
+#
+# この file が測っているのは「段2 の L が**実測の供給**で立っているか（決め打ちに
+# 戻っていないか）」という**形**です。2026-08-31 から L には規則の天井が乗り、
+# `min(計画4本, 実測, **規則1本**)` になりました。**それは正しい振る舞いです** ——
+# 長尺は「1日1本」の内側なので、出す本数は規則を超えられません。
+# ただし規則を当てたままだと L はどの筋書きでも 1.0 に潰れ、**「供給で動くか」
+# そのものが観測できなくなります。** `_eta_pin` の day_cap / rpm_mix / subs_cap と
+# 同じ扱いにします。
+# **規則が L を頭打ちにすることは `tests/test_eta_house_rule.py` が持ちます。**
+@pytest.fixture(autouse=True)
+def _no_house_rule_ceiling(monkeypatch):
+    _eta_pin.pin_house_rule(monkeypatch, eta, _eta_pin.PLAN_DENSITY)
+
 TODAY = date(2026, 8, 24)
 
 
