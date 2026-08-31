@@ -89663,34 +89663,72 @@ M4 の長尺ぶんから丸ごと落ちる本**です。
    （`deixis_count` は「検査は足していません」、`token_probe` は外の repo 依存）。
    **一覧が3本とも同じ顔で並んでいるのが、迷いの出どころです。**
 
-#### 全体 pytest の赤（**この回のものではありません。取らずに置きます**）
+#### 全体 pytest の赤 —— **9件。前の段落で「4件」と書いたのは誤りでした**
 
-**全体を流したら 4件 赤でした。`git show --stat` で確かめたところ、
-この回が触ったのは `scripts/search_terms.py` ／ `scripts/run_marker.py` ／
-その検査 ／ `docs/` ／ `data/` だけ**で、**4件ともそのどれも import していません**
-（`grep -l "search_terms\|run_marker"` が4つとも空）。
+**訂正します。** 上の段落は、全体実行が**まだ 58% までしか進んでいない時点**の
+画面を見て「4件」と書きました。**流し終えたら 11件**で、うち2件
+（`test_lever_hint_measured` ／ `test_reach_dry_fill`）は**撃ち直すと通ります** ——
+20分の実行のあいだに、こちらも別の回も木を書き換えていたためです。
+**残るのは 9件。**
 
-    tests/test_judgeable.py::test_実物で期限が構造的に守れる[opening_motion]
-        **この回より前から赤**（前の回の申し送りにそう書いてあります）。対照(動きなし) あと2本
-    tests/test_long_surface_ceiling_named.py::test_族の数と天井が同じ行に並ぶ
-        「要る 46.3本/日 が測った天井 6本/日 を超えているのに、`day_cap.long_form()` の
-        上限が同じ行に出ていない」。**中身は `scripts/eta.py` の印字**で、
-        **いま optimizer がそこを続けて直しています**（`6cfbc7c7` 17:55 ／ `45141b58` 18:14 ／
-        `7e639031`）。**こちらは取りません** —— 同じ所を2人で直した 08-31 の
-        `src/descriptions.py`（`d2c4cae2` と `a89ab889`・6分差）と同じ形になります
-    tests/test_live_slots.py::test_全部逃がす手は生きている本を増やす
-    tests/test_measure_window.py::test_実物の窓は前提の期限を写している
-        **どちらも実物の状態（予約の並び・`config/hypotheses.yaml` の期限）を読む検査**です。
-        `hypotheses.yaml` はこの回のあいだに別の回が2度 書き換えています
-        （`889d1f85` の verdict ／ `af5c26e6` の claim「主語と反証条件…を直す」）。
-        **先にその回のぶんが落ち着いてから見ること** —— いま直すと、
-        向こうが同じ台帳を書いている最中に当てることになります
+**「途中の画面で数を書かない」は、この文書が何度も踏んでいる形です**
+（`docs/trigger_main.md` の「行番号を貼るな」と同じ ——
+**書いた瞬間に古く、しかも外れていてももっともらしく見える**）。
+**全体実行の数は、`EXIT=` が出てから書くこと。**
 
-**次の回へ**: 上の3件（judgeable を除く）は、**触っている回が居なくなってから**
-`python -m pytest tests/test_long_surface_ceiling_named.py tests/test_live_slots.py
-tests/test_measure_window.py -q` を撃ち直すこと。**まだ赤なら、そこで取ること。**
-**「前からある赤」として黙って持ち越さないこと** —— この4件は、
-**この回に初めて一覧として書き出されました**（それまでは1件だけが申し送られていました）。
+**この回のものではありません**（確かめ方も書いておきます）:
+`git show --stat` で、この回の commit が触ったのは
+`scripts/search_terms.py` ／ `scripts/run_marker.py` ／ その検査 ／ `docs/` ／ `data/` だけ。
+**9件ともそのどれも import していません**（`grep -l` が9つとも空）。
+
+##### **そのうち1件は「壊れた」ではなく「合図」です —— いちばん先に読むこと**
+
+    tests/test_ab_split.py::test_実物で処置群は門に足りていない
+      「処置群の**判定に使える本**が 20本 ＝ 門 16 に達しました。
+       **判定に入ってよい合図です** —— hypotheses.yaml の 09/05 を判定し、この検査を消すこと」
+
+**これは、わざと仕掛けてある逆向きの検査です**（門に**達したら**落ちる）。
+そして**偽の合図ではありません** —— 2026-08-25 に、
+「作っただけの本」を門に当てて偽の合図を出した欠陥が直っており、
+いまの `ready` は **公開ずみ かつ `SETTLE_DAYS` 日 落ち着いた本だけ**を数えています。
+
+**ここが重要です。** `eta.py` はこの回、
+「**この回に閉じられる前提はありません**（いちばん早い期日は 2026-09-02）」と印字しました。
+**その裏で、09/05 の前提は判定できる状態になっていました。**
+`eta.py` 自身が毎周
+「**軌跡の腕が動くのは前提を1件 閉じたときだけ**」と言っている、その1件です。
+
+**次の回へ（最優先）**: `python -m pytest tests/test_ab_split.py -q` を撃ち、
+この行が出たら **`config/hypotheses.yaml` の 09/05 を判定すること**（`verdict`）。
+**閉じたら、この検査は消すこと**（メッセージがそう指示しています）。
+**`--moves` は `effect` から立てること** —— これは `fix` ではなく `verdict` なので、
+この回のように 0日 ではありません。
+
+**覆る条件 ＝ 次の1手**: `eta.py` の「閉じられる前提はありません」が、
+**この逆向きの検査を見ていません。** `deadline_check.py` は `needs:` を読みますが、
+`test_ab_split` の門は**検査の側**にあり、台帳から見えていません。
+**同じ数が2か所にあって、片方しか読まれていない形**です
+（この回に直した `search_terms` と同じ形 —— 道具は在り、答えを出し、読む側が居ない）。
+
+##### 残りの8件（**どれも実物の状態か、いま別の回が触っている所**）
+
+    tests/test_judgeable.py::…[opening_motion]        **この回より前から赤**（前の回の申し送りどおり）
+    tests/test_watches.py::…                          `src/density_engaged_verdict.py` が「判定できません」と
+                                                      印字するのに待ちの台帳に無い。**あの file は 18:15 に
+                                                      別の回が足したもの**で、`config/watches.yaml` には
+                                                      03:05 に別の回の `--claim` が立っています。**取らないこと**
+    tests/test_long_surface_ceiling_named.py::…       中身は `scripts/eta.py` の印字。optimizer が
+                                                      `6cfbc7c7` / `45141b58` / `7e639031` と続けて直している最中
+    tests/test_measure_window.py::…                   `config/hypotheses.yaml` の期限を読む。同上の claim あり
+    tests/test_live_slots.py::…                       予約の並び（実物）
+    tests/test_request_form.py::…                     群の数え方（実物）
+    tests/test_request_form_excludes_long_form.py::…  同上
+    tests/test_reschedule_compact.py::…               詰め方（実物）
+
+**取らずに置いた理由は1つです** —— `hypotheses.yaml` ／ `watches.yaml` ／ `eta.py` は
+**この回のあいだ、別の回が現に書いていました。** 同じ所を2人で直した 08-31 の
+`src/descriptions.py`（`d2c4cae2` と `a89ab889`・**6分差**）と同じ形になります。
+**触っている回が居なくなってから、上の一覧をそのまま撃ち直すこと。**
 ## 2026-08-31 18:5x  (session_01AHfq4FUVAd5fxDM29yG1Cm・最適化の回)
 
 ### オーナーの問い「最適化されてんの？」への答え: **部分的に。ただし「いちばん近い帯」は、この回まで作り話でした。**
