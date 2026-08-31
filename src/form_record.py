@@ -131,8 +131,28 @@ def per_video_best(views_path: Path | None = None,
             "n": n,
             "mean": sum(vals) / n,
             "median": (vals[n // 2] if n % 2 else (vals[n // 2 - 1] + vals[n // 2]) / 2),
+            # **その記録は伸びきった本のものか**（2026-08-31・最適化の回に足した）。
+            #     偽 ＝ **記録は下限**で、`gaps()` の `ratio` は隔たりの**上限**です。
+            #     出どころは `src.settle.mature_hours_supported`（実測・API 0単位）。
+            #     実測 2026-08-31: ショート **真**（地平 480h でも 48h で 100%）／
+            #     長尺 **偽**（地平を 336h へ延ばすと、240h で伸びきった本は 0本）。
+            "settled": _settled(form),
         }
     return out
+
+
+def _settled(form: str) -> bool:
+    """`src.settle` に訊く。**訊けなければ「伸びきっていない」側に倒す。**
+
+    倒す向きを偽にしているのは、**偽は「記録は下限」という弱い主張**で、
+    真は「この記録が上限」という強い主張だからです。
+    道具が落ちたときに強いほうへ倒れると、**黙って「届きません」が固まります。**
+    """
+    try:
+        from . import settle as _settle
+        return bool(_settle.mature_hours_supported(form))
+    except Exception:                                          # noqa: BLE001
+        return False
 
 
 def unknown_form(views_path: Path | None = None,
@@ -197,6 +217,9 @@ def gaps(rpm_scenarios: dict[str, float], per_video_needed: dict[str, float],
         out.append({"band": band, "form": form, "rpm": rpm,
                     "record": rec["best"], "record_id": rec["id"], "n": rec["n"],
                     "need": need, "ratio": need / rec["best"],
+                    # **記録が伸びきっていない形では、`ratio` は隔たりの上限です**
+                    #     （分母が下限なので、比は必ず上振れします）。
+                    "settled": bool(rec.get("settled", False)),
                     "yen": yen, "share": (yen / target_yen) if target_yen else 0.0})
     out.sort(key=lambda r: r["ratio"])
     return out
