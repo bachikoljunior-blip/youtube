@@ -67,8 +67,30 @@ from src import arm_speed, day_cap, form_record, house_rule, levers, motion_grou
 LOG = ROOT / "data" / "eta.jsonl"
 
 
-def _ledger_reach(need_ratio: float) -> list[str]:
+def _ledger_reach(need_ratio: float, *, basis: str = "平均",
+                  band: str | None = None) -> list[str]:
     """**要る倍率のとなりに、この台帳が実際に出した倍率を置く。**
+
+    ## **どの分母で割った倍率を渡すか**（2026-08-31・最適化の回の後半に足した）
+
+    ここは長らく `per_video_ratio`（**平均**で割った倍率）だけを渡されていました。
+    同じ回に `src/form_record.py` が入って、**記録**（この機械が実際に1本で取った数）
+    で割った倍率が、すぐ上の表に並ぶようになりました。実測 2026-08-31::
+
+        平均で割る   いちばん近い帯 ショート 高    **x196.3**  → 足りない **x106.1**
+        記録で割る   いちばん近い帯 長尺 お金 高   **x21.4**   → 足りない  **x11.6**
+
+    **この2行は、出力の中で 13行 しか離れていません。** 片方だけを渡すと、
+    **すぐ上の表と、この行が、別の「いちばん近い帯」を名指しします** ——
+    この repo でいちばん多い壊れ方（「同じ量を2か所が別々に言っている」）そのものです。
+
+    だから**呼ぶ側が小さいほう（＝いちばん甘い側）を渡し**、
+    `basis` と `band` でどちらで割ったかを**同じ行に書きます。**
+    甘い側を渡すのは、**「その甘い側でも足りない」が結論だから**です ——
+    厳しい側で書くと「分母を変えれば届くのでは」が読む側に残ります。
+
+    **覆る条件**: 記録と平均のどちらかが消えたら（`form_record` が返さない回）、
+    呼ぶ側は平均に落ちます。そのとき `basis` は "平均" のままです。
 
     ## なぜ要るか（2026-08-26・最適化の回）
 
@@ -141,11 +163,17 @@ def _ledger_reach(need_ratio: float) -> list[str]:
         f"（閉じた {len(eff)}件。うち **{flat}件** はちょうど ×1.00 ＝ 何も動かず）**",
     ]
     if best < need_ratio:
+        _who = (f"いちばん近い帯（`{band}`・**{basis}**で割った倍率）"
+                if band else f"いちばん近い帯（**{basis}**で割った倍率）")
         out.append(
-            f"      [!] **いちばん近い帯は ×{need_ratio:,.1f} 要ります。"
+            f"      [!] **{_who}は ×{need_ratio:,.1f} 要ります。"
             f"この腕のいちばん良い一手（×{best:,.2f}）を当てても、まだ"
             f"**{need_ratio / best:,.1f}倍** 足りません** ——"
-            "**開いている `per_video` の前提を全部 閉じても、この帯には届きません。**")
+            "**開いている `per_video` の前提を全部 閉じても、この帯には届きません。**"
+            + ("　（**いちばん甘い側で書いています** —— "
+               "記録は平均より小さい倍率を出すので、"
+               "**その記録の日を毎日 続けても足りない**、が上の数の意味です）"
+               if basis == "記録" else ""))
         out.append(
             "      題の形・冒頭の絵・stat の置き方は **効き幅が ±2倍 の道具**で、"
             "**穴は桁がちがいます。** 届かせるには"
@@ -2019,7 +2047,14 @@ def report(m: dict, a: dict) -> list[str]:
             P(f"        （形が実測で分かっていない本 {_unknown}本 は、どの形にも足していません"
               "。`data/video_forms.json` は公開済みだけを持ちます）")
 
-    for line in _ledger_reach(nr):
+    # **すぐ上の表と、同じ「いちばん近い帯」を名指しすること**（2026-08-31）。
+    #     `nr` は平均で割った倍率（x196.3）、`_gaps[0]` は記録で割った倍率（x21.4）。
+    #     **13行しか離れていない2つが、別の帯を指していました。**
+    #     小さいほう（＝いちばん甘い側）を渡します —— 甘い側でも足りないのが結論なので。
+    _lr_ratio, _lr_basis, _lr_band = nr, "平均", nearest
+    if _gaps and _gaps[0]["ratio"] < _lr_ratio:
+        _lr_ratio, _lr_basis, _lr_band = _gaps[0]["ratio"], "記録", _gaps[0]["band"]
+    for line in _ledger_reach(_lr_ratio, basis=_lr_basis, band=_lr_band):
         P(line)
     P("")
     reachable = [k for k in RPM_SCENARIOS if a["ceiling"][k] >= TARGET_YEN]
