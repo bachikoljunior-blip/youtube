@@ -145,10 +145,39 @@ def test_押せなかったときは_偽を返す():
     assert "return True," in src
 
 
-def test_受け取り帳の1ファイルだけを積む():
-    """他の変更を巻き込まないこと（受け取りは作業の最中に来ます）。"""
+def test_渡されたファイルだけを積む():
+    """他の変更を巻き込まないこと（受け取りは作業の最中に来ます）。
+
+    ##### **2026-08-31: `rel` 1本 → `*rels` に広げました**
+    #
+    # `git_save` は `paths` を受け取れるようになり、**受け取り帳の外**にも
+    # 効きます（`critique_queue.stash()` が控えを push するのに使う。
+    # オーナー指摘 `e6d3be89`「失敗したならそこだけ直すんじゃなくて
+    # 応用しないの？」）。**守っているものは同じ**です ——
+    # `git add -A` ではなく、**渡されたパスだけを指定して commit する**。
+    #
+    # この検査は長らく `'_git("commit", ..., "--", rel)'` という
+    # **字面そのもの**を見ていました。字面を見る検査は、
+    # **意味が同じまま書き方が変わっただけで赤くなります**
+    # （実際にここで赤くなりました）。**見るのは意味のほうです。**
+    """
     src = SRC.read_text(encoding="utf-8")
-    assert '_git("commit", "-m", message, "--", rel)' in src, (
+    assert '"commit", "-m", message, "--", *rels' in src, (
         "パス指定の commit をやめています。**作業中の変更を巻き込みます。**"
     )
+    # **`git add -A` / `git commit -a` を使わないこと**（これが本体）。
+    assert '_git("add", "-A")' not in src
+    assert '"commit", "-am"' not in src
+    assert '"-a"' not in src, "全部を巻き込む commit になっています"
     assert inbox.LEDGER.name == "inbox.jsonl"
+
+
+def test_paths_を省くと受け取り帳1本():
+    """**既定を変えないこと。** `inbox.py` は引数なしで呼びます。"""
+    import inspect
+    sig = inspect.signature(inbox.git_save)
+    assert sig.parameters["paths"].default is None
+    src = SRC.read_text(encoding="utf-8")
+    assert "targets = [LEDGER] if paths is None else list(paths)" in src, (
+        "paths を省いたときの既定が受け取り帳でなくなっています"
+    )
