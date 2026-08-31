@@ -652,6 +652,37 @@ def arm_state(eta_row: dict | None) -> dict:
             "open_why": ({"density": density_open_why} if density_open_why else {}),
             # **規則で死んだ腕から、引ける腕への付け替え**（2026-08-31）。
             "redirect_why": redirect_why,
+            # --- **無限大にしても 0日 の腕**（2026-08-31・最適化の回）---
+            #     `caps` / `reaches` は「**天井まで**引いたら」しか見ていないので、
+            #     「天井が足りないだけの腕」と「**無限大でも 0日** の腕」が
+            #     `reaches=False` の同じ字に潰れます。**別の話です** ——
+            #     前者は天井を壊せば引けますが、後者は**何をしても引けません。**
+            #     `scripts/eta.py` の `lever_days()` が `LEVER_INF_SCALE`（×10^9）
+            #     で1回 撃って分けるようにしたので、それを読みます。
+            #
+            #     実測 2026-08-31（`points` 付き ＝ 本番と同じ道）::
+            #
+            #         per_video  天井 ×2.01  → ×17.69 で出る（**天井 ×8.81 上げ**）
+            #         sub_rate   天井 ×6.64  → **×7.1e+09 でも出ない**
+            #         rpm        天井 ×28.05 → **×3.0e+10 でも出ない**
+            #         density    天井 ×1.00  → **×2.1e+09 でも出ない**
+            #
+            #     そのあいだ画面は **`rpm` を「この回に引く腕」として直近 50 ship
+            #     連続で名指し**し、選んだ **24回の全部**が到達日を1日も
+            #     動かしていません（`data/runs.jsonl`）。オーナー規則2
+            #     （ゼロなら律速ではない）に反する名指しが、数えられないまま
+            #     50回 通っていた、ということです。
+            #
+            #     **覆る条件**: `arm_dead_at_inf` を積まない版の `eta.py` に
+            #     戻ったら、ここは空になります —— **「死んだ腕は無い」ではなく
+            #     「読めない」**なので、呼ぶ側はそう扱うこと（`caps` と同じ）。
+            "dead_at_inf": tuple(row.get("arm_dead_at_inf") or ()),
+            "need_over_cap": {
+                k: v for k, v in (row.get("arm_need_over_cap") or {}).items()
+                if isinstance(v, (int, float))},
+            "hint_measured": (False if row.get("lever_hint_measured") is False
+                              else None),
+            "all_dead": bool(row.get("lever_all_dead")),
             "dead": dead, "dead_why": dead_why}
 
 
@@ -671,6 +702,27 @@ def lever_notes(lever: str | None, state: dict) -> list[str]:
     if not lever or lever == "none":
         return []
     out: list[str] = []
+    # --- **無限大にしても 0日 の腕は、天井の話をする前に止める**（2026-08-31）---
+    #     下の全部（天井 ×1.00・面が割れている・名指しとの一致）は「**天井を
+    #     壊せば引ける**」を前提にしています。`dead_at_inf` の腕はそうではない
+    #     ので、その前提から先に断ちます。**理由は `arm_state` の注記に実測。**
+    #     ここが黙ると、次の回は「天井を上げる前提を1件 立てよう」に向かい、
+    #     **無限大でも 0日 の腕について、閉じても日付が動かない前提**を積みます。
+    if lever in (state.get("dead_at_inf") or ()):
+        out.append(f"         [!] **`{lever}` は、無限大にしても到達日が"
+                   "1日も動きません。** 天井の話ではありません ——"
+                   " `×10^9` まで引いても `days_to_target` は出ませんでした"
+                   "（`eta.py` の `LEVER_INF_SCALE`）。")
+        out.append("             **オーナー規則2: 答えがゼロなら、そこは律速では"
+                   "ありません。** この腕で前提を立てても、閉じた日に"
+                   "到達日は動きません。")
+        _live = {k: v for k, v in (state.get("need_over_cap") or {}).items()
+                 if k not in (state.get("dead_at_inf") or ())}
+        if _live:
+            _k = min(_live, key=lambda k: _live[k])
+            out.append(f"             → 引けるのは **`{_k}`**（天井を"
+                       f" **×{_live[_k]:.2f}** 上げれば日付が出ます）。")
+        return out
     cap = state.get("caps", {}).get(lever)
     redirect = (state.get("redirect_why") or {}).get(lever)
     # --- **規則で死んだ腕は、「天井」と同じ字で叱らないこと**（2026-08-31）---
