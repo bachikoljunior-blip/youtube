@@ -2681,6 +2681,12 @@ def report(m: dict, a: dict) -> list[str]:
             P("")
             for _ln in _rule_pv.lines(_e):
                 P(_ln)
+            # **天井の側も同じ密度で読む**（2026-09-01・最適化の回）。
+            #   分子だけ規則の密度に揃えて、天井（`config/hypotheses.yaml` の
+            #   `per_video` の 1,891）は**全密度の最大**のままでした ——
+            #   ×2.01 の分子と分母が別の母集団です。`ceiling_at_rule()` の註に実測。
+            for _ln in _rule_pv.ceiling_lines():
+                P(_ln)
             if not _e.get("significant"):
                 P("    → **区間が 0 をまたぐので、分子は動かしていません**"
                   "（`views_per_video_live` のままです）")
