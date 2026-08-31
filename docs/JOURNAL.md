@@ -91133,3 +91133,36 @@ merge で相手の作業を残すこと・捨てないこと）。だから**閉
 勝手に上がって見えます**（「良くなった」に見えて、実際は窓が狭まっただけ）。
 **次に同じ数を出す回は、まず `data/runs.jsonl` の最古の行の日付を見ること。**
 それが 08-31 より後なら、その数は使えません。
+
+### 検査の実測（**この回に触った範囲を、全部 撃ちました**）
+
+    python -m pytest tests/ -k "marker or slot or window or house_rule or reschedule
+                               or critique or thumbnail or quota or floor or motion"
+    → **707 passed / 6 skipped / 3 failed**（65秒）
+
+**赤3件は、どれもこの回の変更のせいではありません。確かめてあります** ——
+`src/measure_window.py` を変更前の版に**入れ替えて同じ3件を撃ち、同じように赤**でした
+（`scripts/live_slots.py` は `measure_window.inside()` を見ているので、
+**「たぶん無関係」で済ませずに実際に戻して撃っています**）。
+
+    tests/test_judgeable.py::test_実物で期限が構造的に守れる[opening_motion]
+      → 「対照(動きなし) あと 2本」。**この回の頭で `queue_lag` と
+        `batch_build.motion_shortfall()` が出していた数そのもの**（変更前から赤）
+
+    tests/test_live_slots.py::test_全部逃がす手は生きている本を増やす
+      → 生きている本 317 → 317（+0本・86手・4,300単位）。
+        **規則1（1日1本）の下で、逃がす先の余りが無くなっている**
+
+    tests/test_reschedule_compact.py::test_穴の空かない詰め方を道具の側が名指しする
+      → 12本 を詰めると `hole_days()` が 4日 返す（期待は空）。
+        **`_clamp_per_day()` が `PUBLISH_PER_DAY = 1` を読むので 12日に散る**
+
+**下の2件は同じ family です** —— どちらも「1日に何本も置けた頃」の期待値が
+規則1 の下で成り立たなくなったもの。`ac22ec1d`（08/31 15:37）が同じ family の
+2件を直しており、**これで4件目・5件目**です。
+
+**次に来た側へ**: 直す前に「その道具は規則1 の下で、まだ意味があるか」を先に決めること
+—— `--compact` も `live_slots` も「余った枠へ詰め替える」道具で、
+**1日1本なら詰め替える先がありません。検査ごと落とすのが正しい可能性があります。**
+（`hole_days()` 自体は「13日間 1本も公開されない」を捕まえるために作られたもので、
+そちらは規則1 の下でも要ります。）
