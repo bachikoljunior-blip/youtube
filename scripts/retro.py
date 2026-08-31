@@ -59,6 +59,7 @@ import json
 import re
 import sys
 from collections import Counter, defaultdict
+from functools import lru_cache
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -736,8 +737,42 @@ PROC_DOCS = ("docs/trigger_main.md", "docs/trigger_parent.md",
 #: **(c)「わざと寝かせてある」の目印**。道具自身の docstring から拾います。
 #: 語を増やすときは、**その道具の docstring に実際に在る字**にすること
 #: （こちらで言い回しを想像して足すと、当たらないまま増えます）。
+#: **撃つ側の形**（`unwired_tools()`）。**名前が出てくるだけ、は数えません** ——
+#: 素の言及で数えていた頃は、一覧に載せた瞬間に載せた道具が消えました（2回 踏んだ。
+#: `unwired_tools()` の docstring に実測）。
+_CALL_RE = re.compile(
+    r"scripts/([A-Za-z_][A-Za-z0-9_]*)\.py"                             # 道で撃つ
+    r"|(?:^|\n)[ \t]*import[ \t]+([A-Za-z_][A-Za-z0-9_]*)"               # import
+    r"|(?:^|\n)[ \t]*from[ \t]+([A-Za-z_][A-Za-z0-9_]*)[ \t]+import"    # from ... import
+    r"|\bsrc\.([A-Za-z_][A-Za-z0-9_]*)\b"                                # src.<名前>
+    r"|-m[ \t]+scripts\.([A-Za-z_][A-Za-z0-9_]*)\b")                     # -m scripts.<名前>
+
 DORMANT_MARKS = ("だから検査は足していません", "わざと", "配線しないのが正しい",
                  "外の repo", "寝かせ")
+
+
+@lru_cache(maxsize=1)
+def _corpus() -> tuple[tuple[Path, ...], dict[Path, str], str]:
+    """`unwired_tools()` が読む一式。**1回の走りで1度だけ読みます。**
+
+    **憶えているのは速さのためです**（`.py` を 500本 前後 読みます。
+    実測 2026-09-01: 憶える前は検査4件で **44秒**、後は **12秒**）。
+    `retro.py` も検査も一発ものなので、走っている間に中身が変わることはありません。
+    **長く生きる処理から呼ぶなら、`_corpus.cache_clear()` を先に撃つこと。**
+    """
+    tools = tuple(sorted(p for p in (ROOT / "scripts").glob("*.py")
+                         if p.name != "__init__.py"))
+    code: dict[Path, str] = {}
+    for d in ("scripts", "src", "tests"):
+        for p in (ROOT / d).rglob("*.py"):
+            if "__pycache__" not in p.parts:
+                code[p] = p.read_text(encoding="utf-8", errors="replace")
+    proc = ""
+    for rel in PROC_DOCS:
+        f = ROOT / rel
+        if f.exists():
+            proc += f.read_text(encoding="utf-8", errors="replace")
+    return tools, code, proc
 
 
 def unwired_tools() -> list[dict]:
@@ -797,35 +832,31 @@ def unwired_tools() -> list[dict]:
     - **呼び方の形に当てています。** `subprocess` で組み立てた道や、
       `getattr` で引く呼び方は見えません。0本が続いたら、まずここを疑うこと。
     """
-    tools = sorted(p for p in (ROOT / "scripts").glob("*.py") if p.name != "__init__.py")
-    code: dict[Path, str] = {}
-    for d in ("scripts", "src", "tests"):
-        for p in (ROOT / d).rglob("*.py"):
-            if "__pycache__" not in p.parts:
-                code[p] = p.read_text(encoding="utf-8", errors="replace")
-    proc = ""
-    for rel in PROC_DOCS:
-        f = ROOT / rel
-        if f.exists():
-            proc += f.read_text(encoding="utf-8", errors="replace")
+    tools, code, proc = _corpus()
+
+    # **1回で全部ひろうこと**（2026-09-01 に測って直した）。
+    # 道具ごとに全文へ正規表現を当てると **60本 × 10MB ＝ 9.7秒**でした
+    # （きょうだいが `--deselect tests/test_unwired_tools.py` で外しはじめたので測りました。
+    #  **遅い検査は、次の回から走らなくなります**）。
+    # 呼び方の形は道具の名前を含まないので、**1回なめて名前を集めれば足ります**。
+    called: dict[str, set[Path]] = {}
+    for src_path, text in code.items():
+        for m in _CALL_RE.finditer(text):
+            name = next(g for g in m.groups() if g)
+            called.setdefault(name, set()).add(src_path)
+    in_proc = {next(g for g in m.groups() if g) for m in _CALL_RE.finditer(proc)}
 
     out: list[dict] = []
     for path in tools:
-        n = re.escape(path.stem)
-        call = re.compile(
-            r"scripts/%s\.py"                       # 道で撃つ
-            r"|(?:^|\n)\s*import\s+%s\b"            # import
-            r"|(?:^|\n)\s*from\s+%s\s+import"       # from ... import
-            r"|\bsrc\.%s\b"                         # src.<名前>
-            r"|-m\s+scripts\.%s\b" % (n, n, n, n, n))
-        if any(call.search(t) for p, t in code.items() if p != path):
+        name = path.stem
+        if called.get(name, set()) - {path}:
             continue
-        if call.search(proc):
+        if name in in_proc:
             continue
         doc = (re.search(r'"""(.*?)"""', code[path], re.S) or (None, ""))[1]
         says = next((l.strip() for l in doc.splitlines()
                      if any(k in l for k in DORMANT_MARKS)), None)
-        out.append({"name": path.stem,
+        out.append({"name": name,
                     "path": path.relative_to(ROOT).as_posix(),
                     "dormant_says": says})
     return out
