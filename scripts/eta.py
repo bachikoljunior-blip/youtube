@@ -2053,6 +2053,18 @@ def residual_gap(a: dict) -> dict | None:
 
 
 
+#: **手本にしてよい本の、最低クリック数。**（2026-08-31・撃って足した）
+#:
+#: これを割る本の CTR は、±1クリックで率が倍になります。実測::
+#:
+#:     ショート 最高CTR 100.00% ＝ `MrWXzBLlHok`（1面・1クリック）→ 伸びしろ ×50.4
+#:
+#: **床をインプレッションに置かないのは、確からしさを決めるのが分子だから**です
+#: （1,000面でもクリック1なら同じこと）。`conversion_split` の長い註に、
+#: 床を動かしたときの実測（長尺は動かない・ショートは動く）。
+CTR_REF_MIN_CLICKS = 10
+
+
 def conversion_split(form: str = "長尺") -> dict | None:
     """**`per_video` の腕を「見せた数 × 押された率」に割る**（2026-08-31・最適化の回）。
 
@@ -2073,19 +2085,23 @@ def conversion_split(form: str = "長尺") -> dict | None:
     ## 実測（2026-08-31・`data/reach.jsonl`・API 0単位）
 
         長尺 21本   インプレッション 5,012   クリック 84   加重CTR **1.68%**
-          本べつ CTR 中央値 **0.44%**   最高 **5.36%**（`UHo79-HCOWo`）
-          ＝ **中央値の ×12.1**
+          本べつ CTR 中央値 **0.44%**
+          手本 `_Mz5rg6jQ_A` **5.30%**（1,056面・56クリック）＝ **中央値の ×11.9**
 
     （重なった報告を `dedupe` で落とした後の数です。落とす前は 5,133 / 88。
       **落とす前の数を引かないこと** —— 同じ日の CSV が何度も積まれます。）
 
-    **面は在ります**（いちばん押された本より多く見せている本が2本あります）。
-    足りていないのは**押された率**のほうで、
-    **いまのインプレッションのまま**、いちばん押された本の CTR で回すと
-    クリックは **84 → 269（×3.2）** になります。
+    **面は在ります**（手本の本より多く見せている本はありませんが、
+    面の側は 5,012回 出ています）。足りていないのは**押された率**のほうで、
+    **いまのインプレッションのまま**、手本の CTR で回すと
+    クリックは **84 → 266（×3.2）** になります。
 
-    なお1本あたり再生の記録の本 `_Mz5rg6jQ_A` も CTR **5.30%** で、
-    ほぼ同じ所にいます —— **よく回った本は、よく押された本**でした。
+    **手本がこの本になったのは偶然ではありません** —— 1本あたり再生の記録も
+    同じ `_Mz5rg6jQ_A`（「任意継続の20日を過ぎると年収1000万でいくら増えるか」）です。
+    **よく回った本は、よく押された本**でした。
+
+    **ショートでは伸びしろを出しません** —— クリックが `CTR_REF_MIN_CLICKS` 以上の本が
+    1本も無いからです（ショートのクリックは全部で 66回）。**無い所を埋めないこと。**
 
     ## この数の読み方（**上限でも下限でもありません**）
 
@@ -2125,16 +2141,53 @@ def conversion_split(form: str = "長尺") -> dict | None:
     ctrs = sorted(a[1] / a[0] for a in per.values())
     n = len(ctrs)
     median = ctrs[n // 2] if n % 2 else (ctrs[n // 2 - 1] + ctrs[n // 2]) / 2
-    best_id = max(per, key=lambda v: per[v][1] / per[v][0])
-    best = per[best_id][1] / per[best_id][0]
-    return {
+    out = {
         "form": form, "n": n, "impressions": imp, "clicks": clicks,
         "ctr": (clicks / imp) if imp else 0.0,
-        "ctr_median": median, "ctr_best": best, "ctr_best_id": best_id,
-        # **面はそのままで、いちばん押された本の率で回したら**
-        "clicks_at_best": imp * best,
-        "headroom": (imp * best / clicks) if clicks else float("inf"),
+        "ctr_median": median,
     }
+
+    # --- **手本にする本は、クリックが薄い本から選ばないこと**（2026-08-31）---
+    #
+    #     最初の版は「いちばん CTR の高い本」を素で採っていました。**噴き出す。**
+    #     実測（この回・撃って気づいた）::
+    #
+    #       ショート 最高CTR **100.00%**  ← `MrWXzBLlHok`（インプレッション **1**・クリック **1**）
+    #                次点      25.00%       （8 / 2）    その次 20.00%（5 / 1）
+    #       → 伸びしろが **×50.4** と出る。**1回 見せて1回 押された本**の率です。
+    #
+    #     `scripts/eta.py` の `nearest` の註が、同じ壊れ方を自分で書いています ——
+    #     「**ほぼ 0 の分母で割ると、倍率は無限に大きく出ます**」。同じ穴。
+    #
+    #     **床はインプレッションではなくクリックに置きます。** CTR の確からしさを
+    #     決めるのは分子のほうで、インプレッションが 1,000 あってもクリックが 1 なら
+    #     ±1 で率が倍になります。実測で、床を動かしたときの安定ぶりが逆でした::
+    #
+    #       長尺    床 30/50/100/200 いずれでも **×3.2**（手本は 1,056面・56クリック）
+    #       ショート 床 30→×3.7  50→×3.0  100→×1.2   ← **床しだいで答えが変わる ＝ 雑音**
+    #
+    #     だから長尺は数として出し、**ショートは出しません**（下の `None`）。
+    #     **無い所を埋めないこと** —— 印字する側は伸びしろが無ければ黙ります。
+    #
+    #     **覆る条件**: `data/reach.jsonl` が伸びて、ショートにもクリックの厚い本が
+    #     出てきたら自動で出るようになります（定数は下の1つだけ）。
+    ref = {v: a for v, a in per.items() if a[1] >= CTR_REF_MIN_CLICKS}
+    if ref:
+        best_id = max(ref, key=lambda v: ref[v][1] / ref[v][0])
+        best = ref[best_id][1] / ref[best_id][0]
+        out.update({
+            "ctr_best": best, "ctr_best_id": best_id,
+            "ctr_best_clicks": ref[best_id][1], "ctr_best_impressions": ref[best_id][0],
+            # **面はそのままで、いちばん押された本の率で回したら**
+            "clicks_at_best": imp * best,
+            "headroom": (imp * best / clicks) if clicks else float("inf"),
+        })
+    else:
+        out["why_no_headroom"] = (
+            f"クリックが {CTR_REF_MIN_CLICKS}回 以上の本が1本もありません"
+            f"（この形のクリックは全部で {clicks:,.0f}回）——"
+            "**薄い本の率を手本にすると、伸びしろは雑音になります**")
+    return out
 
 def residual_lines(a: dict, prefix: str = "  ") -> list[str]:
     """`residual_gap()` を印字する。**`report()` と頭の要約の両方から呼びます。**"""
@@ -2465,8 +2518,11 @@ def report(m: dict, a: dict) -> list[str]:
           f"（`conversion_split`・`data/reach.jsonl`・API 0単位）——"
           f" {_cs['form']} {_cs['n']}本: インプレッション **{_cs['impressions']:,.0f}**"
           f" ／ クリック **{_cs['clicks']:,.0f}** ＝ 加重CTR **{_cs['ctr']*100:.2f}%**"
-          f"（本べつ中央値 {_cs['ctr_median']*100:.2f}%・最高 {_cs['ctr_best']*100:.2f}%"
-          f" `{_cs['ctr_best_id']}`）。")
+          f"（本べつ中央値 {_cs['ctr_median']*100:.2f}%）。")
+    if _cs and _cs.get("headroom"):
+        P(f"      手本は `{_cs['ctr_best_id']}` の **{_cs['ctr_best']*100:.2f}%**"
+          f"（{_cs['ctr_best_impressions']:,.0f}面・{_cs['ctr_best_clicks']:,.0f}クリック"
+          f" ＝ クリック {CTR_REF_MIN_CLICKS}回 以上の本からだけ選んでいます）。")
         P(f"      → **面は在ります。足りていないのは押された率のほう** ——"
           f" いまのインプレッションのまま、いちばん押された本の率で回すと"
           f" クリックは {_cs['clicks']:,.0f} → **{_cs['clicks_at_best']:,.0f}"
@@ -2477,6 +2533,10 @@ def report(m: dict, a: dict) -> list[str]:
           f"逆に最高の本の CTR が高いのは**問いの選び方**のせいかもしれません"
           f"（そのときサムネを直しても動きません）。"
           f"**クリックは全部で {_cs['clicks']:,.0f}回。桁の話として読むこと。**")
+    elif _cs and _cs.get("why_no_headroom"):
+        P(f"      **伸びしろは出しません** —— {_cs['why_no_headroom']}。"
+          f"（薄い本を手本にすると ×50 のような数が出ます —— 実測 `MrWXzBLlHok`"
+          f" 1面・1クリックで CTR 100パーセント。`nearest` の註と同じ「ほぼ 0 の分母」の穴）")
 
     # --- **倍率がいちばん小さい帯と、要る再生数がいちばん少ない帯は、別です**
     #     （2026-08-31・最適化の回に足した。**規則が 1本/日 に固定されて初めて効く**）
