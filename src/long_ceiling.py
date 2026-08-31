@@ -1,83 +1,222 @@
-"""**長尺の1本あたり再生の「中央値」が、あと何本 積めば覆りうるか。**
+"""**長尺の1本あたり再生は、天井なのか。いま判定できるのか。**
 
-    python -m src.long_ceiling      # **API 0単位**（`data/eta.jsonl` の最後の点を読む）
+    python -m src.long_ceiling      # **API 0単位**（手元の控えだけを読む）
 
-## なぜ要るか（2026-08-31 に足した）
+## なぜ要るか（2026-08-31 に作り、2026-09-01 に測り直した）
 
-`config/hypotheses.yaml` の **`長尺1本あたり-30本`** は、こう書いてあります ——
+`config/hypotheses.yaml` の **`長尺1本あたり-13本`** が、`scripts/eta.py` の
+言う「**未測定の1つ**」です —— `per_video` の天井 1,891 は
+**ショート39本の実測**で、長尺には掛かりません。そして eta は
+「月20万に届く帯は、**長尺がショート並み（673回/本）に伸びた**側だけ」と印字します。
+**つまりこの1件が、目標に届く道が在るかどうかを決めています。**
 
-    **齢 24〜72時間 の読みがある長尺が 30本以上 そろったうえで**、
-    その1本あたり再生の**中央値が 80回 に届かない**なら外れ
+## **2026-09-01 に、この前提は永久に閉じない形でした**（直した）
 
-そして `scripts/deadline_check.py` は毎回 **「要 30 ／ いま 14 → あと 3日」**
-とだけ出します。**「あと3日 待てば分かる」と読めます。**
+前の版の反証条件は「**齢 24〜72時間** の読みがある長尺が **30本以上**」。
+**その2つが、どちらも判定を止めていました。**
 
-**そこが読み違いでした**（2026-08-31 に実測）。判定が読む側の数
-（`long_videos_28d`）は **21本**で、その中央値は **4回**。**分布はこうです**:
+**(1) 30本 は窓に入りません。** 判定が読むのは直近28日で、規則1（1日1本）の下で
+その窓に入りうるのは **最大 28本**。**30 > 28。** しかも `falsified_if` 自身が
+「満たなければ**期限だけ延ばすこと**」と書いており、
+`src/house_rule.needs_beyond_rule()` は**期日で解く**ので延ばすと黙ります ——
+**指示と検査が同じ向きに壊れていました**
+（いまは `house_rule.window_unreachable()` が窓の側で見ます）。
 
-    1 1 1 1 1 2 2 3 3 3 4 4 4 4 6 7 8 15 48 82 133
+**(2) 齢 24〜72時間 は、長尺の熟れる前です。** この repo 自身の
+`src/settle.mature_hours('長尺')` は **96時間**と答えます（ショートは 48時間）。
+`settle.settles_at('長尺')` に至っては **どの地平でも伸びきらない**
+（`supported: False`）。**実測 2026-09-01**:
 
-**あと9本 を、このチャンネルが今までに出した最良の長尺（133回）で
-埋めても、30本の中央値は 6.5 にしかなりません** —— 門は 80 です。
-**待っても、この前提はこの標本からは覆りません。**
+    齢 24〜72時間   n=19  中央値 **1.0回**   ← 前の版が読んでいた所
+    齢 96時間 以上  n=22  中央値 **4.0回**   ← ×4
 
-**「判定するな」と言っているのではありません。** `falsified_if` は
-「30本に満たなければ判定せず、期限だけ延ばすこと」と書いてあり、
-**その一文は1文字も緩めません。** ここが出すのは**上限**です ——
-「あと何本 積んでも、いまの標本のままなら中央値はここまで」。
+**前の版は、長尺を熟れる前に読んで「1回」と数えていました。**
 
-## **平均だけが印字されていました**（この回に見つけた欠陥）
+## 判定の形（符号検定。**効き目の 80回 は1文字も緩めていません**）
 
-`scripts/eta.py` は `long_median_per_video` を**測って `data/eta.jsonl` に
-積んでいながら、1行も印字していません。** 印字しているのは平均のほうで、
-実測は **平均 16回 に対し 中央値 4回（4倍）**。
+「中央値が 80回」が真なら、各本が 80回 を超える確率は 0.5。だから
 
-**判定に使うのは中央値のほう**です。この repo が「いちばん当たる」と言っている形
-（同じことを2か所が別々に言っていて、**読まれるのは判定に使わないほう**）でした。
+    n=13 で 80回超が **3本以下** → p=0.046（片側）で棄却 ＝ **外れ**
 
-## **覆る条件 —— 標本は入れ替わります**
+**30本 は過剰でした。** 13本 なら窓（28本）に入り、同じ効き目を同じ厳しさで
+判定できます。**下げたのは本数だけで、門ではありません。**
 
-判定が読むのは **直近28日**の窓です。**古い本は窓から落ちます。**
-だから上の上限は「**いまの21本が窓に残っているかぎり**」の話です。
+## 数える集合が2つあること（**どちらも消さないこと**）
 
-実測 2026-08-31 の 21本のうち **7本 は 08/12 より前の公開**で、
-09/09 の判定日には窓から落ちています。落ちたぶんを新しい本が埋めれば、
-中央値は上に動きえます。**動くために要る本数は `rescue_needed()` が出します。**
+    `scripts/deadline_check.long_ids()`   `data/batch_runs.jsonl` の `long: true` だけ
+                                          → **必ず少なめ**。`needs` の見張りはこちら
+    `src/reach_split.long_ids()`          そこに `config/pairs.yaml` を足した側
+                                          → **判定はこちら**（2026-08-24 に
+                                            「天井の分母が半分だった」と直した集合）
 
-**いまの実測でその確率を見積もる材料**: 21本のうち 80回 に届いたのは **2本
-（9.5%）**。**30本のうち15本 を 80回 以上にする**必要があるので、
-その率が 3〜4倍 に変わらないかぎり届きません。
+**実測 2026-09-01 で 13本 と 22本。** 母集団が違うので一致しません。
+`needs` が下振れの見張り、判定が実測 —— **役が別です。**
 
-**この推定が覆る条件**: 9.5% は**登録者 500人 未満・面が 1,368回/日**の
-チャンネルで測った率です。**面が桁で増えたら、測り直すこと**
-（`src/rpm_mix.surface_ceiling` の分子）。
+## 覆る条件
 
-## 何を読むか
-
-`data/eta.jsonl` の最後の点の **`long_values_28d`**（昇順の実測）。
-**`scripts/eta.py` を1回 撃つまで、この鍵は積まれません** ——
-無ければ「測っていない」と出します。**「0本だった」ではありません。**
+- **オーナーが規則を外したら**（`house_rule.PUBLISH_PER_DAY` が上がる）、
+  窓に入る本数が増えるので `N_TARGET` を上げ直してよい
+- **`settle.mature_hours('長尺')` が動いたら**、`mature_hours()` は自動で追います
+  —— 96 は**この関数が読めなかったときの控え**でしかありません
+- **長尺が熟れきる地平が見つかったら**（いまは `supported: False`）、
+  そこまで待った読みで測り直すこと。**96時間 は下限であって、確定ではありません**
 """
 from __future__ import annotations
 
 import json
+from math import comb
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 ETA_LOG = ROOT / "data" / "eta.jsonl"
+VIEWS = ROOT / "data" / "views.jsonl"
 HYPOTHESES = ROOT / "config" / "hypotheses.yaml"
 
-#: 判定の門（`config/hypotheses.yaml` の `長尺1本あたり-30本` の `falsified_if`）。
+#: 判定の門（`config/hypotheses.yaml` の `長尺1本あたり-13本` の `falsified_if`）。
 #: **2か所に書いています。** 片方だけ動くのを止めるのは
 #: `tests/test_long_ceiling.py::test_門の数は仮説と同じ` です。
 MEDIAN_GATE = 80
 
-#: 判定に要る本数（同じ `falsified_if` の `need`）。
-N_TARGET = 30
+#: 判定に要る本数（同じ前提の `need`）。**窓（28本）に入る数**であること。
+N_TARGET = 13
+
+#: `N_TARGET` 本のうち、門を超えた本がこれ以下なら「中央値 80回」を棄却する。
+#: **`sign_reject_at(N_TARGET)` の答えを写したもの**（検査で突き合わせます）。
+ABOVE_MAX = 3
 
 #: 判定が読む窓（日）。`scripts/eta.py::_measure()` の `q(28, ...)` と同じ。
 WINDOW_DAYS = 28
 
+#: `src/settle.mature_hours('長尺')` が読めなかったときの控え。**確定値ではありません。**
+MATURE_HOURS_FALLBACK = 96
+
+
+def mature_hours() -> int:
+    """**長尺が熟れる齢。** `src/settle.py` に訊き、読めなければ控えを返す。
+
+    **写さないこと** —— 実測が動いたら、ここも動くべきなので。
+    """
+    try:
+        from src import settle                              # noqa: PLC0415
+        h = settle.mature_hours("長尺")
+        if h:
+            return int(h)
+    except Exception:                                        # noqa: BLE001
+        pass
+    return MATURE_HOURS_FALLBACK
+
+
+# --- 符号検定 ---------------------------------------------------------------
+
+def sign_p(n: int, above: int) -> float:
+    """**「中央値が門」が真なら、門超えが `above` 本以下になる確率**（片側）。
+
+    各本が門を超えるかは表裏（p=0.5）。だから二項の下側累積です。
+    """
+    if n <= 0:
+        return 1.0
+    above = max(0, min(int(above), int(n)))
+    return sum(comb(n, i) for i in range(above + 1)) / 2 ** n
+
+
+def sign_reject_at(n: int, alpha: float = 0.05) -> int | None:
+    """n 本で「中央値が門」を棄却できる**門超えの本数の上限**。無ければ `None`。
+
+    **これが `ABOVE_MAX` の出どころです。** 事前に決める棄却域であって、
+    出てきた標本から選ぶものではありません。
+    """
+    best = None
+    for k in range(n + 1):
+        if sign_p(n, k) < alpha:
+            best = k
+        else:
+            break
+    return best
+
+
+# --- 標本（**判定が読む側**） -----------------------------------------------
+
+def band_by_id(lo: float, hi: float,
+               path: Path | None = None) -> dict[str, float]:
+    """`data/views.jsonl` から、**齢が `lo`〜`hi` の、いちばん新しい読み**を本ごとに。
+
+    **帯で切ること**（「以上」だけにしない）—— 長尺を熟れる前に読むと
+    ×4 低く出るので、比べるときは同じ帯どうしで並べる必要があります。
+    """
+    p = VIEWS if path is None else path
+    if not p.is_file():
+        return {}
+    best: dict[str, tuple[float, float]] = {}
+    for ln in p.read_text(encoding="utf-8").splitlines():
+        ln = ln.strip()
+        if not ln:
+            continue
+        try:
+            r = json.loads(ln)
+        except json.JSONDecodeError:
+            continue                                  # 壊れた行で回を止めない
+        vid = r.get("id")
+        if not vid:
+            continue
+        try:
+            hours = float(r.get("hours") or 0)
+            views = float(r.get("views") or 0)
+        except (TypeError, ValueError):
+            continue
+        if not (lo <= hours <= hi):
+            continue
+        if vid not in best or hours > best[vid][0]:
+            best[vid] = (hours, views)
+    return {k: v[1] for k, v in best.items()}
+
+
+def long_id_set() -> set[str]:
+    """判定が使う長尺の集合（`pairs.yaml` を足した側）。読めなければ空。"""
+    try:
+        from src import reach_split                          # noqa: PLC0415
+        return reach_split.long_ids()
+    except Exception:                                        # noqa: BLE001
+        return set()
+
+
+def sample_in_band(lo: float, hi: float,
+                   path: Path | None = None) -> list[float]:
+    """その齢の帯での、長尺の1本あたり再生（昇順）。"""
+    ids = long_id_set()
+    if not ids:
+        return []
+    return sorted(v for k, v in band_by_id(lo, hi, path).items() if k in ids)
+
+
+def mature_sample(min_hours: float | None = None,
+                  path: Path | None = None) -> list[float]:
+    """**判定に使う標本** —— 熟れた長尺の、1本あたり再生（昇順）。
+
+    長尺の集合は `src/reach_split.long_ids()`（`pairs.yaml` を足した側）。
+    **読めなければ空を返します** —— 回を止めないこと。
+    """
+    h = mature_hours() if min_hours is None else min_hours
+    return sample_in_band(h, float("inf"), path)
+
+
+def verdict(values: list[float] | None = None) -> dict:
+    """**いま判定できるか。できるなら、どちらか。**
+
+    返すのは `{"n", "above", "need", "above_max", "p", "decidable", "falsified"}`。
+    **`decidable` が偽なら、`falsified` は読まないこと**（まだ判定していません）。
+    """
+    v = sorted(mature_sample() if values is None else values)
+    n = len(v)
+    above = sum(1 for x in v if x > MEDIAN_GATE)
+    decidable = n >= N_TARGET
+    limit = sign_reject_at(n) if n else None
+    return {"n": n, "above": above, "need": N_TARGET, "above_max": ABOVE_MAX,
+            "median": median(v), "p": sign_p(n, above) if n else 1.0,
+            "reject_at": limit, "decidable": decidable,
+            "falsified": bool(decidable and limit is not None and above <= limit)}
+
+
+# --- 一般の道具（**天井の上限を読む側**。判定そのものではありません） -------
 
 def median(values: list[int | float]) -> float:
     """昇順に並べた中央値。**空なら 0.0**（呼ぶ側が `n` を見ること）。"""
@@ -123,8 +262,6 @@ def rescue_needed(values: list[int | float], n_target: int = N_TARGET,
 
     小さいほうから順に落とし、残りを `gate` で埋めた中央値が門に届く
     最小の本数を返します。**0 なら、落とさなくても届きえます。**
-    **`len(values)` を返したら、標本を全部 入れ替えても届かない**という意味です
-    （`n_target` が標本より小さいときに起きます）。
     """
     v = sorted(values)
     for k in range(len(v) + 1):
@@ -151,60 +288,56 @@ def latest(path: Path | None = None) -> dict:
     return out
 
 
-def lines(row: dict) -> list[str]:
-    """印字する行。**`long_values_28d` が無い点では「測っていない」と出します。**"""
-    vals = row.get("long_values_28d")
-    n_have = row.get("long_videos_28d")
-    if not isinstance(vals, list) or not vals:
-        return [
-            "=== 長尺の中央値は、あと何本 積めば覆りうるか ===",
-            "  **測っていません** —— `data/eta.jsonl` の最後の点に "
-            "`long_values_28d` がありません（`scripts/eta.py` を1回 撃つと積まれます）。"
-            f"**「長尺が0本だった」ではありません**（同じ点の `long_videos_28d` は "
-            f"{n_have if n_have is not None else '不明'}）。",
-        ]
-    vals = sorted(vals)
-    med = median(vals)
-    bound = best_case_median(vals)
-    rate = share_at_or_above(vals)
-    need = rescue_needed(vals)
-    out = [
-        "=== 長尺の中央値は、あと何本 積めば覆りうるか"
-        f"（`長尺1本あたり-30本` の門 {MEDIAN_GATE}回）===",
-        f"  いま **{len(vals)}本** ／ 中央値 **{med:g}回** ／ 平均 "
-        f"{sum(vals) / len(vals):.1f}回（**判定に使うのは中央値のほう**）",
-        f"  実測（昇順）: {' '.join(str(x) for x in vals)}",
+# --- 印字 -------------------------------------------------------------------
+
+def lines() -> list[str]:
+    """判定の行。**API 0単位**（`data/views.jsonl` だけを読みます）。"""
+    h = mature_hours()
+    v = mature_sample()
+    d = verdict(v)
+    out = [f"=== 長尺の1本あたり再生は天井か（`長尺1本あたり-13本` の門 "
+           f"{MEDIAN_GATE}回・齢 {h}時間 以上）==="]
+    if not v:
+        out.append("  **測っていません** —— `data/views.jsonl` に、齢 "
+                   f"{h}時間 以上の長尺の読みが1件もありません。"
+                   "**「長尺が0本だった」ではありません。**")
+        return out
+    out += [
+        f"  いま **{d['n']}本** ／ 中央値 **{d['median']:g}回** ／ "
+        f"門（{MEDIAN_GATE}回）を超えた本 **{d['above']}本**",
+        f"  実測（昇順）: {' '.join(f'{x:g}' for x in v)}",
     ]
-    if len(vals) >= N_TARGET:
-        out.append(f"  **{N_TARGET}本 に届いています。判定できます**"
-                   f"（`config/hypotheses.yaml` の `falsified_if` を読むこと）。")
+    # **熟れる前に読むと、いくつに見えるか。** ここが 2026-09-01 の直しの中身です。
+    young = sample_in_band(24, 72)
+    if young:
+        out.append(f"  **齢 24〜72時間 で読むと 中央値 {median(young):g}回・n={len(young)}**"
+                   f" —— 熟れてから読むと {d['median']:g}回 です"
+                   f"（**前の版はここを読んでいました**）。"
+                   f"`src/settle.settles_at('長尺')` は**どの地平でも伸びきらない**"
+                   f"と出ているので、**この {h}時間 も下限です。**")
+    if not d["decidable"]:
+        out.append(f"  **まだ判定できません** —— {N_TARGET}本 に "
+                   f"{N_TARGET - d['n']}本 足りません。**判定せず、期限を延ばすこと。**")
+        return out
+    lim = d["reject_at"]
+    if d["falsified"]:
+        out.append(f"  → **判定できます。外れです**（`falsified`）—— "
+                   f"「中央値が {MEDIAN_GATE}回」が真なら門超えは半分 期待されるのに、"
+                   f"**{d['n']}本中 {d['above']}本**。符号検定 **p={d['p']:.4f}**"
+                   f"（棄却域は {lim}本以下）。"
+                   f"**＝ {MEDIAN_GATE}回 は本数のせいではなく、長尺そのものの天井。**")
+        out.append("  **`next_if_false` を読むこと** —— この前提が外れると、"
+                   "`scripts/eta.py` の天井の表で『届く』と出る帯が"
+                   "**長尺がショート並みに伸びた側だけ**になります。")
     else:
-        out.append(
-            f"  残り **{N_TARGET - len(vals)}本** を、**このチャンネルの最良の長尺"
-            f"（{vals[-1]}回）**で埋めても、{N_TARGET}本の中央値は **{bound:g}回**"
-            f" —— 門は {MEDIAN_GATE}回 です。"
-            + ("**待っても、いまの標本のままでは届きません。**"
-               if bound < MEDIAN_GATE else
-               "**届きえます。** 待つこと。"))
-    out.append(
-        f"  門に届いた本: **{sum(1 for x in vals if x >= MEDIAN_GATE)} / {len(vals)}本"
-        f"（{rate * 100:.1f}%）** —— {N_TARGET}本 の中央値を門に載せるには"
-        f" **半分**が要ります。")
-    if need:
-        out.append(
-            f"  [!] **覆るのは「待つ」ではなく「入れ替わる」ほうです** —— 判定は"
-            f"**直近{WINDOW_DAYS}日**の窓なので、古い本は落ちます。"
-            f"いまの標本のうち**低いほうから {need}本 が窓から落ちて**、"
-            f"そのぶんが門以上の本で埋まれば、中央値は門に届きえます。")
-    out.append(
-        "  **これは判定ではありません。** `falsified_if` の"
-        f"「{N_TARGET}本 に満たなければ判定せず、期限だけ延ばすこと」は"
-        "1文字も緩めていません —— ここが出しているのは**上限**です。")
+        out.append(f"  → **判定できます。外れていません**（`survived`）—— "
+                   f"{d['n']}本中 {d['above']}本 が門超えで、棄却域"
+                   f"（{lim}本以下）に入りません。p={d['p']:.4f}。")
     return out
 
 
-def report(path: Path | None = None) -> str:
-    return "\n".join(lines(latest(path)))
+def report() -> str:
+    return "\n".join(lines())
 
 
 def main() -> None:
