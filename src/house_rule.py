@@ -251,8 +251,13 @@ def unreachable_needs(rows, today: str | None = None) -> list[dict]:
             hit = needs_beyond_rule(str(n.get("what") or ""),
                                     str(n.get("on_date") or ""), today)
             if hit:
+                # **`lever` も一緒に返します**（2026-09-01 に足した）。
+                # `scripts/run_marker._unreachable_premise_lines()` が
+                # 「**どの腕が止まるか**」を §1 で出すため —— 呼ぶ側に
+                # `hypotheses.yaml` を引き直させると、そこがまた台帳の道を写します。
                 out.append(dict(hit, claim=str(r.get("claim") or ""),
                                 deadline=str(r.get("deadline") or ""),
+                                lever=str(r.get("lever") or ""),
                                 what=str(n.get("what") or "")))
     return out
 

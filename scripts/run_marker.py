@@ -462,6 +462,71 @@ def _premise_subject_lines(cap: int = PREMISE_ROWS_CAP) -> list[str]:
     return out
 
 
+def _unreachable_premise_lines(cap: int = PREMISE_ROWS_CAP) -> list[str]:
+    """**規則2（1日1本）の下では、期限までに要件が満ちない前提**を出す。
+
+    ## なぜ §1 で出すのか（2026-09-01 に足した。**配線の4本目**）
+
+    `scripts/eta.py` が毎周 印字しているとおり、**到達日が動くのは
+    `config/hypotheses.yaml` の前提を1件 閉じたときだけ**です。
+    **その台帳に「閉じられない前提」が居座ると、到達日はそこで止まります。**
+
+    **この計器は既に在りました** —— `src/house_rule.unreachable_needs()`。
+    ただし、それを印字するのは `scripts/deadline_check.py` の**末尾**だけで、
+    その道具は §1 の読む順（`_doc_index_lines()` の7節）に**1つも入っていません**。
+    `grep -c deadline_check docs/trigger_main.md` は 1 以上ですが、
+    **`_m4_lines()` の註と同じ罠**です —— 名前は在っても、
+    **何をやるか決める前に読まれる所には無い。**
+
+    実測 2026-09-01 04:0x の回: `eta.py` の名指しは `per_video`、
+    「この回に閉じられる前提はありません」。**5つの選択肢のうち4つが枠切れで塞がり**、
+    残るのは `fix` だけに見えていました。`deadline_check.py` を**末尾まで**読んで
+    はじめて「規則の下では満ちない要件 1件」が出て、
+    **その1件が、公開ずみの日だけで期限より 10日 早く閉じました**
+    （「長尺の面は、その日の長尺の公開本数で決まる」・`outcome: mixed`）。
+    **同じ回に `verdict` が撃てるかどうかが、この1行の有無で決まっていました。**
+
+    **`eta.py` の「この回に閉じられる前提はありません」は嘘ではありません** ——
+    あれは `needs` の期日で数えており、**「その期日は永久に来ない」を見ていません。**
+    ここが見るのはそちらです。
+
+    **落ちても回は止めません。** 印が本体で、これは付け足しです。
+    """
+    try:
+        import yaml                                            # noqa: PLC0415
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+        from src import house_rule                             # noqa: PLC0415
+        doc = yaml.safe_load(
+            (Path(__file__).resolve().parents[1]
+             / "config" / "hypotheses.yaml").read_text(encoding="utf-8"))
+        rows = doc["hypotheses"] if isinstance(doc, dict) else doc
+        bad = house_rule.unreachable_needs(rows)
+    except Exception as exc:                                   # noqa: BLE001
+        return [f"[marker] （規則の下で満ちない要件を数えられませんでした: "
+                f"{type(exc).__name__}: {exc}。"
+                f"`python scripts/deadline_check.py` の末尾を読むこと）"]
+    if not bad:
+        return []
+    out = [f"[marker] **規則2（1日{house_rule.PUBLISH_PER_DAY}本）の下では、"
+           f"期限までに要件が満ちない前提: {len(bad)}件** —— "
+           "**その期日は来ません。待っても閉じません。**"
+           " 到達日が動くのは前提を1件 閉じたときだけなので、"
+           "**ここが詰まると到達日が止まります**"]
+    for r in bad[:cap]:
+        claim = str(r.get("claim") or "")
+        out.append(f"         [!] {r.get('deadline') or '—'}"
+                   f"  lever={r.get('lever') or '—'}"
+                   f"  — {claim[:56]}")
+        out.append(f"             要件: {str(r.get('what') or '')[:80]}")
+    if len(bad) > cap:
+        out.append(f"         （ほか {len(bad) - cap}件）")
+    out.append("         **直し方は2つ**: (1) 要件を 1日1本 で届く形へ書き直す "
+               "(2) **すでに公開ずみの日で判定できるなら、いま閉じる**"
+               "（実測 2026-09-01: (2) で期限より 10日 早く1件 閉じました・"
+               "**Data API 0単位**）。全文は `python scripts/deadline_check.py` の末尾")
+    return out
+
+
 #: M4 の数がこれより古かったら、撃ち直しをすすめる（時間）。
 #: 判定の窓が 7日 なので、1日ぶん古い数はまだ同じことを言っています。
 M4_STALE_HOURS = 24
@@ -605,6 +670,11 @@ def write() -> int:
     # **M4（検索 → 長尺）の数と齢**（2026-09-01 に足した）。理由は `_m4_lines()` の註 ——
     # 期限 9/15 の手段で、判定に使う計器は `search_terms.py` の1本だけです。
     for ln in _m4_lines():
+        print(ln)
+    # **規則2 の下では満ちない要件**（2026-09-01 に足した）。理由は
+    # `_unreachable_premise_lines()` の註 —— `eta.py` の「閉じられる前提はありません」は
+    # `needs` の期日で数えており、**「その期日は永久に来ない」を見ていません。**
+    for ln in _unreachable_premise_lines():
         print(ln)
     # **ここで出すこと。** §1 はその回のいちばん最初のコマンドで、
     # **何をやるか決める前**です。決めた後に見せても、払った時間は戻りません。
