@@ -1093,11 +1093,23 @@ def render(m: dict, today: dt.date) -> list[str]:
       " 判断に使うのは `python scripts/eta.py` のほうです")
     P("###     この file を呼ぶものは1つもありません"
       "（手順・親の手順・spawn_prompt・CLAUDE.md・フック・他のコード）")
-    P(f"###     供給を `UPLOAD_CAP_PER_DAY = {UPLOAD_CAP_PER_DAY}本/日`"
-      f"（**API の日枠**）で解いています —— **オーナーの規則は"
-      f" `src/house_rule.PUBLISH_PER_DAY` ＝ {_HOUSE_RULE_PER_DAY}本/日**")
-    P(f"###     つまり下の床の日付は、**規則の {_ratio}倍 の供給**の上に立っています。"
-      " **そのまま読まないこと**")
+    # **2026-08-31 の同じ日の遅くに、供給の側を直しました**（この註の「覆る条件」の
+    # とおり）。註だけ残すと、**直した後も「92倍 の上に立っています」と言い続けます**
+    # —— それがこの repo でいちばん多い壊れ方（言っている所と、している所が別）です。
+    # **だから、いまの姿を言わせます。** 「呼ばれていない」ほうは今も本当です。
+    if st.get("supply_cap", float("inf")) <= _HOUSE_RULE_PER_DAY + 1e-9:
+        P(f"###     供給は **オーナーの規則 {_HOUSE_RULE_PER_DAY}本/日**"
+          f"（`src/house_rule.PUBLISH_PER_DAY`）で解いています。"
+          f" API の日枠 {UPLOAD_CAP_PER_DAY}本/日 は**観測として持っているだけ**です")
+        P(f"###     **2026-08-31 まではその日枠のほうで解いており、床の日付は"
+          f" 規則の {_ratio}倍 の供給の上に立っていました。**"
+          " いまは直っていますが、**判断に使うのは今も `eta.py` のほうです**")
+    else:
+        P(f"###     供給を `UPLOAD_CAP_PER_DAY = {UPLOAD_CAP_PER_DAY}本/日`"
+          f"（**API の日枠**）で解いています —— **オーナーの規則は"
+          f" `src/house_rule.PUBLISH_PER_DAY` ＝ {_HOUSE_RULE_PER_DAY}本/日**")
+        P(f"###     つまり下の床の日付は、**規則の {_ratio}倍 の供給**の上に立っています。"
+          " **そのまま読まないこと**")
     P("=" * 74)
     P("")
     P("=" * 74)
