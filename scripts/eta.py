@@ -1754,6 +1754,135 @@ def analyse(m: dict, points: list[dict] | None = None,
     return a
 
 
+def residual_gap(a: dict) -> dict | None:
+    """**腕の天井を全部 同時に当てたあとに、まだ残っている距離。**（2026-08-31）
+
+    ## なぜ要るか（この回に撃って出た数）
+
+    `report()` は「**どの帯でも届きません**」と、そのすぐ上に
+    「ショート 高 は **×196.3** 遠い」「長尺 お金 高 は **×208.3** 遠い」を出します。
+    **どれも「いまの1本あたり再生（566回／16回）から見た距離」**です。
+    ところが `config/hypotheses.yaml` は、その `per_video` の**天井を
+    もう測って持っています**（`ceiling.value: 1891`）——
+    つまり ×196.3 のうち **×3.34 ぶんは、この機械が「まだ引ける」と
+    自分で言っている腕**です。**そこを引いた残りが、本当の穴。**
+
+    **実測（2026-08-31・`analyse()` を直接 叩いた。API 0単位）**::
+
+        1本あたり再生 1,891回（`per_video` の天井）
+          × 規則 1本/日（`src/house_rule.py`）× 30日 × RPM ¥2,000（帯の上端）
+          = **¥113,460/月 ＝ 目標の 56.7%**   →  残り **×1.76**
+
+    **×196.3 と ×1.76 は、同じ穴の別の測り方です。** 前者は
+    「まだ引いていない腕のぶん」を含み、後者は含みません。
+    **手を決めるのに使えるのは後者のほう** —— 前者を見て決めると、
+    「もう天井を持っている腕」を、まだ伸びる腕として数え続けます。
+
+    ## この差は、判断を変えます
+
+    ×196 は**手の打ちようがない数**に見えます（`docs/MEANS.md` M23 が
+    メンバーシップを「27〜137倍 遠い」と退けた比較も、この物差しの上でした）。
+    **×1.76 は違います。** 残っているのは「あと 1.76倍」で、
+    それを閉じられる定数は**2つしかありません**:
+
+        (1) `config/hypotheses.yaml` の `per_video` の天井 **1,891**
+            —— **ショート39本の24時間の最大**です。掛けている RPM ¥2,000 は
+            **長尺の帯**なので、**形が食い違っています。**
+            同じ `ceiling:` の `escape_note` が自分で
+            「**長尺の1本あたり再生はまだ測れていません**」と書いています。
+            要るのは **3,333回/本**（＝ 1,891 の ×1.76）
+        (2) `RPM_SCENARIOS` の上端 **¥2,000** —— **広告だけの分子の上端**です。
+            ¥3,530 あれば 1,891回/本 のまま届きますが、**広告 RPM で
+            そこへ行く道はありません**（M23 の3つは、この上端の外側の分子）
+
+    **どちらも実測ではありません。** (1) は別の形の実測、(2) は推測の上端。
+    **「届きません」を作っているのは、この2つの未実測の定数です。**
+    `CLAUDE.md`「(イ) **裸の『届きません』を出さないこと**」の、いちばん芯の形。
+
+    ## 覆る条件
+
+    - `ceiling.value` が実測で更新されたとき（`tests/test_per_video_ceiling.py`
+      が実測の最大を見ています）。**残りの倍率は自動で追います**
+    - `RPM_SCENARIOS` の外に分子が1つでも入ったとき（M23）。**そのとき
+      分母が変わるので、この関数の `band` は帯ではなくなります**
+    - `house_rule.PUBLISH_PER_DAY` をオーナーが動かしたとき。
+      **こちらから動かさないこと**（固定その2）
+
+    返り値 `None` は「`per_video` の天井が台帳に無い」＝ **印字しない**の意味です
+    （無い数で日付を語らないこと）。
+    """
+    try:
+        c = arm_speed.ceilings().get("per_video")
+    except Exception:                                          # noqa: BLE001
+        return None
+    if not c or c.get("value") in (None, 0):
+        return None
+    pv_ceiling = float(c["value"])
+    per_day = float(a.get("ceiling_per_day") or 0.0)
+    if per_day <= 0 or not RPM_SCENARIOS:
+        return None
+    band = max(RPM_SCENARIOS, key=lambda k: RPM_SCENARIOS[k])
+    rpm = float(RPM_SCENARIOS[band])
+    yen = pv_ceiling * per_day * 30 / 1000 * rpm
+    if yen <= 0:
+        return None
+    return {
+        "per_video_ceiling": pv_ceiling,
+        "per_video_ceiling_unit": c.get("unit", ""),
+        "per_day": per_day,
+        "per_day_binds": a.get("ceiling_cap_binds"),
+        "band": band,
+        "rpm": rpm,
+        "yen": yen,
+        "share": yen / TARGET_YEN,
+        # **残りの倍率**（1.0 以下なら、天井を全部当てれば届く）
+        "residual": TARGET_YEN / yen,
+        # その残りを `per_video` の側だけで閉じるなら、要る1本あたり再生
+        "per_video_needed": TARGET_YEN * 1000 / (rpm * per_day * 30),
+        # その残りを RPM の側だけで閉じるなら、要る RPM
+        "rpm_needed": TARGET_YEN * 1000 / (pv_ceiling * per_day * 30),
+        "reaches": yen >= TARGET_YEN,
+    }
+
+
+def residual_lines(a: dict, prefix: str = "  ") -> list[str]:
+    """`residual_gap()` を印字する。**`report()` と頭の要約の両方から呼びます。**"""
+    r = residual_gap(a)
+    if r is None:
+        return []
+    out = [
+        f"{prefix}[!] **腕の天井を全部 同時に当てても、上限は ¥{r['yen']:,.0f}/月"
+        f" ＝ 目標の {r['share']*100:.1f}%**"
+        + (f"（残り **×{r['residual']:.2f}**）" if not r["reaches"]
+           else "（**天井を当てれば届きます**）"),
+        f"{prefix}    内訳: 1本あたり再生 **{r['per_video_ceiling']:,.0f}回**"
+        f"（`config/hypotheses.yaml` の `per_video` の天井・{r['per_video_ceiling_unit']}）"
+        f" × **{r['per_day']:.0f}本/日**（縛っているのは「{r['per_day_binds']}」）"
+        f" × 30日 × RPM **¥{r['rpm']:,.0f}**（`{r['band']}` ＝ `RPM_SCENARIOS` の上端）",
+    ]
+    if not r["reaches"]:
+        out += [
+            f"{prefix}    **すぐ上の『×196.3 遠い』と同じ穴の、別の測り方です。**"
+            f" 上は**いまの1本あたり**から見た距離、ここは**天井を全部 引いたあと**の距離。"
+            f" **手を決めるのはこちら** —— 上の数は、この機械が「まだ引ける」と"
+            f"自分で言っている腕のぶんを含んでいます。",
+            f"{prefix}    残り ×{r['residual']:.2f} を閉じられる定数は**2つだけ**です"
+            f"（**どちらも実測ではありません**）:",
+            f"{prefix}      (1) `per_video` の天井 {r['per_video_ceiling']:,.0f}"
+            f" —— **ショートの実測の最大**なのに、掛けている RPM は**長尺の帯**です"
+            f"（**形が食い違っています**。同じ `ceiling:` の `escape_note` が"
+            f"「長尺の1本あたり再生はまだ測れていません」と書いています）。"
+            f"ここだけで閉じるなら **{r['per_video_needed']:,.0f}回/本** 要ります",
+            f"{prefix}      (2) `RPM_SCENARIOS` の上端 ¥{r['rpm']:,.0f}"
+            f" —— **広告だけの分子の上端**です。ここだけで閉じるなら"
+            f" **¥{r['rpm_needed']:,.0f}** 要りますが、**広告 RPM でそこへ行く道はありません**"
+            f"（`docs/MEANS.md` M23 の3つは、この上端の**外側**の分子）",
+            f"{prefix}    **つまり「届きません」を作っているのは、この2つの未実測の定数です。**"
+            f" 覆る条件は `residual_gap()` の docstring。",
+        ]
+    return out
+
+
 def report(m: dict, a: dict) -> list[str]:
     out: list[str] = []
     P = out.append
@@ -2082,6 +2211,12 @@ def report(m: dict, a: dict) -> list[str]:
           "（`CLAUDE.md` は4つとも名指ししています）。"
           "だからこの行は『YouTube では届かない』ではなく"
           "**『広告だけを分子にすると届かない』**です（`docs/MEANS.md` の M23）。")
+        # **裸の「届きません」を出さないこと**（`CLAUDE.md`「(イ)」）の、いちばん芯。
+        #     上の帯は全部「**いまの1本あたり再生**」で割った距離（×196.3 / ×208.3）ですが、
+        #     `per_video` の天井は台帳がもう持っています（`ceiling.value: 1891`）。
+        #     **その天井を当てたあとに残る距離**を、同じ所に並べます —— 実測 ×1.76。
+        #     **どの定数がその ×1.76 を作っているか**まで書くのが (イ) の本文です。
+        out.extend(residual_lines(a))
     else:
         P(f"  上限で届く帯: {', '.join(reachable)}")
         P("      **ただし RPM は実測ではありません。** 収益化後に自分の数字で測り直すこと。")
