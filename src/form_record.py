@@ -170,6 +170,30 @@ CENSOR_MIN_N = 5
 CENSOR_HORIZONS: tuple[float, ...] = (336.0, 480.0, 600.0, 720.0)
 
 
+#: **既定の引数で呼んだときだけ憶える**（`_settled` と同じ理由・同じ寿命）。
+#:
+#: `per_video_best()` は `scripts/eta.py` の1回の走りで **6〜8回** 呼ばれ、
+#: そのたびに `censor_factor()` が形ごとに `data/views.jsonl`（2MB・22,000行）を
+#: 読み直します。**憶えないと、同じ答えのために同じファイルを十数回 読みます。**
+#:
+#: `lru_cache` を使わないのは、`forms` が dict（**ハッシュできない**）だからです。
+#: **道を差した呼び方（`views_path` / `forms` / `min_n` を渡す側）は通しません** ——
+#: 検査や道具が測り直したいときに、憶えが邪魔をしないこと。
+#:
+#: **長く生きるプロセスから呼ぶことになったら、ここを外すこと**（`_settled` と同じ）。
+_CENSOR_MEMO: dict[str, dict] = {}
+
+
+def censor_memo_clear() -> None:
+    """**憶えを捨てる。** 測り直す側（検査・道具）が呼びます。
+
+    `_settled` の `lru_cache` と対で使うこと —— 片方だけ捨てると、
+    **片方の古い答えの上で測り直す**ことになります。
+    """
+    _CENSOR_MEMO.clear()
+    _settled.cache_clear()
+
+
 def censor_factor(form: str, *, views_path: Path | None = None,
                   forms: dict[str, str] | None = None,
                   min_n: int = CENSOR_MIN_N) -> dict:
@@ -211,14 +235,41 @@ def censor_factor(form: str, *, views_path: Path | None = None,
       長尺の n=5 は薄いので、**本が増えたら倍率は動きます。**
     - 中央値ではなく平均を採ると長尺は ×2.53 になります。**中央値のほうが低い**ので、
       **こちらのほうが安全側**です（隔たりを小さく言い過ぎない）。
-    - `settle.mature_hours_supported(form)` が真になったら、
-      その形は伸びきっているので **`factor` は 1.0 に落ちます**（下の分岐）。
+    - **`settled` では門を作っていません**（下の長い註）。伸びきった形は、
+      測れば自分で ×1.00 を出します（ショート 実測 ×1.000・n=22）。
+      門にすると、`MATURE_HOURS_BY_FORM` を正しく直した回に**補正が黙って消えます。**
     """
     zero = {"factor": 1.0, "n": 0, "from_hours": None, "to_hours": None,
             "median": 1.0, "mean": 1.0, "why": "測れていません（補正しません）"}
-    # 伸びきっている形は、そもそも打ち切られていません
-    if _settled(form):
-        return dict(zero, why="この形は伸びきっています（補正は要りません）")
+
+    # **既定の呼び方だけ憶える**（`_CENSOR_MEMO` の註に実測）。
+    memoing = views_path is None and forms is None and min_n == CENSOR_MIN_N
+    if memoing and form in _CENSOR_MEMO:
+        return dict(_CENSOR_MEMO[form])
+
+    # --- **`settled` で先に返さないこと**（2026-08-31・入れた同じ回に外した）---
+    #
+    #     最初の版はここに `if _settled(form): return ...` を置いていました。
+    #     **黙って補正が消える道**になります:
+    #
+    #       `_settled()` は `settle.mature_hours_supported(form)` ＝
+    #       「その形は **`mature_hours(form)` までに**伸びきるか」です。
+    #       ところが打ち切りは形の性質ではなく、**その記録の本が何時間 観測されたか**です。
+    #       長尺の記録 `_Mz5rg6jQ_A` は **246時間** までしか観測されていません。
+    #       いっぽう長尺が平らになるのは **480時間**（この回の実測）。
+    #       次に来た側が `SETTLE_HORIZONS` を延ばして
+    #       `MATURE_HOURS_BY_FORM['長尺'] = 480` に直すと —— それは**正しい直し**です ——
+    #       `_settled('長尺')` は真になり、**補正が 1.0 に落ちて隔たりが黙って 2倍 に戻ります。**
+    #       正しい直しが、別の所を静かに壊す形。
+    #
+    #     **要りません。** 伸びきっている形は、測れば自分で ×1.00 を出します ——
+    #     実測 2026-08-31（ショートの記録の本の年齢 372時間 から）::
+    #
+    #         372h → 480h  n=22  ×1.000      372h → 720h  n=10  ×1.000
+    #         372h → 600h  n=15  ×1.000
+    #
+    #     **門を1つ減らして、測ったほうだけを残します。** `settled` は
+    #     `per_video_best()` が別に返すので、読む側の情報は減りません。
 
     path = views_path or VIEWS
     forms = _forms.measured_forms() if forms is None else forms
@@ -278,8 +329,11 @@ def censor_factor(form: str, *, views_path: Path | None = None,
             "why": f"{a_hours:.0f}時間（記録の本の最後の読み）→ {t:.0f}時間 の"
                    f"対応のある比・n={m}",
         }
-    return best or dict(zero, from_hours=a_hours, record_id=rec_id,
-                        why=f"{a_hours:.0f}時間 より先に n≥{min_n} の地平がありません")
+    out = best or dict(zero, from_hours=a_hours, record_id=rec_id,
+                       why=f"{a_hours:.0f}時間 より先に n≥{min_n} の地平がありません")
+    if memoing:
+        _CENSOR_MEMO[form] = dict(out)
+    return out
 
 
 @functools.lru_cache(maxsize=None)
