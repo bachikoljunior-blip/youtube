@@ -180,9 +180,16 @@ def test_この印を作るコードが_repo_に無い():
     """
     marker = pause_guard.OWNER_PAUSE_MARKER.name
     esc = re.escape(marker)
+    # **読むのは通します。書くのだけを落とします。**（`git log -- .owner-pause` や
+    # `[ -e .owner-pause ]` は「誰が置いたか」を人に見せるためのもので、印を作りません）
     write_pat = re.compile(
-        r"""(touch|>|>>|write_text|write_bytes|mkdir|open|cp|mv|create)[^\n]{0,40}""" + esc
-        + r"""|""" + esc + r"""["'\)\]]*\s*\)?\s*\.\s*(touch|write_text|write_bytes|open|mkdir)\s*\("""
+        # python: `OWNER_PAUSE_MARKER.touch()` / `(ROOT / ".owner-pause").write_text(...)`
+        r"""OWNER_PAUSE_MARKER\s*\.\s*(touch|write_text|write_bytes|mkdir|open)\s*\("""
+        + r"""|""" + esc + r"""["'\)\]]*\s*\)?\s*\.\s*(touch|write_text|write_bytes|mkdir|open)\s*\("""
+        + r"""|open\s*\([^)\n]*""" + esc + r"""[^)\n]*,\s*["'][wax]"""
+        # shell: `touch .owner-pause` / `echo ... > .owner-pause` / `tee .owner-pause`
+        + r"""|\b(touch|tee|install|cp|mv)\b[^\n|;&]{0,40}""" + esc
+        + r"""|>>?\s*["']?[^\s|;&"'`]*""" + esc
     )
     offenders: list[str] = []
     candidates = (list(ROOT.glob("src/**/*.py"))
