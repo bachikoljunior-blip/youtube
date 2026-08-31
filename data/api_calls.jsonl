@@ -2098,3 +2098,10 @@
 {"at": "2026-08-31T18:27:20+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "search_terms.py:by_video"}
 {"at": "2026-08-31T18:27:20+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "search_terms.py:by_video"}
 {"at": "2026-08-31T18:27:20+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "search_terms.py:by_video"}
+{"at": "2026-08-31T18:14:48+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "eta.py:q"}
+{"at": "2026-08-31T18:14:48+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "eta.py:q"}
+{"at": "2026-08-31T18:14:48+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "eta.py:q"}
+{"at": "2026-08-31T18:14:48+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "eta.py:q"}
+{"at": "2026-08-31T18:14:49+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "eta.py:q"}
+{"at": "2026-08-31T18:14:49+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "eta.py:q"}
+{"at": "2026-08-31T18:14:49+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "eta.py:q"}
