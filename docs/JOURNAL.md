@@ -92066,3 +92066,24 @@ b=-0.663・t=-3.96・95% [-0.991, -0.335]・0 をまたがない）:
 
 **どちらも「同じ法則を、片方向にだけ・分母を確かめずに当てる」の別の顔**です。
 `ceiling_at_rule()` が最初にやっていたのと同じ間違いを、逆向きにやりかけました。
+
+### 全体検査（この回の終わりに1回）: **5,471 passed / 7 failed / 9 skipped**（19分）
+
+    test_form_record::test_ショートの記録が_hypotheses_の天井と一致する   ← **新しい赤**
+    test_judgeable::test_実物で期限が構造的に守れる[opening_motion]
+    test_live_slots::test_全部逃がす手は生きている本を増やす
+    test_long_surface_ceiling_named::test_族の数と天井が同じ行に並ぶ
+    test_queue_lag_publish_cap::test_上限が1本になると床の答えが反転する
+    test_request_form::test_深い題ショートは群に入る
+    test_request_form_excludes_long_form::test_split_counts_と_判定の群が_同じ本を数える
+
+下6件は 22:03 の申し送りが名前で挙げている既知の赤。**7件目は別の回のぶん**で、
+`21:35` に `config/hypotheses.yaml` の `per_video.ceiling` が 1,891 → **3,918**
+（規則の密度へ直した天井）に変わったのに、検査は `form_record` の**生の記録**
+（1,891）と等しいことを求めています。**検査の前提のほうが古い** ——
+台帳の天井はいま「密度で直した数」で、記録そのものではありません。
+`git stash` で確かめてはいません。確かめたのは
+**この回が触ったファイル（`scripts/eta.py`・`src/levers.py`）を import する赤が
+1件も無いこと**までです（`test_form_record` は `src.form_record` しか読みません）。
+**直すのは、その天井を動かした側の回にしてください** —— こちらが書き換えると、
+同じ数を2人が別々に決めることになります。
