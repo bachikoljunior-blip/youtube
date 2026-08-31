@@ -65,6 +65,7 @@ from __future__ import annotations
 import copy
 import functools
 import json
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from . import forms as _forms
@@ -151,6 +152,13 @@ def per_video_best(views_path: Path | None = None,
         return copy.deepcopy(_BEST_MEMO[key])
 
     lifetime: dict[str, int] = {}
+    #: **その本が世に出た時刻の推定** ＝ いちばん古い観測の時刻 − そのときの年齢。
+    #:     `data/views.jsonl` だけから出ます（**API 0単位・別のファイルを読みません**）。
+    #:     使い道は下の `tested_by`（記録が何本の反証に耐えたか）1つだけです。
+    born: dict[str, str] = {}
+    #: `at` の読み直しを憶える。**1回の snapshot は同じ時刻を何十行も書く**ので、
+    #:     ここを憶えないと `strptime` が 22,667回 走ります（実測 +380ms）。
+    _t_of: dict[str, datetime] = {}
     for line in path.read_text(encoding="utf-8").splitlines():
         if not line.strip():
             continue
@@ -167,6 +175,21 @@ def per_video_best(views_path: Path | None = None,
             continue
         if v > lifetime.get(vid, -1):
             lifetime[vid] = v
+        at, h = r.get("at"), r.get("hours")
+        if at and h is not None:
+            base = _t_of.get(at)
+            if base is None:
+                try:
+                    base = datetime.strptime(at, "%Y-%m-%dT%H:%M:%SZ")
+                except (TypeError, ValueError):
+                    continue
+                _t_of[at] = base
+            try:
+                t = (base - timedelta(hours=float(h))).isoformat()
+            except (TypeError, ValueError, OverflowError):
+                continue
+            if vid not in born or t < born[vid]:
+                born[vid] = t
 
     by: dict[str, list[tuple[int, str]]] = {}
     for vid, v in lifetime.items():
@@ -193,6 +216,7 @@ def per_video_best(views_path: Path | None = None,
             #     長尺 **偽**（地平を 336h へ延ばすと、240h で伸びきった本は 0本）。
             "settled": _settled(form),
         }
+        out[form].update(_tested_by(rows, born))
         # --- **打ち切りぶんを、実測で埋める**（2026-08-31・最適化の回の第2手）---
         #     `settled` は「記録は下限だ」と**言うだけ**で、この回まで
         #     **誰もその下限を補正していませんでした。** `gaps()` も
@@ -204,6 +228,65 @@ def per_video_best(views_path: Path | None = None,
         out[form]["best_settled"] = out[form]["best"] * cf["factor"]
     _BEST_MEMO[key] = copy.deepcopy(out)
     return out
+
+
+def _tested_by(rows: list[tuple[int, str]], born: dict[str, str]) -> dict:
+    """**その記録は、何本の反証に耐えたか。**（2026-08-31・最適化の回に足した）
+
+    ## なぜ要るか
+
+    `scripts/eta.py` の「届きません」は、突き詰めると**2つの定数**が作っています
+    （`residual_gap()` が自分でそう書いています）——
+    `per_video` の天井 **1,891** と `RPM_SCENARIOS` の上端 **¥2,000**。
+
+    そして 1,891 は「**39本のショートの実測の最大**」です。
+    **標本の最大を「天井」と呼ぶのは、ふつうは誤り**です ——
+    裾の重い分布では、最大は本数と一緒に伸び続けるので、
+    「まだ大きいのを引いていない」だけのことがあります。
+
+    **だから測ります。** 記録が立ったのが何本目で、そのあと何本が挑んで抜けなかったか。
+    **この数は、天井の確からしさそのもの**です。0本 なら「最後に引いたのが最大」＝
+    ただの標本の最大。139本 なら、**その天井は139回 反証にかけられて生き残っています。**
+
+    ## 実測（2026-08-31・この回に自分で撃った・`data/views.jsonl` だけ・API 0単位）
+
+        ショート  n=156  記録 1,891（`NHKylqsNfTw`）
+                  記録は **17本目**（11%地点）。**そのあと 139本 出して更新 0回**
+                  記録の更新は全部で 6回・上位5本 = 1510/1557/1777/1857/1891（**固まっている**）
+                  上位10%（15本）が持つ再生の割合 **29.0%**（裾は重くない）
+        長尺      n=22   記録 156（`_Mz5rg6jQ_A`）
+                  記録は **13本目**（59%地点）。そのあと **9本**だけ
+                  上位10%（2本）が持つ再生の割合 **67.6%**（**裾が重い**）・中央値は **4**
+
+    **読み**: ショートの天井 1,891 は、139本 の反証に耐えています ——
+    **「標本の最大にすぎない」という反論は、ショートには効きません。**
+    長尺は逆で、**9本 しか挑んでいない**うえに上位2本が3分の2を持っています ——
+    **長尺にはまだ天井が立っていません。** `残り ×1.76` を閉じられるとしたら
+    そちら側です（そして `¥2,000` の帯は長尺の側です）。
+
+    ## 覆る条件
+
+    - **公開時刻は推定です** —— いちばん古い観測の時刻 − そのときの年齢。
+      `data/views.jsonl` に古い本の観測しか無い場合、順は前後します。
+      **順が1〜2本 ずれても、139 と 9 の差は動きません。**
+    - **記録が更新されたら `tested_by` は 0 に戻ります**（定数を持ちません）。
+      戻った回は、**その天井は一度も反証にかかっていない**ということです。
+    """
+    if not rows:
+        return {}
+    best_id = rows[0][1]
+    ordered = [vid for _v, vid in rows if vid in born]
+    ordered.sort(key=lambda v: born[v])
+    if best_id not in born or not ordered:
+        return {"record_rank": None, "tested_by": None,
+                "why_untested": "公開の順が出せません（`hours` の付いた観測がありません）"}
+    rank = ordered.index(best_id) + 1
+    return {
+        "record_rank": rank,
+        "record_of": len(ordered),
+        # **記録のあとに世に出た本の数** ＝ その天井が受けた反証の回数
+        "tested_by": len(ordered) - rank,
+    }
 
 
 def _nearest(series: list[tuple[float, int]], hours: float,
