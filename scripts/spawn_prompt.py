@@ -168,7 +168,7 @@ def _gate_state_block() -> str:
     if not g.get("total"):
         return ""
     out = [f"**いまの姿: {g['closed']}/{g['total']} 件 が閉じています**"
-           "（正本は `AUTOMATION_PAUSED.md`・根拠は `data/resume_gate.jsonl`。"
+           "（条件の本文は `docs/RESUME_GATE.md`・根拠は `data/resume_gate.jsonl`。"
            "`python scripts/eta.py --gate` で、その場で読めます）。"]
     closed = [r for r in resume_gate.state() if r["closed"]]
     if closed:
@@ -190,11 +190,11 @@ def _gate_state_block() -> str:
         #     **覆る条件**: `AUTOMATION_PAUSED.md` が消えたら `_pause_block()` ごと
         #     出なくなるので、この段も自動で消えます。
         out.append("**6件とも閉じています。だから、この回に閉じるものはありません。**"
-                   " **正本の `AUTOMATION_PAUSED.md` はまだ在ります** ——"
-                   "つまり生成も投稿も塞がったままです。"
-                   " **消して再開するかどうかは、この機械の判断で決めないこと**"
-                   "（理由3つは `AUTOMATION_PAUSED.md` の"
-                   "「6件とも記録されました」の節と `CLAUDE.md`）。")
+                   " **いま止まっているのは、オーナーが手で `.owner-pause` を"
+                   "置いているからです**（`src/pause_guard`）。"
+                   " **その印を、この機械の判断で外さないこと。**"
+                   " 作りに問題を見つけたなら、**止めるのではなく直すこと**"
+                   "（`CLAUDE.md` 冒頭・`tests/test_pause_needs_owner.py`）。")
         out.append("")
         out.append("**この回に出せるもの**（`--lever gate` で積むこと。上から順に見る）:")
         out.append("")

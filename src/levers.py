@@ -54,7 +54,7 @@ LEVERS: dict[str, str] = {
     #
     # 天井の倍率（この dict に載せる条件）は `resume_gate.cap()`: 閉じた k件 に対し
     # **×(6/k)**、k=0 では定義できないので `None`（**0倍 では 6件 になりません**）。
-    "gate": "収益化の審査に通る形を決める（`AUTOMATION_PAUSED.md` の Resume gate 6件）",
+    "gate": "収益化の審査に通る形を決める（`docs/RESUME_GATE.md` の6件）",
     # **2026-08-31 に足した腕**（最適化の回に実測して足した）。
     #
     # `scripts/eta.py` の頭3行は、**θ（前提が閉じる速さ）を到達日の

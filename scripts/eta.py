@@ -5483,7 +5483,7 @@ def gate_lines(bar: str = "###", tr: dict | None = None) -> list[str]:
     out: list[str] = []
     if not g["total"]:
         out.append(f"{bar} [!] **Resume gate の条件が 1件も読めませんでした** ——"
-                   f" `AUTOMATION_PAUSED.md` の `## Resume gate` の番号つき箇条書きが"
+                   f" `docs/RESUME_GATE.md` の `## Resume gate` の番号つき箇条書きが"
                    f"見つかりません。**0件 を「全部 閉じた」と読まないこと。**")
         return out
     closed, total, opened = g["closed"], g["total"], g["open"]
@@ -5504,7 +5504,7 @@ def gate_lines(bar: str = "###", tr: dict | None = None) -> list[str]:
     if g.get("unrecorded"):
         ns = "／".join(str(r["n"]) for r in g["unrecorded"])
         out.append(
-            f"{bar} [!] **{ns} は `AUTOMATION_PAUSED.md` の側で「閉じた」と印が付いていますが、"
+            f"{bar} [!] **{ns} は `docs/RESUME_GATE.md` の側で「閉じた」と印が付いていますが、"
             f"根拠の1行が `data/resume_gate.jsonl` にありません。** 原文は"
             f"「次の全条件が**記録される**まで解除しない」——"
             f" **印は記録ではありません。** `--close-gate {g['unrecorded'][0]['n']}"
@@ -5563,13 +5563,14 @@ def gate_lines(bar: str = "###", tr: dict | None = None) -> list[str]:
             out.append(
                 f"{bar} **門は {closed}件 とも閉じました（残り 0件）。床(d) は 0日 です**"
                 f" —— **床(d) はもう到達日を縛っていません**（縛っているのは下の"
-                f"軌跡のほう）。**ただし `AUTOMATION_PAUSED.md` が在るあいだ、"
-                f"本は1本も出ません** —— 閉じたのは条件で、**解除はまだ別の1手**です"
-                f"（人の手で `origin/main` へ直接 入った停止なので、"
-                f"`AUTOMATION_PAUSED.md` の「6件とも記録されました」の節を読むこと）。"
-                f" **解除した最初の1周で `python -m src.density_verdict` と"
+                f"軌跡のほう）。**停止は 2026-08-31 にオーナーが解いています** ——"
+                f"いま止まるのは `.owner-pause` が人の手で置かれたときだけです"
+                f"（`src/pause_guard`・検査 `tests/test_pause_needs_owner.py`）。"
+                f" **最初の1周で `python -m src.density_verdict` と"
                 f" `python -m src.frames` を撃ち直すこと** ——"
-                f"閉じた根拠は**上限であって、出来上がりの実測ではありません。**")
+                f"閉じた根拠は**上限であって、出来上がりの実測ではありません。**"
+                f" 外れていたら `--open-gate` で開き直して直すこと"
+                f"（**全体を止めないこと**）。")
         elif not _per:
             out.append(
                 f"{bar} **床(d)＝門が閉じる日 ＋ 軌跡の日数**: 残り {opened}件 ですが、"
