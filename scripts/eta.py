@@ -3146,11 +3146,48 @@ def physical_caps(a0: dict, density: float = PLAN_PUBLISH_PER_DAY,
     #     初測: 実効 ¥20.9 → 天井 ¥866（×41.5）。**据え置きの ×100 は 2.4倍 甘かった。**
     #     **測れていないときだけ**、前の据え置きへ落ちます（黙って落ちないよう why に出す）。
     mixed = rpm_mix.last()
+    # --- **その天井は、オーナーが固定した「1日1本」の下でも立つか**（2026-08-31・最適化の回）---
+    #     `surface_ceiling()` は長尺の面を**いちばん大きかった1日**で読みます。
+    #     実測でその日は **20260821・1,368回/日** で、**その日に公開した長尺は 7本**です。
+    #     規則は **1本/日**（`src/house_rule.PUBLISH_PER_DAY`）。
+    #     **つまり `rpm` の天井は、規則の 7倍 の供給の上に立っていました。**
+    #     この関数の docstring は自分の仕事を「**腕を「実在する幅」で止める
+    #     （軌跡が実在しない世界を歩かないため）**」と書いていて、`density` は
+    #     30行 上で `house_rule` に止められています。**`rpm` だけが規則を
+    #     1度も見ていませんでした** —— `trajectory.py` の供給の天井（×92）・
+    #     `density`（×10）と**同じ欠陥の3件目**です。
+    #     置き換えるのは面の数だけで、新しい推測は1つも足しません
+    #     （規則 1本/日 × **公開1本あたりの面**・実測。`src.rpm_mix.rule_capped`）。
+    #     実測 2026-08-31: **×59.77 → ×28.05**（面 1,368.0 → 320.6回/日）。
+    #     **測れないとき（窓に長尺の公開が0本）は `None` が返り、据え置きのまま**です。
+    rule_cap_rpm = None
     if mixed and mixed.get("factor"):
+        try:
+            from src import reach_split  # 局所読み（`eta.py` の他所と同じ形）
+            _rows = reach_split.dedupe(reach_split.load_rows())
+            _pp = ((reach_split.summary(_rows, reach_split.long_ids()).get("長尺") or {})
+                   .get("per_publish"))
+            rule_cap_rpm = rpm_mix.rule_capped(
+                mixed, _pp, float(house_rule.PUBLISH_PER_DAY))
+        except Exception:                                      # noqa: BLE001
+            rule_cap_rpm = None
+    if rule_cap_rpm:
+        caps["rpm"] = {"factor": float(rule_cap_rpm["factor"]),
+                       "why": (f"実測の混ざり方 ¥{rule_cap_rpm['rpm_now']:,.1f} → "
+                               f"¥{rule_cap_rpm['rpm_max']:,.0f}"
+                               f"（{rule_cap_rpm['why']}）"),
+                       "measured": True,
+                       "rule_binds": True,
+                       "factor_before_rule": float(rule_cap_rpm["factor_before"])}
+    elif mixed and mixed.get("factor"):
         caps["rpm"] = {"factor": float(mixed["factor"]),
                        "why": (f"実測の混ざり方 ¥{mixed.get('rpm_now', 0):,.1f} → "
-                               f"¥{mixed.get('rpm_max', 0):,.0f}（{mixed.get('why', '')}）"),
-                       "measured": True}
+                               f"¥{mixed.get('rpm_max', 0):,.0f}（{mixed.get('why', '')}）"
+                               "。**規則（1日1本）では止めていません** —— "
+                               "窓に長尺の公開が0本で、公開1本あたりの面が測れません"
+                               "（`src.rpm_mix.rule_capped`）"),
+                       "measured": True,
+                       "rule_binds": False}
     else:
         band = RPM_SCENARIOS.get(PLAN_BAND_BY_FORM.get("ショート", ""), 0)
         if band:
