@@ -1,0 +1,116 @@
+"""**「まだ数えきっていない形」を、天井の逃げ先として名指してよいか。**
+
+## なぜ要るか（2026-09-01・最適化の回に実測して足した）
+
+`scripts/eta.py` の頭の3行に、2026-08-31 から こう出ていました ——
+
+    → **その天井 ×8.82 を、ショートの中で探さないこと。**
+      長尺の1本あたり再生は、天井ではなく**まだ1回も数えきっていない**側です。
+      **数えきるのは API 0単位・新しく1本も出さずに進みます。**
+
+**「未計数」から「だから大きいかもしれない」へ、測らずに渡っています。**
+同じ回の `src/form_record.per_video_best()` が、渡った先の数を出しています ——
+
+    ショート  記録 1,891回 × 打ち切り補正 1.00 → `best_settled` **1,891**（settled）
+    長尺      記録   156回 × 打ち切り補正 2.00 → `best_settled`   **312**（未settled）
+
+`best_settled` は「**伸びきったことにして**、いま在る記録を最大まで数えた」値です。
+**長尺を数えきった側の上限が 312**で、天井 1,891 の **×0.17** ——
+オーナー規則2（無限大にして 0日 なら、そこは律速ではない）が、この枝に掛かります。
+同じ日に `config/hypotheses.yaml` の `長尺1本あたり-13本` も
+**外れで閉じています**（中央値 4回 対 門 80回・符号検定 p=0.0001）。
+
+**台帳が閉じた道を、画面の頭が毎周 名指ししていました。**
+頭の3行しか読まれない手順（`CLAUDE.md`）では、これは「次の一手」に見えます。
+
+## もう1つ、同じ回に見つけた形
+
+`_long_ceiling_lines()` は `long_ceiling.lines(m)` と呼んでいましたが、
+`long_ceiling.lines()` は**引数を取りません**。毎周 `TypeError` が出て、
+すぐ下の `except Exception` が飲み、**画面には空が出ていました** ——
+「判定できます。外れです（p=0.0001）」の4行が **1度も印字されないまま**
+台帳の側だけが閉じています。**回を止めない `except` は、こう効きます。**
+
+## ここで固定するもの
+
+1. `_escape_form()` は、**数えきった側の上限が天井を超えるときだけ** `escapes` を真にする
+2. `_long_ceiling_lines()` は**空を返さない**（本物のデータで撃って、行が出ること）
+3. 台帳の名前は**写さない**（`long_ceiling.KEY` から読む）
+
+## 覆る条件
+
+`best_settled` は打ち切り補正込みで毎回 数え直します。長尺の記録が伸びて
+天井を超えたら `escapes` は自分で真に戻り、元の招待の行が戻ります。
+**この検査は数を固定しません**（下の 1,891／312 は作った標本です）。
+"""
+from __future__ import annotations
+
+import importlib.util
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+_spec = importlib.util.spec_from_file_location(
+    "eta_escape_form_mod", ROOT / "scripts" / "eta.py")
+eta = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(eta)
+
+
+def _recs(long_best_settled: float):
+    return {
+        "ショート": {"best": 1891, "best_settled": 1891.0, "settled": True},
+        "長尺": {"best": 156, "best_settled": long_best_settled, "settled": False},
+    }
+
+
+def test_数えきっても天井に届かない形は逃げ先ではない():
+    e = eta._escape_form(_recs(312.0))
+    assert e["form"] == "長尺"
+    assert e["cap"] == 1891.0
+    assert e["top"] == 312.0
+    assert e["escapes"] is False, (
+        "**未計数であることは、大きいことではありません。** "
+        "数えきった側の上限（312）が天井（1,891）に届かないなら、"
+        "そこを数えても天井は上がりません")
+
+
+def test_数えきった側が天井を超える形だけが逃げ先():
+    e = eta._escape_form(_recs(3000.0))
+    assert e["escapes"] is True
+    assert e["over"] > 1.0
+
+
+def test_settled_な形しか無ければ逃げ先は無い():
+    e = eta._escape_form({"ショート": {"best": 1891, "best_settled": 1891.0,
+                                       "settled": True}})
+    assert e["form"] is None
+    assert e["escapes"] is False
+
+
+def test_読めなくても回を止めない():
+    e = eta._escape_form({})
+    assert e["escapes"] is False
+    assert e["form"] is None
+
+
+def test_長尺の判定の行が空で落ちない():
+    """**`except` が飲んだ `TypeError` を、ここで見つける。**
+
+    実データで撃ちます（`data/views.jsonl`・API 0単位）。長尺の読みが
+    1件も無い環境では `long_ceiling.lines()` 自身が「**測っていません**」を
+    出すので、**どちらにせよ空にはなりません。**
+    """
+    out = eta._long_ceiling_lines({})
+    assert out, ("`long_ceiling.lines()` の行が1本も出ていません —— "
+                 "呼び方が合っていない（引数を渡している）か、例外が飲まれています")
+
+
+def test_台帳の名前は写さず正本から読む():
+    from src import long_ceiling
+    assert eta._long_ceiling_key() == long_ceiling.KEY
+    src = (ROOT / "scripts" / "eta.py").read_text(encoding="utf-8")
+    # **印字される文字列の中に古い名前を残さないこと。**
+    #     註と docstring は履歴として残してよい（**なぜ変えたか**が消えると、
+    #     次に来た側が惰性で戻します）。見るのは f 文字列の行だけです。
+    printed = [ln for ln in src.splitlines()
+               if "長尺1本あたり-30本" in ln and ('f"' in ln or "f'" in ln)]
+    assert not printed, printed

@@ -1340,11 +1340,96 @@ def _long_ceiling_lines(m: dict) -> list[str]:
     **回を止めません。** 解けなければ空を返します（`long_values_28d` が
     積まれていない古い点でも、`long_ceiling.lines()` が「測っていない」を出します）。
     """
+    # **`m` は受け取るだけで渡さないこと。** `long_ceiling.lines()` は引数を
+    #     取りません（`data/views.jsonl` から自分で数え直します）。
+    #     2026-08-31〜09-01 の版はここが `lines(m)` で、**毎周 `TypeError` を
+    #     出しては下の `except` が飲んでいました** —— 画面には空が出るので、
+    #     「判定できます。外れです（p=0.0001）」の4行が **1度も印字されないまま**
+    #     台帳の側だけが閉じていました。**引数は消さないこと**（呼ぶ側が3か所ある）。
     try:
         from src import long_ceiling
-        return long_ceiling.lines(m)[1:]
+        return long_ceiling.lines()[1:]
     except Exception:                                          # noqa: BLE001 — 回を止めない
         return []
+
+
+def _long_ceiling_key() -> str:
+    """**判定している前提の名前の正本を1か所から読む。**（読めなければ空文字）
+
+    `src/long_ceiling.KEY`。ここに書き写さないのは、`_long_ceiling_gate()` と
+    同じ理由です —— 2026-09-01 まで、この画面は `長尺1本あたり-30本` と
+    印字していました。その名前の前提は `house_rule.window_unreachable()` が
+    「窓（28本）に 30本 は入らない」で落として書き直されており、
+    **台帳を引いても もう在りません。**
+    """
+    try:
+        from src import long_ceiling
+        return long_ceiling.KEY
+    except Exception:                                          # noqa: BLE001 — 回を止めない
+        return ""
+
+
+def _escape_form(recs: dict | None = None) -> dict:
+    """**「その形は、まだ数えきっていない」を、逃げ先として名指してよいか。**
+
+    ## なぜ要るか（2026-09-01・最適化の回に実測して足した。**API 0単位**）
+
+    頭の3行に、2026-08-31 から**2つの枝**がこう出ていました ——
+
+        → **その天井 ×8.82 を、ショートの中で探さないこと。**
+          長尺の1本あたり再生は、天井ではなく**まだ1回も数えきっていない**側です。
+          **数えきるのは API 0単位・新しく1本も出さずに進みます。**
+
+    **これは「未計数」から「だから大きいかもしれない」へ、測らずに渡っています。**
+    `form_record.per_video_best()` は同じ回に、**渡った先の数**を出しています ——
+
+        ショート  記録 1,891回  打ち切り補正 ×1.00 → **1,891**（`settled: True`）
+        長尺      記録   156回  打ち切り補正 ×2.00 → **312**（`settled: False`）
+
+    `best_settled` は「**伸びきったことにして**、いま在る記録を最大まで数えた」値です。
+    つまり**長尺を数えきった側の上限が 312**で、天井 1,891 の **×0.17**。
+    **数えきっても天井は上がりません** —— オーナー規則2（無限大にして 0日 なら
+    そこは律速ではない）に、この枝はそのまま掛かります。
+
+    同じ日に `config/hypotheses.yaml` の `長尺1本あたり-13本` が
+    **外れで閉じています**（中央値 4回 対 門 80回・符号検定 p=0.0001）。
+    **台帳が閉じた道を、画面の頭が毎周 名指しし続けていました。**
+
+    ## 返すもの
+
+    `{"form", "cap", "top", "over", "escapes"}`。`escapes` が偽なら、
+    その形は逃げ先ではありません（`form` は名前を出すために残します）。
+
+    ## **覆る条件**
+
+    `best_settled` は打ち切り補正（`censor`）込みで**毎回 数え直します**。
+    長尺の記録が伸びて `top > cap` になったら、`escapes` は自分で真に戻り、
+    元の招待の行が戻ります。**定数を持ちません。**
+    （長尺の `censor.noisy` は真 ——「分母は 1〜4再生の本で、記録は 156再生」——
+      なので ×2.00 自体が上振れ側です。**それでも 312 < 1,891。**）
+    """
+    if recs is None:
+        try:
+            recs = form_record.per_video_best()
+        except Exception:                                      # noqa: BLE001 — 回を止めない
+            recs = {}
+
+    def _top(v: dict) -> float:
+        try:
+            return float(v.get("best_settled") or v.get("best") or 0.0)
+        except (TypeError, ValueError):
+            return 0.0
+
+    settled = {f: v for f, v in (recs or {}).items() if v.get("settled", True)}
+    unsettled = {f: v for f, v in (recs or {}).items() if not v.get("settled", True)}
+    cap = max((_top(v) for v in settled.values()), default=0.0)
+    form, top = None, 0.0
+    for f, v in unsettled.items():
+        if _top(v) >= top:
+            form, top = f, _top(v)
+    return {"form": form, "cap": cap, "top": top,
+            "over": (top / cap) if cap else None,
+            "escapes": bool(form and cap and top > cap)}
 
 
 def _long_ceiling_gate() -> int | str:
@@ -2700,7 +2785,7 @@ def report(m: dict, a: dict) -> list[str]:
         #     **3か所目を作らないこと。**
         _lmed = m.get("long_median_per_video")
         if _lmed is not None:
-            P(f"              中央値 **{_lmed:,}回**／本（**判定 `長尺1本あたり-30本` が"
+            P(f"              中央値 **{_lmed:,}回**／本（**判定 `{_long_ceiling_key()}` が"
               f"読むのはこちら。門は {_long_ceiling_gate()}回**）。"
               "平均との差は右に歪んだ分布のぶんです")
             for _ln in _long_ceiling_lines(m):
@@ -7585,29 +7670,27 @@ def headline(pl: dict, prev: dict | None = None,
     #
     #     **覆る条件**: 長尺が伸びきる年齢が1つでも出たとき（`settled` が真になる）。
     #     そのときこの行は自分で消えます。**定数を持ちません。**
-    if pl.get("lever_hint") == "rpm":
-        try:
-            _recs = form_record.per_video_best()
-        except Exception:                                      # noqa: BLE001
-            _recs = {}
-        _uns = [f for f, v in _recs.items() if not v.get("settled", True)]
-        if _uns:
-            _f = _uns[0]
-            out.append(
-                f"{bar} **その `rpm` は、`per_video` の天井から逃げた先です。"
-                f"逃げ先の {_f} は、天井ではなく『測れていない』側です** ——"
-                f" 天井 1,891 の `unit` は「**24時間・ショート**39本の最大」で、"
-                f"{_f} には掛かりません（`escape_note` も「{_f}の1本あたり再生は"
-                f"まだ測れていません」と書いています）。"
-                f"**この回の実測**: `settle.settles_at('{_f}')` ——"
-                f" {_f}は、この標本が届くどの地平でも**伸びきりません**"
-                f"（ショートは地平 480時間 でも 48時間 で 100%）。")
-            out.append(
-                f"{bar}   → **`per_video` を「もう伸びない」と読まないこと。**"
-                f" ショートでは天井（実測）ですが、{_f}では**まだ1回も数えきっていません。**"
-                f" {_f}の1本あたり再生を数えきることは、"
-                f"**API 0単位・新しく1本も出さずに**進みます"
-                f"（`data/views.jsonl` が古い{_f}を観測し続ける限り自動）。")
+    # **2026-09-01: ここは「未計数」を逃げ先として名指していました。**
+    #     `_escape_form()` が、同じ `form_record` の数でその渡りを検算します ——
+    #     数えきった側の上限（`best_settled`）が天井を超えないなら、逃げ先ではありません。
+    _esc = _escape_form()
+    if pl.get("lever_hint") == "rpm" and _esc["form"] and _esc["escapes"]:
+        _f = _esc["form"]
+        out.append(
+            f"{bar} **その `rpm` は、`per_video` の天井から逃げた先です。"
+            f"逃げ先の {_f} は、天井ではなく『測れていない』側です** ——"
+            f" 天井 {_esc['cap']:,.0f} の `unit` は「**24時間・ショート**39本の最大」で、"
+            f"{_f} には掛かりません（`escape_note` も「{_f}の1本あたり再生は"
+            f"まだ測れていません」と書いています）。"
+            f"**この回の実測**: `settle.settles_at('{_f}')` ——"
+            f" {_f}は、この標本が届くどの地平でも**伸びきりません**"
+            f"（ショートは地平 480時間 でも 48時間 で 100%）。")
+        out.append(
+            f"{bar}   → **`per_video` を「もう伸びない」と読まないこと。**"
+            f" ショートでは天井（実測）ですが、{_f}では**まだ1回も数えきっていません。**"
+            f" {_f}の1本あたり再生を数えきることは、"
+            f"**API 0単位・新しく1本も出さずに**進みます"
+            f"（`data/views.jsonl` が古い{_f}を観測し続ける限り自動）。")
     # --- **`per_video` が名指しに変わった回にも、同じことを言う**（2026-08-31）---
     #     上の枝は `lever_hint == "rpm"` にしか掛かりません。この回に名指しが
     #     `rpm` → `per_video` へ変わったので、**この行は黙りました。**
@@ -7621,21 +7704,50 @@ def headline(pl: dict, prev: dict | None = None,
     #     **覆る条件**: `settled` が真になったら（＝長尺が伸びきる齢が出たら）
     #     この行は自分で消えます。**定数を持ちません。**
     if (pl.get("lever_hint") == "per_video"
-            and isinstance(pl.get("lever_need_over_cap"), (int, float))):
-        try:
-            _recs2 = form_record.per_video_best()
-        except Exception:                                      # noqa: BLE001
-            _recs2 = {}
-        _uns2 = [f for f, v in _recs2.items() if not v.get("settled", True)]
-        if _uns2:
-            _f2 = _uns2[0]
+            and isinstance(pl.get("lever_need_over_cap"), (int, float))
+            and _esc["form"]):
+        _f2, _need = _esc["form"], pl["lever_need_over_cap"]
+        if _esc["escapes"]:
             out.append(
-                f"{bar}   → **その天井 ×{pl['lever_need_over_cap']:.2f} を、"
-                f"ショートの中で探さないこと。** 天井 1,891 の `unit` は"
+                f"{bar}   → **その天井 ×{_need:.2f} を、"
+                f"ショートの中で探さないこと。** 天井 {_esc['cap']:,.0f} の `unit` は"
                 f"「**24時間・ショート**39本の最大」で、**{_f2} には掛かっていません** ——"
                 f" {_f2}の1本あたり再生は、天井ではなく**まだ1回も数えきっていない**側です"
                 f"（`settle.settles_at('{_f2}')` —— この標本が届くどの地平でも伸びきらない）。"
                 f" **数えきるのは API 0単位・新しく1本も出さずに進みます。**")
+        else:
+            # **この行は 2026-09-01 に反転しました。**（`_escape_form()` の docstring）
+            #     反転の根拠は、同じ回に `form_record` から出した数だけです ——
+            #     **`{形}` を伸びきったことにして最大まで数えても、天井に届きません。**
+            #     招待のほうは自分で戻ります（`escapes` が真になったとき）。
+            _key = _long_ceiling_key()
+            _v = {}
+            try:
+                from src import long_ceiling as _lc
+                _v = _lc.verdict()
+            except Exception:                                  # noqa: BLE001 — 回を止めない
+                _v = {}
+            _tail = ""
+            if _v.get("decidable") and _v.get("falsified"):
+                _tail = (f" 台帳の `{_key}` も**外れで閉じています**"
+                         f"（中央値 {_v.get('median', 0):,.0f}回 対 門"
+                         f" {_long_ceiling_gate()}回・"
+                         f"n={_v.get('n')}・符号検定 p={_v.get('p', 1.0):.4f}）。")
+            out.append(
+                f"{bar}   → [!] **その天井 ×{_need:.2f} を、{_f2}の中に探さないこと ——"
+                f" この回に数え直して、逃げ先のほうが低いと出ました。**"
+                f" {_f2}は伸びきっていません（`settled: False`）が、"
+                f"**伸びきったことにして最大まで数えても {_esc['top']:,.0f}回**"
+                f"（`form_record.per_video_best()['{_f2}']['best_settled']`＝記録×打ち切り補正）で、"
+                f"いまの天井 **{_esc['cap']:,.0f}回**（ショート）の"
+                f" **×{_esc['over']:.2f}** です。"
+                f"**＝ {_f2}を数えきっても天井は上がりません**"
+                f"（オーナー規則2: 無限大にして 0日 なら、そこは律速ではない）。"
+                + _tail +
+                f" **×{_need:.2f} は形の中にありません。**"
+                f" 探す先は**分母の側**（`rpm`／`density` ＝ 要る再生/月 を下げる。"
+                f"腕を1本ずつではなく同時に引いた残りは `src/joint_cap.py` が出します）か、"
+                f"**天井そのものを立て直す前提**です。")
     if pl.get("lever_hint_covered"):
         out.append(f"{bar} **その `{pl['lever_hint']}` の測定は、予約済みの本が"
                    f" {pl['lever_hint_covered']} に答えます** →"
