@@ -72,6 +72,13 @@ ETA_LOG = ROOT / "data" / "eta.jsonl"
 VIEWS = ROOT / "data" / "views.jsonl"
 HYPOTHESES = ROOT / "config" / "hypotheses.yaml"
 
+#: この道具が判定している前提の名前（`config/hypotheses.yaml`）。
+#: **`scripts/eta.py` にも同じ名前が3回 出ていて、そこは 2026-09-01 まで
+#: `長尺1本あたり-30本`（`house_rule` が「窓に入らない」と落とした前の版）の
+#: ままでした。** 読み手は画面の名前で台帳を引くので、そこが古いと引けません。
+#: **写さないこと。ここから読むこと。**
+KEY = "長尺1本あたり-13本"
+
 #: 判定の門（`config/hypotheses.yaml` の `長尺1本あたり-13本` の `falsified_if`）。
 #: **2か所に書いています。** 片方だけ動くのを止めるのは
 #: `tests/test_long_ceiling.py::test_門の数は仮説と同じ` です。
@@ -295,7 +302,7 @@ def lines() -> list[str]:
     h = mature_hours()
     v = mature_sample()
     d = verdict(v)
-    out = [f"=== 長尺の1本あたり再生は天井か（`長尺1本あたり-13本` の門 "
+    out = [f"=== 長尺の1本あたり再生は天井か（`{KEY}` の門 "
            f"{MEDIAN_GATE}回・齢 {h}時間 以上）==="]
     if not v:
         out.append("  **測っていません** —— `data/views.jsonl` に、齢 "
