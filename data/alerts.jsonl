@@ -483,3 +483,5 @@
 {"at": "2026-08-31T16:57:19+09:00", "key": "status_lines", "n": 1, "session": "session_01AHfq4FUVAd5fxDM29yG1Cm", "by": "status.py"}
 {"at": "2026-08-31T16:52:49+09:00", "key": "dupes_actionable", "n": 15, "session": "session_01AHfq4FUVAd5fxDM29yG1Cm", "by": "status.py"}
 {"at": "2026-08-31T16:54:28+09:00", "key": "status_lines", "n": 1, "session": "session_01AHfq4FUVAd5fxDM29yG1Cm", "by": "status.py"}
+{"at": "2026-08-31T17:20:07+09:00", "key": "schedule_gaps", "n": 6, "session": "session_01AHfq4FUVAd5fxDM29yG1Cm", "by": "status.py"}
+{"at": "2026-08-31T17:20:12+09:00", "key": "stranded", "n": 163, "session": "session_01AHfq4FUVAd5fxDM29yG1Cm", "by": "status.py"}
