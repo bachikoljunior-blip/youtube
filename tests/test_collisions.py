@@ -68,33 +68,73 @@ def test_plan_moves_within_the_day_when_it_can() -> None:
     assert moves[0]["to"] != "2026-08-28T09:00"
 
 
-def test_plan_fills_the_holes_on_the_measure_window_day() -> None:
-    """**測定の窓の日は、まずその日の空き分へ寄せる**（2026-08-25 に逆へ直した）。
+def test_plan_never_places_before_the_live_edge() -> None:
+    """**置き先が `LIVE_FROM_MIN` より前に出ないこと**（2026-08-27 に書き換えた）。
 
-    前の版は「同じ日へ逃がすと 13:30 より後ろへ出る」を理由に別の日へ出していました。
-    **逃がす先は `grid`（05:00〜13:30）からしか採らないので、後ろへは出ません。**
-    そして寄せたぶんだけ「窓の説」の予測が上がり、**切り分けの分解能が上がります。**
+    ここは「測定の窓の日は、まずその日の**早い側の空き**へ寄せる」を確かめる
+    試験でした（05:00 / 05:30 / …）。**その測定は 2026-08-27 に終わり、
+    答えは「朝は生きない」**です —— 05:00〜08:30 に置いた 8本 は全部 0再生
+    （8本とも `public`/`processed`）。`LIVE_FROM_MIN` は 05:00 → 09:00 へ戻して
+    あるので、**早い側の空きはもう候補ではありません。**
+
+    確かめるのは、その日に残るかどうかではなく（それは帯の埋まり方で変わる）、
+    **どの手も生きる帯の中にしか置かないこと**のほうです。
     """
     rows = [row("a", "2026-08-27T00:00:00Z"),   # 09:00 JST
             row("b", "2026-08-27T00:00:00Z"),   # 09:00 JST（衝突）
-            row("z", "2026-08-26T20:00:00Z"),   # 08/27 05:00 JST ＝ 早い側の枠が埋まる
+            row("z", "2026-08-26T20:00:00Z"),   # 08/27 05:00 JST ＝ 帯の外
             row("c", "2026-08-29T00:00:00Z")]
     moves = collisions.plan(rows, today=TODAY)
     assert len(moves) == 1
     assert moves[0]["id"] == "b"
-    assert moves[0]["to"].startswith("2026-08-27T")     # **同じ日に残る**
-    assert moves[0]["force_window"] is True             # 窓の日なので force が要る
+    hh, mm = moves[0]["to"].split("T")[1].split(":")
+    m = int(hh) * 60 + int(mm)
+    assert collisions.LIVE_FROM_MIN <= m <= collisions.LIVE_TO_MIN, (
+        f"{moves[0]['to']} は生きる帯の外です（0再生が確定する時刻へ逃がしています）")
+    assert m % collisions.STEP_MIN == 0
 
 
-def test_plan_does_not_push_past_the_days_last_slot_on_a_window_day() -> None:
-    """**穴を埋めるだけ。** いちばん遅い分より後ろへ出すと T を自分で動かします。"""
+def test_plan_does_not_push_past_the_days_last_slot_on_a_window_day(
+        monkeypatch) -> None:
+    """**穴を埋めるだけ。** いちばん遅い分より後ろへ出すと T を自分で動かします。
+
+    08/27 に入っているのは 09:00 の2本だけ ＝ いちばん遅い分も 09:00 で、
+    **帯の下端（09:00）と同じ**です。つまりその日には空き分が1つも無いので、
+    **別の日へ出ます**（前は 05:00 が空いていたので同じ日に残っていました）。
+
+    ## **窓は、この検査が自分で立てます**（2026-08-29 に直した）
+
+    ここは `src/measure_window.WINDOWS` に 08/27 の窓が**在ること**に
+    寄りかかっていました。**あれは動く台帳です** —— 支えている前提が閉じれば
+    窓は外れます。実際 2026-08-28 23:3x に別の回が
+    「閉じた前提の窓を外した」で 08/27 の窓を消し、**この検査が赤になりました**
+    （`collisions.plan` は1行も変わっていません）。
+
+    **`today` の注入だけでは足りません。** 08-28 に同じ検査が赤になったとき
+    （`collisions.window()` の註）、直したのは「壁の時計を読んでいた」ほうで、
+    **窓そのものが台帳から消える道**は残っていました。**2回目です。**
+
+    だから窓は `monkeypatch` で立てます。この検査が見たいのは
+    **「窓の日には、いちばん遅い分より後ろへ出さない」という `plan()` の振る舞い**
+    であって、**いまその窓が台帳に在るかどうか**ではありません。
+
+    **覆る条件**: `plan()` が `measure_window` を直に呼ばなくなったら、
+    ここの差し替え先も一緒に動かすこと。
+    """
+    from src import measure_window
+
+    monkeypatch.setattr(
+        measure_window, "inside",
+        lambda day, window=None, today=None: day == "2026-08-27")
+
     rows = [row("a", "2026-08-27T00:00:00Z"), row("b", "2026-08-27T00:00:00Z"),
             row("c", "2026-08-29T00:00:00Z")]
     moves = collisions.plan(rows, today=TODAY)
     assert len(moves) == 1
-    # 08/27 に入っているのは 09:00 の2本だけ ＝ いちばん遅い分も 09:00。
-    # 09:00 より前の空きはあるが `grid` の先頭から採るので 05:00 が返る。
-    assert moves[0]["to"] == "2026-08-27T05:00"
+    day, hhmm = moves[0]["to"].split("T")
+    hh, mm = hhmm.split(":")
+    assert day != "2026-08-27" or int(hh) * 60 + int(mm) <= 9 * 60, (
+        "窓の日で、いちばん遅い分より後ろへ出しています（T を自分で動かします）")
 
 
 def test_plan_does_not_reuse_one_slot_twice() -> None:

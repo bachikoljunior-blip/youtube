@@ -46,6 +46,9 @@ import math
 from fractions import Fraction
 
 from . import _checks
+from .furusato import BASIC_INCOME, salary_deduction
+from .koyouhoken import worker_rate
+from .tedori import income_tax
 
 ASSUMPTIONS = [
     "1日あたりの額は、支給開始日以前12か月の標準報酬月額の平均を30で割り、3分の2をかけて計算しています",
@@ -62,6 +65,10 @@ ASSUMPTIONS = [
     "標準報酬月額は1,000円きざみの値だけを入れています（実際の等級もそうなっています）",
     "健康保険料率は都道府県ごとに違うため、率そのものを入力として動かせるようにしています",
     "余りの表に出てくる月額は、その余りになる1,000円きざみの値の例であって、実在する等級とは限りません",
+    "働いた場合の手取りと比べる表では、年収を標準報酬月額の12か月ぶんとして計算しています。賞与があると変わります",
+    "働いた場合の雇用保険料は、一般の事業の労働者負担0.55パーセント（令和7年度）で計算しています",
+    "働いた場合の所得税は、所得控除を基礎控除と社会保険料控除だけにして計算しています。扶養控除などがあると税は下がります",
+    "住民税は前年の所得で決まるため、働いても休んでも同じ額がかかるものとして、両方から同じ額を引いています",
 ]
 
 # 制度の値。**長く動いていないもの**だけをここに置く。
@@ -357,6 +364,185 @@ def rate_step(point: float = 0.01, care: bool = False) -> list[dict]:
     return out
 
 
+
+# ---- 働いた場合の手取りと比べる（**「3分の2」は額面の話で、手取りの話ではない**）----
+#
+# 一般の解説はここで止まる ——「給料のおよそ3分の2」。
+# **その3分の2は額面どうしの比**で、**手取りどうしの比ではない。**
+#
+# **書きはじめたときは「手取りで比べれば3分の2より高くなる」と考えていた。**
+# 働いていれば所得税と雇用保険料がかかり、休んでいればどちらもかからない
+# （傷病手当金は非課税・賃金が支払われないので雇用保険料も生じない）ので、
+# 働いた側の分母だけが削られる、という筋である。**実際に回すと逆だった。**
+#
+#   社会保険料（健保・厚年・介護）は**標準報酬月額から**計算されるので、
+#   休んで手当金が3分の2に減っても**引かれる額は1円も減らない。**
+#   小さくなった分子から満額が引かれるぶんが、上の押し上げより大きい。
+#
+# だから**手取りの置換率は3分の2を下回る**（実測 62.8%〜65.9%）。
+# しかも**下回り方が標準報酬月額で変わる** —— 所得税は累進なので、
+# 高い人ほど押し上げが大きく、置換率は高くなる。**低い人ほど不利。**
+# この向きは一般の解説と逆で、表もどこにも無い。だからここで出す。
+
+EMPLOYMENT_KIND = "一般の事業"      # 雇用保険の率（`koyouhoken.py` の表から引く。ここで書き写さない）
+MONTHS = 12
+
+
+def employment_premium(standard_pay: int) -> int:
+    """働いているときだけ引かれる雇用保険料（本人負担・1か月ぶん）。
+
+    率は `koyouhoken.py` の表から引く。**同じ率を二度書かない**
+    （書き写すと、片方だけ直したときに静かにずれる）。
+    """
+    rate = Fraction(str(worker_rate(EMPLOYMENT_KIND)))
+    return int(Fraction(standard_pay) * rate)
+
+
+def working_month(standard_pay: int, care: bool = False, resident_tax: int = 0,
+                  health_rate: float = HEALTH_RATE,
+                  pension_rate: float = PENSION_RATE) -> dict:
+    """**働いて給料を受け取ったときの、1か月ぶんの手取り。**
+
+    所得税は月の源泉徴収表ではなく、**年で計算してから12で割る**
+    （源泉徴収は年末調整で精算されるので、1年ぶんで見るほうが実際に近い）。
+    所得控除は基礎控除と社会保険料控除だけ（`ASSUMPTIONS`）。
+    """
+    prem = premiums(standard_pay, care, health_rate, pension_rate)
+    koyou = employment_premium(standard_pay)
+    year = standard_pay * MONTHS
+    social_year = (prem["total"] + koyou) * MONTHS
+    taxable = max(0, year - salary_deduction(year) - social_year - BASIC_INCOME)
+    tax_year = income_tax(taxable)
+    tax_month = tax_year // MONTHS
+    net = standard_pay - prem["total"] - koyou - tax_month - resident_tax
+    return {
+        "standard_pay": standard_pay,
+        "premiums": prem["total"],
+        "employment": koyou,
+        "income_tax": tax_month,
+        "resident_tax": resident_tax,
+        "net": net,
+    }
+
+
+def replacement(standard_pay: int, care: bool = False,
+                resident_tax: int = 0) -> dict:
+    """**額面では3分の2。手取りで比べると何パーセントか。**
+
+    分母を3段で削って、押し上げのぶんを取り出す:
+      `base_ratio`  社会保険料だけを引いた給料と比べた比（**ここが 61.2%**）
+      `koyou_ratio` ＋雇用保険料ぶん（休んでいるとかからない）
+      `ratio`       ＋所得税ぶん（傷病手当金は非課税）＝ **実際の手取り置換率**
+
+    **`base_ratio` が 3分の2 を下回っているのが本体。** 社会保険料は
+    標準報酬月額から計算されるので、手当金が3分の2に減っても満額 引かれる。
+    (1)(2) はそれを押し戻すが、**戻し切らない**（上の註）。
+    """
+    check_tables()
+    w = working_month(standard_pay, care=care, resident_tax=resident_tax)
+    r = net_month(standard_pay, care=care, resident_tax=resident_tax)
+    # 分母を段階的に削って、押し上げのぶんを取り出す
+    base_den = standard_pay - w["premiums"] - resident_tax          # 保険料と住民税だけ引いた給料
+    koyou_den = base_den - w["employment"]                          # ＋雇用保険料
+    full_den = koyou_den - w["income_tax"]                          # ＋所得税 ＝ 実際の手取り
+    return {
+        "standard_pay": standard_pay,
+        "working_net": w["net"],
+        "leave_net": r["net"],
+        "face_ratio": r["benefit"] / standard_pay,
+        "base_ratio": r["net"] / base_den if base_den else 0.0,
+        "koyou_ratio": r["net"] / koyou_den if koyou_den else 0.0,
+        "ratio": r["net"] / full_den if full_den else 0.0,
+        "gap": w["net"] - r["net"],
+        "employment": w["employment"],
+        "income_tax": w["income_tax"],
+    }
+
+
+def replacement_grid(care: bool = False, resident_tax: int = 0) -> list[dict]:
+    """標準報酬月額べつの手取り置換率。**この表がどこにも無い。**"""
+    return [replacement(p, care=care, resident_tax=resident_tax)
+            for p in (200_000, 260_000, 300_000, 380_000, 440_000, 500_000, 650_000)]
+
+
+def replacement_spread(care: bool = False) -> dict:
+    """置換率が、下の行と上の行でどれだけ開くか。
+
+    **開くのは所得税のほう。** 雇用保険料は率が一定なので押し上げも一定だが、
+    所得税は累進なので、標準報酬月額が上がるほど分母を強く削る。
+    """
+    rows = replacement_grid(care=care)
+    lo, hi = rows[0], rows[-1]
+    return {
+        "low": lo, "high": hi,
+        "spread": hi["ratio"] - lo["ratio"],
+        "koyou_lift_low": lo["koyou_ratio"] - lo["base_ratio"],
+        "koyou_lift_high": hi["koyou_ratio"] - hi["base_ratio"],
+        "tax_lift_low": lo["ratio"] - lo["koyou_ratio"],
+        "tax_lift_high": hi["ratio"] - hi["koyou_ratio"],
+    }
+
+
+# 標準報酬月額をいくらずつ動かして探すか（**総当たり**。式で解かない ——
+# `daily()` の丸めと `int()` の切り捨てが入るので、閉じた式は1円ずれる）
+PAY_SCAN_LO = 58_000       # 標準報酬月額の下限（健康保険の第1等級）
+PAY_SCAN_HI = 650_000      # 厚生年金の上限等級。**ここより上は保険料が増えないので、この計算は当たらない**
+PAY_SCAN_STEP = 1_000
+
+
+def recovery(standard_pay: int, care: bool = False) -> dict:
+    """**非課税で取り返せるのは、社会保険料に持っていかれたぶんの何割か。**
+
+    `drop_grid()` が「額面比 − 手元比」を落ち幅と呼んでいるのと同じ引き算を、
+    **働いた場合の手取りを分母にして**やり直したもの。
+
+      落ち幅   3分の2 − `base_ratio`（社会保険料が持っていくぶん）
+      戻り     `ratio` − `base_ratio`（雇用保険料と所得税がかからないぶん）
+      取り返し率 戻り ÷ 落ち幅。**1.0 を超えて初めて、手取りでも3分の2**
+    """
+    r = replacement(standard_pay, care=care)
+    drop = BENEFIT_RATIO - r["base_ratio"]
+    back = r["ratio"] - r["base_ratio"]
+    return {
+        "standard_pay": standard_pay,
+        "base_ratio": r["base_ratio"],
+        "ratio": r["ratio"],
+        "drop": drop,
+        "back": back,
+        "recovery": back / drop if drop else 0.0,
+        "koyou_part": r["koyou_ratio"] - r["base_ratio"],
+        "tax_part": r["ratio"] - r["koyou_ratio"],
+    }
+
+
+def recovery_grid(care: bool = False) -> list[dict]:
+    """標準報酬月額べつの取り返し率。"""
+    check_tables()
+    return [recovery(p, care=care)
+            for p in (200_000, 260_000, 300_000, 380_000, 440_000, 500_000, 650_000)]
+
+
+def recovery_scan(care: bool = False) -> dict:
+    """**取り返し率が 100% になる標準報酬月額はあるか。** 総当たりで探す。
+
+    58,000円から650,000円まで1,000円きざみで全部 回す。
+    **650,000円で止めるのは、厚生年金の保険料がそこで頭打ちになるから** ——
+    その先は保険料が増えないので、この計算（率をそのまま掛ける）が当たらない。
+    """
+    check_tables()
+    best = None
+    reach = None
+    for p in range(PAY_SCAN_LO, PAY_SCAN_HI + 1, PAY_SCAN_STEP):
+        row = recovery(p, care=care)
+        if best is None or row["recovery"] > best["recovery"]:
+            best = row
+        if reach is None and row["ratio"] >= BENEFIT_RATIO:
+            reach = row
+    return {"best": best, "reach": reach,
+            "scanned": (PAY_SCAN_HI - PAY_SCAN_LO) // PAY_SCAN_STEP + 1,
+            "lo": PAY_SCAN_LO, "hi": PAY_SCAN_HI}
+
+
 if __name__ == "__main__":
     check_tables()
     print("制度の値の検査: 通過")
@@ -418,6 +604,44 @@ if __name__ == "__main__":
     for r in resident_tax_edges():
         print(f"{r['standard_pay']:11,d}円 {r['net']:12,d}円 {r['half_edge']:15,d}円 "
               f"{r['zero_edge']:17,d}円  {r['half_edge_ratio']:.4%}")
+
+    print("\n=== 額面の3分の2は、働いた場合の手取りと比べると何パーセントか（40歳未満）===")
+    print(f"{'標準報酬月額':>12s} {'働いた手取り':>12s} {'休んだ手取り':>12s} {'額面比':>7s} "
+          f"{'保険料だけ':>9s} {'＋雇用保険':>9s} {'＝手取り比':>9s}  {'月あたりの差'}")
+    for r in replacement_grid():
+        print(f"{r['standard_pay']:11,d}円 {r['working_net']:11,d}円 {r['leave_net']:11,d}円 "
+              f"{r['face_ratio']:6.1%} {r['base_ratio']:8.2%} {r['koyou_ratio']:8.2%} "
+              f"{r['ratio']:8.2%}  {r['gap']:,}円")
+    rs = replacement_spread()
+    print(f"  **額面では全員 {BENEFIT_RATIO:.1%} なのに、手取りで比べると "
+          f"{rs['low']['ratio']:.2%}〜{rs['high']['ratio']:.2%} に割れる**"
+          f"（{rs['low']['standard_pay']:,}円 と {rs['high']['standard_pay']:,}円 で "
+          f"{rs['spread'] * 100:.2f}ポイント）。")
+    print(f"  押し上げのうち雇用保険料ぶんは両端とも {rs['koyou_lift_low'] * 100:.2f}ポイントで動かない。"
+          f"開いているのは所得税ぶんで、{rs['tax_lift_low'] * 100:.2f} → "
+          f"{rs['tax_lift_high'] * 100:.2f}ポイント（累進のため）。")
+
+    print("\n=== 非課税で取り返せるのは、社会保険料に持っていかれたぶんの何割か（40歳未満）===")
+    print(f"{'標準報酬月額':>12s} {'保険料だけの比':>13s} {'落ち幅':>9s} "
+          f"{'雇用保険ぶん':>11s} {'所得税ぶん':>10s} {'戻り':>9s} {'手取り比':>9s}  {'取り返し率'}")
+    for r in recovery_grid():
+        print(f"{r['standard_pay']:11,d}円 {r['base_ratio']:12.2%} "
+              f"{r['drop'] * 100:8.2f}pt {r['koyou_part'] * 100:10.2f}pt "
+              f"{r['tax_part'] * 100:9.2f}pt {r['back'] * 100:8.2f}pt "
+              f"{r['ratio']:8.2%}  {r['recovery']:.1%}")
+    sc = recovery_scan()
+    best = sc["best"]
+    if sc["reach"] is None:
+        print(f"  **{sc['lo']:,}円から{sc['hi']:,}円まで{sc['scanned']:,}点を全部 回して、"
+              f"手取り比が {BENEFIT_RATIO:.2%} に届く標準報酬月額は1つも無い。**")
+        print(f"  いちばん近いのは {best['standard_pay']:,}円 で、取り返し率 {best['recovery']:.1%}"
+              f"（手取り比 {best['ratio']:.2%}）。")
+    else:
+        print(f"  手取り比が {BENEFIT_RATIO:.2%} に届くのは "
+              f"{sc['reach']['standard_pay']:,}円 から。")
+    sc_care = recovery_scan(care=True)
+    print(f"  40歳以上（介護保険料あり）だと、いちばん良い点でも取り返し率は "
+          f"{sc_care['best']['recovery']:.1%}（手取り比 {sc_care['best']['ratio']:.2%}）。")
 
     print("\n=== 健康保険料率が1ポイント違うと、546日ぶんでいくら変わるか（40歳未満）===")
     print(f"{'標準報酬月額':>12s} {f'率{HEALTH_RATE:.0%}の手元':>11s} "

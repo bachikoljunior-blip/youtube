@@ -35,6 +35,7 @@ API で差し替えられる**」と書いていますが、**時刻を動かす
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import sys
 from collections import defaultdict
@@ -47,7 +48,8 @@ import functools  # noqa: E402
 
 from googleapiclient.errors import HttpError  # noqa: E402
 
-from src import auth, dupes, forms, history, measure_window, uploader  # noqa: E402
+from src import (auth, dupes, forms, history, measure_window,  # noqa: E402
+                 upload_cap, uploader)
 
 JST = timezone(timedelta(hours=9))
 # `--compact` で詰める日数の**床**。判定に要る3日＋1日（`compact_plan` の節）。
@@ -64,16 +66,63 @@ DEFAULT_MAX_DAYS = 4
 @functools.cache
 def _measured_per_day(fallback: int = 10) -> int:
     """**呼ばれたときに測ります**（import では読みません。`views.jsonl` は1万行あり、
-    ここを import 時に読むと全部の道具の起動が遅くなります）。"""
+    ここを import 時に読むと全部の道具の起動が遅くなります）。
+
+    ## **オーナーの規則が、この数の上に乗っています**（2026-08-31 に踏んだ）
+
+    原文: 「**動画は1日一本作り置きはなしにして。…それは固定にして**」
+
+    `day_cap.measure()` が返すのは「**1日に何本まで再生が付くか**」という
+    **観測**です（実測 10本/日）。**出してよい本数ではありません。**
+    ここが観測をそのまま返していたので、`--compact` / `--spread` は
+    **1日10本 詰める割り当てを組みます** —— **規則1（1日1本）に正面から反します。**
+
+    しかも `scripts/status.py` は「予約が1本も無い日が10日あります」と鳴らし、
+    その場で **`python scripts/reschedule.py --compact` で詰めること**と
+    案内していました。**規則が入った直後に、道具のほうが元へ戻す形**です
+    （この repo でいちばん多い壊れ方 ——「言っている所と、している所が別」）。
+
+    **観測と規則の低いほうを返します。出どころは `src.house_rule` の1か所**
+    （`batch_build.density_cap()` / `eta.PLAN_PUBLISH_PER_DAY` と同じ）。
+
+    **覆る条件**: オーナーが規則を外したら、観測の側だけが残ります
+    （この関数は `house_rule` を読んでいるだけなので、1行も直りません）。
+    **検査は `tests/test_reschedule_house_rule.py`。**
+    """
     try:
         from src import day_cap
         m = day_cap.measure()
-        return int(m["cap"]) if m.get("measured") else fallback
+        got = int(m["cap"]) if m.get("measured") else fallback
     except Exception:
-        return fallback
+        got = fallback
+    return _clamp_per_day(got)
+
+
+def _clamp_per_day(n: int) -> int:
+    """**規則より多く置かない。**（規則1・2026-08-31。出どころは1か所）"""
+    try:
+        from src import house_rule
+        rule = int(house_rule.PUBLISH_PER_DAY)
+    except Exception:                                          # noqa: BLE001
+        return int(n)
+    return max(1, min(int(n), rule))
 
 
 DEFAULT_PER_DAY = 10          # **読めない回の既定**。実際に使う数は `_measured_per_day()`
+
+
+def _live_edge_min(hour: int, step_min: int) -> int:
+    """**その日の「生きる目盛り」の右端**（JST の分）。
+
+    `spread_plan` が中で立てているのと**同じ式**です
+    （`hour * 60 + (per_day - 1) * step_min`）。既定の 9時・30分きざみ・
+    上限10本 なら **13:30**。
+
+    **定数を書かないこと。** 上限は `day_cap` の実測で動きます
+    （08/24 に 17 → 10 へ動いた）。ここが定数だと、
+    **帯が広がっても置き方が付いていきません。**
+    """
+    return hour * 60 + (_measured_per_day() - 1) * step_min
 MARKER = re.compile(r"\[t:([a-z0-9\-]+)\]")
 
 
@@ -118,28 +167,201 @@ def _scheduled(svc) -> list[dict]:
     return sorted(rows, key=lambda r: r["at"])
 
 
+def _forms_of(rows: list[dict]) -> dict[str, bool]:
+    """予約中の本を、**ショートか長尺か**に分ける（動画ID → ショートなら True）。
+
+    `src.forms.classify()` に任せます —— 実測（`data/video_forms.json`）→
+    秒数 → 題名の `#Shorts` の順で決まる、この repo で唯一の決め方です。
+    **予約中の本は Analytics にまだ出ない**ので、実測は当たりません。
+    そこで秒数を控え（`data/uploaded.jsonl`）から足してから訊きます。
+    """
+    dur: dict[str, float] = {}
+    try:
+        from src import dupes as _dupes
+        for row in _dupes.ledger_rows():
+            vid, sec = row.get("video_id"), row.get("duration_s")
+            if vid and sec:
+                dur[str(vid)] = float(sec)
+    except Exception:                                          # noqa: BLE001
+        pass
+
+    from src import forms as _forms
+    measured = _forms.measured_forms()
+    out = {}
+    for r in rows:
+        row = {"id": r["id"], "title": r.get("title") or ""}
+        if r["id"] in dur:
+            row["duration_s"] = dur[r["id"]]
+        out[r["id"]] = _forms.classify(row, measured)[0]
+    return out
+
+
 def _show(rows: list[dict]) -> None:
-    by_topic: dict[str, list[str]] = defaultdict(list)
+    """予約の一覧。**同じテーマの二重予約に印を付ける。**
+
+    ## 形式をまたぐ組に印を付けないこと（2026-08-26 12:xx に直した）
+
+    ここは長らく**テーマIDだけ**で数えていました。実物（受け取り帳 `c23c90a9`・
+    親からの申し送り 08/24）:
+
+        08/26 14:00  cFZd55jRxAw  長尺    65歳で年180万円 繰下げで元が取れる最後は何歳か
+        09/05 12:00  rRYgdX9GFJA  ショート 85歳まで生きるなら繰下げは何歳まで得か #Shorts
+
+    **10日 離れ・形式ちがい・切り口ちがい。** これは `CLAUDE.md` が明記している
+    「長尺1本から何本も切り出せる」の形**そのもの**です。
+    ところがここは「**片方を外すこと**」と印字していました ——
+    **その指示に従うと、正しい在庫を捨てます。**
+
+    だから数えるのを `(テーマ, 形式)` にしました。**同じ形式で2本**なら、
+    今までどおり「繰り返し」として印を付けます。**形式がちがう組**は
+    別の行で、**捨てろとは言いません。**
+
+    ## それでも残る本当の欠陥は、ID の衝突のほう
+
+    投稿済みの復元は説明欄の `[t:テーマID]` でやるので、
+    **長尺とショートが同じIDだと、チャンネル越しに2本を区別できません。**
+    上の実物は `s-nenkin-motowotoreru-saigo-73sai1` が2本 出た形です。
+
+    **出どころは 2026-08-26 01:5x に閉じています** —— `--long` が
+    選ぶ側に効いておらず、ショート向けの題（`s-`）で長尺を作っていました
+    （`tests/test_pick_long.py`）。いまは長尺は非 `s-` からしか取りません。
+    **新しい衝突は出ない**ので、ここでは印字だけにします。
+
+    **覆る条件**: 形式ちがいの組が **08/26 より後に上がった本**で出たら、
+    `--long` の側がまた漏れています。そのときは検出器ではなく
+    `pick()` を見ること。
+    """
+    is_short = _forms_of(rows)
+    by_key: dict[tuple, list[str]] = defaultdict(list)
+    by_topic: dict[str, set[bool]] = defaultdict(set)
     for r in rows:
         if r["topic"]:
-            by_topic[r["topic"]].append(r["id"])
-    dup = {t for t, v in by_topic.items() if len(v) > 1}
+            by_key[(r["topic"], is_short[r["id"]])].append(r["id"])
+            by_topic[r["topic"]].add(is_short[r["id"]])
+    dup = {k[0] for k, v in by_key.items() if len(v) > 1}
+    # **形式がちがうだけの組**（捨てさせない）
+    crossed = {t for t, fs in by_topic.items() if len(fs) > 1} - dup
 
     for r in rows:
         jst = datetime.fromisoformat(r["at"].replace("Z", "+00:00")).astimezone(JST)
-        mark = " **二重**" if r["topic"] in dup else ""
-        print(f"{jst:%m/%d %H:%M}  {r['id']}  {r['topic']:<22s}{mark}  {r['title'][:34]}")
+        mark = " **二重**" if r["topic"] in dup else (
+            " （形式ちがい）" if r["topic"] in crossed else "")
+        form = " short" if is_short[r["id"]] else "long "
+        print(f"{jst:%m/%d %H:%M}  {r['id']}  {form}  "
+              f"{r['topic']:<22s}{mark}  {r['title'][:34]}")
     if dup:
-        print(f"\n**同じテーマが2本以上予約に入っています: {'・'.join(sorted(dup))}**")
+        print(f"\n**同じテーマ・同じ形式が2本以上 予約に入っています: {'・'.join(sorted(dup))}**")
         print("  続けて見たときに「繰り返し」と映る形です。**片方を外すこと。**")
-    else:
+    if crossed:
+        print(f"\n同じテーマですが**形式がちがいます**: {'・'.join(sorted(crossed))}")
+        print("  **外さないこと。**『長尺1本から何本も切り出す』の形です（`CLAUDE.md`）。")
+        print("  ただし `[t:テーマID]` は形式を持たないので、**チャンネル越しには"
+              "2本を区別できません**。08/26 より後に上がった本で出たなら、"
+              "`--long` の選ぶ側がまた漏れています（`pick()` を見ること）。")
+    if not dup and not crossed:
         print("\n二重予約はありません。")
 
 
+#: **日枠切れの `SystemExit` を、呼ぶ側が見分けるための印**（2026-08-27）。
+#:
+#: `_update` は日枠の 403 を `SystemExit` に変えて投げます。**`SystemExit` は
+#: `Exception` の子ではありません** —— だから呼ぶ側が
+#: `except Exception` に「枠が尽きたら止める」と書いても、**そこへは永久に来ません。**
+#: 実際 `scripts/live_slots.apply_moves` はそう書いてあり、
+#: `except SystemExit` の側で **`continue` していました** ＝
+#: **尽きた窓で、残りの手ぜんぶを撃ち続けます。**
+#:
+#: 印を文で持たせるのは、`SystemExit` が「終了コード」しか運べないからです。
+#: **この語をメッセージから消さないこと**（`tests/test_quota_exit_stops.py`）。
+QUOTA_MARK = "（日枠切れ）"
+
+
+def is_quota_exit(exc: BaseException) -> bool:
+    """その `SystemExit` は**日枠切れ**か（＝撃つほど悪くなるので、そこで止める）。
+
+    ほかの `SystemExit`（過去の時刻・見つからない本・公開済み）は
+    **1本ずつ飛ばして進んでよい** ものです。**混ぜないこと** ——
+    飛ばしてよいものを止めると残りが当たらず、止めるべきものを飛ばすと
+    403 を人数ぶん買います。
+    """
+    return isinstance(exc, SystemExit) and QUOTA_MARK in str(exc.code or "")
+
+
+def _same_instant(a, b) -> bool:
+    """2つの時刻表記が**同じ瞬間**か（`Z` と `+00:00`、秒の小数を吸収する）。
+
+    読めない字が来たら、そのまま文字列で比べます —— **分からないときは
+    「ちがう」側に倒す**こと。ここで取り違えると書き込みを飛ばしてしまいます。
+    """
+    if a is None or b is None:
+        return a is None and b is None
+    try:
+        return (datetime.fromisoformat(str(a).replace("Z", "+00:00"))
+                == datetime.fromisoformat(str(b).replace("Z", "+00:00")))
+    except ValueError:
+        return str(a) == str(b)
+
+
+class AlreadyPublic(RuntimeError):
+    """**もう公開されている本**を、予約へ動かそうとした（2026-08-28 に実測で踏んだ）。
+
+    YouTube は公開済みの本に `publishAt` を立てさせません（**400
+    `invalidPublishAt`**）。それ自体は正しい拒否ですが、**こちらの控えは
+    その本を「まだ先の予約」として数え続けます** —— そして控えを読む道具
+    （`queue_lag` ・`day_cap` ・`live_ring` ・群の床）は、全部その幻を
+    本物の枠として勘定します。
+
+    ## 実測（2026-08-28 21:3x JST・この例外を足した回）
+
+        `cJw79xThyTY`   控え `data/uploaded.jsonl` … `at` = **2026-10-04**
+                        YouTube 実物 …………………… **public**・
+                                                     `publishedAt` = **2026-08-28T11:00:08Z**
+
+    **控えときょうだいの回**の話です（`dupes.retime` の `retimed_at` の註）——
+    同じチャンネルを触る回が並行で走っていて、控えは git で配られるので、
+    **相手が動かした本は、こちらの控えには merge されるまで入りません。**
+
+    ## なぜ例外にするか（**黙って `publishAt` を書きに行かせない**）
+
+    ここを素通りさせると `videos.update` を1回 撃って 400 を買います
+    （**50単位。しかも何も直りません**）。さらに `queue_lag.apply_moves` は
+    **最初の失敗で全部を止める**ので、**幻が1行あるだけで入れ替えが 0/16 になります**
+    —— 実測 2026-08-28、`--plan` の**1手目**がこの本でした。
+    合計 34日（`opening_motion` だけで 30日）の前倒しが、**3周 印字されて
+    1度も当たっていない**のは、これが理由の一つです。
+
+    **投げる前に、控えを実物へ直します**（`_update` の中でやります。
+    入口は6つある（`--move`・`--compact`・`--spread`・`long_pack`・
+    `live_slots`・`queue_lag`）ので、**直す場所はこの関門ひとつ**）。
+    """
+
+    def __init__(self, video_id: str, published_at: str | None = None) -> None:
+        self.video_id = video_id
+        self.published_at = published_at
+        super().__init__(
+            f"{video_id} は**もう公開済み**です"
+            f"（publishedAt={published_at or '不明'}）。"
+            " 予約へは戻せません（YouTube が 400 invalidPublishAt を返します）。"
+            " **控えのほうを実物に合わせました。**")
+
+
+#: `main()` が `--move` でこの例外を握ったときの終了コード。
+#: **`queue_lag.apply_moves` は、これを「この組は飛ばす」と読みます**
+#: （止めない ―― 残りの手は当たります）。
+RC_ALREADY_PUBLIC = 3
+
+#: **撃たなかった**（`move_hold` の上限、または「もうその値」）。
+#: 実物も控えも動いていません —— 呼ぶ側は「当たった」と数えないこと
+#: （`queue_lag.apply_moves` が 2026-08-29 まで数えていました）。
+RC_NOT_MOVED = 4
+
+
 def _update(svc, video_id: str, publish_at: str | None,
-            fallback_status: dict | None = None) -> None:
+            fallback_status: dict | None = None) -> bool:
     """`status` だけを差し替える。**snippet を触らないこと** —— 部分更新なので、
     渡さなかった欄は消えます（題名や説明欄を巻き添えで空にしない）。
+
+    返りは **書いたか**（`True` ＝ `videos.update` を撃った／`False` ＝ 撃たずに済んだ）。
 
     `fallback_status` を渡すと、**現状を読めなかった回だけ**それで代えます
     （2026-08-17 に足した）。**既定は None ＝ これまでどおり読めなければ落ちる**：
@@ -149,9 +371,49 @@ def _update(svc, video_id: str, publish_at: str | None,
     **黙って代えないのはわざとです。** ここで読んでいるのは
     「他人が変えたかもしれない欄」で、示せないまま既定値で上書きすると、
     **`videos().update` は部分更新ではない**ので他の欄が巻き添えになります。
+
+    ## もう同じ値なら、撃たないこと（2026-08-27 に実測して足した）
+
+    **ここは現状を必ず読んでいます**（`videos.list` ＝ 1単位）。にもかかわらず、
+    **読んだ値と書く値が同じかどうかを1度も見ていませんでした。** 実測（窓は
+    08/27 07:00Z 〜、`data/day_quota.jsonl`）:
+
+        通った `videos.update`      **173回**（8,650単位）
+        撃たれた本の数              **58本**
+        → 同じ本の2回目以降        **115回 ＝ 5,750単位**（**66%**）
+
+    （**2026-08-28 に数え直した** —— それまでここは 273回／215回（79%）。
+    `batch_build` が `_update` の**あとにもう1行**帳面へ書いていて、
+    **同じ呼び出しが同じ秒に2行**載っていました。`upload_cap.dedupe_ok` の註。）
+
+    **日枠は 1万単位**なので、これは**その日の枠の 6割 を、同じ値の書き直しに
+    焼いていた**ということです。控えにも残っています —— `1Tduvr67ohI`
+    `QfQWE1ykEx4` `6TK2jXQsB5s` は `data/uploaded.jsonl` に
+    **`at` が1文字も違わない行が2本ずつ**（`dupes.retime` は動かすたびに1行
+    足すので、同じ値で撃った証拠がそのまま残ります）。
+
+    そして焼け切ると、**この窓では `queue_lag --apply` の 12手（1,200単位）が
+    撃てません。** あれは判定日を合計 **7日** 手前に倒す手で、
+    `data/queue_lag.jsonl` の4行は `hook_form` が **4回とも 09-10 のまま** ——
+    **約束した前倒しが1度も実現していない**のは、ここで枠が尽きるからです。
+
+    **どの呼び出し側が悪いのかを探すのはやめました。** `--move`・`--compact`・
+    `--spread`・`long_pack`・`live_slots`・`queue_lag` と入口が6つあり、
+    塞いでも7つ目が同じ穴を作ります（この repo が通算11回 踏んでいる
+    「片方だけ」の形）。**関門はここ1か所なので、ここで止めます。**
+
+    **覆る条件**: `status` のうち、こちらが書き換えるのが
+    `privacyStatus` と `publishAt` の2つだけ、でなくなったとき
+    （`tests/test_reschedule_noop.py` が、その2つ以外を触ったら落ちます）。
+    どうしても撃ち直したい回は `YT_FORCE_UPDATE=1`。
     """
+    read_ok = True
     try:
-        cur = svc.videos().list(part="status", id=video_id).execute()["items"]
+        # `snippet` も取ります。**単位は変わりません**（`videos.list` は
+        # part の数によらず 1単位）。公開済みだったときに、控えへ書き戻す
+        # `publishedAt` がここにしか無いためです（`AlreadyPublic` の註）。
+        cur = svc.videos().list(part="status,snippet",
+                                id=video_id).execute()["items"]
     except Exception as exc:                                  # noqa: BLE001
         if fallback_status is None:
             raise
@@ -159,8 +421,22 @@ def _update(svc, video_id: str, publish_at: str | None,
         print("[reschedule] 呼ぶ側が渡した `status` で代えます"
               "（投稿のときにこちらが立てた4欄）")
         cur = [{"status": dict(fallback_status)}]
+        read_ok = False
     if not cur:
         raise SystemExit(f"動画が見つかりません: {video_id}")
+    before = dict(cur[0]["status"])
+    # **もう公開されている本は、予約へ戻せません。** ここで止めるのは
+    # 「YouTube が拒否するから」ではなく、**控えが幻を数え続けるから**です
+    # （`AlreadyPublic` の註に実測）。**読めた回だけ**判定します ——
+    # `fallback_status` で代えた回は実物を知らないので、今までどおり通します。
+    if read_ok and publish_at and before.get("privacyStatus") == "public":
+        published_at = (cur[0].get("snippet") or {}).get("publishedAt")
+        if published_at:
+            # **控えを実物へ合わせる**（ここが唯一の関門なので、ここで直す）。
+            # 直すと `queue_lag.scheduled()` の `at > now` から外れ、
+            # 幻の予約が**全部の道具から**消えます。
+            dupes.retime(video_id, published_at)
+        raise AlreadyPublic(video_id, published_at)
     status = dict(cur[0]["status"])
     for k in ("uploadStatus", "failureReason", "rejectionReason"):
         status.pop(k, None)
@@ -169,6 +445,33 @@ def _update(svc, video_id: str, publish_at: str | None,
         status["publishAt"] = publish_at
     else:
         status.pop("publishAt", None)
+    # **読めた回だけ**。控えで代えた回は、YouTube 側の実物を知らないので飛ばせません。
+    if (read_ok and not os.environ.get("YT_FORCE_UPDATE")
+            and before.get("privacyStatus") == status["privacyStatus"]
+            and _same_instant(before.get("publishAt"), status.get("publishAt"))):
+        print(f"[reschedule] {video_id} は**もうその値です**。撃ちません"
+              f"（50単位 節約・{status.get('publishAt') or '予約なし'}）", flush=True)
+        return False
+    # **同じ本を、1つの窓で何度も動かさないこと**（2026-08-28 の最適化の回に足した）。
+    # 上の関門は「**もうその値**」だけを捕まえます。実測（窓 08/27）では
+    # 2回以上 撃たれた 29本 のうち **15本 は違う時刻へ**で、素通りしていました ——
+    # しかも食い違いではなく**振動**です（1つの掃きが1か月 先へ、19分後の掃きが
+    # 1か月 手前へ引き戻す。中央値 30日）。**効くのは最後の1回だけ**なので、
+    # 3つ目以降は定義上むだ。実測で 8,900単位（ほぼ1日ぶんの枠）。
+    # `src.upload_cap.MOVE_CAP` に、なぜ 1 ではなく 2 かと覆る条件。
+    # **止めるのはこの1本だけ**です（窓を止める `reserve_hold` とは別物）。
+    cap = upload_cap.move_hold(video_id)
+    if cap:
+        print(f"[reschedule] {cap}", flush=True)
+        return False
+    # **計測のぶんを残して止める**（2026-08-28 の最適化の回に足した）。
+    # 実測: 窓 08/27 16:00 JST は **47分 で 9,150単位**（枠 1万）を焼き、そのあと
+    # **23.2時間、4単位 の `videos.list` が撃てません**。閉じられなかった前提が
+    # 2回 続けて出ています（`src/upload_cap.RESERVE_UNITS` に実測と覆る条件）。
+    # **推測では止めません** —— 枠の実測が無い窓では `None` が返ります。
+    hold = upload_cap.reserve_hold()
+    if hold:
+        raise SystemExit(f"[reschedule] {hold}")
     try:
         svc.videos().update(part="status",
                             body={"id": video_id, "status": status}).execute()
@@ -181,7 +484,7 @@ def _update(svc, video_id: str, publish_at: str | None,
         # と答え続け、次の回が同じ 403 をもう一度買います。
         auth.note_day_quota(exc, f"videos.update {video_id}")
         raise SystemExit(
-            f"[reschedule] **{video_id} の予約は、いま外せません（日枠切れ）。**\n"
+            f"[reschedule] **{video_id} の予約は、いま外せません{QUOTA_MARK}。**\n"
             "  `videos.update` は日枠に当たります。**`videos.insert` とは違います** ——\n"
             "  投稿（insert・1600単位）は日枠が切れていても通るのに、\n"
             "  差し替え（update・50単位）は 403 で止まります。**安いほうが先に閉じます。**\n"
@@ -191,13 +494,198 @@ def _update(svc, video_id: str, publish_at: str | None,
             "  **まだ作り直さないこと。** §5「外す → 作る → 上げ直す」の順は、\n"
             "  ここで止まれば1本も捨てないためにあります"
         ) from exc
+    else:
+        # **通ったことも残すこと**（2026-08-26 に実測して足した）。
+        # 403 のあとに通った呼び出しは、**その 403 が日枠でなかった証拠**です
+        # （日枠は窓の中で戻らない）。`upload_cap.note_quota_ok` に理由。
+        try:
+            upload_cap.note_quota_ok(detail=f"videos.update {video_id}")
+        except Exception:                                      # noqa: BLE001
+            pass
+        return True
+
+
+def _parse_at(value) -> datetime | None:
+    """控えの `at` を datetime に。**読めなければ None**（その行は飛ばす）。"""
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+
+
+#: 長尺を同じ日に置くときの時刻（`scripts/batch_build.LONG_HOURS_JST` と同じ並び）。
+#: **長尺は `SHORTS_FEED` の枠を1つも使いません**（`src/day_cap.py`）。
+#: 夜に置いても生死に掛からないので、要るのは「空いている別々の時刻」だけです。
+LONG_HOURS_JST = (20, 21, 22, 19, 18)
+
+
+def long_pack_plan(rows: list[dict], durations: dict[str, float], *,
+                   now: datetime, per_day: int = 5, lead_min: int = 60,
+                   long_min_s: float = 180.0,
+                   window: tuple[str, str] | None = None) -> list[dict]:
+    """**予約済みの長尺だけを前へ詰める割り当て**（API 0単位・純関数）。
+
+    返すのは `{"id", "topic", "old", "new"}` の並びで、**動かす本だけ**です。
+
+    ## なぜ長尺だけ別に詰めるのか
+
+    **4,000時間の門に入るのは長尺だけ**です（`src/levers.py` / `src/day_cap.py` /
+    `src/verify.py` が同じことを書いています）。ショートは再生の 99.9% を
+    取っていますが（実測 08/26・直近28日: `SHORTS_FEED` 64,283 / `WATCH` 67）、
+    **その門には1分も積みません。** つまり長尺の公開が後ろへ流れたぶん、
+    **いま開いている唯一の門だけが止まります。**
+
+    `compact_plan` はこれをやりません —— あちらは**全部**を詰める道具で、
+    「真ん中に穴を空けない」を守ります。長尺は日ごとに在ったり無かったりが
+    普通なので、あの穴の判定に掛けると必ず止まります。**別の問いです。**
+
+    ## なぜ散っていたか（2026-08-26 に数えた）
+
+    `scripts/batch_build.slots()` は `--date` が無いと**同じ時刻を count 回**返し、
+    `uploader.next_publish_at()` は「その時刻で最初に空いている**日**」を返します。
+    つまり **N本 = N日 に1本ずつ**。実測: 長尺 28本 が 08/26〜10/10 の
+    **21日** に散っていた（1.3本/日）。作る側は 08/25 だけで **25本** 出しています。
+    **散らしているのは置き方だけ**でした。
+
+    （作る側は `batch_build._long_ring()` で直してあります。**こちらは
+    もう予約に入っている本の後始末**で、そちらの直しは効きません。）
+
+    ## **日が縮まない入れ替えは、1つも出しません**（2026-08-27 に測って直した）
+
+    08-26 版は「動かす長尺の枠は空いている」として**全部を並べ替え**ていました。
+    実測（08/27・本物の控えで撃った）:
+
+        14手 ／ **前倒しの合計 0日**   08/28 21:00 → 08/28 **19:00**
+                                       08/28 22:00 → 08/28 **18:00** …
+
+    **同じ日の中で時刻をずらしているだけ**です。`batch_build._pack_long_form()` は
+    これを毎周 撃つので、**1周あたり 14手 × 50単位 ＝ 700単位** が
+    「前倒し 0日」に消えていました。日枠は 10,000単位・`videos.insert` は
+    1本 1,600単位なので、**上げられたはずの本に換算して 1周 0.4本**です。
+
+    **長尺の時刻に意味はありません**（`LONG_HOURS_JST` の註 ——
+    長尺は `SHORTS_FEED` の枠を使わないので、夜に置いても生死に掛からない）。
+    **意味があるのは日付だけ**なので、日が縮まない手は値打ちが 0 です。
+
+    いまは (1) **本当に空いている枠にだけ置き**、(2) **後ろの本から順に
+    いちばん早い空き枠へ**割り当てます。(2) が要るのは、08-26 版が
+    「早い本から早い枠へ」だったため —— 早い本はもう早い日に居るので
+    `slot >= old` で捨てられ、**穴の後ろに取り残された本まで順番が回りません。**
+
+    ## 守っている不変条件
+
+    - **新しい時刻は必ず今より前か同じ。** 後ろへ下げる本は1つも作りません
+      （`compact_plan` と同じ理由 —— 途中で止まっても、もう一度走らせれば
+      同じ割り当てになるため）
+    - **公開日が1日も縮まない手は出しません**（すぐ上の節）
+    - **埋まっている枠は使いません**（ショートの枠も含めて全部避ける）
+    - 測定の窓（`src.measure_window`）の日は置き先から外します
+    - `per_day` を超えて同じ日に置きません。**既定 5 は実測の上限**
+      （`src/day_cap.long_form()`: `most=5` `alive=5` `collapsed=False` ＝
+      5本 出した日は5本とも再生が付いた。**6本目は一度も観測されていません**）
+
+    ## 覆る条件
+
+    `day_cap.long_form()` の `collapsed` が True になったら（＝いちばん多く
+    出した日に「出したのに付かない」本が出たら）、`per_day` をその日の本数より
+    1つ下げること。**黙って上げないこと** —— 上げるのは前提を立てて測る手です。
+
+    **長尺の面で「時刻べつの生死」が測れたら**、上の「時刻に意味はありません」が
+    崩れます。そのときは日付だけでなく時刻も値打ちになるので、
+    「0日 の手を出さない」を測った実測で置き直すこと。
+    """
+    floor = now.astimezone(JST) + timedelta(minutes=lead_min)
+    parsed: list[tuple[datetime, dict]] = []
+    for r in rows:
+        at = _parse_at(r.get("at"))
+        if at is None:
+            continue
+        parsed.append((at.astimezone(JST), r))
+    # **埋まっている枠は、長尺の枠も含めて全部です**（2026-08-27 に直した）。
+    #     ここは 08-26 版では「動かさない本が居ない時刻」＝ **動かす長尺の枠は
+    #     空いている**、としていました。全部を並べ替える前提なら筋が通りますが、
+    #     並べ替えは同じ日の 21:00→19:00 のような **0日 の入れ替え**を大量に生み、
+    #     `videos.update` を 1手 50単位 で焼きます（実測 08/27: 14手・**前倒し 0日**）。
+    #     いまは**本当に空いている枠にだけ置きます。**
+    occupied = {at for at, _ in parsed}
+    longs = [(at, r) for at, r in parsed
+             if durations.get(r.get("id"), 0.0) >= long_min_s and at > floor]
+    if not longs:
+        return []
+    # その日に**すでに居る長尺**の本数（公開済みも数える。置き先の上限に効きます）
+    per_date: dict = {}
+    for at, r in parsed:
+        if durations.get(r.get("id"), 0.0) >= long_min_s:
+            per_date[at.date()] = per_date.get(at.date(), 0) + 1
+
+    # **いちばん後ろの本から、いちばん早い空き枠へ。**
+    #     08-26 版は「早い本から順に、早い枠へ」でした ——
+    #     早い本はもう早い日に居るので `slot >= old` で捨てられ、
+    #     **穴の後ろに取り残された本まで順番が回りません**
+    #     （実測 08/27: 長尺 14本 が 09/24〜10/03 の**ショートの帯**に居るのに、
+    #      計画は 08/28〜09/03 の同じ日の入れ替えだけを出していました）。
+    pool = sorted(longs, key=lambda t: (t[0], str(t[1].get("id", ""))), reverse=True)
+    hours = sorted(list(LONG_HOURS_JST)[:max(1, per_day)])
+    plan: list[dict] = []
+    day = floor.date()
+    last = max(at for at, _ in longs).date()
+    guard = 0
+    while pool and day <= last and guard < 400:
+        guard += 1
+        if measure_window.inside(day.strftime("%Y-%m-%d"), window):
+            day += timedelta(days=1)
+            continue
+        for h in hours:
+            if not pool or per_date.get(day, 0) >= per_day:
+                break
+            slot = datetime(day.year, day.month, day.day, h, 0, tzinfo=JST)
+            if slot <= floor or slot in occupied:
+                continue
+            old, row = pool[0]
+            # **日が縮まない入れ替えは出しません**（50単位 を捨てるだけなので）。
+            #     `pool` は後ろ順なので、先頭で縮まないなら残りも縮みません。
+            #     枠はこの先どんどん後ろになるので、ここで打ち切って構いません。
+            if old.date() <= slot.date():
+                pool = []
+                break
+            pool.pop(0)
+            occupied.add(slot)
+            occupied.discard(old)
+            per_date[day] = per_date.get(day, 0) + 1
+            per_date[old.date()] = per_date.get(old.date(), 1) - 1
+            plan.append({"id": row.get("id"), "topic": row.get("topic", ""),
+                         "old": old, "new": slot})
+        day += timedelta(days=1)
+    return plan
 
 
 def compact_plan(rows: list[dict], *, now: datetime, step_min: int = 30,
                  hour: int = 9, until_hour: int = 21, max_days: int = DEFAULT_MAX_DAYS,
                  lead_min: int = 60,
-                 window: tuple[str, str] | None = None) -> list[dict]:
+                 window: tuple[str, str] | None = None,
+                 live_edge_min: int | None = None) -> list[dict]:
     """**予約を前に詰める割り当てを作る**（API 0単位・純関数）。
+
+    ## `live_edge_min` —— **置き先を「生きる目盛り」に限る**（2026-08-28 に足した）
+
+    **`spread_plan` は 2026-08-24 にこれを直しました。こちらは直っていません
+    でした。** あちらの docstring が「置き先は『生きる目盛り』の中だけ
+    （2026-08-24 に直した。それまで0再生へ送っていた）」と過去形で書いており、
+    **同じ穴が同じファイルの、すぐ上の関数に残っていました。**
+
+    ここの目盛りは `hour`〜`until_hour`（既定 9〜21時）の全部から作られます。
+    実測では **08:59〜13:30 の外に置いた本は、ほぼ 0再生**です
+    （公開済みショート: 08〜13時 は 95本中 93本 が生存・1本あたり 566〜744再生／
+    14〜21時 は 31本中 5本・ほとんどの時が 1本あたり 0.5〜2.0）。
+    つまり `--compact` は、11本目から先を**0再生の枠へ詰めていました。**
+
+    `live_edge_min`（JST の分）を渡すと、目盛りをその分までに切ります。
+    `None` なら今までどおり `until_hour` まで（**純関数のままにするため、
+    ここでは計器を読みません**。読むのは CLI 側 ＝ `_measured_per_day()`）。
+
+    **覆る条件**: `day_cap` の帯が広がったら、CLI が渡す数がそのまま広がります
+    （`hour * 60 + (per_day - 1) * step_min`）。**ここに数を書かないこと。**
+    検査は `tests/test_compact_live_edge.py`。
 
     `rows` は控え（`src.dupes.ledger_rows`）の形。返すのは
     `{"id", "topic", "title", "old", "new"}` の並びで、**動かす本だけ**です。
@@ -266,6 +754,9 @@ def compact_plan(rows: list[dict], *, now: datetime, step_min: int = 30,
     while days_used < max_days:
         if not measure_window.inside(day.isoformat(), window):
             for m in range(hour * 60, until_hour * 60 + 1, step_min):
+                # **生きる目盛りの外へは置かない**（上の `live_edge_min` の節）
+                if live_edge_min is not None and m > live_edge_min:
+                    break
                 slot = datetime(day.year, day.month, day.day,
                                 m // 60, m % 60, tzinfo=JST)
                 if slot > floor:
@@ -728,7 +1219,8 @@ def suggest_max_days(rows: list[dict], now: datetime, args, *,
         try:
             plan = compact_plan(rows, now=now, step_min=args.step_min, hour=args.hour,
                                 until_hour=args.until_hour, max_days=md,
-                                lead_min=args.lead_min, window=window)
+                                lead_min=args.lead_min, window=window,
+                                live_edge_min=_live_edge_min(args.hour, args.step_min))
         except SystemExit:
             continue
         if hole_days(rows, plan, now):
@@ -768,9 +1260,10 @@ def _compact(args) -> int:
             args.max_days = found
         # 見つからなかったときは床のまま進みます。
         # **下の穴の節が、そのまま「どれだけ増やしても埋まりません」と言います。**
+    edge = _live_edge_min(args.hour, args.step_min)
     plan = compact_plan(rows, now=now, step_min=args.step_min, hour=args.hour,
                         until_hour=args.until_hour, max_days=args.max_days,
-                        lead_min=args.lead_min)
+                        lead_min=args.lead_min, live_edge_min=edge)
     where, days = _horizon(rows, plan, now)
     per_day: dict[str, int] = defaultdict(int)
     for p in plan:
@@ -778,7 +1271,8 @@ def _compact(args) -> int:
         per_day[jst.strftime("%m/%d")] += 1
 
     print(f"[compact] 控えの予約 {len(rows)}本のうち、**動かすのは {len(plan)}本**"
-          f"（{args.step_min}分きざみ・{args.hour}〜{args.until_hour}時・{args.max_days}日ぶん）")
+          f"（{args.step_min}分きざみ・{args.hour}:00〜{edge // 60}:{edge % 60:02d}"
+          f"（**生きる帯**・`day_cap` の実測）・{args.max_days}日ぶん）")
     for p in plan:
         o = datetime.fromisoformat(p["old"].replace("Z", "+00:00")).astimezone(JST)
         n = datetime.fromisoformat(p["new"].replace("Z", "+00:00")).astimezone(JST)
@@ -950,8 +1444,64 @@ def _check_source_window(video_id: str, *, force: bool = False, tool: str = "") 
                          tool=f"{tool}（**元の日** {day} が測定日です）")
 
 
+def _lift_dash_ids(argv: list[str] | None) -> tuple[list[str] | None, dict]:
+    """**`-` で始まる動画ID を、argparse の手前で抜き出す**（2026-08-26 に踏んだ）。
+
+    YouTube の動画IDは 64種の字（`A-Za-z0-9_-`）から作られるので、
+    **`-rNsh53STNw` `-LBSPCCE8Aw` のように `-` で始まるものが 1/64 ある**
+    ——実測で、予約中の 487本 のうち **8本**がこの形です。
+
+    argparse は先頭の `-` を旗と読むので、そのまま渡すと落ちます:
+
+        queue_lag.py: error: argument --move: expected 2 arguments
+
+    **これは「打ち方が悪い」ではありません。** `--plan` が出す行をそのまま
+    貼っても、`apply_moves()` が `reschedule.main(["--move", vid, when])` と
+    呼んでも、**同じ所で落ちます** —— 2026-08-26 16:0x の `queue_lag --apply` は
+    51手のうち **6手 目**で止まりました（`-rNsh53STNw`）。
+    `live_slots --apply --all` の 35手にも `-LBSPCCE8Aw` が入っています。
+
+    **`--move` は `nargs=2` なので `=` で書く逃げ道がありません。**
+    だから受け口の手前で外し、`parse_args` の後に戻します。
+    """
+    if argv is None:
+        argv = sys.argv[1:]         # **CLI から貼った行も同じ所で落ちます**
+    out: list[str] = []
+    lifted: dict = {}
+    i = 0
+    while i < len(argv):
+        tok = argv[i]
+        if tok == "--move" and len(argv) - i >= 3:
+            lifted["move"] = [argv[i + 1], argv[i + 2]]
+            i += 3
+            continue
+        if tok == "--unschedule" and len(argv) - i >= 2:
+            lifted["unschedule"] = argv[i + 1]
+            i += 2
+            continue
+        out.append(tok)
+        i += 1
+    return out, lifted
+
+
 def main(argv: list[str] | None = None) -> int:
+    argv, lifted = _lift_dash_ids(argv)
     args = build_parser().parse_args(argv)
+    for key, val in lifted.items():
+        setattr(args, key, val)
+
+    # **`--per-day` を明示で渡した回も、規則で締めること**（2026-08-31）。
+    #     既定だけ締めて口を開けておくと、「今日は詰めたいから」で毎回そこを通ります
+    #     （`batch_build` の `--count` を規則で締めたのと同じ理由）。
+    #     **規則を外すのはオーナーだけです**（`src/house_rule.py`「覆る条件: ありません」）。
+    want = int(getattr(args, "per_day", 0) or 0)
+    if want > 0:
+        args.per_day = _clamp_per_day(want)
+        if args.per_day != want:
+            print(f"[reschedule] `--per-day {want}` は**オーナーの規則で"
+                  f" {args.per_day}本/日 に締めました**"
+                  "（`src/house_rule.py`・2026-08-31「動画は1日一本」）。"
+                  "**規則を外すのはオーナーだけです。**", flush=True)
 
     if args.spread:
         return _spread(args)
@@ -977,11 +1527,51 @@ def main(argv: list[str] | None = None) -> int:
         if at <= datetime.now(timezone.utc):
             raise SystemExit(f"過去の時刻です: {when} JST")
         iso = at.strftime("%Y-%m-%dT%H:%M:%SZ")
-        _update(svc, vid, iso)
-        # **控えにも書き戻すこと**（2026-08-18 に実測で見つけた）。
-        # `--compact` は控えだけを見るので、ここを飛ばすと
-        # **実物は動いたのに、次の回は古い時刻のまま割り当てを組みます。**
-        dupes.retime(vid, iso)
+        try:
+            wrote = _update(svc, vid, iso)
+            # **控えにも書き戻すこと**（2026-08-18 に実測で見つけた）。
+            # `--compact` は控えだけを見るので、ここを飛ばすと
+            # **実物は動いたのに、次の回は古い時刻のまま割り当てを組みます。**
+            #
+            # **`try` の中に置いてあるのはわざとです**（2026-08-28）。
+            # `tests/test_reschedule_move_ledger.py` は「`_update()` を呼ぶ
+            # ブロックは `dupes.retime()` も呼ぶ」を**ブロック単位**で見ます。
+            # 外へ出すと `try` の本体が `_update` だけになり、
+            # **あの検査が落ちます** —— 落ちるのが正しい形なので、
+            # 検査をゆるめずに、2つを同じブロックへ置きました。
+            #
+            # **ただし「撃たなかった回」に書かないこと**（2026-08-29 に実測で見つけた）。
+            # `_update` は **False** を返す道が2つあります ——
+            # 「もうその値です」と、**`move_hold` の上限（1つの窓で同じ本は2回まで）**。
+            # 後者は **YouTube を1文字も変えていない**のに、ここは
+            # `retime` で**新しい時刻を控えへ書き**、下で「移しました」と印字し、
+            # `return 0` を返していました。
+            #
+            # **控えだけが動く ＝ 幻の予約を、こちらの手で作る**ということです。
+            # ⑦（`docs/JOURNAL.md` 2026-08-29）で `queue_lag --apply` を
+            # 丸ごと 0/26 にしていた「幻」と、**同じ形の在庫をここが生産します。**
+            #
+            # 実測 2026-08-29: この回の `--apply` 1回で上限に当たったのは **4本**。
+            # `apply_moves` はその4本も「動かした」と数え、**24手 全部 当たった**と
+            # 印字して、守れない約束を帳面へ書いています。
+            #
+            # **覆る条件**: `move_hold` を撤去するか、上限に当たった本を
+            # `Plan.improve()` が最初から選ばなくなったら、この分岐は死にます。
+            if wrote:
+                dupes.retime(vid, iso)
+            else:
+                print(f"[reschedule] {vid} は**撃っていないので、控えも直しません**"
+                      "（控えだけ動かすと、次の回が読む予約が幻になります）",
+                      flush=True)
+                return RC_NOT_MOVED
+        except AlreadyPublic as exc:
+            # **落としません。** 呼ぶ側（`queue_lag.apply_moves`）に
+            # 「この本は飛ばして、残りは当てろ」と言うための終了コードです。
+            # **控えは `_update` の中でもう直っています**（実物の
+            # `publishedAt` へ）。ここで `retime` を撃つと、
+            # **直したばかりの控えを、また幻の時刻へ戻します。**
+            print(f"[reschedule] {exc}", flush=True)
+            return RC_ALREADY_PUBLIC
         print(f"[reschedule] {vid} を {when} JST へ移しました")
         return 0
 

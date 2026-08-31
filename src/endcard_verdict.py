@@ -77,6 +77,118 @@ def is_ask(narration: list[str]) -> bool:
     return bool(ASK.search(narration[-1]))
 
 
+def is_request(narration: list[str]) -> bool:
+    """読み上げの**最後の1行**が「登録の依頼」か。（2026-08-26 夕に足した）
+
+    ## なぜ `is_ask` の裏ではないのか
+
+    **両方 入っている本があります。** `src/script_writer.py` は
+    「**問いかけを残す余裕があるなら残してよいが、優先は依頼のほう**」と
+    書いています。だから「問いかけでない ＝ 依頼」ではありません ——
+    **依頼が在るかどうかを、独立に見ること。**
+
+    そして「問いかけでない」の側には**長尺の「明日やること」型**も落ちます
+    （長尺は依頼を書かない ＝ `src/script_writer.py`「維持率が落ちる」）。
+    `not_ask` を依頼の群として数えると、**長尺の手順型が混ざります。**
+
+    ## 何に使うか
+
+    `config/hypotheses.yaml` 期限 2026-10-11
+    「**ショートの最後で登録を直接1回頼むと、登録率が上がる**」の**処置群**は、
+    これが真の本です。`scripts/deadline_check.py` の `published_group` に
+    `endcard: request` を書くと、ここで絞ります。
+
+    **覆る条件**: 依頼の文言が「登録」を含まない形（「チャンネルを追加して」など）に
+    変わったら、ここに足すこと。**変えた回が足さないと、処置群が黙って空になります。**
+    """
+    if not narration:
+        return False
+    return "登録" in narration[-1]
+
+
+def narration_of(video_id: str, queue: Path | None = None) -> list[str] | None:
+    """その本の読み上げ全文。**読めなければ `None`**（空リストと区別すること）。
+
+    `form_of()` がここを2度 読んでいたのを、1か所にまとめました。
+    """
+    path = (queue or QUEUE) / f"{video_id}.json"
+    if not path.exists():
+        return None
+    try:
+        nar = (json.loads(path.read_text(encoding="utf-8")) or {}).get("narration")
+    except (OSError, ValueError):
+        return None
+    return list(nar) if isinstance(nar, list) else None
+
+
+def is_mid_request(narration: list[str]) -> bool:
+    """読み上げの**最後より前の行**に、登録の依頼が在るか。（2026-08-26 夜に足した）
+
+    `src/script_writer.request_form()` の A/B の**処置**がこれです ——
+    「終端の依頼はそのまま残したうえで、途中にもう1回」。
+
+    ## `is_request` の否定ではありません
+
+    `is_request` は `narration[-1]` **だけ**を見ます。ここは `narration[:-1]` を見ます。
+    **両方 真の本が処置群**、**`is_request` だけ真の本が対照群**です。
+    どちらも偽の本（依頼そのものが無い＝長尺・08/24 より前の本）は、
+    **どちらの群でもありません**（`src/judgeable.py` が落とします）。
+
+    ## 見分けの語を `is_request` と揃えてあること
+
+    どちらも「登録」の1語で見ています。**片方だけ語を足さないこと** ——
+    足すと、終端の判定と途中の判定で別の物差しになります。
+    **覆る条件**: 依頼の文言が「登録」を含まない形に変わったら、**両方に**足すこと。
+    """
+    if len(narration) < 2:
+        return False
+    return any("登録" in str(line) for line in narration[:-1])
+
+
+def mid_request_compliance(video_ids: list[str], queue: Path | None = None) -> dict:
+    """処置群として作った本のうち、**実際に途中の依頼が入った割合**。
+
+    ## なぜ要るか（`config/hypotheses.yaml` の `mid_request` が読みます）
+
+    群はテーマIDのハッシュで割っています（`request_form`）。**割り当ては正しくても、
+    モデルが指示に従ったとは限りません。** 従っていない本が処置群に混ざると、
+    差は薄まり、`falsified_if` は「上回らなければ外れ」なので**外れに化けます**。
+    2026-08-26 の `endcard: request` が、まさにその形で 51本中 46本を取り違えていました。
+
+    **判定の前にここを見ること。** 8割を切っていたら、判定ではなく
+    `MID_REQUEST_RULE` の書き方を直すのが先です。
+    """
+    seen = ok = missing = no_end = 0
+    for vid in video_ids:
+        nar = narration_of(vid, queue)
+        if nar is None or not nar:
+            missing += 1
+            continue
+        if not is_request(nar):
+            no_end += 1          # 終端の依頼そのものが無い（＝群に入れない本）
+            continue
+        seen += 1
+        ok += 1 if is_mid_request(nar) else 0
+    return {
+        "数えた": seen, "途中あり": ok, "控えが無い": missing, "終端の依頼が無い": no_end,
+        "従った率": (ok / seen) if seen else None,
+    }
+
+
+def form_of(video_id: str, queue: Path | None = None) -> str | None:
+    """その本の終端の型。`"request"` / `"ask"` / `"other"`、読めなければ `None`。
+
+    **読めない本を `"other"` にしないこと** —— 型が分からないだけで、
+    数えると群が実際より大きく見えます（`population()` の同じ注意）。
+    """
+    nar = narration_of(video_id, queue)
+    if not nar:
+        return None
+    if is_request(nar):
+        return "request"
+    return "ask" if is_ask(nar) else "other"
+
+
 def population(ledger: list[dict], queue: Path | None = None) -> tuple[list[str], dict]:
     """判定の母集団（**問いかけ型のショートの動画ID**）と、その内訳を返す。
 
@@ -142,3 +254,87 @@ def verdict(views: int, comments: int, shares: int) -> dict:
             "line": (f"問いかけ型 {views:,}再生 ≥ {TRIGGER_VIEWS:,}／"
                      f"コメント {comments}件 ≥ {NEED_COMMENTS} ＝ **保つ**"
                      f"（共有 {shares}件）")}
+
+
+# ---------------------------------------------------------------------------
+# **閉じた後の「覆る条件」**（2026-08-31 に、実際に発火してから書き直した）
+# ---------------------------------------------------------------------------
+
+#: 「この枠が効いている」と言えるコメント率の目安。**0.2%**。
+#: 出所は `config/hypotheses.yaml` のこの前提の判定文
+#: 「効く場合の目安として置いた 0.2%（2,000再生で期待4件）」。
+#: **ここだけが目安の正本です。** 判定文の側を直したら、ここも直すこと。
+BENCHMARK_RATE = 0.002
+
+#: 覆るのは、目安の **1/4** に届いたとき。
+#: なぜ 1/4 か: 目安ちょうど（0.2%）を門にすると「効いていると確定するまで
+#: 測り直さない」になり、測り直す意味が無くなります。**測り直す値打ちが出る**のは
+#: 「効いている水準と同じ桁に乗ったとき」なので、桁の下端を取っています。
+REVERSAL_RATE = BENCHMARK_RATE / 4          # = 0.05%
+
+#: 率だけだと、窓が小さいときに 1/1000 のような跳ねで発火します。**件数の床**。
+REVERSAL_MIN_COMMENTS = 5
+
+
+def reversal(views: int, comments: int) -> dict:
+    """**閉じた判定が覆るか。** 覆るなら `{"reversed": True, ...}`。
+
+    ## なぜ「1件でも付いたら覆る」をやめたか（2026-08-31 に、発火してから直した）
+
+    2026-08-20 に閉じたとき、覆る条件はこう書いてありました:
+
+        **チャンネル全体のコメントが、28日窓で1件でも視聴者から付いたとき**
+        いまは 20,332再生で 0件なので、**1件出た時点でこの枠に信号があることになり、
+        率を測り直す値打ちが出ます。**
+
+    **2026-08-31 に、そのとおり発火しました** —— 問いかけ型 56,751再生 で
+    **コメント 1件**（チャンネル全体 76,316再生 で 1件）。**初めて視聴者の
+    コメントが付いた日**です（`videos.statistics.commentCount` ではなく
+    `youtubeAnalytics` の `comments`。こちらは自チャンネルの書き込みを数えません ——
+    135本に自分のコメントを付けてあって、なお 1件 なのがその証拠）。
+
+    **それでも覆りません。** 率で見ると:
+
+        1 / 56,751 = **0.0018%**   目安 0.2% の **1/114**
+
+    **条件のほうが壊れていました。** 「1件でも」は**分母が伸びれば必ず満たされます** ——
+    どんなに小さい底の率でも、再生が十分に積もれば 1件は出ます。
+    **効果ではなく、時間の経過で発火する条件**です。閉じた判定を、
+    効果の証拠が1つも無いまま開け直させます。
+
+    そして今回は、**古い条件より強いことが言えるようになりました。** 08/20 は
+    「20,332再生で 0件」＝ 率の上限しか言えませんでしたが、いまは
+    **1件という実測**があるので、率そのものが 0.0018% と置けます。
+    **「まだ測れていない」から「測ったら 114倍 足りない」へ変わった**ので、
+    この前提はむしろ**閉じる側に固まりました。**
+
+    ## これが覆る条件（**この関数そのものの**）
+
+    - 目安 0.2% の出所（`BENCHMARK_RATE`）が実測で覆ったら、両方の数を直すこと。
+      いまの 0.2% は「効く場合の目安として置いた」もので、**実測ではありません。**
+    - コメントが収益に直で効く経路ができたら（例: コメント数が配信に効くと実測できたら）、
+      率ではなく別の物差しに替えること。
+    - **「1件でも」型の条件を、この repo の他の前提で見つけたら同じ形に直すこと。**
+      `config/hypotheses.yaml` には 覆る条件 が 40件 あります。
+    """
+    rate = (comments / views) if views else 0.0
+    ok_rate = rate >= REVERSAL_RATE
+    ok_count = comments >= REVERSAL_MIN_COMMENTS
+    reversed_ = ok_rate and ok_count
+    return {
+        "reversed": reversed_,
+        "views": views,
+        "comments": comments,
+        "rate": rate,
+        "need_rate": REVERSAL_RATE,
+        "need_comments": REVERSAL_MIN_COMMENTS,
+        "line": (
+            f"覆る: コメント率 {rate*100:.4f}% >= {REVERSAL_RATE*100:.2f}% "
+            f"かつ {comments}件 >= {REVERSAL_MIN_COMMENTS} ＝ **測り直す**"
+            if reversed_ else
+            f"覆らない: コメント率 {rate*100:.4f}%"
+            + (f"（目安 {BENCHMARK_RATE*100:.1f}% の 1/{BENCHMARK_RATE/rate:.0f}）"
+               if rate else "（0件）")
+            + f"／門は {REVERSAL_RATE*100:.2f}% かつ {REVERSAL_MIN_COMMENTS}件"
+        ),
+    }

@@ -55,7 +55,7 @@ from pathlib import Path
 # **`src/` を読めるようにする**（`retro.py` と同じ形）。`levers` は腕の語彙だけを持つ
 # 純粋な module で、API も設定も見ません。
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from src import levers  # noqa: E402
+from src import levers, resume_gate  # noqa: E402
 
 JST = timezone(timedelta(hours=9))
 
@@ -148,6 +148,61 @@ def worktree_tag() -> str:
     return ""
 
 
+# 一時置き場の親。**検査が差し替えるので定数にしてあります**（`/tmp` 直書きだと
+# 検査が本物の `/tmp` を掘りに行き、きょうだいの置き場に触ります）。
+_TMP = Path("/tmp")
+
+
+def scratch_dir(make: bool = True) -> str:
+    """**この回だけの一時置き場**を掘って、その道を返す。無ければ空。
+
+    ## なぜ道具の側に置くか（2026-08-29 23:xx に踏んだ。**これで3回目**）
+
+    `docs/trigger_main.md` の §「サブの回は、scratchpad をきょうだいと
+    共有しています」は 2026-08-26 から**正しい逃げ方をそのまま書いています**:
+
+        mkdir -p <scratch>/<自分のID の末尾6文字>
+
+    **それでも踏みます。** この回は `status.py`（40〜60秒）の出力を
+    共有の `<scratch>/status.txt` へ落とし、**読んでいる途中で
+    きょうだいに上書きされました**（266行 → 24行）。
+    一時置き場を覗くと、`a04186` `a50d3c` … と**きょうだいの掘った
+    ディレクトリが40個 並んでいる隣に**、`JOURNAL_live.md`
+    `177d27b0.html` のような**共有の直下に書かれたファイル**が残っています
+    —— つまり**掘った回と掘らなかった回が混ざっています。**
+
+    この repo の他の場所が同じ形について既に答を出しています ——
+    **「人の記憶と手写しに依存する門は、この輪では毎回落ちる側」**
+    （`batch_build.slots()` の註）。だから**手順ではなく道具に持たせます。**
+    `--write` は §1 でその回のいちばん最初に撃たれるので、
+    **何かを書く前に道が出ます。**
+
+    道の作り: 一時置き場は `CLAUDE_CODE_SESSION_ID` から作られていて、
+    **同じ親から立ったサブは全員 同じ ID を持ちます**（`worktree_tag()` の註と
+    同じ理由 —— 環境変数はコンテナに1つ）。だから**セッションIDでは分かれません。**
+    分かれるのは作業コピーの名前のほうなので、その末尾6文字で掘ります。
+
+    **覆る条件**: 一時置き場の場所が環境変数で降ってくるようになったら、
+    glob をやめてそれを読むこと。glob が1件も当たらない置き方（検査・親）では
+    **空を返して黙ります** —— ここで落ちると、印そのものが打てなくなります。
+    検査は `tests/test_run_marker_scratch.py`。
+    """
+    tag = worktree_tag()
+    sid = os.environ.get("CLAUDE_CODE_SESSION_ID", "")
+    if not tag or not sid:
+        return ""
+    hits = sorted(_TMP.glob(f"claude-*/*/{sid}/scratchpad"))
+    if not hits:
+        return ""
+    out = hits[0] / tag[-6:]
+    if make:
+        try:
+            out.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            return ""
+    return str(out)
+
+
 def actor_id() -> str:
     """**この回を回している当人**の識別子。印に残すのはこちら。
 
@@ -220,6 +275,146 @@ def _append(rec: dict) -> str:
     return line
 
 
+CLAIM_KIND = "claim"
+
+#: **「いま取りかかっている」が新鮮だと見なす分数。**
+#: 1周は 15〜30分（`docs/trigger_main.md`）。倍に取って、直前の回のぶんまで見せます。
+CLAIM_WINDOW_MIN = 60
+
+
+def claims(window_min: int = CLAIM_WINDOW_MIN, me: str | None = None) -> list[dict]:
+    """**直近 window_min 分に、自分以外が「取りかかる」と書いたもの。**
+
+    ## なぜ要るか（2026-08-26 21:xx に、この回が 30分 払った）
+
+    この回は `scripts/drift.py` を 30分 かけて直し、push の直前に
+    **きょうだいが同じ 20分間に同じ所を直していた**ことを知りました
+    （merge conflict）。あちらのほうが広かったので**こちらのぶんを捨てています。**
+
+    **fetch では防げません。** 着手前に fetch は撃っていて、
+    そのとき向こうはまだ push していませんでした。**同時に走っています。**
+
+    そして**当たるべくして当たっています** —— `retro.py` の持ち越し1位と
+    `status.py` の「[!] 外れています」は**どの回にも同じ形で見えている**ので、
+    **上位の1件は複数の回が同時に取りにいきます。** 直近7日の周は 115、
+    そのうち ship は 305件。**重なりは事故ではなく、既定の状態です。**
+
+    **`data/runs.jsonl` に置くのは、口が既に在るからです**
+    （`.gitattributes` の `merge=union` で、追記どうしは黙って両方残ります）。
+    読む場所を `--write`（§1・**その回のいちばん最初のコマンド**）にしたのは、
+    **何をやるか決める前**でないと意味がないからです。
+
+    **これは予約ではありません。** 見て、避けるか、重ねるかを決めるのはこちらです
+    （同じ所を2つの回が直すのが正しい場面もあります —— 08-26 の
+    `--shrink` は、きょうだいが見つけなければ間違ったまま走っていました）。
+    """
+    me = me if me is not None else (actor_id() or "")
+    cut = datetime.now(JST) - timedelta(minutes=window_min)
+    out = []
+    for r in _records():
+        if r.get("kind") != CLAIM_KIND:
+            continue
+        if str(r.get("session") or "") == me:
+            continue
+        try:
+            at = datetime.fromisoformat(str(r.get("at")))
+        except ValueError:
+            continue
+        if at.tzinfo is None:
+            at = at.replace(tzinfo=JST)
+        if at >= cut:
+            out.append(r)
+    return out
+
+
+def recent_ships(window_min: int = CLAIM_WINDOW_MIN, me: str | None = None) -> list[dict]:
+    """**直近 window_min 分に、自分以外が実際に出したもの。**
+
+    ## なぜ `claims()` だけでは足りないか（2026-08-27 19:0x に踏んだ）
+
+    `--claim` は**任意**です。`--ship` は**必須**です（§4 の最低ライン）。
+    だから「claim を打たずに走っているきょうだい」は、`claims()` から
+    **1件も見えません。**
+
+    実測（この回）: `run_marker.py --write` は
+    **「直近60分の claim: 0件」**を返しました。同じ時刻の `data/runs.jsonl` には、
+    **18:0x〜18:4x にきょうだいの ship が4件**（長尺の在庫を掘る回）ありました。
+    この回はそれを見ずに「在庫の底」を claim し、**中身を捨てています。**
+
+    **`claims()` が見ているのは意図で、ここが見ているのは実物です。**
+    重なりを避けるのに効くのは、**実際に触られた所**のほう。
+
+    **覆る条件**: `--claim` が全部の回で打たれるようになったら、この2つは
+    同じものを指します（そのときは `claims()` だけで足ります）。
+    **数え方は写していません** —— どちらも `_records()` の同じ行を読み、
+    `kind` だけが違います。
+    """
+    me = me if me is not None else (actor_id() or "")
+    cut = datetime.now(JST) - timedelta(minutes=window_min)
+    out = []
+    for r in _records():
+        if r.get("kind") != "ship":
+            continue
+        if str(r.get("session") or "") == me:
+            continue
+        try:
+            at = datetime.fromisoformat(str(r.get("at")))
+        except ValueError:
+            continue
+        if at.tzinfo is None:
+            at = at.replace(tzinfo=JST)
+        if at >= cut:
+            out.append(r)
+    return out
+
+
+def _claim_lines(window_min: int = CLAIM_WINDOW_MIN) -> list[str]:
+    rows = claims(window_min)
+    ships = recent_ships(window_min)
+    if not rows and not ships:
+        return []
+    out: list[str] = []
+    if rows:
+        out.append(f"[marker] **直近 {window_min}分 に、他の回が取りかかると書いたもの: "
+                   f"{len(rows)}件**（`--claim`）")
+        for r in rows[-5:]:
+            who = str(r.get("session") or "")[-8:]
+            out.append(f"         {str(r.get('at'))[11:16]}  …{who}  {r.get('what')}")
+    # **`--claim` は任意、`--ship` は必須。** 打たれていない claim は
+    #     見えないので、**実際に出したもの**も並べます（`recent_ships` の註）。
+    if ships:
+        out.append(f"[marker] **直近 {window_min}分 に、他の回が実際に出したもの: "
+                   f"{len(ships)}件**（`--ship`。**claim を打たない回は、上には出ません**）")
+        for r in ships[-5:]:
+            who = str(r.get("session") or "")[-8:]
+            out.append(f"         {str(r.get('at'))[11:16]}  …{who}  "
+                       f"{str(r.get('what'))[:96]}")
+    out.append("         **予約ではありません。**避けるか重ねるかはこちらが決めること"
+               "（同じ所を2つの回が直して、片方の誤りが見つかった例が 08-26 にあります）。"
+               "**ただし、ぶつかると片方は捨てになります。**")
+    return out
+
+
+def claim(what: str) -> int:
+    """**「いまからこれに取りかかる」を残す。**（`claims()` の註）"""
+    if not (what or "").strip():
+        print("[marker] `--claim` は1行の中身が要ります。")
+        return 2
+    if is_parent():
+        print("[marker] **親からは印を付けません。**")
+        return 0
+    line = _append({
+        "at": datetime.now(JST).isoformat(timespec="seconds"),
+        "session": actor_id() or "(不明)",
+        "kind": CLAIM_KIND,
+        "what": what.strip(),
+    })
+    print(f"[marker] 取りかかる印を付けました: {line}")
+    for ln in _claim_lines():
+        print(ln)
+    return 0
+
+
 def write() -> int:
     me = actor_id() or "(不明)"
     if is_parent():
@@ -232,6 +427,18 @@ def write() -> int:
         "kind": "start",
     })
     print(f"[marker] 走った印を付けました: {line}")
+    # **この回だけの一時置き場を、ここで掘って見せること**（2026-08-29 に足した）。
+    # 共有の直下へ書くと、きょうだいが同じ名前で上書きします
+    # （実測: `status.py` の出力 266行 → 24行）。`scratch_dir()` の註。
+    scratch = scratch_dir()
+    if scratch:
+        print(f"[marker] **この回の一時置き場: {scratch}**"
+              "（きょうだいと共有の直下へ書かないこと。"
+              "`status.txt` `eta.txt` `build.log` は全員が同じ名前を使います）")
+    # **ここで出すこと。** §1 はその回のいちばん最初のコマンドで、
+    # **何をやるか決める前**です。決めた後に見せても、払った時間は戻りません。
+    for ln in _claim_lines():
+        print(ln)
     return 0
 
 
@@ -329,8 +536,62 @@ def _eta_target() -> tuple[str | None, float | None, str]:
     return row.get("target_date"), row.get("days_to_target"), "据え置き"
 
 
+#: `CLAUDE.md` §「毎回の実行で必ずやること」が「出した」と呼ぶ5つ。
+#: **`scripts/drift.py` の `KINDS` と同じ並びです**（片方だけ変えないこと）。
+#:
+#: **`improve` は 2026-08-31 に足しました**（オーナーが固定した規則3）——
+#: 「次の投稿予定までにそこで投稿する動画を改善し続ける」。
+#: `upload` は**1日1回しか撃てない**ので、そのままだと大半の回が
+#: 「何も出せない回」になります。**次の枠の1本を良くした回も「出した」**です
+#: （`docs/trigger_main.md` §4）。
+SHIP_KINDS = ("upload", "improve", "means", "verdict", "fix")
+
+
+def ship_kind_of(what: str, kind: str | None = None) -> str:
+    """ship の種別。**明示された欄があればそれ。無ければ `what` の頭の語。**
+
+    ## なぜ欄を足したか（2026-08-26・最適化の回）
+
+    `scripts/drift.py` の `_kind_of()` は `what` の**先頭の語だけ**を見ます。
+    その docstring は「**欄を足すのが本筋ですが、既存の240件を読めなくなる**ので」と
+    書いて、頭の語を読むほうを選んでいました。
+
+    **その理由は当たっていません。** 欄を足しても、欄の無い古い行は
+    頭の語で読めばよいだけです（この関数がそうしています）。
+
+    **選ばなかった代償は実測できます**（2026-08-26 18:5x）:
+
+        ship 381件 のうち **155件（41%）が「その他」**
+
+    中身は「その他」ではありません。同じ窓に、こういう行が入っています ——
+    「**長尺1本を 09/07 20:00 JST に予約（VG6EYTKXl1M）**」（＝ `upload`）、
+    「**M9（配信の上限は…）を実データで判定**」（＝ `verdict`）。
+    **upload も verdict も、実数はもっと多い。**
+
+    そして `drift.py` は `verdicts_tail == 0` を**漂流の門**に使っています
+    （`drifting = bool(od_now) and verdicts_tail == 0`）。
+    **門が、4割こぼす目盛りの上に乗っていました。**
+
+    ## 覆る条件
+
+    `data/runs.jsonl` の「その他」が 5% を下回ったら、この欄は要りません
+    （＝頭の語の慣習が守られている）。**それまでは書き続けること。**
+    """
+    if kind:
+        return kind
+    head = (what or "").strip().lower()
+    for k in SHIP_KINDS:
+        if head.startswith(k):
+            return k
+    return "その他"
+
+
+run_marker_ship_kind = ship_kind_of
+
+
 def ship(what: str, closes: list[str] | None = None, lever: str | None = None,
-         moves: int | None = None, reflect: bool = True) -> int:
+         moves: int | None = None, reflect: bool = True,
+         kind: str | None = None) -> int:
     """**この回が「出したもの」を1行残す。**（2026-08-15 追加）
 
     オーナーの指示（原文）: **「子が、少しの作業で終わるの直して」**
@@ -399,6 +660,13 @@ def ship(what: str, closes: list[str] | None = None, lever: str | None = None,
         "kind": "ship",
         "what": what,
     }
+    # **種別を、書く側が残します**（2026-08-26。理由は `ship_kind_of()`）。
+    rec["ship_kind"] = ship_kind_of(what, kind)
+    if rec["ship_kind"] == "その他":
+        print(f"[marker] [!] **種別が読めません**（`{'／'.join(SHIP_KINDS)}` のどれでもない）。"
+              f"`drift.py` の「直近20回の verdict」はこの欄を数えるので、"
+              f"**この1件は漂流の門から見えません。**"
+              f" 直すには `--kind <種別>` を足すか、`--ship \"verdict: ...\"` の形で書くこと")
     # **腕は `what` より先に置きません**（読む側が `what` の頭で見分けているため）。
     if lever:
         rec["lever"] = lever
@@ -471,8 +739,21 @@ def ship(what: str, closes: list[str] | None = None, lever: str | None = None,
               + (f"（いまの予測 {rec.get('eta_target')}）" if rec.get("eta_target") else "")
               + " —— 次の回が、実際に動いた日数と突き合わせます。")
         if moves == 0 and lever in levers.MOVING:
-            print("         [!] **動かす腕を選んで 0日** と言っています。"
-                  " 効くまでに時差があるなら、それを JOURNAL に1行書くこと。")
+            # **`gate` は 0日 が正しい答えです**（2026-08-30 に足した）。
+            #     床(d)＝門が閉じる日＋軌跡の日数 は、閉じた実績が
+            #     `resume_gate.MIN_CLOSED_FOR_RATE` 件 たまるまで**日付を出しません**。
+            #     つまり門を1件 閉じても、そこまでは到達日が動きようがない。
+            #     ここで叱ると、**次の回は 0 以外を作って黙らせる側**へ倒れます ——
+            #     `--moves` は当てるための欄ではないので、それは台帳を汚すだけです。
+            if lever == "gate":
+                print("         **`gate` の 0日 は正しい答えです。**"
+                      " 床(d) は、閉じた実績が"
+                      f" {resume_gate.MIN_CLOSED_FOR_RATE}件 たまるまで日付を出しません"
+                      "（`src/resume_gate.rate_per_day`）。"
+                      " **0 以外を作って埋めないこと。**")
+            else:
+                print("         [!] **動かす腕を選んで 0日** と言っています。"
+                      " 効くまでに時差があるなら、それを JOURNAL に1行書くこと。")
     _suggest_undeclared(what, closes, known)
     # **出したら、その場で予測へ入れ直す**（2026-08-20・オーナー指示。原文:
     # **「毎回の実行で予測するように言ったはずなので、毎回その予測に反映して」**）。
@@ -482,7 +763,10 @@ def ship(what: str, closes: list[str] | None = None, lever: str | None = None,
     # 手順書に「周の終わりに反映すること」と書くだけでは足りません:
     # **2026-08-20 に註へ書いたものは、その日のうちに全部素通りしました。**
     #
-    # 反映は API を叩きません（出発点と同じ実測で解き直すだけ・約4秒）。
+    # 反映は API を叩きません（出発点と同じ実測で解き直すだけ）。
+    # **実測 1分37秒〜5分30秒**（下の `timeout=900` の註と同じ数字にすること）。
+    # **「約4秒」と書かないこと** —— その数を信じた 180秒 の門で、
+    # 反映が毎回 落ちていました。2026-08-26 に3か所そろえました。
     # **失敗しても ship は成功のまま返します** —— 反映は記録であって門ではない。
     if reflect:
         _reflect_now(what)
@@ -830,6 +1114,11 @@ def main(argv: list[str] | None = None) -> int:
                          "早まるなら負、遠のくなら正、動かさないなら 0）。"
                          "オーナー指示 2026-08-20 08:0x「毎回達成日時を早めることを"
                          "考えてから進めるようにして」。**次の回が実際の差と突き合わせます**")
+    ap.add_argument("--kind", metavar="種別", choices=sorted(SHIP_KINDS),
+                    help="**この ship の種別**（`upload`／`means`／`verdict`／`fix`）。"
+                         "省くと `--ship` の頭の語から読みます。"
+                         "**読めないと `drift.py` の漂流の門から見えません**"
+                         "（実測 2026-08-26: 381件 中 155件 が読めていませんでした）")
     ap.add_argument("--closes", metavar="語", action="append", default=[],
                     help="この ship で潰した持ち越しの語（`retro.py` の一覧に出る形で。"
                          "何度でも書ける）。**語が `-` で始まるときは "
@@ -841,6 +1130,11 @@ def main(argv: list[str] | None = None) -> int:
                          "オーナー指示 2026-08-20「毎回その予測に反映して」）。"
                          "**逃げ道であって、既定ではありません** —— 使ったら理由を "
                          "JOURNAL に1行。`stop_check.sh` が終わる前にもう一度訊きます")
+    ap.add_argument("--claim", metavar="内容",
+                    help="**いまから取りかかるものを1行で残す**（`claims()` の註）。"
+                         "`--write` が、直近60分に他の回が書いたぶんを出します —— "
+                         "**何をやるか決める前**に見えるように。**予約ではありません**が、"
+                         "ぶつかると片方は捨てになります（08-26 に 30分 払った）")
     ap.add_argument("--seen", metavar="ID",
                     help="**名指しされた回を見にいって、拾うものが無かった**ことを"
                          "残す（`sibling_check` がもう名指ししません）。"
@@ -853,6 +1147,10 @@ def main(argv: list[str] | None = None) -> int:
                          "言われたときの直し方。**`--ship` を打ち直すと同じ成果が"
                          "2行入り、帳簿が二重に数えます。**")
     args = ap.parse_args(argv)
+    if args.claim:
+        if args.ship or args.seen:
+            ap.error("--claim は単独で打ちます（出したものとは別の記録です）")
+        return claim(args.claim)
     if args.seen:
         if args.ship or args.write:
             ap.error("--seen は単独で打ちます（出したものとは別の記録です）")
@@ -883,8 +1181,32 @@ def main(argv: list[str] | None = None) -> int:
                      "**この成果で予測日が何日動く見込みか**を、"
                      "出す前に言うこと（早まるなら負・遠のくなら正・動かさないなら 0）。"
                      "予測日は `python scripts/eta.py` の先頭3行に出ています")
+        # **種別も書かせる**（2026-08-27。**この回が自分で踏んだ**）。
+        #
+        # `ship_kind_of()` は 2026-08-26 に `--kind` の欄を足しましたが、
+        # **書かせる門はどこにも作りませんでした** —— 頭の語が種別で始まらない
+        # 回は「その他」で通り、`drift.py` の漂流の門（`verdicts_tail == 0`）から
+        # 消えます。実測: `ship` 381件 のうち **155件（41%）が「その他」**。
+        #
+        # 2026-08-27 05:0x の回は、その欄が足された **86分後**に、
+        # 「jutaku に節2件 → 長尺の族 11→13 → 長尺1本を予約（vuhvrJ1CkBE）」で
+        # 踏んでいます（中身は明らかに `upload`）。警告は**書いた後**に出るので、
+        # 気づいた回が `data/runs.jsonl` を手で直すことになりました。
+        #
+        # **`--lever` と同じ形の門にします。** あちらは 2026-08-19 に
+        # 「無いと通らない」にしたことで、以後の ship に必ず腕が付きました。
+        # **註や警告ではなく、通さないことだけが効いています。**
+        #
+        # **覆る条件**: `data/runs.jsonl` の直近100件の「その他」が 0 のまま
+        # 30日 続いたら、頭の語の慣習が定着したということなので、この門は要りません。
+        if run_marker_ship_kind(args.ship, args.kind) == "その他":
+            ap.error("--kind が要ります（--ship と対）。"
+                     f"種別は `{'／'.join(sorted(SHIP_KINDS))}` のどれか —— "
+                     "`what` の頭がその語で始まっていれば書かなくて通ります。"
+                     "**`drift.py` の漂流の門（直近20回の verdict）がこの欄を数えます** —— "
+                     "空けると、その回は門から見えません")
         return ship(args.ship, args.closes, args.lever, args.moves,
-                    reflect=not args.no_reflect)
+                    reflect=not args.no_reflect, kind=args.kind)
     if args.moves is not None:
         ap.error("--moves は --ship と一緒に使ってください（出したものと対で残します）")
     if args.lever:

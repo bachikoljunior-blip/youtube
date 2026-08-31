@@ -93,11 +93,27 @@ def test_正しく貼られている件は動かさない():
     assert got[0] == ("zangyo", right)
 
 
-def test_1個差ではcalcをまたがない():
+def test_1個差ではcalcをまたがない(monkeypatch):
     """**弱い証拠で動かさない。** 制度の定数は calc をまたいで同じ数が出る。
 
     `CROSS_MARGIN` を1に下げれば動くことを確かめて、
     **既定の2では動かない**ことを裏から示します。
+
+    ## **`money_owner` を黙らせてから測ること**（2026-08-30 に足した）
+
+    2026-08-30 に、`realign` の**手前**へもう1つ門が入りました
+    （`money_owner` —— 貼られた calc が題の**金額を1つも持たない**ときだけ動かす。
+    `tests/test_forge_money_owner.py`）。**あちらは段をそろえて見るので、
+    この題では正しく `zangyo` を名指しします**（kaigo は金額0個・zangyo は4個）。
+
+    つまり**この検査の題は、もう `CROSS_MARGIN` まで届きません。**
+    そのままだと、この検査は「`money_owner` が動いた」ことを見て
+    **`CROSS_MARGIN` について何も言わなくなります** ——
+    名前と中身が食い違う検査は、`best_section` の docstring が
+    3回 記録している事故と同じ形です。
+
+    **だから、ここでは手前の門を黙らせます。** 測る対象は `CROSS_MARGIN` だけ。
+    **緩めてはいません** —— 実物では手前の門が先に、より強い証拠で答えます。
     """
     item = _Item("s-zangyo-kyujitsu-43269", *ZANGYO_TEXT)
     all_sections = {m: _sections(m) for m in ("kaigo", "zangyo")}
@@ -110,6 +126,7 @@ def test_1個差ではcalcをまたがない():
     assert scores["zangyo"] >= scores["kaigo"] + forge.CROSS_MARGIN, (
         f"この題では差が {scores} しかなく、この検査が何も言えていません")
 
+    monkeypatch.setattr(forge, "money_owner", lambda *a, **k: None)
     old = forge.CROSS_MARGIN
     try:
         forge.CROSS_MARGIN = scores["zangyo"] - scores["kaigo"] + 1
@@ -120,5 +137,24 @@ def test_1個差ではcalcをまたがない():
         # 「この calc の表が裏付けていない」＝ 0 なので落ちます。
         # **落ちるほうが安全側です** —— 語る制度と画面の表が別物になりません。
         assert got[0] is None or got[0][0] == "kaigo", "差が足りないのに calc をまたいだ"
+    finally:
+        forge.CROSS_MARGIN = old
+
+
+def test_金額の門は_CROSS_MARGIN_より先に効く():
+    """2026-08-30 に足した順番そのものを固定する。
+
+    同じ題・同じ `picked` で、**手前の門だけで `zangyo` に戻ること**
+    （`CROSS_MARGIN` をあり得ない大きさにしても動くこと）。
+    """
+    item = _Item("s-zangyo-kyujitsu-43269", *ZANGYO_TEXT)
+    all_sections = {m: _sections(m) for m in ("kaigo", "zangyo")}
+    picked = [("kaigo", list(all_sections["kaigo"])[0]),
+              ("zangyo", list(all_sections["zangyo"])[0])]
+    old = forge.CROSS_MARGIN
+    try:
+        forge.CROSS_MARGIN = 999
+        got = forge.realign(_Set([item]), picked, all_sections, [])
+        assert got[0] is not None and got[0][0] == "zangyo"
     finally:
         forge.CROSS_MARGIN = old

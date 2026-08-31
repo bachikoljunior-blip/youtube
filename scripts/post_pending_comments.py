@@ -95,11 +95,25 @@ def main(dry: bool = False) -> int:
         print(f"[post] {video['id']} ({topic}) {comment[:40]}…")
         if dry:
             continue
+        # **50単位**。残しているのは「前提を閉じる読み」で、`eta.py` が
+        # 毎回「軌跡の腕が動くのは前提を1件 閉じたときだけ」と言う操作です。
+        # **この道具はやり残しを拾う側なので、次の窓で同じ1行が拾います。**
+        from src import upload_cap                      # noqa: PLC0415
+
+        hold = upload_cap.reserve_hold()
+        if hold:
+            print(f"[post] {hold}")
+            print(f"[post] **ここで止めます**（付けた {posted}件）。"
+                  " 窓が変わった回に同じ1行で続きから拾えます。")
+            break
         youtube.commentThreads().insert(
             part="snippet",
             body={"snippet": {"videoId": video["id"], "topLevelComment": {
                 "snippet": {"textOriginal": comment}}}},
         ).execute()
+        # **通ったら数えること**（2026-08-28）。50単位。
+        from src import upload_cap                      # noqa: PLC0415
+        upload_cap.note_quota_ok(detail=f"commentThreads.insert {video['id']}")
         posted += 1
 
     print(f"{'（確認のみ）' if dry else ''}付けたコメント: {posted}件")

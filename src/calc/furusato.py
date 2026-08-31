@@ -103,6 +103,27 @@
 **同じ「扶養1人」で、場所によって桁がちがいます。**
 
 --------------------------------------------------------------------------
+枠そのものが消える人がいる（2026-08-27 に足した。**掃引が見つけた頭打ち**）
+--------------------------------------------------------------------------
+扶養がふえると枠は一定額ずつ減り、**住民税の所得割が0になった時点で 2,000円 に張り付く。**
+その 2,000円 は**自己負担の定額**であって、控除される枠ではない ——
+上限の式の第1項（所得割額 × 20% ÷ 分母）ごと消えている。
+**寄付しても1円も戻らない。**
+
+「ふるさと納税は実質2,000円」は、**枠が残っている人の話**である。
+
+張り付く人数は年収で動き、**年収50万円ごとにちょうど1人ずつ**ふえる
+（社会保険料率15%・給与のみ・一般の扶養）:
+
+    年収 200万円  扶養 2人      年収 400万円  扶養 6人
+    年収 250万円  扶養 3人      年収 450万円  扶養 7人
+    年収 300万円  扶養 4人      年収 500万円  扶養 8人
+    年収 350万円  扶養 5人      年収 600万円  扶養10人
+
+**「+1人ちょうど」は 200万〜600万 の全部の点で成り立つ**（`check_tables` が数え直す）。
+目安表は扶養3人までしか載せないので、**この帯は表の外側**にある。
+
+--------------------------------------------------------------------------
 根拠
 --------------------------------------------------------------------------
 控除の3階建て（地方税法・所得税法）。
@@ -135,7 +156,15 @@ ASSUMPTIONS = [
     "住民税の基礎控除は43万円、所得税の基礎控除は48万円で計算しています",
     "社会保険料率はこの計算での仮定で、15パーセントとして置いています。"
     "加入している健康保険や介護保険の対象かどうかで実際は変わります",
-    "ふるさと納税以外の所得控除は入れていません。医療費控除や住宅ローン控除があると上限は下がります",
+    "ふるさと納税以外の所得控除は、`Person.other_deduction` に入れた額だけを見ています。"
+    "既定は0円で、そのときは基礎控除・配偶者控除・扶養控除だけで計算しています。"
+    "ここに入れてよいのは、所得税と住民税で額が変わらない所得控除"
+    "（医療費控除・小規模企業共済等掛金控除・地震保険料控除）だけです。"
+    "生命保険料控除や配偶者特別控除は所得税と住民税で額が違うので、"
+    "同じ額を入れると住民税側が過大に引かれます",
+    "住宅ローン控除は税額控除なので、この上限額の計算には入れていません。"
+    "ただし住宅ローン控除で所得税が0円まで減っている人は、"
+    "ふるさと納税の所得税ぶんが戻らないことがあります",
     "ワンストップ特例ではなく確定申告した場合で計算しています",
     "上限を超えた寄付の計算では、寄付金控除の枠を入れています。"
     "所得税は総所得金額等の40パーセントまで、住民税の基本分は30パーセントまでです",
@@ -175,6 +204,14 @@ class Person:
     social_rate: float       # 社会保険料の実効率
     dependents_general: int = 0   # 一般の扶養（16歳以上19歳未満・23歳以上）
     spouse: bool = False          # 配偶者控除の対象がいるか
+    other_deduction: int = 0      # **所得税・住民税で同額の所得控除**（既定0＝従来と同じ）
+    # ↑ 医療費控除・小規模企業共済等掛金控除・地震保険料控除のうち
+    #   **所得税と住民税で額が変わらないもの**だけを入れること。
+    #   生命保険料控除や配偶者特別控除は所得税と住民税で額が違うので、
+    #   ここに入れると住民税側が過大に引かれます（`ASSUMPTIONS` にも書いた）。
+    #   **2026-08-28 に足しました。**それまで `ASSUMPTIONS` は
+    #   「医療費控除があると上限は下がります」と書くだけで、
+    #   **いくら下がるかを出す口が1つもありませんでした**（`src/calc/iryohi.py` の主題13）。
 
 
 def salary_deduction(income: int) -> int:
@@ -207,7 +244,9 @@ def _deductions(p: Person, *, resident: bool) -> int:
         basic, spouse, dependent = BASIC_RESIDENT, 330_000, 330_000
     else:
         basic, spouse, dependent = BASIC_INCOME, 380_000, 380_000
-    return basic + (spouse if p.spouse else 0) + dependent * p.dependents_general
+    return (basic + (spouse if p.spouse else 0)
+            + dependent * p.dependents_general
+            + max(0, p.other_deduction))
 
 
 def resident_tax_income_levy(p: Person) -> int:
@@ -339,6 +378,58 @@ def dependent_grid(income: int, social_rate: float = TYPICAL_SOCIAL_RATE,
             "1人ふえて減った額": None if prev is None else prev - lim,
         })
         prev = lim
+    return rows
+
+
+def dependents_floor(income: int, social_rate: float = TYPICAL_SOCIAL_RATE,
+                     upto: int = 8) -> int | None:
+    """**枠が 2,000円（自己負担ぶんだけ）で止まる、いちばん少ない扶養の人数。**
+
+    住民税の所得割が 0円 になると、`limit()` の第1項が消えて `SELF_PAY` だけが残ります。
+    **「2,000円で残りは全部 控除される」のではなく、「控除される枠が1円も無い」**状態です。
+    見つからなければ `None`。
+    """
+    for n in range(upto + 1):
+        p = Person(income=income, social_rate=social_rate,
+                   dependents_general=n)
+        if resident_tax_income_levy(p) == 0:
+            return n
+    return None
+
+
+def dependents_floor_table(social_rate: float = TYPICAL_SOCIAL_RATE,
+                           incomes: tuple[int, ...] = (
+                               2_000_000, 2_500_000, 3_000_000, 3_500_000,
+                               4_000_000, 5_000_000)) -> list[dict]:
+    """**ふるさと納税の枠が消える扶養の人数は、年収で動きます。**
+
+    枠は扶養1人につき一定額ずつ減り（この帯なら 7,774円）、
+    **住民税の所得割が 0 になった時点で 2,000円 に張り付きます。**
+    その 2,000円 は自己負担の定額で、**控除される枠ではありません** ——
+    つまり **1円も得をしません。**
+
+    「ふるさと納税は実質2,000円」という言い方は、**枠が残っている人の話**です。
+    実測（社会保険料率 15%・給与のみ・一般の扶養だけを動かした）:
+
+        年収 250万円  扶養 **3人**で 2,000円 に張り付く（0〜2人なら 22,378 / 14,603 / 6,829円）
+        年収 300万円  扶養 **4人**（0〜3人なら 28,856 / 21,082 / 13,308 / 5,533円）
+        年収 350万円  扶養 **5人**
+
+    **年収が 50万円 ふえるたびに、耐えられる扶養が1人ふえます。**
+    """
+    rows: list[dict] = []
+    for inc in incomes:
+        n = dependents_floor(inc, social_rate)
+        p0 = Person(income=inc, social_rate=social_rate)
+        last = None if n in (None, 0) else limit(
+            Person(income=inc, social_rate=social_rate,
+                   dependents_general=n - 1))
+        rows.append({
+            "年収": inc,
+            "扶養0人の上限額": limit(p0),
+            "枠が消える扶養の人数": n,
+            "その1人手前の上限額": last,
+        })
     return rows
 
 
@@ -538,6 +629,24 @@ def check_tables() -> None:
             f"崖の帯の数が刻みで変わります（1万円 {_bands(10_000)} / 5千円 {_bands(5_000)}）")
     if _bands(10_000) != len(INCOME_TAX_BRACKETS) - 4:
         raise ValueError(f"崖の帯が {_bands(10_000)}本。速算表の段から出る本数と違う")
+
+    # (7) **主題**（2026-08-27 に足した）: 枠そのものが消える扶養の人数は、
+    #     年収 50万円 ごとに **ちょうど1人**ずつ動く。
+    prev_n: int | None = None
+    for inc in range(2_000_000, 6_000_001, 500_000):
+        n = dependents_floor(inc, upto=20)
+        if n is None:
+            raise ValueError(f"年収{inc:,}円で、扶養20人まで見ても枠が消えません")
+        if prev_n is not None and n - prev_n != 1:
+            raise ValueError(
+                f"年収{inc:,}円で、枠が消える扶養の人数が {prev_n} → {n}（+1 ではない）")
+        prev_n = n
+    # 張り付いた先は、**自己負担の定額そのもの**（控除される枠は0）。
+    _stuck = Person(income=3_000_000, social_rate=TYPICAL_SOCIAL_RATE,
+                    dependents_general=dependents_floor(3_000_000) or 0)
+    _checks.rounding(limit(_stuck), SELF_PAY, "枠が消えた人の上限額")
+    _checks.rounding(resident_tax_income_levy(_stuck), 0,
+                     "枠が消えた人の住民税の所得割額")
 
 
 def social_rate_grid(income: int, rates=(0.13, 0.14, 0.15, 0.16, 0.17)) -> list[dict]:
@@ -861,3 +970,18 @@ if __name__ == "__main__":
     print(f"  帯の外なら {_flat:,}円ぐらいで済むところが、"
           f"帯の中では最大 {max(r['減った額'] for r in _rows):,}円。"
           "**同じ「扶養1人」で、場所によって桁がちがいます。**")
+
+    print("\n=== 枠そのものが消える扶養の人数は、年収50万円ごとに1人ずつ動く ===")
+    for row in dependents_floor_table():
+        n = row["枠が消える扶養の人数"]
+        if n is None:
+            print(f"  年収 {row['年収']:>9,}円  扶養0人の枠 {row['扶養0人の上限額']:>8,}円"
+                  f"  → 8人まで見ても枠は消えません")
+            continue
+        print(f"  年収 {row['年収']:>9,}円  扶養0人の枠 {row['扶養0人の上限額']:>8,}円"
+              f"  → **扶養 {n}人**で {SELF_PAY:,}円 に張り付く"
+              f"（1人手前は {row['その1人手前の上限額']:,}円）")
+    print(f"  **その {SELF_PAY:,}円 は自己負担の定額で、控除される枠ではありません。**"
+          "住民税の所得割が0になると、上限の式の第1項ごと消えます。")
+    print("  「ふるさと納税は実質2,000円」は、**枠が残っている人の話**です ——"
+          "ここに落ちた人は、寄付しても1円も戻りません。")

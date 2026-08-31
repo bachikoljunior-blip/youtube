@@ -116,14 +116,66 @@ def test_境目(views, comments, state):
     assert ev.verdict(views, comments, 0)["state"] == state
 
 
-# --- 実データ（型が分かれていないことを固定する） ---------------------------
+# --- 実データ（型が分かれた。**次はどう分かれているかを固定する**） -----------
 
-def test_実データ_問いかけでない本は1本も無い():
-    """**緑でなくなったら、それは進歩です** —— 対照群ができたということ。
+def test_実データ_問いかけでない本は全部_依頼の型():
+    """**この検査は 2026-08-26 夕に鳴りました。書き換えた記録を残します。**
 
-    いまは控えのあるショートが全部問いかけ型で、**比較する群がありません。**
-    この仮説が「型のちがい」を測れていないのは、そのためです。
+    元の形は `assert breakdown["not_ask"] == 0` で、docstring はこう言っていました
+    ——「**緑でなくなったら、それは進歩です** —— 対照群ができたということ」。
+    **そのとおりに鳴りました**（`not_ask` が 0 → 5）。
+
+    **ただし「対照群」ではありませんでした。処置群のほうです。**
+    出てきた5本は全部これです:
+
+        「雑損控除の境目を毎日出します。登録して次の数字をどうぞ。」
+        「介護の限度額の計算を毎日出すので登録してください」
+
+    ＝ `config/hypotheses.yaml` 期限 2026-10-11
+    「**ショートの最後で登録を直接1回頼むと、登録率が上がる**」の**処置群**が
+    積みはじめた、という意味です（`src/script_writer.py`「2026-08-24 に解禁」。
+    実際に出はじめたのは **2026-08-26 02:50**）。
+
+    ## いま固定していること
+
+    **ショートの終端は、問いかけか依頼のどちらかであること。**
+    どちらでもない本が出たら、それは `script_writer` の型から外れた本です
+    （長尺の「明日やること」がショートに漏れた、など。実際に長尺側では
+    その型を使っているので、漏れは起こりえます）。
+
+    **件数では固定しません** —— 同じ枝で主実行が走っていて、毎周 増えます。
     """
     _, breakdown = ev.population(ev.load_ledger())
-    assert breakdown["not_ask"] == 0
-    assert breakdown["ask"] > 300
+    assert breakdown["ask"] > 300, "問いかけ型（過去の在庫）が消えています"
+
+    ledger, seen, stray = ev.load_ledger(), set(), []
+    for row in ledger:
+        vid = row["video_id"]
+        if vid in seen or "#Shorts" not in (row.get("title") or ""):
+            continue
+        seen.add(vid)
+        if ev.form_of(vid) == "other":
+            stray.append(vid)
+    assert not stray, (
+        "終端が問いかけでも依頼でもないショートがあります: "
+        f"{stray[:5]}（全 {len(stray)}本）。"
+        "`src/script_writer.py` の終端の型から外れています —— "
+        "長尺の「明日やること」がショートに漏れていないか見ること。"
+    )
+
+
+def test_依頼と問いかけは独立に数える():
+    """**「問いかけでない ＝ 依頼」ではありません。**
+
+    `src/script_writer.py`:「問いかけを残す余裕があるなら残してよいが、
+    **優先は依頼のほう**」。両方 入っている本は `is_ask` も `is_request` も真です。
+    **処置群を `not_ask` で数えると、その本を落とします**（＝ 群が実際より小さく見え、
+    30,000再生 の門に届くのが遅く見える）。
+    """
+    both = ["この計算を毎日出しています。登録して次の数字を受け取りますか。"]
+    assert ev.is_ask(both) and ev.is_request(both)
+    only_ask = ["あなたの手当は全員同額ですか。"]
+    assert ev.is_ask(only_ask) and not ev.is_request(only_ask)
+    only_req = ["介護の限度額の計算を毎日出すので登録してください"]
+    assert ev.is_request(only_req) and not ev.is_ask(only_req)
+    assert ev.is_request([]) is False

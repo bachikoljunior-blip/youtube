@@ -71,6 +71,13 @@ import statistics
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 VIEWS = ROOT / "data" / "views.jsonl"
 FORMS = ROOT / "data" / "video_forms.json"
+UPLOADED = ROOT / "data" / "uploaded.jsonl"
+
+#: **長尺と呼ぶ尺の下限（秒）。** `scripts/eta.LONG_FORM_SECONDS` と同じ数です。
+#: ショートの上限は60秒、この作りの長尺は4分以上（`src/verify.py`）なので、
+#: あいだの180秒に置いています。**実測でこの帯に本は1つもありません**
+#: （`_long_by_duration()` の「二山」の節）。
+LONG_MIN_SECONDS = 180.0
 
 JST = dt.timezone(dt.timedelta(hours=9))
 
@@ -143,9 +150,99 @@ def forms(path: pathlib.Path | None = None) -> dict[str, str]:
     return {str(k): str(v) for k, v in got.items()} if isinstance(got, dict) else {}
 
 
-def _long_ids(forms_path: pathlib.Path | None = None) -> set[str]:
-    """**形が分かっている長尺だけ**。不明は落としません（落とすと母集団が消えます）。"""
-    return {v for v, f in forms(forms_path).items() if f == LONG_FORM}
+def _long_by_duration(path: pathlib.Path | None = None) -> set[str]:
+    """**控えの尺で見た長尺**（`data/uploaded.jsonl` の `duration_s`）。
+
+    ## なぜ要るか（2026-08-30・最適化の回。**実測で見つけた**）
+
+    `forms()` が読む `data/video_forms.json` は Analytics の
+    `creatorContentType` です。**あれは公開して再生の付いた本にしか付きません。**
+    だから**予約ぶんの長尺は、1本も入っていません** —— 実測（この回に撃った）:
+
+        `forms()` が「長尺」と言う本            **18本**
+        控えの `duration_s` が 180秒 以上の本   **98本**
+        **重なり                                  1本**
+
+    **予約の側こそ、この関数の相手**です。`live_ids()` は控えの予約行も
+    受け取るので（`ab_split.published()`）、そこを見分けられないと
+    **長尺がショートの帯の枠を取ったことに気づけません。**
+    実測（同じ回・控えと公開済み 629本）:
+
+        `forms()` 由来の 18本 で見る    帯の枠を取っている長尺 **0本** ／ 落ちたショート **0本**
+        控えの尺で見る                  帯の枠を取っている長尺 **16本** ／ 落ちたショート **7本**
+
+    **`tests/test_live_ids_long_form.py` が「落ちたら直す回」と書いていた
+    その条件は、すでに満たされていました。** 検査が気づけなかったのは、
+    **検査も `_long_ids()` を使っていた**からです ——
+    見張りと見張られる側が、同じ目で見ていました。
+
+    ## 尺で割ってよい理由（この回に測った）
+
+    控えの `duration_s`（178本）に、**55秒 と 260秒 のあいだの本は 1本もありません。**
+    分布が二山なので、180秒 の境目はどちらの山も切りません。
+    `forms()` と重なる 1本 でも、両者の答えは一致しています（食い違い 0件）。
+
+    **この repo は既にこの読み方に寄せてあります** ——
+    `src/judgeable._short_topics()`／`src/ab_split._shorts_only()`／
+    `src/watches._durations()` は、どれも控えの `duration_s` で形を割ります
+    （2026-08-27 の結論「`judgeable` のほうが正しい」）。
+    **`day_cap` だけが、そこに合流していませんでした。**
+
+    **後の行が勝ちます**（`published()` と同じ規則。撃ち直しで尺が変わる本のため）。
+
+    **覆る条件**: ショートの上限が 3分 まで伸びたら（YouTube 側の仕様変更）、
+    `LONG_MIN_SECONDS` を測り直すこと。**境目を跨ぐ本が出たら、上の「二山」も
+    測り直すこと** —— そのときは尺だけでは割れません。
+    """
+    p = path or UPLOADED
+    if not p.exists():
+        return set()
+    out: set[str] = set()
+    try:
+        lines = p.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return set()
+    for line in lines:
+        if not line.strip():
+            continue
+        try:
+            r = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        vid, sec = r.get("video_id"), r.get("duration_s")
+        if not vid or sec is None:
+            continue
+        try:
+            long_form = float(sec) >= LONG_MIN_SECONDS
+        except (TypeError, ValueError):
+            continue
+        if long_form:
+            out.add(str(vid))
+        else:
+            out.discard(str(vid))       # **後の行が勝ち**（撃ち直しで尺が変わる本）
+    return out
+
+
+def _long_ids(forms_path: pathlib.Path | None = None,
+              uploaded_path: pathlib.Path | None = None) -> set[str]:
+    """**形が分かっている長尺だけ**。不明は落としません（落とすと母集団が消えます）。
+
+    出どころは2つ、**足し合わせます**（どちらも「分かっている」側）:
+
+      1. `forms()`   —— Analytics の `creatorContentType`。**公開して再生の付いた本だけ**
+      2. `_long_by_duration()` —— 控えの `duration_s`。**予約ぶんも入る**
+
+    **1 だけでは予約が見えません**（重なりは実測 1本／18本 対 98本）。
+    理由と実測は `_long_by_duration()` の docstring。
+    """
+    known = {v for v, f in forms(forms_path).items() if f == LONG_FORM}
+    return known | _long_by_duration(uploaded_path)
+
+
+#: `_readings()` の控え。鍵は（path・mtime・大きさ・齢の下限）。
+#: **ファイルが変われば鍵が変わる**ので、古い数を返しません。
+_READINGS_MEMO: dict[tuple, dict[str, tuple[dt.datetime, float, int]]] = {}
+_READINGS_MEMO_MAX = 8
 
 
 def _readings(path: pathlib.Path | None = None,
@@ -160,6 +257,36 @@ def _readings(path: pathlib.Path | None = None,
     p = path or VIEWS
     if not p.exists():
         return {}
+    # --- **同じファイルを、1回の走りで何十回も読み直さないこと**（2026-08-30 に測って足した）---
+    #     実測（`python -m cProfile scripts/eta.py --reflect`・2026-08-30 06:2x）:
+    #
+    #         eta.py --reflect        65.8秒
+    #           day_cap._readings     **201回・累計 40.8秒**（走り全体の 62%）
+    #           day_cap.long_form     160回・累計 33.7秒（中身はほぼ上）
+    #           json.loads          **5,286,452回**（＝ `data/views.jsonl` を 201回 読み直している）
+    #
+    #     **これは 2026-08-28 に `day_cap.cap()` で直したのと同じ形**です
+    #     （`scripts/eta.py` の `_view_cap_per_day`。あのとき 4分 → 24秒 になった）。
+    #     **あちらは memo を `eta.py` 側に置いた**ので、`_readings` を直に呼ぶ
+    #     `long_form()` / `by_day()` / `day_total()` / `deep_short` には効いていません。
+    #     **1か所で直すこと** —— 呼ぶ側ごとに memo を置くと、次に足された
+    #     呼び口だけがまた 200回 読みます（それがこの 40秒 の由来です）。
+    #
+    #     **鍵にファイルの状態（mtime と大きさ）を入れます。** 走っている最中に
+    #     `scripts/snapshot.py` が追記しても、次の呼びで読み直します ——
+    #     **古い数を返すくらいなら、読み直すほうがいい。**
+    #     **覆る条件**: 同じ mtime のまま中身が変わる積み方をしたら（例: 書き換え）
+    #     ここは古い数を返します。`data/views.jsonl` は追記だけなので、いまは起きません。
+    try:
+        st = p.stat()
+        key = (str(p), st.st_mtime_ns, st.st_size, float(min_age))
+    except OSError:
+        key = None
+    if key is not None and key in _READINGS_MEMO:
+        # **控えそのものを渡さないこと。** 呼ぶ側が触ると、次の呼びに漏れます
+        #     （いまの呼び口は全部 `.items()` を回すだけですが、**次に足される
+        #     呼び口はそうとは限りません**）。値は tuple なので浅い写しで足ります。
+        return dict(_READINGS_MEMO[key])
     first: dict[str, dt.datetime] = {}
     best: dict[str, tuple[float, int]] = {}
     for line in p.read_text(encoding="utf-8").splitlines():
@@ -180,7 +307,16 @@ def _readings(path: pathlib.Path | None = None,
         # 「後ろの本は若いだけ」という別の説明が残ります）
         if cur is None or r["hours"] < cur[0]:
             best[r["id"]] = (r["hours"], r["views"])
-    return {v: (first[v].astimezone(JST), h, n) for v, (h, n) in best.items() if v in first}
+    out = {v: (first[v].astimezone(JST), h, n)
+           for v, (h, n) in best.items() if v in first}
+    if key is not None:
+        # **際限なく積まないこと。** 鍵はファイルの状態 × 齢の下限なので、
+        #     1回の走りで増えるのは高々数件（実測: 6h／24h／48h の3つ）ですが、
+        #     追記のたびに古い鍵が残ります。**新しい順に少しだけ持つこと。**
+        if len(_READINGS_MEMO) >= _READINGS_MEMO_MAX:
+            _READINGS_MEMO.pop(next(iter(_READINGS_MEMO)))
+        _READINGS_MEMO[key] = out
+    return dict(out)
 
 
 def by_day(path: pathlib.Path | None = None,
@@ -259,12 +395,31 @@ def long_form_lines(path: pathlib.Path | None = None,
     m = long_form(path, forms_path)
     if not m["per_day"]:
         return ["  **長尺の面**: 読める長尺がまだありません（上限は未測定）"]
-    out = [
-        f"  **長尺の面: {m['most']}本/日 までは崩れていません**"
-        f"（齢 {m['age_h']:.0f}時間 でそろえた実測。最大の日 {m['alive']}/{m['most']}本 が生存）",
+    # **見出しは `collapsed` で分けること**（2026-08-27 に直した）。
+    #
+    # ここは長らく「**{most}本/日 までは崩れていません**」を**無条件**で印字して
+    # いました。`collapsed` が立った日に、この行は
+    # 「**7本/日 までは崩れていません**（最大の日 **5/7本** が生存）」と出ます ——
+    # **同じ行の中で、自分の言っていることを自分で否定しています。**
+    # そのあいだ `batch_build._long_ring()` のほうは正しく `most - 1` へ落として
+    # いました。**機構は正しく、読まれる側だけが偽**という形です
+    # （`scripts/batch_build.live_ring()` の節と同じ形。今日3件目）。
+    if m["collapsed"]:
+        out = [
+            f"  **長尺の面: {m['most']}本/日 で崩れました → 上限は"
+            f" {max(1, m['most'] - 1)}本/日**"
+            f"（齢 {m['age_h']:.0f}時間 でそろえた実測。"
+            f"最大の日 {m['alive']}/{m['most']}本 しか生存していません）",
+        ]
+    else:
+        out = [
+            f"  **長尺の面: {m['most']}本/日 までは崩れていません**"
+            f"（齢 {m['age_h']:.0f}時間 でそろえた実測。"
+            f"最大の日 {m['alive']}/{m['most']}本 が生存）",
+        ]
+    out.append(
         "    **上の上限はショートの面のもので、長尺には掛かりません**"
-        "（長尺は `SHORTS_FEED` の枠を1つも使わない）。",
-    ]
+        "（長尺は `SHORTS_FEED` の枠を1つも使わない）。")
     if not m["collapsed"]:
         out.append(
             f"    **上限そのものはまだ出ていません**（{m['most']}本/日 を超えた日が無い）。"
@@ -423,6 +578,107 @@ def ties(times: list[dt.datetime], gap_min: float = TIE_GAP_MIN) -> list[list[dt
     return groups
 
 
+DECIDE_GAP_MIN = 3     # 2つのモデルの予測がこれだけ離れていない日からは決めない
+
+
+def split_power(times: list[dt.datetime], c: int, t_min: int,
+                gap_min: float = MIN_GAP_MIN) -> dict:
+    """**その日の形が (A)/(B) をどれだけ切り分けるか**（2026-08-27 に足した）。
+
+    `window()` は日を決めるときに2つの門を通しています ——
+    **予測の差が `DECIDE_GAP_MIN` 以上**（`abs(pc - pw)`）と、
+    **同じ分の組が無いこと**（`ties()`）。どちらも**予約の形だけで先に分かります。**
+
+    ところが `booked_split_day()` は長らく「**`first_pub` より前に出す本が
+    1本でもある日**」で切り分けの日を選んでいました。**それは必要でも十分でも
+    ありません**（2026-08-27 に実測で分かった）:
+
+        2026-08-28  早い本 0本 だが 差 0 —— 早い本が無くても切り分かる日はある…
+        2026-09-07  早い本 0本・差 **5**  ←（13:30 より後ろが多い日は、
+                    **窓のほうが少なく**予測するので、それだけで切り分きます）
+        2026-09-02  早い本 2本・差 **3**（ぎりぎり。1本 動けば消える）
+        2026-08-27  早い本 8本・差 **8**（05:00〜13:30 の18本 ＋ 16:00 の1本）
+
+    **差の大きい日を選ぶこと。** 「早い本があるか」は、差を作る**片方の道**に
+    すぎません（もう片方は「13:30 より後ろに出す本があるか」）。
+
+    返り: `kept`（間隔で残る本数）／`count`（(A) の予測）／`window`（(B) の予測）
+    ／`gap`（その差）／`ties`（同じ分の組の数）／`decisive`（門を2つとも通るか）
+    """
+    kept = _spaced(times, gap_min)
+    pc = min(len(kept), c)
+    pw = sum(1 for x in kept if x.hour * 60 + x.minute <= t_min)
+    tied = ties(times)
+    return {"kept": len(kept), "count": pc, "window": pw, "gap": abs(pc - pw),
+            "ties": len(tied),
+            "decisive": abs(pc - pw) >= DECIDE_GAP_MIN and not tied}
+
+
+def left_edge(path: pathlib.Path | None = None) -> dict | None:
+    """**窓の左端**（これより早く出した本は、その日 0再生で終わる）。
+
+    ## なぜ要るか（2026-08-27 16:xx・実測して足した）
+
+    `window()` の2つのモデルは、**どちらも左端を持っていません**:
+
+        (A) 本数   生きるのは**先頭から** C 本   → 早い本ほど生きる
+        (B) 窓     生きるのは **T まで**の本 全部 → 早い本は全部生きる
+
+    **両方とも「早く出すほど有利」と言っています。** `cap_if_window()` は
+    そこから **05:00 から出せば 18枠（×1.80）** を出し、`scripts/eta.py` は
+    それを `density` の腕の上振れとして印字していました。
+
+    **2026-08-27 に実際に置いて、測りました。** 05:00〜08:30 JST に 8本
+    （30分きざみ）。結果は **8本とも 0再生**（07:30 の1本だけ 4再生）で、
+    生きたのは 08:59 以降の 10本です。**8本とも `public` / `processed`** を
+    `videos.list` で確かめてあるので、**投稿の失敗ではありません。**
+
+        05:00 0    05:30 0    06:00 0    06:30 0    07:00 0
+        07:30 4    08:00 0    08:30 0   ← ここまで死
+        08:59 313  09:30 106  10:00 84  10:30 367 …… 13:30 71  ← ここから生
+
+    **つまり早く出すほど有利ではありません。** 窓には左端があり、
+    **05:00 に倒すと本が死にます。** `density` の ×1.80 は**実在しません** ——
+    09:00〜13:30 は30分きざみで**ちょうど10枠**で、`cap()` の 10 と同じです。
+
+    **覆る条件**: 左端は日によって動くかもしれません（配信の面が育てば早い時刻にも
+    人がいる）。ここは**毎日その日の実物から測り直します**（定数で持ちません）。
+    右端のほうはまだ 13:30 で、**それより後ろは未測**です。
+
+    返り: `{"after", "by", "dead", "days"}` ＝ 左端は `after` より後・`by` まで。
+    早い時刻で死んだ本が1本も無ければ `None`（＝ まだ測っていない）。
+    """
+    found: list[tuple[int, dt.time, dt.time, str]] = []
+    n_dead = 0
+    days: list[str] = []
+    for d, rows, line in _qual_days(path):
+        alive = [p for p, _v, n in rows if n >= line]
+        if not alive:
+            continue
+        first_alive = min(alive)
+        # **その日いちばん早く生きた本より前に出て、死んだ本**だけを見ます。
+        # 「上限を超えて死んだ本」は後ろに出るので、ここには入りません。
+        early_dead = [p for p, _v, n in rows if n < line and p < first_alive]
+        if not early_dead:
+            continue
+        n_dead += len(early_dead)
+        days.append(f"{d}（{min(early_dead):%H:%M}〜{max(early_dead):%H:%M} の "
+                    f"{len(early_dead)}本が0再生 ／ 最初に生きたのは {first_alive:%H:%M}）")
+        found.append((len(early_dead), max(early_dead).time(),
+                      first_alive.time(), str(d)))
+    if not found:
+        return None
+    # **日をまたいで max/min を取らないこと**（2026-08-27 16:xx に踏んだ）。
+    # 死んだ時刻の最大と、生きた時刻の最小を**別々の日から**拾うと、
+    # 08-26（09:00 が死・09:30 から生）と 08-27（08:30 まで死・08:59 から生）で
+    # **`after=09:00` / `by=08:59` ＝ 左端が右端より後ろ**という、
+    # 成り立たない括弧を返します。**括弧は1日の中でしか閉じません。**
+    # 採るのは**早い時刻の死を いちばん多く見た日**（＝ わざと置いた実験日）。
+    n, after, by, day = max(found, key=lambda x: x[0])
+    return {"after": after.strftime("%H:%M"), "by": by.strftime("%H:%M"),
+            "dead": n_dead, "from": day, "from_dead": n, "days": days}
+
+
 def window(path: pathlib.Path | None = None) -> dict:
     """**上限が「1日N本」なのか「時刻の窓」なのかを、切り分けられているか。**
 
@@ -517,19 +773,44 @@ def window(path: pathlib.Path | None = None) -> dict:
 
     C, T, T_min, first_pub = _fit(None)
 
-    def predict(rows, c: int, t_min: int) -> tuple[int, int]:
+    def predict(rows, c: int, t_min: int):
+        """**どの本が生きるか**を、2つのモデルそれぞれの「集合」で返す。
+
+        **本数で返さないこと**（2026-08-27 16:xx に踏んだ）。ここは長らく
+        `min(len(kept), c)` と `sum(x <= t_min)` の**2つの整数**を返し、
+        下の `decided_by` はそれを生きた**本数** `a` と比べていました。
+        ところが 08/27 の実物は:
+
+            本数モデル  生きるのは先頭10本 ＝ 05:00〜09:30
+            実測        生きたのは 08:59〜13:30 の10本
+
+        で、**数は 10 と 10 でぴったり一致し、中身は 19本中 16本が
+        入れ替わっています**（本数モデルが「生きる」と名指しした 8本は
+        全部 0再生、「死ぬ」と名指しした 8本は全部 生きた）。
+        それでも整数しか返さないので `near` は `count` を**距離0**で選び、
+        この道具は `verdict='count'` を**確信つきで**印字しました ——
+        **その日の実物が、選ばれたモデルを丸ごと否定しているのに**です。
+
+        数だけを見ると「当たり」に見えるのは、生きている窓 09:00〜13:30 が
+        30分きざみで**ちょうど10枠**だからです。**それがこの `confounded` の
+        正体そのもの**なので、**数で切り分けようとするかぎり、
+        どんな日を足しても永久に切り分かりません。**
+        """
         kept = _spaced([p for p, _v, _n in rows])
-        return min(len(kept), c), sum(1 for x in kept
-                                      if x.hour * 60 + x.minute <= t_min)
+        return (set(kept[:c]),
+                {x for x in kept if x.hour * 60 + x.minute <= t_min},
+                kept)
 
     decided_by = verdict = None
+    misfit: list[str] = []
     for d, rows, line, a, _dead in per_day:
         held = _fit(d)                    # **その日を除いて当てはめる**
         if held is None:
             continue                      # 前の日が無い ＝ 比べる相手がいない
         c_d, _t_d, t_min_d, _fp_d = held
-        pc, pw = predict(rows, c_d, t_min_d)
-        if abs(pc - pw) < 3:
+        pred_c, pred_w, kept = predict(rows, c_d, t_min_d)
+        pc, pw = len(pred_c), len(pred_w)
+        if abs(pc - pw) < DECIDE_GAP_MIN:
             continue                      # 2つの予測が近い日は、どちらにも読める
         if d in tied_days:
             # **同じ分の組がある日からは決めません。** そこで死んだ本が
@@ -538,23 +819,56 @@ def window(path: pathlib.Path | None = None) -> dict:
             # 窓が真で、組が両方死ぬ場合、生きた本数が**本数モデルの予測に着地**し、
             # `count` を確信つきで印字します。**それは 1.8倍 を取り落とす向き**です。
             continue
-        near, far = sorted(((abs(a - pc), "count"), (abs(a - pw), "window")))
+        # **生きた「本」の集合**で比べます。`_spaced()` で落ちた本は
+        # どちらのモデルの守備範囲でもない（衝突で死ぬ）ので、外します。
+        in_kept = set(kept)
+        act = {p for p, _v, n in rows if n >= line and p in in_kept}
+        # **上限が効いていない日から決めないこと**（2026-08-27 16:xx に足した）。
+        # 2026-08-04（登録者9人・18:29 から7本）は生きたのが 1本 だけです。
+        # 本数モデルは「先頭4本」、窓モデルは 13:30 までが1本も無いので
+        # **「1本も生きない」**を予測します。**何も生きないと言うモデルは、
+        # ほとんど何も生きなかった日で必ず勝ちます** —— 取り違え 窓1本 対
+        # 本数3本 で、この道具は `verdict='window'` を印字しました。
+        # 2026-08-24 に「コインの裏表で断定」として直した所が、
+        # 本の取り違えで測り直したとたんに**別の入口から戻っています。**
+        #
+        # 上限の話をしているのは、**その日が上限の近くまで埋まった日**だけです。
+        # 当てはめた C の半分に届かない日は、縛っているのが上限ではありません
+        # （面が細い・題材が外れた）。**覆る条件**: C 自体が下がって
+        # まともな日まで落ちるようなら、床は割合ではなく `floor` で持つこと。
+        if len(act) * 2 < c_d:
+            continue
+        miss_c, miss_w = len(pred_c ^ act), len(pred_w ^ act)
+        near, far = sorted(((miss_c, "count"), (miss_w, "window")))
         # **どちらにも合っていない日で決めないこと。** 2026-08-04（登録者が9人・
         # 18:29 から7本）は 生きた2本 に対し 本数なら4・窓なら0 で、**両方から等距離**
         # です。ここを通していたので、この道具は「窓のほうが上限」と**コインの裏表で
         # 断定**していました（2026-08-24 に踏んで直した）。
-        if near[0] > max(1.0, 0.25 * max(pc, pw)):
+        #
+        # **本の取り違えで測るようになったので、ここは 08/27 でも効きます** ——
+        # 取り違え 本数16本・窓8本 に対し 門は 19本の 25% ＝ 4.75本 なので、
+        # **どちらも通りません**（＝ この日からは決めない）。**それが正解**です:
+        # 実測の「生きた10本」は 08:59 から始まっており、**窓の左端が
+        # 05:00 ではない**ことを言っています。2つのモデルはどちらも
+        # 左端を持っていないので、**この日はどちらのモデルでも説明できません。**
+        if near[0] > max(1.0, 0.25 * len(kept)):
+            misfit.append(
+                f"{d}（出した {len(rows)}本・生きた {len(act)}本 ／ "
+                f"本を取り違えた数 本数 {miss_c}本・窓 {miss_w}本 "
+                f"＝ **どちらのモデルも合っていません**）")
             continue                      # 実測がどちらのモデルにも乗っていない日
         if far[0] - near[0] < 2:
             continue                      # 差が付いていない
         verdict = near[1]
-        decided_by = f"{d}（出した {len(rows)}本・生きた {a}本 ／ 本数なら {pc}・窓なら {pw}）"
+        decided_by = (f"{d}（出した {len(rows)}本・生きた {len(act)}本 ／ "
+                      f"本を取り違えた数 本数 {miss_c}本・窓 {miss_w}本）")
         break
 
     return {"days": len(evidence), "C": C, "T": T.strftime("%H:%M"),
             "confounded": decided_by is None, "decided_by": decided_by,
             "verdict": verdict, "first_pub": first_pub.strftime("%H:%M"),
-            "last_alive": T.strftime("%H:%M"), "blocked": blocked}
+            "last_alive": T.strftime("%H:%M"), "blocked": blocked,
+            "misfit": misfit, "left_edge": left_edge(path)}
 
 
 def cap(path: pathlib.Path | None = None) -> int:
@@ -564,6 +878,190 @@ def cap(path: pathlib.Path | None = None) -> int:
 def effective(per_day: float, path: pathlib.Path | None = None) -> float:
     """**その本数のうち、再生が付くぶん。** 上限を超えたぶんは 0 として数えます。"""
     return min(float(per_day), float(cap(path)))
+
+
+# ---------------------------------------------------------------------------
+# **本数を増やすと、その日の再生は増えるのか**（2026-08-28 18:xx に測って足した）
+#
+# この上の `measure()` が答えているのは「**その日の何本に再生が付くか**」で、
+# **「その日いくつ再生が付くか」ではありません。** 2つは別の問いです ——
+# 上限 10本 は「11本目から 0」と言うだけで、**その 10本の合計が
+# 本数によって動くかどうかについては、何も言っていません。**
+#
+# 実測（`data/views.jsonl`・齢24時間でそろえた・公開日ごとの合計）:
+#
+#     08/19   8本 → 8,147     08/23  13本 → 9,798
+#     08/20  25本 → 6,329     08/24  10本 → 7,897
+#     08/21  21本 → 6,605     08/25  10本 → 2,385
+#     08/22  25本 → 5,845     08/26  14本 → 1,495     08/27  19本 → 3,484
+#
+# **8本の日と25本の日で、合計はほとんど変わりません。**
+# 08/19〜08/24 の6日だけを見ると、本数と合計の順位相関は **負**です
+# （本数を3倍にした日のほうが、合計は少ない）。
+#
+# **これが効くのは `density` の腕です。** `scripts/eta.py` は
+# 「1日 n本 × 1本あたり再生」で段1を解いており、`measure()` の上限で
+# n を 10本 に頭打ちにしています。**ですが上の実測は、10本の中でも
+# 合計が動いていないと言っています** —— つまり縛っているのは本数ではなく
+# **その日にチャンネルへ配られる総量**のほうです。
+#
+# **ここは「密度は無駄だ」と決めつける道具ではありません。** 日数が9日しか
+# 無く、08/25 に別の段差（下の `SPLIT` の註）が入っています。
+# **出すのは相関と、その日数と、段差の位置だけ**です。判断はそれを読む側がします。
+#
+# **覆る条件**: 本数を上限より大きく振った日が増えて、相関が正へ寄ったら
+# この註は要りません（`day_total()` が毎回 数え直します。定数はありません）。
+# ---------------------------------------------------------------------------
+
+DAY_TOTAL_MIN_AGE_H = 24.0   # 合計を数えるときの齢。**6時間では半分しか付いていません**
+DAY_TOTAL_MIN_DAYS = 4       # 相関を出すのに要る最低の日数
+
+
+def _rank(xs: list[float]) -> list[float]:
+    """同順位は平均順位。**scipy を入れないため**（依存を増やさない）。"""
+    order = sorted(range(len(xs)), key=lambda i: xs[i])
+    out = [0.0] * len(xs)
+    i = 0
+    while i < len(order):
+        j = i
+        while j + 1 < len(order) and xs[order[j + 1]] == xs[order[i]]:
+            j += 1
+        avg = (i + j) / 2.0 + 1.0
+        for k in range(i, j + 1):
+            out[order[k]] = avg
+        i = j + 1
+    return out
+
+
+def _spearman(xs: list[float], ys: list[float]) -> float | None:
+    """順位相関。**動かない列があれば None**（0 と区別が付かないため）。"""
+    if len(xs) < 3 or len(xs) != len(ys):
+        return None
+    rx, ry = _rank(xs), _rank(ys)
+    mx, my = statistics.fmean(rx), statistics.fmean(ry)
+    num = sum((a - mx) * (b - my) for a, b in zip(rx, ry))
+    dx = sum((a - mx) ** 2 for a in rx)
+    dy = sum((b - my) ** 2 for b in ry)
+    if dx <= 0 or dy <= 0:
+        return None
+    return num / (dx * dy) ** 0.5
+
+
+def day_total(path: pathlib.Path | None = None,
+              forms_path: pathlib.Path | None = None,
+              min_age_h: float = DAY_TOTAL_MIN_AGE_H,
+              include_long: bool = False,
+              since: dt.date | None = None) -> dict:
+    """**その日に何本 出したかで、その日の再生の合計は動くのか。**
+
+    `measure()` は「何本に付くか」、ここは「**いくつ付くか**」です。
+    上の註のとおり、**2つは別々に動きます。**
+
+    返り:
+      days       [{"date": …, "n": 本数, "total": 合計, "med": 中央値}]（古い順）
+      rho        本数 と 合計 の順位相関（**全部の日**。日数が足りなければ None）
+      rho_scale  **上限まで出した日だけ**（n >= cap）の同じ相関
+      n_scale    その日数
+      n_days     数えた日数
+      age_h      そろえた齢
+      drop       合計がいちばん大きく落ちた境目 `{"at": 日, "before": …, "after": …}`
+                 （前後3日ずつの中央値で見る。見つからなければ None）
+
+    **`rho` と `rho_scale` は逆の符号になることがあります**（実測 08/28:
+    全24日 **+0.75** ／ 上限まで出した8日 **-0.01** ／ 08/19〜08/24 の6日 **-0.76**）。
+    **`rho` のほうは立ち上がりを含んでいるから**です —— 08/15〜08/18 は
+    1〜4本/日 で合計も数百回。**「本数が少ないから再生も少ない」ではなく、
+    その頃はチャンネルがまだ面に載っていなかった**だけ。
+    **`rho` 単独を density の根拠にしないこと。**
+    """
+    skip = set() if include_long else _long_ids(forms_path)
+    per: dict[dt.date, list[int]] = collections.defaultdict(list)
+    for vid, (pub, _h, n) in _readings(path, min_age_h).items():
+        if vid in skip:
+            continue
+        d = pub.date()
+        if since is not None and d < since:
+            continue
+        per[d].append(n)
+    days = [{"date": d, "n": len(v), "total": sum(v), "med": statistics.median(v)}
+            for d, v in sorted(per.items())]
+    rho = None
+    if len(days) >= DAY_TOTAL_MIN_DAYS:
+        rho = _spearman([float(r["n"]) for r in days],
+                        [float(r["total"]) for r in days])
+    # **上限まで出した日だけで数え直す。** 立ち上がり（1〜4本/日）を混ぜると
+    # 「本数が多い日は合計も多い」が出ますが、それは面に載る前の日を
+    # 本数の効きとして数えているだけです（上の docstring の実測）。
+    c = measure(path, forms_path, include_long)["cap"]
+    at_cap = [r for r in days if r["n"] >= c]
+    rho_scale = None
+    if len(at_cap) >= DAY_TOTAL_MIN_DAYS:
+        rho_scale = _spearman([float(r["n"]) for r in at_cap],
+                              [float(r["total"]) for r in at_cap])
+    # **段差は「前後3日ずつの中央値の比」がいちばん大きい所**。
+    # 平均ではなく中央値なのは、1日の跳ねで境目が動くのを避けるため。
+    drop = None
+    if len(days) >= 6:
+        best = 0.0
+        for i in range(3, len(days) - 2):
+            before = statistics.median([r["total"] for r in days[max(0, i - 3):i]])
+            after = statistics.median([r["total"] for r in days[i:i + 3]])
+            if after <= 0:
+                continue
+            ratio = before / after
+            if ratio > best:
+                best = ratio
+                drop = {"at": days[i]["date"], "before": before,
+                        "after": after, "ratio": ratio}
+        if drop is not None and drop["ratio"] < 1.5:
+            drop = None
+    return {"days": days, "rho": rho, "rho_scale": rho_scale,
+            "n_scale": len(at_cap), "n_days": len(days),
+            "age_h": min_age_h, "drop": drop}
+
+
+def day_total_lines(path: pathlib.Path | None = None,
+                    forms_path: pathlib.Path | None = None) -> list[str]:
+    """**本数と、その日の合計。**上限とは別の問いなので、別の行で出す。"""
+    m = day_total(path, forms_path)
+    if m["n_days"] < DAY_TOTAL_MIN_DAYS:
+        return [f"  **本数 → その日の合計**: 読める日が {m['n_days']}日 しかありません"
+                f"（要る日数 {DAY_TOTAL_MIN_DAYS}）"]
+    out = []
+    rho, rho_s = m["rho"], m["rho_scale"]
+    # **読むのは `rho_scale` のほうです**（`rho` は立ち上がりを含む。docstring の実測）
+    show = rho_s if rho_s is not None else rho
+    if show is None:
+        out.append("  **本数 → その日の合計**: 順位相関が出せません（列が動いていない）")
+    else:
+        verdict = ("**本数を増やしても合計は増えていません**" if show < 0.3
+                   else "本数と合計は同じ向きに動いています")
+        if rho_s is not None:
+            out.append(f"  **本数 → その日の合計の順位相関: {rho_s:+.2f}**"
+                       f"（**上限 {m['n_scale']}日ぶんだけ**・齢 {m['age_h']:.0f}時間）"
+                       f"—— {verdict}")
+            if rho is not None:
+                out.append(f"    **全 {m['n_days']}日 で数えると {rho:+.2f} です。"
+                           "そちらを使わないこと** —— 立ち上がり（1〜4本/日・合計 数百回）を"
+                           "混ぜており、**面に載る前の日を「本数が少ないから」と数えます**")
+        else:
+            out.append(f"  **本数 → その日の合計の順位相関: {rho:+.2f}**（{m['n_days']}日・"
+                       f"齢 {m['age_h']:.0f}時間）—— {verdict}"
+                       "（**上限まで出した日が足りません**。立ち上がりが混ざっています）")
+        out.append("    **上の『上限 n本』とは別の問いです。** 上限は"
+                   "「その日の**何本に**付くか」、ここは「その日**いくつ**付くか」。"
+                   "**`density` の腕が効くのは、ここが正のときだけ**です")
+    for r in m["days"][-8:]:
+        out.append(f"      {r['date']}  {r['n']:2d}本 → 合計 {r['total']:6d}"
+                   f"（中央値 {r['med']:.0f}）")
+    if m["drop"] is not None:
+        d = m["drop"]
+        out.append(f"    [!] **合計が {d['at']} を境に {d['ratio']:.1f}倍 落ちています**"
+                   f"（前3日の中央値 {d['before']:.0f} → 後3日 {d['after']:.0f}）。"
+                   "**本数は境目で変わっていません** —— 落ちたのは1本あたりのほうです")
+        out.append("    **段差があるあいだ、上の相関は2つの群を混ぜています。**"
+                   "本数の効きだけを見るなら、境目の**片側だけ**で数え直すこと")
+    return out
 
 
 def lines(path: pathlib.Path | None = None) -> list[str]:
@@ -581,13 +1079,15 @@ def lines(path: pathlib.Path | None = None) -> list[str]:
     else:
         out.append(f"    **上限より多く出した日がまだありません**（見えている最大 {m['floor']}本）。"
                    "崩れを観測するまで、この数は既定値です")
+    out.extend(day_total_lines(path))
     out.extend(long_form_lines(path))
     return out
 
 
 
 def booked_split_day(first_pub: str, today: dt.date | None = None,
-                     uploaded: pathlib.Path | None = None) -> dict | None:
+                     uploaded: pathlib.Path | None = None,
+                     c: int | None = None, t_min: int | None = None) -> dict | None:
     """**その切り分けの日は、もう予約されていないか**（2026-08-25 に足した）。
 
     `window_lines()` は「**`first_pub` より前から公開する日を1日作れ**」と
@@ -617,46 +1117,156 @@ def booked_split_day(first_pub: str, today: dt.date | None = None,
     `scripts/eta.py` の `blocking` にあったのと**同じ形の欠陥**です
     （そちらは「もう測っている値」を「まだ測っていない」と言っていた）。
 
-    返すのは `{"day", "before", "total", "answer"}`、無ければ `None`。
+    返すのは `{"day", "before", "total", "answer", ...}`、無ければ `None`。
 
         day     いちばん早い切り分けの日（JST）
         before  そのうち `first_pub` より前に置かれている本数
         total   その日の予約の合計
-        answer  生きた本数を**読めるようになる日**（伸びきる2日 + Analytics 3日）
+        answer  生きた本数を**読めるようになる日**（その日の最後の本が `MIN_AGE_H`
+                に達する日。**Analytics の3日遅れは掛かりません** —— 下の註）
+        count / window / gap / ties / decisive   `split_power()` の中身
+        running True ＝ **その日は今日**（もう動いている ＝ 置き直せないが、答えは返る）
 
-    **`before` が 0 の日は返しません。** 早い本が1本も無ければ切り分かりません。
+    ## **2026-08-27 に、この関数が2つの理由で答えを6日 遅らせていました**
+
+    **(1) 今日を飛ばしていました。** `<= today` で切っていたので、
+    **その日が今日になった瞬間、対照日が視界から消えます。** 実測 ——
+    08/27 の予約は **19本・05:00 から30分きざみ・同じ分の組は0**で、
+    (A) 本数なら **10本 生き**、(B) 窓なら **18本 生き**ます（**差 8**）。
+    **これ以上の切り分けの日は帳面のどこにもありません。**
+    それでもこの関数は 08/27 を飛ばし、**差 3 しかない 09/02** を名指しして、
+    `window_lines()` は「読めるのは **2026-09-07**」「**答えが返るまで
+    他の日の本数を増やさないこと**」と毎回 印字していました。
+    **11日 ぶん、`density` の 1.8倍 が宙に浮きます。**
+
+    「置き直せない日は名指ししない」は**作る側の理屈**です。この関数の
+    読み手（`window_lines` / `measure_window.split_day_window` / `cap_if_window`）が
+    要るのは「**どの日が答えるのか・いつ読めるのか**」で、
+    **走っている日はまさにそれです**（守るほうも、まだ間に合います ——
+    08/27 は 16:00 の1本がこの時点でまだ公開前でした）。
+
+    **(2) 「Analytics 3日遅れ」を足していました。** `window()` が読むのは
+    `data/views.jsonl` で、あれは **Data API（`videos.list` の `statistics`）**を
+    `scripts/snapshot.py` が積んだものです —— **Analytics は1行も通りません。**
+    `_readings()` の齢の下限は `MIN_AGE_H`（6時間）なので、
+    **その日の最後の本が6時間 たてば読めます**（08/27 なら 16:00 + 6h ＝ 22:00 JST）。
+    足していた5日は、**どこからも来ていない数**でした。
+
+    **覆る条件**: `_readings()` の齢の下限がショート側でも 24時間 に上がったら、
+    `answer` はその齢で計算し直すこと（この関数は `MIN_AGE_H` を読んでいます）。
     """
-    if not first_pub:
-        return None
-    try:
-        cut = dt.datetime.strptime(first_pub, "%H:%M").time()
-    except ValueError:
-        return None
     today = today or dt.datetime.now(JST).date()
+    try:
+        cut = dt.datetime.strptime(first_pub, "%H:%M").time() if first_pub else None
+    except ValueError:
+        cut = None
 
     # **帳面の読み手を増やさないこと**（`docs/JOURNAL.md` 2026-08-25）。
     # 「後の行を採る・JST で割る」の2規則は `src.motion_groups` が持っています。
     from src import motion_groups
 
     at = motion_groups.scheduled_at(uploaded) if uploaded else motion_groups.scheduled_at()
-    per_day: dict[str, list[dt.time]] = collections.defaultdict(list)
+    per_day: dict[str, list[dt.datetime]] = collections.defaultdict(list)
     for when in at.values():
         day = motion_groups.jst_day(when)
         if not day:
             continue
         t = dt.datetime.fromisoformat(when.replace("Z", "+00:00")).astimezone(JST)
-        per_day[day].append(t.time())
+        per_day[day].append(t)
+
+    if c is None or t_min is None:
+        w = window()
+        if not w.get("C") or not w.get("T"):
+            return None
+        c = int(w["C"])
+        t_min = int(str(w["T"])[:2]) * 60 + int(str(w["T"])[3:])
 
     for day in sorted(per_day):
-        if dt.date.fromisoformat(day) <= today:
-            continue                       # **もう過ぎた日では置き直せません**
-        early = [t for t in per_day[day] if t < cut]
-        if not early:
-            continue
-        return {"day": day, "before": len(early), "total": len(per_day[day]),
-                "answer": (dt.date.fromisoformat(day)
-                           + dt.timedelta(days=5)).isoformat()}
+        if dt.date.fromisoformat(day) < today:
+            continue                       # **過ぎた日は、もう読みのほうで数えています**
+        times = sorted(per_day[day])
+        power = split_power(times, c, t_min)
+        if not power["decisive"]:
+            continue                       # 予測が離れない日・同じ分の組がある日
+        early = [t for t in times if cut and t.time() < cut]
+        last = max(times) + dt.timedelta(hours=MIN_AGE_H)
+        return {"day": day, "before": len(early), "total": len(times),
+                "answer": last.date().isoformat(),
+                "answer_at": last.strftime("%H:%M"),
+                "answer_ts": last.isoformat(),
+                "running": dt.date.fromisoformat(day) == today,
+                **{k: power[k] for k in ("count", "window", "gap", "ties", "kept")}}
     return None
+
+
+def readable_at(b: dict, now: dt.datetime | None = None) -> dict:
+    """**その「読める時刻」に、本当に読めるのか**（2026-08-27 に足した）。
+
+    ## 何が起きていたか（**申し送りが3周 連続で外していた**）
+
+    `booked_split_day()` の `answer` / `answer_at` は **齢だけ**で出ています ——
+    「その日の最後の本が `MIN_AGE_H`（6時間）になる時刻」。**読む口のことは
+    1文字も見ていません。**
+
+    ところが `data/views.jsonl` を積むのは `scripts/snapshot.py` ＝
+    **Data API の `videos.list`** で、**日枠が尽きている窓では 403 しか返りません。**
+    `snapshot.py` 自身が「1本も読めませんでした（日枠は JST 16:00 に戻ります）」と
+    印字して終了コード1で降ります。
+
+    実測 2026-08-27 20:5x JST —— この窓の 403 は **88回** 観測ずみで、
+    枠が戻るのは **08/28 16:00 JST**。それでも `_booked_lines()` は
+    「読めるのは **2026-08-27 22:00** 以降」と印字し、
+    `docs/JOURNAL.md` の申し送りは **3周 続けて**
+    「**22:00 JST を過ぎていたら、まず `python scripts/snapshot.py` を撃つこと**」を
+    運んでいました。**22:00 に撃っても 403 です。**
+
+    **これは `docs/JOURNAL.md` が (N-1) の回で名指しした形そのもの**です ——
+    「**主実行が『撃て』と言われている手が、その時刻に本当に撃てるか**」。
+    そこでは「口は開いているか」を問い、**この関数は「いつ開くか」を答えます。**
+
+    ## 何を返すか
+
+        at          実際に読める、いちばん早い時刻（JST・aware）
+        binding     "age" ＝ 齢が縛っている ／ "quota" ＝ 日枠が縛っている
+        quota_at    日枠が戻る時刻（JST。読めたときだけ。読めなければ None）
+
+    **`answer` のほうは変えません** —— あちらは「齢としては足りる時刻」で、
+    それ自体は正しい事実です。**遅いほうを採るのが、実際に読める時刻**です。
+
+    ## 覆る条件
+
+    - `data/views.jsonl` を Data API 以外（Analytics や手元の控え）から積めるように
+      なったら、日枠は縛らなくなります。そのときこの関数は `binding="age"` を
+      返し続けるので、**消してよい**（`upload_cap.day_quota().open` が常に True）
+    - `upload_cap.day_quota()` が読めない回は、**縛っていない側へ倒します**
+      （読めないことを「閉じている」と読むと、押せる回まで押さなくなる ——
+      `day_quota()` 自身と同じ考え方）
+    """
+    now = now or dt.datetime.now(JST)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=JST)
+    try:
+        age_at = dt.datetime.fromisoformat(str(b.get("answer_ts") or ""))
+    except ValueError:
+        return {"at": None, "binding": "age", "quota_at": None}
+    if age_at.tzinfo is None:
+        age_at = age_at.replace(tzinfo=JST)
+
+    try:
+        from src import upload_cap
+        dq = upload_cap.day_quota()
+    except Exception:                      # noqa: BLE001 — 読めない回は縛らない側へ
+        return {"at": age_at, "binding": "age", "quota_at": None}
+
+    if dq.open:
+        # いま開いている ＝ 齢が来れば読める（窓は毎日 戻るので、
+        # 齢のほうが先なら、その時点で開いているかは別の回が見ます）
+        return {"at": age_at, "binding": "age", "quota_at": None}
+
+    quota_at = dq.resets_at.astimezone(JST)
+    if quota_at <= age_at:
+        return {"at": age_at, "binding": "age", "quota_at": quota_at}
+    return {"at": quota_at, "binding": "quota", "quota_at": quota_at}
 
 
 def cap_if_window(path: pathlib.Path | None = None,
@@ -730,6 +1340,25 @@ def cap_if_window(path: pathlib.Path | None = None,
     if earliest is None or earliest >= end:
         return None
 
+    # **左端が測れていたら、そこより前から数えないこと**（2026-08-27 16:xx）。
+    # ここは「切り分けの日に**予約してある**いちばん早い時刻」から数えていました。
+    # 08/27 はそれが 05:00 なので **05:00〜13:30 ＝ 18枠（×1.80）** を返し、
+    # `scripts/eta.py` が `density` の上振れとして印字していました。
+    #
+    # **その 05:00 は、同じ日に実際に置いて、死ぬのを測った時刻です**
+    # （`left_edge()`。05:00〜08:30 の 8本が 0再生・全部 `public`/`processed`）。
+    # **予約してあることは、再生が付くことを1つも意味しません。**
+    # 左端まで詰めると 08:59〜13:30 ＝ **10枠** ＝ `cap()` と同じで、
+    # **(B) の側にも上振れはありません。**
+    edge = left_edge(path)
+    clamped = False
+    if edge:
+        by = dt.datetime.strptime(edge["by"], "%H:%M").time()
+        if earliest < by:
+            earliest, clamped = by, True
+        if earliest >= end:
+            return None
+
     step = int(MIN_GAP_MIN)
     span = ((end.hour * 60 + end.minute) - (earliest.hour * 60 + earliest.minute))
     return {"cap": int(span // step) + 1,
@@ -737,6 +1366,8 @@ def cap_if_window(path: pathlib.Path | None = None,
             "T": str(w["T"]),
             "step_min": step,
             "measured": False,
+            "left_edge": edge,
+            "clamped": clamped,
             "answer_on": booked["answer"]}
 
 
@@ -761,20 +1392,50 @@ def window_lines(path: pathlib.Path | None = None) -> list[str]:
                  else f"**時刻の窓のほうが上限**です（**{w['T']} JST までに出した本は全部生きる**）")
         return [f"    切り分け済み: {which}",
                 f"      決めた日: {w['decided_by']}"] + blocked
-    return blocked + [
+    edge = w.get("left_edge")
+    misfit = w.get("misfit") or []
+    head = [
         "    [!] **この本数は「時刻の窓」と切り分けられていません。**",
         f"        当てはまる説明が2つあり、**どの日でも同じ数**を出します ——"
         f" (A) 1日 {w['C']}本 まで ／ (B) **{w['T']} JST** までに出した本は全部生きる。",
-        f"        測れている {w['days']}日 は全部 **{w['first_pub']} JST** から始めており、"
-        f"30分きざみだと {w['T']} がちょうど {w['C']}本目です。",
-        "        窓のほうなら、**その時刻より前に置いたぶんは丸ごと上積み**になります"
-        "（作る本数は1本も増えません）。",
-        f"        切り分けるには、**{w['first_pub']} より前から公開する日**を1日作り、"
-        "その日の**生きた本数**を数えること。",
-    ] + _booked_lines(w["first_pub"])
+    ]
+    if edge:
+        # **左端は測れています**（2026-08-27 16:xx）。ここが埋まっている回は、
+        # 「早い時刻に置けば上積み」を**もう書かないこと** —— 測って、死にました。
+        head += [
+            f"        **窓の左端は測れています: {edge['after']} より後・{edge['by']} まで**"
+            f"（{edge['from']} に {edge['from_dead']}本 置いて、**全部 0再生**）。",
+            f"        → **早い時刻に置いても上積みになりません。** {edge['by']}〜{w['T']} は"
+            f"30分きざみで **ちょうど {w['C']}枠** ＝ (A) の {w['C']}本 と同じで、"
+            "**(B) の側にも引き代はありません**（`cap_if_window()` はここで頭打ちにしています）。",
+            "        **残っているのは右端だけ**です —— "
+            f"**{w['T']} より後ろ**に置いた本が生きるかは、まだ測っていません。",
+        ]
+        head += [f"          {d}" for d in edge.get("days", [])]
+    else:
+        head += [
+            f"        測れている {w['days']}日 は全部 **{w['first_pub']} JST** から始めており、"
+            f"30分きざみだと {w['T']} がちょうど {w['C']}本目です。",
+            "        窓のほうなら、**その時刻より前に置いたぶんは丸ごと上積み**になります"
+            "（作る本数は1本も増えません）。",
+            f"        **道は2つあります。** (i) **{w['first_pub']} より前**に置く"
+            f"（窓のほうが**多く**予測する）／ (ii) **{w['T']} より後ろ**に置く"
+            "（窓のほうが**少なく**予測する）。**同じ分に2本 置かないこと**"
+            "（`ties()`。そこで死んだ本を割り当てられません）。",
+        ]
+    if misfit:
+        head += [
+            "        [!] **どちらのモデルでも説明できない日があります**"
+            "（生きた**本数**は合うのに、**生きた本が入れ替わっている**）:",
+        ] + [f"          {m}" for m in misfit] + [
+            "          → **本数だけを見て決めないこと。** この形は "
+            "`window()` が長らく `count` と**断定**していた所です"
+            "（2026-08-27 に、本の取り違えで測るよう直した）。",
+        ]
+    return blocked + head + _booked_lines(w["first_pub"], w)
 
 
-def _booked_lines(first_pub: str) -> list[str]:
+def _booked_lines(first_pub: str, w: dict | None = None) -> list[str]:
     """**その日がもう予約されているなら、そう言うこと**（2026-08-25 に足した）。
 
     このファイルの冒頭の註には「2026-08-27 に 05/06/07/08時 の4本を置いてあります」と
@@ -782,21 +1443,60 @@ def _booked_lines(first_pub: str) -> list[str]:
     「**1日作り**」で終わっており、**道具は知っているのに黙っていました。**
     註は読まれません。**出力に出ていないものは、無いのと同じです。**
     """
+    # **当てはめ済みの C / T を渡すこと**（2026-08-27）。渡さないと
+    # `booked_split_day()` が `window()` を呼び直し、`data/views.jsonl`
+    # （2万行）を**同じ回のうちに2度**読みます。
+    t = str((w or {}).get("T") or "")
     try:
-        b = booked_split_day(first_pub)
+        b = booked_split_day(
+            first_pub,
+            c=(w or {}).get("C"),
+            t_min=(int(t[:2]) * 60 + int(t[3:])) if len(t) == 5 else None,
+        )
     except Exception:                      # 帳面が読めない回でも出力を止めない
         return []
     if not b:
-        return ["        [!] **その日はまだ予約されていません。**"
-                "この回に置けば、そのぶん早く切り分きます"]
+        return ["        [!] **切り分けられる日が、予約のどこにもありません。**"
+                f"（門は2つ ——(A)/(B) の予測差が **{DECIDE_GAP_MIN}本 以上**・"
+                "**同じ分の組が無い**。`src.day_cap.split_power()`）"
+                "この回に1日 置けば、そのぶん早く切り分きます"]
+    where = "**その日は、いま走っています**" if b.get("running") else "**その日はもう予約されています**"
     return [
-        f"        **その日はもう予約されています: {b['day']}**"
-        f"（{b['total']}本・うち {b['before']}本 が {first_pub} より前）。",
-        f"        → 生きた本数を読めるのは **{b['answer']}** ごろ"
-        f"（伸びきる2日 + Analytics 3日遅れ）。**もう1日作らないこと**"
-        "（日を増やすほど交絡が増えます）。",
+        f"        {where}: **{b['day']}**"
+        f"（{b['total']}本・うち {b['before']}本 が {first_pub} より前）"
+        f" → **(A) 本数なら {b['count']}本 生き ／ (B) 窓なら {b['window']}本 生き**"
+        f"（差 {b['gap']}本・同じ分の組 {b['ties']}）。",
+        f"        → 生きた本数を読めるのは **{b['answer']} {b.get('answer_at', '')}** 以降"
+        f"（その日の最後の本が 齢 {MIN_AGE_H:.0f}時間 になる時刻）。"
+        "**もう1日作らないこと**（日を増やすほど交絡が増えます）。",
+        "        **読むには、その時刻より後に `python scripts/status.py` が1回 走ること** ——"
+        "`data/views.jsonl` は **Data API**（`videos.list`）で積んでいます。"
+        "**Analytics の3日遅れは掛かりません**（2026-08-27 に直した。"
+        "ここは長らく +5日 を足していて、答えを6日 遅らせていました）。",
+    ] + _readable_lines(b) + [
         "        [!] **答えが返るまで、他の日の本数を増やさないこと** ——"
         "その日が対照です。",
+    ]
+
+
+def _readable_lines(b: dict) -> list[str]:
+    """**齢が足りても、口が閉じていれば読めません**（2026-08-27 に足した）。
+
+    上の行は「齢としては足りる時刻」を出します。**そこで撃てるとは言っていません。**
+    `data/views.jsonl` を積むのは `scripts/snapshot.py` ＝ `videos.list`（Data API）で、
+    **日枠の尽きている窓では 403** です。理由と実測は `readable_at()` の docstring。
+    """
+    r = readable_at(b)
+    if not r.get("at") or r.get("binding") != "quota":
+        return []
+    return [
+        f"        [!] **その時刻には読めません。** `videos.list`（Data API）の"
+        f"**日枠がこの窓では尽きています** —— `scripts/snapshot.py` も"
+        f"`scripts/status.py` も、いま撃つと 403 で1本も積めません"
+        f"（`snapshot.py` は『1本も読めませんでした』で降ります）。",
+        f"        → **実際に読めるのは {r['at']:%Y-%m-%d %H:%M} JST 以降**"
+        f"（日枠が戻る時刻。齢のほうは {b['answer']} {b.get('answer_at', '')} に足ります）。"
+        f"**その前に撃たないこと** —— 撃った回は 403 を1つ足すだけで、答えは1分も早まりません。",
     ]
 
 
@@ -831,7 +1531,10 @@ if __name__ == "__main__":  # pragma: no cover
 # 処置そのものが再生を落としている場合に、その効果を隠します。
 # ここは順番だけを見ます。
 
-def live_ids(rows: list[dict], path: pathlib.Path | None = None) -> set[str]:
+def live_ids(rows: list[dict], path: pathlib.Path | None = None,
+             *, include_long: bool = False,
+             forms_path: pathlib.Path | None = None,
+             uploaded_path: pathlib.Path | None = None) -> set[str]:
     """**再生が付く側の `video_id`** を返す（API 0単位。公開済みも予約も同じ規則）。
 
     `rows` は `ab_split.published()` の行（`at` が JST の datetime、`video_id`）。
@@ -842,7 +1545,63 @@ def live_ids(rows: list[dict], path: pathlib.Path | None = None) -> set[str]:
 
     **覆る条件**: `cap()` は実測から動きます（定数ではありません）。
     上限が上がれば、ここが返す集合も自動で広がります。
+
+    ## **ここは長尺を外します**（2026-08-30・最適化の回に既定を変えた）
+
+    `by_day()` はもとから外していました（`include_long=False`）——
+    測っているのが**ショートの面**で、長尺は `SHORTS_FEED` の枠を
+    1つも使わないからです。**ここだけが外していませんでした。**
+
+    ### 前の回（2026-08-29）が「差は 0本」と測ったのは、なぜ 0本 だったか
+
+    あの回はこう書いていました（控えと公開済み 578本）:
+
+        live_ids(全部)             **452本**
+        live_ids(長尺を先に除く)    **452本**
+        長尺が帯の枠を取っている数   **0本** ／ そのせいで落ちたショート **0本**
+
+    **数え方が正しく、長尺の一覧のほうが空でした。** `_long_ids()` は
+    `data/video_forms.json`（Analytics の `creatorContentType`）だけを読んでおり、
+    あれは**公開して再生の付いた本にしか付きません** ——
+    **予約ぶんの長尺が、1本も入っていませんでした**（実測 18本 対 98本・重なり 1本）。
+
+    **「差は 0本」は、長尺を 18本 しか見なかったときの 0本 です。**
+    控えの `duration_s` で数え直すと、同じ日のうちに:
+
+        live_ids(全部)             **446本**
+        live_ids(長尺を先に除く)    **437本**
+        長尺が帯の枠を取っている数  **16本** ／ そのせいで落ちたショート **7本**
+
+    **前の回が「落ちたら直す回」と書いた検査は、すでに落ちる条件を満たしていました。**
+    気づけなかったのは、**検査も同じ `_long_ids()` を使っていた**からです ——
+    見張りと見張られる側が同じ目で見ていた形（`_long_by_duration()` の節）。
+
+    ### 既定を変えると何が動くか（**呼び手を全部 見た**）
+
+    標本は**広がる向き**です（長尺が枠を明け渡し、ショートが `alive` に戻る）。
+
+      `judgeable` / `deep_short` / `motion_groups` / `watch_eta`
+          A/B の群はもともと長尺を入れません（`ab_split._shorts_only`）。
+          **増えるのはショートだけ** ＝ 床に早く届く ＝ **判定が早まる向き**
+      `live_slots` / `ab_slots` / `queue_lag`
+          `_swap_candidates` も `band_stray` も `vid in live` を要求するので、
+          **長尺は入れ替えの対象から外れます**（ショートの帯へ引きずり込まない）。
+          `Board._alive_on()` が下がるぶん、その日に置けるショートが増えます
+      `scripts/eta.py`
+          あちらは 08/29 から**手前で `_long_ids` を引いてから渡して**いました。
+          その手当てはそのまま効き、`_long_ids()` が広がったぶん正しくなります
+
+    **`include_long=True` は、外す前後を比べるとき用**です（`by_day()` と同じ）。
+
+    **覆る条件と検査**: `tests/test_live_ids_long_form.py`。
+    長尺がショートの面（`SHORTS_FEED`）の枠を実際に食うと分かったら、
+    既定を戻すこと —— そのときは `by_day()` の既定も同時に戻すこと。
+    **片方だけ戻すと、また今日と同じ形になります。**
     """
+    if not include_long:
+        skip = _long_ids(forms_path, uploaded_path)
+        if skip:
+            rows = [r for r in rows if str(r.get("video_id") or "") not in skip]
     per_day: dict[dt.date, list[tuple[dt.datetime, str]]] = collections.defaultdict(list)
     for row in rows:
         when, vid = row.get("at"), str(row.get("video_id") or "")

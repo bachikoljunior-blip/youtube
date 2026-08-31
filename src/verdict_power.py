@@ -113,6 +113,139 @@ def zero_means(baseline: float, n: int) -> dict:
     }
 
 
+def gate_for(baseline: float, n: int, target: float = 2.0) -> int | None:
+    """**いまの n のまま、見分けられる門はあるか。** 無ければ `None`。
+
+    `power()` は「この門は駄目だ」しか言いません。**駄目なのが n なのか
+    門の置き場所なのかを、一度も切り分けていませんでした**（2026-08-28 に踏んだ）。
+    実測では、**駄目な門 4件 のうち 3件 は n が足りていて、門だけが外れて**いました:
+
+        チャンネルのホーム   n=22,549  門 8人 → alpha 43%   **門 10人 なら 19%/9%**
+        途中の依頼          n=30,000  門 10人 → alpha 48%  **門 14人 なら 10%/10%**
+        族べつの登録率       n=13,015  門 5人 → alpha 40%   **どの門でも駄目**（n が足りない）
+
+    **門が null の期待値のすぐ上に置かれると、alpha はほぼ 50% になります。**
+    「効きなし」の半分が生き残るので、**その前提は、効かない処置を通します。**
+    上の2件は率（`0.0355%` / `0.0318%`）で門を書いており、
+    **その率が実測の率とほぼ同じ**でした ＝ 門を「平均どおり」に置いた形です。
+
+    **同じ n=30,000 の隣の前提は `14人未満` と人数で書いてあり、通っています。**
+    答えは、最初から1件 隣に在りました。
+    """
+    if baseline <= 0 or n <= 0:
+        return None
+    for gate in range(1, int(n * baseline * max(target, 1.0) * 4) + 12):
+        q = power(baseline, n, gate, target)
+        if not q["detects_nothing"]:
+            return gate
+    return None
+
+
+#: **2群を比べている前提**（処置群 対 対照群）。片側の門とは数え方が違う。
+#: 「群」と「上回／下回」が同じ条件文に出てきたら、こちら。
+_TWO_GROUP = re.compile(r"群.{0,80}?(?:上回|下回)", re.S)
+#: 2群の条件が置いている**余白**（「**5人 以上 上回**っていなければ」）。
+#: **無ければ 1** ＝「1人でも上回れば通る」＝ **余白ゼロ**。
+_MARGIN = re.compile(r"([0-9]+)\s*人\s*以上\s*上回")
+
+
+def _pois_pmf(k: int, lam: float) -> float:
+    return math.exp(-lam) * lam ** k / math.factorial(k)
+
+
+def two_group_power(baseline: float, n: int, margin: int,
+                    target: float = 2.0) -> dict:
+    """**処置群が対照群を `margin` 人 以上 上回ったら生き残る**、の取り違え率。
+
+    片側の門（`power()`）と混ぜないこと。**分母が2つあるので、揺れは2倍**です。
+
+    **`margin=1`（＝「上回っていない なら外れ」）は、効きが無くても約 45% 通ります。**
+    2つの独立なポアソンが同じ平均を持つとき、**引き分け以外は半々**だからです:
+
+        P(A > B) = (1 - P(A = B)) / 2
+
+    実測（片群 30,000再生・登録率 0.0318% ＝ 期待 9.5人）: **alpha 45%**。
+    `config/hypotheses.yaml` の「途中の依頼」が、この形で立っていました
+    （2026-08-28 に数え直した）。**余白を置かないと、門になりません。**
+    """
+    lam0 = n * baseline
+    lam1 = lam0 * target
+    top = max(20, int(lam1 + 12 * math.sqrt(lam1 + 1)))
+    a = [_pois_pmf(k, lam0) for k in range(top)]
+    b = [_pois_pmf(k, lam0) for k in range(top)]
+    t = [_pois_pmf(k, lam1) for k in range(top)]
+
+    def p_ge(treat: list[float], ctrl: list[float], m: int) -> float:
+        tot = 0.0
+        for i, pi in enumerate(treat):
+            if pi <= 0.0:
+                continue
+            hi = i - m                      # 対照が これ以下 なら差は m 以上
+            if hi >= 0:
+                tot += pi * sum(ctrl[: hi + 1])
+        return tot
+
+    alpha = p_ge(a, b, margin)
+    beta = 1.0 - p_ge(t, b, margin)
+    return {
+        "n": n, "margin": margin, "baseline": baseline, "target": target,
+        "expected_null": lam0, "expected_target": lam1,
+        "alpha": alpha, "beta": beta,
+        "detects_nothing": alpha > MAX_ERR or beta > MAX_ERR,
+    }
+
+
+def margin_for(baseline: float, n: int, target: float = 2.0) -> int | None:
+    """**2群の前提で、いまの n のまま通る余白。** 無ければ `None`。
+
+    片側の門に `gate_for()` があるのと同じ役目。**こちらを使うべき前提に
+    `gate_for()` の答え（「門を 13人未満 に」）を出さないこと** ——
+    2群の設計に片側の門の数字を当てると、**別の実験に化けます。**
+    """
+    if baseline <= 0 or n <= 0:
+        return None
+    lam1 = n * baseline * max(target, 1.0)
+    for margin in range(1, int(lam1 + 12 * math.sqrt(lam1 + 1)) + 2):
+        if not two_group_power(baseline, n, margin, target)["detects_nothing"]:
+            return margin
+    return None
+
+
+def n_for_gate(baseline: float, target: float = 2.0, start: int = 0,
+
+               cap: int = 2_000_000) -> int | None:
+    """**門で棄却する設計**が成り立ちはじめる n。無ければ `None`。
+
+    `n_for()` は「**0人**が出たら棄却する」ための数です。ここの前提は
+    どれも **人数の門**で棄却するので、**答えるべき問いが違います。**
+    実測では `n_for()` のほうが小さく出るため、**既に持っている再生数より
+    小さい数を「要ります」と印字**していました（15,000 持っている前提に
+    「9,425再生 要ります」）。**それを読んだ回は、待てば直ると考えます。**
+
+    実測（登録率 0.0318%・2倍を見分ける）: `n_for()` **9,425** に対し、
+    **門で見分けられるようになるのは 20,000 前後**。**2倍 以上ちがいます。**
+
+    **`start` より大きい n しか返しません。** 返り値が「いま持っている数」以下だと、
+    読んだ回は「もう足りている」と読み、**実際には見分けられないまま判定します。**
+
+    **飛び石になります**（ポアソンは整数の門しか置けない）。実測 2026-08-28:
+    **n=14,293 では門 7人 が通る**（alpha 17% ／ beta **19.94%**）のに、
+    **n=15,000 では通りません**（門 7人 の alpha が 20.3%・門 8人 の beta が 26.5%）。
+    **増やしたのに見分けられなくなります。** 崖の上を答えにしないため、
+    **n と n×1.05 の両方で門が立つところ**まで進みます。
+    """
+    if baseline <= 0 or target <= 1:
+        return None
+    n = max(start + 1, int(1 / baseline))
+    step = max(1, n // 200)
+    while n <= cap:
+        if (gate_for(baseline, n, target) is not None
+                and gate_for(baseline, int(n * 1.05), target) is not None):
+            return n
+        n += step
+    return None
+
+
 def n_for(baseline: float, multiple: float, confidence: float = 0.95) -> int:
     """「0人」で `multiple` 倍の効きを棄却するのに要る再生数。"""
     if baseline <= 0 or multiple <= 1:
@@ -121,6 +254,18 @@ def n_for(baseline: float, multiple: float, confidence: float = 0.95) -> int:
 
 
 _VIEWS = re.compile(r"([0-9][0-9,]{2,})\s*再生")
+#: **括弧の中は、その前提の標本ではありません。**（2026-08-28 に踏んだ）
+#: `falsified_if` は「いくつ集まったら判定するか」と並べて、
+#: **比べる相手の出どころ**を括弧で書きます:
+#:
+#:     合計再生が 15,000 に達した時点で … **0.0355%（… 22,549再生 → 8人）を上回らなければ**
+#:
+#: 素直に「最初の N再生」を取ると **22,549**（＝ 2026-05-01〜08-17 の参照母集団）を
+#: 標本の大きさだと読みます。**実際の標本は 15,000。** 1.5倍 ちがい、
+#: そこから出す門は 10人 対 7人 で**別の数**になります。
+#: 診断だけの頃は「N再生 要ります」が少しずれるだけでしたが、
+#: **門の数字を名指しするようになった以上、ここがずれると嘘を出します。**
+_PARENS = re.compile(r"[（(][^（()）]*[）)]")
 _PCT = re.compile(r"([0-9]*\.?[0-9]+)\s*%")
 #: 「**14人未満**なら外れ」のように、**人数で置いた門**。率より優先して読む
 #: （率で書くと、地の文にある実測の率を拾ってしまう。2026-08-24 に実際に誤読した）。
@@ -155,7 +300,10 @@ def scan_hypotheses() -> list[dict]:
         cond = m.group(1)
         if "登録" not in cond and "登録" not in claim:
             continue
-        vm = _VIEWS.search(cond)
+        # **括弧を落としてから標本を探す**（`_PARENS` の註）。
+        # 落とした側で見つからないときだけ、元の文へ戻る。
+        bare = _PARENS.sub("", cond)
+        vm = _VIEWS.search(bare) or _VIEWS.search(cond)
         if not vm:
             continue
         n = int(vm.group(1).replace(",", ""))
@@ -173,9 +321,61 @@ def scan_hypotheses() -> list[dict]:
             "gate": gate,
             "gate_label": label,
             "target": claimed_target(claim, cond),
+            # **2群を比べている前提は、片側の門とは別の数え方**（`_TWO_GROUP`）。
+            "two_group": bool(_TWO_GROUP.search(cond)),
+            # **置いてある余白**。無ければ 1（＝ 余白ゼロ・効きなしでも約45%通る）。
+            "margin": int(mm.group(1)) if (mm := _MARGIN.search(bare)) else 1,
             "outcome": (re.search(r"\n    outcome:\s*(\w+)", block) or [None, ""])[1],
         })
     return found
+
+
+def assess(row: dict, baseline: float) -> dict:
+    """**その前提の設計に合った数え方で、取り違え率を返す。**
+
+    片側の門なら `power()`、2群の比べ合いなら `two_group_power()`。
+    返りには `two_group` と、印字に使う `label` を足します。
+
+    **この関数を通すこと。呼ぶ側で `power()` を直接 撃たないこと**
+    （2026-08-28 に踏んだ）。`scripts/status.py` は全部の行に
+    `power()` を当てており、**2群の前提を片側の門として数えていました。**
+    その結果、同じ1件について
+
+        `python -m src.verdict_power`  → **見分けられます**（余白5人・15%/17%）
+        `python scripts/status.py`     → **見分けられません**（48%）
+
+    と、**2つの計器が別のことを言う**状態になった。
+    しかも status のほうが毎周 出るので、**直したばかりの条件が
+    毎回「壊れている」と鳴り、次の回がそれを『直し』にきます。**
+
+    **これは、この回に直した穴（文と実装のずれ）と同じ形です** ——
+    判定の規則が2か所にあると、片方だけが直る。
+    """
+    if row.get("two_group"):
+        q = two_group_power(baseline, row["n"], row.get("margin", 1), row["target"])
+        m = row.get("margin", 1)
+        q["label"] = ("対照を1人でも上回れば通る（**余白ゼロ**）" if m <= 1
+                      else f"対照を {m}人 以上 上回れば通る")
+        q["two_group"] = True
+        return q
+    q = power(baseline, row["n"], row["gate"], row["target"])
+    q["label"] = f"門 {row['gate_label']}"
+    q["two_group"] = False
+    return q
+
+
+def weak_rows(baseline: float | None = None) -> list[tuple[dict, dict]]:
+    """**見分けられない前提だけ**を（行, 取り違え率）で返す。
+
+    `status.py` と `main()` が同じ一覧を見るための、ひとつの入口。
+    """
+    base = baseline_rate()[0] if baseline is None else baseline
+    out = []
+    for r in scan_hypotheses():
+        q = assess(r, base)
+        if q["detects_nothing"]:
+            out.append((r, q))
+    return out
 
 
 def main() -> int:
@@ -191,8 +391,41 @@ def main() -> int:
     if not rows:
         print("  （反証条件が「N再生でX%／N人未満」の形の前提は見つかりませんでした）")
     bad = 0
+    fixable = 0
     for r in rows:
-        q = power(base, r["n"], r["gate"], r["target"])
+        # **2群を比べる前提は、片側の門とは数え方が違う**（2026-08-28 に足した）。
+        # 混ぜると「門を 13人未満 に」のような、**別の実験に化ける指示**を出します。
+        if r["two_group"]:
+            q = assess(r, base)
+            ok = "見分けられます" if not q["detects_nothing"] else "**見分けられません**"
+            cur = f"「{q['label']}」"
+            print(f"  [{r['outcome'] or '未判定'}] {r['claim'][:44]}")
+            print(f"      **2群**・片群 n={r['n']:,}再生・いまの条件は"
+                  f"{cur}  "
+                  f"（効きなしなら 両群 {q['expected_null']:.1f}人／"
+                  f"{r['target']:g}倍なら {q['expected_target']:.1f}人）")
+            print(f"      効きなしで生き残る **{q['alpha']:.0%}** ／ "
+                  f"{r['target']:g}倍あるのに外す **{q['beta']:.0%}**"
+                  f"  → {ok}")
+            if q["detects_nothing"]:
+                bad += 1
+                m = margin_for(base, r["n"], r["target"])
+                if m is not None:
+                    qm = two_group_power(base, r["n"], m, r["target"])
+                    fixable += 1
+                    print(f"      → **n は足りています。余白がゼロなのが外れです。**"
+                          f" **「対照を {m}人 以上 上回る」に直せば見分けられます**"
+                          f"（効きなしで生き残る {qm['alpha']:.0%} ／ "
+                          f"{r['target']:g}倍あるのに外す {qm['beta']:.0%}）")
+                    print(f"         **2つの独立なポアソンは、引き分け以外は半々**です"
+                          f" —— 「上回れば通る」は、効きが無くても **{q['alpha']:.0%}** 通ります。"
+                          f" **片側の門の数字（N人未満）をここに書かないこと。**")
+                else:
+                    print(f"      → **どの余白でも、この n では見分けられません。**")
+            print()
+            continue
+
+        q = assess(r, base)
         ok = "見分けられます" if not q["detects_nothing"] else "**見分けられません**"
         print(f"  [{r['outcome'] or '未判定'}] {r['claim'][:44]}")
         print(f"      n={r['n']:,}再生・門 {r['gate_label']}  "
@@ -204,8 +437,34 @@ def main() -> int:
         if q["detects_nothing"]:
             bad += 1
             z = zero_means(base, r["n"])
-            print(f"      0人が出ても、否定できるのは実測の **{z['rules_out_multiple']:.1f}倍超**まで。"
-                  f" {r['target']:g}倍を見分けるには **{n_for(base, r['target']):,}再生** 要ります")
+            # **n が足りないのか、門の置き場所が悪いのかを切り分ける**（2026-08-28）。
+            # ここは長らく「N再生 要ります」しか出しておらず、**実測 3/4 件で
+            # 既に持っている再生数より小さい数**を「要ります」と言っていました
+            # （22,549 持っている前提に「9,425再生 要ります」）。
+            # `n_for()` は「**0人**で棄却する」ための数で、
+            # **人数の門で棄却するこの前提とは、別の問い**です。
+            g = gate_for(base, r["n"], r["target"])
+            if g is not None:
+                qg = power(base, r["n"], g, r["target"])
+                fixable += 1
+                print(f"      → **n は足りています。門の置き場所が外れています。**"
+                      f" **門を {g}人未満 に直せば見分けられます**"
+                      f"（効きなしで生き残る {qg['alpha']:.0%} ／ "
+                      f"{r['target']:g}倍あるのに外す {qg['beta']:.0%}）")
+                if r["gate_label"].endswith("%未満"):
+                    print(f"         いまは率（{r['gate_label']}）で書いてあり、"
+                          f"**実測の率 {base*100:.4f}% とほぼ同じ ＝ 門を「平均どおり」に置いた形**です。"
+                          f" **人数で書き直すこと。**")
+            else:
+                need = n_for_gate(base, r["target"], start=r["n"])
+                # **`n_for()` を出さないこと。**あれは「0人で棄却する」ための数で、
+                # 人数の門で棄却するこの前提には小さすぎます
+                # （実測: 15,000 持っている前提に「9,425 要ります」と出していた）。
+                more = f"**あと {need - r['n']:,}再生**" if need and need > r["n"] else "**さらに**"
+                tail = (f"**門で見分けられるようになるのは {need:,}再生 から**（{more}）"
+                        if need else "**この倍率は、現実的な n では門で見分けられません**")
+                print(f"      0人が出ても、否定できるのは実測の **{z['rules_out_multiple']:.1f}倍超**まで。"
+                      f" **どの門に置いても、この n では見分けられません** —— {tail}")
         print()
 
     print("=== 実測の率で引き直した必要数（「0人」で棄却する場合）===")
@@ -215,6 +474,11 @@ def main() -> int:
     if bad:
         print(f"  → **見分けられない門が {bad} 件あります。**"
               " ここで閉じた前提は証拠ではありません。**開け直すこと。**")
+        if fixable:
+            print(f"  → **うち {fixable} 件は、再生を1回も足さずに直せます**"
+                  " —— 門の数字を上の行のとおりに書き換えるだけ"
+                  "（`config/hypotheses.yaml` の `falsified_if`）。"
+                  " **待つ必要はありません。**")
     return 0
 
 

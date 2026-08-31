@@ -213,7 +213,7 @@ def ripe_days(published: dict[str, datetime], now: datetime | None = None,
 
 def live_band(published: dict[str, datetime], values: dict[str, int],
               cap_n: int | None = None,
-              gap_min: float = 30.0) -> dict[str, list[int]]:
+              gap_min: float | None = None) -> dict[str, list[int]]:
     """`by_day()` と同じ形。ただし**その日の「生きる帯」の本だけ**を返す。
 
     帯の作り方は `src/day_cap.py` と同じ2段です:
@@ -226,13 +226,23 @@ def live_band(published: dict[str, datetime], values: dict[str, int],
     ここでそろえると、**残るのは間隔のちがいだけ**になります
     （帯の中はどちらの群も30分以上あいているので、厳密には
     「上限を外したときに、まだ差が残るか」を見ています）。
+
+    **2つの既定は、どちらも `src/day_cap.py` から引きます**（2026-08-26 に直した）。
+    `gap_min` はここに **`30.0` と写してありました** —— 一致しているのは
+    **いまの `day_cap.MIN_GAP_MIN` が 30.0 だから**であって、
+    向こうは**実測から動く数**です（`cap()` と同じ）。
+    動いた日に、**この判定だけが古い帯で数え続けます** ——
+    しかも同じ字で「`day_cap.py` と同じ2段です」と書いてあるので、
+    **読んでも気づけません。** `cap_n` は既に引いていたので、`gap_min` もそろえました。
     """
-    if cap_n is None:
+    if cap_n is None or gap_min is None:
         try:
             from . import day_cap
-            cap_n = day_cap.cap()
+            cap_n = day_cap.cap() if cap_n is None else cap_n
+            gap_min = day_cap.MIN_GAP_MIN if gap_min is None else gap_min
         except Exception:                                    # noqa: BLE001
-            cap_n = 10
+            cap_n = 10 if cap_n is None else cap_n
+            gap_min = 30.0 if gap_min is None else gap_min
     days: dict[str, list[tuple[datetime, int]]] = defaultdict(list)
     for vid, when in published.items():
         if vid in values:
@@ -332,6 +342,64 @@ def next_settle(counts: dict[str, int], published: dict[str, datetime],
     return (per_day_last[third] + timedelta(hours=RIPE_H)).astimezone(JST).date()
 
 
+def cap_lines(rep: dict[str, Any]) -> list[str]:
+    """**上限を外した側**（`cap_free`）を読む行。**空を返すことがあります。**
+
+    ## なぜ関数にしたか（2026-08-30 夜に実測して切り出した）
+
+    この節は `render()` の中にだけ書いてあり、**`main()` には無いままでした。**
+    つまり `python -m src.density_verdict` は、
+
+        倍率 0.003（0.5 未満なら外れ）
+        **falsified**
+
+    とだけ印字していました。**同じ台帳で上限を外すと ×0.26 です**
+    （実測 2026-08-30: 生 2/716 ＝ ×0.003 ／ 外した側 217/850 ＝ ×0.26。**91倍 ちがう**）。
+    モジュール冒頭の「割り引いて読むこと」は、まさにこの2つを**並べて**読めと
+    書いてあります —— 片方だけを見た人は、**間隔のせいにできない差まで
+    間隔のせいにします。**
+
+    **この差は、いま効いている所に効きます。** `AUTOMATION_PAUSED.md` と
+    `scripts/eta.py --gate` は「解除した最初の1周で `python -m src.density_verdict`
+    を撃ち直すこと」と名指ししており、**その撃ち直しが読むのは `main()` の側**です。
+    解除条件4で入れた機械の上限（`batch_build.cap_by_density()`）も、
+    ここの `HOUR_HI` を読んでいます。
+
+    **だから2か所に書かないこと。** 片方だけ増えると、静かにずれます
+    （`tests/test_density_verdict_cap_side.py` が、その日に赤くなります）。
+    """
+    cf = rep.get("cap_free") or {}
+    v = rep.get("verdict") or {}
+    if cf.get("ratio") is None:
+        return []
+    try:
+        from . import day_cap
+        cap_n = day_cap.cap()
+    except Exception:                                        # noqa: BLE001
+        cap_n = 10
+    out = [f"  **上限（1日{cap_n}本）を外して数え直すと ×{cf['ratio']:.2f}"
+           f"（{cf['outcome']}）** —— 中央値 詰めた日 {cf['tight_median']:.0f}"
+           f" 対 1時間きざみ {cf['hourly_median']:.0f}"]
+    if cf["outcome"] != v.get("outcome"):
+        out.append("      [!] **生の側と向きが違います。この前提は、間隔について"
+                   "何も言っていません** —— 出ているのは上限のほうです"
+                   "（16本以上の日は、上限の外に出た本の 0 を中央値が拾う）。"
+                   "**これを理由に1日の本数を減らさないこと。**")
+    elif v.get("ratio") is not None and cf["ratio"] >= v["ratio"] * 2:
+        out.append(f"      [!] **生の ×{v['ratio']:.2f} は、ほとんどが上限のぶんです**"
+                   f"（上限を外すと ×{cf['ratio']:.2f}）。"
+                   "**間隔のせいにできるのは、外した側の差だけ。**")
+    near = abs(cf["ratio"] - RATIO_FALSIFIED) / RATIO_FALSIFIED
+    if near <= 0.25:
+        out.append(f"      [!] **外した側は線（{RATIO_FALSIFIED}）から {near:.0%} しか"
+                   "離れていません。**群のちがい（題材・時期）で裏返る幅です。"
+                   "**外れとして手を打つ前に、上限そのものを切り分けること。**")
+    out.append("      上限が「1日N本」なのか「13:30 までの窓」なのかは"
+               " 2026-08-27 に切り分けます（`src/day_cap.window()`）。"
+               " **窓のほうなら、本数を減らすのは逆向きの手です。**")
+    return out
+
+
 def render(rep: dict[str, Any] | None = None) -> str:
     """`scripts/status.py` の1節ぶん。**前提のすぐ上に置きます。**
 
@@ -353,33 +421,7 @@ def render(rep: dict[str, Any] | None = None) -> str:
         out.append(f"  中央値 詰めた日 {v['tight_median']:.0f} 対 1時間きざみ {v['hourly_median']:.0f}"
                    f" ＝ **×{v['ratio']:.2f}**（{RATIO_FALSIFIED} 未満で外れ）")
     out.append(f"  **{v['outcome']}**" + (f" —— {v['why']}" if v.get("why") else ""))
-    cf = rep.get("cap_free") or {}
-    if cf.get("ratio") is not None:
-        try:
-            from . import day_cap
-            cap_n = day_cap.cap()
-        except Exception:                                    # noqa: BLE001
-            cap_n = 10
-        out.append(f"  **上限（1日{cap_n}本）を外して数え直すと ×{cf['ratio']:.2f}"
-                   f"（{cf['outcome']}）** —— 中央値 詰めた日 {cf['tight_median']:.0f}"
-                   f" 対 1時間きざみ {cf['hourly_median']:.0f}")
-        if cf["outcome"] != v.get("outcome"):
-            out.append("      [!] **生の側と向きが違います。この前提は、間隔について"
-                       "何も言っていません** —— 出ているのは上限のほうです"
-                       "（16本以上の日は、上限の外に出た本の 0 を中央値が拾う）。"
-                       "**これを理由に1日の本数を減らさないこと。**")
-        elif v.get("ratio") is not None and cf["ratio"] >= v["ratio"] * 2:
-            out.append(f"      [!] **生の ×{v['ratio']:.2f} は、ほとんどが上限のぶんです**"
-                       f"（上限を外すと ×{cf['ratio']:.2f}）。"
-                       "**間隔のせいにできるのは、外した側の差だけ。**")
-        near = abs(cf["ratio"] - RATIO_FALSIFIED) / RATIO_FALSIFIED
-        if near <= 0.25:
-            out.append(f"      [!] **外した側は線（{RATIO_FALSIFIED}）から {near:.0%} しか"
-                       "離れていません。**群のちがい（題材・時期）で裏返る幅です。"
-                       "**外れとして手を打つ前に、上限そのものを切り分けること。**")
-        out.append("      上限が「1日N本」なのか「13:30 までの窓」なのかは"
-                   " 2026-08-27 に切り分けます（`src/day_cap.window()`）。"
-                   " **窓のほうなら、本数を減らすのは逆向きの手です。**")
+    out += cap_lines(rep)
     if v["outcome"] == "undecided":
         from scripts.eta import published_at
         when = next_settle(rep["counts"], published_at())
@@ -421,6 +463,10 @@ def main() -> None:  # pragma: no cover - 画面出力だけ
     if v.get("ratio") is not None:
         print(f"    倍率 {v['ratio']:.3f}（{RATIO_FALSIFIED} 未満なら外れ）")
     print(f"    **{v['outcome']}**" + (f" —— {v['why']}" if v.get("why") else ""))
+    # **上限を外した側を、必ず並べて出す**（`cap_lines()` の docstring）。
+    # ここが無い間、この画面は生の ×0.003 だけを出していました。
+    for line in cap_lines(rep):
+        print(line)
     if v["outcome"] == "undecided":
         from scripts.eta import published_at
         when = next_settle(rep["counts"], published_at())

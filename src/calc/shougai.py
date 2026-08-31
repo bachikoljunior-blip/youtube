@@ -89,6 +89,22 @@ ASSUMPTIONS = [
     "子は18歳到達年度の3月31日までを対象にしています。"
     "障害のある子は20歳までですが、ここには入れていません",
     "初診日の要件・保険料の納付要件は満たしているものとしています",
+    "傷病手当金と並べる計算では、同一の傷病で両方の受給権があるものとしています。"
+    "別の傷病なら調整はありません",
+    "傷病手当金と並べる計算では、健康保険の標準報酬月額と、厚生年金の平均標準報酬額を"
+    "同じ額に置いています。前者は直近12か月の平均、後者は生涯の平均で賞与も入り"
+    "再評価もされるので、実際は一致しません。賞与のある人は平均標準報酬額のほうが"
+    "大きくなり、年金が増えるぶん傷病手当金はもっと減ります。"
+    "この計算が出しているのは、減り方のいちばん小さい形です",
+    "傷病手当金の日額は、標準報酬月額を30で割って10円未満を四捨五入し、"
+    "3分の2をかけて1円未満を四捨五入したものです（健康保険法99条）",
+    "傷病手当金と調整される年金の1日ぶんは、年金額を360で割って"
+    "1円未満を四捨五入したものです（健康保険法108条4項）",
+    "傷病手当金と並べる表は、標準報酬月額を58,000円から650,000円まで"
+    "1,000円きざみで動かしています。650,000円は厚生年金の上限等級で、"
+    "健康保険の等級はその上にもありますが、そこでは年金の側が増えません",
+    "障害手当金と傷病手当金の計算では、傷病手当金の日額が支給期間を通じて"
+    "変わらないものとしています（健康保険法108条5項）",
 ]
 
 
@@ -603,6 +619,230 @@ def teatekin_vs_2kyuu_soko(months: int = MIN_MONTHS) -> dict:
     }
 
 
+# ---- 主題9: 傷病手当金との併給調整（**族をまたいだ比較**）-----------------
+#
+# **この2つを並べた金額表は、どこにも公表されていません。**
+# 日本年金機構の障害年金の案内は傷病手当金に触れず、協会けんぽの傷病手当金の
+# 案内は「障害厚生年金を受けられるときは調整されます」と**書くだけ**で、
+# **いくらになるかの表を持っていません。**
+# `src/calc/shobyo.py` の `ASSUMPTIONS` も、2026-08-28 まで
+# 「障害年金や老齢年金との調整は含めていません」と**自分で言っていました**。
+#
+# **払う側から見れば同じ1つの病気なのに、境目を並べた表が無い。**
+#
+# 根拠は健康保険法108条4項:
+#
+#   > 傷病手当金の支給を受けるべき者が、同一の傷病について障害厚生年金の支給を
+#   > 受けることができるときは、傷病手当金は、支給しない。ただし、その受けることが
+#   > できる障害厚生年金の額（同一の傷病について障害基礎年金の支給を受けることが
+#   > できるときは、その合算額）につき算定した額が傷病手当金の額より少ないときは、
+#   > その差額を支給する。
+#
+# 施行規則が言う「算定した額」は **年金額 ÷ 360**（1円未満四捨五入）です。
+# 同条5項の障害手当金（一時金）のほうは**差額ではなく日数**で効きます ——
+# 傷病手当金の合算額が障害手当金の額に達するまで、1円も出ません。
+#
+# **ここで比べている2つの「標準報酬」は、本当は別のものです**（下の註）。
+# 前提を置かないと並べられないので、**置いた前提を全部 画面に出します。**
+SHOBYO_DIVISOR = 360            # 年金額をこれで割る（健康保険法施行規則84条の2）
+
+
+def nenkin_nichigaku(nenkin_year: int) -> int:
+    """**年金の1日ぶん**。年金額 ÷ 360（1円未満四捨五入）。
+
+    **365 でも 366 でもありません。** 30日×12か月の 360 です。
+    """
+    return round(nenkin_year / SHOBYO_DIVISOR)
+
+
+def shobyo_chousei(standard_pay: int, grade: int = 3, *,
+                   hyoujun: int | None = None, months: int = MIN_MONTHS,
+                   children: int = 0, spouse: bool = False) -> dict:
+    """**障害年金をもらっている人の、傷病手当金の日額。**
+
+    ## 並べるために置いた前提（**ここが効きます**）
+
+    傷病手当金の `standard_pay` は**健康保険の標準報酬月額**（直近12か月の平均）、
+    障害厚生年金の `hyoujun` は**厚生年金の平均標準報酬額**（生涯の平均・賞与込み・
+    再評価後）で、**同じ人でも普通は一致しません。**
+    `hyoujun` を省いたときは `standard_pay` と同額に置きます ——
+    **賞与が無く、再評価率が1.0で、いまの報酬がずっと続いていた人**の形です。
+    賞与のある人は `hyoujun` のほうが大きくなるので、**年金が増えて
+    傷病手当金はもっと減ります**（この計算は、減り方の下限を出しています）。
+    """
+    from . import shobyo as _shobyo
+
+    hy = standard_pay if hyoujun is None else hyoujun
+    pension = nenkin(grade, hy, months, children=children, spouse=spouse)
+    # **3級には障害基礎年金がありません。**108条4項が合算するのは
+    # 「同一の傷病について障害基礎年金を受けられるとき」だけなので、
+    # 3級の人はここが障害厚生年金だけになります（`nenkin()` が既にそう返します）。
+    day_shobyo = _shobyo.daily(standard_pay)
+    day_pension = nenkin_nichigaku(pension["合計"])
+    sagaku = max(0, day_shobyo - day_pension)
+    return {
+        "標準報酬月額": standard_pay,
+        "平均標準報酬額": hy,
+        "等級": grade,
+        "年金の年額": pension["合計"],
+        "傷病手当金の日額": day_shobyo,
+        "年金の日額": day_pension,
+        "実際に出る傷病手当金": sagaku,
+        "止まる額": day_shobyo - sagaku,
+        "残る割合": sagaku / day_shobyo if day_shobyo else 0.0,
+        "1円も出ないか": sagaku == 0,
+    }
+
+
+def shobyo_kieru_line(grade: int = 3, *, months: int = MIN_MONTHS,
+                      children: int = 0, spouse: bool = False,
+                      hi: int = 650_000) -> dict:
+    """**傷病手当金が1円も出なくなる、標準報酬月額の上限。**
+
+    `standard_pay` を 1,000円 きざみで上げると、傷病手当金は `standard_pay/45`
+    で伸び、年金の日額は `standard_pay × 乗率 × 月数 ÷ 360` で伸びます。
+    **傷病手当金のほうが必ず速い**ので、線は1本で、**その線以下が全部「出ない」**側。
+
+    見つからないときは `線` に 0 を返します（＝ どの報酬でも差額が出る）。
+    """
+    step = 1_000
+    line = 0
+    pay = 58_000        # 健康保険の第1等級
+    while pay <= hi:
+        if shobyo_chousei(pay, grade, months=months, children=children,
+                          spouse=spouse)["1円も出ないか"]:
+            line = pay
+        pay += step
+    return {
+        "等級": grade,
+        "子の人数": children,
+        "配偶者": spouse,
+        "線": line,
+        "線での年金の年額": (nenkin(grade, line or 58_000, months,
+                                   children=children, spouse=spouse)["合計"]),
+        "線の1つ上": line + step if line else 0,
+        "線の1つ上で出る額": (shobyo_chousei(
+            line + step, grade, months=months, children=children,
+            spouse=spouse)["実際に出る傷病手当金"] if line else 0),
+    }
+
+
+def shobyo_chousei_grid(grade: int = 3, *, months: int = MIN_MONTHS,
+                        children: int = 0, spouse: bool = False) -> list[dict]:
+    """等級を1つ決めて、標準報酬月額べつに並べる。"""
+    return [shobyo_chousei(pay, grade, months=months, children=children,
+                           spouse=spouse)
+            for pay in (58_000, 76_500, 100_000, 150_000, 200_000, 300_000,
+                        440_000, 650_000)]
+
+
+def teatekin_tomaru_hi(standard_pay: int, *, months: int = MIN_MONTHS) -> dict:
+    """**障害手当金（一時金）は、日数で効きます**（健康保険法108条5項）。
+
+    差額ではありません。**傷病手当金の合算額が障害手当金の額に達するまで、
+    1円も出ません。** つまり「何日ぶん止まるか」が答えになります。
+
+    546日（通算1年6か月）を全部 止めきる報酬かどうかも返します。
+    """
+    from . import shobyo as _shobyo
+
+    ichiji = teatekin(standard_pay, months)["手当金"]
+    day = _shobyo.daily(standard_pay)
+    days = ichiji / day if day else 0.0
+    return {
+        "標準報酬月額": standard_pay,
+        "障害手当金": ichiji,
+        "傷病手当金の日額": day,
+        "止まる日数": days,
+        "上限の日数": _shobyo.MAX_DAYS,
+        "上限を全部 止めるか": days >= _shobyo.MAX_DAYS,
+        "残る日数": max(0.0, _shobyo.MAX_DAYS - days),
+    }
+
+
+def teatekin_tomaru_grid() -> list[dict]:
+    """障害手当金が止める日数を、標準報酬月額べつに並べる。"""
+    return [teatekin_tomaru_hi(pay)
+            for pay in (58_000, 100_000, 200_000, 300_000, 372_195, 440_000,
+                        650_000)]
+
+
+# ---- 主題10: 約分で報酬が消える2つ（**この表のいちばん深いところ**）-------
+#
+# 傷病手当金の日額は `標準報酬月額 ÷ 45`（＝ ÷30 × 2/3）、
+# 3級の報酬比例は `平均標準報酬額 × 乗率 × 月数` です。
+# **2つを同じ報酬で並べると、報酬が約分で消えます。**
+# 残るのは **月数だけ** —— だから「いくら止まるか」は人によって違うのに、
+# **「何割 止まるか」は誰でも同じ**になります（最低保障が外れた帯で）。
+SHOBYO_DAILY_DIVISOR = 45       # 30日 ÷ (2/3)。傷病手当金の日額 ＝ 月額 ÷ 45
+
+
+def shobyo_tomaru_wariai(months: int = MIN_MONTHS) -> dict:
+    """**3級で止まる割合。報酬によりません。**
+
+        止まる割合 ＝ (乗率 × 月数 ÷ 360) × 45 ＝ 乗率 × 月数 ÷ 8
+
+    最低保障（612,000円）が効いている帯の外だけの話です。
+    帯の中では年金が定額なので、報酬が上がるほど止まる割合は下がります。
+    """
+    m = max(months, MIN_MONTHS)
+    share = ACCRUAL * m / (SHOBYO_DIVISOR / SHOBYO_DAILY_DIVISOR)
+    return {
+        "月数": m,
+        "止まる割合": share,
+        "残る割合": 1 - share,
+        "最低保障が外れる線": saitei_hoshou_line(m)["線"],
+    }
+
+
+def shobyo_tomaru_wariai_grid() -> list[dict]:
+    """月数べつ。**60月ごとに、止まる割合は同じ幅だけ増えます**（1次式なので）。"""
+    return [shobyo_tomaru_wariai(m) for m in (MIN_MONTHS, 360, 420, 480)]
+
+
+def teatekin_tomaru_ittei(months: int = MIN_MONTHS) -> dict:
+    """**最低保障が外れた帯で、障害手当金が止める日数。報酬によりません。**
+
+        止まる日数 ＝ (報酬比例 × 2) ÷ (標準報酬月額 ÷ 45)
+                    ＝ 乗率 × 月数 × 2 × 45
+
+    3級の「止まる割合」の **2 × 45 ÷ (1/360) 倍**にあたる同じ約分です。
+    """
+    m = max(months, MIN_MONTHS)
+    return {
+        "月数": m,
+        "止まる日数": ACCRUAL * m * TEATE_MULTIPLE * SHOBYO_DAILY_DIVISOR,
+        "最低保障が外れる線": saitei_hoshou_line(m)["線"],
+    }
+
+
+def teatekin_zenbu_tomaru_line(months: int = MIN_MONTHS) -> dict:
+    """**546日を まるごと 止めてしまう、標準報酬月額の上限。**
+
+    最低保障の 1,224,000円 は定額なので、**報酬が低い人ほど日数が長くなります。**
+    1,000円 きざみで探します（等級が 1,000円 きざみなので）。
+    """
+    from . import shobyo as _shobyo
+
+    step = 1_000
+    line = 0
+    pay = 58_000
+    while pay <= 650_000:
+        if teatekin_tomaru_hi(pay, months=months)["上限を全部 止めるか"]:
+            line = pay
+        pay += step
+    return {
+        "月数": max(months, MIN_MONTHS),
+        "線": line,
+        "上限の日数": _shobyo.MAX_DAYS,
+        "線での止まる日数": (teatekin_tomaru_hi(line, months=months)["止まる日数"]
+                            if line else 0.0),
+        "線の1つ上で残る日数": (teatekin_tomaru_hi(line + step,
+                                                  months=months)["残る日数"]
+                                if line else 0.0),
+    }
+
+
 def check_tables() -> None:
     """制度の値と計算の向きを確かめる。**壊れた数字で台本を書かせない。**"""
     # 1. 法令が名指ししている値
@@ -776,6 +1016,79 @@ def check_tables() -> None:
                       "扶養親族が増えたときの半額停止の線", strict=True)
     _checks.ascending([r["半額停止の崖"] for r in fuyo_gake_grid(2)],
                       "子が増えたときの半額停止の崖", strict=True)
+
+    # 8. **傷病手当金との調整**（主題9・10）。
+    # **報酬によらない側だけを固定します。** 線そのものの額は、
+    # 「健康保険の標準報酬月額 ＝ 厚生年金の平均標準報酬額」という置き方に
+    # 乗っているので、ここには入れません（`ASSUMPTIONS`）。
+    _checks.statutory(SHOBYO_DIVISOR, 360, "年金を日額に直すときの除数",
+                      source="健康保険法108条4項・同施行規則84条の2")
+    _checks.statutory(SHOBYO_DAILY_DIVISOR, 45,
+                      "傷病手当金の日額を出すときの除数（30 ÷ 2/3）",
+                      source="健康保険法99条")
+    # 線以下は1円も出ず、線の1つ上では出る（＝線が1本で、探し方がずれていない）
+    for grade in (1, 2, 3):
+        line = shobyo_kieru_line(grade)
+        if not line["線"]:
+            raise _checks.TableError(
+                f"{grade}級で、傷病手当金が消える線が見つかりません。"
+                "**調整の向きが逆になっています**")
+        if not shobyo_chousei(line["線"], grade)["1円も出ないか"]:
+            raise _checks.TableError(
+                f"{grade}級・標準報酬月額 {line['線']:,}円 で傷病手当金が出ています。"
+                "**線が1,000円 ずれています**")
+        if shobyo_chousei(line["線の1つ上"], grade)["1円も出ないか"]:
+            raise _checks.TableError(
+                f"{grade}級・標準報酬月額 {line['線の1つ上']:,}円 でも"
+                "傷病手当金が出ていません。**線より上なのに消えています**")
+    # 等級が上がるほど線は上（年金が大きいので、消える帯が広がる）
+    _checks.ascending([shobyo_kieru_line(g)["線"] for g in (3, 2, 1)],
+                      "等級が上がったときの、傷病手当金が消える線", strict=True)
+    # 家族が増えると線はさらに上（定額の加算がそのまま年金に乗るため）
+    _checks.ascending([shobyo_kieru_line(2, children=c)["線"]
+                       for c in (0, 1, 2)],
+                      "子が増えたときの、傷病手当金が消える線", strict=True)
+    # **止まる割合は報酬によらない**（最低保障が外れた帯で）。約分の結果
+    want = shobyo_tomaru_wariai(MIN_MONTHS)["残る割合"]
+    for pay in (400_000, 500_000, 650_000):
+        got = shobyo_chousei(pay, 3)["残る割合"]
+        if abs(got - want) > 1e-3:            # 10円未満四捨五入のぶんだけ揺れる
+            raise _checks.TableError(
+                f"標準報酬月額 {pay:,}円 で、3級の残る割合が {got:.4%} です"
+                f"（報酬によらず {want:.4%} のはず）。**約分が壊れています**")
+    _checks.close(shobyo_tomaru_wariai(MIN_MONTHS)["止まる割合"],
+                  ACCRUAL * MIN_MONTHS / 8, "止まる割合＝乗率×月数÷8", tol=1e-12)
+    # 月数の1次式なので、60月ごとの伸びはどこも同じ幅
+    rows = shobyo_tomaru_wariai_grid()
+    steps = {round(b["止まる割合"] - a["止まる割合"], 9)
+             for a, b in zip(rows, rows[1:])}
+    if len(steps) != 1:
+        raise _checks.TableError(
+            f"60月ごとの伸びが {sorted(steps)} と揃っていません。"
+            "**止まる割合が月数の1次式になっていません**")
+    # **障害手当金が止める日数も、線から上ではどの報酬でも同じ**
+    ittei = teatekin_tomaru_ittei(MIN_MONTHS)["止まる日数"]
+    _checks.close(ittei, ACCRUAL * MIN_MONTHS * TEATE_MULTIPLE
+                  * SHOBYO_DAILY_DIVISOR, "止まる日数＝乗率×月数×2×45", tol=1e-9)
+    for pay in (400_000, 500_000, 650_000):
+        got = teatekin_tomaru_hi(pay)["止まる日数"]
+        if abs(got - ittei) > 0.05:
+            raise _checks.TableError(
+                f"標準報酬月額 {pay:,}円 で、障害手当金の止める日数が {got:.2f}日 です"
+                f"（線から上ではどの報酬でも {ittei:.2f}日 のはず）")
+    # 最低保障が効いている帯では、報酬が低い人ほど長く止まる
+    _checks.decreases_with(lambda p: teatekin_tomaru_hi(p)["止まる日数"],
+                           (58_000, 100_000, 200_000, 300_000),
+                           "最低保障の帯では、報酬が低いほど長く止まる")
+    zenbu = teatekin_zenbu_tomaru_line()
+    if not teatekin_tomaru_hi(zenbu["線"])["上限を全部 止めるか"]:
+        raise _checks.TableError(
+            f"標準報酬月額 {zenbu['線']:,}円 で、546日を全部は止めていません。"
+            "**線が1,000円 ずれています**")
+    if teatekin_tomaru_hi(zenbu["線"] + 1_000)["上限を全部 止めるか"]:
+        raise _checks.TableError(
+            f"標準報酬月額 {zenbu['線'] + 1_000:,}円 でも546日を全部 止めています。"
+            "**線より上なのに止まりきっています**")
 
 
 def main() -> None:
@@ -1014,6 +1327,94 @@ def main() -> None:
               f"  → 差 {k['差']:>9,}円")
     print("  → **3級は障害厚生年金にしかありません。**"
           "国民年金だけの人は、同じ障害の重さでも**3級では1円も出ません**")
+
+    L3 = shobyo_kieru_line(3)
+    print(f"\n=== 障害年金をもらうと、傷病手当金は差額だけになる。"
+          f"**3級でも、標準報酬月額 {L3['線']:,}円 までは1円も出ない**"
+          f"（同じ病気・300月）===")
+    print(f"{'標準報酬月額':>13s} {'傷病手当金の日額':>16s} {'年金の日額':>11s} "
+          f"{'実際に出る額':>13s} {'残る割合':>9s}")
+    for r in shobyo_chousei_grid(3):
+        print(f"{r['標準報酬月額']:12,d}円 {r['傷病手当金の日額']:15,d}円 "
+              f"{r['年金の日額']:10,d}円 {r['実際に出る傷病手当金']:12,d}円 "
+              f"{r['残る割合']:8.2%}"
+              + ("  ← **1円も出ない**" if r["1円も出ないか"] else ""))
+    print(f"  → 健康保険法108条4項は、**年金額を{SHOBYO_DIVISOR}で割った額**を"
+          f"傷病手当金から引きます。3級の最低保障 {GRADE3_MIN:,}円 は"
+          f"日額 {nenkin_nichigaku(GRADE3_MIN):,}円 —— "
+          f"**報酬が低い人ほど、この定額に食われます。**"
+          f"標準報酬月額 {L3['線']:,}円 までは丸ごと消え、"
+          f"{L3['線の1つ上']:,}円 の人が受け取るのは"
+          f"**1日 {L3['線の1つ上で出る額']:,}円**です")
+    print(f"{'等級・家族':>18s} {'消える上限':>11s} {'そこでの年金':>13s} "
+          f"{'1つ上で出る日額':>16s}")
+    for grade, children, spouse, label in ((3, 0, False, "3級"),
+                                           (2, 0, False, "2級"),
+                                           (1, 0, False, "1級"),
+                                           (2, 2, True, "2級・子2人・配偶者")):
+        k = shobyo_kieru_line(grade, children=children, spouse=spouse)
+        print(f"{label:>18s} {k['線']:10,d}円 {k['線での年金の年額']:12,d}円 "
+              f"{k['線の1つ上で出る額']:15,d}円")
+    print("  → **重い等級ほど、傷病手当金の消える帯は広くなります。**"
+          "子の加算も配偶者加給も定額のまま年金に乗って、そのまま差し引かれるので、"
+          "**家族が多い人ほど、傷病手当金は先に消えます** —— "
+          "1.25倍の話とは逆に、ここでは**定額の加算が効きすぎます**")
+
+    W = shobyo_tomaru_wariai()
+    print(f"\n=== 3級で止まる傷病手当金は、"
+          f"**最低保障が外れた帯では「報酬によらず {W['止まる割合']:.2%}」**"
+          f"（決めるのは加入月数だけ）===")
+    print(f"{'標準報酬月額':>13s} {'傷病手当金の日額':>16s} {'止まる額':>10s} "
+          f"{'止まる割合':>10s}")
+    for pay in (400_000, 500_000, 550_000, 650_000):
+        r = shobyo_chousei(pay, 3)
+        print(f"{pay:12,d}円 {r['傷病手当金の日額']:15,d}円 "
+              f"{r['止まる額']:9,d}円 {1 - r['残る割合']:9.2%}")
+    print(f"  → 傷病手当金の日額は **月額 ÷ {SHOBYO_DAILY_DIVISOR}**、"
+          f"3級の日額は **月額 × {ACCRUAL} × 月数 ÷ {SHOBYO_DIVISOR}**。"
+          f"**割ると報酬が約分で消えて、`乗率 × 月数 ÷ 8` だけが残ります。**"
+          f"だから「いくら止まるか」は人それぞれなのに、"
+          f"**「何割 止まるか」は誰でも同じ**です")
+    print(f"{'加入月数':>8s} {'止まる割合':>10s} {'残る割合':>10s} "
+          f"{'最低保障が外れる線':>18s}")
+    for r in shobyo_tomaru_wariai_grid():
+        print(f"{r['月数']:7d}月 {r['止まる割合']:9.2%} {r['残る割合']:9.2%} "
+              f"{r['最低保障が外れる線']:17,d}円")
+    rows = shobyo_tomaru_wariai_grid()
+    step = rows[1]["止まる割合"] - rows[0]["止まる割合"]
+    print(f"  → **60月 長く入っているごとに、止まる割合は {step:.2%} ずつ増えます**"
+          f"（どこも同じ幅 ＝ 月数の1次式）。"
+          f"**長く働いた人ほど、休んだときに手元へ残る割合は小さくなります。**"
+          f"帯の中（最低保障が効いている側）は逆で、"
+          f"報酬が上がるほど止まる割合は下がります")
+
+    Z = teatekin_zenbu_tomaru_line()
+    I = teatekin_tomaru_ittei()
+    print(f"\n=== 障害手当金（一時金）は差額ではなく**日数**で効く。"
+          f"標準報酬月額 {Z['線']:,}円 までは、"
+          f"**{Z['上限の日数']}日 ぶんが丸ごと消える**（300月）===")
+    print(f"{'標準報酬月額':>13s} {'障害手当金':>12s} {'傷病手当金の日額':>16s} "
+          f"{'止まる日数':>11s} {'残る日数':>10s}")
+    for r in teatekin_tomaru_grid():
+        print(f"{r['標準報酬月額']:12,d}円 {r['障害手当金']:11,d}円 "
+              f"{r['傷病手当金の日額']:15,d}円 {r['止まる日数']:10.2f}日 "
+              f"{r['残る日数']:9.2f}日"
+              + ("  ← **全部 消える**" if r["上限を全部 止めるか"] else ""))
+    print(f"  → 健康保険法108条5項は、**傷病手当金の合計が障害手当金の額に"
+          f"達するまで**支給しません。障害手当金の最低保障 "
+          f"{GRADE3_MIN * TEATE_MULTIPLE:,}円 は定額なので、"
+          f"**報酬が低い人ほど、止まる日数が長くなります** —— "
+          f"{Z['線']:,}円 の人は {Z['線での止まる日数']:.2f}日 で"
+          f"{Z['上限の日数']}日 を越え、**1円も受け取れません。**"
+          f"{Z['線'] + 1_000:,}円 になって、やっと "
+          f"{Z['線の1つ上で残る日数']:.2f}日 ぶんが戻ります")
+    print(f"  → 最低保障が外れる {I['最低保障が外れる線']:,}円 から上では、"
+          f"障害手当金も傷病手当金も**報酬に比例**するので、"
+          f"止まる日数は **どの報酬でも {I['止まる日数']:.2f}日**"
+          f"（＝ {ACCRUAL} × {I['月数']}月 × {TEATE_MULTIPLE} × "
+          f"{SHOBYO_DAILY_DIVISOR}）。"
+          f"**一時金をもらった人は、そこから約5か月ぶん、"
+          f"傷病手当金の口が閉じます**")
 
 
 if __name__ == "__main__":

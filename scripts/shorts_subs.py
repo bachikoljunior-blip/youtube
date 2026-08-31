@@ -39,9 +39,21 @@
   （2026-08-25 実測）。だから「どの流入から登録したか」は**この口からは分かりません**。
   出せるのは「**どの動画から**」までです。
 - **収益化の門の進捗そのもの**（公開視聴時間4000時間のうち何時間か）は、
-  Analytics API に欄がありません。**ショートの分がその4000時間に入るかどうかを、
-  この口では確かめられません。** ここは「入らないはず」と書かず、
-  **形べつの時間を出して、判断は読む側に渡します。**
+  Analytics API に欄がありません。**形べつの時間から組み立てます。**
+
+  > **【2026-08-30 に、ここが1つ畳まれました】**
+  > ここには「**ショートの分がその4000時間に入るかどうかを、この口では
+  > 確かめられません**」「判断は読む側に渡します」と書いてありました。
+  > **API の話としては正しく、しかし問いを取り違えています** ——
+  > これは API の問いではなく、**公表されている条件の問い**です。
+  > 取りに行ったら1行 載っていました（`_H4000_SOURCE`）。**入りません。**
+  > **その5日のあいだ、この道具は「あと 349日」という枝を出し続けていました。**
+  > 実際は **24,698日（67.6年）**。**70倍 の差が、どちらの門を狙うかの
+  > 判断に入っていました。**
+  >
+  > **教訓は「渡すな」ではありません** —— 渡す前に、
+  > **その問いが本当にこの口の問いかを一度みること。**
+  > 「この API では分からない」は、「分からない」ではありません。
 
 ## 覆る条件
 
@@ -79,6 +91,22 @@ SUB_DOOR = 1000
 HOUR_DOOR = 4000
 #: もう1つの道（ショート 90日で1000万再生）。**この条件自体は API から読めません。**
 SHORTS_DOOR_90D = 10_000_000
+
+#: **ショートの視聴時間は 4000時間 に入りません。**（2026-08-30 に取りに行って確かめた）
+#:
+#: この道具は 2026-08-25 から「**入るかどうかは、この API では確かめられません**」と
+#: 書いて、両方の日数を出していました。**API の話としては、それは正しい。**
+#: しかしこれは **API の問いではなく、公表されている条件の問い**です ——
+#: 取りに行けば1行 載っています。**取りに行かなかったせいで、5日のあいだ
+#: 「あと 349日」という枝が生きていました。実際は「あと 24,698日」（67.6年）です。**
+#: **70倍 の違いが、どちらの門を狙うかの判断に入っていました。**
+#:
+#: **覆る条件**: このページは書き換わります（2027-02-01 から YPP の更新が入る、と
+#: 同じページが予告しています）。**この定数を根拠に使う回は、日付を見ること** ——
+#: 取り直して文言が変わっていたら、この2つの定数ごと差し替えること。
+_H4000_SOURCE = "support.google.com/youtube/answer/72851 ・取得 2026-08-30"
+_H4000_QUOTE = ("any qualified watch hours from Shorts views in the Shorts Feed "
+                "won't count towards the 4,000 qualified watch hours threshold")
 
 
 # --------------------------------------------------------------------------
@@ -148,6 +176,70 @@ def views_for_subs(remaining: int, rate_per_1000: float | None) -> float | None:
     if not rate_per_1000:
         return None
     return remaining / rate_per_1000 * 1000.0
+
+
+def _ceiling_economics(cap_per_day, mature, need_views, views_per_day, remaining,
+                       days_long_only, minutes_long_per_day, long_avg_seconds,
+                       *, horizon_days: float = 365.0,
+                       long_cap_per_day: float = 6.0, long_views_per_video: float = 11.0):
+    """**「速く出せば開くのか」に、天井で答える。**（2026-08-30・解除条件6）
+
+    ## なぜ要るか
+
+    上の行は「**いまの速さ**が続いたら」を出しています。それだけを読むと
+    「もっと出せば開く」と読めます。**実測はそう言っていません** ——
+    再生が付く本数には測った天井があり（`src/day_cap.cap()`。実測 **10本/日**。
+    それ以上 出したぶんは **0再生**）、天井まで出しても登録の門は
+    **671日 → 610日**（**10%**）しか動きません（実測 2026-08-30）。
+
+    **登録の門を縛っているのは密度ではなく変換のほうです。**
+    `data/runs.jsonl` の 358件 でいちばん多く引かれた腕が `density`（103件）でした。
+    **その腕は、いちばん近い門に対して 10% です。**
+
+    そして **1年で開けるには 1.84倍**（再生でも変換でも同じ倍率）が要り、
+    再生で埋めるなら**測った天井の 1.67倍**です ＝ **天井の外**。
+    **「もっと出す」では届きません。**
+
+    ## 覆る条件
+
+    `day_cap.cap()` は「1日に再生が付く本数」で、`day_cap.window()` が
+    (A)本数 と (B)時刻の窓 を切り分け終えていません。**天井が動いたらここも動きます。**
+    長尺側の 6本/日・11.0回/本 は `src/day_cap.long_form()` と `eta.py` の実測で、
+    **標本が薄い**（`eta.py` が毎回 測り直しています）。
+    """
+    out: dict = {"cap_per_day": cap_per_day, "horizon_days": horizon_days}
+    per_video = None
+    if mature.get("videos"):
+        per_video = mature["views"] / mature["videos"]
+    out["views_per_video_mature"] = per_video
+    ceil_views = (cap_per_day * per_video) if (cap_per_day and per_video) else None
+    out["views_per_day_ceiling"] = ceil_views
+
+    if need_views and ceil_views:
+        out["days_at_ceiling"] = need_views / ceil_views
+        if views_per_day:
+            out["days_saved_by_ceiling"] = need_views / views_per_day - need_views / ceil_views
+            out["ceiling_speedup"] = ceil_views / views_per_day - 1.0
+    if need_views:
+        want = need_views / horizon_days
+        out["views_per_day_for_horizon"] = want
+        out["x_over_pace"] = (want / views_per_day) if views_per_day else None
+        out["x_over_ceiling"] = (want / ceil_views) if ceil_views else None
+    if remaining and views_per_day:
+        # **同じ再生のまま、変換だけで開けるなら**（人/千再生）
+        out["subs_per_1000_for_horizon"] = remaining / (views_per_day * horizon_days) * 1000.0
+
+    # 道A（4,000時間）を、長尺の天井で解き直す
+    if minutes_long_per_day:
+        out["years_long_at_pace"] = (days_long_only / 365.0) if days_long_only else None
+        ceil_min = long_cap_per_day * long_views_per_video * (long_avg_seconds or 0) / 60.0
+        out["long_minutes_per_day_ceiling"] = ceil_min or None
+        if ceil_min:
+            left_min = max(HOUR_DOOR * 60.0 - 0.0, 0.0)
+            out["years_long_at_ceiling"] = left_min / ceil_min / 365.0
+            out["long_minutes_for_horizon"] = left_min / horizon_days
+            out["x_long_over_ceiling"] = (left_min / horizon_days) / ceil_min
+    return out
 
 
 # --------------------------------------------------------------------------
@@ -492,6 +584,30 @@ def summarize(raw: dict, min_age_days: int, conf: float, today: date) -> dict:
     door["shorts_10m_multiple"] = (SHORTS_DOOR_90D / (views_per_day * 90)) if views_per_day else None
     door["shorts_10m_views_per_day_needed"] = SHORTS_DOOR_90D / 90.0
 
+    # ------------------------------------------------------------------
+    # **採算の解き直し**（2026-08-30・解除条件6。**結論を書き置かないための欄**）
+    #
+    # ここまでの行は「**いまの速さ**が続いたら」を出しています。**それだけだと
+    # 「速く出せば開く」と読めます。** 実測はそう言っていません ——
+    # 再生が付く本数には**測った天井**があり（`src/day_cap.cap()`）、
+    # そこまで出しても登録の門は **5% しか速くなりません**。
+    # **登録の門を縛っているのは密度ではなく変換のほう**、というのがこの欄です。
+    #
+    # 天井は `src/day_cap` から取ります（**この道具で測り直さないこと** ——
+    # 同じものを2か所で測ると、片方だけ古くなります）。
+    # 1本あたりは**この道具が持っている熟した本の実測**から出します。
+    # ------------------------------------------------------------------
+    try:
+        from src import day_cap as _day_cap
+        cap_per_day = _day_cap.cap()
+    except Exception:
+        cap_per_day = None
+    mature = (cohorts.get("ショート") or {}).get("mature") or {}
+    door["ceiling"] = _ceiling_economics(
+        cap_per_day, mature, need_views, views_per_day, remaining,
+        door.get("days_to_4000h_if_only_long"), per_day_minutes.get("長尺"),
+        forms.get("長尺", {}).get("avg_view_seconds"))
+
     now = raw.get("channel_now") or {}
     reconcile = None
     if now.get("subscribers") is not None:
@@ -657,17 +773,55 @@ def render(s: dict) -> str:
     mpd = d.get("minutes_per_day_recent7") or {}
     L.append(f"    直近7日の視聴分/日: ショート {_fmt(mpd.get('ショート'),0)} ／ "
              f"長尺 {_fmt(mpd.get('長尺'),1)}")
-    L.append("    **ショートの分がこの4000時間に入るかどうかは、この API では確かめられません**"
-             "（門の進捗を返す欄がありません）。**だから両方を出します。**")
-    L.append(f"      入るなら（ショート＋長尺）… あと **{_fmt(d.get('days_to_4000h_if_shorts_count'),0)}日**")
-    L.append(f"      入らないなら（長尺だけ）… 到達 {_fmt((d['hours_long'] or 0) / HOUR_DOOR * 100, 4)}%、"
+    # **2026-08-30 に、この分岐を畳みました**（最適化の回）。
+    #     ここは長らく「入るかどうかは **この API では確かめられません**」と書いて
+    #     両方を出していました。**API の話としては、それは正しい。**
+    #     ですが**これは API の問いではなく、公表されている条件の問い**です ——
+    #     取りに行けば載っています。取りに行かなかったせいで、
+    #     **4000時間の門が 70倍 近く に見える枝**（349日）が5日 生き続けました。
+    #     出典は下の `_H4000_SOURCE`。**覆る条件もそこ。**
+    L.append(f"    **ショートの分は、この4000時間に入りません**（{_H4000_SOURCE}）——")
+    L.append(f"      原文: 「{_H4000_QUOTE}」")
+    L.append(f"      **効くのは長尺だけ** … 到達 {_fmt((d['hours_long'] or 0) / HOUR_DOOR * 100, 4)}%、"
              f"あと **{_fmt(d.get('days_to_4000h_if_only_long'),0)}日**")
+    L.append(f"      （入れて数えたら あと {_fmt(d.get('days_to_4000h_if_shorts_count'),0)}日 に見えます。"
+             f"**この数は使わないこと** —— 残してあるのは、差の大きさを見るためです）")
     L.append(f"    もう1つの道（ショート90日で1000万再生）… いまの速さなら90日で "
              f"{_fmt(d.get('shorts_views_90d_at_current_pace'),0)}再生。"
              f"**{_fmt(d.get('shorts_10m_multiple'),0)}倍**要る"
              f"（{_fmt(d.get('shorts_10m_views_per_day_needed'),0)}再生/日）")
-    L.append("    **この2つの道の条件そのものは、API からは読めません**"
-             "（公開されている制度の話で、ここでの実測ではありません）。")
+    c = d.get("ceiling") or {}
+    if c.get("views_per_day_ceiling"):
+        L.append("")
+        L.append("  **「もっと速く出せば開くのか」—— 天井で解き直す**"
+                 "（`src/day_cap.cap()`。**それ以上 出したぶんは 0再生**）")
+        L.append(f"    再生が付く上限 **{_fmt(c['cap_per_day'],0)}本/日** × 熟した本の実測"
+                 f" {_fmt(c.get('views_per_video_mature'),0)}回 ＝ **{_fmt(c['views_per_day_ceiling'],0)}再生/日**"
+                 f"（いまは {_fmt(d.get('views_per_day_recent7'),0)}）")
+        if c.get("days_at_ceiling"):
+            L.append(f"    → 登録の門は {_fmt(d.get('days_at_current_pace'),0)}日 →"
+                     f" **{_fmt(c['days_at_ceiling'],0)}日**。"
+                     f"**天井まで出しても {_fmt(c.get('days_saved_by_ceiling'),0)}日"
+                     f"（{_fmt((c.get('ceiling_speedup') or 0)*100,0)}%）しか縮みません。**")
+            L.append("    **＝ 登録の門を縛っているのは密度ではなく変換のほうです。**"
+                     "（`--lever density` を引く前に、ここを読むこと）")
+        if c.get("x_over_pace"):
+            L.append(f"    {_fmt(c['horizon_days'],0)}日 で開けるには"
+                     f" **{_fmt(c['views_per_day_for_horizon'],0)}再生/日**"
+                     f"（いまの {_fmt(c['x_over_pace'],2)}倍・**天井の"
+                     f" {_fmt(c.get('x_over_ceiling'),2)}倍**）、"
+                     f"または変換 **{_fmt(c.get('subs_per_1000_for_horizon'),4)}人/千再生**"
+                     f"（いまの {_fmt((c.get('subs_per_1000_for_horizon') or 0) / (s['forms'].get('ショート',{}).get('subs_per_1000') or 1),2)}倍）")
+    if c.get("years_long_at_ceiling"):
+        L.append(f"    道A も天井で: 長尺 {_fmt(c.get('long_minutes_per_day_ceiling'),0)}分/日"
+                 f" → **{_fmt(c['years_long_at_ceiling'],1)}年**"
+                 f"（{_fmt(c['horizon_days'],0)}日 で開けるには"
+                 f" {_fmt(c.get('long_minutes_for_horizon'),0)}分/日 ＝ 天井の"
+                 f" {_fmt(c.get('x_long_over_ceiling'),0)}倍）")
+    L.append(f"    **この2つの道の条件そのものは、API ではなく公表ページが出どころです**"
+             f"（{_H4000_SOURCE}）—— 「1,000人 ＋ 4,000時間/12か月」**または**"
+             f"「1,000人 ＋ ショート1,000万再生/90日」。**どちらの道でも 1,000人 は要ります。**"
+             f" **上の実測ではありません。日付を見て、古ければ取り直すこと。**")
     L.append("")
 
     h = s.get("health") or {}
@@ -710,6 +864,28 @@ def main() -> int:
             print("data/shorts_subs.json がありません（--offline は前回の控えを読みます）")
             return 1
         summary = json.loads(OUT_JSON.read_text(encoding="utf-8"))
+        # **古い控えにも、天井の欄を足してから出す**（2026-08-30）。
+        #     この欄は 08-30 に足したので、それ以前の控えには入っていません。
+        #     入っていないと `--offline` が黙って**天井の無い姿**を出し、
+        #     「もっと速く出せば開く」に読めます。**API は要りません**
+        #     （控えの中の数だけで解けます）。
+        _door = summary.get("door") or {}
+        if _door and not _door.get("ceiling"):
+            try:
+                from src import day_cap as _dc
+                _cap = _dc.cap()
+            except Exception:
+                _cap = None
+            _mpd = (_door.get("minutes_per_day_recent7") or {})
+            _door["ceiling"] = _ceiling_economics(
+                _cap,
+                ((summary.get("cohorts") or {}).get("ショート") or {}).get("mature") or {},
+                _door.get("views_needed_at_measured_rate"),
+                _door.get("views_per_day_recent7"),
+                _door.get("remaining_to_1000"),
+                _door.get("days_to_4000h_if_only_long"),
+                _mpd.get("長尺"),
+                (summary.get("forms") or {}).get("長尺", {}).get("avg_view_seconds"))
     else:
         raw = collect(args.since, today.isoformat(), with_channel=not args.no_channel)
         summary = summarize(raw, args.min_age_days, args.conf, today)

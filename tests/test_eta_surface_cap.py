@@ -31,6 +31,8 @@ _spec = importlib.util.spec_from_file_location("eta_surface_mod", ROOT / "script
 eta = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(eta)
 
+import _eta_pin  # noqa: E402
+
 # 2026-08-20 の実測（`data/rpm_mix.jsonl` の最後の点）
 MIX = {
     "at": "2026-08-20",
@@ -44,10 +46,15 @@ MIX = {
     "long_share_max": 0.13045460628840652,
     "imp_day": 37.588235294117645,
     # **この点は「いま続いている量」を自分で持ちます**（2026-08-25 に足した）。
-    #     持たせないと、`plan()` が `data/reach.jsonl`（実データ）から測り直し、
-    #     **この検査の当たりが、その日の帳面で動きます** ——
-    #     `docs/trigger_main.md` §4「既知の当たりを実データの偶然に置かないこと」。
     #     2026-08-20 の点なので、当時の面（37.6回/日）をそのまま置きます。
+    #
+    # **これだけでは止まりません**（2026-08-27）。`plan()` は
+    #     `imp_day_recent` が既に在っても `data/reach.jsonl` から測り直します
+    #     —— 点が持っているのは**平均**で、段2 が読むのは**中央値**、
+    #     しかも点には実測 CTR が入っていないからです（`scripts/eta.py` の
+    #     その行のコメント）。**当たりを実データの偶然に置かない**ためには、
+    #     `imp_day_recent` を持たせるだけでは足りず、
+    #     **測り直す道そのものを塞ぐ**必要があります → `_plan()` の `_recent_surface`。
     "imp_day_recent": 37.588235294117645,
     "imp_day_recent_days": 7,
     "why": "長尺の面 37.6回/日 × CTR100% ＝ 再生の 13.0% が上限 → 実効RPM ¥313",
@@ -68,8 +75,41 @@ def _measured(**over):
     return base
 
 
+def _pin_surface(monkeypatch) -> None:
+    """**その日の `data/reach.jsonl` を、この検査に混ぜない。**
+
+    `plan()` は帳面が読める回は必ず面を測り直します（2026-08-27）。
+    ここが見たいのは 2026-08-20 の点そのものなので、測り直す道を塞ぎます
+    —— `docs/trigger_main.md` §4「既知の当たりを実データの偶然に置かないこと」。
+    **点に `imp_day_recent` を持たせるだけでは塞げません。**
+    """
+    monkeypatch.setattr(eta, "_recent_surface", lambda *a, **k: None)
+
+
+def _pin_rule(monkeypatch) -> None:
+    """**オーナー規則（1日1本）を、この検査に当てない。**（2026-08-31）
+
+    この file の主題は**面**（インプレッション）と**混ざり方の天井**で、
+    1日に何本 置くかではありません。ところが 2026-08-31 に
+    `analyse()` の天井（`_ceiling_per_day()`）が規則を読むようになり、
+    分母が **10本/日 → 1本/日** に落ちました。`ceiling_short` はその逆数なので
+    **10倍**（実測: `views_per_video=2,400` の点で 0.89 → **8.87**）——
+    「天井が足りている側の枝」が標本から消えます。
+
+    **形は1行も壊れていません。** `_pin_surface` / `MIX` とまったく同じ扱いで、
+    規則を `day_cap` の上へ退けて、**天井を観測（10本/日）に戻します**。
+    規則そのものは `tests/test_house_rule.py` / `tests/test_eta_day_cap.py` が
+    主題として持ちます（**隠さず、置き場所を分けています**）。
+    """
+    _eta_pin.pin_house_rule(monkeypatch, eta, _eta_pin.PLAN_DENSITY)
+
+
 def _plan(monkeypatch, mix=MIX, **over):
     monkeypatch.setattr(eta.rpm_mix, "last", lambda *a, **k: mix)
+    _pin_surface(monkeypatch)
+    # 規則（1日1本）は、この file の主題ではありません。理由は `_pin_rule` の
+    #     docstring。**規則の効きは `tests/test_eta_house_rule.py` が主題として持ちます。**
+    _pin_rule(monkeypatch)
     m = _measured(**over)
     return eta.plan(m, eta.analyse(m))
 
@@ -107,6 +147,7 @@ def test_腕rpmを何倍にしても面が増えるまで天井を越えない(m
     **実効 RPM は ¥313 のまま**でなければなりません。
     """
     monkeypatch.setattr(eta.rpm_mix, "last", lambda *a, **k: MIX)
+    _pin_surface(monkeypatch)
     m = _measured()
     a = eta.analyse(m)
     a["scale"] = dict(eta.DEFAULT_SCALE, rpm=5.0)

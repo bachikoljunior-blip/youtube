@@ -51,6 +51,8 @@ from pathlib import Path
 
 import yaml
 
+from . import house_rule
+
 ROOT = Path(__file__).resolve().parent.parent
 
 #: 「いま続いている量」を測る窓（日）。**平均でも最大でもない、段取りが乗る数。**
@@ -78,6 +80,11 @@ PAIRS = ROOT / "config" / "pairs.yaml"
 #: **YouTube 自身が「長尺」と数えた動画IDの控え**（`src/rpm_mix.py --record` が書く）。
 #: この道具は API を叩かないので、**測った側が置いていったものを読みます。**
 FORMS = ROOT / "data" / "video_forms.json"
+
+#: **この機械が「長尺として作った」と書き残した帳面**（`scripts/batch_build.py --long`）。
+#: `data/video_forms.json` は **YouTube が分類し終えた本**しか持ちません ——
+#: つまり「まだ公開していない本」と「公開したが再生0の本」が丸ごと落ちます。
+BATCH_RUNS = ROOT / "data" / "batch_runs.jsonl"
 
 #: 段4（月20万）が長尺に置いている月あたり再生数。`scripts/eta.py` の
 #: `TARGET_YEN 200,000` ÷ `RPM_SCENARIOS["長尺 お金 低"] 400` × 1000。
@@ -127,8 +134,62 @@ def measured_long_ids(forms_path: Path | None = None) -> set[str]:
     return {vid for vid, form in forms.items() if form == "長尺"}
 
 
+def built_long_ids(path: Path | None = None) -> set[str]:
+    """**この機械が「長尺として作った」と書き残した動画ID**（`data/batch_runs.jsonl`）。
+
+    ## なぜ要るか（2026-08-26 に足した。**同じ帳面の7件目の同じ穴**）
+
+    `long_ids()` は「**YouTube が長尺と数えた本**」を正本にしています。
+    正しいのですが、**その名簿に載るのは、公開されて再生の付いた本だけ**です。
+    だから **これから公開する本は、1本も入りません。**
+
+    そのせいで `publishes_per_day()` が数えているのは
+    「その日に公開した長尺のうち、**もう分類が終わったもの**」で、
+    **公開日の本数そのものではありません**。実測（2026-08-26）:
+
+        08/21 の長尺の公開   `long_ids()` だけ **5本** ／ 作った帳面と足すと **7本**
+        公開1本あたりの面    **396.8回** → **248.0回**（**60% 上振れていた**）
+
+    **上振れの向きが悪い。** `per_publish` は「公開を止めていた日を分母から外す」
+    ために置いた数で、**段2 の面が足りているかの判断に直に入ります。**
+    分母（公開本数）が小さいほど「1本あたりよく回っている」と出るので、
+    **測り漏らすほど、面は足りているように見えます。**
+
+    ## 混ざらないことは実測で確かめました
+
+    `long: true` で作った 43本 のうち、YouTube が**ショートと数えた本は 0本**
+    （`data/video_forms.json` と突き合わせ・2026-08-26）。逆に、
+    測った長尺 12本 のうち 7本 はこの帳面より古く、載っていません。
+    **どちらの穴も、足せば塞がります**（`long_ids()` の docstring と同じ形）。
+
+    **覆る条件**: `long: true` で作った本が、YouTube にショートと数えられた
+    （`data/video_forms.json` に「ショート」で載る）ことが1本でもあったら、
+    ここは足し算ではなく突き合わせに変えること。
+    """
+    p = path or BATCH_RUNS
+    out: set[str] = set()
+    if not p.exists():
+        return out
+    for line in p.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not row.get("long"):
+            continue
+        for res in row.get("results") or []:
+            vid = res.get("video_id")
+            if vid:
+                out.add(str(vid))
+    return out
+
+
 def long_ids(pairs_path: Path | None = None,
-             forms_path: Path | None = None) -> set[str]:
+             forms_path: Path | None = None,
+             batch_path: Path | None = None) -> set[str]:
     """長尺の動画ID ＝ **測った控え ∪ `config/pairs.yaml`**。
 
     ## なぜ足すのか（2026-08-24 に直した。**天井の分母が半分だった**）
@@ -166,7 +227,392 @@ def long_ids(pairs_path: Path | None = None,
     if p.exists():
         raw = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
         out |= set(dict(raw.get("pairs", {})).values())
+    # **作った帳面も足す**（2026-08-26。`built_long_ids()` に実測）。
+    #     測った控えは「公開されて再生の付いた本」しか持たないので、
+    #     **これから公開する本が1本も入りません** —— `publishes_per_day()` が
+    #     公開日の本数を 5/7本 に取り違えていました。
+    #     **足したぶん、長尺の面は 3,435 → 3,683回 に増えます**（ショートから移る）。
+    #     保存済みの点との段差はここです。**向きは「より正しい側」**で、
+    #     08/22 以降の最大の1日は 337 → 492回（`config/hypotheses.yaml` の
+    #     09/05 の前提が見ている 643回 の線は、どちらでも越えません）。
+    out |= built_long_ids(batch_path)
     return out
+
+
+def _ledger_by_id(ledger_path: Path | None = None) -> dict[str, dict]:
+    """`video_id` → 控えの行。**同じIDが複数行にあるときは後の行が勝ちます。**
+
+    `data/uploaded.jsonl` は追記だけの帳面で、`scripts/reschedule.py` が
+    予約を動かすと**同じ本が別の `at` でもう1行**入ります。だから
+    「いま何日に何本 置いてあるか」を数える側は、**行ではなく id で**数えます
+    （規則の出どころは `src/day_cap._long_by_duration()`「後の行が勝ちます」）。
+
+    **数え直しの実測は `publishes_per_day()` の節**にあります。
+    """
+    out: dict[str, dict] = {}
+    p = ledger_path or LEDGER
+    if not p.exists():
+        return out
+    for line in p.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        vid = row.get("video_id")
+        if vid:
+            out[str(vid)] = row
+    return out
+
+
+def publishes_per_day(longs: set[str] | None = None,
+                      ledger_path: Path | None = None) -> dict[str, int]:
+    """**その日に公開した長尺の本数**（`YYYYMMDD` → 本数）。
+
+    ## なぜ要るか（2026-08-26 に足した。**この帳面の6件目の同じ穴**）
+
+    `BURST_SHARE` の註が、この帳面でいちばん大事なことを既に書いています ——
+
+    > 08/21 の 1,285回 のうち **1,276回（99.3%）が、その日に公開した5本**に
+    > 付いています。…長尺の面は「立っている面」ではなく、**公開日の立ち上がりだけ**です。
+
+    **そこまで分かったうえで、次の行が「続いている量」を1日あたりで測っています。**
+    直近7日の中央値 **8.0回/日** で、`scripts/eta.py` はそれを読んで
+    「**22.4倍 足りません。足りないのはインプレッションで、サムネと題（CTR）では
+    動きません**」と印字します。
+
+    **その7日のうち、長尺を1本でも公開した日は1日だけです**（08/21）。
+    残り6日は**公開が0本**で、面が立ち上がる元がありません。
+    **中央値は、その6日のほうを拾います。**
+
+    これは `summary()` の docstring が書いている穴と**同じ形の、1段 下**です ——
+    あちらは「最初の20日は面そのものが存在しない日（長尺の公開前）で、
+    平均はそれを分母に数えていた」。**こちらは、公開の止まっていた日を
+    『続いている量』の分母に数えています。**
+
+    面が公開で立つなら、続く量を決めるのは**カレンダーではなく公開の本数**です。
+    だから、この関数が返す本数で割った `per_publish` を一緒に出します。
+
+    **控えの `at`（予約時刻）から数えます。** `at` の無い本（2026-08-16 より前に
+    公開したぶん）は数えられないので、**古い窓では本数が下振れします** ——
+    直近の窓（`RECENT_DAYS`）でだけ使うこと。
+
+    ## **1行 ＝ 1本ではありません**（2026-08-30・最適化の回。**実測で見つけた**）
+
+    ここは長らく `out[day] += 1` を**行ごと**に撃っていました。
+    `data/uploaded.jsonl` は**追記だけの帳面**なので、同じ `video_id` が
+    何度も出ます —— 実測（この回に数えた・全 798行）:
+
+        distinct `video_id`   **683**（＝ 余分な行 **115**）
+        同じ行がそのまま2回以上   **81行**
+        `at` の違う行を持つ id     **34件**（`reschedule.py` で動かした本）
+
+    後者が効きます。**予約を動かした本は、古い日と新しい日の両方で数えられます。**
+    実測（この回・`publishes_per_day()` の返りをそのまま比べた）:
+
+        これから7日     行で数える **8.43本/日**  ／  id で数える **4.29本/日**（**1.97倍**）
+        全部の日        行で数える   191本      ／  id で数える   122本（**1.57倍**）
+        いちばん外れた日 20260906  行 **14** ／ 実際 **3**（**4.7倍**）
+
+    **この関数の返りは2か所へ入ります。**`surface_forecast()` が
+    「これから先の面 ＝ 公開1本あたり × 本数/日」で**掛け**、
+    `summary()` 側の `per_publish` は「面 ÷ 本数」で**割り**ます。
+    だから `scripts/eta.py` の段2 に出ていた
+    「公開1本あたり 274.8回 × 長尺 **7.86本/日** ＝ 面 2,159回/日」は、
+    **分子が約2倍、1本あたりが約1.6分の1**でした。
+
+    **同じ帳面の他の読み手は、もうこの規則で読んでいます** ——
+    `src/day_cap._long_by_duration()`「**後の行が勝ちます**」／
+    `src/build_perf.ledger()`／`src/judgeable._publish_by_topic`／
+    `scripts/deadline_check.py`。**ここだけ合流していませんでした**
+    （`day_cap` が 2026-08-30 に合流したのと同じ形の、1つ隣）。
+
+    **覆る条件**: 控えが「1行 ＝ 1本」になったら（追記をやめて上書きにしたら、
+    または `video_id` の無い行を数える必要が出たら）、この節ごと畳むこと。
+    検査は `tests/test_publishes_per_day_dedup.py`。
+    """
+    longs = long_ids() if longs is None else longs
+    out: dict[str, int] = {}
+    for vid, row in _ledger_by_id(ledger_path).items():
+        at = row.get("at")
+        if not at or vid not in longs:
+            continue
+        # ---- **作り置きは供給ではありません**（規則2・2026-08-31 のオーナー原文
+        #      「使わなければ良いだけ前提にも再利用もしない」の2つ目）。
+        #      ここは `surface_forecast()` が「これから先の面」を掛ける分母 ＝
+        #      **この行を落とさないと、外して非公開にする本で面が立ちます。**
+        #      落とすのは **未来の予約 かつ 規則より前に作った本**だけで、
+        #      公開済み（実績）と、規則の下で作る本は残ります。
+        #      判定は `src.house_rule.is_stockpile()` の1か所です（写さないこと）。
+        if house_rule.is_stockpile(row):
+            continue
+        day = str(at)[:10].replace("-", "")
+        out[day] = out.get(day, 0) + 1
+    return out
+
+
+def surface_forecast(sm: dict, pubs: dict[str, int] | None = None,
+                     days: int = RECENT_DAYS,
+                     today: str | None = None,
+                     make_per_day: float | None = None,
+                     slots_per_day: int | None = None,
+                     stock: int | None = None) -> dict | None:
+    """**これから先の面（インプレッション/日）を、予約の長尺の本数から出す。**
+
+    ## なぜ要るか（2026-08-26。**この帳面の8件目の同じ穴**）
+
+    `per_day_sustained`（直近7日の中央値）は「**続いている量**」の名で、
+    実際に測っているのは**カレンダーの1日あたり**です。ところが
+    `publishes_per_day()` の docstring が既にこう書いています ——
+
+    > 面が公開で立つなら、続く量を決めるのは**カレンダーではなく公開の本数**です。
+
+    そこまで書いたうえで、`scripts/eta.py` の段2 は中央値の **17.0回/日** を読み、
+    「**10.5倍 足りません。足りないのはインプレッションで、サムネと題では
+    動きません**」と印字していました。**その7日のうち5日は長尺の公開が0本**です。
+    公開が0本の日の面を「続いている量」と呼ぶと、**測っているのは
+    「公開を止めたら面はいくつか」**であって、段2 の問い
+    （「門2a を 450日 かけて開けられるか」）の答えではありません。
+
+    ## 何を返すか
+
+    **予約は控えに入っています**（`data/uploaded.jsonl` の `at`）。
+    だから「これから N日 で長尺を何本 公開する予定か」は、API を1単位も
+    使わずに数えられます。面はそこから出します:
+
+        面（回/日） ＝ 公開1本あたり `per_publish` × これからの公開 本/日
+
+    実測（2026-08-26）: `per_publish` **248.0回** × これから7日の **2.43本/日**
+    ＝ **603回/日**（段2 の合格点 178回/日 の **3.4倍**）。
+    **同じ帳面の中央値は 17.0回/日** —— どちらも正しく、**問いが別**です。
+
+    ## いちばん大事なのは `dry_days` のほう
+
+    予約を日ごとに数えると、**09/08〜09/20 の 13日 が長尺 0本**でした
+    （2026-08-26 の実測）。面が公開で立つ以上、**そこで面は 08/15〜08/20 と
+    同じ 4〜17回/日 へ落ちます。** 「面が足りない」のではなく
+    **「予定表に穴がある」**で、直す先はサムネでも題でもありません。
+
+    **返り**（測れなければ `None`。回を止めない・推測で埋めない）:
+
+        per_publish       公開1本あたりの面（回）
+        per_day_planned   これから `days` 日の見込み（回/日）
+        pubs_per_day      これから `days` 日の長尺の公開（本/日）
+        planned           その内訳（`YYYYMMDD` → 本）
+        dry_days          これから60日で長尺の公開が0本の日（連なりの先頭から）
+        dry_span          いちばん長い連なり `(始まり, 終わり, 日数)`
+        dry_fill          **その穴は、作る速さで自然に埋まるか**（下）
+
+    ## `dry_span` を「直せ」と読ませないこと（2026-08-26 夜に足した）
+
+    上の註は「直す先はサムネでも題でもなく、**その 13日 に長尺を置くこと**」と
+    書いていました。**それは、たいていの回で間違った手を指します。**
+
+    予約の時刻を決めているのは `uploader.next_publish_at()` だけで、
+    **その時刻で最初に空いている日**へ置きます ＝ **手前から順に埋まります。**
+    だから未来の空き日は「穴」ではなく「**まだ順番が来ていない日**」で、
+    作りつづけていれば、その日が来る前に頭が通過して埋まります。
+
+    実測 2026-08-26（`data/uploaded.jsonl` の長尺 28本・全部 08/24 以降のアップ）::
+
+        公開 08/29 [3.2 3.3 3.4 3.7日前]  …… 頭は 5本/日 で前へ進む
+        公開 09/06 [10.9 11.7日前]
+        公開 09/20〜10/10 [25〜45日前]     …… 1日1本だった頃の置き方の残り
+        → 空いているのは **09/07〜09/19**（頭と、古い置き方の残りのあいだ）
+
+    埋まるかどうかを決めるのは、**穴までの日数と、作る速さ**です::
+
+        穴の手前にある空き枠  ＝ Σ max(0, 1日の枠 − その日の予約)
+        埋まるまでの日数      ＝ 空き枠 ÷ 作る速さ（本/日）
+        穴の日までの日数 より短ければ、**放っておいて埋まります**
+
+    **足りないときに要るのは「その日に置くこと」ではなく、作る速さのほうです。**
+    既にある本を後ろへ動かして穴を埋めると、判定が遅れるぶん**必ず損**します
+    （`scripts/queue_lag.py` が数えているのと同じ日数）。
+
+    `make_per_day` / `slots_per_day` を渡さなければ `dry_fill` は `None`
+    （**測っていないことを、埋まる/埋まらないのどちらにも倒さない**）。
+    """
+    from datetime import date, timedelta
+
+    long = (sm or {}).get("長尺") or {}
+    per_pub = long.get("per_publish")
+    if not per_pub or per_pub <= 0:
+        return None
+    pubs = publishes_per_day() if pubs is None else pubs
+    start = date.fromisoformat(today) if today else date.today()
+    horizon = [(start + timedelta(days=i)).strftime("%Y%m%d") for i in range(days)]
+    planned = {d: int(pubs.get(d, 0)) for d in horizon}
+    n = sum(planned.values())
+    # **穴を探すのは、予定表が続いているあいだだけ**（2026-08-26 に踏んだ）。
+    #     控えの最後より先は「長尺が0本」ではなく「**まだ何も置いていない**」で、
+    #     混ぜると必ずいちばん長い連なりがそこになります（実測 10/06〜10/24 の19日）。
+    #     予約が切れていること自体は `status.py`「予約の先」が別に鳴らします。
+    last = last_scheduled_day()
+    far: list[str] = []
+    for i in range(365):
+        d = (start + timedelta(days=i)).strftime("%Y%m%d")
+        if last and d > last:
+            break
+        far.append(d)
+    dry: list[str] = [d for d in far if not pubs.get(d)]
+    best: tuple[str, str, int] | None = None
+    run: list[str] = []
+    for d in far:
+        if pubs.get(d):
+            run = []
+            continue
+        run.append(d)
+        if best is None or len(run) > best[2]:
+            best = (run[0], run[-1], len(run))
+    return {"per_publish": float(per_pub),
+            "per_day_planned": float(per_pub) * n / len(horizon),
+            "pubs_per_day": n / len(horizon),
+            "planned": planned,
+            "last_scheduled": last,
+            "dry_days": dry,
+            "dry_span": best,
+            "dry_fill": dry_fill(best, pubs, make_per_day, slots_per_day,
+                                 today=start, stock=stock)}
+
+
+def dry_fill(span: tuple[str, str, int] | None,
+             pubs: dict[str, int] | None,
+             make_per_day: float | None,
+             slots_per_day: int | None,
+             today=None,
+             stock: int | None = None) -> dict | None:
+    """**その穴は、作る速さで自然に埋まるか。**（`surface_forecast` の説明を読むこと）
+
+    返り（測れなければ `None` —— **どちらにも倒さない**）::
+
+        open_slots   穴の手前にある空き枠（本）
+        reach_days   その枠が埋まるまでの日数（＝ open_slots ÷ 作る速さ）
+        gap_days     いまから穴の初日までの日数
+        ok           reach_days <= gap_days（＝ 放っておいて埋まる）
+        short_per_day 足りないとき、作る速さをいくつ上げれば間に合うか（本/日）
+        bound        何が縛っているか（`"render"` ＝ 作る速さ ／ `"topics"` ＝ 題材）
+        stock        いま在る長尺向けのテーマ（本）。渡されなければ `None`
+        topics_needed        穴の手前を埋めるのに、あと何本の**新しい題材**が要るか
+        topics_per_day_needed その本数を `gap_days` で割った、要る題材の速さ（本/日）
+
+    ## `make_per_day` だけで見ると、必ず「埋まります」に倒れます（2026-08-29）
+
+    **`make_per_day` は描画の速さで、題材の有無を1つも見ていません**
+    （`eta.long_supply_per_day()` は `data/batch_runs.jsonl` の
+    「作れた本」を数えます ＝ **題材が在った日の記録**）。
+    実測 2026-08-29: 描画 **9.14本/日**・空き枠 17本 → `reach_days` **1.9日**、
+    穴まで 15日 なので **`ok=True`**。同じ時刻に
+
+        `src/supply.py`        長尺向けの在庫 **0本**
+        `scripts/topic_forge.py --list`  7日ぶんで取れるのは最大 **0本**
+
+    **描画は速いが、描くものが1本も無い状態**です。それでも
+    `scripts/eta.py` は「**放っておいて埋まります／その日に置きにいかないこと**」
+    と印字していました —— **4,000時間の門に入るのは長尺だけ**なので、
+    これは門に直結した面について「手を出すな」と言っていたことになります。
+
+    `eta._long_make_per_day()` の docstring は、この壊れ方を名指ししています ——
+    「**願望で割ると『埋まります』と出て、実際には空のまま公開日が来ます**」。
+    あちらが防いでいたのは `measured: False`（計画値へ落ちる枝）だけで、
+    **実測なのに測っている段が違う**、この枝は素通りでした。
+
+    ## だから、題材の側でも割ります
+
+    `stock` を渡すと、**いま在る題材で埋められる本数**が上限になります::
+
+        埋められる ＝ min(空き枠, 在庫)          ← 新しい題材を作らない場合
+        要る新題材 ＝ max(0, 空き枠 − 在庫)
+
+    **`stock` を渡さなければ、これまでと1文字も変わりません**
+    （`bound` は `None`。測っていないことを、埋まる/埋まらないのどちらにも倒さない）。
+
+    **`ok` は両方を通ったときだけ真**です。`stock` が足りなければ
+    `bound="topics"` を返し、**直す先は描画ではなく `src/calc/` の節**になります
+    （`scripts/topic_forge.py --list` の「(2) 既にある表に節を足して」）。
+
+    覆る条件: 長尺が `s-` 以外の題以外からも作れるようになったら、
+    `stock` の数え方（`src/supply.py` の `surfaces()["long"]["stock"]`）が
+    先に外れます。`tests/test_reach_dry_fill.py` がそこを押さえています。
+    """
+    from datetime import date, timedelta
+
+    if not span or not make_per_day or make_per_day <= 0 or not slots_per_day:
+        return None
+    start = today or date.today()
+    try:
+        first = date(int(span[0][:4]), int(span[0][4:6]), int(span[0][6:]))
+    except ValueError:
+        return None
+    gap = (first - start).days
+    if gap <= 0:
+        return None
+    pubs = pubs or {}
+    open_slots = 0
+    for i in range(gap):
+        d = (start + timedelta(days=i)).strftime("%Y%m%d")
+        open_slots += max(0, int(slots_per_day) - int(pubs.get(d, 0)))
+    reach = open_slots / float(make_per_day)
+    need = (open_slots / gap) if gap else None
+    render_ok = reach <= gap
+    out = {"open_slots": open_slots, "reach_days": reach, "gap_days": gap,
+           "ok": render_ok, "make_per_day": float(make_per_day),
+           "slots_per_day": int(slots_per_day),
+           # **埋まる回でも、どこで割れるかを返すこと。** 「埋まります」だけだと
+           #     次の回は作る速さを落としてよいと読みます（余裕は実測 1.9日 しかない）。
+           "need_per_day": need,
+           "short_per_day": (None if render_ok
+                             else max(0.0, need - float(make_per_day))),
+           "bound": None, "stock": None,
+           "topics_needed": None, "topics_per_day_needed": None}
+    if stock is None:
+        # **測っていない側へ倒さない。** ここを `0` で埋めると、在庫を
+        #     読めなかった回が全部「題材が無い」になります（docstring 参照）。
+        if not render_ok:
+            out["bound"] = "render"
+        return out
+    stock = max(0, int(stock))
+    short_topics = max(0, open_slots - stock)
+    out["stock"] = stock
+    out["topics_needed"] = short_topics
+    out["topics_per_day_needed"] = (short_topics / gap) if gap else None
+    # **両方 通ったときだけ「埋まります」**。描画が速くても、描くものが無ければ
+    #     公開日は空のまま来ます（2026-08-29 の実測: 描画 9.14本/日・在庫 0本）。
+    out["ok"] = render_ok and short_topics == 0
+    if not out["ok"]:
+        # **縛っている側を名指しすること。** 「埋まりません」だけだと、
+        #     次の回は既定の助言（＝作る速さを上げろ）へ行きます。
+        out["bound"] = "topics" if short_topics > 0 else "render"
+    return out
+
+
+def last_scheduled_day(ledger_path: Path | None = None) -> str | None:
+    """**控えに入っている最後の予約日**（`YYYYMMDD`）。無ければ `None`。
+
+    形は問いません（長尺でもショートでも）。ここが要るのは
+    「**予定表がどこまで続いているか**」だけで、その先の空白は
+    「長尺を置いていない日」ではなく「まだ何も置いていない日」だからです。
+
+    **`max` を取るので、動かした本の古い予約が末尾に化けます**
+    （2026-08-30 に直した）。`reschedule.py` が本を前へ動かすと、控えには
+    古い `at` の行が残ります。行ごとに `max` を取ると、**もう誰も居ない日**が
+    「予約の先」になります —— 実測（この回）: 行で取ると **20261012**、
+    id で取ると **20261009**（**3日 長く見えていた**）。
+    予約が切れる日を早めに鳴らす側の数字なので、**長く見える向きが危ないほう**です。
+
+    **覆る条件**: `publishes_per_day()` と同じ（控えが追記でなくなったら畳む）。
+    """
+    best: str | None = None
+    for row in _ledger_by_id(ledger_path).values():
+        at = row.get("at")
+        if not at:
+            continue
+        day = str(at)[:10].replace("-", "")
+        if len(day) == 8 and (best is None or day > best):
+            best = day
+    return best
 
 
 def _imp(row: dict) -> float:
@@ -218,8 +664,13 @@ def _median(vals: list[float]) -> float:
     return s[n // 2] if n % 2 else (s[n // 2 - 1] + s[n // 2]) / 2
 
 
-def summary(rows: list[dict], longs: set[str]) -> dict:
+def summary(rows: list[dict], longs: set[str],
+            publishes: dict[str, int] | None = None) -> dict:
     """形べつに集計する。
+
+    `publishes` は `{"YYYYMMDD": その日に公開した長尺の本数}`。
+    省略すると控え（`data/uploaded.jsonl`）から数えます
+    （`publishes_per_day()`。**なぜ本数で割るのかは、そちらの註**）。
 
     返り: `{"長尺": {...}, "ショート": {...}, "days": n, "dates": [...],
     "last_day": "20260821"}`。**`last_day` は「積んである最後の日」**で、
@@ -318,6 +769,26 @@ def summary(rows: list[dict], longs: set[str]) -> dict:
         else:
             v["per_day_sustained"] = v["per_day_recent"]
             v["per_day_sustained_basis"] = f"直近{len(vals)}日の平均"
+        # **公開1本あたりの面**（2026-08-26 に足した。`publishes_per_day` の註）。
+        # 上の `per_day_*` は全部カレンダーの1日あたりで、**公開が0本の日を
+        # 分母に数えます。** 面が公開の立ち上がりで立つなら、そちらは
+        # 「続いている量」ではなく「**公開を止めていた量**」です。
+        # **上の数は1つも変えていません**（保存済みの点と比べられなくなるため）。
+        # ここで足すのは読みのほうだけで、判断は呼び側がします。
+        if key == "長尺":
+            pubs = publishes_per_day(longs) if publishes is None else publishes
+            n_pub = sum(pubs.get(d, 0) for d in recent)
+            v["recent_publishes"] = n_pub
+            v["recent_publish_days"] = sum(1 for d in recent if pubs.get(d, 0))
+            v["recent_zero_publish_days"] = len(recent) - v["recent_publish_days"]
+            v["per_publish"] = (
+                (sum(series[d] for d in recent) / n_pub) if n_pub else None)
+            if v["recent_zero_publish_days"]:
+                v["per_day_sustained_basis"] += (
+                    f"。**この{len(recent)}日のうち"
+                    f"{v['recent_zero_publish_days']}日は長尺を1本も公開していません**"
+                    + (f"（公開1本あたりでは {v['per_publish']:,.1f}回"
+                       f" ／ 公開 {n_pub}本）" if n_pub else "（公開 0本）"))
     return {"長尺": out["長尺"], "ショート": out["ショート"], "days": days,
             "dates": dates, "last_day": dates[-1] if dates else None}
 
@@ -370,9 +841,24 @@ def render(rows: list[dict], longs: set[str] | None = None) -> str:
             f"  [!] 段4は長尺で **月 {g['need_views_month']:,.0f}再生** を立てています。"
             f"いまの面は **CTR 100% でも月 {g['ceiling_views_month']:,.0f}回**"
             f" ＝ **{g['short_by']:,.0f}倍 足りません**",
-            "      **足りないのはインプレッションです。**"
+            "      **段4 に対しては、足りないのはインプレッションです。**"
             "サムネと題（CTR）をいくら直しても、この面は動きません",
+            # **どの合格点に対して言っているかを、同じ行に書くこと**（2026-08-27）。
+            #     ここは長らく「**足りないのはインプレッションです**」と
+            #     **無条件の断言**で終わっていました。同じ回の `scripts/eta.py` は
+            #     段2（門2a・450日）の合格点に対して
+            #     「**面は足りています（1.8倍）** —— 効くのは CTR のほう」と印字しており、
+            #     **2つの道具が、同じ帳面から次に引く腕を正反対に名指し**していました
+            #     （2026-08-27 の回が 25分 使って突き合わせた。「同じ帳面の読み手2つが
+            #      逆を向く」の5件目）。**どちらも自分の問いには正しい** ——
+            #     段4 は 月20万円（500,000回/月）、段2 は 門2a（4,000時間）で、
+            #     **合格点が桁で違います。**
+            #     **印字が問いを名乗らないと、読む側は片方だけを持って帰ります。**
+            "      （**段2（門2a・4,000時間）の合格点は桁が下で、そちらでは"
+            "『面は足りている・効くのは CTR』と出ます** —— "
+            "`scripts/eta.py` の段2 の行。**どちらも正しく、比べている合格点が別です**）",
         ]
     else:
-        lines.append("  面は足りています。**足りないなら CTR のほう**（サムネと題）")
+        lines.append("  段4 に対しては、面は足りています。"
+                     "**足りないなら CTR のほう**（サムネと題）")
     return "\n".join(lines)

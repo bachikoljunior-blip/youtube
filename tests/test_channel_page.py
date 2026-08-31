@@ -56,3 +56,35 @@ def test_安全帯の中には何か描かれている(tmp_path: Path):
     with Image.open(out) as img:
         band = img.crop((sx, sy, sx + cp.SAFE_SIZE[0], sy + cp.SAFE_SIZE[1]))
         assert len(band.getcolors(maxcolors=1 << 16) or []) > 8
+
+
+# --- **窓が古びるのを止める**（2026-08-28 03:5x。M22 は 10周 持ち越されている）---
+
+
+def test_窓の終わりはべた書きではない():
+    """`--end` は長らく **`2026-08-17` のべた書き**でした。
+
+    書いた日（2026-08-20）には正しい数ですが、**日が経つほどずれます** ——
+    08/28 の時点で **11日 古い窓**。M22 は「日枠が戻ったら撃つ」で持ち越され続けて
+    いるので、**待つほど窓が古くなる**形でした。紹介動画は
+    「実際にいちばん登録に変えた本」を選ぶので、**その11日ぶんに出た本
+    （1日 十数本 ＝ 100本以上）が候補にすら入りません。**
+    """
+    import inspect
+    src = inspect.getsource(cp.main)
+    assert "2026-08-17" not in src, "`--end` がべた書きに戻っています"
+    assert "latest_end" in src, "`--end` の既定が `latest_end()` になっていません"
+
+
+def test_窓の終わりは実測の遅れから引く():
+    """**遅れをべた書きしないこと。** `judgeable` が `ANALYTICS_LAG_DAYS = 3` を
+    べた書きして A/B だけ1日 楽観に出していたのと、同じ穴を作らないため。
+    """
+    from datetime import date, datetime, timedelta, timezone
+
+    from src import settle
+    end = date.fromisoformat(cp.latest_end())
+    today = datetime.now(timezone(timedelta(hours=9))).date()
+    assert end == today - timedelta(days=settle.analytics_lag_days())
+    assert end < today, "遅れ 0日 ＝ 「遅れは無い」と言い切る側です"
+

@@ -157,7 +157,7 @@ def year_with_multi_hit(cost: int, months: int, name: str = "ウ") -> dict:
         "多数回該当より前": normal,
         "多数回該当": reduced,
         "1か月あたり": round(per),
-        "多数回の額": round(low),
+        "多数回の額（1か月）": round(low),
         "1年の合計": round(total),
         "多数回が無ければ": round(months * per),
         "軽くなる額": round(months * per - total),
@@ -270,7 +270,7 @@ def multi_hit_gap(name: str, cost: int) -> dict:
         "区分": name,
         "医療費": cost,
         "ふだんの自己負担": round(per),
-        "多数回の額": round(m),
+        "多数回の額（1か月）": round(m),
         "1か月の割引": round(per - m),
         "割引の割合": (per - m) / per if per else 0.0,
     }
@@ -522,7 +522,7 @@ if __name__ == "__main__":
     for months in (1, 3, 4, 6, 12):
         y = year_with_multi_hit(1_000_000, months)
         print(f"  {y['月数']:>2}か月  通常 {y['多数回該当より前']}回×{y['1か月あたり']:,}円"
-              f" ＋ 多数回 {y['多数回該当']:>2}回×{y['多数回の額']:,}円"
+              f" ＋ 多数回 {y['多数回該当']:>2}回×{y['多数回の額（1か月）']:,}円"
               f"  合計 {y['1年の合計']:>9,}円"
               f"（多数回が無ければ {y['多数回が無ければ']:>9,}円・"
               f"{y['軽くなる額']:>8,}円 軽い）")
@@ -589,7 +589,7 @@ if __name__ == "__main__":
           f"{'1か月の割引':>12s} {'割引の割合':>10s}")
     g = multi_hit_gap_grid(C)
     for r in g:
-        print(f"{r['区分']:>3s} {r['ふだんの自己負担']:14,d}円 {r['多数回の額']:10,d}円 "
+        print(f"{r['区分']:>3s} {r['ふだんの自己負担']:14,d}円 {r['多数回の額（1か月）']:10,d}円 "
               f"{r['1か月の割引']:11,d}円 {r['割引の割合']:9.1%}")
     hi = max(g, key=lambda r: r["1か月の割引"])
     lo = min(g, key=lambda r: r["1か月の割引"])

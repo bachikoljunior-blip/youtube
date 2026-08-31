@@ -98,7 +98,30 @@ def excess(hits: list[dict] | None = None) -> int:
 # **生きる帯**（`src/day_cap.py` の実測 + `src/measure_window.py` の切り分け）。
 # 08/21 の実測で 08:59〜13:30 の :00/:30 が10本とも生き、あいだの :15/:45 は7本とも
 # 0〜2再生でした。**30分きざみでこの帯に置く**のが、いま分かっている最善です。
-LIVE_FROM_MIN = 5 * 60          # 05:00 JST
+#
+# **下端は 2026-08-27 16:xx に 05:00 → 09:00 へ戻しました。実測です。**
+# 05:00 は「(A)/(B) を切り分ける日を作るため」に一時的に広げてあった値で、
+# **生きると分かっている時刻ではありませんでした**（`scripts/batch_build.py` の
+# `PROVEN_FROM_MIN` の註が、そう名指ししています）。その切り分けの日が
+# 2026-08-27 に走り、**答えが出ました**:
+#
+#     05:00 0  05:30 0  06:00 0  06:30 0  07:00 0  07:30 4  08:00 0  08:30 0
+#     08:59 313  09:30 106  10:00 84  10:30 367 …… 13:30 71
+#
+# **8本とも 0再生**（齢 7.5〜11時間・8本とも `public`/`processed` を
+# `videos.list` で確認済み ＝ 投稿の失敗ではない）。
+# → 窓には**左端**があり、**09:00 より前に置いた本は死にます**
+#   （`src.day_cap.left_edge()`: 08:30 より後・08:59 まで）。
+#
+# **広げたままにすると、道具が本を殺します。** 実際 `scripts/live_slots.py`
+# は「0再生の枠から逃がす」と言いながら、逃がし先を 05:00〜08:30 から採って
+# いました（**死に枠から死に枠へ、1手 50単位で**）。実測でこの帯に
+# **24本**の予約が既に入っています。
+#
+# **覆る条件**: 左端は面が育てば早い時刻へ動くかもしれません。
+# 定数で持たず `day_cap.left_edge()` を読むこと —— ここは、
+# その計器がまだ何も測れていない回のための既定値です。
+LIVE_FROM_MIN = 9 * 60          # 09:00 JST（実測の左端 08:59 の直後のきざみ）
 LIVE_TO_MIN = 13 * 60 + 30      # 13:30 JST
 STEP_MIN = 30
 PER_DAY = 10                    # `src/day_cap.py` の実測（11本目から先が 0〜3再生）
@@ -181,8 +204,24 @@ def plan(rows: list[dict] | None = None, *, today: str | None = None) -> list[di
         return [m for m in grid if m not in taken]
 
     def window(day: str) -> bool:
+        # **`today` を渡すこと**（2026-08-28 に足した。最適化の回）。
+        # ここは長らく `inside(day)` で、**壁の時計を読んでいました。**
+        # `plan()` の `today` は `upcoming()` と `horizon` には効いていて、
+        # **3つ目のこの枝にだけ効いていません。**
+        #
+        # 症状: `measure_window.WINDOWS` の `until` を過ぎた瞬間、
+        # その窓の日の守り（`ceiling`。「いちばん遅い分より後ろへ出さない」）が
+        # **黙って外れます。** `tests/test_collisions.py` の
+        # `test_plan_does_not_push_past_the_days_last_slot_on_a_window_day` は
+        # `today="2026-08-25"` を渡して 08/27 の窓を見ていましたが、
+        # **実時刻が 08/28 に入った日に赤へ変わりました**（08/27 の窓は
+        # `until: 2026-08-27`）。**検査が壊れたのではなく、注入が効いていない**
+        # のが見えただけです —— 窓の守りは、どの窓についても試せませんでした。
+        #
+        # 覆る条件: `measure_window.inside()` が `today` を受け取らなくなったら、
+        # ここも一緒に直すこと（あちらの既定は `None` ＝ 壁の時計）。
         try:
-            return measure_window.inside(day)
+            return measure_window.inside(day, today=today)
         except Exception:                                    # noqa: BLE001
             return False
 

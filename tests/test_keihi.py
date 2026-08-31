@@ -197,3 +197,83 @@ def test_差が残るいちばん上の所得はゆらぎを拾わない():
     assert got == 7_900_000
     assert keihi.care_age_gap(got)["差"] >= 100
     assert keihi.care_age_gap(got + 100_000)["差"] < 100
+
+
+# ---- 2026-08-26 に足した4節 --------------------------------------------
+#
+# **どれも「同じ結果が2つの理由から出る」形**です。値ではなく、
+# その区別が消えていないかを見ています。
+
+
+def test_経費が1円も効かない帯は所得割が立つ所得で終わる():
+    ze = keihi.kokuho_zero_edges()
+    ends = ze["下端が終わる所得"]
+    # 帯の中では、経費1万円で負担が1円も減らない。
+    assert keihi.marginal(ends - 1)["値打ち"] == 0
+    # その1円上で跳ぶ。**跳びは1円の中で起きます。**
+    assert keihi.marginal(ends)["値打ち"] > 0
+    # 帯の出口は「青色控除後の所得が住民税の基礎控除ちょうど」の1円上。
+    assert keihi.after_aoiro(ends - 1) == keihi.KISO_JUMIN
+
+
+def test_国保が減らない理由は上端と下端で別物():
+    lo = keihi.kokuho_zero_reason(1_000_000)
+    hi = keihi.kokuho_zero_reason(12_000_000)
+    assert lo["国保の減り"] == hi["国保の減り"] == 0
+    assert lo["理由"] == keihi.ZERO_NO_SHOTOKUWARI
+    assert hi["理由"] == keihi.ZERO_AT_LIMIT
+    # **同じ「0」でも、値打ちは同じではありません。**
+    assert lo["値打ち"] == 0
+    assert hi["値打ち"] > 0
+
+
+def test_member_limitは理由を持ち歩く():
+    # **「賦課限度額に当たった点」とは限りません。**
+    # 低い所得では所得割がそもそも0で、1人目から止まります。
+    assert keihi.member_limit(1_000_000)["理由"] == keihi.ZERO_NO_SHOTOKUWARI
+    for p in keihi.MEMBER_PROFITS:
+        assert keihi.member_limit(p)["理由"] == keihi.ZERO_AT_LIMIT
+
+
+def test_人数がふえた国保は単調で逆転しない():
+    # 掃引が拾った「逆転 burden（合計）… members=6 が最大」は**目盛りの粗さ**。
+    # 1人ずつ数えると単調にふえて、限度額で止まります。
+    rows = keihi.member_cost()
+    got = [r["国民健康保険料"] for r in rows]
+    assert got == sorted(got)
+    assert got[-1] == got[-2]          # 止まっている
+    assert max(got) <= 1_130_000       # 賦課限度額の合計
+
+
+def test_国保の増分は3割が税で戻り率は人数によらない():
+    mr = keihi.member_cost_rate()
+    assert 0.29 < mr["いちばん低い割合"] < 0.31
+    assert 0.29 < mr["いちばん高い割合"] < 0.31
+    assert mr["幅"] < 0.01             # 人数で動かない
+    assert mr["止まるまでの正味"] < mr["止まるまでの国保のふえた額"]
+
+
+def test_経費と控除の差の坂は控除の額とぴったり同じ幅():
+    rp = keihi.keihi_ramp()
+    assert rp["坂の幅"] == rp["額"]
+    assert rp["差が0で終わる所得"] == keihi.JIGYOZEI_KOJO
+    assert rp["満額になる所得"] == keihi.JIGYOZEI_KOJO + rp["額"]
+    # 満額の1円下は、まだ満額ではない。
+    assert rp["1円下の差"] < rp["満額の差"]
+
+
+def test_天井は最高税率の段で止まる():
+    cl = keihi.ceiling()
+    steps = keihi.ceiling_steps()
+    assert cl["速算表の税率"] == 45
+    assert cl["値打ち"] == keihi.marginal(1_000_000_000)["値打ち"]
+    # **段は上へ行くほど高い**（国保が消えたあとは速算表だけが動かす）。
+    got = [r["値打ち"] for r in steps]
+    assert got == sorted(got)
+    # 天井の内訳: 国保は1円も効かない。住民税と事業税は所得で動かない。
+    for r in steps:
+        assert r["国保の減り"] == 0
+        assert r["事業税の減り"] == int(keihi.STEP * keihi.JIGYOZEI_RATE)
+        assert r["住民税の減り"] == int(keihi.STEP * keihi.JUMIN_RATE)
+    # **速算表の税率そのものより、必ず高い**（この表の主題）。
+    assert cl["実効率"] > 0.45

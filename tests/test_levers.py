@@ -33,7 +33,29 @@ def test_vocabulary_matches_what_eta_prints():
     src = (ROOT / "scripts" / "eta.py").read_text(encoding="utf-8")
     assert "1本あたりの再生数" in src and "RPM" in src, "天井の2つが eta から消えています"
     assert "登録率" in src and "公開の密度" in src, "門1の2つが eta から消えています"
-    assert set(levers.LEVERS) == {"per_video", "rpm", "density", "sub_rate", "none"}
+    # **`gate` は 2026-08-30 に足した5本目**（`src/resume_gate.py`）。
+    #     この検査の趣旨は「腕の数」ではなく「**eta が印字しない腕を語彙に置かない**」
+    #     ことなので、`gate` にも同じ門を掛けます —— `eta.py` に印字の口
+    #     （`gate_lines`）と天井の出どころ（`resume_gate`）があること。
+    assert "gate_lines" in src and "resume_gate" in src, (
+        "`gate` を語彙に置いているのに、eta が門を印字していません")
+    # **`theta` は 2026-08-31 に足した6本目。**
+    #
+    # `eta.py` の頭3行は「**到達日をいちばん大きく動かすのは θ**」と印字し、
+    # 倍率まで出しています（実測 2026-08-31: θ×2 で **-26日** ／
+    # 天井 θ→∞ で **-51日** ＝ 上の4本のどれよりも大きい）。
+    # **それを指す語が語彙に無かったので、θ を進めた回は `none`
+    # （＝日付を動かさない）へ落ちていました。** 実測 直近7日:
+    # `none` **147件（41%）** ／ ship 359件 で到達日は **+13日 遠のいた**。
+    #
+    # この検査の趣旨は「腕の数」ではなく「**eta が印字しない腕を語彙に
+    # 置かない**」ことなので、`theta` にも同じ門を掛けます。
+    assert "_theta_line" in src and "到達日をいちばん大きく動かすのは θ" in src, (
+        "`theta` を語彙に置いているのに、eta が θ の倍率を印字していません。"
+        "**印字が消えたら、この腕を選んでも効いたかどうかを誰も測れません** ——"
+        "そのときは腕のほうを語彙から外すこと")
+    assert set(levers.LEVERS) == {"per_video", "rpm", "density", "sub_rate",
+                                  "gate", "theta", "none"}
 
 
 def test_none_is_a_real_choice():
@@ -144,7 +166,17 @@ def test_reconcile_marks_a_miss():
     ]
     text = "\n".join(levers.reconcile(rows))
     assert "外した" in text
-    assert "言ったより遠のいています" in text
+    assert "遠のいています" in text
+    # **門の行そのものに数が乗っていること**（2026-08-30・最適化の回に足した）。
+    #     `eta.flagged()` が尾へ運ぶのは **`[!]` の付いた行だけ**なので、
+    #     すぐ上の「宣言の合計 …」は置いていかれます。`CLAUDE.md` の読み方
+    #     （頭と尾の3行）だと、**警告は届くが、いくら外したかは届きません。**
+    #     実測 2026-08-30: 尾に並んだのは文言だけで、
+    #     **宣言 -63日 ／ 実際 +3日 は本文の 151行目**にありました。
+    gate = next(l for l in levers.reconcile(rows) if "[!]" in l)
+    assert "宣言" in gate and "実際" in gate, gate
+    assert "-30日" in gate and "+7日" in gate, gate      # 12-23 → 12-30 で 7日 遠のいた
+    assert "+37日 遠のいて" in gate, gate                # 実際 − 宣言
 
 
 def test_reconcile_is_quiet_before_the_first_declaration():

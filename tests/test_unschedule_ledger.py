@@ -137,10 +137,36 @@ def test_渡さなければこれまでどおり落ちる():
         reschedule._update(_Boom(), "vid1", None)
 
 
-def test_渡せば控えのstatusで予約を外せる():
+def _pin_quota(monkeypatch) -> None:
+    """**その日の日枠の残りを、この検査に混ぜない。**（2026-08-31 に足した）
+
+    `reschedule._update()` は書く前に `upload_cap.reserve_hold()` を読み、
+    **窓の残りが計測ぶんを割っていたら `SystemExit`** を投げます
+    （2026-08-28 に足った、正しい門です）。
+
+    ところがこの2件が見ているのは **「控えの `status` で代えられるか」**で、
+    日枠の残りではありません。**日枠が尽きている日には、主題と関係なく赤くなります** ——
+    実測 2026-08-31（この欄を足した日・枠が尽きていた）::
+
+        SystemExit: [reschedule] **この窓の単位は、計測のぶんを残して止めています**
+                    （使った 9,400 ／ 実測の枠 9,050 ／ 残す 400）
+
+    `docs/trigger_main.md` §4「**既知の当たりを実データの偶然に置かないこと**」の、
+    この file ぶんです。**門そのものは消していません** —— 門は
+    `tests/test_upload_cap*.py` が主題として持ちます（**置き場所を分けるだけ**）。
+
+    **`_update` は撃ちません**（`svc` は差し替えた `_Boom`）。日枠は減りません。
+    """
+    from src import upload_cap
+    monkeypatch.setattr(upload_cap, "reserve_hold", lambda *a, **k: None)
+    monkeypatch.setattr(upload_cap, "move_hold", lambda *a, **k: None)
+
+
+def test_渡せば控えのstatusで予約を外せる(monkeypatch):
     import reschedule
     from src import uploader
 
+    _pin_quota(monkeypatch)
     svc = _Boom()
     reschedule._update(svc, "vid1", None, fallback_status=uploader.base_status())
 
@@ -150,10 +176,11 @@ def test_渡せば控えのstatusで予約を外せる():
     assert "publishAt" not in body["status"], "予約が落ちていません"
 
 
-def test_渡したstatusでも予約を置き直せる():
+def test_渡したstatusでも予約を置き直せる(monkeypatch):
     import reschedule
     from src import uploader
 
+    _pin_quota(monkeypatch)
     svc = _Boom()
     reschedule._update(svc, "vid1", "2026-09-06T07:00:00Z",
                        fallback_status=uploader.base_status())

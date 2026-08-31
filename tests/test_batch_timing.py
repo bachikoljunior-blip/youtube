@@ -29,7 +29,8 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "scripts"))
 
 from scripts import batch_build  # noqa: E402
-from tests.test_batch_parallel import _Recorder, _Sink, _topics  # noqa: E402
+from tests.test_batch_parallel import (  # noqa: E402
+    _Recorder, _Sink, _pin_rule, _topics)
 
 
 def _run(monkeypatch, ids, delays=None, fail_build=None, jobs=3):
@@ -45,6 +46,7 @@ def _run(monkeypatch, ids, delays=None, fail_build=None, jobs=3):
     # 「今日はもう92本上げた」だけで並列の検査が赤くなります
     # （`test_batch_slots.py` が `taken=` で同じことを塞いでいます）。
     monkeypatch.setattr(batch_build.upload_cap, "state", lambda: _open_window())
+    _pin_rule(monkeypatch)          # 規則（1日1本）は主題ではない
     written: list[str] = []
     monkeypatch.setattr(batch_build.Path, "open",
                         lambda self, *a, **k: _Sink(written))
@@ -276,3 +278,45 @@ def _open_window():
 
     return upload_cap.State(False, 0, upload_cap.CAP_PER_DAY,
                             datetime.now(timezone.utc), "検査（枠は開いている）")
+
+
+def test_尺を混ぜて上限を言わないこと(tmp_path, monkeypatch, capsys):
+    """**尺の差が jobs の差に化けないこと。**（2026-08-29 に測って足した）
+
+    実測の台帳では、1本あたりの中央値が尺で桁ちがいでした:
+
+        ショート  **3.2〜3.7分**（jobs 1〜8 で ほぼ平ら）
+        長尺      **8.7〜13.1分**
+
+    そして **jobs 4以上 の走りはほぼ全部ショート**（08-16〜08-21）、
+    **長尺は jobs 1〜3 に集中**（08-22〜08-29）。混ぜた表はそこから
+    「**出る本数がいちばん多いのは同時 5。そこが上限です**」と結論し、
+    その「同時 5」の中身は **08-16 のショート 5本 ずつ 2回**でした。
+
+    ここが守るのは1つ ——
+    **表が尺ごとに分かれ、片方の峰をもう片方の既定にしないこと。**
+    """
+    log = tmp_path / "batch_runs.jsonl"
+    rows = [
+        # 長尺は jobs 1 だけ・1本 10分
+        {"at": "2026-08-25T10:00:00+09:00", "jobs": 1, "count": 1, "long": True,
+         "wall_sec": 600.0, "serial_sec": 600.0, "speedup": 1.0,
+         "results": [{"topic": "L1", "build_sec": 600.0}]},
+        {"at": "2026-08-26T10:00:00+09:00", "jobs": 1, "count": 1, "long": True,
+         "wall_sec": 600.0, "serial_sec": 600.0, "speedup": 1.0,
+         "results": [{"topic": "L2", "build_sec": 600.0}]},
+        # ショートは jobs 5 だけ・1本 3分
+        {"at": "2026-08-16T19:00:00+09:00", "jobs": 5, "count": 5, "long": False,
+         "wall_sec": 200.0, "serial_sec": 900.0, "speedup": 4.5,
+         "results": [{"topic": f"S{i}", "build_sec": 180.0} for i in range(5)]},
+    ]
+    log.write_text("".join(json.dumps(r, ensure_ascii=False) + "\n"
+                           for r in rows), encoding="utf-8")
+    monkeypatch.setattr(batch_build, "LOG", log)
+    assert batch_build.report() == 0
+    out = capsys.readouterr().out
+
+    assert "jobs 別・ショート" in out and "jobs 別・長尺" in out, out
+    # **どちらの群も jobs は1種類しかないので、上限を言ってはいけない**
+    assert out.count("まだ1種類の `jobs` しか走っていません") == 2, out
+    assert "そこが上限です" not in out, out

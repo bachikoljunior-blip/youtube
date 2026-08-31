@@ -127,11 +127,43 @@ def _last_scan() -> dict[str, dict]:
 
     動く数（`views` など）を古い一枚から混ぜるのは間違いですが、
     **尺は動きません**。だから補ってよいのは `IMMUTABLE_METRICS` だけです。
+
+    ## **補いは「後ろの一枚」で止めないこと**（2026-08-30 に測って直した）
+
+    ここは長らく、**尺を持つ最初の一枚を見つけた時点で `missing.remove(mt)`**
+    していました。**一枚が全部の本を持っている前提**です。持っていません ——
+    走査の一枚は「この窓で再生のあった本」で作られ、Data API が
+    途中で 403 になれば**その一枚は部分的に埋まります。**
+
+    実測（2026-08-30 02:4x・`data/scan.jsonl` 240枚）::
+
+        最後の一枚          156本 ／ 尺を持つ本 **0本**（Data API が日枠で 403）
+        一枚だけ補う（前）   尺が付いた本 **50本** → 180秒以上 **6本** ＝ **19再生**
+        全部の枚を補う（後） 尺が付いた本 **156本** → 180秒以上 **18本** ＝ **137再生**
+
+    **7.2倍 の取りこぼしです。** そしてこれは印字だけの話ではありません ——
+    待ち `長尺-1000再生`（`config/hypotheses.yaml` の「長尺の登録率は
+    ショートより1桁以上高い」＝ 腕 `sub_rate` ／ 側 `dist`。`--alloc` が
+    **いちばん早い腕**と名指ししているもの）が、この数で満ち具合を見ています。
+
+        待ち（`_k_scan_sum`）      **19 / 1000**・伸び **-8.00/日** → **届きません**
+        台帳（`deadline_check`）   **286 / 1000**・伸び 26.0/日 → **2026-09-27**
+
+    同じ閾値を見ている2つが **15倍** ちがっていました。しかも「どの一枚が
+    最初に尺を持つか」は回ごとに変わるので、**満ち具合が上下します** ——
+    再生は減らないのに `伸び -8.00/日` と出ていたのはこれです（実測の増減ではなく、
+    **補いに当たった一枚の当たり外れ**）。**負の伸びは、この関数の影でした。**
+
+    **覆る条件**: `IMMUTABLE_METRICS` に「動くもの」が足されたら、この全走査は
+    そのまま古い値を混ぜる道になります（`setdefault` なので新しい側が勝ちますが、
+    **最後の一枚に欠けている本には古い値が入ります**）。足すときは、
+    そのたびに「本当に動かないか」を確かめること。検査は
+    `tests/test_watches_scan_backfill.py`。
     """
     lines = [l for l in SCAN.read_text(encoding="utf-8").splitlines() if l.strip()]
     rows = _row_metrics(lines[-1])
     missing = [mt for mt in IMMUTABLE_METRICS
-               if not any(mt in v for v in rows.values())]
+               if any(mt not in v for v in rows.values())]
     for line in reversed(lines[:-1]):
         if not missing:
             break
@@ -144,7 +176,10 @@ def _last_scan() -> dict[str, dict]:
                 # **その一枚に居る本にだけ**入れる（消えた本を呼び戻さない）
                 if vid in rows:
                     rows[vid].setdefault(mt, val)
-            missing.remove(mt)
+            # **まだ欠けている本が居るなら、もっと後ろの一枚も読むこと。**
+            # 一枚で打ち切っていたのが 2026-08-30 の欠陥（上の docstring）。
+            if all(mt in v for v in rows.values()):
+                missing.remove(mt)
     return rows
 
 
@@ -246,23 +281,123 @@ def _k_length_spread(p: dict) -> Gauge:
                  f"{len(lens)}本・{min(lens):.0f}〜{max(lens):.0f}秒")
 
 
+def _durations() -> dict[str, float]:
+    """動画ID → 尺（秒）。控え（`data/uploaded.jsonl`）の `duration_s` から。
+
+    **`_last_scan()` の「尺」ではありません。** あちらは走査に載った本
+    ＝ **もう実データの来た本**しか持たないので、`published_count` が
+    数えたい「窓のなかに公開した本」には、まだ載っていないものが混じります。
+    控えは投稿した瞬間に書かれるので、**予約ぶんも数えられます。**
+    """
+    out: dict[str, float] = {}
+    for r in _uploaded():
+        vid, sec = r.get("video_id"), r.get("duration_s")
+        if not vid or sec is None:
+            continue
+        try:
+            out[vid] = float(sec)
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
+def _k_reveal_hold_arm(p: dict) -> Gauge:
+    """**「完成形の保持」で比べられる本**（`src/reveal_hold`）。両群の少ないほう。
+
+    ## なぜ `published_count` では足りないのか（2026-08-31 に測って足した）
+
+    すぐ下の `_k_published_count()` は**公開日**で数えます。ところがこの前提の
+    処置群を決めているのは**作った時刻**（`uploaded_at`）で、予約は 5〜6週 先まで
+    入っているので、**08/27 以降に公開された本の大半は、それ以前に作った本**です。
+
+    実測 2026-08-31 —— この待ちは「**満ちました（17 / 16）**」と出ていましたが、
+
+        公開日で数えた（この待ちの前の数え方）        **17**
+        作った時刻で割った処置群・本で畳んで          **11**
+        うちショート（長尺は `reveal_variants` を通らない） **8**
+        齢48時間 を超えた ＝ `falsified_if` が比べられる  **1**
+
+    **満ちていません。** 満ちた待ちは `status.py` が `[!]` で出し、Stop フックが
+    引き止めるので、**「判定しろ」と毎周 押し続けていました。**
+    `config/hypotheses.yaml` の `count_expr` も同じ日に同じ理由で直しています。
+    """
+    if str(ROOT) not in sys.path:
+        sys.path.insert(0, str(ROOT))
+    from src import reveal_hold                                # noqa: PLC0415
+
+    both = reveal_hold.comparable()
+    now = min(len(both["処置"]), len(both["対照"]))
+    ready = reveal_hold.next_ready(int(p.get("need") or 16))
+    note = (f"処置 {len(both['処置'])} ／ 対照 {len(both['対照'])}"
+            f"（**作った時刻で割る。公開日ではありません**）")
+    if ready:
+        note += f" ／ 予約表では {ready} にそろう"
+    return Gauge(now, float(p["need"]), "本", note)
+
+
 def _k_published_count(p: dict) -> Gauge:
-    """窓のなかに公開した本数。`data_ready: true` なら**実データの来た本だけ**。"""
+    """窓のなかに公開した本数。`data_ready: true` なら**実データの来た本だけ**。
+
+    **`min_duration_s` / `max_duration_s` で形を絞れます**（2026-08-27 に足した）。
+    絞らないと、ショートが 9割 を占めるこのチャンネルでは
+    **「長尺を14本 出したか」の門が、ショートだけで満ちます。**
+    尺の分からない本（控えに `duration_s` が無い古い行）は、
+    **絞りを指定した回では数えません** —— 満ちていないものを満ちたと
+    言うより、遅れて満ちるほうが安全なので。
+
+    ## **`data_ready` で削ったぶんを、同じ行に出します**（2026-08-30 に足した）
+
+    **「いま 0」は「まだ数えられていない」であって「出ていない」ではありません。**
+    ところが画面ではその2つが同じ字で出ます。実測（08/30 07:4x・`長尺シェア-14本`）:
+
+        画面        あと **14本**（いま **0** / 要る 14）  2026-08-27〜2026-09-07
+        控えの実物  窓の中に **49本**（08/28=8・08/31=5・09/03=5 …）＝ 要る本数の **3.5倍**
+
+    0 なのは `data_ready: true` が「Analytics の最終日（08/27）より後の公開」を
+    落とすからで、**08/27 の長尺がちょうど 0本**だったためです。
+    **窓のあいだじゅう「あと14本」と鳴り続けるので、読んだ回は
+    「供給が足りない」と読み、もう 3.5倍 入っている窓へ長尺を積み増す側に効きます。**
+
+    だから `data_ready` が削ったときは、**削る前の数を note に出します**
+    （「予約表では N本」）。**判定の数（`now`）は動かしません** ——
+    実データの来ていない本で前提を閉じるほうが危険です。
+
+    **覆る条件**: `data_ready` を使う待ちが「予約表の数 ＜ 要る数」の側で
+    使われるようになったら、この行は毎回 同じことを言うだけになります
+    （そのときは `need` に届いていない回だけ出すこと）。
+    """
     dates = _publish_dates()
     since, until = _day(p["since"]), (_day(p["until"]) if p.get("until") else None)
     last = analytics_last_day()
     if p.get("data_ready") and last is None:
         return Gauge(0, float(p["need"]), "本", err="実データの最終日が読めません")
+    lo, hi = p.get("min_duration_s"), p.get("max_duration_s")
+    secs = _durations() if (lo is not None or hi is not None) else {}
     n = 0
-    for d in dates.values():
+    placed = 0
+    for vid, d in dates.items():
         if d < since or (until and d > until):
             continue
+        if lo is not None or hi is not None:
+            sec = secs.get(vid)
+            if sec is None:
+                continue
+            if lo is not None and sec < float(lo):
+                continue
+            if hi is not None and sec > float(hi):
+                continue
+        placed += 1
         if p.get("data_ready") and last and d > last:
             continue
         n += 1
     note = f"{since}〜{until or '以降'}"
+    if lo is not None or hi is not None:
+        note += f" / 尺 {lo or 0:.0f}〜{hi if hi is not None else '∞'}秒"
     if p.get("data_ready") and last:
         note += f" / 実データは {last} まで"
+        if placed > n:
+            note += (f" / **予約表では {placed}本**（差 {placed - n}本 は"
+                     "「出ていない」ではなく「まだ実データが来ていない」）")
     return Gauge(n, float(p["need"]), "本", note)
 
 
@@ -336,11 +471,17 @@ def _k_scored_pairs(p: dict) -> Gauge:
 
 
 def _ab_group_from_sources(name: str) -> Gauge:
-    """`src/judgeable.SOURCES` の群が、**落ち着いた本**で床に届いたか。
+    """`src/judgeable` の群が、**落ち着いた本**で床に届いたか。
 
     `Floor.groups` は公開日の一覧なので、**落ち着いた本 ＝ 今日から
     `SETTLE_DAYS + ANALYTICS_LAG_DAYS` 引いた日までに公開した本**です。
     **遅れを引かないと、報告されていない本を数えます。**
+
+    **`SOURCES` に無くても諦めないこと**（2026-08-26 22:5x に踏んだ）。
+    `judgeable.ACCRUING` に入っている群（いまは `request_form`）は
+    `SOURCES` から**わざと外れています** —— 外れているのは「期限の出し方」の
+    話であって、**群の数え方と床は `MEMBER_SOURCES` に在ります。**
+    ここで `SOURCES` だけを見ると、その群は「ありません」で落ちます。
     """
     from datetime import timedelta
 
@@ -348,40 +489,138 @@ def _ab_group_from_sources(name: str) -> Gauge:
 
     src = judgeable.SOURCES.get(name)
     if src is None:
-        return Gauge(0, 1.0, "本", err=f"{name}: `src/judgeable.SOURCES` にありません")
+        member_src = judgeable.MEMBER_SOURCES.get(name)
+        if member_src is None:
+            return Gauge(0, 1.0, "本",
+                         err=f"{name}: `src/judgeable.MEMBER_SOURCES` にありません")
+        _make_members, need = member_src
+        src = ((lambda k=name: judgeable._days(judgeable.members(k))), need)
     make, need = src
-    cutoff = (datetime.now(JST).date()
-              - timedelta(days=ab_split.SETTLE_DAYS + judgeable.ANALYTICS_LAG_DAYS))
-    ready = {g: sum(1 for d in days if d <= cutoff) for g, days in make().items()}
+    lag = ab_split.SETTLE_DAYS + judgeable.ANALYTICS_LAG_DAYS
+    today = datetime.now(JST).date()
+    cutoff = today - timedelta(days=lag)
+    groups = {g: sorted(days) for g, days in make().items()}
+    ready = {g: sum(1 for d in days if d <= cutoff) for g, days in groups.items()}
     if not ready:
         return Gauge(0, float(need), "本", err=f"{name}: 群が1つも立っていません")
-    note = " / ".join(f"{g} {n}本" for g, n in sorted(ready.items()))
+    note = ("落ち着き " + " / ".join(f"{g} {n}本" for g, n in sorted(ready.items()))
+            + _ab_bottleneck(groups, need, today, lag))
     return Gauge(min(ready.values()), float(need), "本", note)
+
+
+def _ab_bottleneck(groups: dict[str, list], need: int, today, lag: int) -> str:
+    """**足りないのは「本」か「齢」か。** 目盛りの数字だけでは区別が付きません。
+
+    ## なぜ要るか（2026-08-27 に実測して足した）
+
+    `Gauge.left` は `床 − 落ち着いた本` なので、画面には必ず
+
+        あと **16本**  題の問い-両群16本（いま 0 / 要る 16）  問い 0本 / 断定 0本
+
+    と出ます。**これは「16本 作れ」と読めます。**
+    ところが同じ日の実測では、群には **問い 56本 / 断定 65本** が既に居ました
+    （`judgeable.members("title_form")`）。**1本も作る必要がありません** ——
+    足りないのは公開からの齢（`SETTLE_DAYS + ANALYTICS_LAG_DAYS`）だけで、
+    床に届くのは **2026-09-05**（あと 9日）です。
+
+    同じ日の 6件のうち **4件**（`title_form` 56/65本・`hook_form` 43/50本・
+    `stat_split` 67/317本・`opening_motion` 28/8本）が この形でした。
+    本当に本が足りないのは `slide_pace`（5/3本・床16）と
+    `request_form`（20/22本・床72）の 2件だけです。
+
+    **`eta.py` は同じ回に「本数を増やしても在庫を増やしても、日付は動きません」
+    （腕 `density` の天井 ×1.00）と印字しています。** 目盛りを字面どおりに読んだ回は、
+    1日も早まらない側へ丸ごと持っていかれます。
+
+    ## **これは一度、1件だけ直されています**
+
+    `config/hypotheses.yaml` の `opening_motion` には 2026-08-26 の註で
+    「**本数は足りていて、縛っているのは日付でした**」と書いてあり、
+    その前提の**期限だけ**が 09-13 → 10-16 へ延ばされています。
+    **直したのは1件で、そう読ませている目盛りのほうは直っていませんでした。**
+    （受け取り帳 `e6d3be89`・オーナー 2026-08-23「失敗したならそこだけ直すんじゃなくて
+    応用しないの？」）
+
+    **覆る条件**: 群に居る本が予約から消える（取り消し・生成失敗）なら、
+    「本は足りている」は嘘になります。数えているのは控えの予約なので、
+    予約が減れば次の回の同じ行が本数側へ倒れます。
+    """
+    from datetime import timedelta
+
+    short = {g: need - len(ds) for g, ds in sorted(groups.items()) if len(ds) < need}
+    have = " / ".join(f"{g} {len(ds)}本" for g, ds in sorted(groups.items()))
+    if short:
+        return (f" ／ **本が足りません** —— 群 {have}（床 {need}本）。"
+                + "**あと " + " / ".join(f"{g} {n}本" for g, n in short.items()) + "**")
+    settles = max(ds[need - 1] for ds in groups.values()) + timedelta(days=lag)
+    left = (settles - today).days
+    if left <= 0:
+        return f" ／ 群 {have}（床 {need}本）"
+    return (f" ／ **足りないのは本ではありません** —— 群 {have}（床 {need}本）。"
+            f"**床に届くのは {settles}（あと {left}日）** ＝ 齢待ち。"
+            "**ここに本を足しても1日も早まりません**")
 
 
 def _k_ab_group(p: dict) -> Gauge:
     """A/B の**少ないほうの群**が、判定に要る本数に届いたか。
 
-    数えているのは `src/ab_split.py` です（**同じ数を2箇所で持たない**）。
+    数えているのは `src/judgeable.MEMBER_SOURCES` です（**同じ数を2箇所で持たない**）。
     ここは「その数を毎周ここにも出す」ためだけの入口。
+
+    ## **`ab_split.MIN_PER_GROUP` を床に使わないこと**（2026-08-26 22:5x に踏んだ）
+
+    ここは長らく「`name in ab_split.EXPERIMENTS` なら `MIN_PER_GROUP`（16）」で
+    割っていました。**`request_form` の床は 72本 です**
+    （`src/judgeable.MEMBER_SOURCES`・`config/hypotheses.yaml` の両方が
+    「**16本 を写さないこと**」と明記しています —— 測っているのが
+    engaged ではなく**登録**だから）。実測の症状:
+
+        あと **13本**  途中の依頼-両群72本（いま 3 / **要る 16**）
+
+    **見出しは 72本 と言い、目盛りは 16本 で割っています。**
+    このまま 16本 で「満ちました」が鳴ると、`stop_check.sh` がその回を
+    引き止め、**片群 6,700再生（期待 2.1人）で登録率を比べる**ことになります。
+    `falsified_if` は「上回らなければ外れ（同点も外れ）」なので、
+    **見分けられない標本で判定すると、そのまま「外れ」に化けます。**
+
+    ## **数え方も `ab_split.split_counts` ではありません**（同じ回）
+
+    `split_counts` は `exp.split(topic)` を**全部の本**に当てるので、
+    **長尺も群に入ります。** 長尺は依頼そのものを書かない（`script_writer.ROLE`）ので
+    どちらの群でもなく、`judgeable._members_by_request_form()` は
+    控えの `duration_s` で落としています。実測の食い違い:
+
+        この目盛り        終端のみ **6本** / 途中あり 3本
+        judgeable 側      終端のみ **5本** / 途中あり 3本   ← 長尺が1本 混ざっていた
+
+    **`MEMBER_SOURCES` に在る群は、床も数え方もそちらに訊くこと。**
     """
-    from src import ab_split
+    from src import ab_split, judgeable
 
     name = p["experiment"]
+    if name in judgeable.MEMBER_SOURCES:
+        # **群の作り方も床も1か所**（`judgeable.MEMBER_SOURCES`）に置いてあるので、
+        # ここは数えるのではなく訊くこと。`ACCRUING` で `SOURCES` から
+        # 外れている群（`request_form`）も、あちらが拾います。
+        return _ab_group_from_sources(name)
     if name not in ab_split.EXPERIMENTS:
-        # **IDで振り分けない群**（作った時刻で割る・環境変数で割る）は
-        # `src/judgeable.SOURCES` にあります。**群の作り方は1か所だけ**に
-        # 置いてあるので、ここは数えるのではなく訊くこと。
         return _ab_group_from_sources(name)
     exp = ab_split.EXPERIMENTS[name]
     counts = ab_split.split_counts(exp)
     ready = counts.treated_ready
+    # **ここでも `MIN_PER_GROUP` を写さないこと**（2026-08-27 に潰した。**6件目**）。
+    #     この枝は `MEMBER_SOURCES` に無い実験だけが通るので、**いまは死に枝**です
+    #     （3件とも上で拾われます）。ただし床の違う実験がこれから足されたら、
+    #     **この2行が黙って 16本 で割ります** —— 上の註が防ごうとしている、
+    #     まさにその形。`floor_of()` は `MEMBER_SOURCES` に無い名前を
+    #     `MIN_PER_GROUP` に落とすので、**いまの値は1つも変わりません。**
+    floor = float(ab_split.floor_of(name))
     if not ready:
-        return Gauge(0, float(ab_split.MIN_PER_GROUP), "本",
+        return Gauge(0, floor, "本",
                      err=f"{p['experiment']}: 群が1つも立っていません")
     low = min(ready.values())
     note = " / ".join(f"{g} {n}本" for g, n in sorted(ready.items()))
-    return Gauge(low, float(ab_split.MIN_PER_GROUP), "本", note)
+    return Gauge(low, floor, "本", note)
 
 
 def _k_error_reasons(p: dict) -> Gauge:
@@ -457,11 +696,74 @@ def _k_deep_shorts(p: dict) -> Gauge:
                  f"{since or '全期間'} 以降・ショートの車線に載った深い題")
 
 
+def _k_hypothesis_needs(p: dict) -> Gauge:
+    """**その前提自身の `needs` を、そのまま目盛りにする**（2026-08-29 に足した）。
+
+    ## なぜ要るか
+
+    `tests/test_watches.py::test_数の門を持つ未判定の仮説は台帳を指している` が
+    2件で赤いままでした（09-19「族を外へ出しても1本あたり再生は変わらない」／
+    10-22「登録は配信の広さで決まる」）。どちらも `falsified_if` に数の床が
+    ありますが、**既存の kind では書けません** ——
+    片方は「**題が `s-ribo-` で始まるショート 8本**」、
+    もう片方は「**累計再生 342回 未満の本の再生合計が 20,000回**」。
+
+    **写して新しい kind を増やすのは、同じ数を2箇所で持つことです。**
+    このファイルは 2026-08-27 に、まさにそれで食い違っています
+    （`_hypothesis_judge_state` の上の註 ——「数え方を写し直すのは、
+    同じ事故をもう一度 予約すること」）。だから写さず、
+    **`config/hypotheses.yaml` の `needs` に直接 訊きます。**
+
+    いちばん足りていない `needs` を目盛りにします（`have / need` の最小）。
+    `count_expr` を持たない `needs` しか無い前提は、床が数ではないので
+    **読めません**と返します（黙らせません）。
+
+    **覆る条件**: `deadline_check` が `count_expr` の評価をやめたら、ここも
+    そこへ合わせること。**この関数の中で数え直さないこと。**
+    """
+    claim = str(p.get("claim") or "")
+    if not claim:
+        return Gauge(0, 1.0, "", err="`claim:` が書かれていません")
+    try:
+        import sys as _sys
+        if str(ROOT / "scripts") not in _sys.path:
+            _sys.path.insert(0, str(ROOT / "scripts"))
+        import yaml
+
+        import deadline_check as J
+        doc = yaml.safe_load(
+            (ROOT / "config" / "hypotheses.yaml").read_text(encoding="utf-8"))
+    except Exception as exc:                                   # noqa: BLE001
+        return Gauge(0, 1.0, "", err=f"台帳が読めません: {exc}")
+    hit = next((h for h in doc.get("hypotheses", [])
+                if str(h.get("claim", "")).startswith(claim[:24])), None)
+    if hit is None:
+        return Gauge(0, 1.0, "", err=f"台帳にこの claim がありません: {claim[:24]}")
+    worst: tuple[float, int, float, str] | None = None
+    for need in hit.get("needs") or []:
+        if not isinstance(need, dict) or not need.get("count_expr"):
+            continue
+        want = float(need.get("need") or 0) or 1.0
+        try:
+            have = int(eval(str(need["count_expr"]), dict(J.EXPR_NS)))  # noqa: S307
+        except Exception as exc:                               # noqa: BLE001
+            return Gauge(0, want, "", err=f"`count_expr` が解けません: {exc}")
+        ratio = have / want
+        if worst is None or ratio < worst[0]:
+            worst = (ratio, have, want, str(need["count_expr"])[:40])
+    if worst is None:
+        return Gauge(0, 1.0, "", err="数の床を持つ `needs` がありません（`count_expr` が無い）")
+    _r, have, want, expr = worst
+    return Gauge(have, want, "", f"`config/hypotheses.yaml` の needs: `{expr}`")
+
+
 KINDS = {
     "ab_group": _k_ab_group,
     "deep_shorts": _k_deep_shorts,
+    "hypothesis_needs": _k_hypothesis_needs,
     "length_spread": _k_length_spread,
     "published_count": _k_published_count,
+    "reveal_hold_arm": _k_reveal_hold_arm,
     "scan_sum": _k_scan_sum,
     "days_with_min_videos": _k_days_with_min_videos,
     "scored_pairs": _k_scored_pairs,
@@ -495,20 +797,138 @@ def exempt(path: Path = CONFIG) -> dict[str, str]:
     return dict(doc.get("exempt") or {})
 
 
+# --- **満ちた ≠ 判定できる**（2026-08-26 夜・最適化の回に足した）---
+#
+# `config/watches.yaml` の「深い題のショート-16本」には、こう書いてありました:
+#
+#     **数え方は仮説の `needs.count_expr` と同じ**にしてあります。
+#     片方だけ直すと、鳴る日と判定できる日がずれます。
+#
+# **その日のうちに、片方だけが直りました。** きょうだいの回が
+# `config/hypotheses.yaml` の `needs` を
+# 「**作った** 16本」→「**公開して分類が付いた** 8本 ＋ 使える日 3日」に直し、
+# `src/watches.py::_k_deep_shorts`（**作った本を数える**）はそのままでした。
+#
+# 結果、同じ前提について3つの道具が別々のことを言っていました:
+#
+#     deadline_check.py   「[..] まだ数えはじめたところ。**何もしないのが正解**」
+#     drift.py --gate     exit 2 →「**この回は verdict を出すこと**」
+#     watches --pending   「**満ちました。この回で判定すること**」（3回まで止める）
+#
+# 実測は 要8／いま7、使える日 要3／**いま0**。**判定できる本は1本もありません。**
+#
+# **数え方を写し直すのは、同じ事故をもう一度 予約することです**（この註の上に
+# 「同じにしてある」と書いてあって、それでもずれました）。だから写しません ——
+# **判定できるかどうかの答えを持っている所を、1つに決めて、そこに訊きます。**
+# それが `scripts/deadline_check.py`（＝ `src/judgeable.py` の床）です。
+#
+# **仮説と結ばれている待ちだけ**が対象です（`config/hypotheses.yaml` の
+# `watch:` 欄。結ばれていない待ちは、これまでどおり自分の目盛りで鳴ります）。
+#
+# **覆る条件**: `deadline_check` が「判定できない」と言い続けるのに、
+# 実際には判定できるようになっていたら、待ちが鳴らなくなります。
+# そのときに直すのは `src/judgeable.py` の床のほうで、**ここを外すことではありません。**
+
+
+def _hypothesis_judge_state() -> dict[str, tuple[str, object]] | None:
+    """**待ちの id → その仮説を「いま判定できるか」**。
+
+    返り: `{watch_id: ("ready"|"warming"|"unreachable"|"unchecked", 判定できる日 or None)}`。
+    読めなければ `None` ——  **そのときは1件も抑えません**（黙るより鳴らす。
+    計器が1本読めないことは、「判定できない」ことの証拠ではありません）。
+    """
+    try:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "watches_deadline_check", ROOT / "scripts" / "deadline_check.py")
+        mod = importlib.util.module_from_spec(spec)
+        sys.modules["watches_deadline_check"] = mod   # dataclass が __module__ を引きます
+        spec.loader.exec_module(mod)                  # type: ignore[union-attr]
+        rows = mod.load()
+        by_claim: dict[str, tuple[str, object]] = {}
+        for v in mod.check(rows):
+            if v.ready is not None:
+                by_claim[v.claim] = ("ready", v.ready)
+            elif getattr(v, "unreachable", False):
+                by_claim[v.claim] = ("unreachable", None)
+            elif getattr(v, "unchecked", False):
+                by_claim[v.claim] = ("unchecked", None)
+            else:
+                by_claim[v.claim] = ("warming", None)
+        out: dict[str, tuple[str, object]] = {}
+        for h in rows or []:
+            if not isinstance(h, dict):
+                continue
+            wid = str(h.get("watch") or "").strip()
+            claim = str(h.get("claim") or "")
+            if wid and claim in by_claim:
+                out[wid] = by_claim[claim]
+        return out
+    except Exception:                                 # noqa: BLE001
+        return None
+
+
+def _too_early(w: Watch, state: dict[str, tuple[str, object]] | None) -> str:
+    """**この待ちを、いま鳴らすと嘘になるか。** 嘘なら理由を返す（空なら鳴らしてよい）。
+
+    **`unreachable` と `unchecked` は抑えません** —— 前者は前提の立て方ごと
+    変える必要があり、後者は分からないだけです。**どちらも人が読む価値があります。**
+    抑えるのは「**待てば判定できる**」と分かっている2つだけ。
+    """
+    if not state:
+        return ""
+    got = state.get(w.id)
+    if not got:
+        return ""
+    kind, ready = got
+    if kind == "warming":
+        return ("`scripts/deadline_check.py`: **まだ数えはじめたところ**"
+                "（判定に要るデータが揃っていません）")
+    if kind == "ready" and ready is not None:
+        # **JST で見ること。** この器は UTC なので `date.today()` を使うと
+        # 00:00〜09:00 の9時間、「まだ判定できない」と言い続けます
+        # （`scripts/drift.py::today_jst` が同じ穴を註つきで直しています）。
+        today = datetime.now(timezone(timedelta(hours=9))).date()
+        if ready > today:
+            return f"`scripts/deadline_check.py`: **判定できるのは {ready}**"
+    return ""
+
+
 def unanswered(ws: list[Watch] | None = None) -> list[Watch]:
-    """**満ちているのに、まだ答えが書かれていない待ち。**
+    """**満ちていて、しかも いま判定できる待ち。**
 
     `scripts/stop_check.sh` がこれを見て、回を引き止めます。
     **印字だけでは、読まなかった回に届きません**（それが 8/10〜8/20 の
     10日間に起きたことです）。
+
+    **2026-08-26 に「いま判定できる」を足しました**（上の長い註）。
+    目盛りが満ちても、判定に要るデータが揃っているとは限りません ——
+    **その回にできないことを要求する門は、門ごと信用を失わせます。**
     """
-    out = []
+    rung, _blocked = _split_rung(ws)
+    return rung
+
+
+def _split_rung(ws: list[Watch] | None = None) -> tuple[list[Watch], list[tuple[Watch, str]]]:
+    """満ちた待ちを「**いま判定できる**」と「**まだ早い**」に割る。
+
+    後ろは `render()` が理由つきで印字します。**黙って消さないこと** ——
+    消すと、次の回には存在しなかったことになります。
+    """
+    state = _hypothesis_judge_state()
+    rung: list[Watch] = []
+    blocked: list[tuple[Watch, str]] = []
     for w in (ws if ws is not None else load()):
         if w.answered:
             continue
-        if w.gauge().met:
-            out.append(w)
-    return out
+        if not w.gauge().met:
+            continue
+        why = _too_early(w, state)
+        if why:
+            blocked.append((w, why))
+        else:
+            rung.append(w)
+    return rung, blocked
 
 
 def note_rings(ws: list[Watch], at: str = "") -> None:
@@ -563,11 +983,19 @@ def render(watches: list[Watch] | None = None, record: bool = False) -> str:
         return f"\n=== 待ちの条件 ===\n  読めませんでした（続行）: {str(exc)[:90]}"
 
     lines = ["\n=== 待ちの条件（**満ちたらここに出ます。コメントに書くだけにしない**）==="]
-    rung, waiting, done, broken = [], [], [], []
+    # **満ちた ≠ 判定できる**（`_split_rung` の長い註）。
+    # 「まだ早い」ものは、**鳴らさないが、理由つきで必ず印字する。**
+    try:
+        _early = {w.id: why for w, why in _split_rung(ws)[1]}
+    except Exception:                                          # noqa: BLE001
+        _early = {}
+    rung, waiting, done, broken, early = [], [], [], [], []
     for w in ws:
         g = w.gauge()
         if g.err:
             broken.append((w, g))
+        elif g.met and not w.answered and w.id in _early:
+            early.append((w, g, _early[w.id]))
         elif g.met and not w.answered:
             rung.append((w, g))
         elif g.met:
@@ -588,6 +1016,11 @@ def render(watches: list[Watch] | None = None, record: bool = False) -> str:
         lines.append(f"      → **{w.then}**")
         lines.append(f"      答えが出たら `config/watches.yaml` の "
                      f"`{w.id}` に `answered:` を1行。**それまで毎回鳴ります。**")
+    for w, g, why in early:
+        lines.append(f"  [..] **目盛りは満ちたが、まだ判定できません** {w.id} —— {w.what}")
+        lines.append(f"       {why}")
+        lines.append(f"       いま **{_fmt(g.now)}{g.unit}**（この待ちの目盛り）。"
+                     "**この回は何もしないのが正解です**（畳まない・条件を緩めない）")
     for w, g in waiting:
         lines.append(f"  あと **{_fmt(g.left)}{g.unit}**  {w.id}"
                      f"（いま {_fmt(g.now)} / 要る {_fmt(g.need)}）"

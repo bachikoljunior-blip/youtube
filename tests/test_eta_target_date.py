@@ -49,6 +49,7 @@ _spec.loader.exec_module(eta)
 # `tests/test_eta_day_cap.py` が持ちます（**隠さず、置き場所を分けています**）。
 _UNCAPPED = eta.UPLOAD_CAP_PER_DAY
 
+import _eta_pin  # noqa: E402
 from src import day_cap  # noqa: E402
 
 # --- **同じことが、RPM の混ざり方でも起きていました**（2026-08-22 に直した） ---
@@ -66,12 +67,39 @@ from src import day_cap  # noqa: E402
 # `tests/test_eta_surface_cap.py` が持ちます（**隠さず、置き場所を分けています**）。
 _BAND_ONLY: dict = {}
 
+#: **公開の密度も、ここで縛ります**（2026-08-30 に足した。上と**同じ事故の3回目**）。
+#:
+#: `eta.PLAN_PUBLISH_PER_DAY` は「計画の数」で、**実測が動けば動きます** ——
+#: 2026-08-30 に `src.density_verdict` が
+#: 「1時間より詰めても1本あたりは落ちない」を **falsified**（倍率 0.003）にしたので、
+#: **25 → 13** へ落としました。すると、この file の合成データの天井が
+#: 25本/日 × 952回 × 30日 ＝ 714,000回/月 から **371,280回/月** に下がり、
+#: 合格点を割って `target_date` が `None` に落ちます。
+#:
+#: **形は1行も壊れていません。** 落ちたのは「合成データが届く帯にいるか」だけで、
+#: 上の `_UNCAPPED` / `_BAND_ONLY` と**まったく同じ壊れ方**です。
+#: だから同じ扱いにします —— **構造を測る検査は、計画の数の上に乗らないこと。**
+#:
+#: 密度が到達日を動かすことそのものは、`test_腕を引けば日付が動く` 系と
+#: `tests/test_eta_density_cap.py` が別に持っています（**隠さず、置き場所を分ける**）。
+_PINNED_DENSITY = 25
+
 
 def _pinned(m, monkeypatch, **kw):
-    """**天井を2つとも明示して**段取りを解く（1日の本数・RPM の混ざり方）。"""
+    """**天井を4つとも明示して**段取りを解く（1日の本数・RPM の混ざり方・公開の密度・規則）。
+
+    4つ目（オーナー規則 1日1本）は 2026-08-31 に足しました。**上の3つと同じ壊れ方の4回目**です
+    —— `src/house_rule.PUBLISH_PER_DAY = 1` が乗ると `analyse()` の天井
+    （`_ceiling_per_day()`）が 1本/日 に落ち、この file の合成データが
+    **どの帯にも届かなくなって** `days_revenue` が全部 `NEVER` になります。
+    **形は1行も壊れていません。** 規則そのものは
+    `tests/test_house_rule.py` / `tests/test_eta_day_cap.py` が主題として持ちます。
+    """
+    _eta_pin.pin_house_rule(monkeypatch, eta, _PINNED_DENSITY)
     monkeypatch.setattr(day_cap, "cap", lambda *a, **k: _UNCAPPED)
     kw.setdefault("view_cap", _UNCAPPED)
     kw.setdefault("mix", _BAND_ONLY)
+    kw.setdefault("density", _PINNED_DENSITY)
     return eta.plan(m, eta.analyse(m), **kw)
 
 
@@ -114,12 +142,24 @@ def test_段4の期日は段3の写しではない(monkeypatch):
     )
 
 
-def test_1本あたり再生を上げると段4の期日が動く():
-    """**写しだと、ここが動きません。** 動かない数字に向かって「早めろ」は成立しない。"""
+def test_1本あたり再生を上げると段4の期日が動く(monkeypatch):
+    """**写しだと、ここが動きません。** 動かない数字に向かって「早めろ」は成立しない。
+
+    **2026-08-31: ここだけ `_pinned()` を通っていませんでした。** 天井を明示する道が
+    同じ file の上に在るのに、この1件は素の `eta.plan()` を撃っており、オーナー規則
+    （1日1本）が乗った瞬間に**両側とも `NEVER`** へ落ちて、`fast < slow` が
+    `NEVER < NEVER` になっていました。**形は1行も壊れていません** ——
+    この file の冒頭が3回 書いている「構造を測る検査は、計画の数の上に乗らないこと」
+    の、**4回目**です。測っているのは「段4 が段3 の写しでないこと」なので、
+    合成データは届く帯に置きます（`_UNCAPPED` / `_BAND_ONLY` と同じ扱い）。
+
+    **（この節は 2026-08-31 に2つの回が同時に直し、merge で両方を残しました。）**
+    """
     m = _measured()
-    slow = eta.plan(m, eta.analyse(m))["days_revenue"]
+    slow = _pinned(m, monkeypatch)["days_revenue"]
     m2 = _measured(views_per_video=952 * 4, views_7d=11_324 * 4, views_28d=20_332 * 4)
-    fast = eta.plan(m2, eta.analyse(m2))["days_revenue"]
+    fast = _pinned(m2, monkeypatch)["days_revenue"]
+    assert slow < eta.NEVER, "合成データが届く帯から外れています（検査のほうを直すこと）"
     assert fast < slow, "1本あたり再生を4倍にしても段4 が動きません"
 
 
@@ -229,7 +269,11 @@ def test_到達予測は出力の最初と最後に出る():
     assert "到達予測" in text
     assert "引く腕" in text
     src = (ROOT / "scripts" / "eta.py").read_text(encoding="utf-8")
-    assert src.count("for line in headline(pl, prev, tr):") == 2, (
+    # **閉じ括弧まで当てないこと**（2026-08-29 に3件 まとめて赤くなった）。
+    # `headline()` に引数を1つ足すだけで、この検査は落ちます —— 落ちても
+    # 「頭と尾で2回 呼んでいるか」は1文字も変わっていません。**守りたいのは
+    # 呼ぶ回数と場所であって、引数の並びではない。**
+    assert src.count("for line in headline(pl, prev, tr") == 2, (
         "`headline` は最初と最後の2回出すこと（片方だけになっています）"
     )
 
@@ -272,8 +316,10 @@ def test_混ざり方の実測は差し替えられる_そして合格点を動�
     """
     monkeypatch.setattr(day_cap, "cap", lambda *a, **k: _UNCAPPED)
     m = _measured()
-    band = eta.plan(m, eta.analyse(m), view_cap=_UNCAPPED, mix=_BAND_ONLY)
+    band = eta.plan(m, eta.analyse(m), view_cap=_UNCAPPED, mix=_BAND_ONLY,
+                   density=_PINNED_DENSITY)
     half = eta.plan(m, eta.analyse(m), view_cap=_UNCAPPED,
+                    density=_PINNED_DENSITY,
                     mix={"rpm_max": band["surface"]["rpm_plan"] / 2})
     assert half["surface"]["rpm_plan"] == pytest.approx(band["surface"]["rpm_plan"] / 2)
     assert half["target"]["need_per_video"] == pytest.approx(
@@ -289,6 +335,7 @@ def test_形を測る検査は実測の混ざり方に乗らない(monkeypatch):
     for fake in ({"rpm_max": 253.19, "imp_day": 37.6}, {"rpm_max": 400.0}, None):
         monkeypatch.setattr(eta.rpm_mix, "last", lambda _f=fake: _f)
         got.append(eta.plan(m, eta.analyse(m), view_cap=_UNCAPPED,
+                            density=_PINNED_DENSITY,
                             mix=_BAND_ONLY, today=date(2026, 8, 20))["target_date"])
     assert got[0] is not None and len(set(got)) == 1, (
         f"実測の混ざり方で到達日が動いています: {got}")

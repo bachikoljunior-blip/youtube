@@ -44,7 +44,7 @@ TODAY = date(2026, 8, 20)
 # 天井そのものは `tests/test_eta_surface_cap.py` / `test_eta_day_cap.py` が持ちます。
 @pytest.fixture(autouse=True)
 def _天井は主題ではない(monkeypatch):
-    _eta_pin.pin_ceilings(monkeypatch, eta.PLAN_PUBLISH_PER_DAY)
+    _eta_pin.pin_ceilings(monkeypatch, _eta_pin.PLAN_DENSITY, eta)
 
 
 def _measured(**over):
@@ -230,7 +230,11 @@ def test_印字する日付は軌跡のほう():
     # **据え置きの線も残すこと**（比べられないと、軌跡が効いたかが読めません）
     assert "据え置いた" in text
     src = (ROOT / "scripts" / "eta.py").read_text(encoding="utf-8")
-    assert src.count("for line in headline(pl, prev, tr):") == 2
+    # **閉じ括弧まで当てないこと**（2026-08-29 に3件 まとめて赤くなった）。
+    # `headline()` に引数を1つ足すだけで、この検査は落ちます —— 落ちても
+    # 「頭と尾で2回 呼んでいるか」は1文字も変わっていません。**守りたいのは
+    # 呼ぶ回数と場所であって、引数の並びではない。**
+    assert src.count("for line in headline(pl, prev, tr") == 2
 
 
 def test_軌跡が解けなくても回は止まらない():

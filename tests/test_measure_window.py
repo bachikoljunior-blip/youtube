@@ -297,12 +297,8 @@ def test_止めるときに理由が本文に出る(二つの窓):
     assert "M14" in str(e.value)
 
 
-def test_実物の窓は前提の期限を写している():
-    """**`until` は、その窓が支えている前提の期限**（`config/hypotheses.yaml`）。
-
-    短く書くと、前提が閉じる前に窓が開いて測定が壊れます。ここは
-    「窓の `until` が、開いている前提のどれかの期限と一致する」ことだけを見ます。
-    """
+def _open_hypotheses():
+    """`config/hypotheses.yaml` の、**閉じていない**前提を claim 引きで返す。"""
     import yaml
 
     def _walk(o):
@@ -316,12 +312,68 @@ def test_実物の窓は前提の期限を写している():
                 yield from _walk(v)
 
     conf = yaml.safe_load((ROOT / "config" / "hypotheses.yaml").read_text(encoding="utf-8"))
-    期限 = {str(h["deadline"]) for h in _walk(conf) if not h.get("closed_on")}
+    return {str(h["claim"]): h for h in _walk(conf) if not h.get("closed_on")}
+
+
+def test_窓は支えている前提を名指ししている():
+    """**`until` の持ち主を書くこと。**（2026-08-28 に足した）
+
+    ここが無いあいだ、検査は「`until` が**開いている前提のどれかの期限**と
+    一致するか」しか見ていませんでした。**日付が合っていれば持ち主は誰でもよく**、
+    `src/measure_window.py` の註は「たまたま通っていました」を**2回**、
+    「動かされなかった」を**1回**記録しています。
+
+    **`WINDOWS`（手で書いた窓）だけを見ます。** `day_cap_split` のように
+    **計器が日付を出している窓には `claim` は要りません** ——
+    あちらの `until` は `day_cap.booked_split_day()` の `answer` そのもので、
+    **写しではないので古くなりようがない**からです。
+    `claim` が要るのは「2か所に同じ日付が在る」窓だけ。
+    **derived な窓に `claim` を足しにこないこと**（足すと、こんどはそちらが写しになります）。
+    """
     for w in measure_window.WINDOWS:
-        assert w["until"] in 期限, (
-            f'{w["from"]} の窓の until={w["until"]} が、開いている前提の期限に無い。'
-            " 前提を閉じたなら窓も外すこと（`until` を過ぎれば自分で外れます）。"
+        assert w.get("claim"), (
+            f'{w["from"]} の窓に `claim` がありません。**その `until` は誰の期限ですか。**'
+            " `config/hypotheses.yaml` の `claim` の全文を写すこと"
         )
+
+
+def test_実物の窓は前提の期限を写している():
+    """**`until` は、その窓が支えている前提の期限**（`config/hypotheses.yaml`）。
+
+    短く書くと、前提が閉じる前に窓が開いて測定が壊れます。
+
+    **2026-08-28 に「どれかの期限」から「`claim` の期限」へ締めました。**
+    緩いままだと、次の3つが**全部 通ります**:
+
+        1. 期限が動いたのに `until` が残っている
+           —— **別の前提が偶然その日を持っていれば通る**（実測2回）
+        2. 支えている前提が閉じたのに窓が残っている
+           —— 同上
+        3. `until` が**そもそも別の前提の日**を写している
+
+    そして緩い版は `for` の中で assert するので**最初の1件で止まり**、
+    2件目以降は隠れます —— 実測 2026-08-28: `day_cap`（08-27／前提 08-28）が
+    先に落ちて、`density_engaged`（10-02／前提 10-03）が**見えませんでした。**
+    ここは**全件を集めてから**まとめて出します。
+    """
+    opened = _open_hypotheses()
+    bad: list[str] = []
+    for w in measure_window.WINDOWS:
+        claim = str(w.get("claim") or "")
+        h = opened.get(claim)
+        if h is None:
+            bad.append(
+                f'  {w["label"]}（{w["from"]}）: `claim` の前提が**開いている前提に居ません**。'
+                " 閉じたなら窓も外すこと（`until` を過ぎれば自分で外れます）。"
+                f" claim={claim[:40]}…")
+            continue
+        if str(h["deadline"]) != w["until"]:
+            bad.append(
+                f'  {w["label"]}（{w["from"]}）: until={w["until"]} ／'
+                f' 前提の期限={h["deadline"]} —— **食い違っています。**'
+                " 期限を動かしたら `until` も一緒に動かすこと")
+    assert not bad, (
+        "窓と前提の期限が合っていません（**全件**）:\n" + "\n".join(bad))
 
 
 def test_窓には理由が必ず書いてある():

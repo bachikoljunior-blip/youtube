@@ -232,6 +232,12 @@ def _find_or_create_playlist(youtube, title: str) -> str:
         if not page_token:
             break
 
+    # **ここも 50単位**。`_post_actions` から呼ばれますが、木を歩く検査は
+    # **いちばん内側の関数**を入口と数えるので、ここにも要ります
+    # （別の呼び元ができた日に、この門だけが残ります）。
+    hold = upload_cap.reserve_hold()
+    if hold:
+        raise RuntimeError(f"再生リストを作りません: {hold}")
     created = youtube.playlists().insert(
         part="snippet,status",
         body={
@@ -239,12 +245,43 @@ def _find_or_create_playlist(youtube, title: str) -> str:
             "status": {"privacyStatus": "public"},
         },
     ).execute()
+    upload_cap.note_quota_ok(detail="playlists.insert")
     print(f"[upload] 再生リストを新規作成: {title}")
     return created["id"]
 
 
 def _post_actions(youtube, video_id: str, publish_cfg: dict) -> None:
-    """投稿後の付随処理。ここで失敗しても動画は既に上がっているので落とさない。"""
+    """投稿後の付随処理。ここで失敗しても動画は既に上がっているので落とさない。
+
+    **1本あたり 100単位**（`playlistItems.insert` 50 ＋ `commentThreads.insert` 50。
+    `playlists.insert` の 50 は**再生リストを作る回だけ**で、普段は
+    `playlists.list` の 1単位 で見つかります）。実測 08/27 の窓は 37本 なので
+    **約 3,700単位** —— 残してある `RESERVE_UNITS` 400 の **9.3倍**を、
+    2026-08-28 の2周目まで**数えも止めもせず**に使っていました。
+
+    **ここには「150単位 ＝ 5,550」と書いてありました**（同じ日の少し前）。
+    `playlists.insert` を毎回 数えていたぶんの過大です。**結論は変わりません**
+    （どちらでも 400単位 を桁で超えます）が、**測っていない数を書かないこと** ——
+    この repo が繰り返し踏んでいる形です。
+
+    **止めてよい理由**: ここは元々「失敗しても落とさない」設計で、
+    やり残しを後から拾う道具が両方あります
+    （`scripts/playlists.py` / `scripts/post_pending_comments.py`）。
+    **動画は上がっています。** 一方、残している 400単位 が守るのは
+    「前提を閉じる読み」で、`eta.py` が毎回「軌跡の腕が動くのは
+    前提を1件 閉じたときだけ」と言う、その唯一の操作です。
+
+    **覆る条件**: 拾い直す道具のどちらかが無くなったら、
+    ここで止めたぶんは永久に埋まりません。そのときは止めないこと。
+    """
+    hold = upload_cap.reserve_hold()
+    if hold:
+        print(f"[upload] {hold}")
+        print("[upload] **再生リストと最初のコメントは後回しにします**"
+              "（動画は投稿済み）。窓が変わった回に"
+              " `python scripts/playlists.py` と"
+              " `python scripts/post_pending_comments.py` が拾います。")
+        return
     playlist = (publish_cfg.get("playlist") or "").strip()
     if playlist:
         try:
@@ -258,6 +295,7 @@ def _post_actions(youtube, video_id: str, publish_cfg: dict) -> None:
                     }
                 },
             ).execute()
+            upload_cap.note_quota_ok(detail=f"playlistItems.insert {video_id}")
             print(f"[upload] 再生リストに追加: {playlist}")
         except HttpError as exc:
             note_day_quota(exc, "playlistItems.insert")
@@ -275,6 +313,7 @@ def _post_actions(youtube, video_id: str, publish_cfg: dict) -> None:
                     }
                 },
             ).execute()
+            upload_cap.note_quota_ok(detail=f"commentThreads.insert {video_id}")
             # 固定だけは API に無い。Studio で1タップしてもらう。
             print("[upload] 最初のコメントを投稿しました。"
                   "固定はAPIでできないので、Studioで「固定」を押してください:")
@@ -297,11 +336,49 @@ def _set_thumbnail(youtube, video_id: str, path: Path, tries: int = 4) -> bool:
 
     権限（チャンネル未確認）なら何度撃っても通らないので、回数で打ち切る。
     """
+    # **計測のぶんを残して止める**（2026-08-28 の最適化の回に足した）。
+    # `thumbnails.set` は **50単位**。実測の窓（08/27 16:00 JST）は
+    # **47分 で 9,150単位** を焼き、そのあと 23.2時間、**4単位 の
+    # `videos.list` が撃てません**（`src/upload_cap.RESERVE_UNITS`）。
+    #
+    # **この数は 2026-08-28 に直しました。** ここには 14,150 と書いてありました ——
+    # `dedupe_ok()` を通す前の、二重書きを数えた幻の数です。
+    # `upload_cap.measured_budget()` の註で 9,150 に直った側だけが直り、
+    # **写しであるこちらは古いまま**でした。この数を読んで `RESERVE_UNITS` を
+    # 決め直す回があると、枠を 55% 高く見積もります。
+    # **ここは投げません** —— 投稿そのものは日枠を1単位も使わないので、
+    # 止めるのはサムネだけ。控えに bytes が残り、窓が変わった回に
+    # `refresh_thumbnail.py --missing` で押せます（下の枠切れと同じ扱い）。
+    try:
+        from . import upload_cap as _cap
+        _hold = _cap.reserve_hold()
+    except Exception:                                          # noqa: BLE001
+        _hold = None
+    if _hold:
+        print(f"[upload] **サムネイルは載せません**: {_hold}")
+        print("[upload] **投稿は続けます。** 控えに bytes は残るので、"
+              "窓が変わった回に `refresh_thumbnail.py --missing` で押せます。")
+        return False
     for attempt in range(1, tries + 1):
+        # **輪の中でも訊くこと**（2026-08-28 の2周目）。
+        #
+        # ここは同じ1本の撃ち直しなので、**単位の上では手前の1回で足ります**
+        # （403 は単位を使わず、通れば下で `return` します）。
+        # それでも入れるのは、**規則を単純に保つため**です ——
+        # 「輪の中で書くなら、輪の中で訊く」。
+        # 例外を1つ許すと、次に来た側は**自分の輪もその例外だ**と読みます。
+        # 費用は 19ms／回（実測）で、`thumbnails.set` 1回よりずっと安い。
+        # `tests/test_loop_write_gate.py` が、この規則の側を見ています。
+        if attempt > 1 and _cap.reserve_hold():
+            print("[upload] **撃ち直しません**（枠は計測のぶんを残して止めています）。"
+                  " 控えに bytes は残るので、窓が変わった回に"
+                  " `refresh_thumbnail.py --missing` で押せます。")
+            return False
         try:
             youtube.thumbnails().set(
                 videoId=video_id, media_body=MediaFileUpload(str(path))
             ).execute()
+            upload_cap.note_quota_ok(detail=f"thumbnails.set {video_id}")
             print(f"[upload] サムネイル設定完了{'（%d回目）' % attempt if attempt > 1 else ''}")
             return True
         except HttpError as exc:

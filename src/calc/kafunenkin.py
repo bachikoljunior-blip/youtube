@@ -57,6 +57,8 @@
 """
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 from . import _checks
 
 # ---- 制度の値（国民年金法）--------------------------------------------
@@ -214,6 +216,85 @@ def ten_year_cliff(wife_age: float = 60) -> dict:
     }
 
 
+def cliff_vanish_age(fuka_months: int = 0) -> float:
+    """**「10年の崖」が消える、妻の年齢。**（2026-08-28 に足した）
+
+    `ten_year_cliff()` は妻60歳で「1か月で6.375倍」と出しますが、
+    **その崖は妻の年齢が上がるほど低くなり、ある年齢でぴたりと0になります。**
+
+    寡婦年金は65歳で終わるので、残り年数が短いほど「10年ちょうど」の側の
+    総額が下がります。下がりきって死亡一時金と同額になった時点で、
+    **夫が10年 納めたかどうかは1円も効かなくなります。**
+
+    その年齢は `crossover_age(120)` そのものです（120月ちょうどの寡婦年金が
+    死亡一時金に呑まれる年齢 ＝ 崖が消える年齢）。**別の式は立てません。**
+
+    **覆る条件**: 死亡一時金の下限額（`ICHIJI_TABLE[0]`）か
+    老齢基礎年金の満額が変われば、この年齢は動きます。
+    """
+    age = crossover_age(KAFU_MIN_MONTHS, fuka_months)
+    if age is None:                                  # pragma: no cover - 120月では起きない
+        raise _checks.TableError("120月で境目の年齢が出ませんでした")
+    return age
+
+
+def cliff_by_age(ages: Sequence[float] = (55, 60, 61, 62, 63, 64, 64.5, 65),
+                 fuka_months: int = 0) -> list[dict]:
+    """**「10年の崖」の高さを、妻の年齢べつに並べる。**
+
+    `ten_year_cliff()` は妻60歳の1点しか出しません。ここは同じ崖を
+    妻の年齢で刻みます。**高さは単調に下がり、`cliff_vanish_age()` で0**。
+    """
+    rows = []
+    for age in ages:
+        c = ten_year_cliff(float(age))
+        i = ichiji(KAFU_MIN_MONTHS, fuka_months)
+        rows.append({
+            "妻の年齢": float(age),
+            "寡婦年金の残り年数": kafu_years_left(age),
+            "9年11か月なら": c["手前で受け取る総額"],
+            "10年ちょうどなら": max(c["10年ちょうどの総額"], i),
+            "崖の高さ": c["差"],
+            "倍率": c["倍率"],
+        })
+    return rows
+
+
+def wait_years(wife_age: float) -> float:
+    """寡婦年金の**初回の入金まで、妻が待つ年数**。60歳以上なら0。"""
+    return max(0.0, float(KAFU_FROM_AGE) - float(wife_age))
+
+
+def wait_table(months: int = MONTHS_FULL,
+               ages: Sequence[float] = (25, 30, 35, 40, 45, 50, 55, 60),
+               fuka_months: int = 0) -> list[dict]:
+    """**待つ年数を入れて、寡婦年金を1年あたりに直す。**（2026-08-28 に足した）
+
+    寡婦年金の総額は、妻が60歳より下ならいくつでも同じです
+    （`kafu_years_left` が5年で頭打ちになるため）。**額は同じでも、
+    受け取り始めるまでの年数だけが違います。**
+
+    死亡一時金は請求すればその場で出るので、**「いま120,000円」と
+    「30年 待って765,000円」**という形の選択になります。
+    ここは割引率を置きません（`ASSUMPTIONS` の「物価や賃金による年度改定は
+    入れていません」と揃えるため）。**出すのは待ち年数と、それで割った1年あたり**です。
+    """
+    span = float(KAFU_TO_AGE - KAFU_FROM_AGE)
+    rows = []
+    for age in ages:
+        wait = wait_years(age)
+        total = kafu_total(months, age)
+        rows.append({
+            "妻の年齢": float(age),
+            "初回までの待ち年数": wait,
+            "寡婦年金の総額": total,
+            "死亡一時金": ichiji(months, fuka_months),
+            "受給5年で割った1年あたり": round(total / span) if span else 0,
+            "待ちも含めて割った1年あたり": round(total / (wait + span)) if (wait + span) else 0,
+        })
+    return rows
+
+
 def ichiji_steps() -> list[dict]:
     """死亡一時金の階段を、寡婦年金の同じ1か月ぶんと並べる。
 
@@ -344,6 +425,45 @@ def check_tables() -> None:
     loss = kuriage_loss(MONTHS_FULL, 12)
     _checks.greater(0, loss["世帯の差引"], "繰上げ1年での世帯の差引が0より")
 
+    # 12. **崖の高さは、妻の年齢が上がると下がる一方**（2026-08-28 に足した）。
+    #    寡婦年金は65歳で終わるので、残り年数が減れば「10年ちょうど」の側だけが
+    #    下がります。**手前（9年11か月）の側は死亡一時金の定額なので動きません。**
+    _checks.never_decreases(lambda a: -ten_year_cliff(a)["差"],
+                            [55, 60, 61, 62, 63, 64, 64.5, 65],
+                            "妻の年齢を上げたときの崖の高さ（符号を反転して）")
+    rows_age = cliff_by_age()
+    if rows_age[0]["崖の高さ"] <= 0:
+        raise _checks.TableError("妻55歳で崖が消えています")
+    if rows_age[-1]["崖の高さ"] != 0:
+        raise _checks.TableError(
+            f"妻65歳で崖が0になっていません: {rows_age[-1]['崖の高さ']}")
+    for row in rows_age:
+        if row["9年11か月なら"] != ichiji(KAFU_MIN_MONTHS - 1):
+            raise _checks.TableError("手前の側が妻の年齢で動いています（定額のはず）")
+
+    # 13. **崖が消える年齢は、境目の年齢そのもの**（別の式を立てていないこと）。
+    #    ここが割れたら `cliff_vanish_age` が独自計算に化けています。
+    _checks.close(cliff_vanish_age(), crossover_age(KAFU_MIN_MONTHS),  # type: ignore[arg-type]
+                  "崖が消える年齢と120月の境目の年齢")
+    if not (KAFU_TO_AGE - 1 <= cliff_vanish_age() < KAFU_TO_AGE):
+        raise _checks.TableError(
+            f"崖が消える年齢が64歳台に入っていません: {cliff_vanish_age()}")
+    if ten_year_cliff(cliff_vanish_age())["差"] != 0:
+        raise _checks.TableError("崖が消える年齢で、崖がまだ残っています")
+
+    # 14. **待ち年数は妻の年齢とともに減り、60歳で0**。
+    #    そして**総額は妻60歳以下では1円も変わりません**（5年で頭打ちのため）。
+    _checks.decreases_with(wait_years, [25, 35, 45, 55, 60], "初回までの待ち年数")
+    if wait_years(60) != 0 or wait_years(70) != 0:
+        raise _checks.TableError("60歳以上で待ち年数が0になっていません")
+    totals = {r["寡婦年金の総額"] for r in wait_table()}
+    if len(totals) != 1:
+        raise _checks.TableError(f"妻60歳以下で寡婦年金の総額が動いています: {totals}")
+    w = wait_table()
+    _checks.greater(w[-1]["待ちも含めて割った1年あたり"],
+                    w[0]["待ちも含めて割った1年あたり"],
+                    "妻60歳の1年あたりが妻25歳より")
+
 
 def main() -> None:
     check_tables()
@@ -404,6 +524,59 @@ def main() -> None:
               f"  世帯の差引 **{k['世帯の差引']:,}円**")
     print(f"  夫が繰上げで取り戻すには **{kuriage_loss(MONTHS_FULL, 1)['取り返せる月数']:.1f}か月** "
           "受け取り続ける必要がある（65歳前に亡くなると、そこまで届かない）")
+
+    van = cliff_vanish_age()
+    van_month = (van - int(van)) * 12
+    print(f"\n=== 「10年の崖」は妻の年齢で消える。消えるのは妻"
+          f"{int(van)}歳{van_month:.1f}か月 ===")
+    print(f"  上の崖（{ten_year_cliff()['差']:,}円）は**妻60歳のときの高さ**です。"
+          "寡婦年金は65歳で終わるので、")
+    print("  妻の年齢が上がるほど「10年ちょうど」の側だけが下がり、"
+          f"手前の死亡一時金 {ichiji(KAFU_MIN_MONTHS - 1):,}円 に呑まれます。")
+    print("  妻の年齢  残り  9年11か月なら   10年ちょうどなら      崖の高さ   倍率")
+    for row in cliff_by_age():
+        mark = "  ← **崖が消える**" if row["崖の高さ"] == 0 else ""
+        print(f"    {row['妻の年齢']:>5}歳  {row['寡婦年金の残り年数']:>3.1f}年"
+              f"  {row['9年11か月なら']:>9,}円"
+              f"  {row['10年ちょうどなら']:>11,}円"
+              f"  {row['崖の高さ']:>9,}円"
+              f"  {row['倍率']:>5.3f}倍{mark}")
+    print(f"  **消えるのは妻{van:.4f}歳** ＝ {int(van)}歳{van_month:.1f}か月"
+          f"（{ichiji(KAFU_MIN_MONTHS - 1):,}円 ÷ 年額 {kafu_year(KAFU_MIN_MONTHS):,}円 = "
+          f"{ichiji(KAFU_MIN_MONTHS - 1) / kafu_year(KAFU_MIN_MONTHS):.4f}年 を 65歳から引いた点）。")
+    print(f"  **ここから上では、夫が10年 納めたかどうかは1円も効きません。**"
+          f"妻{int(van)}歳{van_month:.1f}か月より上は、どちらでも "
+          f"{ichiji(KAFU_MIN_MONTHS - 1):,}円 です。")
+    print("  **「10年の崖」を1つの数で語れないのは、ここです。** "
+          f"妻60歳なら {ten_year_cliff(60)['差']:,}円、"
+          f"妻63歳なら {ten_year_cliff(63)['差']:,}円、"
+          f"妻64歳なら {ten_year_cliff(64)['差']:,}円、"
+          f"妻{KAFU_TO_AGE}歳なら 0円。")
+
+    print(f"\n=== 寡婦年金は妻が{KAFU_FROM_AGE}歳になるまで1円も出ない。"
+          f"妻25歳なら初回は{wait_years(25):.0f}年後 ===")
+    print(f"  総額は妻が{KAFU_FROM_AGE}歳より下ならいくつでも同じです"
+          f"（受け取れるのは{KAFU_FROM_AGE}〜{KAFU_TO_AGE}歳の5年だけなので）。")
+    print("  **変わるのは、受け取り始めるまでの年数だけ**です（夫の納付480月）:")
+    print("  妻の年齢  初回まで  寡婦年金の総額  死亡一時金  受給5年で割ると  待ちも入れて割ると")
+    for row in wait_table():
+        mark = "  ← 待ち0" if row["初回までの待ち年数"] == 0 else ""
+        print(f"    {row['妻の年齢']:>5.0f}歳  {row['初回までの待ち年数']:>5.0f}年"
+              f"  {row['寡婦年金の総額']:>12,}円"
+              f"  {row['死亡一時金']:>8,}円"
+              f"  {row['受給5年で割った1年あたり']:>11,}円"
+              f"  {row['待ちも含めて割った1年あたり']:>13,}円{mark}")
+    w25, w60 = wait_table()[0], wait_table()[-1]
+    print(f"  **同じ {w25['寡婦年金の総額']:,}円 でも、妻25歳は "
+          f"{w25['初回までの待ち年数']:.0f}年 待ちます。**"
+          f"待ちも入れて1年あたりに直すと "
+          f"{w25['待ちも含めて割った1年あたり']:,}円 対 "
+          f"{w60['待ちも含めて割った1年あたり']:,}円 ＝ "
+          f"**{w60['待ちも含めて割った1年あたり'] / w25['待ちも含めて割った1年あたり']:.1f}倍**の差です。")
+    print(f"  死亡一時金 {w25['死亡一時金']:,}円 のほうは請求すればその場で出ます"
+          "（請求できるのは死亡日の翌日から2年）。")
+    print("  **物価や賃金の改定・割引率は入れていません**"
+          "（入れると待ちの側はさらに不利になります）。")
 
     print("\n=== 妻の年齢べつ、どちらを選ぶか（夫の納付480月）===")
     for age in (55, 60, 62, 64, 64.4, 64.5, 65):

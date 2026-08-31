@@ -52,6 +52,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
+from src import ab_split                                           # noqa: E402
 from src import day_cap                                            # noqa: E402
 from src.ab_split import EXPERIMENTS, MIN_PER_GROUP, build_times, published  # noqa: E402
 
@@ -105,7 +106,8 @@ def judging_set(exp, rows: list[dict] | None = None,
         mine = []
         for r in rows:
             topic = str(r.get("topic") or "")
-            if r.get("publish") is None or exp.split(topic) != g:
+            # **凍らせた名札が勝ちます**（`src/ab_split.group_of`）。
+            if r.get("publish") is None or ab_split.group_of(exp, topic) != g:
                 continue
             built = bt.get(topic)
             if built is None or built < exp.landed:

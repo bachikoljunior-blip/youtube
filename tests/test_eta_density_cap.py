@@ -16,12 +16,32 @@ from __future__ import annotations
 import importlib.util
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parent.parent
 spec = importlib.util.spec_from_file_location("eta_mod", ROOT / "scripts" / "eta.py")
 eta = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(eta)
 
+import _eta_pin  # noqa: E402
+
 from src import day_cap  # noqa: E402
+
+
+# --- **オーナーの規則（1日1本）は、この file の主題ではありません**（2026-08-31）---
+#
+# `src/house_rule.PUBLISH_PER_DAY = 1` が乗ると、`physical_caps` の分子は
+# `min(口 92, 再生が付く上限, **規則 1**)` ＝ 1 に落ち、`density` の腕の伸びしろは
+# ×1.0（引き代なし）になります。**それは正しい振る舞いです。**
+#
+# ただしこの file が見張っているのは **分母**（`sustained_density` ＝ いま続けられる
+# 7.8本/日 で割ること。計画の数で割ると腕が上限まで歩けない）で、分子が 1 に潰れると
+# **分母そのものが観測できなくなります。** `_eta_pin` の冒頭にある
+# day_cap / rpm_mix / subs_cap と同じ扱いにします —— **規則は明示して縛らせない。**
+# 規則の効きは `tests/test_house_rule.py` と `tests/test_density_cap.py` が持ちます。
+@pytest.fixture(autouse=True)
+def _no_house_rule_ceiling(monkeypatch):
+    _eta_pin.pin_house_rule(monkeypatch, eta, _eta_pin.PLAN_DENSITY)
 
 # --- **2026-08-21 16:2x: 分子が 92 から「再生が付く上限」へ変わりました** ---
 #

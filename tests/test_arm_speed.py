@@ -31,6 +31,7 @@ _spec.loader.exec_module(eta)
 from src import day_cap  # noqa: E402
 
 from src import arm_speed  # noqa: E402
+from src import subs_cap  # noqa: E402
 
 
 # --- 標本（**手元のファイルを読まないこと**。読むと回ごとに答えが変わります）-------
@@ -169,8 +170,18 @@ def test_実在する幅で腕を止める_1日110525本を歩かない():
         assert caps["density"]["at_ceiling"] is True
         assert "引き代なし" in caps["density"]["why"]
     assert caps["density"]["measured"] is True
-    # 登録率は**測った天井ではありません**。そう言うこと
-    assert caps["sub_rate"]["measured"] is False
+    # `sub_rate` は 2026-08-28 に**実測へ入れ替えました**（`src/subs_cap.py`）。
+    # ここには `assert caps["sub_rate"]["measured"] is False` と書いてあり、
+    # **「登録率 100%」＝ ×3,153.91 を「そう言えていれば正しい」としていました。**
+    # `rpm` を 08/20 に入れ替えたときと**同じ直し方**です —— 言えているだけでは
+    # 足りません（軌跡は断りを読まず、その数をそのまま歩きます）。
+    # **測れた回は実測の最大、測れない回だけ据え置きの 100%** に落ちること。
+    if subs_cap.best_per_video():
+        assert caps["sub_rate"]["measured"] is True
+        assert "実測の最大" in caps["sub_rate"]["why"]
+    else:
+        assert caps["sub_rate"]["measured"] is False
+        assert "100%" in caps["sub_rate"]["why"]
     # `rpm` は 2026-08-20 22:4x に**実測へ入れ替えました**（`src/rpm_mix.py`）。
     # ここには `assert caps["rpm"]["measured"] is False` と書いてあり、
     # **据え置きの ×100（¥2,000 ÷ ¥20）を「そう言えていれば正しい」としていました。**
@@ -256,3 +267,79 @@ def test_閉じた前提には4つの欄が入っている():
     rows = arm_speed.closed(doc)
     assert len(rows) >= 15, "閉じた前提が減っています（欄を消していませんか）"
     assert any(r["hit"] for r in rows), "当たりが1件も無い ＝ 速さが出ません"
+
+
+def test_rpm_の前提が1本あたり再生を数えていない():
+    """**付け札は、その実験が実際に数えている値まで届いていること。**
+
+    2026-08-26 夕、`lever: rpm` の開いた前提の1件が、`falsified_if` で
+    **「1本あたり再生」を2群で比べて**いました（09/03 期限「深い題」）。
+    鎖は書いてありましたが、届く先が違います —— 「機構は**ニッチ**だから rpm」で、
+    **ニッチも ¥/1000再生 も1度も数えていません。**
+
+    閉じたときに `effect` へ入るのは**数えた値の倍率**（実測 ×1.59）で、
+    `arm_speed.arm()` はそれを**その腕の伸び幅 `g`** としてそのまま使います。
+    つまり付け札のままなら、**「RPM が 1.59倍 になった」と台帳に書く**ことになります。
+
+    直して、軌跡は **2027-01-07 → 2026-12-31（7日）**動きました。
+    **本数は1本も作っていません。**
+
+    **覆る条件**: 題の深さべつに ¥/1000再生 を実測した回が出たら、
+    **その新しい1件**を `rpm` に立てること（この検査はそちらを止めません ——
+    止めるのは「1本あたり再生を数えていて `rpm`」という組み合わせだけです）。
+    """
+    import yaml
+
+    doc = yaml.safe_load((ROOT / "config" / "hypotheses.yaml").read_text(encoding="utf-8"))
+    bad = [h["claim"][:32] for h in doc["hypotheses"]
+           if isinstance(h, dict) and not h.get("closed_on")
+           and h.get("lever") == "rpm"
+           and "1本あたり再生" in str(h.get("falsified_if") or "")]
+    assert not bad, (
+        "`lever: rpm` なのに `falsified_if` が **1本あたり再生**を数えています: "
+        f"{bad}。それは `per_video` です（`config/hypotheses.yaml` 冒頭の表）。"
+        "ニッチ→RPM の見立てを残したいなら、**¥/1000再生 を数える別の1件**として立てること。"
+    )
+
+
+def test_rpm_が_MIN_N_に達したら_256_を置き直させる():
+    """**`effect` の一巡（4周 持ち越し）を、散文ではなく検査で閉じる。**
+
+    2026-08-26 夕に閉じた21件を一巡した結論 —— **直すところは1件も無い。**
+    `closed()` が `effect` から作るのは `hit = effect > 1.0` の1ビットだけで、
+    `≤1.0` の17件は全部「外れ」か「下がったことの実測」、`>1.0` の4件も
+    それぞれの腕が数えた値の倍率になっている。
+
+    **ただ1つ、`rpm` の `effect: 256.0` だけは名前と中身がずれている** ——
+    あれは「形を替えたら**1本あたり再生**が2桁 動いた」で、¥/1000再生 ではない。
+    **いまは無害**（`rpm` は閉じた前提が1件 ＝ `MIN_N` 未満なので**全体で代用**され、
+    `g` は中央値なので桁外れの1件は順位にも倍率にも効かない）。
+
+    **無害でなくなる日が来ます。** `rpm` の閉じた前提が `MIN_N` に達した瞬間、
+    256 は `rpm` 自前の中央値に入り、**その腕の伸び幅を丸ごと壊します。**
+    そのときにこの検査が落ちます —— **散文の「覆る条件」は読まれませんが、
+    赤い検査は読まれます**（`docs/JOURNAL.md`「同じことを2か所が別々に言っていて、
+    片方しか読まれていない」の裏返し）。
+
+    落ちたときにやること: `config/hypotheses.yaml` の `rpm` ×256 の行を、
+    **¥/1000再生 の倍率へ置き直す**か、`lever` を `per_video` へ移すか、どちらか。
+    """
+    import yaml
+
+    doc = yaml.safe_load((ROOT / "config" / "hypotheses.yaml").read_text(encoding="utf-8"))
+    rows = [r for r in arm_speed.closed(doc) if r["lever"] == "rpm"]
+    odd = [r for r in rows if r["effect"] >= 100]
+    if len(rows) < arm_speed.MIN_N:
+        assert odd, (
+            "`rpm` の ×256（形をショートへ替えた創業時の1件）が消えています。"
+            "消したのなら、この検査ごと消してよい"
+        )
+        return
+    assert not odd, (
+        f"`rpm` の閉じた前提が {len(rows)}件 ＝ `MIN_N`({arm_speed.MIN_N}) に達しました。"
+        "**代用が外れ、`effect` の中央値がこの腕自身の値で決まります。**"
+        f"ところが {[round(r['effect']) for r in odd]} は"
+        "**1本あたり再生**の倍率で、¥/1000再生 ではありません"
+        "（`src/arm_speed` 冒頭「`effect` の一巡は終わりました」）。"
+        "単位を揃えて置き直すか、`lever` を `per_video` へ移すこと。"
+    )

@@ -1,73 +1,65 @@
-name: policy pause guard
+# **機械が自分で自分を止められないことを、CI でも床にする。**（2026-08-31）
+#
+# **この workflow は 2026-08-30 まで逆のことをしていました** ——
+# `test -s AUTOMATION_PAUSED.md` で、**停止の文書が在ることを要求**していました。
+# つまりオーナーが 08/31 にその文書を消した瞬間、**main への push が全部 赤**に
+# なる形です。赤い CI は、次に来た側に「文書を戻せ」と言い続けます ＝
+# **機械が、自分を止め直す理由をいつまでも自分に配る**ことになります。
+#
+# いまは逆を見ます: **`.owner-pause` が無い限り止まらないこと**。
+# 検査の本体は `tests/test_pause_needs_owner.py`（10件）。
+name: pause needs the owner
 
 on:
   push:
     branches: [main]
+  pull_request:
   workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
-  verify-pause:
+  pause-needs-the-owner:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
 
-      - name: Validate files and syntax
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install what the floor test needs
+        run: pip install --quiet pytest PyYAML
+
+      - name: Syntax and hook wiring
         run: |
-          test -s AUTOMATION_PAUSED.md
-          test -s scripts/policy_pause.sh
-          python -m py_compile src/pause_guard.py src/__init__.py src/config.py
+          python -m py_compile src/pause_guard.py src/resume_gate.py src/__init__.py src/config.py
+          bash -n scripts/policy_pause.sh
           python - <<'PY'
           import json
           from pathlib import Path
           settings = json.loads(Path('.claude/settings.json').read_text(encoding='utf-8'))
-          rendered = json.dumps(settings, ensure_ascii=False)
-          assert 'scripts/policy_pause.sh' in rendered
-          assert 'AUTOMATION PAUSED' in Path('AUTOMATION_PAUSED.md').read_text(encoding='utf-8')
+          assert 'scripts/policy_pause.sh' in json.dumps(settings, ensure_ascii=False), \
+              'policy_pause.sh がフックから外れています'
           PY
 
-      - name: Prove generation entry points are blocked
+      - name: The floor - a document alone must not stop anything
+        run: python -m pytest tests/test_pause_needs_owner.py tests/test_pause_guard_list.py -q
+
+      - name: The owner marker is not in the tree
         run: |
-          python - <<'PY'
-          import importlib.util
-          import sys
-          from pathlib import Path
+          # **機械が置いていないこと。** ここが落ちたら、まず「誰が置いたか」を
+          # `git log` で見ること（オーナーが手で置いたのなら、それは正しい停止です）。
+          if [ -e .owner-pause ]; then
+            echo "::warning::.owner-pause is present - the repository is paused by hand."
+            git log -1 --format='marker last touched by: %an <%ae> at %ad' -- .owner-pause || true
+          else
+            echo "not paused (no .owner-pause) - as expected"
+          fi
 
-          spec = importlib.util.spec_from_file_location('pause_guard_test', 'src/pause_guard.py')
-          guard = importlib.util.module_from_spec(spec)
-          spec.loader.exec_module(guard)
-
-          original = sys.argv[0]
-          try:
-              sys.argv[0] = 'pipeline.py'
-              try:
-                  guard.enforce_current_process()
-              except RuntimeError as exc:
-                  assert 'AUTOMATION PAUSED' in str(exc)
-              else:
-                  raise AssertionError('pipeline.py was not blocked')
-
-              sys.argv[0] = 'status.py'
-              guard.enforce_current_process()
-          finally:
-              sys.argv[0] = original
-          print('pause guard passed')
-          PY
-
-      - name: Verify explicit override is narrow and intentional
-        env:
-          ALLOW_POLICY_PAUSED_AUTOMATION: I_ACCEPT_YPP_POLICY_RISK
-        run: |
-          python - <<'PY'
-          import importlib.util
-          import sys
-          spec = importlib.util.spec_from_file_location('pause_guard_override_test', 'src/pause_guard.py')
-          guard = importlib.util.module_from_spec(spec)
-          spec.loader.exec_module(guard)
-          sys.argv[0] = 'pipeline.py'
-          guard.enforce_current_process()
-          print('explicit one-process override recognized')
-          PY
+      # **止める中身が効くことの証明は、`tests/test_pause_needs_owner.py` が
+      # やっています**（`test_オーナーの印を人が置いたときだけ止まる`。印を tmp に
+      # 置いて `pipeline.py` が塞がることまで見る）。ここに写しを置かないこと ——
+      # 写した瞬間に、同じ問いに2つの答えができます。

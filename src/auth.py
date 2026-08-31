@@ -38,6 +38,22 @@ def _clean(value: str) -> str:
 
 
 def credentials() -> Credentials:
+    """**API を叩く側は全員ここを通ります**（`build(..., credentials=credentials())`）。
+
+    だから**枠の帳面の包みは、ここで掛けます**（`src/quota_ledger.install()`）。
+    Data API を叩く場所は `src/` と `scripts/` に 30か所以上 あり、
+    そのつど `build(...)` を立てています —— **一覧に足す約束は、この輪では
+    毎回どこかが落ちます**（`upload_cap._write_path` の「人の記憶と手写しに
+    依存する門は落ちる側」）。**全部が通る1点で包むこと。**
+
+    掛からなくても認証は返します（帳面が空になるだけ。`quota_ledger.render()`
+    がその旨を印字します）。
+    """
+    try:
+        from . import quota_ledger                             # noqa: PLC0415
+        quota_ledger.install()
+    except Exception:                                          # noqa: BLE001
+        pass                                                   # 帳面のために認証を落とさない
     return Credentials(
         token=None,
         refresh_token=_clean(config.env("YT_REFRESH_TOKEN")),

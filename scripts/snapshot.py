@@ -71,3 +71,78 @@ def print_curves(ids: list[str], titles: dict[str, str]) -> None:
     for vid, h in sorted(rows, key=lambda r: r[1][-1]["hours"]):
         点 = "  ".join(f"{d['hours']:.0f}h:{d['views']}" for d in h[-6:])
         print(f"  {titles.get(vid, vid)[:26]:28s} {点}")
+
+
+# --- **単体で撃てるようにする**（2026-08-27 に足した） ----------------------
+#
+# `config/hypotheses.yaml` の `needs[].refresh` は **`python scripts/snapshot.py`**
+# と書いてありました（`scripts/deadline_check.py` が「判定できない前提」に対して
+# **そのまま印字する**行です）。**このファイルには `__main__` がありませんでした** ——
+# 撃っても**黙って何もせず終了コード0**を返し、次の回はもう1度
+# 「読みが足りない」を見ます。**手順が名指ししている道具が、無いのと同じ**でした。
+#
+# `scripts/status.py` は同じことをしていますが、あれは Analytics も棚卸しも回すので
+# **40〜60秒**かかります。ここは `videos.list` だけで、
+# **571本 なら 12組 ＝ 12単位**（日枠は10,000単位）。
+#
+# **切り分けの日（`src/day_cap.booked_split_day()`）を読むのに要るのはこれだけ**です ——
+# その日の最後の本が 齢 `MIN_AGE_H`（6時間）を過ぎた後に1回 撃てば、
+# `day_cap.window()` が (A)/(B) を決めます。
+def _ids_from_ledger() -> list[str]:
+    """`data/uploaded.jsonl` の video_id（**Data API 0単位**）。"""
+    led = LOG.parent / "uploaded.jsonl"
+    if not led.exists():
+        return []
+    out: list[str] = []
+    seen: set[str] = set()
+    for line in led.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        try:
+            vid = str(json.loads(line).get("video_id") or "")
+        except json.JSONDecodeError:
+            continue
+        if vid and vid not in seen:
+            seen.add(vid)
+            out.append(vid)
+    return out
+
+
+def main() -> int:
+    import sys
+    from pathlib import Path as _P
+
+    sys.path.insert(0, str(_P(__file__).resolve().parent.parent))
+    from googleapiclient.discovery import build
+
+    from src import auth
+
+    ids = _ids_from_ledger()
+    if not ids:
+        print("[snapshot] `data/uploaded.jsonl` に video_id がありません")
+        return 1
+    youtube = build("youtube", "v3", credentials=auth.credentials())
+    videos: list[dict] = []
+    for i in range(0, len(ids), 50):
+        try:
+            videos += youtube.videos().list(
+                part="snippet,status,statistics",
+                id=",".join(ids[i:i + 50]),
+            ).execute()["items"]
+        except Exception as exc:                     # noqa: BLE001
+            auth.note_day_quota(exc, "videos.list snapshot")
+            print(f"[snapshot] {i // 50 + 1}組目が取れませんでした: {str(exc)[:90]}")
+            break
+    if not videos:
+        print("[snapshot] 1本も読めませんでした（日枠は JST 16:00 に戻ります）")
+        return 1
+    n = record(videos)
+    newest = max((json.loads(x)["at"] for x in
+                  LOG.read_text(encoding="utf-8").splitlines() if x.strip()),
+                 default="?")
+    print(f"[snapshot] {n}本 積みました（{len(videos)}本 読んだ / いちばん新しい点 {newest}）")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

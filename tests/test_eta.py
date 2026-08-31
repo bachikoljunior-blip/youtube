@@ -35,6 +35,16 @@ _spec.loader.exec_module(eta)
 # `tests/test_eta_day_cap.py` が持ちます（**隠さず、置き場所を分けています**）。
 _UNCAPPED = eta.UPLOAD_CAP_PER_DAY
 
+#: **公開の密度も縛ります**（2026-08-30 に足した。`_UNCAPPED` と**同じ壊れ方**）。
+#:
+#: `eta.PLAN_PUBLISH_PER_DAY` は「計画の数」で、実測が動けば動きます ——
+#: 2026-08-30 に `src.density_verdict` が「1時間より詰めても1本あたりは落ちない」を
+#: **falsified**（倍率 0.003）にしたので **25 → 13** へ落としました。
+#: すると、この file の合成データが「届く帯」から出て `target_date` が `None` に落ち、
+#: **形を測っている検査が4件 赤**になります。**形は1行も壊れていません。**
+#: 密度が到達日を動かすことは `tests/test_eta_density_cap.py` が別に持っています。
+_PINNED_DENSITY = 25
+
 # --- **2026-08-22: 同じことが RPM の側でも起きました** ---
 #
 # `plan()` は `src/rpm_mix.last()`（実効 RPM の天井）も実測から直に読みます。
@@ -44,9 +54,21 @@ _UNCAPPED = eta.UPLOAD_CAP_PER_DAY
 import _eta_pin  # noqa: E402  （pytest が tests/ を sys.path に入れます）
 
 
+# --- **2026-08-31: 4つ目が乗りました —— オーナーの規則（1日1本）** ---
+#
+# `src/house_rule.PUBLISH_PER_DAY = 1` を `eta.PLAN_PUBLISH_PER_DAY` が読みます。
+# この file の `ceiling`（帯ごとの月商の上限）は **per_video × 密度 × 30 × RPM**
+# なので、密度が 25 → 1 に落ちた瞬間に **25分の1**（長尺お金中 819,000円 →
+# 32,760円）になり、「本数では天井は動かない」を測っている検査が
+# **目標額に届かない側へ落ちて赤**になります。**形は1行も壊れていません。**
+# `pin_mix` / `_UNCAPPED` / `_PINNED_DENSITY` と**まったく同じ扱い**にします。
+#
+# **規則そのものの効きは `tests/test_eta_house_rule.py` が主題として持ちます**
+# （表に「いま計画が乗っている本数」の行が出ること・腕が規則で頭打ちになること）。
 @pytest.fixture(autouse=True)
 def _天井は主題ではない(monkeypatch):
     _eta_pin.pin_mix(monkeypatch)
+    _eta_pin.pin_house_rule(monkeypatch, eta, _PINNED_DENSITY)
 
 
 
@@ -285,7 +307,17 @@ def test_長尺の実測があるときは_合格点と突き合わせて出す(
     m["per_video_now"] = a["per_video_now"]
     line = "\n".join(eta.report(m, a))
     assert "測れています" in line, "**「未測定」と書き続けると、誰とも突き合わせません**"
-    assert "未測定" not in line.split("--- **門2a")[1]
+    g2 = line.split("--- **門2a")[1]
+    # **禁じているのは「1本あたり再生そのものを未測定と呼ぶこと」です**（2026-08-29 に絞った）。
+    #     ここは長らく裸の `"未測定" not in g2` でした。**裸だと、別の量について
+    #     正直に「まだ測っていない」と断る行まで落とします** —— 実測 08/29:
+    #     「L を 1.71 → 21.9本/日 に上げたとき、1本あたり再生が 8.0回 のまま
+    #     保つかは未測定」を足したら、この検査が落ちました。
+    #     **その文は、この検査が守ろうとしているものと逆向きです**
+    #     （黙って実測のふりをするのではなく、**断っている**側）。
+    #     **覆る条件**: 下の2つの言い回しが変わったら、ここも直すこと。
+    assert "1本あたり再生は**未測定**" not in g2
+    assert "1本あたり再生は**測れていません**" not in g2
     assert "133倍" in line or "倍**" in line
 
 
@@ -631,7 +663,7 @@ def test_段取りは_どの帯も届かない入力でも空で返らない():
     # 前提: この入力は「どの帯でも届かない」側（ここが変わったら検査の意味が変わる）
     assert all(a["ceiling"][k] < eta.TARGET_YEN for k in eta.RPM_SCENARIOS)
 
-    pl = eta.plan(m, a, view_cap=_UNCAPPED)
+    pl = eta.plan(m, a, view_cap=_UNCAPPED, density=_PINNED_DENSITY)
     assert pl["stages"], "段取りが空で返った"
     assert pl["stages"][-1]["when"] < eta.NEVER, "最後の段に日付が入っていない"
     assert pl["blocking"]["what"], "止めている入力が名指しされていない"
@@ -718,7 +750,7 @@ def test_段4は_段3の日付の写しではない():
 def test_段4は_収益の30日窓のぶんだけ段3より後ろ():
     """月20万は**30日ぶんの合計**。収益化前の再生は1円も生まないので前借りできません。"""
     m, a = _analysed()
-    pl = eta.plan(m, a, view_cap=_UNCAPPED)
+    pl = eta.plan(m, a, view_cap=_UNCAPPED, density=_PINNED_DENSITY)
     d3 = next(s for s in pl["stages"] if s["no"] == 3)["when"]
     assert pl["days_to_target"] == pytest.approx(d3 + eta.REVENUE_WINDOW_DAYS)
 
@@ -785,7 +817,7 @@ def test_倍率が1を切っていても_別の形の実測なら合格点は立
     **測っていない数字の写し**になります（追記が名指ししている穴と同じ形）。
     """
     m, a = _analysed()                       # 長尺の実測は無い＝物差しはショート
-    pl = eta.plan(m, a, view_cap=_UNCAPPED)
+    pl = eta.plan(m, a, view_cap=_UNCAPPED, density=_PINNED_DENSITY)
     assert pl["spine"].startswith("長尺")
     assert pl["target"]["ratio"] < 1.0, "前提: 倍率は1を切っている側"
     assert pl["target"]["proxy"] is True
@@ -794,7 +826,7 @@ def test_倍率が1を切っていても_別の形の実測なら合格点は立
 
     # 長尺を十分に測ったら、推測ではなくなる
     a2 = dict(a, long_per_video=800.0, long_videos_28d=25)
-    pl2 = eta.plan(m, a2, view_cap=_UNCAPPED)
+    pl2 = eta.plan(m, a2, view_cap=_UNCAPPED, density=_PINNED_DENSITY)
     assert pl2["target"]["proxy"] is False
     assert pl2["target"]["met"] is True
 
@@ -807,7 +839,7 @@ def test_門が届かない側でも_日付を1つ出す():
     """
     m, a = _analysed(subs_gained_28d=0)
     assert a["days_subs_at"][eta.PLAN_PUBLISH_PER_DAY] >= eta.NEVER
-    pl = eta.plan(m, a, view_cap=_UNCAPPED)
+    pl = eta.plan(m, a, view_cap=_UNCAPPED, density=_PINNED_DENSITY)
     assert pl["days_to_target"] < eta.NEVER, "段4 が「届きません」で畳まれている"
     assert pl["target"]["fallback"] is not None
     assert pl["target"]["conditional"] is True

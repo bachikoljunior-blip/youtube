@@ -1,8 +1,13 @@
 #!/usr/bin/env python3
 """**次の周を、いま立ててよいか。立てるならどの役か。**
 
-    python scripts/next_round.py                       → GO <役> <役> か WAIT <分>
+    python scripts/next_round.py --live <N>            → GO <役> <役> か WAIT <分>
     python scripts/next_round.py --record <役>[,<役>]   → 立てたことを記録する
+    python scripts/next_round.py --live-set <N>        → 走っているサブの数を置く
+
+**`--live` を必ず付けること**（`list_sessions` の数）。**0 なら間隔に関係なく GO** ——
+間隔は「二重に立てない」ためのもので、**遊ばせるためではありません**
+（2026-08-31・オーナー「何で止まってんだよ！」。理由は `decide()` の docstring）。
 
 ## なぜこれが要るのか（2026-08-25・オーナー指示）
 
@@ -64,6 +69,14 @@ sys.path.insert(0, str(ROOT))
 
 ROUNDS = ROOT / "data" / "rounds.jsonl"
 
+#: **いま走っているサブの数**を、親が置いていく台帳（`--live-set` で書く）。
+#: `--live` を渡さなかった回は、ここを読みます。
+LIVE = ROOT / "data" / "live_subs.json"
+
+#: 台帳が古くなったら「読めなかった」と同じ扱いにする（分）。
+#: **親が落ちたあとの 0 を、いつまでも信じないため**です。
+LIVE_STALE_MIN = 30.0
+
 #: 役。`docs/spawn_prompt.rendered.md` の `kind:` と同じ名前にすること。
 #: **1周でこれを全部立てます。**（交互ではありません。上の節）
 ROLES = ("hourly", "optimizer")
@@ -107,6 +120,38 @@ def round_span(floor_min: float) -> float:
 #: `quota.py` が答えられない回にゼロ間隔で回すと、枠を先に使い切ります。
 FALLBACK_MIN = 90.0
 
+
+def live_write(n: int, now: datetime | None = None) -> dict:
+    """**いま走っているサブの数**を残す（親が `--live-set` で書く）。"""
+    now = now or datetime.now(timezone.utc)
+    row = {"at": now.isoformat(), "live": int(n)}
+    LIVE.parent.mkdir(parents=True, exist_ok=True)
+    LIVE.write_text(json.dumps(row, ensure_ascii=False) + "\n", encoding="utf-8")
+    return row
+
+
+def live_read(now: datetime | None = None) -> tuple[int | None, str]:
+    """台帳から「いま走っているサブの数」を読む。**読めなければ `None`。**
+
+    古い台帳（`LIVE_STALE_MIN` より前）は **読めなかった扱い**にします ——
+    親が落ちたあとの `0` をいつまでも信じると、**間隔を無視して立て続ける**
+    側に倒れます。**測っていないことを、どちらの側にも倒さないこと。**
+    """
+    now = now or datetime.now(timezone.utc)
+    if not LIVE.exists():
+        return None, "台帳がありません（`--live` も渡されていません）"
+    try:
+        row = json.loads(LIVE.read_text(encoding="utf-8").strip() or "{}")
+        at = datetime.fromisoformat(str(row["at"]))
+        n = int(row["live"])
+    except Exception:                                          # noqa: BLE001
+        return None, "台帳が読めません"
+    if at.tzinfo is None:
+        at = at.replace(tzinfo=timezone.utc)
+    age = (now - at).total_seconds() / 60.0
+    if age > LIVE_STALE_MIN:
+        return None, f"台帳が古い（{age:.0f}分前・上限 {LIVE_STALE_MIN:.0f}分）"
+    return n, f"台帳（{age:.0f}分前）"
 
 def rows() -> list[dict]:
     if not ROUNDS.exists():
@@ -207,15 +252,97 @@ def floor_minutes() -> tuple[float, str]:
     except Exception as exc:                                   # noqa: BLE001
         return FALLBACK_MIN, f"quota.py が答えませんでした（{str(exc)[:60]}）"
     if got is None:
-        return FALLBACK_MIN, "quota.py が「まだ出せない」と答えました（目盛りが足りない）"
+        return _floor_from_gauge()
     return float(got), "quota.py の実測"
 
 
-def decide(now: datetime | None = None) -> dict:
+def _floor_from_gauge() -> tuple[float, str]:
+    """**誕生が数えられない回に、オーナーの画面の%から間隔を出す。**
+
+    比の計算そのものは `quota.gauge_floor_minutes()` にあります
+    （`sibling_check.py` も同じ口を見るので、**2か所に書かない**）。
+    ここがやるのは、`FALLBACK_MIN` を基準として渡すことと、
+    **なぜその数になったかを1行で言うこと**だけです。
+
+    2026-08-30 の実測: 週 42%・いま 1.286 %/時 ÷ 許される 0.428 = ×3.0 → **270分**。
+    **覆る条件は `quota.gauge_floor_minutes()` の docstring にあります**
+    （速さが線の内側に戻れば `None` が返り、ここは自分で `FALLBACK_MIN` に戻ります）。
+    """
+    try:
+        from scripts.quota import gauge_floor_minutes
+    except Exception:                                          # noqa: BLE001
+        try:
+            import importlib.util
+            spec = importlib.util.spec_from_file_location(
+                "quota", ROOT / "scripts" / "quota.py")
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+            gauge_floor_minutes = mod.gauge_floor_minutes
+        except Exception:                                      # noqa: BLE001
+            return FALLBACK_MIN, "quota.py を読めませんでした（目盛りも見られません）"
+    try:
+        got = gauge_floor_minutes(FALLBACK_MIN)
+    except Exception as exc:                                   # noqa: BLE001
+        return FALLBACK_MIN, f"quota.py の目盛りが答えませんでした（{str(exc)[:60]}）"
+    if not got:
+        return FALLBACK_MIN, "目盛りが無いか、いまの速さは許される速さの内側です"
+    minutes, ratio = got
+    return float(minutes), (f"目盛りから（誕生が数えられないので速さの比で伸ばした。"
+                            f"×{ratio:.1f}）")
+
+
+def decide(now: datetime | None = None, live: int | None = None) -> dict:
+    """**次の周を立ててよいか。**
+
+    ## **間隔は「二重に立てない」ためのものです。遊ばせるためではありません**
+    ## （2026-08-31・オーナー指示。**この節は消さないこと**）
+
+    オーナー原文:
+
+        **「何で止まってんだよ！」**
+        **「だったら良いに決まってんだろ！顔色伺ってんじゃねえよ！」**
+
+    **何が起きたか**: 親がこの道具の出す間隔（週の使用量から伸ばした **191分**）を
+    **手を止める理由に使い、サブが1体も走っていない状態で待ちました。**
+    この関数は経過時間しか見ていなかったので、**空いている時間が丸ごと落ちます。**
+
+    **だから `live`（いま走っているサブの数）を先に見ます。**
+
+        live == 0   → **GO。間隔に関係なく。**（空きを作らない）
+        live > 0    → これまでどおり（欠けの穴埋め → 間隔）
+        live is None → これまでどおり。**ただし「数が渡されていない」と印字する**
+
+    `live` は `--live N` で渡すか、親が `--live-set N` で置いた台帳から読みます
+    （出どころは `list_sessions`）。**渡されない回を GO に倒さないのは、
+    「測っていないことを、落とす側にも立てる側にも倒さない」ため**です ——
+    そこを GO に倒すと、`--live` を付け忘れた親が**毎回 二重に立てます**。
+    **付け忘れが起きないよう、印字が毎回それを言います。**
+
+    `scripts/quota.py` の間隔の伸ばしは**残します**（枠を使い切ると本当に止まる）。
+    ただしそれは「**1周の重さ**」に効かせるものであって、
+    **空きを作る側に使わないこと。**
+
+    **覆る条件**: サブが 0体 でも立ててはいけない状態が見つかったとき
+    （例: 立てた先が必ず即死する）。そのときは**間隔ではなく、
+    その原因のほうを直すこと** —— 止める仕掛けを足さない（`CLAUDE.md` 2026-08-31）。
+    **検査は `tests/test_next_round_live.py`。戻すには検査を消すしかありません。**
+    """
     now = now or datetime.now(timezone.utc)
     floor, src = floor_minutes()
-    base = {"floor_min": floor, "source": src}
+    live_src = "引数 --live"
+    if live is None:
+        live, live_src = live_read(now)
+    base = {"floor_min": floor, "source": src,
+            "live": live, "live_source": live_src}
     group = current_round(span_min=round_span(floor))
+
+    # **いちばん先に見ます。** 1体も走っていない時間は、間隔で埋めるものでは
+    #     ありません（オーナー 2026-08-31「何で止まってんだよ！」）。
+    if live == 0:
+        return {**base, "go": True, "roles": list(ROLES), "idle": True,
+                "why": ("**走っているサブが0体です。間隔は見ません**"
+                        f"（間隔 {floor:.0f}分・出どころ {live_src}）——"
+                        "間隔は二重に立てないためのもので、遊ばせるためではありません")}
 
     if not group:
         return {**base, "go": True, "roles": list(ROLES),
@@ -294,7 +421,18 @@ def main() -> int:
     ap = argparse.ArgumentParser(description="次の周を立ててよいか／どの役か")
     ap.add_argument("--record", metavar="ROLE[,ROLE]",
                     help="立てたことを記録する（役の名前。カンマ区切りで複数）")
+    ap.add_argument("--live", type=int, default=None, metavar="N",
+                    help="いま走っているサブの数（`list_sessions` から）。"
+                         "**0 なら間隔に関係なく GO**")
+    ap.add_argument("--live-set", type=int, default=None, metavar="N",
+                    help="その数を台帳（data/live_subs.json）へ置くだけ")
     args = ap.parse_args()
+
+    if args.live_set is not None:
+        row = live_write(args.live_set)
+        print(f"[next_round] 走っているサブ: {row['live']}体 と記録しました"
+              f"（{row['at']}）")
+        return 0
 
     if args.record:
         want = [s.strip() for s in args.record.split(",") if s.strip()]
@@ -307,8 +445,15 @@ def main() -> int:
             print(f"[next_round] 記録しました: {row['role']} at {row['at']}")
         return 0
 
-    d = decide()
+    d = decide(live=args.live)
     print(f"[next_round] 間隔 {d['floor_min']:.0f}分（{d['source']}）")
+    if d.get("live") is None:
+        print("  [!] **走っているサブの数が渡されていません。**"
+              " `--live <N>`（`list_sessions` の数）を付けること ——"
+              " 付けないと、**1体も走っていない時間を間隔で埋めます**"
+              "（2026-08-31 にオーナーが叱った止まり方そのものです）")
+    else:
+        print(f"  走っているサブ: **{d['live']}体**（{d['live_source']}）")
     roles = d["roles"]
     if d["go"]:
         print("GO " + " ".join(roles))
@@ -326,6 +471,9 @@ def main() -> int:
     print(f"WAIT {d['wait_min']:.0f}")
     print(f"  理由: {d['why']}")
     print(f"  いまの周は {'・'.join(roles)} がそろっています（片肺ではありません）")
+    if d.get("live"):
+        print(f"  **待つ理由は「二重に立てないため」です** —— いま {d['live']}体 が"
+              "走っています。**間隔そのものではありません**")
     print("  **何もしないこと。** 次のトリガーか、走っているサブの完了が拾います")
     return 0
 

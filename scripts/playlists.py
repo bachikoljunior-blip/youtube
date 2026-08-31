@@ -88,6 +88,38 @@ DESC = (
 )
 
 
+def _reserve_hold() -> str | None:
+    """**計測のぶんを残す門**（`src/upload_cap.reserve_hold`）。
+
+    ここは1回で再生リストと項目を何十件も作りうる口です（各 50単位）。
+    残しているのは「前提を閉じる読み」で、`eta.py` が毎回
+    「軌跡の腕が動くのは前提を1件 閉じたときだけ」と言う操作です。
+    **やり残しは消えません** —— 同じ1行が次の窓で拾います。
+    """
+    try:
+        from src import upload_cap                      # noqa: PLC0415
+
+        return upload_cap.reserve_hold()
+    except Exception:                                   # noqa: BLE001
+        return None       # 読めないなら止めない（推測で止めない）
+
+
+def _note_quota_ok(detail: str) -> None:
+    """**通った書き込みを数える**（2026-08-28）。
+
+    `src/upload_cap.reserve_hold()` は `spent` を読んで止めます。
+    その `spent` を作るのは `note_quota_ok` だけなので、
+    **数えない口から出た単位は、門にとって存在しません。**
+    ここは1回で再生リストと項目を何十件も作りうる口です（各 50単位）。
+    """
+    try:
+        from src import upload_cap                      # noqa: PLC0415
+
+        upload_cap.note_quota_ok(detail=detail)
+    except Exception:                                   # noqa: BLE001
+        pass          # 数えられないことを理由に、書き込みを失敗にしない
+
+
 def _pairs() -> dict[str, str]:
     data = yaml.safe_load(PAIRS.read_text(encoding="utf-8")) or {}
     return data.get("pairs") or {}
@@ -204,6 +236,11 @@ def main(argv: list[str] | None = None) -> int:
         fresh = pid is None                     # 作りたては空。引かない（_items 参照）
         if pid is None:
             print(f"\n[新] {title}")
+            _hold = _reserve_hold()
+            if _hold and not args.dry_run:
+                print(f"     {_hold}")
+                print("     **作りません。**窓が変わった回に同じ1行で作れます。")
+                return 1
             if args.dry_run:
                 print(f"     1. {long_id}（長尺）")
                 for s in shorts:
@@ -214,6 +251,7 @@ def main(argv: list[str] | None = None) -> int:
                             "defaultLanguage": "ja"},
                 "status": {"privacyStatus": "public"},
             }).execute()["id"]
+            _note_quota_ok("playlists.insert")
             made += 1
         else:
             print(f"\n[既] {title}")
@@ -226,10 +264,16 @@ def main(argv: list[str] | None = None) -> int:
             print(f"     + {vid}  {snips[vid]['title'][:28]}")
             if args.dry_run:
                 continue
+            _hold = _reserve_hold()
+            if _hold:
+                print(f"     {_hold}")
+                print("     **入れません。**窓が変わった回に同じ1行で入ります。")
+                return 1
             _retry(lambda: y.playlistItems().insert(part="snippet", body={
                 "snippet": {"playlistId": pid, "resourceId": {
                     "kind": "youtube#video", "videoId": vid}},
             }))
+            _note_quota_ok(f"playlistItems.insert {vid}")
             added += 1
 
     print(f"\n再生リスト {made}件を作成 / 動画 {added}件を追加 / "
