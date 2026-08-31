@@ -25,3 +25,4 @@
 {"at": "2026-08-31", "key": "deep_short_arm('処置')", "rate": 0.833333, "have": 5, "ready": "2026-09-04", "claim": "深い題（`s-` で始まらない・節を持つ題）をショートとして出すと、1本あたり再生が `s-` の題のショートより上がる"}
 {"at": "2026-08-31", "key": "sum(1 for r in rows('uploaded.jsonl') if (r.get('uploaded_at') or '') >= '2026-08-27T12:00' and (r.get('at') or '9') <= str(date.today()))", "rate": 2.25, "have": 9, "ready": "2026-09-04", "claim": "完成した図を説明のあいだ画面に残すと、engaged 比率が上がる（＝速すぎて理解されていない）"}
 {"at": "2026-08-31", "key": "sum(1 for v in long_ids() if latest_views().get(v, 0) > 0)", "rate": 7.0, "have": 14, "ready": "2026-09-03", "claim": "長尺の1本あたり再生 8.0回 は長尺の天井ではない。公開が 0.68本/日 だっただけで、1日8本の帯で出しつづければ、齢をそろえた1本あたり再生は 80回（"}
+{"at": "2026-08-31", "key": "min(reveal_hold_arm('処置'), reveal_hold_arm('対照'))", "rate": 0.25, "have": 1, "ready": "2026-10-30", "claim": "完成した図を説明のあいだ画面に残すと、engaged 比率が上がる（＝速すぎて理解されていない）"}
