@@ -31,6 +31,8 @@ _spec = importlib.util.spec_from_file_location("eta_surface_mod", ROOT / "script
 eta = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(eta)
 
+import _eta_pin  # noqa: E402
+
 # 2026-08-20 の実測（`data/rpm_mix.jsonl` の最後の点）
 MIX = {
     "at": "2026-08-20",
@@ -84,9 +86,28 @@ def _pin_surface(monkeypatch) -> None:
     monkeypatch.setattr(eta, "_recent_surface", lambda *a, **k: None)
 
 
+def _pin_rule(monkeypatch) -> None:
+    """**オーナー規則（1日1本）を、この検査に当てない。**（2026-08-31）
+
+    この file の主題は**面**（インプレッション）と**混ざり方の天井**で、
+    1日に何本 置くかではありません。ところが 2026-08-31 に
+    `analyse()` の天井（`_ceiling_per_day()`）が規則を読むようになり、
+    分母が **10本/日 → 1本/日** に落ちました。`ceiling_short` はその逆数なので
+    **10倍**（実測: `views_per_video=2,400` の点で 0.89 → **8.87**）——
+    「天井が足りている側の枝」が標本から消えます。
+
+    **形は1行も壊れていません。** `_pin_surface` / `MIX` とまったく同じ扱いで、
+    規則を `day_cap` の上へ退けて、**天井を観測（10本/日）に戻します**。
+    規則そのものは `tests/test_house_rule.py` / `tests/test_eta_day_cap.py` が
+    主題として持ちます（**隠さず、置き場所を分けています**）。
+    """
+    _eta_pin.pin_house_rule(monkeypatch, eta, _eta_pin.PLAN_DENSITY)
+
+
 def _plan(monkeypatch, mix=MIX, **over):
     monkeypatch.setattr(eta.rpm_mix, "last", lambda *a, **k: mix)
     _pin_surface(monkeypatch)
+    _pin_rule(monkeypatch)
     m = _measured(**over)
     return eta.plan(m, eta.analyse(m))
 
