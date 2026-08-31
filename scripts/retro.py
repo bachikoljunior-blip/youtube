@@ -794,6 +794,34 @@ def worked_on(toks: list[str], since: str = "") -> dict[str, int]:
 PROC_DOCS = ("docs/trigger_main.md", "docs/trigger_parent.md",
              "docs/spawn_prompt.md", "CLAUDE.md")
 
+#: **`.py` 以外の撃つ側**（2026-09-01 に踏んだ。**3周 持ち越した2本は、両方とも配線ずみでした**）。
+#:
+#: `_corpus()` は長らく `.py`（`scripts` / `src` / `tests`）と `PROC_DOCS` の4本しか
+#: 読んでいませんでした。**この repo で道具を撃つ口は、それだけではありません**:
+#:
+#:     `scripts/stop_check.sh`      … 停止フックが `--gate` を撃つ
+#:     `.claude/settings.json`      … `statusLine` / `hooks` がコマンドを持つ
+#:     `.github/workflows/*.yml`    … CI が撃つ
+#:
+#: **実測 2026-09-01 08:1x** —— 未決として残っていた2本は、片方が停止フックから、
+#: もう片方がハーネスの `statusLine` から**毎回 撃たれて**いました。
+#: 一覧はそれを「どこからも撃たれていない」と名指しし、**3周 続けて申し送りへ運ばれ**、
+#: そのたび「まだ1周も見られていません」と書かれています
+#: （`docs/JOURNAL.md` 2026-09-01 05:5x / 06:2x / 07:0x）。
+#: **偽陽性は、本物より高くつきます** —— 消すか配線するかの三択を、
+#: 既に配線ずみのものに対して毎周やり直させるからです。
+#:
+#: **足してよいのは「実際にコマンドを組み立てる file」だけです**（`PROC_DOCS` の
+#: 「日誌を入れないこと」と同じ理由 —— 名前が出てくるだけの file を足すと、
+#: 一度でも話題に出た道具が全部「配線ずみ」に化けます）。
+#:
+#: **覆る条件**: 撃つ口が増えたら（`Makefile`・`justfile`・`docker-compose.yml`…）
+#: ここに足すこと。**`unwired_tools()` が 0本 を出し続けたら、まずここを疑う**
+#: —— 名前を含む file を1つ足しただけで、一覧は黙って空になります。
+CALLER_GLOBS = ("scripts/*.sh", "*.sh",
+                ".claude/settings.json", ".claude/settings.local.json",
+                ".github/workflows/*.yml", ".github/workflows/*.yaml")
+
 #: **(c)「わざと寝かせてある」の目印**。道具自身の docstring から拾います。
 #: 語を増やすときは、**その道具の docstring に実際に在る字**にすること
 #: （こちらで言い回しを想像して足すと、当たらないまま増えます）。
@@ -847,6 +875,11 @@ _DECIDED_RE = re.compile(r"^\s*#{1,4}\s.*\(c\).*わざと寝かせてある.*$",
 def _corpus() -> tuple[tuple[Path, ...], dict[Path, str], str]:
     """`unwired_tools()` が読む一式。**1回の走りで1度だけ読みます。**
 
+    返すのは `(道具, .py の中身, 撃つ側の本文)`。3つ目は **`PROC_DOCS`（手順）と
+    `CALLER_GLOBS`（シェル・ハーネス設定・CI）を繋いだもの**です ——
+    どちらも「`.py` ではないが、その道具を毎回 撃つ側」なので同じ袋に入れます
+    （**分ける値打ちがありません** —— `unwired_tools()` はこの袋に名前が在るかしか見ません）。
+
     **憶えているのは速さのためです**（`.py` を 500本 前後 読みます。
     実測 2026-09-01: 憶える前は検査4件で **44秒**、後は **12秒**）。
     `retro.py` も検査も一発ものなので、走っている間に中身が変わることはありません。
@@ -864,7 +897,25 @@ def _corpus() -> tuple[tuple[Path, ...], dict[Path, str], str]:
         f = ROOT / rel
         if f.exists():
             proc += f.read_text(encoding="utf-8", errors="replace")
+    for pattern in CALLER_GLOBS:
+        for f in sorted(ROOT.glob(pattern)):
+            if f.is_file():
+                proc += f.read_text(encoding="utf-8", errors="replace")
     return tools, code, proc
+
+
+def caller_files() -> list[str]:
+    """**`.py` 以外で、いま実際に読んでいる撃つ側**（`CALLER_GLOBS` の当たり）。
+
+    検査が「1本も当たっていない」を見るために出します ——
+    glob を書き間違えても `_corpus()` は**黙って何も足しません**。
+    """
+    out: list[str] = []
+    for pattern in CALLER_GLOBS:
+        for f in sorted(ROOT.glob(pattern)):
+            if f.is_file():
+                out.append(f.relative_to(ROOT).as_posix())
+    return out
 
 
 def unwired_tools() -> list[dict]:

@@ -68,11 +68,68 @@ def test_散文で名前を書いても_一覧は動かない():
     **全部 外れたらこの検査ごと消してよい** —— 一覧が空になったということです。
     """
     rows = {r["name"] for r in retro.unwired_tools()}
-    # ↓ この4つは「名前を書いただけ」。呼んでいません。
+    # ↓ この2つは「名前を書いただけ」。呼んでいません。
     assert "deixis_count" in rows
     assert "token_probe" in rows
-    assert "statusline_usage" in rows
-    assert "verdict_followup" in rows
+    # **2026-09-01 08:1x に 2本 外しました。** この検査は長らく
+    # `statusline_usage` / `verdict_followup` も並べていましたが、**あの2本は
+    # 最初から配線ずみ**でした（片方は停止フックの `.sh`、もう片方はハーネスの
+    # `statusLine`）。一覧が `.py` と手順4本しか読んでいなかったので見えず、
+    # **3周 続けて「未決」として申し送られています。**
+    # 上の「覆る条件」がそのとおりの形で発火した例です。
+
+
+def test_撃つ側は_py_だけではない():
+    """**`.sh` とハーネス設定から撃たれている道具を、未配線と呼ばないこと。**
+
+    ## なぜ要るか（2026-09-01 08:1x に踏んだ）
+
+    `_corpus()` は `.py`（`scripts` / `src` / `tests`）と `PROC_DOCS` の4本しか
+    読んでいませんでした。**この repo が道具を撃つ口は、それだけではありません**
+    —— 停止フックの `.sh` と、ハーネスの `statusLine` / `hooks`（`.claude/settings.json`）
+    が毎回 撃っています。
+
+    **未決として残っていた2本は、両方ともそこから撃たれていました。**
+    3周 続けて申し送りに「まだ1周も見られていません」と書かれ、
+    そのたび (a)/(b)/(c) の三択をやり直させています
+    （`docs/JOURNAL.md` 2026-09-01 05:5x / 06:2x / 07:0x）。
+    **偽陽性は本物より高くつきます。**
+
+    **覆る条件**: 撃つ口が増えたら `CALLER_GLOBS` に足すこと。
+    """
+    files = retro.caller_files()
+    assert files, (
+        "`CALLER_GLOBS` が1本も当たっていません。**glob を書き間違えても "
+        "`_corpus()` は黙って何も足しません** —— そのとき一覧は元の偽陽性へ戻ります"
+    )
+    assert any(f.endswith(".sh") for f in files), "シェルの撃つ側が1本もありません"
+    assert any(f.startswith(".claude/") for f in files), (
+        "ハーネス設定（`statusLine` / `hooks`）を読んでいません"
+    )
+
+
+def test_未配線と呼ぶ前に_撃つ側の本文を全部読んでいる():
+    """**一覧に残った道具は、`.py` 以外の撃つ側にも名前が無いこと。**
+
+    上の検査は「読んでいる file が在る」までしか見ません。
+    **読んだ結果が一覧に効いているか**は、こちらが見ます ——
+    `_corpus()` が本文を捨てていても、`caller_files()` は同じ一覧を返すからです。
+
+    名前は**組み立てて**当てます。`scripts/<名前>.py` と生で書くと
+    `_CALL_RE` がそれを撃つ側と読み、**この検査が一覧を空にします**
+    （`retro.py` の docstring に、同じ形で3回 踏んだ跡があります）。
+    """
+    from pathlib import Path as _P
+
+    text = "".join((_P(retro.ROOT) / f).read_text(encoding="utf-8", errors="replace")
+                   for f in retro.caller_files())
+    for r in retro.unwired_tools():
+        needle = "scripts/" + r["name"] + ".py"
+        assert needle not in text, (
+            f"`{r['name']}` は `.py` 以外の撃つ側から撃たれているのに、"
+            "「どこからも撃たれていない」に並んでいます。"
+            "`_corpus()` が `CALLER_GLOBS` の本文を袋へ入れているか見ること"
+        )
 
 
 def test_わざと寝かせてある側が_三択から落ちない():
