@@ -1,168 +1,196 @@
-"""**長尺の中央値の上限**（`src/long_ceiling.py`）が、判定と同じ数を見ていること。
+"""**長尺の天井の判定**（`src/long_ceiling.py`）が、仮説と同じ数を見ていること。
 
-## なぜ要るか（2026-08-31）
+## なぜ要るか（2026-08-31 に作り、2026-09-01 に判定の形ごと直した）
 
-`config/hypotheses.yaml` の `長尺1本あたり-30本` は **中央値 80回** で判定します。
-`scripts/eta.py` は 8/19 から `long_median_per_video` を測って
-`data/eta.jsonl` に積んでいましたが、**印字は平均のほうだけ**でした ——
-実測 2026-08-31 は 平均 16回 に対し **中央値 4回（4倍）**。
+`config/hypotheses.yaml` の `長尺1本あたり-13本` は **門 80回** で判定します。
+この前提が `scripts/eta.py` の言う「**未測定の1つ**」——
+月20万に届く帯は「長尺がショート並みに伸びた側」だけなので、
+**この1件が、目標に届く道が在るかどうかを決めています。**
 
-そして `scripts/deadline_check.py` は毎回「要 30 ／ いま 14 → あと 3日」と出し、
-**「あと3日 待てば分かる」に読めます。** 実測の分布は
+## **2026-09-01 に直したこと**（前の版は永久に閉じませんでした）
 
-    1 1 1 1 1 2 2 3 3 3 4 4 4 4 6 7 8 15 48 82 133   （21本・中央値 4）
+    前: 齢 24〜72時間 の読みが 30本以上 そろったうえで、中央値が 80回 に届かないなら外れ
+    後: 齢 96時間 以上 の読みが 13本以上 そろったうえで、80回超が 3本以下 なら外れ
 
-で、**残り9本 を、このチャンネルの最良の長尺（133回）で埋めても
-30本の中央値は 6.5** です。**待っても、この標本のままでは覆りません。**
+**(1) 30本 は窓に入りません** —— 判定は直近28日、規則は1日1本、窓の上限は **28本**。
+**30 > 28** なので待っても入れ替わっても満ちない。しかも `falsified_if` が
+「満たなければ**期限だけ延ばすこと**」と書いており、`house_rule.needs_beyond_rule()`
+は**期日で解く**ので延ばすと黙る —— **指示と検査が同じ向きに壊れていました。**
 
-## ここで固定するもの（5つ）
+**(2) 齢 24〜72時間 は熟れる前です** —— `settle.mature_hours('長尺')` は **96時間**。
+実測 2026-09-01: 24〜72時間 で中央値 **1回**、96時間 以上で **4回**（**×4**）。
 
-1. 上限が、**無限ではなく実測の最大値**で埋めた数であること
-   （`inf` を入れると上限が `inf` になり「まだ分からない」に化けます）
-2. 実測の分布で、上限が **門 80 の下**に出ること
-3. **覆る道（窓からの入れ替わり）が数で出る**こと ——「待つ」と別物だと言えること
-4. `long_values_28d` が無い点で **「測っていない」と出る**こと
-   （**「0本だった」ではありません**。`data/descriptions.json` で同じ形を踏んでいます）
-5. **門の数（80）と本数（30）が、仮説の本文と同じ**であること
-   —— 2か所に書いてあるので、片方だけ動いたら落とします
+**(3) 13本 で足ります** —— 符号検定。「中央値が 80回」が真なら門超えは p=0.5 なので、
+n=13 で 3本以下 なら p=0.046 で棄却。**門（80回）は1文字も緩めていません。**
+
+## ここで固定するもの
+
+1. **符号検定が正しいこと**（`ABOVE_MAX` が `sign_reject_at(N_TARGET)` と一致）
+2. **`N_TARGET` が窓に入ること**（`N_TARGET` ≤ 28日 × `PUBLISH_PER_DAY`）
+   —— **ここが前の版で壊れていました。この検査が再発を止めます**
+3. 標本が足りなければ **判定しない**こと
+4. 熟れの齢を `src/settle.py` から引くこと（**写さない**）
+5. **門（80）と本数（13）が仮説の本文と同じ**であること（2か所にあるので）
 
 ## 覆る条件
 
-- `falsified_if` の門が 80回 から動いたら、`MEDIAN_GATE` を合わせること
-  （**この検査が落ちて教えます**）
-- 判定が読む窓（28日）が変わったら、`WINDOW_DAYS` と
-  `scripts/eta.py::_measure()` の `q(28, ...)` を**一緒に**動かすこと
+- `falsified_if` の門が 80回 から動いたら `MEDIAN_GATE` を合わせること
+- オーナーが規則を外したら（`PUBLISH_PER_DAY` が上がる）、2番の上限が上がるので
+  `N_TARGET` を上げ直してよい
 """
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
+from src import house_rule
 from src import long_ceiling as lc
 
 ROOT = Path(__file__).resolve().parent.parent
 
-#: 実測 2026-08-31（`long_values_28d`・直近28日・昇順）。
-MEASURED = [1, 1, 1, 1, 1, 2, 2, 3, 3, 3, 4, 4, 4, 4, 6, 7, 8, 15, 48, 82, 133]
+#: 実測 2026-09-01（齢 96時間 以上・`reach_split.long_ids()`・昇順）。
+MATURE = [1, 1, 1, 1, 2, 2, 3, 3, 3, 4, 4, 4, 4, 4, 4, 7, 8, 8, 16, 54, 121, 156]
+
+
+# --- 符号検定 ---------------------------------------------------------------
+
+def test_符号検定の確率():
+    """全部が門の下なら (1/2)^n。**手で確かめられる所を1つ置く。**"""
+    assert lc.sign_p(13, 13) == 1.0
+    assert abs(lc.sign_p(13, 0) - 1 / 8192) < 1e-12
+    assert abs(lc.sign_p(13, 3) - 378 / 8192) < 1e-12
+
+
+def test_棄却域は事前に決まる():
+    """n=13 なら 3本以下（p=0.046）。**標本を見てから選ぶものではありません。**"""
+    assert lc.sign_reject_at(13) == 3
+    assert lc.sign_p(13, 3) < 0.05
+    assert lc.sign_p(13, 4) >= 0.05
+
+
+def test_小さすぎる標本では棄却できない():
+    """n=4 では、全部が門の下でも p=1/16 で 0.05 を切りません。"""
+    assert lc.sign_reject_at(4) is None
+
+
+def test_ABOVE_MAX_は検定から出た数と一致する():
+    """**写した数が、計算した数とずれていないこと。**"""
+    assert lc.ABOVE_MAX == lc.sign_reject_at(lc.N_TARGET)
+
+
+# --- **2番。前の版が壊れていた所** ------------------------------------------
+
+def test_必要な本数は窓に入る():
+    """**`N_TARGET` は、規則の下で窓に入る本数を超えてはいけません。**
+
+    前の版は 30本 で、窓（28日 × 1本/日 ＝ 28本）に入りませんでした。
+    **満たせない条件を反証条件にしてはいけない** —— この検査が再発を止めます。
+    """
+    cap = lc.WINDOW_DAYS * house_rule.PUBLISH_PER_DAY
+    assert lc.N_TARGET <= cap, (
+        f"`N_TARGET`={lc.N_TARGET} は窓（{lc.WINDOW_DAYS}日 × "
+        f"{house_rule.PUBLISH_PER_DAY}本/日 ＝ {cap}本）に入りません。**永久に閉じません。**")
+
+
+def test_仮説の側も窓に入る():
+    """同じことを、**仮説の本文の側**でも見ます（`house_rule` の門を通して）。"""
+    import yaml
+    doc = yaml.safe_load((ROOT / "config" / "hypotheses.yaml").read_text(encoding="utf-8"))
+    hits = [h for h in house_rule.window_unreachable(doc.get("hypotheses") or [])
+            if "長尺の1本あたり再生" in h["claim"]]
+    assert hits == [], f"また窓に入らなくなっています: {hits}"
+
+
+# --- 判定 -------------------------------------------------------------------
+
+def test_足りない標本では判定しない():
+    d = lc.verdict([1, 2, 3])
+    assert d["decidable"] is False
+    assert d["n"] == 3
+
+
+def test_実測は外れと出る():
+    """22本中 門超え 2本 → 棄却域に入るので `falsified`。"""
+    d = lc.verdict(MATURE)
+    assert d["decidable"] is True
+    assert d["above"] == 2
+    assert d["falsified"] is True
+    assert d["p"] < 0.001
+
+
+def test_門を超える本が半分なら外れない():
+    """**逆向きも効くこと** —— 効き目があれば `survived` に出ること。"""
+    v = [1, 2, 3, 4, 5, 6] + [200] * 7
+    d = lc.verdict(v)
+    assert d["decidable"] is True
+    assert d["falsified"] is False
 
 
 def test_中央値():
     assert lc.median([]) == 0.0
-    assert lc.median([5]) == 5
-    assert lc.median([1, 3]) == 2
-    assert lc.median([3, 1, 2]) == 2
-    assert lc.median(MEASURED) == 4
+    assert lc.median([1, 2, 3]) == 2.0
+    assert lc.median([1, 2, 3, 4]) == 2.5
 
 
-def test_上限は実測の最大値で埋める():
-    """**無限で埋めないこと。** 埋めると上限が `inf` になり、判定不能に化けます。"""
-    bound = lc.best_case_median(MEASURED, n_target=30)
-    assert bound == 6.5, bound
-    # 明示的に最大値を渡しても同じ（既定が「標本の最大値」であることの固定）
-    assert lc.best_case_median(MEASURED, 30, optimistic=max(MEASURED)) == bound
+# --- 熟れの齢 ---------------------------------------------------------------
+
+def test_熟れの齢はsettleから引く():
+    """**写さないこと。** `src/settle.py` が動いたら、ここも動くべきです。"""
+    from src import settle
+    assert lc.mature_hours() == int(settle.mature_hours("長尺"))
 
 
-def test_実測の上限は門の下に出る():
-    assert lc.best_case_median(MEASURED, 30) < lc.MEDIAN_GATE
+def test_熟れの齢の控えはショートより長い():
+    """長尺はショート（48時間）より遅く熟れます。**控えがそれを下回らないこと。**"""
+    from src import settle
+    assert lc.MATURE_HOURS_FALLBACK > settle.mature_hours("ショート")
 
 
-def test_標本が足りていれば上限はそのままの中央値():
-    vals = list(range(31))
-    assert lc.best_case_median(vals, 30) == lc.median(vals)
+# --- 標本の読み方 -----------------------------------------------------------
+
+def test_帯で切る(tmp_path):
+    """**「以上」ではなく帯**。熟れる前の読みが混ざると ×4 ずれます。"""
+    p = tmp_path / "views.jsonl"
+    p.write_text(
+        '{"id": "a", "hours": 30, "views": 1}\n'
+        '{"id": "a", "hours": 120, "views": 50}\n'
+        '{"id": "b", "hours": 40, "views": 2}\n', encoding="utf-8")
+    assert lc.band_by_id(96, float("inf"), p) == {"a": 50.0}
+    assert lc.band_by_id(24, 72, p) == {"a": 1.0, "b": 2.0}
 
 
-def test_空の標本では0を返す():
-    assert lc.best_case_median([], 30) == 0.0
-    assert lc.share_at_or_above([]) == 0.0
+def test_壊れた行は飛ばす(tmp_path):
+    p = tmp_path / "views.jsonl"
+    p.write_text('{"id": "a", "hours": 120, "views": 5}\nこわれた\n', encoding="utf-8")
+    assert lc.band_by_id(96, float("inf"), p) == {"a": 5.0}
 
 
-def test_門に届いた割合():
-    assert lc.share_at_or_above(MEASURED) == 2 / 21
-    assert lc.share_at_or_above([80, 80, 1, 1]) == 0.5
+def test_ファイルが無くても止まらない(tmp_path):
+    assert lc.band_by_id(96, float("inf"), tmp_path / "no.jsonl") == {}
 
 
-def test_覆る道は入れ替わりで_数で出る():
-    """**「待つ」では覆りません。** 何本 落ちれば届きうるかを数で出すこと。"""
-    need = lc.rescue_needed(MEASURED, n_target=30)
-    assert need > 0, "0 なら『待てば届く』ことになり、上限の意味が消えます"
-    kept = sorted(MEASURED)[need:]
-    assert lc.best_case_median(kept, 30, optimistic=lc.MEDIAN_GATE) >= lc.MEDIAN_GATE
-    # **1本 少ないと届かない**（最小であることの固定）
-    kept_少ない = sorted(MEASURED)[need - 1:]
-    assert lc.best_case_median(kept_少ない, 30, optimistic=lc.MEDIAN_GATE) < lc.MEDIAN_GATE
-
-
-def test_落とせば必ず届く標本では0を返す():
-    assert lc.rescue_needed([90, 91, 92], n_target=4) == 0
-
-
-def test_分布が無い点は測っていないと出る():
-    """**「0本だった」と読ませないこと。**"""
-    out = "\n".join(lc.lines({"long_videos_28d": 21}))
-    assert "測っていません" in out
-    assert "0本だった" in out or "ではありません" in out
-    assert "21" in out
-
-
-def test_印字に判定の数が出る():
-    out = "\n".join(lc.lines({"long_values_28d": MEASURED,
-                             "long_videos_28d": len(MEASURED)}))
-    assert "中央値 **4回**" in out
-    assert "6.5" in out
-    assert str(lc.MEDIAN_GATE) in out
-    assert "判定ではありません" in out
-
+# --- 2か所に書いてある数 ----------------------------------------------------
 
 def test_門の数は仮説と同じ():
     """**2か所に書いてある数**。片方だけ動いたら、ここで落とします。"""
     text = (ROOT / "config" / "hypotheses.yaml").read_text(encoding="utf-8")
-    assert "長尺1本あたり-30本" in text
-    i = text.index("長尺1本あたり-30本")
+    assert "長尺1本あたり-13本" in text
+    i = text.index("長尺1本あたり-13本")
     section = text[i:i + 4000]
-    assert f"中央値が {lc.MEDIAN_GATE}回 に届かない" in section, \
-        "`falsified_if` の門が動いています。`MEDIAN_GATE` を合わせること"
+    assert f"{lc.MEDIAN_GATE}回 を超える本が {lc.ABOVE_MAX}本以下" in section, \
+        "`falsified_if` の判定の形が動いています。`MEDIAN_GATE`/`ABOVE_MAX` を合わせること"
     assert f"need: {lc.N_TARGET}" in section, \
         "`needs` の本数が動いています。`N_TARGET` を合わせること"
 
 
-def test_eta_が分布を積む鍵を持っている():
-    """`scripts/eta.py::_measure()` が `long_values_28d` を返すこと。
-
-    **`data/eta.jsonl` に積まれないと、この道具は 0単位 で走れません。**
-    """
-    src = (ROOT / "scripts" / "eta.py").read_text(encoding="utf-8")
-    assert '"long_values_28d": list(long_sorted)' in src
-
-
-def test_積まれた点があれば読める():
-    """`data/eta.jsonl` が在るなら、壊れずに読めること（無ければ飛ばす）。"""
-    p = ROOT / "data" / "eta.jsonl"
-    if not p.is_file():
-        return
-    row = lc.latest(p)
-    assert isinstance(row, dict)
-    out = "\n".join(lc.lines(row))
-    assert out.strip()
-    vals = row.get("long_values_28d")
-    if isinstance(vals, list) and vals:
-        # 積まれているなら、判定に使う本数と長さが合っていること
-        assert len(vals) == row.get("long_videos_28d")
+def test_齢も仮説と同じ():
+    """**熟れの齢も2か所にあります。**"""
+    text = (ROOT / "config" / "hypotheses.yaml").read_text(encoding="utf-8")
+    i = text.index("長尺1本あたり-13本")
+    section = text[i:i + 4000]
+    assert f"齢 {lc.mature_hours()}時間 以上" in section
 
 
-def test_壊れた行は飛ばす(tmp_path):
-    p = tmp_path / "eta.jsonl"
-    p.write_text('{"a": 1}\nこわれた行\n{"long_values_28d": [1, 2], "long_videos_28d": 2}\n',
-                 encoding="utf-8")
-    row = lc.latest(p)
-    assert row["long_videos_28d"] == 2
-
-
-def test_ファイルが無くても止まらない(tmp_path):
-    row = lc.latest(tmp_path / "ない.jsonl")
-    assert row == {}
-    assert "測っていません" in "\n".join(lc.lines(row))
-
-
-def test_json_で読める形のまま積める():
-    """`list(long_sorted)` が JSON にできること（`_row()` は素の dict を書きます）。"""
-    assert json.loads(json.dumps({"long_values_28d": MEASURED}))["long_values_28d"] == MEASURED
+def test_印字に判定の数が出る():
+    out = lc.report()
+    assert str(lc.MEDIAN_GATE) in out
+    assert "長尺1本あたり-13本" in out
