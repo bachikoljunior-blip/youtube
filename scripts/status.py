@@ -2936,6 +2936,48 @@ def main(days: int = 7) -> int:
             print("    サムネイルだけ載りません（`thumbnails.set` も 403）。"
                   "**公開前に `scripts/refresh_thumbnail.py` で載せ直すこと。**")
         print("    **この回を止めないこと。** 以下は、手元と **Analytics（別枠）** で出しています。")
+        # --- **θ の計器だけは、ここでも取りに行く**（2026-08-31・最適化の回） ---
+        #
+        # **この節で「落ちたのは片方だけ」を書き直すのは3度目**です
+        # （1度目「チャンネル側の数字は出ません」＝嘘、2度目「枠が戻るまで
+        #   `upload` は選べません」＝嘘）。**3度目はここ。**
+        #
+        # `_channel_main` の中で `record(videos)` を呼んでいるので
+        # （`snapshot.py` の冒頭「`status.py` から毎回自動で呼ぶ。
+        #   **人が思い出す前提にしない**」）、**上の例外はそれを道連れにします。**
+        # 落ちるのは `channels.list` / `playlistItems.list` / `search` で、
+        # `ids` が空 → `RuntimeError` → 表ごと消える経路です。
+        #
+        # **`scripts/snapshot.py` は同じ口ではありません** —— video_id を
+        # `data/uploaded.jsonl` から取り（**Data API 0単位**）、`videos.list` を
+        # **571本 で 12組 ＝ 12単位**だけ叩きます。上が落ちたことは、
+        # **こちらが落ちる理由になりません**（同じ日枠なら一緒に落ちますが、
+        # そのときの費用は「1回 試した」だけです）。
+        #
+        # ## 直すまでに何が起きていたか（実測 2026-08-31 05:1x）
+        #
+        #     `data/views.jsonl` のいちばん新しい点  08-29 17:31 JST（**45時間 前**）
+        #     08/30・08/31 に積まれた行              **0行**（08/06 以来はじめて2日 続けて0）
+        #     その計器を数えている開いた前提          **3件**
+        #     `deadline_check` がそこに出していた文    「あと 3日」「あと 30日」
+        #
+        # **到達日をいちばん大きく動かすのは θ（前提が閉じる速さ）**で、
+        # その θ が、止まった計器のぶんだけ低く出ていました。
+        #
+        # ## 覆る条件
+        #
+        # - `snapshot.main()` が日枠の 403 を**毎回**返すなら、ここは費用だけです。
+        #   そのときは `src.upload_cap.day_quota().open` を先に見て黙ること
+        #   （**いまは見ません** —— 403 の観測そのものが `day_quota.jsonl` の点になり、
+        #     枠が「いつ閉じたか」を絞るのに使われるからです）
+        # - 検査は `tests/test_status_snapshot_on_403.py`
+        try:
+            import snapshot as _snap
+            print("    **θ の計器（`data/views.jsonl`）だけ取りに行きます**"
+                  "（`videos.list` 12単位。上の 403 とは別の呼び）:")
+            _snap.main()
+        except Exception as _exc:                              # noqa: BLE001
+            print(f"    （`snapshot.py` も通りませんでした: {str(_exc)[:70]}）")
         print("=" * 66)
         # **ここに `print_analytics_sections` が無いことが、この直しの本体です。**
         # 無いあいだ、日枠の閉じている十数時間の子は全部
