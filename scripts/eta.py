@@ -1986,6 +1986,14 @@ def residual_gap(a: dict) -> dict | None:
         out["form_share"] = best["share"]
         out["form_band"] = best["band"]
         out["form_record"] = best["record"]
+        # **生の記録と、掛けた補正**（2026-08-31・最適化の回の第2手）。
+        #     `form_record` は**打ち切りを補正したあと**の数になりました。
+        #     補正を黙って掛けると、次に来た側が `data/views.jsonl` を数え直して
+        #     「156 のはずだ」と食い違います。**両方 出すこと。**
+        out["form_record_raw"] = best.get("record_raw", best["record"])
+        out["form_censor"] = float(best.get("censor_factor") or 1.0)
+        out["form_censor_n"] = int(best.get("censor_n") or 0)
+        out["form_censor_why"] = str(best.get("censor_why") or "")
         out["form_form"] = best["form"]
         out["form_residual"] = (TARGET_YEN / best["yen"]) if best["yen"] else float("inf")
         out["form_price"] = (out["form_residual"] / out["residual"]
@@ -2044,6 +2052,15 @@ def residual_lines(a: dict, prefix: str = "  ") -> list[str]:
             f"（目標の {r['form_share']*100:.1f}%・残り ×{r['form_residual']:.1f}）**"
             f" ＝ `{r['form_band']}` を {r['form_record']:,.0f}回/本（{r['form_form']}の記録）"
             f"で毎日（`src/form_record`）。",
+        ] + ([
+            f"{prefix}    **その {r['form_record']:,.0f}回 は、生の記録"
+            f" {r['form_record_raw']:,.0f}回 に打ち切り補正 ×{r['form_censor']:.2f} を"
+            f"掛けた数です**（実測・n={r['form_censor_n']}・{r['form_censor_why']}）。"
+            f" **2026-08-31 まで、ここは生の記録で割っていました** ——"
+            f" 機械は同じ行で「この記録は下限です」と印字しながら、"
+            f"**その下限をそのまま分母にして**いました。補正で隔たりは"
+            f" ×{r['form_residual']*r['form_censor']:.1f} → **×{r['form_residual']:.1f}** です。",
+        ] if r.get("form_censor", 1.0) > 1.0 else []) + [
             f"{prefix}    **その2つの差 ×{r['form_price']:.1f} が、そのまま"
             f"「形を替える」ことの値段です** —— 長尺1本を、ショートの記録と同じだけ"
             f"回すこと。**腕 `rpm` が名指ししているのはここで、値段が数字で出るのは"
@@ -2396,7 +2413,8 @@ def report(m: dict, a: dict) -> list[str]:
           f"段3・段4 が立てている ¥ は**ショートの 1本あたり（{a['per_video_now']:,.0f}回）に"
           "長尺の RPM を掛けた数**で、**その組み合わせを作れる形はありません**"
           f"（ショートの記録 {_recs.get('ショート', {}).get('best', 0):,}回 は RPM ¥60 まで・"
-          f"長尺の記録 {_recs.get('長尺', {}).get('best', 0):,}回 が RPM ¥2,000 の側）。")
+          f"長尺の記録 {_recs.get('長尺', {}).get('best_settled', _recs.get('長尺', {}).get('best', 0)):,.0f}回"
+          f" が RPM ¥2,000 の側）。")
         if _unknown:
             P(f"        （形が実測で分かっていない本 {_unknown}本 は、どの形にも足していません"
               "。`data/video_forms.json` は公開済みだけを持ちます）")
