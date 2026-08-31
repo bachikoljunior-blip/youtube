@@ -757,6 +757,35 @@ def report() -> str:
         for age, row in sorted(eng.items()):
             lines.append(f"    {age:>5.0f}h  中央値 {row['median']*100:5.2f}pt  "
                          f"最大 {row['max']*100:5.2f}pt  n={row['n']}")
+        # --- **その「最大」が、どの形のものか**（2026-08-31・最適化の回に足した）---
+        #     上の行は形を混ぜています。混ぜた最大を見て `SETTLE_DAYS` を上げると、
+        #     **長尺 数本のために ショートの A/B 数十本ぶんが道連れで遅くなります。**
+        #     `SETTLE_DAYS` は `src/judgeable.py` の「判定できる日」に足され、
+        #     `scripts/eta.py` は毎回「軌跡の腕が動くのは前提を1件 閉じたときだけ」と
+        #     印字するので、**待つ日数はそのまま θ の分母**です。
+        #     （`tests/test_settle.py::test_engaged_比率もその時点で確定している` が
+        #       まさにその文面で赤になっていた。**上げるのではなく形で割るのが答え**でした）
+        _age = float(SETTLE_DAYS * 24)
+        _by = {}
+        for _f in ("ショート", "長尺"):
+            try:
+                _r = engaged_curve((_age,), form=_f).get(_age)
+            except Exception:                                  # noqa: BLE001
+                _r = None
+            if _r:
+                _by[_f] = _r
+        if _by:
+            lines.append(f"    **その最大が どの形のものか**（{_age:.0f}h・門 2.00pt）:")
+            for _f, _r in _by.items():
+                _over = "**門超え**" if _r["max"] >= 0.02 else "門の内側"
+                lines.append(f"      {_f:<4} n={_r['n']:>3}  最大 {_r['max']*100:6.2f}pt  "
+                             f"中央 {_r['median']*100:5.2f}pt  {_over}")
+            _sh = _by.get("ショート")
+            if _sh and _sh["max"] < 0.02:
+                lines.append("    [!] **ショートは門の内側です。混ぜた最大で "
+                             "`SETTLE_DAYS` を上げないこと** —— 上げると"
+                             "ショートの A/B が長尺の道連れで遅くなり、**θ が下がります**"
+                             "（`SETTLE_DAYS_BY_FORM` / `settle_days(form)` を使うこと）。")
     hit = curve.get(float(SETTLE_DAYS * 24))
     if hit:
         # **門と同じ量を印字すること**（2026-08-29 に直した）。
