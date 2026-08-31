@@ -24,6 +24,7 @@ __pycache__/
 # 「窓ごと・作業コピーごとに1回」になります（実測 2026-08-28: 走っている
 # 作業コピー 30個 × 17単位 ＝ 510単位 ＞ 守っている 400単位）。
 data/scan_topics.json
+data/scan_video_ids.json
 
 # **いま走っているサブの数**（`scripts/next_round.py --live-set`）。
 # **機械ごと・その瞬間だけの値なので配らない** —— push すると、
