@@ -2425,7 +2425,7 @@ hypotheses:
   - claim: "作る題材の順番は、engaged だけでなく族べつの登録率でも重み付けるべき（門は登録者）"
     # **09-20 → 09-17 へ縮めた（2026-08-26）。`falsified_if` は1文字も変えていません。**
     #   `python scripts/deadline_check.py` の `ready` に合わせただけ。熟成 7日 → 3日（`src/settle.py` の実測）を当てた結果です
-    deadline: "2026-09-21"
+    deadline: "2026-09-22"
     lever: sub_rate                # subscribersGained ÷ 再生 で判定する
     side: content
     needs:
