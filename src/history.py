@@ -100,7 +100,7 @@ def channel_video_ids(youtube, uploads: str, cap: int = 400) -> list[str]:
     """
     cached = _cached_video_ids(uploads, cap)
     if cached is not None:
-        out = _with_ledger_ids(cached)
+        out = _with_ledger_ids(*cached)
         print(f"[history] この窓のチャンネルの動画IDを再利用しました"
               f"（{len(out)}本・**API 0単位**）。"
               " 窓ごとに1回だけ読みます（`_VIDEO_IDS_CACHE` の註）。"
@@ -517,11 +517,13 @@ def _put_cached_topics(topics: set[str], video_ids: int) -> None:
         print(f"[history] 読みの控えを書けませんでした（続行）: {str(exc)[:80]}")
 
 
-def _cached_video_ids(uploads: str, cap: int) -> list[str] | None:
-    """この窓のチャンネルの動画ID。無ければ `None`。**API 0単位。**
+def _cached_video_ids(uploads: str, cap: int) -> tuple[list[str], str] | None:
+    """この窓のチャンネルの動画IDと、**控えた時刻**。無ければ `None`。**API 0単位。**
 
     **窓・uploads プレイリスト・`cap` の3つが一致した控えだけ**を使います
     （`cap` が違えば切られ方が違うので、別の答えです）。
+    時刻を一緒に返すのは、`_with_ledger_ids` が「**その後に上げた本だけ**」を
+    足すためです（理由はあちらの docstring）。
     """
     if _cache_is_off():
         return None
@@ -538,7 +540,7 @@ def _cached_video_ids(uploads: str, cap: int) -> list[str] | None:
     ids = rec.get("ids")
     if not isinstance(ids, list) or not ids:
         return None                       # **空の読みは控えとして使わない**
-    return [str(v) for v in ids if v]
+    return [str(v) for v in ids if v], str(rec.get("at") or "")
 
 
 def _put_cached_video_ids(uploads: str, cap: int, ids: list[str]) -> None:
@@ -561,29 +563,43 @@ def _put_cached_video_ids(uploads: str, cap: int, ids: list[str]) -> None:
         print(f"[history] 動画IDの控えを書けませんでした（続行）: {str(exc)[:80]}")
 
 
-def _with_ledger_ids(found: list[str]) -> list[str]:
-    """控えにしか無い本を**前に**足す。**足し算だけ**（引かない）。
+def _with_ledger_ids(found: list[str], since: str) -> list[str]:
+    """**控えた後に上げた本だけ**を前に足す。**足し算だけ**（引かない）。
 
-    uploads プレイリストは**新しい順**で、控えに足された本は窓の頭より**後**に
-    上げたものなので、**前に置くのが正しい順**です（`_scan` の `setdefault` が
-    「先に見たほうが新しい」を前提にしています）。
+    ## なぜ「控えた後」に絞るのか（**絞らないと、控えが生の読みと別物になります**）
+
+    控え全部と和を取ると、`cap=400` で切られた**古い側 338本**まで戻ってきます。
+    生の `channel_video_ids` は 400本 で切るので、**控えのほうが大きい**という
+    ねじれが出ます。しかも足したぶんは**先頭**に入るので、
+    `_scan(want_map=True)` の `mapping.setdefault`（「**先に見たほうが新しい**」）が
+    **いちばん古い本を「新しい」と読みます** —— 撮り直したテーマで、
+    古い動画IDを返す側に倒れます。
+
+    **足したいのは「窓の頭を読んだ後に、この機械が上げた本」だけ**です。
+    それは控えの `uploaded_at` で切れます。**そこだけなら、確かに新しい**ので
+    先頭に置くのが正しい順になります。
+
+    `uploaded_at` を持たない行は足しません（**古い行にしか無い欄です**）。
     """
     try:
         from . import dupes
 
-        extra = [r.get("id") for r in dupes.ledger_rows()]
+        rows = dupes.ledger_rows()
     except Exception as exc:                                  # noqa: BLE001
         print(f"[history] 控えを読めませんでした（続行）: {str(exc)[:80]}")
         return found
     seen = set(found)
     new: list[str] = []
-    for vid in reversed(extra):           # 控えは追記なので、末尾ほど新しい
-        if vid and vid not in seen:
+    for row in reversed(rows):            # 控えは追記なので、末尾ほど新しい
+        vid, up = row.get("id"), row.get("uploaded_at")
+        if not vid or not up or not since or str(up) <= since:
+            continue
+        if vid not in seen:
             seen.add(vid)
             new.append(vid)
     if new:
         print(f"[history] 控えから {len(new)}本 を足しました"
-              "（窓の頭より後に上げた本。**引き算はしません**）")
+              "（**控えた後に上げた本だけ**。引き算はしません）")
     return new + found
 
 
