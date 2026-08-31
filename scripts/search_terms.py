@@ -37,7 +37,6 @@
 from __future__ import annotations
 
 import argparse
-import re
 import sys
 from datetime import date, timedelta
 from pathlib import Path
@@ -96,47 +95,98 @@ def fetch(days: int) -> list[tuple[str, int, int]]:
     return [(r[0], int(r[1]), int(r[2])) for r in rows]
 
 
+def candidate_ids(days: int) -> list[str]:
+    """**この窓で1再生でも付いた動画ID**を、Analytics から1回で引く（**日枠 0単位**）。
+
+    検索からの再生は総再生の内側なので、**総再生が 0 の本に `YT_SEARCH` の行は立ちません。**
+    だから下の1本ずつの照会は、この集合に絞って構いません
+    （2026-09-01 実測: 直近7日で **121本**・1回 1.2秒）。
+
+    **`dimensions="video"` に `insightTrafficSourceType` の filter は掛けられません**
+    —— 2026-09-01 に撃ち直して確かめました（400 `The query is not supported`）。
+    **だから「1回で全部」にはできません。** ここで縮められるのは候補までです。
+    """
+    analytics = build("youtubeAnalytics", "v2", credentials=credentials(), cache_discovery=False)
+    end = date.today()
+    start = end - timedelta(days=days)
+    try:
+        rows = analytics.reports().query(
+            ids="channel==MINE",
+            startDate=start.isoformat(),
+            endDate=end.isoformat(),
+            metrics="views",
+            dimensions="video",
+            sort="-views",
+            maxResults=200,
+        ).execute().get("rows", []) or []
+    except HttpError as exc:
+        raise FetchFailed(f"候補の動画: {exc.resp.status} {exc}") from exc
+    return [str(r[0]) for r in rows if int(r[1]) > 0]
+
+
+def local_meta(ids: list[str]) -> dict[str, tuple[str, bool]]:
+    """動画ID → (題, ショートか) を**手元の帳面から**組む（**API を1回も叩きません**）。
+
+    形は `src.forms.classify()` に決めさせます —— あれが
+    「実測（`data/video_forms.json`）→ 控えの秒数 → 題名の札」の順で決める**1か所**で、
+    「同じ帳面を読む2つが逆のことを言っていた」を潰すために置かれたものです。
+    ここで別の規則（秒数だけ、札だけ）を書くと、その1か所がまた2か所になります。
+
+    2026-09-01 実測: 候補 121本は **121本とも「実測」**で決まりました（札に落ちた本は 0）。
+    題の取れなかった本は 1本で、そこは動画IDをそのまま出します
+    （**題が無いことより、行ごと消えるほうが悪い** —— 長尺かどうかは別に決まっています）。
+    """
+    from src import dupes, forms
+
+    ledger: dict[str, dict] = {}
+    for row in dupes.ledger_rows():
+        vid = str(row.get("id") or "")
+        if vid:
+            ledger[vid] = row      # 同じIDが複数行あるときは後の行が勝ち
+    measured = forms.measured_forms()
+    out: dict[str, tuple[str, bool]] = {}
+    for vid in ids:
+        row = ledger.get(vid) or {"id": vid}
+        out[vid] = (str(row.get("title") or "") or vid, forms.is_short(row, measured))
+    return out
+
+
 def by_video(days: int) -> list[tuple[str, str, bool, int, int]]:
     """検索からの再生を**動画べつ**に出す。返りは (id, 題, ショートか, 再生, 分)。
 
     **`dimensions='video'` に `insightTrafficSourceType` の filter は掛けられません**
     （400 `The query is not supported`）。逆向き —— 動画で filter して
-    流入経路を dimension にする —— は通るので、公開ぶんを1本ずつ引きます。
-    公開14本ていどなので、回数は問題になりません。
+    流入経路を dimension にする —— は通るので、候補を1本ずつ引きます。
+
+    ## **Data API を1回も叩きません**（2026-09-01 に直した）
+
+    前の版は、公開ぶんの一覧を **Data API** から作っていました
+    （`channels.list` → `playlistItems.list` → `videos.list`）。**あれは日枠を使う口**です。
+
+    **枠が尽きた回に、この節ごと落ちていました。** しかも落ち方が悪い ——
+    その3本は `HttpError` をそのまま投げ、**`FetchFailed` に包んでいませんでした。**
+    `main()` には「**動画べつが取れませんでした。この回は M4 を判定できません**」という
+    断りが**ちゃんと在ります**が、あれが待っているのは `FetchFailed` だけなので、
+    **素の `HttpError` はその横をすり抜けて traceback で死にます。**
+
+    残るのは、直前に印字ずみの**語べつの節だけ**です ——
+    「**この数字だけで M4 を判定しないこと。下の動画べつを見ること**」と
+    書いた直後に、その下が消える。`FetchFailed` の docstring が
+    「**失敗と基準値を混ぜるな**」と言っているのと同じ穴が、**包み忘れ**で開いていました。
+
+    いまは候補を Analytics（**日枠 0単位**）から、題と形を**手元の帳面**から取ります。
+    **枠が尽きている回でも M4 は判定できます** —— M4 の期限は 9/15 で、
+    枠は毎日 尽きます（2026-09-01 実測: 13,352単位 / 枠 10,000・403 を 43回）。
     """
-    from googleapiclient.discovery import build as _build
-
-    youtube = _build("youtube", "v3", credentials=credentials(), cache_discovery=False)
-    channel = youtube.channels().list(part="contentDetails", mine=True).execute()["items"][0]
-    uploads = channel["contentDetails"]["relatedPlaylists"]["uploads"]
-    ids: list[str] = []
-    token = None
-    while True:
-        page = youtube.playlistItems().list(
-            part="contentDetails", playlistId=uploads, maxResults=50, pageToken=token
-        ).execute()
-        ids += [i["contentDetails"]["videoId"] for i in page.get("items", [])]
-        token = page.get("nextPageToken")
-        if not token:
-            break
-
-    meta: dict[str, tuple[str, bool]] = {}
-    for i in range(0, len(ids), 50):
-        for v in youtube.videos().list(
-            part="snippet,status,contentDetails", id=",".join(ids[i:i + 50])
-        ).execute().get("items", []):
-            if v["status"]["privacyStatus"] != "public":
-                continue
-            dur = v["contentDetails"]["duration"]
-            m = re.fullmatch(r"PT(?:(\d+)M)?(?:(\d+)S)?", dur)
-            secs = int(m.group(1) or 0) * 60 + int(m.group(2) or 0) if m else 9999
-            meta[v["id"]] = (v["snippet"]["title"], secs <= 180)
+    ids = candidate_ids(days)
+    meta = local_meta(ids)
 
     analytics = build("youtubeAnalytics", "v2", credentials=credentials(), cache_discovery=False)
     end = date.today()
     start = end - timedelta(days=days)
     out: list[tuple[str, str, bool, int, int]] = []
-    for vid, (title, short) in meta.items():
+    for vid in ids:
+        title, short = meta[vid]
         try:
             rows = analytics.reports().query(
                 ids="channel==MINE",
