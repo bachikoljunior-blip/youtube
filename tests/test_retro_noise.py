@@ -73,8 +73,27 @@ def test_11字の道具名を動画IDと読み違えない():
     assert "topic_forge" not in vids
 
 
-def test_種類は手順の4語だけ():
-    assert retro.noise_tokens()["種類"] == {"upload", "means", "verdict", "fix"}
+def test_種類は手順の語だけ():
+    """**正本と同じ集合であること。** ここに語を書き写さないこと。
+
+    **2026-08-31 に、書き写していたせいで赤くなりました。** ここは
+    `{"upload", "means", "verdict", "fix"}` を直に持っており、
+    オーナーの規則3 で **`improve` が5語目に足された**とき、
+    `scripts/retro.py` と `scripts/run_marker.py` は追随したのに
+    **この検査だけが4語のまま**でした。
+
+    **同じ数を2か所に置かない**（`retro.py` の `JST` の註が
+    「この repo の『片方だけ』は通算10件です」と書いている、その11件目）。
+    **正本は `run_marker.SHIP_KINDS`** です。
+    """
+    from scripts import run_marker as rm
+    want = set(rm.SHIP_KINDS)
+    assert retro.noise_tokens()["種類"] == want, (
+        "`retro.SHIP_KINDS` が `run_marker.SHIP_KINDS` とずれています "
+        f"（retro={retro.SHIP_KINDS} / run_marker={want}）")
+    assert "improve" in want, (
+        "`improve` が種類にありません。**オーナーの規則3**"
+        "（次の枠で出る1本を良くする）を出した回が、`drift.py` から見えなくなります")
 
 
 def test_問題の名前は外れない():

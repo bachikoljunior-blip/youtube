@@ -29,7 +29,8 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "scripts"))
 
 from scripts import batch_build  # noqa: E402
-from tests.test_batch_parallel import _Recorder, _Sink, _topics  # noqa: E402
+from tests.test_batch_parallel import (  # noqa: E402
+    _Recorder, _Sink, _pin_rule, _topics)
 
 
 def _run(monkeypatch, ids, delays=None, fail_build=None, jobs=3):
@@ -45,6 +46,7 @@ def _run(monkeypatch, ids, delays=None, fail_build=None, jobs=3):
     # 「今日はもう92本上げた」だけで並列の検査が赤くなります
     # （`test_batch_slots.py` が `taken=` で同じことを塞いでいます）。
     monkeypatch.setattr(batch_build.upload_cap, "state", lambda: _open_window())
+    _pin_rule(monkeypatch)          # 規則（1日1本）は主題ではない
     written: list[str] = []
     monkeypatch.setattr(batch_build.Path, "open",
                         lambda self, *a, **k: _Sink(written))
