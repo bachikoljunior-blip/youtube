@@ -83937,3 +83937,28 @@ python の `(...).write_text()` でも shell の `touch .owner-pause` でも赤�
 **覆る条件**: `snapshot.main()` が日枠の 403 を**毎回**返すなら、ここは費用だけです。
 そのときは `src.upload_cap.day_quota().open` を先に見て黙ること
 （**いまは見ません** —— 403 の観測そのものが帳面の点になるからです）。
+
+**その2手目を、同じ回のうちに撃って測りました（値打ちは、思ったより狭い）**
+
+    python scripts/status.py   → 「**θ の計器だけ取りに行きます**」まで来た
+    [snapshot] 1組目が取れませんでした: HttpError 403 … videos
+    [snapshot] 1本も読めませんでした（日枠は JST 16:00 に戻ります）
+
+**きょうは効きませんでした。** 落ちていたのは `channels.list`（**1単位**）で、
+つまり**日枠が丸ごと空**です。そのとき `videos.list` も落ちるので、別の呼びでも同じ。
+
+**効くのは「全部 空」ではない窓のほうです。** `src/history.py` は
+`search().list` を使っていて、あれは **100単位**（`videos.list` は 50本 で 1単位）。
+窓の終わりでは **`search` が落ちて `videos.list` は通る**帯があり、
+`ids` が空 → `RuntimeError` → 表ごと落ちる経路は、そこでも同じように踏みます。
+`playlistItems` の失敗・一時的なネットワークの失敗も同じ形です。
+**その帯でだけ、計器が生き残ります。**
+
+撃った 403 は無駄になっていません —— `data/api_calls.jsonl` に
+`1単位 snapshot.py:main` として残り、`day_quota.jsonl` の点にもなります
+（枠が「いつ閉じたか」を絞る材料）。
+
+**覆る条件（差し替え）**: `snapshot.main()` の 403 が**毎窓** 出るなら、
+上の「窓の終わりの帯」が実在しないということです。そのときは
+`data/api_calls.jsonl` で `search` と `videos.list` の落ち方を並べて確かめ、
+実在しなければこの try ごと外すこと。
