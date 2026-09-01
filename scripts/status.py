@@ -2551,8 +2551,8 @@ def print_yomi_queue() -> None:
     print(f"\n=== 読みの待ち行列（**固定その3の1つ目**）===")
     print(f"  積まれた名指し **{len(rows)}件**（{blob.get('at', '?')} まで）／"
           f"耳が判定ずみ **{judged}語**")
-    for line, n in sorted(rows.items(), key=lambda kv: -kv[1])[:5]:
-        print(f"    ×{n:<3} {line.split(': ', 1)[-1][:88]}")
+    for _, e in sorted(rows.items(), key=lambda kv: -int(kv[1].get("n", 0)))[:5]:
+        print(f"    ×{int(e.get('n', 0)):<3} [{e.get('code')}] {str(e.get('why'))[:86]}")
     if len(rows) > 5:
         print(f"    （ほか {len(rows) - 5}件）")
     print("  撃つのは `python scripts/yomi_ear.py --limit 40`"
