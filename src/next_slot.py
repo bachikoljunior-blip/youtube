@@ -303,6 +303,62 @@ def quota_note(publish_at: datetime, now: datetime) -> str | None:
             "　**その窓の回が押さないと、この本はサムネイル無しで出ます**")
 
 
+#: **差し替えの2手が要る単位**（`reschedule.py --unschedule` / `--move` ＝
+#: どちらも `videos.update` 50単位）。焼き直しそのものは 0単位 です。
+SWAP_UNITS = 50 * 2
+
+
+def swap_cost_lines(now: datetime | None = None) -> list[str]:
+    """**差し替えの2手は、日枠が尽きていると撃てません**（2026-09-01 に踏んだ）。
+
+    ## なぜ要るか —— **「insert は通る」と「差し替えられる」は別です**
+
+    すぐ上の行は「焼き直して `--unschedule` → `--move`」と言います。
+    **焼き直し（`python -m src.pipeline`）は 0単位** で、
+    **`videos.insert`（新しい本を上げる）も日枠を1単位も使いません**
+    （`tests/test_insert_never_marked_ok.py` に実測3度）。
+    **枠を要るのは、古いほうを外す `videos.update` だけ**です。
+
+    **そこが落とし穴でした。** 枠が尽きた窓で「insert は通る」だけを読むと:
+
+        新しい本を 22:00 に insert する  → 通る
+        古い本の予約を外す              → **403**
+        結果                            → **22:00 に 2本 公開される**
+
+    **オーナー規則1（1日1本・`src/house_rule.py`）に正面から当たります。**
+    2026-09-01 09:1x の回が、この一歩手前で気づいて撃たずに畳んでいます
+    （`docs/JOURNAL.md`）。**気づかなければ、規則が破れていました。**
+
+    ## 覆る条件
+
+    - `reschedule` が `videos.update` を使わない道を持ったら、この註は要りません
+    - 枠が在る窓では「在ります」とだけ言います（**止める門ではありません** ——
+      判断は撃つ側がします）
+    - 帳面が読めない回は**何も言いません**（推測で手を止めないため）
+    """
+    t = now or datetime.now(timezone.utc)
+    try:
+        from src import quota_ledger, upload_cap              # noqa: PLC0415
+        used = int(quota_ledger.spent(t).get("data") or 0)
+        cap = int(quota_ledger.DAY_UNITS)
+        back = upload_cap.window_end(t)
+    except Exception:                                          # noqa: BLE001
+        return []
+    if used < cap:
+        return [f"       差し替えの2手は **{SWAP_UNITS}単位**"
+                f"（`videos.update` ×2）。枠は在ります（{used:,} / {cap:,}単位）"]
+    when = back.astimezone(JST)
+    return [
+        f"       [!] **差し替えの2手（{SWAP_UNITS}単位・`videos.update` ×2）は、"
+        f"この窓では 403 です**（{used:,} / {cap:,}単位）。"
+        f"戻るのは {when:%m/%d %H:%M} JST",
+        "       **焼き直しと `videos.insert` は日枠を使わないので通ります。"
+        "そこだけ撃つと、古い本の予約が外せず 同じ枠に 2本 出ます** ——"
+        "　オーナー規則1（1日1本）に当たります。**枠が戻ってから、"
+        "外す → 入れるの順で撃つこと**",
+    ]
+
+
 def lines(now: datetime | None = None) -> list[str]:
     """画面へ出す行。**`improve` の当てどころを、fix と同じ形で毎周 出します。**"""
     v = next_video(now=now)
@@ -338,6 +394,7 @@ def lines(now: datetime | None = None) -> list[str]:
                    "（`python -m src.pipeline` で焼き直し、"
                    "`scripts/reschedule.py --unschedule <古い方>` →"
                    " 新しい方を同じ枠へ `--move`）")
+        out.extend(swap_cost_lines(t))
     if pending_thumbnail(str(v.get("video_id") or "") or None):
         out.append("  [!] **サムネイルの bytes は控えに在りますが、YouTube に"
                    "載っていません**（`thumbnail_set: false`）。"
