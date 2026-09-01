@@ -39,21 +39,24 @@ import pytest
 from src import rule_per_video
 
 
-def test_stored_ceiling_tracks_the_live_one():
-    """**書き置いた天井が、いまの計算から離れていないこと。**
+def test_the_strict_gate_already_exists_and_is_stricter():
+    """**門は増やしません** —— `tests/test_form_record.py` に**完全一致**の門が既に在ります。
 
-    落ちたら `config/hypotheses.yaml` の `per_video` の `ceiling.value` を、
-    `python -c "from src import rule_per_video as R; print(R.ceiling_at_rule())"`
-    が出す `value` へ寄せること。**逆をやらないこと** ——
-    生きた計算を書き置きに合わせて丸めたら、この検査の意味が消えます。
+    この回に `ceiling_drift()` を足したとき、同じ門をもう1つ（許容 15%）作りかけました。
+    **既存のほうが厳しく**（`recorded == round(live)`）、緩いほうを足すと
+    「15% までは黙って通る」という**逆向きの合図**になります。だから足しません。
+
+    ここが見張るのは **2つが別々に定義されていないこと**だけ:
+    書き置き（`arm_speed.ceilings()`）が読めて、生きた計算（`ceiling_at_rule()`）も
+    読めて、**同じ数であること**。ずれたときに落ちるのは向こうの検査です。
     """
     d = rule_per_video.ceiling_drift()
     if not d.get("live") or not d.get("stored"):
         pytest.skip("天井が片方 測れていません（素材が足りない回）")
-    assert not d["drifted"], (
-        f"書き置き {d['stored']:,.0f} と いまの計算 {d['live']:,.0f} が "
-        f"×{d['ratio']:.2f} ずれています（許容 {rule_per_video.CEILING_DRIFT_TOL:.0%}）。"
-        " 直すのは config/hypotheses.yaml の ceiling.value のほうです")
+    assert round(d["live"]) == round(d["stored"]), (
+        f"書き置き {d['stored']:,.0f} と いまの計算 {d['live']:,.0f} がずれています。"
+        " 直すのは config/hypotheses.yaml の ceiling.value のほうです"
+        "（tests/test_form_record.py が同じずれで落ちます）")
 
 
 def test_the_two_numbers_are_always_named_apart():
