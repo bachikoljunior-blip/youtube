@@ -2621,6 +2621,143 @@ def ledger_drain(items: list[dict], as_of: date | None = None,
     return out
 
 
+
+def dead_ledger(items: list[dict], state: dict | None = None,
+                as_of: date | None = None, window: int = 7) -> list[str]:
+    """**開いた台帳のうち、どう閉じても到達日を動かせない件数。**（API 0単位）
+
+    ## なぜ要るか（2026-09-01 夕・最適化の回に測って足した）
+
+    `ledger_drain()`（すぐ上）は、開いた前提を **全部 燃料として数えます。**
+    **その全部が燃料ではありません。**
+
+    `src/levers.lever_notes()` は、`--ship` が**宣言した腕**が
+    「無限大にしても 0日」だったときに、こう叱ります ——
+
+        **ここが黙ると、次の回は「天井を上げる前提を1件 立てよう」に向かい、
+        無限大でも 0日 の腕について、閉じても日付が動かない前提を積みます。**
+
+    **その叱りは、出す瞬間の1件にしか掛かりません。**
+    **積み上がった台帳のほうは、誰も見ていませんでした。**
+
+    実測（2026-09-01 12:4x・この関数を書いた回に数えた。開いている 23件）::
+
+        sub_rate  6件   `arm_dead_at_inf` ＝ **×10^9 でも到達日は出ない**
+        density   2件   天井 ×1.00・**オーナーが固定した 1日1本**（覆る条件なし）
+        none      2件   腕が付いていない（`arm_speed` の θ に入りません）
+        ---------------
+        **10/23（43%）が、どう閉じても到達日を1日も動かしません。**
+
+    つまり `ledger_drain()` の「開いている 23件」は、燃料としては **13件** です。
+    **空になる日は、その分だけ手前です。**
+
+    ## これは「その前提が無駄」という意味ではありません
+
+    `sub_rate` の6件は登録率を上げます。門1（登録者1,000人）はそれで開きます。
+    **言えるのは「`eta.py` の到達日は動かない」だけ**です。
+    だから**捨てろとは言いません** —— 数を**分けて**出します。
+    分けないと、燃料の残量が 1.8倍 に見え、
+    **「まだ台帳は空じゃない」で `premise` を立てない回が通ります。**
+
+    ## 覆る条件
+
+    1. **`data/eta.jsonl` が読めない回は、何も言いません**（`levers.arm_state` と
+       同じ約束: **「死んだ腕は無い」ではなく「読めない」**）。
+    2. `arm_dead_at_inf` は**その回の実測**です。`eta.py` が ×10^9 を撃たなく
+       なったら、ここは黙ります。**過去の判定を写して使わないこと。**
+    3. **`density` が規則以外の理由で死んだら**、この分類は変わります
+       （規則は「オーナーしか外せない」、天井は「測り直せば上がる」。
+       `levers.RULE_DEAD` で見分けています）。
+    4. **生きている側が 0件 になったら、この行ではなく `premise` を立てること。**
+       そのときは `ledger_drain()` の「空になる日」が**もう来ています。**
+    """
+    from src import levers as _lv
+    as_of = as_of or today_jst()
+    if state is None:
+        state = _lv.latest_arm_state(ROOT / "data" / "eta.jsonl")
+    caps = state.get("caps") or {}
+    inf = tuple(state.get("dead_at_inf") or ())
+    why = state.get("dead_why") or {}
+    out = ["", "  === その燃料のうち、**どう閉じても到達日を動かせない**のはいくつか ==="]
+    if not caps and not inf:
+        out.append("    （`data/eta.jsonl` に腕の状態がありません。"
+                   "`python scripts/eta.py` を1回 走らせると出ます）"
+                   " —— **「死んだ前提は無い」ではなく「読めない」**です")
+        return out
+    opened = [h for h in items if h.get("claim") and not h.get("closed_on")]
+    buckets: dict[str, list[dict]] = {"inf": [], "rule": [], "none": [], "live": []}
+    for h in opened:
+        lv = str(h.get("lever") or "").strip()
+        if not lv or lv == "none":
+            buckets["none"].append(h)
+        elif lv in inf:
+            buckets["inf"].append(h)
+        elif str(why.get(lv) or "").startswith(_lv.RULE_DEAD):
+            buckets["rule"].append(h)
+        else:
+            buckets["live"].append(h)
+    dead_n = len(buckets["inf"]) + len(buckets["rule"]) + len(buckets["none"])
+    live_n = len(buckets["live"])
+    share = (dead_n / len(opened)) if opened else 0.0
+    out.append(f"    開いている **{len(opened)}件** のうち、"
+               f"**{dead_n}件（{share:.0%}）**は、"
+               f"**どちらに転んでも `eta.py` の到達日を1日も動かしません。**"
+               f" 燃料は **{live_n}件** です")
+
+    def _names(hs: list[dict]) -> None:
+        by: dict[str, list[dict]] = {}
+        for h in hs:
+            by.setdefault(str(h.get("lever") or "none"), []).append(h)
+        for lv, group in sorted(by.items()):
+            out.append(f"        `{lv}` **{len(group)}件**")
+            for h in sorted(group, key=lambda x: str(x.get("deadline"))):
+                out.append(f"          {str(h.get('deadline'))[:10]}  "
+                           f"{str(h.get('claim'))[:56]}")
+
+    if buckets["inf"]:
+        out.append("      **無限大にしても 0日**（この回の `eta.py` が `×10^9` を"
+                   "撃って確かめた `arm_dead_at_inf`）。**オーナー規則2: "
+                   "ゼロなら、そこは律速ではありません**:")
+        _names(buckets["inf"])
+    if buckets["rule"]:
+        out.append("      **天井ではなく規則で止まっています**"
+                   "（`src/house_rule.py`・**覆る条件はありません**）。"
+                   "**測り直しても上がりません。外せるのはオーナーだけです**:")
+        _names(buckets["rule"])
+    if buckets["none"]:
+        out.append("      **腕が付いていません**（`lever:` が空か `none`）。"
+                   "`src/arm_speed.py` の θ に入らないので、"
+                   "**閉じても軌跡は動きません**"
+                   "（門や到達可能性の条件としては効きます。捨てないこと）:")
+        _names(buckets["none"])
+    if not buckets["live"]:
+        out.append("      [!] **燃料は 0件 です。** 開いている前提を全部 閉じても、"
+                   "到達日は1日も動きません。**この回は `premise` を立てること**"
+                   "（生きた腕の上に。0単位・`docs/trigger_main.md` §4）")
+        return out
+    closed_recent = 0
+    for h in items:
+        try:
+            d = date.fromisoformat(str(h.get("closed_on"))[:10])
+        except (TypeError, ValueError):
+            continue
+        if 0 <= (as_of - d).days < window:
+            closed_recent += 1
+    if closed_recent:
+        rate = closed_recent / float(window)
+        all_days = int(len(opened) / rate)
+        live_days = int(live_n / rate)
+        out.append(f"      → **空になる日は、`ledger_drain()` の "
+                   f"{as_of + timedelta(days=all_days)}（あと {all_days}日）ではなく "
+                   f"{as_of + timedelta(days=live_days)}（あと {live_days}日）です** ——"
+                   f" 生きた燃料 {live_n}件 ÷ {rate:.2f}件/日。"
+                   f" **{all_days - live_days}日 早い**")
+    live_arms = sorted({str(h.get("lever") or "") for h in buckets["live"]})
+    hint = state.get("hint")
+    out.append("      生きている腕: " + " / ".join("`%s`" % a for a in live_arms)
+               + (f"（この回の名指しは **`{hint}`**）" if hint else ""))
+    return out
+
 def check(items: list[dict], as_of: date | None = None, lag: int | None = None) -> list[Verdict]:
     as_of = as_of or today_jst()
     lag = analytics_lag_days(as_of) if lag is None else lag
@@ -3413,7 +3550,11 @@ def main(argv: list[str] | None = None) -> int:
         # `pool_drain` が「道具は在るのに撃つ側がどこにも書かれていない」で
         # 塞がれたのと、**同じ形の3件目**です。
         print("")
-        print("\n".join(ledger_drain(load(), as_of=as_of)))
+        _items = load()
+        print("\n".join(ledger_drain(_items, as_of=as_of)))
+        # **燃料の内訳**（2026-09-01 夕・理由は `dead_ledger()` の docstring）。
+        # 開いた件数を全部 燃料として数えると、残量が 1.8倍 に見えます。
+        print("\n".join(dead_ledger(_items, as_of=as_of)))
         return 0
     if a.gate:
         return gate(check(load(), as_of=as_of, lag=lag))
@@ -3425,7 +3566,9 @@ def main(argv: list[str] | None = None) -> int:
     # **台帳の残量**（2026-09-01 に足した。理由は `ledger_drain()` の docstring）。
     # `eta.py` が「腕が動くのは前提を1件 閉じたときだけ」と印字する以上、
     # **台帳は到達日を動かす唯一の燃料**です。その残量を、どの道具も出していませんでした。
-    print("\n".join(ledger_drain(load(), as_of=as_of)))
+    _items = load()
+    print("\n".join(ledger_drain(_items, as_of=as_of)))
+    print("\n".join(dead_ledger(_items, as_of=as_of)))
     _print_starved_floors()
     _print_unreachable_under_rule(as_of=as_of)
     return 0
