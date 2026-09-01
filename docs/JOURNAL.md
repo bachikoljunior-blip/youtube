@@ -94376,3 +94376,35 @@ JST 16:00 まで 403 でした。この回は1単位も使っていません）�
 `FIX_RUN_CAP` の註の覆る条件1 のとおり、**n が積んでから撃ち直すこと。**
 そして **`fix_gate` の行が `waived` ではなく「止まった」まま増えているか**を見ること ——
 前の版が壊れていたのは、そこが 27件 中 19件 `waived` だったからです。
+
+### 追記3（同じ回・13:4x）: 全件検査は **5 failed / 5,601 passed**。**5件はこの回のものではありません**
+
+`python -m pytest tests/ -q`（**19分26秒**）。落ちた5件:
+
+    tests/test_judgeable.py::test_実物で期限が構造的に守れる[opening_motion]
+    tests/test_live_slots.py::test_全部逃がす手は生きている本を増やす
+    tests/test_queue_lag_publish_cap.py::test_上限が1本になると床の答えが反転する
+    tests/test_request_form.py::test_深い題ショートは群に入る
+    tests/test_request_form_excludes_long_form.py::test_split_counts_と_判定の群が_同じ本を数える
+
+**推測ではなく、撃って切り分けました** —— この回の4ファイル
+（`deadline_check.py` / `arm_speed.py` / `eta.py` / `run_marker.py`）を
+`33cb0100`（この回の直前・きょうだいの最後の commit）へ戻して同じ5件を撃つと、
+**同じ5件が、同じ形で落ちます。** ＝ **この回の変更のせいではありません。**
+
+**中身は2つの群に割れています**（次に来た側へ。**どちらもこの回では潰していません**）:
+
+1. **`title_form/問い` の数え方が2つ在ります** ——
+   `split_counts` **23本** 対 `judgeable` の素の群 **78本**。
+   検査自身が「**数え方を2つ並べて残さないこと ―― 次の回がまた両方読みます**」と
+   言っています。**11:28 の A/B の床の直し（`113b7f40`）が `ab_split` の側だけを
+   直し、`judgeable` の側が置いていかれた形**に見えます。
+   **直す先は片方に寄せること**（`src/ab_split.py` ／ `src/judgeable.py`）。
+2. **予約の実物に依る3件**（`judgeable` / `live_slots` / `queue_lag_publish_cap`）。
+   `queue_lag_publish_cap` は「上限 1本/日 なら床は**越えます**」を期待して、
+   実物は「**どの前提も期限までに埋まります**」を返しています ——
+   **これは上の「予約に 267本 の作り置きが残っている」と同じ根**です。
+   `pool_drain --apply --keep 0` が通ったあとに、もう一度 撃つこと。
+
+**この回に触った3面（`dead_ledger` / `next_close(dead=)` / `free_alternatives`）は緑です**
+（狙い撃ち 138件・`fast_tests.py` 674件・関連 452＋57＋12件）。
