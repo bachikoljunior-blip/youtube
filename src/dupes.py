@@ -887,6 +887,112 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
+def ledger_video_ids(path=None) -> set[str]:
+    """**控えが名前を知っている動画ID**（`title` が無い行も数えます）。
+
+    `ledger_rows()` は `id` と `title` の揃った行しか返さないので、
+    「控えに在るか」を聞くのにあれを使うと**題の無い行を『知らない』と答えます。**
+    ここは行そのものを見ます。
+    """
+    from . import config
+
+    p = (config.ROOT / LEDGER) if path is None else pathlib.Path(path)
+    if not p.exists():
+        return set()
+    out: set[str] = set()
+    for line in p.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            vid = json.loads(line).get("video_id")
+        except Exception:                                      # noqa: BLE001
+            continue
+        if vid:
+            out.add(str(vid))
+    return out
+
+
+def observe_scheduled(rows) -> dict:
+    """**口が返した予約を、控えへ写す。控えに無い本は足す**（2026-09-01 に足した）。
+
+    ## なぜ要るか（オーナーが画面で踏んだ穴の、後ろ半分）
+
+    2026-09-01 16:33 JST、YouTube Studio に **09/01 の 18:00 / 19:00 / 20:00 /
+    21:00 の予約が4本**出ていました。**`data/uploaded.jsonl` には、その4本が
+    1行もありません**（`at` に `2026-09-01` を持つ行は 22:00 の1本だけ・
+    過去の行にも無し）。`scripts/pool_drain.py` は**控えだけ**を読むので、
+    **口に在って控えに無い予約は、外す一覧に永久に出ません。**
+    そのまま日が暮れれば当日5本 公開され、**規則1（1日1本）が破れます。**
+
+    `pool_drain` の冒頭は「口からは 169本・控えには 459本」＝
+    **控えが上限側**という前提で書かれていました。**逆向きの穴が実在します。**
+
+    ## なぜ `retime()` では塞がらないか
+
+    `retime()` は**既にある行を書き換えるだけ**です。控えが名前すら知らない
+    動画には当たらず、`False` を返して終わります（何回 口を読んでも同じ）。
+    **足す口が、どこにも無かった**のがこの穴の正体です。
+
+    ## 何を足すか
+
+        控えが知っている本   `retime()` —— 口の時刻で書き換える（印が付くので
+                             きょうだいの古い行に勝ちます）
+        知らない本           1行 足す。`uploaded_at` は **書きません** ——
+                             作った日を知らないからです。`house_rule.is_stockpile()`
+                             は「作った日が分からない未来の予約 ＝ 作り置き」と
+                             読むので、**そのまま池の一覧に出ます**
+
+    **口を読んだ回が、ついでに控えを直す形**にしてあります（`reschedule._scheduled()`）
+    —— 単位は1つも増えません。**「次の回が覚えていること」に頼らないため**です
+    （`batch_build.slots()`:「人の記憶と手写しに依存する門は、この輪では毎回落ちる側」）。
+
+    `rows` は `[{"id","at","title","topic"}]`（`reschedule._scheduled()` の形）。
+    返り: `{"added": [...], "retimed": [...], "known": n}`。
+    書き先は `retime()` / `remember()` と同じ **`config.ROOT / LEDGER` の1つだけ**
+    です（道を引数で受けません —— 写した道は古くなります）。
+
+    **覆る条件**: 控えを捨てて口だけを正本にしたら、この関数は要らなくなります
+    （そのときは `pool_drain` の「控えから数えます」の節ごと書き換えること）。
+    検査は `tests/test_ledger_learns_mouth.py`。
+    """
+    from . import config
+
+    p = config.ROOT / LEDGER
+    if not _may_write_ledger(p):
+        return {"added": [], "retimed": [], "known": 0, "blocked": True}
+    known = ledger_video_ids(p)
+    added: list[str] = []
+    retimed: list[str] = []
+    fresh: list[str] = []
+    for row in rows or []:
+        vid = str((row or {}).get("id") or "")
+        at = (row or {}).get("at")
+        if not vid or not at:
+            continue
+        if vid in known:
+            if retime(vid, at):
+                retimed.append(vid)
+            continue
+        rec = {"video_id": vid,
+               "topic": str(row.get("topic") or ""),
+               # **題は空にしないこと** —— `ledger_rows()` が題の無い行を落とします
+               "title": str(row.get("title") or "") or f"(口から) {vid}",
+               "at": at,
+               # `uploaded_at` は**書きません**（作った日を知らない）。
+               # 知らないことを、知っているように書かないこと。
+               "at_from": "youtube:scheduled",
+               "observed_at": _now_iso()}
+        fresh.append(json.dumps(rec, ensure_ascii=False))
+        added.append(vid)
+        known.add(vid)
+    if fresh:
+        p.parent.mkdir(parents=True, exist_ok=True)
+        with p.open("a", encoding="utf-8") as fh:
+            fh.write("\n".join(fresh) + "\n")
+    return {"added": added, "retimed": retimed, "known": len(known)}
+
+
 def compact_ledger(path=None) -> dict:
     """**同じ行が2つある**ぶんだけを、控えから物理的に落とす（API 0単位）。
 

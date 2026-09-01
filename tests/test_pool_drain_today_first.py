@@ -132,3 +132,15 @@ def test_is_stockpile_は時刻で比べること():
         "09/01 18:00 JST の予約を、16:33 の時点で『もう公開になっている』"
         "と読んでいます。**日付ではなく時刻で比べること。**"
     )
+
+
+def test_きょうぶんを数える口があること():
+    """**画面に1行 出すため**の口（`today_rows`）。0本のときも 0本 と言わせます。"""
+    rows = [_row("today", _at(2026, 9, 1, 22)), _row("tom", _at(2026, 9, 2, 13))]
+    got = pool_drain.pool(now=NOW, rows=rows)
+    mine = pool_drain.today_rows(got, now=NOW)
+    assert [r["id"] for r in mine] == ["today"], (
+        f"{[r['id'] for r in mine]} —— きょう（JST）ぶんだけを返すこと。"
+        " 一覧に当日ぶんが在るかどうかは、`--apply` の前に見える唯一の行です。"
+    )
+    assert pool_drain.today_rows([], now=NOW) == []
