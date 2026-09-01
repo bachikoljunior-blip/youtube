@@ -22,7 +22,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from src import form_record
+from src import form_record, rule_per_video
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -44,18 +44,57 @@ def test_ショートの記録が_hypotheses_の天井と一致する():
 
     **落ちたときの直し方**: 記録が更新されたのなら `hypotheses.yaml` の
     `value` を実測へ書き換えること（`tests/test_per_video_ceiling.py` と同じ）。
-    **この検査を緩めないこと** —— 緩めた瞬間、`per_video` の天井 ×3.34 の
+    **この検査を緩めないこと** —— 緩めた瞬間、`per_video` の天井の
     出どころが誰にも辿れなくなります。
+
+    ## **2026-09-01 に、比べる相手を1段 変えました**（緩めてはいません）
+
+    2026-09-01 に `hypotheses.yaml` の `value` は **1891 → 3918** になりました。
+    記録が更新されたからではありません —— **記録 1,891回（`NHKylqsNfTw`）は
+    「3本/日 の日」の本**で、規則（1日1本・`src/house_rule.py`）の密度へ
+    弾力性 -0.663 で直すと **3,918回**だからです（`src.rule_per_video.ceiling_at_rule`）。
+    分子（`per_video` 942回）は既に規則の密度で測ってあるのに、
+    分母（天井）だけ全密度の最大でした。
+
+    **この検査はそれ以来ずっと赤でした**（`1891 == 3918` で落ちる）。
+    **赤のまま置くと、この検査は何も見張りません** —— 記録が本当に
+    更新された日も、同じ字で落ちるだけだからです。
+
+    そこで比べる相手を「**記録そのもの**」から「**記録から同じ道で導いた数**」へ
+    移しました。**見張る中身は1つも減っていません**:
+
+        ・`ceiling_at_rule()` の `raw` が、いまも**ショートの記録**であること
+        ・`hypotheses.yaml` の `value` が、その記録から導いた数と一致すること
+
+    記録が動けば導いた数も動くので、**yaml が古びれば、いままでどおり落ちます。**
+
+    **覆る条件**: `ceiling_at_rule()` が測れなくなったら（`data/views.jsonl` に
+    密度が読める日が無い）、いままでどおり**記録そのもの**と比べます。
     """
     recs = form_record.per_video_best()
     if not recs.get("ショート"):
         pytest.skip("data/views.jsonl か data/video_forms.json がまだ無い")
     recorded = _recorded_ceiling()
     assert recorded is not None, "hypotheses.yaml に per_video の ceiling がありません"
-    assert recs["ショート"]["best"] == recorded, (
-        f"ショートの記録 {recs['ショート']['best']} と "
-        f"hypotheses.yaml の天井 {recorded} がずれています。"
+    best = recs["ショート"]["best"]
+    at_rule = rule_per_video.ceiling_at_rule()
+    if not (at_rule and at_rule.get("value")):
+        # 規則の密度へ直せない回は、いままでどおり記録そのものと比べます。
+        assert best == recorded, (
+            f"ショートの記録 {best} と hypotheses.yaml の天井 {recorded} が"
+            "ずれています。どちらかが古い —— 記録が更新されたなら yaml を書き換えること"
+        )
+        return
+    assert at_rule["raw"] == best, (
+        f"規則の密度へ直す元の記録 {at_rule['raw']} が、"
+        f"形ごとに数えたショートの記録 {best} と別の本です。"
+        "**天井の出どころが2つに割れています**"
+    )
+    assert recorded == round(float(at_rule["value"])), (
+        f"hypotheses.yaml の天井 {recorded} と、記録 {best} から規則の密度へ"
+        f"直した数 {float(at_rule['value']):,.0f} がずれています。"
         "どちらかが古い —— 記録が更新されたなら yaml を書き換えること"
+        "（`python -c \"from src import rule_per_video as r; print(r.ceiling_at_rule())\"`）"
     )
 
 
