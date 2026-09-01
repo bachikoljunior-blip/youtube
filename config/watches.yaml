@@ -639,6 +639,20 @@ watches:
 # **見張らないと決めたもの**（`tests/test_watches.py` が読みます）。
 # 「まだ判定できません」と印字するのに待ちの台帳に無いファイルは、
 # ここに理由を書くまで検査が落ちます。**黙って放置できない形にするため。**
+
+  # **2026-09-01 に足した**（前提と同じ回で置くこと ——
+  # `watch:` だけ書いて台帳を空けた回が 08-28 18:5x と 09-01 に起きており、
+  # どちらも `tests/test_watches.py` が枝ごと赤でした）。
+  #
+  # **床を写していません。** `kind: hypothesis_needs` は
+  # `config/hypotheses.yaml` の `needs`（`need: 100`）に直接 訊きます。
+  - id: 検索-長尺-100再生
+    what: 「検索面は per_video を動かす大きさになる」の判定（腕 `per_video`・M4 の期限 9/15 と同じ窓）
+    cond: "`scripts/search_terms.py` の **7日窓**の `long_views` が 100 に届く（床は `falsified_if`。数は仮説の `needs` に訊きます）"
+    then: "python scripts/search_terms.py（**日枠 0単位**・約28秒）→ 7日窓の `long_views` が 100 未満なら外れ"
+    source: config/hypotheses.yaml
+    kind: hypothesis_needs
+    claim: "検索面は、per_video を動かす大きさになる"
 exempt:
   src/watches.py: >-
     **待ちの台帳そのものを印字する側です。** 「目盛りは満ちたが、まだ判定できません」は

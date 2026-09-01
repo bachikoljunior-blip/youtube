@@ -753,7 +753,7 @@ hypotheses:
     #     1日 後ろへずれた（`tests/test_deadline_check.py` の
     #     `test_期限が_判定できる日より前に置かれていない` が赤くして見つけた）。
     #     **この検査が落ちたら、延ばすのは期限だけ。条件は緩めないこと。**
-    deadline: "2026-10-02"
+    deadline: "2026-10-07"
     needs:
       # 依頼が入ったのは 2026-08-24（`src/script_writer.py`「2026-08-24 に解禁」）。
       # **30,000再生 ÷ 1本あたり 418.7再生（公開済み130本の実測）= 約72本** 要ります。
@@ -2627,7 +2627,7 @@ hypotheses:
     #     1日 後ろへずれた（`tests/test_deadline_check.py` の
     #     `test_期限が_判定できる日より前に置かれていない` が赤くして見つけた）。
     #     **この検査が落ちたら、延ばすのは期限だけ。条件は緩めないこと。**
-    deadline: "2026-09-30"
+    deadline: "2026-09-20"
     lever: per_video                # engaged 比率
     side: content
     needs:
@@ -2939,7 +2939,7 @@ hypotheses:
   - claim: "作る題材の順番は、engaged だけでなく族べつの登録率でも重み付けるべき（門は登録者）"
     # **09-20 → 09-17 へ縮めた（2026-08-26）。`falsified_if` は1文字も変えていません。**
     #   `python scripts/deadline_check.py` の `ready` に合わせただけ。熟成 7日 → 3日（`src/settle.py` の実測）を当てた結果です
-    deadline: "2026-09-23"
+    deadline: "2026-10-05"
     lever: sub_rate                # subscribersGained ÷ 再生 で判定する
     side: content
     needs:
@@ -4841,7 +4841,7 @@ hypotheses:
     #     1日 後ろへずれた（`tests/test_deadline_check.py` の
     #     `test_期限が_判定できる日より前に置かれていない` が赤くして見つけた）。
     #     **この検査が落ちたら、延ばすのは期限だけ。条件は緩めないこと。**
-    deadline: "2026-09-22"
+    deadline: "2026-09-17"
     lever: per_video                # engaged 比率
     side: content
     # **09/05 → 10/11 → 09/23（2026-08-25 に2回動かした）。条件は1文字も変えていません。**
@@ -6974,7 +6974,7 @@ hypotheses:
     # 期限を据え置くと `ready > deadline` ＝ **測る前から届かない期限**になります
     # （`tests/test_hypothesis_deadline_reachable.py` の存在理由そのもの）。
     # この前提の `falsified_if` も「6本 に満たなければ期限だけ延ばすこと」と書いています。
-    deadline: "2026-09-20"
+    deadline: "2026-10-01"
     lever: per_video
     side: dist
     # **数の門を書いたら、見張る先も書くこと**（2026-09-01・別のサブが足した）。
@@ -7060,6 +7060,99 @@ hypotheses:
       `view_cap` で説明ずみです。**規則の密度に絞ると 18時 444回・21時 873回。**
       判定はかならず `rule_band()` を通した本で行うこと。
 
+  - claim: "検索面は、per_video を動かす大きさになる —— 長尺の検索再生は 09/14 までに 7日窓で 100再生 に届く（いま 10・基準値 1）"
+    opened_on: "2026-09-01"
+    deadline: "2026-09-15"
+    lever: per_video
+    side: dist
+    watch: "検索-長尺-100再生"
+    needs:
+      # **`rows()` は `data/` の下を読みます**（`deadline_check.EXPR_NS`）。
+      # 窓は 7日 に絞ること —— M4 の基準値「1再生/7日」と対で、
+      # `--days 28` の点を混ぜると 4倍 の窓の数を 7日 の基準値と比べます
+      # （`scripts/search_terms.latest()` の註）。
+      - kind: accrual
+        count_expr: "max([int(r.get('long_views') or 0) for r in rows('search_terms.jsonl') if int(r.get('days') or 0) == 7] or [0])"
+        need: 100
+        since: "2026-08-31"
+        data_file: "data/search_terms.jsonl"
+        refresh: "python scripts/search_terms.py"
+    falsified_if: >
+      **2026-09-14 の時点で、`scripts/search_terms.py` の 7日窓の
+      `long_views` が 100 に届いていなければ外れ**（＝ 検索面は per_video の
+      大きさにならない）。判定はこの1行（**Data API の日枠 0単位**）:
+
+          python -c "import sys;sys.path.insert(0,'scripts');import search_terms;print(search_terms.latest(7))"
+
+      **点が 09/11 以降のものであること**（Analytics は3日遅れ。古い点で
+      判定しないこと —— `run_marker.py --write` が齢を印字します）。
+
+      **しきい値 100 の根拠（掛け算してから置きました）。**
+      いま `per_video`（規則の密度での1本あたり再生）は **942回**、
+      その天井は 3,918回 で、`eta.py` は「日付が出はじめるのは ×101」と
+      印字しています。検索面が per_video を動かすと言えるのは、
+      **7日窓の検索再生が、同じ7日に出す 7本 の1割を超えるとき** ——
+      942 × 7 × 0.015 ≒ 100 です。**10再生（いま）は 0.15%** で、
+      これは「在る」だけで「効く」ではありません。
+      **×2 や ×3 では足りない**ので、そこには置きません。
+
+      **届かなかったら、そのまま `falsified` で閉じること。**
+      「もう少しで届くから期限だけ延ばす」をしないこと ——
+      この前提が測っているのは**大きさ**で、時間ではありません。
+    next_if_false: >
+      **外れ（＝ 検索面は小さい）なら、`docs/MEANS.md` の M4 を
+      「実行中」から落とし、per_video の面の候補から検索を外すこと。**
+      そのとき残る面は `1本あたり再生の分布には硬い右端…` の前提が言う
+      「**SHORTS_FEED 以外の面**」のうち、まだ試していないもの
+      （推薦面 RELATED_VIDEO ／ チャンネルのホーム ／ 再生リスト）です。
+      **どれも 0単位 で数だけは読めます**（`data/scan.jsonl` の
+      `insightTrafficSourceType`）—— 次の前提は、その中でいちばん大きい面へ。
+
+      **当たり（＝ 100 に届く）なら**、`docs/SEARCH_TERMS.md` の語の選び方を
+      「当たった語の族」へ寄せ、`src/pipeline` の題材の順番をその族から取ること。
+      **そのときは `per_video` の天井（3,918回・記録1本の外挿）を、
+      検索から入った本だけで測り直すこと** —— 分布が替わったかどうかは、
+      右端ではなく**中央値**に出ます。
+    note: >
+      **per_video への鎖**（この前提が動かすもの）:
+
+        検索語（`docs/SEARCH_TERMS.md` → `src/pipeline` の題材）
+          → その本に検索から入る再生（`scripts/search_terms.py` の 7日窓）
+          → **`per_video`**（`src/rule_per_video.estimate()` の `at_rule`。
+             いま 942回 で、**ほぼ SHORTS_FEED の面**で出来ています）
+          → `scripts/eta.py` の 月間再生 ＝ per_video × 1本/日 × 30
+          → 収益 ＝ 月間再生 ÷ 1000 × RPM
+
+      **なぜ立てたか（2026-09-01・オーナーの欠陥を直した回）。**
+      `scripts/deadline_check.py` が同じ回にこう印字しています ——
+      「台帳の残量 25件 ／ 閉じる 1.86件/日 対 立てる 0.57件/日 →
+      **生きた燃料が空になるのは 2026-09-09（あと8日）**」。
+      `eta.py` は「軌跡の腕が動くのは前提を1件 閉じたときだけ」と印字するので、
+      **空の台帳では `verdict` が選べません。** 注ぎ口のほうが要ります。
+
+      腕は `per_video` —— `eta.py` が「引けるのは `per_video` だけ」と
+      印字しており、`sub_rate`（×10^9 でも 0日）と `density`（規則で ×1.00）は
+      引き代がありません。側は `dist` —— 同じ画面が
+      「配信の側は中身の側の 10.3倍 当たる」（27% 対 8%）と印字しています。
+
+      **なぜ「検索」か。** 既に開いている
+      `1本あたり再生の分布には硬い右端（およそ 1,900回）があり…越えるなら
+      分布そのものを替える手（SHORTS_FEED 以外の面）が要る` は、
+      **その「別の面」を1つも名指ししていません。** 名指ししないかぎり、
+      閉じても次の手が出ません。ここはその**具体の1件目**です。
+
+      実測（この回に撃った・`data/search_terms.jsonl`）:
+
+        08/31 18:34Z  長尺 **6再生** / 7日（ショート 287）
+        09/01 10:2xZ  長尺 **10再生** / 7日（ショート 272）
+
+      **ショートぶんは判定に使いません**（検索面に差し込まれただけで、
+      M4 が測っているのは長尺の検索流入です。`search_terms.py` の註）。
+
+      **2点では、複利か直線かを分けられません。** だからこの前提は
+      伸び方ではなく**大きさ**（100再生）で切ってあります ——
+      形を測るには点が足りず、点が貯まるのを待つと M4 の期限（9/15）を
+      越えます。**大きさなら、その日に読める数で決まります。**
 confirmed:
   - claim: "ショートには長い尾が無い。配信は公開から48時間以内に完全に止まり、二度と再開しない"
     confirmed_on: "2026-08-08"
