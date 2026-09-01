@@ -1202,6 +1202,23 @@ def report(as_of: date | None = None, stock: dict[str, dict[str, int]] | None = 
                 f" ／ **指示が入っていないのにこの群にいる {c.stale[g]:4d}本**"
             )
         lines.append("  " + c.short())
+        # **予約の本数と、値の出る本の数は別です**（2026-09-01 に実測して足した）。
+        # 上の `c.short()` は「指示が入って落ち着いた本」を数えますが、
+        # **その本に Analytics の行が在るかは見ていません。**
+        # 実測 2026-09-01: `title_form` は 問い 23 / 断定 19 で **判定できます** と
+        # 出ていたのに、**値の出る本は 問い 16 / 断定 10**（断定の 4本 は公開から
+        # 5日たって 0再生・9本 は遅れ待ち）。engaged は `engagedViews ÷ views` なので
+        # **0再生の本には値がありません。** そのまま判定すると、見分けられなかった
+        # だけの実験が「外れ」で閉じ、`next_if_false` が腕ごと畳みます
+        # （`title_form` の腕は `per_video` ＝ `eta.py` が「引けるのはこれだけ」と
+        # 名指ししている腕）。**理由と覆る条件は `src/ab_verdict.py` の冒頭。**
+        # 遅い import は循環（`ab_verdict` → `ab_split`）を避けるためです。
+        try:
+            from src import ab_verdict  # noqa: PLC0415
+
+            lines.extend(ab_verdict.lines(exp.name, today=today))
+        except Exception as exc:  # pragma: no cover - 走査が無い環境でも報告は出す
+            lines.append(f"  （値の出る本は数えられませんでした: {exc}）")
         if stock is not None and exp.name in stock:
             lines.extend(outlook(exp, stock[exp.name], as_of=as_of, counts=c,
                                  today=today).lines())
