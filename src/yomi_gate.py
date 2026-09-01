@@ -89,10 +89,23 @@ MAX_TOKENS = 326
 CHUNK_CHARS = 240
 
 
+#: **同じ文を2度 解析しないための憶え。** `open_jtalk` は1回 起動するごとに
+#: 音声まで合成する（実測: 12段・同じ文の台本1本で **0.90秒**）ので、
+#: 台本には同じ言い回しが何度も出るこの使い方では効きます。
+#: 上限を置いてあるのは、`batch_build` が何十本も通す回でも
+#: 憶えが際限なく育たないようにするため。**中身は入力の文字列だけの関数**なので、
+#: 憶えても答えは変わりません（`data/` も時刻も読まない）。
+_MEMO_MAX = 4096
+_MEMO: dict[str, list[dict]] = {}
+
+
 def _analyze_one(one: str) -> list[dict]:
     """**切らずに1回だけ**解析する。呼ぶのは `analyze()` から。"""
     if not one:
         return []
+    hit = _MEMO.get(one)
+    if hit is not None:
+        return [dict(t) for t in hit]        # 呼び手が書き換えても憶えは壊れない
     with tempfile.TemporaryDirectory() as td:
         trace = Path(td) / "trace.txt"
         proc = subprocess.run(
@@ -130,6 +143,9 @@ def _analyze_one(one: str) -> list[dict]:
                     continue               # "[Text analysis result]" の見出し
                 out.append({"surface": f[0], "pos": f[1], "pos2": f[2],
                             "base": f[7], "yomi": f[8], "pron": f[9].replace("’", "")})
+        if len(_MEMO) >= _MEMO_MAX:
+            _MEMO.clear()                    # 溢れたら丸ごと捨てる（順番を持たない）
+        _MEMO[one] = [dict(t) for t in out]
         return out
 
 
