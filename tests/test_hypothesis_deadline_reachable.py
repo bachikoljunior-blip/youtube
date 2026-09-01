@@ -243,6 +243,18 @@ UNCHECKABLE = {
     # その日が判定日です（`deadline_check` の期限より前でも閉じること。
     # 見る道具は `python -m src.ab_verdict`）。
     "`src/day_cap.live_ids()` の": "床がこれから積む本数（20本）＋条件が『0再生が1本も無いか』",
+    # 2026-09-01（最適化の回・別のサブ）に足した。床は `kind: published_group`
+    # ＝「09/02 以降に**掃いた側で**公開した本 6本」で、**これから積む本数**です。
+    # `earliest_*` は `src.ab_split.EXPERIMENTS` の群を予約表から数える道具で、
+    # この前提は A/B の群ではなく `src/publish_hour.sweep_hour()` の掃きなので、
+    # **どちらの意味でも当てられません。**
+    # 判定日は `kind: published_group`（published_after 09-02 ＋ settle 2日
+    # ＋ Analytics の遅れ）が持ちます —— **この回に撃って 2026-09-18 が出るのを
+    # 確かめました**（`deadline_check.ready_by_claim()`）。**日付は失われていません。**
+    #
+    # **`CHECKABLE` へ移す条件**: 掃きが `ab_split.EXPERIMENTS` の群として
+    # 登録されたら（そのとき `earliest_ab()` がそのまま使えます）。
+    "公開時刻は 1本あたり再生に効かない": "床がこれから積む本数（掃いた側 6本・kind: published_group）。A/B の群ではないので earliest_ab() が当たらない",
     "ショートの最後で登録を直接1回頼む": "条件が「計30,000再生」＝将来の再生の合計",
     "作る題材の順番は": "条件が「計15,000再生」＝将来の再生の合計",
     "長尺の登録率はショートより1桁以上高い": "条件が「計1000再生」＝将来の再生の合計",
