@@ -88,11 +88,30 @@ JST = timezone(timedelta(hours=9))
 LEAD_DAYS = 2
 
 
-def per_day(rows: list[dict] | None = None) -> dict | None:
+def per_day(rows: list[dict] | None = None, now: datetime | None = None) -> dict | None:
     """**JST の暦日ごとの予約本数。** `{date: 本数}`（予約のある日だけ）。
 
     `scripts/status.py::per_day_counts()` と**同じ数え方**にしてあります
-    （未来の `at` だけ・JST へ直してから日で数える）。
+    （`now` より後の `at` だけ・JST へ直してから日で数える）。
+
+    ## `now` は 2026-09-02 に足しました（**日付をまたいだ瞬間に赤くなっていた**）
+
+    ここは `datetime.now()` を直に読み、**`empty_days(rows, today)` のほうは
+    渡された `today` を使っていました。** 2つの時計が別だったということです。
+
+    実測 —— `tests/test_slot_gate.py` は `today = date(2026, 9, 1)` を渡して
+    「その日から毎日1本ずつ埋まっている控え」を作りますが、
+    **その 09/01 22:00 の1本は、本物の時計では既に過ぎています**（いまは 09/02）。
+    だから `per_day` は 09/01 を数えず、`empty_days` は「09/01 が空」と答えます。
+    検査は 09/01 に書かれ、**09/02 00:00 JST に、誰も何も触っていないのに赤へ**。
+
+    **引数で `today` を受けるのに、中で `now()` を読む関数は純ではありません。**
+    `today` が明示された回は、その日の JST 0時 を床にします
+    （＝ **きょう既に公開ずみの本も、きょうを埋めているものとして数える** ——
+    「投稿が途切れるか」を聞いているので、そちらが正しい向きです）。
+
+    **覆る条件**: 「まだ出ていない本だけ数えたい」呼び手が出てきたら、
+    `now` を明示して渡すこと（この引数はそのために在ります）。
     """
     if rows is None:
         # **控えそのものが読めない回は、鳴らしません。**
@@ -107,7 +126,7 @@ def per_day(rows: list[dict] | None = None) -> dict | None:
             return None
         if not rows:
             return None
-    now = datetime.now(timezone.utc)
+    now = now or datetime.now(timezone.utc)
     out: dict = {}
     for r in rows:
         at = str(r.get("at") or "")
@@ -126,13 +145,25 @@ def per_day(rows: list[dict] | None = None) -> dict | None:
     return out
 
 
+def _floor(today) -> datetime | None:
+    """`today` が明示された回の床（その日の JST 0時）。**純にするため**。
+
+    渡されていなければ `None` ＝ 本物の時計（`per_day` の註）。
+    """
+    if today is None:
+        return None
+    return datetime(today.year, today.month, today.day, tzinfo=JST)
+
+
 def empty_days(rows: list[dict] | None = None, today=None, lead: int | None = None) -> list:
     """**今日から `lead` 日ぶんのうち、予約が0本の暦日**（早い順）。
 
     **0本の日は `per_day` の鍵に入っていません。** だから暦を歩いて数えます
     （鍵を一覧の元にしたのが `status.py` 側の元の欠陥でした）。
+
+    **`today` を渡した回は、その日の JST 0時 を床にします**（`per_day` の `now` の註）。
     """
-    per = per_day(rows)
+    per = per_day(rows, now=_floor(today))
     if per is None:
         return []
     today = today or datetime.now(JST).date()
@@ -147,7 +178,7 @@ def tail_days(rows: list[dict] | None = None, today=None) -> int:
     これが 0 なら「まだ作っていない」、正なら「**作ってあるのに出さない**」です。
     門の文面がその2つで変わるので、ここで数えます。
     """
-    per = per_day(rows)
+    per = per_day(rows, now=_floor(today))
     if not per:
         return 0
     today = today or datetime.now(JST).date()
