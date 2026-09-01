@@ -1286,18 +1286,79 @@ def forward_line(fw: dict) -> str | None:
     #     `cap_ratio` が `None` になり、下の書式で `TypeError` を上げます ——
     #     そこは `eta.py` 側が `except Exception` で飲むので、
     #     **この行ごと黙って消えます**（消えたことは誰にも見えません）。
+    # --- **窓を `head` の絶対値で選ばないこと**（2026-09-01・最適化の回に直した） ---
+    #
+    # ここは長らく `min(head)` の窓に「**予定を手前に倒せば上がります**」を
+    # 付けていました。**それは測定ではなく定数です。**
+    #
+    # `head = per_day / (n_open/h)` の分子は「窓の内側に判定日がある件数」で
+    # `n_open` が上限、分母は `h` だけが伸びます。しかも判定日は
+    # 「群の床 ＋ 落ち着き7日 ＋ Analytics 3日」で**最短2週間**先なので、
+    # **短い窓ほど `head` は必ず低く出ます**（実測 2026-09-01: 14日 32% ／
+    # 30日 80% ／ 60日 88% ＝ 窓の長さに対して単調増加）。
+    # つまり `min(head)` は**いつでも最短の窓**を指し、この行は
+    # 台帳がどんな姿でも同じ処方を出していました。
+    # **200行 上の「`head` の絶対値を根拠に何かを決めないこと。使ってよいのは
+    # 窓どうしの向きだけ」を、この行自身が破っていました。**
+    #
+    # ## その処方が指す先は、実測で空でした
+    #
+    # 2026-09-01 に `python scripts/queue_lag.py` を撃つと
+    # **入れ替え 0手・合計 0日**（4件とも「動きません」）。
+    # **毎周 空の仕事へ送っていた**ことになります。
+    #
+    # ## さらに「予定」の語が2つを混ぜていました
+    #
+    #     `deadline`（前提の期限）      **動かしても `forward()` は1日も動きません。**
+    #                                   `forward()` が読むのは `ready` だけです
+    #                                   （実測 2026-08-30: `opening_motion` の
+    #                                     期限を 15日 縮めて、腕べつの回転・
+    #                                     台帳の配分・過去との差 とも**変化なし**。
+    #                                     `deadline_check.Verdict.waits` の註）
+    #     公開の順番（`queue_lag`）      `ready` を手前へ動かせます ＝ こちらだけが効く
+    #
+    # 同じ1文の中で前半が `deadline` を指し、後半（「予定を動かしても
+    # 上がりません」）も `deadline` を指していたので、**効く側の
+    # 「公開の順番」がどこにも書かれていませんでした。**
+    #
+    # ## 何で選ぶか —— `cap_ratio`（＝ その窓の天井が、過去の θ に届くか）
+    #
+    # `cap_ratio = (n_open/h) / θ` は **`head` と違って窓の長さの人為ではありません** ——
+    # 「台帳の件数だけで、その窓を過去の速さで回せるか」を答えます。
+    #
+    #     `cap_ratio >= 1.0`  台帳の件数は足りている ＝ **縛っているのは並び**
+    #     `cap_ratio <  1.0`  件数が天井 ＝ **並べ替えでは届かない。前提を増やすこと**
+    #
+    # **覆る条件**: `queue_lag` の「入れ替えるだけで何日 早まるか」が
+    # 窓ごとに全前提へ広がったら、この推測は要りません —— そちらの実測を
+    # そのまま並べること（`forward()` の `cap_per_day` の註と同じ）。
     usable = [h for h in hs
               if h.get("head") is not None and h.get("cap_ratio") is not None]
-    worst = min(usable, key=lambda h: h["head"], default=None)
-    best = max(usable, key=lambda h: h["head"], default=None)
+    # **並びで動きうる窓** ＝ 件数が天井になっていない窓のうち、いちばん短いもの。
+    movable = [h for h in usable if h["cap_ratio"] >= 1.0]
+    # **件数が天井の窓** ＝ 並べ替えでは届かない窓のうち、いちばん長いもの。
+    bound = [h for h in usable if h["cap_ratio"] < 1.0]
     how = ""
-    if worst is not None and best is not None:
-        how = (f" **上げ方は窓で違います**: 今後{worst['days']}日 は最大の"
-               f" {worst['head']:.0%} なので**予定を手前に倒せば上がります**"
-               f"（`scripts/queue_lag.py`）。今後{best['days']}日 は既に"
-               f" {best['head']:.0%} で、**台帳が {fw.get('open')}件 しか無いのが天井**"
-               f"（最大 {best['cap_ratio']:.2f}倍）—— **予定を動かしても上がりません。"
-               "前提を増やすこと**（`python scripts/eta.py --alloc`）。")
+    if movable:
+        w = min(movable, key=lambda h: h["days"])
+        how += (f" **上げ方は窓で違います**: 今後{w['days']}日 は"
+                f"**台帳の件数が天井ではありません**（最大 {w['cap_ratio']:.2f}倍"
+                f"／いま {w['per_day']:.2f}/日）—— この窓で縛っているのは"
+                "**公開の順番**のほうです。"
+                "**手前に倒せる本が実際に在るかは撃って確かめること**"
+                "（`python scripts/queue_lag.py` の『合計 N日／入れ替え N手』。"
+                "**0手 なら、この窓もいまは動きません**）。"
+                "**`deadline` を縮めるのは別物で、`forward()` は1日も動きません**"
+                "（`forward()` は `ready` だけを読む・2026-08-30 実測）。")
+    if bound:
+        w = max(bound, key=lambda h: h["days"])
+        how += (f" 今後{w['days']}日 は、**台帳が {fw.get('open')}件 しか無いのが天井**"
+                f"（最大 {w['cap_ratio']:.2f}倍 ＜ 1.0 ＝ 過去の θ に届きません）—— "
+                "**並べ替えでも公開の順番でも上がりません。前提を増やすこと**"
+                "（`python scripts/eta.py --alloc`）。")
+    if usable and not bound:
+        how += (" **件数が天井になっている窓は1つもありません** —— "
+                "どの窓も台帳ではなく並びで決まっています。")
     return (f"### **上の日付は θ＝{back:.2f}/日（`closed_on` の過去の実測）に"
             f"反比例します。予定表から数えると {parts}** —— "
             "予定表の側は**下限**です（これから立つ前提を数えていない。"

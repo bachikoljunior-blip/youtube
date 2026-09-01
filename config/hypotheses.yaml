@@ -6968,7 +6968,7 @@ hypotheses:
 
   - claim: "公開時刻は 1本あたり再生に効かない —— 規則の密度（1日1本）で、対照 9時 に置いた本と、それ以外の時刻に置いた本の生涯再生の中央値は ×1.5 の中に収まる"
     opened_on: "2026-09-01"
-    deadline: "2026-09-20"
+    deadline: "2026-09-18"
     lever: per_video
     side: dist
     needs:

@@ -200,15 +200,128 @@ def test_予定表が完璧でも長い窓の倍率は下がること():
         "**完璧な予定表なのに 0.05倍 と出るのが、この行の読みにくさの正体です**")
 
 
+def _ledger(n_open: int, ready_on: date = date(2026, 10, 20)) -> tuple[dict, dict]:
+    """開いた前提を `n_open` 件 持つ台帳と、その `ready`。**θ は 1.0/日 に固定。**
+
+    窓の選び方は `cap_ratio = (n_open/h) / θ` で決まるので、**この検査で
+    効かせたいのは件数だけ**です（`head` は選択に使いません）。
+    """
+    doc = {"hypotheses": [
+        {"claim": "A", "lever": "per_video", "effect": 1.5,
+         "closed_on": "2026-08-24"},
+        {"claim": "B", "lever": "rpm", "effect": 2.0,
+         "closed_on": "2026-08-26"},
+    ] + [{"claim": f"O{i}", "lever": "per_video"} for i in range(n_open)]}
+    return doc, {f"O{i}": ready_on for i in range(n_open)}
+
+
 def test_行が_どちらの直し方かを名指しすること():
-    """**上げ方は窓で違います。** 片方しか言わないと、空振りする側へ行きます。"""
-    ready = {"C": date(2026, 8, 27), "D": date(2026, 9, 20),
-             "E": date(2026, 10, 20)}
-    fw = arm_speed.forward(ready, doc=DOC, today=TODAY, horizons=(14, 30, 60))
+    """**上げ方は窓で違います。** 片方しか言わないと、空振りする側へ行きます。
+
+    **2026-09-01 に、選び方を `head` から `cap_ratio` へ替えました。**
+    旧版は `min(head)`／`max(head)` で選んでおり、`head` は窓の長さに対して
+    構造的に単調増加するので、**台帳の姿によらず同じ2つの窓**を指していました。
+    """
+    # 開いた 20件・θ 1.0/日 → 14日 は cap_ratio 1.43（件数は天井ではない）、
+    #                          60日 は cap_ratio 0.33（件数が天井）。
+    doc, ready = _ledger(20)
+    fw = arm_speed.forward(ready, doc=doc, today=TODAY, horizons=(14, 30, 60))
     line = arm_speed.forward_line(fw)
     assert line, "合っていないのに黙っています"
     assert "取りうる最大" in line, f"天井を出していません: {line}"
     assert "queue_lag" in line, (
-        "**予定を手前に倒して上がる窓**を名指ししていません")
+        "**`ready` を手前に倒して上がる窓**を名指ししていません")
     assert "--alloc" in line and "前提を増やす" in line, (
-        "**予定を動かしても上がらない窓**の直し方を名指ししていません")
+        "**件数が天井で、並べ替えでは上がらない窓**の直し方を名指ししていません")
+
+
+# --- **窓を `head` の絶対値で選ばないこと**（2026-09-01・最適化の回に足した） ---
+#
+# `forward_line()` は長らく `min(head)` の窓に
+# 「**予定を手前に倒せば上がります**（`scripts/queue_lag.py`）」を付けていました。
+#
+# **それは測定ではなく定数です。** `head = per_day / (n_open/h)` は
+# 分子が `n_open` で頭打ち・分母だけ `h` で伸び、しかも判定日は最短2週間 先なので、
+# **短い窓ほど必ず低く出ます**（実測 2026-09-01: 14日 32% ／ 30日 80% ／ 60日 88%）。
+# つまり `min(head)` は**台帳がどんな姿でも最短の窓**を指し、
+# `forward()` 自身の「**`head` の絶対値を根拠に何かを決めないこと**」を破っていました。
+#
+# 下の3件は、**その定数を撃ち抜くために置いてあります** ——
+# どれも旧版（`min(head)` / `max(head)`）では落ちます。
+
+
+def test_件数が天井の窓に_並べ替えの処方を出さないこと():
+    """**台帳が薄い**とき、旧版は「14日 は予定を手前に倒せば上がります」と言っていました。
+
+    ここでは開いた前提が **3件** しかなく、どの窓も `cap_ratio < 1.0`
+    ＝ **並べ替えでも公開の順番でも、過去の θ には届きません。**
+    それでも旧版は `min(head)` の窓（14日）に並べ替えの処方を付けます。
+
+    **空の仕事へ送る行は、名指ししないより悪い**です —— この repo の回は
+    `eta.py` の頭が名指しした所へ行くので、そのぶんの周が丸ごと落ちます。
+    """
+    ready = {"C": date(2026, 9, 20), "D": date(2026, 9, 25),
+             "E": date(2026, 10, 20)}
+    fw = arm_speed.forward(ready, doc=DOC, today=TODAY, horizons=(14, 30, 60))
+    for h in fw["horizons"]:
+        assert h["cap_ratio"] < 1.0, (
+            f"前提の置き方が変わって、この検査の前提が崩れています: {h}")
+
+    line = arm_speed.forward_line(fw)
+    assert line, "合っていないのに黙っています"
+    assert "前提を増やすこと" in line, (
+        "どの窓も件数が天井なのに、**唯一 効く手**を名指ししていません")
+    for banned in ("予定を手前に倒せば上がります", "手前に倒せる本が実際に在るか"):
+        assert banned not in line, (
+            f"**件数が天井の台帳に、並べ替えの処方を出しています**（{banned}）。"
+            " `min(head)` は台帳の姿によらず最短の窓を指すので、"
+            "この行は測定ではなく定数になっていました")
+
+
+def test_台帳が厚いとき_件数を天井と言わないこと():
+    """**台帳が厚い**とき、旧版は `max(head)` の窓に「台帳が N件 しか無いのが天井」と言います。
+
+    ここでは開いた前提が **70件**（60日窓の `cap_ratio` も 1.0 以上）＝
+    **件数はどの窓でも天井ではありません。** それでも旧版は必ず1つの窓に
+    「台帳が天井」を付けます —— `max(head)` は常に何かを返すからです。
+
+    **在りもしない天井を名指しすると、`--alloc`（前提を増やす手）が
+    毎周 呼ばれ続け、本当に縛っている所が隠れます。**
+    """
+    doc, ready = _ledger(70)
+    fw = arm_speed.forward(ready, doc=doc, today=TODAY, horizons=(14, 30, 60))
+    for h in fw["horizons"]:
+        assert h["cap_ratio"] >= 1.0, (
+            f"前提の置き方が変わって、この検査の前提が崩れています: {h}")
+
+    line = arm_speed.forward_line(fw)
+    assert line, "合っていないのに黙っています"
+    assert "しか無いのが天井" not in line, (
+        "**件数が足りているのに「台帳が天井」と言っています。**"
+        " `max(head)` は台帳の姿によらず必ず1つの窓を返すので、"
+        "この行は測定ではなく定数になっていました")
+    assert "件数が天井になっている窓は1つもありません" in line, (
+        "縛っているのが台帳**ではない**ことを、はっきり言っていません")
+
+
+def test_deadlineを縮める処方を出さないこと():
+    """**`forward()` は `ready` だけを読みます。`deadline` を動かしても1日も動きません。**
+
+    実測 2026-08-30（`deadline_check.Verdict.waits` の註）: `opening_motion` の
+    期限を 10-07 → 09-22 へ **15日** 縮めて `eta.py --alloc` を撃ち直し、
+    腕べつの回転・台帳の配分・過去との差 とも **変化なし**。
+
+    それでも 2026-09-01 まで、この行は「**予定**を手前に倒せば上がります」と
+    印字していました —— 同じ1文の後半の「**予定**を動かしても上がりません」が
+    `deadline` を指しているので、**同じ語で2つの別物を指していた**ことになります。
+    **効く側（公開の順番）は、どこにも書かれていませんでした。**
+    """
+    doc, ready = _ledger(20)
+    fw = arm_speed.forward(ready, doc=doc, today=TODAY, horizons=(14, 30, 60))
+    line = arm_speed.forward_line(fw)
+    assert line, "合っていないのに黙っています"
+    assert "公開の順番" in line, (
+        "**`ready` を動かせる唯一の手**（公開の順番）を名指ししていません")
+    assert "`deadline` を縮めるのは別物" in line, (
+        "**`deadline` を縮めても `forward()` が動かないこと**を言っていません。"
+        " 言わないと、次の回が期限を縮めて「効かなかった」と記録します")
