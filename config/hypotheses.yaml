@@ -753,7 +753,7 @@ hypotheses:
     #     1日 後ろへずれた（`tests/test_deadline_check.py` の
     #     `test_期限が_判定できる日より前に置かれていない` が赤くして見つけた）。
     #     **この検査が落ちたら、延ばすのは期限だけ。条件は緩めないこと。**
-    deadline: "2026-10-02"
+    deadline: "2026-10-07"
     needs:
       # 依頼が入ったのは 2026-08-24（`src/script_writer.py`「2026-08-24 に解禁」）。
       # **30,000再生 ÷ 1本あたり 418.7再生（公開済み130本の実測）= 約72本** 要ります。
@@ -2627,7 +2627,7 @@ hypotheses:
     #     1日 後ろへずれた（`tests/test_deadline_check.py` の
     #     `test_期限が_判定できる日より前に置かれていない` が赤くして見つけた）。
     #     **この検査が落ちたら、延ばすのは期限だけ。条件は緩めないこと。**
-    deadline: "2026-09-30"
+    deadline: "2026-09-20"
     lever: per_video                # engaged 比率
     side: content
     needs:
@@ -2939,7 +2939,7 @@ hypotheses:
   - claim: "作る題材の順番は、engaged だけでなく族べつの登録率でも重み付けるべき（門は登録者）"
     # **09-20 → 09-17 へ縮めた（2026-08-26）。`falsified_if` は1文字も変えていません。**
     #   `python scripts/deadline_check.py` の `ready` に合わせただけ。熟成 7日 → 3日（`src/settle.py` の実測）を当てた結果です
-    deadline: "2026-09-23"
+    deadline: "2026-10-05"
     lever: sub_rate                # subscribersGained ÷ 再生 で判定する
     side: content
     needs:
@@ -4841,7 +4841,7 @@ hypotheses:
     #     1日 後ろへずれた（`tests/test_deadline_check.py` の
     #     `test_期限が_判定できる日より前に置かれていない` が赤くして見つけた）。
     #     **この検査が落ちたら、延ばすのは期限だけ。条件は緩めないこと。**
-    deadline: "2026-09-22"
+    deadline: "2026-09-17"
     lever: per_video                # engaged 比率
     side: content
     # **09/05 → 10/11 → 09/23（2026-08-25 に2回動かした）。条件は1文字も変えていません。**
@@ -6771,6 +6771,24 @@ hypotheses:
       2,500回 は α=4.74・u=1,130 の Pareto 裾で
       P(X>2500) ≒ 0.0021 ／ 30本で 6.1% —— **偶然では滅多に出ない**が、
       分布がずれれば**すぐ出る**大きさに置いてあります。
+
+      **【2026-09-01・あとから足した】上の裾は、立てた回が手で測った数でした
+      —— つまり書き置かれた結論で、標本が入れ替われば黙って腐ります。**
+      同じ測り方を `src/rule_per_video.tail_headroom()` に入れたので、
+      **判定の日は、この本文の数ではなく、撃った数を読むこと**:
+
+          python -m src.rule_per_video     # 末尾3行が裾（API 0単位・約30秒）
+
+      **その道具は母集団が少し違います**（`_settled()` を通すので
+      `form=ショート` かつ `settle.mature_hours` 以上 ＝ 160本。上の 220本 は
+      齢48時間 だけで切った数）。**そのぶん裾は重く出ます**（α: k=50 で **2.66**）。
+      **重く読んでなお、+300本 で買えるのは ×1.49（1,891 → 2,814回）** ——
+      **どちらの母集団でも、×24.31 には届きません。** 結論は同じで、
+      **2つの切り方で符号も桁も動かない**ことのほうが根拠です。
+
+      **覆る条件**: `tail_headroom()` の `gain`（+300本 の倍率）が **2.0 を
+      超えたら**、裾はここで測ったより重い ＝ この前提の前提が崩れます。
+      検査は `tests/test_tail_headroom.py`。
     next_if_false:
       - "`src/rule_per_video.ceiling_at_rule()` を、その本の実測で引き直す（天井は動く）"
       - "何がずらしたのかを、その本の面（`insights` の trafficSource）で切り分ける"
@@ -6974,7 +6992,7 @@ hypotheses:
     # 期限を据え置くと `ready > deadline` ＝ **測る前から届かない期限**になります
     # （`tests/test_hypothesis_deadline_reachable.py` の存在理由そのもの）。
     # この前提の `falsified_if` も「6本 に満たなければ期限だけ延ばすこと」と書いています。
-    deadline: "2026-09-20"
+    deadline: "2026-10-01"
     lever: per_video
     side: dist
     # **数の門を書いたら、見張る先も書くこと**（2026-09-01・別のサブが足した）。
