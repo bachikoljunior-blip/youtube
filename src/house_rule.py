@@ -133,27 +133,103 @@ def _jst_today() -> str:
     return datetime.now(timezone(timedelta(hours=9))).strftime("%Y-%m-%d")
 
 
-def is_stockpile(row: dict, today: str | None = None) -> bool:
+def _instant(raw: object):
+    """控えの `at` を**時刻**として読む（読めなければ `None`）。
+
+    控えは UTC の `Z` 表記（`2026-09-02T04:00:00Z`）で書かれますが、
+    **`+09:00` の行も混ざっています**（`data/uploaded.jsonl` の実測）。
+    帯の無い行は UTC と読みます（`scripts/pool_drain._parse` と同じ）。
+    """
+    from datetime import datetime, timezone
+    try:
+        at = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+    return at.replace(tzinfo=timezone.utc) if at.tzinfo is None else at
+
+
+def _published_before(now=None, today: str | None = None):
+    """**「もう公開になっている」の境**を、時刻で返す。
+
+    ## なぜ日付ではなく時刻か（2026-09-01 に、オーナーが画面で踏んだ）
+
+    ここは長らく `str(at)[:10] <= today` の**日付の文字列比べ**でした。
+    2026-09-01 16:33 JST、オーナーの YouTube Studio に **09/01 の
+    18:00 / 19:00 / 20:00 / 21:00 の予約が4本**出ていたのに、
+    `scripts/pool_drain.py` の一覧は **09/02 から**しか出ませんでした ——
+    **まだ来ていない当日の予約が「もう公開になっている ＝ 実績」に倒れ、
+    作り置きから外れて、外す一覧から丸ごと落ちていた**からです。
+    外す順は「公開の早い順」なのに、**その日に出てしまう本だけが見えない。**
+    放っておけば当日5本 公開され、**規則1（1日1本）が破れます。**
+
+    しかも物差しが2つ混ざっていました —— `at` は **UTC**、`today` は
+    **JST の日付**。09/02 00:30 JST（＝ 09/01 15:30Z）の予約は
+    `at[:10] == "2026-09-01"` なので、**翌日の未明ぶんまで同じ穴**に落ちます。
+
+    ## 何を境にするか
+
+        `now` が来た      …… それを使う（呼ぶ側が時刻を持っている ＝ いちばん正確）
+        `today` だけ来た  …… その日が**実際の今日**なら「いま」、
+                              違う日（＝日付で固定したい回・検査）なら
+                              **その日の 00:00 JST**
+        どちらも無い      …… `_jst_today()` に聞いて、同じ規則で決める
+                              （**この関数を飛ばさないこと** —— 検査は
+                                そこを差し替えて日付を固定しています）
+
+    **日付だけを渡された回に、その日の 00:00 JST を境にするのはわざと**です。
+    同じ日の予約は「まだ来ていない」側へ倒れます ——
+    **落とす側（＝ 実績とみなして一覧から消す側）に倒すのが、この穴の正体**でした。
+    `is_stockpile` の姿勢（測っていないことを落とす側に倒さない）と同じ向きです。
+
+    **覆る条件**: 控えが `at` を持たない形に変わったら、この関数は意味を失います。
+    検査は `tests/test_pool_drain_today_first.py`。
+    """
+    from datetime import datetime, timedelta, timezone
+    jst = timezone(timedelta(hours=9))
+    if now is not None:
+        return now if now.tzinfo else now.replace(tzinfo=timezone.utc)
+    real = datetime.now(timezone.utc)
+    day = str(today or _jst_today())[:10]
+    if not day or day == real.astimezone(jst).strftime("%Y-%m-%d"):
+        return real
+    try:
+        return datetime.fromisoformat(day + "T00:00:00").replace(tzinfo=jst)
+    except ValueError:
+        return real
+
+
+def is_stockpile(row: dict, today: str | None = None, now=None) -> bool:
     """**その控えの行は「作り置き」か。**（`data/uploaded.jsonl` の1行）
 
     作り置きの条件は**2つとも**満たすことです:
 
-        1. まだ公開されていない（`at` が今日より後）
+        1. まだ公開されていない（`at` が**いまより先**。日付ではなく**時刻**で
+           比べます —— 理由は `_published_before()` の註。当日ぶんが
+           丸ごと見えなくなる穴を、2026-09-01 に実物で踏んでいます）
         2. **規則より前に作った**（`uploaded_at` が `STOCKPILE_SINCE` より前）
 
     2 が要ります。**規則の下で作った本まで落とすと、これから出す1本が
     供給から消えます** —— そうなると「1日1本 作っても面は 0回/日」と
     印字することになり、実物と食い違います。
 
+    `now` は**呼ぶ側が持っている時刻**（`scripts/pool_drain.pool()` が渡します）。
+    無ければ `today` から、それも無ければ「いま」から境を作ります。
+
     読めない行（`at` が無い・形が違う）は **False**（＝落とさない）。
     **測っていないことを、落とす側に倒さないこと。**
     """
     if STOCKPILE_IS_SUPPLY:
         return False
-    at = str(row.get("at") or "")[:10]
-    if not at:
+    raw = row.get("at")
+    if not raw:
         return False
-    if at <= (today or _jst_today()):
+    at = _instant(raw)
+    if at is None:
+        # **時刻として読めない行**だけ、これまでどおり日付で比べます
+        # （読めないものを落とす側に倒さない、の同じ姿勢）。
+        if str(raw)[:10] <= (today or _jst_today()):
+            return False
+    elif at <= _published_before(now, today):
         return False                      # もう公開になっている ＝ 実績
     made = str(row.get("uploaded_at") or "")[:10]
     if not made:
@@ -161,9 +237,9 @@ def is_stockpile(row: dict, today: str | None = None) -> bool:
     return made < STOCKPILE_SINCE
 
 
-def drop_stockpile(rows, today: str | None = None) -> list:
+def drop_stockpile(rows, today: str | None = None, now=None) -> list:
     """**控えの行から、作り置きを落とす。** 残るのが供給です（規則2）。"""
-    return [r for r in rows if not is_stockpile(r, today)]
+    return [r for r in rows if not is_stockpile(r, today, now)]
 
 
 # --- **規則の下で、その前提はまだ満ちうるか**（2026-08-31 に足した） ---------------

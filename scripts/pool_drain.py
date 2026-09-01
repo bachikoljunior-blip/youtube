@@ -160,10 +160,14 @@ def pool(now: datetime | None = None, rows: list[dict] | None = None) -> list[di
             continue
         # **規則の下で作った本は、作り置きではありません**（上の註）。
         # `is_stockpile` は `video_id` と `at` を見るので、控えの `id` を写して渡します。
+        # **`now` を渡すこと**（2026-09-01）—— 日付だけを渡していたころ、
+        # 当日ぶんが「もう公開になっている」に倒れて一覧から丸ごと落ちていました
+        # （`src.house_rule._published_before()` の註・`tests/test_pool_drain_today_first.py`）。
         if not house_rule.is_stockpile({**row, "video_id": row["id"]},
                                        today=now.astimezone(
                                            timezone(timedelta(hours=9))
-                                       ).strftime("%Y-%m-%d")):
+                                       ).strftime("%Y-%m-%d"),
+                                       now=now):
             continue
         out.append({"id": row["id"], "at": at,
                     "title": row.get("title", ""), "topic": row.get("topic", "")})
