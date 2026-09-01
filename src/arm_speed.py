@@ -920,7 +920,8 @@ def lines(arms: dict[str, dict], streak: dict, bd: dict,
 
 def next_close(doc: dict | None = None, today: date | None = None,
                ready: dict[str, date] | None = None,
-               unready: set[str] | None = None) -> dict:
+               unready: set[str] | None = None,
+               dead: set[str] | None = None) -> dict:
     """**次に前提を1件閉じられるのはいつか。**
 
     軌跡の腕は閉じた前提でしか動かないので（この節の上を参照）、
@@ -1008,6 +1009,34 @@ def next_close(doc: dict | None = None, today: date | None = None,
 
     `claims` は **`on` と同じ日に判定できる前提の名前**（`on` が今日なら
     「**いま撃てるもの**」そのもの）。`on` が `None` のときは空。
+
+    ## **`claim_levers` を返しても、読む側は断れませんでした**（2026-09-01 夕）
+
+    すぐ上の節は「読む側が腕を見て断れるように、ここで持たせます」で終わって
+    います。**持たせただけでした。** `scripts/eta.py` の
+    「**この回に閉じられる前提はありません —— いちばん早い期日は …**」は
+    `nc["on"]` しか読まず、`claim_levers` を一度も見ていません。
+
+    実測 2026-09-01 12:4x（この節を書いた回に数えた）:
+
+        いちばん早い期日  **2026-09-03**（2日後）
+        その1件の腕      **`sub_rate`** ＝ この回の `arm_dead_at_inf`
+                         （`×10^9` でも到達日は出ない）
+        → **次に主実行が撃つ `verdict` は、閉じても到達日を1日も動かしません。**
+        開いている 23件 のうち、動かせないのは **10件（43%）**
+        （`deadline_check.dead_ledger()`）
+
+    `dead`（引き代の無い腕の集合）を渡すと、**それを外した側の日付**も返します::
+
+        "live_on" / "live_days" / "live_claims"   死んだ腕を外した「次の1件」
+        "dead_skipped"                            外した claim の数
+
+    **渡さなければ従来どおり**（キーは `None`／空）。**「読めない」と「無い」は
+    別**なので、呼ぶ側が集合を作れない回は渡さないこと。
+
+    **覆る条件**: `dead` に渡す集合の作り方が変わったら（いまは
+    `lever_dead_at_inf` ＋ 天井 ×1.00）、ここの意味も変わります。
+    **この関数は判定しません。渡された集合をそのまま信じます。**
     """
     doc = _load() if doc is None else doc
     today = today or today_jst()
@@ -1049,14 +1078,31 @@ def next_close(doc: dict | None = None, today: date | None = None,
                 levers[claim] = str(h.get("lever"))
     if not days:
         return {"on": None, "days": None, "open": n_open,
-                "source": None, "claims": [], "claim_levers": {}}
+                "source": None, "claims": [], "claim_levers": {},
+                "live_on": None, "live_days": None, "live_claims": [],
+                "dead_skipped": 0}
     soonest, src, _ = min(days, key=lambda x: x[0])
     # **同じ日に判定できるものは全部 返します。** 1件だけ返すと、
     # 撃った次の回に「もう1件あった」が見えません。
     names = [c for (d, _s, c) in days if d == soonest and c]
-    return {"on": soonest, "days": (soonest - today).days,
-            "open": n_open, "source": src, "claims": names,
-            "claim_levers": {c: levers[c] for c in names if c in levers}}
+    out = {"on": soonest, "days": (soonest - today).days,
+           "open": n_open, "source": src, "claims": names,
+           "claim_levers": {c: levers[c] for c in names if c in levers},
+           "live_on": None, "live_days": None, "live_claims": [],
+           "dead_skipped": 0}
+    # **引き代の無い腕を外した側**（2026-09-01 夕。理由は docstring）。
+    #     `dead` が渡らない回は何も言いません（`None`／空のまま）——
+    #     **「死んだ腕は無い」ではなく「読めない」**です。
+    if dead:
+        live = [(d, c) for (d, _s, c) in days
+                if levers.get(c) and levers[c] not in dead]
+        out["dead_skipped"] = len(days) - len(live)
+        if live:
+            live_on = min(live, key=lambda x: x[0])[0]
+            out["live_on"] = live_on
+            out["live_days"] = (live_on - today).days
+            out["live_claims"] = [c for (d, c) in live if d == live_on and c]
+    return out
 
 
 #: `forward()` が数える窓（日）。**14 を先頭に置くこと** —— いちばん短い窓が

@@ -8510,8 +8510,24 @@ def headline(pl: dict, prev: dict | None = None,
             unready = _unready_claims()
         except Exception:
             unready = None
+        # --- **引き代の無い腕の前提を、「次の1件」に数えないこと**（2026-09-01 夕）---
+        #     `next_close()` は 08-31 から `claim_levers` を返していますが、
+        #     **この行はそれを一度も読んでいませんでした。** 実測 2026-09-01 12:4x:
+        #     いちばん早い期日 **2026-09-03** の1件の腕は **`sub_rate`** ＝
+        #     この回の `arm_dead_at_inf`（`×10^9` でも到達日は出ない）。
+        #     **次に主実行が撃つ `verdict` は、閉じても到達日を1日も動かしません。**
+        #     開いている 23件 のうち 10件（43%）がその側です
+        #     （`deadline_check.dead_ledger()`）。
+        #     集合は2つの和: `lever_dead_at_inf`（無限大でも 0日）と
+        #     **天井 x1.00**（`density` ＝ オーナーが固定した 1日1本）。
+        #     **作れなかった回は渡しません** ——「死んだ腕は無い」ではなく「読めない」。
+        _dead_arms = set(_dead_inf) | {
+            k for k, a in arms.items()
+            if isinstance(a, dict) and isinstance(a.get("cap"), (int, float))
+            and a["cap"] <= 1.0}
         try:
-            nc = arm_speed.next_close(ready=ready, unready=unready)
+            nc = arm_speed.next_close(ready=ready, unready=unready,
+                                      dead=_dead_arms or None)
         except Exception:
             nc = None
         if nc and nc.get("on") is not None:
@@ -8552,6 +8568,32 @@ def headline(pl: dict, prev: dict | None = None,
                 head = (f"{bar} **この回に閉じられる前提はありません** ——"
                         f" いちばん早い期日は **{nc['on'].isoformat()}**"
                         f"（{nc['days']}日後・開いている前提 {nc['open']}件）。")
+                # **その1件は、閉じたら到達日を動かすのか。**（2026-09-01 夕）
+                #     理由と実測は `arm_speed.next_close()` の docstring。
+                _lv1 = sorted({v for v in (nc.get("claim_levers") or {}).values()})
+                _d1 = [v for v in _lv1 if v in _dead_arms]
+                if _d1:
+                    head += (" [!] **ただしその期日の腕は "
+                             + "／".join(f"`{v}`" for v in _d1)
+                             + " で、引き代がありません** ——"
+                             " **閉じても到達日は1日も動きません**"
+                             "（オーナー規則2: ゼロなら律速ではない）。")
+                    if nc.get("live_on") is not None:
+                        head += (" 動かせる側のいちばん早い期日は"
+                                 f" **{nc['live_on'].isoformat()}**"
+                                 f"（{nc['live_days']}日後・"
+                                 + "／".join(f"「{c[:34]}」"
+                                            for c in nc.get("live_claims") or [])
+                                 + "）。**待つならそちらです。**")
+                    else:
+                        head += (" **そして引き代のある腕の前提は、期日つきで"
+                                 " 1件も開いていません** —— この回は `verdict` を"
+                                 " 待つのではなく `premise` を立てること"
+                                 "（0単位・`docs/trigger_main.md` §4）。")
+                    if nc.get("dead_skipped"):
+                        head += (" （引き代の無い腕の前提を"
+                                 f" **{nc['dead_skipped']}件** 外して数えました。"
+                                 "内訳は `python scripts/deadline_check.py --fit`）")
                 if gap is not None and abs(gap) >= 1:
                     # **「付け札を照合しろ」は、もう既定にしません**（2026-08-27 に直した）。
                     #
