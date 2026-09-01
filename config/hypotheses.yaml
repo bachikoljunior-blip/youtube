@@ -7187,6 +7187,8 @@ hypotheses:
     deadline: "2026-10-05"
     lever: per_video
     side: dist
+    # 台帳の待ち（2026-09-02 に足した —— `tests/test_watches.py` が 09/01 13:31 から赤でした）
+    watch: 規則の密度-連続10本
     needs:
       - kind: after
         on_date: "2026-10-01"
@@ -7372,8 +7374,16 @@ hypotheses:
         what: "`data/views.jsonl`（22,667点）と `data/video_forms.json` だけ。**Data API 0単位・待つものはありません**"
         data_file: data/views.jsonl
     falsified_if: |
-      **本数を揃えた比べで、長尺の `max/10位` が間引いた中央値の 2倍 に届かなければ外れ**
-      （＝ 上の詰まりは面ではなく本数の差だった）。判定はこの1行（**Data API 0単位・数秒**）:
+      **本数を揃えた比べで、長尺の `max/10位` が間引いた中央値の 2倍 を下回っていれば外れ**
+      （＝ 上の詰まりは面ではなく本数の差だった）。
+      **これは「いつか満ちる門」ではありません** —— 待つものが1つも無く
+      （`needs: now`）、**いま撃てば、いま答えが出ます。**
+      だから `config/watches.yaml` の待ちは要りません
+      （`tests/test_watches.py` の `GATE_IN_YAML` は「〜した時点で」型の言い回しを
+      待ちの印として拾います。**待っていない前提でその言い回しを使わないこと** ——
+      **文面を直すのが正で、`watch:` を1行 足して黙らせるのは誤りです。**
+      台帳に載せると、`status.py` が満ちるはずのない待ちを毎回 印字します）。
+      判定はこの1行（**Data API 0単位・数秒**）:
 
           python -m src.form_tail
 

@@ -32,6 +32,19 @@ watches:
     # （あちらは Analytics の `creatorContentType` を読むので、こちらは控えの尺で近似）。
     min_duration_s: 180
 
+  # **2026-09-02 に足した。**（`tests/test_watches.py` の
+  #  `test_数の門を持つ未判定の仮説は台帳を指している` が 09/01 13:31 から赤でした）
+  - id: 規則の密度-連続10本
+    what: 「1本あたり再生 942回 は、**前後も規則の密度だった日**では一度も測られていない」の判定（腕 `per_video`）
+    cond: "09/03〜10/01 に **1日1本 で連続公開した本が 10本**、かつその日の実データが届いている"
+    then: "python -c \"import sys;sys.path.insert(0,'.');from src import rule_per_video as r;e=r.estimate();print(e['at_rule_mean'], e['rule_days'], e['n_videos'])\" → `at_rule_mean` が 1,500回 を下回っていれば外れ"
+    source: config/hypotheses.yaml
+    kind: published_count
+    since: '2026-09-03'
+    until: '2026-10-01'
+    need: 10
+    data_ready: true
+
   - id: 登録の依頼-30000再生
     # **期限をここに手で書かないこと**（2026-08-26 に測って直した）。
     # 文面は長らく「期限 2026-09-14」でしたが、`config/hypotheses.yaml` の
