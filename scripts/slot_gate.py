@@ -154,6 +154,63 @@ def tail_days(rows: list[dict] | None = None, today=None) -> int:
     return sum(1 for d in per if d > today + timedelta(days=LEAD_DAYS))
 
 
+# --- **`<時>` を空欄で渡さない**（2026-09-01・最適化の回に足した） -------------
+#
+# ここが出す3行のうち、真ん中の `upload_only.py s-<名前> "" <時>` の `<時>` は
+# **空欄でした。** 空欄は「自分で決めろ」なので、読む側は既定
+# （`config/channel.yaml` の `publish_hour_jst`）に落ちます。
+#
+# その既定は 2026-09-01 まで **19時** で、根拠は立ち上げ時の推測
+# 「日本の視聴ピークは 19-22時」だけ ——**規則の密度（1日1本）での観測は 0本**でした。
+# 一方 `scripts/eta.py` の到達日が乗っている `per_video`（942回）は、
+# **ほぼ 9時 の 12本**で出来ています（`src/rule_per_video` の at_rule）。
+#
+# **`improve` の当てどころと同じ穴です** —— 「同じ5択に並べても、探す手間が
+# 違えば選ばれません」（`src/next_slot.py` 冒頭）。ここは**時刻を空欄にしない**。
+#
+# 覆る条件: `publish_hour.best_hour()` が `None`（どの時刻も `MIN_N` に届かない）
+# なら、この関数は**何も足しません** —— 推測で時刻を名指ししないため。
+
+
+def _hour_arg() -> str:
+    """`upload_only.py` の第3引数（予約時刻・JST の時）。**空欄にしない。**"""
+    try:
+        from src import publish_hour                           # noqa: PLC0415
+        h = publish_hour.best_hour()
+    except Exception:                                          # noqa: BLE001
+        h = None
+    if h is None:
+        return "<時>    # 第3引数が予約時刻（JST）"
+    return f"{h}     # 予約時刻（JST）＝ `python -m src.publish_hour` の実測"
+
+
+def _hour_lines() -> list[str]:
+    """時刻を名指しした理由。**名指しできない回は1行も出しません。**"""
+    try:
+        from src import publish_hour                           # noqa: PLC0415
+        h, cfg = publish_hour.best_hour(), publish_hour.config_hour()
+        tab = publish_hour.by_hour()
+        un = publish_hour.untested()
+    except Exception:                                          # noqa: BLE001
+        return []
+    if h is None or h not in tab:
+        return []
+    v = tab[h]
+    out = [f"  **時刻は {h}時**（規則の密度の日で n={v['n']}・中央値 "
+           f"{v['median']:,.0f}回。`python -m src.publish_hour`・API 0単位）。"
+           "**「この時刻が最適だ」ではありません** —— `eta.py` の `per_video` が"
+           "乗っている帯と、機械が置く帯を揃えているだけです。"]
+    if cfg is not None and cfg != h:
+        out.append(f"  [!] `config/channel.yaml` の既定は {cfg}時 のままです"
+                   "（揃えるなら、そちらも直すこと）。")
+    if un:
+        out.append(f"  **規則の密度で一度も試していない時刻が {len(un)}／24 あります。**"
+                   "1日1本 ＝ 1日に1点しか増えないので、"
+                   "**掃くなら前提を立ててから**（`config/hypotheses.yaml`"
+                   "「公開時刻は per_video に効かない」）。")
+    return out + [""]
+
+
 def lines(rows: list[dict] | None = None, today=None) -> list[str]:
     """門が印字する行。**空いていなければ空リスト。**"""
     today = today or datetime.now(JST).date()
@@ -184,9 +241,10 @@ def lines(rows: list[dict] | None = None, today=None) -> list[str]:
         "（`docs/trigger_main.md` §5）。**1本だけです**（9日ぶん作るのが作り置きです）:",
         "",
         "    python -m src.pipeline --script build/short.json --topic s-<名前> --short",
-        f"    python scripts/upload_only.py s-<名前> \"\" <時>    # 第3引数が予約時刻（JST）",
+        f"    python scripts/upload_only.py s-<名前> \"\" {_hour_arg()}",
         "    python scripts/inspect_build.py s-<名前>          # **投稿前に必ず目で見る**",
         "",
+    ] + _hour_lines() + [
         "**撃てないなら**（Data API の日枠 ＝ JST 16:00 に戻る／`AUTOMATION_PAUSED.md`）、"
         "**その理由を `docs/JOURNAL.md` に書いてから終わること。**",
     ]
