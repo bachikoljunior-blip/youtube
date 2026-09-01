@@ -64,3 +64,24 @@ def test_実物の台帳でも出る():
     """**この道具が撃たれる先は実物です。**読めなくなったら、ここが落ちます。"""
     out = "\n".join(dc.ledger_drain(dc.load()))
     assert "台帳の残量" in out
+
+
+def test_主実行が撃つ道にも出る():
+    """**主実行が撃つのは `--fit` のほうです**（`docs/trigger_main.md` §2.6 の1行目）。
+
+    引数なしの道にだけ置いた版は、**毎周の手順から1度も読まれませんでした。**
+    `pool_drain` が「道具は在るのに撃つ側がどこにも書かれていない」で塞がれたのと
+    同じ形の3件目です（2026-09-01 に踏んだ）。
+
+    **覆る条件**: §2.6 が `--fit` を撃たなくなったら、この検査は別の道を見ること。
+    """
+    src = (ROOT / "scripts" / "deadline_check.py").read_text(encoding="utf-8")
+    i = src.index("if a.shrink or a.extend or a.fit:")
+    j = src.index("if a.gate:", i)
+    assert "ledger_drain(" in src[i:j], (
+        "`--fit` の道に台帳の残量が出ていません。"
+        "**主実行が撃つのはこの道です** —— 引数なしの道にだけ置くと、"
+        "毎周の手順からは1度も読まれません")
+    assert "deadline_check.py --fit" in (
+        ROOT / "docs" / "trigger_main.md").read_text(encoding="utf-8"), (
+        "§2.6 が `--fit` を撃たなくなりました。この検査の当てどころを直すこと")

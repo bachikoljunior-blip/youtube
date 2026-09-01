@@ -3380,6 +3380,13 @@ def main(argv: list[str] | None = None) -> int:
         if moved:
             print("  **`falsified_if` は1文字も触っていません。**"
                   "もっと n が要るなら、動かすのは `needs.count` のほうです")
+        # **台帳の残量は、この道へも出します**（2026-09-01 に踏んだ）。
+        # **主実行が撃つのは `--fit` のほうです**（`docs/trigger_main.md` §2.6 の1行目）。
+        # 引数なしの道にだけ置いた版は、**毎周の手順から1度も読まれませんでした** ——
+        # `pool_drain` が「道具は在るのに撃つ側がどこにも書かれていない」で
+        # 塞がれたのと、**同じ形の3件目**です。
+        print("")
+        print("\n".join(ledger_drain(load(), as_of=as_of)))
         return 0
     if a.gate:
         return gate(check(load(), as_of=as_of, lag=lag))
