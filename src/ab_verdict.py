@@ -43,7 +43,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from src import judgeable
@@ -132,6 +132,51 @@ def counts(key: str, *, today: date | None = None,
     return out
 
 
+def earliest(key: str, *, today: date | None = None,
+             gcs: dict[str, GroupCount] | None = None) -> tuple[date, dict[str, float]] | None:
+    """**値の出る本**が床に届く、いちばん早い日。届いているなら `None`。
+
+    `src.ab_split.Counts.earliest_under_rule` は「予約に載る本」で解いています。
+    ここは**値の出る本**で解き直します —— 同じ日数でも、
+    **0再生の本のぶんだけ遅い**（実測 2026-09-01: `title_form` の断定は
+    0再生率 29%。1日1本の規則では、値の出る本は **1日 0.36本** しか増えません）。
+
+    式（全部この回の実測から）::
+
+        1日に増える値の出る本 ＝ 規則の上限（1本/日）× その群の取り分 × (1 − 0再生率)
+        いちばん早い日 ＝ 今日 ＋ 足りない本 ÷ 上の速さ ＋ 落ち着き ＋ Analytics の遅れ
+
+    **覆る条件**: 取り分は `members()` の実績（IDのハッシュ）から数えています。
+    振り分けの塩を変えたら取り分も動くので、そのときは数え直すこと。
+    """
+    from src import house_rule
+
+    today = today or datetime.now().date()
+    gcs = gcs if gcs is not None else counts(key, today=today)
+    if not gcs:
+        return None
+    floor = floor_of(key)
+    lack = {g: floor - gc.usable for g, gc in gcs.items() if gc.usable < floor}
+    if not lack:
+        return None
+    total = sum(gc.counted for gc in gcs.values()) or 1
+    cap = max(1, house_rule.cap())
+    days: dict[str, float] = {}
+    for g, need in lack.items():
+        gc = gcs[g]
+        share = gc.counted / total
+        alive = 1.0 - (gc.zero_rate or 0.0)
+        rate = cap * share * alive
+        days[g] = float("inf") if rate <= 0 else need / rate
+    worst = max(days.values())
+    if worst == float("inf"):
+        return None
+    when = today + timedelta(
+        days=int(-(-worst // 1)) + SETTLE_DAYS + judgeable.ANALYTICS_LAG_DAYS
+    )
+    return when, days
+
+
 def lines(key: str, *, today: date | None = None) -> list[str]:
     """`scripts/ab_split.py` が短く1〜4行 出す形。**床は `floor_of()`。**"""
     gcs = counts(key, today=today)
@@ -159,6 +204,17 @@ def lines(key: str, *, today: date | None = None) -> list[str]:
             f"（{need}）。**いま判定すると、見分けられなかっただけの実験が"
             "『外れ』で閉じ、`next_if_false` が腕ごと畳みます。**"
         )
+        got = earliest(key, today=today, gcs=gcs)
+        if got is not None:
+            when, days = got
+            slow = " ／ ".join(f"{g} {d:.0f}日" for g, d in sorted(days.items()))
+            out.append(
+                f"    **値の出る本が床に届くのは、いちばん早くて {when:%Y-%m-%d}**"
+                f"（規則 1本/日 × 群の取り分 ×（1−0再生率）で {slow}"
+                f" ＋ 落ち着き{SETTLE_DAYS}日 ＋ 遅れ{judgeable.ANALYTICS_LAG_DAYS}日）。"
+                "**期限がこれより手前なら、期限だけを延ばすこと。"
+                "`falsified_if` は1文字も変えないこと。**"
+            )
     rates = {g: gc.zero_rate for g, gc in gcs.items() if gc.zero_rate is not None}
     if len(rates) == 2 and max(rates.values()) - min(rates.values()) >= 0.15:
         hi = max(rates, key=lambda g: rates[g])

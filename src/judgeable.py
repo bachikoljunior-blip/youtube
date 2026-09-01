@@ -92,12 +92,43 @@ class Floor:
 
     @property
     def ready(self) -> date | None:
-        """判定に要る本が**落ち着いて、Analytics に載る**日。そろわなければ `None`。"""
+        """判定に要る本が**落ち着いて、Analytics に載る**日。そろわなければ `None`。
+
+        ## **公開されただけでは、値は出ません**（2026-09-01 に実測して足した）
+
+        ここは長らく「N本目が公開された日 ＋ 落ち着き ＋ 遅れ」でした。
+        ところが**公開されても Analytics に行が来ない本があります** ——
+        実測 2026-09-01 の `title_form`: 断定の群 19本 のうち **4本**は
+        公開から5日たっても `data/scan.jsonl` に行が無く（例 `A91-FSp6liY`
+        2026-08-27 08:00 JST 公開）、**0再生**でした。
+        engaged は `engagedViews ÷ views` なので、**再生 0 の本には値がありません。**
+
+        `ready` はそのまま `scripts/deadline_check.py --shrink` が期限を縮める
+        根拠になるので、ここが楽観だと**まだ値の出ていない標本で判定**します。
+        `falsified_if` は「上回らなければ外れ」なので、
+        **見分けられなかっただけの実験が『外れ』で閉じ、`next_if_false` が
+        腕ごと畳みます。** 実測でその腕は `per_video` ＝ `scripts/eta.py` が
+        「引けるのはこれだけ」と名指ししている、ただ1本の腕でした。
+
+        だから **`src.ab_verdict.earliest()`（値の出る本で解いた日）と、
+        遅いほうを取ります。** 遅い import は循環を避けるためです
+        （`ab_verdict` → `ab_split` → ここ）。
+
+        **覆る条件**: 0再生の本が出なくなれば `earliest()` は `None` を返し、
+        ここは元の式に戻ります（**自動で戻ります。条件を書き足さないこと**）。
+        """
         nth = self.nth
         if not nth or any(d is None for d in nth.values()):
             return None
         latest = max(d for d in nth.values() if d is not None)
-        return latest + timedelta(days=SETTLE_DAYS + ANALYTICS_LAG_DAYS)
+        base = latest + timedelta(days=SETTLE_DAYS + ANALYTICS_LAG_DAYS)
+        try:
+            from src import ab_verdict  # noqa: PLC0415
+
+            got = ab_verdict.earliest(self.key)
+        except Exception:  # 走査が無い環境では、元の式のまま
+            return base
+        return base if got is None else max(base, got[0])
 
     @property
     def ok(self) -> bool:
