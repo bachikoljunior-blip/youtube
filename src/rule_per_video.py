@@ -101,20 +101,106 @@ FORMS = ROOT / "data" / "video_forms.json"
 RULE_BAND_MULT = 2
 
 
-def _forms(path: Path | None = None) -> dict[str, str]:
+#: **`data/video_forms.json` に載っていない本を、どこまで拾うか。**
+#:
+#: `data/video_forms.json` は Analytics の `creatorContentType` で、**公開してから
+#: 数日たった本しか載りません**。それだけを読むと、**いちばん新しい日が丸ごと
+#: 標本から消えます** —— 実測 2026-09-01: 08/31 に公開した 10本 のうち
+#: **Analytics の札が付いているのは 0本**、**控えの秒数が在るのは 8本**。
+#:
+#: `src/forms.py` は、まさにこのために「実測 → 控えの秒数 → 題名の札」の
+#: 3段で決める1か所として 2026-08-25 に作られています。**この道具（08/31 作）は
+#: そこを通さず `data/video_forms.json` を生で読んでいました。**
+#:
+#: 既定は**測ったものだけ**（`measured` ＝ Analytics ／ `duration` ＝ 投稿直前に
+#: `final.mp4` を測った秒数）。**題名の札（`tag`）は入れません** ——
+#: 実測でこの回に測ったところ、`tag` の 34本 を入れると天井が
+#: **3,918回 → 6,718回（×1.71）** に跳ね、弾力性も -0.663 → -1.154 に折れます。
+#: **推測 34本 に天井を 71% 動かさせないこと。** 入れたいときは
+#: `estimate(trust=("measured", "duration", "tag"))` と**名指しで**書くこと。
+LABEL_TIERS: tuple[str, ...] = ("measured", "duration")
+
+#: 台帳は毎回 読み直すと重いので、プロセスの間だけ持ちます。
+_LEDGER_CACHE: dict[str, dict] | None = None
+
+
+def _ledger() -> dict[str, dict]:
+    """`id → 台帳の行`（`duration_s` と `title` を持つ）。読めなければ空。"""
+    global _LEDGER_CACHE
+    if _LEDGER_CACHE is not None:
+        return _LEDGER_CACHE
+    out: dict[str, dict] = {}
+    try:
+        from . import dupes
+        for r in dupes.ledger_rows():
+            vid = str(r.get("id") or r.get("video_id") or "")
+            if vid:
+                out[vid] = r
+    except Exception:
+        out = {}
+    _LEDGER_CACHE = out
+    return out
+
+
+def _forms(path: Path | None = None,
+           trust: tuple[str, ...] | None = None,
+           tiers: dict[str, int] | None = None) -> dict[str, str]:
+    """**形の札**（`id → ショート/長尺`）。`src.forms.classify()` の3段を通します。
+
+    `trust` に入っている段だけを採ります（既定は `LABEL_TIERS`）。
+    `tiers` に dict を渡すと、**どの段が何本を決めたか**をそこへ書きます ——
+    落ちた本数が見えないと、次の回がまた「標本は全部入っている」前提で読みます。
+    **API 0単位。**
+    """
     p = path or FORMS
     try:
         raw = json.loads(p.read_text(encoding="utf-8"))
     except Exception:
-        return {}
-    f = raw.get("forms")
-    return f if isinstance(f, dict) else {}
+        raw = {}
+    f = raw.get("forms") if isinstance(raw, dict) else None
+    measured = dict(f) if isinstance(f, dict) else {}
+    keep = tuple(trust) if trust is not None else LABEL_TIERS
+    if tiers is not None:
+        tiers["measured"] = len(measured)
+    if "measured" not in keep:
+        measured = {}
+        if tiers is not None:
+            tiers["measured"] = 0
+    if keep == ("measured",):
+        return measured
+
+    led = _ledger()
+    if not led:
+        return measured
+    try:
+        from . import forms as _forms_mod
+    except Exception:
+        return measured
+    out = dict(measured)
+    for vid, row in led.items():
+        if vid in out:
+            continue
+        try:
+            is_short, how = _forms_mod.classify(row, measured)
+        except Exception:
+            continue
+        if how not in keep:
+            continue
+        out[vid] = "ショート" if is_short else "長尺"
+        if tiers is not None:
+            tiers[how] = tiers.get(how, 0) + 1
+    return out
 
 
 def _settled(views_path: Path | None = None, forms: dict[str, str] | None = None,
-             form: str = "ショート") -> list[tuple[Any, str, int]]:
-    """**伸びきった本だけ**を `(公開日, id, 生涯再生)` で返す。API 0単位。"""
-    fm = forms if forms is not None else _forms()
+             form: str = "ショート", trust: tuple[str, ...] | None = None,
+             tiers: dict[str, int] | None = None) -> list[tuple[Any, str, int]]:
+    """**伸びきった本だけ**を `(公開日, id, 生涯再生)` で返す。API 0単位。
+
+    札の無い本は**黙って落ちます**（`fm.get(vid) != form`）。落ちた本数は
+    `tiers["unlabelled"]` に入ります —— **その数が、この標本の見えていない縁です。**
+    """
+    fm = forms if forms is not None else _forms(trust=trust, tiers=tiers)
     if not fm:
         return []
     try:
@@ -123,6 +209,7 @@ def _settled(views_path: Path | None = None, forms: dict[str, str] | None = None
     except Exception:
         ripe = 48
     series: dict[str, list[tuple[float, int, str]]] = {}
+    _unlab_ids: set[str] = set()
     p = views_path or VIEWS
     try:
         text = p.read_text(encoding="utf-8")
@@ -137,6 +224,8 @@ def _settled(views_path: Path | None = None, forms: dict[str, str] | None = None
             continue
         vid = r.get("id")
         if fm.get(vid) != form:
+            if vid is not None and vid not in fm:
+                _unlab_ids.add(vid)
             continue
         h, v, at = r.get("hours"), r.get("views"), r.get("at")
         if h is None or v is None or at is None:
@@ -159,6 +248,8 @@ def _settled(views_path: Path | None = None, forms: dict[str, str] | None = None
         except Exception:
             continue
         out.append((pub.date(), vid, life))
+    if tiers is not None:
+        tiers["unlabelled"] = len(_unlab_ids)
     return out
 
 
@@ -181,7 +272,8 @@ def _logreg(xs: list[float], ys: list[float]) -> dict:
 
 
 def estimate(views_path: Path | None = None, forms: dict[str, str] | None = None,
-             per_day: int | None = None, form: str = "ショート") -> dict:
+             per_day: int | None = None, form: str = "ショート",
+             trust: tuple[str, ...] | None = None) -> dict:
     """**規則の公開密度で測った1本あたり再生。**API 0単位。
 
     返り::
@@ -200,9 +292,10 @@ def estimate(views_path: Path | None = None, forms: dict[str, str] | None = None
             per_day = int(house_rule.PUBLISH_PER_DAY)
         except Exception:
             per_day = 1
-    rows = _settled(views_path, forms, form)
+    tiers: dict[str, int] = {}
+    rows = _settled(views_path, forms, form, trust=trust, tiers=tiers)
     if not rows:
-        return {"ok": False, "why": "伸びきった本が 0本 です"}
+        return {"ok": False, "why": "伸びきった本が 0本 です", "labels": tiers}
     byday: dict[Any, list[int]] = defaultdict(list)
     for d, vid, v in rows:
         byday[d].append(v)
@@ -241,6 +334,10 @@ def estimate(views_path: Path | None = None, forms: dict[str, str] | None = None
         "elasticity": el,
         "significant": sig,
         "share_over_band": (over_videos / len(rows)) if rows else 0.0,
+        # **どの段が札を決めたか・何本が札ごと落ちたか。**
+        # `unlabelled` が 0 でないあいだ、この標本には**見えていない縁**があります。
+        "labels": tiers,
+        "trust": list(trust) if trust is not None else list(LABEL_TIERS),
     }
     b = el.get("b")
     out["why"] = (
@@ -306,6 +403,25 @@ def lines(e: dict | None = None) -> list[str]:
         "    **これは因果ではありません** —— 密度の高い日は時期と共線です。"
         "言えるのは「**規則と同じ密度の日で測ると、この数だった**」の1点。"
     )
+    lab = e.get("labels") or {}
+    unlab = int(lab.get("unlabelled") or 0)
+    if unlab:
+        out.append(
+            f"    [!] **この標本には見えていない縁があります —— 形の札が付かず落ちた本 {unlab}本**"
+            f"（採った段: {'/'.join(e.get('trust') or [])}）。"
+            " **落ちるのは新しい本のほうです** —— `data/video_forms.json` は Analytics の"
+            " `creatorContentType` で、**公開して数日たった本しか載りません**"
+            "（実測 2026-09-01: 08/31 に出した 10本 のうち Analytics の札は **0本**、"
+            "控えの秒数は **8本**）。"
+            " **＝ この数を「いま改善した1本」が動かすまでには、その遅れが乗ります。**"
+            " 縮める手は `python -m src.rpm_mix --forms`（Analytics 枠・Data API 0単位）。"
+        )
+        out.append(
+            "        **`tag`（題名の `#Shorts`）は既定で採っていません** —— 実測 2026-09-01:"
+            " `tag` の 34本 を入れると天井が **3,918回 → 6,718回（×1.71）**、"
+            " 弾力性が **-0.663 → -1.154** に折れます。**推測に天井を 71% 動かさせないこと。**"
+            " 見たいときだけ `estimate(trust=(\"measured\",\"duration\",\"tag\"))`。"
+        )
     return out
 
 
