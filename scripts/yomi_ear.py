@@ -184,11 +184,25 @@ def settle(limit: int = 20) -> int:
         entry["heard"] = heard
         entry["settled"] = True
         entry["scored"] = [[round(d, 4), c] for d, c in scored]
-        if heard in (risk.get(w) or [kana]):
+        # **熟語の中の1字なら、「実測の読みのどれか」では通せない**
+        # （2026-09-02 に踏んだ）: 「重課後の実額…」の「重」は
+        # Google が **オモ** と読み（ジューとの距離 0.320 対 0.661）、
+        # オモ は実測の読みに入っているので safe に倒れかけた。
+        # **だが 重課 は じゅうか で、オモ は誤り。** 熟語の切れ方が割れているので、
+        # 1字の読みが辞書に在るかどうかは何も言っていない。
+        inside = bool(re.search(f"[{G.KANJI}]{re.escape(w)}|{re.escape(w)}[{G.KANJI}]",
+                                to_speech(sent)))
+        if heard in (risk.get(w) or [kana]) and not inside:
             entry["verdict"] = "safe"
             entry["why"] = (f"Google は {heard} と読んだ。実測の読み "
                             f"{'/'.join(risk.get(w) or [kana])} の中なので本番は成立している"
                             f"（open-jtalk の {kana} のほうが外れていた）")
+        elif inside:
+            entry["verdict"] = "misread"
+            entry["correct"] = ""           # **1字の置換では直りません**
+            entry["why"] = (f"Google は {heard} と読んだ。**熟語の中の1字**なので、"
+                            f"読みが辞書に在るかどうかは何も言っていない（切れ方が割れている）。"
+                            f"直すなら熟語ごと台帳に入れること")
         else:
             entry["correct"] = kana
             entry["why"] = (f"Google は {heard} と読んだ。実測の読みのどれでもない ＝ "

@@ -88,18 +88,18 @@ def test_台帳に正しい読みが無ければ自動置換しない():
     2026-09-02 の実測: 「額」は open-jtalk が正しく Google が誤読、
     「年」は逆に open-jtalk が トシ と誤読していた。**距離では向きが決まらない。**
     """
-    blob = {"words": {"甲": {"verdict": "misread", "dist": 9.9},
-                      "乙": {"verdict": "misread", "dist": 9.9, "correct": "オツ"}}}
+    blob = {"words": {"甲種": {"verdict": "misread", "dist": 9.9},
+                      "乙種": {"verdict": "misread", "dist": 9.9, "correct": "オツシュ"}}}
     yomi_gate.LEDGER_PATH.parent.mkdir(parents=True, exist_ok=True)
     keep = yomi_gate.LEDGER_PATH.read_text(encoding="utf-8") \
         if yomi_gate.LEDGER_PATH.exists() else None
     try:
         yomi_gate.LEDGER_PATH.write_text(json.dumps(blob, ensure_ascii=False),
                                          encoding="utf-8")
-        assert yomi_gate.corrections() == {"乙": "オツ"}
-        out = to_speech("甲と乙の話です。")
-        assert "甲" in out, "向きが未確認の語を置換している"
-        assert "オツ" in out and "乙" not in out, out
+        assert yomi_gate.corrections() == {"乙種": "オツシュ"}
+        out = to_speech("甲種と乙種の話です。")
+        assert "甲種" in out, "向きが未確認の語を置換している"
+        assert "オツシュ" in out and "乙種" not in out, out
     finally:
         if keep is None:
             yomi_gate.LEDGER_PATH.unlink(missing_ok=True)
@@ -151,3 +151,35 @@ def test_耳が通した語は待ち行列から消える():
                 path.unlink(missing_ok=True)
             else:
                 path.write_text(keep, encoding="utf-8")
+
+
+def test_1文字の語は自動置換しない():
+    """**1文字の漢字は活用語幹でもあります**（2026-09-02 に踏んだ）。
+
+    「重」→ ジュー は、前後が漢字でない出現だけに絞っても
+    **「重い」を「ジューい」**にします。1文字の誤読は
+    `src/yomi.FIXES` に**文脈つきの正規表現**で入れること
+    （「額」がその形。`scripts/check_yomi.py` が巻き込みを毎回 検算します）。
+    """
+    keep = yomi_gate.LEDGER_PATH.read_text(encoding="utf-8") \
+        if yomi_gate.LEDGER_PATH.exists() else None
+    blob = {"words": {"重": {"verdict": "misread", "correct": "ジュー"},
+                      "控除額": {"verdict": "misread", "correct": "コージョガク"}}}
+    try:
+        yomi_gate.LEDGER_PATH.write_text(json.dumps(blob, ensure_ascii=False),
+                                         encoding="utf-8")
+        assert yomi_gate.corrections() == {"控除額": "コージョガク"}
+        out = to_speech("重課後と重い荷物と控除額。")
+        assert "重い" in out and "ジューい" not in out, out
+        assert "コージョガク" in out, out
+    finally:
+        if keep is None:
+            yomi_gate.LEDGER_PATH.unlink(missing_ok=True)
+        else:
+            yomi_gate.LEDGER_PATH.write_text(keep, encoding="utf-8")
+
+
+def test_熟語の中の1字は前後が漢字でも置換されない():
+    """`apply_corrections()` の門。**熟語ごと台帳に入れる**のが直し方。"""
+    got = yomi_gate.apply_corrections("重課後と重い荷物。", {"重": "ジュー"})
+    assert got.startswith("重課後"), got
