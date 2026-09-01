@@ -5772,3 +5772,10 @@
 {"at": "2026-09-01T10:39:04+00:00", "detail": "videos.list snippet", "by": "history.py:_scan"}
 {"at": "2026-09-01T10:39:13+00:00", "detail": "channels.list mine", "by": "history.py:_scan"}
 {"at": "2026-09-01T10:39:16+00:00", "detail": "channels.list mine", "by": "history.py:_scan"}
+{"at": "2026-09-01T13:06:28+00:00", "detail": "playlistItems.list uploads", "by": "history.py:channel_video_ids"}
+{"at": "2026-09-01T13:06:36+00:00", "detail": "status: Data API 読み", "by": "status.py:main"}
+{"at": "2026-09-01T13:06:37+00:00", "detail": "videos.list snapshot", "by": "snapshot.py:main"}
+{"at": "2026-09-01T13:07:43+00:00", "detail": "channels.list mine", "by": "history.py:_scan"}
+{"at": "2026-09-01T13:07:55+00:00", "detail": "channels.list mine", "by": "history.py:_scan"}
+{"at": "2026-09-01T13:07:59+00:00", "detail": "playlistItems.list uploads", "by": "history.py:channel_video_ids"}
+{"at": "2026-09-01T13:08:03+00:00", "detail": "videos.list snippet", "by": "history.py:_scan"}
