@@ -430,6 +430,27 @@ def _update(svc, video_id: str, publish_at: str | None,
         cur = svc.videos().list(part="status,snippet",
                                 id=video_id).execute()["items"]
     except Exception as exc:                                  # noqa: BLE001
+        # **日枠切れは、書き込みの側と同じ扱いにすること**（2026-09-01 夜に踏んだ）。
+        #     20行 下の `videos.update` は `_is_quota()` で見て
+        #     `auth.note_day_quota()` を残してから読める文で止まります。
+        #     **その1つ手前のこの読みには、その handling がありませんでした。**
+        #     実測 2026-09-01 20:2x、`--move` が生の traceback で落ち
+        #     （`HttpError 403 ... quotaExceeded` を14行）、**`data/day_quota.jsonl`
+        #     に1行も残りませんでした。** 下の枝の註がそのまま当てはまります ——
+        #     「残さないと `upload_cap.day_quota()` が **open=True**（まだ押せる）と
+        #     答え続け、次の回が同じ 403 をもう一度 買います」。
+        #     **安いほうが先に閉じる**（読み 1単位・書き 50単位）ので、
+        #     枠が尽きた窓では**必ずここが先に当たります。**
+        if _is_quota(exc):
+            auth.note_day_quota(exc, f"videos.list {video_id}")
+            raise SystemExit(
+                f"[reschedule] **{video_id} の現状を、いま読めません{QUOTA_MARK}。**\n"
+                "  `videos.list`（1単位）が日枠で 403 です。**読みのほうが先に閉じます** ——\n"
+                "  書き込み（`videos.update`・50単位）はこの手前で止まるので、\n"
+                "  **YouTube 側は1つも変わっていません**（途中まで動いた、はありません）。\n"
+                "  → **JST 16:00 以降にやり直すこと**（日枠は太平洋時間の0時に戻ります）。\n"
+                "  暦の全体は `python -m src.next_slot`（**API 0単位**）"
+            ) from exc
         if fallback_status is None:
             raise
         print(f"[reschedule] **現状を読めません**: {str(exc)[:90]}")

@@ -152,6 +152,64 @@ def test_権限が無い403は握りつぶさず素通しすること():
         reschedule._update(svc, "vid1", None)
 
 
+class _ReadFails:
+    """**`list`（読み・1単位）のほうが落ちる口。** 2026-09-01 20:2x の実物と同じ形。"""
+
+    def __init__(self, exc: Exception) -> None:
+        self._exc = exc
+        self.updated: list[dict] = []
+
+    def list(self, **kw):
+        raise self._exc
+
+    def update(self, **kw):                                   # pragma: no cover
+        self.updated.append(kw)
+        return _Call({})
+
+
+def test_読みの側の日枠切れも_言葉で止まること(monkeypatch):
+    """**安いほうが先に閉じます。** 読み 1単位 は、書き 50単位 より先に 403 になる。
+
+    ## なぜ足したか（2026-09-01 20:2x に実際に叩いた）
+
+    上の `test_日枠切れなら_やり直す時刻まで言って止まる` が守っていたのは
+    **`videos.update`（書き）だけ**でした。その1つ手前の
+    `videos.list`（読み・1単位）には handling が無く、
+    枠が尽きた窓の `--move` は **生の traceback 14行**で落ちていました。
+
+    **traceback そのものより悪いのは、観測が残らないことです。**
+    書きの側の枝はこう註記しています —— 「残さないと
+    `upload_cap.day_quota()` が **open=True**（まだ押せる）と答え続け、
+    **次の回が同じ 403 をもう一度 買います**」。
+    読みの側には、その `note_day_quota()` がありませんでした。
+    """
+    seen: list[str] = []
+    monkeypatch.setattr(reschedule.auth, "note_day_quota",
+                        lambda exc, where: seen.append(where))
+    svc = _Svc(_ReadFails(_http_error(403, QUOTA_BODY)))
+
+    with pytest.raises(SystemExit) as got:
+        reschedule._update(svc, "vid1", "2026-09-03T00:00:00Z")
+
+    msg = str(got.value)
+    assert "16:00" in msg, "**いつやり直せばよいか**が出ていない"
+    assert "1つも変わっていません" in msg, (
+        "読みで止まった回は YouTube 側が無傷。そう言わないと、"
+        "読んだ側が『途中まで動いたかもしれない』と疑って二度 撃つ")
+    assert seen and seen[0].startswith("videos.list"), (
+        "`note_day_quota()` を残していない —— 次の回が同じ 403 をもう一度 買う")
+
+
+def test_読みの側の権限403は素通しすること(monkeypatch):
+    """**待っても直りません。** 日枠の文言を出すと、直らないものを待たせます。"""
+    monkeypatch.setattr(reschedule.auth, "note_day_quota",
+                        lambda exc, where: None)
+    svc = _Svc(_ReadFails(_http_error(403, FORBIDDEN_BODY)))
+
+    with pytest.raises(HttpError):
+        reschedule._update(svc, "vid1", "2026-09-03T00:00:00Z")
+
+
 def test_通る回は素通り_余計な例外を足していないこと():
     videos = _Videos(None)
 

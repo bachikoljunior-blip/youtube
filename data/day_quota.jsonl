@@ -5779,3 +5779,4 @@
 {"at": "2026-09-01T13:07:55+00:00", "detail": "channels.list mine", "by": "history.py:_scan"}
 {"at": "2026-09-01T13:07:59+00:00", "detail": "playlistItems.list uploads", "by": "history.py:channel_video_ids"}
 {"at": "2026-09-01T13:08:03+00:00", "detail": "videos.list snippet", "by": "history.py:_scan"}
+{"at": "2026-09-01T13:21:47+00:00", "detail": "videos.list Eggpp86CkDk", "by": "reschedule.py:_update"}
