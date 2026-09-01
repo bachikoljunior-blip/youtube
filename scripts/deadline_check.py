@@ -2528,6 +2528,72 @@ def load(path: Path | None = None) -> list[dict]:
     return yaml.safe_load(p.read_text(encoding="utf-8")).get("hypotheses", [])
 
 
+def ledger_drain(items: list[dict], as_of: date | None = None,
+                 window: int = 7) -> list[str]:
+    """**台帳は、閉じる速さで空になります。** その残量と、空になる日。
+
+    ## なぜ要るか（2026-09-01・最適化の回に測って足した）
+
+    `scripts/eta.py` は毎周こう印字します ——
+    **「軌跡の腕が動くのは、`config/hypotheses.yaml` の前提を1件 閉じたときだけ。
+    作る・出す・直すは、軌跡の入力に入りません」。**
+    **つまり台帳は、到達日を動かす唯一の燃料です。**
+
+    **その残量を、どの道具も出していませんでした。** 実測（この回・git から）:
+
+        08/20 → 08/29   claim 28 → 52件（**+2.7件/日**）／ 開いている 17 → 32件
+        08/29 → 09/01   claim 52 → 53件（**+0.33件/日**）／ 開いている 32 → 21件
+
+    **立てるほうが 8分の1 に落ち、閉じるほうは 2.7件/日 のままです。**
+    差し引き **−2.3件/日** で、開いている 21件 は **9日 で尽きます。**
+    尽きた回は、`verdict` を選べません（`docs/trigger_main.md` §4 の5択のうち、
+    到達日を動かしうる唯一の手です）。
+
+    ## **この関数は git を読みません**（毎回その場で数えます）
+
+    台帳には **`opened_on:` の欄がありません**（実測 49件・鍵は
+    `claim/deadline/falsified_if/lever/needs/next_if_false/note/side`）。
+    だから**立てた速さは、この台帳からは数えられません** —— 上の数は git から
+    数えたもので、**ここには写しません**（写した瞬間に古びます）。
+    出すのは `closed_on` から数えられる側 ——
+    **閉じる速さと、いまの残量と、このままなら空になる日**だけです。
+
+    **次に前提を立てる回は `opened_on:` を書くこと。** 1行 足すだけで、
+    次の回からは立てる速さもここで出ます（`side:` / `lever:` が空欄だと
+    `arm_speed` から黙って消えるのと、同じ形の穴です）。
+
+    **覆る条件**: 閉じる速さが 0 の窓では、空になる日は出ません（**割れません**）。
+    そのときは「この窓では閉じていません」とだけ出します ——
+    **推測で日付を作らないこと。**
+    """
+    as_of = as_of or today_jst()
+    opened = [h for h in items if h.get("claim") and not h.get("closed_on")]
+    closed_recent = 0
+    for h in items:
+        try:
+            d = date.fromisoformat(str(h.get("closed_on"))[:10])
+        except (TypeError, ValueError):
+            continue
+        if 0 <= (as_of - d).days < window:
+            closed_recent += 1
+    out = [f"  **台帳の残量: 開いている {len(opened)}件** ／ "
+           f"直近{window}日に閉じた **{closed_recent}件**"]
+    if not closed_recent:
+        out.append(f"    この窓では1件も閉じていません。**空になる日は出せません**"
+                   "（割れないので、推測で日付を作らないこと）")
+        return out
+    rate = closed_recent / float(window)
+    days = int(len(opened) / rate) if rate else 0
+    out[0] += f"（**{rate:.2f}件/日**）"
+    out.append(f"    → **このままなら台帳が空になるのは {as_of + timedelta(days=days)}"
+               f"（あと {days}日）。** `eta.py` は「腕が動くのは前提を1件 閉じた"
+               "ときだけ」と印字します —— **空の台帳では、`verdict` が選べません。**")
+    out.append("    **立てた速さは、この台帳からは数えられません** —— "
+               "`opened_on:` の欄がありません。**次に前提を立てる回は、"
+               "その1行を書くこと**（次の回から、ここに立てる側の速さも出ます）")
+    return out
+
+
 def check(items: list[dict], as_of: date | None = None, lag: int | None = None) -> list[Verdict]:
     as_of = as_of or today_jst()
     lag = analytics_lag_days(as_of) if lag is None else lag
@@ -3322,6 +3388,10 @@ def main(argv: list[str] | None = None) -> int:
     # 純粋な関数の中で書くと、控えは「この機械が何回 撃たれたか」を数えます。
     record_estimates(vs, as_of=as_of)
     print("\n".join(lines(vs, lag)))
+    # **台帳の残量**（2026-09-01 に足した。理由は `ledger_drain()` の docstring）。
+    # `eta.py` が「腕が動くのは前提を1件 閉じたときだけ」と印字する以上、
+    # **台帳は到達日を動かす唯一の燃料**です。その残量を、どの道具も出していませんでした。
+    print("\n".join(ledger_drain(load(), as_of=as_of)))
     _print_starved_floors()
     _print_unreachable_under_rule(as_of=as_of)
     return 0
