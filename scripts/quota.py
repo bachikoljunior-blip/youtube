@@ -131,7 +131,35 @@ SUSTAIN_PCT_PER_HOUR = 100.0 / WEEK_HOURS      # ＝ 0.595 %/時
 QUANT_FULL_PCT = 8.0
 
 # 間隔の下限に置く上下の歯止め。**計器が壊れても鎖を止めない／暴走させない。**
-FLOOR_MIN_CLAMP, FLOOR_MAX_CLAMP = 10.0, 90.0
+#
+# ## **上の歯止めが 90分 だったあいだ、この計器は「測った」と言えていませんでした**
+# ##（2026-09-01・最適化の回に撃って直した）
+#
+# `pace()` は `per_lap / forward_rate` で間隔を出しますが、**その答えが
+# 歯止めより大きいときは、返るのは歯止めの定数のほう**です。それでも
+# `next_round.py` は `間隔 90分（quota.py の実測）` と印字していました ——
+# **90 は実測ではなく、`FLOOR_MAX_CLAMP` そのもの**です。
+# **`density` の ×10^9 が `view_cap = 10` で切られていたのと同じ形**
+# （`scripts/eta.py` の `LEVER_EFFECT_KEY`）——**倍率が腕に届く前に切られ、
+# 切られたことが呼ぶ側に伝わっていませんでした。**
+#
+# この回に撃って出た数（本番と同じ道）::
+#
+#     per_lap 36.500%  forward_rate 0.126 %/時
+#       → 生の間隔 **17,382分（289.7時間）** …… 歯止めで **90分**（**×193 切られた**）
+#
+# 生のほうが桁違いなのは、**誕生が数え落とされていた**からです
+# （`_births_between()` の註）。**2つの欠陥が打ち消し合って、
+# たまたま「速すぎる側」に着地していました。**
+#
+# **上を 720分（12時間）へ動かします。** 歯止めの役目は「計器が壊れても
+# 鎖を止めない」ことなので、**止まらない条件のほうから決めること** ——
+# オーナーの固定規則は **1日1本**（`src/house_rule.py`）なので、
+# 鎖は**1日に最低2回 起きれば規則を守れます**。720分 はその線です。
+# **90分 には、そういう根拠がありませんでした。**
+#
+# **覆る条件**: 1日1本 の規則が変わったら、この 720 も測り直すこと。
+FLOOR_MIN_CLAMP, FLOOR_MAX_CLAMP = 10.0, 720.0
 
 # 弱いほうから順に。遷移の向きを判定するのに使う。
 STATUS_ORDER = ["allowed", "allowed_warning", "rejected"]
@@ -592,14 +620,75 @@ def _anchors() -> list[dict]:
     return out
 
 
+#: **実際に走った回が1行ずつ残る台帳**（`scripts/run_marker.py` が書く）。
+#: `data/quota.jsonl` は `list_sessions` の返りを写した回にしか誕生が入らないので、
+#: **誕生の本数はこちらのほうが実物に近い**（下の `_births_between()` の註）。
+RUNS_LOG = ROOT / "data" / "runs.jsonl"
+
+
+def _births_from_runs(start: datetime, end: datetime) -> int:
+    """`data/runs.jsonl` に**実際に印を残した**セッションの数。
+
+    1行ごとの `session` は `session_XXX#agent_YYY` の形で、**回ごとに別**です。
+    ここは重複を潰して数えるだけ。読めなければ 0（呼ぶ側が `max()` するので害はない）。
+    """
+    if not RUNS_LOG.exists():
+        return 0
+    seen: set[str] = set()
+    try:
+        lines = RUNS_LOG.read_text(encoding="utf-8").splitlines()
+    except Exception:                                          # noqa: BLE001
+        return 0
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            row = json.loads(line)
+        except Exception:                                      # noqa: BLE001
+            continue
+        sid, at = row.get("session"), _parse_iso(row.get("at"))
+        if sid and at and start <= at <= end:
+            seen.add(sid)
+    return len(seen)
+
+
 def _births_between(rows: list[dict], start: datetime, end: datetime) -> int:
-    """`start`〜`end` に生まれたセッションの数。**セッションごとに1回だけ数える。**"""
+    """`start`〜`end` に生まれたセッションの数。**セッションごとに1回だけ数える。**
+
+    ## **`quota.jsonl` だけでは、ほとんど数えられていませんでした**
+    ##（2026-09-01・最適化の回に撃って足した）
+
+    `quota.jsonl` に誕生が入るのは、**誰かが `list_sessions` の返りを
+    `--ingest` で写した回だけ**です。それは毎周ではありません。実測::
+
+        枠 08/29 07:00 → 09/01 11:55 JST（76.9時間・使用 73%）
+          `quota.jsonl` から数えた誕生 …… **2件**   → 1周 **36.500%**
+          `data/runs.jsonl` の別セッション …… **109件** → 1周 **0.670%**
+
+    **×54 の食い違い**です。上の註は「数え落とせば1周は過大に出て、
+    間隔は**安全側（長め）**に振れる」と書いていましたが、**振れませんでした** ——
+    過大な 1周 が出した 289.7時間 を `FLOOR_MAX_CLAMP` が 90分 へ叩き落とし、
+    **真値 173分 より 1.9倍 速い側**に着地していたからです
+    （区間で数えると 55件・+20% → 1周 0.364% → **173分**）。
+    **「安全側に振れる」は、歯止めが無いときにだけ正しい文でした。**
+
+    だから**両方を数えて、多いほうを採ります。** 多いほうを採るのは、
+    誕生を数え落とすと 1周 が過大 ＝ **走ってよい速さを過大に見積もる**側に
+    出るからです（`runs.jsonl` にも、印を残す前に死んだ回は入りません。
+    それでも `quota.jsonl` の 2件 よりは実物に近い）。
+
+    **覆る条件**: `run_marker.py` が `session` を書かなくなったら、
+    ここは 0 を返して元の `quota.jsonl` の数へ戻ります
+    （検査は `tests/test_quota_births_from_runs.py`）。
+    """
     seen = {}
     for r in rows:
         sid, born = r.get("session_id"), _parse_iso(r.get("born_at"))
         if sid and born and sid not in seen:
             seen[sid] = born
-    return sum(1 for b in seen.values() if start <= b <= end)
+    from_quota = sum(1 for b in seen.values() if start <= b <= end)
+    return max(from_quota, _births_from_runs(start, end))
 
 
 def pace(now: datetime | None = None) -> dict | None:
@@ -707,15 +796,24 @@ def pace(now: datetime | None = None) -> dict | None:
         weight = max(0.0, min(1.0, seg["used"] / QUANT_FULL_PCT))
         per_lap = weight * seg["per_lap"] + (1.0 - weight) * per_lap_cum
 
-    floor = None
+    # **切られたことを、呼ぶ側へ渡すこと**（2026-09-01）。
+    #     長らくここは歯止めを掛けた数だけを返し、`next_round.py` はそれを
+    #     `（quota.py の実測）` と印字していました。**歯止めは実測ではありません。**
+    floor = floor_raw = None
+    floor_clipped = ""
     if per_lap:
         if forward_rate <= 0:
             # **枠を使い切っている。** ここで None（＝待たない）を返すと、
             # 閉じた枠に鎖を突っ込み続けることになる。天井まで空ける。
-            floor = FLOOR_MAX_CLAMP
+            floor = floor_raw = FLOOR_MAX_CLAMP
+            floor_clipped = "spent"      # 枠が尽きている（測って出た数ではない）
         else:
-            floor = max(FLOOR_MIN_CLAMP,
-                        min(FLOOR_MAX_CLAMP, per_lap / forward_rate * 60))
+            floor_raw = per_lap / forward_rate * 60
+            floor = max(FLOOR_MIN_CLAMP, min(FLOOR_MAX_CLAMP, floor_raw))
+            if floor_raw > FLOOR_MAX_CLAMP:
+                floor_clipped = "max"    # 測った数のほうが大きい ＝ **速すぎる側に着地**
+            elif floor_raw < FLOOR_MIN_CLAMP:
+                floor_clipped = "min"
 
     # 尽きる時刻も `now` から。ここも目盛りの時刻から引いていました。
     exhaust = (now + timedelta(hours=(100.0 - used_now) / carry_rate)
@@ -732,6 +830,10 @@ def pace(now: datetime | None = None) -> dict | None:
         "forward_rate": forward_rate, "left_hours": left_hours,
         "used_now": used_now, "carry_rate": carry_rate, "carried_hours": elapsed,
         "floor_min": floor,
+        # **歯止めを掛ける前の数と、掛かったかどうか。**
+        #     `floor_clipped == "max"` は「この計器は、返した数より
+        #     **長い間隔が要ると測っている**」の意味です（＝ いまの鎖は速すぎる）。
+        "floor_raw": floor_raw, "floor_clipped": floor_clipped,
         "exhaust_at": exhaust,
         "dead_hours": ((resets - exhaust).total_seconds() / 3600
                        if exhaust and exhaust < resets else 0.0),
@@ -881,6 +983,17 @@ def pace_report(now: datetime | None = None) -> None:
             print(f"    {p['hours']:.1f}時間で誕生 {p['births']} 件 "
                   f"→ **1周 {p['per_lap']:.3f}%**")
         print(f"    持続できる間隔（誕生から誕生）: **{p['floor_min']:.0f}分**")
+        if p.get("floor_clipped") == "max" and p.get("floor_raw"):
+            print(f"      [!] **これは測った数ではありません** —— 測って出たのは "
+                  f"**{p['floor_raw']:.0f}分**（{p['floor_raw'] / 60:.1f}時間）で、"
+                  f"`FLOOR_MAX_CLAMP` の {FLOOR_MAX_CLAMP:.0f}分 で切られています"
+                  f"（**×{p['floor_raw'] / FLOOR_MAX_CLAMP:.1f} 切られた**）。"
+                  f" **切られたぶん、鎖は速すぎる側で回ります。**"
+                  f" 歯止めを動かす前に、まず 1周 {p['per_lap']:.3f}% の分母"
+                  f"（誕生 {p['births']}件）を疑うこと")
+        elif p.get("floor_clipped") == "spent":
+            print("      [!] **枠を使い切っています。** これは測った数ではなく、"
+                  "歯止めの上限そのものです（閉じた枠に鎖を突っ込まないため）")
     else:
         print("    **誕生を1件も数えられていません。**`quota.jsonl` が薄すぎます")
     if p["exhaust_at"]:
