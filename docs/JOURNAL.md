@@ -96406,3 +96406,45 @@ Analytics 側にまだ無いので、**道具を撃っても新しい日は拾�
 こちらは「その天井は、まだ測れていない」。あちらの claim が書いている 3,918回 は
 同じ日に 4,101 へ動いているので、**判定のときは固定値ではなく
 `ceiling_at_rule()` の値を使う**よう註を1つ足してあります。
+
+### 同じ回の終わりに —— 検査の色（**全体は 25分。殺していません**）
+
+    全体 5,699 passed / 12 failed（1,524秒）→ この回の直しの後は 残り 4件
+
+**この回が入れて、この回が消したもの**（12件のうち 7件）:
+
+    tests/test_pool_drain_thumbnail_first.py **4件** —— 門を `--apply` の頭に置いたせいで、
+      **§4 がいちばん高い 50単位 と呼んでいるサムネイルまで止めていた。**
+      門を「外す」の直前へ移し、作り物の予約と門の読む先（実物の控え）を揃えた
+    tests/test_hypothesis_deadline_reachable.py —— 立てた前提を `CHECKABLE` に登録
+    tests/test_slot_gate.py **2件** —— 下に別項
+
+**この回が拾って直した、この回のものではない赤**（2件）:
+
+    tests/test_slot_gate.py（**09/02 00:00 JST に、誰も何も触らずに赤へ**）
+      `empty_days(rows, today)` は渡された `today` を使い、中の `per_day()` は
+      `datetime.now()` を直に読んでいた。**2つの時計が別。**
+      引数で日を受けるのに中で `now()` を読む関数は純ではない
+    tests/test_watches.py（**09/01 13:31 から赤**・きょうだいの前提に `watch:` が無かった）
+      `config/watches.yaml` に `規則の密度-連続10本` を足して繋いだ。
+      **前提の本文は1字も触っていない**
+
+**残っている赤 4件は、どれもこの回の外です**（触っていません）:
+
+    test_judgeable[opening_motion] ／ test_live_slots ／
+    test_request_form ／ test_request_form_excludes_long_form
+      （A/B の群の数え方が2つ並んでいる件。`split_counts` 23本 対 素の群 50本）
+    test_hypothesis_deadline_reachable —— **この回の走っている最中に、きょうだいが
+      「いまの天井 4,101回 は標本の縁である」を足しました**（`CHECKABLE`/`UNCHECKABLE`
+      への登録がまだ）。**向こうがいま触っている所なので、こちらは手を出しません。**
+
+### **枠が戻る 09/02 16:00 の窓へ、そのまま渡すもの**
+
+    python scripts/reschedule.py --compact          # 0単位。**25本・穴 0日**と出ます
+    python scripts/reschedule.py --compact --apply  # 25本 × 50 = **1,250単位**
+
+**この案は 16:05 に解き直しても同じです**（この回に確かめました。置き先の違う本 0）。
+**09/03〜09/27 が 1日1本 で埋まります。** 09/02 は、もう在る1本が埋めているので触りません。
+
+**`pool_drain --apply` を先に撃たないこと** —— この回から、暦に穴がある間は
+その門が止めます（`--despite-gap` で通せます。**通した回は理由をここに**）。
