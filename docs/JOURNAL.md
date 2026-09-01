@@ -94720,3 +94720,57 @@ hourly が「`fast_tests` の赤3件・出どころは 7分前の `dc2dda06`」�
 そして `points` 付きの `per_video` ×4.16 は **16.31%** で、
 毎周の頭に出ている **16.3%** と一致します —— **画面の数と、この表は同じ道です。**
 
+
+### 追記: **全件検査を、走らせている最中に `scripts/eta.py` を編集して壊しました**
+
+1回目の全件検査は **9 failed / 5,615 passed**（19分05秒）。きょうだいが 04:17 に
+名前で書き置いた **5件**（`judgeable` / `live_slots` / `queue_lag_publish_cap` /
+`request_form` / `request_form_excludes_long_form`）はそのまま在り、
+**4件が新しく**落ちていました:
+
+    tests/test_eta_fits_deadlines.py::test_main_が寄せ直しを撃っている
+    tests/test_eta_fits_deadlines.py::test_offline_では撃たない          （StopIteration）
+    tests/test_eta_reflect_light.py::test_reflect_is_wired_to_full_false
+    tests/test_eta_rpm_clip_named.py::test_rpmが切られている回は切っている物を名指しすること
+
+**4件とも、隔離して撃つと緑です**（11 passed）。**そして4件とも、
+`inspect.getsource()` で `scripts/eta.py` の中身を読む検査**でした:
+
+    test_eta_fits_deadlines    inspect.getsource(E.main)        ×2
+    test_eta_reflect_light     inspect.getsource(eta.reflect)
+    test_eta_rpm_clip_named    inspect.getsource(eta.headline)
+
+**`inspect.getsource()` は、モジュールを読んだ時点の行番号でファイルを切ります。**
+検査は 05:05 に走り出し、**私はその 05:2x に `scripts/eta.py` へコメントを
+足しました**（`9ad86f0d`・4行）。行番号が下へずれ、切り出す窓が別の場所を指し、
+探している字が「無い」ことになります。**赤は本物でしたが、原因は私の変更ではなく、
+私が検査の最中にファイルを触ったことです。**
+
+**危うく取り違えるところでした。** 隔離して緑だったのを見て
+「順番の相互作用でしょう」で済ませると、**次に来た側は 4件 の幽霊を
+引き継ぎます。** きょうだいが「戻して撃って切り分けた」と書いていたので、
+同じことをしようとして —— **戻した版を走らせても、2つの仮説
+（私の変更が原因／編集が原因）を区別できない**ことに気づき、止めました。
+**区別できるのは「自分の版のまま、何も触らずに1回」のほうです。**
+
+**次に来た側へ（規則にしてよい）:**
+
+> **全件検査（19分）を走らせているあいだ、`.py` を1文字も触らないこと。**
+> 触ると `inspect.getsource()` を使う検査が、**触った所と無関係に**落ちます。
+> 直したいものが出てきたら、**メモに書いて、検査が終わってから触ること。**
+> `scripts/fast_tests.py`（3分）は短いので踏みにくいだけで、同じ罠です。
+
+**覆る条件**: 検査が `inspect.getsource()` をやめて、
+出力の側（`headline()` が返す行）で判定するようになったら、この罠は消えます。
+**そのほうが良い検査です** —— いま止めているのは「本文にこの字が在るか」で、
+**字が在っても出力に出ない**ことは止められていません。
+
+**切り分けの結果（撃って出しました）。** 自分の版のまま、**何も触らずに1回**:
+
+    5 failed / 5,619 passed / 9 skipped （19分27秒）
+    落ちた5件は、きょうだいが 04:17 に名前で書き置いた**5件と同じ名前**です
+
+**＝ この回の変更が足した赤は 0件。** 1回目の 9件 のうち 4件 は、
+**私が検査中に `scripts/eta.py` を触ったこと**だけが原因でした。
+（`passed` が 5,601 → 5,619 と 18件 増えているのは、この回の新しい検査 6件 と
+きょうだいの足した分です。）
