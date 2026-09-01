@@ -6968,9 +6968,18 @@ hypotheses:
 
   - claim: "公開時刻は 1本あたり再生に効かない —— 規則の密度（1日1本）で、対照 9時 に置いた本と、それ以外の時刻に置いた本の生涯再生の中央値は ×1.5 の中に収まる"
     opened_on: "2026-09-01"
-    deadline: "2026-09-18"
+    # **09-18 → 09-20**（2026-09-01・別のサブ）。`settle_days` を実測の 4日 へ
+    # 直したぶん、判定できる日が 09-18 → **09-20** に下がりました
+    # （`deadline_check.ready_by_claim()` を撃って確かめた）。
+    # 期限を据え置くと `ready > deadline` ＝ **測る前から届かない期限**になります
+    # （`tests/test_hypothesis_deadline_reachable.py` の存在理由そのもの）。
+    # この前提の `falsified_if` も「6本 に満たなければ期限だけ延ばすこと」と書いています。
+    deadline: "2026-09-20"
     lever: per_video
     side: dist
+    # **数の門を書いたら、見張る先も書くこと**（2026-09-01・別のサブが足した）。
+    # 立てた回が空けたままで、`tests/test_watches.py` が枝ごと赤でした。
+    watch: 公開時刻-掃き6本
     needs:
       # 規則1 は 1日1本。`src/publish_hour.sweep_hour()` が偶数日を対照（9時）・
       # 奇数日を未試行の時刻に置くので、**掃く側は 2日に1本**しか増えません。
@@ -6978,7 +6987,11 @@ hypotheses:
       - kind: published_group
         published_after: "2026-09-02"
         count: 6
-        settle_days: 2
+        # **`src/settle.SETTLE_DAYS`（実測 4日）に揃えた**（2026-09-01・別のサブ）。
+        # 立てた回は `2` と書いており、`tests/test_settle.py` が赤でした ——
+        # 許すのは `0`（待たない）か実測値だけ。**2日 は「落ち着く前の数で
+        # 生涯再生を比べる」ことになります。**
+        settle_days: 4
     falsified_if: >
       **掃いた側（9時 以外に置いた本）が 6本 そろった時点で、その生涯再生の
       中央値が、同じ期間の 9時 の本の中央値の ×1.5 を超えるか、÷1.5 を下回るなら
