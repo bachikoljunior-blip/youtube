@@ -825,7 +825,24 @@ def _eta_target() -> tuple[str | None, float | None, str]:
 #: `upload` は**1日1回しか撃てない**ので、そのままだと大半の回が
 #: 「何も出せない回」になります。**次の枠の1本を良くした回も「出した」**です
 #: （`docs/trigger_main.md` §4）。
-SHIP_KINDS = ("upload", "improve", "means", "verdict", "fix")
+#: **`premise` は 2026-09-01 に足しました**（最適化の回）。
+#: `eta.py` は毎周こう印字しています ——
+#: 「**軌跡の腕が動くのは `config/hypotheses.yaml` の前提を1件 閉じたときだけ**」
+#: そして `docs/trigger_main.md` §2.6 は、その先をこう分けています ——
+#:
+#:     台帳を減らす手   期日の来た前提を閉じる（`verdict`）。**0日 のことがある**
+#:     到達日を動かす手 **縛っている腕の天井を疑う前提を、新しく立てる**
+#:
+#: **後者が、5択のどこにもありませんでした。** 実測（この回・`data/runs.jsonl`）:
+#: 08-25 以降の ship **326件** ＝ `fix` 248（**76%**）／`upload` 33／
+#: `verdict` 20（6%）／`means` 19／`improve` 6。
+#: **`fix` の 248件 のうち 232件 が自分で `--moves 0` と宣言しています。**
+#: 台帳のほうは 開いている 21件・閉じる 1.86件/日 で、**2026-09-12 に空**でした
+#: （`deadline_check.ledger_drain()`）。**減る一方の燃料に、注ぎ口が無かった**形です。
+#:
+#: **`src/premise.py` とは別物です** —— あちらは台本の前提（画面に出しようがない値）。
+#: ここは `config/hypotheses.yaml` の1件（＝到達日を動かす燃料）。
+SHIP_KINDS = ("upload", "improve", "means", "verdict", "fix", "premise")
 
 
 #: **`fix` の連（続けて何回 `fix` で終わったか）の上限。**
@@ -990,8 +1007,46 @@ def near_deadlines(limit: int = 3) -> list[str]:
 #: - **読めない回は空を返します** ＝ 免除は今までどおり効く側。
 #:   推測で門を締めないため（この repo の他の門と同じ姿勢）
 def free_alternatives() -> list[str]:
-    """**日枠が尽きていても撃てる手**を並べる（API 0単位）。空なら免除してよい。"""
+    """**日枠が尽きていても撃てる手**を並べる（API 0単位）。空なら免除してよい。
+
+    ## `premise` を先頭に置いた理由（2026-09-01・最適化の回）
+
+    この一覧は **`fix` の連の門が「免除してよいか」を決める唯一の入力**です。
+    そして `premise`（`config/hypotheses.yaml` に前提を1件 立てる）は
+    **ファイルを1つ書くだけで、YouTube に1単位も触りません。**
+    つまり **この一覧が空になる回は、もう在りません。**
+
+    **それは骨抜きではなく、逆です。** 免除は「打てる手が本当に無い回」の
+    ためのもので、**`premise` はいつでも打てます。**
+    `eta.py` が毎周 名指ししている唯一の日付を動かす手を、
+    **`fix` を通すために「無い」ことにしていた**のが前の姿でした。
+
+    実測（2026-09-01・`data/runs.jsonl` 08-25 以降 326件）:
+    `fix` **248件（76%）**・うち **232件が `--moves 0` 宣言** ／ `verdict` 20件（6%）。
+    台帳は 開いている 21件・閉じる 1.86件/日 で **09-12 に空**（`ledger_drain()`）。
+
+    ## 覆る条件
+
+    `config/hypotheses.yaml` が読めない回は、この行を出しません
+    （在りもしない手を「在る」と言わないこと）。
+    """
     out: list[str] = []
+    # **前提を立てる手は、いつでも 0単位で在ります**（上の註）。
+    hypo = Path(__file__).resolve().parents[1] / "config" / "hypotheses.yaml"
+    try:
+        from src import levers                                   # noqa: PLC0415
+
+        hint = [k for k in levers.LEVERS if k not in ("none", "gate", "theta")]
+    except Exception:                                           # noqa: BLE001
+        hint = None
+    if hypo.exists():
+        out.append(
+            "`premise`（**0単位**）— `config/hypotheses.yaml` に前提を1件 立てる。"
+            "**`eta.py` の頭の3行めが、どの腕のどの天井を疑うかを毎周 名指しします**"
+            "（「立てるべき前提は『その天井は天井ではない』」）。"
+            "`lever:` / `side:` / `opened_on:` の3行を忘れないこと ——"
+            "空だと `arm_speed` と `ledger_drain` から黙って消えます"
+            + (f"（腕は {'／'.join(hint)} のどれか）" if hint else ""))
     try:
         from src import next_slot                               # noqa: PLC0415
 

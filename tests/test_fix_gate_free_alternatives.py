@@ -77,22 +77,57 @@ def test_free_alternatives_names_improve_and_upload_when_a_next_video_exists() -
     assert "0単位" in joined, "**値段**が出ていません（名指しは値段まで）"
 
 
-def test_returns_empty_when_there_is_no_next_video(monkeypatch) -> None:
-    """**推測で門を締めないこと。** 次の1本が無ければ空 ＝ 免除は今までどおり効く。"""
+def test_premise_is_always_there(monkeypatch) -> None:
+    """**`premise` は、次の1本が無くても在ります**（2026-09-01 に足した）。
+
+    ## なぜ、この2件の期待を裏返したか
+
+    ここには「次の1本が無ければ空」「読めない回も空（＝緩む側）」の2件が
+    ありました。**どちらも `next_slot` の話です。**
+    `premise`（`config/hypotheses.yaml` に前提を1件 立てる）は
+    `next_slot` を1度も見ません —— **ファイルを1つ書くだけで、
+    YouTube に1単位も触りません。**
+
+    **だから「打つ手が無い回」は、もう在りません。**
+    それは門の骨抜きではなく逆です: `eta.py` が毎周 名指ししている
+    **唯一の到達日を動かす手**を、`fix` を通すために「無い」ことにしていたのが
+    前の姿でした（実測 08-25 以降の ship 326件 ＝ `fix` 76%・`verdict` 6%、
+    台帳は 21件・**09-12 に空**）。
+
+    **覆る条件**: `config/hypotheses.yaml` が読めない回は、この行は出ません
+    （下の検査）。台帳が空になっても行は出ます —— **空の台帳こそ、
+    立てるべき回です。**
+    """
     from src import next_slot
 
     monkeypatch.setattr(next_slot, "next_video", lambda *a, **k: None)
-    assert run_marker.free_alternatives() == []
+    out = run_marker.free_alternatives()
+    assert out, "次の1本が無い回でも `premise` は在ります"
+    assert "premise" in "\n".join(out)
+    assert "0単位" in "\n".join(out), "**値段**が出ていません（名指しは値段まで）"
 
 
-def test_returns_empty_when_next_slot_cannot_be_read(monkeypatch) -> None:
-    """読めない回も空を返す（＝ 緩む側）。**この repo の他の門と同じ姿勢です。**"""
+def test_next_slot_failure_does_not_take_premise_down(monkeypatch) -> None:
+    """`next_slot` が落ちても `premise` は残る（**別々の入力です**）。"""
     from src import next_slot
 
     def boom(*a, **k):
         raise RuntimeError("読めません")
 
     monkeypatch.setattr(next_slot, "next_video", boom)
+    out = run_marker.free_alternatives()
+    assert [x for x in out if "premise" in x], (
+        "`next_slot` の失敗が `premise` まで落としています —— 別の入力です")
+    assert not [x for x in out if "improve" in x], (
+        "`next_slot` が読めないのに `improve` を名指ししています（推測で門を締めない）")
+
+
+def test_premise_is_gone_when_the_ledger_file_is_gone(monkeypatch, tmp_path) -> None:
+    """**在りもしない手を「在る」と言わないこと。** 台帳が無ければ黙る。"""
+    from src import next_slot
+
+    monkeypatch.setattr(next_slot, "next_video", lambda *a, **k: None)
+    monkeypatch.setattr(run_marker.Path, "exists", lambda self: False)
     assert run_marker.free_alternatives() == []
 
 

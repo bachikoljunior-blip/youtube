@@ -398,7 +398,7 @@ def first_lines(body: list[str], want: str) -> str:
 
 # **`improve` は 2026-08-31 に足しました**（オーナーの規則3。
 # 正本は `run_marker.SHIP_KINDS`）。
-SHIP_KINDS = {"upload", "improve", "means", "verdict", "fix"}
+SHIP_KINDS = {"upload", "improve", "means", "verdict", "fix", "premise"}
 
 
 def noise_tokens() -> dict[str, set[str]]:
@@ -671,7 +671,7 @@ def tokens(body: list[str]) -> set[str]:
 
 #: **種別の正本は `ship_kind` の欄です**（`scripts/run_marker.ship_kind_of()`）。
 #: 散文の頭の語ではありません。
-SHIP_KINDS = ("upload", "improve", "means", "verdict", "fix")
+SHIP_KINDS = ("upload", "improve", "means", "verdict", "fix", "premise")
 
 
 def ship_summary(n: int) -> tuple[Counter, list[str]]:

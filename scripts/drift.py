@@ -87,7 +87,9 @@ WINDOW_DAYS = 7
 STALE_ROUNDS = 20
 # **`improve` は 2026-08-31 に足しました**（オーナーの規則3。
 # `run_marker.SHIP_KINDS` と同じ並びにすること —— 片方だけ変えない）。
-KINDS = ("upload", "improve", "means", "verdict", "fix")
+# **`premise` は 2026-09-01 に足しました**（前提を1件 立てる ＝ 到達日を動かす唯一の手。
+#   理由は `run_marker.SHIP_KINDS` の註）。
+KINDS = ("upload", "improve", "means", "verdict", "fix", "premise")
 
 # **この先 SUPPLY_HORIZON 日に期日が来る、開いている前提の数**を在庫と呼びます。
 # 期限切れ（期日が過ぎて未判定）も**いま閉じられる**ので在庫に数えます。
