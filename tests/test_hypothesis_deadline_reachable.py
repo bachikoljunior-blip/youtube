@@ -217,10 +217,29 @@ def earliest_opening_motion() -> date | None:
 
 
 #: `claim` の一部 → その前提を**いちばん早く判定できる日**を出す関数。
+#: **待つものが1つも無い前提**（`needs: kind: now`）。床は「きょう」です ——
+#: 読むのは手元の帳面だけで、予約にも Analytics の遅れにも依存しません。
+#: **`earliest_*` の3つと違い、群を数えません**（数える相手が居ないため）。
+def earliest_now():
+    """`data/views.jsonl` と `data/video_forms.json` が在るなら、床は今日。"""
+    from datetime import date
+    from pathlib import Path as _P
+    root = _P(__file__).resolve().parent.parent
+    if not (root / "data" / "views.jsonl").is_file():
+        return None
+    if not (root / "data" / "video_forms.json").is_file():
+        return None
+    return date.today()
+
+
 CHECKABLE = {
     "題を問いの形にすると": lambda: earliest_ab("title_form"),
     "冒頭1枚目の主役": lambda: earliest_ab("hook_form"),
     "冒頭の stat は": earliest_stat_split,
+    # 2026-09-02 に足した。**手元の帳面だけで判定できます**（`python -m src.form_tail`
+    # ・Data API 0単位）。床が今日なので `deadline` も今日 ——
+    # `test_遅すぎる期限が残っていないこと` がそこを見ます。
+    "ショートの面（SHORTS_FEED）の1本あたり配信の上限": earliest_now,
 }
 
 #: 当てられない件と、その理由。**docstring と同じ並び。**
