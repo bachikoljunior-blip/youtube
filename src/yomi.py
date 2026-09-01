@@ -135,9 +135,8 @@ def to_speech(text: str) -> str:
     for fix in FIXES:
         text = fix.apply(text)
     try:
-        from .yomi_gate import corrections
-        for word, kana in corrections().items():
-            text = text.replace(word, kana)
+        from .yomi_gate import apply_corrections
+        text = apply_corrections(text)      # **熟語の中の1字は巻き込みません**
     except Exception:                       # 台帳が読めなくても読み上げは止めない
         pass
     return text

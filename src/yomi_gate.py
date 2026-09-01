@@ -373,6 +373,12 @@ def _now() -> str:
 def corrections() -> dict:
     """耳が「誤読」と判定し、**正しい読みまで記録できた**語だけを返す。
 
+    **1文字の語はここから外してあります**（2026-09-02 に踏んだ）。1文字の漢字は
+    活用語幹でもあるので、前後が漢字でない出現だけに絞っても足りません ——
+    「重」→ ジュー は「重課」を避けられても**「重い」を「ジューい」にします。**
+    1文字の誤読は `src/yomi.FIXES` に**文脈つきの正規表現**で入れること
+    （「額」がそうなっています。`scripts/check_yomi.py` が巻き込みを毎回 検算します）。
+
     距離が離れているだけでは、**どちらのエンジンが正しいかは分からない**
     （2026-09-02 の実測: 「額」は open-jtalk が正しく Google が誤り、
     「年」は逆に open-jtalk が トシ と読み Google のほうが正しい）。
@@ -380,4 +386,23 @@ def corrections() -> dict:
     `correct` の欄まで埋まった語 ＝ **向きまで確かめた語**だけ。
     """
     return {w: e["correct"] for w, e in load_ledger().items()
-            if e.get("verdict") == "misread" and e.get("correct")}
+            if e.get("verdict") == "misread" and e.get("correct") and len(w) >= 2}
+
+
+def apply_corrections(text: str, table: dict | None = None) -> str:
+    """台帳の置換を当てる。**熟語の中の1字を巻き込まないこと。**
+
+    素の `str.replace()` で当ててはいけません（2026-09-02 に気づいて塞いだ）——
+    たとえば「重」を ジュー に置き換えると、**「重い」が「ジューい」**になります。
+    `src/yomi.FIXES` の「額」が最初から
+    `(?<![漢字])額(?![漢字])` と書いてあるのは同じ理由です。
+
+    だからここは**前後が漢字でない出現だけ**を置き換えます。
+    熟語の中の誤読は、仮名1字の差し替えでは直りません
+    （直すなら熟語ごと。そちらは `data/yomi_queue.json` に残して、
+    次の回が語ではなく**熟語**として台帳に入れること）。
+    """
+    table = corrections() if table is None else table
+    for word, kana in table.items():
+        text = re.sub(f"(?<![{KANJI}]){re.escape(word)}(?![{KANJI}])", kana, text)
+    return text
