@@ -217,6 +217,59 @@ def _uploaded_ats() -> dict[str, datetime]:
     return out
 
 
+def _stockpile_ids(today: str | None = None) -> set[str]:
+    """**控えのうち「作り置き」の動画ID**（規則2・`src/house_rule.is_stockpile`）。
+
+    ## なぜ要るか（2026-09-01・最適化の回に、実測で踏んだ）
+
+    `_publish_dates()` は **予約ぶんも入れます**（docstring がそう書いています）。
+    そのまま `_k_published_count()` の `placed` に入るので、待ちの note は
+    こう印字していました（実測 2026-09-01・`配信抑制-0824`）:
+
+        いま 16 / 要る 30 … **予約表では 66本**（差 50本 は
+        「出ていない」ではなく**「まだ実データが来ていない」**）
+
+    **その 50本 は来ません。** 同じ日に数えた実測 ——
+    **控えの未来の予約 293本 は、293本 とも作り置き**でした
+    （`house_rule.is_stockpile` ・ 作り置きでない未来の予約は **0本**）。
+    オーナーが 2026-08-31 に固定した規則2（作り置きをしない）の下では、
+    **`pool_drain --apply` が外して非公開のまま置きます ＝ 1本も公開されません。**
+
+    `src/house_rule.py` は、この壊れ方を名指しで警告しています ——
+    **「これから出る本」として数えると、在りもしない供給で日付が早く出ます。**
+    **「外した結果、到達日は後ろへ動きます。それが正しい姿です。隠さないこと。」**
+
+    ## 何が変わるか
+
+    「差 50本 は実データ待ち」を読んだ回は、**供給は足りている、待てばよい**と読みます。
+    実際には この待ちは **規則の 1日1本 で作る新しい本でしか満ちません。**
+    `scripts/eta.py` は毎回「**軌跡の腕が動くのは、前提を1件 閉じたときだけ**」と
+    印字しているので、**満ちない待ちを「待てばよい」と読ませることは、
+    到達日をそこで止めることと同じ**です。
+
+    ## 覆る条件
+
+    オーナーが規則2 を外したら（`house_rule.STOCKPILE_IS_SUPPLY` が `True`）、
+    `is_stockpile()` が全部 `False` を返すのでこの集合は空になり、
+    note の警告は自然に消えます。**ここを個別に直す必要はありません。**
+    """
+    try:
+        from src import house_rule                              # noqa: PLC0415
+    except Exception:                                           # noqa: BLE001
+        return set()                                            # 読めない回は黙る
+    out: set[str] = set()
+    for r in _uploaded():
+        vid = r.get("video_id")
+        if not vid:
+            continue
+        try:
+            if house_rule.is_stockpile(r, today):
+                out.add(str(vid))
+        except Exception:                                       # noqa: BLE001
+            continue
+    return out
+
+
 def _publish_dates() -> dict[str, date]:
     """動画ID → 公開日（JST）。**予約ぶんも入ります**（`at` は予約時刻）。
 
@@ -365,6 +418,19 @@ def _k_published_count(p: dict) -> Gauge:
     **覆る条件**: `data_ready` を使う待ちが「予約表の数 ＜ 要る数」の側で
     使われるようになったら、この行は毎回 同じことを言うだけになります
     （そのときは `need` に届いていない回だけ出すこと）。
+
+    ## **その「予約表では N本」は、作り置きを供給に数えていました**（2026-09-01）
+
+    上の註は「差 N本 は**まだ実データが来ていない**」と言い切っています。
+    **来ない本が混ざっていました。** 実測 2026-09-01 ——
+    **控えの未来の予約 293本 は、293本 とも作り置き**
+    （`house_rule.is_stockpile`・作り置きでない未来の予約は **0本**）。
+    規則2 の下では `pool_drain --apply` が外すので、**1本も公開されません。**
+
+    だから差の内訳を出します（`_stockpile_ids()` に理由と実測）——
+    **来る本だけで満ちるなら黙り、足りないぶんだけを「あと N本・最短 N日」**として
+    出します。窓が閉じていて規則1 が許す本数に届かない待ちは、
+    **「永久に満ちません」**と言い切ります（`house_rule.cap()`）。
     """
     dates = _publish_dates()
     since, until = _day(p["since"]), (_day(p["until"]) if p.get("until") else None)
@@ -375,6 +441,8 @@ def _k_published_count(p: dict) -> Gauge:
     secs = _durations() if (lo is not None or hi is not None) else {}
     n = 0
     placed = 0
+    stock = 0                       # placed のうち **作り置き**（規則2・公開されない）
+    stock_ids = _stockpile_ids()
     for vid, d in dates.items():
         if d < since or (until and d > until):
             continue
@@ -388,6 +456,10 @@ def _k_published_count(p: dict) -> Gauge:
                 continue
         placed += 1
         if p.get("data_ready") and last and d > last:
+            # **まだ数えていない本**。そのうち作り置きは「実データ待ち」ではなく
+            # **来ない本**です（規則2・`_stockpile_ids()`）。
+            if vid in stock_ids:
+                stock += 1
             continue
         n += 1
     note = f"{since}〜{until or '以降'}"
@@ -398,6 +470,47 @@ def _k_published_count(p: dict) -> Gauge:
         if placed > n:
             note += (f" / **予約表では {placed}本**（差 {placed - n}本 は"
                      "「出ていない」ではなく「まだ実データが来ていない」）")
+    # **作り置きは供給ではありません**（規則2・2026-09-01 に足した。
+    # 理由と実測は `_stockpile_ids()` の docstring）。
+    # **満ちている待ちには出しません** —— 満ちた後の「あと0本」は毎回 同じ字が
+    # 増えるだけで、読む側の手を1つも変えません（`_k_published_count` の
+    # 「覆る条件」と同じ姿勢）。
+    # **足りない数を、来る本だけで数え直します。** 作り置きを引いてなお
+    # 足りるなら、この待ちは実データで満ちます —— **そのときは黙ること。**
+    # （満ちる待ちに毎回 同じ警告を出すと、読む側の手を1つも変えません）
+    short = max(0, int(float(p["need"])) - n)
+    waiting = placed - n
+    real = waiting - stock                    # 本当に「実データ待ち」の本
+    gap = short - real                        # 新しく作らないと埋まらない本数
+    # **窓が閉じている待ちは、規則が許す本数のほうが先に効きます。**
+    # 09/25〜09/26 の2日に 5本 を要る待ちは、1日1本 の下では**永久に満ちません**
+    # （`src/house_rule.unreachable_needs()` が台帳の `needs` に対してやっていることを、
+    #   待ちの側でもやります —— 待ちは `needs` を通らないので、あちらでは見えません）。
+    if stock and gap > 0 and until:
+        try:
+            from src import house_rule as _hr                   # noqa: PLC0415
+            span = (until - since).days + 1
+            allowed = span * _hr.cap()
+            if float(p["need"]) > allowed:
+                note += (f"  [!] **この待ちは規則の下では永久に満ちません** —— "
+                         f"窓は {span}日（{since}〜{until}）で、規則1 が許すのは "
+                         f"**{allowed}本**。要る **{int(float(p['need']))}本** に届きません"
+                         "（`src/house_rule.cap()`）。**待っても来ません。** "
+                         "要件を 1日1本 で届く形に書き直すか、この前提を"
+                         "**公開ずみの日で閉じること**（`docs/trigger_main.md` §4 の `verdict`）")
+                return Gauge(n, float(p["need"]), "本", note)
+        except Exception:                                       # noqa: BLE001
+            pass                                                # 読めない回は下へ落とす
+    if stock and gap > 0:
+        note += (f"  [!] **その差 {waiting}本 のうち {stock}本 は作り置きです**"
+                 "（規則2・`src/house_rule.is_stockpile`）—— "
+                 "**`pool_drain --apply` が外すので、1本も公開されません。**"
+                 f" 本当に実データ待ちなのは {real}本 だけなので、"
+                 f"**あと {gap}本** は**規則の 1日1本 で これから作る本**でしか"
+                 f"埋まりません（**最短 {gap}日**）。"
+                 "**「予約に在るから待てばよい」ではありません。** "
+                 "満ちる形に要件を書き直すか、公開ずみの日で閉じること"
+                 "（`docs/trigger_main.md` §4 の `verdict`）")
     return Gauge(n, float(p["need"]), "本", note)
 
 
