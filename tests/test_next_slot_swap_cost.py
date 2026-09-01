@@ -84,6 +84,9 @@ def test_焼き直しの案内と同じ所に出ている() -> None:
     """**別の節に置かないこと。** 案内の直後でなければ、読む側は届く前に撃ちます。"""
     src = (ROOT / "src" / "next_slot.py").read_text(encoding="utf-8")
     i = src.index("焼き直すのが `improve` の1手です")
-    j = src.index("swap_cost_lines(t)")
+    # **`(t)` で綴じないこと**（2026-09-01 22:0x）—— 2つ目の引数
+    # （`publish_at`）が足されて、この索きが `ValueError` で落ちました。
+    # 見ているのは「案内の直後に在るか」だけなので、開き括弧までで足ります。
+    j = src.index("swap_cost_lines(t")
     assert 0 < j - i < 400, (
         "差し替えの値段が、焼き直しの案内から離れています")

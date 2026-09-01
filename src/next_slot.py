@@ -41,6 +41,7 @@
     stale_commits()     その本を焼いたあとに、生成側へ入ったコミット
     pending_thumbnail() サムネイルが控えに在るのに、まだ載っていないか
     quota_note()        枠が戻るのは何時で、公開まで何時間 残っているか
+    window_reaches()    **枠が戻るのは、この本が出る前か**（`False` なら もう直せません）
     lines()             画面へ出す行（`scripts/run_marker.py --write` が呼びます）
 
 **行き先が「分類」で終わらないようにしてあります。** 1件目の実装は最後の行が
@@ -308,7 +309,56 @@ def quota_note(publish_at: datetime, now: datetime) -> str | None:
 SWAP_UNITS = 50 * 2
 
 
-def swap_cost_lines(now: datetime | None = None) -> list[str]:
+def window_reaches(publish_at: datetime, now: datetime | None = None) -> bool | None:
+    """**枠が戻る時刻は、この本が出る前か。**（**API 0単位**）
+
+    `True` ＝ 戻ってから公開まで時間が在る（＝ その窓の回が撃てば間に合う）。
+    `False` ＝ **戻る前に出てしまう**。`None` ＝ 帳面が読めない（**推測しない**）。
+
+    ## なぜ要るか（2026-09-01 22:0x に踏んだ）
+
+    この判定は `quota_note()` が既に持っていました。**呼ばれる所が
+    `pending_thumbnail()` の枝の中だけ**で、**サムネイルが既に載っている本では
+    一度も走りません。** そして実際に走っていたのは `swap_cost_lines()` のほうで、
+    あちらは同じ `window_end()` を読みながら**公開時刻と比べていません**でした。
+
+    実測 —— 次の枠は `a63FzIUV2wI`（**09/02 13:00 JST 公開**）、
+    枠が戻るのは **09/02 16:00 JST**。**3時間 遅い。**
+    それでも画面に出ていたのは
+
+        **枠が戻ってから、外す → 入れるの順で撃つこと**
+
+    で、**次の回に、もう出来ないことを指示していました。**
+    同じ出力の 12行 上に「**公開に間に合いません**」という正しい文が在ります。
+
+    ## これは 9時 の既定に構造で当たります
+
+    枠の頭は**太平洋時間の0時 ＝ JST 16:00**（`upload_cap.window_start`）。
+    実測（`data/api_calls.jsonl` の全窓）では、戻ってから
+    **1.1時間（08/31）／3.1時間（09/01）**で焼き切れています。
+    ＝ 書ける帯は **16:00〜19:00 JST** しかありません。
+
+    `config/channel.yaml` の `publish_hour_jst` は 2026-09-01 に **19 → 9** へ
+    移りました（`src/publish_hour.py`。`per_video` の実測に揃えたもので、
+    それ自体は正しい）。**9時 は 16:00 の手前**なので、そこに置かれた本を
+    差し替えられるのは**前日の 16:00〜19:00 の3時間だけ**です。
+    規則3（「次の投稿予定まで改善し続ける」）の言う「まで」の最後の **21時間**が、
+    **既定を移した日から、構造的に空になりました。**
+
+    **覆る条件**: `reschedule` が `videos.update` を使わない道を持ったら
+    （＝ 差し替えが日枠の外に出たら）、この関数は要りません。
+    """
+    t = now or datetime.now(timezone.utc)
+    try:
+        from src import upload_cap                             # noqa: PLC0415
+        back = upload_cap.window_end(t)
+    except Exception:                                          # noqa: BLE001
+        return None
+    return back < publish_at
+
+
+def swap_cost_lines(now: datetime | None = None,
+                    publish_at: datetime | None = None) -> list[str]:
     """**差し替えの2手は、日枠が尽きていると撃てません**（2026-09-01 に踏んだ）。
 
     ## なぜ要るか —— **「insert は通る」と「差し替えられる」は別です**
@@ -348,10 +398,28 @@ def swap_cost_lines(now: datetime | None = None) -> list[str]:
         return [f"       差し替えの2手は **{SWAP_UNITS}単位**"
                 f"（`videos.update` ×2）。枠は在ります（{used:,} / {cap:,}単位）"]
     when = back.astimezone(JST)
+    head = (f"       [!] **差し替えの2手（{SWAP_UNITS}単位・`videos.update` ×2）は、"
+            f"この窓では 403 です**（{used:,} / {cap:,}単位）。"
+            f"戻るのは {when:%m/%d %H:%M} JST")
+    # **戻る時刻が公開より後なら、「戻ってから撃て」は嘘です**（2026-09-01 22:0x）。
+    # `window_reaches()` の註に実測。**推測では言いません** ——
+    # `publish_at` を渡されていない回・帳面が読めない回は、今までどおりの案内。
+    if publish_at is not None and window_reaches(publish_at, t) is False:
+        late = (back - publish_at).total_seconds() / 3600.0
+        return [
+            head,
+            f"       [!] **この本が出るのは {publish_at.astimezone(JST):%m/%d %H:%M} JST ＝ "
+            f"枠が戻る {late:.0f}時間 前です。差し替えは間に合いません。**"
+            "　**この本は、いまの中身のまま出ます** —— "
+            "焼き直しても載せる口が開きません（`videos.update` は日枠の内側）",
+            "       → **この回に `improve` を当てるなら、その次の枠の本へ。**"
+            f"　そして枠の頭は **{when:%H:%M} JST** です ——"
+            "　それより前の時刻に置いた本は、**前日の窓でしか差し替えられません**"
+            "（`config/channel.yaml` の `publish_hour_jst` はいま 9時・"
+            "`src/next_slot.window_reaches` に実測）",
+        ]
     return [
-        f"       [!] **差し替えの2手（{SWAP_UNITS}単位・`videos.update` ×2）は、"
-        f"この窓では 403 です**（{used:,} / {cap:,}単位）。"
-        f"戻るのは {when:%m/%d %H:%M} JST",
+        head,
         "       **焼き直しと `videos.insert` は日枠を使わないので通ります。"
         "そこだけ撃つと、古い本の予約が外せず 同じ枠に 2本 出ます** ——"
         "　オーナー規則1（1日1本）に当たります。**枠が戻ってから、"
@@ -574,7 +642,7 @@ def lines(now: datetime | None = None) -> list[str]:
                    "（`python -m src.pipeline` で焼き直し、"
                    "`scripts/reschedule.py --unschedule <古い方>` →"
                    " 新しい方を同じ枠へ `--move`）")
-        out.extend(swap_cost_lines(t))
+        out.extend(swap_cost_lines(t, publish_at=v["_at"]))
     if pending_thumbnail(str(v.get("video_id") or "") or None):
         out.append("  [!] **サムネイルの bytes は控えに在りますが、YouTube に"
                    "載っていません**（`thumbnail_set: false`）。"
