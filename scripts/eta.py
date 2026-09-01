@@ -4314,12 +4314,12 @@ def physical_caps(a0: dict, density: float = PLAN_PUBLISH_PER_DAY,
     rule_cap_rpm = None
     if mixed and mixed.get("factor"):
         try:
-            from src import reach_split  # 局所読み（`eta.py` の他所と同じ形）
-            _rows = reach_split.dedupe(reach_split.load_rows())
-            _pp = ((reach_split.summary(_rows, reach_split.long_ids()).get("長尺") or {})
-                   .get("per_publish"))
+            # **公開1本あたりの面は `_long_per_publish()` の1か所から取ります**
+            #     （2026-09-01）。`plan()` の `rpm_cap` も同じ関数を読むので、
+            #     **腕の天井と、合格点を作る天井が、別の数から出ることがありません。**
+            #     （帳面の読み直しも1回で済みます）
             rule_cap_rpm = rpm_mix.rule_capped(
-                mixed, _pp, float(house_rule.PUBLISH_PER_DAY))
+                mixed, _long_per_publish(), float(house_rule.PUBLISH_PER_DAY))
         except Exception:                                      # noqa: BLE001
             rule_cap_rpm = None
     if rule_cap_rpm:
