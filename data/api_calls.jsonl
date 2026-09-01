@@ -3219,3 +3219,31 @@
 {"at": "2026-09-01T01:45:42+00:00", "api": "reporting", "method": "reports", "units": 0, "ok": true}
 {"at": "2026-09-01T01:45:54+00:00", "api": "reporting", "method": "jobs", "units": 0, "ok": true}
 {"at": "2026-09-01T01:45:54+00:00", "api": "reporting", "method": "reports", "units": 0, "ok": true}
+{"at": "2026-09-01T01:58:38+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "eta.py:q"}
+{"at": "2026-09-01T01:58:38+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "eta.py:q"}
+{"at": "2026-09-01T01:58:38+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "eta.py:q"}
+{"at": "2026-09-01T01:58:39+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "eta.py:q"}
+{"at": "2026-09-01T01:58:39+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "eta.py:q"}
+{"at": "2026-09-01T01:58:39+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "eta.py:q"}
+{"at": "2026-09-01T01:58:39+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "eta.py:q"}
+{"at": "2026-09-01T01:59:40+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "eta.py:q"}
+{"at": "2026-09-01T01:59:40+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "eta.py:q"}
+{"at": "2026-09-01T01:59:40+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "eta.py:q"}
+{"at": "2026-09-01T01:59:41+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "eta.py:q"}
+{"at": "2026-09-01T01:59:41+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "eta.py:q"}
+{"at": "2026-09-01T01:59:41+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "eta.py:q"}
+{"at": "2026-09-01T01:59:41+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "eta.py:q"}
+{"at": "2026-09-01T02:00:56+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "eta.py:q"}
+{"at": "2026-09-01T02:00:56+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "eta.py:q"}
+{"at": "2026-09-01T02:00:57+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "eta.py:q"}
+{"at": "2026-09-01T02:00:57+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "eta.py:q"}
+{"at": "2026-09-01T02:00:57+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "eta.py:q"}
+{"at": "2026-09-01T02:00:57+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "eta.py:q"}
+{"at": "2026-09-01T02:00:58+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "eta.py:q"}
+{"at": "2026-09-01T02:02:25+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "eta.py:q"}
+{"at": "2026-09-01T02:02:25+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "eta.py:q"}
+{"at": "2026-09-01T02:02:25+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "eta.py:q"}
+{"at": "2026-09-01T02:02:25+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "eta.py:q"}
+{"at": "2026-09-01T02:02:26+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "eta.py:q"}
+{"at": "2026-09-01T02:02:26+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "eta.py:q"}
+{"at": "2026-09-01T02:02:26+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "eta.py:q"}

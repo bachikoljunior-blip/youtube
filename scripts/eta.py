@@ -3621,10 +3621,17 @@ def lever_days(m: dict, a: dict, pl0: dict, today: date | None = None,
     **`cap` とも `factor` とも別の数**だからです（実測 `per_video` は ×2.7 付近）。
     """
     base = pl0.get("days_to_target", NEVER)
+    # **その天井が「なぜその値か」も一緒に運ぶこと**（2026-09-01 夕）。
+    #     頭の3行は「切っている物のほうを見ろ」と印字しますが、
+    #     切っている物の名前（`cap_why`）は、ここで捨てられていました ——
+    #     `caps` は `{腕: 倍率}` だけを取り出しており、`headline()` からは
+    #     二度と読めません。**言っている所と、している所が別**の一例です。
+    cap_whys: dict[str, str | None] = {}
     if caps is None:
         try:
-            caps = {k: v.get("cap") for k, v in
-                    _capped_arms(a, supply=supply).items()}
+            _arms = _capped_arms(a, supply=supply)
+            caps = {k: v.get("cap") for k, v in _arms.items()}
+            cap_whys = {k: v.get("cap_why") for k, v in _arms.items()}
         except Exception:                                      # noqa: BLE001
             caps = {}
 
@@ -3779,6 +3786,11 @@ def lever_days(m: dict, a: dict, pl0: dict, today: date | None = None,
             "gain": max(0.0, gain),
             "reachable": reachable,
             "cap": cap,
+            # **その天井が「なぜその値か」**（2026-09-01 夕）。頭の3行が
+            #     「切っている物のほうを見ろ」と言う以上、切っている物の名前は
+            #     行と一緒に運ぶこと。**`arms` の `cap_why` は `lever_days()` の
+            #     中にしか無く、`headline()` からは読めませんでした。**
+            "cap_why": cap_whys.get(lever),
             "at_ceiling": at_ceiling,
             "days_at_cap": d_cap,
             "date_at_cap": _date(d_cap),
@@ -8135,6 +8147,42 @@ def headline(pl: dict, prev: dict | None = None,
               " 1日に再生が付く上限 10本・`src/day_cap.py`。"
               " その手前に**オーナーが固定した 1本/日**"
               "（`src/house_rule.py`）が乗っているので、腕の天井は ×1.00 です）。")
+        # --- **`rpm` を切っている物を、ここで名指しすること**（2026-09-01 夕・最適化の回）---
+        #     すぐ上の行は「切っている物のほうを見ろ」と言いながら、
+        #     **答えを書いてあるのは `density` だけ**でした。指示に従った回は、
+        #     `rpm` の切り所を自分で探すところから始まります（この回がそうでした）。
+        #     **撃って出た答え**（`physical_caps()['rpm']` と `plan()` を並べた）:
+        #
+        #         caps['rpm'].factor  ×36.72  ＝ **実効の混ざり方** ¥21.0 → ¥769
+        #         sc['rpm'] が掛かる先        ＝ **帯** `RPM_SCENARIOS['長尺 お金 低']` ¥400
+        #         → 模型を動かす最大の倍率    ＝ 769 / 400 ＝ **×1.82**（実測の頭打ちと一致）
+        #
+        #     **倍率の分母が2か所で別**です（混ざり方 ¥21 と 帯 ¥400 で **19倍**）。
+        #     数そのものは `min(band_rpm, rpm_cap)` が救っているので、
+        #     **`days_at_cap` は正しく、印字される「×36.72」だけが 20倍 大きい側**です。
+        #     そして `rpm_cap` を作っているのは `rpm_mix.rule_capped()` ——
+        #     **オーナーが固定した 1本/日**（`src/house_rule.py`）です。
+        #     **＝ 切られている2本は、どちらも同じ規則で切られています。**
+        #
+        #     **覆る条件**: `caps['rpm'].factor` が帯の単位へ揃ったら
+        #     （＝ `rpm_max / RPM_SCENARIOS[PLAN_BAND_BY_FORM['長尺 お金']]`）、
+        #     印字と実効が一致するので、この註は要りません。
+        if "rpm" in _clipped:
+            _rc = next((r for r in (pl.get("lever_days") or [])
+                        if r.get("lever") == "rpm"), {})
+            out.append(
+                f"{bar}     **`rpm` を切っているのも同じ規則です** ——"
+                " `rpm_mix.rule_capped()` の実効RPMの天井は"
+                " **1日1本 × 公開1本あたりの面**（`src/house_rule.py`）で立っています。"
+                + (f" 実測: {_rc.get('cap_why')}" if _rc.get("cap_why") else "")
+                + " **そして印字される天井 ×"
+                + (f"{_rc['cap']:.2f}" if _rc.get("cap") else "N")
+                + " は、この模型が使う倍率ではありません** ——"
+                  " その倍率は**実効の混ざり方**を分母にしており、"
+                  " `plan()` が掛けるのは**帯**（`RPM_SCENARIOS['長尺 お金 低']` ¥400）です。"
+                  f" 模型を動かす最大の倍率は上の **×{_clipped['rpm']['at']:.3g}** のほう。"
+                  " **`min(band_rpm, rpm_cap)` が数を救っているので、"
+                  "日付は正しく、大きいのは印字だけです。**")
     if pl.get("lever_chosen_by") == "need_over_cap":
         _n, _noc = pl.get("lever_need"), pl.get("lever_need_over_cap")
         out.append(
