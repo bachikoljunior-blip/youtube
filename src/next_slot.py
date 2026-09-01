@@ -595,7 +595,16 @@ def calendar_lines(now: datetime | None = None,
                "**暦を1日も見ていません**）")
     out.append("     → **新しい本は1本も要りません。もう予約に在る本を前へ倒すだけです**:")
     out.append("       python scripts/reschedule.py --compact          # 割り当てだけ・**0単位**")
-    out.append("       python scripts/reschedule.py --compact --apply  # 1本 50単位")
+    out.append(f"       python scripts/reschedule.py --compact --apply  # 1本 50単位"
+               f"（空き {c['empty']}日 なら およそ **{c['empty'] * 50:,}単位**）")
+    # **順番を書くこと**（2026-09-01 夜）。実測 2026-09-01 の日枠 13,966単位 の内訳は
+    #     `reschedule.py:_update` 8,212 ／ `history.py:channel_video_ids` 5,412 で、
+    #     **`status.py` を先に撃つと、この手のぶんが残りません。**
+    #     枠は 09/02 16:00 JST に戻りますが、戻った枠を先に読みへ使うと、
+    #     **同じ穴のまま次の窓へ持ち越します。**
+    out.append("       **`status.py` より先に撃つこと** —— あちらは読みだけで"
+               "実測 5,000単位 超（`history.py:channel_video_ids`）。"
+               "後回しにすると、戻った枠がこの手に残りません")
     out.extend(_calendar_quota_lines(now or datetime.now(timezone.utc)))
     out.append("     **控えは実物とずれることがあります**（`src/ledger_truth.py`）。"
                "撃って 0本 しか動かない回は `scripts/reschedule.py --list`（50単位）で"
