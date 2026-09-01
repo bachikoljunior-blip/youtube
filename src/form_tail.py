@@ -331,6 +331,66 @@ def tail_elasticity(rows=None) -> dict | None:
     }
 
 
+def shelf_drift(rows=None) -> dict | None:
+    """**その棚は、時間とともに上がっているか**（**API 0単位**・`data/views.jsonl` だけ）。
+
+    ## なぜ要るか（2026-09-02 に足した）
+
+    同じ日に2件 閉じました ——「上端は棚（配信の上限）」と
+    「その棚への外挿は、平均に当てた傾きを極値に当てている」。
+    **どちらも『天井はここだ』の側**で、`eta.py` は毎周
+    「**この回に立てるべき前提は『その天井は天井ではない』**」と名指しします。
+
+    棚が**チャンネルの大きさ**（登録者・面の割り当て）で決まっているなら、
+    棚は**時間とともに上がるはず**です。中身をどう変えても動かないが、
+    チャンネルが育てば動く —— そのとき天井は定数ではなく、
+    `per_video` は「引けないが、待てば上がる」腕になります。
+
+    **逆に傾きが 0 と区別が付かなければ、棚は本当に定数**で、
+    `eta.py` の「あと ×23.24」は**待っても縮みません**
+    （＝ 形を替えるしかない ＝ 腕 `rpm` の側へ逃げる根拠になります）。
+
+    ## 測り方
+
+    伸びきった本を**日ごと**にまとめ、`log(その日の最大)` を
+    **日付の通し番号**（いちばん古い日を 0）へ回帰します。
+    `tail_elasticity()` が回帰する相手は「その日の本数」で、**こちらは時間**です
+    —— 別の量なので、両方 要ります。
+
+    返すのは `{"fit": {...}, "days": n, "span_days": N, "rising": bool}`。
+    `rising` は「傾きの 95% 区間が 0 より上」＝ **棚は上がっている**。
+    """
+    if rows is None:
+        from src import rule_per_video as _rp
+        rows = _rp._settled()
+    if not rows:
+        return None
+    by: dict[str, list[int]] = defaultdict(list)
+    for day, _vid, life in rows:
+        if life and life > 0:
+            by[day].append(int(life))
+    days = sorted(by)
+    if len(days) < 4:
+        return None
+    # `_settled()` は `date` を返しますが、作り物の帳面では文字列で来ます
+    # （`shelf()` の `first_seen` 側は文字列）。**どちらでも通すこと。**
+    def _d(v):
+        return v if isinstance(v, date) else date.fromisoformat(str(v))
+
+    base = _d(days[0])
+    xs, ys = [], []
+    for day in days:
+        xs.append(float((_d(day) - base).days))
+        ys.append(math.log(max(by[day])))
+    fit = _ols(xs, ys)
+    if not fit:
+        return None
+    return {"fit": fit, "days": len(days),
+            "span_days": int(xs[-1] - xs[0]),
+            # **片側ではなく両側の 95%** で見ます（`_ols` の `lo`/`hi` がそれ）。
+            "rising": fit["lo"] > 0.0}
+
+
 def lines(**kw) -> list[str]:
     """画面へ。**壁が形の側にあるかどうかを1行で。**"""
     s = shape(**kw)
@@ -380,6 +440,25 @@ def lines(**kw) -> list[str]:
 
 
 if __name__ == "__main__":                                     # pragma: no cover
-    print("=== 形ごとの上の裾（API 0単位・`data/views.jsonl` だけ）===")
-    for line in lines():
-        print(line)
+    import sys
+
+    if "--drift" in sys.argv[1:]:
+        print("=== その棚は上がっているか（API 0単位・`data/views.jsonl` だけ）===")
+        d = shelf_drift()
+        if not d:
+            print("  日が 4日 に満たないので測れません")
+        else:
+            f = d["fit"]
+            print(f"  伸びきった日 {d['days']}日／幅 {d['span_days']}日")
+            print(f"  log(その日の最大) を日付へ回帰: b={f['b']:+.4f}"
+                  f"  t={f['t']:+.2f}  95%[{f['lo']:+.4f}, {f['hi']:+.4f}]")
+            if d["rising"]:
+                print("  → **棚は上がっています。** 天井は定数ではなく、"
+                      "チャンネルが育つと動く量です（`per_video` は待てば上がる腕）")
+            else:
+                print("  → **0 と区別が付きません。** 棚は定数として扱うこと ——"
+                      " 待っても `eta.py` の隔たりは縮みません（逃げ先は形の側 ＝ 腕 `rpm`）")
+    else:
+        print("=== 形ごとの上の裾（API 0単位・`data/views.jsonl` だけ）===")
+        for line in lines():
+            print(line)
