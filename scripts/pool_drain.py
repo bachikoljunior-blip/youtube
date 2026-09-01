@@ -418,6 +418,65 @@ def _push_thumbnail_first(video_id: str) -> int:
     return refresh_thumbnail.push_missing(only_video=video_id)
 
 
+def _calendar_hold() -> list[str]:
+    """**暦に穴が空いている間、池化は後回し**（**API 0単位**）。鳴らなければ空。
+
+    ## なぜ要るか（2026-09-02 01:0x に測って足した）
+
+    この道具と `scripts/reschedule.py --compact` は、**同じ予約の山に、逆向きの手**を
+    当てます。どちらも `[暦]` の鳴っている回に候補として出てきます:
+
+        pool_drain        規則2（作り置きなし）→ 「残す 1本／**外す 107本**」
+        reschedule --compact  規則1（1日1本）  → 「**25本 を 09/03〜09/27 へ 1日1本**」
+
+    **先に池化を撃つと、穴を埋める本がその場で無くなります。** 実測 2026-09-02 01:0x
+    の控え —— 予約 108本 のうち **106本が 09/24〜10/09**、手前の **09/03〜09/23 は
+    20日 まるごと 0本**。池化はその 106本 を全部 private の下書きへ戻すので、
+    **穴の20日は「埋める本が1本も無い」状態で確定します**（戻すには生成ではなく
+    予約の入れ直しが要り、`videos.update` は日枠の内側です）。
+
+    ## どちらが先か —— **穴のほうが高い**
+
+    `eta.py` の到達日が動くのは前提を1件 閉じたときだけで、前提の多くは
+    **公開ずみの本が積むのを待って**います。同じ回の `eta.py` の実測:
+
+        今後14日 の θ は **0.57/日**（過去の実測 1.10/日 の **52%**）
+        「**この窓で縛っているのは公開の順番のほうです**」
+
+    **空白の20日は、その間に閉じられたはずの前提が1件も閉じない**という意味で
+    θ の側に効きます。一方、作り置きが山のまま残っても **θ は1日も遅れません**
+    （遅れるのは規則2 の見た目だけで、`eta.py` の入力にありません）。
+    **釣り合っていないので、穴が先です。**
+
+    ## 覆る条件
+
+    - 穴が埋まったら（`calendar()["run"] < 2`）この門は黙ります ——
+      **そのとき池化が正になります。**「詰めてから、余りを外す」の順です
+    - オーナーが 1日1本 を外したら `house_rule` 経由で `calendar()` ごと緩みます
+    - 控えが実物とずれていると穴も嘘になります（`src/ledger_truth.py`）。
+      **`calendar()` の覆る条件がそのまま効きます**
+    """
+    try:
+        from src import next_slot                              # noqa: PLC0415
+        cal = next_slot.calendar()
+    except Exception:                                          # noqa: BLE001
+        return []                                              # 読めない回は黙る（推測で止めない）
+    if int(cal.get("total") or 0) <= 0 or int(cal.get("run") or 0) < 2:
+        return []
+    run, run_from = int(cal["run"]), cal.get("run_from") or "?"
+    return [
+        f"[pool] [!] **暦に穴が空いています —— 池化より先に、詰めるほうです**"
+        f"（今後 {cal.get('days')}日 のうち **{cal.get('empty')}日 が空**／"
+        f"いちばん長い空白は **{run}日 連続**（{run_from} 〜））",
+        "[pool]     **いま外すと、その穴を埋める本がその場で無くなります**"
+        "（外した本は private の下書きへ戻り、入れ直しは `videos.update` ＝ 日枠の内側）",
+        "[pool]     → python scripts/reschedule.py --compact          # 割り当てだけ・**0単位**",
+        "[pool]     → python scripts/reschedule.py --compact --apply  # 1本 50単位",
+        "[pool]     **詰めてから、余りを外すこと。**"
+        "（穴は `eta.py` の θ に効き、作り置きの見た目は効きません。`_calendar_hold` の註）",
+    ]
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(
         description="予約を外して private のまま残し、下書きの池にする")
@@ -433,6 +492,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--no-thumbnail-first", action="store_true",
                     help="次に公開される本のサムネイル（50単位）を先に押さない"
                          "（**外した回は理由を JOURNAL に**）")
+    ap.add_argument("--despite-gap", action="store_true",
+                    help="暦に穴が空いていても外す（**外した回は理由を JOURNAL に**）")
     ap.add_argument("--no-swap-reserve", action="store_true",
                     help=f"次に公開される本の差し替え（{SWAP_UNITS}単位）のぶんを"
                          "残さない（**外した回は理由を JOURNAL に**）")
@@ -537,6 +598,17 @@ def main(argv: list[str] | None = None) -> int:
     if not drop:
         print("[pool] **外すものはありません。**（池化は済んでいます）", flush=True)
         return 0
+    # **暦に穴が空いている間は、池化のほうが後です**（2026-09-02 01:0x に足した）。
+    # 詳しくは `_calendar_hold()` の註。**API 0単位**。
+    hold = _calendar_hold()
+    if hold:
+        for line in hold:
+            print(line, flush=True)
+        if args.apply and not args.despite_gap:
+            print("[pool] **この回は外しません。**"
+                  " 承知のうえで撃つなら `--despite-gap`"
+                  "（**理由を JOURNAL に書くこと**）。", flush=True)
+            return 0
     if not args.apply:
         print("[pool] **数えただけです**（API 0単位）。撃つには `--apply`。", flush=True)
         return 0
