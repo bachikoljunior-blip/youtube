@@ -196,6 +196,43 @@ def main(topic: str, visibility: str | None = None, hour: int | None = None,
     except Exception as exc:
         print(f"[dupes] **控えを残せませんでした: {str(exc)[:80]}**")
 
+    # **contact sheet が無ければ、ここで作る**（2026-09-01 に踏んで足した）。
+    #
+    # `critique_queue.stash()` は `inspect.jpg` が無いと**何もせずに帰ります**
+    # （あちらの docstring:「無い材料の空箱を積んでも次の回を惑わせるだけ」）。
+    # **そして `--dry-run` の `src/pipeline` は contact sheet を作りません** ——
+    # あれは `scripts/inspect_build.py` という別の道具です。
+    #
+    # つまり **`--dry-run` で焼いて `upload_only.py` で上げる道**を通ると、
+    # **その本は必ず独立評価を回せません。** 2026-09-01 に実際に踏みました
+    # （`ICmIBsZRYFE`。手で `inspect_build.py` を撃ち直して残しています）。
+    #
+    # **この道は「たまに使う抜け道」ではありません。** 日枠が尽きた窓では
+    # `pipeline` の `history.posted_topic_ids()`（約25単位）が 403 になるので、
+    # `--dry-run` ＋ `upload_only.py` が**唯一 通る道**です
+    # （`docs/trigger_main.md`「枠が尽きている回に選ぶのは、これです」）。
+    # **枠が細い日ほど、この穴に落ちます。**
+    #
+    # **なぜ「作れ」と言うのではなく、ここで作るのか。** 手順の側には
+    # 既に3か所 書いてありました（`inspect_build` の docstring・`critique_queue`
+    # の印字・`docs/CRITIQUE.md`）。**3つとも「次に来た側が覚えていること」に
+    # 頼っています** —— `batch_build.slots()`:「**人の記憶と手写しに依存する門は、
+    # この輪では毎回落ちる側**」。だから門を、材料を要る側へ移します。
+    #
+    # **落ちても投稿は止めません**（投稿はもう済んでいる）。
+    #
+    # **覆る条件**: `src/pipeline` が `--dry-run` でも contact sheet を焼くように
+    # なったら、この段は要りません（`tests/test_upload_only_sheet.py` が
+    # 「無ければ作る」を縛っているので、消すときはその検査ごと）。
+    if not (work / "inspect.jpg").exists():
+        print("[queue] contact sheet が無いので、ここで作ります"
+              "（--dry-run の pipeline は焼きません）")
+        try:
+            import inspect_build                               # noqa: PLC0415
+            inspect_build.main(topic)
+        except Exception as exc:                               # noqa: BLE001
+            print(f"[queue] contact sheet を作れませんでした（続行）: {str(exc)[:100]}")
+
     # 独立評価（M13）の材料も同じ理由で残す。**残さないと、投稿した回で評価を
     # 回せなかった時点で永久に評価できません**（`scripts/critique_queue.py`）。
     #
