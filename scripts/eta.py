@@ -414,6 +414,35 @@ def _density_elasticity() -> float | None:
     return b
 
 
+_LONG_PER_PUBLISH: list = []          # 1回だけ測る入れ物（`None` も憶える）
+
+
+def _long_per_publish() -> float | None:
+    """**長尺の公開1本あたり、サムネが何回 見られたか**（実測・API 0単位）。
+
+    `data/reach.jsonl` を読むだけですが、`plan()` は `lever_days()` と
+    `joint_cap.solve()` から**何十回も呼び直されます。** 毎回 帳面を
+    読み直すと、それだけで回が遅くなるので**1回だけ測って憶えます**
+    （`None`＝測れなかった、も憶えること。**憶えないと毎回 読み直します**）。
+
+    **覆る条件**: 1回の実行の中で `data/reach.jsonl` が増えることは
+    ありません（増やすのは `scripts/reach.py` の別の回）。増えるように
+    なったら、ここは憶えないこと。
+    """
+    if _LONG_PER_PUBLISH:
+        return _LONG_PER_PUBLISH[0]
+    val = None
+    try:
+        rows = reach_split.dedupe(reach_split.load_rows())
+        val = ((reach_split.summary(rows, reach_split.long_ids()).get("長尺") or {})
+               .get("per_publish"))
+        val = float(val) if val else None
+    except Exception:                                          # noqa: BLE001
+        val = None
+    _LONG_PER_PUBLISH.append(val)
+    return val
+
+
 def _thin_by_density(per_video: float, density: float,
                      at_rule: bool = True) -> tuple[float, float]:
     """`per_video`（規則の密度で測った数）を、**その密度での数**へ直す。
@@ -6205,6 +6234,47 @@ def plan(m: dict, a: dict, density: int = PLAN_PUBLISH_PER_DAY,
             mix = _with_recent_surface(mix)
     else:
         mix = dict(mix)
+    # --- **規則（1日1本）の天井が、この `min()` に届いていなかった**（2026-09-01）---
+    #
+    #     `physical_caps()` は 2026-08-31 に `rpm` の腕を規則で止めました
+    #     （`src.rpm_mix.rule_capped`・面 1,368.0 → 公開1本あたり × 1本/日）。
+    #     **その天井は、ここへ1度も届いていませんでした。**
+    #
+    #     下の2行が効かせているのは `min(band_rpm, rpm_cap)` で、`rpm_cap` は
+    #     **規則で切る前の** `mix["rpm_max"]` です。腕の倍率をいくつに止めても
+    #     `band_rpm` は `rpm_cap` より上なので、**必ずここで同じ数に丸められます**
+    #     —— つまり `caps["rpm"]` を ×59.77 から ×32.47 へ下げた効果は
+    #     **数字の上でゼロ**でした（実測: `--reflect` の `×10^9` の探りが
+    #     `need_month` 165,450回/月 ＝ ¥1,209 で止まる。規則の天井 ¥680 なら
+    #     293,974回/月 のはず）。**この repo でいちばん多い壊れ方
+    #     「言っている所と、している所が別」の、`rpm` での3件目**です。
+    #
+    #     実測（2026-09-01・`data/reach.jsonl`・API 0単位）:
+    #
+    #         規則で切る前   長尺の面 1,368.0回/日（20260821・**長尺を7本 公開した日**）
+    #         規則で切った後 長尺の面   403.3回/日（公開1本あたり × **1本/日**）
+    #         → 実効RPM の天井 ¥1,252 → **¥680**、要る再生/月 159,710 → **293,974**
+    #
+    #     **面（`long_views_day_cap`）のほうは切りません** —— あちらは
+    #     「面をあと何倍 広げれば埋まるか」の比べる相手で、**観測の上限**の
+    #     ままが正しい（規則で切ると「いま在る面」が実際より小さく出ます）。
+    #     **覆る条件**: `surface_needed` が「規則の下で何倍」を出すように
+    #     なったら、あちらもここで切ること。
+    _ceiling_mix = mix
+    try:
+        _pp = _long_per_publish()
+        _rule = rpm_mix.rule_capped(mix, _pp, float(house_rule.PUBLISH_PER_DAY))
+        if _rule:
+            _ceiling_mix = dict(mix, imp_day=_rule["imp_day"],
+                                long_share_max=_rule["long_share_max"],
+                                rpm_max=_rule["rpm_max"],
+                                factor=_rule["factor"],
+                                rule_binds=True,
+                                imp_day_before_rule=mix.get("imp_day"),
+                                rpm_max_before_rule=mix.get("rpm_max"))
+    except Exception:                                          # noqa: BLE001
+        _ceiling_mix = mix                                     # **回を止めないこと。**
+
     # --- **腕を引くと、長尺の割合は薄まる**（2026-09-01・最適化の回に足した）---
     #
     #     `mix["rpm_max"]` は `src/rpm_mix.surface_ceiling()` の
@@ -6244,17 +6314,23 @@ def plan(m: dict, a: dict, density: int = PLAN_PUBLISH_PER_DAY,
             per_video, density_month,
             at_rule=bool(m.get("views_per_video_rule")))
         _short_views_day = float(_pv_at_density) * float(density_month)
-        _base_short = float(mix.get("imp_day") or 0.0) * (
-            (1.0 - float(mix.get("long_share_max") or 0.0))
-            / float(mix.get("long_share_max") or 1.0)) if mix.get("long_share_max") else 0.0
+        _sh0 = float(_ceiling_mix.get("long_share_max") or 0.0)
+        _base_short = ((float(_ceiling_mix.get("imp_day") or 0.0) * (1.0 - _sh0) / _sh0)
+                       if 0.0 < _sh0 < 1.0 else 0.0)
         if _short_views_day > 0 and _base_short > 0:
-            _co = rpm_mix.coupled(mix, _short_views_day / _base_short)
+            _co = rpm_mix.coupled(_ceiling_mix, _short_views_day / _base_short)
             if _co:
-                mix = dict(mix, **_co)
+                _ceiling_mix = dict(_ceiling_mix, **_co)
     except Exception:                                          # noqa: BLE001
         pass                                                   # **回を止めないこと。**
-    rpm_cap = float(mix.get("rpm_max") or 0.0) or None
+    rpm_cap = float(_ceiling_mix.get("rpm_max") or 0.0) or None
+    # **面は規則で切りません**（上の節の「覆る条件」）。ここは観測の上限のまま。
     long_views_day_cap = float(mix.get("imp_day") or 0.0) or None
+    # **`mix` そのものは差し替えません。** `lever_days()` / `joint_cap.solve()` は
+    #     `plan(..., mix=mix)` で呼び直すので、切った版を渡すと**規則で2度
+    #     切り、カップリングを2度 掛けます**（倍率が2乗で乗る）。
+    #     切るのは `rpm_cap` の1つだけ。呼び直された側は、その回の倍率で
+    #     自分で解き直します。
     # **段2 の分母は天井ではありません**（2026-08-25）。`_gate2_surface_basis` を読むこと。
     long_views_day_now, gate2_basis, gate2_span = _gate2_surface_basis(mix)
 
