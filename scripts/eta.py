@@ -428,14 +428,33 @@ def _long_per_publish() -> float | None:
     **覆る条件**: 1回の実行の中で `data/reach.jsonl` が増えることは
     ありません（増やすのは `scripts/reach.py` の別の回）。増えるように
     なったら、ここは憶えないこと。
+
+    ## **尾を入れたほうを先に読みます**（2026-09-01 に配線した）
+
+    `per_publish` は「窓の面 ÷ **窓の中の公開 本数**」で、**窓の右端で
+    公開した本も丸ごと1本**と数えます。その本の尾はまだ積んでいないので、
+    **この数は下振れします** —— そして下振れは
+    `rpm_mix.rule_capped()` → 面の天井 → 段2 と、まっすぐ効きます。
+
+    実測（2026-09-01・窓 20260822..20260828）: 窓の中の公開 14本 のうち
+    **8本（57%）が最終日**。尾で重みを付けると分母は **11.42本** で、
+    1本あたりは **403.3回 → 494.5回（×1.23）**。
+
+    `per_publish_settled` が **`None`**（均衡パネルが薄くて尾を測れない）
+    のときだけ、今までどおり `per_publish` に落ちます。
+    **推測の曲線で分母を割らないこと**は `accrual_curve()` 側の約束です。
+
+    **覆る条件**: `summary()` が `per_publish` のほうにも尾を入れたら、
+    ここは1行に戻すこと（そのとき保存済みの点と比べられなくなるので、
+    `data/eta.jsonl` の断りも一緒に書くこと）。
     """
     if _LONG_PER_PUBLISH:
         return _LONG_PER_PUBLISH[0]
     val = None
     try:
         rows = reach_split.dedupe(reach_split.load_rows())
-        val = ((reach_split.summary(rows, reach_split.long_ids()).get("長尺") or {})
-               .get("per_publish"))
+        long = reach_split.summary(rows, reach_split.long_ids()).get("長尺") or {}
+        val = long.get("per_publish_settled") or long.get("per_publish")
         val = float(val) if val else None
     except Exception:                                          # noqa: BLE001
         val = None

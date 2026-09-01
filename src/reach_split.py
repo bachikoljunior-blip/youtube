@@ -601,7 +601,14 @@ def surface_forecast(sm: dict, pubs: dict[str, int] | None = None,
     from datetime import date, timedelta
 
     long = (sm or {}).get("長尺") or {}
-    per_pub = long.get("per_publish")
+    # **尾を入れたほうを先に読みます**（2026-09-01 に配線した）。
+    #     ここが掛けているのは**これから公開する本**で、その本は尾を丸ごと
+    #     積みます。**窓の右端で公開した本を「丸ごと1本」と数えた
+    #     `per_publish`（下振れ）を、丸ごと積む本に掛けないこと** ——
+    #     実測 2026-09-01: 403.3回 → 494.5回（**×1.23**）。
+    #     `per_publish_settled` は尾を測れない回に `None` を返すので、
+    #     そのときだけ今までどおりに落ちます（`accrual_curve()` の約束）。
+    per_pub = long.get("per_publish_settled") or long.get("per_publish")
     if not per_pub or per_pub <= 0:
         return None
     pubs = publishes_per_day() if pubs is None else pubs

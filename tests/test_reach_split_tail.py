@@ -152,6 +152,36 @@ def test_地平は窓と同じ長さにしてある() -> None:
     assert R.TAIL_DAYS == R.RECENT_DAYS
 
 
+def test_これから公開する本には尾を入れたほうを掛ける() -> None:
+    """`surface_forecast()` が掛けるのは**これから公開する本**で、
+    その本は尾を丸ごと積みます。**下振れした数を掛けないこと。**"""
+    sm = {"長尺": {"per_publish": 100.0, "per_publish_settled": 123.0}}
+    fc = R.surface_forecast(sm, pubs={"20260901": 1}, days=1, today="2026-09-01")
+    assert fc is not None
+    assert fc["per_publish"] == pytest.approx(123.0)
+
+
+def test_尾を測れないときは今までどおりの数を掛ける() -> None:
+    sm = {"長尺": {"per_publish": 100.0, "per_publish_settled": None}}
+    fc = R.surface_forecast(sm, pubs={"20260901": 1}, days=1, today="2026-09-01")
+    assert fc is not None
+    assert fc["per_publish"] == pytest.approx(100.0)
+
+
+def test_etaの1か所も尾を入れたほうを先に読む() -> None:
+    """`scripts/eta.py:_long_per_publish()` —— ここが
+    `rpm_mix.rule_capped()` 経由で面の天井に入る唯一の口です。"""
+    from pathlib import Path
+    src = Path(__file__).resolve().parent.parent / "scripts" / "eta.py"
+    body = src.read_text(encoding="utf-8")
+    i = body.index("def _long_per_publish(")
+    j = body.index("\ndef ", i + 1)
+    fn = body[i:j]
+    assert 'get("per_publish_settled")' in fn, (
+        "eta が下振れした `per_publish` のほうを読んでいる")
+    assert 'get("per_publish")' in fn, "尾を測れない回に落ちる先が無い"
+
+
 def test_公開日の一覧は作り置きを落とす() -> None:
     """規則を写していないこと ——判定は `house_rule.is_stockpile()` の1か所。"""
     import inspect
