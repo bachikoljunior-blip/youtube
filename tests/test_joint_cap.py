@@ -60,15 +60,40 @@ def _rows():
     return [{"lever": "per_video", "cap": 2.007}, {"lever": "rpm", "cap": 28.05}]
 
 
+def _resolve(scale):
+    """**倍率に応えて動く模型**（`per_video` が分子、`rpm` が分母）。
+
+    ## **定数を返す模型は、もう使えません**（2026-09-01 に赤で気づいた）
+
+    この節は長らく `_resolve` を渡していました。
+    **どの倍率でも同じ数を返す模型**です。`solve()` が「1本ずつ抜いて
+    joint が動くか」を測るようになった時点で、そこは
+    **「2本とも抜いても動かない」＝ 2本とも `idle`** と読まれ、
+    印字が `idle` の枝（名指し ＋「前提を立てないこと」）へ切り替わり、
+    行数の検査が 1 → 3 で落ちました。**検査が正しく落ちています** ——
+    定数の模型は「腕が効かない世界」そのものだからです。
+
+    満杯（`per_video` ×2.007 ／ `rpm` ×28.05）でちょうど元の
+    `(159_710.0, 1891.0)` になるように置いてあるので、
+    **下の数字（×2.82・35.5%）はそのまま**です。
+    """
+    pv = float(scale.get("per_video", 1.0))
+    rp = float(scale.get("rpm", 1.0))
+    return 159_710.0 * (28.05 / rp), 1891.0 * (pv / 2.007)
+
+
 def test_solve_は解き直した1点を返す():
     seen = {}
 
     def resolve(scale):
-        seen["scale"] = scale
-        return 159_710.0, 1891.0            # (need_month, ceiling_day)
+        seen.setdefault("scale", scale)     # **最初の1回が joint の点**
+        return _resolve(scale)              # (need_month, ceiling_day)
 
     res = joint_cap.solve(_rows(), resolve)
     assert seen["scale"] == {"per_video": 2.007, "rpm": 28.05}
+    # **この模型は2本とも効くので、`idle` は空** —— 名指しの行は出ません
+    assert res["idle"] == []
+    assert sorted(res["live"]) == ["per_video", "rpm"]
     assert res["ceiling_month"] == 1891.0 * 30
     assert abs(res["ratio"] - (1891.0 * 30) / 159_710.0) < 1e-9
     assert res["reaches"] is False
@@ -85,7 +110,7 @@ def test_solve_が落ちても回を止めない():
 
 
 def test_1本ずつの倍率のほうが大きい回は_そう書く():
-    res = joint_cap.solve(_rows(), lambda _s: (159_710.0, 1891.0))
+    res = joint_cap.solve(_rows(), _resolve)
     lines = joint_cap.lines(res, 8.819)
     assert len(lines) == 2
     joined = "".join(lines)
@@ -95,7 +120,7 @@ def test_1本ずつの倍率のほうが大きい回は_そう書く():
 
 
 def test_残りのほうが大きい回は_余計な行を出さない():
-    res = joint_cap.solve(_rows(), lambda _s: (159_710.0, 1891.0))
+    res = joint_cap.solve(_rows(), _resolve)
     assert len(joint_cap.lines(res, None)) == 1
     assert len(joint_cap.lines(res, 1.5)) == 1     # 1本ずつのほうが小さい
     assert joint_cap.lines(None, 8.8) == []        # **無い回は1行も出さない**
@@ -124,7 +149,7 @@ def test_headline_が_joint_cap_の行を出す():
         "binding": "再生数が天井に当たっている", "lever_hint": "per_video",
         "lever_chosen_by": "need_over_cap",
         "lever_need": 17.702, "lever_need_over_cap": 8.819,
-        "joint_cap": joint_cap.solve(_rows(), lambda _s: (159_710.0, 1891.0)),
+        "joint_cap": joint_cap.solve(_rows(), _resolve),
     }
     out = "".join(eta.headline(pl))
     assert "2.82" in out, "残りの距離が頭の3行に出ていません"
