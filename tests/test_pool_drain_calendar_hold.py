@@ -83,11 +83,7 @@ def test_暦が読めない回は黙る_推測で止めない(monkeypatch):
     assert pool_drain._calendar_hold() == []
 
 
-def test_apply_は穴が空いている間_1本も外さない(monkeypatch, capsys):
-    """**門はここです。**`--despite-gap` を付けた回だけ通します。"""
-    _patch(monkeypatch, _cal())
-    fired: list = []
-
+def _stub(monkeypatch, dropped: list, thumbs: list):
     from datetime import datetime, timedelta, timezone
     base = datetime(2026, 9, 24, 1, 0, tzinfo=timezone.utc)
     rows = [{"id": f"v{i}", "title": f"t{i}", "topic": "s-x",
@@ -97,11 +93,57 @@ def test_apply_は穴が空いている間_1本も外さない(monkeypatch, caps
     monkeypatch.setattr(pool_drain, "by_day", lambda r: {})
     monkeypatch.setattr(pool_drain, "today_rows", lambda r: [])
     monkeypatch.setattr(pool_drain, "swap_reserve", lambda *a, **k: None)
-    monkeypatch.setattr(pool_drain, "thumbnail_first", lambda *a, **k: fired.append("x"))
+    monkeypatch.setattr(pool_drain, "thumbnail_first", lambda *a, **k: "NEXT1")
+    monkeypatch.setattr(pool_drain, "_push_thumbnail_first",
+                        lambda vid: (thumbs.append(vid), 0)[1])
+    monkeypatch.setattr(pool_drain.uploader, "_service", lambda: object())
+    monkeypatch.setattr(pool_drain.uploader, "base_status", lambda: {})
+    monkeypatch.setattr(pool_drain.reschedule, "_update",
+                        lambda svc, vid, at, fallback_status=None:
+                        (dropped.append(vid), True)[1])
+    monkeypatch.setattr(pool_drain.dupes, "retime", lambda vid, at: None)
 
-    rc = pool_drain.main(["--apply"])
+
+def test_apply_は穴が空いている間_1本も外さない(monkeypatch, capsys):
+    """**門は「外す」の直前です。**`--despite-gap` を付けた回だけ通します。
+
+    **サムネイル（50単位）は門より前**に残してあります —— あれは §4 が
+    いちばん高い 50単位 と呼んでいる手で、暦の穴とは関係がありません。
+    ここで止めるのは `videos.update`（外す）のほうだけです。
+    """
+    _patch(monkeypatch, _cal())
+    dropped: list = []
+    thumbs: list = []
+    _stub(monkeypatch, dropped, thumbs)
+
+    rc = pool_drain.main(["--apply", "--no-inbox"])
     out = capsys.readouterr().out
     assert rc == 0
     assert "この回は外しません" in out
     assert "--despite-gap" in out
-    assert not fired, "門の後ろの手が1つでも走ったら、外し始めています"
+    assert not dropped, "穴が空いているのに外しています"
+    assert thumbs == ["NEXT1"], "サムネイル（50単位）まで止めています"
+
+
+def test_despite_gap_を付けた回は通る(monkeypatch, capsys):
+    """**逃げ道を残すこと**（理由を JOURNAL に）。"""
+    _patch(monkeypatch, _cal())
+    dropped: list = []
+    thumbs: list = []
+    _stub(monkeypatch, dropped, thumbs)
+
+    rc = pool_drain.main(["--apply", "--no-inbox", "--despite-gap"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "この回は外しません" not in out
+    assert dropped, "`--despite-gap` でも外せないなら、逃げ道になっていません"
+
+
+def test_数えるだけの回にも順番は出る(monkeypatch, capsys):
+    """**撃つ前に順番が見えていないと、次の回がまた同じ順で撃ちます。**"""
+    _patch(monkeypatch, _cal())
+    _stub(monkeypatch, [], [])
+    pool_drain.main(["--no-inbox"])
+    out = capsys.readouterr().out
+    assert "reschedule.py --compact" in out
+    assert "この回は外しません" not in out      # 数えるだけの回に門は要りません

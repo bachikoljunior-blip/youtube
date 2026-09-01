@@ -78,6 +78,11 @@ def _stub_apply(monkeypatch, order: list, *, thumb_rc: int = 0,
                              "title": "drop", "topic": "t"},
                         ])
     monkeypatch.setattr(pool_drain, "thumbnail_first", lambda now=None: "NEXT1")
+    # **この作り物の予約に穴はありません**（09/02・09/03 の2本 ＝ 1日1本）。
+    # `_calendar_hold()` は `pool` ではなく `data/uploaded.jsonl` を読むので、
+    # 揃えないと**実物の暦（この日は 19日 連続の空白）で止まります**
+    # —— 門そのものは `tests/test_pool_drain_calendar_hold.py` が見ます。
+    monkeypatch.setattr(pool_drain, "_calendar_hold", lambda: [])
 
     def _thumb(video_id: str) -> int:
         order.append(f"thumb:{video_id}")

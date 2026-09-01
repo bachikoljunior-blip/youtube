@@ -599,16 +599,11 @@ def main(argv: list[str] | None = None) -> int:
         print("[pool] **外すものはありません。**（池化は済んでいます）", flush=True)
         return 0
     # **暦に穴が空いている間は、池化のほうが後です**（2026-09-02 01:0x に足した）。
-    # 詳しくは `_calendar_hold()` の註。**API 0単位**。
+    # 詳しくは `_calendar_hold()` の註。**API 0単位。数えるだけの回にも出します**
+    # —— 撃つ前に順番が見えていないと、次の回がまた同じ順で撃ちます。
     hold = _calendar_hold()
-    if hold:
-        for line in hold:
-            print(line, flush=True)
-        if args.apply and not args.despite_gap:
-            print("[pool] **この回は外しません。**"
-                  " 承知のうえで撃つなら `--despite-gap`"
-                  "（**理由を JOURNAL に書くこと**）。", flush=True)
-            return 0
+    for line in hold:
+        print(line, flush=True)
     if not args.apply:
         print("[pool] **数えただけです**（API 0単位）。撃つには `--apply`。", flush=True)
         return 0
@@ -638,6 +633,16 @@ def main(argv: list[str] | None = None) -> int:
                       " —— 単位が理由なら、窓が変わった回に"
                       f" `python scripts/refresh_thumbnail.py --missing --video {first}`",
                       flush=True)
+
+    # **止めるのはここ ——「外す」だけです**（2026-09-02）。
+    # サムネイル（50単位）はこの門より前に置いてあります。あれは §4 がいちばん高い
+    # 50単位 と呼んでいる手で、**暦の穴とは関係がありません**。
+    # ここで止めるのは `videos.update`（外す・107本ぶん）のほうだけです。
+    if hold and not args.despite_gap:
+        print("[pool] **この回は外しません。**"
+              " 承知のうえで撃つなら `--despite-gap`"
+              "（**理由を JOURNAL に書くこと**）。", flush=True)
+        return 0
 
     svc = uploader._service()
     # **控えで示せた本だけがここに来ています**（`pool()`）。だから
