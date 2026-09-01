@@ -44,8 +44,9 @@
 """
 from __future__ import annotations
 
+import math as _math
 import re as _re
-from datetime import date as _date
+from datetime import date as _date, timedelta as _timedelta
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -309,8 +310,24 @@ def needs_beyond_rule(what: str, on_date: str, today: str | None = None) -> dict
     counts = [int(x) for x in _COUNT.findall(text)]
     named = [n for n in counts if n > allowed]
     if named:
-        return {"named": max(named), "allowed": float(allowed),
-                "kind": "total", "on_date": str(on_date)[:10]}
+        want = max(named)
+        # **「届きません」で止めないこと。** どこまで動かせば届くかを、
+        # 同じ返りに入れます（2026-09-02 に足した）—— これが無いと、
+        # 次に来た回が毎周 同じ引き算をやり直します（実測: 09/01 と 09/02 の
+        # 2回が、同じ2件で同じ計算をしています）。
+        #
+        # **規則は 1日 N本 なので、`want` 本 積むのに要るのは
+        # `ceil(want / PUBLISH_PER_DAY)` 日**。それを今日に足したのが、
+        # 要件が満ちる最初の日（`need_on_date`）です。
+        # **期限そのものは、そこへ実データの遅れを足した日より後**に置くこと
+        # —— 遅れの日数はここでは測れないので（`src/settle.py` の持ち物）、
+        # **足す前の日を返します。呼ぶ側が遅れを足すこと。**
+        need_days = int(_math.ceil(want / float(PUBLISH_PER_DAY)))
+        return {"named": want, "allowed": float(allowed),
+                "kind": "total", "on_date": str(on_date)[:10],
+                "need_days": need_days,
+                "need_on_date": str(d0 + _timedelta(days=need_days)),
+                "short_days": need_days - (d1 - d0).days}
     return None
 
 
@@ -391,6 +408,23 @@ def unreachable_lines(rows, today: str | None = None) -> list[str]:
         out.append(f"  [!] {h['deadline']}  {h['claim'][:52]}")
         out.append(f"        {why}")
         out.append(f"        要件: {h['what'][:100]}")
+        # **どこまで動かせば届くかを、同じ所に出します**（2026-09-02 に足した）。
+        # 「届きません」だけを出すのは、`CLAUDE.md` が `eta.py` について
+        # 「**裸の『届きません』を出さないこと**」と書いているのと同じ形です。
+        if h["kind"] == "per_day":
+            out.append("        → **期日をいくら延ばしても届きません。**"
+                       " 規則そのものを超える本数を名指ししているので、"
+                       "**書き直すのは要件のほう**です（1日1本 で言える形へ）")
+        else:
+            out.append(f"        → **{h['short_days']}日 足りません。**"
+                       f" `on_date` を **{h['need_on_date']}** 以降にすれば、"
+                       f"規則の 1日1本 で {h['named']}本 に届きます"
+                       f"（今日から {h['need_days']}日）。"
+                       f"**`deadline` は、そこへ実データの遅れを足した日より後**に置くこと")
+            out.append("        [!] **この日数は「規則どおり毎日1本 出た場合」です。**"
+                       " 予約の暦に穴があるあいだは、この日も来ません ——"
+                       " §1 の `[暦]` が鳴っていたら、**先にそちらを埋めること**"
+                       "（`scripts/reschedule.py --compact`）")
     return out + win
 
 

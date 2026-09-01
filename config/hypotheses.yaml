@@ -6750,12 +6750,18 @@ hypotheses:
     # **期限は 10-01 ではなく 10-04**（`tests/test_deadline_check.py` が赤くした）——
     # `on_date: 2026-10-01` に実データの遅れ 3日 が乗るので、判定できるのは 10-04。
     # **判定できる日より前に期限を置かないこと。**
-    deadline: "2026-10-05"
+    #
+    # **2026-09-02 に 10-01 → 10-02 / 10-05 → 10-06 へ1日 送りました。**
+    # 理由と「送り直す前に見ること」は、すぐ上の `day_cap.live_ids()` の前提と同じです
+    # —— **09/01 に1本も公開されなかったぶん、要件が 1日 足りなくなりました。**
+    # **これは毎日 腐ります。正しい手は暦の穴を埋めることです**
+    # （`scripts/reschedule.py --compact --apply`）。
+    deadline: "2026-10-06"
     lever: per_video
     side: dist
     needs:
       - kind: after
-        on_date: "2026-10-01"
+        on_date: "2026-10-02"
         plus_lag: true
         data_file: "data/views.jsonl"
         refresh: "python scripts/snapshot.py"
@@ -6851,12 +6857,24 @@ hypotheses:
     opened_on: "2026-09-01"
     # 判定できる日 ＝ 09/01 から 1日1本 で 20本 ＝ 09/21、＋落ち着き4日 ＋遅れ3日。
     # **判定できる日より前に期限を置かないこと**（`tests/test_deadline_check.py`）。
-    deadline: "2026-09-25"
+    #
+    # **2026-09-02 に 09-21 → 09-22 / 09-25 → 09-26 へ1日 送りました。**
+    # 立てた 09/01 の時点では届く要件でしたが、**09/01 に1本も公開されなかった**ので
+    # （予約の暦に 20日 の穴。§1 の `[暦]`）、**1日ぶん 足りなくなりました。**
+    # `src/house_rule.unreachable_lines()` が「**1日 足りません。`on_date` を
+    # 2026-09-22 以降にすれば届きます**」と名指ししたので、そのとおりに送っています
+    # （直し方 (1)「要件を 1日1本 で届く形へ書き直す」）。
+    #
+    # **これは毎日 1日ずつ 腐ります** —— 穴が埋まるまで、公開の無い日が来るたびに
+    # また 1日 足りなくなります。**送り直すのが正しい手ではありません。**
+    # **正しい手は暦の穴を埋めること**（`scripts/reschedule.py --compact --apply`・
+    # 枠が戻る 09/02 16:00 JST）。**3回目を送る前に、暦を先に見ること。**
+    deadline: "2026-09-26"
     lever: per_video
     side: infra
     needs:
       - kind: after
-        on_date: "2026-09-21"
+        on_date: "2026-09-22"
         plus_lag: true
         data_file: "data/scan.jsonl"
         refresh: "python -m src.scan"
