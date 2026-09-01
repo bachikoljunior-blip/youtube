@@ -621,9 +621,64 @@ def _anchors() -> list[dict]:
 
 
 #: **実際に走った回が1行ずつ残る台帳**（`scripts/run_marker.py` が書く）。
-#: `data/quota.jsonl` は `list_sessions` の返りを写した回にしか誕生が入らないので、
-#: **誕生の本数はこちらのほうが実物に近い**（下の `_births_between()` の註）。
+#: 1行ごとの `session` は**サブ1体**で、**1周ではありません**（下の註）。
 RUNS_LOG = ROOT / "data" / "runs.jsonl"
+
+#: **親が「1周 立てた」と記録する台帳**（`scripts/next_round.py --record` が書く）。
+#: `decide()` が待ち時間を測る単位はこの `round` なので、**間隔の分母もこれ**。
+ROUNDS_LOG = ROOT / "data" / "rounds.jsonl"
+
+
+def _laps_between(start: datetime, end: datetime) -> int:
+    """`start`〜`end` に立った**周**の数（`rounds.jsonl` の `round` の別数）。
+
+    ## **単位を間違えると、そのぶんまるごと速く回ります**（2026-09-01）
+
+    `pace()` の `floor_min` を読むのは `next_round.decide()` で、あちらは
+    **「前の周の開始から何分」**を `floor` と比べます ＝ **周から周**です。
+    ところが `per_lap` の分母は長らく**サブの誕生数**でした。実測::
+
+        枠 08/29 07:00 → 09/01 11:55 JST   周 **48**／サブ **109**  → 1周に 2.27体
+        直近の区間 08/31 17:26 →           周 **21**／サブ  **55**  → 1周に 2.62体
+
+    **1周は 2〜3体 立ちます**（`next_round.ROLES` が hourly と optimizer の
+    2つ、そこから孫が出ることもある）。サブ単位の `per_lap` を周単位の門に
+    渡していたので、**間隔は 2.6倍 短い側**に出ていました。
+
+    実測（この回・区間 +20%）::
+
+        サブ単位  20% ÷ 55体 = 0.364% → 174分
+        周単位    20% ÷ 21周 = 0.952% → **456分**   ← `decide()` が要るのはこちら
+        実際の間隔 18.5時間 ÷ 21周 = **53分**（＝ **8.6倍 速い**）
+
+    **数え落としは安全側です。** 周を数え落とすと `per_lap` は過大 → 間隔は
+    長くなります。だから足りないときは**サブ数へ落ちません**（サブ数は必ず
+    周数より多く、`per_lap` を小さく ＝ **速すぎる側**に倒します）。
+
+    **覆る条件**: `decide()` が待ちを周ではなくサブで測るようになったら、
+    分母もサブへ戻すこと。検査は `tests/test_quota_births_from_runs.py`。
+    """
+    if not ROUNDS_LOG.exists():
+        return 0
+    seen: set[str] = set()
+    try:
+        lines = ROUNDS_LOG.read_text(encoding="utf-8").splitlines()
+    except Exception:                                          # noqa: BLE001
+        return 0
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            row = json.loads(line)
+        except Exception:                                      # noqa: BLE001
+            continue
+        at = _parse_iso(row.get("at"))
+        if not at or not (start <= at <= end):
+            continue
+        # `round` が無い古い行は、その行自体を1周として数える（時刻で代用）。
+        seen.add(str(row.get("round") or row.get("at")))
+    return len(seen)
 
 
 def _births_from_runs(start: datetime, end: datetime) -> int:
@@ -656,30 +711,30 @@ def _births_from_runs(start: datetime, end: datetime) -> int:
 def _births_between(rows: list[dict], start: datetime, end: datetime) -> int:
     """`start`〜`end` に生まれたセッションの数。**セッションごとに1回だけ数える。**
 
-    ## **`quota.jsonl` だけでは、ほとんど数えられていませんでした**
-    ##（2026-09-01・最適化の回に撃って足した）
+    ## **分母は「周」です。`quota.jsonl` はそれをほとんど数えていませんでした**
+    ##（2026-09-01・最適化の回に撃って直した）
 
     `quota.jsonl` に誕生が入るのは、**誰かが `list_sessions` の返りを
     `--ingest` で写した回だけ**です。それは毎周ではありません。実測::
 
         枠 08/29 07:00 → 09/01 11:55 JST（76.9時間・使用 73%）
-          `quota.jsonl` から数えた誕生 …… **2件**   → 1周 **36.500%**
-          `data/runs.jsonl` の別セッション …… **109件** → 1周 **0.670%**
+          `quota.jsonl` の誕生 …… **2件**  → 1周 36.500% → 生の間隔 289.7時間
+          `rounds.jsonl` の周  …… **48件** → 1周  1.521% → 生の間隔  12.1時間
 
-    **×54 の食い違い**です。上の註は「数え落とせば1周は過大に出て、
-    間隔は**安全側（長め）**に振れる」と書いていましたが、**振れませんでした** ——
-    過大な 1周 が出した 289.7時間 を `FLOOR_MAX_CLAMP` が 90分 へ叩き落とし、
-    **真値 173分 より 1.9倍 速い側**に着地していたからです
-    （区間で数えると 55件・+20% → 1周 0.364% → **173分**）。
-    **「安全側に振れる」は、歯止めが無いときにだけ正しい文でした。**
+    **数え落とし自体は安全側です**（分母が小さい ＝ 1周が過大 ＝ 間隔が長い）。
+    **危なかったのは、そのあと `FLOOR_MAX_CLAMP` が 289.7時間 を 90分 へ
+    叩き落としていたこと**で、`next_round.py` はそれを
+    `間隔 90分（quota.py の実測）` と印字していました —— **90 は定数**です。
+    周単位で数え直した真値は **459分**（直近の区間・21周で +20%）なので、
+    **鎖は 5.1倍 速い側で回っていました。**
 
-    だから**両方を数えて、多いほうを採ります。** 多いほうを採るのは、
-    誕生を数え落とすと 1周 が過大 ＝ **走ってよい速さを過大に見積もる**側に
-    出るからです（`runs.jsonl` にも、印を残す前に死んだ回は入りません。
-    それでも `quota.jsonl` の 2件 よりは実物に近い）。
+    だから**周が数えられるならそれを採り、駄目なときだけ `quota.jsonl` へ
+    落ちます**（`_laps_between()`）。**サブの誕生数（`runs.jsonl`・109件）へは
+    落ちません** —— 1周に 2〜3体 立つので、あれを分母にすると `per_lap` が
+    小さくなり、**速すぎる側**へ倒れます。
 
-    **覆る条件**: `run_marker.py` が `session` を書かなくなったら、
-    ここは 0 を返して元の `quota.jsonl` の数へ戻ります
+    **覆る条件**: `next_round.py` が `--record` を書かなくなったら、
+    `_laps_between()` が 0 を返して元の `quota.jsonl` の数へ戻ります
     （検査は `tests/test_quota_births_from_runs.py`）。
     """
     seen = {}
@@ -688,7 +743,10 @@ def _births_between(rows: list[dict], start: datetime, end: datetime) -> int:
         if sid and born and sid not in seen:
             seen[sid] = born
     from_quota = sum(1 for b in seen.values() if start <= b <= end)
-    return max(from_quota, _births_from_runs(start, end))
+    # **周が数えられるなら、それが分母**（`_laps_between()` の註）。
+    #     数えられない回だけ `quota.jsonl` の誕生へ落ちます —— あれも数え落とし
+    #     ますが、**数え落としは間隔を長くする側**なので、鎖は速くなりません。
+    return _laps_between(start, end) or from_quota
 
 
 def pace(now: datetime | None = None) -> dict | None:
@@ -716,6 +774,8 @@ def pace(now: datetime | None = None) -> dict | None:
     used = float(a["used_percent"])
     rows = _load()
     births = _births_between(rows, start, at)
+    # **1周に何体 立っているか**（診断。分母には使いません —— `_laps_between()` の註）。
+    subs = _births_from_runs(start, at)
 
     rate = used / hours                       # %/時（枠の頭からの通算）
     per_lap_cum = used / births if births else None
@@ -824,7 +884,8 @@ def pace(now: datetime | None = None) -> dict | None:
         "window_start": win_start, "window_reset": win_reset,
         "gauge_window_start": start, "gauge_window_reset": resets,
         "rolled": rolled,
-        "hours": hours, "births": births,
+        "hours": hours, "births": births, "subs": subs,
+        "subs_per_lap": (subs / births) if births else None,
         "rate": rate, "per_lap": per_lap, "per_lap_cum": per_lap_cum,
         "seg": seg, "seg_weight": weight,
         "forward_rate": forward_rate, "left_hours": left_hours,
@@ -980,9 +1041,13 @@ def pace_report(now: datetime | None = None) -> None:
                   f"区間 {seg['per_lap']:.3f}%（{seg['births']}周）"
                   f" → 区間に **{p['seg_weight']:.0%}** 寄せて **{p['per_lap']:.3f}%**")
         else:
-            print(f"    {p['hours']:.1f}時間で誕生 {p['births']} 件 "
+            print(f"    {p['hours']:.1f}時間で **{p['births']}周** "
                   f"→ **1周 {p['per_lap']:.3f}%**")
-        print(f"    持続できる間隔（誕生から誕生）: **{p['floor_min']:.0f}分**")
+        print(f"    持続できる間隔（**周から周**）: **{p['floor_min']:.0f}分**"
+              + (f"   ＊分母は周 {p['births']}件（サブは {p['subs']}体 ＝ "
+                 f"1周に {p['subs_per_lap']:.2f}体。**サブを分母にすると "
+                 f"{p['subs_per_lap']:.1f}倍 速い側へ倒れます**）"
+                 if p.get("subs_per_lap") else ""))
         if p.get("floor_clipped") == "max" and p.get("floor_raw"):
             print(f"      [!] **これは測った数ではありません** —— 測って出たのは "
                   f"**{p['floor_raw']:.0f}分**（{p['floor_raw'] / 60:.1f}時間）で、"
