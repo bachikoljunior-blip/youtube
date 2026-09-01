@@ -1983,6 +1983,16 @@ def _check_yomi(script: dict | None) -> list[str]:
     for i, seg in enumerate(script.get("segments", [])):
         for why in remaining_risks(str(seg.get("narration") or "")):
             problems.append(f"セグメント{i + 1} の読みが直っていない（{why}）")
+    # **2026-09-02: ここまでが「並べた語だけ」の門でした。**
+    # オーナー原文（固定その3）は「ナレーションの漢字の読み方**全部**正しくして」。
+    # `BROKEN_SHAPES` は 1語（裸の「額」）しか見ておらず、
+    # **公開ずみ 694本 に出る漢字のかたまり 3,514語 のうち 0.03%** です。
+    # `src/yomi_gate` は語の一覧を持たず、**読み上げに出る漢字を全部**
+    # 形態素解析にかけて形で判定します。**止めるのは証拠のあるものだけ**
+    # （R0 音から消えた字／R3 耳で誤読と実測ずみ）——
+    # 疑い（R1/R2）で止めると、実測で**公開ずみ 31本 が 31本とも**止まりました。
+    from . import yomi_gate
+    problems += yomi_gate.problems(script)
     return problems
 
 
