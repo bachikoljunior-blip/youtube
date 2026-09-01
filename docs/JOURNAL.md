@@ -95076,3 +95076,20 @@ API 0単位・`scripts/retro.py` の中だけで閉じます。
 **残っているのは n の小ささだけ**（門の後は 12件）。
 `FIX_RUN_CAP` の覆る条件2 は「66.7% を十分に下回って 30日 続いたら外す」なので、
 **次に来た側は、手で数えず `run_marker.fix_share()` を撃つこと。**
+
+##### 追記: **残った赤2件は、この回の変更ではありません**（切り分けて確かめた）
+
+    -k "upload or publish or uploader or slot or channel_yaml or config or reschedule or day_cap"
+    **408 passed / 2 failed**（80.8秒）
+
+    FAILED tests/test_live_slots.py::test_全部逃がす手は生きている本を増やす
+    FAILED tests/test_queue_lag_publish_cap.py::test_上限が1本になると床の答えが反転する
+
+**確かめ方**: `config/hypotheses.yaml` をこの回の前提を足す前の版に戻して
+撃ち直したら、**2件とも同じ形で赤いまま**（22 passed / 2 failed）。
+前者は 2026-09-01 の日誌に既出（「規則2 を外しても赤いまま」）。
+`live_slots` / `queue_lag` / `day_cap` は `publish_hour_jst` を1度も読みません
+（grep 0件）。
+
+**この回が触った `.py` は 2件**（`src/publish_hour.py`（新）・`scripts/slot_gate.py`）。
+**全体（16分）は撃っていません** —— 触った所から離れた壊れ方は、この選択では見えません。
