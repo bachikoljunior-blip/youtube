@@ -28,14 +28,38 @@ A と B が近ければ2つのエンジンは一致、離れていれば**割れ
 **中央値 + 3×MAD** を超えた語を `misread` にする。基準は `data/yomi_ledger.json`
 に一緒に書き込むので、後の回が同じ目盛りで読める。
 
-**この回に確かめた予測**: オーナーが耳で見つけた「額」は、この目盛りで
-外れ値の側に落ちるはず。落ちなければ**この測り方が間違っている**（下の覆る条件）。
+## 目盛りの検算（2026-09-02 に**実際に撃った数**。写しではない）
+
+    危ない語 17語の分布         中央値 0.256 / MAD 0.035 → 目盛り 0.361
+    額（既知の誤読・raw）        **0.489**  ← 目盛りの上。**予測どおり外れ値に落ちた**
+    賃金（正しく読めている）      0.373     ← わずかに上（**取りこぼしではなく空振り**）
+    実際（正しく読めている）      0.303     ← 下
+
+同じ文を旧 `probe_yomi.py`（候補つき）で測ると
+**ひたい 0.319 対 がく 0.463** —— **2026-09-02 のいまも Google は「ひたい」と読む。**
+つまりこの誤読は 2026-08-16 の置換で**隠してあるだけ**で、消えてはいない。
+
+**空振りの側は安い**（その語が耳の待ち行列に1つ増えるだけ）が、
+**取りこぼしは動画に残る**。オーナーは「読みの誤りは1つも許されません」と言っている
+（`CLAUDE.md` 固定その3）。だから既定は**拾いすぎる側**（3×MAD）に置いてある。
 
 **覆る条件**:
-  - 「額」が外れ値に落ちない → 距離の作り方（`probe_yomi.feats`）が読みの違いに
-    反応していない。フレーム長・帯域数を変えて測り直すこと。
   - `misread` にした語を `probe_yomi.py --text ... --candidates ...` で
-    追試して、実際には正しく読めていた → 目盛りが厳しすぎる（3×MAD を上げる）。
+    追試して、9割が正しく読めていた → 目盛りが厳しすぎる（`--sigma` を上げる）。
+  - 逆に、耳で誤読と分かった語がここの目盛りの下に居た → 距離の作り方
+    （`probe_yomi.feats`）が読みの違いに反応していない。帯域数を変えて測り直すこと。
+
+## **距離は「割れている」までしか言わない。どちらが正しいかは言わない**
+
+2026-09-02 の実測で両方向が出た:
+
+    額  open-jtalk ガク が正しく、Google の ヒタイ が誤り
+    年  open-jtalk トシ が誤りで、Google の ネン が正しい（「年15万円」の文脈）
+
+**だから `verdict: misread` だけでは自動置換しない。**
+向きを確かめて `correct` の欄を埋めた語だけが `src/yomi.to_speech()` に載る
+（`src/yomi_gate.corrections()`）。向きの確認は
+`probe_yomi.py --text <文> --word <語> --candidates <読み> <読み>`。
 """
 from __future__ import annotations
 
@@ -77,11 +101,15 @@ def sentences_for(word: str, cap: int = 1) -> list[str]:
     return out
 
 
-def distance(sentence: str, word: str, kana: str) -> float:
-    """A（そのまま）と B（その語だけ open-jtalk の読みに置換）の音の距離。"""
+def distance(sentence: str, word: str, kana: str, raw: bool = False) -> float:
+    """A（そのまま）と B（その語だけ open-jtalk の読みに置換）の音の距離。
+
+    `raw=True` は `to_speech()` の置換を通さない。**目盛りの検算専用** ——
+    既に直っている語（「額」）を、直す前の姿で測って外れ値に落ちるか見るため。
+    """
     from scripts.probe_yomi import dtw, feats, synth
 
-    spoken = to_speech(sentence)
+    spoken = sentence if raw else to_speech(sentence)
     if word not in spoken:
         raise LookupError(word)
     swapped = spoken.replace(word, kana, 1)
@@ -100,6 +128,8 @@ def main() -> int:
     ap.add_argument("--word")
     ap.add_argument("--report", action="store_true")
     ap.add_argument("--sigma", type=float, default=3.0, help="中央値 + この数×MAD で切る")
+    ap.add_argument("--raw", action="store_true", help="to_speech() を通さずに測る（目盛りの検算用）")
+    ap.add_argument("--dry", action="store_true", help="台帳に書かない")
     args = ap.parse_args()
 
     if args.report:
@@ -130,14 +160,14 @@ def main() -> int:
             continue
         sent = sents[0]
         try:
-            toks = G.analyze(to_speech(sent))
+            toks = G.analyze(sent if args.raw else to_speech(sent))
         except RuntimeError:
             continue
         kana = next((t["pron"] for t in toks if t["surface"] == w and t["pron"] not in G._SILENT), "")
         if not kana:
             continue
         try:
-            d = distance(sent, w, kana)
+            d = distance(sent, w, kana, raw=args.raw)
         except Exception as exc:            # 通信・音の失敗はその語を飛ばす（黙って通さない）
             print(f"   -- {w}: 測れず {type(exc).__name__}", flush=True)
             continue
@@ -152,6 +182,9 @@ def main() -> int:
     med = _median(ds)
     mad = _median([abs(d - med) for d in ds]) or 1e-6
     cut = med + args.sigma * mad
+    if args.dry:
+        print(f"\n[ear] --dry: 台帳に書きません（中央値 {med:.3f} / MAD {mad:.3f} / 目盛り {cut:.3f}）")
+        return 0
     prev = json.loads(LEDGER.read_text(encoding="utf-8")) if LEDGER.exists() else {}
     store = prev.get("words", {})
     for r in rows:

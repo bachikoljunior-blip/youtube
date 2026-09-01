@@ -105,9 +105,28 @@ BROKEN_SHAPES: list[tuple[str, str]] = [
 
 
 def to_speech(text: str) -> str:
-    """TTS に渡す直前の文字列を作る。**字幕・画面・説明欄には絶対に使わない。**"""
+    """TTS に渡す直前の文字列を作る。**字幕・画面・説明欄には絶対に使わない。**
+
+    2つの層が順に当たる:
+
+      1. `FIXES` …… 人が書いた置換。**ここに語を足していく形はもうやめる**
+         （オーナー原文・`CLAUDE.md` 固定その3「漢字の読み方**全部**正しくして」）
+      2. `data/yomi_ledger.json` …… **耳が実測で誤読と判定し、
+         正しい読みまで確かめた語**。`scripts/yomi_ear.py` が積む。
+         **語の一覧を人が書かずに増える**のはこちら側。
+
+    **距離が離れているだけの語は、ここに入りません**（`yomi_gate.corrections()`）
+    —— どちらのエンジンが正しいかは距離では決まらないので、
+    `correct` の欄まで埋まった語だけが自動置換されます。
+    """
     for fix in FIXES:
         text = fix.apply(text)
+    try:
+        from .yomi_gate import corrections
+        for word, kana in corrections().items():
+            text = text.replace(word, kana)
+    except Exception:                       # 台帳が読めなくても読み上げは止めない
+        pass
     return text
 
 
