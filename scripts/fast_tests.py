@@ -51,7 +51,50 @@ ROOT = Path(__file__).resolve().parent.parent
 
 #: **どの回でも撃つ芯。** 目標の判断に直で効く道具（到達予測・腕・合否の数え方）で、
 #: ここが赤いと**その回の判断そのものが狂います**。触っていなくても撃つこと。
-CORE = ("eta", "levers", "arm_speed", "drift")
+#
+# ## 台帳の門を足した理由（2026-09-01・最適化の回。**赤が押される所まで通った**）
+#
+# 下の `keywords()` は `.py` 以外を1件も `-k` に入れません。ところが
+# **`premise` の回が触るのは `config/hypotheses.yaml` ただ1つ**です ——
+# 実測（`scripts/retro.py`・直近8回）: **premise 3件（37%）**。
+# つまり **ship の 37% は、その変更を見ている検査が1つも選ばれないまま押されます。**
+# 画面には「この回が触った .py: N件」としか出ないので、
+# **触った `.yaml` が無防備だったことは、撃った側にも見えませんでした。**
+#
+# 実際に通りました —— 2026-09-01 に立った前提が `CHECKABLE`／`UNCHECKABLE` の
+# どちらにも入らないまま押され、`tests/test_hypothesis_deadline_reachable.py` が
+# 赤のまま枝に載りました（見つけたのは、その 40分 後に全件を撃った回）。
+#
+# **道を名指しして選ぶ道は採りませんでした** —— `config/hypotheses.yaml` を
+# 名指ししている `tests/test_*.py` は **71件** あり、その中には
+# 絵を焼く重い検査（`test_contact_sheet_padding` など）が入っていて**遅い**。
+# 台帳を**ついでに読んでいるだけ**の検査まで拾ってしまいます。
+#
+# **代わりに、台帳の「形」を見ている検査を芯に入れます。** 実測 2026-09-01 ——
+# **同じ1件の前提が、3つの門を同時に赤くしていました**（どれも別の欠け方）:
+#
+#     tests/test_hypothesis_deadline_reachable  CHECKABLE/UNCHECKABLE のどちらにも無い
+#     tests/test_settle                          settle_days: 2（実測は 4日）
+#     tests/test_watches                         数の門を書いたのに watch: が無い
+#
+# **1つ塞いでも、残り2つで赤いままです。** だから語を1つに絞れません:
+#
+#     語を 6つ（…dead_arm まで）        281件・**22.8秒** → 3つのうち **1つ**しか捕まえない
+#     ＋ settle / watches               338件・**66.1秒** → **2つ**
+#     ＋ judgeable                      355件・**71.8秒** → **3つとも**  ← これを採った
+#     道で選ぶ（`config/hypotheses.yaml` を名指しする 71件）
+#                                       704件・**219.2秒** ＝ **3.1倍 遅くて、同じ3件**
+#     全件（`--all`）                 2,346件・**386.6秒**
+#
+# **`judgeable` は +5.7秒 で1件 増やします。** 入れない理由がありません。
+#
+# **覆る条件**: 芯が重くなって（目安 **2分**）誰も撃たなくなったら、そこで割ること
+# —— **16分 かかるから誰も撃たない、が赤を何日も残した原因**です
+# （下の `--all` の註と同じ理由）。**そのつど撃って測ること。上の数を写さないこと。**
+CORE = ("eta", "levers", "arm_speed", "drift",
+        # --- 台帳（`config/hypotheses.yaml`）の形を見ている門（上の註） ---
+        "hypothes", "premise", "unreachable", "house_rule",
+        "dead_ledger", "dead_arm", "settle", "watches", "judgeable")
 
 #: 比べる相手の既定。**幹の名前をここに書き写しています** —— 変わったら直すこと
 #: （`--base` で上書きできます）。
@@ -310,6 +353,20 @@ def main(argv: list[str] | None = None) -> int:
 
     print(f"[fast_tests] この回が触った .py: {len(words)}件"
           + (f" —— {'／'.join(words)}" if words else "（無し）"))
+    # **落としたものを黙って落とさないこと**（2026-09-01・最適化の回）。
+    #     `keywords()` は `.py` 以外を1件も `-k` に入れません。**それ自体は
+    #     変えていません**（道で選ぶと重い検査まで来る。`CORE` の註）が、
+    #     **落としたことが画面に出ないのが欠陥でした** —— `premise` の回は
+    #     `config/hypotheses.yaml` しか触らないので、毎回「触った .py: 0件」に
+    #     見え、**何が無防備なのかを撃った側が言えませんでした。**
+    other = [f for f in files if not f.endswith(".py")]
+    if other:
+        print(f"[fast_tests] この回が触った .py 以外: {len(other)}件"
+              f" —— {'／'.join(other)}")
+        print("[fast_tests]   **これらは `-k` に入りません**（ファイル名から"
+              "検査の名前は出ないため）。`config/hypotheses.yaml` の形だけは"
+              "**芯**が見ています（`CORE` の註）。**それ以外の `.yaml` /"
+              " `.jsonl` を触った回は、`--all` を撃つこと。**")
     print(f"[fast_tests] 芯（毎回撃つ）: {'／'.join(CORE)}")
     print(f"[fast_tests] -k: {' or '.join(picked)}")
     if not words:
