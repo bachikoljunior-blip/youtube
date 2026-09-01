@@ -427,17 +427,197 @@ def swap_cost_lines(now: datetime | None = None,
     ]
 
 
+#: **予約の暦を規則と突き合わせる窓の上限**（日）。
+#: これより先は、まだ作っていない本のほうが多いので数えません。
+CALENDAR_DAYS = 120
+
+
+def calendar(now: datetime | None = None,
+             path: Path | None = None) -> dict:
+    """**予約の実物が、模型の前提（1日1本）を守っているか。**（**API 0単位**）
+
+    ## なぜ要るか（2026-09-01 夜・最適化の回。**この穴には名前がありませんでした**）
+
+    `scripts/eta.py` の到達日は **`PLAN_PUBLISH_PER_DAY = 1`（規則1）で解いています。**
+    そして `physical_caps()` は `density` の腕をこう止めます ——
+    「**規則 1本/日 ÷ いま続けられる 1.0本/日 ＝ ×1.00 ＝ 引き代なし**」。
+
+    **その分母は「続けられるか」（供給の能力・`sustained_density()`）であって、
+    「実際に予約に入っているか」ではありません。** 実測 2026-09-01 20:0x
+    （`data/uploaded.jsonl` を `video_id` ごとに畳んで JST の日で数えた）:
+
+        09/01  1本      09/03  **0本**
+        09/02  1本      **09/05 〜 09/23 の 19日、1本も予約が入っていません**
+        09/04  1本      09/24 から先は 1日 7〜13本（規則の 7〜13倍）
+
+    **今後23日のうち20日が空**で、実際の密度は **0.13本/日**。
+    模型は 1.0本/日 で解いているので、**到達日はその差のぶん早すぎます。**
+    そして腕の側は「規則に張り付いている＝引き代なし」と名乗ります ——
+    **張り付いているのは模型の前提のほうで、機械はその 1/7 しか出していません。**
+
+    `src/house_rule.py` が名指ししている、この repo でいちばん多い壊れ方
+    （「**言っている所と、している所が別**」）の、暦の側の実例です。
+
+    **`scripts/queue_lag.py` は見つけられません** —— あちらの入れ替えは
+    **(日,時刻) の集合を1つも変えない**ので（自分でそう書いています）、
+    **空いている日は最初から視野の外**です。実測: 同じ時刻に撃った
+    `queue_lag.py --plan` は「合計 **0日**／入れ替え **0手**」でした。
+
+    ## 直す手（**新しい本は1本も要りません。もう予約に在る本を前へ倒すだけ**）
+
+        python scripts/reschedule.py --compact          # 割り当てだけ・**0単位**
+        python scripts/reschedule.py --compact --apply  # 1本 50単位（`videos.update`）
+
+    `--compact` の `--per-day` は `_measured_per_day()` が
+    `src/house_rule.py` から 1 を読むので、**詰めた先は自動で 1本/日**です
+    （実測 2026-09-01: 26本 を 09/03〜09/27 へ 1日1本 で並べる案が出ました）。
+
+    ## 覆る条件
+
+    - **控えは実物とずれることがあります**（`src/ledger_truth.py`・2026-09-01 に
+      「実物に予約が在るのに控えは無い」口が4つ 見つかっています）。
+      **空だと出たら、撃つ前に `scripts/reschedule.py --list`（50単位）で確かめること。**
+    - オーナーが 1日1本 を自分の言葉で外したら、`house_rule` 経由で自動に緩みます
+    - 予約が1本も無い回は何も言いません（`total` が 0 なら `calendar_lines()` は空）
+    """
+    t = now or datetime.now(timezone.utc)
+    try:
+        from src import house_rule                            # noqa: PLC0415
+        rule = max(1, int(house_rule.PUBLISH_PER_DAY))
+    except Exception:                                          # noqa: BLE001
+        rule = 1
+    latest: dict[str, dict] = {}
+    for r in _rows(path):
+        vid = r.get("video_id")
+        if vid:
+            latest[str(vid)] = r
+    per_day: dict[str, int] = {}
+    for r in latest.values():
+        at = _parse(r.get("at"))
+        if at and at > t:
+            key = at.astimezone(JST).strftime("%Y-%m-%d")
+            per_day[key] = per_day.get(key, 0) + 1
+    out: dict = {"rule": rule, "total": sum(per_day.values()), "per_day": per_day,
+                 "empty": 0, "run": 0, "run_from": None, "over": [],
+                 "days": 0, "last": None, "density": 0.0}
+    if not per_day:
+        return out
+    out["last"] = max(per_day)
+    # **今日は数えません**（2026-09-01 に踏んだ）。控えは `at` が未来の行しか
+    #     残さないので、**今日ぶんが公開されたあとの今日は、必ず「空」に見えます。**
+    #     偽陽性で毎周 鳴る画面は、次に来た側が読み飛ばします。数えるのは明日から。
+    start = t.astimezone(JST).date() + timedelta(days=1)
+    end = datetime.strptime(out["last"], "%Y-%m-%d").date()
+    span = min((end - start).days + 1, CALENDAR_DAYS)
+    if span <= 0:
+        return out
+    run = 0
+    got = 0
+    for i in range(span):
+        key = (start + timedelta(days=i)).strftime("%Y-%m-%d")
+        n = per_day.get(key, 0)
+        got += n
+        out["days"] += 1
+        if n == 0:
+            out["empty"] += 1
+            run += 1
+            if run > out["run"]:
+                out["run"] = run
+                out["run_from"] = (start + timedelta(days=i - run + 1)).strftime("%Y-%m-%d")
+        else:
+            run = 0
+            if n > rule:
+                out["over"].append((key, n))
+    out["density"] = got / float(out["days"]) if out["days"] else 0.0
+    # **平均は、後ろの作り置きに持ち上げられます**（2026-09-01 に踏んだ）。
+    #     実測の1発目は「39日の平均 2.77本/日 ＝ 規則の 277%」と出ました ——
+    #     **19日 連続で空なのに「規則より多い」と読める形**です。
+    #     縛っているのは**空白が終わるまでの窓**なので、そこを別に出します。
+    if out["run"] and out["run_from"]:
+        near_end = (datetime.strptime(out["run_from"], "%Y-%m-%d").date()
+                    + timedelta(days=out["run"] - 1))
+        near_days = (near_end - start).days + 1
+        if near_days > 0:
+            near_got = sum(per_day.get((start + timedelta(days=i)).strftime("%Y-%m-%d"), 0)
+                           for i in range(near_days))
+            out["near_days"] = near_days
+            out["near_density"] = near_got / float(near_days)
+            out["near_until"] = near_end.strftime("%Y-%m-%d")
+    return out
+
+
+def _calendar_quota_lines(t: datetime) -> list[str]:
+    """暦を直す手が**この窓で撃てるか**。枠が読めない回は黙ります（推測で止めないため）。"""
+    try:
+        from src import quota_ledger, upload_cap              # noqa: PLC0415
+        used = int(quota_ledger.spent(t).get("data") or 0)
+        cap = int(quota_ledger.DAY_UNITS)
+        back = upload_cap.window_end(t)
+    except Exception:                                          # noqa: BLE001
+        return []
+    if used < cap:
+        return [f"       枠は在ります（{used:,} / {cap:,}単位）"]
+    return [f"       [!] **この窓では 403 です**（{used:,} / {cap:,}単位）。"
+            f"戻るのは {back.astimezone(JST):%m/%d %H:%M} JST —— "
+            "**そこで最初に撃つのがこれです**（`videos.insert` は枠を使わないので、"
+            "投稿そのものは止まりません）"]
+
+
+def calendar_lines(now: datetime | None = None,
+                   path: Path | None = None) -> list[str]:
+    """`calendar()` を画面へ。**守れている回は1行、破れている回は当てどころまで。**"""
+    c = calendar(now=now, path=path)
+    if not c["days"] or not c["total"]:
+        return []
+    rule = c["rule"]
+    if not c["empty"] and not c["over"]:
+        return [f"[暦] 予約 {c['total']}本／今後 {c['days']}日 は"
+                f"**規則どおり {rule}本/日**（空きなし・超過なし）"]
+    out = [f"[!] [暦] **予約の実物が規則（{rule}本/日）と別です** —— "
+           f"今後 {c['days']}日 のうち **{c['empty']}日 が空**"]
+    if c["run"] >= 2:
+        out.append(f"     いちばん長い空白は **{c['run']}日 連続**"
+                   f"（{c['run_from']} 〜・**その間 1本も公開されません**）")
+    if c.get("near_days"):
+        out.append(f"     **その空白が終わるまでの {c['near_days']}日（〜{c['near_until']}）の"
+                   f"実際の密度は {c['near_density']:.2f}本/日 ＝ 規則の "
+                   f"{c['near_density'] / rule:.0%}**"
+                   f"　（今後 {c['days']}日 の平均は {c['density']:.2f}本/日 ですが、"
+                   "**平均は後ろの作り置きに持ち上げられます。縛っているのは手前です**）")
+    if c["over"]:
+        top = max(c["over"], key=lambda x: x[1])
+        out.append(f"     一方 **{len(c['over'])}日 が規則を超えています**"
+                   f"（いちばん多い日 {top[0]} の **{top[1]}本** ＝ 規則の {top[1] // rule}倍）"
+                   " —— 規則が固定される前に積んだ作り置きです")
+    out.append(f"     **`scripts/eta.py` の到達日は {rule}本/日 で解いています。**"
+               "　実物がその下にある間、**その日付は早すぎます**"
+               "（`eta.physical_caps` の分母は「続けられるか」＝供給の能力で、"
+               "**暦を1日も見ていません**）")
+    out.append("     → **新しい本は1本も要りません。もう予約に在る本を前へ倒すだけです**:")
+    out.append("       python scripts/reschedule.py --compact          # 割り当てだけ・**0単位**")
+    out.append("       python scripts/reschedule.py --compact --apply  # 1本 50単位")
+    out.extend(_calendar_quota_lines(now or datetime.now(timezone.utc)))
+    out.append("     **控えは実物とずれることがあります**（`src/ledger_truth.py`）。"
+               "撃って 0本 しか動かない回は `scripts/reschedule.py --list`（50単位）で"
+               "実物を見ること")
+    return out
+
+
 def lines(now: datetime | None = None) -> list[str]:
     """画面へ出す行。**`improve` の当てどころを、fix と同じ形で毎周 出します。**"""
+    # **暦を先に出すこと**（2026-09-01 夜）。下の `[次の枠]` は「次の1本」しか
+    #     見ないので、**その1本の後ろが19日 空でも、この画面には一度も出ませんでした。**
+    #     `improve` の当てどころより先に、**そもそも出る本が在るか**を見ます。
+    cal = calendar_lines(now=now)
     v = next_video(now=now)
     if not v:
-        return ["[次の枠] **予約が1本もありません。** `improve` は当てどころが無い回です"
+        return cal + ["[次の枠] **予約が1本もありません。** `improve` は当てどころが無い回です"
                 "（`python scripts/batch_build.py` で1本 作るか、"
                 "池から戻すこと ＝ `python scripts/reschedule.py --move <videoId> <時刻>`）"]
     at = v["_at"].astimezone(JST)
     t = now or datetime.now(timezone.utc)
     hours = (v["_at"] - t).total_seconds() / 3600.0
-    out = [
+    out = list(cal) + [
         f"[次の枠] **{at:%m/%d %H:%M} JST（あと {hours:.0f}時間）に出る1本**"
         f"　`{v.get('video_id')}`　{str(v.get('title') or '')[:44]}"
         f"　題材 `{v.get('topic')}`"
