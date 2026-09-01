@@ -1094,7 +1094,17 @@ def _spread(args) -> int:
     done = 0
     # **遅いほうから**（追い越しを作らない）
     for p in sorted(plan, key=lambda p: p["old"], reverse=True)[:args.max]:
-        _update(svc, p["id"], p["new"], fallback_status=uploader.base_status())
+        # **撃たなかった回は、控えも動かさないこと**（`--move` と同じ理由。
+        # 2026-09-01 に、ここが残っているのを実測で見つけた ——
+        # 08-29 に `--move` だけ直して、`--spread`／`--compact`／`pool_drain`
+        # の3つは**素通りのまま**でした。この repo が通算12回 踏んでいる
+        # 「片方だけ」の形です）。
+        wrote = _update(svc, p["id"], p["new"], fallback_status=uploader.base_status())
+        if not wrote:
+            print(f"[spread] {p['id']} は**撃っていないので、控えも直しません**"
+                  "（控えだけ動かすと、実物はもとの時刻のまま公開されます）",
+                  flush=True)
+            continue
         dupes.retime(p["id"], p["new"])
         done += 1
         n = datetime.fromisoformat(p["new"].replace("Z", "+00:00")).astimezone(JST)
@@ -1401,7 +1411,13 @@ def _compact(args) -> int:
     svc = uploader._service()
     done = 0
     for p in plan[:args.max]:
-        _update(svc, p["id"], p["new"], fallback_status=uploader.base_status())
+        # **撃たなかった回は、控えも動かさないこと**（上の `--spread` と同じ理由）。
+        wrote = _update(svc, p["id"], p["new"], fallback_status=uploader.base_status())
+        if not wrote:
+            print(f"[compact] {p['id']} は**撃っていないので、控えも直しません**"
+                  "（控えだけ動かすと、実物はもとの時刻のまま公開されます）",
+                  flush=True)
+            continue
         dupes.retime(p["id"], p["new"])
         done += 1
         n = datetime.fromisoformat(p["new"].replace("Z", "+00:00")).astimezone(JST)
@@ -1641,7 +1657,14 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.unschedule:
-        _update(svc, args.unschedule, None)
+        # **撃たなかった回は、控えも動かさないこと**（`--move` と同じ理由）。
+        # ここは4つ目の口です —— 08-29 に `--move` だけ直し、
+        # `--spread`／`--compact`／`pool_drain`／ここ の4つが素通りのまま
+        # 2026-09-01 まで残っていました（`tests/test_retime_needs_write.py`）。
+        if not _update(svc, args.unschedule, None):
+            print(f"[reschedule] {args.unschedule} は**撃っていないので、"
+                  "控えも直しません**（控えだけ外すと、実物は予約のまま公開されます）")
+            return RC_NOT_MOVED
         dupes.retime(args.unschedule, None)
         print(f"[reschedule] {args.unschedule} の予約を外しました（private のまま残っています）")
         return 0

@@ -2448,6 +2448,13 @@ def print_local_sections(inventory: bool = True) -> None:
     # **予約の一覧のすぐ下**（2026-08-31 に配線した）。あちらは「何本 予約に在るか」、
     # こちらは「**その本の主役の数字が、いまの表にまだ在るか**」です。
     print_stale_scheduled()
+    # **`print_stale_scheduled` の隣**（2026-09-01 に配線した）。あちらは
+    # 「予約に在る本の**中身**が古くないか」、こちらは
+    # 「**その予約の一覧そのもの**が実物と食い違っていないか」です。
+    # オーナーが 09/01 16:33 に画面で見つけた形（控えは「09/02 以降だけ」と
+    # 言うのに、実物には 09/01 18:00〜21:00 に4本 残っていた）を、
+    # **API 0単位**で数え直します。詳しくは `src/ledger_truth.py` の冒頭。
+    print_ledger_truth()
     print_means()
     # **`print_means` の隣に置いています。** あちらは「手段が尽きたか」、
     # こちらは「材料が尽きたか」で、**§4 でどれを選べるかを決めるのは両方**です。
@@ -2628,6 +2635,37 @@ def print_stale_scheduled() -> None:
         print(f"          python scripts/unschedule.py {b['video_id']} --why \"...\"")
     print("      **`videos.update` は日枠に当たります**（`videos.insert` とは違う）。"
           "403 なら **JST 16:00 以降**にやり直すこと")
+
+
+def print_ledger_truth() -> None:
+    """**控えだけが動いた本**（2026-09-01 に配線した。**API 0単位**）。
+
+    ## なぜ status に置いたか（**穴を塞いだだけでは、在庫は消えません**）
+
+    2026-09-01、`--spread`／`--compact`／`pool_drain --apply` が
+    `reschedule._update()` の返りを見ずに `dupes.retime()` を撃っていた穴を
+    塞ぎました。**塞いだのは、これから作る幻のほうだけ**です ——
+    **既に控えに入っている幻は、そのまま残ります。**
+
+    そして幻は**黙って消えます**: 控えの `at` が過去になった本は
+    `pool_drain.pool()` の `at <= now` で落ち、`_print_inventory_from_ledger`
+    の未来の一覧にも出ません。**どこにも出ないまま、実物だけが公開されます。**
+
+    **鳴らないなら空**です（1件も無ければ1行も出しません）。
+    数え方と「言わないこと」は `src/ledger_truth.py` の冒頭に。
+    """
+    try:
+        from src import ledger_truth
+        lines = ledger_truth.report_lines()
+    except Exception as exc:                                   # noqa: BLE001
+        print(f"  [控えの照合] 読めませんでした: {str(exc)[:90]}")
+        return
+    if not lines:
+        return
+    print()
+    print("=== 控えと実物のずれ（**API 0単位**）===")
+    for line in lines:
+        print(line)
 
 
 def print_upload_cap() -> None:

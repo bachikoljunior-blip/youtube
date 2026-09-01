@@ -446,7 +446,18 @@ def main(argv: list[str] | None = None) -> int:
     done, stopped = 0, False
     for r in drop:
         try:
-            reschedule._update(svc, r["id"], None, fallback_status=fallback)
+            # **撃たなかった回は、控えも動かさないこと**（2026-09-01。
+            # `reschedule._update` は **False** を返す道が2つあり、片方
+            # （`upload_cap.move_hold`）は **YouTube を1文字も変えていません**。
+            # ここは長らく返りを見ずに `retime(None)` を撃っており、
+            # **控えだけが「予約なし」になって、実物はそのまま公開されます。**
+            # `--move` は 08-29 に直っていましたが、**ここと `--spread`/`--compact`
+            # は素通りのまま**でした（この repo が通算12回 踏んでいる「片方だけ」）。
+            # 実測（`src/ledger_truth.py` が 0単位 で数え直した）: **4本**。
+            if not reschedule._update(svc, r["id"], None, fallback_status=fallback):
+                print(f"[pool] {r['id']} は**撃っていないので、控えも直しません**"
+                      "（控えだけ外すと、実物は予約のまま公開されます）", flush=True)
+                continue
             dupes.retime(r["id"], None)
         except (KeyboardInterrupt, MemoryError):
             raise
