@@ -172,42 +172,53 @@ def tail_days(rows: list[dict] | None = None, today=None) -> int:
 # なら、この関数は**何も足しません** —— 推測で時刻を名指ししないため。
 
 
-def _hour_arg() -> str:
-    """`upload_only.py` の第3引数（予約時刻・JST の時）。**空欄にしない。**"""
+def _hour_for(day) -> int | None:
+    """その日に置くべき時刻（`publish_hour.sweep_hour`）。**根拠が無ければ None。**"""
     try:
         from src import publish_hour                           # noqa: PLC0415
-        h = publish_hour.best_hour()
+        return publish_hour.sweep_hour(day)
     except Exception:                                          # noqa: BLE001
-        h = None
+        return None
+
+
+def _hour_arg(day=None) -> str:
+    """`upload_only.py` の第3引数（予約時刻・JST の時）。**空欄にしない。**"""
+    h = _hour_for(day)
     if h is None:
         return "<時>    # 第3引数が予約時刻（JST）"
     return f"{h}     # 予約時刻（JST）＝ `python -m src.publish_hour` の実測"
 
 
-def _hour_lines() -> list[str]:
+def _hour_lines(day=None) -> list[str]:
     """時刻を名指しした理由。**名指しできない回は1行も出しません。**"""
+    h = _hour_for(day)
+    if h is None:
+        return []
     try:
         from src import publish_hour                           # noqa: PLC0415
-        h, cfg = publish_hour.best_hour(), publish_hour.config_hour()
-        tab = publish_hour.by_hour()
-        un = publish_hour.untested()
+        base, cfg = publish_hour.best_hour(), publish_hour.config_hour()
+        tab, un = publish_hour.by_hour(), publish_hour.untested()
     except Exception:                                          # noqa: BLE001
         return []
-    if h is None or h not in tab:
-        return []
-    v = tab[h]
-    out = [f"  **時刻は {h}時**（規則の密度の日で n={v['n']}・中央値 "
-           f"{v['median']:,.0f}回。`python -m src.publish_hour`・API 0単位）。"
-           "**「この時刻が最適だ」ではありません** —— `eta.py` の `per_video` が"
-           "乗っている帯と、機械が置く帯を揃えているだけです。"]
-    if cfg is not None and cfg != h:
-        out.append(f"  [!] `config/channel.yaml` の既定は {cfg}時 のままです"
+    if h == base and h in tab:
+        v = tab[h]
+        out = [f"  **時刻は {h}時（対照）**（規則の密度の日で n={v['n']}・中央値 "
+               f"{v['median']:,.0f}回。`python -m src.publish_hour`・API 0単位）。"
+               "**「この時刻が最適だ」ではありません** —— `eta.py` の `per_video` が"
+               "乗っている帯と、機械が置く帯を揃えているだけです。"]
+    else:
+        out = [f"  **時刻は {h}時（掃く側）**。この時刻は規則の密度で"
+               f"**一度も試していません**（対照は {base}時）。"
+               "**偶数日は対照・奇数日は未試行**で交互に置きます —— "
+               "まとめて寄せると時期の効果と混ざるからです"
+               "（`src/publish_hour.sweep_hour`）。"]
+    if cfg is not None and base is not None and cfg != base:
+        out.append(f"  [!] `config/channel.yaml` の既定は {cfg}時、対照は {base}時 です"
                    "（揃えるなら、そちらも直すこと）。")
     if un:
         out.append(f"  **規則の密度で一度も試していない時刻が {len(un)}／24 あります。**"
-                   "1日1本 ＝ 1日に1点しか増えないので、"
-                   "**掃くなら前提を立ててから**（`config/hypotheses.yaml`"
-                   "「公開時刻は per_video に効かない」）。")
+                   "1日1本 ＝ 1日に1点しか増えません。判定は"
+                   "`config/hypotheses.yaml`「公開時刻は 1本あたり再生に効かない」。")
     return out + [""]
 
 
@@ -241,10 +252,10 @@ def lines(rows: list[dict] | None = None, today=None) -> list[str]:
         "（`docs/trigger_main.md` §5）。**1本だけです**（9日ぶん作るのが作り置きです）:",
         "",
         "    python -m src.pipeline --script build/short.json --topic s-<名前> --short",
-        f"    python scripts/upload_only.py s-<名前> \"\" {_hour_arg()}",
+        f"    python scripts/upload_only.py s-<名前> \"\" {_hour_arg(gap[0])}",
         "    python scripts/inspect_build.py s-<名前>          # **投稿前に必ず目で見る**",
         "",
-    ] + _hour_lines() + [
+    ] + _hour_lines(gap[0]) + [
         "**撃てないなら**（Data API の日枠 ＝ JST 16:00 に戻る／`AUTOMATION_PAUSED.md`）、"
         "**その理由を `docs/JOURNAL.md` に書いてから終わること。**",
     ]

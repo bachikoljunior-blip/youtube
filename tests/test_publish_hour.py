@@ -89,3 +89,34 @@ def test_機械の既定と計器が同じ時刻を指していること():
         "`scripts/eta.py` の per_video が乗っている帯がずれています。**"
         "（時刻を変える判断そのものは自由です —— そのときは"
         "`config/hypotheses.yaml` の前提と、この検査の期待を一緒に直すこと）")
+
+
+def test_掃く側と対照が交互に出る():
+    """**まとめて片方へ寄せないこと**（時期の効果と混ざる）。
+
+    実測 `src/rule_per_video`: 9時 の 12本 は 08/26〜08/31 に固まっており、
+    **時期と共線**です。1日1本では点が1日1つしか増えないので、
+    **対照と処置を日ごとに入れ替える**のが、いちばん安い交絡の外し方になります。
+    """
+    import datetime as _dt
+    rows = [_row(20 + i, 9, 900, i) for i in range(publish_hour.MIN_N)]
+    days = [_dt.date(2026, 9, 2) + _dt.timedelta(days=i) for i in range(8)]
+    got = [publish_hour.sweep_hour(d, rows) for d in days]
+    assert got.count(9) == 4, f"対照が半分ではありません: {got}"
+    assert len(set(g for g in got if g != 9)) == 4, (
+        f"**掃く側が同じ時刻に固まっています**: {got}。日付で順に回すこと。")
+
+
+def test_対照が立つ前は掃かない():
+    """`best_hour()` が `None` の段階では **`None`**（比べる先が無い）。"""
+    import datetime as _dt
+    rows = [_row(20, 9, 900)]
+    assert publish_hour.sweep_hour(_dt.date(2026, 9, 3), rows) is None
+
+
+def test_掃く候補は寝ている帯を後回しにする():
+    rows = [_row(20 + i, 9, 900, i) for i in range(publish_hour.MIN_N)]
+    cand = publish_hour.sweep_candidates(rows)
+    assert not [h for h in cand if h < publish_hour.SWEEP_LO], (
+        "**0〜5時 JST を先に掃いています。**1日1点しか増えないので、"
+        "当たりそうな順に使うこと（`SWEEP_LO`）。")

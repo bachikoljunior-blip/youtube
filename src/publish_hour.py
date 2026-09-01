@@ -193,6 +193,57 @@ def best_hour(rows: list[tuple] | None = None) -> int | None:
     return max(ok)[2]
 
 
+# --- **掃く**（2026-09-01 に足した） -----------------------------------------
+#
+# 上の `best_hour()` は「**いま根拠のある時刻**」を返します。それだけを使うと、
+# **20時刻 は永久に 0本 のまま**です —— 既定を 9時 に揃えた瞬間、機械は
+# 二度と別の時刻に置かなくなり、**この道具は自分で自分の標本を殺します。**
+#
+# 規則1 は 1日1本なので、**1日に増える点は1つ**です。だから掃き方は
+# 「たまに別の時刻」ではなく **対照と交互**にします ——
+#
+#     偶数日  `best_hour()`（対照。いま 9時）
+#     奇数日  未試行の時刻を1つ（掃く側。日付で順に回す）
+#
+# **なぜ交互か。** 1本あたり再生は 8月後半に大きく動いており（`rule_per_video`
+# の「時期と共線」）、**まとめて片方に寄せると時期の効果と混ざります。**
+# 日ごとに入れ替えれば、対照と処置が同じ期間に散ります。
+#
+# **候補を 6〜23時 に絞る理由**: 0〜5時 JST は視聴者が寝ている帯で、
+# **この repo は一度も置いたことがありません**（全密度 160本 でも 0本）。
+# 掃く価値はありますが、**先に 6〜23 を埋めてからです** —— 1日1点しか
+# 増えないので、**当たりそうな順に使うこと**。
+#
+# **覆る条件**: 未試行の時刻が無くなったら `sweep_hour()` は常に `best_hour()`
+# を返します（掃き終わり）。**前提が閉じたら、この交互をやめること** ——
+# 効かないと出たなら 9時 に固定、効くと出たならその時刻へ既定を移すだけです。
+
+#: 掃く候補にしてよい時刻の帯（JST）。**0〜5時 は後回し**（上の註）。
+SWEEP_LO, SWEEP_HI = 6, 23
+
+
+def sweep_candidates(rows: list[tuple] | None = None) -> list[int]:
+    """**掃く先**（未試行のうち `SWEEP_LO`〜`SWEEP_HI`）。無ければ空。"""
+    return [h for h in untested(rows) if SWEEP_LO <= h <= SWEEP_HI]
+
+
+def sweep_hour(target_date=None, rows: list[tuple] | None = None) -> int | None:
+    """**その日に置くべき時刻。** 対照（`best_hour`）と未試行を**交互**に。
+
+    `best_hour()` が `None`（根拠なし）なら **`None`** を返します ——
+    対照が立っていない段階で掃いても、比べる先がありません。
+    """
+    base = best_hour(rows)
+    if base is None:
+        return None
+    if target_date is None:
+        target_date = datetime.now(JST).date()
+    cand = sweep_candidates(rows)
+    if not cand or target_date.toordinal() % 2 == 0:
+        return base
+    return cand[(target_date.toordinal() // 2) % len(cand)]
+
+
 def config_hour(path: Path | None = None) -> int | None:
     """`config/channel.yaml` の `publish_hour_jst`（機械が実際に置く時刻）。"""
     try:
