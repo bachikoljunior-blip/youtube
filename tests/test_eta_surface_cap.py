@@ -26,6 +26,8 @@ from __future__ import annotations
 import importlib.util
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parent.parent
 _spec = importlib.util.spec_from_file_location("eta_surface_mod", ROOT / "scripts" / "eta.py")
 eta = importlib.util.module_from_spec(_spec)
@@ -104,6 +106,47 @@ def _pin_rule(monkeypatch) -> None:
     _eta_pin.pin_house_rule(monkeypatch, eta, _eta_pin.PLAN_DENSITY)
 
 
+def _coupled(pl, mix=MIX) -> float:
+    """**天井は、この模型自身のショート再生/日 で解き直されます**（2026-09-01）。
+
+    `MIX["rpm_max"]`（¥313）は「長尺の面 37.6回/日 ＋ **点が測った窓の**
+    ショート再生/日」で出た数です。ところが `plan()` は、腕を引いた世界の
+    `ceiling_day`（＝ ショートの再生/日）を分子に使います。
+    **ショートが増えれば長尺の割合は薄まる**ので、天井は ¥313 の**下**へ動きます
+    （理由と実測は `src/rpm_mix.coupled()`）。
+
+    ここは**その解き直しを、検査の側でも同じ入力から出します** ——
+    定数（¥67.6 など）を写すと、点や密度が動いた日にこの検査だけが古びます。
+    """
+    s0 = mix["imp_day"] * (1.0 - mix["long_share_max"]) / mix["long_share_max"]
+    co = eta.rpm_mix.coupled(mix, float(pl["ceiling_day"]) / s0)
+    assert co, "`rpm_mix.coupled()` が当たっていません（帯が変わった？）"
+    return float(co["rpm_max"])
+
+
+def _mix_with_surface(imp_day: float, mix=MIX) -> dict:
+    """**面（長尺のインプレッション）だけを差し替えた点**を作る。（2026-09-01）
+
+    天井が「足りている」枝は、2026-09-01 から **1本あたり再生では作れません** ——
+    `plan()` がショート再生/日 で天井を解き直すようになったので
+    （`src/rpm_mix.coupled()`）、**1本あたりを上げると長尺の割合が薄まり、
+    合格点が同じだけ上がって追いかけてきます**（極限は ショート高 ¥60）。
+
+    足りている側は**面で作ります。** 面が広ければ長尺の割合は薄まらず、
+    天井はショートを増やしても残ります —— **これが物理的にも正しい形**です。
+
+    点の側のショート再生/日 は動かしません（`S = L × (1 - share) / share`）。
+    """
+    s0 = mix["imp_day"] * (1.0 - mix["long_share_max"]) / mix["long_share_max"]
+    share = imp_day / (imp_day + s0)
+    rpm_max = (share * eta.rpm_mix.BANDS["長尺 お金 高"]
+               + (1.0 - share) * eta.rpm_mix.BANDS["ショート 高"])
+    return dict(mix, imp_day=imp_day, imp_day_recent=imp_day,
+                long_share_max=share, rpm_max=rpm_max,
+                factor=rpm_max / mix["rpm_now"],
+                why=f"長尺の面 {imp_day:,.1f}回/日（この検査が差し替えた面）")
+
+
 def _plan(monkeypatch, mix=MIX, **over):
     monkeypatch.setattr(eta.rpm_mix, "last", lambda *a, **k: mix)
     _pin_surface(monkeypatch)
@@ -122,9 +165,17 @@ def test_段4のRPMは実測の混ざり方の天井で頭打ちになる(monkey
     long = pl["forms"]["長尺 お金"]
     assert long["rpm_band"] == 400, "帯そのものが変わっています（比較の相手が消えます）"
     assert long["capped"] is True
-    assert long["rpm"] == MIX["rpm_max"], (
-        "段4 の RPM が実測の天井（¥313）になっていません。"
+    assert long["rpm"] < 400, (
+        "段4 の RPM に帯 ¥400 が素通りしています。"
         "**純長尺 ¥400 は「再生の100%が長尺」の数で、面がそれを許していません**"
+    )
+    assert long["rpm"] <= MIX["rpm_max"] + 1e-9, (
+        f"点が測った天井 ¥{MIX['rpm_max']:,.0f} の**上**に出ています"
+    )
+    assert long["rpm"] == pytest.approx(_coupled(pl)), (
+        "段4 の RPM が、この模型自身のショート再生/日 で解き直した天井に"
+        "なっていません（`src/rpm_mix.coupled()`）。**点の ¥313 は"
+        "「点が測った窓のショート再生/日」の上に立っています**"
     )
 
 
@@ -132,9 +183,16 @@ def test_合格点は帯ではなく天井から出る(monkeypatch):
     """500,000回/月 ではなく 639,000回/月。**この差が 1.28倍 の甘さです。**"""
     pl = _plan(monkeypatch)
     need = pl["forms"]["長尺 お金"]["views_needed_month"]
-    assert abs(need - eta.TARGET_YEN * 1000 / MIX["rpm_max"]) < 1.0
-    assert 630_000 < need < 645_000, f"要る月間再生が {need:,.0f} 回です（実測なら約 639,000 回）"
+    assert abs(need - eta.TARGET_YEN * 1000 / _coupled(pl)) < 1.0
     assert need > eta.TARGET_YEN * 1000 / 400, "帯 ¥400 の側（500,000回）に戻っています"
+    # **点の天井（¥313 → 639,000回）よりも、さらに要ります**（2026-09-01）。
+    #     ショートを密度まで伸ばした世界では長尺の割合が薄まるので、合格点は
+    #     必ずこの側です。**ここが逆向きに戻ったら、分子と分母の土俵がまた
+    #     別れています**（`src/rpm_mix.coupled()` の docstring）。
+    assert need >= eta.TARGET_YEN * 1000 / MIX["rpm_max"] - 1.0, (
+        f"要る月間再生が {need:,.0f} 回 —— 点の天井から出る 639,000回 より"
+        "**少ない**側です（分母だけ甘い天井に戻っています）"
+    )
 
 
 # --- 2. 腕 `rpm` は、面が増えるまで天井を越えない --------------------------------
@@ -152,7 +210,8 @@ def test_腕rpmを何倍にしても面が増えるまで天井を越えない(m
     a = eta.analyse(m)
     a["scale"] = dict(eta.DEFAULT_SCALE, rpm=5.0)
     pl = eta.plan(m, a)
-    assert pl["forms"]["長尺 お金"]["rpm"] == MIX["rpm_max"]
+    assert pl["forms"]["長尺 お金"]["rpm"] == pytest.approx(_coupled(pl))
+    assert pl["forms"]["長尺 お金"]["rpm"] <= MIX["rpm_max"] + 1e-9
     assert pl["surface"]["capped"] is True
 
 
@@ -238,8 +297,18 @@ def test_天井が足りていれば逆算は出ない(monkeypatch):
     枝そのものが標本から消えます。** 2.5倍 落ちたぶんを 1本あたりで戻して、
     **この検査が見張っている枝（足りているなら逆算を出さない）を残します。**
     足りない側の枝は上の2件（`views_per_video=100 / 400`）が持っています。
+
+    **2026-09-01 に、もう1度 直しました。** `plan()` がショート再生/日 で
+    天井を解き直すようになった（`src/rpm_mix.coupled()`）ので、
+    **1本あたりを上げるだけでは、この枝はもう作れません** ——
+    上げたぶん長尺の割合が薄まり、合格点が追いかけてきます
+    （極限は ショート高 ¥60 ＝ 3,333,333回/月）。
+    足りている側は**面**で作ります（`_mix_with_surface(6,000回/日)`）。
+    **これは検査の都合ではなく、物理のほうが言っていることです** ——
+    面が広ければ、ショートが増えても長尺の割合は残ります。
     """
-    pl = _plan(monkeypatch, views_per_video=2_400, median_views_per_video=2_400)
+    pl = _plan(monkeypatch, mix=_mix_with_surface(6_000.0),
+               views_per_video=2_400, median_views_per_video=2_400)
     assert pl["ceiling_short"] <= 1, "この標本の前提が変わりました（検査のほうを直すこと）"
     assert not pl["surface_needed"]
 
