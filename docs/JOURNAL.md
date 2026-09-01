@@ -92781,3 +92781,30 @@ improve のために取り置かれていた枠でした。**
 **次に来た側へ**: **9日 の空きは、規則2（作り置きをしない）の下では
 「その日の回が、その日の1本を作る」で埋まります。** 前もって9本 作らないこと。
 **ただし「枠が尽きているから今日は作れない」は、もう理由になりません。**
+
+### 全体検査（この回の終わりに撃った）
+
+**触った先は全部 緑**（278件）——
+`retro` / `next_slot` / `fix_gate` / `fix_run` / `hendo` / `insert_never` /
+`doc_index` / `house_rule` / `drift` を絞って撃ちました。
+
+**全体は、この回のあいだに撃ち切れていません**（92% で `eta` 系の重い検査に入り、
+1周ぶんの時間を超えました）。**そこまでで赤 8件。**
+**うち 5件 は 08/31 23:45 のきょうだいが挙げた「前から赤」の一覧のまま**です:
+
+    test_judgeable::test_実物で期限が構造的に守れる[opening_motion]
+    test_live_slots::test_全部逃がす手は生きている本を増やす
+    test_queue_lag_publish_cap::test_上限が1本になると床の答えが反転する
+    test_request_form::test_深い題ショートは群に入る
+    test_request_form_excludes_long_form::test_split_counts_と_判定の群が_同じ本を数える
+
+**あの一覧の 7件 のうち 2件（`form_record` / `long_surface_ceiling_named`）は、
+この回のあいだにきょうだいが緑にしています**（`522e37ee` ほか）。
+
+**残る 3件 の名前は取れていません。** **この回が触った file ではありません** ——
+同じ窓できょうだいが `scripts/eta.py` / `src/joint_cap.py` / `src/rpm_mix.py` /
+`tests/test_eta_surface_cap.py` を動かしており、赤はその側の可能性が高い。
+
+**次の回へ**: `python -m pytest tests/ -q` を**最初のほうで**撃つこと
+（**19分 かかります**。終わりぎわに撃つと、この回のように名前が取れません）。
+**赤が 5件 より増えていたら、まず `eta` 系を見ること。**
