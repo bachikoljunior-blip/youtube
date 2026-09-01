@@ -260,16 +260,24 @@ def main() -> int:
 
     rows: list[dict] = []
     for w in words:
-        sents = sentences_for(w)
-        if not sents:
-            continue
-        sent = sents[0]
-        try:
-            toks = G.analyze(sent if args.raw else to_speech(sent))
-        except RuntimeError:
-            continue
-        kana = next((t["pron"] for t in toks if t["surface"] == w and t["pron"] not in G._SILENT), "")
+        # **文字として含む文ではなく、その語が「トークンとして」出る文を探すこと。**
+        # 2026-09-02 に踏んだ: 先頭の1文だけを見ていたので、危ない語 18語 のうち
+        # **9語 が黙って飛ばされていた** —— 「高」は「高い」（形容詞）、
+        # 「日」は「日数」、「本」は「元本」の中にしか無く、
+        # 置換する対象のトークンが1つも無かった。**飛ばした跡も残っていなかった。**
+        sent, kana = "", ""
+        for cand in sentences_for(w, cap=12):
+            try:
+                toks = G.analyze(cand if args.raw else to_speech(cand))
+            except RuntimeError:
+                continue
+            got = next((t["pron"] for t in toks
+                        if t["surface"] == w and t["pron"] not in G._SILENT), "")
+            if got:
+                sent, kana = cand, got
+                break
         if not kana:
+            print(f"   -- {w}: トークンとして出る文が控えに無い（12文まで見た）", flush=True)
             continue
         try:
             d = distance(sent, w, kana, raw=args.raw)
@@ -295,7 +303,17 @@ def main() -> int:
     for r in rows:
         r["verdict"] = "misread" if r["dist"] > cut else "safe"
         r["by"] = "ear"
-        store[r["word"]] = r
+        was = store.get(r["word"]) or {}
+        if was.get("settled"):
+            # **向きまで決めた語を、測り直しで捨てないこと**（2026-09-02 に踏んだ）。
+            # ここは丸ごと差し替えていたので、`--direction` が出した
+            # `heard` / `correct` / `why` が、次の `--limit` 実行で消えていた。
+            # 距離は新しいほうへ更新し、**決まった向きは残す。**
+            was.update({"dist": r["dist"], "sentence": r["sentence"],
+                        "kana": r["kana"]})
+            store[r["word"]] = was
+        else:
+            store[r["word"]] = r
     LEDGER.write_text(json.dumps(
         {"at": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "cut": round(cut, 4),
          "median": round(med, 4), "mad": round(mad, 4), "sigma": args.sigma,
