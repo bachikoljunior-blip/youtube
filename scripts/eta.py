@@ -6851,8 +6851,10 @@ def plan(m: dict, a: dict, density: int = PLAN_PUBLISH_PER_DAY,
             #     `per_video` 1本と**同じ数**です。理由は下の `plan()` の
             #     `rpm_plan = min(band_rpm, rpm_cap)`: `rpm` の腕は帯のほうを
             #     上げますが、`rpm_cap` は `per_video` を引くほど下がるので
-            #     （`rpm_mix.coupled()` の希釈）、**`per_video` ×2.4 付近で
-            #     乗り換わり、そこから先の `rpm` は `×10^9` でも 0** です。
+            #     （`rpm_mix.coupled()` の希釈）、**`per_video` ×2.5 付近で
+            #     乗り換わり、そこから先の `rpm` は `×10^9` でも 0** です
+            #     （`points` 付き ＝ この道で挟みました。×2.40 は ×1.0204 で
+            #      まだ生きており、**×2.60 でちょうど ×1.0000**）。
             #     **上の 35.5% / ×2.82 も、その日の数です。引かないこと。**
             #     いまは `joint_cap.solve()` が `idle` を返し、画面が名指しします
             #     （`tests/test_joint_cap_idle_arm.py`）。
