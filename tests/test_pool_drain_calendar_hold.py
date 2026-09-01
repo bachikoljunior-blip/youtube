@@ -1,0 +1,107 @@
+"""**暦に穴が空いている間、`pool_drain --apply` は外さない**（API 0単位）。
+
+## なぜ要るか（2026-09-02 01:0x に測って足した）
+
+`scripts/pool_drain.py` と `scripts/reschedule.py --compact` は、
+**同じ予約の山に、逆向きの手**を当てます。どちらも `[暦]` の鳴っている回に
+候補として出てきます。実測（2026-09-02 01:0x の控え・予約 108本）:
+
+    pool_drain            「残す 1本／**外す 107本**（5,457単位）」
+    reschedule --compact  「**25本 を 09/03〜09/27 へ 1日1本**（1,250単位）」
+
+**先に池化を撃つと、穴を埋める本がその場で無くなります** ——
+106本 は 09/24〜10/09 に積んであり、手前の **09/03〜09/23 は 20日 まるごと 0本**。
+外した本は private の下書きへ戻るので、入れ直しには `videos.update`（日枠の内側）が
+要ります。**穴の20日は「埋める本が1本も無い」状態で確定します。**
+
+どちらが先かは釣り合いで決まります —— 空白の20日は
+**その間に閉じられたはずの前提が1件も閉じない**という意味で `eta.py` の θ に効き
+（同じ回の実測: 今後14日 の θ は 0.57/日 ＝ 過去の 1.10/日 の 52%、
+「この窓で縛っているのは公開の順番のほう」）、
+作り置きが山のまま残ることは θ を1日も遅らせません。**穴が先です。**
+"""
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+import pytest
+
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(ROOT / "scripts"))
+
+pool_drain = pytest.importorskip("pool_drain")
+
+
+def _cal(**kw) -> dict:
+    base = {"total": 108, "days": 37, "empty": 20, "run": 19,
+            "run_from": "2026-09-05", "over": []}
+    base.update(kw)
+    return base
+
+
+def _patch(monkeypatch, cal: dict) -> None:
+    from src import next_slot
+    monkeypatch.setattr(next_slot, "calendar", lambda *a, **k: cal)
+
+
+def test_穴が空いていたら詰めるほうを名指しする(monkeypatch):
+    _patch(monkeypatch, _cal())
+    lines = pool_drain._calendar_hold()
+    assert lines, "19日 連続の空白で黙るのは、この欠陥の再発です"
+    body = "\n".join(lines)
+    assert "reschedule.py --compact" in body
+    assert "19日 連続" in body
+    assert "2026-09-05" in body
+
+
+def test_穴が埋まっていれば黙る(monkeypatch):
+    """**そのとき池化が正になります。**「詰めてから、余りを外す」の順。"""
+    _patch(monkeypatch, _cal(empty=0, run=0, run_from=None))
+    assert pool_drain._calendar_hold() == []
+
+
+def test_1日の空白では止めない(monkeypatch):
+    """1日は詰める手の対象になりません（`run < 2` は黙る）。"""
+    _patch(monkeypatch, _cal(empty=1, run=1, run_from="2026-09-05"))
+    assert pool_drain._calendar_hold() == []
+
+
+def test_予約が1本も無い回は黙る(monkeypatch):
+    _patch(monkeypatch, _cal(total=0))
+    assert pool_drain._calendar_hold() == []
+
+
+def test_暦が読めない回は黙る_推測で止めない(monkeypatch):
+    from src import next_slot
+
+    def _boom(*a, **k):
+        raise RuntimeError("控えが読めない")
+
+    monkeypatch.setattr(next_slot, "calendar", _boom)
+    assert pool_drain._calendar_hold() == []
+
+
+def test_apply_は穴が空いている間_1本も外さない(monkeypatch, capsys):
+    """**門はここです。**`--despite-gap` を付けた回だけ通します。"""
+    _patch(monkeypatch, _cal())
+    fired: list = []
+
+    from datetime import datetime, timedelta, timezone
+    base = datetime(2026, 9, 24, 1, 0, tzinfo=timezone.utc)
+    rows = [{"id": f"v{i}", "title": f"t{i}", "topic": "s-x",
+             "at": base + timedelta(hours=i)} for i in range(3)]
+    monkeypatch.setattr(pool_drain, "pool", lambda *a, **k: rows)
+    monkeypatch.setattr(pool_drain, "plan", lambda r, keep: (r[:1], r[1:]))
+    monkeypatch.setattr(pool_drain, "by_day", lambda r: {})
+    monkeypatch.setattr(pool_drain, "today_rows", lambda r: [])
+    monkeypatch.setattr(pool_drain, "swap_reserve", lambda *a, **k: None)
+    monkeypatch.setattr(pool_drain, "thumbnail_first", lambda *a, **k: fired.append("x"))
+
+    rc = pool_drain.main(["--apply"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "この回は外しません" in out
+    assert "--despite-gap" in out
+    assert not fired, "門の後ろの手が1つでも走ったら、外し始めています"
