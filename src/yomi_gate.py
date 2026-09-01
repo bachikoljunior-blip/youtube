@@ -79,19 +79,31 @@ def available() -> bool:
     return bool(shutil.which("open_jtalk")) and Path(DICT).exists() and Path(VOICE).exists()
 
 
-def analyze(text: str) -> list[dict]:
-    """1行を形態素解析して、トークンごとの (表層, 品詞, 読み, 発音) を返す。
+#: **1回の解析で返ってくるトークンの上限**（2026-09-02 に実測）。
+#: これを超える入力は、**エラーも警告も無しに切り落とされます** ——
+#: 40文字 を 12回 つないだ 491文字 で 326 に張り付き、983文字 でも 326 のまま。
+#: **「解析した」と「全部 解析した」は別**なので、`analyze()` は
+#: 自分で切って回します（下）。**ここを撤去すると、長い段は黙って無検査になります。**
+MAX_TOKENS = 326
+#: 切る幅。上限の 326トークン に対し、日本語は 1文字 ≒ 0.9トークン なので余裕を見る。
+CHUNK_CHARS = 240
 
-    **open-jtalk は入力の1行目しか解析しない**（この回に実測）。改行を含む
-    文字列を渡すと2行目から先が黙って落ちるので、ここで改行を潰しておく。
-    """
-    one = " ".join(text.splitlines()).strip()
+
+def _analyze_one(one: str) -> list[dict]:
+    """**切らずに1回だけ**解析する。呼ぶのは `analyze()` から。"""
     if not one:
         return []
     with tempfile.TemporaryDirectory() as td:
         trace = Path(td) / "trace.txt"
         proc = subprocess.run(
-            ["open_jtalk", "-x", DICT, "-m", VOICE,
+            # `-r 5.0` は**話速**。ここで要るのは形態素の表だけで、
+            # 書かせた wav は捨てます —— 速く喋らせるほど合成が短く済み、
+            # **表は1トークンも変わりません**（2026-09-02 実測: 既定 1.77秒 →
+            # 0.63秒（**2.8倍**）、どちらもトークン 215件 で一致。
+            # `-r 20` `-r 100` にしても 0.63秒 で頭打ち）。
+            # `-s`（サンプリング周波数）は効きません（1.78秒）。
+            # **覆る条件**: ここが書いた wav を使う日が来たら、この旗を外すこと。
+            ["open_jtalk", "-x", DICT, "-m", VOICE, "-r", "5.0",
              "-ot", str(trace), "-ow", str(Path(td) / "o.wav")],
             input=one.encode("utf-8"), capture_output=True,
         )
@@ -99,15 +111,71 @@ def analyze(text: str) -> list[dict]:
             raise RuntimeError(
                 f"open_jtalk 失敗: {proc.stderr.decode('utf-8', 'ignore')[:200]}")
         out: list[dict] = []
-        for line in trace.read_text(encoding="utf-8").splitlines():
-            if not line.strip():
-                break                      # 空行から先は音響パラメータ
-            f = line.split(",")
-            if len(f) < 10:
-                continue                   # "[Text analysis result]" の見出し
-            out.append({"surface": f[0], "pos": f[1], "pos2": f[2],
-                        "base": f[7], "yomi": f[8], "pron": f[9].replace("’", "")})
+        # **`read_text()` で丸ごと読まないこと**（2026-09-02 に踏んだ）。
+        # トレースは 40文字 の入力でも **339KB**、327文字 で **2.7MB** あり、
+        # 頭の「形態素の表」より下は音響パラメータで、**UTF-8 でない並びが
+        # 混ざります** —— 丸ごと decode すると
+        # `'utf-8' codec can't decode byte ...` を投げ、`analyze()` は
+        # `RuntimeError` ではなく `UnicodeDecodeError` で落ちます。
+        # 実測: 300文字 を超える入力は**全部これで落ちていました**
+        # （＝ 複数行をまとめて解析する道が塞がっていた）。
+        # 要るのは最初の空行までなので、**そこで読むのをやめる。**
+        with trace.open("rb") as fh:
+            for raw in fh:
+                line = raw.decode("utf-8", "ignore")
+                if not line.strip():
+                    break                  # 空行から先は音響パラメータ
+                f = line.rstrip("\r\n").split(",")
+                if len(f) < 10:
+                    continue               # "[Text analysis result]" の見出し
+                out.append({"surface": f[0], "pos": f[1], "pos2": f[2],
+                            "base": f[7], "yomi": f[8], "pron": f[9].replace("’", "")})
         return out
+
+
+def analyze(text: str) -> list[dict]:
+    """テキストを形態素解析して、トークンごとの (表層, 品詞, 読み, 発音) を返す。
+
+    **open-jtalk は入力の1行目しか解析しない**ので改行を潰し、
+    **1回に 326トークン までしか返さない**ので `CHUNK_CHARS` ごとに切って回す。
+    どちらも 2026-09-02 の実測で、**黙って落ちる**種類の欠け方です。
+    """
+    one = " ".join(text.splitlines()).strip()
+    if not one:
+        return []
+    if len(one) <= CHUNK_CHARS:
+        return _analyze_one(one)
+    out: list[dict] = []
+    for start in range(0, len(one), CHUNK_CHARS):
+        out += _analyze_one(one[start:start + CHUNK_CHARS])
+    return out
+
+
+def analyze_many(lines: list[str], chunk_chars: int = CHUNK_CHARS) -> list[dict]:
+    """**複数行をまとめて**解析する。台本1本や公開ずみ全文を通すのはこちら。
+
+    **速くはなりません。** 2026-09-02 に測りました —— 48行 を
+    まとめて 14.5秒 対 行ごと 14.9秒（**3%**）。
+    重さは呼び出しの回数ではなく**文字数**に乗っています（open_jtalk は
+    表を出すついでに音声も合成するため）。**速くしたいなら `-r`**
+    （`_analyze_one` の註。実測 2.8倍）。
+    ここが返すのは、行の切れ目を気にせず全部のトークンを並べたものです。
+    """
+    out: list[dict] = []
+    buf: list[str] = []
+    size = 0
+    for line in lines:
+        one = " ".join(str(line).splitlines()).strip()
+        if not one:
+            continue
+        if size + len(one) > chunk_chars and buf:
+            out += _analyze_one("　".join(buf))
+            buf, size = [], 0
+        buf.append(one)
+        size += len(one) + 1
+    if buf:
+        out += _analyze_one("　".join(buf))
+    return out
 
 
 def _load(path: Path) -> dict:
