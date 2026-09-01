@@ -2588,9 +2588,36 @@ def ledger_drain(items: list[dict], as_of: date | None = None,
     out.append(f"    → **このままなら台帳が空になるのは {as_of + timedelta(days=days)}"
                f"（あと {days}日）。** `eta.py` は「腕が動くのは前提を1件 閉じた"
                "ときだけ」と印字します —— **空の台帳では、`verdict` が選べません。**")
-    out.append("    **立てた速さは、この台帳からは数えられません** —— "
-               "`opened_on:` の欄がありません。**次に前提を立てる回は、"
-               "その1行を書くこと**（次の回から、ここに立てる側の速さも出ます）")
+    # **立てる側**（2026-09-01 の午前に配線した。この関数を書いた回は
+    # 「`opened_on:` の欄がありません」とだけ言って終わっていました ——
+    # **欄が要る、と言うだけでは欄は増えません。** 同じ回の午後に
+    # `premise` を6択に足し、その1件目に `opened_on:` を書いて、ここを読ませました）。
+    dated = [h for h in items if h.get("opened_on")]
+    if not dated:
+        out.append("    **立てた速さは、まだ数えられません** —— "
+                   "`opened_on:` を持つ前提が **0件** です。**次に前提を立てる回は、"
+                   "その1行を書くこと**（1件 書けば、次の回からここに出ます）")
+        return out
+    opened_recent = 0
+    for h in dated:
+        try:
+            d = date.fromisoformat(str(h.get("opened_on"))[:10])
+        except (TypeError, ValueError):
+            continue
+        if 0 <= (as_of - d).days < window:
+            opened_recent += 1
+    orate = opened_recent / float(window)
+    out.append(f"    **立てた速さ: 直近{window}日に **{opened_recent}件**"
+               f"（**{orate:.2f}件/日**・`opened_on:` を持つ {len(dated)}件 のうち）**"
+               f" 対 閉じる **{rate:.2f}件/日** → 差し引き **{orate - rate:+.2f}件/日**")
+    if orate < rate:
+        out.append("      **注ぎ口より漏れのほうが速い。** 上の「空になる日」は、"
+                   "そのまま生きています。**`premise` は 0単位・いつでも撃てます**"
+                   "（`docs/trigger_main.md` §4・`run_marker.free_alternatives()`）")
+    if len(dated) < len(items):
+        out.append(f"      （`opened_on:` の無い前提が {len(items) - len(dated)}件 あります。"
+                   "**古い分を推測で埋めないこと** —— この数は"
+                   "「書いてある分」だけで割っています。分母が増えるほど正確になります）")
     return out
 
 
