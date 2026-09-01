@@ -1168,15 +1168,76 @@ def free_alternatives() -> list[str]:
     if nxt:
         vid = str(nxt.get("video_id") or "?")
         out.append(
-            f"`improve`（**0単位**）— 次の枠の1本 `{vid}` の"
+            f"`improve`（**コードの側は 0単位**）— 次の枠の1本 `{vid}` の"
             "**台本を書き直す／計算を厚くする**（`src/script_writer`・`src/verify`・"
             "`src/calc/`）。枠が要るのは 題名・説明（50）とサムネ（50）だけで、"
-            "その 50 は `upload_cap.RESERVE_UNITS = 400` が残しています")
+            "その 50 は `upload_cap.RESERVE_UNITS = 400` が残しています"
+            + _improve_swap_note())
         out.append(
             f"`upload`（**日枠を使いません**）— 焼き直した `{vid}` を上げ直す。"
             "`videos.insert` は日枠が尽きていても通ります"
             "（実測3度・`tests/test_insert_never_marked_ok.py`）")
     return out
+
+
+def _improve_swap_note() -> str:
+    """**`improve` の値札の後半**（＝ 直したコードを、実際に本へ入れる代金）。
+
+    ## なぜ足したか（2026-09-01 11:3x。**前の回が名指しして、直せなかった1件**）
+
+    `free_alternatives()` の `improve` の行は「**0単位**」としか書いていませんでした。
+    **0単位 で買えるのは `src/calc/` や `src/script_writer` を直すところまで**で、
+    **焼き直した本を同じ枠へ差し替える2手**（`reschedule.py --unschedule` →
+    `--move`）は `videos.update` ×2 ＝ **`next_slot.SWAP_UNITS` 単位**、
+    **日枠が要ります。**
+
+    **実測 2026-09-01**: きょうだい2回が 09:04 と 10:08 に `src/calc/hendo.py` を
+    厚くして `improve` で ship しましたが、**その2件はどちらも今夜 22:00 に出る本に
+    入っていません**（`next_slot` が「焼いたのは 08/31 20:26。そのあと N件」と
+    毎周 名指ししています）。この回の `split_grid` を入れて **4件**。
+
+    **同じ repo の `next_slot.swap_cost_lines()` は、この代金を正しく印字しています。**
+    ズレていたのは、**`fix` の連の門が読む唯一の一覧**（この関数）のほうでした ——
+    **門は「0単位で撃てる手が在る」と言って `fix` を止め、
+    止められた側が向かった先は「良くしたのに本には入らない」でした。**
+
+    **これは `improve` を止める行ではありません**（規則3 は「出る瞬間まで良くし続けろ」）。
+    **値札を最後まで書くだけ**です。枠が尽きている窓では
+    「コードまでは進む。本に入れるのは枠が戻ってから」と読めます。
+
+    ## 覆る条件
+
+    - `reschedule` が `videos.update` を使わない道を持ったら、この後半は要りません
+      （`next_slot.swap_cost_lines()` の同じ「覆る条件」と一緒に消すこと）
+    - 帳面（`quota_ledger`）が読めない回は、**単位だけ**言って窓のことは言いません
+      —— **推測で手を止めないため**（`swap_cost_lines()` と同じ姿勢）
+    """
+    try:
+        from src import next_slot                              # noqa: PLC0415
+
+        units = int(next_slot.SWAP_UNITS)
+    except Exception:                                          # noqa: BLE001
+        return ""
+    tail = (f"。**ただし 0単位 で買えるのはコードの側だけです** ——"
+            f"焼き直した本を同じ枠へ差し替える2手"
+            f"（`--unschedule` → `--move`）は **{units}単位**"
+            f"（`videos.update` ×2）で、**日枠が要ります**")
+    out, _line = quota_is_out()
+    if not out:
+        return tail + "（この窓は枠が在ります）"
+    try:
+        from datetime import datetime, timezone               # noqa: PLC0415
+
+        from src import upload_cap                            # noqa: PLC0415
+
+        when = upload_cap.window_end(datetime.now(timezone.utc)).astimezone(JST)
+        return tail + (f" —— **この窓では 403 です。戻るのは "
+                       f"{when:%m/%d %H:%M} JST。**"
+                       "**それまでに撃てるのはコードまで**"
+                       "（焼き直しだけ撃って差し替えないと、古い予約が外せず"
+                       "同じ枠に2本 出ます ＝ オーナー規則1 違反）")
+    except Exception:                                          # noqa: BLE001
+        return tail + " —— **この窓では 403 です**"
 
 def quota_is_out() -> tuple[bool, str]:
     """**Data API の日枠が、この窓でもう尽きているか**（`(尽きているか, 1行)`）。
