@@ -6235,7 +6235,7 @@ hypotheses:
     # 作ってから公開までの中央値は 15日（`deadline_check` の実測）＋
     # 落ち着き3日 ＋ Analytics の遅れ3日。**`queue_lag --move` で手前へ倒せば
     # 縮みます**（枠が戻る 08/28 16:00 JST 以降）。**縮んだら期限も縮めること。**
-    deadline: "2026-09-12"
+    deadline: "2026-09-06"
     needs:
       - kind: accrual
         # **比べられる本**の数（`src/reveal_hold.arm_n`）。両群の少ないほう。
