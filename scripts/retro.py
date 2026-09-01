@@ -446,6 +446,109 @@ def noise_tokens() -> dict[str, set[str]]:
     return {"族名": calcs, "種類": set(SHIP_KINDS), "動画ID": vids}
 
 
+#: **角括弧の印だけ**でできた語（`[pool] [!]` `[marker]`）。
+#: 道具が自分の出力の頭に付けている印で、**問題の名前ではありません。**
+TOOL_MARK_RE = re.compile(r"\[[^\[\]]*\]")
+
+
+def is_tool_mark(tok: str) -> bool:
+    """その語は、**道具自身の印字**（角括弧の印）だけでできているか。
+
+    ## なぜ要るか（2026-09-01。**2周 続けて名指しされていました**）
+
+    持ち越しの一覧に `[pool] [!]` が **4周** 載っていました。あれは
+    `scripts/pool_drain.py` が自分の出力の頭に付けている印で、
+    **同じ1件を `python scripts/pool_drain.py --apply` と2語に割っています**
+    （2026-09-01 10:2x と 11:5x の申し送りが、両方ともこの例を挙げています）。
+
+    **手で語彙を並べていません**（`noise_tokens()` の教訓）。
+    見ているのは**形**だけです —— 角括弧を全部 落として何も残らなければ、
+    その語はファイルも関数も名指ししていません。
+    """
+    return bool(TOOL_MARK_RE.search(tok)) and not TOOL_MARK_RE.sub("", tok).strip()
+
+
+def _contained_at_boundary(short: str, long: str) -> bool:
+    """`short` が `long` の中に、**語の切れ目で**入っているか。
+
+    切れ目を見るのは、`grid` が `guard_grid` を飲み込むような畳み方を
+    止めるためです。前後が `[A-Za-z0-9_]` なら、それは別の語の一部です。
+    """
+    i = long.find(short)
+    while i >= 0:
+        before = long[i - 1] if i > 0 else ""
+        after = long[i + len(short)] if i + len(short) < len(long) else ""
+        if not re.match(r"[A-Za-z0-9_]", before or " ") and \
+           not re.match(r"[A-Za-z0-9_]", after or " "):
+            return True
+        i = long.find(short, i + 1)
+    return False
+
+
+def fold_contained(seen: dict[str, list[str]]) -> tuple[dict[str, list[str]],
+                                                        dict[str, str]]:
+    """**同じ1件が複数の語に割れている**のを、長いほうへ畳む。
+
+    返すのは `(畳んだ後の一覧, 畳んだ語 → 畳んだ先)`。
+
+    ## なぜ要るか（2026-09-01。**2周 続けて名指しされていました**）
+
+    実測（この回の一覧・23語）——
+
+        python scripts/pool_drain.py --apply   ⊃  pool_drain.py --apply
+        scripts/reschedule.py --unschedule <古い方>  ⊃  --unschedule
+        src/calc/hendo.catchup_grid()          ⊃  catchup_grid()
+
+    **どれも同じ1件です。** 割れていると (1) 一覧が実際より長く見え、
+    (2) `worked_on()` の「実物に当たった回」が形ごとにばらけ、
+    (3) `_sinks()` の枠待ちの印が**長い形にしか当たりません**
+    （2026-09-01 11:5x の申し送り4 —— `python scripts/pool_drain.py --apply` は
+    沈んだのに `pool_drain.py --apply` は沈まなかった）。**畳めば3つとも直ります。**
+
+    ## 日付が重なっているかは見ません（**一度 書いて外しました**）
+
+    最初は「同じ回に両方 出ていたら畳む」と書きました。**実測で外れます** ——
+    `--unschedule` は 09:4x/10:2x/10:4x、`scripts/reschedule.py --unschedule <古い方>`
+    は 11:1x/11:5x/13:3x で、**一度も重なっていません。**
+    前半の回が短い形で、後半の回が長い形で書いただけです。
+    重なりを条件にすると、**まさに畳みたい「3周+3周＝6周」が畳まれません。**
+
+    **覆る条件**: 別々の1件が偶然 部分文字列になって畳まれた回が出たら、
+    切れ目の規則（`_contained_at_boundary`）を強めること。畳んだ先は
+    画面に必ず出るので（「同じ1件として畳みました」）、その場で気づけます。
+    """
+    folded: dict[str, str] = {}
+    by_len = sorted(seen, key=len, reverse=True)
+    for short in sorted(seen, key=len):
+        for long in by_len:
+            if long == short or len(long) <= len(short):
+                continue
+            if _contained_at_boundary(short, long):
+                folded[short] = long
+                break
+
+    def _root(tok: str) -> str:
+        seen_: set[str] = set()
+        while tok in folded and tok not in seen_:
+            seen_.add(tok)
+            tok = folded[tok]
+        return tok
+
+    folded = {s: _root(s) for s in folded}
+    folded = {s: d for s, d in folded.items() if s != d}
+    out: dict[str, list[str]] = {t: list(ds) for t, ds in seen.items()
+                                 if t not in folded}
+    for short, long in folded.items():
+        dest = out.get(long)
+        if dest is None:
+            continue
+        for d in seen[short]:
+            if d not in dest:
+                dest.append(d)
+        dest.sort()
+    return out, folded
+
+
 JST = timezone(timedelta(hours=9))
 # **窓の頭はここに持ちません**（2026-08-17 22:4x に外した）。
 # `QUOTA_BACK_HOUR = 16` と固定で持っていましたが、枠の頭は**太平洋時間の0時**なので
@@ -754,17 +857,43 @@ def carry_over(n: int = 8) -> tuple[dict[str, list[str]], dict[str, list[str]]]:
                 continue
             seen[tok].append(date[:16])
     noise = noise_tokens()
-    out: dict[str, list[str]] = {}
     dropped: dict[str, list[str]] = {}
-    for tok, ds in seen.items():
-        if len(ds) < 2:
-            continue
+
+    def _noise_label(tok: str) -> str:
+        # **道具自身の印字は、問題の名前ではありません**（`is_tool_mark()`）。
+        if is_tool_mark(tok):
+            return "道具の印字"
         for label, words in noise.items():
             if tok in words:
+                return label
+        return ""
+
+    # **外すのが先、畳むのが後です**（2026-09-01。**逆に書いて、その場で踏んだ**）。
+    # 先に畳むと、`fix` のような**種類の語**が長い語へ回数を持ち込みます ——
+    # 実測: `fix`（種類として外すはずの語）が `fix: 「3本とも同時に天井` へ
+    # 畳まれ、**外したはずの4回が一覧の上位に戻って**いました。
+    kept: dict[str, list[str]] = {}
+    for tok, ds in seen.items():
+        label = _noise_label(tok)
+        if label:
+            # 一覧に出る目のあった語（2回以上）だけ、外したことを言います。
+            # 1回きりの語まで並べると、その節が数十行になります。
+            if len(ds) >= 2:
                 dropped.setdefault(label, []).append(tok)
-                break
-        else:
-            out[tok] = ds
+            continue
+        kept[tok] = list(ds)
+
+    # **畳むのは「2回以上」で切る前です。** 切ってから畳むと、
+    # 短い形で1回・長い形で1回 出ている同じ1件が、**両方とも落ちます。**
+    seen_folded, folded = fold_contained(kept)
+    out: dict[str, list[str]] = {t: ds for t, ds in seen_folded.items()
+                                 if len(ds) >= 2}
+    # **畳んだ語も語彙には残すこと**（生の語のまま）。`run_marker.py --closes` は
+    # `carry_over()` の返り（`dropped` も含む）を語彙に使うので、ここから
+    # 落とすと、短い形で `--closes` を打った回に「一覧に無い語」と鳴ります。
+    for short, long in folded.items():
+        if long in out:
+            dropped.setdefault("同じ1件", []).append(short)
     return out, dropped
 
 
@@ -1320,13 +1449,32 @@ def main() -> int:
         print("  ありません。（申し送りが毎回すべて片づいている、"
               "か、書き方が毎回違って機械では追えていない）")
     # **落としたものは必ず言うこと。** 黙って削ると「全部見た」に見えます。
-    if dropped:
-        total = sum(len(v) for v in dropped.values())
+    # **外し方が3つあるので、まとめて1つの見出しに入れないこと**（2026-09-01）。
+    # 「物の名前」「道具の印字」「同じ1件へ畳んだ」は、次の回への意味が別です ——
+    # 前2つは**この一覧に載らない**もの、最後は**上の行に合流した**ものです。
+    names = {k: v for k, v in dropped.items() if k not in ("道具の印字", "同じ1件")}
+    if names:
+        total = sum(len(v) for v in names.values())
         print(f"\n  --- **物の名前なので外したもの（{total}件）** ---")
-        for label, toks in sorted(dropped.items(), key=lambda kv: -len(kv[1])):
+        for label, toks in sorted(names.items(), key=lambda kv: -len(kv[1])):
             print(f"  {label:>6s}  {' / '.join(sorted(toks))}")
         print("  **問題の名前ではなく物の名前**です（`noise_tokens()`）。"
               "族名は `src/calc/`、動画IDは `data/critique_queue/` の実物から引いています。")
+    if dropped.get("道具の印字"):
+        toks = sorted(dropped["道具の印字"])
+        print(f"\n  --- **道具自身の印字なので外したもの（{len(toks)}件）** ---")
+        print(f"  {' / '.join(toks)}")
+        print("  角括弧を落とすと何も残りません（`is_tool_mark()`）。"
+              "**ファイルも関数も名指ししていない**ので、開く先がありません。")
+    if dropped.get("同じ1件"):
+        toks = sorted(dropped["同じ1件"])
+        print(f"\n  --- **同じ1件なので、長いほうへ畳んだもの（{len(toks)}件）** ---")
+        print(f"  {' / '.join(toks)}")
+        print("  上の一覧の、これを**含む**行に合流しています（`fold_contained()`）。"
+              "\n  **回数はそこに足してあります** —— 畳む前は"
+              "「3周ずつ運ばれた2件」に見えていたものが、"
+              "1件で6周 運ばれていた、という読み方に変わります。"
+              "\n  `--closes` には短いほうの形でも通ります（語彙には残してあります）。")
     if muted:
         print("\n  --- **閉じたと宣言されているので、上から外したもの** ---")
         for tok, n in sorted(muted.items(), key=lambda kv: -kv[1]):
