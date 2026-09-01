@@ -50,6 +50,7 @@ open-jtalk は**本番のエンジンではない**。本番は Google Cloud TTS
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -246,8 +247,18 @@ def queue(lines: list[str]) -> None:
     seen = dict(blob.get("open", {}))
     for line in lines:
         seen[line] = seen.get(line, 0) + 1
-    QUEUE_PATH.write_text(json.dumps(
-        {"at": _now(), "open": seen}, ensure_ascii=False, indent=1), encoding="utf-8")
+    body = json.dumps({"at": _now(), "open": seen}, ensure_ascii=False, indent=1)
+    # **`batch_build` は並列に走る。** そのまま write_text すると、
+    # 別の工程が途中まで書かれた JSON を読む（`_load` が握り潰して空扱いにする ＝
+    # 名指しが黙って消える）。一時ファイルに書いて rename すれば、
+    # 読み手が見るのは常に「前の版」か「次の版」のどちらかになる。
+    tmp = QUEUE_PATH.with_suffix(f".{os.getpid()}.tmp")
+    try:
+        tmp.write_text(body, encoding="utf-8")
+        tmp.replace(QUEUE_PATH)
+    finally:
+        if tmp.exists():
+            tmp.unlink()
 
 
 def _now() -> str:
