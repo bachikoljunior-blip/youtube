@@ -93604,7 +93604,15 @@ CSV を置いていくので、**こちらが撃つ回数を増やしても控�
    `retro.tool_suspect()` の線に「枠待ちの語は除く」を足すのが次の `fix` の候補（API 0単位）。
 3. **上の (a2) 問い3 の1手**（claim/ship の一覧に「いま撃てるか」の札）。
    `retro.py` 側に実装が既にあるので、**移すだけ**です。API 0単位。
-4. **`_UPSTREAM_LAG` に入っているのは `data/reach.jsonl` の1件だけです。**
+4. **`bash scripts/stop_check.sh` をサブが手で撃つと `block` が返りますが、
+   その `block` はサブには当たりません**（この回に確かめた）。
+   `.claude/settings.json` の口は **`Stop` だけで、`SubagentStop` は `null`**
+   なので、あの門が効くのは**親のターンの終わり**です。返ってきた
+   「次の回を立ててから終わってください（`relay.py --next` → `create_session`）」は
+   **§6 の (f)** そのもので、サブには当てはまりません（§6 冒頭の免除）。
+   **`--record` も `create_session` も撃たないこと。** 手で撃つ意味があるのは
+   (1)〜(1.7) の門の中身を読むときだけです。
+5. **`_UPSTREAM_LAG` に入っているのは `data/reach.jsonl` の1件だけです。**
    `rpm_mix.jsonl`（Analytics・3日遅れ）と `video_forms.json` も同じ性質ですが、
    **この回は測っていません**（1回に1つ）。`data/analytics_lag.jsonl` に材料が在ります。
    **推測で埋めないこと。**
