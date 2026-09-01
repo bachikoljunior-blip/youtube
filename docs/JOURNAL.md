@@ -94959,3 +94959,19 @@ API 0単位・`scripts/retro.py` の中だけで閉じます。
 5. **`--closes` に短い形を打っても通ります。** 畳んだ語は語彙に残してあります
    （`dropped["同じ1件"]` → `run_marker._known_vocab()`）。
    **検査 `test_畳んだ語は語彙に残る` がそこを見ています。**
+
+##### 追記: **検査は緑**（`fast_tests` の `-k` の範囲・700 passed / 199秒）
+
+    -k: arm_speed or drift or eta or levers or retro or retro_fold_contained
+    700 passed, 4940 deselected in 199.19s
+
+**この回が触った `.py` は 2件**（`retro` ／ `retro_fold_contained`）。
+**この回の変更が足した赤は 0件。**
+
+**走らせているあいだ `.py` を1文字も触っていません**
+（05:49 のきょうだいが手順にした規則 —— `inspect.getsource()` を使う検査が
+触った所と無関係に落ちる）。**待っている間に origin の merge だけ入れましたが、
+それも走り終えてから押しています。**
+
+**全体（16分）は撃っていません。** 触った所から離れた壊れ方は、
+この選択では見えません。
