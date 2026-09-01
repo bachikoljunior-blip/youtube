@@ -93879,3 +93879,47 @@ CSV を置いていくので、**こちらが撃つ回数を増やしても控�
    1行目は見出しの意味と合っていません。**害はありませんが、画面に出すなら落とすこと。**
    API 0単位・`fix` の候補（**実物は `src/calc/hendo.catchup_grid()` の
    `for p in s["payments"]` —— `payments[0]` は `simulate()` が初回に必ず積む1件**）。
+
+### 追記（11:3x）: **前の回が名指しして直せなかった1件を、この回で潰しました**
+
+`improve` を ship したので `fix_run_len()` は **0** に戻り、門は開いています
+（**種別の語を書き換えたのではありません** —— 上の `improve` は物が変わっています）。
+そこで 10:5x の回の申し送り（`550e6ef8`）を撃ちました。
+
+**`run_marker.free_alternatives()` の `improve` の行は「0単位」で終わっていました。**
+`free_alternatives()` は **`fix` の連の門が読む唯一の入力**です
+（`tests/test_fix_gate_free_alternatives.py`）。そこに半分の値札が載っていたので:
+
+    門    「0単位で撃てる手（`improve`）が在る」→ `fix` を止める
+    行き先 コードは良くなる。**本には入らない**（差し替えの2手が 403）
+
+**実測 09/01: `improve` の ship は 3件**（09:04 `guard_grid` ／ 10:08 `compound_grid` ／
+11:2x `split_grid`）**で、3件とも今夜 22:00 に出る本に入っていません。**
+焼いたのは 08/31 20:26 で、差し替え（`--unschedule` → `--move` ＝ `videos.update` ×2 ＝
+**100単位**）がこの窓では 403 だからです。
+
+**同じ repo の `next_slot.swap_cost_lines()` は、この代金を正しく印字しています。**
+ズレていたのは**門が読むほうの一覧だけ**でした ——
+**1つの事実が2か所にあって、片方だけが古い**という、この repo でいちばん多い形です。
+
+- `run_marker._improve_swap_note()`。単位は **`next_slot.SWAP_UNITS` から引きます**
+  （同じ数を2か所に書かない）。枠が在る窓と 403 の窓で言い分けます
+- 帳面（`quota_ledger`）が読めない回は**単位だけ**言い、窓のことは言いません ——
+  **推測で手を止めないため**（`swap_cost_lines()` と同じ姿勢）
+- 検査 `tests/test_free_alternatives_improve_price.py`（5件）。
+  そのうち1件は **`improve` が一覧から消えていないこと**を見ます ——
+  消えると門が免除に倒れるので、**値札で `improve` を殺さない**ための検査です
+
+**覆る条件**: `reschedule` が `videos.update` を使わない道を持ったら、
+この後半は要りません（`next_slot.swap_cost_lines()` の同じ「覆る条件」と一緒に消すこと）。
+
+### この回の検査（全件）
+
+`python -m pytest -q` は **2,491 passed / 1 failed / 1 skipped**（6分3秒）。
+赤い1件は **`tests/test_judgeable.py::test_実物で期限が構造的に守れる[opening_motion]`**
+—— 「判定に要る本が予約にそろっていません: 対照(動きなし) 2本 不足」で、
+**この回の変更とは無関係の在庫の話**です（`config/topics.yaml` を 09/01 02:13 時点の
+版へ戻しても同じように赤い、と確かめました）。
+**直し方は検査自身の docstring に書いてあります** ——
+「群がそろわない（`ready is None`）なら、期限ではなく**在庫の割り当て**の話。
+`python scripts/ab_split.py --outlook` を見ること」。**次の回の候補。API 0単位。**
