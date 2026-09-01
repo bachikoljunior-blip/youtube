@@ -123,6 +123,42 @@ def _uploads(rows: list[dict] | None = None) -> dict[str, dict]:
     return out
 
 
+def _is_stockpile(rec: dict, now: datetime | None = None) -> bool:
+    """**その控えは「作り置き」か**（規則2・`src/house_rule.is_stockpile`）。
+
+    ## なぜ要るか（2026-09-01・最適化の回に、実物で踏んだ）
+
+    `next_ready()` は「予約表から」その群が `need` 本 そろう日を出します。
+    **予約表は、規則2 が外す本でできていました。** 実測 2026-09-01 ——
+    控えの未来の予約 **293本 は 293本 とも作り置き**（作り置きでない未来の予約は 0本）。
+    それでも `scripts/status.py` はこう印字していました:
+
+        あと **10本**  完成形の保持-16本（いま 6 / 要る 16）
+            … ／ **予約表では 2026-09-02 にそろう**
+
+    **09/02 には そろいません。** その 10本 は `pool_drain --apply` が外すので
+    1本も公開されません。**「明日そろう」と読んだ回は、何もしないのが正解だと読みます。**
+
+    `src/judgeable.members()` は 2026-08-31 に同じ絞りを入れています
+    （「作り置きの予約は、床に数えません」）。**同じ台帳を読む2つ目の入口が、
+    その絞りを持っていませんでした。**
+
+    `src/house_rule.py` の警告どおりの形です ——
+    **「これから出る本」として数えると、在りもしない供給で日付が早く出ます。**
+
+    **覆る条件**: オーナーが規則2 を外したら（`house_rule.STOCKPILE_IS_SUPPLY`）、
+    `is_stockpile()` が全部 `False` を返すので、この絞りは自然に消えます。
+    **読めない回は `False`**（＝落とさない）—— 測っていないことを落とす側に倒さない。
+    """
+    try:
+        from src import house_rule                              # noqa: PLC0415
+
+        today = (now or datetime.now(timezone.utc)).astimezone(JST).strftime("%Y-%m-%d")
+        return bool(house_rule.is_stockpile(rec, today))
+    except Exception:                                           # noqa: BLE001
+        return False
+
+
 def _parse(value: Any) -> datetime | None:
     try:
         when = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
@@ -213,6 +249,8 @@ def next_ready(need: int = 16, now: datetime | None = None,
     for _vid, rec in _uploads(rows).items():
         if side_of(rec) != side:
             continue
+        if _is_stockpile(rec, now):
+            continue                       # 規則2 ＝ 公開されない本（下の註）
         sec = rec.get("duration_s")
         pub = _parse(rec.get("at"))
         if sec is None or pub is None:
