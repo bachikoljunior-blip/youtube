@@ -98,3 +98,24 @@ def test_公開ずみの本が門で止まらない():
         if done >= 3:
             break
     assert done, "公開ずみの台本が1本も読めていません"
+
+
+def test_憶えても答えが変わらない():
+    """`_analyze_one()` の憶え（`_MEMO`）は、**入力の文字列だけの関数**であること。
+
+    2026-09-02 に足した。門を `verify` へ繋いだら、検査の一式が **4倍** 遅くなった
+    （台本1本・12段で **0.90秒**。open_jtalk は1回 起動するごとに音声まで合成する）。
+    台本には同じ言い回しが何度も出るので、憶えるだけで **0.90秒 → 0.08秒**。
+    **速さのために答えを変えていないこと**を、ここで見ます。
+    """
+    if not G.available():
+        return
+    a1 = G.analyze("表の行を見てください。")
+    b1 = G.analyze("控除額は48万円です。")
+    a2 = G.analyze("表の行を見てください。")
+    assert [t["surface"] for t in a1] == [t["surface"] for t in a2]
+    assert [t["pron"] for t in a1] == [t["pron"] for t in a2]
+    assert [t["surface"] for t in b1] != [t["surface"] for t in a1]
+    # 呼び手が返りを書き換えても、次の呼び出しに漏れないこと
+    a2[0]["surface"] = "壊した"
+    assert G.analyze("表の行を見てください。")[0]["surface"] != "壊した"
