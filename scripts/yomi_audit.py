@@ -71,6 +71,24 @@ def lines() -> list[str]:
     return list(seen)
 
 
+
+def _save(prons: dict, silent: dict, done: int, total: int,
+          started: float, partial: bool) -> dict:
+    """途中でも最後でも、同じ形で書く。**読む側は `partial` を見るだけ。**"""
+    blob = {
+        "at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+        "lines": done, "of_lines": total, "partial": partial,
+        "surfaces": len(prons),
+        "seconds": round(time.time() - started, 1),
+        "split": {s: sorted(v) for s, v in prons.items() if len(v) > 1},
+        "silent": dict(silent),
+    }
+    tmp = OUT.with_suffix(".tmp")
+    tmp.write_text(json.dumps(blob, ensure_ascii=False, indent=1), encoding="utf-8")
+    tmp.replace(OUT)          # 読み手が半分書かれた JSON を見ないように
+    return blob
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--limit", type=int, default=0, help="先頭から N 行だけ")
@@ -115,16 +133,14 @@ def main() -> int:
             rate = chars / max(1e-9, time.time() - started)
             print(f"   {i + 1}/{len(rows)} 行  {rate:.0f}文字/秒  "
                   f"割れる語 {sum(1 for v in prons.values() if len(v) > 1)}", flush=True)
+            # **途中で保存する。** この機械はコンテナごと落ちます —— 2026-09-01 に
+            # 39分 走っていた回が丸ごと消え、同じ日に3つ まとめて殺されています。
+            # 全文は約50分 かかるので、**最後にまとめて書くと 0 か 100 になります。**
+            # 途中の表でも門は動く（語が少ないだけで、誤りは1つも入らない）。
+            _save(prons, silent, i + 1, len(rows), started, partial=True)
 
-    split = {s: sorted(v) for s, v in prons.items() if len(v) > 1}
-    blob = {
-        "at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
-        "lines": len(rows), "surfaces": len(prons),
-        "seconds": round(time.time() - started, 1),
-        "split": split,
-        "silent": dict(silent),
-    }
-    OUT.write_text(json.dumps(blob, ensure_ascii=False, indent=1), encoding="utf-8")
+    _save(prons, silent, len(rows), len(rows), started, partial=False)
+    split = {s: v for s, v in prons.items() if len(v) > 1}
     print(f"[yomi] 行 {len(rows)} / 漢字の表層 異なり {len(prons)} / "
           f"**割れる語 {len(split)}**（{len(split) / max(1, len(prons)) * 100:.1f}%）"
           f" / 音にならない語 {len(silent)}  → {OUT}")
