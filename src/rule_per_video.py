@@ -86,7 +86,7 @@ import json
 import math
 import statistics
 from collections import defaultdict
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -422,6 +422,106 @@ def lines(e: dict | None = None) -> list[str]:
             " 弾力性が **-0.663 → -1.154** に折れます。**推測に天井を 71% 動かさせないこと。**"
             " 見たいときだけ `estimate(trust=(\"measured\",\"duration\",\"tag\"))`。"
         )
+    try:
+        out.extend(sample_lines(next_sample_days(e)))
+    except Exception:
+        pass
+    return out
+
+
+def next_sample_days(e: dict | None = None, cal: dict | None = None,
+                     today: Any = None) -> dict:
+    """**この標本は、次にいつ増えるか。**（2026-09-01・最適化の回）**API 0単位。**
+
+    ## なぜ要るか（この回に踏んだ）
+
+    `at_rule_mean` は「**その日に {band}本 までしか出さなかった日**」だけで
+    できています。`eta.py` が毎周「引けるのは `per_video` だけ」と名指しする、
+    その分子です。**つまり、規則の密度の日が1日も増えないあいだ、この数は
+    どれだけ良い本を作っても動きません。**
+
+    実測 2026-09-01: 標本の規則日は **12日**、いちばん新しいものでも 08/18。
+    予約の暦は **108本 / 20日 が空**で、埋まっている日は **4〜13本/日**。
+    **≤2本/日 で立っている日は 09/04・09/25・09/26 の 3日 だけ** ——
+    つまり**今後 23日 で標本は 1日 しか増えません**（12日 → 13日）。
+
+    **これは「予約を詰め直せ」という話ではありません**（そこは別の回の担当）。
+    ここが言うのは1つだけ: **空いた日を 1本/日 で埋めることは、鎖を切らさない
+    ためだけの手ではなく、唯一 生きている腕の分子を動かせる唯一の入口**です。
+
+    返り::
+
+        rule_days   いま標本に入っている規則日の数
+        band        規則日と見なす上限（`per_day * RULE_BAND_MULT`）
+        upcoming    これから規則日になれる日 `[(日, 本数), ...]`
+        next_day    そのいちばん手前（無ければ None）
+        wait_days   `today` から `next_day` までの日数
+        blocked     本数が多すぎて規則日になれない日の数
+        empty       予約が 0本 の日の数（**埋めれば規則日になれる日**）
+    """
+    e = e if e is not None else estimate()
+    band = int(e.get("band") or max(1, RULE_BAND_MULT))
+    if cal is None:
+        try:
+            from . import next_slot
+            cal = next_slot.calendar()
+        except Exception:
+            cal = None
+    out: dict[str, Any] = {"rule_days": e.get("rule_days"), "band": band,
+                           "upcoming": [], "next_day": None, "wait_days": None,
+                           "blocked": None, "empty": None}
+    if not isinstance(cal, dict):
+        return out
+    per_day = cal.get("per_day") or {}
+    if today is None:
+        today = datetime.now(timezone.utc).date()
+    elif isinstance(today, str):
+        today = date.fromisoformat(today)
+    up, blocked = [], 0
+    for k, n in per_day.items():
+        try:
+            d = date.fromisoformat(str(k))
+        except Exception:
+            continue
+        if d <= today:
+            continue
+        if int(n) <= band:
+            up.append((d, int(n)))
+        else:
+            blocked += 1
+    up.sort()
+    out["upcoming"] = up
+    out["blocked"] = blocked
+    out["empty"] = cal.get("empty")
+    if up:
+        out["next_day"] = up[0][0]
+        out["wait_days"] = (up[0][0] - today).days
+    return out
+
+
+def sample_lines(s: dict | None = None) -> list[str]:
+    """`next_sample_days()` の印字。**`eta.py` が `lines()` の続きに出します。**"""
+    s = s if s is not None else next_sample_days()
+    if s.get("next_day") is None and not s.get("empty"):
+        return []
+    out = ["    --- **この標本は、次にいつ増えるか**（`next_sample_days()`・API 0単位）---"]
+    if s.get("next_day") is not None:
+        out.append(
+            f"        いま規則日 **{s['rule_days']}日**。予約の暦で "
+            f"**{s['band']}本/日 以下**で立っている日は **{len(s['upcoming'])}日** —— "
+            f"いちばん手前は **{s['next_day']}**（**{s['wait_days']}日後**）。"
+            f" 本数が多すぎて規則日になれない日は **{s['blocked']}日**。"
+        )
+    else:
+        out.append(f"        いま規則日 **{s['rule_days']}日**。"
+                   f"**予約の暦に、{s['band']}本/日 以下の日が1日もありません。**")
+    out.append(
+        f"        [!] **＝ 分子（`at_rule_mean`）は、それまで動きません。**"
+        " どれだけ良い本を作っても、規則の密度の日が増えないと標本に入りません。"
+        + (f" **空いている日は {s['empty']}日** ——"
+           " **1本/日 で埋めれば、そのぶん規則日が増えます**（鎖を切らさないためだけの手ではありません）。"
+           if s.get("empty") else "")
+    )
     return out
 
 
@@ -582,7 +682,70 @@ def ceiling_lines(c: dict | None = None) -> list[str]:
         f"        → {c['why']}{span}。素材は {c['max_per_day']}本/日 までの "
         f"{c['n_source']}本・**外挿は1段**。"
         f"**規則が 1本/日 に固定された今、これは 2〜3週間で自分で判定されます**",
-    ]
+    ] + (drift_lines(ceiling_drift(c)) if c else [])
+
+
+#: **書き置いた天井と、いま計算した天井のずれを、どこまで黙って許すか。**
+#:
+#: 実測 2026-09-01: `scripts/eta.py` の見出しは「`per_video` は ×4.16 が天井
+#: （実測 3,918・`src/rule_per_video.ceiling_at_rule()`）」と**この関数を出典に
+#: 挙げます**が、`plan()` が実際に使う数は `arm_speed.ceilings()` ——
+#: **`config/hypotheses.yaml` に書き置かれた `value: 3918` という文字**です。
+#: **関数は毎回 動くのに、使われる数は動きません。**
+#:
+#: この回に標本の欠けを1つ直したら、生きた計算は **3,918 → 4,101** になりましたが、
+#: 見出しは **3,918 のまま**でした。**結論より先に、その根拠のほうが腐ります。**
+#: だから「ずれている」ことを**印字と検査の両方**で言わせます
+#: （`tests/test_ceiling_drift.py`）。
+CEILING_DRIFT_TOL = 0.15
+
+
+def ceiling_drift(c: dict | None = None, stored: float | None = None) -> dict:
+    """**書き置いた天井 対 いま計算した天井。**API 0単位。
+
+    返り::
+
+        live     `ceiling_at_rule()` の点推定（いま計算した数）
+        stored   `config/hypotheses.yaml` の `ceiling.value`（使われている数）
+        ratio    live ÷ stored
+        drifted  `CEILING_DRIFT_TOL` を超えてずれているか
+    """
+    c = c if c is not None else ceiling_at_rule()
+    live = float(c["value"]) if c and c.get("value") else None
+    if stored is None:
+        try:
+            from . import arm_speed
+            v = (arm_speed.ceilings() or {}).get("per_video") or {}
+            stored = float(v["value"]) if v.get("value") is not None else None
+        except Exception:
+            stored = None
+    out = {"live": live, "stored": stored, "ratio": None, "drifted": False}
+    if live and stored:
+        out["ratio"] = live / stored
+        out["drifted"] = abs(out["ratio"] - 1.0) > CEILING_DRIFT_TOL
+    return out
+
+
+def drift_lines(d: dict | None = None) -> list[str]:
+    """`ceiling_drift()` の印字。**ずれていなくても出します** ——
+
+    「いま計算した数と、使われている数は別の物だ」が見えていないと、
+    次の回が見出しの `3,918` を**測ったばかりの数**として読みます。
+    """
+    d = d if d is not None else ceiling_drift()
+    if not d.get("live") or not d.get("stored"):
+        return []
+    same = abs(d["ratio"] - 1.0) < 1e-9
+    head = (f"    **見出しの天井は、書き置かれた文字です** —— "
+            f"`config/hypotheses.yaml` の `ceiling.value` **{d['stored']:,.0f}** を "
+            f"`plan()` が使い、`ceiling_at_rule()` の**いまの計算 "
+            f"{d['live']:,.0f}**（×{d['ratio']:.2f}）は使いません。")
+    if d["drifted"]:
+        return [head + f" [!] **{CEILING_DRIFT_TOL:.0%} を超えてずれています ——"
+                       " 書き置きのほうを直すこと**（`tests/test_ceiling_drift.py` が落ちます）。"]
+    if same:
+        return [head + " いまは同じ数です。"]
+    return [head + " ずれは許容の内です。"]
 
 
 #: Hill 推定に使う上位の本数（k）。**1つの k で読まないこと** ——
