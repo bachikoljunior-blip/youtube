@@ -279,7 +279,9 @@ def floor_minutes() -> tuple[float, str]:
             return float(got), "**枠を使い切っています**（歯止めの上限。実測ではありません）"
         if pc.get("births"):
             return float(got), (f"quota.py の実測（1周 {pc.get('per_lap', 0):.3f}%"
-                                f"・誕生 {pc['births']}件）")
+                                f"・**周 {pc['births']}件**"
+                                + (f"／サブ {pc['subs']}体" if pc.get("subs") else "")
+                                + "）")
     return float(got), "quota.py の実測"
 
 
