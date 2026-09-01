@@ -2515,8 +2515,48 @@ def print_local_sections(inventory: bool = True) -> None:
     print_queue_lag()
     print_live_slots()
     print_hypotheses()
+    print_yomi_queue()
     print_alert_hit_rate()
     print_budget()
+
+
+def print_yomi_queue() -> None:
+    """**読みの門が名指しした語**を、毎周ここに出す（2026-09-02 に足した）。
+
+    オーナー原文（`CLAUDE.md` 固定その3・**一字も変えないこと**）:
+    「**ナレーションの漢字の読み方全部正しくして**」
+
+    `src/verify._check_yomi` は台本を見るたびに読み上げの漢字を全部
+    形態素解析にかけ、**落とさない名指し（R1 割れる／R2 刻まれる）を
+    `data/yomi_queue.json` に積みます**。落とさないのは、R1 に当たる語
+    （日・分・人・年・上・行…）が**毎本に出る**ので、耳の判定より先に落とすと
+    **投稿が全部 止まる**からです。
+
+    **積むだけで誰も見ないなら、積んでいないのと同じです。**
+    だからここに出します。撃つ先は1つ:
+
+        python scripts/yomi_ear.py --limit 40   ← Google と open-jtalk の一致を測る
+
+    **覆る条件**: 耳が待ち行列をひととおり判定し終えたら、
+    「**判定の無い R1 は落とす**」へ寄せること（そこが本当の門）。
+    そのとき、この行は「待ち 0件」で静かになります。
+    """
+    from src import yomi_gate
+
+    blob = yomi_gate._load(yomi_gate.QUEUE_PATH)
+    rows = blob.get("open", {})
+    if not rows:
+        return
+    judged = len(yomi_gate.load_ledger())
+    print(f"\n=== 読みの待ち行列（**固定その3の1つ目**）===")
+    print(f"  積まれた名指し **{len(rows)}件**（{blob.get('at', '?')} まで）／"
+          f"耳が判定ずみ **{judged}語**")
+    for line, n in sorted(rows.items(), key=lambda kv: -kv[1])[:5]:
+        print(f"    ×{n:<3} {line.split(': ', 1)[-1][:88]}")
+    if len(rows) > 5:
+        print(f"    （ほか {len(rows) - 5}件）")
+    print("  撃つのは `python scripts/yomi_ear.py --limit 40`"
+          "（候補を人が書かずに、本番の Google と open-jtalk の一致だけを測ります）")
 
 
 def print_goal_drift() -> None:

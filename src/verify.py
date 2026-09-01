@@ -1967,15 +1967,31 @@ def _check_slides(work: Path, script: dict | None) -> list[str]:
 
 
 def _check_yomi(script: dict | None) -> list[str]:
-    """合成音声が確実に読み違える形が、TTS に渡る文字列に残っていないか。
+    """読み上げに渡る文字列の、**全部の漢字**を形態素解析にかける。
 
     2026-08-16 に「額」が「ひたい」と読まれていたのを、オーナーが動画を聞いて
-    見つけた。ここには音の検査が1つも無かったので6日間残った。
+    見つけた。**6日 残った**のは、ここに音の検査が1つも無かったから。
 
-    見ているのは音そのものではない。`src/yomi.py` の置換を通したあとに、
-    **既知の壊れる形が1文字でも残っていないか**だけ。残っていなければ、
-    その字はエンジンに届かないので誤読しようがない。音の実測は
-    `scripts/probe_yomi.py`（Google TTS の出力を直接比べる）が担当する。
+    **2026-09-02 まで、ここが見ていた語は 1語だけだった**（裸の「額」・
+    `src/yomi.BROKEN_SHAPES`）。実測すると、この repo の読み上げは
+    **694本・6,206行・漢字のかたまり 異なり 3,514語**ある。**0.03%** しか
+    見ていない門を「読みの検査」と呼んでいた。オーナー原文
+    （`CLAUDE.md` 固定その3）「**ナレーションの漢字の読み方全部正しくして**」は、
+    **語を1つずつ足す形をやめろ**という意味なので、既定を反転してある:
+
+        古い形  既知の壊れる語を並べ、それが残っていたら落とす
+                → **並べていない語は無検査で通る**
+        いまの形 漢字を全部 open-jtalk に通し、**危ない形**を機械が名指しする
+                （`src/yomi_gate.inspect()`。R0 音にならない / R1 文脈で読みが割れる /
+                  R2 1文字に刻まれる / R3 耳が誤読と判定）
+
+    **落とすのは R0 と R3 だけ**。R1・R2 は `data/yomi_queue.json` に積んで
+    耳（`scripts/yomi_ear.py`）に回す。**理由**: R1 に当たる語（日・分・人・年・
+    上・行…）は**毎本に出る**ので、耳の判定より先に落とすと**投稿が全部止まる**。
+    止めるのは最大の損失なので、**名指しは全語・停止は確定した誤りだけ**に分けてある。
+
+    **覆る条件**: 耳が R1 の語をひととおり判定し終えたら、
+    「**判定の無い R1 は落とす**」へ寄せること（そこが本当の門）。
     """
     if not script:
         return []
@@ -1983,17 +1999,16 @@ def _check_yomi(script: dict | None) -> list[str]:
     for i, seg in enumerate(script.get("segments", [])):
         for why in remaining_risks(str(seg.get("narration") or "")):
             problems.append(f"セグメント{i + 1} の読みが直っていない（{why}）")
-    # **2026-09-02: ここまでが「並べた語だけ」の門でした。**
-    # オーナー原文（固定その3）は「ナレーションの漢字の読み方**全部**正しくして」。
-    # `BROKEN_SHAPES` は 1語（裸の「額」）しか見ておらず、
-    # **公開ずみ 694本 に出る漢字のかたまり 3,514語 のうち 0.03%** です。
-    # `src/yomi_gate` は語の一覧を持たず、**読み上げに出る漢字を全部**
-    # 形態素解析にかけて形で判定します。**止めるのは証拠のあるものだけ**
-    # （R0 音から消えた字／R3 耳で誤読と実測ずみ）——
-    # 疑い（R1/R2）で止めると、実測で**公開ずみ 31本 が 31本とも**止まりました。
-    from . import yomi_gate
-    problems += yomi_gate.problems(script)
-    return problems
+    try:
+        from . import yomi_gate
+        hits = yomi_gate.problems(script)
+    except Exception:                       # 解析器が無い環境で投稿を止めない
+        return problems
+    blocking = [h for h in hits if " R0:" in h or " R3:" in h]
+    queued = [h for h in hits if h not in blocking]
+    if queued:
+        yomi_gate.queue(queued)
+    return problems + blocking
 
 
 #: **人間の職業・資格の名前**。ここに無い肩書きは素通りします（下の「覆る条件」）。

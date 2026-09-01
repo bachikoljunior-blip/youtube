@@ -1,85 +1,79 @@
-"""読みの門が **何で止まり、何で止まらないか**（2026-09-02）。
+"""読みの門が **止めすぎていないこと**（2026-09-02）。
 
 オーナー固定その3・1つ目「ナレーションの漢字の読み方全部正しくして」の門は
-`src/yomi_gate.py` にあり、`src/verify._check_yomi()` から呼ばれます。
+`src/yomi_gate.py` にあり、`src/verify._check_yomi()` から毎回 撃たれます。
 
-**この検査が守っているのは「止めすぎない」ほう**です。実測（2026-09-02）:
-疑い（R1 読みが割れる／R2 1文字に刻まれる）まで止める側に置くと、
-**公開ずみ 31本 が 31本とも止まりました**。そのうち **68%（2,301/3,397）は
-数詞の音便**（十 ジュッ/ジュー・百 ヒャク/ビャク/ピャク）で、**全部 正しい読み**です。
+**この検査が守っているのは「止めすぎない」ほうです。** 実測（2026-09-02）:
+疑い（R1 読みが割れる／R2 1文字に刻まれる）まで落とす側に置くと、
+**公開ずみ 31本 が 31本とも止まりました**（R1/R2 合計 3,397件）。そのうち
+**68%（2,301件）は数詞の音便**（十 ジュッ/ジュー・百 ヒャク/ビャク/ピャク）で、
+**全部 正しい読み**です。**投稿が途切れるのが最大の損失**
+（`CLAUDE.md`「動き方の帰結」4）なので、落とすのは
+**R0（音から消えた字）と R3（正しい読みまで確かめた誤読）だけ**。
 
-**投稿が途切れるのが最大の損失**（`CLAUDE.md`「動き方の帰結」4）。
-だから止めるのは **R0（音から消えた字）と R3（正しい読みが分かっている誤読）だけ**で、
-疑いは `to_measure()` が耳の待ち行列へ回します。
+**`tests/test_yomi_gate_all_words.py` は「全語を見ていること」を見ます。
+こちらは「見た結果で止めすぎないこと」を見ます。** 片方だけでは足りません。
 """
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from src import yomi_gate as G  # noqa: E402
+from src import verify, yomi_gate as G  # noqa: E402
 
 
 def _script(*lines: str) -> dict:
     return {"segments": [{"narration": ln} for ln in lines]}
 
 
-def test_止める符号は2つだけ():
-    """R1/R2 をここへ足すと、その日から**全部の本が止まります。**"""
-    assert G.BLOCKING == ("R0", "R3")
-
-
 def test_数詞の音便はR1に数えない():
-    """十 ジュッ/ジュー・百 ヒャク/ビャク/ピャク は連濁と促音便で、**正しい割れ方**。
-
-    ここを数えると指摘の 68% が数詞になり、本当の誤読が埋もれます。
-    """
-    risk = {"十": ["ジュッ", "ジュー"], "行": ["クダリ", "ギョー"]}
+    """十 ジュッ/ジュー・百 ヒャク/ビャク/ピャク は連濁と促音便で、**正しい割れ方**。"""
     if not G.available():
         return
-    found = G.inspect("十万円の控除を、表の行で見ます。", risk, {})
-    r1 = {h["surface"] for h in found if h["code"] == "R1"}
-    assert "十" not in r1, f"数詞が R1 に入っています: {found}"
-
-
-def test_割れただけでは止めない_正しい読みが入って初めて止まる():
-    """**「割れた」と「誤読」は別**（2026-09-02 に両方向の実例を測った）。
-
-        額  open-jtalk ガク（正）／ Google ひたい（誤）→ 置換で**直る**
-        行  open-jtalk クダリ（誤）／ Google ぎょう（正）→ 置換で**壊れる**
-
-    耳が言えるのは「割れたか」までなので、`correct` が入るまで止めません。
-    """
-    if not G.available():
-        return
-    text = "表の行を見ます。"
-    split_only = {"行": {"verdict": "split", "dist": 0.9}}
-    resolved = {"行": {"verdict": "split", "dist": 0.9, "correct": "ぎょう"}}
-    codes_split = {h["code"] for h in G.inspect(text, {}, split_only) if h["surface"] == "行"}
-    codes_done = {h["code"] for h in G.inspect(text, {}, resolved) if h["surface"] == "行"}
-    assert "R3" not in codes_split, "正しい読みが決まっていないのに止めています"
-    assert "R3" in codes_done, "正しい読みが入っても止まっていません"
+    risk = {"十": ["ジュッ", "ジュー"], "百": ["ヒャク", "ビャク", "ピャク"]}
+    found = G.inspect("十万円と、二百万円を並べます。", risk, {})
+    named = {h["surface"] for h in found if h["code"] == "R1"}
+    assert not (named & {"十", "百"}), f"数詞が R1 に入っています: {found}"
 
 
 def test_台帳が行を安全と言っているあいだは止めない():
-    """`data/yomi_ledger.json` の実測（本番の Google TTS は ぎょう）が生きていること。
+    """**「割れた」と「誤読」は別**（2026-09-02 に両方向の実例を測った）。
 
-    **これが消えると、次に耳を回した回が「行」を誤読と判定し、
-    公開ずみ 680箇所 を『くだり』へ置換しかねません。**
+        額  open-jtalk ガク（正）／ Google ひたい（誤）→ 仮名置換で**直る**
+        行  open-jtalk クダリ（誤）／ Google ぎょう（正）→ 仮名置換で**壊れる**
+
+    公開ずみ 694本 に裸の「行」は **680箇所**、どれも表の行（＝ぎょう）。
+    **この記録が消えると、次に耳を回した回が「行」を誤読と判定し、
+    その 680箇所 を『くだり』へ置換しかねません。**
     """
-    ledger = G.load_ledger()
-    entry = ledger.get("行") or {}
+    entry = G.load_ledger().get("行") or {}
     assert entry.get("verdict") == "safe", f"行 の判定が変わっています: {entry}"
     assert "ぎょう" in str(entry.get("heard", "")), entry
+
+
+def test_向きの分からない語で自動置換しない():
+    """`corrections()` が返すのは、**`correct` の欄まで埋まった語だけ**。
+
+    距離が離れているだけでは、どちらのエンジンが正しいかは言えません。
+    """
+    for word, kana in G.corrections().items():
+        assert kana, word
+    ledger = G.load_ledger()
+    unresolved = [w for w, e in ledger.items()
+                  if e.get("verdict") == "misread" and not e.get("correct")]
+    assert all(w not in G.corrections() for w in unresolved)
 
 
 def test_長い段でも黙って切り捨てない():
     """open_jtalk は 1回に **326トークン** までしか返しません（2026-09-02 実測）。
 
-    切って回さないと、**長い段の後半が無検査で通ります。**
+    切って回さないと、**長い段の後半が無検査で通ります** ——
+    しかもトレースを丸ごと decode すると、300文字 を超える入力は
+    `UnicodeDecodeError` で落ちていました（音響パラメータが UTF-8 でない）。
     """
     if not G.available():
         return
@@ -89,9 +83,7 @@ def test_長い段でも黙って切り捨てない():
 
 
 def test_公開ずみの本が門で止まらない():
-    """**止めすぎていないこと。** 3本だけ通す（全部通すと 90秒 かかる）。"""
-    import json
-
+    """**止めすぎていないこと。** 3本だけ通す（全部だと 90秒 かかる）。"""
     if not G.available():
         return
     files = sorted((ROOT / "data" / "critique_queue").glob("*.json"))
@@ -101,7 +93,7 @@ def test_公開ずみの本が門で止まらない():
         if not isinstance(data, dict) or not data.get("narration"):
             continue
         script = _script(*[str(x) for x in data["narration"][:6]])
-        assert G.problems(script) == [], f"{path.name} が止まりました"
+        assert verify._check_yomi(script) == [], f"{path.name} が止まりました"
         done += 1
         if done >= 3:
             break

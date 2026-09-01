@@ -37,10 +37,23 @@ TTS に渡す文字列の中でだけ仮名に置き換える。SSML の `<sub a
 **覆る条件**: 置換後の読みで抑揚が不自然だと実測で分かったら、SSML `<sub>` に
 移すこと（音は同じになることは確認済み）。
 
-## 増やすとき
+## 増やすとき —— **もう、ここに手で足す形ではありません**（2026-09-02）
 
-**推測で足さないこと。** `python scripts/probe_yomi.py --text "…"` で実測し、
-実際に誤読しているものだけを入れる。理由の欄に、測った文をそのまま残すこと。
+オーナー原文（`CLAUDE.md` 固定その3・**一字も変えないこと**）:
+「**ナレーションの漢字の読み方全部正しくして**」＝ **語を1つずつ直す形をやめろ。**
+
+実測すると、この repo の読み上げは **694本・6,206行・漢字のかたまり 異なり 3,514語**。
+`FIXES` は **1語**（0.03%）です。**残りは、この輪が自分で見つけます**:
+
+    scripts/yomi_audit.py    公開ずみ全文 → 文脈で読みが割れる語（`data/yomi_risk.json`）
+    src/yomi_gate.inspect()  台本の漢字を全部 名指し（`src/verify._check_yomi` が毎回 撃つ）
+    scripts/yomi_ear.py      Google と open-jtalk の一致を測る（**候補は人が書かない**）
+      〃      --direction    実測の読みを候補にして、**どちらが正しいか**まで決める
+    data/yomi_ledger.json    その判定。`correct` が埋まった語は、下の `to_speech()` が
+                             **自動で置換します** ＝ **`FIXES` に足す必要はありません**
+
+**`FIXES` は種です。一覧ではありません。** ここに手で足すのは、
+**上の輪が届かないと実測で分かった形**だけにすること（理由に、測った文を残すこと）。
 """
 from __future__ import annotations
 
@@ -105,9 +118,28 @@ BROKEN_SHAPES: list[tuple[str, str]] = [
 
 
 def to_speech(text: str) -> str:
-    """TTS に渡す直前の文字列を作る。**字幕・画面・説明欄には絶対に使わない。**"""
+    """TTS に渡す直前の文字列を作る。**字幕・画面・説明欄には絶対に使わない。**
+
+    2つの層が順に当たる:
+
+      1. `FIXES` …… 人が書いた置換。**ここに語を足していく形はもうやめる**
+         （オーナー原文・`CLAUDE.md` 固定その3「漢字の読み方**全部**正しくして」）
+      2. `data/yomi_ledger.json` …… **耳が実測で誤読と判定し、
+         正しい読みまで確かめた語**。`scripts/yomi_ear.py` が積む。
+         **語の一覧を人が書かずに増える**のはこちら側。
+
+    **距離が離れているだけの語は、ここに入りません**（`yomi_gate.corrections()`）
+    —— どちらのエンジンが正しいかは距離では決まらないので、
+    `correct` の欄まで埋まった語だけが自動置換されます。
+    """
     for fix in FIXES:
         text = fix.apply(text)
+    try:
+        from .yomi_gate import corrections
+        for word, kana in corrections().items():
+            text = text.replace(word, kana)
+    except Exception:                       # 台帳が読めなくても読み上げは止めない
+        pass
     return text
 
 

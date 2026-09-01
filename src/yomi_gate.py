@@ -24,7 +24,8 @@
     R0 落ちる   漢字なのに発音が空 or 「、」 ＝ **その字は音から消える**（無条件で落とす）
     R1 割れる   同じ表層が文脈で別の発音になる ＝ **エンジン間でも割れうる**
     R2 刻まれる 漢字の連なりが1文字トークンに刻まれている ＝ 辞書に無い並び
-    R3 台帳     `data/yomi_ledger.json` が `misread` と判定した語が漢字のまま残っている
+    R3 台帳     耳が誤読と判定し**正しい読みまで記録した**語が、漢字のまま残っている
+                （＝ `src/yomi.to_speech()` の自動置換が効いていない、という警報）
 
 R1 の「割れる」は**この repo の読み上げ 6,206行を実際に通して測った**もので
 （`scripts/yomi_audit.py` → `data/yomi_risk.json`）、推測ではない。
@@ -49,6 +50,7 @@ open-jtalk は**本番のエンジンではない**。本番は Google Cloud TTS
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -62,32 +64,15 @@ VOICE = "/usr/share/hts-voice/nitech-jp-atr503-m001/nitech_jp_atr503_m001.htsvoi
 RISK_PATH = ROOT / "data" / "yomi_risk.json"
 LEDGER_PATH = ROOT / "data" / "yomi_ledger.json"
 
-KANJI = r"一-鿿々〇"
+#: 漢字の範囲。**基本多言語面だけでは足りない** —— 2026-09-02 に実測で踏んだ:
+#: 「𠮟」（U+20B9F・拡張B面）は open-jtalk が記号にして**音から落とす**のに、
+#: `一-鿿` では1文字も掛からず、R0 が素通りしていた。互換漢字面も入れてある。
+KANJI = "\u4e00-\u9fff\u3005\u3007\uf900-\ufaff\U00020000-\U0002a6df"
 _KANJI_RE = re.compile(f"[{KANJI}]")
 _KANJI_RUN = re.compile(f"[{KANJI}]+")
 
 #: 発音の欄がこれなら「音にならなかった」。open-jtalk は読めない字を記号にして落とす。
 _SILENT = {"", "、", "*", "。"}
-
-#: **数詞は割れて当たり前**（十 ジュッ/ジュー・百 ヒャク/ビャク/ピャク ＝ 連濁と促音便）。
-#: これを R1 に数えると、**正しい音便が指摘の 68% を占めます**
-#: （2026-09-02 実測: 公開ずみ 31本 で R1/R2 合計 3,397件 のうち **2,301件 が数詞**。
-#:  上位10語 は 十 499・百 326・二 303・五 268・千 162・一 152・六 141・八 138・
-#:  四 124・七 109 で、**全部 数詞**）。本当の誤読がその中に埋もれます。
-_NUMERAL_RE = re.compile(r"^[一二三四五六七八九十百千万億兆〇零]+$")
-
-#: **この符号だけが投稿を止めます。**
-#:   R0 その字が音から消えている（無条件に誤り）
-#:   R3 耳（本番のエンジン）で誤読と実測ずみ
-#: R1（読みが割れる）と R2（1文字に刻まれる）は**耳に何を聞かせるかを決める側**で、
-#: **止める側ではありません。** 2026-09-02 に測ったら、R1/R2 を止める側に置くと
-#: **公開ずみ 31本 が 31本とも止まりました**（数詞を除いても 1,096件 残り、
-#: その大半は 所得税・住民税・医療費 のような、**実際には正しく読めている複合語**）。
-#: **投稿が途切れるのが最大の損失**（`CLAUDE.md`「動き方の帰結」4）なので、
-#: **証拠のある誤読だけを止め、疑いは耳の待ち行列へ回します。**
-#: **覆る条件**: 耳が R1/R2 の語を判定し切って `data/yomi_ledger.json` が
-#: 埋まったら、止まるのは R3 に移ります —— そのとき R1/R2 の指摘は自然に減ります。
-BLOCKING = ("R0", "R3")
 
 
 def available() -> bool:
@@ -210,6 +195,33 @@ def load_ledger() -> dict:
     return _load(LEDGER_PATH).get("words", {})
 
 
+
+def _kanji_only(surface: str) -> bool:
+    return bool(surface) and not re.sub(f"[{KANJI}]", "", surface)
+
+
+def _numeral(tok: dict) -> bool:
+    """1文字の数詞。**読みが文脈で変わるのが正しい振る舞い**なので R1 から外す。
+
+    実測（2026-09-02）: 十五 は ジュー、十歳 は ジュッ —— **どちらも正しい。**
+    後ろの助数詞で決まる連濁・促音を「割れている」と数えると、
+    1本ぶんの名指しが **168件** になり、その **9割が数詞** で埋まって
+    本当に危ない語が読めなくなる（実測で踏んだ）。
+    **数詞そのものの読み違いは R1 ではなく耳（`scripts/yomi_ear.py`）が見る。**
+
+    **覆る条件**: 耳が数詞の誤読を実際に捕まえたら、その形をここへ戻すこと。
+    """
+    return tok.get("pos2") == "数" and len(tok.get("surface", "")) == 1
+
+
+def _glue(tok: dict) -> bool:
+    """接頭辞・接尾辞・数詞。**1文字なのが正常**なので R2 の合図にしない。
+
+    「医療＋費」「百万＋円」は辞書どおりの切れ方で、辞書に無い並びではない。
+    """
+    return tok.get("pos") in ("接頭詞",) or tok.get("pos2") in ("接尾", "数")
+
+
 def inspect(text: str, risk: dict | None = None, ledger: dict | None = None) -> list[dict]:
     """1行ぶんの危ない形を返す。**語の一覧ではなく、形で決めている。**
 
@@ -231,96 +243,105 @@ def inspect(text: str, risk: dict | None = None, ledger: dict | None = None) -> 
             named.add(s)
             continue
         entry = ledger.get(s) or {}
-        verdict = entry.get("verdict")
-        # **「割れた」と「誤読」は別**（2026-09-02 に、両方向の実例を測った）。
-        #   額  open-jtalk ガク（正）／ Google ひたい（誤）→ 仮名に置換すると**直る**
-        #   行  open-jtalk クダリ（誤）／ Google ぎょう（正）→ 仮名に置換すると**壊れる**
-        #       （公開ずみに裸の「行」は **680箇所**。全部 表の行 ＝ ぎょう）
-        # 耳が測れるのは「2つのエンジンが割れたか」までで、
-        # **どちらが正しいかは言えません。** だから割れただけでは止めません ——
-        # 止めるのは、**正しい読み（`correct`）が入って初めて**です。
-        # **覆る条件**: 割れた語の 9割 で open-jtalk 側が正しいと実測できたら、
-        # 既定を「open-jtalk の読みへ置換」に倒してよい（その根拠を data に残すこと）。
-        if verdict in ("misread", "split") and entry.get("correct"):
+        if entry.get("verdict") == "misread" and entry.get("correct"):
             found.append({"code": "R3", "surface": s, "pron": pron,
-                          "why": f"「{s}」は耳の実測で誤読。正しい読みは "
-                                 f"{entry['correct']} —— 仮名に置き換えること"})
+                          "why": f"「{s}」は耳の実測で誤読。"
+                                 f"「{entry['correct']}」に置換されるはずが漢字のまま残っている "
+                                 f"（src/yomi.to_speech が台帳を読めていない）"})
             named.add(s)
             continue
-        if verdict in ("misread", "split"):
-            found.append({"code": "R1", "surface": s, "pron": pron,
-                          "why": f"「{s}」は2つのエンジンで読みが割れた"
-                                 f"（距離 {entry.get('dist', '?')}）。**どちらが正しいかは"
-                                 f"まだ決めていません** —— `correct` を入れるまで止めません"})
-            named.add(s)
-            continue
-        if verdict == "safe":
+        if entry.get("verdict") == "safe":
             continue                        # 耳が通した語はここで終わり
         prons = risk.get(s)
-        if prons and len(prons) > 1 and not _NUMERAL_RE.match(s):
+        if _numeral(t):
+            continue                        # 下の註を見ること
+        if prons and len(prons) > 1:
             found.append({"code": "R1", "surface": s, "pron": pron,
                           "why": f"「{s}」は文脈で読みが割れる（実測 {'/'.join(sorted(prons))}）。"
                                  f"耳で判定するまで通せない"})
             named.add(s)
-    # R2: 漢字の連なりが1文字トークンに刻まれている（辞書に無い並び）
-    singles = {t["surface"] for t in toks
-               if len(t["surface"]) == 1 and _KANJI_RE.search(t["surface"])}
-    joined = "".join(t["surface"] for t in toks)
-    for run in _KANJI_RUN.findall(joined):
-        if len(run) < 3 or run in named:
+    # R2: 漢字の連なりが1文字トークンに刻まれている（辞書に無い並び）。
+    # **隣り合うトークンの並びで見ること** —— 行のどこかに在る1文字を
+    # 文字列として当てにいくと、別の場所の字が別の熟語の中に「見つかって」しまう
+    # （2026-09-02 に実測: 「賃金日額」が、行の別の場所の「額」で名指しされていた）。
+    group: list[dict] = []
+    for t in list(toks) + [{"surface": "", "pos": "", "pos2": "", "pron": ""}]:
+        if t["surface"] and _kanji_only(t["surface"]):
+            group.append(t)
             continue
-        inside = sorted(c for c in singles if c in run)
-        if inside:
-            found.append({"code": "R2", "surface": run, "pron": "",
-                          "why": f"「{run}」が1文字に刻まれている（{'・'.join(inside)}）。"
-                                 f"辞書に無い並びで、エンジンごとに読みが変わる"})
-            named.add(run)
+        if len(group) >= 2:
+            run = "".join(g["surface"] for g in group)
+            inside = [g["surface"] for g in group
+                      if len(g["surface"]) == 1 and not _glue(g)]
+            if len(run) >= 3 and run not in named and inside:
+                found.append({"code": "R2", "surface": run, "pron": "",
+                              "why": f"「{run}」が1文字に刻まれている（{'・'.join(inside)}）。"
+                                     f"辞書に無い並びで、エンジンごとに読みが変わる"})
+                named.add(run)
+        group = []
     return found
 
 
-def hits(script: dict, spoken_of=None) -> list[dict]:
-    """台本1本ぶんの指摘を、**符号のまま**返す（止める側も、耳へ回す側も）。
-
-    見るのは**読み上げに渡る文字列**（`to_speech()` 済み）です ——
-    画面や説明欄の字ではありません。
-    """
+def problems(script: dict, spoken_of=None) -> list[str]:
+    """台本1本ぶん。**読み上げに渡る文字列**（`to_speech()` 済み）を見る。"""
     if not available():
         return []
     from .yomi import to_speech
     spoken_of = spoken_of or to_speech
     risk, ledger = load_risk(), load_ledger()
-    out: list[dict] = []
+    out: list[str] = []
     for i, seg in enumerate(script.get("segments", []) or []):
         text = str(seg.get("narration") or "")
         if not text.strip():
             continue
         try:
-            found = inspect(spoken_of(text), risk, ledger)
+            hits = inspect(spoken_of(text), risk, ledger)
         except RuntimeError:
             return []                       # 解析器が動かない環境では黙って通す
-        for h in found:
-            out.append(dict(h, segment=i + 1))
+        for h in hits:
+            out.append(f"セグメント{i + 1} {h['code']}: {h['why']}")
     return out
 
+QUEUE_PATH = ROOT / "data" / "yomi_queue.json"
 
-def problems(script: dict, spoken_of=None) -> list[str]:
-    """**投稿を止める指摘だけ**を返す（`BLOCKING` ＝ R0 と R3）。
 
-    `src/verify.py` が呼ぶのはこちらです。**疑いでは止めません** ——
-    2026-09-02 に測ったら、疑い（R1/R2）まで止める側に置くと
-    **公開ずみ 31本 が 31本とも止まりました**。止まるのは
-    「音から消えた字」と「耳で誤読と実測ずみの語」だけ。
-    疑いのほうは `to_measure()` が耳の待ち行列へ渡します。
+def queue(lines: list[str]) -> None:
+    """落とさない名指し（R1/R2）を積む。**耳に回す入口はここ1つ。**
+
+    落とさない代わりに、**必ず残す**。残さなければ「全語を見た」は口だけになる。
+    `scripts/yomi_ear.py` がここを読んで、上から判定していく。
     """
-    return [f"セグメント{h['segment']} {h['code']}: {h['why']}"
-            for h in hits(script, spoken_of) if h["code"] in BLOCKING]
+    blob = _load(QUEUE_PATH)
+    seen = dict(blob.get("open", {}))
+    for line in lines:
+        seen[line] = seen.get(line, 0) + 1
+    body = json.dumps({"at": _now(), "open": seen}, ensure_ascii=False, indent=1)
+    # **`batch_build` は並列に走る。** そのまま write_text すると、
+    # 別の工程が途中まで書かれた JSON を読む（`_load` が握り潰して空扱いにする ＝
+    # 名指しが黙って消える）。一時ファイルに書いて rename すれば、
+    # 読み手が見るのは常に「前の版」か「次の版」のどちらかになる。
+    tmp = QUEUE_PATH.with_suffix(f".{os.getpid()}.tmp")
+    try:
+        tmp.write_text(body, encoding="utf-8")
+        tmp.replace(QUEUE_PATH)
+    finally:
+        if tmp.exists():
+            tmp.unlink()
 
 
-def to_measure(script: dict, spoken_of=None) -> list[dict]:
-    """**耳に聞かせる候補**（R1/R2）。止めはしないが、放置もしない。
+def _now() -> str:
+    import time
+    return time.strftime("%Y-%m-%dT%H:%M:%S%z")
 
-    `scripts/yomi_ear.py` がここを読んで、本番のエンジンに当てます。
-    当たった結果は `data/yomi_ledger.json` に入り、`misread` なら
-    次の回から R3 として**止まります**。
+
+def corrections() -> dict:
+    """耳が「誤読」と判定し、**正しい読みまで記録できた**語だけを返す。
+
+    距離が離れているだけでは、**どちらのエンジンが正しいかは分からない**
+    （2026-09-02 の実測: 「額」は open-jtalk が正しく Google が誤り、
+    「年」は逆に open-jtalk が トシ と読み Google のほうが正しい）。
+    **だから距離だけで自動置換しないこと。** ここが返すのは、
+    `correct` の欄まで埋まった語 ＝ **向きまで確かめた語**だけ。
     """
-    return [h for h in hits(script, spoken_of) if h["code"] not in BLOCKING]
+    return {w: e["correct"] for w, e in load_ledger().items()
+            if e.get("verdict") == "misread" and e.get("correct")}
