@@ -699,7 +699,8 @@ def compact_plan(rows: list[dict], *, now: datetime, step_min: int = 30,
                  hour: int = 9, until_hour: int = 21, max_days: int = DEFAULT_MAX_DAYS,
                  lead_min: int = 60,
                  window: tuple[str, str] | None = None,
-                 live_edge_min: int | None = None) -> list[dict]:
+                 live_edge_min: int | None = None,
+                 writable_from: datetime | None = None) -> list[dict]:
     """**予約を前に詰める割り当てを作る**（API 0単位・純関数）。
 
     ## `live_edge_min` —— **置き先を「生きる目盛り」に限る**（2026-08-28 に足した）
@@ -753,11 +754,46 @@ def compact_plan(rows: list[dict], *, now: datetime, step_min: int = 30,
 
     測定の窓（`src.measure_window`）の日は、**置き先からも、動かす対象からも外します。**
 
-    ## 置き先は「いちばん早い予約の日」から。**それより前へは出しません**
+    ## 置き先は「**撃てるようになる時刻**の日」から（2026-09-02 に直した）
 
-    今日や明日へ出せば、もっと詰まります。**やりません** —— その手前にあるのは
-    測定の窓（M14）か、**もう手元で確かめようがないほど目前の日**だからです。
-    いちばん早い予約の日から後ろへ埋めるだけなら、**公開の順番も間隔の意図も壊れません。**
+    ここは長らく「**いちばん早い予約の日**から。それより前へは出しません」でした。
+    理由は「その手前にあるのは測定の窓（M14）か、もう手元で確かめようがないほど
+    目前の日だから」。**測定の窓は下で別に外しており**、目前の日は `lead_min`
+    （と下の `writable_from`）が落とします。**残っていたのは、外れた側の効果だけです。**
+
+    ### **その錨は、1本 公開されるだけで 22日 跳びます**（実測 2026-09-02 01:0x）
+
+    そのときの控え: 生きている予約 108本 のうち **先頭は `a63FzIUV2wI`
+    （09/02 13:00 JST）**、2本目は **`Eggpp86CkDk`（09/24 10:30）**。
+    あいだの **09/03〜09/23 は 1本も在りません**（20日の穴）。
+
+        いま（01:07 JST）  錨＝09/02 → 目盛りは 09/02〜09/27 → **26本 動く・穴 0日**
+        13:00 に 1本 公開  錨＝09/24 → **穴の 20日 が目盛りから丸ごと消える**
+        枠が戻る 16:00     `--compact` は `max_days` を 26〜40 の**どれでも**
+                           「`Jb_LsPk2FZA` を後ろへ動かす割り当て」で **SystemExit**
+                           ＝ **1本も動きません**
+
+    **錨が予約の山に乗った瞬間、1日1本の目盛りでは必ず後ろ向きの割り当てになります**
+    （山はすでに 1日 3〜13本 詰まっているので、1日1枠では収まらない）。
+    ＝ **穴を埋める手が、穴の手前の1本が出た瞬間に、永久に撃てなくなる。**
+
+    **だから錨は「いちばん早い予約」ではなく「いちばん早く撃てる日」にします。**
+    動かせない予約（`floor` より前に出る本）の日は、目盛りから外します
+    —— そこは既に1本 埋まっているので、置くと 1日2本 になります。
+
+    ## `writable_from` —— **床は「いま」ではなく「撃てるようになる時刻」**
+
+    `--compact`（0単位）を印字する回と、`--apply`（1本50単位）を撃つ回は
+    **別の回**です。日枠が尽きている間に案を作ると、**枠が戻るまでの置き先**が
+    案に混ざります（実測: 上の1行目 `09/02 13:00 → 09/02 09:00` は、
+    置き先も動かす本も枠の戻る 16:00 より前 ＝ **撃てる時刻には残っていない**）。
+
+    `writable_from` を渡すと、`floor` をそこまで上げます。渡すのは CLI 側
+    （`src.next_slot.writable_from()`・**API 0単位**）。`None` なら今までどおり。
+
+    **覆る条件**: 差し替えが日枠の外に出たら、この引数は要りません。
+    検査は `tests/test_compact_writable_from.py`。
+
     `lead_min` より手前の枠も落とします（YouTube は直前の予約を受けません）。
     """
     if not 1 <= step_min <= 60 or 60 % step_min:
@@ -766,7 +802,11 @@ def compact_plan(rows: list[dict], *, now: datetime, step_min: int = 30,
         raise SystemExit(f"時刻の範囲がおかしい: {hour}〜{until_hour}")
 
     floor = now + timedelta(minutes=lead_min)
+    if writable_from is not None and writable_from > floor:
+        # **床は「いま」ではなく「撃てるようになる時刻」**（上の節）。
+        floor = writable_from
     live = []
+    held: set = set()          # 動かせない予約が既に埋めている日（JST）
     for r in rows:
         if not r.get("at"):
             continue
@@ -780,15 +820,28 @@ def compact_plan(rows: list[dict], *, now: datetime, step_min: int = 30,
         if measure_window.inside(jst.strftime("%Y-%m-%d"), window):
             continue          # 測定中の日は動かさない（M14）
         live.append((at, r))
+    for r in rows:
+        # **動かせない本が、既に埋めている日**（`floor` より前 ＝ 公開ずみ・
+        # または枠が戻る前に出る本）。目盛りから外します —— 置くと 1日2本 になり、
+        # 規則1（`src/house_rule.py`）を、詰める側から破ります。
+        try:
+            at = datetime.fromisoformat(str(r["at"]).replace("Z", "+00:00"))
+        except (ValueError, KeyError, TypeError):
+            continue
+        if at <= floor:
+            held.add(at.astimezone(JST).date())
     live.sort(key=lambda t: (t[0], t[1].get("id", "")))
     if not live:
         return []
 
-    day = live[0][0].astimezone(JST).date()
+    # **錨は「いちばん早い予約の日」ではなく「いちばん早く撃てる日」**（上の節）。
+    day = min(floor.astimezone(JST).date(), live[0][0].astimezone(JST).date())
+    last_day = live[-1][0].astimezone(JST).date()
     grid: list[datetime] = []
     days_used = 0
-    while days_used < max_days:
-        if not measure_window.inside(day.isoformat(), window):
+    while days_used < max_days and day <= last_day + timedelta(days=max_days):
+        if not measure_window.inside(day.isoformat(), window) and day not in held:
+            added = 0
             for m in range(hour * 60, until_hour * 60 + 1, step_min):
                 # **生きる目盛りの外へは置かない**（上の `live_edge_min` の節）
                 if live_edge_min is not None and m > live_edge_min:
@@ -797,7 +850,12 @@ def compact_plan(rows: list[dict], *, now: datetime, step_min: int = 30,
                                 m // 60, m % 60, tzinfo=JST)
                 if slot > floor:
                     grid.append(slot)
-            days_used += 1
+                    added += 1
+            # **1枠も出せなかった日は、`max_days` を食いません**（2026-09-02）。
+            # 錨の日は床の後ろにあることがあり、そこで1日ぶん捨てると
+            # 「穴の空かない最小の日数」がずれます。
+            if added:
+                days_used += 1
         day += timedelta(days=1)
 
     plan = []
@@ -1242,7 +1300,8 @@ def hole_days(rows: list[dict], plan: list[dict], now: datetime) -> list[str]:
 
 def suggest_compact(rows: list[dict], now: datetime, args, *,
                     ceiling: int = 40, start: int | None = None,
-                    window: tuple[str, str] | None = None
+                    window: tuple[str, str] | None = None,
+                    writable_from: datetime | None = None
                     ) -> tuple[int | None, list[dict]]:
     """**穴が空かない `--max-days` と、その日数で作った割り当て**を一緒に返す。
 
@@ -1280,7 +1339,8 @@ def suggest_compact(rows: list[dict], now: datetime, args, *,
             plan = compact_plan(rows, now=now, step_min=args.step_min, hour=args.hour,
                                 until_hour=args.until_hour, max_days=md,
                                 lead_min=args.lead_min, window=window,
-                                live_edge_min=_live_edge_min(args.hour, args.step_min))
+                                live_edge_min=_live_edge_min(args.hour, args.step_min),
+                                writable_from=writable_from)
         except SystemExit:
             continue
         if hole_days(rows, plan, now):
@@ -1293,7 +1353,8 @@ def suggest_compact(rows: list[dict], now: datetime, args, *,
 
 def suggest_max_days(rows: list[dict], now: datetime, args, *,
                      ceiling: int = 40, start: int | None = None,
-                     window: tuple[str, str] | None = None) -> int | None:
+                     window: tuple[str, str] | None = None,
+                     writable_from: datetime | None = None) -> int | None:
     """**穴が空かない `--max-days`** を返す（見つからなければ None）。
 
     **割り当ても要るなら `suggest_compact()` を使うこと。** ここが返すのは数だけで、
@@ -1316,7 +1377,7 @@ def suggest_max_days(rows: list[dict], now: datetime, args, *,
     **検査の日付を動かして直すと、次に窓が増えた回にまた落ちます。**
     """
     md, _plan = suggest_compact(rows, now, args, ceiling=ceiling, start=start,
-                                window=window)
+                                window=window, writable_from=writable_from)
     return md
 
 
@@ -1340,6 +1401,15 @@ def _compact(args) -> int:
     _say_conflicts(rows)
     now = datetime.now(timezone.utc)
     edge = _live_edge_min(args.hour, args.step_min)
+    # **床は「いま」ではなく「撃てるようになる時刻」**（`compact_plan` の節）。
+    # 0単位で案を印字する回と、枠の戻った回に撃つ回は別の回なので、
+    # いまを床にすると「撃てる時刻には残っていない置き先」が案に混ざります。
+    from src import next_slot as _ns                            # noqa: PLC0415
+    writable = _ns.writable_from(now)
+    if writable is not None:
+        print(f"[compact] **日枠が尽きています。床を {writable.astimezone(JST):%m/%d %H:%M} JST"
+              "（枠が戻る時刻）まで上げました** —— それより前の置き先は、"
+              "撃てる回には残っていません（`src.next_slot.writable_from`・API 0単位）")
     plan = None
     if args.max_days is None:
         args.max_days = DEFAULT_MAX_DAYS
@@ -1347,7 +1417,8 @@ def _compact(args) -> int:
         #     組み直すと、`suggest_*` が付けた「穴は空きません」の保証が外れます
         #     （実例は `suggest_compact` の docstring —— 規則が 1本/日 になった日に
         #     `live_edge_min` が縮み、組み直した側だけ穴が出た）。
-        found, found_plan = suggest_compact(rows, now, args, start=DEFAULT_MAX_DAYS)
+        found, found_plan = suggest_compact(rows, now, args, start=DEFAULT_MAX_DAYS,
+                                            writable_from=writable)
         if found is not None and found != DEFAULT_MAX_DAYS:
             print(f"[compact] **--max-days を {DEFAULT_MAX_DAYS} → {found} に上げました**"
                   f"（穴の空かない最小の日数。API 0単位で数え直した結果）")
@@ -1359,7 +1430,8 @@ def _compact(args) -> int:
     if plan is None:
         plan = compact_plan(rows, now=now, step_min=args.step_min, hour=args.hour,
                             until_hour=args.until_hour, max_days=args.max_days,
-                            lead_min=args.lead_min, live_edge_min=edge)
+                            lead_min=args.lead_min, live_edge_min=edge,
+                            writable_from=writable)
     where, days = _horizon(rows, plan, now)
     per_day: dict[str, int] = defaultdict(int)
     for p in plan:
@@ -1391,7 +1463,7 @@ def _compact(args) -> int:
               f"（**もともと空いていた日も含みます**）: "
               + " ".join(holes))
     if holes and not args.allow_gap:
-        hint = suggest_max_days(rows, now, args)
+        hint = suggest_max_days(rows, now, args, writable_from=writable)
         fix = (f"        → **`--max-days {hint}` なら穴は空きません**"
                "（詰め切るので、後ろが減るぶんは `--min-days` が見ます）。\n"
                if hint else
