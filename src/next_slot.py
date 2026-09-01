@@ -357,6 +357,48 @@ def window_reaches(publish_at: datetime, now: datetime | None = None) -> bool | 
     return back < publish_at
 
 
+def writable_from(now: datetime | None = None) -> datetime | None:
+    """**いま `videos.update` が撃てないなら、撃てるようになる時刻**（**API 0単位**）。
+
+    撃てるなら `None`。帳面が読めなくても `None`（**推測しません**）。
+
+    ## なぜ要るか（2026-09-02 01:0x に測って足した。**15時間後に効く欠陥でした**）
+
+    `window_reaches()` は「**この本が出る前に枠は戻るか**」を答えます。
+    足りなかったのは、その裏返し ——
+    **「枠が戻ったとき、その置き先はまだ未来か」**のほうです。
+
+    実測（2026-09-02 01:0x・`scripts/reschedule.py --compact`）:
+
+        いま（01:07 JST）の割り当ての1行目
+            09/02 13:00 → 09/02 09:00  a63FzIUV2wI
+        枠が戻るのは **09/02 16:00 JST**
+
+    **置き先の 09:00 も、動かす本の公開 13:00 も、枠が戻る 3時間 前です。**
+    ＝ **この行は、撃てる時刻には1つも残っていません。**
+
+    `compact_plan()` は `now + lead_min` しか床にしておらず、
+    **枠が戻る時刻を1つも見ていませんでした。** 0単位で案を印字する回と、
+    枠の戻った回に撃つ回が**別の回**である以上、
+    **床は「いま」ではなく「撃てるようになる時刻」でなければ、案は腐ります。**
+
+    **覆る条件**: `reschedule` が `videos.update` を使わない道を持ったら
+    （＝ 差し替えが日枠の外に出たら）、この関数は要りません
+    （`window_reaches()` の覆る条件と同じ日に発火します）。
+    """
+    t = now or datetime.now(timezone.utc)
+    try:
+        from src import quota_ledger, upload_cap                # noqa: PLC0415
+        used = int(quota_ledger.spent(t).get("data") or 0)
+        cap = int(quota_ledger.DAY_UNITS)
+        back = upload_cap.window_end(t)
+    except Exception:                                           # noqa: BLE001
+        return None
+    if used < cap:
+        return None
+    return back if back > t else None
+
+
 def swap_cost_lines(now: datetime | None = None,
                     publish_at: datetime | None = None) -> list[str]:
     """**差し替えの2手は、日枠が尽きていると撃てません**（2026-09-01 に踏んだ）。

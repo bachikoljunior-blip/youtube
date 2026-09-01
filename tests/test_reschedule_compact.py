@@ -42,12 +42,21 @@ def _jst(stamp: str) -> str:
 
 
 def test_1時間きざみの3日ぶんが30分きざみの1日に詰まる():
+    """**錨は 2026-09-02 に「いちばん早い予約の日」から「いちばん早く撃てる日」へ移りました。**
+
+    以前はここが `08/24`（＝ `v0` の日）で、`v0` だけ動かない形でした。
+    いまは床（`now + lead_min` ＝ 08/18 12:00 JST）の日から埋めるので、
+    **18本 とも動きます。**理由は `compact_plan` の「その錨は、1本 公開される
+    だけで 22日 跳びます」の節（実測で穴の20日が目盛りから消えました）。
+    """
     rows = [_row(f"v{i}", f"2026-08-2{4 + i // 6}T{9 + i % 6:02d}:00") for i in range(18)]
     plan = reschedule.compact_plan(rows, now=NOW, max_days=1, window=EMPTY)
-    # 25枠（9:00〜21:00・30分）に18本なので、全部 08/24 に入る
-    assert {p["id"] for p in plan} == {f"v{i}" for i in range(1, 18)}   # v0 は動かない
-    assert _jst(plan[0]["new"]) == "2026-08-24T09:30"
-    assert _jst(plan[-1]["new"]) == "2026-08-24T17:30"
+    # 08/18 の 12:30〜21:00（30分きざみ・床の後ろ）に18本 とも入る
+    assert {p["id"] for p in plan} == {f"v{i}" for i in range(18)}
+    assert _jst(plan[0]["new"]) == "2026-08-18T12:30"
+    assert _jst(plan[-1]["new"]) == "2026-08-18T21:00"
+    for p in plan:
+        assert p["new"] <= p["old"], p
 
 
 def test_動かす先はいつも今より前か同じ():
@@ -77,16 +86,48 @@ def test_測定の窓は置き先からも対象からも外れる():
     plan = reschedule.compact_plan(rows, now=NOW, max_days=2, window=win)
     assert "in" not in {p["id"] for p in plan}
     days = {_jst(p["new"])[:10] for p in plan}
+    # **窓の日には1本も置かない**（ここが本題）。置き先の日そのものは、
+    # 2026-09-02 に錨が「いちばん早く撃てる日」へ移ったので床の側から始まります。
     assert days & {"2026-08-26", "2026-08-27"} == set()
-    assert days <= {"2026-08-25", "2026-08-28"}
+    assert days <= {"2026-08-18", "2026-08-19"}
+    for p in plan:
+        assert p["new"] <= p["old"], p
 
 
-def test_いちばん早い予約より前へは出さない():
-    """置き先は**いちばん早い予約の日から**。それより前は、窓か、目前の日です。"""
+def test_錨はいちばん早く撃てる日で_いちばん早い予約の日ではない():
+    """**2026-09-02 に置き換えました。** 前は「いちばん早い予約の日から。
+    それより前は、窓か、目前の日」でした。
+
+    **その錨は、予約の山の手前が1本 公開されるだけで、山の日まで跳びます。**
+    実測（2026-09-02 01:0x・控えの実物 108本）——
+    先頭 `a63FzIUV2wI`（09/02 13:00）／2本目 `Eggpp86CkDk`（09/24 10:30）／
+    あいだの **09/03〜09/23 は 0本**。13:00 にその1本が出た後は錨が 09/24 になり、
+    **穴の20日が目盛りから丸ごと消えて**、`max_days` を 26〜40 の
+    どれにしても「後ろへ動かす割り当て」で `SystemExit` ＝ **1本も動きません**。
+
+    「窓」は `measure_window` が別に外し、「目前の日」は `lead_min` と
+    `writable_from` が外します。**錨に兼ねさせる理由はありませんでした。**
+
+    **覆る条件**: `live_edge_min` が 1日 複数枠に戻り（＝ 規則1 が外れ）、
+    錨を山に置いても後ろ向きの割り当てが出なくなったら、この検査は要りません。
+    """
     rows = [_row("a", "2026-09-01T09:00"), _row("b", "2026-09-02T09:00")]
     plan = reschedule.compact_plan(rows, now=NOW, max_days=1, window=EMPTY)
-    assert [p["id"] for p in plan] == ["b"]
-    assert _jst(plan[0]["new"]) == "2026-09-01T09:30"
+    assert [p["id"] for p in plan] == ["a", "b"]
+    assert _jst(plan[0]["new"]) == "2026-08-18T12:30"      # 床（08/18 12:00）の直後
+    for p in plan:
+        assert p["new"] <= p["old"], p
+
+
+def test_動かせない本が埋めている日には置かない():
+    """`floor` より前に出る本の日は、目盛りから外す（置くと **1日2本**）。"""
+    rows = [_row("soon", "2026-08-18T11:30"),      # 床（12:00）の手前 ＝ 動かせない
+            _row("ok", "2026-09-01T09:00")]
+    plan = reschedule.compact_plan(rows, now=NOW, max_days=1, lead_min=60,
+                                   window=EMPTY)
+    assert [p["id"] for p in plan] == ["ok"]
+    # 08/18 は `soon` が埋めているので、置き先は翌日
+    assert _jst(plan[0]["new"]) == "2026-08-19T09:00"
 
 
 def test_いまより前の本と公開済みは触らない():
@@ -94,16 +135,23 @@ def test_いまより前の本と公開済みは触らない():
             {"id": "none", "topic": "s-x", "title": "none", "at": None},
             _row("ok", "2026-09-01T09:00")]
     rows.append(_row("ok2", "2026-09-02T09:00"))
-    plan = reschedule.compact_plan(rows, now=NOW, max_days=1, lead_min=60,
+    plan = reschedule.compact_plan(rows, now=NOW, max_days=2, lead_min=60,
                                    window=EMPTY)
-    # past（過ぎた）・soon（lead の中）・at が無い行は、**枠を1つも食わない**
-    assert [p["id"] for p in plan] == ["ok2"]
-    assert _jst(plan[0]["new"]) == "2026-09-01T09:30"
+    # past（過ぎた）・soon（lead の中）・at が無い行は、**動かす対象に入らない**
+    assert [p["id"] for p in plan] == ["ok", "ok2"]
+    # 08/18 は past と soon が埋めているので、置き先は 08/19 から
+    assert _jst(plan[0]["new"]) == "2026-08-19T09:00"
+    for p in plan:
+        assert p["new"] <= p["old"], p
 
 
 def test_後ろへ動かす割り当てになったら止まる():
-    """`--hour` が遅すぎると、前に詰めるつもりで後ろへ送ります。"""
-    rows = [_row("v0", "2026-08-24T09:00")]
+    """`--hour` が遅すぎると、前に詰めるつもりで後ろへ送ります。
+
+    錨が床の日へ移った（2026-09-02）ので、**同じ日の中で**後ろへ送る形にしました
+    —— 錨が本の日より前にあると、`--hour` が遅くても前へ動いてしまうためです。
+    """
+    rows = [_row("v0", "2026-08-18T13:00")]        # 床（12:00）の直後
     with pytest.raises(SystemExit, match="後ろへ動かす"):
         reschedule.compact_plan(rows, now=NOW, hour=20, until_hour=21,
                                 max_days=1, window=EMPTY)
