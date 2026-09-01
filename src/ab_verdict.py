@@ -89,6 +89,8 @@ class GroupCount:
     measured: list[float] = field(default_factory=list)
     #: 公開から `SETTLE_DAYS` 日たっているのに行が無い ＝ **0再生**
     zero: int = 0
+    #: その 0再生 の本が公開された日（**群の差か、日の差かを見分けるため**）
+    zero_days: list[date] = field(default_factory=list)
     #: まだ `SETTLE_DAYS` 日たっていない（Analytics の遅れ。**0再生ではない**）
     young: int = 0
     #: 走査の窓より前の公開（行が無くても 0再生とは言えない）
@@ -128,6 +130,7 @@ def counts(key: str, *, today: date | None = None,
                 gc.young += 1
             else:
                 gc.zero += 1
+                gc.zero_days.append(pub)
         out[group] = gc
     return out
 
@@ -165,7 +168,13 @@ def earliest(key: str, *, today: date | None = None,
     for g, need in lack.items():
         gc = gcs[g]
         share = gc.counted / total
-        alive = 1.0 - (gc.zero_rate or 0.0)
+        # **1日ぶんの 0再生 を、これからの速さに掛けないこと**（2026-09-01 に踏んだ）。
+        # 実測: `title_form` の断定の 0再生 4本は**全部 08/27 公開**で、
+        # 08/16〜08/28 の他の12日は 0再生 が1本もありません。
+        # 1日の外れ値を率として未来に掛けると、期限が要らないぶん遠くなります。
+        # **2日 以上にまたがっているときだけ、率として使います。**
+        spread = len(set(gc.zero_days))
+        alive = 1.0 - (gc.zero_rate or 0.0) if spread >= 2 else 1.0
         rate = cap * share * alive
         days[g] = float("inf") if rate <= 0 else need / rate
     worst = max(days.values())
@@ -218,12 +227,24 @@ def lines(key: str, *, today: date | None = None) -> list[str]:
     rates = {g: gc.zero_rate for g, gc in gcs.items() if gc.zero_rate is not None}
     if len(rates) == 2 and max(rates.values()) - min(rates.values()) >= 0.15:
         hi = max(rates, key=lambda g: rates[g])
+        # **群の差に見えて、日の差のことがあります**（2026-09-01 に踏んだ）。
+        # 実測: `title_form` は 問い 0% 対 断定 29% と出たが、
+        # **0再生の本 13本 は全部 2026-08-27 公開の1日ぶん**だった
+        # （08/16〜08/28 のうち、他の12日は 0再生 が1本も無い）。
+        # **日を見ずに「処置が再生を落としている」と読むと、ただの外れ値を
+        # 処置の効果として前提に立ててしまいます。**
+        days = sorted(set(gcs[hi].zero_days))
+        where = (
+            f"**その 0再生 は全部 {days[0]:%m/%d} 公開の1日ぶんです** —— "
+            "**群の差ではなく日の差の可能性が高い。** その日に何が起きたかを先に見ること。"
+            if len(days) == 1 else
+            "0再生の公開日: " + " ".join(f"{d:%m/%d}" for d in days[:8])
+            + ("…" if len(days) > 8 else "")
+        )
         out.append(
             "  [!] **0再生率が群で違います**（"
             + " / ".join(f"{g} {r:.0%}" for g, r in sorted(rates.items()))
-            + f"）。**その差は engaged では測れません** —— `{hi}` の側が"
-            "再生そのものを落としている可能性があるので、"
-            "engaged の順位和より先に、0再生率のほうを判定すること。"
+            + f"）。**その差は engaged では測れません**（分母 0 の本は順位に乗らない）。{where}"
         )
     return out
 
