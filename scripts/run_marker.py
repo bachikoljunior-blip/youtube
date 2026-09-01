@@ -945,6 +945,72 @@ def near_deadlines(limit: int = 3) -> list[str]:
         return []
 
 
+#: **日枠が尽きていても撃てる手**（2026-09-01 に足した。**下の `quota_is_out()` の免除は、
+#: これが空のときだけ効きます**）。
+#:
+#: ## なぜ要るか —— **免除の理由が、この repo 自身の実測と逆でした**
+#:
+#: `quota_is_out()` の註は `docs/trigger_main.md` §4 の表を引いて、
+#: 「門が名指しする4つは**どれも枠の向こう側**」と書いていました。
+#: **`upload` と `improve` について、それは誤りです。**
+#:
+#:   `videos.insert` は**日枠を1単位も使いません。尽きていても通ります。**
+#:     実測3度 —— `src/auth.py` 8/17 05:2x（`insert` が通るのに `update` が 403）、
+#:     08/27 に枠が尽きた 16:47 JST の**後**に 3本（18:05・18:20・18:40）。
+#:     `tests/test_insert_never_marked_ok.py` が、その3度を理由ごと守っています。
+#:     `upload_cap.reserve_hold()` の返り文も
+#:     「**投稿（`videos.insert`）はこの枠を使わないので、止まりません。**」と印字します。
+#:
+#:   `improve` の5つの道のうち **2つ（台本を書き直す・計算を厚くする）は 0単位**です
+#:     （`src/script_writer` / `src/verify` / `src/calc/` は手元のコードで、
+#:     YouTube に触りません）。枠が要るのは 題名・説明（50）とサムネ（50）だけで、
+#:     しかも **`upload_cap.RESERVE_UNITS = 400` は、その 50 のために残してあります** ——
+#:     `_ledger_hold()` の返り文が「残しているのは…**次の1本を良くする書き込み**
+#:     （`improve`・50単位）のためです」と、そのまま書いています。
+#:
+#: ## いちばん強い証拠は、免除を書いた関数の**隣の枝**です
+#:
+#: 免除しなかったときの `ap.error` は、こう言っています ——
+#: 「**`improve` は、いつでも在ります**（規則3）。**この門は、そこへ戻す門です。**」
+#: **同じ関数の2つの枝が、逆のことを言っていました。**
+#:
+#: ## 何を壊していたか（実測）
+#:
+#: 規則3 が固定された 2026-08-31 以降の ship **88件**: `fix` 56件（64%）／
+#: **`improve` 4件（4.5%）／ `upload` 0件**。直近8件は **8件とも `fix`**
+#: （`retro.py`「fix に偏っています」）。**枠が尽きるたびに門が開いていたので、
+#: 偏りは構造だと説明され、そのまま続いていました。**
+#:
+#: ## 覆る条件
+#:
+#: - `videos.insert` が同じ 403 で落ちるようになったら（＝枠が1つに統合された）、
+#:   `upload` の行は落とすこと（`upload_cap.RESERVE_UNITS` の覆る条件と同じ日です）
+#: - 次に公開される1本が無い窓（`next_slot.next_video()` が `None`）では
+#:   `improve` の行は出ません。**そのときは免除が今までどおり効きます**
+#: - **読めない回は空を返します** ＝ 免除は今までどおり効く側。
+#:   推測で門を締めないため（この repo の他の門と同じ姿勢）
+def free_alternatives() -> list[str]:
+    """**日枠が尽きていても撃てる手**を並べる（API 0単位）。空なら免除してよい。"""
+    out: list[str] = []
+    try:
+        from src import next_slot                               # noqa: PLC0415
+
+        nxt = next_slot.next_video()
+    except Exception:                                           # noqa: BLE001
+        nxt = None
+    if nxt:
+        vid = str(nxt.get("video_id") or "?")
+        out.append(
+            f"`improve`（**0単位**）— 次の枠の1本 `{vid}` の"
+            "**台本を書き直す／計算を厚くする**（`src/script_writer`・`src/verify`・"
+            "`src/calc/`）。枠が要るのは 題名・説明（50）とサムネ（50）だけで、"
+            "その 50 は `upload_cap.RESERVE_UNITS = 400` が残しています")
+        out.append(
+            f"`upload`（**日枠を使いません**）— 焼き直した `{vid}` を上げ直す。"
+            "`videos.insert` は日枠が尽きていても通ります"
+            "（実測3度・`tests/test_insert_never_marked_ok.py`）")
+    return out
+
 def quota_is_out() -> tuple[bool, str]:
     """**Data API の日枠が、この窓でもう尽きているか**（`(尽きているか, 1行)`）。
 
@@ -954,23 +1020,35 @@ def quota_is_out() -> tuple[bool, str]:
     「**オーナーが固定した規則（1日1本）は毎日 `upload` を要求しているので、
     逃げ場のない門にはなりません。**」
 
-    **枠が尽きている窓では、その前提が成り立ちません。**
-    `docs/trigger_main.md` §4 が同じことを実測つきで書いています:
+    **枠が尽きている窓では、その前提が半分だけ崩れます。**
 
-        upload   `videos.insert` 1,600単位          ← 枠
-        improve  サムネ 50単位／題名・説明 50単位   ← 枠（**物が変わるまでが improve**）
-        verdict  期日の来た前提が1件も無ければ撃てない
-        means    `docs/MEANS.md` の未着手が、たいてい枠を要る
-        fix      ← **枠が尽きている回に残るのは、事実上これだけ**
+    ##### **上の表は誤りでした**（2026-09-01 に直した。**この註が最初に書いた表**）
 
-    **だから「枠が尽きた回は fix に偏る」は、判断ではなく構造です。**
+    ここには `docs/trigger_main.md` §4 の表を引いて
+    「`upload` は `videos.insert` 1,600単位 ← 枠」「**枠が尽きた回に残るのは
+    事実上 `fix` だけ**」と書いてありました。**この repo が3度 実測で
+    否定しているほうです** —— `videos.insert` は日枠を1単位も使わず、
+    **尽きていても通ります**（`tests/test_insert_never_marked_ok.py`／
+    `upload_cap.reserve_hold()` の返り文）。`improve` も、5つの道のうち
+    **台本を書き直す・計算を厚くするの2つは 0単位**で、残る 50単位 は
+    `upload_cap.RESERVE_UNITS = 400` が**その improve のために**残しています。
+
+    **本当に枠の向こう側なのは `means` と、読みで閉じる `verdict` だけ**です。
+
+    **証拠は、この門の隣の枝にありました** —— 免除しなかったときの `ap.error` が
+    「**`improve` は、いつでも在ります**（規則3）。**この門は、そこへ戻す門です。**」
+    と印字しています。**同じ関数の2つの枝が、逆のことを言っていました。**
+
+    だから免除は **`free_alternatives()` が空のときだけ**にしました。
     実測 2026-09-01 03:5x（この関数を足した回）: 積んだ消費 **13,353単位** /
     枠 10,000・**403 を 43回** 観測。`scripts/reschedule.py --list` は
     `channels.list` の 403 で traceback、`eta.py` は
     「**この回に閉じられる前提はありません**（いちばん早い期日は1日後）」。
-    **5つのうち4つが、最初から選べませんでした。**
-    それでも門は「`verdict` / `upload` / `means` / `improve` に使え」と言って
-    止めます —— **名指しされた4つが全部 枠の向こう側にあるのに、です。**
+    **その回は「5つのうち4つが最初から選べなかった」と読みました。
+    正しくは 2つ**（`means` と `verdict`）—— `upload` と `improve` は
+    撃てました。**この誤読の代金**は `data/runs.jsonl` に出ています:
+    規則3 が固定された 08-31 以降の ship 88件 で `improve` **4.5%** ／
+    `upload` **0件**、直近8件は **8件とも `fix`**。
 
     ## **これは門の骨抜きではありません**（そのつもりで足したら、意味がない）
 
@@ -1703,18 +1781,21 @@ def main(argv: list[str] | None = None) -> int:
         _fk = run_marker_ship_kind(args.ship, args.kind)
         if _fk == "fix":
             _run = fix_run_len()
-            # **枠が尽きている窓では、この門は止めません**（2026-09-01 に踏んだ。
-            # 理由と実測は `quota_is_out()` の註）。門が名指しする4つ
-            # （`verdict` / `upload` / `means` / `improve`）は、
-            # **どれも枠の向こう側**にあります。**通したことは残します。**
+            # **枠が尽きている窓でも、撃てる手が残っていれば止めます**
+            # （2026-09-01 に直した。理由と実測は `free_alternatives()` の註）。
+            # 前の版は「門が名指しする4つはどれも枠の向こう側」を理由に
+            # **無条件で通していました** —— `videos.insert` は日枠を使わず、
+            # `improve` の台本・計算の道は 0単位 なので、**その理由は誤りです。**
+            # **通したことは残します。**
             _out, _qline = quota_is_out()
-            if _run >= FIX_RUN_CAP and _out:
+            _free = free_alternatives() if _out else []
+            if _run >= FIX_RUN_CAP and _out and not _free:
                 note_fix_gate(args.ship, _run, waived=True)
                 print(f"[marker] **`fix` が {_run}回 続いています**（上限 {FIX_RUN_CAP}）が、"
                       f"**この窓は Data API の日枠が尽きているので通します** —— {_qline}")
-                print("[marker]   門が名指しする `upload`（1,600単位）/ `improve`（50単位）は"
-                      "枠を要り、`verdict` は期日の来た前提が要ります"
-                      "（`docs/trigger_main.md` §4 の同じ節）。")
+                print("[marker]   **そして 0単位 で撃てる手も残っていません**"
+                      "（`free_alternatives()` が空 ＝ 次に公開される1本がありません）。"
+                      "枠を要るのは `means` と、読みで閉じる `verdict` です。")
                 print("[marker]   **その回の JOURNAL に「枠が尽きていた」と書くこと** —— "
                       "書かないと、次に `retro.py` を読んだ回が"
                       "「fix に偏っている」だけを見て、偏りの理由を「選び方が悪い」と読みます。")
@@ -1722,6 +1803,17 @@ def main(argv: list[str] | None = None) -> int:
                 note_fix_gate(args.ship, _run)
                 _alt = near_deadlines()
                 _lines = "\n                     ".join(_alt) if _alt else "（`config/hypotheses.yaml` が読めませんでした）"
+                # **枠が尽きていても撃てる手を、その場で名指しすること。**
+                # 名指しできない門は、種別の語を書き換えて通されるだけです
+                # （`near_deadlines()` の註と同じ理由）。
+                _freelines = ""
+                if _out:
+                    _f = _free or free_alternatives()
+                    if _f:
+                        _joined = "\n                     ".join(_f)
+                        _freelines = ("\n  **この窓は日枠が尽きていますが、"
+                                      "0単位 で撃てる手が残っています**:\n"
+                                      f"                     {_joined}\n")
                 ap.error(
                     f"**`fix` が {_run}回 続いています**（上限 {FIX_RUN_CAP}）。"
                     "`eta.py` は毎回「作る・出す・直すは軌跡の入力に入りません」と"
@@ -1736,6 +1828,7 @@ def main(argv: list[str] | None = None) -> int:
                     "と言っています。**`upload` が1日1回しか撃てない以上、"
                     "大半の回の「出したもの」はこれです**（`docs/trigger_main.md` §4）。"
                     "**この門は、そこへ戻す門です。**\n"
+                    f"{_freelines}"
                     "  期限の近い前提（`python scripts/deadline_check.py` に全文）:\n"
                     f"                     {_lines}\n"
                     "  **規則（1日1本）の下では永久に閉じない前提**が別に数件あります —— "

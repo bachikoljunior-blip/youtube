@@ -148,19 +148,31 @@ def test_名指しに_閉じた前提を混ぜない() -> None:
 def test_枠が尽きている窓では_連の門は止めない(tmp_path: Path, monkeypatch) -> None:
     """**逃げ場のない門にしないこと**（2026-09-01 に踏んだ）。
 
-    門が名指しする4つは、どれも枠を要ります（`upload` 1,600単位／
-    `improve` 50単位／`means` はたいてい枠／`verdict` は期日の来た前提）。
-    **枠が尽きた窓で止めると、その回は何も出せません** ——
-    `docs/trigger_main.md` §4 が「枠が尽きた回に残るのは事実上 `fix` だけ」と
-    実測つきで書いています（2026-09-01 00:1x の回: 5つのうち4つが最初から選べず、
-    ship は5件とも `fix`）。
-
     **判定は観測した 403 です**（`upload_cap.day_quota().open`）——
     こちらの見積りでは緩められません。
+
+    ## **この検査の前提を、2026-09-01 08:4x に直しました**
+
+    ここには「門が名指しする4つは、どれも枠を要ります（`upload` 1,600単位／
+    `improve` 50単位／…）」と書いてありました。**誤りです** ——
+    `videos.insert` は日枠を1単位も使わず、尽きていても通ります
+    （`tests/test_insert_never_marked_ok.py` に実測3度）。`improve` も
+    **台本を書き直す・計算を厚くする**の2つは 0単位 で、残る 50単位 は
+    `upload_cap.RESERVE_UNITS = 400` が**その improve のために**残しています。
+
+    **代金は `fix` 23連**（`run_marker.fix_run_len()` の実測 2026-09-01 08:4x）。
+
+    **だから免除は「枠が尽きた」だけでは効きません** ——
+    `free_alternatives()` が**空のとき**だけです。ここはその「空」の側、
+    つまり**次に公開される1本が無い窓**を見ています
+    （在るときに止まることは `tests/test_fix_gate_free_alternatives.py`）。
     """
     p = _write(tmp_path, ["fix"] * 20)
     monkeypatch.setattr(rm, "MARKS", p)
     monkeypatch.setattr(rm, "quota_is_out", lambda: (True, "**尽きています**（テスト）"))
+    # **次の枠の1本が無い窓**（＝ 0単位 で撃てる手も残っていない）。
+    # ここを実物のままにすると、この検査は repo の予約表しだいで色が変わります。
+    monkeypatch.setattr(rm, "free_alternatives", lambda: [])
     calls: list = []
     monkeypatch.setattr(rm, "ship", lambda *a, **k: calls.append((a, k)) or 0)
     rm.main(["--ship", "fix: 枠が尽きた窓なので通る", "--kind", "fix",
