@@ -316,6 +316,98 @@ def thumbnail_first(now: datetime | None = None) -> str:
     return ""
 
 
+#: **差し替えの2手のぶんを、池化に食わせないこと**（2026-09-01 22:2x に足した）。
+#:
+#: ## なぜ要るか —— **上の門は、サムネイルしか知りません**
+#:
+#: `thumbnail_first()` は「次に公開される本の**サムネイルが載っていない**」だけを
+#: 見ます。**サムネイルが既に載っている本は、空文字で返ります。**
+#: そして `improve` のもう1つの道 —— **焼き直して差し替える**（`--unschedule`
+#: → `--move` ＝ `videos.update` ×2 ＝ **100単位**）—— は、この門の外でした。
+#:
+#: 実測 2026-09-01 の窓（16:00 JST 起点・`data/api_calls.jsonl`）:
+#:
+#:     16:0x  `refresh_thumbnail` 50単位（**上の門が正しく効いた**）
+#:     16:0x  `pool_drain --apply` で 160本 ＝ 窓ぜんぶ（12,258 / 10,000単位）
+#:     結果   次の枠 `a63FzIUV2wI`（09/02 13:00 公開）は、
+#:            **焼いたあとに入った 6件 が1つも入らないまま出ます**
+#:
+#: **その本のサムネイルは載っていました。** だから上の門は何も言わず、
+#: 100単位 が残りませんでした。**同じ形の2度目です**（1度目は 08/31 の 50単位）。
+#:
+#: ## なぜ「止める」ではなく「残す」か
+#:
+#: `thumbnail_first` の註と同じ理由です —— 止める形にすると、
+#: 押せない事情が1つでもあれば池化が永久に止まり、
+#: 締切（`first_breach()`）が動きません。**残す形なら池化は進みます。**
+#: 費用は、この窓の **100単位（1%）**・外す本にして **2本**です。
+#:
+#: ## 覆る条件
+#:
+#: - **枠が公開に間に合わない本には、何も残しません**
+#:   （`next_slot.window_reaches()` が `False` ＝ もう差し替えられない。
+#:   残すと、誰にも使われない取り置きになります —— `RESERVE_UNITS` がその形）
+#: - 焼き直しの要らない本（`stale_commits()` が空）にも残しません
+#: - `--no-swap-reserve` で外せます（**外した回は理由を JOURNAL に**）
+#: - `reschedule` が `videos.update` を使わない道を持ったら、この門ごと要りません
+SWAP_UNITS = 50 * 2
+
+
+def swap_reserve(now: datetime | None = None) -> tuple[str, int] | None:
+    """**次の枠の本が、まだ差し替えを要るか**（要るなら `(動画ID, 件数)`）。**API 0単位**。
+
+    判定は `src/next_slot` に1本化してあります（**ここで書き直さないこと** ——
+    書き直すと2つの答えができます。`thumbnail_first` と同じ）。
+
+    `None` を返すのは、次の1本が無い回・**焼き直しても同じ物が出る回**
+    （`stale_commits()` が空）・**枠が公開に間に合わない回**
+    （`window_reaches()` が `False`）です。
+    """
+    try:
+        from src import next_slot                              # noqa: PLC0415
+        row = next_slot.next_video(now)
+        if not row:
+            return None
+        vid = str(row.get("video_id") or "")
+        if not vid:
+            return None
+        built = next_slot._parse(row.get("uploaded_at"))
+        cm = next_slot.stale_commits(built, video_id=vid)
+        if not cm:
+            return None
+        at = row.get("_at")
+        # **間に合わない本に残さないこと。** `None`（分からない）では残します ——
+        # 分からないほうへ倒すと、取り置きが早く消えます。
+        if at is not None and next_slot.window_reaches(at, now) is False:
+            return None
+        return vid, len(cm)
+    except Exception:                                          # noqa: BLE001
+        return None
+
+
+def _trim_for_swap(drop: list, now: datetime | None = None) -> tuple[list, int]:
+    """**残りの単位が差し替えのぶんを切りそうなら、外す本を減らす。**（**API 0単位**）
+
+    返りは `(減らしたあとの drop, 残した本数)`。**帳面が読めない回は減らしません**
+    （推測で締切を遅らせないため —— `first_breach()` に締切があります）。
+    """
+    try:
+        from src import quota_ledger                           # noqa: PLC0415
+        used = int(quota_ledger.spent(now).get("data") or 0)
+        cap = int(quota_ledger.DAY_UNITS)
+    except Exception:                                          # noqa: BLE001
+        return drop, 0
+    left = cap - used - SWAP_UNITS            # 差し替えのぶんを引いた残り
+    if left <= 0:
+        # **もう残っていません。** ここで `drop` を空にしても差し替えは撃てない
+        # ので、減らしません（池化の締切だけが遅れます）。
+        return drop, 0
+    room = left // UNITS_PER_VIDEO
+    if room >= len(drop):
+        return drop, 0
+    return drop[:room], len(drop) - room
+
+
 def _push_thumbnail_first(video_id: str) -> int:
     """その1本を押す（**50単位**）。返りは `refresh_thumbnail.push_missing` のまま。
 
@@ -341,6 +433,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--no-thumbnail-first", action="store_true",
                     help="次に公開される本のサムネイル（50単位）を先に押さない"
                          "（**外した回は理由を JOURNAL に**）")
+    ap.add_argument("--no-swap-reserve", action="store_true",
+                    help=f"次に公開される本の差し替え（{SWAP_UNITS}単位）のぶんを"
+                         "残さない（**外した回は理由を JOURNAL に**）")
     args = ap.parse_args(argv)
 
     rows = pool()
@@ -376,6 +471,29 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.max > 0:
         drop = drop[:args.max]
+
+    # **差し替えのぶんを、池化に食わせないこと**（2026-09-01 22:2x に足した）。
+    # 上の `thumbnail_first` はサムネイルしか見ておらず、**サムネイルが載っている
+    # 本の「焼き直して差し替える」（100単位）は門の外**でした。実測 09/01 16:0x の
+    # 窓がそれで、次の枠 `a63FzIUV2wI` は 6件 入らないまま出ます。`swap_reserve` の註。
+    swap = None if args.no_swap_reserve else swap_reserve()
+    if swap:
+        vid, ncm = swap
+        drop, held = _trim_for_swap(drop)
+        print(f"[pool] **次に公開される本 `{vid}` は、まだ差し替えが要ります**"
+              f"（焼いたあとに {ncm}件・差し替えは {SWAP_UNITS}単位 ＝ "
+              f"`videos.update` ×2）", flush=True)
+        if held:
+            print(f"[pool]     そのぶんを残すため、この回に外すのを **{held}本 減らします**"
+                  f"（{held * UNITS_PER_VIDEO}単位）。"
+                  " 外すには `--no-swap-reserve`（**理由を JOURNAL に**）", flush=True)
+        else:
+            print("[pool]     枠はこの回の池化と両方に足ります（減らしていません）",
+                  flush=True)
+        print(f"[pool]     → **池化より先に撃つこと**: `python -m src.pipeline` で"
+              f"焼き直し → `scripts/reschedule.py --unschedule {vid}` →"
+              " 新しい方を同じ枠へ `--move`", flush=True)
+
     print(f"[pool] 残す **{len(kept)}本**／外す **{len(drop)}本**"
           f"（見積り {len(drop) * UNITS_PER_VIDEO:,}単位）", flush=True)
 
