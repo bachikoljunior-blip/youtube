@@ -51,6 +51,7 @@ from __future__ import annotations
 import json
 import math
 import random
+from datetime import date
 from collections import defaultdict
 from pathlib import Path
 
@@ -170,6 +171,85 @@ def shape(views_path: Path | None = None, forms_path: Path | None = None,
     return out
 
 
+#: 「棚」を数える高さ（`max` の何割以上を、棚に載っているとみなすか）。
+#: **0.75 は掛け算してから置きました** —— `max/10位` が 1.33 ＝ 10位が max の 75.1%
+#: なので、**この高さは「上位10本がまるごと入るぎりぎり」**です。0.9 に上げると
+#: 3本しか残らず「たまたま近い2本」と区別が付かず、0.5 まで下げると 45本 ＝
+#: 分布の胴まで拾って、棚かどうかを言えなくなります。
+SHELF_FRAC = 0.75
+#: 棚と呼ぶのに要る本数（これ未満なら「たまたま近い数本」）。
+SHELF_MIN_N = 5
+#: 棚と呼ぶのに要る、初観測日の広がり（日）。**同じ日の本だけなら、
+#: 面ではなくその日の出来事（1本が跳ねて連れて上がった）で説明が付きます。**
+SHELF_MIN_SPAN_DAYS = 7
+
+
+def first_seen(path: Path | None = None) -> dict[str, str]:
+    """本 → いちばん最初にその本を観測した時刻（`data/views.jsonl` の並び順）。"""
+    out: dict[str, str] = {}
+    p = path or VIEWS
+    if not p.is_file():
+        return {}
+    with p.open() as fh:
+        for line in fh:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                r = json.loads(line)
+            except ValueError:
+                continue
+            vid, at = r.get("id"), r.get("at")
+            if vid and at and vid not in out:
+                out[vid] = str(at)
+    return out
+
+
+def shelf(form: str = "ショート", frac: float = SHELF_FRAC,
+          views_path: Path | None = None, forms_path: Path | None = None) -> dict:
+    """**その形の上端は「棚」か、それとも「1本の飛び出し」か**（**API 0単位**）。
+
+    `max/10位` は「上位が団子か」しか言いません。**団子は1日で作れます** ——
+    1本が跳ねて、同じ日の隣の本を連れて上げれば、上位は簡単に固まります。
+    **棚（＝配信の上限）なら、別々の日に出した別々の題が、
+    何度でも同じ高さで止まります。**
+
+    返すのは `{"n", "max", "shelf_n", "span_days", "days", "is_shelf"}`。
+    `is_shelf` が真なのは **`shelf_n >= SHELF_MIN_N` かつ
+    `span_days >= SHELF_MIN_SPAN_DAYS`** のとき。
+
+    **これは `matched` の p 値とは別の証拠です** —— あちらは
+    「本数の差では説明できない」、こちらは「その日の出来事では説明できない」。
+    """
+    best = best_views(views_path)
+    forms = forms_map(forms_path)
+    seen = first_seen(views_path)
+    vals = sorted(((v, vid) for vid, v in best.items() if forms.get(vid) == form),
+                  reverse=True)
+    if not vals:
+        return {"n": 0, "max": None, "shelf_n": 0, "span_days": None,
+                "days": [], "is_shelf": False}
+    top = vals[0][0]
+    on = [(v, vid) for v, vid in vals if v >= top * frac]
+    days = sorted({seen[vid][:10] for _, vid in on if vid in seen})
+    # **1日しか無い ＝ 幅 0日**（`None` にしないこと —— `None` は
+    # 「日付が1つも読めなかった」の意味に取っておきます。混ぜると
+    # 「同じ日に固まった団子」が「測れていない」と同じ扱いになり、門が素通りします）。
+    span = None
+    if len(days) == 1:
+        span = 0
+    elif len(days) >= 2:
+        a = date.fromisoformat(days[0])
+        b = date.fromisoformat(days[-1])
+        span = (b - a).days
+    return {
+        "n": len(vals), "max": top, "shelf_n": len(on),
+        "span_days": span, "days": days,
+        "is_shelf": (len(on) >= SHELF_MIN_N
+                     and span is not None and span >= SHELF_MIN_SPAN_DAYS),
+    }
+
+
 def lines(**kw) -> list[str]:
     """画面へ。**壁が形の側にあるかどうかを1行で。**"""
     s = shape(**kw)
@@ -190,6 +270,16 @@ def lines(**kw) -> list[str]:
                    f"・最大 {m['max']:.2f}）")
         out.append(f"  **{m['small']} の実測 {m['observed']:.2f} が出る割合 p {ptxt}**"
                    " —— 本数の差では説明できません")
+    sh = shelf(views_path=kw.get("views_path"), forms_path=kw.get("forms_path"))
+    if sh["max"]:
+        verdict = ("**棚です**" if sh["is_shelf"]
+                   else "**棚とは呼べません**（本数か日数が足りない）")
+        out.append(f"  ショート の上端 {sh['max']}回 の {int(SHELF_FRAC * 100)}% 以上に"
+                   f" **{sh['shelf_n']}本**が載り、初観測日は **{len(sh['days'])}日**に"
+                   f"わたります（幅 {sh['span_days']}日） → {verdict}")
+        out.append("    **`max/10位` とは別の証拠です** —— あちらは「本数の差では"
+                   "説明できない」、こちらは**「その日の出来事では説明できない」**。"
+                   "別の日の別の題が、何度でも同じ高さで止まっています")
     return out
 
 
