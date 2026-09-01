@@ -6205,6 +6205,54 @@ def plan(m: dict, a: dict, density: int = PLAN_PUBLISH_PER_DAY,
             mix = _with_recent_surface(mix)
     else:
         mix = dict(mix)
+    # --- **腕を引くと、長尺の割合は薄まる**（2026-09-01・最適化の回に足した）---
+    #
+    #     `mix["rpm_max"]` は `src/rpm_mix.surface_ceiling()` の
+    #
+    #         share_max = 長尺の面/日 ÷ (長尺の面/日 + **いまの**ショート再生/日)
+    #
+    #     で、分母の後半が **測った窓の「いま」で固まっています。**
+    #     ところがこの下では、腕 `per_video` を天井（×4.16）まで引いた
+    #     `ceiling_day` を**分子**に使いながら、合格点（`need_month`）は
+    #     **その固まった天井**から出していました。**ショートが 4.16倍 の
+    #     世界では、長尺の割合はその分 薄まります。**
+    #
+    #     実測（2026-09-01・点 `at=2026-08-29`・`src/rpm_mix.coupled()`）:
+    #
+    #         据え置き           長尺 61.5% → 実効RPM ¥1,252 → 要る 159,710回/月
+    #         `per_video` ×4.16  長尺 27.7% → 実効RPM **¥598** → 要る **334,696回/月**
+    #
+    #     そして毎周の頭に出ている「**3本とも同時に天井まで引くと 目標の
+    #     73.6%（残り ×1.36）**」は、**×4.16 の分子と ×1.00 の分母**を
+    #     掛けた数でした。同じ土俵で解き直すと **35.1%・残り ×2.85**
+    #     —— **前提の寸法が 2.1倍 小さく出ていました。**
+    #
+    #     **分母はこの模型自身のショート再生/日（`per_video × density`）に
+    #     そろえます。** 点の側（90日の平均 857.9回/日）と模型の側
+    #     （規則の密度で 942回/日）は**同じ量を2通りに測った数**で、
+    #     片方を分子・片方を分母に使うのが元の欠陥です。据え置きの回も
+    #     ここで **¥1,252 → ¥1,209（−3.4%・辛い側）** に動きます。
+    #
+    #     **長尺の面（`imp_day`）は据え置きです** —— ショートの腕を引いても
+    #     長尺のサムネが見られる回数は増えません。
+    #
+    #     **覆る条件**: `surface_ceiling()` が長尺の面もこの模型の密度で
+    #     出すようになったら、ここは要りません。`_thin_by_density` が
+    #     測れない回（`at_rule=False`）は倍率 1.00 で素通しになります。
+    try:
+        _pv_at_density, _ = _thin_by_density(
+            per_video, density_month,
+            at_rule=bool(m.get("views_per_video_rule")))
+        _short_views_day = float(_pv_at_density) * float(density_month)
+        _base_short = float(mix.get("imp_day") or 0.0) * (
+            (1.0 - float(mix.get("long_share_max") or 0.0))
+            / float(mix.get("long_share_max") or 1.0)) if mix.get("long_share_max") else 0.0
+        if _short_views_day > 0 and _base_short > 0:
+            _co = rpm_mix.coupled(mix, _short_views_day / _base_short)
+            if _co:
+                mix = dict(mix, **_co)
+    except Exception:                                          # noqa: BLE001
+        pass                                                   # **回を止めないこと。**
     rpm_cap = float(mix.get("rpm_max") or 0.0) or None
     long_views_day_cap = float(mix.get("imp_day") or 0.0) or None
     # **段2 の分母は天井ではありません**（2026-08-25）。`_gate2_surface_basis` を読むこと。

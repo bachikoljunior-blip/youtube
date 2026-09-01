@@ -653,6 +653,108 @@ def rule_capped(point: dict, per_publish: float | None,
     }
 
 
+def coupled(point: dict, short_scale: float,
+            bands: dict[str, int] | None = None) -> dict | None:
+    """**腕を引いてショートの再生が増えると、長尺の割合は薄まる。**（API 0単位）
+
+    ## なぜ要るか（2026-09-01・最適化の回に測って足した）
+
+    `surface_ceiling()` の天井はこう置かれています::
+
+        share_max = 長尺の面/日 ÷ (長尺の面/日 + **いまの**ショート再生/日)
+
+    分母の後半が **「いま」で固まっています。** ところが `scripts/eta.py` の
+    `plan()` は、腕 `per_video` を天井まで引いた世界の
+    `ceiling_day`（＝ ショートの再生/日）を**分子**に使いながら、
+    合格点（`need_month`）は**この固まった天井**から出していました。
+
+    **ショートを 4.16倍 に伸ばした世界では、長尺の割合はその分 薄まります。**
+    実測（2026-09-01・保存済みの点 `at=2026-08-29`）::
+
+        腕            長尺の面/日  ショート再生/日  長尺の割合  実効RPM   要る再生/月
+        据え置き        1,368.0        857.9      61.5%   ¥1,252    159,710
+        `per_video` ×4.16  1,368.0      3,569.0      27.7%   **¥598**  **334,696**
+
+    そして「**3本とも同時に天井まで引くと 目標の 73.6%（残り ×1.36）**」は、
+    **×4.16 の分子と、×1.00 の分母を掛けた数**でした。同じ土俵で解き直すと::
+
+        目標の **73.6%** → **35.1%**   残り **×1.36** → **×2.85**（**2.1倍 甘い**）
+
+    **この数は、毎周「立てるべき前提の大きさ」として印字されています**
+    （`src/joint_cap.lines()`）。**前提の寸法が 2.1倍 小さく出ていました。**
+
+    `rule_capped()` の末尾が「**短い側の再生（`short_views_day`）は
+    動かしていません**」と書いているのと**同じ欠陥の、腕の側**です。
+
+    ## 何を足していないか
+
+    **推測を1つも足しません。** 長尺の面（`imp_day`）は据え置き ——
+    ショートの腕を引いても長尺のサムネが見られる回数は増えないからです
+    （増えるなら、それは `rpm` の腕のほうの話で、別に数えます）。
+    動かすのは**分母の後半だけ**です。
+
+    ## 使い方
+
+        rpm_mix.coupled(point, short_scale=4.16)   # → 新しい rpm_max / long_share_max
+
+    `short_scale` は **据え置きを 1.0 とした、ショート再生/日 の倍率**。
+    `1.0` を渡すと、点に入っている `rpm_max` をそのまま復元します
+    （復元できなければ **`None`** ＝「この点は別の帯で出ている」）。
+
+    ## 覆る条件
+
+    - `surface_ceiling()` が `short_views_day` を点に書くようになったら、
+      ここの復元（`S = L × (1 - share) / share`）は要りません。
+    - 帯（`BANDS`）が `長尺 お金 高` / `ショート 高` 以外で出された点には
+      **当たりません**（自己検査で外れるので `None` を返します）。
+    - 腕 `rpm` が「長尺の面そのものを増やす」形で測れるようになったら、
+      `imp_day` の据え置きはやめること。
+    """
+    bands = bands or BANDS
+    if not point:
+        return None
+    try:
+        L = float(point.get("imp_day") or 0.0)
+        share = float(point.get("long_share_max") or 0.0)
+        now = float(point.get("rpm_now") or 0.0)
+        scale = float(short_scale)
+    except (TypeError, ValueError):
+        return None
+    if L <= 0 or now <= 0 or not (0.0 < share < 1.0) or scale <= 0:
+        return None
+    long_band = float(bands["長尺 お金 高"])
+    short_band = float(bands["ショート 高"])
+    # **自己検査**: 据え置きの割合から復元した RPM が、点の `rpm_max` と
+    #     合わないなら、その点は別の帯（`level`）で出ています。**黙って
+    #     上書きしないこと** —— 呼ぶ側が「当てられなかった」と言えるように。
+    stored = point.get("rpm_max")
+    check = share * long_band + (1.0 - share) * short_band
+    if stored is None or abs(float(stored) - check) > max(1.0, abs(check) * 0.01):
+        return None
+    short_views_day = L * (1.0 - share) / share
+    scaled = short_views_day * scale
+    denom = L + scaled
+    share_max = (L / denom) if denom > 0 else 0.0
+    rpm_max = share_max * long_band + (1.0 - share_max) * short_band
+    return {
+        "factor": rpm_max / now,
+        "rpm_now": now,
+        "rpm_max": rpm_max,
+        "long_share_max": share_max,
+        "imp_day": L,
+        "short_views_day": scaled,
+        "short_views_day_before": short_views_day,
+        "short_scale": scale,
+        "rpm_max_before": float(stored),
+        "long_share_max_before": share,
+        "why": (f"ショートの再生を ×{scale:,.2f}"
+                f"（{short_views_day:,.1f} → {scaled:,.1f}回/日）に伸ばすと、"
+                f"長尺の面 {L:,.1f}回/日 は据え置きなので"
+                f" 長尺の割合は {share * 100:.1f}% → **{share_max * 100:.1f}%**、"
+                f" 実効RPM の天井は ¥{float(stored):,.0f} → **¥{rpm_max:,.0f}**"),
+    }
+
+
 def last(path: Path | None = None) -> dict | None:
     """最後に積んだ実測。**無ければ None**（呼ぶ側が「測っていない」と言えるように）。"""
     p = path or LOG
