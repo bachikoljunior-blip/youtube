@@ -592,6 +592,20 @@ def print_hypotheses() -> None:
                 print(f"        [!] {_exp.name} の群を数えられませんでした: {e}")
                 continue
             print(f"        {_c.short()}")
+            # **「判定できます」を裸で出さないこと**（2026-09-01 に実測して足した）。
+            # `short()` が数えるのは**予約に在る本**で、**Analytics に行が在るか**は
+            # 見ていません。実測 2026-09-01: `title_form` は 問い 23 / 断定 19 で
+            # 「判定できます」と出ていたのに、**値の出る本は 問い 16 / 断定 10**
+            # （断定の 4本 は公開から5日たって 0再生）。engaged は
+            # `engagedViews ÷ views` なので **0再生の本には値がありません。**
+            # 理由と覆る条件は `src/ab_verdict.py` の冒頭。
+            try:
+                from src import ab_verdict as _abv
+
+                for _line in _abv.lines(_exp.name):
+                    print(f"      {_line}")
+            except Exception as e:  # 道具が、状態のせいで死んではいけない
+                print(f"        （値の出る本は数えられませんでした: {e}）")
             # **床の数そのものが、当てられる大きさを決めています**（2026-08-20 05:2x に足した）。
             # yaml には「8対8 なら倍半分の差は見分けられる」と書いてありましたが、
             # **効きがゼロのときに何と言うか**は一度も測られていませんでした ——
