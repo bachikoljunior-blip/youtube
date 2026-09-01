@@ -250,6 +250,87 @@ def shelf(form: str = "ショート", frac: float = SHELF_FRAC,
     }
 
 
+#: 上端の弾力性を、平均の弾力性と比べるときの有意水準（両側 95%）。
+Z95 = 1.96
+
+
+def _ols(xs: list[float], ys: list[float]) -> dict | None:
+    """log-log の最小二乗。返すのは `{"b", "se", "t", "lo", "hi", "n"}`。"""
+    n = len(xs)
+    if n < 4:
+        return None
+    mx = sum(xs) / n
+    my = sum(ys) / n
+    sxx = sum((x - mx) ** 2 for x in xs)
+    if sxx <= 0:
+        return None
+    b = sum((x - mx) * (y - my) for x, y in zip(xs, ys)) / sxx
+    a = my - b * mx
+    s2 = sum((y - (a + b * x)) ** 2 for x, y in zip(xs, ys)) / (n - 2)
+    # **残差 0（＝ 完全に乗っている）は `None` にしないこと。**
+    # 傾きが厳密に決まっている、という意味であって「測れなかった」ではありません。
+    # `None` を返すと、作り物の帳面で試した回が「道具が壊れている」と読みます。
+    se = math.sqrt(s2 / sxx) if s2 > 0 else 0.0
+    t = (b / se) if se > 0 else (math.inf if b else 0.0)
+    return {"b": b, "se": se, "t": t,
+            "lo": b - Z95 * se, "hi": b + Z95 * se, "n": n}
+
+
+def tail_elasticity(rows=None) -> dict | None:
+    """**その日の本数を減らすと上がるのは「平均」か、「上端」もか**（**API 0単位**）。
+
+    ## なぜ要るか（2026-09-02 に測って足した）
+
+    `src/rule_per_video.ceiling_at_rule()` は、**観測された最大**（1,891回・
+    3本/日 の日の本）に `n ** (-b)` を掛けて 1本/日 へ外挿します。
+    その `b` は `rule_per_video.estimate()` の弾力性 ——
+    **「その日の本数 → 1本あたり再生」の回帰**で、
+    **`1本あたり再生` は平均（中心）**です。
+
+    **平均に当てた傾きを、極値（最大）に当てています。**
+    上端が棚（`shelf()` で確かめた配信の上限）なら、
+    **その傾きは上端まで届きません** —— 密度を下げても棚は上がらないからです。
+
+    ## だから、上端そのものの傾きを測ります
+
+    日ごとに `log(その日の最大)` と `log(その日の平均)` を、
+    それぞれ `log(その日の本数)` へ回帰して並べます。
+
+    **`b_max` の 95% 区間が `b_mean` を含まなければ、外挿は上端に効いていません。**
+    そのとき `ceiling_at_rule()` の `value` は `raw`（＝ 観測された最大）の
+    `n ** (-b_mean)` 倍だけ上振れしていることになります。
+
+    返すのは `{"max": {...}, "mean": {...}, "reaches_tail": bool, "inflation": float}`。
+    `inflation` は「上端に効かないなら、天井は何倍 上振れか」（3 ** (-b_mean)）。
+    """
+    if rows is None:
+        from src import rule_per_video as _rp
+        rows = _rp._settled()
+    if not rows:
+        return None
+    by: dict[str, list[int]] = defaultdict(list)
+    for day, _vid, life in rows:
+        if life and life > 0:
+            by[day].append(int(life))
+    pts = [(len(v), max(v), sum(v) / len(v)) for v in by.values() if v]
+    if len(pts) < 4:
+        return None
+    xs = [math.log(n) for n, _mx, _mn in pts]
+    fit_max = _ols(xs, [math.log(mx) for _n, mx, _mn in pts])
+    fit_mean = _ols(xs, [math.log(mn) for _n, _mx, mn in pts])
+    if not fit_max or not fit_mean:
+        return None
+    # **区間の端は、丸めの誤差で外れます。** 完全に乗っている帳面（残差 0）では
+    # 区間が1点になるので、そのぶんの遊びを持たせること。
+    eps = 1e-9
+    reaches = fit_max["lo"] - eps <= fit_mean["b"] <= fit_max["hi"] + eps
+    return {
+        "max": fit_max, "mean": fit_mean, "reaches_tail": reaches,
+        # **`CEILING_MAX_PER_DAY`（3本/日）から 1本/日 への1段ぶん。**
+        "inflation": 3.0 ** (-fit_mean["b"]),
+    }
+
+
 def lines(**kw) -> list[str]:
     """画面へ。**壁が形の側にあるかどうかを1行で。**"""
     s = shape(**kw)
@@ -280,6 +361,21 @@ def lines(**kw) -> list[str]:
         out.append("    **`max/10位` とは別の証拠です** —— あちらは「本数の差では"
                    "説明できない」、こちらは**「その日の出来事では説明できない」**。"
                    "別の日の別の題が、何度でも同じ高さで止まっています")
+    te = tail_elasticity()
+    if te:
+        mx, mn = te["max"], te["mean"]
+        out.append(f"  **その日の本数を減らして上がるのは「平均」だけです** ——"
+                   f" 日ごとの**平均**の弾力性 b={mn['b']:+.3f}（t={mn['t']:+.2f}）に対し、"
+                   f" 日ごとの**最大**は b={mx['b']:+.3f}（t={mx['t']:+.2f}"
+                   f"・95%[{mx['lo']:+.3f}, {mx['hi']:+.3f}]・n={mx['n']}日）")
+        if te["reaches_tail"]:
+            out.append("    → 上端の区間が平均の b を**含んでいます**。"
+                       "`ceiling_at_rule()` の外挿は上端にも効いているとみてよい")
+        else:
+            out.append(f"    → 上端の区間が平均の b を**含みません**。"
+                       f" **`rule_per_video.ceiling_at_rule()` は、平均に当てた傾きを"
+                       f"極値に当てています** ＝ 天井は **×{te['inflation']:.2f}** の上振れ"
+                       f"（規則の 1日1本 での天井は、記録 {sh['max']}回 とほぼ同じ）")
     return out
 
 

@@ -91,3 +91,73 @@ def test_画面に棚の行が出る():
     if "ショート" not in out:
         return
     assert "棚" in out, out
+
+
+# ---------------------------------------------------------------------------
+# **外挿が上端まで届いているか**（`tail_elasticity`）
+#
+# `rule_per_video.ceiling_at_rule()` は「観測された最大」に `n ** (-b)` を掛けて
+# 1本/日 へ外挿します。その `b` は **平均**に当てた回帰の傾きです。
+# **平均の傾きを極値に当ててよいか**を、ここで数えます。
+# ---------------------------------------------------------------------------
+
+def _rows(spec):
+    """`{日: [再生, ...]}` → `_settled()` と同じ形 `(日, 本ID, 再生)`。"""
+    out = []
+    for day, vals in spec.items():
+        for i, v in enumerate(vals):
+            out.append((day, f"{day}-{i}", v))
+    return out
+
+
+def test_上端も平均と同じだけ動くなら外挿は届いている():
+    """**全部が同じ倍率で動く**（＝ 分布ごと平行移動）なら、外挿は上端にも効きます。"""
+    # **日の中の形を n から独立にします** —— 倍率を 1.0 / 0.5 で交互に置くと、
+    # 偶数本の日はどれも「最大 ×1.0・平均 ×0.75」。**動くのは `n ** -0.7` だけ**なので、
+    # 上端と平均は同じ傾きで下がります（＝ 分布ごとの平行移動）。
+    spec = {}
+    for i, n in enumerate([2, 2, 4, 4, 6, 6, 8, 8, 12, 12, 20, 20]):
+        scale = 10000 * (n ** -0.7)
+        spec[f"2026-08-{i + 1:02d}"] = [int(scale * (1.0 if j % 2 == 0 else 0.5))
+                                        for j in range(n)]
+    te = form_tail.tail_elasticity(_rows(spec))
+    assert te is not None
+    assert te["reaches_tail"] is True, te
+
+
+def test_上端が棚なら外挿は届いていない():
+    """**上端だけが動かない**（棚）なら、平均の傾きを極値に当ててはいけません。"""
+    spec = {}
+    for i, n in enumerate([1, 1, 2, 2, 3, 3, 8, 8, 12, 12, 20, 20]):
+        # 最大は 1,000 に張り付き、下だけが本数で薄まる
+        vals = [1000] + [int(900 * (n ** -0.9) * (1 - 0.02 * j))
+                         for j in range(n - 1)]
+        spec[f"2026-08-{i + 1:02d}"] = vals
+    te = form_tail.tail_elasticity(_rows(spec))
+    assert te is not None
+    assert te["reaches_tail"] is False, te
+    assert te["inflation"] > 1.0, te
+
+
+def test_いまの実測では外挿が上端まで届いていない():
+    """**この検査が、前提「天井 4,101回 は外挿ぶんだけ上振れ」の judge です**。
+
+    覆る条件: 上端の 95% 区間が平均の `b` を**含むようになったら**、
+    この前提は falsified —— そのとき `ceiling_at_rule()` の外挿はそのままでよい。
+    """
+    te = form_tail.tail_elasticity()
+    if te is None:                                # 控えが無い環境
+        return
+    assert te["max"]["lo"] <= te["max"]["b"] <= te["max"]["hi"]
+    assert te["reaches_tail"] is False, te
+    # 上端の傾きは 0 と区別が付かない（＝ 密度を下げても棚は上がらない）
+    assert abs(te["max"]["t"]) < 2.0, te
+    # 平均の傾きは 0 と区別が付く（＝ 平均のほうは本当に動く）
+    assert abs(te["mean"]["t"]) > 2.0, te
+
+
+def test_画面に外挿の行が出る():
+    out = "\n".join(form_tail.lines())
+    if "ショート" not in out:
+        return
+    assert "弾力性" in out, out

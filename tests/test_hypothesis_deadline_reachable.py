@@ -245,6 +245,11 @@ CHECKABLE = {
     #     (2) **その日の出来事では説明できない**（`form_tail.shelf()`:
     #         上端 1,891回 の 75% 以上に 10本・初観測日 7日・幅 17日 ＝ 棚）
     #   `config/hypotheses.yaml` の `confirmed:` の先頭に全文があります。
+    #
+    # **同じ回が、その続きを1件 立てました**（`premise`）。**床はやはり今日** ——
+    # 読むのは `data/views.jsonl` だけで、予約にも Analytics の遅れにも依存しません。
+    # 判定は `python -m src.form_tail`（Data API 0単位）。
+    "外挿（記録 1,891回 × `n ** (-b)`）で使う": earliest_now,
 }
 
 #: 当てられない件と、その理由。**docstring と同じ並び。**
