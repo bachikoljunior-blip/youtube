@@ -3689,3 +3689,11 @@
 {"at": "2026-09-01T06:34:19+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "scan.py:query"}
 {"at": "2026-09-01T06:34:20+00:00", "api": "data", "method": "videos.list", "units": 1, "ok": false, "by": "scan.py:collect", "detail": "-5n5vwfePoY,-NbX_FMzAg0,0GdstSOGWVw,12V-kHrKzIg,13TynquQzQU,178_WLomK4Y,1xPjpFwG8qk,2FSAM7FYftY,2sEAxqibFIM,3SZDpbRKSto,"}
 {"at": "2026-09-01T06:34:21+00:00", "api": "data", "method": "channels.list", "units": 1, "ok": false, "by": "scan.py:collect"}
+{"at": "2026-09-01T07:01:49+00:00", "api": "data", "method": "videos.list", "units": 1, "ok": true, "by": "reschedule.py:_update", "detail": "UIWHsypOPPg"}
+{"at": "2026-09-01T07:01:50+00:00", "api": "data", "method": "videos.update", "units": 50, "ok": true, "by": "reschedule.py:_update", "detail": "UIWHsypOPPg"}
+{"at": "2026-09-01T07:01:56+00:00", "api": "data", "method": "channels.list", "units": 1, "ok": true, "by": "uploader.py:scheduled_publish_times"}
+{"at": "2026-09-01T07:01:56+00:00", "api": "data", "method": "playlistItems.list", "units": 1, "ok": true, "by": "uploader.py:scheduled_publish_times", "detail": "UUhTXZzwkIJHqyL7L_fEtuqQ"}
+{"at": "2026-09-01T07:01:57+00:00", "api": "data", "method": "videos.list", "units": 1, "ok": true, "by": "uploader.py:scheduled_publish_times", "detail": "UIWHsypOPPg,J67vEIw_VRE,4woC2YuX7ig,bGwW9Xp1Fiw,zrAb_NNETSU,1Nyl3aLUOgo,t8sUIqnv7o8,R6H23zZ8f-Y,m_uUwS0Tsy0,n6vbjM1xQGk,"}
+{"at": "2026-09-01T07:02:00+00:00", "api": "data", "method": "playlists.list", "units": 1, "ok": true, "by": "uploader.py:_find_or_create_playlist"}
+{"at": "2026-09-01T07:02:01+00:00", "api": "data", "method": "playlistItems.insert", "units": 50, "ok": true, "by": "uploader.py:_post_actions"}
+{"at": "2026-09-01T07:02:05+00:00", "api": "data", "method": "thumbnails.set", "units": 50, "ok": true, "by": "uploader.py:_set_thumbnail", "detail": "ICmIBsZRYFE"}

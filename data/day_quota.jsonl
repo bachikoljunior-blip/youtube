@@ -5588,3 +5588,6 @@
 {"at": "2026-09-01T06:05:13+00:00", "detail": "videos.list snapshot", "by": "snapshot.py:main"}
 {"at": "2026-09-01T06:34:09+00:00", "detail": "status: Data API 読み", "by": "status.py:main"}
 {"at": "2026-09-01T06:34:10+00:00", "detail": "videos.list snapshot", "by": "snapshot.py:main"}
+{"at": "2026-09-01T07:01:50+00:00", "ok": true, "detail": "videos.update UIWHsypOPPg", "by": "reschedule.py:_update"}
+{"at": "2026-09-01T07:02:01+00:00", "ok": true, "detail": "playlistItems.insert ICmIBsZRYFE", "by": "uploader.py:_post_actions"}
+{"at": "2026-09-01T07:02:05+00:00", "ok": true, "detail": "thumbnails.set ICmIBsZRYFE", "by": "uploader.py:_set_thumbnail"}
