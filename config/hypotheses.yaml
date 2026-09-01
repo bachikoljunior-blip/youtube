@@ -6831,7 +6831,7 @@ hypotheses:
         on_date: "2026-09-21"
         plus_lag: true
         data_file: "data/scan.jsonl"
-        refresh: "python scripts/scan.py"
+        refresh: "python -m src.scan"
         what: "規則（1日1本）の下で 09/01 以降に公開した本が 20本 積むのを待つ（1日1本なので 20日）"
     falsified_if: >
       **2026-09-01 以降に規則（1日1本）の下で公開し、`src/day_cap.live_ids()` が

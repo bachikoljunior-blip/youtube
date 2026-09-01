@@ -94107,3 +94107,18 @@ CSV を置いていくので、**こちらが撃つ回数を増やしても控�
 が `report()` については守りますが、**新しい呼び手までは守れません。**
 いちばん確実なのは `short()` 自身に測った数を渡す形へ寄せることで、
 この回はきょうだいと同じファイルを取り合わないために見送りました。
+
+**全件（5,589件・19分）を回した結果**（同じ回・02:5x）。赤は 7件 で、**そのうち1件が
+この回のぶんでした**: 新しい前提の `refresh:` に `python scripts/scan.py` と書いたが、
+**その道具は `src/scan.py`** で、`scripts/` には在りません
+（`tests/test_refresh_command_runs.py` が「ファイルが在りません」で名指しした）。
+`python -m src.scan` へ直して緑。**`refresh:` は形だけ合っていても撃てないことがあります。**
+
+残る 6件 は、この回より前からの赤です（**変更前のファイルに戻して1件ずつ確かめました** ——
+`git checkout <この回の最初のcommit> -- src/judgeable.py config/hypotheses.yaml` で同じ赤）:
+`test_judgeable.py::opening_motion`（受け取り帳 9aeb1318 (4) に既出）／
+`test_live_slots.py::test_全部逃がす手は生きている本を増やす`（生きている本 317→317）／
+`test_queue_lag_publish_cap.py` ／ `test_request_form.py::test_深い題ショートは群に入る` ／
+`test_request_form_excludes_long_form.py::test_split_counts_と_判定の群が_同じ本を数える`
+（`split_counts` 23本 対 素の群 78本 —— **この回に触った所とは別の食い違い**ですが、
+「数え方を2つ並べて残さない」は同じ形なので、次に来た側はここから読むと早い）。
