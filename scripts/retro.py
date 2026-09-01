@@ -669,7 +669,43 @@ def tokens(body: list[str]) -> set[str]:
     return found
 
 
+#: **種別の正本は `ship_kind` の欄です**（`scripts/run_marker.ship_kind_of()`）。
+#: 散文の頭の語ではありません。
+SHIP_KINDS = ("upload", "improve", "means", "verdict", "fix")
+
+
 def ship_summary(n: int) -> tuple[Counter, list[str]]:
+    """**出したものを種別で数える。**
+
+    ## **散文の頭の語で数えないこと**（2026-09-01 に踏んだ。**この関数が数えていました**）
+
+    ここは長らく `what.split(":", 1)[0]` を種別として数えていました。
+    **`data/runs.jsonl` には `ship_kind` という構造の欄があります** ——
+    2026-08-26 に、まさに「散文の頭の語は当てにならない」（実測 381件中
+    **155件（41%）**が読めなかった）ので足された欄です。
+    **この関数だけが、その欄を無視して散文へ戻っていました。**
+
+    実測 2026-09-01 09:2x の直近8件:
+
+        帳面（`ship_kind`）  fix **7** ／ improve 1        ＝ fix **87.5%**
+        この関数の印字        fix 6（75%）／ improve 1 ／ **`eta` 1**
+
+    **`eta` は5つの種別のどれでもありません。** 散文が
+    「eta: 天井を作る min() が…」で始まっていただけで、帳面の `ship_kind` は
+    `fix` です。**無い種別を1つ作り、`fix` の比を 12.5ポイント 低く出していました**
+    （前の回は `fix(手順)` という別の幻の種別も出しています）。
+
+    **これは見た目の問題ではありません。** すぐ下の「**〜 に偏っています**」は
+    この数から出ており、**その1行が、その回に何を出すかを決めています。**
+    比が低く出れば、偏りの警告は**出るのが遅れます。**
+
+    ## 覆る条件
+
+    - `run_marker` が `ship_kind` を書かなくなったら、下の落とし口だけが残ります
+      （そのときは散文へ戻りますが、**幻の種別が出たら、それは落とし口のほうです**）
+    - 種別が増えたら `SHIP_KINDS` に足すこと。**`run_marker.SHIP_KINDS` が正本**で、
+      `tests/test_retro_ship_kind.py` が2つの一致を見ています
+    """
     kinds: Counter = Counter()
     recent: list[str] = []
     if not RUNS.exists():
@@ -685,7 +721,13 @@ def ship_summary(n: int) -> tuple[Counter, list[str]]:
     ships = [r for r in rows if r.get("kind") == "ship"]
     for r in ships[-n:]:
         what = r.get("what", "")
-        head = what.split(":", 1)[0].strip() if ":" in what[:12] else "?"
+        head = str(r.get("ship_kind") or "").strip()
+        if head not in SHIP_KINDS:
+            # **落とし口。** 欄が無い古い行（2026-08-26 より前）だけがここへ来ます。
+            # **頭の語も5つのどれかでなければ「その他」** —— `run_marker` と同じ答え。
+            # 幻の種別（`eta` / `fix(手順)`）を作らないのが、ここの仕事です。
+            low = what.strip().lower()
+            head = next((k for k in SHIP_KINDS if low.startswith(k)), "その他")
         kinds[head] += 1
         recent.append(f"  {r.get('at', '')[5:16]}  {what[:96]}")
     return kinds, recent
