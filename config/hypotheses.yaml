@@ -6936,6 +6936,21 @@ hypotheses:
       - "`imp_day` の据え置きは正しい。**`rpm` は通る道の上で本当に 0 の腕**なので、`src/levers.py` の `RULE_DEAD` と同じ扱い（`joint_idle`）を機械の側に足し、`config/hypotheses.yaml` の `lever: rpm` の開いた前提（この回で 19%・4件前後）を `deadline_check --fit` の死んだ側へ移すこと"
       - "そのうえで、残りの ×6.13 は **`per_video` の天井だけ**の話になる。探す先は 1本あたり再生の分布の右端（`src/rule_per_video.py` / `src/form_record.py`）1つに絞ること"
     note: >
+      **RPM への鎖**（`tests/test_eta_headline_alloc_hand.py::
+      test_台帳の付け札が実際に測っているものと合っていること` が要求する1本。
+      **最初の版はこれを書き落として赤になりました**）:
+
+        長尺の面/日（`imp_day`）
+          → 長尺の再生の割合（`long_share_max` ＝ imp_day ÷ (imp_day ＋ ショート再生/日)）
+          → **実効RPM**（長尺の高い RPM と ショートの低い RPM の重み付き平均。
+             `src/rpm_mix.surface_ceiling()` の `rpm_max`）
+          → `scripts/eta.plan()` の `rpm_cap`、そして `rpm_plan = min(帯, rpm_cap)`
+          → 合格点 `need_month` ＝ 200,000円 × 1000 ÷ 実効RPM
+
+      **この前提が測っているのは面ですが、動かすのは実効RPM（¥/1000再生）です。**
+      面が据え置きなら、ショートを伸ばすほど実効RPM は薄まり、
+      `rpm` の腕は買えなくなります —— それがこの回に測った ×1.0000 の中身です。
+
       **`imp_day` が動くなら、直す先は `src/rpm_mix.coupled()` です** ——
       いまは ショート再生の倍率だけを受け取って長尺の割合を薄めており、
       長尺の面は触りません。`imp_day *= scale ** beta` を入れると、
