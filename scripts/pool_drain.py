@@ -395,6 +395,24 @@ def main(argv: list[str] | None = None) -> int:
     else:
         print("[pool] **これから来る日は、どれも規則1 の内側です**（1日1本）",
               flush=True)
+    # **上の締切も、この一覧も、控えだけで出しています**（2026-09-01 に足した）。
+    # オーナーが 09/01 16:33 に画面で踏んだのは、まさにその形でした ——
+    # 控えは「予約はもう 09/02 以降だけ」と言い、実物には 09/01 18:00〜21:00 に
+    # 4本 残っていた。**「これから来る日は規則1 の内側です」を裸で言わないこと。**
+    # 数え方は `src/ledger_truth.py`（API 0単位）。**鳴らなければ黙ります。**
+    try:
+        from src import ledger_truth
+        ghosts = ledger_truth.phantoms()
+    except Exception:                                          # noqa: BLE001
+        ghosts = []
+    if ghosts:
+        print(f"[pool] [!] **上の数は控えだけで出しています。その控えのうち"
+              f" {len(ghosts)}本 は、実物と食い違っていることが分かっています**"
+              f"（`python -m src.ledger_truth`）: "
+              + " ".join(g["id"] for g in ghosts), flush=True)
+        print("[pool]     **この本は一覧に出ていません。**"
+              " 控えの `at` が過去なら `pool()` の `at <= now` で落ちるので、"
+              "実物だけが予約のまま公開されます", flush=True)
     for r in kept:
         print(f"[pool]   残す: {r['at'].isoformat()}  {r['id']}  {r['title'][:40]}",
               flush=True)
