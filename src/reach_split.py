@@ -47,6 +47,7 @@ from __future__ import annotations
 
 import json
 from collections import defaultdict
+from datetime import date
 from pathlib import Path
 
 import yaml
@@ -74,6 +75,17 @@ RECENT_DAYS = 7
 #: 続いている量は 8回/日 なので、実際は **24倍 足りません。**
 #: **同じ帳面の読み手2つが逆を向いていた形の5件目**（4件目は `summary()` の docstring）。
 BURST_SHARE = 0.5
+
+#: **公開1本の面が、何日かけて積むか**（`accrual_curve()` の地平）。
+#: `RECENT_DAYS` と同じ 7日 にしてあります —— 窓と地平が同じでないと、
+#: 「窓に落ちた尾の割合」が 1.0 を超えたり、窓の外の尾を数えたりします。
+TAIL_DAYS = 7
+
+#: 尾の形を measure するのに要る、**齢 `TAIL_DAYS` 日まで観測できた長尺の本数**。
+#: これを下回ったら曲線を返しません（＝ 呼ぶ側は今までどおり「窓の中の本数」で
+#: 割ります）。**推測の曲線で分母を割らないこと** —— 分母は面の天井に直に効きます。
+TAIL_MIN_PANEL = 5
+
 STORE = ROOT / "data" / "reach.jsonl"
 LEDGER = ROOT / "data" / "uploaded.jsonl"
 PAIRS = ROOT / "config" / "pairs.yaml"
@@ -351,6 +363,157 @@ def publishes_per_day(longs: set[str] | None = None,
         day = str(at)[:10].replace("-", "")
         out[day] = out.get(day, 0) + 1
     return out
+
+
+def publish_day_by_id(longs: set[str] | None = None,
+                      ledger_path: Path | None = None) -> dict[str, str]:
+    """`video_id` → **公開した日**（`YYYYMMDD`）。長尺だけ。
+
+    `publishes_per_day()` の**同じ規則**（id で数える・作り置きは落とす）を、
+    日ごとに畳む前の形で返します。**尾の重みは本ごとに違う**ので、
+    畳んだ本数からは組み直せません。
+
+    **規則を写していません** —— 作り置きの判定は `house_rule.is_stockpile()`
+    の1か所のままです（`publishes_per_day()` の註）。
+    """
+    longs = long_ids() if longs is None else longs
+    out: dict[str, str] = {}
+    for vid, row in _ledger_by_id(ledger_path).items():
+        at = row.get("at")
+        if not at or vid not in longs or house_rule.is_stockpile(row):
+            continue
+        out[vid] = str(at)[:10].replace("-", "")
+    return out
+
+
+def _day(s: str) -> date | None:
+    """`"20260828"` → `date`。読めなければ `None`（呼ぶ側で落とす）。"""
+    s = str(s or "")
+    if len(s) != 8 or not s.isdigit():
+        return None
+    try:
+        return date(int(s[:4]), int(s[4:6]), int(s[6:8]))
+    except ValueError:
+        return None
+
+
+def accrual_curve(rows: list[dict], pub_day: dict[str, str],
+                  horizon: int = TAIL_DAYS,
+                  min_panel: int = TAIL_MIN_PANEL) -> list[float] | None:
+    """**公開1本の面が、齢べつに何割まで積んだか**（`W[0] … W[horizon]`・単調非減少）。
+
+    返りは累積の割合で、`W[horizon] == 1.0`。測れないときは **`None`**。
+
+    ## なぜ要るか（2026-09-01 に足した。**申し送り 04:0x の1番**）
+
+    `summary()` の `per_publish` は「窓の面 ÷ **窓の中の公開 本数**」です。
+    分子は面の実測なので、**窓の右端で公開した本は、その尾がまだ積んでいません。**
+    それでも分母には**丸ごと1本**として入ります —— つまり
+    **`per_publish` は下振れします**（窓の右端に公開が寄っているほど強く）。
+
+    実測（2026-09-01・`data/reach.jsonl` 45日・長尺）:
+
+        窓 20260822..20260828   面 5,646回 ／ 窓の中の公開 **14本**
+          そのうち **8本（57%）が窓の最終日 20260828**（齢 0日）
+          齢 0日 で積んでいるのは、齢7日 までの **41.3%** だけ
+
+    尾の形（齢7日 まで観測できた長尺 **7本**の均衡パネル）:
+
+        齢  0日 41.3% ／ 1日 51.0% ／ 2日 61.1% ／ 3日 68.1%
+            4日 77.3% ／ 5日 88.1% ／ 6日 93.4% ／ 7日 100%
+
+    **7日目でもまだ 6.6% 積んでいます。** ＝ 尾は 7日 で終わっていません
+    （`horizon` を伸ばせる控えが貯まったら、そこは測り直すこと）。
+
+    ## 均衡パネルで測ること（**混ぜると尾が短く見えます**）
+
+    齢べつの合計を、観測できた本を混ぜたまま並べると、
+    **齢の大きい所ほど本数が少ない**ので「もう伸びていない」に見えます
+    （実測: 混ぜたまま数えると齢0日 が 36.6%、均衡パネルでは 41.3%。
+    **向きが逆に出る所もあります**）。だから **齢 `horizon` 日まで
+    観測できた本だけ**で数えます。
+
+    ## 覆る条件
+
+    - `data/reach.jsonl` が本べつの `date` を持たなくなったら、この関数は
+      組み直せません（いまは `video_id` × `date` の行があります）
+    - パネルが `min_panel` 本 を切ったら **`None` を返します** ——
+      呼ぶ側は今までどおり「窓の中の本数」で割ること。
+      **推測の曲線で分母を割らないこと**（分母は面の天井に直に効きます）
+    """
+    if horizon < 0:
+        return None
+    dates = sorted({str(r.get("date", "")) for r in rows if r.get("date")})
+    if not dates:
+        return None
+    first, last = _day(dates[0]), _day(dates[-1])
+    if first is None or last is None:
+        return None
+    # 本 × 齢 の面
+    per: dict[str, dict[int, float]] = defaultdict(lambda: defaultdict(float))
+    for r in rows:
+        vid = str(r.get("video_id") or "")
+        p = _day(pub_day.get(vid, ""))
+        d = _day(str(r.get("date", "")))
+        if p is None or d is None:
+            continue
+        age = (d - p).days
+        if 0 <= age <= horizon:
+            per[vid][age] += _imp(r)
+    # **均衡パネル**: 公開日が控えの窓の中にあり、齢 horizon 日まで観測できた本
+    panel = [v for v in per
+             if (p := _day(pub_day.get(v, ""))) is not None
+             and p >= first and (last - p).days >= horizon]
+    if len(panel) < min_panel:
+        return None
+    cum = [sum(sum(per[v].get(a, 0.0) for a in range(k + 1)) for v in panel)
+           for k in range(horizon + 1)]
+    if cum[horizon] <= 0:
+        return None
+    curve = [x / cum[horizon] for x in cum]
+    # 単調に直す（同じ日に負の面は来ませんが、控えの取り直しで前後することがある）
+    for i in range(1, len(curve)):
+        curve[i] = max(curve[i], curve[i - 1])
+    curve[-1] = 1.0
+    return curve
+
+
+def settled_publishes(window: list[str], pub_day: dict[str, str],
+                      curve: list[float] | None) -> float | None:
+    """**その窓の面を作ったのは、公開 何本ぶんか**（尾で重みを付けた分母）。
+
+    公開1本が窓へ落とす割合は `W(窓の終わり - 公開日) - W(窓の始まり - 公開日 - 1)`。
+
+    - **窓の右端で公開した本**は 1本 未満（尾がまだ積んでいない）
+    - **窓より前に公開した本**も 0本 ではない（尾の一部が窓に落ちている）
+
+    いまの `per_publish` は前者を 1本、後者を 0本 と数えています。
+    **2つは逆を向いています**が、実測では前者のほうが強い ——
+    2026-09-01 の窓では 14本 → **11.42本**（`per_publish` は **×1.23**）。
+
+    `curve` が `None`（尾を測れない）なら **`None`** を返します。
+    """
+    if curve is None or not window:
+        return None
+    start, end = _day(window[0]), _day(window[-1])
+    if start is None or end is None:
+        return None
+    horizon = len(curve) - 1
+
+    def W(a: int) -> float:
+        if a < 0:
+            return 0.0
+        return 1.0 if a >= horizon else curve[a]
+
+    eff = 0.0
+    for p_str in pub_day.values():
+        p = _day(p_str)
+        if p is None:
+            continue
+        f = W((end - p).days) - W((start - p).days - 1)
+        if f > 0:
+            eff += f
+    return eff or None
 
 
 def surface_forecast(sm: dict, pubs: dict[str, int] | None = None,
@@ -665,12 +828,20 @@ def _median(vals: list[float]) -> float:
 
 
 def summary(rows: list[dict], longs: set[str],
-            publishes: dict[str, int] | None = None) -> dict:
+            publishes: dict[str, int] | None = None,
+            pub_days: dict[str, str] | None = None) -> dict:
     """形べつに集計する。
 
     `publishes` は `{"YYYYMMDD": その日に公開した長尺の本数}`。
     省略すると控え（`data/uploaded.jsonl`）から数えます
     （`publishes_per_day()`。**なぜ本数で割るのかは、そちらの註**）。
+
+    `pub_days` は `{video_id: "YYYYMMDD"}`。**`publishes` を畳む前の形**で、
+    尾の重み（`accrual_curve()` / `settled_publishes()`）に要ります ——
+    **本ごとに齢が違うので、畳んだ本数からは組み直せません。**
+    省略すると同じ控えから引きます（`publish_day_by_id()`）。
+    **`publishes` を渡して `pub_days` を渡さないと、分子は渡された側・
+    分母は控えの側になります。** 検査と呼び側は**両方 渡すこと**。
 
     返り: `{"長尺": {...}, "ショート": {...}, "days": n, "dates": [...],
     "last_day": "20260821"}`。**`last_day` は「積んである最後の日」**で、
@@ -783,6 +954,41 @@ def summary(rows: list[dict], longs: set[str],
             v["recent_zero_publish_days"] = len(recent) - v["recent_publish_days"]
             v["per_publish"] = (
                 (sum(series[d] for d in recent) / n_pub) if n_pub else None)
+            # ---- **尾を入れた1本あたり**（2026-09-01 に足した。申し送り 04:0x の1番）。
+            #      上の `per_publish` は**窓の右端で公開した本も丸ごと1本**と数え、
+            #      その本の尾はまだ積んでいません ＝ **下振れします。**
+            #      **上の数は変えていません**（保存済みの点と比べられなくなるため）。
+            #      判断に使うのは `per_publish_settled` のほう ——
+            #      `accrual_curve()` / `settled_publishes()` の docstring に実測。
+            imp_recent = sum(series[d] for d in recent)
+            pd = publish_day_by_id(longs) if pub_days is None else pub_days
+            curve = accrual_curve(rows, pd)
+            eff = settled_publishes(recent, pd, curve)
+            v["tail_curve"] = curve
+            v["settled_publishes"] = eff
+            v["per_publish_settled"] = (imp_recent / eff) if eff else None
+            if eff and n_pub:
+                v["per_publish_settled_basis"] = (
+                    f"窓の中の公開 {n_pub}本 を、尾の積み具合で {eff:,.2f}本 に"
+                    f"直した（`accrual_curve()`・齢0日 で"
+                    f" {curve[0] * 100:.0f}% しか積んでいない）"
+                    f" —— 1本あたり {v['per_publish']:,.1f}回 →"
+                    f" **{v['per_publish_settled']:,.1f}回**"
+                    f"（×{v['per_publish_settled'] / v['per_publish']:.2f}）")
+            elif eff:
+                # **窓の中の公開が 0本 でも、面は 0 ではありません** ——
+                # 前に公開した本の尾が落ちています。いまの `per_publish` は
+                # ここで **None**（測れない）になり、天井が丸ごと落ちます。
+                v["per_publish_settled_basis"] = (
+                    f"**窓の中の公開は 0本 ですが、前の公開の尾が {eff:,.2f}本 ぶん"
+                    f"落ちています** —— 1本あたり"
+                    f" **{v['per_publish_settled']:,.1f}回**"
+                    "（`per_publish` はこの窓では測れません）")
+            else:
+                v["per_publish_settled_basis"] = (
+                    "**尾を測れていません**（齢"
+                    f"{TAIL_DAYS}日 まで観測できた長尺が {TAIL_MIN_PANEL}本 未満）。"
+                    "窓の中の本数で割った `per_publish` を使うこと")
             if v["recent_zero_publish_days"]:
                 v["per_day_sustained_basis"] += (
                     f"。**この{len(recent)}日のうち"
