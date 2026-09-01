@@ -1137,18 +1137,49 @@ def free_alternatives() -> list[str]:
     `fix` **248件（76%）**・うち **232件が `--moves 0` 宣言** ／ `verdict` 20件（6%）。
     台帳は 開いている 21件・閉じる 1.86件/日 で **09-12 に空**（`ledger_drain()`）。
 
+    ## **腕の一覧から、引き代の無い腕を落とすこと**（2026-09-01 夕・最適化の回）
+
+    ここは長らく `levers.LEVERS` を**そのまま**並べていました ——
+    つまり「前提を1件 立てなさい、腕はこの4つから」と言いながら、
+    **その4つに `sub_rate`（この回の `arm_dead_at_inf` ＝ `×10^9` でも到達日は
+    出ない）と `density`（天井 ×1.00・オーナーが固定した 1日1本）が入っていました。**
+
+    **これが、死んだ燃料の注ぎ口です。** 実測 2026-09-01 12:4x
+    （`deadline_check.dead_ledger()` を書いた回に数えた）:
+
+        開いている 23件 のうち **10件（43%）**が、どう閉じても到達日を動かさない
+        （`sub_rate` 6件 ／ `density` 2件 ／ 腕なし 2件）
+
+    **出す瞬間に叱る `levers.lever_notes()` は既に在ります。**
+    足りなかったのは**選ぶ前**で、そこがここです。
+
+    **落とすのは腕の名前だけで、`premise` の手そのものは残します** ——
+    生きた腕が0本になる回でも、この行は消えません（腕の候補が出ないだけ）。
+
     ## 覆る条件
 
     `config/hypotheses.yaml` が読めない回は、この行を出しません
     （在りもしない手を「在る」と言わないこと）。
+    **`data/eta.jsonl` が読めない回は、腕を1本も落としません** ——
+    **「死んだ腕は無い」ではなく「読めない」**（`levers.arm_state` と同じ約束）。
     """
     out: list[str] = []
     # **前提を立てる手は、いつでも 0単位で在ります**（上の註）。
     hypo = Path(__file__).resolve().parents[1] / "config" / "hypotheses.yaml"
+    dropped: list[str] = []
     try:
         from src import levers                                   # noqa: PLC0415
 
         hint = [k for k in levers.LEVERS if k not in ("none", "gate", "theta")]
+        # **引き代の無い腕を落とす**（上の註）。**読めない回は落としません。**
+        _st = levers.latest_arm_state(
+            Path(__file__).resolve().parents[1] / "data" / "eta.jsonl")
+        _caps, _inf = _st.get("caps") or {}, tuple(_st.get("dead_at_inf") or ())
+        if _caps or _inf:
+            _dead = set(_inf) | {k for k, v in _caps.items()
+                                 if isinstance(v, (int, float)) and v <= 1.0}
+            dropped = [k for k in hint if k in _dead]
+            hint = [k for k in hint if k not in _dead]
     except Exception:                                           # noqa: BLE001
         hint = None
     if hypo.exists():
@@ -1158,7 +1189,14 @@ def free_alternatives() -> list[str]:
             "（「立てるべき前提は『その天井は天井ではない』」）。"
             "`lever:` / `side:` / `opened_on:` の3行を忘れないこと ——"
             "空だと `arm_speed` と `ledger_drain` から黙って消えます"
-            + (f"（腕は {'／'.join(hint)} のどれか）" if hint else ""))
+            + (f"（腕は {'／'.join(hint)} のどれか）" if hint else "")
+            + (f" **{'／'.join(dropped)} には立てないこと** ——"
+               " 引き代がありません（`×10^9` でも 0日、または天井 ×1.00 ＝ 規則）。"
+               " 閉じた日に到達日は動きません（`deadline_check.py --fit` に内訳）"
+               if dropped else "")
+            + (" [!] **引き代のある腕が 1本もありません。**"
+               " 立てるなら『その天井は天井ではない』の側です"
+               if hint == [] and dropped else ""))
     try:
         from src import next_slot                               # noqa: PLC0415
 
