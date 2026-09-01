@@ -164,7 +164,22 @@ def _scheduled(svc) -> list[dict]:
             m = MARKER.search(v["snippet"].get("description", ""))
             rows.append({"id": v["id"], "at": at, "topic": m.group(1) if m else "",
                          "title": v["snippet"]["title"]})
-    return sorted(rows, key=lambda r: r["at"])
+    rows = sorted(rows, key=lambda r: r["at"])
+    # **読んだついでに、控えを実物へ合わせます**（2026-09-01・単位は増えません）。
+    # 口に在って控えに無い予約は、`pool_drain` の外す一覧に**永久に出ません**
+    # —— 09/01 16:33 に Studio へ出ていた4本が、控えに1行も無いまま
+    # その日のうちに公開される所でした（`src.dupes.observe_scheduled()` の註）。
+    try:
+        seen = dupes.observe_scheduled(rows)
+        if seen.get("added") or seen.get("retimed"):
+            print(f"[reschedule] 控えを実物へ合わせました: "
+                  f"**足した {len(seen['added'])}本**"
+                  f"／時刻を直した {len(seen['retimed'])}本"
+                  f"（足したぶんは `pool_drain` の一覧に出ます）", flush=True)
+    except Exception as exc:                                   # noqa: BLE001
+        # **読みの邪魔をしないこと** —— ここは控えを直すおまけです。
+        print(f"[reschedule] 控えへ写せませんでした（読みは続けます）: {str(exc)[:90]}")
+    return rows
 
 
 def _forms_of(rows: list[dict]) -> dict[str, bool]:

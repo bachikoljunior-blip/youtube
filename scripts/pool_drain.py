@@ -160,15 +160,38 @@ def pool(now: datetime | None = None, rows: list[dict] | None = None) -> list[di
             continue
         # **規則の下で作った本は、作り置きではありません**（上の註）。
         # `is_stockpile` は `video_id` と `at` を見るので、控えの `id` を写して渡します。
+        # **`now` を渡すこと**（2026-09-01）—— 日付だけを渡していたころ、
+        # 当日ぶんが「もう公開になっている」に倒れて一覧から丸ごと落ちていました
+        # （`src.house_rule._published_before()` の註・`tests/test_pool_drain_today_first.py`）。
         if not house_rule.is_stockpile({**row, "video_id": row["id"]},
                                        today=now.astimezone(
                                            timezone(timedelta(hours=9))
-                                       ).strftime("%Y-%m-%d")):
+                                       ).strftime("%Y-%m-%d"),
+                                       now=now):
             continue
         out.append({"id": row["id"], "at": at,
                     "title": row.get("title", ""), "topic": row.get("topic", "")})
     out.sort(key=lambda r: r["at"])
     return out
+
+
+def today_rows(rows: list[dict], now: datetime | None = None) -> list[dict]:
+    """**きょう（JST）公開される予定の本**を、一覧の中から抜き出す（API 0単位）。
+
+    ## なぜ数えて印字するか（2026-09-01・オーナーが画面で踏んだ）
+
+    16:33 JST、Studio に **09/01 の 18:00〜21:00 の予約が4本**出ていたのに、
+    `pool_drain` の一覧は **09/02 から**でした。**当日ぶんが1本も無いこと自体が
+    画面のどこにも出ていない**ので、一覧を見ても「そういうもの」と読めます。
+
+    **いちばん早い日は、いちばん取り返しがつきません** —— 明日ぶんは明日の窓で
+    外せますが、**きょうの夕方に出る本は、いま外さなければ公開されます**。
+    だから本数を1行 出して、**0本なら 0本 と言わせます**（黙って空にしない）。
+    """
+    now = now or datetime.now(timezone.utc)
+    jst = timezone(timedelta(hours=9))
+    day = now.astimezone(jst).strftime("%Y-%m-%d")
+    return [r for r in rows if r["at"].astimezone(jst).strftime("%Y-%m-%d") == day]
 
 
 def plan(rows: list[dict], keep: int) -> tuple[list[dict], list[dict]]:
@@ -330,6 +353,27 @@ def main(argv: list[str] | None = None) -> int:
               f"／**{per_day:.1f}本/日**", flush=True)
     else:
         print("[pool] 予約済み **0本**（控え）", flush=True)
+
+    # **きょうぶんを、必ず1行 出すこと**（2026-09-01 に足した。`today_rows` の註）。
+    # `--apply` の前に「当日ぶんが見えているか」が分かる唯一の行です。
+    mine = today_rows(rows)
+    jst_today = datetime.now(timezone(timedelta(hours=9))).strftime("%Y-%m-%d")
+    if mine:
+        print(f"[pool] **きょう {jst_today} JST に公開される予定: {len(mine)}本**"
+              f"（一覧の先頭 —— いま外さなければ、その時刻に公開されます）",
+              flush=True)
+        jst = timezone(timedelta(hours=9))
+        for r in mine[:8]:
+            print(f"[pool]     {r['at'].astimezone(jst).strftime('%H:%M')} JST"
+                  f"  {r['id']}  {r['title'][:36]}", flush=True)
+    else:
+        print(f"[pool] きょう {jst_today} JST に公開される予定: **控えでは 0本**"
+              " —— **控えに無い予約は、この一覧に出ません。**"
+              " 2026-09-01 16:33 に Studio へ4本 出ていて控えは 0本 でした"
+              "（`src.dupes.observe_scheduled()` の註）。"
+              " 枠が戻った回は `python scripts/reschedule.py --list` を先に撃つこと"
+              "（読んだついでに控えを実物へ合わせます）", flush=True)
+
     if args.max > 0:
         drop = drop[:args.max]
     print(f"[pool] 残す **{len(kept)}本**／外す **{len(drop)}本**"
