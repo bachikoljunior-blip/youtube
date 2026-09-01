@@ -21,6 +21,8 @@
 """
 from __future__ import annotations
 
+import re as _re
+
 import sys
 from pathlib import Path
 
@@ -43,14 +45,50 @@ def test_上限を写していない(monkeypatch):
     assert "**7本/日**" in out, out[:400]
 
 
-def test_上限が1本になると床の答えが反転する(monkeypatch):
-    """床が足りているとき、この検査は**何も主張しません**（空振り）。"""
-    wide = "\n".join(_lines(13, monkeypatch))
-    if "床の足りない群はありません" in wide or "どの前提も期限までに埋まります" not in wide:
-        return                      # 足りない群が無い日は、比べるものがありません
-    tight = "\n".join(_lines(1, monkeypatch))
-    assert "越えます" in tight, tight[:600]
-    assert "間に合わない前提" in tight, tight[:600]
+def _last_dates(out: str) -> dict[str, str]:
+    """群ごとの「最後の1本」の日を拾う。`` `群` あと **N本** → … **YYYY-MM-DD** ``。"""
+    found = {}
+    for m in _re.finditer(r"`([a-z_]+)`\s*あと\s*\*\*(\d+)本\*\*.*?最後の1本は\s*\*\*(\d{4}-\d\d-\d\d)\*\*", out):
+        found[m.group(1)] = (int(m.group(2)), m.group(3))
+    return found
+
+
+def test_上限が1本になると床の日が後ろへ動く(monkeypatch):
+    """**上限が印字だけでなく、計算にも効いていること。**
+
+    ## **2026-09-02: ここは「越えます」を見ていて、赤くなりました**
+
+    足した日（08-31）の実測は `request_form` **あと 96本**・締切 09-29 で、
+    1本/日 なら **85日 越えます**でした。**いまは越えません** ——
+    きょうだいの回が期限を実データで解き直し（title_form 09-07→09-27 ほか）、
+    こちらの回が前提を1件 閉じたぶん、床が縮んだからです。
+    **反転が起きないのは、模型が直った結果であって、欠陥ではありません。**
+
+    docstring は「日付や日数は毎日 動くので写しません」と書いているのに、
+    **「越えます」という*結果*のほうを写していました。** 同じ穴です。
+
+    **だから見るのは結果ではなく差です** —— 上限を 13 から 1 へ落としたら、
+    どの群の「最後の1本」も**後ろへ動く**こと（同じか、より後）。
+    そして 2本以上 要る群が1つでもあれば、**少なくとも1群は厳密に後ろへ**。
+    これは越える／越えないに関わらず、毎日 観測できます。
+
+    **覆る条件**: `rate_lines()` が上限を `publish_cap()` 以外から取るように
+    なったら、日が1日も動かなくなってここが赤くなります。
+    **そのとき直すのは本体のほう** —— 上限を2か所から読む形に戻っています。
+    """
+    wide = _last_dates("\n".join(_lines(13, monkeypatch)))
+    tight = _last_dates("\n".join(_lines(1, monkeypatch)))
+    assert wide, "床の在る群が1つもありません（この検査が空回りしています）"
+    assert set(wide) == set(tight), (wide, tight)
+    for key, (_n, day) in wide.items():
+        assert tight[key][1] >= day, (
+            f"{key}: 上限を 13→1 に落としたのに、最後の1本が前へ動いています "
+            f"({day} → {tight[key][1]})")
+    movable = [k for k, (n, _d) in wide.items() if n >= 2]
+    if movable:
+        assert any(tight[k][1] > wide[k][1] for k in movable), (
+            "2本以上 要る群があるのに、上限を 13→1 にしても日が1日も動きません "
+            f"（`publish_cap()` が計算に効いていない）: {wide} → {tight}")
 
 
 def test_上限が読めない回は答えを出さない(monkeypatch):

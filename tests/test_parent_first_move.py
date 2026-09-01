@@ -33,6 +33,8 @@
 """
 from __future__ import annotations
 
+import re as _re
+
 import importlib.util
 import re
 from pathlib import Path
@@ -258,9 +260,23 @@ def test_目標だけが与件だと先頭のファイルに書いてある() ->
             "（**古いブロックが先頭に戻っています**）")
 
     # **いちばん上の見出しが、いちばん新しい固定であること。**
+    #
+    # **2026-09-02: ここも日付を固定していて、赤くなりました**（この検査で2度目）。
+    # 上の docstring は「窓の幅を決め打つと、次の与件でまた踏む」と書いて
+    # 幅を捨てたのに、**その2行下で日付（`"2026-08-31"`）を決め打っていました。**
+    # オーナーが 09-02 に**固定その3**を足して先頭に入れた瞬間に落ちています。
+    # **並びは1ミリも壊れていません。壊れたのは決め打った日付だけ。**
+    #
+    # **だから日付も捨てます** —— 見るのは「1行目の日付が、この文書に在る
+    # どの見出しの日付よりも新しいこと」。次に固定その4 が来ても踏みません。
+    heads = [(m.group(1), m.group(0)) for m in
+             _re.finditer(r"^#\s.*?(20\d\d-\d\d-\d\d).*$", text, _re.M)]
+    assert heads, "`CLAUDE.md` に日付つきの見出しが1つもありません"
     first = text.lstrip().splitlines()[0]
-    assert "2026-08-31" in first, (
-        f"`CLAUDE.md` の1行目が、いちばん新しい固定ではありません: {first[:80]}")
+    newest = max(day for day, _line in heads)
+    assert newest in first, (
+        f"`CLAUDE.md` の1行目が、いちばん新しい固定ではありません"
+        f"（いちばん新しい日付は {newest}）: {first[:80]}")
     begin = text.find("<!-- PERMANENT-DIRECTIVE:BEGIN -->")
     assert begin > 0, (
         "08-08 のブロックが先頭に戻っています。"
