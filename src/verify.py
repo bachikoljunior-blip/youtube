@@ -2025,11 +2025,11 @@ def _check_yomi(script: dict | None) -> list[str]:
         hits = yomi_gate.problems(script)
     except Exception:                       # 解析器が無い環境で投稿を止めない
         return problems
-    blocking = [h for h in hits if " R0:" in h or " R3:" in h]
-    queued = [h for h in hits if h not in blocking]
+    blocking = [h for h in hits if h["code"] in ("R0", "R3")]
+    queued = [h for h in hits if h["code"] not in ("R0", "R3")]
     if queued:
         yomi_gate.queue(queued)
-    return problems + blocking
+    return problems + [yomi_gate.say(h) for h in blocking]
 
 
 #: **人間の職業・資格の名前**。ここに無い肩書きは素通りします（下の「覆る条件」）。

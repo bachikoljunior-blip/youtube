@@ -214,14 +214,20 @@ def inspect(text: str, risk: dict | None = None, ledger: dict | None = None) -> 
     return found
 
 
-def problems(script: dict, spoken_of=None) -> list[str]:
-    """台本1本ぶん。**読み上げに渡る文字列**（`to_speech()` 済み）を見る。"""
+def problems(script: dict, spoken_of=None) -> list[dict]:
+    """台本1本ぶん。**読み上げに渡る文字列**（`to_speech()` 済み）を見る。
+
+    返すのは `inspect()` の当たりに `seg`（何番目のセグメントか）を足したもの。
+    **文字列ではなく形のまま返す** —— 呼ぶ側が「落とす／積む」を分けるとき、
+    `code` と `surface` が要るからです（文字列から切り出すと、
+    表現を変えた瞬間に静かに壊れます）。
+    """
     if not available():
         return []
     from .yomi import to_speech
     spoken_of = spoken_of or to_speech
     risk, ledger = load_risk(), load_ledger()
-    out: list[str] = []
+    out: list[dict] = []
     for i, seg in enumerate(script.get("segments", []) or []):
         text = str(seg.get("narration") or "")
         if not text.strip():
@@ -231,13 +237,18 @@ def problems(script: dict, spoken_of=None) -> list[str]:
         except RuntimeError:
             return []                       # 解析器が動かない環境では黙って通す
         for h in hits:
-            out.append(f"セグメント{i + 1} {h['code']}: {h['why']}")
+            out.append(dict(h, seg=i + 1))
     return out
+
+
+def say(hit: dict) -> str:
+    """当たり1件を1行にする。**表示の形はここ1か所。**"""
+    return f"セグメント{hit.get('seg', 0)} {hit['code']}: {hit['why']}"
 
 QUEUE_PATH = ROOT / "data" / "yomi_queue.json"
 
 
-def queue(lines: list[str]) -> None:
+def queue(hits: list[dict]) -> None:
     """落とさない名指し（R1/R2）を積む。**耳に回す入口はここ1つ。**
 
     落とさない代わりに、**必ず残す**。残さなければ「全語を見た」は口だけになる。
@@ -245,8 +256,17 @@ def queue(lines: list[str]) -> None:
     """
     blob = _load(QUEUE_PATH)
     seen = dict(blob.get("open", {}))
-    for line in lines:
-        seen[line] = seen.get(line, 0) + 1
+    for hit in hits:
+        key = f"{hit['code']}\t{hit['surface']}"
+        row = seen.get(key) or {}
+        seen[key] = {"code": hit["code"], "surface": hit["surface"],
+                     "why": hit["why"], "n": int(row.get("n", 0)) + 1}
+    # **判定ずみの語を待ち行列に残さないこと。** 耳が safe と言った語は
+    # `inspect()` がもう名指ししないので、ここに残っていると
+    # `status.py` が**いつまでも古い名前を出し続けます**（積むだけで減らない表は、
+    # 読まれなくなって、積んでいないのと同じになります）。
+    done = {w for w, e in load_ledger().items() if e.get("verdict") == "safe"}
+    seen = {k: v for k, v in seen.items() if v.get("surface") not in done}
     body = json.dumps({"at": _now(), "open": seen}, ensure_ascii=False, indent=1)
     # **`batch_build` は並列に走る。** そのまま write_text すると、
     # 別の工程が途中まで書かれた JSON を読む（`_load` が握り潰して空扱いにする ＝

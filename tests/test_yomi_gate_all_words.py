@@ -125,3 +125,29 @@ def test_投稿を止めない側の設計が残っている():
     body = src.split("def _check_yomi(")[1].split("\ndef ")[0]
     assert "queue" in body, "落とさない名指しを捨てている（積む先が無い）"
     assert hasattr(yomi_gate, "queue")
+
+
+def test_耳が通した語は待ち行列から消える():
+    """**減らない表は読まれなくなり、積んでいないのと同じになります。**"""
+    keep_q = yomi_gate.QUEUE_PATH.read_text(encoding="utf-8") \
+        if yomi_gate.QUEUE_PATH.exists() else None
+    keep_l = yomi_gate.LEDGER_PATH.read_text(encoding="utf-8") \
+        if yomi_gate.LEDGER_PATH.exists() else None
+    try:
+        yomi_gate.LEDGER_PATH.write_text(json.dumps({"words": {}}), encoding="utf-8")
+        yomi_gate.queue([{"code": "R1", "surface": "丙", "why": "丙 が割れる", "seg": 1}])
+        rows = yomi_gate._load(yomi_gate.QUEUE_PATH)["open"]
+        assert any(v["surface"] == "丙" for v in rows.values()), rows
+        # 耳が safe と言ったら、次に積んだときに消える
+        yomi_gate.LEDGER_PATH.write_text(
+            json.dumps({"words": {"丙": {"verdict": "safe"}}}, ensure_ascii=False),
+            encoding="utf-8")
+        yomi_gate.queue([])
+        rows = yomi_gate._load(yomi_gate.QUEUE_PATH)["open"]
+        assert not any(v["surface"] == "丙" for v in rows.values()), rows
+    finally:
+        for path, keep in ((yomi_gate.QUEUE_PATH, keep_q), (yomi_gate.LEDGER_PATH, keep_l)):
+            if keep is None:
+                path.unlink(missing_ok=True)
+            else:
+                path.write_text(keep, encoding="utf-8")
