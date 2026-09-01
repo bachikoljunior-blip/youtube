@@ -73,6 +73,17 @@ from collections.abc import Callable
 #: 1か月の日数。`scripts/eta.py` の `ceiling_views_month` と同じ置き方。
 DAYS_PER_MONTH = 30.0
 
+#: **「抜いても変わらない」の線**（`solve()` の `idle`）。
+#:
+#: 1本 抜いた joint に対する比が、これを下回る腕は **joint に効いていない**
+#: と読みます。0.5% は模型の丸めの幅より上、実測の差より下です ——
+#: 2026-09-01 の実物は `rpm` / `sub_rate` が **ちょうど 1.0000**（`min()` で
+#: ピン留めされて1点も動かない）、`per_video` が **1.585**。**間は空です。**
+#:
+#: **覆る条件**: 腕の効きが数%で並ぶようになったら、ここを 1.001 まで下げ、
+#: `lines()` に「小さいが 0 ではない」の言い方を足すこと。
+IDLE_FACTOR = 1.005
+
 
 def joint_scale(rows: list[dict] | None) -> dict[str, float]:
     """`lever_ladder()` の行から、**天井まで引いた倍率の束**を作る。
@@ -117,6 +128,49 @@ def solve(rows: list[dict] | None,
     **`plan()` を直接は呼びません**（この模型の中身を知らないでいるため）。
 
     落ちたら `None`。**回を止めないこと。**
+
+    ## **1本 抜いてみるところまでが、この関数です**（2026-09-01・最適化の回に足した）
+
+    この関数は長らく「全部 引いた1点」しか返さず、`lines()` は
+    その1点に **「`rpm` は分母を下げ、`per_video` は分子を上げます ——
+    掛かる向きが別なので、1本ずつ測るともう片方の効き目が毎回 捨てられます」**
+    という文を無条件で添えていました。**その文は、今日 測ると偽です。**
+
+    実測（2026-09-01・`_measure()` の本番の道。数字は撃って読むこと）::
+
+        据え置き                        目標の  5.73%
+        `per_video` だけ天井（×4.16）   目標の 16.52%
+        `rpm`       だけ天井（×36.72）  目標の 10.42%
+        `sub_rate`  だけ天井（×6.64）   目標の  5.73%   ← 1点も動かしません
+        **3本とも同時に天井**          目標の **16.52%**  ← `per_video` だけと同じ
+
+    **積になっていません。** `rpm` の ×1.82 は `per_video` の ×2.88 の
+    **内側**にあります。理由は `plan()` の1行::
+
+        rpm_plan = min(band_rpm, rpm_cap)
+
+    `rpm` の腕は `band_rpm`（帯 ¥400）のほうを上げますが、`rpm_cap` は
+    実効RPMの物理の天井で、**`per_video` を引くほど下がります**
+    （ショート再生が増えるほど長尺の割合が薄まる ＝ `rpm_mix.coupled()`）。
+    倍率をふって挟むと、**乗り換え点は `per_video` ×2.4 付近**です::
+
+        per_video ×1.00 + rpm ×10^9 → 10.42%（`rpm` は ×1.82 効く）
+        per_video ×2.00 + rpm ×10^9 → 13.27%（まだ効く）
+        per_video ×2.50 + rpm ×10^9 → 14.20% ＝ `rpm` ×1 と**同値**
+        per_video ×4.16 + rpm ×10^9 → 16.52% ＝ `rpm` ×1 と**同値**
+
+    **＝ `per_video` を ×2.4 より上へ引いた瞬間、`rpm` の腕は永久に 0 になります。**
+    そして `per_video` は、毎周の頭が「この回に引く腕」として名指ししている
+    唯一の腕です。**通る道の上では、`rpm` の前提は燃料ではありません。**
+
+    だから返りに `marginal`（1本 抜いたときの差）と `idle`（抜いても
+    変わらない腕）を足します。**腕の数だけ `resolve()` を余分に呼びます**
+    —— 実測 1回 **0.41秒**、腕3本で **+1.2秒**（`scripts/eta.py` 全体の 3% 弱）。
+
+    **覆る条件**: `plan()` の `rpm_plan` が `min()` をやめる（＝帯が
+    物理の天井を越えられるようになる）か、`rpm_mix.coupled()` が
+    長尺の面もこの模型の密度で伸ばすようになったら、`idle` は空になり、
+    上の文が自分で戻ります。**`idle` が空の回は、印字も元どおりです。**
     """
     scale = joint_scale(rows)
     if not scale:
@@ -131,6 +185,27 @@ def solve(rows: list[dict] | None,
     r = ratio(need_month, ceiling_month)
     if r is None:
         return None
+    marginal: dict[str, dict] = {}
+    idle: list[str] = []
+    if len(scale) > 1:
+        for k in scale:
+            rest = {kk: vv for kk, vv in scale.items() if kk != k}
+            try:
+                n2, c2 = resolve(rest)
+            except Exception:                                  # noqa: BLE001
+                continue                                       # **回を止めないこと。**
+            if c2 is None:
+                continue
+            r2 = ratio(n2, float(c2) * DAYS_PER_MONTH)
+            if r2 is None or r2 <= 0:
+                continue
+            marginal[k] = {
+                "ratio_without": r2,
+                "delta": r - r2,
+                "factor": (r / r2) if r2 else None,
+            }
+            if r / r2 < IDLE_FACTOR:
+                idle.append(k)
     return {
         "scale": scale,
         "need_month": need_month,
@@ -138,6 +213,12 @@ def solve(rows: list[dict] | None,
         "ratio": r,
         "gap": (1.0 / r) if r else None,
         "reaches": r >= 1.0,
+        "marginal": marginal,
+        # **抜いても joint が動かない腕。** 名前だけで判断しないこと ——
+        #     その回の `resolve()` が出した数です。
+        "idle": idle,
+        # 実際に joint を動かしている腕（＝ `idle` の補集合）。
+        "live": [k for k in scale if k not in idle],
     }
 
 
@@ -148,6 +229,14 @@ def lines(res: dict | None, solo_need_over_cap: float | None = None,
     `solo_need_over_cap` は、画面が既に出している「天井を ×N 上げろ」の N。
     渡されたら**その N が何倍 大きい側か**まで書きます ——
     **書かないと、2つの数が同じ画面に並んで、読む側が選べません。**
+
+    ## **`idle` の行は、`solo_need_over_cap` に掛けないこと**（2026-09-01）
+
+    最初の版は「積になっていません」を `solo_need_over_cap` が来た回だけ
+    出していました。**あの値は来ない回があります** —— 実測 2026-09-01、
+    `plan(..., points=None)` の道では `lever_need_over_cap` が `None` で、
+    **`idle` が `['sub_rate','rpm']` と出ているのに1行も出ませんでした。**
+    **警告のほうを、注釈の有無に括り付けないこと。**
     """
     if not res:
         return []
@@ -161,16 +250,50 @@ def lines(res: dict | None, solo_need_over_cap: float | None = None,
         f"（{res['ceiling_month']:,.0f} ／ {res['need_month']:,.0f} 再生/月・"
         f"{names}）。**残りは ×{g:.2f}。**"
     ]
-    if (isinstance(solo_need_over_cap, (int, float)) and solo_need_over_cap
-            and solo_need_over_cap > g * 1.05):
-        out.append(
-            f"{bar}     **すぐ上の ×{solo_need_over_cap:.2f} は「その1本だけを"
+    idle = list(res.get("idle") or ())
+    live = list(res.get("live") or ())
+    mar = res.get("marginal") or {}
+    solo = (solo_need_over_cap
+            if (isinstance(solo_need_over_cap, (int, float)) and solo_need_over_cap
+                and solo_need_over_cap > g * 1.05) else None)
+    head = (f"{bar}     **すぐ上の ×{solo:.2f} は「その1本だけを"
             f"動かしたとき」の数で、残りの距離ではありません**"
-            f"（{solo_need_over_cap / g:.1f}倍 大きい側）。"
-            " `rpm` は**分母**（要る再生/月）を下げ、`per_video` は**分子**を"
+            f"（{solo / g:.1f}倍 大きい側）。" if solo else f"{bar}     ")
+    if idle:
+        # **積になっていない回。** 下の「掛かる向きが別」は今日は偽なので
+        #     出さないこと（`solve()` の docstring に実測と「覆る条件」）。
+        movers = "／".join(f"`{k}`（抜くと ×{mar[k]['factor']:.2f}）"
+                           for k in live if k in mar and mar[k].get("factor"))
+        out.append(
+            head
+            + f"[!] **上の {len(res['scale'])}本は積になっていません** —— "
+            + "／".join(f"`{k}`" for k in idle)
+            + f" は**抜いても joint が1点も動きません**（×{IDLE_FACTOR:.3f} 未満）。"
+            + (f" joint を動かしているのは {movers} だけです。" if movers else "")
+            + f" **＝ 残りの ×{g:.2f} は、その腕**だけ**の天井を"
+              "さらに、という意味です。**")
+        out.append(
+            f"{bar}     **抜いても動かない腕に前提を立てないこと。**"
+            " 1本だけで測った天井は**買えません** ——"
+            " `plan()` の `rpm_plan = min(band_rpm, rpm_cap)` が、"
+            "`per_video` を引くほど下がる `rpm_cap` のほうでピン留めします"
+            "（`rpm_mix.coupled()`／実測の乗り換え点は `per_video` ×2.4 付近。"
+            "**そこを越えた瞬間、`rpm` の腕は永久に 0 になります**）。"
+            " **通る道が `per_video` である限り、"
+            + "／".join(f"`{k}`" for k in idle)
+            + " の前提は燃料ではありません**"
+            "（`deadline_check --fit` の『生きている腕』は"
+            "**いまの `per_video` の値での**判定です。"
+            "**あちらが `rpm` を生きていると言っても、この行が勝ちます**）。")
+    elif solo:
+        out.append(
+            head
+            + " `rpm` は**分母**（要る再生/月）を下げ、`per_video` は**分子**を"
             "上げます —— **掛かる向きが別なので、1本ずつ測ると"
             "もう片方の効き目が毎回 捨てられます。**"
-            f" **立てるべき前提の大きさは ×{g:.2f} のほう**です。")
+            f" **立てるべき前提の大きさは ×{g:.2f} のほう**です"
+            "（この回は腕が全部 joint に効いています ——"
+            " 1本ずつ抜いて確かめた `idle` が空）。")
     return out
 
 
