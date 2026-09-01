@@ -175,9 +175,14 @@ def lines(key: str, *, today: date | None = None) -> list[str]:
 def main(argv: list[str] | None = None) -> int:
     import sys
 
-    keys = (argv if argv is not None else sys.argv[1:]) or list(EXPERIMENTS)
+    # **既定は `judgeable.MEMBER_SOURCES` の全部**（`EXPERIMENTS` ではありません）。
+    # `stat_split` と `opening_motion` は `ab_split.EXPERIMENTS` に無く、
+    # `judgeable` 側にしかいません —— そこを既定から落とすと、
+    # **いちばん判定が近い2件が、この道具の外に出ます**（実測 2026-09-01:
+    # `stat_split` 処置(後) は 値の出る本 13本／床16、0再生率 24% 対 1%）。
+    keys = (argv if argv is not None else sys.argv[1:]) or list(judgeable.MEMBER_SOURCES)
     for key in keys:
-        if key not in EXPERIMENTS:
+        if key not in judgeable.MEMBER_SOURCES:
             print(f"[ab_verdict] 知らない実験: {key}")
             continue
         print(f"=== {key} ===")
