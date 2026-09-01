@@ -253,6 +253,33 @@ def floor_minutes() -> tuple[float, str]:
         return FALLBACK_MIN, f"quota.py が答えませんでした（{str(exc)[:60]}）"
     if got is None:
         return _floor_from_gauge()
+    # **「実測」と名乗ってよいのは、歯止めで切られていないときだけ**（2026-09-01）。
+    #     長らくここは無条件に `quota.py の実測` と印字していました。
+    #     実測 09/01: 測って出たのは 289.7時間 で、返っていたのは
+    #     `FLOOR_MAX_CLAMP` の **90分**（×193 切られた）。**90 は定数です。**
+    try:
+        from scripts.quota import pace as _pace
+    except Exception:                                          # noqa: BLE001
+        try:
+            _pace = mod.pace                                   # type: ignore[name-defined]
+        except Exception:                                      # noqa: BLE001
+            _pace = None
+    if _pace is not None:
+        try:
+            pc = _pace() or {}
+        except Exception:                                      # noqa: BLE001
+            pc = {}
+        if pc.get("floor_clipped") == "max" and pc.get("floor_raw"):
+            return float(got), (
+                f"**歯止めで切られた数です（実測ではありません）** —— "
+                f"測って出たのは {pc['floor_raw'] / 60:.1f}時間 で、"
+                f"`quota.FLOOR_MAX_CLAMP` が {got:.0f}分 に切りました。"
+                f"**そのぶん鎖は速すぎる側で回ります**")
+        if pc.get("floor_clipped") == "spent":
+            return float(got), "**枠を使い切っています**（歯止めの上限。実測ではありません）"
+        if pc.get("births"):
+            return float(got), (f"quota.py の実測（1周 {pc.get('per_lap', 0):.3f}%"
+                                f"・誕生 {pc['births']}件）")
     return float(got), "quota.py の実測"
 
 
