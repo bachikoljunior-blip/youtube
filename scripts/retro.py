@@ -1081,8 +1081,53 @@ SUSPECT_MENTIONS = 3
 SUSPECT_TOUCHED = 1
 
 
-def tool_suspect(mentions: int, touched_n: int) -> bool:
-    """**その語ではなく、その語を出している道具を先に疑う線**（`SUSPECT_MENTIONS` の註）。"""
+def tool_suspect(mentions: int, touched_n: int, sunk: bool = False) -> bool:
+    """**その語ではなく、その語を出している道具を先に疑う線**（`SUSPECT_MENTIONS` の註）。
+
+    ## `sunk` —— **枠や時計で塞がっている語には、この線を当てないこと**
+    ## （2026-09-01 11:5x に足した。**10:4x の申し送りが名指ししていた1件**）
+
+    この線が読んでいるのは **M/N の比**（言及 N回 に対して、実物に当たった M回）です。
+    ところが**枠で塞がっている語の M は、構造的に必ず 0 になります** ——
+    その語を潰す手が `videos.update` / `thumbnails.set` なら、
+    日枠の切れている 13時間ぶんの回は**撃てば 403 になるので、撃ちません。**
+    **触っていないのは、道具が間違っているからではなく、窓が閉じているからです。**
+    ＝ **その M/N には情報が1ビットも入っていません。**
+
+    実測（この回・2026-09-01 11:5x の `retro.py` の出力）—— 印の付いた 4件 のうち **2件**:
+
+        python scripts/pool_drain.py --apply   ← 同じ行に「**いまは潰せません**（単位枠）」
+        python -m src.pipeline                 ← 同じ行に「**いまは潰せません**（単位枠）」
+        [pool] [!]                             ← 塞がっていない（残る）
+        実物に当たった回 0                      ← 塞がっていない（残る）
+
+    **1行の中で逆のことを言っていました** ——「いまは潰せません（単位枠。あと 4.0時間）」と
+    「6周 運ばれて、実物に当たったのは 0回 —— その語を出している道具の側を先に疑うこと」。
+    **前半が後半の理由を説明しているのに、後半は道具を疑えと言っています。**
+
+    **同じ誤りを、すぐ下の `open_zero` が先に踏んで直してあります**
+    （「沈めた語を『既定』に持ち上げないこと」・2026-09-01）。
+    あちらは `_sinks()` で除いて直りました。**こちらは除いていませんでした** ——
+    `tests/test_retro_tool_suspect.py::test_選ぶ順を_持ち上げないこと` は在りましたが、
+    **印字の1行（「これは『この語を選べ』ではありません」）が在るかしか見ておらず、
+    門そのものは無い**という、この repo が何度も踏んでいる「註と実装のずれ」でした。
+
+    ## 消さないこと・沈めないこと ——「当てない」だけ
+
+    語そのものは一覧に残り、`_sinks()` の順もそのままです。**外すのは印だけ**。
+    窓が戻れば `sunk` は False になり、そこで初めて M/N が読める数になります
+    （枠が戻ったのに触られない語は、そのとき本当に道具を疑う対象です）。
+
+    ## 覆る条件
+
+    - 枠が戻った窓で、**それまで沈んでいた語がそのまま印つきで上がってくる**なら、
+      この引数は「遅らせているだけ」です（それでよい —— 遅らせた先で読める）。
+    - 逆に、**沈んでいる間に道具の欠陥が見つかった実例が2回**出たら、
+      塞がりは M/N の情報を消していません。そのときは `sunk` を外し、
+      **開いた語と何が正しかったかを `docs/JOURNAL.md` に書くこと。**
+    """
+    if sunk:
+        return False
     return mentions >= SUSPECT_MENTIONS and touched_n <= SUSPECT_TOUCHED
 
 
@@ -1169,7 +1214,9 @@ def main() -> int:
                 tail += (f"  ← **いまは潰せません**（申し送りが時刻を指定。"
                          f"あと {clocked[tok]:.1f} 時間）")
             n_touch = touched.get(tok, 0)
-            if tool_suspect(len(dates), n_touch):
+            # **塞がっている語には印を当てないこと**（`tool_suspect()` の `sunk` の註）。
+            # 同じ行が3語 上で「いまは潰せません（単位枠）」と言っています。
+            if tool_suspect(len(dates), n_touch, sunk=_sinks(tok)):
                 tail += (f"  ← **{len(dates)}周 運ばれて、実物に当たったのは {n_touch}回** —— "
                          "**その語を出している道具の側を先に疑うこと**")
             print(f"  {len(dates)}回  {tok}{tail}")
@@ -1200,7 +1247,7 @@ def main() -> int:
         # この一覧が5周 手で運ばれたのと同じ理由で、**まとめて1か所に出さないと
         # 読む側には届きません。**
         suspect = [t for t, ds in carried.items()
-                   if tool_suspect(len(ds), touched.get(t, 0))]
+                   if tool_suspect(len(ds), touched.get(t, 0), sunk=_sinks(t))]
         if suspect:
             print(f"\n  **そのうち {len(suspect)}件 は、{SUSPECT_MENTIONS}周 以上 運ばれて、"
                   f"実物に当たったのが {SUSPECT_TOUCHED}回 以下 です** ——"
@@ -1215,6 +1262,16 @@ def main() -> int:
                   "`_corpus()` がそこを読んでいなかった）。")
             print("  **これは「この語を選べ」ではありません**（選ぶ順は下の日枠／時刻の節が決めます）。"
                   "**取りかかったときに、どこを先に開くか**です。")
+        # **外した語は、必ず数と名前で言うこと**（この節の末尾と同じ理由 ——
+        # 黙って削ると「そんな語は無かった」に見えます）。窓が戻れば戻ってきます。
+        held = [t for t, ds in carried.items()
+                if _sinks(t) and tool_suspect(len(ds), touched.get(t, 0), sunk=False)]
+        if held:
+            print(f"\n  **さらに {len(held)}件 が、同じ線に当たっていますが印を外しています** ——"
+                  " **塞がっている語の「実物に当たった回 0」は、道具の話ではありません**"
+                  "（撃てば 403 なので、撃たれていないだけ。`tool_suspect()` の `sunk`）。")
+            for t in held:
+                print(f"      {t}  ← 窓が戻ったら、そこで初めて M/N が読める数になります")
         zero = [t for t in carried if touched.get(t, 0) == 0]
         if zero:
             print(f"  **そのうち {len(zero)}件 は、実物に当たった回が 0 です** ——"
