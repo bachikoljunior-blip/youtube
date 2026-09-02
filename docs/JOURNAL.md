@@ -102018,3 +102018,9 @@ runs/eta を数える・掃きに1手 足す・決めを写す —— **Opus で
   釣る形なので、1本目の判定（09/06）が外れてから疑う所
 - 1コマ 18秒（64コマ／19.6分）の画面の遅さ: `visuals.reveal_variants` が要素を1つずつ出す形に割っているので、実物の切り替えはもっと速い。
   数えていない —— 次の回が `bake_slides.py` で撃つなら、その本の維持率のカーブ（09/07 以降）と並べてから
+
+### 追記（同じ回・05:0x）—— `fast_tests`: 赤 2件（名前で。**この回の変更とは無関係** —— 前の2回の最適化の回と同じ2件）
+
+- `tests/test_eta_pause_banner.py::test_silent_when_not_paused`（eta の本文に「止まっています」が別の文脈で入っている・04:4x の回と同じ）
+- `tests/test_judgeable.py::test_実物で期限が構造的に守れる[opening_motion]`（対照群の予約 2本 不足・規則1 の下では前提の側の話）
+- この回の変更（`scripts/ahead_sweep.py`・`scripts/upload_only.py`・`src/daily_pick.py`・`tests/test_rebake_today.py`）に掛かる 1,062件 は緑
