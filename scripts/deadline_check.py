@@ -441,6 +441,13 @@ _EXPR_METERS: dict[str, tuple[str, ...]] = {
     # あの貯めは `scripts/retention.py` を撃った回だけ伸びます —— 実測 2026-08-20 に
     # 21本 で 7日 止まっていた前例が、あのファイルの docstring に在ります。
     "clarity_books": ("data/retention.json",),
+    # **止まるのは「撃った跡」のほう**（2026-09-02 に足した）。
+    #     `reveal_hold_days()` は、最後に `--judge` を撃ったときの
+    #     「比の取れた日」を返します。控え（`uploaded.jsonl`）が増えても、
+    #     **撃ち直すまで動きません** —— だから止まるのはこちらです。
+    #     `uploaded.jsonl` は `_BUILD_LEDGERS`（作ると増える側）なので、
+    #     ここに並べると「取り直せ」と嘘を言います。
+    "reveal_hold_days": ("data/reveal_hold_attempts.jsonl",),
 }
 
 #: **計器を開かない名前**（`EXPR_NS` にあるが、この表に載らないもの）。
@@ -467,6 +474,8 @@ _METER_REFRESH: dict[str, str] = {
     "data/video_forms.json": "python -m src.rpm_mix --forms",
     "data/reach.jsonl": "python scripts/reach.py",
     "data/retention.json": "python scripts/retention.py",
+    # **Analytics 1回（Data API の日枠とは別枠）**。403 の窓でも撃てます。
+    "data/reveal_hold_attempts.jsonl": "python -m src.reveal_hold --judge",
 }
 
 #: **「取り直す」ものではなく「作ると増える」もの。**

@@ -150,7 +150,35 @@ def test_控えを読む門は本で畳んでいること() -> None:
 
 
 def test_完成形の保持の門は比べられる本を数えていること() -> None:
-    """この前提の `count_expr` が、また行を数える式に戻っていないこと。"""
+    """この前提の `count_expr` が、また行を数える式に戻っていないこと。
+
+    ## **2026-09-02 に、門が2つになりました**
+
+    ここは長らく「**全部の `count_expr` に `reveal_hold_arm(` が入っていること**」
+    でした。**`needs` が1つしか無かったから**です。
+
+    同じ日に2つ目を足しました —— `reveal_hold_days()`（`need: 3`）。
+    理由は、`reveal_hold_arm()` が数える**本の数**と、`reveal_hold.verdict()` が
+    見る**比の取れた日**が別だったからです（実測 2026-09-02: 本 16/21 で
+    `need: 16` を満たすのに、撃つと **対にできた日 2日（要 3日）**で
+    `decided: False`。`paired_days()` は控えだけ、`ratios_by_day()` は
+    そこへ Analytics の engaged 比を join するので **4日 → 2日**）。
+
+    **`all(... reveal_hold_arm ...)` のままだと、この2つ目を足した瞬間に赤くなります**
+    —— **正しい足しなのに落ちる**ので、見ているものを本来の不変条件へ直しました:
+
+        (1) どの `count_expr` も `reveal_hold_*()` を通っている（＝行を数えない）
+        (2) **本の門と、日の門が、両方 在る**
+
+    (2) を足したのは、片方だけに戻す直しを止めるためです。
+    """
     exprs = [e for c, e in _accruals() if "完成した図" in c]
     assert exprs, "前提が見つかりません（`claim` が変わったなら、この検査も直すこと）"
-    assert all("reveal_hold_arm(" in e for e in exprs), exprs
+    assert all("reveal_hold_" in e for e in exprs), \
+        f"行を数える式に戻っています（`reveal_hold_*()` を通すこと）: {exprs}"
+    assert any("reveal_hold_arm(" in e for e in exprs), \
+        f"**本の門**（両群 16本）がありません: {exprs}"
+    assert any("reveal_hold_days(" in e for e in exprs), \
+        ("**日の門**（`verdict()` が見る「比の取れた日」）がありません。"
+         "本の数だけを門にすると、`eta.py` が「いま判定できる」と名指しして、"
+         f"撃つと判定できない回が毎周 出ます: {exprs}")
