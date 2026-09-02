@@ -100894,3 +100894,5 @@ Opus/Sonnet で足りた所: 検査の実行・commit/push・`uploaded.jsonl` �
 **この回の終わりの `fast_tests`（979 緑・4分52秒）: 赤 2件**（前の回と同じ名前・この回の変更とは無関係）:
 `tests/test_eta_pause_banner.py::test_silent_when_not_paused` ／ `tests/test_judgeable.py::test_実物で期限が構造的に守れる[opening_motion]`。
 この回で足した `tests/test_house_rule_published_since.py` 6件と `test_house_rule_reach.py`・`test_unreachable_premise_marker.py` は緑。
+
+### 追記（同じ回・02:5x）—— `fast_tests`: **赤 2件**（前の回と同じ名前・この回の変更とは無関係）: `tests/test_eta_pause_banner.py::test_silent_when_not_paused` ／ `tests/test_judgeable.py::test_実物で期限が構造的に守れる[opening_motion]`。この回の3件目の赤 `tests/test_hypothesis_deadline_reachable.py::test_開いている前提は全部どちらかに入っていること` は新しい前提の登録漏れで、`UNCHECKABLE`（床は「まだ作っていない長尺 1本 ＋ 48h」・予約に無い本なので `earliest_*` が当たらない）に理由つきで足して緑。`test_niche_ceiling_short.py`・`test_daily_pick.py`・`test_today_place.py` は緑（36件）。
