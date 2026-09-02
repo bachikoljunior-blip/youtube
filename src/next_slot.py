@@ -977,6 +977,45 @@ def today_full(now: datetime | None = None,
     return today_count(now=now, path=path) >= rule
 
 
+def _picked(day) -> dict | None:
+    """`[きょうの1本]` で決めた本（`src/daily_pick.py`）。動画IDの無い決定は `None`。"""
+    try:
+        from . import daily_pick                                 # noqa: PLC0415
+        cur = daily_pick.current(day)
+    except Exception:                                            # noqa: BLE001
+        return None
+    return cur if cur and cur.get("video_id") else None
+
+
+def _config_hour() -> int:
+    """機械が実際に置く時刻（`config/channel.yaml`）。**20 の直書きをやめた**（2026-09-02 夜）——
+    同じ画面の `[きょうの1本]` が 09:00、ここが 20:00 と出て食い違っていた。"""
+    try:
+        from . import publish_hour                               # noqa: PLC0415
+        h = publish_hour.config_hour()
+        return int(h) if h is not None else 20
+    except Exception:                                            # noqa: BLE001
+        return 20
+
+
+def _move_lines(got: list[dict], day, hour: int | None = None, note: str = "") -> list[str]:
+    """その日の枠へ入れる `--move` の1行。**`[きょうの1本]` で別の本を決めてあれば、そちら**
+    （2026-09-02 夜・最適化の回）—— 同じ画面が2つの本を名指しすると、次の回はどちらか
+    を惰性で撃ちます。決めた本が下書きと違うとき、下書きは消さずに池へ残します。"""
+    picked = _picked(day)
+    hour = _config_hour() if hour is None else hour
+    vid = str(got[0].get("video_id")) if got else ""
+    if picked and picked.get("video_id") != vid:
+        pv = picked.get("video_id")
+        return [
+            f"     **{day:%m/%d} の1本は `[きょうの1本]` で {picked.get('form')} `{pv}` に"
+            f"決めてあります**（理由: {str(picked.get('why'))[:60]}）:",
+            f"       python scripts/reschedule.py --move {pv} {day:%Y-%m-%d}T{hour:02d}:00{note}",
+            f"     　 下書き `{vid}` は**消さない**（private のまま池に残す）。",
+        ]
+    return [f"       python scripts/reschedule.py --move {vid} {day:%Y-%m-%d}T{hour:02d}:00{note}"]
+
+
 def draft_lines(now: datetime | None = None,
                 path: Path | None = None) -> list[str]:
     """`drafts()` を画面へ。**規則5 が効いている回だけ出します**（無ければ空）。
@@ -1083,13 +1122,11 @@ def draft_lines(now: datetime | None = None,
                    "規則3「次の枠で出る1本を、出る瞬間まで良くし続ける」。")
         out.append(f"     **明日（{(t.astimezone(JST) + timedelta(days=1)):%m/%d} JST）に"
                    "なってから**、その日の枠へ（1本 50単位）:")
-        out.append(f"       python scripts/reschedule.py --move {got[0].get('video_id')}"
-                   f" {(t.astimezone(JST) + timedelta(days=1)):%Y-%m-%d}T20:00"
-                   "   # **明日になってから撃つこと**")
+        out.extend(_move_lines(got, (t.astimezone(JST) + timedelta(days=1)).date(),
+                               note="   # **明日になってから撃つこと**"))
         return out
     out.append("     **その日になったら、その日の枠へ入れること**（1本 50単位）:")
-    out.append(f"       python scripts/reschedule.py --move {got[0].get('video_id')}"
-               f" {t:%Y-%m-%d}T20:00")
+    out.extend(_move_lines(got, t.date()))
     out.append("     **先の日付を書かないこと。** それまでは規則3 の対象です"
                "（次の枠で出る1本を、出る瞬間まで良くし続ける）")
     return out
@@ -1198,6 +1235,20 @@ def lines(now: datetime | None = None) -> list[str]:
             "  **`improve` の当てどころは、この本です。**"
             "「予約が無い」は「当てどころが無い」ではありません。",
         ]
+    # --- **形を先に**（2026-09-02 夜・最適化の回）: `src/daily_pick.py`（API 0単位）---
+    #
+    #     下の行は「improve するなら中身のほう（題・サムネ・台本・計算）」と、
+    #     **中身の側だけ**を名指ししていました。同じ日に控えを齢48時間でそろえると
+    #     ショート 中央値 173回 ／ 長尺 1回（1/173）で、**その1本がどの形かが
+    #     `per_video` を 0単位 でいちばん大きく動かす手**です。形を決めずに磨いた
+    #     長尺（09/01 22:00・improve 5件）は 20時間で 1再生 でした。
+    #     **選択肢に無い手は選ばれません**（この file の冒頭と同じ理由）。
+    try:
+        from . import daily_pick                                 # noqa: PLC0415
+        out.extend(daily_pick.lines(v, now=t))
+    except Exception as exc:                                     # noqa: BLE001
+        out.append(f"  [?] [きょうの1本] の数が出せませんでした（{exc}）—— "
+                   "`python -m src.daily_pick` を手で撃つこと")
     built = _parse(v.get("uploaded_at"))
     cm = stale_commits(built, video_id=str(v.get('video_id') or '') or None)
     if built is None:
@@ -1207,7 +1258,7 @@ def lines(now: datetime | None = None) -> list[str]:
         out.append(f"  焼いたのは {built.astimezone(JST):%m/%d %H:%M} JST。"
                    "**そのあと生成側のコードは変わっていません** ＝ "
                    "焼き直しても同じ物が出ます。**improve するなら中身のほう**"
-                   "（題・サムネ・台本・計算）")
+                   "（題・サムネ・台本・計算）—— **ただし形は上の `[きょうの1本]` が先**")
     else:
         out.append(f"  [!] **焼いたのは {built.astimezone(JST):%m/%d %H:%M} JST。"
                    f"そのあと、この本を焼くコードに {len(cm)}件 入っています"
