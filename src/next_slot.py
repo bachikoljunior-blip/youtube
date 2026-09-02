@@ -1103,18 +1103,62 @@ def lines(now: datetime | None = None) -> list[str]:
     cal = calendar_lines(now=now)
     cal = list(cal) + draft_lines(now=now)
     v = next_video(now=now)
+    # --- **予約が無い回でも、次に出る1本は在ります**（2026-09-02 に踏んだ）---
+    #
+    #     ここは長らく `next_video()`（＝ `at` が未来の行）だけを見ており、
+    #     予約が1本も無い回に**こう出していました**:
+    #
+    #         [次の枠] **予約が1本もありません。** `improve` は当てどころが無い回です
+    #
+    #     **同じ画面の3行 上が、正反対を言っています**（`draft_lines()`）——
+    #
+    #         [下書き] 予約を付けずに上げてある本が 1本 あります　`MqQKSnbM0OI`
+    #                **きょうやるのは `improve` のほう**です（規則3）
+    #
+    #     **規則5（固定その4「1日の回り方」）の下では、これが普通の状態です** ——
+    #     「作るのは前の日から、**予約だけが当日**」なので、
+    #     **次に出る1本は、その日が来るまで必ず `at` が空**です。
+    #     つまりこの道具は、**規則5 が効いている間ずっと**
+    #     「当てどころが無い」と言い続けます。
+    #
+    #     下にある材料（`stale_commits()` ＝ 焼いた後に入った直し／
+    #     `pending_thumbnail()` ＝ 載っていないサムネ）は**そのまま使えます。**
+    #     向ける先が居なかっただけです。
+    #
+    #     **実測（2026-09-02 16:3x）**: `data/runs.jsonl` の ship 305件 のうち
+    #     `improve` は **9件（3%）**。その9件は**全部**、下書きではなく
+    #     **予約ずみの本が在った 20時間の窓**（08/31 20:1x〜09/01 16:0x）に入っており、
+    #     窓の外 192件 では **0件**。**当てどころが出ない回に improve は選ばれません。**
+    #
+    #     **覆る条件**: オーナーが規則5 を外して先の日付に予約できるようになったら、
+    #     `next_video()` が常に本を返すので、この枝は自分で黙ります。
+    draft = None
+    if not v:
+        got = drafts(now=now)
+        draft = got[0] if got else None
+        v = draft
     if not v:
         return cal + ["[次の枠] **予約が1本もありません。** `improve` は当てどころが無い回です"
                 "（`python scripts/batch_build.py` で1本 作るか、"
                 "池から戻すこと ＝ `python scripts/reschedule.py --move <videoId> <時刻>`）"]
-    at = v["_at"].astimezone(JST)
     t = now or datetime.now(timezone.utc)
-    hours = (v["_at"] - t).total_seconds() / 3600.0
-    out = list(cal) + [
-        f"[次の枠] **{at:%m/%d %H:%M} JST（あと {hours:.0f}時間）に出る1本**"
-        f"　`{v.get('video_id')}`　{str(v.get('title') or '')[:44]}"
-        f"　題材 `{v.get('topic')}`"
-    ]
+    if draft is None:
+        at = v["_at"].astimezone(JST)
+        hours = (v["_at"] - t).total_seconds() / 3600.0
+        out = list(cal) + [
+            f"[次の枠] **{at:%m/%d %H:%M} JST（あと {hours:.0f}時間）に出る1本**"
+            f"　`{v.get('video_id')}`　{str(v.get('title') or '')[:44]}"
+            f"　題材 `{v.get('topic')}`"
+        ]
+    else:
+        out = list(cal) + [
+            f"[次の枠] **予約はまだ在りませんが、次に出る1本はこれです**"
+            f"（規則5 ＝ 作るのは前の日から、**予約だけが当日**）"
+            f"　`{v.get('video_id')}`　{str(v.get('title') or '')[:44]}"
+            f"　題材 `{v.get('topic')}`",
+            "  **`improve` の当てどころは、この本です。**"
+            "「予約が無い」は「当てどころが無い」ではありません。",
+        ]
     built = _parse(v.get("uploaded_at"))
     cm = stale_commits(built, video_id=str(v.get('video_id') or '') or None)
     if built is None:
@@ -1131,11 +1175,21 @@ def lines(now: datetime | None = None) -> list[str]:
                    f"　—— その直しは、この本に入っていません**")
         for ln in cm:
             out.append(f"       {ln[:118]}")
-        out.append("  → **焼き直すのが `improve` の1手です**"
-                   "（`python -m src.pipeline` で焼き直し、"
-                   "`scripts/reschedule.py --unschedule <古い方>` →"
-                   " 新しい方を同じ枠へ `--move`）")
-        out.extend(swap_cost_lines(t, publish_at=v["_at"]))
+        if draft is None:
+            out.append("  → **焼き直すのが `improve` の1手です**"
+                       "（`python -m src.pipeline` で焼き直し、"
+                       "`scripts/reschedule.py --unschedule <古い方>` →"
+                       " 新しい方を同じ枠へ `--move`）")
+            out.extend(swap_cost_lines(t, publish_at=v["_at"]))
+        else:
+            # **下書きには外す枠がありません。** `--unschedule` は撃てません
+            #     （予約が無い本に撃つと空振りします）。焼き直したら
+            #     `--draft` でもう1本 上げて、**古いほうを池に残す**だけです。
+            out.append("  → **焼き直すのが `improve` の1手です**"
+                       "（`python -m src.pipeline` で焼き直し → "
+                       "`python scripts/upload_only.py <題材> --draft`）。"
+                       "**`--unschedule` は要りません**（この本には外す枠がありません）。"
+                       "予約は**その日になってから** `--move` で。")
     if pending_thumbnail(str(v.get("video_id") or "") or None):
         out.append("  [!] **サムネイルの bytes は控えに在りますが、YouTube に"
                    "載っていません**（`thumbnail_set: false`）。"
@@ -1144,9 +1198,10 @@ def lines(now: datetime | None = None) -> list[str]:
                    f"--video {v.get('video_id')}")
         out.append("       （`--missing` だけだと実測 158本 ＝ **7,900単位** で、"
                    "`pool_drain` と枠を取り合います）")
-        qn = quota_note(v["_at"], t)
-        if qn:
-            out.append(qn)
+        if draft is None:
+            qn = quota_note(v["_at"], t)
+            if qn:
+                out.append(qn)
     out.append("  **規則3（`src/house_rule.py`）が言っているのはこの1本のことです。**"
                "　出したら `--ship \"improve: <何を、どう変えたか>\" --lever per_video`")
     return out

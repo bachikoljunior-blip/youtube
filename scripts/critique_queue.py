@@ -418,14 +418,57 @@ def _scored() -> set[str]:
     return out
 
 
+def _mark_drafts(out: dict[str, tuple[int, float]]) -> dict[str, tuple[int, float]]:
+    """**予約なしの本のうち、下書きだけを段0 へ戻す。**（**API 0単位**）
+
+    段2（予約なし）には2種類が混ざります ——
+
+        池化した本   一度 予約して外した本。**二度と公開されません**（＝捨て）
+        下書き       規則5 で「前の日に作って、当日に予約する」本。**次に出る1本**
+
+    分ける口は `src.next_slot.drafts()`（`retimed_at` の有無）。
+    読めなければ**何もしません**（この道具を止める理由になりません）。
+    """
+    try:
+        from src import next_slot                              # noqa: PLC0415
+        for r in next_slot.drafts():
+            vid = str(r.get("video_id") or "")
+            if vid and out.get(vid, (2, 0.0))[0] == 2:
+                out[vid] = (0, float("inf"))
+    except Exception as exc:                                   # noqa: BLE001 — 回を止めない
+        print(f"[queue] 下書きを見分けられませんでした（段2 のまま）: {str(exc)[:90]}")
+    return out
+
+
 def deadlines(offline_only: bool = False) -> tuple[dict[str, tuple[int, float]], str]:
     """各動画の**締切**（＝直せる猶予）を返す。`{動画ID: (段, 時間)}` と、取れた口の名前。
 
     段は小さいほど先に評価すべきもの:
 
-        0  予約あり  → 公開まで**あと何時間**。**ここだけが「評価して直せる」窓**です
+        0  予約あり  → 公開まで**あと何時間**。「評価して直せる」窓
         1  公開済み  → もう直せませんが engaged が付くので M13 の較正には使えます
         2  予約なし  → **直す先も較正の材料も無い。**既定では待ち行列に出しません
+
+    ## **段2 に、直せる本が1つ混ざっています**（2026-09-02 に踏んだ）
+
+    この段分けは 2026-08-16 のもので、**規則5（固定その4「1日の回り方」）より前**です。
+    規則5 はこう回ります ——「作るのは前の日から、**予約だけが当日**」。
+    つまり **次に出る1本は、その日が来るまで必ず `at` が空 ＝ 段2** です。
+
+    実物（09/02 16:3x）: `MqQKSnbM0OI`（09/03 に出す本）は
+    「**出していない 435本: 予約なし（重なりで外した本）。直す先も engaged も無いので
+    評価しても捨てになります**」の中に隠れていました。**逆です** ——
+    公開もしていない・予約もしていない本は、**いちばん自由に直せる1本**です
+    （題も台本もサムネも、まだ誰も見ていません）。
+
+    見分ける口は `src.next_slot.drafts()`（**API 0単位**）——
+    「`at` が空・`uploaded_at` が在る・**`retimed_at` が無い**」の3つで、
+    池化した本（一度 予約して外した本）と分かれます。ここでは段 **0**、
+    猶予は `inf`（＝ 段0 の末尾。**その日が来るまで直し続けられる**ので、
+    公開が迫っている予約ずみの本より急ぎではありません）。
+
+    **覆る条件**: オーナーが規則5 を外して先の日付に予約できるようになったら、
+    次に出る本は段0 に入るので、この上書きは何もしなくなります。
 
     口が落ちても止まりません（`data/uploaded.jsonl` の控えへ落ちる）。
     **控えは「上げたときの予約時刻」なので、あとから外した本を予約ありと読みます。**
@@ -462,6 +505,7 @@ def deadlines(offline_only: bool = False) -> tuple[dict[str, tuple[int, float]],
                     out[v["id"]] = (0, hours)
                 else:
                     out[v["id"]] = (2, 0.0)
+            _mark_drafts(out)
             return out, "API"
         except Exception as exc:  # 口が落ちても待ち行列は出す
             print(f"[queue] 締切を口から取れませんでした（控えへ落ちます）: {str(exc)[:90]}")
@@ -478,6 +522,7 @@ def deadlines(offline_only: bool = False) -> tuple[dict[str, tuple[int, float]],
             hours = (datetime.fromisoformat(str(at).replace("Z", "+00:00"))
                      - now).total_seconds() / 3600
             out[r["id"]] = (0, hours) if hours >= 0 else (1, 0.0)
+        _mark_drafts(out)
         return out, "控え（data/uploaded.jsonl・外した本を予約ありと読みます）"
     except Exception as exc:
         print(f"[queue] 控えも読めませんでした（並びは動画ID順のまま）: {str(exc)[:90]}")
