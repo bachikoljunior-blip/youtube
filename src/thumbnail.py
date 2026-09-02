@@ -153,6 +153,114 @@ OUTSIDE_LINE1_EDGE = (255, 255, 255)    # その白い縁
 OUTSIDE_LINE2 = (255, 232, 0)           # 黄色い結論
 OUTSIDE_MARGIN = 56
 
+#: **描いた人物（実在しない・固定の1体）**（`outside_long` だけ・2026-09-03 06:xx に足した）。
+#:
+#: ## なぜ要るか
+#:
+#: 上の註は「顔 ＝ ここは写せない」と書いていました。**写せないのは実在の人物**です
+#: （なりすましは目標を壊す・`verify` の名乗りの門）。外の上位4本は 4/4 が人の顔で、
+#: 前提「外の作り方を写した長尺」の 09/04・09/05 の2本は「題・尺・中身・絵・冒頭」を
+#: 写して**顔だけ写していません**（`docs/JOURNAL.md` 2026-09-03 05:1x の `[道筋]`）。
+#: 外の上位（`mL0bwzi8KFM`・325万回）は写真の人物の隣に**描いたキャラクター**も置いており、
+#: 描いた人物はこの帯の型の中に在ります。**専門家を名乗らず、名前も肩書きも付けない
+#: 1体**なら、名乗りの門（`verify._check_no_human_expert_claim`）の外側です。
+#:
+#: 置くのは右側の胸像1体（スーツ・笑顔）。本文の幅は `OUTSIDE_FIGURE_LEFT` までに縮む
+#: （実測: 7字 の主語が 160px → 110px。外の上位も本文は幅の 6割 で、人物が残りを占める）。
+#: `OUTSIDE_FIGURE = False` にすれば、この回より前の絵と1ピクセルも変わりません。
+#:
+#: ## 覆る条件
+#:
+#: 09/06 17:00 以降の `1huadpEk6HY` の 48h（顔あり）と、それより前の外の型の長尺
+#: （顔なし・`6PKux5HNnUE` は池に private のまま在る）を並べて、顔ありが下なら外す。
+#: 前提「外の作り方を写した長尺」が外れで閉じたら、この型ごと根拠を失います。
+OUTSIDE_FIGURE = True
+OUTSIDE_FIGURE_LEFT = 890               # 人物の左端。本文はここまで
+FIGURE_CX = 1110                        # 人物の中心 x
+FIGURE_SKIN = (247, 208, 172)
+FIGURE_SKIN_SHADE = (214, 164, 130)
+FIGURE_HAIR = (52, 38, 34)
+FIGURE_SUIT = (34, 46, 96)
+FIGURE_SHIRT = (250, 250, 252)
+FIGURE_TIE = (178, 34, 46)
+FIGURE_LINE = (28, 22, 24)
+FIGURE_GLOW = (255, 224, 90, 80)
+
+
+def _draw_figure(img: Image.Image) -> None:
+    """右側に描いた人物1体（胸像）を置く。4倍で描いて縮める（縁がなめらか）。"""
+    S = 4
+    cx = FIGURE_CX
+    o = 7   # 輪郭の太さ（元の px）
+
+    # 後ろの光（外の上位の放射の代わり・柔らかい楕円）
+    glow = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    ImageDraw.Draw(glow).ellipse([(cx - 320, 40), (cx + 320, 700)], fill=FIGURE_GLOW)
+    glow = glow.filter(ImageFilter.GaussianBlur(48))
+    img.paste(glow, (0, 0), glow)
+
+    layer = Image.new("RGBA", (W * S, H * S), (0, 0, 0, 0))
+    d = ImageDraw.Draw(layer)
+
+    def bx(x0, y0, x1, y1, pad=0):
+        return [((x0 - pad) * S, (y0 - pad) * S), ((x1 + pad) * S, (y1 + pad) * S)]
+
+    def pt(x, y):
+        return (x * S, y * S)
+
+    # 輪郭（少し大きく描いた同じ形）→ 本体、の順。
+    body = (cx - 225, 480, cx + 225, 820)
+    head = (cx - 116, 150, cx + 116, 420)
+    ear_l = (cx - 134, 268, cx - 100, 330)
+    ear_r = (cx + 100, 268, cx + 134, 330)
+    neck = (cx - 46, 380, cx + 46, 500)
+    hair_box = (cx - 120, 146, cx + 120, 362)
+
+    d.rounded_rectangle(bx(*body, pad=o), radius=120 * S, fill=FIGURE_LINE)
+    d.rectangle(bx(*neck, pad=o), fill=FIGURE_LINE)
+    d.ellipse(bx(*ear_l, pad=o), fill=FIGURE_LINE)
+    d.ellipse(bx(*ear_r, pad=o), fill=FIGURE_LINE)
+    d.ellipse(bx(*head, pad=o), fill=FIGURE_LINE)
+
+    d.rounded_rectangle(bx(*body), radius=120 * S, fill=FIGURE_SUIT)
+    # シャツの V と襟、ネクタイ
+    d.polygon([pt(cx - 78, 480), pt(cx + 78, 480), pt(cx, 610)], fill=FIGURE_SHIRT)
+    d.polygon([pt(cx - 14, 486), pt(cx + 14, 486), pt(cx + 20, 600), pt(cx, 628), pt(cx - 20, 600)],
+              fill=FIGURE_TIE)
+    d.line([pt(cx - 78, 480), pt(cx, 610), pt(cx + 78, 480)], fill=FIGURE_LINE, width=3 * S)
+    # ラペル
+    d.polygon([pt(cx - 130, 480), pt(cx - 78, 480), pt(cx - 4, 640), pt(cx - 70, 640)], fill=FIGURE_SUIT)
+    d.polygon([pt(cx + 130, 480), pt(cx + 78, 480), pt(cx + 4, 640), pt(cx + 70, 640)], fill=FIGURE_SUIT)
+    d.line([pt(cx - 130, 480), pt(cx - 70, 640)], fill=FIGURE_LINE, width=3 * S)
+    d.line([pt(cx + 130, 480), pt(cx + 70, 640)], fill=FIGURE_LINE, width=3 * S)
+
+    d.rectangle(bx(*neck), fill=FIGURE_SKIN)
+    d.rectangle(bx(cx - 46, 400, cx + 46, 430), fill=FIGURE_SKIN_SHADE)   # あごの影
+    d.ellipse(bx(*ear_l), fill=FIGURE_SKIN)
+    d.ellipse(bx(*ear_r), fill=FIGURE_SKIN)
+    d.ellipse(bx(*head), fill=FIGURE_SKIN)
+    # 髪（頭の上半分）ともみあげ
+    d.chord(bx(*hair_box), start=180, end=360, fill=FIGURE_HAIR)
+    d.polygon([pt(cx - 120, 250), pt(cx - 96, 250), pt(cx - 104, 330), pt(cx - 118, 300)], fill=FIGURE_HAIR)
+    d.polygon([pt(cx + 120, 250), pt(cx + 96, 250), pt(cx + 104, 330), pt(cx + 118, 300)], fill=FIGURE_HAIR)
+    # 眉・目
+    d.line([pt(cx - 88, 278), pt(cx - 40, 268)], fill=FIGURE_HAIR, width=9 * S)
+    d.line([pt(cx + 40, 268), pt(cx + 88, 278)], fill=FIGURE_HAIR, width=9 * S)
+    for ex in (cx - 62, cx + 62):
+        d.ellipse(bx(ex - 24, 290, ex + 24, 320), fill=(255, 255, 255), outline=FIGURE_LINE, width=2 * S)
+        d.ellipse(bx(ex - 10, 294, ex + 10, 318), fill=FIGURE_LINE)
+        d.ellipse(bx(ex - 8, 296, ex - 2, 302), fill=(255, 255, 255))
+    # 鼻・頬・口（開いた笑顔）
+    d.line([pt(cx, 300), pt(cx - 10, 344), pt(cx + 8, 346)], fill=FIGURE_SKIN_SHADE, width=4 * S)
+    d.ellipse(bx(cx - 108, 336, cx - 72, 356), fill=(244, 168, 156, 170))
+    d.ellipse(bx(cx + 72, 336, cx + 108, 356), fill=(244, 168, 156, 170))
+    d.chord(bx(cx - 54, 330, cx + 54, 398), start=0, end=180, fill=(150, 40, 50),
+            outline=FIGURE_LINE, width=3 * S)
+    d.rectangle(bx(cx - 38, 366, cx + 38, 376), fill=(255, 255, 255))
+
+    layer = layer.resize((W, H), Image.LANCZOS)
+    img.paste(layer, (0, 0), layer)
+
 
 def _fit_font(draw: ImageDraw.ImageDraw, text: str, start: int, max_w: int, floor: int = 90):
     """`start` から下げて、幅 `max_w` に入る最大の字を返す。"""
@@ -168,8 +276,10 @@ def _fit_font(draw: ImageDraw.ImageDraw, text: str, start: int, max_w: int, floo
 def _create_outside(img: Image.Image, line1: str, line2: str, kicker: str | None,
                     out_path: Path) -> Path:
     """`OUTSIDE_STYLE` の描き方。上の註に、写した型の出どころ。"""
+    if OUTSIDE_FIGURE:
+        _draw_figure(img)          # 字より先（字が人物の上に載る側）
     draw = ImageDraw.Draw(img)
-    max_w = W - OUTSIDE_MARGIN * 2
+    max_w = (OUTSIDE_FIGURE_LEFT - OUTSIDE_MARGIN - 16) if OUTSIDE_FIGURE else W - OUTSIDE_MARGIN * 2
     f1 = _fit_font(draw, line1, 190 if len(line1) <= 6 else 160, max_w)
     f2 = _fit_font(draw, line2, 190 if len(line2) <= 6 else 160, max_w)
     b1 = draw.textbbox((0, 0), line1 or "　", font=f1)

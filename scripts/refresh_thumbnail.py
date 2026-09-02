@@ -12,7 +12,12 @@
 
     python scripts/refresh_thumbnail.py <テーマID> <動画ID> <配色の番号>
         `build/<テーマID>/` から**作り直して**差し替える。
-        サムネイルの作りそのものを変えたときだけ
+        サムネイルの作りそのものを変えたときだけ（**`build/` が要る ＝ 同じ回だけ**）
+
+    python scripts/refresh_thumbnail.py --rebuild <動画ID>
+        **控えだけから作り直して、控えの `<ID>.thumb.jpg` を差し替える**（API 0単位・
+        2026-09-03 に追加）。`build/` の無い後の回で、絵の作り（`src/thumbnail.py`）を
+        直したときはこちら。載せるのは窓が戻った回の `--missing --video <ID>`
 
 ## `--missing` を足した理由（**3回持ち越された項目**）
 
@@ -36,7 +41,8 @@ import json
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
 
 from googleapiclient.discovery import build  # noqa: E402
 from googleapiclient.http import MediaFileUpload  # noqa: E402
@@ -482,7 +488,50 @@ def push_missing(dry_run: bool = False, force: bool = False,
     return 0 if ok == len(rows) else 1
 
 
+def rebuild_stash(video_id: str, topic: str | None = None) -> int:
+    """控えだけから絵を焼き直して、控えの `<ID>.thumb.jpg` を差し替える（**API 0単位**）。
+
+    `main()` は `build/<テーマID>/slides` を読みますが、あれは .gitignore で
+    まっさらな容器には在りません（2026-09-03 に踏んだ）。控えには
+    `<ID>.jpg`（コマの一覧・背景の素材にはこれで足りる —— `_base_image` は
+    80px まで潰すので字形は残らない）と `<ID>.script.json`（2行と kicker）が在るので、
+    **絵の作り（`src/thumbnail.py`）を直した回は、焼き直さずにこれで控えを更新できます。**
+    載せるのは、窓が戻った回の `--missing --video <ID>`（50単位）。
+    """
+    stash = ROOT / "data" / "critique_queue"
+    src_img, script_path = stash / f"{video_id}.jpg", stash / f"{video_id}.script.json"
+    meta_path = stash / f"{video_id}.json"
+    if not (src_img.exists() and script_path.exists()):
+        print(f"[thumb] 控えが足りません: {src_img.name} / {script_path.name}")
+        return 1
+    script = json.loads(script_path.read_text(encoding="utf-8"))
+    if topic is None and meta_path.exists():
+        topic = str(json.loads(meta_path.read_text(encoding="utf-8")).get("topic") or "")
+    topic = topic or ""
+    work = ROOT / "build" / "_rebuild" / video_id
+    work.mkdir(parents=True, exist_ok=True)
+    theme = visuals.theme_for(topic, None)
+    accent = tuple(int(theme["accent"].lstrip("#")[i:i + 2], 16) for i in (0, 2, 4))
+    out = thumbnail.create(
+        src_img, script["thumbnail_line1"], script["thumbnail_line2"],
+        work / "thumbnail.jpg", work, accent=accent,
+        kicker=script.get("thumbnail_kicker"), style=topic_style(topic),
+    )
+    dest = stash / f"{video_id}.thumb.jpg"
+    dest.write_bytes(out.read_bytes())
+    print(f"[thumb] 控えの絵を焼き直しました: {dest}（{dest.stat().st_size:,} bytes・"
+          f"style={topic_style(topic) or '既定'}）。載せるのは窓が戻った回の "
+          f"`--missing --video {video_id}`（50単位）")
+    return 0
+
+
 if __name__ == "__main__":
+    if "--rebuild" in sys.argv:
+        _i = sys.argv.index("--rebuild")
+        if _i + 1 >= len(sys.argv):
+            print("--rebuild のあとに動画IDを書くこと")
+            raise SystemExit(2)
+        raise SystemExit(rebuild_stash(sys.argv[_i + 1]))
     if "--missing" in sys.argv:
         _only = ""
         if "--video" in sys.argv:
