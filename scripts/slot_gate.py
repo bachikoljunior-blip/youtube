@@ -83,9 +83,28 @@ sys.path.insert(0, str(ROOT))
 
 JST = timezone(timedelta(hours=9))
 
+def _same_day_only() -> bool:
+    """**規則5（固定その4）が効いているか。** 読めない回は「効いていない」側へ。"""
+    try:
+        from src import house_rule                             # noqa: PLC0415
+        return bool(house_rule.same_day_only())
+    except Exception:                                          # noqa: BLE001
+        return False
+
+
 #: **何日 先まで見るか。** 0 ＝ 今日だけ。2 ＝ 今日・明日・明後日。
-#: 理由は上の註（作った本が予約に入るまで 1日／日枠が戻るのは JST 16:00）。
-LEAD_DAYS = 2
+#:
+#: **2026-09-02 に、規則5（固定その4）で 0 になりました。** オーナー原文:
+#: 「**現在の日付にしか予約しないってことだからね？**」
+#: ＝ **先の日付が空であることが正しい状態**なので、明日・明後日が 0本 でも
+#: 鳴らしてはいけません（鳴らすと、この門は**毎周 必ず**鳴ります ——
+#: そして `scripts/stop_check.sh` がその回を止めます）。
+#:
+#: 見るのは**今日 1日だけ**です。今日の1本が予約にも実績にも無ければ、
+#: それは本物の途切れ（`CLAUDE.md`「途切れるのが最大の損失」）。
+#:
+#: **上の「2日 にする理由」の節は、規則5 が外れたときのために残してあります。**
+LEAD_DAYS = 0 if _same_day_only() else 2
 
 
 def per_day(rows: list[dict] | None = None, now: datetime | None = None) -> dict | None:
@@ -263,20 +282,62 @@ def lines(rows: list[dict] | None = None, today=None) -> list[str]:
     cells = " ".join(
         f"{(today + timedelta(days=i)):%m/%d}={per.get(today + timedelta(days=i), 0)}"
         for i in range(LEAD_DAYS + 1))
-    out = [
-        f"**予約が0本の日が、今日から{LEAD_DAYS}日 のうちに {len(gap)}日 あります: "
-        + " ".join(f"{d:%m/%d}" for d in gap) + "**",
-        f"  今日から{LEAD_DAYS + 1}日: {cells}   （規則1 ＝ **1日1本**・`src/house_rule.py`）",
-        "  **その日は投稿が途切れます。**「途切れるのが最大の損失」（`CLAUDE.md`）。",
-    ]
+    if _same_day_only():
+        out = [
+            f"**きょう（{gap[0]:%m/%d} JST）の1本が、予約にも実績にもありません。**"
+            "（規則5・固定その4「現在の日付にしか予約しない」）",
+            f"  きょう: {cells}   （規則1 ＝ **1日1本**・`src/house_rule.py`）",
+            "  **きょうは投稿が途切れます。**「途切れるのが最大の損失」（`CLAUDE.md`）。",
+            "  **明日から先が空なのは正常です** —— この門は今日しか見ていません",
+        ]
+    else:
+        out = [
+            f"**予約が0本の日が、今日から{LEAD_DAYS}日 のうちに {len(gap)}日 あります: "
+            + " ".join(f"{d:%m/%d}" for d in gap) + "**",
+            f"  今日から{LEAD_DAYS + 1}日: {cells}   （規則1 ＝ **1日1本**・`src/house_rule.py`）",
+            "  **その日は投稿が途切れます。**「途切れるのが最大の損失」（`CLAUDE.md`）。",
+        ]
     tail = tail_days(rows, today)
-    if tail:
+    if tail and _same_day_only():
+        out.append(
+            f"  **先の日付に、まだ {tail}日 ぶんの予約が並んでいます** —— "
+            "**それも規則5 に反しています**（先の日付は空が正しい）。"
+            "外す手は `python scripts/pool_drain.py --apply --keep 0`"
+            "（**削除はしません**・private の下書きへ戻すだけ）。"
+            "**手前へ倒さないこと** —— `--compact` は先の日付へ並べ直す手で、"
+            "規則5 に反します。")
+    elif tail:
         out.append(
             f"  **その先には、まだ {tail}日 ぶんの予約が並んでいます** ——"
             "つまりこの穴は「まだ作っていない」ではなく**「作ってあるのに出さない」**です。"
             "**それでも詰めないこと** —— `--compact` は `at` しか動かさないので、"
             "詰めた本は作り置きのままで `pool_drain` が同じ本を外します"
             "（`src/house_rule.is_stockpile`）。")
+    if _same_day_only():
+        out += [
+            "",
+            f"**この回でやること: きょう（{gap[0]:%m/%d}）の枠へ1本 入れること。**"
+            "**先の日付には置かないこと**（規則5）:",
+            "",
+            "  (a) **前の日に作った下書きが在るなら、それを今日の枠へ**（1本 50単位）:",
+            "        python scripts/reschedule.py --pool          # private の下書きを見る",
+            f"        python scripts/reschedule.py --move <videoId> {today:%Y-%m-%d}"
+            f"T{(_hour_for(gap[0]) or 20):02d}:00",
+            "  (b) 下書きが無いなら、作ってから同じ日へ:",
+            "",
+            "    python -m src.pipeline --topic <名前> --dry-run",
+            "    python scripts/inspect_build.py <名前>            # **投稿前に必ず目で見る**",
+            f"    python scripts/upload_only.py <名前> \"\" {_hour_arg(gap[0])}",
+            "",
+            "**そして、出したら次の日の1本を作り始めること**（固定その4「1日の回り方」）——"
+            "作るのは前の日から、**予約だけが当日**です"
+            "（`python scripts/upload_only.py <名前> --draft` で予約を付けずに上げられます）。",
+            "",
+        ] + _hour_lines(gap[0]) + [
+            "**撃てないなら**（Data API の日枠 ＝ JST 16:00 に戻る）、"
+            "**その理由を `docs/JOURNAL.md` に書いてから終わること。**",
+        ]
+        return out
     out += [
         "",
         f"**この回でやること: {gap[0]:%m/%d} の枠に入る1本を、予約まで入れること**"

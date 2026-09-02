@@ -61,7 +61,12 @@ def test_故障を注入すると発火する_穴が1日():
     assert slot_gate.empty_days(rows, today) == [hole]
     out = "\n".join(slot_gate.lines(rows, today))
     assert f"{hole:%m/%d}" in out
-    assert "予約まで入れる" in out
+    # **文面は規則5 で変わります**（2026-09-02）。`LEAD_DAYS` が 0 になり、
+    #     穴＝きょう なので「予約まで入れる」ではなく「きょうの枠へ入れる」。
+    if slot_gate._same_day_only():
+        assert "きょう" in out and "枠へ1本 入れること" in out, out
+    else:
+        assert "予約まで入れる" in out
 
 
 def test_控えが空なら_今日から全部が穴():
@@ -74,14 +79,42 @@ def test_穴の先に作り置きが在れば_そう言う():
     """**「まだ作っていない」と「作ってあるのに出さない」は別のことです。**
 
     先に予約が並んでいるのに手前が0本なら、後者。文面が変わります。
+
+    **2026-09-02（規則5）で、後者の読みがもう一段 変わりました** ——
+    先の日付に予約が在ること自体が欠陥なので、文面は
+    「作ってあるのに出さない」ではなく「**それも規則5 に反しています**」＋
+    外す手（`pool_drain --apply --keep 0`）になります。
+    **数え方（`tail_days`）は同じです。**
     """
     today = date(2026, 9, 1)
     far = [_row(today + timedelta(days=n)) for n in (20, 21, 22)]
     out = "\n".join(slot_gate.lines(far, today))
-    assert "作ってあるのに出さない" in out
+    mark = "規則5 に反しています" if slot_gate._same_day_only() else "作ってあるのに出さない"
+    assert mark in out, out
+    if slot_gate._same_day_only():
+        assert "pool_drain.py --apply --keep 0" in out, out
     assert slot_gate.tail_days(far, today) == 3
     # 穴の先に何も無ければ、その文は出ない
-    assert "作ってあるのに出さない" not in "\n".join(slot_gate.lines([], today))
+    assert mark not in "\n".join(slot_gate.lines([], today))
+
+
+def test_規則5では明日が空でも鳴らない():
+    """**先の日付が空なのは正常**（2026-09-02・固定その4）。
+
+    オーナー原文: 「**現在の日付にしか予約しないってことだからね？**」
+
+    この門は `scripts/stop_check.sh` に配線されていて、鳴るとその回を止めます。
+    `LEAD_DAYS = 2` のままだと **明日と明後日が必ず空**なので、
+    **規則5 の下では毎周 必ず鳴り、毎周 その回が止まります。**
+    ここは「きょうが埋まっていれば黙る」ことを見ます。
+    """
+    if not slot_gate._same_day_only():
+        return                                  # 規則5 が外れている回は、上の3件が正
+    assert slot_gate.LEAD_DAYS == 0, slot_gate.LEAD_DAYS
+    today = date(2026, 9, 1)
+    only_today = [_row(today)]                  # 明日以降は1本も無い ＝ 正しい姿
+    assert slot_gate.empty_days(only_today, today) == []
+    assert slot_gate.lines(only_today, today) == []
 
 
 def test_詰めろとは一度も言わない():
