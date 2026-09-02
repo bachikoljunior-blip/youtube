@@ -201,3 +201,77 @@ def test_place_today_は_place_hour_を読む():
     src = inspect.getsource(sweep.place_today)
     assert "place_hour(" in src, "置く側が掃く時刻を読んでいません（`place_hour`）"
     assert "config_hour()" not in src, "置く側が既定だけを読んでいます（掃きが助言止まりに戻る）"
+
+
+# ---------------------------------------------------------------- きょうの1本のサムネイル（2026-09-03 03:xx）
+def _plan_placed(vid: str) -> dict:
+    return {"do": True, "rc": 0, "video_id": vid, "when": "2026-09-04T17:00", "via": "update"}
+
+
+def test_置いた本のサムネイルが載っていなければ_その1本だけ押す():
+    """**試験の本（外の作りを写した長尺）が、サムネイル無しで出ない**こと。
+    実測 09/03 02:3x: `6PKux5HNnUE` は `thumbnail_set: False` のまま 09/04 の1本で、
+    押す口は3つとも その日に起きない（掃きは「先の日付 0本」で走らない・日誌は書き置き・
+    `uploader` は上げた瞬間だけ）。"""
+    pushed: list[str] = []
+    line = sweep.thumb_today(_jst(16, 30, 4), plan=_plan_placed("VID-LONG"),
+                             missing=["VID-LONG", "OTHER"], quota_open=True,
+                             push=lambda v: pushed.append(v) or 0)
+    assert pushed == ["VID-LONG"]
+    assert "載せました" in line
+
+
+def test_載っている本は押さない():
+    pushed: list[str] = []
+    sweep.thumb_today(_jst(16, 30, 4), plan=_plan_placed("VID-LONG"),
+                      missing=["OTHER"], quota_open=True,
+                      push=lambda v: pushed.append(v) or 0)
+    assert pushed == []
+
+
+def test_日枠が尽きていれば押さず_理由を返す():
+    pushed: list[str] = []
+    line = sweep.thumb_today(_jst(9, 0, 4), plan=_plan_placed("VID-LONG"),
+                             missing=["VID-LONG"], quota_open=False,
+                             push=lambda v: pushed.append(v) or 0)
+    assert pushed == [] and "日枠" in line
+
+
+def test_dry_run_は押さない():
+    pushed: list[str] = []
+    sweep.thumb_today(_jst(16, 30, 4), plan=_plan_placed("VID-LONG"), dry_run=True,
+                      missing=["VID-LONG"], quota_open=True,
+                      push=lambda v: pushed.append(v) or 0)
+    assert pushed == []
+
+
+def test_置いていない回は_控えの次の1本がきょうなら_それを押す(monkeypatch):
+    """**置く手が「きょうの枠は埋まっている」で黙った回**（`insert` で朝に置いた本・
+    実測 09/03 `9zkfjEH48PY`）でも、16:00 の窓が戻った回に押せること。"""
+    from src import next_slot
+    monkeypatch.setattr(next_slot, "next_video",
+                        lambda now=None, path=None: {"video_id": "VID-TODAY",
+                                                     "at": "2026-09-04T08:00:00Z"})
+    assert sweep.today_video_id(_jst(16, 30, 4), {"do": False}) == "VID-TODAY"
+    # 明日の本は押さない（規則5 の下では在りませんが、在っても pool_drain の仕事）
+    monkeypatch.setattr(next_slot, "next_video",
+                        lambda now=None, path=None: {"video_id": "VID-TOMORROW",
+                                                     "at": "2026-09-05T08:00:00Z"})
+    assert sweep.today_video_id(_jst(16, 30, 4), {"do": False}) == ""
+
+
+def test_置いた本が先で_insert_で置き直した新IDを採る():
+    plan = {"do": True, "rc": 0, "video_id": "OLD", "placed_id": "NEW", "via": "insert"}
+    assert sweep.today_video_id(_jst(16, 30, 4), plan) == "NEW"
+
+
+def test_main_は置いた直後にサムネイルを押す(monkeypatch):
+    order: list[str] = []
+    monkeypatch.setattr(sweep, "place_today",
+                        lambda now=None, dry_run=False: order.append("today") or {"do": False})
+    monkeypatch.setattr(sweep, "thumb_today",
+                        lambda now=None, plan=None, dry_run=False: order.append("thumb") or "")
+    monkeypatch.setattr(sweep, "reasons_to_skip",
+                        lambda now=None: order.append("sweep") or "先の日付は 0本 です")
+    assert sweep.main(["--dry-run"]) == 0
+    assert order == ["today", "thumb", "sweep"]
