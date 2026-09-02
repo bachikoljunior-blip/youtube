@@ -30,8 +30,38 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "scripts"))
 
+import pytest  # noqa: E402
+
 import batch_build  # noqa: E402
 import queue_lag as QL  # noqa: E402
+
+
+# --- **実データに寄りかからないこと**（2026-09-02 に赤くなって足した） -------
+#
+# `batch_build.live_plan()` は `taken` を渡さないと `queue_lag.scheduled()` を読み、
+# **それが空なら `[]` を返します**（`live_plan` の「読めなければ `[]`」の枝）。
+#
+# 2026-09-02、規則5（固定その4「**先の日付には1本も置かない**」）に従って
+# 先の日付の予約を **0本** にしたところ、この file が一斉に赤くなりました ——
+# **コードは1行も変わっていません。暦が正しくなったから**です。
+#
+# `docs/trigger_main.md` §4:「**既知の当たりを実データの偶然に置かないこと**」。
+# ここが見たいのは「置き方（手前から埋める・上限で並べ替えない）」で、
+# **いま何本 予約が在るかではありません。** だから予約を検査が自分で作ります。
+#
+# **覆る条件**: `live_plan` の `taken` の継ぎ目を外したら、この fixture ごと
+# 書き直すこと（あそこは「反実仮想の唯一の継ぎ目」と註記されています）。
+@pytest.fixture(autouse=True)
+def _予約を検査が作る(monkeypatch):
+    from datetime import timedelta
+
+    base = datetime.now(QL.JST).replace(hour=9, minute=0, second=0, microsecond=0)
+    rows = []
+    for day in range(1, 40):                    # 手前 39日 を、朝から少しずつ埋める
+        for k in range((day % 4) + 1):
+            rows.append({"video_id": f"v{day}-{k}",
+                         "at": base + timedelta(days=day, minutes=30 * k)})
+    monkeypatch.setattr(QL, "scheduled", lambda now=None: rows)
 
 
 def test_live_ring_は_live_plan_の写しである():

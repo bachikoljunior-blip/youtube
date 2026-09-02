@@ -125,9 +125,14 @@ def _stub(monkeypatch, dropped: list, thumbs: list):
                         lambda vid: (thumbs.append(vid), 0)[1])
     monkeypatch.setattr(pool_drain.uploader, "_service", lambda: object())
     monkeypatch.setattr(pool_drain.uploader, "base_status", lambda: {})
-    monkeypatch.setattr(pool_drain.reschedule, "_update",
-                        lambda svc, vid, at, fallback_status=None:
-                        (dropped.append(vid), True)[1])
+    # **`report=` を受けること**（2026-09-02。上と同じ理由）。
+    def _stub_update(svc, vid, at, fallback_status=None, report=None):
+        dropped.append(vid)
+        if report is not None:
+            report.update({"wrote": True, "reason": "wrote"})
+        return True
+
+    monkeypatch.setattr(pool_drain.reschedule, "_update", _stub_update)
     monkeypatch.setattr(pool_drain.dupes, "retime", lambda vid, at: None)
 
 

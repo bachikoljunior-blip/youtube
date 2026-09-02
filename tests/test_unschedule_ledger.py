@@ -177,15 +177,28 @@ def test_渡せば控えのstatusで予約を外せる(monkeypatch):
 
 
 def test_渡したstatusでも予約を置き直せる(monkeypatch):
+    """**きょうの時刻で置き直せること。**
+
+    ここは 2026-09-02 まで `"2026-09-06T07:00:00Z"`（4日 先）を直書きしていました。
+    `reschedule._update` が規則5 の関門を持ったので
+    （`src.house_rule.refuse_future_publish`・固定その4
+      「現在の日付にしか予約しないってことだからね？」）、
+    **直書きの先の日付は門で止まり、この検査が見たい `fallback_status` の道まで
+    届きません。** 見たいのは「控えの `status` で置き直せるか」なので、
+    日付をきょうにして門を通します。
+    """
     import reschedule
     from src import uploader
 
     _pin_quota(monkeypatch)
+    jst = timezone(timedelta(hours=9))
+    at = datetime.now(jst).replace(hour=23, minute=0, second=0, microsecond=0)
+    stamp = at.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     svc = _Boom()
-    reschedule._update(svc, "vid1", "2026-09-06T07:00:00Z",
+    reschedule._update(svc, "vid1", stamp,
                        fallback_status=uploader.base_status())
 
-    assert svc.updated["body"]["status"]["publishAt"] == "2026-09-06T07:00:00Z"
+    assert svc.updated["body"]["status"]["publishAt"] == stamp
 
 
 def test_base_statusは投稿のときに立てる4欄と同じ():

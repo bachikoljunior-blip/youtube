@@ -716,6 +716,9 @@ def main(argv: list[str] | None = None) -> int:
     #     **止まるもの（日枠・計測のぶんの取り置き）と、飛ばすもの（1本ごとの失敗）**
     #     を分けます。
     done, stopped = 0, False
+    #: **控えだけを直した本**（実物はもう外れていた／本がもう無い）。
+    #: `done` と分けます —— 混ぜると「何単位 焼いたか」が読めなくなります。
+    fixed = 0
     for r in drop:
         try:
             # **撃たなかった回は、控えも動かさないこと**（2026-09-01。
@@ -726,13 +729,43 @@ def main(argv: list[str] | None = None) -> int:
             # `--move` は 08-29 に直っていましたが、**ここと `--spread`/`--compact`
             # は素通りのまま**でした（この repo が通算12回 踏んでいる「片方だけ」）。
             # 実測（`src/ledger_truth.py` が 0単位 で数え直した）: **4本**。
-            if not reschedule._update(svc, r["id"], None, fallback_status=fallback):
+            # **`False` の2つの意味を分けること**（2026-09-02。`_update` の `report`）。
+            #     "same"      **実物はもう予約なし**（`videos.list` がそう言った）。
+            #                 **古いのは控えのほう**なので、ここで直します
+            #     "move_hold" **YouTube を1文字も変えていない**。控えを触らないこと
+            #
+            # **実測 2026-09-02 16:0x**: 控えは先の日付の予約を **107本** と言い、
+            # 口は **41本**。差の 66本 は**もう外れている**本で、ここは毎回
+            # 「撃っていないので控えも直しません」で飛ばしていました ——
+            # **＝ 控えは永久に 0本 になりません**（`scripts/ahead_gate.py` の門が、
+            # 直しようのない数で鳴り続けます）。
+            rep: dict = {}
+            if not reschedule._update(svc, r["id"], None,
+                                      fallback_status=fallback, report=rep):
+                if rep.get("reason") == "same":
+                    dupes.retime(r["id"], None)
+                    print(f"[pool] {r['id']} は**実物ではもう外れていました**。"
+                          "控えのほうを直します（撃っていません・0単位）", flush=True)
+                    fixed += 1
+                    continue
                 print(f"[pool] {r['id']} は**撃っていないので、控えも直しません**"
                       "（控えだけ外すと、実物は予約のまま公開されます）", flush=True)
                 continue
             dupes.retime(r["id"], None)
         except (KeyboardInterrupt, MemoryError):
             raise
+        except reschedule.VideoGone as exc:
+            # **消えた本 1本 で、残り全部の掃きを落とさないこと**（2026-09-02 に踏んだ）。
+            #     `VideoGone` は `SystemExit` の子なので、下の枝はこれを
+            #     「この窓ではもう書けません」と読んで**止まります**。実測:
+            #     枠が 4,000単位 以上 残っているのに 97本 で止まりました。
+            #     **存在しない本は公開されない**ので、控えの `at` は幻です。落とします。
+            dupes.retime(r["id"], None)
+            print(f"[pool] {r['id']} は**YouTube にもうありません**"
+                  f"（{str(exc.code or exc)[:80]}）。控えの予約を落として続けます",
+                  flush=True)
+            fixed += 1
+            continue
         except BaseException as exc:                           # noqa: BLE001
             if reschedule.is_quota_exit(exc) or reschedule._is_quota(exc):
                 print(f"[pool] **日枠が尽きました**（{done}本 外したところ）。"
@@ -754,9 +787,14 @@ def main(argv: list[str] | None = None) -> int:
         if done % 10 == 0:
             print(f"[pool]   {done}/{len(drop)}本", flush=True)
 
-    left = len(rows) - len(kept) - done
+    left = len(rows) - len(kept) - done - fixed
     print(f"[pool] **外した {done}本／まだ予約に残っている {left}本**"
           f"（残す {len(kept)}本 を入れると {left + len(kept)}本）", flush=True)
+    if fixed:
+        print(f"[pool] うち **{fixed}本 は控えだけを直しました**"
+              "（実物ではもう外れていた／本がもう無い ＝ **0単位**）。"
+              " 控えが実物より多いと、`scripts/ahead_gate.py` の門が"
+              "**直しようのない数で鳴り続けます**", flush=True)
     print("[pool] **消していません。** 外した本は private のまま残っています"
           "（時刻を入れ直せば戻ります）。", flush=True)
 

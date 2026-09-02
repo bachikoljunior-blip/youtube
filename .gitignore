@@ -32,3 +32,14 @@ data/scan_video_ids.json
 # 30分で古くなる作りにしてありますが、そもそも配る値ではありません。
 # 正本は `list_sessions`。台帳は「同じ回のうちに使い回す」ためだけのものです。
 data/live_subs.json
+
+# **掃きの記録と印**（`scripts/ahead_sweep.py`。2026-09-02）。
+# **機械ごと・その回だけの値なので配らない** —— ログは背景の走りの控え、
+# 印（ロック）は「いまこの機械で掃きが走っている」だけを言います。
+# push すると、並行して走る作業コピーどうしが**互いの印で止まります**
+# （`data/live_subs.json` と同じ理由）。
+#
+# **`data/ahead_live.jsonl`（実物を見た観測）は配ります** —— あれは
+# 「口が何と言ったか」で、機械に依りません。門がそこを読みます。
+data/ahead_sweep.log
+data/.ahead_sweep.lock

@@ -136,14 +136,18 @@ def test_釘づけの道は_先の日付で例外(monkeypatch):
 
 
 def test_釘づけの道は_きょうなら通る(monkeypatch):
-    """**常に断る実装を落とす検査。** きょうの先の時刻は返ること。"""
+    """**常に断る実装を落とす検査。** きょうの先の時刻は返ること。
+
+    **`now.hour + 1` にしないこと**（2026-09-02 に踏んだ）—— `next_publish_at` は
+    「予約は 20分先から」で弾くので、**15:45 に撃つと 16:00 が 15分先**になり、
+    規則5 とは無関係の `ValueError` で落ちます。**時計しだいで色が変わる検査**でした。
+    余白を大きく取り、足りない時間帯は見送ります。
+    """
     monkeypatch.setattr(uploader.measure_window, "check", lambda *a, **k: None)
     now = datetime.now(JST)
-    if now.hour >= 23:                       # きょうの残り時間が無い回は見送る
-        pytest.skip("きょうの中に 20分先の枠が残っていません")
-    hour = max(now.hour + 1, 1)
-    if hour > 23:
-        pytest.skip("きょうの中に 20分先の枠が残っていません")
+    hour = now.hour + 2
+    if hour > 23:                            # きょうの残りに 2時間 無い回は見送る
+        pytest.skip("きょうの中に 2時間 先の枠が残っていません")
     got = uploader.next_publish_at(hour, 0, taken=set(),
                                    date_jst=now.strftime("%Y-%m-%d"))
     assert got.endswith("Z")
@@ -169,3 +173,32 @@ def test_規則5_が外れたら4か所とも緩む(monkeypatch):
     #     上の1行を倒すだけで、関門も一緒に緩むのが正しい姿。
     with pytest.raises(AssertionError, match="単位を使う前に"):
         reschedule._update(_Svc(), "vid", _real(1))
+
+
+def test_予約時刻を書く所は_2か所しかないこと():
+    """**7つ目の入口を作らせないこと。**
+
+    `reschedule._update()` の docstring:「入口が6つあり、塞いでも**7つ目が
+    同じ穴を作ります**（この repo が通算11回 踏んでいる「片方だけ」の形）。
+    **関門はここ1か所なので、ここで止めます**」。
+
+    その関門は `status["publishAt"] = …` を書く所にしか効きません。
+    **新しく書く所を足した回は、ここで落ちます** —— そのときは、
+    足した所からも `house_rule.refuse_future_publish()` を呼ぶこと
+    （**判定を写さないこと**。写すと、また片方だけ直せます）。
+
+    `videos().update(part="snippet", …)`（`link_longform` / `retitle`）は
+    ここに入りません —— `status` を触らないので、予約を作れません。
+    """
+    import re
+    hits = []
+    for rel in sorted(list((ROOT / "src").glob("*.py"))
+                      + list((ROOT / "scripts").glob("*.py"))):
+        text = rel.read_text(encoding="utf-8")
+        for line in text.splitlines():
+            if re.search(r'\["publishAt"\]\s*=', line):
+                hits.append(rel.relative_to(ROOT).as_posix())
+                break
+    assert hits == ["scripts/reschedule.py", "src/uploader.py"], hits
+    for rel in hits:
+        assert "refuse_future_publish" in (ROOT / rel).read_text(encoding="utf-8"), rel
