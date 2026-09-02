@@ -6584,3 +6584,16 @@
 {"at": "2026-09-02T15:30:54+00:00", "api": "data", "method": "videos.list", "units": 1, "ok": true, "by": "upload_only.py:main", "detail": "sHj5LjTj_C0,tBI1Lml41SA,VcfQsHq4B_0,3mcrKYDJ_Mc,Yy7GmcGoQ6I,bjd0APzOyDI,CIPYV_r1Hdo,kLZ_TfA0Iss,PhQ2KvuQASQ,l6_dVdypyw8,"}
 {"at": "2026-09-02T15:30:55+00:00", "api": "data", "method": "videos.list", "units": 1, "ok": true, "by": "upload_only.py:main", "detail": "_AVmgTNc658,1d3sR_XOdCw,JmKA7eB5jc0,gmCvNpLfBg4,VDn9Ue0GEVk,1nIfEOsNunk,mWIrQ0IIlWI,QTL7_jky0o0,oB8M8Q5EtMw,Sl5DTCZxaRs,"}
 {"at": "2026-09-02T15:30:56+00:00", "api": "data", "method": "videos.list", "units": 1, "ok": true, "by": "upload_only.py:main", "detail": "5d0Ox7N4UYM,tk6sCW_TrKA,RT0_pZl-jig,zwbEb9Fs4Jo,7ZVHJis_CH0,KW3TqPvWctQ,ZRRONBzRoGA,c62jFg13yws,Eggpp86CkDk,u4iRJRE4JQk,"}
+{"at": "2026-09-02T15:52:17+00:00", "api": "data", "method": "channels.list", "units": 1, "ok": true, "by": "niche_ceiling.py:_own_channel"}
+{"at": "2026-09-02T15:52:17+00:00", "api": "data", "method": "search.list", "units": 100, "ok": false, "by": "niche_ceiling.py:probe"}
+{"at": "2026-09-02T15:52:17+00:00", "api": "data", "method": "search.list", "units": 100, "ok": false, "by": "niche_ceiling.py:probe"}
+{"at": "2026-09-02T15:52:17+00:00", "api": "data", "method": "search.list", "units": 100, "ok": false, "by": "niche_ceiling.py:probe"}
+{"at": "2026-09-02T15:52:18+00:00", "api": "data", "method": "search.list", "units": 100, "ok": false, "by": "niche_ceiling.py:probe"}
+{"at": "2026-09-02T15:52:18+00:00", "api": "data", "method": "search.list", "units": 100, "ok": false, "by": "niche_ceiling.py:probe"}
+{"at": "2026-09-02T15:53:01+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "eta.py:q"}
+{"at": "2026-09-02T15:53:01+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "eta.py:q"}
+{"at": "2026-09-02T15:53:02+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "eta.py:q"}
+{"at": "2026-09-02T15:53:02+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "eta.py:q"}
+{"at": "2026-09-02T15:53:02+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "eta.py:q"}
+{"at": "2026-09-02T15:53:02+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "eta.py:q"}
+{"at": "2026-09-02T15:53:03+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "eta.py:q"}
