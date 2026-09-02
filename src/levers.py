@@ -929,3 +929,91 @@ def latest_arm_state(path: Path) -> dict:
                                   "lever_hint_measured")},
                       "lever_hint": hint_row.get("lever_hint"),
                       "binding": hint_row.get("binding")})
+
+
+# ---------------------------------------------------------------------------
+# **註ではなく門**（2026-09-02・最適化の回）
+# ---------------------------------------------------------------------------
+
+def blocked(lever: str | None, state: dict) -> list[str]:
+    """**引いても到達日が動かないと分かっている腕**なら、断る文面を返す。
+
+    空リスト ＝ 通す。`scripts/run_marker.py --ship` が、**書き込む前**に呼びます。
+
+    ## なぜ門にしたか（**この回に自分で撃った数**・`data/runs.jsonl` 500行）
+
+    `lever_notes()` は既にこの2つを印字していました。その docstring はこう
+    言っています —— **「どちらも門ではありません」**。**その判断は正しく、
+    そして `cap <= DEAD_CAP` の一般形については、いまも変えていません**
+    （前提が未判定なら覆るため）。
+
+    **覆らない2つだけを、ここで断ります**:
+
+        RULE_DEAD      `density` …… オーナーが固定した 1日1本（`src/house_rule.py`）。
+                       **覆る条件はありません**（外せるのはオーナーだけ）
+        dead_at_inf    `sub_rate` …… `×10^9` まで引いても `days_to_target` が出ない。
+                       **オーナー規則2: 答えがゼロなら、そこは律速ではない**
+
+    **実測（2026-09-02 12:4x・`data/runs.jsonl` の ship 308件）**::
+
+        density  を宣言した ship            76件
+          うち 規則が乗った 08/31 以降       **12件**（moves 0 が 9・**-1 が 3**）
+          そのうち kind=verdict             ** 4件**  ← **軌跡を動かす唯一の通貨**
+        sub_rate を宣言した ship            ** 8件**（moves 0 が 7・**-4 が 1**）
+
+    **註は毎回 出ていました。** それでも 20件 が通り、うち **4件 は負の
+    `--moves`**（＝この腕を引けば到達日が早まる、という宣言）です。
+    **その腕では、閉じた日に1日も動きません。** ＝ 註は効いていません
+    （`scripts/run_marker.py` の「**註や警告ではなく、通さないことだけが
+    効いています**」・2026-08-19 の `--lever` と同じ形。**この repo で2度目**）。
+
+    ## どれだけ買うか（**手を決める前に答えること**）
+
+    **到達日は 1日も早まりません** —— いまの軌跡は `出ません` で、θ を上げても
+    `出ません` は `出ません` のままです（`scripts/eta.py`）。**それが上限で
+    頭打ちになっているだけ**なので、そこで止めずに数えます:
+
+        軌跡が動くのは前提を1件 閉じたときだけ（`per_video` 実測 1.0日に1件）。
+        上の **verdict 4件** は、閉じても定義上 0日 の腕に落ちていました。
+        ＝ **回転 4件ぶん**（`per_video` なら 20% の当たりで 0.8件）が消えています。
+
+    **買うのは日付ではなく、日付を動かせる通貨のほう**です。
+
+    ## 覆る条件
+
+    - オーナーが 1日1本 を外したら、`density` はここから外れます
+      （`arm_state` が `RULE_DEAD` を名乗らなくなるので、**自動で外れます**）。
+    - `dead_at_inf` は `eta.py` が毎回 測り直します。出なくなれば通ります。
+    - **`caps` が読めない行では、何も断りません**（「読めない」と
+      「死んだ腕は無い」は別・`arm_state` の約束）。
+
+    >>> blocked("density", {})            # 読めなければ通す
+    []
+    >>> blocked(None, {"dead_at_inf": ("sub_rate",)})
+    []
+    """
+    if not lever or lever == "none":
+        return []
+    why = (state.get("dead_why") or {}).get(lever) or ""
+    inf = lever in (state.get("dead_at_inf") or ())
+    if not inf and not why.startswith(RULE_DEAD):
+        return []
+    out = [f"[marker] **断りました。`--lever {lever}` は記録していません。**"]
+    if inf:
+        out.append(f"         `{lever}` は**無限大にしても到達日が1日も動きません**"
+                   "（`eta.py` の `LEVER_INF_SCALE` で `×10^9` まで実測）。"
+                   " **オーナー規則2: 答えがゼロなら、そこは律速ではありません。**")
+    else:
+        out.append(f"         `{lever}` を止めているのは天井ではありません —— {why}")
+    out.append("         **仕事を捨てろとは言っていません。** 断っているのは"
+               "**腕の宣言のほう**です。出したものはそのまま、腕だけ選び直すこと:")
+    hint = state.get("hint")
+    if hint and hint in LEVERS and hint != lever:
+        out.append(f"           `--lever {hint}`   ← いま名指しされている腕"
+                   f"（床は {state.get('binding') or '（読めません）'}）")
+    out.append("           `--lever none`   ← 道具・手順の整備。"
+               "**これも正しい答えです**（`ship()` の註）")
+    out.append("         **どちらでもないなら、この作業は到達日を動かしません。**"
+               " そう書いて `none` にすること —— 嘘の腕を1件 積むより、"
+               "**動かない回を1件 数えるほうが速い**です。")
+    return out

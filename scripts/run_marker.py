@@ -1522,6 +1522,22 @@ def ship(what: str, closes: list[str] | None = None, lever: str | None = None,
             rec["lever_hint_covered"] = _arm["hint_covered"]
     if lever and lever in _arm.get("caps", {}):
         rec["lever_cap"] = _arm["caps"][lever]
+    # --- **覆らない死に方の腕だけは、書き込む前に断る**（2026-09-02・最適化の回）---
+    #     `levers.lever_notes()` は既に叱っていました。**それでも 08/31 以降に
+    #     20件 通り、うち 4件 は負の `--moves`**（＝早まると宣言）です
+    #     （`levers.blocked()` の docstring に、この回に撃った内訳）。
+    #     **註が効いていないことの、2度目の実測**です ——
+    #     1度目は 2026-08-19 の `--lever` そのもの（この file の
+    #     「**註や警告ではなく、通さないことだけが効いています**」）。
+    #     断るのは**腕の宣言だけ**で、仕事は捨てません（文面がそう言います）。
+    #     **一般の `cap <= DEAD_CAP` は断りません** —— あちらは前提が
+    #     未判定なら覆るからで、`lever_notes` の判断をそのまま残します。
+    if lever:
+        _block = levers.blocked(lever, _arm)
+        if _block:
+            for _ln in _block:
+                print(_ln)
+            return 2
     target, days, basis = _eta_target()
     if target is not None:
         rec["eta_target"] = target
