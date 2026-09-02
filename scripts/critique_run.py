@@ -118,7 +118,7 @@ def load(video_id: str) -> tuple[dict, Path]:
 
 def ask_one(n: int, prompt: str, workdir: Path) -> tuple[int, str]:
     """1体ぶん。**リポジトリの外**で走らせる（CLAUDE.md を読ませないため）。"""
-    args = [_binary(), "-p", prompt, "--output-format", "json", "--model", "opus"]
+    args = [_binary(), "-p", prompt, "--output-format", "json", "--model", "claude-fable-5-1"]
     try:
         proc = subprocess.run(
             args, capture_output=True, text=True, timeout=TIMEOUT,

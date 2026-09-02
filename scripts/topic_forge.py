@@ -1595,7 +1595,7 @@ def main() -> int:
                          "（`assign_new_families` の節）")
     ap.add_argument("--per-family", type=int, default=1,
                     help="`--new-family` のとき、1族あたり何件 書かせるか（既定 1）")
-    ap.add_argument("--model", default="opus")
+    ap.add_argument("--model", default="claude-fable-5-1")
     args = ap.parse_args()
     if args.new_family:
         args.long = True

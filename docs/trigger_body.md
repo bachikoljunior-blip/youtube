@@ -17,7 +17,9 @@
 
     isolation: "worktree"
     run_in_background: true
-    model: "opus"      ← オーナー指示「一次サブはOpus5でやってね」
+    （model は付けない ＝ 親と同じ `claude-fable-5-1` を継ぐ）
+        ← オーナー指示 2026-09-02「Fable5.1のウルトラコードにした。全てこれに置き換えて」
+           （08/31 の「一次サブはOpus5でやってね」は、これで上書きされました）
 
 **cwd が repo の中でないと worktree が作れません。**「Stage 2 classifier error」は撃ち直すこと。
 立てたら `python scripts/next_round.py --record hourly,optimizer` → `data/` を commit して push。
