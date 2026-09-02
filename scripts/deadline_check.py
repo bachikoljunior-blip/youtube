@@ -1353,6 +1353,52 @@ def _ans_accrual(need: dict, as_of: date) -> Answer:
     if _counts_videos(expr):
         from src import house_rule                          # noqa: PLC0415
         cap = float(house_rule.PUBLISH_PER_DAY)
+        # --- **規則は天井であって、床ではありません**（2026-09-02 11:5x に足した）---
+        #
+        #   すぐ下の押さえは「規則（1日1本）より速い伸び率は名乗らない」だけで、
+        #   **規則より遅い実物は見ていませんでした。**
+        #
+        #   実測（2026-09-02 11:4x・`clarity_ear_load_sign`）:
+        #
+        #       この行が出していた文    「要 135 ／ いま 113（1.00/日）→ **あと 22日**」
+        #       前提の期限              **2026-09-25**（23日後）＝ 間に合う、と読めます
+        #       予約の実物              今後21日（〜09/23）のうち **20日 が空**
+        #                               実際の密度 **0.05本/日 ＝ 規則の 5%**
+        #       その密度での本当の日数  **約 460日**
+        #
+        #   `clarity_books()` が増えるのは**公開した本のぶんだけ**です
+        #   （貯めは尽きています —— `scripts/retention.py` は 63本 引きに行って
+        #    空 61本／エラー 2本、**0本 しか足しません**）。
+        #   つまり **この前提は、暦を 1本/日 に戻さないかぎり期限までに閉じません。**
+        #   それを「あと 22日」と印字していました。
+        #
+        #   **これは θ に直で効きます** —— `scripts/eta.py` は
+        #   「軌跡の腕が動くのは前提を1件 閉じたときだけ」と毎周 印字しており、
+        #   閉じられない前提を「あと22日」と数えているぶん、θ は高く出ます。
+        #
+        #   **覆る条件**: `scripts/reschedule.py --compact --apply` で暦が
+        #   1本/日 に戻れば、`near_density` が 1.0 になり、この押さえは
+        #   何もしなくなります（＝ 押さえが効いている間は、暦が薄いということです）。
+        cal_note = ""
+        try:
+            from src import next_slot                       # noqa: PLC0415
+            cal = next_slot.calendar()
+            near = float(cal.get("near_density") or 0.0)
+            nd = int(cal.get("near_days") or 0)
+            # 窓が短すぎる（数日）と、たまたま空いた日で全部を決めてしまいます。
+            if nd >= 7 and 0.0 <= near < cap:
+                cal_note = (f"。**さらに予約の実物で押さえています**"
+                            f"（規則は {house_rule.PUBLISH_PER_DAY}本/日 ですが、"
+                            f"今後 {nd}日（〜{cal.get('near_until')}）に実際に入っている"
+                            f"のは **{near:.2f}本/日 ＝ 規則の "
+                            f"{near / cap * 100:.0f}%**。"
+                            f"**この数が増えるのは公開した本のぶんだけ**なので、"
+                            f"空いた日はそのまま待ち時間になります）"
+                            f" —— **暦を戻す手**: `python scripts/reschedule.py --compact`"
+                            f"（0単位で案・`--apply` で実行）")
+                cap = near
+        except Exception:                                    # noqa: BLE001
+            cal_note = ""
         if rate > cap:
             # **なぜ速いのかは、式ごとに違います**（2026-09-02 に足した）。
             #   ここは長らく「**作った本**の平均だから」1つだけを名乗っていました。
@@ -1368,7 +1414,8 @@ def _ans_accrual(need: dict, as_of: date) -> Answer:
                    "その速さは**貯めを一度に引いた回**が `since` の窓に入っているぶんで、"
                    "貯めが尽きた後に増えるのは公開した本のぶんだけです")
             cap_note = (f"。**伸び率を規則（1日{house_rule.PUBLISH_PER_DAY}本）で"
-                        f"押さえています**（実測の平均は {rate:.2f}本/日 ですが、{why}）")
+                        f"押さえています**（実測の平均は {rate:.2f}本/日 ですが、{why}）"
+                        + cal_note)
             rate = cap
     days = math.ceil((want - have) / rate)
     # **帯の幅**: 積み上げの数え上げ誤差 ≒ 1/√have（件数の相対標準誤差）を日数へ移す。

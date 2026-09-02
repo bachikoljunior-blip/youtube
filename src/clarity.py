@@ -197,6 +197,7 @@ CURVES = config.ROOT / "data" / "retention.json"
 #: —— `retention.py` が 500 で 0本 しか足さず、n が 113 のまま、
 #: 表は前の回と1桁も違わないのに「2回目の ★」に見えました）。
 LEDGER = config.ROOT / "data" / "clarity.jsonl"
+VIEWS = config.ROOT / "data" / "views.jsonl"
 
 #: **昇格の条件**（`docs/JOURNAL.md`「次の回へ」2. の原文を数にしたもの）——
 #: 「`文字/コマ` が 2回 続けて門を越えたら（**別々の回・n が増えた状態で**）、
@@ -449,6 +450,54 @@ def streak(measure: str, rows: list[dict] | None = None) -> int:
     return out
 
 
+def views_map() -> dict[str, int]:
+    """`video_id` → 観測した最大の累計再生（`data/views.jsonl`）。**API 0単位。**
+
+    `videos.list` の累計なので、Analytics の3日遅れは掛かりません。
+    """
+    out: dict[str, int] = {}
+    if not VIEWS.exists():
+        return out
+    for line in VIEWS.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        try:
+            r = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        vid, v = r.get("id"), r.get("views")
+        if vid and isinstance(v, (int, float)):
+            out[str(vid)] = max(out.get(str(vid), 0), int(v))
+    return out
+
+
+def views_table(bs: list | None = None) -> dict:
+    """物差し × **1本あたり再生**の順位相関。`(n, {物差し: rho})`。
+
+    ## なぜ別に要るか（2026-09-02 11:5x）
+
+    `OUTCOMES` は3つとも**維持率**です —— 「入ってきた人が最後まで見たか」。
+    **`eta.py` が「引けるのは `per_video` だけ」と名指ししている腕は、そこではありません** ——
+    あちらは「**何人が見に来たか**」（`rule_per_video.ceiling_at_rule()` ＝ 4,101回）で、
+    **別の軸**です。維持率と再生数は逆相関することがあります
+    （`analytics.fetch_retention` の註 —— 実測 537再生で相対0.50、1506再生で相対0.25）。
+
+    **＝ 維持率で越えた物差しが、天井のほうにも効く保証はありません。**
+    この表は、その1点だけを見ます。
+    """
+    bs = books() if bs is None else bs
+    vm = views_map()
+    pairs = [(rows, vm[vid]) for vid, _c, rows in bs if vid in vm]
+    out: dict = {"n": len(pairs), "門": significant_at(len(pairs)) if len(pairs) > 2 else float("inf"),
+                 "rho": {}}
+    if len(pairs) < 3:
+        return out
+    ys = [v for _r, v in pairs]
+    for mname, (fn, _sign) in MEASURES.items():
+        out["rho"][mname] = spearman([fn(rows) for rows, _v in pairs], ys)
+    return out
+
+
 def report_lines() -> list[str]:
     bs = books()
     if len(bs) < 3:
@@ -490,6 +539,18 @@ def report_lines() -> list[str]:
             out.append("  [!] **配線ずみの物差しだけ、3つの出口の全部で向きが逆です。**"
                        "「多いほど分かりにくい」の側の証拠は1つもありません"
                        "（`config/hypotheses.yaml` の `clarity_ear_load_sign`）")
+    # ---- 腕（`per_video`）のほうにも当ててみる ----
+    vt = views_table(bs)
+    if vt["n"] >= 3:
+        vhit = [m for m, r in vt["rho"].items() if abs(r) >= vt["門"]]
+        out.append(f"  **1本あたり再生（＝ 引ける腕 `per_video`）に当てると**（n={vt['n']}"
+                   f"・門 {vt['門']:.3f}）: "
+                   + (f"**{len(vhit)}件 が門を越えます**（"
+                      + "・".join(f"{m} {vt['rho'][m]:+.3f}" for m in vhit) + "）"
+                      if vhit else "**1件も越えません**"))
+        out.append("      **維持率で越えた物差しが、天井のほうにも効くとはかぎりません**"
+                   " —— 維持率は「入った人が残ったか」、こちらは「何人 来たか」で別の軸です"
+                   "（`analytics.fetch_retention` の註: 実測で逆相関することがあります）")
     # ---- ここから下は「この ★ を、前の回の ★ と足してよいか」だけを言います ----
     # **表の ★ は n が動かなくても同じ字で出ます。** だから目で2回 見ても
     # 「2回 続けて越えた」の証拠になりません（2026-09-02 に踏みかけた形）。
