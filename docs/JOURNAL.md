@@ -97471,3 +97471,34 @@ docstring は「窓の幅を決め打つと次の与件でまた踏む」と書�
 5. 残る赤4件（`test_judgeable[opening_motion]` / `test_live_slots` /
    `test_request_form` 系2件）は**この回のものではありません**（1行も触っていない）。
    暦の穴が埋まるまで土台ごと動きます。
+
+### **全件走査の赤 7件 —— 3件は私のぶんでした**（同じ回で全部 直した）
+
+`pytest tests/ -q` を1周ぶん走らせて（21分）出た7件の内訳:
+
+    私のぶん 3件
+      test_deadline_check::test_遅すぎる期限が残っていないこと      ← 上の節で直した
+      test_hypothesis_deadline_reachable::…どちらかに入っていること  ← CHECKABLE/UNCHECKABLE に無かった
+      test_watches::test_数の門を持つ未判定の仮説は台帳を指している    ← `watch:` が無かった
+    私のぶんではない 4件（1行も触っていない・前の回からの持ち越し）
+      test_judgeable[opening_motion] / test_live_slots
+      test_request_form 系2件
+
+**3件とも「前提を1件 立てたら、他の3か所も同時に埋めろ」という同じ形**です
+（台帳の期限・当てられるかの一覧・待ちの台帳）。**この repo は同じ所で3回 転んでいます**
+（`配信抑制-0824` と `長尺1本あたり-30本` の註が「**`watch:` を書いたら、その場で置くこと**」
+と書いています）。**4回目をやったのが私です。**
+
+- `tests/test_hypothesis_deadline_reachable.py` の `UNCHECKABLE` に理由つきで追加
+  （床が `clarity_books()` ＝ **予約に在る本ではなく、カーブを取り終えた本**なので
+  `earliest_*` が当たらない。**`CHECKABLE` へ移す条件**も書いた）
+- `config/watches.yaml` に `人にわかるか-耳の負荷-135本`（`kind: hypothesis_needs` ＝
+  **数を写さない**。床は前提の `needs` に訊く）＋ 前提に `watch:` を1行
+
+→ `status.py` が毎周 出すようになりました:
+**「あと 22　人にわかるか-耳の負荷-135本（いま 113 / 要る 135）」**
+
+**覆る条件**: 「前提を立てる」が4か所の同時更新を要るのは、**道具の側の欠陥**かもしれません。
+次に前提を立てる回が同じ3件を赤にしたら（＝5回目）、直すのは回の注意力ではなく
+**`run_marker.py --ship --kind premise` が立てた直後に3か所を点検して名指しする**ほうです
+（いまは全件走査で21分 待たないと分かりません）。

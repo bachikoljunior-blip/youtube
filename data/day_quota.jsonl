@@ -5798,3 +5798,8 @@
 {"at": "2026-09-01T22:05:05+00:00", "detail": "channels.list mine", "by": "history.py:_scan"}
 {"at": "2026-09-01T22:05:15+00:00", "detail": "channels.list mine", "by": "history.py:_scan"}
 {"at": "2026-09-01T22:05:18+00:00", "detail": "channels.list mine", "by": "history.py:_scan"}
+{"at": "2026-09-02T01:47:55+00:00", "detail": "status: Data API 読み", "by": "status.py:main"}
+{"at": "2026-09-02T01:47:56+00:00", "detail": "videos.list snapshot", "by": "snapshot.py:main"}
+{"at": "2026-09-02T01:48:36+00:00", "detail": "channels.list mine", "by": "history.py:_scan"}
+{"at": "2026-09-02T01:48:45+00:00", "detail": "channels.list mine", "by": "history.py:_scan"}
+{"at": "2026-09-02T01:48:48+00:00", "detail": "channels.list mine", "by": "history.py:_scan"}
