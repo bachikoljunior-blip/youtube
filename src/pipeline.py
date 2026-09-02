@@ -417,6 +417,25 @@ def main(argv: list[str] | None = None) -> int:
     topic = pick_topic(pool, posted, topic_id)
     if args.calc:
         topic = {**topic, "calc": args.calc}
+
+    # **題材ごとの尺**（2026-09-03・最適化の回）。`config/channel.yaml` の
+    # `target_minutes: 6` はチャンネル全体の1つの値で、**題材の側から尺を
+    # 変える口が無かった**。外の同じ帯の上位（`data/niche_ceiling.jsonl`・
+    # 今年の長尺 p90 624,772回）は尺の中央が **26分**、自分の長尺は 5分 で
+    # 48時間 中央値 **1回**。前提「外の作り方を写した長尺」
+    # （`config/hypotheses.yaml`・期限 09-07）は 20分以上 を要るのに、
+    # この機械は 7.5分 より長い本を**作れませんでした**（上限 ＝ 目標＋1.5分）。
+    # `topics.yaml` に `minutes: 20` と書いた題材だけ、その尺で作る。
+    # **覆る条件**: その前提が外れたら（48h で 100回 未満）、`minutes:` を
+    # 持つ題材を増やさないこと（口は残してよい。使う理由が無くなるだけ）。
+    if not args.short and topic.get("minutes"):
+        want = float(topic["minutes"])
+        channel["video"] = dict(channel["video"])
+        channel["video"]["target_minutes"] = want
+        channel["video"]["min_minutes"] = round(want * 0.8, 1)
+        channel["video"]["max_minutes"] = round(want * 1.25, 1)
+        print(f"[pipeline] 題材の尺で作ります: 目標 {want:g}分"
+              f"（下限 {channel['video']['min_minutes']}分・上限 {channel['video']['max_minutes']}分）")
     print(f"=== テーマ: {topic['title_seed']} ({topic['id']}) ===")
     if not args.script and not topic.get("calc"):
         # 台本を生成させるのに計算が無いと、数字を発明させることになる。

@@ -769,6 +769,85 @@ def _hour_default(day: date | None = None) -> int:
         return 9
 
 
+def _outside_long_deadline() -> str:
+    """前提「外の作り方を写した長尺」の期限（`config/hypotheses.yaml`）。無ければ空。0単位。"""
+    try:
+        import yaml                                            # noqa: PLC0415
+        data = yaml.safe_load((ROOT / "config" / "hypotheses.yaml").read_text(encoding="utf-8"))
+        items = data.get("hypotheses") if isinstance(data, dict) else data
+        for h in items or []:
+            claim = str((h or {}).get("claim") or "")
+            if "写した長尺" in claim and not (h.get("closed_on") or h.get("verdict")):
+                return str(h.get("deadline") or "")
+    except Exception:                                          # noqa: BLE001
+        pass
+    return ""
+
+
+def outside_long_lines(day: date, cur: dict | None, now: datetime | None = None,
+                       topics: list[dict] | None = None,
+                       drafts: list[dict] | None = None) -> list[str]:
+    """**外の作りを写した長尺**（`topics.yaml` の `style: outside_long`）が、池に在るか・
+    その日の1本になっているかを1〜3行で出す。**API 0単位。**
+
+    ## なぜ要るか（2026-09-03 02:xx・最適化の回）
+
+    前の最適化の回（01:5x）は「理論値が在る形は長尺」を画面に出し、前提
+    「外の作り方を写した長尺」（48h で 100回）を立てて、こう書き残した ——
+    **「主実行が 09-09 までに長尺を1本も作らなかったら、この回の手は画面を1つ増やしただけ。
+    そのときは `--pick` の既定を理論値の在る形に倒すこと」**。その1時間後の主実行は `fix` を出し、
+    09/03・09/04 の1本はどちらもショートに決まっていた（`data/daily_pick.jsonl`）。
+    **画面が「長尺」と言っても、決める行は「ショート 173回 対 長尺 1回」の数で書かれる** ——
+    その 1回 は「いまの作り方の長尺」の数で、外の作りの長尺はまだ 1本も測っていない。
+    測っていない形を、測った数で落とすのが鏡の中の回り方だった。
+
+    だからここは、**外の作りの長尺の下書きが池に在る日は、その日の1本をそれにする行**を出す
+    （在るのに別の本を決めていたら名指しする。無ければ作る手を出す）。決めるのは回のままだが、
+    「数字で上書きする」の数字は、この行が渡す（外の p90 ÷ 自分の中央値・前提の期限）。
+
+    **覆る条件**: 前提が閉じたら（当たり・外れどちらでも）この行は要らない —— 当たりなら
+    `by_form()` の長尺の中央値が自分で上がって順位が入れ替わる。外れなら `next_if_false`
+    （ショートの p90 ×10 を先に取る）へ。`_outside_long_deadline()` が空を返した日から消えます。
+    """
+    dl = _outside_long_deadline()
+    if not dl:
+        return []
+    tops = [t for t in (topics if topics is not None else _topics())
+            if str(t.get("style") or "") == "outside_long"]
+    if not tops:
+        return []
+    ids = {t["id"] for t in tops}
+    if drafts is None:
+        try:
+            from . import next_slot                                # noqa: PLC0415
+            drafts = next_slot.drafts(now)
+        except Exception:                                          # noqa: BLE001
+            drafts = []
+    have = [d for d in drafts if str(d.get("topic") or "") in ids]
+    out: list[str] = []
+    if have:
+        d = have[0]
+        vid = str(d.get("video_id") or "")
+        out.append(f"     **外の作りを写した長尺の下書きが池に在ります**: `{vid}` `{d.get('topic')}`"
+                   f"（前提「外の作り方を写した長尺」期限 {dl}・48h で 100回 が門。"
+                   f"**測っていない形を、いまの作り方の長尺の 1回 で落とさないこと**）")
+        if not cur or str(cur.get("video_id") or "") != vid:
+            out.append(f"     → **{day:%m/%d} の1本はこれにすること**（`by_form()` の長尺 1回 は"
+                       f"『5分・計算1本』の数で、この本の数ではない。外の長尺 p90 は自分の中央値の ×624,772・"
+                       f"`outside_lines`）:")
+            out.append(f"       python -m src.daily_pick --pick 長尺 {d.get('topic')} --video {vid}"
+                       f" --day {day:%Y-%m-%d} --why \"外の作りを写した長尺の1本目（前提の判定・期限 {dl}）。"
+                       f"外の長尺 p90 ÷ 自分の中央値 1回\"")
+    else:
+        out.append(f"     [!] **外の作りを写した長尺は、まだ池に1本も在りません**（題材 "
+                   + "・".join(f"`{t['id']}`" for t in tops[:3])
+                   + f"・前提の期限 {dl}）。作るのは 0単位・上げるのは `videos.insert`＝日枠の外:")
+        out.append(f"       python -m src.pipeline --topic {tops[0]['id']} --dry-run"
+                   f" && python scripts/inspect_build.py {tops[0]['id']}"
+                   f" && python scripts/upload_only.py {tops[0]['id']} --draft")
+    return out
+
+
 def lines(next_row: dict | None, now: datetime | None = None,
           cmp: dict | None = None, picks_path: Path | None = None,
           topics: set[str] | None = None, cands: list[dict] | None = None,
@@ -863,6 +942,8 @@ def lines(next_row: dict | None, now: datetime | None = None,
                        f" && python scripts/upload_only.py {oth} --draft")
     cur = current(day, picks_path)
     hour = _hour_default(day)
+    if cmp is None and picks_path is None:
+        out.extend(outside_long_lines(day, cur, now=now))
     if cur:
         vid = cur.get("video_id")
         out.append(f"     **{day:%m/%d} の1本: {cur.get('form')} `{cur.get('topic')}`"
