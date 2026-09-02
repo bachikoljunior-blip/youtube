@@ -313,17 +313,24 @@ def _clock_block(live: bool = True) -> str:
         w = w.astimezone(JST)
         if w <= now:
             out.append("")
+            # **`--compact --apply` を名指ししないこと**（2026-09-02・規則5）。
+            #   固定その4「現在の日付にしか予約しない」の下では、あれは
+            #   **先の日付へ並べ直す禁じ手**です（道具の側も撃たなくしてあります）。
+            #   `videos.update` の要る手として名指しするのは、**外す側**のほう。
             out.append("    日枠: **いま撃てます**"
-                       "（`videos.update` の要る手 —— `reschedule --compact --apply` /"
-                       " 差し替えの2手 —— が、この回に通ります）")
+                       "（`videos.update` の要る手 —— `pool_drain --apply --keep 0`"
+                       "（**先の日付の予約を外す**）/ 次の枠の1本の差し替えの2手 /"
+                       " その日の枠への `reschedule --move` —— が、この回に通ります）")
         else:
             hrs = (w - now).total_seconds() / 3600.0
             out.append("")
             out.append(f"    日枠: **いまは 403 です。戻るのは {w:%m/%d %H:%M} JST"
                        f"（あと {hrs:.1f}時間）** ——"
-                       " それより前に `videos.update` の要る手（`--apply`・差し替え）を"
-                       "名指しされていても、**この回では撃てません。**"
-                       " 0単位 の手（`--compact` の案 / `premise` / 台本の側）へ振ること")
+                       " それより前に `videos.update` の要る手（`pool_drain --apply`・"
+                       "差し替え・`--move`）を名指しされていても、**この回では撃てません。**"
+                       " 0単位 の手（`premise` / 台本の側 /"
+                       " **次の日の1本を `upload_only.py <ID> --draft` で上げる**"
+                       " —— `videos.insert` は日枠を使いません）へ振ること")
     return "\n".join(out)
 
 
