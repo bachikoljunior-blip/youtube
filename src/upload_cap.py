@@ -747,6 +747,40 @@ def measured_budget(now: datetime | None = None) -> dict:
 #:   `tests/test_insert_never_marked_ok.py` が理由ごと見ています）
 RESERVE_UNITS = 400
 
+#: **取り置きの中から、次に出る1本の書き込み 1回ぶんだけは通す**（2026-09-02 に踏んだ）。
+#:
+#: ## なぜ要るか —— **門が、自分で名指しした相手を止めていました**
+#:
+#: `_ledger_hold()` の返り文は、こう言います（**実物・09/02 16:5x**）:
+#:
+#:     残しているのは、**前提を閉じる読み**と**次の1本を良くする書き込み**
+#:     （`improve`・50単位）のためです
+#:
+#: そして同じ回に `python scripts/refresh_thumbnail.py --missing --video MqQKSnbM0OI`
+#: —— **まさにその「次の1本を良くする書き込み・50単位」** —— を、
+#: この門が止めました。**取り置きは、名指しした相手からも取り置いていました。**
+#:
+#: 取り置きはただの床（`used < cap - RESERVE_UNITS`）で、
+#: **誰が撃つかを1文字も見ていません。** 文と実装が別だった、この repo で
+#: いちばん多い壊れ方の、この門ぶんです。
+#:
+#: ## どこまで通すか
+#:
+#: **次に出る1本の 50単位 を、1回だけ**。呼ぶ側が `improve_one=True` を
+#: 渡したときに限り、取り置きが `RESERVE_UNITS - IMPROVE_UNITS` へ下がります。
+#: **繰り返しは、窓の数え上げではなく仕事のほうで止まります** ——
+#: サムネイルは載れば控えが `thumbnail_set: true` になるので、
+#: 同じ本へ2度目は流れません（`refresh_thumbnail` は「載っていない本」しか拾わない）。
+#: **束（`--missing` の全本・158本 ＝ 7,900単位）には渡しません。**
+#:
+#: ## 覆る条件
+#:
+#: 取り置きを食い切って 403 が出るようになったら（`day_quota().hits` が
+#: この窓で増えるのに `reserve_hold(improve_one=True)` が `None` を返していたら）、
+#: **ここを 0 にすること。** 読みの側（`videos.list` は 1単位）は
+#: 350単位 残るので、前提を閉じる回は止まりません。
+IMPROVE_UNITS = 50
+
 
 #: **もう1つの門。こちらは「帳面の側」で、読みも数えます**（2026-09-01 に足した）。
 #:
@@ -818,7 +852,7 @@ RESERVE_UNITS = 400
 #:   **帳面は消す側がまだ居ません**（2026-08-31 に置いたばかり）。10倍 に育つと
 #:   1回 72ms・190本 で 14秒 —— **そこまで来たら窓の合計を1回だけ数えて使い回すこと**
 #:   （いまやると、速くならない代わりに「窓の途中で増えた消費が見えない」を作ります）
-def _ledger_hold(now: datetime | None = None) -> str | None:
+def _ledger_hold(now: datetime | None = None, reserve: int | None = None) -> str | None:
     """**帳面（漏れない側）で見た取り置き**（API 0単位）。止めてよければ理由の文字列。
 
     `src/quota_ledger` は `HttpRequest.execute` を1点で包むので、
@@ -851,7 +885,8 @@ def _ledger_hold(now: datetime | None = None) -> str | None:
         cap = int(_ql.DAY_UNITS)
     except Exception:                                          # noqa: BLE001
         return None
-    room = cap - RESERVE_UNITS
+    keep = RESERVE_UNITS if reserve is None else int(reserve)
+    room = cap - keep
     if used < room:
         return None
     top = sorted(by.items(), key=lambda kv: -kv[1])[:2]
@@ -859,7 +894,7 @@ def _ledger_hold(now: datetime | None = None) -> str | None:
     tail = window_end(now or datetime.now(timezone.utc))
     back = tail.astimezone(JST).strftime("%m/%d %H:%M JST")
     return (f"**この窓の単位は、帳面の側で止めています**"
-            f"（使った {used:,} ／ 公表の枠 {cap:,} ／ 残す {RESERVE_UNITS}）。"
+            f"（使った {used:,} ／ 公表の枠 {cap:,} ／ 残す {keep}）。"
             f" **こちらは読みも数えます**（`measured_budget()` は書き込みだけ）。"
             f" いちばん食っているのは {who}。"
             f" 残しているのは、**前提を閉じる読み**と"
@@ -870,7 +905,8 @@ def _ledger_hold(now: datetime | None = None) -> str | None:
             f" どうしても書くなら `YT_NO_RESERVE=1`（理由を JOURNAL に）")
 
 
-def reserve_hold(now: datetime | None = None) -> str | None:
+def reserve_hold(now: datetime | None = None, *,
+                 improve_one: bool = False) -> str | None:
     """**この窓の単位が、計測のぶんまで減っていないか**（API 0単位）。
 
     書き込み（`videos.update` / `thumbnails.set`）を撃つ**前**に呼ぶこと。
@@ -880,16 +916,22 @@ def reserve_hold(now: datetime | None = None) -> str | None:
     無い窓では必ず `None` を返します。`RESERVE_UNITS` の註に理由。
 
     `YT_NO_RESERVE=1` で外せます（**外した回は理由を JOURNAL に**）。
+
+    `improve_one=True` は「**次に出る1本の書き込み 1回**（50単位）」の印です。
+    取り置きが `RESERVE_UNITS - IMPROVE_UNITS` へ下がります ——
+    この門の返り文が自分で名指ししている相手だからです（`IMPROVE_UNITS` の註）。
+    **束（`--missing` の全本）には渡さないこと。**
     """
     if os.environ.get("YT_NO_RESERVE"):
         return None
+    keep = max(0, RESERVE_UNITS - (IMPROVE_UNITS if improve_one else 0))
     # **帳面の側を先に見ること**（2026-09-01）。下の `measured_budget()` は
     # **書き込みしか数えない**ので、読みで焼けた窓を「まだ余っている」と答えます
     # （実測 2026-09-01: 9,400 と答えた窓で、通った消費は 12,859単位・403 を45回）。
     # こちらは `HttpRequest.execute` を1点で包む帳面なので漏れません。
     # **緩める向きには効きません** —— 帳面が黙る窓（行が0）では `None` を返し、
     # 判断はそのまま下の門へ落ちます。`_ledger_hold` の註に「なぜ円環でないか」。
-    held = _ledger_hold(now)
+    held = _ledger_hold(now, reserve=keep)
     if held:
         return held
     try:
@@ -900,12 +942,12 @@ def reserve_hold(now: datetime | None = None) -> str | None:
     if not floor:
         return None                    # 実測が無い窓では止めない（推測で止めない）
     spent = int(b.get("spent") or 0)
-    if spent < floor - RESERVE_UNITS:
+    if spent < floor - keep:
         return None
     tail = window_end(now or datetime.now(timezone.utc))
     back = tail.astimezone(JST).strftime("%m/%d %H:%M JST")
     return (f"**この窓の単位は、計測のぶんを残して止めています**"
-            f"（使った {spent:,} ／ 実測の枠 {floor:,} ／ 残す {RESERVE_UNITS}）。"
+            f"（使った {spent:,} ／ 実測の枠 {floor:,} ／ 残す {keep}）。"
             f" 残しているのは、**前提を閉じる読み**のためです"
             f"（`videos.list` は 1単位。`eta.py`: 軌跡の腕が動くのは前提を1件"
             f"閉じたときだけ）。窓が変わるのは {back}。"

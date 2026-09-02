@@ -392,7 +392,33 @@ def push_missing(dry_run: bool = False, force: bool = False,
     #
     # 残しているのは**前提を閉じる読み**です（`videos.list` は 1単位）。
     # `eta.py`: 軌跡の腕が動くのは前提を1件 閉じたときだけ。
-    hold = upload_cap.reserve_hold()
+    # --- **次に出る1本の 50単位 は、取り置きの中から通す**（2026-09-02 に踏んだ）---
+    #
+    #     この門の返り文は、自分でこう名指しします ——
+    #     「残しているのは、前提を閉じる読みと**次の1本を良くする書き込み**
+    #       （`improve`・50単位）のためです」。
+    #     そして同じ回に、**まさにその 50単位** を止めました。
+    #     取り置きはただの床で、**誰が撃つかを1文字も見ていません。**
+    #
+    #     渡すのは「`--video` で1本だけ」かつ「その1本が**次に出る本**」のときだけ。
+    #     束（`--missing` の全本・実測 158本 ＝ 7,900単位）には渡しません。
+    #     見分けは `src.next_slot`（**API 0単位**）——
+    #     予約ずみなら `next_video()`、規則5 で予約がまだ無ければ `drafts()` の先頭。
+    _improve_one = False
+    if only_video and not only_long:
+        try:
+            from src import next_slot as _ns                    # noqa: PLC0415
+            _nxt = _ns.next_video()
+            _ids = {str((_nxt or {}).get("video_id") or "")}
+            _ids |= {str(r.get("video_id") or "") for r in _ns.drafts()[:1]}
+            _improve_one = only_video in (_ids - {""})
+        except Exception as exc:                                # noqa: BLE001 — 止めない
+            print(f"[thumb] 次に出る1本を見分けられませんでした: {str(exc)[:80]}")
+    if _improve_one:
+        print("[thumb] **これは「次に出る1本」です** —— "
+              "取り置き（`RESERVE_UNITS`）から 50単位 だけ通します"
+              "（`upload_cap.IMPROVE_UNITS`）。束には渡しません")
+    hold = upload_cap.reserve_hold(improve_one=_improve_one)
     if hold:
         print(f"[thumb] {hold}")
         print("[thumb] **押しません**（`--force` ではなく `YT_NO_RESERVE=1` で外せます）。"
