@@ -39,3 +39,5 @@
 {"fetched_at": "2026-09-01T06:14:00+09:00", "window_id": "five_hour", "used_percent": 21, "remaining_percent": 79, "source": "owner-manual", "note": "同じ画面の『現在のセッション』。**週枠の判断には使わない**（分母が別）", "resets_at_iso": "2026-08-31T22:59:00Z"}
 {"fetched_at": "2026-09-01T11:55:00+09:00", "window_id": "seven_day", "used_percent": 73, "remaining_percent": 27, "resets_at_iso": "2026-09-04T22:00:00Z", "source": "owner-manual", "note": "Fableのみ9%・使用クレジット オン・月間上限0"}
 {"fetched_at": "2026-09-01T11:55:00+09:00", "window_id": "five_hour", "used_percent": 16, "remaining_percent": 84, "source": "owner-manual", "note": "同じ画面の『現在のセッション』。**週枠の判断には使わない**（分母が別）", "resets_at_iso": "2026-09-01T03:59:00Z"}
+{"fetched_at": "2026-09-02T10:43:00+09:00", "window_id": "seven_day", "used_percent": 3, "remaining_percent": 97, "resets_at_iso": "2026-09-04T21:59:00Z", "source": "owner-manual", "note": "リセット後・Fable 0%"}
+{"fetched_at": "2026-09-02T10:43:00+09:00", "window_id": "five_hour", "used_percent": 3, "remaining_percent": 97, "source": "owner-manual", "note": "同じ画面の『現在のセッション』。**週枠の判断には使わない**（分母が別）", "resets_at_iso": "2026-09-02T05:59:00Z"}
