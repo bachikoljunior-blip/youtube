@@ -650,6 +650,18 @@ def short_script_problems(script, topic_id: str = "") -> list[str]:
     return problems
 
 
+def _topic_style(topic_id: str) -> str:
+    """`config/topics.yaml` の `style:`（無ければ空）。読めなければ空 —— 検査を増やす側に倒さない。"""
+    try:
+        from . import config                                   # noqa: PLC0415
+        for t in config.load_topics().get("topics", []):
+            if str(t.get("id") or "") == topic_id:
+                return str(t.get("style") or "")
+    except Exception:                                          # noqa: BLE001
+        pass
+    return ""
+
+
 def long_script_problems(script, topic_id: str = "") -> list[str]:
     """長尺の台本の不備を並べる。空なら合格。**`short_script_problems` の長尺版。**
 
@@ -727,6 +739,10 @@ def long_script_problems(script, topic_id: str = "") -> list[str]:
     # あちらは「言った数が絵に在るか」、こちらは「耳がいくつ持たされるか」。
     # 理由と覆る条件は `verify._check_ear_load` の docstring。
     problems += [p.strip() for p in verify._check_ear_load(data)]
+    # **外の作りを写す題材は、冒頭の型も写しているか**（2026-09-03 05:xx・最適化の回）。
+    # `style: outside_long` の題材だけ。理由と覆る条件は `outside_opening_problems` の docstring。
+    if topic_id and _topic_style(topic_id) == "outside_long":
+        problems += outside_opening_problems(script)
     # **入り方と締め方が、直近の本と揃っていないか**（2026-08-30・解除条件3）。
     # **長尺のほうが深刻でした** —— 134本のうち 113本（84%）が同じ4文字で始まり、
     # 82本（61%）が同じ4文字で終わっています（`python -m src.frames`）。
@@ -1388,8 +1404,16 @@ OUTSIDE_LONG_RULE = """
 - 尺は20分前後。**計算を1本 見せる回ではなく、「どう受け取るかを決める」ための回**にする。
   見終わった人が「自分はこの月に受け取る」と決められる形。
 - 構成:
-  (1) 冒頭60秒で、結論と「決め方を間違えるといくら違うか」を計算出力の数字で言い切る
-      （差の金額と分岐の年齢。前提つきの試算だと1文で添える）。
+  (1) **冒頭 90秒（最初の 4コマ）は、外の上位4本の冒頭の順をそのまま写す**
+      （`data/niche_thumbs/<id>.opening.txt`・自動字幕の実物。5.0M／4.4M／3.3M／2.9M 回の4本が同じ順）:
+        a. 1文目: 結論か損得の額を1文で（計算出力の数字）。
+        b. 2文目: その額を「知らない側」がどうなるか（「知らないままだと…」「申請しないと1円も…」）。
+        c. 名乗り: 「こんにちは。〈チャンネル名〉です。今回は…について解説します。」
+        d. **視聴者への問いを2つ以上**（「皆さん、…と感じませんか？」「…ではないでしょうか？」
+           「…をご存知でしょうか？」）。主語は「皆さん」「あなた」＝ 2人称。3人称の解説で始めない。
+        e. 見続ける約束: 「最後まで見れば、自分の場合の数字が出せます」の1文 → 「それでは本題です」＋目次。
+      機械の検査 `outside_opening_problems` が a〜e を最初の 4コマ で数えます（名乗り・問い 2つ・皆さん／あなた 2つ・
+      「最後まで」）。**前提つきの試算だと1文 添えるのは変えない。**
   (2) 章を5〜7つ。**章ごとに判断を1つ**置く（65歳・70歳・75歳のどれか／額面で見るか手取りで見るか／
       何歳まで生きると置くか／あと1か月待つ値段／介護の負担割合が上がる月、など渡した表に在るもの）。
       章ごとに、渡した表から**別の表**を1枚以上 chart か table で出す。同じ表を2つの章で使わない。
@@ -1415,6 +1439,55 @@ ASK_TITLE_RULE = """
 - 全角32文字以内・#Shorts の規則はそのまま
 - **サムネイルと first_comment は変えないこと。** 変えると、何が効いたか分かりません
 """
+
+
+#: `outside_opening_problems` が見るコマ数（外の上位4本の冒頭 90秒 ≒ この機械の 4コマ・1コマ 20〜25秒）。
+OUTSIDE_OPENING_SEGS = 4
+_OUTSIDE_ADDRESS_RE = re.compile(r"皆さん|みなさん|あなた")
+_OUTSIDE_QUESTION_RE = re.compile(r"(ませんか|でしょうか|ですか|ますか)[？?]")
+_OUTSIDE_GREETING_RE = re.compile(r"こんにちは|こんばんは|おはようございます")
+_OUTSIDE_PROMISE_RE = re.compile(r"最後まで")
+
+
+def outside_opening_problems(script, first: int = OUTSIDE_OPENING_SEGS) -> list[str]:
+    """`style: outside_long` の台本の冒頭が、外の上位4本の冒頭の型（`OUTSIDE_LONG_RULE` (1) a〜e）に
+    なっているかを**数えて**並べる。空なら合格。**API 0単位・純関数。**
+
+    ## なぜ要るか（2026-09-03 05:xx・最適化の回）
+
+    「外の作り方を写した長尺」の1本目 `6PKux5HNnUE` は、題・尺・絵を写して**冒頭を写していなかった**:
+    最初の 4コマ に 名乗り 0・問い 0・「皆さん／あなた」0・「最後まで」0（3人称の解説）。
+    外の上位4本（`data/niche_thumbs/<id>.opening.txt`・自動字幕）は 90秒 に 問い 2〜3・「皆さん」2〜3・
+    名乗り 1・「最後まで」1〜2 で揃っている。自分の長尺は 15〜30% の間にいちばん去る（`daily_pick` の中央カーブ）
+    ので、写していない所のうち、いちばん先に見られるのがここ。**文章の指示は守られない**（`generate()` の
+    実測 2026-08-09）ので、数える。
+
+    **覆る条件**: 前提「外の作り方を写した長尺」が外れたら（48h で 100回 未満）、`OUTSIDE_LONG_RULE` ごと
+    使わない（`config/hypotheses.yaml` の `next_if_false`）。当たっても、冒頭を外の型に**した本**と
+    **していない本**の 48h が同じなら、この検査は落とす側に回さず `[!]` の印字だけに戻す。
+    """
+    segs = list(getattr(script, "segments", None) or (script.get("segments") if isinstance(script, dict) else []) or [])
+    if not segs:
+        return []
+    head = "".join(
+        (getattr(x, "narration", None) if not isinstance(x, dict) else x.get("narration")) or ""
+        for x in segs[:first])
+    problems: list[str] = []
+    n_addr = len(_OUTSIDE_ADDRESS_RE.findall(head))
+    n_q = len(_OUTSIDE_QUESTION_RE.findall(head))
+    if not _OUTSIDE_GREETING_RE.search(head):
+        problems.append(f"冒頭 {first}コマ に名乗りが無い（「こんにちは。〈チャンネル名〉です。今回は…を解説します」の1文。"
+                        "外の上位4本は 4/4 が名乗る）")
+    if n_addr < 2:
+        problems.append(f"冒頭 {first}コマ で視聴者を「皆さん」「あなた」と呼んでいるのが {n_addr}回（2回以上。"
+                        "3人称の解説で始めない —— 外の上位4本は 90秒 に 2〜3回）")
+    if n_q < 2:
+        problems.append(f"冒頭 {first}コマ の視聴者への問い（「〜ませんか？」「〜でしょうか？」）が {n_q}つ（2つ以上。"
+                        "外の上位4本は 90秒 に 2〜3つ）")
+    if not _OUTSIDE_PROMISE_RE.search(head):
+        problems.append(f"冒頭 {first}コマ に見続ける約束が無い（「最後まで見れば、自分の場合の数字が出せます」の1文。"
+                        "外の上位4本は 4/4 に在る）")
+    return problems
 
 
 #: 冒頭の主役（1枚目の `note`）を問いの形にする割合。**0 にすると振り分けが止まります。**
