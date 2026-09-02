@@ -114,3 +114,84 @@ def test_台帳の名前は写さず正本から読む():
     printed = [ln for ln in src.splitlines()
                if "長尺1本あたり-30本" in ln and ('f"' in ln or "f'" in ln)]
     assert not printed, printed
+
+
+# ===================================================================
+# **比べる相手が居ない回**（2026-09-02 に足した。**この日、道具が落ちました**）
+#
+#   `python scripts/eta.py` が、手順（§2.6）の「最初の2手」で落ちました ——
+#
+#       TypeError: unsupported format string passed to NoneType.__format__
+#
+#   `_escape_form()` の `over` は `cap` が 0 のとき `None` を返します。
+#   `cap` は「**伸びきった形の記録の最大**」で、この日は**ショートまで
+#   `settled: False`** に落ちたので（`data/views.jsonl` の打ち切り補正が
+#   効く齢に届かなくなった）、伸びきった形が0 ＝ `cap` が 0 になりました。
+#   下の枝は `x{over:.2f}` を刷ろうとします。
+#
+#   **`escapes` の偽には2つの意味が混ざっていました** ——
+#     (1) 比べて、逃げ先のほうが低かった
+#     (2) **比べる相手が居ない**（`cap` が 0）
+#   画面は (2) を (1) の文（「この回に数え直して、逃げ先のほうが低いと出ました」）で
+#   刷ろうとして落ちます。**落ちなかったとしても、それは嘘です。**
+#
+#   ここで固定するのは3つ:
+#     1. `comparable` が、その2つを分ける
+#     2. `over` は `cap` が 0 のとき `None` のまま（0.0 に丸めない ＝「x0.00」は嘘）
+#     3. `_escape_lines()` が**どの形でも落ちない**（`headline()` の外へ出したので撃てます）
+# ===================================================================
+
+
+def test_伸びきった形が1つも無ければ比べられない():
+    e = eta._escape_form({
+        "ショート": {"best": 1891, "best_settled": 1891.0, "settled": False},
+        "長尺": {"best": 191, "best_settled": 525.25, "settled": False},
+    })
+    assert e["comparable"] is False, (
+        "**伸びきった形が1つも無い回です。** `cap` が 0 なので、"
+        "低いとも高いとも言えません")
+    assert e["escapes"] is False
+    assert e["over"] is None, "**0.0 に丸めないこと** ——「x0.00」は測った数ではありません"
+    assert e["all_unsettled"] == ["ショート", "長尺"]
+
+
+def test_比べられる回は_comparable_が真():
+    e = eta._escape_form(_recs(312.0))
+    assert e["comparable"] is True
+    assert e["escapes"] is False, "比べて、逃げ先のほうが低い回"
+
+
+def test_逃げ先の行はどの形でも落ちない():
+    """**この検査が無かったので、本物のデータでしか落ちませんでした。**"""
+    pl = {"lever_hint": "per_video", "lever_need_over_cap": 21.61}
+    for recs in (
+        {},
+        {"ショート": {"best": 1891, "best_settled": 1891.0, "settled": False},
+         "長尺": {"best": 191, "best_settled": 525.25, "settled": False}},
+        _recs(312.0),
+        _recs(3000.0),
+    ):
+        orig = eta._escape_form
+        eta._escape_form = lambda _r=None, _v=recs: orig(_v)
+        try:
+            got = eta._escape_lines(pl)
+        finally:
+            eta._escape_form = orig
+        assert isinstance(got, list)
+
+
+def test_比べられない回は低いとは言わない():
+    pl = {"lever_hint": "per_video", "lever_need_over_cap": 21.61}
+    orig = eta._escape_form
+    eta._escape_form = lambda _r=None: orig({
+        "ショート": {"best": 1891, "best_settled": 1891.0, "settled": False},
+        "長尺": {"best": 191, "best_settled": 525.25, "settled": False}})
+    try:
+        got = "".join(eta._escape_lines(pl))
+    finally:
+        eta._escape_form = orig
+    assert "逃げ先のほうが低いと出ました" not in got, (
+        "**比べていません。** `cap` が 0 の回に「低いと出ました」と刷らないこと")
+    assert "comparable: False" in got, got[:400]
+    assert "比べられません" in got and "伸びきったと言える形が1つも無い" in got
+    assert "ショート／長尺" in got, "**どの形が伸びきっていないか**を名前で出すこと"
