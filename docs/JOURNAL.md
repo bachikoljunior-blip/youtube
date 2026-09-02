@@ -101043,3 +101043,7 @@ Opus/Sonnet で足りた所: 検査の実行・commit/push・`uploaded.jsonl` �
 4. 次の長尺を作る回は `data/scripts/zaishoku-2026-62man.build.py` を写して、族を変えること
    （外の上位の題: 年金の受け取り方・ねんきん定期便に載らない年金・非課税世帯・貯蓄額）。
    台本は `claude -p` に書かせず、計算の出力から組むこと（一息 4個・言った数は絵に）。
+
+**この回の終わりの `fast_tests`（1,014 緑・5分19秒）: 赤 2件**（前の回と同じ名前・この回の変更とは無関係）: `tests/test_eta_pause_banner.py::test_silent_when_not_paused` ／ `tests/test_judgeable.py::test_実物で期限が構造的に守れる[opening_motion]`。この回で足した `zaishoku.check_tables()` の検査（620,000・0.007・差の上限 55,000・例1/例3 は 0・待機月数で単調）は `python -m src.calc.zaishoku` の冒頭で通過。
+
+**同じ枝で同時に走っていた回**（`af8f551c` / `f64079c1`）が `zaishoku-2026-62man` に `minutes: 20 / style: outside_long` を足し、もう1件「年金の受け取り方・20分」の題材を置いている。**上げたのはこの回の 6PKux5HNnUE の1本だけ**（`data/uploaded.jsonl`）。次の長尺は、あちらの題材で `data/scripts/zaishoku-2026-62man.build.py` の型を写すこと。
