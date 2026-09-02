@@ -184,3 +184,20 @@ def test_insert_の道は_控えが無ければ_何も撃たない(tmp_path):
     rc, new_id = sweep.place_by_insert(
         {"video_id": "no-such-video-zzz", "when": "2026-09-03T09:00"}, _jst(0, 30))
     assert rc == 2 and new_id is None
+
+
+def test_置く時刻は掃く側が先で_根拠が無ければ既定():
+    """**置く側が `config_hour()` しか読まず、掃き（`sweep_hour`）が助言止まりだった**
+    （2026-09-03 00:4x に踏んだ。`sweep_hour(09/04)`=17時・機械は 9時）。"""
+    import datetime as _dt
+    day = _dt.date(2026, 9, 4)
+    assert sweep.place_hour(day, sweep=lambda d: 17, config=lambda: 9) == 17
+    assert sweep.place_hour(day, sweep=lambda d: None, config=lambda: 11) == 11
+    assert sweep.place_hour(day, sweep=lambda d: None, config=lambda: None) == 9
+
+
+def test_place_today_は_place_hour_を読む():
+    import inspect
+    src = inspect.getsource(sweep.place_today)
+    assert "place_hour(" in src, "置く側が掃く時刻を読んでいません（`place_hour`）"
+    assert "config_hour()" not in src, "置く側が既定だけを読んでいます（掃きが助言止まりに戻る）"

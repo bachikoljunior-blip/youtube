@@ -251,7 +251,10 @@ def reasons_to_skip(now: datetime | None = None) -> str:
 #         → それも無ければ 次に出る下書き（`src.next_slot.next_video`）
 #       を `scripts/reschedule.py --move <id> <きょう>T<時>:00` で置く
 #
-# 時刻は `config/channel.yaml` の `publish_hour_jst`。その時刻を過ぎている回は、
+# 時刻は `place_hour()` —— **掃く側**（`src/publish_hour.sweep_hour`・偶数日は対照、
+# 奇数日は未試行の時刻）が先、根拠が無ければ `config/channel.yaml` の `publish_hour_jst`
+#（2026-09-03 00:4x に直した。それまで置く側だけが 9時 固定で、掃きは助言止まりだった）。
+# その時刻を過ぎている回は、
 # **いまから `TODAY_LEAD_MIN` 分 より先の、次の正時**（`TODAY_LAST_HOUR` まで）。
 # **明日には置きません**（`house_rule.refuse_future_publish` が断ります）。
 #
@@ -299,6 +302,51 @@ def today_slot(now: datetime, hour: int, *, lead_min: int = TODAY_LEAD_MIN,
     if slot.date() != t.date() or slot.hour > last_hour:
         return None
     return slot
+
+
+def place_hour(day, *, sweep=None, config=None) -> int:
+    """**その日に置く時刻（JST の時）。** 掃く側（`publish_hour.sweep_hour`）が先、
+    根拠が無ければ `config/channel.yaml` の既定、それも無ければ 9。**API 0単位。**
+
+    ## なぜ `config_hour()` だけではいけないか（2026-09-03 00:4x に踏んだ）
+
+    `src/publish_hour.sweep_hour()` は 09/01 に「**偶数日は対照（9時）・奇数日は
+    未試行の時刻**」と交互に置く形で足され、`scripts/slot_gate.py` はその時刻を
+    回に**助言**していました。ところが 09/02 に置く手そのものが回の裁量から
+    この関数（`place_today`）へ移り、**ここは `config_hour()`（9時 固定）しか
+    読んでいませんでした** —— 助言する側は掃き、置く側は掃かない。
+    「**言っている所と、している所が別**」（`src/publish_hour.py` 冒頭が名指しした、
+    この repo でいちばん多い壊れ方）が、道具を1段 移した日にそのまま再発していました。
+
+    実測 09/03 00:4x: `sweep_hour(2026-09-04)` は **17時**、機械が置くのは **9時**。
+    規則の密度で一度も試していない時刻は **20／24** のまま（`python -m src.publish_hour`）。
+    1日1本 ＝ 1日に1点しか増えないので、置く側が掃かない限り**永久に 0本** です。
+
+    `sweep`／`config` は検査のための差し替え口（省略時は `src.publish_hour` の実物）。
+
+    ## 覆る条件
+
+    - 前提（`config/hypotheses.yaml` の「公開時刻は per_video に効かない」）が閉じたら、
+      `sweep_hour()` 自身が対照だけを返すようになります。ここは変えなくてよい
+    - `sweep_hour()` が `None`（対照が `MIN_N` に届かない）のあいだは、既定に倒れます
+    """
+    try:
+        from src import publish_hour                            # noqa: PLC0415
+    except Exception:                                          # noqa: BLE001
+        publish_hour = None
+    h = None
+    try:
+        fn = sweep or (publish_hour.sweep_hour if publish_hour else None)
+        h = fn(day) if fn else None
+    except Exception:                                          # noqa: BLE001
+        h = None
+    if h is None:
+        try:
+            fn = config or (publish_hour.config_hour if publish_hour else None)
+            h = fn() if fn else None
+        except Exception:                                      # noqa: BLE001
+            h = None
+    return 9 if h is None else int(h)
 
 
 def today_plan(now: datetime, *, count: int, cap: int, candidate: dict | None,
@@ -519,13 +567,7 @@ def place_today(now: datetime | None = None, *, dry_run: bool = False) -> dict:
         quota_open = bool(upload_cap.day_quota(now).open)
     except Exception:                                          # noqa: BLE001
         quota_open = True
-    hour = None
-    try:
-        from src import publish_hour                            # noqa: PLC0415
-        hour = publish_hour.config_hour()
-    except Exception:                                          # noqa: BLE001
-        hour = None
-    hour = 9 if hour is None else int(hour)
+    hour = place_hour(now.astimezone(JST).date())
     cand = None
     if count < house_rule.cap():
         # **日枠が尽きていても候補は読む**（0単位）—— `videos.insert` の道が在るかは
