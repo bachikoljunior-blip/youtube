@@ -45,3 +45,6 @@ data/ahead_sweep.log
 data/.ahead_sweep.lock
 data/.today_place.lock
 data/.ahead_sweep.kick
+# 外の帯を撃つ印と log（`scripts/niche_ceiling.kick()`。2026-09-02 深夜）—— 同じ理由で配らない。
+data/niche_ceiling.log
+data/niche_ceiling.kick

@@ -402,6 +402,79 @@ def eta_line(need_over_cap: float | None = None, path: Path | None = None,
             "（`search.list` 100単位/語。**日枠が尽きていたら 429 で 0本**）")
 
 
+#: `kick()` の印と log。印が `KICK_EVERY` の内なら二度 起こさない。
+KICK_MARK = ROOT / "data" / "niche_ceiling.kick"
+KICK_LOG = ROOT / "data" / "niche_ceiling.log"
+KICK_EVERY = timedelta(hours=6)
+#: 帳面のその形が、これより若ければ撃ち直さない（`search.list` 100単位/語）。
+KICK_FRESH = timedelta(days=7)
+
+
+def kick(form: str = "short", now: datetime | None = None, *, root: Path | None = None,
+         mark: Path | None = None, ledger: Path | None = None,
+         every: timedelta | None = None, fresh: timedelta | None = None,
+         spawn=None) -> str:
+    """**毎日 出している形（ショート）の外の数を、回の意思と関係なく撃つ。** 返りは1行の理由。
+
+    ## なぜ要るか（2026-09-02 深夜・最適化の回）
+
+    `[きょうの1本]` は「撃つこと: `niche_ceiling.py --form short`」と印字しますが、
+    **この repo で印字された手は、選ばれなければ撃たれません**（09/01 の実測: fix 82%・
+    印字された `reschedule --pool` は毎朝 出て 0回）。`ahead_sweep.kick()` と同じ形で、
+    **実際に毎周 撃たれる口（`run_marker.py --write`）から背景で起こします。**
+
+    起こす条件（3つとも）:
+      - 帳面にその形が **`KICK_FRESH`（7日）より若い件が無い**
+      - 印 `KICK_MARK` が **`KICK_EVERY`（6時間）より古い**（429 の窓で毎周 撃たない）
+      - 台本生成の子プロセスではない
+
+    429 の回は帳面に書かず 2 で終わるので（`denied_lines()`）、印だけが進み、
+    次の窓（16:00 JST 以降）の周で撃ち直します。**成功すれば 7日 黙ります**（500単位/週）。
+
+    **覆る条件**: `search.list` の日枠が毎周 尽きているなら（`data/api_calls.jsonl` の
+    429 が連日）、`KICK_EVERY` を 24時間 にして 16:00 JST 直後に寄せること。
+    """
+    import os
+    import subprocess
+
+    now = now or datetime.now(timezone.utc)
+    root = Path(root or ROOT)
+    mark = Path(mark or KICK_MARK)
+    every = KICK_EVERY if every is None else every
+    fresh = KICK_FRESH if fresh is None else fresh
+    if os.environ.get("YOUTUBE_PIPELINE_CHILD"):
+        return "台本生成の子プロセスなので起こしません"
+    row = latest(ledger, form=form)
+    if row:
+        try:
+            age = now - datetime.fromisoformat(str(row["at"]))
+            if age < fresh:
+                return f"帳面に {form} が {age.days}日前 の件で在ります（{fresh.days}日 は撃ち直しません）"
+        except Exception:                                      # noqa: BLE001
+            pass
+    try:
+        raw = mark.read_text(encoding="utf-8").strip()
+        at = datetime.fromisoformat(raw) if raw else None
+        if at is not None and now - at < every:
+            return f"{(now - at).total_seconds() / 60:.0f}分 前に起こしてあります（`{mark.name}`）"
+    except (OSError, ValueError):
+        pass
+    try:
+        mark.parent.mkdir(parents=True, exist_ok=True)
+        mark.write_text(now.isoformat() + "\n", encoding="utf-8")
+        cmd = [sys.executable or "python3", "scripts/niche_ceiling.py", "--form", form, "--queries", "5"]
+        if spawn is not None:
+            spawn(cmd)
+        else:
+            log = open(root / KICK_LOG.name if root != ROOT else KICK_LOG, "ab")   # noqa: SIM115
+            log.write(f"\n=== {now.isoformat(timespec='seconds')} {' '.join(cmd[1:])}\n".encode())
+            subprocess.Popen(cmd, cwd=str(root), stdout=log, stderr=subprocess.STDOUT,
+                             stdin=subprocess.DEVNULL, start_new_session=True)
+    except Exception as exc:                                   # noqa: BLE001
+        return f"起こせませんでした: {str(exc)[:120]}"
+    return f"背景で起こしました（`--form {form} --queries 5`・500単位・log は `data/{KICK_LOG.name}`）"
+
+
 def render(res: dict) -> list[str]:
     rows = res["rows"]
     s = summarize(rows)

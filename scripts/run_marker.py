@@ -693,6 +693,14 @@ def write() -> int:
         print(f"[marker] きょうの1本: {_sweep.kick()}")
     except Exception as exc:                                   # noqa: BLE001
         print(f"[marker] きょうの1本: 起こせませんでした（{str(exc)[:80]}）")
+    # **外の帯を、毎日 出している形（ショート）で撃つ手も、ここから起こす**（2026-09-02 深夜）。
+    #     `[きょうの1本]` が印字する手は選ばれなければ撃たれません。帳面にショートが
+    #     7日以内に無く、印が 6時間 より古い周だけ背景で撃ちます（`niche_ceiling.kick()` の註）。
+    try:
+        import niche_ceiling as _nc                             # noqa: PLC0415
+        print(f"[marker] 外の帯: {_nc.kick()}")
+    except Exception as exc:                                   # noqa: BLE001
+        print(f"[marker] 外の帯: 起こせませんでした（{str(exc)[:80]}）")
     # **この回だけの一時置き場を、ここで掘って見せること**（2026-08-29 に足した）。
     # 共有の直下へ書くと、きょうだいが同じ名前で上書きします
     # （実測: `status.py` の出力 266行 → 24行）。`scratch_dir()` の註。
