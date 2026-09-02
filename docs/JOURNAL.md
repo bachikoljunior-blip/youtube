@@ -99763,6 +99763,37 @@ Fable 5.1 で回した最初の定期の回のうちの1つです。**新しい�
    （`…/9a47ee/`）に書きました。
 4. `git fetch` → `merge origin/claude/…` は fast-forward（数秒）。push は `HEAD:claude/…` で通りました。
 
+### 4. 親が `config/parents.txt` に無く、Stop フックが親を毎ターン引き止めていた（2つ目の ship・`fix`・腕 `none`）
+
+**この回に撃って分かった順に書きます**（上の 3-2 を確かめる途中で出た）。
+
+    コンテナの `CLAUDE_CODE_REMOTE_SESSION_ID`   → `session_01AHfq4FUVAd5fxDM29yG1Cm`（＝ 親の心拍の撃ち込む先）
+    `config/parents.txt`（親の checkout・44行）      → **この ID は無い**（最後の行は 08/25 の `01RzmEZy`）
+    `scripts/stop_check.sh` を親の立場で上から追う:
+      名簿で黙れない → SHIP_STATE は `shipped`（サブの印が同じ ID に見える）→ (1)(1.6) は通る
+      → **(2.0) `python scripts/relay.py --check` が exit 2**（親の checkout でも実測 2）
+        `cmd_check()` は `data/relay.jsonl` に自分の行が無ければ 2 —— あの台帳は 08/25 12:15Z で止まっていて、
+        いまの親の行は**永久に無い**（子セッション時代の受け渡し）→ **親を毎ターン 2回 引き止める**
+      → **(2)「終わる前の確認」が 5分に1回 引き止める**（`SENTINEL` は /tmp・親は常駐）
+
+**引き止められた親は、何か答えるしかありません。** 白名簿（4文だけ）を守っていても、
+フックが `{"decision":"block"}` を返せば、次のターンが強制されます。**08/16 に「親が `済み。` と
+答えていた」と `stop_check.sh` の頭に書いてある、あれと同じ形が、親の交代（08/30）から 3日 続いていました。**
+`goal_reminder.sh` も同じ名簿を読み、親の毎ターンに目標の全文を差し込んでいました（文脈の重さ）。
+
+直し: `config/parents.txt` に1行 足した（理由と覆る条件は名簿の中）。**親の checkout に届くのは、
+次の心拍の `git pull` から。** それまでのターンは、まだ引き止められます。
+サブへの副作用は名簿に書いたとおり（`is_parent()` は worktree で見るので、印は打てる）。
+
+**これは「親が喋る」原因の全部ではありません** —— 引き止められていないターンでも喋った回は在るはずで、
+そちらは指示の側です。**ただし機械が強制していたぶんは、これで止まります。**
+
+**もっと腐らない形**（次の回へ）: `stop_check.sh` / `goal_reminder.sh` が hook の stdin JSON の `cwd`
+（公式の hook 仕様: worktree の中なら `cwd` はその道、`CLAUDE_PROJECT_DIR` は根のまま）を読み、
+`.claude/worktrees/` の外なら親として黙る。**名簿に足し忘れる形（08/16・08/24・09/02 で3度目）が消えます。**
+同じ `cwd` で **`SubagentStop`** を足せば、上の 3-2 の「足すだけでは直らない」も解けます
+（worktree の `data/runs.jsonl` と `agent_id` で、その回の印だけを見られる）。
+
 ### 設計の見直し（§6 (a2)）
 
 1. **いちばん時間を食ったのは `eta.py` の 9分 と、焼き直しの 約4分半（10:11 → 10:15Z）**（どちらも対象のせい）。
@@ -99785,3 +99816,5 @@ Fable 5.1 で回した最初の定期の回のうちの1つです。**新しい�
 4. `SubagentStop`（上の 3-2）—— 設定の見直しの回へ。**足すだけでは直らない**理由も上に。
 5. 次の焼き直しは `--replaces 6GtzWaguZhg,SD8zQU-x6y0,MqQKSnbM0OI`（3本とも private・予約なし）。
    台本は `data/critique_queue/6GtzWaguZhg.script.json`（`critique_queue.stash()` が残す）。
+6. **`stop_check.sh` / `goal_reminder.sh` を hook の `cwd` で親か決める形に**（上の 4）。
+   `SubagentStop` もそこで足す。検査は `tests/test_stop_check_quiet.py` の形で、stdin JSON を渡すこと。
