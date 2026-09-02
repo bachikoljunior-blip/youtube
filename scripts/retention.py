@@ -52,6 +52,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src import config
+from src import analytics
 from src.analytics import fetch_retention
 
 CACHE = config.ROOT / "data" / "retention.json"
@@ -153,17 +154,72 @@ def videos() -> list[dict]:
     return sorted(out, key=lambda r: -r["views"])
 
 
+#: 直前の `curves()` が何本 引いて、何本 足せたか。`main()` が読んで印字します。
+#: **なぜ数えるか**: 引きに行った本が全部 失敗しても、この道具は下の表を
+#: **前の回と1桁も違わない字で**出して 0 で終わります（2026-09-02 11:4x の実測
+#: —— `[analytics] 維持率を取得できませんでした: 500` が1行 出たきり、
+#: 貯めは 132本 のまま、`python -m src.clarity` の n も 113本 のままでした）。
+#: **表が出たことは、貯まったことの証拠になりません。**
+LAST_FETCH: dict[str, int] = {"試した": 0, "足した": 0, "空": 0, "エラー": 0}
+
+
 def curves(vs: list[dict], refresh: bool = False) -> dict[str, list]:
-    """カーブを取ってきて貯める。**API を毎回叩かない**（100点×本数は重い）。"""
+    """カーブを取ってきて貯める。**API を毎回叩かない**（100点×本数は重い）。
+
+    引いた結果は `LAST_FETCH` に残します（**足せた本数を黙らせないため**）。
+    """
     cache = json.loads(CACHE.read_text(encoding="utf-8")) if CACHE.exists() else {}
+    LAST_FETCH.update({"試した": 0, "足した": 0, "空": 0, "エラー": 0})
     for v in vs:
         if refresh or v["id"] not in cache:
+            LAST_FETCH["試した"] += 1
+            # **エラーと空を、返り値では区別できません**（どちらも `[]`）。
+            # 数えている側（`analytics.RETENTION_ERRORS`）の増分で分けます。
+            before_err = analytics.RETENTION_ERRORS["n"]
             got = fetch_retention(v["id"])
             if got:
                 cache[v["id"]] = got
+                LAST_FETCH["足した"] += 1
+            elif analytics.RETENTION_ERRORS["n"] > before_err:
+                LAST_FETCH["エラー"] += 1
+            else:
+                LAST_FETCH["空"] += 1
     CACHE.parent.mkdir(parents=True, exist_ok=True)
     CACHE.write_text(json.dumps(cache, ensure_ascii=False), encoding="utf-8")
     return cache
+
+
+def fetch_lines(before: int, after: int) -> list[str]:
+    """**貯めが動いたかどうか**の1行（`LAST_FETCH` と貯めの本数から）。
+
+    `n` を増やすために撃った回が、増えなかったことに気づけるようにするためのものです。
+    """
+    f = LAST_FETCH
+    if f["試した"] == 0:
+        return [f"  貯め **{after}本**（引きに行った本はありません ——"
+                f" 走査に新しい本がまだ在りません）"]
+    if f["足した"] == 0:
+        out = [f"  [!] **1本も貯まりませんでした** —— {f['試した']}本 引きに行って"
+               f"（空 {f['空']}本 ／ エラー {f['エラー']}本）、貯めは {before}本 のまま",
+               "      **下の表は前の回と同じ数です。新しい観測ではありません**"
+               " —— `python -m src.clarity` の n も動きません"]
+        if f["エラー"] and not f["空"]:
+            out.append("      理由は上の `[analytics] …` の行。"
+                       "**上流の一時失敗なので、次の回に撃ち直せば通ることがあります**")
+        elif f["空"]:
+            out.append(f"      **{f['空']}本 は「落ちた」のではなく、上流に"
+                       f"カーブがまだ在りません**（`rows` が 0行・エラーではありません）。"
+                       f"**撃ち直しても増えません** —— 再生が貯まるまで待つ側です")
+            out.append(f"      **この {f['空']}本 は毎周 引き直しています**"
+                       f"（貯めに入らないので、次の回も同じ数だけ Analytics を叩きます）。"
+                       f"n を増やしたいなら、増えるのは**公開した本**のぶんだけです")
+        return out
+    落 = f["空"] + f["エラー"]
+    return [f"  貯め {before}本 → **{after}本**"
+            f"（{f['試した']}本 引いて {f['足した']}本 足しました"
+            + (f"・空 {f['空']}本 ／ エラー {f['エラー']}本" if 落 else "") + "）",
+            "      **`python -m src.clarity` を撃ち直すこと** —— n が増えた回だけ、"
+            "あちらの『連』が1つ進みます"]
 
 
 BLOCKS = " ▁▂▃▄▅▆▇█"
@@ -457,8 +513,13 @@ def write_html(vs: list[dict], cache: dict, path: Path) -> None:
 
 def main(argv: list[str]) -> int:
     vs = videos()
+    before = len(json.loads(CACHE.read_text(encoding="utf-8"))) if CACHE.exists() else 0
     cache = curves(vs, refresh="--refresh" in argv)
     report(vs, cache)
+    # **表のあとに置きます** —— 表の前だと 130行 の上へ流れて読まれません。
+    print()
+    for line in fetch_lines(before, len(cache)):
+        print(line)
     if "--html" in argv:
         out = Path(argv[argv.index("--html") + 1])
         write_html(vs, cache, out)

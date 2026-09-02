@@ -150,6 +150,7 @@
 from __future__ import annotations
 
 import json
+import datetime as _dt
 import math
 import re
 from pathlib import Path
@@ -188,6 +189,19 @@ _DEIXIS = re.compile(DEIXIS_WIDE)
 
 QUEUE = config.ROOT / "data" / "critique_queue"
 CURVES = config.ROOT / "data" / "retention.json"
+
+#: **読みの控え**。1周に1行 積みます。`streak()` の材料。
+#: **なぜ要るか**: 昇格の条件（下）が「**n が増えた別々の回**で 2回 続けて」なので、
+#: **その回の表だけでは判定できません。** 前の回の n を持っていないと、
+#: **同じ 1回の観測を 2回 数えて昇格させます**（2026-09-02 11:4x に踏みかけた
+#: —— `retention.py` が 500 で 0本 しか足さず、n が 113 のまま、
+#: 表は前の回と1桁も違わないのに「2回目の ★」に見えました）。
+LEDGER = config.ROOT / "data" / "clarity.jsonl"
+
+#: **昇格の条件**（`docs/JOURNAL.md`「次の回へ」2. の原文を数にしたもの）——
+#: 「`文字/コマ` が 2回 続けて門を越えたら（**別々の回・n が増えた状態で**）、
+#: `script_writer.{long,short}_script_problems` に入れること。**1回では入れないこと**」
+PROMOTE_STREAK = 2
 
 
 def spearman(xs: list[float], ys: list[float]) -> float:
@@ -369,6 +383,72 @@ def table(bs: list | None = None) -> dict:
     return out
 
 
+def readings() -> list[dict]:
+    """控えの行を古い順に。**n が同じ連続した行は、いちばん新しい1行へ畳みます。**
+
+    畳むのは、**同じ観測を2回 数えないため**です。`record()` は n が動いた回だけ
+    足しますが、merge で両方残った跡（この repo で何度も出ている形）が入っても、
+    ここで1本になります。
+    """
+    if not LEDGER.exists():
+        return []
+    rows: list[dict] = []
+    for line in LEDGER.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        try:
+            r = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if rows and rows[-1].get("n") == r.get("n"):
+            rows[-1] = r          # 同じ n は畳む（新しいほうを残す）
+        else:
+            rows.append(r)
+    return rows
+
+
+def record(t: dict, rho_c: float) -> tuple[dict, bool]:
+    """この回の読みを控えへ。`(その行, 足したか)`。
+
+    **n が前の回から動いていない回は足しません。** 足すと `streak()` が
+    「別々の回」を数えられなくなり、**1回の観測で昇格します**。
+    """
+    row = {
+        "at": _dt.datetime.now(_dt.timezone.utc).isoformat(timespec="seconds"),
+        "n": t["n"],
+        "門": t["門"],
+        "対照": rho_c,
+        "対照ok": rho_c <= CONTROL_MAX_RHO,
+        "rho": {m: r["最大"] for m, r in t["行"].items()},
+    }
+    prev = readings()
+    if prev and prev[-1].get("n") == row["n"]:
+        return row, False
+    LEDGER.parent.mkdir(parents=True, exist_ok=True)
+    with LEDGER.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(row, ensure_ascii=False) + "\n")
+    return row, True
+
+
+def streak(measure: str, rows: list[dict] | None = None) -> int:
+    """その物差しが、**n の増えた別々の回で** 何回 続けて門を越えているか。
+
+    **昇格（`PROMOTE_STREAK`）はこの数だけで決めます。**
+    表の ★ を目で2回 見ることでは決めません —— ★ は n が動かなくても同じ字で出ます。
+    **対照が落ちている回は連を切ります**（計器が死んでいる回の ★ は読めない）。
+    """
+    rows = readings() if rows is None else rows
+    out = 0
+    for r in reversed(rows):
+        if not r.get("対照ok", True):
+            break
+        v = (r.get("rho") or {}).get(measure)
+        if v is None or abs(v) < r.get("門", float("inf")):
+            break
+        out += 1
+    return out
+
+
 def report_lines() -> list[str]:
     bs = books()
     if len(bs) < 3:
@@ -410,6 +490,40 @@ def report_lines() -> list[str]:
             out.append("  [!] **配線ずみの物差しだけ、3つの出口の全部で向きが逆です。**"
                        "「多いほど分かりにくい」の側の証拠は1つもありません"
                        "（`config/hypotheses.yaml` の `clarity_ear_load_sign`）")
+    # ---- ここから下は「この ★ を、前の回の ★ と足してよいか」だけを言います ----
+    # **表の ★ は n が動かなくても同じ字で出ます。** だから目で2回 見ても
+    # 「2回 続けて越えた」の証拠になりません（2026-09-02 に踏みかけた形）。
+    prev = readings()
+    before = prev[-1] if prev else None
+    row, added = record(t, rho_c)
+    if before is None:
+        out.append(f"  **この読みが控えの1点目です**（n={t['n']}・`data/clarity.jsonl`）。"
+                   f"連は下の数で数えます")
+    elif not added:
+        out.append(f"  [!] **この読みは前の回と同じ n（{t['n']}本）です —— 新しい観測ではありません。**"
+                   f"　控えへ足していません（前の読みは {before['at']}）")
+        out.append(f"      **上の ★ を、前の回の ★ と足さないこと。**"
+                   f"　n が増えていない回の ★ は、前の回の ★ と同じ1つの観測です")
+        out.append(f"      n が増えないときは `scripts/retention.py` の出どころを見ること"
+                   f"（**500 でも 0本 でも、あの道具は表を出して正常終了します**）")
+    else:
+        out.append(f"  **新しい観測です**: n {before['n']} → **{t['n']}本**"
+                   f"（門 {before['門']:.3f} → {gate:.3f}）。控えへ足しました")
+    # 昇格の条件を、prose ではなく数で出す
+    rows = readings()
+    for mname in t["行"]:
+        k = streak(mname, rows)
+        if k <= 0:
+            continue
+        if k >= PROMOTE_STREAK:
+            out.append(f"  ★ **`{mname}` は n の増えた別々の回で {k}回 続けて門を越えました"
+                       f"（条件 {PROMOTE_STREAK}回）→ 台本の側へ入れる番です**: "
+                       f"`script_writer.{{long,short}}_script_problems`"
+                       f"（`_check_ear_load` の隣。**`verify.run` の門にしないこと** ——"
+                       f" 誤報が不投稿になります）")
+        else:
+            out.append(f"  `{mname}`: 連 **{k}／{PROMOTE_STREAK}回**"
+                       f"（n の増えた回だけ数えています）。**まだ入れないこと**")
     out.append("  **カーブを貯めると判定が早まります**: `python scripts/retention.py`"
                "（貯めに無いIDだけ引くので `--refresh` は要りません）")
     return out

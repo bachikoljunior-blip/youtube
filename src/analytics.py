@@ -218,6 +218,14 @@ if __name__ == "__main__":
     optimize()
 
 
+#: `fetch_retention` が **HttpError で落ちた** 回数。
+#: **空（0行）と区別するために要ります** —— 呼ぶ側から見ると、上流の一時失敗も
+#: 「その本にはまだカーブが無い」も、**どちらも `[]`** で返ります。
+#: 混ぜると「撃ち直せば通る」と「何度撃っても通らない」が同じ字になり、
+#: 次の回が毎周ぶん撃ち直します（2026-09-02 に、その文言を書きかけた）。
+RETENTION_ERRORS: dict = {"n": 0, "last": None}
+
+
 def fetch_retention(video_id: str, days: int = 28) -> list[tuple[float, float, float]]:
     """1本の維持率カーブ。`[(位置0〜1, 維持, 相対), ...]`。
 
@@ -249,6 +257,8 @@ def fetch_retention(video_id: str, days: int = 28) -> list[tuple[float, float, f
             sort="elapsedVideoTimeRatio",
         ).execute()
     except HttpError as exc:
+        RETENTION_ERRORS["n"] += 1
+        RETENTION_ERRORS["last"] = exc.resp.status
         print(f"[analytics] 維持率を取得できませんでした: {exc.resp.status}")
         return []
     return [(r[0], r[1], r[2]) for r in response.get("rows", [])]
