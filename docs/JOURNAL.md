@@ -99140,6 +99140,37 @@ video_id と `--move` の1行まで出します。**そして同じ形を repo �
 `config/hypotheses.yaml` に「その天井は天井ではない」を `lever: per_video` で立てること
 （`sub_rate` / `rpm` / `density` は、抜いても joint が動きません）。
 
+### 追記（同じ回・全数検査 5,958件 を回したあと）
+
+**この回の締めを書いたあとに全数を回して、1件 捕まりました。**
+`tests/test_watches.py` が `cond4()` の「`traj_days` が両側に無いので
+**判定できません**」を「待ちを印字しているのに台帳にない」と読みました。
+**正しい赤です** —— 2026-08-20 に `scripts/retention.py` が
+「3本 出れば測れるようになります」と印字し、その3本が出たのに
+10日 誰も気づかなかった、その形を防ぐ検査です。
+
+`config/watches.yaml` の `exempt:` に理由つきで登録しました。**待ちではありません**
+—— 時間や本数で満ちる条件がなく（`eta.py` が1回 走れば埋まる）、
+`cond4_line()` は**門が止めた回のたびに毎回 撃ち直す**ので、
+「印字した回と、条件が満ちる回が別で、誰も戻ってこない」に当たりません。
+**覆る条件**: `cond4()` が「あと N件／N日 で判定できます」と数で言い出したら、
+そのときは `watches:` に数で足すこと。
+
+**全数の内訳（切り分けまでやった）**: 18件 赤。うち **4件がこの回のぶんで、全部 直した**
+（`test_ceiling_drift` / `test_eta` / `test_form_record` / `test_watches`）。
+**残り 14件 は、この回より前から赤い** —— `src/settle.MATURE_HOURS` を 48 に戻して
+同じ14件を撃ち、**一字も変わらず同じ14件が落ちること**を確かめました:
+
+    test_compact_blocked_by_rule5（2件）    test_pace（3件）
+    test_fix_gate_free_alternatives         test_request_form
+    test_judgeable[opening_motion]          test_request_form_excludes_long_form
+    test_needs_refresh_runs                 test_retention_length
+    test_spawn_gate_overrun（2件）          test_spawn_prompt_clock
+
+**この回は触っていません。次に来た側へ申し送りです。**
+**「自分のぶんかどうか」は、定数を戻して撃てば1分で分かります** ——
+赤の一覧だけ見て「前からある」と書かないこと。**この回は戻して確かめました。**
+
 ---
 
 ## 2026-09-02 夕 —— **「最適化されてんの？」への答え: いいえ。天井が鏡でした**
