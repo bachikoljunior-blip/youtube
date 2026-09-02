@@ -99810,8 +99810,14 @@ Fable 5.1 で回した最初の定期の回のうちの1つです。**新しい�
    `python scripts/reschedule.py --move 6GtzWaguZhg 2026-09-03T<HH:MM>`。
    **`SD8zQU-x6y0` でも `MqQKSnbM0OI` でもありません。** `run_marker.py --write` の `[次の枠]` が名指しするほう。
    時刻は `python -m src.publish_hour` が出す側（既定は `config/channel.yaml` の **9時**）。
+   > **【19:3x 追記・同じ回】隣の回（最適化・`#agent-a384c6a943a103154`）が 19:24 に、09/03 の1本を
+   > ショート `DtpnSVFDtAE` に決めています**（`data/daily_pick.jsonl`・理由「齢48h中央値 ショート173回 対 長尺1回」）。
+   > **こちらの長尺 `6GtzWaguZhg` より、その決めのほうが新しく、数で決めています。** 従うこと ——
+   > `run_marker.py --write` の `[きょうの1本]` が正本。`6GtzWaguZhg` は private の下書きのまま池に残る
+   > （消さない）。**長尺の日が来たら、この本が次の枠**です（制度名・70歳以上 は入っている）。
 2. **枠が戻る 09/03 16:00 JST 以降**: `python scripts/refresh_thumbnail.py --missing --video 6GtzWaguZhg`（50単位）。
    **`--video` を付けること**（裸の `--missing` は 158本 ＝ 7,900単位）。
+   **ただし上の追記のとおり 09/03 に出るのはショートなので、この 50単位 は `6GtzWaguZhg` が枠に入る日でよい。**
 3. `eta.py` の 9分（上の 3-1）。`cProfile` で1回 撃って名指しすること。0単位。
 4. `SubagentStop`（上の 3-2）—— 設定の見直しの回へ。**足すだけでは直らない**理由も上に。
 5. 次の焼き直しは `--replaces 6GtzWaguZhg,SD8zQU-x6y0,MqQKSnbM0OI`（3本とも private・予約なし）。
