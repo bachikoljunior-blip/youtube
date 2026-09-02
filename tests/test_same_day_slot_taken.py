@@ -119,6 +119,36 @@ def test_printer_offers_today_when_free(tmp_path):
     assert "--move MqQKSnbM0OI 2026-09-02" in out
 
 
+def test_zero_drafts_after_publishing_is_the_alarm(tmp_path):
+    """**0本 のほうが欠陥です**（2026-09-02 に足した・**発火**）。
+
+    ここは長らく「下書きが在れば出す・無ければ黙る」でした。
+    **固定その4「1日の回り方」の下では、向きが逆です** ——
+    公開したあとに下書きが 0本 なのが、`CLAUDE.md` 冒頭が名指ししている
+    欠陥そのものです（「09/02 13:00 に公開したあと、09/03 のぶんが
+    **1本も作られていない**まま数時間が流れています」）。
+
+    **鳴る側と黙る側が入れ替わっていました** —— 回っている回だけが画面に出て、
+    **止まっている回は何も出ない。** `scripts/slot_gate.py` も塞ぎません
+    （`LEAD_DAYS = 0` ＝ きょうしか見ないので、きょうの1本が出た瞬間に黙る）。
+    """
+    p = _ledger(tmp_path, [_published_today()])
+    out = "\n".join(next_slot.draft_lines(now=NOW, path=p))
+    assert "下書きが 0本" in out, \
+        "公開したのに次の日のぶんが 0本 —— それを言う口が1つもありません"
+    assert "--draft" in out, "作る手を名指ししていません"
+
+
+def test_zero_drafts_before_publishing_is_silent(tmp_path):
+    """**きょうの枠がまだ空の回は黙ること。** そこは `slot_gate` の仕事です。
+
+    両方が同時に鳴ると、どちらを先にやるか分からなくなります
+    （**常に鳴る実装を落とすため**）。
+    """
+    p = _ledger(tmp_path, [])
+    assert next_slot.draft_lines(now=NOW, path=p) == []
+
+
 # ---------------------------------------------------------------- 門の側
 
 def _rows_for(monkeypatch, rows: list[dict]) -> None:
