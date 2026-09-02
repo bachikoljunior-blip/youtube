@@ -404,6 +404,25 @@ def _doc_index_lines(doc: str = DOC_FOR_INDEX) -> list[str]:
                 f"{type(exc).__name__}: {exc}。`grep -n '^## ' {doc}` を手で撃つこと）"]
 
 
+def _doc_decision_lines(doc: str = DOC_FOR_INDEX) -> list[str]:
+    """**§4 の表2つと「選ぶ順」**を、文書から切り出して刷る（2026-09-03 に足した）。
+
+    `_doc_index_lines()` の対。あちらは「どこを読むか」、こちらは「§4 は読まなくてよい」
+    の中身です。理由は `doc_usage.decision_block()` の註。**落ちても回は止めません。**
+    """
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        import doc_usage                                       # noqa: PLC0415
+        path = Path(__file__).resolve().parent.parent / doc
+        if not path.is_file():
+            return []
+        text = path.read_text(encoding="utf-8")
+        return doc_usage.decision_lines(text, doc, prefix="[marker] ")
+    except Exception as exc:                                   # noqa: BLE001
+        return [f"[marker] （§4 の表を出せませんでした: {type(exc).__name__}: {exc}。"
+                f"`grep -n 'この節で本当に要るのは' {doc}` で引くこと）"]
+
+
 PREMISE_ROWS_CAP = 4
 
 
@@ -712,6 +731,11 @@ def write() -> int:
     # **手順の当てどころ**（2026-09-01 に足した）。ここで出す理由は下の
     # `_doc_index_lines()` の註。**§1 は手順を読む前の唯一のコマンド**です。
     for ln in _doc_index_lines():
+        print(ln)
+    # **§4 の表2つと「選ぶ順」を、文書から切り出してここに刷る**（2026-09-03 に足した）。
+    #     §4 の「覆る条件」が名指ししていた形。理由は `doc_usage.decision_block()` の註 ——
+    #     (a2) 問い1 が 8周 続けて「手順の読み」で、§4 の 80行 の `sed` がその1本。
+    for ln in _doc_decision_lines():
         print(ln)
     # **前提の主語と、条件が数えている値の食い違い**（2026-09-01 に足した）。
     # 理由は `_premise_subject_lines()` の註 —— 到達日を動かすのは
