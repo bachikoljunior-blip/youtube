@@ -883,9 +883,87 @@ def drafts(now: datetime | None = None,
     return out
 
 
+def today_count(now: datetime | None = None,
+                path: Path | None = None) -> int:
+    """**きょう（JST）の枠が、もう何本 埋まっているか。**（**API 0単位**）
+
+    ## なぜ `calendar()` の `per_day` を使わないか（2026-09-02 に踏んだ）
+
+    `calendar()` の `per_day` は **`at > t`（これから出る本）だけ**を数えます。
+    だから **きょう 13:00 に公開ずみの1本は、そこに入っていません。**
+    「きょうの枠は空いているか」を聞くと、公開した直後の回ほど「空いている」と
+    答えます —— **いちばん埋まっている瞬間に、いちばん空いて見える**数え方です。
+
+    ここは `scripts/slot_gate.per_day(now=<JST 0時>)` と**同じ床**にします
+    （＝ **きょう既に公開した本も、きょうを埋めているものとして数える**）。
+    聞いているのは「規則1（1日1本）の枠が残っているか」なので、そちらが正しい向きです。
+
+    ## 覆る条件
+
+    控えは**上限側の見積り**です（取り消した本も残る）ので、この数は
+    **多めに出る側**に外れます ＝ 「埋まっている」と答えたら本物、
+    「空いている」は言い切れません（`scripts/slot_gate.py` の註と同じ）。
+    """
+    t = now or datetime.now(timezone.utc)
+    day = t.astimezone(JST).date()
+    floor = datetime(day.year, day.month, day.day, tzinfo=JST)
+    latest: dict[str, dict] = {}
+    for r in _rows(path):
+        vid = r.get("video_id")
+        if vid:
+            latest[str(vid)] = r
+    n = 0
+    for r in latest.values():
+        at = _parse(r.get("at"))
+        if at and at >= floor and at.astimezone(JST).date() == day:
+            n += 1
+    return n
+
+
+def today_full(now: datetime | None = None,
+               path: Path | None = None) -> bool:
+    """**きょうの枠が規則1（1日1本）で埋まっているか。**"""
+    try:
+        from src import house_rule                             # noqa: PLC0415
+        rule = max(1, int(house_rule.PUBLISH_PER_DAY))
+    except Exception:                                          # noqa: BLE001
+        rule = 1
+    return today_count(now=now, path=path) >= rule
+
+
 def draft_lines(now: datetime | None = None,
                 path: Path | None = None) -> list[str]:
-    """`drafts()` を画面へ。**規則5 が効いている回だけ出します**（無ければ空）。"""
+    """`drafts()` を画面へ。**規則5 が効いている回だけ出します**（無ければ空）。
+
+    ## **きょうの枠が埋まっている回に `--move <きょう>` を出さないこと**
+
+    **2026-09-02 に、この関数は実際にそれを出していました。** 実物:
+
+        きょう 09/02 13:00 JST に1本 公開ずみ（規則1 の枠は埋まっている）
+        13:57 JST に次の日のぶんを `--draft` で上げた（**規則5 の正しい回り方**）
+        → この関数の印字: `reschedule.py --move MqQKSnbM0OI 2026-09-02T20:00`
+
+    **撃つと 09/02 が 2本 になります** —— オーナーが固定した規則1
+    （`src/house_rule.py`「動画は1日一本」）に正面から反します。
+    日付は `{t:%Y-%m-%d}`（＝ **いつ撃っても「きょう」**）を書いていて、
+    **きょうの枠が空いているかを一度も見ていませんでした。**
+
+    そして **その下書きは、きょうのぶんではありません** —— 規則5 の回り方は
+    「公開したら → すぐ**次の日**の1本を作り始める → **その日になったら**予約」
+    なので、公開直後に立っている下書きは**明日のぶん**です。
+    きょう やることは予約ではなく、**規則3（出る瞬間まで良くし続ける）**のほうです。
+
+    `calendar()` の `per_day` では判定できません（`at > t` しか数えないので、
+    **公開した直後の回ほど「きょうは空いている」と答えます**）。`today_count()` を見ること。
+
+    ## 覆る条件
+
+    - オーナーが規則1（1日1本）を外したら、`house_rule.PUBLISH_PER_DAY` 経由で
+      枠の本数が変わります（この関数は読むだけなので、1行も直りません）。
+    - `today_count()` は**多めに出る側**に外れます（控えは上限側の見積り）。
+      「埋まっている」と言われて実物が空だった回は、`scripts/reschedule.py --list`
+      （50単位）で実物を見てから手で `--move` すること。
+    """
     try:
         from src import house_rule                             # noqa: PLC0415
         if not house_rule.same_day_only():
@@ -902,6 +980,24 @@ def draft_lines(now: datetime | None = None,
         made = r["_made"].astimezone(JST)
         out.append(f"     `{r.get('video_id')}`　{str(r.get('title') or '')[:40]}"
                    f"　焼いたのは {made:%m/%d %H:%M} JST")
+    if today_full(now=now, path=path):
+        # **きょうの枠は埋まっています**（規則1 ＝ 1日1本）。
+        #     この下書きは**明日のぶん**で、きょう予約すると 2本 になります。
+        out.append(f"     **きょう（{t:%m/%d} JST）の枠は、もう埋まっています**"
+                   f"（{today_count(now=now, path=path)}本／規則1 ＝ **1日1本**・"
+                   "`src/house_rule.py`）。")
+        out.append("     → **この下書きは、きょうのぶんではありません。**"
+                   "公開したら次の日の1本を作り始める（規則5「1日の回り方」）ので、"
+                   "**これは明日のぶん**です。")
+        out.append("     **きょうは予約しないこと。** 先の日付にも置かないこと（規則5）。"
+                   "**きょうやるのは `improve` のほう**です —— "
+                   "規則3「次の枠で出る1本を、出る瞬間まで良くし続ける」。")
+        out.append(f"     **明日（{(t.astimezone(JST) + timedelta(days=1)):%m/%d} JST）に"
+                   "なってから**、その日の枠へ（1本 50単位）:")
+        out.append(f"       python scripts/reschedule.py --move {got[0].get('video_id')}"
+                   f" {(t.astimezone(JST) + timedelta(days=1)):%Y-%m-%d}T20:00"
+                   "   # **明日になってから撃つこと**")
+        return out
     out.append("     **その日になったら、その日の枠へ入れること**（1本 50単位）:")
     out.append(f"       python scripts/reschedule.py --move {got[0].get('video_id')}"
                f" {t:%Y-%m-%d}T20:00")
