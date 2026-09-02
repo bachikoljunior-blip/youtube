@@ -100,13 +100,28 @@ def channel_video_ids(youtube, uploads: str, cap: int = 400) -> list[str]:
     """
     cached = _cached_video_ids(uploads, cap)
     if cached is not None:
-        out = _with_ledger_ids(*cached)
-        print(f"[history] この窓のチャンネルの動画IDを再利用しました"
-              f"（{len(out)}本・**API 0単位**）。"
-              " 窓ごとに1回だけ読みます（`_VIDEO_IDS_CACHE` の註）。"
-              " 読み直すなら `YT_NO_SCAN_CACHE=1`")
-        return out
+        return _reuse_video_ids(cached)
 
+    # **錠を取ってから、控えをもう一度 読む**（2026-09-03・`_ScanLock` の註）。
+    # 同時に立った回は、最初の1回が書き終えるのを待って 0単位 で読みます。
+    with _ScanLock():
+        cached = _cached_video_ids(uploads, cap)
+        if cached is not None:
+            return _reuse_video_ids(cached)
+        return _scan_video_ids(youtube, uploads, cap)
+
+
+def _reuse_video_ids(cached: tuple[list[str], str]) -> list[str]:
+    out = _with_ledger_ids(*cached)
+    print(f"[history] この窓のチャンネルの動画IDを再利用しました"
+          f"（{len(out)}本・**API 0単位**）。"
+          " 窓ごとに1回だけ読みます（`_VIDEO_IDS_CACHE` の註）。"
+          " 読み直すなら `YT_NO_SCAN_CACHE=1`")
+    return out
+
+
+def _scan_video_ids(youtube, uploads: str, cap: int) -> list[str]:
+    """**生で読む側**（`channel_video_ids` の中身。錠と控えの下で呼ばれます）。"""
     ids: list[str] = []
     seen: set[str] = set()
     partial = False                      # **口が欠けた回は控えない**（下の末尾）
@@ -517,39 +532,120 @@ def _put_cached_topics(topics: set[str], video_ids: int) -> None:
         print(f"[history] 読みの控えを書けませんでした（続行）: {str(exc)[:80]}")
 
 
+def _read_video_ids_recs() -> tuple[dict, dict[str, dict]]:
+    """控えの file を読み、`(頭, {cap → {at, ids}})` で返す。読めなければ空。
+
+    **2つの形を読みます**（2026-09-03 に形を変えた。古い形の控えが窓の途中に
+    残っていても、その窓のうちは効き続けるように）:
+
+        古い形  {"window", "at", "uploads", "cap", "ids"}          ← cap 1つだけ
+        今の形  {"window", "uploads", "recs": {"<cap>": {"at", "ids"}}}
+    """
+    try:
+        rec = json.loads(_video_ids_cache_path().read_text(encoding="utf-8"))
+    except Exception:                                          # noqa: BLE001
+        return {}, {}
+    if not isinstance(rec, dict):
+        return {}, {}
+    recs = rec.get("recs")
+    if isinstance(recs, dict):
+        return rec, {str(k): v for k, v in recs.items() if isinstance(v, dict)}
+    if rec.get("cap") is not None:                             # 古い形
+        return rec, {str(rec.get("cap")): {"at": rec.get("at"), "ids": rec.get("ids")}}
+    return rec, {}
+
+
 def _cached_video_ids(uploads: str, cap: int) -> tuple[list[str], str] | None:
     """この窓のチャンネルの動画IDと、**控えた時刻**。無ければ `None`。**API 0単位。**
 
-    **窓・uploads プレイリスト・`cap` の3つが一致した控えだけ**を使います
-    （`cap` が違えば切られ方が違うので、別の答えです）。
+    **窓・uploads プレイリストが一致した控え**のうち、次のどちらかを使います:
+
+        (1) `cap` が同じ記録            —— 切られ方が同じなので、同じ答え
+        (2) **切られていない記録**        —— `len(ids) < その cap` ＝ チャンネルを
+                                          最後まで読んだ答え。**どの `cap` の
+                                          呼び手にも、そのまま正しい**（上位集合）
+
+    ## なぜ (2) を足したか（2026-09-03・最適化の回に測った）
+
+    ここは長らく「`cap` が一致した控えだけ」で、しかも **file に記録は1つ**でした。
+    呼び手は2種類あります —— `status` / `reschedule` / `upload_only` の **cap=400** と、
+    `scripts/ahead_gate.py --live` の **cap=5,000**（`SCAN_CAP`・毎周の掃きから
+    2回 撃たれる）。**片方が控えると、もう片方の記録が消えます。** 交互に撃たれる
+    たびに互いの控えを消し合い、cap=5,000 の側は `search.list`（**100単位/ページ**）を
+    9ページ めくります ＝ **1回 約 900単位**。
+
+    実測 `data/api_calls.jsonl`（`history.py:channel_video_ids` の `search.list`）:
+
+        08/31 の窓   33回 ＝ 3,300単位
+        09/01 の窓   75回 ＝ 7,500単位     （日枠 10,000 の **75%**）
+        09/02 の窓   51回 ＝ 5,100単位     （窓が開いて **7分** で。5つの回が同時に走査）
+
+    **同じ窓の 3日とも、日枠は 10,000 を超えて 403 で閉じました**（13,513 / 16,071 /
+    15,435）。閉じている間は、その日の1本を**焼き直しても差し替えられません**
+    （`videos.insert` 1,600・`thumbnails.set` 50・`videos.update` 50 —— 全部 同じ枠）。
+    ＝ 規則3（次の枠の1本を出る瞬間まで良くし続ける・`src/house_rule.py`）が、
+    **毎日 8時間ほど 機械の側で死んでいました。** 09/03 09:00 の本は、サムネイル無し・
+    焼き直し不能のまま出ています（`run_marker.py --write` がそう印字した）。
+
     時刻を一緒に返すのは、`_with_ledger_ids` が「**その後に上げた本だけ**」を
     足すためです（理由はあちらの docstring）。
+
+    ## 覆る条件
+
+    - 動画を消す道ができたら（`videos().delete` か private 落とし）、
+      「切られていない記録」は「もう無い本」を返し続けます
+    - `search.list` が 100単位 でなくなったら、ここの値打ちは (1) だけになります
     """
     if _cache_is_off():
         return None
     window = _scan_window()
     if not window:
         return None
-    try:
-        rec = json.loads(_video_ids_cache_path().read_text(encoding="utf-8"))
-    except Exception:                                          # noqa: BLE001
+    head, recs = _read_video_ids_recs()
+    if head.get("window") != window or head.get("uploads") != uploads:
         return None
-    if (rec.get("window") != window or rec.get("uploads") != uploads
-            or rec.get("cap") != cap):
-        return None
-    ids = rec.get("ids")
-    if not isinstance(ids, list) or not ids:
-        return None                       # **空の読みは控えとして使わない**
-    return [str(v) for v in ids if v], str(rec.get("at") or "")
+
+    def _pick(entry: dict) -> tuple[list[str], str] | None:
+        ids = entry.get("ids")
+        if not isinstance(ids, list) or not ids:
+            return None                   # **空の読みは控えとして使わない**
+        return [str(v) for v in ids if v], str(entry.get("at") or "")
+
+    exact = recs.get(str(cap))
+    if exact is not None:
+        got = _pick(exact)
+        if got is not None:
+            return got
+    # (2) 切られていない記録は、どの cap の呼び手にも正しい（上位集合）
+    for key, entry in recs.items():
+        try:
+            rec_cap = int(key)
+        except ValueError:
+            continue
+        ids = entry.get("ids")
+        if isinstance(ids, list) and ids and len(ids) < rec_cap:
+            got = _pick(entry)
+            if got is not None:
+                return got
+    return None
 
 
 def _put_cached_video_ids(uploads: str, cap: int, ids: list[str]) -> None:
-    """**欠けた回は書かないこと**（呼ぶ側が口の欠けを見ています）。"""
+    """**欠けた回は書かないこと**（呼ぶ側が口の欠けを見ています）。
+
+    **同じ窓・同じ uploads の他の `cap` の記録は残します**（`recs` に足す）。
+    消すと、cap=400 と cap=5,000 の呼び手が互いの控えを消し合います
+    （`_cached_video_ids` の「なぜ (2) を足したか」）。窓か uploads が違えば、
+    file ごと置き換えます。
+    """
     window = _scan_window()
     if not window or _cache_is_off() or not ids:
         return
-    body = json.dumps({"window": window, "at": datetime.now(timezone.utc).isoformat(),
-                       "uploads": uploads, "cap": cap, "ids": ids},
+    head, recs = _read_video_ids_recs()
+    if head.get("window") != window or head.get("uploads") != uploads:
+        recs = {}
+    recs[str(cap)] = {"at": datetime.now(timezone.utc).isoformat(), "ids": ids}
+    body = json.dumps({"window": window, "uploads": uploads, "recs": recs},
                       ensure_ascii=False)
     try:
         # 置き換えは一手で（`_put_cached_topics` と同じ理由。共有の置き場には
@@ -561,6 +657,68 @@ def _put_cached_video_ids(uploads: str, cap: int, ids: list[str]) -> None:
         os.replace(tmp, path)
     except OSError as exc:
         print(f"[history] 動画IDの控えを書けませんでした（続行）: {str(exc)[:80]}")
+
+
+#: **走査を、機械にひとつずつにする錠**（2026-09-03）。待つ上限（秒）。
+#:
+#: 実測 09/02 の窓: 窓が開いた 07:05〜07:07 UTC に **5つの回が同時に**
+#: `channel_video_ids` を撃ち、`search.list` 33回・`playlistItems.list` 45回 が
+#: **1分の中に**並びました。控えは「最初の1回が書いてから」しか効かないので、
+#: 同時に立った回は全員が生で読みます。**錠を取ってから控えを読み直す**と、
+#: 2人目からは 0単位 です。上限を過ぎたら錠を待たずに読みます（止めない）。
+SCAN_LOCK_WAIT_SEC = 180
+
+
+class _ScanLock:
+    """`with _ScanLock():` —— 取れなければ待つ。上限を過ぎたら取らずに進む。"""
+
+    def __init__(self) -> None:
+        self._fh = None
+
+    def __enter__(self) -> "_ScanLock":
+        if _cache_is_off():
+            return self
+        try:
+            import fcntl                                       # noqa: PLC0415
+            import time                                        # noqa: PLC0415
+
+            path = _video_ids_cache_path().with_name("yt-scan.lock")
+            path.parent.mkdir(parents=True, exist_ok=True)
+            self._fh = open(path, "a+", encoding="utf-8")     # noqa: SIM115
+            deadline = time.monotonic() + SCAN_LOCK_WAIT_SEC
+            waited = False
+            while True:
+                try:
+                    fcntl.flock(self._fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except OSError:
+                    if time.monotonic() >= deadline:
+                        print("[history] 走査の錠を待ちきれませんでした（続行・生で読みます）")
+                        self._fh.close()
+                        self._fh = None
+                        break
+                    if not waited:
+                        print("[history] 別の回がチャンネルを走査中です。"
+                              "終わるのを待って控えを読みます（**0単位**）")
+                        waited = True
+                    time.sleep(1.0)
+        except Exception:                                      # noqa: BLE001
+            self._fh = None
+        return self
+
+    def __exit__(self, *exc) -> None:
+        if self._fh is not None:
+            try:
+                import fcntl                                   # noqa: PLC0415
+
+                fcntl.flock(self._fh, fcntl.LOCK_UN)
+            except Exception:                                  # noqa: BLE001
+                pass
+            try:
+                self._fh.close()
+            except Exception:                                  # noqa: BLE001
+                pass
+            self._fh = None
 
 
 def _with_ledger_ids(found: list[str], since: str) -> list[str]:
