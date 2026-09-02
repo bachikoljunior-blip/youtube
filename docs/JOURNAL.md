@@ -100963,3 +100963,19 @@ Opus/Sonnet で足りた所: 検査の実行・commit/push・`uploaded.jsonl` �
 
 **`[きょうの1本]` に外の作りの長尺の下書き（20分・判断の回）が出て「09/04 の1本はこれ」と書かれ、09/04 の `place_today` はショート `wOlDmGhbBts` ではなく
 その本を枠に置く。** 09/06 の 48h でこの前提が判定でき、`by_form()` の長尺の中央値に「外の作り」の数が初めて入る。
+
+### 追記（同じ回・02:3x JST）—— 作った・上げた・09/04 の1本にした
+
+    台本      `claude -p`（opus）初稿 61セグメント／6,140字。書き直しの輪 3回で残ったのは「棒が `nenkin-kurisage`（公開済み）と 3本 共通」1件
+              → `script.json` の 18枚目（繰上げで減る年額の chart）を table に替えて `--script` で焼き直し（生成を飛ばす・0単位）
+    本        **18.4分**・1920x1080・chart 9枚・`verify` 合格。題「【年金の受け取り方】最適が54か月飛ぶ 何歳から受け取るか」
+    上げ      `upload_only.py … --draft` → **`dRZnZrRy2Lw`**（private・予約なし・`videos.insert`）。サムネイルは帳面が止めた（bytes は控えに在る →
+              窓が戻った回に `python scripts/refresh_thumbnail.py --missing`）
+    決め      `daily_pick --pick 長尺 nenkin-uketorikata-65-70-75-handan --video dRZnZrRy2Lw --day 2026-09-04`（ショート `wOlDmGhbBts` は池に残す）
+    画面      `[きょうの1本]` に「外の作りを写した長尺の下書きが池に在ります: `dRZnZrRy2Lw`」「09/04 の1本: 長尺 … ＝ `dRZnZrRy2Lw`」が出る（撃って確かめた）
+
+**次に主実行が1周したとき**: 09/04（JST）の `place_today` が `daily_pick.current(09/04)` を読んで `dRZnZrRy2Lw` を枠に置く（ショートではなく）。
+09/06 に 48h の数が `data/views.jsonl` に入り、前提「外の作り方を写した長尺」（門 100回）が判定できる。
+
+**覆る条件（この追記ぶん）**: 主実行が 09/04 の決めを数字で上書きしてショートに戻したら、それは `outside_long_lines` の行が読まれていない
+（= 画面の 45行目 は 44行より弱い）ということ。そのときは `_today_candidate()` の側で外の作りの下書きを先に読む形へ倒すこと。
