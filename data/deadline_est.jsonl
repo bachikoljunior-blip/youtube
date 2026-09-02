@@ -38,3 +38,4 @@
 {"at": "2026-09-02", "key": "min(reveal_hold_arm('処置'), reveal_hold_arm('対照'))", "rate": 1.0, "have": 11, "ready": "2026-09-07", "claim": "完成した図を説明のあいだ画面に残すと、engaged 比率が上がる（＝速すぎて理解されていない）"}
 {"at": "2026-09-02", "key": "max([int(r.get('long_views') or 0) for r in rows('search_terms.jsonl') if int(r.get('days') or 0) == 7] or [0])", "rate": 5.0, "have": 10, "ready": "2026-09-20", "claim": "検索面は、per_video を動かす大きさになる —— 長尺の検索再生は 09/14 までに 7日窓で 100再生 に届く（いま 10・基準値 1）"}
 {"at": "2026-09-02", "key": "clarity_books()", "rate": 2.875, "have": 69, "ready": "2026-09-25", "claim": "一息に載せる数の個数が多いほど、聞き手は分からなくなって離れる（＝ `verify.EAR_LOAD_MAX` が立っている前提）"}
+{"at": "2026-09-02", "key": "reveal_hold_days()", "rate": 0.333333, "have": 2, "ready": "2026-09-05", "claim": "完成した図を説明のあいだ画面に残すと、engaged 比率が上がる（＝速すぎて理解されていない）"}
