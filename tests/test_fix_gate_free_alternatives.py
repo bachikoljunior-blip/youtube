@@ -64,12 +64,33 @@ def test_free_alternatives_names_improve_and_upload_when_a_next_video_exists() -
 
     名指しできない門は、種別の語を書き換えて通されるだけです
     （`near_deadlines()` の註と同じ理由）。
+
+    ## **分かれ目は「一覧が空か」ではなく「次の1本が在るか」**（2026-09-02 16:3x に直した）
+
+    ここは `if not out:` で分岐していました。**2026-09-01 に `premise` が
+    一覧の先頭へ入った日から、`out` は二度と空になりません**
+    （`free_alternatives()` の註「この一覧が空になる回は、もう在りません」・
+    同じ file の `test_premise_is_always_there` がそれを見ています）。
+    ＝ **逃げ道が塞がり、次の1本が無い窓でも `improve` を要求していました。**
+
+    そして**その窓は、いまの既定です** —— オーナー固定その4（規則5・
+    「現在の日付にしか予約しない」）の下では、**その日の1本を出したあと
+    `next_slot.next_video()` は None** になります。
+    **暦の穴は正常な状態**（`CLAUDE.md` 冒頭）なので、
+    この検査はそのたびに赤くなっていました。
+
+    見るものは変えていません —— **次の1本が在る窓では、いままでどおり
+    `improve` / `upload` / 値段の3つを要求します。**
     """
+    from src import next_slot
     out = run_marker.free_alternatives()
-    if not out:
-        # 次に公開される1本が無い窓。**そのときは空が正しい**（下の検査が見ます）。
-        from src import next_slot
-        assert next_slot.next_video() is None
+    if next_slot.next_video() is None:
+        # **次に公開される1本が無い窓**（規則5 の下では、これが既定）。
+        # `improve` / `upload` は名指しできません（直す相手が居ない）。
+        joined = "\n".join(out)
+        assert "improve" not in joined, (
+            "次の1本が無いのに `improve` を名指ししています —— "
+            "**在りもしない手を『在る』と言わないこと**")
         return
     joined = "\n".join(out)
     assert "improve" in joined, "0単位 の `improve` が名指しされていません"
