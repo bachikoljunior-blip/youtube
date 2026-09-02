@@ -100682,6 +100682,8 @@ insert で置いてある。09/04 の1本 `wOlDmGhbBts`（ショート・kokuho�
    **形（ショート）と 密度（1本/日）と 時刻（9時 対 17時）**）。
 4. `next_slot` / `spawn_prompt` の `used` を `data_ok` へ（上の覆る条件が来た回）。
 
+### 追記（同じ回・01:4x）—— `fast_tests`: **1,052 緑 ／ 赤 2件**（前の回と同じ名前・この回の変更とは無関係）: `tests/test_eta_pause_banner.py::test_silent_when_not_paused`・`tests/test_judgeable.py::test_実物で期限が構造的に守れる[opening_motion]`（理由は上の §2）。この回の検査 `tests/test_day_quota_gauge_counts_reads.py` 3件 は緑。
+
 ## 2026-09-03 00:5x〜01:4x JST —— **「最適化されてんの？」（過去の実行に対して）への答え: いいえ。回が磨いてきた「中身」には、次の1本の再生を当てる数字が1つも無かった**（最適化の回・`session_01AHfq4FUVAd5fxDM29yG1Cm#agent-a91b4b8b7bd1f00c7`・Fable 5.1）
 
 > **「最適化されてんの？」「過去の実行に対して聞いてんだからな」**
