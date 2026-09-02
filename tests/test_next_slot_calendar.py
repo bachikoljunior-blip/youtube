@@ -32,6 +32,8 @@ import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
@@ -65,7 +67,20 @@ def _one_per_day(start: str, n: int) -> dict[str, int]:
     return {(d + timedelta(days=i)).strftime("%Y-%m-%d"): 1 for i in range(n)}
 
 
-def test_quiet_when_rule_is_kept(tmp_path):
+@pytest.fixture()
+def legacy(monkeypatch):
+    """**規則5 が入る前の枝**（「暦の穴が欠陥」）を試すための札。
+
+    2026-09-02 にオーナーが「現在の日付にしか予約しない」を固定したので、
+    既定の枝は逆になりました。**下の枝を消していないのは、規則5 が外れたら
+    そこへ戻るからです** —— 消すと、戻す先が無くなります。
+    """
+    from src import house_rule
+    monkeypatch.setattr(house_rule, "SAME_DAY_SCHEDULING_ONLY", False)
+    return house_rule
+
+
+def test_quiet_when_rule_is_kept(tmp_path, legacy):
     """**1日1本きっかりなら鳴らないこと。** 常に鳴る実装をここで落とします。"""
     p = _ledger(tmp_path, _one_per_day("2026-09-02", 20))
     c = next_slot.calendar(now=NOW, path=p)
@@ -75,7 +90,7 @@ def test_quiet_when_rule_is_kept(tmp_path):
     assert out and "[!]" not in out[0], out
 
 
-def test_hole_fires(tmp_path):
+def test_hole_fires(tmp_path, legacy):
     """**実測の形（手前が空・後ろが作り置き）を注入して、発火を確かめる。**"""
     days = {"2026-09-01": 1, "2026-09-02": 1, "2026-09-04": 1}
     days.update({"2026-09-24": 7, "2026-09-27": 11, "2026-10-07": 13})
@@ -93,7 +108,60 @@ def test_hole_fires(tmp_path):
     assert "reschedule.py --compact" in body, body
 
 
-def test_near_window_is_not_the_average(tmp_path):
+# ---------------------------------------------------------------- 規則5（固定その4）
+#
+# **2026-09-02、オーナーが「現在の日付にしか予約しないってことだからね？」と固定しました。**
+# 上の3件が見ている「暦の穴」は、**この規則の下では欠陥ではありません** ——
+# 先の日付が空であることが正しい状態で、**先の日付に予約が在るほうが欠陥**です。
+#
+# **片方だけを検査にしないこと。** 下は
+#
+#     ・規則5 の下で、先の予約が **在る** → 鳴る／当てどころは `pool_drain --keep 0`
+#     ・規則5 の下で、先の予約が **無い** → 鳴らない（穴は正常）
+#     ・規則5 の下で、否定された手（`reschedule --compact --apply`）を**名指ししない**
+#
+# の3つを見ます。上の `legacy` 札と合わせて、**枝が入れ替わったことまで**縛ります。
+
+
+def test_same_day_rule_fires_on_stockpile(tmp_path):
+    """**先の日付に予約が在ったら鳴ること**（規則5・既定の枝）。"""
+    days = {"2026-09-01": 1, "2026-09-02": 1, "2026-09-04": 1}
+    days.update({"2026-09-24": 7, "2026-09-27": 11, "2026-10-07": 13})
+    p = _ledger(tmp_path, days)
+    c = next_slot.calendar(now=NOW, path=p)
+    assert c["same_day_only"] is True, c
+    # NOW は 09/01 20:00 JST ＝ 今日は 09/01。**明日（09/02）以降が全部 欠陥**
+    assert c["ahead"] == 1 + 1 + 7 + 11 + 13, c
+    assert c["ahead_days"] == 5, c
+    assert c["ahead_first"] == "2026-09-02", c
+    assert c["ahead_last"] == "2026-10-07", c
+    assert c["ahead_top"] == ("2026-10-07", 13), c
+    out = next_slot.calendar_lines(now=NOW, path=p)
+    assert out[0].startswith("[!]"), out
+    body = "\n".join(out)
+    assert "pool_drain.py --apply --keep 0" in body, body
+    # **否定された手を名指ししないこと**（撃つと欠陥が増えます）
+    assert "reschedule.py --compact --apply  #" not in body, body
+    assert "日 が空" not in body, body
+
+
+def test_same_day_rule_is_quiet_when_calendar_is_empty(tmp_path):
+    """**先の日付が空なら鳴らないこと。** 穴は正常です（規則5）。
+
+    常に鳴る実装をここで落とします —— この検査が無いと、
+    「`ahead` が 0 でも `[!]` を出す」実装が通ってしまいます。
+    """
+    # **今日ぶんの1本だけが予約に在る、正しい姿**（09/02 08:00 JST に立って見る）
+    today_only = datetime(2026, 9, 1, 23, 0, tzinfo=timezone.utc)
+    p = _ledger(tmp_path, {"2026-09-02": 1})
+    c = next_slot.calendar(now=today_only, path=p)
+    assert c["ahead"] == 0, c
+    out = next_slot.calendar_lines(now=today_only, path=p)
+    assert out and "[!]" not in out[0], out
+    assert "正しい状態です" in out[0], out
+
+
+def test_near_window_is_not_the_average(tmp_path, legacy):
     """**平均は後ろの作り置きに持ち上げられます。**（1発目の実装がここで外れた）
 
     実測の1発目は「今後39日の平均 **2.77本/日 ＝ 規則の 277%**」と印字しました ——

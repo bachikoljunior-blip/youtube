@@ -542,6 +542,30 @@ def calendar(now: datetime | None = None,
     out: dict = {"rule": rule, "total": sum(per_day.values()), "per_day": per_day,
                  "empty": 0, "run": 0, "run_from": None, "over": [],
                  "days": 0, "last": None, "density": 0.0}
+    # ---- 規則5（固定その4・2026-09-02）。**ここが、いまの欠陥の定義です** ----
+    #     下の `empty` / `run` / `over` は「先の日付に予約が在るのが正常」という
+    #     前提の数です。オーナーが 2026-09-02 に **「現在の日付にしか予約しない」**
+    #     と固定したので、**先の日付が空であることが正しい状態**になりました。
+    #     下の数え方は残します（他の道具が読んでいる・過去のログと並べられる）が、
+    #     **画面が名指しするのは、この `ahead` のほう**です。
+    #
+    #     **`if not per_day` より前で数えること**（2026-09-02 に踏んだ）——
+    #     下には早い戻りが2つ在り（予約が無い回・今日ぶんだけの回）、
+    #     **正しい姿の回ほどそこで返る**ので、後ろに置くと `ahead` が
+    #     「いちばん健全な回にだけ無い」鍵になります。
+    try:
+        from src import house_rule                            # noqa: PLC0415
+        out["same_day_only"] = bool(house_rule.same_day_only())
+    except Exception:                                          # noqa: BLE001
+        out["same_day_only"] = False
+    _today = t.astimezone(JST).date()
+    _ahead = {d: n for d, n in per_day.items()
+              if datetime.strptime(d, "%Y-%m-%d").date() > _today}
+    out["ahead"] = sum(_ahead.values())
+    out["ahead_days"] = len(_ahead)
+    out["ahead_top"] = max(_ahead.items(), key=lambda kv: kv[1]) if _ahead else None
+    out["ahead_first"] = min(_ahead) if _ahead else None
+    out["ahead_last"] = max(_ahead) if _ahead else None
     if not per_day:
         return out
     out["last"] = max(per_day)
@@ -677,11 +701,87 @@ def _calendar_quota_lines(t: datetime, empty: int = 0) -> list[str]:
             "投稿そのものは止まりません）"]
 
 
+def _same_day_lines(c: dict, t: datetime) -> list[str]:
+    """**規則5（固定その4）の下での暦の画面。** 意味が下の版と逆です。
+
+    ## なぜ逆になったか（2026-09-02・オーナーが固定した）
+
+    オーナー原文（`src/house_rule.OWNER_VERBATIM_SAME_DAY`）:
+
+        「現在の日付にしか予約しないってことだからね？」
+
+    **その日の1本を、その日に予約する。先の日付には1本も置かない。**
+    だから ——
+
+        先の日付が空          **正常**（この関数は静かな1行だけ出します）
+        先の日付に予約が在る  **これが欠陥**（＝ 外すべき作り置き）
+
+    **この節の前の版は、まっすぐ逆のことを言っていました** ——
+    「今後 N日 のうち M日 が空」を `[!]` で鳴らし、
+    **`reschedule.py --compact --apply`（先の日付へ並べ直す手）を名指し**して
+    いました。規則5 の下では、それは**欠陥を増やす手**です。
+    実際に、直前の3回の申し送りが揃ってその手を名指ししています
+    （撃たれる前にオーナーが止めました）。
+
+    直す手は逆向きで、**`python scripts/pool_drain.py --apply --keep 0`**
+    （予約を外して private の下書きへ戻す。**削除はしません**）。
+
+    ## 覆る条件
+
+    オーナーが「先の日付にも置いてよい」と言って
+    `house_rule.SAME_DAY_SCHEDULING_ONLY` が `False` になったら、
+    `calendar_lines()` は下の（穴を欠陥と読む）枝へ自動で戻ります。
+    **枝を消していないのは、そのためです。**
+    """
+    ahead = int(c.get("ahead") or 0)
+    days = int(c.get("ahead_days") or 0)
+    if not ahead:
+        return ["[暦] **先の日付に予約はありません**（規則5・固定その4）。"
+                "**これが正しい状態です。**"
+                "　今日ぶんの1本を今日 予約し、公開したら次の日の1本を作り始めること"]
+    out = [f"[!] [暦] **先の日付に予約が {ahead}本 残っています**"
+           f"（{days}日 ぶん・規則5「現在の日付にしか予約しない」に反します）"]
+    if c.get("ahead_first"):
+        out.append(f"     いちばん手前は **{c['ahead_first']}**"
+                   f"／いちばん先は **{c['ahead_last']}**")
+    top = c.get("ahead_top")
+    if top:
+        out.append(f"     いちばん多い日は **{top[0]} の {top[1]}本**"
+                   " —— 規則が固定される前に積んだ作り置きです")
+    out.append("     **空いている日は欠陥ではありません。** 先の日付が空であることが"
+               "正しい状態です（`src/house_rule.SAME_DAY_SCHEDULING_ONLY`）。"
+               "**`scripts/reschedule.py --compact --apply` は撃たないこと** ——"
+               "あれは先の日付へ並べ直す手で、この規則に反します")
+    out.append("     → **外す手**（**削除はしません**・private の下書きへ戻すだけ）:")
+    out.append("       python scripts/pool_drain.py --keep 0          # 案だけ・**0単位**")
+    out.append(f"       python scripts/pool_drain.py --apply --keep 0  # 1本 50単位"
+               f"（{ahead}本 なら およそ **{ahead * 50:,}単位**）")
+    out.append("       **今日ぶんの未公開の1本は外さないこと**"
+               "（`ahead` が見ているのは明日以降だけ）")
+    out.extend(_calendar_quota_lines(t, empty=0))
+    out.append("     **控えは実物とずれることがあります**（`python -m src.ledger_truth`）。"
+               "一覧に出ない本が別に在ります —— そちらは "
+               "`python scripts/reschedule.py --unschedule <videoId>` で個別に外すこと")
+    return out
+
+
 def calendar_lines(now: datetime | None = None,
                    path: Path | None = None) -> list[str]:
-    """`calendar()` を画面へ。**守れている回は1行、破れている回は当てどころまで。**"""
+    """`calendar()` を画面へ。**守れている回は1行、破れている回は当てどころまで。**
+
+    **規則5（固定その4・2026-09-02）が効いている間は `_same_day_lines()` です。**
+    下の枝（「暦の穴が欠陥」）は、その規則が外れたときのために残してあります。
+    """
     c = calendar(now=now, path=path)
-    if not c["days"] or not c["total"]:
+    if not c["total"]:
+        return []
+    # **規則5 の枝を、`days` より先に見ること**（2026-09-02 に踏んだ）——
+    #     `days` は「明日以降 いくつの日を見たか」なので、
+    #     **今日ぶんの1本だけが在る＝いちばん正しい姿の回で 0** になります。
+    #     後ろに置くと、その回だけ画面が黙りました。
+    if c.get("same_day_only"):
+        return _same_day_lines(c, now or datetime.now(timezone.utc))
+    if not c["days"]:
         return []
     rule = c["rule"]
     if not c["empty"] and not c["over"]:

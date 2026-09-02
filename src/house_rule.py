@@ -124,6 +124,78 @@ def cap() -> int:
 #: **`False` から動かさないこと** —— 動かすと、公開しない本で日付が早く出ます。
 STOCKPILE_IS_SUPPLY = False
 
+# ---------------------------------------------------------------- 規則5（固定その4）
+#
+# **オーナー原文（2026-09-02）**:
+#
+#     「現在の日付にしか予約しないってことだからね？」
+#     「その日の投稿の後は次の日の作成になるってわかってるよな？」
+#
+# 規則2の「作り置きなし」の**意味が、ここで確定しました**。
+#
+#     その日の1本を、**その日に**予約する。**先の日付には1本も置かない。**
+#     先の日付が空であることが、**正しい状態**です。
+#
+# そして1日の回り方はこうです ——
+#
+#     公開したら → **すぐ次の日の1本を作り始める**（前の日のうちに作る）
+#                 → 次の枠まで改善し続ける（規則3）
+#                 → **その日になったら、その日で予約して出す**（規則5）
+#
+# **「その日に予約する」は「その日まで何もしない」ではありません。**
+# 作るのは前の日の公開直後から。**当日なのは予約だけ**です。
+#
+# ## これで意味が反転したもの（**呼ぶ側は必ずここを読むこと**）
+#
+# `src/next_slot.calendar` / `scripts/pool_drain.py` / `scripts/slot_gate.py` /
+# `scripts/deadline_check.py` / `scripts/queue_lag.py` / `scripts/live_slots.py` は
+# **「先の日付に予約が在るのが正常」**という前提で書かれていました。
+# **この規則の下では、逆です** ——
+#
+#     先の日付が空          **正常**（欠陥ではない。警告しないこと）
+#     先の日付に予約が在る  **これが欠陥**（＝ 外すべき作り置き）
+#
+# **`reschedule.py --compact --apply`（先の日付へ並べ直す手）は撃たないこと。**
+# 直す手は逆向きで、`python scripts/pool_drain.py --apply --keep 0` です。
+
+#: **予約してよいのは「今日（JST）」だけか。** 規則5。
+#: ここが「先の日付に置いてよいか」の唯一の出どころです。
+SAME_DAY_SCHEDULING_ONLY = True
+
+#: オーナー原文（**一字も変えないこと**）。`CLAUDE.md` に在ります。
+OWNER_VERBATIM_SAME_DAY = "現在の日付にしか予約しないってことだからね？"
+OWNER_VERBATIM_NEXT_DAY = "その日の投稿の後は次の日の作成になるってわかってるよな？"
+
+
+def same_day_only() -> bool:
+    """**先の日付への予約を禁じているか**（規則5）。定数を写さず、ここを読むこと。"""
+    return bool(SAME_DAY_SCHEDULING_ONLY)
+
+
+def ahead_of_today(rows, now=None) -> list:
+    """**「明日以降に予約が入っている」行**を返す（規則5の下では、これが欠陥）。
+
+    `rows` は `data/uploaded.jsonl` 形（`video_id` / `at`）でも
+    `queue_lag.scheduled()` 形でも通ります —— 見るのは `at`（ISO・UTC 可）だけ。
+
+    **空リストが正常**です。1件でも返ったら、それは外す対象（`pool_drain`）。
+    今日ぶんの1本は**含みません**（当日の予約は規則どおり）。
+    """
+    from datetime import datetime, timedelta, timezone
+    jst = timezone(timedelta(hours=9))
+    t = now or datetime.now(timezone.utc)
+    today = t.astimezone(jst).date()
+    out = []
+    for r in rows or ():
+        raw = r.get("at") or r.get("publish_at") or r.get("scheduled_at")
+        at = _instant(raw)
+        if at is None:
+            continue
+        if at.astimezone(jst).date() > today:
+            out.append(r)
+    return out
+
+
 #: **この日より前に作った本が「作り置き」です**（規則が入った日）。
 #: この日以降に作る本は、1日1本の規則の下で作った本なので、**供給です**。
 #: 日付を写さないこと —— 判定は下の `is_stockpile()` の1か所です。
