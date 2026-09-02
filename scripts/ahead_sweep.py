@@ -743,6 +743,69 @@ def thumb_today(now: datetime | None = None, *, plan: dict | None = None,
     return line
 
 
+def comment_pending(now: datetime | None = None, *, dry_run: bool = False,
+                    pending=None, quota_open=None, run=None) -> str:
+    """**公開ずみで最初のコメントの無い本に、コメントを付ける**（1本 50単位）。返りは1行の理由。
+
+    ## なぜここに在るか（2026-09-03 04:xx に踏んだ）
+
+    規則5（下書きで上げ、当日に予約）の下では**全部の本が private で上がる**ので、
+    `uploader._post_actions` の `commentThreads.insert` は毎本 403 で落ち、拾い直しは
+    `scripts/post_pending_comments.py` だけです。**その道具は `build/` を読んでいて、
+    まっさらなコンテナには `build/` が無い**（`.gitignore`）—— 申し送りが 6周 続けて
+    「16:00 以降の回で撃て」と運び、撃たれても 0本 でした（`retro.py` の持ち越し・
+    実物に当たった回 0／`data/api_calls.jsonl` 08/31〜 `commentThreads` 0件）。
+
+    **「16:00 以降に撃つ」を回が憶えておく形は、6周で 0本 です。** `place_today` /
+    `thumb_today` と同じ理由で、この掃きの中へ移しました —— `kick()` から 20分ごと。
+    控えに未処理の本が無ければ **API 0単位**（`pending` が空なら呼びません）。
+
+    `pending`／`quota_open`／`run` は検査のための差し替え口（省略時は実物:
+    `critique_queue.pending_first_comments()`／`upload_cap.day_quota().open`／
+    `_run([... scripts/post_pending_comments.py])`）。
+    """
+    now = now or datetime.now(timezone.utc)
+    stamp = now.astimezone(JST).strftime("%m/%d %H:%M JST")
+    if pending is None:
+        try:
+            import critique_queue                              # noqa: PLC0415
+            pending = critique_queue.pending_first_comments()
+        except Exception as exc:                               # noqa: BLE001
+            pending = []
+            print(f"[comment] 控えを読めませんでした: {str(exc)[:100]}", flush=True)
+    if not pending:
+        line = "控えに、最初のコメントの未処理な本はありません（API 0単位）"
+        print(f"[comment] {stamp} 付けません —— {line}", flush=True)
+        return line
+    if quota_open is None:
+        try:
+            from src import upload_cap                          # noqa: PLC0415
+            quota_open = bool(upload_cap.day_quota(now).open)
+        except Exception:                                      # noqa: BLE001
+            quota_open = True
+    if not quota_open:
+        line = (f"未処理 {len(pending)}本 あるが、日枠が尽きている（次の窓の回が付ける）")
+        print(f"[comment] {stamp} 付けません —— {line}", flush=True)
+        return line
+    argv = [sys.executable or "python3", "scripts/post_pending_comments.py"]
+    if dry_run:
+        argv.append("--dry-run")
+    if run is None:
+        run = lambda a: _run(a, "post_pending_comments", 600)  # noqa: E731
+    print(f"[comment] {stamp} **未処理 {len(pending)}本。公開ずみの本に最初のコメントを付けます**"
+          f"（1本 50単位{'・`--dry-run`' if dry_run else ''}）", flush=True)
+    try:
+        rc = int(run(argv))
+    except Exception as exc:                                   # noqa: BLE001
+        line = f"付ける手が落ちました: {str(exc)[:120]}"
+        print(f"[comment] [!] {line}", flush=True)
+        return line
+    line = ("付ける手を通しました（付いた本は控えに印）" if rc == 0
+            else f"付ける手が rc={rc} で戻りました（控えは残る。次の回がもう一度 通す）")
+    print(f"[comment] {line}", flush=True)
+    return line
+
+
 #: **起こした印**（`kick()` が、この時間の内なら二度 起こさない）。
 KICK_MARK = "data/.ahead_sweep.kick"
 KICK_EVERY = timedelta(minutes=20)
@@ -825,6 +888,12 @@ def main(argv: list[str] | None = None) -> int:
                         dry_run=args.dry_run)
         except Exception as exc:                               # noqa: BLE001
             print(f"[thumb-today] [!] 押す手が落ちました: {str(exc)[:200]}", flush=True)
+        # **公開ずみの本の最初のコメント**（`comment_pending` の註。private で上がる
+        # 規則5 の下では、付ける口がここしかない）。
+        try:
+            comment_pending(now, dry_run=args.dry_run)
+        except Exception as exc:                               # noqa: BLE001
+            print(f"[comment] [!] 付ける手が落ちました: {str(exc)[:200]}", flush=True)
     why = reasons_to_skip(now)
     if why:
         print(f"[sweep] {stamp} 掃きません —— {why}", flush=True)
