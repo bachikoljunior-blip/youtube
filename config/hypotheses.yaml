@@ -235,7 +235,11 @@ hypotheses:
     deadline: "2026-10-02"
     lever: "per_video"
     side: "content"
-    watch: "天井は鏡か-外の実測-129261回"
+    # **`watch:` は付けません。** この前提には**貯まるのを待つ床がありません** ——
+    # 判定は `python scripts/niche_ceiling.py` を**別の日に撃ち直すだけ**で、
+    # 本数も日数も増えるのを待ちません（待ちの台帳 `config/watches.yaml` は
+    # 「いつ満ちるか」を数える所なので、ここに置くと永久に満ちたまま鳴ります）。
+    # **撃ち直す手は、`eta.py` が毎周 印字します**（`niche_ceiling.eta_line()` の末尾）。
     falsified_if: |
       **`python scripts/niche_ceiling.py --queries 4` を、この回とは別の日に撃ち直して**、
       次のどちらかが成り立てば外れ（＝ 天井は本当に帯の天井だった）:
