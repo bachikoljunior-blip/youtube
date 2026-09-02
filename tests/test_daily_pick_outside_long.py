@@ -27,6 +27,9 @@ def test_その本を決めていれば命令の行は出ない(monkeypatch):
     monkeypatch.setattr(daily_pick, "_outside_long_deadline", lambda: "2026-09-07")
     drafts = [{"video_id": "LONGID12345", "topic": "nenkin-uketorikata-65-70-75-handan"}]
     cur = {"video_id": "LONGID12345", "form": "長尺", "topic": "nenkin-uketorikata-65-70-75-handan"}
+    # 冒頭の行は `outside_opening_lines` の側の検査（`tests/test_outside_opening.py`）。ここでは切る ——
+    # 実物の `data/scripts/<題材>.script.json` が在ると（2026-09-03 05:0x から在る）その行が足されて本数が動く。
+    monkeypatch.setattr(daily_pick, "outside_opening_lines", lambda *a, **k: [])
     out = daily_pick.outside_long_lines(date(2026, 9, 4), cur, topics=TOPICS, drafts=drafts)
     assert len(out) == 1
     assert "これにすること" not in out[0]
