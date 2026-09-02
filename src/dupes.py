@@ -659,7 +659,7 @@ def used_round_amounts(topics: dict[str, str] | None = None
 
 def blocking(title: str, topic_id: str, videos: list[dict],
              topics: dict[str, str] | None = None,
-             exclude: str | None = None) -> list[dict]:
+             exclude: str | set[str] | None = None) -> list[dict]:
     """**投稿の直前に呼ぶ。** これから上げる1本が、既にある本と強く重なるか。
 
     重なっていれば、その組を返します（**空なら通してよい**）。
@@ -688,7 +688,16 @@ def blocking(title: str, topic_id: str, videos: list[dict],
     have = {r["id"] for r in rows}
     rows += [r for r in ledger_rows(topics) if r["id"] not in have]
     if exclude:
-        rows = [r for r in rows if r["id"] != exclude]
+        # **複数の下書きを一度に外せること**（2026-09-02 夜・3本目の焼き直しで踏んだ）。
+        #
+        # 規則3 は「出る瞬間まで」なので、同じ本の焼き直しは1日に何度も起きます。
+        # 1回ごとに private・予約なしの下書きが**1本ずつ残る**（消さない・規則の4）ので、
+        # 3本目を上げる回は「1つ前」を外しても**「2つ前」に `same-topic` で当たります**
+        # （実測: `MqQKSnbM0OI` と `SD8zQU-x6y0` の2本が同じ題材で残っていた）。
+        # 呼び手は `--replaces a,b` を割って集合で渡し、1本ずつ private・予約なしを
+        # 確かめてから、ここへ来ます（`upload_only.drop_replaced()`）。
+        dropped = {exclude} if isinstance(exclude, str) else set(exclude)
+        rows = [r for r in rows if r["id"] not in dropped]
     me = {"id": "＜これから上げる本＞", "title": title, "topic": topic_id,
           "calc": (topics or {}).get(topic_id, ""), "at": None, "scheduled": False}
     return [i for i in find(rows + [me])

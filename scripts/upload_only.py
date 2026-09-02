@@ -3,8 +3,9 @@
     python scripts/upload_only.py <テーマID>
     python scripts/upload_only.py <テーマID> "" <時刻>   # 第3引数で予約
     python scripts/upload_only.py <テーマID> --draft     # **予約を付けずに private で上げる**
-    python scripts/upload_only.py <テーマID> --draft --replaces <videoId>
+    python scripts/upload_only.py <テーマID> --draft --replaces <videoId>[,<videoId>…]
                                                         # **焼き直し（規則3）。差し替える下書きを外す**
+                                                        # （同じ題材の下書きが何本 残っていても、全部 名指しで外せる）
 
 **`--draft` は 2026-09-02 に足しました**（規則5・固定その4）。オーナー原文:
 
@@ -224,18 +225,23 @@ def main(topic: str, visibility: str | None = None, hour: int | None = None,
                     part="snippet,status", id=",".join(missing[i:i + 50])).execute()["items"]
             if missing:
                 print(f"[check] 口から返らなかった控え {len(missing)}本を引き直しました")
-            if replaces:
-                existing, why = drop_replaced(existing, replaces)
+            # **`--replaces a,b` —— 下書きは1本ずつ残るので、何本でも外せること**
+            # （2026-09-02 夜。同じ日の3本目の焼き直しで、「1つ前」を外しても
+            # 「2つ前」の `MqQKSnbM0OI` に `same-topic` で止められました）。
+            # 1本ずつ private・予約なしを確かめます。**1本でも欠けたら全部 断る。**
+            replaced_ids = [x.strip() for x in (replaces or "").split(",") if x.strip()]
+            for vid in replaced_ids:
+                existing, why = drop_replaced(existing, vid)
                 if why:
-                    print(f"\n[!] **`--replaces {replaces}` は使えません** —— {why}")
+                    print(f"\n[!] **`--replaces {vid}` は使えません** —— {why}")
                     print("  外す枠があるなら `scripts/reschedule.py --unschedule` が先です。")
                     return 1
-                print(f"[check] **差し替え**: {replaces} を突き合わせから外しました"
+                print(f"[check] **差し替え**: {vid} を突き合わせから外しました"
                       "（private・予約なし ＝ 公開の並びに入っていない本）")
             hits = dupes.blocking(
                 title, topic, existing,
                 {t["id"]: t.get("calc", "") for t in config.load_topics()["topics"]},
-                exclude=replaces)
+                exclude=set(replaced_ids) or None)
             if hits:
                 print("\n[!] **既にある本と強く重なります。投稿を中止します。**")
                 for h in hits:
