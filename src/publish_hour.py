@@ -254,6 +254,29 @@ def config_hour(path: Path | None = None) -> int | None:
         return None
 
 
+def outside_long_day(day, *, picks_path: Path | None = None,
+                     topics: list[dict] | None = None) -> bool:
+    """**その日の1本が、外の作りを写した長尺（`style: outside_long`）か。** API 0単位。
+
+    読むのは `data/daily_pick.jsonl` のその日の最後の決め（`daily_pick.current`）と
+    `config/topics.yaml` の `style`。決めが無い日・題材が読めない日は False（掃きに戻る）。
+    理由は `place_hour()` の「別の試験を載せた日は掃かない」。
+    """
+    try:
+        from . import daily_pick                               # noqa: PLC0415
+        cur = daily_pick.current(day, picks_path)
+        if not cur:
+            return False
+        topic = str(cur.get("topic") or "")
+        if not topic:
+            return False
+        tops = topics if topics is not None else daily_pick._topics()
+        return any(str(t.get("id") or "") == topic and str(t.get("style") or "") == "outside_long"
+                   for t in tops)
+    except Exception:                                          # noqa: BLE001
+        return False
+
+
 def place_hour(day=None, *, sweep=None, config=None) -> int:
     """**その日に置く時刻（JST の時）—— 正本はここ1つ。** 掃く側（`sweep_hour(その日)`）が先、
     根拠が無ければ `config/channel.yaml` の既定、それも無ければ 9。**API 0単位。**
@@ -282,13 +305,35 @@ def place_hour(day=None, *, sweep=None, config=None) -> int:
     - 前提「公開時刻は per_video に効かない」（`config/hypotheses.yaml`）が閉じたら、
       `sweep_hour()` 自身が対照だけを返すようになります。ここは変えなくてよい
     - `sweep_hour()` が `None`（対照が `MIN_N` に届かない）のあいだは、既定に倒れます
+
+    ## 別の試験を載せた日は掃かない（2026-09-03 05:5x・最適化の回。**この回に撃った数**）
+
+    `sweep_hour()` は奇数日を未試行の時刻に置きます。09/04（奇数）は **17時**、09/05 は 9時、
+    09/06 は **19時** でした。ところが 09/04・09/05 の1本は、前提「外の作り方を写した長尺」の
+    **n=2 の試験**そのもの（`data/daily_pick.jsonl`・`style: outside_long`）。掃きに載せると:
+
+    - **1本目と2本目が別の時刻に出る**（17時／9時）。n=2 で形の効きを読むのに、時刻の交絡が乗る
+    - 48h の判定（`OUTSIDE_48H_GATE`）が 09/06 **17:00** ＝ 09/06 の枠（19時）の **2時間前**。
+      判定を見て 09/06 の1本を直す時間が 2時間 しか無い。9時 なら 10時間 在る
+    - 前提「公開時刻は効かない」（`config/hypotheses.yaml`・掃いた側 6本 で判定・比べる相手は
+      **同じ期間の 9時 のショート**）の側にも、長尺の 1〜73回 が「掃いた側」として混ざる
+
+    だから **その日の1本が `outside_long` の題材なら、掃かずに対照（`best_hour()`）に置く**。
+    掃く側の 6本 は、ショートの日で貯める（1日1本なので、貯まる速さは 2日に1本 のまま）。
+
+    **覆る条件**: 外の作りの長尺が 3本 以上 揃い、前提「外の作り方を写した長尺」が閉じたら
+    `outside_long_day()` は常に False（`_topics()` の `style` が消えるか、`daily_pick` の
+    決めが outside_long でなくなる）。そのときは自動で掃きに戻る。**この関数を消す必要は無い。**
     """
     if day is None:
         day = datetime.now(JST).date()
     h = None
     try:
-        fn = sweep or sweep_hour
-        h = fn(day)
+        if outside_long_day(day):
+            h = best_hour()
+        else:
+            fn = sweep or sweep_hour
+            h = fn(day)
     except Exception:                                          # noqa: BLE001
         h = None
     if h is None:

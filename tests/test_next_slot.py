@@ -294,6 +294,9 @@ def test_move_lines_は_機械が置く時刻と同じ数を刷る(monkeypatch) 
 
     monkeypatch.setattr(publish_hour, "sweep_hour", lambda d: 17)
     monkeypatch.setattr(publish_hour, "config_hour", lambda path=None: 9)
+    # 外の作りの長尺の日は掃かない（`publish_hour.outside_long_day`・2026-09-03）。
+    # この検査は「3か所が同じ数」を見るものなので、その門は外して掃きの側を通す。
+    monkeypatch.setattr(publish_hour, "outside_long_day", lambda d, **kw: False)
     monkeypatch.setattr(next_slot, "_picked", lambda day: None)
     day = _dt.date(2026, 9, 4)
 

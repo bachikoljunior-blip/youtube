@@ -186,10 +186,14 @@ def test_insert_の道は_控えが無ければ_何も撃たない(tmp_path):
     assert rc == 2 and new_id is None
 
 
-def test_置く時刻は掃く側が先で_根拠が無ければ既定():
+def test_置く時刻は掃く側が先で_根拠が無ければ既定(monkeypatch):
     """**置く側が `config_hour()` しか読まず、掃き（`sweep_hour`）が助言止まりだった**
     （2026-09-03 00:4x に踏んだ。`sweep_hour(09/04)`=17時・機械は 9時）。"""
     import datetime as _dt
+    from src import publish_hour
+    # 外の作りの長尺の日は掃かない門（`publish_hour.outside_long_day`・2026-09-03 05:5x）は
+    # 別の検査（tests/test_publish_hour_outside_long.py）。ここは掃きの順だけを見る
+    monkeypatch.setattr(publish_hour, "outside_long_day", lambda d, **kw: False)
     day = _dt.date(2026, 9, 4)
     assert sweep.place_hour(day, sweep=lambda d: 17, config=lambda: 9) == 17
     assert sweep.place_hour(day, sweep=lambda d: None, config=lambda: 11) == 11
