@@ -161,6 +161,26 @@ QUANT_FULL_PCT = 8.0
 # **覆る条件**: 1日1本 の規則が変わったら、この 720 も測り直すこと。
 FLOOR_MIN_CLAMP, FLOOR_MAX_CLAMP = 10.0, 720.0
 
+# **オーナー指示（2026-09-02 18:4x JST・原文。一字も変えないこと）**:
+#
+# > **「使用量は定期的に画面送るからとりあえず最初は今までの最高速度の二分の一の速度でやって」**
+#
+# 「今までの最高速度」は、目盛り（`data/usage.jsonl`）の**同じ枠の隣り合う2点**から
+# 出る %/時 の最大です。撃って出た数（2026-09-02 18:4x）:
+#
+#     08/25 22:26 → 08/26 09:52 JST  11.4時間で 37% → 54%  ＝ **1.487 %/時**
+#     その二分の一                                          ＝ **0.744 %/時**
+#
+# **定数に写しません。** 毎回 目盛りから数えます（`max_measured_rate()`）——
+# 写すと、目盛りが増えて最高が更新されたとき、ここだけ古くなります
+# （この repo でいちばん多い壊れ方: 言っている所と、している所が別）。
+# `pace()` は「この先に許される速さ」をこの上限で頭打ちにします。
+# ＝ 間隔（`floor_min`）は `per_lap / min(forward_rate, cap)` で出ます。
+#
+# **覆る条件**: オーナーが速さについて次に何か言ったとき（画面を送る、と言っています）。
+# そのときは `OWNER_SPEED_DIVISOR` ではなく、**言われた数のほう**を入れること。
+OWNER_SPEED_DIVISOR = 2.0
+
 # 弱いほうから順に。遷移の向きを判定するのに使う。
 STATUS_ORDER = ["allowed", "allowed_warning", "rejected"]
 
@@ -855,6 +875,42 @@ def _births_between(rows: list[dict], start: datetime, end: datetime) -> int:
     return _laps_between(start, end) or from_quota
 
 
+def max_measured_rate(anchors: list[dict] | None = None) -> dict | None:
+    """**目盛りの同じ枠の隣り合う2点から出る %/時 の最大**（今までの最高速度）。
+
+    リセットをまたぐ差（%が減った）は「使った量」ではないので数えません。
+    返り: `{"rate", "from_at", "to_at", "from_used", "to_used", "hours"}`。点が足りなければ None。
+    """
+    anchors = _anchors() if anchors is None else anchors
+    pts = []
+    for row in anchors:
+        at = _parse_iso(row.get("fetched_at"))
+        if not at:
+            continue
+        pts.append((at, float(row["used_percent"]), _parse_iso(row.get("resets_at_iso"))))
+    pts.sort(key=lambda x: x[0])
+    best = None
+    for (t0, u0, r0), (t1, u1, r1) in zip(pts, pts[1:]):
+        hours = (t1 - t0).total_seconds() / 3600
+        if hours <= 0 or u1 < u0:
+            continue                          # 同時刻／戻された ＝ 使った量ではない
+        if r0 and r1 and not _same_window(r0, r1):
+            continue                          # 別の枠をまたぐ差は使わない
+        rate = (u1 - u0) / hours
+        if best is None or rate > best["rate"]:
+            best = {"rate": rate, "from_at": t0, "to_at": t1,
+                    "from_used": u0, "to_used": u1, "hours": hours}
+    return best
+
+
+def owner_rate_cap(anchors: list[dict] | None = None) -> float | None:
+    """**この先に許される速さの上限（%/時）** ＝ 今までの最高速度 ÷ `OWNER_SPEED_DIVISOR`。"""
+    best = max_measured_rate(anchors)
+    if not best or best["rate"] <= 0:
+        return None
+    return best["rate"] / OWNER_SPEED_DIVISOR
+
+
 def pace(now: datetime | None = None) -> dict | None:
     """いまの速さと、持続できる1周の間隔。目盛りが無ければ None。
 
@@ -972,6 +1028,12 @@ def pace(now: datetime | None = None) -> dict | None:
         used_now = min(100.0, used + elapsed * carry_rate)
     left_hours = (win_reset - now).total_seconds() / 3600
     forward_rate = ((100.0 - used_now) / left_hours) if left_hours > 0 else 0.0
+    # **オーナーの上限**（2026-09-02「今までの最高速度の二分の一の速度でやって」）。
+    #     枠に余裕があっても、この線より速くは走らない。`OWNER_SPEED_DIVISOR` の註。
+    forward_rate_raw, rate_cap = forward_rate, owner_rate_cap(anchors)
+    forward_capped = bool(rate_cap is not None and forward_rate > rate_cap)
+    if forward_capped:
+        forward_rate = rate_cap
 
     # --- 1周いくらか（区間へ寄せる。寄せる量は Δ% の大きさで決める） -----
     weight, per_lap = 0.0, per_lap_cum
@@ -1025,6 +1087,8 @@ def pace(now: datetime | None = None) -> dict | None:
         "rate_raw": rate_raw, "rate_floored": rate_floored,
         "per_lap_raw": per_lap_raw, "per_lap_floored": per_lap_floored,
         "forward_rate": forward_rate, "left_hours": left_hours,
+        "forward_rate_raw": forward_rate_raw, "rate_cap": rate_cap,
+        "forward_capped": forward_capped, "rate_max": max_measured_rate(anchors),
         "used_now": used_now, "carry_rate": carry_rate, "carried_hours": elapsed,
         "floor_min": floor,
         # **歯止めを掛ける前の数と、掛かったかどうか。**
@@ -1182,6 +1246,14 @@ def pace_report(now: datetime | None = None) -> None:
         print(f"      **残りは目盛りの時刻からではなく、いまから数えること。**"
               f"目盛りは人手でしか入らないので必ず古くなり、"
               f"**古いまま割ると必ず「速すぎてよい」側に外れます**（2026-08-21 に 9% ずれた）")
+    if p.get("rate_cap") is not None:
+        mx = p.get("rate_max") or {}
+        print(f"    オーナーの上限: **{p['rate_cap']:.3f} %/時**"
+              f"（今までの最高速度 {mx.get('rate', 0):.3f} %/時 ÷ {OWNER_SPEED_DIVISOR:g}"
+              + (f"・{mx['from_at'].astimezone(JST):%m/%d %H:%M} → {mx['to_at'].astimezone(JST):%m/%d %H:%M} JST" if mx.get('from_at') else "")
+              + "）"
+              + ("   ← **いまはこれが効いています**（枠の残りより厳しい）" if p.get("forward_capped")
+                 else f"   （枠の残りから出る {p.get('forward_rate_raw', 0):.3f} %/時 のほうが厳しい）"))
     print(f"    この先に許される速さ: **{p['forward_rate']:.3f} %/時**"
           f"（残り {100 - p['used_now']:.1f}% ÷ 残り {p['left_hours']:.1f}時間）"
           f"   → 通算は **{p['over']:+.0%}**")

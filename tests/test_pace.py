@@ -226,7 +226,28 @@ def test_区間が短いほど通算へ寄せる(tmp_path):
     assert p["seg_weight"] == pytest.approx(3.0 / quota.QUANT_FULL_PCT, abs=0.01)
     assert p["per_lap"] == pytest.approx(0.396, abs=0.005)         # 0.333 と 0.500 の間
     assert p["per_lap_cum"] < p["per_lap"] < p["seg"]["per_lap"]
-    assert p["floor_min"] == pytest.approx(41, abs=1)              # 31分 → 41分
+    # **オーナーの上限（2026-09-02「最高速度の二分の一」）が先に効くと 53分 になる。**
+    #     ここで見たいのは「寄せ」の側なので、上限を外して 41分 を確かめる。
+    #     上限そのものは `test_オーナーの上限は最高速度の半分` が見る。
+    assert p["forward_capped"] is True
+    assert p["floor_min"] == pytest.approx(
+        p["per_lap"] / p["rate_cap"] * 60, abs=1)                 # 上限で頭打ち
+    assert p["per_lap"] / p["forward_rate_raw"] * 60 == pytest.approx(41, abs=1)  # 31分 → 41分
+
+
+def test_オーナーの上限は最高速度の半分(tmp_path):
+    """**「今までの最高速度の二分の一の速度でやって」**（2026-09-02・原文）。
+
+    最高速度は目盛りの隣り合う2点の %/時 の最大。上限はその半分で、
+    枠の残りから出る「許される速さ」より厳しければ、そちらが効く。
+    """
+    _two_point(tmp_path)
+    mx = quota.max_measured_rate()
+    assert mx is not None and mx["rate"] == pytest.approx(0.896, abs=0.005)
+    assert quota.owner_rate_cap() == pytest.approx(0.896 / quota.OWNER_SPEED_DIVISOR, abs=0.005)
+    p = quota.pace(_now(SECOND_AT))
+    assert p["rate_cap"] == pytest.approx(quota.owner_rate_cap(), abs=1e-9)
+    assert p["forward_rate"] <= p["rate_cap"] + 1e-9
 
 
 def test_区間が太れば区間だけで決める(tmp_path):
