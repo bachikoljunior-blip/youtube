@@ -102092,3 +102092,17 @@ runs/eta を数える・掃きの範囲を1日→3日に・印の読み方・写
 
 - `fix` 比（71%）そのものを門でいじること: 09/01 の門で 74.7%→61.2% にしても日付は動かなかった（`run_marker` の註「回の配合をこれ以上いじらないこと」）。この回も触っていない
 - 09/04 の本 `1huadpEk6HY` の中身: 控えと台本が同じ（sha 83759eac6989）。verify 合格・冒頭 型の中。触ると同じ日に 2本目の焼きになる
+
+### 追記（同じ回・05:1x）—— 05:02 に起こした焼きは 05:03:59 に**跡を残さず死んだ**。原因は未特定。同じ sha を hourly が手で焼いている
+
+- `data/rebake.log` は pipeline の1行で止まり、`build/nenkin-…/audio/` は seg_044（05:03:58）で止まった。`rebake-run` の親も子も居ない。
+  帳面 `data/rebake.jsonl` に `done` 行は無い（rc も無い）。OOM ではない（`free -m` 空き 10GB・`memory.events` 無し）。repo に kill する物は無い
+  （`grep pkill|killpg|os.kill` 0件）。**別に Popen した `sleep 240`（`start_new_session`）は 1分 以上 生きている** ＝ 「サブの Bash から起こした背景は
+  即 死ぬ」ではない。**次の回が同じ形を踏んだら、`_run` を `capture_output` ではなく log へ流す形（`stdout=log`）に替えて跡を残すこと**
+  —— いまは死んだ瞬間の出力が消える
+- 同じ時刻に **hourly（`agent-a7d07fac…`）が同じ台本を手で `pipeline` していた**（05:02 に起こしたとき既に走っていた・`final.mp4` 05:07）。
+  こちらの `rebake_run` の錠（`rebake.lock`）は手撃ちの pipeline を止めない。＝ **この回の焼きは要らなかった**（相手が上げれば
+  `stash == draft` で機械は「同じ中身」で止まる）。この回に入れた `rebake_attempted` の「印が古く `done` が無ければもう一度」は、
+  相手の上げが落ちたときに 3時間 後の周が拾う側 —— 二重に焼かず、取りこぼしもしない
+- **覆る条件に足す**: `data/rebake.jsonl` に `start` だけで `done` の無い行が 2件 続いたら、焼く側が死ぬ形が構造。`_run` の出力を log へ流し、
+  `rebake_run` の頭で `os.setsid` 済みかと親 pid を印字して、誰が殺したかを跡で追うこと
