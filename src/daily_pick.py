@@ -994,7 +994,9 @@ def outside_opening_lines(vid: str, topic: str, root: Path | None = None,
                    f"（`scripts/ahead_sweep.rebake_today`・毎周の `kick` から・台本が控えと違い commit 済みなら背景で "
                    f"`videos.insert`（日枠を使わない・TTS 64コマ 約4分＋合成）→ 決めを新 ID へ写す。"
                    f"帳面 `data/rebake.jsonl`・log `data/rebake.log`。日枠が要るのは当日の `--move` 50単位 だけ）。"
-                   f"手で撃つなら（同じ物・いま撃ってよい）:")
+                   f"手で撃つなら（同じ物）—— **先に `python scripts/ahead_sweep.py --dry-run` の `[rebake]` を見ること**: "
+                   f"「一度 焼いた（印）」と出ていれば機械がいま焼いている。**そのとき手で撃つと同じ本が2本 上がる**"
+                   f"（2026-09-03 05:0x に実測: 手の bake 中に `--rebake-run` が同じ sha で起きた・片方を kill）:")
         out.append(f"       python -m src.pipeline --script {draft.relative_to(root)} --topic {topic} --dry-run"
                    f" && python scripts/upload_only.py {topic} --draft --replaces {vid}")
     elif pd is not None:
@@ -1061,10 +1063,19 @@ def outside_long_lines(day: date, cur: dict | None, now: datetime | None = None,
     out: list[str] = list(ro_lines)
     cur_id = str((cur or {}).get("video_id") or "")
     taken = set()
+    # **ほかの日の決め（最後の行）が名指ししている本 → その日**（2026-09-03 05:0x に足した。
+    # 下の「ほかの日に決めてある下書きの冒頭」で使う）
+    taken_day: dict[str, str] = {}
     try:
+        last_by_day: dict[str, dict] = {}
         for r in _jsonl(PICKS):
             if r.get("for_day") != day.isoformat() and r.get("video_id"):
                 taken.add(str(r["video_id"]))
+            if r.get("for_day"):
+                last_by_day[str(r["for_day"])] = r
+        for d_s, r in last_by_day.items():
+            if d_s != day.isoformat() and r.get("video_id"):
+                taken_day[str(r["video_id"])] = d_s
     except Exception:                                          # noqa: BLE001
         pass
     if ro == "stop":
@@ -1093,6 +1104,21 @@ def outside_long_lines(day: date, cur: dict | None, now: datetime | None = None,
                 out.append(f"       python -m src.daily_pick --pick 長尺 {d.get('topic')} --video {vid}"
                            f" --day {day:%Y-%m-%d} --why \"外の作りを写した長尺の1本目（前提の判定・期限 {dl}）。"
                            f"外の長尺 p90 ÷ 自分の中央値 1回\"")
+            # **ほかの日に決めてある外の作りの下書きも、冒頭を数えて見せる**（2026-09-03 05:0x に踏んだ）。
+            #     この画面は決めた日の1本（上の `d`）の冒頭しか数えておらず、09/05 の決め `dRZnZrRy2Lw`
+            #     （02:29 に決めた・冒頭 4件 型の外）は 04:2x の回の申し送りでしか見えなかった。
+            #     `rebake_today` は `for_day` の本しか焼き直さないので、**先の日の本は台本を直す回が要る** ——
+            #     台本の直しは 0単位で、その日が来れば機械が焼く。見えなければ、その回は来ない
+            #     （`retro.py`: 3周 以上 運ばれて実物に当たったのが 1回 以下 ＝ 道具の側を疑え）。
+            for x in have:
+                xv = str(x.get("video_id") or "")
+                if not xv or xv == vid or xv not in taken_day:
+                    continue
+                xl = outside_opening_lines(xv, str(x.get("topic") or ""))
+                if xl:
+                    out.append(f"     ほかの日（{taken_day[xv][5:].replace('-', '/')}）に決めてある外の作りの下書き "
+                               f"`{xv}` `{x.get('topic')}`:")
+                    out.extend(xl)
             return out
         # 下書きは全部ほかの日に割り当てずみ → 次を作るかは先読みの判定で
         out.append(f"     外の作りの長尺の下書きは全部 ほかの日に決めてあります"
