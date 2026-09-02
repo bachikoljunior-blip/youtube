@@ -6334,3 +6334,57 @@
 {"at": "2026-09-02T10:43:38+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "eta.py:q"}
 {"at": "2026-09-02T10:43:38+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "eta.py:q"}
 {"at": "2026-09-02T10:43:38+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "eta.py:q"}
+{"at": "2026-09-02T11:26:58+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "eta.py:q"}
+{"at": "2026-09-02T11:26:59+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "eta.py:q"}
+{"at": "2026-09-02T11:26:59+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "eta.py:q"}
+{"at": "2026-09-02T11:26:59+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "eta.py:q"}
+{"at": "2026-09-02T11:27:00+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "eta.py:q"}
+{"at": "2026-09-02T11:27:00+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "eta.py:q"}
+{"at": "2026-09-02T11:27:00+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "eta.py:q"}
+{"at": "2026-09-02T11:27:54+00:00", "api": "data", "method": "channels.list", "units": 1, "ok": true, "by": "status.py:_channel_main"}
+{"at": "2026-09-02T11:27:55+00:00", "api": "data", "method": "videos.list", "units": 1, "ok": true, "by": "status.py:_channel_main", "detail": "6GtzWaguZhg,SD8zQU-x6y0,MqQKSnbM0OI,dg-5ml7GRZQ,8hJnwkC8NU0,2tAGEKVCgYQ,ICmIBsZRYFE,HW0-QFAPl98,CLiJusPI7gY,aPz9Ys_wkeo,"}
+{"at": "2026-09-02T11:27:56+00:00", "api": "data", "method": "videos.list", "units": 1, "ok": true, "by": "status.py:_channel_main", "detail": "JZ0n90eQ238,GbRRvae3nEE,a63FzIUV2wI,h35ot6MqYso,m7BRQs9X6Jc,icSuiH8u6G0,vdxF0QfsHDg,sCr8CcUtpN4,7iw5tSFK4H4,h8AzogGHyqU,"}
+{"at": "2026-09-02T11:27:56+00:00", "api": "data", "method": "videos.list", "units": 1, "ok": true, "by": "status.py:_channel_main", "detail": "CGt5C0Sni24,G26SUnRP0bg,8y2N_R-1wBg,zZHmFW7AYFo,l6yTGfjskD8,Z0tBNDpr60o,UVXKWfgWkZE,ClBuhgt43pA,DSZfGUQ_NyQ,zM9LWPirhCA,"}
+{"at": "2026-09-02T11:27:56+00:00", "api": "data", "method": "videos.list", "units": 1, "ok": true, "by": "status.py:_channel_main", "detail": "mRisqvcqmm4,cFZd55jRxAw,mLIs9lDXTpQ,8ORhweAXZ7U,h_1tmYxLSdo,yC5BVoX64bU,6l0RCUDEm5g,OcAFHKW6Gtg,uTXFcur6VTw,ENCe9pKoZug,"}
+{"at": "2026-09-02T11:27:57+00:00", "api": "data", "method": "videos.list", "units": 1, "ok": true, "by": "status.py:_channel_main", "detail": "dLDoFEVHn5s,v6gZIFynjpc,SvOyN1BOdQ4,-5n5vwfePoY,utZAUxymQLw,fLENot-5oKM,470i0hhnRx0,78ssJSwULTg,to_gWbvDhrU,JpTJlmJBDm0,"}
+{"at": "2026-09-02T11:27:57+00:00", "api": "data", "method": "videos.list", "units": 1, "ok": true, "by": "status.py:_channel_main", "detail": "BVZmhAG6s8s,lywTMXD6WDM,WIj04aFYW6Q,OePniwSIcTE,2FSAM7FYftY,KdlvGxloIg4,5A-YZC26YVs,xEwtkQDKqkA,zUDaYS5Acgo,lIQxDg4OlAo,"}
+{"at": "2026-09-02T11:27:58+00:00", "api": "data", "method": "videos.list", "units": 1, "ok": true, "by": "status.py:_channel_main", "detail": "5SEWUmEzxcs,66ErsT9OUrI,D4O2b1xKe5M,NeLZdfJiaDM,dhU65tcBJIo,pMHDwK5tB2E,eDhsTuVyVAw,gPusj-Y2404,G3VqIFpBwKo,drkKm9fHW2M,"}
+{"at": "2026-09-02T11:27:59+00:00", "api": "data", "method": "videos.list", "units": 1, "ok": true, "by": "status.py:_channel_main", "detail": "GHVkmMsYnz4,ERW21qnDcTc,Hphh4YLfCR4,J2PXnd75LIM,5eAjnILgDVc,supVwM056so,6icv_RjRM1c,AxcqoUJHHMk,EXwYyJgoeec,FGZ1NPuwWxc,"}
+{"at": "2026-09-02T11:27:59+00:00", "api": "data", "method": "videos.list", "units": 1, "ok": true, "by": "status.py:_channel_main", "detail": "tYnLi1uaJOc,anH_Ht3CfQk,zGEeeOvgEK4,MGyAFTblhKc,mmgb36T4fic,sLpF129koN8,j9fn0x4xG9U,dh0Zg0WJ3TM,YBZFmrsL_kk,f-eqkNfiPFQ,"}
+{"at": "2026-09-02T11:28:00+00:00", "api": "data", "method": "videos.list", "units": 1, "ok": true, "by": "status.py:_channel_main", "detail": "QKvpHbRfdb0,x2agstHS8m0,Y3JUjFLrORY,tQqJpZSFmI8,vb3uVpMM2IQ,yds84ydrXgY,AvHtsG5FRn4,1JpphG6oeDE,_4JrAC1ijZ8,F179rBqytVQ,"}
+{"at": "2026-09-02T11:28:01+00:00", "api": "data", "method": "videos.list", "units": 1, "ok": true, "by": "status.py:_channel_main", "detail": "HTsLo6BhTPM,u3V1PFBC20c,PdJ0ltnIvkw,GXrtaUFHK3Q,Y27_ofu-pCY,laMTkmhldy4,ajP5wUBStVY,PwXnB_AlzRQ,ioPzkN-XxLs,ofPvQqfsC5g,"}
+{"at": "2026-09-02T11:28:01+00:00", "api": "data", "method": "videos.list", "units": 1, "ok": true, "by": "status.py:_channel_main", "detail": "n0xfyfZZL8g,ejZd3m41-k0,17H_GxEFs4U,ou3pE36xgCI,Sm2K5kLI_c4,Yc4EI4sbpoY,OwFjo4kLA9U,MZGm2v70r30,XYKBemKX8eg,L2fqMA7Xh-k,"}
+{"at": "2026-09-02T11:28:02+00:00", "api": "data", "method": "videos.list", "units": 1, "ok": true, "by": "status.py:_channel_main", "detail": "2_kBcQwtDIQ,G6_KpcyNxEw,w9mQca2J2I4,rk0hMaeKer0,M-Quvedsyv0,WYDJwBtvBD4,cDgq2WaXFZA,lGEH_kU3Esk,sHj5LjTj_C0,tBI1Lml41SA,"}
+{"at": "2026-09-02T11:28:02+00:00", "api": "data", "method": "videos.list", "units": 1, "ok": true, "by": "status.py:_channel_main", "detail": "8gVKGl2r58c,HoF6kT9UtZw,3S16LVnj0RU,CwfNxMQlmJg,aE7qcL_bEic,plmBPZqqP1U,fWIFdvlcgbA,1wtEWAoGOeo,_AVmgTNc658,1d3sR_XOdCw,"}
+{"at": "2026-09-02T11:28:03+00:00", "api": "data", "method": "videos.list", "units": 1, "ok": true, "by": "status.py:_channel_main", "detail": "pte2D3b-VLI,NPag7xobhTo,NQFpuf7LMP0,-rNsh53STNw,ONvXI2r4-4A,mmetNUrDNZs,JfqeRrpdAcU,1IBZOQag6Tg,5d0Ox7N4UYM,tk6sCW_TrKA,"}
+{"at": "2026-09-02T11:28:47+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "analytics.py:fetch_traffic"}
+{"at": "2026-09-02T11:28:48+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "analytics.py:fetch_report"}
+{"at": "2026-09-02T11:28:49+00:00", "api": "data", "method": "videos.list", "units": 1, "ok": true, "by": "analytics.py:fetch_report", "detail": "NHKylqsNfTw,fLENot-5oKM,gPusj-Y2404,x9idbNKZpqw,YmJ7psxW3co,ZUO6bFJRsRY,2FSAM7FYftY,pMHDwK5tB2E,CdX2oIb7BG8,Ty4w6q-tBMo,"}
+{"at": "2026-09-02T11:28:51+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "analytics.py:fetch_retention"}
+{"at": "2026-09-02T11:28:52+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "analytics.py:fetch_retention"}
+{"at": "2026-09-02T11:28:53+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "analytics.py:fetch_retention"}
+{"at": "2026-09-02T11:28:54+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "analytics.py:fetch_retention"}
+{"at": "2026-09-02T11:28:55+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "status.py:print_channel_signals"}
+{"at": "2026-09-02T11:28:56+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "status.py:pull"}
+{"at": "2026-09-02T11:28:57+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "status.py:pull"}
+{"at": "2026-09-02T11:28:57+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "status.py:pull"}
+{"at": "2026-09-02T11:28:57+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "status.py:print_where_watched"}
+{"at": "2026-09-02T11:28:58+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "scan.py:query"}
+{"at": "2026-09-02T11:28:58+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "scan.py:query"}
+{"at": "2026-09-02T11:28:59+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "scan.py:query"}
+{"at": "2026-09-02T11:28:59+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "scan.py:query"}
+{"at": "2026-09-02T11:28:59+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "scan.py:query"}
+{"at": "2026-09-02T11:28:59+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "scan.py:query"}
+{"at": "2026-09-02T11:28:59+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "scan.py:query"}
+{"at": "2026-09-02T11:29:00+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "scan.py:query"}
+{"at": "2026-09-02T11:29:00+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "scan.py:query"}
+{"at": "2026-09-02T11:29:00+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "scan.py:query"}
+{"at": "2026-09-02T11:29:00+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "scan.py:query"}
+{"at": "2026-09-02T11:29:00+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "scan.py:query"}
+{"at": "2026-09-02T11:29:01+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "scan.py:query"}
+{"at": "2026-09-02T11:29:02+00:00", "api": "data", "method": "videos.list", "units": 1, "ok": true, "by": "scan.py:collect", "detail": "-5n5vwfePoY,-NbX_FMzAg0,0GdstSOGWVw,12V-kHrKzIg,13TynquQzQU,178_WLomK4Y,1Nyl3aLUOgo,1xPjpFwG8qk,2FSAM7FYftY,2sEAxqibFIM,"}
+{"at": "2026-09-02T11:29:02+00:00", "api": "data", "method": "videos.list", "units": 1, "ok": true, "by": "scan.py:collect", "detail": "EYxhnLT8vJA,EanVD0YZPlo,EszlAOjkQ2o,FNR61l5Q4pk,FSAN9tjIX10,FcrqwSTZ7Kc,Fq-RGVyWDBM,G1qe_mj0mco,G3VqIFpBwKo,G4CNc4zATzA,"}
+{"at": "2026-09-02T11:29:02+00:00", "api": "data", "method": "videos.list", "units": 1, "ok": true, "by": "scan.py:collect", "detail": "UI5P9jvchc4,UVXKWfgWkZE,UgU5jekMYtw,Un9Tlod-Vdw,W54m_JDnSHM,WE_ZB7XNN2o,WIj04aFYW6Q,WuTf0Z-tRJc,X8fq21tC-DU,XXUdcTq7psQ,"}
+{"at": "2026-09-02T11:29:03+00:00", "api": "data", "method": "videos.list", "units": 1, "ok": true, "by": "scan.py:collect", "detail": "l3NcCYgX7uI,l6yTGfjskD8,lIQxDg4OlAo,lges32AtBC0,lyqNRWPouck,m74wgCTi2n0,mLIs9lDXTpQ,mQ017S6275o,mRisqvcqmm4,mULv9y-sTOo,"}
+{"at": "2026-09-02T11:29:04+00:00", "api": "data", "method": "channels.list", "units": 1, "ok": true, "by": "scan.py:collect"}
+{"at": "2026-09-02T11:29:05+00:00", "api": "data", "method": "playlists.list", "units": 1, "ok": true, "by": "scan.py:collect"}

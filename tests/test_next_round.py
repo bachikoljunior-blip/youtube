@@ -225,6 +225,35 @@ def test_recordは複数の役を受ける(tmp_path, monkeypatch):
     assert len(got) == len(nr.ROLES)
 
 
+def test_2種類そろった呼びは前の片肺を埋めない(tmp_path, monkeypatch):
+    """**2026-09-02 夜に親が実物で踏んだ形。**
+
+    前の周が optimizer だけで終わっていると、`--record hourly,optimizer` の
+    1行目（hourly）が前の周の穴埋めに吸われ、2行目が新しい周を始めて、
+    以後 周が1つずつ ずれ続けた。すると `decide()` は hourly が終わった直後でも
+    「GO hourly（穴埋め）」と出す ＝ 走ったばかりの役の二重立て。
+    """
+    import json as _json
+    from datetime import datetime, timedelta, timezone
+    rounds = tmp_path / "rounds.jsonl"
+    monkeypatch.setattr(nr, "ROUNDS", rounds)
+    monkeypatch.setattr(nr, "floor_minutes", lambda: (97.0, "検査"))
+    t0 = datetime(2026, 9, 2, 9, 19, 45, tzinfo=timezone.utc)
+    rounds.write_text(_json.dumps({"at": t0.isoformat(), "role": "optimizer",
+                                   "round": t0.isoformat()}) + "\n", encoding="utf-8")
+    t1 = t0 + timedelta(minutes=34)
+    got = nr.record_many(list(nr.ROLES), now=t1)
+    assert {r["round"] for r in got} == {t1.isoformat()}, "同じ呼びの2行が別の周に割れています"
+    group = nr.current_round(span_min=nr.round_span(97))
+    assert nr.missing_roles(group) == [], "そろった周が片肺に見えています"
+    # 1つだけ渡した呼びは、これまでどおり穴埋め
+    t2 = t1 + timedelta(minutes=5)
+    rounds.write_text(_json.dumps({"at": t2.isoformat(), "role": "optimizer",
+                                   "round": t2.isoformat()}) + "\n", encoding="utf-8")
+    one = nr.record_many(["hourly"], now=t2 + timedelta(minutes=3))
+    assert one[0]["round"] == t2.isoformat()
+
+
 @pytest.mark.parametrize("role", list(nr.ROLES))
 def test_役の名前は渡す本文のkindと一致する(role):
     """名前がずれると、親は存在しない `kind:` を探して止まります。"""

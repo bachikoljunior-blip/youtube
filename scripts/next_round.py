@@ -422,7 +422,8 @@ def decide(now: datetime | None = None, live: int | None = None) -> dict:
             "why": f"前の周の開始から {passed:.0f}分。あと {floor - passed:.0f}分"}
 
 
-def record(role: str, now: datetime | None = None) -> dict:
+def record(role: str, now: datetime | None = None,
+           round_id: str | None = None) -> dict:
     """立てたことを1行残す。**周の識別子（`round`）も一緒に書きます。**
 
     **なぜ識別子が要るのか**（2026-08-26。時刻の窓で2回外したあと）:
@@ -439,11 +440,40 @@ def record(role: str, now: datetime | None = None) -> dict:
     古い行に `round` が無い場合だけ、窓へ落ちます。
     """
     now = now or datetime.now(timezone.utc)
-    row = {"at": now.isoformat(), "role": role, "round": _join_round(role, now)}
+    rid = round_id or _join_round(role, now)
+    row = {"at": now.isoformat(), "role": role, "round": rid}
     ROUNDS.parent.mkdir(parents=True, exist_ok=True)
     with ROUNDS.open("a", encoding="utf-8") as fh:
         fh.write(json.dumps(row, ensure_ascii=False) + "\n")
     return row
+
+
+def record_many(roles: list[str], now: datetime | None = None) -> list[dict]:
+    """**1回の呼びで書く行は、全部 同じ周**（2026-09-02 夜・親が実物で踏んだ）。
+
+    ## 何が起きていたか（`data/rounds.jsonl` の実物）
+
+        09:19:45 optimizer  round=09:19:45     ← 前の周が片肺で終わっていた
+        09:53:37 hourly     round=09:19:45     ← `--record hourly,optimizer` の1行目が
+                                                  **前の周の穴埋め**に吸われる
+        09:53:37 optimizer  round=09:53:37     ← 2行目は「もう埋まっている」で**新しい周**
+        11:26:29 hourly     round=09:53:37     ← 以下、周ごとに1つずつ ずれ続ける
+        11:26:29 optimizer  round=11:26:29
+
+    `_join_round` は**1行ずつ**「その役が最新の周に無ければ継ぐ」と決めるので、
+    2つの役を同時に立てた呼びの1行目が、前の片肺の周を埋めに行きます。
+    すると `current_round()` はいつも **optimizer だけの周**を見て、
+    **hourly が終わった直後でも「GO hourly（穴埋め）」** と出します。
+    親がそれに従えば、走ったばかりの役を二重に立てる ＝ 「二分の一の速度」に反します。
+
+    **同時に立てた役は、同じ周です。** `ROLES` をぜんぶ含む呼びは**必ず新しい周**を
+    始めます（穴埋めは、役を1つだけ渡した呼びのときだけ）。
+    検査は `tests/test_next_round.py::test_2種類そろった呼びは前の片肺を埋めない`。
+    """
+    now = now or datetime.now(timezone.utc)
+    want = [r for r in roles if r]
+    rid = now.isoformat() if set(want) >= set(ROLES) else None
+    return [record(role, now=now, round_id=rid) for role in want]
 
 
 def _join_round(role: str, now: datetime) -> str:
@@ -558,9 +588,11 @@ def main() -> int:
         if bad:
             print(f"役は {ROLES} のどれかです: {', '.join(bad)}", file=sys.stderr)
             return 2
-        for role in want:
-            row = record(role)
-            print(f"[next_round] 記録しました: {row['role']} at {row['at']}")
+        # **同じ呼びの役は同じ周**（`record_many` の註 —— 1行ずつ継がせると、
+        #     1行目が前の片肺の周へ吸われ、周が1つずつ ずれ続けます）。
+        for row in record_many(want):
+            print(f"[next_round] 記録しました: {row['role']} at {row['at']}"
+                  f"（周 {row['round']}）")
         return 0
 
     d = decide(live=args.live)

@@ -113,15 +113,27 @@
                   `uploader.upload`（自動探索は**下書きへ倒れます**）
     終わりの門    `scripts/stop_check.sh` (1.45)（`scripts/ahead_gate.py --gate`）
                   **0本にしないまま、その回を終われません**
-    掃き          `scripts/ahead_sweep.py`（`SessionStart` から背景で）
+    掃き          `scripts/ahead_sweep.py`
                   **回が何も選ばなくても掃きます**
+    **置く側**    `scripts/ahead_sweep.place_today()`（2026-09-02 夜に足した）
+                  **きょうの枠が空なら、`[きょうの1本]` で決めた本を その日の枠へ置きます**
+                  （決めていなければ池から形と族の数で・51単位・`data/ahead_sweep.log` の `[today]`）
+
+> **上の2つは `SessionStart` フックからは起きていません**（2026-09-02 夜に実測 ——
+> このコンテナのどの checkout にも `data/ahead_sweep.log` が無い。サブの始まりは
+> `SessionStart` ではなく、終わりも `Stop` ではない）。**実際に毎周 撃たれる2つの口から
+> 起こします**: `scripts/run_marker.py --write`（サブの §1）と `scripts/next_round.py`（親）
+> → `ahead_sweep.kick()`。**フックは残してありますが、当てにしないこと。**
+> 同じ理由で **`stop_check.sh` の門 (1)(1.4)(1.45)(1.6) は、サブでは1度も鳴っていません**
+> （`SubagentStop` 登録 0件・日誌 2026-09-02 18:5x の 3-2）。
 
     python scripts/ahead_gate.py          # 控えと実物で数える（**API 0単位**）
     python scripts/ahead_gate.py --live   # **実物**を引き直して記録する
+    python scripts/ahead_sweep.py --dry-run   # きょうの1本と掃きが、いま何をするか（**API 0単位**）
 
 **逃げ道は「日枠が尽きている」1つだけで、道具が自分で `upload_cap.day_quota()`
 に訊きます**（回の申告ではありません）。理由・実測・覆る条件は
-`docs/JOURNAL.md` 2026-09-02 15:3x。**この3つを外さないこと。**
+`docs/JOURNAL.md` 2026-09-02 15:3x と 同日 夜（置く側）。**この4つを外さないこと。**
 
 ## **1日の回り方**（2026-09-02・オーナー原文）
 
