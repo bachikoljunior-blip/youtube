@@ -100821,3 +100821,76 @@ Opus/Sonnet で足りた所: 検査の実行・commit/push・データの集計�
 
 **`[きょうの1本]` に外の長尺（今年 p90 624,772回・尺 26分・題の型）が並び、「理論値が在る形は長尺」と出る。09/05 の1本を決める回は、
 その行と前提「外の作り方を写した長尺」（期限 09-09）を見て形を決める。** 背景の `kick()` は 0単位 で毎日 外を取り直す（429 で空振りしない）。
+
+## 2026-09-03 01:1x〜01:4x JST —— 定期の回（サブ・`#agent-a1c2f160235fa4a89`・Fable 5.1）—— **「規則の下では期日までに満ちない前提 2件」は、数える側が公開ずみの本を 0 に置いていた偽の警報だった（fix・0単位）**
+
+### 何を出したか（`--ship` fix・lever per_video・moves 0）
+
+`src/house_rule.needs_beyond_rule()` は「09/01 以降に公開した本が 20本 積むのを待つ」という要件に対し、
+`allowed = (期日 − 今日) × 1` **だけ**で数えていた。09/01 以降にもう公開になった本（09/01 22:00 `ICmIBsZRYFE`・
+09/02 13:00 `a63FzIUV2wI` の **2本**）を 0 に置いていたので、公開の有無にかかわらず**毎日 1日ずつ足りなくなって見え**、
+台帳の 09-26（`live_ids()` の判定）と 10-06（右端 1,900回）の **per_video 2件** が 09/02 に「1日 足りません」で
+期限を 1日 送られ、この回の §1 にも同じ行が出ていた。**前提の本文の註は「これは毎日 腐ります。送り直すのが
+正しい手ではありません」と書いたままで、腐らせていたのは数える側だった。**
+
+直し: 要件から「N/N 以降」を読めたら `published_since()`（`data/uploaded.jsonl` の `at` を**時刻**で比べ・
+`video_id` で畳む・`_published_before()` の境）で公開ずみを数え、`allowed = 公開ずみ ＋ 今日から期日までの日数`。
+実測 09/03 01:2x: 2本 ＋ 19日 ＝ 21本 ≥ 20本 → `deadline_check.py` 末尾の「満ちない 2件」は **0件**、
+`run_marker --write` の `[!] 規則2 の下では…` も黙る。読めない要件は前のまま（0 を足す）。
+
+同じ画面が「予約の暦に穴があるあいだは、この日も来ません —— `reschedule.py --compact` で埋めること」と
+勧めていたのも消した。固定その4（予約はその日のぶんだけ・先の日付は空が正しい）の下でその手は無く、
+**同じ file の上の節（L158）が「`--compact --apply` は撃たないこと」と書いているのに、下の行が勧めていた**
+（この repo でいちばん多い壊れ方: 言っている所と、している所が別）。いまは「送り直すのではなく、その日の1本を出すこと」。
+
+検査 `tests/test_house_rule_published_since.py` 6件（既知の当たりを先に固定: 09/03 に 2本＋19日 ≥ 20本／
+0本 なら前と同じ 1日 足りない／控えは時刻で数え重複は畳む／`以降` の無い要件は前のまま／年の無い月日は今日以前で最寄り／
+行に `--compact` が無い）。既存 `test_house_rule_reach.py` ほか 43件 も緑。
+
+### なぜこれを選んだか（腕は `per_video`・eta.py の名指しどおり。`--moves 0`）
+
+- 日枠は 15,282／10,000 で 16:00 JST まで書き込み不可。`upload` は 09/03 のぶん（`9zkfjEH48PY` 09:00）も
+  09/04 のぶん（`wOlDmGhbBts` 下書き・00:31 の `daily_pick`）も前の回が済ませている。
+- `[きょうの1本]` は 09/03・09/04 とも決まっていた（ショート・shokibo → kokuho）。**この回は決め直していない**
+  （数は 00:31 と同じ: ショート 48h 中央値 173回 対 長尺 1回・n=214/30。上書きする根拠が無い）。
+- `improve` の中身の側は、`[きょうの1本]` 自身が「維持率も族も雑音 ＝ 中身に次の1本を当てる数字が無い」と印字。
+  配信の側（時刻の掃き・サムネ）は `videos.update` が要る → 16:00 まで撃てない。
+- `verdict`: 期限 09/03 の「天井は作り方の天井」は `niche_ceiling --form short` が 01:14 JST に 5語とも 429
+  （`data/niche_ceiling.log`）。**16:00 JST 以降の回が撃ち直せば閉じられる**（外の最大 ×30.6 ＞ 要る ×21.88 が長尺で出ている。
+  ショートで同じ向きなら「生きている」→ improve へ、`falsified_if` は「429 のときは判定しない」）。
+- 残る 0単位 の手のうち、**到達日の機構に直に触るのはこれ**だった —— `eta.py` は「腕が動くのは前提を1件 閉じたときだけ」で、
+  閉じられない前提が台帳に居座ると到達日が止まる。偽の「満ちない」で per_video の2件が毎日 送られ続ければ、
+  `deadline_check --fit` の `ledger_drain` も `arm_speed.forward()` の `ready` も、その2件を**実際より遅い日**で読む。
+
+### 持ち越し（`retro.py` の既定5件）を潰していない理由
+
+`run_marker.py --write`／`data/daily_pick.jsonl`／`python -m src.publish_hour`／`config/hypotheses.yaml`／`data/ahead_sweep.log`
+は「実物に当たった回 0」だが、5件とも**時刻の指定つき（16:00 JST 以降）か、置く側の機械（`place_today`）が
+09/04 に初めて走るのを見る話**で、この回（01:xx・枠なし）に当たれる実物が無い。`config/hypotheses.yaml` は
+この回の fix が **その台帳の 2件の期日の読み方**を直しているが、台帳の行そのものは1文字も触っていないので `--closes` は付けない。
+
+### Fable と速さ
+
+Opus/Sonnet で足りた所: 検査の実行・commit/push・`uploaded.jsonl` の集計。判断が要ったのは「毎日 1日ずつ腐る」という
+台帳の註を読んで、**腐っているのは暦ではなく数える側**だと気づく所の1点。壁時計 約 30分。
+
+### 覆る条件
+
+- `needs[]` が `count_since:` のような構造化した欄を持ったら、本文の正規表現（`_SINCE`）ではなくそちらを読む。
+- オーナーが「先の日付にも置いてよい」と言ったら、`unreachable_lines` の「その日の1本を出すこと」の行は
+  暦を埋める手に戻してよい（そのとき L158 の「撃たないこと」も一緒に外すこと。**片方だけ直すと同じ食い違いに戻る**）。
+- `published_since()` は `data/uploaded.jsonl` の `at` を「公開になった時刻」として読む。控えに無い予約
+  （`src.dupes.observe_scheduled()` の註: 09/01 に Studio 4本／控え 0本）は数えない側 ＝ **少なく数える**。
+  それでも「足りない」が出たら、`reschedule.py --list`（枠が戻ってから）で控えを実物へ合わせてから読み直すこと。
+
+### 次の回へ
+
+1. **16:00 JST 以降の回**: `python scripts/niche_ceiling.py --form short --queries 5`（500単位）→ 期限 09/03 の前提を `verdict`。
+   同じ回で `refresh_thumbnail.py --missing --video 9zkfjEH48PY`（50単位・公開後でも載る）と `playlists.py`／`post_pending_comments.py`。
+2. 09/04 の朝: `place_today` が `wOlDmGhbBts` を 09/04 17:00 へ置く（`data/ahead_sweep.log` の `[today]` で確かめる）。
+   置けていなければ `reschedule.py --move wOlDmGhbBts 2026-09-04T17:00`（50単位）。
+3. `9zkfjEH48PY`（09/03 09:00）の 48時間 再生が **350回 未満**なら「池の古い本 → 焼き直し」の差ではなく族か形を疑う（00:0x の回の条件）。
+
+**この回の終わりの `fast_tests`（979 緑・4分52秒）: 赤 2件**（前の回と同じ名前・この回の変更とは無関係）:
+`tests/test_eta_pause_banner.py::test_silent_when_not_paused` ／ `tests/test_judgeable.py::test_実物で期限が構造的に守れる[opening_motion]`。
+この回で足した `tests/test_house_rule_published_since.py` 6件と `test_house_rule_reach.py`・`test_unreachable_premise_marker.py` は緑。
