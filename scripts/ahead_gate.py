@@ -149,6 +149,11 @@ def today_rows(rows: list[dict] | None = None,
 
     **公開ずみも数えます。** 「あと何本 置けるか」は、その日に既に出た本を
     引いた残りだからです —— 未公開だけ数えると、**出たあとに もう1本 置けます。**
+
+    **これは下限です。** 控えの `at` が空のまま公開された本は数えられません
+    （`dupes.observe_scheduled()` が塞いでいるのは「口に在って控えに無い**予約**」
+    までで、予約せずに公開した本はそこを通りません）。
+    **鳴ったら本物、鳴らなくても 1本 の証拠にはなりません。**
     """
     now = now or datetime.now(timezone.utc)
     rows = dupes.ledger_rows() if rows is None else rows
