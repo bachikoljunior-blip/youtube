@@ -467,6 +467,99 @@ def fetch_thumbs(rows: list[dict], *, keep: int = THUMBS_KEEP, form: str | None 
     return got
 
 
+
+OPENING_SECS = 90
+
+
+def opening_path(video_id: str, root: Path | None = None) -> Path:
+    return (root or THUMBS) / f"{video_id}.opening.txt"
+
+
+def vtt_to_text(vtt: str, upto: float = OPENING_SECS) -> str:
+    """自動字幕（vtt）の先頭 `upto` 秒ぶんを、重複を落として1本の文字列に（純関数）。"""
+    import re                                                  # noqa: PLC0415
+    out: list[str] = []
+    seen: set[str] = set()
+    for blk in vtt.split("\n\n"):
+        m = re.search(r"(\d+):(\d+):(\d+)\.(\d+) --> ", blk)
+        if not m:
+            continue
+        t = int(m[1]) * 3600 + int(m[2]) * 60 + int(m[3])
+        if t > upto:
+            break
+        for line in blk.split("\n")[1:]:
+            line = re.sub(r"<[^>]+>", "", line).strip()
+            if line and line not in seen and not line.startswith("align"):
+                seen.add(line)
+                out.append(line)
+    return "".join(out)
+
+
+def _fetch_vtt(video_id: str, timeout: int = 120) -> str:
+    """yt-dlp で自動字幕（ja）だけ落として文字列で返す（動画は落とさない・API 0単位）。"""
+    import subprocess                                          # noqa: PLC0415
+    import tempfile                                            # noqa: PLC0415
+    with tempfile.TemporaryDirectory() as td:
+        cp = subprocess.run(
+            ["yt-dlp", "--skip-download", "--write-auto-sub", "--sub-lang", "ja",
+             "--sub-format", "vtt", "-o", str(Path(td) / "cap"),
+             f"https://www.youtube.com/watch?v={video_id}"],
+            capture_output=True, text=True, timeout=timeout, check=False)
+        for f in Path(td).glob("cap*.vtt"):
+            return f.read_text(encoding="utf-8", errors="replace")
+        if cp.returncode != 0:
+            print(f"[niche] [!] 字幕が取れませんでした: {video_id}（{(cp.stderr or '')[-160:]}）")
+    return ""
+
+
+def fetch_openings(rows: list[dict], *, keep: int = THUMBS_KEEP, form: str = "long",
+                   root: Path | None = None, fetch=None, secs: float = OPENING_SECS) -> list[Path]:
+    """**外の上位の長尺の「冒頭 90秒 に何を言っているか」を `data/niche_thumbs/<id>.opening.txt` に落とす**
+    （yt-dlp の自動字幕・API 0単位・在るものは撃たない）。
+
+    ## なぜ要るか（2026-09-03 05:xx・最適化の回）
+
+    「外の作り方を写した長尺」（`config/hypotheses.yaml`）は、外の上位の**題・尺・絵**を写した。
+    **冒頭 90秒 の話し方は写していなかった** —— 写す材料が手元に無かったから。
+    実際に落として並べると（`J6i7L0QSRSQ` 5.0M・`D9BI69GFWvs` 4.4M・`mL0bwzi8KFM` 3.3M・`YRFTmhCp4Fk` 2.9M）、
+    4本とも同じ順で入っている:
+
+        1文目   結論か損の額を1文で（「2026年から年収516万円でも非課税世帯になれるようになったんです」）
+        2文目   「この改正を知らないと皆さん損します」＝ 知らない側の損
+        次      「こんにちは。〇〇です」＝ 名乗り → 「今回は…について解説します」
+        次      視聴者への問い 2〜3回（「〜と感じませんか？」「〜ではないでしょうか？」「ご存知でしょうか？」）
+        次      「今日の動画を最後まで見れば…」＝ 見続ける約束 → 「それでは本題へ」＋ 目次
+
+    自分の 09/04 の本（`6PKux5HNnUE`）の冒頭 4コマは 名乗り 0・問い 0・約束 0・「皆さん／あなた」0 で、
+    3人称の解説から始まっていた。長尺は 15〜30% で去る（`daily_pick` の中央カーブ）ので、
+    **写していない所のうち、いちばん先に見られる所がここ**。写す材料を毎周 手元に置く。
+
+    **覆る条件**: yt-dlp の字幕が取れなくなったら（`[!]` が続く）この口は黙って空を返す。
+    `script_writer.outside_opening_problems` が読むのは**型**（上の5つ）で、この文面ではない。
+    """
+    root = root or THUMBS
+    fetch = fetch or _fetch_vtt
+    top = sorted((r for r in rows if r.get("form") == form and r.get("id")),
+                 key=lambda r: -int(r.get("views") or 0))[:keep]
+    got: list[Path] = []
+    for r in top:
+        dst = opening_path(str(r["id"]), root)
+        if dst.exists() and dst.stat().st_size > 0:
+            got.append(dst)
+            continue
+        try:
+            text = vtt_to_text(fetch(str(r["id"])) or "", upto=secs)
+        except Exception:                                      # noqa: BLE001
+            text = ""
+        if not text:
+            continue
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        dst.write_text(f"# {r.get('title') or ''}\n# {int(r.get('views') or 0)}回・{int(r.get('secs') or 0)}秒・"
+                       f"先頭 {int(secs)}秒 の自動字幕（yt-dlp・0単位）\n{text}\n", encoding="utf-8")
+        got.append(dst)
+    return got
+
+
 def latest(path: Path | None = None, form: str | None = None) -> dict | None:
     """**帳面の最後の1件**（`data/niche_ceiling.jsonl`）。**撃ちません・API 0単位。**
 
@@ -711,7 +804,21 @@ def main(argv: list[str] | None = None) -> int:
                     help=f"撃った後に、形ごと上位 N枚 の絵を data/niche_thumbs/ に落とす（0単位・既定 {THUMBS_KEEP}・0 で落とさない）")
     ap.add_argument("--thumbs-only", action="store_true",
                     help="撃たずに、帳面の最後の1件の上位の絵だけ落とす（0単位）")
+    ap.add_argument("--openings", type=int, default=4,
+                    help="撃った後に、長尺の上位 N本 の冒頭 90秒（自動字幕）を data/niche_thumbs/<id>.opening.txt に落とす（0単位・既定 4）")
+    ap.add_argument("--openings-only", action="store_true",
+                    help="撃たずに、帳面の最後の1件の長尺の上位の冒頭だけ落とす（0単位・yt-dlp）")
     a = ap.parse_args(argv)
+    if a.openings_only:
+        row = latest(form=None)
+        if not row:
+            print("[niche] 帳面が空です（先に撃つこと）")
+            return 2
+        got = fetch_openings(row.get("top") or [], keep=max(0, a.openings))
+        print(f"[niche] 冒頭 {len(got)}本 が手元に在ります: {THUMBS}")
+        for pth in got:
+            print(f"    {pth.name}")
+        return 0
     if a.thumbs_only:
         row = latest(form=None if a.form == "any" else a.form)
         if not row:
@@ -756,6 +863,9 @@ def main(argv: list[str] | None = None) -> int:
         got = fetch_thumbs(top_rows(res["rows"]), keep=a.thumbs,
                            form=None if a.form == "any" else a.form)
         print(f"[niche] 絵 {len(got)}枚 → {THUMBS}（0単位）")
+    if a.openings > 0 and a.form == "any":
+        got = fetch_openings(top_rows(res["rows"]), keep=a.openings)
+        print(f"[niche] 長尺の冒頭 {len(got)}本 → {THUMBS}（0単位・yt-dlp の字幕）")
     return 0
 
 
