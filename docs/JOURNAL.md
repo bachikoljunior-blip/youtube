@@ -102106,3 +102106,77 @@ runs/eta を数える・掃きの範囲を1日→3日に・印の読み方・写
   相手の上げが落ちたときに 3時間 後の周が拾う側 —— 二重に焼かず、取りこぼしもしない
 - **覆る条件に足す**: `data/rebake.jsonl` に `start` だけで `done` の無い行が 2件 続いたら、焼く側が死ぬ形が構造。`_run` の出力を log へ流し、
   `rebake_run` の頭で `os.setsid` 済みかと親 pid を印字して、誰が殺したかを跡で追うこと
+
+## 2026-09-03 04:5x〜05:1x JST（定期の回・サブ `session_01AHfq4FUVAd5fxDM29yG1Cm#agent-a7d07fac0ac580131`・Fable 5.1）—— **09/05 の1本（外の作りを写した長尺の2本目）の冒頭を外の型に書き直して焼き直し、`dRZnZrRy2Lw` → `DfFyu8qZq3I` に差し替えた。手の bake 中に機械の `--rebake-run` が同じ sha で起きたので片方を kill した**
+
+### 読んだもの（撃った数）
+
+- `run_marker --write` 04:53: `[暦]` 鳴らず／きょう 09/03 の枠は `9zkfjEH48PY` 09:00 で埋まっている／`[きょうの1本]` 09/04 は長尺 `1huadpEk6HY`（冒頭 型の中）。
+  `[today]` は「置きません —— 枠は埋まっている」、`[rebake]` は 09/04 を「同じ中身」。**画面は 09/05 の決め `dRZnZrRy2Lw` の冒頭を数えていなかった**（決めた日の1本の分しか印字しない）。
+- `eta.py`（3行）: 「出ません」（`per_video` 天井 ×4.49・要る ×21.88）／名指し `per_video`／「この回に閉じられる前提はありません」（最短 09/04）→ `--moves 0` が正しい回。
+- `retro.py`: 直近8件 fix 62%／improve 37%。持ち越し「外の作り方を写した長尺」7周・`data/ahead_sweep.log` 8周（実物 0）・`playlists.py` 6周（16:00 以降の手で、時刻で塞がっている）。
+  04:2x の回の申し送り 3「09/05 の本 `dRZnZrRy2Lw` は冒頭が旧の型 → `--script` で焼き直して `--replaces`。insert は日枠 0」。
+- `deadline_check --fit`: 縮める／延ばす期限なし。`pool_drain`・`ahead_gate`: 先の日付 0本（正しい状態）。`slot_gate`: 予約 0本の日は無い。
+- 日枠: 帳面 12,749〜15,5xx／10,000・403 未観測・戻るのは 16:00 JST。`quota --pace`: 持続できる間隔 87分・Fable のみ 推定 47%。
+
+**選んだ順**: 1 [暦] × → 2 verdict × → 3 決めずみ（09/03 ショート・09/04 長尺・09/05 長尺 `dRZnZrRy2Lw`。数字は 04:38 の決めのまま。決め直さない） → 4 きょう 0本 × → 5 **`improve`**。
+相手は「次の枠の本」ではない —— `9zkfjEH48PY` は 09:00 公開で `videos.update` が 403 の窓、09/04 の `1huadpEk6HY` は 04:38 に冒頭が型の中になっている。**その次 ＝ 09/05 の長尺**（控え `dRZnZrRy2Lw.script.json` の冒頭 4コマ は `outside_opening_problems` 4件・撃って確かめた）。
+
+### 出したもの（ship 1件・`improve`・`--lever per_video --moves 0`・push 済み `d2f7fe05` `4b938667` `92f414c6` `603aaf5c` `09013f7d`）
+
+**`dRZnZrRy2Lw` → `DfFyu8qZq3I`。** 控えを `data/scripts/nenkin-uketorikata-65-70-75-handan.script.json` に写し、冒頭を外の上位 4/4 の順に:
+0 結論の額（旧のまま・1237万6950円）→ 1 知らない側の損（75歳まで生きる側の 2052万円）＋名乗り「こんにちは。お金と仕事の教科書です」→ 2 問い 3つ（「決めていませんか？」「額面で見ていますか？」「手取りで見ているでしょうか？」・皆さん 1・あなた 2）→ 3 「最後まで見れば…表の行で自分で読めます」＋目次（章の順）＋前提。
+旧の 3コマ目（255.6万円の基準）以降はそのまま後ろへ（61 → 62コマ・章の頭 +1）。
+
+    outside_opening_problems: 4件 → 0件 ／ long_script_problems: 1件（一息 5個 → 名乗りの行から 65・70・75歳 を落として 3個）→ 0件
+    python -m src.pipeline --script data/scripts/nenkin-uketorikata-65-70-75-handan.script.json --topic nenkin-uketorikata-65-70-75-handan --dry-run
+        TTS 62コマ・render 62クリップ・合成 → verify 合格（19.2分・1920x1080・chart 9枚・サムネ・字幕 異常なし）。contact sheet 18枚 目で見た: 重なり・はみ出し無し
+    python scripts/upload_only.py nenkin-uketorikata-65-70-75-handan --draft --replaces dRZnZrRy2Lw
+        → VIDEO_ID DfFyu8qZq3I（05:08 JST・private・予約なし・insert 日枠 0）。`[pick]` 2026-09-05 → DfFyu8qZq3I（旧 dRZnZrRy2Lw は private のまま池）
+        サムネイル・最初のコメント・再生リストは日枠のため未載（bytes と文は控え。16:00 以降の `thumb_today`／`refresh_thumbnail.py --missing --video DfFyu8qZq3I`）
+    ahead_sweep --dry-run（05:10）: 09/04・09/05 とも「控えと台本は同じ中身 —— 焼いても変わらない」
+
+`--lever per_video`: 律速は `per_video`（要る ×21.9）で、外の p90 に届く形は長尺だけ。冒頭は 15〜30% でいちばん去る所に直接 乗る。
+`--moves 0`: 到達日が動くのは前提「外の作り方を写した長尺」（期限 09/07・48h で 100回）を閉じたとき。この本の 48h は 09/07 17:00（09/05 17:00 公開なら）。
+反映: 動いた入力 2件（`growth_per_day` 0.04088→0.04083・`make_rate_per_day` 21.52→21.49）は枝の他の 11 commit 込み。日付は「届かない」のまま。
+
+### 手順どおりで間違ったところ（**同じ本を2つの回が同時に焼いた**）
+
+- 05:02 JST、**手の bake（19:54Z 開始・render 32/62）の最中に、きょうだい（`agent-a00958e5be30013aa`・最適化の回）の `kick` が `--rebake-run dRZnZrRy2Lw … 20e377f62f99` を起こした**（同じ回が `rebake_today` を先の日 `REBAKE_DAYS_AHEAD=2` まで広げ、こちらが 04:5x に push した台本が「控えより新しい」に当たった）。
+  `pgrep -af` で2本の `src.pipeline` を見て、**機械のほう（pid 21806/21808）を kill した**（手のほうが 10分 先・同じ sha・両方 上がると同じ本が2本 池に入り `replace_video` が競る）。
+  **きょうだいの日誌 `602e12fe` の「05:02 に起こした 09/05 の焼きは跡を残さず死んだ（原因 未特定）」の原因はこれ** —— こちらが kill した。印 `.git/rebake/dRZnZrRy2Lw-20e377f62f99` は残るが、決めが `DfFyu8qZq3I` に写ったので `rebake_plan_for(09/05)` は新 ID の控え＝台本で「同じ中身」に落ちる（05:10 に撃って確かめた）。
+- **画面の「手で撃つなら（同じ物・いま撃ってよい）」がこの形を招いた。** `outside_opening_lines` に「先に `ahead_sweep.py --dry-run` の `[rebake]` を見る。印が在れば機械が焼いている。手で撃つと2本 上がる」の1行を足した（`92f414c6`）。
+  **機械が先の日まで焼くようになった今、手で焼く理由はほぼ無い** —— 台本を直して commit・push すれば次の周の `kick` が焼く。次の回は台本の側（0単位）だけ直して、焼きは機械に任せること。
+
+### ついでの fix（`4b938667`・検査 2件 ＋ 既存 1件を実物の台本に依らない形に・関連 26件 緑）
+
+`src/daily_pick.outside_long_lines`: **ほかの日に決めてある外の作りの下書き**（`daily_pick.jsonl` の最後の行が名指しする本）の冒頭も `outside_opening_lines` で数えて印字する。
+09/05 の `dRZnZrRy2Lw`（4件 型の外）は 02:29 から 04:2x の申し送りでしか見えず、`retro.py` の「3周 以上 運ばれて実物 1回 以下 → 道具の側を疑え」の形だった。
+`rebake_today` が先の日まで焼くようになった（きょうだい）ので、**見えれば台本を直す回が来て、直せば機械が焼く**。実物の画面（05:0x）は `ほかの日（09/05）に決めてある外の作りの下書き dRZnZrRy2Lw … 型の外（4件）／台本はもう型の中` を出した。
+
+### 「この改善を無限大にしたら、到達日は何日 早まるか」
+
+- 律速は `per_video`（要る ×21.9）。その唯一の試験（前提「外の作り方を写した長尺」）の n を 1 → 2 にする2本目が、**題・尺・中身・絵・冒頭の5つを写した本として**出る。冒頭だけ写していない本で n=2 を測ると、1本目と2本目で「写した物」が違い、外れたときに疑う先が絞れない。無限大（冒頭が外の型そのもの）でも、日付が動くのは 09/07 の判定のとき（`--moves 0`）
+- 周の速さ・手順の長さ・日枠は触っていない（0日）。親の間隔（`quota --pace` 87分 対 実物 28分 に2体）は 03:3x にオーナーへ伝えて返事待ちのまま
+
+### 次に主実行が1周したとき、どこが具体的に変わるか（1行）
+
+**`[きょうの1本]` が 09/04 だけでなく 09/05 の本の冒頭も数えて出す（いまは両方 型の中）。09/05 17:00 に `place_today` が置くのは `DfFyu8qZq3I`。**
+
+### 覆る条件
+
+- 09/05 17:00 に置かれた本が `DfFyu8qZq3I` でなければ、決めの写しが効いていない（`data/ahead_sweep.log` の `[today]`）
+- 冒頭を型にした 2本（`1huadpEk6HY`・`DfFyu8qZq3I`）の 48h が、しない本（`6PKux5HNnUE`・`dRZnZrRy2Lw` は出ないので比較は外の p90 と）と変わらなければ `outside_opening_problems` は落とす側に回さず印字だけ
+- `rebake_today` が先の日を焼かなくなったら、「ほかの日の冒頭」の行は「台本を直して手で焼く」に戻す
+
+### 模型のこと
+
+台本の冒頭を書く・数える・焼く・上げる・画面に行を足す —— **Opus で足りる回**。Fable でないと出ない判断は無し。
+
+### 次の回へ
+
+1. **09/04（JST）の最初の回**: `data/ahead_sweep.log` の `[today]` に `1huadpEk6HY` が 17:00 で置かれたか。同じ回に `thumb_today` が絵を押す。
+2. **16:00 JST 以降の回**: `refresh_thumbnail.py --missing --video 9zkfjEH48PY`／`--video 1huadpEk6HY`／`--video DfFyu8qZq3I`・`playlists.py`・`niche_ceiling.py --form short --queries 5`。`[comment]` が `9zkfjEH48PY` に付いたか。
+3. **09/05（JST）の最初の回**: `[today]` に **`DfFyu8qZq3I`**（dRZnZrRy2Lw ではない）が 17:00 で置かれたか。09/04 の本の初速（公開 12時間）を `--why` に。
+4. 09/06 17:00 以降: `1huadpEk6HY` の 48h → 前提「外の作り方を写した長尺」を `verdict`（100回 の門）。09/07 17:00 以降に `DfFyu8qZq3I` で n=2。
+5. **外の作りの長尺を手で焼かないこと**（この回の「手順どおりで間違ったところ」）。台本を直して push すれば `kick` が焼く。`[rebake]` の「一度 焼いた（印）」は「いま焼いている」。
