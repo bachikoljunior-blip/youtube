@@ -238,6 +238,46 @@ def _gate_state_block() -> str:
     return "\n".join(out) + "\n"
 
 
+def _why_writes_stop(now: datetime) -> str:
+    """**何が書き込みを止めているのかを、名前で言う。**（2026-09-02 に踏んで足した）
+
+    ここは長らく「**いまは 403 です**」と刷っていました。**嘘のことがあります。**
+
+    `writable_from()` が見ているのは **帳面の見積り**（`quota_ledger.spent` が
+    `DAY_UNITS` に達したか）で、**観測した 403 ではありません。**
+    実測 2026-09-02 17:3x に受け取った回は、本文が「いまは 403 です」と言い、
+    同じ回の `upload_cap.day_quota()` は
+
+        この窓ではまだ 403 を観測していません（… 使った 6,550 ／ 前例のある枠 9,400）
+
+    と印字しました。**同じ回の中で、本文と道具が別のことを言っています。**
+    しかも `run_marker.py --write` のほうは `--move` と `refresh_thumbnail`
+    （どちらも 50単位）を**撃てる手として名指し**します。
+    受け取った側は、どちらを信じるかを毎回 自分で決めることになります。
+
+    **この repo は、同じ穴をこの日にもう1つ塞いでいます** ——
+    09/02 12:45 の `fix`「暦の号令を黙らせる4つ目の口」が、まさに
+    「判定が**帳面の見積り**で、repo の正本は**観測した 403**だ」でした。
+    **親の本文が、その5つ目の口です。**
+
+    **止めているものは本物です**（実測: この窓の `refresh_thumbnail` は
+    「**この窓の単位は、帳面の側で止めています**（使った 12,168 ／ 公表の枠 10,000）」
+    で断られました）。**変えるのは、止めている物の名前のほうだけ。**
+
+    **覆る条件**: `writable_from()` が観測した 403 も見るようになったら、
+    この関数は「403」と「帳面」を区別せずに1行で言ってよい。
+    """
+    try:
+        from src import quota_ledger, upload_cap                # noqa: PLC0415
+        q = upload_cap.day_quota(now)
+        used = int(quota_ledger.spent(now).get("data") or 0)
+        cap = int(quota_ledger.DAY_UNITS)
+    except Exception:                                           # noqa: BLE001
+        return "帳面の側で止めています"
+    seen = "**403 を観測ずみ**" if not q.open else "**403 はまだ観測していません**"
+    return f"{seen}／帳面 使った {used:,} ／ 枠 {cap:,}"
+
+
 def _clock_block(live: bool = True) -> str:
     """**いまの時刻と、日枠が戻る時刻を、写しではなく道具から出す**（2026-09-02）。
 
@@ -324,8 +364,8 @@ def _clock_block(live: bool = True) -> str:
         else:
             hrs = (w - now).total_seconds() / 3600.0
             out.append("")
-            out.append(f"    日枠: **いまは 403 です。戻るのは {w:%m/%d %H:%M} JST"
-                       f"（あと {hrs:.1f}時間）** ——"
+            out.append(f"    日枠: **書き込みは、いま止まっています**（{_why_writes_stop(now)}）"
+                       f"。**戻るのは {w:%m/%d %H:%M} JST（あと {hrs:.1f}時間）** ——"
                        " それより前に `videos.update` の要る手（`pool_drain --apply`・"
                        "差し替え・`--move`）を名指しされていても、**この回では撃てません。**"
                        " 0単位 の手（`premise` / 台本の側 /"

@@ -60,7 +60,14 @@ def test_枠の時刻を_JST_で刷る(monkeypatch):
     穴（写した時刻を信じる）そのもの**の形です。
     """
     from src import next_slot
-    utc_noon = datetime(2026, 9, 2, 7, 0, tzinfo=timezone.utc)   # ＝ 16:00 JST
+    # **固定の日付を書かないこと**（2026-09-02 18:0x に腐って赤くなった）。
+    # ここは `writable_from()` が**未来**を返す枝を見ています。
+    # `2026-09-02 07:00Z` と書いてあった行は、その日の 16:00 JST を過ぎた瞬間に
+    # 「いま撃てます」の枝へ落ち、**この検査が測りたいものを1つも測らなくなりました。**
+    # ＝ この段が塞ごうとしている穴（写した時刻が古くなる）を、検査の側で作った形。
+    tomorrow = (datetime.now(timezone.utc) + timedelta(days=1)).date()
+    utc_noon = datetime(tomorrow.year, tomorrow.month, tomorrow.day,
+                        7, 0, tzinfo=timezone.utc)               # ＝ 16:00 JST
     monkeypatch.setattr(next_slot, "writable_from", lambda *a, **k: utc_noon)
     block = sp._clock_block()
     assert "16:00 JST" in block, f"JST へ直していません: {block!r}"
@@ -104,3 +111,42 @@ def test_写しに時刻を焼き込まない():
     assert "ここに入ります" in got, "写しに差し込み口の説明が残っていません"
     # 立てる瞬間の本文には、ちゃんと入ること（口だけで終わらせない）
     assert "JST です" in sp.build("hourly")
+
+
+def test_403を観測していない回に403と言わない(monkeypatch):
+    """**「いまは 403 です」は嘘のことがあります**（2026-09-02 17:3x に踏んだ）。
+
+    `writable_from()` が見ているのは**帳面の見積り**で、**観測した 403 ではありません。**
+    同じ回の `upload_cap.day_quota()` は
+    「この窓ではまだ 403 を観測していません」と印字していました。
+
+    09/02 12:45 の `fix`（暦の号令の4つ目の口）と同じ穴です ——
+    「判定が帳面の見積りで、repo の正本は観測した 403 だ」。
+    **止まっていること自体は本物なので、消すのは「403」という名前だけ。**
+    """
+    from src import next_slot, upload_cap
+
+    future = datetime.now(timezone.utc) + timedelta(hours=5)
+    monkeypatch.setattr(next_slot, "writable_from", lambda *a, **k: future)
+
+    class _Q:
+        open = True          # ＝ **まだ 403 を観測していない**
+
+    monkeypatch.setattr(upload_cap, "day_quota", lambda *a, **k: _Q())
+    block = sp._clock_block()
+    assert "止まっています" in block, block
+    assert "403 はまだ観測していません" in block, block
+    assert "いまは 403 です" not in block, "観測していない 403 を名乗っています"
+
+
+def test_403を観測した回はそう言う(monkeypatch):
+    from src import next_slot, upload_cap
+
+    future = datetime.now(timezone.utc) + timedelta(hours=5)
+    monkeypatch.setattr(next_slot, "writable_from", lambda *a, **k: future)
+
+    class _Q:
+        open = False         # ＝ **観測ずみ**
+
+    monkeypatch.setattr(upload_cap, "day_quota", lambda *a, **k: _Q())
+    assert "403 を観測ずみ" in sp._clock_block()
