@@ -361,3 +361,31 @@ def test_0再生の枠の本は交換の相手にしない(monkeypatch):
     _fake_groups(monkeypatch, {})
     got = [v for v, _ in live_slots._swap_candidates(board, dt.date(2026, 9, 2), 4)]
     assert got == ["v0"]
+
+
+def test_規則5では1手も出さない():
+    """**先の日付へ本を置く手は、いま禁じられています**（2026-09-02・固定その4）。
+
+    オーナー原文: 「**現在の日付にしか予約しないってことだからね？**」
+
+    この道具が出すのは全部 `reschedule.py --move <id> <先の日付>` ＝
+    **先の日付へ置く手**です。「0再生の枠から生きた枠へ逃がす」という理屈は
+    それ自体 正しいのですが、**「先の日付に本が並んでいる」ことを前提**にしており、
+    規則5 の下では**その前提のほうが欠陥**です（外す手は `pool_drain --keep 0`）。
+
+    **すぐ上の `test_全部逃がす手は生きている本を増やす` は `if board.moves:` で
+    守られているので、規則5 の下では空振りします。** この検査が無いと、
+    「1手も出さない」が**検査されないまま**通ります。
+    """
+    from src import house_rule
+
+    ls = pytest.importorskip("scripts.live_slots")
+    if not house_rule.same_day_only():
+        return                                  # 規則5 が外れている回は、上の一群が正
+    board = ls.Board(ls._rows())
+    for make in (ls.plan, ls.plan_all, ls.plan_band):
+        out = make(board)
+        body = "\n".join(out)
+        assert "reschedule.py --move" not in body, (make.__name__, body)
+        assert "pool_drain.py --apply --keep 0" in body, (make.__name__, body)
+    assert board.moves == [], board.moves

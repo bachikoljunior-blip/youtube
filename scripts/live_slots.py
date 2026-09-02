@@ -295,8 +295,51 @@ def report(board: Board | None = None) -> list[str]:
     return out
 
 
+def rule5_block() -> list[str]:
+    """**規則5（固定その4）の下では、この道具は1手も出しません。** 効いていなければ空。
+
+    ## なぜ止めるか（2026-09-02）
+
+    オーナー原文（`src/house_rule.OWNER_VERBATIM_SAME_DAY`）:
+
+        「現在の日付にしか予約しないってことだからね？」
+
+    この道具が出すのは、**全部 `reschedule.py --move <id> <先の日付>`** です ——
+    つまり **先の日付へ本を置く手**。規則5 で禁じられている手そのものです。
+
+    **「0再生の枠から生きた枠へ逃がす」という理屈は、それ自体は正しい。**
+    ただしそれは「**先の日付に本が並んでいる**」ことを前提にしており、
+    規則5 の下では**その前提のほうが欠陥**です。先の日付の本は、
+    逃がす先を探すのではなく **`pool_drain --apply --keep 0` で外します。**
+
+    ## 覆る条件
+
+    `house_rule.SAME_DAY_SCHEDULING_ONLY` が `False` に戻ったら、
+    下の `plan()` / `plan_all()` / `plan_band()` がそのまま復活します。
+    **どれも消していません。**
+    """
+    try:
+        from src import house_rule                             # noqa: PLC0415
+        if not house_rule.same_day_only():
+            return []
+    except Exception:                                          # noqa: BLE001
+        return []
+    return [
+        "",
+        "=== **この道具は、いま1手も出しません**（規則5・固定その4）===",
+        "  オーナー原文: **「現在の日付にしか予約しないってことだからね？」**",
+        "  ここが出すのは全部 **先の日付へ本を置き直す手**で、規則5 に反します。",
+        "  **先の日付に並んでいる本のほうが欠陥です。** 逃がす先を探すのではなく、",
+        "    python scripts/pool_drain.py --apply --keep 0"
+        "    # 予約を外して private の下書きへ（**削除はしません**）",
+        "  で外すこと。読みだけの `report()`（`--plan` を付けない回）は今までどおりです。",
+    ]
+
+
 def plan(board: Board) -> list[str]:
     """**足りない群から順に**、死に枠の本を生きた枠へ移す。
+
+    **規則5（固定その4）の下では1手も出しません** —— `rule5_block()` の註。
 
     ## 押し出しは起きます。**総数は減りません**（2026-08-26 に数え直した）
 
@@ -317,6 +360,9 @@ def plan(board: Board) -> list[str]:
     押し出した先が**足りない群の本だった**場合、その群の不足はその場で数え直され、
     次の手で埋めます（だから手の数が、最初の不足より多くなることがあります）。
     """
+    blocked = rule5_block()
+    if blocked:
+        return blocked
     out = ["", "=== 手（`scripts/reschedule.py --move` を、この順で）==="]
     was_live = board.live()
     #: (前提, 群, まだ足りない本数)。**埋め方は、置き終えてから言います**
@@ -405,6 +451,9 @@ def plan_all(board: Board) -> list[str]:
     これは `day_cap` の上限が本物であることに乗っています。
     **上限が上がったら（`cap()` は実測から動きます）、この手は要らなくなります。**
     """
+    blocked = rule5_block()
+    if blocked:
+        return blocked
     out = ["", "=== 0再生の枠に居る本を、上限の余っている日へ逃がす"
                 "（**新しい本は1本も要りません**）==="]
     was = board.live()
@@ -530,6 +579,9 @@ def plan_band(board: Board, limit: int | None = None) -> list[str]:
     - 帯の外でも再生が付くと実測で出たら、`plan_all()` ごと要りません
     - **検査は `tests/test_live_slots_band.py`**
     """
+    blocked = rule5_block()
+    if blocked:
+        return blocked
     out = ["", "=== 帯の外に居る本を、同じ日の帯へ入れ直す"
                 "（**(A) では ±0・(B) なら生き返る**。どちらでも損をしません）==="]
     grid = sorted(GRID)
