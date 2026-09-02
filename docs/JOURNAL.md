@@ -100578,3 +100578,8 @@ n=3 の `kokuho` を1本 積んで上位帯の n を増やす側にした。池�
 4. `daily_pick` の「まだ作っていない `s-` の題材」から、**公開ずみと棒が共通になる題材を落とす**
    （上の 3-3）。`src/dupes` か `published_bars.json` で 0単位に数えられる。
 5. 期限 09/04 の前提（`per_video`・side=dist）が、次に閉じられる1件。
+
+### 追記（同じ回・01:1x）—— `fast_tests` の赤 2件（この回の変更とは無関係・名前で残す）
+
+- `tests/test_eta_pause_banner.py::test_silent_when_not_paused` —— `eta.py` の本文に「`per_video` の標本は 2026-08-18 で**止まっています**」の行（`763cde2a` 以降）が入り、検査の「止まっています が無いこと」（休止の帯の字）と衝突している。検査の字が広すぎる。`daily_pick` は読んでいない。
+- `tests/test_judgeable.py::test_実物で期限が構造的に守れる[opening_motion]` —— 前提 `opening_motion` の処置群（動きあり）が予約に **0本**（対照 2本・要る 8本/群）。規則5（その日にしか予約しない）の下では**予約が先へ積まれないので、この形の判定は構造的にそろわない**。前提の側（`config/hypotheses.yaml`）を「公開ずみで数える」形に直すか閉じるかは、定期の回の `verdict` の仕事。
