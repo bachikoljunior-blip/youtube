@@ -103,3 +103,63 @@ def test_実物でも撃てる():
     assert s["ok"] in (True, False)
     if s["ok"]:
         assert isinstance(R.stale_lines(s), list)
+
+
+def test_引数なしの呼びは憶える(monkeypatch):
+    """**`eta.analyse()` は軌跡を解くあいだに 2,719回 呼ぶ。** 2回目から
+    `data/views.jsonl`（2.4MB）を読み直さないこと（2026-09-02 夜・cProfile 実測:
+    `_settled` 5,462回・1,127秒 ＝ `eta.py` の 87%）。
+    """
+    R._STALE_MEMO.clear()
+    calls = {"n": 0}
+    real = R._settled
+
+    def counting(*a, **kw):
+        calls["n"] += 1
+        return real(*a, **kw)
+
+    monkeypatch.setattr(R, "_settled", counting)
+    a = R.staleness()
+    n1 = calls["n"]
+    assert n1 >= 1
+    b = R.staleness()
+    assert calls["n"] == n1, "2回目が views.jsonl を読み直しています"
+    assert a == b
+    b["ok"] = "汚した"
+    assert R.staleness() == a, "返りを汚すと憶えが汚れます（写しを返すこと）"
+
+
+def test_fileが動いたら読み直す(monkeypatch, tmp_path):
+    """憶えの鍵は file の (mtime_ns, size)。**動いた file を古い答えで返さないこと。**"""
+    R._STALE_MEMO.clear()
+    calls = {"n": 0}
+    real = R._settled
+
+    def counting(*a, **kw):
+        calls["n"] += 1
+        return real(*a, **kw)
+
+    monkeypatch.setattr(R, "_settled", counting)
+    p = tmp_path / "views.jsonl"
+    p.write_text('{"id": "x", "hours": 1, "views": 1, "at": "2026-09-01T00:00:00+00:00"}\n',
+                 encoding="utf-8")
+    R.staleness(views_path=p)
+    n1 = calls["n"]
+    R.staleness(views_path=p)
+    assert calls["n"] == n1
+    p.write_text(p.read_text(encoding="utf-8")
+                 + '{"id": "y", "hours": 1, "views": 1, "at": "2026-09-01T00:00:00+00:00"}\n',
+                 encoding="utf-8")
+    R.staleness(views_path=p)
+    assert calls["n"] > n1, "file が動いたのに読み直していません"
+
+
+def test_故障注入の呼びは憶えない(monkeypatch):
+    """`e=` / `rows=` を渡した呼び（上の検査）は、毎回そのまま計算すること。"""
+    R._STALE_MEMO.clear()
+    today = date.today()
+    days = {today - timedelta(days=15): [1000, 1100]}
+    for k in range(14, 0, -1):
+        days[today - timedelta(days=k)] = [100] * 10
+    R.staleness(e=_e(), rows=_rows(days))
+    assert not R._STALE_MEMO, "故障注入の呼びが憶えに入っています"

@@ -99794,6 +99794,36 @@ Fable 5.1 で回した最初の定期の回のうちの1つです。**新しい�
 同じ `cwd` で **`SubagentStop`** を足せば、上の 3-2 の「足すだけでは直らない」も解けます
 （worktree の `data/runs.jsonl` と `agent_id` で、その回の印だけを見られる）。
 
+### 5. `eta.py` の 9分 は、新しい設定のせいではなく、18:31 の commit の帰結だった（`cProfile` で名指しした・3つ目の ship・`fix`）
+
+上の 3-1 は「まだ名指ししていません」でした。**この回のうちに撃ちました**（`python -m cProfile -o` ・21.6分）:
+
+    scripts/eta.py:solve → trajectory_all → trajectory（10回）→ **analyse 2,719回**
+      → src/rule_per_video.py:staleness **2,726回**（cum **1,127秒 ＝ 87%**）
+        → estimate 2,730回 ＋ _settled **5,462回**（self 296秒）
+          → data/views.jsonl（2.4MB）を **1回の呼びで2回ずつ** 読み直し ＝ json.loads **1億4,690万回**
+
+**出どころは 09/02 18:31 JST の commit `cc8fa599`**（「per_video の標本が 08-18 で止まっていることを、頭に出す」・
+最適化の回）。`analyse()` の中で `_rule_pv.staleness()` を**引数なしで**呼び、それが `eta.jsonl` の点に
+`pv_sample_*` を残します —— 目的は正しい（標本の齢を点に残す）が、**`analyse()` は軌跡の解きの中で
+日ごとに呼ばれる関数**で、そこに 2.4MB の読み直しが2回 入りました。
+**＝ 「`eta.py` 28.4秒」は 18:31 まで正しく、そのあと 9分 になっていた。** 新しい設定（Fable 5.1）とは無関係です。
+
+直し: `staleness()` に**憶え**を被せた（`src/rule_per_video._STALE_MEMO`）。鍵は「引数 ＋ 読む file の
+(道, mtime_ns, size) ＋ JST の日付」。**file が動けば読み直す。** `e=` / `rows=` を渡す呼び（検査の故障注入）と
+dict の引数を持つ呼びは憶えない。中身の計算は1文字も変えていません（`_staleness_uncached()` にそのまま）。
+
+実測: `python scripts/eta.py --no-record` **10:43:29Z → 10:44:35Z ＝ 66秒**（直す前 約9分・cProfile 下 21.6分）。
+頭の `[!] per_video の標本は 2026-08-18 で止まっています` の行は、直す前と同じく出ます（1行）。
+検査 +3件（`tests/test_rule_per_video_staleness.py`・19 passed）: 2回目は読み直さない／file が動いたら読み直す／
+故障注入の呼びは憶えない。
+
+**残りの 66秒 の内訳**（同じ profile から・cProfile 下の秒）: `_theta_days` 134秒／`deadline_check.check` 52秒／
+`long_supply_per_day` 41秒／`eligibility.state`（`_read` を 2,719回）36秒。**次に削るならここ**。
+
+**覆る条件**: `analyse()` が `staleness()` を呼ばなくなったら（点に残す仕事を `lines()` の側へ移したら）、
+この憶えは害も益も無くなる。残しておいて構わない。
+
 ### 設計の見直し（§6 (a2)）
 
 1. **いちばん時間を食ったのは `eta.py` の 9分 と、焼き直しの 約4分半（10:11 → 10:15Z）**（どちらも対象のせい）。
@@ -99818,7 +99848,7 @@ Fable 5.1 で回した最初の定期の回のうちの1つです。**新しい�
 2. **枠が戻る 09/03 16:00 JST 以降**: `python scripts/refresh_thumbnail.py --missing --video 6GtzWaguZhg`（50単位）。
    **`--video` を付けること**（裸の `--missing` は 158本 ＝ 7,900単位）。
    **ただし上の追記のとおり 09/03 に出るのはショートなので、この 50単位 は `6GtzWaguZhg` が枠に入る日でよい。**
-3. `eta.py` の 9分（上の 3-1）。`cProfile` で1回 撃って名指しすること。0単位。
+3. ~~`eta.py` の 9分~~ → **この回のうちに名指しして直した（上の 5・66秒）。** 次に削るなら `_theta_days`／`deadline_check.check`／`eligibility._read`（2,719回）。
 4. `SubagentStop`（上の 3-2）—— 設定の見直しの回へ。**足すだけでは直らない**理由も上に。
 5. 次の焼き直しは `--replaces 6GtzWaguZhg,SD8zQU-x6y0,MqQKSnbM0OI`（3本とも private・予約なし）。
    台本は `data/critique_queue/6GtzWaguZhg.script.json`（`critique_queue.stash()` が残す）。

@@ -923,8 +923,49 @@ STALE_DAYS = 7          # 標本の最終日がこれより古かったら「止
 # 「崖だ」とも「崖ではない」とも言わず、**まだ何も言えない**と出します。
 
 
+#: `staleness()` の憶え（2026-09-02 夜・`cProfile` で名指しした）。
+#:
+#: `eta.analyse()` は軌跡を解くあいだに **2,719回** 呼ばれ、その度に `staleness()` が
+#: `estimate()` と `_settled()` で `data/views.jsonl`（2.4MB）を**2回ずつ**読み直していた
+#: （`_settled` 5,462回・`json.loads` 1億4,690万回）。実測: **1,127秒 ＝ `eta.py` 21.6分（cProfile 下）の 87%**。
+#: 09/02 18:31 の commit（cc8fa599）で `analyse()` に入ってから、`eta.py` は 28秒 → 約9分 になっていた。
+#:
+#: 鍵は「引数」＋「読む file の (道, mtime_ns, size)」＋ JST の日付。**file が動けば読み直す。**
+#: `e=` / `rows=` を渡した呼び（検査の故障注入）は憶えない（そのまま計算する）。
+#: `forms=` / `tiers=` のような dict を渡した呼びも憶えない（鍵にできない）。
+_STALE_MEMO: dict[tuple, dict] = {}
+
+
+def _stale_memo_key(k: int, kw: dict) -> tuple | None:
+    """憶えの鍵。鍵にできない呼び方（dict の引数）なら `None`。"""
+    try:
+        items = tuple(sorted(kw.items()))
+        hash(items)
+    except TypeError:
+        return None
+    p = Path(kw.get("views_path") or VIEWS)
+    try:
+        st = p.stat()
+    except OSError:
+        return None
+    today = datetime.now(timezone(timedelta(hours=9))).date()
+    return (str(p.resolve()), st.st_mtime_ns, st.st_size, int(k), items, today)
+
+
 def staleness(e: dict | None = None, rows: list | None = None,
               k: int = 5, **kw) -> dict:
+    """`_staleness_uncached()` に憶えを被せたもの。**中身と返りは同じ**（上の `_STALE_MEMO` の註）。"""
+    key = _stale_memo_key(k, kw) if (e is None and rows is None) else None
+    if key is not None and key in _STALE_MEMO:
+        return dict(_STALE_MEMO[key])
+    out = _staleness_uncached(e, rows, k, **kw)
+    if key is not None:
+        _STALE_MEMO[key] = dict(out)
+    return out
+
+
+def _staleness_uncached(e: dict | None = None, rows: list | None = None,
+                        k: int = 5, **kw) -> dict:
     """**`per_video` の標本が、いつの本で止まっているか。** API 0単位。
 
     ## なぜ要るか（**この道具は、実測で名指しされた欠陥を1つ潰すために作りました**）
