@@ -6517,6 +6517,33 @@ hypotheses:
         need: 16
         since: "2026-08-27"
         data_file: "data/uploaded.jsonl"
+      # **2026-09-02 に足した2つ目の要件。同じ形の穴の3件目でした。**
+      #
+      #   上の `need: 16`（本の数）は 2026-09-02 に**満ちました**（処置 16 / 対照 21）。
+      #   `deadline_check` は「満ちた」と言い、`scripts/eta.py` は頭の3行で
+      #   **「この回は `verdict` で日付が動かせます」**とこの前提を名指ししました。
+      #   **撃つと判定できません** —— この回に実際に撃った結果:
+      #
+      #       比の取れた本 17本 ／ **対にできた日 2日**（要 3日）
+      #       {'decided': False, 'why': '両群がそろう公開日が 2日（要 3日）'}
+      #
+      #   `paired_days()` は**控えだけ**で数えます（その日に両群の本が居るか ＝ 4日）。
+      #   `verdict()` が見るのは、そこへ **Analytics の engaged 比**を join した後で、
+      #   比の付かない本が落ちて **4日 → 2日**（08/28・08/29 が消えた）。
+      #
+      #   この前提の註が、同じ形の穴を自分で2回 数えています
+      #   （`deep_short_arm()` 2026-08-29 が1件目、`arm_n` の行／本 が2件目）。
+      #   **これが3件目です。** 違いは **0単位 では見えないこと** ——
+      #   比が付くかは Analytics を撃つまで分かりません。だから
+      #   `src/reveal_hold.record_attempt()` が**撃った結果**を控えに残し、
+      #   `reveal_hold_days()` はそれを読みます（一度も撃っていなければ上限を返す）。
+      - kind: accrual
+        what: "**`verdict()` に実際に渡せる日**（比の取れた日）。`src/reveal_hold.judgeable_days()`"
+        count_expr: "reveal_hold_days()"
+        need: 3
+        since: "2026-08-27"
+        data_file: "data/reveal_hold_attempts.jsonl"
+        refresh: "python -m src.reveal_hold --judge"
     lever: per_video
     side: content
     watch: "完成形の保持-16本"      # 満ちたかは `src/watches.py` が毎周見ています

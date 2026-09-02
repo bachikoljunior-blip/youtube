@@ -315,6 +315,42 @@ def reveal_hold_arm(side: str = "処置") -> int:
     return reveal_hold.arm_n(side)
 
 
+def reveal_hold_days() -> int:
+    """**`reveal_hold.verdict()` に実際に渡せる日の数**（`src/reveal_hold.judgeable_days`）。
+
+    すぐ上の `reveal_hold_arm()` は**本の数**を見ています。
+    **`falsified_if` が数えているのはこちら**なので、門はこれを読みます
+    （`deep_short_days()` → `deep_short_usable_days()` と**同じ形**・2026-08-29）。
+
+    ## 実測 2026-09-02（**この回に撃って踏んだ**）
+
+        reveal_hold_arm  処置 **16本** ／ 対照 **21本** → `need: 16` を満たす
+        --judge          比の取れた日 **2日**（要 3日）→ `decided: False`
+
+    `paired_days()` は**控えだけ**（その日に両群の本が居るか）。
+    `verdict()` が見るのは、そこへ **Analytics の engaged 比**を join した後 ——
+    比の付かない本が落ちて **4日 → 2日**（08/28・08/29 が消える）。
+
+    本の数だけを門にしていたので、`ready_by_claim()` → `arm_speed.next_close()`
+    → `scripts/eta.py` の頭3行「**この回は `verdict` で日付が動かせます** ——
+    いま判定できるのは: 完成した図を…」まで通っていました。**撃つと判定できません。**
+    **頭3行しか読まない回は、2日ぶんの中央値で前提を閉じます。**
+
+    `deep_short_arm()`（1件目・2026-08-29）、`reveal_hold_arm()` の行／本
+    （2件目・2026-08-31）に続く、**同じ形の3件目**です。
+    違いは **0単位 では見えないこと** —— 比が付くかは Analytics を撃つまで
+    分かりません。だから `src/reveal_hold.record_attempt()` が**撃った結果**を
+    控えに残し、ここはそれを読みます。
+
+    **一度も撃っていない回は `paired_days()`（＝上限）を返します** ——
+    最初の1回は撃ってみないと分かりません。
+    """
+    if str(ROOT) not in sys.path:
+        sys.path.insert(0, str(ROOT))
+    from src import reveal_hold                                # noqa: PLC0415
+    return reveal_hold.judgeable_days()
+
+
 def clarity_books() -> int:
     """**控えと維持率カーブが両方ある本の数**（`src/clarity.books()`）。
 
@@ -341,6 +377,7 @@ EXPR_NS = {"json": json, "rows": _rows, "date": date, "ab_members": ab_members,
            "deep_short_arm": deep_short_arm,
            "deep_short_usable_days": deep_short_usable_days,
            "reveal_hold_arm": reveal_hold_arm,
+           "reveal_hold_days": reveal_hold_days,
            "latest_views": latest_views, "uploaded": uploaded, "long_ids": long_ids}
 
 
