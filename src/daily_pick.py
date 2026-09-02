@@ -784,9 +784,113 @@ def _outside_long_deadline() -> str:
     return ""
 
 
+#: **24時間の先読みの門**（2026-09-03 03:xx・最適化の回。「最適化されてんの？」への答えの1つ）。
+#:
+#: 前提「外の作り方を写した長尺」の判定は **48h・100回**（`config/hypotheses.yaml`）で、それは動かしません。
+#: ここは別の門です —— **次の未決の日の1本をどちらの形にするか**を、24h の数で**先に決めておく**門。
+#:
+#: ## なぜ要るか
+#:
+#: 1日1本（`src/house_rule.py`）の下で、最初の外の作りの長尺（09/04 17:00）の 48h は 09/06 17:00 ——
+#: **09/06 の枠と同じ時刻**です。つまり 09/04・09/05・09/06 の3枠は、**1本目の結果を見ずに決まる**。
+#: 09/06 の1本を「見てから」決められるのは、24h の数だけです。**その数の読み方を決めていないと、
+#: 09/05 の回は 1本目の数を見ても動けず、09/06 は池の順で決まります**（09/03 の下書きがそうでした）。
+#:
+#: ## 門の高さ（この回に撃って出た数・`data/views.jsonl`）
+#:
+#: いまの作り方の長尺は 齢6h で **0回**（`8hJnwkC8NU0`）・齢20h で **1回**（`ICmIBsZRYFE`）。
+#: 48h の門 100回 の **3割 ＝ 30回** を 24h で越えていれば、48h で門を越える側に居る
+#: （ショートの中央カーブは 24h で 48h の約8割。長尺は未測定 —— だから半分より低い3割に置く）。
+#:
+#: **覆る条件**: 外の作りの長尺が3本以上 測れたら、その本の 24h/48h の比で置き直すこと
+#: （`aged_views(hours=24)` と `aged_views(hours=48)` を同じ本で並べれば出ます）。
+OUTSIDE_24H_GATE = 30
+OUTSIDE_48H_GATE = 100
+
+
+def _latest_obs(video_id: str, views_path: Path | None = None) -> dict | None:
+    """控え（`data/views.jsonl`）の、その本のいちばん後ろの観測。無ければ `None`。0単位。"""
+    last = None
+    for r in _jsonl(views_path or VIEWS):
+        if r.get("id") == video_id:
+            last = r
+    return last
+
+
+def outside_long_readout(now: datetime | None = None, *, topics: list[dict] | None = None,
+                         uploaded_path: Path | None = None,
+                         views_path: Path | None = None) -> tuple[list[str], str | None]:
+    """**公開ずみ／予約ずみの外の作りの長尺の、いまの再生と 24h の先読みの門。**（API 0単位）
+
+    返り: `(行, 判定)`。判定は `"go"`（24h で門の上）／ `"stop"`（24h で門の下）／ `None`（まだ読めない）。
+    複数の本が読めるときは、**いちばん新しく 24h を越えた本**の判定。
+    """
+    tops = {t["id"] for t in (topics if topics is not None else _topics())
+            if str(t.get("style") or "") == "outside_long"}
+    if not tops:
+        return [], None
+    t = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    out: list[str] = []
+    verdict: str | None = None
+    verdict_at: datetime | None = None
+    rows = sorted(((vid, r) for vid, r in _latest_uploaded(uploaded_path).items()
+                   if str(r.get("topic") or "") in tops and r.get("at")),
+                  key=lambda x: str(x[1].get("at")))
+    for vid, r in rows:
+        try:
+            pub = datetime.fromisoformat(str(r["at"]).replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        if pub.tzinfo is None:
+            pub = pub.replace(tzinfo=timezone.utc)
+        h24 = (pub + timedelta(hours=24)).astimezone(JST)
+        h48 = (pub + timedelta(hours=48)).astimezone(JST)
+        if pub > t:
+            out.append(f"     外の作りの長尺 `{vid}` は {pub.astimezone(JST):%m/%d %H:%M} JST に出ます → "
+                       f"24h の先読み（門 {OUTSIDE_24H_GATE}回）は {h24:%m/%d %H:%M} JST・"
+                       f"48h の判定（門 {OUTSIDE_48H_GATE}回）は {h48:%m/%d %H:%M} JST")
+            continue
+        age = (t - pub).total_seconds() / 3600
+        obs = _latest_obs(vid, views_path)
+        if obs is None:
+            out.append(f"     外の作りの長尺 `{vid}`（齢 {age:.0f}h）: 控えに観測が無い → "
+                       f"`python scripts/snapshot.py`（Analytics・日枠の外）で読むこと")
+            continue
+        v = int(obs.get("views") or 0)
+        h = float(obs.get("hours") or age)
+        line = (f"     外の作りの長尺 `{vid}`: 齢 {h:.0f}h で **{v}回**"
+                f"（いまの作り方の長尺は 齢20h で 1回・齢48h の中央値 1回）")
+        if h < 24:
+            line += (f" → 24h（{h24:%m/%d %H:%M} JST）の先読みの門 {OUTSIDE_24H_GATE}回 まで待つ。"
+                     f"**次の未決の日は、それまで決めないこと**")
+        elif v >= OUTSIDE_24H_GATE:
+            line += (f" **≥ 先読みの門 {OUTSIDE_24H_GATE}回 → 次の未決の日の1本も外の作りの長尺**"
+                     f"（下書きが無ければ作る・下の行）")
+            if verdict_at is None or pub > verdict_at:
+                verdict, verdict_at = "go", pub
+        else:
+            line += (f" **＜ 先読みの門 {OUTSIDE_24H_GATE}回 → 次の未決の日の1本は規則の密度のショート**"
+                     f"（池・族の順。長尺の次の1本は作らない）。前提の判定そのものは "
+                     f"48h・{OUTSIDE_48H_GATE}回 のまま（`falsified_if`）")
+            if verdict_at is None or pub > verdict_at:
+                verdict, verdict_at = "stop", pub
+        if h >= 48:
+            line += f"（48h を過ぎている: 前提の判定は `verdict`・門 {OUTSIDE_48H_GATE}回・`deadline_check`）"
+        out.append(line)
+    return out, verdict
+
+
+def _unbuilt_outside(tops: list[dict], uploaded_path: Path | None = None) -> list[dict]:
+    """`style: outside_long` の題材のうち、まだ1本も上げていないもの（台帳の順）。0単位。"""
+    made = {str(r.get("topic") or "") for r in _latest_uploaded(uploaded_path).values()}
+    return [t for t in tops if str(t.get("id") or "") not in made]
+
+
 def outside_long_lines(day: date, cur: dict | None, now: datetime | None = None,
                        topics: list[dict] | None = None,
-                       drafts: list[dict] | None = None) -> list[str]:
+                       drafts: list[dict] | None = None,
+                       readout: tuple[list[str], str | None] | None = None,
+                       uploaded_path: Path | None = None) -> list[str]:
     """**外の作りを写した長尺**（`topics.yaml` の `style: outside_long`）が、池に在るか・
     その日の1本になっているかを1〜3行で出す。**API 0単位。**
 
@@ -804,6 +908,14 @@ def outside_long_lines(day: date, cur: dict | None, now: datetime | None = None,
     だからここは、**外の作りの長尺の下書きが池に在る日は、その日の1本をそれにする行**を出す
     （在るのに別の本を決めていたら名指しする。無ければ作る手を出す）。決めるのは回のままだが、
     「数字で上書きする」の数字は、この行が渡す（外の p90 ÷ 自分の中央値・前提の期限）。
+
+    ## 24h の先読み（2026-09-03 03:xx・同じ回の続き）
+
+    `outside_long_readout()` の判定を先に読みます。**`"stop"`（24h で門の下）なら、
+    池に下書きが残っていても「その日の1本はこれに」とは言わず、作る手も出しません**
+    （その日はショート —— `pool_candidates("ショート")`）。`"go"` で未割当の下書きが無ければ、
+    次の未着手の題材（`_unbuilt_outside`）を作る手を出します。判定が無い（まだ 24h 前）あいだは
+    前と同じ —— 在る下書きをその日の1本に。**3本目を先に作らないこと**（作り置きの規則2）。
 
     **覆る条件**: 前提が閉じたら（当たり・外れどちらでも）この行は要らない —— 当たりなら
     `by_form()` の長尺の中央値が自分で上がって順位が入れ替わる。外れなら `next_if_false`
@@ -824,42 +936,70 @@ def outside_long_lines(day: date, cur: dict | None, now: datetime | None = None,
         except Exception:                                          # noqa: BLE001
             drafts = []
     have = [d for d in drafts if str(d.get("topic") or "") in ids]
-    out: list[str] = []
+    ro_lines, ro = (readout if readout is not None
+                    else outside_long_readout(now, topics=tops, uploaded_path=uploaded_path))
+    out: list[str] = list(ro_lines)
+    cur_id = str((cur or {}).get("video_id") or "")
+    taken = set()
+    try:
+        for r in _jsonl(PICKS):
+            if r.get("for_day") != day.isoformat() and r.get("video_id"):
+                taken.add(str(r["video_id"]))
+    except Exception:                                          # noqa: BLE001
+        pass
+    if ro == "stop":
+        left = "・".join("`" + str(d.get("video_id")) + "`" for d in have)
+        out.append(f"     → **{day:%m/%d} の1本は規則の密度のショート**（上の先読み）。"
+                   + (f" 外の作りの下書き {left} は池に残す（消さない）。" if have else "")
+                   + f" 前提「外の作り方を写した長尺」の判定は 48h・{OUTSIDE_48H_GATE}回（期限 {dl}）で別")
+        return out
     if have:
         # **どの下書きを名指しするか**（2026-09-03 02:3x に踏んだ）: 同じ枝の2つの回が同じ夜に
         # 1本ずつ上げ（`6PKux5HNnUE`・`dRZnZrRy2Lw`）、`have[0]` は決めた本と別の本を指した。
         # その日に決めてある本ならそれ、無ければ**ほかの日にまだ決められていない**下書きの先頭。
-        cur_id = str((cur or {}).get("video_id") or "")
-        taken = set()
-        try:
-            for r in _jsonl(PICKS):
-                if r.get("for_day") != day.isoformat() and r.get("video_id"):
-                    taken.add(str(r["video_id"]))
-        except Exception:                                      # noqa: BLE001
-            pass
+        free = [x for x in have if str(x.get("video_id") or "") not in taken]
         d = (next((x for x in have if str(x.get("video_id") or "") == cur_id), None)
-             or next((x for x in have if str(x.get("video_id") or "") not in taken), None)
-             or have[0])
-        vid = str(d.get("video_id") or "")
-        out.append(f"     **外の作りを写した長尺の下書きが池に在ります**: `{vid}` `{d.get('topic')}`"
-                   f"（前提「外の作り方を写した長尺」期限 {dl}・48h で 100回 が門。"
-                   f"**測っていない形を、いまの作り方の長尺の 1回 で落とさないこと**）")
-        if not cur or str(cur.get("video_id") or "") != vid:
-            out.append(f"     → **{day:%m/%d} の1本はこれにすること**（`by_form()` の長尺 1回 は"
-                       f"『5分・計算1本』の数で、この本の数ではない。外の長尺 p90 は自分の中央値の ×624,772・"
-                       f"`outside_lines`）:")
-            out.append(f"       python -m src.daily_pick --pick 長尺 {d.get('topic')} --video {vid}"
-                       f" --day {day:%Y-%m-%d} --why \"外の作りを写した長尺の1本目（前提の判定・期限 {dl}）。"
-                       f"外の長尺 p90 ÷ 自分の中央値 1回\"")
-    else:
+             or (free[0] if free else None))
+        if d is not None:
+            vid = str(d.get("video_id") or "")
+            out.append(f"     **外の作りを写した長尺の下書きが池に在ります**: `{vid}` `{d.get('topic')}`"
+                       f"（前提「外の作り方を写した長尺」期限 {dl}・48h で {OUTSIDE_48H_GATE}回 が門。"
+                       f"**測っていない形を、いまの作り方の長尺の 1回 で落とさないこと**）")
+            if not cur or str(cur.get("video_id") or "") != vid:
+                out.append(f"     → **{day:%m/%d} の1本はこれにすること**（`by_form()` の長尺 1回 は"
+                           f"『5分・計算1本』の数で、この本の数ではない。外の長尺 p90 は自分の中央値の ×624,772・"
+                           f"`outside_lines`）:")
+                out.append(f"       python -m src.daily_pick --pick 長尺 {d.get('topic')} --video {vid}"
+                           f" --day {day:%Y-%m-%d} --why \"外の作りを写した長尺の1本目（前提の判定・期限 {dl}）。"
+                           f"外の長尺 p90 ÷ 自分の中央値 1回\"")
+            return out
+        # 下書きは全部ほかの日に割り当てずみ → 次を作るかは先読みの判定で
+        out.append(f"     外の作りの長尺の下書きは全部 ほかの日に決めてあります"
+                   f"（{'・'.join('`' + str(x.get('video_id')) + '`' for x in have)}）")
+    nxt = _unbuilt_outside(tops, uploaded_path)
+    if ro == "go" and nxt:
+        t0 = nxt[0]
+        out.append(f"     → **24h の先読みが門の上なので、{day:%m/%d} の1本は外の作りの長尺の次の1本**"
+                   f"（題材 `{t0['id']}`・作るのは 0単位・上げるのは `videos.insert`＝日枠の外）:")
+        out.append(f"       python -m src.pipeline --topic {t0['id']} --dry-run"
+                   f" && python scripts/inspect_build.py {t0['id']}"
+                   f" && python scripts/upload_only.py {t0['id']} --draft")
+    elif ro == "go" and not nxt:
+        out.append(f"     [!] **24h の先読みが門の上なのに、`style: outside_long` の未着手の題材が"
+                   f" `config/topics.yaml` に1件も残っていません** —— 外の上位の題（`outside_lines`）から"
+                   f" 1件 足すこと（`calc` は `src/calc/` に在るもの・`minutes: 20`・`style: outside_long`）")
+    elif not have and ro is None:
         out.append(f"     [!] **外の作りを写した長尺は、まだ池に1本も在りません**（題材 "
                    + "・".join(f"`{t['id']}`" for t in tops[:3])
                    + f"・前提の期限 {dl}）。作るのは 0単位・上げるのは `videos.insert`＝日枠の外:")
-        out.append(f"       python -m src.pipeline --topic {tops[0]['id']} --dry-run"
-                   f" && python scripts/inspect_build.py {tops[0]['id']}"
-                   f" && python scripts/upload_only.py {tops[0]['id']} --draft")
+        t0 = (nxt or tops)[0]
+        out.append(f"       python -m src.pipeline --topic {t0['id']} --dry-run"
+                   f" && python scripts/inspect_build.py {t0['id']}"
+                   f" && python scripts/upload_only.py {t0['id']} --draft")
+    elif have and ro is None:
+        out.append(f"     → **{day:%m/%d} の1本は、まだ決めないこと**（1本目の 24h の先読みを待つ。"
+                   f"それまでに3本目を作らない ＝ 作り置きの規則2）")
     return out
-
 
 def lines(next_row: dict | None, now: datetime | None = None,
           cmp: dict | None = None, picks_path: Path | None = None,
