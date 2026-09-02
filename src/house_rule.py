@@ -430,14 +430,103 @@ def drop_stockpile(rows, today: str | None = None, now=None) -> list:
 
 _COUNT_PER_DAY = _re.compile(r"(\d+(?:\.\d+)?)\s*本\s*/\s*日")
 _COUNT = _re.compile(r"(\d+)\s*本")
+#: 要件が「**いつから**数えるか」を言っている形（`09/01 以降に公開した本が 20本`・
+#: `2026-09-01 以降`）。**この日付が読めた要件だけ、公開ずみの本を足して数えます。**
+_SINCE = _re.compile(r"(?:(\d{4})[-/])?(\d{1,2})/(\d{1,2})\s*以降")
+_SINCE_ISO = _re.compile(r"(\d{4})-(\d{2})-(\d{2})\s*以降")
+
+#: 控えの置き場。**呼ぶ側に道を書かせないこと。**
+UPLOADED = ROOT / "data" / "uploaded.jsonl"
 
 
-def needs_beyond_rule(what: str, on_date: str, today: str | None = None) -> dict | None:
+def since_of(what: str, today: str | None = None) -> _date | None:
+    """要件の本文から「N月N日 以降」を日付で返す（無ければ `None`）。
+
+    年が無い形（`09/01 以降`）は、**今日以前でいちばん近いその月日**と読みます
+    （年をまたいだ直後の「12/30 以降」を来年に置かないため）。
+    """
+    if not what:
+        return None
+    m = _SINCE_ISO.search(what)
+    if m:
+        try:
+            return _date(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+        except ValueError:
+            return None
+    m = _SINCE.search(what)
+    if not m:
+        return None
+    mo, da = int(m.group(2)), int(m.group(3))
+    try:
+        if m.group(1):
+            return _date(int(m.group(1)), mo, da)
+        t = _date.fromisoformat(str(today or _jst_today())[:10])
+        cand = _date(t.year, mo, da)
+        return cand if cand <= t else _date(t.year - 1, mo, da)
+    except ValueError:
+        return None
+
+
+def published_since(since: _date, today: str | None = None, now=None,
+                    rows=None) -> int:
+    """**`since` の 00:00 JST から「いま」までに公開になった本の数**（`video_id` で重複を畳む）。
+
+    `rows` は `data/uploaded.jsonl` 形（`video_id` / `at`）。無ければ控えを読みます。
+    **予約でまだ来ていない本は数えません**（境は `_published_before()` —— 時刻で比べる）。
+    読めない行は数えない側（**測っていないことを、足す側にも倒さない**）。
+    """
+    from datetime import datetime, timedelta, timezone
+    jst = timezone(timedelta(hours=9))
+    if rows is None:
+        rows = []
+        try:
+            import json
+            with UPLOADED.open(encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if line:
+                        try:
+                            rows.append(json.loads(line))
+                        except ValueError:
+                            continue
+        except OSError:
+            return 0
+    lo = datetime(since.year, since.month, since.day, tzinfo=jst)
+    hi = _published_before(now, today)
+    seen: set = set()
+    for r in rows:
+        at = _instant((r or {}).get("at"))
+        if at is None or at < lo or at > hi:
+            continue
+        seen.add(str(r.get("video_id") or id(r)))
+    return len(seen)
+
+
+def needs_beyond_rule(what: str, on_date: str, today: str | None = None,
+                      published=None) -> dict | None:
     """**その要件は、規則の下でまだ満ちうるか。** 満ちないなら理由を返す。
 
     返すのは `{"named": 名指しされた本数, "allowed": 規則が許す本数, "kind": …}`。
     満ちうる（または読み取れない）ときは `None`。**読めないものは通します** ——
     測っていないことを、落とす側に倒さないこと（`is_stockpile` と同じ姿勢）。
+
+    ## 公開ずみの本を足して数える（2026-09-03 01:xx に踏んで直した）
+
+    それまで `allowed = (期日 − 今日) × PUBLISH_PER_DAY` **だけ**でした。
+    要件が「**09/01 以降に公開した本が 20本**」と言っているのに、
+    **09/01 以降にもう公開になった本（09/01 22:00・09/02 13:00 の 2本）を 0 に置いて**
+    いたので、公開の有無にかかわらず**毎日 1本ずつ足りなくなって見えました** ——
+    台帳の 09-26 と 10-06 の2件（どちらも `lever: per_video`）が、09/02 に
+    「1日 足りません」で期限を 1日 送られ、09/03 の回にも同じ行が出ています。
+    **本文の註が「これは毎日 腐ります。送り直すのが正しい手ではありません」と
+    書いたまま、数える側が腐らせていました。**
+
+    直し: 要件から「N/N 以降」が読めたら、`published_since()` で**公開ずみ**を数え、
+    `allowed = 公開ずみ ＋ 今日から期日までの日数 × PUBLISH_PER_DAY`。
+    読めない要件は前のまま（0 を足す）。`published` は検査の差し込み口（本数）。
+
+    **覆る条件**: `needs[]` が `count_since:` のような構造化した欄を持つようになったら、
+    本文の正規表現ではなくそちらを読むこと。
     """
     if not what or not on_date:
         return None
@@ -457,8 +546,16 @@ def needs_beyond_rule(what: str, on_date: str, today: str | None = None) -> dict
         return {"named": max(over), "allowed": float(PUBLISH_PER_DAY),
                 "kind": "per_day", "on_date": str(on_date)[:10]}
 
-    # (2) 「N本」—— 今日から期日までに、規則が何本 許すかと比べる
-    allowed = (d1 - d0).days * PUBLISH_PER_DAY
+    # (2) 「N本」—— **公開ずみ** ＋ 今日から期日までに規則が許す本数 と比べる
+    since = since_of(what, t)
+    if published is not None:
+        done = int(published)
+    elif since is not None:
+        done = published_since(since, today=t)
+    else:
+        done = 0
+    ahead = (d1 - d0).days * PUBLISH_PER_DAY
+    allowed = done + ahead
     text = _COUNT_PER_DAY.sub("", what)          # 上で見た形は取り除く
     counts = [int(x) for x in _COUNT.findall(text)]
     named = [n for n in counts if n > allowed]
@@ -475,8 +572,9 @@ def needs_beyond_rule(what: str, on_date: str, today: str | None = None) -> dict
         # **期限そのものは、そこへ実データの遅れを足した日より後**に置くこと
         # —— 遅れの日数はここでは測れないので（`src/settle.py` の持ち物）、
         # **足す前の日を返します。呼ぶ側が遅れを足すこと。**
-        need_days = int(_math.ceil(want / float(PUBLISH_PER_DAY)))
+        need_days = int(_math.ceil(max(want - done, 0) / float(PUBLISH_PER_DAY)))
         return {"named": want, "allowed": float(allowed),
+                "done": done, "since": str(since) if since else None,
                 "kind": "total", "on_date": str(on_date)[:10],
                 "need_days": need_days,
                 "need_on_date": str(d0 + _timedelta(days=need_days)),
@@ -556,8 +654,15 @@ def unreachable_lines(rows, today: str | None = None) -> list[str]:
             why = (f"要件が **{h['named']:g}本/日** を名指ししています"
                    f"（規則は {h['allowed']:g}本/日）")
         else:
-            why = (f"要件が **{h['named']}本** を名指ししていますが、"
-                   f"今日から {h['on_date']} までに規則が許すのは **{h['allowed']:g}本**")
+            done = int(h.get("done") or 0)
+            since = h.get("since")
+            if since:
+                why = (f"要件が **{h['named']}本** を名指ししていますが、"
+                       f"{since} 以降に公開ずみ **{done}本** ＋ 今日から {h['on_date']} までに"
+                       f"規則が許す **{h['allowed'] - done:g}本** ＝ **{h['allowed']:g}本**")
+            else:
+                why = (f"要件が **{h['named']}本** を名指ししていますが、"
+                       f"今日から {h['on_date']} までに規則が許すのは **{h['allowed']:g}本**")
         out.append(f"  [!] {h['deadline']}  {h['claim'][:52]}")
         out.append(f"        {why}")
         out.append(f"        要件: {h['what'][:100]}")
@@ -574,10 +679,14 @@ def unreachable_lines(rows, today: str | None = None) -> list[str]:
                        f"規則の 1日1本 で {h['named']}本 に届きます"
                        f"（今日から {h['need_days']}日）。"
                        f"**`deadline` は、そこへ実データの遅れを足した日より後**に置くこと")
-            out.append("        [!] **この日数は「規則どおり毎日1本 出た場合」です。**"
-                       " 予約の暦に穴があるあいだは、この日も来ません ——"
-                       " §1 の `[暦]` が鳴っていたら、**先にそちらを埋めること**"
-                       "（`scripts/reschedule.py --compact`）")
+            # **`reschedule.py --compact` をここで勧めないこと**（2026-09-03 に消した）。
+            # 固定その4（予約はその日のぶんだけ・先の日付は空が正しい）の下では
+            # 「暦の穴を埋める」手はもう在りません —— 同じ file の上の節が
+            # 「`--compact --apply` は撃たないこと」と書いているのに、この行が勧めていた。
+            out.append("        [!] **この日数は「きょうから毎日1本 出た場合」です。**"
+                       " 公開の無い日が来るたび 1本 足りなくなります ——"
+                       " 送り直すのではなく、**その日の1本を出すこと**"
+                       "（固定その4: 予約はその日のぶんだけ。先の日付は置けません）")
     return out + win
 
 
