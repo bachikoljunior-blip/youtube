@@ -183,3 +183,55 @@ def test_熟語の中の1字は前後が漢字でも置換されない():
     """`apply_corrections()` の門。**熟語ごと台帳に入れる**のが直し方。"""
     got = yomi_gate.apply_corrections("重課後と重い荷物。", {"重": "ジュー"})
     assert got.startswith("重課後"), got
+
+
+@pytest.mark.skipif(not yomi_gate.available(), reason="open-jtalk が無い")
+def test_耳が通した1字はR2の合図にならない():
+    """「月十万円」の 月 は 名詞-一般 の1字で `_glue` に掛からない。
+
+    2026-09-03 に踏んだ形: 耳が 年（ネン）・月（ツキ）を safe と判定した後も、
+    09/04 の本 1本で R2 が **75件**（うち 74件 がこの形）並び、`_numeral` の註と
+    同じ理由で本当に危ない語が読めなくなっていた。R1 は台帳を見て黙るのに、
+    R2 だけ見ていなかった。
+    """
+    text = to_speech("厚生年金が月10万円の人。")
+    before = yomi_gate.inspect(text, risk={}, ledger={})
+    assert any(h["code"] == "R2" and "月" in h.get("inside", []) for h in before), before
+    after = yomi_gate.inspect(text, risk={}, ledger={"月": {"verdict": "safe"}})
+    assert not any(h["code"] == "R2" for h in after), after
+
+
+def test_刻まれた1字が全部safeになった並びは待ち行列から消える():
+    """R2 の並び（「月十万円」）は表層が語ではないので、語の safe では消えなかった
+    （「年十五万七千八百五十三円」n=25 が 年 の safe 後も残り続けていた・2026-09-03）。"""
+    keep_q = yomi_gate.QUEUE_PATH.read_text(encoding="utf-8") \
+        if yomi_gate.QUEUE_PATH.exists() else None
+    keep_l = yomi_gate.LEDGER_PATH.read_text(encoding="utf-8") \
+        if yomi_gate.LEDGER_PATH.exists() else None
+    try:
+        yomi_gate.LEDGER_PATH.write_text(json.dumps({"words": {}}), encoding="utf-8")
+        yomi_gate.queue([
+            {"code": "R2", "surface": "丙十万円", "inside": ["丙"],
+             "why": "「丙十万円」が1文字に刻まれている（丙）。", "seg": 1},
+            # 2026-09-03 より前の形（`inside` を持たない）は `why` から読む
+            {"code": "R2", "surface": "丁五万円",
+             "why": "「丁五万円」が1文字に刻まれている（丁）。辞書に無い並び", "seg": 2},
+            {"code": "R2", "surface": "丙丁千円", "inside": ["丙", "丁"],
+             "why": "「丙丁千円」が1文字に刻まれている（丙・丁）。", "seg": 3},
+        ])
+        rows = yomi_gate._load(yomi_gate.QUEUE_PATH)["open"]
+        assert {v["surface"] for v in rows.values()} >= {"丙十万円", "丁五万円", "丙丁千円"}
+        yomi_gate.LEDGER_PATH.write_text(
+            json.dumps({"words": {"丙": {"verdict": "safe"}}}, ensure_ascii=False),
+            encoding="utf-8")
+        yomi_gate.queue([])
+        left = {v["surface"] for v in yomi_gate._load(yomi_gate.QUEUE_PATH)["open"].values()}
+        assert "丙十万円" not in left, left          # 丙 が safe → 消える
+        assert "丁五万円" in left, left              # 丁 は未判定 → 残る
+        assert "丙丁千円" in left, left              # 丁 が残っている → 残る
+    finally:
+        for path, keep in ((yomi_gate.QUEUE_PATH, keep_q), (yomi_gate.LEDGER_PATH, keep_l)):
+            if keep is None:
+                path.unlink(missing_ok=True)
+            else:
+                path.write_text(keep, encoding="utf-8")

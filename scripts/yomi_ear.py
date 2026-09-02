@@ -192,6 +192,18 @@ def settle(limit: int = 20) -> int:
         # 1字の読みが辞書に在るかどうかは何も言っていない。
         inside = bool(re.search(f"[{G.KANJI}]{re.escape(w)}|{re.escape(w)}[{G.KANJI}]",
                                 to_speech(sent)))
+        # **活用語（動詞・形容詞）の語幹は、前が漢字でも熟語の中の1字ではない**
+        # （2026-09-03 に踏んだ）: 「2万210円消えます」の 消え は Google が キエ と
+        # 正しく読んでいた（0.381 対 ギエ 0.405）のに、前の「円」が漢字なので
+        # 「熟語の中の1字」に倒れて misread（correct 空）のまま台帳に残り、
+        # R1 で毎本 名指しされていた（待ち行列 n=30・09/04 の本にも 2件）。
+        # 熟語の切れ方が割れうるのは名詞のときだけなので、品詞で分ける。
+        try:
+            tok = next((t for t in G.analyze(to_speech(sent)) if t["surface"] == w), None)
+        except RuntimeError:
+            tok = None
+        if tok and tok.get("pos") in ("動詞", "形容詞"):
+            inside = False
         if heard in (risk.get(w) or [kana]) and not inside:
             entry["verdict"] = "safe"
             entry["why"] = (f"Google は {heard} と読んだ。実測の読み "
