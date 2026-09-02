@@ -875,6 +875,19 @@ class VideoScript(BaseModel):
     thumbnail_line2: str = Field(
         description="サムネ2行目。全角9文字以内。**1行目と同じく、金額を丸めないこと**"
     )
+    # **この欄は 2026-08-31 に `src/thumbnail.create(kicker=)` と `src/pipeline.py` の
+    # `getattr(script, "thumbnail_kicker", None)` として足されましたが、この型には
+    # 在りませんでした**（2026-09-03 02:5x に実測: repo 全体で `thumbnail_kicker` は
+    # pipeline と refresh_thumbnail の読む側 2か所だけ。控え 694本 に1本も無い）。
+    # pydantic は知らない欄を黙って落とすので、**書き手が書いても届かず、
+    # 足した日から1本もサムネに題材が載っていません**（言っている所と、している所が別）。
+    # 検査は `tests/test_thumbnail_kicker.py`。
+    thumbnail_kicker: str = Field(
+        default="",
+        description="サムネの上の1行（題材そのもの・全角18文字以内・省略可）。"
+        "本文の2行が何の話かを名指す（例: 2026年4月 年金のルール変更）。"
+        "**金額を書くなら丸めない**（1行目と同じ検査に掛かります）"
+    )
     first_comment: str = Field(
         description="投稿直後に自分で書き込むコメント。本編の要点を数字ごと3行でまとめ、最後に視聴者へ問いかけを1つ。200文字以内。宣伝や依頼は書かない"
     )

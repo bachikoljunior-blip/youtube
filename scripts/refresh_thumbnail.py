@@ -45,6 +45,18 @@ from src import auth, thumbnail, upload_cap, visuals  # noqa: E402
 from src.auth import credentials  # noqa: E402
 
 
+def topic_style(topic_id: str) -> str:
+    """`config/topics.yaml` の `style:`（`outside_long` など）。無ければ空。**API 0単位。**"""
+    try:
+        from src import config as _config                        # noqa: PLC0415
+        for t in _config.load_topics().get("topics") or []:
+            if str(t.get("id")) == topic_id:
+                return str(t.get("style") or "")
+    except Exception:                                          # noqa: BLE001
+        pass
+    return ""
+
+
 def main(topic: str, video_id: str, theme_index: int) -> int:
     work = Path("build") / topic
     slides = sorted((work / "slides").glob("slide_*.png"))
@@ -61,6 +73,7 @@ def main(topic: str, video_id: str, theme_index: int) -> int:
         script["thumbnail_line1"], script["thumbnail_line2"],
         work / "thumbnail.jpg", work, accent=accent,
         kicker=script.get("thumbnail_kicker"),
+        style=topic_style(topic),
     )
     print(f"[thumb] 作り直しました: {out} accent={theme['accent']}")
 

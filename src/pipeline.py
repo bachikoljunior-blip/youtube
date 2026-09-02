@@ -679,6 +679,9 @@ def main(argv: list[str] | None = None) -> int:
         # **題材の1行**（省略可）。台本が持っていなければ、これまでと同じ絵。
         # `src/thumbnail.create()` の docstring に、足した理由の全文。
         kicker=getattr(script, "thumbnail_kicker", None),
+        # **外の作りを写した長尺**（`topics.yaml` の `style: outside_long`）は、絵も外の型で
+        # （`src/thumbnail.OUTSIDE_STYLE` に理由）。ほかの題材は従来と1ピクセルも変わらない。
+        style=str(topic.get("style") or ""),
     )
 
     description = build_description(script, spans, channel, topic["id"])

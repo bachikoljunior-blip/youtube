@@ -1770,7 +1770,9 @@ def _check_title_from_calc(work: Path, script: dict | None, topic: dict | None) 
     problems = []
     for label, text in (("タイトル", script.get("title", "")),
                         ("サムネ", str(script.get("thumbnail_line1", ""))
-                         + " " + str(script.get("thumbnail_line2", "")))):
+                         + " " + str(script.get("thumbnail_line2", ""))
+                         # 上の1行（題材）も同じ門（2026-09-03。`VideoScript.thumbnail_kicker`）
+                         + " " + str(script.get("thumbnail_kicker", "") or ""))):
         for n in sorted(_to_yen(text)):
             if n >= 1000 and n not in have:
                 problems.append(

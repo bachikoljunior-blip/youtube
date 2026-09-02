@@ -120,10 +120,111 @@ def _draw_outlined(draw: ImageDraw.ImageDraw, xy, text: str, font, fill, stroke=
     draw.text(xy, text, font=font, fill=fill, stroke_width=stroke, stroke_fill=(12, 12, 16))
 
 
+#: **外の作りを写した長尺の絵**（`topics.yaml` の `style: outside_long`・2026-09-03 に足した）。
+#:
+#: ## なぜ要るか（同じ夜に、外の上位4本のサムネイルを実物で並べた）
+#:
+#: `scripts/niche_ceiling.py` の長尺の上位（505万・440万・325万・293万回）は、絵の型が揃っています:
+#:
+#:     上の帯    黄色い箱に黒字で「9月中に必ず確認して！」「R8年4月から」「2026年から」
+#:               ＝ **いつ・誰に**の1行。小さく、箱で切れている
+#:     本文1     **赤い字に白い縁**（その外に黒い影）で主語 ——「年金に」「申請をしないと」
+#:     本文2     黄色か白の字に黒い縁で結論 ——「7万円 一生上乗せ」「234万円 失う！」
+#:     左の帯    縦書きの短い煽り（「絶対申請して」「9割が知らない」）。ここは写さない
+#:     顔        人の顔。**ここは写せない**（実在しない人を出さない・`verify` の名乗りの門）
+#:
+#: 自分の控え（`6PKux5HNnUE.thumb.jpg`）は 2行・桃色と白・暗い背景で、**主語（年金）が
+#: どこにも無く**、いつの話かも無い。前提「外の作り方を写した長尺」（`config/hypotheses.yaml`）
+#: は題と尺と中身を写していて、**絵だけ写していませんでした**。一覧で最初に目に入るのは
+#: 絵なので、ここを写さないと「外の作りを写した」の判定が絵のぶんだけ混ざります。
+#:
+#: 写すのは**色と3段の型**だけ（顔と左の帯は写さない）。`style` が `outside_long` の
+#: ときだけ効き、ほかの題材は従来と1ピクセルも変わりません。
+#:
+#: ## 覆る条件
+#:
+#: 前提「外の作り方を写した長尺」が外れで閉じたら（48時間で 100回 未満）、この型に
+#: 根拠は残りません。そのときは `topics.yaml` の `style:` を外せば、この枝は通りません。
+OUTSIDE_STYLE = "outside_long"
+OUTSIDE_KICKER_BG = (255, 222, 0)       # 黄色い箱
+OUTSIDE_KICKER_FG = (16, 16, 20)        # その上の黒字
+OUTSIDE_LINE1 = (226, 28, 28)           # 赤い主語
+OUTSIDE_LINE1_EDGE = (255, 255, 255)    # その白い縁
+OUTSIDE_LINE2 = (255, 232, 0)           # 黄色い結論
+OUTSIDE_MARGIN = 56
+
+
+def _fit_font(draw: ImageDraw.ImageDraw, text: str, start: int, max_w: int, floor: int = 90):
+    """`start` から下げて、幅 `max_w` に入る最大の字を返す。"""
+    size = start
+    while size > floor:
+        f = _font(size)
+        if draw.textbbox((0, 0), text or "　", font=f)[2] <= max_w:
+            return f
+        size -= 10
+    return _font(floor)
+
+
+def _create_outside(img: Image.Image, line1: str, line2: str, kicker: str | None,
+                    out_path: Path) -> Path:
+    """`OUTSIDE_STYLE` の描き方。上の註に、写した型の出どころ。"""
+    draw = ImageDraw.Draw(img)
+    max_w = W - OUTSIDE_MARGIN * 2
+    f1 = _fit_font(draw, line1, 190 if len(line1) <= 6 else 160, max_w)
+    f2 = _fit_font(draw, line2, 190 if len(line2) <= 6 else 160, max_w)
+    b1 = draw.textbbox((0, 0), line1 or "　", font=f1)
+    b2 = draw.textbbox((0, 0), line2 or "　", font=f2)
+    h1, h2 = b1[3] - b1[1], b2[3] - b2[1]
+    gap = 34
+
+    fk = bk = None
+    if kicker:
+        fk = _fit_font(draw, kicker, 72 if len(kicker) <= 14 else 62, max_w - 40, floor=48)
+        bk = draw.textbbox((0, 0), kicker, font=fk)
+    hk = (bk[3] - bk[1] + 36) if bk else 0     # 箱の高さ（上下の余白 18 ずつ）
+
+    block = h1 + h2 + gap + (hk + 30 if hk else 0)
+    top = max(24, (H - block) // 2)
+    x = OUTSIDE_MARGIN
+
+    if kicker and fk and bk:
+        pad = 20
+        box = [(x - 6, top), (x + (bk[2] - bk[0]) + pad * 2, top + hk)]
+        draw.rectangle(box, fill=OUTSIDE_KICKER_BG)
+        draw.text((x - 6 + pad - bk[0], top + 18 - bk[1]), kicker, font=fk, fill=OUTSIDE_KICKER_FG)
+        top += hk + 30
+
+    if line1:
+        y = top - b1[1]
+        # 黒い影 → 白い縁 → 赤い字。外の上位の「赤字に白縁」はこの3層です。
+        draw.text((x + 6, y + 8), line1, font=f1, fill=(12, 12, 16), stroke_width=18,
+                  stroke_fill=(12, 12, 16))
+        draw.text((x, y), line1, font=f1, fill=OUTSIDE_LINE1, stroke_width=12,
+                  stroke_fill=OUTSIDE_LINE1_EDGE)
+        top += h1 + gap
+    if line2:
+        y = top - b2[1]
+        draw.text((x, y), line2, font=f2, fill=OUTSIDE_LINE2, stroke_width=14,
+                  stroke_fill=(12, 12, 16))
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    quality = 92
+    while quality >= 60:
+        img.save(out_path, "JPEG", quality=quality, optimize=True)
+        if out_path.stat().st_size < 2_000_000:
+            break
+        quality -= 8
+    return out_path
+
+
 def create(source: Path, line1: str, line2: str, out_path: Path, work: Path,
            accent: tuple[int, int, int] | None = None,
-           kicker: str | None = None) -> Path:
+           kicker: str | None = None, style: str | None = None) -> Path:
     """accent には動画のテーマ色を渡す。渡さないと本文と色が食い違う。
+
+    `style` が `OUTSIDE_STYLE`（`topics.yaml` の `style: outside_long`）なら、
+    外の上位の型（黄色い箱の1行・赤字に白縁の主語・黄色の結論）で描く。
+    それ以外は従来と1ピクセルも変わらない（`OUTSIDE_STYLE` の上の註）。
 
     `kicker` は**題材そのもの**を1行で書く欄（省略可）。
 
@@ -145,6 +246,8 @@ def create(source: Path, line1: str, line2: str, out_path: Path, work: Path,
     """
     accent = accent or ACCENT
     img = _base_image(source, work)
+    if (style or "") == OUTSIDE_STYLE:
+        return _create_outside(img, line1, line2, kicker, out_path)
     draw = ImageDraw.Draw(img)
 
     # 左端のアクセントバー
