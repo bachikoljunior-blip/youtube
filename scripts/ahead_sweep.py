@@ -1082,6 +1082,23 @@ def rebake_run(vid: str, topic: str, sha: str) -> int:
                   "seconds": round(time.time() - t0)}, root)
     if rc == 0 and new_id:
         print(f"[rebake-run] **差し替えました**: `{vid}` → `{new_id}`（{time.time() - t0:.0f}秒）", flush=True)
+        # **押すところまでが1手**（`src/inbox.git_save` の註と同じ穴）—— 決めの写し（`daily_pick.jsonl`）と
+        # 控え（`critique_queue/<新ID>.*`）はこの作業コピーの `data/` にしか無く、置く手は別の作業コピーの
+        # `kick` から起きることがある。押さなければ、置かれるのは旧 ID のまま。
+        try:
+            from src import inbox                              # noqa: PLC0415
+            paths = [root / "data" / "daily_pick.jsonl", root / "data" / "uploaded.jsonl",
+                     root / "data" / "published_bars.json", root / REBAKE_LEDGER,
+                     root / "data" / "api_calls.jsonl"]
+            paths += sorted((root / "data" / "critique_queue").glob(f"{new_id}.*"))
+            paths = [p for p in paths if p.exists()]
+            ok, note = inbox.git_save(
+                f"rebake: {topic} を焼き直して差し替えた {vid} → {new_id}（台本 sha {sha}・"
+                f"scripts/ahead_sweep.rebake_today・決めは新 ID へ）", paths)
+            print(f"[rebake-run] {'押しました' if ok else '[!] 押せませんでした'}: {note[-200:]}", flush=True)
+        except Exception as exc:                               # noqa: BLE001
+            print(f"[rebake-run] [!] 押せませんでした: {str(exc)[:160]} —— "
+                  f"`git add data/daily_pick.jsonl data/critique_queue && git commit && git push` を手で", flush=True)
     else:
         print(f"[rebake-run] [!] 焼き直せませんでした（rc={rc}・{time.time() - t0:.0f}秒）。"
               f"同じ台本は二度 焼きません —— 台本を直して commit すること", flush=True)
