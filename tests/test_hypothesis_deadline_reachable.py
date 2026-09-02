@@ -248,7 +248,34 @@ def earliest_clarity_views():
     return date.today()
 
 
+#: **`per_video` の標本が、判定に足りる日数まで貯まる最短の日**
+#: （2026-09-02 夜・最適化の回に足した）。
+#:
+#: 台帳「08-25 を境に落ちた1本あたり再生は…」の床は
+#: **帯（≤2本/日）に入った日が 19日**（`staleness()['sample_days']`）。
+#: オーナー規則は 1日1本（`src/house_rule.py`）なので、**帯には 1日1点**しか
+#: 入りません ＝ 最短は「いま何日 貯まっているか」からの単純な引き算です。
+#:
+#: **暦に穴が空いた日は 0本 ＝ 帯にも入りません**ので、これは**下限**です
+#: （実際にはもっと掛かる）。床が下限であることは、上の `earliest_*` と同じ性質。
+#:
+#: **覆る条件**: `staleness()` が撃てない（`ok` が False）なら `None` を返し、
+#: 下の検査が「床に届きません」と落とします。**黙って通しません。**
+def earliest_pv_sample(need: int = 19):
+    from datetime import date, timedelta
+    try:
+        from src import rule_per_video as R
+        s = R.staleness()
+    except Exception:
+        return None
+    if not s.get("ok"):
+        return None
+    have = int(s.get("sample_days") or 0)
+    return date.today() + timedelta(days=max(0, need - have))
+
+
 CHECKABLE = {
+    "08-25 を境に落ちた1本あたり再生は": earliest_pv_sample,
     "題を問いの形にすると": lambda: earliest_ab("title_form"),
     "冒頭1枚目の主役": lambda: earliest_ab("hook_form"),
     "冒頭の stat は": earliest_stat_split,

@@ -2523,6 +2523,26 @@ def analyse(m: dict, points: list[dict] | None = None,
         for k in RPM_SCENARIOS
     }
     a["per_video_now"] = per_video
+    # --- **その数の齢を、点にも残す**（2026-09-02 夜・最適化の回）---
+    #     頭の3行（`lines()` の `stale_lines()`）は**その回にしか出ません**。
+    #     `data/eta.jsonl` に残っていなければ、**「標本はいつ動き出したか」を
+    #     後から誰も数えられません** —— 台帳
+    #     `08-25 を境に落ちた1本あたり再生は…`（期限 09-23）の判定は
+    #     **標本が動き出したこと**を要件にしているので、ここが要ります。
+    #     **`None` は「撃てなかった」で、0 ではありません。**
+    try:
+        from src import rule_per_video as _rule_pv
+        _st = _rule_pv.staleness()
+        if _st.get("ok"):
+            a["pv_sample_last"] = str(_st["sample_last"])
+            a["pv_sample_days"] = _st["sample_days"]
+            a["pv_sample_age_days"] = _st["age_days"]
+            a["pv_sample_stale"] = _st["stale"]
+            a["pv_resid_recent"] = _st["recent_ratio"]
+            a["pv_resid_b"] = (_st.get("fit") or {}).get("b")
+            a["pv_resid_cliff"] = _st["cliff"]
+    except Exception:                                  # pragma: no cover
+        pass
 
     # --- 到達日を解くための入力（2026-08-20 08:0x に足した）---
     #     **ここが無い間、段4 の期日は段3 の写しでした。**
@@ -10284,6 +10304,13 @@ def _row(m: dict, a: dict, pl: dict, tr: dict | None, sup: dict | None) -> dict:
     #     積まないと `run_marker.py` から見えず、`lever_followed` が
     #     道具の指示どおりに動いた回を「外した」と数えつづけます。
     row["lever_hint_covered"] = pl.get("lever_hint_covered")
+    # **`per_video` の標本の最終日**（2026-09-02 夜）。上の行は `a` の
+    #     **数だけ**を拾うので、日付（文字列）はここで明示的に積みます
+    #     （`pv_sample_days` / `pv_sample_age_days` / `pv_resid_*` は数なので、
+    #      上の内包表記が拾っています）。**この欄が無いと、台帳
+    #      `08-25 を境に落ちた1本あたり再生は…`（期限 09-23）の
+    #      「標本が動き出したか」を後から数えられません。**
+    row["pv_sample_last"] = a.get("pv_sample_last")
     # **供給の実測も積む**（次の回が「作る速さは上がったか」を測れる形にする）
     row["density_month"] = pl.get("density_month")
     row["make_rate_per_day"] = (sup or {}).get("rate_per_day")
