@@ -102024,3 +102024,71 @@ runs/eta を数える・掃きに1手 足す・決めを写す —— **Opus で
 - `tests/test_eta_pause_banner.py::test_silent_when_not_paused`（eta の本文に「止まっています」が別の文脈で入っている・04:4x の回と同じ）
 - `tests/test_judgeable.py::test_実物で期限が構造的に守れる[opening_motion]`（対照群の予約 2本 不足・規則1 の下では前提の側の話）
 - この回の変更（`scripts/ahead_sweep.py`・`scripts/upload_only.py`・`src/daily_pick.py`・`tests/test_rebake_today.py`）に掛かる 1,062件 は緑
+
+## 2026-09-03 04:5x〜05:3x JST —— 最適化の回（Fable 5.1・サブ `session_01AHfq4FUVAd5fxDM29yG1Cm#agent-a00958e5be30013aa`）: 「最適化されてんの？」「過去の実行に対して聞いてんだからな」への答え
+
+### 答え: **いいえ**
+
+この回に自分で撃って出た数（書き置きの結論は使っていない・API 0単位）:
+
+    data/runs.jsonl   ship 281件（08/29〜09/03 04:4x）: fix **199（71%）**／ improve 21／ verdict 20／ upload 17／ premise 16／ means 8
+                      `--moves` 0 が **266件（95%）**。日別の fix: 08/30 36/55 ／ 08/31 40/50 ／ 09/01 **78/97** ／ 09/02 23/39 ／ 09/03 13/25
+                      1セッションの中央値 22.5分。直近40セッションのうち fix だけで終わった回 **14**
+    data/eta.jsonl    1,196点。`target_date` は 08/20 を最後に None のまま。`traj_date` は 08/31 08:02 から None（出ません）
+    eta.py            「出ません」。律速 `per_video`（天井 ×4.49・要る ×98.20 ＝ 天井を ×21.88）。`sub_rate` は ×10^9 で 0日
+    status.py         登録 25／1,000・09/02 の公開 3本は 5／0／111回。08/30〜31 のショートは 84〜259回
+    git log 09/02〜   src/ に触った commit のうち動画の物（台本・絵・計算）が変わったのは 3件、残りは画面・門・控え
+
+**目標（月20万）に対して、過去の回は最適化されていない。** 到達日は 08/20 から一度も出ておらず、動いたのは道具と画面。
+
+### なぜ近づかない回が選ばれ続けたか（この回の名指し1つ）
+
+**規則3（次の枠で出る1本を、出る瞬間まで良くし続ける）の機械（`rebake_today`・05:0x の前の回が入れた）は
+`daily_pick.for_day()` の**1日ぶんしか**見ていなかった。** 09/05 の本 `dRZnZrRy2Lw`（外の作りを写した長尺の2本目・唯一の腕 `per_video` の
+前提の n を 1→2 にする本）は、09/03 の時点で冒頭 4コマ が旧の型のまま（`outside_opening_problems` 4件）決まっていて、
+台本を直しても **09/04 17:00 に 09/04 の枠が埋まるまで誰も焼き直さない**形だった。＝ 台本を直す手（improve）が本になるのは
+最短で 36時間 後で、その間に verify の赤も分からない。
+
+もう1つ、同じ回に踏んだ: **hourly（`d2f7fe05`・04:5x）とこの回が、同じ台本の同じ 4コマ を 10分差で書き直した**（併合で `AA` 衝突）。
+渡された本文は「同じ枝で他に走っている相手は、立てた時点ではいません」と言っていたが、`next_round.py` は 2種類そろって1周 ＝
+**hourly と optimizer は毎周 同じ瞬間に立つ**。写し（`spawn_prompt.rendered.md`）の既定 `siblings=[]` は毎周 偽だった
+（08-31 22:3x の `src/descriptions.py` 6分差と同じ形。あのときの直しは「名指しされた回は TOUCHED_CMD を撃て」で、名指しが一度も起きなかった）。
+
+### 変えたもの（主実行の1周が具体的に変わる所・push 済み `66bcb62c` ＋ この commit）
+
+1. `scripts/ahead_sweep.rebake_today` が **`for_day()` の先 `REBAKE_DAYS_AHEAD`（2）日の決めも見る**（決めが在る日だけ・起こすのは1周に1本・手前の日が先）。
+   `rebake_plan_for(day, now)` に切り出し。実測: 09/04 `1huadpEk6HY` は「同じ中身」で止まり、09/05 `dRZnZrRy2Lw` を「台本のほうが新しい（sha 20e377f62f99）」で名指し
+2. **焼く印が古く（`REBAKE_MARK_STALE` 3時間）帳面に `done` が無ければ、焼く側が死んだと読んでもう一度 焼く**（`rebake_attempted`）。
+   サブは親の容器の中で走るので、親が畳まれると焼く側も道連れになり、その sha は永久に「一度 焼いた」になっていた
+3. 09/05 の台本 `data/scripts/nenkin-uketorikata-65-70-75-handan.script.json` は **主実行 `d2f7fe05` のほうを残した**（同じ型・`outside_opening_problems` 0件・
+   言った数は絵に在る・こちらの版は捨てた）。**この回が 05:02 に `rebake_today` を撃って、背景で焼いている**（`data/rebake.jsonl`・`data/rebake.log`）
+4. `scripts/spawn_prompt.py` の写しの既定を **`SAME_ROUND_SIBLINGS`**（hourly ↔ optimizer を役の名で名指し）に。受け取った側は `TOUCHED_CMD` を撃って
+   相手の押した所を避ける（`tests/test_spawn_prompt.py` を「名指ししている」側に書き換え）
+5. 検査 `tests/test_rebake_days_ahead.py` 7件
+
+### 「この改善を無限大にしたら、到達日は何日 早まるか」
+
+- 律速は `per_video`（天井を ×21.88）。それを試す本は 09/04・09/05 の2本で、規則3 が効く時間が 1日ぶん → 2〜3日ぶん になった。
+  無限大（直した瞬間に本が変わる）なら、前提「外の作り方を写した長尺」の n=2 が**両方とも直した台本で**出る。日付そのものは前提が閉じたときに動く（`--moves 0`）
+- 並列の税: 2人が同じ穴を掘ると θ は 2 ではなく 1。名指しで避けられた回だけ、その周は 2 になる（`eta.py` の θ＝1.20/日 の側）
+
+### 次に主実行が1周したとき、どこが具体的に変わるか（1行）
+
+**`kick` → `[rebake]` の行が 09/04 と 09/05 の2行 出て、09/05 の `dRZnZrRy2Lw` が背景で焼き直され（この回が起こした・`data/rebake.jsonl` の `done` 行）
+`daily_pick.jsonl` の 09/05 の決めが新 ID へ写る。渡される本文は「hourly が同じ周に走っている」と名指しする。**
+
+### 覆る条件
+
+- `data/rebake.jsonl` の `done` に `rc != 0` が付いたら（この回の焼きが verify で落ちたら）、台本 `data/scripts/nenkin-…script.json` の側を直して commit（同じ sha は二度 焼かない）
+- 09/05 17:00 に置かれた本が `dRZnZrRy2Lw` のままなら、写し（`replace_video`）か置く手（`_today_candidate`）の欠陥
+- 先の日を見る形で、1日に 2回 の上限（`REBAKE_MAX_PER_DAY`）に毎日 当たるなら、上限を日ではなく本ごとにすること
+- `next_round.py` が交互（役を1つずつ）に戻ったら `SAME_ROUND_SIBLINGS` は空に
+
+### 模型のこと
+
+runs/eta を数える・掃きの範囲を1日→3日に・印の読み方・写しの既定 —— **Opus で足りる回**。Fable でないと出ない判断は無し。
+
+### 追わないと決めたこと
+
+- `fix` 比（71%）そのものを門でいじること: 09/01 の門で 74.7%→61.2% にしても日付は動かなかった（`run_marker` の註「回の配合をこれ以上いじらないこと」）。この回も触っていない
+- 09/04 の本 `1huadpEk6HY` の中身: 控えと台本が同じ（sha 83759eac6989）。verify 合格・冒頭 型の中。触ると同じ日に 2本目の焼きになる

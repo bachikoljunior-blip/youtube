@@ -258,11 +258,14 @@ def test_逐語で渡す役には差し込み口が残っていない():
         )
 
 
-def test_相手がいない回は_いないと書いてある側が写しの既定():
-    """**空欄ではなく「いません」と書いてあること。**
+def test_写しの既定は_同じ周に立つもう一方の役を名指しする():
+    """**空欄でも「いません」でもなく、もう一方の役が書いてあること**（2026-09-03 に変えた）。
 
-    差し込み口を消すだけだと、`_siblings_block()` の
-    「調べていないだけと区別できない」という穴に戻ります。
+    それまでは「いません」が既定でした。差し込み口を消すだけだと `_siblings_block()` の
+    「調べていないだけと区別できない」穴に戻る、が理由でしたが、`next_round.py` は
+    hourly と optimizer を**毎周 同じ瞬間に**立てる（2種類そろって1周）ので、
+    「いません」は毎周 偽でした（実測 09-03 04:5x: 同じ台本の同じ 4コマ を 10分差で2人が書き直した）。
+    `SAME_ROUND_SIBLINGS` の註。
     """
     import json
     import re as _re
@@ -270,11 +273,14 @@ def test_相手がいない回は_いないと書いてある側が写しの既�
     text = sp.RENDERED.read_text(encoding="utf-8")
     blocks = dict(_re.findall(
         r"^## kind: ([\w-]+)\s*\n\n```json\n(.*?)^```", text, _re.M | _re.S))
-    prompt = json.loads(blocks["hourly"])["prompt"]
-    assert "他に走っている" in prompt and "いません" in prompt, (
-        "写しの `hourly` に「他に走っている相手はいません」が書かれていません。"
-        "**書いていないと、受け取った側は「調べていないだけ」と区別できません。**"
-    )
+    for kind, other in (("hourly", "optimizer"), ("optimizer", "hourly")):
+        prompt = json.loads(blocks[kind])["prompt"]
+        assert "いま同じ枝で走っています" in prompt and other in prompt, (
+            f"写しの `{kind}` が、同じ周に立つ `{other}` を名指ししていません。"
+            "**名指しが無いと、受け取った側は相手の押した所（`TOUCHED_CMD`）を見に行きません。**"
+        )
+        assert "<<" not in prompt.split("いま同じ枝で走っています", 1)[1][:400], "名指しが差し込み口のまま"
+        assert "立てた時点ではいません" not in prompt
 
 
 def test_枝の名前が本文に入る() -> None:
