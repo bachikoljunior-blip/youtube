@@ -99489,6 +99489,20 @@ video_id と `--move` の1行まで出します。**そして同じ形を repo �
    `improve` を1件 探している回は、ここが 0単位 の当てどころです。
 5. **`eta.py` が実測を取りに行くと 500 で落ちる窓があります**（この回に踏んだ）。
    `--offline` で回を止めないこと —— **道具自身がそう印字します。**
+6. **全数 5,958件 を回しました（25分22秒）: 20件 赤 ／ 5,980 緑 ／ 10 skip。**
+   **この回のぶんは 0件**（触った `test_upload_only_replaces` / `test_spawn_prompt_clock` /
+   `test_dupes*` / `test_upload_only_sheet` は 67件 とも緑）。
+   前の回の申し送りが数えた 14件 のうち **`test_compact_blocked_by_rule5`（2件）は
+   きょうの別の回が直して緑**になり、代わりに**この回の窓で枝に載った 6件**が新しく赤です:
+
+       test_cap_caveat_surface[alloc_search]      test_eta_fits_deadlines（2件）
+       test_deadline_check（needs が全部 書いてある） test_eta_reflect_light
+       test_hypothesis_deadline_reachable          test_narrated（3件・KeyError）
+
+   **どれも `eta` / 台帳 / `narrated` 側**で、この回は1行も触っていません
+   （`git log` で同じ窓の ship を見ること —— `premise`（`niche_ceiling`）と
+   `hypotheses.yaml` の回が在ります）。**「前からある」と書かずに、
+   自分のぶんかを1分で確かめる形**（定数を戻して撃つ）は 09/02 夕の項にあります。
 
 ### 立てた前提の登録が2か所 足りず、検査2件を赤にしていました（同じ回に直した）
 
