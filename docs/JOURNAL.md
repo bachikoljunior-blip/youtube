@@ -101075,3 +101075,87 @@ Opus/Sonnet で足りた所: 検査の実行・commit/push・`uploaded.jsonl` �
 
 **取り合いの避け方（次に来た側へ）**: `daily_pick --pick` の前に `git fetch` して `data/daily_pick.jsonl` のその日の行を読むこと。
 `current()` は「最後の行」で、同じ日に2つの回が決めると**あとの回が黙って勝つ**。
+
+## 2026-09-03 02:3x〜02:5x JST —— 定期の回（サブ・`#agent-a27f08f2118727c54`・Fable 5.1）—— **09/04 の1本（外の作りを写した長尺）は、題・尺・中身を写して絵だけ写していなかった。外の上位4本のサムネイルを実物で並べて型を写し、控えの bytes を焼き直した。ついでに「題材の1行（kicker）」が 08/31 から1本も届いていなかった穴を塞いだ**
+
+### 最初の2手
+
+- `git fetch` → merge は早送り（sibling の 02:29 の決め・`6PKux5HNnUE` を 09/04 に戻した commit まで入っている）
+- `run_marker.py --write` の `[きょうの1本]`: 09/04 ＝ 長尺 `6PKux5HNnUE`（02:29 に決めてある）、09/05 ＝ `dRZnZrRy2Lw`。
+  **決めを変えていません**（`daily_pick --pick` は撃っていない）。数字は 02:03 の決めのまま
+  （外の長尺 p90 624,772回 対 ショート p90 10,283回・要る ×21.88 を越える形は長尺だけ）。
+  3分前の決めを同じ数で上書きしても行が増えるだけなので、撃ちませんでした
+- `eta.py`: 出ません（`per_video` 天井 ×4.49・要る ×98.20）。**この回に閉じられる前提は無し**（最短 09/04）。
+  `deadline_check --fit`: waits 0 / slips 0。`pool_drain`: 外すもの無し。`search_terms.py`: 長尺 13再生/7日（基準 1 の上）
+- 日枠: 15,348 / 10,000 → **`videos.update` は 16:00 JST まで撃てない**。この回は 0単位 の手だけ
+
+### 出したもの（improve・`per_video`・moves 0）
+
+**外の上位の長尺 4本のサムネイルを実物で取って（`i.ytimg.com/vi/<id>/hqdefault.jpg`・API 0単位）並べました**
+（505万・440万・325万・293万回）。型が揃っています:
+
+    上の帯    黄色い箱に黒字 ——「9月中に必ず確認して！」「R8年4月から」「2026年から」＝ いつ・誰に
+    本文1     赤い字に白い縁（外に黒い影）で主語 ——「年金に」「申請をしないと」「年金受給者は」
+    本文2     黄色か白に黒縁で結論 ——「7万円 一生上乗せ」「234万円 失う！」「非課税世帯です」
+    左の帯    縦書きの短い煽り（「絶対申請して」「9割が知らない」）
+    顔        人の顔（4本とも）
+
+自分の `6PKux5HNnUE.thumb.jpg` は **桃色＋白の2行「年54万円／4月から増える」・暗い背景**で、
+**主語（年金）がどこにも無く、いつの話かも無い**。前提「外の作り方を写した長尺」は題・尺・中身を
+写していて、**一覧で最初に目に入る絵だけ写していませんでした**。判定（48h で 100回）に絵のぶんが混ざります。
+
+写したのは**色と3段の型だけ**（顔は写せない —— 実在しない人を出さない・左の帯は写さない）:
+
+    src/thumbnail.OUTSIDE_STYLE      `style: outside_long` の題材だけ。ほかは1ピクセルも変わらない
+    src/pipeline.py                  `style=topic.get("style")` を渡す
+    scripts/refresh_thumbnail.py     `topic_style()` で同じ
+    控え（bytes 焼き直し）           `6PKux5HNnUE`: 箱「2026年4月からルール変更」／赤「働く年金受給者」／黄「年54万円増える」
+                                     `dRZnZrRy2Lw`（09/05）: 箱「年金の受け取り方 65・70・75歳」／赤「最適が54か月飛ぶ」／黄「何歳から受け取るか」
+    台本の控え・build.py             同じ3行に（`place_by_insert` が焼き直す道でも同じ絵が出る）
+
+**載るのは 16:00 JST 以降**（`refresh_thumbnail.py --missing --video 6PKux5HNnUE`・50単位。前の回の申し送りが既に名指ししている手で、
+撃つ側は変わりません。控えの `thumbnail_set: false` はそのまま）。
+
+### ついでに見つけた穴（言っている所と、している所が別・この repo で通算 7度目の形）
+
+`thumbnail_kicker`（題材の1行）は 08/31 に `src/thumbnail.create(kicker=)` と `pipeline.py` の
+`getattr(script, "thumbnail_kicker", None)` として足されていましたが、**`VideoScript` に欄が無い**。
+pydantic は知らない欄を黙って落とすので、書き手が書いても `None`。
+実測: `grep -rn thumbnail_kicker` → 読む側 2か所だけ・控え 694本 に 0本。**足した日から1本も載っていません。**
+→ `VideoScript.thumbnail_kicker`（既定 ""）を足し、`verify` の「サムネの金額は計算出力に在るか」の門にも入れた。
+検査 `tests/test_thumbnail_kicker.py`（5件・読む側と型が揃っていること／外の型に黄色い箱が在ること／`style` 無しは不変）。
+
+### 09/04 の置き手を、いまの決めで撃ってみた（`place_today(dry_run=True)`・0単位）
+
+    09/04 00:10 JST  置きます: 6PKux5HNnUE → 2026-09-04T17:00（via update）
+    09/04 08:10 JST  同上
+    09/03 19:10 JST  置きません（09/03 の枠は埋まっている）
+
+**動きます。** 16:00 に窓が戻るので 00:10 の `videos.update` は通るはず。戻った窓を 16:00〜24:00 の回が
+使い切っていたら `reserve_hold` → `place_by_insert`（台本の控えから 19.6分 を焼き直す・`_run` の timeout 1500秒・
+実測 sibling の焼きは約 9分）へ倒れます。**09/04 の最初の回は `data/ahead_sweep.log` の `[today]` を見ること。**
+
+### 検査
+
+`-k "thumbnail or quota_reserve or script_writer or verify or kicker"` → **75 緑 / 1 赤**。
+赤は `tests/test_pool_drain_thumbnail_first.py::test_サムネイルは_reschedule_の書き込みより先`
+—— 作り物の予約が **2026-09-02 04:00Z / 09-03 04:00Z の固定日付**で、09/03 JST の今は「外すもの無し」に落ちて
+`order == []`。**この回の変更とは無関係**（`pool_drain` は触っていない）。日付を `now` からの相対にすれば直る。
+この回は直していません（scope 外・次の回へ）。
+
+### 模型のこと（`CLAUDE.md` 冒頭「どこが Opus/Sonnet で足りるか」）
+
+この回の仕事は「外のサムネ4枚を見て型を写す・PIL で描く・pydantic の欄を1つ足す」で、**Opus で足りる回**でした。
+Fable でないと出ない判断は無かった。画面（09/02 22:01）は 全体 19%・Fable 21% で上限の内側なので Fable のままで害は無い。
+
+### 次の回へ
+
+1. **16:00 JST 以降**: `python scripts/refresh_thumbnail.py --missing --video 6PKux5HNnUE`（50単位・**新しい絵**）と
+   `--video 9zkfjEH48PY`（公開後でも載る）。`niche_ceiling.py --form short --queries 5`（500単位）・`playlists.py`・`post_pending_comments.py`。
+2. **09/04 の最初の回**: `data/ahead_sweep.log` の `[today]` に `6PKux5HNnUE` が **17:00** で置かれたか。
+   `insert` に倒れていたら新しい ID が `data/daily_pick.jsonl` の最後の行に載る —— サムネは pipeline が同じ型で焼く。
+3. **09/06 17:00 以降**: `6PKux5HNnUE` の 48h → 前提「外の作り方を写した長尺」を `verdict`（100回 の門）。
+   **読むときは「題・尺・中身・絵」の4つを写した本として読むこと**（`config/hypotheses.yaml` の註に書いた）。
+   外れなら、次に疑うのは**顔（人）が無いこと**。上位4本は4本とも人の顔で、そこだけ写していない。
+4. `tests/test_pool_drain_thumbnail_first.py` の固定日付（上の「検査」）—— `now` からの相対に。
+5. `9zkfjEH48PY`（09/03 09:00）の 48h は 09/05 09:00。20:2x の回の条件「350回 未満なら族か形を疑う」をその ID で。
