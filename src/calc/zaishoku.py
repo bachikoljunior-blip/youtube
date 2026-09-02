@@ -50,6 +50,8 @@ from . import _checks
 ASSUMPTIONS = [
     "在職老齢年金の支給停止調整額は令和7年度の51万円で計算しています。"
     "令和6年度は50万円で、この額は毎年度改定されます",
+    "2026年4月からの支給停止調整額は62万円として置いています。"
+    "令和7年の年金制度改正で、51万円から62万円へ引き上げられます",
     "止まる額は、基本月額と総報酬月額相当額の合計から支給停止調整額を引き、"
     "その2分の1としています。合計が支給停止調整額以下なら止まりません",
     "基本月額は老齢厚生年金の報酬比例部分を12で割った額です。"
@@ -70,6 +72,16 @@ ASSUMPTIONS = [
 # 支給停止調整額。厚生年金保険法第46条。毎年度改定される。
 STOP_BASE_R7 = 510_000          # 令和7年度
 STOP_BASE_R6 = 500_000          # 令和6年度
+# **2026年4月から 62万円**（令和7年の年金制度改正・厚生年金保険法第46条の改正）。
+# 51万円 → 62万円 は毎年度の賃金スライドではなく法律で決めた引き上げで、
+# 上げ幅 11万円 はここ数年の改定（1万円きざみ）の 11倍。以後は賃金で改定される。
+STOP_BASE_2026 = 620_000        # 2026年4月〜（令和8年度）
+
+# 繰下げの増額率。1か月あたり 0.7%（厚生年金保険法施行令第3条の5の2）。
+# **繰下げ待機中に在職老齢年金で止まった分は、増額の対象に入らない。**
+# 対象になるのは「止まらなかった側」だけなので、調整額が上がると
+# 止まらない側が広がり、同じ待機月数でも増額が大きくなる。
+KURISAGE_RATE = 0.007
 STOP_SHARE = 0.5                # 超えた分のうち止まる割合（2分の1）
 
 # 標準報酬月額（厚生年金）。第1等級から第32等級まで。令和2年9月に32等級へ。
@@ -341,8 +353,217 @@ def average_rate_grid(kihon_monthly: float, annual_bonus: int = 0,
     return rows
 
 
+def reform_grid(kihon_monthly: float, annual_bonus: int = 0) -> list[dict]:
+    """**2026年4月の引き上げ（51万円 → 62万円）で、止まる額がどれだけ減るか。**
+
+    等級ごとに、いまの調整額と新しい調整額で止まる額を並べ、差を月と年で出す。
+    差は「両方の帯に入っている」ところで最大の 5万5000円（上げ幅 11万円 の半分）。
+    片方の帯にしか入らない等級では、差はそれより小さい。
+    """
+    rows = []
+    for g in GRADES_HIGH:
+        now = stopped(kihon_monthly, g, annual_bonus, STOP_BASE_R7)
+        new = stopped(kihon_monthly, g, annual_bonus, STOP_BASE_2026)
+        rows.append({
+            "標準報酬月額": g,
+            "51万円_止まる_月": round(now),
+            "62万円_止まる_月": round(new),
+            "差_月": round(now - new),
+            "差_年": round((now - new) * 12),
+            "62万円_受け取る厚生年金_月": round(kihon_monthly - new),
+            "62万円_年金の手元_月": round(kihon_monthly - new + basic_monthly()),
+        })
+    return rows
+
+
+def reform_by_kihon_grid(grade: int = 500_000, annual_bonus: int = 0) -> list[dict]:
+    """**年金の額（基本月額）べつに、同じ月給で止まる額がどれだけ減るか。**
+
+    基本月額が大きい人ほど、51万円の帯には深く入っていて、62万円でもまだ帯に残る。
+    だから差は基本月額と一緒に大きくなり、5万5000円で頭打ちになる。
+    """
+    rows = []
+    for kihon in (50_000, 80_000, 100_000, 120_000, 150_000, 180_000, 200_000):
+        now = stopped(kihon, grade, annual_bonus, STOP_BASE_R7)
+        new = stopped(kihon, grade, annual_bonus, STOP_BASE_2026)
+        rows.append({
+            "基本月額": kihon,
+            "年金の年額": kihon * 12,
+            "標準報酬月額": grade,
+            "51万円_止まる_月": round(now),
+            "62万円_止まる_月": round(new),
+            "差_月": round(now - new),
+            "差_年": round((now - new) * 12),
+            "51万円_止まる_年": round(now * 12),
+            "62万円_止まる_年": round(new * 12),
+        })
+    return rows
+
+
+def reform_threshold_grid(annual_bonus: int = 0) -> list[dict]:
+    """**止まりはじめる線と全額止まる線が、どちらも 11万円 右へ動く。**"""
+    rows = []
+    for kihon in (50_000, 80_000, 100_000, 120_000, 150_000, 180_000):
+        rows.append({
+            "基本月額": kihon,
+            "51万円_止まりはじめる総報酬": STOP_BASE_R7 - kihon,
+            "62万円_止まりはじめる総報酬": STOP_BASE_2026 - kihon,
+            "51万円_全額止まる総報酬": round(full_stop_grade(kihon, annual_bonus, STOP_BASE_R7)),
+            "62万円_全額止まる総報酬": round(full_stop_grade(kihon, annual_bonus, STOP_BASE_2026)),
+            "線の動き": STOP_BASE_2026 - STOP_BASE_R7,
+        })
+    return rows
+
+
+def reform_bonus_grid(kihon_monthly: float, grade: int = 440_000) -> list[dict]:
+    """**賞与を含めたときの差。** 賞与は12で割って毎月に載るので、賞与が多い人ほど
+    62万円でもまだ帯に残り、差は 5万5000円 に近づく。"""
+    rows = []
+    for bonus in (0, 600_000, 1_200_000, 1_800_000, 2_400_000):
+        now = stopped(kihon_monthly, grade, bonus, STOP_BASE_R7)
+        new = stopped(kihon_monthly, grade, bonus, STOP_BASE_2026)
+        rows.append({
+            "年間の賞与": bonus,
+            "月に載る額": round(bonus / 12),
+            "総報酬月額相当額": round(total_monthly(grade, bonus)),
+            "51万円_止まる_月": round(now),
+            "62万円_止まる_月": round(new),
+            "差_月": round(now - new),
+            "差_年": round((now - new) * 12),
+        })
+    return rows
+
+
+def kurisage_grid(kihon_monthly: float, grade: int = 500_000,
+                  months: int = 60, annual_bonus: int = 0) -> list[dict]:
+    """**繰下げ待機中の人にも効く。** 待機中に在職老齢年金で止まった分は増額の対象に
+    入らないので、増額の元になるのは「止まらなかった側」だけ。62万円で止まらない側が
+    広がると、同じ待機月数でも一生の増額が大きくなる。
+
+    増額 ＝ 止まらなかった月額 × 0.7% × 待機月数。**止まった側は待っても増えない。**
+    """
+    rows = []
+    rate = KURISAGE_RATE * months
+    for base, label in ((STOP_BASE_R7, "51万円"), (STOP_BASE_2026, "62万円")):
+        stop = stopped(kihon_monthly, grade, annual_bonus, base)
+        target = kihon_monthly - stop
+        gain = target * rate
+        rows.append({
+            "調整額": label,
+            "止まる_月": round(stop),
+            "増額の対象になる月額": round(target),
+            "待機月数": months,
+            "増額率": round(rate, 3),
+            "一生の増額_月": round(gain),
+            "一生の増額_年": round(gain * 12),
+        })
+    return rows
+
+
+def kurisage_months_grid(kihon_monthly: float, grade: int = 500_000,
+                         annual_bonus: int = 0) -> list[dict]:
+    """**待機月数べつに、51万円と62万円で一生の増額がどれだけ違うか。**"""
+    rows = []
+    for months in (12, 24, 36, 60, 120):
+        k = kurisage_grid(kihon_monthly, grade, months, annual_bonus)
+        rows.append({
+            "待機月数": months,
+            "増額率": k[0]["増額率"],
+            "51万円_一生の増額_月": k[0]["一生の増額_月"],
+            "62万円_一生の増額_月": k[1]["一生の増額_月"],
+            "差_月": k[1]["一生の増額_月"] - k[0]["一生の増額_月"],
+            "差_年": k[1]["一生の増額_年"] - k[0]["一生の増額_年"],
+        })
+    return rows
+
+
+EXAMPLES = (
+    ("例1", 63, 50_000, 380_000, 0),
+    ("例2", 66, 120_000, 500_000, 1_200_000),
+    ("例3", 70, 150_000, 300_000, 0),
+    ("例4", 65, 80_000, 470_000, 0),
+)
+
+
+def examples_grid() -> list[dict]:
+    """**4人の例。** 合計が 51万円 を超えていない人には、4月からも 1円 も変わらない。"""
+    rows = []
+    for name, age, kihon, grade, bonus in EXAMPLES:
+        now = stopped(kihon, grade, bonus, STOP_BASE_R7)
+        new = stopped(kihon, grade, bonus, STOP_BASE_2026)
+        rows.append({
+            "例": name,
+            "年齢": age,
+            "基本月額": kihon,
+            "標準報酬月額": grade,
+            "年間の賞与": bonus,
+            "総報酬月額相当額": round(total_monthly(grade, bonus)),
+            "合計": round(kihon + total_monthly(grade, bonus)),
+            "51万円_止まる_月": round(now),
+            "62万円_止まる_月": round(new),
+            "差_月": round(now - new),
+            "差_年": round((now - new) * 12),
+        })
+    return rows
+
+
+def max_gain() -> dict:
+    """差の上限。上げ幅 11万円 の半分が、両方の帯に入っている人の月の差。"""
+    diff = (STOP_BASE_2026 - STOP_BASE_R7) * STOP_SHARE
+    return {
+        "上げ幅": STOP_BASE_2026 - STOP_BASE_R7,
+        "差の上限_月": round(diff),
+        "差の上限_年": round(diff * 12),
+    }
+
+
 def check_tables() -> None:
     """制度の値と計算の向きを確かめる。**壊れた数字で台本を書かせない。**"""
+    # 0. 2026年4月からの調整額と、繰下げの増額率
+    _checks.statutory(STOP_BASE_2026, 620_000, "支給停止調整額（2026年4月〜）",
+                      source="令和7年改正の厚生年金保険法第46条")
+    _checks.statutory(KURISAGE_RATE, 0.007, "繰下げの増額率（1か月）",
+                      source="厚生年金保険法施行令第3条の5の2")
+    _checks.ratio(KURISAGE_RATE, "繰下げの増額率")
+    # 調整額が 11万円 上がると、両方の帯に入っている人の止まる額は 5万5000円 減る
+    _checks.rounding(stopped(150_000, 650_000, 0, STOP_BASE_R7)
+                     - stopped(150_000, 650_000, 0, STOP_BASE_2026),
+                     55_000, "調整額 51万→62万 で止まる額の差（両方の帯の中）")
+    _checks.rounding(max_gain()["差の上限_年"], 660_000, "差の上限（年）")
+    # 基本月額10万・月給50万: 51万では 4万5000円 止まり、62万では 0円
+    _checks.rounding(stopped(100_000, 500_000, 0, STOP_BASE_R7), 45_000,
+                     "基本月額10万・月給50万・51万円のときの停止額")
+    _checks.rounding(stopped(100_000, 500_000, 0, STOP_BASE_2026), 0,
+                     "基本月額10万・月給50万・62万円のときの停止額")
+    # 差はどの等級でも上限を超えない・負にならない
+    for r in reform_grid(100_000):
+        if not 0 <= r["差_月"] <= 55_000:
+            raise _checks.TableError(f"差が上限の外: {r}")
+    # 62万円のとき、基本月額10万は月給65万でも全額は止まらない（帯の出口は 72万）
+    _checks.rounding(full_stop_grade(100_000, 0, STOP_BASE_2026), 720_000,
+                     "62万円のとき基本月額10万で全額止まる総報酬")
+    if stopped(100_000, 650_000, 0, STOP_BASE_2026) >= 100_000:
+        raise _checks.TableError("62万円のとき、月給65万で全額止まっている。72万まで止まらないはず")
+    # 繰下げ: 止まらない側が広がるぶん、同じ待機月数でも増額が大きい
+    k = kurisage_grid(100_000)
+    if not k[1]["一生の増額_月"] > k[0]["一生の増額_月"]:
+        raise _checks.TableError("62万円のほうが繰下げの増額が大きくならない")
+    _checks.rounding(k[0]["増額率"], 0.42, "60か月 待機の増額率")
+    # 差は基本月額とともに減らず、上限 5万5000円 で頭打ち
+    ex = {r["例"]: r for r in examples_grid()}
+    if ex["例1"]["差_月"] != 0 or ex["例3"]["差_月"] != 0:
+        raise _checks.TableError("合計が51万円以下の例で差が出ている")
+    _checks.rounding(ex["例2"]["差_月"], 55_000, "例2（合計72万円）の差")
+    _checks.rounding(ex["例4"]["差_月"], 20_000, "例4（合計55万円）の差")
+    m = {r["待機月数"]: r for r in kurisage_months_grid(100_000)}
+    _checks.rounding(m[60]["差_月"], 18_900, "60か月 待機の差")
+    _checks.increases_with(lambda t: m[t]["差_月"], [12, 24, 36, 60, 120],
+                           "待機が長いのに差が増えていない")
+    diffs = [r["差_月"] for r in reform_by_kihon_grid()]
+    if any(b < a for a, b in zip(diffs, diffs[1:])):
+        raise _checks.TableError("基本月額が増えたのに、51万→62万の差が減っている")
+    if max(diffs) != 55_000:
+        raise _checks.TableError(f"差の頭打ちが 55,000 ではない: {max(diffs)}")
     # 1. 法令が名指ししている値
     _checks.statutory(STOP_BASE_R7, 510_000, "支給停止調整額（令和7年度）",
                       source="厚生年金保険法第46条")
@@ -548,3 +769,77 @@ if __name__ == "__main__":
               f"令和6年度{row['令和6年度_止まる_月']:>7,d}円/月  "
               f"令和7年度{row['令和7年度_止まる_月']:>7,d}円/月  "
               f"差{row['差_月']:>6,d}円/月（年{row['差_年']:>7,d}円）")
+
+    print("\n=== 2026年4月から 支給停止調整額が51万円から62万円へ 月給べつに止まる額の差 ===")
+    print(f"  前提: 報酬比例部分は月{KIHON:,}円（年{KIHON*12:,}円）/ 賞与なし / "
+          f"いまの調整額{STOP_BASE_R7:,}円 → 2026年4月から{STOP_BASE_2026:,}円 / "
+          f"老齢基礎年金は満額の月{basic_monthly():,}円で止まりません")
+    for row in reform_grid(KIHON):
+        print(f"  標準報酬{row['標準報酬月額']:>7,d}円  51万円で止まる{row['51万円_止まる_月']:>7,d}円/月"
+              f"  62万円で止まる{row['62万円_止まる_月']:>7,d}円/月  差{row['差_月']:>7,d}円/月"
+              f"（年{row['差_年']:>8,d}円）  62万円のとき受け取る厚生年金{row['62万円_受け取る厚生年金_月']:>7,d}円"
+              f"  年金の手元{row['62万円_年金の手元_月']:>7,d}円")
+    top = max_gain()
+    print(f"  上げ幅{top['上げ幅']:,}円の半分が差の上限 ＝ 月{top['差の上限_月']:,}円・年{top['差の上限_年']:,}円")
+    r50 = next(r for r in reform_grid(KIHON) if r["標準報酬月額"] == 500_000)
+    print(f"  標準報酬{500_000:,}円の人: 月{r50['差_月']:,}円 × 12か月 ＝ 年{r50['差_年']:,}円、"
+          f"10年 働けば {r50['差_年'] * 10:,}円")
+
+    print("\n=== 年金の額べつ 同じ月給50万円で止まる額がどれだけ減るか ===")
+    print(f"  前提: 標準報酬月額{500_000:,}円 / 賞与なし / "
+          f"調整額{STOP_BASE_R7:,}円 → {STOP_BASE_2026:,}円")
+    for row in reform_by_kihon_grid(500_000):
+        print(f"  基本月額{row['基本月額']:>7,d}円（年{row['年金の年額']:>9,d}円）"
+              f"  51万円で止まる{row['51万円_止まる_月']:>7,d}円/月（年{row['51万円_止まる_年']:>8,d}円）"
+              f"  62万円で止まる{row['62万円_止まる_月']:>7,d}円/月（年{row['62万円_止まる_年']:>8,d}円）"
+              f"  差{row['差_月']:>7,d}円/月（年{row['差_年']:>8,d}円）")
+
+    print("\n=== 止まりはじめる線と全額止まる線が どちらも11万円 右へ動く ===")
+    print(f"  前提: 賞与なし / 調整額{STOP_BASE_R7:,}円 → {STOP_BASE_2026:,}円")
+    for row in reform_threshold_grid():
+        print(f"  基本月額{row['基本月額']:>7,d}円  止まりはじめる総報酬 {row['51万円_止まりはじめる総報酬']:>7,d}円 → "
+              f"{row['62万円_止まりはじめる総報酬']:>7,d}円  全額止まる総報酬 {row['51万円_全額止まる総報酬']:>7,d}円 → "
+              f"{row['62万円_全額止まる総報酬']:>7,d}円  動き{row['線の動き']:>7,d}円")
+
+    print("\n=== 賞与を含めたとき 月給44万円で年間賞与べつの差 ===")
+    print(f"  前提: 標準報酬月額{440_000:,}円 / 報酬比例部分は月{KIHON:,}円 / "
+          f"調整額{STOP_BASE_R7:,}円 → {STOP_BASE_2026:,}円 / 賞与は12で割って毎月に載る")
+    for row in reform_bonus_grid(KIHON, 440_000):
+        print(f"  年間賞与{row['年間の賞与']:>9,d}円  月に載る{row['月に載る額']:>7,d}円  "
+              f"総報酬月額相当額{row['総報酬月額相当額']:>7,d}円  51万円で止まる{row['51万円_止まる_月']:>6,d}円/月  "
+              f"62万円で止まる{row['62万円_止まる_月']:>6,d}円/月  差{row['差_月']:>6,d}円/月（年{row['差_年']:>7,d}円）")
+
+    print("\n=== 繰下げ待機中の人にも効く 止まった分は増額されない ===")
+    print(f"  前提: 報酬比例部分は月{KIHON:,}円 / 標準報酬月額{500_000:,}円 / 賞与なし / "
+          f"待機{60}か月（65歳から70歳）/ 増額率は1か月{KURISAGE_RATE:.1%} / "
+          f"調整額{STOP_BASE_R7:,}円 → {STOP_BASE_2026:,}円")
+    for row in kurisage_grid(KIHON, 500_000, 60):
+        print(f"  調整額{row['調整額']}  止まる{row['止まる_月']:>7,d}円/月  増額の対象になる月額{row['増額の対象になる月額']:>7,d}円  "
+              f"待機{row['待機月数']}か月 × 増額率{row['増額率']:.1%} ＝ 一生の増額 月{row['一生の増額_月']:>7,d}円"
+              f"（年{row['一生の増額_年']:>8,d}円）")
+    k = kurisage_grid(KIHON, 500_000, 60)
+    print(f"  差 ＝ 月{k[1]['一生の増額_月'] - k[0]['一生の増額_月']:,}円・"
+          f"年{k[1]['一生の増額_年'] - k[0]['一生の増額_年']:,}円（一生続く）")
+
+    print("\n=== 62万円のとき 月給を1万円上げて手元に残る割合 ===")
+    print(f"  前提: 報酬比例部分は月{KIHON:,}円 / 賞与なし / 調整額{STOP_BASE_2026:,}円")
+    for row in marginal_grid(KIHON, 0, STOP_BASE_2026):
+        print(f"  {row['等級を上げる']:>22s}  月給+{row['月給の増え']:>6,d}円  "
+              f"年金{-row['年金の減り']:>+7,d}円  手元+{row['手元の増え']:>6,d}円  "
+              f"残る割合 {row['残る割合']:.1%}")
+
+    print("\n=== 待機月数べつ 繰下げの一生の増額の差 ===")
+    print(f"  前提: 報酬比例部分は月{KIHON:,}円 / 標準報酬月額{500_000:,}円 / 賞与なし / "
+          f"増額率は1か月{KURISAGE_RATE:.1%} / 調整額{STOP_BASE_R7:,}円 → {STOP_BASE_2026:,}円")
+    for row in kurisage_months_grid(KIHON, 500_000):
+        print(f"  待機{row['待機月数']:>4d}か月（増額率{row['増額率']:.1%}）  51万円の線 月{row['51万円_一生の増額_月']:>7,d}円  "
+              f"62万円の線 月{row['62万円_一生の増額_月']:>7,d}円  差 月{row['差_月']:>7,d}円（年{row['差_年']:>8,d}円）")
+
+    print("\n=== 4人の例 合計が51万円を超えていない人は1円も変わらない ===")
+    print(f"  前提: 調整額{STOP_BASE_R7:,}円 → {STOP_BASE_2026:,}円 / 賞与は12で割って毎月に載る / 基礎年金は止まらない")
+    for row in examples_grid():
+        print(f"  {row['例']} {row['年齢']}歳  年金 月{row['基本月額']:>7,d}円  標準報酬{row['標準報酬月額']:>7,d}円  "
+              f"年間賞与{row['年間の賞与']:>9,d}円  総報酬月額相当額{row['総報酬月額相当額']:>7,d}円  合計{row['合計']:>7,d}円  "
+              f"51万円で止まる{row['51万円_止まる_月']:>7,d}円/月  62万円で止まる{row['62万円_止まる_月']:>7,d}円/月  "
+              f"差{row['差_月']:>6,d}円/月（年{row['差_年']:>7,d}円）")
+
