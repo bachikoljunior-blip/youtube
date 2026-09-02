@@ -238,6 +238,95 @@ def _gate_state_block() -> str:
     return "\n".join(out) + "\n"
 
 
+def _clock_block(live: bool = True) -> str:
+    """**いまの時刻と、日枠が戻る時刻を、写しではなく道具から出す**（2026-09-02）。
+
+    ## なぜ要るか（**この回に踏んだ**）
+
+    申し送り（`--note`）は**原文のまま**通します —— 要約しない、数字は桁もそのまま。
+    **それは正しい。** ですが原文には「**いま何時の窓か**」が書かれていることがあり、
+    **それは書いた時点の写しです。**
+
+    実測 2026-09-02 11:4x —— 申し送りの1行目:
+
+        **この回は 09/02 16:00 JST の窓に当たります（日枠が戻る回）**
+
+    受け取った子が最初に撃った `run_marker.py --write` の時刻は **11:41 JST**。
+    **枠が戻る 4時間19分 前**でした。その本文が名指ししていた3手のうち
+
+        reschedule.py --compact --apply   1,250単位  → **403**
+        差し替えの2手（videos.update ×2）    100単位  → **403**
+
+    は、**その回には撃てません**。`docs/trigger_main.md` は
+    「**順番は道具が印字します。本文に写された順を信じないこと**」と書いていますが、
+    **その註は「親の本文」には向いていませんでした。**
+
+    `_gate_state_block()` の docstring と同じ形です ——
+    「べた書きのままだと、次に立つ子は全員『6件とも開いている』と読みます。
+    **本文の先頭は、いちばん強く効く場所です。**」
+
+    **申し送りは直せません（原文だから）。だから、すぐ下に実物を置きます。**
+
+    ## 覆る条件
+
+    `writable_from()` が読めなければ**黙ります**（読めないことを
+    「いつでも撃てます」として印字しないこと —— `_gate_state_block()` と同じ）。
+    子の側は `run_marker.py --write` が同じ数を毎周 出すので、
+    **ここが消えても、当てどころは失われません。**
+    """
+    # **`--write-rendered` の写しには、時刻を焼き込まないこと**（2026-09-02 に踏んだ）。
+    #   写しは `docs/spawn_prompt.rendered.md` に**コミットされる静的な生成物**で、
+    #   `tests/test_spawn_prompt.py::test_rendered_copy_for_the_parent_is_current`
+    #   が「いま組み立てた本文と1字でも違えば赤」で見ています。
+    #   **時刻を入れると、書き出した次の分から永久に赤**になります
+    #   （実測: 入れた直後の1回は同じ分だったので緑、次の分で赤）。
+    #   ＝ **この段が塞ごうとしている穴（写した時刻が古くなる）を、
+    #      写しの側で自分が作る**ことになります。だから写しでは口だけ残します。
+    if not live:
+        return ("**いまの時刻と日枠の状態が、ここに入ります**"
+                "（`scripts/spawn_prompt._clock_block()` が**立てる瞬間に**組み立てます）。"
+                "\n\n    **上の申し送りに書かれた時刻は写しです。**"
+                "食い違ったら `python scripts/run_marker.py --write` が印字するほうを採ること")
+    import sys
+    if str(ROOT) not in sys.path:
+        sys.path.insert(0, str(ROOT))
+    try:
+        from datetime import datetime, timedelta, timezone
+        from src import next_slot
+    except Exception:  # noqa: BLE001 — 型の生成で回を止めない
+        return ""
+    JST = timezone(timedelta(hours=9))
+    now = datetime.now(JST)
+    out = [f"**いまは {now:%m/%d %H:%M} JST です**"
+           "（**この行は組み立てた時刻。上の申し送りに書かれた時刻は写しです** ——"
+           "食い違ったら、こちらでもなく **`python scripts/run_marker.py --write`**"
+           "が印字するほうを採ること）。"]
+    try:
+        w = next_slot.writable_from(now)
+    except Exception:  # noqa: BLE001
+        w = None
+    if w is not None:
+        # **JST へ直すこと。** `writable_from()` は UTC で返します ——
+        # 直さずに `%H:%M` で刷ると **09/02 07:00 JST** と出ます（実物は 16:00）。
+        # 「あと N時間」だけが正しく、時刻のほうが 9時間 ずれる形で、
+        # **この段が塞ごうとしている穴（写した時刻を信じる）そのもの**でした。
+        w = w.astimezone(JST)
+        if w <= now:
+            out.append("")
+            out.append("    日枠: **いま撃てます**"
+                       "（`videos.update` の要る手 —— `reschedule --compact --apply` /"
+                       " 差し替えの2手 —— が、この回に通ります）")
+        else:
+            hrs = (w - now).total_seconds() / 3600.0
+            out.append("")
+            out.append(f"    日枠: **いまは 403 です。戻るのは {w:%m/%d %H:%M} JST"
+                       f"（あと {hrs:.1f}時間）** ——"
+                       " それより前に `videos.update` の要る手（`--apply`・差し替え）を"
+                       "名指しされていても、**この回では撃てません。**"
+                       " 0単位 の手（`--compact` の案 / `premise` / 台本の側）へ振ること")
+    return "\n".join(out)
+
+
 def _pause_block(root: Path) -> str:
     """**停止中に、サブへ配る本文の先頭に入る段。**
 
@@ -374,7 +463,7 @@ def _siblings_block(siblings: list[str]) -> str:
 
 
 def build(kind: str, note: str = "", siblings: list[str] | None = None,
-          only: str = "", root: Path = ROOT) -> str:
+          only: str = "", root: Path = ROOT, live_clock: bool = True) -> str:
     if kind not in KINDS:
         raise SystemExit(f"[!] --kind は {'/'.join(KINDS)} のどれか（受け取った: {kind}）")
     tpl = templates(root / "docs" / "spawn_prompt.md")
@@ -401,6 +490,7 @@ def build(kind: str, note: str = "", siblings: list[str] | None = None,
         "note_block": note_block,
         "first_move": FIRST_MOVE.strip(),
         "siblings_block": _siblings_block(list(siblings or [])),
+        "clock_block": _clock_block(live=live_clock),
         "lead": (tpl["lead-only"].replace("<<only>>", only) if only
                  else tpl["lead-round"]),
     }
@@ -493,8 +583,11 @@ def write_rendered(root: Path = ROOT) -> Path:
              ""]
     for kind in KINDS:
         note = _NOTE_SLOT if kind.startswith("owner") else ""
+        # **`live_clock=False`**: 写しは commit される静的な生成物なので、
+        # 時刻を焼き込むと書き出した次の分から永久に赤になります
+        # （`_clock_block()` の註）。**立てる瞬間の本文には入ります。**
         args = create_session_args(kind, note=note, siblings=[], only="",
-                                   root=root)
+                                   root=root, live_clock=False)
         parts += [f"## kind: {kind}", "", "```json",
                   json.dumps(args, ensure_ascii=False, indent=2), "```", ""]
     RENDERED.write_text("\n".join(parts), encoding="utf-8")
