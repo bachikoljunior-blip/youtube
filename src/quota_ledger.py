@@ -355,6 +355,27 @@ def spent(now: datetime | None = None) -> dict[str, Any]:
     return out
 
 
+def used_units(now: datetime | None = None) -> int:
+    """いまの窓で**実際に枠を使った**単位（`spent()["data_ok"]`・通った行だけ）。
+
+    **枠の残りを刷る・分岐する口は、全部これを読むこと**（2026-09-03 に足した）。
+    `spent()["data"]` は 403／429 の行も定価で足すので、失敗の多い窓ほど高く出ます
+    —— 実測 09/03 06:4x の窓: `data` 15,688 対 `data_ok` 12,881（**2,807 高い**）。
+    7か所（`next_slot.quota_note` ほか）がその高いほうで「枠が尽きています（N / 10,000）」
+    と刷っていました。両方 10,000 を越えていたので判定は同じでしたが、
+    `data` だけが越える窓（通った 9,000 ＋ 弾かれた 1,500）では**空いている枠を
+    「尽きた」と言います**（`pool_drain` の差し替えの残りも同じだけ少なく出る）。
+
+    `spent()` を差し替えた検査（`{"data": N}` だけを返す）でも動くよう、
+    `data_ok` が無ければ `data` へ倒します。検査は `tests/test_quota_used_units.py`。
+    """
+    s = spent(now)
+    v = s.get("data_ok")
+    if v is None:
+        v = s.get("data")
+    return int(v or 0)
+
+
 #: 1日の枠（公表値）。**この機械から実数は読めません**（尽きた時刻で確かめること）
 DAY_UNITS = 10_000
 

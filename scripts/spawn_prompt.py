@@ -270,7 +270,7 @@ def _why_writes_stop(now: datetime) -> str:
     try:
         from src import quota_ledger, upload_cap                # noqa: PLC0415
         q = upload_cap.day_quota(now)
-        used = int(quota_ledger.spent(now).get("data") or 0)
+        used = int(quota_ledger.used_units(now))
         cap = int(quota_ledger.DAY_UNITS)
     except Exception:                                           # noqa: BLE001
         return "帳面の側で止めています"

@@ -165,7 +165,7 @@ def budget_max(now: datetime | None = None) -> int:
     """
     try:
         from src import quota_ledger                           # noqa: PLC0415
-        used = int(quota_ledger.spent(now).get("data") or 0)
+        used = int(quota_ledger.used_units(now))
         cap = int(quota_ledger.DAY_UNITS)
     except Exception:                                          # noqa: BLE001
         return 0

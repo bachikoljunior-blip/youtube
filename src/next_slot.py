@@ -343,7 +343,7 @@ def quota_note(publish_at: datetime, now: datetime) -> str | None:
     """
     try:
         from src import quota_ledger, upload_cap              # noqa: PLC0415
-        used = int(quota_ledger.spent(now).get("data") or 0)
+        used = int(quota_ledger.used_units(now))
         cap = int(quota_ledger.DAY_UNITS)
         back = upload_cap.window_end(now)
     except Exception:                                          # noqa: BLE001
@@ -447,7 +447,7 @@ def writable_from(now: datetime | None = None) -> datetime | None:
     t = now or datetime.now(timezone.utc)
     try:
         from src import quota_ledger, upload_cap                # noqa: PLC0415
-        used = int(quota_ledger.spent(t).get("data") or 0)
+        used = int(quota_ledger.used_units(t))
         cap = int(quota_ledger.DAY_UNITS)
         back = upload_cap.window_end(t)
     except Exception:                                           # noqa: BLE001
@@ -489,7 +489,7 @@ def swap_cost_lines(now: datetime | None = None,
     t = now or datetime.now(timezone.utc)
     try:
         from src import quota_ledger, upload_cap              # noqa: PLC0415
-        used = int(quota_ledger.spent(t).get("data") or 0)
+        used = int(quota_ledger.used_units(t))
         cap = int(quota_ledger.DAY_UNITS)
         back = upload_cap.window_end(t)
     except Exception:                                          # noqa: BLE001
@@ -723,7 +723,7 @@ def _calendar_quota_lines(t: datetime, empty: int = 0) -> list[str]:
     """
     try:
         from src import quota_ledger, upload_cap              # noqa: PLC0415
-        used = int(quota_ledger.spent(t).get("data") or 0)
+        used = int(quota_ledger.used_units(t))
         cap = int(quota_ledger.DAY_UNITS)
         back = upload_cap.window_end(t)
     except Exception:                                          # noqa: BLE001
