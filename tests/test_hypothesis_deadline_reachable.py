@@ -232,6 +232,22 @@ def earliest_now():
     return date.today()
 
 
+#: `文字/コマ` × 累計再生（`src/clarity.views_table()`）の前提の床。
+#: **待つものはありません** —— 読むのは `data/retention.json`（維持率カーブ）と
+#: `data/views.jsonl`（累計再生）の2枚だけで、**予約にも Analytics の遅れにも
+#: 依存しません**。`earliest_now` と別にしてあるのは、あちらが見ているのが
+#: `video_forms.json` で、**この前提はその札を1枚も使わない**からです
+#: （読まないファイルの有無で床が動くと、止まった計器に気づけません）。
+def earliest_clarity_views():
+    from datetime import date
+    from pathlib import Path as _P
+    root = _P(__file__).resolve().parent.parent
+    for name in ("data/retention.json", "data/views.jsonl"):
+        if not (root / name).is_file():
+            return None
+    return date.today()
+
+
 CHECKABLE = {
     "題を問いの形にすると": lambda: earliest_ab("title_form"),
     "冒頭1枚目の主役": lambda: earliest_ab("hook_form"),
@@ -259,6 +275,14 @@ CHECKABLE = {
     #
     # **`earliest_now` は残してあります** —— `needs: kind: now` の前提は今後も
     # 立つので、次に立った1件はここへ1行 足せば済みます。
+    #
+    # **2026-09-02 11:5x に1件 足しました**（`premise`）。`needs: kind: now` で、
+    # 読むのは `data/retention.json` と `data/views.jsonl` の2枚だけ ——
+    # **待つものがないので床は「きょう」**です。
+    # （立てた回がこの登録を忘れて、この検査を1度 赤にしました。
+    #  `config/hypotheses.yaml` に1件 足したら、**ここも同じ回で埋めること** ——
+    #  同じ所を数えて5回目です）
+    "冒頭の分かりにくさ": earliest_clarity_views,
 }
 
 #: 当てられない件と、その理由。**docstring と同じ並び。**
