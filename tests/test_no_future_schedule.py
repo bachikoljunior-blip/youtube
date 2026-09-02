@@ -136,14 +136,18 @@ def test_釘づけの道は_先の日付で例外(monkeypatch):
 
 
 def test_釘づけの道は_きょうなら通る(monkeypatch):
-    """**常に断る実装を落とす検査。** きょうの先の時刻は返ること。"""
+    """**常に断る実装を落とす検査。** きょうの先の時刻は返ること。
+
+    **`now.hour + 1` にしないこと**（2026-09-02 に踏んだ）—— `next_publish_at` は
+    「予約は 20分先から」で弾くので、**15:45 に撃つと 16:00 が 15分先**になり、
+    規則5 とは無関係の `ValueError` で落ちます。**時計しだいで色が変わる検査**でした。
+    余白を大きく取り、足りない時間帯は見送ります。
+    """
     monkeypatch.setattr(uploader.measure_window, "check", lambda *a, **k: None)
     now = datetime.now(JST)
-    if now.hour >= 23:                       # きょうの残り時間が無い回は見送る
-        pytest.skip("きょうの中に 20分先の枠が残っていません")
-    hour = max(now.hour + 1, 1)
-    if hour > 23:
-        pytest.skip("きょうの中に 20分先の枠が残っていません")
+    hour = now.hour + 2
+    if hour > 23:                            # きょうの残りに 2時間 無い回は見送る
+        pytest.skip("きょうの中に 2時間 先の枠が残っていません")
     got = uploader.next_publish_at(hour, 0, taken=set(),
                                    date_jst=now.strftime("%Y-%m-%d"))
     assert got.endswith("Z")

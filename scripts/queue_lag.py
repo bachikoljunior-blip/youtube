@@ -1521,6 +1521,7 @@ def supply_lines(short: list[tuple[str, str, int]],
                 rel = None
                 cand: list[dict] = []
                 _rows = rows if rows is not None else scheduled()
+                from src import house_rule as _hr               # noqa: PLC0415
                 try:
                     _ans = answering(_rows)[1]
                     cand = dead_slots(_rows, _ans, due, _grid)
@@ -1543,6 +1544,31 @@ def supply_lines(short: list[tuple[str, str, int]],
                                "ぜんぶ後ろへ動かしても間に合いません** ——"
                                " ここではじめて「順番では消えない」と言えます"
                                "（`relief()` が `None`）")
+                elif _hr.same_day_only() and not _rows:
+                    # **先の日付が空なのは、いま「正しい状態」です**（2026-09-02・規則5）。
+                    #
+                    # オーナー原文（`src.house_rule.OWNER_VERBATIM_SAME_DAY`）:
+                    #     「現在の日付にしか予約しないってことだからね？」
+                    # ＝ **先の日付には1本も置かない。空なのが正しい。**
+                    #
+                    # 下の枝は「どけられる死に枠が1本もない」＝
+                    # **並べ替える対象が無いので超過は枠の側で確定**、と言います。
+                    # **規則5 の下では、その前提が違います** —— 予約が空なのは
+                    # 枠が詰まっているからではなく、**そう決めたから**です。
+                    # 埋まる速さは並べ替えでは1日も変わらず、**1日1本 出た結果**で
+                    # 決まります（`CLAUDE.md` 固定その4「暦に穴が空いているを
+                    # 欠陥として扱うこと」を明示的に否定している節）。
+                    #
+                    # **`--compact` を勧めないこと。** あれは先の日付へ並べ直す手で、
+                    # 規則5 が禁じています（`reschedule._compact()` が自分で断ります）。
+                    per_day = _hr.cap()
+                    out.append(f"{bar}      **先の日付に予約が 1本もありません** ——"
+                               " 規則5（固定その4「**現在の日付にしか予約しない**」）の下では"
+                               "**これが正しい状態**です。"
+                               f" この床は**並べ替えでは埋まりません** —— 1日 {per_day}本 の"
+                               f"公開が {n_key}本 積むまで、およそ **{n_key // max(per_day, 1)}日**"
+                               "（`src/house_rule.py`）。"
+                               " **`--compact` で先へ並べ直さないこと**（規則5 が禁じています）")
                 else:
                     # **どける先が1本も無い枝**（2026-08-29 14:2x に足した）。
                     # 24ebde3 が「材料を足しても埋まりません」を消したのは、

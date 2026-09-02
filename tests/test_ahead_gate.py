@@ -227,3 +227,43 @@ def test_きょうが多い回は_先の日付より先に言う(窓, monkeypatc
     _quota(monkeypatch, True)
     v = ahead_gate.verdict(NOW, [_row(0, 13, "a"), _row(0, 20, "b"), _row(5, 20, "c")])
     assert "きょうが 2本" in v["why"]
+
+
+# ---------------------------------------------------------------- 実物の名簿
+def test_走査の上限を切っていないこと():
+    """**既定の 400本 が、この門の最初の穴でした**（2026-09-02 16:0x）。
+
+    `reschedule._scheduled()` は `history.channel_video_ids` を既定の `cap=400` で
+    呼びます。実測 406本 の外側に、オーナーが名指しした2本が居ました:
+
+        gmCvNpLfBg4  publishAt = 2026-10-01T02:30:00Z
+        I05QbyDSt7k  publishAt = 2026-10-06T11:00:00Z
+
+    **「実物で見た」と言いながら、見ていない側に答えがありました。**
+    上げる費用は 50本あたり 1単位。**切る費用は、予約が1本 生き残ること。**
+    """
+    assert ahead_gate.SCAN_CAP >= 5_000
+    text = (ROOT / "scripts" / "ahead_gate.py").read_text(encoding="utf-8")
+    assert "cap=SCAN_CAP" in text
+
+
+def test_名簿を2つ足していること():
+    """**控えを名簿にするだけでも足りませんでした**（続けて2本 取りこぼした）。
+
+        走査だけ  → 控えに在って走査の外の本が落ちる（24本）
+        控えだけ  → 控えに無い本が落ちる（CRhmZX1koc8 / MEAZmye9dDM の2本）
+
+    **3度 同じ形です ——「見ていない所に答えがある」。両方 足すこと。**
+    """
+    text = (ROOT / "scripts" / "ahead_gate.py").read_text(encoding="utf-8")
+    assert "_ledger_ids()" in text
+    assert "channel_video_ids" in text
+    assert "if v not in seen_ids" in text
+
+
+def test_走査が落ちても控えは訊くこと():
+    """**片方が落ちたら、もう片方まで止めないこと**（0本 と答えるのが最悪）。"""
+    text = (ROOT / "scripts" / "ahead_gate.py").read_text(encoding="utf-8")
+    i = text.index("scanned = history.channel_video_ids")
+    tail = text[i:i + 400]
+    assert "except Exception" in tail and "scanned = []" in tail
