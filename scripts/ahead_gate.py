@@ -237,32 +237,135 @@ def record(count: int, ids: list[str], source: str,
     return row
 
 
+#: **1回の `videos.list` に入れる動画ID の数**（YouTube の上限。**1呼び出し 1単位**）。
+BATCH = 50
+
+#: **チャンネルの走査で見る本数の上限**（`history.channel_video_ids` の `cap`）。
+#:
+#: **既定の 400 が、この門の最初の穴でした**（2026-09-02 16:0x）——
+#: `reschedule._scheduled()` は既定のまま呼ぶので **406本**しか見ず、
+#: オーナーが名指しした `gmCvNpLfBg4`（10/01 予約）と `I05QbyDSt7k`（10/06 予約）が
+#: **その外側**に居ました。**「実物で見た」と言いながら、見ていない側に答えがあった。**
+#:
+#: 上げる費用は `playlistItems.list` の **50本あたり 1単位**（実測 733本 ＝ 15単位）。
+#: **切る費用は、予約が1本 生き残ること**です。**釣り合っていません。**
+SCAN_CAP = 5_000
+
+
+def _ledger_ids() -> list[str]:
+    """控えが知っている動画ID を、**新しい順**に返す（重複なし）。"""
+    out, seen = [], set()
+    for r in reversed(dupes.ledger_rows()):
+        vid = str(r.get("id") or r.get("video_id") or "")
+        if vid and vid not in seen:
+            seen.add(vid)
+            out.append(vid)
+    return out
+
+
 def live_ahead(now: datetime | None = None) -> tuple[list[dict], str]:
     """**口に訊く。** 返りは `(明日以降の予約, 読めなかった理由)`。
 
-    取り口は `scripts/reschedule._scheduled()` の1か所です（**写さないこと**）——
-    あれは `history.channel_video_ids` を通るので予約中の本が落ちず、
-    **読んだついでに控えを実物へ合わせます**（`dupes.observe_scheduled`）。
+    ## **チャンネルの走査だけでは足りません**（2026-09-02 16:0x に実物で踏んだ）
+
+    ここは最初、`scripts/reschedule._scheduled()` だけを呼んでいました。
+    あれは `history.channel_video_ids` を通り、**`cap=400` で頭打ち**します
+    （`pool_drain` の冒頭に同じ註: 「予約が 400本 を超えた日から、古い側が見えません」）。
+
+    **実測**: その形で「**実物の先の日付の予約: 0本**」と答えた直後に、
+    オーナーが名指しした4本を `videos.list` へ**IDで**訊いたら ——
+
+        gmCvNpLfBg4  private  **publishAt = 2026-10-01T02:30:00Z**   ← 予約が生きている
+        I05QbyDSt7k  private  **publishAt = 2026-10-06T11:00:00Z**   ← 予約が生きている
+        q4UyLG7_CAE  private  publishAt = None
+        uo0tBXrDscc  private  publishAt = None
+
+    **走査の 406本 に、その2本が入っていませんでした。**
+    ＝ **「実物で見た」と言いながら、見ていない側に答えがありました。**
+    この門はまさにその形（控えだけで 0本 と言い切る）を塞ぐために在るので、
+    **同じ穴を自分で開けていた**ことになります。
+
+    ## **控えを名簿にするのも足りません**（同じ回に、続けて踏んだ）
+
+    次に「控えが知っている本を全部 ID で訊く」形にしたら、**24本** 出ました
+    （走査の 406本 には1本も入っていなかった）。外し切って「0本」。
+    **それでも、上限を外した走査を撃ったら、まだ2本 残っていました**:
+
+        CRhmZX1koc8  publishAt = 2026-10-06T00:00:00Z
+        MEAZmye9dDM  publishAt = 2026-10-07T00:00:00Z
+
+    **控えに無い本は、控えを名簿にしたら出ません。** 3度 同じ形です ——
+    **「見ていない所に答えがある」。**
+
+    ## いま撃っているもの（**2つの名簿を足します**）
+
+        (1) チャンネルの走査（**上限を外して**）  `channel_video_ids(cap=SCAN_CAP)`
+        (2) 控えが知っている本                    `dupes.ledger_rows()`
+
+    どちらも 50本ずつ `videos.list` へ渡します（**part の数によらず 1呼び出し
+    1単位**）。実測 733本 ＋ 739本 で **約 30単位** —— `videos.update` 1本ぶん
+    （50単位）より安い。**安いので、両方 撃ちます。**
+
+    走査は `reschedule._scheduled()` **経由では撃ちません** ——
+    あちらは `cap=400` 既定で、そこが今回の穴でした。**上限はここで指定します。**
+    ただし `_scheduled()` も別に呼びます: あれは読んだついでに
+    **控えを実物へ合わせる**（`dupes.observe_scheduled`）ので、
+    2026-09-01 16:33 の穴（口に在って控えに無い）はそちらが塞ぎます。
+
+    ## 覆る条件
+
+    - チャンネルが `SCAN_CAP` 本を超えたら、また上を切ります。**そのときは
+      ここを上げること**（1本あたり 0.04単位 なので、上げても安い）
+    - `videos.list` が part によらず 1単位、でなくなったら、この見積りは崩れます
     """
     now = now or datetime.now(timezone.utc)
+    today = now.astimezone(JST).date()
+    found: dict[str, dict] = {}
     try:
         import reschedule                                      # noqa: PLC0415
         from src import uploader                               # noqa: PLC0415
         svc = uploader._service()
-        rows = reschedule._scheduled(svc)
+        rows = reschedule._scheduled(svc)                      # 走査（控えも直す）
+        for r in rows:
+            at = _parse(r.get("at"))
+            if at is not None and at > now and at.astimezone(JST).date() > today:
+                found[r.get("id", "")] = {"id": r.get("id", ""), "at": at,
+                                          "title": r.get("title", "")}
+        # **2つの名簿を足して、全部 ID で訊く**（上の註に、3度 踏んだ実測）:
+        #   (1) チャンネルの走査（**上限を外して**）  ← 控えに無い本を拾う
+        #   (2) 控えが知っている本                    ← 走査の外に居る本を拾う
+        ids = _ledger_ids()
+        try:
+            from src import history                            # noqa: PLC0415
+            ch = svc.channels().list(part="contentDetails", mine=True).execute()
+            up = ch["items"][0]["contentDetails"]["relatedPlaylists"]["uploads"]
+            scanned = history.channel_video_ids(svc, up, cap=SCAN_CAP)
+        except Exception:                                      # noqa: BLE001
+            scanned = []                                       # 走査が落ちても控えは訊く
+        seen_ids = set(ids)
+        ids = ids + [v for v in scanned if v not in seen_ids]
+        for i in range(0, len(ids), BATCH):
+            chunk = ids[i:i + BATCH]
+            got = svc.videos().list(part="snippet,status",
+                                    id=",".join(chunk)).execute()
+            for v in got.get("items", []):
+                at = _parse((v.get("status") or {}).get("publishAt"))
+                if at is None or at <= now or at.astimezone(JST).date() <= today:
+                    continue
+                found[v["id"]] = {"id": v["id"], "at": at,
+                                  "title": (v.get("snippet") or {}).get("title", "")}
+                # **控えを実物へ合わせる**（読んだついでに・単位は増えません）。
+                # 合わせないと、`pool_drain.pool()` の `at <= now` で落ちて
+                # **外す一覧に永久に出ません**（この4本がその形でした）。
+                try:
+                    dupes.retime(v["id"], (v.get("status") or {})["publishAt"])
+                except Exception:                              # noqa: BLE001
+                    pass
     except (KeyboardInterrupt, MemoryError):
         raise
     except BaseException as exc:                               # noqa: BLE001
         return [], str(exc)[:200]
-    today = now.astimezone(JST).date()
-    out = []
-    for r in rows:
-        at = _parse(r.get("at"))
-        if at is None or at <= now:
-            continue
-        if at.astimezone(JST).date() > today:
-            out.append({"id": r.get("id", ""), "at": at, "title": r.get("title", "")})
-    out.sort(key=lambda r: r["at"])
+    out = sorted(found.values(), key=lambda r: r["at"])
     record(len(out), [r["id"] for r in out], "videos.list", now)
     return out, ""
 

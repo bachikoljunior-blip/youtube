@@ -418,6 +418,42 @@ def _same_instant(a, b) -> bool:
         return str(a) == str(b)
 
 
+class VideoGone(SystemExit):
+    """**もう存在しない本**を、外そう／動かそうとした（2026-09-02 に実測で踏んだ）。
+
+    ## なぜ要るか
+
+    `_update()` はここを長らく **裸の `SystemExit`** で落としていました。
+    ところが `scripts/pool_drain.py` の掃きのループは、`SystemExit` を
+    **「この窓ではもう書けません」**（＝ 日枠・取り置き）と読んで**止まります** ——
+    あれは「飛ばして次を撃つと、取り置きが取り置きにならない」ための正しい判断です。
+
+    **実測 2026-09-02 16:0x**（自動の掃きの1回目）:
+
+        [pool] **この窓ではもう書けません**（97本 外したところ）:
+               動画が見つかりません: iicEp33dILY
+        [pool] **外した 97本／まだ予約に残っている 14本**
+
+    **枠はまだ 4,000単位 以上 残っていました。** 止めたのは
+    「控えに在って、YouTube にはもう無い本」1本です ——
+    **1本の欠けが、残り全部の掃きを落としました。**
+
+    `SystemExit` の子にしてあるので、**受けていない呼び側の振る舞いは変わりません**
+    （今までどおり、その文で止まります）。**掃きだけが、これを見分けて飛ばします。**
+
+    ## 控えはどうするか
+
+    **`at` を落とします。** 存在しない本は公開されないので、
+    控えが「先の予約」として数え続けるのは幻です（`AlreadyPublic` と同じ判断）。
+
+    検査は `tests/test_pool_drain_video_gone.py`。
+    """
+
+    def __init__(self, video_id: str):
+        self.video_id = video_id
+        super().__init__(f"動画が見つかりません: {video_id}")
+
+
 class AlreadyPublic(RuntimeError):
     """**もう公開されている本**を、予約へ動かそうとした（2026-08-28 に実測で踏んだ）。
 
@@ -473,11 +509,32 @@ RC_NOT_MOVED = 4
 
 
 def _update(svc, video_id: str, publish_at: str | None,
-            fallback_status: dict | None = None) -> bool:
+            fallback_status: dict | None = None,
+            report: dict | None = None) -> bool:
     """`status` だけを差し替える。**snippet を触らないこと** —— 部分更新なので、
     渡さなかった欄は消えます（題名や説明欄を巻き添えで空にしない）。
 
     返りは **書いたか**（`True` ＝ `videos.update` を撃った／`False` ＝ 撃たずに済んだ）。
+
+    ## `report` —— **`False` の2つの意味を、呼ぶ側に分けて渡す**（2026-09-02）
+
+    渡すと `{"wrote": bool, "reason": str}` が入ります。`reason` は3つ:
+
+        "wrote"      `videos.update` を撃った
+        "same"       **実物はもうその値でした**（`videos.list` がそう言った）——
+                     **控えのほうが古い。** 直すのは控えの側です
+        "move_hold"  この窓でその本はもう `MOVE_CAP` 回 動かした ＝
+                     **YouTube を1文字も変えていない。** 控えを触らないこと
+
+    **返り値だけでは、この2つが区別できません。** 実測 2026-09-02 16:0x ——
+    控えは先の日付の予約を **107本** と言い、口（`videos.list`）は **41本**。
+    差の 66本 は**もう外れている**本で、`pool_drain` はそれを毎回
+    「撃っていないので控えも直しません」で飛ばしていました。
+    **＝ 控えは永久に 0本 になりません**（`scripts/ahead_gate.py` の門が、
+    直しようのない数で鳴り続けます）。
+
+    `"same"` は `videos.list` の返りそのものなので、**推測ではありません。**
+    ここで控えを直してよい唯一の枝です。
 
     `fallback_status` を渡すと、**現状を読めなかった回だけ**それで代えます
     （2026-08-17 に足した）。**既定は None ＝ これまでどおり読めなければ落ちる**：
@@ -576,7 +633,10 @@ def _update(svc, video_id: str, publish_at: str | None,
         cur = [{"status": dict(fallback_status)}]
         read_ok = False
     if not cur:
-        raise SystemExit(f"動画が見つかりません: {video_id}")
+        # **裸の `SystemExit` にしないこと**（2026-09-02）。掃きのループは
+        #     `SystemExit` を「この窓ではもう書けません」と読んで**止まります** ——
+        #     消えた本 1本 で、残り全部の掃きが落ちました（`VideoGone` の註に実測）。
+        raise VideoGone(video_id)
     before = dict(cur[0]["status"])
     # **もう公開されている本は、予約へ戻せません。** ここで止めるのは
     # 「YouTube が拒否するから」ではなく、**控えが幻を数え続けるから**です
@@ -604,6 +664,8 @@ def _update(svc, video_id: str, publish_at: str | None,
             and _same_instant(before.get("publishAt"), status.get("publishAt"))):
         print(f"[reschedule] {video_id} は**もうその値です**。撃ちません"
               f"（50単位 節約・{status.get('publishAt') or '予約なし'}）", flush=True)
+        if report is not None:
+            report.update({"wrote": False, "reason": "same"})
         return False
     # **同じ本を、1つの窓で何度も動かさないこと**（2026-08-28 の最適化の回に足した）。
     # 上の関門は「**もうその値**」だけを捕まえます。実測（窓 08/27）では
@@ -616,6 +678,8 @@ def _update(svc, video_id: str, publish_at: str | None,
     cap = upload_cap.move_hold(video_id)
     if cap:
         print(f"[reschedule] {cap}", flush=True)
+        if report is not None:
+            report.update({"wrote": False, "reason": "move_hold"})
         return False
     # **計測のぶんを残して止める**（2026-08-28 の最適化の回に足した）。
     # 実測: 窓 08/27 16:00 JST は **47分 で 9,150単位**（枠 1万）を焼き、そのあと

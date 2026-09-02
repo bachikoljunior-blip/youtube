@@ -93,9 +93,16 @@ def _stub_apply(monkeypatch, order: list, *, thumb_rc: int = 0,
     monkeypatch.setattr(pool_drain, "_push_thumbnail_first", _thumb)
     monkeypatch.setattr(pool_drain.uploader, "_service", lambda: object())
     monkeypatch.setattr(pool_drain.uploader, "base_status", lambda: {})
-    monkeypatch.setattr(pool_drain.reschedule, "_update",
-                        lambda svc, vid, at, fallback_status=None:
-                        order.append(f"update:{vid}"))
+    # **`report=` を受けること**（2026-09-02）—— `_update` は `False` の
+    #   2つの意味（"same" ＝ 実物はもうその値／"move_hold" ＝ 撃っていない）を
+    #   そこへ入れて返し、掃きは**前者のときだけ控えを直します**。
+    def _stub_update(svc, vid, at, fallback_status=None, report=None):
+        order.append(f"update:{vid}")
+        if report is not None:
+            report.update({"wrote": True, "reason": "wrote"})
+        return True
+
+    monkeypatch.setattr(pool_drain.reschedule, "_update", _stub_update)
     monkeypatch.setattr(pool_drain.dupes, "retime", lambda vid, at: None)
 
 
