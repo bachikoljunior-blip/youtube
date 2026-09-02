@@ -100825,3 +100825,7 @@ Opus/Sonnet で足りた所: 検査の実行・commit/push・`uploaded.jsonl` �
 2. 09/04 の朝: `place_today` が `wOlDmGhbBts` を 09/04 17:00 へ置く（`data/ahead_sweep.log` の `[today]` で確かめる）。
    置けていなければ `reschedule.py --move wOlDmGhbBts 2026-09-04T17:00`（50単位）。
 3. `9zkfjEH48PY`（09/03 09:00）の 48時間 再生が **350回 未満**なら「池の古い本 → 焼き直し」の差ではなく族か形を疑う（00:0x の回の条件）。
+
+**この回の終わりの `fast_tests`（979 緑・4分52秒）: 赤 2件**（前の回と同じ名前・この回の変更とは無関係）:
+`tests/test_eta_pause_banner.py::test_silent_when_not_paused` ／ `tests/test_judgeable.py::test_実物で期限が構造的に守れる[opening_motion]`。
+この回で足した `tests/test_house_rule_published_since.py` 6件と `test_house_rule_reach.py`・`test_unreachable_premise_marker.py` は緑。
