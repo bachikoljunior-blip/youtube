@@ -194,10 +194,38 @@ def today_rows(rows: list[dict], now: datetime | None = None) -> list[dict]:
     return [r for r in rows if r["at"].astimezone(jst).strftime("%Y-%m-%d") == day]
 
 
-def plan(rows: list[dict], keep: int) -> tuple[list[dict], list[dict]]:
-    """**残す本と、外す本**に割る（API 0単位）。公開時刻の早い順に `keep` 本を残す。"""
+def plan(rows: list[dict], keep: int,
+         now: datetime | None = None) -> tuple[list[dict], list[dict]]:
+    """**残す本と、外す本**に割る（API 0単位）。公開時刻の早い順に `keep` 本を残す。
+
+    ## **きょうぶんは、`--keep 0` でも外しません**（2026-09-02・規則5）
+
+    オーナー原文（固定その4）は「**現在の日付にしか予約しない**」で、
+    その回の指示は「**`--keep 0` です —— 先の日付には1本も残さないので。
+    ただし今日の1本が未公開で残っているなら、それは外さないこと**」でした。
+
+    **`--keep 0` はその両方を一度に言えません** —— 早い順に 0本 残すので、
+    きょうの1本が一覧の先頭に居れば**それが最初に外れます**。
+    そして**きょうの1本は、いちばん取り返しがつきません**
+    （明日ぶんは明日の窓で外せますが、きょうの夕方の1本は、
+    外したら その日の公開が 0本 になります ＝ `CLAUDE.md`「4. 投稿を途切れさせない」）。
+
+    だから規則5 の下では、**きょう（JST）以前の予約は `keep` の数と関係なく残します。**
+    `keep` が数えるのは**明日以降のぶんだけ**です。
+
+    **覆る条件**: `house_rule.SAME_DAY_SCHEDULING_ONLY` が `False` になったら、
+    この分けは消えて、単純な「早い順に `keep` 本」に戻ります。
+    検査は `tests/test_pool_drain_keep_today.py`。
+    """
     keep = max(0, keep)
-    return rows[:keep], rows[keep:]
+    if not house_rule.same_day_only():
+        return rows[:keep], rows[keep:]
+    now = now or datetime.now(timezone.utc)
+    jst = timezone(timedelta(hours=9))
+    today = now.astimezone(jst).date()
+    today_side = [r for r in rows if r["at"].astimezone(jst).date() <= today]
+    ahead = [r for r in rows if r["at"].astimezone(jst).date() > today]
+    return today_side + ahead[:keep], ahead[keep:]
 
 
 def by_day(rows: list[dict]) -> dict[str, int]:
@@ -421,7 +449,26 @@ def _push_thumbnail_first(video_id: str) -> int:
 def _calendar_hold() -> list[str]:
     """**暦に穴が空いている間、池化は後回し**（**API 0単位**）。鳴らなければ空。
 
-    ## なぜ要るか（2026-09-02 01:0x に測って足した）
+    ## **【2026-09-02】この門は、規則5 の下では黙ります。まず ここを読むこと**
+
+    オーナー原文（`src/house_rule.OWNER_VERBATIM_SAME_DAY`・固定その4）:
+
+        「現在の日付にしか予約しないってことだからね？」
+
+    ＝ **先の日付には1本も置かない。先の日付が空であることが正しい状態です。**
+
+    **下の註は、まっすぐ逆のことを言っています** ——「穴を埋める本が無くなるから、
+    池化より先に `reschedule --compact --apply` で 09/03〜09/27 へ並べ直せ」。
+    **その手は、いま禁じられている手そのものです。**
+    そして この門は `--apply` を**止めて**いたので、
+    **オーナーが名指しした `pool_drain --apply --keep 0` が、
+    `--despite-gap` を付けない限り1本も外せない**状態でした。
+
+    だから `house_rule.same_day_only()` が真のあいだ、この門は空を返します
+    （＝ 池化がそのまま正しい手）。**下の枝は消していません** ——
+    オーナーが「先の日付にも置いてよい」と言えば、そちらへ自動で戻ります。
+
+    ## なぜ要るか（2026-09-02 01:0x に測って足した。**上の規則5 の下では効きません**）
 
     この道具と `scripts/reschedule.py --compact` は、**同じ予約の山に、逆向きの手**を
     当てます。どちらも `[暦]` の鳴っている回に候補として出てきます:
@@ -456,6 +503,10 @@ def _calendar_hold() -> list[str]:
     - 控えが実物とずれていると穴も嘘になります（`src/ledger_truth.py`）。
       **`calendar()` の覆る条件がそのまま効きます**
     """
+    # **規則5（固定その4）の下では、穴は欠陥ではありません。**（2026-09-02）
+    #     ここで止めると、オーナーが名指しした手が撃てません。
+    if house_rule.same_day_only():
+        return []
     try:
         from src import next_slot                              # noqa: PLC0415
         cal = next_slot.calendar()
@@ -482,9 +533,17 @@ def main(argv: list[str] | None = None) -> int:
         description="予約を外して private のまま残し、下書きの池にする")
     ap.add_argument("--apply", action="store_true",
                     help="実際に外す（**付けないと数えるだけ・API 0単位**）")
-    ap.add_argument("--keep", type=int, default=house_rule.PUBLISH_PER_DAY,
-                    help="先頭の N本 は予約のまま残す"
-                         f"（既定 {house_rule.PUBLISH_PER_DAY} ＝ 規則1の1日ぶん）")
+    # **既定は規則5 が決めます**（2026-09-02）。「現在の日付にしか予約しない」の下で
+    #     **先の日付に残してよい本は 0本** です（きょうぶんは `plan()` が別に守ります）。
+    #     規則5 が外れたら、規則1 の1日ぶん（＝ 1本）へ自動で戻ります。
+    _keep_default = 0 if house_rule.same_day_only() else house_rule.PUBLISH_PER_DAY
+    ap.add_argument("--keep", type=int, default=_keep_default,
+                    help="**明日以降**の先頭 N本 は予約のまま残す"
+                         f"（既定 {_keep_default}"
+                         + ("　＝ 規則5「先の日付には1本も置かない」。"
+                            "**きょうぶんは `--keep 0` でも外しません**"
+                            if house_rule.same_day_only()
+                            else " ＝ 規則1の1日ぶん") + "）")
     ap.add_argument("--max", type=int, default=0,
                     help="この回で外す上限（0 ＝ 日枠が尽きるまで）")
     ap.add_argument("--no-inbox", action="store_true",

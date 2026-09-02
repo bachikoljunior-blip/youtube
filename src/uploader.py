@@ -462,8 +462,32 @@ def upload(
 
     visibility = publish_cfg.get("visibility", "private")
     status: dict = base_status(publish_cfg)
+    # ---- **予約を付けずに上げる道**（`draft`。2026-09-02・規則5 で要るようになった）
+    #
+    # オーナー原文（`src/house_rule.OWNER_VERBATIM_NEXT_DAY`・固定その4）:
+    #
+    #     「その日の投稿の後は次の日の作成になるってわかってるよな？」
+    #
+    # ＝ **作るのは前の日の公開直後から。予約だけが当日**です。
+    # ところが、ここは長らく「private ＝ 必ず `publishAt` を付ける」でした。
+    # **前の日に作った1本を、予約せずに置いておく道が1本も無かった**のです
+    # （`--skip-upload` は上げないので、コンテナと一緒に消えます）。
+    #
+    # `draft` を渡すと `publishAt` を付けません。**private のまま**上がるので、
+    # 誰にも見えず、日枠も使いません（`videos.insert` は日枠の外）。
+    # その日になったら `scripts/reschedule.py --move <id> <時刻>` で予約します。
+    #
+    # **`taken_publish_times()` を撃たないのも、この道の値打ちです** ——
+    # あれは日枠を使うので、枠の尽きた窓では 403 になります。
+    # **枠が 403 でも、作って上げるところまでは進みます。**
+    if visibility == "private" and publish_cfg.get("draft"):
+        print("[upload] **予約を付けずに private の下書きとして上げます**"
+              "（規則5・固定その4「現在の日付にしか予約しない」）")
+        print("[upload]   その日になったら "
+              "`python scripts/reschedule.py --move <videoId> <時刻>` で予約すること")
+        publish_cfg["publish_at"] = None
     # private のときだけ予約公開できる。public 指定なら即時公開。
-    if visibility == "private":
+    elif visibility == "private":
         # すでに埋まっている枠は飛ばす。作り置きを積むと同じ時刻に重なるため。
         status["publishAt"] = next_publish_at(
             int(publish_cfg.get("publish_hour_jst", 19)),

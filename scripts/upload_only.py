@@ -1,6 +1,20 @@
 """検査済みの build/<テーマID>/ を、作り直さずにそのまま投稿する。
 
     python scripts/upload_only.py <テーマID>
+    python scripts/upload_only.py <テーマID> "" <時刻>   # 第3引数で予約
+    python scripts/upload_only.py <テーマID> --draft     # **予約を付けずに private で上げる**
+
+**`--draft` は 2026-09-02 に足しました**（規則5・固定その4）。オーナー原文:
+
+    「その日の投稿の後は次の日の作成になるってわかってるよな？」
+    「現在の日付にしか予約しないってことだからね？」
+
+＝ **作るのは前の日の公開直後から。予約だけが当日。**
+それまで、この道具には「上げるが予約しない」道が1本もありませんでした
+（`--skip-upload` は上げないので、**コンテナと一緒に消えます**）。
+`--draft` で上げた本は private のまま残り、その日になったら
+`python scripts/reschedule.py --move <videoId> <時刻>` で予約します。
+**`videos.insert` は日枠を使わないので、403 の窓でも通ります。**
 
 なぜ要るか。--dry-run で作った final.mp4 は、本番投稿するものと完全に同一で、
 verify も通っている。それをもう一度パイプラインに通すと、音声合成と38枚の
@@ -55,7 +69,7 @@ def split_when(when: str) -> tuple[int, int, str | None]:
 
 def main(topic: str, visibility: str | None = None, hour: int | None = None,
          date_jst: str | None = None, skip_dupe_check: bool = False,
-         minute: int | None = None) -> int:
+         minute: int | None = None, draft: bool = False) -> int:
     """hour を渡すと、その時刻（JST）で予約する。
     date_jst（`YYYY-MM-DD`）も渡すと、**その日に釘づけ**する（埋まっていれば失敗）。
 
@@ -95,6 +109,15 @@ def main(topic: str, visibility: str | None = None, hour: int | None = None,
         channel["publish"] = dict(channel["publish"])
         channel["publish"]["publish_date_jst"] = date_jst
         print(f"[check] 予約日を {date_jst} に釘づけ（埋まっていれば翌日へ送らず失敗）")
+    if draft:
+        # **予約を付けずに上げる**（規則5・固定その4）。`src/uploader.upload()` の註。
+        # 前の日に作った1本を private のまま置き、**その日になってから**予約します。
+        channel["publish"] = dict(channel["publish"])
+        channel["publish"]["visibility"] = "private"
+        channel["publish"]["draft"] = True
+        channel["publish"].pop("publish_date_jst", None)
+        print("[check] **下書き（予約なし）で上げます** —— "
+              "その日になったら `scripts/reschedule.py --move` で予約すること")
 
     if "[t:" not in description:
         print("説明欄にテーマ印がありません。投稿済みの記録が残らないので中止します")
@@ -257,6 +280,10 @@ if __name__ == "__main__":
     # 先に抜いておく。**使ったら理由を JOURNAL に書くこと。**
     _allow = "--allow-dupe" in _argv
     _argv = [a for a in _argv if a != "--allow-dupe"]
+    # **予約を付けずに上げる札**（規則5・固定その4）。位置引数の数を変えないよう、
+    # `--allow-dupe` と同じ形で先に抜きます。
+    _draft = "--draft" in _argv
+    _argv = [a for a in _argv if a != "--draft"]
     if len(_argv) not in (1, 2, 3):
         print(__doc__)
         raise SystemExit(2)
@@ -270,4 +297,5 @@ if __name__ == "__main__":
         _date,
         _allow,
         _minute,
+        _draft,
     ))
