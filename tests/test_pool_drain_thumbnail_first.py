@@ -68,14 +68,17 @@ def _stub_apply(monkeypatch, order: list, *, thumb_rc: int = 0,
                 thumb_raises: bool = False):
     """`--apply` の道を、API を1単位も使わずに通す。**順番だけを見ます。**"""
     utc = pool_drain.timezone.utc
+    # **日付は `now` からの相対**（2026-09-03 に直した）—— 固定の 09/02・09/03 04:00Z で
+    # 書かれていて、09/03 JST になった日に `plan()` の「きょう以前は外さない」
+    # （規則5）に両方とも入り、`order == []` で赤になった。**この検査が見るのは
+    # 順番だけ**なので、外される側（明日以降）に2本 置ければ足りる。
+    base = pool_drain.datetime.now(utc).replace(hour=4, minute=0, second=0, microsecond=0)
+    d1 = base + pool_drain.timedelta(days=1)
+    d2 = base + pool_drain.timedelta(days=2)
     monkeypatch.setattr(pool_drain, "pool",
                         lambda now=None, rows=None: [
-                            {"id": "keep",
-                             "at": pool_drain.datetime(2026, 9, 2, 4, 0, tzinfo=utc),
-                             "title": "keep", "topic": "t"},
-                            {"id": "drop",
-                             "at": pool_drain.datetime(2026, 9, 3, 4, 0, tzinfo=utc),
-                             "title": "drop", "topic": "t"},
+                            {"id": "keep", "at": d1, "title": "keep", "topic": "t"},
+                            {"id": "drop", "at": d2, "title": "drop", "topic": "t"},
                         ])
     monkeypatch.setattr(pool_drain, "thumbnail_first", lambda now=None: "NEXT1")
     # **この作り物の予約に穴はありません**（09/02・09/03 の2本 ＝ 1日1本）。
