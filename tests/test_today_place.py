@@ -154,3 +154,33 @@ def test_SessionStart_から起きるフックは_この道具を呼ぶ():
     assert "ahead_sweep.py" in sh
     hooks = (ROOT / ".claude" / "settings.json").read_text(encoding="utf-8")
     assert "ahead_sweep.sh" in hooks
+
+
+# ---------------------------------------------------------------- videos.insert の道（2026-09-03）
+def test_日枠が尽きていても_台本の控えが在れば_insert_で置く():
+    """**帳面が焼けた翌朝でも、きょうの1本が空かないこと。** 実測 09/03 00:03 JST:
+    `--move` は帳面の取り置き（12,368／10,000）で止まり、既定の枠 09:00 は窓の戻る
+    16:00 JST の 7時間 前だった。`videos.insert` は日枠を使わない。"""
+    p = sweep.today_plan(_jst(0, 30), count=0, cap=1, candidate=CAND, hour=9,
+                         quota_open=False, insert_ok=True)
+    assert p["do"] is True and p["via"] == "insert"
+    assert p["when"] == "2026-09-03T09:00"
+
+
+def test_日枠が開いていれば_既定は_update():
+    p = sweep.today_plan(_jst(0, 30), count=0, cap=1, candidate=CAND, hour=9,
+                         quota_open=True, insert_ok=True)
+    assert p["do"] is True and p["via"] == "update"
+
+
+def test_日枠が尽きていて_控えも無ければ_置かない():
+    p = sweep.today_plan(_jst(0, 30), count=0, cap=1, candidate=CAND, hour=9,
+                         quota_open=False, insert_ok=False)
+    assert p["do"] is False and "日枠" in p["why"]
+
+
+def test_insert_の道は_控えが無ければ_何も撃たない(tmp_path):
+    assert sweep.stash_script("no-such-video", root=tmp_path) is None
+    rc, new_id = sweep.place_by_insert(
+        {"video_id": "no-such-video-zzz", "when": "2026-09-03T09:00"}, _jst(0, 30))
+    assert rc == 2 and new_id is None

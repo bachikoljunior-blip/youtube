@@ -191,6 +191,22 @@ def _run(argv: list[str], label: str, timeout: int = 1800) -> int:
     return got.returncode
 
 
+def _run_out(argv: list[str], label: str, timeout: int = 1800) -> tuple[int, str]:
+    """`_run` と同じだが標準出力も返す（`upload_only.py` の `VIDEO_ID …` を読むため）。"""
+    print(f"[sweep] $ {' '.join(argv)}", flush=True)
+    try:
+        got = subprocess.run(argv, cwd=str(ROOT), timeout=timeout,
+                             capture_output=True, text=True)
+    except subprocess.TimeoutExpired:
+        print(f"[sweep] [!] {label} が {timeout}秒 で切れました", flush=True)
+        return 124, ""
+    for line in (got.stdout or "").splitlines():
+        print(f"[sweep]   {line}", flush=True)
+    for line in (got.stderr or "").splitlines()[-20:]:
+        print(f"[sweep]   ! {line}", flush=True)
+    return got.returncode, got.stdout or ""
+
+
 def reasons_to_skip(now: datetime | None = None) -> str:
     """**掃かない理由**（掃いてよければ空文字）。**API 0単位**。"""
     now = now or datetime.now(timezone.utc)
@@ -257,7 +273,9 @@ def reasons_to_skip(now: datetime | None = None) -> str:
 
 #: **きょうの1本を置く手の印**（掃きの印とは別。掃きは数分、こちらは数秒）。
 TODAY_LOCK = "data/.today_place.lock"
-TODAY_STALE = timedelta(minutes=10)
+#: 30分 —— `videos.insert` の道（`place_by_insert`: 焼き直し 約1分 ＋ 上げ 数分）が
+#: 10分 を超えることがあるため（2026-09-03 に 10分 → 30分）。
+TODAY_STALE = timedelta(minutes=30)
 
 #: **いまから最低これだけ先に置く**（YouTube は過去の `publishAt` を受けません。
 #: `reschedule.py --move` も `過去の時刻です` で落ちます）。
@@ -285,10 +303,16 @@ def today_slot(now: datetime, hour: int, *, lead_min: int = TODAY_LEAD_MIN,
 
 def today_plan(now: datetime, *, count: int, cap: int, candidate: dict | None,
                hour: int, quota_open: bool, rule_on: bool = True,
-               paused: str = "") -> dict:
+               paused: str = "", insert_ok: bool = False) -> dict:
     """**置くか・何を・いつ**を決める（**API 0単位・純関数**）。
 
-    返り: `{"do": bool, "why": str, "video_id": str|None, "when": "YYYY-MM-DDTHH:00"|None}`
+    返り: `{"do": bool, "why": str, "video_id": str|None, "when": "YYYY-MM-DDTHH:00"|None,
+            "via": "update" | "insert"}`
+
+    `insert_ok=True` は「その本は `videos.insert` で置き直せる」の印
+    （台本の控え `data/critique_queue/<ID>.script.json` が在る）。**日枠が尽きていても、
+    その道なら置けます** —— `videos.insert` は日枠を使いません（`src/upload_cap.day_quota`
+    の註・08/27 に 403 の後で 3本 通った実測）。印が無ければ従来どおり置きません。
     """
     day = now.astimezone(JST).date().isoformat()
     if not rule_on:
@@ -300,8 +324,9 @@ def today_plan(now: datetime, *, count: int, cap: int, candidate: dict | None,
     if count >= max(1, cap):
         return {"do": False, "why": f"きょう {day} の枠は埋まっています（{count}本／規則 {cap}本）",
                 "video_id": None, "when": None}
-    if not quota_open:
-        return {"do": False, "why": "日枠が尽きています（この窓では `videos.update` が通りません）",
+    if not quota_open and not insert_ok:
+        return {"do": False, "why": "日枠が尽きています（この窓では `videos.update` が通りません。"
+                "台本の控えも無いので `videos.insert` でも置き直せません）",
                 "video_id": None, "when": None}
     slot = today_slot(now, hour)
     if slot is None:
@@ -313,7 +338,8 @@ def today_plan(now: datetime, *, count: int, cap: int, candidate: dict | None,
         return {"do": False, "why": "置ける本が1本も無い（決めた本も、池も、下書きも無い）",
                 "video_id": None, "when": None}
     return {"do": True, "why": str((candidate or {}).get("why") or ""),
-            "video_id": vid, "when": slot.strftime("%Y-%m-%dT%H:%M")}
+            "video_id": vid, "when": slot.strftime("%Y-%m-%dT%H:%M"),
+            "via": "insert" if (not quota_open and insert_ok) else "update"}
 
 
 def _today_candidate(now: datetime) -> dict | None:
@@ -364,9 +390,124 @@ def _today_candidate(now: datetime) -> dict | None:
     return None
 
 
+STASH = "data/critique_queue"
+
+
+def stash_script(video_id: str, root: Path | None = None) -> Path | None:
+    """その本を**焼き直せる台本の控え**（`critique_queue.stash()` が残す）。無ければ `None`。"""
+    if not video_id:
+        return None
+    f = Path(root or config.ROOT) / STASH / f"{video_id}.script.json"
+    return f if f.exists() else None
+
+
+def _uploaded_row(video_id: str) -> dict | None:
+    """`data/uploaded.jsonl` の、その本の（いちばん新しい）行 —— 題材と尺。"""
+    import json                                                # noqa: PLC0415
+    f = Path(config.ROOT) / "data" / "uploaded.jsonl"
+    try:
+        lines = f.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return None
+    hit = None
+    for ln in lines:
+        try:
+            r = json.loads(ln)
+        except Exception:                                      # noqa: BLE001
+            continue
+        if r.get("video_id") == video_id:
+            hit = r
+    return hit
+
+
+def place_by_insert(plan: dict, now: datetime) -> tuple[int, str | None]:
+    """**`videos.update` が撃てない窓で、きょうの1本を `videos.insert` で置く**（2026-09-03 00:1x）。
+
+    返りは `(rc, 新しい動画ID or None)`。
+
+    ## なぜ要るか（同じ夜に実測）
+
+    09/03 00:03 JST の `[today]` は `reschedule.py --move OBJdXEr6gLg 2026-09-03T09:00` を
+    撃ち、**帳面の取り置き**（`upload_cap._ledger_hold`: 使った 12,368 ／ 枠 10,000）で
+    止められました。窓が変わるのは **16:00 JST** —— 既定の枠 **09:00** はその 7時間 前です。
+    ＝ **前の日の夕方に帳面が焼けた日は、翌朝の1本が毎回 置けません**（09/01 も同じ形）。
+    規則5 は「作るのは前の日・予約だけが当日」なので、**当日の朝に `videos.update` が
+    要る作り**そのものが、この窓と噛み合っていませんでした。
+
+    `videos.insert` は日枠を使いません（`src/upload_cap.day_quota` の註・
+    `tests/test_insert_never_marked_ok.py`）。**同じ台本（`critique_queue/<ID>.script.json`）を
+    `--script` で焼き直せば `claude -p` も要らず（約1分）、`upload_only.py <題材> "" "<日>@<時>"`
+    が `publishAt` 付きで上げます。** 実測 09/03 00:08 JST: `9zkfjEH48PY` が 09:00 JST に載った
+    （回が手で撃った。ここはそれを機械へ移したもの）。
+    古い下書きは `--replaces` で突き合わせから外すだけで、**消しません**（private の池に残る）。
+
+    ## 覆る条件
+
+    - `videos.insert` が同じ 403 で落ちるようになったら（枠が1つに統合された）、この道は
+      閉じます。そのときは `day_quota()` の註と `RESERVE_UNITS` の覆る条件も同じ日に発火します
+    - 置く既定の時刻が窓の切り替わり（16:00 JST）より後になったら、この道はほぼ要りません
+    """
+    vid = str(plan.get("video_id") or "")
+    script = stash_script(vid)
+    if script is None:
+        print(f"[today] [!] `{vid}` の台本の控えが無いので、`videos.insert` では置き直せません",
+              flush=True)
+        return 2, None
+    row = _uploaded_row(vid) or {}
+    topic = str(row.get("topic") or "")
+    if not topic:
+        print(f"[today] [!] `{vid}` の題材が `data/uploaded.jsonl` に無いので置き直せません",
+              flush=True)
+        return 2, None
+    try:
+        from src import daily_pick                              # noqa: PLC0415
+        cur = daily_pick.current(now.astimezone(JST).date()) or {}
+    except Exception:                                          # noqa: BLE001
+        cur = {}
+    form = str(cur.get("form") or "")
+    if not form:
+        dur = float(row.get("duration_s") or 0)
+        form = "ショート" if 0 < dur <= 60 else "長尺"
+    py = sys.executable or "python3"
+    argv = [py, "-m", "src.pipeline", "--script", str(script), "--topic", topic, "--dry-run"]
+    if form == "ショート":
+        argv.append("--short")
+    rc = _run(argv, "pipeline --script（焼き直し）", 1500)
+    if rc != 0:
+        return rc, None
+    day, hm = str(plan["when"]).split("T")
+    rc, out = _run_out([py, "scripts/upload_only.py", topic, "", f"{day}@{hm}",
+                        "--replaces", vid], "upload_only（insert・publishAt）", 1200)
+    if rc != 0:
+        return rc, None
+    new_id = None
+    for ln in out.splitlines():
+        if ln.startswith("VIDEO_ID "):
+            new_id = ln.split(None, 1)[1].strip()
+    if not new_id:
+        print("[today] [!] `upload_only` は通ったが `VIDEO_ID` が読めません", flush=True)
+        return 3, None
+    try:
+        from src import daily_pick                              # noqa: PLC0415
+        daily_pick.record(
+            form, topic,
+            f"{now.astimezone(JST).strftime('%H:%M')} 機械: 帳面の取り置き（日枠 10,000）で "
+            f"`--move {vid}` が書けず、同じ台本を焼き直して `videos.insert`（日枠 0単位）で "
+            f"{plan['when']} JST に置いた。{vid} は private の池",
+            day=now.astimezone(JST).date(), now=now, video_id=new_id)
+    except Exception as exc:                                   # noqa: BLE001
+        print(f"[today] 決定を書き換えられませんでした（置けてはいます）: {str(exc)[:100]}",
+              flush=True)
+    return 0, new_id
+
+
 def place_today(now: datetime | None = None, *, dry_run: bool = False) -> dict:
     """**きょうの1本を、回の意思と関係なく置く。** 返りは `today_plan()` の dict に
-    `rc`（撃った結果。撃っていなければ `None`）を足したもの。"""
+    `rc`（撃った結果。撃っていなければ `None`）を足したもの。
+
+    置く道は2つ。`videos.update`（`reschedule --move`・50単位）が既定で、
+    **日枠が尽きている／帳面の取り置きが止める窓**では `videos.insert`（`place_by_insert`・
+    日枠 0単位）へ倒れます —— その本の台本の控えが在るときだけ。"""
     now = now or datetime.now(timezone.utc)
     stamp = now.astimezone(JST).strftime("%m/%d %H:%M JST")
     from src import next_slot, upload_cap                       # noqa: PLC0415
@@ -386,15 +527,29 @@ def place_today(now: datetime | None = None, *, dry_run: bool = False) -> dict:
         hour = None
     hour = 9 if hour is None else int(hour)
     cand = None
-    if count < house_rule.cap() and quota_open:
+    if count < house_rule.cap():
+        # **日枠が尽きていても候補は読む**（0単位）—— `videos.insert` の道が在るかは
+        # 候補が決まって初めて分かります（`place_by_insert` の註）。
         try:
             cand = _today_candidate(now)
         except Exception as exc:                               # noqa: BLE001
             print(f"[today] 候補を読めませんでした: {str(exc)[:120]}", flush=True)
+    insert_ok = stash_script(str((cand or {}).get("video_id") or "")) is not None
     plan = today_plan(now, count=count, cap=house_rule.cap(), candidate=cand, hour=hour,
                       quota_open=quota_open, rule_on=house_rule.same_day_only(),
-                      paused=_paused())
+                      paused=_paused(), insert_ok=insert_ok)
     plan["rc"] = None
+    if plan["do"] and plan.get("via") == "update" and insert_ok:
+        # **帳面の取り置きが `videos.update` を止める窓**（403 はまだ見ていないが、
+        # `reschedule._update` は `reserve_hold()` で `SystemExit` する）。撃つ前に同じ門に
+        # 訊いて、止まるなら最初から `videos.insert` の道へ（実測 09/03 00:03 の形）。
+        try:
+            held = upload_cap.reserve_hold(now)
+        except Exception:                                      # noqa: BLE001
+            held = None
+        if held:
+            plan["via"] = "insert"
+            plan["why"] = f"{plan['why']}／`videos.update` は取り置きで止まる → insert"
     if not plan["do"]:
         print(f"[today] {stamp} きょうの1本は置きません —— {plan['why']}", flush=True)
         return plan
@@ -409,13 +564,19 @@ def place_today(now: datetime | None = None, *, dry_run: bool = False) -> dict:
         return plan
     try:
         py = sys.executable or "python3"
-        rc = _run([py, "scripts/reschedule.py", "--move", plan["video_id"], plan["when"]],
-                  "reschedule --move", 300)
+        if plan.get("via") == "insert":
+            rc, new_id = place_by_insert(plan, now)
+            if new_id:
+                plan["placed_id"] = new_id
+        else:
+            rc = _run([py, "scripts/reschedule.py", "--move", plan["video_id"], plan["when"]],
+                      "reschedule --move", 300)
     finally:
         drop_lock(lock)
     plan["rc"] = rc
     if rc == 0:
-        print(f"[today] **置きました**: `{plan['video_id']}` {plan['when']} JST", flush=True)
+        print(f"[today] **置きました**: `{plan.get('placed_id') or plan['video_id']}` "
+              f"{plan['when']} JST（{plan.get('via', 'update')}）", flush=True)
     else:
         print(f"[today] [!] 置けませんでした（rc={rc}）。次の回の SessionStart が"
               " もう一度 試します（`scripts/stop_check.sh` (1.4) も引き止めます）", flush=True)
