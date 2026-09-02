@@ -167,3 +167,26 @@ def test_潰れていた数を再現し直った数と並べる(tmp_path):
     # 尽きる時刻も窓の食い違いで飛んでいた（01/14 と出ていた）
     assert p["exhaust_at"] is not None
     assert (p["exhaust_at"] - _now()).days < 30
+
+
+def test_リセット後に2点目が入っても窓は戻らない(tmp_path):
+    """**この検査が無いと、次にオーナーが%を貼った回で黙って再発します。**
+
+    `_gauge_reset()` が「いちばん新しい1組」しか見ないと、リセット後に
+    2点目（3% → 10%）が入った瞬間に「増えている ＝ 普通の区間」で打ち切り、
+    **窓が枠の頭（08/29）へ戻って、分母がまた枠ぜんぶになります。**
+    枠の中を**いちばん新しい落ち込みまで**さかのぼること。
+    """
+    later = "2026-09-02T18:00:00+09:00"
+    _write(tmp_path, [(PRE_AT, 73, RESET_ISO), (NOW_AT, 3, RESET_ISO),
+                      (later, 10, RESET_ISO)])
+    p = quota.pace(datetime.fromisoformat(later).astimezone(UTC))
+
+    assert p["reset_at"] == datetime.fromisoformat(PRE_AT).astimezone(UTC), (
+        "2点目が入ったらリセットを見失っている ＝ 窓が枠の頭へ戻っている")
+    span = datetime.fromisoformat(later) - datetime.fromisoformat(PRE_AT)
+    assert p["hours"] == pytest.approx(span.total_seconds() / 3600, abs=0.05)
+    assert p["hours"] < 40, "枠の頭（107時間）から数え直してしまっている"
+    # リセット後の2点なので、こんどは区間が引ける
+    assert p["seg"] is not None
+    assert p["seg"]["used"] == pytest.approx(7.0)

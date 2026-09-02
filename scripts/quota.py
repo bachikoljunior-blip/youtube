@@ -659,19 +659,31 @@ def _gauge_reset(anchors: list[dict]) -> tuple[datetime, float] | None:
     if len(anchors) < 2:
         return None
     a = anchors[0]
-    at, resets = _parse_iso(a.get("fetched_at")), _parse_iso(a.get("resets_at_iso"))
-    if not at or not resets:
+    resets = _parse_iso(a.get("resets_at_iso"))
+    if not _parse_iso(a.get("fetched_at")) or not resets:
         return None
-    used = float(a["used_percent"])
-    for prev in anchors[1:]:
-        p_at = _parse_iso(prev.get("fetched_at"))
-        p_reset = _parse_iso(prev.get("resets_at_iso"))
-        if not p_at or p_at >= at or not _same_window(p_reset, resets):
+
+    # **いちばん新しい1組だけを見ないこと**（2026-09-02 に自分で踏みかけた）。
+    #     直前の点だけを見て「増えている ＝ 普通の区間」で打ち切ると、
+    #     **リセット後に2点目が入った瞬間に、窓が枠の頭へ戻ります** ——
+    #     09/02 の実物で言えば、次に 18:00 の 10% が貼られた回で
+    #     `(3% → 10%)` は増えているので `None` になり、分母がまた
+    #     08/29 からの 60周 に戻る。**同じ食い違いが黙って再発します。**
+    #     枠の中を**いちばん新しい落ち込みまで**さかのぼること。
+    same = []
+    for row in anchors:
+        r_at = _parse_iso(row.get("fetched_at"))
+        r_reset = _parse_iso(row.get("resets_at_iso"))
+        if not r_at or not _same_window(r_reset, resets):
             continue
-        p_used = float(prev["used_percent"])
-        if p_used > used:                     # 枠は同じ。なのに%が減った ＝ 戻された
-            return p_at, p_used
-        return None                           # 直前が増えている ＝ 普通の区間
+        same.append((r_at, float(row["used_percent"])))
+    same.sort(key=lambda x: x[0], reverse=True)     # 新しい順
+
+    for (newer_at, newer_used), (older_at, older_used) in zip(same, same[1:]):
+        if older_at >= newer_at:
+            continue                          # 同時刻の点は使えない
+        if older_used > newer_used:           # 枠は同じ。なのに%が減った ＝ 戻された
+            return older_at, older_used
     return None
 
 
