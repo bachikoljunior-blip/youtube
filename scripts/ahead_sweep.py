@@ -130,6 +130,45 @@ def _paused() -> str:
     return ""
 
 
+#: **その日の1本のために、掃きに食わせない単位**（2026-09-02）。
+#:
+#: ## なぜ要るか
+#:
+#: この掃きは**回の意思と関係なく**走ります。だから「今日はやめておこう」で
+#: 手加減する人がいません。**窓を全部 焼くと、その日の投稿が撃てなくなります** ——
+#: `CLAUDE.md`「**投稿が途切れるのが最大の損失**」。実測 2026-09-01 16:0x の窓は、
+#: `pool_drain --apply` が 160本 で **12,258 / 10,000単位** を焼き、
+#: 次の枠の本が「焼いたあとに入った 6件」を1つも入れずに出ました
+#: （`pool_drain.SWAP_UNITS` の註）。
+#:
+#: その日の1本に要るのは、ざっと **`--move` 51 ＋ サムネイル 50 ＋ 差し替え 100
+#: ＋ 読み**。**多めに 2,000単位** 残します（掃きは翌日の窓が続けます ——
+#: 締切は `pool_drain.first_breach()` が言うとおり 09/24 で、まだ余裕があります）。
+#:
+#: **覆る条件**: 掃きが何日 経っても終わらないなら、ここを削る前に
+#: `pool_drain` の取り置き（`swap_reserve`）と取り合っていないかを見ること。
+RESERVE_UNITS = 2_000
+
+
+def budget_max(now: datetime | None = None) -> int:
+    """**この回の掃きで外してよい本数の上限**（0 ＝ 上限を置かない）。**API 0単位**。
+
+    帳面（`src.quota_ledger`）が読めない回は **0**（上限なし）を返します ——
+    **推測で締切を遅らせないこと**（`pool_drain._trim_for_swap` と同じ考え方）。
+    """
+    try:
+        from src import quota_ledger                           # noqa: PLC0415
+        used = int(quota_ledger.spent(now).get("data") or 0)
+        cap = int(quota_ledger.DAY_UNITS)
+    except Exception:                                          # noqa: BLE001
+        return 0
+    import pool_drain                                          # noqa: PLC0415
+    left = cap - used - RESERVE_UNITS
+    if left <= 0:
+        return 1                    # **1本だけ**（0 は「上限なし」の意味なので使えない）
+    return max(1, left // pool_drain.UNITS_PER_VIDEO)
+
+
 def _run(argv: list[str], label: str, timeout: int = 1800) -> int:
     print(f"[sweep] $ {' '.join(argv)}", flush=True)
     try:
@@ -202,8 +241,15 @@ def main(argv: list[str] | None = None) -> int:
         # 2. 控えと実物の食い違いを名指しする（**API 0単位**）
         _run([py, "-m", "src.ledger_truth"], "ledger_truth", 120)
         # 3. 外す（**削除しません。private の下書きへ戻すだけ**）
-        _run([py, "scripts/pool_drain.py", "--apply", "--keep", "0"],
-             "pool_drain --apply", 3600)
+        #    **その日の1本のぶんを残します**（`RESERVE_UNITS` の註）——
+        #    この掃きは回の意思と関係なく走るので、手加減する人がいません。
+        cap = budget_max(now)
+        drain = [py, "scripts/pool_drain.py", "--apply", "--keep", "0"]
+        if cap:
+            drain += ["--max", str(cap)]
+            print(f"[sweep] この回に外すのは **最大 {cap}本**"
+                  f"（その日の1本に {RESERVE_UNITS:,}単位 残します）", flush=True)
+        _run(drain, "pool_drain --apply", 3600)
         # 4. 掃いたあとを、もう一度 実物で見て記録する
         _run([py, "scripts/ahead_gate.py", "--live"], "ahead_gate --live", 300)
     finally:

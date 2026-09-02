@@ -148,3 +148,42 @@ def test_掃く順番が固定されていること():
     truth = text.index('"-m", "src.ledger_truth"')
     drain = text.index('"scripts/pool_drain.py", "--apply", "--keep", "0"')
     assert live < truth < drain
+
+
+# ---------------------------------------------------------------- その日のぶん
+def test_窓が空なら_107本ぶん以上_掃ける(monkeypatch):
+    """**掃きが1回では終わらない形にしないこと。** いまの残り 107本 は1窓で入ります。"""
+    from src import quota_ledger
+    monkeypatch.setattr(quota_ledger, "spent", lambda now=None: {"data": 0})
+    assert ahead_sweep.budget_max() >= 107
+
+
+def test_その日の1本のぶんを残す(monkeypatch):
+    """**この掃きは回の意思と関係なく走ります。手加減する人がいません。**
+
+    実測 2026-09-01 16:0x: `pool_drain --apply` が 160本 で
+    **12,258 / 10,000単位** を焼き、次の枠の本が「焼いたあとに入った 6件」を
+    1つも入れずに出ました（`pool_drain.SWAP_UNITS` の註）。
+    """
+    from src import quota_ledger
+    cap = quota_ledger.DAY_UNITS
+    monkeypatch.setattr(quota_ledger, "spent",
+                        lambda now=None: {"data": cap - ahead_sweep.RESERVE_UNITS})
+    assert ahead_sweep.budget_max() == 1
+
+
+def test_帳面が読めない回は上限を置かない(monkeypatch):
+    """**推測で締切を遅らせないこと**（`pool_drain._trim_for_swap` と同じ）。"""
+    from src import quota_ledger
+
+    def boom(now=None):
+        raise OSError("帳面が読めない")
+
+    monkeypatch.setattr(quota_ledger, "spent", boom)
+    assert ahead_sweep.budget_max() == 0
+
+
+def test_上限は_pool_drain_の_max_へ渡ること():
+    """**渡していなければ、取り置きは効きません。**"""
+    text = (ROOT / "scripts" / "ahead_sweep.py").read_text(encoding="utf-8")
+    assert '"--max", str(cap)' in text
