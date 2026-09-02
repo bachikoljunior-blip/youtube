@@ -994,7 +994,9 @@ def outside_opening_lines(vid: str, topic: str, root: Path | None = None,
                    f"（`scripts/ahead_sweep.rebake_today`・毎周の `kick` から・台本が控えと違い commit 済みなら背景で "
                    f"`videos.insert`（日枠を使わない・TTS 64コマ 約4分＋合成）→ 決めを新 ID へ写す。"
                    f"帳面 `data/rebake.jsonl`・log `data/rebake.log`。日枠が要るのは当日の `--move` 50単位 だけ）。"
-                   f"手で撃つなら（同じ物・いま撃ってよい）:")
+                   f"手で撃つなら（同じ物）—— **先に `python scripts/ahead_sweep.py --dry-run` の `[rebake]` を見ること**: "
+                   f"「一度 焼いた（印）」と出ていれば機械がいま焼いている。**そのとき手で撃つと同じ本が2本 上がる**"
+                   f"（2026-09-03 05:0x に実測: 手の bake 中に `--rebake-run` が同じ sha で起きた・片方を kill）:")
         out.append(f"       python -m src.pipeline --script {draft.relative_to(root)} --topic {topic} --dry-run"
                    f" && python scripts/upload_only.py {topic} --draft --replaces {vid}")
     elif pd is not None:
