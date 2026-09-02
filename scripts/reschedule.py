@@ -48,8 +48,8 @@ import functools  # noqa: E402
 
 from googleapiclient.errors import HttpError  # noqa: E402
 
-from src import (auth, dupes, forms, history, measure_window,  # noqa: E402
-                 upload_cap, uploader)
+from src import (auth, dupes, forms, history, house_rule,  # noqa: E402
+                 measure_window, upload_cap, uploader)
 
 JST = timezone(timedelta(hours=9))
 # `--compact` で詰める日数の**床**。判定に要る3日＋1日（`compact_plan` の節）。
@@ -522,7 +522,23 @@ def _update(svc, video_id: str, publish_at: str | None,
     `privacyStatus` と `publishAt` の2つだけ、でなくなったとき
     （`tests/test_reschedule_noop.py` が、その2つ以外を触ったら落ちます）。
     どうしても撃ち直したい回は `YT_FORCE_UPDATE=1`。
+
+    ## **先の日付は、ここで断ります**（2026-09-02・規則5 の置く側）
+
+    オーナー原文: **「1日一本になってないんだけど、今後こういうことが一切ないようにしろ」**
+
+    `pool_drain` と `ahead_gate` は**外す側**です。**置く側が開いたままなら、
+    外した先から積み直せます。** この関数は `videos.update` の関門1か所なので
+    （すぐ上の「入口が6つあり、塞いでも7つ目が同じ穴を作る」）、ここで断ります。
+    判定の本文は `src.house_rule.refuse_future_publish()` の1つだけ
+    （**写さないこと**）。**`publish_at=None`（外す手）は通します。**
+    検査は `tests/test_no_future_schedule.py`。
     """
+    # **単位を使う前に断ること**（下の `videos.list` は1単位・日枠の内側）。
+    _refuse = house_rule.refuse_future_publish(publish_at)
+    if _refuse:
+        raise SystemExit(f"[reschedule] {video_id}: {_refuse}")
+
     read_ok = True
     try:
         # `snippet` も取ります。**単位は変わりません**（`videos.list` は

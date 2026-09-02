@@ -167,6 +167,23 @@ class _ReadFails:
         return _Call({})
 
 
+
+def _today_stamp() -> str:
+    """**きょう（JST）**の予約時刻を1つ作る。
+
+    ここは 2026-09-02 まで `"2026-09-03T00:00:00Z"` を直書きしていました。
+    `reschedule._update` が規則5（先の日付には置かない・
+    `src.house_rule.refuse_future_publish`）の関門を持ったので、
+    **直書きの「明日」は門で止まり、この検査が見たい読みの側まで届きません。**
+    見たいのは `videos.list` の 403 の扱いなので、**日付は何でもよい** ——
+    きょうにして、門を通してから落とします。
+    """
+    from datetime import datetime, timedelta, timezone
+    jst = timezone(timedelta(hours=9))
+    t = datetime.now(jst).replace(hour=23, minute=0, second=0, microsecond=0)
+    return t.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
 def test_読みの側の日枠切れも_言葉で止まること(monkeypatch):
     """**安いほうが先に閉じます。** 読み 1単位 は、書き 50単位 より先に 403 になる。
 
@@ -189,7 +206,7 @@ def test_読みの側の日枠切れも_言葉で止まること(monkeypatch):
     svc = _Svc(_ReadFails(_http_error(403, QUOTA_BODY)))
 
     with pytest.raises(SystemExit) as got:
-        reschedule._update(svc, "vid1", "2026-09-03T00:00:00Z")
+        reschedule._update(svc, "vid1", _today_stamp())
 
     msg = str(got.value)
     assert "16:00" in msg, "**いつやり直せばよいか**が出ていない"
@@ -207,7 +224,7 @@ def test_読みの側の権限403は素通しすること(monkeypatch):
     svc = _Svc(_ReadFails(_http_error(403, FORBIDDEN_BODY)))
 
     with pytest.raises(HttpError):
-        reschedule._update(svc, "vid1", "2026-09-03T00:00:00Z")
+        reschedule._update(svc, "vid1", _today_stamp())
 
 
 def test_通る回は素通り_余計な例外を足していないこと():

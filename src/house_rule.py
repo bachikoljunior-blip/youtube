@@ -196,6 +196,76 @@ def ahead_of_today(rows, now=None) -> list:
     return out
 
 
+def refuse_future_publish(publish_at, now=None) -> str:
+    """**先の日付への予約を、書く直前に断る理由**（断らないなら空文字）。規則5。
+
+    ## なぜ「外す側」だけでは足りないか（2026-09-02・オーナー原文）
+
+    > **「1日一本になってないんだけど、今後こういうことが一切ないようにしろ」**
+
+    `scripts/pool_drain.py` も `scripts/ahead_gate.py` も、**もう置かれたものを
+    外す側**です。**置く側が開いたままなら、外した先から積み直せます** ——
+    そして置く側は実際に開いていました:
+
+        `src.uploader.next_publish_at()` の自動探索は、きょうの枠が
+        過去／埋まっていると **`target += timedelta(days=1)` で翌日以降へ歩きます**
+        （最大60日先まで）。**規則5 の下では、この1行が違反そのものです。**
+
+    459本 の作り置きは、この歩きが積んだものです。**外し切っても、
+    この道が開いていれば同じ山が戻ります。**
+
+    ## ここに置く理由（**入口ごとに書かないこと**）
+
+    `videos.update` の関門は `scripts/reschedule._update()` **1か所**
+    （あの docstring:「入口が6つあり、塞いでも7つ目が同じ穴を作る。
+    **関門はここ1か所なので、ここで止めます**」）。
+    `videos.insert` の予約時刻を決めるのは `uploader.next_publish_at()` **1か所**
+    （あの docstring:「予約時刻を決めているのは、この関数だけです」）。
+    **判定の本文はここ1つで、その2か所が呼ぶだけ**にします ——
+    写すと、この repo が通算12回 踏んだ「片方だけ直す」に戻ります。
+
+    ## 断らないもの
+
+        `publish_at` が `None`            **予約を外す手**（＝ 池化。これは通す）
+        きょう（JST）以前の時刻          規則どおり
+        `same_day_only()` が `False`      規則5 が外れている
+
+    **読めない時刻は断りません**（推測で投稿を止めないこと ——
+    `CLAUDE.md`「投稿が途切れるのが最大の損失」）。
+
+    ## 覆る条件
+
+    - オーナーが「先の日付にも置いてよい」と言ったら `SAME_DAY_SCHEDULING_ONLY`
+      が `False` になり、ここは全部 空文字を返します
+    - **抜け道を作らないこと。** 「この回だけ」の環境変数を足したくなったら、
+      それは 08/31 からの2日で 459本 → 107本 にしか減らなかったのと同じ形です
+
+    検査は `tests/test_no_future_schedule.py`。
+    """
+    if not same_day_only():
+        return ""
+    at = _instant(publish_at) if publish_at is not None else None
+    if at is None:
+        return ""
+    from datetime import datetime, timedelta, timezone
+    jst = timezone(timedelta(hours=9))
+    t = now or datetime.now(timezone.utc)
+    day = at.astimezone(jst).date()
+    today = t.astimezone(jst).date()
+    if day <= today:
+        return ""
+    return (
+        f"**{day} は「先の日付」です。予約できません**"
+        f"（規則5・固定その4「{OWNER_VERBATIM_SAME_DAY}」）。\n"
+        f"  きょうは {today}（JST）。**その日の1本を、その日に予約する** ——"
+        " 先の日付が空であることが正しい状態です。\n"
+        "  作った本は `--draft` で private のまま上げて置き、"
+        "**その日になってから** `scripts/reschedule.py --move <id> <時刻>`。\n"
+        "  いま先の日付に在るぶんは `python scripts/ahead_gate.py` が数えます"
+        "（外すのは `python scripts/pool_drain.py --apply --keep 0`）。"
+    )
+
+
 #: **この日より前に作った本が「作り置き」です**（規則が入った日）。
 #: この日以降に作る本は、1日1本の規則の下で作った本なので、**供給です**。
 #: 日付を写さないこと —— 判定は下の `is_stockpile()` の1か所です。

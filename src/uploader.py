@@ -9,7 +9,7 @@ from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 from googleapiclient.http import MediaFileUpload
 
-from . import measure_window, upload_cap
+from . import house_rule, measure_window, upload_cap
 from .auth import credentials, explain, is_upload_cap, note_day_quota
 
 JST = timezone(timedelta(hours=9))
@@ -182,6 +182,14 @@ def next_publish_at(hour_jst: int, minute_jst: int, taken: set[str] | None = Non
         measure_window.check(date_jst, force=force_window,
                              tool="uploader.next_publish_at(date_jst=…)")
         stamp = target.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        # **釘づけの道でも、先の日付は置けません**（規則5・固定その4）。
+        #     判定は `house_rule.refuse_future_publish()` の1か所（**写さないこと**）。
+        #     ここは例外で止めます —— 釘づけは呼ぶ側が日を指定した道なので、
+        #     黙って別の日に置き換えると「測っている数字のほう」が壊れます
+        #     （すぐ上の `taken` の枝と同じ理由）。
+        refuse = house_rule.refuse_future_publish(stamp)
+        if refuse:
+            raise ValueError(refuse)
         if stamp in (taken or set()):
             raise ValueError(
                 f"{date_jst} {hour_jst:02d}:{minute_jst:02d} JST はすでに埋まっています。"
@@ -489,13 +497,39 @@ def upload(
     # private のときだけ予約公開できる。public 指定なら即時公開。
     elif visibility == "private":
         # すでに埋まっている枠は飛ばす。作り置きを積むと同じ時刻に重なるため。
-        status["publishAt"] = next_publish_at(
+        _stamp = next_publish_at(
             int(publish_cfg.get("publish_hour_jst", 19)),
             int(publish_cfg.get("publish_minute_jst", 0)),
             taken=taken_publish_times(youtube),
             date_jst=publish_cfg.get("publish_date_jst") or None,
         )
-        print(f"[upload] 公開予定: {status['publishAt']}")
+        # ---- **先の日付になったら、予約せずに下書きで上げる**（2026-09-02・規則5）
+        #
+        # オーナー原文: **「1日一本になってないんだけど、今後こういうことが
+        # 一切ないようにしろ」**
+        #
+        # `next_publish_at()` の自動探索は、きょうの枠が過去／埋まっていると
+        # **`target += timedelta(days=1)` で翌日以降へ歩きます**（最大60日先）。
+        # **459本 の作り置きは、この1行が積んだものです。**
+        # `pool_drain` で外し切っても、**この道が開いていれば同じ山が戻ります。**
+        #
+        # **止めるのではなく、下書きへ倒します。** 例外にすると、枠が埋まった日は
+        # 投稿そのものが落ちます —— `CLAUDE.md`「**投稿が途切れるのが最大の損失**」。
+        # 下書きなら物は上がり、**その日になってから `--move` で予約できます**
+        # （固定その4「その日の投稿の後は次の日の作成になるってわかってるよな？」
+        #   ＝ 作るのは前の日から、予約だけが当日）。
+        # 判定は `house_rule.refuse_future_publish()` の1か所（**写さないこと**）。
+        _refuse = house_rule.refuse_future_publish(_stamp)
+        if _refuse:
+            print(f"[upload] **予約しません** —— {_stamp} は先の日付です")
+            print(f"[upload]   {_refuse}")
+            print("[upload] **private の下書きとして上げます**"
+                  "（物は残ります。その日になったら "
+                  "`python scripts/reschedule.py --move <videoId> <時刻>`）")
+            publish_cfg["publish_at"] = None
+        else:
+            status["publishAt"] = _stamp
+            print(f"[upload] 公開予定: {status['publishAt']}")
         # **決めた時刻を、呼んだ側にも返すこと**（2026-08-16）。
         # `scripts/upload_only.py` は `channel["publish"]["publish_at"]` を読んで
         # `data/uploaded.jsonl` に控えます。ところがこの時刻は**ここで初めて決まる**ので、
@@ -505,7 +539,12 @@ def upload(
         # （新しい行だけが空で、一覧の見た目は変わらない）。
         # これが効く先は2つ —— `dupes.ledger_rows()` の `scheduled` と、
         # `sibling_check` の在庫（＝予約が何日先まで埋まっているか）。
-        publish_cfg["publish_at"] = status["publishAt"]
+        #
+        # **下書きへ倒した回は書き戻しません**（`status` に `publishAt` が無い）——
+        # 上の枝で既に `None` を入れてあります。`.get` にしないこと:
+        # 欄が消えた日に、黙って `None` を控えへ書くほうへ倒れます。
+        if "publishAt" in status:
+            publish_cfg["publish_at"] = status["publishAt"]
 
     body = {
         "snippet": {
