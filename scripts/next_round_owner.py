@@ -59,19 +59,37 @@ def corrected_sub_model(now: datetime | None = None) -> tuple[str, str]:
 
     pct = float(gauge.get("pct", 0.0))
     seen = gauge["at"].astimezone(quota.JST)
-    if pct >= FABLE_ONLY_GAUGE_FULL_PCT:
+
+    # **目盛りは人手でしか入らないので、必ず古くなります。** 古いぶんは
+    # 「Fable のみ」**自身の速さ**で運ぶ（`quota.fable_rate()`・同じ枠の2点で測る。
+    # 点が1つなら 全モデルの速さ ÷ 0.5 ＝ 公式仕様の比）。
+    # 2026-09-03 03:5x に踏んだ: ここは運ばず、`quota.sub_model` は全モデルの速さで
+    # 運んでいた（公式の比の 1/2）。どちらも、目盛りが実際に 100% に届いたあと
+    # **1日 `fable` を返し続け**、その間に立てたサブは落ちる（A10 が破れる）。
+    # 「全モデルの速度でFable専用目盛りを外挿しない」（docstring）は、
+    # **比を掛けずに外挿するな**の意味で守る —— 比を掛けた外挿は公式仕様そのもの。
+    est = quota.fable_estimate(now, gauge=gauge) or {}
+    est_pct = float(est.get("est", pct))
+    exhaust = est.get("exhaust_at")
+    tail = ""
+    if est.get("rate_source") in ("measured", "official"):
+        tail = (f"。いま推定 {est_pct:.0f}%（{quota._fable_rate_words(est)}"
+                + (f"・100% は {exhaust.astimezone(quota.JST):%m/%d %H:%M} JST" if exhaust else "")
+                + "）")
+    if max(pct, est_pct) >= FABLE_ONLY_GAUGE_FULL_PCT:
         return (
             "opus",
             f"『Fable のみ』{pct:.0f}%（{seen:%m/%d %H:%M} JST）"
             "＝公式のFable内訳上限100%に到達"
-            "（通常の全モデル週間上限の50%分）",
+            "（通常の全モデル週間上限の50%分）" + tail
+            + "。**新しい画面が来るまで Opus**",
         )
 
     return (
         "fable",
         f"『Fable のみ』{pct:.0f}%（{seen:%m/%d %H:%M} JST）"
         f"＜ 内訳上限{FABLE_ONLY_GAUGE_FULL_PCT:.0f}%"
-        "（100%が通常の全モデル週間上限の50%分。50%では止めない）",
+        "（100%が通常の全モデル週間上限の50%分。50%では止めない）" + tail,
     )
 
 

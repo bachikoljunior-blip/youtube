@@ -955,31 +955,136 @@ def fable_gauge() -> dict | None:
             "all_pct": float(r.get("used_percent", 0)), "resets": _parse_iso(r.get("resets_at_iso"))}
 
 
-def sub_model(now: datetime | None = None) -> tuple[str, str]:
-    """**サブに渡す模型と、その理由1行。** `FABLE_CAP_PCT` の註。
+#: **公式仕様**: Fable に使えるのは通常の全モデル週間上限の **50% ぶん**
+#: （`docs/OWNER_MODEL_BUDGET.md`）。「Fable のみ」の目盛りは、その 50% ぶんを
+#: 0〜100% で表すので、**全部を Fable で走らせているあいだ、この目盛りは
+#: 「すべてのモデル」の目盛りの 1/0.5 ＝ 2倍 の速さで進みます。**
+#: 実測（`data/usage.jsonl`・2026-09-02 19:39 → 22:01 JST）: すべて +4% ／ Fable +9%
+#: ＝ **2.25倍**。`scripts/next_round_owner.py` も同じ数を持ちます（検査で揃える）。
+OFFICIAL_FABLE_SHARE = 0.5
 
-    目盛りが古いぶんは、直近の速さで運んだ推定で埋める（`pace()` と同じ考え方 ——
-    古い目盛りで割ると必ず「まだ余裕がある」側に外れる）。
+
+def fable_rate(now: datetime | None = None,
+               anchors: list[dict] | None = None) -> dict | None:
+    """**「Fable のみ」の目盛りが進む速さ（%/時）と、その出どころ。**
+
+    2026-09-03 03:5x に踏んだ形: `sub_model()` は「Fable のみ」を **全モデルの速さ
+    （`carry_rate`・1.69 %/時）**で運んでいました。公式仕様では Fable の目盛りは
+    全モデルの **2倍** で進むので（`OFFICIAL_FABLE_SHARE`）、推定は必ず
+    「まだ余裕がある」側に外れます —— 実測: 22:01 の 21% は、こちらの数では
+    **09/03 18:4x JST に 100%**、あの数では 09/04 20:4x（**1日 遅い**）。
+    親は `sub_model` が `opus` を返すまで `fable` を渡し続けるので、目盛りが
+    実際に尽きた後の 1日、**立てたサブが全部 落ちる**（＝ A10「自動実行は永久に
+    止まらない」が破れる）。
+
+    出どころは2つ。**上から先に当たったもの**:
+
+        measured   同じ枠の、隣り合う2つの Fable の点（`fable_percent` が増えている）
+                   → Δ Fable% ÷ 時間。**測っているので、これが正本**
+        official   Fable の点が1つしか無い → 全モデルの速さ ÷ `OFFICIAL_FABLE_SHARE`
+                   （全部を Fable で走らせている前提。**Opus に切り替えたあとは
+                     過大に出ます** —— そのときは次の画面が来るまでの保険）
+
+    返り: `{"rate", "source", "from_at", "to_at", "from_pct", "to_pct", "hours",
+    "all_rate"}`。点が無ければ None。`all_rate` は同じ2点での全モデルの速さ
+    （measured のときだけ。**比が 1/`OFFICIAL_FABLE_SHARE` から大きく外れたら、
+    その区間は Fable 以外も走っていた**と読める）。
     """
     now = now or datetime.now(timezone.utc)
-    g = fable_gauge()
-    if not g or not g["at"]:
-        return "fable", "「Fable のみ」の目盛りがまだ無い（画面が来たら --fable で積むこと）"
-    if g["resets"] and g["resets"] <= now:
-        return "fable", f"「Fable のみ」の枠は {g['resets'].astimezone(JST):%m/%d %H:%M} JST に戻った（目盛り {g['pct']:.0f}% は前の枠）"
-    est = g["pct"]
+    anchors = _anchors() if anchors is None else anchors
+    pts = []
+    for row in anchors:
+        if row.get("fable_percent") is None:
+            continue
+        at = _parse_iso(row.get("fetched_at"))
+        if not at:
+            continue
+        pts.append((at, float(row["fable_percent"]), float(row.get("used_percent") or 0.0),
+                    _parse_iso(row.get("resets_at_iso"))))
+    pts.sort(key=lambda x: x[0])
+    for (t0, f0, u0, r0), (t1, f1, u1, r1) in zip(reversed(pts[:-1]), reversed(pts[1:])):
+        hours = (t1 - t0).total_seconds() / 3600
+        if hours <= 0 or f1 < f0:
+            continue                          # 同時刻／戻された ＝ 使った量ではない
+        if r0 and r1 and not _same_window(r0, r1):
+            continue
+        return {"rate": (f1 - f0) / hours, "source": "measured",
+                "from_at": t0, "to_at": t1, "from_pct": f0, "to_pct": f1, "hours": hours,
+                "all_rate": ((u1 - u0) / hours) if u1 >= u0 else None}
+    if not pts:
+        return None
     try:
         p = pace(now)
-        rate = (p or {}).get("carry_rate") or 0.0
+        carry = float((p or {}).get("carry_rate") or 0.0)
     except Exception:                                          # noqa: BLE001
-        rate = 0.0
+        carry = 0.0
+    t, f, u, r = pts[-1]
+    return {"rate": carry / OFFICIAL_FABLE_SHARE, "source": "official",
+            "from_at": t, "to_at": t, "from_pct": f, "to_pct": f, "hours": 0.0,
+            "all_rate": carry}
+
+
+def fable_estimate(now: datetime | None = None,
+                   gauge: dict | None = None) -> dict | None:
+    """**「Fable のみ」の、いまの推定と、100% に届く時刻。**
+
+    `gauge` は `fable_gauge()` の返り（呼ぶ側が差し替えられるように引数で受ける）。
+    返り: `{"gauge", "rate", "rate_source", "est", "exhaust_at", "stale_hours"}`。
+    目盛りが無ければ None。枠が戻っていれば `est` は目盛りの値のまま・`exhaust_at` は None。
+    """
+    now = now or datetime.now(timezone.utc)
+    g = fable_gauge() if gauge is None else gauge
+    if not g or not g.get("at"):
+        return None
+    if g.get("resets") and g["resets"] <= now:
+        return {"gauge": g, "rate": 0.0, "rate_source": "reset", "est": g["pct"],
+                "exhaust_at": None, "stale_hours": 0.0}
+    fr = fable_rate(now)
+    rate = float((fr or {}).get("rate") or 0.0)
     hours = max(0.0, (now - g["at"]).total_seconds() / 3600)
     est = min(100.0, g["pct"] + hours * rate)
     if est >= FABLE_CAP_PCT:
-        return "opus", (f"「Fable のみ」 {g['pct']:.0f}%（{g['at'].astimezone(JST):%m/%d %H:%M} JST）"
-                        f" → いま推定 {est:.0f}% ≧ 上限 {FABLE_CAP_PCT:.0f}%")
-    return "fable", (f"「Fable のみ」 {g['pct']:.0f}%（{g['at'].astimezone(JST):%m/%d %H:%M} JST）"
-                     f" → いま推定 {est:.0f}% ＜ 上限 {FABLE_CAP_PCT:.0f}%")
+        exhaust = g["at"] + timedelta(hours=(FABLE_CAP_PCT - g["pct"]) / rate) if rate > 0 else now
+    elif rate > 0:
+        exhaust = now + timedelta(hours=(FABLE_CAP_PCT - est) / rate)
+    else:
+        exhaust = None
+    return {"gauge": g, "rate": rate, "rate_source": (fr or {}).get("source", "none"),
+            "est": est, "exhaust_at": exhaust, "stale_hours": hours}
+
+
+def _fable_rate_words(fe: dict) -> str:
+    src = fe.get("rate_source")
+    if src == "measured":
+        return f"目盛り自身の速さ {fe['rate']:.2f} %/時（同じ枠の2点で測った）"
+    if src == "official":
+        return (f"全モデルの速さ ÷ {OFFICIAL_FABLE_SHARE} ＝ {fe['rate']:.2f} %/時"
+                "（公式仕様。Fable の点が1つしか無い）")
+    return "速さが取れない（目盛りの値のまま）"
+
+
+def sub_model(now: datetime | None = None) -> tuple[str, str]:
+    """**サブに渡す模型と、その理由1行。** `FABLE_CAP_PCT` の註。
+
+    目盛りが古いぶんは、**「Fable のみ」自身の速さ**で運んだ推定で埋める
+    （`fable_rate()`。全モデルの速さで運ぶと 2倍 遅い側に外れる —— あちらの註）。
+    古い目盛りで割ると必ず「まだ余裕がある」側に外れるので、運ばない選択はしない。
+    """
+    now = now or datetime.now(timezone.utc)
+    fe = fable_estimate(now)
+    if not fe:
+        return "fable", "「Fable のみ」の目盛りがまだ無い（画面が来たら --fable で積むこと）"
+    g = fe["gauge"]
+    if fe["rate_source"] == "reset":
+        return "fable", f"「Fable のみ」の枠は {g['resets'].astimezone(JST):%m/%d %H:%M} JST に戻った（目盛り {g['pct']:.0f}% は前の枠）"
+    head = f"「Fable のみ」 {g['pct']:.0f}%（{g['at'].astimezone(JST):%m/%d %H:%M} JST）"
+    ex = fe["exhaust_at"]
+    ex_words = f"・100% は {ex.astimezone(JST):%m/%d %H:%M} JST" if ex else ""
+    if fe["est"] >= FABLE_CAP_PCT:
+        return "opus", (f"{head} → いま推定 {fe['est']:.0f}% ≧ 上限 {FABLE_CAP_PCT:.0f}%"
+                        f"（{_fable_rate_words(fe)}{ex_words}。**新しい画面が来るまで Opus**）")
+    return "fable", (f"{head} → いま推定 {fe['est']:.0f}% ＜ 上限 {FABLE_CAP_PCT:.0f}%"
+                     f"（{_fable_rate_words(fe)}{ex_words}）")
 
 
 def pace(now: datetime | None = None) -> dict | None:
@@ -1595,7 +1700,7 @@ def main() -> int:
                          "『週間の制限／すべてのモデル』の使用済み%%")
     ap.add_argument("--at", metavar="時刻", help="画面の時刻（`MM/DD HH:MM` か `YYYY-MM-DD HH:MM`・JST）")
     ap.add_argument("--session", metavar="%", type=int, help="『現在のセッション』の%%（5時間枠）")
-    ap.add_argument("--fable", metavar="%", type=int, help="『週間の制限／Fable のみ』の使用済み%%（上限 50。`FABLE_CAP_PCT`）")
+    ap.add_argument("--fable", metavar="%", type=int, help="『週間の制限／Fable のみ』の使用済み%%（上限 100。`FABLE_CAP_PCT`）")
     ap.add_argument("--session-in", metavar="分", type=int, help="『N時間M分後にリセット』を分に直した数")
     ap.add_argument("--resets", metavar="時刻", help="週枠のリセットを明示（既定は次の土 07:00 JST）")
     ap.add_argument("--note", metavar="文", default="", help="その点に添える1行")
