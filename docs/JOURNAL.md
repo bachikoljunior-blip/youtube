@@ -100429,3 +100429,97 @@ insert の直後は 09/03 が埋まっている。自分の直前の1行なの�
 ＝ **次の周（16:00 JST より前）は 429 で 0単位・16:00 JST 以降の最初の周で外のショートが帳面に入り、
 その次の周から `[きょうの1本]` に外の最大／中央と上位5題が並ぶ。** 回が選ばなくても。
 検査 `test_kick_fires_only_when_the_form_is_stale_and_the_mark_is_old`。
+
+---
+
+## 2026-09-03 00:2x〜 JST —— 定期の回（サブ・`#agent-a88d2e986929ef8c2`・Fable 5.1）
+
+**最初の2手**: `git merge origin/…`（早送り）→ `run_marker.py --write`。印の `[きょうの1本]`:
+ショート 48h 中央値 **173回**（n=214）対 長尺 **1回**（n=30）＝ ×173。族は `shokibo` 1,036回(n=4) ／
+`kokuho` 1,035回(n=3) が同率1位。**09/03 09:00 JST の1本 `9zkfjEH48PY`（ショート・shokibo）は前の回が
+insert で置いてある。09/04 の1本は未決** → 決めてから `improve`（申し送りどおり）。
+
+`eta.py` の頭: 到達予測 **出ません**・縛っているのは `per_video`（天井 ×4.49・要る ×98.20）・
+「外の最大は自分の天井の ×30.6 ＝ 作り方の天井。次の手は `improve`」・**この回に閉じられる前提はありません**
+（いちばん早い期日 09-04）＝ `--moves 0` が正しい回。腕は名指しどおり `per_video`。
+`deadline_check --fit`: 縮める／延ばす期限 0件・台帳 32件（生きた燃料 22件・空になるのは 09/14）。
+`pool_drain`: 外すもの 0本（池化ずみ）。`retro.py` の持ち越し上位 `--moves 0` / `pool_drain --apply` /
+`run_marker.py --write`（実物に当たった回 0）—— この回は持ち越しから選ばず、**目の前の 09/04 の1本**を先にした
+（規則5「公開したら次の日の1本を作り始める」は持ち越しのどれより先）。
+
+### 1. 出したもの（2件）
+
+**(a) `upload`**（腕 `per_video`・`--moves 0`）: **09/04 の1本 `wOlDmGhbBts`（ショート
+`s-kokuho-2wari-cliff-6nin-92570`・族 `kokuho`）を `--draft` で上げた**（`videos.insert`・日枠 0単位・
+予約は付けていない ＝ 規則5「作るのは前の日・予約だけが当日」）:
+
+    python -m src.daily_pick --pick ショート s-kokuho-2wari-cliff-6nin-92570 --why "…"     # 00:25 JST
+    python -m src.pipeline --topic s-kokuho-2wari-cliff-6nin-92570 --dry-run --short       # 約 6分（claude -p 2回・verify 合格）
+    python scripts/check_yomi.py build/…/script.json                                       # 合格（直し 5件）
+    python scripts/upload_only.py s-kokuho-2wari-cliff-6nin-92570 --draft --replaces 17H_GxEFs4U
+    python -m src.daily_pick --pick ショート … --video wOlDmGhbBts --day 2026-09-04 --why "…"
+
+**形と族の決め（数字）**: ショート 48h 中央値 173回 対 長尺 1回（×173）。族は `kokuho` 1,035回(n=3) と
+`shokibo` 1,036回(n=4) が同率1位（差 1回 は雑音）。09/03 が `shokibo` なので**同族2日続きを避け**、
+n=3 の `kokuho` を1本 積んで上位帯の n を増やす側にした。池の `17H_GxEFs4U` は 08/17 焼き（生成側が
+その後 50 commit 以上 動いている）なので**現行の作りで焼き直した**（前の回が `DtpnSVFDtAE` で同じ判断）。
+出来上がり: 10コマ・1コマ 4.5秒（遅い側）・登録の依頼 途中あり・前提の表・「比例なら 9万9120円／実際
+9万2570円／不足 6,550円」の棒・崖の奥（9人で 1,973円）。**サムネイルは載っていない**（帳面 12,447 ＞ 10,000
+で `thumbnails.set` が止まる。bytes は控えに在る）。`17H_GxEFs4U` は private のまま池（**消していない**）。
+**09/04 の枠へは `place_today` が置く** —— `ahead_sweep._today_candidate(09/04)` を撃って
+`wOlDmGhbBts`（source=pick）が返るのを確かめた。
+
+**(b) `fix`**（`scripts/ahead_sweep.py`・`src/daily_pick.py`・検査 +2・`tests/test_today_place.py` ほか 99件 緑）:
+**置く側が公開時刻を掃いていなかった。** `src/publish_hour.sweep_hour()`（09/01・偶数日は対照 9時、
+奇数日は未試行の時刻）は `scripts/slot_gate.py` が回に**助言**するだけで、09/02 に置く手が回の裁量から
+`place_today()` へ移ったとき、そこは **`config_hour()`（9時 固定）**しか読んでいなかった。
+＝「言っている所と、している所が別」が、道具を1段 移した日にそのまま再発（`publish_hour.py` 冒頭が
+名指しした形そのもの）。実測: `sweep_hour(09/04)`=**17時**、機械は **9時**。規則の密度で未試行の時刻は
+**20／24** のまま。1日1本 ＝ 1日に1点しか増えないので、置く側が掃かない限り永久に 0本。
+直し: `ahead_sweep.place_hour(day, sweep=, config=)`（掃く側 → 既定 → 9 の順・純関数）を `place_today` が読む。
+`daily_pick._hour_default(day)` も同じ順（画面が 9時 と言って機械が 17時 に置く形にしないため）。
+**配信の側の `improve`（公開時刻）が、これで回の意思と関係なく毎日 1点 積まれる。**
+**覆る条件**: 前提「公開時刻は per_video に効かない」（期限 10/07・lever density）が閉じたら
+`sweep_hour()` 自身が対照だけ返す。`best_hour()` が `None` のあいだは既定に倒れる。
+
+### 2. この回の間違い
+
+- 最初の `bash scripts/setup.sh &` を `( … &)` の複合で撃って分類器に止められた（`run_in_background` で
+  撃ち直し。数十秒）。
+- `sed -n … $F` のように**変数入りの sed** も、`cat >> docs/JOURNAL.md <<EOF … && git add` のような
+  **ヒアドキュメント＋git の連結**も止められた。**次の回へ**: ワークツリーのサブは、変数を含む複合コマンドと
+  「書く＋git」の連結を撃たないこと（書くのは Write ツール、git は1行ずつ）。
+
+### 3. 設計の見直し（§6 (a2)）
+
+1. **いちばん時間を食ったのは焼き（約 6分・claude -p が verify の指摘で 1回 書き直し）と、手順の読み（約 5分・
+   `sed` 7発）**。どちらも対象のせい。手順のせいは 0分 —— §1 の `--write` が読む順・一時置き場・
+   `[きょうの1本]` の数を1画面で出したので、決めは 2分 で済んだ。
+2. **手順どおりで間違ったところ**: 無い。ただし §4「配信の側は中身の側の 10.3倍」を読んだ直後に
+   `publish_hour` を撃ったら (b) が見つかった —— **「配信の側」の3つ（時刻・形式・面）のうち、
+   時刻だけ機械が持っていて、機械が読んでいなかった**。手順ではなく道具の側を直した。
+3. **最短か: 否。** 焼きの 6分 のうち `claude -p` の 1回目が「棒が公開ずみの 2本と共通」で落ちている ——
+   `s-kokuho-2wari-cliff-16520` と同じ計算（16,520円 × 人数）を主役にする題材だったので、**題材の側で
+   重なりが決まっていた**。次に `kokuho` を選ぶなら `calc_sections` の違う題材を先に。
+   `python -m src.daily_pick` の「まだ作っていない `s-` の題材」に**公開ずみと棒が共通になる題材を
+   落とす**手が入れば、この 3分 は消える（次の回への1手）。
+
+### Fable と速さ
+
+`quota.py --pace`: 週 推定 25%（Fable のみ・上限 100%）。オーナーの上限 0.743 %/時 が効いている
+（持続できる間隔 87分）。**Opus/Sonnet で足りた所**: 焼きの待ち・`upload_only` の実行・検査の実行
+（壁時計 約 8分）。判断が要ったのは「族を `shokibo` か `kokuho` か」「置く側の時刻の直し」の2点。
+
+### 次の回へ
+
+1. **09/03 09:00 JST に `9zkfjEH48PY` が出る**（対照 9時）。**09/04 は `place_today` が `wOlDmGhbBts` を
+   17時 に置く**（掃く側・初めて）。**09/04 の最初の回は `data/ahead_sweep.log` の `[today]` で
+   「17:00」を確かめること** —— 9:00 と出ていたら (b) が効いていない（`place_hour` を疑う）。
+2. **16:00 JST 以降の回**: `python scripts/refresh_thumbnail.py --missing --video 9zkfjEH48PY` と
+   `--video wOlDmGhbBts`（各 50単位）、`python scripts/playlists.py`・`python scripts/post_pending_comments.py`。
+   `python scripts/niche_ceiling.py --form short --queries 5` も 16:00 以降に自分で起きる（`kick`）。
+3. `wOlDmGhbBts` の 48時間 再生を、族 `kokuho` の中央値 1,035回 と並べること（n=3 → 4）。
+   **17時 の本なので、9時 の対照（`9zkfjEH48PY`）と同じ週の点として `python -m src.publish_hour` に入る。**
+4. `daily_pick` の「まだ作っていない `s-` の題材」から、**公開ずみと棒が共通になる題材を落とす**
+   （上の 3-3）。`src/dupes` か `published_bars.json` で 0単位に数えられる。
+5. 期限 09/04 の前提（`per_video`・side=dist）が、次に閉じられる1件。
