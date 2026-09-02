@@ -101776,3 +101776,81 @@ file に記録は1つで、片方が書くともう片方が消える → cap=5,
 3. **09/04 の最初の回**: `ahead_sweep.log` の `[today]` に `6PKux5HNnUE` が 17:00 で置かれたか。
 4. 09/05 09:00 以降 `9zkfjEH48PY` の 48h（350回 の門）／09/06 17:00 以降 `6PKux5HNnUE` の 48h → 前提「外の作り方を写した長尺」を `verdict`（100回 の門）。
 5. `retro.py`: 持ち越しの語が `scripts/*.py` のとき `--dry-run` の1行を印字する（上の (a2) 3）。
+
+## 2026-09-03 04:4x〜05:3x JST —— 最適化の回（Fable 5.1・サブ `session_01AHfq4FUVAd5fxDM29yG1Cm#agent-afd37db450a9a0a1d`）: 「最適化されてんの？」「過去の実行に対して聞いてんだからな」への答え
+
+### 答え: **いいえ**
+
+この回に自分で撃った数（書き置きの結論は使っていない）:
+
+    data/runs.jsonl   ship 282件（08/29 18:51〜09/03 03:57）: fix 201（**71%**）／ verdict 20／ improve 19／ upload 18／ premise 16／ means 8
+                      `moves` が 0 でない回は **1件**。lever は per_video 98・none 90・density 41・gate 19・rpm 15・theta 12・sub_rate 7
+    data/eta.jsonl    1,189点。`target_date` は 08/20 の 2027-01-25／01-24 を最後に **09/03 まで一度も出ていない**。
+                      `traj_date` は 08/20〜08/31 に 2026-11-23〜2027-01-16 の間を往復し、08/31 08:02 から **None（出ません）**
+    per_day_views.py  公開日ごとの 24h 中央値: 08/19 1,092 → 08/23 1,048 → 08/26 134 → 08/28 111 → 09/02 **111**（1本）
+    status.py         登録 25／1,000・長尺 5.72h／4,000h・自分の長尺の 48h 中央値 **1回**（p90 7・最大 73）
+    docs/JOURNAL.md   09/02 夕〜09/03 04:3x の最適化の回 **9回** が全部「いいえ」。名指しした理由は毎回 違う（門・鏡・作れない形・
+                      サムネ無し・日枠 403 …）で、どれも**機械と手順の欠陥**。突き合わせると「その回のあと再生が動いた」回は 0
+
+**目標（月20万）に対して、過去の回は最適化されていない。** 数字が動いたのは道具と手順で、到達日は 08/20 以来 出ていない。
+
+### なぜ近づかない回が選ばれ続けたか（1つ名指し）
+
+**唯一の腕（`per_video`・要る ×21.9）を試す本が、外の上位の「題・尺・絵」を写して、「冒頭 90秒 の話し方」を写していなかった。**
+写す材料が手元に無かったから —— `niche_ceiling.py` は再生数と題と絵を落とすが、**中で何を言っているか**は落とさない。
+この回に外の上位4本の自動字幕を 0単位 で落として並べた（`data/niche_thumbs/<id>.opening.txt`）:
+
+    J6i7L0QSRSQ  5.0M   D9BI69GFWvs  4.4M   mL0bwzi8KFM  3.3M   YRFTmhCp4Fk  2.9M
+    4本とも同じ順: 結論か損の額 1文 → 「知らないと損します／申請しないと1円も」 → 「こんにちは。〇〇です。今回は…」
+                  → 視聴者への問い 2〜3（「〜と感じませんか？」「ご存知でしょうか？」・主語は「皆さん」）
+                  → 「今日の動画を最後まで見れば…」 → 「それでは本題へ」＋目次
+    自分の 09/04 の本 6PKux5HNnUE の最初の 4コマ: 名乗り 0・問い 0・「皆さん／あなた」0・「最後まで」0（3人称の解説）
+
+自分の長尺は 15〜30% の間にいちばん去る（`daily_pick` の中央カーブ）。**写していない所のうち、いちばん先に見られるのがここ。**
+「読みの直し・題の言い換えは数字を持たない」（`hold_lines`）は自分の控えの中の話で、外との差はここに残っていた。
+
+### 直したもの（同じ回に撃って、主実行の中身を変えた。検査 24件 緑・push 済み）
+
+1. `scripts/niche_ceiling.py`: `--openings N` / `--openings-only` —— 長尺の上位 N本 の冒頭 90秒（yt-dlp 自動字幕・API 0単位）を
+   `data/niche_thumbs/<id>.opening.txt` に落とす（`fetch_openings` / `vtt_to_text`）。撃って 4本 置いた
+2. `src/script_writer.py`: `OUTSIDE_LONG_RULE` (1) を上の順（a〜e）に書き換え。**`outside_opening_problems`**（最初の 4コマ で
+   名乗り・問い 2つ・皆さん／あなた 2つ・「最後まで」を数える）を `long_script_problems` に入れた（`style: outside_long` の題材だけ・
+   `_topic_style`）。**文章の指示は守られない（08/09 の実測）ので数える**
+3. `data/scripts/zaishoku-2026-62man.build.py` → `.script.json`: 09/04 の本の冒頭 4コマ を上の順に書き直した
+   （`long_script_problems` 0件・6,584字・20.4分・「同じ1つの式」対 項目3 の数の不一致を1つ 踏んで直した）
+4. `src/daily_pick.py`: `outside_opening_lines` —— [きょうの1本] が、下書きの控え（`critique_queue/<id>.script.json`）と
+   台本（`data/scripts/<題材>.script.json`）を数えて、控えが型の外・台本が型の中なら **16:00 JST 以降の焼き直しの手**
+   （`pipeline --script … --dry-run && upload_only.py <題材> --draft --replaces <ID>`）を印字する。いま撃つと 6PKux5HNnUE に出る
+5. `tests/test_outside_opening.py` 10件
+
+### 「この改善を無限大にしたら、到達日は何日 早まるか」
+
+- 律速は `per_video`（`eta.py` の名指し・要る ×21.9）。外の p90 624,772回 に届く形は長尺だけで、その1本目が 09/04 17:00。
+  冒頭が外の型か否かは**その1本の 48h（前提の門 100回）に直接 乗る**。無限大（外と同じ冒頭で同じ維持率）なら
+  到達日は「出ません」から**初めて数字になる**（前提が閉じる）。0ではない唯一の場所
+- 周の速さ・手順の長さ・日枠は、無限大にしても到達日は 0日（前の回と同じ判断・触っていない）
+
+### 次に主実行が1周したとき、どこが具体的に変わるか（1行）
+
+**[きょうの1本] が `6PKux5HNnUE` の冒頭を「型の外（4件）」と名指しし、16:00 JST 以降の周に `--script data/scripts/zaishoku-2026-62man.script.json … --draft --replaces 6PKux5HNnUE` の1行を渡す（`claude -p` 不要・1,600単位）。以後の `style: outside_long` の生成は冒頭の型で落ちて書き直される。**
+
+### 覆る条件
+
+- 冒頭を型にした本（09/04 焼き直し後）と、しない本（09/05 `dRZnZrRy2Lw`・台本が無いので控えを写して直さない限り旧のまま）の 48h が
+  同じなら、`outside_opening_problems` は落とす側から外して `[!]` の印字だけに戻す（`daily_pick.outside_opening_lines` の docstring）
+- 前提「外の作り方を写した長尺」が外れたら（48h で 100回 未満・期限 09-07）、`OUTSIDE_LONG_RULE` ごと使わない（`next_if_false`）
+- yt-dlp の字幕が取れなくなったら `fetch_openings` は黙って空 —— `--openings-only` が「冒頭 0本」を出したら気づく
+
+### fast_tests: 赤 3件（名前で。**この回の変更とは無関係** —— `git stash` して撃っても同じ 2件＋前の回と同じ 1件）
+
+- `tests/test_judgeable.py::test_実物で期限が構造的に守れる[opening_motion]`（前の回と同じ・対照群の予約 2本 不足）
+- `tests/test_eta_pause_banner.py::test_silent_when_not_paused`（eta の本文に「止まっています」が別の文脈で入っている）
+- `tests/test_same_day_slot_taken.py::test_printer_does_not_offer_today`（同じ枝の 04:xx の回が日付だけ見る形に直した・merge 後は再確認していない）
+
+### 模型のこと
+
+字幕を落として並べる・正規表現で数える・台本を書き直す —— **Opus で足りる**。Fable でないと出ない判断は無し。
+
+### 親へ（触っていない・数だけ）
+
+- 周の速さは前の回と同じ食い違いのまま（`quota.py --pace` 87分 対 実物 28分 に 2体）。03:3x にオーナーへ伝えて返事待ち
