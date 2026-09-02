@@ -99506,3 +99506,39 @@ video_id と `--move` の1行まで出します。**そして同じ形を repo �
   **撃ち直す手は `eta.py` が毎周 印字します。**
 - `UNCHECKABLE` に理由つきで足しました（床が無いので `earliest_*` が当たらない／
   縛っているのは `search.list` の日枠で、枠は毎日 戻るので期限 10-02 は十分 届く）。
+
+### 追記 —— 立てた前提が、**さらに2件**の検査を赤にしていました（同じ回に直した）
+
+隣のサブが回した全数（`20 failed, 5980 passed`）に、**私が立てた前提のぶんが2件**
+入っていました。**`watch:` と `UNCHECKABLE` を直した時点では、まだ足りていません**:
+
+    test_deadline_check::test_開いている前提には全部_needs_が書いてある   ← `needs:` が無い
+    test_deadline_check::test_遅すぎる期限が残っていないこと              ← 上を直した結果 出た
+
+**`needs:` を `kind: now` と書いたのが1回目の間違いでした。** `now` は
+「きょう判定できる」の意味で、そう書くと**期限に1日でも余白があるだけで赤くなります。**
+この前提が待っているのは本でも日数でもなく「**別の日が来ること**」なので、
+正しいのは `kind: after`（`on_date: 2026-09-03` / `plus_lag: false`
+—— Analytics を1行も読まないので、あの3日は掛かりません）。
+
+**期限は 10-02 → 09-05 → 09-03 と2回 縮みました。** 最後は
+`python scripts/deadline_check.py --shrink` が書き換えた値です。
+**09-05 は「枠が 429 で潰れたとき用の余白 2日」でしたが、これも赤で潰されました** ——
+検査の註がそのまま理由です:
+
+> **期限を水増しして待つと、`arm_speed.forward()` は `ready` の側を読むので、
+> 予測だけが「その日に閉じる」前提のまま残る**（＝ 到達日が早すぎる側に出る）
+
+**余白は `deadline` ではなく `needs` に書くこと。**
+09-03 に撃って4語とも 429 だったら、**その回が理由を書いて延ばすこと。**
+
+**残り5件は私のぶんではありません**（`git stash` して同じ5件が出ることを確認）——
+`test_narrated`（`video_id` の KeyError）・`test_judgeable[opening_motion]`・
+`test_fix_gate_free_alternatives`。**隣の車線です。**
+
+**次に前提を立てる側へ**: `config/hypotheses.yaml` に1件 足すと、**登録先が4か所**
+あります（`needs:` ／ `deadline` が `ready` と一致 ／ `UNCHECKABLE` か `CHECKABLE` ／
+`watch:` を書くなら `config/watches.yaml`）。**この回は4か所とも1発では通せず、
+検査に3回 直されました。** 立てたら、その場で
+`pytest tests/test_deadline_check.py tests/test_hypothesis_deadline_reachable.py tests/test_watches.py -q`
+を撃つこと（**50秒**）。
