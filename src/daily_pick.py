@@ -455,13 +455,13 @@ def _ratio_line(cmp: dict, draft_form: str) -> str | None:
     if a is None or b is None or (b <= 0 and a <= 0):
         return None
     if a <= 0:
-        return (f"     ＝ 下書きの形（{draft_form}）の中央値は 0回。もう一方（{other}）は "
+        return (f"     ＝ 次に出る本の形（{draft_form}）の中央値は 0回。もう一方（{other}）は "
                 f"{_fmt(b)}。")
     r = b / a
     if r >= 1:
-        return (f"     ＝ 下書きの形（{draft_form}）は、もう一方の形（{other}）の "
+        return (f"     ＝ 次に出る本の形（{draft_form}）は、もう一方の形（{other}）の "
                 f"**1/{r:,.0f}**（中央値どうし）。")
-    return (f"     ＝ 下書きの形（{draft_form}）は、もう一方の形（{other}）の "
+    return (f"     ＝ 次に出る本の形（{draft_form}）は、もう一方の形（{other}）の "
             f"**×{1 / r:,.1f}**（中央値どうし）。")
 
 
@@ -492,7 +492,7 @@ def lines(next_row: dict | None, now: datetime | None = None,
     if next_row:
         draft_form, how = _form_of(next_row, _measured_forms())
         draft_fam = family_of(next_row.get("topic"))
-        out.append(f"     下書き `{next_row.get('video_id')}` は **{draft_form}**"
+        out.append(f"     次に出る本 `{next_row.get('video_id')}` は **{draft_form}**"
                    f"（題材 `{next_row.get('topic')}`・族 `{draft_fam or '?'}`・形の決め方 {how}）")
     rd = c.get("recent_days", 14)
     out.append(f"     齢 {AGE_HOURS}時間 でそろえた1本あたり再生（`data/views.jsonl`・API 0単位・"
@@ -522,10 +522,10 @@ def lines(next_row: dict | None, now: datetime | None = None,
         if draft_fam:
             rk, st = family_rank(fams, draft_fam)
             if st:
-                out.append(f"     下書きの族 `{draft_fam}` は {rk}位／{len(fams)}族"
+                out.append(f"     次に出る本の族 `{draft_fam}` は {rk}位／{len(fams)}族"
                            f"（ショート 中央値 {_fmt(st['median'])}・n={st['n']}）")
             else:
-                out.append(f"     下書きの族 `{draft_fam or '?'}` は、ショートで測ったことがありません")
+                out.append(f"     次に出る本の族 `{draft_fam or '?'}` は、ショートで測ったことがありません")
     rows_all = c.get("rows") or []
     pool = pool_candidates(fams=fams, exclude=(next_row or {}).get("video_id"),
                            rows=rows_all) if cands is None else cands
@@ -565,10 +565,10 @@ def lines(next_row: dict | None, now: datetime | None = None,
                        f"（1本 50単位・先の日付には置かない）:")
             out.append(f"       python scripts/reschedule.py --move {vid} {day:%Y-%m-%d}T{hour:02d}:00")
             if next_row and next_row.get("video_id") and next_row.get("video_id") != vid:
-                out.append(f"     　 下書き `{next_row.get('video_id')}` は**消さない**"
+                out.append(f"     　 次に出る本 `{next_row.get('video_id')}` は**消さない**"
                            f"（private のまま池に残す。決めた本が出せなくなった日の代わり）。")
         elif draft_form and cur.get("form") and cur.get("form") != draft_form:
-            out.append(f"     [!] **決めた形（{cur.get('form')}）と、下書きの形（{draft_form}）が"
+            out.append(f"     [!] **決めた形（{cur.get('form')}）と、次に出る本の形（{draft_form}）が"
                        f"違います** —— 決めた題材を作って `--draft` で上げること"
                        f"（上げた最新の下書きが `[次の枠]` になります）。")
     else:
