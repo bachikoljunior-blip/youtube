@@ -58,6 +58,63 @@ def _frame(video: Path, at: float, dest: Path) -> Path | None:
     return dest if dest.exists() else None
 
 
+def clip_marks(work: Path, head: float = 0.25) -> list[float] | None:
+    """**コマ1枚につき1点**の抜きどころ（秒）。クリップが無ければ `None`。
+
+    ## なぜ要るか（2026-09-02 に、出す本の sheet を目で見て踏んだ）
+
+    ここは長らく**等間隔**でした（`head + (total-head) * i/(count-1)`）。
+    枚数は `slides_plan.json` のコマ数に合わせてあるので、**枚数は合います。**
+    **合っていなかったのは中身のほうです** —— クリップの長さは揃っていない
+    （ナレーションの長さで決まる）ので、等間隔だと
+
+        長いコマ  **2回** 抜かれる
+        短いコマ  **1回も** 抜かれない
+
+    が普通に起きます。実測（`gassan-kaigo-alone-155`・18コマ）:
+    **最後のコマが2枚**並び、**15番目（「合算に入らない負担」）が1枚も
+    出ていませんでした。** それでも印字は
+
+        [inspect] 計画は 18コマ。18枚で**全部に届いています**
+
+    **枚数だけを見て「全部に届いています」と言っていた**わけです。
+    この sheet は `docs/CRITIQUE.md` の独立評価にそのまま渡るので、
+    **見せていないコマに点が付き、見せすぎたコマが二重に効きます。**
+    この file の docstring が3件 並べている
+    「**計器が、動画に無いものを見せた／あるものを隠した**」の**4件目**です。
+
+    ## どう取るか
+
+    `clips/clip_*.mp4` の長さを積んで、**各クリップの真ん中**を返します
+    （1コマ＝1クリップ）。ただし**先頭だけは真ん中ではなく `head` 秒**です ——
+    独立評価が聞いているのは「**最初の1.5秒**で親指が止まりますか」で、
+    1本目の真ん中（実測 2〜3秒）はその区間の外に出ます
+    （2026-08-15 の「冒頭を必ず1枚入れること」を壊さないため）。
+
+    ## 覆る条件
+
+    - `clips/` はビルドの作業ディレクトリにしか在りません。**投稿後に消えたら
+      `None` を返し、呼ぶ側は等間隔へ落ちます**（そのときは「届いています」と
+      言わないこと —— 下の `main()` がそう分けています）。
+    - 1コマを2つに割る演出（`reveal_variants`）が入ると、クリップ数と
+      `slides_plan.json` のコマ数がずれます。**ずれたらクリップ側が正**です
+      （実際に画面へ出るのはクリップなので）。
+    """
+    clips = sorted((work / "clips").glob("clip_*.mp4"))
+    if not clips:
+        return None
+    marks: list[float] = []
+    at = 0.0
+    for i, c in enumerate(clips):
+        try:
+            d = _duration(c)
+        except Exception:                                      # noqa: BLE001
+            return None                                        # 1本でも読めなければ落ちる
+        marks.append(head if i == 0 else at + d / 2.0)
+        at += d
+    return marks
+
+
 def planned_frames(work: Path) -> int:
     """`slides_plan.json` が言っているコマ数。無ければ 0。"""
     plan = work / "slides_plan.json"
@@ -234,8 +291,23 @@ def main(topic: str, count: int = 0, with_thumb: bool = False) -> int:
         # 0.0秒ちょうどは暗転や無音を拾うことがあるので 0.25秒から始め、
         # 残りは末尾まで均す。
         head = 0.25
-        for i in range(count):
-            at = head + (total - head) * i / max(count - 1, 1)
+        # **クリップの真ん中から1枚ずつ**（2026-09-02。`clip_marks()` の註）。
+        #     等間隔だと、長いコマが2回・短いコマが0回 になります ——
+        #     実測でこの本は**最後のコマが2枚・15番目が0枚**でした。
+        #     クリップが読めない回だけ、これまでどおり等間隔へ落ちます。
+        marks = clip_marks(work, head=head)
+        per_clip = marks is not None
+        if marks is None or (count and len(marks) != count):
+            # **枚数が明示された回（`<ID> N`）は、その N を優先すること。**
+            #     `clip_marks()` は「1コマ1枚」しか返せないので、
+            #     人が枚数を指定した回は等間隔のほうが意図に合います。
+            if marks is not None and count and len(marks) != count:
+                print(f"[inspect] クリップは {len(marks)}本、枚数の指定は {count}枚 —— "
+                      "**等間隔で抜きます**（1コマ1枚にはなりません）")
+                per_clip = False
+            marks = [min(head + (total - head) * i / max(count - 1, 1),
+                         max(total - 0.2, 0.0)) for i in range(count)]
+        for i, at in enumerate(marks):
             at = min(at, max(total - 0.2, 0.0))
             got = _frame(video, at, tmpdir / f"f{i}.jpg")
             if got:
@@ -270,12 +342,24 @@ def main(topic: str, count: int = 0, with_thumb: bool = False) -> int:
         print("          目視が最後のコマを「壊れている」と言ったら、まずこの枠を疑うこと。")
     # **計器に、自分の見落としを言わせる。**
     # 黙って足りない sheet は「全部見た」として読まれます（8/15〜8/16 に3回）。
+    # **「枚数が足りている」を「全部 見えている」と言わないこと**（2026-09-02 に踏んだ）。
+    #     等間隔で抜くと、枚数が合っていても**長いコマが2回・短いコマが0回**になります。
+    #     実測（`gassan-kaigo-alone-155`・18コマ・18枚）: 最後のコマが2枚、
+    #     15番目（「合算に入らない負担」）が **0枚**。それでもこの行は
+    #     「**18枚で全部に届いています**」と言っていました。
+    #     **1コマ1枚で抜けた回だけ「届いています」と言えます。**
     if planned:
         if len(tiles) < planned:
             print(f"[inspect] **この sheet は {planned}コマ中 {len(tiles)}枚しか見ていません。**"
                   f" 落ちたコマは採点されません（`inspect_build.py <ID> {planned}` で全部見えます）")
+        elif per_clip:
+            print(f"[inspect] 計画は {planned}コマ。**クリップ1本につき1枚**"
+                  f"（{len(tiles)}枚）で全部に届いています")
         else:
-            print(f"[inspect] 計画は {planned}コマ。{len(tiles)}枚で全部に届いています")
+            print(f"[inspect] 計画は {planned}コマ・{len(tiles)}枚ですが、"
+                  "**等間隔で抜いています** —— 枚数は足りていても、"
+                  "**長いコマが2回・短いコマが0回**になることがあります"
+                  "（`clips/` が読めない回。**「全部 見た」とは言えません**）")
     else:
         print("[inspect] `slides_plan.json` が無いので、コマ数と突き合わせていません")
     print("[inspect] Read で開いて、次を見ること:")
