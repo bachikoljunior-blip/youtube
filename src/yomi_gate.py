@@ -287,10 +287,18 @@ def inspect(text: str, risk: dict | None = None, ledger: dict | None = None) -> 
             continue
         if len(group) >= 2:
             run = "".join(g["surface"] for g in group)
+            # **耳が safe と言った1字は、刻まれていても合図にしない**（2026-09-03 に踏んだ）。
+            # 「月十万円」「年五十四万円」の 月・年 は 名詞-一般 の1字なので `_glue` に
+            # 掛からず、耳が 年（ネン）・月（ツキ）を safe と判定した後も
+            # **1本あたり 75件** が R2 で並び続けていた（09/04 の本の実測。うち 74件 が
+            # この形）。R1 は上で台帳を見て黙るのに、R2 だけ見ていなかった。
+            # `_numeral` の註と同じ形 —— 数詞で埋まると本当に危ない語が読めなくなる。
             inside = [g["surface"] for g in group
-                      if len(g["surface"]) == 1 and not _glue(g)]
+                      if len(g["surface"]) == 1 and not _glue(g)
+                      and (ledger.get(g["surface"]) or {}).get("verdict") != "safe"]
             if len(run) >= 3 and run not in named and inside:
                 found.append({"code": "R2", "surface": run, "pron": "",
+                              "inside": inside,
                               "why": f"「{run}」が1文字に刻まれている（{'・'.join(inside)}）。"
                                      f"辞書に無い並びで、エンジンごとに読みが変わる"})
                 named.add(run)
@@ -345,12 +353,21 @@ def queue(hits: list[dict]) -> None:
         row = seen.get(key) or {}
         seen[key] = {"code": hit["code"], "surface": hit["surface"],
                      "why": hit["why"], "n": int(row.get("n", 0)) + 1}
+        if hit.get("inside"):
+            seen[key]["inside"] = list(hit["inside"])
     # **判定ずみの語を待ち行列に残さないこと。** 耳が safe と言った語は
     # `inspect()` がもう名指ししないので、ここに残っていると
     # `status.py` が**いつまでも古い名前を出し続けます**（積むだけで減らない表は、
     # 読まれなくなって、積んでいないのと同じになります）。
     done = {w for w, e in load_ledger().items() if e.get("verdict") == "safe"}
     seen = {k: v for k, v in seen.items() if v.get("surface") not in done}
+    # R2 の並び（「月十万円」）は表層が語ではないので、上の1行では消えません。
+    # **刻まれていた1字（月）が全部 safe になったら、その並びも消えること**
+    # （2026-09-03 に踏んだ: 年（ネン）が 09/02 に safe になった後も
+    # 「年十五万七千八百五十三円」n=25 が待ち行列に残り続けていた）。
+    seen = {k: v for k, v in seen.items()
+            if not (v.get("code") == "R2" and r2_inside(v)
+                    and all(c in done for c in r2_inside(v)))}
     body = json.dumps({"at": _now(), "open": seen}, ensure_ascii=False, indent=1)
     # **`batch_build` は並列に走る。** そのまま write_text すると、
     # 別の工程が途中まで書かれた JSON を読む（`_load` が握り潰して空扱いにする ＝
@@ -363,6 +380,17 @@ def queue(hits: list[dict]) -> None:
     finally:
         if tmp.exists():
             tmp.unlink()
+
+
+def r2_inside(row: dict) -> list[str]:
+    """R2 の行が名指ししている1字。新しい行は `inside` に持ち、
+    古い行（2026-09-03 より前に積んだもの）は `why` の「（月・年）」から読む。"""
+    if row.get("inside"):
+        return [str(c) for c in row["inside"]]
+    m = re.search(r"（([^（）]+)）", str(row.get("why", "")))
+    if not m:
+        return []
+    return [c for c in m.group(1).split("・") if len(c) == 1 and _KANJI_RE.search(c)]
 
 
 def _now() -> str:
