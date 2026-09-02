@@ -207,3 +207,68 @@ def test_wired_into_the_first_screen():
     assert "out = list(cal) + [" in src, "暦が `[次の枠]` より前に出ていません"
     rm = (ROOT / "scripts" / "run_marker.py").read_text(encoding="utf-8")
     assert "next_slot.lines()" in rm, "run_marker が next_slot.lines() を呼んでいません"
+    assert "draft_lines(now=now)" in src, "下書きの行が `lines()` から外れています"
+
+
+# ---------------------------------------------------------------- 下書き（規則5）
+#
+# **「作ってあるが、まだ予約していない本」を、どの道具も出していませんでした。**
+# `next_video()` は `at` が未来の行しか見ないので、`--draft` で上げた本は
+# **どの画面にも出ません** ＝ 次に来た回は、もう在る本をもう一度 作ります。
+#
+# オーナー原文（固定その4「1日の回り方」）:
+# 「**その日の投稿の後は次の日の作成になるってわかってるよな？**」
+
+
+def _draft_ledger(tmp_path, rows: list[dict]) -> Path:
+    p = tmp_path / "uploaded.jsonl"
+    p.write_text("\n".join(json.dumps(r, ensure_ascii=False) for r in rows),
+                 encoding="utf-8")
+    return p
+
+
+def test_下書きだけを拾う_池化した本は拾わない(tmp_path):
+    """**`retimed_at` が本体です**（2026-09-02 に、撃って踏んだ）。
+
+    最初は「`at` が空・`uploaded_at` が新しい」だけで切りました。実物で撃つと
+    **136本** —— `pool_drain` で外した本も `at` が `None` になるので、
+    **池化したばかりの本が全部 混ざりました。**「まだ予約していない本」とは
+    **逆の意味の本**です。`retime()` が残す `retimed_at` で分かれます。
+    """
+    made = "2026-09-01T02:00:00+00:00"
+    rows = [
+        {"video_id": "draft1", "title": "下書き", "topic": "t-1",
+         "at": None, "uploaded_at": made},
+        {"video_id": "drained", "title": "外した本", "topic": "t-2",
+         "at": None, "uploaded_at": made,
+         "retimed_at": "2026-09-01T07:00:00+00:00"},
+        {"video_id": "sched", "title": "予約ずみ", "topic": "t-3",
+         "at": "2026-09-24T11:00:00Z", "uploaded_at": made},
+        {"video_id": "old", "title": "古い下書き", "topic": "t-4",
+         "at": None, "uploaded_at": "2026-08-01T02:00:00+00:00"},
+    ]
+    p = _draft_ledger(tmp_path, rows)
+    got = [r["video_id"] for r in next_slot.drafts(now=NOW, path=p)]
+    assert got == ["draft1"], got
+
+
+def test_下書きの行は_きょうの日付で_move_を出す(tmp_path):
+    """**先の日付を書かないこと。** 出す `--move` は、必ず**きょう**です。"""
+    from src import house_rule
+    if not house_rule.same_day_only():
+        return
+    rows = [{"video_id": "draft1", "title": "下書き", "topic": "t-1",
+             "at": None, "uploaded_at": "2026-09-01T02:00:00+00:00"}]
+    p = _draft_ledger(tmp_path, rows)
+    body = "\n".join(next_slot.draft_lines(now=NOW, path=p))
+    assert "draft1" in body, body
+    # NOW は 09/01 20:00 JST ＝ きょうは 09/01
+    assert "--move draft1 2026-09-01T" in body, body
+    assert "2026-09-02T" not in body, "**先の日付を書いています**"
+
+
+def test_下書きが無ければ黙る(tmp_path):
+    p = _draft_ledger(tmp_path, [
+        {"video_id": "sched", "title": "予約ずみ", "topic": "t-3",
+         "at": "2026-09-24T11:00:00Z", "uploaded_at": "2026-09-01T02:00:00+00:00"}])
+    assert next_slot.draft_lines(now=NOW, path=p) == []

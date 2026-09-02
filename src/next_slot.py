@@ -827,12 +827,96 @@ def calendar_lines(now: datetime | None = None,
     return out
 
 
+def drafts(now: datetime | None = None,
+           path: Path | None = None, days: int = 7) -> list[dict]:
+    """**予約を付けずに上げた private の下書き**（新しい順）。**API 0単位。**
+
+    ## なぜ要るか（2026-09-02・規則5「1日の回り方」）
+
+    オーナー原文:「**その日の投稿の後は次の日の作成になるってわかってるよな？**」
+
+        公開したら → **すぐ次の日の1本を作り始める**（`upload_only.py <ID> --draft`）
+                   → 次の枠まで改善し続ける
+                   → **その日になったら、その日で予約して出す**
+
+    **真ん中の「作ってあるが、まだ予約していない本」を、どの道具も出していません**
+    でした。`next_video()` は `at` が未来の行しか見ないので、**下書きは
+    どの画面にも出ません** —— つまり次に来た回は、**もう在る本をもう一度 作ります。**
+
+    見分け方は3つ揃うこと ——
+
+        `at` が空          まだ予約が入っていない
+        `uploaded_at` が在る 上がってはいる（`--skip-upload` の本と分かれる）
+        **`retimed_at` が無い** ＝ **一度も予約されたことがない**
+
+    ## **3つ目が本体です**（2026-09-02 に、撃って踏んだ）
+
+    最初は `days`（新しさ）だけで切りました。**実物で撃つと 136本** ——
+    `pool_drain` で外した本も `at` が `None` になるので、
+    **池化したばかりの本が全部 混ざりました**（`UIWHsypOPPg` `J67vEIw_VRE` …）。
+    「作ってあるが、まだ予約していない本」とは**逆の意味の本**です。
+
+    `dupes.retime(id, None)` は `retimed_at` を残します。**`--draft` で上げた本は
+    予約を一度も触っていないので、この印がありません。** そこで分かれます。
+    `days` は保険として残してあります（古い控えの取りこぼし避け）。
+
+    ## 覆る条件
+
+    `retime()` が印を残さなくなったら、ここは池化した本を全部 拾い直します
+    （＝ また 136本 に戻ります）。**そのときは印のほうを直すこと。**
+    """
+    t = now or datetime.now(timezone.utc)
+    latest: dict[str, dict] = {}
+    for r in _rows(path):
+        vid = r.get("video_id")
+        if vid:
+            latest[str(vid)] = r
+    out = []
+    for r in latest.values():
+        if r.get("at") or r.get("retimed_at"):
+            continue                      # 予約ずみ／**一度 予約して外した本**（池化）
+        made = _parse(r.get("uploaded_at"))
+        if made is None or (t - made).days > days:
+            continue
+        out.append({**r, "_made": made})
+    out.sort(key=lambda r: r["_made"], reverse=True)
+    return out
+
+
+def draft_lines(now: datetime | None = None,
+                path: Path | None = None) -> list[str]:
+    """`drafts()` を画面へ。**規則5 が効いている回だけ出します**（無ければ空）。"""
+    try:
+        from src import house_rule                             # noqa: PLC0415
+        if not house_rule.same_day_only():
+            return []
+    except Exception:                                          # noqa: BLE001
+        return []
+    got = drafts(now=now, path=path)
+    if not got:
+        return []
+    t = (now or datetime.now(timezone.utc)).astimezone(JST)
+    out = [f"[下書き] **予約を付けずに上げてある本が {len(got)}本 あります**"
+           "（規則5「1日の回り方」—— 作るのは前の日から、**予約だけが当日**）"]
+    for r in got[:3]:
+        made = r["_made"].astimezone(JST)
+        out.append(f"     `{r.get('video_id')}`　{str(r.get('title') or '')[:40]}"
+                   f"　焼いたのは {made:%m/%d %H:%M} JST")
+    out.append("     **その日になったら、その日の枠へ入れること**（1本 50単位）:")
+    out.append(f"       python scripts/reschedule.py --move {got[0].get('video_id')}"
+               f" {t:%Y-%m-%d}T20:00")
+    out.append("     **先の日付を書かないこと。** それまでは規則3 の対象です"
+               "（次の枠で出る1本を、出る瞬間まで良くし続ける）")
+    return out
+
+
 def lines(now: datetime | None = None) -> list[str]:
     """画面へ出す行。**`improve` の当てどころを、fix と同じ形で毎周 出します。**"""
     # **暦を先に出すこと**（2026-09-01 夜）。下の `[次の枠]` は「次の1本」しか
     #     見ないので、**その1本の後ろが19日 空でも、この画面には一度も出ませんでした。**
     #     `improve` の当てどころより先に、**そもそも出る本が在るか**を見ます。
     cal = calendar_lines(now=now)
+    cal = list(cal) + draft_lines(now=now)
     v = next_video(now=now)
     if not v:
         return cal + ["[次の枠] **予約が1本もありません。** `improve` は当てどころが無い回です"
