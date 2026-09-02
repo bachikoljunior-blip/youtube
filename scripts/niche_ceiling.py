@@ -194,18 +194,88 @@ def verdict(best: float, own: float, need: float = NEED_OVER_CAP) -> tuple[str, 
     ratio = (best / own) if own else 0.0
     if ratio >= need:
         return "mirror", (
-            f"[!] **外の最大は自分の天井の ×{ratio:.1f} で、要る ×{need} を超えています。**"
+            f"[!] **外の最大は自分の天井の ×{ratio:.1f} で、要る ×{need:.2f} を超えています。**"
             f" ＝ **{own:,.0f}回 は帯の天井ではなく、この作り方の天井です。**"
             " `eta.py` の「出ません」は、形ではなく**作り方**のせい ——"
             " 次の手は `improve`（1本の作り方を変える）です")
     if ratio >= 1.0:
         return "niche_short", (
-            f"[!] **外の最大は自分の天井の ×{ratio:.1f}。要る ×{need} には届きません。**"
+            f"[!] **外の最大は自分の天井の ×{ratio:.1f}。要る ×{need:.2f} には届きません。**"
             " ＝ 作り方で天井を上げても足りない。**帯（ニッチ）を変える手が要ります**"
             "（`CLAUDE.md`「ニッチも尺も形式も頻度もチャンネルも、変えてよい対象です」）")
     return "niche_wall", (
         f"[!] **外の最大でも自分の天井の ×{ratio:.1f} —— 帯そのものが天井です。**"
         " **本の作り方をいくら直しても届きません。ニッチを変えること。**")
+
+
+def latest(path: Path | None = None) -> dict | None:
+    """**帳面の最後の1件**（`data/niche_ceiling.jsonl`）。**撃ちません・API 0単位。**
+
+    `scripts/eta.py` が毎回これを読みます —— **撃った数が主実行に届く口**です。
+    """
+    p = path or LEDGER
+    row = None
+    try:
+        with p.open(encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    row = json.loads(line)
+                except Exception:                              # noqa: BLE001
+                    continue
+    except FileNotFoundError:
+        return None
+    return row
+
+
+def eta_line(need_over_cap: float | None = None, path: Path | None = None,
+             now: datetime | None = None) -> str | None:
+    """**`eta.py` の「天井そのものを ×N 上げないと」の直後に出す1行。**
+
+    ## なぜ要るか（2026-09-02・最適化の回）
+
+    `eta.py` はずっと「**この回に立てるべき前提は『その天井は天井ではない』**」
+    と書いていました。**書いてあるだけで、確かめる口がありませんでした** ——
+    天井 4,229 は `ceiling_at_rule()` ＝ **自分の記録**から作った数で、
+    「天井ではない」と言うための**外の数**がどこにも無かったからです。
+
+    この行は、`niche_ceiling.py` が実際に撃って取った**外の最大**を、
+    要る倍率（`lever_need_over_cap`）と**同じ画面**に並べます。
+    **並ばないかぎり、撃った数は主実行に届きません。**
+
+    **覆る条件**: 帳面が空／古い（30日超）なら `None` を返して1行も出しません
+    —— **出ない行は、読む側の手順を増やしません。**
+    """
+    row = latest(path)
+    if not row:
+        return None
+    own = row.get("own_ceiling")
+    s = row.get("summary") or {}
+    best = max((int((s.get(f) or {}).get("max", 0) or 0) for f in ("short", "long")),
+               default=0)
+    if not own or not best:
+        return None
+    age = ""
+    try:
+        at = datetime.fromisoformat(str(row["at"]))
+        d = ((now or datetime.now(timezone.utc)) - at).days
+        if d > 30:
+            return None
+        age = f"{d}日前"
+    except Exception:                                          # noqa: BLE001
+        pass
+    need = need_over_cap if isinstance(need_over_cap, (int, float)) and need_over_cap \
+        else NEED_OVER_CAP
+    code, line = verdict(best, own, need)
+    forms = " ／ ".join(
+        f"{'ショート' if f == 'short' else '長尺'} 最大 {int(d['max']):,}回（n={d['n']}）"
+        for f, d in s.items() if (d or {}).get("n"))
+    return (f"   {line} —— **外の実測**（`scripts/niche_ceiling.py`・{age}）: {forms}。"
+            f" 自分の天井 {own:,.0f}回 は `ceiling_at_rule()` ＝ **自分の記録**から作った数です。"
+            " **取り直す手**: `python scripts/niche_ceiling.py`"
+            "（`search.list` 100単位/語。**日枠が尽きていたら 429 で 0本**）")
 
 
 def render(res: dict) -> list[str]:
