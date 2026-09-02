@@ -8400,7 +8400,9 @@ def headline(pl: dict, prev: dict | None = None,
         #     `search.list` で撃って `data/niche_ceiling.jsonl` に積み、ここで読みます。
         #     **消す条件**: あちらの `eta_line()` の註（帳面が空／30日超なら 0行）。
         try:
-            sys.path.insert(0, str(Path(__file__).resolve().parent))
+            _here = str(Path(__file__).resolve().parent)
+            if _here not in sys.path:
+                sys.path.insert(0, _here)
             import niche_ceiling as _nc                        # noqa: PLC0415
             _nl = _nc.eta_line(pl.get("lever_need_over_cap"))
             if _nl:
