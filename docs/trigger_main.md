@@ -1748,6 +1748,37 @@ Python だけが死ぬ**という形で出ます。**いちばん読み違えや
     python scripts/pool_drain.py                                 ← **API 0単位・数秒。下の註**
     python /home/user/youtube/scripts/eta.py
 
+##### **【2026-09-02】この節は、もう「覚えておくこと」ではありません**
+
+オーナー原文（この日）:
+
+> **「1日一本になってないんだけど、今後こういうことが一切ないようにしろ」**
+
+**上の「3行目に入れること」は、書いたとおりに読まれ、それでも撃たれませんでした**
+—— 08/31 の固定から2日で、先の日付の予約は **459本 → 107本 にしか
+減っていません**（09/01 の実測: `fix` 82% ／ `upload` 0件）。
+**選ばれない手は、撃たれません。**
+
+**だから、この仕事は手順から機械へ移しました。** 3か所です:
+
+    置く側の関門  `src.house_rule.refuse_future_publish()`
+                  → **先の日付には、もう1本も置けません**
+                    （`reschedule._update` / `uploader.next_publish_at` /
+                      `uploader.upload` の3つが呼びます。自動探索は下書きへ倒れます）
+    終わりの門    `scripts/stop_check.sh` (1.45) ＋ `scripts/ahead_gate.py --gate`
+                  → **0本にしないまま、この回を終われません**（12回で通します）
+    掃き          `scripts/ahead_sweep.py`（`SessionStart` から背景で）
+                  → **この回が何も選ばなくても掃きます**
+
+**この回がやることは、もうありません。** 数えたければ:
+
+    python scripts/ahead_gate.py          # 控えと実物・**API 0単位**
+    python scripts/ahead_gate.py --live   # **実物**を引き直す（十数単位）
+
+**逃げ道は「日枠が尽きている」1つだけで、道具が自分で
+`upload_cap.day_quota()` に訊きます**（回の申告ではありません）。
+理由と覆る条件は `docs/JOURNAL.md` 2026-09-02 15:3x。
+
 ##### **`pool_drain` を、この3行目に入れること**（2026-09-01 に踏んだ。**`deadline_check` と同じ形の2件目**）
 
 **実測 2026-09-01: `grep -c pool_drain docs/trigger_main.md` → 0。**
