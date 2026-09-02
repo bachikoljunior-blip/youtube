@@ -2248,6 +2248,19 @@ def main(argv: list[str] | None = None) -> int:
                 print("[marker]   **その回の JOURNAL に「枠が尽きていた」と書くこと** —— "
                       "書かないと、次に `retro.py` を読んだ回が"
                       "「fix に偏っている」だけを見て、偏りの理由を「選び方が悪い」と読みます。")
+            elif _run >= FIX_RUN_CAP and cond4().get("fired"):
+                # **門の自分の「覆る条件4」が立っているなら、門は通す**（2026-09-02 夜）。
+                #     `cond4()` は 09/02 夕に「既に立っていた」と実測され、`cond4_line()` は
+                #     止めた回に**毎回**「律速は `fix` ではありません。回の配合をこれ以上
+                #     いじらないこと」と印字していました —— **印字しながら止めるのは、
+                #     配合をいじり続けることそのもの**です（この回に実物で踏んだ:
+                #     置く側の機械化と、親の周の割れの直しが、この門で2度 記録できなかった）。
+                #     条件4 が偽に戻れば（`traj_days` が動いた回が出れば）門は自動で戻ります。
+                #     **通したことは残します**（`waived`）。
+                note_fix_gate(args.ship, _run, waived=True)
+                print(f"[marker] **`fix` が {_run}回 続いています**（上限 {FIX_RUN_CAP}）が、"
+                      "**この門の覆る条件4 が立っているので通します** —— "
+                      f"{cond4_line()}")
             elif _run >= FIX_RUN_CAP:
                 note_fix_gate(args.ship, _run)
                 _alt = near_deadlines()

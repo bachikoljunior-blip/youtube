@@ -66,10 +66,14 @@ def test_free_alternatives_names_improve_and_upload_when_a_next_video_exists() -
     （`near_deadlines()` の註と同じ理由）。
     """
     out = run_marker.free_alternatives()
-    if not out:
-        # 次に公開される1本が無い窓。**そのときは空が正しい**（下の検査が見ます）。
-        from src import next_slot
-        assert next_slot.next_video() is None
+    from src import next_slot
+    if next_slot.next_video() is None:
+        # 次に公開される1本が無い窓（規則5 の下では、きょうの1本を置くまで毎日そうです）。
+        # **`premise` はいつでも在るので一覧は空になりません** —— `improve` だけが無い。
+        # 2026-09-02 夜まで、ここは「一覧が空なら」で分岐していたので、
+        # 予約の無い時間帯は毎回 赤でした（`premise` の行だけが返るため）。
+        assert not any("`improve`" in ln for ln in out), "次の1本が無いのに improve を名指ししています"
+        assert any("premise" in ln for ln in out), "`premise` はいつでも在るはずです"
         return
     joined = "\n".join(out)
     assert "improve" in joined, "0単位 の `improve` が名指しされていません"
