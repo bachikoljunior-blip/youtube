@@ -966,6 +966,14 @@ _MIN_SPAN_DAYS = 2
 _BUILD_LEDGER = "rows('batch_runs.jsonl')"
 
 
+class _SameDayRule(Exception):
+    """**規則5（固定その4）が効いているので、暦の空きでは押さえない。**
+
+    例外にしてあるのは、`cal_note` を作る `try` の**中から一発で降りる**ためです
+    （`next_slot.calendar()` を撃つ前に降りるので、読みも走りません）。
+    """
+
+
 def _ledger_frozen(expr: str) -> bool:
     """**その `count_expr` は、停止中に1件も増えないか。**（`_ans_accrual` が読む）
 
@@ -1379,9 +1387,28 @@ def _ans_accrual(need: dict, as_of: date) -> Answer:
         #   **覆る条件**: `scripts/reschedule.py --compact --apply` で暦が
         #   1本/日 に戻れば、`near_density` が 1.0 になり、この押さえは
         #   何もしなくなります（＝ 押さえが効いている間は、暦が薄いということです）。
+        #
+        #   ## **【2026-09-02】規則5 の下では、この押さえを使いません**
+        #
+        #   オーナー原文（固定その4）:
+        #   「**現在の日付にしか予約しないってことだからね？**」
+        #   ＝ **先の日付が空であることが正しい状態**です。
+        #
+        #   上の押さえは「暦の空きは供給の薄さだ」と読みますが、規則5 の下では
+        #   **暦は常に空**なので、`near_density` は必ず 0 付近になります。
+        #   そのまま `cap` に入れると、**どの前提も「約 460日」「永久に閉じない」**
+        #   になり、`eta.py` の θ が構造的に 0 へ倒れます。
+        #   **空の暦は、供給が無いことを意味しません** —— 供給は
+        #   「毎日1本、その日に予約して出す」ぶんで、暦には前もって出ません
+        #   （`house_rule.planned_publishes_per_day()` がその数です）。
+        #
+        #   **覆る条件**: `SAME_DAY_SCHEDULING_ONLY` が `False` に戻ったら、
+        #   暦がまた供給の写しになるので、下の押さえがそのまま復活します。
         cal_note = ""
         try:
             from src import next_slot                       # noqa: PLC0415
+            if house_rule.same_day_only():
+                raise _SameDayRule                          # 下の押さえを使わない
             cal = next_slot.calendar()
             near = float(cal.get("near_density") or 0.0)
             nd = int(cal.get("near_days") or 0)
@@ -1397,6 +1424,12 @@ def _ans_accrual(need: dict, as_of: date) -> Answer:
                             f" —— **暦を戻す手**: `python scripts/reschedule.py --compact`"
                             f"（0単位で案・`--apply` で実行）")
                 cap = near
+        except _SameDayRule:
+            cal_note = ("。**暦の空きでは押さえていません**（規則5・固定その4"
+                        "「現在の日付にしか予約しない」—— 先の日付が空なのが"
+                        "正しい状態なので、暦は供給の写しになりません。"
+                        "供給は `house_rule.planned_publishes_per_day()` の"
+                        f" {house_rule.planned_publishes_per_day()}本/日 です）")
         except Exception:                                    # noqa: BLE001
             cal_note = ""
         if rate > cap:
