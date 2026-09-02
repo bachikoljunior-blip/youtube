@@ -1708,31 +1708,53 @@ def _escape_lines(pl: dict, bar: str = "###") -> list[str]:
     #     8.8倍**を目指し、**まだ1回も数えていない側を数えに行きません。**
     #     **覆る条件**: `settled` が真になったら（＝長尺が伸びきる齢が出たら）
     #     この行は自分で消えます。**定数を持ちません。**
+    # **`over` / `cap` が無い回に、この段を刷らないこと**（2026-09-02 に落ちた）。
+    #
+    #     `_escape_form()` は `settled`（伸びきったと言える形）が1つも無い回に
+    #     `cap = 0.0` を返し、そこから **`over` を正しく `None`** にします
+    #     （`"over": (top / cap) if cap else None`）。**守っているのは向こう**です。
+    #     刷る側がその `None` をそのまま `:.2f` に渡していました:
+    #
+    #         TypeError: unsupported format string passed to NoneType.__format__
+    #         scripts/eta.py:8309 in headline
+    #
+    #     **`scripts/eta.py` は、毎周いちばん最初に撃つ道具です**
+    #     （`docs/trigger_main.md` §2.6 —— §4 で何をやるか決める**前**）。
+    #     落ちると、その回は**到達日も腕も見ないまま**§4 を選びます。
+    #     実測 2026-09-02: `_esc = {'form': 'ショート', 'cap': 0.0, 'top': 1891.0,
+    #     'over': None, 'escapes': False}` で、`main()` ごと落ちていました。
+    #
+    #     **黙って行を消さないこと。** 消すと「逃げ先は無い」と読めますが、
+    #     本当は**まだ比べられない**だけです。下の `else` がそう言います。
+    _esc_ok = (isinstance(_esc.get("over"), (int, float))
+               and isinstance(_esc.get("cap"), (int, float))
+               and _esc.get("cap"))
     if (pl.get("lever_hint") == "per_video"
             and isinstance(pl.get("lever_need_over_cap"), (int, float))
-            and _esc["form"]):
+            and _esc["form"] and not _esc_ok):
+        out.append(
+            f"{bar}   → **逃げ先（形を替える道）は、この回は比べられません** ——"
+            f" 伸びきったと言える形が1つも無いので"
+            f"（`_escape_form()` の `cap` が 0）、"
+            f"「{_esc['form']}に逃げれば天井が上がるか」は**この回では答えが出ません**。"
+            " **「逃げ先が無い」ではありません。**"
+            " 数えきる手は `python -m src.settle`（API 0単位）。"
+            # --- **`escapes` の偽を「低かった」と読ませないこと**（2026-09-02・
+            #     きょうだいの2件を合流させた回に足した）---
+            #     `escapes` の偽には2つの意味が混ざります ——
+            #     (1) 比べて、逃げ先のほうが低かった  (2) **比べる相手が居ない**。
+            #     `comparable` がその2つを分けます（`_escape_form()`）。
+            #     ここは (2) の枝なので、**どの形が伸びきっていないかを名前で出す**
+            #     ——「`cap` が 0」だけでは、どこを数えに行けばよいか分かりません。
+            f" **`comparable: False`** ＝ `escapes` の偽は"
+            f"「低かった」ではなく「**比べていない**」のほうです"
+            f"（伸びきっていないのは "
+            f"{'／'.join(_esc.get('all_unsettled') or [_esc['form']])}）。")
+    if (pl.get("lever_hint") == "per_video"
+            and isinstance(pl.get("lever_need_over_cap"), (int, float))
+            and _esc["form"] and _esc_ok):
         _f2, _need = _esc["form"], pl["lever_need_over_cap"]
-        if not _esc["comparable"]:
-            # --- **比べる相手が居ない回**（2026-09-02 に足した。**この回に落ちた**）---
-            #     `cap` は「**伸びきった形の記録の最大**」です。この日、
-            #     ショートまで `settled: False` に落ちて（`data/views.jsonl` の
-            #     打ち切り補正が効く齢に届かなくなった）、**伸びきった形が0**に
-            #     なりました。すると `over` は `None` で、下の枝は落ちます。
-            #     **「逃げ先のほうが低い」とは言えません** —— 低いも高いも、
-            #     比べる相手が居ないからです。**言えるのは「まだ測れていない」だけ。**
-            _forms = "／".join(sorted((_esc.get("all_unsettled") or [])) or [_f2])
-            out.append(
-                f"{bar}   → [!] **その天井 ×{_need:.2f} は、いまどちらの形にも当てられません"
-                f"（`comparable: False`）** —— **伸びきった形が1つも無い**からです"
-                f"（{_forms} が全部 `settled: False`・`cap` が 0）。"
-                f" `escapes` の偽を「逃げ先のほうが低い」と読まないこと ——"
-                f" **この回は、比べる相手が居ないほうの偽です。**"
-                f" 埋めるのは API 0単位:"
-                f" `data/views.jsonl` が古い本を読み続ければ、どれかの形が"
-                f" 伸びきった齢を出して `cap` が戻ります"
-                f"（`settle.settles_at()`／`form_record.per_video_best()`）。"
-                f" **それまで、この行を根拠に形を選ばないこと。**")
-        elif _esc["escapes"]:
+        if _esc["escapes"]:
             out.append(
                 f"{bar}   → **その天井 ×{_need:.2f} を、"
                 f"ショートの中で探さないこと。** 天井 {_esc['cap']:,.0f} の `unit` は"

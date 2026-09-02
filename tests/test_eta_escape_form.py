@@ -192,4 +192,6 @@ def test_比べられない回は低いとは言わない():
         eta._escape_form = orig
     assert "逃げ先のほうが低いと出ました" not in got, (
         "**比べていません。** `cap` が 0 の回に「低いと出ました」と刷らないこと")
-    assert "comparable" in got and "伸びきった形が1つも無い" in got
+    assert "comparable: False" in got, got[:400]
+    assert "比べられません" in got and "伸びきったと言える形が1つも無い" in got
+    assert "ショート／長尺" in got, "**どの形が伸びきっていないか**を名前で出すこと"
