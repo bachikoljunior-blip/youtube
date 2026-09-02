@@ -1384,6 +1384,30 @@ def suggest_max_days(rows: list[dict], now: datetime, args, *,
 def _compact(args) -> int:
     """`--compact`。**既定は割り当てを出すだけ**で、`--apply` で初めて撃ちます。
 
+    ## **【2026-09-02】規則5 の下では、この手は撃てません。まず ここを読むこと**
+
+    オーナー原文（`CLAUDE.md` 冒頭「固定その4」・`src/house_rule`）:
+
+        「現在の日付にしか予約しないってことだからね？」
+
+    ＝ **その日の1本を、その日に予約する。先の日付には1本も置かない。**
+
+    **`--compact` がやるのは、まさに「先の日付へ 1日1本ずつ並べ直す」**ことです。
+    2026-09-02 に「09/03〜09/27 へ 26本 を1日1本」という案を出しかけました ——
+    **その案は、いま禁じられている手です。**
+
+    **止め方は「案は出す・撃たない」**にしてあります:
+
+        `--compact` だけ        いままでどおり案を出し、**最後に禁じ手だと言う**
+        `--compact --apply`     **撃ちません**（`house_rule.same_day_only()` が真の間）
+
+    案を残すのは、規則5 が外れた回がそのまま読めるようにするためです。
+    **いま暦を直す手は逆向きで、`python scripts/pool_drain.py --apply --keep 0`**
+    （予約を外して private の下書きへ戻す。**削除はしません**）。
+
+    **覆る条件**: `house_rule.SAME_DAY_SCHEDULING_ONLY` が `False` に戻ったとき。
+    検査は `tests/test_compact_blocked_by_rule5.py`。
+
     ## `--max-days` を書かなかったときは、道具が決めます（2026-08-19 18:0x）
 
     ここは長らく**既定 4 で撃って、穴が残ったら止まり、`--max-days N` を
@@ -1481,6 +1505,22 @@ def _compact(args) -> int:
 
     if not plan:
         print("[compact] 動かすものはありません。")
+        return 0
+    # **規則5（固定その4・2026-09-02）は、この手そのものを禁じています。**
+    #     案は出しますが（規則が外れた回がそのまま読めるように）、撃ちません。
+    #     詳しくは `_compact()` の冒頭の節。
+    from src import house_rule as _hr                           # noqa: PLC0415
+    if _hr.same_day_only():
+        print("[compact] [!] **この手は、いま撃てません**"
+              "（規則5・固定その4「**現在の日付にしか予約しないってことだからね？**」）")
+        print("[compact]     上の割り当ては**先の日付へ 1日1本ずつ並べ直す手**で、"
+              "この規則に反します。**空いている日は欠陥ではありません。**")
+        print("[compact]     暦を直す手は逆向きです ——"
+              " `python scripts/pool_drain.py --apply --keep 0`"
+              "（**削除はしません**・private の下書きへ戻すだけ）")
+        print("[compact]     案そのものは上に出してあります"
+              "（`src/house_rule.SAME_DAY_SCHEDULING_ONLY` が `False` に戻れば、"
+              "そのまま `--apply` で撃てます）")
         return 0
     if not args.apply:
         print("[compact] **これは割り当てだけです。**撃つには --apply を付けること"
