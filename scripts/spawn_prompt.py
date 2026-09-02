@@ -620,6 +620,25 @@ _NOTE_SLOT = "<<オーナーの言葉を、ここに原文のまま。要約し�
 # 数えさせて埋めること。**親に暗算させないこと**が、この節の要点です。
 
 
+#: **写しの既定で名指しする相手**（2026-09-03 05:xx・最適化の回に足した）。
+#:
+#: 上の註は「走っている相手を親が知っている回だけ、その1文を差し替えること」と書いていましたが、
+#: 親は `prompt` を1字も変えずに渡す（`docs/trigger_parent.md`）ので、差し替える手は**一度も起きません**。
+#: いっぽう `next_round.py` は「2種類そろって1周」で、**hourly と optimizer は毎周 同じ瞬間に立ちます** ——
+#: ＝ 「立てた時点ではいません」は、写しの既定として**毎周 偽**でした。
+#: 実測 2026-09-03 04:5x〜05:0x: hourly（`d2f7fe05`）とこの最適化の回が、同じ台本
+#: （`data/scripts/nenkin-uketorikata-65-70-75-handan.script.json`）の同じ 4コマ を 10分差で書き直し、併合で `AA` 衝突。
+#: 08-31 22:3x（`src/descriptions.py`・6分差）と同じ形の**並列の税**が、写しの1文で隠れていました。
+#: 役の名で名指しすれば、受け取った側は `TOUCHED_CMD` を撃って相手の押した所を避けられます。
+#:
+#: **覆る条件**: `next_round.py` が役を1つずつ立てる形に戻ったら（交互）、ここは空に戻すこと。
+#: `owner-*` は親が単独で立てる（`next_round_owner.py`）ので名指ししません。
+SAME_ROUND_SIBLINGS: dict[str, list[str]] = {
+    "hourly": ["optimizer（同じ周に親が一緒に立てる役。`next_round.py` は2種類そろって1周）"],
+    "optimizer": ["hourly（同じ周に親が一緒に立てる役。`next_round.py` は2種類そろって1周）"],
+}
+
+
 def write_rendered(root: Path = ROOT) -> Path:
     """**親がそのまま貼れる形**を1ファイルに書き出す。"""
     parts = ["# 子に渡すプロンプト（**親向けの写し。そのまま貼れます**）",
@@ -638,8 +657,8 @@ def write_rendered(root: Path = ROOT) -> Path:
         # **`live_clock=False`**: 写しは commit される静的な生成物なので、
         # 時刻を焼き込むと書き出した次の分から永久に赤になります
         # （`_clock_block()` の註）。**立てる瞬間の本文には入ります。**
-        args = create_session_args(kind, note=note, siblings=[], only="",
-                                   root=root, live_clock=False)
+        args = create_session_args(kind, note=note, siblings=list(SAME_ROUND_SIBLINGS.get(kind, [])),
+                                   only="", root=root, live_clock=False)
         parts += [f"## kind: {kind}", "", "```json",
                   json.dumps(args, ensure_ascii=False, indent=2), "```", ""]
     RENDERED.write_text("\n".join(parts), encoding="utf-8")

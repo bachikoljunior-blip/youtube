@@ -1,0 +1,2 @@
+[rebake-run] 09/03 05:02 JST `dRZnZrRy2Lw`（nenkin-uketorikata-65-70-75-handan・sha 20e377f62f99）を焼きます
+[sweep] $ /usr/local/bin/python -m src.pipeline --script data/scripts/nenkin-uketorikata-65-70-75-handan.script.json --topic nenkin-uketorikata-65-70-75-handan --dry-run
