@@ -691,6 +691,16 @@ def lines(next_row: dict | None, now: datetime | None = None,
     fams = c.get("families") or []
     if fams:
         out.extend(_loo_lines(c.get("family_loo") or {}))
+        # **中身の側に当てる数字が在るか**（維持率・日の揺れ）を、族の行のすぐ下に（2026-09-03・`src/hold.py`）。
+        #     族が雑音なら次に見るのは「中身のどこか」ではなく「中身に当てる数字が在るか」で、
+        #     無いなら残りの時間は日の側（配信）へ向ける —— その判定を毎周 数え直して出す。
+        #     貯めの補充（Analytics）は実物の呼び出し（`cmp is None`）のときだけ。
+        try:
+            from . import hold                                     # noqa: PLC0415
+            out.extend(hold.lines(c.get("rows") or [], next_row,
+                                  fetch=(cmp is None and picks_path is None)))
+        except Exception as exc:                                   # noqa: BLE001
+            out.append(f"     （維持率の行は出せませんでした: {exc}）")
         top = [f for f in fams if f["enough"]][:6]
         out.append("     族（`calc`）ごとのショートの **日で割った残差**（上位・n≥%d・括弧は生の 48時間 中央値）: "
                    % FAMILY_MIN_N
