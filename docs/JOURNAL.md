@@ -98457,3 +98457,59 @@ c765a472 が入れ替えたのは枝の**中身**で、**どちらの枝へ入�
 
 **いまは 1本 在るので鳴っていません**（`MqQKSnbM0OI`・09/02 13:57 JST 焼き）——
 **明日それを予約した瞬間に 0本 になり、そこで鳴ります。** それが狙いです。
+
+### 潰した「いいえ」の理由 その4 —— **毎朝 通る道の1手目が、撃てない手だった**
+
+`scripts/slot_gate.py` は、きょうの枠が空いている回にこう印字していました:
+
+    (a) **前の日に作った下書きが在るなら、それを今日の枠へ**（1本 50単位）:
+          python scripts/reschedule.py --pool          # private の下書きを見る
+
+**`--pool` という旗はありません。** 撃つと `usage: …` ＋ **exit 2**。
+しかもそこは、**規則5 の下で毎日 0時 JST に必ず通る道の1手目**です
+（先の日付は必ず空なので、この門は毎朝 鳴り、その1行目が毎朝 読まれます）。
+
+`python -m src.next_slot`（API 0単位）に直しました —— `draft_lines()` が
+video_id と `--move` の1行まで出します。**そして同じ形を repo ぜんぶで塞ぎました**
+（`tests/test_printed_flags_exist.py` —— `src/` `scripts/` の中の
+`scripts/<なにか>.py --<旗>` という**印字**を全部 拾い、その旗を、
+印字が名指ししている当のファイルが知っているかを見る）。
+
+**作る途中で偽陽性を3種 踏んで、そのぶん検査が締まりました**（全部 註に残した）:
+
+    relay.py --plan          「`--plan` という名前にしないこと」という**設計の註**だった
+                             → `#` で始まる行は見ない
+    retro.py --alerts-all    `argparse` の**手前で `sys.argv` から抜く**旗。実際に撃てる
+                             → `add_argument` だけでなく、引用符の中の `--…` を全部 拾う
+                               （`status.py --alerts-all` / `upload_only.py --draft` も同じ形）
+    inbox.py --close/--open  `inbox.py` は `src` と `scripts` の**両方に在る**。名前だけで
+                             引くと `src/inbox.py` の**git の旗**と突き合わせていた
+                             → **木（scripts / src）まで込みで当てる**
+
+**発火を確かめました**: `--pool` を戻すと落ち、直すと通ります。
+
+### repo 側の門 2つが、こちらの取りこぼしを捕まえました（**そういう作りになっている**）
+
+    tests/test_deadline_expr_meters.py  「`EXPR_NS` に足して `_EXPR_METERS` に
+                                          載せていない名前: ['reveal_hold_days']」
+    tests/test_reveal_hold_arm.py       `needs` が1つだった頃の形
+                                        （`all(... reveal_hold_arm ...)`）のまま、
+                                        **正しい足しで赤くなった**
+
+前者は `data/reveal_hold_attempts.jsonl` と取り直す手（`--judge`）を登録。
+後者は、見ているものを本来の不変条件へ直しました ——
+(a) どの `count_expr` も `reveal_hold_*()` を通っている（行を数えない）／
+(b) **本の門と、日の門が、両方 在る**（片方だけに戻す直しを止めるため）。
+
+### この回の全体走行
+
+**残っている赤は 1件**（`test_judgeable.py::test_実物で期限が構造的に守れる[opening_motion]`）。
+**この回の前から落ちています** —— 直前の記録（09/02 13:xx）が
+「残る3件はこの回の前から落ちています（`opening_motion` の期限／`request_form` の群 2件）」
+と書いており、**この回の変更を外しても同じ字で落ちる**ことを確かめました。
+
+**2件目の `--ship` に `--no-reflect` を使いました。理由**: 同じ回の1件目が
+数分前に `--reflect` を通しており（`data/eta.jsonl` の `kind="reflect"`）、
+**動いた入力は `growth_per_day` / `make_rate_per_day` の2つだけ**で、
+どちらもこの回の作業では動きません（`fix` は軌跡の入力に入らない）。
+**2度目は同じ字が出るだけ**なので省きました。**逃げ道であって、既定ではありません。**
