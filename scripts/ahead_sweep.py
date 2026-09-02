@@ -418,7 +418,8 @@ def _today_candidate(now: datetime) -> dict | None:
         st = forms.get(best_form) or {}
         why = (f"決めた本が無かったので機械が数で選んだ: 形 {best_form}"
                f"（齢48h 中央値 {st.get('median')}回・n={st.get('n')}）・"
-               f"族 {top.get('family')} 中央値 {top.get('fam_median')}回(n={top.get('fam_n')})")
+               f"族 {top.get('family')} 残差 ×{top.get('fam_res')}"
+               f"（生 {top.get('fam_median')}回・n={top.get('fam_n')}）")
         try:
             daily_pick.record(best_form, str(top.get("topic") or ""), why, day=day,
                               now=now, video_id=top["video_id"])

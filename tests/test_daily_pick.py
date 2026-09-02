@@ -188,3 +188,30 @@ def test_next_slot_prints_the_block_right_after_the_next_video(monkeypatch) -> N
     idx_pick = next(i for i, ln in enumerate(out) if ln.startswith("[きょうの1本]"))
     assert idx_pick == idx_next + 1
     assert any("ショート" in ln and "長尺" in ln for ln in out[idx_pick:idx_pick + 3])
+
+
+def test_family_residual_and_loo_say_noise_when_family_does_not_predict() -> None:
+    """生の中央値が高い族（良い日に出ただけ）を、日で割った残差が下げること。
+    そして族が当たらないとき、画面は ρ と「雑音」を出すこと（2026-09-03・最適化の回）。"""
+    from datetime import date as _d
+    rows = []
+    # 日A（良い日: 中央値 1000）に族 a が3本、日B（悪い日: 中央値 10）に族 b が3本
+    for i, v in enumerate((900, 1000, 1100)):
+        rows.append({"video_id": f"a{i}", "form": "ショート", "family": "a", "views": v,
+                     "pub": _d(2026, 8, 1), "life": v, "age_h": 60, "day_count": 3})
+    for i, v in enumerate((9, 10, 11)):
+        rows.append({"video_id": f"b{i}", "form": "ショート", "family": "b", "views": v,
+                     "pub": _d(2026, 8, 2), "life": v, "age_h": 60, "day_count": 3})
+    daily_pick._attach_residual(rows)
+    fams_raw = daily_pick.by_family(rows, min_n=2, key="views")
+    fams_res = daily_pick.by_family(rows, min_n=2)
+    assert [f["family"] for f in fams_raw] == ["a", "b"]
+    # 残差では同じ（どちらも自分の日の中央値どおり）＝ 生の 100倍 の差が消える
+    assert abs(fams_res[0]["median"] - fams_res[1]["median"]) < 0.05
+    assert fams_res[0]["views_median"] in (1000, 10)
+    loo = daily_pick.family_loo(rows, key="res")
+    assert loo["n"] == 6 and loo["gate"] is not None
+    got = "\n".join(daily_pick._loo_lines({"views": loo, "res": loo}))
+    assert "ρ=" in got and "門" in got
+    if abs(loo["rho"] or 0) <= loo["gate"]:
+        assert "族は当たりません" in got

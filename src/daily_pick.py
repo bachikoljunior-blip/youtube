@@ -247,8 +247,91 @@ def aged_views(hours: int = AGE_HOURS, *, views_path: Path | None = None,
             "life": max(v for _, v, _ in s), "age_h": s[-1][0],
             "day_count": per_day[pub_of[vid]],
         })
+    _attach_residual(out)
     out.sort(key=lambda x: (x["pub"], x["form"], x["video_id"]))
     return out
+
+
+def _attach_residual(rows: list[dict]) -> None:
+    """各行に `day_median`（**同じ日・同じ形**の 48時間 再生の中央値）と
+    `res`（＝ (views+1)/(day_median+1)・**その日の中でどれだけ抜けたか**）を足す。
+
+    ## なぜ要るか（2026-09-03 00:xx・最適化の回。**族の順位が当たっていなかった**）
+
+    族の順位は「生の 48時間 再生の中央値」で付けていました。**その順位は、次の1本を
+    当てません** —— 1本を抜いて残りの族の中央値でその1本を当てる（LOO）と
+    **ρ = −0.005（n=169・ショート）**。ゼロです。
+    再生を決めているのは**その日に何本 出したか**（`day_count` との ρ = −0.39、
+    その日の中央値との ρ = +0.45）で、族の中央値は「その族の本がたまたま良い日に出たか」を
+    写していただけでした（`shokibo` 1,036回・n=4 も、`kokuho` 1,035回・n=3 も、その形）。
+    **日で割った残差**で同じ LOO をやると **ρ = +0.17（n=169・門 0.15・3本以上の日だけ）**、
+    1本の日も入れると **+0.10（n=185・門 0.14）** —— どちらも門の上か下かの縁で、
+    日の中の順位（percentile）なら **−0.02**。**＝ 族は当たりません。** どの割り方でも。
+    だから画面は「族の順位」の前に、その順位が当たるかの ρ を**毎周 数え直して**出し、
+    両方が門の下なら「族で時間を使うな」と書きます（`_loo_lines`）。
+    残差で並べるのは、生で並べるより**外れ方がましなだけ**（1,036回・n=4 の族が、
+    たまたま良い日に出た族でないことを、少なくとも日で割って確かめてある）。
+
+    **覆る条件**: `family_loo()` の残差の ρ が門を下回り、生のほうが上回る日が来たら
+    （＝ 密度が規則で揃って日の差が消え、生の再生がそのまま当たるようになったら）、
+    `by_family` の既定の `key` を `views` に戻すこと。定数は無い —— 毎周 `compare()` が数え直す。
+    """
+    by_key: dict[tuple, list[int]] = defaultdict(list)
+    for r in rows:
+        by_key[(r["pub"], r["form"])].append(int(r["views"]))
+    med = {k: statistics.median(v) for k, v in by_key.items()}
+    for r in rows:
+        m = med[(r["pub"], r["form"])]
+        r["day_median"] = m
+        r["res"] = (int(r["views"]) + 1) / (m + 1)
+
+
+def _spearman(xs: list[float], ys: list[float]) -> float | None:
+    if len(xs) < 3 or len(xs) != len(ys):
+        return None
+
+    def rank(vals: list[float]) -> list[float]:
+        order = sorted(range(len(vals)), key=lambda i: vals[i])
+        rk = [0.0] * len(vals)
+        i = 0
+        while i < len(order):
+            j = i
+            while j + 1 < len(order) and vals[order[j + 1]] == vals[order[i]]:
+                j += 1
+            for k in range(i, j + 1):
+                rk[order[k]] = (i + j) / 2
+            i = j + 1
+        return rk
+    ra, rb = rank(xs), rank(ys)
+    n = len(xs)
+    ma, mb = sum(ra) / n, sum(rb) / n
+    num = sum((a - ma) * (b - mb) for a, b in zip(ra, rb))
+    den = (sum((a - ma) ** 2 for a in ra) * sum((b - mb) ** 2 for b in rb)) ** 0.5
+    return num / den if den else None
+
+
+def family_loo(rows: list[dict], form: str = "ショート", key: str = "res",
+               min_others: int = 2) -> dict:
+    """**族の順位が、次の1本を当てるか**（leave-one-out の Spearman ρ・API 0単位）。
+
+    各本を1本 抜き、残りの同じ族の `key` の中央値で、抜いた本の `key` を当てる。
+    返り: `{"rho": ρ | None, "n": 本数, "gate": 両側5%の門 (1.96/√n)}`。
+    `rho` が `gate` を越えなければ、族の順位は**雑音**です（画面はそう出す）。
+    """
+    fam: dict[str, list[dict]] = defaultdict(list)
+    for r in rows:
+        if r.get("form") == form and r.get("family") and r.get(key) is not None:
+            fam[r["family"]].append(r)
+    xs: list[float] = []
+    ys: list[float] = []
+    for members in fam.values():
+        for r in members:
+            others = [float(t[key]) for t in members if t is not r]
+            if len(others) >= min_others:
+                xs.append(statistics.median(others))
+                ys.append(float(r[key]))
+    n = len(xs)
+    return {"rho": _spearman(xs, ys), "n": n, "gate": (1.96 / n ** 0.5) if n else None}
 
 
 def _observed_ids(views_path: Path | None = None) -> set[str]:
@@ -279,17 +362,25 @@ def by_form(rows: list[dict], *, since: date | None = None,
 
 
 def by_family(rows: list[dict], form: str = "ショート",
-              min_n: int = FAMILY_MIN_N) -> list[dict]:
-    """族（`calc`）ごとの 48時間 再生（その形だけ）。中央値の高い順。"""
-    vals: dict[str, list[int]] = defaultdict(list)
+              min_n: int = FAMILY_MIN_N, key: str = "res") -> list[dict]:
+    """族（`calc`）ごとの 48時間 再生（その形だけ）。**`key` の中央値の高い順**。
+
+    既定の `key` は `res`（日で割った残差・`_attach_residual`）。生の再生の中央値は
+    `views_median` に残す（画面はどちらも出す）。`res` の無い行（古い呼び出し・検査）は
+    `views` で並べる。
+    """
+    vals: dict[str, list[float]] = defaultdict(list)
+    raw: dict[str, list[int]] = defaultdict(list)
     for r in rows:
         if r["form"] != form or not r.get("family"):
             continue
-        vals[r["family"]].append(int(r["views"]))
+        raw[r["family"]].append(int(r["views"]))
+        vals[r["family"]].append(float(r[key]) if r.get(key) is not None else float(r["views"]))
     out = []
     for fam, v in vals.items():
         st = _stats(v)
         st["family"] = fam
+        st["views_median"] = statistics.median(raw[fam])
         st["enough"] = st["n"] >= min_n
         out.append(st)
     out.sort(key=lambda x: (-(x["median"] or 0), -x["n"], x["family"]))
@@ -315,6 +406,7 @@ def compare(now: datetime | None = None, rows: list[dict] | None = None,
         "rule": by_form(rows, max_per_day=RULE_BAND_MULT),
         "life": by_form([r for r in rows if r["age_h"] >= 24 * 7], key="life"),
         "families": by_family(rows),
+        "family_loo": {k: family_loo(rows, key=k) for k in ("views", "res")},
         "recent_days": recent_days,
         "n_rows": len(rows),
         "rows": rows,
@@ -369,9 +461,11 @@ def pool_candidates(form: str = "ショート", fams: list[dict] | None = None,
         _, st = family_rank(fams, fam)
         out.append({"video_id": vid, "topic": r.get("topic"), "family": fam,
                     "title": r.get("title"),
-                    "fam_median": (st or {}).get("median"), "fam_n": (st or {}).get("n", 0),
+                    "fam_res": (st or {}).get("median"),
+                    "fam_median": (st or {}).get("views_median", (st or {}).get("median")),
+                    "fam_n": (st or {}).get("n", 0),
                     "draft": r.get("retimed_at") is None})
-    out.sort(key=lambda x: (-(x["fam_median"] or -1), -x["fam_n"], x["video_id"]))
+    out.sort(key=lambda x: (-(x["fam_res"] or -1), -x["fam_n"], x["video_id"]))
     return out
 
 
@@ -394,8 +488,10 @@ def unposted_topics(form: str = "ショート", fams: list[dict] | None = None,
         fam = family_of(tid, by_id)
         _, st = family_rank(fams, fam)
         out.append({"topic": tid, "family": fam, "title": t.get("title_seed"),
-                    "fam_median": (st or {}).get("median"), "fam_n": (st or {}).get("n", 0)})
-    out.sort(key=lambda x: (-(x["fam_median"] or -1), -x["fam_n"], x["topic"]))
+                    "fam_res": (st or {}).get("median"),
+                    "fam_median": (st or {}).get("views_median", (st or {}).get("median")),
+                    "fam_n": (st or {}).get("n", 0)})
+    out.sort(key=lambda x: (-(x["fam_res"] or -1), -x["fam_n"], x["topic"]))
     return out
 
 
@@ -485,10 +581,40 @@ def outside_lines(cmp: dict, form: str = "ショート", now: datetime | None = 
     ]
 
 
+def _loo_lines(loo: dict) -> list[str]:
+    """族の順位が当たるかを、生と残差の両方で1行に。門を越えない側は「雑音」と書く。"""
+    def one(k: str, label: str) -> str:
+        d = loo.get(k) or {}
+        rho, n, gate = d.get("rho"), d.get("n", 0), d.get("gate")
+        if rho is None or not n:
+            return f"{label} —（n={n}）"
+        mark = "門を越えた" if gate is not None and abs(rho) > gate else "**雑音**"
+        return f"{label} ρ={rho:+.2f}（n={n}・門 {gate:.2f}・{mark}）"
+    def noise(k: str) -> bool:
+        d = loo.get(k) or {}
+        return d.get("rho") is None or d.get("gate") is None or abs(d["rho"]) <= d["gate"]
+    ln = ("     族の順位が次の1本を当てるか（1本 抜いて残りの族で当てる・Spearman）: "
+          + one("views", "生の再生") + " ／ " + one("res", "日で割った残差"))
+    if noise("views") and noise("res"):
+        ln += ("\n     → **族は当たりません。族の順位で `improve` の時間を使わないこと** —— "
+               "下の順は参考で、決め手は 形（ショート）と 密度（1本/日）。**族より先に外の帯**"
+               "（`niche_ceiling.py --form short`）で「同じ帯の上位は何を出しているか」を見ること")
+    else:
+        ln += " —— **雑音の側で族を選ばないこと**（族は弱い手掛かり。決め手は形と密度）"
+    return [ln]
+
+
 def _fmt(v) -> str:
     if v is None:
         return "—"
     return f"{v:,.0f}回"
+
+
+def _fmtx(v) -> str:
+    """残差（日の中央値に対する比）の表示。`_fmt` は「回」を付けるので別にする。"""
+    if v is None:
+        return "—"
+    return f"×{v:,.1f}"
 
 
 def _ratio_line(cmp: dict, draft_form: str) -> str | None:
@@ -564,14 +690,17 @@ def lines(next_row: dict | None, now: datetime | None = None,
     out.extend(outside_lines(c, "ショート", now=now))
     fams = c.get("families") or []
     if fams:
+        out.extend(_loo_lines(c.get("family_loo") or {}))
         top = [f for f in fams if f["enough"]][:6]
-        out.append("     族（`calc`）ごとのショートの 48時間 中央値（上位・n≥%d）: " % FAMILY_MIN_N
-                   + " ／ ".join(f"`{f['family']}` {_fmt(f['median'])}(n={f['n']})" for f in top))
+        out.append("     族（`calc`）ごとのショートの **日で割った残差**（上位・n≥%d・括弧は生の 48時間 中央値）: "
+                   % FAMILY_MIN_N
+                   + " ／ ".join(f"`{f['family']}` {_fmtx(f['median'])}"
+                                 f"({_fmt(f.get('views_median'))}・n={f['n']})" for f in top))
         if draft_fam:
             rk, st = family_rank(fams, draft_fam)
             if st:
                 out.append(f"     次に出る本の族 `{draft_fam}` は {rk}位／{len(fams)}族"
-                           f"（ショート 中央値 {_fmt(st['median'])}・n={st['n']}）")
+                           f"（残差 {_fmtx(st['median'])}・生 {_fmt(st.get('views_median'))}・n={st['n']}）")
             else:
                 out.append(f"     次に出る本の族 `{draft_fam or '?'}` は、ショートで測ったことがありません")
     rows_all = c.get("rows") or []
@@ -579,16 +708,18 @@ def lines(next_row: dict | None, now: datetime | None = None,
                            rows=rows_all) if cands is None else cands
     if pool:
         out.append(f"     池に在る private のショート {len(pool)}本（作らずに、その日の枠へ "
-                   f"`--move` できる・50単位）—— 族の中央値の高い順:")
+                   f"`--move` できる・50単位）—— 族の残差（日で割った）の高い順:")
         for p in pool[:5]:
             out.append(f"       `{p['video_id']}`  {str(p['title'] or '')[:36]}"
-                       f"　族 `{p['family'] or '?'}` {_fmt(p['fam_median'])}(n={p['fam_n']})")
+                       f"　族 `{p['family'] or '?'}` {_fmtx(p.get('fam_res'))}"
+                       f"({_fmt(p['fam_median'])}・n={p['fam_n']})")
     un = unposted_topics(fams=fams, rows=rows_all) if untried is None else untried
     if un:
-        out.append(f"     まだ作っていない `s-` の題材（`calc` 在り）{len(un)}件 —— 族の中央値の高い順:")
+        out.append(f"     まだ作っていない `s-` の題材（`calc` 在り）{len(un)}件 —— 族の残差（日で割った）の高い順:")
         for u in un[:4]:
             out.append(f"       `{u['topic']}`  {str(u['title'] or '')[:36]}"
-                       f"　族 `{u['family'] or '?'}` {_fmt(u['fam_median'])}(n={u['fam_n']})")
+                       f"　族 `{u['family'] or '?'}` {_fmtx(u.get('fam_res'))}"
+                       f"({_fmt(u['fam_median'])}・n={u['fam_n']})")
     if draft_form:
         oth = other_form_topic(next_row.get("topic") if next_row else None, topics)
         if oth:
