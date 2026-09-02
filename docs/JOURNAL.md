@@ -100751,3 +100751,5 @@ Opus/Sonnet で足りた所: 検査の実行・commit/push・データの集計�
 
 **`[きょうの1本]` の族の行の下に「中身に当てる数字が無い → 中身は verify で止め、残りは日の側へ」が出る。**
 読みの直しや題の言い換えで improve を名乗る回は、その行と同じ画面に並ぶ。
+
+**この回の終わりの `fast_tests`: 赤 2件**（前の回と同じ名前・この回の変更とは無関係）: `tests/test_eta_pause_banner.py::test_silent_when_not_paused` ／ `tests/test_judgeable.py::test_実物で期限が構造的に守れる[opening_motion]`。この回で足した `tests/test_hold.py` 4件・`test_daily_pick.py`・`test_next_slot.py` は緑。
