@@ -987,6 +987,23 @@ def _picked(day) -> dict | None:
     return cur if cur and cur.get("video_id") else None
 
 
+def picked_row(now: datetime | None = None,
+               path: Path | None = None) -> dict | None:
+    """`[きょうの1本]` で決めた本の控え（`data/uploaded.jsonl` の最後の行）。
+    動画IDの無い決定・控えに無い本は `None`。**API 0単位。**"""
+    try:
+        from . import daily_pick                                 # noqa: PLC0415
+        cur = _picked(daily_pick.for_day(now))
+    except Exception:                                            # noqa: BLE001
+        return None
+    if not cur:
+        return None
+    row = latest_rows(path).get(str(cur.get("video_id")))
+    if not row:
+        return None
+    return {**row, "_picked": cur}
+
+
 def _config_hour() -> int:
     """機械が実際に置く時刻（`config/channel.yaml`）。**20 の直書きをやめた**（2026-09-02 夜）——
     同じ画面の `[きょうの1本]` が 09:00、ここが 20:00 と出て食い違っていた。"""
@@ -1213,6 +1230,24 @@ def lines(now: datetime | None = None) -> list[str]:
         got = drafts(now=now)
         draft = got[0] if got else None
         v = draft
+    # --- **`[きょうの1本]` で別の本を決めてあれば、次に出る本はそちらです**（2026-09-02 20:xx）---
+    #
+    #     実測（09/02 20:26 の `--write`）: `[次の枠]` は下書きの `6GtzWaguZhg`（長尺）を
+    #     名指しして「improve の当てどころは、この本です」と言い、その 6行 下の
+    #     `[きょうの1本]` は 09/03 の1本を池の `DtpnSVFDtAE`（ショート・08/19 焼き）と
+    #     言っていました。**同じ画面が2本を名指しし、`stale_commits()`（焼いた後に入った
+    #     直し）と `pending_thumbnail()` は、出ない側の本で数えていました** ——
+    #     出るほうの本は 08/19 焼きで、生成側の直し（読みの門・固定その3）が 1件も
+    #     入っていないのに、画面は「そのあと生成側のコードは変わっていません」でした。
+    #     `draft_lines()` の `--move` は 19:xx に決めた本へ揃えてあります（`_move_lines`）。
+    #     **ここが揃っていませんでした。** 予約が実際に在る回（`next_video()` が返す）は
+    #     予約が正で、決めのほうが古いので触りません。
+    picked_from = None
+    if v is not None and draft is not None:
+        pk = picked_row(now=now)
+        if pk and str(pk.get("video_id")) != str(v.get("video_id")):
+            picked_from = str(v.get("video_id") or "")
+            v = pk
     if not v:
         return cal + ["[次の枠] **予約が1本もありません。** `improve` は当てどころが無い回です"
                 "（`python scripts/batch_build.py` で1本 作るか、"
@@ -1231,7 +1266,9 @@ def lines(now: datetime | None = None) -> list[str]:
             f"[次の枠] **予約はまだ在りませんが、次に出る1本はこれです**"
             f"（規則5 ＝ 作るのは前の日から、**予約だけが当日**）"
             f"　`{v.get('video_id')}`　{str(v.get('title') or '')[:44]}"
-            f"　題材 `{v.get('topic')}`",
+            f"　題材 `{v.get('topic')}`"
+            + (f"　—— **`[きょうの1本]` で決めた本**（下書き `{picked_from}` は池に残す）"
+               if picked_from else ""),
             "  **`improve` の当てどころは、この本です。**"
             "「予約が無い」は「当てどころが無い」ではありません。",
         ]

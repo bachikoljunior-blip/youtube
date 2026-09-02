@@ -223,3 +223,58 @@ def test_quota_note_is_silent_when_the_ledger_is_unreadable(monkeypatch) -> None
 
     monkeypatch.setattr(quota_ledger, "spent", boom)
     assert next_slot.quota_note(PUB, NOW) is None
+
+
+def test_next_slot_follows_the_daily_pick_when_nothing_is_scheduled(monkeypatch) -> None:
+    """予約が無く、`[きょうの1本]` が下書きと別の本を決めていたら、`[次の枠]` はその本
+    （2026-09-02 20:xx に踏んだ —— 同じ画面が 6GtzWaguZhg と DtpnSVFDtAE の2本を名指しし、
+    `stale_commits()` は出ない側の本で数えていた）。"""
+    from datetime import timedelta
+    from src import daily_pick
+    t = datetime.now(timezone.utc)
+    old = {"video_id": "OLD", "topic": "gassan-1", "title": "長尺", "duration_s": 300,
+           "uploaded_at": t.isoformat(), "at": None}
+    pick = {"video_id": "PICK", "topic": "s-shokibo-1", "title": "短い #Shorts",
+            "uploaded_at": (t - timedelta(days=15)).isoformat(), "at": None,
+            "retimed_at": t.isoformat()}
+    monkeypatch.setattr(next_slot, "calendar_lines", lambda **kw: [])
+    monkeypatch.setattr(next_slot, "draft_lines", lambda **kw: [])
+    monkeypatch.setattr(next_slot, "next_video", lambda **kw: None)
+    monkeypatch.setattr(next_slot, "drafts", lambda **kw: [dict(old)])
+    monkeypatch.setattr(next_slot, "latest_rows", lambda *a, **kw: {"OLD": old, "PICK": pick})
+    monkeypatch.setattr(daily_pick, "current", lambda day, path=None: {
+        "for_day": day.isoformat(), "form": "ショート", "topic": "s-shokibo-1",
+        "video_id": "PICK", "why": "173 対 1"})
+    seen: list[str | None] = []
+
+    def fake_stale(built, video_id=None, **kw):
+        seen.append(video_id)
+        return []
+
+    monkeypatch.setattr(next_slot, "stale_commits", fake_stale)
+    monkeypatch.setattr(next_slot, "pending_thumbnail", lambda *a, **kw: False)
+    out = next_slot.lines()
+    nxt = next(ln for ln in out if ln.startswith("[次の枠]"))
+    assert "`PICK`" in nxt and "`OLD`" not in nxt.split("——")[0]
+    assert "[きょうの1本]" in nxt and "OLD" in nxt          # 下書きは池に残すと書く
+    assert seen == ["PICK"]                                  # 古さも、出る側の本で数える
+
+
+def test_next_slot_keeps_a_real_reservation_over_the_pick(monkeypatch) -> None:
+    """予約が実際に在る回は、予約が正（決めのほうが古い）。"""
+    from datetime import timedelta
+    from src import daily_pick
+    t = datetime.now(timezone.utc)
+    fake = {"video_id": "RES", "topic": "kaigo-9", "title": "t", "duration_s": 300,
+            "uploaded_at": t.isoformat(), "_at": t + timedelta(hours=5)}
+    monkeypatch.setattr(next_slot, "calendar_lines", lambda **kw: [])
+    monkeypatch.setattr(next_slot, "draft_lines", lambda **kw: [])
+    monkeypatch.setattr(next_slot, "next_video", lambda **kw: dict(fake))
+    monkeypatch.setattr(daily_pick, "current", lambda day, path=None: {
+        "for_day": day.isoformat(), "form": "ショート", "topic": "s-x-1",
+        "video_id": "PICK", "why": "1 対 2"})
+    monkeypatch.setattr(next_slot, "stale_commits", lambda *a, **kw: [])
+    monkeypatch.setattr(next_slot, "pending_thumbnail", lambda *a, **kw: False)
+    out = next_slot.lines()
+    nxt = next(ln for ln in out if ln.startswith("[次の枠]"))
+    assert "`RES`" in nxt and "PICK" not in nxt
