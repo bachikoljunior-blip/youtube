@@ -538,6 +538,52 @@ def record(form: str, topic: str, why: str, *, day: date | None = None,
     return row
 
 
+def replace_video(old_ids, new_id: str, *, why_note: str = "",
+                  now: datetime | None = None, path: Path | None = None) -> list[str]:
+    """**焼き直しで下書きの ID が変わったら、その本を名指ししている決めを新しい ID へ写す。**
+    返りは写した `for_day` の一覧（無ければ空）。**API 0単位。**
+
+    ## なぜ要るか（2026-09-03 05:xx・最適化の回に踏んだ穴）
+
+    `[きょうの1本]` の決め（`record`）は **`video_id` で本を名指し**し、
+    `scripts/ahead_sweep._today_candidate` はその ID をそのまま枠へ置きます。
+    ところが規則3 の焼き直し（`upload_only.py <題材> --draft --replaces <旧ID>`）は
+    **新しい ID の下書きを作り、旧 ID は private のまま残す**（消さない・固定その2の4）。
+    ＝ 決めを写さないと、**置かれるのは冒頭を直す前の旧 ID** で、直した本は池に眠ります。
+    09/04 の試験の本 `6PKux5HNnUE`（唯一の腕 `per_video` の前提）がまさにその形でした ——
+    画面は「16:00 以降に焼き直して差し替える」と刷り、差し替えたあと枠に入るのは旧 ID。
+
+    **覆る条件**: `_today_candidate` が ID ではなく題材で本を引くようになったら、ここは要りません。
+    """
+    olds = {str(x).strip() for x in (old_ids or []) if str(x).strip()}
+    new_id = str(new_id or "").strip()
+    if not olds or not new_id or new_id in olds:
+        return []
+    p = path or PICKS
+    rows = _jsonl(p)
+    last_by_day: dict[str, dict] = {}
+    for r in rows:
+        if r.get("for_day"):
+            last_by_day[str(r["for_day"])] = r
+    done: list[str] = []
+    for day_s in sorted(last_by_day):
+        cur = last_by_day[day_s]
+        if str(cur.get("video_id") or "") not in olds:
+            continue
+        try:
+            day = date.fromisoformat(day_s)
+        except ValueError:
+            continue
+        old = str(cur.get("video_id"))
+        why = (f"焼き直し: `{old}` → `{new_id}`（1本・{why_note or 'upload_only --replaces'}）。"
+               f"前の決め: {str(cur.get('why') or '')[:140]}")
+        record(str(cur.get("form") or FORMS[1]), str(cur.get("topic") or ""), why,
+               day=day, now=now, path=p, video_id=new_id,
+               expected=cur.get("expected_48h"))
+        done.append(day_s)
+    return done
+
+
 def _need_over_cap(path: Path | None = None) -> float | None:
     """`data/eta.jsonl` 最終行の `lever_need_over_cap`（日付が出るのに天井を何倍 上げる要るか）。0単位。"""
     rows = _jsonl(path or (ROOT / "data" / "eta.jsonl"))
@@ -936,8 +982,10 @@ def outside_opening_lines(vid: str, topic: str, root: Path | None = None,
                    + "／".join(x.split("（")[0] for x in ps) + f"）。外の 4/4 は 結論の額 → 知らない側の損 → 名乗り → "
                    f"問い 2〜3 → 「最後まで」の順（実物 `data/niche_thumbs/<id>.opening.txt`）。長尺は 15〜30% でいちばん去る")
     if pd is not None and not pd:
-        out.append(f"     → 台本 `{draft.relative_to(root)}` は**もう型の中**。{reset_hm} JST 以降（日枠が戻る）に"
-                   f"焼き直して差し替える（`videos.insert` 1,600単位・`claude -p` 不要・約1分＋合成）:")
+        out.append(f"     → 台本 `{draft.relative_to(root)}` は**もう型の中**。**焼き直しは機械が撃ちます**"
+                   f"（`scripts/ahead_sweep.rebake_today`・毎周の `kick` から・台本が控えと違い commit 済みなら背景で "
+                   f"`videos.insert` → 決めを新 ID へ写す。帳面 `data/rebake.jsonl`・log `data/rebake.log`）。"
+                   f"手で撃つなら（同じ物）:")
         out.append(f"       python -m src.pipeline --script {draft.relative_to(root)} --topic {topic} --dry-run"
                    f" && python scripts/upload_only.py {topic} --draft --replaces {vid}")
     elif pd is not None:

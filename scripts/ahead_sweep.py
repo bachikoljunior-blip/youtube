@@ -807,6 +807,292 @@ def comment_pending(now: datetime | None = None, *, dry_run: bool = False,
 
 
 #: **起こした印**（`kick()` が、この時間の内なら二度 起こさない）。
+# ---------------------------------------------------------------- 決めた本の焼き直し（規則3 を機械へ）
+#
+# ## なぜ要るか（2026-09-03 05:xx JST・最適化の回。「最適化されてんの？」→ いいえ の理由を1つ潰す）
+#
+# 規則3（次の枠で出る1本を、出る瞬間まで良くし続ける）の**物が変わる1手**は焼き直しです
+# （`pipeline --script … --dry-run` → `upload_only.py <題材> --draft --replaces <旧ID>`）。
+# ところがその手は `[きょうの1本]` が**印字するだけ**で、撃つかどうかは回の裁量でした。
+# 実測（`data/runs.jsonl` 08/29〜09/03・ship 282件）: `fix` 200（71%）／ `improve` 20。
+# 印字された手が撃たれなかった例は繰り返し在ります —— 「外せ」（459本 → 2日で 107本）、
+# 最初のコメント（申し送り 6周・実物 0回）、`SessionStart` フック（一度も起きていない）。
+# 09/04 の試験の本（`6PKux5HNnUE`・唯一の腕 `per_video` の前提）は、冒頭を外の型に直した台本が
+# `data/scripts/` に在るのに、焼き直しは「16:00 以降の回が撃てば」の形でした。
+#
+# だから **置く手と同じ口**（毎周 起こされる `kick` → `main`）で、
+# 決めた本の**台本の控え**（`data/critique_queue/<ID>.script.json`・上げたときの写し）と
+# **手元の台本**（`data/scripts/<題材>.script.json`）が違えば、背景で焼き直して差し替えます。
+# 撃った結果、`upload_only` が決めを新しい ID へ写す（`daily_pick.replace_video`）ので、
+# 置く手はそのまま新しい本を枠へ置きます。
+#
+# ## 門（撃たない条件。全部 0単位で決める）
+#
+#     決めが無い／控えか台本が無い    何も分からないので撃たない
+#     中身が同じ                      焼いても1バイトも変わらない
+#     台本が控えより新しくない        古い台本で新しい本を上書きしない（`git log` の時刻 対 `uploaded_at`・
+#                                     未 commit の変更は「新しい」と読む）
+#     同じ台本（sha）を一度 試した     verify で落ちた台本を毎周 40分ずつ焼かない（印は機械にひとつ・
+#                                     `_rebake_marks_dir()`）
+#     もう予約が付いている            `--replaces` が断る側（private・予約なし だけ外せる）
+#     枠まで `REBAKE_LEAD` 未満         焼き上がる前に出てしまう
+#
+# 上げるのは `videos.insert`（日枠の 403 の窓でも通っていた・09/03 00:09 実測）。
+# 同時に走らないよう、機械にひとつの錠（`rebake.lock`・flock）を焼く側が持ちます。
+#
+# ## 覆る条件
+#
+# - 焼き直した本と しない本の 48h に差が無いと分かったら（前提「外の作り方を写した長尺」の n が 3 を超えたところで
+#   `daily_pick` が数える）、この手は台本の差ではなく「決めが変わった日」だけに絞ること
+# - `data/rebake.jsonl` に `rc != 0` が3件 続いたら、焼く側（pipeline／upload_only）の欠陥。ここを止めるのではなく直す
+# - 1日に 2回 以上 焼いた日が続くなら、台本を小刻みに commit する回のほう（`REBAKE_MAX_PER_DAY`）
+
+#: 枠までこれより短ければ焼かない（合成 ＋ 64コマ の描画 ＋ 上げ ≈ 40〜60分）
+REBAKE_LEAD = timedelta(minutes=100)
+#: 同じ日に焼き直す上限（`videos.insert` 1本ぶんの上げ・TTS の費用・帳面）
+REBAKE_MAX_PER_DAY = 2
+REBAKE_LEDGER = "data/rebake.jsonl"
+REBAKE_LOG = "data/rebake.log"
+
+
+def _rebake_marks_dir() -> Path:
+    """**同じ台本を二度 焼かない印の置き場**（機械にひとつ）。作業コピーごとに `data/` は
+    別なので、`.git` の共通の場所（`src/history._git_common_dir`）に置く。取れなければ `data/`。"""
+    try:
+        from src import history                                # noqa: PLC0415
+        common = history._git_common_dir()
+    except Exception:                                          # noqa: BLE001
+        common = None
+    base = (common or (Path(config.ROOT) / "data")) / "rebake"
+    try:
+        base.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        pass
+    return base
+
+
+def _canon(text: str) -> str:
+    """台本の中身を、空白や鍵の順に依らない1つの字にする。"""
+    import json                                                # noqa: PLC0415
+    try:
+        return json.dumps(json.loads(text), ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    except Exception:                                          # noqa: BLE001
+        return (text or "").strip()
+
+
+def script_sha(text: str) -> str:
+    import hashlib                                             # noqa: PLC0415
+    return hashlib.sha1(_canon(text).encode("utf-8")).hexdigest()[:12]
+
+
+def draft_newer_than(draft: Path, uploaded_at: str | None, root: Path | None = None) -> bool | None:
+    """**手元の台本が、上げた本より新しいか。** 未 commit の変更が在れば `True`。
+    commit 済みなら `git log -1` の時刻 対 `uploaded_at`。分からなければ `None`（撃たない側）。"""
+    root = Path(root or config.ROOT)
+    try:
+        rel = str(draft.resolve().relative_to(root.resolve()))
+    except ValueError:
+        rel = str(draft)
+    try:
+        st = subprocess.run(["git", "status", "--porcelain", "--", rel], cwd=str(root),
+                            capture_output=True, text=True, timeout=30)
+        if st.returncode == 0 and st.stdout.strip():
+            return True
+        lg = subprocess.run(["git", "log", "-1", "--format=%cI", "--", rel], cwd=str(root),
+                            capture_output=True, text=True, timeout=30)
+        committed = ahead_gate._parse(lg.stdout.strip()) if lg.returncode == 0 else None
+    except Exception:                                          # noqa: BLE001
+        return None
+    up = ahead_gate._parse(uploaded_at) if uploaded_at else None
+    if committed is None or up is None:
+        return None
+    return committed > up
+
+
+def rebake_plan(*, cur: dict | None, stash_text: str | None, draft_text: str | None,
+                draft_newer: bool | None, attempted: bool, scheduled: bool,
+                slot_at: datetime | None, now: datetime, baked_today: int = 0,
+                lead: timedelta = REBAKE_LEAD, max_per_day: int = REBAKE_MAX_PER_DAY) -> dict:
+    """**焼き直すかを決める（純関数・API 0単位）。** 返りは `{do, why, sha, video_id, topic}`。"""
+    out = {"do": False, "why": "", "sha": "", "video_id": str((cur or {}).get("video_id") or ""),
+           "topic": str((cur or {}).get("topic") or "")}
+    if not cur or not out["video_id"] or not out["topic"]:
+        out["why"] = "決めた本が無い（`[きょうの1本]` が ID と題材で名指ししていない）"
+        return out
+    if stash_text is None:
+        out["why"] = f"`{out['video_id']}` の台本の控えが無い（`data/critique_queue/`）"
+        return out
+    if draft_text is None:
+        out["why"] = f"手元の台本 `data/scripts/{out['topic']}.script.json` が無い"
+        return out
+    out["sha"] = script_sha(draft_text)
+    if _canon(stash_text) == _canon(draft_text):
+        out["why"] = f"控えと台本は同じ中身（sha {out['sha']}）—— 焼いても変わらない"
+        return out
+    if scheduled:
+        out["why"] = f"`{out['video_id']}` にはもう予約が付いている（`--replaces` が断る側）"
+        return out
+    if draft_newer is not True:
+        out["why"] = ("台本が控えより新しいと言えない（commit の時刻 ≤ 上げた時刻・"
+                      "古い台本で上書きしない）")
+        return out
+    if attempted:
+        out["why"] = f"同じ台本（sha {out['sha']}）は一度 焼いた（印 `_rebake_marks_dir()`）—— verify の赤なら台本を直すこと"
+        return out
+    if baked_today >= max_per_day:
+        out["why"] = f"きょう既に {baked_today}回 焼いた（上限 {max_per_day}）"
+        return out
+    if slot_at is None:
+        out["why"] = "きょうの中に置ける枠が残っていない"
+        return out
+    if slot_at - now < lead:
+        out["why"] = (f"枠 {slot_at.astimezone(JST).strftime('%m/%d %H:%M')} JST まで "
+                      f"{(slot_at - now).total_seconds() / 60:.0f}分 —— 焼き上がる前に出る（要る {lead.total_seconds() / 60:.0f}分）")
+        return out
+    out["do"] = True
+    out["why"] = (f"控え（上げたときの写し）と台本 `data/scripts/{out['topic']}.script.json` が違う"
+                  f"（sha {out['sha']}・台本のほうが新しい）→ 焼き直して `{out['video_id']}` を差し替える")
+    return out
+
+
+def _rebake_rows(root: Path | None = None) -> list[dict]:
+    import json                                                # noqa: PLC0415
+    f = Path(root or config.ROOT) / REBAKE_LEDGER
+    rows: list[dict] = []
+    try:
+        for ln in f.read_text(encoding="utf-8").splitlines():
+            try:
+                rows.append(json.loads(ln))
+            except Exception:                                  # noqa: BLE001
+                continue
+    except OSError:
+        pass
+    return rows
+
+
+def _rebake_note(row: dict, root: Path | None = None) -> None:
+    import json                                                # noqa: PLC0415
+    f = Path(root or config.ROOT) / REBAKE_LEDGER
+    try:
+        f.parent.mkdir(parents=True, exist_ok=True)
+        with f.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(row, ensure_ascii=False) + "\n")
+    except OSError:
+        pass
+
+
+def rebake_today(now: datetime | None = None, *, dry_run: bool = False) -> dict:
+    """**決めた本の台本が、上げたときより良くなっていれば、背景で焼き直して差し替える。**
+    返りは `rebake_plan()` の dict に `started`（起こしたか）を足したもの。**決めるのは 0単位。**"""
+    now = now or datetime.now(timezone.utc)
+    stamp = now.astimezone(JST).strftime("%m/%d %H:%M JST")
+    from src import daily_pick, next_slot                      # noqa: PLC0415
+    root = Path(config.ROOT)
+    try:
+        day = daily_pick.for_day(now)
+        cur = daily_pick.current(day)
+    except Exception as exc:                                   # noqa: BLE001
+        print(f"[rebake] {stamp} 決めを読めませんでした: {str(exc)[:120]}", flush=True)
+        return {"do": False, "started": False, "why": "決めを読めない"}
+    vid = str((cur or {}).get("video_id") or "")
+    topic = str((cur or {}).get("topic") or "")
+    stash = stash_script(vid, root) if vid else None
+    draft = root / "data" / "scripts" / f"{topic}.script.json" if topic else None
+    stash_text = stash.read_text(encoding="utf-8") if stash else None
+    draft_text = draft.read_text(encoding="utf-8") if (draft and draft.exists()) else None
+    up = _uploaded_row(vid) if vid else None
+    newer = draft_newer_than(draft, (up or {}).get("uploaded_at"), root) if (draft_text and draft) else None
+    scheduled = False
+    try:
+        r = next_slot.latest_rows().get(vid) if vid else None
+        scheduled = bool(r and r.get("at"))
+    except Exception:                                          # noqa: BLE001
+        scheduled = False
+    sha = script_sha(draft_text) if draft_text else ""
+    attempted = bool(sha) and (_rebake_marks_dir() / f"{vid}-{sha}").exists()
+    today_s = now.astimezone(JST).date().isoformat()
+    baked_today = sum(1 for r in _rebake_rows(root)
+                      if r.get("kind") == "start" and str(r.get("at", ""))[:10] == today_s)
+    t = now.astimezone(JST)
+    if day == t.date():
+        slot_at = today_slot(now, place_hour(day))
+    else:
+        slot_at = datetime(day.year, day.month, day.day, place_hour(day), tzinfo=JST)
+    plan = rebake_plan(cur=cur, stash_text=stash_text, draft_text=draft_text, draft_newer=newer,
+                       attempted=attempted, scheduled=scheduled, slot_at=slot_at, now=now,
+                       baked_today=baked_today)
+    plan["started"] = False
+    if not plan["do"]:
+        print(f"[rebake] {stamp} 焼き直しません —— {plan['why']}", flush=True)
+        return plan
+    print(f"[rebake] {stamp} **焼き直します**: `{vid}`（{topic}）—— {plan['why']}", flush=True)
+    if dry_run:
+        print("[rebake] **焼いていません**（`--dry-run`）", flush=True)
+        return plan
+    mark = _rebake_marks_dir() / f"{vid}-{sha}"
+    try:
+        mark.write_text(now.isoformat() + "\n", encoding="utf-8")
+    except OSError:
+        pass
+    _rebake_note({"at": t.isoformat(timespec="seconds"), "kind": "start", "video_id": vid,
+                  "topic": topic, "sha": sha, "for_day": day.isoformat(),
+                  "session": os.environ.get("CLAUDE_SESSION_ID") or ""}, root)
+    try:
+        log = open(root / REBAKE_LOG, "ab")                     # noqa: SIM115
+        subprocess.Popen([sys.executable or "python3", "scripts/ahead_sweep.py",
+                          "--rebake-run", vid, topic, sha],
+                         cwd=str(root), stdout=log, stderr=subprocess.STDOUT,
+                         stdin=subprocess.DEVNULL, start_new_session=True)
+        plan["started"] = True
+        print(f"[rebake] 背景で起こしました（log は `{REBAKE_LOG}`・帳面は `{REBAKE_LEDGER}`）", flush=True)
+    except Exception as exc:                                   # noqa: BLE001
+        print(f"[rebake] [!] 起こせませんでした: {str(exc)[:120]}", flush=True)
+    return plan
+
+
+def rebake_run(vid: str, topic: str, sha: str) -> int:
+    """**焼く側**（背景・`--rebake-run`）。機械にひとつの錠を持って
+    `pipeline --script --dry-run` → `upload_only --draft --replaces` を撃ち、結果を帳面へ。"""
+    import fcntl                                               # noqa: PLC0415
+    root = Path(config.ROOT)
+    t0 = time.time()
+    lock_path = _rebake_marks_dir() / "rebake.lock"
+    fh = open(lock_path, "a+", encoding="utf-8")              # noqa: SIM115
+    try:
+        fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        print(f"[rebake-run] 別の焼き直しが走っています（錠 `{lock_path}`）。この回は焼きません", flush=True)
+        _rebake_note({"at": datetime.now(JST).isoformat(timespec="seconds"), "kind": "skip",
+                      "video_id": vid, "topic": topic, "sha": sha, "why": "locked"}, root)
+        return 0
+    py = sys.executable or "python3"
+    draft = f"data/scripts/{topic}.script.json"
+    print(f"[rebake-run] {datetime.now(JST).strftime('%m/%d %H:%M JST')} `{vid}`（{topic}・sha {sha}）を焼きます", flush=True)
+    rc = _run([py, "-m", "src.pipeline", "--script", draft, "--topic", topic, "--dry-run"],
+              "pipeline --dry-run", 5400)
+    new_id = ""
+    if rc == 0:
+        rc, out = _run_out([py, "scripts/upload_only.py", topic, "--draft", "--replaces", vid],
+                           "upload_only --draft --replaces", 1800)
+        for ln in (out or "").splitlines():
+            if ln.startswith("VIDEO_ID "):
+                new_id = ln.split(None, 1)[1].strip()
+    _rebake_note({"at": datetime.now(JST).isoformat(timespec="seconds"), "kind": "done",
+                  "video_id": vid, "topic": topic, "sha": sha, "rc": rc, "new_id": new_id,
+                  "seconds": round(time.time() - t0)}, root)
+    if rc == 0 and new_id:
+        print(f"[rebake-run] **差し替えました**: `{vid}` → `{new_id}`（{time.time() - t0:.0f}秒）", flush=True)
+    else:
+        print(f"[rebake-run] [!] 焼き直せませんでした（rc={rc}・{time.time() - t0:.0f}秒）。"
+              f"同じ台本は二度 焼きません —— 台本を直して commit すること", flush=True)
+    try:
+        fcntl.flock(fh, fcntl.LOCK_UN)
+        fh.close()
+    except OSError:
+        pass
+    return rc
+
+
 KICK_MARK = "data/.ahead_sweep.kick"
 KICK_EVERY = timedelta(minutes=20)
 LOG = "data/ahead_sweep.log"
@@ -894,6 +1180,11 @@ def main(argv: list[str] | None = None) -> int:
             comment_pending(now, dry_run=args.dry_run)
         except Exception as exc:                               # noqa: BLE001
             print(f"[comment] [!] 付ける手が落ちました: {str(exc)[:200]}", flush=True)
+        # **決めた本の台本が良くなっていれば、背景で焼き直す**（規則3 を機械へ・`rebake_today` の註）。
+        try:
+            rebake_today(now, dry_run=args.dry_run)
+        except Exception as exc:                               # noqa: BLE001
+            print(f"[rebake] [!] 焼き直す手が落ちました: {str(exc)[:200]}", flush=True)
     why = reasons_to_skip(now)
     if why:
         print(f"[sweep] {stamp} 掃きません —— {why}", flush=True)
@@ -947,4 +1238,7 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
+    # **焼く側**（`rebake_today` が背景で起こす）。位置引数 3つ: 旧ID・題材・台本の sha。
+    if len(sys.argv) >= 5 and sys.argv[1] == "--rebake-run":
+        raise SystemExit(rebake_run(sys.argv[2], sys.argv[3], sys.argv[4]))
     raise SystemExit(main())

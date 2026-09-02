@@ -201,6 +201,8 @@ def main(topic: str, visibility: str | None = None, hour: int | None = None,
     # 8/16 に実物76本を突き合わせると、**テーマIDが違うのに同じ金額**の組が
     # 予約の中に4本残っていました（`35万9318円` `61万9千円` `136万円` `足切り8万円`）。
     # 見ているのは題の数字なので、**calc も台本も別でも、答えが同じなら鳴ります。**
+    # **`--replaces` の ID は門の外でも要ります**（下の `[pick]`・決めの写し）。
+    replaced_ids = [x.strip() for x in (replaces or "").split(",") if x.strip()]
     if not skip_dupe_check:
         try:
             from src import dupes, history
@@ -229,7 +231,6 @@ def main(topic: str, visibility: str | None = None, hour: int | None = None,
             # （2026-09-02 夜。同じ日の3本目の焼き直しで、「1つ前」を外しても
             # 「2つ前」の `MqQKSnbM0OI` に `same-topic` で止められました）。
             # 1本ずつ private・予約なしを確かめます。**1本でも欠けたら全部 断る。**
-            replaced_ids = [x.strip() for x in (replaces or "").split(",") if x.strip()]
             for vid in replaced_ids:
                 existing, why = drop_replaced(existing, vid)
                 if why:
@@ -292,6 +293,23 @@ def main(topic: str, visibility: str | None = None, hour: int | None = None,
                         duration_s=_dur)
     except Exception as exc:
         print(f"[dupes] **控えを残せませんでした: {str(exc)[:80]}**")
+
+    # **差し替えたら、`[きょうの1本]` の決めも新しい ID へ写す**（2026-09-03 05:xx）。
+    # 決めは ID で本を名指しし、`ahead_sweep._today_candidate` はその ID を枠へ置きます。
+    # 写さないと、置かれるのは**焼き直す前の旧 ID**（`src/daily_pick.replace_video` の註）。
+    if replaced_ids:
+        try:
+            from src import daily_pick as _pick
+            _days = _pick.replace_video(replaced_ids, video_id,
+                                        why_note=f"upload_only --replaces・題材 {topic}")
+            if _days:
+                print(f"[pick] **[きょうの1本] の決めを写しました**: {', '.join(_days)} → {video_id}"
+                      f"（旧 {', '.join(replaced_ids)}）")
+            else:
+                print(f"[pick] [きょうの1本] に {', '.join(replaced_ids)} を名指しした決めは無い（写す物なし）")
+        except Exception as exc:
+            print(f"[pick] **決めを写せませんでした: {str(exc)[:100]}** —— "
+                  f"`python -m src.daily_pick --pick ... --video {video_id}` で手で写すこと")
 
     # **contact sheet が無ければ、ここで作る**（2026-09-01 に踏んで足した）。
     #
