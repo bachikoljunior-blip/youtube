@@ -14,9 +14,10 @@
 事実（2026-09-02 19:0x に撃って出た数）:
 
     模型          親は `claude-fable-5-1`・**effort 最大**。働き手（サブ）は
-                  **`python scripts/next_round.py` が GO と一緒に印字する模型**を Agent の `model` に渡す
-                  （画面の「Fable のみ」が **50%** に届くまで `fable`、届いたら `opus`。
-                    出どころは `scripts/quota.FABLE_CAP_PCT` と `quota.sub_model()`）。
+                  **`python scripts/next_round_owner.py` が GO と一緒に印字する模型**を Agent の `model` に渡す
+                  （画面の「Fable のみ」が **100%** に届くまで `fable`、届いたら `opus`。
+                    **50% ではない** —— 同日 21:3x の訂正「fableのみは100％使っていい」
+                    「全モデルの50%っていう公式仕様だわ！」。正本 `docs/OWNER_MODEL_BUDGET.md`）。
                   **Opus／Sonnet／Haiku で足りる所はそれでよい**（上の原文）—— どこがそれかは、
                   その回が決めて `docs/JOURNAL.md` に書く。画面が来たら `--fable <%>` も一緒に積む
     働き手        Agent ツールのサブ（`isolation: "worktree"`・`run_in_background: true`）。
