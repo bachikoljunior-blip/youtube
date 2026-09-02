@@ -626,6 +626,120 @@ def place_today(now: datetime | None = None, *, dry_run: bool = False) -> dict:
     return plan
 
 
+# ---------------------------------------------------------------- きょうの1本のサムネイル
+#
+# ## なぜ要るか（2026-09-03 03:xx JST・最適化の回。「最適化されてんの？」→ いいえ の理由を1つ潰す）
+#
+# 09/04 の1本（`6PKux5HNnUE`・外の作りを写した長尺 19.6分）は `videos.insert` で上げた本で、
+# **`thumbnail_set: False`** のまま池に在ります（帳面が焼けた窓で `thumbnails.set` だけ 403）。
+# `place_today` は 17:00 JST にその本を枠へ置きますが、**サムネイルは押しません**。
+# 押す口は3つ在って、3つとも この日には起きません:
+#
+#     pool_drain.thumbnail_first()     `pool_drain --apply` の頭 —— 掃きは「先の日付 0本」で
+#                                      `reasons_to_skip` が返すので、規則5 の下では **毎日 走らない**
+#     refresh_thumbnail --missing --video   日誌の「次の回へ 2.」（**書き置き** ＝ 人の記憶）
+#     uploader._set_thumbnail          上げた瞬間だけ。窓が閉じていれば 403 で終わり
+#
+# ＝ **`eta.py` が「引けるのは `per_video` だけ・天井を ×21.88」と名指しし、その唯一の試験
+# （前提「外の作り方を写した長尺」・門 100回/48h）に出る本が、サムネイル無しで出る形でした。**
+# 長尺の露出は 検索／おすすめ のサムネイルで決まります（ショートのフィードとは違う）——
+# 試験の本にだけ無いなら、外れても「作り」の外れとは読めません（試験が壊れる）。
+#
+# だから **置く手と同じ口**（`place_today` の直後・毎周 起こされる）で、**きょう出る1本**の
+# サムネイルが控えに在って載っていなければ、その1本だけ押します（**50単位**・
+# `refresh_thumbnail.push_missing(only_video=…)`。門はあちらのまま: 日枠・取り置き）。
+#
+# ## 覆る条件
+#
+# - `uploader._set_thumbnail` が窓の外でも通るようになったら（枠が統合された）、ここは要りません
+# - 押す先が「きょうの1本」以外に広がったら（例: 先の日付の本）、それは `pool_drain.thumbnail_first`
+#   の仕事です。**ここは1日1本・50単位 以上は撃ちません**
+# - `critique_queue.missing_thumbnail()` が `None`（分からない）を返すようになったら、
+#   ここも「分からない本は押さない」のままにすること（全部を押しに行かないため）
+
+
+def today_video_id(now: datetime, plan: dict | None = None) -> str:
+    """**きょう（JST）公開される本の ID**（無ければ空文字）。**API 0単位。**
+
+    置いた本（`place_today` の返り）が先。無ければ控えの「次に公開される本」で、
+    その `at` がきょうのものだけ（明日の本は押さない —— 規則5 の下では在りませんが、
+    在っても `pool_drain.thumbnail_first` の仕事です）。"""
+    plan = plan or {}
+    if plan.get("rc") == 0:
+        vid = str(plan.get("placed_id") or plan.get("video_id") or "")
+        if vid:
+            return vid
+    try:
+        from src import next_slot                              # noqa: PLC0415
+        nxt = next_slot.next_video(now) or {}
+        at = nxt.get("at")
+        if isinstance(at, str):
+            at = next_slot._parse(at)
+        if at is not None and at.astimezone(JST).date() == now.astimezone(JST).date():
+            return str(nxt.get("video_id") or "")
+    except Exception:                                          # noqa: BLE001
+        pass
+    return ""
+
+
+def thumb_today(now: datetime | None = None, *, plan: dict | None = None,
+                dry_run: bool = False, missing=None, quota_open=None, push=None) -> str:
+    """**きょう出る1本のサムネイルが載っていなければ、その1本だけ押す**（50単位）。
+    返りは1行の理由（押した／押さない／押せなかった）。
+
+    `missing`／`quota_open`／`push` は検査のための差し替え口（省略時は実物:
+    `critique_queue.missing_thumbnail()`／`upload_cap.day_quota().open`／
+    `refresh_thumbnail.push_missing(only_video=…)`）。"""
+    now = now or datetime.now(timezone.utc)
+    stamp = now.astimezone(JST).strftime("%m/%d %H:%M JST")
+    vid = today_video_id(now, plan)
+    if not vid:
+        line = "きょう公開される本が無い（置いていない・控えにも無い）"
+        print(f"[thumb-today] {stamp} 押しません —— {line}", flush=True)
+        return line
+    if missing is None:
+        try:
+            import critique_queue                              # noqa: PLC0415
+            missing = [r["video_id"] for r in critique_queue.missing_thumbnail()]
+        except Exception as exc:                               # noqa: BLE001
+            missing = []
+            print(f"[thumb-today] 控えを読めませんでした: {str(exc)[:100]}", flush=True)
+    if vid not in set(missing or []):
+        line = f"`{vid}` はサムネイルが載っている（か、控えに無い）"
+        print(f"[thumb-today] {stamp} 押しません —— {line}", flush=True)
+        return line
+    if quota_open is None:
+        try:
+            from src import upload_cap                          # noqa: PLC0415
+            quota_open = bool(upload_cap.day_quota(now).open)
+        except Exception:                                      # noqa: BLE001
+            quota_open = True
+    if not quota_open:
+        line = f"`{vid}` のサムネイルは載っていないが、日枠が尽きている（次の窓の回が押す）"
+        print(f"[thumb-today] {stamp} 押しません —— {line}", flush=True)
+        return line
+    if dry_run:
+        line = f"`{vid}` のサムネイルを押します（`--dry-run` なので押していません）"
+        print(f"[thumb-today] {stamp} {line}", flush=True)
+        return line
+    if push is None:
+        def push(video_id: str) -> int:
+            import refresh_thumbnail                           # noqa: PLC0415
+            return int(refresh_thumbnail.push_missing(only_video=video_id))
+    print(f"[thumb-today] {stamp} **きょうの1本 `{vid}` のサムネイルを押します**（50単位）",
+          flush=True)
+    try:
+        rc = int(push(vid))
+    except Exception as exc:                                   # noqa: BLE001
+        line = f"`{vid}` のサムネイルを押せませんでした: {str(exc)[:120]}"
+        print(f"[thumb-today] [!] {line}", flush=True)
+        return line
+    line = (f"`{vid}` に載せました" if rc == 0
+            else f"`{vid}` は押せませんでした（rc={rc}・控えは残る。次の回がもう一度 押す）")
+    print(f"[thumb-today] {line}", flush=True)
+    return line
+
+
 #: **起こした印**（`kick()` が、この時間の内なら二度 起こさない）。
 KICK_MARK = "data/.ahead_sweep.kick"
 KICK_EVERY = timedelta(minutes=20)
@@ -697,10 +811,17 @@ def main(argv: list[str] | None = None) -> int:
     # **置く側を先に。** 掃きは数分 かかり、日枠を食います。きょうの1本の 51単位 を
     # 先に取ること（`RESERVE_UNITS` の註と同じ向き）。
     if not args.no_today:
+        plan = None
         try:
-            place_today(now, dry_run=args.dry_run)
+            plan = place_today(now, dry_run=args.dry_run)
         except Exception as exc:                               # noqa: BLE001
             print(f"[today] [!] 置く手が落ちました: {str(exc)[:200]}", flush=True)
+        # **置いたら、その本のサムネイル**（`thumb_today` の註。50単位・きょうの1本だけ）。
+        try:
+            thumb_today(now, plan=plan if isinstance(plan, dict) else None,
+                        dry_run=args.dry_run)
+        except Exception as exc:                               # noqa: BLE001
+            print(f"[thumb-today] [!] 押す手が落ちました: {str(exc)[:200]}", flush=True)
     why = reasons_to_skip(now)
     if why:
         print(f"[sweep] {stamp} 掃きません —— {why}", flush=True)

@@ -101075,6 +101075,67 @@ Opus/Sonnet で足りた所: 検査の実行・commit/push・`uploaded.jsonl` �
 
 **取り合いの避け方（次に来た側へ）**: `daily_pick --pick` の前に `git fetch` して `data/daily_pick.jsonl` のその日の行を読むこと。
 `current()` は「最後の行」で、同じ日に2つの回が決めると**あとの回が黙って勝つ**。
+## 2026-09-03 02:3x〜03:1x JST —— **「最適化されてんの？」（過去の実行に対して）への答え: いいえ。唯一の腕の試験に出る本が、サムネイル無しで出る形だった**（最適化の回・`session_01AHfq4FUVAd5fxDM29yG1Cm#agent-a1f03078b497196b4`・Fable 5.1）
+
+> **「最適化されてんの？」「過去の実行に対して聞いてんだからな」**
+
+### 答え: **いいえ。** この回に自分で撃った数だけ（書き置きの結論は根拠にしていない）
+
+    data/runs.jsonl（502行・ship 290件・08-29〜09-03）   fix 206（71%）／ upload 20 ／ verdict 20 ／ improve 16 ／ premise 16 ／ means 12
+                                                          `moves`: 0 が 275件・負 14件・正 1件。日ごと（08-29〜09-03）: fix が毎日 最多（24・36・40・78・23・5）
+    data/eta.jsonl（1,175行）                              `per_video_now` 08-19 1,092 → 08-27 613 → 08-31 942（帯を切る形に替えた日に**上がる**）。到達日: 08-31 から「出ません」
+                                                          最終行: `arm_need_over_cap.per_video` **21.88**・`arm_dead_at_inf: [sub_rate]`・`traj_days` 1e9
+    eta.py（この回に撃った）                                「引けるのは `per_video` だけ。天井 ×4.49・要る ×98.20 ＝ 天井そのものを ×21.88」
+    status.py（この回に撃った）                             登録者 25人・総再生 80,349。09/03 09:00 `9zkfjEH48PY`（ショート）予約ずみ。
+                                                          09/04 `6PKux5HNnUE`（長尺 19.6分・外の作り）・09/05 `dRZnZrRy2Lw`（18.4分）は private の池
+    data/critique_queue/6PKux5HNnUE.json                  **`thumbnail_set: False`**（`thumbnail_stashed: True`）。dRZnZrRy2Lw も同じ。9zkfjEH48PY も同じ
+    git log（09/02 09:38〜17:30 UTC）                       生成側に触った commit は 09/02 夕の 9件（minutes:／style: outside_long／daily_pick）。それ以外は道具と日誌
+    docs/JOURNAL.md                                       最適化の回が 09/02 19:0x 〜 09/03 02:2x に **9回**「いいえ」。最後の2回だけが出力（長尺 2本）を変えた
+
+**近づいていない。** 290回 出して到達日は 1日も前に動かず、`per_video_now` は帯の切り方で上下しただけで実物は 8月前半の 1/5。
+ただし直近の 2回（01:4x・01:3x〜02:2x）は、初めて**出る物**を変えた（外の作りを写した長尺 2本・09/04・09/05）。**そこまでは正しい向き。**
+
+### なぜ近づかない回が選ばれ続けたか（1つ 名指し）
+
+前の 9回 の名指し（形を数で決めていない／置く側が機械でない／外を見ていない／鏡の中／作れない形）は、どれも当たっている。
+この回に読んだ実物で、**その次に在るもの**を1つ:
+
+    eta.py の唯一の腕 `per_video` の試験 ＝ 前提「外の作り方を写した長尺」（門 100回/48h・期限 09-07）に出る本 `6PKux5HNnUE` は
+    **サムネイルが載っていない**（帳面が焼けた窓で `thumbnails.set` だけ 403）。押す口は3つ在って、3つとも 09/04 には起きない:
+      pool_drain.thumbnail_first()   `pool_drain --apply` の頭 —— 掃きは `reasons_to_skip` が「先の日付 0本」で返すので、規則5 の下では**毎日 走らない**
+      refresh_thumbnail --video      日誌 02:2x「次の回へ 2.」（書き置き ＝ 人の記憶。`pool_drain.py:303` の註が「3つとも次に来た側が覚えていることに頼っている」と名指しした形そのもの）
+      uploader._set_thumbnail        上げた瞬間だけ。窓が閉じていれば 403 で終わり
+    ＝ 長尺の露出は 検索／おすすめ のサムネイルで決まる（ショートのフィードとは違う）。**試験の本にだけ無ければ、外れても「作り」の外れとは読めない ＝ 試験そのものが壊れる。**
+
+**構造は同じ**: 外す側・置く側を機械にしたあと、「置いた本を良くする側」（規則3）は、まだ回の記憶だった。
+
+### 潰したもの（主実行の中身・この回のうちに撃った）
+
+`scripts/ahead_sweep.py`:
+- `today_video_id(now, plan)` —— きょう出る本（置いた本 → 控えの次の1本が きょう のとき）。**API 0単位**
+- `thumb_today(now, plan=…)` —— その本が `critique_queue.missing_thumbnail()` に在って日枠が開いていれば、**その1本だけ** `refresh_thumbnail.push_missing(only_video=…)`（50単位・門はあちらのまま）。閉じていれば理由を返して次の窓の回に譲る
+- `main()`: `place_today` の**直後**に呼ぶ（= `run_marker --write` と `next_round` の `kick()` から毎周 起きる口。20分ごと）
+- 検査 7件（`tests/test_today_place.py`）: 置いた本を押す／載っている本は押さない／日枠が尽きていれば押さない／dry-run／置いていない回は控えの次の1本がきょうなら押す・明日なら押さない／insert の新IDを採る／main の順（today → thumb → sweep）
+- 実物で撃った（0単位・`--dry-run`）: `today_video_id` → `9zkfjEH48PY`（09/03 09:00）・「押します（dry-run）」。いまは日枠が閉じている（16:00 JST まで）ので実弾は次の窓
+
+Opus/Sonnet で足りた所: 検査の実行・merge・commit/push。判断が要ったのは「9回 の名指しの次に何が在るか」を `critique_queue/*.json` の `thumbnail_set` と `reasons_to_skip` の返りで名指しする所だけ。
+
+### 「この改善を無限大にしたら、到達日は何日 早まるか」
+
+**この回は 0日**（`--moves 0`）。到達日を動かすのは 09/06 の 48h で前提が閉じるときで、この手はその**試験を壊さない**ためのもの
+（サムネイル有無は長尺の CTR に効く。効き幅はこのチャンネルでは未測定 —— だから「早まる」とは書かない。**0日 と「効かない」を混ぜない**）。
+
+### 覆る条件
+
+- `uploader._set_thumbnail` が窓の外でも通るようになったら（枠が統合された）、`thumb_today` は要らない
+- 09/04 17:0x の `data/ahead_sweep.log` に `[thumb-today] … 載せました` が出ていなければ、この口は起きていない ＝ `kick()` の 20分 の印か `day_quota().open` を疑うこと。手で押すなら `python scripts/refresh_thumbnail.py --missing --video 6PKux5HNnUE`
+- `fast_tests` の赤 4件（`tests/test_pool_drain_thumbnail_first.py`）は **HEAD でも同じ 4件 赤**（この回に `git stash` で確かめた。池化が済んでいて「外すものが無い」ので `thumbnail_first` が呼ばれない形）。この回の変更とは無関係
+
+### 次に主実行が1周したとき、どこが変わるか
+
+**09/04 16:00 JST 以降の最初の周で、`kick()` → `place_today` が `6PKux5HNnUE` を 17:00 に置いた直後に、同じ口が そのサムネイル（年54万円／4月から増える）を押す。** 回が日誌を読んで思い出す必要は無い。
+同じく 09/03 16:00 以降の周で `9zkfjEH48PY`（公開ずみ）のサムネイルも押される（50単位）。
+
 
 ## 2026-09-03 02:3x〜02:5x JST —— 定期の回（サブ・`#agent-a27f08f2118727c54`・Fable 5.1）—— **09/04 の1本（外の作りを写した長尺）は、題・尺・中身を写して絵だけ写していなかった。外の上位4本のサムネイルを実物で並べて型を写し、控えの bytes を焼き直した。ついでに「題材の1行（kicker）」が 08/31 から1本も届いていなかった穴を塞いだ**
 
