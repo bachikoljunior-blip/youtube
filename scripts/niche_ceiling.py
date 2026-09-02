@@ -75,6 +75,31 @@ QUERIES = [
     "標準報酬月額 計算",
 ]
 
+#: **ショートの帯の語**（2026-09-02 夜・最適化の回に足した）。
+#:
+#: 上の `QUERIES` は 09/02 昼に撃って **長尺 25本／ショート 0本** でした ——
+#: つまり「天井は鏡か」の判定は、**毎日 出している形（ショート）の外の数を1つも
+#: 見ていません**（`src/daily_pick.py`: ショート 48h 中央値 173回 対 長尺 1回）。
+#: 語は `data/uploaded.jsonl` のショートで 48時間 1,000回 を超えた題（`kojo` / `nenkin` /
+#: `iryohi` / `furusato` / `taishoku` / `kakyu`）から採り、`videoDuration=short` で引きます。
+SHORT_QUERIES = [
+    "年金 手取り いくら",
+    "医療費控除 いくら戻る",
+    "ふるさと納税 上限 計算",
+    "退職金 税金 いくら",
+    "所得税 控除 節税",
+    "加給年金 いくら",
+]
+
+#: ショートと見なす秒数。YouTube の定義は 2024-10 から **3分以下**です
+#: （それまでは 60秒）。09/02 昼の帳面の1件は ≤60秒 で分けています（その日は
+#: ショートが 0本 だったので、比べる数は変わりません）。
+SHORT_MAX_SECS = 180
+
+#: 帳面に残す「外の上位」の本数（題・再生・尺・チャンネル）。
+#: **数だけ残すと、次の回は「何が取れていたか」を撃ち直さないと読めません**（100単位/語）。
+TOP_KEEP = 15
+
 LEDGER = ROOT / "data" / "niche_ceiling.jsonl"
 
 #: `scripts/eta.py` の `lever_need_over_cap`（天井をいくつ上げれば日付が出るか）。
@@ -99,8 +124,12 @@ def _own_channel(youtube) -> str:
         return ""
 
 
-def probe(queries: list[str], days: int = 365, per_query: int = 25) -> dict:
-    """撃って、外の本の再生数を返す。**`search.list` は1回100単位。**"""
+def probe(queries: list[str], days: int = 365, per_query: int = 25,
+          form: str = "any") -> dict:
+    """撃って、外の本の再生数を返す。**`search.list` は1回100単位。**
+
+    `form="short"` は `videoDuration=short`（4分未満）で引きます（既定 `any` は尺で分けるだけ）。
+    """
     from googleapiclient.discovery import build
 
     from src import quota_ledger
@@ -117,14 +146,21 @@ def probe(queries: list[str], days: int = 365, per_query: int = 25) -> dict:
         timespec="seconds").replace("+00:00", "Z")
 
     ids: dict[str, str] = {}                    # video_id -> 引いた語
+    denied = 0                                  # search.list が 429/403 で返った語の数
     for q in queries:
         try:
+            kw = {"videoDuration": "short"} if form == "short" else {}
             r = youtube.search().list(
                 part="id", q=q, type="video", order="viewCount",
                 maxResults=per_query, regionCode="JP", relevanceLanguage="ja",
-                publishedAfter=after).execute()
+                publishedAfter=after, **kw).execute()
         except Exception as exc:                               # noqa: BLE001
-            print(f"[niche] search.list 失敗（{q}）: {exc}", file=sys.stderr)
+            msg = str(exc)
+            if "429" in msg or "quotaExceeded" in msg or "rateLimitExceeded" in msg:
+                denied += 1
+                print(f"[niche] search.list 429（{q}）: search の日枠が尽きています", file=sys.stderr)
+            else:
+                print(f"[niche] search.list 失敗（{q}）: {exc}", file=sys.stderr)
             continue
         for it in r.get("items", []):
             vid = (it.get("id") or {}).get("videoId")
@@ -152,12 +188,41 @@ def probe(queries: list[str], days: int = 365, per_query: int = 25) -> dict:
             secs = _iso8601_seconds(cd.get("duration", ""))
             rows.append({
                 "id": it.get("id"), "views": int(st.get("viewCount", 0) or 0),
-                "secs": secs, "form": "short" if 0 < secs <= 60 else "long",
+                "secs": secs, "form": "short" if 0 < secs <= SHORT_MAX_SECS else "long",
                 "channel": ch, "title": sn.get("title", ""),
                 "published": sn.get("publishedAt", ""),
                 "q": ids.get(it.get("id"), ""),
             })
-    return {"rows": rows, "own": own, "queries": queries, "days": days}
+    return {"rows": rows, "own": own, "queries": queries, "days": days, "form": form,
+            "denied": denied}
+
+
+#: `search.list` の日枠（"Search Queries per day"）が戻る時刻。**Data API の日枠と同じ
+#: 太平洋時間 0:00 ＝ 16:00 JST（夏時間）**。`src/upload_cap.day_quota()` の窓と同じ。
+SEARCH_RESET_JST = "16:00 JST"
+
+
+def denied_lines(res: dict) -> list[str]:
+    """**全語 429 の回に出す行。帳面には書きません**（0本 は「帯が無い」ではなく「撃てていない」）。
+
+    2026-09-02 23:1x に踏んだ: 5語とも 429 で、`render()` が「**帯そのものが天井です。
+    ニッチを変えること**」と印字し、帳面に n=0 の1件が**書かれました**。
+    `eta_line()` は best=0 で黙るので画面には出ませんが、`latest()` の答えは
+    その嘘の1件になっていました。**撃てていない回は、帳面に触らないこと。**
+    """
+    return [
+        f"[!] **{res.get('denied', 0)}語 全部が 429 ＝ `search.list` の日枠が尽きています。"
+        f"0本 は「帯が無い」ではなく「撃てていない」です。** 帳面には書きません。",
+        f"    戻るのは {SEARCH_RESET_JST}（`Search Queries per day`・Data API の日枠と同じ窓）。"
+        f" そのあとに同じコマンドを撃ち直すこと。",
+    ]
+
+
+def top_rows(rows: list[dict], keep: int = TOP_KEEP) -> list[dict]:
+    """帳面に残す上位（**題つき**）。"""
+    top = sorted(rows, key=lambda r: -int(r.get("views") or 0))[:keep]
+    return [{k: r.get(k) for k in ("id", "views", "secs", "form", "channel", "title",
+                                   "published", "q")} for r in top]
 
 
 def summarize(rows: list[dict]) -> dict:
@@ -208,13 +273,9 @@ def verdict(best: float, own: float, need: float = NEED_OVER_CAP) -> tuple[str, 
         " **本の作り方をいくら直しても届きません。ニッチを変えること。**")
 
 
-def latest(path: Path | None = None) -> dict | None:
-    """**帳面の最後の1件**（`data/niche_ceiling.jsonl`）。**撃ちません・API 0単位。**
-
-    `scripts/eta.py` が毎回これを読みます —— **撃った数が主実行に届く口**です。
-    """
+def _rows(path: Path | None = None) -> list[dict]:
     p = path or LEDGER
-    row = None
+    out: list[dict] = []
     try:
         with p.open(encoding="utf-8") as fh:
             for line in fh:
@@ -222,12 +283,75 @@ def latest(path: Path | None = None) -> dict | None:
                 if not line:
                     continue
                 try:
-                    row = json.loads(line)
+                    out.append(json.loads(line))
                 except Exception:                              # noqa: BLE001
                     continue
     except FileNotFoundError:
-        return None
-    return row
+        return []
+    return out
+
+
+def latest(path: Path | None = None, form: str | None = None) -> dict | None:
+    """**帳面の最後の1件**（`data/niche_ceiling.jsonl`）。**撃ちません・API 0単位。**
+
+    `scripts/eta.py` が毎回これを読みます —— **撃った数が主実行に届く口**です。
+    `form="short"` なら、**その形が 1本以上 拾えた**最後の1件（ショート 0本 の
+    昼の1件は飛ばす）。
+    """
+    rows = _rows(path)
+    if form:
+        rows = [r for r in rows if ((r.get("summary") or {}).get(form) or {}).get("n")]
+    return rows[-1] if rows else None
+
+
+def top_lines(form: str = "short", path: Path | None = None,
+              now: datetime | None = None, own_median: float | None = None,
+              need: float | None = None) -> list[str]:
+    """**`src/daily_pick.lines()` の `[きょうの1本]` に出す、外の帯の同じ形の数。**（API 0単位）
+
+    ## なぜ要るか（2026-09-02 夜・最適化の回）
+
+    `[きょうの1本]` は 09/02 夜から「形と族を、いまの数で決める」画面ですが、
+    並ぶ数は**全部 自分の控え**（族の中央値は n=2〜6）でした。同じ日の昼に外を撃った
+    帳面は `eta.py` の1行にしか届かず、しかも**長尺 25本／ショート 0本** ——
+    毎日 出している形の外の数は、主実行のどの画面にも無かった。
+
+    ここは、帳面に残した**外の上位の題**をそのまま並べます。族の中央値（n=4）より、
+    **外で実際に取れている題**のほうが、次の1本の題材を決める根拠として強い。
+
+    **覆る条件**: 帳面が空／その形が 0本／30日超なら 1行も出しません。
+    """
+    row = latest(path, form=form)
+    if not row:
+        return []
+    try:
+        d = ((now or datetime.now(timezone.utc))
+             - datetime.fromisoformat(str(row["at"]))).days
+    except Exception:                                          # noqa: BLE001
+        d = 0
+    if d > 30:
+        return []
+    s = (row.get("summary") or {}).get(form) or {}
+    label = "ショート" if form == "short" else "長尺"
+    ln = (f"     外の帯の{label}（`scripts/niche_ceiling.py`・{d}日前・"
+          f"{len(row.get('queries') or [])}語・n={s.get('n', 0)}／{s.get('channels', 0)}ch）: "
+          f"最大 **{int(s.get('max', 0)):,}回** ／ p90 {int(s.get('p90', 0)):,}回 ／ "
+          f"中央 {int(s.get('median', 0)):,}回")
+    if own_median:
+        ln += (f"　← 自分の{label}の中央値 {own_median:,.0f}回 の "
+               f"**中央で ×{(s.get('median') or 0) / own_median:.1f}・"
+               f"最大で ×{(s.get('max') or 0) / own_median:.1f}**")
+    if need:
+        ln += f"（日付が出るのは ×{need:.1f}）"
+    out = [ln]
+    top = [r for r in (row.get("top") or []) if r.get("form") == form][:5]
+    if top:
+        out.append(f"       外で取れている題（上位{len(top)}・**題材を決める根拠はこちらのほうが強い**"
+                   "。族の中央値は n=2〜6）:")
+        for r in top:
+            out.append(f"         {int(r.get('views') or 0):>10,}回  {int(r.get('secs') or 0):>3}s  "
+                       f"{str(r.get('title') or '')[:46]}")
+    return out
 
 
 def eta_line(need_over_cap: float | None = None, path: Path | None = None,
@@ -314,22 +438,29 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--queries", type=int, default=4)
     ap.add_argument("--days", type=int, default=365)
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--form", choices=("any", "short"), default="any",
+                    help="short: `videoDuration=short` と SHORT_QUERIES で、毎日 出している形の外を撃つ")
     a = ap.parse_args(argv)
-    qs = QUERIES[:max(1, a.queries)]
+    qs = (SHORT_QUERIES if a.form == "short" else QUERIES)[:max(1, a.queries)]
     if a.dry_run:
-        print(f"[niche] 撃つ語 {len(qs)}件 ＝ search.list {len(qs)}回 ＝ {100 * len(qs)}単位")
+        print(f"[niche] 撃つ語 {len(qs)}件（{a.form}）＝ search.list {len(qs)}回 ＝ {100 * len(qs)}単位")
         for q in qs:
             print("   ", q)
         return 0
-    res = probe(qs, days=a.days)
+    res = probe(qs, days=a.days, form=a.form)
+    if not res["rows"] and res.get("denied"):
+        for line in denied_lines(res):
+            print(line)
+        return 2
     for line in render(res):
         print(line)
     LEDGER.parent.mkdir(parents=True, exist_ok=True)
     with LEDGER.open("a", encoding="utf-8") as fh:
         fh.write(json.dumps({
             "at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-            "queries": qs, "days": a.days, "n": len(res["rows"]),
+            "queries": qs, "days": a.days, "n": len(res["rows"]), "form": a.form,
             "summary": summarize(res["rows"]), "own_ceiling": own_ceiling(),
+            "top": top_rows(res["rows"]),
         }, ensure_ascii=False) + "\n")
     return 0
 

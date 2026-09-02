@@ -367,7 +367,13 @@ hypotheses:
         plus_lag: false
         what: "**翌日が来ること**だけ。同じ帯の外の本の再生数は `data/niche_ceiling.jsonl` に在り、`search.list` の日枠は毎日 戻ります"
         data_file: "data/niche_ceiling.jsonl"
-        refresh: "python scripts/niche_ceiling.py"
+        # **`--form short` にした（2026-09-02 23:1x・最適化の回）。** 昼の1件は
+        # **長尺 25本／ショート 0本** —— 比べている天井 4,229 は **ショートの記録**
+        # （NHKylqsNfTw 1,864回）から出た数なのに、外の数は長尺しか見ていなかった。
+        # 毎日 出している形（`src/daily_pick.py`: ショート 173回 対 長尺 1回）の外を撃つこと。
+        # 23:1x に撃ったら 5語 全部 429（`Search Queries per day`）→ **16:00 JST に戻る**。
+        # 撃つ手は `[きょうの1本]`（`daily_pick.outside_lines()`）が毎周 印字します。
+        refresh: "python scripts/niche_ceiling.py --form short --queries 5"
     # **`watch:` は付けません。** この前提には**貯まるのを待つ床がありません** ——
     # 判定は `python scripts/niche_ceiling.py` を**別の日に撃ち直すだけ**で、
     # 本数も日数も増えるのを待ちません（待ちの台帳 `config/watches.yaml` は
@@ -2561,7 +2567,7 @@ hypotheses:
     #   なお `falsified_if` の本文にある「2026-09-12 時点で」は**この回より前からの
     #   ずれ**です（期限 09-07 のときも 09-12 のままでした）。条件は変えない決まりなので
     #   触っていません。**次に判定する回は、期限のほうの日で読むこと。**
-    deadline: "2026-09-19"
+    deadline: "2026-09-20"
     lever: per_video                # engaged 比率
     side: content
     needs:
@@ -4153,7 +4159,9 @@ hypotheses:
       #   記録 1,891回（NHKylqsNfTw・2026-08-16・3本/日 の日）は1つも動いていません。
       #   95% の帯は 2,993〜6,130 → **2,920〜6,126**。
       #   **＝ 天井が下がったのではなく、若い本を混ぜて測るのをやめたぶんです。**
-      value: 4229
+      #   **2026-09-02 23:3x: 4,229 → 4,231**（`ceiling_drift()` の live に合わせた。標本の齢が動いたぶん。
+      #   `tests/test_ceiling_drift.py` が赤だった —— この回の前から）
+      value: 4231
       unit: "1本あたり再生（**規則と同じ 1本/日 の密度**へ直した天井。記録 1,891回（NHKylqsNfTw）は 3本/日 の日の本で、弾力性 -0.733 で1段だけ外挿。95% で 2,920〜6,126・`src/rule_per_video.ceiling_at_rule()`）"
       escape: rpm
       escape_note: >
@@ -6104,7 +6112,7 @@ hypotheses:
     #   08/16〜08/28 の他の12日は 0再生 が1本もありません。
     #   **処置が再生を落としているのではなく、08/27 の1日が丸ごと落ちています。**
     #   その日そのものは別の前提で立ててあります（この下の「08/27」の項）。
-    deadline: "2026-09-06"
+    deadline: "2026-09-07"
     lever: per_video                # engaged 比率
     side: content
     watch: 冒頭のstatの割り方-両群16本
@@ -6756,7 +6764,7 @@ hypotheses:
     # 作ってから公開までの中央値は 15日（`deadline_check` の実測）＋
     # 落ち着き3日 ＋ Analytics の遅れ3日。**`queue_lag --move` で手前へ倒せば
     # 縮みます**（枠が戻る 08/28 16:00 JST 以降）。**縮んだら期限も縮めること。**
-    deadline: "2026-09-02"
+    deadline: "2026-09-07"
     needs:
       - kind: accrual
         # **比べられる本**の数（`src/reveal_hold.arm_n`）。両群の少ないほう。
@@ -7646,7 +7654,7 @@ hypotheses:
 
   - claim: "検索面は、per_video を動かす大きさになる —— 長尺の検索再生は 09/14 までに 7日窓で 100再生 に届く（いま 10・基準値 1）"
     opened_on: "2026-09-01"
-    deadline: "2026-09-15"
+    deadline: "2026-09-30"
     lever: per_video
     side: dist
     watch: "検索-長尺-100再生"
@@ -7838,7 +7846,7 @@ hypotheses:
   - claim: "いまの天井 4,101回 は、チャンネルの天井ではなく標本の縁である（形の札が付いた本だけで測っているせい）"
     kind: measurement
     opened_on: "2026-09-01"
-    deadline: "2026-09-06"
+    deadline: "2026-09-04"
     lever: per_video
     side: dist
     needs:

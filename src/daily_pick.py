@@ -442,6 +442,49 @@ def record(form: str, topic: str, why: str, *, day: date | None = None,
     return row
 
 
+def outside_lines(cmp: dict, form: str = "ショート", now: datetime | None = None,
+                  ledger: Path | None = None) -> list[str]:
+    """**外の帯の、同じ形の数**を `[きょうの1本]` に並べる（`scripts/niche_ceiling.py` の帳面・API 0単位）。
+
+    ## なぜ要るか（2026-09-02 夜・最適化の回）
+
+    この画面の数は**全部 自分の控え**でした（族の中央値は n=2〜6）。同じ日の昼に外を撃った
+    帳面（`data/niche_ceiling.jsonl`）は `eta.py` の1行にしか出ず、しかも
+    **長尺 25本／ショート 0本** —— 毎日 出している形の外の数は、どの画面にも無かった。
+    自分の記録（最大 1,864回）を天井と呼ぶ限り、同じ作り方の外へは出られません。
+
+    **帳面にその形が無いときは、撃つ手を1行 出します**（`--form short`・100単位/語）。
+    09/02 23:1x に撃ったら 5語 全部 429（`Search Queries per day`）だったので、
+    **戻る時刻（16:00 JST）も一緒に出します** —— 出ない手は撃たれません。
+
+    **覆る条件**: 帳面にその形が 1本以上 在れば、この行は数と上位の題に置き換わります
+    （`niche_ceiling.top_lines()`）。30日 超えたら消えて、撃つ手に戻ります。
+    """
+    try:
+        import sys
+        here = str(ROOT / "scripts")
+        if here not in sys.path:
+            sys.path.insert(0, here)
+        import niche_ceiling as nc                                 # noqa: PLC0415
+    except Exception:                                          # noqa: BLE001
+        return []
+    key = "short" if form == "ショート" else "long"
+    own = ((cmp.get("rule") if form == "ショート" else cmp.get("all")) or {}).get(form, {}) \
+        .get("median") or (cmp.get("all") or {}).get(form, {}).get("median")
+    try:
+        got = nc.top_lines(key, path=ledger, now=now, own_median=own)
+    except Exception:                                          # noqa: BLE001
+        got = []
+    if got:
+        return got
+    return [
+        f"     外の帯の{form}: **まだ 1本も撃てていません**（帳面 `data/niche_ceiling.jsonl` に"
+        f" {form} 0本）。自分の記録を天井と呼ぶ限り、同じ作り方の外へ出られません —— "
+        f"撃つこと（100単位/語・`Search Queries per day` は {getattr(nc, 'SEARCH_RESET_JST', '16:00 JST')} に戻る）:",
+        f"       python scripts/niche_ceiling.py --form short --queries 5",
+    ]
+
+
 def _fmt(v) -> str:
     if v is None:
         return "—"
@@ -514,6 +557,7 @@ def lines(next_row: dict | None, now: datetime | None = None,
         rl = _ratio_line(c, draft_form)
         if rl:
             out.append(rl)
+    out.extend(outside_lines(c, "ショート", now=now))
     fams = c.get("families") or []
     if fams:
         top = [f for f in fams if f["enough"]][:6]
