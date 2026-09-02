@@ -111,6 +111,107 @@ def _clamp_per_day(n: int) -> int:
 DEFAULT_PER_DAY = 10          # **読めない回の既定**。実際に使う数は `_measured_per_day()`
 
 
+RC_RULE_FULL = 5              # **`--move` の先の日が、規則1 で埋まっている**
+
+
+def _day_holders(day: str, exclude: str | None = None) -> list[str]:
+    """**その JST の暦日に、もう予約／公開が入っている本**（`video_id` の一覧）。
+
+    `day` は `YYYY-MM-DD`。`exclude` はいま動かそうとしている本（自分の枠は数えない）。
+    読むのは控え（`data/uploaded.jsonl`）だけ ＝ **API 0単位**。
+
+    **`at` が過去の本も数えます。** 聞いているのは「規則1（1日1本）の枠が
+    残っているか」なので、**きょう既に公開した本も枠を埋めています**
+    （`src/next_slot.today_count()` と同じ床・同じ理由）。
+    """
+    try:
+        from src import dupes as _d                            # noqa: PLC0415
+        rows = _d.ledger_rows()
+    except Exception:                                          # noqa: BLE001
+        return []
+    # **鍵は `id` です**（2026-09-02 に踏んだ）。`dupes.ledger_rows()` は
+    #     控えの `video_id` を **`id`** に写して返します（`src/dupes.py`）。
+    #     `video_id` で引くと**全行 None** になり、この門は
+    #     **一度も鳴らないまま「空いています」と答えます** ——
+    #     最初に書いたときそれで素通りしました。両方 見ます。
+    latest: dict[str, dict] = {}
+    for r in rows:
+        v = r.get("id") or r.get("video_id")
+        if v:
+            latest[str(v)] = r
+    out = []
+    for v, r in latest.items():
+        if exclude and v == exclude:
+            continue
+        at = str(r.get("at") or "")
+        if not at:
+            continue
+        try:
+            t = datetime.fromisoformat(at.replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        if t.tzinfo is None:
+            t = t.replace(tzinfo=timezone.utc)
+        if t.astimezone(JST).strftime("%Y-%m-%d") == day:
+            out.append(v)
+    return out
+
+
+def _rule_blocks_move(vid: str, when: str) -> list[str]:
+    """**その `--move` が規則1（1日1本）を破るなら、理由の行**（破らなければ空）。
+
+    ## なぜ機械の側に置くか（2026-09-02・最適化の回。**実物で踏んだ**）
+
+    `--per-day` は `_clamp_per_day()` で締めてあり、`--compact` / `--spread` /
+    `batch_build` は全部そこを通ります。**`--move` だけが素通りでした。**
+
+    実物 2026-09-02: `src/next_slot.draft_lines()` が
+
+        python scripts/reschedule.py --move MqQKSnbM0OI 2026-09-02T20:00
+
+    を印字していて、**その 09/02 には 13:00 の1本が既に公開ずみ**でした。
+    撃てば 09/02 が **2本** ＝ オーナーが固定した規則1
+    （`src/house_rule.py`「動画は1日一本」）に正面から反します。
+    印字の側は直しましたが、**印字を直しただけでは同じ穴です** ——
+    `scripts/stop_check.sh` の教訓（「印字に格上げしただけでは、
+    出ていても読まずに終われる」）と、`src/house_rule.py` 冒頭の
+    「この repo でいちばん多い壊れ方 ＝ 言っている所と、している所が別」。
+
+    **上限の出どころは増やしていません** —— `house_rule.PUBLISH_PER_DAY` の1か所です。
+
+    ## 覆る条件
+
+    - オーナーが規則1 を外したら、`PUBLISH_PER_DAY` 経由で自動に緩みます。
+    - 控えは**上限側の見積り**（取り消した本も残る）なので、この門は
+      **止めすぎる側**に外れます。実物が空だと分かっている回は
+      `scripts/reschedule.py --list`（50単位）で確かめてから、
+      控えのほうを直すこと（**門を外さないこと**）。
+    - 入れ替え（2本の時刻を交換）は、先に `--unschedule` してから `--move` すること。
+      実測 2026-09-02 の `queue_lag.py --plan` は **0手**なので、いま塞ぐものはありません。
+    """
+    try:
+        from src import house_rule as _h                       # noqa: PLC0415
+        rule = max(1, int(_h.PUBLISH_PER_DAY))
+    except Exception:                                          # noqa: BLE001
+        return []
+    day = str(when)[:10]
+    held = _day_holders(day, exclude=vid)
+    if len(held) < rule:
+        return []
+    return [
+        f"[reschedule] **{day}（JST）は、もう {len(held)}本 埋まっています**"
+        f"（規則1 ＝ **{rule}本/日**・`src/house_rule.py`・2026-08-31"
+        "「動画は1日一本」）。**撃ちません。**",
+        f"             その日に居る本: {' '.join(held[:6])}"
+        + ("  ほか" if len(held) > 6 else ""),
+        "             **規則を外すのはオーナーだけです。** 入れ替えたいなら、"
+        "先に `--unschedule <どける本>` を撃ってから、こちらを撃つこと。",
+        "             きょうの枠が埋まっている回に立っている下書きは"
+        "**明日のぶん**です（規則5「1日の回り方」）——"
+        "きょうやるのは予約ではなく `improve`（規則3）。",
+    ]
+
+
 def _live_edge_min(hour: int, step_min: int) -> int:
     """**その日の「生きる目盛り」の右端**（JST の分）。
 
@@ -1723,6 +1824,13 @@ def main(argv: list[str] | None = None) -> int:
         return _compact(args)
 
     if args.move:
+        # **規則1（1日1本）を、API を呼ぶ前に見ること**（2026-09-02 に足した）。
+        #     `--per-day` は `_clamp_per_day()` で締めてありますが、
+        #     **`--move` だけが素通りでした**（`_rule_blocks_move` の註に実物）。
+        _blocked = _rule_blocks_move(args.move[0], args.move[1])
+        if _blocked:
+            print("\n".join(_blocked), flush=True)
+            return RC_RULE_FULL
         # **API を呼ぶ前に見ること。** 窓の門は認証も枠も要らないので、
         # 通らない移動で単位（50単位）を捨てないため。
         measure_window.check(args.move[1][:10], force=args.force_window,
