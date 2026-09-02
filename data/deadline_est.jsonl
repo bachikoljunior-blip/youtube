@@ -39,3 +39,11 @@
 {"at": "2026-09-02", "key": "max([int(r.get('long_views') or 0) for r in rows('search_terms.jsonl') if int(r.get('days') or 0) == 7] or [0])", "rate": 5.0, "have": 10, "ready": "2026-09-20", "claim": "検索面は、per_video を動かす大きさになる —— 長尺の検索再生は 09/14 までに 7日窓で 100再生 に届く（いま 10・基準値 1）"}
 {"at": "2026-09-02", "key": "clarity_books()", "rate": 2.875, "have": 69, "ready": "2026-09-25", "claim": "一息に載せる数の個数が多いほど、聞き手は分からなくなって離れる（＝ `verify.EAR_LOAD_MAX` が立っている前提）"}
 {"at": "2026-09-02", "key": "reveal_hold_days()", "rate": 0.333333, "have": 2, "ready": "2026-09-05", "claim": "完成した図を説明のあいだ画面に残すと、engaged 比率が上がる（＝速すぎて理解されていない）"}
+{"at": "2026-09-03", "key": "clarity_books()", "rate": 1.0, "have": 113, "ready": "2026-09-25", "claim": "一息に載せる数の個数が多いほど、聞き手は分からなくなって離れる（＝ `verify.EAR_LOAD_MAX` が立っている前提）"}
+{"at": "2026-09-03", "key": "sum(v for v in latest_views().values() if v < 342)", "rate": 2514.0, "have": 12570, "ready": "2026-09-06", "claim": "登録は本の作りではなく配信の広さで決まる。再生が伸びなかった本からは、何本 積んでも登録は入らない"}
+{"at": "2026-09-03", "key": "len({r['video_id'] for r in uploaded() if r.get('video_id') and str(r.get('topic', '')).startswith('s-ribo-') and str(r.get('at', ''))[:10] <= str(date.today())})", "rate": 0.166667, "have": 1, "ready": "2026-10-15", "claim": "1本あたり再生の天井は配信の側で決まっている。題材の族を税・年金・社会保険の外へ出しても、1本あたり再生は変わらない"}
+{"at": "2026-09-03", "key": "sum(latest_views().get(v, 0) for v in long_ids())", "rate": 29.2, "have": 438, "ready": "2026-09-23", "claim": "長尺の登録率はショートより1桁以上高い（律速の登録者は長尺でしか動かない）"}
+{"at": "2026-09-03", "key": "min(reveal_hold_arm('処置'), reveal_hold_arm('対照'))", "rate": 1.0, "have": 15, "ready": "2026-09-04", "claim": "完成した図を説明のあいだ画面に残すと、engaged 比率が上がる（＝速すぎて理解されていない）"}
+{"at": "2026-09-03", "key": "reveal_hold_days()", "rate": 0.285714, "have": 2, "ready": "2026-09-07", "claim": "完成した図を説明のあいだ画面に残すと、engaged 比率が上がる（＝速すぎて理解されていない）"}
+{"at": "2026-09-03", "key": "max([int(r.get('long_views') or 0) for r in rows('search_terms.jsonl') if int(r.get('days') or 0) == 7] or [0])", "rate": 3.333333, "have": 10, "ready": "2026-09-30", "claim": "検索面は、per_video を動かす大きさになる —— 長尺の検索再生は 09/14 までに 7日窓で 100再生 に届く（いま 10・基準値 1）"}
+{"at": "2026-09-03", "key": "len(json.load(open('data/video_forms.json'))['forms'])", "rate": 106.5, "have": 213, "ready": "2026-09-04", "claim": "いまの天井 4,101回 は、チャンネルの天井ではなく標本の縁である（形の札が付いた本だけで測っているせい）"}
