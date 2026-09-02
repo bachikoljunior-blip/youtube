@@ -89,3 +89,44 @@ def test_控えから拾い直されないこと(monkeypatch):
     # `exclude` で外す → 通る
     assert not dupes.blocking(title, "gassan-kaigo-alone-155", [], topics,
                               exclude="old")
+
+
+def test_下書きが2本残っていても全部外せる(monkeypatch):
+    """**3本目の焼き直し**（2026-09-02 夜に実際に踏んだ形）。
+
+    規則3 は「出る瞬間まで」なので焼き直しは1日に何度も起き、
+    そのたびに private・予約なしの下書きが**1本ずつ残ります**（消さない・規則の4）。
+    「1つ前」だけ外しても、「2つ前」に `same-topic` で当たります
+    （実測: `MqQKSnbM0OI` と `SD8zQU-x6y0`）。
+    """
+    from src import dupes
+
+    ledger = [
+        {"id": "d1", "title": "介護の月額上限2万4600円で年間限度額の何割が埋まるか",
+         "topic": "gassan-kaigo-alone-155", "calc": "gassan", "at": None, "scheduled": False},
+        {"id": "d2", "title": "介護の月額上限2万4600円は年間限度額19万円の何割か",
+         "topic": "gassan-kaigo-alone-155", "calc": "gassan", "at": None, "scheduled": False},
+    ]
+    monkeypatch.setattr(dupes, "ledger_rows", lambda topics=None: list(ledger))
+    topics = {"gassan-kaigo-alone-155": "gassan"}
+    title = "高額介護合算療養費 介護だけで年間限度額19万円の何割が埋まるか"
+
+    # 1本だけ外す → もう1本で鳴る（直す前の姿）
+    assert dupes.blocking(title, "gassan-kaigo-alone-155", [], topics, exclude="d2")
+    # 集合で外す → 通る
+    assert not dupes.blocking(title, "gassan-kaigo-alone-155", [], topics,
+                              exclude={"d1", "d2"})
+
+
+def test_複数の札は1本ずつ確かめる():
+    """`--replaces a,b` は **1本でも欠けたら全部 断る**（予約済みを混ぜて通さない）。"""
+    rows = [_v("a"), _v("b", publish_at="2026-09-03T11:00:00Z")]
+    kept, why = upload_only.drop_replaced(rows, "a")
+    assert why == "" and [r["id"] for r in kept] == ["b"]
+    kept2, why2 = upload_only.drop_replaced(kept, "b")
+    assert "予約" in why2 and [r["id"] for r in kept2] == ["b"]
+    # main() が `,` で割って1本ずつ `drop_replaced` に通していること（写しではなく実物）
+    src = (ROOT / "scripts" / "upload_only.py").read_text(encoding="utf-8")
+    assert 'replaces or "").split(",")' in src
+    assert "for vid in replaced_ids:" in src
+    assert "exclude=set(replaced_ids) or None" in src

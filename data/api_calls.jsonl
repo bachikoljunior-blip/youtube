@@ -6289,3 +6289,34 @@
 {"at": "2026-09-02T09:56:59+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "eta.py:q"}
 {"at": "2026-09-02T09:57:00+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "eta.py:q"}
 {"at": "2026-09-02T10:07:54+00:00", "api": "data", "method": "channels.list", "units": 1, "ok": true, "by": "preflight.py:main"}
+{"at": "2026-09-02T09:53:48+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "eta.py:q"}
+{"at": "2026-09-02T09:53:48+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "eta.py:q"}
+{"at": "2026-09-02T09:53:48+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "eta.py:q"}
+{"at": "2026-09-02T09:53:49+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "eta.py:q"}
+{"at": "2026-09-02T09:53:49+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "eta.py:q"}
+{"at": "2026-09-02T09:53:49+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "eta.py:q"}
+{"at": "2026-09-02T09:53:49+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "eta.py:q"}
+{"at": "2026-09-02T09:59:38+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "eta.py:q"}
+{"at": "2026-09-02T09:59:38+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "eta.py:q"}
+{"at": "2026-09-02T09:59:39+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "eta.py:q"}
+{"at": "2026-09-02T09:59:39+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "eta.py:q"}
+{"at": "2026-09-02T09:59:39+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "eta.py:q"}
+{"at": "2026-09-02T09:59:39+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "eta.py:q"}
+{"at": "2026-09-02T09:59:39+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "eta.py:q"}
+{"at": "2026-09-02T10:15:50+00:00", "api": "data", "method": "channels.list", "units": 1, "ok": true, "by": "upload_only.py:main"}
+{"at": "2026-09-02T10:15:51+00:00", "api": "data", "method": "videos.list", "units": 1, "ok": true, "by": "upload_only.py:main", "detail": "SD8zQU-x6y0,MqQKSnbM0OI,dg-5ml7GRZQ,8hJnwkC8NU0,2tAGEKVCgYQ,ICmIBsZRYFE,HW0-QFAPl98,CLiJusPI7gY,aPz9Ys_wkeo,r9T2IwTyuz0,"}
+{"at": "2026-09-02T10:15:52+00:00", "api": "data", "method": "videos.list", "units": 1, "ok": true, "by": "upload_only.py:main", "detail": "GbRRvae3nEE,a63FzIUV2wI,h35ot6MqYso,m7BRQs9X6Jc,icSuiH8u6G0,vdxF0QfsHDg,sCr8CcUtpN4,7iw5tSFK4H4,h8AzogGHyqU,Z0kIGfHVlEo,"}
+{"at": "2026-09-02T10:15:52+00:00", "api": "data", "method": "videos.list", "units": 1, "ok": true, "by": "upload_only.py:main", "detail": "G26SUnRP0bg,8y2N_R-1wBg,zZHmFW7AYFo,l6yTGfjskD8,Z0tBNDpr60o,UVXKWfgWkZE,ClBuhgt43pA,DSZfGUQ_NyQ,zM9LWPirhCA,5qVTSD6FF20,"}
+{"at": "2026-09-02T10:15:52+00:00", "api": "data", "method": "videos.list", "units": 1, "ok": true, "by": "upload_only.py:main", "detail": "cFZd55jRxAw,mLIs9lDXTpQ,8ORhweAXZ7U,h_1tmYxLSdo,yC5BVoX64bU,6l0RCUDEm5g,OcAFHKW6Gtg,uTXFcur6VTw,ENCe9pKoZug,B3pgxY1Xi1w,"}
+{"at": "2026-09-02T10:15:52+00:00", "api": "data", "method": "videos.list", "units": 1, "ok": true, "by": "upload_only.py:main", "detail": "v6gZIFynjpc,SvOyN1BOdQ4,-5n5vwfePoY,utZAUxymQLw,fLENot-5oKM,470i0hhnRx0,78ssJSwULTg,to_gWbvDhrU,JpTJlmJBDm0,yy7wFYJOz88,"}
+{"at": "2026-09-02T10:15:52+00:00", "api": "data", "method": "videos.list", "units": 1, "ok": true, "by": "upload_only.py:main", "detail": "lywTMXD6WDM,WIj04aFYW6Q,OePniwSIcTE,2FSAM7FYftY,KdlvGxloIg4,5A-YZC26YVs,xEwtkQDKqkA,zUDaYS5Acgo,lIQxDg4OlAo,IkGaQv1fQQA,"}
+{"at": "2026-09-02T10:15:53+00:00", "api": "data", "method": "videos.list", "units": 1, "ok": true, "by": "upload_only.py:main", "detail": "66ErsT9OUrI,D4O2b1xKe5M,NeLZdfJiaDM,dhU65tcBJIo,pMHDwK5tB2E,eDhsTuVyVAw,gPusj-Y2404,G3VqIFpBwKo,drkKm9fHW2M,m_q1G_GNgY8,"}
+{"at": "2026-09-02T10:15:53+00:00", "api": "data", "method": "videos.list", "units": 1, "ok": true, "by": "upload_only.py:main", "detail": "ERW21qnDcTc,Hphh4YLfCR4,J2PXnd75LIM,5eAjnILgDVc,supVwM056so,6icv_RjRM1c,AxcqoUJHHMk,EXwYyJgoeec,FGZ1NPuwWxc,DjXL4OmsUN0,"}
+{"at": "2026-09-02T10:15:53+00:00", "api": "data", "method": "videos.list", "units": 1, "ok": true, "by": "upload_only.py:main", "detail": "anH_Ht3CfQk,zGEeeOvgEK4,MGyAFTblhKc,mmgb36T4fic,sLpF129koN8,j9fn0x4xG9U,dh0Zg0WJ3TM"}
+{"at": "2026-09-02T10:15:54+00:00", "api": "data", "method": "videos.list", "units": 1, "ok": true, "by": "upload_only.py:main", "detail": "YBZFmrsL_kk,f-eqkNfiPFQ,9hqzUxqBjBE,cJTGM3x3yaM,KPGuqj5v1Qs,E5i0YfIkmnA,uhR8msMW9k4,cQ-gLLQ8onQ,hKCwPvuqviw,hcqHpGUOeM8,"}
+{"at": "2026-09-02T10:15:54+00:00", "api": "data", "method": "videos.list", "units": 1, "ok": true, "by": "upload_only.py:main", "detail": "_4JrAC1ijZ8,F179rBqytVQ,kk57OJ0zVT4,Ra_Z2XKgg28,_zD84TTiBbE,Ry37GWVfn48,PqnO-T8dQbs,lsxehx1ISTo,n4c3BTsXRZU,L1_8cUYl6rA,"}
+{"at": "2026-09-02T10:15:55+00:00", "api": "data", "method": "videos.list", "units": 1, "ok": true, "by": "upload_only.py:main", "detail": "ioPzkN-XxLs,ofPvQqfsC5g,UJB3hrfxpfQ,jP9RWO2Gs7Y,AW_3Bnk-Cu0,N9Mc3VJu92g,E1AV3fsum7E,anLKkadODp8,jzkRozkWbAM,nY9VICHEUh8,"}
+{"at": "2026-09-02T10:15:55+00:00", "api": "data", "method": "videos.list", "units": 1, "ok": true, "by": "upload_only.py:main", "detail": "XYKBemKX8eg,L2fqMA7Xh-k,KZ6uXiZt4yI,YKVMTd6fOmg,n0biLiZFCiI,qBHJaKOl1hM,yun7OQaI1T4,SE0V5vXQuM8,YR1Z18HV8KQ,quiaZxn7tes,"}
+{"at": "2026-09-02T10:15:56+00:00", "api": "data", "method": "videos.list", "units": 1, "ok": true, "by": "upload_only.py:main", "detail": "sHj5LjTj_C0,tBI1Lml41SA,VcfQsHq4B_0,3mcrKYDJ_Mc,Yy7GmcGoQ6I,bjd0APzOyDI,CIPYV_r1Hdo,kLZ_TfA0Iss,PhQ2KvuQASQ,l6_dVdypyw8,"}
+{"at": "2026-09-02T10:15:56+00:00", "api": "data", "method": "videos.list", "units": 1, "ok": true, "by": "upload_only.py:main", "detail": "_AVmgTNc658,1d3sR_XOdCw,JmKA7eB5jc0,gmCvNpLfBg4,VDn9Ue0GEVk,1nIfEOsNunk,mWIrQ0IIlWI,QTL7_jky0o0,oB8M8Q5EtMw,Sl5DTCZxaRs,"}
+{"at": "2026-09-02T10:15:57+00:00", "api": "data", "method": "videos.list", "units": 1, "ok": true, "by": "upload_only.py:main", "detail": "5d0Ox7N4UYM,tk6sCW_TrKA,RT0_pZl-jig,zwbEb9Fs4Jo,7ZVHJis_CH0,KW3TqPvWctQ,ZRRONBzRoGA,c62jFg13yws,Eggpp86CkDk,u4iRJRE4JQk,"}
