@@ -271,7 +271,21 @@ def _future_date(days: int) -> str:
     return (datetime.now(JST) + timedelta(days=days)).strftime("%Y-%m-%d")
 
 
-def test_pinned_date_is_returned_as_is():
+@pytest.fixture()
+def 規則5なし(monkeypatch):
+    """**先の日付への釘づけは、規則5 の下では断られます**（2026-09-02）。
+
+    下の2件が見ているのは**釘づけそのものの仕組み**（渡した日をそのまま返す・
+    埋まっていても翌日へ送らない）で、**規則5 が外れた日にそのまま要るもの**です。
+    規則5 の下で断ることは `tests/test_no_future_schedule.py` が主題として持ちます
+    （`test_釘づけの道は_先の日付で例外`）。**置き場所を分けるだけ**で、
+    どちらの門も消していません。
+    """
+    from src import house_rule
+    monkeypatch.setattr(house_rule, "SAME_DAY_SCHEDULING_ONLY", False)
+
+
+def test_pinned_date_is_returned_as_is(規則5なし):
     day = _future_date(9)
     got = next_publish_at(10, 0, taken=set(), date_jst=day)
     want = datetime.strptime(f"{day} 10:00", "%Y-%m-%d %H:%M") \
@@ -280,7 +294,7 @@ def test_pinned_date_is_returned_as_is():
     assert got == want
 
 
-def test_pinned_date_does_not_slide_when_taken():
+def test_pinned_date_does_not_slide_when_taken(規則5なし):
     """**埋まっていても翌日へ送らない。** 送ると「1日8本」が7本+1本に化ける。"""
     day = _future_date(9)
     taken = {next_publish_at(10, 0, taken=set(), date_jst=day)}
