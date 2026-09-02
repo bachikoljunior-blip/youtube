@@ -500,7 +500,34 @@ def next_sample_days(e: dict | None = None, cal: dict | None = None,
 
 
 def sample_lines(s: dict | None = None) -> list[str]:
-    """`next_sample_days()` の印字。**`eta.py` が `lines()` の続きに出します。**"""
+    """`next_sample_days()` の印字。**`eta.py` が `lines()` の続きに出します。**
+
+    ## **【2026-09-02】規則5 の下では、暦から数えません**
+
+    オーナー原文（固定その4）:「**現在の日付にしか予約しないってことだからね？**」
+    ＝ **先の日付が空であることが正しい状態**なので、
+    「予約の暦に規則日の候補が何日あるか」は **常に 0** になります。
+
+    下の文はそれを「**分子は それまで動きません**」と読みますが、
+    **規則5 の下ではその読みが逆**です —— 標本は**毎日1本 出た結果として**
+    1日ずつ増えます（暦に置いて稼ぐのではありません）。
+    暦から数えた「あと何日」は、この規則の下では意味を持ちません。
+    """
+    try:
+        from . import house_rule                              # noqa: PLC0415
+        if house_rule.same_day_only():
+            s = s if s is not None else next_sample_days()
+            n = house_rule.planned_publishes_per_day()
+            return [
+                "    --- **この標本は、次にいつ増えるか**（規則5・固定その4）---",
+                f"        いま規則日 **{s.get('rule_days')}日**。"
+                f"**毎日 {n}本 出るぶん、1日に1日ずつ増えます。**",
+                "        **暦からは数えません** —— 「現在の日付にしか予約しない」"
+                "ので、先の日付は空が正しい状態です。"
+                "**空いている日は、埋める対象ではありません。**",
+            ]
+    except Exception:                                          # noqa: BLE001
+        pass
     s = s if s is not None else next_sample_days()
     if s.get("next_day") is None and not s.get("empty"):
         return []

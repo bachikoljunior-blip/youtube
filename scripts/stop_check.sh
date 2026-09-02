@@ -715,7 +715,7 @@ if [ "$SLOTRC" -eq 2 ] && [ -n "$SLOTGATE" ]; then
   if [ "$SN" -lt 3 ]; then
     echo $((SN + 1)) > "$SCOUNT"
     cat <<EOF >&2
-【投稿が途切れる日が、すぐ先にあります】(${SN}→$((SN + 1))回目・3回で通します)
+【きょうの1本が、まだ予約にも実績にもありません】(${SN}→$((SN + 1))回目・3回で通します)
 
 ${SLOTGATE}
 
@@ -725,7 +725,7 @@ ${SLOTGATE}
 - 背後で走っているもの: ${RUNNING}
 - 未コミットの変更: ${DIRTY}
 EOF
-    printf '{"decision":"block","reason":"すぐ先に予約0本の日があります。その日の1本を予約まで入れてから終わってください（python scripts/slot_gate.py）"}\n'
+    printf '{"decision":"block","reason":"きょうの1本が、まだ予約にも実績にもありません。きょうの枠へ1本 入れてから終わってください（python scripts/slot_gate.py）。**先の日付には置かないこと** ＝ 規則5・固定その4"}\n'
     exit 0
   fi
   rm -f "$SCOUNT"
