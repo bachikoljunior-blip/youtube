@@ -466,9 +466,11 @@ def _ratio_line(cmp: dict, draft_form: str) -> str | None:
 
 
 def _hour_default() -> int:
+    """機械が実際に置く時刻（`config/channel.yaml` の `publish_hour_jst`）。"""
     try:
         from . import publish_hour
-        return int(publish_hour.configured_hour())
+        h = publish_hour.config_hour()
+        return int(h) if h is not None else 9
     except Exception:                                          # noqa: BLE001
         return 9
 

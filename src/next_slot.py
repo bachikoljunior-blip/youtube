@@ -987,11 +987,23 @@ def _picked(day) -> dict | None:
     return cur if cur and cur.get("video_id") else None
 
 
-def _move_lines(got: list[dict], day, hour: int = 20, note: str = "") -> list[str]:
+def _config_hour() -> int:
+    """機械が実際に置く時刻（`config/channel.yaml`）。**20 の直書きをやめた**（2026-09-02 夜）——
+    同じ画面の `[きょうの1本]` が 09:00、ここが 20:00 と出て食い違っていた。"""
+    try:
+        from . import publish_hour                               # noqa: PLC0415
+        h = publish_hour.config_hour()
+        return int(h) if h is not None else 20
+    except Exception:                                            # noqa: BLE001
+        return 20
+
+
+def _move_lines(got: list[dict], day, hour: int | None = None, note: str = "") -> list[str]:
     """その日の枠へ入れる `--move` の1行。**`[きょうの1本]` で別の本を決めてあれば、そちら**
     （2026-09-02 夜・最適化の回）—— 同じ画面が2つの本を名指しすると、次の回はどちらか
     を惰性で撃ちます。決めた本が下書きと違うとき、下書きは消さずに池へ残します。"""
     picked = _picked(day)
+    hour = _config_hour() if hour is None else hour
     vid = str(got[0].get("video_id")) if got else ""
     if picked and picked.get("video_id") != vid:
         pv = picked.get("video_id")
