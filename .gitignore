@@ -43,3 +43,5 @@ data/live_subs.json
 # 「口が何と言ったか」で、機械に依りません。門がそこを読みます。
 data/ahead_sweep.log
 data/.ahead_sweep.lock
+data/.today_place.lock
+data/.ahead_sweep.kick

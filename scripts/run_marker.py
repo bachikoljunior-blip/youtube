@@ -685,6 +685,14 @@ def write() -> int:
         "kind": "start",
     })
     print(f"[marker] 走った印を付けました: {line}")
+    # **きょうの1本を置く手（＋先の日付の掃き）を、ここから起こす**（2026-09-02 夜）。
+    #     ここは毎周 必ず最初に撃たれる唯一の口です（§1）。SessionStart フックは
+    #     サブでは起きません（`scripts/ahead_sweep.kick()` の註）。背景・数秒。
+    try:
+        import ahead_sweep as _sweep                            # noqa: PLC0415
+        print(f"[marker] きょうの1本: {_sweep.kick()}")
+    except Exception as exc:                                   # noqa: BLE001
+        print(f"[marker] きょうの1本: 起こせませんでした（{str(exc)[:80]}）")
     # **この回だけの一時置き場を、ここで掘って見せること**（2026-08-29 に足した）。
     # 共有の直下へ書くと、きょうだいが同じ名前で上書きします
     # （実測: `status.py` の出力 266行 → 24行）。`scratch_dir()` の註。
