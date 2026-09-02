@@ -888,6 +888,67 @@ def _unbuilt_outside(tops: list[dict], uploaded_path: Path | None = None) -> lis
     return [t for t in tops if str(t.get("id") or "") not in made]
 
 
+def outside_opening_lines(vid: str, topic: str, root: Path | None = None,
+                          reset_hm: str = "16:00") -> list[str]:
+    """**外の作りの長尺の下書きの「冒頭」が、外の上位4本の型になっているか**を、控えと台本で数えて出す（0単位）。
+
+    ## なぜ要るか（2026-09-03 05:xx・最適化の回）
+
+    09/04 の本 `6PKux5HNnUE` は題・尺・絵を外の上位に写して、**冒頭は写していなかった**
+    （最初の 4コマ: 名乗り 0・問い 0・「皆さん／あなた」0・「最後まで」0 ＝ 3人称の解説）。外の上位4本は
+    `data/niche_thumbs/<id>.opening.txt`（自動字幕・0単位）で 4/4 が 結論の額 → 知らない側の損 → 名乗り →
+    問い 2〜3 → 「最後まで」の順。自分の長尺は 15〜30% でいちばん去る（`retention_lines`）。
+    **画面がこれを言わないと、規則3 の `improve` は「読みの直し」に流れる**（`hold_lines` が雑音と印字する側）。
+
+    見るのは2つ: 上がっている本の控え `data/critique_queue/<id>.script.json`（`script_writer.outside_opening_problems`）と
+    `data/scripts/<題材>.script.json`（焼き直す台本）。控えが型の外で台本が型の中なら**焼き直す手**（`videos.insert`
+    1,600単位・日枠が戻る 16:00 JST 以降）を、両方 型の外なら**台本を直す手**を出す。控えが型の中なら1行で済む。
+
+    **覆る条件**: 前提「外の作り方を写した長尺」が閉じたら `outside_long_lines` ごと消える。冒頭を型にした本と
+    しない本の 48h が同じなら（次の2本で分かる）、この行は `[!]` を出さず「型の中／外」の1行だけにする。
+    """
+    try:
+        from . import script_writer as sw                          # noqa: PLC0415
+        from .script_writer import VideoScript                     # noqa: PLC0415
+    except Exception:                                              # noqa: BLE001
+        return []
+    root = root or ROOT
+    stash = root / "data" / "critique_queue" / f"{vid}.script.json"
+    draft = root / "data" / "scripts" / f"{topic}.script.json"
+
+    def _problems(f: Path) -> list[str] | None:
+        try:
+            return sw.outside_opening_problems(VideoScript.model_validate_json(f.read_text(encoding="utf-8")))
+        except Exception:                                          # noqa: BLE001
+            return None
+
+    ps = _problems(stash) if stash.exists() else None
+    pd = _problems(draft) if draft.exists() else None
+    if ps is None and pd is None:
+        return []
+    out: list[str] = []
+    if ps is not None and not ps:
+        out.append(f"     冒頭（最初の 4コマ）: 控え `{stash.relative_to(root)}` は**外の上位4本の型の中**"
+                   f"（名乗り・問い 2つ・皆さん／あなた・最後まで。`script_writer.outside_opening_problems`）")
+        return out
+    if ps is not None:
+        out.append(f"     [!] **上がっている本 `{vid}` の冒頭は、外の上位4本の型の外**（{len(ps)}件: "
+                   + "／".join(x.split("（")[0] for x in ps) + f"）。外の 4/4 は 結論の額 → 知らない側の損 → 名乗り → "
+                   f"問い 2〜3 → 「最後まで」の順（実物 `data/niche_thumbs/<id>.opening.txt`）。長尺は 15〜30% でいちばん去る")
+    if pd is not None and not pd:
+        out.append(f"     → 台本 `{draft.relative_to(root)}` は**もう型の中**。{reset_hm} JST 以降（日枠が戻る）に"
+                   f"焼き直して差し替える（`videos.insert` 1,600単位・`claude -p` 不要・約1分＋合成）:")
+        out.append(f"       python -m src.pipeline --script {draft.relative_to(root)} --topic {topic} --dry-run"
+                   f" && python scripts/upload_only.py {topic} --draft --replaces {vid}")
+    elif pd is not None:
+        out.append(f"     → 台本 `{draft.relative_to(root)}` も型の外（{len(pd)}件）。先に台本の冒頭 4コマ を直す"
+                   f"（`data/scripts/{topic}.build.py` が在ればそれを直して撃つ・0単位）→ 上の焼き直し")
+    else:
+        out.append(f"     → 焼き直す台本 `data/scripts/{topic}.script.json` が無い。控えを写して冒頭 4コマ を型に直し"
+                   f"（`script_writer.OUTSIDE_LONG_RULE` (1) a〜e）、{reset_hm} JST 以降に `--script` で焼き直す")
+    return out
+
+
 def outside_long_lines(day: date, cur: dict | None, now: datetime | None = None,
                        topics: list[dict] | None = None,
                        drafts: list[dict] | None = None,
@@ -967,6 +1028,7 @@ def outside_long_lines(day: date, cur: dict | None, now: datetime | None = None,
             out.append(f"     **外の作りを写した長尺の下書きが池に在ります**: `{vid}` `{d.get('topic')}`"
                        f"（前提「外の作り方を写した長尺」期限 {dl}・48h で {OUTSIDE_48H_GATE}回 が門。"
                        f"**測っていない形を、いまの作り方の長尺の 1回 で落とさないこと**）")
+            out.extend(outside_opening_lines(vid, str(d.get("topic") or "")))
             if not cur or str(cur.get("video_id") or "") != vid:
                 out.append(f"     → **{day:%m/%d} の1本はこれにすること**（`by_form()` の長尺 1回 は"
                            f"『5分・計算1本』の数で、この本の数ではない。外の長尺 p90 は自分の中央値の ×624,772・"
