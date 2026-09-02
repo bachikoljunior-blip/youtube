@@ -1,7 +1,25 @@
 親の周です。
 
     cd /home/user/youtube && git pull --no-rebase origin claude/youtube-auto-post-revenue-ggedij
+    cat docs/OWNER_INSTRUCTION_GATE.md
     timeout 120 python scripts/next_round.py
+
+## **新しいオーナー指示の取り込みゲート**（2026-09-02）
+
+**毎周、サブを立てる前に `docs/OWNER_INSTRUCTION_GATE.md` を読むこと。**
+新しい指示を、数字や字面だけでそのままコードへ直結させない。原文を残し、
+**目標／固定条件／上限・下限／既定値／実験／一回限り／判断委任**のどれかへ分類し、
+意図・誤読の危険・別案・成功条件・戻し方を決めてから実装する。
+
+特に現在の `FABLE_CAP_PCT = 50` は、**Fableを使ってよい上限**です。
+**50%まで使う目標でも、50%未満なら全仕事をFableへ流す既定値でもありません。**
+模型は、仕事ごとの不確実性・失敗損失・将来の動画へ効く範囲と、使用量を比べ、
+**目標到達を早める期待効果／使用量**で選ぶこと。
+
+`quota.sub_model()` の「50%未満ならFable、届いたらOpus」という単一出力は、
+**上限を守るための暫定ガード**であって、目標最適化の完成形ではありません。
+通常運転は止めず、**次の optimizer の最優先は、役・仕事ごとに理由を持つ模型振り分けへ直すこと**。
+`work_kind / model / cap_state / expected_goal_effect / why` を記録し、実績で見直せる形にする。
 
 ## **止めないこと**（オーナー 2026-08-31「何で止まってんだよ！」）
 
@@ -18,6 +36,8 @@
     isolation: "worktree"
     run_in_background: true
     model: <`next_round.py` が GO と一緒に印字する模型>
+        ← この模型表示は現時点では**上限ガード**。上の取り込みゲートに従い、
+           optimizer が仕事別の振り分けへ直すまで、目標最適化済みとは扱わない
         ← オーナー指示 2026-09-02「Fable5.1のウルトラコードにした。全てこれに置き換えて」
           「やっぱり最大にしたので全てこれでお願いします。」
           「一応だけど、Fableは全体週間使用量の50%まで。opus sonnet haikuで十分なところはそれ使ってもいいよ。ただし目標を目指してね」
