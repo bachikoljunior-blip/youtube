@@ -620,6 +620,101 @@ def _anchors() -> list[dict]:
     return out
 
 
+#: 目盛りの `resets_at_iso` は**手で写されます。** 同じ枠なのに 21:59 と 22:00 が
+#: 混ざっており（実測 `data/usage.jsonl` 09/01〜09/02）、`==` で比べると
+#: **同じ枠の2点が「別の枠」に化けて区間が引けなくなります。** 分だけ許す。
+WINDOW_MATCH_TOL = timedelta(minutes=15)
+
+
+def _same_window(r1: datetime | None, r2: datetime | None) -> bool:
+    """2つの `resets_at` が同じ枠を指しているか（写し違いの分は許す）。"""
+    return bool(r1 and r2 and abs(r1 - r2) <= WINDOW_MATCH_TOL)
+
+
+def _gauge_reset(anchors: list[dict]) -> tuple[datetime, float] | None:
+    """**枠が動かないまま、目盛りだけが戻された時刻の下限**を返す。
+
+    2026-09-02 10:43 JST に踏みました。同じ `resets_at`（09/05 07:00 JST）のまま、
+    目盛りが **73% → 3%** に戻っています（オーナーの画面でリセットされた）。
+    `pace()` は枠の頭を `resets - 7日` ＝ **08/29 06:59** から取るので、
+
+        分子  リセット後の **3%**（＝ 09/01 11:55 以降のぶんだけ）
+        分母  08/29 から数えた **99.7時間・58周**
+
+    と**窓が食い違い**、1周 **0.052%** ＝ 持続できる間隔 **10分** に潰れました。
+    通算 0.030 %/時・尽きるのは 01/14、も同じ食い違いから出ています。
+    **09/01 に直した「歯止めが実測を潰す」と同じ形です**（あちらは `clip`、
+    こちらは**窓**）。
+
+    返すのは `(下限, リセット前の%)`。リセットの瞬間は
+    **(1つ前の点, いまの点] の間**にあり、どこかは測れません。
+    **下限を返すのは、窓をいちばん広く ＝ 周をいちばん多く取る側**で、
+    `per_lap` は**最小**に出ます ＝ **速すぎる側**。だから `pace()` は
+    これを**下限としてだけ**使い、リセット前に測れていた `per_lap` と
+    **大きいほうを採ります**（1周の重さは、枠が戻っても軽くなりません）。
+
+    **覆る条件**: 目盛りが機械から読めるようになったら（`rate_limit_info` に
+    % が入る）、下限ではなくリセットの時刻そのものが取れます。
+    """
+    if len(anchors) < 2:
+        return None
+    a = anchors[0]
+    at, resets = _parse_iso(a.get("fetched_at")), _parse_iso(a.get("resets_at_iso"))
+    if not at or not resets:
+        return None
+    used = float(a["used_percent"])
+    for prev in anchors[1:]:
+        p_at = _parse_iso(prev.get("fetched_at"))
+        p_reset = _parse_iso(prev.get("resets_at_iso"))
+        if not p_at or p_at >= at or not _same_window(p_reset, resets):
+            continue
+        p_used = float(prev["used_percent"])
+        if p_used > used:                     # 枠は同じ。なのに%が減った ＝ 戻された
+            return p_at, p_used
+        return None                           # 直前が増えている ＝ 普通の区間
+    return None
+
+
+def _per_lap_before(anchors: list[dict], at_or_before: datetime,
+                    rows: list[dict]) -> dict | None:
+    """**リセット前に測れていた「1周いくら」と「%/時」。**
+
+    1周の重さは枠の残量とは無関係なので、枠が戻っても**この数は残ります。**
+    リセット直後は新しい枠に点が1つしか無く、そこから出る `per_lap` は
+    **下限**にしかなりません。**その下限より、直前に測れていた数のほうが大きければ
+    そちらを採る** —— 枠が戻ったことを「1周が軽くなった」と読まないため。
+    """
+    for i, prev in enumerate(anchors):
+        p_at = _parse_iso(prev.get("fetched_at"))
+        p_reset = _parse_iso(prev.get("resets_at_iso"))
+        if not p_at or p_at > at_or_before or not p_reset:
+            continue
+        p_used = float(prev["used_percent"])
+        p_start = p_reset - WINDOW_SPAN["seven_day"]
+        p_births = _laps_between(p_start, p_at)
+        p_hours = (p_at - p_start).total_seconds() / 3600
+        if not p_births or p_hours <= 0:
+            return None
+        cum, cum_rate = p_used / p_births, p_used / p_hours
+        # リセット前の枠の中の、さらに1つ前の点との区間（あれば寄せる）
+        for older in anchors[i + 1:]:
+            o_at = _parse_iso(older.get("fetched_at"))
+            o_reset = _parse_iso(older.get("resets_at_iso"))
+            if not o_at or o_at >= p_at or not _same_window(o_reset, p_reset):
+                continue
+            o_used = float(older["used_percent"])
+            s_used, s_births = p_used - o_used, _laps_between(o_at, p_at)
+            s_hours = (p_at - o_at).total_seconds() / 3600
+            if s_used < 0 or not s_births or s_hours <= 0:
+                break
+            w = max(0.0, min(1.0, s_used / QUANT_FULL_PCT))
+            return {"at": p_at, "used": p_used,
+                    "per_lap": w * (s_used / s_births) + (1.0 - w) * cum,
+                    "rate": w * (s_used / s_hours) + (1.0 - w) * cum_rate}
+        return {"at": p_at, "used": p_used, "per_lap": cum, "rate": cum_rate}
+    return None
+
+
 #: **実際に走った回が1行ずつ残る台帳**（`scripts/run_marker.py` が書く）。
 #: 1行ごとの `session` は**サブ1体**で、**1周ではありません**（下の註）。
 RUNS_LOG = ROOT / "data" / "runs.jsonl"
@@ -767,25 +862,42 @@ def pace(now: datetime | None = None) -> dict | None:
     at = _parse_iso(a.get("fetched_at"))
     if not resets or not at:
         return None
-    start = resets - WINDOW_SPAN["seven_day"]
+    rows = _load()
+    # **枠が動かないまま目盛りだけ戻されたら、分母もそこから数え直すこと**
+    # （2026-09-02。`_gauge_reset()` に実測）。ここを `resets - 7日` のままに
+    # すると、分子は**リセット後のぶんだけ**・分母は**枠の頭からの全部**になり、
+    # 1周が 0.052% ＝ 間隔 10分 まで潰れます。**窓を揃える。**
+    reset = _gauge_reset(anchors)
+    reset_at, reset_from = (reset if reset else (None, None))
+    gauge_start = resets - WINDOW_SPAN["seven_day"]
+    start = max(gauge_start, reset_at) if reset_at else gauge_start
     hours = (at - start).total_seconds() / 3600
     if hours <= 0:
         return None
     used = float(a["used_percent"])
-    rows = _load()
     births = _births_between(rows, start, at)
     # **1周に何体 立っているか**（診断。分母には使いません —— `_laps_between()` の註）。
     subs = _births_from_runs(start, at)
 
-    rate = used / hours                       # %/時（枠の頭からの通算）
+    # **リセット直後は `hours`／`births` がどちらも上限**（窓の下限を採っている）
+    # なので、そこから出る `rate` も `per_lap` も**下限**にしかなりません。
+    # リセット前に測れていた数を床として当てる（下の `*_floored`）。
+    pre = _per_lap_before(anchors, reset_at, rows) if reset_at else None
+
+    rate_raw = used / hours                   # %/時（測った窓の通算）
+    rate, rate_floored = rate_raw, False
+    if pre and pre["rate"] > rate:
+        rate, rate_floored = pre["rate"], True
     per_lap_cum = used / births if births else None
 
     # --- 直近の区間（同じ枠の中の、1つ前の点との差） --------------------
     seg = None
     for prev in anchors[1:]:
         p_at, p_reset = _parse_iso(prev.get("fetched_at")), _parse_iso(prev.get("resets_at_iso"))
-        if not p_at or p_reset != resets or p_at >= at:
+        if not p_at or not _same_window(p_reset, resets) or p_at >= at:
             continue                          # 別の枠／同時刻の点は使えない
+        if reset_at and p_at <= reset_at:
+            continue                          # **リセットをまたぐ差は「使った量」ではない**
         s_hours = (at - p_at).total_seconds() / 3600
         s_used = used - float(prev["used_percent"])
         s_births = _births_between(rows, p_at, at)
@@ -836,7 +948,7 @@ def pace(now: datetime | None = None) -> dict | None:
     # （%はこの機械から読めない）ので、**0% から直近の速さで運んだ推定**に置きます。
     # 「凍らせて 0 と言う」でも「古い%を持ち越す」でもなく、**軌跡で埋める**。
     span = WINDOW_SPAN["seven_day"]
-    win_start, win_reset, rolled = start, resets, 0
+    win_start, win_reset, rolled = gauge_start, resets, 0
     while win_reset <= now:
         win_start, win_reset = win_reset, win_reset + span
         rolled += 1
@@ -855,6 +967,15 @@ def pace(now: datetime | None = None) -> dict | None:
     if seg and seg["per_lap"] and per_lap_cum:
         weight = max(0.0, min(1.0, seg["used"] / QUANT_FULL_PCT))
         per_lap = weight * seg["per_lap"] + (1.0 - weight) * per_lap_cum
+
+    # --- **枠が戻った直後は、この数は下限にしかなりません** ---------------
+    # リセットの瞬間は (1つ前の点, いまの点] のどこかで、`start` はその**下限**。
+    # ＝ 窓をいちばん広く取っている ＝ 周をいちばん多く数えている ＝
+    # `per_lap` は**最小**に出ます。**1周の重さは枠が戻っても軽くなりません**ので、
+    # リセット前に測れていた数のほうが大きければ、そちらを採ること。
+    per_lap_raw, per_lap_floored = per_lap, False
+    if pre and (per_lap is None or pre["per_lap"] > per_lap):
+        per_lap, per_lap_floored = pre["per_lap"], True
 
     # **切られたことを、呼ぶ側へ渡すこと**（2026-09-01）。
     #     長らくここは歯止めを掛けた数だけを返し、`next_round.py` はそれを
@@ -888,6 +1009,10 @@ def pace(now: datetime | None = None) -> dict | None:
         "subs_per_lap": (subs / births) if births else None,
         "rate": rate, "per_lap": per_lap, "per_lap_cum": per_lap_cum,
         "seg": seg, "seg_weight": weight,
+        "reset_at": reset_at, "reset_from": reset_from,
+        "gauge_start": gauge_start, "pre": pre,
+        "rate_raw": rate_raw, "rate_floored": rate_floored,
+        "per_lap_raw": per_lap_raw, "per_lap_floored": per_lap_floored,
         "forward_rate": forward_rate, "left_hours": left_hours,
         "used_now": used_now, "carry_rate": carry_rate, "carried_hours": elapsed,
         "floor_min": floor,
@@ -1005,7 +1130,23 @@ def pace_report(now: datetime | None = None) -> None:
     print(f"    枠: {p['window_start'].astimezone(JST):%m/%d %H:%M} → "
           f"{p['window_reset'].astimezone(JST):%m/%d %H:%M} JST"
           f"{'  ← **いまの枠**（目盛りの枠ではありません）' if p['rolled'] else ''}")
-    print(f"    通算 {p['rate']:.3f} %/時（{p['hours']:.1f}時間で {p['anchor_used']:.0f}%）")
+    if p.get("reset_at"):
+        print(f"    [!] **枠は動かないまま、目盛りだけ戻されています** —— "
+              f"{p['reset_at'].astimezone(JST):%m/%d %H:%M} JST の "
+              f"**{p['reset_from']:.0f}%** → いまの **{p['anchor_used']:.0f}%**。"
+              f" **分母もそこから数え直しています**"
+              f"（枠の頭 {p['gauge_start'].astimezone(JST):%m/%d %H:%M} から数えると "
+              f"分子はリセット後・分母は枠ぜんぶ ＝ **窓が食い違います**）")
+        print(f"        リセットの瞬間は "
+              f"({p['reset_at'].astimezone(JST):%m/%d %H:%M}, "
+              f"{p['anchor_at'].astimezone(JST):%H:%M}] のどこかで、**測れません。**"
+              f" 採っているのは**下限**（窓がいちばん広い ＝ 周がいちばん多い）なので、"
+              f"下の通算と1周は**どちらも下限**です")
+    print(f"    通算 {p['rate']:.3f} %/時（{p['hours']:.1f}時間で {p['anchor_used']:.0f}%）"
+          + (f"   ← **測って出たのは {p['rate_raw']:.3f} %/時**（下限）。"
+             f"リセット前に測れていた {p['pre']['rate']:.3f} %/時 を床にしています"
+             f"（**枠が戻っても1周は軽くなりません**）"
+             if p.get("rate_floored") else ""))
     seg = p["seg"]
     if seg:
         print(f"    直近の区間 {seg['from_at'].astimezone(JST):%m/%d %H:%M}→"
@@ -1042,7 +1183,11 @@ def pace_report(now: datetime | None = None) -> None:
                   f" → 区間に **{p['seg_weight']:.0%}** 寄せて **{p['per_lap']:.3f}%**")
         else:
             print(f"    {p['hours']:.1f}時間で **{p['births']}周** "
-                  f"→ **1周 {p['per_lap']:.3f}%**")
+                  f"→ **1周 {p['per_lap']:.3f}%**"
+                  + (f"   ← **測って出たのは {p['per_lap_raw']:.3f}%**（下限）。"
+                     f"床は {p['pre']['per_lap']:.3f}%"
+                     f"（{p['pre']['at'].astimezone(JST):%m/%d %H:%M} までの実測）"
+                     if p.get("per_lap_floored") and p.get("per_lap_raw") else ""))
         print(f"    持続できる間隔（**周から周**）: **{p['floor_min']:.0f}分**"
               + (f"   ＊分母は周 {p['births']}件（サブは {p['subs']}体 ＝ "
                  f"1周に {p['subs_per_lap']:.2f}体。**サブを分母にすると "
