@@ -47,11 +47,19 @@
 **実物だけでも足りません** —— 口は日枠が尽きた窓では1文字も返しません
 （`upload_cap.day_quota()`）。そのときは控えが唯一の目です。
 
+## **きょうの側も数えます**（「1日一本になってない」は、明日以降だけの話ではない）
+
+`ahead()` が数えるのは明日以降です。**きょうが2本でも 0本 と出ます。**
+だから `today_rows()` を並べて置き、`house_rule.cap()`（1本/日）を超えたら
+**そちらを先に言います** —— 明日ぶんは明日の窓で外せますが、
+**きょうの夕方に出る本は、いま外さなければ公開されます。**
+
 ## 門の効き方（**逃げ道は「枠が無い」1つだけ。回の裁量ではありません**）
 
+    枠が開いている ＋ きょうが上限より多い     → **止める**（いちばん取り返しがつかない）
     枠が開いている ＋ 先の日付に 1本でも在る   → **止める**（その回で外す）
     枠が開いている ＋ 控えは0本・実物を見ていない → **止める**（`--live` を撃たせる）
-    枠が開いている ＋ 控えも実物も0本            → 通す（**これが正しい状態**）
+    枠が開いている ＋ どちらも規則どおり         → 通す（**これが正しい状態**）
     枠が尽きている                              → 通す（撃てないので）＋ 受け取り帳へ
 
 **「枠が尽きている」は、この道具が自分で `upload_cap.day_quota()` に訊きます。**
@@ -122,6 +130,41 @@ def ahead(rows: list[dict] | None = None,
         out.append({"id": r.get("id") or r.get("video_id") or "",
                     "at": at, "title": r.get("title", "")})
     out.sort(key=lambda r: r["at"] or now)
+    return out
+
+
+def today_rows(rows: list[dict] | None = None,
+               now: datetime | None = None) -> list[dict]:
+    """**きょう（JST）に公開される／された本**を、時刻の順に返す。**API 0単位**。
+
+    ## なぜ「先の日付」だけでは足りないか（2026-09-02・オーナー原文）
+
+    > **「1日一本になってないんだけど」**
+
+    上の `ahead()` が数えるのは**明日以降**です。**きょうが2本でも 0本 と出ます。**
+    規則1（`house_rule.cap()` ＝ 1本/日）が破れるのは、明日以降だけではありません
+    —— 実際 09/02 は 13:00 に1本 公開したあとで、`src/next_slot.draft_lines()` が
+    「`--move <次の本> 2026-09-02T20:00`」と印字していました
+    （`tests/test_same_day_slot_taken.py`）。**撃てば その日が2本**です。
+
+    **公開ずみも数えます。** 「あと何本 置けるか」は、その日に既に出た本を
+    引いた残りだからです —— 未公開だけ数えると、**出たあとに もう1本 置けます。**
+    """
+    now = now or datetime.now(timezone.utc)
+    rows = dupes.ledger_rows() if rows is None else rows
+    today = now.astimezone(JST).date()
+    out, seen = [], set()
+    for r in rows:
+        at = _parse(r.get("at"))
+        vid = str(r.get("id") or r.get("video_id") or "")
+        if at is None or at.astimezone(JST).date() != today or not vid:
+            continue
+        if vid in seen:                    # 控えは同じ本を何度も書きます（`retime`）
+            continue
+        seen.add(vid)
+        out.append({"id": vid, "at": at, "title": r.get("title", ""),
+                    "future": at > now})
+    out.sort(key=lambda r: r["at"])
     return out
 
 
@@ -228,10 +271,13 @@ def verdict(now: datetime | None = None, rows: list[dict] | None = None) -> dict
     now = now or datetime.now(timezone.utc)
     if not house_rule.same_day_only():
         return {"block": False, "why": "規則5 が外れています（先の日付に置いてよい）",
-                "lines": [], "ahead": 0, "quota_open": True, "seen": None}
+                "lines": [], "ahead": 0, "quota_open": True, "seen": None,
+                "today": 0, "over_today": 0}
 
     mine = ahead(rows, now)
     days = by_day(mine)
+    mine_today = today_rows(rows, now)
+    over_today = max(0, len(mine_today) - house_rule.cap())
     try:
         q = upload_cap.day_quota(now)
         quota_open = bool(q.open)
@@ -254,6 +300,18 @@ def verdict(now: datetime | None = None, rows: list[dict] | None = None) -> dict
     else:
         lines.append("[ahead] 先の日付の予約: **控えでは 0本**")
 
+    # **きょうの本数も、必ず1行 出すこと。** 「1日一本になってない」は、
+    # 明日以降だけの話ではありません（`today_rows()` の註に 09/02 の実例）。
+    stamp_today = now.astimezone(JST).strftime("%Y-%m-%d")
+    lines.append(f"[ahead] きょう {stamp_today} JST: **{len(mine_today)}本**"
+                 f"（規則1 の上限 {house_rule.cap()}本／うち未公開 "
+                 f"{sum(1 for r in mine_today if r['future'])}本）")
+    if over_today:
+        for r in mine_today:
+            lines.append(f"[ahead]   {r['at'].astimezone(JST).strftime('%H:%M')} JST"
+                         f"  {r['id']}  {'**未公開**' if r['future'] else '公開ずみ'}"
+                         f"  {r['title'][:32]}")
+
     if seen is not None:
         stamp = (_parse(seen.get("at")) or now).astimezone(JST).strftime("%m/%d %H:%M JST")
         lines.append(f"[ahead] 実物（口）: **{seen.get('count')}本**"
@@ -267,23 +325,37 @@ def verdict(now: datetime | None = None, rows: list[dict] | None = None) -> dict
 
     if not quota_open:
         return {"block": False, "ahead": len(mine), "quota_open": False, "seen": seen,
+                "today": len(mine_today), "over_today": over_today,
                 "why": "日枠が尽きています（この窓では外せません）", "lines": lines}
+
+    if over_today:
+        # **きょうが上限より多い。** いちばん取り返しがつかない側です ——
+        # 明日ぶんは明日の窓で外せますが、**きょうの夕方に出る本は、
+        # いま外さなければ公開されます**（`pool_drain.today_rows()` の註）。
+        return {"block": True, "ahead": len(mine), "quota_open": True, "seen": seen,
+                "today": len(mine_today), "over_today": over_today,
+                "why": (f"**きょうが {len(mine_today)}本 です**"
+                        f"（規則1 の上限は {house_rule.cap()}本／**{over_today}本 多い**）"),
+                "lines": lines}
+
+    extra = {"today": len(mine_today), "over_today": over_today}
 
     if mine:
         return {"block": True, "ahead": len(mine), "quota_open": True, "seen": seen,
+                **extra,
                 "why": f"先の日付に **{len(mine)}本** 残っています", "lines": lines}
 
     if seen is None:
-        return {"block": True, "ahead": 0, "quota_open": True, "seen": None,
+        return {"block": True, "ahead": 0, "quota_open": True, "seen": None, **extra,
                 "why": "控えは 0本 ですが、**実物をこの窓で一度も見ていません**",
                 "lines": lines}
 
     if int(seen.get("count") or 0) > 0:
-        return {"block": True, "ahead": 0, "quota_open": True, "seen": seen,
+        return {"block": True, "ahead": 0, "quota_open": True, "seen": seen, **extra,
                 "why": f"控えは 0本 ですが、**実物には {seen.get('count')}本** 在ります",
                 "lines": lines}
 
-    return {"block": False, "ahead": 0, "quota_open": True, "seen": seen,
+    return {"block": False, "ahead": 0, "quota_open": True, "seen": seen, **extra,
             "why": "先の日付は空です（**これが正しい状態**）", "lines": lines}
 
 

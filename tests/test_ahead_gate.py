@@ -177,3 +177,53 @@ def test_手順が実物を見る手を名指ししている():
     assert "--live" in ahead_gate.HOWTO
     assert "pool_drain.py --apply --keep 0" in ahead_gate.HOWTO
     assert "きょうのぶん" in ahead_gate.HOWTO
+
+
+# ---------------------------------------------------------------- きょうの側
+def test_きょうが上限どおりなら黙る(窓, monkeypatch):
+    _quota(monkeypatch, True)
+    ahead_gate.record(0, [], "videos.list", NOW - timedelta(minutes=1))
+    v = ahead_gate.verdict(NOW, [_row(0)])
+    assert v["over_today"] == 0
+    assert v["block"] is False
+
+
+def test_故障を注入すると発火する_きょうが2本(窓, monkeypatch):
+    """**注入する故障**: きょうに2本 置く（規則1 は 1本/日）。
+
+    09/02 の実物がこの形の一歩手前でした —— 13:00 に1本 公開したあと、
+    `next_slot.draft_lines()` が `--move <次の本> 2026-09-02T20:00` と印字。
+    **撃てば その日が2本**（`tests/test_same_day_slot_taken.py`）。
+    """
+    _quota(monkeypatch, True)
+    ahead_gate.record(0, [], "videos.list", NOW - timedelta(minutes=1))
+    v = ahead_gate.verdict(NOW, [_row(0, 13, "a"), _row(0, 20, "b")])
+    assert v["block"] is True
+    assert v["over_today"] == 1
+    assert "きょうが 2本" in v["why"]
+
+
+def test_公開ずみも数える(窓, monkeypatch):
+    """**未公開だけ数えると、出たあとに もう1本 置けます。**"""
+    _quota(monkeypatch, True)
+    # 13:00 JST は NOW（14:00 JST）より前 ＝ 公開ずみ
+    rows = ahead_gate.today_rows([_row(0, 13, "a"), _row(0, 20, "b")], NOW)
+    assert [r["future"] for r in rows] == [False, True]
+    assert len(rows) == 2
+
+
+def test_同じ本を二度_数えない(窓):
+    """控えは `retime` のたびに行が増えます。**行ではなく本を数えること。**"""
+    rows = ahead_gate.today_rows([_row(0, 20, "a"), _row(0, 20, "a")], NOW)
+    assert len(rows) == 1
+
+
+def test_きょうが多い回は_先の日付より先に言う(窓, monkeypatch):
+    """**いちばん取り返しがつかないのは、きょうの側**です。
+
+    明日ぶんは明日の窓で外せますが、**きょうの夕方に出る本は、
+    いま外さなければ公開されます**（`pool_drain.today_rows()` の註）。
+    """
+    _quota(monkeypatch, True)
+    v = ahead_gate.verdict(NOW, [_row(0, 13, "a"), _row(0, 20, "b"), _row(5, 20, "c")])
+    assert "きょうが 2本" in v["why"]
