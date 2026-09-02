@@ -2,6 +2,7 @@
 """**次の周を、いま立ててよいか。立てるならどの役か。**
 
     python scripts/next_round.py --live <N>            → GO <役> <役> か WAIT <分>
+    python scripts/next_round.py                       → **COUNT**（数えて撃ち直せ。WAIT は出ません・2026-09-02）
     python scripts/next_round.py --record <役>[,<役>]   → 立てたことを記録する
     python scripts/next_round.py --live-set <N>        → 走っているサブの数を置く
 
@@ -598,12 +599,21 @@ def main() -> int:
     d = decide(live=args.live)
     print(f"[next_round] 間隔 {d['floor_min']:.0f}分（{d['source']}）")
     if d.get("live") is None:
-        print("  [!] **走っているサブの数が渡されていません。**"
-              " `--live <N>`（`list_sessions` の数）を付けること ——"
-              " 付けないと、**1体も走っていない時間を間隔で埋めます**"
-              "（2026-08-31 にオーナーが叱った止まり方そのものです）")
-    else:
-        print(f"  走っているサブ: **{d['live']}体**（{d['live_source']}）")
+        # **WAIT を印字しません。** 2026-09-02 21:2x、親は 0体 と数えたうえで
+        #     `--live` を付けずに撃ち、出た WAIT をそのまま「（0体・WAIT 74分）」と
+        #     出しました（オーナー「てめえほんとバカだな」）。08-31 と同じ止まり方の
+        #     2回目です。数が無い回に WAIT を見せる限り、親はそれを読みます ——
+        #     だから見せません。**答えは COUNT（数えて撃ち直せ）の1つだけ。**
+        #     GO にも倒しません（付け忘れた親が毎回 二重に立てる・`decide()` の註）。
+        #     検査: tests/test_next_round_live.py「数が無い回は WAIT を印字しない」
+        print("COUNT")
+        print("  [!] **走っているサブの数が渡されていません。WAIT も GO も出しません。**")
+        print("  `list_sessions limit=25 mine=true` で数えて、"
+              "**`python scripts/next_round.py --live <その数>`** を撃ち直すこと")
+        print("  （0体 なら GO・1体 以上なら間隔。**0体 で WAIT は存在しません** ——"
+              " 2026-08-31・09-02 に同じ形で2回 叱られています）")
+        return 2
+    print(f"  走っているサブ: **{d['live']}体**（{d['live_source']}）")
     roles = d["roles"]
     if d["go"]:
         print("GO " + " ".join(roles))

@@ -136,3 +136,20 @@ def test_オーナー原文がこの機械のどこかに在る():
     body = (ROOT / "scripts" / "next_round.py").read_text(encoding="utf-8")
     assert "何で止まってんだよ" in body, (
         "`decide()` の docstring から、なぜ 0体 GO なのかの原文が消えています")
+
+
+def test_数が無い回はWAITを印字しない(monkeypatch, capsys):
+    """**2026-09-02 21:2x。** 親は 0体 と数えたうえで `--live` を付けずに撃ち、
+    出た WAIT を「（0体・WAIT 74分）」と出した（オーナー「てめえほんとバカだな」）。
+    08-31 と同じ止まり方の2回目。**数が無い回に見せるのは COUNT だけ**（WAIT も GO も無し）。"""
+    import sys
+    monkeypatch.setattr(nr, "live_read", lambda now=None: (None, "台帳がありません"))
+    monkeypatch.setattr(sys, "argv", ["next_round.py"])
+    rc = nr.main()
+    out = capsys.readouterr().out
+    assert rc == 2, out
+    lines = [ln.strip() for ln in out.splitlines()]
+    assert "COUNT" in lines, out
+    assert not any(ln.startswith("WAIT") for ln in lines), out
+    assert not any(ln.startswith("GO") for ln in lines), out
+    assert "--live" in out
