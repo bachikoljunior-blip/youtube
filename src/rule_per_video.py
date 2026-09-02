@@ -909,6 +909,201 @@ def tail_lines(t: dict | None = None) -> list[str]:
     ]
 
 
+# ----------------------------------------------------------------------
+# **標本が止まっていないか**（2026-09-02 夕・最適化の回に足した）
+# ----------------------------------------------------------------------
+
+STALE_DAYS = 7          # 標本の最終日がこれより古かったら「止まっている」
+
+# **崖のしきい値は置いていません**（2026-09-02・このファイル自身の註と
+# `config/hypotheses.yaml` 冒頭「いま見えている向きを条件に焼き込まないこと」）。
+# 最初 `CLIFF_RATIO = 2.0` と**勘で**置いて、残差の中央値 0.712 が
+# 「崖ではない」と出ました。**その 2.0 に根拠がありません。**
+# 代わりに、残差の**傾きに有意の門を添えて**判定します —— 門に届かない回は
+# 「崖だ」とも「崖ではない」とも言わず、**まだ何も言えない**と出します。
+
+
+def staleness(e: dict | None = None, rows: list | None = None,
+              k: int = 5, **kw) -> dict:
+    """**`per_video` の標本が、いつの本で止まっているか。** API 0単位。
+
+    ## なぜ要るか（**この道具は、実測で名指しされた欠陥を1つ潰すために作りました**）
+
+    `per_video()` は `estimate()['at_rule_mean']` を返します。それは
+    **「その日 2本以下しか出していない日」の本だけ**で測った数です。
+    帯を切る理由は正しい（弾力性 b=-0.733・t=-4.26 ＝ 密度は1本あたりを確かに削る）。
+    **ですが、その帯には出口がありません。**
+
+    実測（2026-09-02 に自分で数えた）:
+
+        帯（≤2本/日）に入った日  **2026-08-04 〜 2026-08-18 の 12日**
+        帯の外（3本以上/日）      **2026-08-19 以降の 14日 —— 全部**
+        → **標本の最終日は 08-18。この道具を書いた日から 15日 前です。**
+
+    **`per_video` は 08-19 以降の実物を1本も見ていません。**
+    そして `scripts/eta.py` は毎周この数から天井 `ceiling_at_rule()` を作り、
+    「縛っているのは `per_video`・要るのは ×21.88」と頭に印字します。
+
+    **止まっている数は、下がりません。上がって見えることさえあります。**
+    実測 `data/eta.jsonl`: `per_video_now` は **08-30 603 → 08-31 942**。
+    帯を切る形（`views_per_video_rule`）に替えたのが 08-31 だからです。
+    **同じ窓で、実物の1本あたりは 08-24 839回 → 08-31 121回 に落ちています。**
+
+    ＝ **回が読む数は上がり、チャンネルは落ちていました。**
+    回はその落ちを見る手を持っていないので、`eta.py` が本文の真ん中に並べる
+    「名指しされた欠陥 36件」から1件 選びます（実測 `data/runs.jsonl` 302件:
+    `fix` **73%**）。**この関数は、その落ちを頭に出すために在ります。**
+
+    ## 密度と混ぜないこと（**この関数の要点**）
+
+    帯の外の日は本数が多いので、**そのまま比べると密度の効きを崖と読み違えます。**
+    だから測っているのは**残差**です —— その日の本数 `n` から
+
+        予想 = at_rule（帯の中央値） × n ** b        （b は `estimate()` の弾力性）
+
+    を作り、`残差 = 実測の中央値 ÷ 予想` を日ごとに出します。
+    **1.0 なら「本数で説明が付く」・1.0 より下は「本数では説明が付かない落ち」です。**
+
+    実測（2026-09-02・b=-0.733・at_rule=1070.5）:
+
+        08-23 n=11 実測 1035 予想 185 → **×5.6**
+        08-24 n=10 実測  839 予想 198 → **×4.2**
+        08-26 n=12 実測  129 予想 174 → **×0.74**
+        08-28 n=14 実測   42 予想 157 → **×0.27**
+        08-29 n=13 実測   12 予想 164 → **×0.07**
+        08-30 n=10 実測  141 予想 198 → **×0.71**
+
+    **＝ 本数を勘定に入れても、08-25 を境に ×6 落ちています。**
+
+    ## 覆る条件（**2つ。どちらでもこの関数の出力は消えます**）
+
+    1. **帯に新しい日が入ったとき。** オーナー規則は 1日1本（`src/house_rule.py`）
+       なので、規則どおりに出た日は必ず帯に入ります。`age_days` が
+       `STALE_DAYS` を切れば `stale` は False になり、印字は止まります。
+    2. **残差の崖が閉じたとき。** 直近 k 日 の残差の中央値が `1/CLIFF_RATIO`
+       を上回れば `cliff` は False。**そのときは密度で説明が付いた ＝
+       規則 1本/日 が効いた、ということです。**
+
+    **この関数は前提を判定しません。** 出すのは数だけで、判定は
+    `config/hypotheses.yaml` の `per_video-標本が08-18で止まっている` が持ちます。
+    """
+    e = e if e is not None else estimate(**kw)
+    if not e.get("ok"):
+        return {"ok": False, "why": "estimate() が立たない"}
+    rows = rows if rows is not None else _settled(**{k2: v for k2, v in kw.items()
+                                                    if k2 in ("views_path", "forms", "form")})
+    if not rows:
+        return {"ok": False, "why": "標本 0本"}
+    byday: dict[Any, list[int]] = defaultdict(list)
+    for d, _vid, v in rows:
+        byday[d].append(v)
+    band = e.get("band", 2)
+    at_rule = float(e.get("at_rule") or 0.0)
+    b = (e.get("elasticity") or {}).get("b")
+    in_band = sorted(d for d, vs in byday.items() if len(vs) <= band)
+    if not in_band or at_rule <= 0:
+        return {"ok": False, "why": "帯に入った日が 0日"}
+    last = in_band[-1]
+    today = datetime.now(timezone(timedelta(hours=9))).date()
+    age = (today - last).days
+    # --- 帯の外の日を、本数で直してから並べる ---
+    resid: list[dict] = []
+    for d in sorted(byday):
+        if d <= last:
+            continue
+        vs = byday[d]
+        n = len(vs)
+        obs = statistics.median(vs)
+        pred = at_rule * (n ** b) if b is not None else None
+        resid.append({"day": d, "n": n, "obs": obs, "pred": pred,
+                      "ratio": (obs / pred) if pred else None})
+    recent = [r for r in resid if r["ratio"] is not None][-k:]
+    r_med = statistics.median([r["ratio"] for r in recent]) if recent else None
+    # --- 残差が**日とともに落ちているか**（門つき。勘のしきい値を置かない）---
+    fit = _logreg([float((r["day"] - resid[0]["day"]).days) for r in resid
+                   if r["ratio"] is not None],
+                  [math.log(max(r["ratio"], 1e-3)) for r in resid
+                   if r["ratio"] is not None]) if len(resid) >= 4 else {"ok": False}
+    sig = bool(fit.get("ok") and fit["hi"] < 0)      # 95% が 0 をまたがず、負
+    return {
+        "ok": True,
+        "sample_last": last,
+        "sample_days": len(in_band),
+        "age_days": age,
+        "stale": age >= STALE_DAYS,
+        "at_rule": at_rule,
+        "b": b,
+        "band": band,
+        "outside_days": len(resid),
+        "resid": resid,
+        "recent_k": len(recent),
+        "recent_ratio": r_med,
+        "fit": fit,
+        # **`cliff` は「測って崖だと言えた」ときだけ True。**
+        # 門に届いていない回は False ですが、それは「崖ではない」ではなく
+        # 「**まだ何も言えない**」です。その差は `stale_lines()` が字で出します。
+        "cliff": sig,
+        # **要る倍率を、この崖のぶんだけ読み直すための係数**。
+        # `eta.py` の `lever_need_over_cap` は `at_rule` で立った天井を分母に
+        # しているので、実物がその `recent_ratio` 倍しか出ていないなら、
+        # 距離はその逆数だけ遠い。
+        "need_mult": (1.0 / r_med) if (r_med and r_med > 0) else None,
+    }
+
+
+def stale_lines(s: dict | None = None, **kw) -> list[str]:
+    """`staleness()` を、頭で読める 1〜3行に。**止まっていなければ 0行。**"""
+    s = s if s is not None else staleness(**kw)
+    if not s.get("ok") or not (s.get("stale") or s.get("cliff")):
+        return []
+    out: list[str] = []
+    if s.get("stale"):
+        out.append(
+            f"[!] **`per_video` の標本は {s['sample_last']} で止まっています"
+            f"（{s['age_days']}日前・帯 ≤{s['band']}本/日 の {s['sample_days']}日）。**"
+            f" それ以降の {s['outside_days']}日 は**全部 帯の外**なので、"
+            f"この数（{s['at_rule']:,.0f}回）は**新しい本を1本も見ていません**。"
+            " **止まった数は下がりません** —— 実測 `data/eta.jsonl`:"
+            " `per_video_now` は 08-30 **603** → 08-31 **942** と**上がって**います"
+            "（帯を切る形に替えた日）。**同じ窓で実物の1本あたりは"
+            " 08-24 839回 → 08-31 121回。** 回が読む数だけが上がっていました。"
+            " **出口は規則そのものです** —— 1日1本（`src/house_rule.py`）で出た日は"
+            " 必ず帯に入るので、規則どおりに出た日から標本は動き出します。")
+    f = s.get("fit") or {}
+    r = s.get("resid") or []
+    if r and f.get("ok"):
+        head, tail = r[:2], r[-3:]
+
+        def _f(x):
+            return (f"{x['day'].strftime('%m-%d')} {x['n']}本 実測{x['obs']:,.0f}"
+                    f"／予想{x['pred']:,.0f} ＝ **×{x['ratio']:.2f}**")
+
+        out.append(
+            f"    帯の外の {len(r)}日 を**本数で直した残差**"
+            f"（予想 ＝ {s['at_rule']:,.0f} × 本数^{s['b']:.3f}・弾力性は実測）: "
+            + " ／ ".join(_f(x) for x in head) + " …… "
+            + " ／ ".join(_f(x) for x in tail)
+            + f" ＝ 直近{s['recent_k']}日の中央値 **×{s['recent_ratio']:.2f}**。"
+            f" 日への回帰 **b={f['b']:+.3f}/日**・t={f['t']:.2f}"
+            f"・95%[{f['lo']:+.3f}, {f['hi']:+.3f}]"
+            + ("（**0 をまたぎません** ＝ 本数では説明が付かない落ちが在ります。"
+               "**ただし門は 1.96（正規）です** —— n が小さいので"
+               f"小標本の t 門（n={f['n']}・2.228）に替えると **またぎます**。"
+               "**「崖だ」と決めきらないこと。**）"
+               if s.get("cliff") else
+               "（**0 をまたぎます ＝ まだ何も言えません。**"
+               "『崖ではない』ではありません）"))
+    if s.get("stale"):
+        out.append(
+            "    → **だから、頭に出る『要る ×N』は、止まった標本の上の天井"
+            f"（`ceiling_at_rule()`）で割った数です。** 残差の中央値で読み直すと"
+            f" **{s['need_mult']:,.1f}倍 甘い側**（並べてあるだけ・上の門を見ること）。"
+            " **この回に引くべきは「天井を上げる」より先に「標本を動かす」ほう** ——"
+            " 台帳 `per_video-標本が08-18で止まっている`"
+            "（規則 1本/日 が効くなら残差は 1.0 へ戻る。戻らなければ密度ではない）。")
+    return out
+
+
 if __name__ == "__main__":                                     # pragma: no cover
-    for _l in lines() + ceiling_lines() + tail_lines():
+    for _l in lines() + ceiling_lines() + tail_lines() + stale_lines():
         print(_l)
