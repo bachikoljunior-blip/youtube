@@ -1,9 +1,27 @@
 #!/usr/bin/env python3
 """**1本あたり再生の天井を、このチャンネルの外で測る。**（2026-09-02・最適化の回）
 
-    python scripts/niche_ceiling.py            # 既定（search.list 4回 ＝ 400単位）
+    python scripts/niche_ceiling.py            # 既定 `--source free`（yt-dlp・**API 0単位**・両方の形）
+    python scripts/niche_ceiling.py --source api --form short   # Data API（search.list 100単位/語）
     python scripts/niche_ceiling.py --dry-run  # 撃たずに、何を撃つかだけ出す
     python scripts/niche_ceiling.py --queries 6
+
+## `--source free`（2026-09-03 02:xx JST・最適化の回。**「最適化されてんの？」→ いいえ の理由を1つ潰した**）
+
+この道具は 09/02 に2回 撃たれて、**1回目は長尺 25本／ショート 0本、2回目は 5語 全部 429**
+でした。外の数が主実行に届いた回は **0回**。原因は値段です —— `search.list` は 100単位/語 で、
+日枠（10,000）はきょうの1本の upload（1,600）と `improve`（50）が先に使うので、
+**外を見る手は毎日 最後に回って、毎日 429 で終わっていました**（`data/niche_ceiling.log`）。
+
+**外を見ない限り、天井は鏡のままです**（下の「なぜ要るか」）。だから外を撃つ手は
+**日枠の外**に置きます: `yt-dlp` の検索（`https://www.youtube.com/results?search_query=…&sp=…`）
+は Data API を通らず、1語 2秒・**0単位**で、再生数・尺・チャンネル・題が返ります
+（この回の実測: 「年金 手取り いくら」 ショート帯 19本／最大 36,066回、
+**今年の長尺 最大 1,355,670回**）。`kick()` もこちらで起こすので、**毎周 429 で空振りしていた
+背景の1手が、毎日 実際に外の数を持って帰ります。**
+
+**覆る条件**: `yt-dlp` の検索が YouTube 側で止められたら（`entries` が連日 0 件）、
+`--source api` に戻すこと（`kick()` の `source`）。**その日は 429 の窓を避けて 16:00 JST 直後に**。
 
 ## なぜ要るか（**この回に数えて分かったこと**）
 
@@ -197,6 +215,95 @@ def probe(queries: list[str], days: int = 365, per_query: int = 25,
             "denied": denied}
 
 
+#: **`--source free` の検索フィルタ**（YouTube の `sp=` ＝ protobuf の base64。2026-09-03 に実測）。
+#:   `short` : 再生数順 × 動画 × 4分未満（日付なし）      → ショートの帯
+#:   `year`  : 再生数順 × 動画 × 今年                      → 長尺の帯（**今年 伸びた本**）
+#: 「今年 × 4分未満」の組み合わせは 5本 しか返らなかった（同じ回に実測）ので使いません。
+SP_FILTERS = {"short": "CAMSBBABGAE%3D", "year": "CAMSBAgFEAE%3D"}
+#: 1語 1フィルタで読む本数（検索結果の1ページ ≈ 20本）。
+FREE_PER_QUERY = 30
+
+
+def _own_video_ids() -> set[str]:
+    """自分の本の ID（`data/uploaded.jsonl`）。**外の数に自分を混ぜないため**（チャンネル ID は
+    Data API 1単位なので、0単位のこちらは ID で外す）。"""
+    out: set[str] = set()
+    try:
+        with (ROOT / "data" / "uploaded.jsonl").open(encoding="utf-8") as fh:
+            for line in fh:
+                try:
+                    v = json.loads(line).get("video_id")
+                except Exception:                              # noqa: BLE001
+                    continue
+                if v:
+                    out.add(str(v))
+    except OSError:
+        pass
+    return out
+
+
+def free_rows(entries: list[dict], q: str, own_ids: set[str] | None = None) -> list[dict]:
+    """yt-dlp の flat な `entries` を、`probe()` と同じ行の形に（純関数・撃たない）。"""
+    own_ids = own_ids or set()
+    rows: list[dict] = []
+    for e in entries or []:
+        vid = str(e.get("id") or "")
+        if not vid or vid in own_ids:
+            continue
+        secs = int(e.get("duration") or 0)
+        rows.append({
+            "id": vid, "views": int(e.get("view_count") or 0), "secs": secs,
+            "form": "short" if 0 < secs <= SHORT_MAX_SECS else "long",
+            "channel": str(e.get("channel_id") or e.get("channel") or ""),
+            "title": str(e.get("title") or ""), "published": "", "q": q,
+        })
+    return rows
+
+
+def probe_free(queries: list[str], days: int = 365, per_query: int = FREE_PER_QUERY,
+               form: str = "any") -> dict:
+    """**Data API を通らずに**（yt-dlp・0単位）外の本の再生数を返す。返りは `probe()` と同じ形。
+
+    `form="short"` は `short` のフィルタだけ、`any` は `short` と `year` の両方を撃ちます
+    （長尺の帯は「今年 伸びた本」で読む —— 日付なしの再生数順は 5年前の本が上に来る）。
+    `days` は帳面に書き残すだけです（`year` フィルタ ＝ 今年 1月から）。
+    """
+    import urllib.parse
+
+    try:
+        import yt_dlp
+    except Exception as exc:                                   # noqa: BLE001
+        print(f"[niche] yt-dlp が無い（`pip install yt-dlp`）: {exc}", file=sys.stderr)
+        return {"rows": [], "own": "", "queries": queries, "days": days, "form": form,
+                "denied": len(queries), "source": "free"}
+    own_ids = _own_video_ids()
+    filters = ["short"] if form == "short" else ["year", "short"]
+    opts = {"quiet": True, "extract_flat": True, "skip_download": True,
+            "playlistend": per_query, "no_warnings": True}
+    seen: dict[str, dict] = {}
+    denied = 0
+    for q in queries:
+        got_any = False
+        for f in filters:
+            url = ("https://www.youtube.com/results?search_query="
+                   + urllib.parse.quote(q) + "&sp=" + SP_FILTERS[f])
+            try:
+                with yt_dlp.YoutubeDL(opts) as y:
+                    info = y.extract_info(url, download=False)
+                ents = (info or {}).get("entries") or []
+            except Exception as exc:                           # noqa: BLE001
+                print(f"[niche] yt-dlp 検索 失敗（{q}／{f}）: {str(exc)[:120]}", file=sys.stderr)
+                ents = []
+            for r in free_rows(list(ents), q, own_ids):
+                got_any = True
+                if r["id"] not in seen or seen[r["id"]]["views"] < r["views"]:
+                    seen[r["id"]] = r
+        if not got_any:
+            denied += 1
+    return {"rows": list(seen.values()), "own": "", "queries": queries, "days": days,
+            "form": form, "denied": denied, "source": "free"}
+
+
 #: `search.list` の日枠（"Search Queries per day"）が戻る時刻。**Data API の日枠と同じ
 #: 太平洋時間 0:00 ＝ 16:00 JST（夏時間）**。`src/upload_cap.day_quota()` の窓と同じ。
 SEARCH_RESET_JST = "16:00 JST"
@@ -219,10 +326,18 @@ def denied_lines(res: dict) -> list[str]:
 
 
 def top_rows(rows: list[dict], keep: int = TOP_KEEP) -> list[dict]:
-    """帳面に残す上位（**題つき**）。"""
-    top = sorted(rows, key=lambda r: -int(r.get("views") or 0))[:keep]
-    return [{k: r.get(k) for k in ("id", "views", "secs", "form", "channel", "title",
-                                   "published", "q")} for r in top]
+    """帳面に残す上位（**題つき・形ごとに `keep` 本**）。
+
+    2026-09-03: 形を分けずに 15本 だと、今年の長尺（100万回）が全部を占めて
+    ショートの題が1本も残らず、`top_lines("short")` が空になる。形ごとに残す。
+    """
+    out: list[dict] = []
+    for form in ("short", "long"):
+        top = sorted((r for r in rows if r.get("form") == form),
+                     key=lambda r: -int(r.get("views") or 0))[:keep]
+        out.extend({k: r.get(k) for k in ("id", "views", "secs", "form", "channel", "title",
+                                          "published", "q")} for r in top)
+    return out
 
 
 def summarize(rows: list[dict]) -> dict:
@@ -406,8 +521,9 @@ def eta_line(need_over_cap: float | None = None, path: Path | None = None,
 KICK_MARK = ROOT / "data" / "niche_ceiling.kick"
 KICK_LOG = ROOT / "data" / "niche_ceiling.log"
 KICK_EVERY = timedelta(hours=6)
-#: 帳面のその形が、これより若ければ撃ち直さない（`search.list` 100単位/語）。
-KICK_FRESH = timedelta(days=7)
+#: 帳面のその形が、これより若ければ撃ち直さない。**0単位（`--source free`）になったので 1日**
+#: （API 版のときは 7日 ＝ 500単位/週。外の帯は日ごとに動くので、毎日 取り直す）。
+KICK_FRESH = timedelta(days=1)
 
 
 def kick(form: str = "short", now: datetime | None = None, *, root: Path | None = None,
@@ -462,7 +578,10 @@ def kick(form: str = "short", now: datetime | None = None, *, root: Path | None 
     try:
         mark.parent.mkdir(parents=True, exist_ok=True)
         mark.write_text(now.isoformat() + "\n", encoding="utf-8")
-        cmd = [sys.executable or "python3", "scripts/niche_ceiling.py", "--form", form, "--queries", "5"]
+        # 2026-09-03: `--source free`（yt-dlp・0単位）で**両方の形**を撃つ。API 版は 09/02 に
+        # 2回とも 429 で、背景の1手は一度も帳面を進めていなかった（`data/niche_ceiling.log`）。
+        cmd = [sys.executable or "python3", "scripts/niche_ceiling.py", "--source", "free",
+               "--form", "any", "--queries", "6"]
         if spawn is not None:
             spawn(cmd)
         else:
@@ -472,7 +591,7 @@ def kick(form: str = "short", now: datetime | None = None, *, root: Path | None 
                              stdin=subprocess.DEVNULL, start_new_session=True)
     except Exception as exc:                                   # noqa: BLE001
         return f"起こせませんでした: {str(exc)[:120]}"
-    return f"背景で起こしました（`--form {form} --queries 5`・500単位・log は `data/{KICK_LOG.name}`）"
+    return f"背景で起こしました（`--source free --form any --queries 6`・0単位・log は `data/{KICK_LOG.name}`）"
 
 
 def render(res: dict) -> list[str]:
@@ -513,14 +632,23 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--form", choices=("any", "short"), default="any",
                     help="short: `videoDuration=short` と SHORT_QUERIES で、毎日 出している形の外を撃つ")
+    ap.add_argument("--source", choices=("free", "api"), default="free",
+                    help="free: yt-dlp の検索（0単位・既定）／ api: Data API の search.list（100単位/語）")
     a = ap.parse_args(argv)
-    qs = (SHORT_QUERIES if a.form == "short" else QUERIES)[:max(1, a.queries)]
+    if a.source == "free" and a.form == "any":
+        # 0単位なので、ショートの語と長尺の語を**両方**撃つ（形ごとの帯が同じ帳面に入る）。
+        qs = SHORT_QUERIES[:max(1, a.queries)] + QUERIES[:max(1, a.queries)]
+    else:
+        qs = (SHORT_QUERIES if a.form == "short" else QUERIES)[:max(1, a.queries)]
     if a.dry_run:
-        print(f"[niche] 撃つ語 {len(qs)}件（{a.form}）＝ search.list {len(qs)}回 ＝ {100 * len(qs)}単位")
+        if a.source == "free":
+            print(f"[niche] 撃つ語 {len(qs)}件（{a.form}・yt-dlp・0単位）")
+        else:
+            print(f"[niche] 撃つ語 {len(qs)}件（{a.form}）＝ search.list {len(qs)}回 ＝ {100 * len(qs)}単位")
         for q in qs:
             print("   ", q)
         return 0
-    res = probe(qs, days=a.days, form=a.form)
+    res = (probe_free if a.source == "free" else probe)(qs, days=a.days, form=a.form)
     if not res["rows"] and res.get("denied"):
         for line in denied_lines(res):
             print(line)
@@ -532,6 +660,7 @@ def main(argv: list[str] | None = None) -> int:
         fh.write(json.dumps({
             "at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
             "queries": qs, "days": a.days, "n": len(res["rows"]), "form": a.form,
+            "source": a.source,
             "summary": summarize(res["rows"]), "own_ceiling": own_ceiling(),
             "top": top_rows(res["rows"]),
         }, ensure_ascii=False) + "\n")

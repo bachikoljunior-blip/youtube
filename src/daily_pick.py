@@ -538,6 +538,113 @@ def record(form: str, topic: str, why: str, *, day: date | None = None,
     return row
 
 
+def _need_over_cap(path: Path | None = None) -> float | None:
+    """`data/eta.jsonl` 最終行の `lever_need_over_cap`（日付が出るのに天井を何倍 上げる要るか）。0単位。"""
+    rows = _jsonl(path or (ROOT / "data" / "eta.jsonl"))
+    for r in reversed(rows):
+        v = r.get("lever_need_over_cap")
+        if isinstance(v, (int, float)) and v > 0:
+            return float(v)
+    return None
+
+
+def theory_gap(cmp: dict, ledger: Path | None = None, now: datetime | None = None) -> dict:
+    """**形ごとに「外の帯 ÷ 自分の中央値」を数える**（純関数寄り・API 0単位）。
+
+    返り: {"ショート": {"own": …, "out_p90": …, "out_max": …, "x_p90": …, "x_max": …,
+                       "secs_median": …, "n": …, "age_days": …}, "長尺": {…}, "best": 形 or None}
+    `x_p90` は「外の p90 を自分の中央値で割った数」。**理論値がどの形に在るか**はこれで決まります。
+    自分の中央値が 0 の形は、1回 として割ります（0 で割らない・向きは変わらない）。
+    """
+    out: dict = {"best": None}
+    try:
+        import sys
+        here = str(ROOT / "scripts")
+        if here not in sys.path:
+            sys.path.insert(0, here)
+        import niche_ceiling as nc                                 # noqa: PLC0415
+    except Exception:                                          # noqa: BLE001
+        return out
+    best_x = 0.0
+    for form, key in (("ショート", "short"), ("長尺", "long")):
+        row = nc.latest(ledger, form=key)
+        if not row:
+            continue
+        s = (row.get("summary") or {}).get(key) or {}
+        if not s.get("n"):
+            continue
+        src = cmp.get("rule") if form == "ショート" else cmp.get("all")
+        own = ((src or {}).get(form) or {}).get("median")
+        if own is None:
+            own = ((cmp.get("all") or {}).get(form) or {}).get("median")
+        own_div = max(float(own or 0), 1.0)
+        secs = sorted(int(t.get("secs") or 0) for t in (row.get("top") or [])
+                      if t.get("form") == key and t.get("secs"))
+        try:
+            age = ((now or datetime.now(timezone.utc))
+                   - datetime.fromisoformat(str(row["at"]))).days
+        except Exception:                                      # noqa: BLE001
+            age = 0
+        d = {"own": own, "out_p90": s.get("p90"), "out_max": s.get("max"),
+             "x_p90": float(s.get("p90") or 0) / own_div,
+             "x_max": float(s.get("max") or 0) / own_div,
+             "secs_median": (statistics.median(secs) if secs else None),
+             "n": s.get("n"), "age_days": age, "source": row.get("source", "api")}
+        out[form] = d
+        if d["x_p90"] > best_x:
+            best_x, out["best"] = d["x_p90"], form
+    return out
+
+
+def theory_lines(cmp: dict, ledger: Path | None = None, now: datetime | None = None,
+                 need: float | None = None) -> list[str]:
+    """**理論値がどの形に在るか**を、外の帯（0単位）÷ 自分の中央値 で毎周 出す。
+
+    ## なぜ要るか（2026-09-03 02:xx JST・最適化の回。「最適化されてんの？（過去の実行に対して）」→ いいえ）
+
+    `data/runs.jsonl` の ship 290件（08-29〜）で到達日が動いた回は 0回、`data/eta.jsonl` は 08-21 から
+    「出ません」のまま。この画面は形を「自分の控えどうし」（ショート 173回 対 長尺 1回）で決めていたので、
+    **次の1本は毎日ショート**、長尺は「いまの作り方の長尺」しか無いので永久に 1回 —— 鏡の中で回っていた。
+    同じ日に 0単位 で撃った外（`niche_ceiling.py --source free`・486本）:
+
+        ショート  外の p90 10,283回 ／ 最大   220,089回   ← 自分（規則の密度）173回 の ×59
+        長尺      外の p90 624,772回 ／ 最大 5,049,657回   ← 自分 1回 の ×624,772（今年 伸びた本・尺の中央 25分）
+
+    目標本文の「原理的に最大の理論値」は、**同じ帯の外が今年 実際に取っている数**のほうに近い。
+    `eta.py` が要ると言う ×21.88 は、ショートの p90 でも ×59 で越え、長尺なら桁が4つ違う。
+    **形は自分の控えで決めない。理論値の在る形と、その形で外が実際にやっている作り方で決める。**
+
+    **覆る条件**: 帳面が 30日 より古い／その形が 0本 なら、その形の行は出ない（`theory_gap`）。
+    自分の長尺の中央値が外の p90 の 1/100 を超えたら（＝ 作り方を写した長尺が実際に伸びたら）、
+    この行は「差」ではなく「追い付き」を言う行に書き換えること。
+    """
+    g = theory_gap(cmp, ledger=ledger, now=now)
+    forms = [f for f in FORMS if f in g]
+    if not forms:
+        return []
+    need = need if need is not None else _need_over_cap()
+    parts = []
+    for f in forms:
+        d = g[f]
+        parts.append(f"{f} ×{d['x_p90']:,.0f}（外の p90 {_fmt(d['out_p90'])} ÷ 自分の中央値 "
+                     f"{_fmt(d['own'] if d['own'] is not None else 0)}・最大は ×{d['x_max']:,.0f}）")
+    out = ["     **理論値の在りか**（外の帯 ÷ 自分・0単位・毎周 数え直し）: " + " ／ ".join(parts)]
+    best = g.get("best")
+    if best:
+        d = g[best]
+        ln = f"     → 理論値が在る形は **{best}**"
+        if need:
+            reach = [f for f in forms if g[f]["x_p90"] >= need]
+            ln += (f"。日付が出るのに要る ×{need:.1f} を外の p90 で越える形: "
+                   + ("・".join(reach) if reach else "**無し**"))
+        if best == "長尺" and d.get("secs_median"):
+            ln += (f"。外の上位の尺の中央 **{d['secs_median'] / 60:.0f}分**（自分の長尺は 5分・計算1本・題に数字）")
+        out.append(ln)
+        out.append("       ＝ 形を自分の控え（ショート 対 長尺 の中央値）で決めないこと。**外の上位の題と尺を写した1本**を"
+                   "その形で出して、48時間の数をこの画面に入れる（前提は `config/hypotheses.yaml` の「外の作り方を写した長尺」）。")
+    return out
+
+
 def outside_lines(cmp: dict, form: str = "ショート", now: datetime | None = None,
                   ledger: Path | None = None) -> list[str]:
     """**外の帯の、同じ形の数**を `[きょうの1本]` に並べる（`scripts/niche_ceiling.py` の帳面・API 0単位）。
@@ -572,6 +679,20 @@ def outside_lines(cmp: dict, form: str = "ショート", now: datetime | None = 
     except Exception:                                          # noqa: BLE001
         got = []
     if got:
+        # **もう一方の形の外の帯も同じ画面に**（2026-09-03 02:xx・最適化の回）。
+        #   ここまでは「次に出る本の形（ショート）」の外だけを出していた。形を決める画面なのに、
+        #   形の比較は**自分の控えどうし**（ショート 173回 対 長尺 1回）だけ ＝ 鏡と鏡の比較。
+        #   0単位で撃った同じ日の外（`--source free`）: ショート p90 10,283回／長尺（今年）p90 624,772回。
+        #   自分の中央値で割ると ×59 対 ×624,772 —— **理論値（目標本文の「原理的に最大」）が
+        #   どちらの形に在るかは、この2つの数で決まります。** 自分の控えの比較では永久に見えない。
+        other_key = "long" if key == "short" else "short"
+        other_form = "長尺" if other_key == "long" else "ショート"
+        other_own = (cmp.get("all") or {}).get(other_form, {}).get("median")
+        try:
+            got += nc.top_lines(other_key, path=ledger, now=now, own_median=other_own)
+        except Exception:                                      # noqa: BLE001
+            pass
+        got += theory_lines(cmp, ledger=ledger, now=now)
         return got
     return [
         f"     外の帯の{form}: **まだ 1本も撃てていません**（帳面 `data/niche_ceiling.jsonl` に"

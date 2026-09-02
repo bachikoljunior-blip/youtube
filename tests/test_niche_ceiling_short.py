@@ -55,7 +55,7 @@ def test_all_429_says_not_shot_and_writes_nothing(tmp_path: Path, monkeypatch) -
     monkeypatch.setattr(nc, "probe", lambda qs, days=365, form="any": {
         "rows": [], "own": "", "queries": qs, "days": days, "form": form, "denied": len(qs)})
     monkeypatch.setattr(nc, "own_ceiling", lambda: 4229.0)
-    rc = nc.main(["--form", "short", "--queries", "3"])
+    rc = nc.main(["--source", "api", "--form", "short", "--queries", "3"])
     assert rc == 2
     assert not p.exists()
     text = "\n".join(nc.denied_lines({"denied": 3}))
@@ -104,7 +104,11 @@ def test_kick_fires_only_when_the_form_is_stale_and_the_mark_is_old(tmp_path: Pa
     # 帳面にショートが無い → 起こす（印が書かれる）
     p0 = _ledger(tmp_path, [_row("2026-09-02T08:48:43+00:00", 0)])
     got = nc.kick("short", now, root=tmp_path, mark=mark, ledger=p0, spawn=calls.append)
-    assert "背景で起こしました" in got and calls and "--form" in calls[0] and "short" in calls[0]
+    # 2026-09-03: 起こす手は `--source free`（yt-dlp・0単位）で、**両方の形**を撃つ。
+    #   API 版（100単位/語）は 09/02 に2回とも 429 で、背景の1手が一度も帳面を進めなかった。
+    assert "背景で起こしました" in got and calls and "--source" in calls[0] and "free" in calls[0]
+    assert "--form" in calls[0] and "any" in calls[0]
+    assert "0単位" in got
     # 同じ窓（6時間 以内）はもう起こさない
     got2 = nc.kick("short", now, root=tmp_path, mark=mark, ledger=p0, spawn=calls.append)
     assert "分 前に起こしてあります" in got2 and len(calls) == 1

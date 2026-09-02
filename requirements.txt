@@ -13,3 +13,6 @@ pytest>=8.0.0
 # `scripts/probe_yomi.py` が合成音声のスペクトルを比べるのに使う。
 # 読み違いは耳でしか見つからなかったので、機械が聞けるようにするための道具。
 numpy>=2.0.0
+# `scripts/niche_ceiling.py --source free`（外の帯を Data API の日枠の外で撃つ・0単位）。
+# search.list は 100単位/語 で、09/02 は2回とも 429 で外の数が主実行に届かなかった（2026-09-03）。
+yt-dlp>=2026.8.19
