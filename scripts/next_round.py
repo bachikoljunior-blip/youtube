@@ -536,6 +536,16 @@ def main() -> int:
     for line in refresh_rendered():
         print(line)
 
+    # **きょうの1本を置く手（＋先の日付の掃き）を、親の周から起こす**（2026-09-02 夜）。
+    #     SessionStart フックは、このコンテナでは一度も起きていません（`ahead_sweep.kick()`
+    #     の註）。親が毎周 撃つのはこの道具だけなので、ここから起こします。
+    #     背景・数秒・親の画面には1行も出しません（白名簿）。
+    try:
+        import ahead_sweep as _sweep                            # noqa: PLC0415
+        _sweep.kick()
+    except Exception:                                          # noqa: BLE001
+        pass
+
     if args.live_set is not None:
         row = live_write(args.live_set)
         print(f"[next_round] 走っているサブ: {row['live']}体 と記録しました"

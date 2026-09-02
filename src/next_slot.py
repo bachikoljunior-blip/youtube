@@ -1022,6 +1022,12 @@ def _move_lines(got: list[dict], day, hour: int | None = None, note: str = "") -
     picked = _picked(day)
     hour = _config_hour() if hour is None else hour
     vid = str(got[0].get("video_id")) if got else ""
+    # **置くのは機械です**（2026-09-02 夜・`scripts/ahead_sweep.place_today`）——
+    # その日になった最初の SessionStart が、この本を その日の枠へ置きます。
+    # 回が撃つのは「機械より先に置きたい」ときだけ（2度目は規則1 の関門で止まる・0単位）。
+    auto = ("     　 **その日になれば機械が置きます**（`scripts/ahead_sweep.py` の `place_today`・"
+            "SessionStart から背景で）。回が撃つ必要はありません —— 置かれていなければ"
+            " `data/ahead_sweep.log` の `[today]` の行を見ること。")
     if picked and picked.get("video_id") != vid:
         pv = picked.get("video_id")
         return [
@@ -1029,8 +1035,10 @@ def _move_lines(got: list[dict], day, hour: int | None = None, note: str = "") -
             f"決めてあります**（理由: {str(picked.get('why'))[:60]}）:",
             f"       python scripts/reschedule.py --move {pv} {day:%Y-%m-%d}T{hour:02d}:00{note}",
             f"     　 下書き `{vid}` は**消さない**（private のまま池に残す）。",
+            auto,
         ]
-    return [f"       python scripts/reschedule.py --move {vid} {day:%Y-%m-%d}T{hour:02d}:00{note}"]
+    return [f"       python scripts/reschedule.py --move {vid} {day:%Y-%m-%d}T{hour:02d}:00{note}",
+            auto]
 
 
 def draft_lines(now: datetime | None = None,
