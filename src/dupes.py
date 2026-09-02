@@ -658,7 +658,8 @@ def used_round_amounts(topics: dict[str, str] | None = None
 
 
 def blocking(title: str, topic_id: str, videos: list[dict],
-             topics: dict[str, str] | None = None) -> list[dict]:
+             topics: dict[str, str] | None = None,
+             exclude: str | None = None) -> list[dict]:
     """**投稿の直前に呼ぶ。** これから上げる1本が、既にある本と強く重なるか。
 
     重なっていれば、その組を返します（**空なら通してよい**）。
@@ -669,10 +670,25 @@ def blocking(title: str, topic_id: str, videos: list[dict],
 
     **作ったあとに止めるので、その1本は捨てになります。** それでも
     **公開してしまうより安い** —— 収益化の対象外になると収入はゼロなので。
+
+    ## `exclude` —— **差し替える1本を外す**（2026-09-02 に足した）
+
+    規則3 の焼き直し（`upload_only.py <題材> --draft --replaces <videoId>`）は、
+    **外そうとしている下書きと必ず同じ題材**です。呼び手が `videos` から
+    抜くだけでは足りません —— **この関数は、抜けた本を控え
+    （`ledger_rows()`）から拾い直します**（口が落とした本で誤って通さないための
+    段。2026-08-16 の `iTrogWVf4Eg`）。実測 2026-09-02: 呼び手側で抜いて撃ち、
+    `same-topic` が**そのまま鳴りました。**
+
+    **だから、外すのは両方を混ぜたあと 1か所**です。
+    外してよいか（private・予約なし）の判定は呼び手が持ちます ——
+    ここには生きた `status` が来ない行（控えの側）が混ざるからです。
     """
     rows = rows_from_videos(videos, topics)
     have = {r["id"] for r in rows}
     rows += [r for r in ledger_rows(topics) if r["id"] not in have]
+    if exclude:
+        rows = [r for r in rows if r["id"] != exclude]
     me = {"id": "＜これから上げる本＞", "title": title, "topic": topic_id,
           "calc": (topics or {}).get(topic_id, ""), "at": None, "scheduled": False}
     return [i for i in find(rows + [me])

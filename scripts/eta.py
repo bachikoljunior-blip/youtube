@@ -8393,6 +8393,22 @@ def headline(pl: dict, prev: dict | None = None,
                   and _noc else "")
             + " ＝ **この回に立てるべき前提は「その天井は天井ではない」**"
               "（`config/hypotheses.yaml`）。**腕の値を動かす手では出ません。**")
+        # --- **その「天井ではない」を、外の実測で答える**（2026-09-02・最適化の回）---
+        #     上の行はずっと「天井は天井ではない」と**書くだけ**でした。
+        #     天井 `ceiling_at_rule()` は**自分の記録**から作った数なので、
+        #     否定するには**外の数**が要ります。`scripts/niche_ceiling.py` が
+        #     `search.list` で撃って `data/niche_ceiling.jsonl` に積み、ここで読みます。
+        #     **消す条件**: あちらの `eta_line()` の註（帳面が空／30日超なら 0行）。
+        try:
+            _here = str(Path(__file__).resolve().parent)
+            if _here not in sys.path:
+                sys.path.insert(0, _here)
+            import niche_ceiling as _nc                        # noqa: PLC0415
+            _nl = _nc.eta_line(pl.get("lever_need_over_cap"))
+            if _nl:
+                out.append(bar + _nl)
+        except Exception:                                      # noqa: BLE001, S110
+            pass
     # --- **すぐ上の倍率は「1本だけ動かした線」です**（2026-09-01・最適化の回）---
     #     理由と実測は `src/joint_cap.py` の docstring。**消す条件もそこ。**
     #     `joint_cap` が無い回（軌跡が落ちた・天井が1つも測れていない）は

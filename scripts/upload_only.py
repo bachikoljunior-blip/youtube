@@ -3,6 +3,8 @@
     python scripts/upload_only.py <テーマID>
     python scripts/upload_only.py <テーマID> "" <時刻>   # 第3引数で予約
     python scripts/upload_only.py <テーマID> --draft     # **予約を付けずに private で上げる**
+    python scripts/upload_only.py <テーマID> --draft --replaces <videoId>
+                                                        # **焼き直し（規則3）。差し替える下書きを外す**
 
 **`--draft` は 2026-09-02 に足しました**（規則5・固定その4）。オーナー原文:
 
@@ -67,9 +69,66 @@ def split_when(when: str) -> tuple[int, int, str | None]:
     return int(hour_part), minute, date_part
 
 
+def drop_replaced(existing: list[dict], video_id: str) -> tuple[list[dict], str]:
+    """**差し替える1本を、重なりの突き合わせから外す。**（2026-09-02 に足した）
+
+    返すのは `(外したあとの一覧, 断る理由)`。理由が空でなければ**外しません**。
+
+    ## なぜ要るか（この回に実際に止められた）
+
+    オーナーが固定した規則3 は「**次の枠で出る1本を、出る瞬間まで良くし続ける**」で、
+    その1手は `docs/trigger_main.md` §4 が名指ししているとおり **焼き直し**です
+    （`python -m src.pipeline` → `upload_only.py <題材> --draft`）。
+
+    ところが焼き直した本は、**外そうとしているその下書きと必ず同じ題材**です。
+    `src/dupes.find()` の `same-topic` は**強い**重なりなので、
+    `upload_only.py` は投稿を中止します —— **規則3 の1手が、門で塞がっていました。**
+
+        [same-topic] テーマID `gassan-kaigo-alone-155` が同じ
+            これから: 介護の月額上限2万4600円は年間限度額19万円の何割か
+            既にある: MqQKSnbM0OI  介護の月額上限2万4600円で年間限度額の何割が埋まるか
+
+    **`--allow-dupe` では代わりになりません。** あれは門を**丸ごと**降ろすので、
+    同じ回に `same-yen`（別の題材で金額が入れ子）まで通ります。
+    規則3 は 1日1回ではなく**出る瞬間まで**なので、
+    「毎回 `--allow-dupe` を撃って JOURNAL に理由を書く」は
+    **人の記憶に依存する門**（`batch_build.slots()` の註）——
+    このリポジトリで毎回 落ちる側です。
+
+    ## 外してよい条件（**この2つだけ**。片方でも欠けたら断ります）
+
+        private であること      公開の並びに入っていない
+        予約が付いていないこと  `publishAt` が無い ＝ 出る予定がない
+
+    **この2つが揃った本は「視聴者から見て存在しない」**ので、
+    門が守っている「同じチャンネルの動画を続けて数本視聴したときの繰り返し」に
+    そもそも当たりません。逆に**予約済みを外すのは禁じます** ——
+    2026-08-16 にすり抜けた `iTrogWVf4Eg` が、まさに**予約済み**の本でした
+    （`same-topic` を5分の間に止めて、そのあと通した回）。
+    外したいなら `scripts/reschedule.py --unschedule` が先です。
+
+    **覆る条件**: 規則5（`src/house_rule.SAME_DAY_SCHEDULING_ONLY`）が外れて
+    下書きを何本も持てるようになったら、「private・予約なし」だけでは
+    足りなくなります（同じ題材の下書きが2本 並ぶ）。
+    そのときは題材ではなく**その1本を名指しした札**であることを、
+    `data/uploaded.jsonl` の側でも突き合わせること。
+    """
+    hit = [v for v in existing if v.get("id") == video_id]
+    if not hit:
+        return existing, f"その本が突き合わせの一覧にありません（{video_id}）"
+    v = hit[0]
+    st = v.get("status", {}) or {}
+    if st.get("privacyStatus") != "private":
+        return existing, f"private ではありません（{st.get('privacyStatus')}）"
+    if st.get("publishAt"):
+        return existing, f"予約が付いています（{st.get('publishAt')}）"
+    return [x for x in existing if x.get("id") != video_id], ""
+
+
 def main(topic: str, visibility: str | None = None, hour: int | None = None,
          date_jst: str | None = None, skip_dupe_check: bool = False,
-         minute: int | None = None, draft: bool = False) -> int:
+         minute: int | None = None, draft: bool = False,
+         replaces: str | None = None) -> int:
     """hour を渡すと、その時刻（JST）で予約する。
     date_jst（`YYYY-MM-DD`）も渡すと、**その日に釘づけ**する（埋まっていれば失敗）。
 
@@ -165,9 +224,18 @@ def main(topic: str, visibility: str | None = None, hour: int | None = None,
                     part="snippet,status", id=",".join(missing[i:i + 50])).execute()["items"]
             if missing:
                 print(f"[check] 口から返らなかった控え {len(missing)}本を引き直しました")
+            if replaces:
+                existing, why = drop_replaced(existing, replaces)
+                if why:
+                    print(f"\n[!] **`--replaces {replaces}` は使えません** —— {why}")
+                    print("  外す枠があるなら `scripts/reschedule.py --unschedule` が先です。")
+                    return 1
+                print(f"[check] **差し替え**: {replaces} を突き合わせから外しました"
+                      "（private・予約なし ＝ 公開の並びに入っていない本）")
             hits = dupes.blocking(
                 title, topic, existing,
-                {t["id"]: t.get("calc", "") for t in config.load_topics()["topics"]})
+                {t["id"]: t.get("calc", "") for t in config.load_topics()["topics"]},
+                exclude=replaces)
             if hits:
                 print("\n[!] **既にある本と強く重なります。投稿を中止します。**")
                 for h in hits:
@@ -284,6 +352,16 @@ if __name__ == "__main__":
     # `--allow-dupe` と同じ形で先に抜きます。
     _draft = "--draft" in _argv
     _argv = [a for a in _argv if a != "--draft"]
+    # **差し替える1本を名指しする札**（規則3・`drop_replaced()` の註）。
+    # `--replaces <videoId>` の2語ぶんを、位置引数の数を変えないよう先に抜きます。
+    _replaces: str | None = None
+    if "--replaces" in _argv:
+        _i = _argv.index("--replaces")
+        if _i + 1 >= len(_argv):
+            print("`--replaces` には差し替える videoId を続けること")
+            raise SystemExit(2)
+        _replaces = _argv[_i + 1]
+        del _argv[_i:_i + 2]
     if len(_argv) not in (1, 2, 3):
         print(__doc__)
         raise SystemExit(2)
@@ -298,4 +376,5 @@ if __name__ == "__main__":
         _allow,
         _minute,
         _draft,
+        _replaces,
     ))

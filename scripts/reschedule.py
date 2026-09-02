@@ -1653,6 +1653,37 @@ def _compact(args) -> int:
     if per_day:
         print("[compact] 詰めたあとの本数/日: "
               + " ".join(f"{d}={n}" for d, n in sorted(per_day.items())))
+    # **規則5（固定その4・2026-09-02）は、この手そのものを禁じています。**
+    #     案は出しますが（規則が外れた回がそのまま読めるように）、撃ちません。
+    #     詳しくは `_compact()` の冒頭の節。
+    from src import house_rule as _hr                           # noqa: PLC0415
+    if _hr.same_day_only():
+        print("[compact] [!] **この手は、いま撃てません**"
+              "（規則5・固定その4「**現在の日付にしか予約しないってことだからね？**」）")
+        print("[compact]     上の割り当ては**先の日付へ 1日1本ずつ並べ直す手**で、"
+              "この規則に反します。**空いている日は欠陥ではありません。**")
+        print("[compact]     暦を直す手は逆向きです ——"
+              " `python scripts/pool_drain.py --apply --keep 0`"
+              "（**削除はしません**・private の下書きへ戻すだけ）")
+        print("[compact]     案そのものは上に出してあります"
+              "（`src/house_rule.SAME_DAY_SCHEDULING_ONLY` が `False` に戻れば、"
+              "そのまま `--apply` で撃てます）")
+        return 0
+
+    # --- **規則5 の門は、下の2つの門より「先」に置くこと**（2026-09-02 夕・最適化の回）---
+    #     下の2つ（`--min-days` と「真ん中の穴」）は、どちらも
+    #     **「予約が先の日付まで埋まっているのが正しい」**という前提で書かれています。
+    #     **規則5 の下では、その前提が反転します** ——「先の日付が空であることが、
+    #     正しい状態です」（`CLAUDE.md` 固定その4）。
+    #     門が下にあったせいで、実物を撃つと
+    #         `[compact] **予約の先が 0.0日しか残りません**（下限 8.0日）`
+    #     で落ち、**規則5 の説明が1行も出ませんでした。**
+    #     いちばん危ないのは、その文が「投稿が途切れるのが最大の損失」と言うことです ——
+    #     **正しい状態を「欠陥」と読ませ、先の日付へ並べ直す手へ誘導します。**
+    #     （検査 `tests/test_compact_blocked_by_rule5.py` が、これで落ちていました）
+    #     **覆る条件**: `house_rule.SAME_DAY_SCHEDULING_ONLY` が `False` に戻ったとき。
+    #     そのときは門が通るので、下の2つがそのまま元の順で効きます。
+
     print(f"[compact] 予約の最後: {where}（あと {days:.1f}日）")
     if days < args.min_days:
         raise SystemExit(
@@ -1686,22 +1717,6 @@ def _compact(args) -> int:
 
     if not plan:
         print("[compact] 動かすものはありません。")
-        return 0
-    # **規則5（固定その4・2026-09-02）は、この手そのものを禁じています。**
-    #     案は出しますが（規則が外れた回がそのまま読めるように）、撃ちません。
-    #     詳しくは `_compact()` の冒頭の節。
-    from src import house_rule as _hr                           # noqa: PLC0415
-    if _hr.same_day_only():
-        print("[compact] [!] **この手は、いま撃てません**"
-              "（規則5・固定その4「**現在の日付にしか予約しないってことだからね？**」）")
-        print("[compact]     上の割り当ては**先の日付へ 1日1本ずつ並べ直す手**で、"
-              "この規則に反します。**空いている日は欠陥ではありません。**")
-        print("[compact]     暦を直す手は逆向きです ——"
-              " `python scripts/pool_drain.py --apply --keep 0`"
-              "（**削除はしません**・private の下書きへ戻すだけ）")
-        print("[compact]     案そのものは上に出してあります"
-              "（`src/house_rule.SAME_DAY_SCHEDULING_ONLY` が `False` に戻れば、"
-              "そのまま `--apply` で撃てます）")
         return 0
     if not args.apply:
         print("[compact] **これは割り当てだけです。**撃つには --apply を付けること"
