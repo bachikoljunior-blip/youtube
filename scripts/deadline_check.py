@@ -315,7 +315,24 @@ def reveal_hold_arm(side: str = "処置") -> int:
     return reveal_hold.arm_n(side)
 
 
+def clarity_books() -> int:
+    """**控えと維持率カーブが両方ある本の数**（`src/clarity.books()`）。
+
+    「人間にわかるか」の物差しを人の側の数に当てるとき、**この数が n** です。
+    増えるのは `python scripts/retention.py`（貯めに無いIDだけ引きます）。
+
+    **1日1本 の規則では律速されません** —— 数えているのは
+    「公開した本」ではなく「**カーブを取った本**」で、取る先は
+    もう公開ずみの本の山（`data/critique_queue/` に 1,354本）だからです。
+    """
+    if str(ROOT) not in sys.path:
+        sys.path.insert(0, str(ROOT))
+    from src import clarity                                    # noqa: PLC0415
+    return len(clarity.books())
+
+
 EXPR_NS = {"json": json, "rows": _rows, "date": date, "ab_members": ab_members,
+           "clarity_books": clarity_books,
            "deep_short_days": deep_short_days,
            "deep_short_arm": deep_short_arm,
            "deep_short_usable_days": deep_short_usable_days,
@@ -379,6 +396,10 @@ _EXPR_METERS: dict[str, tuple[str, ...]] = {
     "deep_short_arm": ("data/views.jsonl", "data/video_forms.json"),
     "deep_short_days": ("data/video_forms.json",),
     "deep_short_usable_days": ("data/views.jsonl", "data/video_forms.json"),
+    # **止まるのは `retention.json` のほう**です（控えは本を作るたびに増えます）。
+    # あの貯めは `scripts/retention.py` を撃った回だけ伸びます —— 実測 2026-08-20 に
+    # 21本 で 7日 止まっていた前例が、あのファイルの docstring に在ります。
+    "clarity_books": ("data/retention.json",),
 }
 
 #: **計器を開かない名前**（`EXPR_NS` にあるが、この表に載らないもの）。
@@ -404,6 +425,7 @@ _METER_REFRESH: dict[str, str] = {
     "data/views.jsonl": "python scripts/snapshot.py",
     "data/video_forms.json": "python -m src.rpm_mix --forms",
     "data/reach.jsonl": "python scripts/reach.py",
+    "data/retention.json": "python scripts/retention.py",
 }
 
 #: **「取り直す」ものではなく「作ると増える」もの。**
