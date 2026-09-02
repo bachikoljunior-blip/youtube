@@ -679,9 +679,87 @@ def measured_budget(now: datetime | None = None) -> dict:
             floor, came_from = spent, start
     spent_here = sum(unit_cost(r.get("detail")) for r in dedupe_ok(
         [r for r in by_window.get(here, []) if r.get("ok")]))
-    return {"floor": floor, "spent": spent_here,
-            "left": max(0, floor - spent_here),
-            "from": came_from.astimezone(JST).strftime("%m/%d") if came_from else None}
+    out = {"floor": floor, "spent": spent_here,
+           "left": max(0, floor - spent_here),
+           "from": came_from.astimezone(JST).strftime("%m/%d") if came_from else None}
+    # **帳面（`data/api_calls.jsonl`・読みも載る）の側も、同じ形で添える**
+    # （2026-09-03 01:0x に足した）。上の `spent` / `floor` は**書き込みだけ**
+    # （`DAY_QUOTA_HITS`）で、この意味は変えません（`reserve_hold` の下の門と
+    # `tests/test_quota_reserve.py` がその形で立っています）。
+    #
+    # ## なぜ要るか（実測 2026-09-03 00:5x・窓 09/02 07:00Z〜）
+    #
+    #     `day_quota().line`   「この窓で使った単位 **6,550** ／ 前例 9,400 → **あと 2,850**」
+    #     `quota_ledger.spent`  **13,764** / 10,000（`run_marker --write` の同じ画面）
+    #     帳面の ok 行だけ       **12,464**（videos.update 6,550 ＋ **search.list 5,200**
+    #                            ＋ videos.list 595 ＋ ほか 119）
+    #
+    # **同じ画面の2行が 7,000単位 食い違っていました。** 上の行は `retro.py` の
+    # 持ち越しの節に「**いまなら潰せます**（あと 2,850）」として出ます —— 実際は
+    # `niche_ceiling.py` の `search.list` 52回 が 5,200単位 使っていて、
+    # **09/01 は 12,859 通過後に 403** なので、この窓は前例の縁です。
+    # 「書き込みだけ」の数を「使った単位」と刷ると、読みが枠を食った窓ほど
+    # **余裕がある側に外れます**（`tests/test_quota_ok_call_sites.py` の
+    # 「尽きた窓で先に 403 を返すのは読みのほう」と同じ穴）。
+    #
+    # `ledger_spent`  この窓で**通った** Data API の単位（`ok=False` は数えない。
+    #                 403／429 は単位を使いません —— `_ledger_hold` と同じ数え方）。
+    #                 帳面に行が無い窓は `None`（推測で埋めない）
+    # `ledger_floor`  過去の窓で、最初の 403（`DAY_QUOTA_HITS`）より前に通った
+    #                 帳面の単位の最大（＝ 読みも入れた枠の下限・実測）
+    #
+    # **覆る条件**: `note_quota_ok` が読みにも書くようになったら、`spent` 自身が
+    # 読みまで数えるので、この2つは `spent` / `floor` と同じ数になり、要らなくなります。
+    # 検査は `tests/test_day_quota_gauge_counts_reads.py`。
+    try:
+        led = _ledger_by_window()
+    except Exception:                                          # noqa: BLE001
+        led = {}
+    first_hit_of: dict[datetime, str | None] = {}
+    for start, rows in by_window.items():
+        rows = sorted(rows, key=lambda r: str(r.get("at")))
+        first_hit_of[start] = next((str(r.get("at")) for r in rows if not r.get("ok")), None)
+    l_floor, l_from = 0, None
+    for start, rows in led.items():
+        hit = first_hit_of.get(start)
+        used = sum(int(r.get("units") or 0) for r in rows
+                   if r.get("ok") and str(r.get("api")) == "data"
+                   and (not hit or str(r.get("at")) < hit))
+        if start != here and used > l_floor:
+            l_floor, l_from = used, start
+    here_rows = led.get(here)
+    out["ledger_spent"] = (sum(int(r.get("units") or 0) for r in here_rows
+                               if r.get("ok") and str(r.get("api")) == "data")
+                           if here_rows else None)
+    out["ledger_floor"] = l_floor
+    out["ledger_from"] = l_from.astimezone(JST).strftime("%m/%d") if l_from else None
+    return out
+
+
+def _ledger_by_window() -> dict[datetime, list[dict]]:
+    """`data/api_calls.jsonl` を窓（`window_start`）ごとに分ける。（API 0単位）
+
+    `quota_ledger.rows()` は**いまの窓**しか返さないので、過去の窓の「403 の前に
+    通った単位」（枠の下限）を出すには、ここで全行を読みます。
+    """
+    from . import quota_ledger as _ql                          # noqa: PLC0415
+    path = _root() / _ql.LEDGER
+    out: dict[datetime, list[dict]] = {}
+    if not path.exists():
+        return out
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            rec = json.loads(line)
+        except ValueError:
+            continue
+        when = _parse(rec.get("at"))
+        if not when:
+            continue
+        out.setdefault(window_start(when), []).append(rec)
+    return out
 
 
 #: **計測のために、窓の単位を必ず残す量**（2026-08-28 の最適化の回に足した）。
@@ -1412,8 +1490,35 @@ def day_quota(now: datetime | None = None) -> DayQuota:
         b = measured_budget(now)
     except Exception:                                          # noqa: BLE001
         b = None
-    if b and b["floor"]:
-        gauge = (f" この窓で使った単位 **{b['spent']:,}** ／"
+    if b and b.get("ledger_spent") is not None:
+        # **帳面の側を刷る**（2026-09-03 に直した。`measured_budget` の註）。
+        # 書き込みだけの `spent` を「使った単位」と刷ると、`search.list`（100単位/回）が
+        # 枠を食った窓ほど余裕がある側に外れます（実測 6,550 対 12,464）。
+        used = int(b["ledger_spent"])
+        ref = int(b.get("ledger_floor") or 0)
+        ref_from = b.get("ledger_from")
+        try:
+            from . import quota_ledger as _ql                  # noqa: PLC0415
+            pub = int(_ql.DAY_UNITS)
+        except Exception:                                      # noqa: BLE001
+            pub = 10_000
+        gauge = (f" この窓で通った単位 **{used:,}**（帳面 `data/api_calls.jsonl`・"
+                 f"**読みも数える**。うち書き込み {b['spent']:,}）／ 公表の枠 {pub:,}")
+        if ref:
+            gauge += f" ／ 前例 **{ref:,}**（{ref_from} はそこまで通って 403）"
+            if used >= ref:
+                gauge += (f" → **前例を {used - ref:,} 超えています。403 が来る側です** —— "
+                          f"`videos.update`・`thumbnails.set` は窓が変わってから。")
+            else:
+                gauge += f" → **前例まで あと {ref - used:,}**。"
+        elif used >= pub:
+            gauge += f" → **公表の枠を {used - pub:,} 超えています。403 が来る側です。**"
+        else:
+            gauge += f" → **公表の枠まで あと {pub - used:,}**。"
+        gauge += ("**残量ではなく前例です** —— 外す向きは、押して 403 を受ける側"
+                  "（403 は単位を使いません）。")
+    elif b and b["floor"]:
+        gauge = (f" この窓で使った単位 **{b['spent']:,}**（書き込みだけ。帳面に行が無い窓）／"
                  f" 前例のある枠 **{b['floor']:,}**（{b['from']} の実測）→"
                  f" **あと {b['left']:,}**。"
                  f"**残量ではなく前例です** —— `videos.update` は1回 50単位で、"

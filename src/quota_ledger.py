@@ -333,13 +333,19 @@ def rows(now: datetime | None = None) -> list[dict]:
 
 def spent(now: datetime | None = None) -> dict[str, Any]:
     """いまの窓の消費。`{"data": 単位, "by": {...}, "method": {...}, "n": 件数}`。"""
-    out: dict[str, Any] = {"data": 0, "n": 0, "by": {}, "method": {}, "other": 0}
+    # `data_ok` ＝ **通った**行だけの単位（2026-09-03 に足した）。`data` は `ok=False`
+    # （403／429）も定価で足すので、失敗の多い窓ほど高く出ます（実測 09/02 の窓:
+    # `data` 13,764 対 `data_ok` 12,464 —— 差は `search.list` の 429）。
+    # 枠を実際に使ったのは `data_ok` のほう（`upload_cap._ledger_hold` と同じ数え方）。
+    out: dict[str, Any] = {"data": 0, "data_ok": 0, "n": 0, "by": {}, "method": {}, "other": 0}
     for r in rows(now):
         units = int(r.get("units") or 0)
         api = str(r.get("api") or "")
         out["n"] += 1
         if api == "data":
             out["data"] += units
+            if r.get("ok"):
+                out["data_ok"] += units
         else:
             out["other"] += 1
         key = str(r.get("method") or "?")
@@ -362,7 +368,8 @@ def render(now: datetime | None = None) -> str:
         "=== Data API の日枠を、何が消費したか（`data/api_calls.jsonl`・API 0単位）===",
         f"  窓の頭: {head:%Y-%m-%d %H:%M} PT ／ 帳面の行: **{s['n']}件**",
         f"  積んだ消費: **{s['data']:,}単位** / 公表の枠 {DAY_UNITS:,}"
-        f"（**単価は公表値。Google の実数ではありません**）",
+        f"（**単価は公表値。Google の実数ではありません**。"
+        f" うち**通った**行だけなら {s.get('data_ok', s['data']):,}単位 —— 403／429 は単位を使いません）",
         f"  403 の観測: {getattr(q, 'hits', 0)}回"
         + ("（**尽きています**）" if not getattr(q, "open", True) else ""),
     ]
