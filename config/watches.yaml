@@ -666,6 +666,26 @@ watches:
     source: config/hypotheses.yaml
     kind: hypothesis_needs
     claim: "検索面は、per_video を動かす大きさになる"
+
+  # **2026-09-02 10:3x に、前提と同じ回で足しました**（オーナー固定その3
+  # 「動画内の説明は人間にわかるようにして」の側の1件目）。
+  # **前提だけ書いて台帳を空けた回が、この repo で3回 起きています**
+  # （`配信抑制-0824` と `長尺1本あたり-30本` の註）。**`watch:` を書いたら、その場で置くこと。**
+  #
+  # **数をここに写していません**（`kind: hypothesis_needs`）。床の 135本 は
+  # 前提の `needs:` にあり、写すと同じ数を2箇所で持つことになります
+  # （2026-08-27 に実際に食い違った形。`src/watches.py` の
+  #  `_hypothesis_judge_state` の上の註）。
+  - id: 人にわかるか-耳の負荷-135本
+    what: 「一息に載せる数の個数が多いほど、聞き手は分からなくなって離れる（＝ `verify.EAR_LOAD_MAX` が立っている前提）」の判定（腕 `per_video`・側 `content`）
+    cond: "控えと維持率カーブが**両方ある**本が 135本（床は `falsified_if`。数は仮説の `needs` ＝ `clarity_books()` に訊きます）"
+    then: "python -m src.clarity（**日枠 0単位**・数秒）→ **陽性対照が門（-0.20）を通っていること**を先に見る。そのうえで『数の個数 最大』の3つの出口が**どれも有意の門に届かず**、かつ**別の物差しが届いている**なら外れ（＝ 門に立っている物差しを外し、届いたほうへ入れ替える）"
+    # **増やす手も書いておくこと** —— この数は待っても増えません（`data/retention.json` は
+    # 取り直した回だけ伸びます。`deadline_check` の `_METER_REFRESH` に同じ手が在ります）。
+    # `python scripts/retention.py`（Analytics の枠。**Data API の日枠を使わないので 403 の窓でも通ります**）
+    source: config/hypotheses.yaml
+    kind: hypothesis_needs
+    claim: "一息に載せる数の個数が多いほど、聞き手は分からなくなって離れる"
 exempt:
   src/watches.py: >-
     **待ちの台帳そのものを印字する側です。** 「目盛りは満ちたが、まだ判定できません」は

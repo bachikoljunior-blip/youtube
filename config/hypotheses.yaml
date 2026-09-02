@@ -237,6 +237,7 @@ hypotheses:
         since: "2026-08-09"   # `analytics.fetch_retention` が100点を返しはじめた日
         data_file: "data/retention.json"
         refresh: "python scripts/retention.py"
+    watch: "人にわかるか-耳の負荷-135本"    # 満ちたかは `src/watches.py` が毎周 見ています
     # ------------------------------------------------------------------
     # **この条件は、立てた回の数時間後に書き直しました**（2026-09-02）。
     # 最初の版は「3つの出口の順位相関が**3つとも 0 以上**なら外れ」でした ——
