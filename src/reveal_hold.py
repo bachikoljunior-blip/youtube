@@ -75,6 +75,7 @@ engaged の比を実際に取るのは `verdict()` で、そこだけ **Analytic
 """
 from __future__ import annotations
 
+import json
 import statistics
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -301,6 +302,101 @@ def verdict(pairs: Iterable[tuple[date, float, float]], need_days: int = 3) -> d
             "verdict": "survived" if up * 2 > len(pairs) else "falsified"}
 
 
+ATTEMPTS = ROOT / "data" / "reveal_hold_attempts.jsonl"
+
+#: **`verdict()` が要る「比の取れた日」の数。** 出どころはここ1か所。
+NEED_DAYS = 3
+
+
+def record_attempt(res: dict, pairs_n: int, now: datetime | None = None,
+                   path: Path | None = None) -> None:
+    """**判定を撃った跡を1行 残す。**（`data/reveal_hold_attempts.jsonl`）
+
+    ## なぜ要るか（2026-09-02・最適化の回。**この回に撃って踏んだ**）
+
+    この道具は、**同じ回の中で2つのことを言っていました**:
+
+        render()   両群がそろう公開日: **4日** → **判定できます**
+        --judge    比の取れた本 17本 ／ 対にできた日 **2日**
+                   → {'decided': False, 'why': '両群がそろう公開日が 2日（要 3日）'}
+
+    `paired_days()` は**控えだけ**で数えます（その日に両群の本が居るか）。
+    `ratios_by_day()` は、そこへ **Analytics の engaged 比**を join します ——
+    **比の付かない本が落ちて、4日 が 2日 に減りました**（08/28・08/29 が消えた）。
+    `verdict()` が見ているのは後者で、**前者では一度も判定できません。**
+
+    そして `config/hypotheses.yaml` の `needs` は
+
+        count_expr: "min(reveal_hold_arm('処置'), reveal_hold_arm('対照'))"
+        need: 16
+
+    ＝ **本の数**しか数えていません。16本 は満ちているので
+    `scripts/deadline_check.py` は「満ちた」と言い、`scripts/eta.py` は頭の3行で
+    **「この回は `verdict` で日付が動かせます」**と、この前提を名指しします。
+    **撃つと判定できません。** 毎周 その往復を1回ぶん捨てています。
+
+    **この前提の註が、同じ形の穴を自分で2回 数えています** ——
+    「門は『作った／公開した』を、手順は『**比べられる**』を数えている」
+    （`deep_short_arm()` 2026-08-29 が1件目、`arm_n` の行／本 が2件目）。
+    **これが3件目です。** 違いは、今度は 0単位 では見えないこと ——
+    **比が付くかは Analytics を撃つまで分かりません。**
+    だから**撃った結果のほうを控えに残します。**
+
+    ## 覆る条件
+
+    比の付かなかった本に、あとから Analytics が比を付けたら（遅れは 2〜3日）、
+    同じ日が生き返ります。**だから跡は「最後の1回」ではなく積みます** ——
+    `last_attempt()` は新しい行を読み、古い行は履歴として残ります。
+    """
+    path = path or ATTEMPTS
+    rec = {"ts": (now or datetime.now(timezone.utc)).isoformat(),
+           "pairs": int(pairs_n), "need_days": int(NEED_DAYS),
+           "decided": bool(res.get("decided")),
+           "why": str(res.get("why") or ""),
+           "verdict": str(res.get("verdict") or "")}
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
+
+
+def last_attempt(path: Path | None = None) -> dict | None:
+    """**最後に判定を撃った跡**（無ければ `None`）。**API 0単位。**"""
+    path = path or ATTEMPTS
+    if not path.exists():
+        return None
+    out = None
+    for ln in path.read_text(encoding="utf-8").splitlines():
+        ln = ln.strip()
+        if not ln:
+            continue
+        try:
+            out = json.loads(ln)
+        except json.JSONDecodeError:
+            continue
+    return out
+
+
+def judgeable_days(now: datetime | None = None,
+                   rows: list[dict] | None = None,
+                   path: Path | None = None) -> int:
+    """**`verdict()` に実際に渡せる日の数**（**API 0単位**）。
+
+    一度でも撃っていれば、**その実測**（比の取れた日）を返します ——
+    控えだけで数えた `paired_days()` は**上限**であって、
+    `verdict()` が見る数ではありません（`record_attempt` の註）。
+
+    まだ一度も撃っていない回は `paired_days()` を返します
+    （＝ 上限。**最初の1回は撃ってみないと分かりません**）。
+    """
+    got = last_attempt(path)
+    if got is None:
+        return len(paired_days(now, rows))
+    # **控えが撃った時より増えていたら、上限のほうも一緒に下がれないこと** ——
+    # 新しい本が出れば比の取れる日は増えうるので、`max` は取りません。
+    # 撃った跡が「足りない」と言っている以上、**次に撃つまでは足りない**が正しい。
+    return int(got.get("pairs") or 0)
+
+
 def render(now: datetime | None = None) -> str:
     """画面に出す本文（**API 0単位**）。"""
     now = now or datetime.now(timezone.utc)
@@ -329,7 +425,26 @@ def render(now: datetime | None = None) -> str:
         + (f"（{', '.join(str(d) for d in days)}）" if days else ""),
     ]
     if min(len(both["処置"]), len(both["対照"])) >= 16:
-        lines.append("  → **判定できます**（`python -m src.reveal_hold --judge`・Analytics 1回）")
+        att = last_attempt()
+        if att and not att.get("decided"):
+            # **撃った跡が「足りない」と言っている**（`record_attempt` の註）。
+            lines.append(
+                f"  → **まだ判定できません。** 前に撃ったとき、**比の取れた日は"
+                f" {att.get('pairs')}日**（要 {att.get('need_days', NEED_DAYS)}日）"
+                f"でした（{str(att.get('ts'))[:16]}）。")
+            lines.append(
+                f"     **上の「そろう公開日 {len(days)}日」は控えだけの数 ＝ 上限**です ——"
+                "`verdict()` が見るのは **Analytics の engaged 比が付いた日**のほうで、"
+                "比の付かない本が落ちるとここまで減ります。")
+            lines.append(
+                "     **増えるのは公開したぶんだけ**です（規則1 ＝ 1日1本）。"
+                "撃ち直すのは、両群のそろう日が増えてから:"
+                " `python -m src.reveal_hold --judge`")
+        else:
+            lines.append("  → **判定を撃てます**（`python -m src.reveal_hold --judge`"
+                         "・Analytics 1回）。**ただし「判定できる」ではありません** ——"
+                         f"`verdict()` が要るのは **比の取れた日 {NEED_DAYS}日**で、"
+                         f"上の {len(days)}日 は控えだけの**上限**です")
     elif ready:
         lines.append(f"  → **まだ判定できません。** 予約表で両群が 16本 そろうのは"
                      f" **{ready}**（処置 {ready_t} ／ 対照 {ready_c}・齢{AGE_HOURS}時間 込み）")
@@ -364,7 +479,14 @@ def main(argv: list[str] | None = None) -> None:  # pragma: no cover - 画面出
     for day, old, new in pairs:
         mark = "処置" if new > old else "対照"
         print(f"    {day}  対照 {old:.3f} 対 処置 {new:.3f}  → {mark}")
-    print("  ", verdict(pairs))
+    res = verdict(pairs)
+    print("  ", res)
+    record_attempt(res, len(pairs))
+    if not res.get("decided"):
+        print("  [!] **閉じないこと。** この跡は控えに残したので、"
+              "次の回の `python -m src.reveal_hold`（0単位）と "
+              "`scripts/deadline_check.py` は「まだ判定できない」と言います "
+              "（`src/reveal_hold.record_attempt` の註）")
 
 
 if __name__ == "__main__":                                     # pragma: no cover

@@ -5811,3 +5811,12 @@
 {"at": "2026-09-02T04:42:48+00:00", "detail": "channels.list mine", "by": "history.py:_scan"}
 {"at": "2026-09-02T04:43:04+00:00", "detail": "channels.list mine", "by": "history.py:_scan"}
 {"at": "2026-09-02T04:43:05+00:00", "detail": "channels.list mine", "by": "history.py:_scan"}
+{"at": "2026-09-02T05:43:43+00:00", "detail": "status: Data API 読み", "by": "status.py:main"}
+{"at": "2026-09-02T05:43:44+00:00", "detail": "videos.list snapshot", "by": "snapshot.py:main"}
+{"at": "2026-09-02T05:44:02+00:00", "detail": "status: Data API 読み", "by": "status.py:main"}
+{"at": "2026-09-02T05:44:03+00:00", "detail": "videos.list snapshot", "by": "snapshot.py:main"}
+{"at": "2026-09-02T05:44:43+00:00", "detail": "channels.list mine", "by": "history.py:_scan"}
+{"at": "2026-09-02T05:44:52+00:00", "detail": "channels.list mine", "by": "history.py:_scan"}
+{"at": "2026-09-02T05:44:54+00:00", "detail": "channels.list mine", "by": "history.py:_scan"}
+{"at": "2026-09-02T05:52:37+00:00", "detail": "videos.list MqQKSnbM0OI", "by": "reschedule.py:_update"}
+{"at": "2026-09-02T05:53:22+00:00", "detail": "videos.list MqQKSnbM0OI", "by": "reschedule.py:_update"}

@@ -320,7 +320,13 @@ def lines(rows: list[dict] | None = None, today=None) -> list[str]:
             "**先の日付には置かないこと**（規則5）:",
             "",
             "  (a) **前の日に作った下書きが在るなら、それを今日の枠へ**（1本 50単位）:",
-            "        python scripts/reschedule.py --pool          # private の下書きを見る",
+            # **`reschedule.py --pool` と書いてありました。そんな旗はありません**
+            #     （2026-09-02 に撃って踏んだ: `usage: …` ＋ **exit 2**）。
+            #     しかもここは、規則5 の下で**毎日 0時 JST に必ず通る道の1手目**です。
+            #     下書きを一覧するのは `python -m src.next_slot`（**API 0単位**）——
+            #     `src/next_slot.draft_lines()` が video_id と `--move` の1行まで出します。
+            #     検査は `tests/test_printed_flags_exist.py`（repo ぜんぶを見ます）。
+            "        python -m src.next_slot                      # private の下書きを見る（**0単位**）",
             f"        python scripts/reschedule.py --move <videoId> {today:%Y-%m-%d}"
             f"T{(_hour_for(gap[0]) or 20):02d}:00",
             "  (b) 下書きが無いなら、作ってから同じ日へ:",
