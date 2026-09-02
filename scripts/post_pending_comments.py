@@ -100,12 +100,30 @@ def _mine_exists(youtube, video: dict) -> bool:
     )
 
 
-def _post(youtube, video_id: str, comment: str) -> None:
+def _post(youtube, video_id: str, comment: str, *, reserve_hold=None, note_ok=None) -> str | None:
+    """1本に付ける（`commentThreads.insert`・**50単位**）。通れば `None`、門で止まれば その文。
+
+    **門（`upload_cap.reserve_hold`）と数える口（`upload_cap.note_quota_ok`）は、撃つ関数の
+    中に置くこと**（2026-09-03 06:4x）。`main()` の輪の側に置いてあったあいだ、
+    `tests/test_quota_reserve.py` の2件（入口ごとに「門を見ているか」「通ったら数えているか」を
+    **撃つ関数の本文で**数える）が赤のままでした —— 実物は門を通っていたのに、
+    検査から見えない場所にあった。**検査が見る所に置く**のが直し方です（門を緩めない）。
+    """
+    if reserve_hold is None or note_ok is None:
+        from src import upload_cap                          # noqa: PLC0415
+        reserve_hold = reserve_hold or upload_cap.reserve_hold
+        note_ok = note_ok or (lambda detail: upload_cap.note_quota_ok(detail=detail))
+    hold = reserve_hold()
+    if hold:
+        return hold
     youtube.commentThreads().insert(
         part="snippet",
         body={"snippet": {"videoId": video_id, "topLevelComment": {
             "snippet": {"textOriginal": comment[:9000]}}}},
     ).execute()
+    # **通ったら数えること**（2026-08-28）。50単位。
+    note_ok(f"commentThreads.insert {video_id}")
+    return None
 
 
 def main(dry: bool = False, *, service=None, reserve_hold=None, note_ok=None,
@@ -177,15 +195,12 @@ def main(dry: bool = False, *, service=None, reserve_hold=None, note_ok=None,
         # **50単位**。残しているのは「前提を閉じる読み」で、`eta.py` が
         # 毎回「軌跡の腕が動くのは前提を1件 閉じたときだけ」と言う操作です。
         # **この道具はやり残しを拾う側なので、次の窓で同じ1行が拾います。**
-        hold = reserve_hold()
+        hold = _post(youtube, vid, comment, reserve_hold=reserve_hold, note_ok=note_ok)
         if hold:
             print(f"[post] {hold}")
             print(f"[post] **ここで止めます**（付けた {posted}件）。"
                   " 窓が変わった回に同じ1行で続きから拾えます。")
             break
-        _post(youtube, vid, comment)
-        # **通ったら数えること**（2026-08-28）。50単位。
-        note_ok(f"commentThreads.insert {vid}")
         if vid in stash:
             mark(vid)
         posted += 1
