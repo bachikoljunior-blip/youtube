@@ -201,6 +201,39 @@ def stash(topic: str, video_id: str, script: dict, work: Path,
     # 焼き直す必要はありません。**サムネイルは投稿の時点でもう出来ています。**
     # YouTube に載らなかっただけなので、**bytes を残せば、後の回が押すだけで済みます。**
     # 1本 約70KB —— 同じ場所に既にある contact sheet の 10分の1 です。
+    # **台本そのものを残します**（2026-09-02。**`improve` の値段が、ここで決まっていました**）。
+    #
+    # ここには contact sheet ／ 読み上げ文 ／ `slides_plan.json` ／ サムネイルが
+    # 残っていました。**`script.json` だけがありません。**
+    #
+    # `python -m src.pipeline --script <台本> --topic <ID>` は
+    # **同じ本を、1か所だけ変えて焼き直せる**唯一の道です。台本が無いと、
+    # 焼き直しは `--topic` だけの生成 ＝ `claude -p` が**別の本を書き下ろします**
+    # （`critique_queue` の冒頭「本文は毎回書き下ろし」）。
+    # ＝ **「この本のここだけ直す」という手が、この repo に1つも無かった。**
+    #
+    # 2026-09-02 に踏みました。09/03 に出す `MqQKSnbM0OI` の読みを2件 直し
+    # （段のローマ数字・表の行）、その直しを本へ入れようとしたら、
+    # **入れる道がありません** —— 控えに `narration`（読み上げ文だけ）と
+    # `slides_plan`（絵だけ）はあっても、`title` / `description_body` / `tags` /
+    # `first_comment` / `chapters` / `title_alternatives` が1つも無い。
+    # 画面が「焼直可」と言っていたのは**絵のこと**で、**本のことではありません**。
+    #
+    # **`improve` が ship の 3%（305件中 9件）しか無い理由の1つがこれです。**
+    # 当てどころが見つかっても、**当てる道の値段が「本を1冊 書き直す」**でした。
+    #
+    # 1本あたり数十KB（contact sheet の10分の1以下）。
+    # **独立評価の子には渡しません**（渡してよいのは contact sheet と読み上げ文
+    # ＝ `docs/CRITIQUE.md`）。これはこちら側が焼き直すための入力です。
+    #
+    # **覆る条件**: `--script` が台本の全部を要らなくなったら（欠けた欄を
+    # 自分で埋めるようになったら）、ここは `narration` だけで足ります。
+    script_src = work / "script.json"
+    script_kept = False
+    if script_src.exists():
+        shutil.copy2(script_src, STASH / f"{video_id}.script.json")
+        script_kept = True
+
     thumb_src = work / "thumbnail.jpg"
     thumb_kept = False
     if thumb_src.exists():
@@ -236,6 +269,9 @@ def stash(topic: str, video_id: str, script: dict, work: Path,
                 "orientation": "縦" if _was_short(work, lines, plan_src) else "横",
                 "narration": [ln for ln in lines if ln],
                 "slides_plan": plan_kept,
+                # **`slides_plan` は絵、`script` は本です**（2026-09-02）。
+                #     「焼直可」を絵の意味で使っていたので、欄を分けてあります。
+                "script": script_kept,
                 "change_ratios": _change_ratios(work),
                 "thumbnail_stashed": thumb_kept,
                 # **投稿の時点で YouTube に載ったかどうか。**
@@ -251,10 +287,18 @@ def stash(topic: str, video_id: str, script: dict, work: Path,
     )
     print(f"[queue] 独立評価の材料を残しました: {STASH / f'{video_id}.jpg'}")
     if plan_kept:
-        print(f"[queue] 焼き直せる入力も残しました: {STASH / f'{video_id}.plan.json'}")
+        print(f"[queue] 絵を焼き直せる入力も残しました: {STASH / f'{video_id}.plan.json'}")
     else:
         # **黙って落とさない。** 無いことに気づけないのが、この項目が5回持ち越された理由です。
         print(f"[queue] **{plan_src} がありません** —— この本は後から焼き直せません")
+    if script_kept:
+        print(f"[queue] **本を焼き直せる台本も残しました**: "
+              f"{STASH / f'{video_id}.script.json'}　→ "
+              f"`python -m src.pipeline --script <その台本> --topic {topic}`")
+    else:
+        print(f"[queue] **{script_src} がありません** —— "
+              "この本は「1か所だけ直して焼き直す」ができません"
+              "（`--topic` だけの生成は、別の本を書き下ろします）")
     if thumbnail_set is False:
         if thumb_kept:
             print("[queue] **サムネイルが YouTube に載っていません。** "
@@ -293,6 +337,8 @@ def stash(topic: str, video_id: str, script: dict, work: Path,
         kept = [STASH / f"{video_id}.json", STASH / f"{video_id}.jpg"]
         if plan_kept:
             kept.append(STASH / f"{video_id}.plan.json")
+        if script_kept:
+            kept.append(STASH / f"{video_id}.script.json")
         if thumb_kept:
             kept.append(STASH / f"{video_id}.thumb.jpg")
         try:
@@ -320,7 +366,7 @@ def missing_thumbnail() -> list[dict]:
     """
     out = []
     for meta_path in sorted(STASH.glob("*.json")):
-        if meta_path.name.endswith(".plan.json"):
+        if meta_path.name.endswith((".plan.json", ".script.json")):
             continue
         try:
             meta = json.loads(meta_path.read_text(encoding="utf-8"))
@@ -576,7 +622,12 @@ def pending(include_stranded: bool = False,
         # 名前と型の**両方**で弾いています。いま実際に効いているのは型のほう
         # （`slides_plan.json` は配列なので `isinstance` で落ちる）ですが、
         # **中身の形が変わった日に、名前のほうだけが残ります。**
-        if meta.name.endswith(".plan.json"):
+        # **`.script.json` も同じ理由で拾わないこと**（2026-09-02 に足した）。
+        #     あちらは配列なので `isinstance` で落ちましたが、**台本は dict** です
+        #     —— 名前で外さないと `"<ID>.script"` という架空の待ちが生えます
+        #     （`video_id` の欄が無いので `meta.stem` が拾われ、点の付けようが
+        #      無いので永久に消えません。`.plan.json` の註と同じ穴の、2つ目）。
+        if meta.name.endswith((".plan.json", ".script.json")):
             continue
         try:
             d = json.loads(meta.read_text(encoding="utf-8"))
