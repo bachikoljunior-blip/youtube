@@ -826,7 +826,20 @@ def outside_long_lines(day: date, cur: dict | None, now: datetime | None = None,
     have = [d for d in drafts if str(d.get("topic") or "") in ids]
     out: list[str] = []
     if have:
-        d = have[0]
+        # **どの下書きを名指しするか**（2026-09-03 02:3x に踏んだ）: 同じ枝の2つの回が同じ夜に
+        # 1本ずつ上げ（`6PKux5HNnUE`・`dRZnZrRy2Lw`）、`have[0]` は決めた本と別の本を指した。
+        # その日に決めてある本ならそれ、無ければ**ほかの日にまだ決められていない**下書きの先頭。
+        cur_id = str((cur or {}).get("video_id") or "")
+        taken = set()
+        try:
+            for r in _jsonl(PICKS):
+                if r.get("for_day") != day.isoformat() and r.get("video_id"):
+                    taken.add(str(r["video_id"]))
+        except Exception:                                      # noqa: BLE001
+            pass
+        d = (next((x for x in have if str(x.get("video_id") or "") == cur_id), None)
+             or next((x for x in have if str(x.get("video_id") or "") not in taken), None)
+             or have[0])
         vid = str(d.get("video_id") or "")
         out.append(f"     **外の作りを写した長尺の下書きが池に在ります**: `{vid}` `{d.get('topic')}`"
                    f"（前提「外の作り方を写した長尺」期限 {dl}・48h で 100回 が門。"
