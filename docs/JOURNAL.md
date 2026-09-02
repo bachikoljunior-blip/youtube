@@ -101854,3 +101854,83 @@ file に記録は1つで、片方が書くともう片方が消える → cap=5,
 ### 親へ（触っていない・数だけ）
 
 - 周の速さは前の回と同じ食い違いのまま（`quota.py --pace` 87分 対 実物 28分 に 2体）。03:3x にオーナーへ伝えて返事待ち
+
+## 2026-09-03 04:2x〜04:4x JST（定期の回・サブ `session_01AHfq4FUVAd5fxDM29yG1Cm#agent-a216871536e990c81`・Fable 5.1）—— **09/04 の1本を「16:00 まで待たず」に焼き直して差し替えた（`videos.insert` は日枠を使わない）。待たせていたのは画面の1行だった**
+
+### 読んだもの（撃った数）
+
+- `run_marker --write` 04:25: `[暦]` 鳴らず／きょう 09/03 の枠は `9zkfjEH48PY` 09:00 で埋まっている／`[きょうの1本]` 09/04 は長尺 `6PKux5HNnUE`（02:29 の決め）。
+  同じ画面の `[!]`: **上がっている本 `6PKux5HNnUE` の冒頭は外の上位4本の型の外（4件）**・台本 `data/scripts/zaishoku-2026-62man.script.json` はもう型の中 →
+  「**16:00 JST 以降（日枠が戻る）に**焼き直して差し替える（`videos.insert` 1,600単位）」と印字。
+- `eta.py`: 出ません（`per_video` 天井 ×4.49・要る ×21.88）。名指し `per_video`。「この回に閉じられる前提はありません」（最短 09/04）。
+  「`eta.py` の『出ません』は作り方のせい —— 次の手は `improve`」。
+- `retro.py`: 直近8件 fix 62%／improve 37%。持ち越し「外の作り方を写した長尺」6周・`--video 6PKux5HNnUE` は「申し送りが時刻を指定・あと 11.6時間」で塞がれていた。
+- `deadline_check --fit`: 縮める／延ばす期限なし。`pool_drain`: 先の日付 0本（正しい状態）。
+- 日枠: 帳面 15,4xx／10,000・403 未観測・戻るのは 16:00 JST。
+
+**選んだ順**: 1 [暦] × → 2 verdict × → 3 決めずみ（長尺・数字に合っている。決め直さない） → 4 きょう 0本 × → 5 **`improve`**。
+`improve` の相手は次の枠の本ではない（`9zkfjEH48PY` は 09:00 公開で `videos.update` が 403 の窓 —— 画面が「この本はいまの中身のまま出ます」と言っている）ので、**その次 ＝ 09/04 の長尺**。
+
+### 出したもの（ship 1件・`improve`・`--lever per_video --moves 0`）
+
+**`6PKux5HNnUE` → `1huadpEk6HY`。** 冒頭 4コマ を外の上位 4/4 の順（結論の額 → 知らない側の損 → 名乗り → 問い 2〜3 → 「最後まで」＋目次）にした台本で焼き直し、下書き（private・予約なし）で上げた。
+
+    python -m src.pipeline --script data/scripts/zaishoku-2026-62man.script.json --topic zaishoku-2026-62man --dry-run
+        TTS 64コマ 約4分・render 64クリップ 約4分・合成 → verify 合格（19.9分・1920x1080・chart 10枚・サムネ・字幕 異常なし）
+    python scripts/upload_only.py zaishoku-2026-62man --draft --replaces 6PKux5HNnUE
+        差し替え: 6PKux5HNnUE を突き合わせから外した／強い重なりなし → VIDEO_ID 1huadpEk6HY（04:37 JST）
+        サムネイルは日枠のため未載（bytes は控え・当日の `thumb_today` が押す）。控え `data/critique_queue/1huadpEk6HY.*`（push ずみ 991132f0）
+    outside_opening_problems: 6PKux5HNnUE の控え 4件 ／ 1huadpEk6HY の控え **0件**（撃って確かめた）
+    python -m src.daily_pick --pick 長尺 zaishoku-2026-62man --video 1huadpEk6HY --day 2026-09-04 --why "…"
+        → `place_today` が 09/04 17:00 に置くのは 1huadpEk6HY。6PKux5HNnUE は private のまま池（消さない）
+
+`--lever per_video`: 律速は `per_video` で、外の p90 に届く形は長尺だけ（`eta.py`）。冒頭は 15〜30% でいちばん去る所に直接 乗る。
+`--moves 0`: 到達日が動くのは前提「外の作り方を写した長尺」（期限 09/07・48h で 100回）を閉じたときで、この本の 48h は 09/06 17:00。
+反映（`--reflect`）: 動いた入力 2件（`growth_per_day` 0.04093→0.04088・`make_rate_per_day` 21.54→21.53）はどちらも枝の他の commit 込み。日付は「届かない」のまま。
+
+### ついでの `fix`（同じ回・push 2899c6ec）
+
+**画面が 11時間 待たせていた。** `src/daily_pick.outside_opening_lines` は 05:xx（前の最適化の回）の版で
+「16:00 JST 以降（日枠が戻る）に焼き直して差し替える（`videos.insert` 1,600単位）」と印字していた。
+`videos.insert` は日枠を使わない —— この repo が3度 実測で確かめ（`src/auth.py` 08/17・08/27 の3本・`tests/test_insert_never_marked_ok.py`）、
+§4 の表も「upload: 日枠を使いません」で、**同じ日の 02:14 JST に帳面 10,000 超で通った `6PKux5HNnUE` 自身がその証拠**。
+`retro.py` も同じ行を読んで `--video 6PKux5HNnUE` を「申し送りが時刻を指定・いまは潰せません」に分類していた（時刻の出どころは画面の側）。
+→ 印字を「いま焼き直して差し替える（insert は日枠を使わない・日枠が要るのは当日の `--move` 50単位 だけ）」に。
+`tests/test_outside_opening.py` に「印字に 16:00 が無い・『日枠を使わない』が在る」を固定（10件 緑）。
+
+**なぜここに書いた回が踏んだか**: 焼き直しの手の「1,600単位」は `videos.insert` の**公称**単位で、**この repo の帳面がそれを日枠に数えていない**ことを、
+書いた回は画面の側に写していなかった（§4 の表は正しかった）。**同じ事実を2か所が別々に言っていて、新しく書いた側が古い読みだった**（このファイルで何度目か）。
+**覆る条件**: `videos.insert` が同じ 403 で落ちたら（§4 の表の覆る条件と同じ日）、この印字も 16:00 待ちへ戻す。
+
+### 潰していない持ち越し（理由）
+
+- `playlists.py`／`data/ahead_sweep.log`／`thumb_today`: 前の回と同じ判断（`playlistItems.insert` は上げた瞬間に通る・`[today]` は時刻つきの申し送り・
+  `thumb_today` は取り置きの門で 16:00 まで押せない）。この回は触っていない。
+- `[?] 2026-09-23 lever=per_video 主語=density/per_video 数えている=density`（`run_marker` の札の検査）: 前提の中身は「1本/日 で 1本あたり再生の残差が 1.0 へ戻る」で、
+  動く値は `per_video`。札は正しいと読んだ。機械の「主語」の数え方（`density` の語で引っかかる）の側の話で、この回は触らない。
+
+### 設計の見直し（§6 (a2)）
+
+1. **いちばん時間を食ったのは焼き直し（TTS＋render＋合成 約9分・対象のせい）と、手順の読み（`run_marker --write` 107行 ＋ §0/§1/§2/§2.5/§2.6/§2.7/§4/§6 の `sed` 8回・約3割・手順のせい）。**
+   焼き直しは背景に投げ、待つ間に §4 の読みと `fix` を進めた —— 待ちは素にならなかった。
+2. **手順どおりで間違ったところ**: 手順ではなく**画面**（`daily_pick` の1行）が間違っていた。手順（§4 の表・spawn の本文）は「insert は日枠を使わない」と正しく言っていて、
+   画面だけが「16:00 以降」と言い、`retro.py` がそれを写して「潰せません」に分類した。**道具の出力のほうが文書より新しい、は「道具のほうが正しい」ではない**
+   —— 画面の1行は前の回が手で書いた文で、事実は §4 の表と帳面の側にあった。直したのは画面。
+3. **最短か**: 否。**焼き直しの手（pipeline → upload_only --replaces → daily_pick --pick）は3手で、2手目と3手目の ID の受け渡しを人が写している。**
+   `upload_only.py --replaces <ID>` が `VIDEO_ID` を出した時点で、`daily_pick` の同じ日の決め（`current()`）が `<ID>` を指していれば新 ID へ書き換える（1関数・0単位）が次の1手。
+   この回は足していない（`--replaces` の意味が「同じ題材の焼き直し」なので、決めの本の差し替えと一致する）。
+
+### 模型のこと
+
+この回の中身（焼き直し・上げ直し・印字の1行の直し・検査 1件）は **Opus で足りる**。Fable でないと出ない判断は無し。
+
+### 次の回へ
+
+1. **09/04（JST）の最初の回**: `data/ahead_sweep.log` の `[today]` に **`1huadpEk6HY`**（6PKux5HNnUE ではない）が 17:00 で置かれたか。
+   置けていなければ `python scripts/reschedule.py --move 1huadpEk6HY 2026-09-04T17:00`（50単位・16:00 以降）。同じ回に `thumb_today` が絵を押す（`thumbnail_set: false`）。
+2. **16:00 JST 以降の回**: `refresh_thumbnail.py --missing --video 9zkfjEH48PY`（公開後でも載る）・`--video 1huadpEk6HY`・`playlists.py`・`niche_ceiling.py --form short --queries 5`。
+   `[comment]` が `9zkfjEH48PY` に付いたか（`first_comment_posted`）。
+3. **09/05 の本 `dRZnZrRy2Lw`（長尺2本目・02:29 の決め）は冒頭が旧の型**（台本 `data/scripts/nenkin-uketorikata-65-70-75-handan.script.json` が無ければ控えを写して冒頭 4コマ を直し、
+   `--script` で焼き直して `--replaces dRZnZrRy2Lw`。**insert は日枠 0 なので、いつでも撃てる**）。09/04 の本の初速（公開 12時間）を `--why` に。
+4. 09/06 17:00 以降: `1huadpEk6HY` の 48h → 前提「外の作り方を写した長尺」を `verdict`（100回 の門）。読むときは「題・尺・中身・絵・**冒頭**」の5つを写した本として。
+5. 上の (a2) 3: `upload_only --replaces` が `daily_pick` の決めを新 ID へ書き換える1関数。
