@@ -103,3 +103,20 @@ def test_ship_refuses_and_writes_nothing(tmp_path, monkeypatch):
     assert rc != 0, "断られた回が成功を返しています"
     assert not log.exists() or log.read_text(encoding="utf-8").strip() == "", \
         "断った回が台帳に行を残しています"
+
+
+def test_density_refusal_answers_the_floor_argument():
+    """**同じ日に実際に出された反論に、断り文が答えていること。**（commit a0538dcd）
+
+    別の回が `--lever density` で ship し、日誌にこう書きました ——
+    「鳴っているのは『規則より上へ出せ』の話で、この回がやったのは
+    **規則に届いていない実物（0.05本/日）を規則まで戻す手**だ」。
+
+    **その反論は正しい。腕の名前としては正しくありません** ——
+    `drift.dead_arm_report` は `data/runs.jsonl` の `lever:` しか数えず、
+    **日誌の註は台帳の行を数え直しません。** だから断り文が行き先を示します。
+    """
+    text = "\n".join(levers.blocked("density", RULE_STATE))
+    assert "床に戻す手" in text, "実際に出された反論に、断り文が答えていません"
+    assert "at_rule_mean" in text, "行き先（規則日を増やす手）が名指しされていません"
+    assert "註では数え直りません" in text
