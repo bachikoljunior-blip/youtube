@@ -370,7 +370,12 @@ def _clock_block(live: bool = True) -> str:
                        "差し替え・`--move`）を名指しされていても、**この回では撃てません。**"
                        " 0単位 の手（`premise` / 台本の側 /"
                        " **次の日の1本を `upload_only.py <ID> --draft` で上げる**"
-                       " —— `videos.insert` は日枠を使いません）へ振ること")
+                       " —— `videos.insert` は日枠を使いません）へ振ること。"
+                       " **きょうの1本がまだ置かれていなければ、それも insert で置けます**"
+                       "（`ahead_sweep.place_today` が自分で倒れます —— 台本の控え"
+                       " `data/critique_queue/<ID>.script.json` から焼き直して"
+                       " `upload_only.py <題材> \"\" \"<きょう>@<時>\" --replaces <ID>`。"
+                       " 実測 2026-09-03 00:08 JST・`data/ahead_sweep.log` の `[today]` で確かめること）")
     return "\n".join(out)
 
 
