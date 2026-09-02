@@ -430,6 +430,63 @@ def mark_thumbnail_set(video_id: str) -> bool:
     return True
 
 
+def pending_first_comments() -> list[dict]:
+    """**最初のコメントがまだ付いていない（かもしれない）本**（2026-09-03 に足した）。
+
+    `<動画ID>.script.json` に `first_comment` が在り、`<動画ID>.json` の
+    `first_comment_posted` が **True でない**ものを返します（**API 0単位**）。
+    private のままの本も出ます —— 出ているかは `scripts/post_pending_comments.py` が
+    `videos.list` で見ます（ここで時計から推測しないこと。予約は当日に動きます）。
+
+    なぜ要るか: `post_pending_comments.py` は `build/<題材>/script.json` だけを読んでいて、
+    **`build/` は `.gitignore`・まっさらなコンテナには無い** ので、サブの回からは
+    毎回 0本 でした（実測 `data/api_calls.jsonl` 08/31〜: `commentThreads` 0件）。
+    控えは `stash()` が動画ID で写しているので、こちらが正本です。
+    """
+    out = []
+    for script_path in sorted(STASH.glob("*.script.json")):
+        video_id = script_path.name[:-len(".script.json")]
+        meta_path = STASH / f"{video_id}.json"
+        try:
+            script = json.loads(script_path.read_text(encoding="utf-8"))
+            meta = (json.loads(meta_path.read_text(encoding="utf-8"))
+                    if meta_path.exists() else {})
+        except (OSError, ValueError):
+            continue
+        if meta.get("first_comment_posted") is True:
+            continue
+        comment = (script.get("first_comment") or "").strip()
+        if not comment:
+            continue
+        out.append({"video_id": video_id, "topic": meta.get("topic"),
+                    "comment": comment, "stashed_at": meta.get("stashed_at")})
+    return out
+
+
+def mark_first_comment_posted(video_id: str) -> bool:
+    """**付いた本の印**（`first_comment_posted: true`）。`mark_thumbnail_set` と同じ形・同じ門。
+
+    呼ぶのは `commentThreads.insert` が**通ったあと**か、**自分のコメントが既に在る**と
+    `commentThreads.list` で見たときだけ。先に付けると、落ちた本が一覧から消えて
+    **二度と拾われません。** 検査からは書きません（`src/dupes.may_write_path()`）。
+    """
+    meta_path = STASH / f"{video_id}.json"
+    if not meta_path.exists():
+        return False
+    from src import dupes as _dupes                            # noqa: PLC0415
+
+    if not _dupes.may_write_path(meta_path):
+        return False
+    try:
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    meta["first_comment_posted"] = True
+    meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=1),
+                         encoding="utf-8")
+    return True
+
+
 def _scored() -> set[str]:
     """点の付いたもの（テーマID・動画IDのどちらでも）。
 

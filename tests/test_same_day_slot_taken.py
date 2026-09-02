@@ -108,7 +108,8 @@ def test_printer_does_not_offer_today(tmp_path):
     assert out, "下書きが在るのに1行も出ていません"
     assert "--move MqQKSnbM0OI 2026-09-02" not in out, \
         "きょうの枠は埋まっているのに、きょうへの `--move` を出しています（規則1 に反する手）"
-    assert "2026-09-03T20:00" in out, "明日の日付を名指ししていません"
+    # 時刻は `publish_hour.place_hour` の正本から出る（fdd18c06・09/03）。**日付だけを見る**
+    assert "2026-09-03T" in out, "明日の日付を名指ししていません"
     assert "improve" in out, "きょうやること（規則3）を名指ししていません"
 
 

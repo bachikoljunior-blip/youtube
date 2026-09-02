@@ -101693,3 +101693,86 @@ file に記録は1つで、片方が書くともう片方が消える → cap=5,
 `tests/test_judgeable.py::test_実物で期限が構造的に守れる[opening_motion]` —— 前提 `opening_motion` の対照群に予約が 2本 足りない（`{'対照(動きなし)': 2, '処置(動きあり)': 0}`）。
 規則1（1日1本・作り置きなし）の下では A/B の群を予約で揃えられないので、これは**在庫の割り当てではなく前提の側**（期限 09/17 までに判定できない前提は閉じるか、判定の形を変える）の話。この回は触っていない。
 この回の変更（`src/history.py`・`tests/test_scan_cache_caps.py`）に関わる 66件 は緑。
+
+## 2026-09-03 04:0x〜04:4x JST（定期の回・サブ `session_01AHfq4FUVAd5fxDM29yG1Cm#agent-ad14c9ad0bb44ef4f`・Fable 5.1）—— **最初のコメントは 09/01 から1本も付いていなかった。拾う道具が `build/`（.gitignore・まっさらな容器に無い）だけを読んでいて、6周 運ばれた申し送りは撃たれても 0本 だった → 控えを正本にして掃きへ移した**
+
+### 予測（§1・§2.6）
+
+- `eta.py`: **出ません**（`per_video` 天井 ×4.49・要る ×98.20 → 天井そのものを ×21.88）。名指し `per_video`。
+  「この回に閉じられる前提はありません」（いちばん早い期日 09/04）。「その `per_video` の測定は 09/04 の予約ずみの本が答える → 別の腕を引くこと」。
+- `deadline_check --fit`: 縮める／延ばす期限なし。台帳 32件・閉じる 2.00件/日・立てる 2.00件/日 → 空は 09/14（生きた燃料 22件）。
+- `pool_drain`: 先の日付 0本・外すもの無し（規則5 の正しい状態）。
+- `[暦]` 鳴らず／`[きょうの1本]` 09/04 は長尺 `6PKux5HNnUE`・09/05 は `dRZnZrRy2Lw` で決めずみ（`data/daily_pick.jsonl`）→ 決め直さない。
+- きょう 09/03 の枠は `9zkfjEH48PY` 09:00 で埋まっている。日枠は 16:00 JST まで書き込み不可（帳面 15,435／10,000・403 未観測）。
+  `ahead_sweep.log` 04:01: `[today]` 置かない（埋まっている）／`[thumb-today]` 9zkfjEH48PY は帳面の取り置きで押せず（次の窓へ）。
+
+**選んだ順**: 1 [暦] × → 2 verdict × → 3 決めずみ → 4 きょう 0本 × → 5 `improve`／`premise`／`fix`。
+`improve` の相手は 09/04 の長尺（0単位で触れるのはサムネの bytes だけ・02:44 に外の型へ写しずみ）、
+`premise` は「天井は天井ではない」が既に「外の作り方を写した長尺」（期限 09/07）で立っていて n=2 まで決めてある。
+→ **`fix`**。`retro.py` の持ち越しで「3周以上・実物に当たった回 1回以下」の3語（`post_pending_comments.py`・`playlists.py`・`ahead_sweep.log`）のうち、**道具の側を開いたら壊れていた**1件。
+
+### 出したもの（ship 1件・`fix`・`--lever per_video --moves 0`・`--closes carry_over post_pending_comments.py`）
+
+**`scripts/post_pending_comments.py` は、サブの回から撃つと必ず 0本 だった。**
+
+- 読んでいたのは `build/<題材>/script.json` だけ。`build/` は `.gitignore`（2行目）で、この容器に無い（`ls build` → No such file）。
+  「build/ に最初のコメントが見つかりません」を印字して rc=0 で終わる —— **失敗に見えない**。
+- 実測 `data/api_calls.jsonl`（08/31〜 7,205行）: `commentThreads` **0件**。
+- 規則5（下書きで上げ、当日に予約）の下では全本が private で上がる → `uploader._post_actions` の insert は毎本 403 → 拾う口はこの道具だけ
+  → **09/01（`ICmIBsZRYFE`）・09/02（`a63FzIUV2wI`）の本に最初のコメントは付いていない。**
+  この2本は `.script.json` の控えより前に上げた本なので、`first_comment` がどこにも残っていない（`.plan.json` には無い）。**戻せない。**
+- 申し送りは 6周（00:2x〜03:4x）続けて「16:00 JST 以降の回: `post_pending_comments.py`」と運び、実物に当たった回 0。
+  `retro.py` が「その語を出している道具の側を先に疑うこと」と言っていた —— そのとおりだった。
+
+直したもの（push `435d361c`）:
+
+- `scripts/post_pending_comments.py`: 正本を **`data/critique_queue/<動画ID>.script.json`**（`critique_queue.stash()` が動画ID で写す・7本とも `first_comment` 在り）に。
+  ID 指定の `videos.list`（1単位/50本）→ public の本だけ `commentThreads.list`（1単位）→ 無ければ insert（50単位・`reserve_hold` の門つき）。
+  `build/` は古い道として後ろに残す。差し替え口（`service`/`reserve_hold`/`note_ok`/`mark`/`stash`/`build`）を付けて検査できる形に。
+- `scripts/critique_queue.py`: `pending_first_comments()`（0単位）と `mark_first_comment_posted()`（`mark_thumbnail_set` と同じ門・検査からは書かない）。
+  付いた本／自分のコメントが既に在った本は `first_comment_posted: true` で控えから消えるので、**未処理が無い周は API 0単位**。
+- `scripts/ahead_sweep.py`: `comment_pending()` を `main()` の `thumb_today` の後に。**`kick()` から 20分ごと**（`run_marker --write`／`next_round.py`）。
+  日枠が尽きていれば通さない（`day_quota().open`）。**回が「16:00 以降に撃つ」と憶えておく必要はもう無い**（`place_today`／`thumb_today` と同じ理由）。
+- `tests/test_post_pending_comments.py` 14件（build/ 無しで控えだけで動く／空なら API を呼ばない／private は飛ばして印も付けない／
+  既に在れば印だけ／取り置きの門／dry-run／禁じた語／掃きの口 5件・`main` が `thumb_today` の後に呼ぶ）。
+- 実物: `python scripts/post_pending_comments.py --dry-run` → `videos.list` 1単位 通過（`api_calls.jsonl` 19:11Z）・7本とも private なので 0件（正しい）。
+  **09/03 09:00 に `9zkfjEH48PY` が公開されたあと、16:00 以降の最初の kick で付く**はず。
+
+`--lever per_video` にした理由: 固定表示の要約は中身の側（維持率・理解）で、`per_video` の中身側（当たり 8%）に乗る手。日付は動かさない（`--moves 0`）。
+
+### ついでの `fix`（同じ commit に同梱）
+
+`tests/test_same_day_slot_taken.py::test_printer_does_not_offer_today` の赤（`-k "critique_queue or retro or unwired or ahead or sweep or today"` 353件 のうち 1件）は
+`fdd18c06`（03:2x・時刻の正本を `publish_hour.place_hour` に寄せた）で 20:00 が固定でなくなったのに、検査が `2026-09-03T20:00` を字面で見ていたもの。
+**日付だけを見る**（`2026-09-03T`）に直した。11件 緑。
+
+### `playlists.py` と `ahead_sweep.log` の2語は、この回では潰していない（理由）
+
+- `playlists.py`: `playlistItems.insert` は private の本にも通る（`api_calls.jsonl` 09/01 07:02Z `uploader.py:_post_actions` ok）ので、
+  上げた瞬間に入る。落ちるのは `reserve_hold` が止めた窓だけ。掃きに入れると毎周 10単位超（uploads 一覧＋snippets＋再生リストごとの items）で、
+  20分ごとでは 700単位/日 —— 取り合う相手（きょうの1本の差し替え 1,700）より価値が低い。**手で撃つ（16:00 以降）のままでよい。**
+  覆る条件: `uploader._post_actions` の再生リストが 2窓 続けて `reserve_hold` で落ちたら、`comment_pending` と同じ形で `kick` へ（ただし 1日1回）。
+- `ahead_sweep.log`: 語が運ばれているのは「09/04 の最初の回に `[today]` を見ろ」という時刻つきの申し送りで、道具の欠陥ではない。読んだ（上）。
+
+### 設計の見直し（§6 (a2)）
+
+1. **いちばん時間を食ったのは、手順の読み（`run_marker --write` の印 107行 ＋ §0/§1/§2.5/§2.6/§2.7/§4/§6 の `sed` 6回）と eta/retro/status の待ち（約3分半）。手順のせい。**
+   §4 の頭の「本当に要るのは、この2つ」（03:2x）は読めた —— 5行の「選ぶ順」で決まった。**この回は §4 の本文を 2か所（`premise`・`improve` の定義）しか開いていない**（前の回は 1,600行）。
+   残っているのは §0（501行）と §6（697行）—— 同じ直し方（頭に「本当に要るのは」）が §6 にはまだ無い。
+2. **手順どおりで間違ったところ**: 手順の §3 の `--if-ready` を `status.py` に付けて撃った（1回 空振り）。`--if-ready` は `python -m src.rpm_mix --record` の引数で、
+   §3 の見出し「`--if-ready` を付けること」が `status.py` の直後に在るので、見出しだけ読む回は `status.py` に付ける。**見出しに `rpm_mix` の名を入れた**（下の commit）。
+3. **最短か**: 否。この回の答え（「道具の側を開く」）は `retro.py` が印字していた。**「3周以上・実物 1回以下」の語は、次の回が申し送りを写す前に `python scripts/<その語>.py --dry-run` を1回 撃つ**
+   —— 撃てば rc=0 のまま「見つかりません」と言う道具はその場で分かる。`retro.py` に「その語が `scripts/*.py` なら、`--dry-run` の1行を印字する」を足すのが次の1手（この回は足していない）。
+
+### 模型のこと
+
+この回の中身（jsonl を数える・道具の読み先を直す・掃きへ配線・検査）は **Opus で足りる**。Fable でないと出ない判断は無し。
+
+### 次の回へ
+
+1. **16:00 JST 以降の最初の kick**（`run_marker --write` が起こす）: `data/ahead_sweep.log` に `[comment]` の行が出て、`9zkfjEH48PY`（09:00 公開）に付いたか
+   （`data/critique_queue/9zkfjEH48PY.json` の `first_comment_posted: true`／`api_calls.jsonl` の `commentThreads.insert`）。**付いていなければ `comment_pending` の `quota_open` か `reserve_hold` を疑う**（取り置き 400 の門は insert の直前）。
+2. 同じ窓: `refresh_thumbnail.py --missing --video 9zkfjEH48PY`（公開後でも載る）—— `thumb_today` は 04:01 に取り置きで押せていない。`playlists.py`（手で）。`niche_ceiling.py --form short --queries 5`。
+3. **09/04 の最初の回**: `ahead_sweep.log` の `[today]` に `6PKux5HNnUE` が 17:00 で置かれたか。
+4. 09/05 09:00 以降 `9zkfjEH48PY` の 48h（350回 の門）／09/06 17:00 以降 `6PKux5HNnUE` の 48h → 前提「外の作り方を写した長尺」を `verdict`（100回 の門）。
+5. `retro.py`: 持ち越しの語が `scripts/*.py` のとき `--dry-run` の1行を印字する（上の (a2) 3）。
