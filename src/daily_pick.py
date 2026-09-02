@@ -867,8 +867,12 @@ def outside_long_readout(now: datetime | None = None, *, topics: list[dict] | No
             if verdict_at is None or pub > verdict_at:
                 verdict, verdict_at = "go", pub
         else:
-            line += (f" **＜ 先読みの門 {OUTSIDE_24H_GATE}回 → 次の未決の日の1本は規則の密度のショート**"
-                     f"（池・族の順。長尺の次の1本は作らない）。前提の判定そのものは "
+            # **門の下でも形はショートへ戻さない**（2026-09-03 夜・最適化の回）。ショートの視聴時間は
+            # 門2a（4,000時間）に 0 入り、門2b は 1本/日 なら 111,111回/本（`gate_arithmetic`）。
+            # 戻す先は「長尺のまま、作りを1つ変える」。前提の判定（48h・100回）は動かさない。
+            line += (f" **＜ 先読みの門 {OUTSIDE_24H_GATE}回 → それでも次の未決の日の1本は長尺**"
+                     f"（ショートは 4,000時間 の門に 0時間・`gate_lines` の倍率）。**同じ作りを繰り返さず、"
+                     f"1つ変える**（題の型／絵／冒頭のどれか1つ・変えた点を `--why` に）。前提の判定そのものは "
                      f"48h・{OUTSIDE_48H_GATE}回 のまま（`falsified_if`）")
             if verdict_at is None or pub > verdict_at:
                 verdict, verdict_at = "stop", pub
@@ -946,11 +950,11 @@ def outside_long_lines(day: date, cur: dict | None, now: datetime | None = None,
     except Exception:                                          # noqa: BLE001
         pass
     if ro == "stop":
-        left = "・".join("`" + str(d.get("video_id")) + "`" for d in have)
-        out.append(f"     → **{day:%m/%d} の1本は規則の密度のショート**（上の先読み）。"
-                   + (f" 外の作りの下書き {left} は池に残す（消さない）。" if have else "")
-                   + f" 前提「外の作り方を写した長尺」の判定は 48h・{OUTSIDE_48H_GATE}回（期限 {dl}）で別")
-        return out
+        # **ショートへは倒さない**（2026-09-03 夜。理由は `gate_arithmetic` の註 —— ショートの視聴時間は
+        # 門2a に 0 入る）。門の下は「形を戻せ」ではなく「作りを1つ変えろ」。下の行はそのまま下書き／次の題材を名指しする。
+        out.append(f"     → **{day:%m/%d} の1本も長尺のまま**（1本目が 24h で門の下。ショートは 4,000時間 の門に 0時間・"
+                   f"`gate_lines`）。**次の1本は同じ作りを繰り返さず 1つ変える**（題の型／絵／冒頭のどれか1つ・"
+                   f"変えた点を `--why` に）。前提「外の作り方を写した長尺」の判定は 48h・{OUTSIDE_48H_GATE}回（期限 {dl}）で別")
     if have:
         # **どの下書きを名指しするか**（2026-09-03 02:3x に踏んだ）: 同じ枝の2つの回が同じ夜に
         # 1本ずつ上げ（`6PKux5HNnUE`・`dRZnZrRy2Lw`）、`have[0]` は決めた本と別の本を指した。
@@ -975,15 +979,17 @@ def outside_long_lines(day: date, cur: dict | None, now: datetime | None = None,
         out.append(f"     外の作りの長尺の下書きは全部 ほかの日に決めてあります"
                    f"（{'・'.join('`' + str(x.get('video_id')) + '`' for x in have)}）")
     nxt = _unbuilt_outside(tops, uploaded_path)
-    if ro == "go" and nxt:
+    if ro in ("go", "stop") and nxt:
         t0 = nxt[0]
-        out.append(f"     → **24h の先読みが門の上なので、{day:%m/%d} の1本は外の作りの長尺の次の1本**"
+        why = ("24h の先読みが門の上なので" if ro == "go"
+               else "24h の先読みは門の下だが 形は長尺のまま（作りを1つ変えて）")
+        out.append(f"     → **{why}、{day:%m/%d} の1本は外の作りの長尺の次の1本**"
                    f"（題材 `{t0['id']}`・作るのは 0単位・上げるのは `videos.insert`＝日枠の外）:")
         out.append(f"       python -m src.pipeline --topic {t0['id']} --dry-run"
                    f" && python scripts/inspect_build.py {t0['id']}"
                    f" && python scripts/upload_only.py {t0['id']} --draft")
-    elif ro == "go" and not nxt:
-        out.append(f"     [!] **24h の先読みが門の上なのに、`style: outside_long` の未着手の題材が"
+    elif ro in ("go", "stop") and not nxt:
+        out.append(f"     [!] **24h の先読みが出たのに、`style: outside_long` の未着手の題材が"
                    f" `config/topics.yaml` に1件も残っていません** —— 外の上位の題（`outside_lines`）から"
                    f" 1件 足すこと（`calc` は `src/calc/` に在るもの・`minutes: 20`・`style: outside_long`）")
     elif not have and ro is None:
@@ -998,6 +1004,205 @@ def outside_long_lines(day: date, cur: dict | None, now: datetime | None = None,
         out.append(f"     → **{day:%m/%d} の1本は、まだ決めないこと**（1本目の 24h の先読みを待つ。"
                    f"それまでに3本目を作らない ＝ 作り置きの規則2）")
     return out
+
+#: 長尺の維持率カーブが1本も無い日に、視聴分を出すために置く仮の「平均して見られる割合」。
+#: **測れた日から使われません**（`long_watch_fraction()` が n≥1 なら実測を返す）。
+ASSUMED_LONG_FRAC = 0.3
+
+
+def _gate_constants() -> dict:
+    """収益化の門の数。**正本は `scripts/eta.py`**（読めない回だけ公表値を置く）。"""
+    try:
+        import sys
+        here = str(ROOT / "scripts")
+        if here not in sys.path:
+            sys.path.insert(0, here)
+        import eta as _eta                                         # noqa: PLC0415
+        return {"subs": int(_eta.SUBS_GATE), "long_hours": float(_eta.LONG_HOURS_GATE),
+                "window_days": float(_eta.LONG_HOURS_WINDOW_DAYS),
+                "shorts_views": float(_eta.SHORTS_VIEWS_GATE), "shorts_days": 90.0}
+    except Exception:                                          # noqa: BLE001
+        return {"subs": 1000, "long_hours": 4000.0, "window_days": 365.0,
+                "shorts_views": 10_000_000.0, "shorts_days": 90.0}
+
+
+def _eta_snapshot(path: Path | None = None) -> dict:
+    """`data/eta.jsonl` の、門の分子（`long_hours_365` / `shorts_views_90d` / `subs_net`）を持つ最後の行。0単位。"""
+    for r in reversed(_jsonl(path or (ROOT / "data" / "eta.jsonl"))):
+        if "long_hours_365" in r:
+            return r
+    return {}
+
+
+def long_watch_fraction(rows: list[dict], cv: dict[str, list] | None = None) -> tuple[float | None, int]:
+    """長尺の本が**平均して何割 見られたか**（`data/retention.json` の `audienceWatchRatio` の平均）と、その本数。0単位。"""
+    if cv is None:
+        try:
+            from . import hold                                     # noqa: PLC0415
+            cv = hold.curves()
+        except Exception:                                          # noqa: BLE001
+            cv = {}
+    vals: list[float] = []
+    for r in rows:
+        if r.get("form") != "長尺":
+            continue
+        curve = (cv or {}).get(str(r.get("video_id")))
+        if not curve:
+            continue
+        try:
+            vals.append(statistics.mean(float(p[1]) for p in curve))
+        except (TypeError, ValueError, IndexError, statistics.StatisticsError):
+            continue
+    if not vals:
+        return None, 0
+    return statistics.mean(vals), len(vals)
+
+
+def _long_duration_min(next_row: dict | None = None, uploaded_path: Path | None = None,
+                       topics: list[dict] | None = None) -> float:
+    """次の長尺の尺（分）。外の作りの本（`style: outside_long`）が上がっていればその中央、
+    無ければ次に出る本、それも無ければ 20分（外の上位の尺の下端）。"""
+    tops = {t["id"] for t in (topics if topics is not None else _topics())
+            if str(t.get("style") or "") == "outside_long"}
+    secs = []
+    for r in _latest_uploaded(uploaded_path).values():
+        if str(r.get("topic") or "") in tops and r.get("duration_s"):
+            try:
+                secs.append(float(r["duration_s"]))
+            except (TypeError, ValueError):
+                continue
+    if secs:
+        return statistics.median(secs) / 60.0
+    try:
+        d = float((next_row or {}).get("duration_s") or 0)
+        if d > 180:
+            return d / 60.0
+    except (TypeError, ValueError):
+        pass
+    return 20.0
+
+
+def gate_arithmetic(cmp: dict, *, snapshot: dict | None = None, duration_min: float | None = None,
+                    frac: tuple[float | None, int] | None = None, consts: dict | None = None) -> dict:
+    """**収益化の門に、どちらの形が近いか**を、規則（1日1本）の下で 1本あたりに直して数える。純関数・API 0単位。
+
+    ## なぜ要るか（2026-09-03 夜・最適化の回。「最適化されてんの？」→ いいえ の理由を1つ潰す）
+
+    この画面は形を **齢48時間の再生**（ショート 173回 対 長尺 1回）で並べ、外の作りの長尺の
+    24h の先読みが門の下なら「その日の1本は規則の密度のショート」へ倒していた。
+    **その 48時間の再生は、目標の門の数ではない。** 門（`scripts/eta.py`）はこう数える:
+
+        門2a  長尺の視聴 4,000時間／直近12か月     ← **ショートの視聴時間は 0 入る**
+        門2b  ショートの再生 1,000万回／直近90日   ← 1日1本 なら **111,111回/本**
+
+    自分の数（この回に撃った・`data/eta.jsonl` 09/02）: 長尺の視聴 **3.1時間**、ショート 83k回/90日、
+    登録 25人。ショートは 400本 出して 8万回 —— 門2b の 0.8%。規則の密度の中央値 1,049回 でも
+    **×106**、直近14日の中央値 110回 なら **×1,010**。長尺は 20分 の本が 16% 見られる（実測 n=1）として
+    1日 11時間 ＝ **約 200回/日**、自分の長尺の生涯 中央値 4回 → **×50**・記録 196回 → **×1.0**。
+    **ショートは、いくら伸びても 4,000時間 に 1分も入らない。** 形をショートへ戻す判定は、
+    この数を見てから出すこと（`eta.py` は 08-31 に「門2a は門2b の 473倍 近い」と数えていたが、
+    この画面には 1行も出ていなかった —— 言っている所と、している所が別）。
+
+    返り: `{"shorts": {...}, "long": {...}, "nearer": "長尺"|"ショート"|None, "consts": {...}}`。
+    倍率は「要る数 ÷ 自分の中央値」（中央値 0 は 1 で割る）。**小さいほうが門に近い**。
+
+    ## 覆る条件
+
+    - YouTube が門の数を変えたら `scripts/eta.py` の定数を直す（ここは読むだけ・写しを持たない）。
+    - 長尺の維持率カーブが 3本 以上 貯まったら `ASSUMED_LONG_FRAC` は使われない（`long_watch_fraction`）。
+    - 自分のショートの中央値が 門2b の要る数の 1/10 を越えたら（＝ 11,111回/本）、この行の向きは
+      数で自分に入れ替わる（定数は無い）。
+    """
+    c = consts or _gate_constants()
+    s = snapshot if snapshot is not None else _eta_snapshot()
+    out: dict = {"consts": c, "nearer": None}
+    # --- 門2b: ショート ---
+    need_s = c["shorts_views"] / c["shorts_days"]                 # 1日1本 → 1本あたり
+    own_s = ((cmp.get("rule") or {}).get("ショート") or {}).get("median")
+    own_s_all = ((cmp.get("recent") or {}).get("ショート") or {}).get("median")
+    own_s_max = ((cmp.get("all") or {}).get("ショート") or {}).get("max")
+    out["shorts"] = {
+        "need_per_video": need_s, "own_median_rule": own_s, "own_median_recent": own_s_all,
+        "own_max": own_s_max, "have_90d": s.get("shorts_views_90d"),
+        "x_median": need_s / max(float(own_s or 0), 1.0), "x_max": need_s / max(float(own_s_max or 0), 1.0),
+        "hours_to_gate2a": 0.0,
+    }
+    # --- 門2a: 長尺 ---
+    have_h = float(s.get("long_hours_365") or 0.0)
+    left_h = max(c["long_hours"] - have_h, 0.0)
+    per_day_h = left_h / c["window_days"]
+    dur = float(duration_min if duration_min is not None else 20.0)
+    fr, fr_n = frac if frac is not None else (None, 0)
+    use_fr = fr if (fr is not None and fr > 0) else ASSUMED_LONG_FRAC
+    min_per_view = max(dur * use_fr, 0.05)
+    need_l = per_day_h * 60.0 / min_per_view                       # 1日に要る再生（1日1本 → 1本あたりの目安）
+    lf = (cmp.get("life") or {}).get("長尺") or {}
+    own_l = lf.get("median")
+    own_l_max = lf.get("max")
+    out["long"] = {
+        "have_hours": have_h, "left_hours": left_h, "per_day_hours": per_day_h,
+        "duration_min": dur, "frac": use_fr, "frac_measured": fr is not None and fr > 0, "frac_n": fr_n,
+        "need_per_video": need_l, "own_median_life": own_l, "own_max_life": own_l_max,
+        "x_median": need_l / max(float(own_l or 0), 1.0), "x_max": need_l / max(float(own_l_max or 0), 1.0),
+    }
+    out["subs"] = {"have": s.get("subs_net"), "need": c["subs"]}
+    xs, xl = out["shorts"]["x_median"], out["long"]["x_median"]
+    out["nearer"] = "長尺" if xl <= xs else "ショート"
+    return out
+
+
+def gate_lines(cmp: dict, next_row: dict | None = None, *, snapshot: dict | None = None,
+               uploaded_path: Path | None = None, topics: list[dict] | None = None,
+               cv: dict[str, list] | None = None) -> list[str]:
+    """`gate_arithmetic()` を `[きょうの1本]` の3行にする。**前提が閉じても消えない行**（門の数は前提ではない）。"""
+    try:
+        fr = long_watch_fraction(cmp.get("rows") or [], cv)
+        dur = _long_duration_min(next_row, uploaded_path, topics)
+        g = gate_arithmetic(cmp, snapshot=snapshot, duration_min=dur, frac=fr)
+    except Exception as exc:                                       # noqa: BLE001
+        return [f"     （収益化の門の行は出せませんでした: {exc}）"]
+    s, l, c = g["shorts"], g["long"], g["consts"]
+    fr_note = (f"実測 n={l['frac_n']}" if l["frac_measured"] else f"仮 `ASSUMED_LONG_FRAC`・長尺のカーブ 0本")
+    out = [
+        f"     **収益化の門で数える**（`scripts/eta.py` の門・規則 1本/日 で 1本あたりに直す・0単位・毎周 数え直し）:",
+        f"       長尺　　 門2a {c['long_hours']:,.0f}時間/{c['window_days']:.0f}日 に対して いま {l['have_hours']:.1f}時間"
+        f" → 要る {l['per_day_hours']:.1f}時間/日 ＝ {l['duration_min']:.0f}分の本が {l['frac']:.0%} 見られて（{fr_note}）"
+        f" **{l['need_per_video']:,.0f}回/日** ／ 自分の長尺の生涯 中央値 {_fmt(l['own_median_life'])}"
+        f"（要る ×{l['x_median']:,.0f}）・最大 {_fmt(l['own_max_life'])}（×{l['x_max']:,.1f}）",
+        f"       ショート 門2b {c['shorts_views']:,.0f}回/{c['shorts_days']:.0f}日 → **{s['need_per_video']:,.0f}回/本**"
+        f" ／ 自分の規則の密度の中央値 {_fmt(s['own_median_rule'])}（要る ×{s['x_median']:,.0f}）・最大 {_fmt(s['own_max'])}"
+        f"（×{s['x_max']:,.0f}）・いま {int(s['have_90d'] or 0):,}回/90日。**ショートの視聴時間は 門2a に 0 入る**",
+        f"     → 門に近い形は **{g['nearer']}**（要る倍率の小さい側）。登録 {int(g['subs']['have'] or 0):,}/{c['subs']:,}人。"
+        f" **48時間の再生（上の表）で形を決めないこと** —— あれは門の数ではない。"
+        f"ショートへ戻す判定は、この行の倍率が入れ替わった回にだけ出す",
+    ]
+    return out
+
+
+def fallback_form(cmp: dict, *, snapshot: dict | None = None, topics: list[dict] | None = None,
+                  uploaded_path: Path | None = None, cv: dict[str, list] | None = None) -> str:
+    """**決めていない日に機械が選ぶ形**（`scripts/ahead_sweep._today_candidate`）。
+    2026-09-03 夜まで「齢48h の中央値の大きい形」＝ 毎日ショート。いまは `gate_arithmetic()` の
+    門に近い側。読めない回だけ 48h の中央値へ落ちる。"""
+    try:
+        g = gate_arithmetic(cmp, snapshot=snapshot,
+                            duration_min=_long_duration_min(None, uploaded_path, topics),
+                            frac=long_watch_fraction(cmp.get("rows") or [], cv))
+        if g.get("nearer") in FORMS:
+            return str(g["nearer"])
+    except Exception:                                          # noqa: BLE001
+        pass
+    forms = cmp.get("all") or {}
+    return max(FORMS, key=lambda f: ((forms.get(f) or {}).get("median") or 0,
+                                     (forms.get(f) or {}).get("n") or 0))
+
+
+def outside_first(pool: list[dict], topics: list[dict] | None = None) -> list[dict]:
+    """池の候補のうち `style: outside_long` の題材を先頭へ（順は保つ）。"""
+    tops = {str(t.get("id")) for t in (topics if topics is not None else _topics())
+            if str(t.get("style") or "") == "outside_long"}
+    return sorted(pool, key=lambda p: 0 if str(p.get("topic") or "") in tops else 1)
+
 
 def lines(next_row: dict | None, now: datetime | None = None,
           cmp: dict | None = None, picks_path: Path | None = None,
@@ -1038,6 +1243,8 @@ def lines(next_row: dict | None, now: datetime | None = None,
         rl = _ratio_line(c, draft_form)
         if rl:
             out.append(rl)
+    # **門の数は前提ではないので、前提が閉じても消えない**（2026-09-03 夜・`gate_arithmetic` の註）。
+    out.extend(gate_lines(c, next_row))
     out.extend(outside_lines(c, "ショート", now=now))
     fams = c.get("families") or []
     if fams:

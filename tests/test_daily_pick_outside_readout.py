@@ -55,7 +55,11 @@ def test_24hで門の下ならstop(tmp_path):
     lines, v = daily_pick.outside_long_readout(PUB + timedelta(hours=25), topics=TOPICS,
                                                uploaded_path=up, views_path=vw)
     assert v == "stop"
-    assert "規則の密度のショート" in "\n".join(lines)
+    joined = "\n".join(lines)
+    # 門の下でも形はショートへ戻さない（ショートの視聴時間は 4,000時間 の門に 0 入る・`gate_arithmetic`）
+    assert "それでも次の未決の日の1本は長尺" in joined
+    assert "規則の密度のショート" not in joined
+    assert "1つ変える" in joined
 
 
 def test_まだ出ていない本は時刻だけ出す(tmp_path):
@@ -67,15 +71,28 @@ def test_まだ出ていない本は時刻だけ出す(tmp_path):
     assert "09/05 17:00" in lines[0] and "09/06 17:00" in lines[0]
 
 
-def test_stopなら池の下書きをその日の1本にしない(monkeypatch):
+def test_stopでも形は長尺のままで下書きを名指しする(monkeypatch):
+    """2026-09-03 夜: 門の下で「その日はショート」へ倒すのをやめた。ショートは 4,000時間 の門に 0時間
+    （`gate_arithmetic`）。門の下は「形を戻す」ではなく「作りを1つ変える」。"""
     monkeypatch.setattr(daily_pick, "_outside_long_deadline", lambda: "2026-09-07")
     drafts = [{"video_id": "LONG2", "topic": "nenkin-uketorikata-65-70-75-handan"}]
     out = daily_pick.outside_long_lines(date(2026, 9, 6), None, topics=TOPICS, drafts=drafts,
                                         readout=(["(先読み)"], "stop"))
     joined = "\n".join(out)
-    assert "09/06 の1本は規則の密度のショート" in joined
-    assert "これにすること" not in joined
-    assert "LONG2" in joined and "池に残す" in joined
+    assert "09/06 の1本も長尺のまま" in joined
+    assert "規則の密度のショート" not in joined
+    assert "1つ変える" in joined
+    assert "LONG2" in joined and "これにすること" in joined
+
+
+def test_stopで下書きが尽きていても次の題材を作る手を出す(monkeypatch, tmp_path):
+    monkeypatch.setattr(daily_pick, "_outside_long_deadline", lambda: "2026-09-07")
+    up, _ = _files(tmp_path, 25.0, 3)
+    out = daily_pick.outside_long_lines(date(2026, 9, 6), None, topics=TOPICS, drafts=[],
+                                        readout=(["(先読み)"], "stop"), uploaded_path=up)
+    joined = "\n".join(out)
+    assert "python -m src.pipeline --topic kakyu-nenkin-shinsei-teikibin-ni-nai --dry-run" in joined
+    assert "作りを1つ変えて" in joined
 
 
 def test_goで下書きが尽きていれば次の題材を作る手を出す(monkeypatch, tmp_path):

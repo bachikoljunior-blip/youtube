@@ -405,21 +405,22 @@ def _today_candidate(now: datetime) -> dict | None:
     if cur and cur.get("video_id"):
         return {"video_id": cur["video_id"], "why": f"[きょうの1本] {cur.get('form')} "
                 f"`{cur.get('topic')}`（{str(cur.get('why'))[:80]}）", "source": "pick"}
-    # 決めていない → 形と族の数で、池から
+    # 決めていない → 形は**収益化の門に近い側**（`daily_pick.fallback_form`・2026-09-03 夜。
+    #     それまで「齢48h の中央値の大きい形」で選んでいた ＝ 毎日ショート。ショートの視聴時間は
+    #     4,000時間 の門に 0 入る —— `daily_pick.gate_arithmetic` の註）。同じ形の中では
+    #     外の作りの下書き（`style: outside_long`）を先に、あとは族の数で。
     try:
         cmp = daily_pick.compare(now)
         forms = cmp["all"]
-        best_form = max(daily_pick.FORMS,
-                        key=lambda f: ((forms.get(f) or {}).get("median") or 0,
-                                       (forms.get(f) or {}).get("n") or 0))
-        pool = daily_pick.pool_candidates(best_form, rows=cmp["rows"])
+        best_form = daily_pick.fallback_form(cmp)
+        pool = daily_pick.outside_first(daily_pick.pool_candidates(best_form, rows=cmp["rows"]))
     except Exception:                                          # noqa: BLE001
         pool, best_form, forms = [], None, {}
     if pool:
         top = pool[0]
         st = forms.get(best_form) or {}
         why = (f"決めた本が無かったので機械が数で選んだ: 形 {best_form}"
-               f"（齢48h 中央値 {st.get('median')}回・n={st.get('n')}）・"
+               f"（収益化の門に近い側・`daily_pick.gate_arithmetic`／齢48h 中央値 {st.get('median')}回・n={st.get('n')}）・"
                f"族 {top.get('family')} 残差 ×{top.get('fam_res')}"
                f"（生 {top.get('fam_median')}回・n={top.get('fam_n')}）")
         try:
