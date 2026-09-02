@@ -901,8 +901,16 @@ def outside_opening_lines(vid: str, topic: str, root: Path | None = None,
     **画面がこれを言わないと、規則3 の `improve` は「読みの直し」に流れる**（`hold_lines` が雑音と印字する側）。
 
     見るのは2つ: 上がっている本の控え `data/critique_queue/<id>.script.json`（`script_writer.outside_opening_problems`）と
-    `data/scripts/<題材>.script.json`（焼き直す台本）。控えが型の外で台本が型の中なら**焼き直す手**（`videos.insert`
-    1,600単位・日枠が戻る 16:00 JST 以降）を、両方 型の外なら**台本を直す手**を出す。控えが型の中なら1行で済む。
+    `data/scripts/<題材>.script.json`（焼き直す台本）。控えが型の外で台本が型の中なら**焼き直す手**（`videos.insert`・
+    **いま撃てる**）を、両方 型の外なら**台本を直す手**を出す。控えが型の中なら1行で済む。
+
+    **「16:00 JST 以降（日枠が戻る）に」と書かないこと**（2026-09-03 04:5x に直した）。この行は 05:xx の版で
+    「`videos.insert` 1,600単位・日枠が戻る 16:00 JST 以降」と印字しており、**次の周が 11時間 待つ手に見えていました**。
+    `videos.insert` は日枠を使いません —— `src/auth.py`（08/17 05:2x・insert が通るのに update が 403）、08/27 の
+    枠が尽きた 16:47 JST の後に通った 3本、`tests/test_insert_never_marked_ok.py`、そして同じ日の 02:14 JST に
+    帳面 10,000 超で通った `6PKux5HNnUE` 自身。`docs/trigger_main.md` §4 の表も「upload: 日枠を使いません」。
+    焼き直しの手で日枠が要るのは**その日の枠へ `--move` する 50単位 だけ**で、それは `place_today` が当日に撃つ。
+    `reset_hm` は互換のために残してあるが、この関数はもう印字しない。
 
     **覆る条件**: 前提「外の作り方を写した長尺」が閉じたら `outside_long_lines` ごと消える。冒頭を型にした本と
     しない本の 48h が同じなら（次の2本で分かる）、この行は `[!]` を出さず「型の中／外」の1行だけにする。
@@ -936,8 +944,9 @@ def outside_opening_lines(vid: str, topic: str, root: Path | None = None,
                    + "／".join(x.split("（")[0] for x in ps) + f"）。外の 4/4 は 結論の額 → 知らない側の損 → 名乗り → "
                    f"問い 2〜3 → 「最後まで」の順（実物 `data/niche_thumbs/<id>.opening.txt`）。長尺は 15〜30% でいちばん去る")
     if pd is not None and not pd:
-        out.append(f"     → 台本 `{draft.relative_to(root)}` は**もう型の中**。{reset_hm} JST 以降（日枠が戻る）に"
-                   f"焼き直して差し替える（`videos.insert` 1,600単位・`claude -p` 不要・約1分＋合成）:")
+        out.append(f"     → 台本 `{draft.relative_to(root)}` は**もう型の中**。**いま焼き直して差し替える**"
+                   f"（`videos.insert` は日枠を使わない・`claude -p` 不要・TTS 64コマ 約4分＋合成。"
+                   f"日枠が要るのは当日の `--move` 50単位 だけ）:")
         out.append(f"       python -m src.pipeline --script {draft.relative_to(root)} --topic {topic} --dry-run"
                    f" && python scripts/upload_only.py {topic} --draft --replaces {vid}")
     elif pd is not None:
@@ -945,7 +954,7 @@ def outside_opening_lines(vid: str, topic: str, root: Path | None = None,
                    f"（`data/scripts/{topic}.build.py` が在ればそれを直して撃つ・0単位）→ 上の焼き直し")
     else:
         out.append(f"     → 焼き直す台本 `data/scripts/{topic}.script.json` が無い。控えを写して冒頭 4コマ を型に直し"
-                   f"（`script_writer.OUTSIDE_LONG_RULE` (1) a〜e）、{reset_hm} JST 以降に `--script` で焼き直す")
+                   f"（`script_writer.OUTSIDE_LONG_RULE` (1) a〜e）、`--script` で焼き直す（`videos.insert` は日枠を使わない）")
     return out
 
 

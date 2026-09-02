@@ -71,6 +71,9 @@ def test_控えが型の外で台本が型の中なら焼き直す手が出る(t
     assert "型の外" in joined and "もう型の中" in joined
     assert "python -m src.pipeline --script data/scripts/topic-x.script.json --topic topic-x --dry-run" in joined
     assert "upload_only.py topic-x --draft --replaces VID00000001" in joined
+    # **「16:00 JST 以降に」と印字しないこと**（2026-09-03 04:5x）。`videos.insert` は日枠を使わないので、
+    # 焼き直しはいま撃てる。05:xx の版はこの行で次の周を 11時間 待たせていた（`outside_opening_lines` の docstring）。
+    assert "16:00" not in joined and "日枠を使わない" in joined
 
 
 def test_控えが型の中なら1行で済む(tmp_path: Path):
