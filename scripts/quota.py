@@ -675,8 +675,7 @@ def _gauge_reset(anchors: list[dict]) -> tuple[datetime, float] | None:
     return None
 
 
-def _per_lap_before(anchors: list[dict], at_or_before: datetime,
-                    rows: list[dict]) -> dict | None:
+def _per_lap_before(anchors: list[dict], at_or_before: datetime) -> dict | None:
     """**リセット前に測れていた「1周いくら」と「%/時」。**
 
     1周の重さは枠の残量とは無関係なので、枠が戻っても**この数は残ります。**
@@ -882,7 +881,7 @@ def pace(now: datetime | None = None) -> dict | None:
     # **リセット直後は `hours`／`births` がどちらも上限**（窓の下限を採っている）
     # なので、そこから出る `rate` も `per_lap` も**下限**にしかなりません。
     # リセット前に測れていた数を床として当てる（下の `*_floored`）。
-    pre = _per_lap_before(anchors, reset_at, rows) if reset_at else None
+    pre = _per_lap_before(anchors, reset_at) if reset_at else None
 
     rate_raw = used / hours                   # %/時（測った窓の通算）
     rate, rate_floored = rate_raw, False

@@ -277,6 +277,27 @@ def floor_minutes() -> tuple[float, str]:
                 f"**そのぶん鎖は速すぎる側で回ります**")
         if pc.get("floor_clipped") == "spent":
             return float(got), "**枠を使い切っています**（歯止めの上限。実測ではありません）"
+        # **下側で切られた回も「実測」ではありません**（2026-09-02 に踏んだ）。
+        #     上の枝は `max` しか見ておらず、`min` は素通りで「実測」と名乗って
+        #     いました。実測 09/02: 測って出たのは **2分**（窓が食い違っていた）で、
+        #     返っていたのは `FLOOR_MIN_CLAMP` の **10分**。**10 は定数です。**
+        #     下側で貼りついたら、**まず窓と分母を疑うこと**（`quota._gauge_reset`）。
+        if pc.get("floor_clipped") == "min" and pc.get("floor_raw"):
+            return float(got), (
+                f"**歯止めで切られた数です（実測ではありません）** —— "
+                f"測って出たのは {pc['floor_raw']:.0f}分 で、"
+                f"`quota.FLOOR_MIN_CLAMP` が {got:.0f}分 に持ち上げました。"
+                f"**下側に貼りついているときは、まず1周の分母を疑うこと**")
+        # **枠が戻った直後は、1周が「床」で立っています**（2026-09-02）。
+        #     リセットの瞬間は測れないので、`pace()` は窓の下限を採り、
+        #     リセット前に測れていた数を床に当てています。**それは実測ですが、
+        #     いまの枠で測った数ではありません。** 名乗りを分けること。
+        if pc.get("per_lap_floored") and pc.get("births"):
+            return float(got), (
+                f"**いまの枠で測った数ではありません** —— 枠が戻った直後で、"
+                f"いまの枠から出るのは 1周 {pc.get('per_lap_raw', 0):.3f}%（下限・"
+                f"周 {pc['births']}件）だけ。リセット前の実測 "
+                f"{pc.get('per_lap', 0):.3f}% を床にしています")
         if pc.get("births"):
             return float(got), (f"quota.py の実測（1周 {pc.get('per_lap', 0):.3f}%"
                                 f"・**周 {pc['births']}件**"
