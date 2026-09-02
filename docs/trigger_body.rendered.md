@@ -17,9 +17,12 @@
 
     isolation: "worktree"
     run_in_background: true
-    （model は付けない ＝ 親と同じ `claude-fable-5-1` を継ぐ）
+    model: <`next_round.py` が GO と一緒に印字する模型>
         ← オーナー指示 2026-09-02「Fable5.1のウルトラコードにした。全てこれに置き換えて」
-           （08/31 の「一次サブはOpus5でやってね」は、これで上書きされました）
+          「やっぱり最大にしたので全てこれでお願いします。」
+          「一応だけど、Fableは全体週間使用量の50%まで。opus sonnet haikuで十分なところはそれ使ってもいいよ。ただし目標を目指してね」
+          （画面の「Fable のみ」が 50% に届くまで `fable`、届いたら `opus`。`quota.sub_model()`）
+          （08/31 の「一次サブはOpus5でやってね」は、これで上書きされました）
 
 **cwd が repo の中でないと worktree が作れません。**「Stage 2 classifier error」は撃ち直すこと。
 立てたら `python scripts/next_round.py --record hourly,optimizer` → `data/` を commit して push。

@@ -8,11 +8,17 @@
 オーナーの原文の引用は**消さない・書き換えない**（考え直すのは、その読み方と機械の側）。
 
 > **「やっぱり最大にしたので全てこれでお願いします。」**（同日 19:0x JST。**ウルトラコードは切れました**）
+>
+> **「一応だけど、Fableは全体週間使用量の50%まで。opus sonnet haikuで十分なところはそれ使ってもいいよ。ただし目標を目指してね」**（同日 20:0x JST）
 
 事実（2026-09-02 19:0x に撃って出た数）:
 
-    模型          親も働き手も `claude-fable-5-1`・**effort 最大**。Agent の `model` は**付けない**
-                  （付けないと親を継ぐ。`"opus"` を書かないこと）
+    模型          親は `claude-fable-5-1`・**effort 最大**。働き手（サブ）は
+                  **`python scripts/next_round.py` が GO と一緒に印字する模型**を Agent の `model` に渡す
+                  （画面の「Fable のみ」が **50%** に届くまで `fable`、届いたら `opus`。
+                    出どころは `scripts/quota.FABLE_CAP_PCT` と `quota.sub_model()`）。
+                  **Opus／Sonnet／Haiku で足りる所はそれでよい**（上の原文）—— どこがそれかは、
+                  その回が決めて `docs/JOURNAL.md` に書く。画面が来たら `--fable <%>` も一緒に積む
     働き手        Agent ツールのサブ（`isolation: "worktree"`・`run_in_background: true`）。
                   **Workflow ツールは既定では使わない**（ウルトラコードが切れた。オーナーが
                   自分の言葉で「workflow で」と言ったときだけ）。

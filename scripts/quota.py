@@ -181,6 +181,20 @@ FLOOR_MIN_CLAMP, FLOOR_MAX_CLAMP = 10.0, 720.0
 # そのときは `OWNER_SPEED_DIVISOR` ではなく、**言われた数のほう**を入れること。
 OWNER_SPEED_DIVISOR = 2.0
 
+# **オーナー指示（2026-09-02 20:0x JST・原文。一字も変えないこと）**:
+#
+# > **「一応だけど、Fableは全体週間使用量の50%まで。opus sonnet haikuで十分なところは
+# >   それ使ってもいいよ。ただし目標を目指してね」**
+#
+# 画面には週の目盛りが2つ在ります（「すべてのモデル」と「Fable のみ」）。
+# **「Fable のみ」の使用済み% が 50 に届いたら、サブの模型を `opus` へ**（`sub_model()`）。
+# 届くまでは `fable`（同日 19:0x「やっぱり最大にしたので全てこれでお願いします。」）。
+# 画面が来たら `--gauge <週%> --fable <Fable%> --at ...` で**両方**積むこと。
+# 「Opus／Sonnet／Haiku で足りる所」がどこかは、その回が決めて日誌に書く（ここでは決めない）。
+#
+# **覆る条件**: オーナーが数を言い直したとき。
+FABLE_CAP_PCT = 50.0
+
 # 弱いほうから順に。遷移の向きを判定するのに使う。
 STATUS_ORDER = ["allowed", "allowed_warning", "rejected"]
 
@@ -911,6 +925,44 @@ def owner_rate_cap(anchors: list[dict] | None = None) -> float | None:
     return best["rate"] / OWNER_SPEED_DIVISOR
 
 
+def fable_gauge() -> dict | None:
+    """**画面の「Fable のみ」の最新の点**（`fable_percent` を持つ週枠の行）。無ければ None。"""
+    rows = [r for r in _anchors() if r.get("fable_percent") is not None]
+    if not rows:
+        return None
+    rows.sort(key=lambda r: r.get("fetched_at", ""))
+    r = rows[-1]
+    return {"at": _parse_iso(r.get("fetched_at")), "pct": float(r["fable_percent"]),
+            "all_pct": float(r.get("used_percent", 0)), "resets": _parse_iso(r.get("resets_at_iso"))}
+
+
+def sub_model(now: datetime | None = None) -> tuple[str, str]:
+    """**サブに渡す模型と、その理由1行。** `FABLE_CAP_PCT` の註。
+
+    目盛りが古いぶんは、直近の速さで運んだ推定で埋める（`pace()` と同じ考え方 ——
+    古い目盛りで割ると必ず「まだ余裕がある」側に外れる）。
+    """
+    now = now or datetime.now(timezone.utc)
+    g = fable_gauge()
+    if not g or not g["at"]:
+        return "fable", "「Fable のみ」の目盛りがまだ無い（画面が来たら --fable で積むこと）"
+    if g["resets"] and g["resets"] <= now:
+        return "fable", f"「Fable のみ」の枠は {g['resets'].astimezone(JST):%m/%d %H:%M} JST に戻った（目盛り {g['pct']:.0f}% は前の枠）"
+    est = g["pct"]
+    try:
+        p = pace(now)
+        rate = (p or {}).get("carry_rate") or 0.0
+    except Exception:                                          # noqa: BLE001
+        rate = 0.0
+    hours = max(0.0, (now - g["at"]).total_seconds() / 3600)
+    est = min(100.0, g["pct"] + hours * rate)
+    if est >= FABLE_CAP_PCT:
+        return "opus", (f"「Fable のみ」 {g['pct']:.0f}%（{g['at'].astimezone(JST):%m/%d %H:%M} JST）"
+                        f" → いま推定 {est:.0f}% ≧ 上限 {FABLE_CAP_PCT:.0f}%")
+    return "fable", (f"「Fable のみ」 {g['pct']:.0f}%（{g['at'].astimezone(JST):%m/%d %H:%M} JST）"
+                     f" → いま推定 {est:.0f}% ＜ 上限 {FABLE_CAP_PCT:.0f}%")
+
+
 def pace(now: datetime | None = None) -> dict | None:
     """いまの速さと、持続できる1周の間隔。目盛りが無ければ None。
 
@@ -1246,6 +1298,8 @@ def pace_report(now: datetime | None = None) -> None:
         print(f"      **残りは目盛りの時刻からではなく、いまから数えること。**"
               f"目盛りは人手でしか入らないので必ず古くなり、"
               f"**古いまま割ると必ず「速すぎてよい」側に外れます**（2026-08-21 に 9% ずれた）")
+    _m, _why = sub_model(now)
+    print(f"    サブの模型: **{_m}**（{_why}）")
     if p.get("rate_cap") is not None:
         mx = p.get("rate_max") or {}
         print(f"    オーナーの上限: **{p['rate_cap']:.3f} %/時**"
@@ -1422,7 +1476,7 @@ def _next_weekly_reset(at: datetime) -> datetime:
 
 def record_gauge(week_pct: int, at_text: str, session_pct: int | None = None,
                  session_in_min: int | None = None, resets_text: str | None = None,
-                 note: str = "") -> int:
+                 note: str = "", fable_pct: int | None = None) -> int:
     """**オーナーの画面の%を、1行で積む**（2026-08-19 21:2x にオーナー指示で足した）。
 
     ## なぜ要るか
@@ -1483,6 +1537,8 @@ def record_gauge(week_pct: int, at_text: str, session_pct: int | None = None,
         "source": "owner-manual",
         "note": note or "オーナーの画面から（`quota.py --gauge`）",
     }]
+    if fable_pct is not None:
+        rows[0]["fable_percent"] = int(fable_pct)
     if session_pct is not None:
         row = {
             "fetched_at": at.isoformat(timespec="seconds"),
@@ -1520,6 +1576,7 @@ def main() -> int:
                          "『週間の制限／すべてのモデル』の使用済み%%")
     ap.add_argument("--at", metavar="時刻", help="画面の時刻（`MM/DD HH:MM` か `YYYY-MM-DD HH:MM`・JST）")
     ap.add_argument("--session", metavar="%", type=int, help="『現在のセッション』の%%（5時間枠）")
+    ap.add_argument("--fable", metavar="%", type=int, help="『週間の制限／Fable のみ』の使用済み%%（上限 50。`FABLE_CAP_PCT`）")
     ap.add_argument("--session-in", metavar="分", type=int, help="『N時間M分後にリセット』を分に直した数")
     ap.add_argument("--resets", metavar="時刻", help="週枠のリセットを明示（既定は次の土 07:00 JST）")
     ap.add_argument("--note", metavar="文", default="", help="その点に添える1行")
@@ -1529,7 +1586,7 @@ def main() -> int:
         if not args.at:
             ap.error("--gauge には --at が要ります（画面の時刻。あとから積むと速さが狂います）")
         return record_gauge(args.gauge, args.at, args.session, args.session_in,
-                            args.resets, args.note)
+                            args.resets, args.note, args.fable)
     if args.at or args.session is not None:
         ap.error("--at / --session は --gauge と一緒に使ってください")
 

@@ -574,6 +574,13 @@ def main() -> int:
                   "**そのまま**渡すこと（親が中身を考えないこと）")
         print("  **isolation: \"worktree\" と run_in_background: true を"
               "必ず付けること**（衝突を避ける／親を塞がない）")
+        try:
+            from scripts.quota import sub_model as _sub_model
+            _m, _why = _sub_model()
+        except Exception as exc:                               # noqa: BLE001
+            _m, _why = "fable", f"quota.sub_model が答えません（{str(exc)[:60]}）"
+        print(f"  **model: \"{_m}\"**（{_why}。オーナー 2026-09-02"
+              "「Fableは全体週間使用量の50%まで」→ `quota.FABLE_CAP_PCT`）")
         print(f"  立てたら: python scripts/next_round.py --record {','.join(roles)}")
         return 0
     print(f"WAIT {d['wait_min']:.0f}")
