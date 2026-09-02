@@ -492,6 +492,8 @@ def test_同値の点が続いても_入力が違う最後の点と比べる(tmp
 
 from datetime import date as _date, datetime, timedelta, timezone  # noqa: E402
 
+from src import settle  # noqa: E402  （**年齢の数を写さないため**・2026-09-02）
+
 _NOW = datetime(2026, 8, 20, 3, 0, tzinfo=timezone.utc)
 
 
@@ -520,21 +522,54 @@ def test_年齢の引けない本も未公開に入れる():
     assert dropped["未公開"] == ["nazo"]
 
 
-def test_48時間経っていない本は落ちる_伸びが終わっていないから():
-    """実測（`data/views.jsonl` n=9）: 24時間で中央値 99.1%・48時間で 100%。
+def test_伸びきっていない若い本は落ちる():
+    """**若い本は、一生ぶんではなく数時間ぶんを持って平均に入ります。**
 
-    **それより若い本は、一生ぶんではなく数時間ぶんを持って平均に入ります。**
+    **年齢の数をここに写さないこと**（2026-09-02 に書き直した）。
+    この検査は長らく `assert eta.MATURE_HOURS == 48` を持っており、
+    `src/settle.py` 側が実測で 48 → 72 へ動いた回に落ちました。
+    **落ちたのは実装ではなく、写しのほうです。**
+    年齢の出どころは `settle.mature_hours(form)` の1か所だけ
+    （`MATURE_HOURS` はその「形が分からないとき」の落とし先）。
     """
+    h = settle.MATURE_HOURS
     rows = [["wakai", 200, 20, 40.0], ["jukusi", 1_000, 20, 40.0]]
-    kept, dropped = eta.drop_unripe(rows, _pub(wakai=10, jukusi=120), _NOW)
+    kept, dropped = eta.drop_unripe(
+        rows, _pub(wakai=h // 4, jukusi=h * 3), _NOW)
     assert [r[0] for r in kept] == ["jukusi"]
     assert dropped["未熟"] == ["wakai"]
-    assert eta.MATURE_HOURS == 48
+    assert eta.MATURE_HOURS == settle.MATURE_HOURS, (
+        "`eta.MATURE_HOURS` が `src/settle.py` を読まなくなっています —— "
+        "**同じ量を2か所で持たないこと**")
 
 
-def test_ちょうど48時間の本は残る():
-    kept, _ = eta.drop_unripe([["x", 900, 20, 40.0]], _pub(x=48), _NOW)
-    assert [r[0] for r in kept] == ["x"]
+def test_ちょうど年齢に達した本は残る():
+    """**境目は「その年齢ちょうど」で通ること。**
+
+    [!] **1本だけで書かないこと**（2026-09-02 に踏んだ）。
+    `drop_unripe` は「全部 落ちたら、落とさずに全部 返す」
+    （`if not kept: return list(rows), {"落とし先なし": ...}`）ので、
+    **1本の検査は、その本が落ちても緑になります。**
+    実際この検査は、`MATURE_HOURS` が 48 → 72 に動いたあとも
+    **落ちた本を「残った」と読んで通っていました。**
+    だから熟した本を1本 添えて、`kept` の**中身**で見ます。
+    """
+    h = settle.MATURE_HOURS
+    kept, dropped = eta.drop_unripe(
+        [["x", 900, 20, 40.0], ["furui", 900, 20, 40.0]],
+        _pub(x=h, furui=h * 3), _NOW)
+    assert sorted(r[0] for r in kept) == ["furui", "x"], dropped
+    assert "落とし先なし" not in dropped
+
+
+def test_年齢に1時間足りない本は落ちる():
+    """**上の境目の、反対側。** 2本 渡して「落とし先なし」の枝を避けます。"""
+    h = settle.MATURE_HOURS
+    kept, dropped = eta.drop_unripe(
+        [["wakai", 900, 20, 40.0], ["furui", 900, 20, 40.0]],
+        _pub(wakai=h - 1, furui=h * 3), _NOW)
+    assert [r[0] for r in kept] == ["furui"]
+    assert dropped["未熟"] == ["wakai"]
 
 
 def test_28日の窓より前に公開した本は落ちる():

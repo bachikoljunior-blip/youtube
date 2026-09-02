@@ -923,6 +923,18 @@ SHIP_KINDS = ("upload", "improve", "means", "verdict", "fix", "premise")
 #:    （`tests/test_fix_run_cap_share.py` が、その算術を止めます）。
 #: 4. **`verdict` / `premise` が増えたのに到達日が動かない**なら、律速は `fix` では
 #:    ありません（＝ 前提の熟す速さのほう。実測 1.14件/日 に対し、回は 15周/日）。
+#:    **手で数えないこと。`cond4()` を撃つこと**（2026-09-02 に撃てる形にした）。
+#:
+#:    > **【2026-09-02: 4 は既に立っています。】** `cond4()` の実測 ——
+#:    > `verdict`+`premise` 比 **7.8% → 30.6%**（門の前 257件 / 後 49件）、
+#:    > `fix` 比 74.7% → 61.2%、`lever_followed` 18.3% → **53.1%**、
+#:    > 死んだ腕を名乗った ship 36.6% → **10.2%**。**配合は全部 良くなりました。**
+#:    > そして `traj_days` は 08-30 の 135.7日 から **08-31 以降ずっと「出ません」**。
+#:    > **＝ 門は効いた。効いても日付は動かない。**
+#:    >
+#:    > **だから、この門をこれ以上きつくしないこと。** 天井まで3本とも引いても
+#:    > 目標の 18.7%（`python -m src.joint_cap`）で、残りの ×5.35 は
+#:    > **腕の値ではなく天井そのもの**の話です。**回の配合は、もう律速ではありません。**
 FIX_RUN_CAP = 2
 
 #: **この門を作り直した時刻**（2026-09-01 10:45 JST）。`fix_share()` の既定の境目です。
@@ -1002,6 +1014,153 @@ def fix_share_line(path: Path | None = None) -> str:
     return (f"**`fix` 比**: 門の前 {b['fix']}/{b['n']} ＝ {b['share']:.1%}"
             f" ／ 門の後 {a['fix']}/{a['n']} ＝ {a['share']:.1%}"
             f"（この門の天井 {r['cap_share']:.1%} ＝ {FIX_RUN_CAP}/{FIX_RUN_CAP + 1}）{tail}")
+
+
+#: **到達日を動かしうる種別**（`FIX_RUN_CAP` の門が「そちらへ使え」と言う側）。
+#: `eta.py` の定義では、**軌跡の腕が動くのは前提を1件 閉じたときだけ**なので、
+#: 本当に日付を持っているのは `verdict` と `premise` の2つです
+#: （`upload` / `improve` / `means` は「出した」の側で、`--moves` は定義上 0）。
+MOVING_KINDS = ("verdict", "premise")
+
+
+def cond4(path: Path | None = None, eta_path: Path | None = None,
+          since: str | None = None) -> dict:
+    """**`FIX_RUN_CAP` の「覆る条件 4」が立っているか。**（`data/` だけ・**API 0単位**）
+
+    ## なぜ要るか（2026-09-02 夕・最適化の回に撃って作った）
+
+    `FIX_RUN_CAP` の覆る条件は4件あり、**1 だけが撃てる形**でした
+    （`fix_share()`）。4 は散文のままです ——
+
+        4. **`verdict` / `premise` が増えたのに到達日が動かない**なら、
+           律速は `fix` ではありません（＝ 前提の熟す速さのほう）
+
+    **同じファイルが、その1つ上でこう書いています** ——
+    「**覆る条件は、撃てる形で置かないと、書いてあっても発火しません**」。
+    `fix_share()` はその教訓で作られました。**4 は取り残されていました。**
+
+    そして 2026-09-02 に手で数えたら、**4 は既に立っていました**::
+
+        門の前（〜09-01 10:45）  ship 257件  fix 74.7%  verdict+premise   7.8%
+        門の後                    ship  49件  fix 61.2%  verdict+premise  30.6%
+        `lever_followed`          18.3% → 53.1%
+        死んだ腕を名乗った ship    36.6% → 10.2%
+        —— **配合はどれも良くなりました**
+        `traj_days`               08-30 135.7日 → 08-31 以降 **出ません**
+        —— **到達日は動いていません**（良くなるどころか、日付が消えた）
+
+    **＝ 門は効いた。効いたのに日付が動かない。だから律速は `fix` ではありません。**
+
+    ## これが分かると、次の回が何をしなくて済むか
+
+    **回の配合をこれ以上いじらないこと。** `fix` 比を 61% から 50% へ下げても、
+    `lever_followed` を 53% から 90% へ上げても、**到達日は動きません** ——
+    腕を3本とも天井まで引いても目標の 18.7% だからです（`python -m src.joint_cap`）。
+    **残りの x5.35 は、腕の値ではなく天井そのものの話**で、
+    そこは `config/hypotheses.yaml` の前提でしか動きません。
+
+    返り: `{"fired", "before", "after", "traj_before", "traj_after", "why"}`。
+
+    ## **覆る条件**（この関数自身の）
+
+    - **`traj_days` が動いた回が出たら**（＝ 到達日が実際に前後した）、`fired` は
+      自分で偽に戻ります。**定数を持ちません。**
+    - `data/eta.jsonl` に `traj_days` が無くなったら、ここは判定できません
+      （`traj_*` が `None` で返ります）。**そのときは黙って偽**にします ——
+      **「測れない」を「立っている」と読ませないこと。**
+    - `MOVING_KINDS` を増やすときは、その種別が**本当に軌跡の入力に入るか**を
+      先に確かめること（`eta.py --reflect` の「前 → 後」が動くか）。
+      入らない種別を足すと、この判定は**必ず立ちます**（分子だけ増えるので）。
+    """
+    p = path or MARKS
+    at = since or FIX_GATE_AT
+    before: list[str] = []
+    after: list[str] = []
+    try:
+        with p.open(encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    row = json.loads(line)
+                except Exception:                               # noqa: BLE001
+                    continue
+                if row.get("kind") != "ship":
+                    continue
+                k = row.get("ship_kind") or "(none)"
+                (after if str(row.get("at", "")) >= at else before).append(k)
+    except FileNotFoundError:
+        pass
+
+    def _one(ks: list[str]) -> dict:
+        n = len(ks)
+        mv = sum(1 for k in ks if k in MOVING_KINDS)
+        return {"n": n, "moving": mv, "share": (mv / n) if n else 0.0}
+
+    b, a = _one(before), _one(after)
+
+    # **到達日**は `traj_days` で見ます（`_eta_target()` と同じ欄）。
+    #     「出ません」は `eta.py` が 10^9 で積むので、
+    #     **大きい数 ＝ 遠い**の向きでそのまま比べられます。
+    tb = ta = None
+    try:
+        rows = [json.loads(ln) for ln in
+                (eta_path or ETA_LOG).read_text(encoding="utf-8").splitlines() if ln.strip()]
+        for r in rows:
+            d = r.get("traj_days")
+            if not isinstance(d, (int, float)):
+                continue
+            if str(r.get("at", "")) < at:
+                tb = float(d)
+            else:
+                ta = float(d)
+    except (OSError, json.JSONDecodeError, ValueError):
+        tb = ta = None
+
+    # **測れない回は偽**（上の「覆る条件」2つ目）。
+    moved = None if (tb is None or ta is None) else (ta < tb - 0.5)
+
+    def _d(v: float | None) -> str:
+        """**`10^9` を「1000000000.0日」と刷らないこと。** `eta.py` の
+        「出ません」（＝ 天井が足りない）がその値で積まれています ——
+        生の桁を出すと、読んだ側が「27万年 かかる」と読みます（実際に読みかけた）。
+        """
+        if v is None:
+            return "無し"
+        return "出ません" if v >= 1e8 else f"{v:.1f}日"
+    rose = a["n"] >= 20 and a["share"] > b["share"]
+    fired = bool(rose and moved is False)
+
+    if fired:
+        why = (f"到達日を動かしうる種別が {b['share']:.1%} -> {a['share']:.1%} に"
+               f"増えたのに、到達日は {_d(tb)} -> {_d(ta)} で近づいていません")
+    elif moved is None:
+        why = "`traj_days` が両側に無いので判定できません（**立っているとは読まないこと**）"
+    elif not rose:
+        why = f"動かしうる種別が増えていません（{b['share']:.1%} -> {a['share']:.1%}）"
+    else:
+        why = f"到達日は近づいています（{_d(tb)} -> {_d(ta)}）"
+
+    return {"fired": fired, "at": at, "before": b, "after": a,
+            "traj_before": tb, "traj_after": ta, "moved": moved, "why": why}
+
+
+def cond4_line(path: Path | None = None) -> str:
+    """`cond4()` を1行にする。**立っていないときも数を出すこと** ——
+    黙ると、次に来た側が「まだ立っていない」と「測っていない」を区別できません。
+    """
+    r = cond4(path)
+    b, a = r["before"], r["after"]
+    head = (f"**`verdict`+`premise` 比**: 門の前 {b['moving']}/{b['n']} ＝ {b['share']:.1%}"
+            f" ／ 門の後 {a['moving']}/{a['n']} ＝ {a['share']:.1%}")
+    if r["fired"]:
+        return (head + f"　← [!] **`FIX_RUN_CAP` の覆る条件4 が立っています** —— {r['why']}。"
+                "**律速は `fix` ではありません。回の配合をこれ以上いじらないこと** —— "
+                "腕を3本とも天井まで引いても目標の 18.7%（`python -m src.joint_cap`）で、"
+                "残りは**天井そのもの**の話です"
+                "（`config/hypotheses.yaml` の前提でしか動きません）")
+    return head + f"（覆る条件4 は立っていません: {r['why']}）"
 
 
 def fix_run_len(path: Path | None = None) -> int:
@@ -2122,7 +2281,12 @@ def main(argv: list[str] | None = None) -> int:
                     # 前の版は、この比をどこにも出していませんでした ——
                     # だから「門が効いていない」（覆る条件1）を、
                     # **7日 のあいだ誰も判定できませんでした。**
-                    f"  {fix_share_line()}")
+                    f"  {fix_share_line()}\n"
+                    # **覆る条件 1 だけでなく 4 も、その場で見せること**
+                    #     （2026-09-02）。1 は `fix_share()` が撃てる形で置かれ、
+                    #     4 は散文のままでした。**4 は既に立っています** ——
+                    #     立っているなら、この門はもう律速ではありません。
+                    f"  {cond4_line()}")
         return ship(args.ship, args.closes, args.lever, args.moves,
                     reflect=not args.no_reflect, kind=args.kind)
     if args.moves is not None:

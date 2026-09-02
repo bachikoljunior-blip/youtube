@@ -1095,6 +1095,45 @@ def draft_lines(now: datetime | None = None,
     return out
 
 
+def rebake_input_lines(video_id: str, topic: str) -> list[str]:
+    """**同じ本を、1か所だけ変えて焼き直せるか。**（**API 0単位**）
+
+    ## なぜ要るか（2026-09-02 に踏んだ）
+
+    「焼き直す」には2つあり、**値段が桁で違います**:
+
+        台本が控えに在る   `pipeline --script <台本> --topic <ID>`
+                          → **同じ本**の、直した所だけが変わる
+        台本が無い         `pipeline --topic <ID>`
+                          → `claude -p` が**別の本を書き下ろす**（6〜11分）。
+                            題も説明も一次コメントも入れ替わります
+
+    `scripts/critique_queue.py` の画面は「焼直可」と出しますが、
+    **あれは絵（`slides_plan.json`）のこと**で、本のことではありません。
+    2026-09-02、09/03 に出す本の読みを2件 直したあと、
+    **その直しを本へ入れる道がありませんでした。**
+
+    台本を残す口は同じ日に足してあります（`critique_queue.stash()`）。
+    **それより前に焼いた本には在りません** —— ここはそれを黙らせないためです。
+
+    ## 覆る条件
+
+    `--script` が欠けた欄を自分で埋めるようになったら、この行は要らなくなります。
+    """
+    if not video_id:
+        return []
+    path = ROOT / "data" / "critique_queue" / f"{video_id}.script.json"
+    if path.exists():
+        return [f"  **同じ本を焼き直せます**（控えに台本が在る）:",
+                f"       python -m src.pipeline --script {path} --topic {topic}"]
+    return ["  [!] **この本の台本は控えにありません** —— "
+            "`python -m src.pipeline --topic ...` は**別の本を書き下ろします**"
+            "（題・説明・一次コメントごと入れ替わる）。"
+            "**「1か所だけ直して焼き直す」はできません。**",
+            "       台本を残す口は 2026-09-02 に足してあります"
+            "（`critique_queue.stash()`）—— **次に焼く本からは在ります。**"]
+
+
 def lines(now: datetime | None = None) -> list[str]:
     """画面へ出す行。**`improve` の当てどころを、fix と同じ形で毎周 出します。**"""
     # **暦を先に出すこと**（2026-09-01 夜）。下の `[次の枠]` は「次の1本」しか
@@ -1175,6 +1214,8 @@ def lines(now: datetime | None = None) -> list[str]:
                    f"　—— その直しは、この本に入っていません**")
         for ln in cm:
             out.append(f"       {ln[:118]}")
+        out.extend(rebake_input_lines(str(v.get("video_id") or ""),
+                                      str(v.get("topic") or "")))
         if draft is None:
             out.append("  → **焼き直すのが `improve` の1手です**"
                        "（`python -m src.pipeline` で焼き直し、"
