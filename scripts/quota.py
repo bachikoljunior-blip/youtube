@@ -181,6 +181,12 @@ FLOOR_MIN_CLAMP, FLOOR_MAX_CLAMP = 10.0, 720.0
 # そのときは `OWNER_SPEED_DIVISOR` ではなく、**言われた数のほう**を入れること。
 OWNER_SPEED_DIVISOR = 2.0
 
+#: 「今までの最高速度」は**この指示が来た時刻より前**の目盛りだけで数える。
+#: 入れた直後に踏んだ: 22:01 の点で 19:39→22:01 が 1.690 %/時 と出て、
+#: **上限のほうが 0.744 → 0.845 へ上がりました**。速く走るほど上限が上がる形は、
+#: 「二分の一の速度で」の反対です。基準は指示の時点で凍らせる。
+OWNER_SPEED_INSTRUCTION_AT = datetime(2026, 9, 2, 18, 45, tzinfo=JST)
+
 # **オーナー指示（2026-09-02 20:0x JST・原文。一字も変えないこと）**:
 #
 # > **「一応だけど、Fableは全体週間使用量の50%まで。opus sonnet haikuで十分なところは
@@ -898,10 +904,12 @@ def _births_between(rows: list[dict], start: datetime, end: datetime) -> int:
     return _laps_between(start, end) or from_quota
 
 
-def max_measured_rate(anchors: list[dict] | None = None) -> dict | None:
+def max_measured_rate(anchors: list[dict] | None = None,
+                      before: datetime | None = OWNER_SPEED_INSTRUCTION_AT) -> dict | None:
     """**目盛りの同じ枠の隣り合う2点から出る %/時 の最大**（今までの最高速度）。
 
     リセットをまたぐ差（%が減った）は「使った量」ではないので数えません。
+    `before` より後の点は数えません（既定は指示の時刻。`OWNER_SPEED_INSTRUCTION_AT` の註）。
     返り: `{"rate", "from_at", "to_at", "from_used", "to_used", "hours"}`。点が足りなければ None。
     """
     anchors = _anchors() if anchors is None else anchors
@@ -909,6 +917,8 @@ def max_measured_rate(anchors: list[dict] | None = None) -> dict | None:
     for row in anchors:
         at = _parse_iso(row.get("fetched_at"))
         if not at:
+            continue
+        if before is not None and at > before:
             continue
         pts.append((at, float(row["used_percent"]), _parse_iso(row.get("resets_at_iso"))))
     pts.sort(key=lambda x: x[0])
