@@ -169,3 +169,32 @@ def test_規則5_が外れたら4か所とも緩む(monkeypatch):
     #     上の1行を倒すだけで、関門も一緒に緩むのが正しい姿。
     with pytest.raises(AssertionError, match="単位を使う前に"):
         reschedule._update(_Svc(), "vid", _real(1))
+
+
+def test_予約時刻を書く所は_2か所しかないこと():
+    """**7つ目の入口を作らせないこと。**
+
+    `reschedule._update()` の docstring:「入口が6つあり、塞いでも**7つ目が
+    同じ穴を作ります**（この repo が通算11回 踏んでいる「片方だけ」の形）。
+    **関門はここ1か所なので、ここで止めます**」。
+
+    その関門は `status["publishAt"] = …` を書く所にしか効きません。
+    **新しく書く所を足した回は、ここで落ちます** —— そのときは、
+    足した所からも `house_rule.refuse_future_publish()` を呼ぶこと
+    （**判定を写さないこと**。写すと、また片方だけ直せます）。
+
+    `videos().update(part="snippet", …)`（`link_longform` / `retitle`）は
+    ここに入りません —— `status` を触らないので、予約を作れません。
+    """
+    import re
+    hits = []
+    for rel in sorted(list((ROOT / "src").glob("*.py"))
+                      + list((ROOT / "scripts").glob("*.py"))):
+        text = rel.read_text(encoding="utf-8")
+        for line in text.splitlines():
+            if re.search(r'\["publishAt"\]\s*=', line):
+                hits.append(rel.relative_to(ROOT).as_posix())
+                break
+    assert hits == ["scripts/reschedule.py", "src/uploader.py"], hits
+    for rel in hits:
+        assert "refuse_future_publish" in (ROOT / rel).read_text(encoding="utf-8"), rel
