@@ -66,8 +66,22 @@ def _free_day() -> str:
     raise AssertionError("窓に当たらない日が60日 見つかりません")
 
 
-def test_帯の外の本が同じ日の帯へ入る():
-    """(A) では生きているのに帯の外に居る本を、**同じ日の空き分**へ入れ直す。"""
+def test_帯の外の本が同じ日の帯へ入る(monkeypatch):
+    """(A) では生きているのに帯の外に居る本を、**同じ日の空き分**へ入れ直す。
+
+    ## **規則5（固定その4・2026-09-02）の下では、この手は撃ちません**
+
+    `plan_band` が動かすのは**同じ日の中**なので、「先の日付へ置く」には
+    当たりません。それでも止めているのは、**触れる本が全部 先の日付に居るから**です ——
+    規則5 の下ではその予約は `pool_drain --apply --keep 0` で外す対象で、
+    **1手 50単位 を、外す側が要る日枠から取ります。**
+    きょうの1本に帯の問題は起きません（その日に1本しか居ないので）。
+
+    ここは**規則を外して**、規則5 が戻ったときの枝を確かめます
+    （`live_slots.rule5_block()` の「覆る条件」）。
+    """
+    from src import house_rule
+    monkeypatch.setattr(house_rule, "SAME_DAY_SCHEDULING_ONLY", False)
     day = _free_day()
     rows = [_row("a", day, "09:00"), _row("b", day, "09:30"), _row("c", day, "18:00")]
     now = dt.datetime.fromisoformat(day).replace(tzinfo=JST) - dt.timedelta(days=2)

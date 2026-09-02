@@ -46,7 +46,34 @@ def _patch(monkeypatch, cal: dict) -> None:
     monkeypatch.setattr(next_slot, "calendar", lambda *a, **k: cal)
 
 
-def test_穴が空いていたら詰めるほうを名指しする(monkeypatch):
+@pytest.fixture()
+def legacy(monkeypatch):
+    """**規則5（固定その4）が入る前の枝**を試すための札（2026-09-02）。
+
+    オーナーが 2026-09-02 に「**現在の日付にしか予約しないってことだからね？**」を
+    固定したので、**この門は既定で黙ります** —— 埋める手
+    （`reschedule --compact --apply`）が、いま禁じられた手だからです。
+    そして門が残っていると、**オーナーが名指しした `--apply --keep 0` が
+    `--despite-gap` 無しでは1本も外せません**でした。
+
+    **下の一群は消していません。** 規則5 が外れたら、そのまま効きます。
+    """
+    from src import house_rule
+    monkeypatch.setattr(house_rule, "SAME_DAY_SCHEDULING_ONLY", False)
+    return house_rule
+
+
+def test_規則5の下では門ごと黙る(monkeypatch):
+    """**いまの既定**（2026-09-02）。空いた日は欠陥ではありません。"""
+    from src import house_rule
+    if not house_rule.same_day_only():
+        pytest.skip("規則5 が外れています（この検査の前提）")
+    _patch(monkeypatch, _cal())
+    assert pool_drain._calendar_hold() == [], \
+        "**規則5 の下で門が残っていると、`--apply --keep 0` が撃てません**"
+
+
+def test_穴が空いていたら詰めるほうを名指しする(legacy, monkeypatch):
     _patch(monkeypatch, _cal())
     lines = pool_drain._calendar_hold()
     assert lines, "19日 連続の空白で黙るのは、この欠陥の再発です"
@@ -104,7 +131,7 @@ def _stub(monkeypatch, dropped: list, thumbs: list):
     monkeypatch.setattr(pool_drain.dupes, "retime", lambda vid, at: None)
 
 
-def test_apply_は穴が空いている間_1本も外さない(monkeypatch, capsys):
+def test_apply_は穴が空いている間_1本も外さない(legacy, monkeypatch, capsys):
     """**門は「外す」の直前です。**`--despite-gap` を付けた回だけ通します。
 
     **サムネイル（50単位）は門より前**に残してあります —— あれは §4 が
@@ -125,7 +152,7 @@ def test_apply_は穴が空いている間_1本も外さない(monkeypatch, caps
     assert thumbs == ["NEXT1"], "サムネイル（50単位）まで止めています"
 
 
-def test_despite_gap_を付けた回は通る(monkeypatch, capsys):
+def test_despite_gap_を付けた回は通る(legacy, monkeypatch, capsys):
     """**逃げ道を残すこと**（理由を JOURNAL に）。"""
     _patch(monkeypatch, _cal())
     dropped: list = []
@@ -139,7 +166,7 @@ def test_despite_gap_を付けた回は通る(monkeypatch, capsys):
     assert dropped, "`--despite-gap` でも外せないなら、逃げ道になっていません"
 
 
-def test_数えるだけの回にも順番は出る(monkeypatch, capsys):
+def test_数えるだけの回にも順番は出る(legacy, monkeypatch, capsys):
     """**撃つ前に順番が見えていないと、次の回がまた同じ順で撃ちます。**"""
     _patch(monkeypatch, _cal())
     _stub(monkeypatch, [], [])
