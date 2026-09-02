@@ -58,13 +58,29 @@ def test_枠の時刻を_JST_で刷る(monkeypatch):
     実際に一度そう出ました（**09/02 07:00 JST** と印字・実物は 16:00）。
     「あと N時間」だけが正しく、時刻のほうがずれる —— **この段が塞ごうとしている
     穴（写した時刻を信じる）そのもの**の形です。
+
+    ## **暦を焼き込まないこと**（2026-09-02 16:2x に直した。**同じ形で3件目**）
+
+    ここは長らく `datetime(2026, 9, 2, 7, 0, UTC)`（＝ 16:00 JST）を
+    べた書きしていました。`_clock_block()` は `w <= now` で枝が割れるので、
+    **実時刻が 09/02 16:00 JST を過ぎた瞬間に「いま撃てます」の枝へ落ち、
+    時刻を1つも刷らなくなります** —— この検査は**その日のうちに赤くなりました**
+    （実測 16:20 JST）。**検査が「毎日 動く結果」を写していた**形で、
+    同じ日に既に2件 直しています（`test_parent_first_move` /
+    `test_queue_lag_publish_cap`・`data/runs.jsonl` 08:33 の `fix_gate`）。
+
+    いまは**いまの時刻からの相対**で置きます。**結果ではなく差を見ること。**
     """
     from src import next_slot
-    utc_noon = datetime(2026, 9, 2, 7, 0, tzinfo=timezone.utc)   # ＝ 16:00 JST
-    monkeypatch.setattr(next_slot, "writable_from", lambda *a, **k: utc_noon)
+    JST = timezone(timedelta(hours=9))
+    # **未来側に置くこと** —— `w <= now` だと「いま撃てます」の枝で時刻を刷りません。
+    ahead = datetime.now(timezone.utc) + timedelta(hours=3)
+    monkeypatch.setattr(next_slot, "writable_from", lambda *a, **k: ahead)
     block = sp._clock_block()
-    assert "16:00 JST" in block, f"JST へ直していません: {block!r}"
-    assert "07:00 JST" not in block
+    want = f"{ahead.astimezone(JST):%m/%d %H:%M} JST"
+    utc_face = f"{ahead:%m/%d %H:%M} JST"        # 直し忘れるとこちらが出ます
+    assert want in block, f"JST へ直していません: {block!r}"
+    assert utc_face not in block, f"UTC の顔のまま刷っています: {block!r}"
 
 
 def test_撃てる回はそう言う(monkeypatch):
