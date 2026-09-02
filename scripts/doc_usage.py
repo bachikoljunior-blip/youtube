@@ -91,6 +91,54 @@ def tokens_of(body: str) -> set[str]:
 _SEC_NUM = re.compile(r"^(\d+(?:\.\d+)?)[.\s]")
 # 「普通の回の読む順」の箇条書きを見つける目印。**この文書の中の語です。**
 _READ_ORDER_MARK = "普通の回に読むのは"
+# §4 の「この節で本当に要るのは、この2つ」の表の始まりと終わり。**これも文書の中の語です。**
+_DECISION_START = "この節で本当に要るのは、この2つです"
+_DECISION_END = "下の本文を読むのは、上の表で決められなかった回だけです"
+
+
+def decision_block(text: str) -> list[str]:
+    """**§4 の表2つと「選ぶ順」を、文書からそのまま切り出す**（2026-09-03 に足した）。
+
+    ## なぜ道具が出すのか
+
+    §4 は 1,600行 あり、普通の回に要るのは頭の「6択」「日枠が尽きている回の表」「選ぶ順」
+    だけです。それでも回は `sed -n '<L>,+80p'` で 80行 読みに行き、`retro.py` の (a2) 問い1
+    は **8周 続けて「いちばん時間を食ったのは手順の読み」**と書きました（2026-09-03 06:4x
+    までの縦読み）。§4 の「覆る条件」が自分で言っています ——
+    「`run_marker.py --write` がこの2つの表を毎周 印字するようになったら、この節は
+    『道具が出します』に縮む」。**これがその印字です。**
+
+    **手で写していません。** 見出し `_DECISION_START` の次の行から `_DECISION_END` の
+    手前までを、文書からそのまま返します（頭の「この節は 1,600行 あります」の段落は
+    表ではないので、`**(1)` から始めます）。文書を直せば印字も変わり、写しは古くなりません。
+    **文書のその節を消すと、印字も消えます** —— 消すなら、こちらを別の正本に向けること。
+    見出しが無ければ `[]`（古い文書・別の文書）。
+    """
+    lines = text.splitlines()
+    start = next((i for i, ln in enumerate(lines) if _DECISION_START in ln), None)
+    if start is None:
+        return []
+    end = next((i for i in range(start + 1, len(lines)) if _DECISION_END in lines[i]), None)
+    if end is None:
+        return []
+    body = lines[start + 1:end]
+    first = next((i for i, ln in enumerate(body) if ln.startswith("**(1)")), None)
+    if first is not None:
+        body = body[first:]
+    while body and not body[-1].strip():
+        body.pop()
+    return body
+
+
+def decision_lines(text: str, doc: str = "docs/trigger_main.md", prefix: str = "") -> list[str]:
+    """印字用。`run_marker.py --write` が読む順の一覧のすぐ下に出します。"""
+    block = decision_block(text)
+    if not block:
+        return []
+    out = [f"{prefix}**§4 の表（6択・日枠の表・選ぶ順）—— `{doc}` から切り出し。"
+           f"**§4 を `sed` で読みに行く必要はありません**（決められなかった回だけ）**"]
+    out += [f"{prefix}    {ln}" if ln.strip() else prefix.rstrip() for ln in block]
+    return out
 
 
 def reading_order(text: str) -> list[tuple[str, str]]:
@@ -171,10 +219,14 @@ def index_lines(text: str, doc: str = "docs/trigger_main.md",
         out.append(f"{prefix}=== {doc}（{total:,}行 / 大見出し {len(rows)}件・"
                    f"**文書に出てくる順**。番号順ではありません）===")
         shown = rows
+    printed_below = bool(only_read and decision_block(text))
     for r in shown:
         mark = "⭑" if r["read"] else " "
         num = f"§{r['num']}" if r["num"] else ""
         note = f"  ← {r['note']}" if r["note"] else ""
+        if printed_below and r["num"] == "4":
+            # §4 の表は `decision_lines()` がこの一覧のすぐ下に刷ります（2026-09-03）。
+            note = "  ← **表は下に印字ずみ。`sed` は決められなかった回だけ**"
         out.append(f"{prefix} {mark} {num:<5s} L{r['line']:<5d} {r['lines']:5,d}行  "
                    f"sed -n '{r['line']},+80p'  {r['title'][:44]}{note}")
     if only_read:

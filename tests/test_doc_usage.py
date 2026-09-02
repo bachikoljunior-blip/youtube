@@ -91,3 +91,45 @@ def test_実物で走る():
     assert rc == 0
     assert "相手にした記録" in out
     assert "判定できない節" in out
+
+
+def test_節4の表は文書から切り出す_手で写さない():
+    """**§4 の「覆る条件」の発火**（2026-09-03）: 表2つと「選ぶ順」は道具が刷る。
+
+    切り出す範囲は見出しの字から。**行番号を持たない**ので、文書が増えてもずれません。
+    """
+    text = ("## 4. この回でやること\n"
+            "### **この節で本当に要るのは、この2つです**（x）\n\n"
+            "**この節は 1,600行 あります**（前置き。表ではない）\n\n"
+            "**(1) 6択**\n\n    upload / improve / means / verdict / premise / fix\n\n"
+            "**選ぶ順**:\n\n    1. `[暦]` が鳴っている → その1手\n\n"
+            "**下の本文を読むのは、上の表で決められなかった回だけです。** 見出しに…\n"
+            "**覆る条件**: …\n")
+    block = doc_usage.decision_block(text)
+    assert block[0].startswith("**(1) 6択**")
+    assert any("upload / improve / means / verdict / premise / fix" in ln for ln in block)
+    assert any("選ぶ順" in ln for ln in block)
+    assert not any("1,600行" in ln for ln in block)          # 前置きは表ではない
+    assert not any("覆る条件" in ln for ln in block)         # 終わりの目印の外
+    lines = doc_usage.decision_lines(text, "d.md", prefix="[m] ")
+    assert lines[0].startswith("[m] **§4 の表")
+    assert all(ln.startswith("[m]") for ln in lines)
+
+
+def test_節4の表が無い文書では何も出さない():
+    assert doc_usage.decision_block("## 4. x\n本文だけ\n") == []
+    assert doc_usage.decision_lines("## 4. x\n本文だけ\n") == []
+    # 始まりだけ在って終わりが無い（切りかけ）も、途中まで刷らない
+    assert doc_usage.decision_block("### この節で本当に要るのは、この2つです\n**(1) a\n") == []
+
+
+def test_読む順の節4の行は_表が下に在ると言う():
+    """一覧の §4 の行が `sed` を促したままだと、表を刷った意味がありません。"""
+    text = Path(__file__).resolve().parent.parent.joinpath("docs/trigger_main.md").read_text(encoding="utf-8")
+    assert doc_usage.decision_block(text), "実物の §4 に表が無い（見出しの字が変わった？）"
+    lines = doc_usage.index_lines(text, only_read=True)
+    row4 = next(ln for ln in lines if " §4 " in ln)
+    assert "表は下に印字ずみ" in row4
+    got = doc_usage.decision_lines(text)
+    assert any("upload / improve / means / verdict / premise / fix" in ln for ln in got)
+    assert any("`[暦]` が鳴っている" in ln for ln in got)
