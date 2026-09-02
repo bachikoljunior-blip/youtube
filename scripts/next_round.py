@@ -6,9 +6,14 @@
     python scripts/next_round.py --record <役>[,<役>]   → 立てたことを記録する
     python scripts/next_round.py --live-set <N>        → 走っているサブの数を置く
 
-**`--live` を必ず付けること**（`list_sessions` の数）。**0 なら間隔に関係なく GO** ——
-間隔は「二重に立てない」ためのもので、**遊ばせるためではありません**
-（2026-08-31・オーナー「何で止まってんだよ！」。理由は `decide()` の docstring）。
+**`--live` を必ず付けること**（`list_sessions` の数）。
+
+**0体 でも、間隔（`quota.py` の「持続できる間隔」）は守ります**（2026-09-03・オーナー
+「サブで判断して」で optimizer が決めた。理由は `decide()` の docstring）。
+間隔の途中なら **WAIT と一緒に「起こし」の撃ち方を印字する**（`send_later`）ので、
+**親は遊びません** —— 間隔が明けた分に自分で起きます。
+2026-08-31 の「何で止まってんだよ！」は、**起こしを置かずに 191分 待った**ことへの叱りで、
+「間隔を無視しろ」ではありません（原文は `decide()` に残してあります）。
 
 ## なぜこれが要るのか（2026-08-25・オーナー指示）
 
@@ -121,6 +126,20 @@ def round_span(floor_min: float) -> float:
 #: `quota.py` が答えられない回にゼロ間隔で回すと、枠を先に使い切ります。
 FALLBACK_MIN = 90.0
 
+#: **0体 のときに待つ上限（分）**（2026-09-03）。`quota.py` は「使い切った」と読むと
+#: 720分 を返しますが、その推定は外れることがある（08-21 に 9%・08-30 に 3.3日ぶん）。
+#: 6時間 に1回は立てて実物で確かめる —— 立てた先が 429 で落ちても、失うのは1周ぶん。
+IDLE_WAIT_MAX_MIN = 360.0
+
+#: 印字に使う、上限の言葉（数は `quota.owner_rate_cap()` が毎回 目盛りから出す。写さない）。
+OWNER_CAP_WORDS = "「今までの最高速度の二分の一」"
+
+#: **親が置いた起こし**の台帳（`decide()` が WAIT を印字したときに書く）。
+#: 同じ周のあいだに親が何度 起きても（サブの完了通知は何度も来る）、
+#: `send_later` を撃つのは1回にするため。**親が撃ったかどうかは、ここには入りません**
+#: （撃たなかった回は、心拍 :59 が拾います）。
+WAKE = ROOT / "data" / "parent_wake.json"
+
 
 def live_write(n: int, now: datetime | None = None) -> dict:
     """**いま走っているサブの数**を残す（親が `--live-set` で書く）。"""
@@ -153,6 +172,29 @@ def live_read(now: datetime | None = None) -> tuple[int | None, str]:
     if age > LIVE_STALE_MIN:
         return None, f"台帳が古い（{age:.0f}分前・上限 {LIVE_STALE_MIN:.0f}分）"
     return n, f"台帳（{age:.0f}分前）"
+
+def wake_read(now: datetime | None = None) -> datetime | None:
+    """台帳にある、**まだ来ていない**起こしの時刻。無ければ `None`。"""
+    now = now or datetime.now(timezone.utc)
+    if not WAKE.exists():
+        return None
+    try:
+        row = json.loads(WAKE.read_text(encoding="utf-8").strip() or "{}")
+        at = datetime.fromisoformat(str(row["wake_at"]))
+    except Exception:                                          # noqa: BLE001
+        return None
+    if at.tzinfo is None:
+        at = at.replace(tzinfo=timezone.utc)
+    return at if at > now else None
+
+
+def wake_write(wake_at: datetime, now: datetime | None = None) -> dict:
+    now = now or datetime.now(timezone.utc)
+    row = {"at": now.isoformat(), "wake_at": wake_at.isoformat()}
+    WAKE.parent.mkdir(parents=True, exist_ok=True)
+    WAKE.write_text(json.dumps(row, ensure_ascii=False) + "\n", encoding="utf-8")
+    return row
+
 
 def rows() -> list[dict]:
     if not ROUNDS.exists():
@@ -345,6 +387,47 @@ def _floor_from_gauge() -> tuple[float, str]:
 def decide(now: datetime | None = None, live: int | None = None) -> dict:
     """**次の周を立ててよいか。**
 
+    ## **0体 でも間隔は守る。ただし遊ばない —— 起こしを置いて待つ**（2026-09-03）
+
+    オーナー原文（09/02 18:4x）: **「使用量は定期的に画面送るからとりあえず最初は
+    今までの最高速度の二分の一の速度でやって」**、09/03 06:3x: **「サブで判断して」**
+    （親が 03:3x・06:2x に伝えた食い違いへの答え。判断は optimizer の回）。
+
+    **食い違い**: `quota.py --pace` は「上限 0.743 %/時・持続できる間隔 140分」と言い、
+    この関数は「0体 なら間隔を見ずに GO」と言っていた。サブは背景で ~25分 で終わり、
+    終わると親が起きて 0体 を見る → 即 GO。**実物は 2体 を 17〜30分 ごと**
+    （`data/rounds.jsonl` 09/03 00:04〜06:39・15周）。
+
+    **実測 09/02 22:01 → 09/03 06:21 JST**: 週「すべてのモデル」19→45%・「Fable のみ」
+    21→71%（3.12 %/時 ＝ 上限の 4.2倍）。**このままなら すべてのモデルは 09/03 23:58 JST
+    に 100%、土曜 07:00 のリセットまで 31時間 鎖が止まる。** 06:0x には 5時間枠の 429 で
+    サブ2体が落ちた。**「0体 → 即 GO」は、止まらないためのつもりで、31時間 止める側でした。**
+
+    **決めたこと**:
+
+        live == 0 ・ 前の周の開始から floor 以上   → GO（間隔が明けている）
+        live == 0 ・ floor の途中                    → **WAIT。ただし親は起こしを置く**
+                                                       （`send_later` を印字どおりに撃つ。
+                                                         起きたら間隔が明けている ＝ GO）
+        live == 0 ・ 片方だけ欠けている              → 欠けを GO（これまでどおり）
+        live > 0                                     → これまでどおり（二重に立てない）
+        live is None                                 → COUNT（これまでどおり）
+
+    **なぜ「起こし」なら 08-31 の叱りに反しないか**: あのとき親は 191分 を
+    **何も置かずに**待った（次に起きるのは心拍の :59 か、居ないサブの完了）。
+    起こしを置けば **間隔が明けた分に必ず起きる**ので、空きは「持続できる間隔」ぶんだけ ——
+    それは枠を使い切って 31時間 空けるより短い。**「止めない」を守るのは、こちらです。**
+    `send_later` は即返り（承認待ちにならない・`docs/trigger_parent.md` §5 実測）。
+
+    待ちの上限は `IDLE_WAIT_MAX_MIN`（6時間）。`quota.py` が「使い切った」と言って
+    720分 を返しても、6時間 に1回は立てて**実物で確かめる**（推定は外れる。
+    2026-08-21 に 9%・08-30 に 3.3日ぶん ずれた）。
+
+    **覆る条件**: (1) オーナーが速さの上限を外したら（`quota.OWNER_SPEED_DIVISOR`）
+    間隔は自然に縮む —— この関数は触らない。(2) 実測で「起こしが届かない」が出たら
+    （`data/parent_wake.json` の `wake_at` を 15分 過ぎても `rounds.jsonl` に周が無い）、
+    そのときは起こしの口を直す。**0体 即 GO に戻すのではなく。**
+
     ## **間隔は「二重に立てない」ためのものです。遊ばせるためではありません**
     ## （2026-08-31・オーナー指示。**この節は消さないこと**）
 
@@ -387,13 +470,13 @@ def decide(now: datetime | None = None, live: int | None = None) -> dict:
             "live": live, "live_source": live_src}
     group = current_round(span_min=round_span(floor))
 
-    # **いちばん先に見ます。** 1体も走っていない時間は、間隔で埋めるものでは
-    #     ありません（オーナー 2026-08-31「何で止まってんだよ！」）。
-    if live == 0:
-        return {**base, "go": True, "roles": list(ROLES), "idle": True,
-                "why": ("**走っているサブが0体です。間隔は見ません**"
-                        f"（間隔 {floor:.0f}分・出どころ {live_src}）——"
-                        "間隔は二重に立てないためのもので、遊ばせるためではありません")}
+    # **0体 は「間隔を見ない」ではなく「起こしを置いて待つ」**（2026-09-03・上の節）。
+    #     09/03 00:04〜06:39 の 15周（17〜30分 ごと）が、上限 0.743 %/時 の 4.2倍 で
+    #     枠を食い、23:58 JST に尽きる線に乗っていた。
+    idle = (live == 0)
+    if idle:
+        floor = min(floor, IDLE_WAIT_MAX_MIN)
+        base["floor_min"] = floor
 
     if not group:
         return {**base, "go": True, "roles": list(ROLES),
@@ -417,10 +500,23 @@ def decide(now: datetime | None = None, live: int | None = None) -> dict:
 
     if passed >= floor:
         return {**base, "go": True, "roles": list(ROLES), "passed_min": passed,
-                "why": f"前の周の開始から {passed:.0f}分（間隔 {floor:.0f}分）"}
-    return {**base, "go": False, "roles": list(ROLES), "passed_min": passed,
-            "wait_min": floor - passed,
-            "why": f"前の周の開始から {passed:.0f}分。あと {floor - passed:.0f}分"}
+                "idle": idle,
+                "why": (f"前の周の開始から {passed:.0f}分（間隔 {floor:.0f}分）"
+                        + ("・走っているサブは 0体" if idle else ""))}
+    wait = floor - passed
+    out = {**base, "go": False, "roles": list(ROLES), "passed_min": passed,
+           "wait_min": wait, "idle": idle,
+           "why": f"前の周の開始から {passed:.0f}分。あと {wait:.0f}分"}
+    if idle:
+        # **起こしの時刻**（間隔が明ける瞬間 ＋ 1分。起きたとき `passed >= floor` に
+        #     なっているように。`send_later` は分の粒度）。
+        out["wake_at"] = started + timedelta(minutes=floor + 1.0)
+        out["wake_min"] = max(1, int(wait) + 1)
+        out["why"] = (f"**0体・間隔の途中**（前の周の開始から {passed:.0f}分・間隔 {floor:.0f}分）。"
+                      f"**起こしを置いて待つ** —— 立てると上限 "
+                      f"{OWNER_CAP_WORDS} を越え、枠を使い切った先で 31時間 止まる"
+                      "（09/03 06:3x「サブで判断して」）")
+    return out
 
 
 def record(role: str, now: datetime | None = None,
@@ -556,7 +652,7 @@ def main() -> int:
                     help="立てたことを記録する（役の名前。カンマ区切りで複数）")
     ap.add_argument("--live", type=int, default=None, metavar="N",
                     help="いま走っているサブの数（`list_sessions` から）。"
-                         "**0 なら間隔に関係なく GO**")
+                         "**0 でも間隔は守る（途中なら起こしを置いて WAIT）**")
     ap.add_argument("--live-set", type=int, default=None, metavar="N",
                     help="その数を台帳（data/live_subs.json）へ置くだけ")
     args = ap.parse_args()
@@ -610,8 +706,8 @@ def main() -> int:
         print("  [!] **走っているサブの数が渡されていません。WAIT も GO も出しません。**")
         print("  `list_sessions limit=25 mine=true` で数えて、"
               "**`python scripts/next_round.py --live <その数>`** を撃ち直すこと")
-        print("  （0体 なら GO・1体 以上なら間隔。**0体 で WAIT は存在しません** ——"
-              " 2026-08-31・09-02 に同じ形で2回 叱られています）")
+        print("  （0体 なら「間隔が明けていれば GO・途中なら起こしを置いて WAIT」・"
+              "1体 以上なら間隔。2026-08-31・09-02 に数を渡さずに2回 叱られています）")
         return 2
     print(f"  走っているサブ: **{d['live']}体**（{d['live_source']}）")
     roles = d["roles"]
@@ -641,7 +737,29 @@ def main() -> int:
     if d.get("live"):
         print(f"  **待つ理由は「二重に立てないため」です** —— いま {d['live']}体 が"
               "走っています。**間隔そのものではありません**")
-    print("  **何もしないこと。** 次のトリガーか、走っているサブの完了が拾います")
+        print("  **何もしないこと。** 次のトリガーか、走っているサブの完了が拾います")
+        return 0
+    # **0体 の WAIT ＝ 起こしを置く**（`decide()` の節 2026-09-03）。
+    #     置かずに待つと 08-31 の形（191分 の空き）。置けば空きは間隔ぶんだけ。
+    now = datetime.now(timezone.utc)
+    wake_at = d["wake_at"]
+    try:
+        from scripts.quota import JST as _JST
+    except Exception:                                          # noqa: BLE001
+        _JST = timezone(timedelta(hours=9))
+    hhmm = wake_at.astimezone(_JST).strftime("%H:%M")
+    pending = wake_read(now)
+    if pending is not None and abs((pending - wake_at).total_seconds()) <= 120:
+        print(f"  起こしは **{pending.astimezone(_JST):%H:%M} JST** に置いてあります"
+              "（`send_later` は撃たない。同じ周で親が何度 起きても 1回）")
+    else:
+        wake_write(wake_at, now=now)
+        print(f"  **起こしを置くこと**（承認待ちにならない・即返り）:")
+        print(f"    send_later  delay_minutes={d['wake_min']}  "
+              f"name=\"親の周（起こし {hhmm}）\"  "
+              "message=\"親の周です（起こし）。docs/trigger_body.rendered.md のとおりに。\"")
+    print(f"  出す文字: **（0体・次 {hhmm}）**  ← 白名簿の 2（それ以外は出さない）")
+    print("  **サブを立てないこと。** 立てると上限（今までの最高速度の二分の一）を越えます")
     return 0
 
 
