@@ -330,20 +330,22 @@ def place_hour(day, *, sweep=None, config=None) -> int:
       `sweep_hour()` 自身が対照だけを返すようになります。ここは変えなくてよい
     - `sweep_hour()` が `None`（対照が `MIN_N` に届かない）のあいだは、既定に倒れます
     """
+    # **正本は `src/publish_hour.place_hour`**（2026-09-03 02:5x に寄せた —— 同じ順が
+    # ここ・`daily_pick._hour_default`・`next_slot._move_lines` の3か所に書かれ、1か所だけ
+    # 古かった。順はあちらに1回だけ書く。ここは検査の差し替え口を残して呼ぶだけ）。
     try:
         from src import publish_hour                            # noqa: PLC0415
+        return publish_hour.place_hour(day, sweep=sweep, config=config)
     except Exception:                                          # noqa: BLE001
-        publish_hour = None
+        pass
     h = None
     try:
-        fn = sweep or (publish_hour.sweep_hour if publish_hour else None)
-        h = fn(day) if fn else None
+        h = sweep(day) if sweep else None
     except Exception:                                          # noqa: BLE001
         h = None
     if h is None:
         try:
-            fn = config or (publish_hour.config_hour if publish_hour else None)
-            h = fn() if fn else None
+            h = config() if config else None
         except Exception:                                      # noqa: BLE001
             h = None
     return 9 if h is None else int(h)

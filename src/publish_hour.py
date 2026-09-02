@@ -254,6 +254,52 @@ def config_hour(path: Path | None = None) -> int | None:
         return None
 
 
+def place_hour(day=None, *, sweep=None, config=None) -> int:
+    """**その日に置く時刻（JST の時）—— 正本はここ1つ。** 掃く側（`sweep_hour(その日)`）が先、
+    根拠が無ければ `config/channel.yaml` の既定、それも無ければ 9。**API 0単位。**
+
+    ## なぜ1つに寄せたか（2026-09-03 02:5x に踏んだ）
+
+    同じ `run_marker.py --write` の画面が、同じ本 `6PKux5HNnUE` の同じ手（09/04 の枠へ
+    `--move`）を **2つの時刻**で刷っていました:
+
+        [下書き]     python scripts/reschedule.py --move 6PKux5HNnUE 2026-09-04T09:00
+        [きょうの1本] python scripts/reschedule.py --move 6PKux5HNnUE 2026-09-04T17:00
+
+    9時 は `next_slot._move_lines` が `config_hour()` を読んだ数、17時 は
+    `daily_pick._hour_default` と `ahead_sweep.place_hour`（機械が実際に置く側）が
+    `sweep_hour()` を読んだ数です。**同じ判断が3か所に書かれていて、1か所だけ古い**
+    —— 「言っている所と、している所が別」（この module の冒頭）の、もう1つの形。
+    09/03 00:4x に `place_today` を直した回は、置く側と `daily_pick` を揃えましたが、
+    `next_slot` は `config_hour()` を直に読んだままでした。**3か所に同じ順を書く限り、
+    次に順を変えた回がまた1つ書き忘れます。** だから順はここに1回だけ書き、
+    3か所はこれを呼びます。
+
+    `sweep`／`config` は検査のための差し替え口（省略時はこの module の実物）。
+
+    ## 覆る条件
+
+    - 前提「公開時刻は per_video に効かない」（`config/hypotheses.yaml`）が閉じたら、
+      `sweep_hour()` 自身が対照だけを返すようになります。ここは変えなくてよい
+    - `sweep_hour()` が `None`（対照が `MIN_N` に届かない）のあいだは、既定に倒れます
+    """
+    if day is None:
+        day = datetime.now(JST).date()
+    h = None
+    try:
+        fn = sweep or sweep_hour
+        h = fn(day)
+    except Exception:                                          # noqa: BLE001
+        h = None
+    if h is None:
+        try:
+            fn = config or config_hour
+            h = fn()
+        except Exception:                                      # noqa: BLE001
+            h = None
+    return 9 if h is None else int(h)
+
+
 def lines(rows: list[tuple] | None = None) -> list[str]:
     """画面に出す形。**帯が1つも無ければ、1行も出しません。**"""
     tab = by_hour(rows)

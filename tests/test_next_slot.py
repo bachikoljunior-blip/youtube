@@ -278,3 +278,32 @@ def test_next_slot_keeps_a_real_reservation_over_the_pick(monkeypatch) -> None:
     out = next_slot.lines()
     nxt = next(ln for ln in out if ln.startswith("[次の枠]"))
     assert "`RES`" in nxt and "PICK" not in nxt
+
+
+def test_move_lines_は_機械が置く時刻と同じ数を刷る(monkeypatch) -> None:
+    """**同じ画面の同じ `--move` が 09:00 と 17:00 で2回 刷られていた**（2026-09-03 02:5x）。
+
+    `_move_lines` は `config_hour()`（9時）を直に読み、`daily_pick._hour_default` と
+    機械（`ahead_sweep.place_hour`）は `sweep_hour()`（09/04 は 17時）を読んでいた。
+    正本を `publish_hour.place_hour` の1か所に寄せ、3か所がそれを呼ぶ。
+    """
+    import datetime as _dt
+    import importlib
+    from src import daily_pick, publish_hour
+    sweep = importlib.import_module("scripts.ahead_sweep")
+
+    monkeypatch.setattr(publish_hour, "sweep_hour", lambda d: 17)
+    monkeypatch.setattr(publish_hour, "config_hour", lambda path=None: 9)
+    monkeypatch.setattr(next_slot, "_picked", lambda day: None)
+    day = _dt.date(2026, 9, 4)
+
+    got = [{"video_id": "6PKux5HNnUE", "title": "x"}]
+    lines = next_slot._move_lines(got, day)
+    assert any("2026-09-04T17:00" in ln for ln in lines), lines
+    assert not any("2026-09-04T09:00" in ln for ln in lines), lines
+    # 3か所が同じ数
+    assert daily_pick._hour_default(day) == 17
+    assert sweep.place_hour(day) == 17
+    # 掃く根拠が無ければ既定へ倒れる（3か所とも）
+    monkeypatch.setattr(publish_hour, "sweep_hour", lambda d: None)
+    assert next_slot._place_hour(day) == daily_pick._hour_default(day) == sweep.place_hour(day) == 9
