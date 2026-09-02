@@ -981,19 +981,43 @@ def _rebake_note(row: dict, root: Path | None = None) -> None:
         pass
 
 
-def rebake_today(now: datetime | None = None, *, dry_run: bool = False) -> dict:
-    """**決めた本の台本が、上げたときより良くなっていれば、背景で焼き直して差し替える。**
-    返りは `rebake_plan()` の dict に `started`（起こしたか）を足したもの。**決めるのは 0単位。**"""
-    now = now or datetime.now(timezone.utc)
-    stamp = now.astimezone(JST).strftime("%m/%d %H:%M JST")
-    from src import daily_pick, next_slot                      # noqa: PLC0415
-    root = Path(config.ROOT)
+#: 決めが在る先の日を、きょうの他に何日ぶん見るか（2026-09-03 05:xx・最適化の回）。
+#: 09/05 の本 `dRZnZrRy2Lw` は 09/03 の時点で冒頭が旧の型のまま決まっていて、`for_day()` だけを見る形だと
+#: 09/04 17:00 に 09/04 の枠が埋まるまで**誰も焼き直さない**（規則3 の「出る瞬間まで良くし続ける」が、
+#: 手前の1日ぶんしか効かない）。先の決めも同じ門で見れば、直した台本は commit した次の周に本になる。
+REBAKE_DAYS_AHEAD = 2
+#: 焼く印（`_rebake_marks_dir()/<ID>-<sha>`）が「まだ焼いている」と読める上限。これより古く、帳面に
+#: `done` が無ければ、焼く側が途中で死んだ（容器の回収・親の畳み）と読んで、もう一度 焼く。
+REBAKE_MARK_STALE = timedelta(hours=3)
+
+
+def rebake_attempted(vid: str, sha: str, *, now: datetime, root: Path | None = None) -> bool:
+    """**同じ台本（sha）を一度 焼いたか。** 印が在って、帳面に `done` が在る（rc を問わない）か、
+    印が `REBAKE_MARK_STALE` より若い（＝いま焼いている）なら True。
+    印だけ在って `done` が無く古い ＝ 焼く側が途中で死んだ → False（もう一度 焼く）。"""
+    if not sha or not vid:
+        return False
+    mark = _rebake_marks_dir() / f"{vid}-{sha}"
+    if not mark.exists():
+        return False
+    for r in _rebake_rows(root):
+        if r.get("kind") == "done" and r.get("video_id") == vid and r.get("sha") == sha:
+            return True
     try:
-        day = daily_pick.for_day(now)
-        cur = daily_pick.current(day)
-    except Exception as exc:                                   # noqa: BLE001
-        print(f"[rebake] {stamp} 決めを読めませんでした: {str(exc)[:120]}", flush=True)
-        return {"do": False, "started": False, "why": "決めを読めない"}
+        raw = mark.read_text(encoding="utf-8").strip()
+        at = ahead_gate._parse(raw) if raw else None
+    except OSError:
+        at = None
+    if at is None:
+        return True
+    return (now - at) < REBAKE_MARK_STALE
+
+
+def rebake_plan_for(day, now: datetime, *, root: Path | None = None) -> dict:
+    """その日の決めた本について `rebake_plan()` を組む（読むだけ・0単位）。"""
+    from src import daily_pick, next_slot                      # noqa: PLC0415
+    root = Path(root or config.ROOT)
+    cur = daily_pick.current(day)
     vid = str((cur or {}).get("video_id") or "")
     topic = str((cur or {}).get("topic") or "")
     stash = stash_script(vid, root) if vid else None
@@ -1009,7 +1033,7 @@ def rebake_today(now: datetime | None = None, *, dry_run: bool = False) -> dict:
     except Exception:                                          # noqa: BLE001
         scheduled = False
     sha = script_sha(draft_text) if draft_text else ""
-    attempted = bool(sha) and (_rebake_marks_dir() / f"{vid}-{sha}").exists()
+    attempted = rebake_attempted(vid, sha, now=now, root=root)
     today_s = now.astimezone(JST).date().isoformat()
     baked_today = sum(1 for r in _rebake_rows(root)
                       if r.get("kind") == "start" and str(r.get("at", ""))[:10] == today_s)
@@ -1021,11 +1045,48 @@ def rebake_today(now: datetime | None = None, *, dry_run: bool = False) -> dict:
     plan = rebake_plan(cur=cur, stash_text=stash_text, draft_text=draft_text, draft_newer=newer,
                        attempted=attempted, scheduled=scheduled, slot_at=slot_at, now=now,
                        baked_today=baked_today)
+    plan["for_day"] = day.isoformat()
+    plan["decided"] = bool(cur)
+    return plan
+
+
+def rebake_today(now: datetime | None = None, *, dry_run: bool = False) -> dict:
+    """**決めた本の台本が、上げたときより良くなっていれば、背景で焼き直して差し替える。**
+    見るのは `for_day()` の日と、その先 `REBAKE_DAYS_AHEAD` 日の決め（先の決めは決めが在る日だけ）。
+    返りは最初に「焼く」と出た日の `rebake_plan()` の dict（無ければ最初の日のもの）に `started` を足したもの。
+    **決めるのは 0単位。** 起こすのは1周に1本（錠は焼く側が持つ）。"""
+    now = now or datetime.now(timezone.utc)
+    stamp = now.astimezone(JST).strftime("%m/%d %H:%M JST")
+    from src import daily_pick                                 # noqa: PLC0415
+    root = Path(config.ROOT)
+    try:
+        first = daily_pick.for_day(now)
+    except Exception as exc:                                   # noqa: BLE001
+        print(f"[rebake] {stamp} 決めを読めませんでした: {str(exc)[:120]}", flush=True)
+        return {"do": False, "started": False, "why": "決めを読めない"}
+    days = [first + timedelta(days=i) for i in range(REBAKE_DAYS_AHEAD + 1)]
+    chosen: dict | None = None
+    head: dict | None = None
+    for i, day in enumerate(days):
+        try:
+            plan = rebake_plan_for(day, now, root=root)
+        except Exception as exc:                               # noqa: BLE001
+            print(f"[rebake] {stamp} {day.isoformat()} の決めを読めませんでした: {str(exc)[:120]}", flush=True)
+            continue
+        if i > 0 and not plan.get("decided"):
+            continue                                           # 先の日は決めが在るときだけ
+        head = head or plan
+        if plan["do"] and chosen is None:
+            chosen = plan
+        else:
+            print(f"[rebake] {stamp} {day.isoformat()} は焼き直しません —— {plan['why']}", flush=True)
+    plan = chosen or head or {"do": False, "why": "決めが無い", "video_id": "", "topic": "", "sha": ""}
     plan["started"] = False
     if not plan["do"]:
-        print(f"[rebake] {stamp} 焼き直しません —— {plan['why']}", flush=True)
         return plan
-    print(f"[rebake] {stamp} **焼き直します**: `{vid}`（{topic}）—— {plan['why']}", flush=True)
+    vid, topic, sha = plan["video_id"], plan["topic"], plan["sha"]
+    day_s = plan.get("for_day", first.isoformat())
+    print(f"[rebake] {stamp} **焼き直します**（{day_s} の本）: `{vid}`（{topic}）—— {plan['why']}", flush=True)
     if dry_run:
         print("[rebake] **焼いていません**（`--dry-run`）", flush=True)
         return plan
@@ -1034,8 +1095,9 @@ def rebake_today(now: datetime | None = None, *, dry_run: bool = False) -> dict:
         mark.write_text(now.isoformat() + "\n", encoding="utf-8")
     except OSError:
         pass
+    t = now.astimezone(JST)
     _rebake_note({"at": t.isoformat(timespec="seconds"), "kind": "start", "video_id": vid,
-                  "topic": topic, "sha": sha, "for_day": day.isoformat(),
+                  "topic": topic, "sha": sha, "for_day": day_s,
                   "session": os.environ.get("CLAUDE_SESSION_ID") or ""}, root)
     try:
         log = open(root / REBAKE_LOG, "ab")                     # noqa: SIM115
