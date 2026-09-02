@@ -759,12 +759,10 @@ def _hour_default(day: date | None = None) -> int:
     """機械が実際に置く時刻 —— **掃く側**（`publish_hour.sweep_hour(その日)`）が先、
     根拠が無ければ `config/channel.yaml` の `publish_hour_jst`（`scripts/ahead_sweep.place_hour`
     と同じ順。2026-09-03 に揃えた —— 画面が 9時 と言い、機械が 17時 に置く形にしないため）。"""
+    # 正本は `publish_hour.place_hour`（2026-09-03 02:5x に寄せた。順をここに書き直さないこと）
     try:
         from . import publish_hour
-        h = publish_hour.sweep_hour(day or for_day())
-        if h is None:
-            h = publish_hour.config_hour()
-        return int(h) if h is not None else 9
+        return int(publish_hour.place_hour(day or for_day()))
     except Exception:                                          # noqa: BLE001
         return 9
 

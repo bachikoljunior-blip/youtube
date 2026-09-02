@@ -120,6 +120,16 @@ TOP_KEEP = 15
 
 LEDGER = ROOT / "data" / "niche_ceiling.jsonl"
 
+#: **外の上位の絵**（`https://i.ytimg.com/vi/<id>/hqdefault.jpg`・API 0単位・1枚 約50KB）。
+#: 2026-09-03 02:4x の回が「外の帯の上位と**作りが違う点**を1つ、次の1本に入れる」を
+#: やろうとして、**題と尺は帳面に在るのに、絵はどこにも無かった**（curl で4枚 取って
+#: 初めて型が見えた —— 黄色い箱の題材・赤字に白縁の主語・黄色の結論・人の顔）。
+#: `[きょうの1本]` が毎周「作りが違う点」と言う以上、その絵は毎周 手元に在ること。
+#: 置き場は git に入れる（`*.jpg` は `.gitignore` の外。控えのサムネと同じ扱い）。
+THUMBS = ROOT / "data" / "niche_thumbs"
+THUMB_URL = "https://i.ytimg.com/vi/{id}/hqdefault.jpg"
+THUMBS_KEEP = 8
+
 #: `scripts/eta.py` の `lever_need_over_cap`（天井をいくつ上げれば日付が出るか）。
 #: **この数は動きます。** 判定に使う前に `data/eta.jsonl` の最後の行を見ること。
 NEED_OVER_CAP = 21.88
@@ -406,6 +416,57 @@ def _rows(path: Path | None = None) -> list[dict]:
     return out
 
 
+def _get_bytes(url: str, timeout: int = 20) -> bytes:
+    """1枚 取る（proxy は環境変数のまま。`urllib` が落ちたら `curl` へ倒れる）。"""
+    try:
+        import urllib.request                                  # noqa: PLC0415
+        with urllib.request.urlopen(url, timeout=timeout) as r:  # noqa: S310
+            return r.read()
+    except Exception:                                          # noqa: BLE001
+        import subprocess                                      # noqa: PLC0415
+        cp = subprocess.run(["curl", "-sS", "--max-time", str(timeout), url],
+                            capture_output=True, check=False)
+        return cp.stdout if cp.returncode == 0 else b""
+
+
+def thumb_path(video_id: str, root: Path | None = None) -> Path:
+    return (root or THUMBS) / f"{video_id}.jpg"
+
+
+def fetch_thumbs(rows: list[dict], *, keep: int = THUMBS_KEEP, form: str | None = None,
+                 root: Path | None = None, fetch=None) -> list[Path]:
+    """**外の上位の絵を `data/niche_thumbs/<id>.jpg` に落とす**（API 0単位・在るものは撃たない）。
+
+    `rows` は帳面の `top`（`top_rows()` の形）。形ごとに再生の多い順 `keep` 枚。
+    `fetch` は検査の差し替え口（`url -> bytes`）。返り: 手元に在る（新旧とも）道の一覧。
+
+    **覆る条件**: `i.ytimg.com` が proxy の外なら 0枚 で黙って返る（`[!]` を1行 出す）。
+    """
+    root = root or THUMBS
+    fetch = fetch or _get_bytes
+    forms = [form] if form else ["short", "long"]
+    got: list[Path] = []
+    for f in forms:
+        top = sorted((r for r in rows if r.get("form") == f and r.get("id")),
+                     key=lambda r: -int(r.get("views") or 0))[:keep]
+        for r in top:
+            dst = thumb_path(str(r["id"]), root)
+            if dst.exists() and dst.stat().st_size > 0:
+                got.append(dst)
+                continue
+            try:
+                data = fetch(THUMB_URL.format(id=r["id"]))
+            except Exception:                                  # noqa: BLE001
+                data = b""
+            if not data:
+                print(f"[niche] [!] 絵が取れませんでした: {r['id']}（{THUMB_URL.format(id=r['id'])}）")
+                continue
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            dst.write_bytes(data)
+            got.append(dst)
+    return got
+
+
 def latest(path: Path | None = None, form: str | None = None) -> dict | None:
     """**帳面の最後の1件**（`data/niche_ceiling.jsonl`）。**撃ちません・API 0単位。**
 
@@ -463,9 +524,21 @@ def top_lines(form: str = "short", path: Path | None = None,
     if top:
         out.append(f"       外で取れている題（上位{len(top)}・**題材を決める根拠はこちらのほうが強い**"
                    "。族の中央値は n=2〜6）:")
+        have = 0
         for r in top:
+            has = thumb_path(str(r.get("id") or "")).exists()
+            have += int(has)
             out.append(f"         {int(r.get('views') or 0):>10,}回  {int(r.get('secs') or 0):>3}s  "
-                       f"{str(r.get('title') or '')[:46]}")
+                       f"{str(r.get('title') or '')[:46]}"
+                       f"{'  絵 `data/niche_thumbs/' + str(r.get('id')) + '.jpg`' if has else ''}")
+        # **作りが違う点は、題と尺だけでは見えません**（2026-09-03 02:4x の回が curl で4枚
+        # 取って初めて「黄色い箱・赤字に白縁・人の顔」が見えた）。絵の在りかをここに出す。
+        if have < len(top):
+            out.append(f"       絵が手元に無い本 {len(top) - have}本 —— "
+                       "`python scripts/niche_ceiling.py --thumbs-only`（API 0単位・`i.ytimg.com`）"
+                       "で `data/niche_thumbs/<id>.jpg` に落ちます。**題と尺だけで「作りが違う点」を決めないこと**")
+        else:
+            out.append("       絵は全部 `data/niche_thumbs/<id>.jpg` に在ります（`Read` で見ること・API 0単位）")
     return out
 
 
@@ -634,7 +707,22 @@ def main(argv: list[str] | None = None) -> int:
                     help="short: `videoDuration=short` と SHORT_QUERIES で、毎日 出している形の外を撃つ")
     ap.add_argument("--source", choices=("free", "api"), default="free",
                     help="free: yt-dlp の検索（0単位・既定）／ api: Data API の search.list（100単位/語）")
+    ap.add_argument("--thumbs", type=int, default=THUMBS_KEEP,
+                    help=f"撃った後に、形ごと上位 N枚 の絵を data/niche_thumbs/ に落とす（0単位・既定 {THUMBS_KEEP}・0 で落とさない）")
+    ap.add_argument("--thumbs-only", action="store_true",
+                    help="撃たずに、帳面の最後の1件の上位の絵だけ落とす（0単位）")
     a = ap.parse_args(argv)
+    if a.thumbs_only:
+        row = latest(form=None if a.form == "any" else a.form)
+        if not row:
+            print("[niche] 帳面が空です（先に撃つこと）")
+            return 2
+        got = fetch_thumbs(row.get("top") or [], keep=max(0, a.thumbs),
+                           form=None if a.form == "any" else a.form)
+        print(f"[niche] 絵 {len(got)}枚 が手元に在ります: {THUMBS}")
+        for pth in got:
+            print(f"    {pth.name}")
+        return 0
     if a.source == "free" and a.form == "any":
         # 0単位なので、ショートの語と長尺の語を**両方**撃つ（形ごとの帯が同じ帳面に入る）。
         qs = SHORT_QUERIES[:max(1, a.queries)] + QUERIES[:max(1, a.queries)]
@@ -664,6 +752,10 @@ def main(argv: list[str] | None = None) -> int:
             "summary": summarize(res["rows"]), "own_ceiling": own_ceiling(),
             "top": top_rows(res["rows"]),
         }, ensure_ascii=False) + "\n")
+    if a.thumbs > 0:
+        got = fetch_thumbs(top_rows(res["rows"]), keep=a.thumbs,
+                           form=None if a.form == "any" else a.form)
+        print(f"[niche] 絵 {len(got)}枚 → {THUMBS}（0単位）")
     return 0
 
 

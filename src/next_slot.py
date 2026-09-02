@@ -1015,12 +1015,28 @@ def _config_hour() -> int:
         return 20
 
 
+def _place_hour(day) -> int:
+    """機械が実際に置く時刻 —— **正本は `publish_hour.place_hour`**（掃く側が先・次に既定）。
+
+    2026-09-03 02:5x に踏んだ: ここが `_config_hour()`（9時）を直に読み、同じ画面の
+    `[きょうの1本]`（`daily_pick._hour_default`）と機械（`ahead_sweep.place_hour`）は
+    `sweep_hour()`（09/04 は 17時）を読んでいた。**同じ本の同じ `--move` が 09:00 と 17:00 で
+    2回 刷られる形。** 順を3か所に書くのをやめ、ここは正本を呼ぶだけ。
+    """
+    try:
+        from . import publish_hour                               # noqa: PLC0415
+        return int(publish_hour.place_hour(day))
+    except Exception:                                            # noqa: BLE001
+        return _config_hour()
+
+
 def _move_lines(got: list[dict], day, hour: int | None = None, note: str = "") -> list[str]:
     """その日の枠へ入れる `--move` の1行。**`[きょうの1本]` で別の本を決めてあれば、そちら**
     （2026-09-02 夜・最適化の回）—— 同じ画面が2つの本を名指しすると、次の回はどちらか
-    を惰性で撃ちます。決めた本が下書きと違うとき、下書きは消さずに池へ残します。"""
+    を惰性で撃ちます。決めた本が下書きと違うとき、下書きは消さずに池へ残します。
+    時刻は `_place_hour(day)`（機械が置く側と同じ数。9時 と 17時 が同じ画面に並んだ 09/03 の跡）。"""
     picked = _picked(day)
-    hour = _config_hour() if hour is None else hour
+    hour = _place_hour(day) if hour is None else hour
     vid = str(got[0].get("video_id")) if got else ""
     # **置くのは機械です**（2026-09-02 夜・`scripts/ahead_sweep.place_today`）——
     # その日になった最初の SessionStart が、この本を その日の枠へ置きます。
