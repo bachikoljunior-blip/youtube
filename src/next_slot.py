@@ -137,6 +137,68 @@ def _parse(ts: str | None) -> datetime | None:
     return d if d.tzinfo else d.replace(tzinfo=timezone.utc)
 
 
+def latest_rows(path: Path | None = None) -> dict[str, dict]:
+    """**1本の動画は1行**にたたむ（`{video_id: 勝った行}`）。**API 0単位。**
+
+    ## なぜ「最後の行」ではいけないか（2026-09-02 に、撃って踏んだ）
+
+    ここは長らく `latest[video_id] = r` の**素通し**でした ＝ **ファイルの最後の行が勝つ**。
+    控えは1本につき1行ではありません（実測 854行 / 739本）—— `retime()` が行を足し、
+    **きょうだいの回の merge が両方の行を残します。**
+
+    **ファイルの並びは、時刻の順ではありません。** 実物 `DyEcaMK5ZU8`:
+
+        508行目  at = 2026-10-10T00:00:00Z   retimed_at = 2026-08-26T07:**10**:57  ← 本物
+        511行目  at = 2026-09-04T04:00:00Z   retimed_at = 2026-08-26T07:**08**:07
+
+    **後ろの行のほうが、2分 古い。** 最後の行を採ると **09/04** を拾います ——
+    そんな予約はありません（本物は 10/10）。実測でこう割れていました:
+
+        python -m src.next_slot   [次の枠] **09/04 13:00 JST（あと 45時間）に出る1本**
+        scripts/ahead_gate.py     先の日付の予約は **2026-09-24 〜 2026-10-10**（09/04 は無い）
+
+    **`src/dupes._collapse()` は 2026-08-25 からこれを正しく解いています** ——
+    「勝つ行は `retimed_at` がいちばん新しい行、無ければ最後の行」。
+    `retimed_at` は **`videos.update` を通った側を言う唯一の手がかり**だからです。
+    `scripts/status.py` / `scripts/slot_gate.py` / `scripts/ahead_gate.py` /
+    `scripts/pool_drain.py` は全部そちらを読んでいて、**この file だけが別でした。**
+
+    ## 何が壊れていたか
+
+    `[次の枠]` は **`improve` の当てどころ**です（`lines()` の最後の行が
+    「規則3 が言っているのはこの1本のことです」と書いています）。
+    **主実行は、在りもしない枠に向かって規則3 を回していました** ——
+    「あと 45時間」も、`swap_cost_lines()` の見積りも、その幻の上に乗ります。
+
+    ## なぜ `dupes.ledger_rows()` を呼ばないか
+
+    あちらは**読む先が固定**で、`path=` を受けません（検査が控えを差し替えます）。
+    **目盛りだけ** `dupes._retime_key` から借りて、**規則の出どころは1か所**に保ちます。
+
+    ## 覆る条件
+
+    `retime()` が印を押さなくなったら、この関数は「最後の行」へ落ちます
+    （`_retime_key` が両方 `(0, "")` を返すため）＝ **いまの素通しと同じ**。
+    そのときは**印のほうを直すこと。**
+    """
+    try:
+        from src.dupes import _retime_key                       # noqa: PLC0415
+    except Exception:                                           # noqa: BLE001
+        def _retime_key(row: dict) -> tuple:                    # noqa: ANN202
+            stamp = row.get("retimed_at") or ""
+            return (1 if stamp else 0, stamp)
+    best: dict[str, dict] = {}
+    for r in _rows(path):
+        vid = r.get("video_id")
+        if not vid:
+            continue
+        vid = str(vid)
+        cur = best.get(vid)
+        if cur is None or _retime_key(r) >= _retime_key(cur):
+            best[vid] = r
+    return best
+
+
 def next_video(now: datetime | None = None,
                path: Path | None = None) -> dict | None:
     """**次に公開される1本**（`at` が未来で最小）。無ければ `None`。
@@ -146,11 +208,7 @@ def next_video(now: datetime | None = None,
     予約を外した本（`at` が `null` に変わった本）を「次の1本」に出します。
     """
     t = now or datetime.now(timezone.utc)
-    latest: dict[str, dict] = {}
-    for r in _rows(path):
-        vid = r.get("video_id")
-        if vid:
-            latest[str(vid)] = r
+    latest = latest_rows(path)
     fut = []
     for r in latest.values():
         at = _parse(r.get("at"))
@@ -528,11 +586,7 @@ def calendar(now: datetime | None = None,
         rule = max(1, int(house_rule.PUBLISH_PER_DAY))
     except Exception:                                          # noqa: BLE001
         rule = 1
-    latest: dict[str, dict] = {}
-    for r in _rows(path):
-        vid = r.get("video_id")
-        if vid:
-            latest[str(vid)] = r
+    latest = latest_rows(path)
     per_day: dict[str, int] = {}
     for r in latest.values():
         at = _parse(r.get("at"))
@@ -866,11 +920,7 @@ def drafts(now: datetime | None = None,
     （＝ また 136本 に戻ります）。**そのときは印のほうを直すこと。**
     """
     t = now or datetime.now(timezone.utc)
-    latest: dict[str, dict] = {}
-    for r in _rows(path):
-        vid = r.get("video_id")
-        if vid:
-            latest[str(vid)] = r
+    latest = latest_rows(path)
     out = []
     for r in latest.values():
         if r.get("at") or r.get("retimed_at"):
@@ -907,11 +957,7 @@ def today_count(now: datetime | None = None,
     t = now or datetime.now(timezone.utc)
     day = t.astimezone(JST).date()
     floor = datetime(day.year, day.month, day.day, tzinfo=JST)
-    latest: dict[str, dict] = {}
-    for r in _rows(path):
-        vid = r.get("video_id")
-        if vid:
-            latest[str(vid)] = r
+    latest = latest_rows(path)
     n = 0
     for r in latest.values():
         at = _parse(r.get("at"))
