@@ -7567,3 +7567,4 @@
 {"at": "2026-09-02T20:17:33+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": false, "by": "scan.py:query"}
 {"at": "2026-09-02T20:17:34+00:00", "api": "data", "method": "channels.list", "units": 1, "ok": true, "by": "scan.py:collect"}
 {"at": "2026-09-02T20:17:35+00:00", "api": "data", "method": "playlists.list", "units": 1, "ok": true, "by": "scan.py:collect"}
+{"at": "2026-09-02T20:13:34+00:00", "api": "data", "method": "videos.list", "units": 1, "ok": true, "by": "post_pending_comments.py:main", "detail": "1huadpEk6HY,6GtzWaguZhg,6PKux5HNnUE,9zkfjEH48PY,DfFyu8qZq3I,OBJdXEr6gLg,SD8zQU-x6y0,dRZnZrRy2Lw,wOlDmGhbBts"}
