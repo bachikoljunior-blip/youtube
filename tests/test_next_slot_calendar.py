@@ -272,3 +272,80 @@ def test_下書きが無ければ黙る(tmp_path):
         {"video_id": "sched", "title": "予約ずみ", "topic": "t-3",
          "at": "2026-09-24T11:00:00Z", "uploaded_at": "2026-09-01T02:00:00+00:00"}])
     assert next_slot.draft_lines(now=NOW, path=p) == []
+
+
+# =====================================================================
+# **予約が無い回に「improve は当てどころが無い」と言わないこと**
+#   （2026-09-02 に踏んだ。**同じ画面の中で2行が正反対を言っていました**）
+#
+#   実物（`python -m src.next_slot` の出力・09/02 16:3x）:
+#
+#       [下書き] 予約を付けずに上げてある本が 1本 あります　`MqQKSnbM0OI`
+#              **きょうやるのは `improve` のほう**です（規則3）
+#       [次の枠] **予約が1本もありません。** `improve` は当てどころが無い回です
+#
+#   **規則5（固定その4「1日の回り方」）の下では、これが普通の状態です** ——
+#   「作るのは前の日から、**予約だけが当日**」なので、次に出る1本は
+#   その日が来るまで必ず `at` が空。`next_video()` は `at` が未来の行しか
+#   見ないので、**規則5 が効いている間ずっと**「当てどころが無い」と言い続けます。
+#
+#   実測（`data/runs.jsonl` の ship 305件）: `improve` は **9件（3%）**で、
+#   その9件は**全部**「予約ずみの本が在った 20時間の窓」に入っています。
+#   窓の外 192件 では **0件**。**当てどころが出ない回に improve は選ばれません。**
+#
+#   ＝ 3% は「improve が効かない」ではなく「**当てどころが出ていない**」でした。
+# =====================================================================
+
+
+def _lines_with_draft(monkeypatch, draft: dict | None,
+                      sched: dict | None = None,
+                      stale: list[str] | None = None,
+                      thumb: bool = False) -> str:
+    monkeypatch.setattr(next_slot, "calendar_lines", lambda **k: [])
+    monkeypatch.setattr(next_slot, "draft_lines", lambda **k: [])
+    monkeypatch.setattr(next_slot, "next_video", lambda **k: sched)
+    monkeypatch.setattr(next_slot, "drafts", lambda **k: [draft] if draft else [])
+    monkeypatch.setattr(next_slot, "stale_commits", lambda *a, **k: stale or [])
+    monkeypatch.setattr(next_slot, "pending_thumbnail", lambda *a, **k: thumb)
+    return "\n".join(next_slot.lines(now=NOW))
+
+
+DRAFT = {"video_id": "draft1", "title": "下書きの題", "topic": "t-1",
+         "at": None, "uploaded_at": "2026-09-01T02:00:00+00:00"}
+
+
+def test_予約が無くても下書きが在れば当てどころとして出す(monkeypatch):
+    body = _lines_with_draft(monkeypatch, DRAFT)
+    assert "当てどころが無い回です" not in body, body
+    assert "draft1" in body, body
+    assert "**`improve` の当てどころは、この本です。**" in body, body
+
+
+def test_下書きも予約も無ければ_これまでどおり当てどころが無いと言う(monkeypatch):
+    body = _lines_with_draft(monkeypatch, None)
+    assert "当てどころが無い回です" in body, body
+
+
+def test_下書きの回に_外す枠のない_unschedule_を出さない(monkeypatch):
+    """**下書きには外す枠がありません。** 撃つと空振りします。"""
+    body = _lines_with_draft(monkeypatch, DRAFT, stale=["abc1234 何かの直し"])
+    assert "焼き直すのが `improve` の1手です" in body, body
+    assert "--unschedule <古い方>" not in body, body
+    assert "`--unschedule` は要りません" in body, body
+
+
+def test_下書きの回は_あと何時間_を出さない(monkeypatch):
+    """`_at` が無い本に「あと N時間」は書けません（**落ちない**ことも見ます）。"""
+    body = _lines_with_draft(monkeypatch, DRAFT, thumb=True)
+    assert "時間）に出る1本" not in body, body
+    assert "refresh_thumbnail.py --missing --video draft1" in body, body
+
+
+def test_予約が在る回は_これまでどおり予約のほうを出す(monkeypatch):
+    from datetime import datetime, timezone
+    sched = {"video_id": "sched1", "title": "予約ずみ", "topic": "t-9",
+             "uploaded_at": "2026-09-01T02:00:00+00:00",
+             "_at": datetime(2026, 9, 2, 11, 0, tzinfo=timezone.utc)}
+    body = _lines_with_draft(monkeypatch, DRAFT, sched=sched)
+    assert "sched1" in body, body
+    assert "draft1" not in body, "**予約が在る回に下書きへ乗り換えないこと**"
