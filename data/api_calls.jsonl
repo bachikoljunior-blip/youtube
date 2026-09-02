@@ -5103,3 +5103,12 @@
 {"at": "2026-09-02T03:38:34+00:00", "api": "data", "method": "channels.list", "units": 1, "ok": false, "by": "history.py:_scan"}
 {"at": "2026-09-02T03:40:58+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "rpm_mix.py:fetch_video_forms"}
 {"at": "2026-09-02T03:40:58+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "rpm_mix.py:fetch_video_forms"}
+{"at": "2026-09-02T03:37:24+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "eta.py:q"}
+{"at": "2026-09-02T03:37:24+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "eta.py:q"}
+{"at": "2026-09-02T03:37:24+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "eta.py:q"}
+{"at": "2026-09-02T03:37:25+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "eta.py:q"}
+{"at": "2026-09-02T03:37:25+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "eta.py:q"}
+{"at": "2026-09-02T03:37:25+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "eta.py:q"}
+{"at": "2026-09-02T03:37:25+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "eta.py:q"}
+{"at": "2026-09-02T03:43:45+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "rpm_mix.py:fetch_video_forms"}
+{"at": "2026-09-02T03:43:45+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "rpm_mix.py:fetch_video_forms"}

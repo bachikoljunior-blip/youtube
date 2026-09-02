@@ -21,6 +21,7 @@ from __future__ import annotations
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from types import SimpleNamespace
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
@@ -38,10 +39,20 @@ class _Ledger:
         return {"data": self._used}
 
 
-def _lines(monkeypatch, used: int, empty: int = 20):
+def _lines(monkeypatch, used: int, empty: int = 20, shut: bool = None):
+    """`shut` は**観測した 403**（`upload_cap.day_quota().open is False`）。
+
+    **既定は `used >= cap` に合わせてあります** —— 帳面と観測が一致する回。
+    食い違う回は `shut` を明示すること（下の `test_観測した403のほうで分岐する`）。
+    """
     import src.quota_ledger as ql
+    import src.upload_cap as uc
     monkeypatch.setattr(ql, "spent", lambda _t: {"data": used})
     monkeypatch.setattr(ql, "DAY_UNITS", 10_000)
+    if shut is None:
+        shut = used >= 10_000
+    monkeypatch.setattr(uc, "day_quota",
+                        lambda _t=None: SimpleNamespace(open=not shut))
     t = datetime(2026, 9, 2, 7, 5, tzinfo=timezone.utc)
     return "\n".join(next_slot._calendar_quota_lines(t, empty=empty))
 
@@ -57,6 +68,44 @@ def test_撃てない回は_戻る時刻を言う(monkeypatch):
     assert "403" in got
     assert "戻るのは" in got
     assert "いま撃てます" not in got
+
+
+def test_観測した403のほうで分岐する(monkeypatch):
+    """**帳面の見積りが枠を超えていても、403 を観測していなければ撃てます。**
+
+    `upload_cap.day_quota()` は2つの場合に「押してよい」と答えます ——
+    403 のあとに呼び出しが通った（＝ あれは日枠ではなかった）ときと、
+    枠が読めなかったとき。**どちらも `spent()` は cap を超えたまま**なので、
+    見積りで分岐すると**この関数だけが黙り**、窓を1つ丸ごと落とします。
+    """
+    got = _lines(monkeypatch, used=16_043, shut=False)
+    assert "いま撃てます" in got, (
+        "`day_quota()` が『押してよい』と言っている回で黙っています —— "
+        "判定は帳面の見積りではなく、観測した 403 です")
+    assert "16,043" in got, "見積りは但し書きとして残すこと（撃つ前に読めるように）"
+    assert "公表値" in got, "なぜ超えていても撃ってよいかが書かれていません"
+
+
+def test_見積りが枠の内側でも観測した403が勝つ(monkeypatch):
+    """逆向き。**観測した 403 は、見積りが小さくても勝ちます。**"""
+    got = _lines(monkeypatch, used=0, shut=True)
+    assert "403" in got and "いま撃てます" not in got
+
+
+def test_枠が読めない回は撃つ側へ倒す(monkeypatch):
+    """`day_quota()` が投げたら「押してみる」。**黙るほうへ倒さないこと。**"""
+    import src.quota_ledger as ql
+    import src.upload_cap as uc
+
+    def boom(_t=None):
+        raise RuntimeError("読めません")
+
+    monkeypatch.setattr(ql, "spent", lambda _t: {"data": 16_043})
+    monkeypatch.setattr(ql, "DAY_UNITS", 10_000)
+    monkeypatch.setattr(uc, "day_quota", boom)
+    t = datetime(2026, 9, 2, 7, 5, tzinfo=timezone.utc)
+    got = "\n".join(next_slot._calendar_quota_lines(t, empty=20))
+    assert "いま撃てます" in got
 
 
 def test_撃てる回のほうが静かにならない(monkeypatch):

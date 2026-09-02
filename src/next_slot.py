@@ -610,6 +610,38 @@ def _calendar_quota_lines(t: datetime, empty: int = 0) -> list[str]:
 
     **覆る条件**: 暦が規則どおりになれば `calendar_lines()` がこの節ごと出しません
     （＝ 鳴っていない回には、この号令も出ません）。
+
+    ## **黙らせる4つ目の口が、まだ空いていました**（2026-09-02 12:4x に測って塞いだ）
+
+    上の直しは枝の**中身**を入れ替えただけで、**どちらの枝へ入るかは
+    `quota_ledger.spent() >= DAY_UNITS`（＝ 帳面の見積り）のまま**でした。
+    **repo の判定はそこではありません** —— `docs/trigger_main.md` §2433 と
+    `scripts/run_marker.py` が「**判定は観測した 403 です
+    （`upload_cap.day_quota().open`）**」と書いています。**2つの出どころが在り、
+    食い違ったときに黙るのは、また撃てる回のほうでした。**
+
+    実測（2026-09-02 12:4x・`spent()=16,043` のまま `day_quota()` だけ開かせた）:
+
+        upload_cap.day_quota().line   「**あの 403 は日枠ではありません。押してよい。**」
+        _calendar_quota_lines()       「**この窓では 403 です**（16,043 / 10,000単位）」
+
+    **同じ回の画面で、片方が「押してよい」、片方が「403 です」。**
+    `day_quota()` が開くのは実際に起きる2つの場合です ——
+    **403 のあとに呼び出しが通った**とき（`quota_ok_after_hits`。日枠は窓の中で
+    戻らないので、あれは日枠ではなかった ＝ 短い間に撃ちすぎた側）と、
+    **枠が読めなかった**とき（あちらは「読めない」を「閉じている」と読みません）。
+    どちらも `spent()` は cap を超えたままなので、**この関数だけが黙り続けます。**
+
+    そして `spent()` は超えます —— **単価は公表値で Google の実数ではなく**
+    （`quota_ledger.DAY_UNITS` の註）、いまの実測は **16,043 / 10,000 ＝ 160%** です。
+
+    **いまは `day_quota().open` で分岐し、`spent()` は但し書きにだけ使います。**
+    外す向きは撃ってみれば分かります（403 が返ったらそこまでは動いている ＝
+    次の窓で `--compact` をもう一度）。**黙る側は、窓を丸ごと1つ落とします。**
+
+    **覆る条件**: `quota_ledger.spent()` が公表値ではなく Google の実数を
+    読めるようになったら、`day_quota()` と二重に持つ意味がなくなります
+    （そのときは `upload_cap.day_quota()` の側をこの見積りで作ること）。
     """
     try:
         from src import quota_ledger, upload_cap              # noqa: PLC0415
@@ -618,9 +650,21 @@ def _calendar_quota_lines(t: datetime, empty: int = 0) -> list[str]:
         back = upload_cap.window_end(t)
     except Exception:                                          # noqa: BLE001
         return []
-    if used < cap:
-        got = [f"       [!] **いま撃てます**（{used:,} / {cap:,}単位）—— "
+    # **判定は観測した 403**（`docs/trigger_main.md` §2433）。帳面の見積りは
+    #     但し書きにだけ使うこと —— 食い違ったときに黙ると、窓を1つ落とします。
+    try:
+        shut = upload_cap.day_quota(t).open is False
+    except Exception:                                          # noqa: BLE001
+        shut = False                                           # 読めない＝押してみる
+    if not shut:
+        got = [f"       [!] **いま撃てます**（403 は観測していません）—— "
                "**この回の最初の1手が、すぐ上の `--apply` です。**"]
+        if used >= cap:
+            got.append(f"           （帳面の見積りは {used:,} / {cap:,}単位 ですが、"
+                       "**単価は公表値で Google の実数ではありません**。"
+                       "**判定は観測した 403 のほうです。** 途中で 403 が返っても、"
+                       "**そこまでは動いています** —— 次の窓で `--compact` を"
+                       "もう一度 撃つこと）")
         if empty:
             got.append(f"           撃たなければ、空の {empty}日 はそのまま次の回へ"
                        "持ち越します。**「次の回へ」に書いて渡した回が 3件 あり、"
