@@ -1411,6 +1411,21 @@ def ship_kind_of(what: str, kind: str | None = None) -> str:
 run_marker_ship_kind = ship_kind_of
 
 
+def _overdue_judgeable() -> list[tuple[str, object]]:
+    """`deadline_check.overdue_judgeable()` を、**読めなければ空**で返す。
+
+    `scripts/` は package ではないので、ここで path を足して読みます。
+    **例外は握り潰します** —— 門が壊れて ship が全部止まるほうが、
+    目標に対して確実に悪い（`levers.blocked()` と同じ約束）。
+    """
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        import deadline_check                              # noqa: PLC0415
+        return deadline_check.overdue_judgeable()
+    except Exception:                                      # noqa: BLE001
+        return []
+
+
 def ship(what: str, closes: list[str] | None = None, lever: str | None = None,
          moves: int | None = None, reflect: bool = True,
          kind: str | None = None) -> int:
@@ -1537,6 +1552,45 @@ def ship(what: str, closes: list[str] | None = None, lever: str | None = None,
         if _block:
             for _ln in _block:
                 print(_ln)
+            return 2
+    # --- **期限の来た前提が手元で閉じられる回は、`fix` / `means` を通さない** ---
+    #     （2026-09-02・最適化の回。**この回に自分で撃った数**）
+    #
+    #     `data/eta.jsonl` の `reflect` **614行**（08/20〜）: `days_to_target` は
+    #     **610行 が到達不能のまま**、残り 4行 は **156.9日 → 到達不能**。
+    #     **1度も近づいていません。** 同じ期間の ship **306件** の内訳は
+    #     **fix 223件（73%）／ verdict 21件（6.9%）**、名指しに従った回 **23.5%**。
+    #     `scripts/eta.py` は毎回「**軌跡の腕が動くのは前提を1件 閉じたときだけ。
+    #     作る・出す・直すは、軌跡の入力に入りません**」と印字しています。
+    #
+    #     `fix` はいつでも在り（道具が100本あれば壊れた物は必ず1本ある）、
+    #     `stop_check.sh` の「何か出したか」は**種別を見ません**。
+    #     ＝ **いちばん安い ship が門を満たす**形が開いたままでした。
+    #     註は既に出ていました（`levers.lever_notes`）。**効いていません** ——
+    #     この repo で3度目の「註ではなく、通さないことだけが効く」形です。
+    #
+    #     **仕事は捨てません。** `verdict` を1件 出せばここは空になり、
+    #     同じ `fix` がその場で通ります（`ready <= today` ＝ 待つものは無い）。
+    #     `upload` / `improve` は断りません（オーナー固定その2 の規則1・3）。
+    if rec["ship_kind"] in ("fix", "means"):
+        _due = _overdue_judgeable()
+        if _due:
+            print(f"[marker] **通しません** —— 期限の来た前提が {len(_due)}件、"
+                  f"**いま手元のデータだけで閉じられます。**")
+            for _c, _d in _due:
+                print(f"           {_d}  {_c[:78]}")
+            print("[marker] `scripts/eta.py`: **軌跡の腕が動くのは前提を1件"
+                  " 閉じたときだけ**（作る・出す・直すは入力に入りません）。")
+            print("[marker] 実測（614回ぶんの `data/eta.jsonl`）: **到達日は 1度も"
+                  "近づいていません**。ship 306件 の 73% が `fix` でした。")
+            print("[marker] **この `fix` を捨てるのではありません** —— 先に"
+                  " `--kind verdict` で上の1件を閉じれば、ここは空になって通ります"
+                  "（判定に要るデータは**もう手元にあります**）。")
+            print("[marker] 判定できないと思うなら、それは前提の `needs:` が"
+                  " 嘘をついています。**`needs:` のほうを直すこと**"
+                  "（`scripts/deadline_check.py`）。")
+            print("[marker] 公開が止まるなら `--kind upload` / `--kind improve`"
+                  " は断りません（オーナー固定その2 の規則1・3）。")
             return 2
     target, days, basis = _eta_target()
     if target is not None:

@@ -3261,6 +3261,86 @@ def unready_claims(items: list[dict] | None = None, as_of: date | None = None,
     return {v.claim for v in vs if v.ready is None and not v.unchecked}
 
 
+def overdue_judgeable(items: list[dict] | None = None, as_of: date | None = None,
+                      lag: int | None = None) -> list[tuple[str, date]]:
+    """**期限が来ていて、いま手元で閉じられる前提**（claim, deadline）。空 ＝ 無い。
+
+    `scripts/run_marker.py --ship` が、**`fix` / `means` を書き込む前**に読みます。
+
+    ## なぜ要るか（**この回に自分で撃った数**・2026-09-02）
+
+    `data/eta.jsonl` の `reflect` **614行**（08/20 以降・回が終わるたびに1行）:
+
+        `days_to_target` が **到達不能 のまま 610行**。
+        残り 4行 は **156.9日 → 到達不能**（＝ **遠のいた側**）。
+        **1度も近づいていません。**
+
+    同じ期間の `data/runs.jsonl` の ship **306件**:
+
+        fix **223件（73%）** ／ verdict **21件（6.9%）**
+        `eta.py` の名指し（`lever_hint`）に従った回 **72件（23.5%）**
+
+    そして `scripts/eta.py` はこう印字しています ——
+    **「軌跡の腕が動くのは、`config/hypotheses.yaml` の前提を1件 閉じたときだけ。
+    作る・出す・直すは、軌跡の入力に入りません」**。
+
+    **＝ 出した物の 73% は、模型の定義上 0日 の側でした。**
+    これは模型が `fix` を数え落としているだけ、ではありません ——
+    `fix` が θ（前提の閉じる速さ）を上げるなら θ は上がるはずですが、
+    実測の θ は **1.17/日（過去）→ 0.71/日（今後14日）→ 0.43/日（今後60日）** と
+    **下がっています**（`scripts/eta.py` の頭3行）。**223件 は θ を上げませんでした。**
+
+    ## なぜ「註」では止まらないか
+
+    `fix` は**いつでも在ります**（道具が100本あれば、壊れている物は必ず1本ある）。
+    `stop_check.sh` の「この回は何か出したか」は**種別を見ません**ので、
+    いちばん安い ship が門を満たします。`levers.blocked()` も
+    **`lever == "none"` を無条件で通します**（97件／306件 が `none`）。
+    ＝ **通り道が開いたままでした。**
+
+    **この repo で3度目の同じ形です**（`run_marker.py` の
+    「**註や警告ではなく、通さないことだけが効いています**」）。
+
+    ## 断り方（**仕事は捨てません**）
+
+    ここが1件でも返すあいだ、`--kind fix` / `--kind means` は通しません。
+    **`verdict` を先に出せば、その場で空になって通ります** ——
+    `ready <= today` ＝ **待つものは無い**（データはもう手元にある）ので、
+    値段は「その回の ship を1つ、通貨のほうへ回すこと」だけです。
+
+    `upload` / `improve` は**断りません**（オーナー固定その2の規則1・3）。
+    `premise` / `verdict` も断りません（台帳を増やす側・閉じる側）。
+
+    ## 覆る条件
+
+    - 台帳に「期限が来ていて、いま閉じられる」前提が無ければ、ここは空です
+      （＝ 何も断りません。**既定は通す側**）。
+    - `fix` を止めることで公開が止まるなら、この門のほうが間違いです ——
+      そのときは `upload` / `improve` の側で出すこと（どちらも断りません）。
+    - 読めない回（例外）は**通します**（`levers.blocked()` と同じ約束 ——
+      「読めない」と「無い」は別）。
+    """
+    try:
+        items = items if items is not None else load()
+        today = as_of or today_jst()
+        ready = ready_by_claim(items, as_of=as_of, lag=lag)
+        out: list[tuple[str, date]] = []
+        for h in items:
+            if h.get("closed_on"):
+                continue
+            dl = h.get("deadline")
+            if not dl:
+                continue
+            dl = dl if isinstance(dl, date) else date.fromisoformat(str(dl))
+            r = ready.get(h.get("claim"))
+            if dl <= today and r is not None and r <= today:
+                out.append((str(h.get("claim")), dl))
+        return out
+    except Exception:                                    # noqa: BLE001
+        # **読めなければ断らない。** 門が壊れて仕事が全部止まるほうが悪い。
+        return []
+
+
 def not_open_yet(items: list[dict] | None = None, now: datetime | None = None,
                  lag: int | None = None) -> set[str]:
     """**判定できる日は今日だが、その日の中でまだ時刻が来ていない claim。**
