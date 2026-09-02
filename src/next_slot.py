@@ -588,8 +588,29 @@ def calendar(now: datetime | None = None,
     return out
 
 
-def _calendar_quota_lines(t: datetime) -> list[str]:
-    """暦を直す手が**この窓で撃てるか**。枠が読めない回は黙ります（推測で止めないため）。"""
+def _calendar_quota_lines(t: datetime, empty: int = 0) -> list[str]:
+    """暦を直す手が**この窓で撃てるか**。枠が読めない回は黙ります（推測で止めないため）。
+
+    ## **撃てる回のほうを、大きく書くこと**（2026-09-02 12:3x に測って直した）
+
+    **ここは長らく、向きが逆でした。**
+
+        403 の回（＝ **撃てない**回）   `[!] **この窓では 403 です** …
+                                       **そこで最初に撃つのがこれです**`  ← 強い
+        枠の在る回（＝ **撃てる**回）   `枠は在ります（0 / 10,000単位）`    ← 弱い
+
+    **撃てない回にだけ号令が出て、撃てる回には出ていませんでした。**
+    実測（`scripts/retro.py` の「次の回へ」）—— **`reschedule --compact --apply` を
+    「枠が戻る 16:00 に撃つこと」と書いた回が 3件 並んでおり、3件とも撃たれていません。**
+    暦の空きは 20日 のまま、いちばん長い空白は 19日 連続です。
+
+    枠が戻ったあとの回が読むのは、**この関数の `used < cap` の枝**です。
+    そこに「枠は在ります」としか書いていなければ、**申し送りの側にどれだけ
+    大きく書いても、その回の画面では 403 の回より静かになります。**
+
+    **覆る条件**: 暦が規則どおりになれば `calendar_lines()` がこの節ごと出しません
+    （＝ 鳴っていない回には、この号令も出ません）。
+    """
     try:
         from src import quota_ledger, upload_cap              # noqa: PLC0415
         used = int(quota_ledger.spent(t).get("data") or 0)
@@ -598,7 +619,14 @@ def _calendar_quota_lines(t: datetime) -> list[str]:
     except Exception:                                          # noqa: BLE001
         return []
     if used < cap:
-        return [f"       枠は在ります（{used:,} / {cap:,}単位）"]
+        got = [f"       [!] **いま撃てます**（{used:,} / {cap:,}単位）—— "
+               "**この回の最初の1手が、すぐ上の `--apply` です。**"]
+        if empty:
+            got.append(f"           撃たなければ、空の {empty}日 はそのまま次の回へ"
+                       "持ち越します。**「次の回へ」に書いて渡した回が 3件 あり、"
+                       "3件とも撃たれていません**（枠の在る回のほうが、"
+                       "403 の回より静かな画面を見ていたためです）")
+        return got
     return [f"       [!] **この窓では 403 です**（{used:,} / {cap:,}単位）。"
             f"戻るのは {back.astimezone(JST):%m/%d %H:%M} JST —— "
             "**そこで最初に撃つのがこれです**（`videos.insert` は枠を使わないので、"
@@ -647,7 +675,8 @@ def calendar_lines(now: datetime | None = None,
     out.append("       **`status.py` より先に撃つこと** —— あちらは読みだけで"
                "実測 5,000単位 超（`history.py:channel_video_ids`）。"
                "後回しにすると、戻った枠がこの手に残りません")
-    out.extend(_calendar_quota_lines(now or datetime.now(timezone.utc)))
+    out.extend(_calendar_quota_lines(now or datetime.now(timezone.utc),
+                                     empty=int(c.get("empty") or 0)))
     out.append("     **控えは実物とずれることがあります**（`src/ledger_truth.py`）。"
                "撃って 0本 しか動かない回は `scripts/reschedule.py --list`（50単位）で"
                "実物を見ること")
