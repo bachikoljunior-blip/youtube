@@ -523,6 +523,9 @@ def main(argv: list[str] | None = None) -> int:
         [s.narration for s in script.segments],
         channel["generation"]["tts"],
         work / "audio",
+        # **外の作りを写した長尺は open-jtalk へ倒さない**（`tts.synthesize_segments` の docstring・
+        # 2026-09-03）。唯一の腕の試験に出る本が、背景の焼き直しで機械音声のまま差し替わる穴。
+        allow_fallback=str(topic.get("style") or "") != "outside_long",
     )
     if not audios:
         raise RuntimeError("台本のセグメントが空でした。テーマを変えて再実行してください。")

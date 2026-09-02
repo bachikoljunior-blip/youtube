@@ -95,11 +95,29 @@ def _open_jtalk(text: str, dest: Path, cfg: dict) -> None:
     raw.unlink(missing_ok=True)
 
 
-def synthesize_segments(narrations: list[str], tts_cfg: dict, out_dir: Path) -> list[tuple[Path, float]]:
+def synthesize_segments(narrations: list[str], tts_cfg: dict, out_dir: Path,
+                        *, allow_fallback: bool = True) -> list[tuple[Path, float]]:
     """セグメントごとに音声を作り、(ファイル, 秒数) を返す。
 
     google が途中で失敗したら open-jtalk に切り替えて全部作り直す。
     無人で毎日回るので、声が少し落ちることより、その日1本落ちるほうが損。
+
+    **`allow_fallback=False` のときは切り替えず、google の失敗をそのまま上げる**
+    （2026-09-03 05:xx JST・最適化の回）。理由: 外の作りを写した長尺
+    （`topics.yaml` の `style: outside_long`・19〜20分・60コマ超）は、`eta.py` が
+    「引けるのは `per_video` だけ」と名指しする腕の**唯一の試験**に出る本で、
+    `scripts/ahead_sweep.rebake_today` が**背景で誰も見ずに**焼き直す。60コマのどれか
+    1つで google が一度でも落ちると、**20分まるごと open-jtalk の機械音声**に化けて、
+    そのまま `--replaces` で差し替わる（log に1行 出るだけ・`verify` は音を見ない）。
+    その本の 48h が 100回 以下でも、外れたのは「作り方」ではなく「声」になり、
+    前提（`config/hypotheses.yaml` の「外の作り方を写した長尺」）が読めなくなる。
+    上の「1本落ちるより声が落ちるほうが得」は、1日 10本 以上 出していた頃の損得で、
+    規則（1日1本・出る瞬間まで良くする）の下では逆 —— 落ちたら焼き直せばよい
+    （`rebake_today` は死んだ印を拾い直す）。ショートと従来の長尺は今までどおり。
+
+    **覆る条件**: google が日をまたいで落ち続け、その日の1本が出せなくなったら
+    （`data/rebake.jsonl` に `rc != 0` が 3件 続く）、そのときはここを `True` に戻すより
+    先に鍵・請求先を直すこと（この註の上の3行が言っている当のもの）。
     請求先の紐付け漏れ・APIキーの制限ミス・無料枠超過は、どれもここに出る。
 
     声は途中で変えない。1本の中で話者が変わるのは、機械的な声より不快。
@@ -126,6 +144,12 @@ def synthesize_segments(narrations: list[str], tts_cfg: dict, out_dir: Path) -> 
             if attempt_engine != "google":
                 raise
             print(f"[tts] google が失敗しました: {str(exc)[:300]}")
+            if not allow_fallback:
+                raise RuntimeError(
+                    "google の音声が落ちました。この本（外の作りを写した長尺）は open-jtalk へ"
+                    " 倒しません —— 焼き直すこと（`synthesize_segments` の docstring）: "
+                    + str(exc)[:200]
+                ) from exc
             print("[tts] open-jtalk に切り替えて作り直します（声は機械的になります）")
 
     raise RuntimeError("unreachable")
