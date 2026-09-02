@@ -1,0 +1,359 @@
+{
+ "_note": "2026-09-02 18:5x JST。オーナー指示「目標以外を固定指示も含めて…全て考え直して」を受けて、読む役（Fable 5.1）が CLAUDE.md / docs/GOAL.md / docs/CONSTRAINTS.md / src/house_rule.py / tests/test_house_rule.py を全部読んで数えた『前の設定（Opus 5・サブ2体・親が Agent で立てる・誕生数の分母・その間隔）を前提にしている所』。**書いた時点の前提が1つ古い**: このとき親は『ウルトラコード＝Workflow ツールを既定で使う』を事実として渡していたが、直後にオーナーが「やっぱり最大にしたので全てこれでお願いします」と言い、ウルトラコードは切れた（Workflow は既定では使わない。働き手は Agent ツールのサブ2体、模型 claude-fable-5-1、effort 最大）。changes_now の『Workflow なら…』の部分はその前提で読むこと。それ以外（file/where/what/built_for）は実物を読んだ結果で、そのまま使える。",
+ "area": "claude_md",
+ "summary": "対象5ファイル（CLAUDE.md 1,022行/34,584字・GOAL.md 288行・CONSTRAINTS.md 729行・house_rule.py 728行・test_house_rule.py 119行）を全部読み、前の設定（Opus 5・サブ2体・親が Agent で立てる・誕生数の分母・その間隔）を前提にしている所を 43件 に分けた。うち「今の設定で変わる」24件・「変わらない（根拠つき）」19件。変わる側の芯は4つ: (1) 速さの単位 —— CLAUDE.md/GOAL.md/CONSTRAINTS.md の「間隔」「1周の重さ」「list_sessions→quota --ingest」は、分母が data/rounds.jsonl の周（next_round.py --record・ROLES=hourly,optimizer の2体）で、Workflow は --record を書かない（rounds.jsonl 最終行 09-02 09:19Z、その後0行）。pace() 実測: 22.8h 窓で births=10・subs=19・subs_per_lap=1.9、owner_rate_cap()=0.7434 %/時。(2) 「回」の単位 —— 「毎回の実行で必ずやること」1〜7（eta.py 28.4秒→腕→JOURNAL 末尾10件→--ship→--reflect→push）と6択は、1周=1体が直列に回る前提。runs.jsonl 500行は全行 `session#agent-` 形（Agent サブ）、08-31以降 ship 176件: fix 134(76%)/premise 14/verdict 14/improve 11/upload 2/means 1、lever_hint は per_video 119/rpm 57。16体並列で同じ7手を撃つと eta.py×16・JOURNAL.md（99,646行・6.9MB）への並列追記・push 競合になる。(3) 白名簿の定型文「（二台稼働）」「（0体・WAIT N分）」「サブの完了通知」は2体+完了通知の形。(4) CONSTRAINTS.md B13・「repo を触らずにできること」・表の「子がチャットに報告」・「独立評価は Agent ツール」は create_session 子セッション時代（08-15〜08-25）の前提で、Agent サブ化の時点で既に死んでいたものが Workflow でさらに遠のく。変わらない側: 目標本文・固定その2/3/4・恒久指示ブロック・house_rule.py（PUBLISH_PER_DAY=1・SAME_DAY_SCHEDULING_ONLY=True・pytest 10 passed 0.23s・verbatim_missing_from()=[]・hypotheses 62件/開32件で unreachable 0件）・停止禁止（.owner-pause は人だけ）。ただし test_固定であることが書いてある が「原文が PERMANENT-DIRECTIVE より前・head に A14 と 固定」を要求するので、CLAUDE.md を組み直すときブロックの順番が検査に縛られる。副次の実測: settings.json の hook は Stop のみ（SubagentStop 0件）、config/parents.txt に現親 session_01AHfq4F は無い（6件・最後が 01RzmEZy）、list_triggers の生きている1本は `59 */3 * * *`（親の心拍、prompt に model:\"opus\"・「Agent へ」・「二台」が残る）、.claude/worktrees は28本。",
+ "items": [
+  {
+   "file": "CLAUDE.md",
+   "where": "L1-22 冒頭ブロック「2026-09-02 18:4x JST —— 設定が変わりました」",
+   "what": "オーナー原文と新設定の事実（模型・Workflow・上限0.744%/時・目盛り）を宣言し、「next_round.py の間隔はこの上限で頭打ちにした許される速さから出る」と書く",
+   "built_for": "今の設定（09-02 18:4x に書かれた）。ただし名指しする next_round.py は ROLES=(\"hourly\",\"optimizer\") の2体・rounds.jsonl の周が分母（前の設定の道具）",
+   "changes_now": "原文と事実の行は変わらない。「next_round.py の間隔」の1行だけが前の設定の道具を指している: 分母 data/rounds.jsonl は next_round.py --record が書き、最終行 09-02 09:19Z（18:19 JST）以降 0行。Workflow は --record を撃たないので _laps_between()=0 → quota.jsonl の誕生（list_sessions 由来・Workflow agent は出ない）へ落ち、floor は gauge_floor_minutes（画面の比）だけになる。owner_rate_cap() は今撃って 0.7434 %/時 と出る",
+   "weight": "大"
+  },
+  {
+   "file": "CLAUDE.md",
+   "where": "L25-55 親の出力の白名簿（4文だけ）",
+   "what": "親が出してよい文を「（二台稼働）」「（0体・WAIT N分）」「訊かれたことへの答え」「手が要る1行」の4つに限る。「サブの完了通知が来ても 1 か 2 しか出さない」",
+   "built_for": "サブ2体（二台）・親が Agent で立てて完了通知で次の周・WAIT は next_round.py の間隔",
+   "changes_now": "オーナー原文6行と「喋らない」の芯は変わらない。定型文1・2の文言（二台・体数・WAIT分）は Workflow（1本の script で最大16体、完了は script の戻り値）では形が合わない。「完了通知」も Workflow では script の終了1回になる。定型を「script を撃った／撃たなかった」の2形に置き直す必要",
+   "weight": "中"
+  },
+  {
+   "file": "CLAUDE.md",
+   "where": "L57-113 固定その4「予約はその日のぶんだけ」＋「この仕事は手順から機械へ移しました」（3か所: refuse_future_publish／stop_check.sh 1.45／ahead_sweep）",
+   "what": "先の日付に置けない関門を機械3か所に置き、「逃げ道は日枠が尽きている1つだけ」",
+   "built_for": "「その回が選べば撃つ」形（1周1体の hourly が6択から選ぶ・fix 82%/upload 0件）への反省として機械へ移した。終わりの門は Stop フック＝1回=1セッションの前提",
+   "changes_now": "オーナー原文と関門 house_rule.refuse_future_publish()（API を呼ぶ側の関門・呼ぶ者に依らない）は変わらない。終わりの門 stop_check.sh(1.45) は .claude/settings.json に Stop のみ登録（SubagentStop 0件）で、サブ／Workflow agent の終わりで鳴るかは未検証。掃き ahead_sweep.sh は SessionStart hook → Workflow agent で SessionStart が鳴るかも未検証。3つのうち確実に効くのは1つ目だけ",
+   "weight": "大"
+  },
+  {
+   "file": "CLAUDE.md",
+   "where": "L115-134「1日の回り方」（公開したらすぐ次の日の1本を作り始める／作る手が5択の最下位に落ちている）",
+   "what": "09/02 13:00 公開後、09/03 のぶんが数時間作られなかった原因を「作る手が6択の中で選ばれない」と書く",
+   "built_for": "1周=hourly 1体が6択から1件を選ぶ形（選択制）",
+   "changes_now": "変わる。Workflow の pipeline なら「作る→検査→改善」を役として固定で組めるので「選ばれない」問題そのものが消える。実測（runs.jsonl・08-31以降 ship 176件）: fix 134(76%)／improve 11／upload 2。09-02 は 29件中 improve 2・upload 1。09/03 の下書き SD8zQU-x6y0 は在る（親の事実）",
+   "weight": "大"
+  },
+  {
+   "file": "CLAUDE.md",
+   "where": "L136-306 固定その3（読み・分かること・_check_ear_load・clarity・streak）",
+   "what": "ナレーションの読み全部と「人にわかる」を固定し、計測（check_yomi／_check_ear_load／src.clarity・PROMOTE_STREAK=2）を置く",
+   "built_for": "内容の固定。設定に依らない。ただし「次に来た回への1手」「次に来る回の仕事」など申し送りは1周1体の「回」単位",
+   "changes_now": "変わらない（原文3つ・計測は API 0単位で誰が撃っても同じ・streak は data/clarity.jsonl の n が動いた回で数える）。「回」宛の申し送りは Workflow の役（verify 役・improve 役）へ渡す形に読み替えるだけ",
+   "weight": "中"
+  },
+  {
+   "file": "CLAUDE.md",
+   "where": "L308-350 固定その2 運転規則＋「機械の側」（house_rule.PUBLISH_PER_DAY=1・tests/test_house_rule.py）",
+   "what": "1日1本・作り置きなし・次の枠まで改善の規則と、その機械の床",
+   "built_for": "設定に依らない固定（08-31）",
+   "changes_now": "変わらない。今撃った: cap()=1・STOCKPILE_ALLOWED=False・pytest tests/test_house_rule.py 10 passed（0.23秒）・verbatim_missing_from()=[]",
+   "weight": "大"
+  },
+  {
+   "file": "CLAUDE.md",
+   "where": "L352-383「いちばん新しい与件（2026-08-26）」承認を求めない",
+   "what": "目標以外は承認を待たず全部こちらの判断。例として「サブは毎周 17日前の作業コピーから始め直していた」",
+   "built_for": "与件は設定に依らない。例だけ create_session の sources 時代（子セッションが古い枝から立つ）",
+   "changes_now": "変わらない（与件）。例の「17日前の作業コピー」は Workflow の worktree（今の checkout から切る）では起きない形なので、例としてだけ古い",
+   "weight": "小"
+  },
+  {
+   "file": "CLAUDE.md",
+   "where": "L385-449 PERMANENT-DIRECTIVE ブロック（A1〜A14）＋「A1 の現行の読み方」",
+   "what": "目標の本文（08-08 版＋08-15 の YouTube 限定）。「A14 この9件以外は変えてよい」",
+   "built_for": "目標。設定に依らない",
+   "changes_now": "変わらない（オーナーは「目標以外」と言っている）。ただし tests/test_house_rule.py::test_固定であることが書いてある が「OWNER_VERBATIM が <!-- PERMANENT-DIRECTIVE:BEGIN --> より前に在り、その head に A14 と 固定 の字が在る」ことを要求するので、CLAUDE.md を組み直すときこのブロックの位置（固定その2より後）は検査に縛られる",
+   "weight": "大"
+  },
+  {
+   "file": "CLAUDE.md",
+   "where": "L465-488「使ってよい資源」（list_sessions limit=25 mine=true → quota.py --ingest／--gauge／41分→65分）",
+   "what": "使用量の読み方を list_sessions の取り込みと画面の目盛りの2本で書く",
+   "built_for": "サブが list_sessions に出る create_session 時代。Agent サブの時点で既に出ない（config/parents.txt の 08-25 註）。「41分→65分」は誕生数割りの間隔",
+   "changes_now": "変わる。Workflow agent も list_sessions に出ないので「list_sessions → --ingest」の2行は死んだ手順。「%はこの機械から読めない・唯一の目盛りは画面・来たらまず --gauge」は変わらない。pace() 実測（22.8h 窓）: births=10（rounds.jsonl）・subs=19（runs.jsonl）・subs_per_lap=1.9、quota.jsonl は 786行",
+   "weight": "大"
+  },
+  {
+   "file": "CLAUDE.md",
+   "where": "L490-508「このリポジトリで働くときの前提」（GOAL.md の5項目・「この回は何か1つ出してから終わる」）",
+   "what": "判断のたびに5項目、回ごとに最低1件を出す",
+   "built_for": "「回」＝サブ1体の1周",
+   "changes_now": "変わる: 「回」の単位が script 1本（最大16体）になる。「1つ出す」を script 単位に置くか agent 単位に置くかを決め直す必要。5項目そのものは変わらない",
+   "weight": "中"
+  },
+  {
+   "file": "CLAUDE.md",
+   "where": "L545-598 帰結4「投稿を途切れさせない。定期実行は止めない」（list_triggers で実物・間隔は「1周の重さ」・1回の起動でやること・6択と実測）",
+   "what": "間隔の決め方（1周の重さ・アカウント全体では決めない）と、1回の中身（status.py→6択→--ship --lever --moves→--reflect）",
+   "built_for": "親 cron＋1周=サブ2体＋quota.pace の per_lap（分母=rounds.jsonl の周）",
+   "changes_now": "変わる。list_triggers 実測: 生きているのは `59 */3 * * *`（親の心拍・session_01AHfq4F 紐付け）1本で、その prompt には model:\"opus\"・「Agent へ」・「二台」が残っている（別領域だが、この節が「実物を見ろ」と指す先）。「1周の重さ」の分母は Workflow では数えられない（--record 無し）。6択の実測「133件 fix 109(82%)」は今撃つと 08-31 以降 176件 fix 134(76%)",
+   "weight": "大"
+  },
+  {
+   "file": "CLAUDE.md",
+   "where": "L599-604 Stop フック stop_check.sh「このフックを消さないこと」",
+   "what": "終わるとき「終わるのが最善か」を問い、印の無い回を引き止める",
+   "built_for": "1回=1セッション（Stop がその回の終わりに鳴る）",
+   "changes_now": "変わるかは未検証。実測: settings.json は Stop のみ（SubagentStop 0件）。stop_check.sh は CLAUDE_CODE_REMOTE_SESSION_ID が config/parents.txt に在れば exit 0 するが、現親 session_01AHfq4F は名簿に無い（6件・最後が 01RzmEZy）。Workflow agent の終わりで Stop が鳴るなら効き、鳴らなければ Agent サブと同じく素通り。「消さない」は残す",
+   "weight": "中"
+  },
+  {
+   "file": "CLAUDE.md",
+   "where": "L605-632 帰結5「使用量は目標のためにある」（削るのは間隔のほう・list_sessions→--ingest・usage.py は測定ではない）",
+   "what": "速さの制御を「間隔」で行うと書く",
+   "built_for": "親が周の間隔で速さを制御する形（誕生数の分母）",
+   "changes_now": "変わる。Workflow は同時最大16体で、速さの単位は「間隔」ではなく「1 script の体数×重さ」。上限 0.744%/時 を守る量は script の並列数で決めることになり、pace() の per_lap は Workflow の script を数えない。「usage.py は測定ではない」「show-usage.mjs は動かない」は変わらない",
+   "weight": "大"
+  },
+  {
+   "file": "CLAUDE.md",
+   "where": "L634-865「この作りの根幹」＋ 08-31 停止禁止ブロック（L655-700: .owner-pause は人だけ・pause_guard.is_paused() 1か所・resume_gate／policy_pause.sh／spawn_prompt.py はそこへ聞くだけ）",
+   "what": "ポリシー（persona・frames・density）の判断と、機械が自分を止めない作り",
+   "built_for": "内容側は設定に依らない。名指しの spawn_prompt.py は --kind hourly/optimizer で Agent に渡す本文を組む道具（サブ2体の立て方）",
+   "changes_now": "「止める仕掛けを足さない」「.owner-pause は人だけ」「作りに問題を見つけたら直す」は変わらない（作法にも同じ）。spawn_prompt.py は Workflow では使わないので名指しだけ古くなる。policy_pause.sh は SessionStart/UserPromptSubmit hook で Workflow agent で鳴るかは未検証。ポリシーの中身（verify の門）は誰が作っても同じ",
+   "weight": "中"
+  },
+  {
+   "file": "CLAUDE.md",
+   "where": "L878-1007「毎回の実行で必ずやること」1〜7（eta.py→腕を選ぶ→JOURNAL 末尾10件→analytics→--ship --lever --moves→--reflect→JOURNAL 追記して push）",
+   "what": "1周の直列手順。eta.py は 28.4秒、--reflect は --ship が既定で呼ぶ",
+   "built_for": "1周=1体の直列の回（毎回 eta.py を撃ち・毎回 JOURNAL に追記して push）",
+   "changes_now": "変わる。16体が並列に同じ7手を撃つと eta.py 28.4秒×16、docs/JOURNAL.md（99,646行・6.9MB）への並列追記と push の競合（作法: fetch+merge 必須）。Workflow なら 1（eta）と 2（腕）を script の先頭1回、7（push）を末尾1回に寄せられる。印 run_marker.actor_id() は .claude/worktrees/<name> の道から `session#agent-xxx` を作る（runs.jsonl 500行は全行この形・worktree は28本）——Workflow の worktree 名が同じ形かは未検証（覆る条件）。実測 08-31 以降 176件: lever_hint per_video 119/rpm 57、選んだ腕 per_video 74/none 53/density 13/theta 12/rpm 12、宣言 moves 合計 -2,206日",
+   "weight": "大"
+  },
+  {
+   "file": "CLAUDE.md",
+   "where": "L1009-1022「実装の要点」",
+   "what": "setup.sh／script_writer／pipeline の使い方と4分の下限",
+   "built_for": "設定に依らない",
+   "changes_now": "変わらない（コマンドは誰が撃っても同じ）",
+   "weight": "小"
+  },
+  {
+   "file": "docs/GOAL.md",
+   "where": "L1-16 目標（一字も変えない）",
+   "what": "目標本文（YouTube の収益で月20万を最短で）",
+   "built_for": "目標",
+   "changes_now": "変わらない（オーナー「目標以外」）",
+   "weight": "大"
+  },
+  {
+   "file": "docs/GOAL.md",
+   "where": "L17-36 固定その2",
+   "what": "運転規則の原文と4つの読み方",
+   "built_for": "固定（08-31）",
+   "changes_now": "変わらない。house_rule.VERBATIM_HOMES=(\"CLAUDE.md\",\"docs/GOAL.md\") で検査が両方に原文を要求する（今撃って verbatim_missing_from()=[]）",
+   "weight": "大"
+  },
+  {
+   "file": "docs/GOAL.md",
+   "where": "L38-58「何かを決める前に、毎回この5つに答えること」",
+   "what": "5つの確認項目",
+   "built_for": "設定に依らない。goal_reminder.sh（UserPromptSubmit hook）がここから毎ターン注入する",
+   "changes_now": "変わらない。注入の hook が Workflow agent で鳴るかは未検証だが、項目そのものは agent() の本文に直接入れられる",
+   "weight": "中"
+  },
+  {
+   "file": "docs/GOAL.md",
+   "where": "L59-115「起きたら何をするか」（list_triggers で間隔・アカウント全体で決めない・6択の写し・実測 304件 fix 72%/premise 4%・stop_check 3回）",
+   "what": "1回の中身と6択（写し。正本は trigger_main §4 と run_marker.SHIP_KINDS）",
+   "built_for": "1周=1体が起きて6択から1件（選択制）・間隔で速さを制御",
+   "changes_now": "変わる。「間隔」→ script の体数。写しの実測は今撃つと ship 302件 fix 219(73%)/premise 14(5%)。SHIP_KINDS 6件（upload,improve,means,verdict,fix,premise）は実物と一致。Workflow なら6択を「選ぶ」のではなく役に分けて並列に撃てる",
+   "weight": "大"
+  },
+  {
+   "file": "docs/GOAL.md",
+   "where": "L133「1回の起動は短く独立に。前回の続きを記憶で追わず、JOURNAL.md と実績から読み直す」",
+   "what": "回ごとに新しい文脈で始める",
+   "built_for": "子セッション／Agent サブ",
+   "changes_now": "変わらない（Workflow agent も新しい文脈・worktree）",
+   "weight": "小"
+  },
+  {
+   "file": "docs/GOAL.md",
+   "where": "L149-165「自動実行は止めない」（間隔の値を書かない・list_triggers・毎時→6h→8h→12h→毎時→6h・枠が苦しい週は間隔を延ばす・以前は Stop フックで終了を止めていた）",
+   "what": "定期実行の正本は docs/TRIGGER.md、間隔で帳尻を合わせる",
+   "built_for": "親 cron＋子セッション",
+   "changes_now": "変わる。list_triggers 実測は `59 */3 * * *` 1本（写しの遷移の最後「6h」とも違う）。速さの制御単位が間隔から並列数・重さへ移る。「止めない」は変わらない",
+   "weight": "中"
+  },
+  {
+   "file": "docs/GOAL.md",
+   "where": "L167-189「終わる前に、毎回『終わるのが最善か』を考えること」（印の無い回は3回まで引き止める）",
+   "what": "Stop フックの説明",
+   "built_for": "1回=1セッション",
+   "changes_now": "CLAUDE.md L599 と同じ: settings.json は Stop のみ・SubagentStop 無し。Workflow agent の終わりで鳴るかは未検証。「文書ではなくフックに」の考えは残る",
+   "weight": "中"
+  },
+  {
+   "file": "docs/GOAL.md",
+   "where": "L191-205「落としても止まらない理由」「取りこぼしても壊れないようにしてあること」（予約済みなら起きなくても公開・status.py が予約の空きと予算の残り時間・背後の生成はコンテナ再起動で消える）",
+   "what": "取りこぼし耐性の前提",
+   "built_for": "予約が数日先まで積んである時代＋子セッションのコンテナ",
+   "changes_now": "設定変更とは別の理由で既に反転: 固定その4で先の日付の予約は 0本 が正常（親の事実: 先の予約 0本）。「起きなくても公開される」は成り立たない。build/ が agent 終了で消えるのは Agent サブも Workflow worktree も同じ",
+   "weight": "中"
+  },
+  {
+   "file": "docs/GOAL.md",
+   "where": "L207-288「掛け算し直す数字」「分かったこと／まだ分からないこと」（09-02 夕の niche_ceiling 追記を含む）",
+   "what": "収益の算数と実測の判断",
+   "built_for": "設定に依らない",
+   "changes_now": "変わらない（内容の判断）",
+   "weight": "小"
+  },
+  {
+   "file": "docs/CONSTRAINTS.md",
+   "where": "L1-31「与件は目標だけ。あとは全部こちらの判断」",
+   "what": "目標本文と、A2〜A15 が目標に含まれている説明",
+   "built_for": "目標",
+   "changes_now": "変わらない",
+   "weight": "大"
+  },
+  {
+   "file": "docs/CONSTRAINTS.md",
+   "where": "L32-58「『できない縛り』も、自分で外すもの」（環境がサブエージェント禁止で回せず／git checkout -B が弾かれた）",
+   "what": "環境の制約を自分で置き換える教訓",
+   "built_for": "サブエージェントが使えなかった環境（08-15）",
+   "changes_now": "教訓は変わらない。例は逆転（Workflow で最大16体並列が撃てる）。「サブの可否は主犯ではなかった（build/ が消える）」は Workflow worktree でも同じ",
+   "weight": "小"
+  },
+  {
+   "file": "docs/CONSTRAINTS.md",
+   "where": "L60-66「『次の回を待つ』のをやめた」（子は終わる前に自分で次の子を立てる・48%）",
+   "what": "子が自分で次の子を立てる形（B13 の要約）",
+   "built_for": "create_session の子セッション鎖（08-15）。08-25 の Agent サブ化で既に消えている",
+   "changes_now": "変わる。親が Workflow script を組む形では「子が次の子を立てる」は無い。節ごと過去の記録",
+   "weight": "中"
+  },
+  {
+   "file": "docs/CONSTRAINTS.md",
+   "where": "L67-94「設計の見直しは、実行の最初ではなく終わりぎわ」（trigger_main §6 (a2)・§2.7 retro.py）",
+   "what": "見直しを回の終わりに置き、申し送りを次の子が retro.py で拾う",
+   "built_for": "hourly 子の直列手順書（trigger_main.md 5,384行）",
+   "changes_now": "変わる。Workflow の adversarial verify・役の分離なら、見直しを別 agent が同じ script 内で撃てる（次の周へ渡す必要が無い）。retro.py が拾う「次の回へ」の申し送りの形は script の構造化出力に置き換わる",
+   "weight": "中"
+  },
+  {
+   "file": "docs/CONSTRAINTS.md",
+   "where": "L105-125 表「過去に人から来た話のうち、いま続けているもの」（1回で完結させる〈親子方式〉・親は FOR_OWNER の未処理だけを出す〈trigger_parent.md〉・子の最後にチャット欄へ日本語で報告する〈§6 (e)〉）",
+   "what": "続けている運転の形とその理由",
+   "built_for": "親子方式（create_session）",
+   "changes_now": "変わる。「子がチャット欄へ報告」は白名簿（親は4文だけ）と既に矛盾。Workflow agent の出力は schema 付きの構造化出力で親へ返り、チャットには出ない。「親は FOR_OWNER の未処理だけ」は白名簿4に吸収。「simple の main を触らない」「repo の存在を出さない」は変わらない",
+   "weight": "中"
+  },
+  {
+   "file": "docs/CONSTRAINTS.md",
+   "where": "L127-147「使用量について」（list_sessions→--ingest・ChatGPT は使えない・独立評価は Agent ツールの子エージェントで回す〈docs/CRITIQUE.md〉）",
+   "what": "使用量の読み方と独立評価の器",
+   "built_for": "Agent ツールのサブ",
+   "changes_now": "変わる。docs/CRITIQUE.md L91 は「サブエージェントはもう要りません」（08-15 に別プロセスへ）で、この行と既に食い違っている。Workflow の adversarial verify が独立評価の器になる。list_sessions の2行は死んだ手順",
+   "weight": "中"
+  },
+  {
+   "file": "docs/CONSTRAINTS.md",
+   "where": "L169-431 B1〜B10b（計算で独自性・chart 3枚・ショートの1枚目・入力に逃がす・目視・しきい値・律速は登録者・B8 予約は数日先まで埋める・仮説の期限・4欄・1日10本）",
+   "what": "内容と判定方法の判断",
+   "built_for": "設定に依らない。B8 は作り置き時代",
+   "changes_now": "変わらない（内容の判断）。B8「予約は数日先まで埋める」だけは固定その4（先の日付に置かない）で既に反転しているが、設定変更とは別の理由",
+   "weight": "中"
+  },
+  {
+   "file": "docs/CONSTRAINTS.md",
+   "where": "L432-468 B11「常時稼働はしない」（いま 9 * * * *〈毎時〉・測るなら子ごとの usage・6時間おきだった頃の記録）",
+   "what": "1回で完結・出してから終わる・間隔と重さは別々に決める",
+   "built_for": "親 cron＋子セッション（子ごとの usage が list_sessions で読めた）",
+   "changes_now": "変わる。list_triggers 実測は `59 */3 * * *`（写しが古い）。Workflow agent に子ごとの usage は無く、唯一の目盛りはオーナーの画面（--gauge）。「1回で完結・出してから終わる」は残る",
+   "weight": "中"
+  },
+  {
+   "file": "docs/CONSTRAINTS.md",
+   "where": "L470-488 B12「分析は毎回。そのうえで毎回1件は出す」（覆る条件: upload 以外が枯れたら間隔のほうを延ばす）",
+   "what": "最低ラインと覆る条件",
+   "built_for": "間隔で帳尻を合わせる形",
+   "changes_now": "最低ラインは変わらない。覆る条件の「間隔を延ばす」は Workflow では並列数を減らすに読み替わる",
+   "weight": "小"
+  },
+  {
+   "file": "docs/CONSTRAINTS.md",
+   "where": "L490-574 B13「子は終わる前に自分で次の子を立てる」（create_session・tags youtube-hourly・created_at の新しいほうが畳む・sibling_check.py・lineage depth 8・3分後に親を起こす Routine・create_new_session_on_fire 却下）",
+   "what": "子セッション鎖の設計と二重起動の防ぎ方",
+   "built_for": "create_session の子セッション（08-15）。08-25 に Agent サブへ移った時点で既に死んでいる（parents.txt 註）",
+   "changes_now": "変わる。Workflow では全部消える（同時16体を親 script が持つ・深さ8の話は無い・sibling は script が知っている）。作法で archive_session／set_session_title は禁止。節は履歴としてだけ残る",
+   "weight": "中"
+  },
+  {
+   "file": "docs/CONSTRAINTS.md",
+   "where": "L576-645 B14「既存の本と予約479本は引っ込めない」（混在の窓は 10/09 まで・reschedule.py は pause_guard の対象）",
+   "what": "作り置きの扱いの判断",
+   "built_for": "停止中＋作り置き時代（08-30）",
+   "changes_now": "設定変更とは別の理由で古い: 固定その4で 106本を外す方針・先の予約は 0本（親の事実）→ 「混在の窓 10/09」は消えている。「削除しない」は作法と一致して変わらない",
+   "weight": "小"
+  },
+  {
+   "file": "docs/CONSTRAINTS.md",
+   "where": "L647-720「repo を触らずにできること」（create_session に sources が渡らない・set_session_title が唯一の申し送り・archive_session・add_repo 403・create_trigger を呼ばない）",
+   "what": "repo の無い子セッションの3手",
+   "built_for": "create_session 子セッション時代（08-17）",
+   "changes_now": "変わる。Workflow agent は worktree 分離で repo が必ず在る。作法で set_session_title／archive_session は禁止。節ごと死んでいる",
+   "weight": "小"
+  },
+  {
+   "file": "docs/CONSTRAINTS.md",
+   "where": "L722-729「迷ったときの決め方」",
+   "what": "目標に効くか・根拠は数字か・やめる理由は数字で",
+   "built_for": "設定に依らない",
+   "changes_now": "変わらない",
+   "weight": "小"
+  },
+  {
+   "file": "src/house_rule.py",
+   "where": "L1-103 docstring・PUBLISH_PER_DAY=1・STOCKPILE_ALLOWED・OWNER_VERBATIM（3つ）・VERBATIM_HOMES・verbatim_missing_from()・cap()",
+   "what": "1日の上限の唯一の出どころと原文の在処の検査",
+   "built_for": "固定（設定に依らない）",
+   "changes_now": "変わらない。今撃った: cap()=1・verbatim_missing_from()=[]・pytest 10 passed",
+   "weight": "大"
+  },
+  {
+   "file": "src/house_rule.py",
+   "where": "L105-272 STOCKPILE_IS_SUPPLY／規則5（SAME_DAY_SCHEDULING_ONLY・OWNER_VERBATIM_SAME_DAY・same_day_only()・ahead_of_today()・refuse_future_publish()）",
+   "what": "先の日付への予約を書く直前に断る判定本文（呼ぶ側は reschedule._update と uploader.next_publish_at の2か所）",
+   "built_for": "固定その4。docstring の「08/31 からの2日で 459本→107本」「この回だけの環境変数を足したくなったら」は回単位の話",
+   "changes_now": "変わらない。判定本文が1か所で呼ぶ者に依らない（Workflow の agent が何体呼んでも同じ）。same_day_only()=True・STOCKPILE_IS_SUPPLY=False を今撃って確認",
+   "weight": "大"
+  },
+  {
+   "file": "src/house_rule.py",
+   "where": "L275-396 planned_publishes_per_day()／_jst_today／_instant／_published_before／is_stockpile／drop_stockpile",
+   "what": "予測の「これから」から作り置きを外す算術",
+   "built_for": "固定その2の規則2（設定に依らない）",
+   "changes_now": "変わらない",
+   "weight": "中"
+  },
+  {
+   "file": "src/house_rule.py",
+   "where": "L399-728 needs_beyond_rule／unreachable_needs／unreachable_claims／unreachable_lines／window_unreachable（「次に来た回が毎周 同じ引き算をやり直します（09/01 と 09/02 の2回）」）",
+   "what": "開いた前提が規則の下で満ちるかを数で判定して印字する（止めない）",
+   "built_for": "規則の算術。「回」宛の註は1周1体の申し送り",
+   "changes_now": "変わらない（今撃った: hypotheses 62件・開 32件・unreachable_needs 0件・window_unreachable 0件・unreachable_claims=[]）。L580 の「先にそちらを埋めること（reschedule.py --compact）」は固定その4と矛盾（設定とは別の理由）",
+   "weight": "小"
+  },
+  {
+   "file": "tests/test_house_rule.py",
+   "where": "L1-93 docstring＋機械の上限の検査（test_規則は1日1本／密度上限が規則から来ている／同じ日に2本目を落とす／ring／PLAN_PUBLISH_PER_DAY／--count 既定1 を文字列一致で）",
+   "what": "batch_build.cap_by_density と eta.PLAN_PUBLISH_PER_DAY が house_rule を読んでいるかの検査",
+   "built_for": "固定（設定に依らない）",
+   "changes_now": "変わらない。今撃って 10 passed（0.23秒）",
+   "weight": "大"
+  },
+  {
+   "file": "tests/test_house_rule.py",
+   "where": "L97-119 原文の検査（test_原文が消えていない／test_原文が一字も変わっていない／test_固定であることが書いてある: head = text[:index(\"<!-- PERMANENT-DIRECTIVE:BEGIN -->\")] に OWNER_VERBATIM・\"A14\"・\"固定\"）",
+   "what": "原文が CLAUDE.md 冒頭（恒久指示ブロックより前）と GOAL.md に在ることの検査",
+   "built_for": "固定（設定に依らない）",
+   "changes_now": "変わらないが、CLAUDE.md を考え直す側を縛る: 冒頭ブロックの並び（固定その2の原文と A14・固定 の字が PERMANENT-DIRECTIVE より前）を保たないと赤くなる。「戻すにはこの検査を消すしかない」は残す",
+   "weight": "中"
+  }
+ ]
+}
