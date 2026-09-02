@@ -8275,9 +8275,40 @@ def headline(pl: dict, prev: dict | None = None,
     #     8.8倍**を目指し、**まだ1回も数えていない側を数えに行きません。**
     #     **覆る条件**: `settled` が真になったら（＝長尺が伸びきる齢が出たら）
     #     この行は自分で消えます。**定数を持ちません。**
+    # **`over` / `cap` が無い回に、この段を刷らないこと**（2026-09-02 に落ちた）。
+    #
+    #     `_escape_form()` は `settled`（伸びきったと言える形）が1つも無い回に
+    #     `cap = 0.0` を返し、そこから **`over` を正しく `None`** にします
+    #     （`"over": (top / cap) if cap else None`）。**守っているのは向こう**です。
+    #     刷る側がその `None` をそのまま `:.2f` に渡していました:
+    #
+    #         TypeError: unsupported format string passed to NoneType.__format__
+    #         scripts/eta.py:8309 in headline
+    #
+    #     **`scripts/eta.py` は、毎周いちばん最初に撃つ道具です**
+    #     （`docs/trigger_main.md` §2.6 —— §4 で何をやるか決める**前**）。
+    #     落ちると、その回は**到達日も腕も見ないまま**§4 を選びます。
+    #     実測 2026-09-02: `_esc = {'form': 'ショート', 'cap': 0.0, 'top': 1891.0,
+    #     'over': None, 'escapes': False}` で、`main()` ごと落ちていました。
+    #
+    #     **黙って行を消さないこと。** 消すと「逃げ先は無い」と読めますが、
+    #     本当は**まだ比べられない**だけです。下の `else` がそう言います。
+    _esc_ok = (isinstance(_esc.get("over"), (int, float))
+               and isinstance(_esc.get("cap"), (int, float))
+               and _esc.get("cap"))
     if (pl.get("lever_hint") == "per_video"
             and isinstance(pl.get("lever_need_over_cap"), (int, float))
-            and _esc["form"]):
+            and _esc["form"] and not _esc_ok):
+        out.append(
+            f"{bar}   → **逃げ先（形を替える道）は、この回は比べられません** ——"
+            f" 伸びきったと言える形が1つも無いので"
+            f"（`_escape_form()` の `cap` が 0）、"
+            f"「{_esc['form']}に逃げれば天井が上がるか」は**この回では答えが出ません**。"
+            " **「逃げ先が無い」ではありません。**"
+            " 数えきる手は `python -m src.settle`（API 0単位）。")
+    if (pl.get("lever_hint") == "per_video"
+            and isinstance(pl.get("lever_need_over_cap"), (int, float))
+            and _esc["form"] and _esc_ok):
         _f2, _need = _esc["form"], pl["lever_need_over_cap"]
         if _esc["escapes"]:
             out.append(
