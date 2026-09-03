@@ -17,7 +17,7 @@
 from __future__ import annotations
 
 import unittest.mock as um
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 
 from src import house_rule
 
@@ -39,7 +39,15 @@ def test_公開ずみが0なら前と同じに足りない():
 
 
 def test_公開ずみは控えの実物から数える():
-    """`published` を渡さなければ、`09/01 以降` を読んで控えを数えること（**時刻**で比べる）。"""
+    """`published` を渡さなければ、`09/01 以降` を読んで控えを数えること（**時刻**で比べる）。
+
+    **`now` を渡すこと**（2026-09-03 13:4x に赤で踏んだ）。この検査は `today="2026-09-03"`
+    を渡しますが、**その日が実際の今日だと `_published_before()` は「いま」を境にします**
+    （関数の docstring がそう書いている ＝ 仕様どおり）。すると `c`（09/03 09:00 JST）は
+    **09:00 を過ぎた回だけ**公開ずみに入り、**1日のうち 15時間 この検査が赤**になります。
+    実際、この行を書いた回は 09/03 の朝で緑、同じ日の 13:45 に赤になりました。
+    **時刻の入る検査に、実際の日付を書かないこと** —— 境を自分で渡せば、いつ撃っても同じです。
+    """
     rows = [
         {"video_id": "a", "at": "2026-09-01T13:00:00Z"},   # 09/01 22:00 JST ＝ 公開ずみ
         {"video_id": "b", "at": "2026-09-02T04:00:00Z"},   # 09/02 13:00 JST ＝ 公開ずみ
@@ -49,7 +57,12 @@ def test_公開ずみは控えの実物から数える():
         {"video_id": "q"},                                 # 読めない行は数えない
     ]
     assert house_rule.since_of(_WHAT_SINCE, today="2026-09-03") == date(2026, 9, 1)
-    assert house_rule.published_since(date(2026, 9, 1), today="2026-09-03", rows=rows) == 2
+    at_midnight = datetime(2026, 9, 3, 0, 0, tzinfo=timezone(timedelta(hours=9)))
+    assert house_rule.published_since(date(2026, 9, 1), today="2026-09-03",
+                                      now=at_midnight, rows=rows) == 2
+    # 09:00 JST を過ぎた回では `c` も入る（＝ 境は時刻。日付の文字列比べではない）
+    assert house_rule.published_since(date(2026, 9, 1), today="2026-09-03",
+                                      now=at_midnight + timedelta(hours=13), rows=rows) == 3
     with um.patch.object(house_rule, "published_since", lambda *a, **k: 2):
         assert house_rule.needs_beyond_rule(_WHAT_SINCE, "2026-09-22",
                                             today="2026-09-03") is None
