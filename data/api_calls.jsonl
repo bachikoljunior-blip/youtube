@@ -8120,3 +8120,45 @@
 {"at": "2026-09-03T07:01:31+00:00", "api": "data", "method": "thumbnails.set", "units": 50, "ok": true, "by": "refresh_thumbnail.py:push_missing", "detail": "1huadpEk6HY"}
 {"at": "2026-09-03T07:01:43+00:00", "api": "data", "method": "thumbnails.set", "units": 50, "ok": true, "by": "refresh_thumbnail.py:push_missing", "detail": "9zkfjEH48PY"}
 {"at": "2026-09-03T07:01:46+00:00", "api": "data", "method": "thumbnails.set", "units": 50, "ok": true, "by": "refresh_thumbnail.py:push_missing", "detail": "DfFyu8qZq3I"}
+{"at": "2026-09-03T07:05:02+00:00", "api": "data", "method": "channels.list", "units": 1, "ok": true, "by": "playlists.py:_uploads"}
+{"at": "2026-09-03T07:05:03+00:00", "api": "data", "method": "playlistItems.list", "units": 1, "ok": true, "by": "playlists.py:_uploads", "detail": "UUhTXZzwkIJHqyL7L_fEtuqQ"}
+{"at": "2026-09-03T07:05:03+00:00", "api": "data", "method": "playlistItems.list", "units": 1, "ok": true, "by": "playlists.py:_uploads", "detail": "UUhTXZzwkIJHqyL7L_fEtuqQ"}
+{"at": "2026-09-03T07:05:03+00:00", "api": "data", "method": "playlistItems.list", "units": 1, "ok": true, "by": "playlists.py:_uploads", "detail": "UUhTXZzwkIJHqyL7L_fEtuqQ"}
+{"at": "2026-09-03T07:05:04+00:00", "api": "data", "method": "playlistItems.list", "units": 1, "ok": true, "by": "playlists.py:_uploads", "detail": "UUhTXZzwkIJHqyL7L_fEtuqQ"}
+{"at": "2026-09-03T07:05:04+00:00", "api": "data", "method": "playlistItems.list", "units": 1, "ok": true, "by": "playlists.py:_uploads", "detail": "UUhTXZzwkIJHqyL7L_fEtuqQ"}
+{"at": "2026-09-03T07:05:04+00:00", "api": "data", "method": "playlistItems.list", "units": 1, "ok": true, "by": "playlists.py:_uploads", "detail": "UUhTXZzwkIJHqyL7L_fEtuqQ"}
+{"at": "2026-09-03T07:05:04+00:00", "api": "data", "method": "playlistItems.list", "units": 1, "ok": true, "by": "playlists.py:_uploads", "detail": "UUhTXZzwkIJHqyL7L_fEtuqQ"}
+{"at": "2026-09-03T07:05:04+00:00", "api": "data", "method": "playlistItems.list", "units": 1, "ok": true, "by": "playlists.py:_uploads", "detail": "UUhTXZzwkIJHqyL7L_fEtuqQ"}
+{"at": "2026-09-03T07:05:05+00:00", "api": "data", "method": "playlistItems.list", "units": 1, "ok": true, "by": "playlists.py:_uploads", "detail": "UUhTXZzwkIJHqyL7L_fEtuqQ"}
+{"at": "2026-09-03T07:05:05+00:00", "api": "data", "method": "playlistItems.list", "units": 1, "ok": true, "by": "playlists.py:_uploads", "detail": "UUhTXZzwkIJHqyL7L_fEtuqQ"}
+{"at": "2026-09-03T07:05:05+00:00", "api": "data", "method": "playlistItems.list", "units": 1, "ok": true, "by": "playlists.py:_uploads", "detail": "UUhTXZzwkIJHqyL7L_fEtuqQ"}
+{"at": "2026-09-03T07:05:05+00:00", "api": "data", "method": "playlistItems.list", "units": 1, "ok": true, "by": "playlists.py:_uploads", "detail": "UUhTXZzwkIJHqyL7L_fEtuqQ"}
+{"at": "2026-09-03T07:05:06+00:00", "api": "data", "method": "playlistItems.list", "units": 1, "ok": true, "by": "playlists.py:_uploads", "detail": "UUhTXZzwkIJHqyL7L_fEtuqQ"}
+{"at": "2026-09-03T07:05:06+00:00", "api": "data", "method": "playlistItems.list", "units": 1, "ok": true, "by": "playlists.py:_uploads", "detail": "UUhTXZzwkIJHqyL7L_fEtuqQ"}
+{"at": "2026-09-03T07:05:06+00:00", "api": "data", "method": "playlistItems.list", "units": 1, "ok": true, "by": "playlists.py:_uploads", "detail": "UUhTXZzwkIJHqyL7L_fEtuqQ"}
+{"at": "2026-09-03T07:05:07+00:00", "api": "data", "method": "videos.list", "units": 1, "ok": true, "by": "playlists.py:_snippets", "detail": "9zkfjEH48PY,DfFyu8qZq3I,1huadpEk6HY,dRZnZrRy2Lw,6PKux5HNnUE,wOlDmGhbBts,OBJdXEr6gLg,6GtzWaguZhg,SD8zQU-x6y0,MqQKSnbM0OI,"}
+{"at": "2026-09-03T07:05:07+00:00", "api": "data", "method": "videos.list", "units": 1, "ok": true, "by": "playlists.py:_snippets", "detail": "a63FzIUV2wI,dg-5ml7GRZQ,h35ot6MqYso,m7BRQs9X6Jc,icSuiH8u6G0,8hJnwkC8NU0,2tAGEKVCgYQ,4woC2YuX7ig,bGwW9Xp1Fiw,zrAb_NNETSU,"}
+{"at": "2026-09-03T07:05:07+00:00", "api": "data", "method": "videos.list", "units": 1, "ok": true, "by": "playlists.py:_snippets", "detail": "a63FzIUV2wI,h35ot6MqYso,m7BRQs9X6Jc,icSuiH8u6G0,8hJnwkC8NU0,2tAGEKVCgYQ,4woC2YuX7ig,bGwW9Xp1Fiw,zrAb_NNETSU,1Nyl3aLUOgo,"}
+{"at": "2026-09-03T07:05:07+00:00", "api": "data", "method": "videos.list", "units": 1, "ok": true, "by": "playlists.py:_snippets", "detail": "a63FzIUV2wI,h35ot6MqYso,m7BRQs9X6Jc,icSuiH8u6G0,2tAGEKVCgYQ,4woC2YuX7ig,bGwW9Xp1Fiw,l6yTGfjskD8,zrAb_NNETSU,1Nyl3aLUOgo,"}
+{"at": "2026-09-03T07:05:07+00:00", "api": "data", "method": "videos.list", "units": 1, "ok": true, "by": "playlists.py:_snippets", "detail": "a63FzIUV2wI,h35ot6MqYso,m7BRQs9X6Jc,icSuiH8u6G0,l6yTGfjskD8,IsAiWt2lzG4,vdxF0QfsHDg,G_tklBCZJzs,Z0tBNDpr60o,sCr8CcUtpN4,"}
+{"at": "2026-09-03T07:05:07+00:00", "api": "data", "method": "videos.list", "units": 1, "ok": true, "by": "playlists.py:_snippets", "detail": "l6yTGfjskD8,IsAiWt2lzG4,G_tklBCZJzs,Z0tBNDpr60o,sCr8CcUtpN4,h94Fv_SnnC4,UVXKWfgWkZE,ClBuhgt43pA,DSZfGUQ_NyQ,zM9LWPirhCA,"}
+{"at": "2026-09-03T07:05:08+00:00", "api": "data", "method": "videos.list", "units": 1, "ok": true, "by": "playlists.py:_snippets", "detail": "l6yTGfjskD8,Z0tBNDpr60o,UVXKWfgWkZE,ClBuhgt43pA,DSZfGUQ_NyQ,zM9LWPirhCA,5qVTSD6FF20,l3NcCYgX7uI,8Z9mRMeAjeI,84KbprFxs_Q,"}
+{"at": "2026-09-03T07:05:08+00:00", "api": "data", "method": "videos.list", "units": 1, "ok": true, "by": "playlists.py:_snippets", "detail": "CJxJzecM-fo,iwdNOasGYE4,ix6UxGvVGwU,EQwt_6hjGwc,kOoCPJCa1PU,OviZcV_PqbM,GLcYZgHwNfc,D7jrLXinFDo,EszlAOjkQ2o,aalN6AHdB98,"}
+{"at": "2026-09-03T07:05:08+00:00", "api": "data", "method": "videos.list", "units": 1, "ok": true, "by": "playlists.py:_snippets", "detail": "BzvH0iCzrzo,1xPjpFwG8qk,O7ZtLuFhSq8,12V-kHrKzIg,FNR61l5Q4pk,XXUdcTq7psQ,3kXKmyQfTAM,4ZAd1WWoiOg,ogtEaVgmdQM,c2zJ4bnavh4,"}
+{"at": "2026-09-03T07:05:08+00:00", "api": "data", "method": "videos.list", "units": 1, "ok": true, "by": "playlists.py:_snippets", "detail": "v6gZIFynjpc,SvOyN1BOdQ4,-5n5vwfePoY,utZAUxymQLw,fLENot-5oKM,470i0hhnRx0,78ssJSwULTg,ZUO6bFJRsRY,cdKMFCFjiuA,Ty4w6q-tBMo,"}
+{"at": "2026-09-03T07:05:08+00:00", "api": "data", "method": "videos.list", "units": 1, "ok": true, "by": "playlists.py:_snippets", "detail": "v6gZIFynjpc,SvOyN1BOdQ4,-5n5vwfePoY,utZAUxymQLw,fLENot-5oKM,470i0hhnRx0,78ssJSwULTg,WIj04aFYW6Q,OePniwSIcTE,2FSAM7FYftY,"}
+{"at": "2026-09-03T07:05:08+00:00", "api": "data", "method": "videos.list", "units": 1, "ok": true, "by": "playlists.py:_snippets", "detail": "v6gZIFynjpc,SvOyN1BOdQ4,-5n5vwfePoY,utZAUxymQLw,fLENot-5oKM,470i0hhnRx0,78ssJSwULTg,WIj04aFYW6Q,OePniwSIcTE,2FSAM7FYftY,"}
+{"at": "2026-09-03T07:05:09+00:00", "api": "data", "method": "videos.list", "units": 1, "ok": true, "by": "playlists.py:_snippets", "detail": "v6gZIFynjpc,WIj04aFYW6Q,OePniwSIcTE,2FSAM7FYftY,KdlvGxloIg4,5A-YZC26YVs,xEwtkQDKqkA,zUDaYS5Acgo,xd7xIkt_Qwc,EYxhnLT8vJA,"}
+{"at": "2026-09-03T07:05:09+00:00", "api": "data", "method": "videos.list", "units": 1, "ok": true, "by": "playlists.py:_snippets", "detail": "WIj04aFYW6Q,OePniwSIcTE,2FSAM7FYftY,KdlvGxloIg4,5A-YZC26YVs,xEwtkQDKqkA,zUDaYS5Acgo,lIQxDg4OlAo,IkGaQv1fQQA,xBY-DtMhSdg,"}
+{"at": "2026-09-03T07:05:09+00:00", "api": "data", "method": "videos.list", "units": 1, "ok": true, "by": "playlists.py:_snippets", "detail": "b3ZewNvalXc,a1b2Nm6jN_0,yd4DRcRfZE8,iTrogWVf4Eg,UI5P9jvchc4,7b2-Z6Jw5DQ,CdX2oIb7BG8,NHKylqsNfTw,W54m_JDnSHM,dhU65tcBJIo,"}
+{"at": "2026-09-03T07:05:09+00:00", "api": "data", "method": "playlists.list", "units": 1, "ok": true, "by": "playlists.py:_mine"}
+{"at": "2026-09-03T07:05:10+00:00", "api": "data", "method": "playlistItems.list", "units": 1, "ok": true, "by": "playlists.py:_items", "detail": "PLHGuPJ4KZjNQ"}
+{"at": "2026-09-03T07:05:10+00:00", "api": "data", "method": "playlistItems.list", "units": 1, "ok": true, "by": "playlists.py:_items", "detail": "PLMmwyVtcR7VA"}
+{"at": "2026-09-03T07:05:10+00:00", "api": "data", "method": "playlistItems.insert", "units": 50, "ok": true, "by": "playlists.py:_retry"}
+{"at": "2026-09-03T07:05:10+00:00", "api": "data", "method": "playlistItems.list", "units": 1, "ok": true, "by": "playlists.py:_items", "detail": "PLC--t5MNeBY4"}
+{"at": "2026-09-03T07:05:11+00:00", "api": "data", "method": "playlistItems.insert", "units": 50, "ok": true, "by": "playlists.py:_retry"}
+{"at": "2026-09-03T07:05:11+00:00", "api": "data", "method": "playlistItems.list", "units": 1, "ok": true, "by": "playlists.py:_items", "detail": "PLKIJgirJUvAs"}
+{"at": "2026-09-03T07:05:12+00:00", "api": "data", "method": "playlistItems.insert", "units": 50, "ok": true, "by": "playlists.py:_retry"}
+{"at": "2026-09-03T07:05:12+00:00", "api": "data", "method": "playlistItems.list", "units": 1, "ok": true, "by": "playlists.py:_items", "detail": "PLREAp-FO6lsY"}
+{"at": "2026-09-03T07:05:12+00:00", "api": "data", "method": "playlistItems.insert", "units": 50, "ok": true, "by": "playlists.py:_retry"}
+{"at": "2026-09-03T07:05:12+00:00", "api": "data", "method": "playlistItems.list", "units": 1, "ok": true, "by": "playlists.py:_items", "detail": "PLNGe3yblThvo"}
