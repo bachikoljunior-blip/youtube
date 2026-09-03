@@ -7,6 +7,7 @@
 """
 from __future__ import annotations
 
+import pathlib
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -64,3 +65,24 @@ def test_弾かれた回は_いま焼いている扱いにしない(monkeypatch:
 
 def test_本が無ければ何も言わない() -> None:
     assert next_slot.machine_rebake_lines("", NOW) == []
+
+
+def test_焼いている印は_手の1行を落とす目印になる(monkeypatch: pytest.MonkeyPatch) -> None:
+    """**同じ画面が、同じ本について逆のことを2行 並べていた**（2026-09-03 13:2x の実物）:
+
+        いま焼いています —— **手で撃たないこと。同じ本が2本 上がります**
+        → **焼き直すのが `improve` の1手です**（`python -m src.pipeline` …）   ← 次の行
+
+    05:1x の回は、これで手と機械が同じ sha を焼き、片方を止めている。
+    `lines()` は、この2つの語のどちらかが出ていたら手の1行を出さない。
+    """
+    _patch(monkeypatch,
+           {"do": False, "video_id": "V", "sha": "s", "why": "同じ台本（sha s）は一度 焼いた"},
+           [{"at": "2026-09-03T13:12:00+09:00", "kind": "start", "video_id": "V", "sha": "s"}])
+    body = next_slot.machine_rebake_lines("V", NOW)
+    assert any(("いま焼いています" in ln) or ("機械も焼き直します" in ln) for ln in body)
+
+    src = (pathlib.Path(next_slot.__file__)).read_text(encoding="utf-8")
+    assert "machine_has_it" in src
+    assert "if not machine_has_it:" in src
+

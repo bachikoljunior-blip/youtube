@@ -1388,10 +1388,25 @@ def lines(now: datetime | None = None) -> list[str]:
                    f"　—— その直しは、この本に入っていません**")
         for ln in cm:
             out.append(f"       {ln[:118]}")
-        out.extend(rebake_input_lines(str(v.get("video_id") or ""),
-                                      str(v.get("topic") or "")))
-        out.extend(machine_rebake_lines(str(v.get("video_id") or ""), now))
-        if draft is None:
+        # **機械が焼く（か、いま焼いている）なら、手で撃つ1行を出さないこと**
+        #     （2026-09-03 13:2x に実物で見た。この画面は
+        #      「いま焼いています —— 手で撃たないこと。同じ本が2本 上がります」の**次の行**で
+        #      「→ 焼き直すのが `improve` の1手です（`python -m src.pipeline` …）」と
+        #      勧めていました。**同じ画面が、同じ本について逆のことを2行 並べて言う形**で、
+        #      09/03 05:1x の回はこれで手と機械が同じ sha を焼き、片方を kill しています）。
+        mrl = machine_rebake_lines(str(v.get("video_id") or ""), now)
+        machine_has_it = any(("いま焼いています" in ln) or ("機械も焼き直します" in ln)
+                             for ln in mrl)
+        if not machine_has_it:
+            out.extend(rebake_input_lines(str(v.get("video_id") or ""),
+                                          str(v.get("topic") or "")))
+        out.extend(mrl)
+        if machine_has_it:
+            out.append("  → **この本の `improve` は、いま機械の側で進んでいます。**"
+                       "終わったか（`**差し替えました**` の行）は `data/rebake.log` の末尾。"
+                       "**この回が打つなら、本ではなく別の所へ**"
+                       "（絵・題・次の日の1本・道具）")
+        elif draft is None:
             out.append("  → **焼き直すのが `improve` の1手です**"
                        "（`python -m src.pipeline` で焼き直し、"
                        "`scripts/reschedule.py --unschedule <古い方>` →"
