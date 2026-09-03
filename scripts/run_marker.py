@@ -751,6 +751,17 @@ def write() -> int:
     # `needs` の期日で数えており、**「その期日は永久に来ない」を見ていません。**
     for ln in _unreachable_premise_lines():
         print(ln)
+    # **帳面の「在るはずの列が空のまま」**（2026-09-04 に足した）。理由は
+    # `src/ledger_holes.py` の註 —— `niche_ceiling.jsonl` の `top[].published` は
+    # **30本 中 30本 が空**で、気づいてから **3周ぶん申し送りで運ばれ**、そのあいだ
+    # `daily_pick` の「理論値の在りか」は **外の生涯の累計 ÷ 自分の 48時間** を出していました。
+    # **誰も「何本 空か」を数えていませんでした。**穴が無ければ 1行も出しません。
+    try:
+        from src import ledger_holes                            # noqa: PLC0415
+        for ln in ledger_holes.lines():
+            print(f"[marker]{ln}")
+    except Exception as exc:                                    # noqa: BLE001
+        print(f"[marker]   帳面の穴: 数えられませんでした（{str(exc)[:80]}）")
     # **`improve` の当てどころ**（2026-09-01 に足した）。理由は `_next_slot_lines()`
     # の註 —— 5択のうち improve だけ、当てどころがどこにも印字されていませんでした
     # （規則が固定された 08-31 以降の ship 88件 中 **4件・4.5%**）。
