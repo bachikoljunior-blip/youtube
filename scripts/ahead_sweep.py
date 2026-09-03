@@ -1117,6 +1117,55 @@ def _baked_today(rows: list[dict], today_s: str, *, busy: bool | None = None) ->
     return n
 
 
+def rebake_running(vid: str, sha: str, root: Path | None = None) -> bool:
+    """**いま錠を握っているのが、この本か**（`rebake_busy()` の「誰か」を、本ごとに割る）。
+
+    ## なぜ要るか（2026-09-04 03:2x に実測。**`rebake_died()` の 3つ目の入口**）
+
+    `rebake_busy()` は錠がひとつしか無いので **「誰かが焼いている」しか言えません。**
+    そこへ `rebake_died()` が `return not rebake_busy()` と書いてあったので、
+    **別の本を焼いている間、すべての本が「いま焼いています」になっていました。** 実測:
+
+        23:28:27  `1huadpEk6HY`（sha d4ec75716d0e）の `beat` —— そのあと `done` 無し
+        03:15:50  `DfFyu8qZq3I` の `start` → 03:16:10 `beat`（**錠はこちらが握った**）
+        03:2x     `machine_rebake_lines("1huadpEk6HY")` ＝ **「いま焼いています（23:28 JST に起きた）」**
+                  `machine_rebake_lines("DfFyu8qZq3I")` ＝ **「いま焼いています（03:16 JST に起きた）」**
+                  ＝ **同じ画面が、2本を同時に「焼いている」と言っていました**（焼く側は1本）
+
+    そのせいで `--write` の `[次の枠]` は、**09/04 09:00 に出る `1huadpEk6HY`** について
+    「`improve` は いま機械の側で進んでいます → **この回が打つなら、本ではなく別の所へ**」
+    と刷り続けます。実物の機械は `rebake_plan_for(09/04)` で
+    **`do: False`（「もう予約が付いている」）** ＝ **未来永劫この本を焼きません。**
+    ＝ **規則3 の当てどころ（次の枠の1本）が、毎周 選択肢から消えていました。**
+    その本は焼いた後にコードが 6件 入っており（登録の依頼を画面／説明欄／コメントへ・
+    GPT Image 2.0 の絵）、そのどれも入っていません。
+
+    ## なぜ `beat` で割れるか
+
+    `beat` は **`rebake_run()` が `flock` を取った直後にしか書かれません**
+    （`start` は決める側が spawn の**前**に書くだけなので、錠を1つも言っていません）。
+    錠は排他なので、**より新しい `beat` が別の本に在る ＝ この本は錠を手放している**
+    ——これは齢を待たずに言える、直接の証拠です。
+
+    **覆る条件**: 焼く側が同時に2本 走れるようになったら（錠を本ごとに分けたら）、
+    この判定は使えません。そのときは錠のファイル名に本を入れて、そちらを見ること。
+    """
+    if not vid or not sha:
+        return False
+    if not rebake_busy():
+        return False
+    last_beat = None
+    for r in _rebake_rows(root):
+        if r.get("kind") == "beat":
+            last_beat = r
+    if last_beat is None:
+        # `beat` が1つも無い帳面（`--rebake-run` を手で撃った古い回）では割れない。
+        # そのときは錠の「誰か」をそのまま返す（前の形と同じ）。
+        return True
+    return (str(last_beat.get("video_id") or "") == vid
+            and str(last_beat.get("sha") or "") == sha)
+
+
 def rebake_died(vid: str, sha: str, *, now: datetime, root: Path | None = None) -> bool:
     """**焼きかけのまま、焼く側が消えたか**（印は在る・`done` は無い・錠は空いている）。
 
@@ -1156,7 +1205,10 @@ def rebake_died(vid: str, sha: str, *, now: datetime, root: Path | None = None) 
     at = ahead_gate._parse(str(last.get("at") or ""))
     if at is None or (now - at) < REBAKE_START_GRACE:
         return False
-    return not rebake_busy()
+    # **錠の「誰か」を、本ごとに割ること**（2026-09-04 に踏んだ・`rebake_running()` の註）。
+    #     ここが `not rebake_busy()` だった間、**別の本を焼いている最中は
+    #     すべての本が「いま焼いています」**になっていました。
+    return not rebake_running(vid, sha, root)
 
 
 def rebake_attempted(vid: str, sha: str, *, now: datetime, root: Path | None = None) -> bool:

@@ -1285,13 +1285,20 @@ def machine_rebake_lines(video_id: str, now: datetime | None = None) -> list[str
             except Exception:                                  # noqa: BLE001
                 died = False
             if died:
-                return [f"  [!] **焼きかけで消えています**（{str(last.get('at'))[11:16]} JST に起きて、"
-                        "いま走っていません —— 器の回収）。**機械は次の掃きで焼き直します**が、"
-                        "この回で撃ってもかまいません（錠が重なりを止めます）:",
+                # **ここに来た時点で `plan["do"]` は False です** —— `rebake_attempted()` が
+                #     `rebake_died()` を先に見るので、「死んだから焼き直す」なら
+                #     上の `plan.get("do")` で返っています（2026-09-04 に読み直した）。
+                #     ＝ 焼き直しを止めているのは**死んだこと以外**（予約が付いている・
+                #     きょうの上限・同じ sha）。**それを「機械は次の掃きで焼き直します」と
+                #     言ってはいけません。** 言った回は、また見送ります。
+                return [f"  [!] **前の焼きは {str(last.get('at'))[11:16]} JST に起きて、"
+                        "`done` を残さずに終わっています**（器の回収）。"
+                        "**いま走っているのは、この本ではありません**",
+                        f"  [!] **機械は焼き直しません** —— {plan.get('why', '')}",
+                        "       ＝ 直すか、手で撃つかは**この回が決めること**。"
+                        "「機械がやるだろう」で見送らないこと（09/03 は 8時間 止まっていた）",
                         f"       python scripts/ahead_sweep.py --rebake-run {video_id} "
-                        f"{plan.get('topic', '')} {plan.get('sha', '')}",
-                        "       ＝ **「いま焼いています」で見送らないこと**"
-                        "（09/03 は同じ絵で 8時間 止まっていた）"]
+                        f"{plan.get('topic', '')} {plan.get('sha', '')}"]
             return [f"  **いま焼いています**（{str(last.get('at'))[11:16]} JST に起きた・"
                     "背景・log は `data/rebake.log`・帳面は `data/rebake.jsonl`）"
                     " —— **手で撃たないこと。同じ本が2本 上がります**"]
