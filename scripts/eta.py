@@ -7002,8 +7002,14 @@ def plan(m: dict, a: dict, density: int = PLAN_PUBLISH_PER_DAY,
             _alive = [r for r in _rows if r.get("need_over_cap")]
             out["lever_all_dead"] = bool(_rows) and not any(
                 r.get("reachable_at_cap") for r in _rows)
-            out["lever_dead_at_inf"] = tuple(
-                r["lever"] for r in _rows if r.get("dead_at_inf"))
+            _dead_levers = [r["lever"] for r in _rows if r.get("dead_at_inf")]
+            # --- **到達日が出ない回は、門1' を動かす腕を「0日」で殺さない**
+            #     （2026-09-03・最適化の回。`revive_gate_arms()` の頭に実測）---
+            _dead_levers, _revived = revive_gate_arms(
+                _dead_levers, all_dead=bool(out.get("lever_all_dead")),
+                fan_subs_remaining=a.get("fan_subs_remaining"))
+            out["lever_gate_revived"] = tuple(_revived)
+            out["lever_dead_at_inf"] = tuple(_dead_levers)
             # --- **「無限大でも 0日」と「無限大が届いていない」を分ける** ---
             #     （2026-09-01・最適化の回に測って足した。**API 0単位**）
             #     `LEVER_EFFECT_KEY` の docstring に、この回の実測。
@@ -8217,6 +8223,43 @@ def _ship_lever_counts(path: Path | None = None, days: int = 7) -> dict[str, int
     return out
 
 
+#: 門1'（登録者）を動かす腕。`subs_per_day = views_day × sub_rate` の2つの因子。
+GATE_ARMS = ("per_video", "sub_rate")
+
+
+def revive_gate_arms(dead: list[str], *, all_dead: bool,
+                     fan_subs_remaining: float | None) -> tuple[list[str], list[str]]:
+    """**到達日が出ない回に、門1' を動かす腕を `dead_at_inf` から外す。**（2026-09-03・最適化の回）
+
+    `dead_at_inf` は「その腕だけを ×10^9 にしても `days_to_target` が出ない」です。
+    **全部の腕が天井で届かない回（`lever_all_dead`）は、その判定に意味がありません** ——
+    どの腕も 0日 で、それは律速の証拠ではなく、軌跡が届かないことの言い換えです。
+    ところが `src/levers.blocked()` はこの札で `--lever sub_rate` を**断ります**
+    （実測 2026-09-03 12:5x: この回の ship が断られた。同じ日の ledger: `sub_rate` 7件）。
+    **最初に落ちる門は 門1'（登録者 500人）で、それを動かす2本の片方を、
+    届かない軌跡の 0日 を根拠に台帳から締め出していました。**
+
+    返すのは `(まだ死んでいる腕, 生き返らせた腕)`。
+
+    ## 覆る条件
+
+    - `all_dead` が偽の回（どれかの腕が天井で届く）は、何も変えません ——
+      そのときの `dead_at_inf` は本物です。
+    - 門1' が開いた回（`fan_subs_remaining <= 0`）も、何も変えません。
+
+    >>> revive_gate_arms(["sub_rate", "rpm"], all_dead=True, fan_subs_remaining=475)
+    (['rpm'], ['sub_rate'])
+    >>> revive_gate_arms(["sub_rate"], all_dead=False, fan_subs_remaining=475)
+    (['sub_rate'], [])
+    >>> revive_gate_arms(["sub_rate"], all_dead=True, fan_subs_remaining=0)
+    (['sub_rate'], [])
+    """
+    if not all_dead or not fan_subs_remaining or fan_subs_remaining <= 0:
+        return list(dead), []
+    revived = [k for k in dead if k in GATE_ARMS]
+    return [k for k in dead if k not in GATE_ARMS], revived
+
+
 def gate_arm_lines(pl: dict, *, runs_path: Path | None = None) -> list[str]:
     """**到達日が出ない回は、腕を「最初に落ちる門」の日数で測る。**（2026-09-03・最適化の回）
 
@@ -8294,6 +8337,9 @@ def gate_arm_lines(pl: dict, *, runs_path: Path | None = None) -> list[str]:
         out.append(f"{bar}     直近 7日 の ship: `per_video` {n_pv}件 ／ `sub_rate` {n_sr}件"
                    + ("　← **門を動かす2本のうち、片方しか引かれていません。**"
                       if n_sr * 5 < n_pv else ""))
+    if pl.get("lever_gate_revived"):
+        out.append(f"{bar}     この回から `--lever {'／'.join(pl['lever_gate_revived'])}` は台帳に書けます"
+                   "（`arm_dead_at_inf` から外した。届かない軌跡の 0日 は、門の側の根拠になりません）。")
     out.append(f"{bar}     `sub_rate` の手は 0単位です: 登録の依頼はいま**最後のセグメントの音声1文**だけ"
                f"（`src/script_writer.py`）＝ 最後まで見た人にしか届きません。"
                f" 画面（全時間）・`first_comment`・説明欄の先頭に同じ依頼を置くのは、"
@@ -10508,8 +10554,13 @@ def _row(m: dict, a: dict, pl: dict, tr: dict | None, sup: dict | None) -> dict:
     #     **この2欄で、読む側が名指しを外せます。**
     if pl.get("lever_all_dead"):
         row["lever_all_dead"] = True
-    if pl.get("lever_dead_at_inf"):
+    if "lever_dead_at_inf" in pl:
+        # **空でも積むこと**（2026-09-03）。`levers.latest_arm_state()` は
+        #     「`arm_dead_at_inf` を持つ最後の行」を拾うので、空の回に鍵を落とすと
+        #     **古い行の `sub_rate` が生き返り、`--lever sub_rate` は断られ続けます。**
         row["arm_dead_at_inf"] = list(pl["lever_dead_at_inf"])
+    if pl.get("lever_gate_revived"):
+        row["arm_gate_revived"] = list(pl["lever_gate_revived"])
     if pl.get("lever_hint_measured") is False:
         row["lever_hint_measured"] = False
     if pl.get("lever_chosen_by") == "need_over_cap":
