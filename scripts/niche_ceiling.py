@@ -715,6 +715,82 @@ def latest(path: Path | None = None, form: str | None = None) -> dict | None:
     return rows[-1] if rows else None
 
 
+def age_days(row: dict, now: datetime | None = None) -> float | None:
+    """1本の齢（日）。`published` が空／読めなければ `None`。**撃ちません。**"""
+    at = str(row.get("published") or "")
+    if not at:
+        return None
+    try:
+        d = datetime.fromisoformat(at.replace("Z", "+00:00"))
+    except Exception:                                          # noqa: BLE001
+        return None
+    if d.tzinfo is None:
+        d = d.replace(tzinfo=timezone.utc)
+    secs = ((now or datetime.now(timezone.utc)) - d).total_seconds()
+    return secs / 86400.0 if secs > 0 else None
+
+
+def per_day_lines(row: dict, form: str, *, own_median_48h: float | None = None,
+                  now: datetime | None = None) -> list[str]:
+    """**外の帯を「1日あたり」で読み直す行**（API 0単位）。
+
+    ## なぜ要るか（2026-09-04 に、公開日を埋めて初めて見えた）
+
+    上の行（`top_lines`）が出している「外の帯 ÷ 自分」は、
+    **外の生涯の累計 ÷ 自分の 48時間**です。公開日を埋めて数えたら、
+    外の上位に **48時間 以内の本は 1本もありません**でした:
+
+        長尺    齢 中央 **203日** ／ 最小 128日
+        ショート  齢 中央 **1,729日（4.7年）** ／ 最小 274日
+
+    しかも `SP_FILTERS` は**形ごとに窓が違います**（ショートは日付なし ＝ 全期間、
+    長尺は `year` ＝ 今年）。**別々の窓で測った2つを、横に並べて形を決めていました。**
+
+    1日あたりに直すと向きが変わります —— 自分のショートの中央値 1,049回/48h
+    （＝ 約 525回/日）は、**外のショートの上位（14〜186回/日）より上**で、
+    外の長尺（6,000〜29,000回/日）より下。**「外の帯が上」は、形によっては齢の産物です。**
+
+    **これは「累計を見るな」ではありません。** 累計は「その題でどこまで積めるか」を
+    言っていて、それはそれで要る数です。**並べて読むこと** ——
+    片方だけだと、**窓の差が結論を作ります**（`daily_pick` の門の註と同じ形）。
+
+    **覆る条件**: `published` の埋まっている本が 3本 未満なら、1行も出しません
+    （中央値が1本で決まる帯から、形の結論を出さないこと）。
+    """
+    top = [r for r in (row.get("top") or []) if r.get("form") == form]
+    pairs = []
+    for r in top:
+        a = age_days(r, now)
+        v = int(r.get("views") or 0)
+        if a and v > 0:
+            pairs.append((a, v))
+    if len(pairs) < 3:
+        return []
+    ages = sorted(a for a, _ in pairs)
+    rates = sorted(v / a for a, v in pairs)
+    med_age = ages[len(ages) // 2]
+    med_rate = rates[len(rates) // 2]
+    hi_rate = rates[-1]
+    fresh = sum(1 for a in ages if a <= 2)
+    label = "ショート" if form == "short" else "長尺"
+    win = "全期間（日付の絞りなし）" if form == "short" else "今年（`year`）"
+    out = [f"     ↑ その数は**生涯の累計**です（1日あたりに直すと別の話になります・"
+           f"`niche_ceiling.per_day_lines`・n={len(pairs)}本）:"
+           f" 齢 中央 **{med_age:,.0f}日**／最小 {ages[0]:,.0f}日・"
+           f"**48時間 以内に出た本 {fresh}本**"
+           f" → 1日あたり 中央 **{med_rate:,.0f}回/日**・最大 {hi_rate:,.0f}回/日"
+           f"（撃った窓は {win}）"]
+    if own_median_48h:
+        mine = own_median_48h / 2.0
+        shown = f"{mine:,.1f}" if mine < 10 else f"{mine:,.0f}"
+        out.append(f"       自分の{label}は 48時間 中央値 {own_median_48h:,.0f}回 ＝ "
+                   f"**{shown}回/日** → 外の中央の **×{med_rate / mine:,.2f}**・"
+                   f"最大の ×{hi_rate / mine:.1f}。"
+                   f"**上の『×N』は累計どうしではありません** —— "
+                   f"形を決めるときは、この行と上の行の両方を見ること")
+    return out
+
+
 def top_lines(form: str = "short", path: Path | None = None,
               now: datetime | None = None, own_median: float | None = None,
               need: float | None = None) -> list[str]:
@@ -774,6 +850,10 @@ def top_lines(form: str = "short", path: Path | None = None,
                        "で `data/niche_thumbs/<id>.jpg` に落ちます。**題と尺だけで「作りが違う点」を決めないこと**")
         else:
             out.append("       絵は全部 `data/niche_thumbs/<id>.jpg` に在ります（`Read` で見ること・API 0単位）")
+    # **累計と1日あたりを、必ず並べて出すこと**（`per_day_lines` の註・2026-09-04）。
+    #     上の「×N」は 外の生涯の累計 ÷ 自分の 48時間 で、外の上位に 48時間 以内の本は
+    #     1本もありません（長尺 齢 中央 203日／ショート 1,729日）。
+    out += per_day_lines(row, form, own_median_48h=own_median, now=now)
     return out
 
 
