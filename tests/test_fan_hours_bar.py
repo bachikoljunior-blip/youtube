@@ -156,8 +156,21 @@ def test_gate_legs_are_ranked_on_one_ruler():
     legs = a.get("gate_legs")
     assert legs, "門の脚が並んでいません"
     assert len(legs) == 4, f"脚が4つではありません: {len(legs)}"
-    ratios = [lg["ratio"] for lg in legs]
+    ratios = [lg["ratio_typical"] for lg in legs]
     assert ratios == sorted(ratios), "近い順に並んでいません"
+    # **並べ替えの分母は「典型（平均）」であること**（2026-09-03）。
+    # 記録（その形で1本だけ出た最高）で割ると、門2a' は ×0.84 ＝
+    # 「もう越えている」と出ます。長尺の実測は中央値 4回・24時間齢 1回 ——
+    # **1本の数で門までの隔たりを名乗ると、腕の選択がそこで狂います。**
+    # `src/form_record.py` 冒頭の決まり:「『最高で割った倍率』を到達日に
+    # 入れないこと。到達日は平均で解きます」。門までの隔たりは到達日です。
+    for lg in legs:
+        assert lg.get("typical") is not None, f"典型が付いていない脚: {lg['name']}"
+        assert lg.get("n"), f"n が付いていない脚: {lg['name']}"
+        assert lg["ratio_typical"] >= lg["ratio"], (
+            f"{lg['name']}: 典型で割った倍率が、記録で割った倍率より近い。"
+            "分母が入れ替わっています（平均 ≦ 記録 のはず）"
+        )
     # **入れた順が、たまたま昇順**（1.13 → 1.51 → 17.6 → 58.8）なので、
     # 上の1行だけでは `sort` を消しても緑のままです（2026-08-31 に踏んだ）。
     # **入れた順と並べた順が食い違う場を作って**、そこで昇順を見ます。
@@ -167,13 +180,14 @@ def test_gate_legs_are_ranked_on_one_ruler():
         form_record.per_video_best = lambda: {
             # 長尺の記録を桁で大きくすると、長尺の脚（先に入る）が
             # **いちばん遠い側**へ回り、入れた順 ≠ 昇順 になります。
-            "長尺": {"best": 1.0, "best_settled": 1.0, "mean": 1.0},
-            "ショート": {"best": 10 ** 9, "best_settled": 10 ** 9, "mean": 10 ** 9},
+            "長尺": {"best": 1.0, "best_settled": 1.0, "mean": 1.0, "n": 27},
+            "ショート": {"best": 10 ** 9, "best_settled": 10 ** 9,
+                     "mean": 10 ** 9, "n": 185},
         }
         shuffled = eta._gate_legs(a)
     finally:
         form_record.per_video_best = _orig
-    got = [lg["ratio"] for lg in shuffled]
+    got = [lg["ratio_typical"] for lg in shuffled]
     assert got == sorted(got), (
         "記録を入れ替えたら並びが崩れました。`_gate_legs` が並べ替えていません"
     )
@@ -191,7 +205,8 @@ def test_gate_legs_are_ranked_on_one_ruler():
     # ショートの脚は、長尺の脚より必ず遠い（規則1本/日 では桁がちがう）
     shorts = [lg for lg in legs if lg["form"] == "ショート"]
     longs = [lg for lg in legs if lg["form"] == "長尺"]
-    assert min(s["ratio"] for s in shorts) > max(l["ratio"] for l in longs)
+    assert (min(s["ratio_typical"] for s in shorts)
+            > max(l["ratio_typical"] for l in longs))
 
 
 def test_no_numerator_was_smuggled_in():
