@@ -1281,6 +1281,47 @@ def bake_minutes() -> tuple[float | None, int]:
 BAKE_RENDER_MIN = 13.0
 
 
+#: 焼きの段（新しい順に見て、最初に当たったものがいまの段）。`build/<題材>/` の実物で判じます。
+#: **log では判じられません**（`_run_out` の註 —— 子が 8KB ためるので、20分 古い行が末尾に居ます）。
+BAKE_STAGES = (
+    ("final.mp4", "焼き上がり（あとは上げるだけ）"),
+    ("clips", "映像を焼いています"),
+    ("audio", "**読み照合の輪**（`faster-whisper` を CPU で回すので、ここがいちばん長い）"),
+    ("clarity_loop.json", "分かりやすさの輪 おわり → 音を作っています"),
+    ("script.json", "台本を読み込みました（分かりやすさの輪の中）"),
+)
+
+
+def bake_stage(topic: str, *, root: Path | None = None) -> str:
+    """**いま焼きがどこまで進んだか**（`build/<題材>/` の実物・API 0単位）。無ければ空。
+
+    ## なぜ log ではなく `build/` を見るか（2026-09-04 22:0x に踏んだ）
+
+    `data/rebake.log` の末尾は **20分 古いことがあります**（子が 8KB ずつためる・
+    `_run_out()` の註）。実測: 末尾が「分かりやすさの輪 2周目」のまま止まって見えた 20分 の間に、
+    実物は 3周目・4周目 を終え、**音 62本 まで焼き終えていました。**
+
+    **待つ側は log だけを見ると「固まった」と読んで降ります。** `build/<題材>/` の
+    mtime は子の buffer を通らないので、**そこだけは嘘をつきません。**
+    """
+    d = Path(root or config.ROOT) / "build" / (topic or "")
+    if not topic or not d.is_dir():
+        return ""
+    newest = None
+    for name, say in BAKE_STAGES:
+        p = d / name
+        if not p.exists():
+            continue
+        try:
+            at = datetime.fromtimestamp(p.stat().st_mtime, tz=timezone.utc)
+        except OSError:
+            continue
+        mins = (datetime.now(timezone.utc) - at).total_seconds() / 60
+        newest = f"{say}（`build/{topic}/{name}` は {mins:.0f}分 前）"
+        break
+    return newest or ""
+
+
 def _takeover_mark(day_s: str) -> Path:
     """**その日の枠を、いま引き継いでいる最中**の印（機械にひとつ・`<日>` ごと）。"""
     return _rebake_marks_dir() / f"takeover-{day_s}"

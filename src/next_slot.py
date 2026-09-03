@@ -1312,6 +1312,16 @@ def machine_rebake_lines(video_id: str, now: datetime | None = None) -> list[str
             out = [f"  **いま焼いています**（{str(last.get('at'))[11:16]} JST に起きた・"
                    "背景・log は `data/rebake.log`・帳面は `data/rebake.jsonl`）"
                    " —— **手で撃たないこと。同じ本が2本 上がります**"]
+            # **log の末尾は 20分 古いことがあります**（`ahead_sweep.bake_stage` の註）。
+            #     生きているかは `build/<題材>/` の mtime で見ること。
+            try:
+                stage = ahead_sweep.bake_stage(str(plan.get("topic") or ""))
+            except Exception:                                  # noqa: BLE001
+                stage = ""
+            if stage:
+                out += [f"       いまの段: {stage}",
+                        "       **`data/rebake.log` が動いていないのを「死んだ」と読まないこと** ——"
+                        " 子は 8KB ためるので末尾は最大 20分 古い。生死は `ps -o time= -p <pid>`（CPU 時間）で"]
             if starts and dones == 0:
                 try:
                     mins, n = ahead_sweep.bake_minutes()
