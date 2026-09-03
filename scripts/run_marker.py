@@ -1276,6 +1276,133 @@ def fix_run_len(path: Path | None = None) -> int:
     return n
 
 
+#: **`verdict` が出ないまま続いた回の上限**（判定できる前提が在るときだけ効きます）。
+#:
+#: ## なぜ要るか（2026-09-04・最適化の回に足した。実測はこの回に撃った数）
+#:
+#: `FIX_RUN_CAP`（2026-09-01）は効きました。**`fix` の比は実測で落ちています** ——
+#: 08-31 **80.0%** → 09-01 80.4% → 09-02 **59.0%** → 09-03 61.1% → 09-04 61.5%
+#: （`data/runs.jsonl`・この回に数えた）。門は 66.7% の天井どおりに働いています。
+#:
+#: **それでも到達日は動いていません。** 同じ窓の再生/日（7日）は
+#: 1,941 → 1,746 → 1,344 と落ち続けています（`data/eta.jsonl`）。
+#:
+#: **落ちた `fix` が、どこへ行ったかを数えると分かります**（種別・日べつ）:
+#:
+#:     09-01  fix 78  improve  5  premise 7  verdict 6
+#:     09-02  fix 23  improve  5  premise 7  verdict 3
+#:     09-03  fix 33  improve 12  premise 5  verdict **0**
+#:     09-04  fix  8  improve  4  premise 0  verdict **0**
+#:
+#: **`improve` へ流れました。`verdict` へは1件も流れていません。**
+#: 理由は門の中に書いてあります —— `FIX_RUN_CAP` が止めるのは `fix` **だけ**で、
+#: そのエラー本文は **「`improve` は、いつでも在ります」** と自分で名指ししています。
+#: **いちばん安い逃げ道を、門が案内していました。**
+#:
+#: そして `eta.py` は毎周こう印字します ——
+#: **「軌跡の腕が動くのは、`config/hypotheses.yaml` の前提を1件 閉じたときだけ。
+#: 作る・出す・直すは軌跡の入力に入りません」。**
+#: つまり **`verdict` 以外の種別は、定義上どれも 0日** です。
+#: `fix` を `improve` に替えても、0日 が 0日 のまま名前を変えただけです。
+#:
+#: ## しきいは 14（**実測の p75**）
+#:
+#: `verdict` と `verdict` のあいだの「非 `verdict` の連」を実測すると
+#: （n=16・`data/runs.jsonl`）**中央値 4・p75 14・p90 32・過去の最大 38。**
+#: **いまの連は 81** —— 過去の最大の **2.1倍** です。
+#:
+#: 14 に置くと、**過去の連の 75% はこの門に触りません**（普通の並びは通る）。
+#: 触るのは、過去に一度も無かった長さの尾だけです。
+#:
+#: ## **判定できる前提が在るときしか効きません**
+#:
+#: `verdict` は在庫が無ければ撃てない種別なので、連だけで止めると
+#: **閉じられる物が無い回を、閉じろと言って止める**ことになります。
+#: だから `arm_speed.next_close()` を撃って（**API 0単位・実測 0.3秒**）、
+#: **`days <= 0`（きょう判定できる前提が実在する）ときだけ**門を立てます。
+#: 実測 2026-09-04: `days 0`／`on 2026-09-04`／`open 35件`／腕 `per_video`。
+#: 09-03 に `verdict` が 0件 だったのは**正しい**（判定できる日は 09-04 でした）。
+#: **きょう在るのに 13件 撃って 0件** —— そこだけを止めます。
+#:
+#: ## **`upload` は通します**
+#:
+#: オーナーが固定した規則（1日1本）は聖域です。**出す手を止める門は作りません。**
+#:
+#: ## 覆る条件
+#:
+#: 1. `next_close()` の `source` が `deadline`（＝ **置いた回の勘**）のとき、
+#:    「きょう判定できる」は偽のことがあります（`arm_speed.next_close()` の註）。
+#:    **その場合の正しい手は `config/hypotheses.yaml` の `deadline` を直すこと**
+#:    （`src/judgeable.py`: 「**期限だけを延ばすこと。`falsified_if` は変えないこと**」）。
+#:    直せば `on` が先へ動くので、**門は自分で開きます。** 特例は要りません。
+#: 2. 非 `verdict` の連が p75 を割って落ち着いたら（`verdict` 比が上がったら）、
+#:    この門は仕事を終えています。**そのときは数を見て畳むこと。**
+#: 3. `eta.py` が「腕が動くのは前提を閉じたときだけ」を撤回したら、この門の前提が消えます。
+VERDICT_RUN_CAP = 14
+
+
+def verdict_run_len(path: Path | None = None) -> int:
+    """**末尾から数えて、`verdict` **以外**が何回 続いているか。**
+
+    `fix_run_len()` と同じ欄（`ship_kind`）・同じ約束
+    （**`kind != "ship"` の行は数に入れません**）。
+    """
+    p = path or MARKS
+    if not p.exists():
+        return 0
+    n = 0
+    for line in reversed(p.read_text(encoding="utf-8").splitlines()):
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            r = json.loads(line)
+        except Exception:
+            continue
+        if r.get("kind") != "ship":
+            continue
+        if r.get("ship_kind") == "verdict":
+            break
+        n += 1
+    return n
+
+
+def judgeable_now() -> dict:
+    """**きょう閉じられる前提が実在するか。**（`arm_speed.next_close()`・API 0単位）
+
+    読めなければ **空を返して門を開けます**（`near_deadlines()` と同じ約束 ——
+    **読めない道具で回を止めないこと**）。
+    """
+    try:
+        from src import arm_speed                                # noqa: PLC0415
+        r = arm_speed.next_close()
+        if r.get("days") is None or int(r["days"]) > 0:
+            return {}
+        return r
+    except Exception:
+        return {}
+
+
+def note_verdict_gate(what: str, run_len: int) -> None:
+    """**止めたことを残す**（`note_fix_gate()` と同じ理由・同じ約束）。
+
+    **止めた回数を数えられない門は、効いたかどうかも数えられません。**
+    `kind="verdict_gate"` ＝ `drift.py` は `kind != "ship"` を読み飛ばすので、
+    漂流の比そのものは汚しません。
+    """
+    try:
+        with MARKS.open("a", encoding="utf-8") as f:
+            f.write(json.dumps({
+                "at": datetime.now(JST).isoformat(timespec="seconds"),
+                "session": actor_id() or "(不明)",
+                "kind": "verdict_gate",
+                "run_len": run_len,
+                "what": what[:200],
+            }, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+
+
 def near_deadlines(limit: int = 3) -> list[str]:
     """**開いている前提を、期限の近い順に。**（`config/hypotheses.yaml` を読むだけ・API 0単位）
 
@@ -2386,6 +2513,45 @@ def main(argv: list[str] | None = None) -> int:
                     #     4 は散文のままでした。**4 は既に立っています** ——
                     #     立っているなら、この門はもう律速ではありません。
                     f"  {cond4_line()}")
+        # **`verdict` の側の門**（2026-09-04。理由と実測は `VERDICT_RUN_CAP` の註）。
+        #
+        # 上の `fix` の門は効きました（比 80% → 61%）が、**押し出した回は
+        # `improve` へ流れ、`verdict` へは1件も流れていません**（09-03/09-04 とも 0件）。
+        # `eta.py` の模型では **`verdict` 以外は定義上 0日** なので、
+        # `fix` を `improve` に替えるのは、0日 の名前を替えただけです。
+        #
+        # **`upload` は通します**（オーナーが固定した 1日1本 は聖域）。
+        if _fk not in ("verdict", "upload"):
+            _jn = judgeable_now()
+            if _jn:
+                _vrun = verdict_run_len()
+                if _vrun >= VERDICT_RUN_CAP:
+                    note_verdict_gate(args.ship, _vrun)
+                    _claims = _jn.get("claims") or []
+                    _lv = _jn.get("claim_levers") or {}
+                    _named = "\n                     ".join(
+                        f"{str(c)[:78]}" + (f"（腕 `{_lv[c]}`）" if c in _lv else "")
+                        for c in _claims[:3]) or "（`next_close()` が名前を返していません）"
+                    ap.error(
+                        f"**`verdict` が {_vrun}回 出ていません**"
+                        f"（上限 {VERDICT_RUN_CAP} ＝ 実測の p75。過去の最大は 38）。"
+                        "**そして、きょう閉じられる前提が実在します**"
+                        f"（`arm_speed.next_close()`: `days {_jn.get('days')}`／"
+                        f"`on {_jn.get('on')}`／開いている {_jn.get('open')}件）。\n"
+                        "  `eta.py` は毎周「**軌跡の腕が動くのは、前提を1件 閉じたときだけ。"
+                        "作る・出す・直すは軌跡の入力に入りません**」と印字しています。"
+                        f"**つまり `{_fk}` のこの回は、定義上 0日 です。**\n"
+                        "  **いま判定できる前提**（この名前で `config/hypotheses.yaml` を引くこと）:\n"
+                        f"                     {_named}\n"
+                        "  **撃ち方は2つ。どちらも 0単位 で、どちらでもこの門は開きます**:\n"
+                        "    1. その前提を閉じて `--kind verdict` で出す（`closed_on:` と `outcome:`）。\n"
+                        "    2. **まだ判定できないなら、`deadline` のほうを直す** —— "
+                        f"`next_close()` の出どころは `{_jn.get('source')}` で、"
+                        "`deadline` は**置いた回の勘**です（`src/judgeable.py`）。"
+                        "**期限だけを延ばすこと。`falsified_if` は変えないこと。** "
+                        "直せば `on` が先へ動くので、**門は自分で開きます。**\n"
+                        "  **その直しが本当に要るなら、次の回でも要ります。順番だけの門です。**")
+
         return ship(args.ship, args.closes, args.lever, args.moves,
                     reflect=not args.no_reflect, kind=args.kind)
     if args.moves is not None:
