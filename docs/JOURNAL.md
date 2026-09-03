@@ -103088,3 +103088,28 @@ CLI から `--effort` が消えたら関数ごと消すこと（渡すと `claud
 - 09/04・09/05 の長尺の決め（外の作りを写した長尺・n=2）は触っていない。前提の判定中
 - `src/script_writer.py`・`src/renderer.py` の登録の依頼そのものは動かしていない —— 次の1本を作る主実行が、
   上の行を見て決める（いま 09/04 の本は焼けている。焼き直しの値段は主実行が持つ）
+
+### 追記（同じ回・12:5x）—— 押したら断られた。**同じ札が台帳の門にもなっていた**
+
+`run_marker.py --ship ... --lever sub_rate` が **断られた**:
+
+    [marker] 断りました。`--lever sub_rate` は記録していません。
+             `sub_rate` は無限大にしても到達日が1日も動きません（×10^9 まで実測）
+
+出どころは `src/levers.blocked()`（09/02 の最適化の回が門にした）→ `data/eta.jsonl` の
+`arm_dead_at_inf: ["sub_rate"]`。**同じ「届かない軌跡の 0日」が、頭の3行で「引かないこと」と
+言うだけでなく、台帳に `sub_rate` を書けなくしていた。** ＝ sub_rate の ship が 7件 しか無い理由の
+半分は、書けなかったから。
+
+直した（`scripts/eta.py`）:
+- `revive_gate_arms()`（新・doctest 3件）: **全腕が天井で届かない回**（`lever_all_dead`）かつ
+  門1' が開いていない回は、`per_video`／`sub_rate`（`subs_per_day = views × sub_rate` の2因子）を
+  `lever_dead_at_inf` から外す。届く腕が1本でも在る回は何も変えない（そのときの札は本物）
+- 行に積むとき `arm_dead_at_inf` は**空でも積む**（`latest_arm_state` は「鍵を持つ最後の行」を
+  拾うので、鍵を落とすと古い行の `sub_rate` が生き返る）
+- 実物: 1224点目 `arm_dead_at_inf: []`・頭に「この回から `--lever sub_rate` は台帳に書けます」。
+  押し直して通った。検査 `tests/test_eta_gate_arm.py` 7件・`test_dead_arm_lever_blocked.py` ほか 57件 緑
+
+**覆る条件**: `levers.blocked()` の `dead_at_inf` の意味（「この腕だけ ×10^9 でも届かない」）は
+残してある。どれかの腕が天井で届くようになった回（`lever_all_dead` が偽）は、この生き返りは
+自分で止まる。そのとき `sub_rate` がまた断られるなら、それは本物の 0日。

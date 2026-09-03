@@ -80,3 +80,29 @@ def test_headlineが実際にこの行を出す(monkeypatch):
     monkeypatch.setattr(eta, "gate_arm_lines", stub)
     text = "\n".join(eta.headline(pl, None, {"choice": [], "arms": {}}))
     assert "GATE-ARM-SENTINEL" in text and seen["pl"] is pl
+
+
+def test_到達日が出ない回は門を動かす腕を殺さない():
+    """`levers.blocked()` が `--lever sub_rate` を断る根拠（`dead_at_inf`）は、
+    全腕が天井で届かない回には立てない。届く腕が1本でも在れば、そのまま。"""
+    assert eta.revive_gate_arms(["sub_rate", "rpm"], all_dead=True,
+                                fan_subs_remaining=475) == (["rpm"], ["sub_rate"])
+    assert eta.revive_gate_arms(["sub_rate"], all_dead=False,
+                                fan_subs_remaining=475) == (["sub_rate"], [])
+    assert eta.revive_gate_arms(["sub_rate"], all_dead=True,
+                                fan_subs_remaining=0) == (["sub_rate"], [])
+
+
+def test_空のdead_at_infも行に積む():
+    """**鍵を落とすと古い行が生き返る**（`levers.latest_arm_state` は
+    `arm_dead_at_inf` を持つ最後の行を拾う）。空でも積むこと。"""
+    src = (Path(__file__).resolve().parent.parent / "scripts" / "eta.py").read_text(encoding="utf-8")
+    assert 'if "lever_dead_at_inf" in pl:' in src
+    assert 'if pl.get("lever_dead_at_inf"):\n        row["arm_dead_at_inf"]' not in src
+
+
+def test_生き返らせた腕は頭に出る():
+    pl = _pl()
+    pl["lever_gate_revived"] = ("sub_rate",)
+    text = "\n".join(eta.gate_arm_lines(pl, runs_path=Path("/nonexistent")))
+    assert "`--lever sub_rate` は台帳に書けます" in text
