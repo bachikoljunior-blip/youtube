@@ -69,13 +69,27 @@ def test_engaged_で測る実験は今までどおり出すこと():
     assert "当てる率" in text, text
 
 
-def test_request_form_だけが登録で測ると宣言していること():
+#: **登録で測る実験**。ここに無い実験は engaged で測ります。
+#: **増やすときは、この一覧に足すこと**（元の検査は `request_form` の1件を
+#: 名前で焼き込んでいましたが、docstring は「増えたらここを直すこと」と
+#: 言っていました。2026-09-03 に `subs_badge` が2件目になり、一覧へ移した）。
+#:
+#: **「登録で測る」と宣言した実験は、床が engaged より桁ちがいに大きい**
+#: ことに注意（登録は 再生 3,151回 に1人 の稀な事象）。
+#: 上の docstring の「見分けられなかっただけの実験が、効かない実験として閉じる」
+#: が、そのまま掛かります。**足すときは `python -m src.verdict_power` で
+#: 取り違え率を先に見ること。**
+SUBS_METRIC_EXPERIMENTS = {"request_form", "subs_badge"}
+
+
+def test_登録で測ると宣言しているのは一覧の実験だけであること():
     """**宣言の場所は1つ**（`Experiment.metric`）。増えたらここを直すこと。"""
     got = {name: e.metric for name, e in ab_split.EXPERIMENTS.items()}
-    assert got.get("request_form") == "登録", (
-        f"`request_form` は登録で測ります（床 72本 の出どころ）: {got}")
+    for name in SUBS_METRIC_EXPERIMENTS:
+        assert got.get(name) == "登録", (
+            f"`{name}` は登録で測ります（床の出どころ）: {got}")
     for name, m in got.items():
-        if name != "request_form":
+        if name not in SUBS_METRIC_EXPERIMENTS:
             assert m == "engaged", f"{name} の metric が変わっています: {got}"
 
 

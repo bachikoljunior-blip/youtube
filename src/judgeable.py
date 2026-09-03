@@ -717,6 +717,13 @@ MEMBER_SOURCES: dict[str, tuple[Callable[[], dict[str, list[Member]]], int]] = {
     # **長尺は帯を1枠も使いません**（置き先は `_long_ring()` の 18〜22時）ので、
     # 群はショートだけです（`ab_split` 側の `eligible=_shorts_only`）。
     "slot_half": (lambda: _members_by_split("slot_half"), MIN_PER_GROUP),
+    # 画面（全時間）に登録の依頼の札を出すか（`src/ab_split.subs_badge`・
+    # `src/visuals.subs_badge_on()`）。**測るのは登録**なので、床は
+    # `request_form` と同じ **72本** —— `MIN_PER_GROUP`（16本）は engaged 用で、
+    # 登録（再生 3,151回 に1人）はその本数では**見分けられません**
+    # （`src/verdict_power.py` の冒頭 ——「検出できない条件を反証条件にしてはいけない」）。
+    # **長尺にもショートにも掛かります**（画面はどちらにも在るので `eligible` 無し）。
+    "subs_badge": (lambda: _members_by_split("subs_badge"), 72),
 }
 
 #: `MEMBER_SOURCES` には在るが、**期限は `kind: accrual`（伸び率）で解く**もの。
@@ -753,7 +760,13 @@ MEMBER_SOURCES: dict[str, tuple[Callable[[], dict[str, list[Member]]], int]] = {
 #:
 #: **覆る条件**: 規則の下で作った本が積み上がって問いの群が 16本 に届いたら、
 #: ここから外すこと（`Floor` の側で期限が守れるか見張られます）。
-ACCRUING: set[str] = {"request_form", "slide_pace", "slot_half", "hook_form"}
+#: **`subs_badge` も同じ形です**（2026-09-03 21:0x）—— 札が入ったのは 21:00 JST で、
+#: **予約に在る本は全部それより前に焼かれています**（両群 0本 / 床 72本）。
+#: `Floor.ready` は「片群 N本 が**予約に**そろって初めて日が出る」形なので、
+#: ここに入れないと `test_実物で期限が構造的に守れる` が**赤で居座ります**。
+#: **積み終わったらここから外すこと。**
+ACCRUING: set[str] = {"request_form", "slide_pace", "slot_half", "hook_form",
+                      "subs_badge"}
 
 #: yaml の `key:` → (群べつの**公開日**を作る関数, 片群あたりの必要本数)。
 #: **`members()` から畳んで作ります。ここに直接足さないこと** ——
