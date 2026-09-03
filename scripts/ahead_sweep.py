@@ -1029,28 +1029,55 @@ def _drop_mark(vid: str, sha: str) -> None:
         pass
 
 
-def _baked_today(rows: list[dict], today_s: str) -> int:
+def _baked_today(rows: list[dict], today_s: str, *, busy: bool | None = None) -> int:
     """**きょう実際に焼いた回数**（上限 `REBAKE_MAX_PER_DAY` の分子）。
 
-    `start` を数えて、**同じ本・同じ台本の `skip` を引きます** ——
-    錠に弾かれた回は1秒で終わっていて、何も焼いていないからです
-    （`_drop_mark()` の註に実測）。**引かないと、すれ違い1回で
-    その日の焼き直しが上限に達します。**
+    数えるのは **`done` の在る `start`** だけ。それに、**いま走っている1本**
+    （錠を誰かが握っていて、`done` の無い `start` が残っている）を足します。
+    `skip`（錠に弾かれた回）は `done` を残さないので、この形で自然に落ちます。
+
+    ## なぜ `start` を数えなくなったか（2026-09-03 16:0x に実測）
+
+    `start` は**決める側**が spawn の前に書きます。焼く側が器ごと回収されると
+    `done` が残らないので、**何も焼いていない `start` が上限を食います。** 実測:
+
+        13:12:31  start `1huadpEk6HY`（sha 65bd391332c2）→ `done` 無し（器の回収）
+        15:00:54  start `1huadpEk6HY`（sha bd162bda6fd5）→ `done` 無し（器の回収）
+        16:00     `_baked_today` は **2**  ＝「きょう既に 2回 焼いた（上限 2）」
+                  → **その日の焼き直しが、1本も焼けていないのに全部 止まる**
+
+    `skip` を引く形（2026-09-03 13:1x）は**錠に弾かれた入口**しか塞いでいませんでした。
+    これは同じ穴の2つ目の入口で、`rebake_died()` と対です。
+
+    **失敗した焼きは、ちゃんと上限を食います** —— `rebake_run()` は rc≠0 でも
+    `done` を書くので、壊れた台本が無限に焼き直されることはありません。
+    食わないのは「器ごと消えた回」だけです。
+
+    **覆る条件**: 焼く側が別の器で走るようになったら、`rebake_busy()`（`flock`）は
+    器をまたがないので「走っている1本」を見落とします。帳面の心拍で読むこと。
     """
     def _day(r: dict) -> str:
         return str(r.get("at", ""))[:10]
 
-    skipped: set[tuple[str, str]] = {
-        (str(r.get("video_id") or ""), str(r.get("sha") or ""))
-        for r in rows if r.get("kind") == "skip" and _day(r) == today_s
+    def _key(r: dict) -> tuple[str, str]:
+        return (str(r.get("video_id") or ""), str(r.get("sha") or ""))
+
+    done: set[tuple[str, str]] = {
+        _key(r) for r in rows if r.get("kind") == "done" and _day(r) == today_s
     }
     n = 0
+    in_flight = False
     for r in rows:
         if r.get("kind") != "start" or _day(r) != today_s:
             continue
-        if (str(r.get("video_id") or ""), str(r.get("sha") or "")) in skipped:
-            continue
-        n += 1
+        if _key(r) in done:
+            n += 1
+        else:
+            in_flight = True
+    if in_flight:
+        alive = rebake_busy() if busy is None else busy
+        if alive:
+            n += 1          # 焼く側は機械にひとつ（錠）
     return n
 
 

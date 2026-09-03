@@ -17,6 +17,8 @@ JST = timezone(timedelta(hours=9))
 
 
 def _rows() -> list[dict]:
+    """A/s1 は 05:02 に起きて `done` を残さず消えた（器の回収）。B/s2 は錠に弾かれた。
+    **どちらも1本も焼いていません。**"""
     return [
         {"at": "2026-09-03T05:02:35+09:00", "kind": "start", "video_id": "A", "sha": "s1"},
         {"at": "2026-09-03T11:41:52+09:00", "kind": "start", "video_id": "B", "sha": "s2"},
@@ -26,11 +28,31 @@ def _rows() -> list[dict]:
 
 
 def test_弾かれた回は上限の分子に入らない() -> None:
-    assert ahead_sweep._baked_today(_rows(), "2026-09-03") == 1
+    """2026-09-03 16:0x に **1 → 0** へ直した。A/s1 も `done` が無く、錠も空いている
+    （＝ 器ごと消えた）ので、上限を食う理由がありません。`_baked_today()` の註。"""
+    assert ahead_sweep._baked_today(_rows(), "2026-09-03", busy=False) == 0
+
+
+def test_走っている1本は分子に入る() -> None:
+    """錠を誰かが握っていれば、`done` の無い `start` は「いま焼いている」1本です。"""
+    assert ahead_sweep._baked_today(_rows(), "2026-09-03", busy=True) == 1
+
+
+def test_焼き終わった回は分子に入る() -> None:
+    rows = _rows() + [{"at": "2026-09-03T05:25:00+09:00", "kind": "done",
+                       "video_id": "A", "sha": "s1", "rc": 0}]
+    assert ahead_sweep._baked_today(rows, "2026-09-03", busy=False) == 1
+
+
+def test_失敗した焼きも分子に入る() -> None:
+    """rc≠0 でも `done` は書かれる ＝ 壊れた台本が無限に焼き直されないこと。"""
+    rows = _rows() + [{"at": "2026-09-03T05:25:00+09:00", "kind": "done",
+                       "video_id": "A", "sha": "s1", "rc": 1}]
+    assert ahead_sweep._baked_today(rows, "2026-09-03", busy=False) == 1
 
 
 def test_別の日は数えない() -> None:
-    assert ahead_sweep._baked_today(_rows(), "2026-09-04") == 0
+    assert ahead_sweep._baked_today(_rows(), "2026-09-04", busy=False) == 0
 
 
 def test_弾かれた回が印を残さない(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
