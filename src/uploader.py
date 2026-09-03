@@ -309,7 +309,11 @@ def _post_actions(youtube, video_id: str, publish_cfg: dict) -> None:
             note_day_quota(exc, "playlistItems.insert")
             print(f"[upload] 再生リストへの追加に失敗（動画は投稿済み）: {exc}")
 
-    comment = (publish_cfg.get("first_comment") or "").strip()
+    # 末尾に登録の依頼を1文（`src/sub_ask.py`・2026-09-03）。**冪等**なので、
+    # 台本が自分で書いていても二重にはなりません。
+    from . import sub_ask
+
+    comment = sub_ask.with_comment_ask((publish_cfg.get("first_comment") or "").strip())
     if comment:
         try:
             youtube.commentThreads().insert(

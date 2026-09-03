@@ -15,7 +15,8 @@ import shutil
 import sys
 from pathlib import Path
 
-from . import bars, config, history, subtitles, thumbnail, uploader, verify, visuals
+from . import (bars, config, history, sub_ask, subtitles, thumbnail, uploader,
+               verify, visuals)
 from .renderer import build_narration, build_video, segment_timeline
 from .script_writer import (SHORT_SEGMENT_CHARS, VideoScript, generate,
                             short_script_problems)
@@ -96,7 +97,11 @@ def pick_thumbnail_slide(script: VideoScript) -> int:
 
 def build_description(script: VideoScript, spans: list[tuple[float, float]],
                       channel: dict, topic_id: str) -> str:
-    parts = [script.description_body.strip(), "", "▼ 目次"]
+    # **先頭は登録の依頼**（`src/sub_ask.py`・2026-09-03）。`もっと見る` を開く前に
+    # 見えるのはここだけで、依頼は今まで**最後のセグメントの音声1文**にしか
+    # 在りませんでした（＝最後まで見た人にしか届いていない。門1' を動かす
+    # `sub_rate` の腕）。`with_head()` は冪等なので二重には入りません。
+    parts = [sub_ask.with_head(script.description_body.strip()), "", "▼ 目次"]
 
     lines = []
     for chapter in sorted(script.chapters, key=lambda c: c.segment_index):

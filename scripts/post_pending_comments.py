@@ -116,6 +116,11 @@ def _post(youtube, video_id: str, comment: str, *, reserve_hold=None, note_ok=No
     hold = reserve_hold()
     if hold:
         return hold
+    # 末尾に登録の依頼を1文（`src/sub_ask.py`・2026-09-03）。**冪等**。
+    # `src/uploader.py` の投稿直後の口と**同じ1文**を足します（2か所で違う字にしない）。
+    from src import sub_ask                                  # noqa: PLC0415
+
+    comment = sub_ask.with_comment_ask(comment)
     youtube.commentThreads().insert(
         part="snippet",
         body={"snippet": {"videoId": video_id, "topLevelComment": {
