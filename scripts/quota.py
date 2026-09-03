@@ -1094,8 +1094,30 @@ FABLE_RESERVE_PCT = 90.0
 ROLE_TIER: dict[str, str] = {
     "hourly": "routine",      # 記録・定型検査・機械的修正が実測の大半
     "optimizer": "leverage",  # 前提の判定・手順の設計・題材の型
+    "owner-full": "routine",  # 記録 ＋ 1周（定型側）
+    "owner-record": "light",  # 単純な記録だけ → sonnet（Fable の残りに関係なく）
 }
+#: 軽い段に渡す模型。
+LIGHT_MODEL = "sonnet"
 MODEL_CHOICE_FILE = ROOT / "data" / "model_choice.jsonl"
+
+
+def fable_cost_per_sub(now: datetime | None = None) -> float | None:
+    """**サブ1体が「Fable のみ」を何% 食うか**（同じ枠の2点の Δ% ÷ その間に立ったサブ）。
+
+    測れなければ None。`fable_rate()` の measured の区間と `_births_from_runs()` を使う。
+    """
+    now = now or datetime.now(timezone.utc)
+    fr = fable_rate(now)
+    if not fr or fr.get("source") != "measured":
+        return None
+    try:
+        births = _births_from_runs(fr["from_at"], fr["to_at"])
+    except Exception:                                          # noqa: BLE001
+        return None
+    if not births:
+        return None
+    return max(0.0, (float(fr["to_pct"]) - float(fr["from_pct"])) / births)
 
 
 def role_model(model: str, why: str, est_pct: float | None, role: str | None) -> tuple[str, str]:
@@ -1106,9 +1128,19 @@ def role_model(model: str, why: str, est_pct: float | None, role: str | None) ->
     役が無い呼び（古い呼び方）は今までどおり。
     """
     tier = ROLE_TIER.get(role or "", None)
+    if tier == "light":
+        return LIGHT_MODEL, f"役 `{role}` は単純な記録 → 軽い模型（オーナー 09/03 07:3x）"
     if model != "fable" or tier != "routine" or est_pct is None:
         if tier == "leverage" and model == "fable":
-            why = f"{why}。役 `{role}` は高レバレッジ側（`quota.ROLE_TIER`）→ 100% まで Fable"
+            # **100% を越える形では立てない**（同時に入った 09:2x の optimizer の線。
+            #     越えた後の 1日、立てたサブは全部 落ちる —— `fable_rate()` の註・A10）。
+            #     サブ1体の費用は実測（同じ枠の Δ% ÷ その間に立った数・`fable_cost_per_sub`）。
+            per_sub = fable_cost_per_sub()
+            if per_sub is not None and est_pct is not None and est_pct + per_sub >= FABLE_CAP_PCT:
+                return "opus", (f"{why}。役 `{role}` は高レバレッジ側だが、1体ぶん ≈ {per_sub:.1f}% を"
+                                f"足すと {est_pct + per_sub:.0f}% ≧ {FABLE_CAP_PCT:.0f}% → "
+                                "**Opus**（100% を越えて落とさない）")
+            why = f"{why}。役 `{role}` は高レバレッジ側（`quota.ROLE_TIER`）→ 100% の手前まで Fable"
         return model, why
     if est_pct >= FABLE_RESERVE_PCT:
         return "opus", (f"{why}。**ただし役 `{role}` は定型側**（`quota.ROLE_TIER`・"
