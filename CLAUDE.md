@@ -37,6 +37,8 @@
 >
 > **「エフォートレベル全て高にして」「Fable5.1使う時は」**（09/03 11:1x JST ＝ Fable 5.1 を使うときの effort は「高」。事実: Agent ツールにサブごとの effort の口は無く、サブは親セッションの effort を継ぐ。`claude -p` の口（`src/claude_cli.py`）には `--effort <level>` が在る —— Fable で撃つときは `high` を渡すこと。**09/03 13:1x に配線した**: `claude_cli.effort_for()` が模型名を見て Fable のときだけ `--effort high` を並べる（`CLAUDE_CLI_EFFORT` で上書き・検査 `tests/test_claude_cli_effort.py`）。**この行を読んで、もう一度 配線しないこと**）
 
+> **「Opus5にした」**（09/03 18:2x JST ＝ 画面で「Fable のみ」が **100% 使用済み**（すべてのモデル 63%・現在のセッション 7%・リセット 土 6:59）になったのを受けて、**親のセッションの模型が `claude-opus-5` に切り替えられた**。事実: 親は Opus 5 で走っている。サブの模型は `next_round_owner.py` が役ごとに印字するとおり —— 「Fable のみ」が 100% なので**いまは全役 opus**（新しい画面が来るまで）。effort の指示（09/03 11:1x「エフォートレベル全て高にして」「Fable5.1使う時は」）はそのまま生きている）
+
 事実（2026-09-02 19:0x に撃って出た数）:
 
     模型          親は `claude-fable-5-1`・**effort 最大**。働き手（サブ）は

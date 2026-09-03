@@ -20,3 +20,13 @@
 [sweep]   [history] 控えから 336件のテーマを足しました（チャンネルの読みと**和**を取ります。二重に作らないため）
 [sweep]   [history] この窓のチャンネルの読みを再利用しました（投稿済みテーマ 716件・**API 0単位**）。 窓ごとに1回だけ読みます（`_SCAN_CACHE` の註）。 読み直すなら `YT_NO_SCAN_CACHE=1`
 [sweep]   [clarity] 1周目: 挙がった 40件/40件 → 根拠あり 40件/39件 → 両方に出た 20件
+[rebake-run] 09/03 18:01 JST `1huadpEk6HY`（zaishoku-2026-62man・sha a45d484a223f）を焼きます
+[sweep] $ /usr/local/bin/python3 -m src.pipeline --script data/scripts/zaishoku-2026-62man.script.json --topic zaishoku-2026-62man --dry-run
+[sweep]   [history] 控えから 336件のテーマを足しました（チャンネルの読みと**和**を取ります。二重に作らないため）
+[sweep]   [history] この窓のチャンネルの読みを再利用しました（投稿済みテーマ 716件・**API 0単位**）。 窓ごとに1回だけ読みます（`_SCAN_CACHE` の註）。 読み直すなら `YT_NO_SCAN_CACHE=1`
+[sweep]   [pipeline] 題材の尺で作ります: 目標 20分（下限 16.0分・上限 25.0分）
+[sweep]   === テーマ: 【知らないと損】2026年4月 働く年金受給者は年54万円増える (zaishoku-2026-62man) ===
+[sweep]   [pipeline] 台本を読み込みました: data/scripts/zaishoku-2026-62man.script.json
+[sweep]   [pipeline] タイトル: 【知らないと損】2026年4月 働く年金受給者は年54万円増える
+[sweep]   [history] 控えから 336件のテーマを足しました（チャンネルの読みと**和**を取ります。二重に作らないため）
+[sweep]   [history] この窓のチャンネルの読みを再利用しました（投稿済みテーマ 716件・**API 0単位**）。 窓ごとに1回だけ読みます（`_SCAN_CACHE` の註）。 読み直すなら `YT_NO_SCAN_CACHE=1`
