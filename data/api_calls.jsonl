@@ -8697,4 +8697,7 @@
 {"at": "2026-09-03T18:22:02+00:00", "api": "data", "method": "videos.update", "units": 50, "ok": true, "by": "sub_ask.py:sweep", "detail": "7b2-Z6Jw5DQ"}
 {"at": "2026-09-03T18:22:03+00:00", "api": "data", "method": "videos.update", "units": 50, "ok": true, "by": "sub_ask.py:sweep", "detail": "0GdstSOGWVw"}
 {"at": "2026-09-03T18:22:11+00:00", "api": "data", "method": "videos.list", "units": 1, "ok": true, "detail": "2tAGEKVCgYQ,drkKm9fHW2M"}
+{"at": "2026-09-03T18:24:41+00:00", "api": "data", "method": "videos.list", "units": 1, "ok": true, "by": "sub_ask.py:apply_to_video", "detail": "1huadpEk6HY"}
+{"at": "2026-09-03T18:24:50+00:00", "api": "data", "method": "videos.list", "units": 1, "ok": true, "by": "sub_ask.py:apply_to_video", "detail": "1huadpEk6HY"}
+{"at": "2026-09-03T18:24:51+00:00", "api": "data", "method": "videos.update", "units": 50, "ok": true, "by": "sub_ask.py:apply_to_video", "detail": "1huadpEk6HY"}
 {"at": "2026-09-03T18:24:06+00:00", "api": "data", "method": "videos.list", "units": 1, "ok": true, "by": "sub_ask.py:sweep", "detail": "2tAGEKVCgYQ,_Mz5rg6jQ_A,dg-5ml7GRZQ,Tvm988Z4aHc,sCr8CcUtpN4,drkKm9fHW2M,IsAiWt2lzG4,1xPjpFwG8qk,a63FzIUV2wI,FSAN9tjIX10,"}
