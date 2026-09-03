@@ -2104,8 +2104,10 @@ def _check_yomi_heard(path: Path, work: Path, script: dict | None) -> list[str]:
         except Exception as exc:                               # noqa: BLE001
             return [f"完成音声を聞き取れなかった（{type(exc).__name__}: {exc}）"]
 
+    # **落とすのは「機械が直せる誤読」だけ**（`yomi_hear.fixable()` の docstring）。
+    # 1文字の語は仮名置換で直せないので、落とすとその本は**二度と通りません**。
     problems = [yomi_hear.say(r) for r in report.get("hits", [])
-                if r.get("verdict") == "misread"]
+                if r.get("verdict") == "misread" and yomi_hear.fixable(r.get("surface", ""))]
     # **繋ぎの事故は読みの誤りと同じ所で見える**（`yomi_hear.slice_final` の docstring）。
     if segs:
         total = sum(yomi_hear.probe_duration(p) for p in segs[:len(lines)])

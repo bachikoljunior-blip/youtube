@@ -193,54 +193,123 @@ def _heard_slice(ref: str, heard: str, k0: int, k1: int) -> str:
     return heard[lo:hi] if lo is not None else ""
 
 
+#: 活用する品詞。末尾のモーラは**送り仮名**で、漢字の読みではない（門1b）。
+_INFLECTS = ("動詞", "形容詞", "助動詞")
+
+#: 語の読みを探す窓の幅（カナ何文字ぶん、整列の位置の前後に見るか）。
+#: 認識器は語を落としたり足したりするので、**位置は前後にずれます** ——
+#: 窓が狭いと、ずれただけの語を「消えた」と名指しします。
+#: 逆に広げすぎると、**別の語の中の同じ音**を拾って誤読を見逃します
+#: （2026-09-03 に踏んだ: 窓 12 で「額（ガク）」を「日額（ニチガク）」の中の
+#:  ガク で「聞こえている」ことにして、既知の誤読を1件 取りこぼした）。
+WINDOW = 6
+
+
 def compare(spoken: str, heard: str) -> list[dict]:
     """**渡した文字列**と**聞き取った文字列**をカナで突き合わせ、割れた語を名指しする。
 
-    返すのは `{"surface","pron","heard","k0","k1","pos"}` の並び。
-    門1（漢字を含まない語は落とす）はここで当たっています。
+    返すのは `{"surface","pron","heard","char","k0","k1","pos"}` の並び。
+
+    ## **差分の塊ではなく、語ごとに「その読みが近くに在るか」を見る**（2026-09-03 に直した）
+
+    最初は `difflib` の差分の塊を語に当てていました。**64コマの本1本で外れました**:
+
+        賞与 16件 / 側 4件 …… 予定 ショーヨ に対し「聞いた ショーアタエ」。
+                              **その読みは、聞き取りの文の中にちゃんと在ります。**
+                              1文に同じ語が4回 出ると、差分の整列が別の出現に
+                              引っかかり、**在る語を「消えた」と言っていました**
+        月・年               1文に「月」が4回・「年」が3回。差分の塊はそのうち1つを
+                              指しているのに、2回目を撃つ側は `find()` で**先頭**を
+                              置き換えていた ＝ **別の場所を確かめて misread と言っていた**
+
+    いまは語ごとに、**予定の読みが、聞き取りの中の「その辺り」に在るか**だけを見ます。
+
+        その辺り   整列（`difflib`）が指した位置の前後 `WINDOW` カナ。
+                   整列は**大きくずれない**ぶんだけ信じる（位置の目安にだけ使う）
+        取り合い   一度 使った出現は次の語に渡さない（`cursor` が前へしか進まない）。
+                   これが無いと、「賞与」が4回 出る文で**同じ1つの ショーヨ**を
+                   4回とも「聞こえている」ことにできてしまいます
     """
     ref, toks = kana_map(spoken)
     got, _ = kana_map(heard)
     if not ref:
         return []
-    sm = difflib.SequenceMatcher(None, ref, got, autojunk=False)
-    bad: list[tuple[int, int]] = [(i1, i2) for tag, i1, i2, _j1, _j2
-                                  in sm.get_opcodes() if tag != "equal"]
+    where = _align(ref, got)
     hits: list[dict] = []
-    seen: set[int] = set()
-    for i1, i2 in bad:
-        lo, hi = i1, max(i2, i1 + 1)          # 差し込み（i1==i2）は隣の語に当てる
-        for n, tok in enumerate(toks):
-            if n in seen or tok["k1"] <= lo or tok["k0"] >= hi:
-                continue
-            if not _KANJI_RE.search(tok["surface"]):
-                continue                       # 門1: 直す当ての無い語
-            seen.add(n)
-            got_here = _heard_slice(ref, got, tok["k0"], tok["k1"])
-            if _tail_only(tok, got_here):
-                continue                       # 門1b: 送り仮名の差
-            hits.append({"surface": tok["surface"], "pron": tok["pron"], "pos": tok["pos"],
-                         "k0": tok["k0"], "k1": tok["k1"], "heard": got_here})
+    cursor = 0
+    for tok in toks:
+        want = tok["pron"]
+        if not want:
+            continue
+        at = where[min(tok["k0"], len(ref))]
+        found = _claim(got, want, cursor, at)
+        if found < 0 and tok["pos"] in _INFLECTS and len(want) >= 3:
+            found = _claim(got, want[:-1], cursor, at)   # 門1b: 送り仮名だけの差
+        if found >= 0:
+            cursor = found + len(want)
+            continue                           # その読みは、ちゃんと聞こえている
+        if not _KANJI_RE.search(tok["surface"]):
+            continue                           # 門1: 直す当ての無い語
+        hits.append({"surface": tok["surface"], "pron": want, "pos": tok["pos"],
+                     "char": tok["char"], "k0": tok["k0"], "k1": tok["k1"],
+                     "heard": (_heard_slice(ref, got, tok["k0"], tok["k1"])
+                               or got[at:at + len(want)])})
     return hits
 
 
-#: 活用する品詞。末尾のモーラは**送り仮名**で、漢字の読みではない（門1b）。
-_INFLECTS = ("動詞", "形容詞", "助動詞")
+def _align(ref: str, got: str) -> list[int]:
+    """予定カナの各位置が、聞き取りカナのどこに当たるか（**目安の表**。1回だけ作る）。
 
-
-def _tail_only(tok: dict, heard: str) -> bool:
-    """活用語で、**末尾1モーラだけ**が違うか（＝ 送り仮名の書き違い）。
-
-    **覆る条件**: 1文字の動詞（「観る」「経る」）で頭が1モーラしかない語は、
-    ここが「末尾だけ」を「全部」と取り違えます。だから
-    **予定の読みが2モーラ以上あるときだけ**当てています。
-    そこを外した誤読が出たら、この門を品詞ではなく
-    「表層の末尾が仮名かどうか」で切り直すこと。
+    `difflib` を語ごとに呼ぶと、1コマで何百回も整列し直すことになります
+    （実測で聞き取りより解析のほうが重くなりました）。**表を1つ作って引くこと。**
     """
-    want = tok["pron"]
-    if tok["pos"] not in _INFLECTS or len(want) < 2:
-        return False
-    return len(heard) == len(want) and heard[:-1] == want[:-1]
+    where = [0] * (len(ref) + 1)
+    j = 0
+    for tag, i1, i2, j1, j2 in difflib.SequenceMatcher(None, ref, got,
+                                                       autojunk=False).get_opcodes():
+        for i in range(i1, i2):
+            where[i] = j1 + (i - i1) if tag == "equal" else j1
+        j = j2
+    where[len(ref)] = j
+    return where
+
+
+def _claim(got: str, want: str, cursor: int, at: int) -> int:
+    """`want` を、`cursor` 以降・`at` の前後 `WINDOW` の中から1つ取る（無ければ -1）。"""
+    lo = max(cursor, at - WINDOW)
+    hi = at + len(want) + WINDOW
+    if lo >= len(got):
+        return -1
+    found = got.find(want, lo, hi)
+    return found
+
+
+def fixable(surface: str) -> bool:
+    """**その語は、機械が直せるか。**
+
+    直すのは `src/yomi.to_speech()` の仮名置換で、`yomi_gate.corrections()` は
+    **1文字の語を返しません** —— 1文字の漢字は活用語幹でもあるので、
+    「重」→ ジュー は「重い」を「ジューい」にします（あちらの docstring）。
+
+    **＝ 1文字の語は、見つけても直せません。** だから門で落としません
+    （落とすと、その本は**二度と通りません** ＝ 投稿が永久に止まる）。
+    名指しは `data/yomi_queue.json` に残し、`src/yomi.FIXES` に
+    **文脈つきの正規表現**で人が入れる形にしてあります（「額」がその形）。
+
+    ## そして 1文字の「予定の読み」は、そもそも当てになりません（2026-09-03 の実測）
+
+        月（予定 ツキ）  「年金が月20万円の人は、いま月9万5000円が止まり、4月からは…」
+        年（予定 ネン）  「年金が月15万円の人は、いま年84万円が…新しい線では年18万円なので」
+
+    どちらも **open-jtalk が熟語を切り損ねて1字に刻んだ跡**（`yomi_gate` の R2）で、
+    その1字に付いた読みは**辞書の第一候補**でしかありません。
+    そこへ「予定の読み」を強いると、**Google が正しく読んでいた所を壊します**
+    （`scripts/yomi_ear.py` が同じ罠を「重課 → オモ」で踏んでいます）。
+
+    **覆る条件**: 1文字の誤読をオーナーが耳で指摘したら、
+    そのときは**熟語ごと**台帳に入れること（1字の置換に戻さないこと）。
+    """
+    return len(surface) >= 2
 
 
 # ---------------------------------------------------------------- 2回目を撃つ
@@ -261,10 +330,12 @@ def confirm(spoken: str, hit: dict, tts_cfg: dict | None = None) -> str:
     want = hit["pron"]
     if not want:
         return "unclear"
-    if hit["heard"] == want:
-        return "noise"                         # 割れは隣の語の巻き添えだった
-    # 予定の読みのカナに差し替えた文を作る（その1か所だけ）
-    idx = spoken.find(hit["surface"])
+    # **どの出現かを、文字位置で押さえること**（2026-09-03 に踏んだ）。
+    # `find()` にすると、1文に「月」が4回 出る文で**先頭**を置き換え、
+    # 差分が指していたのと**別の場所**を確かめて misread と言っていました。
+    idx = hit.get("char")
+    if idx is None or spoken[idx:idx + len(hit["surface"])] != hit["surface"]:
+        idx = spoken.find(hit["surface"])
     if idx < 0:
         return "unclear"
     swapped = spoken[:idx] + want + spoken[idx + len(hit["surface"]):]
@@ -296,6 +367,7 @@ def hear(lines: list[str], wavs: list[Path], *, tts_cfg: dict | None = None,
     if len(lines) != len(wavs):
         raise ValueError(f"行 {len(lines)} と音 {len(wavs)} の数が違う（全文にならない）")
     rows: list[dict] = []
+    texts: list[str] = []
     words = 0
     for i, (line, wav) in enumerate(zip(lines, wavs)):
         spoken = to_speech(str(line))
@@ -305,22 +377,34 @@ def hear(lines: list[str], wavs: list[Path], *, tts_cfg: dict | None = None,
             heard = transcribe(Path(wav))
         except Exception as exc:                               # noqa: BLE001
             raise RuntimeError(f"セグメント{i + 1} を聞き取れない: {type(exc).__name__}") from exc
+        texts.append(heard)
         for hit in compare(spoken, heard):
             hit.update({"seg": i, "sentence": line, "spoken": spoken})
             rows.append(hit)
-    # **同じ語は1回だけ確かめる**（2回目は合成と認識で1語 数秒かかる）
+    rows = judge(rows, tts_cfg=tts_cfg, confirm_hits=confirm_hits, log=log)
+    return {"lines": len(lines), "words": words, "split": len(rows), "hits": rows,
+            "heard_text": texts}
+
+
+def judge(rows: list[dict], *, tts_cfg: dict | None = None,
+          confirm_hits: bool = True, log=print) -> list[dict]:
+    """割れた語に判定を付ける（門3。**同じ語は1回だけ確かめる** —— 2回目は数秒かかる）。
+
+    **1文字の語は撃ちません**（`fixable()` の docstring）—— 直せないので、
+    確かめても行き先が待ち行列しか無く、**時間だけ払う**ことになります。
+    """
     verdicts: dict[tuple[str, str], str] = {}
     for row in rows:
-        key = (row["surface"], row["pron"])
-        if not confirm_hits:
+        if not confirm_hits or not fixable(row["surface"]):
             row["verdict"] = "unclear"
             continue
+        key = (row["surface"], row["pron"])
         if key not in verdicts:
             verdicts[key] = confirm(row["spoken"], row, tts_cfg)
             log(f"   -- {row['surface']}（予定 {row['pron']} / 聞いた {row['heard'] or '－'}）"
                 f" → {verdicts[key]}")
         row["verdict"] = verdicts[key]
-    return {"lines": len(lines), "words": words, "split": len(rows), "hits": rows}
+    return rows
 
 
 def record(report: dict) -> dict:
@@ -336,7 +420,7 @@ def record(report: dict) -> dict:
     store = dict(blob.get("words", {}))
     fixed: dict[str, str] = {}
     for row in report["hits"]:
-        if row.get("verdict") != "misread":
+        if row.get("verdict") != "misread" or not fixable(row["surface"]):
             continue
         word, want = row["surface"], row["pron"]
         store[word] = {"word": word, "kana": want, "sentence": row["sentence"],
@@ -351,8 +435,12 @@ def record(report: dict) -> dict:
         tmp.write_text(json.dumps(blob, ensure_ascii=False, indent=1), encoding="utf-8")
         tmp.replace(G.LEDGER_PATH)
     unclear = [{"code": "H1", "surface": r["surface"],
-                "why": f"完成音声で読みが割れたが、聞き取りでは決められなかった"
-                       f"（予定 {r['pron']} / 聞いた {r['heard'] or '－'}）。"}
+                "why": (f"完成音声で読みが割れた"
+                        f"（予定 {r['pron']} / 聞いた {r['heard'] or '－'}）。"
+                        + ("1文字なので仮名置換では直せない ——"
+                           " 熟語ごと台帳に入れるか `src/yomi.FIXES` に文脈つきで。"
+                           if not fixable(r["surface"]) else
+                           " 聞き取りでは向きを決められなかった。"))}
                for r in report["hits"] if r.get("verdict") == "unclear"]
     if unclear:
         G.queue(unclear)

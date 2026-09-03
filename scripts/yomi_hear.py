@@ -72,6 +72,41 @@ def from_script(path: Path, limit: int, out: Path) -> tuple[list[str], list[Path
     return lines, wavs, "台本から焼き直した音"
 
 
+def recompare(path: Path, out: Path | None) -> int:
+    """**聞き取りの結果を貯めてあるので、照合だけ引き直せる。**
+
+    門の目盛り（`WINDOW`・畳む表・門1b）を動かしたときに、
+    **同じ音・同じ書き起こしで**空振りが何件 変わったかを、
+    API も模型も撃たずに数えるための道。**1本 15分 の聞き取りを何度もやり直さないこと。**
+    """
+    blob = json.loads(path.read_text(encoding="utf-8"))
+    texts = blob.get("heard_text") or []
+    if not texts:
+        print("[hear] この控えには聞き取りの文が入っていません（古い版）")
+        return 2
+    lines: dict[int, str] = {}
+    for row in blob.get("hits", []):
+        lines[row["seg"]] = row["sentence"]
+    rows = []
+    for i, heard in enumerate(texts):
+        line = lines.get(i)
+        if line is None:
+            continue                            # 割れが1件も無かったコマは文が残っていない
+        spoken = to_speech(line)
+        for hit in H.compare(spoken, heard):
+            hit.update({"seg": i, "sentence": line, "spoken": spoken})
+            rows.append(hit)
+    rows = H.judge(rows, confirm_hits=False)
+    print(f"[hear] 引き直し: 割れ {blob.get('split', '?')}件 → {len(rows)}件")
+    for row in rows:
+        print(f"    セグメント{row['seg'] + 1} 「{row['surface']}」"
+              f" 予定 {row['pron']} / 聞いた {row['heard'] or '－'}")
+    if out:
+        blob["hits"], blob["split"] = rows, len(rows)
+        out.write_text(json.dumps(blob, ensure_ascii=False, indent=1), encoding="utf-8")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -85,8 +120,13 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--again", action="store_true",
                     help="直したあとの**もう一度の全文照合**（音を焼き直してから聞く）")
     ap.add_argument("--json", type=Path, help="結果をここに書く")
+    ap.add_argument("--recompare", type=Path,
+                    help="前に書いた --json を読み、**聞き取りをやり直さずに**照合だけ引き直す"
+                         "（門の目盛りを動かしたときの検算。API も模型も撃たない）")
     args = ap.parse_args(argv)
 
+    if args.recompare:
+        return recompare(args.recompare, args.json)
     if not H.available():
         print("[hear] 聞き取れる環境ではありません"
               " （pip install faster-whisper / open-jtalk のどちらかが無い）")

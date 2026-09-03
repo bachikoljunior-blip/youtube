@@ -101,11 +101,40 @@ def test_送り仮名の書き違いは名指ししない():
 
 
 @pytest.mark.skipif(not yomi_gate.available(), reason="open-jtalk が無い")
+@pytest.mark.skipif(not yomi_gate.available(), reason="open-jtalk が無い")
+def test_同じ語が何回出ても取り合わない():
+    """1文に同じ語が4回 出ても、**1つの出現を4回 使い回さない**。
+
+    2026-09-03 に踏んだ形の裏返し —— 差分の整列に頼っていた頃は、
+    「賞与」が4回 出る文で **在る語を「消えた」と16件** 名指ししていた。
+    """
+    line = "賞与のがくで動かします。賞与が年120万円なら止まります。賞与が無ければ変わりません。賞与の有無で違います。"
+    assert yomi_hear.compare(line, line.replace("がく", "額")) == []
+    # 1つだけ潰したら、**1件だけ**名指しされること（4件でも 0件でもない）
+    broken = line.replace("賞与が年", "小指が年", 1).replace("がく", "額")
+    assert len(yomi_hear.compare(line, broken)) == 1
+
+
+@pytest.mark.skipif(not yomi_gate.available(), reason="open-jtalk が無い")
 def test_割れた語には聞こえた音が付く():
     """`confirm()` は「1回目で予定の読みが聞こえたか」から始まるので、
     **聞こえた側の音**を必ず持って回ること。"""
-    hits = yomi_hear.compare("控除額を計算します。", "工場学を計算します。")
-    assert hits and all("heard" in h and "pron" in h for h in hits)
+    hits = yomi_hear.compare("実際の額は賃金日額で決まります。",
+                             "実際の飛体は賃金日額で決まります。")
+    assert hits and all(h.get("heard") and h.get("pron") and "char" in h for h in hits)
+
+
+@pytest.mark.skipif(not yomi_gate.available(), reason="open-jtalk が無い")
+def test_隣の語の同じ音では見逃さない():
+    """窓を広げすぎると、**別の語の中の同じ音**で誤読が消える。
+
+    2026-09-03 に踏んだ: 窓 12 のとき「額（ガク）」が
+    「日額（ニチガク）」の中の ガク で「聞こえている」ことになり、
+    **既知の誤読を1件 取りこぼした。**
+    """
+    hits = yomi_hear.compare("実際の額は賃金日額で決まります。",
+                             "実際の飛体は賃金日額で決まります。")
+    assert [h["surface"] for h in hits] == ["額"]
 
 
 # ---------------------------------------------------------------- 門の効き方
@@ -132,11 +161,27 @@ def _work(tmp_path, lines, report):
 
 def test_誤読が残る本は落ちる(tmp_path, monkeypatch):
     monkeypatch.setattr(yomi_hear, "available", lambda: True)
-    lines = ["実際の額は賃金日額で決まります。"]
-    hit = {"seg": 0, "surface": "額", "pron": "ガク", "heard": "ヒタイ", "verdict": "misread"}
+    lines = ["控除額を計算します。"]
+    hit = {"seg": 0, "surface": "控除額", "pron": "コージョガク", "heard": "コージョヒタイ",
+           "verdict": "misread"}
     work = _work(tmp_path, lines, _report(lines, [hit]))
     problems = verify._check_yomi_heard(tmp_path / "final.mp4", work, _script(lines))
-    assert problems and "額" in problems[0], problems
+    assert problems and "控除額" in problems[0], problems
+
+
+def test_1文字の誤読では止めない(tmp_path, monkeypatch):
+    """**直せない誤読で落とすと、その本は二度と通りません**（＝ 投稿が永久に止まる）。
+
+    `yomi_gate.corrections()` は1文字の語を返しません（活用語幹を巻き込むため）。
+    しかも 2026-09-03 の実測では、1文字の「予定の読み」自体が
+    **熟語を切り損ねた跡**でした（月 → ツキ・年 → ネン）。
+    """
+    monkeypatch.setattr(yomi_hear, "available", lambda: True)
+    assert not yomi_hear.fixable("月") and yomi_hear.fixable("控除額")
+    lines = ["年金が月20万円の人は、いま月9万5000円が止まります。"]
+    hit = {"seg": 0, "surface": "月", "pron": "ツキ", "heard": "ズケ", "verdict": "misread"}
+    work = _work(tmp_path, lines, _report(lines, [hit]))
+    assert verify._check_yomi_heard(tmp_path / "final.mp4", work, _script(lines)) == []
 
 
 def test_割れても確定していなければ落とさない(tmp_path, monkeypatch):
