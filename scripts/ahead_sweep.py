@@ -1226,6 +1226,50 @@ def rebake_tally(root: Path | None = None) -> tuple[int, int]:
             sum(1 for r in rows if r.get("kind") == "done"))
 
 
+def bake_minutes() -> tuple[float | None, int]:
+    """**1回の焼き直しは何分かかるか**（実測の中央値・分／標本数）。**API 0単位。**
+
+    ## なぜ「焼き直しの帳面」から出せないか（2026-09-04 に踏んだ）
+
+    `data/rebake.jsonl` の `done` は **0件** です（`rebake_tally()`）——
+    **一度も終わっていないので、終わりの時刻がありません。**
+    そこで、**中でいちばん長い所**（分かりやすさの輪）の実測を使います:
+
+        data/clarity_loop.jsonl   `seconds` 1435秒 ＝ **24分**（4周・上限まで回った回）
+
+    輪のあとに 焼き（実測 13分）と 読み照合の輪 と 上げ が続くので、
+    **これは下限**です。**「40分 は要る」を下限として読むこと**（上振れはする）。
+
+    使い道は1つ —— **回が「待つか、見送るか」を決めるとき**。
+    枠まで これより短ければ、焼き始めても間に合いません（`rebake_run()` の `late`）。
+
+    **覆る条件**: `done` が数件 出たら、`seconds` の中央値を直接 使うこと
+    （そちらは上げまで含んだ本物の長さです）。
+    """
+    import json                                                # noqa: PLC0415
+    f = Path(config.ROOT) / "data" / "clarity_loop.jsonl"
+    vals: list[float] = []
+    try:
+        for ln in f.read_text(encoding="utf-8").splitlines():
+            try:
+                s = json.loads(ln).get("seconds")
+            except Exception:                                  # noqa: BLE001
+                continue
+            if isinstance(s, (int, float)) and s > 0:
+                vals.append(float(s))
+    except OSError:
+        return (None, 0)
+    if not vals:
+        return (None, 0)
+    vals.sort()
+    med = vals[len(vals) // 2] / 60.0
+    return (round(med + BAKE_RENDER_MIN, 1), len(vals))
+
+
+#: 分かりやすさの輪の**あと**に要る分（焼き 13分 ＋ 読み照合の輪 ＋ 上げ）。実測の下限。
+BAKE_RENDER_MIN = 13.0
+
+
 def _takeover_mark(day_s: str) -> Path:
     """**その日の枠を、いま引き継いでいる最中**の印（機械にひとつ・`<日>` ごと）。"""
     return _rebake_marks_dir() / f"takeover-{day_s}"

@@ -1313,10 +1313,16 @@ def machine_rebake_lines(video_id: str, now: datetime | None = None) -> list[str
                    "背景・log は `data/rebake.log`・帳面は `data/rebake.jsonl`）"
                    " —— **手で撃たないこと。同じ本が2本 上がります**"]
             if starts and dones == 0:
+                try:
+                    mins, n = ahead_sweep.bake_minutes()
+                except Exception:                              # noqa: BLE001
+                    mins, n = None, 0
+                how = (f"**{mins:.0f}分 は要ります**（下限・分かりやすさの輪の実測 n={n} ＋ 焼き）"
+                       if mins else "何分かかるかは、まだ 1件も測れていません")
                 out += [f"  [!] **焼き直しは これまで {starts}回 起きて、{dones}回 しか終わっていません。**"
                         "焼く側は**この器の中**の背景プロセスなので、"
                         "**この回が終わると道連れで死にます**（`ahead_sweep.rebake_tally` の註）",
-                        "       ＝ **この回は、終わるまで待つこと。**"
+                        f"       ＝ **この回は、終わるまで待つこと。**{how}。"
                         "`tail -3 data/rebake.log` を数分おきに見て、"
                         "`**差し替えました**` か `[!] 焼き直せませんでした` が出るまで居ること"]
             elif starts:
