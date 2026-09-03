@@ -722,13 +722,24 @@ def main() -> int:
                   "**そのまま**渡すこと（親が中身を考えないこと）")
         print("  **isolation: \"worktree\" と run_in_background: true を"
               "必ず付けること**（衝突を避ける／親を塞がない）")
-        try:
-            from scripts.quota import sub_model as _sub_model
-            _m, _why = _sub_model()
-        except Exception as exc:                               # noqa: BLE001
-            _m, _why = "fable", f"quota.sub_model が答えません（{str(exc)[:60]}）"
-        print(f"  **model: \"{_m}\"**（{_why}。オーナー 2026-09-02"
-              "「Fableは全体週間使用量の50%まで」→ `quota.FABLE_CAP_PCT`）")
+        # **役ごとに模型を選ぶ**（オーナー原文 09/03 07:3x「仕事ごとに Fable・Opus・
+        # Sonnet・Haiku を選ぶ」「Fable のみは 100% 到達になって使えなくならないほうが
+        # 良くない？」）。09/03 09:4x まではここが 1行 で、全役へ同じ模型を返していた。
+        # 段と予備の線は `quota.ROLE_TIER` / `quota.FABLE_RESERVE_PCT`、
+        # 選んだ理由は `data/model_choice.jsonl` に積む（`quota.record_model_choice`・
+        # `docs/OWNER_INSTRUCTION_GATE.md` の 6）。
+        import scripts.quota as _quota
+        for role in roles:
+            try:
+                _m, _why = _quota.sub_model(role=role)
+            except Exception as exc:                           # noqa: BLE001
+                _m, _why = "fable", f"quota.sub_model が答えません（{str(exc)[:60]}）"
+            try:
+                _quota.record_model_choice(role, _m, _why)
+            except Exception:                                  # noqa: BLE001
+                pass
+            print(f"  **model（`kind: {role}`）: \"{_m}\"**（{_why}。"
+                  "上限は `quota.FABLE_CAP_PCT`・予備は `quota.FABLE_RESERVE_PCT`）")
         print(f"  立てたら: python scripts/next_round.py --record {','.join(roles)}")
         return 0
     print(f"WAIT {d['wait_min']:.0f}")

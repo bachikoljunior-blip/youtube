@@ -102621,3 +102621,82 @@ Fable 5.1（サブ）。この回の中身は「帳面と実物の突き合わ�
 ### 模型のこと
 
 後半は数を出して型に 12行 足しただけ。**Sonnet で足りた。** 判断は「いいえ」と名指しの 1点。
+
+## 2026-09-03 09:2x JST  (session_01AHfq4FUVAd5fxDM29yG1Cm・optimizer サブ)
+
+**「最適化されてんの？」→ いいえ。** 自分で撃った数（`scripts/optimized.py`・5日 276件）:
+ship の 71% が `fix`、`--moves 0` が 262/276、到達日が最後に出たのは 08/20、再生/日(7d) は
+6,299（08/25）→ 1,746（-72%）。長尺の齢24h 再生は中央値 **1**（n=31）、ショートは 158（n=217）。
+直近 3時間 の hourly の ship は「枠の残りを刷る7か所を揃えた」「§4 の表を刷る」の2件 ——
+道具の手入れで、どちらも Fable で走った。**Fable のみ は推定 90%・100% は 11:11 JST の線。
+枠の戻りは 09/05 07:00 JST**（46時間 先）。そこを越えると、09/04 に閉じる `per_video` の
+前提（長尺・外の作りを写す・n=2）の判定を、Fable でやれない。
+
+**潰した理由（1つ）**: オーナー 09/03 07:3x「仕事ごとに Fable・Opus・Sonnet・Haiku を選ぶ／
+Fable のみを 100% に届かせない」が機械に入っておらず、`fix` 71% の hourly が Fable を食っていた。
+→ `quota.role_model(role)` を入れ、`next_round.py` の GO が**役ごとに** `model:` を印字する:
+`owner-record` は sonnet・`hourly` は Fable が枠の戻りまで両役ぶん持つときだけ Fable（いまは
+opus）・`optimizer` は 1周ぶん（サブ1体 ≈ 1.8%・実測 Δ%÷立った数）が 100% の手前に収まる限り
+Fable。**100% を越える形では立てない**（越えた後 1日、立てたサブは全部 落ちる）。
+検査 `tests/test_role_model.py`。親の手順（`docs/trigger_parent.md`・`CLAUDE.md` 事実）にも1行。
+
+**次に主実行が1周したとき変わる所**: GO が `model: "opus" ← kind: hourly`／`model: "fable" ←
+kind: optimizer` と出て、hourly は opus で立つ。Fable の速さは半分になり、11:11 の線が消える。
+
+**覆る条件**: (1) 「Fable のみ」の速さを役べつに測れるようになったら、費用を役べつの実測に替える。
+(2) Opus で走った hourly の ship の種別・moves が Fable のときと変わらない（それが実測なら
+optimizer も opus でよく、Fable は 09/04 の判定にだけ使う）。(3) 推定の速さ（6%/時）は両役 Fable の
+実測なので、hourly を opus にした後は**過大**に出る —— 次の画面で `--fable <%>` が来れば直る。
+それまでは opus 側に外れる（安全側）。
+
+**触らなかった所**: 09/04・09/05 の長尺の決め（外の作りを写す・n=2）。長尺の齢24h 中央値 1 の
+実測に対して分の悪い賭けだが、`eta.py` が「×21.88 は形の中に無い・作り方を変える improve」と
+言っている腕そのもので、09/04 に答えが出る。ここで戻すと n が永遠に 1 のまま。
+## 2026-09-03 09:2x〜09:5x JST —— 定期の回（Fable 5.1・サブ `session_01AHfq4FUVAd5fxDM29yG1Cm#agent-a9a2acd68144d422a`）
+
+**出したもの（1件目・fix・moves 0）**: **役ごとに模型を選ぶ**（オーナー原文 09/03 07:3x）を機械に入れた。
+`quota.sub_model(role=)` / `quota.role_model()` / `quota.ROLE_TIER` / `quota.FABLE_RESERVE_PCT=90` /
+`quota.record_model_choice()` → `data/model_choice.jsonl`（`docs/OWNER_INSTRUCTION_GATE.md` の 6 の6欄）。
+`next_round.py` の GO は役ごとに `model（kind: hourly）` `model（kind: optimizer）` を刷る。`next_round_owner.corrected_sub_model(role=)` も同じ線。
+検査 `tests/test_model_by_role.py` 6件 ＋ 既存 27件 緑。
+
+### なぜこれか（数字）
+
+- 07:3x の原文は `CLAUDE.md` に写されただけ（17a8f6fa は CLAUDE.md 9行 のみ）。機械は「目盛りだけ・全役に同じ模型」のまま（`OWNER_INSTRUCTION_GATE.md` 自身が「上限管理には使えても目標最適化ではない」と書いた形）
+- 「Fable のみ」推定 89〜90%・100% は **11:11 JST**（`quota.py --pace`）。届いたら翌 09/05 07:00 JST の戻りまで **全役が Opus** ＝ オーナーの最後の問い「100% 到達になって使えなくなるようにならないほうが良くない？」がそのまま起きる線だった
+- 段の根拠は実測: hourly の ship 276件/5日 は fix 71%・moves 0 95%・中央値 11分（07:2x の回）＝「Fable を使う価値が実測で薄い」側。optimizer は前提の判定・手順の設計 ＝ 高レバレッジ側
+- **この回は 日枠 403（16:00 まで）・閉じられる前提 0件（最早 09/04）・09/04 の本の焼き直しは別サブ（Opus・読みの門）の手** で、`improve`/`verdict`/`upload` のどれも撃てなかった。撃てる 0単位 の手のうち、いちばん大きいのがこれ（次の周の親から効く）
+
+### 模型のこと
+
+この回は Fable（`data/model_choice.jsonl` の1行目 ＝ 自分の分。予備の線 90% 未満）。中身は「実装 3ファイル＋検査」で **Opus で足りた**。
+次の周からは `hourly` が予備の線を越えて Opus に倒れる（推定 90% ちょうど）。**それが 1周目の実測になる** —— 覆る条件は `quota.py` の註。
+
+**覆る条件**: `data/model_choice.jsonl` × `data/runs.jsonl` の ship で、Opus の hourly の ship（kind・moves・`aged_views(24)`）が Fable の回より薄いと出たら `hourly` を `leverage` へ戻す。
+optimizer の ship が Opus と変わらなければ予備は要らない（`FABLE_RESERVE_PCT` を 100 へ）。**線 90 は既定値で根拠は無い**（ゲート文書の分類「既定値」）。
+
+**出したもの（2件目・fix・moves 0）**: `config/hypotheses.yaml` の 09-23「落ちた1本あたり再生は密度で説明が付く」に `note:`（札 `per_video` で密度を数えるのはわざと・鎖は `rule_per_video.staleness()` → `ceiling_at_rule()`）。
+`premise_subject.py` の `[?]` が **1件 → 0件**（`[n]` 4件）。`--write` が毎周 刷っていた「札が違うと `--alloc` の配分ごと違います」の行が消える。検査 25件 緑。
+やらなかった手（理由）: `improve`（09/04 `1huadpEk6HY` の焼き直し）は **読みの門を実装中の別サブ（Opus）の手** —— 取り合わない（親の申し送り）。`verdict stat_split` は撃ってみた: 処置 21本／対照 91本 で床 16 は越えたが、`ab_verdict` は「0再生率が群で違う（25% 対 1%）・engaged では測れない」までしか言わず、期限は 09-21。**閉じる根拠は出ていない**（前の回の Sonnet の申し送り「verdict で閉じること」は、`eta.py`「この回に閉じられる前提はありません」のほうが正しい）。
+
+### 設計の見直し（§6 (a2)）
+
+1. いちばん時間を食ったのは、手順の読み（`--write` 150行 ＋ 読む順 §「普通の回の読む順」150行 ＋ §2/§2.7/§6 の `sed` 3回 ＋ `eta` 473行 ＋ `retro` の尾）— 約4割。次が模型の実装（3ファイル＋検査・約3割）
+2. 手順どおりで間違ったところ: 無し。手順の外: `status.py` を撃たなかった（前2回と同じ・要らなかった）。sandbox は `cd … ; python …; git …` の連結と heredoc→pytest の連結を「git かどうか判別できない」で拒む（§0 の族）。**git は単独の行で撃つこと**
+3. 最短ではない: `ab_verdict` を2回 撃った（1回目 `tail -30` で足りていた）。`eta.py` が 6分（同じ分にきょうだい 3体 が同じ `eta.py` を撃っていた —— 4プロセス並走。**同じ周の 3体 が同じ 6分 を別々に払う** ＝ 1周 18分 の重複。`eta.py` の結果を `data/eta.jsonl` の最新点から 10分 以内なら読み直す短絡が在れば 12分 浮く。次の optimizer へ）
+
+### 次の回へ
+
+1. **模型の1周目の実測**: 次の GO で `hourly` が `model: "opus"` になる（推定 90% ≥ 予備の線）。その回の ship の中身を `data/model_choice.jsonl` と並べて読むこと（覆る条件は `quota.py` の註）。**「Fable のみ」の画面が来たら `--fable <%>` を積む** —— 推定 6.00 %/時 は 2点 で測った数で、画面が来るまで運び続ける
+2. `eta.py` の重複（上の (a2) 3）: きょうだい 3体 が同じ分に同じ `eta.py` を撃つ。`data/eta.jsonl` の最新点が N分 以内なら印字だけにする短絡 —— optimizer の手
+3. `niche_ceiling.py` の `published` が空なのは **`--source free`（yt-dlp の flat entries）の側だけ**（`free_rows()` L268）。API 側（`videos.list`・L221）は `publishedAt` を保存ずみ。flat には日付が無いので、取るなら上位 N本 だけ yt-dlp を flat 無しで撃ち直す（0単位・数秒/本）。前の回の申し送り 3 はこの形に読み替えること
+4. **16:00 JST 以降**: 前の回の申し送り 1（`refresh_thumbnail --video 9zkfjEH48PY`／`1huadpEk6HY`／`DfFyu8qZq3I`・`quota_refute`）はそのまま。09/04 の `--move 1huadpEk6HY 2026-09-04T09:00` は **09/04 になってから**（`ahead_sweep.place_today` が自分で置く）
+
+**（09:5x 追記・同じ optimizer）** 同じ周の hourly（dc0a5528・09:4x）が同じ指示を先に機械へ入れていた
+（`quota.sub_model(role=)`・`ROLE_TIER`・予備の線 `FABLE_RESERVE_PCT=90`・`data/model_choice.jsonl`）。
+**merge で相手の形を正本にし、こちらの `role_model(role)` は捨てた。** 残したのは相手に無かった2点:
+(1) `optimizer` も **1体ぶん（実測 ≈ 1.8%・`fable_cost_per_sub()`）を足して 100% に届くなら opus**
+（相手は 100% まで Fable ＝ 最後の1体が越えて落ちる）。(2) `owner-record` は **sonnet**（`LIGHT_MODEL`）。
+検査は `tests/test_model_by_role.py`（相手）＋ `tests/test_role_model.py`（この2点）。
+**同じ物を二重に作った 30分 は、この周の無駄** —— 立った時点の claim（`run_marker --claim`）を
+読まずに始めたのが原因。次の optimizer は、数える前に `data/runs.jsonl` の直近の claim を1行 見ること。

@@ -34,10 +34,13 @@ OFFICIAL_FABLE_SHARE_OF_REGULAR_WEEK = 0.50
 FABLE_ONLY_GAUGE_FULL_PCT = 100.0
 
 
-def corrected_sub_model(now: datetime | None = None) -> tuple[str, str]:
+def corrected_sub_model(now: datetime | None = None,
+                        role: str | None = None) -> tuple[str, str]:
     """Fableの**利用可能性**を正しい目盛りで返す。
 
-    仕事にFableを使うべきかは、ここでは決めない。これは枠が残っているかだけ。
+    枠の門はここで決める。**役ごとの段と予備の線**（オーナー原文 09/03 07:3x・
+    `quota.role_model()` / `quota.ROLE_TIER` / `quota.FABLE_RESERVE_PCT`）は
+    `role` を渡した呼びにだけ重ねる（2026-09-03 09:4x）。
     専用目盛りの増加率を測れていないため、全モデル速度での外挿はしない。
     """
     now = now or datetime.now(timezone.utc)
@@ -85,11 +88,12 @@ def corrected_sub_model(now: datetime | None = None) -> tuple[str, str]:
             + "。**新しい画面が来るまで Opus**",
         )
 
-    return (
+    return quota.role_model(
         "fable",
         f"『Fable のみ』{pct:.0f}%（{seen:%m/%d %H:%M} JST）"
         f"＜ 内訳上限{FABLE_ONLY_GAUGE_FULL_PCT:.0f}%"
         "（100%が通常の全モデル週間上限の50%分。50%では止めない）" + tail,
+        max(pct, est_pct), role,
     )
 
 
