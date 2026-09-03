@@ -345,7 +345,13 @@ def loop(script: dict, topic_id: str, work: Path | None = None, *,
 
     text_lines = lines(script)
     start_print = fingerprint(text_lines)
-    base = mech_problems(script, topic_id, portrait)
+    try:
+        base = mech_problems(script, topic_id, portrait)
+    except Exception as exc:                                   # noqa: BLE001
+        # **ここで投げないこと。** 投げると控えが1つも残らず、`verify` の門が
+        # 「輪を通っていない」と読んで**その本を落とします**（＝ 投稿が1日 落ちる）。
+        log(f"[clarity] 機械の検査を数えられませんでした（{type(exc).__name__}）")
+        base = []
     report: dict = {"rounds": [], "model": model, "fixed": 0, "start": start_print,
                     "segments": len(text_lines), "reason": "", "topic": topic_id}
     last_top = ""

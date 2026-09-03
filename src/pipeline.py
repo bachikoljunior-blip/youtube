@@ -376,6 +376,19 @@ def clarify_and_fix(script, channel: dict, work: Path, topic: dict, portrait: bo
                                    channel=channel, portrait=portrait)
     except Exception as exc:                                   # noqa: BLE001
         print(f"[pipeline] 分かりやすさの輪に失敗しました（{type(exc).__name__}: {exc}）")
+        # **控えを必ず1つ残すこと。** `verify._check_clarity_loop` は控えが無いと
+        # 「輪を通っていない本」として落とします —— ここで残さないと、
+        # 輪の側の故障が**その日の投稿を落とします**（`CLAUDE.md`「4. 投稿を途切れさせない」）。
+        try:
+            work.mkdir(parents=True, exist_ok=True)
+            (work / clarity_loop.REPORT_NAME).write_text(json.dumps(
+                {"end": clarity_loop.fingerprint(clarity_loop.lines(blob)),
+                 "reason": f"評価に失敗（{type(exc).__name__}: {exc}）",
+                 "rounds": [], "fixed": 0, "changed": False,
+                 "topic": topic.get("id", "")}, ensure_ascii=False, indent=1),
+                encoding="utf-8")
+        except OSError:
+            pass
         return False
     if not report.get("changed"):
         return False

@@ -52,6 +52,18 @@ def test_verify_の門になっていて_全文照合より前に並ぶ():
     assert "_check_clarity_loop" not in only
 
 
+def test_輪が落ちた回も控えを残す():
+    """**輪の側の故障で、その日の投稿を落とさないこと。**
+
+    `verify._check_clarity_loop` は控えが無ければ落とします。だから
+    `clarify_and_fix` は、輪が例外で抜けた回にも控えを1つ置かなければいけません。
+    """
+    src = (C.config.ROOT / "src" / "pipeline.py").read_text(encoding="utf-8")
+    body = src.split("def clarify_and_fix(")[1].split("\ndef ")[0]
+    assert "clarity_loop.REPORT_NAME" in body, (
+        "輪が落ちた回に控えが残らない（`verify` がその本を落とします）")
+
+
 def test_書き直したら台本を置き直して機械の検査を当て直す():
     src = (C.config.ROOT / "src" / "pipeline.py").read_text(encoding="utf-8")
     body = src.split("if clarify_and_fix(script")[1][:900]
