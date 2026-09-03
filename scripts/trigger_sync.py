@@ -128,6 +128,50 @@ def render_body(spec: dict, root: Path = ROOT) -> str:
     return body.strip()
 
 
+def _ccr_and_body(row: dict) -> tuple[dict, str]:
+    """行から「環境の欄」と「本文」を抜く。**返りの形が3つあります。**
+
+    ## なぜ要るか（2026-09-03 13:4x に実測。**この道具は本文を1度も読めていませんでした**）
+
+    ここは長らく `row["job_config"]["ccr"]["events"][0]["data"]["message"]["content"]`
+    の1本だけを見ていました。**いまの `list_triggers` の返りにその道はありません**:
+
+        row["session_request"]["environment_id"]
+        row["session_request"]["events"][0]["payload"]
+                              ["internal_anthropic_catchall"]["message"]["content"]
+        row["derived_state"]["prompt"]              ← 同じ本文の写し
+
+    **抜けなかった欄は「無い」ではなく「0字」として保存されます**（この節の上に、
+    まさにその註が書いてあります —— 「欄ごと落とすと 0字 として保存され、
+    直せるのは親だけなので、サブは毎回それを申し送る」）。
+    実測: 正本 4,254字 に対して実物 1,913字 と鳴り続け、`environment_id` も空。
+    **`status.py` の「観測が 63時間前」は、積みたくても積めなかった跡**です。
+
+    **3つとも受けます**（片方しか受けないと「積んだつもりで積めていない」回が出る、
+    というのが `observed()` の docstring の言い分で、**形は増えます**）。
+
+    **覆る条件**: 返りの形がまた変わったら、ここに1本 足すこと。
+    **落とさないこと** —— 古い形の観測が `data/trigger_seen.json` に残っています。
+    """
+    ccr = (row.get("job_config") or {}).get("ccr") or {}
+    if not ccr:
+        ccr = row.get("session_request") or {}
+    body = ""
+    for ev in (ccr.get("events") or []):
+        if not isinstance(ev, dict):
+            continue
+        msg = ((ev.get("data") or {}).get("message") or {})
+        if not msg:
+            msg = (((ev.get("payload") or {})
+                    .get("internal_anthropic_catchall") or {}).get("message") or {})
+        body = msg.get("content") or ""
+        if body:
+            break
+    if not body:
+        body = ((row.get("derived_state") or {}).get("prompt") or "")
+    return ccr, body
+
+
 def observed(dump: dict | list, trigger_id: str) -> dict | None:
     """`list_triggers` / `update_trigger` の返りから、当該トリガーの姿を抜く。
 
@@ -147,12 +191,7 @@ def observed(dump: dict | list, trigger_id: str) -> dict | None:
     for row in rows:
         if row.get("id") != trigger_id:
             continue
-        ccr = (row.get("job_config") or {}).get("ccr") or {}
-        events = ccr.get("events") or []
-        body = ""
-        if events:
-            body = (((events[0].get("data") or {}).get("message") or {})
-                    .get("content") or "")
+        ccr, body = _ccr_and_body(row)
         return {
             "id": row.get("id"),
             "name": row.get("name"),
