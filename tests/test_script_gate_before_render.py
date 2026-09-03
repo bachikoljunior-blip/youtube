@@ -64,9 +64,14 @@ def test_scriptだけで判定できるものしか入れないこと():
 
 def test_pipelineがレンダリングの前に撃つこと():
     """**「合成前に止めます」を、本当に止まる形にしておくこと。**"""
-    src = (ROOT / "src" / "pipeline.py").read_text(encoding="utf-8")
-    assert "verify.script_only_problems(" in src, (
+    whole = (ROOT / "src" / "pipeline.py").read_text(encoding="utf-8")
+    assert "verify.script_only_problems(" in whole, (
         "`src/pipeline.py` が `script_only_problems` を撃っていません")
+    # **`main()` の中だけを見ること**（2026-09-03 に踏んだ）。file 全体で数えると、
+    # `main()` より上に置いた補助（`hear_and_fix` が `synthesize_segments` を
+    # 呼び直す）を「先に合成している」と読んで、**順番が正しいのに赤くなります。**
+    # 順番を言っているのは、あくまで1本を焼く道（`main`）の中の並びです。
+    src = whole[whole.index("\ndef main("):]
     gate = src.index("verify.script_only_problems(")
     synth = src.index("synthesize_segments(")
     assert gate < synth, (

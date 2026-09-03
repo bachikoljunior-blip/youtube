@@ -116,6 +116,26 @@ def test_同じ語が何回出ても取り合わない():
 
 
 @pytest.mark.skipif(not yomi_gate.available(), reason="open-jtalk が無い")
+def test_数字の書き換えで語の位置がずれない():
+    """**open-jtalk は算用数字を漢数字に書き換えます**（「10」→ 一十）。
+
+    2026-09-03 に踏んだ: 位置を素直に進めていたので、数字より後ろの語の
+    文字位置が全部ずれ、「賞与」が**文の長さそのもの**（131）を指していた。
+    2回目を撃つ側はそこを置き換えるので、**文の外**を確かめていた。
+    """
+    line = "年金が月10万円なら、総報酬61万円で賞与は年120万円です。"
+    _kana, toks = yomi_hear.kana_map(line)
+    for tok in toks:
+        if tok["char"] >= 0:
+            assert line[tok["char"]:tok["char"] + len(tok["surface"])] == tok["surface"], tok
+    got = {t["surface"]: t["char"] for t in toks if t["char"] >= 0}
+    assert got.get("賞与") == line.index("賞与")
+    # 門1c: 書き換えられた漢数字は、読み上げに1文字も無いので名指ししない
+    assert all(h["surface"] not in ("十", "六", "一", "二")
+               for h in yomi_hear.compare(line, "年金が月10万円なら、総報酬61万円で賞与は年120万円です"))
+
+
+@pytest.mark.skipif(not yomi_gate.available(), reason="open-jtalk が無い")
 def test_割れた語には聞こえた音が付く():
     """`confirm()` は「1回目で予定の読みが聞こえたか」から始まるので、
     **聞こえた側の音**を必ず持って回ること。"""

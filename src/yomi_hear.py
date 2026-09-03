@@ -52,6 +52,10 @@
     門1b **活用語の、末尾1モーラだけの違いは落とす。** 動詞・形容詞の末尾は送り仮名 ＝
          **漢字の読みではない**（実測: 認識器が「受け取る」を「受け取り」と書き、
          ウケトル 対 ウケトリ で割れた。頭の ウケトr は一致している）
+    門1c **送った文の中に、その表層が無ければ落とす。** open-jtalk は
+         **算用数字を漢数字に書き換える**ので（「10」→ 一十・「61」→ 六十一）、
+         その字は**読み上げに1文字も無く、直す当てが無い**
+         （実測: 「十（予定 ジュー / 聞いた ヒャク）」で1件 名指ししていた）
     門2  **正書法のゆれを畳む**（ハ→ワ・ヘ→エ・ヲ→オ・ヂ→ジ・ヅ→ズ）。
          助詞「は」を open-jtalk は文脈で ワ とも ハ とも読む。読みの誤りではない
     門3  **2回目を撃つ**（`confirm()`）。割れた語を、**予定の読みのカナに置き換えた文**で
@@ -165,13 +169,18 @@ def kana_map(text: str) -> tuple[str, list[dict]]:
     for tok in G.analyze(text):
         surface = tok["surface"]
         at = text.find(surface, cursor)
-        if at < 0:
-            at = cursor
         pron = norm(tok["pron"])
         out.append({"surface": surface, "pos": tok["pos"], "char": at,
                     "k0": len(kana), "k1": len(kana) + len(pron), "pron": pron})
         kana += pron
-        cursor = at + len(surface)
+        if at >= 0:
+            cursor = at + len(surface)
+        # **見つからない表層で cursor を進めないこと**（2026-09-03 に踏んだ）。
+        # `open-jtalk` は**算用数字を漢数字に書き換えます**（「10」→ 一十・
+        # 「61」→ 六十一）。この repo の読み上げはほぼ全部の文に数字が入るので、
+        # 進めてしまうと**その文の、数字より後ろの語の位置が全部ずれます** ——
+        # 実測: 「賞与」の文字位置が 131（文の長さそのもの）になり、
+        # 2回目を撃つ側が**文の外**を置き換えていました。
     return kana, out
 
 
@@ -250,6 +259,8 @@ def compare(spoken: str, heard: str) -> list[dict]:
             continue                           # その読みは、ちゃんと聞こえている
         if not _KANJI_RE.search(tok["surface"]):
             continue                           # 門1: 直す当ての無い語
+        if tok["char"] < 0:
+            continue                           # 門1c: 下を見ること
         hits.append({"surface": tok["surface"], "pron": want, "pos": tok["pos"],
                      "char": tok["char"], "k0": tok["k0"], "k1": tok["k1"],
                      "heard": (_heard_slice(ref, got, tok["k0"], tok["k1"])
@@ -322,10 +333,40 @@ def _synth(text: str, dest: Path, tts_cfg: dict | None = None) -> None:
     tts._google(text, dest, cfg)
 
 
-def confirm(spoken: str, hit: dict, tts_cfg: dict | None = None) -> str:
+def confirm(spoken: str, hit: dict, heard_a: str = "", tts_cfg: dict | None = None) -> str:
     """割れた語を**もう1回 撃って**、聞き取りの誤りと読みの誤りを分ける（門3）。
 
-    返すのは `"noise"` / `"misread"` / `"unclear"`。判定の表は module の docstring。
+    返すのは `"noise"` / `"misread"` / `"unclear"`。
+
+    ## **2回目と「予定の読み」を比べないこと**（2026-09-03 に踏んで直した）
+
+    最初は「2回目で予定の読みが聞こえたら misread」にしていました。
+    **64コマの本1本で、正しく読めている語を 16件 unclear にしました**:
+
+        賞与  予定 ショーヨ / 聞いた ショーアタエ
+              認識器は **「商与」** と書いていた（同音の書き違い）。
+              **「与」1字は open-jtalk が アタエ と読む**ので、
+              書き起こし側のカナが ショーアタエ に化ける。
+              音は最初から ショーヨ で、**誤読は1つも起きていない。**
+
+    **書き起こしの側のカナは、認識器が何と書いたかで揺れます。**
+    予定の読みと直に比べると、その揺れが全部「読みの誤り」に見えます。
+
+    **いまは A と B を、同じ揺れを通して比べます**:
+
+        A  漢字のまま合成した音（1周目で聞いてある）        → 聞こえた音 a
+        B  その語だけ予定の読みのカナに置き換えて合成した音  → 聞こえた音 b
+
+        a == b   2つの音は同じに聞こえた ＝ **A も予定どおり読んでいた** → noise
+        b に予定の読みが在って、a に無い                    → **misread**
+        それ以外                                          → unclear
+
+    **同じ認識器・同じ解析を2回とも通すので、揺れは両側で同じように出ます。**
+
+    a と b は**その語の周りだけ**（前後 `NEAR` カナ）で比べます。文の端まで比べると、
+    認識器が別の所で1字 揺れただけで「違う音だった」になります
+    （2026-09-03 の実測: 「賞与」は A も B も **「消費」** と書かれていて、
+    音は同じなのに、整列の切れ目が1字ずれて `unclear` に落ちていた）。
     """
     want = hit["pron"]
     if not want:
@@ -348,11 +389,27 @@ def confirm(spoken: str, hit: dict, tts_cfg: dict | None = None) -> str:
             return "unclear"                   # 鍵が無い・網が落ちた ＝ 止めない
     ref_b, toks_b = kana_map(swapped)
     span = next(((t["k0"], t["k1"]) for t in toks_b
-                 if t["char"] <= idx < t["char"] + len(t["surface"])), None)
+                 if 0 <= t["char"] <= idx < t["char"] + len(t["surface"])), None)
     if span is None:
         return "unclear"
-    got_b = _heard_slice(ref_b, kana_map(heard_b)[0], *span)
-    return "misread" if got_b == want else "unclear"
+    got_b = kana_map(heard_b)[0]
+    near_b = _near(ref_b, got_b, span[0], len(want))
+    if heard_a:
+        ref_a, _ = kana_map(spoken)
+        got_a = kana_map(heard_a)[0]
+        if near_b == _near(ref_a, got_a, hit["k0"], len(want)):
+            return "noise"                     # 2つの音は同じに聞こえた
+    return "misread" if want in near_b else "unclear"
+
+
+#: A と B を比べる窓（その語の前後、カナ何文字ぶんか）。
+NEAR = 4
+
+
+def _near(ref: str, got: str, k0: int, size: int) -> str:
+    """聞き取りカナの、**その語の周りだけ**を切り出す。"""
+    at = _align(ref, got)[min(k0, len(ref))]
+    return got[max(0, at - NEAR):at + size + NEAR]
 
 
 # ---------------------------------------------------------------- 全文を聞く
@@ -381,13 +438,13 @@ def hear(lines: list[str], wavs: list[Path], *, tts_cfg: dict | None = None,
         for hit in compare(spoken, heard):
             hit.update({"seg": i, "sentence": line, "spoken": spoken})
             rows.append(hit)
-    rows = judge(rows, tts_cfg=tts_cfg, confirm_hits=confirm_hits, log=log)
+    rows = judge(rows, texts, tts_cfg=tts_cfg, confirm_hits=confirm_hits, log=log)
     return {"lines": len(lines), "words": words, "split": len(rows), "hits": rows,
             "heard_text": texts}
 
 
-def judge(rows: list[dict], *, tts_cfg: dict | None = None,
-          confirm_hits: bool = True, log=print) -> list[dict]:
+def judge(rows: list[dict], texts: list[str] | None = None, *,
+          tts_cfg: dict | None = None, confirm_hits: bool = True, log=print) -> list[dict]:
     """割れた語に判定を付ける（門3。**同じ語は1回だけ確かめる** —— 2回目は数秒かかる）。
 
     **1文字の語は撃ちません**（`fixable()` の docstring）—— 直せないので、
@@ -400,7 +457,8 @@ def judge(rows: list[dict], *, tts_cfg: dict | None = None,
             continue
         key = (row["surface"], row["pron"])
         if key not in verdicts:
-            verdicts[key] = confirm(row["spoken"], row, tts_cfg)
+            verdicts[key] = confirm(row["spoken"], row,
+                                    texts[row["seg"]] if texts else "", tts_cfg)
             log(f"   -- {row['surface']}（予定 {row['pron']} / 聞いた {row['heard'] or '－'}）"
                 f" → {verdicts[key]}")
         row["verdict"] = verdicts[key]
