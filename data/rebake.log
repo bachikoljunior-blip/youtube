@@ -1,3 +1,5 @@
 [rebake-run] 09/03 05:02 JST `dRZnZrRy2Lw`（nenkin-uketorikata-65-70-75-handan・sha 20e377f62f99）を焼きます
 [sweep] $ /usr/local/bin/python -m src.pipeline --script data/scripts/nenkin-uketorikata-65-70-75-handan.script.json --topic nenkin-uketorikata-65-70-75-handan --dry-run
 [rebake-run] 別の焼き直しが走っています（錠 `/home/user/youtube/.git/rebake/rebake.lock`）。この回は焼きません
+[rebake-run] 09/03 13:12 JST `1huadpEk6HY`（zaishoku-2026-62man・sha 65bd391332c2）を焼きます
+[sweep] $ /usr/local/bin/python -m src.pipeline --script data/scripts/zaishoku-2026-62man.script.json --topic zaishoku-2026-62man --dry-run

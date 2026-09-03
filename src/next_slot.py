@@ -1218,6 +1218,62 @@ def rebake_input_lines(video_id: str, topic: str) -> list[str]:
             "（`critique_queue.stash()`）—— **次に焼く本からは在ります。**"]
 
 
+def machine_rebake_lines(video_id: str, now: datetime | None = None) -> list[str]:
+    """**機械の側が、この本を焼き直すつもりか**（`ahead_sweep.rebake_plan_for()` の判定を写す）。
+
+    ## なぜ要るか（2026-09-03 13:1x に実測。**朝から止まっていて、誰も気づきませんでした**）
+
+    この画面は「焼いたのは 04:37 JST。そのあと 6件 入っています」と正しく言い、
+    **手で撃つ1行**まで出していました。出していなかったのは
+    **「機械はどうするつもりか」**です。実物はこうでした:
+
+        [rebake] 2026-09-04 は焼き直しません —— 同じ台本（sha …）は一度 焼いた
+        [rebake] 2026-09-05 は焼き直しません —— きょう既に 2回 焼いた（上限 2）
+
+    **どちらも嘘**で（帳面に `done` は 0件・11:41 の `skip` が印と上限を食っていた）、
+    **09/03 の焼き直しは 05:02 から 8時間 止まっていました。**
+    掃きの `[rebake]` は `data/ahead_sweep.log` にしか出ないので、
+    **`--write` だけを読む回（＝ 普通の回）からは見えません。**
+
+    **「手で撃てます」と「機械が撃ちます」は別**です。前者だけを出していると、
+    回は「機械がやるだろう」と読んで見送り、機械は黙って止まっています。
+
+    **覆る条件**: `rebake_plan_for()` が重くなったら（いまは読むだけ・API 0単位）、
+    掃きが最後に書いた判定を `data/rebake.jsonl` から読む形へ移すこと。
+    """
+    if not video_id:
+        return []
+    try:
+        from scripts import ahead_sweep                        # noqa: PLC0415
+    except Exception:                                          # noqa: BLE001
+        return []
+    t = (now or datetime.now(JST)).astimezone(JST)
+    for day in (t.date(), t.date() + timedelta(days=1), t.date() + timedelta(days=2)):
+        try:
+            plan = ahead_sweep.rebake_plan_for(day, t)
+        except Exception:                                      # noqa: BLE001
+            continue
+        if str(plan.get("video_id") or "") != video_id:
+            continue
+        if plan.get("do"):
+            return ["  **機械も焼き直します**（次の掃きが背景で起こします・"
+                    "`scripts/ahead_sweep.py`）—— 手で撃つと**同じ本が2本 上がります**"]
+        # **「いま焼いている」を「もう焼いた」と混ぜないこと**（この註の実測がまさにそれ）。
+        #     `rebake_attempted()` はどちらも True を返すので、帳面の最後の行で分けます。
+        last = None
+        for r in ahead_sweep._rebake_rows(None):
+            if r.get("video_id") == video_id and r.get("sha") == plan.get("sha"):
+                last = r
+        if last is not None and last.get("kind") == "start":
+            return [f"  **いま焼いています**（{str(last.get('at'))[11:16]} JST に起きた・"
+                    "背景・log は `data/rebake.log`・帳面は `data/rebake.jsonl`）"
+                    " —— **手で撃たないこと。同じ本が2本 上がります**"]
+        return [f"  [!] **機械は焼き直しません** —— {plan.get('why', '')}",
+                "       ＝ 直すか、手で撃つかは**この回が決めること**。"
+                "「機械がやるだろう」で見送らないこと（09/03 は 8時間 止まっていた）"]
+    return []
+
+
 def lines(now: datetime | None = None) -> list[str]:
     """画面へ出す行。**`improve` の当てどころを、fix と同じ形で毎周 出します。**"""
     # **暦を先に出すこと**（2026-09-01 夜）。下の `[次の枠]` は「次の1本」しか
@@ -1334,6 +1390,7 @@ def lines(now: datetime | None = None) -> list[str]:
             out.append(f"       {ln[:118]}")
         out.extend(rebake_input_lines(str(v.get("video_id") or ""),
                                       str(v.get("topic") or "")))
+        out.extend(machine_rebake_lines(str(v.get("video_id") or ""), now))
         if draft is None:
             out.append("  → **焼き直すのが `improve` の1手です**"
                        "（`python -m src.pipeline` で焼き直し、"

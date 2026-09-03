@@ -102877,6 +102877,99 @@ optimizer の ship が Opus と変わらなければ予備は要らない（`FAB
 - 焼き直しは `ahead_sweep` の**機械の道**（`rebake_today` / `--rebake-run`）で撃ちました ——
   あちらが flock を持つので、掃きの回と取り合いません
 
+## 2026-09-03 13:0x〜14:0x JST —— 定期の回（サブ `session_01AHfq4FUVAd5fxDM29yG1Cm#agent-a1fe0cd1c719c973f`・Opus）
+
+役は `hourly`（定型側）。**この回は Fable を1回も撃っていません** ——
+`quota.py --pace` が「「Fable のみ」89%（11:05）→ いま推定 97%・100% は 13:58 JST」と
+言っており、オーナー 07:3x の「Fable のみは 100% 到達になって使えなくなるようにならないほうが
+良くない？」に当たるからです。焼き直しの中の輪（`clarity_loop`）も
+`generation.model` ＝ `opus` のままにしてあります（`src/clarity_loop.py` の「模型の選び方」）。
+
+### 出したもの 1件目（fix・`--lever none --moves 0`）—— **オーナーの effort の指示が、機械に無かった**
+
+> **「エフォートレベル全て高にして」「Fable5.1使う時は」**（09/03 11:1x）
+
+`CLAUDE.md` 38行目は、この指示を受けて
+**「`claude -p` の口（`src/claude_cli.py`）には `--effort <level>` が在る —— Fable で撃つときは
+`high` を渡すこと」**と書いていました。**書いてあるだけでした。**
+`claude_cli._invoke()` が組み立てていたのは `--model` だけです。
+
+    $ claude --help | grep effort
+      --effort <level>    Effort level for the current session      ← 口は在る
+
+- `claude_cli.effort_for(model)` が**模型名を見て** Fable のときだけ `high` を返す。
+  呼ぶ側（`clarity_loop` / `script_writer` / …）は `quota.sub_model()` の返りを
+  そのまま渡すので、**自分が Fable かどうかを知りません** —— 名前で分けられるのはここだけ
+- `opus` / `sonnet` / `haiku` には渡しません。指示が「Fable5.1使う時は」と範囲を切っており、
+  09/03 07:3x の「単純な記録・定型検査・機械的修正は軽いモデル」と逆を向くため
+- `CLAUDE_CLI_EFFORT` で上書きできる（1本だけ別の段で撃って比べるとき）
+- 検査 `tests/test_claude_cli_effort.py` 4件。`_invoke()` の**引数の並びそのもの**も見ます
+  （`effort_for()` が正しくても配線だけ外れる形を、このリポジトリで何度も踏んでいるため）
+
+**覆る条件**: オーナーが「全部の模型で高」と言ったら `EFFORT_BY_MODEL` を捨てて常に `high`。
+CLI から `--effort` が消えたら関数ごと消すこと（渡すと `claude` が異常終了し、`ask()` の3回が全部落ちる）。
+
+**なぜこれを1件目にしたか**: 11:1x に届いた指示が、11:1x〜13:0x の回（複数）を素通りしています。
+`CLAUDE.md` に**指示と、直す場所と、直し方まで**書かれていて、それでも入りませんでした。
+**「書いてある」と「入っている」は別**で、このリポジトリでは前者が後者に化けません。
+
+### 出したもの 2件目（fix・`--lever per_video --moves 0`）—— **きょうの焼き直しが、朝から全部 止まっていた**
+
+13:1x に `ahead_sweep.py --dry-run` を撃つと、**09/04 も 09/05 も焼きませんでした**:
+
+    [rebake] 2026-09-04 は焼き直しません —— 同じ台本（sha 65bd391332c2）は一度 焼いた
+    [rebake] 2026-09-05 は焼き直しません —— きょう既に 2回 焼いた（上限 2）
+
+**どちらも嘘です。** `data/rebake.jsonl` に `done` は**1件もありません**:
+
+    05:02:35 start  dRZnZrRy2Lw  sha 20e377f62f99   ← 容器の回収で消えた（done 無し）
+    11:41:52 start  1huadpEk6HY  sha 65bd391332c2
+    11:41:53 skip   1huadpEk6HY  why: locked        ← **1秒後。何も焼いていない**
+
+錠（`flock`）を握ったまま 05:02 の回が消え、11:41 の回はそれに弾かれています。
+印（`_rebake_marks_dir()/<ID>-<sha>`）は**錠を取る前**に決める側（`rebake_today`）が書くので、
+焼く側（`rebake_run`）が弾かれると**焼いていないのに印だけ**が残り、
+`rebake_attempted()` が `REBAKE_MARK_STALE`（3時間）のあいだ True を返します。
+同じ `skip` が `baked_today` の分子にも入るので、**すれ違い1回で、その日の焼き直しが上限に達します**。
+
+**この穴が食っていたもの**: 09/04 の1本 `1huadpEk6HY` は 04:37 JST に焼いた本で、そのあと
+この枝には**焼くコードの直しが 6件**（読み照合の門・分かりやすさの輪・出口の順）と、
+分かりやすさの輪が台本へ書き戻した**8コマ**が載っています。**そのどれも入っていません。**
+規則3「次の枠で出る1本を、出る瞬間まで良くし続ける」が、**機械の側で朝から止まっていました。**
+
+- `_drop_mark(vid, sha)`: 弾かれた回は印を消す（`rebake_run()` の skip の枝）
+- `_baked_today(rows, day)`: `start` から、同じ本・同じ台本の `skip` を引く
+- 残っていた 11:41 の印を1つ消した（直した機械が 11:41 にやったはずのこと）
+- 検査 `tests/test_rebake_lock_skip.py` 4件
+
+**覆る条件**: 印を「錠を取ったあと」に書けるようになったら `_drop_mark()` は要りません
+（いまは決める側と焼く側が別プロセスで、決める側しか書けません）。
+**3件 続けて `skip` が出るなら**、消すべきは印ではなく**錠の持ち主が死ぬこと**のほうです
+（`rebake_run` に PID を書かせて、死んでいたら奪う）。
+
+### 3件目（improve・規則3）—— 09/04 の1本を、直った機械で焼き直している
+
+上の穴を塞いだ直後の掃きが、そのまま起こしました（背景・`data/rebake.log`）:
+
+    [rebake] 13:12 JST **焼き直します**（2026-09-04 の本）: `1huadpEk6HY`（zaishoku-2026-62man）
+    [rebake] 背景で起こしました
+
+`upload_only --draft --replaces`（`videos.insert`・**日枠 0単位**）まで焼く側が自分でやり、
+`data/daily_pick.jsonl` の決めを新しい ID へ移して commit と push まで持っています。
+**日枠は 16:00 JST まで尽きている**（403 を6回 観測）ので、`--move` で 09/04 の枠へ入れるのは
+`ahead_sweep.place_today` が 09/04 にやります。
+
+### この回の形の決め（`[きょうの1本]` の数で）
+
+きょう 09/03 の枠は埋まっている（1本／規則 1本）ので、決めるのは**次の枠 = 09/04**。
+04:38 の決め（長尺 `zaishoku-2026-62man`）を、この回の数でそのまま置きます:
+
+    外の帯 長尺 p90 624,772回 ／ ショート p90 10,283回
+    日付が出るのに要る ×21.9 を外の p90 で越える形は **長尺だけ**
+    48時間の中央値（ショート 173回 対 長尺 1回）で決めないこと ——
+    あれは門2a/2b の数ではない、と `--write` の行が言っている
+
+
 ## 2026-09-03 12:3x JST —— 「最適化されてんの？」（過去の回について）→ **いいえ**（optimizer サブ `session_01AHfq4FUVAd5fxDM29yG1Cm#agent-a158400529cbdf221`・Fable）
 
 ### 数（この回に自分で撃った。`python scripts/optimized.py`・`scripts/eta.py`・`data/shorts_subs.json`）
