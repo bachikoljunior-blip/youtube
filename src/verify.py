@@ -2171,10 +2171,19 @@ def _check_yomi_heard(path: Path, work: Path, script: dict | None) -> list[str]:
     # **落とすのは「機械が直せる誤読」だけ**（`yomi_hear.fixable()` の docstring）。
     # 1文字の語は仮名置換で直せないので、落とすとその本は**二度と通りません**。
     problems = [yomi_hear.say(r) for r in report.get("hits", [])
-                if r.get("verdict") == "misread" and yomi_hear.fixable(r.get("surface", ""))]
+                if r.get("verdict") == "misread"
+                and yomi_hear.fixable(r.get("surface", ""), r.get("pos", ""))]
     # **繋ぎの事故は読みの誤りと同じ所で見える**（`yomi_hear.slice_final` の docstring）。
+    #
+    # **コマとコマの間の無音を足すこと**（2026-09-03。**足さずに書いてありました**）。
+    # `renderer.build_audio()` は間に `SILENCE_SECONDS`（0.35秒）を1つずつ挟むので、
+    # 足さないと **コマ数 × 0.35秒** ぶん必ず食い違います ——
+    # 64コマの本で **22.4秒**。この門は、実物の長尺を**1本残らず落とす**形でした
+    # （実測: 09/04 `1huadpEk6HY` の焼き直しが「1332.0秒 と 1309.6秒 が食い違う」で落ちた）。
     if segs:
-        total = sum(yomi_hear.probe_duration(p) for p in segs[:len(lines)])
+        from .renderer import SILENCE_SECONDS                  # noqa: PLC0415
+        n = min(len(segs), len(lines))
+        total = sum(yomi_hear.probe_duration(p) for p in segs[:n]) + max(0, n) * SILENCE_SECONDS
         shown = float(_probe(path).get("format", {}).get("duration") or 0)
         if total and abs(shown - total) > 1.5:
             problems.append(f"完成音声 {shown:.1f}秒 とコマの合計 {total:.1f}秒 が食い違う"

@@ -129,3 +129,55 @@ def test_輪の上限が定数で置いてある():
     src = (H.ROOT / "src" / "yomi_hear.py").read_text(encoding="utf-8")
     assert "HEAR_MAX_PASSES" in src
     assert "while True:" in src.split("def audit(")[1], "輪になっていない"
+
+
+# ------------------------------------------- 実物の1本で踏んだ2つ（2026-09-03）
+
+def test_コマの間の無音を足さないと長尺は1本も通らない():
+    """`renderer.build_audio()` は間に 0.35秒 の無音を挟みます。
+
+    足さずに「完成音声の秒数 ＝ コマの合計」で見ると、**コマ数 × 0.35秒** ぶん
+    必ず食い違う —— 64コマの本で **22.4秒**。実測（09/04 `1huadpEk6HY` の焼き直し）:
+    「完成音声 1332.0秒 とコマの合計 1309.6秒 が食い違う」で落ちました。
+    **この門は、実物の長尺を1本残らず落とす形でした。**
+    """
+    src = (H.ROOT / "src" / "verify.py").read_text(encoding="utf-8")
+    body = src.split("def _check_yomi_heard(")[1].split("\ndef ")[0]
+    assert "SILENCE_SECONDS" in body, "無音ぶんを足していない（長尺が1本も通りません）"
+
+
+def test_刻むときも無音を足す():
+    """足さないと、ずれが1コマごとに積もって**別の所**を切り出します。"""
+    src = (H.ROOT / "src" / "yomi_hear.py").read_text(encoding="utf-8")
+    body = src.split("def slice_final(")[1]
+    assert "start += dur + SILENCE_SECONDS" in body, (
+        "刻む位置に無音を足していない（終わりのコマほどずれます）")
+
+
+def test_活用形は台帳に入れない():
+    """**実物の1本を、二度と通らない形にしました。**
+
+    09/04 `1huadpEk6HY` の焼き直しが、認識器の書き違い（「留まって」「円割り」）から
+    `止まっ → トマッ` / `変わり → カワリ` を台帳に入れ、`yomi_gate` の R3 が落とした。
+    「全額止まっていました」の「止まっ」は**前が漢字**なので
+    `apply_corrections()` が構造的に置換に行けず、**直す手が1つも無い。**
+    そして活用形は台帳の単位として間違い（「止まっ」を直しても「止まり」は直らない）。
+    """
+    assert not H.fixable("止まっ", "動詞")
+    assert not H.fixable("変わり", "動詞")
+    assert not H.fixable("高く", "形容詞")
+    assert H.fixable("控除額", "名詞")
+    assert H.fixable("控除額")                       # 品詞を渡さない古い呼びは今までどおり
+
+
+def test_R3_は置換が届かない出現では鳴らない():
+    """届かない所で鳴らすと、**その本は二度と通りません。**"""
+    from src import yomi_gate as G
+    led = {"止まっ": {"verdict": "misread", "correct": "トマッ"}}
+    # 前が漢字 ＝ `apply_corrections` が構造的に置換に行けない出現
+    out = G.inspect("全額止まっていました", risk={}, ledger=led)
+    assert not [x for x in out if x["code"] == "R3"], (
+        "置換の届かない出現で R3 が鳴っている（直す手が無いのに落ちます）")
+    # 前が漢字でない ＝ 置換に行けるはず。それでも残っていれば、それは本当の警報
+    out = G.inspect("が止まっていました", risk={}, ledger=led)
+    assert [x for x in out if x["code"] == "R3"], "本当の警報まで消している"

@@ -295,7 +295,7 @@ def _claim(got: str, want: str, cursor: int, at: int) -> int:
     return found
 
 
-def fixable(surface: str) -> bool:
+def fixable(surface: str, pos: str = "") -> bool:
     """**その語は、機械が直せるか。**
 
     直すのは `src/yomi.to_speech()` の仮名置換で、`yomi_gate.corrections()` は
@@ -319,8 +319,29 @@ def fixable(surface: str) -> bool:
 
     **覆る条件**: 1文字の誤読をオーナーが耳で指摘したら、
     そのときは**熟語ごと**台帳に入れること（1字の置換に戻さないこと）。
+
+    ## **活用語も直せません**（2026-09-03。**実物で1本 止めてから足した**）
+
+    最初の本番の1周（09/04 `1huadpEk6HY` の焼き直し）が、台帳にこれを入れました:
+
+        止まっ  予定 トマッ / 聞いた **トドマッ**   ← 認識器が「留まって」と書いた
+        変わり  予定 カワリ / 聞いた **エンワリ**   ← 認識器が「円割り」と書いた
+
+    どちらも**音は最初から正しく、誤読は1つも起きていません**（門1b は
+    末尾1モーラの違いしか落とさないので、**頭でずれたこの2件は素通りしました**）。
+    そして入った瞬間、`yomi_gate` の **R3 がその本を落として二度と通らなくなりました** ——
+    「全額止まっていました」の「止まっ」は**前が漢字（額）**なので、
+    `apply_corrections()` が**構造的に置換に行けません**（あちらの docstring:
+    「熟語の中の1字を巻き込まないこと」）。**直せない語で門が閉じる形**です。
+
+    **そもそも台帳の単位として間違っています。** 「止まっ」を直しても
+    「止まり」「止まる」「止まれ」は直りません —— **語ではなく活用形**を入れている。
+    直すなら**語幹の漢字を含む熟語**として入れること。
+
+    **覆る条件**: 活用語の誤読をオーナーが耳で指摘したら、そのときも
+    活用形ではなく**熟語**（または `src/yomi.FIXES` の文脈つき正規表現）で入れること。
     """
-    return len(surface) >= 2
+    return len(surface) >= 2 and pos not in _INFLECTS
 
 
 # ---------------------------------------------------------------- 2回目を撃つ
@@ -452,7 +473,7 @@ def judge(rows: list[dict], texts: list[str] | None = None, *,
     """
     verdicts: dict[tuple[str, str], str] = {}
     for row in rows:
-        if not confirm_hits or not fixable(row["surface"]):
+        if not confirm_hits or not fixable(row["surface"], row.get("pos", "")):
             row["verdict"] = "unclear"
             continue
         key = (row["surface"], row["pron"])
@@ -478,7 +499,7 @@ def record(report: dict) -> dict:
     store = dict(blob.get("words", {}))
     fixed: dict[str, str] = {}
     for row in report["hits"]:
-        if row.get("verdict") != "misread" or not fixable(row["surface"]):
+        if row.get("verdict") != "misread" or not fixable(row["surface"], row.get("pos", "")):
             continue
         word, want = row["surface"], row["pron"]
         store[word] = {"word": word, "kana": want, "sentence": row["sentence"],
@@ -497,7 +518,7 @@ def record(report: dict) -> dict:
                         f"（予定 {r['pron']} / 聞いた {r['heard'] or '－'}）。"
                         + ("1文字なので仮名置換では直せない ——"
                            " 熟語ごと台帳に入れるか `src/yomi.FIXES` に文脈つきで。"
-                           if not fixable(r["surface"]) else
+                           if not fixable(r["surface"], r.get("pos", "")) else
                            " 聞き取りでは向きを決められなかった。"))}
                for r in report["hits"] if r.get("verdict") == "unclear"]
     if unclear:
@@ -563,7 +584,7 @@ def audit(lines: list[str], wavs: list[Path], work: Path, *, tts_cfg: dict | Non
     while True:
         fixed = record(report)
         misread = [r for r in report["hits"]
-                   if r["verdict"] == "misread" and fixable(r["surface"])]
+                   if r["verdict"] == "misread" and fixable(r["surface"], r.get("pos", ""))]
         if not misread:
             reason = "誤読 0件"
             break
@@ -632,7 +653,16 @@ def slice_final(video: Path, durations: list[float], out_dir: Path) -> list[Path
     **出て行く音はセグメントの wav そのものではありません**。
     音量の正規化と符号化は読みを変えませんが、**繋ぎ間違い・欠け・入れ替わりは変えます。**
     ここを通せば、その3つも一緒に見えます。
+
+    ## **コマの間の無音を足すこと**（2026-09-03。**足さずに書いてありました**）
+
+    `src/renderer.build_audio()` は、コマとコマの間に
+    **`renderer.SILENCE_SECONDS`（0.35秒）の無音を1つずつ挟みます。**
+    足さずに `start += dur` で刻むと、**ずれが1コマごとに 0.35秒 積もります** ——
+    64コマの本で **22.4秒**。終わりのほうは、まったく別の所を切り出して
+    「読みが割れた」と言うことになります。
     """
+    from .renderer import SILENCE_SECONDS                      # noqa: PLC0415
     out_dir.mkdir(parents=True, exist_ok=True)
     paths: list[Path] = []
     start = 0.0
@@ -644,5 +674,5 @@ def slice_final(video: Path, durations: list[float], out_dir: Path) -> list[Path
             check=True, capture_output=True,
         )
         paths.append(dest)
-        start += dur
+        start += dur + SILENCE_SECONDS
     return paths

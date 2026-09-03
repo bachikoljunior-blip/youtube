@@ -260,11 +260,21 @@ def inspect(text: str, risk: dict | None = None, ledger: dict | None = None) -> 
             continue
         entry = ledger.get(s) or {}
         if entry.get("verdict") == "misread" and entry.get("correct"):
-            found.append({"code": "R3", "surface": s, "pron": pron,
-                          "why": f"「{s}」は耳の実測で誤読。"
-                                 f"「{entry['correct']}」に置換されるはずが漢字のまま残っている "
-                                 f"（src/yomi.to_speech が台帳を読めていない）"})
-            named.add(s)
+            # **置換が構造的に届かない出現では鳴らさないこと**（2026-09-03 に実物で踏んだ）。
+            #
+            # `apply_corrections()` は**前後が漢字でない出現だけ**を置き換えます
+            # （あちらの docstring:「熟語の中の1字を巻き込まないこと」）。
+            # つまり「全額止まっていました」の「止まっ」は、台帳に在っても
+            # **`to_speech()` が置き換えに行けません** —— それを R3 で落とすと、
+            # **その本は二度と通りません**（実測: 09/04 `1huadpEk6HY` の焼き直しが
+            # ここで落ち、直す手が1つも無かった）。
+            # 鳴らすのは「置換に行けるはずなのに漢字のまま残っている」ときだけ。
+            if apply_corrections(text, {s: entry["correct"]}) != text:
+                found.append({"code": "R3", "surface": s, "pron": pron,
+                              "why": f"「{s}」は耳の実測で誤読。"
+                                     f"「{entry['correct']}」に置換されるはずが漢字のまま残っている "
+                                     f"（src/yomi.to_speech が台帳を読めていない）"})
+                named.add(s)
             continue
         if entry.get("verdict") == "safe":
             continue                        # 耳が通した語はここで終わり
