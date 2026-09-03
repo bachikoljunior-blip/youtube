@@ -8837,3 +8837,5 @@
 {"at": "2026-09-03T23:24:32+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "eta.py:q"}
 {"at": "2026-09-03T23:30:59+00:00", "api": "data", "method": "videos.list", "units": 1, "ok": true, "by": "niche_ceiling.py:_fetch_upload_dates", "detail": "hejVQfCWQFY,IMVvPG8EKpE,1JLNJYVxeRM,ErydAlGrbh8,gs-Obfg81RI,vB6VOKnZxyQ,9kged7sPsOs,ECE2jJf10Mg,ui91ySHEIdM,as-vXFJIcf4,"}
 {"at": "2026-09-03T23:31:00+00:00", "api": "data", "method": "videos.list", "units": 1, "ok": true, "by": "niche_ceiling.py:_fetch_upload_dates", "detail": "hejVQfCWQFY,IMVvPG8EKpE,1JLNJYVxeRM,ErydAlGrbh8,gs-Obfg81RI,vB6VOKnZxyQ,9kged7sPsOs,ECE2jJf10Mg,ui91ySHEIdM,as-vXFJIcf4,"}
+{"at": "2026-09-03T23:29:53+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "rpm_mix.py:fetch_video_forms"}
+{"at": "2026-09-03T23:29:53+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "rpm_mix.py:fetch_video_forms"}
