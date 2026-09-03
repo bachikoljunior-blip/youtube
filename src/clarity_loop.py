@@ -119,6 +119,8 @@ import hashlib
 import json
 import os
 import re
+import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 from pydantic import BaseModel, Field
@@ -389,10 +391,18 @@ def loop(script: dict, topic_id: str, work: Path | None = None, *,
         log(f"[clarity] 機械の検査を数えられませんでした（{type(exc).__name__}）")
         base = []
     report: dict = {"rounds": [], "model": model, "fixed": 0, "start": start_print,
-                    "segments": len(text_lines), "reason": "", "topic": topic_id}
+                    "segments": len(text_lines), "reason": "", "topic": topic_id,
+                    "at": datetime.now(timezone.utc).isoformat(timespec="seconds")}
     last_top = ""
 
+    # **1周が何分かかるかを、誰も測れていませんでした**（2026-09-03 16:1x）。
+    #     この輪は毎本の焼き直しの中に在り、`pipeline` の出力は焼く側が
+    #     まるごと呑んでいたので（`ahead_sweep._run_out` の註）、
+    #     **「焼き直しが 25分 かかる」の内訳が1つも取れていません。**
+    #     秒だけ帳面へ落とします —— 上限 4周 を減らすかどうかは、この数が要ります。
+    t_all = time.time()
     for r in range(1, max(1, rounds) + 1):
+        t_round = time.time()
         try:
             a = reader(text_lines)
             b = reader(text_lines)
@@ -409,7 +419,8 @@ def loop(script: dict, topic_id: str, work: Path | None = None, *,
                # **見るのは「いちばん上」だけ**（オーナーの止め方。上の節）。
                # `hits[0]` と比べないこと —— 同じ引用が2件 挙がると取り違えます。
                "top_confirmed": bool(ga and reproduced(ga[0], gb, text_lines) is not None),
-               "any_confirmed": bool(hits)}
+               "any_confirmed": bool(hits),
+               "seconds": round(time.time() - t_round, 1)}
         report["rounds"].append(row)
         log(f"[clarity] {r}周目: 挙がった {len(a)}件/{len(b)}件 → "
             f"根拠あり {len(ga)}件/{len(gb)}件 → 両方に出た {len(hits)}件")
@@ -494,6 +505,7 @@ def loop(script: dict, topic_id: str, work: Path | None = None, *,
 
     report["end"] = fingerprint(text_lines)
     report["changed"] = report["end"] != start_print
+    report["seconds"] = round(time.time() - t_all, 1)
     if work is not None:
         work.mkdir(parents=True, exist_ok=True)
         (work / REPORT_NAME).write_text(
@@ -512,7 +524,11 @@ def record(report: dict) -> None:
            "confirmed": sum(int(x.get("confirmed") or 0) for x in rows),
            "grounded": sum(int((x.get("grounded") or [0, 0])[0]) for x in rows),
            "raw": sum(int((x.get("raw") or [0, 0])[0]) for x in rows),
-           "reason": report.get("reason", ""), "changed": bool(report.get("changed"))}
+           "reason": report.get("reason", ""), "changed": bool(report.get("changed")),
+           # **いつ・何秒 かかったか**（2026-09-03 16:1x に足した）。
+           #     これが無いので「上限 4周 は重すぎないか」を誰も判定できませんでした。
+           "at": report.get("at", ""), "seconds": report.get("seconds", 0),
+           "round_seconds": [x.get("seconds", 0) for x in rows]}
     try:
         LEDGER.parent.mkdir(parents=True, exist_ok=True)
         with LEDGER.open("a", encoding="utf-8") as f:

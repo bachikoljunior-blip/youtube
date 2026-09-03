@@ -329,3 +329,32 @@ def test_模型が落ちた回は落とさない(tmp_path):
                     "reason": "評価に失敗（RuntimeError: 網が落ちた）", "rounds": []}),
         encoding="utf-8")
     assert verify._check_clarity_loop(tmp_path, script_of(LINES)) == []
+
+
+# ---------------------------------------------------------------- 秒を測る
+#
+# **1周が何分かかるかを、誰も測れていませんでした**（2026-09-03 16:1x）。
+# この輪は毎本の焼き直しの中に在り、焼く側は子の出力をまるごと呑んでいたので
+# （`ahead_sweep._run_out` の註）、「焼き直しが 25分」の内訳が1つも取れていない。
+# **上限 4周 を減らすかどうかの判定に、この数が要ります。**
+
+def test_帳面に秒と時刻が入る(tmp_path, monkeypatch) -> None:
+    ledger = tmp_path / "clarity_loop.jsonl"
+    monkeypatch.setattr(C, "LEDGER", ledger)
+    C.record({"topic": "t", "model": "m", "rounds": [{"seconds": 1.5}, {"seconds": 2.5}],
+              "fixed": 3, "reason": "r", "changed": True,
+              "at": "2026-09-03T07:00:00+00:00", "seconds": 4.0})
+    row = json.loads(ledger.read_text(encoding="utf-8").strip())
+    assert row["at"] == "2026-09-03T07:00:00+00:00"
+    assert row["seconds"] == 4.0
+    assert row["round_seconds"] == [1.5, 2.5]
+
+
+def test_秒の欄が無い控えでも落ちない(tmp_path, monkeypatch) -> None:
+    """**古い控えを読む回で投げないこと**（帳面を書けずに、輪ごと落ちます）。"""
+    ledger = tmp_path / "clarity_loop.jsonl"
+    monkeypatch.setattr(C, "LEDGER", ledger)
+    C.record({"topic": "t", "model": "m", "rounds": [{}], "fixed": 0,
+              "reason": "", "changed": False})
+    row = json.loads(ledger.read_text(encoding="utf-8").strip())
+    assert row["at"] == "" and row["seconds"] == 0 and row["round_seconds"] == [0]
