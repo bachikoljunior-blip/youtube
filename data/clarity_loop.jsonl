@@ -2,3 +2,4 @@
 {"topic": "zaishoku-2026-62man", "model": "opus", "rounds": 3, "fixed": 54, "confirmed": 81, "grounded": 120, "raw": 120, "reason": "書き直しで機械の検査が 0件 → 1件 に増えた", "changed": true}
 {"topic": "zaishoku-2026-62man", "model": "opus", "rounds": 2, "fixed": 8, "confirmed": 48, "grounded": 80, "raw": 80, "reason": "1番可能性が高いものが、独立の評価で再現しなかった（＝ほとんど言いがかり）", "changed": true}
 {"topic": "nenkin-uketorikata-65-70-75-handan", "model": "opus", "rounds": 4, "fixed": 32, "confirmed": 102, "grounded": 158, "raw": 160, "reason": "上限 4周 に達した", "changed": true}
+{"topic": "zaishoku-2026-62man", "model": "opus", "rounds": 4, "fixed": 28, "confirmed": 93, "grounded": 160, "raw": 160, "reason": "上限 4周 に達した", "changed": true}
