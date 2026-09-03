@@ -103113,3 +103113,44 @@ CLI から `--effort` が消えたら関数ごと消すこと（渡すと `claud
 **覆る条件**: `levers.blocked()` の `dead_at_inf` の意味（「この腕だけ ×10^9 でも届かない」）は
 残してある。どれかの腕が天井で届くようになった回（`lever_all_dead` が偽）は、この生き返りは
 自分で止まる。そのとき `sub_rate` がまた断られるなら、それは本物の 0日。
+
+### 追記（13:4x）—— 4件目（fix）: **A10 の見張りが、返りの形が変わって以来 目を閉じていた**
+
+`status.py` がきょう、この2行を**同時に**出していました:
+
+    [!] body: 本文が正本と違います（正本 4,254字 / 実物 1,913字）
+    [!] **観測が 63時間前です**（上限 24時間）
+
+**同じ原因です。** `trigger_sync.observed()` が見ていたのは
+`job_config.ccr.events[0].data.message.content` の**1本だけ**で、
+いまの `list_triggers` の返りにその道はありません:
+
+    row["session_request"]["environment_id"]
+    row["session_request"]["events"][0]["payload"]["internal_anthropic_catchall"]["message"]["content"]
+    row["derived_state"]["prompt"]
+
+**抜けなかった欄は「0字」として保存される**（この節の上に、その註が既に在ります）ので、
+**積むほど台帳に嘘が入り、積まないほうがマシ**になっていました ＝ 63時間 の正体。
+`_ccr_and_body()` が3つの形を受けるように（検査 `tests/test_trigger_sync_shapes.py` 4件）。
+
+**この回は、実物を目で確かめただけで積んでいません** —— 本文 4,254字 を手で写すと、
+その写し損ないがそのまま台帳の嘘になるからです（**08/28 06:5x に踏んだ形**）。
+**次の回が `list_triggers limit=3` → `trigger_sync.py --ingest` で積むこと**（道具は直っています）。
+目で見た実物:
+
+    trig_01GM4wKqD8aCfrQzsQbRoA4r  親の心拍（1時間ごと）  `59 * * * *`  enabled
+    persistent_session_id  session_01AHfq4FUVAd5fxDM29yG1Cm
+    environment_id         env_01QMJaP2yRCzw4tY5VpJeM1m
+    last_fired 09/03 03:59Z ／ next_run 04:59Z   ＝ **自動実行は生きています**
+
+### この回の ship（5件）
+
+    1. fix   `--effort high`（Fable のとき）—— オーナー 09/03 11:1x が未配線だった
+    2. fix   錠に弾かれた焼き直しが印と上限を食う —— きょうの焼き直しが全部 止まっていた
+    3. feat  `--write` に「機械はこの本を焼き直すつもりか」
+    4. fix   同じ画面が「手で撃つな」と「手で焼き直せ」を2行 並べていた
+    5. fix   A10 の見張り（`trigger_sync.observed()`）が返りの形の変化で目を閉じていた
+
+**3件目と4件目は、2件目を直した直後に、直した自分の画面を撃って見つけたもの**です。
+**直したら、その場で画面を撃って読み直すこと** —— 註だけ読んで済ませると、
+「いま焼いています」の下に「手で焼き直せ」が並んだままになります。
