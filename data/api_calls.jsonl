@@ -8620,3 +8620,7 @@
 {"at": "2026-09-03T15:17:00+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "analytics.py:fetch_retention"}
 {"at": "2026-09-03T15:17:01+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "analytics.py:fetch_retention"}
 {"at": "2026-09-03T15:17:03+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "analytics.py:fetch_retention"}
+{"at": "2026-09-03T15:24:19+00:00", "api": "data", "method": "videos.list", "units": 1, "ok": true, "by": "post_pending_comments.py:main", "detail": "1huadpEk6HY,6GtzWaguZhg,6PKux5HNnUE,DfFyu8qZq3I,OBJdXEr6gLg,SD8zQU-x6y0,dRZnZrRy2Lw,wOlDmGhbBts"}
+{"at": "2026-09-03T15:24:19+00:00", "api": "data", "method": "channels.list", "units": 1, "ok": true, "by": "post_pending_comments.py:main"}
+{"at": "2026-09-03T15:24:19+00:00", "api": "data", "method": "playlistItems.list", "units": 1, "ok": true, "by": "post_pending_comments.py:main", "detail": "UUhTXZzwkIJHqyL7L_fEtuqQ"}
+{"at": "2026-09-03T15:24:20+00:00", "api": "data", "method": "videos.list", "units": 1, "ok": true, "by": "post_pending_comments.py:main", "detail": "9zkfjEH48PY,MqQKSnbM0OI,dg-5ml7GRZQ,8hJnwkC8NU0,2tAGEKVCgYQ,ICmIBsZRYFE,HW0-QFAPl98,CLiJusPI7gY,aPz9Ys_wkeo,r9T2IwTyuz0,"}
