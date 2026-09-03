@@ -779,6 +779,80 @@ def thumb_today(now: datetime | None = None, *, plan: dict | None = None,
     return line
 
 
+#: `sub_ask_pending()` が毎周 見る本数と、使ってよい単位。
+#: **既定を小さく取っています** —— 掃きの本体（予約・サムネ・コメント）の枠を
+#: 食わないため。置く先はふつう 0〜数本 で、そのときは読みの 1単位 だけです。
+SUB_ASK_TOP = 40
+SUB_ASK_BUDGET = 1200
+
+def sub_ask_pending(now: datetime | None = None, *, dry_run: bool = False,
+                    sweep=None) -> str:
+    """**再生の付いている既存の本に、登録の依頼が入っているかを毎周 見る**。返りは1行。
+
+    ## なぜここに在るか（2026-09-04・最適化の回）
+
+    `eta.py` が毎周こう印字しています —— **最初に落ちる門は 門1'（登録者 500人）で
+    532日後。動かす腕は `views/day × sub_rate` の積。`sub_rate` を天井まで引くと
+    81日後**（`per_video` 単独の 118日後 より速い）。そして 直近7日 の ship は
+    `per_video` 116件 対 `sub_rate` 10件 —— **積の片方しか引かれていません。**
+
+    `src/sub_ask.py` は 2026-09-03 に、その `sub_rate` の 0単位 の手として足され、
+    `pipeline` と `uploader` に**これから作る本**の口として繋がりました。
+    ところが **すでに上がっている本**へ掛ける `apply_to_video()` は
+    **動画IDを手で1本ずつ渡す形**しか無く、**repo のどこからも呼ばれていません**でした。
+
+    2026-09-04 に実物を数えると、そのぶんがまるごと落ちていました:
+
+        上がっている 249本 のうち、いま再生が動いているのは **36本**。
+        その **36本 すべて**の説明欄に、依頼は1文字も入っていませんでした。
+        ＝ **いまの再生/日 の 100%** が、依頼の無い本から来ていました。
+
+    **新しい本は 1日1本（規則1）で、いまの再生の大半は過去の本が運んでいます。**
+    だから「これから作る本にだけ掛ける」形は、`sub_rate` の腕をほとんど引きません。
+
+    掛け直しが毎周 要るのは、**動いている本の顔ぶれが入れ替わる**からです ——
+    きょう 0回/日 だった本が、明日 伸び始めます。そのとき掛かっていなければ、
+    その再生は依頼を見ません。置く先が無ければ **読みの 1単位 だけ**です。
+
+    **なぜ回の裁量にしないか。** この輪で「回が憶えておく」形は落ちます ——
+    最初のコメント（申し送り 6周・実物 0回）、`SessionStart` フック（0回）、
+    そして `apply_to_video()` 自身（足された日から 0回）。`comment_pending` と
+    同じ口（毎周 起こされる `kick` → `main`）へ入れます。
+
+    **覆る条件**: `config/hypotheses.yaml` の「説明欄の先頭とコメントに登録の依頼を
+    置くと、登録率が上がる」が外れたら、`sub_ask.HEAD` を空にすること ——
+    この手は `HEAD` が空なら**何もせず 0単位 で戻ります**（消しに来る必要はありません）。
+    """
+    now = now or datetime.now(timezone.utc)
+    stamp = now.astimezone(JST).strftime("%m/%d %H:%M JST")
+    if sweep is None:
+        try:
+            from src import sub_ask                            # noqa: PLC0415
+            sweep = sub_ask.sweep
+        except Exception as exc:                               # noqa: BLE001
+            line = f"道具を読めませんでした: {str(exc)[:100]}"
+            print(f"[sub-ask] [!] {line}", flush=True)
+            return line
+    try:
+        from src import upload_cap                             # noqa: PLC0415
+        if not bool(upload_cap.day_quota(now).open):
+            line = "日枠が尽きているので見ません（次の窓の回が見ます）"
+            print(f"[sub-ask] {stamp} {line}", flush=True)
+            return line
+    except Exception:                                          # noqa: BLE001
+        pass
+    print(f"[sub-ask] {stamp} 再生の付いている本に登録の依頼が入っているかを見ます"
+          f"（読み 1単位・置く先があれば 1本 50単位{'・`--dry-run`' if dry_run else ''}）",
+          flush=True)
+    try:
+        sweep(top=SUB_ASK_TOP, budget=SUB_ASK_BUDGET, dry_run=dry_run)
+    except Exception as exc:                                   # noqa: BLE001
+        line = f"見る手が落ちました: {str(exc)[:120]}"
+        print(f"[sub-ask] [!] {line}", flush=True)
+        return line
+    return "見ました"
+
+
 def comment_pending(now: datetime | None = None, *, dry_run: bool = False,
                     pending=None, quota_open=None, run=None) -> str:
     """**公開ずみで最初のコメントの無い本に、コメントを付ける**（1本 50単位）。返りは1行の理由。
@@ -1525,6 +1599,12 @@ def main(argv: list[str] | None = None) -> int:
             comment_pending(now, dry_run=args.dry_run)
         except Exception as exc:                               # noqa: BLE001
             print(f"[comment] [!] 付ける手が落ちました: {str(exc)[:200]}", flush=True)
+        # **再生の付いている既存の本に、登録の依頼が入っているか**（`sub_ask_pending` の註。
+        # 門1' を動かす積のうち `sub_rate` の側。置く先が無ければ 1単位）。
+        try:
+            sub_ask_pending(now, dry_run=args.dry_run)
+        except Exception as exc:                               # noqa: BLE001
+            print(f"[sub-ask] [!] 見る手が落ちました: {str(exc)[:200]}", flush=True)
         # **決めた本の台本が良くなっていれば、背景で焼き直す**（規則3 を機械へ・`rebake_today` の註）。
         try:
             rebake_today(now, dry_run=args.dry_run)
