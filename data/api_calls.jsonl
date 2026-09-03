@@ -8180,3 +8180,50 @@
 {"at": "2026-09-03T07:22:23+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "analytics.py:fetch_retention"}
 {"at": "2026-09-03T07:22:24+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "analytics.py:fetch_retention"}
 {"at": "2026-09-03T07:22:25+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "analytics.py:fetch_retention"}
+{"at": "2026-09-03T07:34:49+00:00", "api": "data", "method": "channels.list", "units": 1, "ok": true, "by": "status.py:_channel_main"}
+{"at": "2026-09-03T07:34:49+00:00", "api": "data", "method": "videos.list", "units": 1, "ok": true, "by": "status.py:_channel_main", "detail": "9zkfjEH48PY,DfFyu8qZq3I,1huadpEk6HY,dRZnZrRy2Lw,6PKux5HNnUE,wOlDmGhbBts,OBJdXEr6gLg,6GtzWaguZhg,SD8zQU-x6y0,MqQKSnbM0OI,"}
+{"at": "2026-09-03T07:34:50+00:00", "api": "data", "method": "videos.list", "units": 1, "ok": true, "by": "status.py:_channel_main", "detail": "a63FzIUV2wI,h35ot6MqYso,m7BRQs9X6Jc,icSuiH8u6G0,vdxF0QfsHDg,GHVkmMsYnz4,ERW21qnDcTc,Hphh4YLfCR4,J2PXnd75LIM,5eAjnILgDVc,"}
+{"at": "2026-09-03T07:34:50+00:00", "api": "data", "method": "videos.list", "units": 1, "ok": true, "by": "status.py:_channel_main", "detail": "vQc3Jx6rSyA,a3eMYxK-OAg,yuuLK2d-DyI,l6yTGfjskD8,Z0tBNDpr60o,UVXKWfgWkZE,ClBuhgt43pA,DSZfGUQ_NyQ,zM9LWPirhCA,5qVTSD6FF20,"}
+{"at": "2026-09-03T07:34:50+00:00", "api": "data", "method": "videos.list", "units": 1, "ok": true, "by": "status.py:_channel_main", "detail": "mLIs9lDXTpQ,8ORhweAXZ7U,h_1tmYxLSdo,yC5BVoX64bU,6l0RCUDEm5g,OcAFHKW6Gtg,uTXFcur6VTw,ENCe9pKoZug,B3pgxY1Xi1w,BzvH0iCzrzo,"}
+{"at": "2026-09-03T07:34:50+00:00", "api": "data", "method": "videos.list", "units": 1, "ok": true, "by": "status.py:_channel_main", "detail": "LiUDEzA2cFk,kf798uLNh7E,oWGs84pIHWg,dLDoFEVHn5s,to_gWbvDhrU,JpTJlmJBDm0,yy7wFYJOz88,s20h15d9GtA,nNt2_3fiWzE,7lV40I13Rls,"}
+{"at": "2026-09-03T07:34:51+00:00", "api": "data", "method": "videos.list", "units": 1, "ok": true, "by": "status.py:_channel_main", "detail": "xBY-DtMhSdg,G4CNc4zATzA,H28qfOxuJF0,3SZDpbRKSto,XOs9JBL5wJ0,b3ZewNvalXc,PEUAJTyDVDY,J3OuVORRxPo,SWy-pgM2Obs,n2xdLoIv4XU,"}
+{"at": "2026-09-03T07:34:51+00:00", "api": "data", "method": "videos.list", "units": 1, "ok": true, "by": "status.py:_channel_main", "detail": "m_q1G_GNgY8,7NtIDFiPrsw,YHiigJ3Zpj4,hiTMix1eNxc,Z9gy1rw9TOA,SbZjiakY--g,UTwBchk3OX0,8Yb181bZvU4,SsUYduA1dpg,8rXlUhkfMEU,"}
+{"at": "2026-09-03T07:34:52+00:00", "api": "data", "method": "videos.list", "units": 1, "ok": true, "by": "status.py:_channel_main", "detail": "8whXYb_4shM,H00j9Gcpu9k,DkQuG4RDOdU,F_-nn7flcPs,UPVqfnb5_Pc,ZCBd6NfUdcc,EXsGSCztLDc,FGZ1NPuwWxc,DjXL4OmsUN0,RyughHuNO-Q,"}
+{"at": "2026-09-03T07:34:53+00:00", "api": "data", "method": "videos.list", "units": 1, "ok": true, "by": "status.py:_channel_main", "detail": "MGyAFTblhKc,c6aVwaF08-I,lHW4IV-O2OA,Vpjbt0XofmQ,myshNgE4aro,5SEWUmEzxcs,66ErsT9OUrI,D4O2b1xKe5M,NeLZdfJiaDM,KPGuqj5v1Qs,"}
+{"at": "2026-09-03T07:34:53+00:00", "api": "data", "method": "videos.list", "units": 1, "ok": true, "by": "status.py:_channel_main", "detail": "Y3JUjFLrORY,tQqJpZSFmI8,vb3uVpMM2IQ,yds84ydrXgY,AvHtsG5FRn4,1JpphG6oeDE,_4JrAC1ijZ8,F179rBqytVQ,kk57OJ0zVT4,Ra_Z2XKgg28,"}
+{"at": "2026-09-03T07:34:54+00:00", "api": "data", "method": "videos.list", "units": 1, "ok": true, "by": "status.py:_channel_main", "detail": "PdJ0ltnIvkw,GXrtaUFHK3Q,Y27_ofu-pCY,laMTkmhldy4,ajP5wUBStVY,PwXnB_AlzRQ,ioPzkN-XxLs,ofPvQqfsC5g,UJB3hrfxpfQ,jP9RWO2Gs7Y,"}
+{"at": "2026-09-03T07:34:54+00:00", "api": "data", "method": "videos.list", "units": 1, "ok": true, "by": "status.py:_channel_main", "detail": "17H_GxEFs4U,ou3pE36xgCI,Sm2K5kLI_c4,Yc4EI4sbpoY,OwFjo4kLA9U,lywTMXD6WDM,BVZmhAG6s8s,ZtKT9uig4FU,JbjojnAZe2Q,YR1Z18HV8KQ,"}
+{"at": "2026-09-03T07:34:55+00:00", "api": "data", "method": "videos.list", "units": 1, "ok": true, "by": "status.py:_channel_main", "detail": "hrBimxwblQ4,2_kBcQwtDIQ,G6_KpcyNxEw,w9mQca2J2I4,rk0hMaeKer0,M-Quvedsyv0,WYDJwBtvBD4,cDgq2WaXFZA,lGEH_kU3Esk,sHj5LjTj_C0,"}
+{"at": "2026-09-03T07:34:56+00:00", "api": "data", "method": "videos.list", "units": 1, "ok": true, "by": "status.py:_channel_main", "detail": "M5WFRwM4llo,8gVKGl2r58c,HoF6kT9UtZw,3S16LVnj0RU,CwfNxMQlmJg,aE7qcL_bEic,plmBPZqqP1U,fWIFdvlcgbA,1wtEWAoGOeo,_AVmgTNc658,"}
+{"at": "2026-09-03T07:34:56+00:00", "api": "data", "method": "videos.list", "units": 1, "ok": true, "by": "status.py:_channel_main", "detail": "lUcw34Jm3ng,rJERibgJ2kw,pte2D3b-VLI,NPag7xobhTo,NQFpuf7LMP0,-rNsh53STNw,ONvXI2r4-4A,mmetNUrDNZs,JfqeRrpdAcU,1IBZOQag6Tg,"}
+{"at": "2026-09-03T07:35:50+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "analytics.py:fetch_traffic"}
+{"at": "2026-09-03T07:35:53+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "analytics.py:fetch_report"}
+{"at": "2026-09-03T07:35:59+00:00", "api": "data", "method": "videos.list", "units": 1, "ok": true, "by": "analytics.py:fetch_report", "detail": "NHKylqsNfTw,fLENot-5oKM,gPusj-Y2404,x9idbNKZpqw,YmJ7psxW3co,ZUO6bFJRsRY,2FSAM7FYftY,pMHDwK5tB2E,CdX2oIb7BG8,Ty4w6q-tBMo,"}
+{"at": "2026-09-03T07:36:03+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "analytics.py:fetch_retention"}
+{"at": "2026-09-03T07:36:08+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "analytics.py:fetch_retention"}
+{"at": "2026-09-03T07:36:15+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "analytics.py:fetch_retention"}
+{"at": "2026-09-03T07:36:19+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "analytics.py:fetch_retention"}
+{"at": "2026-09-03T07:36:23+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "status.py:print_channel_signals"}
+{"at": "2026-09-03T07:36:28+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "status.py:pull"}
+{"at": "2026-09-03T07:36:29+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "status.py:pull"}
+{"at": "2026-09-03T07:36:29+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "status.py:pull"}
+{"at": "2026-09-03T07:36:29+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "status.py:print_where_watched"}
+{"at": "2026-09-03T07:36:33+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "scan.py:query"}
+{"at": "2026-09-03T07:36:34+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "scan.py:query"}
+{"at": "2026-09-03T07:36:34+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "scan.py:query"}
+{"at": "2026-09-03T07:36:35+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "scan.py:query"}
+{"at": "2026-09-03T07:36:35+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "scan.py:query"}
+{"at": "2026-09-03T07:36:36+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "scan.py:query"}
+{"at": "2026-09-03T07:36:36+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "scan.py:query"}
+{"at": "2026-09-03T07:36:36+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "scan.py:query"}
+{"at": "2026-09-03T07:36:37+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "scan.py:query"}
+{"at": "2026-09-03T07:36:37+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "scan.py:query"}
+{"at": "2026-09-03T07:36:37+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "scan.py:query"}
+{"at": "2026-09-03T07:36:38+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "scan.py:query"}
+{"at": "2026-09-03T07:36:38+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "scan.py:query"}
+{"at": "2026-09-03T07:36:41+00:00", "api": "data", "method": "videos.list", "units": 1, "ok": true, "by": "scan.py:collect", "detail": "-5n5vwfePoY,-NbX_FMzAg0,0GdstSOGWVw,12V-kHrKzIg,13TynquQzQU,178_WLomK4Y,1Nyl3aLUOgo,1xPjpFwG8qk,2FSAM7FYftY,2sEAxqibFIM,"}
+{"at": "2026-09-03T07:36:43+00:00", "api": "data", "method": "videos.list", "units": 1, "ok": true, "by": "scan.py:collect", "detail": "EYxhnLT8vJA,EanVD0YZPlo,EszlAOjkQ2o,FNR61l5Q4pk,FSAN9tjIX10,FcrqwSTZ7Kc,Fq-RGVyWDBM,G1qe_mj0mco,G3VqIFpBwKo,G4CNc4zATzA,"}
+{"at": "2026-09-03T07:36:43+00:00", "api": "data", "method": "videos.list", "units": 1, "ok": true, "by": "scan.py:collect", "detail": "UVXKWfgWkZE,UgU5jekMYtw,Un9Tlod-Vdw,W54m_JDnSHM,WE_ZB7XNN2o,WIj04aFYW6Q,WuTf0Z-tRJc,X8fq21tC-DU,XXUdcTq7psQ,YHiigJ3Zpj4,"}
+{"at": "2026-09-03T07:36:44+00:00", "api": "data", "method": "videos.list", "units": 1, "ok": true, "by": "scan.py:collect", "detail": "kf798uLNh7E,l3NcCYgX7uI,l6yTGfjskD8,lIQxDg4OlAo,lges32AtBC0,lyqNRWPouck,m74wgCTi2n0,mLIs9lDXTpQ,mQ017S6275o,mRisqvcqmm4,"}
+{"at": "2026-09-03T07:36:48+00:00", "api": "data", "method": "channels.list", "units": 1, "ok": true, "by": "scan.py:collect"}
+{"at": "2026-09-03T07:36:53+00:00", "api": "data", "method": "playlists.list", "units": 1, "ok": true, "by": "scan.py:collect"}
