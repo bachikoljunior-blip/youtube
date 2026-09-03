@@ -989,6 +989,11 @@ REBAKE_DAYS_AHEAD = 2
 #: 焼く印（`_rebake_marks_dir()/<ID>-<sha>`）が「まだ焼いている」と読める上限。これより古く、帳面に
 #: `done` が無ければ、焼く側が途中で死んだ（容器の回収・親の畳み）と読んで、もう一度 焼く。
 REBAKE_MARK_STALE = timedelta(hours=3)
+#: 帳面に `start` を書いてから、焼く側が錠（`flock`）を握るまでの猶予（2026-09-03 15:5x）。
+#: `start` は**決める側**（`rebake_today()`）が spawn の前に書くので、直後の数秒は
+#: 「錠が空いている＝死んだ」と読めません。これより古い `start` で錠が空いていれば、
+#: 焼く側はもう居ません（器の回収・親の畳み）。
+REBAKE_START_GRACE = timedelta(minutes=3)
 
 
 def _drop_mark(vid: str, sha: str) -> None:
@@ -1049,6 +1054,48 @@ def _baked_today(rows: list[dict], today_s: str) -> int:
     return n
 
 
+def rebake_died(vid: str, sha: str, *, now: datetime, root: Path | None = None) -> bool:
+    """**焼きかけのまま、焼く側が消えたか**（印は在る・`done` は無い・錠は空いている）。
+
+    ## なぜ要るか（2026-09-03 15:5x に実測。**`_drop_mark` と同じ穴の、2つ目の入口**）
+
+    印は錠を取る**前**に立ちます。錠に弾かれた回は `_drop_mark()` が消しますが、
+    **錠を握ったまま器ごと回収された回は、誰も消しません。** 実測:
+
+        15:00:54  `1huadpEk6HY`（sha bd162bda6fd5）の印 ＋ 帳面に `start`
+        15:47     器が入れ替わる（`ps` に `pipeline` は1本も居ない）
+        15:5x     `rebake_attempted()` は **True**（印が 3時間 より若い）
+                  `next_slot.machine_rebake_lines()` は **「いま焼いています ——
+                  手で撃たないこと」**
+
+    ＝ **機械は 18:01 まで焼き直さず、回は「機械がやるだろう」と読んで見送ります。**
+    9/03 の朝に 8時間 止まったのと同じ絵で、入口だけが違います。
+
+    `flock` は**プロセスが死ねば OS が外す**ので、「錠が空いている」は
+    「焼く側はもう居ない」の直接の証拠です（`rebake_busy()` の docstring）。
+    印の齢（3時間）を待つ必要はありません。
+
+    **覆る条件**: 焼く側が別の器で走るようになったら（`flock` は器をまたぎません）、
+    この判定は「死んだ」を誤って返します。そのときは帳面に心拍（`kind: "beat"`）を
+    書かせて、その齢で読むこと。
+    """
+    if not sha or not vid:
+        return False
+    mark = _rebake_marks_dir() / f"{vid}-{sha}"
+    if not mark.exists():
+        return False
+    last = None
+    for r in _rebake_rows(root):
+        if r.get("video_id") == vid and r.get("sha") == sha:
+            last = r
+    if last is None or last.get("kind") != "start":
+        return False
+    at = ahead_gate._parse(str(last.get("at") or ""))
+    if at is None or (now - at) < REBAKE_START_GRACE:
+        return False
+    return not rebake_busy()
+
+
 def rebake_attempted(vid: str, sha: str, *, now: datetime, root: Path | None = None) -> bool:
     """**同じ台本（sha）を一度 焼いたか。** 印が在って、帳面に `done` が在る（rc を問わない）か、
     印が `REBAKE_MARK_STALE` より若い（＝いま焼いている）なら True。
@@ -1061,6 +1108,9 @@ def rebake_attempted(vid: str, sha: str, *, now: datetime, root: Path | None = N
     for r in _rebake_rows(root):
         if r.get("kind") == "done" and r.get("video_id") == vid and r.get("sha") == sha:
             return True
+    # **焼きかけで消えた回は「焼いた」ではありません**（印の齢 3時間 を待たない）。
+    if rebake_died(vid, sha, now=now, root=root):
+        return False
     try:
         raw = mark.read_text(encoding="utf-8").strip()
         at = ahead_gate._parse(raw) if raw else None

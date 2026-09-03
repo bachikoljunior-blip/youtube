@@ -1265,6 +1265,22 @@ def machine_rebake_lines(video_id: str, now: datetime | None = None) -> list[str
             if r.get("video_id") == video_id and r.get("sha") == plan.get("sha"):
                 last = r
         if last is not None and last.get("kind") == "start":
+            # **「起きた」と「まだ生きている」は別**（2026-09-03 15:5x に踏んだ）。
+            #     `start` は決める側が spawn の前に書くので、器が回収されると
+            #     **帳面には `start` だけが残り、この行は永久に「いま焼いています」と言い続けます。**
+            #     錠（`flock`）は焼く側が死ねば OS が外すので、それが直接の証拠です。
+            try:
+                died = ahead_sweep.rebake_died(video_id, str(plan.get("sha") or ""), now=t)
+            except Exception:                                  # noqa: BLE001
+                died = False
+            if died:
+                return [f"  [!] **焼きかけで消えています**（{str(last.get('at'))[11:16]} JST に起きて、"
+                        "いま走っていません —— 器の回収）。**機械は次の掃きで焼き直します**が、"
+                        "この回で撃ってもかまいません（錠が重なりを止めます）:",
+                        f"       python scripts/ahead_sweep.py --rebake-run {video_id} "
+                        f"{plan.get('topic', '')} {plan.get('sha', '')}",
+                        "       ＝ **「いま焼いています」で見送らないこと**"
+                        "（09/03 は同じ絵で 8時間 止まっていた）"]
             return [f"  **いま焼いています**（{str(last.get('at'))[11:16]} JST に起きた・"
                     "背景・log は `data/rebake.log`・帳面は `data/rebake.jsonl`）"
                     " —— **手で撃たないこと。同じ本が2本 上がります**"]
