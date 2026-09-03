@@ -125,18 +125,37 @@ def _pairs() -> dict[str, str]:
     return data.get("pairs") or {}
 
 
-def _uploads(y) -> list[str]:
+def _uploads(y, tries: int = 4) -> list[str]:
+    """アップロード済みの全動画ID（自前の `uploads` 再生リストから）。
+
+    **ページの途中で 404 が返ることがある**（2026-09-03 に実測: `playlistId` は
+    `channels.list` で直後に引いた本物で、1ページ目は通り、2ページ目以降の
+    `pageToken` で "playlist ... cannot be found" が落ちる。2回連続・別々の
+    `pageToken` で発生 ＝ 個別のトークンの話ではなく、列挙そのものが不安定）。
+    **原因は特定していない**（自分の書き込みが同時に走っていない時間帯でも起きた）。
+    `_items()` の「作りたては404」とは別物 —— こちらの `uploads` は既存の
+    チャンネル本体の再生リストなので、無いことはあり得ない。**列挙をゼロから
+    やり直す**（部分リストは使わない。ページ2で切れた続きだけ足すと、
+    最初のズレをそのまま持ち越すため）。
+    """
     ch = y.channels().list(part="contentDetails", mine=True).execute()["items"][0]
     up = ch["contentDetails"]["relatedPlaylists"]["uploads"]
-    ids, tok = [], None
-    while True:
-        r = y.playlistItems().list(part="contentDetails", playlistId=up,
-                                   maxResults=50, pageToken=tok).execute()
-        ids += [i["contentDetails"]["videoId"] for i in r["items"]]
-        tok = r.get("nextPageToken")
-        if not tok:
-            break
-    return ids
+    for i in range(tries):
+        try:
+            ids, tok = [], None
+            while True:
+                r = y.playlistItems().list(part="contentDetails", playlistId=up,
+                                           maxResults=50, pageToken=tok).execute()
+                ids += [it["contentDetails"]["videoId"] for it in r["items"]]
+                tok = r.get("nextPageToken")
+                if not tok:
+                    break
+            return ids
+        except HttpError as e:
+            if e.resp.status not in (404, 409, 500, 503) or i == tries - 1:
+                raise
+            time.sleep(2 ** i)
+    return []                                    # pragma: no cover（上でreturn/raise済み）
 
 
 def _snippets(y, ids: list[str]) -> dict[str, dict]:
