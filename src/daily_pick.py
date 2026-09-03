@@ -861,6 +861,51 @@ def _latest_obs(video_id: str, views_path: Path | None = None) -> dict | None:
     return last
 
 
+def and_path_form(cmp: dict | None = None, *, snapshot: dict | None = None,
+                  topics: list[dict] | None = None, uploaded_path: Path | None = None,
+                  cv: dict[str, list] | None = None,
+                  now: datetime | None = None) -> tuple[str | None, str]:
+    """**AND の道（門1 ＋（門2a ／ 門2b））で門に近い形**と、その根拠の1行。**API 0単位。**
+
+    ## なぜ要るか（2026-09-04・最適化の回。**「最適化されてんの？」→ いいえ の理由を1つ潰した**）
+
+    `outside_long_readout()` の 24h の先読みの門は、**門を割っても割らなくても
+    「次の未決の日の1本は長尺」と印字していました**（`v >= OUTSIDE_24H_GATE` の枝と
+    `else` の枝が、どちらも長尺）。**＝ 門が、それが門をしている決定を1度も変えられない。**
+    毎周 数字が出て、毎周 同じ手が選ばれるので、回は「測って決めた」と読みます。
+    実測: `data/daily_pick.jsonl` の決めは 09-04・09-05 とも長尺、`data/eta.jsonl` の
+    再生/日(7d) は 6,299（08-25）→ 1,344（09-03）で **-79%**。
+
+    そして**割ったときの言い分**（「ショートは 4,000時間 の門に 0時間」）は、
+    **同じファイルの `gate_arithmetic()` が 40行 先で名指ししている誤りそのもの**です ——
+    門2 だけで比べるのは **AND の片脚（門1）を落として比べること**で、
+    落とした脚のほうが遠い（門1・長尺 ×314 対 門2a ×34）。
+    `gate_arithmetic()["nearer"]` は 2026-09-03 夜にそこを直してあり、
+    `fallback_form()` は既にこちらを読んでいます。**読んでいなかったのは
+    `outside_long_*` の散文のほうだけ**でした —— そして回が従うのは散文です。
+
+    ここはその `nearer` を、先読みの門を割った枝からも引けるようにするだけです。
+    **形を決め打ちしません** —— 長尺の登録率の分母が桁で増えれば `nearer` は
+    自分で長尺へ戻り、この行も一緒に戻ります。
+
+    **覆る条件**: `gate_arithmetic()` が `path_x`（両形の脚）を出せない回
+    （`data/shorts_subs.json` が読めない等）は `(None, 理由)` を返します。
+    **推測で埋めないこと** —— 埋めると、必ず要る脚が推測になります。
+    """
+    try:
+        c = compare(now=now) if cmp is None else cmp
+        g = gate_arithmetic(c, snapshot=snapshot,
+                            duration_min=_long_duration_min(None, uploaded_path, topics),
+                            frac=long_watch_fraction(c.get("rows") or [], cv))
+    except Exception as exc:                                       # noqa: BLE001
+        return None, f"門の算がこの回は出せませんでした（{exc}）"
+    px = g.get("path_x") or {}
+    if not px or g.get("nearer") not in FORMS:
+        return None, "門1 の脚が立たないので、道どうしは比べられません（`data/shorts_subs.json`）"
+    body = "・".join(f"道 {k} ＝ ×{v:,.0f}" for k, v in sorted(px.items(), key=lambda kv: kv[1]))
+    return str(g["nearer"]), f"AND の道でいちばん遠い脚どうし: {body}"
+
+
 def outside_long_readout(now: datetime | None = None, *, topics: list[dict] | None = None,
                          uploaded_path: Path | None = None,
                          views_path: Path | None = None) -> tuple[list[str], str | None]:
@@ -913,13 +958,23 @@ def outside_long_readout(now: datetime | None = None, *, topics: list[dict] | No
             if verdict_at is None or pub > verdict_at:
                 verdict, verdict_at = "go", pub
         else:
-            # **門の下でも形はショートへ戻さない**（2026-09-03 夜・最適化の回）。ショートの視聴時間は
-            # 門2a（4,000時間）に 0 入り、門2b は 1本/日 なら 111,111回/本（`gate_arithmetic`）。
-            # 戻す先は「長尺のまま、作りを1つ変える」。前提の判定（48h・100回）は動かさない。
-            line += (f" **＜ 先読みの門 {OUTSIDE_24H_GATE}回 → それでも次の未決の日の1本は長尺**"
-                     f"（ショートは 4,000時間 の門に 0時間・`gate_lines` の倍率）。**同じ作りを繰り返さず、"
-                     f"1つ変える**（題の型／絵／冒頭のどれか1つ・変えた点を `--why` に）。前提の判定そのものは "
-                     f"48h・{OUTSIDE_48H_GATE}回 のまま（`falsified_if`）")
+            # **門を割ったら、形は門の算に返す**（2026-09-04・最適化の回。`and_path_form()` の註）。
+            # 2026-09-03 夜〜09-04 は、ここが「それでも長尺」と決め打ちしていました ——
+            # 上の `v >= OUTSIDE_24H_GATE` の枝も長尺なので、**門が決定を1度も変えられない**。
+            # そして言い分（「ショートは 4,000時間 の門に 0時間」）は 門2 だけの比較 ＝
+            # `gate_arithmetic()` が名指しした **AND の片脚を落とす**誤りでした。
+            # 前提の判定（48h・100回）は動かさない —— 動かすのは**次の未決の日の形**だけ。
+            _af, _an = and_path_form(now=now, topics=None, uploaded_path=uploaded_path)
+            if _af and _af != "長尺":
+                line += (f" **＜ 先読みの門 {OUTSIDE_24H_GATE}回 → 次の未決の日の1本は "
+                         f"{_af}**（{_an}）。**門2 だけで「長尺のまま」と言わないこと** ——"
+                         f" 門1 は両方の道に要る AND で、長尺経由の脚のほうが遠い（`gate_lines`）。"
+                         f"前提の判定そのものは 48h・{OUTSIDE_48H_GATE}回 のまま（`falsified_if`）")
+            else:
+                line += (f" **＜ 先読みの門 {OUTSIDE_24H_GATE}回 → 次の未決の日の1本は長尺のまま**"
+                         f"（{_an}）。**同じ作りを繰り返さず、1つ変える**"
+                         f"（題の型／絵／冒頭のどれか1つ・変えた点を `--why` に）。前提の判定そのものは "
+                         f"48h・{OUTSIDE_48H_GATE}回 のまま（`falsified_if`）")
             if verdict_at is None or pub > verdict_at:
                 verdict, verdict_at = "stop", pub
         if h >= 48:
@@ -1079,11 +1134,20 @@ def outside_long_lines(day: date, cur: dict | None, now: datetime | None = None,
     except Exception:                                          # noqa: BLE001
         pass
     if ro == "stop":
-        # **ショートへは倒さない**（2026-09-03 夜。理由は `gate_arithmetic` の註 —— ショートの視聴時間は
-        # 門2a に 0 入る）。門の下は「形を戻せ」ではなく「作りを1つ変えろ」。下の行はそのまま下書き／次の題材を名指しする。
-        out.append(f"     → **{day:%m/%d} の1本も長尺のまま**（1本目が 24h で門の下。ショートは 4,000時間 の門に 0時間・"
-                   f"`gate_lines`）。**次の1本は同じ作りを繰り返さず 1つ変える**（題の型／絵／冒頭のどれか1つ・"
-                   f"変えた点を `--why` に）。前提「外の作り方を写した長尺」の判定は 48h・{OUTSIDE_48H_GATE}回（期限 {dl}）で別")
+        # **門を割った回は、形を門の算（AND の道）に返す**（2026-09-04・最適化の回・`and_path_form()` の註）。
+        # 2026-09-03 夜のここは「ショートへは倒さない」と決め打ちで、`ro` が `"go"` でも `"stop"` でも
+        # 長尺になっていました ＝ **先読みの門が、それが門をしている決定を1度も変えられない。**
+        # 前提「外の作り方を写した長尺」の判定（48h・100回）は、この行では動かしません。
+        _af, _an = and_path_form(now=now, uploaded_path=uploaded_path)
+        if _af and _af != "長尺":
+            out.append(f"     → **{day:%m/%d} の1本は {_af}**（1本目が 24h で先読みの門の下・{_an}）。"
+                       f"**門2 だけで「長尺のまま」と言わないこと** —— 門1 は両方の道に要る AND です"
+                       f"（`gate_lines`）。前提「外の作り方を写した長尺」の判定は 48h・"
+                       f"{OUTSIDE_48H_GATE}回（期限 {dl}）で別 —— **形を戻しても前提は生きています**")
+        else:
+            out.append(f"     → **{day:%m/%d} の1本も長尺のまま**（1本目が 24h で門の下・{_an}）。"
+                       f"**次の1本は同じ作りを繰り返さず 1つ変える**（題の型／絵／冒頭のどれか1つ・"
+                       f"変えた点を `--why` に）。前提「外の作り方を写した長尺」の判定は 48h・{OUTSIDE_48H_GATE}回（期限 {dl}）で別")
     if have:
         # **どの下書きを名指しするか**（2026-09-03 02:3x に踏んだ）: 同じ枝の2つの回が同じ夜に
         # 1本ずつ上げ（`6PKux5HNnUE`・`dRZnZrRy2Lw`）、`have[0]` は決めた本と別の本を指した。
