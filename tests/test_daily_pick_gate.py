@@ -56,10 +56,43 @@ def test_長尺の要る回数は残り時間を窓と視聴分で割った数()
     assert l["frac_measured"] is True and l["frac_n"] == 1
 
 
-def test_いまの数では長尺のほうが門に近い():
+def test_門2だけなら長尺が近い_が_それはANDの片脚を落とした比べ方():
+    """**門2a と 門2b だけ**を比べれば長尺が近い。ここは 2026-09-03 夜まで
+    `nearer` そのものだった。**いまは `nearer_or`**（OR の2脚だけの答え）。"""
     g = daily_pick.gate_arithmetic(_cmp(), snapshot=SNAP, duration_min=20, frac=(0.16, 1))
-    assert g["nearer"] == "長尺"
+    assert g["nearer_or"] == "長尺"
     assert g["long"]["x_median"] < g["shorts"]["x_median"]
+
+
+def test_門1は両方の道に要るので_道ごとのいちばん遠い脚で比べる():
+    """**道は AND です**（門1 ＋（門2a ／ 門2b））。2026-09-03 夜に直した。
+
+    それまで `nearer` は 門2 の2脚だけを比べ、`fallback_form()` がそれで
+    **その日の1本の形**を決めていた。落とした脚（門1・長尺経由 ×314）は
+    残した脚（門2a ×34）より **9倍 遠い** ——**落とし方が結論を作っていた。**
+
+    **鎖の長さは、いちばん弱い環で決まります。**
+    """
+    g = daily_pick.gate_arithmetic(_cmp(), snapshot=SNAP, duration_min=20, frac=(0.16, 1))
+    sf = g["subs"]["forms"]
+    if not sf:
+        # `data/shorts_subs.json` が読めない環境。**推測で埋めないこと** ——
+        # 脚が立たない回は門2 だけの答えに落ちる、が正しい振る舞い。
+        assert g["nearer"] == g["nearer_or"]
+        return
+    assert set(sf) == {"ショート", "長尺"}
+    # 門1 は「あと何人 ÷ 窓 ÷ 1本/日」＝ 1本あたりに直した数
+    assert abs(g["subs"]["need_per_video"] - (1000 - 25) / 365) < 1e-9
+    for f, d in sf.items():
+        assert abs(d["subs_per_video"] - d["per_1000"] / 1000 * d["median_views"]) < 1e-12
+    # 道ごとの倍率は、その道の**いちばん遠い脚**
+    px = g["path_x"]
+    assert px["長尺"] == max(g["long"]["x_median"], sf["長尺"]["x"])
+    assert px["ショート"] == max(g["shorts"]["x_median"], sf["ショート"]["x"])
+    assert g["nearer"] == min(px, key=lambda k: px[k])
+    # 長尺は 門1 の脚（標本 1人/470再生）でいちばん遠い。**それを落として比べていた。**
+    assert sf["長尺"]["x"] > sf["ショート"]["x"]
+    assert g["nearer"] == "ショート" and g["nearer_flipped"] is True
 
 
 def test_カーブが無ければ仮の割合を使いそう書く():
@@ -70,12 +103,30 @@ def test_カーブが無ければ仮の割合を使いそう書く():
     joined = "\n".join(lines)
     assert "ASSUMED_LONG_FRAC" in joined
     assert "0 入る" in joined
-    assert "門に近い形は **長尺**" in joined
+    assert "門2 だけで近い形は **長尺**" in joined
+    # **門1 の脚が、同じ画面に出ていること**（2026-09-03 夜）。
+    # 出ていないと、必ず要る脚が読む側から見えないまま形が決まります。
+    if (daily_pick.gate_arithmetic(_cmp(), snapshot=SNAP, duration_min=20,
+                                   frac=(None, 0))["subs"]["forms"]):
+        assert "門1" in joined and "AND" in joined
+        assert "門に近い形は ショート" in joined
 
 
 def test_ショートの中央値が要る数に届けば向きは入れ替わる():
     g = daily_pick.gate_arithmetic(_cmp(short_rule=200_000), snapshot=SNAP, duration_min=20, frac=(0.16, 1))
     assert g["nearer"] == "ショート"
+    assert g["nearer_or"] == "ショート"
+
+
+def test_長尺の登録の分母が桁で増えたら向きは自分で戻る():
+    """**覆る条件を、機械の側で見る。** 長尺の登録率の分母は 470再生・登録1人。
+    そこが桁で増えれば `nearer` は自分で入れ替わります（定数は持ちません）。"""
+    g = daily_pick.gate_arithmetic(_cmp(long_life=4000), snapshot=SNAP,
+                                   duration_min=20, frac=(0.16, 1))
+    if not g["subs"]["forms"]:
+        return
+    # 長尺の1本あたり再生が桁で増えれば、門1 の脚も 門2a の脚も長尺が近くなる
+    assert g["nearer"] == "長尺"
 
 
 def test_long_watch_fraction_は長尺のカーブだけ平均する():
@@ -88,7 +139,12 @@ def test_long_watch_fraction_は長尺のカーブだけ平均する():
 
 
 def test_決めていない日の機械の形は門に近い側で_外の作りの下書きが先頭():
-    assert daily_pick.fallback_form(_cmp(), snapshot=SNAP, topics=[], cv={}) == "長尺"
+    # **2026-09-03 夜に、ここは 長尺 → ショート へ覆りました。**
+    # 覆したのは新しい数ではなく **比べ方**です —— 門1（両方の道に要る AND）を
+    # 盤に載せた。理由と覆る条件は `docs/JOURNAL.md` の同日の節。
+    _g = daily_pick.gate_arithmetic(_cmp(), snapshot=SNAP, duration_min=20, frac=(0.16, 1))
+    _want = "ショート" if _g["subs"]["forms"] else "長尺"
+    assert daily_pick.fallback_form(_cmp(), snapshot=SNAP, topics=[], cv={}) == _want
     assert daily_pick.fallback_form(_cmp(short_rule=200_000), snapshot=SNAP, topics=[], cv={}) == "ショート"
     tops = [{"id": "zaishoku-2026-62man", "style": "outside_long"}, {"id": "old-5min"}]
     pool = [{"video_id": "A", "topic": "old-5min"}, {"video_id": "B", "topic": "zaishoku-2026-62man"}]

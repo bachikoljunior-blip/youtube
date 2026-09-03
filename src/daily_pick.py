@@ -1171,6 +1171,34 @@ def _gate_constants() -> dict:
                 "shorts_views": 10_000_000.0, "shorts_days": 90.0}
 
 
+def _subs_rates(path: Path | None = None) -> dict:
+    """**形べつの「千再生あたり何人 登録するか」**を、`data/shorts_subs.json` から読む。API 0単位。
+
+    出どころは `scripts/shorts_subs.py` が積んだ最後の実測
+    （`creatorContentType`。**題名の札ではなく YouTube が数えた形**）。
+    返り: `{"ショート": {"per_1000": 0.237, "views": 88434, "subs": 21, "ci": [lo, hi]}, ...}`。
+    **読めなければ空の dict**（呼ぶ側は行を出さないこと。推測で埋めないこと）。
+    """
+    try:
+        raw = json.loads((path or (ROOT / "data" / "shorts_subs.json")).read_text("utf-8"))
+    except Exception:                                          # noqa: BLE001
+        return {}
+    out: dict = {}
+    for form, d in (raw.get("forms") or {}).items():
+        if form not in ("ショート", "長尺"):
+            continue
+        try:
+            out[form] = {"per_1000": (None if d.get("subs_per_1000") is None
+                                      else float(d["subs_per_1000"])),
+                         "views": float(d.get("views") or 0.0),
+                         "subs": int(d.get("subs_net") or 0),
+                         "ci": d.get("ci_per_1000")}
+        except (TypeError, ValueError):
+            continue
+    out["at"] = raw.get("at")
+    return out
+
+
 def _eta_snapshot(path: Path | None = None) -> dict:
     """`data/eta.jsonl` の、門の分子（`long_hours_365` / `shorts_views_90d` / `subs_net`）を持つ最後の行。0単位。"""
     for r in reversed(_jsonl(path or (ROOT / "data" / "eta.jsonl"))):
@@ -1290,9 +1318,108 @@ def gate_arithmetic(cmp: dict, *, snapshot: dict | None = None, duration_min: fl
         "need_per_video": need_l, "own_median_life": own_l, "own_max_life": own_l_max,
         "x_median": need_l / max(float(own_l or 0), 1.0), "x_max": need_l / max(float(own_l_max or 0), 1.0),
     }
-    out["subs"] = {"have": s.get("subs_net"), "need": c["subs"]}
+    # --- **門1（登録者1,000人）。両方の道に要る脚**（2026-09-03 夜・最適化の回）---
+    #     ここは長らく `{"have": 25, "need": 1000}` の2つの数だけで、
+    #     **倍率にも `nearer` にも入っていませんでした。** 門1 は 門2a/門2b の
+    #     どちらの道でも **AND** で要ります（`scripts/shorts_subs.py` §4 が
+    #     公表ページから引いている）。つまり `nearer` は「**OR の2脚のうち
+    #     どちらが近いか**」しか答えていないのに、画面はそれを
+    #     「門に近い形」と印字し、`fallback_form()` はそれで**その日の1本の形**を
+    #     決めていました。**必ず要る脚が、形の比較から抜けていた**ということです。
+    #
+    #     この回に自分で撃った数（`data/shorts_subs.json`・API 0単位）:
+    #
+    #         形      本数  再生     登録  登録/千再生   95%区間
+    #         ショート  186  80,957   21    0.237      [0.147 〜 0.363]
+    #         長尺      28     470    1     2.128      [0.054 〜 11.855]  ← 分母 470再生
+    #
+    #     **率では決まりません**（区間が重なる・長尺の分母は 470再生）。決まるのは
+    #     **1本あたりに直したとき**です —— 率 × その形の1本あたり再生:
+    #
+    #         ショート  0.237/千 × 中央値 213回 = **0.051人/本**
+    #         長尺      2.128/千 × 中央値   4回 = **0.009人/本**
+    #
+    #     要るのは 975人 ÷ 365日 ÷ 1本/日 ＝ **2.67人/本**。→ ショート ×53・長尺 ×313。
+    #     **どちらも 門2 の脚より遠い。** 門1 が縛っている脚です。
+    #
+    #     **覆る条件**: 長尺の分母（470再生）が桁で増えたら率が測り直され、
+    #     この2つの倍率は自分で入れ替わりえます（定数は持ちません）。
+    #     `data/shorts_subs.json` が無い回は、この脚は `None` で出ません
+    #     （**推測で埋めないこと** —— 埋めると、必ず要る脚が推測になります）。
+    rates = _subs_rates()
+    have_subs = float(s.get("subs_net") or 0)
+    left_subs = max(float(c["subs"]) - have_subs, 0.0)
+    need_subs_per_video = left_subs / float(c["window_days"])       # 1本/日 → 1本あたり
+    subs_leg: dict = {"have": s.get("subs_net"), "need": c["subs"],
+                      "left": left_subs, "need_per_video": need_subs_per_video,
+                      "at": rates.get("at"), "forms": {}}
+    _own_med = {"ショート": ((cmp.get("rule") or {}).get("ショート") or {}).get("median"),
+                "長尺": ((cmp.get("life") or {}).get("長尺") or {}).get("median")}
+    for _f in ("ショート", "長尺"):
+        _r = rates.get(_f) or {}
+        _p1000, _med = _r.get("per_1000"), _own_med.get(_f)
+        if _p1000 is None or _med is None:
+            continue
+        _per_video = float(_p1000) / 1000.0 * float(_med)
+        subs_leg["forms"][_f] = {
+            "per_1000": float(_p1000), "median_views": float(_med),
+            "subs_per_video": _per_video, "sample_views": _r.get("views"),
+            "sample_subs": _r.get("subs"), "ci_per_1000": _r.get("ci"),
+            "x": (need_subs_per_video / _per_video) if _per_video > 0 else float("inf"),
+        }
+    out["subs"] = subs_leg
     xs, xl = out["shorts"]["x_median"], out["long"]["x_median"]
-    out["nearer"] = "長尺" if xl <= xs else "ショート"
+    out["nearer_or"] = "長尺" if xl <= xs else "ショート"
+    _sf = subs_leg["forms"]
+    if len(_sf) == 2:
+        out["nearer_subs"] = min(_sf, key=lambda k: _sf[k]["x"])
+        out["gate1_binds"] = (min(v["x"] for v in _sf.values()) > min(xs, xl))
+    # --- **道は AND です。近さは、その道の いちばん遠い脚で決まります** ---
+    #     （2026-09-03 夜・最適化の回。**`nearer` の中身を、ここで直しました**）
+    #
+    #     公表の条件は「**登録者1,000人 ＋（長尺4,000時間 ／ ショート1,000万回）**」。
+    #     つまり道は2本 あり、**どちらの道でも 門1 が要ります**:
+    #
+    #         道A（長尺）    門1 ＋ 門2a      道B（ショート）  門1 ＋ 門2b
+    #
+    #     `nearer` は 2026-09-03 夜まで **門2a と 門2b だけを比べて**いました。
+    #     **AND の片脚を落として比べていた**ということです。この回に撃った数:
+    #
+    #         脚                          倍率
+    #         門2a  長尺の視聴4,000時間     **×34**
+    #         門2b  ショート90日1,000万回     ×106
+    #         門1   登録・ショート経由        **×11**   ← 盤の上でいちばん近い脚
+    #         門1   登録・長尺経由            ×314   ← 盤の上でいちばん遠い脚
+    #
+    #     門2 だけで比べると「近い形は **長尺**（×34 < ×106）」。
+    #     **道ごとに、いちばん遠い脚（＝その道の律速）で比べると逆です**:
+    #
+    #         道A 全部 長尺   max(×314, ×34)  ＝ **×314**
+    #         道B 全部 ショート max(×11, ×106) ＝ **×106**
+    #
+    #     ×314 の道を「近い」と名乗り、`fallback_form()` がその形を選んでいました。
+    #     **鎖の長さは、いちばん弱い環で決まります。** 落とした脚（門1・長尺 ×314）は
+    #     残した脚（門2a ×34）より **9倍 遠い**ので、落とし方が結論を作っていました。
+    #
+    #     ## 覆る条件
+    #
+    #     - 長尺の登録率の分母は **470再生・登録1人**（区間 0.054〜11.855/千）。
+    #       **桁で増えたら ×314 は動きます。** そのとき `nearer` は自分で入れ替わります。
+    #     - `data/shorts_subs.json` が読めない回は 門1 の脚が立たないので、
+    #       `nearer` は**元どおり門2 だけの答え**（`nearer_or`）に落ちます。
+    #       **推測で埋めないこと** —— 埋めると、必ず要る脚が推測になります。
+    #     - オーナーが 1日1本 を外して両形を同じ日に出せるなら、道は排他ではなくなり、
+    #       この比較の主語（「その日の1本の形」）そのものが変わります。
+    if len(_sf) == 2:
+        _path = {"長尺": max(xl, _sf["長尺"]["x"]),
+                 "ショート": max(xs, _sf["ショート"]["x"])}
+        out["path_x"] = _path
+        out["nearer"] = min(_path, key=lambda k: _path[k])
+        out["nearer_flipped"] = (out["nearer"] != out["nearer_or"])
+    else:
+        out["path_x"] = {}
+        out["nearer"] = out["nearer_or"]
+        out["nearer_flipped"] = False
     return out
 
 
@@ -1317,10 +1444,50 @@ def gate_lines(cmp: dict, next_row: dict | None = None, *, snapshot: dict | None
         f"       ショート 門2b {c['shorts_views']:,.0f}回/{c['shorts_days']:.0f}日 → **{s['need_per_video']:,.0f}回/本**"
         f" ／ 自分の規則の密度の中央値 {_fmt(s['own_median_rule'])}（要る ×{s['x_median']:,.0f}）・最大 {_fmt(s['own_max'])}"
         f"（×{s['x_max']:,.0f}）・いま {int(s['have_90d'] or 0):,}回/90日。**ショートの視聴時間は 門2a に 0 入る**",
-        f"     → 門に近い形は **{g['nearer']}**（要る倍率の小さい側）。登録 {int(g['subs']['have'] or 0):,}/{c['subs']:,}人。"
+        f"     → 門2 だけで近い形は **{g.get('nearer_or')}**（要る倍率の小さい側）。"
+        f"登録 {int(g['subs']['have'] or 0):,}/{c['subs']:,}人。"
         f" **48時間の再生（上の表）で形を決めないこと** —— あれは門の数ではない。"
         f"ショートへ戻す判定は、この行の倍率が入れ替わった回にだけ出す",
     ]
+    # --- **門1（登録者）の脚を、同じ物差しで並べる**（2026-09-03 夜・最適化の回）---
+    #     上の `nearer` は 門2a と 門2b の **OR** のうち近いほうです。
+    #     **門1 は、その どちらの道でも AND で要ります。** 抜けていました。
+    _sl = g.get("subs") or {}
+    _sf = _sl.get("forms") or {}
+    if _sf:
+        _parts = []
+        for _f in ("長尺", "ショート"):
+            _d = _sf.get(_f)
+            if not _d:
+                continue
+            _parts.append(
+                f"{_f} {_d['per_1000']:.3f}人/千再生 × 中央値 {_d['median_views']:,.0f}回"
+                f" ＝ {_d['subs_per_video']:.3f}人/本（要る ×{_d['x']:,.0f}"
+                f"・標本 {int(_d['sample_subs'] or 0)}人/{int(_d['sample_views'] or 0):,}再生）")
+        out.append(
+            f"       登録　　 門1 {c['subs']:,}人（**両方の道に要る AND**）"
+            f" → あと {_sl['left']:,.0f}人 ＝ 1本/日 で **{_sl['need_per_video']:.2f}人/本** ／ "
+            + "・".join(_parts))
+        _px = g.get("path_x") or {}
+        if _px:
+            out.append(
+                "     → **道は AND です**（門1 ＋（門2a ／ 門2b））。"
+                "**その道の いちばん遠い脚**で比べる: "
+                + "・".join(f"道 {k} ＝ ×{v:,.0f}" for k, v in
+                            sorted(_px.items(), key=lambda kv: kv[1]))
+                + f" → **門に近い形は {g['nearer']}**")
+            if g.get("nearer_flipped"):
+                out.append(
+                    f"     [!] **門2 だけなら {g['nearer_or']}・門1 を足すと "
+                    f"{g['nearer']}。** 2026-09-03 夜まで、ここは 門2 だけで"
+                    "比べていました（＝ AND の片脚を落として比べていた）。"
+                    "落とした脚のほうが遠いので、**落とし方が結論を作っていました**")
+        if g.get("gate1_binds"):
+            out.append(
+                "     [!] **どちらの形でも、門1 の倍率が門2 の倍率より大きい"
+                "（＝門1 が縛っている脚）。** その回に引く腕は `sub_rate` か "
+                "`per_video`（登録は 再生 × 率）で、`density` は規則で固定"
+                "（`src/house_rule.py`）")
     return out
 
 
