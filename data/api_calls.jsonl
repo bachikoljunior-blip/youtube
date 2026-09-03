@@ -7959,3 +7959,5 @@
 {"at": "2026-09-03T04:28:45+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "scan.py:query"}
 {"at": "2026-09-03T04:28:46+00:00", "api": "data", "method": "videos.list", "units": 1, "ok": false, "by": "scan.py:collect", "detail": "-5n5vwfePoY,-NbX_FMzAg0,0GdstSOGWVw,12V-kHrKzIg,13TynquQzQU,178_WLomK4Y,1Nyl3aLUOgo,1xPjpFwG8qk,2FSAM7FYftY,2sEAxqibFIM,"}
 {"at": "2026-09-03T04:28:47+00:00", "api": "data", "method": "channels.list", "units": 1, "ok": false, "by": "scan.py:collect"}
+{"at": "2026-09-03T04:34:30+00:00", "api": "reporting", "method": "jobs", "units": 0, "ok": true, "by": "reach.py:show"}
+{"at": "2026-09-03T04:34:30+00:00", "api": "reporting", "method": "reports", "units": 0, "ok": true, "by": "reach.py:show"}
