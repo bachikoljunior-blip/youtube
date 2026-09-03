@@ -560,6 +560,148 @@ def fetch_openings(rows: list[dict], *, keep: int = THUMBS_KEEP, form: str = "lo
     return got
 
 
+def _fetch_upload_date(video_id: str, timeout: int = 60) -> str:
+    """1本の公開日を `YYYYMMDD` で返す（yt-dlp・**API 0単位**）。**いまは通りません** ——
+    2026-09-04 の実測で、1本ずつの取り出しは
+    「Sign in to confirm you're not a bot」で断られます（検索の flat な取り出しは通る）。
+    `_fetch_upload_dates` が落ちたときの控えとして残してあります。"""
+    import subprocess                                          # noqa: PLC0415
+    try:
+        cp = subprocess.run(
+            ["yt-dlp", "--skip-download", "--no-warnings", "--print", "%(upload_date)s",
+             f"https://www.youtube.com/watch?v={video_id}"],
+            capture_output=True, text=True, timeout=timeout, check=False)
+    except Exception:                                          # noqa: BLE001
+        return ""
+    out = (cp.stdout or "").strip().splitlines()
+    val = out[-1].strip() if out else ""
+    return val if (len(val) == 8 and val.isdigit()) else ""
+
+
+def _fetch_upload_dates(ids: list[str]) -> dict[str, str]:
+    """公開日をまとめて引く（`videos.list`・**50本で 1単位**）。返りは `{id: publishedAt}`。
+
+    **1本ずつの yt-dlp より、こちらのほうが安いです。** `videos.list` は
+    `id` をカンマで 50本 まで並べられて **1回 1単位**なので、帳面へ入る 30本 は **1単位**。
+    0単位ではありませんが、1本ずつ数秒 待つ道より速く、いまは**そちらが通りません**
+    （bot 判定・`_fetch_upload_date` の註）。
+    """
+    if not ids:
+        return {}
+    from googleapiclient.discovery import build                # noqa: PLC0415
+
+    from src import quota_ledger                               # noqa: PLC0415
+    from src.auth import credentials                           # noqa: PLC0415
+    try:
+        quota_ledger.install()
+    except Exception:                                          # noqa: BLE001
+        pass
+    out: dict[str, str] = {}
+    try:
+        youtube = build("youtube", "v3", credentials=credentials(), cache_discovery=False)
+    except Exception as exc:                                   # noqa: BLE001
+        print(f"[niche] 公開日が引けません（認証）: {str(exc)[:120]}", file=sys.stderr)
+        return {}
+    for i in range(0, len(ids), 50):
+        chunk = ids[i:i + 50]
+        try:
+            r = youtube.videos().list(part="snippet", id=",".join(chunk)).execute()
+        except Exception as exc:                               # noqa: BLE001
+            print(f"[niche] videos.list 失敗（公開日）: {str(exc)[:160]}", file=sys.stderr)
+            continue
+        for it in r.get("items", []):
+            at = (it.get("snippet") or {}).get("publishedAt") or ""
+            if it.get("id") and at:
+                out[str(it["id"])] = str(at)
+    return out
+
+
+def fill_published(rows: list[dict], *, fetch=None, fetch_many=None,
+                   limit: int = 2 * TOP_KEEP) -> int:
+    """**帳面に残す行だけ**、空の `published` を埋める。返りは埋めた本数。
+
+    ## なぜ要るか（2026-09-04・申し送りが3周 運んでいた）
+
+    `data/niche_ceiling.jsonl` の `top[].published` は **`--source free` の側だけ空**でした
+    （`free_rows()`）。API 側（`videos.list`）は `publishedAt` を保存ずみです。
+    yt-dlp の **flat な `entries` に日付が無い**のが原因で、撃ち方の問題ではありません
+    （2026-09-04 に実測 —— 返る欄は `timestamp` / `release_timestamp` とも **全部 None**）。
+
+    日付が無いと、**外の上位が「いつ出た本か」が読めません。** これが要るのは1つの問いのためです ——
+    **「外の上位は、初動で取っているのか、何年もかけて積んだのか」。**
+    この repo の形の判定（ショート／長尺）は **48時間 で 100回** の門ひとつに乗っており、
+    その門は**外の帯の数**と並べて読まれます。**外の数が生涯の累計なら、並びません。**
+
+    ## 何で引くか
+
+    既定は **`videos.list`（50本で 1単位）**。1本ずつの yt-dlp は、いま
+    「Sign in to confirm you're not a bot」で断られます（`_fetch_upload_date` の註）。
+    `fetch`（1本ずつ）を渡せばそちらを使います —— 検査と、API が使えない回のため。
+
+    ## なぜ「帳面に残す行だけ」か
+
+    拾った行は 130〜330本 ありますが、帳面へ入るのは `top_rows()` の
+    **形ごと 15本 ＝ 最大 30本**。**読まれない行に単位を使わないこと。**
+
+    **覆る条件**: 日付が引けなければ、この関数は黙って 0 を返します
+    （空のままなので、前と同じ状態に戻るだけ）。
+    """
+    todo = [r for r in rows[:max(0, limit)] if not r.get("published") and r.get("id")]
+    if not todo:
+        return 0
+    if fetch is None and fetch_many is None:
+        fetch_many = _fetch_upload_dates
+    n = 0
+    if fetch_many is not None:
+        got = fetch_many([str(r["id"]) for r in todo]) or {}
+        for r in todo:
+            val = got.get(str(r["id"])) or ""
+            if val:
+                r["published"] = val
+                n += 1
+        return n
+    for r in todo:
+        val = fetch(str(r["id"]))
+        if val:
+            r["published"] = val
+            n += 1
+    return n
+
+
+def backfill_published(rows_back: int, path: Path | None = None) -> int:
+    """帳面の**新しいほうから `rows_back` 件**の `top[].published` の空を埋め直す。
+
+    `--source free` で撃った過去の行は `published` が空です（`fill_published` の註）。
+    撃ち直すと**別の帯**（検索結果は毎日 変わる）になってしまうので、
+    **同じ行のまま**日付だけ入れます。**行の並びは変えません。**
+    """
+    p = path or LEDGER
+    try:
+        lines = p.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        print("[niche] 帳面が読めません")
+        return 2
+    idxs = [i for i, ln in enumerate(lines) if ln.strip()][-max(1, rows_back):]
+    total = 0
+    for i in idxs:
+        try:
+            row = json.loads(lines[i])
+        except Exception:                                      # noqa: BLE001
+            continue
+        top = row.get("top") or []
+        got = fill_published(top, limit=len(top))
+        if not got:
+            continue
+        row["top"] = top
+        lines[i] = json.dumps(row, ensure_ascii=False)
+        total += got
+        print(f"[niche] {str(row.get('at'))[:16]} の行: {got}本 埋めました")
+    if total:
+        p.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    print(f"[niche] 公開日を 合計 {total}本 埋めました（`videos.list` 50本で 1単位）")
+    return 0
+
+
 def latest(path: Path | None = None, form: str | None = None) -> dict | None:
     """**帳面の最後の1件**（`data/niche_ceiling.jsonl`）。**撃ちません・API 0単位。**
 
@@ -808,7 +950,12 @@ def main(argv: list[str] | None = None) -> int:
                     help="撃った後に、長尺の上位 N本 の冒頭 90秒（自動字幕）を data/niche_thumbs/<id>.opening.txt に落とす（0単位・既定 4）")
     ap.add_argument("--openings-only", action="store_true",
                     help="撃たずに、帳面の最後の1件の長尺の上位の冒頭だけ落とす（0単位・yt-dlp）")
+    ap.add_argument("--backfill-published", type=int, default=0, metavar="N",
+                    help="撃たずに、帳面の**新しいほうから N件**の `top[].published` の空を埋め直す"
+                         "（`videos.list` 50本で 1単位。`--source free` で撃った過去の行のため）")
     a = ap.parse_args(argv)
+    if a.backfill_published > 0:
+        return backfill_published(a.backfill_published)
     if a.openings_only:
         row = latest(form=None)
         if not row:
@@ -850,6 +997,13 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     for line in render(res):
         print(line)
+    # **帳面へ入る行にだけ公開日を入れる**（`fill_published` の註・`videos.list` 1単位）。
+    #     `--source free` は flat な `entries` から作るので `published` が空のまま入り、
+    #     「外の上位は初動で取ったのか、何年もかけて積んだのか」が読めませんでした。
+    top = top_rows(res["rows"])
+    filled = fill_published(top)
+    if filled:
+        print(f"[niche] 公開日を {filled}本 埋めました（`videos.list` 50本で 1単位）")
     LEDGER.parent.mkdir(parents=True, exist_ok=True)
     with LEDGER.open("a", encoding="utf-8") as fh:
         fh.write(json.dumps({
@@ -857,14 +1011,14 @@ def main(argv: list[str] | None = None) -> int:
             "queries": qs, "days": a.days, "n": len(res["rows"]), "form": a.form,
             "source": a.source,
             "summary": summarize(res["rows"]), "own_ceiling": own_ceiling(),
-            "top": top_rows(res["rows"]),
+            "top": top,
         }, ensure_ascii=False) + "\n")
     if a.thumbs > 0:
-        got = fetch_thumbs(top_rows(res["rows"]), keep=a.thumbs,
+        got = fetch_thumbs(top, keep=a.thumbs,
                            form=None if a.form == "any" else a.form)
         print(f"[niche] 絵 {len(got)}枚 → {THUMBS}（0単位）")
     if a.openings > 0 and a.form == "any":
-        got = fetch_openings(top_rows(res["rows"]), keep=a.openings)
+        got = fetch_openings(top, keep=a.openings)
         print(f"[niche] 長尺の冒頭 {len(got)}本 → {THUMBS}（0単位・yt-dlp の字幕）")
     return 0
 
