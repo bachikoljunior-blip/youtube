@@ -6010,3 +6010,4 @@
 {"at": "2026-09-03T18:22:02+00:00", "ok": true, "detail": "videos.update 7b2-Z6Jw5DQ", "by": "sub_ask.py:sweep"}
 {"at": "2026-09-03T18:22:03+00:00", "ok": true, "detail": "videos.update 0GdstSOGWVw", "by": "sub_ask.py:sweep"}
 {"at": "2026-09-03T18:24:51+00:00", "ok": true, "detail": "videos.update 1huadpEk6HY", "by": "sub_ask.py:apply_to_video"}
+{"at": "2026-09-03T19:00:42+00:00", "ok": true, "detail": "videos.update _Mz5rg6jQ_A", "by": "sub_ask.py:sweep"}

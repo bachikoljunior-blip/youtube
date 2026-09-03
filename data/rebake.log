@@ -478,3 +478,13 @@
 [sweep]   [history] この窓のチャンネルの読みを再利用しました（投稿済みテーマ 716件・**API 0単位**）。 窓ごとに1回だけ読みます（`_SCAN_CACHE` の註）。 読み直すなら `YT_NO_SCAN_CACHE=1`
 [sweep]   [clarity] 1周目: 挙がった 40件/40件 → 根拠あり 40件/40件 → 両方に出た 28件
 [sweep]   [clarity] 8コマ を言い換えました（コマ [2, 6, 7, 9, 12, 30, 35, 49]） → **白紙から評価し直します**
+[rebake-run] 09/04 04:00 JST `DfFyu8qZq3I`（nenkin-uketorikata-65-70-75-handan・sha 7fe81c38a757）を焼きます
+[sweep] $ /usr/local/bin/python3 -m src.pipeline --script data/scripts/nenkin-uketorikata-65-70-75-handan.script.json --topic nenkin-uketorikata-65-70-75-handan --dry-run
+[sweep]   [history] 控えから 336件のテーマを足しました（チャンネルの読みと**和**を取ります。二重に作らないため）
+[sweep]   [history] この窓のチャンネルの読みを再利用しました（投稿済みテーマ 716件・**API 0単位**）。 窓ごとに1回だけ読みます（`_SCAN_CACHE` の註）。 読み直すなら `YT_NO_SCAN_CACHE=1`
+[sweep]   [pipeline] 題材の尺で作ります: 目標 20分（下限 16.0分・上限 25.0分）
+[sweep]   === テーマ: 年金は65歳・70歳・75歳のどれで受け取るか 寿命の見込み1か月で最適が54か月飛ぶ (nenkin-uketorikata-65-70-75-handan) ===
+[sweep]   [pipeline] 台本を読み込みました: data/scripts/nenkin-uketorikata-65-70-75-handan.script.json
+[sweep]   [pipeline] タイトル: 【年金の受け取り方】最適が54か月飛ぶ 何歳から受け取るか
+[sweep]   [history] 控えから 336件のテーマを足しました（チャンネルの読みと**和**を取ります。二重に作らないため）
+[sweep]   [history] この窓のチャンネルの読みを再利用しました（投稿済みテーマ 716件・**API 0単位**）。 窓ごとに1回だけ読みます（`_SCAN_CACHE` の註）。 読み直すなら `YT_NO_SCAN_CACHE=1`
