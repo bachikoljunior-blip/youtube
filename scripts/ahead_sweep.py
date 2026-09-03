@@ -991,6 +991,64 @@ REBAKE_DAYS_AHEAD = 2
 REBAKE_MARK_STALE = timedelta(hours=3)
 
 
+def _drop_mark(vid: str, sha: str) -> None:
+    """**焼かずに終わった回の印を消す。**
+
+    ## なぜ要るか（2026-09-03 13:1x に実測。**その日の焼き直しが全部 止まっていました**）
+
+    印（`_rebake_marks_dir()/<ID>-<sha>`）は**錠を取る前**に、決める側
+    （`rebake_today()`）が書きます。焼く側（`rebake_run()`）が錠に弾かれると、
+    **焼いていないのに印だけが残ります。** `rebake_attempted()` は
+    「印が `REBAKE_MARK_STALE`（3時間）より若い ＝ いま焼いている」と読むので、
+    **その台本は3時間 焼けません。**
+
+    実測（09/03）: 11:41:52 に `1huadpEk6HY`（sha 65bd391332c2）の印が立ち、
+    11:41:53 に `skip`（`why: locked`）。錠を握っていたのは 05:02 に起きて
+    `done` を残さず消えた回（容器の回収）。**13:10 の掃きは
+    「同じ台本は一度 焼いた」と言って 09/04 の本を飛ばしています** ——
+    その本には、その朝の 6件 の直し（分かりやすさの輪・読み照合の門）と
+    分かりやすさの輪が書き戻した 8コマ が**入っていません**。
+
+    **飛ばした本が良くならない、では済みません。** 同じ `skip` が
+    `baked_today` の分子にも入るので（`_baked_today()` の註）、
+    **その日の上限 2回 も食います** —— 09/05 の本も同じ掃きで
+    「きょう既に 2回 焼いた」と止まっていました。**1回の錠のすれ違いで、
+    その日の焼き直しが全部 止まります。**
+
+    **覆る条件**: 印を「錠を取ったあと」に書くように直せば、この関数は要りません
+    （決める側と焼く側が別プロセスなので、いまは決める側しか書けません）。
+    """
+    try:
+        (_rebake_marks_dir() / f"{vid}-{sha}").unlink()
+    except OSError:
+        pass
+
+
+def _baked_today(rows: list[dict], today_s: str) -> int:
+    """**きょう実際に焼いた回数**（上限 `REBAKE_MAX_PER_DAY` の分子）。
+
+    `start` を数えて、**同じ本・同じ台本の `skip` を引きます** ——
+    錠に弾かれた回は1秒で終わっていて、何も焼いていないからです
+    （`_drop_mark()` の註に実測）。**引かないと、すれ違い1回で
+    その日の焼き直しが上限に達します。**
+    """
+    def _day(r: dict) -> str:
+        return str(r.get("at", ""))[:10]
+
+    skipped: set[tuple[str, str]] = {
+        (str(r.get("video_id") or ""), str(r.get("sha") or ""))
+        for r in rows if r.get("kind") == "skip" and _day(r) == today_s
+    }
+    n = 0
+    for r in rows:
+        if r.get("kind") != "start" or _day(r) != today_s:
+            continue
+        if (str(r.get("video_id") or ""), str(r.get("sha") or "")) in skipped:
+            continue
+        n += 1
+    return n
+
+
 def rebake_attempted(vid: str, sha: str, *, now: datetime, root: Path | None = None) -> bool:
     """**同じ台本（sha）を一度 焼いたか。** 印が在って、帳面に `done` が在る（rc を問わない）か、
     印が `REBAKE_MARK_STALE` より若い（＝いま焼いている）なら True。
@@ -1035,8 +1093,7 @@ def rebake_plan_for(day, now: datetime, *, root: Path | None = None) -> dict:
     sha = script_sha(draft_text) if draft_text else ""
     attempted = rebake_attempted(vid, sha, now=now, root=root)
     today_s = now.astimezone(JST).date().isoformat()
-    baked_today = sum(1 for r in _rebake_rows(root)
-                      if r.get("kind") == "start" and str(r.get("at", ""))[:10] == today_s)
+    baked_today = _baked_today(_rebake_rows(root), today_s)
     t = now.astimezone(JST)
     if day == t.date():
         slot_at = today_slot(now, place_hour(day))
@@ -1126,6 +1183,7 @@ def rebake_run(vid: str, topic: str, sha: str) -> int:
         print(f"[rebake-run] 別の焼き直しが走っています（錠 `{lock_path}`）。この回は焼きません", flush=True)
         _rebake_note({"at": datetime.now(JST).isoformat(timespec="seconds"), "kind": "skip",
                       "video_id": vid, "topic": topic, "sha": sha, "why": "locked"}, root)
+        _drop_mark(vid, sha)
         return 0
     py = sys.executable or "python3"
     draft = f"data/scripts/{topic}.script.json"
