@@ -225,13 +225,121 @@ def probe(queries: list[str], days: int = 365, per_query: int = 25,
             "denied": denied}
 
 
-#: **`--source free` の検索フィルタ**（YouTube の `sp=` ＝ protobuf の base64。2026-09-03 に実測）。
-#:   `short` : 再生数順 × 動画 × 4分未満（日付なし）      → ショートの帯
-#:   `year`  : 再生数順 × 動画 × 今年                      → 長尺の帯（**今年 伸びた本**）
-#: 「今年 × 4分未満」の組み合わせは 5本 しか返らなかった（同じ回に実測）ので使いません。
-SP_FILTERS = {"short": "CAMSBBABGAE%3D", "year": "CAMSBAgFEAE%3D"}
+#: **`--source free` の検索フィルタ**（YouTube の `sp=` ＝ protobuf の base64）。
+#:
+#:     `short`       再生数順 × 動画 × 4分未満（**日付の絞りなし ＝ 全期間**） → いまのショートの帯
+#:     `year`        再生数順 × 動画 × 今年（**尺の絞りなし**）                 → いまの長尺の帯
+#:     `short_year`  再生数順 × 動画 × 今年 × 4分未満                          → **窓を揃えた**ショートの帯
+#:
+#: ## **形ごとに窓が違います。これが結論を作っていました**（2026-09-04 に測り直した）
+#:
+#: いまの2つは **ショート＝全期間 ／ 長尺＝今年**で、**別々の窓で測った2つを
+#: 横に並べて形を決めています**（`daily_pick.theory_lines`）。公開日を埋めて数えたら、
+#: ショートの上位の齢は **中央 1,729日（4.7年）**・長尺は **203日**でした。
+#:
+#: **ここには「『今年 × 4分未満』の組み合わせは 5本 しか返らなかった」と書いてありました。
+#: 撃ち直したら 79本 返りました**（3語・1語あたり 26本・2026-09-04・下の `--windows`）。
+#: **前の数がどう出たのかは分かりません**（語が違ったか、その日の応答か）が、
+#: **いまは足ります。** 窓を揃えると帯そのものが変わります:
+#:
+#:     いまの short（全期間 × 4分未満）  n=90  中央 **6,779回**  最大 1,546,432回
+#:     今年 × 4分未満                    n=79  中央 **69回**     最大   327,023回   ← **×98 違う**
+#:     今月 × 4分未満                    n= 9  中央 3回          （**窓が狭すぎます**）
+#:     今週 × 4分未満                    n= 2  （同上）
+#:
+#: **＝ いまのショートの帯の中央 865回 は、4.7年 積んだ本の累計です。**
+#:
+#: ## **それでも、窓は揃えません**（同じ回に、この repo の語で撃ち直した）
+#:
+#: 上の 79本 は**広い3語**（「年金 いくら」「ideco 節税」「ふるさと納税 上限」）で出た数です。
+#: **この repo が実際に使う `SHORT_QUERIES` で撃つと 16本 でした**（4語・`--windows --form short`）:
+#:
+#:     いまの short（全期間 × 4分未満）  n=66  中央 948回
+#:     今年 × 4分未満                    n=**16**  中央 204回   ← **30本 の線を割っています**
+#:     今月 × 4分未満                    n= 6 ／ 今週 n= 2
+#:
+#: **＝ 揃えた窓では、この帯の標本が足りません。** 中央値が 16本 で決まる帯から
+#: 形の結論を出すのは、いま直したばかりの誤り（窓の差が結論を作る）と同じ形です。
+#: **だから既定は替えず、`daily_pick.theory_lines` の「1日あたり」の行のほうで読みます**
+#: （そちらは齢で割るので、窓が違っても比べられます）。
+#:
+#: **覆る条件**: `--windows --form short` の「今年 × 4分未満」が **30本 以上**になったら
+#: （語を増やす・`SHORT_QUERIES` を広げる・その帯が育つ）、
+#: `probe_free()` の `filters` を `["short_year"] if form == "short" else ["year"]` にして
+#: 窓を揃えること。**そのとき `daily_pick` の「理論値の在りか」は総取っ替えになります**
+#: （ショートの中央 865回 → 200回 台）ので、同じ回に他の画面を替えないこと。
+SP_FILTERS = {"short": "CAMSBBABGAE%3D", "year": "CAMSBAgFEAE%3D",
+              "short_year": "CAMSBggFEAEYAQ%3D%3D"}
 #: 1語 1フィルタで読む本数（検索結果の1ページ ≈ 20本）。
 FREE_PER_QUERY = 30
+
+
+def sp_param(upload_date: int | None, duration: int | None, sort_by: int = 3) -> str:
+    """`sp=` を組む（**撃ちません**・純関数）。`SP_FILTERS` の値はこれで作れます。
+
+        SearchParams { int32 sort_by = 1; SearchFilter filter = 2; }
+        SearchFilter { int32 upload_date = 1; int32 type = 2; int32 duration = 3; }
+          upload_date 1=1時間 2=今日 3=今週 4=今月 5=今年
+          type        1=動画      duration 1=4分未満 2=20分超 3=4〜20分
+          sort_by     0=関連 1=評価 2=新着 3=再生数
+
+    **手で base64 を書き写さないこと** —— `SP_FILTERS` の3つは、この関数の返りと
+    一致するかを `tests/test_niche_windows.py` が見ます。
+    """
+    import base64                                              # noqa: PLC0415
+    import urllib.parse                                        # noqa: PLC0415
+    f = b""
+    if upload_date:
+        f += bytes([0x08, upload_date])
+    f += bytes([0x10, 0x01])                                   # type = 動画
+    if duration:
+        f += bytes([0x18, duration])
+    raw = bytes([0x08, sort_by]) + bytes([0x12, len(f)]) + f
+    return urllib.parse.quote(base64.b64encode(raw).decode(), safe="")
+
+
+def window_counts(queries: list[str], cases: list[tuple[str, int | None, int | None]] | None = None,
+                  per_query: int = 30) -> list[dict]:
+    """**窓ごとに、何本 返って中央がいくつかを数える**（yt-dlp・**API 0単位**）。
+
+    形ごとに違う窓（`SP_FILTERS` の註）を揃えられるかは、**撃たないと分かりません** ——
+    09/03 の註は「今年 × 4分未満 は 5本」でしたが、09/04 に撃ち直すと **79本**でした。
+    **写した数で決めないこと。この関数を撃つこと。**
+    """
+    import urllib.parse                                        # noqa: PLC0415
+    try:
+        import yt_dlp                                          # noqa: PLC0415
+    except Exception as exc:                                   # noqa: BLE001
+        print(f"[niche] yt-dlp が無い: {exc}", file=sys.stderr)
+        return []
+    cases = cases or [("いまの short（全期間 × 4分未満）", None, 1),
+                      ("今年 × 4分未満", 5, 1),
+                      ("今月 × 4分未満", 4, 1),
+                      ("今週 × 4分未満", 3, 1),
+                      ("いまの year（今年・尺なし）", 5, None)]
+    opts = {"quiet": True, "extract_flat": True, "skip_download": True,
+            "playlistend": per_query, "no_warnings": True}
+    out: list[dict] = []
+    for label, ud, dur in cases:
+        views: list[int] = []
+        n = 0
+        for q in queries:
+            url = ("https://www.youtube.com/results?search_query="
+                   + urllib.parse.quote(q) + "&sp=" + sp_param(ud, dur))
+            try:
+                with yt_dlp.YoutubeDL(opts) as y:
+                    info = y.extract_info(url, download=False)
+                ents = (info or {}).get("entries") or []
+            except Exception as exc:                           # noqa: BLE001
+                print(f"[niche] [!] {q}: {str(exc)[:100]}", file=sys.stderr)
+                ents = []
+            n += len(ents)
+            views += [int(e.get("view_count") or 0) for e in ents]
+        views.sort()
+        out.append({"label": label, "sp": sp_param(ud, dur), "n": n,
+                    "median": (views[len(views) // 2] if views else 0),
+                    "max": (views[-1] if views else 0)})
+    return out
 
 
 def _own_video_ids() -> set[str]:
@@ -1030,10 +1138,22 @@ def main(argv: list[str] | None = None) -> int:
                     help="撃った後に、長尺の上位 N本 の冒頭 90秒（自動字幕）を data/niche_thumbs/<id>.opening.txt に落とす（0単位・既定 4）")
     ap.add_argument("--openings-only", action="store_true",
                     help="撃たずに、帳面の最後の1件の長尺の上位の冒頭だけ落とす（0単位・yt-dlp）")
+    ap.add_argument("--windows", action="store_true",
+                    help="窓ごとに何本 返って中央がいくつかを数えるだけ（yt-dlp・0単位）。"
+                         "形ごとに違う窓（`SP_FILTERS` の註）を揃えられるかは、これで見ること")
     ap.add_argument("--backfill-published", type=int, default=0, metavar="N",
                     help="撃たずに、帳面の**新しいほうから N件**の `top[].published` の空を埋め直す"
                          "（`videos.list` 50本で 1単位。`--source free` で撃った過去の行のため）")
     a = ap.parse_args(argv)
+    if a.windows:
+        qs = (SHORT_QUERIES if a.form == "short" else QUERIES)[:max(1, a.queries)]
+        print(f"[niche] 窓を数えます（{len(qs)}語・yt-dlp・0単位）")
+        for r in window_counts(qs):
+            print(f"    {r['label']:32s} sp={r['sp']:24s} n={r['n']:4d} "
+                  f"中央 {r['median']:>9,}回 ／ 最大 {r['max']:>10,}回")
+        print("    → **揃えた窓（今年 × 4分未満）で n が 30本 を割ったら、窓は揃えないこと**"
+              "（`SP_FILTERS` の註の「覆る条件」）")
+        return 0
     if a.backfill_published > 0:
         return backfill_published(a.backfill_published)
     if a.openings_only:
