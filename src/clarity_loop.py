@@ -65,6 +65,20 @@
     `script_writer.{long,short}_script_problems` を数え、**増えたらその周を捨てる**
     （＝ 直前の台本に戻して輪を止める）。**分かりやすくして検査に落ちるのは、退化です。**
 
+### **1周で全部を直させないこと**（2026-09-03 に実測して足した）
+
+最初は「その周の再現した指摘を**全部**」書き直させました。**09/05 の本で 27件 が
+1回の書き直しに乗り、機械の検査が 0件 → 3件 に増えて、周ごと捨てになりました**
+（前提の値がコマから消えた 2件 ＋ 一息の数が 5個 になった 1件）。
+どうせ**毎周 白紙から評価し直す**ので、1周で直すのは**上位 `FIX_PER_ROUND` 件**だけです。
+残りは次の周に、また上から挙がります。
+
+### 検査が増えたら、**捨てる前に直させる**（同じ回に足した）
+
+`script_writer.generate()` が既にやっている形と同じです —— 落ちた事実をそのまま
+渡して、`REWRITE_FIX_TRIES` 回まで書き直させる。それでも増えるなら、
+その周を捨てて止めます（**分かりやすくして検査に落ちるのは、退化**）。
+
 ## 止め方（上限と、直らないときの出口）
 
     1. 門A を通った指摘が 0件                     → 終わり（言いがかりしか無い）
@@ -116,6 +130,13 @@ ROUNDS_MAX = int(os.environ.get("CLARITY_ROUNDS_MAX", "4"))
 
 #: 1回の評価で受け取る指摘の上限（**「批判的に全て」を潰さない数**）。
 FINDINGS_MAX = 40
+
+#: **1周の書き直しに乗せる指摘の数**（上の「1周で全部を直させないこと」）。
+#: 毎周 白紙から評価し直すので、残りは次の周にまた上から挙がります。
+FIX_PER_ROUND = 8
+
+#: 書き直しが機械の検査を増やしたときに、**落ちた事実を渡して直させる**回数。
+REWRITE_FIX_TRIES = 2
 
 #: 仕事場に残す控え。`verify._check_clarity_loop()` がこれを門にする。
 REPORT_NAME = "clarity_loop.json"
@@ -195,11 +216,22 @@ FIX_PROMPT = """次の読み上げの、下に挙げるコマが**耳だけで�
 ## 決まり（**ここを外すと、直した本が投稿前の検査に落ちます**）
 
 - **言い換えだけ。** 新しい数字・割合・年・金額を1つも足さないこと。
-  いま読み上げに在る数は、**そのまま同じ数だけ**残すこと（減らすのも不可）。
+  いま読み上げに在る数は、**そのまま同じ数だけ**残すこと（**減らすのも不可** ——
+  そのコマから数が消えると「前提の値が画面のどこにもない」で落ちます）。
+- **1つのコマに、数（金額・年齢・割合・個数・順位）を5個以上 入れないこと。**
+  いま5個 以上 入っているコマは、**その数のまま**（増やさない）。
 - 画面（図・表）は書き直しません。だから**画面に無い値を新しく言わないこと。**
 - 1文を短く切るのは良い。指す先を名詞で言い直すのも良い。
 - **挙げられたコマだけ**を出すこと。触っていないコマは出さない。
 - 文字数は元の ±25% に収めること（尺が動くので）。
+{extra}"""
+
+RETRY_NOTE = """
+## **前の書き直しは、投稿前の検査に落ちました。** 直してください
+
+{problems}
+
+上の決まりを守ったまま、**同じコマをもう一度**出し直してください。
 """
 
 
@@ -286,15 +318,19 @@ def read_once(text_lines: list[str], *, model: str, timeout: int = 900) -> list[
     return list(out.findings)[:FINDINGS_MAX]
 
 
-def rewrite_once(text_lines: list[str], findings: list[Finding], *,
+def rewrite_once(text_lines: list[str], findings: list[Finding], extra: str = "", *,
                  model: str, timeout: int = 900) -> dict[int, str]:
-    """指摘されたコマを**言い換えさせる**。返るのは `{コマ番号(0起点): 新しい読み上げ}`。"""
+    """指摘されたコマを**言い換えさせる**。返るのは `{コマ番号(0起点): 新しい読み上げ}`。
+
+    `extra` には、前の書き直しが落とした機械の検査をそのまま渡します
+    （`script_writer.generate()` の書き直しの輪と同じ形）。
+    """
     from .claude_cli import ask                                # noqa: PLC0415
 
     said = "\n".join(
         f"- コマ{f.seg}「{f.quote}」…… {f.why}（直し方の案: {f.fix}）" for f in findings)
     out, _ = ask(Rewrite,
-                 FIX_PROMPT.format(body=body_of(text_lines), findings=said),
+                 FIX_PROMPT.format(body=body_of(text_lines), findings=said, extra=extra),
                  model=model, timeout=timeout)
     fixed: dict[int, str] = {}
     for row in out.segments:
@@ -341,7 +377,7 @@ def loop(script: dict, topic_id: str, work: Path | None = None, *,
     """
     model = model or model_name(channel)
     reader = reader or (lambda ls: read_once(ls, model=model))
-    rewriter = rewriter or (lambda ls, fs: rewrite_once(ls, fs, model=model))
+    rewriter = rewriter or (lambda ls, fs, extra="": rewrite_once(ls, fs, extra, model=model))
 
     text_lines = lines(script)
     start_print = fingerprint(text_lines)
@@ -370,7 +406,9 @@ def loop(script: dict, topic_id: str, work: Path | None = None, *,
         row = {"round": r, "raw": [len(a), len(b)], "grounded": [len(ga), len(gb)],
                "confirmed": len(hits),
                "top": (ga[0].model_dump() if ga else None),
-               "top_confirmed": bool(hits and ga and hits[0].quote == ga[0].quote),
+               # **見るのは「いちばん上」だけ**（オーナーの止め方。上の節）。
+               # `hits[0]` と比べないこと —— 同じ引用が2件 挙がると取り違えます。
+               "top_confirmed": bool(ga and reproduced(ga[0], gb, text_lines) is not None),
                "any_confirmed": bool(hits)}
         report["rounds"].append(row)
         log(f"[clarity] {r}周目: 挙がった {len(a)}件/{len(b)}件 → "
@@ -395,37 +433,51 @@ def loop(script: dict, topic_id: str, work: Path | None = None, *,
             break
         last_top = norm(ga[0].quote)
 
-        try:
-            fixed = rewriter(text_lines, hits)
-        except Exception as exc:                               # noqa: BLE001
-            row["stop"] = f"書き直しに失敗（{type(exc).__name__}）"
-            report["reason"] = row["stop"]
-            log(f"[clarity] 書き直しに失敗しました（{type(exc).__name__}）。輪を抜けます")
-            break
-        if not fixed:
-            row["stop"] = "書き直しが1コマも返らなかった"
-            report["reason"] = row["stop"]
-            break
-
-        before = list(text_lines)
+        # **1周で全部を直させないこと**（上の節。27件 を1回に乗せて周ごと捨てた実測）。
+        take = hits[:FIX_PER_ROUND]
+        row["asked"] = len(take)
+        extra = ""
+        fixed: dict[int, str] = {}
         after = list(text_lines)
-        for i, text in fixed.items():
-            after[i] = text
-        if after == before:
-            row["stop"] = "書き直しても本文が変わらなかった"
-            report["reason"] = row["stop"]
-            break
-        trial = json.loads(json.dumps(script))
-        for i, text in fixed.items():
-            trial["segments"][i]["narration"] = text
-        grew = mech_problems(trial, topic_id, portrait)
-        if len(grew) > len(base):
-            # **分かりやすくして検査に落ちるのは退化。** その周は捨てる。
-            row["stop"] = (f"書き直しで機械の検査が {len(base)}件 → {len(grew)}件 に増えた")
+        grew = base
+        for attempt in range(REWRITE_FIX_TRIES + 1):
+            try:
+                fixed = rewriter(text_lines, take, extra)
+            except Exception as exc:                           # noqa: BLE001
+                row["stop"] = f"書き直しに失敗（{type(exc).__name__}）"
+                fixed = {}
+                log(f"[clarity] 書き直しに失敗しました（{type(exc).__name__}）")
+                break
+            if not fixed:
+                row["stop"] = "書き直しが1コマも返らなかった"
+                break
+            after = list(text_lines)
+            for i, text in fixed.items():
+                after[i] = text
+            if after == text_lines:
+                row["stop"] = "書き直しても本文が変わらなかった"
+                fixed = {}
+                break
+            trial = json.loads(json.dumps(script))
+            for i, text in fixed.items():
+                trial["segments"][i]["narration"] = text
+            grew = mech_problems(trial, topic_id, portrait)
+            if len(grew) <= len(base):
+                break
+            # **捨てる前に、落ちた事実を渡して直させる**（`script_writer` と同じ形）。
             row["broke"] = grew[:3]
-            report["reason"] = row["stop"]
-            log(f"[clarity] 書き直しが検査を増やしました（{len(base)}→{len(grew)}件）。"
-                "その周は捨てて止めます")
+            row["retries"] = attempt + 1
+            log(f"[clarity] 書き直しが検査を増やしました（{len(base)}→{len(grew)}件）"
+                f"。落ちた事実を渡して直させます（{attempt + 1}/{REWRITE_FIX_TRIES}）")
+            if attempt >= REWRITE_FIX_TRIES:
+                # **分かりやすくして検査に落ちるのは退化。** その周は捨てる。
+                row["stop"] = f"書き直しで機械の検査が {len(base)}件 → {len(grew)}件 に増えた"
+                fixed = {}
+                break
+            extra = RETRY_NOTE.format(
+                problems="\n".join(f"- {p}" for p in grew[len(base):] or grew[:3]))
+        if not fixed:
+            report["reason"] = row.get("stop") or "書き直しが通らなかった"
             break
 
         for i, text in fixed.items():

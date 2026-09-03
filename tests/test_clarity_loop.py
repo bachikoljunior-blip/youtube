@@ -152,7 +152,7 @@ def test_先頭が再現しなければ輪は終わる_これがオーナーの�
         return ([f(1, "六十五歳から受け取ると")] if calls["read"] % 2
                 else [f(3, "先ほどの線は、そちらの帯")])
 
-    def rewriter(ls, hits):
+    def rewriter(ls, hits, extra=""):
         calls["fix"] += 1
         return {}
 
@@ -168,7 +168,7 @@ def test_根拠のある指摘が0件でも終わる():
     script = script_of(LINES)
     rep = C.loop(script, "t", None,
                  reader=lambda ls: [f(1, "本文に無い言葉をここに書く")],
-                 rewriter=lambda ls, h: {}, log=lambda *a: None)
+                 rewriter=lambda ls, h, e="": {}, log=lambda *a: None)
     assert rep["rounds"][0]["grounded"] == [0, 0]
     assert "根拠" in rep["reason"]
 
@@ -184,7 +184,7 @@ def test_再現したら直して_白紙から評価し直す():
             return [f(3, "先ほどの線は、そちらの帯の左端")]
         return []                       # 直ったら、もう挙がらない
 
-    def rewriter(ls, hits):
+    def rewriter(ls, hits, extra=""):
         assert [h.seg for h in hits] == [3]
         return {2: "六十五歳の帯の左端と、七十歳の帯の左端は同じ位置にあります。"}
 
@@ -203,7 +203,7 @@ def test_同じ指摘が2周_先頭に来たら止める():
     rep = C.loop(script, "t", None,
                  reader=lambda ls: [f(3, "先ほどの線は、そちらの帯の左端")],
                  # 別のコマだけ書き換えて、指摘された文は触らない
-                 rewriter=lambda ls, h: {0: "六十五歳から受け取ると、基準の額が出ます。"},
+                 rewriter=lambda ls, h, e="": {0: "六十五歳から受け取ると、基準の額が出ます。"},
                  log=lambda *a: None)
     assert "直らない" in rep["reason"]
     assert len(rep["rounds"]) == 2
@@ -218,7 +218,7 @@ def test_書き直しで機械の検査が増えたらその周を捨てる(monk
                                          else ["画面に無い数を言っている"]))
     rep = C.loop(script, "t", None,
                  reader=lambda ls: [f(3, "先ほどの線は、そちらの帯の左端")],
-                 rewriter=lambda ls, h: {2: "新しい数 12万3000円 を足した文。"},
+                 rewriter=lambda ls, h, e="": {2: "新しい数 12万3000円 を足した文。"},
                  log=lambda *a: None)
     assert "増えた" in rep["reason"]
     assert [s["narration"] for s in script["segments"]] == before, (
@@ -230,7 +230,7 @@ def test_上限で止まる():
     script = script_of(LINES)
     n = {"i": 0}
 
-    def rewriter(ls, hits):
+    def rewriter(ls, hits, extra=""):
         n["i"] += 1
         return {2: f"言い換えた文 その{n['i']}。先ほどの線は、そちらの帯の左端です。"}
 
@@ -247,13 +247,13 @@ def test_評価が落ちても輪は例外を投げない():
         raise RuntimeError("網が落ちた")
 
     rep = C.loop(script_of(LINES), "t", None, reader=boom,
-                 rewriter=lambda ls, h: {}, log=lambda *a: None)
+                 rewriter=lambda ls, h, e="": {}, log=lambda *a: None)
     assert "評価に失敗" in rep["reason"]
 
 
 def test_控えを仕事場に置く(tmp_path):
     rep = C.loop(script_of(LINES), "t", tmp_path,
-                 reader=lambda ls: [], rewriter=lambda ls, h: {}, log=lambda *a: None)
+                 reader=lambda ls: [], rewriter=lambda ls, h, e="": {}, log=lambda *a: None)
     blob = json.loads((tmp_path / C.REPORT_NAME).read_text(encoding="utf-8"))
     assert blob["end"] == C.fingerprint(LINES) == rep["end"]
 
