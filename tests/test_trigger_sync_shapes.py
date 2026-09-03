@@ -62,8 +62,21 @@ def test_写しからでも本文を拾う() -> None:
     assert got["body"] == "いまの本文"
 
 
-def test_本文がどこにも無ければ空() -> None:
+def test_本文の欄がどこにも無ければ_空ではなく_None() -> None:
+    """「見ていない」と「空だった」は別（`test_欄が無いのと_空なのを分ける` と対）。"""
     row = {"id": "T1", "name": "x", "cron_expression": "* * * * *", "enabled": True}
     got = ts.observed({"data": [row]}, "T1")
     assert got is not None
-    assert got["body"] == ""
+    assert got["body"] is None
+
+
+def test_欄が無いのと_空なのを分ける() -> None:
+    """**サブは本文（4,254字）を手で写せません。** 欄を落とした観測が「0字」に
+    化けると、次の回は「親の本文が壊れている」と読んで毎回それを申し送る
+    （08/28 06:5x に踏んだ）。`None` ＝ 欄そのものが無い、`""` ＝ 在って空。"""
+    no_field = {"id": "T1", "name": "x", "cron_expression": "* * * * *", "enabled": True,
+                "session_request": {"environment_id": "e", "events": []}}
+    assert ts.observed({"data": [no_field]}, "T1")["body"] is None
+
+    empty = {**no_field, "derived_state": {"prompt": ""}}
+    assert ts.observed({"data": [empty]}, "T1")["body"] == ""

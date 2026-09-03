@@ -156,7 +156,7 @@ def _ccr_and_body(row: dict) -> tuple[dict, str]:
     ccr = (row.get("job_config") or {}).get("ccr") or {}
     if not ccr:
         ccr = row.get("session_request") or {}
-    body = ""
+    body: str | None = None
     for ev in (ccr.get("events") or []):
         if not isinstance(ev, dict):
             continue
@@ -164,11 +164,14 @@ def _ccr_and_body(row: dict) -> tuple[dict, str]:
         if not msg:
             msg = (((ev.get("payload") or {})
                     .get("internal_anthropic_catchall") or {}).get("message") or {})
-        body = msg.get("content") or ""
-        if body:
-            break
+        if "content" in msg:
+            body = msg.get("content") or ""
+            if body:
+                break
     if not body:
-        body = ((row.get("derived_state") or {}).get("prompt") or "")
+        prompt = (row.get("derived_state") or {}).get("prompt")
+        if prompt is not None:
+            body = prompt
     return ccr, body
 
 
@@ -199,7 +202,13 @@ def observed(dump: dict | list, trigger_id: str) -> dict | None:
             "enabled": bool(row.get("enabled", False)),
             "persistent_session_id": row.get("persistent_session_id"),
             "environment_id": ccr.get("environment_id"),
-            "body": body.strip(),
+            # **`None` は「欄そのものが無い」・`""` は「在って空」**（別物です）。
+            #     写す側が欄を落とすと、前は「0字」として保存され、
+            #     次の回が「親の本文が壊れている」と読んで**毎回それを申し送って**いました
+            #     （08/28 06:5x に踏んだ）。**サブは本文を手で写せない**（4,254字）ので、
+            #     識別子と齢だけを新しくする積み方が要ります。
+            #     この節の「覆る条件」がまさにこれで、2026-09-03 に発火させました。
+            "body": (body.strip() if isinstance(body, str) else None),
             "next_run_at": row.get("next_run_at"),
             "last_fired_at": row.get("last_fired_at"),
         }
@@ -272,6 +281,15 @@ def diff(spec: dict, seen: dict | None, root: Path = ROOT) -> list[str]:
             continue
         a, b = want[key], seen.get(key)
         if a == b:
+            continue
+        if key == "body" and b is None:
+            out.append("body: **本文は、この観測に入っていません**（欄そのものが無い ——"
+                       "「空だった」ではありません）。積んだ側が"
+                       "`job_config.ccr.events[].data.message.content` /"
+                       "`session_request.events[].payload…` /"
+                       "`derived_state.prompt` のどれも渡していないだけです。"
+                       "**壊れている証拠ではないので、これを申し送らないこと。**"
+                       "識別子と齢は、この観測で新しくなっています")
             continue
         if key == "body":
             # **「当てること」と言わないこと**（2026-09-01 08:2x に直した）。
