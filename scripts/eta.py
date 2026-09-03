@@ -10482,6 +10482,16 @@ def _row(m: dict, a: dict, pl: dict, tr: dict | None, sup: dict | None) -> dict:
     row["density_month"] = pl.get("density_month")
     row["make_rate_per_day"] = (sup or {}).get("rate_per_day")
     row["days_gate1"] = pl.get("gate1", {}).get("days")
+    # --- **門1'（登録者 500人）の日数を積む**（2026-09-03 14:5x・最適化の回）---
+    #     到達日（`traj_days`）は 08-31 以降ずっと 10^9（「出ません」）です。
+    #     その間、`run_marker.cond4()` は「到達日が動かない」を**恒真**で立て、
+    #     `FIX_RUN_CAP` の門を**毎回 免除**していました（実測 09/03: `fix_gate`
+    #     18件 全部 `waived`・同日の ship 47件中 fix 31件）。**動かない数で
+    #     「動かない」を判定してはいけません。** 最初に落ちる門は 門1' で、
+    #     その日数は登録の実測で毎日動きます（`gate_arm_lines()` が測る側）。
+    #     ここに積むと、`cond4()` は**到達日が出ない回でも**動く数で判定できます。
+    #     **覆る条件**: `traj_days` が有限に戻ったら、`cond4()` は自分でそちらを読みます。
+    row["gate1p_days"] = (pl.get("gates") or {}).get("days_fan_subs")
     # --- **`density` の天井は、面ごとに割れている**（2026-08-26。3回続けて申し送られた）---
     #     `arm_caps["density"]` はショートの面の数だけです。**長尺の面は別**で、
     #     しかも**未測定**なので `LEVERS` には入れていません（軌跡に歩かせない）。
@@ -10637,7 +10647,7 @@ def _row(m: dict, a: dict, pl: dict, tr: dict | None, sup: dict | None) -> dict:
 _REFLECT_IGNORE = {
     "at", "kind", "session", "base_at", "note", "moved", "no_movable_input",
     "traj_date_before", "target_date_before", "traj_delta_days", "target_delta_days",
-    "traj_days_before", "days_to_target_before", "traj_solved",
+    "traj_days_before", "days_to_target_before", "traj_solved", "gate1p_days_before",
 }
 
 
@@ -10798,7 +10808,7 @@ def reflect(note: str | None = None, *, record: bool = True) -> tuple[int, dict]
     #     **`per_video_now` は落としません** —— あれは入力の側です
     #     （実測が同じでも、`_per_video()` の式を変えれば動く ＝ この回の作業ぶん）。
     for k in ("target_date", "traj_date", "days_to_target", "traj_days",
-              "days_revenue", "binding", "lever_hint", "traj_focus"):
+              "days_revenue", "binding", "lever_hint", "traj_focus", "gate1p_days"):
         moved.pop(k, None)
     t_before, t_after = base.get("traj_date"), row.get("traj_date")
     s_before, s_after = base.get("target_date"), row.get("target_date")
@@ -10849,6 +10859,7 @@ def reflect(note: str | None = None, *, record: bool = True) -> tuple[int, dict]
         "traj_date_before": t_before, "traj_date": t_after, "traj_delta_days": t_delta,
         "target_date_before": s_before, "target_date": s_after, "target_delta_days": s_delta,
         "traj_days_before": base.get("traj_days"), "traj_days": row.get("traj_days"),
+        "gate1p_days_before": base.get("gate1p_days"), "gate1p_days": row.get("gate1p_days"),
         "days_to_target_before": base.get("days_to_target"),
         "days_to_target": row.get("days_to_target"),
         "binding": row.get("binding"), "lever_hint": row.get("lever_hint"),
