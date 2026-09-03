@@ -177,34 +177,70 @@ def budget_max(now: datetime | None = None) -> int:
 
 
 def _run(argv: list[str], label: str, timeout: int = 1800) -> int:
-    print(f"[sweep] $ {' '.join(argv)}", flush=True)
-    try:
-        got = subprocess.run(argv, cwd=str(ROOT), timeout=timeout,
-                             capture_output=True, text=True)
-    except subprocess.TimeoutExpired:
-        print(f"[sweep] [!] {label} が {timeout}秒 で切れました", flush=True)
-        return 124
-    for line in (got.stdout or "").splitlines():
-        print(f"[sweep]   {line}", flush=True)
-    for line in (got.stderr or "").splitlines()[-20:]:
-        print(f"[sweep]   ! {line}", flush=True)
-    return got.returncode
+    return _run_out(argv, label, timeout)[0]
 
 
 def _run_out(argv: list[str], label: str, timeout: int = 1800) -> tuple[int, str]:
-    """`_run` と同じだが標準出力も返す（`upload_only.py` の `VIDEO_ID …` を読むため）。"""
+    """子の出力を**1行ずつ その場で**流しながら撃つ（返り値と全文も返す）。
+
+    ## なぜ `capture_output` をやめたか（2026-09-03 16:1x に踏んだ）
+
+    前は `subprocess.run(capture_output=True)` で、**子が終わるまで1行も出ませんでした。**
+    焼き直しは 25分 かかるので、その間 `data/rebake.log` に在るのは `$ …` の1行だけ。
+    そして**器ごと回収されると、その出力は永久に失われます** —— きょう死んだ2本
+    （13:12・15:00）は、どこまで進んだのかを1文字も残していません。
+
+    流しておくと3つ取れます:
+
+        ・**生きているか**（`--write` の画面が「いま焼いています」と言う根拠になる）
+        ・**どこで死んだか**（次の回が、同じ所で死ぬかを見られる）
+        ・**どの段が遅いか** —— 分かりやすさの輪（`clarify_and_fix`）の1周が
+          何分 かかるかは、いま誰も測れていません（この回の (a2) 問い3）
+
+    `stderr` は `stdout` へ畳んでいます（**時系列が混ざらないため**。前は末尾 20行 に
+    切っていて、途中で落ちた回の手がかりがそこで消えていました）。`VIDEO_ID …` を
+    索く側（`rebake_run`）は行頭で見るので、混ざっても読めます。
+
+    **止め方**: 出力が1行も来ないまま固まる子が居るので、待つ側ではなく
+    `threading.Timer` で殺します（行が来たときだけ見る形だと、無言の固まりを取り逃がす）。
+
+    **覆る条件**: `data/rebake.log` が大きくなりすぎたら、ここではなく**呼ぶ側**で
+    間引くこと（何を落とすかは、そのとき何を読みたいかで決まる）。
+    """
+    import threading                                           # noqa: PLC0415
     print(f"[sweep] $ {' '.join(argv)}", flush=True)
+    lines: list[str] = []
     try:
-        got = subprocess.run(argv, cwd=str(ROOT), timeout=timeout,
-                             capture_output=True, text=True)
-    except subprocess.TimeoutExpired:
+        proc = subprocess.Popen(argv, cwd=str(ROOT), stdout=subprocess.PIPE,   # noqa: S603
+                                stderr=subprocess.STDOUT, text=True, bufsize=1)
+    except OSError as exc:
+        print(f"[sweep] [!] {label} が起きませんでした: {str(exc)[:200]}", flush=True)
+        return 127, ""
+    killed: list[bool] = []
+
+    def _kill() -> None:
+        killed.append(True)
+        try:
+            proc.kill()
+        except OSError:
+            pass
+
+    timer = threading.Timer(timeout, _kill)
+    timer.daemon = True
+    timer.start()
+    try:
+        if proc.stdout is not None:
+            for raw in proc.stdout:
+                line = raw.rstrip("\n")
+                lines.append(line)
+                print(f"[sweep]   {line}", flush=True)
+        rc = proc.wait()
+    finally:
+        timer.cancel()
+    if killed:
         print(f"[sweep] [!] {label} が {timeout}秒 で切れました", flush=True)
-        return 124, ""
-    for line in (got.stdout or "").splitlines():
-        print(f"[sweep]   {line}", flush=True)
-    for line in (got.stderr or "").splitlines()[-20:]:
-        print(f"[sweep]   ! {line}", flush=True)
-    return got.returncode, got.stdout or ""
+        return 124, "\n".join(lines)
+    return rc, "\n".join(lines)
 
 
 def reasons_to_skip(now: datetime | None = None) -> str:
