@@ -8308,3 +8308,6 @@
 {"at": "2026-09-03T10:33:06+00:00", "api": "data", "method": "channels.list", "units": 1, "ok": true, "by": "post_pending_comments.py:main"}
 {"at": "2026-09-03T10:33:07+00:00", "api": "data", "method": "playlistItems.list", "units": 1, "ok": true, "by": "post_pending_comments.py:main", "detail": "UUhTXZzwkIJHqyL7L_fEtuqQ"}
 {"at": "2026-09-03T10:33:07+00:00", "api": "data", "method": "videos.list", "units": 1, "ok": true, "by": "post_pending_comments.py:main", "detail": "9zkfjEH48PY,MqQKSnbM0OI,dg-5ml7GRZQ,8hJnwkC8NU0,2tAGEKVCgYQ,ICmIBsZRYFE,HW0-QFAPl98,CLiJusPI7gY,aPz9Ys_wkeo,r9T2IwTyuz0,"}
+{"at": "2026-09-03T10:47:14+00:00", "api": "data", "method": "videos.list", "units": 1, "ok": true, "by": "sub_ask.py:apply_to_video", "detail": "DfFyu8qZq3I"}
+{"at": "2026-09-03T10:47:20+00:00", "api": "data", "method": "videos.list", "units": 1, "ok": true, "by": "sub_ask.py:apply_to_video", "detail": "DfFyu8qZq3I"}
+{"at": "2026-09-03T10:47:20+00:00", "api": "data", "method": "videos.update", "units": 50, "ok": true, "by": "sub_ask.py:apply_to_video", "detail": "DfFyu8qZq3I"}
