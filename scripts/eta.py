@@ -1981,6 +1981,32 @@ def _gate2_bar(a: dict, row: dict, per_day: float, days: float) -> float:
 # **×1.13 が、この機械のどの門の脚よりも近い数です。** そこに「届きません」と
 # 印字していました。
 #
+# ## **↑ この表の分母は 2026-09-03 に外しました。読むときは下を見ること。**
+#
+# 上の 156回 も 1,891回 も **その形で1本だけ出た最高**です。**同じ分母で
+# 並べ替えと「いちばん近い脚」の名指しまでやっていたのが誤り**でした ——
+# `src/form_record.py` 自身が冒頭で「**『最高で割った倍率』を到達日に入れない
+# こと。到達日は平均で解きます**」と書いています。
+#
+# 2026-09-03（最適化の回）に自分で撃った数（`form_record.per_video_best()`）:
+#
+#     形     n     記録     平均     中央値
+#     長尺   27    210回    19.1回    4回    ← 記録は n=27 のうち **14位** の本 1本
+#     ショート 185  1,891回   440.4回  213回
+#
+#     脚                          合格点   平均で割る   記録で割る
+#     門2a' 下の段 3,000時間      176回/本   **×9.2**     ×0.84 ←「もう越えている」
+#     門2a  上の段 4,000時間      235回/本     ×12.3      ×1.12
+#
+# **記録で割ると、いちばん近い脚は「もう越えている」と出ます。** 長尺の実測は
+# 中央値 **4回**・24時間齢の中央値 **1回** です。その表を隣に置いたまま、
+# `data/daily_pick.jsonl` は 09/04・09/05 の1本を**両方とも長尺**に決め、
+# 同じ窓で 再生/日(7d) は 6,299（08-25）→ 1,344（09-03）に落ちました。
+#
+# だから `_gate_legs()` は `ratio_typical`（平均で割った倍率）で**並べ**、
+# それで**名指し**します。`ratio`（記録）は列として残します —— あちらは
+# 「もう1回 最高を出して N倍 にする」という別の問いの分母だからです。
+#
 # ## **これは「開く」と言っているのではありません**
 #
 # 合格点は **1本/日 を 365日 続けたときの、1本ごとの数**です。記録は **1本**の数
@@ -2027,11 +2053,43 @@ def _fan_hours_bar(a: dict) -> dict:
 
 
 def _gate_legs(a: dict) -> list[dict]:
-    """**4つの門の脚を、「この機械の記録の何倍か」の1つの物差しで並べる。**
+    """**4つの門の脚を、1つの物差しで並べる。物差しは2本 出します —— 典型と記録。**
 
     **並べないと、どの脚が近いか決められません。** この道具は脚ごとに違う単位
     （時間／再生／人）で印字していて、**倍率で並べた行が1つもありませんでした。**
     倍率が付いていない「届きません」は、桁の情報を落とします。
+
+    ## **並べる物差しを、記録から典型（平均）へ移しました**（2026-09-03・最適化の回）
+
+    2026-08-31 から 09-03 まで、この表は **`best`（その形で1本だけ出た最高）**で
+    割った倍率だけを出し、**その倍率で並べ、その倍率で「いちばん近い脚」を
+    名指し**していました。そのとき出ていた数はこうです（この回に自分で撃った）:
+
+        形     n    記録    平均    中央値
+        長尺   27   210回   19.1回   4回     ← 記録は n=27 のうち **14位**の本 1本
+        ショート 185  1,891回  440.4回  213回
+
+    合格点 176回/本（門2a' 下の段）を **記録 210 で割ると ×0.84 ——「もう越えている」**。
+    **平均 19.1 で割ると ×9.2。中央値 4 で割れば ×44。** 同じ脚です。
+    この表は「いちばん近い脚 ×1.13」と印字し続け、その隣で `data/daily_pick.jsonl` は
+    09/04・09/05 の1本を **両方とも長尺**に決めていました。**その2日を含む窓で、
+    再生/日(7d) は 6,299（08-25）→ 1,344（09-03）に落ちています。**
+
+    `src/form_record.py` は自分の冒頭にこう書いてあります ——
+    **「『最高で割った倍率』を到達日に入れないこと。到達日は平均で解きます」**。
+    門までの隔たりは到達日そのものなので、**この表はその決まりの外に居ました。**
+
+    だから **並べ替えと名指しは `ratio_typical`（平均で割った倍率）**に移します。
+    `ratio`（記録で割った倍率）は消しません —— 「もう1回 最高を出し、それを N倍
+    にする」という別の問い（`form_record` の §「なぜ平均ではなく最高で見る節が要るか」）
+    には、あちらが正しい分母だからです。**2本 並べて、どちらの問いか分かるようにする。**
+
+    ## 覆る条件
+
+    - `mean` が返らない形は `ratio` に落ちます（分母が消えるより落ちるほうが安全）。
+    - **平均は裾の重い分布では上振れ側**です（長尺は上位2本で 67.6%）。
+      中央値まで落とすなら `median` に替えること —— そのときは倍率が更に 4〜5倍 遠くなります。
+    - n が二桁を割った形は、平均も記録も同じくらい当てになりません。**n を同じ行に出します。**
 
     登録者の脚（門1 / 門1'）はここに入れません —— あちらは**日数で既に有限**
     （1,140日 / 557日）で、倍率ではなく日で比べるほうが正しいからです。
@@ -2039,26 +2097,36 @@ def _gate_legs(a: dict) -> list[dict]:
     best = form_record.per_video_best() or {}
     rec_long = float((best.get("長尺") or {}).get("best") or 0.0)
     rec_short = float((best.get("ショート") or {}).get("best") or 0.0)
+    typ_long = float((best.get("長尺") or {}).get("mean") or 0.0)
+    typ_short = float((best.get("ショート") or {}).get("mean") or 0.0)
+    n_long = int((best.get("長尺") or {}).get("n") or 0)
+    n_short = int((best.get("ショート") or {}).get("n") or 0)
     per_day = float(house_rule.PUBLISH_PER_DAY)
     fan = a.get("fan_hours_bar") or {}
     legs = []
 
-    def _add(name, bar, form, record):
+    def _add(name, bar, form, record, typical, n):
         legs.append({"name": name, "bar": float(bar), "form": form, "record": record,
-                     "ratio": (float(bar) / record) if record > 0 else float("inf")})
+                     "typical": typical, "n": n,
+                     "ratio": (float(bar) / record) if record > 0 else float("inf"),
+                     "ratio_typical": (float(bar) / typical) if typical > 0
+                     else ((float(bar) / record) if record > 0 else float("inf"))})
 
     _add("門2a' 下の段 長尺%s時間（%s）" % (format(FAN_HOURS_GATE, ","), fan.get("label", "")),
-         fan.get("bar") or float("inf"), "長尺", rec_long)
+         fan.get("bar") or float("inf"), "長尺", rec_long, typ_long, n_long)
     ypp_rows = a.get("long_break_even") or []
     if ypp_rows:
         ypp = min(_gate2_bar(a, r, per_day, float(LONG_HOURS_WINDOW_DAYS)) for r in ypp_rows)
-        _add("門2a  上の段 長尺%s時間" % format(LONG_HOURS_GATE, ","), ypp, "長尺", rec_long)
+        _add("門2a  上の段 長尺%s時間" % format(LONG_HOURS_GATE, ","), ypp, "長尺",
+             rec_long, typ_long, n_long)
     if per_day > 0:
         _add("門2b' 下の段 ショート90日%s回" % format(FAN_SHORTS_VIEWS_GATE, ","),
-             (FAN_SHORTS_VIEWS_GATE / 90.0) / per_day, "ショート", rec_short)
+             (FAN_SHORTS_VIEWS_GATE / 90.0) / per_day, "ショート",
+             rec_short, typ_short, n_short)
         _add("門2b  上の段 ショート90日%s回" % format(SHORTS_VIEWS_GATE, ","),
-             (SHORTS_VIEWS_GATE / 90.0) / per_day, "ショート", rec_short)
-    legs.sort(key=lambda r: r["ratio"])
+             (SHORTS_VIEWS_GATE / 90.0) / per_day, "ショート",
+             rec_short, typ_short, n_short)
+    legs.sort(key=lambda r: r["ratio_typical"])
     return legs
 
 
@@ -3136,16 +3204,27 @@ def report(m: dict, a: dict) -> list[str]:
     _legs = a.get("gate_legs") or []
     if _legs:
         P("")
-        P("    --- **門の脚を、1つの物差し（この機械の記録の何倍か）で並べる** ---"
-          "（2026-08-31 に足しました。**倍率で並べた行が、この道具に1つもありませんでした**）")
+        P("    --- **門の脚を、1つの物差しで並べる。左が典型（平均）・右が記録（1本）** ---"
+          "（2026-08-31 に足し、**2026-09-03 に並べ替えを記録から典型へ移しました** ——"
+          " 記録で割ると 門2a' が **×0.84＝もう越えている**と出ますが、"
+          "その記録は n=27 のうち 14位 の本 **1本**の数です）")
         for _lg in _legs:
+            _rt = _lg.get("ratio_typical", _lg["ratio"])
             _r = _lg["ratio"]
-            _rs = "**×%.2f**" % _r if _r < 2 else "×%.1f" % _r
+            _ts = "**×%.2f**" % _rt if _rt < 2 else "×%.1f" % _rt
+            _rs = "×%.2f" % _r if _r < 2 else "×%.1f" % _r
             P(f"      {_lg['name']:<38} 合格点 {_lg['bar']:>9,.0f}回/本"
-              f"  対 {_lg['form']}の記録 {_lg['record']:>6,.0f}回  → {_rs}")
+              f"  対 {_lg['form']}の平均 {_lg.get('typical') or 0:>7,.1f}回"
+              f"(n={_lg.get('n') or 0})  → {_ts}"
+              f"　／ 記録 {_lg['record']:>6,.0f}回 なら {_rs}")
         _near = _legs[0]
+        _nrt = _near.get("ratio_typical", _near["ratio"])
         P(f"      → **いちばん近い脚は `{_near['name'].split('（')[0].strip()}` の "
-          f"×{_near['ratio']:.2f}** です。**そこに「届きません」と印字していました。**"
+          f"×{_nrt:.2f}**（典型で割った数）。"
+          f"**記録で割れば ×{_near['ratio']:.2f} ですが、それは 1本 の数です** ——"
+          "「その1本を毎日 出し続けたら」という別の問いの答えで、"
+          "**門までの隔たり（＝到達日）は平均で解く決まり**です"
+          "（`src/form_record.py` 冒頭）。"
           "　登録者の脚（門1 / 門1'）は日数で既に有限なので、この表には入れていません"
           f"（門1' は {_fmt_days(a['days_fan_subs'])}）。")
         P("")
