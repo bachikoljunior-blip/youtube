@@ -1719,6 +1719,57 @@ def rebake_busy() -> bool:
     return False
 
 
+def same_topic_drafts(vid: str, topic: str, *, root: Path | None = None) -> list[str]:
+    """**`--replaces` に渡す ID を全部そろえる**（いちばん新しい順・`vid` が先頭）。**API 0単位。**
+
+    ## なぜ1本では足りないか（2026-09-04 22:2x に、焼き上がる前に気づいた）
+
+    `rebake_run()` は長らく `--replaces <vid>` の**1本だけ**を渡していました。
+    **同じ題材の下書きは、焼き直すたびに1本ずつ積みます**（消さない・固定その2 の4）。
+    ＝ **3本目を上げる回は、「1つ前」を外しても「2つ前」に `same-topic` で当たります。**
+
+    `src/dupes.blocking()` の `exclude` はこれを 2026-09-02 に直しており、
+    `scripts/upload_only.py` も **`--replaces a,b`** を受けます。
+    **渡す側だけが、1本のままでした。**
+
+    実測（この回）: 題材 `nenkin-uketorikata-65-70-75-handan` の下書きは
+    `dRZnZrRy2Lw`（09/02 上げ・予約なし）と `DfFyu8qZq3I`（09/03 上げ・予約なし）の **2本**。
+    走っていた焼きは `--replaces DfFyu8qZq3I` だけを渡すので、
+    **75分 かけて焼いたあと、`dRZnZrRy2Lw` の `same-topic` で断られます。**
+    ＝ **いちばん高い所（焼き）を払ってから、いちばん安い所（引数）で落ちる形。**
+
+    **予約の付いている本は入れません** —— `upload_only.drop_replaced()` は
+    「private・予約なし」しか外さず、**1本でも欠けたら全部 断る**ので、
+    予約つきを混ぜると、この関数のせいで上げられなくなります
+    （予約つきの本は `takeover` が別に面倒を見ます・先頭の `vid` だけが例外）。
+    """
+    root = Path(root or config.ROOT)
+    out = [vid] if vid else []
+    if not topic:
+        return out
+    rows = []
+    try:
+        import json                                            # noqa: PLC0415
+        f = root / "data" / "uploaded.jsonl"
+        for ln in f.read_text(encoding="utf-8").splitlines():
+            try:
+                r = json.loads(ln)
+            except Exception:                                  # noqa: BLE001
+                continue
+            if str(r.get("topic") or "") == topic and str(r.get("video_id") or ""):
+                rows.append(r)
+    except OSError:
+        return out
+    for r in reversed(rows):                                   # 新しい順
+        other = str(r.get("video_id"))
+        if other in out:
+            continue
+        if _slot_of(other):                                    # 予約つきは混ぜない（上の註）
+            continue
+        out.append(other)
+    return out
+
+
 def _slot_of(vid: str) -> str:
     """**その本に付いている予約の時刻**（`YYYY-MM-DDTHH:MM` JST・API 0単位）。無ければ空。"""
     from src import next_slot                                  # noqa: PLC0415
@@ -1815,7 +1866,15 @@ def rebake_run(vid: str, topic: str, sha: str, *, takeover: bool = False) -> int
                 print(f"[rebake-run] [!] 予約を外せませんでした（rc={rc}）。**枠はそのまま**"
                       f"（旧 `{vid}` が {slot} に出ます）", flush=True)
     if rc == 0 and not late:
-        rc, out = _run_out([py, "scripts/upload_only.py", topic, "--draft", "--replaces", vid],
+        # **同じ題材の下書きを全部 渡すこと**（`same_topic_drafts()` の註）。
+        #     1本だけだと、3本目の焼き直しが「2つ前」の `same-topic` で断られます ——
+        #     **75分 かけて焼いたあと、引数1つで落ちる形。**
+        drops = same_topic_drafts(vid, topic, root=root)
+        if len(drops) > 1:
+            print(f"[rebake-run] 同じ題材の下書き {len(drops)}本 を外します: {', '.join(drops)}",
+                  flush=True)
+        rc, out = _run_out([py, "scripts/upload_only.py", topic, "--draft",
+                            "--replaces", ",".join(drops)],
                            "upload_only --draft --replaces", 1800)
         for ln in (out or "").splitlines():
             if ln.startswith("VIDEO_ID "):

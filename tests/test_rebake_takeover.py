@@ -141,3 +141,35 @@ def test_焼きが長引いたら引き継がない(monkeypatch: pytest.MonkeyPa
     kinds = [n.get("kind") for n in notes]
     assert "late" in kinds and "done" not in kinds
     assert rc == 0
+
+
+def test_同じ題材の下書きを全部replacesに渡す(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """**3本目の焼き直しは、「1つ前」を外しても「2つ前」に `same-topic` で当たります。**
+
+    実測 2026-09-04（焼き上がる前に気づいた）: 題材
+    `nenkin-uketorikata-65-70-75-handan` の下書きは `dRZnZrRy2Lw`（09/02・予約なし）と
+    `DfFyu8qZq3I`（09/03・予約なし）の 2本。走っていた焼きは
+    `--replaces DfFyu8qZq3I` の1本だけを渡すので、**75分 かけて焼いたあと、
+    引数1つで断られます** —— いちばん高い所を払ってから、いちばん安い所で落ちる形。
+
+    `src/dupes.blocking()` の `exclude` は 2026-09-02 に複数を受けるよう直っており、
+    `scripts/upload_only.py` も `--replaces a,b` を受けます。**渡す側だけが 1本のままでした。**
+    """
+    root = tmp_path
+    (root / "data").mkdir(parents=True, exist_ok=True)
+    (root / "data" / "uploaded.jsonl").write_text(
+        '{"video_id": "OLD1", "topic": "t"}\n'
+        '{"video_id": "CUR", "topic": "t"}\n'
+        '{"video_id": "OTHER", "topic": "other"}\n'
+        '{"video_id": "BOOKED", "topic": "t"}\n',
+        encoding="utf-8")
+    # `BOOKED` だけ予約つき。**予約つきは混ぜないこと** ——
+    # `drop_replaced()` は private・予約なし しか外さず、1本でも欠けたら全部 断るので、
+    # 混ぜるとこの関数のせいで上げられなくなる。
+    monkeypatch.setattr(ahead_sweep, "_slot_of",
+                        lambda v: "2026-09-05T09:00" if v == "BOOKED" else "")
+    got = ahead_sweep.same_topic_drafts("CUR", "t", root=root)
+    assert got[0] == "CUR"                    # 先頭は必ず本人
+    assert "OLD1" in got                      # 「2つ前」も外す
+    assert "BOOKED" not in got                # 予約つきは混ぜない
+    assert "OTHER" not in got                 # 別の題材は混ぜない
