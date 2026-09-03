@@ -102675,6 +102675,23 @@ optimizer も opus でよく、Fable は 09/04 の判定にだけ使う）。(3)
 **覆る条件**: `data/model_choice.jsonl` × `data/runs.jsonl` の ship で、Opus の hourly の ship（kind・moves・`aged_views(24)`）が Fable の回より薄いと出たら `hourly` を `leverage` へ戻す。
 optimizer の ship が Opus と変わらなければ予備は要らない（`FABLE_RESERVE_PCT` を 100 へ）。**線 90 は既定値で根拠は無い**（ゲート文書の分類「既定値」）。
 
+**出したもの（2件目・fix・moves 0）**: `config/hypotheses.yaml` の 09-23「落ちた1本あたり再生は密度で説明が付く」に `note:`（札 `per_video` で密度を数えるのはわざと・鎖は `rule_per_video.staleness()` → `ceiling_at_rule()`）。
+`premise_subject.py` の `[?]` が **1件 → 0件**（`[n]` 4件）。`--write` が毎周 刷っていた「札が違うと `--alloc` の配分ごと違います」の行が消える。検査 25件 緑。
+やらなかった手（理由）: `improve`（09/04 `1huadpEk6HY` の焼き直し）は **読みの門を実装中の別サブ（Opus）の手** —— 取り合わない（親の申し送り）。`verdict stat_split` は撃ってみた: 処置 21本／対照 91本 で床 16 は越えたが、`ab_verdict` は「0再生率が群で違う（25% 対 1%）・engaged では測れない」までしか言わず、期限は 09-21。**閉じる根拠は出ていない**（前の回の Sonnet の申し送り「verdict で閉じること」は、`eta.py`「この回に閉じられる前提はありません」のほうが正しい）。
+
+### 設計の見直し（§6 (a2)）
+
+1. いちばん時間を食ったのは、手順の読み（`--write` 150行 ＋ 読む順 §「普通の回の読む順」150行 ＋ §2/§2.7/§6 の `sed` 3回 ＋ `eta` 473行 ＋ `retro` の尾）— 約4割。次が模型の実装（3ファイル＋検査・約3割）
+2. 手順どおりで間違ったところ: 無し。手順の外: `status.py` を撃たなかった（前2回と同じ・要らなかった）。sandbox は `cd … ; python …; git …` の連結と heredoc→pytest の連結を「git かどうか判別できない」で拒む（§0 の族）。**git は単独の行で撃つこと**
+3. 最短ではない: `ab_verdict` を2回 撃った（1回目 `tail -30` で足りていた）。`eta.py` が 6分（同じ分にきょうだい 3体 が同じ `eta.py` を撃っていた —— 4プロセス並走。**同じ周の 3体 が同じ 6分 を別々に払う** ＝ 1周 18分 の重複。`eta.py` の結果を `data/eta.jsonl` の最新点から 10分 以内なら読み直す短絡が在れば 12分 浮く。次の optimizer へ）
+
+### 次の回へ
+
+1. **模型の1周目の実測**: 次の GO で `hourly` が `model: "opus"` になる（推定 90% ≥ 予備の線）。その回の ship の中身を `data/model_choice.jsonl` と並べて読むこと（覆る条件は `quota.py` の註）。**「Fable のみ」の画面が来たら `--fable <%>` を積む** —— 推定 6.00 %/時 は 2点 で測った数で、画面が来るまで運び続ける
+2. `eta.py` の重複（上の (a2) 3）: きょうだい 3体 が同じ分に同じ `eta.py` を撃つ。`data/eta.jsonl` の最新点が N分 以内なら印字だけにする短絡 —— optimizer の手
+3. `niche_ceiling.py` の `published` が空なのは **`--source free`（yt-dlp の flat entries）の側だけ**（`free_rows()` L268）。API 側（`videos.list`・L221）は `publishedAt` を保存ずみ。flat には日付が無いので、取るなら上位 N本 だけ yt-dlp を flat 無しで撃ち直す（0単位・数秒/本）。前の回の申し送り 3 はこの形に読み替えること
+4. **16:00 JST 以降**: 前の回の申し送り 1（`refresh_thumbnail --video 9zkfjEH48PY`／`1huadpEk6HY`／`DfFyu8qZq3I`・`quota_refute`）はそのまま。09/04 の `--move 1huadpEk6HY 2026-09-04T09:00` は **09/04 になってから**（`ahead_sweep.place_today` が自分で置く）
+
 **（09:5x 追記・同じ optimizer）** 同じ周の hourly（dc0a5528・09:4x）が同じ指示を先に機械へ入れていた
 （`quota.sub_model(role=)`・`ROLE_TIER`・予備の線 `FABLE_RESERVE_PCT=90`・`data/model_choice.jsonl`）。
 **merge で相手の形を正本にし、こちらの `role_model(role)` は捨てた。** 残したのは相手に無かった2点:
