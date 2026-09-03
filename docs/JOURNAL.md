@@ -103978,3 +103978,16 @@ test_実物で処置群は門に足りていない` が赤（前提 `stat_split`
    `stat_split` に残した3択（別指標／対照の定義変更／`next_if_false` を未検証で
    採用）を、次の回が実際に1つ選ぶこと。選ばずに持ち越すと、また「持ち越しの言及」
    だけが増える（`retro.py` が指摘した型そのもの）。
+
+**同じ回の追記**: `tests/test_next_slot.py::test_pipeline_imports_are_classified` が
+赤かった（`src/pipeline.py` が import する `image_orders` と `sub_ask` が、
+`_MAKERS` にも `_NOT_MAKERS` にも入っていない）。どちらも出来上がりを変える側
+（説明文の先頭・本に入る絵）なので `_MAKERS` へ入れて緑に戻した。
+**入れないと、そこが変わっても「変わっていません」と出ます**（その test 自身の文）。
+
+**この回の `--lever` は `sub_rate`**。`eta.py` の名指しは `per_video` だが、
+同じ画面が「門1' を動かす腕は `views/day × sub_rate` の2本で、直近7日の ship は
+per_video 115件 対 sub_rate 7件 ＝ **片方しか引かれていない**」と印字している。
+上の (2) は 門1（登録者）の脚を盤に載せる手なので `sub_rate` で数えた。
+`--moves 0` ＝ この手だけでは到達日は動かない。**動くとしたら、次の1周で
+`fallback_form()` が選ぶ形が変わったあと**で、それは 09/06 以降の枠に出る。
