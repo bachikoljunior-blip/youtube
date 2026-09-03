@@ -45,10 +45,33 @@
     with_head()     説明欄に HEAD を足す（**何度掛けても増えません**）
     with_comment_ask()  コメントに COMMENT_TAIL を足す（同じく冪等・上限つき）
     apply_to_video()    **すでに上がっている本**の説明欄に足す（`videos.update` 50単位）
+    rank_by_traffic()   **いま再生が付いている順**に並べる（`data/views.jsonl`・0単位）
+    sweep()             その順で、まだ入っていない本へ置いていく（予算つき）
 
 **焼き直しは要りません。** 台本（`sha`）は変わらないので
 `scripts/ahead_sweep.py` の焼き直しは起きず、
 `apply_to_video()` が既にある下書きへ後から足せます。
+
+## `--sweep` を足した理由（2026-09-04 に数えた）
+
+上の `apply_to_video()` は **動画IDを手で1本ずつ渡す形**でしか呼べず、
+**repo のどこからも呼ばれていませんでした**（`grep apply_to_video` の当たりは
+この1ファイルの中だけ）。**上がっている本を数え上げる手が無かった**からです。
+
+その間に何が起きていたかを、この回に実測しました（`data/views.jsonl`・0単位）:
+
+    上がっている本 249本のうち、いま再生が動いているのは **36本だけ**。
+    上位 17本 で、いまの再生/日 の **92%**。
+    そして**その1位（全体の 42.9%）の説明欄に、依頼は1文字も入っていませんでした**
+    （`videos.list` で実際に読んで確かめた）。
+
+つまり `sub_ask` は **これから作る本**にだけ効いていて、
+**いまの再生のほぼ全部を運んでいる既存の本には、一度も掛かっていませんでした。**
+`sub_rate` は「再生 × 率」なので、**掛かっていない側にこそ再生が在ります。**
+
+`--sweep` は `rank_by_traffic()` の順（＝再生/日 の降順）に置いていきます。
+**尽きるまで舐めません** —— 再生が動いていない 213本 に 50単位ずつ払っても
+登録は1人も増えないので、**既定は再生が動いている本だけ**（`--min-per-day`）です。
 
 ## 覆る条件（数字で1つ）
 
@@ -61,8 +84,11 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
+
+from src import upload_cap
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -151,12 +177,194 @@ def apply_to_video(video_id: str, *, service=None, dry_run: bool = False) -> int
     return 0
 
 
+#: `data/views.jsonl`（この repo が撮っている再生の控え）。
+VIEWS = Path(__file__).resolve().parents[1] / "data" / "views.jsonl"
+
+#: 掃いた記録。**1本 1行**（何をどう変えたかを、次に来た側が数えられるように）。
+SWEEP_LOG = Path(__file__).resolve().parents[1] / "data" / "sub_ask_sweep.jsonl"
+
+#: `videos.list` は 1回に 50本まで（1単位）。`videos.update` は 1本 50単位。
+LIST_CHUNK = 50
+LIST_UNITS = 1
+UPDATE_UNITS = 50
+
+
+def rank_by_traffic(path: Path | None = None, *, window_h: float = 24.0):
+    """**いま再生が付いている順**に `(再生/日, 動画ID)` を返す（**API 0単位**）。
+
+    `data/views.jsonl` の各本の最後の点と、そこから `window_h` 以上 前の点との
+    差を、日あたりへ直したものです。**点が2つ無い本は入りません**（測れないので）。
+
+    **なぜ総再生ではなく「いまの再生/日」で並べるのか。** 置く先の値打ちは
+    **これから来る人の数**であって、過去に来た人の数ではありません。実測（2026-09-04）
+    では総再生 1,441回 の本が 0.9回/日、136回 の本が 67.0回/日 で、順が逆でした。
+
+    **覆る条件**: `data/views.jsonl` の撮る間隔が 24時間 より粗くなったら、
+    この窓では差が出ません（`window_h` を伸ばすこと）。
+    """
+    import collections
+    import datetime as _dt
+
+    src = Path(path) if path else VIEWS
+    if not src.exists():
+        return []
+    snaps: dict[str, list[tuple[str, int]]] = collections.defaultdict(list)
+    for line in src.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            d = json.loads(line)
+        except Exception:
+            continue
+        vid, at, views = d.get("id"), d.get("at"), d.get("views")
+        if vid and at and views is not None:
+            try:
+                snaps[str(vid)].append((str(at), int(views)))
+            except Exception:
+                continue
+
+    def _t(a: str):
+        return _dt.datetime.fromisoformat(a.replace("Z", "+00:00"))
+
+    out: list[tuple[float, str]] = []
+    for vid, pts in snaps.items():
+        pts.sort()
+        last_at, last_v = pts[-1]
+        t1 = _t(last_at)
+        base = None
+        for a, v in reversed(pts):
+            if (t1 - _t(a)).total_seconds() >= window_h * 3600:
+                base = (a, v)
+                break
+        if base is None:
+            continue
+        hrs = (t1 - _t(base[0])).total_seconds() / 3600
+        if hrs <= 0:
+            continue
+        out.append(((last_v - base[1]) / hrs * 24, vid))
+    out.sort(reverse=True)
+    return out
+
+
+def sweep(*, top: int = 40, min_per_day: float = 0.5, budget: int = 3000,
+          service=None, dry_run: bool = False) -> int:
+    """再生の付いている順に、説明欄の先頭へ依頼を置いていく。
+
+    **読みは束ねます**（`videos.list` は 50本で 1単位）。書くのは
+    **入っていない本だけ**（`videos.update` 50単位）。`budget` は**単位**で、
+    使い切ったらそこで止めます（他の仕事の枠を食い潰さないため）。
+    """
+    ranked = [(d, v) for d, v in rank_by_traffic() if d >= min_per_day][:top]
+    if not ranked:
+        print("[sub_ask] 掃く本がありません（再生が動いている本が 0本）")
+        return 0
+    per_day = {v: d for d, v in ranked}
+    ids = [v for _, v in ranked]
+    print(f"[sub_ask] 対象 {len(ids)}本（再生/日 {min_per_day} 以上・"
+          f"合計 {sum(per_day.values()):.1f}回/日）・予算 {budget}単位")
+
+    if not HEAD.strip():
+        print("[sub_ask] HEAD が空なので、何もしません（前提が外れた後の姿）")
+        return 0
+
+    youtube = service
+    if youtube is None:
+        from src.uploader import _service
+        youtube = _service()
+
+    used = 0
+    snippets: dict[str, dict] = {}
+    for i in range(0, len(ids), LIST_CHUNK):
+        chunk = ids[i:i + LIST_CHUNK]
+        if used + LIST_UNITS > budget:
+            print("[sub_ask] 予算が尽きたので、読みをここで止めます")
+            break
+        res = youtube.videos().list(part="snippet", id=",".join(chunk)).execute()
+        used += LIST_UNITS
+        for it in res.get("items") or []:
+            snippets[it["id"]] = it["snippet"]
+
+    missing = [v for v in ids if v in snippets and HEAD_MARK not in
+               (snippets[v].get("description") or "")]
+    already = len(snippets) - len(missing)
+    print(f"[sub_ask] 読めた {len(snippets)}本 ／ 既に入っている {already}本 ／ "
+          f"置く先 {len(missing)}本（{used}単位 使用）")
+
+    done = 0
+    covered = 0.0
+    for vid in missing:
+        if used + UPDATE_UNITS > budget:
+            print(f"[sub_ask] 予算 {budget}単位 に当たったので止めます"
+                  f"（残り {len(missing) - done}本 は次の回）")
+            break
+        snippet = snippets[vid]
+        before = snippet.get("description") or ""
+        after = with_head(before)
+        if after == before:
+            continue
+        title = (snippet.get("title") or "")[:36]
+        print(f"[sub_ask] {vid} {per_day[vid]:6.1f}回/日 『{title}』")
+        if dry_run:
+            done += 1
+            covered += per_day[vid]
+            continue
+        hold = upload_cap.reserve_hold()
+        if hold:
+            print(f"[sub_ask] 見送ります: {hold}")
+            break
+        snippet["description"] = after[:4900]
+        try:
+            youtube.videos().update(part="snippet",
+                                    body={"id": vid, "snippet": snippet}).execute()
+        except Exception as exc:                                    # noqa: BLE001
+            print(f"[sub_ask] {vid} で落ちました: {type(exc).__name__} {str(exc)[:160]}")
+            break
+        used += UPDATE_UNITS
+        upload_cap.note_quota_ok(detail=f"videos.update {vid}")
+        done += 1
+        covered += per_day[vid]
+        _note_sweep(vid, per_day[vid])
+
+    total = sum(d for d, _ in rank_by_traffic() if d > 0) or 1.0
+    print(f"[sub_ask] 置いた {done}本 ／ {used}単位 ／ "
+          f"いまの再生/日 の {100 * covered / total:.0f}% を覆いました"
+          + ("（--dry-run なので書いていません）" if dry_run else ""))
+    return 0
+
+
+def _note_sweep(video_id: str, per_day: float) -> None:
+    """掃いた1本を控えへ（**次の回が「いつ掛かったか」を数えられるように**）。"""
+    import datetime as _dt
+    try:
+        SWEEP_LOG.parent.mkdir(parents=True, exist_ok=True)
+        with SWEEP_LOG.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps({
+                "at": _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "id": video_id,
+                "views_per_day": round(float(per_day), 2),
+                "where": "description_head",
+            }, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="説明欄とコメントに登録の依頼を置く")
     ap.add_argument("--apply", metavar="動画ID", action="append", default=[],
                     help="すでに上がっている本の説明欄の先頭に依頼を置く（50単位・冪等）")
+    ap.add_argument("--sweep", action="store_true",
+                    help="いま再生が付いている順に、まだ入っていない本へ置いていく")
+    ap.add_argument("--top", type=int, default=40, help="--sweep が見る本数（既定 40）")
+    ap.add_argument("--min-per-day", type=float, default=0.5,
+                    help="--sweep が相手にする最低の再生/日（既定 0.5）")
+    ap.add_argument("--budget", type=int, default=3000,
+                    help="--sweep が使ってよい単位（既定 3000 ＝ 約58本）")
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args(argv)
+    if args.sweep:
+        return sweep(top=args.top, min_per_day=args.min_per_day,
+                     budget=args.budget, dry_run=args.dry_run)
     if not args.apply:
         print(HEAD)
         print()
