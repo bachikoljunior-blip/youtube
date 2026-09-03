@@ -73,6 +73,19 @@ def test_書き直したら台本を置き直して機械の検査を当て直�
         "（絵を全部 描いたあとで落ちます）")
 
 
+def test_渡された台本にも書き戻す():
+    """**`rebake_plan` の sha が毎回 食い違うのを防ぐ。**
+
+    あちらは「控え（焼いて上げた本文）」と「`data/scripts/` の台本」の sha を
+    比べて焼き直しを決めます。書き戻さないと、焼き直すたびに輪が本文を書き換え、
+    **同じ本の焼き直しで `REBAKE_MAX_PER_DAY` を毎日 使い切ります。**
+    """
+    src = (C.config.ROOT / "src" / "pipeline.py").read_text(encoding="utf-8")
+    body = src.split("if clarify_and_fix(script")[1][:2000]
+    assert "Path(args.script).write_text" in body, (
+        "分かりやすさの書き直しを、渡された台本へ書き戻していない")
+
+
 # ---------------------------------------------------------------- 門A（根拠）
 
 LINES = [

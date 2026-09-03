@@ -623,6 +623,21 @@ def main(argv: list[str] | None = None) -> int:
                 "分かりやすさの書き直しで、投稿前の検査に落ちる形になりました: "
                 + " / ".join(again)
             )
+        # **渡された台本にも書き戻すこと**（2026-09-03。踏む前に塞いだ）。
+        #
+        # `scripts/ahead_sweep.rebake_plan()` は
+        # 「控え（`data/critique_queue/<ID>.script.json` ＝ **焼いて上げた本文**）」と
+        # 「台本（`data/scripts/<題材>.script.json`）」の sha を比べて、
+        # 違えば「台本のほうが新しい」＝ **焼き直す**と決めます。
+        # ここで書き戻さないと、焼き直すたびに輪が本文を書き換え、
+        # 控えだけが新しくなって **毎回 sha が食い違ったまま**になります ——
+        # `REBAKE_MAX_PER_DAY`（2本）を、同じ本の焼き直しで毎日 使い切る形。
+        if args.script:
+            Path(args.script).write_text(
+                json.dumps(script.model_dump(), ensure_ascii=False, indent=2) + "\n",
+                encoding="utf-8",
+            )
+            print(f"[pipeline] 分かりやすさの書き直しを {args.script} にも書き戻しました")
 
     # 2. 音声（ここで各セグメントの実尺が確定する）
     audios = synthesize_segments(
