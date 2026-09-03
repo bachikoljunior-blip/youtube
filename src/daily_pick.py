@@ -631,11 +631,36 @@ def theory_gap(cmp: dict, ledger: Path | None = None, now: datetime | None = Non
                    - datetime.fromisoformat(str(row["at"]))).days
         except Exception:                                      # noqa: BLE001
             age = 0
+        # --- **齢で割った側**（2026-09-04 に足した）--------------------------
+        #     上の `x_p90` は **外の生涯の累計 ÷ 自分の 48時間**です。公開日を埋めて
+        #     数えたら、外の上位に **48時間 以内の本は 1本もありません**
+        #     （長尺 齢 中央 203日／ショート 1,729日 ＝ 4.7年）。しかも撃つ窓が
+        #     形ごとに違う（`niche_ceiling.SP_FILTERS`: ショート＝全期間・長尺＝今年）ので、
+        #     **別々の窓で測った2つを横に並べて形を決めていました。**
+        #     1日あたりに直すと、ショートは向きが変わります（自分 524回/日 対 外 18回/日）。
+        #     **累計は消しません** —— 累計は「その題でどこまで積めるか」を言っている数で、
+        #     1日あたりは「いま追い付けるか」を言っている数。**並べて読むこと。**
+        rates = sorted(
+            r for r in (
+                (int(t.get("views") or 0) / a)
+                for t, a in ((t, nc.age_days(t, now)) for t in (row.get("top") or [])
+                             if t.get("form") == key)
+                if a and int(t.get("views") or 0) > 0)
+        )
+        ages_d = sorted(
+            a for a in (nc.age_days(t, now) for t in (row.get("top") or [])
+                        if t.get("form") == key) if a)
+        own_rate = own_div / 2.0                      # 自分の中央値は **48時間** の数
         d = {"own": own, "out_p90": s.get("p90"), "out_max": s.get("max"),
              "x_p90": float(s.get("p90") or 0) / own_div,
              "x_max": float(s.get("max") or 0) / own_div,
              "secs_median": (statistics.median(secs) if secs else None),
-             "n": s.get("n"), "age_days": age, "source": row.get("source", "api")}
+             "n": s.get("n"), "age_days": age, "source": row.get("source", "api"),
+             "n_dated": len(rates),
+             "age_median": (ages_d[len(ages_d) // 2] if ages_d else None),
+             "out_rate": (rates[len(rates) // 2] if len(rates) >= 3 else None),
+             "own_rate": own_rate,
+             "x_day": ((rates[len(rates) // 2] / own_rate) if len(rates) >= 3 else None)}
         out[form] = d
         if d["x_p90"] > best_x:
             best_x, out["best"] = d["x_p90"], form
@@ -688,6 +713,23 @@ def theory_lines(cmp: dict, ledger: Path | None = None, now: datetime | None = N
         out.append(ln)
         out.append("       ＝ 形を自分の控え（ショート 対 長尺 の中央値）で決めないこと。**外の上位の題と尺を写した1本**を"
                    "その形で出して、48時間の数をこの画面に入れる（前提は `config/hypotheses.yaml` の「外の作り方を写した長尺」）。")
+    # **同じ画面に、齢で割った側も並べること**（`theory_gap` の註・2026-09-04）。
+    #     上の ×N は 外の生涯の累計 ÷ 自分の 48時間 で、外の上位に 48時間 以内の本は 0本。
+    #     **片方だけだと、窓の差が結論を作ります。**
+    day = [f for f in forms if g[f].get("x_day")]
+    if day:
+        cols = " ／ ".join(
+            f"{f} **×{g[f]['x_day']:,.2f}**（外の上位の中央 {g[f]['out_rate']:,.0f}回/日"
+            f"・齢 中央 {g[f]['age_median']:,.0f}日・n={g[f]['n_dated']}"
+            f" ÷ 自分 {g[f]['own_rate']:,.1f}回/日）" for f in day)
+        out.append("     **同じものを1日あたりで**（上の ×N は **外の生涯の累計 ÷ 自分の 48時間** ——"
+                   " 外の上位に 48時間 以内の本は 0本 です）: " + cols)
+        near = min(day, key=lambda f: g[f]["x_day"])
+        out.append(f"       → 1日あたりで見て、いちばん近い形は **{near}**"
+                   f"（×{g[near]['x_day']:,.2f}）。**上の行と食い違ったら、"
+                   "どちらか片方を根拠にしないこと** —— 累計は「その題でどこまで積めるか」、"
+                   "1日あたりは「いま追い付けるか」。**撃つ窓も形ごとに違います**"
+                   "（`niche_ceiling.SP_FILTERS`: ショート＝全期間・長尺＝今年）")
     return out
 
 
