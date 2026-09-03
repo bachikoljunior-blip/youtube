@@ -1063,63 +1063,43 @@ def _fable_rate_words(fe: dict) -> str:
     return "速さが取れない（目盛りの値のまま）"
 
 
-def sub_model(now: datetime | None = None) -> tuple[str, str]:
-    """**サブに渡す模型と、その理由1行。** `FABLE_CAP_PCT` の註。
-
-    目盛りが古いぶんは、**「Fable のみ」自身の速さ**で運んだ推定で埋める
-    （`fable_rate()`。全モデルの速さで運ぶと 2倍 遅い側に外れる —— あちらの註）。
-    古い目盛りで割ると必ず「まだ余裕がある」側に外れるので、運ばない選択はしない。
-    """
-    now = now or datetime.now(timezone.utc)
-    fe = fable_estimate(now)
-    if not fe:
-        return "fable", "「Fable のみ」の目盛りがまだ無い（画面が来たら --fable で積むこと）"
-    g = fe["gauge"]
-    if fe["rate_source"] == "reset":
-        return "fable", f"「Fable のみ」の枠は {g['resets'].astimezone(JST):%m/%d %H:%M} JST に戻った（目盛り {g['pct']:.0f}% は前の枠）"
-    head = f"「Fable のみ」 {g['pct']:.0f}%（{g['at'].astimezone(JST):%m/%d %H:%M} JST）"
-    ex = fe["exhaust_at"]
-    ex_words = f"・100% は {ex.astimezone(JST):%m/%d %H:%M} JST" if ex else ""
-    if fe["est"] >= FABLE_CAP_PCT:
-        return "opus", (f"{head} → いま推定 {fe['est']:.0f}% ≧ 上限 {FABLE_CAP_PCT:.0f}%"
-                        f"（{_fable_rate_words(fe)}{ex_words}。**新しい画面が来るまで Opus**）")
-    return "fable", (f"{head} → いま推定 {fe['est']:.0f}% ＜ 上限 {FABLE_CAP_PCT:.0f}%"
-                     f"（{_fable_rate_words(fe)}{ex_words}）")
-
-
-#: **役ごとの模型**（オーナー原文 2026-09-03 07:3x・`CLAUDE.md` 冒頭）:
-#:
-#: > 「単純な記録、定型検査、機械的修正は軽いモデル ● 仮説検証、題材選定、動画の構成改善
-#: >  など高レバレッジ部分はFable ● Fableを使う価値が実測で薄い仕事には使わない
-#: >  ● 仕事ごとにFable・Opus・Sonnet・Haikuを選ぶ
-#: >  Fableのみは100％到達になって使えなくなるようにならないほうが良くない？」
-#:
-#: 機械が選べる粒度は**役**です（サブは Agent を立てられない。親が `model` を渡す）。
-#: 実測（2026-09-03 09:2x・`scripts/optimized.py`・5日 276件）: ship の **71% が `fix`**
-#: （機械的修正）で、その全部が Fable で走っていた。**その回の `hourly` は
-#: 09/03 06:50「枠の残りを刷る7か所を揃えた」・07:08「§4 の表を run_marker が刷る」** ——
-#: どちらも Fable でなくてよい仕事です。一方、`optimizer` は**仮説検証・題材選定**
-#: （09/03 02:03 の「長尺・外の作りを写す」の決めは optimizer が出した）。
-#:
-#: だから: `owner-record`（単純な記録）は **sonnet**。`hourly` は **Fable が枠の戻りまで
-#: 両役ぶん持つときだけ Fable**、持たなければ **opus**。`optimizer` は **1周ぶんが 100% の
-#: 手前に収まる限り Fable**（残りは高レバレッジ側に使い切る）。収まらなければ opus。
-#: **100% を越える形では立てない** —— 越えた後の 1日、立てたサブは全部 落ちる
-#: （`fable_rate()` の註・A10）。
-#:
-#: **覆る条件**: 「Fable のみ」の速さを役べつに測れるようになったら（いまは両役の合計）、
-#: 役ごとの1周の費用を実測に替えること。Opus で走った `optimizer` の verdict の当たりが
-#: Fable と変わらない（`deadline_check --fit` の当たり率）なら、`optimizer` も opus でよい。
-ROLE_TIER = {
-    "optimizer": "fable",
-    "hourly": "fable",
-    "owner-full": "fable",
-    "owner-record": "sonnet",
+# --------------------------------------------------------------------------
+# 仕事ごとの模型（オーナー原文 2026-09-03 07:3x・`CLAUDE.md` 冒頭）
+#
+#   「単純な記録、定型検査、機械的修正は軽いモデル ● 仮説検証、題材選定、
+#    動画の構成改善など高レバレッジ部分はFable ● Fableを使う価値が実測で薄い
+#    仕事には使わない ● 仕事ごとに Fable・Opus・Sonnet・Haiku を選ぶ
+#    Fableのみは100％到達になって使えなくなるようにならないほうが良くない？」
+#
+# 09/03 09:4x までの実装は「目盛りだけを見て、全役へ同じ模型」でした
+# （`docs/OWNER_INSTRUCTION_GATE.md` が「上限管理には使えても目標最適化ではない」
+# と書いた形そのもの）。ここで足したのは 2つだけ:
+#
+#   (1) **役で段を分ける** `ROLE_TIER`。`hourly`（定期の回）は実測で
+#       直近5日の ship 276件 が fix 71%・`--moves 0` 95%・中央値 11分 で 1件
+#       （`data/runs.jsonl`・09/03 07:2x の回が数えた）＝「Fable を使う価値が
+#       実測で薄い」側。`optimizer`（前提の判定・手順の設計・題材の型）は
+#       高レバレッジ側。
+#   (2) **予備 `FABLE_RESERVE_PCT`**。「Fable のみ」の推定が予備の線を越えたら、
+#       定型の役は Opus へ倒し、残りを高レバレッジの役に残す。100% に届いて
+#       **全部が使えなくなる**（オーナーの最後の問い）のを避けるのが目的で、
+#       線の値そのものに根拠はない（既定値。`docs/OWNER_INSTRUCTION_GATE.md` の分類）。
+#
+# **覆る条件**: `data/model_choice.jsonl` に積んだ選択を `data/runs.jsonl` の ship と
+# 並べて、Opus で回した `hourly` の ship の中身（kind・moves・aged_views）が Fable の
+# 回より薄いと出たら、`hourly` を `leverage` へ戻すこと。逆に `optimizer` の ship が
+# Opus と変わらなければ、予備は要らない（線を 100 に戻す）。
+# --------------------------------------------------------------------------
+FABLE_RESERVE_PCT = 90.0
+ROLE_TIER: dict[str, str] = {
+    "hourly": "routine",      # 記録・定型検査・機械的修正が実測の大半
+    "optimizer": "leverage",  # 前提の判定・手順の設計・題材の型
+    "owner-full": "routine",  # 記録 ＋ 1周（定型側）
+    "owner-record": "light",  # 単純な記録だけ → sonnet（Fable の残りに関係なく）
 }
-#: 高レバレッジの役（残りの Fable をここに使い切る）。
-HIGH_LEVERAGE_ROLES = ("optimizer",)
-#: 軽い役（Fable の残りに関係なく、常に `ROLE_TIER` の模型）。
-LIGHT_ROLES = ("owner-record",)
+#: 軽い段に渡す模型。
+LIGHT_MODEL = "sonnet"
+MODEL_CHOICE_FILE = ROOT / "data" / "model_choice.jsonl"
 
 
 def fable_cost_per_sub(now: datetime | None = None) -> float | None:
@@ -1140,44 +1120,91 @@ def fable_cost_per_sub(now: datetime | None = None) -> float | None:
     return max(0.0, (float(fr["to_pct"]) - float(fr["from_pct"])) / births)
 
 
-def role_model(role: str, now: datetime | None = None) -> tuple[str, str]:
-    """**役 `role` に渡す模型と、その理由1行。** `ROLE_TIER` の註。
+def role_model(model: str, why: str, est_pct: float | None, role: str | None) -> tuple[str, str]:
+    """**枠の門を通った (model, why) に、役の段と予備の線を重ねる。**
 
-    `sub_model()`（枠の可否の門。`next_round_owner.py` が差し替えることがある）が
-    `fable` 以外を返したら、それに従う（軽い役を除く）。
+    `model` が既に `opus`（100% 到達）なら触らない。`fable` で、役が `routine` で、
+    推定が `FABLE_RESERVE_PCT` 以上なら Opus へ倒し、理由に1行 足す。
+    役が無い呼び（古い呼び方）は今までどおり。
+    """
+    tier = ROLE_TIER.get(role or "", None)
+    if tier == "light":
+        return LIGHT_MODEL, f"役 `{role}` は単純な記録 → 軽い模型（オーナー 09/03 07:3x）"
+    if model != "fable" or tier != "routine" or est_pct is None:
+        if tier == "leverage" and model == "fable":
+            # **100% を越える形では立てない**（同時に入った 09:2x の optimizer の線。
+            #     越えた後の 1日、立てたサブは全部 落ちる —— `fable_rate()` の註・A10）。
+            #     サブ1体の費用は実測（同じ枠の Δ% ÷ その間に立った数・`fable_cost_per_sub`）。
+            per_sub = fable_cost_per_sub()
+            if per_sub is not None and est_pct is not None and est_pct + per_sub >= FABLE_CAP_PCT:
+                return "opus", (f"{why}。役 `{role}` は高レバレッジ側だが、1体ぶん ≈ {per_sub:.1f}% を"
+                                f"足すと {est_pct + per_sub:.0f}% ≧ {FABLE_CAP_PCT:.0f}% → "
+                                "**Opus**（100% を越えて落とさない）")
+            why = f"{why}。役 `{role}` は高レバレッジ側（`quota.ROLE_TIER`）→ 100% の手前まで Fable"
+        return model, why
+    if est_pct >= FABLE_RESERVE_PCT:
+        return "opus", (f"{why}。**ただし役 `{role}` は定型側**（`quota.ROLE_TIER`・"
+                        f"直近5日の ship は fix 71%・moves 0 95%）で、推定 {est_pct:.0f}% が"
+                        f"予備の線 {FABLE_RESERVE_PCT:.0f}% 以上 → **Opus**（残りは高レバレッジの役に残す）")
+    return model, f"{why}。役 `{role}` は定型側だが予備の線 {FABLE_RESERVE_PCT:.0f}% 未満 → Fable"
+
+
+def record_model_choice(role: str, model: str, why: str,
+                        now: datetime | None = None) -> dict:
+    """**選んだ模型と理由を1行 積む**（`docs/OWNER_INSTRUCTION_GATE.md` の 6:
+    `work_kind / model / all_models_week_pct / fable_only_pct / expected_goal_effect / why`）。
+    実績（`data/runs.jsonl` の ship）と突き合わせるための行で、無ければ上の
+    「覆る条件」が判定できない。API 0単位。"""
+    now = now or datetime.now(timezone.utc)
+    fe = fable_estimate(now) or {}
+    try:
+        p = pace(now) or {}
+    except Exception:                                          # noqa: BLE001
+        p = {}
+    tier = ROLE_TIER.get(role, "unknown")
+    row = {
+        "at": now.astimezone(JST).isoformat(timespec="seconds"),
+        "work_kind": f"{role}:{tier}",
+        "model": model,
+        "all_models_week_pct": (round(float(p["used_now"]), 1)
+                                if p.get("used_now") is not None else None),
+        "fable_only_pct": (round(float(fe["est"]), 1) if fe.get("est") is not None else None),
+        "expected_goal_effect": ("到達日を動かす前提の判定・手順の設計（高）" if tier == "leverage"
+                                 else "1件 出す（実測 fix 71%・moves 0 95%・低）"),
+        "why": why,
+    }
+    MODEL_CHOICE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    with MODEL_CHOICE_FILE.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(row, ensure_ascii=False) + "\n")
+    return row
+
+
+def sub_model(now: datetime | None = None, role: str | None = None) -> tuple[str, str]:
+    """**サブに渡す模型と、その理由1行。** `FABLE_CAP_PCT` の註。
+
+    目盛りが古いぶんは、**「Fable のみ」自身の速さ**で運んだ推定で埋める
+    （`fable_rate()`。全モデルの速さで運ぶと 2倍 遅い側に外れる —— あちらの註）。
+    古い目盛りで割ると必ず「まだ余裕がある」側に外れるので、運ばない選択はしない。
+
+    `role` を渡すと、枠の門の上に役の段と予備の線を重ねる（`role_model()`・
+    2026-09-03 09:4x）。渡さない呼びは今までどおり枠の門だけ。
     """
     now = now or datetime.now(timezone.utc)
-    tier = ROLE_TIER.get(role, "fable")
-    if role in LIGHT_ROLES:
-        return tier, f"`{role}` は単純な記録 → 軽い模型（オーナー 09/03 07:3x）"
-    gate_model, gate_why = sub_model(now)
-    if gate_model != "fable":
-        return gate_model, gate_why
     fe = fable_estimate(now)
-    if not fe or fe.get("rate_source") in ("reset", "none") or fe["rate"] <= 0:
-        return tier, gate_why
+    if not fe:
+        return "fable", "「Fable のみ」の目盛りがまだ無い（画面が来たら --fable で積むこと）"
     g = fe["gauge"]
-    resets = g.get("resets")
-    rem = max(0.0, 100.0 - float(fe["est"]))
-    per_sub = fable_cost_per_sub(now)
-    if per_sub is None:
-        p = pace(now)
-        floor_min = float((p or {}).get("floor_min") or 140.0)
-        per_sub = fe["rate"] * floor_min / 60.0 / 2.0
-    hours_to_reset = ((resets - now).total_seconds() / 3600.0) if resets else None
-    need_both = (fe["rate"] * hours_to_reset) if hours_to_reset is not None else 0.0
-    head = (f"「Fable のみ」推定 {fe['est']:.0f}%・残り {rem:.0f}%・サブ1体 ≈ {per_sub:.1f}%"
-            + (f"・戻りまで {hours_to_reset:.0f}時間 に両役で {need_both:.0f}% 要る"
-               if hours_to_reset is not None else ""))
-    if rem >= need_both + per_sub:
-        return tier, f"{head} → 枠の戻りまで両役とも Fable で持つ"
-    if role in HIGH_LEVERAGE_ROLES:
-        if rem >= per_sub:
-            return "fable", (f"{head} → 残りは高レバレッジの `{role}` に使う"
-                             "（`hourly` は opus・オーナー 09/03 07:3x）")
-        return "opus", f"{head} → 1周ぶんが 100% の手前に収まらない → opus（100% を越えて落とさない）"
-    return "opus", (f"{head} → 枠の戻りまで持たないので `{role}` は opus"
-                    "（Fable は `optimizer` に残す・オーナー 09/03 07:3x「機械的修正は軽いモデル」）")
+    if fe["rate_source"] == "reset":
+        return "fable", f"「Fable のみ」の枠は {g['resets'].astimezone(JST):%m/%d %H:%M} JST に戻った（目盛り {g['pct']:.0f}% は前の枠）"
+    head = f"「Fable のみ」 {g['pct']:.0f}%（{g['at'].astimezone(JST):%m/%d %H:%M} JST）"
+    ex = fe["exhaust_at"]
+    ex_words = f"・100% は {ex.astimezone(JST):%m/%d %H:%M} JST" if ex else ""
+    if fe["est"] >= FABLE_CAP_PCT:
+        return "opus", (f"{head} → いま推定 {fe['est']:.0f}% ≧ 上限 {FABLE_CAP_PCT:.0f}%"
+                        f"（{_fable_rate_words(fe)}{ex_words}。**新しい画面が来るまで Opus**）")
+    return role_model("fable", (f"{head} → いま推定 {fe['est']:.0f}% ＜ 上限 {FABLE_CAP_PCT:.0f}%"
+                                f"（{_fable_rate_words(fe)}{ex_words}）"),
+                      float(fe["est"]), role)
 
 
 def pace(now: datetime | None = None) -> dict | None:

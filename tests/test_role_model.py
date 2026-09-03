@@ -1,76 +1,55 @@
-"""役ごとの模型（`quota.role_model`）。オーナー原文 2026-09-03 07:3x:
-「仕事ごとに Fable・Opus・Sonnet・Haiku を選ぶ／Fable のみを 100% に届かせない」。
+"""役ごとの模型に、09/03 09:5x の optimizer が重ねた2点（`quota.role_model` の註）:
 
+    高レバレッジ（optimizer）  1体ぶん（`fable_cost_per_sub`）を足して 100% に届くなら Opus
+    軽い役（owner-record）     Fable の残りに関係なく `LIGHT_MODEL`（sonnet）
+
+本体の線（定型の役は予備の線 90%）は `tests/test_model_by_role.py`。
 **覆る条件**: `quota.ROLE_TIER` の註。
 """
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
+from scripts import next_round_owner as owner
 from scripts import quota
 
-JST = timezone(timedelta(hours=9))
+
+def _fe(est: float):
+    at = datetime(2026, 9, 3, 0, 0, tzinfo=timezone.utc)
+    return {"gauge": {"pct": est, "at": at, "resets": None}, "rate": 0.0,
+            "rate_source": "measured", "est": est, "exhaust_at": None, "stale_hours": 0.0}
 
 
-def _fe(est, rate=6.0, hours_to_reset=46.0, now=None):
-    now = now or datetime.now(timezone.utc)
-    return {"gauge": {"at": now - timedelta(hours=1), "pct": est, "all_pct": 45.0,
-                      "resets": now + timedelta(hours=hours_to_reset)},
-            "rate": rate, "rate_source": "measured", "est": est,
-            "exhaust_at": now + timedelta(hours=(100 - est) / rate), "stale_hours": 1.0}
+def test_leverage_role_stops_one_sub_short_of_100(monkeypatch):
+    monkeypatch.setattr(quota, "fable_estimate", lambda now=None, **kw: _fe(99.0))
+    monkeypatch.setattr(quota, "fable_cost_per_sub", lambda now=None: 1.8)
+    m, why = quota.sub_model(role="optimizer")
+    assert m == "opus" and "100% を越えて落とさない" in why
 
 
-def _wire(monkeypatch, est, per_sub=1.8, hours_to_reset=46.0, gate=("fable", "ok")):
-    monkeypatch.setattr(quota, "sub_model", lambda now=None: gate)
-    monkeypatch.setattr(quota, "fable_estimate",
-                        lambda now=None, gauge=None: _fe(est, hours_to_reset=hours_to_reset))
-    monkeypatch.setattr(quota, "fable_cost_per_sub", lambda now=None: per_sub)
+def test_leverage_role_keeps_fable_when_one_sub_fits(monkeypatch):
+    monkeypatch.setattr(quota, "fable_estimate", lambda now=None, **kw: _fe(97.0))
+    monkeypatch.setattr(quota, "fable_cost_per_sub", lambda now=None: 1.8)
+    assert quota.sub_model(role="optimizer")[0] == "fable"
 
 
-def test_record_role_is_always_light(monkeypatch):
-    _wire(monkeypatch, est=10.0)
-    assert quota.role_model("owner-record")[0] == "sonnet"
+def test_unknown_cost_does_not_block(monkeypatch):
+    monkeypatch.setattr(quota, "fable_estimate", lambda now=None, **kw: _fe(99.0))
+    monkeypatch.setattr(quota, "fable_cost_per_sub", lambda now=None: None)
+    assert quota.sub_model(role="optimizer")[0] == "fable"
 
 
-def test_plenty_left_both_roles_fable(monkeypatch):
-    # 残り 90%・戻りまで 2時間 に 12% 要る → 両役とも Fable
-    _wire(monkeypatch, est=10.0, hours_to_reset=2.0)
-    assert quota.role_model("hourly")[0] == "fable"
-    assert quota.role_model("optimizer")[0] == "fable"
+def test_record_role_is_light(monkeypatch):
+    monkeypatch.setattr(quota, "fable_estimate", lambda now=None, **kw: _fe(10.0))
+    assert quota.sub_model(role="owner-record")[0] == quota.LIGHT_MODEL == "sonnet"
+    at = datetime(2026, 9, 3, 0, 0, tzinfo=timezone.utc)
+    monkeypatch.setattr(owner.quota, "fable_gauge",
+                        lambda: {"pct": 10.0, "at": at, "resets": None})
+    assert owner.corrected_sub_model(role="owner-record")[0] == "sonnet"
 
 
-def test_scarce_hourly_goes_opus_optimizer_keeps_fable(monkeypatch):
-    # 09/03 09:2x の実物: 推定 90%・残り 10%・戻りまで 46時間（両役で 273% 要る）
-    _wire(monkeypatch, est=90.0, hours_to_reset=46.0)
-    m_h, why_h = quota.role_model("hourly")
-    m_o, _ = quota.role_model("optimizer")
-    assert m_h == "opus" and "optimizer" in why_h
-    assert m_o == "fable"
-
-
-def test_last_round_does_not_cross_100(monkeypatch):
-    # 残り 1%・サブ1体 1.8% → optimizer も opus（100% を越えて落とさない）
-    _wire(monkeypatch, est=99.0)
-    assert quota.role_model("optimizer")[0] == "opus"
-    assert quota.role_model("hourly")[0] == "opus"
-
-
-def test_gate_wins_when_not_fable(monkeypatch):
-    _wire(monkeypatch, est=10.0, gate=("opus", "100% 到達"))
-    assert quota.role_model("hourly") == ("opus", "100% 到達")
-    assert quota.role_model("optimizer") == ("opus", "100% 到達")
-    assert quota.role_model("owner-record")[0] == "sonnet"
-
-
-def test_go_prints_model_per_role(monkeypatch, capsys):
-    from scripts import next_round
-    _wire(monkeypatch, est=90.0, hours_to_reset=46.0)
-    monkeypatch.setattr(next_round, "decide", lambda **kw: {
-        "go": True, "roles": list(next_round.ROLES), "why": "test", "live": 0,
-        "live_source": "test", "floor_min": 140.0, "source": "test"})
-    monkeypatch.setattr("sys.argv", ["next_round.py", "--live", "0"])
-    try:
-        next_round.main()
-    except SystemExit:
-        pass
-    out = capsys.readouterr().out
-    assert 'model: "opus" ← `kind: hourly`' in out
-    assert 'model: "fable" ← `kind: optimizer`' in out
+def test_cost_per_sub_is_delta_over_births(monkeypatch):
+    at = datetime(2026, 9, 3, 0, 0, tzinfo=timezone.utc)
+    monkeypatch.setattr(quota, "fable_rate", lambda now=None, anchors=None: {
+        "rate": 6.0, "source": "measured", "from_at": at, "to_at": at,
+        "from_pct": 60.0, "to_pct": 71.0})
+    monkeypatch.setattr(quota, "_births_from_runs", lambda a, b: 11)
+    assert abs(quota.fable_cost_per_sub() - 1.0) < 1e-9

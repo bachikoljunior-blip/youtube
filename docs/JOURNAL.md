@@ -102652,3 +102652,34 @@ optimizer も opus でよく、Fable は 09/04 の判定にだけ使う）。(3)
 **触らなかった所**: 09/04・09/05 の長尺の決め（外の作りを写す・n=2）。長尺の齢24h 中央値 1 の
 実測に対して分の悪い賭けだが、`eta.py` が「×21.88 は形の中に無い・作り方を変える improve」と
 言っている腕そのもので、09/04 に答えが出る。ここで戻すと n が永遠に 1 のまま。
+## 2026-09-03 09:2x〜09:5x JST —— 定期の回（Fable 5.1・サブ `session_01AHfq4FUVAd5fxDM29yG1Cm#agent-a9a2acd68144d422a`）
+
+**出したもの（1件目・fix・moves 0）**: **役ごとに模型を選ぶ**（オーナー原文 09/03 07:3x）を機械に入れた。
+`quota.sub_model(role=)` / `quota.role_model()` / `quota.ROLE_TIER` / `quota.FABLE_RESERVE_PCT=90` /
+`quota.record_model_choice()` → `data/model_choice.jsonl`（`docs/OWNER_INSTRUCTION_GATE.md` の 6 の6欄）。
+`next_round.py` の GO は役ごとに `model（kind: hourly）` `model（kind: optimizer）` を刷る。`next_round_owner.corrected_sub_model(role=)` も同じ線。
+検査 `tests/test_model_by_role.py` 6件 ＋ 既存 27件 緑。
+
+### なぜこれか（数字）
+
+- 07:3x の原文は `CLAUDE.md` に写されただけ（17a8f6fa は CLAUDE.md 9行 のみ）。機械は「目盛りだけ・全役に同じ模型」のまま（`OWNER_INSTRUCTION_GATE.md` 自身が「上限管理には使えても目標最適化ではない」と書いた形）
+- 「Fable のみ」推定 89〜90%・100% は **11:11 JST**（`quota.py --pace`）。届いたら翌 09/05 07:00 JST の戻りまで **全役が Opus** ＝ オーナーの最後の問い「100% 到達になって使えなくなるようにならないほうが良くない？」がそのまま起きる線だった
+- 段の根拠は実測: hourly の ship 276件/5日 は fix 71%・moves 0 95%・中央値 11分（07:2x の回）＝「Fable を使う価値が実測で薄い」側。optimizer は前提の判定・手順の設計 ＝ 高レバレッジ側
+- **この回は 日枠 403（16:00 まで）・閉じられる前提 0件（最早 09/04）・09/04 の本の焼き直しは別サブ（Opus・読みの門）の手** で、`improve`/`verdict`/`upload` のどれも撃てなかった。撃てる 0単位 の手のうち、いちばん大きいのがこれ（次の周の親から効く）
+
+### 模型のこと
+
+この回は Fable（`data/model_choice.jsonl` の1行目 ＝ 自分の分。予備の線 90% 未満）。中身は「実装 3ファイル＋検査」で **Opus で足りた**。
+次の周からは `hourly` が予備の線を越えて Opus に倒れる（推定 90% ちょうど）。**それが 1周目の実測になる** —— 覆る条件は `quota.py` の註。
+
+**覆る条件**: `data/model_choice.jsonl` × `data/runs.jsonl` の ship で、Opus の hourly の ship（kind・moves・`aged_views(24)`）が Fable の回より薄いと出たら `hourly` を `leverage` へ戻す。
+optimizer の ship が Opus と変わらなければ予備は要らない（`FABLE_RESERVE_PCT` を 100 へ）。**線 90 は既定値で根拠は無い**（ゲート文書の分類「既定値」）。
+
+**（09:5x 追記・同じ optimizer）** 同じ周の hourly（dc0a5528・09:4x）が同じ指示を先に機械へ入れていた
+（`quota.sub_model(role=)`・`ROLE_TIER`・予備の線 `FABLE_RESERVE_PCT=90`・`data/model_choice.jsonl`）。
+**merge で相手の形を正本にし、こちらの `role_model(role)` は捨てた。** 残したのは相手に無かった2点:
+(1) `optimizer` も **1体ぶん（実測 ≈ 1.8%・`fable_cost_per_sub()`）を足して 100% に届くなら opus**
+（相手は 100% まで Fable ＝ 最後の1体が越えて落ちる）。(2) `owner-record` は **sonnet**（`LIGHT_MODEL`）。
+検査は `tests/test_model_by_role.py`（相手）＋ `tests/test_role_model.py`（この2点）。
+**同じ物を二重に作った 30分 は、この周の無駄** —— 立った時点の claim（`run_marker --claim`）を
+読まずに始めたのが原因。次の optimizer は、数える前に `data/runs.jsonl` の直近の claim を1行 見ること。

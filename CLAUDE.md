@@ -29,14 +29,18 @@
 
     模型          親は `claude-fable-5-1`・**effort 最大**。働き手（サブ）は
                   **`python scripts/next_round_owner.py` が GO と一緒に**役ごとに**印字する模型**を Agent の `model` に渡す
-                  （09/03 09:2x から役べつ: `quota.role_model()`。`hourly` は Fable が枠の戻りまで持つときだけ Fable、
-                    持たなければ opus。`optimizer` は 1周ぶんが 100% の手前に収まる限り Fable。`owner-record` は sonnet
-                    —— オーナー 09/03 07:3x「仕事ごとに選ぶ／Fable のみを 100% に届かせない」）
+                  （役べつの線は下の行。`optimizer` も **1体ぶんを足して 100% に届くなら opus**・
+                    `owner-record` は sonnet —— 09/03 09:5x の optimizer が重ねた）
                   （画面の「Fable のみ」が **100%** に届くまで `fable`、届いたら `opus`。
                     **50% ではない** —— 同日 21:3x の訂正「fableのみは100％使っていい」
                     「全モデルの50%っていう公式仕様だわ！」。正本 `docs/OWNER_MODEL_BUDGET.md`）。
                   **Opus／Sonnet／Haiku で足りる所はそれでよい**（上の原文）—— どこがそれかは、
                   その回が決めて `docs/JOURNAL.md` に書く。画面が来たら `--fable <%>` も一緒に積む
+                  **役ごとに違う模型が出る**（09/03 09:4x・原文 07:3x を機械に入れた）: GO の行は
+                  `model（kind: hourly）` と `model（kind: optimizer）` の2行。`hourly`（実測 fix 71%・
+                  moves 0 95% ＝ 定型側）は「Fable のみ」推定が予備の線 `quota.FABLE_RESERVE_PCT`（90%）
+                  以上で Opus、`optimizer`（前提の判定・設計）は 100% まで Fable。選んだ理由は
+                  `data/model_choice.jsonl`（`quota.record_model_choice`）。覆る条件は `quota.py` の註
     働き手        Agent ツールのサブ（`isolation: "worktree"`・`run_in_background: true`）。
                   **Workflow ツールは既定では使わない**（ウルトラコードが切れた。オーナーが
                   自分の言葉で「workflow で」と言ったときだけ）。
