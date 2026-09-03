@@ -56,10 +56,16 @@ def test_24hで門の下ならstop(tmp_path):
                                                uploaded_path=up, views_path=vw)
     assert v == "stop"
     joined = "\n".join(lines)
-    # 門の下でも形はショートへ戻さない（ショートの視聴時間は 4,000時間 の門に 0 入る・`gate_arithmetic`）
-    assert "それでも次の未決の日の1本は長尺" in joined
-    assert "規則の密度のショート" not in joined
-    assert "1つ変える" in joined
+    # **2026-09-04 に直した。** それまでここは「それでも長尺」と決め打ちで、
+    # `go` の枝も長尺だったので **門が決定を1度も変えられません**でした
+    # （`tests/test_outside_long_gate_branches.py`・`daily_pick.and_path_form()` の註）。
+    # 門を割った回の形は `gate_arithmetic()["nearer"]`（AND の道）が決めます ——
+    # 門2 だけで比べるのは、その `gate_arithmetic()` 自身が名指しした
+    # 「AND の片脚（門1）を落とす」誤りでした。**形は決め打ちしません。**
+    assert "それでも次の未決の日の1本は長尺" not in joined
+    assert "次の未決の日の1本" in joined
+    # 前提「外の作り方を写した長尺」の判定そのものは、この枝では動かさない。
+    assert "48h・100回 のまま" in joined
 
 
 def test_まだ出ていない本は時刻だけ出す(tmp_path):
@@ -71,18 +77,40 @@ def test_まだ出ていない本は時刻だけ出す(tmp_path):
     assert "09/05 17:00" in lines[0] and "09/06 17:00" in lines[0]
 
 
-def test_stopでも形は長尺のままで下書きを名指しする(monkeypatch):
-    """2026-09-03 夜: 門の下で「その日はショート」へ倒すのをやめた。ショートは 4,000時間 の門に 0時間
-    （`gate_arithmetic`）。門の下は「形を戻す」ではなく「作りを1つ変える」。"""
+def test_stopの日の形は門の算が決める(monkeypatch):
+    """**2026-09-04 に直した。**
+
+    2026-09-03 夜のここは「門の下でもショートへ倒さない」と決め打ちで、`go` の枝も
+    長尺だったため **先読みの門が決定を1度も変えられません**でした。門を割った回の形は
+    `gate_arithmetic()["nearer"]`（門1 ＋ 門2 の AND の道）が決めます。
+
+    **どちらの形が正しいかは、ここでは決めません** —— `nearer` が長尺へ戻れば
+    この行も戻ります。見るのは「門の算に従うこと」だけ。
+    下書きの名指しは、形が動いても消えないこと（前提はまだ生きている）。"""
     monkeypatch.setattr(daily_pick, "_outside_long_deadline", lambda: "2026-09-07")
+    monkeypatch.setattr(daily_pick, "and_path_form", lambda *a, **k: ("ショート", "（検査の値）"))
+    drafts = [{"video_id": "LONG2", "topic": "nenkin-uketorikata-65-70-75-handan"}]
+    out = daily_pick.outside_long_lines(date(2026, 9, 6), None, topics=TOPICS, drafts=drafts,
+                                        readout=(["(先読み)"], "stop"))
+    joined = "\n".join(out)
+    assert "09/06 の1本も長尺のまま" not in joined
+    assert "09/06 の1本は ショート" in joined
+    # **形を戻しても前提は生きています** —— 48h・100回 の判定は別に立っている。
+    assert "48h・100回" in joined
+    assert "LONG2" in joined and "これにすること" in joined
+
+
+def test_門の算が出せない回はstopでも長尺のまま(monkeypatch):
+    """**推測で埋めないこと。** 門1 の脚が立たない回は形を動かさず、
+    2026-09-03 夜の「作りを1つ変える」に落ちる。"""
+    monkeypatch.setattr(daily_pick, "_outside_long_deadline", lambda: "2026-09-07")
+    monkeypatch.setattr(daily_pick, "and_path_form", lambda *a, **k: (None, "脚が立ちません"))
     drafts = [{"video_id": "LONG2", "topic": "nenkin-uketorikata-65-70-75-handan"}]
     out = daily_pick.outside_long_lines(date(2026, 9, 6), None, topics=TOPICS, drafts=drafts,
                                         readout=(["(先読み)"], "stop"))
     joined = "\n".join(out)
     assert "09/06 の1本も長尺のまま" in joined
-    assert "規則の密度のショート" not in joined
     assert "1つ変える" in joined
-    assert "LONG2" in joined and "これにすること" in joined
 
 
 def test_stopで下書きが尽きていても次の題材を作る手を出す(monkeypatch, tmp_path):
