@@ -210,9 +210,20 @@ def _run_out(argv: list[str], label: str, timeout: int = 1800) -> tuple[int, str
     import threading                                           # noqa: PLC0415
     print(f"[sweep] $ {' '.join(argv)}", flush=True)
     lines: list[str] = []
+    # **子の側にも「ためるな」と言うこと**（2026-09-04 22:0x に踏んだ）。
+    #     `bufsize=1` は**こちらの読み口**の話で、子の `stdout` は
+    #     tty でないので **Python が既定で 8KB ずつためます。**
+    #     ＝ 上の3つ（生きているか・どこで死んだか・どの段が遅いか）は、
+    #     **8KB たまるまで1つも取れません。** 実測: 09/04 06:22 の焼きは
+    #     `data/rebake.log` の末尾が **20分 のあいだ「分かりやすさの輪 2周目」のまま**で、
+    #     実物はその間に 3周目・4周目 を終え、音まで焼き終えていました
+    #     （`build/<題材>/clarity_loop.json` の mtime と `audio/` の 62本 で分かった）。
+    #     **待つ側は、それを「固まった」と読みます** —— この回がまさに読みかけました。
+    env = dict(os.environ, PYTHONUNBUFFERED="1")
     try:
         proc = subprocess.Popen(argv, cwd=str(ROOT), stdout=subprocess.PIPE,   # noqa: S603
-                                stderr=subprocess.STDOUT, text=True, bufsize=1)
+                                stderr=subprocess.STDOUT, text=True, bufsize=1,
+                                env=env)
     except OSError as exc:
         print(f"[sweep] [!] {label} が起きませんでした: {str(exc)[:200]}", flush=True)
         return 127, ""
