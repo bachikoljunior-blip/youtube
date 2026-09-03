@@ -605,9 +605,23 @@ def main(argv: list[str] | None = None) -> int:
     # 1.5 **説明が分かりやすいかの修正ループ**（2026-09-03・オーナー原文は `CLAUDE.md` 冒頭）。
     #
     #     > 「説明が分かりやすいかの修正ループ回してから、その全文照合修正ループ回すようにして」
+    #     > **「全ての改善が終わった後に、分かりやすさループを回して、
+    #     >   それが終わったら読み照合ループにして」**（同日 11:0x）
     #
-    #     **毎本の出口の順は、ここ (1) → 下の 2.5 (2)。** 逆にすると、照合した音が
-    #     読み上げの書き換えで**全部 捨てになります**（`clarify_and_fix` の docstring）。
+    #     **毎本の出口の順は (0) → ここ (1) → 下の 2.5 (2)。**
+    #
+    #         (0) その本に打つ**他の改善を全部 先に**終える —— 題・構成・絵・尺・冒頭の型。
+    #             機械では**ここより上**が全部それです（`script_writer.generate()` の
+    #             書き直しの輪 3回・`_check_short_script`・`_check_not_repeat`・
+    #             `script_only_problems`）。**`improve` の回が台本を直すのも、
+    #             `data/scripts/<題材>.script.json` の側 ＝ ここより上**です
+    #         (1) ここ。**読み上げ本文を書き換える最後の手**
+    #         (2) 2.5。音が焼けてから、その音を聞いて読みを直す
+    #
+    #     **(1) の後ろに、読み上げを変える手を足さないこと** ——
+    #     足した瞬間に「全ての改善が終わった後に」が破れます
+    #     （検査 `tests/test_clarity_loop.py::test_分かりやすさの輪の後ろで読み上げを変えないこと`）。
+    #     逆に (1) を音より後ろへ動かすと、照合した音が書き換えで**全部 捨てになります**。
     #     `verify` の側は `work/clarity_loop.json` を門にします（`_check_clarity_loop`）。
     if clarify_and_fix(script, channel, work, topic, bool(args.short)):
         (work / "script.json").write_text(

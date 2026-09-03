@@ -40,6 +40,27 @@ def test_pipeline_は分かりやすさの輪を音より前に回す():
         "オーナーの順（分かりやすさ → 全文照合）が逆になっている")
 
 
+def test_分かりやすさの輪の後ろで読み上げを変えないこと():
+    """**オーナー原文（2026-09-03 11:0x・`CLAUDE.md` 冒頭）**:
+
+    > 「全ての改善が終わった後に、分かりやすさループを回して、
+    >   それが終わったら読み照合ループにして」
+
+    ＝ **分かりやすさの輪は、読み上げ本文を書き換える最後の手**です。
+    ここより後ろに `narration` を書き換える行を足した瞬間、その順が破れます
+    （輪が評価したのと違う本文が音になり、控えの指紋も合わなくなる）。
+    """
+    src = (C.config.ROOT / "src" / "pipeline.py").read_text(encoding="utf-8")
+    after = src.split("if clarify_and_fix(script")[1]
+    # 輪そのものの書き戻し（`script.segments[i].narration = ...` は
+    # `clarify_and_fix` の中だけ）より後ろに、代入が1つも無いこと
+    bad = [ln.strip() for ln in after.splitlines()
+           if ".narration =" in ln or '["narration"] =' in ln]
+    assert not bad, (
+        "分かりやすさの輪より後ろで読み上げを書き換えています: "
+        f"{bad[:2]}。**オーナーの順（全ての改善 → 分かりやすさ → 読み照合）が破れます**")
+
+
 def test_verify_の門になっていて_全文照合より前に並ぶ():
     src = (C.config.ROOT / "src" / "verify.py").read_text(encoding="utf-8")
     assert "_check_clarity_loop(work, script)" in src
