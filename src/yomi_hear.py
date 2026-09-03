@@ -518,32 +518,80 @@ def fingerprint(lines: list[str]) -> str:
     return hashlib.sha256(body).hexdigest()[:16]
 
 
+#: **全文照合の輪の上限**（2026-09-03。オーナー「全文照合はループにしてよ」）。
+#:
+#: 1周 ＝ 聞き取り（64コマで約 2分）＋ 焼き直し（Google TTS 64回）。
+#: 4 にしてあるのは、**直る語は1周で直るから**です —— 台帳に入れた語は
+#: 次の合成から `to_speech()` が仮名に置き換えるので、同じ語が2周 生き残ったら
+#: それは仮名置換で直らない形（`fixable()` の docstring）。
+#: 下の「同じ語が直らない」の出口のほうが先に効くので、ここは**保険**です。
+HEAR_MAX_PASSES = int(os.environ.get("YOMI_HEAR_MAX_PASSES", "4"))
+
+
 def audit(lines: list[str], wavs: list[Path], work: Path, *, tts_cfg: dict | None = None,
           resynth=None, log=print) -> dict:
-    """**毎本これを撃つ。** オーナーの1文をそのまま形にしたもの。
+    """**毎本これを撃つ。** オーナーの2文をそのまま形にしたもの。
+
+    > 「Google TTSで生成した完成音声の最初から最後までを機械で聞き取り、
+    >   予定していた読みと照合し、誤読があれば修正・再生成して、もう一度全文照合する」
+    > **「全文照合はループにしてよ」**（2026-09-03 09:4x）
 
         1. 完成音声の最初から最後までを機械で聞き取る       （`hear()`）
         2. 予定していた読みと照合する                     （カナで・門1〜門3）
         3. 誤読があれば修正（台帳）・再生成（`resynth()`）
-        4. **もう一度 全文照合する**                      （`hear()` をもう1周）
+        4. **もう一度 全文照合する** → **誤読が 0 になるまで 1 へ戻る**
 
-    `resynth()` が無ければ 3・4 は飛ばして、誤読を控えに残すだけ（`verify` が落とす）。
-    **1周しか直しません** —— 2周目でまだ誤読が残るなら、それは仮名置換で直らない形
-    （熟語の中の1字など。`yomi_gate.corrections()` の docstring）なので、
-    機械が直せないことを名指しして止めるほうが正しい。
+    ## 止め方（**回し続けないための3つの出口**）
+
+        誤読 0件                → 終わり（**輪の目的**）
+        **同じ語が直らない**     → 止める。台帳に入れた読みで焼き直したのに、
+                                  その語がまた割れた ＝ 仮名置換では直らない形
+                                  （熟語の中の1字など・`yomi_gate.corrections()`）。
+                                  もう1周 回しても**同じ音がもう一度 出るだけ**で、
+                                  Google TTS を 64回 撃つ時間だけ払う
+        `HEAR_MAX_PASSES` 周     → 止める（保険）
+
+    どの出口で出ても、**残った誤読は控えに残ります** ——
+    `verify._check_yomi_heard` がそれを見て**その本を落とします**（通らない本は出さない）。
+    `resynth()` が無ければ 3・4 は初めから飛ばします（`verify` が聞き直す側の呼び）。
     """
     report = hear(lines, wavs, tts_cfg=tts_cfg, log=log)
-    report["passes"] = 1
-    misread = [r for r in report["hits"] if r["verdict"] == "misread"]
-    fixed = record(report)
-    if misread and resynth is not None and fixed:
+    passes = 1
+    tried: dict[str, str] = {}          # すでに台帳へ入れて焼き直した語 → その読み
+    applied: dict[str, str] = {}
+    reason = ""
+    while True:
+        fixed = record(report)
+        misread = [r for r in report["hits"]
+                   if r["verdict"] == "misread" and fixable(r["surface"])]
+        if not misread:
+            reason = "誤読 0件"
+            break
+        if resynth is None:
+            reason = "焼き直す口が無い（`verify` の側の呼び）"
+            break
+        fresh = {w: k for w, k in fixed.items() if tried.get(w) != k}
+        if not fresh:
+            # **同じ語が、同じ読みで台帳に在るのに、また割れた。**
+            stuck = "・".join(sorted({r["surface"] for r in misread}))
+            reason = (f"同じ語が直らない（{stuck}）—— 仮名置換では直らない形。"
+                      "熟語ごと台帳に入れるか `src/yomi.FIXES` に文脈つきで")
+            log(f"[hear] {reason}")
+            break
+        tried.update(fixed)
+        applied.update(fixed)
+        if passes >= HEAR_MAX_PASSES:
+            reason = f"上限 {HEAR_MAX_PASSES}周 に達した"
+            log(f"[hear] {reason}")
+            break
         log(f"[hear] 誤読 {len(misread)}件 を直して焼き直します"
-            f"（{'・'.join(f'{w}→{k}' for w, k in fixed.items())}）")
+            f"（{'・'.join(f'{w}→{k}' for w, k in fresh.items())}）→ **もう一度 全文照合**")
         wavs = resynth()
         report = hear(lines, wavs, tts_cfg=tts_cfg, log=log)
-        report["passes"] = 2
-        report["fixed"] = fixed
-        record(report)
+        passes += 1
+    report["passes"] = passes
+    report["fixed"] = applied
+    report["reason"] = reason
     report["at"] = G._now()
     report["model"] = MODEL_NAME
     report["fingerprint"] = fingerprint(lines)
@@ -553,7 +601,7 @@ def audit(lines: list[str], wavs: list[Path], work: Path, *, tts_cfg: dict | Non
                                     encoding="utf-8")
     log(f"[hear] {report['lines']}行 / 漢字の語 {report['words']}語 を照合 "
         f"→ 割れ {report['split']}件・誤読 {report['misread']}件"
-        f"（{report['passes']}周目）")
+        f"（{report['passes']}周・{report['reason']}）")
     return report
 
 

@@ -352,6 +352,38 @@ def _check_short_script(script, topic_id: str = "") -> None:
         )
 
 
+def clarify_and_fix(script, channel: dict, work: Path, topic: dict, portrait: bool):
+    """**説明が分かりやすいかの修正ループ**（オーナー原文 2026-09-03 09:5x・10:0x）。
+
+    > 「説明が分かりやすいかの修正ループ回してから、その全文照合修正ループ回すようにして」
+
+    **毎本の出口の順は (1) ここ → (2) `hear_and_fix()`** です。この順でなければ
+    いけない理由は、**ここが narration を書き換えるから** ——
+    先に音を作って照合すると、**その音は捨てになります**（読み上げが変わるので
+    合成し直しになり、`yomi_hear` の控えの指紋も合わなくなる）。
+
+    返すのは書き換わったかどうか。`script`（`VideoScript`）はその場で更新します。
+    模型が無い・落ちた環境では**何もせず素通りします**（投稿を止めない ——
+    `CLAUDE.md`「4. 投稿を途切れさせないこと」。門は `verify._check_clarity_loop`）。
+    """
+    try:
+        from . import clarity_loop                             # noqa: PLC0415
+    except Exception:                                          # noqa: BLE001
+        return False
+    blob = script.model_dump()
+    try:
+        report = clarity_loop.loop(blob, topic.get("id", ""), work,
+                                   channel=channel, portrait=portrait)
+    except Exception as exc:                                   # noqa: BLE001
+        print(f"[pipeline] 分かりやすさの輪に失敗しました（{type(exc).__name__}: {exc}）")
+        return False
+    if not report.get("changed"):
+        return False
+    for seg, row in zip(script.segments, blob["segments"]):
+        seg.narration = row["narration"]
+    return True
+
+
 def hear_and_fix(script, channel: dict, work: Path, audios: list, topic: dict | None = None):
     """**完成音声を聞いて、誤読があれば直して焼き直す**（オーナー原文 2026-09-03）。
 
@@ -556,6 +588,28 @@ def main(argv: list[str] | None = None) -> int:
             "台本の時点で投稿前の検査に落ちます（レンダリング前に止めました）: "
             + " / ".join(early)
         )
+
+    # 1.5 **説明が分かりやすいかの修正ループ**（2026-09-03・オーナー原文は `CLAUDE.md` 冒頭）。
+    #
+    #     > 「説明が分かりやすいかの修正ループ回してから、その全文照合修正ループ回すようにして」
+    #
+    #     **毎本の出口の順は、ここ (1) → 下の 2.5 (2)。** 逆にすると、照合した音が
+    #     読み上げの書き換えで**全部 捨てになります**（`clarify_and_fix` の docstring）。
+    #     `verify` の側は `work/clarity_loop.json` を門にします（`_check_clarity_loop`）。
+    if clarify_and_fix(script, channel, work, topic, bool(args.short)):
+        (work / "script.json").write_text(
+            json.dumps(script.model_dump(), ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        # **書き換えたら、機械の検査をもう一度 当てること。**
+        # 言い換えで数の対応が壊れることがあり、ここを通さないと
+        # 絵を全部 描いたあとで `verify` に落ちます（この repo が何度も踏んだ形）。
+        again = verify.script_only_problems(script.model_dump(), bool(args.short))
+        if again:
+            raise RuntimeError(
+                "分かりやすさの書き直しで、投稿前の検査に落ちる形になりました: "
+                + " / ".join(again)
+            )
 
     # 2. 音声（ここで各セグメントの実尺が確定する）
     audios = synthesize_segments(

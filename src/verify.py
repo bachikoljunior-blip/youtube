@@ -2034,6 +2034,70 @@ def _check_yomi(script: dict | None) -> list[str]:
     return problems + [yomi_gate.say(h) for h in blocking]
 
 
+def _check_clarity_loop(work: Path, script: dict | None) -> list[str]:
+    """**説明が分かりやすいかの修正ループを、この本文で回した控え**を要求する。
+
+    オーナー原文（`CLAUDE.md` 冒頭・2026-09-03・**一字も変えないこと**）:
+
+    > **「説明が分かりやすいかの修正ループ回してから、その全文照合修正ループ回すようにして」**
+    > **「説明が分かりやすいかの修正ループは評価する時に分かりにくい部分を批判的に全て上げ、
+    > 1番可能性が高いものがほとんど言いがかりになったらループおわり。」**
+
+    輪そのものは `src/pipeline.py` が**音を作る前**に回します（`clarify_and_fix`）——
+    そこが narration を書き換えられる唯一の場所だからです。ここが見るのは
+    **その輪が、いま出て行こうとしている本文に対して回ったか**だけ:
+
+        控えが無い          → **落とす**（輪を通っていない本は出さない）
+        控えの指紋が違う     → 輪のあとで本文が変わっている ＝ **落とす**
+        輪が模型の故障で抜けた → 落とさない（本の欠陥ではない。1行 印字する）
+
+    ## **残った指摘では落としません**（ここを緩くしてある理由）
+
+    輪が「同じ指摘が2周 続けて先頭に来た」で出たとき、その本にはまだ
+    **分かりにくいと2回 独立に言われた所**が残っています。それでも落としません ——
+    `_check_ear_load` の docstring と同じ理由で、**誤報は不投稿**だからです。
+    模型の指摘1件で1日ぶんの投稿が消えるのは、`CLAUDE.md`「4. 投稿を途切れさせないこと」
+    に反します。**機械で確かめられる部分（輪が回ったか・本文が同じか）だけを門にします。**
+
+    **覆る条件**: `data/clarity_loop.jsonl` の `reason` で分けて
+    `src/clarity.py` の維持率を並べ、**「直らないまま出た本」が実測で劣る**と出たら、
+    そのときは残った指摘そのものを門にすること（先に測ること。落としてから測ると
+    1日ぶん落ちます）。
+    """
+    if not script:
+        return []
+    try:
+        from . import clarity_loop                             # noqa: PLC0415
+    except Exception:                                          # noqa: BLE001
+        return []
+    import shutil                                              # noqa: PLC0415
+    if not shutil.which("claude"):
+        print("[verify] 分かりやすさの輪は飛ばしました（claude コマンドが無い）")
+        return []
+    lines = clarity_loop.lines(script)
+    if not any(x.strip() for x in lines):
+        return []
+    report_path = work / clarity_loop.REPORT_NAME
+    if not report_path.exists():
+        return ["説明が分かりやすいかの修正ループを通った控えが無い"
+                f"（{report_path.name}）"]
+    try:
+        report = json.loads(report_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return ["分かりやすさの輪の控えが読めない"]
+    if report.get("end") != clarity_loop.fingerprint(lines):
+        return ["分かりやすさの輪の控えが、この読み上げのものではない"
+                "（輪を回したあとで本文が変わっている）"]
+    reason = str(report.get("reason") or "")
+    if reason.startswith("評価に失敗") or reason.startswith("書き直しに失敗"):
+        print(f"[verify] 分かりやすさ: 輪が途中で抜けました（{reason}）。落としません")
+        return []
+    rounds = report.get("rounds") or []
+    print(f"[verify] 分かりやすさ: {len(rounds)}周・{report.get('fixed', 0)}コマ 直した"
+          f"（{reason}・模型 {report.get('model', '?')}）")
+    return []
+
+
 def _check_yomi_heard(path: Path, work: Path, script: dict | None) -> list[str]:
     """**完成音声を最初から最後まで機械で聞き取り、予定の読みと照合した控え**を要求する。
 
@@ -2627,6 +2691,12 @@ def check(path: Path, video_cfg: dict, min_minutes: float, work: Path,
     problems += _check_not_repeat(work, script)
     problems += _check_adjacent_frames(work)
     problems += _check_law_citation_verbatim(work, script)
+    # **毎本の出口の2つの輪**（2026-09-03・オーナー原文は `CLAUDE.md` 冒頭）。
+    #     **この順で並べること** ——「説明が分かりやすいかの修正ループ回してから、
+    #     その全文照合修正ループ回すようにして」。回すのは `src/pipeline.py` で、
+    #     ここは**その控えを門にする側**です（両方 要る ——
+    #     あちらは「直せる所」、ここは「通らない本を出さない所」）。
+    problems += _check_clarity_loop(work, script)
     # **音を聞く門はここだけ**（`script_only_problems` に入れないこと ——
     # あちらは絵を描く前に撃たれるので、まだ音がありません）。
     problems += _check_yomi_heard(path, work, script)
