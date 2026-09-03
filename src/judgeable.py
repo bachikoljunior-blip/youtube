@@ -695,9 +695,19 @@ MEMBER_SOURCES: dict[str, tuple[Callable[[], dict[str, list[Member]]], int]] = {
     # ここは `config/hypotheses.yaml` の期限 2026-10-11 と同じ引き方です
     # （あちらは対照群が無いので絶対値、こちらは2群）。
     "request_form": (_members_by_request_form, 72),
-    # d14dbf7「冒頭の stat を 前提を先・数字を後 に割る」 2026-08-23 22:03:31 JST
+    # **2026-09-03 に直した。** 長らく「d14dbf7 2026-08-23 22:03:31 JST」を
+    # 境目に使っていましたが、**d14dbf7 は `scripts/resume.py` を足しただけの
+    # 無関係な commit**（`git show --stat d14dbf7` で確認）で、冒頭の stat の
+    # 割り方には触れていません。**実際に向きを逆にした commit は `ed7a898e`
+    # （2026-08-15 22:03:11 JST・「fix: めくりの『実質同じ絵』は画素では
+    # 捕まらなかった」）**で、8日 早い側です。
+    # 実測: 08-15 22:03〜08-23 22:03 に作った本は **364本／639本（57%）**あり、
+    # 全部すでに新しい割り方（前提を先）で作られていたのに、
+    # 境目が8日遅かったせいで**「対照(前)＝旧い割り方」に誤って入っていました。**
+    # `_members_by_landed` は build_times() の実測時刻で割るだけなので、
+    # 直すのはこの日付だけです（呼び出し側・検査は無傷）。
     "stat_split": (
-        lambda: _members_by_landed(datetime(2026, 8, 23, 22, 3, 31, tzinfo=JST)),
+        lambda: _members_by_landed(datetime(2026, 8, 15, 22, 3, 11, tzinfo=JST)),
         MIN_PER_GROUP,
     ),
     # `falsified_if` の「対照 8本以上・動きあり 8本以上」がこの前提の N
