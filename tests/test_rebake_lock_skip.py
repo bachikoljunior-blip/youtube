@@ -51,3 +51,22 @@ def test_弾かれた回が印を残さない(tmp_path: Path, monkeypatch: pytes
 def test_印が無くても倒れない(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(ahead_sweep, "_rebake_marks_dir", lambda: tmp_path)
     ahead_sweep._drop_mark("nope", "nope")
+
+
+def test_焼いている最中は_起こす側が見送る(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """掃きは 20分 ごとに来る。長い1本（実測 25分 超）のあいだ、起こすたびに
+    `start` と `skip` が1組 積まれていた（09/03 13:2x〜13:3x に実物で2組）。"""
+    import fcntl
+
+    monkeypatch.setattr(ahead_sweep, "_rebake_marks_dir", lambda: tmp_path)
+    assert ahead_sweep.rebake_busy() is False
+
+    fh = open(tmp_path / "rebake.lock", "a+", encoding="utf-8")
+    fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    try:
+        assert ahead_sweep.rebake_busy() is True
+    finally:
+        fcntl.flock(fh, fcntl.LOCK_UN)
+        fh.close()
+
+    assert ahead_sweep.rebake_busy() is False

@@ -1147,6 +1147,15 @@ def rebake_today(now: datetime | None = None, *, dry_run: bool = False) -> dict:
     if dry_run:
         print("[rebake] **焼いていません**（`--dry-run`）", flush=True)
         return plan
+    if rebake_busy():
+        # **もう1本 焼いている最中なら、起こさない**（2026-09-03 13:3x に実測）。
+        #     焼く側は錠に弾かれて1秒で終わるので、起こしても
+        #     `start` と `skip` が帳面に1組 増えるだけ。掃きは 20分 ごとに来るので、
+        #     長い1本（実測 25分 超）のあいだ、その組が何度も積まれます。
+        #     **`_baked_today()` はその組を引きますが、帳面と log は汚れ続けます。**
+        print(f"[rebake] {stamp} 起こしません —— **もう1本 焼いています**"
+              f"（錠 `{_rebake_marks_dir() / 'rebake.lock'}`・log は `{REBAKE_LOG}`）", flush=True)
+        return plan
     mark = _rebake_marks_dir() / f"{vid}-{sha}"
     try:
         mark.write_text(now.isoformat() + "\n", encoding="utf-8")
@@ -1167,6 +1176,33 @@ def rebake_today(now: datetime | None = None, *, dry_run: bool = False) -> dict:
     except Exception as exc:                                   # noqa: BLE001
         print(f"[rebake] [!] 起こせませんでした: {str(exc)[:120]}", flush=True)
     return plan
+
+
+def rebake_busy() -> bool:
+    """**いま焼いている最中か**（錠を取ってすぐ返す・待たない）。
+
+    `rebake_run()` が握る `flock` を、別の fd から取ってみるだけ。取れたら
+    その場で外すので、焼く側の邪魔をしません。**取れなければ誰かが焼いています。**
+    プロセスが死ねば `flock` は OS が外すので、`rebake.lock` の**ファイルが在ること**を
+    「焼いている」と読まないこと（09/03 に 8時間 それを踏んでいます）。
+    """
+    import fcntl                                               # noqa: PLC0415
+    path = _rebake_marks_dir() / "rebake.lock"
+    try:
+        fh = open(path, "a+", encoding="utf-8")                # noqa: SIM115
+    except OSError:
+        return False
+    try:
+        fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        return True
+    finally:
+        try:
+            fcntl.flock(fh, fcntl.LOCK_UN)
+        except OSError:
+            pass
+        fh.close()
+    return False
 
 
 def rebake_run(vid: str, topic: str, sha: str) -> int:
