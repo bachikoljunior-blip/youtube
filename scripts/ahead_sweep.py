@@ -1196,6 +1196,36 @@ REBAKE_START_GRACE = timedelta(minutes=3)
 TAKEOVER_STALE = timedelta(minutes=30)
 
 
+def rebake_tally(root: Path | None = None) -> tuple[int, int]:
+    """**焼き直しは、これまでに何回 起きて、何回 終わったか**（`(start, done)`・API 0単位）。
+
+    ## なぜ数えるか（2026-09-04 06:4x に数えて、初めて分かった）
+
+        data/rebake.jsonl   start 21件 ／ beat 15件 ／ skip 3件 ／ **done 0件**
+
+    **21回 起きて、1回も終わっていません。** この repo の焼き直しは
+    **一度も成功したことがない**まま、毎周 起き直しています。
+
+    死に方は毎回 同じです —— `rebake_today()` は `subprocess.Popen(start_new_session=True)`
+    で背景へ逃がしますが、**逃がす先はこの器の中**です。回が終われば器は回収され、
+    焼く側も道連れになります（`docs/spawn_prompt.md` の「あなたは親のコンテナの中で
+    走っています」と同じ話）。**直近5日のサブは `start` から中央値 11分 で終わっており**、
+    焼き直しは（この回に実測した内訳で）分かりやすさの輪だけで 14分 を超えます。
+    ＝ **背景へ逃がすかぎり、構造上 間に合いません。**
+
+    だから画面（`next_slot.machine_rebake_lines`）は「いま焼いています」に
+    **この数を並べます** —— 「走っている」と「終わる」は別で、
+    **いまのところ後者は 0件 です。** 見た回は、**終わるまで待つこと**
+    （待てる長さの根拠は `quota.py --pace` の「持続できる間隔」）。
+
+    **覆る条件**: `done` が 1件でも出たら、この註は「何分 かかるか」の話に変わります。
+    器の外（別のジョブ・別のセッション）で焼けるようになったら、待つ必要も消えます。
+    """
+    rows = _rebake_rows(root)
+    return (sum(1 for r in rows if r.get("kind") == "start"),
+            sum(1 for r in rows if r.get("kind") == "done"))
+
+
 def _takeover_mark(day_s: str) -> Path:
     """**その日の枠を、いま引き継いでいる最中**の印（機械にひとつ・`<日>` ごと）。"""
     return _rebake_marks_dir() / f"takeover-{day_s}"
