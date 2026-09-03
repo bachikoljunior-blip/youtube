@@ -1661,12 +1661,33 @@ def rebake_run(vid: str, topic: str, sha: str, *, takeover: bool = False) -> int
     new_id = ""
     slot = _slot_of(vid) if takeover else ""
     mark_t: Path | None = None
+    late = False                                               # 焼きが長引いて、枠に間に合わなかった
     if rc == 0 and takeover:
         # **枠の引き継ぎ** —— ここから `--move 新` までのあいだ、その日は 0本。
+        # **焼き終えた「いま」で、もう一度 枠までを測ること**（2026-09-04）。
+        #     枠の線（`REBAKE_LEAD`）を見たのは**焼く前**です。焼きが長引けば、
+        #     引き継ぎに入る時点で枠が目の前（か、過ぎている）ことがあります。
+        #     そこで予約を外すと、**その日の公開が遅れるか、飛びます。**
+        #     間に合わない回は**引き継がない** —— 新しい本は private のまま池に残り、
+        #     旧い本が予定どおり出ます（`daily_pick` は次の回が写せます）。
+        #     線は置く側と同じ `TODAY_LEAD_MIN`（新しい定数を作らない）。
+        left = None
+        if slot:
+            _s = ahead_gate._parse(slot + ":00+09:00")
+            left = (_s - datetime.now(timezone.utc)).total_seconds() / 60 if _s else None
         if not slot:
             print(f"[rebake-run] [!] `{vid}` の予約の時刻が読めません（`data/next_slot` の控え）。"
                   f"**枠を外しません** —— 差し替えずに終わります", flush=True)
             rc = 1
+        elif left is not None and left < TODAY_LEAD_MIN:
+            # **上げないこと。** `--replaces` は予約の付いた本を断るので、ここで上げても
+            #     重なりの検査で落ちます（＝ 焼いたぶんは、どのみち池にも入りません）。
+            #     旧い本を予定どおり出すのが、この回のいちばん高い出口です。
+            print(f"[rebake-run] [!] 枠 {slot} JST まで {left:.0f}分（線 {TODAY_LEAD_MIN}分）—— "
+                  f"**引き継ぎません。** 焼きが長引いたので、旧 `{vid}` を予定どおり出します。"
+                  f"台本は commit ずみなので、**次の回が余裕のある枠で焼き直せます**", flush=True)
+            late = True
+            takeover = False
         else:
             mark_t = _takeover_mark(slot[:10])
             try:
@@ -1679,7 +1700,7 @@ def rebake_run(vid: str, topic: str, sha: str, *, takeover: bool = False) -> int
             if rc != 0:
                 print(f"[rebake-run] [!] 予約を外せませんでした（rc={rc}）。**枠はそのまま**"
                       f"（旧 `{vid}` が {slot} に出ます）", flush=True)
-    if rc == 0:
+    if rc == 0 and not late:
         rc, out = _run_out([py, "scripts/upload_only.py", topic, "--draft", "--replaces", vid],
                            "upload_only --draft --replaces", 1800)
         for ln in (out or "").splitlines():
@@ -1704,9 +1725,16 @@ def rebake_run(vid: str, topic: str, sha: str, *, takeover: bool = False) -> int
             mark_t.unlink()
         except OSError:
             pass
-    _rebake_note({"at": datetime.now(JST).isoformat(timespec="seconds"), "kind": "done",
+    # **間に合わなかった回は `done` ではありません**（2026-09-04）。
+    #     `rebake_attempted()` は rc を問わず `done` を「焼いた」と読むので、
+    #     `done` を残すと**同じ台本は二度と焼かれません** —— 焼く価値は残っているのに。
+    #     `late` は印も落として、次の回が**余裕のある枠で**もう一度 焼けるようにします。
+    _rebake_note({"at": datetime.now(JST).isoformat(timespec="seconds"),
+                  "kind": "late" if late else "done",
                   "video_id": vid, "topic": topic, "sha": sha, "rc": rc, "new_id": new_id,
                   "seconds": round(time.time() - t0)}, root)
+    if late:
+        _drop_mark(vid, sha)
     if rc == 0 and new_id:
         print(f"[rebake-run] **差し替えました**: `{vid}` → `{new_id}`（{time.time() - t0:.0f}秒）", flush=True)
         # **押すところまでが1手**（`src/inbox.git_save` の註と同じ穴）—— 決めの写し（`daily_pick.jsonl`）と

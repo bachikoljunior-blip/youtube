@@ -107,3 +107,37 @@ def test_印が壊れていても止めない(tmp_path, monkeypatch: pytest.Monk
     monkeypatch.setattr(ahead_sweep, "_rebake_marks_dir", lambda: tmp_path)
     ahead_sweep._takeover_mark("2026-09-04").write_text("なんだこれ\n", encoding="utf-8")
     assert ahead_sweep.takeover_in_flight("2026-09-04") is False
+
+
+def test_焼きが長引いたら引き継がない(monkeypatch: pytest.MonkeyPatch, tmp_path, capsys) -> None:
+    """**焼き終えた「いま」で、もう一度 枠までを測ること。**
+
+    枠の線（`REBAKE_LEAD`）を見たのは**焼く前**です。焼きが長引けば、引き継ぎに入る
+    時点で枠が目の前（か、過ぎている）ことがあります。そこで予約を外すと
+    **その日の公開が遅れるか、飛びます。** 間に合わない回は引き継がず、
+    旧い本を予定どおり出し、**印を落として次の回に譲ります**（`done` を残すと
+    `rebake_attempted()` が「焼いた」と読み、同じ台本は二度と焼かれません）。
+    """
+    calls: list[list[str]] = []
+    notes: list[dict] = []
+    monkeypatch.setattr(ahead_sweep, "_rebake_marks_dir", lambda: tmp_path)
+    monkeypatch.setattr(ahead_sweep, "_rebake_note", lambda row, root=None: notes.append(row))
+    monkeypatch.setattr(ahead_sweep, "_run", lambda cmd, *a, **k: (calls.append(cmd), 0)[1])
+    monkeypatch.setattr(ahead_sweep, "_run_out",
+                        lambda cmd, *a, **k: (calls.append(cmd), (0, "VIDEO_ID NEW1"))[1])
+    # 枠は 5分 後（線 `TODAY_LEAD_MIN` = 20分 より近い）
+    soon = datetime.now(timezone.utc).astimezone(JST) + timedelta(minutes=5)
+    monkeypatch.setattr(ahead_sweep, "_slot_of", lambda v: soon.strftime("%Y-%m-%dT%H:%M"))
+
+    rc = ahead_sweep.rebake_run("OLD1", "t", "sha1", takeover=True)
+
+    out = capsys.readouterr().out
+    assert "引き継ぎません" in out
+    # **予約を外していないこと**（外すと、その日の公開が飛ぶ）
+    assert not any("--unschedule" in " ".join(c) for c in calls)
+    # **上げてもいないこと**（`--replaces` は予約つきを断るので、どのみち落ちる）
+    assert not any("upload_only.py" in " ".join(c) for c in calls)
+    # **`done` ではなく `late`** ＝ 次の回が、余裕のある枠でもう一度 焼ける
+    kinds = [n.get("kind") for n in notes]
+    assert "late" in kinds and "done" not in kinds
+    assert rc == 0
