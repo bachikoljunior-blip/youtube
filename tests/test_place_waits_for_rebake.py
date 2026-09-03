@@ -31,7 +31,7 @@ def _plan(now: datetime, *, rebake_pending: bool) -> dict:
 
 
 def test_焼き直しが要る本は枠が遠いあいだ置かない() -> None:
-    # 03:15 JST・枠 09:00 ＝ 345分 先（`REBAKE_LEAD` 100分 より遠い）
+    # 03:15 JST・枠 09:00 ＝ 345分 先（`REBAKE_LEAD` より遠い。数は定数から読むこと）
     plan = _plan(datetime(2026, 9, 4, 3, 15, tzinfo=JST), rebake_pending=True)
     assert plan["do"] is False
     assert "--replaces" in plan["why"]
@@ -41,7 +41,7 @@ def test_焼き直しが要る本は枠が遠いあいだ置かない() -> None:
 
 
 def test_枠が近づいたら焼き直しを待たずに置く() -> None:
-    # 08:00 JST・枠 09:00 ＝ 60分 先（`REBAKE_LEAD` 100分 の内側 ＝ 焼く側も焼かない）
+    # 08:00 JST・枠 09:00 ＝ 60分 先（`REBAKE_LEAD` の内側 ＝ 焼く側も焼かない）
     plan = _plan(datetime(2026, 9, 4, 8, 0, tzinfo=JST), rebake_pending=True)
     assert plan["do"] is True
     assert plan["video_id"] == "V1"

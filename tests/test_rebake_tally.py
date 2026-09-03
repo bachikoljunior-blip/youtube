@@ -44,8 +44,20 @@ def test_一度も終わっていなければ待てと言う(monkeypatch: pytest
     assert "終わるまで待つこと" in out
 
 
-def test_一度でも終わっていれば待てとは言わない(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_一度終わったあとも待てと言う(monkeypatch: pytest.MonkeyPatch) -> None:
+    """**`done` が出ても「待て」は消してはいけません**（2026-09-04 08:2x に置き直した）。
+
+    この検査は前は逆のこと（「一度でも終わっていれば待てとは言わない」）を守っていました。
+    **`done` の数は、焼く側が死ぬかどうかと関係がありません** —— 焼く側は
+    `Popen(start_new_session=True)` でもこの器の中に居るので、**回が終われば道連れ**です。
+    09/04 07:40 の唯一の `done` も、回が 78分 居続けたから出たものでした。
+
+    そして待つ側が要るのは「終わったことがあるか」ではなく **「あと何分 居ればいいか」**で、
+    その数は `done` が出てから初めて本物（78.2分）になります。
+    **いちばん要る回で消える**作りだったので、両方の枝で出します。
+    """
     monkeypatch.setattr(ahead_sweep, "rebake_tally", lambda root=None: (22, 3))
+    monkeypatch.setattr(ahead_sweep, "bake_minutes", lambda: (78.2, 1))
     monkeypatch.setattr(ahead_sweep, "rebake_plan_for",
                         lambda day, t, **kw: {"video_id": "V1", "do": False, "sha": "s",
                                               "topic": "t", "why": "焼いている最中"})
@@ -54,5 +66,28 @@ def test_一度でも終わっていれば待てとは言わない(monkeypatch: 
                                             "at": "2026-09-04T06:22:39+09:00"}])
     monkeypatch.setattr(ahead_sweep, "rebake_died", lambda *a, **k: False)
     out = "\n".join(next_slot.machine_rebake_lines("V1"))
-    assert "終わるまで待つこと" not in out
-    assert "22回 起きて 3回 終わっています" in out
+    assert "22回 起きて、3回 終わっています" in out
+    assert "終わるまで待つこと" in out
+    # **何分 待てばいいか**は、`done` が在るときは帳面の実測から出すこと
+    assert "78分 は要ります" in out
+    assert "`data/rebake.jsonl` の `done` の実測" in out
+    assert "下限" not in out
+
+
+def test_done_が無い間は下限と断って出す(monkeypatch: pytest.MonkeyPatch) -> None:
+    """**`done` が 0件 の間の数は下限です**（輪 ＋ 焼き。読み照合の輪は 0 と置いてある）。
+
+    実測は 2.1倍（37分 → 78.2分）でした。**断らずに出すと、待つ側が早く降ります。**
+    """
+    monkeypatch.setattr(ahead_sweep, "rebake_tally", lambda root=None: (22, 0))
+    monkeypatch.setattr(ahead_sweep, "bake_minutes", lambda: (37.0, 2))
+    monkeypatch.setattr(ahead_sweep, "rebake_plan_for",
+                        lambda day, t, **kw: {"video_id": "V1", "do": False, "sha": "s",
+                                              "topic": "t", "why": "焼いている最中"})
+    monkeypatch.setattr(ahead_sweep, "_rebake_rows",
+                        lambda root=None: [{"video_id": "V1", "sha": "s", "kind": "beat",
+                                            "at": "2026-09-04T06:22:39+09:00"}])
+    monkeypatch.setattr(ahead_sweep, "rebake_died", lambda *a, **k: False)
+    out = "\n".join(next_slot.machine_rebake_lines("V1"))
+    assert "37分 は要ります" in out
+    assert "**下限**" in out
