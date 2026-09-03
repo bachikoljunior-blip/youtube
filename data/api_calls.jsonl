@@ -8051,3 +8051,34 @@
 {"at": "2026-09-03T06:54:36+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "eta.py:q"}
 {"at": "2026-09-03T06:54:36+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "eta.py:q"}
 {"at": "2026-09-03T06:54:37+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "eta.py:q"}
+{"at": "2026-09-03T07:01:08+00:00", "api": "data", "method": "channels.list", "units": 1, "ok": true, "by": "history.py:_scan"}
+{"at": "2026-09-03T07:01:08+00:00", "api": "data", "method": "playlistItems.list", "units": 1, "ok": true, "by": "history.py:_scan_video_ids", "detail": "UUhTXZzwkIJHqyL7L_fEtuqQ"}
+{"at": "2026-09-03T07:01:09+00:00", "api": "data", "method": "playlistItems.list", "units": 1, "ok": true, "by": "history.py:_scan_video_ids", "detail": "UUhTXZzwkIJHqyL7L_fEtuqQ"}
+{"at": "2026-09-03T07:01:09+00:00", "api": "data", "method": "playlistItems.list", "units": 1, "ok": true, "by": "history.py:_scan_video_ids", "detail": "UUhTXZzwkIJHqyL7L_fEtuqQ"}
+{"at": "2026-09-03T07:01:10+00:00", "api": "data", "method": "playlistItems.list", "units": 1, "ok": true, "by": "history.py:_scan_video_ids", "detail": "UUhTXZzwkIJHqyL7L_fEtuqQ"}
+{"at": "2026-09-03T07:01:10+00:00", "api": "data", "method": "playlistItems.list", "units": 1, "ok": true, "by": "history.py:_scan_video_ids", "detail": "UUhTXZzwkIJHqyL7L_fEtuqQ"}
+{"at": "2026-09-03T07:01:11+00:00", "api": "data", "method": "playlistItems.list", "units": 1, "ok": true, "by": "history.py:_scan_video_ids", "detail": "UUhTXZzwkIJHqyL7L_fEtuqQ"}
+{"at": "2026-09-03T07:01:11+00:00", "api": "data", "method": "playlistItems.list", "units": 1, "ok": true, "by": "history.py:_scan_video_ids", "detail": "UUhTXZzwkIJHqyL7L_fEtuqQ"}
+{"at": "2026-09-03T07:01:11+00:00", "api": "data", "method": "playlistItems.list", "units": 1, "ok": true, "by": "history.py:_scan_video_ids", "detail": "UUhTXZzwkIJHqyL7L_fEtuqQ"}
+{"at": "2026-09-03T07:01:13+00:00", "api": "data", "method": "playlistItems.list", "units": 1, "ok": true, "by": "history.py:_scan_video_ids", "detail": "UUhTXZzwkIJHqyL7L_fEtuqQ"}
+{"at": "2026-09-03T07:01:13+00:00", "api": "data", "method": "playlistItems.list", "units": 1, "ok": true, "by": "history.py:_scan_video_ids", "detail": "UUhTXZzwkIJHqyL7L_fEtuqQ"}
+{"at": "2026-09-03T07:01:13+00:00", "api": "data", "method": "playlistItems.list", "units": 1, "ok": true, "by": "history.py:_scan_video_ids", "detail": "UUhTXZzwkIJHqyL7L_fEtuqQ"}
+{"at": "2026-09-03T07:01:14+00:00", "api": "data", "method": "playlistItems.list", "units": 1, "ok": true, "by": "history.py:_scan_video_ids", "detail": "UUhTXZzwkIJHqyL7L_fEtuqQ"}
+{"at": "2026-09-03T07:01:14+00:00", "api": "data", "method": "playlistItems.list", "units": 1, "ok": true, "by": "history.py:_scan_video_ids", "detail": "UUhTXZzwkIJHqyL7L_fEtuqQ"}
+{"at": "2026-09-03T07:01:14+00:00", "api": "data", "method": "playlistItems.list", "units": 1, "ok": true, "by": "history.py:_scan_video_ids", "detail": "UUhTXZzwkIJHqyL7L_fEtuqQ"}
+{"at": "2026-09-03T07:01:15+00:00", "api": "data", "method": "playlistItems.list", "units": 1, "ok": true, "by": "history.py:_scan_video_ids", "detail": "UUhTXZzwkIJHqyL7L_fEtuqQ"}
+{"at": "2026-09-03T07:01:15+00:00", "api": "data", "method": "search.list", "units": 100, "ok": true, "by": "history.py:_scan_video_ids"}
+{"at": "2026-09-03T07:01:16+00:00", "api": "data", "method": "search.list", "units": 100, "ok": true, "by": "history.py:_scan_video_ids"}
+{"at": "2026-09-03T07:01:16+00:00", "api": "data", "method": "search.list", "units": 100, "ok": true, "by": "history.py:_scan_video_ids"}
+{"at": "2026-09-03T07:01:16+00:00", "api": "data", "method": "videos.list", "units": 1, "ok": true, "by": "history.py:_scan", "detail": "9zkfjEH48PY,DfFyu8qZq3I,1huadpEk6HY,dRZnZrRy2Lw,6PKux5HNnUE,wOlDmGhbBts,OBJdXEr6gLg,6GtzWaguZhg,SD8zQU-x6y0,MqQKSnbM0OI,"}
+{"at": "2026-09-03T07:01:17+00:00", "api": "data", "method": "videos.list", "units": 1, "ok": true, "by": "history.py:_scan", "detail": "a63FzIUV2wI,h35ot6MqYso,m7BRQs9X6Jc,icSuiH8u6G0,vdxF0QfsHDg,GHVkmMsYnz4,ERW21qnDcTc,Hphh4YLfCR4,J2PXnd75LIM,5eAjnILgDVc,"}
+{"at": "2026-09-03T07:01:17+00:00", "api": "data", "method": "videos.list", "units": 1, "ok": true, "by": "history.py:_scan", "detail": "vQc3Jx6rSyA,a3eMYxK-OAg,yuuLK2d-DyI,l6yTGfjskD8,Z0tBNDpr60o,UVXKWfgWkZE,ClBuhgt43pA,DSZfGUQ_NyQ,zM9LWPirhCA,5qVTSD6FF20,"}
+{"at": "2026-09-03T07:01:17+00:00", "api": "data", "method": "videos.list", "units": 1, "ok": true, "by": "history.py:_scan", "detail": "mLIs9lDXTpQ,8ORhweAXZ7U,h_1tmYxLSdo,yC5BVoX64bU,6l0RCUDEm5g,OcAFHKW6Gtg,uTXFcur6VTw,ENCe9pKoZug,B3pgxY1Xi1w,BzvH0iCzrzo,"}
+{"at": "2026-09-03T07:01:18+00:00", "api": "data", "method": "videos.list", "units": 1, "ok": true, "by": "history.py:_scan", "detail": "LiUDEzA2cFk,kf798uLNh7E,oWGs84pIHWg,dLDoFEVHn5s,to_gWbvDhrU,JpTJlmJBDm0,yy7wFYJOz88,s20h15d9GtA,nNt2_3fiWzE,7lV40I13Rls,"}
+{"at": "2026-09-03T07:01:18+00:00", "api": "data", "method": "videos.list", "units": 1, "ok": true, "by": "history.py:_scan", "detail": "xBY-DtMhSdg,G4CNc4zATzA,H28qfOxuJF0,3SZDpbRKSto,XOs9JBL5wJ0,b3ZewNvalXc,PEUAJTyDVDY,J3OuVORRxPo,SWy-pgM2Obs,n2xdLoIv4XU,"}
+{"at": "2026-09-03T07:01:18+00:00", "api": "data", "method": "videos.list", "units": 1, "ok": true, "by": "history.py:_scan", "detail": "m_q1G_GNgY8,7NtIDFiPrsw,YHiigJ3Zpj4,hiTMix1eNxc,Z9gy1rw9TOA,SbZjiakY--g,UTwBchk3OX0,8Yb181bZvU4,SsUYduA1dpg,8rXlUhkfMEU,"}
+{"at": "2026-09-03T07:01:19+00:00", "api": "data", "method": "videos.list", "units": 1, "ok": true, "by": "history.py:_scan", "detail": "8whXYb_4shM,H00j9Gcpu9k,DkQuG4RDOdU,F_-nn7flcPs,UPVqfnb5_Pc,ZCBd6NfUdcc,EXsGSCztLDc,FGZ1NPuwWxc,DjXL4OmsUN0,RyughHuNO-Q,"}
+{"at": "2026-09-03T07:01:19+00:00", "api": "data", "method": "videos.list", "units": 1, "ok": true, "by": "history.py:_scan", "detail": "MGyAFTblhKc"}
+{"at": "2026-09-03T07:01:31+00:00", "api": "data", "method": "thumbnails.set", "units": 50, "ok": true, "by": "refresh_thumbnail.py:push_missing", "detail": "1huadpEk6HY"}
+{"at": "2026-09-03T07:01:43+00:00", "api": "data", "method": "thumbnails.set", "units": 50, "ok": true, "by": "refresh_thumbnail.py:push_missing", "detail": "9zkfjEH48PY"}
+{"at": "2026-09-03T07:01:46+00:00", "api": "data", "method": "thumbnails.set", "units": 50, "ok": true, "by": "refresh_thumbnail.py:push_missing", "detail": "DfFyu8qZq3I"}
