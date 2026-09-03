@@ -1033,8 +1033,33 @@ def comment_pending(now: datetime | None = None, *, dry_run: bool = False,
 # - `data/rebake.jsonl` に `rc != 0` が3件 続いたら、焼く側（pipeline／upload_only）の欠陥。ここを止めるのではなく直す
 # - 1日に 2回 以上 焼いた日が続くなら、台本を小刻みに commit する回のほう（`REBAKE_MAX_PER_DAY`）
 
-#: 枠までこれより短ければ焼かない（合成 ＋ 64コマ の描画 ＋ 上げ ≈ 40〜60分）
-REBAKE_LEAD = timedelta(minutes=100)
+#: 枠までこれより短ければ焼かない。
+#:
+#: **2026-09-04 に 100分 → 150分 へ上げました。** 100分 は「合成 ＋ 64コマ の描画 ＋ 上げ
+#: ≈ 40〜60分」という**推測**の上に 40分 積んだ数で、実物を1度も見ていませんでした。
+#: この repo で初めて最後まで通った焼き直し（`data/rebake.jsonl` の唯一の `done`・
+#: `seconds` 4692）の内訳は:
+#:
+#:     分かりやすさの輪  24.6分（4周・上限まで・32コマ 直した）
+#:     音 62本            2.0分
+#:     読み照合の輪      32.0分（`faster-whisper medium` を CPU・**誤読 0件 で1周**）
+#:     焼き              13.0分
+#:     ―――――――――――――――――――
+#:     合計              78.2分  ＋ 上げ（`videos.insert`・数分）
+#:
+#: **100分 では余裕が 20分 ありません。** しかも読み照合の輪の 32分 は
+#: **誤読 0件 で1周 通った場合**で、誤読が出れば合成し直してもう1周です（そこだけで +30分）。
+#: 枠に間に合わないまま焼き始めた回は、`rebake_run()` の `late` で降りて 78分 を捨てます。
+#:
+#: **上げた代償**: 9時の枠に対して **06:30 より前**に起きた回しか焼けなくなります。
+#: そこは「`place_hour` を後ろへ倒す」か「前の日のうちに焼く」の二択で、
+#: **固定その4（枠へ置くのは当日）とは衝突しません**（焼くのは予約の話ではない）。
+#:
+#: **覆る条件**: `done` が数件 溜まったら、`bake_minutes()` の中央値 ＋ 上げの余裕（20分）で
+#: ここを置き直すこと（いまは n=1 なので、手で 150 と書いてある）。
+#: 逆に「枠が近いので置けない」が続くなら、上げすぎ ——
+#: `data/ahead_sweep.log` の `[today]` に「焼いてから置きます」が 3周 続いたら疑うこと。
+REBAKE_LEAD = timedelta(minutes=150)
 #: 同じ日に焼き直す上限（`videos.insert` 1本ぶんの上げ・TTS の費用・帳面）
 REBAKE_MAX_PER_DAY = 2
 REBAKE_LEDGER = "data/rebake.jsonl"
@@ -1240,24 +1265,59 @@ def rebake_tally(root: Path | None = None) -> tuple[int, int]:
 def bake_minutes() -> tuple[float | None, int]:
     """**1回の焼き直しは何分かかるか**（実測の中央値・分／標本数）。**API 0単位。**
 
-    ## なぜ「焼き直しの帳面」から出せないか（2026-09-04 に踏んだ）
+    ## 見る順は2つ（2026-09-04 に置き直した）
 
-    `data/rebake.jsonl` の `done` は **0件** です（`rebake_tally()`）——
-    **一度も終わっていないので、終わりの時刻がありません。**
-    そこで、**中でいちばん長い所**（分かりやすさの輪）の実測を使います:
+    1. **`data/rebake.jsonl` の `done` の `seconds`** —— 焼き始めから終わりまでの**本物の長さ**。
+       1件でも在れば、こちらの中央値を返します。
+    2. 1件も無ければ、**中でいちばん長い所**（分かりやすさの輪 `data/clarity_loop.jsonl`）
+       ＋ `BAKE_RENDER_MIN` の**下限**。**上振れします**（下の実測で 2.1倍 でした）。
 
-        data/clarity_loop.jsonl   `seconds` 1435秒 ＝ **24分**（4周・上限まで回った回）
+    ## なぜ置き直したか
 
-    輪のあとに 焼き（実測 13分）と 読み照合の輪 と 上げ が続くので、
-    **これは下限**です。**「40分 は要る」を下限として読むこと**（上振れはする）。
+    09/04 07:40 に、この repo で**初めて焼き直しが最後まで通りました**（22回 起きて 0回 → 1件）。
+    そこまでは `done` が 0件 だったので、この関数は輪の 24分 ＋ 焼き 13分 ＝ **37分** を
+    「下限」として返していました。**実測は 78.2分**（`seconds` 4692）—— **2.1倍**です。
+    内訳は `REBAKE_LEAD` の註に。
+
+    **37分 は「待つか、見送るか」を決める側にそのまま渡っていました**（`src/next_slot.py`）。
+    2.1倍 外れた下限で「間に合う」と読んだ回は、**焼き始めてから枠に追い越されます。**
+
+    `rc` は見ません —— **落ちた焼きも、そこまでに同じ時間を使っています**（唯一の `done` も
+    `rc=1`・最後の上げだけ same-topic で断られた回でした）。測っているのは
+    「成功したか」ではなく「**どれだけ待たされるか**」です。
 
     使い道は1つ —— **回が「待つか、見送るか」を決めるとき**。
     枠まで これより短ければ、焼き始めても間に合いません（`rebake_run()` の `late`）。
 
-    **覆る条件**: `done` が数件 出たら、`seconds` の中央値を直接 使うこと
-    （そちらは上げまで含んだ本物の長さです）。
+    **覆る条件**: `done` が 5件 を超えたら、**中央値ではなく上側**（最大か p90）を返すこと。
+    待つ側にとって外れて痛いのは短い側だけなので、中央値は n が増えるほど楽観へ寄ります。
     """
     import json                                                # noqa: PLC0415
+
+    def _med(vals: list[float]) -> float:
+        vals.sort()
+        return vals[len(vals) // 2]
+
+    # 1. 本物の長さ（焼き始め → 終わり）。1件でも在ればこちらを使う。
+    done: list[float] = []
+    try:
+        f = Path(config.ROOT) / REBAKE_LEDGER
+        for ln in f.read_text(encoding="utf-8").splitlines():
+            try:
+                row = json.loads(ln)
+            except Exception:                                  # noqa: BLE001
+                continue
+            if (row.get("kind") or row.get("event")) != "done":
+                continue
+            sec = row.get("seconds")
+            if isinstance(sec, (int, float)) and sec > 0:
+                done.append(float(sec))
+    except OSError:
+        done = []
+    if done:
+        return (round(_med(done) / 60.0, 1), len(done))
+
+    # 2. まだ1件も終わっていない ＝ 中でいちばん長い所 ＋ あとの分（**下限**）
     f = Path(config.ROOT) / "data" / "clarity_loop.jsonl"
     vals: list[float] = []
     try:
@@ -1272,9 +1332,7 @@ def bake_minutes() -> tuple[float | None, int]:
         return (None, 0)
     if not vals:
         return (None, 0)
-    vals.sort()
-    med = vals[len(vals) // 2] / 60.0
-    return (round(med + BAKE_RENDER_MIN, 1), len(vals))
+    return (round(_med(vals) / 60.0 + BAKE_RENDER_MIN, 1), len(vals))
 
 
 #: 分かりやすさの輪の**あと**に要る分（焼き 13分 ＋ 読み照合の輪 ＋ 上げ）。実測の下限。

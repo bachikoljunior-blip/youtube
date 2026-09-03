@@ -1322,13 +1322,24 @@ def machine_rebake_lines(video_id: str, now: datetime | None = None) -> list[str
                 out += [f"       いまの段: {stage}",
                         "       **`data/rebake.log` が動いていないのを「死んだ」と読まないこと** ——"
                         " 子は 8KB ためるので末尾は最大 20分 古い。生死は `ps -o time= -p <pid>`（CPU 時間）で"]
+            # **待つ長さは、`done` が出たあとも出し続けること**（2026-09-04 08:2x に踏んだ）。
+            #     この枝は長らく `dones == 0` の間だけ「何分 待てばいいか」を出し、
+            #     `done` が 1件 出た瞬間に**一行の脚註へ落ちて**いました。
+            #     ところが待つ側が要るのは「終わったことがあるか」ではなく
+            #     **「あと何分 居ればいいか」**で、それは `done` が出てから初めて
+            #     本物の数（78.2分）になります。**いちばん要る回で消える**作りでした。
+            try:
+                mins, n = ahead_sweep.bake_minutes()
+            except Exception:                                  # noqa: BLE001
+                mins, n = None, 0
+            if mins and dones:
+                how = f"**{mins:.0f}分 は要ります**（`data/rebake.jsonl` の `done` の実測 n={n}）"
+            elif mins:
+                how = (f"**{mins:.0f}分 は要ります**（**下限** ——"
+                       f" 分かりやすさの輪の実測 n={n} ＋ 焼き。実測は 2.1倍 でした）")
+            else:
+                how = "何分かかるかは、まだ 1件も測れていません"
             if starts and dones == 0:
-                try:
-                    mins, n = ahead_sweep.bake_minutes()
-                except Exception:                              # noqa: BLE001
-                    mins, n = None, 0
-                how = (f"**{mins:.0f}分 は要ります**（下限・分かりやすさの輪の実測 n={n} ＋ 焼き）"
-                       if mins else "何分かかるかは、まだ 1件も測れていません")
                 out += [f"  [!] **焼き直しは これまで {starts}回 起きて、{dones}回 しか終わっていません。**"
                         "焼く側は**この器の中**の背景プロセスなので、"
                         "**この回が終わると道連れで死にます**（`ahead_sweep.rebake_tally` の註）",
@@ -1336,8 +1347,12 @@ def machine_rebake_lines(video_id: str, now: datetime | None = None) -> list[str
                         "`tail -3 data/rebake.log` を数分おきに見て、"
                         "`**差し替えました**` か `[!] 焼き直せませんでした` が出るまで居ること"]
             elif starts:
-                out += [f"  （これまで {starts}回 起きて {dones}回 終わっています・"
-                        "終わるまで待つなら `tail -3 data/rebake.log`）"]
+                out += [f"  [!] **焼き直しは これまで {starts}回 起きて、{dones}回 終わっています。**"
+                        "焼く側は**この器の中**の背景プロセスなので、"
+                        "**この回が終わると道連れで死にます**（`ahead_sweep.rebake_tally` の註）",
+                        f"       ＝ **この回は、終わるまで待つこと。**{how}。"
+                        "`tail -3 data/rebake.log` を数分おきに見て、"
+                        "`**差し替えました**` か `[!] 焼き直せませんでした` が出るまで居ること"]
             return out
         return [f"  [!] **機械は焼き直しません** —— {plan.get('why', '')}",
                 "       ＝ 直すか、手で撃つかは**この回が決めること**。"
