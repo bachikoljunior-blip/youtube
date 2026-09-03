@@ -1087,6 +1087,99 @@ def sub_model(now: datetime | None = None) -> tuple[str, str]:
                      f"（{_fable_rate_words(fe)}{ex_words}）")
 
 
+#: **役ごとの模型**（オーナー原文 2026-09-03 07:3x・`CLAUDE.md` 冒頭）:
+#:
+#: > 「単純な記録、定型検査、機械的修正は軽いモデル ● 仮説検証、題材選定、動画の構成改善
+#: >  など高レバレッジ部分はFable ● Fableを使う価値が実測で薄い仕事には使わない
+#: >  ● 仕事ごとにFable・Opus・Sonnet・Haikuを選ぶ
+#: >  Fableのみは100％到達になって使えなくなるようにならないほうが良くない？」
+#:
+#: 機械が選べる粒度は**役**です（サブは Agent を立てられない。親が `model` を渡す）。
+#: 実測（2026-09-03 09:2x・`scripts/optimized.py`・5日 276件）: ship の **71% が `fix`**
+#: （機械的修正）で、その全部が Fable で走っていた。**その回の `hourly` は
+#: 09/03 06:50「枠の残りを刷る7か所を揃えた」・07:08「§4 の表を run_marker が刷る」** ——
+#: どちらも Fable でなくてよい仕事です。一方、`optimizer` は**仮説検証・題材選定**
+#: （09/03 02:03 の「長尺・外の作りを写す」の決めは optimizer が出した）。
+#:
+#: だから: `owner-record`（単純な記録）は **sonnet**。`hourly` は **Fable が枠の戻りまで
+#: 両役ぶん持つときだけ Fable**、持たなければ **opus**。`optimizer` は **1周ぶんが 100% の
+#: 手前に収まる限り Fable**（残りは高レバレッジ側に使い切る）。収まらなければ opus。
+#: **100% を越える形では立てない** —— 越えた後の 1日、立てたサブは全部 落ちる
+#: （`fable_rate()` の註・A10）。
+#:
+#: **覆る条件**: 「Fable のみ」の速さを役べつに測れるようになったら（いまは両役の合計）、
+#: 役ごとの1周の費用を実測に替えること。Opus で走った `optimizer` の verdict の当たりが
+#: Fable と変わらない（`deadline_check --fit` の当たり率）なら、`optimizer` も opus でよい。
+ROLE_TIER = {
+    "optimizer": "fable",
+    "hourly": "fable",
+    "owner-full": "fable",
+    "owner-record": "sonnet",
+}
+#: 高レバレッジの役（残りの Fable をここに使い切る）。
+HIGH_LEVERAGE_ROLES = ("optimizer",)
+#: 軽い役（Fable の残りに関係なく、常に `ROLE_TIER` の模型）。
+LIGHT_ROLES = ("owner-record",)
+
+
+def fable_cost_per_sub(now: datetime | None = None) -> float | None:
+    """**サブ1体が「Fable のみ」を何% 食うか**（同じ枠の2点の Δ% ÷ その間に立ったサブ）。
+
+    測れなければ None。`fable_rate()` の measured の区間と `_births_from_runs()` を使う。
+    """
+    now = now or datetime.now(timezone.utc)
+    fr = fable_rate(now)
+    if not fr or fr.get("source") != "measured":
+        return None
+    try:
+        births = _births_from_runs(fr["from_at"], fr["to_at"])
+    except Exception:                                          # noqa: BLE001
+        return None
+    if not births:
+        return None
+    return max(0.0, (float(fr["to_pct"]) - float(fr["from_pct"])) / births)
+
+
+def role_model(role: str, now: datetime | None = None) -> tuple[str, str]:
+    """**役 `role` に渡す模型と、その理由1行。** `ROLE_TIER` の註。
+
+    `sub_model()`（枠の可否の門。`next_round_owner.py` が差し替えることがある）が
+    `fable` 以外を返したら、それに従う（軽い役を除く）。
+    """
+    now = now or datetime.now(timezone.utc)
+    tier = ROLE_TIER.get(role, "fable")
+    if role in LIGHT_ROLES:
+        return tier, f"`{role}` は単純な記録 → 軽い模型（オーナー 09/03 07:3x）"
+    gate_model, gate_why = sub_model(now)
+    if gate_model != "fable":
+        return gate_model, gate_why
+    fe = fable_estimate(now)
+    if not fe or fe.get("rate_source") in ("reset", "none") or fe["rate"] <= 0:
+        return tier, gate_why
+    g = fe["gauge"]
+    resets = g.get("resets")
+    rem = max(0.0, 100.0 - float(fe["est"]))
+    per_sub = fable_cost_per_sub(now)
+    if per_sub is None:
+        p = pace(now)
+        floor_min = float((p or {}).get("floor_min") or 140.0)
+        per_sub = fe["rate"] * floor_min / 60.0 / 2.0
+    hours_to_reset = ((resets - now).total_seconds() / 3600.0) if resets else None
+    need_both = (fe["rate"] * hours_to_reset) if hours_to_reset is not None else 0.0
+    head = (f"「Fable のみ」推定 {fe['est']:.0f}%・残り {rem:.0f}%・サブ1体 ≈ {per_sub:.1f}%"
+            + (f"・戻りまで {hours_to_reset:.0f}時間 に両役で {need_both:.0f}% 要る"
+               if hours_to_reset is not None else ""))
+    if rem >= need_both + per_sub:
+        return tier, f"{head} → 枠の戻りまで両役とも Fable で持つ"
+    if role in HIGH_LEVERAGE_ROLES:
+        if rem >= per_sub:
+            return "fable", (f"{head} → 残りは高レバレッジの `{role}` に使う"
+                             "（`hourly` は opus・オーナー 09/03 07:3x）")
+        return "opus", f"{head} → 1周ぶんが 100% の手前に収まらない → opus（100% を越えて落とさない）"
+    return "opus", (f"{head} → 枠の戻りまで持たないので `{role}` は opus"
+                    "（Fable は `optimizer` に残す・オーナー 09/03 07:3x「機械的修正は軽いモデル」）")
+
+
 def pace(now: datetime | None = None) -> dict | None:
     """いまの速さと、持続できる1周の間隔。目盛りが無ければ None。
 

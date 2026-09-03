@@ -28,7 +28,10 @@
 事実（2026-09-02 19:0x に撃って出た数）:
 
     模型          親は `claude-fable-5-1`・**effort 最大**。働き手（サブ）は
-                  **`python scripts/next_round_owner.py` が GO と一緒に印字する模型**を Agent の `model` に渡す
+                  **`python scripts/next_round_owner.py` が GO と一緒に**役ごとに**印字する模型**を Agent の `model` に渡す
+                  （09/03 09:2x から役べつ: `quota.role_model()`。`hourly` は Fable が枠の戻りまで持つときだけ Fable、
+                    持たなければ opus。`optimizer` は 1周ぶんが 100% の手前に収まる限り Fable。`owner-record` は sonnet
+                    —— オーナー 09/03 07:3x「仕事ごとに選ぶ／Fable のみを 100% に届かせない」）
                   （画面の「Fable のみ」が **100%** に届くまで `fable`、届いたら `opus`。
                     **50% ではない** —— 同日 21:3x の訂正「fableのみは100％使っていい」
                     「全モデルの50%っていう公式仕様だわ！」。正本 `docs/OWNER_MODEL_BUDGET.md`）。

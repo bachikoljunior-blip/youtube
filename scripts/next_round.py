@@ -722,13 +722,19 @@ def main() -> int:
                   "**そのまま**渡すこと（親が中身を考えないこと）")
         print("  **isolation: \"worktree\" と run_in_background: true を"
               "必ず付けること**（衝突を避ける／親を塞がない）")
-        try:
-            from scripts.quota import sub_model as _sub_model
-            _m, _why = _sub_model()
-        except Exception as exc:                               # noqa: BLE001
-            _m, _why = "fable", f"quota.sub_model が答えません（{str(exc)[:60]}）"
-        print(f"  **model: \"{_m}\"**（{_why}。オーナー 2026-09-02"
-              "「Fableは全体週間使用量の50%まで」→ `quota.FABLE_CAP_PCT`）")
+        # **役ごとに模型を印字する**（オーナー 09/03 07:3x「仕事ごとに Fable・Opus・Sonnet・
+        #     Haiku を選ぶ／Fable のみを 100% に届かせない」。`quota.ROLE_TIER` の註。
+        #     2026-09-03 09:2x の optimizer が入れた —— それまでは両役とも同じ模型で、
+        #     fix 71% の hourly が Fable を食い、100% は 11:11 JST の線に乗っていた）。
+        from scripts import quota as _quota
+        for role in roles:
+            try:
+                _m, _why = _quota.role_model(role)
+            except Exception as exc:                           # noqa: BLE001
+                _m, _why = "fable", f"quota.role_model が答えません（{str(exc)[:60]}）"
+            print(f"  **model: \"{_m}\" ← `kind: {role}`**（{_why}）")
+        print("  役ごとに違う模型が出たら、**その役の Agent にその模型を渡す**"
+              "（オーナー 09/03 07:3x。正本 `docs/OWNER_MODEL_BUDGET.md`）")
         print(f"  立てたら: python scripts/next_round.py --record {','.join(roles)}")
         return 0
     print(f"WAIT {d['wait_min']:.0f}")

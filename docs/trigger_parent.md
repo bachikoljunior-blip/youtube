@@ -105,6 +105,7 @@
       → **GO <役> <役>** なら、出た役を**全部**、`docs/spawn_prompt.rendered.md` の
          `kind: <役>` の `prompt` を **1字も変えずに** Agent ツールへ渡す
          **`isolation: "worktree"` と `run_in_background: true` を必ず付ける**
+         **`model:` は GO が役ごとに印字した模型**（`hourly` と `optimizer` で違うことがある・09/03 09:2x）
     python scripts/next_round.py --record <役>[,<役>]
     git add data/rounds.jsonl && git commit && git push                   ← **省かないこと**
 
