@@ -390,7 +390,7 @@ def place_hour(day, *, sweep=None, config=None) -> int:
 def today_plan(now: datetime, *, count: int, cap: int, candidate: dict | None,
                hour: int, quota_open: bool, rule_on: bool = True,
                paused: str = "", insert_ok: bool = False,
-               rebake_pending: bool = False) -> dict:
+               rebake_pending: bool = False, takeover_pending: bool = False) -> dict:
     """**置くか・何を・いつ**を決める（**API 0単位・純関数**）。
 
     返り: `{"do": bool, "why": str, "video_id": str|None, "when": "YYYY-MM-DDTHH:00"|None,
@@ -411,6 +411,15 @@ def today_plan(now: datetime, *, count: int, cap: int, candidate: dict | None,
                 "video_id": None, "when": None}
     if paused:
         return {"do": False, "why": f"一時停止の印が在ります: {paused[:120]}",
+                "video_id": None, "when": None}
+    # **差し替えの途中の窓では置かない**（2026-09-04・`TAKEOVER_STALE` の註）。
+    #     焼き上がった本と枠を入れ替える 2〜5分 のあいだ、その日は 0本 に見えます。
+    #     ここで置くと、**旧 ID が枠へ戻り**、直後の `--move 新` が規則1 で弾かれます。
+    #     印が古ければ（焼く側が消えた）この枝は立たず、次の掃きが旧 ID を戻します。
+    if takeover_pending:
+        return {"do": False, "why": "いま差し替えの途中です（焼き上がった本と枠を入れ替えています）。"
+                f"置くと旧 ID が枠へ戻って `--move` が規則1 で弾かれる（印 `{_takeover_mark(day).name}`・"
+                f"{int(TAKEOVER_STALE.total_seconds() // 60)}分 で無視）",
                 "video_id": None, "when": None}
     if count >= max(1, cap):
         return {"do": False, "why": f"きょう {day} の枠は埋まっています（{count}本／規則 {cap}本）",
@@ -448,9 +457,13 @@ def today_plan(now: datetime, *, count: int, cap: int, candidate: dict | None,
     #     **この2つは同じ線の裏表で、構造上 かみ合いません**（永久に置かれない、は起きない）。
     #     枠が近づけば `rebake_pending` の値に関わらず、次の掃きが置きます。
     #
-    #     **覆る条件**: `upload_only --replaces` が予約の付いた本も差し替えられるように
-    #     なったら、この枝は要りません（そのとき `rebake_plan()` の `scheduled` の枝と
-    #     一緒に消すこと）。検査 `tests/test_place_waits_for_rebake.py`。
+    #     **【2026-09-04 06:5x】その `scheduled` の枝は消しました**（`rebake_plan()` の
+    #     `takeover` の註）。**この枝は残します** —— 消すと、置いてから焼くことになり、
+    #     **50単位 ×2（外す・置き直す）を毎回 余分に払う**からです。枠が空のうちに
+    #     焼いておけば、置くのは新しい本 1回（50単位）で済みます。
+    #     ＝ いまの2つの役: **この枝は「まだ置いていない日」を安く回し**、
+    #     `takeover` は「**もう置いてしまった日**」を救います。
+    #     検査 `tests/test_place_waits_for_rebake.py`／`tests/test_rebake_takeover.py`。
     if rebake_pending and (slot - now) >= REBAKE_LEAD:
         return {"do": False,
                 "why": f"`{vid}` は焼き直せば良くなる（台本のほうが控えより新しい）。"
@@ -654,8 +667,8 @@ def place_today(now: datetime | None = None, *, dry_run: bool = False) -> dict:
             print(f"[today] 候補を読めませんでした: {str(exc)[:120]}", flush=True)
     insert_ok = stash_script(str((cand or {}).get("video_id") or "")) is not None
     # **この本は、いま焼き直せば良くなるか**（0単位・読むだけ）。`today_plan()` の
-    #     「焼き直しが先。置くのは後」の枝へ渡します。**まだ予約が付いていないので、
-    #     `rebake_plan_for()` の `scheduled` の枝はここでは立ちません。**
+    #     「焼き直しが先。置くのは後」の枝へ渡します。**ここへ来るのは枠が空の日だけ**
+    #     （埋まっていれば `today_plan()` が上で帰る）ので、予約つきの本は当たりません。
     rebake_pending = False
     try:
         _rp = rebake_plan_for(now.astimezone(JST).date(), now)
@@ -669,7 +682,9 @@ def place_today(now: datetime | None = None, *, dry_run: bool = False) -> dict:
     plan = today_plan(now, count=count, cap=house_rule.cap(), candidate=cand, hour=hour,
                       quota_open=quota_open, rule_on=house_rule.same_day_only(),
                       paused=_paused(), insert_ok=insert_ok,
-                      rebake_pending=rebake_pending)
+                      rebake_pending=rebake_pending,
+                      takeover_pending=takeover_in_flight(
+                          now.astimezone(JST).date().isoformat(), now=now))
     plan["rc"] = None
     if plan["do"] and plan.get("via") == "update" and insert_ok:
         # **帳面の取り置きが `videos.update` を止める窓**（403 はまだ見ていないが、
@@ -1075,7 +1090,7 @@ def rebake_plan(*, cur: dict | None, stash_text: str | None, draft_text: str | N
                 lead: timedelta = REBAKE_LEAD, max_per_day: int = REBAKE_MAX_PER_DAY) -> dict:
     """**焼き直すかを決める（純関数・API 0単位）。** 返りは `{do, why, sha, video_id, topic}`。"""
     out = {"do": False, "why": "", "sha": "", "video_id": str((cur or {}).get("video_id") or ""),
-           "topic": str((cur or {}).get("topic") or "")}
+           "topic": str((cur or {}).get("topic") or ""), "takeover": bool(scheduled)}
     if not cur or not out["video_id"] or not out["topic"]:
         out["why"] = "決めた本が無い（`[きょうの1本]` が ID と題材で名指ししていない）"
         return out
@@ -1089,9 +1104,22 @@ def rebake_plan(*, cur: dict | None, stash_text: str | None, draft_text: str | N
     if _canon(stash_text) == _canon(draft_text):
         out["why"] = f"控えと台本は同じ中身（sha {out['sha']}）—— 焼いても変わらない"
         return out
-    if scheduled:
-        out["why"] = f"`{out['video_id']}` にはもう予約が付いている（`--replaces` が断る側）"
-        return out
+    # **予約が付いていても焼き直します**（2026-09-04 06:5x。**ここが規則3 の最大の手を塞いでいました**）
+    #
+    #     旧: `if scheduled: return out` ＝ **一度 枠へ置いた本は、未来永劫 焼き直せない。**
+    #     実測 09/04 06:3x —— 09:00 に出る `1huadpEk6HY` は 09/03 04:37 に焼いてあり、
+    #     そのあと入ったコードが 6件（登録の依頼を説明欄／コメント／画面へ・GPT Image 2.0 の絵）。
+    #     `rebake_plan_for(09/04)` は毎周 `do: False`。**規則3 の当てどころが、毎周 消えていました。**
+    #
+    #     `--replaces` が断るのは **重なりの検査**の話だけです（`scripts/upload_only.py`）——
+    #     「private・予約なし ＝ 公開の並びに入っていない」本しか突き合わせから外しません。
+    #     予約を外せば通ります。**外す時刻が問題**でした:
+    #
+    #         先に外す  焼く 30〜60分 のあいだ、その日の本が 0本（死んだら公開が飛ぶ）
+    #         後で外す  外す→上げる→置く の 2〜5分 だけ 0本 ← **こちら（`takeover`）**
+    #
+    #     だから `do` は立てたまま `takeover: True` を返し、**外すのは焼き上がった後**
+    #     （`rebake_run()` の `_takeover_*`）。焼く前の枠の線（`lead`）は下でそのまま効きます。
     if draft_newer is not True:
         out["why"] = ("台本が控えより新しいと言えない（commit の時刻 ≤ 上げた時刻・"
                       "古い台本で上書きしない）")
@@ -1111,7 +1139,8 @@ def rebake_plan(*, cur: dict | None, stash_text: str | None, draft_text: str | N
         return out
     out["do"] = True
     out["why"] = (f"控え（上げたときの写し）と台本 `data/scripts/{out['topic']}.script.json` が違う"
-                  f"（sha {out['sha']}・台本のほうが新しい）→ 焼き直して `{out['video_id']}` を差し替える")
+                  f"（sha {out['sha']}・台本のほうが新しい）→ 焼き直して `{out['video_id']}` を差し替える"
+                  + ("（**予約つき** —— 焼き上がってから枠を引き継ぎます）" if out["takeover"] else ""))
     return out
 
 
@@ -1154,6 +1183,36 @@ REBAKE_MARK_STALE = timedelta(hours=3)
 #: 「錠が空いている＝死んだ」と読めません。これより古い `start` で錠が空いていれば、
 #: 焼く側はもう居ません（器の回収・親の畳み）。
 REBAKE_START_GRACE = timedelta(minutes=3)
+
+#: **枠の引き継ぎ（takeover）が宙に浮いていられる上限**（2026-09-04 に足した）。
+#: 焼き上がった本を差し替える 3手（`--unschedule 旧` → `upload_only` → `--move 新`）の
+#: あいだ、その日の枠は **空**です。その窓に別の掃きが来ると
+#: `place_today()` は「きょうは 0本」と読んで**旧 ID をもう一度 置き**、
+#: 直後の `--move 新` が規則1（1日1本）で弾かれます（`reschedule.RC_RULE_FULL`）。
+#: だから印（`_takeover_mark()`）を置き、置く側はその印が若いあいだ **置きません**。
+#: **これより古い印は無視します** —— 焼く側が器ごと消えた回に、
+#: 印だけが残って**その日が永久に空**になるほうが高い。無視されれば次の掃きが
+#: 旧 ID を枠へ戻す（`daily_pick` はまだ旧 ID を指しているので、自分で治ります）。
+TAKEOVER_STALE = timedelta(minutes=30)
+
+
+def _takeover_mark(day_s: str) -> Path:
+    """**その日の枠を、いま引き継いでいる最中**の印（機械にひとつ・`<日>` ごと）。"""
+    return _rebake_marks_dir() / f"takeover-{day_s}"
+
+
+def takeover_in_flight(day_s: str, *, now: datetime | None = None) -> bool:
+    """**その日の枠が、いま差し替えの途中で空いているか**（`TAKEOVER_STALE` より若い印）。"""
+    now = now or datetime.now(timezone.utc)
+    mark = _takeover_mark(day_s)
+    try:
+        raw = mark.read_text(encoding="utf-8").strip()
+    except OSError:
+        return False
+    at = ahead_gate._parse(raw.splitlines()[0]) if raw else None
+    if at is None:
+        return False
+    return (now - at) < TAKEOVER_STALE
 
 
 def _drop_mark(vid: str, sha: str) -> None:
@@ -1374,8 +1433,10 @@ def rebake_plan_for(day, now: datetime, *, root: Path | None = None) -> dict:
     up = _uploaded_row(vid) if vid else None
     newer = draft_newer_than(draft, (up or {}).get("uploaded_at"), root) if (draft_text and draft) else None
     scheduled = False
+    booked: datetime | None = None
     try:
         r = next_slot.latest_rows().get(vid) if vid else None
+        booked = ahead_gate._parse(str((r or {}).get("at") or ""))
         scheduled = bool(r and r.get("at"))
     except Exception:                                          # noqa: BLE001
         scheduled = False
@@ -1384,7 +1445,12 @@ def rebake_plan_for(day, now: datetime, *, root: Path | None = None) -> dict:
     today_s = now.astimezone(JST).date().isoformat()
     baked_today = _baked_today(_rebake_rows(root), today_s)
     t = now.astimezone(JST)
-    if day == t.date():
+    if booked is not None:
+        # **もう予約が付いている本の締切は、その予約そのもの**（2026-09-04）。
+        #     `today_slot()` は「いまから置ける次の正時」を返すので、枠を過ぎた本に
+        #     **1時間 後の存在しない締切**を与え、焼いている最中に公開されます。
+        slot_at = booked.astimezone(JST)
+    elif day == t.date():
         slot_at = today_slot(now, place_hour(day))
     else:
         slot_at = datetime(day.year, day.month, day.day, place_hour(day), tzinfo=JST)
@@ -1410,16 +1476,29 @@ def rebake_today(now: datetime | None = None, *, dry_run: bool = False) -> dict:
     except Exception as exc:                                   # noqa: BLE001
         print(f"[rebake] {stamp} 決めを読めませんでした: {str(exc)[:120]}", flush=True)
         return {"do": False, "started": False, "why": "決めを読めない"}
-    days = [first + timedelta(days=i) for i in range(REBAKE_DAYS_AHEAD + 1)]
+    # **きょうを必ず見ること**（2026-09-04 06:5x に踏んだ。**`scheduled` の枝と同じ door の2つ目の錠**）
+    #
+    #     `daily_pick.for_day()` は「**きょうの枠が埋まっていれば あす**」を返します
+    #     （`next_slot.today_full()`）。＝ **その日の本を置いた瞬間に、その日は
+    #     焼き直しの視野から外れます。** `rebake_plan()` の `scheduled` の枝を外しても、
+    #     ここが `first` から始まるかぎり **きょうの本は一度も plan に載りません。**
+    #     実測 09/04 06:32: `--dry-run` の `[rebake]` は 09/05 の1行だけで、
+    #     09:00 に出る `1huadpEk6HY`（焼いた後にコード 6件）は**印字されてすらいない。**
+    #
+    #     **2つとも外して初めて、規則3 の「次の枠の1本」に手が届きます。**
+    #     きょうを足しても 1本/日 は破れません —— 焼き直しは本を**差し替える**だけで、
+    #     枠は増えません（`takeover`）。
+    base = now.astimezone(JST).date()
+    days = sorted({base} | {first + timedelta(days=i) for i in range(REBAKE_DAYS_AHEAD + 1)})
     chosen: dict | None = None
     head: dict | None = None
-    for i, day in enumerate(days):
+    for day in days:
         try:
             plan = rebake_plan_for(day, now, root=root)
         except Exception as exc:                               # noqa: BLE001
             print(f"[rebake] {stamp} {day.isoformat()} の決めを読めませんでした: {str(exc)[:120]}", flush=True)
             continue
-        if i > 0 and not plan.get("decided"):
+        if day not in (base, first) and not plan.get("decided"):
             continue                                           # 先の日は決めが在るときだけ
         head = head or plan
         if plan["do"] and chosen is None:
@@ -1456,8 +1535,10 @@ def rebake_today(now: datetime | None = None, *, dry_run: bool = False) -> dict:
                   "session": os.environ.get("CLAUDE_SESSION_ID") or ""}, root)
     try:
         log = open(root / REBAKE_LOG, "ab")                     # noqa: SIM115
-        subprocess.Popen([sys.executable or "python3", "scripts/ahead_sweep.py",
-                          "--rebake-run", vid, topic, sha],
+        argv = ["--rebake-run", vid, topic, sha]
+        if plan.get("takeover"):
+            argv.append("--takeover")                           # 予約つきの本は、焼き上がってから枠を引き継ぐ
+        subprocess.Popen([sys.executable or "python3", "scripts/ahead_sweep.py", *argv],
                          cwd=str(root), stdout=log, stderr=subprocess.STDOUT,
                          stdin=subprocess.DEVNULL, start_new_session=True)
         plan["started"] = True
@@ -1494,9 +1575,34 @@ def rebake_busy() -> bool:
     return False
 
 
-def rebake_run(vid: str, topic: str, sha: str) -> int:
+def _slot_of(vid: str) -> str:
+    """**その本に付いている予約の時刻**（`YYYY-MM-DDTHH:MM` JST・API 0単位）。無ければ空。"""
+    from src import next_slot                                  # noqa: PLC0415
+    try:
+        row = next_slot.latest_rows().get(vid) or {}
+        at = ahead_gate._parse(str(row.get("at") or ""))
+    except Exception:                                          # noqa: BLE001
+        return ""
+    return at.astimezone(JST).strftime("%Y-%m-%dT%H:%M") if at else ""
+
+
+def rebake_run(vid: str, topic: str, sha: str, *, takeover: bool = False) -> int:
     """**焼く側**（背景・`--rebake-run`）。機械にひとつの錠を持って
-    `pipeline --script --dry-run` → `upload_only --draft --replaces` を撃ち、結果を帳面へ。"""
+    `pipeline --script --dry-run` → `upload_only --draft --replaces` を撃ち、結果を帳面へ。
+
+    `takeover=True` は「**旧 ID には予約が付いている**」の印（`rebake_plan()` の同名の欄）。
+    そのときは焼き上がった**後**に枠を引き継ぎます:
+
+        1. 旧 ID の予約の時刻を控える（`_slot_of`・0単位）
+        2. `reschedule.py --unschedule <旧>`（50単位）← **ここから枠が空きます**
+        3. `upload_only --draft --replaces <旧>`（`videos.insert`・日枠 0単位）
+        4. `reschedule.py --move <新> <控えた時刻>`（50単位）← 枠が埋まります
+
+    **2〜4 のあいだ、その日は 0本 です**（実測 2〜5分）。その窓に `place_today()` が来ると
+    旧 ID を枠へ戻し、4 が規則1 で弾かれるので、**2 の前に印を置きます**（`_takeover_mark`）。
+    **3 が落ちたら 2 を戻します**（旧 ID を同じ時刻へ）—— 焼き直しに失敗した日に
+    公開そのものを落とさないため。**「焼けなかった」と「その日 出なかった」は別の損です。**
+    """
     import fcntl                                               # noqa: PLC0415
     root = Path(config.ROOT)
     t0 = time.time()
@@ -1523,12 +1629,51 @@ def rebake_run(vid: str, topic: str, sha: str) -> int:
     rc = _run([py, "-m", "src.pipeline", "--script", draft, "--topic", topic, "--dry-run"],
               "pipeline --dry-run", 5400)
     new_id = ""
+    slot = _slot_of(vid) if takeover else ""
+    mark_t: Path | None = None
+    if rc == 0 and takeover:
+        # **枠の引き継ぎ** —— ここから `--move 新` までのあいだ、その日は 0本。
+        if not slot:
+            print(f"[rebake-run] [!] `{vid}` の予約の時刻が読めません（`data/next_slot` の控え）。"
+                  f"**枠を外しません** —— 差し替えずに終わります", flush=True)
+            rc = 1
+        else:
+            mark_t = _takeover_mark(slot[:10])
+            try:
+                mark_t.write_text(datetime.now(timezone.utc).isoformat() + "\n", encoding="utf-8")
+            except OSError:
+                mark_t = None
+            print(f"[rebake-run] 枠を引き継ぎます: `{vid}` の {slot} JST を外します（50単位）", flush=True)
+            rc = _run([py, "scripts/reschedule.py", "--unschedule", vid],
+                      "reschedule --unschedule", 600)
+            if rc != 0:
+                print(f"[rebake-run] [!] 予約を外せませんでした（rc={rc}）。**枠はそのまま**"
+                      f"（旧 `{vid}` が {slot} に出ます）", flush=True)
     if rc == 0:
         rc, out = _run_out([py, "scripts/upload_only.py", topic, "--draft", "--replaces", vid],
                            "upload_only --draft --replaces", 1800)
         for ln in (out or "").splitlines():
             if ln.startswith("VIDEO_ID "):
                 new_id = ln.split(None, 1)[1].strip()
+        if takeover and slot:
+            if rc == 0 and new_id:
+                rc = _run([py, "scripts/reschedule.py", "--move", new_id, slot],
+                          "reschedule --move（引き継ぎ）", 600)
+                if rc == 0:
+                    print(f"[rebake-run] 枠を引き継ぎました: `{new_id}` を {slot} JST へ", flush=True)
+                else:
+                    print(f"[rebake-run] [!] 新しい本を枠へ置けませんでした（rc={rc}）—— "
+                          f"`python scripts/reschedule.py --move {new_id} {slot}` を手で撃つこと", flush=True)
+            else:
+                # **焼けなかった日に、公開まで落とさない。** 外した予約を旧 ID へ戻す。
+                print(f"[rebake-run] [!] 上げられませんでした。**旧 `{vid}` を {slot} へ戻します**", flush=True)
+                _run([py, "scripts/reschedule.py", "--move", vid, slot],
+                     "reschedule --move（戻し）", 600)
+    if mark_t is not None:
+        try:
+            mark_t.unlink()
+        except OSError:
+            pass
     _rebake_note({"at": datetime.now(JST).isoformat(timespec="seconds"), "kind": "done",
                   "video_id": vid, "topic": topic, "sha": sha, "rc": rc, "new_id": new_id,
                   "seconds": round(time.time() - t0)}, root)
@@ -1715,5 +1860,6 @@ def main(argv: list[str] | None = None) -> int:
 if __name__ == "__main__":
     # **焼く側**（`rebake_today` が背景で起こす）。位置引数 3つ: 旧ID・題材・台本の sha。
     if len(sys.argv) >= 5 and sys.argv[1] == "--rebake-run":
-        raise SystemExit(rebake_run(sys.argv[2], sys.argv[3], sys.argv[4]))
+        raise SystemExit(rebake_run(sys.argv[2], sys.argv[3], sys.argv[4],
+                                    takeover="--takeover" in sys.argv[5:]))
     raise SystemExit(main())
