@@ -4,3 +4,4 @@
 {"topic": "nenkin-uketorikata-65-70-75-handan", "model": "opus", "rounds": 4, "fixed": 32, "confirmed": 102, "grounded": 158, "raw": 160, "reason": "上限 4周 に達した", "changed": true}
 {"topic": "zaishoku-2026-62man", "model": "opus", "rounds": 4, "fixed": 28, "confirmed": 93, "grounded": 160, "raw": 160, "reason": "上限 4周 に達した", "changed": true}
 {"topic": "zaishoku-2026-62man", "model": "opus", "rounds": 4, "fixed": 30, "confirmed": 93, "grounded": 159, "raw": 160, "reason": "上限 4周 に達した", "changed": true}
+{"topic": "zaishoku-2026-62man", "model": "opus", "rounds": 4, "fixed": 29, "confirmed": 91, "grounded": 158, "raw": 160, "reason": "上限 4周 に達した", "changed": true, "at": "2026-09-03T10:33:48+00:00", "seconds": 1434.7, "round_seconds": [249.6, 199.9, 217.8, 244.4]}
