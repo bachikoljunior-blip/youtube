@@ -9,3 +9,5 @@
 [sweep] $ /usr/local/bin/python3 -m src.pipeline --script data/scripts/zaishoku-2026-62man.script.json --topic zaishoku-2026-62man --dry-run
 [rebake-run] 09/03 16:01 JST `1huadpEk6HY`（zaishoku-2026-62man・sha bd162bda6fd5）を焼きます
 [sweep] $ /usr/local/bin/python -m src.pipeline --script data/scripts/zaishoku-2026-62man.script.json --topic zaishoku-2026-62man --dry-run
+[rebake-run] 09/03 16:40 JST `1huadpEk6HY`（zaishoku-2026-62man・sha a45d484a223f）を焼きます
+[sweep] $ /usr/local/bin/python3 -m src.pipeline --script data/scripts/zaishoku-2026-62man.script.json --topic zaishoku-2026-62man --dry-run
