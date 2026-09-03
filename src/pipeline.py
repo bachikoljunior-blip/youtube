@@ -798,6 +798,34 @@ def main(argv: list[str] | None = None) -> int:
         json.dumps(plan, ensure_ascii=False), encoding="utf-8"
     )
 
+    # **次に焼く本のぶんの絵を、ここで注文しておく**（2026-09-03・オーナー原文
+    # 「動画内で使う画像はチャットgptのimages2.0を活用して」）。
+    #
+    # **注文は「置くだけ」で、この本には間に合いません** —— 外の毎時セッションが
+    # 拾うまで最大1時間かかるので、間に合うのは**次に同じ題材を焼いたとき**
+    # （＝ 規則3「次の枠まで改善し続ける」で焼き直す回）です。
+    # `docs/IMAGE_ORDERS.md`:「絵が要る本の締切から 2時間 以上 前に置くこと。
+    # 来ていなければ、**待たずに** 自前の図解で焼くこと（**止めない**）」。
+    #
+    # **置かないと、外のセッションは永久に1枚も焼きません**（2026-09-03 に実測 ——
+    # 注文 0件・絵 0件・`image_orders` を書くコード 0か所で、受け口だけが在りました）。
+    try:
+        from . import image_orders
+
+        _o = image_orders.place(
+            topic["id"],
+            f"{topic.get('title') or topic['id']} の解説動画の背景。"
+            "抽象的で落ち着いた幾何学模様。暗めで、上に白い文字を載せても読める濃さ。",
+            size="1080x1920" if args.short else "1920x1080",
+            for_text=f"{topic['id']} の動画内の背景",
+        )
+        if not _o.get("already"):
+            print(f"[image] 注文を置きました: data/image_orders/{_o['id']}.json"
+                  "（届くのは次に焼く回から。**この本は待ちません**）")
+    except Exception as _e:                                 # noqa: BLE001
+        # **止めない。** 絵は「在れば敷く」もので、無くても本は焼けます。
+        print(f"[image] 注文を置けませんでした（続けます）: {_e}")
+
     slides = visuals.render(
         plan, work / "slides", topic["id"],
         theme_index=theme_index, portrait=args.short,

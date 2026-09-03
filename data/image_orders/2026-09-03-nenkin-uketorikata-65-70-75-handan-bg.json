@@ -1,0 +1,13 @@
+{
+ "id": "2026-09-03-nenkin-uketorikata-65-70-75-handan-bg",
+ "asked_at": "2026-09-03T20:18:24+09:00",
+ "for": "nenkin-uketorikata-65-70-75-handan（長尺）の動画内の背景",
+ "prompt": "nenkin-uketorikata-65-70-75-handan の解説動画の背景。日本の制度・お金の話に合う、抽象的で落ち着いた幾何学模様。暗めのトーンで、上に白い文字を載せても読める濃さ。",
+ "avoid": "文字・ロゴ・実在の人物・透かし・図表・グラフ",
+ "size": "1920x1080",
+ "format": "jpg",
+ "out": "assets/images/2026-09-03-nenkin-uketorikata-65-70-75-handan-bg.jpg",
+ "status": "pending",
+ "due": "2026-09-04T08:18:24+09:00",
+ "late": false
+}

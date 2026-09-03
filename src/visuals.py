@@ -87,7 +87,7 @@ body::before {
    別のものが必ず来ます。**覆る条件**: padding-top を 24px より小さくしたら、
    ここは重なります（そのときは置き場所ごと引き直すこと）。 */
 .subs-badge {
-  position: absolute; top: 18px; right: 72px;
+  position: absolute; z-index: 2; top: 18px; right: 72px;
   font-size: 22px; font-weight: 800; letter-spacing: .04em;
   color: {ACCENT}; opacity: .82; line-height: 1;
 }
@@ -95,6 +95,33 @@ body::after {
   content: ""; position: absolute; inset: 0; pointer-events: none;
   background: radial-gradient(120% 90% at 78% 8%, rgba({GLOW},.22), transparent 60%);
 }
+/* **GPT Image 2.0 で焼いた絵を、背景として敷く枠**（2026-09-03・オーナー原文
+   「動画内で使う画像はチャットgptのimages2.0を活用して」）。
+   `src/image_orders.image_for()` が絵を返した本だけに入ります。
+
+   **数字の上に敷かないこと。** この作りの根幹は「制度を解説するのではなく、
+   **自分で計算した結果を発表する**」で、主役は `.stat` と `.chart` の数字です
+   （CLAUDE.md）。だから絵は `z-index: 0` の**いちばん下**に置き、
+   **暗幕（`.bg-veil`）を必ず重ねて**文字のコントラストを保ちます。
+   **絵が図表を持っていると、こちらの計算と食い違って見えます** ——
+   だから注文の `avoid` に「図表・グラフ」を入れてあります
+   （`src/image_orders.AVOID`）。
+
+   **覆る条件**: 暗幕を薄くして文字が読めなくなったら、`--veil` を上げること。
+   読めるかどうかは目視ではなく `_LINE_PROBE_JS` の隣に測る口を足して見ること。 */
+.bg-photo {
+  position: absolute; inset: 0; z-index: 0;
+  background-size: cover; background-position: center;
+}
+.bg-veil {
+  position: absolute; inset: 0; z-index: 0; pointer-events: none;
+  background: {BG}; opacity: var(--veil, .72);
+}
+/* **`.subs-badge` をここに入れないこと。** `position: relative` が
+   札の `absolute` を上書きして、札が本文の流れへ降りてきます
+   （2026-09-03 に踏んだ —— `tests/test_subs_badge.py` が
+     「見出しと重なった」で捕まえました）。札は自分の規則で `z-index` を持ちます。 */
+.headline, .body, .formula { position: relative; z-index: 1; }
 /* `--head-fit` は「1行が限度より長いときだけ」入る縮小率（`_fit_ratio`）。
    **見出しには縮むつまみが1つも無かった**（2026-08-17）——
    `tighten` は折り直すだけ、`zoom` は `.body` にしか掛からないので、
@@ -777,8 +804,14 @@ def _body_html(visual: dict, portrait: bool = False, tighten: int = 0) -> str:
 SUBS_BADGE_TEXT = "チャンネル登録"
 
 
+#: 背景の絵の上に敷く暗幕の濃さ。**下げるときは文字が読めるか測ること**
+#: （`src/visuals._css()` の `.bg-veil` の註）。
+BG_VEIL = 0.72
+
+
 def build_html(visual: dict, theme: dict | None = None, portrait: bool = False,
-               tighten: int = 0, zoom: float = 1.0, subs_badge: bool = False) -> str:
+               tighten: int = 0, zoom: float = 1.0, subs_badge: bool = False,
+               bg_image: str = "") -> str:
     """`tighten` は横（勝手な折り返し）、`zoom` は縦（枠からの溢れ）を直す。
 
     **2つは別の向きなので、別のつまみが要る。** `tighten` を上げると行数が
@@ -797,9 +830,15 @@ def build_html(visual: dict, theme: dict | None = None, portrait: bool = False,
     # **上の padding の中に置くので、下の3つの行は1つも動きません。**
     badge_html = (f'<div class="subs-badge">{_esc(SUBS_BADGE_TEXT)}</div>'
                   if subs_badge else "")
+    # **絵は `data:` で差し込みます** —— `set_content()` には base URL が無いので、
+    # `file://` や相対パスだと**黙って無地で焼けます**（`image_orders.data_uri`）。
+    bg_html = (f'<div class="bg-photo" style="background-image:url({bg_image})"></div>'
+               f'<div class="bg-veil"></div>') if bg_image else ""
     return (
         "<!doctype html><html lang=ja><head><meta charset=utf-8>"
-        f"<style>{_css(theme or THEMES[0], portrait)}{extra}</style></head><body>"
+        f"<style>{_css(theme or THEMES[0], portrait)}{extra}"
+        f":root {{ --veil: {BG_VEIL}; }}</style></head><body>"
+        f"{bg_html}"
         f"{badge_html}"
         f'<div class="headline"{head_style}>{head}</div>'
         f'<div class="body">{_body_html(visual, portrait, tighten)}</div>'
@@ -1160,9 +1199,32 @@ def subs_badge_on(topic_id: str) -> bool:
         return False
 
 
+def bg_image_for(topic_id: str) -> str:
+    """**GPT Image 2.0 で焼いた絵が届いていれば、その `data:` を返す。無ければ空。**
+
+    オーナー原文（2026-09-03 20:0x）「**動画内で使う画像はチャットgptの
+    images2.0を活用して**」。受け渡しは `docs/IMAGE_ORDERS.md`、
+    注文と受け取りは `src/image_orders.py`。
+
+    **待ちません。** 空文字は異常ではなく「まだ来ていない ＝ 自前の図解で焼く」
+    という正常な合図です（`docs/IMAGE_ORDERS.md`「**止めない**」）。
+    **ここに例外を投げる枝を足さないこと** —— 絵1枚のために本を1本 落とすほうが
+    はるかに高くつきます（CLAUDE.md の4）。
+    """
+    if not topic_id:
+        return ""
+    try:
+        from src import image_orders
+
+        got = image_orders.image_for(str(topic_id))
+        return image_orders.data_uri(got) if got else ""
+    except Exception:                                       # noqa: BLE001
+        return ""
+
+
 def render(visuals: list[dict], out_dir: Path, topic_id: str = "",
            theme_index: int | None = None, portrait: bool = False,
-           subs_badge: bool | None = None) -> list[Path]:
+           subs_badge: bool | None = None, bg_image: str | None = None) -> list[Path]:
     """図解を1枚ずつ PNG にする。配色は theme_index があれば順番に回す。
 
     portrait=True でショート向けの縦画面（1080x1920）にする。
@@ -1181,6 +1243,9 @@ def render(visuals: list[dict], out_dir: Path, topic_id: str = "",
 
     theme = theme_for(topic_id, theme_index)
     badge = subs_badge_on(topic_id) if subs_badge is None else bool(subs_badge)
+    bg = bg_image_for(topic_id) if bg_image is None else str(bg_image or "")
+    if bg:
+        print(f"[visuals] 背景に GPT Image 2.0 の絵を敷きます（{len(bg) // 1024}KB）")
     if badge:
         print(f"[visuals] 登録の依頼を画面に出します（A/B 画面あり・{SUBS_BADGE_TEXT}）")
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -1204,7 +1269,7 @@ def render(visuals: list[dict], out_dir: Path, topic_id: str = "",
             for zoom in ZOOMS:
                 for tighten in range(MAX_TIGHTEN + 1):
                     page.set_content(
-                        build_html(visual, theme, portrait, tighten, zoom, badge),
+                        build_html(visual, theme, portrait, tighten, zoom, badge, bg),
                         wait_until="load")
                     bad = page.evaluate(_LINE_PROBE_JS)
                     if bad < best[0]:
@@ -1217,7 +1282,7 @@ def render(visuals: list[dict], out_dir: Path, topic_id: str = "",
             if not done:
                 # 詰めきっても収まらなかった。一番ましだったところへ戻して焼く。
                 page.set_content(
-                    build_html(visual, theme, portrait, best[1], best[2], badge),
+                    build_html(visual, theme, portrait, best[1], best[2], badge, bg),
                     wait_until="load")
                 print(f"[visuals] [!] {i}枚目: 収まらない箇所が {best[0]} 残った"
                       f"（詰め {best[1]} 段・縮小 {best[2]}）。"
