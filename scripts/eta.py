@@ -7098,6 +7098,16 @@ def plan(m: dict, a: dict, density: int = PLAN_PUBLISH_PER_DAY,
     if _rc and out.get("lever_hint") == "per_video":
         out["lever_hint_covered"] = (_rc.isoformat() if hasattr(_rc, "isoformat")
                                      else str(_rc))
+    # --- **門の日数を、頭の3行まで運ぶ**（2026-09-03・最適化の回）---
+    #     `a`（門の辞書）は `headline()` に渡っていませんでした。到達日が
+    #     出ない回は、腕を門1' の日数で測るしかないのに（`gate_arm_lines()`）、
+    #     頭からは門が見えなかった。**`a` を丸ごと運ばず、要る4つだけ**。
+    out["gates"] = {
+        "fan_subs_remaining": a.get("fan_subs_remaining"),
+        "subs_remaining": a.get("subs_remaining"),
+        "subs_per_day": a.get("subs_per_day"),
+        "days_fan_subs": a.get("days_fan_subs"),
+    }
     return out
 
 
@@ -8186,6 +8196,112 @@ def gate_lines(bar: str = "###", tr: dict | None = None) -> list[str]:
     return out
 
 
+def _ship_lever_counts(path: Path | None = None, days: int = 7) -> dict[str, int]:
+    """直近 `days` 日の ship を `--lever` ごとに数える（`data/runs.jsonl`・API 0単位）。"""
+    path = path or (ROOT / "data" / "runs.jsonl")
+    out: dict[str, int] = {}
+    if not path.exists():
+        return out
+    since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    for line in path.read_text(encoding="utf-8").splitlines():
+        try:
+            r = json.loads(line)
+        except Exception:                                      # noqa: BLE001
+            continue
+        if not (r.get("kind") == "ship" or r.get("ship_kind")):
+            continue
+        if str(r.get("at") or "") < since:
+            continue
+        k = str(r.get("lever") or "none")
+        out[k] = out.get(k, 0) + 1
+    return out
+
+
+def gate_arm_lines(pl: dict, *, runs_path: Path | None = None) -> list[str]:
+    """**到達日が出ない回は、腕を「最初に落ちる門」の日数で測る。**（2026-09-03・最適化の回）
+
+    ## なぜ要るか（実測。`python scripts/optimized.py` と `data/runs.jsonl`）
+
+    頭の3行は `lever_hint` を「この回に引く腕」と名指しし、その下で
+    「無限大にしても到達日が 0日 しか動かない腕: `sub_rate`。引かないこと」と出していました。
+    **その 0日 は、到達日そのものが『出ません』の回に測った 0日 です** ——
+    軌跡が届かないなら、どの腕を無限大にしても「動いた日数」は定義上 0 で、
+    それは律速でないことの証拠ではありません。
+
+    同じ出力の 60行 下では、**最初に落ちる門は 門1'（登録者 500人・いま 25人）で
+    532日**（観測 0.58人/日 なら 826日）と印字していました。**その門を動かす腕は
+    `views/day × sub_rate` の2本で、`sub_rate` はその片方です。**
+
+    実測（直近 5日・275 ship）: `--lever per_video` 108件 ／ `sub_rate` 7件。
+    頭の3行が「引かないこと」と書いた腕は、実際に引かれていませんでした。
+    その間、登録者は 22人 → 25人（0.58人/日）。**収益は門が開くまで 0円** なので、
+    門1' が動かない限り、到達日はどの回でも動きません。
+
+    ## 出すもの
+
+    到達日が出ない回（`target_date is None`）にだけ、門1' の残り人数を
+    `subs_per_day × 天井` で割った日数を、腕ごとに1行ずつ。天井は `lever_days` の
+    `cap`（`per_video` は実測の最大・`sub_rate` は `src/subs_cap.py` の実測の最大）。
+    **腕を1本だけ引いた日数と、2本とも天井まで引いた日数**を並べ、
+    直近 7日 の ship がどちらを引いたかを横に置きます。
+    **どの腕を引くかは回が決めます** —— ここは、頭の3行の「引かないこと」が
+    門の側では逆向きであることを、同じ3行の中に出すだけです。
+
+    ## 覆る条件
+
+    - `target_date` が出る回は、この行は出ません（軌跡の側の 0日 が本物になるので）。
+    - 門1' が既に開いた回（`fan_subs_remaining == 0`）も出ません。
+    - `sub_rate` の天井が `per_video` の天井より小さくなったら、並びは自分で変わります
+      （定数は持ちません。`lever_days` の `cap` を毎周 読みます）。
+    """
+    if pl.get("target_date") is not None:
+        return []
+    g = pl.get("gates") or {}
+    remaining = g.get("fan_subs_remaining")
+    spd = float(g.get("subs_per_day") or 0.0)
+    if not remaining or remaining <= 0 or spd <= 0:
+        return []
+    caps: dict[str, float] = {}
+    for r in pl.get("lever_days") or []:
+        c = r.get("cap")
+        if r.get("lever") in ("per_video", "sub_rate") and c and c > 1.0:
+            caps[r["lever"]] = float(c)
+    if not caps:
+        return []
+    bar = "###"
+    base = remaining / spd
+    out = [
+        f"{bar} [!] **到達日が出ない回の『0日しか動かない』は、律速の証拠ではありません** ——"
+        f" 軌跡が届かない間は、どの腕も動いた日数が 0 です。"
+        f" **最初に落ちる門は 門1'（登録者 {FAN_SUBS_GATE:,}人・あと {int(remaining)}人）**で"
+        f" **{_fmt_days(base)}**（模型 {spd:.2f}人/日）。その門を動かす腕は"
+        f" `views/day × sub_rate` の2本です。**門1' で腕を測ると**:"
+    ]
+    prod = 1.0
+    for lever in ("per_video", "sub_rate"):
+        c = caps.get(lever)
+        if not c:
+            continue
+        prod *= c
+        out.append(f"{bar}     `{lever}` を天井 ×{c:.2f} まで引く → 門1' は"
+                   f" {_fmt_days(base / c)}（{c:.1f}倍 早い）")
+    if len(caps) == 2:
+        out.append(f"{bar}     2本とも天井まで → {_fmt_days(base / prod)}"
+                   f"（×{prod:.1f}）。**積です** —— 片方だけ引いても、もう片方の分は残ります。")
+    counts = _ship_lever_counts(runs_path)
+    if counts:
+        n_pv, n_sr = counts.get("per_video", 0), counts.get("sub_rate", 0)
+        out.append(f"{bar}     直近 7日 の ship: `per_video` {n_pv}件 ／ `sub_rate` {n_sr}件"
+                   + ("　← **門を動かす2本のうち、片方しか引かれていません。**"
+                      if n_sr * 5 < n_pv else ""))
+    out.append(f"{bar}     `sub_rate` の手は 0単位です: 登録の依頼はいま**最後のセグメントの音声1文**だけ"
+               f"（`src/script_writer.py`）＝ 最後まで見た人にしか届きません。"
+               f" 画面（全時間）・`first_comment`・説明欄の先頭に同じ依頼を置くのは、"
+               f" 次の1本で試せて、`data/shorts_subs.json` で 48時間 後に測れます"
+               f"（`src/verdict_power.py` の n を先に見ること）。")
+    return out
+
+
 def headline(pl: dict, prev: dict | None = None,
              tr: dict | None = None,
              points: list[dict] | None = None,
@@ -8380,6 +8496,11 @@ def headline(pl: dict, prev: dict | None = None,
             + "／".join(f"`{k}`" for k in _dead_inf)
             + "**（この回に `×10^9` まで撃って確かめた。オーナー規則2:"
               " **ゼロなら、そこは律速ではない**）。**引かないこと。**")
+    # --- **その 0日 を、門1' で測り直す**（2026-09-03・最適化の回。`gate_arm_lines()` の頭）---
+    try:
+        out.extend(gate_arm_lines(pl))
+    except Exception as _e:          # pragma: no cover - 道具が欠けても頭は出す
+        out.append(f"{bar} [!] `gate_arm_lines()` が撃てません: {_e}")
     # --- **撃った無限大が、腕に届かなかった腕**（2026-09-01・最適化の回）---
     #     ここは長らく上の行に混ざっていました。混ざると、**規則2 が
     #     「引かないこと」と言っている腕**の中に、**切られているだけの腕**が
