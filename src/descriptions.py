@@ -197,6 +197,14 @@ def body(description: str) -> str:
         i = text.find(mark)
         if i >= 0:
             text = text[:i]
+    # **先頭の登録の依頼も定型です**（`src/sub_ask.HEAD`・2026-09-03 に足した）。
+    # 落とさないと、`persona_defects()` / `verify` が定型文を「本文」として読み、
+    # 全本に同じ指摘が出ます（footer を落としているのと同じ理由）。
+    from . import sub_ask                                    # noqa: PLC0415
+
+    # `with_head()` が入れる形は **HEAD そのもの**なので、丸ごと1回 消せば足ります。
+    if sub_ask.HEAD.strip():
+        text = text.replace(sub_ask.HEAD, "", 1)
     lines: list[str] = []
     for ln in text.splitlines():
         if RULE_RE.match(ln.strip()):

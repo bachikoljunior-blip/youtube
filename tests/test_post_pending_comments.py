@@ -32,6 +32,8 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 import critique_queue  # noqa: E402
 
+from src import sub_ask  # noqa: E402
+
 _pspec = importlib.util.spec_from_file_location(
     "post_pending_comments_mod", ROOT / "scripts" / "post_pending_comments.py")
 ppc = importlib.util.module_from_spec(_pspec)
@@ -87,7 +89,13 @@ def test_build_が無くても_控えだけで動く(tmp_path, monkeypatch, caps
     rc = ppc.main(False, service=lambda: yt, reserve_hold=lambda: None,
                   note_ok=lambda d: None, mark=marked.append, build={})
     assert rc == 0
-    assert yt.inserted == [("A", "一言")]
+    # **末尾に登録の依頼が1文 足ります**（`src/sub_ask.py`・2026-09-03）。
+    # 控えの本文は そのまま先頭に残ること（依頼が本文を押し出していないこと）。
+    assert len(yt.inserted) == 1
+    vid, body = yt.inserted[0]
+    assert vid == "A"
+    assert body.startswith("一言")
+    assert body.endswith(sub_ask.COMMENT_TAIL)
     assert marked == ["A"]
     assert "付けたコメント: 1件" in capsys.readouterr().out
 
