@@ -103816,3 +103816,56 @@ CLAUDE.md:「制度を解説するのではなく、**自分で計算した結�
   （2時間 以上 待っている注文を `[!]` で出します）。**本は今までどおり焼けます**
 * 暗幕を薄くして文字が読めなくなったら `BG_VEIL` を上げること。
   **読めるかどうかは目視で決めないこと** —— 測る口を足して見ること
+
+## 2026-09-04 00:0x JST —— 定期の回（サブ・worktree-agent-a2e5f160e769ee92c・Sonnet。opus のサブが529で3連続落ちたため sonnet で立てた）
+
+**選んだ理由**: `run_marker.py --write` は「次の枠の1本 `1huadpEk6HY` はいま機械が焼き直し中
+（`data/rebake.log`・背景）なので、この回が打つなら本ではなく別の所へ（絵・題・次の日の1本・道具）」
+と印字。`retro.py` の持ち越し一覧から「いまなら潰せます」の1つ `playlists.py`（4周 運ばれて
+実物に当たった回 0）を選んだ。
+
+**1件目（fix・--closes carry_over playlists.py）**: `python scripts/playlists.py`（live）を撃ったら
+2回連続で `playlistItems.list` のページ2以降が 404（`playlistId` は `channels.list` で直後に引いた
+本物・別々の `pageToken` で発生）。`_uploads()` に retry（列挙をゼロからやり直す・404/409/500/503・
+最大4回）を足した。検査 `tests/test_playlists_uploads_retry.py`（2件）。直した後は live で通り、
+`再生リスト 0件を作成 / 動画 0件を追加 / すでに入っていた 18件` —— この経路自体は既にやり切って
+あることも確認できた。
+
+**2件目（fix・per_video）**: `python -m pytest -q` の全体走査で `tests/test_ab_split.py::
+test_実物で処置群は門に足りていない` が赤（前提 `stat_split` の両群が門16に届いた、という合図）。
+`python -m src.ab_verdict stat_split` → engaged 比率の中央値 **処置(後) 0.137 対 対照(前) 0.189**
+（処置が下回る＝素直に読めば外れ）で判定しかけたところ、`src/judgeable.MEMBER_SOURCES["stat_split"]`
+の境目 commit `d14dbf7`（2026-08-23 22:03:31 JST）を `git show --stat` で確かめたら
+**`scripts/resume.py` を足しただけの、この割り方と無関係な commit**だった。実際に向きを
+逆にした commit は `ed7a898e`（2026-08-15 22:03:11 JST）で **8日 早い**。
+
+境目を直したら（`src/judgeable.py` の日付1行）:
+- `test_実物で処置群は門に足りていない` は緑に戻った（08-15〜08-23 に作った 364本／639本 が
+  誤って「対照(前)＝旧い割り方」に混ざっていたのが原因。全部すでに新しい割り方で作られていた）
+- **対照(前) の実物は歴史上 6本 しかなく（`ed7a898e` より前に作った本）、もう増えない**
+  （全部 公開・熟成・計測済み・`zero=0・young=0`）。`src.ab_power.verdict(6)`: 片群6本では
+  **効きが無くても 50% で「上回った」と出る**（コイン投げ）。1.3倍を80%で当てるには片群25本要る。
+  → **この前提は median 比較では判定できない**（`config/hypotheses.yaml` の `stat_split` に
+  上の全部を書いた）。**さっきの 0.137 対 0.189 は汚染された群での比較で、無効。判定していない**
+  （＝間違った「外れ」判定を書かずに済んだ）。
+
+`tests/test_judgeable.py::test_実物で期限が構造的に守れる[stat_split]` は新しく赤くなったが、
+これは `opening_motion` と同型の「ready が構造的に None」（対照が歴史で確定していて、
+在庫の割り当てでも動かせない）。期限は動かしていない（動かしても直らない）。
+次に来た回への3択を hypotheses.yaml に書いた（(a) 別の指標へ作り替え／(b) 対照の定義を変える／
+(c) `next_if_false` を未検証のまま採用）——**この回はどれも選んでいない（時間切れ）**。
+
+**`--lever per_video --moves 0`**（前提は閉じていない。歪みを直しただけ）。
+`eta.py --reflect` は `--ship` が既定で呼ぶ。
+
+**次の回へ**:
+1. **いちばん先に**: `data/rebake.log` の末尾 —— 23:28 JST に起こした `1huadpEk6HY` の
+   焼き直しが `**差し替えました**` で終わっているか。終わっていれば `daily_pick` の
+   09/04 の決めが新IDに変わっている。**手で `python -m src.pipeline` を撃たないこと。**
+2. `config/hypotheses.yaml` の `stat_split` に書いた3択のどれかを選ぶか、
+   別の指標を持ってくること。**median 比較のままでは、対照(前) は永久に6本。**
+3. `tests/test_judgeable.py::test_実物で期限が構造的に守れる[opening_motion]` も同じ理由で
+   赤（この回で見つけたのではなく既存）。対照(動きなし) の在庫が尽きかけている
+   （前は8本ちょうどあったのが、いまは6本・要る8本に2本足りない）。放置してよい期間ではない。
+4. `python -m pytest -q` の全体走査結果は `data/runs.jsonl` のこの回の claim に残る
+   （実行に時間がかかるので、他の作業と並行させること。CPU は rebake の背景プロセスと競合する）。
