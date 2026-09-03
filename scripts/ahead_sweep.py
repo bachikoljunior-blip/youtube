@@ -389,7 +389,8 @@ def place_hour(day, *, sweep=None, config=None) -> int:
 
 def today_plan(now: datetime, *, count: int, cap: int, candidate: dict | None,
                hour: int, quota_open: bool, rule_on: bool = True,
-               paused: str = "", insert_ok: bool = False) -> dict:
+               paused: str = "", insert_ok: bool = False,
+               rebake_pending: bool = False) -> dict:
     """**置くか・何を・いつ**を決める（**API 0単位・純関数**）。
 
     返り: `{"do": bool, "why": str, "video_id": str|None, "when": "YYYY-MM-DDTHH:00"|None,
@@ -399,6 +400,10 @@ def today_plan(now: datetime, *, count: int, cap: int, candidate: dict | None,
     （台本の控え `data/critique_queue/<ID>.script.json` が在る）。**日枠が尽きていても、
     その道なら置けます** —— `videos.insert` は日枠を使いません（`src/upload_cap.day_quota`
     の註・08/27 に 403 の後で 3本 通った実測）。印が無ければ従来どおり置きません。
+
+    `rebake_pending=True` は「**この本は、いま焼き直せば良くなる**」の印
+    （`rebake_plan_for(きょう)` が `do: True` を返した ＝ 台本のほうが控えより新しい）。
+    そのときは、枠まで `REBAKE_LEAD` 以上 残っているかぎり**置きません**。理由は下。
     """
     day = now.astimezone(JST).date().isoformat()
     if not rule_on:
@@ -423,6 +428,37 @@ def today_plan(now: datetime, *, count: int, cap: int, candidate: dict | None,
     if not vid:
         return {"do": False, "why": "置ける本が1本も無い（決めた本も、池も、下書きも無い）",
                 "video_id": None, "when": None}
+    # --- **焼き直しが先。置くのは後**（2026-09-04 に踏んだ）-----------------------
+    #
+    #     **固定その4（予約はその日のぶんだけ）と 規則3（次の枠の1本を改善し続ける）が、
+    #     `upload_only --replaces` の所で衝突していました。** 掃きの中の順は
+    #     `main()` で **`place_today()` → `rebake_today()`** で、置く手のほうが先です。
+    #     置いた瞬間に `rebake_plan_for()` は
+    #     **「`<ID>` にはもう予約が付いている（`--replaces` が断る側）」**で `do: False` に
+    #     倒れるので、**同じ掃きの数行 下にある焼き直しが、自分で自分を塞いでいました。**
+    #
+    #     実測 2026-09-04: 09:00 に出る `1huadpEk6HY` は 09/03 04:37 に焼いてあり、
+    #     そのあと入った 6件（登録の依頼を画面へ・GPT Image 2.0 の背景ほか）が
+    #     1つも入っていない。絵は外の ChatGPT Works が 09/03 20:33 に納品ずみで
+    #     `assets/images/` に在るのに、**本に入る道だけが閉じていました。**
+    #     ＝ **規則3 のいちばん大きい手（焼き直し）が、まさに規則3 の時間帯だけ使えない。**
+    #
+    #     **待つ長さは `REBAKE_LEAD` と同じものを使います**（新しい定数を作らないこと）。
+    #     焼く側は枠まで `REBAKE_LEAD` を切ったら自分で焼くのをやめるので、
+    #     **この2つは同じ線の裏表で、構造上 かみ合いません**（永久に置かれない、は起きない）。
+    #     枠が近づけば `rebake_pending` の値に関わらず、次の掃きが置きます。
+    #
+    #     **覆る条件**: `upload_only --replaces` が予約の付いた本も差し替えられるように
+    #     なったら、この枝は要りません（そのとき `rebake_plan()` の `scheduled` の枝と
+    #     一緒に消すこと）。検査 `tests/test_place_waits_for_rebake.py`。
+    if rebake_pending and (slot - now) >= REBAKE_LEAD:
+        return {"do": False,
+                "why": f"`{vid}` は焼き直せば良くなる（台本のほうが控えより新しい）。"
+                       f"**置くと `--replaces` が断る側に回る**ので、焼いてから置きます"
+                       f"（枠 {slot.strftime('%H:%M')} JST まで"
+                       f" {int((slot - now).total_seconds() // 60)}分・"
+                       f"線は `REBAKE_LEAD` {int(REBAKE_LEAD.total_seconds() // 60)}分）",
+                "video_id": vid, "when": slot.strftime("%Y-%m-%dT%H:%M")}
     return {"do": True, "why": str((candidate or {}).get("why") or ""),
             "video_id": vid, "when": slot.strftime("%Y-%m-%dT%H:%M"),
             "via": "insert" if (not quota_open and insert_ok) else "update"}
@@ -617,9 +653,23 @@ def place_today(now: datetime | None = None, *, dry_run: bool = False) -> dict:
         except Exception as exc:                               # noqa: BLE001
             print(f"[today] 候補を読めませんでした: {str(exc)[:120]}", flush=True)
     insert_ok = stash_script(str((cand or {}).get("video_id") or "")) is not None
+    # **この本は、いま焼き直せば良くなるか**（0単位・読むだけ）。`today_plan()` の
+    #     「焼き直しが先。置くのは後」の枝へ渡します。**まだ予約が付いていないので、
+    #     `rebake_plan_for()` の `scheduled` の枝はここでは立ちません。**
+    rebake_pending = False
+    try:
+        _rp = rebake_plan_for(now.astimezone(JST).date(), now)
+        rebake_pending = (bool(_rp.get("do"))
+                          and str(_rp.get("video_id") or "")
+                          == str((cand or {}).get("video_id") or "")
+                          and bool((cand or {}).get("video_id")))
+    except Exception as exc:                                   # noqa: BLE001
+        print(f"[today] 焼き直しの予定を読めませんでした（置く側は止めません）: "
+              f"{str(exc)[:120]}", flush=True)
     plan = today_plan(now, count=count, cap=house_rule.cap(), candidate=cand, hour=hour,
                       quota_open=quota_open, rule_on=house_rule.same_day_only(),
-                      paused=_paused(), insert_ok=insert_ok)
+                      paused=_paused(), insert_ok=insert_ok,
+                      rebake_pending=rebake_pending)
     plan["rc"] = None
     if plan["do"] and plan.get("via") == "update" and insert_ok:
         # **帳面の取り置きが `videos.update` を止める窓**（403 はまだ見ていないが、
