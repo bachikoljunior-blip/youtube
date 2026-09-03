@@ -652,14 +652,22 @@ EXPERIMENTS: dict[str, Experiment] = {
         # 帯の中の位置の話なので、掛かるのはショートだけです。
         eligible=_shorts_only,
     ),
-    # **配信の側の2件目**（2026-09-03・最適化の回）。腕は `sub_rate` ——
-    # `eta.py` の 門1' で測ると `per_video`(119日) より大きい(81日)のに、
-    # 直近7日の ship は per_video 115件 対 sub_rate 7件 でした。
+    # 2026-09-03・最適化の回。腕は `sub_rate` —— `eta.py` の 門1' で測ると
+    # `per_video`(119日) より大きい(81日)のに、直近7日の ship は
+    # per_video 115件 対 sub_rate 7件 でした。
     # **ショートにも長尺にも掛かります**（`eligible` を置きません）——
     # 画面はどちらの形にも在るので、絞る理由がありません。
+    #
+    # **`side` は `content` です**（立てた回が最初 `dist` と書いて、同じ回に直した）。
+    # `src/arm_speed.sides()` の定義は「**動画の外側**（形式・時刻・本数・間隔・面）＝
+    # 配信 ／ **動画の中身**（題・文言・冒頭の絵・コマの速さ・尺）＝ 中身」で、
+    # **画面に焼く札は動画の中**です。**札の見た目で決めないこと** ——
+    # ここを `dist` にすると `sides()` の 2つの数（当たり 38% 対 9%）が
+    # **静かに濁ります**。同じ日に別の回が足した `src/sub_ask.py`
+    # （説明欄・コメント）は**動画の外側なので、あちらが `dist`** です。
     "subs_badge": Experiment(
         name="subs_badge",
-        side="dist",
+        side="content",
         split=subs_badge,
         treated="画面あり",
         control="画面なし",

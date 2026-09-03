@@ -74,7 +74,9 @@ def test_両群に本が入る():
 def test_EXPERIMENTS_に登録されている():
     """足し忘れると `status.py` が群を突き合わせないまま外れを出します。"""
     exp = ab_split.EXPERIMENTS["subs_badge"]
-    assert exp.side == "dist"
+    # **`content` です**（画面に焼く札は動画の中。`arm_speed.sides()` の定義）。
+    # `dist` に戻すと、当たり 38%/9% の2つの数が静かに濁ります。
+    assert exp.side == "content"
     assert exp.metric == "登録"
     assert {exp.treated, exp.control} == {"画面あり", "画面なし"}
 
@@ -90,7 +92,7 @@ def test_台帳にこの実験を名指しした前提が開いている():
            and not any(k in h for k in ("verdict", "closed_on", "outcome"))]
     assert len(hit) == 1, [h.get("claim") for h in hit]
     assert hit[0]["lever"] == "sub_rate"
-    assert hit[0]["side"] == "dist"
+    assert hit[0]["side"] == "content"
 
 
 def test_札の文言に登録の語が入っている():
