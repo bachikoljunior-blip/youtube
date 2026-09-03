@@ -73,7 +73,14 @@ def test_verdict_run_len_ignores_non_ship_rows(tmp_path):
 
 
 def _run_cli(monkeypatch, kind, judgeable, run_len=99):
-    """門だけを撃つ。**台帳には書きません**（`ship()` を差し替えます）。"""
+    """門だけを撃つ。**台帳（`data/runs.jsonl`）には1行も書きません。**
+
+    `ship()` だけでなく `note_verdict_gate()` も差し替えること —— あちらは
+    `ap.error()` の**手前**で本物の台帳へ追記します（この検査を書いた回に、
+    実際に 2行 漏らして `git checkout` で戻しました）。
+    """
+    monkeypatch.setattr(run_marker, "note_verdict_gate", lambda *a, **k: None)
+    monkeypatch.setattr(run_marker, "note_fix_gate", lambda *a, **k: None)
     monkeypatch.setattr(run_marker, "judgeable_now", lambda: judgeable)
     monkeypatch.setattr(run_marker, "verdict_run_len", lambda *a, **k: run_len)
     # 上流の `fix` の門とは別物であることを見るため、`fix` の連は 0 に固定
