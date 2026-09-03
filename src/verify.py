@@ -2034,6 +2034,92 @@ def _check_yomi(script: dict | None) -> list[str]:
     return problems + [yomi_gate.say(h) for h in blocking]
 
 
+def _check_yomi_heard(path: Path, work: Path, script: dict | None) -> list[str]:
+    """**完成音声を最初から最後まで機械で聞き取り、予定の読みと照合した控え**を要求する。
+
+    オーナー原文（`CLAUDE.md` 冒頭・2026-09-03・**一字も変えないこと**）:
+
+    > **「Google TTSで生成した完成音声の最初から最後までを機械で聞き取り、
+    > 予定していた読みと照合し、誤読があれば修正・再生成して、もう一度全文照合する」**
+    > **「やるようにして。」**
+
+    ## ここが見るもの（**聞き直すのは、控えが無いときだけ**）
+
+    照合そのものは `src/pipeline.py` が音を作った直後にやります（そこが
+    **直して焼き直すのがいちばん安い所**だから ——
+    絵を描いたあとで直すと、絵から全部やり直しになる）。
+    ここは**その控えが、この本のもので、誤読 0件で終わっているか**を見ます:
+
+        控えが無い          → **ここで聞く**（`final.mp4` の音を刻んで・遅いが落とさない）
+        控えの指紋が違う     → 台本が後から変わっている ＝ **落とす**
+        `misread` が残る    → **落とす**（＝ 通らない本は出さない）
+        コマの合計と尺が違う → 繋ぎのどこかが落ちている ＝ **落とす**
+
+    ## **落とさない場合**（ここを緩くしてある理由）
+
+    `faster-whisper` か `open-jtalk` が無い環境では、**この門は何も言いません。**
+    投稿が途切れるのが最大の損失で（`CLAUDE.md`「4. 投稿を途切れさせないこと」）、
+    **道具が入っていないことは、その本の読みが壊れている証拠ではない**からです。
+    入っているかどうかは `requirements.txt` の側で担保します。
+
+    **覆る条件**: 模型の無い所で本番が回っていると実測で分かったら、
+    ここを「無ければ落とす」に寄せること（そのときは `scripts/setup.sh` に
+    模型の先取りを足してから。落としてから気づくと1日ぶん落ちます）。
+    """
+    if not script:
+        return []
+    try:
+        from . import yomi_hear                                # noqa: PLC0415
+    except Exception:                                          # noqa: BLE001
+        return []
+    if not yomi_hear.available():
+        print("[verify] 完成音声の聞き取りは飛ばしました（faster-whisper か open-jtalk が無い）")
+        return []
+
+    lines = [str(s.get("narration") or "") for s in script.get("segments", [])
+             if str(s.get("narration") or "").strip()]
+    if not lines:
+        return []
+    want = yomi_hear.fingerprint(lines)
+    report = None
+    report_path = work / yomi_hear.REPORT_NAME
+    if report_path.exists():
+        try:
+            report = json.loads(report_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            report = None
+    if report and report.get("fingerprint") != want:
+        return ["完成音声の照合の控えが、この台本のものではない"
+                "（音を作ったあとで読み上げが変わっている）"]
+
+    segs = sorted((work / "audio").glob("seg_*.wav"))
+    if report is None:
+        if not segs:
+            return ["完成音声の照合の控えが無く、聞き直す音も無い"]
+        durations = [yomi_hear.probe_duration(p) for p in segs][:len(lines)]
+        wavs = (yomi_hear.slice_final(path, durations, work / "heard")
+                if path.exists() else segs[:len(lines)])
+        try:
+            report = yomi_hear.audit(lines, wavs, work)
+        except Exception as exc:                               # noqa: BLE001
+            return [f"完成音声を聞き取れなかった（{type(exc).__name__}: {exc}）"]
+
+    problems = [yomi_hear.say(r) for r in report.get("hits", [])
+                if r.get("verdict") == "misread"]
+    # **繋ぎの事故は読みの誤りと同じ所で見える**（`yomi_hear.slice_final` の docstring）。
+    if segs:
+        total = sum(yomi_hear.probe_duration(p) for p in segs[:len(lines)])
+        shown = float(_probe(path).get("format", {}).get("duration") or 0)
+        if total and abs(shown - total) > 1.5:
+            problems.append(f"完成音声 {shown:.1f}秒 とコマの合計 {total:.1f}秒 が食い違う"
+                            f"（照合したのは、出て行く音と別の音かもしれない）")
+    if not problems:
+        print(f"[verify] 読み: 完成音声 {report.get('lines', 0)}行 / "
+              f"漢字の語 {report.get('words', 0)}語 を全文照合、誤読 0件"
+              f"（割れ {report.get('split', 0)}件・模型 {report.get('model', '?')}）")
+    return problems
+
+
 #: **人間の職業・資格の名前**。ここに無い肩書きは素通りします（下の「覆る条件」）。
 _PROFESSION_WORDS = (
     "経理", "人事", "労務", "総務", "財務",
@@ -2539,6 +2625,9 @@ def check(path: Path, video_cfg: dict, min_minutes: float, work: Path,
     problems += _check_not_repeat(work, script)
     problems += _check_adjacent_frames(work)
     problems += _check_law_citation_verbatim(work, script)
+    # **音を聞く門はここだけ**（`script_only_problems` に入れないこと ——
+    # あちらは絵を描く前に撃たれるので、まだ音がありません）。
+    problems += _check_yomi_heard(path, work, script)
 
     if problems:
         raise VerificationError("投稿前の検査に落ちました: " + " / ".join(problems))

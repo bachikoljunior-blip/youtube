@@ -352,6 +352,45 @@ def _check_short_script(script, topic_id: str = "") -> None:
         )
 
 
+def hear_and_fix(script, channel: dict, work: Path, audios: list, topic: dict | None = None):
+    """**完成音声を聞いて、誤読があれば直して焼き直す**（オーナー原文 2026-09-03）。
+
+    返すのは `synthesize_segments()` と同じ `[(wav, 秒数), ...]` ——
+    **焼き直したら秒数が変わる**ので、呼ぶ側は必ずここの返りを使うこと
+    （読みを仮名にすると尺が動きます。古い秒数のまま絵を並べると、
+      字幕と音が最後までずれます）。
+
+    聞き取れない環境では**何もせず素通りします**（理由は
+    `src/verify._check_yomi_heard` の docstring）。
+    """
+    try:
+        from . import yomi_hear                                # noqa: PLC0415
+    except Exception:                                          # noqa: BLE001
+        return audios
+    if not yomi_hear.available():
+        print("[pipeline] 完成音声の聞き取りは飛ばします（faster-whisper か open-jtalk が無い）")
+        return audios
+    lines = [s.narration for s in script.segments]
+    tts_cfg = channel["generation"]["tts"]
+    state: dict = {"audios": audios}
+
+    def resynth():
+        state["audios"] = synthesize_segments(
+            lines, tts_cfg, work / "audio",
+            allow_fallback=str((topic or {}).get("style") or "") != "outside_long",
+        )
+        return [p for p, _ in state["audios"]]
+
+    try:
+        yomi_hear.audit(lines, [p for p, _ in audios], work,
+                        tts_cfg=tts_cfg, resynth=resynth)
+    except Exception as exc:                                   # noqa: BLE001
+        # **ここで投稿を止めないこと。** 落とすのは `verify` の側で、
+        # あちらは控えが無ければ自分で聞き直します（二重の門）。
+        print(f"[pipeline] 完成音声の照合に失敗しました（{type(exc).__name__}: {exc}）")
+    return state["audios"]
+
+
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     channel = config.load_channel()
@@ -529,6 +568,16 @@ def main(argv: list[str] | None = None) -> int:
     )
     if not audios:
         raise RuntimeError("台本のセグメントが空でした。テーマを変えて再実行してください。")
+
+    # 2.5 **完成音声を最初から最後まで聞き取り、予定の読みと照合する**（2026-09-03・
+    #     オーナー原文は `CLAUDE.md` 冒頭と `src/yomi_hear.py`）。
+    #     **絵を描く前にここでやります。** 誤読が見つかったときに直す手は
+    #     「台帳に入れて音を焼き直す」だけで済み、絵とサムネと字幕は1枚も作り直しません
+    #     —— `verify` まで持っていくと、直すたびに **20分ぶんの描画** をやり直します。
+    #     `verify` の側は、ここが残した控え（`work/yomi_hear.json`）を門にします
+    #     （`verify._check_yomi_heard`）。**両方 要ります** ——
+    #     ここは「直せる所」、あちらは「通らない本を出さない所」。
+    audios = hear_and_fix(script, channel, work, audios, topic)
 
     segment_paths = [p for p, _ in audios]
     durations = [d for _, d in audios]

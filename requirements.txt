@@ -16,3 +16,11 @@ numpy>=2.0.0
 # `scripts/niche_ceiling.py --source free`（外の帯を Data API の日枠の外で撃つ・0単位）。
 # search.list は 100単位/語 で、09/02 は2回とも 429 で外の数が主実行に届かなかった（2026-09-03）。
 yt-dlp>=2026.8.19
+# `src/yomi_hear.py`（**完成音声を最初から最後まで聞き取り、予定の読みと照合する門**）。
+# オーナー原文 2026-09-03「Google TTSで生成した完成音声の最初から最後までを機械で聞き取り、
+# 予定していた読みと照合し、誤読があれば修正・再生成して、もう一度全文照合する」。
+# 実測（2026-09-03）: Google Cloud Speech-to-Text は **同じ鍵では撃てません** ——
+# `GOOGLE_TTS_API_KEY` で speech.googleapis.com を叩くと 403 API_KEY_SERVICE_BLOCKED
+# （鍵が TTS に絞ってある。鍵を広げるのはオーナーの手が要る）。
+# faster-whisper は鍵が要らず、模型は初回に自動で降りてくる（medium で 1.5GB・CPU で音の 0.63倍）。
+faster-whisper>=1.1.0
