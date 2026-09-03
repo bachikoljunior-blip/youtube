@@ -23,3 +23,5 @@
 {"at": "2026-09-03T22:00:35+09:00", "kind": "beat", "video_id": "1huadpEk6HY", "topic": "zaishoku-2026-62man", "sha": "d4ec75716d0e"}
 {"at": "2026-09-03T23:28:13+09:00", "kind": "start", "video_id": "1huadpEk6HY", "topic": "zaishoku-2026-62man", "sha": "d4ec75716d0e", "for_day": "2026-09-04", "session": ""}
 {"at": "2026-09-03T23:28:27+09:00", "kind": "beat", "video_id": "1huadpEk6HY", "topic": "zaishoku-2026-62man", "sha": "d4ec75716d0e"}
+{"at": "2026-09-04T01:01:00+09:00", "kind": "start", "video_id": "DfFyu8qZq3I", "topic": "nenkin-uketorikata-65-70-75-handan", "sha": "7fe81c38a757", "for_day": "2026-09-05", "session": ""}
+{"at": "2026-09-04T01:01:19+09:00", "kind": "beat", "video_id": "DfFyu8qZq3I", "topic": "nenkin-uketorikata-65-70-75-handan", "sha": "7fe81c38a757"}
