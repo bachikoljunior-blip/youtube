@@ -9,6 +9,10 @@
 
 なぜ要るかと、「ほとんど言いがかり」の決め方は `src/clarity_loop.py` の docstring に
 全部あります。**評価は模型を叩きます**（既定は台本と同じ `opus`。`CLARITY_MODEL` で差し替え）。
+
+## **(c) わざと寝かせてある —— 毎本の輪は `src/pipeline.py`（`clarify_and_fix`）が回します。ここは**手で当てる口**です**（2026-09-03 に決めた）
+
+**どこからも撃たれていないのが正しい形です。**（`scripts/retro.py` の三択を、この回が (c) で倒しました。**やり直さないこと**）
 """
 from __future__ import annotations
 
