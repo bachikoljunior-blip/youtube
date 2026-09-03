@@ -498,6 +498,8 @@
 [sweep]   [pipeline] タイトル: 【年金の受け取り方】最適が54か月飛ぶ 何歳から受け取るか
 [sweep]   [history] 控えから 336件のテーマを足しました（チャンネルの読みと**和**を取ります。二重に作らないため）
 [sweep]   [history] この窓のチャンネルの読みを再利用しました（投稿済みテーマ 716件・**API 0単位**）。 窓ごとに1回だけ読みます（`_SCAN_CACHE` の註）。 読み直すなら `YT_NO_SCAN_CACHE=1`
+[rebake-run] 09/04 06:22 JST `DfFyu8qZq3I`（nenkin-uketorikata-65-70-75-handan・sha 7fe81c38a757）を焼きます
+[sweep] $ /usr/local/bin/python -m src.pipeline --script data/scripts/nenkin-uketorikata-65-70-75-handan.script.json --topic nenkin-uketorikata-65-70-75-handan --dry-run
 [rebake-run] 09/04 06:00 JST `DfFyu8qZq3I`（nenkin-uketorikata-65-70-75-handan・sha 7fe81c38a757）を焼きます
 [sweep] $ /usr/local/bin/python3 -m src.pipeline --script data/scripts/nenkin-uketorikata-65-70-75-handan.script.json --topic nenkin-uketorikata-65-70-75-handan --dry-run
 [sweep]   [history] 控えから 336件のテーマを足しました（チャンネルの読みと**和**を取ります。二重に作らないため）
@@ -508,3 +510,7 @@
 [sweep]   [pipeline] タイトル: 【年金の受け取り方】最適が54か月飛ぶ 何歳から受け取るか
 [sweep]   [history] 控えから 336件のテーマを足しました（チャンネルの読みと**和**を取ります。二重に作らないため）
 [sweep]   [history] この窓のチャンネルの読みを再利用しました（投稿済みテーマ 716件・**API 0単位**）。 窓ごとに1回だけ読みます（`_SCAN_CACHE` の註）。 読み直すなら `YT_NO_SCAN_CACHE=1`
+[sweep]   [clarity] 1周目: 挙がった 40件/40件 → 根拠あり 39件/38件 → 両方に出た 25件
+[sweep]   [clarity] 8コマ を言い換えました（コマ [1, 6, 7, 9, 12, 29, 35, 49]） → **白紙から評価し直します**
+[sweep]   [clarity] 2周目: 挙がった 40件/40件 → 根拠あり 40件/39件 → 両方に出た 28件
+[sweep]   [clarity] 8コマ を言い換えました（コマ [1, 2, 6, 7, 12, 29, 35, 49]） → **白紙から評価し直します**

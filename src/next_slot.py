@@ -1299,9 +1299,30 @@ def machine_rebake_lines(video_id: str, now: datetime | None = None) -> list[str
                         "「機械がやるだろう」で見送らないこと（09/03 は 8時間 止まっていた）",
                         f"       python scripts/ahead_sweep.py --rebake-run {video_id} "
                         f"{plan.get('topic', '')} {plan.get('sha', '')}"]
-            return [f"  **いま焼いています**（{str(last.get('at'))[11:16]} JST に起きた・"
-                    "背景・log は `data/rebake.log`・帳面は `data/rebake.jsonl`）"
-                    " —— **手で撃たないこと。同じ本が2本 上がります**"]
+            # **「走っている」と「終わる」は別**（2026-09-04 06:4x に数えて足した）。
+            #     この行は長らく「いま焼いています → 手で撃たないこと」だけを出し、
+            #     回はそれを読んで**その場で終わって**いました。器はその瞬間に
+            #     回収され、焼く側も道連れです（`ahead_sweep.rebake_tally` の註）。
+            #     実測 **start 21件 / done 0件** ＝ **一度も終わったことがありません。**
+            #     待つ側にそれを言わないと、この形は永久に回り続けます。
+            try:
+                starts, dones = ahead_sweep.rebake_tally()
+            except Exception:                                  # noqa: BLE001
+                starts, dones = 0, 0
+            out = [f"  **いま焼いています**（{str(last.get('at'))[11:16]} JST に起きた・"
+                   "背景・log は `data/rebake.log`・帳面は `data/rebake.jsonl`）"
+                   " —— **手で撃たないこと。同じ本が2本 上がります**"]
+            if starts and dones == 0:
+                out += [f"  [!] **焼き直しは これまで {starts}回 起きて、{dones}回 しか終わっていません。**"
+                        "焼く側は**この器の中**の背景プロセスなので、"
+                        "**この回が終わると道連れで死にます**（`ahead_sweep.rebake_tally` の註）",
+                        "       ＝ **この回は、終わるまで待つこと。**"
+                        "`tail -3 data/rebake.log` を数分おきに見て、"
+                        "`**差し替えました**` か `[!] 焼き直せませんでした` が出るまで居ること"]
+            elif starts:
+                out += [f"  （これまで {starts}回 起きて {dones}回 終わっています・"
+                        "終わるまで待つなら `tail -3 data/rebake.log`）"]
+            return out
         return [f"  [!] **機械は焼き直しません** —— {plan.get('why', '')}",
                 "       ＝ 直すか、手で撃つかは**この回が決めること**。"
                 "「機械がやるだろう」で見送らないこと（09/03 は 8時間 止まっていた）"]

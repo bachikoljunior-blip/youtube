@@ -90,8 +90,18 @@ def test_同じ台本は二度焼かない():
     assert p["do"] is False and "一度 焼いた" in p["why"]
 
 
-def test_予約が付いていれば焼かない():
-    assert _plan(scheduled=True)["do"] is False
+def test_予約が付いていても焼く_枠は焼き上がってから引き継ぐ():
+    """**2026-09-04 に反転**（旧: 「予約が付いていれば焼かない」）。
+
+    予約つきを断っていたので、**一度 枠へ置いた本は未来永劫 焼き直せません**でした ——
+    実測 09/04 09:00 の `1huadpEk6HY` は、焼いた後に入ったコード 6件 が1つも入らないまま。
+    ＝ 規則3（次の枠の1本を良くし続ける）の**いちばん大きい手が、規則3 の時間帯だけ使えない**。
+    いまは `do` を立て、**外すのは焼き上がった後**（`takeover`・`rebake_run()` の註）。
+    """
+    p = _plan(scheduled=True)
+    assert p["do"] is True and p["takeover"] is True
+    assert "予約つき" in p["why"]
+    assert _plan(scheduled=False)["takeover"] is False
 
 
 def test_枠が近すぎれば焼かない():
