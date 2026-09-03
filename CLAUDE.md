@@ -35,7 +35,7 @@
 >
 > **「全ての改善が終わった後に、分かりやすさループを回して、それが終わったら読み照合ループにして」**（09/03 11:05 JST ＝ 毎本の出口の順が確定した: **(0) その本に打つ他の改善を全部 先に終える → (1) 分かりやすさの修正ループ → (2) 完成音声の読み照合ループ**。(1) は台本を書き換えるので**音を作る前**・(2) は音が焼けた後。機械の側は `src/pipeline.py` の 1.5 と 2.5、門は `verify._check_clarity_loop` → `_check_yomi_heard`）
 >
-> **「エフォートレベル全て高にして」「Fable5.1使う時は」**（09/03 11:1x JST ＝ Fable 5.1 を使うときの effort は「高」。事実: Agent ツールにサブごとの effort の口は無く、サブは親セッションの effort を継ぐ。`claude -p` の口（`src/claude_cli.py`）には `--effort <level>` が在る —— Fable で撃つときは `high` を渡すこと）
+> **「エフォートレベル全て高にして」「Fable5.1使う時は」**（09/03 11:1x JST ＝ Fable 5.1 を使うときの effort は「高」。事実: Agent ツールにサブごとの effort の口は無く、サブは親セッションの effort を継ぐ。`claude -p` の口（`src/claude_cli.py`）には `--effort <level>` が在る —— Fable で撃つときは `high` を渡すこと。**09/03 13:1x に配線した**: `claude_cli.effort_for()` が模型名を見て Fable のときだけ `--effort high` を並べる（`CLAUDE_CLI_EFFORT` で上書き・検査 `tests/test_claude_cli_effort.py`）。**この行を読んで、もう一度 配線しないこと**）
 
 事実（2026-09-02 19:0x に撃って出た数）:
 

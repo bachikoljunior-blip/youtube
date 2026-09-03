@@ -162,8 +162,55 @@ def _extract_json(text: str) -> str:
     raise ClaudeCliError(f"JSON が閉じていません: {text[start:start + 400]}")
 
 
+EFFORT_BY_MODEL: dict[str, str] = {"fable": "high"}
+EFFORT_ENV = "CLAUDE_CLI_EFFORT"
+
+
+def effort_for(model: str) -> str | None:
+    """`claude -p --effort <level>` に渡す段。無ければ `None`（渡さない）。
+
+    ## なぜ要るか（オーナー 09/03 11:1x・原文は `CLAUDE.md` 冒頭）
+
+        **「エフォートレベル全て高にして」「Fable5.1使う時は」**
+
+    **この指示は、言われた日には機械に入っていませんでした。**
+    `CLAUDE.md` 38行目が「`claude -p` の口（`src/claude_cli.py`）には
+    `--effort <level>` が在る —— Fable で撃つときは `high` を渡すこと」と
+    書いているのに、`_invoke()` は `--model` だけを組み立てていました
+    （09/03 13:0x の回が `--help` で口の実在を確かめて配線）。
+
+    **模型の名前で分けています。** サブの模型は `quota.sub_model()` が
+    枠の残りで `fable` / `opus` / … を返すので、**呼ぶ側は自分が
+    Fable かどうかを知りません**。ここで名前を見るのが、
+    呼び口を1つも増やさずに指示を満たせる唯一の場所です。
+
+    **`opus` などに `high` を渡さないのは、指示が「Fable5.1使う時は」と
+    範囲を切っているから**です（`ROLE_TIER` の軽い模型は「単純な記録」用で、
+    そこに effort を積むのは 09/03 07:3x の指示と逆を向きます）。
+
+    `CLAUDE_CLI_EFFORT` を置けば、模型によらずその段を渡します
+    （1本だけ別の段で撃って比べるため。空文字なら「渡さない」）。
+
+    **覆る条件**: オーナーが「全部の模型で高」と言ったら
+    `EFFORT_BY_MODEL` を捨てて、常に `high` を返すこと。
+    CLI から `--effort` が消えたら、この関数ごと消すこと
+    （渡すと `claude` が異常終了し、`ask()` の3回が全部落ちます）。
+    """
+    forced = os.environ.get(EFFORT_ENV)
+    if forced is not None:
+        return forced.strip() or None
+    key = (model or "").strip().lower()
+    for name, level in EFFORT_BY_MODEL.items():
+        if key == name or key.startswith(name + "-") or name in key:
+            return level
+    return None
+
+
 def _invoke(prompt: str, model: str, resume: str | None, timeout: int) -> tuple[str, str]:
     args = [_binary(), "-p", prompt, "--output-format", "json", "--model", model]
+    effort = effort_for(model)
+    if effort:
+        args += ["--effort", effort]
     if resume:
         args += ["--resume", resume]
 
