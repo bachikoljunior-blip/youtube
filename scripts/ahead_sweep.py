@@ -1151,7 +1151,7 @@ def rebake_died(vid: str, sha: str, *, now: datetime, root: Path | None = None) 
     for r in _rebake_rows(root):
         if r.get("video_id") == vid and r.get("sha") == sha:
             last = r
-    if last is None or last.get("kind") != "start":
+    if last is None or last.get("kind") not in ("start", "beat"):
         return False
     at = ahead_gate._parse(str(last.get("at") or ""))
     if at is None or (now - at) < REBAKE_START_GRACE:
@@ -1337,6 +1337,13 @@ def rebake_run(vid: str, topic: str, sha: str) -> int:
     py = sys.executable or "python3"
     draft = f"data/scripts/{topic}.script.json"
     print(f"[rebake-run] {datetime.now(JST).strftime('%m/%d %H:%M JST')} `{vid}`（{topic}・sha {sha}）を焼きます", flush=True)
+    # **錠を取ったのは、ここが初めて**（`start` は決める側が spawn の前に書くので、
+    #     錠を握れたことを1つも言っていません）。手で `--rebake-run` を撃った回は
+    #     `start` すら残らず、画面の「いま焼いています」が**前の回の時刻**を出します
+    #     （2026-09-03 16:2x に実測）。**`done` を待たずに1行 残すこと。**
+    #     `_baked_today()` は `start` しか数えないので、上限には入りません。
+    _rebake_note({"at": datetime.now(JST).isoformat(timespec="seconds"), "kind": "beat",
+                  "video_id": vid, "topic": topic, "sha": sha}, root)
     rc = _run([py, "-m", "src.pipeline", "--script", draft, "--topic", topic, "--dry-run"],
               "pipeline --dry-run", 5400)
     new_id = ""

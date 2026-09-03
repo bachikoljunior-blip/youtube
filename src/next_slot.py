@@ -1264,7 +1264,10 @@ def machine_rebake_lines(video_id: str, now: datetime | None = None) -> list[str
         for r in ahead_sweep._rebake_rows(None):
             if r.get("video_id") == video_id and r.get("sha") == plan.get("sha"):
                 last = r
-        if last is not None and last.get("kind") == "start":
+        # `beat` ＝ 焼く側が**錠を取った**印（`start` は決める側が spawn の前に書くだけ）。
+        #     手で `--rebake-run` を撃った回は `start` を残さないので、`beat` が
+        #     無いと、この行は前の回の時刻を出し続けます（2026-09-03 16:2x に実測）。
+        if last is not None and last.get("kind") in ("start", "beat"):
             # **「起きた」と「まだ生きている」は別**（2026-09-03 15:5x に踏んだ）。
             #     `start` は決める側が spawn の前に書くので、器が回収されると
             #     **帳面には `start` だけが残り、この行は永久に「いま焼いています」と言い続けます。**

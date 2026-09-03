@@ -62,3 +62,30 @@ def test_死んだ回は焼いたことにしない(tmp_path: Path, monkeypatch:
 def test_生きている間は焼いたことにする(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     _setup(tmp_path, monkeypatch, _START, busy=True)
     assert ahead_sweep.rebake_attempted("A", "s1", now=NOW) is True
+
+
+# ---------------------------------------------------------------- 心拍
+#
+# `start` は**決める側**が spawn の前に書く ＝ 錠を握れたことを1つも言っていない。
+# 手で `--rebake-run` を撃った回は `start` すら残さないので、画面の「いま焼いています」が
+# **前の回の時刻**を出していた（2026-09-03 16:2x に実測）。`beat` は錠を取った印。
+
+_BEAT = [{"at": "2026-09-03T15:00:54+09:00", "kind": "start", "video_id": "A", "sha": "s1"},
+         {"at": "2026-09-03T15:01:10+09:00", "kind": "beat", "video_id": "A", "sha": "s1"}]
+
+
+def test_心拍だけでも死んでいると読める(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _setup(tmp_path, monkeypatch, _BEAT, busy=False)
+    assert ahead_sweep.rebake_died("A", "s1", now=NOW) is True
+
+
+def test_心拍のあと錠が握られていれば生きている(tmp_path: Path,
+                                     monkeypatch: pytest.MonkeyPatch) -> None:
+    _setup(tmp_path, monkeypatch, _BEAT, busy=True)
+    assert ahead_sweep.rebake_died("A", "s1", now=NOW) is False
+
+
+def test_心拍は_その日の上限を食わない() -> None:
+    """`_baked_today()` は `start` しか数えないこと（心拍で二重に数えない）。"""
+    assert ahead_sweep._baked_today(_BEAT, "2026-09-03", busy=False) == 0
+    assert ahead_sweep._baked_today(_BEAT, "2026-09-03", busy=True) == 1
