@@ -1572,9 +1572,14 @@ def rebake_today(now: datetime | None = None, *, dry_run: bool = False) -> dict:
         except Exception as exc:                               # noqa: BLE001
             print(f"[rebake] {stamp} {day.isoformat()} の決めを読めませんでした: {str(exc)[:120]}", flush=True)
             continue
-        if day not in (base, first) and not plan.get("decided"):
-            continue                                           # 先の日は決めが在るときだけ
-        head = head or plan
+        if day != first and not plan.get("decided"):
+            continue                                           # `first` 以外は決めが在るときだけ（きょうも）
+        # **`head`（何も焼かない回に返す1件）は `first` に寄せること**（2026-09-04）。
+        #     `base`（きょう）を一覧の頭に足したので、素直に「最初に見た日」を採ると、
+        #     **決めの無いきょう**が「決めが無い」で `head` を取り、
+        #     決めの在る日の理由（「控えと台本は同じ中身」）が画面から消えます。
+        if head is None or day == first:
+            head = plan
         if plan["do"] and chosen is None:
             chosen = plan
         else:
