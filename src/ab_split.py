@@ -403,6 +403,66 @@ def slot_half(topic_id: str, share: float = SLOT_EARLY_SHARE) -> str:
 slot_half.split_ref = "ab_split.slot_half"
 
 
+#: **画面に登録の依頼を出す割合。** 0 にすると振り分けが止まります
+#: （そのとき `subs_badge()` は全部 `"画面なし"` を返し、画面は前と同じになります）。
+SUBS_BADGE_SHARE = 0.5
+
+#: **塩**。`title_form` / `hook_form` / `slot_half` と**同じIDから別の答え**を
+#: 出すために要ります（`SLOT_HALF_SALT` の註と同じ理由）。
+SUBS_BADGE_SALT = "subs_badge:v1:"
+
+
+def subs_badge(topic_id: str, share: float = SUBS_BADGE_SHARE) -> str:
+    """この本の**画面に、登録の依頼を出すか**。
+
+    ## なぜ要るか（2026-09-03・最適化の回に測って足した）
+
+    `scripts/eta.py` は毎周こう印字します ——
+    **「最初に落ちる門は 門1'（登録者500人・あと475人）で 532日後。
+    その門を動かす腕は `views/day × sub_rate` の2本」**、そして
+    **`sub_rate` を天井（×6.59）まで引くと 門1' は 81日後**（451日 早い）。
+    `per_video` を天井まで引いても 119日後 なので、**こちらのほうが大きい。**
+
+    ところが同じ行が続けてこう出しています ——
+    **「直近7日の ship: `per_video` 115件 ／ `sub_rate` 7件
+    ← 門を動かす2本のうち、片方しか引かれていません。」**
+
+    ## 何を賭けているか（**失うものも書くこと**）
+
+    いまの登録の依頼は **`src/script_writer.py` の最後のセグメントの音声1文だけ**
+    です（`ROLE` の「最後のセグメントで、登録を1回はっきり頼むこと」）。
+    **＝ 最後まで見た人にしか届きません。** 実測の維持率は 12〜53%
+    （`scripts/status.py`）なので、**依頼は再生の半分以下にしか届いていません。**
+
+    画面（`src/visuals.py` の `.subs-badge`）は**全時間 出ます**。
+    届く先が 2〜8倍 になります。
+
+    失うのは**画面の面積**です。ただし置き場所は `body` の `padding-top` の中
+    （上端 14〜18px）で、**構造上どのコマも空**なので、見出しにも本文にも
+    1px も掛かりません（`src/visuals._css()` の註・`tests/test_subs_badge.py`）。
+    もう1つ賭けているのは**維持率**です —— `ROLE` は
+    「長尺では登録の依頼も書かない（維持率が落ちる）」と書いていますが、
+    **それは音声の1文の話**で、画面の隅の小さな札は一度も試していません。
+    **維持率が落ちるならそれがこの実験の答えです。どちらでも取れます。**
+
+    ## なぜ乱数にしないか
+
+    `slot_half` と同じ理由 —— 落ちて撃ち直した本が別の群へ移ると比較が壊れます。
+
+    判定は `config/hypotheses.yaml`（`ab_split.subs_badge`）。
+    """
+    if share <= 0:
+        return "画面なし"
+    if share >= 1:
+        return "画面あり"
+    h = hashlib.sha1((SUBS_BADGE_SALT + str(topic_id)).encode("utf-8")).digest()
+    return ("画面あり" if (int.from_bytes(h[:4], "big") % 10_000) < share * 10_000
+            else "画面なし")
+
+
+subs_badge.split_ref = "ab_split.subs_badge"
+
+
 #: **この包みの中身が、どこに在るか。** `config/hypotheses.yaml` の `falsified_if`
 #: はここを名指しします（`tests/test_ab_split._split_ref`）。
 #: **包みの `__module__` を書かせないこと** —— それは `src.ab_split` で、
@@ -591,6 +651,25 @@ EXPERIMENTS: dict[str, Experiment] = {
         # **長尺は帯を1枠も使いません**（置き先は `_long_ring()` の 18〜22時）。
         # 帯の中の位置の話なので、掛かるのはショートだけです。
         eligible=_shorts_only,
+    ),
+    # **配信の側の2件目**（2026-09-03・最適化の回）。腕は `sub_rate` ——
+    # `eta.py` の 門1' で測ると `per_video`(119日) より大きい(81日)のに、
+    # 直近7日の ship は per_video 115件 対 sub_rate 7件 でした。
+    # **ショートにも長尺にも掛かります**（`eligible` を置きません）——
+    # 画面はどちらの形にも在るので、絞る理由がありません。
+    "subs_badge": Experiment(
+        name="subs_badge",
+        side="dist",
+        split=subs_badge,
+        treated="画面あり",
+        control="画面なし",
+        # **`pipeline` が `visuals.render()` へ渡しはじめた時刻**。
+        # これより前に焼いた本は、画面に札が無いので**どちらの群でもありません**。
+        landed=datetime(2026, 9, 3, 21, 0, 0, tzinfo=JST),
+        deadline=_deadline_from_yaml("subs_badge", date(2026, 10, 20), split=subs_badge),
+        commit="",
+        # **登録で測ります**（engaged ではない）。
+        metric="登録",
     ),
 }
 

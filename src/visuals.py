@@ -73,6 +73,24 @@ body::before {
   content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 12px;
   background: {ACCENT};
 }
+/* **登録の依頼を、画面の側に置く枠**（2026-09-03・最適化の回）。
+   `src/script_writer.py` の依頼は**最後のセグメントの音声1文**だけなので、
+   **最後まで見た人にしか届きません**（実測の維持率 12〜53%）。
+   `scripts/eta.py` は「門1'（登録者500人）を動かす腕は views/day × sub_rate の
+   2本」「sub_rate を天井まで引くと 532日 → 81日」と印字しており、
+   直近7日の ship は per_video 115件 対 sub_rate 7件 でした。
+
+   **置き場所は「上の padding の中」です。** body の padding-top より上は
+   構造上どのコマも空なので、**見出しにも本文にも1pxも掛かりません**
+   （`_wrap_head` の折り返しも `--head-fit` も、1つも動きません）。
+   下（字幕の帯）と右（ショートのボタン列）は使えません —— どちらも
+   別のものが必ず来ます。**覆る条件**: padding-top を 24px より小さくしたら、
+   ここは重なります（そのときは置き場所ごと引き直すこと）。 */
+.subs-badge {
+  position: absolute; top: 18px; right: 72px;
+  font-size: 22px; font-weight: 800; letter-spacing: .04em;
+  color: {ACCENT}; opacity: .82; line-height: 1;
+}
 body::after {
   content: ""; position: absolute; inset: 0; pointer-events: none;
   background: radial-gradient(120% 90% at 78% 8%, rgba({GLOW},.22), transparent 60%);
@@ -199,6 +217,8 @@ html, body { width: 540px; height: 960px; }
    2026-08-07、箇条書きが右端94%まで達して「比べ／る」と1文字落ちた。 */
 body { padding: 56px 96px 300px 52px; }
 body::before { width: 8px; }
+/* 右 96px はショートのボタン列。そこには置かない（上の註と同じ理由）。 */
+.subs-badge { top: 14px; right: 96px; font-size: 18px; }
 .headline { font-size: calc(40px * var(--head-fit, 1)); margin-bottom: 28px; }
 .note { font-size: 28px; margin-top: 20px; }
 .note.lead { margin-top: 0; font-size: 58px; line-height: 1.35; }
@@ -752,8 +772,13 @@ def _body_html(visual: dict, portrait: bool = False, tighten: int = 0) -> str:
     return "".join(parts)
 
 
+#: 画面に出す登録の依頼の文言。**「登録」の語を必ず含めること** ——
+#: `src/endcard_verdict.is_request()` と同じ語で処置群を作ります。
+SUBS_BADGE_TEXT = "チャンネル登録"
+
+
 def build_html(visual: dict, theme: dict | None = None, portrait: bool = False,
-               tighten: int = 0, zoom: float = 1.0) -> str:
+               tighten: int = 0, zoom: float = 1.0, subs_badge: bool = False) -> str:
     """`tighten` は横（勝手な折り返し）、`zoom` は縦（枠からの溢れ）を直す。
 
     **2つは別の向きなので、別のつまみが要る。** `tighten` を上げると行数が
@@ -769,9 +794,13 @@ def build_html(visual: dict, theme: dict | None = None, portrait: bool = False,
     # 根拠は毎コマ同じ場所にあるほうが読める。
     formula = str(visual.get("formula") or "").strip()
     formula_html = f'<div class="formula">{_esc(formula)}</div>' if formula else ""
+    # **上の padding の中に置くので、下の3つの行は1つも動きません。**
+    badge_html = (f'<div class="subs-badge">{_esc(SUBS_BADGE_TEXT)}</div>'
+                  if subs_badge else "")
     return (
         "<!doctype html><html lang=ja><head><meta charset=utf-8>"
         f"<style>{_css(theme or THEMES[0], portrait)}{extra}</style></head><body>"
+        f"{badge_html}"
         f'<div class="headline"{head_style}>{head}</div>'
         f'<div class="body">{_body_html(visual, portrait, tighten)}</div>'
         f"{formula_html}"
@@ -1110,8 +1139,30 @@ def reveal_variants(visual: dict, want: int) -> list[dict]:
     return [visual]
 
 
+def subs_badge_on(topic_id: str) -> bool:
+    """この本の画面に、登録の依頼を出すか（A/B・`src/ab_split.subs_badge`）。
+
+    **`render()` の中で引きます。** 呼ぶ側に書かせると、焼き直しの道
+    （`scripts/ahead_sweep.py` の rebake）が通ったときに片方だけ札が消え、
+    **同じテーマIDの本が群をまたぎます。** 振り分けはIDのハッシュなので、
+    ここで引く限り、何度 焼き直しても同じ側に落ちます。
+
+    **`ab_split` が読めないときは False**（＝ 前と同じ画面）。
+    止めないこと —— 札1枚のために本を1本 落とすほうが損です。
+    """
+    if not topic_id:
+        return False
+    try:
+        from src import ab_split
+
+        return ab_split.subs_badge(str(topic_id)) == "画面あり"
+    except Exception:                                       # noqa: BLE001
+        return False
+
+
 def render(visuals: list[dict], out_dir: Path, topic_id: str = "",
-           theme_index: int | None = None, portrait: bool = False) -> list[Path]:
+           theme_index: int | None = None, portrait: bool = False,
+           subs_badge: bool | None = None) -> list[Path]:
     """図解を1枚ずつ PNG にする。配色は theme_index があれば順番に回す。
 
     portrait=True でショート向けの縦画面（1080x1920）にする。
@@ -1129,6 +1180,9 @@ def render(visuals: list[dict], out_dir: Path, topic_id: str = "",
     from playwright.sync_api import sync_playwright
 
     theme = theme_for(topic_id, theme_index)
+    badge = subs_badge_on(topic_id) if subs_badge is None else bool(subs_badge)
+    if badge:
+        print(f"[visuals] 登録の依頼を画面に出します（A/B 画面あり・{SUBS_BADGE_TEXT}）")
     out_dir.mkdir(parents=True, exist_ok=True)
     paths: list[Path] = []
     executable = _chromium_path()
@@ -1149,8 +1203,9 @@ def render(visuals: list[dict], out_dir: Path, topic_id: str = "",
             best, done = (10**9, 0, 1.0), False
             for zoom in ZOOMS:
                 for tighten in range(MAX_TIGHTEN + 1):
-                    page.set_content(build_html(visual, theme, portrait, tighten, zoom),
-                                     wait_until="load")
+                    page.set_content(
+                        build_html(visual, theme, portrait, tighten, zoom, badge),
+                        wait_until="load")
                     bad = page.evaluate(_LINE_PROBE_JS)
                     if bad < best[0]:
                         best = (bad, tighten, zoom)
@@ -1162,7 +1217,8 @@ def render(visuals: list[dict], out_dir: Path, topic_id: str = "",
             if not done:
                 # 詰めきっても収まらなかった。一番ましだったところへ戻して焼く。
                 page.set_content(
-                    build_html(visual, theme, portrait, best[1], best[2]), wait_until="load")
+                    build_html(visual, theme, portrait, best[1], best[2], badge),
+                    wait_until="load")
                 print(f"[visuals] [!] {i}枚目: 収まらない箇所が {best[0]} 残った"
                       f"（詰め {best[1]} 段・縮小 {best[2]}）。"
                       f"{visual.get('headline', '')!r}")
