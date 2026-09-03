@@ -1115,6 +1115,10 @@ def cond4(path: Path | None = None, eta_path: Path | None = None,
 
     - **`traj_days` が動いた回が出たら**（＝ 到達日が実際に前後した）、`fired` は
       自分で偽に戻ります。**定数を持ちません。**
+    - **到達日が「出ません」（10^9）の回は、到達日では測りません**（2026-09-03 14:5x）。
+      10^9 は「動かなかった」ではなく「測れない」です —— そこを「動かなかった」と
+      読んだ結果、この判定は 08-31 から恒真で立ち、門を毎回 免除していました。
+      その回は 門1'（登録者 500人）の日数 `gate1p_days` で測ります。両側に無ければ偽。
     - `data/eta.jsonl` に `traj_days` が無くなったら、ここは判定できません
       （`traj_*` が `None` で返ります）。**そのときは黙って偽**にします ——
       **「測れない」を「立っている」と読ませないこと。**
@@ -1154,22 +1158,47 @@ def cond4(path: Path | None = None, eta_path: Path | None = None,
     #     「出ません」は `eta.py` が 10^9 で積むので、
     #     **大きい数 ＝ 遠い**の向きでそのまま比べられます。
     tb = ta = None
+    gb = ga = None      # 門1'（登録者 500人）の日数。`eta.py _row()` の `gate1p_days`
     try:
         rows = [json.loads(ln) for ln in
                 (eta_path or ETA_LOG).read_text(encoding="utf-8").splitlines() if ln.strip()]
         for r in rows:
+            side_before = str(r.get("at", "")) < at
             d = r.get("traj_days")
-            if not isinstance(d, (int, float)):
-                continue
-            if str(r.get("at", "")) < at:
-                tb = float(d)
-            else:
-                ta = float(d)
+            if isinstance(d, (int, float)):
+                if side_before:
+                    tb = float(d)
+                else:
+                    ta = float(d)
+            g = r.get("gate1p_days")
+            if isinstance(g, (int, float)) and g < 1e8:
+                if side_before:
+                    gb = float(g)
+                else:
+                    ga = float(g)
     except (OSError, json.JSONDecodeError, ValueError):
-        tb = ta = None
+        tb = ta = gb = ga = None
 
     # **測れない回は偽**（上の「覆る条件」2つ目）。
-    moved = None if (tb is None or ta is None) else (ta < tb - 0.5)
+    #
+    # **「出ません」（10^9）は「動かなかった」ではありません**（2026-09-03 14:5x・
+    #     最適化の回に実物で踏んだ）。08-31 以降 `traj_days` はずっと 10^9 で、
+    #     前が 135.7日・後が 10^9 → `ta < tb - 0.5` は**永久に偽** → この判定は
+    #     **恒真**で立ち、`FIX_RUN_CAP` の門を毎回 免除していました
+    #     （実測 09/03: `fix_gate` 18件 全部 `waived`、同日 ship 47件中 fix 31件・
+    #     moves 0 が 45件）。**動かない数で「動かない」を判定した形**です。
+    #     直し: 到達日が**両側とも有限**のときだけ到達日で測る。片側でも 10^9 なら、
+    #     最初に落ちる門（門1'・登録者 500人）の日数 `gate1p_days` で測る ——
+    #     あれは登録の実測で毎日動く数です（`eta.gate_arm_lines()` と同じ主語）。
+    #     どちらも両側に無ければ `None`（＝ 立てない）。
+    #     **覆る条件**: `traj_days` が有限に戻った回から、上の枝が自分で効きます。
+    measured_by = None
+    if tb is not None and ta is not None and tb < 1e8 and ta < 1e8:
+        moved, measured_by = (ta < tb - 0.5), "到達日"
+    elif gb is not None and ga is not None:
+        moved, measured_by = (ga < gb - 0.5), "門1'"
+    else:
+        moved = None
 
     def _d(v: float | None) -> str:
         """**`10^9` を「1000000000.0日」と刷らないこと。** `eta.py` の
@@ -1182,18 +1211,25 @@ def cond4(path: Path | None = None, eta_path: Path | None = None,
     rose = a["n"] >= 20 and a["share"] > b["share"]
     fired = bool(rose and moved is False)
 
+    if measured_by == "門1'":
+        _mb, _ma = _d(gb), _d(ga)
+    else:
+        _mb, _ma = _d(tb), _d(ta)
+    _lab = measured_by or "到達日"
     if fired:
         why = (f"到達日を動かしうる種別が {b['share']:.1%} -> {a['share']:.1%} に"
-               f"増えたのに、到達日は {_d(tb)} -> {_d(ta)} で近づいていません")
+               f"増えたのに、{_lab}は {_mb} -> {_ma} で近づいていません")
     elif moved is None:
-        why = "`traj_days` が両側に無いので判定できません（**立っているとは読まないこと**）"
+        why = ("到達日が「出ません」で、門1'（`gate1p_days`）も両側に無いので判定できません"
+               "（**立っているとは読まないこと**）")
     elif not rose:
         why = f"動かしうる種別が増えていません（{b['share']:.1%} -> {a['share']:.1%}）"
     else:
-        why = f"到達日は近づいています（{_d(tb)} -> {_d(ta)}）"
+        why = f"{_lab}は近づいています（{_mb} -> {_ma}）"
 
     return {"fired": fired, "at": at, "before": b, "after": a,
-            "traj_before": tb, "traj_after": ta, "moved": moved, "why": why}
+            "traj_before": tb, "traj_after": ta, "gate1p_before": gb, "gate1p_after": ga,
+            "measured_by": measured_by, "moved": moved, "why": why}
 
 
 def cond4_line(path: Path | None = None) -> str:

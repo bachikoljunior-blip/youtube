@@ -8024,6 +8024,44 @@
 {"at": "2026-09-03T04:35:56+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "analytics.py:fetch_retention"}
 {"at": "2026-09-03T04:35:57+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "analytics.py:fetch_retention"}
 {"at": "2026-09-03T04:35:58+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "analytics.py:fetch_retention"}
+{"at": "2026-09-03T06:51:45+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "eta.py:q"}
+{"at": "2026-09-03T06:51:45+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "eta.py:q"}
+{"at": "2026-09-03T06:51:45+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "eta.py:q"}
+{"at": "2026-09-03T06:51:46+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "eta.py:q"}
+{"at": "2026-09-03T06:51:48+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "eta.py:q"}
+{"at": "2026-09-03T06:51:48+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "eta.py:q"}
+{"at": "2026-09-03T06:51:48+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "eta.py:q"}
+{"at": "2026-09-03T06:52:57+00:00", "api": "data", "method": "channels.list", "units": 1, "ok": false, "by": "status.py:_channel_main"}
+{"at": "2026-09-03T06:52:58+00:00", "api": "data", "method": "videos.list", "units": 1, "ok": false, "by": "snapshot.py:main", "detail": "Prw6AB9hOsY,PEUAJTyDVDY,YhHeqMKql7U,tbIjpTBIln4,nK2SRMIqEF8,lIQxDg4OlAo,IkGaQv1fQQA,2sEAxqibFIM,SRtQOjPm858,nPzWa_yhoQ0,"}
+{"at": "2026-09-03T06:52:59+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "analytics.py:fetch_traffic"}
+{"at": "2026-09-03T06:53:00+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "analytics.py:fetch_report"}
+{"at": "2026-09-03T06:53:01+00:00", "api": "data", "method": "videos.list", "units": 1, "ok": false, "by": "analytics.py:fetch_report", "detail": "NHKylqsNfTw,fLENot-5oKM,gPusj-Y2404,x9idbNKZpqw,YmJ7psxW3co,ZUO6bFJRsRY,2FSAM7FYftY,pMHDwK5tB2E,CdX2oIb7BG8,Ty4w6q-tBMo,"}
+{"at": "2026-09-03T06:53:02+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "status.py:print_channel_signals"}
+{"at": "2026-09-03T06:53:03+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "status.py:pull"}
+{"at": "2026-09-03T06:53:03+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "status.py:pull"}
+{"at": "2026-09-03T06:53:04+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "status.py:pull"}
+{"at": "2026-09-03T06:53:04+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "status.py:print_where_watched"}
+{"at": "2026-09-03T06:53:05+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "scan.py:query"}
+{"at": "2026-09-03T06:53:05+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "scan.py:query"}
+{"at": "2026-09-03T06:53:06+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "scan.py:query"}
+{"at": "2026-09-03T06:53:06+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "scan.py:query"}
+{"at": "2026-09-03T06:53:06+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "scan.py:query"}
+{"at": "2026-09-03T06:53:06+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "scan.py:query"}
+{"at": "2026-09-03T06:53:06+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "scan.py:query"}
+{"at": "2026-09-03T06:53:07+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "scan.py:query"}
+{"at": "2026-09-03T06:53:07+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "scan.py:query"}
+{"at": "2026-09-03T06:53:07+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "scan.py:query"}
+{"at": "2026-09-03T06:53:07+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "scan.py:query"}
+{"at": "2026-09-03T06:53:07+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "scan.py:query"}
+{"at": "2026-09-03T06:53:08+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "scan.py:query"}
+{"at": "2026-09-03T06:53:08+00:00", "api": "data", "method": "videos.list", "units": 1, "ok": false, "by": "scan.py:collect", "detail": "-5n5vwfePoY,-NbX_FMzAg0,0GdstSOGWVw,12V-kHrKzIg,13TynquQzQU,178_WLomK4Y,1Nyl3aLUOgo,1xPjpFwG8qk,2FSAM7FYftY,2sEAxqibFIM,"}
+{"at": "2026-09-03T06:53:09+00:00", "api": "data", "method": "channels.list", "units": 1, "ok": false, "by": "scan.py:collect"}
+{"at": "2026-09-03T06:54:58+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "analytics.py:fetch_retention"}
+{"at": "2026-09-03T06:54:59+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "analytics.py:fetch_retention"}
+{"at": "2026-09-03T06:55:00+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "analytics.py:fetch_retention"}
+{"at": "2026-09-03T06:55:02+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "analytics.py:fetch_retention"}
+{"at": "2026-09-03T06:55:03+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "analytics.py:fetch_retention"}
+{"at": "2026-09-03T06:55:04+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "analytics.py:fetch_retention"}
 {"at": "2026-09-03T06:51:37+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "analytics.py:fetch_retention"}
 {"at": "2026-09-03T06:51:38+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "analytics.py:fetch_retention"}
 {"at": "2026-09-03T06:51:39+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "analytics.py:fetch_retention"}

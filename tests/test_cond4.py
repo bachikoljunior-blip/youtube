@@ -64,16 +64,54 @@ def _ships(at: str, kinds: list[str]) -> list[dict]:
 
 
 def test_動かしうる種別が増えて到達日が動かないと立つ(tmp_path):
-    """**この repo の、いまの実物の形**（2026-09-02）。"""
+    """**到達日が両側とも有限で、動いていない**形。"""
+    marks = _marks(tmp_path,
+                   _ships("2026-08-30T00:00", ["fix"] * 30)
+                   + _ships("2026-09-01T12:00", ["verdict"] * 10 + ["fix"] * 15))
+    eta = _eta(tmp_path, [{"at": "2026-08-30T00:00", "traj_days": 135.7},
+                          {"at": "2026-09-02T00:00", "traj_days": 135.7}])
+    r = rm.cond4(path=marks, eta_path=eta, since=GATE)
+    assert r["fired"] is True, r
+    assert r["measured_by"] == "到達日"
+    assert r["before"]["share"] == 0.0
+    assert r["after"]["share"] > 0.0
+
+
+def test_到達日が出ませんに変わった回は恒真で立たない(tmp_path):
+    """**2026-09-03 に実物で踏んだ形。** 前 135.7日 → 後 10^9（「出ません」）を
+    「動かなかった」と読むと、到達日が出ない限り**永久に立ち**、`FIX_RUN_CAP` の
+    門を毎回 免除します（実測 09/03: `fix_gate` 18件 全部 `waived`）。
+    10^9 は「測れない」です —— 門1' の数も無いなら、判定できない（偽）。
+    """
     marks = _marks(tmp_path,
                    _ships("2026-08-30T00:00", ["fix"] * 30)
                    + _ships("2026-09-01T12:00", ["verdict"] * 10 + ["fix"] * 15))
     eta = _eta(tmp_path, [{"at": "2026-08-30T00:00", "traj_days": 135.7},
                           {"at": "2026-09-02T00:00", "traj_days": 1e9}])
     r = rm.cond4(path=marks, eta_path=eta, since=GATE)
+    assert r["fired"] is False, r
+    assert r["moved"] is None
+    assert "判定できません" in r["why"]
+
+
+def test_到達日が出ない回は門1の日数で測る(tmp_path):
+    """到達日が 10^9 でも、`gate1p_days`（門1'・登録者 500人）が両側に在れば
+    **そちらで**判定する。動いていなければ立ち、近づいていれば立たない。
+    """
+    marks = _marks(tmp_path,
+                   _ships("2026-08-30T00:00", ["fix"] * 30)
+                   + _ships("2026-09-01T12:00", ["verdict"] * 10 + ["fix"] * 15))
+    eta = _eta(tmp_path, [{"at": "2026-08-30T00:00", "traj_days": 1e9, "gate1p_days": 532.0},
+                          {"at": "2026-09-02T00:00", "traj_days": 1e9, "gate1p_days": 532.0}])
+    r = rm.cond4(path=marks, eta_path=eta, since=GATE)
     assert r["fired"] is True, r
-    assert r["before"]["share"] == 0.0
-    assert r["after"]["share"] > 0.0
+    assert r["measured_by"] == "門1'"
+    assert "532.0日" in r["why"] and "1000000000" not in r["why"]
+    eta2 = _eta(tmp_path, [{"at": "2026-08-30T00:00", "traj_days": 1e9, "gate1p_days": 532.0},
+                           {"at": "2026-09-02T00:00", "traj_days": 1e9, "gate1p_days": 480.0}])
+    r2 = rm.cond4(path=marks, eta_path=eta2, since=GATE)
+    assert r2["fired"] is False, r2
+    assert r2["moved"] is True
 
 
 def test_到達日が近づいていれば立たない(tmp_path):
