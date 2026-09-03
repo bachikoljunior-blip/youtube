@@ -140,3 +140,83 @@
 [sweep]   [tts:google] 62/64 22.34s  自分の数字に置き換えるときに要るのは2つです。ねんき…
 [sweep]   [tts:google] 63/64 19.77s  計算の順番は3つです。年金の月額と、賞与こみの給与を…
 [sweep]   [tts:google] 64/64 20.19s  置き換えると動くのは、止まるがくと差の大きさです。動…
+[sweep]      -- 老齢（予定 ローレー / 聞いた ローヨワイ） → noise
+[sweep]      -- 賞与（予定 ショーヨ / 聞いた ワブケヨ） → noise
+[sweep]      -- ひと月（予定 ヒトツキ / 聞いた イチガツ） → noise
+[sweep]      -- 損得（予定 ソントク / 聞いた ムラトク） → unclear
+[sweep]   [hear] 64行 / 漢字の語 2443語 を照合 → 割れ 43件・誤読 0件（1周・誤読 0件）
+[sweep]   [pipeline] 想定尺: 25.4 分
+[sweep]   [visuals] chromium: /opt/pw-browsers/chromium-1194/chrome-linux/chrome
+[sweep]   [visuals] 1/64 stat
+[sweep]   [visuals] 2/64 compare
+[sweep]   [visuals] 3/64 table
+[sweep]   [visuals] 4/64 compare
+[sweep]   [visuals] 5/64 steps
+[sweep]   [visuals] 6/64 stat
+[sweep]   [visuals] 7/64 stat
+[sweep]   [visuals] 8/64 compare
+[sweep]   [visuals] 9/64 steps
+[sweep]   [visuals] 10/64 chart
+[sweep]   [visuals] 11/64 chart
+[sweep]   [visuals] 12/64 table  詰め0段 縮小0.94
+[sweep]   [visuals] 13/64 chart
+[sweep]   [visuals] 14/64 stat
+[sweep]   [visuals] 15/64 table  詰め0段 縮小0.94
+[sweep]   [visuals] 16/64 stat
+[sweep]   [visuals] 17/64 stat
+[sweep]   [visuals] 18/64 stat
+[sweep]   [visuals] 19/64 compare
+[sweep]   [visuals] 20/64 table  詰め0段 縮小0.94
+[sweep]   [visuals] 21/64 table
+[sweep]   [visuals] 22/64 chart
+[sweep]   [visuals] 23/64 chart
+[sweep]   [visuals] 24/64 stat
+[sweep]   [visuals] 25/64 table  詰め0段 縮小0.82
+[sweep]   [visuals] 26/64 chart  詰め0段 縮小0.88
+[sweep]   [visuals] 27/64 table  詰め0段 縮小0.94
+[sweep]   [visuals] 28/64 stat
+[sweep]   [visuals] 29/64 steps
+[sweep]   [visuals] 30/64 table  詰め0段 縮小0.82
+[sweep]   [visuals] 31/64 stat
+[sweep]   [visuals] 32/64 chart
+[sweep]   [visuals] 33/64 compare
+[sweep]   [visuals] 34/64 compare
+[sweep]   [visuals] 35/64 compare
+[sweep]   [visuals] 36/64 stat
+[sweep]   [visuals] 37/64 table
+[sweep]   [visuals] 38/64 chart
+[sweep]   [visuals] 39/64 table  詰め0段 縮小0.94
+[sweep]   [visuals] 40/64 table
+[sweep]   [visuals] 41/64 stat
+[sweep]   [visuals] 42/64 compare
+[sweep]   [visuals] 43/64 table  詰め0段 縮小0.94
+[sweep]   [visuals] 44/64 stat
+[sweep]   [visuals] 45/64 steps
+[sweep]   [visuals] 46/64 table  詰め0段 縮小0.94
+[sweep]   [visuals] 47/64 table
+[sweep]   [visuals] 48/64 stat
+[sweep]   [visuals] 49/64 chart
+[sweep]   [visuals] 50/64 table  詰め0段 縮小0.94
+[sweep]   [visuals] 51/64 table
+[sweep]   [visuals] 52/64 chart
+[sweep]   [visuals] 53/64 compare
+[sweep]   [visuals] 54/64 steps
+[sweep]   [visuals] 55/64 steps
+[sweep]   [visuals] 56/64 table
+[sweep]   [visuals] 57/64 steps
+[sweep]   [visuals] 58/64 steps
+[sweep]   [visuals] 59/64 compare
+[sweep]   [visuals] 60/64 compare
+[sweep]   [visuals] 61/64 table
+[sweep]   [visuals] 62/64 steps
+[sweep]   [visuals] 63/64 steps
+[sweep]   [visuals] 64/64 compare
+[sweep]   [render] クリップ 1/64
+[sweep]   [render] クリップ 2/64
+[sweep]   [render] クリップ 3/64
+[sweep]   [render] クリップ 4/64
+[sweep]   [render] クリップ 5/64
+[sweep]   [render] クリップ 6/64
+[sweep]   [render] クリップ 7/64
+[sweep]   [render] クリップ 8/64
+[sweep]   [render] クリップ 9/64
