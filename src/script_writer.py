@@ -749,6 +749,11 @@ def long_script_problems(script, topic_id: str = "") -> list[str]:
         # **(4) 題とサムネ も同じ理由で数えます**（2026-09-04 12:5x・`outside_title_problems`
         # の docstring）。**実測 3/3 で外れていた脚はここだけです。**
         problems += outside_title_problems(script)
+        # **(5) 間合い（narration 2〜4文・章の頭の前提）も同じ理由で数えます**
+        # （2026-09-04 13:4x・`outside_pacing_problems` の docstring）。
+        # **規則の脚は、これで全部 数えた側に入りました**（数えないと決めたのは
+        # 「尺は20分前後」と「断定・煽りの語」の2つで、どちらも理由が書いてあります）。
+        problems += outside_pacing_problems(script)
     # **入り方と締め方が、直近の本と揃っていないか**（2026-08-30・解除条件3）。
     # **長尺のほうが深刻でした** —— 134本のうち 113本（84%）が同じ4文字で始まり、
     # 82本（61%）が同じ4文字で終わっています（`python -m src.frames`）。
@@ -1699,6 +1704,126 @@ def outside_title_problems(script) -> list[str]:
             problems.append("サムネの2行に判断の語が無い（"
                             + " / ".join(f"「{t}」" for t in lines)
                             + "。例:「どれを選ぶか」「何歳から受け取るか」)")
+    return problems
+
+
+#: `OUTSIDE_LONG_RULE` (5) 間合い —— **規則の最後の脚**（2026-09-04 13:4x に足した）。
+#: 「各セグメントの narration は2〜4文」。**数は規則の本文から引いています**（本文を直したら、ここも直すこと）。
+OUTSIDE_NARRATION_LO = 2
+OUTSIDE_NARRATION_HI = 4
+#: 「前提（年金額・単身・手取り率の置き方）は章の頭で毎回 言い直す」を数える語。
+#: **「前提」の1語だけ**を見ます —— 実測 `Ec-j1-W4nqw` は章の頭 6/6 が「前提」を含み、
+#: 語を足しても（「置く」「単身」）当たる数は変わりませんでした（6/6 のまま）。
+#: 広い正規表現は、当たっても**当たった理由が言えません**。
+_OUTSIDE_PREMISE_RE = re.compile(r"前提")
+_OUTSIDE_SENT_RE = re.compile(r"(?<=[。？！])")
+
+
+def _sentences(text: str) -> list[str]:
+    """narration を文に割る（`。？！` の後ろで切る）。**API 0単位・純関数。**"""
+    return [s for s in _OUTSIDE_SENT_RE.split(str(text or "")) if s.strip()]
+
+
+def outside_pacing_problems(script, first: int = OUTSIDE_OPENING_SEGS) -> list[str]:
+    """`style: outside_long` の台本の**間合い**が `OUTSIDE_LONG_RULE` (5) になっているかを
+    **数えて**並べる。空なら合格。**API 0単位・純関数。**
+
+    ## なぜ要るか（2026-09-04 13:4x に踏んで足した）
+
+    `OUTSIDE_LONG_RULE` の脚を数える口は、この repo で4回に分けて入りました ——
+    09-03 に (1) 冒頭、09-04 12:16 に (2) 章・(3) 締め、12:55 に (4) 題とサムネ。
+    **残っていたのは、規則の中ほどにある2行です**::
+
+        - 各セグメントの narration は2〜4文。前提（年金額・単身・手取り率の置き方）は
+          章の頭で毎回 言い直す。
+
+    理由は前の3回と同じ ——
+    **「文章の指示は守られない（`generate()` の実測 2026-08-09）ので、数える」**
+    （`outside_opening_problems` の docstring）。
+
+    **実測（2026-09-04・`style: outside_long` の実物 3本すべて）: 3本とも落ちます。
+    しかも (5a) と (5b) で、落ちる本がきれいに分かれました**::
+
+        本                 (5a) 2〜4文 から外れるコマ      (5b) 章の頭の「前提」
+        Ec-j1-W4nqw       **16 / 58**（最大 11文）        6/6  ← 守っている
+        1huadpEk6HY         3 / 60（最大 6文）           **0/6**
+        6PKux5HNnUE         3 / 60（最大 6文）           **0/6**
+
+    ＝ **どちらの脚も「1本だけが守り、残りが落ちる」形**で、
+    **片方だけ数えても、もう片方は黙って抜けます。**
+
+    (5a) が効く所は、耳ではなく**目**です。この機械は 1コマ ＝ 1枚の絵なので、
+    11文 のコマは**同じ絵が 40秒 動かない**ということです
+    （`Ec-j1-W4nqw` seg 5 は 11文・概算 33秒、seg 1 は 9文・概算 42秒。
+    この本のコマの中央は 16.5秒）。規則が写している外の上位4本は、
+    **冒頭 90秒 ＝ 4コマ**（`OUTSIDE_OPENING_SEGS` の註）で、1コマ 20〜25秒 です。
+
+    ## 何を数えるか（**規則の本文にそのまま在る2つだけ**）
+
+        (5a) 冒頭 `first` コマを**除く**各コマの narration が
+             `OUTSIDE_NARRATION_LO`〜`OUTSIDE_NARRATION_HI` 文
+        (5b) 冒頭の章を**除く**各章の先頭コマに「前提」が在る
+
+    ## **冒頭 4コマ を (5a) から外している理由**（同じ回に実測して外した）
+
+    **規則どうしが、そこだけ逆を向いています。** (1) の冒頭の型は
+    a〜e の**5つ**（結論の額・知らない側・名乗り・問い2つ以上・見続ける約束）を
+    最初の 4コマ に入れろと命じており、**5つ入れると 4文 では収まりません。**
+    実測 `Ec-j1-W4nqw` の冒頭 4コマ は 8 / 9 / 5 / 4 文 で、`outside_opening_problems` は
+    **合格**を返します。ここを (5a) で鳴らすと、**2つの検査が同じ本に反対の直しを命じます。**
+
+    ＝ 冒頭は `outside_opening_problems` の持ち場、その先が (5a) の持ち場
+    （`outside_body_problems` が冒頭の章を数えないのと同じ切り方です）。
+
+    ## **数えていない脚が、まだ1つ在ります（わざと）**
+
+    規則の1行目「**尺は20分前後**」は数えません —— 尺は台本だけでは決まらず
+    （読み上げの速さ・図の尺）、`verify.check()` が**焼いたあとの実物**で見ています
+    （`min_minutes`）。**台本の文字数からの概算をここに置くと、
+    「概算では通ったのに実物で落ちた」という食い違いを新しく作ります。**
+
+    **覆る条件**: 前提「外の作り方を写した長尺」が外れたら（48h で 100回 未満）、
+    `OUTSIDE_LONG_RULE` ごと使わないので、この検査も一緒に落とすこと
+    （`config/hypotheses.yaml` の `next_if_false`）。
+    """
+    segs = list(getattr(script, "segments", None)
+                or (script.get("segments") if isinstance(script, dict) else []) or [])
+    if not segs:
+        return []
+    problems: list[str] = []
+
+    over: list[str] = []
+    for i, seg in enumerate(segs):
+        if i < first:
+            continue
+        nar = seg.get("narration") if isinstance(seg, dict) else getattr(seg, "narration", None)
+        n = len(_sentences(nar))
+        if n and not (OUTSIDE_NARRATION_LO <= n <= OUTSIDE_NARRATION_HI):
+            over.append(f"{i}コマ目 {n}文")
+    if over:
+        problems.append(
+            f"narration が {OUTSIDE_NARRATION_LO}〜{OUTSIDE_NARRATION_HI}文 でないコマが "
+            f"{len(over)}つ（{' / '.join(over[:8])}"
+            + ("…" if len(over) > 8 else "")
+            + f"。冒頭 {first}コマ は `outside_opening_problems` の持ち場なので数えていません。"
+            "1コマ＝1枚の絵なので、文が多いほど同じ絵が動きません)")
+
+    chs = list(getattr(script, "chapters", None)
+               or (script.get("chapters") if isinstance(script, dict) else []) or [])
+    starts = []
+    for c in chs:
+        i = c.get("segment_index") if isinstance(c, dict) else getattr(c, "segment_index", None)
+        lab = c.get("label") if isinstance(c, dict) else getattr(c, "label", None)
+        if isinstance(i, int) and 0 <= i < len(segs):
+            starts.append((i, str(lab or "")))
+    starts.sort()
+    # 先頭の章は冒頭 90秒（`outside_opening_problems` の持ち場）なので数えない。
+    for i, lab in starts[1:]:
+        seg = segs[i]
+        nar = seg.get("narration") if isinstance(seg, dict) else getattr(seg, "narration", None)
+        if not _OUTSIDE_PREMISE_RE.search(str(nar or "")):
+            problems.append(f"章「{lab}」の先頭コマ（{i}コマ目）が前提を言い直していない"
+                            "（規則「前提（年金額・単身・手取り率の置き方）は章の頭で毎回 言い直す」)")
     return problems
 
 
