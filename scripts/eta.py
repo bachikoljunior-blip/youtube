@@ -4366,10 +4366,20 @@ def physical_caps(a0: dict, density: float = PLAN_PUBLISH_PER_DAY,
         #     軌跡がここを ×10 で歩くと、**規則の外の世界**を歩きます
         #     （この関数の docstring が禁じている形そのもの）。
         #     **出どころは `src.house_rule` の1か所**（`batch_build` と同じ）。
+        # **2026-09-04 17:3x: オーナーが床を外しました**（「目標以外全部外して良いよ」）。
+        #     `PUBLISH_PER_DAY` は **1 のまま**ですが、身分が
+        #     「床（測り直しても動かない）」から「既定値（測って変えてよい）」に変わりました。
+        #     ここは長らく**数だけ**を見ていたので、床が外れても `density` は ×1.00 のまま ——
+        #     `deadline_check` はそれを読んで「**覆る条件はありません。外せるのはオーナーだけです**」と
+        #     印字し続け、`density` の前提 2件 が燃料から外れたままでした（17:5x に実測）。
+        #     **見るのは数ではなく旗**（`house_rule.publish_per_day_is_floor()`）。
+        #     外れている間の天井は観測（`view_cap`）で、1本あたりの薄まり（弾力性 -0.663）は
+        #     模型の下流が持っています —— **開けても天井は ×1.80 止まり**で、×10 にはなりません。
         view_cap = min(float(UPLOAD_CAP_PER_DAY), float(_view_cap_per_day()))
         rule_cap = float(house_rule.PUBLISH_PER_DAY)
-        rule_binds = rule_cap <= view_cap
-        arm_cap = min(view_cap, rule_cap)
+        rule_is_floor = house_rule.publish_per_day_is_floor()
+        rule_binds = rule_is_floor and rule_cap <= view_cap
+        arm_cap = min(view_cap, rule_cap) if rule_is_floor else view_cap
         raw = arm_cap / density
         # **倍率が 1 を下回るのは「引き代がマイナス」ではありません** ——
         #     **すでに上限より多く出している**、という意味です。そのまま返すと
@@ -4405,11 +4415,17 @@ def physical_caps(a0: dict, density: float = PLAN_PUBLISH_PER_DAY,
                                       "（超えたぶんは 0再生）".format(1 / raw) if over else "")),
                            "measured": True,
                            "at_ceiling": at_rule_ceiling,
-                           # **その上限は「観測」か「オーナーの規則」か。**
+                           # **その上限は「観測」か「外せない規則」か。**
                            #     観測（`day_cap`）なら測り直せば動きます。
-                           #     規則（`src/house_rule.py`）は **覆る条件がありません** ——
                            #     `src/levers.py` はこの1つで、面が開いていても
                            #     `density` を生き返らせてよいかを決めます。
+                           #
+                           #     **2026-09-04 17:3x までは「規則＝覆る条件なし」でした。**
+                           #     オーナーが床を外したので、いまの `PUBLISH_PER_DAY = 1` は
+                           #     **既定値**です（`house_rule.publish_per_day_is_floor()`）——
+                           #     測って別のほうが速いなら変えてよい。だからここも False になり、
+                           #     `density` は燃料に戻ります。**その1本/日 は、まだ
+                           #     「速いから」ではなく「前はそう言われたから」の数**です。
                            "rule_binds": bool(rule_binds),
                            "surface": "ショート"}
         # --- **その「引き代なし」は、まだ決まっていない枝の上に立っています** ---
@@ -9003,8 +9019,17 @@ def headline(pl: dict, prev: dict | None = None,
             + "**。 **見るのは腕ではなく、切っている物のほうです**"
               "（`density` は `solve_gate1` の `min(密度, view_cap)` ＝"
               " 1日に再生が付く上限 10本・`src/day_cap.py`。"
-              " その手前に**オーナーが固定した 1本/日**"
-              "（`src/house_rule.py`）が乗っているので、腕の天井は ×1.00 です）。")
+              + ("　その手前に**オーナーが固定した 1本/日**"
+                 "（`src/house_rule.py`）が乗っているので、腕の天井は ×1.00 です）。"
+                 if house_rule.publish_per_day_is_floor() else
+                 "　**2026-09-04 17:3x にオーナーが床を外したので**"
+                 "（「目標以外全部外して良いよ」）、ここを切っているのは"
+                 "**規則ではなく観測**です。`PUBLISH_PER_DAY = 1` は残っていますが、"
+                 "いまは**既定値**で、**まだ「速いから」ではなく「前はそう言われたから」の数**です"
+                 "（`house_rule.publish_per_day_is_floor()`）。"
+                 "**上げれば1本あたりは薄まります**（弾力性 実測 -0.663）—— "
+                 "その薄まりを入れても天井は ×1.80 止まりなので、"
+                 "**×10 の本数がそのまま ×10 の再生になるとは読まないこと**）。"))
         # --- **`rpm` を切っている物を、ここで名指しすること**（2026-09-01 夕・最適化の回）---
         #     すぐ上の行は「切っている物のほうを見ろ」と言いながら、
         #     **答えを書いてあるのは `density` だけ**でした。指示に従った回は、
