@@ -6037,3 +6037,4 @@
 {"at": "2026-09-04T18:12:17+00:00", "ok": true, "detail": "videos.update DtpnSVFDtAE retitle", "by": "retitle.py:main"}
 {"at": "2026-09-04T18:12:27+00:00", "ok": true, "detail": "videos.update DtpnSVFDtAE retitle", "by": "retitle.py:main"}
 {"at": "2026-09-04T18:19:49+00:00", "ok": true, "detail": "videos.update DtpnSVFDtAE", "by": "sub_ask.py:apply_to_video"}
+{"at": "2026-09-04T18:22:24+00:00", "ok": true, "detail": "videos.update iwdNOasGYE4", "by": "sub_ask.py:sweep"}
