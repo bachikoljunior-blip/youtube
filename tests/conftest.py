@@ -60,8 +60,65 @@ _WIDE_K = {
 }
 
 
+def _bake_is_live() -> str:
+    """**いま動画を焼いている最中か。** 焼いていればその1行、いなければ `""`。純関数・API 0単位。
+
+    正本は **`pgrep` と共通の台帳**です（`data/rebake.log` の `tail` は生死の判定に使えません ——
+    焼く側の標準出力は 8KB ずつたまるので、生きていても 20分 動かないことがあります）。
+    """
+    import subprocess                                            # noqa: PLC0415
+    for pat in ("src.pipeline --topic", "src.pipeline --script",
+                "ahead_sweep.py --rebake-run"):
+        try:
+            out = subprocess.run(["pgrep", "-f", pat], capture_output=True,
+                                 text=True, timeout=10)
+        except Exception:                                        # noqa: BLE001
+            continue
+        pids = [x for x in (out.stdout or "").split() if x.strip()]
+        if pids:
+            return f"`{pat}`（pid {' '.join(pids[:4])}）"
+    return ""
+
+
 def pytest_configure(config):
-    """`-k` に網の広い語が入っていたら、**撃つ前に**値札を出す。"""
+    """`-k` に網の広い語が入っていたら、**撃つ前に**値札を出す。
+
+    ## **焼いている最中の全件は、自分で優先度を下げます**（2026-09-05 07:0x に足した）
+
+    手順（`docs/spawn_prompt.md`）にはこう書いてあります ——
+    **「並行に `python -m pytest -q tests/`（全件）を選ばないこと。この器は 4コア」**。
+    実測 2026-09-04 22:0x: 全件を2本 走らせていた 20分 のあいだ、焼き側の CPU は
+    **52%** まで落ち、分かりやすさの輪の3周目が **30分 進みませんでした**。
+
+    **書いてあって、起きました。** 2026-09-05 07:00、09:00 公開の枠の焼き直しが
+    読み照合の輪を回している最中に、**別の回が全件を2本** 走らせています
+    （nice 0・CPU 85% と 79%）。手順は読まれていて、**守る所が無かった**だけです。
+    この repo でいちばん多い壊れ方（言っている所と、している所が別）のこの回ぶんです。
+
+    **止めません。** 検査を落とすと、その回が何も出せなくなります。
+    **自分の優先度を下げるだけ**にします（`os.nice(19)`）—— 焼きが在るあいだ
+    余った CPU は全部もらえるので、**空いている器では1秒も遅くなりません。**
+
+    **覆る条件**: 器のコアが増えて、全件と焼きが同時に走っても焼きが遅れなく
+    なったら、この段は要りません（`nproc` を見て畳むこと）。
+    `os.nice` が使えない環境（Windows）では黙って飛ばします。
+    """
+    # ---- 焼きが在れば、自分を後ろへ下げる（**全件のときだけ**）
+    if not (getattr(config.option, "keyword", "") or ""):
+        live = _bake_is_live()
+        if live:
+            try:
+                import os as _os                                 # noqa: PLC0415
+                _os.nice(19)
+                print(f"\n[conftest] **いま焼いている最中です** —— {live}。\n"
+                      "  `-k` の無い全件なので、**この検査の優先度を下げました**"
+                      "（`nice 19`）。\n"
+                      "  止めてはいません。焼きが終われば元の速さで走ります。\n"
+                      "  次からは `-k` で絞ること（`python scripts/fast_tests.py` が"
+                      "その回の触った所から作ります）。\n")
+            except Exception:                                    # noqa: BLE001
+                print(f"\n[conftest] **いま焼いている最中です** —— {live}。"
+                      " 全件は焼きを遅らせます（`-k` で絞ること）。\n")
     expr = getattr(config.option, "keyword", "") or ""
     if not expr:
         return
