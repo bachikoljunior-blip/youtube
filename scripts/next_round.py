@@ -646,6 +646,103 @@ def refresh_rendered() -> list[str]:
     return out
 
 
+def kinds_allowed() -> dict:
+    """**この周が ship してよい種別を、作りはじめる前に出す**（API 0単位・約9秒）。
+
+    ## なぜ足したか（2026-09-04 深夜・最適化の回。実測は下）
+
+    `run_marker.py` の `fix` の門は **2026-09-01 から在り**、以後4日 ぶん
+    締め直されています。**それでも `fix` の比は 78% → 60% で止まり**、
+    到達日は動いていません。**この回に数えた実物**（`data/runs.jsonl`）::
+
+        ship 241件（09/01〜09/04）／ `eta_days` は **241件 すべて 10^9**
+        `gate1p_days` は在る 6件 が **全部 511.538**（＝ 4日で 0.0日 も動いていない）
+        `fix_gate` の発火 **106回** —— **waived 50回（47%）**
+        止めた 56回 のうち **12回（21%）が、同じ文面を 45分以内に ship**
+          （中央 +6分・1件は sim=1.00 の丸写し・**10件は種別も `fix` のまま**）
+        ＝ 発火 106回 のうち **62回（58%）は、何も変えていません**
+
+    **門が効かない理由は、締め方ではなく置き場所です。** あの門は
+    **周の終わり（`--ship`）に立っています** —— そこへ着いた時点で、
+    その周の時間はもう使い切っています。残る道は3つ:
+
+        1. 免除する（50回）  2. 言い換えて通す（12回）  3. 周を捨てる（0回）
+
+    **誰も 3 を選びません。** だから門は「何を選ぶか」を変えられず、
+    **「何と呼ぶか」だけを変えて**きました。これが、近づかない周が
+    選ばれ続けた口です（`--moves` の自己申告ではなく、ここ）。
+
+    **だからこの読み出しを、周の頭に置きます。** `next_round.py` は親と
+    サブが毎周いちばん最初に撃つ道具で、**まだ何も作っていない時点**で走ります。
+    同じ述語（`untreated_slot` / `fix_run_len` / `fix_since_move` /
+    `judgeable_today`）を、**40分 早く**渡すだけです ——
+    門の定数は1つも変えていません（変えると、また言い換えが増えるだけ）。
+
+    **止める仕掛けではありません。** 返すのは行だけで、例外は外へ出しません。
+
+    **覆る条件**: `data/runs.jsonl` の `fix_gate` の
+    「止めた直後45分以内の同文 ship」が **30日 0件** で、かつ waived の比が
+    2割 を切ったら、頭で渡す意味は消えています（門だけで足ります）。
+    そのときは、この関数と `main()` の呼びの**両方**を消すこと。
+    """
+    out: dict = {"lines": [], "blocked": [], "ok": True}
+    try:
+        sys.path.insert(0, str(ROOT / "scripts"))
+        import run_marker as rm                                # noqa: PLC0415
+    except Exception as exc:                                   # noqa: BLE001
+        out["lines"].append(f"  [!] 種別の下読みが出せません: {str(exc)[:100]}")
+        return out
+
+    def _safe(fn, default):
+        try:
+            return fn()
+        except Exception:                                      # noqa: BLE001
+            return default
+
+    slot = _safe(rm.untreated_slot, {"fired": False, "why": "", "video_id": "", "topic": ""})
+    run_len = _safe(rm.fix_run_len, 0)
+    since = _safe(rm.fix_since_move, 0)
+    ready = _safe(rm.judgeable_today, [])
+    cap_run = getattr(rm, "FIX_RUN_CAP", 2)
+    cap_since = getattr(rm, "FIX_SINCE_MOVE_CAP", 5)
+
+    why: list[str] = []
+    if slot.get("fired"):
+        why.append(f"きょうの枠の本が前提の脚を通っていない（{slot.get('why', '')[:90]}）")
+    over = (run_len >= cap_run) or (since >= cap_since)
+    if over and ready:
+        why.append(f"`fix` の連 {run_len}/{cap_run}・動いた ship から {since}/{cap_since}"
+                   f"、かつ きょう判定できる前提が {len(ready)}件")
+
+    out["lines"].append(
+        f"  種別の下読み: `fix` 連 {run_len}/{cap_run}・動いた ship から {since}/{cap_since}"
+        f"・きょう判定できる前提 {len(ready)}件"
+        f"・枠の本 {'✗ 脚が残っている' if slot.get('fired') else '✓ 脚は全部 通っている'}")
+
+    if why:
+        out["ok"] = False
+        out["blocked"] = ["fix"]
+        out["lines"].append("  [!] **この周は `fix` では ship できません** —— " + "／".join(why))
+        if slot.get("fired") and slot.get("topic"):
+            out["lines"].append(
+                f"      通る手: `python scripts/inspect_build.py {slot['topic']}` → "
+                f"`upload_only.py {slot['topic']} --draft --replaces {slot.get('video_id', '')}`")
+        if over and ready:
+            out["lines"].append(f"      きょう判定できる前提: {', '.join(map(str, ready[:4]))}")
+        out["lines"].append(
+            "      **いま決めること**（作りはじめる前に）: "
+            "`improve` / `upload` / `verdict` / `premise` / `means` のどれで出すか。"
+            "**終わってから言い換えないこと** —— 止めた 56回のうち 12回が"
+            "同じ文面を +6分 で通しています（`kinds_allowed` の註）")
+    elif over and not ready:
+        out["lines"].append(
+            f"  [!] `fix` は上限（連 {run_len}/{cap_run}・{since}/{cap_since}）に着いていますが、"
+            "**きょう判定できる前提が 0件** なので門は立ちません。"
+            "**通るからといって、`fix` が近づける手だという意味ではありません** ——"
+            "実測の歩留りは `fix` 0.6%（157回→1件）対 `verdict` 44.4%（9回→4件）")
+    return out
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="次の周を立ててよいか／どの役か")
     ap.add_argument("--record", metavar="ROLE[,ROLE]",
@@ -694,6 +791,11 @@ def main() -> int:
 
     d = decide(live=args.live)
     print(f"[next_round] 間隔 {d['floor_min']:.0f}分（{d['source']}）")
+    # **種別の下読みを、周の頭で出す**（`kinds_allowed()` の註に実測）。
+    #     COUNT の枝より前に置くこと —— 親は COUNT で撃ち直すので、
+    #     ここより下だと「数を渡した回」しか読めません。
+    for _line in kinds_allowed()["lines"]:
+        print(_line)
     if d.get("live") is None:
         # **WAIT を印字しません。** 2026-09-02 21:2x、親は 0体 と数えたうえで
         #     `--live` を付けずに撃ち、出た WAIT をそのまま「（0体・WAIT 74分）」と
