@@ -224,6 +224,92 @@ def _fx(v: float | None) -> str:
     return "—" if v is None else f"{v:.2f}"
 
 
+#: (3)「作りが違う点を1つ入れる」に、**その場で当てられる数**を並べる本数。
+TITLE_FEATURE_TOP = 3
+
+
+#: **規則の本文が禁じている特徴**（`script_writer.OUTSIDE_LONG_RULE`）。
+#: 帯では ×46 で最大ですが、**「打てる手」としては勧めません** ——
+#: YouTube のポリシー（誤解を与える内容）は数ではなく、倒すかどうかは
+#: 09-07 の判定回が決める話です（`_OUTSIDE_DECIDE_RE` の註「どちらへ倒すかは中身の方針」）。
+#: 表には残します（隠すと、倒す回が数を見つけられません）。
+TITLE_FEATURES_FORBIDDEN = ("断定・煽り",)
+
+
+def title_feature_line(next_row: dict | None, form: str = "ショート") -> list[str]:
+    """**その本の形の、題の特徴ごとの倍率**を上位いくつか並べる（**API 0単位**）。
+
+    ## なぜここに出すか（2026-09-05 01:1x に足した）
+
+    すぐ上の (3) は「**外の帯の上位と作りが違う点を1つ、次の1本に入れる**」と
+    毎周 言っています。**言うだけで、数は出していませんでした。**
+    結果、題を触った回は毎回 その場で正規表現と窓を書き直し、
+    **同じ帯で3回 数えて3回とも食い違う**という形になりました
+    （`niche_ceiling.TITLE_FEATURES` の註に3件の実測）。
+    **この回自身も、重なりを潰さずに ×8 を出しています**（潰すと ×2.39）。
+
+    出すのは `niche_ceiling.title_features()` の**上位 `TITLE_FEATURE_TOP` 件**と、
+    **その本の題に無いもの**（＝ すぐ打てる手）だけ。薄い升（n<`THIN_CELL`）には印が付きます。
+
+    **形は `next_row` から取ります** —— 疑問形は 長尺 ×0.37・ショート ×2.39 で
+    **符号が逆**なので、形を間違えると向きごと逆の手を打ちます。
+
+    **覆る条件**: `title_features()` の上位が 3周 続けて同じで、しかも
+    その特徴が次の本に既に在るなら、この行は毎周 同じことを言うだけです（そのとき畳むこと）。
+    """
+    if not next_row:
+        return []
+    try:
+        sys.path.insert(0, str(ROOT / "scripts"))
+        import niche_ceiling as nc                              # noqa: PLC0415
+        import re as _re                                        # noqa: PLC0415
+    except Exception:                                           # noqa: BLE001
+        return []
+    # **形は尺から取ります**（`next_row` に `form` が在るとはかぎらない —— 実測
+    # `next_slot.next_video()` の行には `duration_s` は在っても `form` は在りません）。
+    # 尺も読めなければ、呼び手が持っている形（`lines(form=…)`）へ倒します。
+    # **ここを間違えると向きごと逆の手を打ちます**（疑問形は 長尺 ×0.37・ショート ×2.39）。
+    secs = next_row.get("duration_s")
+    if isinstance(secs, (int, float)) and secs > 0:
+        nc_form = "long" if float(secs) >= 180 else "short"
+    else:
+        nc_form = "short" if str(next_row.get("form") or form) == "ショート" else "long"
+    form = nc_form
+    try:
+        feats = nc.title_features(form)
+    except Exception:                                           # noqa: BLE001
+        return []
+    if not feats:
+        return []
+    title = str(next_row.get("title") or "")
+    top = [d for d in feats if (d["ratio"] or 0) > 1.0][:TITLE_FEATURE_TOP]
+    if not top:
+        return []
+    def _mark(d):
+        if d["name"] in TITLE_FEATURES_FORBIDDEN:
+            tag = "**規則が禁じている**（09-07 の判定回が倒す）"
+        elif not title:
+            tag = "—（題が読めません）"
+        elif _re.search(nc.TITLE_FEATURES[d["name"]], title):
+            tag = "**在り**"
+        else:
+            tag = "**無し ← 打てる**"
+        thin = "・薄い升" if d["thin"] else ""
+        return f"{d['name']} ×{d['ratio']:.2f}(n={d['n_yes']}対{d['n_no']}{thin}) {tag}"
+    out = [f"     **題の特徴の実測（{form}・1日あたり・`niche_ceiling.py --titles`・API 0単位）**: "
+           + " ／ ".join(_mark(d) for d in top)]
+    open_ = [d for d in top if title and not _re.search(nc.TITLE_FEATURES[d["name"]], title)
+             and not d["thin"] and d["name"] not in TITLE_FEATURES_FORBIDDEN]
+    if open_:
+        out.append(f"     → **いちばん厚い升で、まだ空いている特徴: 「{open_[0]['name']}」**"
+                   f"（×{open_[0]['ratio']:.2f}・n={open_[0]['n_yes']}対{open_[0]['n_no']}）。"
+                   " `scripts/retitle.py <ID> \"<題>\"`（50単位・焼き直し無しで齢は 0 に戻らない）"
+                   " ／ サムネは `refresh_thumbnail.py --rebuild <ID>` → `--missing --video <ID> --replace`")
+    out.append("     [!] **形をまたいで写さないこと** —— 疑問形は 長尺と ショート で符号が逆です"
+               "（`TITLE_FEATURES` の註）。**升が薄い（n<20）倍率を単独の根拠にしないこと。**")
+    return out
+
+
 def lines(rows: list[dict], next_row: dict | None = None, *, cv: dict[str, list] | None = None,
           fetch: bool = False, retention_path: Path | None = None,
           queue: Path | None = None, form: str = "ショート") -> list[str]:
@@ -270,6 +356,7 @@ def lines(rows: list[dict], next_row: dict | None = None, *, cv: dict[str, list]
                        "(2) 公開時刻の掃き（`src/publish_hour.sweep_hour`）を続ける "
                        "(3) 外の帯の上位（`niche_ceiling.py --form short`）と**作りが違う点**を1つ、次の1本に入れる"
                        "（同じ作りの中で磨いても ×1 ／ 作りを変えた1本だけが ×10 を試せる）")
+        out.extend(title_feature_line(next_row, form))
         if dw and next_row:
             segs = _segments_of(next_row.get("video_id"), queue)
             if segs:
