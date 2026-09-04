@@ -75,14 +75,24 @@ def _row(need, expr, window_txt, **kw):
     return r
 
 
+#: **窓に入らない本数を、規則から作ること**（2026-09-05 に書き替えた）。
+#: ここは `need=30` をべた書きし、窓 28日 × **1本/日** ＝ 28本 と比べていました。
+#: 規則が 10本/日 になると窓には 280本 入るので、**30本 は満ちてしまい**、
+#: 「永久に満ちない」側の検査4件が、満ちる場面を測る形へ化けます。
+#: **覆る条件**: `window_unreachable` が「窓の日数 × 上限」以外の式になったとき。
+_WINDOW = 28
+_ALLOWED = _WINDOW * house_rule.PUBLISH_PER_DAY
+_NEED_OVER = _ALLOWED + 2          # **わざと窓に入らない**本数
+
+
 def test_flags_need_above_window_capacity():
-    """30本 ／ 窓 28日 ／ 1日1本 → **窓に 28本 しか入らないので永久に満ちない。**"""
+    """窓に入る本数（窓の日数 × 規則）を超える `need` は**永久に満ちない。**"""
     hits = house_rule.window_unreachable(
-        [_row(30, "sum(1 for v in long_ids())", "判定は 直近28日 の窓")])
+        [_row(_NEED_OVER, "sum(1 for v in long_ids())", f"判定は 直近{_WINDOW}日 の窓")])
     assert len(hits) == 1
-    assert hits[0]["need"] == 30
-    assert hits[0]["window_days"] == 28
-    assert hits[0]["allowed"] == 28
+    assert hits[0]["need"] == _NEED_OVER
+    assert hits[0]["window_days"] == _WINDOW
+    assert hits[0]["allowed"] == _ALLOWED
 
 
 def test_does_not_flag_when_it_fits():
@@ -101,7 +111,8 @@ def test_does_not_flag_value_sums():
 
 def test_does_not_flag_closed_rows():
     hits = house_rule.window_unreachable(
-        [_row(30, "sum(1 for v in long_ids())", "直近28日", closed_on="2026-08-01")])
+        [_row(_NEED_OVER, "sum(1 for v in long_ids())", f"直近{_WINDOW}日",
+              closed_on="2026-08-01")])
     assert hits == []
 
 
@@ -111,14 +122,19 @@ def test_extending_the_deadline_does_not_silence_it():
     `needs_beyond_rule()` は期日を延ばせば黙りますが、こちらは日付を
     1つも見ないので黙りません。**「期限だけ延ばすこと」で逃げられない。**
     """
-    row = _row(30, "sum(1 for v in long_ids())", "直近28日", deadline="2099-12-31")
+    row = _row(_NEED_OVER, "sum(1 for v in long_ids())", f"直近{_WINDOW}日",
+               deadline="2099-12-31")
     assert len(house_rule.window_unreachable([row])) == 1
 
 
 def test_silent_if_owner_lifts_the_rule():
-    """**覆る条件**: 規則が外れて 1日2本 になれば、窓に 56本 入るので黙る。"""
-    row = _row(30, "sum(1 for v in long_ids())", "直近28日")
-    assert house_rule.window_unreachable([row], per_day=2) == []
+    """**覆る条件**: 規則が外れて 1日ぶんが増えれば、窓に入るので黙る。
+
+    **緩める先も、いまの規則から作ること**（2026-09-05）—— `per_day=2` の
+    べた書きは、規則そのものが 2 を超えた日に「緩めたのに黙らない」で赤くなります。
+    """
+    row = _row(_NEED_OVER, "sum(1 for v in long_ids())", f"直近{_WINDOW}日")
+    assert house_rule.window_unreachable([row], per_day=_NEED_OVER) == []
 
 
 def test_lines_are_empty_when_nothing_is_stuck():
@@ -128,13 +144,14 @@ def test_lines_are_empty_when_nothing_is_stuck():
 def test_lines_name_the_blocked_lever():
     """**どの腕が止まっているか**を出すこと —— それが到達日への効き目そのもの。"""
     out = house_rule.window_unreachable_lines(
-        [_row(30, "sum(1 for v in long_ids())", "直近28日")])
+        [_row(_NEED_OVER, "sum(1 for v in long_ids())", f"直近{_WINDOW}日")])
     assert out and any("per_video" in ln for ln in out)
 
 
 def test_unreachable_lines_includes_the_window_section():
     """`scripts/deadline_check.py` は `unreachable_lines()` を印字するだけなので、
     **ここに入っていなければ、主実行の1周には出ません。**"""
-    row = _row(30, "sum(1 for v in long_ids())", "直近28日", deadline="2099-12-31")
+    row = _row(_NEED_OVER, "sum(1 for v in long_ids())", f"直近{_WINDOW}日",
+               deadline="2099-12-31")
     out = house_rule.unreachable_lines([row], today="2026-09-01")
     assert any("期日を延ばしても満ちない" in ln for ln in out)
