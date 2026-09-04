@@ -1060,6 +1060,25 @@ def comment_pending(now: datetime | None = None, *, dry_run: bool = False,
 #: 逆に「枠が近いので置けない」が続くなら、上げすぎ ——
 #: `data/ahead_sweep.log` の `[today]` に「焼いてから置きます」が 3周 続いたら疑うこと。
 REBAKE_LEAD = timedelta(minutes=150)
+#: **焼く側を殺すまでの秒数。** `REBAKE_LEAD` と同じ数から作ります（写しを持たない）。
+#:
+#: **2026-09-04 16:39 に踏みました。** ここは `5400`（90分）と直に書いてあり、
+#: すぐ上の `REBAKE_LEAD` は「**焼き上がるのに 150分 見る**」と言っています ——
+#: **同じ file の中で、待つ側と殺す側が 60分 食い違っていました。**
+#: 実測（`data/rebake.jsonl` の `done` 3件）:
+#:
+#:     07:40  rc=1    4,692秒（78分）  読み照合の輪 1周
+#:     14:42  rc=0    3,325秒（55分）  読み照合の輪 1周
+#:     16:39  **rc=124  5,400秒（90分・殺された）**  読み照合の輪が **2周**
+#:            （誤読が出て音を作り直した ＝ オーナー指示の輪が正しく回った回）
+#:            —— 描画 83コマ の途中で死に、**90分 ぶんが丸ごと捨てられました**
+#:
+#: ＝ **輪が2周した回だけ、必ず殺されます。** 誤読が見つかるほど損をする形でした。
+#:
+#: **覆る条件**: `done` が数件 溜まったら、`bake_minutes()` の最大 ＋ 余白で置き直すこと。
+#: それが `REBAKE_LEAD` を超えるなら、**先に `REBAKE_LEAD` のほうを上げること**
+#: （枠に間に合わない焼きを始めないため。順番を逆にすると `late` で捨てる回が増えます）。
+REBAKE_RUN_TIMEOUT = int(REBAKE_LEAD.total_seconds())
 #: 同じ日に焼き直す上限（`videos.insert` 1本ぶんの上げ・TTS の費用・帳面）
 REBAKE_MAX_PER_DAY = 2
 REBAKE_LEDGER = "data/rebake.jsonl"
@@ -1951,7 +1970,7 @@ def rebake_run(vid: str, topic: str, sha: str, *, takeover: bool = False) -> int
     _rebake_note({"at": datetime.now(JST).isoformat(timespec="seconds"), "kind": "beat",
                   "video_id": vid, "topic": topic, "sha": sha}, root)
     rc = _run([py, "-m", "src.pipeline", "--script", draft, "--topic", topic, "--dry-run"],
-              "pipeline --dry-run", 5400)
+              "pipeline --dry-run", REBAKE_RUN_TIMEOUT)
     new_id = ""
     slot = _slot_of(vid) if takeover else ""
     mark_t: Path | None = None
