@@ -56,17 +56,64 @@ def _lines(monkeypatch, *, paused: bool) -> list[str]:
     return eta.headline(dict(_PL), None, dict(_TR), None)
 
 
+#: **この段だけを名指しする印**（2026-09-04 に、赤くなってから置いた）。
+#:
+#: ここには長らく **素の「止まっています」**と書いてありました。**日本語のありふれた
+#: 述語**なので、`headline()` の**別の段**が同じ語を使った日に、そのまま当たります。
+#: 実測 2026-09-04、`per_video` の段が
+#:
+#:     **`per_video` の標本は 2026-08-18 で止まっています（17日前・帯 ≤2本/日 の 12日）。**
+#:
+#: を出すようになり、**平時に黙る検査**（`test_silent_when_not_paused`）が赤くなりました。
+#: **鳴ったのは、この検査が守っているもの（停止の段）とは無関係の行です。**
+#:
+#: **もっと悪いのは、赤くならなかったほうです。** `_index()` は**最初に当たった行**を
+#: 返すので、`test_paused_warning_comes_before_any_date` は
+#: 「停止の段が到達日より前か」ではなく「**`止まっています` を含む最初の行**が
+#: 到達日より前か」を測っていました。実測では停行が 2行目・`per_video` の段が 6行目 で
+#: 順番がたまたま合っていただけで、**段の順が入れ替われば、黙って別の行を測ります。**
+#:
+#: だから印は**この段にしか出ない字**にします。実測（`headline()` を両方の状態で撃った）:
+#:
+#:     `**止まっています**`（太字）  止めた時 1行 ／ 平時 **0行**
+#:     素の `止まっています`        止めた時 3行 ／ 平時 **1行**  ← 当たってしまう
+#:
+#: **覆る条件**: 停止の段の見出しの字が変われば、ここも変えること
+#: （`scripts/eta.py` の `pause_guard.is_paused()` の枝）。**素の語へは戻さないこと。**
+PAUSE_MARK = "**止まっています**"
+
+
 def _index(lines: list[str], needle: str) -> int:
-    for i, ln in enumerate(lines):
-        if needle in ln:
-            return i
-    return -1
+    """`needle` を含む行の位置。**2行以上に当たったら、その場で落とします。**
+
+    **穴を塞ぐのではなく、穴を作っている側を塞ぐための門です**（2026-09-04）。
+
+    この関数は「最初に当たった行」を返します。順番を測る検査
+    （`test_paused_warning_comes_before_any_date`）がそれを使うと、
+    **印がありふれた語のとき、黙って別の段を測ります** —— 赤くならないので、
+    測る対象が入れ替わったことに誰も気づきません。実際 `PAUSE_MARK` を
+    素の「止まっています」で置いていた間、`per_video` の段が同じ語を
+    使い出しても、**順番がたまたま合っていたので緑のまま**でした。
+
+    だから **1行に当たることを、印の側の条件にします。** 2行以上に当たったら
+    「その印はこの段を名指ししていない」という意味なので、
+    **印を細くすること**（段の側の字を薄めないこと）。
+
+    実測（`headline()` を両方の状態で撃った・2026-09-04）:
+    `**止まっています**` 1/0行 ／ `月20万の到達予測` 1/1行 ＝ どちらも 1行 以下。
+    """
+    hits = [i for i, ln in enumerate(lines) if needle in ln]
+    assert len(hits) <= 1, (
+        f"印 {needle!r} が {len(hits)}行 に当たっています（{hits}）——"
+        " **印がこの段を名指ししていません。** 最初の1行だけを返すと、"
+        "順番の検査が黙って別の段を測ります。印を細くすること（段の字を薄めないこと）")
+    return hits[0] if hits else -1
 
 
 def test_paused_warning_comes_before_any_date(monkeypatch):
     """**止まっている間は、警告が先。** 日付より後ろに落ちたら、読まれません。"""
     lines = _lines(monkeypatch, paused=True)
-    warn = _index(lines, "止まっています")
+    warn = _index(lines, PAUSE_MARK)
     assert warn >= 0, "止まっているのに、そう書いていない"
 
     # 到達日の行（出ても出なくても）より前にあること
@@ -103,4 +150,6 @@ def test_paused_names_what_was_frozen(monkeypatch):
 def test_silent_when_not_paused(monkeypatch):
     """**平時は黙ること。** 常に出る警告は、読まれない警告になります。"""
     body = "\n".join(_lines(monkeypatch, paused=False))
-    assert "止まっています" not in body
+    assert PAUSE_MARK not in body, (
+        "平時なのに停止の段が出ている。**素の『止まっています』では数えないこと** —— "
+        "`PAUSE_MARK` の註（別の段が同じ語を使って 2026-09-04 に赤くなった）")
