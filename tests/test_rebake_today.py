@@ -121,9 +121,9 @@ def test_差し替えたら決めが新IDへ写る(tmp_path):
     p = tmp_path / "daily_pick.jsonl"
     from datetime import date
     daily_pick.record("長尺", "zaishoku-2026-62man", "外の p90 624,772回", day=date(2026, 9, 4),
-                      now=NOW, path=p, video_id="OLD00000001")
+                      now=NOW, path=p, video_id="OLD00000001", expected=1.0)
     daily_pick.record("長尺", "nenkin-uketorikata", "2本目", day=date(2026, 9, 5),
-                      now=NOW, path=p, video_id="OTHER000001")
+                      now=NOW, path=p, video_id="OTHER000001", expected=1.0)
     days = daily_pick.replace_video(["OLD00000001"], "NEW00000001", why_note="検査", now=NOW, path=p)
     assert days == ["2026-09-04"]
     cur = daily_pick.current(date(2026, 9, 4), p)
@@ -143,7 +143,8 @@ def test_差し替えたら決めが新IDへ写る(tmp_path):
 def test_名指ししていなければ何も写さない(tmp_path):
     p = tmp_path / "daily_pick.jsonl"
     from datetime import date
-    daily_pick.record("ショート", "s-x", "1本", day=date(2026, 9, 4), now=NOW, path=p, video_id="AAA")
+    daily_pick.record("ショート", "s-x", "1本", day=date(2026, 9, 4), now=NOW, path=p,
+                      video_id="AAA", expected=1049.0)
     assert daily_pick.replace_video(["ZZZ"], "NEW", now=NOW, path=p) == []
     assert daily_pick.replace_video(["AAA"], "AAA", now=NOW, path=p) == []
     assert daily_pick.current(date(2026, 9, 4), p)["video_id"] == "AAA"
