@@ -746,6 +746,9 @@ def long_script_problems(script, topic_id: str = "") -> list[str]:
         # **規則は3つ命じているのに、数えていたのは (1) だけでした**（2026-09-04）。
         # (2) 章・(3) 締め も同じ理由で数えます（`outside_body_problems` の docstring）。
         problems += outside_body_problems(script)
+        # **(4) 題とサムネ も同じ理由で数えます**（2026-09-04 12:5x・`outside_title_problems`
+        # の docstring）。**実測 3/3 で外れていた脚はここだけです。**
+        problems += outside_title_problems(script)
     # **入り方と締め方が、直近の本と揃っていないか**（2026-08-30・解除条件3）。
     # **長尺のほうが深刻でした** —— 134本のうち 113本（84%）が同じ4文字で始まり、
     # 82本（61%）が同じ4文字で終わっています（`python -m src.frames`）。
@@ -1605,6 +1608,97 @@ def outside_body_problems(script) -> list[str]:
     if not (_OUTSIDE_STEPS_RE.search(tail) and _OUTSIDE_THREE_RE.search(tail)):
         problems.append(f"末尾 {OUTSIDE_CLOSING_SEGS}コマ に締めの手順が無い"
                         "（「自分の場合の数字を出す手順」を3つ、順に）")
+    return problems
+
+
+#: `OUTSIDE_LONG_RULE` (4) 題・サムネ —— **この規則の4つ目の脚**（2026-09-04 12:5x に足した）。
+#: 題は「全角45文字以内」、サムネは2行。**数は規則の本文から引いています**（本文を直したら、ここも直すこと）。
+OUTSIDE_TITLE_MAX = 45
+#: サムネの1行が「金額の差」であることを数える正規表現。**円 だけを金額と数えます** ——
+#: 「54か月」「69歳7か月」は計算出力の数字ですが、規則が命じているのは *金額* です
+#: （実測 2026-09-04: `Ec-j1-W4nqw` のサムネ2行は「最適が54か月飛ぶ」「何歳から受け取るか」で、
+#: 金額が1つも無く、同じ台本の `angle` には +2,476,950円 / +12,376,950円 / 20,520,000円 が在りました）。
+_OUTSIDE_MONEY_RE = re.compile(r"[0-9０-９][0-9０-９,，．.]*\s*(?:億|万)?円")
+#: 「判断の語」（規則の例:「どれを選ぶか」「何歳から受け取るか」）。
+_OUTSIDE_DECIDE_RE = re.compile(r"どれ|どちら|何歳|いつから|いつまで|選ぶ|決める|決め方|得か|損か")
+
+
+def outside_title_problems(script) -> list[str]:
+    """`style: outside_long` の**題とサムネ**が `OUTSIDE_LONG_RULE` (4) になっているかを
+    **数えて**並べる。空なら合格。**API 0単位・純関数。**
+
+    ## なぜ要るか（2026-09-04 12:5x に踏んで足した）
+
+    `OUTSIDE_LONG_RULE` は4つ命じています —— (1) 冒頭・(2) 章・(3) 締め・**(4) 題とサムネ**。
+    09-03 に (1) を、09-04 12:16 に (2)(3) を数える口が入りました。**(4) だけが
+    文章の指示のまま**で、`generate()` に渡って終わりです。理由は同じ ——
+    **「文章の指示は守られない（`generate()` の実測 2026-08-09）ので、数える」**
+    （`outside_opening_problems` の docstring）。
+
+    **実測（2026-09-04・outside_long の実物 3本すべて）: 3本とも落ちます。**
+    しかも**落ち方が3本ばらばら**で、それぞれ別の脚が抜けていました::
+
+        Ec-j1-W4nqw （09/05 の1本）  題 `【年金の受け取り方】最適が54か月飛ぶ 何歳から受け取るか`
+                                    サムネ `最適が54か月飛ぶ` / `何歳から受け取るか`
+                                    → **金額が1つも無い**（規則「サムネの2行は『金額の差』と『判断の語』」）。
+                                      同じ題材の `angle` には +2,476,950円 / +12,376,950円 / 20,520,000円 が在ります
+        1huadpEk6HY / 6PKux5HNnUE   サムネ `働く年金受給者` / `年54万円増える`
+                                    → 金額は在るが、**判断の語が無い**（相手＋金額の2行）
+
+    ＝ **この検査は、いま在る本を通すために足したのではありません。** (1)(2)(3) を足したときは
+    3本とも通り「次の本が黙って落ちるのを止めるため」でしたが、(4) は**すでに 3/3 で外れています。**
+    (1)〜(3) を数えはじめてから、外れが残っていたのはここだけです。
+
+    ## 何を数えるか（**規則の本文にそのまま在る4つだけ**）
+
+        (4a) 題の先頭が【 】（相手か場面）
+        (4b) 題が全角 `OUTSIDE_TITLE_MAX` 文字以内
+        (4c) サムネの2行のどちらかが**金額**（`_OUTSIDE_MONEY_RE`）＝「金額の差」
+        (4d) サムネの2行のどちらかが**判断の語**（`_OUTSIDE_DECIDE_RE`）
+
+    ## **数えていない脚が1つ在ります（わざと）**
+
+    規則はもう1つ、**「『必ず』『絶対』『大損』のような断定・煽りの語は使わない」**と書いています。
+    **これは数えません** —— 同じ規則を測っている前提「外の作り方を写した長尺」
+    （`config/hypotheses.yaml`・期限 2026-09-07）の claim 自身が、写す型を
+    **「題は【緊急解説／知らないと損】＋…」**と書いており、**その1本目 `1huadpEk6HY` の題は
+    実際に `【知らないと損】2026年4月 働く年金受給者は年54万円増える` です。**
+    ＝ 規則の本文と、規則が測っている前提が、この1点だけ**逆を向いています。**
+    どちらへ倒すかは**中身の方針の話**（機械が決める話ではない）なので、
+    **ここでは数えず、食い違いとして残します。**
+
+    **覆る条件**: 09-07 に前提「外の作り方を写した長尺」を判定する回が、この食い違いを
+    どちらかへ倒すこと。倒したら (4e) としてここに足すか、規則の本文からその1行を消すこと。
+    前提が外れた（48h で 100回 未満）ときは `OUTSIDE_LONG_RULE` ごと落とすので、
+    この検査も一緒に落とします（`next_if_false`）。
+    """
+    def _get(name: str) -> str:
+        v = getattr(script, name, None)
+        if v is None and isinstance(script, dict):
+            v = script.get(name)
+        return str(v or "").strip()
+
+    title = _get("title")
+    if not title:
+        return []
+    problems: list[str] = []
+    if not title.startswith("【"):
+        problems.append(f"題が【 】で始まっていない（`{title[:14]}…`。"
+                        "外の上位の形 —— 先頭に【 】で相手か場面）")
+    if len(title) > OUTSIDE_TITLE_MAX:
+        problems.append(f"題が全角 {len(title)}文字（{OUTSIDE_TITLE_MAX}文字以内）")
+
+    lines = [t for t in (_get("thumbnail_line1"), _get("thumbnail_line2")) if t]
+    if lines:
+        if not any(_OUTSIDE_MONEY_RE.search(t) for t in lines):
+            problems.append("サムネの2行に金額が無い（"
+                            + " / ".join(f"「{t}」" for t in lines)
+                            + "。規則「サムネの2行は『金額の差』と『判断の語』」。"
+                            "**か月・歳は金額ではありません** —— 計算出力の円の値を使うこと)")
+        if not any(_OUTSIDE_DECIDE_RE.search(t) for t in lines):
+            problems.append("サムネの2行に判断の語が無い（"
+                            + " / ".join(f"「{t}」" for t in lines)
+                            + "。例:「どれを選ぶか」「何歳から受け取るか」)")
     return problems
 
 
