@@ -1798,6 +1798,87 @@ def quota_is_out() -> tuple[bool, str]:
     return True, str(getattr(q, "line", "") or "**日枠が尽きています**")
 
 
+def untreated_slot() -> dict:
+    """**枠に立っている決めの本が、前提の脚を通っていないか。**（`data/` と台本の控えだけ・**API 0単位**）
+
+    返り: `{"fired", "video_id", "topic", "bad", "why"}`。`fired` が真なら、
+    **その日の供給の 100%**（規則1 は 1日1本・`src/house_rule.py`）が、
+    前提を1件も進めない本で埋まろうとしています。
+
+    ## なぜ要るか（2026-09-04 17:xx・最適化の回に実物で踏んだ）
+
+    前提「外の作り方を写した長尺」（`config/hypotheses.yaml`・期限 2026-09-07）のために、
+    決めは 09-04・09-05 の**2日ぶんの枠**を取りました。撃って数えた実物::
+
+        1huadpEk6HY  09-04 の枠・公開ずみ  (2)(4)(5) ✗   齢6時間で 0回
+        O_lfBxB7S8Q  09-05 の枠・予約ずみ  (1) ✗
+        —— 決めの `why` は「5脚とも ○ の唯一の本」と名乗っている（**偽**）
+
+    ＝ **枠は 2日 減り、前提は 1件も進んでいません。** `verdict` は直近5日で
+    13回 中 7回（54%）が到達日を動かした**唯一の種別**で、その `verdict` は
+    前提が閉じないと撃てません。**閉じない理由が、ここです。**
+
+    ## なぜ印字ではなく門か
+
+    `src/daily_pick.standing_pick_treatment()` が同じことを**印字**します。
+    このファイルは同じ教訓を4回 書いています ——
+    「**註と警告では戻り、「無いと通らない」にしたときだけ効いた**」。
+    そして実測: `[!!]`（立っている決めと門の算の食い違い）は印字だけで、
+    **12回 連続で同じ鎖**を作りました。
+
+    ## 何を止め、何を通すか（**配合の門ではありません**）
+
+    止めるのは `fix` **だけ**です。`improve`／`upload`／`verdict`／`premise`／`means` は通ります。
+    ＝ この門が言うのは「**きょうの回を、その1本の脚を通すことに使え**」だけで、
+    それはオーナー規則3（`docs/GOAL.md`）の本文そのものです。
+    **`FIX_RUN_CAP` をきつくするのとは別物**（あちらは比の門・こちらは1本の門）。
+
+    ## 覆る条件
+
+    - **その本が脚を全部 通れば、門は自分で消えます**（定数を持ちません）。
+    - 決めの題材が `outside_long` の型でなくなったら、黙ります。
+    - **台本の控えが読めない回は、黙ります**（`fired` は偽）——
+      **「測れない」を「立っている」と読ませないこと**（`cond4()` が
+      2026-08-31〜09-03 に踏んだのと同じ穴）。
+    - 前提「外の作り方を写した長尺」が閉じたら、この門ごと落とすこと。
+    """
+    out = {"fired": False, "video_id": "", "topic": "", "bad": [], "why": ""}
+    try:
+        from src import daily_pick as _dp
+    except Exception as exc:                                       # noqa: BLE001
+        out["why"] = f"`src.daily_pick` が読めません（{str(exc)[:60]}）"
+        return out
+    try:
+        cur = _dp.current(_dp.for_day())
+    except Exception as exc:                                       # noqa: BLE001
+        out["why"] = f"決めが読めません（{str(exc)[:60]}）"
+        return out
+    if not cur:
+        out["why"] = "きょうの枠に立っている決めがありません"
+        return out
+    topic = str(cur.get("topic") or "")
+    vid = str(cur.get("video_id") or "")
+    out["topic"], out["video_id"] = topic, vid
+    try:
+        tops = {str(t.get("id")): str(t.get("style") or "") for t in _dp._topics()}
+    except Exception as exc:                                       # noqa: BLE001
+        out["why"] = f"題材の表が読めません（{str(exc)[:60]}）"
+        return out
+    if tops.get(topic) != "outside_long":
+        out["why"] = f"決めの題材 `{topic}` は `outside_long` の型ではありません（この門の外）"
+        return out
+    bad, why = _dp.pick_legs(vid)
+    if why:
+        out["why"] = f"脚が測れません（{why}）"
+        return out
+    if not bad:
+        out["why"] = f"`{vid}` は脚を全部 通っています"
+        return out
+    out["fired"], out["bad"] = True, bad
+    out["why"] = (f"`{vid}`（題材 `{topic}`）が {len(bad)}/4脚 ✗: {'・'.join(bad)}")
+    return out
+
+
 def note_fix_gate(what: str, run_len: int, waived: bool = False) -> None:
     """**止めたことを残す。**
 
@@ -2516,7 +2597,34 @@ def main(argv: list[str] | None = None) -> int:
         # ここも同じで、**「連が長い」と印字するだけなら `drift.py` が
         # 2026-08-24 から毎回やっていて、7日 後の比は変わっていません。**
         _fk = run_marker_ship_kind(args.ship, args.kind)
+        # **枠に立っている本が前提の脚を通っていない間、`fix` は通しません**
+        # （2026-09-04 17:xx。理由と実測は `untreated_slot()` の註）。
+        # 規則1 は 1日1本 ＝ その1本は**その日の供給の 100%**。処置になっていない
+        # 本をその枠へ入れると、枠は減り、前提は 1件も進みません。
+        # **`FIX_RUN_CAP`（比の門）とは別物です** —— こちらは1本の門で、
+        # **その本が脚を通れば自分で消えます**（定数を持ちません）。
         if _fk == "fix":
+            _u = untreated_slot()
+            # **その本を直す `fix` は通します** —— 本の ID か題材を名乗っていれば、
+            # それは門が言っている手そのものです（門が自分の出口を塞がないこと）。
+            _on_it = bool(_u["fired"]) and (
+                _u["video_id"] in args.ship or (_u["topic"] and _u["topic"] in args.ship))
+            if _u["fired"] and not _on_it:
+                ap.error(
+                    f"**きょうの枠の本が、前提の脚を通っていません** —— {_u['why']}"
+                    "（`scripts/run_marker.untreated_slot`・`src/daily_pick.pick_legs`・API 0単位）。\n"
+                    "  **規則1 は 1日1本**（`src/house_rule.py`）＝ **その1本は、その日の供給の 100%** です。"
+                    "処置になっていない本をその枠へ入れると、**枠は減り、前提"
+                    "「外の作り方を写した長尺」（`config/hypotheses.yaml`・期限 2026-09-07）は"
+                    "1件も進みません**。 実測: 同じ試験で先に出した `1huadpEk6HY` は"
+                    " (2)(4)(5) ✗ のまま公開され、齢6時間で **0回**。\n"
+                    "  **この回は、その脚を通すことに使うこと**（オーナー規則3・`docs/GOAL.md`）:\n"
+                    f"    python scripts/inspect_build.py {_u['topic']}\n"
+                    f"    python scripts/upload_only.py {_u['topic']} --draft --replaces {_u['video_id']}\n"
+                    "  **`improve` / `upload` / `verdict` / `premise` / `means` は通ります。"
+                    "止めているのは `fix` だけです。** その本が脚を全部 通れば、この門は自分で消えます。\n"
+                    "  **その本を直す `fix` も通ります** —— `--ship` に本の ID か題材を書くこと。")
+
             _run = fix_run_len()
             # **枠が尽きている窓でも、撃てる手が残っていれば止めます**
             # （2026-09-01 に直した。理由と実測は `free_alternatives()` の註）。

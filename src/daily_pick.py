@@ -1155,6 +1155,116 @@ def and_path_form(cmp: dict | None = None, *, snapshot: dict | None = None,
     return str(g["nearer"]), f"AND の道でいちばん遠い脚どうし: {body}"
 
 
+#: **立っている決めが名指している「その本」が、前提の脚を全部 通っているか。**
+#: （2026-09-04 17:xx・最適化の回に足した。`treated_count` は**分母**を数える口で、
+#:  **枠に入る1本そのもの**は、どこも数えていませんでした。）
+OUTSIDE_LEGS: tuple[tuple[str, str], ...] = (
+    ("(1) 冒頭", "outside_opening_problems"),
+    ("(2) 章・締め", "outside_body_problems"),
+    ("(4) 題・サムネ", "outside_title_problems"),
+    ("(5) 間合い", "outside_pacing_problems"),
+)
+
+
+def pick_legs(video_id: str | None, *, queue: Path | None = None) -> tuple[list[str], str | None]:
+    """`(通らなかった脚, 読めなかった理由)`。**API 0単位・実物の台本の控えだけ。**
+
+    `data/critique_queue/<video_id>.script.json` を `src/script_writer` の
+    4つの数える口に通します。控えが読めなければ `([], 理由)` ——
+    **読めないものを「通った」に数えません**（`treated_count` と同じ向き）。
+    """
+    vid = str(video_id or "").strip()
+    if not vid:
+        return [], "決めが本を名指していません（`video_id` が空）"
+    path = (queue or QUEUE) / f"{vid}.script.json"
+    try:
+        script = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:                           # noqa: BLE001
+        return [], f"台本の控えが読めません（`{path}`・{str(exc)[:60]}）"
+    try:
+        from src import script_writer as _sw
+    except Exception as exc:                                       # noqa: BLE001
+        return [], f"`src.script_writer` が読めません（{str(exc)[:60]}）"
+    bad: list[str] = []
+    for label, fn in OUTSIDE_LEGS:
+        f = getattr(_sw, fn, None)
+        if f is None:
+            continue
+        try:
+            if f(script):
+                bad.append(label)
+        except Exception:                                          # noqa: BLE001
+            continue
+    return bad, None
+
+
+def standing_pick_treatment(cur: dict | None, *, topics: list[dict] | None = None,
+                            queue: Path | None = None) -> list[str]:
+    """**立っている決めの本を、いまの脚で測り直した行。**（API 0単位）
+
+    ## なぜ要るか（2026-09-04 17:xx・最適化の回に実物で踏んだ）
+
+    規則1 は 1日1本（`src/house_rule.py`）。**その日に枠へ入る1本は、その日の供給の 100%** です。
+    その1本を決めた `why` は**散文**で、こう名乗っていました（09-04T16:21 の決め）::
+
+        O_lfBxB7S8Q は 5脚とも ○ の唯一の本
+
+    **同じ回に、機械で測ると偽です** —— `outside_opening_problems` が (1) 冒頭 を落とします
+    （脚 (1)b「知らない側がどうなるか」は 09-04 15:0x に足したので、
+      その名乗りは**足す前の写し**でした）。同じ日に枠を取った `1huadpEk6HY` は
+    (2)(4)(5) を落としたまま公開ずみで、齢6時間で **0回**。
+
+    ＝ **前提「外の作り方を写した長尺」（期限 2026-09-07）のために枠を 2日ぶん 取りながら、
+    その枠へ入れた本は 1本も処置になっていません。** 枠だけ減って、前提は 1件も進みません
+    （`lines()` の「取った枠から、まだ 1本も 48h の観測が出ていません」と同じ穴の、**上流**）。
+
+    `treated_count()` は**分母**（既に出た本）を数えます。ここは**これから出る1本**を数えます。
+    **どちらも無いと、処置 0本 の試験が「試験ずみ」として枠を食い続けます。**
+
+    ## 覆る条件
+
+    - 前提「外の作り方を写した長尺」が閉じて `OUTSIDE_LONG_RULE` を使わなくなったら、
+      この行ごと落とすこと（`config/hypotheses.yaml`）。
+    - 決めの形が `outside_long` の型を持たない題材になったら、ここは黙ります
+      （**型の無い題材に「写していない」と言わないこと**）。
+    """
+    if not cur:
+        return []
+    topic = str(cur.get("topic") or "")
+    tops = {str(t.get("id")): str(t.get("style") or "")
+            for t in (topics if topics is not None else _topics())}
+    if tops.get(topic) != "outside_long":
+        return []
+    vid = cur.get("video_id")
+    bad, why = pick_legs(vid, queue=queue)
+    claim = "脚" in str(cur.get("why") or "") or "○" in str(cur.get("why") or "")
+    if why:
+        return [f"     [!] **決めの本 `{vid or '(無し)'}` の脚が、この回は測れませんでした** —— {why}。"
+                f"**測れないものを「処置ずみ」に数えないこと。**"]
+    if not bad:
+        return [f"     [数] 決めの本 `{vid}` は **外の型の脚を全部 通っています**"
+                f"（`src/daily_pick.pick_legs`・{len(OUTSIDE_LEGS)}脚・実物の台本の控え）。"]
+    head = ("     [!!] **立っている決めの本が、前提の脚を通っていません** —— "
+            f"`{vid}` は {len(bad)}/{len(OUTSIDE_LEGS)}脚 が ✗: **{'・'.join(bad)}**"
+            "（`src/daily_pick.pick_legs`・実物の台本の控え・API 0単位）。")
+    out = [head]
+    if claim:
+        out.append("     　 **決めの `why` は「脚は通っている」と名乗っています。"
+                   "散文のほうが古い写しです** —— 脚は足されており"
+                   "（(1)b 09-04 15:0x・(4) 12:5x・(5) 13:4x）、**名乗りは機械で毎周 測り直すこと。**")
+    out.append("     　 規則1 は 1日1本（`src/house_rule.py`）＝ **この1本は、その日の供給の 100%** です。"
+               "処置になっていない本をその枠へ入れると、**枠は減り、前提は 1件も進みません**"
+               "（前提「外の作り方を写した長尺」・`config/hypotheses.yaml`）。"
+               "実測: 同じ試験で先に出した `1huadpEk6HY` は (2)(4)(5) ✗ のまま公開され、齢6時間で 0回。")
+    out.append("     　 **この回の `improve` は、この脚を通すことです**"
+               "（オーナー規則3「次の枠までの時間は、その枠で出す1本を改善し続ける」）:")
+    out.append(f"       python scripts/inspect_build.py {topic}"
+               f"   # 脚を落としている段を見る（`src/script_writer.OUTSIDE_LONG_RULE`）")
+    out.append(f"       python scripts/upload_only.py {topic} --draft --replaces {vid}"
+               f"   # 直したら焼き直して差し替える（旧 ID は private のまま残す）")
+    return out
+
+
 def standing_form_conflict(cur: dict | None, *, now: datetime | None = None,
                            uploaded_path: Path | None = None,
                            form_call=None, picks_path: Path | None = None,
@@ -2087,6 +2197,11 @@ def lines(next_row: dict | None, now: datetime | None = None,
         # 呼ばれていませんでした（その判定はこの回 `None`＝長尺6本の観測が 0件）。
         # ＝ **回は前の決めしか読めず、09-03T02:03 から 11回 連続で同じ形を追認した。**
         out.extend(standing_form_conflict(cur, now=now, picks_path=picks_path))
+        # **立っている決めの「その本」を、毎周 脚で測り直す**（2026-09-04 17:xx・
+        # `standing_pick_treatment()` の註）。ここまでは、枠に入る1本が処置に
+        # なっているかを**どこも数えておらず**、散文の名乗り（「5脚とも ○」）だけが
+        # 引き継がれていました。実測でその名乗りは偽（(1) 冒頭 が ✗）。
+        out.extend(standing_pick_treatment(cur))
         if vid:
             out.append(f"     → **{day:%m/%d}（JST）になってから**、この本を その日の枠へ"
                        f"（1本 50単位・先の日付には置かない）:")
