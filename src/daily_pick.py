@@ -2691,6 +2691,73 @@ def measured_seconds(video_id: str, uploaded_path: Path | None = None) -> float 
 OUTSIDE_LONG_KNEE_SEC = 1500
 
 
+#: `outside_long_length_band()` が数える帯（秒）。**切れ目 `OUTSIDE_LONG_KNEE_SEC` を挟む2つ**。
+_LEN_BANDS = ((1200, 1500), (1500, 1800))
+
+
+def outside_long_length_band(path: Path | None = None) -> dict | None:
+    """**外の長尺の帯を、尺で2つに割って1日あたりを数える**（`data/niche_corpus.jsonl`・API 0単位）。
+
+    返り: `{"n": 帯の長尺の総数, "lo": (n, 中央値/日), "hi": (n, 中央値/日), "x": 倍率}`。
+    読めなければ `None`。
+
+    ## なぜ関数にしたか（2026-09-05 04:0x に踏んだ）
+
+    `draft_length_lines()` の2行目は、**まるごとべた書きの散文**でした ——
+    「外の長尺 **365本** を齢で割った実測: 20〜25分 **n=37 823回/日** 対
+    25〜30分 **n=34 3,507回/日**（**×4.3**）」。09/04 23:5x の回が数えた数を、
+    その回が文字列に焼き付けたものです。
+
+    **同じ帳面を、この回（09/05 04:0x）に数え直したら、1つも合いませんでした**:
+
+        べた書き   365本   20〜25分 n=37 823回/日   25〜30分 n=34 3,507回/日   ×4.3
+        実測       335本   20〜25分 n=33 792回/日   25〜30分 n=24 2,094回/日   ×2.6
+
+    帳面（`data/niche_corpus.jsonl`）は毎周 引き直されるので、**べた書きは必ず古くなります。**
+    この repo が `per_video` の「標本は 2026-08-18 で止まっています」と
+    `slot_cost` の「1,049回 は 18日前の帯の高さ」で2回 踏んだのと**同じ形**です。
+    しかも**この行は、次の1本の形を決める根拠**として印字されています。
+
+    **切れ目そのもの（25分）は動かしていません** —— 動かしたのは「その両側がいくつか」だけ。
+    切れ目は `OUTSIDE_LONG_KNEE_SEC` が持ちます。
+
+    **覆る条件**: 帳面に `published` の無い行が増えて n が落ちたら、
+    `--fill-corpus-published` で埋めること（`niche_ceiling.corpus_published_cover`）。
+    帯の順が入れ替わったら（下のほうが速くなったら）、`OUTSIDE_LONG_KNEE_SEC` と
+    `script_writer.OUTSIDE_LONG_RULE` の尺の節を両方 書き直すこと。
+    """
+    import statistics as _st
+    try:
+        import sys
+        here = str(ROOT / "scripts")
+        if here not in sys.path:
+            sys.path.insert(0, here)
+        import niche_ceiling as nc                              # noqa: PLC0415
+        rows = nc.corpus_rows("long", path=path) if path else nc.corpus_rows("long")
+    except Exception:                                           # noqa: BLE001
+        return None
+    per: list[tuple[int, float]] = []
+    for r in rows:
+        secs, views = r.get("secs"), r.get("views")
+        pub, at = r.get("published"), r.get("at")
+        if not (secs and views and pub and at):
+            continue
+        p0, p1 = _parse(str(pub)), _parse(str(at))
+        if not p0 or not p1:
+            continue
+        days = max((p1 - p0).total_seconds() / 86400.0, 1.0)
+        per.append((int(secs), float(views) / days))
+    if not per:
+        return None
+    out: dict = {"n": len(per)}
+    for key, (lo, hi) in zip(("lo", "hi"), _LEN_BANDS):
+        xs = sorted(v for sec, v in per if lo <= sec < hi)
+        out[key] = (len(xs), _st.median(xs) if xs else 0.0)
+    lo_med, hi_med = out["lo"][1], out["hi"][1]
+    out["x"] = (hi_med / lo_med) if lo_med > 0 else None
+    return out
+
+
 def draft_length_lines(video_id: str) -> list[str]:
     """**その下書きの尺は、外の帯の切れ目のどちら側か。**（API 0単位）
 
@@ -2744,14 +2811,34 @@ def draft_length_lines(video_id: str) -> list[str]:
                     f"・`daily_pick.LONG_CHARS_PER_SECOND`（実物 11本 から数えた中央）。"
                     f"**`pipeline.CHARS_PER_SECOND`（5.2）で割ると 8% 長く出ます** ——"
                     f"5.2 は読み上げの速さで、動画の尺の速さではありません")
-    return [
+    lines = [
         f"     この下書きの**尺 {sec / 60:.1f}分**（{src_note}）——"
         f" 外の帯の切れ目 {knee // 60}分 の {side}・差 {gap:.1f}分",
-        f"       外の長尺 365本 を齢で割った実測: 20〜25分 n=37 **823回/日** 対"
-        f" 25〜30分 n=34 **3,507回/日**（×4.3）。"
-        f"チャンネルの大きさを止めても 12件中 9件 で 25分以上が速く、中央 ×2.89"
-        f"（符号検定 片側 p=0.073 ＝ **0.05 を割っていません。目安**）",
     ]
+    # **帯の数は、毎周 数え直します**（2026-09-05 04:0x）。ここはべた書きの散文で
+    #     「365本／n=37 823回/日／n=34 3,507回/日／×4.3」と刷っており、
+    #     同じ帳面を数え直したら **335本／n=33 792回/日／n=24 2,094回/日／×2.6** ——
+    #     **1つも合っていませんでした**（`outside_long_length_band` の docstring）。
+    band = outside_long_length_band()
+    if band:
+        lo_n, lo_v = band["lo"]
+        hi_n, hi_v = band["hi"]
+        x = f"×{band['x']:.1f}" if band.get("x") else "（下の帯が 0本 なので倍率は出ません）"
+        lines.append(
+            f"       外の長尺 {band['n']}本 を齢で割った実測（**この周に数えた**"
+            f"・`daily_pick.outside_long_length_band`・API 0単位）: "
+            f"20〜25分 n={lo_n} **{lo_v:,.0f}回/日** 対 "
+            f"25〜30分 n={hi_n} **{hi_v:,.0f}回/日**（{x}）")
+    else:
+        lines.append("       外の長尺の帯を数えられませんでした"
+                     "（`data/niche_corpus.jsonl` に `published` が読める長尺が 0本）")
+    # **符号検定のほうは 09/04 23:5x の1回きりの数です**（この周は数え直していません）。
+    #     n も窓も書いてあるので、引くときは撃ち直すこと。
+    lines.append(
+        "       チャンネルの大きさを止めた側（**09/04 23:5x の1回きり。この周は数え直していません**）:"
+        " 12件中 9件 で 25分以上が速く、中央 ×2.89"
+        "（符号検定 片側 p=0.073 ＝ **0.05 を割っていません。目安**）")
+    return lines
 
 
 def outside_opening_lines(vid: str, topic: str, root: Path | None = None,
