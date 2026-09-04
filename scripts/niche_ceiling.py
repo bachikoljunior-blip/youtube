@@ -644,6 +644,120 @@ def corpus_fill_published(*, path: Path | None = None, fetch_many=None,
             "units": (len(need) + 49) // 50}
 
 
+#: **題の特徴** —— 「どんな題が取れているか」を、**形ごとに**同じ定義で数えるための一覧。
+#:
+#: ## なぜ1か所に置いたか（2026-09-05 01:0x に、3回 食い違ったのを見て足した）
+#:
+#: この帯で題の特徴を数えた回が、少なくとも3回 在ります。**3回とも、その場で
+#: 正規表現と窓を書き直しており、出た数が食い違いました**::
+#:
+#:     09/04 14:04  405c9db4  疑問形の尾 **×0.09**（`【】＋相手の名指し` の中・n=13対17）
+#:     09/04 22:42  57bb8b84  疑問形    **×0.73**（`【】`在り 155本 の中・生の再生）
+#:     09/05 01:0x  この回     疑問形    **×0.38**（長尺 n=365・齢で割った 回/日）
+#:                            そして 405c9db4 の升は、いま **×2.00**（n=12対20）
+#:
+#: **どれも嘘ではありません** —— 母集団・層・物差し（生の再生か 回/日 か）が別なだけです。
+#: **だから、比べられない数が「同じ名前」で3回 出ました。** 実際に 405c9db4 は
+#: n=13対17 の升の ×0.09 で、公開前の本の題を書き換えています（その升は 29本 増えただけで
+#: 符号が反転しました）。
+#:
+#: **ここに置く定義が正本です。撃つのは `--titles`。** 手で書き直さないこと ——
+#: 直すなら、この表を直して、直した理由を `docs/JOURNAL.md` に書くこと。
+TITLE_FEATURES: dict[str, str] = {
+    "相手の名指し": r"(受給者|[0-9０-９]{2}歳以上|の方へ|の方は|あなた|必見|向け)",
+    "場面": r"(20[0-9]{2}年|R[0-9]年|令和[0-9元]+年|[0-9０-９]+月から|改正)",
+    "断定・煽り": r"(必ず|絶対|大損|知らないと|緊急|衝撃|やばい|ヤバい)",
+    "金額": r"[0-9０-９][0-9０-９,，．.]*\s*(?:億|万)?円",
+    "疑問形": r"(か$|か[!！？?]|？|\?|でしょうか|ですか)",
+    "「？」": r"[？?]",
+    "「いくら」": r"いくら",
+    "損得の方向語": r"(損|得|失う|増える|減る)",
+    "【】": r"【",
+}
+
+#: `title_features()` が「薄い」と印を付ける升の大きさ。**n=30 前後の升の倍率を、
+#: 単独の根拠にしないこと** —— 09/04 の ×0.09（n=13対17）は、帯が 29本 増えただけで
+#: ×2.00 に反転しました。
+THIN_CELL = 20
+
+
+def _title_pd_rows(form: str, *, path: Path | None = None,
+                   now: datetime | None = None) -> list[dict]:
+    """帯の本に「1日あたり再生」を付けて返す（`published` の読めない本は落とす）。**0単位。**"""
+    out = []
+    for r in corpus_rows(form, path=path):
+        age = age_days(r, now=now)
+        if not age or age < 1:
+            continue
+        r = dict(r)
+        r["age_days"] = age
+        r["per_day"] = float(r.get("views") or 0) / age
+        out.append(r)
+    return out
+
+
+def title_features(form: str = "short", *, path: Path | None = None,
+                   now: datetime | None = None, layer: str = "") -> list[dict]:
+    """**帯の題の特徴ごとに「有る本／無い本」の 1日あたり再生の中央値と倍率**（**API 0単位**）。
+
+    `layer` に `TITLE_FEATURES` の名前を渡すと、**その特徴を持つ本の中だけ**で数えます
+    （交絡を1段 抜くため。例: `layer="【】"`）。
+
+    返す1件は `{"name", "n_yes", "n_no", "med_yes", "med_no", "ratio", "thin"}`。
+    `thin` は、どちらかの升が `THIN_CELL` 未満 ＝ **その倍率を単独の根拠にしないこと**。
+
+    **物差しは 1日あたり（生の累計ではない）** —— 帯の齢の中央値は 200〜1,800日 で、
+    こちらの読みは 48時間 です。累計どうしで比べると、**古い本が勝つだけの表**になります。
+    """
+    rows = _title_pd_rows(form, path=path, now=now)
+    if layer:
+        rx = re.compile(TITLE_FEATURES[layer])
+        rows = [r for r in rows if rx.search(str(r.get("title") or ""))]
+    out = []
+    for name, pat in TITLE_FEATURES.items():
+        if name == layer:
+            continue
+        rx = re.compile(pat)
+        yes = [r["per_day"] for r in rows if rx.search(str(r.get("title") or ""))]
+        no = [r["per_day"] for r in rows if not rx.search(str(r.get("title") or ""))]
+        my = statistics.median(yes) if yes else 0.0
+        mn = statistics.median(no) if no else 0.0
+        out.append({"name": name, "n_yes": len(yes), "n_no": len(no),
+                    "med_yes": my, "med_no": mn,
+                    "ratio": (my / mn) if mn else None,
+                    "thin": len(yes) < THIN_CELL or len(no) < THIN_CELL})
+    return sorted(out, key=lambda d: -(d["ratio"] or 0))
+
+
+def title_feature_lines(form: str = "short", *, path: Path | None = None,
+                        now: datetime | None = None) -> list[str]:
+    """`title_features()` を読む形にした行（**API 0単位**）。層も1段 出します。
+
+    **形ごとに符号が逆になる特徴があります** —— 2026-09-05 の実測で、疑問形は
+    長尺 ×0.38（n=141対224）・ショート ×8.04（n=54対108）でした。
+    **片方の形で測った結論を、もう片方へ写さないこと。**
+    """
+    rows = _title_pd_rows(form, path=path, now=now)
+    if not rows:
+        return [f"[題の特徴] {form}: 帯に `published` の読める本がありません"]
+    ages = sorted(r["age_days"] for r in rows)
+    out = [f"[題の特徴] **{form}** n={len(rows)}本・齢 中央 {statistics.median(ages):,.0f}日"
+           "（**1日あたり再生の中央値**・`niche_ceiling.title_features`・API 0単位）"]
+    for d in title_features(form, path=path, now=now):
+        r = "—" if d["ratio"] is None else f"×{d['ratio']:.2f}"
+        mark = "  [!] **薄い升 —— 単独の根拠にしないこと**" if d["thin"] else ""
+        out.append(f"   {d['name']:<8} 有 n={d['n_yes']:>3} {d['med_yes']:>9,.2f}回/日"
+                   f" | 無 n={d['n_no']:>3} {d['med_no']:>9,.2f}  **{r}**{mark}")
+    out.append("   —— 交絡を1段 抜いた層（`【】`が在る本の中だけ）——")
+    for d in title_features(form, path=path, now=now, layer="【】"):
+        r = "—" if d["ratio"] is None else f"×{d['ratio']:.2f}"
+        mark = "  [!] 薄い升" if d["thin"] else ""
+        out.append(f"   {d['name']:<8} 有 n={d['n_yes']:>3} | 無 n={d['n_no']:>3}  **{r}**{mark}")
+    out.append("   [!] **形ごとに符号が逆になる特徴があります**（2026-09-05 の実測: 疑問形は"
+               " 長尺 ×0.38・ショート ×8.04）。**片方の形の結論を、もう片方へ写さないこと。**")
+    return out
+
+
 def summarize(rows: list[dict]) -> dict:
     out: dict[str, dict] = {}
     for form in ("short", "long"):
@@ -1333,7 +1447,18 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--fill-corpus-published", action="store_true",
                     help="撃たずに、帯（`data/niche_corpus.jsonl`）の空の `published` を埋める"
                          "（`videos.list` 50本で 1単位）。**齢で割った数は、これが無いと n=16 です**")
+    ap.add_argument("--titles", action="store_true",
+                    help="撃たずに、帯の**題の特徴ごと**の 1日あたり再生を数える"
+                         "（`title_features`・API 0単位）。`--form short` で形を選ぶ"
+                         "（既定は両方）。**題を書き換える回は、手で数え直さずにこれを撃つこと**")
     a = ap.parse_args(argv)
+    if a.titles:
+        forms = ("short",) if a.form == "short" else ("long", "short")
+        for f in forms:
+            for line in title_feature_lines(f):
+                print(line)
+            print()
+        return 0
     if a.fill_corpus_published:
         before = corpus_published_cover()
         for form, d in sorted(before.items()):
