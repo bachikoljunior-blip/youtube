@@ -60,7 +60,7 @@ def test_台本が控えと違い_新しく_枠に間に合えば焼く():
     p = _plan()
     assert p["do"] is True
     assert p["video_id"] == "OLD00000001" and p["topic"] == "zaishoku-2026-62man"
-    assert p["sha"] == sweep.script_sha(B)
+    assert p["sha"] == sweep.script_sha(B, render_only=True)
 
 
 def test_中身が同じなら焼かない_空白や鍵の順は見ない():

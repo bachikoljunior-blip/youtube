@@ -2663,10 +2663,58 @@ def untreated_slot_block(cur: dict | None, *, topics: list[dict] | None = None,
         return ""
     if done:
         return ""
-    return (f"`{vid}` は前提「外の作り方を写した長尺」の脚が {len(bad)}本 ✗"
+    head = (f"`{vid}` は前提「外の作り方を写した長尺」の脚が {len(bad)}本 ✗"
             f"（{'／'.join(bad)}）。処置ずみは {done}/{seen}本 なので、この本を入れると"
-            f"**枠は減って前提は進みません**（09-04 の `1huadpEk6HY` と同じ形・齢6時間で 0回）。"
-            f"枠までに脚を通してから置きます")
+            f"**枠は減って前提は進みません**（09-04 の `1huadpEk6HY` と同じ形・齢12時間で 2回）。")
+    if metadata_only(bad):
+        # **焼き直しでは直りません**（`METADATA_LEGS` の註に実測）。
+        return head + METADATA_FIX_HOWTO
+    return head + "枠までに脚を通してから置きます"
+
+
+def metadata_fix_plan(cur: dict | None, *, topics: list[dict] | None = None,
+                      queue: Path | None = None) -> dict | None:
+    """**焼き直さずに直せるときの、直す中身。**無ければ `None`。API 0単位。
+
+    返す: `{"video_id", "title", "thumbnail_kicker", "thumbnail_line1",
+            "thumbnail_line2", "bad", "topic"}` —— 値は**手元の台本**から取ります。
+
+    ## 出す条件は3つ全部（1つでも欠けたら `None`）
+
+        1. 控え（`pick_legs`）が落としている脚が **metadata だけ**
+        2. 手元の台本（`draft_legs`）は **4脚とも ○** —— 直った先が在ること
+        3. 決めが本と題材を名指していること
+
+    **2 が要る理由**: 手元も落ちているなら、写す先が無いので直しになりません
+    （そのときは焼き直しでもなく、**台本を直す**のが先）。
+    """
+    if not cur:
+        return None
+    topic = str(cur.get("topic") or "").strip()
+    vid = str(cur.get("video_id") or "").strip()
+    if not topic or not vid:
+        return None
+    tops = {str(t.get("id")): str(t.get("style") or "")
+            for t in (topics if topics is not None else _topics())}
+    if tops.get(topic) != "outside_long":
+        return None
+    bad, why = pick_legs(vid, queue=queue)
+    if why or not metadata_only(bad):
+        return None
+    dbad, dwhy = draft_legs(topic)
+    if dwhy or dbad:
+        return None
+    try:
+        draft = json.loads((ROOT / "data" / "scripts" / f"{topic}.script.json")
+                           .read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    out = {"video_id": vid, "topic": topic, "bad": list(bad)}
+    for k in ("title", "thumbnail_kicker", "thumbnail_line1", "thumbnail_line2"):
+        out[k] = draft.get(k)
+    if not out.get("title"):
+        return None
+    return out
 
 
 if __name__ == "__main__":

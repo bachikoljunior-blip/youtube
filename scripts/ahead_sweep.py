@@ -777,7 +777,24 @@ def place_today(now: datetime | None = None, *, dry_run: bool = False) -> dict:
         _blk = ""
         print(f"[today] 処置の門を読めませんでした（置く側は止めません）: "
               f"{str(exc)[:120]}", flush=True)
-    if _blk and not rebake_pending:
+    # **落ちているのが metadata だけなら、焼き直しでは直りません。**
+    #     （2026-09-04 21:xx・最適化の回。実測は `daily_pick.METADATA_LEGS` の註）
+    #     09-04 はここで 4回 焼き直し、4回とも同じ脚 `(4) 題・サムネ` が落ちたまま
+    #     動画IDだけ捨てました。焼き 55〜90分 に対し直しは 21〜30分 間隔で降るので、
+    #     **焼き上がった控えは必ず古い ＝ この枝は永久に閉じません。**
+    #     `(4)` が見るのは `title` と `thumbnail_*` ＝ metadata なので、
+    #     `scripts/metadata_fix.py` が数秒で直します。**焼き直しには倒しません。**
+    _meta_plan = None
+    if _blk:
+        try:
+            _meta_plan = _dp.metadata_fix_plan(_cur)
+        except Exception as exc:                               # noqa: BLE001
+            print(f"[today] metadata の直しを読めませんでした: {str(exc)[:120]}", flush=True)
+    if _meta_plan:
+        print(f"[today] **焼き直しません**（落ちた脚は metadata だけ）: "
+              f"python scripts/metadata_fix.py {_meta_plan['video_id']}", flush=True)
+        print(f"[today]   題 → {_meta_plan['title']}", flush=True)
+    elif _blk and not rebake_pending:
         rebake_pending = True
         print(f"[today] 焼き直しが先: {_blk}", flush=True)
     plan = today_plan(now, count=count, cap=house_rule.cap(), candidate=cand, hour=hour,
@@ -1196,18 +1213,70 @@ def _rebake_marks_dir() -> Path:
     return base
 
 
-def _canon(text: str) -> str:
-    """台本の中身を、空白や鍵の順に依らない1つの字にする。"""
+#: **焼いても動画に入らない欄。**（2026-09-04 21:xx・最適化の回に実測で足した）
+#:
+#: ## なぜ要るか —— **これが焼き直しの輪の原動機でした**
+#:
+#: 09-04 の ship は **65件**、うち `fix` **41件**、`--moves` 0以外 **0件**。
+#: 決めは 14回 全部 長尺で、焼き直しが動画IDを **4つ** 捨てました
+#: （`Ec-j1-W4nqw` → `O_lfBxB7S8Q` → `XwB8nxtN5D8` → `e6sLHLmPhrk`）。
+#: **4本とも、控えと台本の差は `title` と `thumbnail_kicker` の 2欄だけ**でした::
+#:
+#:     控え  【年金の受け取り方】…／kicker 全角17文字
+#:     台本  【60歳以上の方へ】…／kicker「年180万・75歳まで」11文字
+#:
+#: `_canon()` は台本を**丸ごと**1つの字にするので、この2欄が違うだけで
+#: `rebake_plan_for()` は「台本のほうが新しい → 焼き直す」と言い、
+#: **20分の動画を 55〜90分 かけて焼き直します。**
+#:
+#: **その2欄は、焼いても動画に入りません。**
+#:
+#:     `title`         YouTube の metadata。`scripts/retitle.py` が 50単位・数秒で差し替える
+#:     `thumbnail_*`   別画像。`scripts/refresh_thumbnail.py --rebuild` が **API 0単位**で焼き直し、
+#:                     `--missing --video <ID>` が 50単位で載せる
+#:
+#: **＝ この2欄で焼き直すのは、コマも音も1フレームも変わらない 90分 です。**
+#: そして直しは 21〜30分 間隔で降るので、**焼き上がりは必ずまた古く、輪は閉じません。**
+#:
+#: だから比べる字からは外します。metadata の食い違いは
+#: `scripts/metadata_fix.py`（`daily_pick.metadata_fix_plan()` を読む）が数秒で埋めます。
+#:
+#: ## 覆る条件
+#:
+#: - `src/pipeline.py` が `title` か `thumbnail_*` を**コマに焼き込む**ようになったら、
+#:   その欄はここから外すこと（そのときは本当に焼き直しが要ります）。
+#: - `description_body` / `tags` / `first_comment` も動画に入りませんが、
+#:   **ここには入れていません** —— 実測で輪を回していたのは上の2種だけで、
+#:   **測っていない欄をまとめて外すと、次に本当に必要な焼き直しを黙って落とします。**
+#:   外すなら、その回に実測を1つ添えること。
+RENDER_IGNORED_FIELDS: frozenset[str] = frozenset({
+    "title", "thumbnail_kicker", "thumbnail_line1", "thumbnail_line2",
+    # `title_alternatives` は**次に題を替えるときの候補**で、動画にも YouTube にも
+    # 1文字も出ません。**実測**: commit `abade351`（09-04 11:45）はこの欄**だけ**を
+    # 直しており、それだけで sha が変わり、20分の動画の焼き直し 55〜90分 が命じられました。
+    "title_alternatives",
+})
+
+
+def _canon(text: str, *, render_only: bool = False) -> str:
+    """台本の中身を、空白や鍵の順に依らない1つの字にする。
+
+    `render_only=True` で **焼いても動画に入らない欄**（`RENDER_IGNORED_FIELDS`）を
+    落とします —— 焼き直しが要るかを決めるのは、こちらの字です。
+    """
     import json                                                # noqa: PLC0415
     try:
-        return json.dumps(json.loads(text), ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        obj = json.loads(text)
     except Exception:                                          # noqa: BLE001
         return (text or "").strip()
+    if render_only and isinstance(obj, dict):
+        obj = {k: v for k, v in obj.items() if k not in RENDER_IGNORED_FIELDS}
+    return json.dumps(obj, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
 
-def script_sha(text: str) -> str:
+def script_sha(text: str, *, render_only: bool = False) -> str:
     import hashlib                                             # noqa: PLC0415
-    return hashlib.sha1(_canon(text).encode("utf-8")).hexdigest()[:12]
+    return hashlib.sha1(_canon(text, render_only=render_only).encode("utf-8")).hexdigest()[:12]
 
 
 def draft_newer_than(draft: Path, uploaded_at: str | None, root: Path | None = None) -> bool | None:
@@ -1270,9 +1339,15 @@ def rebake_plan(*, cur: dict | None, stash_text: str | None, draft_text: str | N
     if draft_text is None:
         out["why"] = f"手元の台本 `data/scripts/{out['topic']}.script.json` が無い"
         return out
-    out["sha"] = script_sha(draft_text)
-    if _canon(stash_text) == _canon(draft_text):
+    out["sha"] = script_sha(draft_text, render_only=True)
+    # **焼いても動画に入らない欄は見ません**（`RENDER_IGNORED_FIELDS` の註に実測）。
+    if _canon(stash_text, render_only=True) == _canon(draft_text, render_only=True):
         out["why"] = f"控えと台本は同じ中身（sha {out['sha']}）—— 焼いても変わらない"
+        if _canon(stash_text) != _canon(draft_text):
+            # **題かサムネだけが違う。**焼き直しでは直りません（1フレームも変わらない）。
+            out["why"] += ("　[!] **題かサムネだけが違います。焼き直しでは直りません** ——"
+                           f"`python scripts/metadata_fix.py {out['video_id']}`"
+                           "（`title` / `thumbnail_*` は metadata。50単位・数秒）")
         if stash_newer is True:
             # **同じ中身なのは、控えを後から書き換えたからかもしれません**（上の註）。
             out["why"] += ("　[!] **ただし控えは、この本を上げた後に commit されています** ——"
