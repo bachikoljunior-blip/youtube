@@ -212,8 +212,20 @@ def test_empty_day_is_allowed(monkeypatch):
 
 
 def test_moving_a_video_within_its_own_day_is_allowed(monkeypatch):
-    """**自分の枠は数えないこと**（時刻だけ動かす回を止めない）。"""
+    """**自分の枠は数えないこと**（時刻だけ動かす回を止めない）。
+
+    **題材の門も固定すること**（2026-09-05）—— `_rule_blocks_move()` には
+    「その題材はもう公開ずみか」の門もあり、そこだけ実物の
+    `src/daily_pick.published_topics()` を読んでいました。作り物の id
+    `a63FzIUV2wI` の題材が実際に公開された日に、**この検査は規則1 とは
+    無関係な理由で赤**になります（実測 2026-09-05・規則を 1 に戻しても赤）。
+    **ここが見ているのは「自分の枠は数えない」ことだけ**なので、
+    別の門は黙らせます（題材の門は `tests/test_move_blocks_published_topic.py`）。
+    """
+    from src import daily_pick as _dp
+
     _rows_for(monkeypatch, [_published_today()])
+    monkeypatch.setattr(_dp, "published_topics", lambda *a, **k: set())
     assert reschedule._rule_blocks_move("a63FzIUV2wI", "2026-09-02T20:00") == []
 
 
