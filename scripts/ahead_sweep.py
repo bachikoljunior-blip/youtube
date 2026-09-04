@@ -1363,6 +1363,94 @@ LOCAL_ONLY_FIELDS: frozenset[str] = frozenset({
 #: 焼き直しが要るかを決めるときに落とす欄（上の2つの和）。
 RENDER_IGNORED_FIELDS: frozenset[str] = METADATA_FIELDS | LOCAL_ONLY_FIELDS
 
+#: **測れる物差しが在る metadata の欄。**（2026-09-05 01:3x に足した）
+#:
+#: `title` だけは帯の実測で当てられます（`scripts/niche_ceiling.py --titles`・
+#: 長尺 n=335・`src/daily_pick.TITLE_FEATURES`）。**サムネの3欄には物差しが1つもありません** ——
+#: どちらの字が多く見られるかを、この repo は1度も測っていません。
+#: **差が在ることは、50単位 を使う理由になりません。**
+MEASURED_METADATA_FIELDS: frozenset[str] = frozenset({"title"})
+
+
+def metadata_fix_acts(video_id: str, topic: str, *,
+                      plan_call=None) -> tuple[bool, str]:
+    """**`metadata_fix.py <ID>` を撃ったら、実際に直すか。** `(直すか, 一行の理由)`。**API 0単位。**
+
+    ## なぜ要るか（2026-09-05 01:3x に、この回が実物で踏んだ）
+
+    `rebake_plan()` は「控えと台本で `METADATA_FIELDS` の欄が違う」を見て
+    「**`python scripts/metadata_fix.py <ID>`（50単位）**」と命じます。
+    ところが `metadata_fix.py` が実際に動く条件は**別のもの**でした
+    （`src/daily_pick.metadata_fix_plan()`）——
+
+        欄が違うか                      ← `rebake_plan` が見ているもの
+        `metadata_only(pick_legs(vid))` ← `metadata_fix.py` が見ているもの
+
+    **`metadata_only([])` は `False` です**（「1本も落ちていない ＝ 直すものが無い」）。
+    つまり**4脚とも通っている本で欄だけが違う回**は、命じられたとおり撃つと
+
+        [meta] <ID> は直せません —— 脚は全部 ○ です
+
+    で終わります。**実測 2026-09-05 01:2x の `GFvAcxvDmYM`**: 4脚 全通
+    （`pick_legs` ＝ `([], None)`）で `thumbnail_line2` だけが違い
+    （控え `60歳以上の方へ` 対 台本 `何歳から受け取るか`）、
+    **この回が画面のとおり撃って、1手 落としました。**
+
+    これは 2026-09-04 21:5x に `METADATA_FIELDS` と `LOCAL_ONLY_FIELDS` を
+    分けたのと**同じ形の欠陥が、1つ内側に残っていた**ものです。
+    あのときは「どこにも出ない欄で 50単位」を止め、
+    **「出る欄だが、道具が受け取らない」ほうは残っていました。**
+
+    ## 覆る条件
+
+    `metadata_fix_plan()` の門が「欄が違うこと」を見るようになったら、
+    この関数は毎回 `True` を返すようになるので、**そのときここごと畳むこと。**
+    """
+    if plan_call is None:
+        try:
+            from src import daily_pick as _dp                   # noqa: PLC0415
+        except Exception as exc:                                # noqa: BLE001
+            return False, f"`src.daily_pick` が読めません（{str(exc)[:40]}）"
+
+        def plan_call(vid: str, top: str):
+            return _dp.metadata_fix_plan({"video_id": vid, "topic": top})
+
+    try:
+        plan = plan_call(video_id, topic)
+    except Exception as exc:                                    # noqa: BLE001
+        return False, f"門を撃てません（{str(exc)[:40]}）"
+    if plan:
+        return True, ""
+    return False, ("`metadata_fix.py` の門（`daily_pick.metadata_fix_plan`）が"
+                   "この本を受け取りません")
+
+
+def metadata_diff_line(video_id: str, topic: str, meta: list[str], *,
+                       plan_call=None) -> str:
+    """**欄が違うときに刷る1行。** 道具が受け取る本にだけ、撃つ手を出します。**API 0単位。**
+
+    受け取らない本では**代わりに「測れる物差しが在る欄か」を言います** ——
+    `title` は帯の実測で当てられ、サムネの3欄は当てられません
+    （`MEASURED_METADATA_FIELDS` の註）。
+    """
+    acts, why = metadata_fix_acts(video_id, topic, plan_call=plan_call)
+    head = f"　[!] **題かサムネだけが違います。焼き直しでは直りません**（違う欄: {'・'.join(meta)}）"
+    if acts:
+        return head + f" —— `python scripts/metadata_fix.py {video_id}`（metadata。50単位・数秒）"
+    measured = sorted(set(meta) & MEASURED_METADATA_FIELDS)
+    unmeasured = sorted(set(meta) - MEASURED_METADATA_FIELDS)
+    out = head + f" —— **ただし `metadata_fix.py` は撃っても直しません**（{why}）。"
+    if measured:
+        out += (f" **物差しの在る欄が違っています: {'・'.join(measured)}** ——"
+                f" 帯の実測（`scripts/niche_ceiling.py --titles`・長尺 n=335）で"
+                f" どちらが上かを見てから、`python scripts/retitle.py {video_id} \"<題>\"`（50単位）。")
+    if unmeasured:
+        out += (f" **物差しの無い欄: {'・'.join(unmeasured)}** ——"
+                " どちらの字が多く見られるかを、この repo は1度も測っていません。"
+                " **差が在ることは、50単位 を使う理由になりません**"
+                "（撃つなら、その回が数を1つ持って来ること）。")
+    return out
+
 
 def _canon(text: str, *, render_only: bool = False) -> str:
     """台本の中身を、空白や鍵の順に依らない1つの字にする。
@@ -1429,7 +1517,7 @@ def rebake_plan(*, cur: dict | None, stash_text: str | None, draft_text: str | N
                 draft_newer: bool | None, attempted: bool, scheduled: bool,
                 slot_at: datetime | None, now: datetime, baked_today: int = 0,
                 lead: timedelta = REBAKE_LEAD, max_per_day: int = REBAKE_MAX_PER_DAY,
-                stash_newer: bool | None = None) -> dict:
+                stash_newer: bool | None = None, meta_fix_plan_call=None) -> dict:
     """**焼き直すかを決める（純関数・API 0単位）。** 返りは `{do, why, sha, video_id, topic}`。
 
     ## `stash_newer` —— **控えを、上げた後に書き換えた回がありました**（2026-09-04 15:3x）
@@ -1473,9 +1561,11 @@ def rebake_plan(*, cur: dict | None, stash_text: str | None, draft_text: str | N
             changed = _changed_fields(stash_text, draft_text)
             meta = sorted(changed & METADATA_FIELDS)
             if meta:
-                out["why"] += ("　[!] **題かサムネだけが違います。焼き直しでは直りません** ——"
-                               f"`python scripts/metadata_fix.py {out['video_id']}`"
-                               f"（違う欄: {'・'.join(meta)}。metadata。50単位・数秒）")
+                # **命じる前に、その道具が受け取るかを見ること**（2026-09-05 01:3x）。
+                # `metadata_fix.py` の門は「欄が違うこと」ではなく
+                # `metadata_only(pick_legs(vid))` で、**4脚 全通の本は受け取りません**。
+                out["why"] += metadata_diff_line(out["video_id"], out["topic"], meta,
+                                                 plan_call=meta_fix_plan_call)
             else:
                 out["why"] += ("　[!] **違うのは、動画にも YouTube にも出ない欄だけです**"
                                f"（{'・'.join(sorted(changed)) or '欄を数えられません'}）——"

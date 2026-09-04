@@ -80,11 +80,19 @@ def test_既定は全部の欄を見る():
 # ---------------------------------------------------------------------------
 
 
-def _plan(stash: str, draft: str) -> dict:
+#: **道具が受け取る本**（`metadata_fix_plan` が中身を返す側）。
+#: 既定でこちらを渡します —— この節が測っているのは「**どの欄が違えば撃つ手が在るか**」で、
+#: 「**その本を道具が受け取るか**」は別の門です（`tests/test_metadata_fix_reachable.py`）。
+def _accepts(vid: str, topic: str) -> dict:
+    return {"video_id": vid, "topic": topic, "title": "題"}
+
+
+def _plan(stash: str, draft: str, *, plan_call=_accepts) -> dict:
     return sweep.rebake_plan(
         cur={"video_id": "vid1", "topic": "t"}, stash_text=stash, draft_text=draft,
         draft_newer=True, attempted=False, scheduled=False, slot_at=None,
-        now=__import__("datetime").datetime.now(sweep.JST))
+        now=__import__("datetime").datetime.now(sweep.JST),
+        meta_fix_plan_call=plan_call)
 
 
 def test_2つの集合は重ならず_和が焼き直しの無視欄():
@@ -114,10 +122,33 @@ def test_別案だけが違えば_撃つ手は無いと言うこと():
 
 
 def test_題と別案の両方が違えば_metadata_fix_を名指しする():
-    """片方でも YouTube に出る欄が違えば、撃つ手は在ります。"""
+    """片方でも YouTube に出る欄が違えば、撃つ手は在ります。
+
+    **ただし「在る」の条件が1つ増えました**（2026-09-05 01:3x）——
+    下の `test_道具が受け取らない本には撃つ手を出さない` を見ること。
+    """
     why = _plan(_j(), _j(title="別の題", title_alternatives=["別案1"]))["why"]
     assert "metadata_fix.py vid1" in why
     assert "撃つ手はありません" not in why
+
+
+def test_道具が受け取らない本には撃つ手を出さない():
+    """**欄が違うこと ＝ 撃つ手が在ること、ではありません。**（2026-09-05 01:3x に踏んだ）
+
+    この節はもともと「**片方でも YouTube に出る欄が違えば、撃つ手は在ります**」を
+    測っていました。**それは偽でした** —— `metadata_fix.py` の門は
+    `metadata_only(pick_legs(vid))` で、**4脚 全通の本を受け取りません**
+    （`metadata_only([])` は `False`）。
+
+    実測 `GFvAcxvDmYM`（09/05 の枠の本）: 4脚 全通・`thumbnail_line2` だけが違う。
+    画面は `metadata_fix.py` を命じ、撃つと「脚は全部 ○ です」で終わりました。
+    """
+    why = _plan(_j(), _j(thumbnail_line2="別の字"), plan_call=lambda v, t: None)["why"]
+    # **撃つ手（走らせる行）が出ていないこと。** 名前は「撃っても直しません」の説明に出ます。
+    assert "scripts/metadata_fix.py" not in why
+    assert "撃っても直しません" in why
+    # **物差しの無い欄では、50単位 を使う理由が無いことまで言うこと。**
+    assert "50単位 を使う理由になりません" in why
 
 
 def test_changed_fields_は読めなければ黙る():
