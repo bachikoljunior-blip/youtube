@@ -43,3 +43,5 @@
 {"at": "2026-09-04T13:46:57+09:00", "kind": "start", "video_id": "Ec-j1-W4nqw", "topic": "nenkin-uketorikata-65-70-75-handan", "sha": "ff6f012e56da", "for_day": "2026-09-05", "session": ""}
 {"at": "2026-09-04T13:47:02+09:00", "kind": "beat", "video_id": "Ec-j1-W4nqw", "topic": "nenkin-uketorikata-65-70-75-handan", "sha": "ff6f012e56da"}
 {"at": "2026-09-04T14:42:27+09:00", "kind": "done", "video_id": "Ec-j1-W4nqw", "topic": "nenkin-uketorikata-65-70-75-handan", "sha": "ff6f012e56da", "rc": 0, "new_id": "O_lfBxB7S8Q", "seconds": 3325}
+{"at": "2026-09-04T15:09:06+09:00", "kind": "start", "video_id": "O_lfBxB7S8Q", "topic": "nenkin-uketorikata-65-70-75-handan", "sha": "acbf24ae7bfd", "for_day": "2026-09-05", "session": ""}
+{"at": "2026-09-04T15:09:07+09:00", "kind": "beat", "video_id": "O_lfBxB7S8Q", "topic": "nenkin-uketorikata-65-70-75-handan", "sha": "acbf24ae7bfd"}
