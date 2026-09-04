@@ -2789,7 +2789,45 @@ def ledger_drain(items: list[dict], as_of: date | None = None,
     out.append(f"    **立てた速さ: 直近{window}日に **{opened_recent}件**"
                f"（**{orate:.2f}件/日**・`opened_on:` を持つ {len(dated)}件 のうち）**"
                f" 対 閉じる **{rate:.2f}件/日** → 差し引き **{orate - rate:+.2f}件/日**")
-    if orate < rate:
+    # --- **偏った対で「漏れのほうが速い」と言わないこと**（2026-09-04・最適化の回）---
+    #
+    # **この2つの率は、同じ精度で測れていません。** 実測（この回・その場で数えた）:
+    #
+    #     `closed_on:` の被覆   ほぼ 100%（`verdict` の回が必ず書く）
+    #     `opened_on:` の被覆   **15/67 件＝22%**（09-01 に欄を足した日から書き始め、
+    #                           分布は 09-01:7／09-02:6／09-03:2／**09-04:0**）
+    #
+    # 22% の分子を 100% の分子と引き算すれば、**差は必ず負に出ます。**
+    # 実際この行は 09-04 に「注ぎ口より漏れのほうが速い（-0.14件/日）／
+    # 台帳は 2026-09-16 に空になる」と印字していました。**それは偽です** ——
+    # 同じ台帳の開き数は `ledger_drain()` 自身の註が書く 09-01 の **21件** から
+    # この回の **33件** へ増えており、`data/runs.jsonl` の `premise` は
+    # 直近5日で **20件（4.0件/日）** です。**台帳は減っていません。増えています。**
+    #
+    # **この行は道具ではなく計器の壊れ方です** —— 回はこの印字を読んで
+    # 「燃料が尽きる」を前提に手を選びます。だから偏った対のときは
+    # **警報を出さず、被覆のほうを名指しします。**
+    #
+    # **覆る条件**: `opened_on:` の被覆が `_OPEN_COVER_MIN` を超えたら、
+    # 台帳の側だけで足ります（下の `runs.jsonl` の推計は参考に落ちます）。
+    ship_rate, ship_n = _premise_ship_rate(as_of, window)
+    cover = len(dated) / float(len(items)) if items else 0.0
+    if ship_rate is not None:
+        out.append(f"      **もう1つの推計（`data/runs.jsonl` の `premise` の回）: "
+                   f"直近{window}日に {ship_n}件（{ship_rate:.2f}件/日）** —— "
+                   "こちらは台帳の欄に依らないので、**被覆の穴が開いていません**")
+    if orate < rate and cover < _OPEN_COVER_MIN and (
+            ship_rate is None or ship_rate >= rate):
+        out.append(f"      [!] **この対では判定しません** —— `closed_on:` は"
+                   f"ほぼ全件に付き、`opened_on:` は **{cover:.0%}** にしか付いて"
+                   "いません。**被覆の違う分子どうしの引き算は、必ず負に出ます。**"
+                   "「漏れのほうが速い」とは**言えません**"
+                   + (f"（欄に依らない推計は {ship_rate:.2f}件/日 で、閉じる"
+                      f" {rate:.2f}件/日 を下回っていません）" if ship_rate is not None else "")
+                   + "。**直すのは選び方ではなく欄のほうです** —— "
+                     "`premise` の回は `opened_on:` を書くこと"
+                     "（`run_marker` の `premise` の門が、書かない回を通しません）")
+    elif orate < rate:
         out.append("      **注ぎ口より漏れのほうが速い。** 上の「空になる日」は、"
                    "そのまま生きています。**`premise` は 0単位・いつでも撃てます**"
                    "（`docs/trigger_main.md` §4・`run_marker.free_alternatives()`）")
@@ -2798,6 +2836,48 @@ def ledger_drain(items: list[dict], as_of: date | None = None,
                    "**古い分を推測で埋めないこと** —— この数は"
                    "「書いてある分」だけで割っています。分母が増えるほど正確になります）")
     return out
+
+
+#: `opened_on:` の被覆がこれ未満なら、立てる速さと閉じる速さを引き算しません
+#: （上の `ledger_drain()` の註）。**0.8 は「ほぼ全件」の意味で、実測ではありません** ——
+#: 被覆が上がったら、この数ではなく**この門ごと**畳んでよい。
+_OPEN_COVER_MIN = 0.8
+
+
+def _premise_ship_rate(as_of: date, window: int) -> tuple[float | None, int]:
+    """**`data/runs.jsonl` の `premise` の回から、立てる速さを推計する。**（API 0単位）
+
+    台帳の `opened_on:` は**後から足した欄**なので古い分に穴があります。
+    こちらは印そのものなので穴がありません（`run_marker.ship()` が毎回 書く）。
+
+    **同じ数ではありません** —— 1回の `premise` が前提を2件 立てることも、
+    立て直し（書き換え）で0件のこともあります。**上限側の推計**として読むこと。
+    読めなければ `(None, 0)` を返します（**読めない道具で回を止めないこと**）。
+    """
+    p = ROOT / "data" / "runs.jsonl"
+    if not p.exists():
+        return None, 0
+    n = 0
+    try:
+        for line in p.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                r = json.loads(line)
+            except Exception:
+                continue
+            if r.get("kind") != "ship" or r.get("ship_kind") != "premise":
+                continue
+            try:
+                d = date.fromisoformat(str(r.get("at"))[:10])
+            except (TypeError, ValueError):
+                continue
+            if 0 <= (as_of - d).days < window:
+                n += 1
+    except OSError:
+        return None, 0
+    return n / float(window), n
 
 
 
