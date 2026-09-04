@@ -88,3 +88,52 @@ def test_題の型は_実物提示のときだけ通る(title, ok):
     lo, hi = osh.total_chars_band()
     legs = dict((n, o) for n, o, _ in osh.legs_of_script(_script((lo + hi) // 2, title=title)))
     assert legs["(2) 題"] is ok
+
+
+# --- `style: outside_short` の札が付いたときだけ、床が立つこと -------------------
+#
+# **既定の道は1文字も変えていません**（実測: 上限 140字 のメッセージがそのまま出る）。
+# 札が無いうちは、この帯は誰にも当たりません —— `config/topics.yaml` の
+# `style: outside_short` は **まだ 0件** です（上の検査が見ています）。
+
+
+class _V:
+    headline = ""
+
+
+class _Seg:
+    def __init__(self, n: str):
+        self.narration = n
+        self.visual = _V()
+
+
+class _Script:
+    def __init__(self, chars: int):
+        self.segments = [_Seg("あ" * 30) for _ in range(chars // 30)]
+
+    def model_dump(self):
+        return {"segments": [{"narration": s.narration} for s in self.segments]}
+
+
+def _totals(script, topic_id, sw):
+    return [p for p in sw.short_script_problems(script, topic_id) if "ナレーション合計" in p]
+
+
+def test_札が無ければ_床は立たない():
+    from src import script_writer as sw
+    assert sw.short_total_band("") == (0, sw.SHORT_TOTAL_CHARS, "")
+    assert _totals(_Script(120), "", sw) == []          # 短くても何も言わない
+    assert _totals(_Script(180), "", sw)                # 上限は今までどおり
+
+
+def test_札が付くと_帯は外の升へ移る(monkeypatch):
+    from src import script_writer as sw
+    monkeypatch.setattr(sw, "_topic_style", lambda _t: "outside_short")
+    lo, hi, why = sw.short_total_band("x")
+    assert (lo, hi) == osh.total_chars_band()
+    assert "outside_short" in why
+    # **いまの作り（140字）は、その帯では「短すぎる」**
+    short = _totals(_Script(120), "x", sw)
+    assert short and "下限" in short[0]
+    # **帯に入っていれば何も言わない**
+    assert _totals(_Script((lo + hi) // 2), "x", sw) == []
