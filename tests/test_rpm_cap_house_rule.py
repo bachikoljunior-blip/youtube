@@ -102,7 +102,22 @@ def test_physical_caps_rpm_is_stopped_by_the_rule():
 def test_the_max_day_really_broke_the_rule():
     """**前提のほうを検査する** —— 天井が読んでいる日が、本当に規則の外か。
 
-    ここが赤くなったら、上の3件は**もう要りません**（そのときは消すこと）。
+    ## 2026-09-05: 前提が成り立たなくなりました（**消していません**）
+
+    ここは「赤くなったら上の3件ごと消すこと」と書いていました。実際に
+    `PUBLISH_PER_DAY` が 1 → 10 になった日に、前提が成り立たなくなります ——
+    天井が読んでいる日の長尺の公開は **4本** で、規則 10本/日 の**中**です。
+
+    **それでも消しません。** 上の3件が見ているのは「**規則が止めるとき、
+    そう名乗って天井を下げるか**」という仕掛けのほうで、その仕掛けは
+    規則が何本でも要ります（**規則がまた下がれば、すぐまた止める側になります**）。
+    消すと、次に規則が下がった回に**誰も見ていない**状態で戻ります。
+
+    **代わりに、前提が成り立っていない回は飛ばします** —— 前提の検査なので、
+    前提が無い日に赤くしても、それは欠陥を指していません。
+
+    **覆る条件**: 規則が「天井が読んでいる日の本数」より下がったら、
+    この検査はまた本文を撃ちます（`skip` の行が消えます）。
     """
     rows = reach_split.dedupe(reach_split.load_rows())
     sm = reach_split.summary(rows, reach_split.long_ids())
@@ -111,10 +126,13 @@ def test_the_max_day_really_broke_the_rule():
         pytest.skip("面の帳面に長尺の日がありません")
     pubs = reach_split.publishes_per_day(reach_split.long_ids())
     n = pubs.get(day, 0)
-    assert n > house_rule.PUBLISH_PER_DAY, (
-        f"天井が読んでいる日 {day} の長尺の公開は {n}本 で、"
-        f"規則 {house_rule.PUBLISH_PER_DAY}本/日 を超えていません"
-        " —— **この検査は役目を終えました。上の3件ごと消すこと。**")
+    if n <= house_rule.PUBLISH_PER_DAY:
+        pytest.skip(
+            f"天井が読んでいる日 {day} の長尺の公開は {n}本 で、"
+            f"規則 {house_rule.PUBLISH_PER_DAY}本/日 の中です"
+            " —— **規則がこの本数より下がるまで、上の3件は止める側になりません**"
+            "（仕掛けは残してあります。docstring を読むこと）")
+    assert n > house_rule.PUBLISH_PER_DAY
 
 
 # --------------------------------------------------------------------------

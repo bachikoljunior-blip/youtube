@@ -3141,6 +3141,16 @@ def measured_seconds(video_id: str, uploaded_path: Path | None = None) -> float 
 #: チャンネル 12件 中 **9件** で 25分以上のほうが速く、チャンネル内の比の中央 **×2.89**
 #: （符号検定 片側 p=0.073・n=12）。**p は 0.05 を割っていません。目安として読むこと。**
 #:
+#: **【2026-09-05 07:1x】上の5行の数は、もう合っていません。引かないこと。**
+#: 同じ帳面をこの日に数え直すと **334本／20〜25分 n=33 792回/日 対 25〜30分 n=24
+#: 2,094回/日（×2.6）**、符号検定は **7組中 6組・×2.01・p=0.062**（12件中9件・×2.89・
+#: p=0.073 ではありません）。**上の5行は「どこで切れるか」を決めた回の記録として
+#: 残してあるだけ**で、いまの数は `outside_length_controls()` が毎周 印字します。
+#: そして上の「向きは同じ」は**齢の交絡を抜く前**の話でした —— この帳面は
+#: spearman(secs, age) = **-0.344**（長い本ほど新しい）で、生の倍率にはそのぶんが
+#: 混ざっています。抜いても長尺は残りましたが、**ショートでは いちばん強い脚が
+#: 逆を向きます**（`outside_length_controls` の docstring）。
+#:
 #: **覆る条件**: `data/niche_corpus.jsonl` が入れ替わったら数え直すこと
 #: （**ここに写した数を信じないで、毎周 数え直すのが本筋**です —— この定数は
 #: 「どこで切れるか」の目印で、倍率そのものは帯が変われば動きます）。
@@ -3212,6 +3222,214 @@ def outside_long_length_band(path: Path | None = None) -> dict | None:
     lo_med, hi_med = out["lo"][1], out["hi"][1]
     out["x"] = (hi_med / lo_med) if lo_med > 0 else None
     return out
+
+
+def _corpus_per_day(form: str, path: Path | None = None) -> list[dict]:
+    """帳面の1行を `{secs, vpd, age, ch}` に直して返す（`niche_corpus.jsonl`・API 0単位）。
+
+    `outside_long_length_band()` が内側でやっていた読み込みを、**交絡を見る側と
+    共有するため**に外へ出したものです（2026-09-05 07:2x）。
+    """
+    try:
+        import sys
+        here = str(ROOT / "scripts")
+        if here not in sys.path:
+            sys.path.insert(0, here)
+        import niche_ceiling as nc                              # noqa: PLC0415
+        rows = nc.corpus_rows(form, path=path) if path else nc.corpus_rows(form)
+    except Exception:                                           # noqa: BLE001
+        return []
+    out: list[dict] = []
+    for r in rows:
+        secs, views = r.get("secs"), r.get("views")
+        pub, at = r.get("published"), r.get("at")
+        if not (secs and views and pub and at):
+            continue
+        p0, p1 = _parse(str(pub)), _parse(str(at))
+        if not p0 or not p1:
+            continue
+        days = max((p1 - p0).total_seconds() / 86400.0, 1.0)
+        out.append({"secs": int(secs), "vpd": float(views) / days,
+                    "age": days, "ch": r.get("channel") or ""})
+    return out
+
+
+def _sign_p(wins: int, n: int) -> float | None:
+    """符号検定の片側 p（`wins` 以上が偏る確率）。n=0 なら `None`。"""
+    if n <= 0:
+        return None
+    return sum(math.comb(n, k) for k in range(wins, n + 1)) / (2 ** n)
+
+
+def outside_length_controls(form: str = "long", path: Path | None = None,
+                            bands: tuple = _LEN_BANDS) -> dict | None:
+    """**尺の帯の倍率から、齢とチャンネルを抜く**（`data/niche_corpus.jsonl`・API 0単位）。
+
+    返り:
+
+        {"n": 数えた本数,
+         "rho": spearman(secs, age)   ← **交絡が在るか**。負なら「長い本ほど新しい」
+         "window": (下限日, 上限日) | None,     ← 齢をそろえた窓（両帯の 10〜90%点の重なり）
+         "matched": {"lo": (n, 中央値/日), "hi": (n, 中央値/日), "x": 倍率 | None} | None,
+         "sign": {"pairs": 組, "wins": 勝ち, "x": 組内の比の中央, "p": 片側 p} | None}
+
+    ## なぜ要るか（2026-09-05 07:1x に、この回が実測して足した）
+
+    `outside_long_length_band()` は **齢で割って**います。それでも
+    「長いほうが速い」の証拠にはなりません —— **1日あたりの再生は齢とともに落ちる**ので、
+    片方の帯が新しければ、それだけで速く見えます。そして**この帳面では実際に
+    そうなっています**:
+
+        spearman(secs, age) = **-0.322**（長尺 n=365・この回に数えた）
+        20〜25分 の齢 中央 **221日** 対 25〜30分 **180日**
+
+    ＝ 生の ×2.6 には「25〜30分 のほうが 41日 新しい」が混ざっています。
+
+    **長尺は、3つとも抜いても残りました**（この回の実測。走っている焼き直しの前提は立っています）:
+
+        生            20〜25分 n=33 792回/日 対 25〜30分 n=24 2,094回/日 ＝ **×2.6**
+        齢をそろえた  窓 72〜233日: n=15 792回/日 対 n=20 1,758回/日 ＝ **×2.22**
+        チャンネル止め 7組中 **6組**・組内の比の中央 **×2.01**・片側 p=0.062
+
+    **ショートは、脚によって答えが違います。ここが本番です**（同じ回に数えた）:
+
+        生            60秒 未満 n=20 0.40回/日 対 60秒 以上 n=142 1.61回/日 ＝ **×4.07**
+        齢をそろえた  窓 117〜3811日: n=14 0.18回/日 対 n=89 0.90回/日 ＝ **×4.86**
+        チャンネル止め 3組中 **1組**・組内の比の中央 **×0.75**・片側 p=0.875 ＝ **無し**
+        （さらに窓を 齢<=400日 まで詰めると n=4 対 22 で**符号が反転**します）
+
+    ＝ **長尺で通った3脚のうち、ショートで通るのは2脚だけ**で、いちばん強い脚
+    （チャンネルを止めた側）が**逆を向いています**。長尺の結論をショートへ
+    そのまま写すと、いちばん弱い根拠で 100% の供給を動かすことになります。
+
+    ショートは自分の出す本の 100% です（`data/uploaded.jsonl` の 109本 は
+    **全部 23.6〜32.6秒**・中央 29.0秒）。外の帯でこの窓に居るのは 162本中 7本（4.3%）で、
+    再生の上位15本には **0本** —— **「外と作りが違う」は帳面が言っています。
+    「長くすれば速くなる」は、この帳面では、まだ言えません。**
+
+    **だから、この関数は倍率を1つも返しません** —— 生・齢そろえ・チャンネル止めの
+    **3つとも**返し、印字は3つとも並べます。読む側が、どれで決めたかを言えるように。
+
+    ## 覆る条件
+
+    帳面が入れ替わって `rho` が 0 に近づいたら（`|rho| < 0.1`）、齢の窓は要らなくなります
+    —— そのときも消さないこと。**交絡が無いことを毎周 数えているのが、この行の値打ちです。**
+    組が 10組 を越えても `p` が 0.05 を割らないなら、その帯の差は**無い**と読むこと。
+    """
+    import statistics as _st
+    per = _corpus_per_day(form, path=path)
+    if not per:
+        return None
+    lo_b, hi_b = bands[0], bands[1]
+    lo = [p for p in per if lo_b[0] <= p["secs"] < lo_b[1]]
+    hi = [p for p in per if hi_b[0] <= p["secs"] < hi_b[1]]
+    out: dict = {"n": len(per),
+                 "rho": _spearman([p["secs"] for p in per], [p["age"] for p in per])}
+
+    # 齢をそろえた窓 —— 両帯の 10〜90%点の**重なり**。手で選ばないこと。
+    out["window"] = None
+    out["matched"] = None
+    if lo and hi:
+        def pct(xs: list[float], q: float) -> float:
+            s = sorted(xs)
+            return s[min(len(s) - 1, max(0, int(round(q * (len(s) - 1)))))]
+        a0, a1 = pct([p["age"] for p in lo], 0.1), pct([p["age"] for p in lo], 0.9)
+        b0, b1 = pct([p["age"] for p in hi], 0.1), pct([p["age"] for p in hi], 0.9)
+        w0, w1 = max(a0, b0), min(a1, b1)
+        if w1 > w0:
+            ml = [p["vpd"] for p in lo if w0 <= p["age"] <= w1]
+            mh = [p["vpd"] for p in hi if w0 <= p["age"] <= w1]
+            if ml and mh:
+                lv, hv = _st.median(ml), _st.median(mh)
+                out["window"] = (w0, w1)
+                # **窓に入れても、齢がそろったとは限りません。**そろったかどうかは
+                # 読む側が見分けられるように、窓の中の齢の中央も返します
+                # （実測 ショート: 窓 117〜3811日 ＝ ほぼ全部で、何も止まっていない）。
+                la = _st.median([p["age"] for p in lo if w0 <= p["age"] <= w1])
+                ha = _st.median([p["age"] for p in hi if w0 <= p["age"] <= w1])
+                out["matched"] = {"lo": (len(ml), lv), "hi": (len(mh), hv),
+                                  "x": (hv / lv) if lv > 0 else None,
+                                  "age": (la, ha)}
+
+    # チャンネルを止めた符号検定 —— 両帯を持つチャンネルの中だけで比べる
+    out["sign"] = None
+    byc: dict[str, dict[str, list[float]]] = defaultdict(lambda: {"lo": [], "hi": []})
+    for p in lo:
+        byc[p["ch"]]["lo"].append(p["vpd"])
+    for p in hi:
+        byc[p["ch"]]["hi"].append(p["vpd"])
+    pairs = [(_st.median(v["lo"]), _st.median(v["hi"]))
+             for v in byc.values() if v["lo"] and v["hi"]]
+    if pairs:
+        wins = sum(1 for a, b in pairs if b > a)
+        ratios = [b / a for a, b in pairs if a > 0]
+        out["sign"] = {"pairs": len(pairs), "wins": wins,
+                       "x": _st.median(ratios) if ratios else None,
+                       "p": _sign_p(wins, len(pairs))}
+    return out
+
+
+def _vpd(v: float) -> str:
+    """1日あたりの再生を、桁が落ちない字にする。
+
+    `{:,.0f}` だけだと、ショートの帯（中央 0.18回/日 対 0.90回/日）が
+    **「0回/日 対 1回/日」**になり、倍率と食い違って読めます（2026-09-05 07:2x に踏んだ）。
+    """
+    return f"{v:,.2f}" if abs(v) < 10 else f"{v:,.0f}"
+
+
+def length_control_lines(form: str = "long", bands: tuple = _LEN_BANDS,
+                         label: tuple = ("20〜25分", "25〜30分")) -> list[str]:
+    """`outside_length_controls()` を、決める側の画面の字にする（API 0単位）。
+
+    **生の倍率の隣に必ず出すこと。** 2026-09-05 07:1x まで、この位置には
+    09/04 23:5x の回が焼き付けた散文（「12件中 9件・中央 ×2.89・p=0.073」）が
+    在りました。**同じ帳面をこの回に数え直したら 7組中 5組・×1.33・p=0.227** で、
+    組の数も倍率も p も合っていません —— `outside_long_length_band` の docstring が
+    「べた書きは必ず古くなります」と書いた、その真下でした。
+    """
+    got = outside_length_controls(form, bands=bands)
+    if not got:
+        return []
+    lines: list[str] = []
+    rho = got.get("rho")
+    if rho is not None:
+        near = "**交絡は小さい**" if abs(rho) < 0.1 else "**長い本ほど新しい**"
+        if rho > 0.1:
+            near = "**長い本ほど古い**"
+        lines.append(
+            f"       [交絡] 齢と尺の相関 spearman(secs, age) = **{rho:+.3f}**"
+            f"（n={got['n']}・**この周に数えた**）→ {near}。"
+            f" **1日あたりは齢とともに落ちるので、生の倍率にはこのぶんが混ざっています。**")
+    m, w = got.get("matched"), got.get("window")
+    if m and w:
+        x = f"×{m['x']:.2f}" if m.get("x") else "（下の帯が 0本）"
+        la, ha = m.get("age") or (None, None)
+        # **窓に入れただけで「そろった」と言わないこと。**窓の中の齢の中央を並べて、
+        # まだ離れているなら、そう名乗る（実測 ショート: 窓が 117〜3811日 ＝ 効いていない）。
+        if la and ha:
+            far = max(la, ha) / max(min(la, ha), 1e-9)
+            note = (f"窓の中の齢の中央 {la:.0f}日 対 {ha:.0f}日"
+                    + ("・**まだそろっていません。この行を控えとして読まないこと**"
+                       if far >= 1.5 else "・**そろいました**"))
+        else:
+            note = "窓の中の齢を数えられませんでした"
+        lines.append(
+            f"       [齢をそろえた] 齢 {w[0]:.0f}〜{w[1]:.0f}日 の窓だけ"
+            f"（両帯の 10〜90%点の重なり・**この周に数えた**）: "
+            f"{label[0]} n={m['lo'][0]} {_vpd(m['lo'][1])}回/日 対 "
+            f"{label[1]} n={m['hi'][0]} {_vpd(m['hi'][1])}回/日（{x}・{note}）")
+    s = got.get("sign")
+    if s:
+        p = s.get("p")
+        verdict = ("**0.05 を割っています**" if p is not None and p < 0.05
+                   else "**0.05 を割っていません。目安**")
+        x = f"×{s['x']:.2f}" if s.get("x") else "—"
+        lines.append(
+            f"       [チャンネルを止めた] 両帯を持つ {s['pairs']}組 中 **{s['wins']}組** で"
+            f" {label[1]} が速く、組内の比の中央 {x}"
+            f"（符号検定 片側 p={p:.3f} ＝ {verdict}・**この周に数えた**）")
+    return lines
 
 
 def draft_length_lines(video_id: str) -> list[str]:
@@ -3288,12 +3506,14 @@ def draft_length_lines(video_id: str) -> list[str]:
     else:
         lines.append("       外の長尺の帯を数えられませんでした"
                      "（`data/niche_corpus.jsonl` に `published` が読める長尺が 0本）")
-    # **符号検定のほうは 09/04 23:5x の1回きりの数です**（この周は数え直していません）。
-    #     n も窓も書いてあるので、引くときは撃ち直すこと。
-    lines.append(
-        "       チャンネルの大きさを止めた側（**09/04 23:5x の1回きり。この周は数え直していません**）:"
-        " 12件中 9件 で 25分以上が速く、中央 ×2.89"
-        "（符号検定 片側 p=0.073 ＝ **0.05 を割っていません。目安**）")
+    # **符号検定も、毎周 数え直します**（2026-09-05 07:1x）。ここは 09/04 23:5x の回が
+    #     焼き付けた散文で「12件中 9件・中央 ×2.89・片側 p=0.073」と刷っていました。
+    #     **同じ帳面をこの回に数え直したら 7組中 5組・×1.33・p=0.227** ——
+    #     組の数も倍率も p も合っていません。すぐ上の `outside_long_length_band` の
+    #     docstring が「べた書きは必ず古くなります」と書いた、その真下で同じことを
+    #     していました（**言っている所と、している所が別** —— この repo でいちばん多い壊れ方）。
+    #     あわせて、生の倍率から**齢**を抜いた数も並べます（`outside_length_controls`）。
+    lines.extend(length_control_lines("long"))
     return lines
 
 
@@ -3369,6 +3589,153 @@ def outside_opening_lines(vid: str, topic: str, root: Path | None = None,
         out.append(f"     → 焼き直す台本 `data/scripts/{topic}.script.json` が無い。控えを写して冒頭 4コマ を型に直し"
                    f"（`script_writer.OUTSIDE_LONG_RULE` (1) a〜e）、`--script` で焼き直す（`videos.insert` は日枠を使わない）")
     return out
+
+
+#: ショートを尺で割る所（秒）。**外の帯から「速いほう」を測って決めた数ではありません** ——
+#: YouTube がショートを切る線（60秒）そのものです。長尺の `OUTSIDE_LONG_KNEE_SEC` は
+#: 「どちらの帯が速いか」を測って置いた切れ目でしたが、**ショートでその測定は通っていません**
+#: （`outside_length_controls("short")` のいちばん強い脚が逆を向く）。
+#: ＝ この線は**「自分がどこに居るか」を数えるための線**であって、狙いの帯ではありません。
+OUTSIDE_SHORT_KNEE_SEC = 60
+
+
+def own_short_lengths(uploaded_path: Path | None = None,
+                      max_sec: float = 200.0) -> dict | None:
+    """**自分のショートの尺は、どこに固まっているか**（`data/uploaded.jsonl`・API 0単位）。
+
+    返り: `{"n": 本数, "median": 中央, "min": 最小, "max": 最大, "over": 切れ目以上の本数}`。
+
+    `duration_s` が `max_sec` 以下の本をショートとみなします（長尺は 20分 以上なので、
+    200秒 で割れば取り違えません）。
+    """
+    import statistics as _st
+    secs: list[float] = []
+    for r in _jsonl(uploaded_path or (ROOT / "data" / "uploaded.jsonl")):
+        d = r.get("duration_s")
+        if not d:
+            continue
+        try:
+            v = float(d)
+        except (TypeError, ValueError):
+            continue
+        if 0 < v <= max_sec:
+            secs.append(v)
+    if not secs:
+        return None
+    return {"n": len(secs), "median": _st.median(secs), "min": min(secs),
+            "max": max(secs), "over": sum(1 for s in secs if s >= OUTSIDE_SHORT_KNEE_SEC)}
+
+
+def outside_window_share(lo: float, hi: float, form: str = "short",
+                         path: Path | None = None, top: int = 15) -> dict | None:
+    """**外の帯のうち、`lo`〜`hi` 秒 に居るのは何本か**（API 0単位）。
+
+    返り: `{"n": 帯の総数, "inside": その窓の本数, "share": 割合,
+            "top_n": 上位の本数, "top_inside": 上位のうち窓に居る数,
+            "top_median_sec": 上位の尺の中央}`。
+
+    **倍率ではありません。**「自分が居る所に、外はどれだけ居るか」だけを数えます ——
+    速い遅いは `outside_length_controls()` の3脚が言うことで、この関数は**占有**を見ます。
+    """
+    import statistics as _st
+    per = _corpus_per_day(form, path=path)
+    if not per:
+        return None
+    rows = _corpus_rows_raw(form, path=path)
+    inside = [p for p in per if lo <= p["secs"] <= hi]
+    out = {"n": len(per), "inside": len(inside),
+           "share": len(inside) / len(per) if per else 0.0}
+    if rows:
+        top_rows = sorted(rows, key=lambda r: -(r.get("views") or 0))[:top]
+        secs = [int(r["secs"]) for r in top_rows if r.get("secs")]
+        out["top_n"] = len(secs)
+        out["top_inside"] = sum(1 for s in secs if lo <= s <= hi)
+        out["top_median_sec"] = _st.median(secs) if secs else None
+    return out
+
+
+def _corpus_rows_raw(form: str, path: Path | None = None) -> list[dict]:
+    """帳面の行をそのまま返す（`views` で並べ替えたいときのため）。"""
+    try:
+        import sys
+        here = str(ROOT / "scripts")
+        if here not in sys.path:
+            sys.path.insert(0, here)
+        import niche_ceiling as nc                              # noqa: PLC0415
+        return list(nc.corpus_rows(form, path=path) if path else nc.corpus_rows(form))
+    except Exception:                                           # noqa: BLE001
+        return []
+
+
+def short_length_lines(video_id: str = "") -> list[str]:
+    """**ショートの尺を、決める側の画面に出す**（API 0単位）。
+
+    ## なぜ要るか（2026-09-05 07:3x に足した）
+
+    `lines()` は `if draft_form == "長尺":` の中でだけ尺を印字していました。
+    註にはこう書いてありました ——「**長尺のときだけ出します**（切れ目は外の長尺の
+    帯から引いた数で、ショートには当たりません）」。**切れ目は当たりませんが、
+    尺そのものは当たります。** そして:
+
+        `[きょうの1本]` が名指しする形は **ショート**（門1＋門2 の AND で近いほう）
+        `data/uploaded.jsonl` の実物 109本 は **全部 23.6〜32.6秒**（中央 29.0秒）
+        外の帯のショート 162本 で その窓（23〜33秒）に居るのは **7本（4.3%）**
+        再生の上位15本で その窓に居るのは **0本**（上位の尺 中央 99秒）
+
+    ＝ **供給の 100% を占める形の、いちばん大きい作りの違いが、どの回の目にも
+    入っていませんでした。** 長尺には 04:0x に同じ穴が見つかって塞がれています
+    （`draft_length_lines` の呼び手）。**同じ穴が、もう一方の形に開いたままでした。**
+
+    ## この行は「長くしろ」と言っていません
+
+    `outside_length_controls("short")` の3脚のうち、いちばん強い脚
+    （チャンネルを止めた符号検定）は **3組中 1組・×0.75・p=0.875 ＝ 逆向き**です。
+    だから印字は**占有**（自分がどこに居るか）と**3脚**を並べるだけで、
+    狙いの帯を名指ししません。**名指しできるようになる条件は、3脚がそろうこと。**
+
+    ## 覆る条件
+
+    3脚がそろって同じ向きになったら、`OUTSIDE_SHORT_KNEE_SEC` を「速いほうの帯の
+    切れ目」に置き直し、`config/hypotheses.yaml` に尺の前提を立てること
+    （**台帳が薄いときだけ**。`run_marker.ledger_days()`）。
+    自分のショートが窓の外へ出はじめたら（`over` が 0本 でなくなったら）、
+    この行は「固まっている」ではなく「散らばっている」を出すこと。
+    """
+    lines: list[str] = []
+    own = own_short_lengths()
+    if not own:
+        return lines
+    sec = measured_seconds(video_id) if video_id else None
+    knee = OUTSIDE_SHORT_KNEE_SEC
+    if sec:
+        side = "**上**" if sec >= knee else "**下**"
+        lines.append(
+            f"     この本の**尺 {sec:.0f}秒**（**実物**・`data/uploaded.jsonl` の"
+            f" `duration_s`）—— 外がショートを切る線 {knee}秒 の {side}")
+    lines.append(
+        f"       自分のショート {own['n']}本 の尺: 中央 **{own['median']:.0f}秒**"
+        f"・{own['min']:.0f}〜{own['max']:.0f}秒 の中に全部・{knee}秒 以上は"
+        f" **{own['over']}本**（`daily_pick.own_short_lengths`・**この周に数えた**）")
+    share = outside_window_share(own["min"], own["max"])
+    if share:
+        top = ""
+        if share.get("top_n"):
+            top = (f"／ 再生の上位{share['top_n']}本 では **{share['top_inside']}本**"
+                   f"（上位の尺 中央 {share['top_median_sec']:.0f}秒）")
+        lines.append(
+            f"       その窓（{own['min']:.0f}〜{own['max']:.0f}秒）に居る外の本:"
+            f" {share['n']}本 中 **{share['inside']}本（{share['share']*100:.1f}%）**"
+            f" {top} —— **作りが違うのは本当です**（`daily_pick.outside_window_share`）")
+    lines.extend(length_control_lines(
+        "short", bands=((0, knee), (knee, 10 ** 9)),
+        label=(f"{knee}秒 未満", f"{knee}秒 以上")))
+    lines.append(
+        "       [!] **この行は「長くしろ」と言っていません** —— 上の3脚のうち"
+        " いちばん強い脚（チャンネルを止めた側）が**逆を向いています**。"
+        " 読めるのは「外と作りが違う」までで、「長くすれば速くなる」ではありません。"
+        " **3脚がそろった回に、はじめて尺の前提を立てること**"
+        "（`daily_pick.short_length_lines` の覆る条件）。")
+    return lines
 
 
 def outside_long_lines(day: date, cur: dict | None, now: datetime | None = None,
@@ -3927,6 +4294,90 @@ def ahead_move_note(day: date) -> str:
             f"（1本 50単位・先の日付には置かない）")
 
 
+def improve_window_lines(next_row: dict | None, now: datetime | None = None) -> list[str]:
+    """**規則3 の相手に、公開までに1文字でも書けるのか**（API 0単位）。
+
+    ## なぜ要るか（2026-09-05 07:2x に実測して足した）
+
+    規則3 は「**次の枠で出る1本を、出る瞬間まで良くし続ける**」です。
+    **その1本の題・説明・絵を変える道は `videos.update` の1つだけ**で、
+    それは日枠が尽きると 403 になり、**戻るのは翌 16:00 JST**（`next_slot.writable_from`）。
+
+    実測（この回・09/05 07:2x JST）:
+
+        次の枠の1本 `kzefG44_APU`   公開 **09/05 09:00 JST**
+        `videos.update` が戻るのは   **09/05 16:00 JST**（7時間 あと）
+        ＝ **この本には、公開までに1文字も書けません。**
+
+    **規則3 が名指しする相手が、構造上 手の届かない所に居ます。**
+    そして画面はそれを一言も言っていませんでした —— `writable_from()` は
+    `reschedule`（動かす側）と `slot_gate` からしか呼ばれておらず、
+    **「良くし続ける」と書いてある側からは1度も呼ばれていません。**
+
+    ＝ 回は「次の枠の1本を improve せよ」と読み、当てどころを探し、
+    **撃てないと分かるまでの時間を毎回 使います**（親の申し送りの
+    「直近5日の ship 276件 は fix 71%・`--moves 0` が 95%」の、少なくとも一部）。
+    **届かない相手を名指ししているあいだ、届く相手は名指しされません。**
+
+    ## 何を出すか
+
+    書けるなら、いつまで書けるかを1行。**書けないなら、届く相手を名指しします**:
+
+        1. **その次の日の1本**（まだ `videos.insert` していないので、台本ごと変えられる。
+           `videos.update` を1回も使いません）
+        2. **公開の後の差し替え**（16:00 以降・`metadata_fix.py`・50単位）
+        3. **道具**（0単位・いつでも）
+
+    ## 覆る条件
+
+    日枠が尽きていない回では、この関数は「いつまで書けるか」だけを出します。
+    `reschedule` が `videos.update` を使わない道を持ったら（差し替えが日枠の外に
+    出たら）、この行ごと要りません —— `next_slot.writable_from()` の覆る条件と
+    同じ日に発火します。
+    """
+    if not next_row:
+        return []
+    try:
+        from src import next_slot as _ns                        # noqa: PLC0415
+        wf = _ns.writable_from(now)
+    except Exception:                                           # noqa: BLE001
+        return []
+    at = next_row.get("_at")
+    if not isinstance(at, datetime):
+        at = _parse(str(next_row.get("at") or ""))
+    if not isinstance(at, datetime):
+        return []
+    vid = next_row.get("video_id") or "?"
+    if wf is None:
+        return [f"     [窓] `{vid}` は**いま書けます**"
+                f"（`videos.update` は撃てます・`next_slot.writable_from()` = None）。"
+                f" **公開 {_jst(at):%m/%d %H:%M} JST までが規則3 の持ち時間です。**"]
+    if wf < at:
+        return [f"     [窓] `{vid}` は**まだ書けませんが、公開には間に合います** ——"
+                f" `videos.update` が戻るのは **{_jst(wf):%m/%d %H:%M} JST**、"
+                f"公開は {_jst(at):%m/%d %H:%M} JST（差 "
+                f"{(at - wf).total_seconds() / 3600:.1f}時間）"]
+    return [
+        f"     [窓] [!] **`{vid}` には、公開までに1文字も書けません** ——"
+        f" 公開 **{_jst(at):%m/%d %H:%M} JST** に対して `videos.update` が戻るのは"
+        f" **{_jst(wf):%m/%d %H:%M} JST**（**{(wf - at).total_seconds() / 3600:.1f}時間 遅い**"
+        f"・`next_slot.writable_from`・API 0単位）。"
+        f" **規則3 の相手が、構造上 手の届かない所に居ます。**",
+        "        → 届く当てどころは この3つです:"
+        " **(1) その次の日の1本**（まだ `videos.insert` していないので"
+        "**台本ごと**変えられる ＝ `videos.update` を1回も使わない・いちばん大きい手）"
+        " ／ **(2) 公開の後の差し替え**"
+        f"（{_jst(wf):%H:%M} JST 以降・`scripts/metadata_fix.py`・50単位）"
+        " ／ **(3) 道具**（0単位）。"
+        " **この本の題・説明・絵を今から直そうとしないこと** —— 撃てば 403 です。",
+    ]
+
+
+def _jst(t: datetime) -> datetime:
+    """UTC の時刻を JST に直す（印字のためだけ）。"""
+    return t.astimezone(timezone(timedelta(hours=9)))
+
+
 def lines(next_row: dict | None, now: datetime | None = None,
           cmp: dict | None = None, picks_path: Path | None = None,
           topics: set[str] | None = None, cands: list[dict] | None = None,
@@ -3946,6 +4397,13 @@ def lines(next_row: dict | None, now: datetime | None = None,
         draft_fam = family_of(next_row.get("topic"))
         out.append(f"     次に出る本 `{next_row.get('video_id')}` は **{draft_form}**"
                    f"（題材 `{next_row.get('topic')}`・族 `{draft_fam or '?'}`・形の決め方 {how}）")
+        # **その本に、公開までに1文字でも書けるのか**（2026-09-05 07:2x に足した）。
+        # 規則3 の相手を名指しする行のすぐ下に置きます —— 実測 09/05: 次の枠の
+        # `kzefG44_APU` は 09:00 JST 公開で、`videos.update` が戻るのは 16:00 JST。
+        # **7時間 遅い ＝ 公開までに1文字も書けません。** 画面はそれを一言も
+        # 言っておらず（`writable_from()` は動かす側からしか呼ばれていなかった）、
+        # 回は毎回「当てどころを探して、撃てないと分かる」ぶんの時間を使っていました。
+        out.extend(improve_window_lines(next_row, now))
         # **次に出る本の「尺」を、ここで印字します**（2026-09-05 04:0x に踏んだ）。
         #
         # `draft_length_lines()` は在ったのに、**この画面には1度も出ていませんでした** ——
@@ -3959,10 +4417,22 @@ def lines(next_row: dict | None, now: datetime | None = None,
         # ＝ ×2.6）が、決める側の目に1度も入っていませんでした。**
         # 実測: `GFvAcxvDmYM` は 22.7分 ＝ 切れ目 25分 の 2.3分 下。
         #
-        # **長尺のときだけ出します**（切れ目は外の長尺の帯から引いた数で、
-        # ショートには当たりません）。**覆る条件**は `draft_length_lines` の docstring。
+        # **形ごとに、別の尺の行を出します**（2026-09-05 07:3x に直した）。
+        #
+        # ここは 07:3x まで `if draft_form == "長尺":` だけで、註にこう書いてありました ——
+        # 「**長尺のときだけ出します**（切れ目は外の長尺の帯から引いた数で、
+        # ショートには当たりません）」。**切れ目は当たりませんが、尺そのものは当たります。**
+        #
+        # そのあいだ、`[きょうの1本]` が名指しする形（門1＋門2 の AND では **ショート**）の
+        # 尺は、**どの回の目にも入っていませんでした** —— 実測: 自分のショート 109本 は
+        # 全部 24〜33秒、外の帯のショート 132本 で その窓に居るのは **6本（4.5%）**、
+        # 再生の上位15本では **0本**（上位の尺 中央 126秒）。
+        # **供給の 100% を占める形の、いちばん大きい作りの違い**です。
+        # 04:0x に長尺で塞がれたのと**同じ穴**が、もう一方の形に開いたままでした。
         if draft_form == "長尺":
             out.extend(draft_length_lines(str(next_row.get("video_id") or "")))
+        elif draft_form == "ショート":
+            out.extend(short_length_lines(str(next_row.get("video_id") or "")))
     rd = c.get("recent_days", 14)
     out.append(f"     齢 {AGE_HOURS}時間 でそろえた1本あたり再生（`data/views.jsonl`・API 0単位・"
                f"{c.get('n_rows', 0)}本）:")

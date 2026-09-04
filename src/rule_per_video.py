@@ -98,6 +98,35 @@ FORMS = ROOT / "data" / "video_forms.json"
 #: そのまま 1本 だけで採ると n=9日 になるので、**規則の 2倍まで**を同じ帯とします。
 #: （実測: 1〜2本/日 の 12日 は中央値 1,070回、3本以上/日 の 13日 は 212回。
 #:   齢の門を 96時間 にすると折れ目は 9本/日 に寄りますが、**向きは同じ**です）
+#: **規則の何倍までを「規則と同じ密度の日」と見なすか。**
+#:
+#: ## [!] **この帯は、規則を動かすと動きます。読みが1本も来ていなくても動きます**
+#:
+#: 帯は `PUBLISH_PER_DAY × RULE_BAND_MULT` です。**分子が規則そのもの**なので、
+#: `src/house_rule.PUBLISH_PER_DAY` を動かした回は、**その場で `at_rule` が
+#: 変わります** —— 新しい実測は1本も入っていないのに。
+#:
+#: **2026-09-05 に実際に踏みました**（規則を 1 → 10 にした回・日誌に全文）::
+#:
+#:     per_day=1   帯 ≤2本/日   at_rule **1,070.5** / 標本 12日 / 最後 08-18 / stale True
+#:     per_day=10  帯 ≤20本/日  at_rule **443.0**   / 標本 26日 / 最後 08-31 / stale False
+#:
+#: 増えた 14日 は 08/19〜08/31 の**密に出していた日**で、**新しい読みではありません。**
+#: その回は この 26日 を「`needs` の 19日 を超えた」と読んで
+#: `config/hypotheses.yaml` の前提を1件 **誤って閉じ、同じ回に取り消しています。**
+#: `src/publish_hour.rule_band()` も同じ式なので、`best_hour()` が 9時 → 10時 へ
+#: 動きました（`tests/test_publish_hour.py` に経緯）。
+#:
+#: **次にここを読む側への3つ**:
+#:
+#:   1. **前提を判定するときは `per_day=` を明示して撃つこと。**
+#:      既定で撃つと「いまの規則の帯」で読みます —— 前提が書かれた帯とは別ものです
+#:   2. **規則を動かした回は、`at_rule` の変化を成果として読まないこと。**
+#:      動いたのは母集団で、実物ではありません
+#:   3. 帯をまたいで比べたいなら、それは**別の前提**です（門も引き直すこと）
+#:
+#: **覆る条件**: 帯の定義が規則から切り離されたら（例: 帯を「その前提が立った日の
+#: 規則」で固定するようにしたら）、この註は要らなくなります。
 RULE_BAND_MULT = 2
 
 
@@ -1087,6 +1116,57 @@ def _staleness_uncached(e: dict | None = None, rows: list | None = None,
         pred = at_rule * (n ** b) if b is not None else None
         resid.append({"day": d, "n": n, "obs": obs, "pred": pred,
                       "ratio": (obs / pred) if pred else None})
+    # --- **帯が広がると、この検出器は黙ります**（2026-09-05・最適化の回に塞いだ）---
+    #
+    # 上の輪は「**帯の外の日**」しか残差にしません。帯は `estimate()` が
+    # `band = per_day * RULE_BAND_MULT` で作るので、**`house_rule.PUBLISH_PER_DAY` が
+    # 動くと帯も動きます。**
+    #
+    # 実測（この回に撃った数）: 09-04 21:50 の commit `7a7c7b21` が
+    # `PUBLISH_PER_DAY` を **1 → 10** にしました。帯はその倍で **2 → 20**。
+    # **標本の全部の日が 20本/日 以下なので、`in_band` が全日を飲み込み、
+    # `last` が標本の最終日になり、`resid` が空になります** ——
+    #
+    #     outside_days = **0** ／ recent_k = **0** ／ recent_ratio = **None**
+    #     cliff = **False** ／ need_mult = **None**
+    #
+    # `cliff=False` は「崖ではない」ではなく「**測っていない**」です。
+    # ところが `stale_lines()` は `stale or cliff` でしか喋らないので、
+    # **頭から崖の行がまるごと消えました。** この関数が自分の註に
+    # 「**この関数は、その落ちを頭に出すために在ります**」と書いている、その落ちです。
+    #
+    # そして 21:57（**7分後**）に `config/hypotheses.yaml` の
+    # 「1本あたり再生の落ちは密度で説明が付く」が、**この黙った出力**
+    # （`stale=False` / `at_rule=443.0`）を根拠に `survived` で閉じられました。
+    #
+    # **なぜ帯で分ける必要が無いか**: 残差は `pred = 基準 × 本数^b` で
+    # **すでに密度で直してあります**。帯は「新しい日か」の代わりに使っていただけで、
+    # 新旧を分ける物差しとしては**帯の幅に振られます**。**時で分ければ振られません。**
+    #
+    # だから帯が飲み込んだときは、**時の holdout** に落とします ——
+    # 直近 k 日 を伏せ、**それより前の日だけ**で基準（帯の中の日の中央値）を作り、
+    # 伏せた k 日 をその基準で測ります。**当てに使った日で当たりを測らない**形です。
+    #
+    # **覆る条件**: 帯が実物より狭くなって「帯の外の日」がまた出るなら、
+    # 上の輪が残差を作るので、この落とし口は立ちません（`resid_source` が字で出ます）。
+    resid_source = "band"
+    resid_base = at_rule
+    if not resid and b is not None:
+        _days = sorted(byday)
+        if len(_days) >= k + 3:
+            _past, _held = _days[:-k], _days[-k:]
+            _base = [statistics.median(byday[d]) for d in _past
+                     if len(byday[d]) <= band]
+            if _base:
+                resid_base = float(statistics.median(_base))
+                resid_source = "holdout"
+                for d in _held:
+                    vs = byday[d]
+                    n = len(vs)
+                    obs = statistics.median(vs)
+                    pred = resid_base * (n ** b)
+                    resid.append({"day": d, "n": n, "obs": obs, "pred": pred,
+                                  "ratio": (obs / pred) if pred else None})
     recent = [r for r in resid if r["ratio"] is not None][-k:]
     r_med = statistics.median([r["ratio"] for r in recent]) if recent else None
     # --- 残差が**日とともに落ちているか**（門つき。勘のしきい値を置かない）---
@@ -1106,6 +1186,15 @@ def _staleness_uncached(e: dict | None = None, rows: list | None = None,
         "band": band,
         "outside_days": len(resid),
         "resid": resid,
+        # **残差をどこから取ったか**（"band" ＝ 帯の外の日 ／ "holdout" ＝ 時で伏せた直近 k日）。
+        # **`resid_base` は残差の分母**で、"band" のときは `at_rule` と同じ、
+        # "holdout" のときは**伏せた日を含めずに**作り直した中央値です。
+        "resid_source": resid_source,
+        "resid_base": resid_base,
+        # **測れていない**（帯も時も残差を1日も作れなかった）。
+        # `cliff=False` と**区別が要ります** —— あちらは「崖ではない」ではなく
+        # 「まだ何も言えない」で、`blind` は「**何も言えないことすら見えていない**」。
+        "blind": not resid,
         "recent_k": len(recent),
         "recent_ratio": r_med,
         "fit": fit,
@@ -1124,9 +1213,20 @@ def _staleness_uncached(e: dict | None = None, rows: list | None = None,
 def stale_lines(s: dict | None = None, **kw) -> list[str]:
     """`staleness()` を、頭で読める 1〜3行に。**止まっていなければ 0行。**"""
     s = s if s is not None else staleness(**kw)
-    if not s.get("ok") or not (s.get("stale") or s.get("cliff")):
+    if not s.get("ok") or not (s.get("stale") or s.get("cliff") or s.get("blind")):
         return []
     out: list[str] = []
+    if s.get("blind"):
+        out.append(
+            f"[!] **`per_video` の崖は、いま測れていません**（`blind`）——"
+            f" 帯が ≤{s['band']}本/日 まで広がって標本の全日を飲み、"
+            f"『帯の外の日』が **0日** になりました（`band = PUBLISH_PER_DAY × 2`）。"
+            " **`cliff=False` は「崖ではない」ではありません** —— **何も測っていない**です。"
+            f" 標本の最終日は {s['sample_last']}（{s['age_days']}日前）で、"
+            f" 頭の天井は止まった {s['at_rule']:,.0f}回 の上に立っています。"
+            " **出口は標本のほうです** —— 直近 k日 を伏せて測る口"
+            "（`resid_source='holdout'`）が立つには、"
+            f"標本に日が {s['recent_k'] or 0}日 では足りません。**その形の本を出すこと。**")
     if s.get("stale"):
         out.append(
             f"[!] **`per_video` の標本は {s['sample_last']} で止まっています"
@@ -1148,9 +1248,13 @@ def stale_lines(s: dict | None = None, **kw) -> list[str]:
             return (f"{x['day'].strftime('%m-%d')} {x['n']}本 実測{x['obs']:,.0f}"
                     f"／予想{x['pred']:,.0f} ＝ **×{x['ratio']:.2f}**")
 
+        _src = ("帯の外の" if s.get("resid_source") != "holdout"
+                else "**時で伏せた直近**")
         out.append(
-            f"    帯の外の {len(r)}日 を**本数で直した残差**"
-            f"（予想 ＝ {s['at_rule']:,.0f} × 本数^{s['b']:.3f}・弾力性は実測）: "
+            f"    {_src} {len(r)}日 を**本数で直した残差**"
+            f"（予想 ＝ {s.get('resid_base', s['at_rule']):,.0f} × 本数^{s['b']:.3f}"
+            + ("・弾力性は実測）: " if s.get("resid_source") != "holdout" else
+               "・**基準は伏せた日を含めずに作り直した中央値**）: ")
             + " ／ ".join(_f(x) for x in head) + " …… "
             + " ／ ".join(_f(x) for x in tail)
             + f" ＝ 直近{s['recent_k']}日の中央値 **×{s['recent_ratio']:.2f}**。"
@@ -1164,11 +1268,18 @@ def stale_lines(s: dict | None = None, **kw) -> list[str]:
                "（**0 をまたぎます ＝ まだ何も言えません。**"
                "『崖ではない』ではありません）"))
     if s.get("stale"):
+        # **`need_mult` は残差が 1日も無いと None です**（帯が全日を飲んだ回・`blind`）。
+        # 前の版はここで素通しに書式を当てていて、`stale` が立った瞬間に
+        # `TypeError` で `stale_lines()` ごと落ちました（`eta.py:9082` は
+        # 例外を捕まえて「撃てません」に置き換えるので、**頭から静かに消えます**）。
+        _nm = s.get("need_mult")
         out.append(
             "    → **だから、頭に出る『要る ×N』は、止まった標本の上の天井"
             f"（`ceiling_at_rule()`）で割った数です。** 残差の中央値で読み直すと"
-            f" **{s['need_mult']:,.1f}倍 甘い側**（並べてあるだけ・上の門を見ること）。"
-            " **この回に引くべきは「天井を上げる」より先に「標本を動かす」ほう** ——"
+            + (f" **{_nm:,.1f}倍 甘い側**（並べてあるだけ・上の門を見ること）。"
+               if _nm else
+               " **読み直せません**（残差が 0日 ＝ `blind`。上の行を見ること）。")
+            + " **この回に引くべきは「天井を上げる」より先に「標本を動かす」ほう** ——"
             " 台帳 `per_video-標本が08-18で止まっている`"
             "（規則 1本/日 が効くなら残差は 1.0 へ戻る。戻らなければ密度ではない）。")
     return out

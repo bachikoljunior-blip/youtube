@@ -88,7 +88,18 @@ def test_出力の頭で_周の予測ではないと言う():
         "出力の頭で「これは周の予測ではない」と言っていません"
     )
     assert "scripts/eta.py" in head, "本物（eta.py）を名指ししていません"
-    assert "92倍" in head, (
-        "規則との倍率を出していません。**床の日付が、規則の92倍の供給の上に"
+    # **倍率は計算すること。92 をべた書きしないこと**（2026-09-05）——
+    #     あれは `UPLOAD_CAP_PER_DAY(92) // PUBLISH_PER_DAY(1)` の答えで、
+    #     規則が 10本/日 になった日に 9 へ変わります。`scripts/trajectory.py`
+    #     自身は `_ratio` を計算して印字しており、**写しはこの検査だけ**でした。
+    import importlib.util as _ilu
+    from src import house_rule as _hr
+
+    _spec = _ilu.spec_from_file_location("traj_ratio", SRC)
+    _traj = _ilu.module_from_spec(_spec)
+    _spec.loader.exec_module(_traj)
+    ratio = _traj.UPLOAD_CAP_PER_DAY // max(int(_hr.PUBLISH_PER_DAY), 1)
+    assert f"{ratio}倍" in head, (
+        f"規則との倍率を出していません。**床の日付が、規則の{ratio}倍の供給の上に"
         "立っていることが読み取れません**"
     )
