@@ -8941,3 +8941,10 @@
 {"at": "2026-09-04T02:47:32+00:00", "api": "data", "method": "videos.list", "units": 1, "ok": true, "by": "post_pending_comments.py:main", "detail": "1huadpEk6HY,9zkfjEH48PY,MqQKSnbM0OI,dg-5ml7GRZQ,8hJnwkC8NU0,2tAGEKVCgYQ,ICmIBsZRYFE,HW0-QFAPl98,CLiJusPI7gY,aPz9Ys_wkeo,"}
 {"at": "2026-09-04T02:47:33+00:00", "api": "data", "method": "commentThreads.list", "units": 1, "ok": true, "by": "post_pending_comments.py:_mine_exists", "detail": "1huadpEk6HY"}
 {"at": "2026-09-04T02:47:34+00:00", "api": "data", "method": "videos.list", "units": 1, "ok": true, "by": "sub_ask.py:sweep", "detail": "2tAGEKVCgYQ,_Mz5rg6jQ_A,dg-5ml7GRZQ,FSAN9tjIX10,drkKm9fHW2M,sCr8CcUtpN4,NzygRNpx8GU,kOoCPJCa1PU,cFZd55jRxAw,a63FzIUV2wI,"}
+{"at": "2026-09-04T02:51:04+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "eta.py:q"}
+{"at": "2026-09-04T02:51:04+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "eta.py:q"}
+{"at": "2026-09-04T02:51:04+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "eta.py:q"}
+{"at": "2026-09-04T02:51:04+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "eta.py:q"}
+{"at": "2026-09-04T02:51:05+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "eta.py:q"}
+{"at": "2026-09-04T02:51:05+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "eta.py:q"}
+{"at": "2026-09-04T02:51:05+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "eta.py:q"}
