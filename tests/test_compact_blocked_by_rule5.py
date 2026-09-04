@@ -77,22 +77,51 @@ class _Args:
     per_day = 1
 
 
-def _run(monkeypatch, capsys) -> str:
-    """`_compact()` を撃って、印字を返す。**口へ行ったら、そこで落とす。**"""
-    def _boom(*_a, **_k):
-        raise AssertionError("**撃ってはいけません** —— `uploader._service()` に届きました")
+class _Reached(Exception):
+    """`uploader._service()` に届いた（**口は叩いていません**）。"""
 
-    monkeypatch.setattr(reschedule.uploader, "_service", _boom)
-    rc = reschedule._compact(_Args())
-    assert rc == 0, rc
-    return capsys.readouterr().out
+
+def _run(monkeypatch, capsys) -> tuple[str, bool]:
+    """`_compact()` を撃って、（印字, 口へ届いたか）を返す。
+
+    **口そのものは叩きません** —— `_service()` を差し替えて、その場で止めます。
+    届いたかどうかは**返りで**返します（`AssertionError` を投げると、
+    「届かないこと」しか検査できなくなる —— 2026-09-05 06:2x にそこで落ちた）。
+    """
+    reached = {"hit": False}
+
+    def _stop(*_a, **_k):
+        reached["hit"] = True
+        raise _Reached
+
+    monkeypatch.setattr(reschedule.uploader, "_service", _stop)
+    try:
+        rc = reschedule._compact(_Args())
+        assert rc == 0, rc
+    except _Reached:
+        pass
+    return capsys.readouterr().out, reached["hit"]
 
 
 def test_規則5では1本も動かさない(monkeypatch, capsys):
-    """**1 と 2**: 口へ行かず、外す手を名指しすること。"""
-    if not house_rule.same_day_only():
-        pytest.skip("規則5 が外れています（この検査の前提）")
-    out = _run(monkeypatch, capsys)
+    """**1 と 2**: 口へ行かず、外す手を名指しすること。
+
+    ## **`skip` をやめました**（2026-09-05 06:2x）
+
+    ここは長らく `if not house_rule.same_day_only(): pytest.skip(...)` でした。
+    2026-09-04 17:3x のオーナー指示（「目標以外全部外して良いよ」＝
+    `OWNER_FLOORS_LIFTED = True`）で `same_day_only()` は **False** になり、
+    **この検査はその日から一度も走っていません** —— この repo でいちばん危ない1手の
+    見張りが、黙って消えていました。
+
+    **床の状態は、この検査が決めます**（`monkeypatch` で真にする）。
+    そうすれば、床がどちら向きでも門そのものは毎回 検査されます。
+    """
+    monkeypatch.setattr(house_rule, "OWNER_FLOORS_LIFTED", False)
+    monkeypatch.setattr(house_rule, "SAME_DAY_SCHEDULING_ONLY", True)
+    assert house_rule.same_day_only() is True
+    out, reached = _run(monkeypatch, capsys)
+    assert not reached, "**撃ってはいけません** —— `uploader._service()` に届きました"
     assert "この手は、いま撃てません" in out, out[-800:]
     assert "pool_drain.py --apply --keep 0" in out, out[-800:]
     # **案そのものは出ていること**（規則が外れた回が読むため）
@@ -122,11 +151,21 @@ def test_規則5を外すと門が消える(monkeypatch, capsys):
     **覆る条件**: 規則5 が外れて予約が先の日付へ戻ったら、
     もとの「口へ届く」形のほうが強いので、そちらへ戻すこと。
     """
+    monkeypatch.setattr(house_rule, "OWNER_FLOORS_LIFTED", True)
     monkeypatch.setattr(house_rule, "SAME_DAY_SCHEDULING_ONLY", False)
+    assert house_rule.same_day_only() is False
     # **`--min-days` を 0 にすること。** あの門は「予約が先の日付まで
     # 埋まっているか」を見ており、この検査が見ている所とは別軸です
     # （規則5 の下では 0日 が正しい状態なので、既定の 8.0 では必ず落ちます）。
     monkeypatch.setattr(_Args, "min_days", 0.0)
-    out = _run(monkeypatch, capsys)
+    out, reached = _run(monkeypatch, capsys)
     assert "この手は、いま撃てません" not in out, out[-800:]
     assert "pool_drain.py --apply --keep 0" not in out, out[-800:]
+    # **上の「覆る条件」が発火しました**（2026-09-05 06:2x）——
+    # 規則5 が外れ（`OWNER_FLOORS_LIFTED`・09/04 17:3x）、先の日付の予約が戻った
+    # （09/06 19:00 に1本）ので、**動かす本が在り、口へ届きます。**
+    # 届いたことまで見るのが「もとの、強いほうの形」です。**在庫に依るので、
+    # 動かす本が 0本 の回は上の2行だけで通します**（門が消えたことは見えている）。
+    if "**動かすのは 0本**" not in out and "動かすのは 0本" not in out:
+        assert reached, ("規則5 が外れているのに `uploader._service()` へ届きません"
+                         " —— 門が別の所に残っています\n" + out[-800:])
