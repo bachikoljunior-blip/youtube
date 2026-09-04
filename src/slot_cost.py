@@ -50,6 +50,7 @@
 この門は自分でその形を通します。**形の禁止ではなく、測った数で倒れる門です。**
 """
 from __future__ import annotations
+import math
 
 #: 判定に使う齢。前提 `外の作り方を写した長尺` の判定窓と同じ 48時間。
 HOURS = 48
@@ -207,3 +208,105 @@ def open_slot_experiments(path=None) -> list[dict]:
                 win = None
         out.append({"claim": claim, "win": win, "form": form})
     return out
+
+
+#: 帯の名前（`win_band()` が返す `band`）。**3つだけ。**
+BANDS = ("miss", "unpaid", "paid")
+
+
+def win_band(v: float | None, *, gate: float, give_up: str = "ショート",
+             sv: dict | None = None, cmp: dict | None = None, now=None) -> dict:
+    """**48時間に実際に出た数が、どの帯に落ちたか。**（API 0単位）
+
+    ## なぜ要るか（2026-09-05 01:5x・毎時の回が撃った数）
+
+    `verdict()` は**撃つ前**の門です（「当たっても枠のぶんを払えるか」）。
+    ところが**撃った後**を読む所には、門が **1つしかありませんでした** ——
+    `daily_pick.OUTSIDE_48H_GATE` ＝ **100回**。その 100回 の出どころは
+    前提の `claim` にそのまま書いてあります:
+
+        「48時間の再生は **いまの長尺の中央値 1回 の ×100**（100回）を超える」
+
+    **＝ 自分の記録だけで作った数（鏡）です。** この repo は同じ誤りを
+    2026-09-03 に1度 閉じています —— 前提「`per_video` の天井 4,229回 は
+    帯の天井ではなく、いまの作り方の天井である（＝ `ceiling_at_rule()` が
+    **自分の記録だけで作った鏡**）」`outcome: survived`。
+    **鏡だと分かって天井を捨てたのに、その後継の前提の「当たりの門」は、
+    同じ作り方（自分の中央値 ×N）のまま残っていました。**
+
+    ## 何が実際に壊れるか（散文ではなく、書いてある帰結）
+
+    `config/hypotheses.yaml` の姉妹の前提（外の作りの**ショート**）の註に、
+    こう書いてあります —— 「**覆る条件**: `外の作り方を写した長尺` が当たった
+    （48h で **100回** 超え）なら、**形を長尺へ寄せる判断が先**」。
+
+    ＝ 09/07 の判定が **101回** で返ってきたら、その1本は「当たり」と読まれ、
+    **これから先の枠が長尺へ寄ります。** ところが同じ枠をショートに使えば、
+    実測の中央値は **1,049回**（規則の密度・`slot_value()`・2026-09-05）です。
+    **101回 は「作りは効いた」の証拠にはなりますが、「枠をこの形に寄せてよい」
+    の証拠には一度もなっていません。** 2つの問いに、門が1つしかありませんでした。
+
+    ## だから帯を3つに割ります（**どちらの門も緩めません**）
+
+        v <  gate            → ``miss``    前提は外れ。`next_if_false` へ。
+        gate ≤ v < cost      → ``unpaid``  **作りは効いた／枠の代金は払えていない。**
+                                           前提は当たり（`falsified_if` は満たした）が、
+                                           **形を長尺へ寄せる根拠にはならない** ——
+                                           同じ枠のショートの実測に負けている。
+        v ≥ cost             → ``paid``    当たり、かつ枠のぶんを払えた。
+                                           **このときだけ形の判断を動かしてよい。**
+
+    返す dict: ``band`` / ``gate`` / ``cost`` / ``give_up`` / ``may_move_form``
+    （＝ `band == "paid"`）/ ``line``（印字する1行）。
+
+    **数が足りない回は `band=None`・`line=""` を返します**（推測で埋めない）。
+    `cost` が読めないときは `gate` だけで `miss`／`unpaid` を分け、
+    **`paid` は名乗りません**（払えたことを、測らずに言わないため）。
+
+    **覆る条件**: 長尺が規則の密度で中央値を上げれば `slot_value()` の勝者が
+    入れ替わり、`cost` はその形の数になります。＝ **形の禁止ではなく、
+    測った数で自分が倒れる帯です。** また `gate` が `cost` 以上に置き直された日、
+    `unpaid` の幅は 0 になり、この関数は 2帯 に自分で縮みます。
+    """
+    if v is None or gate is None:
+        return {"band": None, "gate": gate, "cost": None, "give_up": give_up,
+                "may_move_form": False, "line": ""}
+    try:
+        v = float(v)
+        gate = float(gate)
+    except (TypeError, ValueError):
+        return {"band": None, "gate": None, "cost": None, "give_up": give_up,
+                "may_move_form": False, "line": ""}
+    if not (math.isfinite(v) and math.isfinite(gate)):
+        return {"band": None, "gate": None, "cost": None, "give_up": give_up,
+                "may_move_form": False, "line": ""}
+    s = sv if sv is not None else slot_value(cmp=cmp, now=now)
+    cost = (s.get("forms", {}).get(give_up) or {}).get("median")
+    if not isinstance(cost, (int, float)) or isinstance(cost, bool) \
+            or not math.isfinite(cost) or cost <= 0:
+        cost = None
+    if v < gate:
+        band = "miss"
+        line = (f"**{v:,.0f}回 ＜ 前提の門 {gate:,.0f}回 → 外れ**"
+                f"（`next_if_false` へ）")
+    elif cost is None:
+        band = "unpaid"
+        line = (f"**{v:,.0f}回 ≥ 前提の門 {gate:,.0f}回 → 前提は当たり。"
+                f"ただし枠の機会費用が測れません（{give_up} の規則の密度の標本 0本）"
+                f"→ 形を寄せる判断はまだ取れません**")
+    elif v < cost:
+        band = "unpaid"
+        line = (f"**{v:,.0f}回 ≥ 前提の門 {gate:,.0f}回 → 前提は当たり"
+                f"（`falsified_if` は満たしています）。"
+                f"ただし同じ枠の {give_up} の実測 {cost:,.0f}回"
+                f"（規則の密度の中央値・`slot_value`）に負けています ＝ "
+                f"**作りは効いた／枠の代金は払えていない**。"
+                f"→ **この数で形を長尺へ寄せないこと。**"
+                f"寄せてよいのは {cost:,.0f}回 を越えた回だけです")
+    else:
+        band = "paid"
+        line = (f"**{v:,.0f}回 ≥ 前提の門 {gate:,.0f}回 かつ "
+                f"≥ 同じ枠の {give_up} の実測 {cost:,.0f}回 → 当たり、"
+                f"かつ枠のぶんを払えました ＝ 形の判断を動かしてよい**")
+    return {"band": band, "gate": gate, "cost": cost, "give_up": give_up,
+            "may_move_form": band == "paid", "line": line}
