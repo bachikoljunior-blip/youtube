@@ -52,7 +52,8 @@ def main(video_id: str, title: str) -> int:
         return 1
 
     snippet = items[0]["snippet"]
-    print(f"  前: {snippet['title']}")
+    before = str(snippet.get("title") or "")
+    print(f"  前: {before}")
     snippet["title"] = title
     # **計測のぶんを残して止める**（2026-08-28 の最適化の回・2枚目）。
     # `videos.update` は **50単位**。1本だけの道具ですが、門を外しておくと
@@ -74,6 +75,14 @@ def main(video_id: str, title: str) -> int:
     # **末尾に印**（`link_longform` と同じ理由）。タイトルの書き換えは
     # 予約を動かしていないので、`MOVE_CAP` の持ち手を奪わないこと。
     upload_cap.note_quota_ok(detail=f"videos.update {video_id} retitle")
+    # **帳面にも書くこと**（2026-09-05 00:2x に踏んだ・`src/retitles.py` の註に実測）。
+    # `data/uploaded.jsonl` は「上げたときの行」で、ここを差し替えても**1文字も変わりません**。
+    # `[次の枠]`（`src/next_slot.py`）はその帳面の `title` を刷るので、
+    # **書かないと、その回がいちばん先に読む1行が古い題のままになります。**
+    # 帳面は追記専用（`merge=union`）なので、行は書き換えず、別の帳面へ足して重ねます。
+    from src import retitles                                    # noqa: PLC0415
+
+    retitles.record(video_id, title, prev=before)
     print(f"  後: {title}")
     return 0
 

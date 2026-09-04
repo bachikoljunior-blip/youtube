@@ -137,7 +137,14 @@ def _rows(path: Path | None = None) -> list[dict]:
             out.append(json.loads(ln))
         except json.JSONDecodeError:
             continue
-    return out
+    # **題は、上げた後に差し替わっていることがあります**（2026-09-05 00:2x に踏んだ）。
+    # 帳面（`data/uploaded.jsonl`）の `title` は**上げたときの字**で、
+    # `scripts/retitle.py` はそこへ書きません。重ねないと `[次の枠]` が古い題を刷ります
+    # （実測 `GFvAcxvDmYM`: 23:03 に差し替えたのに、00:2x の `--write` は前の題を出していた）。
+    # 実測と覆る条件は `src/retitles.py` の docstring。
+    from src import retitles                                   # noqa: PLC0415
+
+    return retitles.overlay(out)
 
 
 def _parse(ts: str | None) -> datetime | None:
