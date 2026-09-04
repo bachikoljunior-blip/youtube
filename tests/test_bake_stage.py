@@ -93,15 +93,78 @@ def test_どちらも無ければ何も返さない(tmp_path, monkeypatch) -> No
     assert ahead_sweep.bake_minutes() == (None, 0)
 
 
+#: 焼き上がってから枠までに要る余白（`videos.insert` ＋ 予約の置き換え）。
+#: `REBAKE_LEAD` の註の「上げの余裕（20分）」と同じ数。
+BAKE_UPLOAD_MARGIN_MIN = 20.0
+
+
 def test_枠までの線は実測より長いこと() -> None:
-    """**`REBAKE_LEAD` は「1回の焼きの長さ」より長くなければ意味がありません。**
+    """**`REBAKE_LEAD` は「1回の焼きの長さ ＋ 上げ」より長くなければ意味がありません。**
 
     100分 の線は、実測 78.2分 ＋ 上げ に対して余裕が 20分 しかなく、しかも
     読み照合の輪の 32分 は**誤読 0件 で1周**の値でした（誤読が出れば +30分）。
     この検査は、次に誰かが線を実測へ近づけたときに鳴ります。
+
+    ## **`× 1.5` を「＋ 上げの余裕」へ替えました**（2026-09-04 21:3x）
+
+    同じ日に 2つ 変わり、**掛け算のほうは満たせない形**になっていました:
+
+        1. `REBAKE_RUN_TIMEOUT = int(REBAKE_LEAD.total_seconds())`
+           ＝ **焼きは `REBAKE_LEAD` を超えたところで必ず殺される**
+           （実測 16:39 の `rc=124`）。だから `bake_minutes()` の**最大は
+           構造上 `REBAKE_LEAD` を超えられません。**
+        2. `bake_minutes()` は `done` 5件 で**中央値から最大へ**切り替わった。
+
+    その2つが重なると `lead >= max * 1.5` は「**最大が lead の 2/3 を超えたら赤**」
+    という意味になり、超えた回の直し方は **`REBAKE_LEAD` を上げる**しかありません。
+    ところが上げると殺す線も一緒に上がるので、**次はもっと長い `done` が出て、
+    また 2/3 を超えます** —— 追いつけない検査です。
+    実測でいうと、いまの最大 90.0分 に対して線 150分 は通りますが、
+    **オーナー指示の読み照合の輪が 2周 した焼き（＞90分）が1件 最後まで通れば、
+    100分 を超えて赤**になります。**輪が正しく回った日にだけ赤くなる検査**でした。
+
+    要るのは倍率ではなく「**焼き上がってから枠までに、上げるぶんが残っているか**」で、
+    それは足し算です（`BAKE_UPLOAD_MARGIN_MIN` ＝ `REBAKE_LEAD` の註と同じ 20分）。
+
+    **覆る条件**: `REBAKE_RUN_TIMEOUT` が `REBAKE_LEAD` と切り離されたら、
+    最大は線に張り付かなくなるので、倍率へ戻してよい。
     """
     mins, n = ahead_sweep.bake_minutes()
     if mins is None or not n:
         pytest.skip("焼きの長さがまだ 1件も測れていない")
     lead = ahead_sweep.REBAKE_LEAD.total_seconds() / 60.0
-    assert lead >= mins * 1.5, f"線 {lead:.0f}分 が実測 {mins:.1f}分 に近すぎます"
+    assert lead >= mins + BAKE_UPLOAD_MARGIN_MIN, (
+        f"線 {lead:.0f}分 が実測 {mins:.1f}分 ＋ 上げ {BAKE_UPLOAD_MARGIN_MIN:.0f}分 に届いていません")
+
+
+def test_done_が5件_に届いたら上側_最大_を返す(tmp_path, monkeypatch) -> None:
+    """**待つ側にとって、外れて痛いのは短い側だけ。**
+
+    この数の使い道は1つで、`src/next_slot.py` が回に
+    「**この回は、終わるまで待つこと。N分 は要ります**」と刷ります。
+    短い側へ外れた回は差し替えの前に降り、焼く側は**その回の道連れで死にます**
+    （焼く側はこの器の中の背景プロセス）。
+
+    実測（`data/rebake.jsonl`・2026-09-04・5件 とも同じ1本）は
+    中央値 78.2分／最大 90.0分 で、**中央値は 11.8分（13%）短く言って**いました。
+    しかも最大の 5,400秒 は `rc=124`（`REBAKE_RUN_TIMEOUT` に殺された）＝
+    「90分 かかった」ではなく「**90分 では終わらなかった**」ので、まだ下限です。
+    """
+    rows = "".join(f'{{"kind": "done", "rc": 0, "seconds": {s}}}\n'
+                   for s in (4692, 3325, 5400, 4977, 3737))
+    _ledger(tmp_path, monkeypatch, '{"seconds": 600}\n', rows)
+    mins, n = ahead_sweep.bake_minutes()
+    assert n == 5
+    assert mins == 90.0, "5件 に届いたら中央値（78.2）ではなく最大（90.0）"
+
+
+def test_done_が4件_までは中央値のまま(tmp_path, monkeypatch) -> None:
+    """**切り替えの線は `BAKE_UPPER_AT`。** n が小さいうちの最大は 1件 の外れ値そのもの
+    なので、そこまでは中央値で読みます（`bake_minutes()` の註）。"""
+    rows = "".join(f'{{"kind": "done", "rc": 0, "seconds": {s}}}\n'
+                   for s in (4692, 3325, 5400, 4977))
+    _ledger(tmp_path, monkeypatch, '{"seconds": 600}\n', rows)
+    mins, n = ahead_sweep.bake_minutes()
+    assert n == 4 and n < ahead_sweep.BAKE_UPPER_AT
+    # 中央値（偶数なら上側）＝ 4977秒 ＝ 83.0分。最大（5400 ＝ 90.0分）ではない
+    assert mins == 83.0
