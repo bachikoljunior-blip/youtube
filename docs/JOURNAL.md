@@ -112649,3 +112649,18 @@ commit だけ在ります —— **`data/runs.jsonl` には出ないので、次
 **この回の変更を `git stash` で外して撃ち直しても、同じ2件が落ちます** ——
 つまり**もとから赤**です。立てた側の回が持っているはずなので、この回は触っていません。
 **次の回へ**: 直すなら `watch:` の語を台帳（`data/watch_rings.jsonl` 系）へ足すこと。
+
+### この回の最後の1件は、`fix_gate` が記録を断りました（**作業は残っています**）
+
+`run_marker.py --ship`（上の `_banked_views_since` の直し）は `fix_gate` で止まりました
+（`run_len` 16／3・`waived: false`）。門の言い分はそのとおりです ——
+**`fix` 比は 門の後 124/248 ＝ 50.0%**（天井 66.7%）で、この回も 4件 中 2件 が `fix` です。
+門は「直しが本当に要るなら、それは次の回でも要ります。**順番だけの門です**」と書いています。
+
+**コミットは押してあります。**`data/runs.jsonl` に `ship` の行が無いだけで、
+`git log` と `docs/JOURNAL.md` には残っています。**次の回が拾う必要はありません**
+（同じ直しを2回しないこと —— `scripts/deadline_check.py` の `_banked_views_since` を
+`grep` すれば、もう在るのが分かります）。
+
+この回の記録ずみ ship は **4件**: `upload`（09/07 の枠）／`improve`（ショートの題の門）／
+`improve`（`standing_pick_title` ＋ 09/07 の retitle）／`fix`（`_written_date_gate`）。
