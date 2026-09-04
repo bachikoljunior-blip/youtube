@@ -61,8 +61,13 @@ def _ledger(tmp_path, days: dict[str, int]) -> Path:
     for day, cnt in sorted(days.items()):
         for i in range(cnt):
             n += 1
+            # **時は 0〜23 に丸めること**（2026-09-05）—— `9 + i` のままだと、
+            #     1日の本数が 15本 を超えた場面で `ValueError: hour must be in
+            #     0..23` になります（規則が 10本/日 になり、超える場面を
+            #     `cap + 7` で作るようになったため）。**日の本数は変えません。**
             at = datetime.strptime(day, "%Y-%m-%d").replace(
-                hour=9 + i, tzinfo=JST).astimezone(timezone.utc)
+                hour=(9 + i) % 24, minute=(i // 24) * 5,
+                tzinfo=JST).astimezone(timezone.utc)
             rows.append({"video_id": f"v{n:04d}", "topic": f"t-{n}",
                          "title": f"題 {n}",
                          "at": at.strftime("%Y-%m-%dT%H:%M:%SZ"),
@@ -103,7 +108,14 @@ def test_quiet_when_rule_is_kept(tmp_path, legacy):
 def test_hole_fires(tmp_path, legacy):
     """**実測の形（手前が空・後ろが作り置き）を注入して、発火を確かめる。**"""
     days = {"2026-09-01": 1, "2026-09-02": 1, "2026-09-04": 1}
-    days.update({"2026-09-24": 7, "2026-09-27": 11, "2026-10-07": 13})
+    # **超える本数を、規則から作ること**（2026-09-05 に書き替えた）——
+    #     7 / 11 / 13 は `PUBLISH_PER_DAY = 1` の下でだけ「規則の外」でした。
+    #     規則が 10本/日 になると 7本 の日が内側へ入り、`over` が 3日 → 2日 に
+    #     なります（＝「穴の後ろの作り置き」を1日 見落とす形に化けます）。
+    from src import house_rule as _hr
+    _c = _hr.cap()
+    days.update({"2026-09-24": _c + 1, "2026-09-27": _c + 5,
+                 "2026-10-07": _c + 7})
     p = _ledger(tmp_path, days)
     c = next_slot.calendar(now=NOW, path=p)
     # 09/05 〜 09/23 の 19日

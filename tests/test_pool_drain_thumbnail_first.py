@@ -73,13 +73,20 @@ def _stub_apply(monkeypatch, order: list, *, thumb_rc: int = 0,
     # （規則5）に両方とも入り、`order == []` で赤になった。**この検査が見るのは
     # 順番だけ**なので、外される側（明日以降）に2本 置ければ足りる。
     base = pool_drain.datetime.now(utc).replace(hour=4, minute=0, second=0, microsecond=0)
-    d1 = base + pool_drain.timedelta(days=1)
-    d2 = base + pool_drain.timedelta(days=2)
-    monkeypatch.setattr(pool_drain, "pool",
-                        lambda now=None, rows=None: [
-                            {"id": "keep", "at": d1, "title": "keep", "topic": "t"},
-                            {"id": "drop", "at": d2, "title": "drop", "topic": "t"},
-                        ])
+    # **外れる本が1本 残るように、規則から作ること**（2026-09-05 に書き替えた）——
+    #     ここは `keep` + `drop` の **2本**で「1本は外れる」を作っていました
+    #     （`PUBLISH_PER_DAY = 1` だったので、2本目が規則の外に出た）。
+    #     規則が 10本/日 になると **2本とも内側**になり、`order` に `update:drop`
+    #     が1つも出ず、この file の4件が「外す口を見ない検査」に化けます。
+    #     **見張っているのは順番（サムネが先・池化は止まらない）**なので、
+    #     外れる本が1本 在ればよく、その本数だけを規則から作ります。
+    keep_n = max(1, pool_drain.house_rule.cap())
+    rows_stub = [{"id": f"keep{i}", "at": base + pool_drain.timedelta(days=1 + i),
+                  "title": f"keep{i}", "topic": "t"} for i in range(keep_n)]
+    rows_stub.append({"id": "drop",
+                      "at": base + pool_drain.timedelta(days=1 + keep_n),
+                      "title": "drop", "topic": "t"})
+    monkeypatch.setattr(pool_drain, "pool", lambda now=None, rows=None: list(rows_stub))
     monkeypatch.setattr(pool_drain, "thumbnail_first", lambda now=None: "NEXT1")
     # **この作り物の予約に穴はありません**（09/02・09/03 の2本 ＝ 1日1本）。
     # `_calendar_hold()` は `pool` ではなく `data/uploaded.jsonl` を読むので、
