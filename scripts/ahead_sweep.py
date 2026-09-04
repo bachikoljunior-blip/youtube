@@ -1123,8 +1123,28 @@ def draft_newer_than(draft: Path, uploaded_at: str | None, root: Path | None = N
 def rebake_plan(*, cur: dict | None, stash_text: str | None, draft_text: str | None,
                 draft_newer: bool | None, attempted: bool, scheduled: bool,
                 slot_at: datetime | None, now: datetime, baked_today: int = 0,
-                lead: timedelta = REBAKE_LEAD, max_per_day: int = REBAKE_MAX_PER_DAY) -> dict:
-    """**焼き直すかを決める（純関数・API 0単位）。** 返りは `{do, why, sha, video_id, topic}`。"""
+                lead: timedelta = REBAKE_LEAD, max_per_day: int = REBAKE_MAX_PER_DAY,
+                stash_newer: bool | None = None) -> dict:
+    """**焼き直すかを決める（純関数・API 0単位）。** 返りは `{do, why, sha, video_id, topic}`。
+
+    ## `stash_newer` —— **控えを、上げた後に書き換えた回がありました**（2026-09-04 15:3x）
+
+    控え（`data/critique_queue/<ID>.script.json`）は「**その動画に実際に入っている台本**」の
+    記録で、この関数はそれと手元の台本の差で焼き直しを決めます。ところが 09/04 04:46 の回
+    （commit `69fe5244`）は、手元の台本と**控えの両方**を手で書き換えました。起きることは2つ:
+
+        1. 控えと台本が同じ中身になるので、この関数は「**焼いても変わらない**」と言う
+           ＝ **直したものが動画に入らないまま、誰も気づかない**
+        2. 控えを読む側（`src/clarity.books()`・`src/frames.py`・
+           `daily_pick` の外の型の読み・前提の群分け）が、**実物と違う字**を数える
+
+    実測: `Ec-j1-W4nqw`（07:42 に上げた 62コマ の本）の控えは **83コマ** になっていました。
+
+    **控えを手で書き換えないこと。** 直すのは `data/scripts/<題材>.script.json` だけで、
+    控えは焼き直しが**上げたときに**書きます（`scripts/critique_queue.stash()`）。
+    ここでは、控えが上げた後に commit されていたら（`stash_newer`）**そう言います** ——
+    止めはしません（読み違いのほうが高い）。
+    """
     out = {"do": False, "why": "", "sha": "", "video_id": str((cur or {}).get("video_id") or ""),
            "topic": str((cur or {}).get("topic") or ""), "takeover": bool(scheduled)}
     if not cur or not out["video_id"] or not out["topic"]:
@@ -1139,6 +1159,12 @@ def rebake_plan(*, cur: dict | None, stash_text: str | None, draft_text: str | N
     out["sha"] = script_sha(draft_text)
     if _canon(stash_text) == _canon(draft_text):
         out["why"] = f"控えと台本は同じ中身（sha {out['sha']}）—— 焼いても変わらない"
+        if stash_newer is True:
+            # **同じ中身なのは、控えを後から書き換えたからかもしれません**（上の註）。
+            out["why"] += ("　[!] **ただし控えは、この本を上げた後に commit されています** ——"
+                           "控えは『実物に入っている台本』の記録なので、"
+                           "**手で書き換えると、直したものが動画に入らないまま同じ中身に見えます**。"
+                           "`git log -1 -- data/critique_queue/<ID>.script.json` を見ること")
         return out
     # **予約が付いていても焼き直します**（2026-09-04 06:5x。**ここが規則3 の最大の手を塞いでいました**）
     #
@@ -1693,9 +1719,12 @@ def rebake_plan_for(day, now: datetime, *, root: Path | None = None) -> dict:
         slot_at = today_slot(now, place_hour(day))
     else:
         slot_at = datetime(day.year, day.month, day.day, place_hour(day), tzinfo=JST)
+    # **控えが、上げた後に commit されていないか**（`rebake_plan` の `stash_newer` の註）。
+    stash_newer = (draft_newer_than(stash, (up or {}).get("uploaded_at"), root)
+                   if (stash and up) else None)
     plan = rebake_plan(cur=cur, stash_text=stash_text, draft_text=draft_text, draft_newer=newer,
                        attempted=attempted, scheduled=scheduled, slot_at=slot_at, now=now,
-                       baked_today=baked_today)
+                       baked_today=baked_today, stash_newer=stash_newer)
     plan["for_day"] = day.isoformat()
     plan["decided"] = bool(cur)
     return plan
