@@ -758,7 +758,12 @@ def place_today(now: datetime | None = None, *, dry_run: bool = False) -> dict:
         print(f"[today] 焼き直しの予定を読めませんでした（置く側は止めません）: "
               f"{str(exc)[:120]}", flush=True)
     plan = today_plan(now, count=count, cap=house_rule.cap(), candidate=cand, hour=hour,
-                      quota_open=quota_open, rule_on=house_rule.same_day_only(),
+                      # **`same_day_only()` を渡さないこと**（2026-09-04 17:39 に踏んだ）。
+                      #     あれは「先の日付を禁じるか」で、この手の問いは
+                      #     「**その日の枠に本を入れるか**」です。オーナーが床を外した
+                      #     瞬間（17:3x）、代用していたせいで**置く手ごと止まりました**。
+                      #     残す理由と覆る条件は `house_rule.PLACE_TODAY_WITHOUT_ASKING`。
+                      quota_open=quota_open, rule_on=house_rule.place_today_on(),
                       paused=_paused(), insert_ok=insert_ok,
                       rebake_pending=rebake_pending,
                       takeover_pending=takeover_in_flight(
