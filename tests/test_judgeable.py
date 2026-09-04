@@ -82,12 +82,31 @@ def test_yaml_の_key_は重複しない():
 
 @pytest.mark.parametrize("f", J.floors(), ids=lambda f: f.key)
 def test_実物で期限が構造的に守れる(f: J.Floor):
-    """**予約の実物から数えて、期限までに判定できること。**
+    """**期限までに判定できること。**
 
     赤くなったら、`python -m src.judgeable` が出す日付へ
-    **期限だけを**動かすこと（条件は1文字も変えない）。
-    群がそろわない（`ready is None`）なら、期限ではなく**在庫の割り当て**の話です ——
-    `python scripts/ab_split.py --outlook` を見ること。
+    **期限だけを**動かすこと（条件は1文字も変えない。`python scripts/deadline_check.py --extend`）。
+
+    ## **「予約にそろっているか」では見ません**（2026-09-04 19:4x に直した）
+
+    ここは長らく `assert f.ready is not None`（＝ **N本目がもう予約に在ること**）から
+    始まっていました。**規則1（1日1本）と規則2（作り置きなし）の下では、
+    片群 16本 が先に予約へ並ぶことは構造上ありません** —— 並んでいたら、それが作り置きです。
+    実測 2026-09-04: `stat_split`（対照 あと10本）と `opening_motion`（対照 あと2本）が
+    **2件とも、この1行だけで赤**でした。**規則が入る前に書かれた検査で、
+    いまは「規則どおりに運転している」ことを赤で報せています。**
+
+    **見るべきは「そろっているか」ではなく「期限までに そろえられるか」です。**
+    `Floor.ready_at_rule` が、足りぶん ÷ 規則の密度 でその日を出します
+    （`scripts/queue_lag.py` と同じ式・数え方の正本は `judgeable` の側）。
+
+    **床（`MIN_PER_GROUP`）を下げて緑にしないこと。** 期限だけを動かすこと。
     """
-    assert f.ready is not None, f"判定に要る本が予約にそろっていません: {f.shortfall()}"
-    assert f.ok, "\n".join(f.lines())
+    when = f.ready if f.ready is not None else f.ready_at_rule
+    assert when is not None, (
+        f"判定できる日が、実物からも規則の密度からも出せません: {f.shortfall()}\n"
+        + "\n".join(f.lines()))
+    assert when <= f.deadline, (
+        f"期限 {f.deadline} までに判定できません（判定できるのは {when}"
+        + ("・予約の実物" if f.ready is not None else "・規則の密度からの推定") + "）\n"
+        + "\n".join(f.lines()))
