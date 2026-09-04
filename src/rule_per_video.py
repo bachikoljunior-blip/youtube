@@ -948,8 +948,37 @@ def _stale_memo_key(k: int, kw: dict) -> tuple | None:
         st = p.stat()
     except OSError:
         return None
-    today = datetime.now(timezone(timedelta(hours=9))).date()
+    today = _today_jst()
     return (str(p.resolve()), st.st_mtime_ns, st.st_size, int(k), items, today)
+
+
+def _today_jst() -> date:
+    """**きょう（JST）。この模組が「今日」と言うのは、ここ1か所です。**
+
+    ## なぜ関数にしたか（2026-09-05 05:4x に実測した）
+
+    `staleness()` の齢は **JST** で数えていました（`datetime.now(JST).date()`）。
+    ところが検査 `tests/test_rule_per_video_staleness.py` は **`date.today()`**
+    ＝ **その器の時計（この器は UTC）** で故障を注入していました。
+
+        器の UTC 15:00〜24:00  ＝ **JST 00:00〜09:00**  → UTC の日付が 1日 若い
+        → 注入した「15日前」が、数える側からは **16日前** に見える
+        → `assert s["age_days"] == 15` が **落ちる**
+
+    **＝ この検査は、毎晩 JST 00:00〜09:00 の 9時間 だけ 赤くなります。**
+    そして**この輪が走るのは、まさにその時間帯**です（実測 2026-09-05 05:2x の回が
+    赤で受け取った。同じ形で `tests/test_ready_at_rule.py` も 09/22 対 09/21 で赤）。
+
+    **赤が毎晩の飾りになると、本物の赤が見えなくなります。**
+
+    継ぎ目にした理由は、時計を JST へ揃えるためではありません ——
+    **検査が時計を持たなくて済むように**です（`monkeypatch.setattr(R, "_today_jst", …)`
+    で固定の日を挿せる）。時計に依る検査は、直した翌日にまた別の形で落ちます。
+
+    **覆る条件**: この器の時計が JST になったら、上の 9時間 は消えます。
+    それでも継ぎ目は残すこと —— 消すと検査が時計を持ち直します。
+    """
+    return datetime.now(timezone(timedelta(hours=9))).date()
 
 
 def staleness(e: dict | None = None, rows: list | None = None,
@@ -1045,7 +1074,7 @@ def _staleness_uncached(e: dict | None = None, rows: list | None = None,
     if not in_band or at_rule <= 0:
         return {"ok": False, "why": "帯に入った日が 0日"}
     last = in_band[-1]
-    today = datetime.now(timezone(timedelta(hours=9))).date()
+    today = _today_jst()
     age = (today - last).days
     # --- 帯の外の日を、本数で直してから並べる ---
     resid: list[dict] = []

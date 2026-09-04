@@ -17,7 +17,21 @@
 """
 from datetime import date, timedelta
 
+import pytest
+
 from src import rule_per_video as R
+
+#: **時計を持たない日**（`R._today_jst` を差し替えて使う）。
+#: 素の `date.today()` は**その器の時計**（この器は UTC）で、`staleness()` が数える
+#: **JST** と JST 00:00〜09:00 のあいだ 1日 ずれます。**この輪はその時間に走ります。**
+#: 実測 2026-09-05 05:2x: 注入した「15日前」が 16日前 に見えて赤くなりました。
+FIXED_TODAY = date(2026, 9, 5)
+
+
+@pytest.fixture(autouse=True)
+def _fix_clock(monkeypatch):
+    """**この検査は時計を持ちません。** 器が UTC でも JST でも同じ結果になること。"""
+    monkeypatch.setattr(R, "_today_jst", lambda: FIXED_TODAY)
 
 
 def _e(at_rule=1000.0, b=-0.733, band=2):
@@ -36,7 +50,7 @@ def _rows(days):
 
 def test_止まった標本を捕まえる():
     """**故障の注入**: 帯（≤2本/日）の最後の日を、今日から 15日 前に置く。"""
-    today = date.today()
+    today = FIXED_TODAY
     days = {today - timedelta(days=15): [1000, 1100]}          # 帯の中
     for k in range(14, 0, -1):                                  # ここから全部 帯の外
         days[today - timedelta(days=k)] = [100] * 10
@@ -53,7 +67,7 @@ def test_止まった標本を捕まえる():
 
 def test_帯に新しい日が入ったら黙る():
     """**覆る条件そのもの。** 規則（1日1本）どおりに出た日は必ず帯に入る。"""
-    today = date.today()
+    today = FIXED_TODAY
     days = {today - timedelta(days=15): [1000, 1100]}
     for k in range(14, 0, -1):
         days[today - timedelta(days=k)] = [100] * 10
@@ -70,7 +84,7 @@ def test_残差は本数で直してから見る():
     帯の外の日を「本数の効き（`at_rule × n^b`）ちょうど」で作れば、
     残差は 1.0 付近に並び、**傾きは 0 をまたぐ ＝ `cliff` は立たない。**
     """
-    today = date.today()
+    today = FIXED_TODAY
     b, at_rule = -0.733, 1000.0
     days = {today - timedelta(days=15): [at_rule, at_rule]}
     for k in range(14, 0, -1):
@@ -84,7 +98,7 @@ def test_残差は本数で直してから見る():
 
 def test_本数で説明が付かない落ちは立つ():
     """**故障の注入**: 本数を一定にしたまま、1本あたりを日ごとに削る。"""
-    today = date.today()
+    today = FIXED_TODAY
     b, at_rule = -0.733, 1000.0
     days = {today - timedelta(days=15): [at_rule, at_rule]}
     base = at_rule * (10 ** b)
@@ -157,7 +171,7 @@ def test_fileが動いたら読み直す(monkeypatch, tmp_path):
 def test_故障注入の呼びは憶えない(monkeypatch):
     """`e=` / `rows=` を渡した呼び（上の検査）は、毎回そのまま計算すること。"""
     R._STALE_MEMO.clear()
-    today = date.today()
+    today = FIXED_TODAY
     days = {today - timedelta(days=15): [1000, 1100]}
     for k in range(14, 0, -1):
         days[today - timedelta(days=k)] = [100] * 10
