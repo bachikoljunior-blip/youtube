@@ -226,21 +226,27 @@ def test_区間が短いほど通算へ寄せる(tmp_path):
     assert p["seg_weight"] == pytest.approx(3.0 / quota.QUANT_FULL_PCT, abs=0.01)
     assert p["per_lap"] == pytest.approx(0.396, abs=0.005)         # 0.333 と 0.500 の間
     assert p["per_lap_cum"] < p["per_lap"] < p["seg"]["per_lap"]
-    # **オーナーの上限（2026-09-02「最高速度の二分の一」）が先に効くと 53分 になる。**
-    #     ここで見たいのは「寄せ」の側なので、上限を外して 41分 を確かめる。
-    #     上限そのものは `test_オーナーの上限は最高速度の半分` が見る。
-    assert p["forward_capped"] is True
+    # **上限は外れています**（2026-09-04「最初はっつってんじゃん」）。
+    #     いま効くのは枠の残りだけ。上限そのものの算数は
+    #     `test_オーナーの上限は最高速度の半分`（明示的に掛け直す）が見る。
+    assert p["forward_capped"] is False
+    assert p["rate_cap"] is None
     assert p["floor_min"] == pytest.approx(
-        p["per_lap"] / p["rate_cap"] * 60, abs=1)                 # 上限で頭打ち
+        p["per_lap"] / p["forward_rate"] * 60, abs=1)
     assert p["per_lap"] / p["forward_rate_raw"] * 60 == pytest.approx(41, abs=1)  # 31分 → 41分
 
 
-def test_オーナーの上限は最高速度の半分(tmp_path):
+def test_オーナーの上限は最高速度の半分(tmp_path, monkeypatch):
     """**「今までの最高速度の二分の一の速度でやって」**（2026-09-02・原文）。
 
     最高速度は目盛りの隣り合う2点の %/時 の最大。上限はその半分で、
     枠の残りから出る「許される速さ」より厳しければ、そちらが効く。
+
+    **いまは外れています**（2026-09-04 12:0x「最初はっつってんじゃん」＝
+    `quota.OWNER_SPEED_CAP_LIFTED = True`）。半分の算数そのものは、
+    また掛けると言われたときのために、ここで固定しておく。
     """
+    monkeypatch.setattr(quota, "OWNER_SPEED_CAP_LIFTED", False)
     _two_point(tmp_path)
     mx = quota.max_measured_rate()
     assert mx is not None and mx["rate"] == pytest.approx(0.896, abs=0.005)
@@ -248,6 +254,20 @@ def test_オーナーの上限は最高速度の半分(tmp_path):
     p = quota.pace(_now(SECOND_AT))
     assert p["rate_cap"] == pytest.approx(quota.owner_rate_cap(), abs=1e-9)
     assert p["forward_rate"] <= p["rate_cap"] + 1e-9
+
+
+def test_上限は外れている(tmp_path):
+    """**「何で上限つけてんのバカ？」「最初はっつってんじゃん」**（2026-09-04・原文）。
+
+    「とりあえず最初は二分の一」の「最初」は終わった ＝ `owner_rate_cap()` は None。
+    残るのは枠の残り（使い切ると 31時間 止まる）だけ。
+    """
+    _two_point(tmp_path)
+    assert quota.OWNER_SPEED_CAP_LIFTED is True
+    assert quota.owner_rate_cap() is None
+    p = quota.pace(_now(SECOND_AT))
+    assert p["rate_cap"] is None
+    assert p["forward_capped"] is False
 
 
 def test_区間が太れば区間だけで決める(tmp_path):

@@ -181,6 +181,20 @@ FLOOR_MIN_CLAMP, FLOOR_MAX_CLAMP = 10.0, 720.0
 # そのときは `OWNER_SPEED_DIVISOR` ではなく、**言われた数のほう**を入れること。
 OWNER_SPEED_DIVISOR = 2.0
 
+# **オーナー指示（2026-09-04 12:0x JST・原文。一字も変えないこと）**:
+#
+# > **「何で上限つけてんのバカ？」**
+# > **「最初はっつってんじゃん」**
+#
+# ＝ 上の 18:4x の指示の「**とりあえず最初は**」が終わった、という宣言です。
+# **半分の上限はここで外します。** `owner_rate_cap()` は None を返し、
+# `pace()` の「この先に許される速さ」は**枠の残り ÷ 残りの時間**だけで決まります
+# （枠を使い切らない、という制約は残る —— 使い切った先は 31時間 止まるので）。
+#
+# **覆る条件**: オーナーが速さについてまた何か言ったとき。そのときは
+# `OWNER_SPEED_CAP_LIFTED = False` に戻すか、**言われた数**を入れること。
+OWNER_SPEED_CAP_LIFTED = True
+
 #: 「今までの最高速度」は**この指示が来た時刻より前**の目盛りだけで数える。
 #: 入れた直後に踏んだ: 22:01 の点で 19:39→22:01 が 1.690 %/時 と出て、
 #: **上限のほうが 0.744 → 0.845 へ上がりました**。速く走るほど上限が上がる形は、
@@ -937,7 +951,13 @@ def max_measured_rate(anchors: list[dict] | None = None,
 
 
 def owner_rate_cap(anchors: list[dict] | None = None) -> float | None:
-    """**この先に許される速さの上限（%/時）** ＝ 今までの最高速度 ÷ `OWNER_SPEED_DIVISOR`。"""
+    """**この先に許される速さの上限（%/時）** ＝ 今までの最高速度 ÷ `OWNER_SPEED_DIVISOR`。
+
+    **`OWNER_SPEED_CAP_LIFTED` が True なら None**（2026-09-04 12:0x「最初はっつってんじゃん」
+    ＝ 「とりあえず最初は二分の一」の「最初」は終わった）。上の註を読むこと。
+    """
+    if OWNER_SPEED_CAP_LIFTED:
+        return None
     best = max_measured_rate(anchors)
     if not best or best["rate"] <= 0:
         return None
