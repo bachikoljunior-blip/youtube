@@ -22,8 +22,14 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def _script(**kw):
+    #: **`title` は 2026-09-04 20:2x に `【年金の受け取り方】` から替えました。**
+    #: あれは規則の本文が例に挙げていた形ですが、**題材そのもの**で、本文の
+    #: 「先頭に【 】で**相手か場面**」と逆を向いていました（(4a2)・
+    #: `src/script_writer._OUTSIDE_BRACKET_WHO_RE` の註に外の帯の実測）。
+    #: **ここを題材の【 】に戻さないこと** —— 戻すと「規則どおり」の見本が
+    #: 規則に反した形になり、(4a2) は下の検査からは見えなくなります。
     base = {
-        "title": "【年金の受け取り方】年240万円変わる どれを選ぶか",
+        "title": "【65歳の前に】年240万円変わる どれを選ぶか",
         "thumbnail_line1": "生涯で240万円",
         "thumbnail_line2": "何歳から受け取るか",
     }
@@ -62,12 +68,30 @@ def test_サムネに判断の語が無いと鳴る():
 
 
 def test_題が括弧で始まらないと鳴る():
-    out = sw.outside_title_problems(_script(title="年金の受け取り方 年240万円変わる どれを選ぶか"))
+    out = sw.outside_title_problems(_script(title="65歳の前に 年240万円変わる どれを選ぶか"))
     assert any("【 】で始まっていない" in p for p in out)
 
 
+def test_題材を角括弧に入れると鳴る():
+    """(4a2)（2026-09-04 20:2x）。**規則の本文の例そのものが逆を向いていました。**
+
+    本文は「先頭に【 】で相手か場面（例:【65歳の前に】**【年金の受け取り方】**）」で、
+    後ろはその動画の題材そのものです。数える口は `title.startswith("【")` だけだったので、
+    outside_long の実物 3本のうち 2本（`Ec-j1-W4nqw`・`e6sLHLmPhrk`）がこの例を写して
+    `【年金の受け取り方】…何歳から受け取るか` になりました（**【 】の中と本文で「受け取」が二重**）。
+
+    外の帯の実測と覆る条件は `tests/test_outside_title_bracket.py` に在ります。
+    """
+    out = sw.outside_title_problems(
+        _script(title="【年金の受け取り方】年240万円変わる どれを選ぶか"))
+    assert len(out) == 1, out
+    assert "相手でも場面でもない" in out[0]
+    # 本文の例が (4a2) と同じ向きであること（例を戻したら赤になる）
+    assert "【年金の受け取り方】" not in sw.OUTSIDE_LONG_RULE
+
+
 def test_題が長すぎると鳴る():
-    long_title = "【年金の受け取り方】" + "あ" * (sw.OUTSIDE_TITLE_MAX + 1)
+    long_title = "【65歳の前に】" + "あ" * (sw.OUTSIDE_TITLE_MAX + 1)
     out = sw.outside_title_problems(_script(title=long_title))
     assert any("文字以内" in p for p in out)
 
