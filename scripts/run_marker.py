@@ -3407,6 +3407,69 @@ def main(argv: list[str] | None = None) -> int:
         # ここも同じで、**「連が長い」と印字するだけなら `drift.py` が
         # 2026-08-24 から毎回やっていて、7日 後の比は変わっていません。**
         _fk = run_marker_ship_kind(args.ship, args.kind)
+        # --- **立っている枠の決めを、いまの門に通し直す**（2026-09-05 05:xx・最適化の回）---
+        #
+        # **ここが、近づかない回が選ばれ続けた口です。** この回に撃った数
+        # （`scripts/optimized.py` ／ `daily_pick.standing_form_stale`）::
+        #
+        #     直近5日の ship            237件 ／ fix 134 + improve 57 ＝ **191件（80.6%）**
+        #     測った動き（門1' の日数差） 近づいた **0件**
+        #     再生/日(7d)               6,299（08-25）→ **943**（09-04）＝ **-85%**
+        #     齢48h の実測 中央値        ショート **164回**（n=216）／ 長尺 **1回**（n=36）
+        #     09-05 の枠に立っている決め  **長尺** `GFvAcxvDmYM`・見込み **1.0回**
+        #     path_form_hold("長尺")     → **止める**（門の算は ショート・×106 対 ×334）
+        #     path_form_hold("ショート")  → **""**（通る）
+        #
+        # ＝ **同じ形が、書く段では止められ、立っている段では守られていました。**
+        # 門はぜんぶ書き門で（`slot_cost`・`probe_hold`・`path_form_hold`・
+        # `restated_pick_block`・`anyway_pays_hold`）、**すでに立っている決めを
+        # 通し直す所が1つも在りません。** そして `rule3_book()` はその決めを
+        # 規則3 の主語として名指しし、`dry_ledger_gate()` は **その本を名乗った
+        # `fix` しか通しません** —— **機械が自分で「その形では決めさせない」と
+        # 言っている本へ、その日の回が門で送り込まれていました。**
+        # 191件（80.6%）の行き先はそこです。
+        #
+        # **止めるのは `fix` と `improve` だけ**です。`verdict` / `upload` /
+        # `premise` / `means` は通します（**詰みません**）——
+        # そして差し替えの手（`daily_pick --pick <門の指す形>`）はいつでも撃てます。
+        # 撃てば `standing_form_stale()` は `""` を返し、**この門は自分で消えます**。
+        #
+        # ## 覆る条件
+        #
+        # - 枠の決めが門の指す形に差し替わったら、この門は黙ります（**定数を持ちません**）。
+        # - `and_path_form()` が長尺を指すようになったら、止まるのはショートの据え置きです。
+        #   **形を決め打ちしていません。**
+        # - 立っている決めが無い日／`carry` だけの日は立ちません（**推測で止めないこと**）。
+        if _fk in ("fix", "improve"):
+            try:
+                from src import daily_pick as _dps               # noqa: PLC0415
+                from src import next_slot as _nss                # noqa: PLC0415
+
+                _sday = None
+                try:
+                    _nv = _nss.next_video() or {}
+                    _sat = _nv.get("at") or _nv.get("publish_at")
+                    if _sat:
+                        _sday = _dps._parse(_sat).astimezone(_dps.JST).date()
+                except Exception:                                # noqa: BLE001
+                    _sday = None
+                _stale = _dps.standing_form_stale(_sday)
+            except Exception:                                    # noqa: BLE001
+                _stale = ""
+            if _stale:
+                ap.error(
+                    _stale + "\n"
+                    "  **規則1 は 1日1本**（`src/house_rule.py`）＝ **その1本は、その日の供給の 100%** です。"
+                    "門が「その形では決めさせない」と言っている本を直しても、"
+                    "**その日の供給は 100% その形のまま**です。\n"
+                    "  **通る手**（どれも きょう 撃てます）:\n"
+                    "    python -m src.daily_pick --pick <門の指す形> <題材> --expected <回> --why \"<数字で1行>\"\n"
+                    "    --kind verdict / upload / premise / means は、この門を通ります\n"
+                    "  **差し替えれば、この門は自分で消えます**"
+                    "（`daily_pick.standing_form_stale` は `\"\"` を返します）。\n"
+                    "  実測: 直近5日の ship 237件 のうち fix+improve は **191件（80.6%）**、"
+                    "同じ窓の 再生/日(7d) は 6,299 → **943**（-85%）"
+                    "（`scripts/optimized.py`・`data/eta.jsonl`）。")
         # **枠に立っている本が前提の脚を通っていない間、`fix` は通しません**
         # （2026-09-04 17:xx。理由と実測は `untreated_slot()` の註）。
         # 規則1 は 1日1本 ＝ その1本は**その日の供給の 100%**。処置になっていない

@@ -2126,6 +2126,80 @@ def path_form_hold(form: str, *, now: datetime | None = None,
             f"（越えた行は `anyway` として控えに残り、次の回が実物と並べます）。")
 
 
+def standing_form_stale(day=None, *, cur=None, now: datetime | None = None,
+                        uploaded_path: Path | None = None,
+                        path: Path | None = None, hold_call=None) -> str:
+    """**すでに立っている決めを、いまの門に通し直す。** 落ちるなら理由の1行、通るなら `""`。**API 0単位。**
+
+    `path_form_hold()` は**これから書く決め**しか見ません。すでに控えに立っている決めは、
+    門が後から入れ替わっても**誰も通し直しません**。ここが通し直します。
+
+    ## なぜ要るか（2026-09-05 05:xx・最適化の回。「最適化されてんの？」→ **いいえ** の理由を1つ潰す）
+
+    この回が自分で撃った数（`scripts/optimized.py` と、この回の `path_form_hold` 呼び）:
+
+        直近5日の ship            237件 ／ fix 134 + improve 57 ＝ **191件（80.6%）**
+        測った動き（門1' の日数差）  近づいた **0件**・遠のいた 0件
+        再生/日(7d)               6,299（08-25）→ **943**（09-04）＝ **-85%**
+        齢48h の実測 中央値        ショート **164回**（n=216）／ 長尺 **1回**（n=36）
+        いま立っている 09-05 の決め  **長尺** `GFvAcxvDmYM`・見込み **1.0回**
+        path_form_hold("長尺")     → **止める**（門の算は ショート・道 ×106 対 ×334）
+        path_form_hold("ショート")  → **""**（通る）
+
+    ＝ **同じ形が、書く段では止められ、立っている段では守られていました。**
+    門はぜんぶ**書き門**です（`slot_cost` ・`probe_hold`・`path_form_hold`・
+    `restated_pick_block`・`anyway_pays_hold`）。`current()` は、その日の決めを
+    **無条件で**返し、`run_marker.rule3_book()` はそれを規則3 の主語として名指しし、
+    `dry_ledger_gate()` は **その本を名乗った `fix` しか通しません**。
+    ＝ **機械が自分で「この形では決めさせない」と言っている本に、
+    その日の回が門で送り込まれていました。** 191件 の行き先はそこです。
+
+    ## 何を返すか
+
+    その日の決め（`kind == decide`）の**形**を `path_form_hold()` に通し直すだけです。
+    **題材も動画IDも見ません**（作り直しではなく、形の据え置きだけを見ます）。
+    `anyway` が書かれている行も通し直します —— `anyway` は**書いた回**の越えであって、
+    **次の回まで効く免罪ではありません**（`path_form_hold` の「1度 越えたら以後 黙る、
+    にはしません」と同じ線）。
+
+    ## 覆る条件
+
+    - 決めが門の指す形に差し替わったら、この関数は `""` を返して黙ります（**自分で消えます**）。
+    - `and_path_form()` が長尺を指すようになったら、止まるのはショートの据え置きです。
+      **形を決め打ちしていません。**
+    - その日の決めが無い／`carry` だけの日は `""`（**推測で止めないこと**）。
+    """
+    d = day
+    if d is None:
+        d = for_day(now)
+    if not isinstance(d, date):
+        try:
+            d = date.fromisoformat(str(d))
+        except (TypeError, ValueError):
+            return ""
+    row = cur if cur is not None else current(d, path)
+    if not row or pick_kind(row) != PICK_KIND_DECIDE:
+        return ""
+    form = str(row.get("form") or "")
+    if form not in FORMS:
+        return ""
+    call = path_form_hold if hold_call is None else hold_call
+    try:
+        why = call(form, now=now, uploaded_path=uploaded_path)
+    except Exception:                                              # noqa: BLE001
+        return ""
+    if not why:
+        return ""
+    vid = str(row.get("video_id") or "") or "—"
+    exp = row.get("expected_48h")
+    exp_s = f"{float(exp):,.0f}回" if isinstance(exp, (int, float)) else "—"
+    return (f"**{d} の枠に立っている決めが、いまの門を自分で通りません** —— "
+            f"{form} / {row.get('topic')} / {vid}（見込み {exp_s}）。{why}"
+            f" **これは書き門ではなく通し直しです**（`standing_form_stale`）—— "
+            f"立っている決めは、門が入れ替わっても誰も通し直していませんでした。"
+            f" **この回の手は、その本を直すことではなく、枠を差し替えることです。**")
+
+
 def _median_pair_line(a: str, b: str, *, median_call=None) -> str:
     """**2つの形の、齢48h の中央値を並べた1行**（`form_median_48h` の実物・API 0単位）。
 
