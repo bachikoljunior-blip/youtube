@@ -689,6 +689,23 @@ def arm_state(eta_row: dict | None) -> dict:
             #     `eta.py` が「予約済みの本が答えを返すので別の腕を引け」と
             #     言っている回は、名指しを外すのが**正しい**です。
             "hint_covered": row.get("lever_hint_covered"),
+            # **その免除は、どの腕のものか**（2026-09-05 05:xx・最適化の回）。
+            #     `lever_hint_covered` の出どころは `eta.plan()` の
+            #     `blocking["sample"]` ＝ **長尺の1本あたり再生の標本が埋まる日**で、
+            #     **`per_video` の免除**です。ところが `eta.solve()` の
+            #     `gate_arm_pick()` は、そのあとで名指しを門1' の腕（`sub_rate`）へ
+            #     書き換えます。**免除だけが名前を替えて生き残る**形で、
+            #     実測 `data/runs.jsonl` の ship 239件 中 **90件（38%）**が
+            #     そのまま出ていました（うち `sub_rate` を引いたのは 7件）。
+            #
+            #     **古い行には この欄が在りません。** そのときは
+            #     **その行自身の名指し**を免除の持ち主と読みます —— 免除は
+            #     必ず「その行の `lever_hint`」に対して書かれたからです。
+            #     `latest_arm_state()` は `hint` を**別の行**から拾うので、
+            #     ここが無いと**行をまたいだ取り違え**が同じ形で残ります。
+            "hint_covered_arm": (row.get("lever_hint_covered_arm")
+                                 or (row.get("lever_hint")
+                                     if row.get("lever_hint_covered") else None)),
             "caps": caps, "reaches": reaches,
             # **「その腕を凍らせたら軌跡は何日 遠のくか」**（2026-08-26）。
             #     `reaches=False`（＝この腕だけを天井まで引いても届かない）は
@@ -868,6 +885,13 @@ def lever_notes(lever: str | None, state: dict) -> list[str]:
     if hint and hint in LEVERS and hint != lever:
         why = state.get("binding") or "（床の名前が読めません）"
         covered = state.get("hint_covered")
+        # **免除は、それを計算した腕のものか**（2026-09-05 05:xx）。
+        #     腕が違うなら免除ではありません —— 下の `else` が出て、
+        #     「`{lever}` を選んだ理由を JOURNAL に1行書くこと」に戻ります。
+        #     **覆る条件**: `lever_hint_covered` が腕ごとの辞書になったら要りません。
+        _carm = state.get("hint_covered_arm")
+        if _carm is not None and _carm != hint:
+            covered = None
         if covered:
             # **道具の指示どおりに動いた回を、叱らないこと**（2026-08-26）。
             #     `eta.py` は同じ回に「引く腕は `per_video`」と
@@ -921,12 +945,27 @@ def latest_arm_state(path: Path) -> dict:
             inf_row = row
         if caps_row and hint_row and inf_row:
             break
+    # **免除は、それを積んだ行の腕と一緒に運ぶこと**（2026-09-05 05:xx）。
+    #     `hint` は `hint_row` から、`hint_covered` は `caps_row` から来ます ——
+    #     **別の行です。** 腕の名前を付けずに混ぜると、`caps_row` の
+    #     `per_video` の免除が、`hint_row` の `sub_rate` の名前で通ります
+    #     （`scripts/eta.py` 側で 90件 踏んだのと**同じ形**が、ここにも在りました）。
+    #     `arm_state()` が `caps_row` から `hint_covered_arm` を組みます。
     return arm_state({**caps_row,
                       # **新しいほうが勝つこと。** `caps_row` に古い
                       # `arm_dead_at_inf` が入っていても、こちらで上書きします。
                       **{k: v for k, v in inf_row.items()
                          if k in ("arm_dead_at_inf", "arm_need_over_cap",
                                   "lever_hint_measured")},
+                      # **腕の名前は、`caps_row` の側で先に確定させること。**
+                      #     下の `lever_hint` の上書きより**前**に置かないと、
+                      #     `arm_state()` の「欄が無ければ その行の名指し」の
+                      #     取り落としが、`hint_row` の名指しを拾ってしまい、
+                      #     **必ず一致して黙る**（＝ 直した意味が無くなる）。
+                      "lever_hint_covered_arm": (
+                          caps_row.get("lever_hint_covered_arm")
+                          or (caps_row.get("lever_hint")
+                              if caps_row.get("lever_hint_covered") else None)),
                       "lever_hint": hint_row.get("lever_hint"),
                       "binding": hint_row.get("binding")})
 
