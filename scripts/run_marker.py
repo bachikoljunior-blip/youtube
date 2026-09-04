@@ -903,6 +903,93 @@ def _gate1p_now() -> float | None:
     return None
 
 
+#: **免除の言い訳を書くときの印**（`lever_hint_covered` が転がったあと、
+#: それでも名指しを外すなら、この語を `--ship` の本文に入れること）。
+HINT_MISS_MARK = "名指し外し"
+
+
+def hint_cover_rolled(path: Path | None = None, *, hint: str | None = None,
+                      covered: str | None = None, today: str | None = None) -> dict | None:
+    """**`lever_hint_covered`（名指しの腕の免除）が「転がって」いないか。**
+    （`data/runs.jsonl` だけ・**API 0単位**）
+
+    ## なぜ要るか（2026-09-05 03:5x・最適化の回。この回に自分で撃った数）
+
+    `eta.py` は 2026-09-04 12:5x から**毎周かならず** `sub_rate` を名指しします
+    （`gate_arm_pick()`。門1' は 512日 → `sub_rate` を天井まで引けば **83日**）。
+    その後の ship **81件 は 81件とも `lever_hint = sub_rate`** でした。
+    **実際に `sub_rate` を引いたのは 5件（6%）。** 残る 76件 は別の腕で、
+    **その 76件 は 76件とも `lever_hint_covered` を持っています（100%）。**
+
+    `lever_hint_covered` の意味は「この名指しの測定は、もう予約ずみの本が
+    答えるので、この回は別の腕を引け」です。**ところがその日付は、
+    毎日 00:2x に転がっていました**（この回に数えた実測）::
+
+        cover=2026-09-03  7件   09-02T20:38 .. 09-03T00:17
+        cover=2026-09-04  55件  09-03T00:09 .. 09-04T00:22
+        cover=2026-09-05  86件  09-04T03:25 .. 09-05T00:20
+        cover=2026-09-06  22件  09-05T00:26 .. 09-05T03:20
+
+    **前の日付が来る前に、次の本へ付け替わっています**（3回とも）。
+    オーナーが固定した規則は **1日1本** なので、**予約ずみの本は必ず在ります** ——
+    ＝ この免除は**恒真**で、`sub_rate` は 170回 連続で「今回は引かなくてよい」
+    と言われ続けました。**門1' を動かす2本のうち片方が、構造的に飢えていました。**
+
+    （`untreated_slot()` が `FIX_RUN_CAP` を毎回 免除していたのと同じ壊れ方です。
+    この file の 1253行 に、その1度目が書いてあります。**2度目です。**）
+
+    ## 何を「転がった」と呼ぶか
+
+    **免除は、遅い側へ動かせません。** 直前に同じ腕へ出た免除の日付より
+    後ろの日付が来て、**その前の日付がまだ来ていない**なら、それは
+    「答えが返った」のではなく「別の本へ付け替えた」です ＝ 免除は失効します。
+
+    前の日付が**すでに過ぎている**なら、測定は本当に landed したので、
+    次の本へ移るのは正しい —— そちらは転がりと呼びません。
+
+    返り: 転がっていれば `{"prev": 前の日付, "prev_at": その行の時刻,
+    "now": いまの日付, "streak": 同じ腕が免除で連続して見送られた回数}`、
+    でなければ `None`。
+
+    ## 覆る条件
+
+    - `eta.py` の名指しが `sub_rate` 以外へ入れ替わっても、この関数は動きます
+      （腕の名前を定数で持たず、渡された `hint` で数えます）。
+    - `lever_hint_covered` の欄名が変わったら、ここも変えること。
+    - **前の免除の日付が過ぎてから次へ移る**運用に戻ったら、この門は自分で黙ります
+      （`prev < today` の枝）。そうなったら註ごと外してよい。
+    """
+    if not hint or not covered:
+        return None
+    day = today or datetime.now().astimezone().strftime("%Y-%m-%d")
+    p = path or MARKS
+    try:
+        lines = [ln for ln in p.read_text(encoding="utf-8").splitlines() if ln.strip()]
+    except OSError:
+        return None
+    prev = prev_at = None
+    streak = 0
+    for ln in reversed(lines[-800:]):
+        try:
+            row = json.loads(ln)
+        except json.JSONDecodeError:
+            continue
+        if row.get("kind") != "ship" or row.get("lever_hint") != hint:
+            continue
+        if not row.get("lever_hint_covered"):
+            break
+        streak += 1
+        c = str(row["lever_hint_covered"])
+        if prev is None and c != covered:
+            prev, prev_at = c, row.get("at")
+    if prev is None or not (covered > prev):
+        return None
+    # **前の免除の日付がもう過ぎているなら、転がりではありません**（本当に landed した）。
+    if prev < day:
+        return None
+    return {"prev": prev, "prev_at": prev_at, "now": covered, "streak": streak}
+
+
 def _last_ship_gate1p() -> float | None:
     """**直前の ship 行が積んだ門1'の日数。** 無ければ `None`。
 
@@ -2706,6 +2793,45 @@ def ship(what: str, closes: list[str] | None = None, lever: str | None = None,
             for _ln in _block:
                 print(_ln)
             return 2
+
+    # --- **転がった免除では、名指しを外せません**（2026-09-05 03:5x・最適化の回）---
+    #
+    #     実測（この回・`data/runs.jsonl`）: `gate_arm_pick()` が入った
+    #     09-04 12:5x 以降の ship **81件 は全部 `lever_hint = sub_rate`**。
+    #     引いたのは **5件（6%）**、外した **76件 は 76件とも `lever_hint_covered`**。
+    #     その日付は 09-03 → 09-04 → 09-05 → 09-06 と **毎日 00:2x に転がって**
+    #     いました（`hint_cover_rolled()` の註に内訳）。**1日1本の規則の下では
+    #     予約ずみの本が必ず在るので、この免除は恒真**です ＝
+    #     門1' を動かす2本（`per_video × sub_rate` の**積**）の片方が、
+    #     170回 連続で「今回は引かなくてよい」と言われ続けました。
+    #
+    #     **註と警告では戻らないことは、この file が2度 実測しています**
+    #     （`--lever` そのもの／`levers.blocked`）。**通さないことだけが効きます。**
+    #     断るのは**腕の宣言だけ**で、仕事は捨てません ——
+    #     名指しの腕を引くか、`HINT_MISS_MARK` を本文に書いて理由を残すか。
+    #
+    #     **覆る条件**: 免除の日付が「前のが過ぎてから」動く運用に戻れば、
+    #     `hint_cover_rolled()` が `None` を返してこの門は自分で黙ります。
+    _rolled = None
+    if lever and _arm.get("hint") and _arm.get("hint_covered") and lever != _arm["hint"]:
+        _rolled = hint_cover_rolled(hint=_arm["hint"], covered=str(_arm["hint_covered"]))
+    if _rolled and HINT_MISS_MARK not in (what or ""):
+        print(
+            f"[marker] **断りました** —— 名指しの腕は `{_arm['hint']}` で、この回は "
+            f"`{lever}` を書いています。**免除（`lever_hint_covered`）は転がっています**: "
+            f"前は {_rolled['prev']}（{_rolled['prev_at']}）で、**その日はまだ来ていないのに** "
+            f"いまは {_rolled['now']} へ付け替わりました。"
+            f"同じ腕が免除で見送られた連続回数 **{_rolled['streak']}回**。"
+            f"\n[marker] **1日1本の規則の下では予約ずみの本は必ず在るので、この免除は恒真です。**"
+            f" 門1' は据え置き 512日、`{_arm['hint']}` を天井まで引けば 83日 "
+            f"（2本とも引けば 19日・積）。**片方だけ引いても、もう片方の分は残ります。**"
+            f"\n[marker] 通す道は2つ: (1) `--lever {_arm['hint']}` で名指しの腕を引く"
+            f"（いま撃てる手: `python -m src.sub_ask --sweep`）。"
+            f" (2) それでも外すなら、`--ship` の本文に **「{HINT_MISS_MARK}」** と"
+            f"**外した理由**を書くこと（次の回が数えられるように残ります）。")
+        return 2
+    if _rolled:
+        rec["lever_cover_rolled"] = True
     target, days, basis = _eta_target()
     if target is not None:
         rec["eta_target"] = target
