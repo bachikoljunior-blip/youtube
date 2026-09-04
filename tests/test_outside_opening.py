@@ -26,10 +26,36 @@ def _script(narrs: list[str]) -> dict:
     return {"segments": [{"narration": n, "visual": {"kind": "stat"}} for n in narrs]}
 
 
-def test_前の冒頭は4件とも外れる():
+def test_前の冒頭は5件とも外れる():
     ps = sw.outside_opening_problems(_script(OLD))
-    assert len(ps) == 4
+    assert len(ps) == 5
     assert any("名乗り" in p for p in ps) and any("最後まで" in p for p in ps)
+    assert any("知らない側" in p for p in ps)
+
+
+def test_知らない側の1文は位置まで数える():
+    """**在るかどうかだけ見ると通ります。**（2026-09-04 15:0x に踏んだ）
+
+    09/05 の1本 `O_lfBxB7S8Q` はこの1文を持っていて、位置が **394文字目**でした
+    （外の上位4本は 3/4 が **45文字以内**: `YRFTmhCp4Fk` 40 ／ `mL0bwzi8KFM` 44 ／
+    `D9BI69GFWvs` 38（字幕は「応存」と誤変換）／ `J6i7L0QSRSQ` は対話形式で無し）。
+    冒頭 4コマ の中には在るので、**位置を見ない検査は「在る」として通していました。**
+    """
+    late = list(NEW)
+    late[0] = ("2026年4月から、働きながら受け取る年金が、年54万円ぶん止まらなくなります。"
+               "対象は、働きながら厚生年金を受け取っていて、年金と給与の合計が51万円を超えている人です。"
+               "線が動くだけで、この額です。前提は月給30万円、賞与なし、単身。"
+               "制度の説明ではなく、働き方を決めるための計算です。"
+               "この変更を知らないままだと、月給を抑える働き方を続けてしまいます。")
+    ps = sw.outside_opening_problems(_script(late))
+    assert len(ps) == 1 and "知らない側" in ps[0] and "文字目" in ps[0]
+    # **同じ1文を頭へ寄せれば通る**（消せ、ではなく、置く場所の話）。
+    assert sw.outside_opening_problems(_script(NEW)) == []
+
+
+def test_規則の本文と数える側が同じ数を持つ():
+    """**規則の本文と数える側が別々の数を持つと、この repo でいちばん多い壊れ方になります。**"""
+    assert f"冒頭 {sw._OUTSIDE_LOSS_HEAD_CHARS}文字以内" in sw.OUTSIDE_LONG_RULE
 
 
 def test_外の型の冒頭は通る():

@@ -123,12 +123,18 @@ def test_生成の輪へ配線されていること():
         "`long_script_problems()` が `outside_pacing_problems` を呼んでいません")
 
 
-def test_実物の3本で鳴る_控えが在れば():
+def test_実物の2本で鳴る_控えが在れば():
     """**実測を検査に残します。**控えが無い器では黙って飛ばします（`.gitignore` ではないが、
-    まっさらな clone には在る）。"""
+    まっさらな clone には在る）。
+
+    **まだ焼き直される本を、ここに置かないこと**（2026-09-04 15:0x に踏んだ）。
+    初版は `Ec-j1-W4nqw`（09/05 の1本）を「鳴る」側に置いていました。同じ日の 14:42 に
+    その本は焼き直され、**控えが直った台本で上書きされた**ので、直した回がこの検査を
+    赤くしています —— **直ったことが赤になる検査**は、次に来た側に「直しを戻せ」と読めます。
+    残すのは、**もう焼き直されない本**（公開ずみ・別の題材）だけにすること。
+    """
     seen = 0
-    for name, want_pace, want_premise in (("Ec-j1-W4nqw", True, False),
-                                          ("1huadpEk6HY", True, True),
+    for name, want_pace, want_premise in (("1huadpEk6HY", True, True),
                                           ("6PKux5HNnUE", True, True)):
         p = ROOT / "data" / "critique_queue" / f"{name}.script.json"
         if not p.exists():
