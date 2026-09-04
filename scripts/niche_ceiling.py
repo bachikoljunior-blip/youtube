@@ -540,6 +540,110 @@ def corpus_rows(form: str | None = None, *, path: Path | None = None) -> list[di
     return sorted(best.values(), key=lambda r: -int(r.get("views") or 0))
 
 
+def corpus_published_cover(*, path: Path | None = None) -> dict:
+    """帯の `published` の被覆（**撃ちません・API 0単位**）。形ごとに `{有り, 全体}`。
+
+    **この数を見ないと、下の `corpus_fill_published` が要るかどうかが分かりません。**
+    """
+    out: dict[str, dict] = {}
+    for r in corpus_rows(path=path):
+        form = str(r.get("form") or "?")
+        d = out.setdefault(form, {"have": 0, "all": 0})
+        d["all"] += 1
+        if r.get("published"):
+            d["have"] += 1
+    return out
+
+
+def corpus_fill_published(*, path: Path | None = None, fetch_many=None,
+                          limit: int = 0) -> dict:
+    """`CORPUS` の空の `published` を埋める（**`videos.list` 50本で 1単位**）。
+
+    ## なぜ要るか（2026-09-04 22:5x に撃って数えた）
+
+    `fill_published()` は **帳面に残す 形ごと 15本 だけ**を埋めます
+    （「読まれない行に単位を使わないこと」）。その註は **`CORPUS` が無かった頃**の
+    ものです。いまは `corpus_rows()` が帯の全部（長尺 337本）を読み、
+    readout が唯一 名指しする中身の手（「外の上位と**作りが違う点**を1つ入れる」）は
+    そこで測られます。**その帯の `published` は 337本中 16本（4.7%）しか入っていません。**
+
+    **齢で割らないと、この帯の数は読めません。** 同じ帯で同じ語を当てて測った実測:
+
+        語            生涯の累計（n=337）   1日あたり（n=16）
+        相手の名指し      ×40.15              **×0.79**
+        場面            ×17.97              **×0.82**
+        括弧見出し        ×19.88              **×0.95**
+        煽り            ×8.08               **×1.36**
+        疑問形          ×0.62                ×0.71
+
+    **累計で ×40 に見えるものが、齢で割ると ×0.79 —— 符号ごと裏返ります。**
+    累計の大きい本は「古い本」でもあるので、当たり前です
+    （readout 自身が「その数は**生涯の累計**です（1日あたりに直すと別の話になります）」
+    と毎周 印字しています）。**それでも 1日あたりの側は n=16 で、何も言えません。**
+    ＝ **どちらが正しいかを決められないのは、`published` が 4.7% しか無いからです。**
+
+    ## 値段
+
+    `videos.list` は id を 50本 まで並べて **1回 1単位**。帯 467本 なら **10単位**
+    （1本の `--move` が 50単位。**帯を丸ごと齢で割れるようにする値段が、予約の1/5です**）。
+
+    ## 何をするか
+
+    行は**足しません**（`corpus_write` の「同じ本が別の日に別の再生数で入るのは
+    その本の伸びの記録」を壊さない）。**同じ行の `published` の空だけ**を埋めて
+    書き戻します。返りは `{"asked": 引きに行った本数, "filled": 埋まった本数,
+    "lines": 書き換えた行数, "units": 使った単位}`。
+
+    **覆る条件**: 引けなければ `filled` 0 で、file は1文字も変わりません。
+    """
+    p = path or CORPUS
+    try:
+        lines = p.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return {"asked": 0, "filled": 0, "lines": 0, "units": 0}
+    need: list[str] = []
+    seen: set[str] = set()
+    for ln in lines:
+        if not ln.strip():
+            continue
+        try:
+            r = json.loads(ln)
+        except ValueError:
+            continue
+        vid = str(r.get("id") or "")
+        if vid and not r.get("published") and vid not in seen:
+            seen.add(vid)
+            need.append(vid)
+    if limit > 0:
+        need = need[:limit]
+    if not need:
+        return {"asked": 0, "filled": 0, "lines": 0, "units": 0}
+    getter = fetch_many or _fetch_upload_dates
+    got = getter(need) or {}
+    if not got:
+        return {"asked": len(need), "filled": 0, "lines": 0,
+                "units": (len(need) + 49) // 50}
+    changed = 0
+    for i, ln in enumerate(lines):
+        if not ln.strip():
+            continue
+        try:
+            r = json.loads(ln)
+        except ValueError:
+            continue
+        vid = str(r.get("id") or "")
+        val = got.get(vid) or ""
+        if not val or r.get("published"):
+            continue
+        r["published"] = val
+        lines[i] = json.dumps(r, ensure_ascii=False)
+        changed += 1
+    if changed:
+        p.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return {"asked": len(need), "filled": len(got), "lines": changed,
+            "units": (len(need) + 49) // 50}
+
+
 def summarize(rows: list[dict]) -> dict:
     out: dict[str, dict] = {}
     for form in ("short", "long"):
@@ -1226,7 +1330,22 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--backfill-published", type=int, default=0, metavar="N",
                     help="撃たずに、帳面の**新しいほうから N件**の `top[].published` の空を埋め直す"
                          "（`videos.list` 50本で 1単位。`--source free` で撃った過去の行のため）")
+    ap.add_argument("--fill-corpus-published", action="store_true",
+                    help="撃たずに、帯（`data/niche_corpus.jsonl`）の空の `published` を埋める"
+                         "（`videos.list` 50本で 1単位）。**齢で割った数は、これが無いと n=16 です**")
     a = ap.parse_args(argv)
+    if a.fill_corpus_published:
+        before = corpus_published_cover()
+        for form, d in sorted(before.items()):
+            print(f"[niche] 前: {form:6s} published {d['have']}/{d['all']}"
+                  f"（{100.0 * d['have'] / max(1, d['all']):.1f}%）")
+        res = corpus_fill_published()
+        print(f"[niche] {res['asked']}本 引きに行って {res['filled']}本 埋まりました"
+              f"（{res['lines']}行 書き換え・約 {res['units']}単位）")
+        for form, d in sorted(corpus_published_cover().items()):
+            print(f"[niche] 後: {form:6s} published {d['have']}/{d['all']}"
+                  f"（{100.0 * d['have'] / max(1, d['all']):.1f}%）")
+        return 0
     if a.windows:
         qs = (SHORT_QUERIES if a.form == "short" else QUERIES)[:max(1, a.queries)]
         print(f"[niche] 窓を数えます（{len(qs)}語・yt-dlp・0単位）")
