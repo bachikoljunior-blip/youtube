@@ -70,6 +70,38 @@ JST = timezone(timedelta(hours=9))
 
 FORMS = ("ショート", "長尺")
 
+#: `data/daily_pick.jsonl` の行の種類（2026-09-04 19:0x に足した）。
+#: `decide` ＝ **回が数で決めた行**。`carry` ＝ **焼き直しで動画IDだけ写した行**。
+#: 数えるとき（`_standing_chain_len()`）も、理由を引くとき（`lines()`）も、
+#: **`carry` は決めではありません** —— 回が1度も触っていない行だからです。
+#: **欄の無い古い行は `decide` として読みます**（`pick_kind()`）。
+PICK_KIND_DECIDE = "decide"
+PICK_KIND_CARRY = "carry"
+PICK_KINDS = (PICK_KIND_DECIDE, PICK_KIND_CARRY)
+
+
+def pick_kind(row: dict) -> str:
+    """その行が「決め」か「写し」か。**欄が無い古い行は「決め」**（2026-09-04 より前の行）。
+
+    ただし欄の無い行でも、`replace_video()` が書いた古い形（`why` が
+    「焼き直し: `<旧ID>` → 」で始まる）は **写し**として読みます ——
+    **その形の行は 09-03〜09-04 に 11件 あり、全部「決め」として数えられていました。**
+    """
+    k = str((row or {}).get("kind") or "").strip()
+    if k in PICK_KINDS:
+        return k
+    if str((row or {}).get("why") or "").startswith("焼き直し: `"):
+        return PICK_KIND_CARRY
+    return PICK_KIND_DECIDE
+
+
+def last_decided(rows: list[dict]) -> dict | None:
+    """後ろから見て、**最初の「決め」の行**（写しを飛ばす）。無ければ None。"""
+    for r in reversed(list(rows or [])):
+        if pick_kind(r) == PICK_KIND_DECIDE:
+            return r
+    return None
+
 #: 同じ齢でそろえる時間。ショートは 48時間 で伸びきる（`src/settle.py` 実測 96%）。
 #: 長尺は伸びきりませんが（同 25%）、**比べるのに使うのは「同じ齢」**です ——
 #: 伸びきった長尺で比べても 1/136 が 1/49（×2.75・`long_censor`）になるだけで、向きは変わりません。
@@ -519,8 +551,16 @@ def current(day: date, path: Path | None = None) -> dict | None:
 
 def record(form: str, topic: str, why: str, *, day: date | None = None,
            now: datetime | None = None, path: Path | None = None,
-           video_id: str | None = None, expected: float | None = None) -> dict:
-    """その日の1本を決めて残す（追記・`merge=union`）。"""
+           video_id: str | None = None, expected: float | None = None,
+           kind: str = PICK_KIND_DECIDE, rebaked_from: str = "") -> dict:
+    """その日の1本を決めて残す（追記・`merge=union`）。
+
+    `kind` は **その行が「決め」か「写し」か**。既定は `"decide"`（回が数で決めた行）で、
+    `replace_video()` だけが `"carry"`（焼き直しで ID を写しただけの行）を書きます。
+    **この欄が無かったとき、写しの行は決めと同じ重みで数えられていました** ——
+    `_standing_chain_len()` の「N回 連続で同じ形」も、`lines()` の「理由」も、
+    **回が1度も触っていない行を根拠に印字していました**（2026-09-04 19:0x に踏んだ）。
+    """
     if form not in FORMS:
         raise ValueError(f"形は {FORMS} のどれか: {form!r}")
     if not (why or "").strip() or not re.search(r"\d", why):
@@ -531,6 +571,8 @@ def record(form: str, topic: str, why: str, *, day: date | None = None,
         "for_day": (day or for_day(now)).isoformat(),
         "form": form, "topic": topic, "video_id": video_id, "why": why.strip(),
         "expected_48h": expected,
+        "kind": kind if kind in PICK_KINDS else PICK_KIND_DECIDE,
+        "rebaked_from": str(rebaked_from or ""),
         "session": os.environ.get("CLAUDE_SESSION_ID") or "",
     }
     p = path or PICKS
@@ -577,11 +619,19 @@ def replace_video(old_ids, new_id: str, *, why_note: str = "",
         except ValueError:
             continue
         old = str(cur.get("video_id"))
-        why = (f"焼き直し: `{old}` → `{new_id}`（1本・{why_note or 'upload_only --replaces'}）。"
-               f"前の決め: {str(cur.get('why') or '')[:140]}")
+        # **決めの理由は、焼き直しでは1文字も変えません**（2026-09-04 19:0x に直した）。
+        # ここは長らく `f"焼き直し: … 前の決め: {why[:140]}"` と**前置き＋140字で切って**
+        # 書き直していました。実測（`data/daily_pick.jsonl` 09-04T18:06）——
+        # 16:55 に回が数で書いた 約400字 の理由が **「…処置を落と」で切れて**残り、
+        # 次の回の `[!!]` はそれを「**前の回の散文**（根拠にしない）」と正しく判定して、
+        # **同じ議論をゼロからやり直しました**（18:2x の回で実測・約15分）。
+        # 焼き直しは決めではないので、決めの欄（`why`）を触らず、
+        # **写したことは別の欄**（`kind="carry"` / `rebaked_from`）に残します。
+        why = str(cur.get("why") or "")
         record(str(cur.get("form") or FORMS[1]), str(cur.get("topic") or ""), why,
                day=day, now=now, path=p, video_id=new_id,
-               expected=cur.get("expected_48h"))
+               expected=cur.get("expected_48h"),
+               kind=PICK_KIND_CARRY, rebaked_from=old)
         done.append(day_s)
     return done
 
@@ -1420,8 +1470,16 @@ def treated_count(form: str, *, hours: int = AGE_HOURS,
 
 
 def _standing_chain_len(picks_path: Path | None = None) -> int:
-    """`data/daily_pick.jsonl` の後ろから、同じ形が続いている本数。0単位。"""
-    rows = list(_jsonl(picks_path or PICKS))
+    """`data/daily_pick.jsonl` の後ろから、同じ形が続いている**決め**の数。0単位。
+
+    **写しの行（`kind="carry"`）は数えません**（2026-09-04 19:0x に直した）。
+    焼き直しは動画IDを新しいほうへ写すだけで、**形も題材も理由も回は触っていません**。
+    それを数に入れると、「N回 連続で同じ形」は**焼いた回数のぶん水増し**されます ——
+    実測 09-04 の `data/daily_pick.jsonl`: 15行 のうち **4行 が写し**でした
+    （＝ 画面の「15回 連続」は、決めの数では 11回）。
+    **鎖の長さは「回が何回 追認したか」を言う数**なので、機械の写しは入りません。
+    """
+    rows = [r for r in _jsonl(picks_path or PICKS) if pick_kind(r) == PICK_KIND_DECIDE]
     if not rows:
         return 0
     last = rows[-1].get("form")
@@ -2207,10 +2265,20 @@ def lines(next_row: dict | None, now: datetime | None = None,
         out.extend(outside_long_lines(day, cur, now=now))
     if cur:
         vid = cur.get("video_id")
+        # **理由は「決め」の行から引くこと**（2026-09-04 19:0x に直した）。
+        # ここは `cur`（＝ 最後の行）の `why` を引いていました。焼き直しの写しが最後に来た日は、
+        # それが**機械の書いた前置き**で、決めた回の数はその中で 140字 に切られていました
+        # （実測 09-04T18:06 「…処置を落と」で切断）。
+        # いまは写しを飛ばして、**回が最後に数で書いた行**を引きます。
+        dec = last_decided(_jsonl(picks_path or PICKS)) or cur
+        carried = pick_kind(cur) == PICK_KIND_CARRY
         out.append(f"     **{day:%m/%d} の1本: {cur.get('form')} `{cur.get('topic')}`"
                    f"{' ＝ `' + str(vid) + '`' if vid else ''}**"
-                   f"（{str(cur.get('at'))[11:16]} JST に決めた・**前の回の散文**（根拠にしない）: "
-                   f"{str(cur.get('why'))[:90]}）。**変えるなら、数字で上書きすること**"
+                   f"（{str(dec.get('at'))[11:16]} JST に決めた"
+                   + (f"・いまの ID は {str(cur.get('at'))[11:16]} の焼き直しが"
+                      f"`{cur.get('rebaked_from') or '旧ID'}` から写したもの" if carried else "")
+                   + f"・**前の回の散文**（根拠にしない）: "
+                   f"{str(dec.get('why'))[:90]}）。**変えるなら、数字で上書きすること**"
                    f"（同じコマンドをもう一度）。")
         # **立っている決めを、毎周 いまの門の算と突き合わせる**（2026-09-04・最適化の回・
         # `standing_form_conflict()` の註）。ここまでは、立っている決めの `why`＝前の回の散文だけが
