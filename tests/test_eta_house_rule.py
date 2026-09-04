@@ -33,6 +33,22 @@
 **覆る条件**: オーナーが自分の言葉で規則を外したとき。そのときは
 `src/house_rule.py` に原文を書き足して `PUBLISH_PER_DAY` を動かし、
 **この file の期待値は自動で追随します**（数をべた書きしていません）。
+
+> ### **【2026-09-05 03:0x】その「自動で追随します」は、外れました**
+>
+> **オーナーは 2026-09-04 17:3x に外しました**（原文「目標以外全部外して良いよ」）。
+> ところが動いたのは **`PUBLISH_PER_DAY`（1 のまま）ではなく `OWNER_FLOORS_LIFTED`**
+> という**旗**のほうで、この file はその旗を読んでいませんでした。
+> **＝ 期待値は追随せず、2件（`test_密度の腕は規則より上へ歩けない` /
+> `test_理由の行が規則を名指しする`）が赤のまま置かれていました。**
+>
+> **赤いまま置かれた検査は、次に本当に壊れた回に何も言いません。**
+> いまは `house_rule.publish_per_day_is_floor()` を読み、**床が立っている世界と
+> 外れている世界の、それぞれで守るもの**を書いてあります（どちらも緩めていません）。
+>
+> **次にここを読む側へ**: 「数をべた書きしていないから自動で追随する」は、
+> **数だけが動くときにしか成り立ちません。** 規則の効き方そのものが旗で切り替わる
+> 作りになったら、**検査も旗を読むこと。**
 """
 from __future__ import annotations
 
@@ -97,31 +113,68 @@ def test_その行が規則の行だと名乗る():
     assert rows and "house_rule" in rows[0], rows
 
 
+#: **この2件は、床が外れた日（2026-09-04 17:3x）から赤のまま置かれていました**
+#: （2026-09-05 03:0x に測って直した）。
+#:
+#: この file の冒頭の「覆る条件」はこう書いています ——「オーナーが自分の言葉で
+#: 規則を外したとき。そのときは `src/house_rule.py` に**原文を書き足して
+#: `PUBLISH_PER_DAY` を動かし**、この file の期待値は自動で追随します」。
+#: **オーナーは 09/04 17:3x に外しましたが、動いたのは定数ではなく旗のほう**でした
+#: （`OWNER_FLOORS_LIFTED = True` → `publish_per_day_is_floor()` が False）。
+#: `PUBLISH_PER_DAY` は 1 のままなので、**期待値は追随せず、2件が赤で残りました。**
+#:
+#: **赤いまま置かれた検査は、次に本当に壊れた回に何も言いません**（この repo が
+#: 何度も踏んでいる「言っている所と、している所が別」の、検査の側の形）。
+#: だから**旗を読む**ようにします —— 床が立っている世界と外れている世界の
+#: **両方で守るもの**を、それぞれ書きます。**どちらの側も緩めていません。**
+#:
+#: **覆る条件**: `house_rule.publish_per_day_is_floor()` が消えたら、この分岐は
+#: 要らなくなります（そのとき残すのは、旗が指していたほうの1本だけ）。
+
 def test_密度の腕は規則より上へ歩けない():
     """腕の天井は「出せる本数」でも「再生が付く本数」でもなく、**いちばん低いもの**。
 
-    規則が 1本/日 なので、`density` の腕には引き代がありません
+    **床が立っている間**は、規則が 1本/日 なので `density` の腕に引き代はありません
     （`physical_caps` が ×1.0 を返す）。**ここが 1.0 を超えたら、
     軌跡は規則の外の世界を歩いています。**
+
+    **床が外れている間**（オーナー 2026-09-04 17:3x「目標以外全部外して良いよ」）は、
+    天井は観測のほう（`day_cap` の「再生が付く上限」・`UPLOAD_CAP_PER_DAY` の小さいほう）
+    です。**それでも「出せる口の上限 92本」までは歩けません** —— 出しても再生が付かない
+    本数まで歩けば、また実在しない世界です。**そこがこの検査の守る線**になります。
     """
     sup = {"sustained_rate_per_day": 7.8, "rate_per_day": 36.5}
     caps = eta.physical_caps({"sub_rate": 0.0004}, supply=sup)
     rule = float(house_rule.PUBLISH_PER_DAY)
     dens = eta.sustained_density(sup)
     assert dens <= rule, f"続けられる密度が規則を超えています（{dens} > {rule}）"
-    assert caps["density"]["factor"] <= max(1.0, rule / dens) + 1e-9, caps["density"]
+    if house_rule.publish_per_day_is_floor():
+        assert caps["density"]["factor"] <= max(1.0, rule / dens) + 1e-9, caps["density"]
+    else:
+        # 床が外れていても、**観測の天井は越えないこと**（`view_cap` ＝ 再生が付く上限）。
+        view_cap = min(float(eta.UPLOAD_CAP_PER_DAY), float(eta._view_cap_per_day()))
+        assert caps["density"]["factor"] <= max(1.0, view_cap / dens) + 1e-9, caps["density"]
+        assert caps["density"]["factor"] < float(eta.UPLOAD_CAP_PER_DAY) / dens, \
+            "出しても再生が付かない本数まで歩いています（`view_cap` が効いていない）"
 
 
 def test_理由の行が規則を名指しする():
     """**裸の「引き代なし」を出さないこと**（`CLAUDE.md` の (イ)）。
 
     何を固定したせいでそう出たのかを、同じ行に並べること。
+    **床が外れている回は、代わりに「何が縛っているか」を名指しすること** ——
+    縛っているものが規則から観測へ移っただけで、**名指しの義務は移りません。**
     """
     caps = eta.physical_caps({"sub_rate": 0.0004},
                              supply={"sustained_rate_per_day": 7.8})
     why = caps["density"]["why"]
-    assert "house_rule" in why, why
-    assert f"{float(house_rule.PUBLISH_PER_DAY):.0f}本/日" in why, why
+    if house_rule.publish_per_day_is_floor():
+        assert "house_rule" in why, why
+        assert f"{float(house_rule.PUBLISH_PER_DAY):.0f}本/日" in why, why
+    else:
+        assert "day_cap" in why, why
+        assert "再生が付く上限" in why, why
+        assert str(eta.UPLOAD_CAP_PER_DAY) in why, why
 
 
 def test_段2のLは規則を超えない():
