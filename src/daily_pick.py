@@ -969,7 +969,11 @@ def record(form: str, topic: str, why: str, *, day: date | None = None,
             raise ValueError(hold)
     # **門の算が指す形と違う形で決めるのを止める**（`path_form_hold` の註・2026-09-05 02:xx）。
     # `kind="carry"`（焼き直しの写し）は決めではないので通します。
-    if kind == PICK_KIND_DECIDE and not (anyway or "").strip():
+    #
+    # **素振り（`path` を渡した回）では立ちません** —— 本番の控えを守る門なので、
+    # すぐ上の `slot_cost` の門と同じ切り分けにしています（CLI に `--path` はありません）。
+    if (kind == PICK_KIND_DECIDE and path is None
+            and not (anyway or "").strip()):
         _pf = path_form_hold(form, now=now, uploaded_path=up)
         if _pf:
             raise ValueError(_pf)
