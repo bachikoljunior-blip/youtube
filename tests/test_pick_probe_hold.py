@@ -99,3 +99,73 @@ def test_写しは決めではないので止めない(tmp_path):
                             kind=daily_pick.PICK_KIND_CARRY,
                             topics=TOPICS, uploaded_path=up)
     assert daily_pick.pick_kind(row) == daily_pick.PICK_KIND_CARRY
+
+
+# ---------------------------------------------------------------------------
+# **札ではなく実物で「試す本」を選ぶ**（2026-09-04 22:2x に踏んだ・`treated_probe`）
+#
+# 上の4本は `style: outside_long` の**札だけ**で試す本を選んでいました。実測（同じ回に撃った）:
+#   pick_legs('1huadpEk6HY')  = ['(2) 章・締め', '(4) 題・サムネ', '(5) 間合い']  ← 4脚中 3脚 ✗
+#   draft_legs('zaishoku-2026-62man') = 同じ3脚 ✗   ← 手元の台本も外の型に上げていない
+#   treated_count('長尺')     = (0, 36)             ← 実物で数えると処置は 1本も公開ずみでない
+# 札だけの本が 24h の門を握り、次の未決の日を止めていました ——
+# **前提を閉じられない本の数字を待って、閉じられる本（4脚○）の枠を止めていた。**
+# ---------------------------------------------------------------------------
+
+def test_処置でない本は次の未決の日を止めない(tmp_path, monkeypatch):
+    """**控えが読めた上で脚が✗** の本は前提を閉じられないので、閂を握れません。"""
+    up = _uploaded(tmp_path, "2026-09-04T00:00:00Z")
+    now = datetime(2026, 9, 4, 12, 0, tzinfo=timezone.utc)
+    monkeypatch.setattr(daily_pick, "treated_probe",
+                        lambda vid, **kw: ("no", "外の型の脚が 3本 通っていません"))
+    assert daily_pick.probe_hold("長尺", date(2026, 9, 6), now=now,
+                                 topics=TOPICS, uploaded_path=up) == ""
+    row = daily_pick.record("長尺", "long-probe", "処置は 0本／36本", day=date(2026, 9, 6),
+                            now=now, path=tmp_path / "picks.jsonl",
+                            topics=TOPICS, uploaded_path=up)
+    assert row["form"] == "長尺"
+
+
+def test_控えが読めないだけでは閂を外さない(tmp_path, monkeypatch):
+    """`"unknown"` は証拠ではありません —— **推測で止めない**の裏返しで、**推測で外さない**。"""
+    up = _uploaded(tmp_path, "2026-09-04T00:00:00Z")
+    now = datetime(2026, 9, 4, 12, 0, tzinfo=timezone.utc)
+    monkeypatch.setattr(daily_pick, "treated_probe",
+                        lambda vid, **kw: ("unknown", "台本の控えが読めません"))
+    assert daily_pick.probe_hold("長尺", date(2026, 9, 6), now=now,
+                                 topics=TOPICS, uploaded_path=up), "読めないだけでは外さないこと"
+
+
+def test_treated_probe_は実物の脚で三値を返す(tmp_path, monkeypatch):
+    """`pick_legs` の `(脚, 読めない理由)` を **`yes` / `no` / `unknown` に写す**こと。
+
+    **`unknown` と `no` を混ぜないのが要点**です —— 「控えが読めない」と
+    「読めた上で脚が✗」は、閂の外し方が違います（`no` だけが外す）。
+    """
+    monkeypatch.setattr(daily_pick, "pick_legs",
+                        lambda vid, **kw: ([], "台本の控えが読めません"))
+    assert daily_pick.treated_probe("X")[0] == "unknown"
+    monkeypatch.setattr(daily_pick, "pick_legs",
+                        lambda vid, **kw: (["(4) 題・サムネ"], None))
+    state, why = daily_pick.treated_probe("X")
+    assert state == "no" and "(4) 題・サムネ" in why, (state, why)
+    monkeypatch.setattr(daily_pick, "pick_legs", lambda vid, **kw: ([], None))
+    assert daily_pick.treated_probe("X")[0] == "yes"
+    monkeypatch.undo()
+    # 本を名指していない決めは、控えを読むまでもなく `unknown`
+    assert daily_pick.treated_probe("", queue=tmp_path)[0] == "unknown"
+
+
+def test_処置でない本は先読みの門を握らない(tmp_path, monkeypatch):
+    """`outside_long_readout` の判定も、札ではなく実物で。**処置でない本の判定は `None`**。"""
+    up = _uploaded(tmp_path, "2026-09-04T00:00:00Z")
+    views = tmp_path / "views.jsonl"
+    views.write_text(json.dumps({"id": "PROBE1", "hours": 26, "views": 999},
+                                ensure_ascii=False) + "\n", encoding="utf-8")
+    now = datetime(2026, 9, 5, 4, 0, tzinfo=timezone.utc)          # 齢28h
+    monkeypatch.setattr(daily_pick, "treated_probe",
+                        lambda vid, **kw: ("no", "外の型の脚が 3本 通っていません"))
+    lines, verdict = daily_pick.outside_long_readout(now, topics=TOPICS,
+                                                     uploaded_path=up, views_path=views)
+    assert verdict is None, "処置でない本の 999回 で次の日の形を決めないこと"
+    assert any("この本は処置ではありません" in x for x in lines), lines

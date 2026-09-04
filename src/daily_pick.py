@@ -651,6 +651,15 @@ def probe_hold(form: str, day, *, now=None, topics: list[dict] | None = None,
             continue
         if want <= pub.astimezone(JST).date():
             continue                                 # 試す本そのものの日 ＝ 止めない
+        # **札ではなく実物で選ぶ**（`treated_probe` の註・2026-09-04 22:2x）。
+        # `style: outside_long` は「これから外の型で作るつもり」の札で、
+        # 実物がその型に届いているとは限りません。実測 `1huadpEk6HY` は 4脚中 3脚 ✗ ＝
+        # 前提「外の作り方を写した長尺」を閉じられない本でした。
+        # **閉じられない本の 24h を待って、次の枠を止めない。**
+        # 外すのは `"no"`（控えが読めた上で脚が✗）だけ —— `"unknown"`（控えが読めない）では
+        # 外しません。閂を外すほうにも証拠が要ります（`treated_probe` の註）。
+        if treated_probe(vid)[0] == "no":
+            continue
         if best is None or pub > best[0]:
             best = (pub, str(vid))
     if best is None:
@@ -1432,6 +1441,62 @@ def pick_legs(video_id: str | None, *, queue: Path | None = None) -> tuple[list[
     return legs_of_path((queue or QUEUE) / f"{vid}.script.json", what="台本の控え")
 
 
+def treated_probe(video_id: str | None, *, queue: Path | None = None) -> tuple[str, str]:
+    """**その本が「処置」か**。`("yes"|"no"|"unknown", 一行の理由)`。**API 0単位・実物の台本の控えだけ。**
+
+    ## なぜ要るか（2026-09-04 22:2x に踏んだ）
+
+    **「外の作りの長尺」には、口が2つ ありました。**
+
+        `config/topics` の `style: outside_long`   ＝ **これから外の型で作るつもり**（意図の札）
+        `pick_legs(vid) == ([], None)`            ＝ **実物の台本が4脚 全部 通った**（処置の実体）
+
+    `treated_count()` は下（実物）で数えます。ところが `probe_hold()` と
+    `outside_long_readout()` は **上（意図の札）だけ**で「試す本」を選んでいました。
+    実測（2026-09-04 22:2x に撃った）:
+
+        pick_legs('1huadpEk6HY') = ['(2) 章・締め', '(4) 題・サムネ', '(5) 間合い']   ← 4脚中 3脚 ✗
+        draft_legs('zaishoku-2026-62man') = 同じ3脚 ✗   ← 手元の台本も外の型に上げていない
+        treated_count('長尺') = (0, 36)                  ← 実物で数えると、処置は **1本も公開されていない**
+
+    つまり `1huadpEk6HY` は **札だけの本**です。それが「試す本」として:
+
+        - `outside_long_readout()` の 24h の先読みの門（30回）を握り、**次の日の形**を決め、
+        - `probe_hold()` として、**次の未決の日**の決めを止めていました。
+
+    **どちらも、前提を閉じられない本の数字を待っています。**
+    前提「外の作り方を写した長尺」の `falsified_if` は「**その本**（題が上の型の本）」の
+    齢48h で読む、と書いてあります —— 札ではなく型です。
+    処置でない本をいくら待っても、その前提は 1件も進みません
+    （同じ画面が「取った枠から、まだ 1本も 48h の観測が出ていません（0本／2本）」と刷っていたのは、
+    枠が足りなかったからではなく、**出した2本が処置ではなかったから**です）。
+
+    **これは marker が毎周 刷っている註と同じ向きです** ——
+    「**処置 n=0 の分母で処置を落とさないこと**」。分母だけでなく、
+    **門の分子（試す本）も、実物で選ぶこと。**
+
+    ## 読めないときは `"unknown"`。**止めを外すのは `"no"` のときだけ**
+
+    控えが読めない本は `"unknown"` で返ります。**呼ぶ側は `"unknown"` で止めを外さないこと** ——
+    `probe_hold` は安全側の閂で、**外すには「この本は処置ではない」という実物の証拠が要ります**。
+    「読めなかった」は証拠ではありません（`probe_hold` の docstring の
+    **「推測で止めないこと」** の裏返しで、**推測で外さないこと**）。
+    `1huadpEk6HY` は控えが読めた上で 3脚 ✗ ＝ `"no"` です。
+
+    ## 覆る条件
+
+    - `config` の札と実物の脚が**必ず一致する**ようになったら（作る側が札の本を
+      4脚 通さないと出せなくなったら）、この関数は要りません。
+      そのときは `probe_hold` / `outside_long_readout` を札だけに戻して、ここを消すこと。
+    """
+    bad, why = pick_legs(video_id, queue=queue)
+    if why:
+        return "unknown", why
+    if bad:
+        return "no", f"外の型の脚が {len(bad)}本 通っていません（{'・'.join(bad)}）"
+    return "yes", "外の型の脚は 4本とも通っています"
+
+
 def legs_of_path(path: Path, *, what: str = "台本") -> tuple[list[str], str | None]:
     """`(通らなかった脚, 読めなかった理由)`。**API 0単位・渡された台本だけ。**
 
@@ -1882,6 +1947,21 @@ def outside_long_readout(now: datetime | None = None, *, topics: list[dict] | No
         h = float(obs.get("hours") or age)
         line = (f"     外の作りの長尺 `{vid}`: 齢 {h:.0f}h で **{v}回**"
                 f"（いまの作り方の長尺は 齢20h で 1回・齢48h の中央値 1回）")
+        # **札ではなく実物で選ぶ**（`treated_probe` の註・2026-09-04 22:2x）。
+        # `style: outside_long` は意図の札で、実物がその型に届いた証拠ではありません。
+        # 型に届いていない本は、前提「外の作り方を写した長尺」を閉じられないので、
+        # **その 24h で次の日の形を決めない・次の枠を止めない**。数字は出しますが、門は握らせません。
+        _state, _why_not = treated_probe(vid)
+        if _state == "no":
+            out.append(line + f" —— [!] **この本は処置ではありません**（{_why_not}）。"
+                              f"**札（`style: outside_long`）は「外の型で作るつもり」で、"
+                              f"実物がその型に届いた証拠ではありません**（`treated_probe`）。"
+                              f"前提「外の作り方を写した長尺」の `falsified_if` は"
+                              f"**その型の本**を読むので、この本の 24h/48h では閉じられません ——"
+                              f" **先読みの門も、次の未決の日の止めも、この本には握らせません。**"
+                              f"（実物で数えた処置: `treated_count('長尺')` ＝ "
+                              f"{treated_count('長尺')[0]}本／{treated_count('長尺')[1]}本）")
+            continue
         if h < 24:
             line += (f" → 24h（{h24:%m/%d %H:%M} JST）の先読みの門 {OUTSIDE_24H_GATE}回 まで待つ。"
                      f"**次の未決の日は、それまで決めないこと**")
