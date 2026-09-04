@@ -37,7 +37,19 @@ import pytest
 from src import house_rule
 
 
-_SWEPT = ("**掃いた 36本**（`data/sub_ask_sweep.jsonl`・2026-09-04 に"
+#: **鳴る本数を、規則から作ること**（2026-09-05 に書き替えた）。
+#:
+#: ここは「36本」「40本」をべた書きし、`PUBLISH_PER_DAY = 1` の下で
+#: 「規則では届かないから鳴る」を見ていました。規則が 10本/日 になると
+#: 14日 で 140本・19日 で 190本 入るので、**どちらも届いてしまい**、
+#: 「鳴る側」の検査2件が、鳴らない場面を測る形へ化けます（実際に赤くなりました）。
+#: **覆る条件**: `needs_beyond_rule` が「日数 × 上限」以外の式になったとき。
+_DAYS_SWEPT = 14                                        # 2026-09-04 → 2026-09-18
+_NAMED_SWEPT = _DAYS_SWEPT * house_rule.PUBLISH_PER_DAY + 8
+_DAYS_ROW = 19                                          # 2026-09-04 → 2026-09-23
+_NAMED_ROW = _DAYS_ROW * house_rule.PUBLISH_PER_DAY + 8
+
+_SWEPT = (f"**掃いた {_NAMED_SWEPT}本**（`data/sub_ask_sweep.jsonl`・2026-09-04 に"
           "説明欄の先頭だけを変えた本）の、掃いた後 14日 の合計再生が 3,000")
 
 
@@ -50,7 +62,8 @@ def _ledger(tmp_path, rel: str, ids) -> None:
 
 
 def test_掃きずみの母集団は足りているので鳴らない(tmp_path):
-    _ledger(tmp_path, "data/sub_ask_sweep.jsonl", [f"v{i}" for i in range(39)])
+    _ledger(tmp_path, "data/sub_ask_sweep.jsonl",
+            [f"v{i}" for i in range(_NAMED_SWEPT + 3)])
     hit = house_rule.needs_beyond_rule(
         _SWEPT, "2026-09-18", today="2026-09-04",
         data_file="data/shorts_subs.json", root=tmp_path,
@@ -65,20 +78,20 @@ def test_同じ要件は帳面が無ければ前のまま鳴る(tmp_path):
         data_file="data/shorts_subs.json", root=tmp_path,
         tracked=lambda rel: False)
     assert hit is not None
-    assert hit["named"] == 36
+    assert hit["named"] == _NAMED_SWEPT
 
 
 def test_計器そのものを母集団と読まない(tmp_path):
     """**本物の警報を黙らせないこと。** `data_file:` と同じ帳面は数えない。"""
     _ledger(tmp_path, "data/views.jsonl", [f"v{i}" for i in range(257)])
-    what = ("09/03〜09/23 に **1日1本 で連続公開した本 40本以上**の、"
+    what = (f"09/03〜09/23 に **連続公開した本 {_NAMED_ROW}本以上**の、"
             "齢をそろえた読み（`data/views.jsonl`）")
     hit = house_rule.needs_beyond_rule(
         what, "2026-09-23", today="2026-09-04",
         data_file="data/views.jsonl", root=tmp_path,
         tracked=lambda rel: True)
     assert hit is not None, "計器 257本 を母集団と読んで黙ってはいけない"
-    assert hit["named"] == 40
+    assert hit["named"] == _NAMED_ROW
 
 
 def test_計器を名乗っていない要件は数えない(tmp_path):
