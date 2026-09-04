@@ -1406,12 +1406,17 @@ def standing_form_conflict(cur: dict | None, *, now: datetime | None = None,
         f"     [!!] **立っている決め（{have}）と、いま測った門の算（{want}）が食い違います。**"
         f"　{why}",
         base,
-        f"     　 立っている決めの「理由」は**前の回の散文**です —— **根拠にしないこと**"
-        f"（`data/daily_pick.jsonl` の `why` は前の決めを引く鎖で、いま {chain}回 連続で同じ形）。"
-        f"**この回の数で決め直すか、門の算がなぜ外れているかを数で言うこと。**",
+        (f"     　 **この決めは、この回が書いたものです**"
+         f"（`data/runs.jsonl` の最後の `start` より後）—— **もう一度 決め直さないこと。**"
+         f" 鎖はいま {chain}回 連続で同じ形ですが、**その最後の1本は、この回が数で置いた行**です。"
+         if decided_this_round(cur) else
+         f"     　 立っている決めの「理由」は**前の回の散文**です —— **根拠にしないこと**"
+         f"（`data/daily_pick.jsonl` の `why` は前の決めを引く鎖で、いま {chain}回 連続で同じ形）。"
+         f"**この回の数で決め直すか、門の算がなぜ外れているかを数で言うこと。**"),
+    ] + ([] if decided_this_round(cur) else [
         "     　 決め直すなら（同じコマンドで上書き）:",
         f"       python -m src.daily_pick --pick {want} {topic} --why \"<いま撃った数で>\"",
-    ]
+    ])
 
 
 #: **その形の齢48h の分母のうち、外の型を「全部」写した本が何本か**（2026-09-04 16:4x に足した）。
@@ -1550,6 +1555,51 @@ def expected_lines(now=None, *, picks_path=None, views_path=None,
     for w in waiting:
         out.append(f"     　 待ち: {w}")
     return out
+
+
+#: この回が立った時刻（`data/runs.jsonl` の最後の `start`）。**回の中で決め直したかを見るため。**
+RUNS = ROOT / "data" / "runs.jsonl"
+
+
+def round_started_at(runs_path=None):
+    """この回が立った時刻（`data/runs.jsonl` の最後の `start`）。読めなければ None。0単位。"""
+    last = None
+    for r in _jsonl(runs_path or RUNS):
+        if r.get("kind") == "start" and r.get("at"):
+            last = r
+    if not last:
+        return None
+    try:
+        return datetime.fromisoformat(str(last["at"]))
+    except ValueError:
+        return None
+
+
+def decided_this_round(row, *, runs_path=None) -> bool:
+    """その決めが、**いま走っている回**のものか。0単位。
+
+    ## なぜ要るか（2026-09-04 18:4x に踏んだ）
+
+    `standing_form_conflict()` は、立っている決めの理由をいつでも
+    「**前の回の散文です —— 根拠にしないこと**」と呼びます。**決めた回にも同じ字で出ます。**
+    実測: この回は 18:20 に数で決め直し、そのあと同じ画面を読んで
+    **もう一度 同じ議論をやり直しかけました**（決めから 19分後）。
+
+    **「前の回のものか」は数えられます** —— `data/runs.jsonl` の最後の `start` より
+    後に書かれた決めは、この回のものです。**その回に「やり直せ」と言わないこと。**
+
+    **覆る条件**: 1つの回が複数の `start` を書くようになったら（器の回収で並ぶ実測が在ります）、
+    この判定は「最後の start 以降」になるので**同じ回の前半の決めを他の回のものと読みます**。
+    そのときは `session` の欄で見分けること（`record()` が書いています）。
+    """
+    at = str((row or {}).get("at") or "")
+    t0 = round_started_at(runs_path)
+    if not at or t0 is None:
+        return False
+    try:
+        return datetime.fromisoformat(at) >= t0
+    except ValueError:
+        return False
 
 
 def _standing_chain_len(picks_path: Path | None = None) -> int:
@@ -2360,8 +2410,10 @@ def lines(next_row: dict | None, now: datetime | None = None,
                    f"（{str(dec.get('at'))[11:16]} JST に決めた"
                    + (f"・いまの ID は {str(cur.get('at'))[11:16]} の焼き直しが"
                       f"`{cur.get('rebaked_from') or '旧ID'}` から写したもの" if carried else "")
-                   + f"・**前の回の散文**（根拠にしない）: "
-                   f"{str(dec.get('why'))[:90]}）。**変えるなら、数字で上書きすること**"
+                   + ("・**この回が数で置いた行**（決め直さないこと）: "
+                      if decided_this_round(dec)
+                      else "・**前の回の散文**（根拠にしない）: ")
+                   + f"{str(dec.get('why'))[:90]}）。**変えるなら、数字で上書きすること**"
                    f"（同じコマンドをもう一度）。")
         # **立っている決めを、毎周 いまの門の算と突き合わせる**（2026-09-04・最適化の回・
         # `standing_form_conflict()` の註）。ここまでは、立っている決めの `why`＝前の回の散文だけが
