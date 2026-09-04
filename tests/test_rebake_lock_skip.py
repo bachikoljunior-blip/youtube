@@ -55,6 +55,61 @@ def test_別の日は数えない() -> None:
     assert ahead_sweep._baked_today(_rows(), "2026-09-04", busy=False) == 0
 
 
+def test_同じ本を何度も起こしても1回() -> None:
+    """**数えるのは焼いた本であって、起こした回数ではありません**（2026-09-04 15:0x）。
+
+    実測: `DfFyu8qZq3I`（sha 7fe81c38a757）は 01:01〜06:22 に **8回** 起こされ
+    （そのつど器が回収され）、07:40 に1回だけ `done` を残しました。
+    `start` の行を数えていたので分子は **8**、`Ec-j1-W4nqw` と合わせて **9**。
+    上限 2 なので、**その日はもう1本も焼き直せません** —— 規則3 の当てどころが、
+    翌日まで消えます。実際に焼いたのは 2本。
+    """
+    rows = [{"at": f"2026-09-03T0{h}:01:00+09:00", "kind": "start",
+             "video_id": "A", "sha": "s1"} for h in range(1, 7)]
+    rows.append({"at": "2026-09-03T07:40:00+09:00", "kind": "done",
+                 "video_id": "A", "sha": "s1", "rc": 1})
+    assert ahead_sweep._baked_today(rows, "2026-09-03", busy=False) == 1
+    rows += [{"at": "2026-09-03T13:46:00+09:00", "kind": "start", "video_id": "B", "sha": "s2"},
+             {"at": "2026-09-03T14:42:00+09:00", "kind": "done", "video_id": "B", "sha": "s2",
+              "rc": 0}]
+    assert ahead_sweep._baked_today(rows, "2026-09-03", busy=False) == 2
+
+
+def test_別の本の焼きはその本の上限を食わない() -> None:
+    """**上限は「同じ日に（同じ本を）焼き直す上限」です**（2026-09-04 15:0x）。
+
+    実測 09/04: 09/04 の本（`DfFyu8qZq3I`・rc=1）と 09/05 の本（`Ec-j1-W4nqw`）で
+    ちょうど 2回。全部の本を足して数えていたので、**09/05 の本はその日じゅう
+    二度と焼けません** —— 規則3 の当てどころは 09/05 の本なので、
+    これは規則3 を1日ぶん止めます。
+    """
+    rows = [{"at": "2026-09-03T01:00:00+09:00", "kind": "start", "video_id": "A", "sha": "s1"},
+            {"at": "2026-09-03T02:00:00+09:00", "kind": "done", "video_id": "A", "sha": "s1",
+             "rc": 1},
+            {"at": "2026-09-03T13:00:00+09:00", "kind": "start", "video_id": "B", "sha": "s2"},
+            {"at": "2026-09-03T14:00:00+09:00", "kind": "done", "video_id": "B", "sha": "s2",
+             "rc": 0}]
+    assert ahead_sweep._baked_today(rows, "2026-09-03", busy=False) == 2
+    assert ahead_sweep._baked_today(rows, "2026-09-03", busy=False, video_id="B") == 1
+    assert ahead_sweep._baked_today(rows, "2026-09-03", busy=False, video_id="C") == 0
+
+
+def test_本ごとに数える側が配線されていること() -> None:
+    """**数え方を直しても、呼ぶ側が全部の本を足していれば1ミリも変わりません。**"""
+    import inspect
+    src = inspect.getsource(ahead_sweep.rebake_plan_for)
+    assert "video_id=vid" in src, "`rebake_plan_for()` が本ごとに数えていません"
+
+
+def test_同じ本でも台本が違えば別に数える() -> None:
+    """緩めすぎないこと —— 鍵は（本 × sha）。台本が変われば、それは別の焼きです。"""
+    rows = [{"at": "2026-09-03T01:00:00+09:00", "kind": "start", "video_id": "A", "sha": "s1"},
+            {"at": "2026-09-03T02:00:00+09:00", "kind": "done", "video_id": "A", "sha": "s1"},
+            {"at": "2026-09-03T03:00:00+09:00", "kind": "start", "video_id": "A", "sha": "s2"},
+            {"at": "2026-09-03T04:00:00+09:00", "kind": "done", "video_id": "A", "sha": "s2"}]
+    assert ahead_sweep._baked_today(rows, "2026-09-03", busy=False) == 2
+
+
 def test_弾かれた回が印を残さない(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """印が残ると `rebake_attempted()` が 3時間 True を返し、その台本が焼けなくなる。"""
     monkeypatch.setattr(ahead_sweep, "_rebake_marks_dir", lambda: tmp_path)
