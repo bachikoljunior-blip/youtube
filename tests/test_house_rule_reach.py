@@ -35,24 +35,40 @@ from __future__ import annotations
 
 from src import house_rule
 
+#: **超える本数を、規則から作ること**（2026-09-05 に書き替えた）。
+#:
+#: ここは「16本」「2.0本/日」をべた書きし、`PUBLISH_PER_DAY = 1` の下で
+#: 「満ちない」を見ていました。2026-09-05 に規則が 10本/日 になると
+#: **16本 も 2.0本/日 も規則の中に収まり**、この file の「満ちないと言う側」の
+#: 検査が4件とも、満ちる場面を測る形へ化けます（実際に赤くなりました）。
+#:
+#: この file の冒頭は「**数をべた書きしていないので、この file も自動で追随します**」
+#: と書いていました。**追随したのは算数だけで、場面は写しでした。**
+#: **覆る条件**: `needs_beyond_rule` が「日数 × 上限」以外の式になったら作り直すこと。
+_DAYS = 10                                          # 2026-08-31 → 2026-09-10
+_ALLOWED = _DAYS * house_rule.PUBLISH_PER_DAY       # 規則の下で許される合計
+_NAMED = _ALLOWED + 6                               # **わざと超える**本数
+_PER_DAY_NAMED = float(house_rule.PUBLISH_PER_DAY) + 1.0    # 1日あたりで超える
+
 
 def test_未来の多本数の日は満ちないと言う():
     hit = house_rule.needs_beyond_rule(
-        "09/10（16本 公開）の、公開から6時間たった読み（`data/views.jsonl`）",
+        f"09/10（{_NAMED}本 公開）の、公開から6時間たった読み（`data/views.jsonl`）",
         "2026-09-10", today="2026-08-31")
-    assert hit is not None, "16本 公開 が 1日1本 の下で満ちる、と読んでいます"
-    assert hit["named"] == 16
-    assert hit["allowed"] == 10 * house_rule.PUBLISH_PER_DAY
+    assert hit is not None, \
+        f"{_NAMED}本 公開 が {house_rule.PUBLISH_PER_DAY}本/日 の下で満ちる、と読んでいます"
+    assert hit["named"] == _NAMED
+    assert hit["allowed"] == _ALLOWED
 
 
 def test_N本毎日という形は日数を掛けずに規則と比べる():
-    """「2.0本/日」は**期日までの合計ではありません。** そのまま規則と比べること。"""
+    """「N本/日」は**期日までの合計ではありません。** そのまま規則と比べること。"""
     hit = house_rule.needs_beyond_rule(
-        "`data/reach.jsonl` の 08/26〜09/07（長尺の予約 26本 ＝ 2.0本/日）",
+        f"`data/reach.jsonl` の 08/26〜09/07（長尺の予約 26本 ＝ {_PER_DAY_NAMED}本/日）",
         "2026-09-07", today="2026-08-31")
     assert hit is not None
     assert hit["kind"] == "per_day"
-    assert hit["named"] == 2.0
+    assert hit["named"] == _PER_DAY_NAMED
     assert hit["allowed"] == float(house_rule.PUBLISH_PER_DAY)
 
 
@@ -79,9 +95,11 @@ def test_読めないものは通す():
 
 def test_規則を動かすと判定も動く(monkeypatch):
     """**数をべた書きしないこと。** 出どころは `PUBLISH_PER_DAY` の1か所。"""
-    what = "09/10（16本 公開）の読み"
+    what = f"09/10（{_NAMED}本 公開）の読み"
     assert house_rule.needs_beyond_rule(what, "2026-09-10", today="2026-08-31")
-    monkeypatch.setattr(house_rule, "PUBLISH_PER_DAY", 25)
+    # **緩める先も、いまの規則から作ること**（25 のべた書きは、規則が 25 を
+    # 超えた日に「緩めたのに黙らない」で赤くなります）。
+    monkeypatch.setattr(house_rule, "PUBLISH_PER_DAY", _NAMED)
     assert house_rule.needs_beyond_rule(what, "2026-09-10", today="2026-08-31") is None
 
 
@@ -101,10 +119,11 @@ def test_満ちない要件が無ければ1行も出さない():
 def test_行には何本と何本許されるかが並ぶ():
     """**裸の「満ちません」を出さないこと**（`CLAUDE.md` の (イ)）。"""
     rows = [{"claim": "1日に再生が付く本数の上限", "deadline": "2026-09-10",
-             "needs": [{"on_date": "2026-09-10", "what": "09/10（16本 公開）の読み"}]}]
+             "needs": [{"on_date": "2026-09-10",
+                        "what": f"09/10（{_NAMED}本 公開）の読み"}]}]
     lines = house_rule.unreachable_lines(rows, today="2026-08-31")
     body = "\n".join(lines)
-    assert "16本" in body and "10本" in body, body
+    assert f"{_NAMED}本" in body and f"{_ALLOWED}本" in body, body
     assert "1日に再生が付く本数の上限" in body
 
 
