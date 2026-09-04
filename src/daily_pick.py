@@ -696,6 +696,87 @@ def form_median_48h(form: str, *, cmp: dict | None = None,
         return None
 
 
+def standing_days(video_id: str | None, *, path: Path | None = None) -> list[str]:
+    """**その動画IDが「その日の1本」として立っている日**（`for_day` の一覧・古い順）。
+    立っていなければ空。**API 0単位・`data/daily_pick.jsonl` だけを読みます。**
+
+    `current()` と同じ「最後に残した決定」を、日ごとに引きます ——
+    途中で別の本へ差し替えられた日は、ここには出ません。
+    """
+    vid = str(video_id or "").strip()
+    if not vid:
+        return []
+    rows = _by_at(list(_jsonl(path or PICKS)))
+    last: dict[str, str] = {}
+    for r in rows:
+        d = str(r.get("for_day") or "")
+        if d:
+            last[d] = str(r.get("video_id") or "").strip()
+    return sorted(d for d, v in last.items() if v == vid)
+
+
+def day_guard(video_id: str | None, day: date | None, *,
+              path: Path | None = None, now: datetime | None = None) -> str:
+    """**`--day` を省いた `--pick` が、別の日の決めを黙って書き換えるのを止める。**
+    止めるなら理由の1行、通すなら `""`。**API 0単位。**
+
+    ## なぜ要るか（2026-09-05 00:38 に踏んだ。**踏んでから 24秒 で気づけたのは偶然です**）
+
+    この回は「09/05 の1本を据え置く」つもりで、`--day` を付けずにこう撃ちました::
+
+        python -m src.daily_pick --pick 長尺 nenkin-... --video GFvAcxvDmYM --why "…09/05 の…"
+
+    `for_day()` は **「きょうの枠が埋まっていれば あす」** を返します。09/05 の枠は
+    00:01 にもう埋まっていたので、返ったのは **09-06**。結果、**27分前（00:27）に
+    別の回が数で決めた 09/06 の1本（ショート `DtpnSVFDtAE`）が、
+    長尺 `GFvAcxvDmYM` で上書きされました。**
+
+    - **理由の本文は 09/05 の話をしています。** 行の `for_day` だけが 09-06 です ——
+      つまり**読んでも食い違いに気づけない行**が1本 増えます
+    - 上書きされた側は `merge=union` の追記なので**消えてはいません**。
+      しかし `current()` は「最後の1行」を返すので、**次の回が読むのは上書きした側**です
+    - `ahead_sweep._today_candidate` はその ID をそのまま枠へ置くので、
+      **09/06 の枠に、09/05 に公開ずみの本が入りかけていました**
+
+    ## 何で止めるか
+
+    **`--video` が、別の日の「その日の1本」として立っているとき**だけ止めます。
+    そのときの `--day` の省略は、ほぼ確実に「据え置きのつもり」です ——
+    据え置きたい日は `--video` が立っている日のほうで、`for_day()` の返す
+    「次の未決の日」ではありません。
+
+    **止まったら `--day` を書くこと**（`--day` を明示した `--pick` は素通しです。
+    本当に別の日へ移したい回は、そう書けます）。
+
+    ## 覆る条件
+
+    - `for_day()` が「引数の `--video` が立っている日」を先に見るようになったら、
+      この門は要りません（そのとき `for_day` を直して、ここを消すこと）
+    - `data/daily_pick.jsonl` が1日1行の上書きになったら、上書きは事故ではなく
+      仕様になるので、止める理由が変わります
+    """
+    if day is not None:
+        return ""
+    vid = str(video_id or "").strip()
+    if not vid:
+        return ""
+    days = standing_days(vid, path=path)
+    if not days:
+        return ""
+    target = for_day(now).isoformat()
+    if target in days:
+        return ""
+    return (
+        f"`{vid}` は **{'／'.join(days)} の「その日の1本」として立っています**が、"
+        f"`--day` を省いたので書き先は **{target}** です"
+        f"（`for_day()` は『きょうの枠が埋まっていれば あす』を返します）。"
+        f" そのまま書くと **{target} の決めを黙って上書きします**"
+        f"（2026-09-05 00:38 に実際に踏み、27分前の別の回の決めを潰しました）。"
+        f" 据え置きなら `--day {days[-1]}`、本当に {target} へ移すなら `--day {target}` と"
+        f"**日付を書くこと**。"
+    )
+
+
 def record(form: str, topic: str, why: str, *, day: date | None = None,
            now: datetime | None = None, path: Path | None = None,
            video_id: str | None = None, expected: float | None = None,
@@ -749,6 +830,11 @@ def record(form: str, topic: str, why: str, *, day: date | None = None,
     up = uploaded_path
     if up is None and path is not None:
         up = Path(path).parent / "uploaded.jsonl"
+    # **`--day` を省いた決めが、別の日の決めを黙って上書きするのを止める**（`day_guard` の註）。
+    if kind == PICK_KIND_DECIDE:
+        _dg = day_guard(video_id, day, path=path, now=now)
+        if _dg:
+            raise ValueError(_dg)
     if kind == PICK_KIND_DECIDE and not (anyway or "").strip():
         hold = probe_hold(form, day or for_day(now), now=now, topics=topics,
                           uploaded_path=up)
