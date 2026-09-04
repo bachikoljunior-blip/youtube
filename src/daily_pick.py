@@ -2106,6 +2106,73 @@ def _unbuilt_outside(tops: list[dict], uploaded_path: Path | None = None) -> lis
     return [t for t in tops if str(t.get("id") or "") not in made]
 
 
+def script_seconds(video_id: str) -> float | None:
+    """**控えの台本の見積り尺（秒）。**読めなければ `None`。API 0単位。
+
+    **`src/pipeline.CHARS_PER_SECOND`（5.2字/秒）で割ります。**
+    2026-08-09 の実測「465文字が89秒」から来た数で、`src/clarity.py` も同じ値を使います。
+
+    **コマの間合いは足していません**ので、実物はこれ以上になります（下限です）。
+    """
+    from src.pipeline import CHARS_PER_SECOND
+
+    path = ROOT / "data" / "critique_queue" / f"{video_id}.script.json"
+    try:
+        d = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:                                          # noqa: BLE001
+        return None
+    segs = d.get("segments") or []
+    chars = sum(len(str(x.get("narration") or "")) for x in segs if isinstance(x, dict))
+    return chars / CHARS_PER_SECOND if chars else None
+
+
+#: 外の帯の長尺を、尺の帯ごとに「1日あたり再生の中央値」で並べた実測
+#: （2026-09-04 23:5x・`data/niche_corpus.jsonl` の長尺 365本 を齢で割った）。
+#: **切れ目は 25分**: 20〜25分 n=37 823回/日 対 25〜30分 n=34 **3,507回/日**（×4.3）。
+#: チャンネルの大きさの交絡を止めても向きは同じ —— 25分をまたいで両方を持つ
+#: チャンネル 12件 中 **9件** で 25分以上のほうが速く、チャンネル内の比の中央 **×2.89**
+#: （符号検定 片側 p=0.073・n=12）。**p は 0.05 を割っていません。目安として読むこと。**
+#:
+#: **覆る条件**: `data/niche_corpus.jsonl` が入れ替わったら数え直すこと
+#: （**ここに写した数を信じないで、毎周 数え直すのが本筋**です —— この定数は
+#: 「どこで切れるか」の目印で、倍率そのものは帯が変われば動きます）。
+OUTSIDE_LONG_KNEE_SEC = 1500
+
+
+def draft_length_lines(video_id: str) -> list[str]:
+    """**その下書きの尺は、外の帯の切れ目のどちら側か。**（API 0単位）
+
+    ## なぜ要るか（2026-09-04 23:5x に自分で踏んだ）
+
+    この回、同じ本の尺を **20.7分** と書いて `premise` を1件 出しました。
+    **違いました。24.7分です。** 字数を **6.2字/秒** で割ったのが誤りで、
+    正本は **5.2字/秒**（`src/pipeline.CHARS_PER_SECOND`）。
+    **台本に秒数の欄が無く**（`segments` は `narration` と `visual` だけ）、
+    `data/views.jsonl` にも `secs` が無いので、**見積もるしかありません** ——
+    そのとき repo の実測を探さずに頭の中の数を使うと、40分後に自分で訂正することになります。
+
+    **だから、ここが数えて印字します。** 次の回は割り算をしません。
+
+    **公開後は、この見積りではなく実物の `secs` を見ること**（間合いのぶん長くなります）。
+    """
+    sec = script_seconds(video_id)
+    if not sec:
+        return []
+    knee = OUTSIDE_LONG_KNEE_SEC
+    side = "**上（帯のいちばん速い側）**" if sec >= knee else "**下**"
+    gap = abs(sec - knee) / 60.0
+    return [
+        f"     この下書きの**見積り尺 {sec / 60:.1f}分**"
+        f"（{int(sec)}秒 ＝ 台本の字数 ÷ {5.2}字/秒・`src/pipeline.CHARS_PER_SECOND`。"
+        f"**コマの間合いを足していないので下限**）——"
+        f" 外の帯の切れ目 {knee // 60}分 の {side}・差 {gap:.1f}分",
+        f"       外の長尺 365本 を齢で割った実測: 20〜25分 n=37 **823回/日** 対"
+        f" 25〜30分 n=34 **3,507回/日**（×4.3）。"
+        f"チャンネルの大きさを止めても 12件中 9件 で 25分以上が速く、中央 ×2.89"
+        f"（符号検定 片側 p=0.073 ＝ **0.05 を割っていません。目安**）",
+    ]
+
+
 def outside_opening_lines(vid: str, topic: str, root: Path | None = None,
                           reset_hm: str = "16:00") -> list[str]:
     """**外の作りの長尺の下書きの「冒頭」が、外の上位4本の型になっているか**を、控えと台本で数えて出す（0単位）。
@@ -2278,6 +2345,7 @@ def outside_long_lines(day: date, cur: dict | None, now: datetime | None = None,
                        f"（前提「外の作り方を写した長尺」期限 {dl}・48h で {OUTSIDE_48H_GATE}回 が門。"
                        f"**測っていない形を、いまの作り方の長尺の 1回 で落とさないこと**）")
             out.extend(outside_opening_lines(vid, str(d.get("topic") or "")))
+            out.extend(draft_length_lines(vid))
             if not cur or str(cur.get("video_id") or "") != vid:
                 out.append(f"     → **{day:%m/%d} の1本はこれにすること**（`by_form()` の長尺 1回 は"
                            f"『5分・計算1本』の数で、この本の数ではない。外の長尺 p90 は自分の中央値の ×624,772・"
