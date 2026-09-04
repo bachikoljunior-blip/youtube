@@ -21,8 +21,23 @@ from datetime import date, datetime, timedelta, timezone
 
 from src import house_rule
 
-_WHAT_SINCE = ("規則（1日1本）の下で 09/01 以降に公開した本が 20本 積むのを待つ"
-               "（1日1本なので 20日）")
+#: **要る本数を、規則から作ること**（2026-09-05 に書き替えた）。
+#:
+#: ここは「20本」をべた書きし、09/03 → 09/22 の **19日 × 1本/日** と比べていました。
+#: 規則が 10本/日 になると 19日 で 190本 入るので、**20本 は満ちてしまい**、
+#: 「足りない」側の検査3件が、足りる場面を測る形へ化けます（実際に赤くなりました）。
+#: **公開ずみ 0本 のとき、ちょうど 1本 足りない**ように作ります（`short_days == 1`）。
+_DAYS_SINCE = 19                                    # 09/03 → 09/22
+_ALLOWED_SINCE = _DAYS_SINCE * house_rule.PUBLISH_PER_DAY
+_NEED_SINCE = _ALLOWED_SINCE + 1
+
+_WHAT_SINCE = (f"規則の下で 09/01 以降に公開した本が {_NEED_SINCE}本 積むのを待つ"
+               f"（{house_rule.PUBLISH_PER_DAY}本/日 なので {_DAYS_SINCE}日）")
+
+#: 「以降」の無い要件で使う本数（08/31 → 09/10 ＝ 10日 を**超える**本数）。
+_DAYS_TO_0910 = 10
+_ALLOWED_0910 = _DAYS_TO_0910 * house_rule.PUBLISH_PER_DAY
+_NAMED_0910 = _ALLOWED_0910 + 6
 
 
 def test_公開ずみを足すと届く():
@@ -70,9 +85,9 @@ def test_公開ずみは控えの実物から数える():
 
 def test_以降の無い要件は前のまま():
     """出どころの日付が読めない要件に、控えの本数を足さないこと（前の判定を保つ）。"""
-    hit = house_rule.needs_beyond_rule("09/10（16本 公開）の読み", "2026-09-10",
-                                       today="2026-08-31")
-    assert hit is not None and hit["done"] == 0 and hit["allowed"] == 10
+    hit = house_rule.needs_beyond_rule(f"09/10（{_NAMED_0910}本 公開）の読み",
+                                       "2026-09-10", today="2026-08-31")
+    assert hit is not None and hit["done"] == 0 and hit["allowed"] == _ALLOWED_0910
 
 
 def test_年の無い以降は今日以前でいちばん近い月日():
@@ -87,5 +102,5 @@ def test_行は公開ずみと残りの日数を分けて出し_compactを勧め
              "needs": [{"on_date": "2026-09-22", "what": _WHAT_SINCE}]}]
     with um.patch.object(house_rule, "published_since", lambda *a, **k: 0):
         body = "\n".join(house_rule.unreachable_lines(rows, today="2026-09-03"))
-    assert "公開ずみ **0本**" in body and "**19本**" in body, body
+    assert "公開ずみ **0本**" in body and f"**{_ALLOWED_SINCE}本**" in body, body
     assert "--compact" not in body

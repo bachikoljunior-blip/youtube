@@ -3213,6 +3213,214 @@ def outside_long_length_band(path: Path | None = None) -> dict | None:
     return out
 
 
+def _corpus_per_day(form: str, path: Path | None = None) -> list[dict]:
+    """帳面の1行を `{secs, vpd, age, ch}` に直して返す（`niche_corpus.jsonl`・API 0単位）。
+
+    `outside_long_length_band()` が内側でやっていた読み込みを、**交絡を見る側と
+    共有するため**に外へ出したものです（2026-09-05 07:2x）。
+    """
+    try:
+        import sys
+        here = str(ROOT / "scripts")
+        if here not in sys.path:
+            sys.path.insert(0, here)
+        import niche_ceiling as nc                              # noqa: PLC0415
+        rows = nc.corpus_rows(form, path=path) if path else nc.corpus_rows(form)
+    except Exception:                                           # noqa: BLE001
+        return []
+    out: list[dict] = []
+    for r in rows:
+        secs, views = r.get("secs"), r.get("views")
+        pub, at = r.get("published"), r.get("at")
+        if not (secs and views and pub and at):
+            continue
+        p0, p1 = _parse(str(pub)), _parse(str(at))
+        if not p0 or not p1:
+            continue
+        days = max((p1 - p0).total_seconds() / 86400.0, 1.0)
+        out.append({"secs": int(secs), "vpd": float(views) / days,
+                    "age": days, "ch": r.get("channel") or ""})
+    return out
+
+
+def _sign_p(wins: int, n: int) -> float | None:
+    """符号検定の片側 p（`wins` 以上が偏る確率）。n=0 なら `None`。"""
+    if n <= 0:
+        return None
+    return sum(math.comb(n, k) for k in range(wins, n + 1)) / (2 ** n)
+
+
+def outside_length_controls(form: str = "long", path: Path | None = None,
+                            bands: tuple = _LEN_BANDS) -> dict | None:
+    """**尺の帯の倍率から、齢とチャンネルを抜く**（`data/niche_corpus.jsonl`・API 0単位）。
+
+    返り:
+
+        {"n": 数えた本数,
+         "rho": spearman(secs, age)   ← **交絡が在るか**。負なら「長い本ほど新しい」
+         "window": (下限日, 上限日) | None,     ← 齢をそろえた窓（両帯の 10〜90%点の重なり）
+         "matched": {"lo": (n, 中央値/日), "hi": (n, 中央値/日), "x": 倍率 | None} | None,
+         "sign": {"pairs": 組, "wins": 勝ち, "x": 組内の比の中央, "p": 片側 p} | None}
+
+    ## なぜ要るか（2026-09-05 07:1x に、この回が実測して足した）
+
+    `outside_long_length_band()` は **齢で割って**います。それでも
+    「長いほうが速い」の証拠にはなりません —— **1日あたりの再生は齢とともに落ちる**ので、
+    片方の帯が新しければ、それだけで速く見えます。そして**この帳面では実際に
+    そうなっています**:
+
+        spearman(secs, age) = **-0.322**（長尺 n=365・この回に数えた）
+        20〜25分 の齢 中央 **221日** 対 25〜30分 **180日**
+
+    ＝ 生の ×2.6 には「25〜30分 のほうが 41日 新しい」が混ざっています。
+
+    **長尺は、3つとも抜いても残りました**（この回の実測。走っている焼き直しの前提は立っています）:
+
+        生            20〜25分 n=33 792回/日 対 25〜30分 n=24 2,094回/日 ＝ **×2.6**
+        齢をそろえた  窓 72〜233日: n=15 792回/日 対 n=20 1,758回/日 ＝ **×2.22**
+        チャンネル止め 7組中 **6組**・組内の比の中央 **×2.01**・片側 p=0.062
+
+    **ショートは、脚によって答えが違います。ここが本番です**（同じ回に数えた）:
+
+        生            60秒 未満 n=20 0.40回/日 対 60秒 以上 n=142 1.61回/日 ＝ **×4.07**
+        齢をそろえた  窓 117〜3811日: n=14 0.18回/日 対 n=89 0.90回/日 ＝ **×4.86**
+        チャンネル止め 3組中 **1組**・組内の比の中央 **×0.75**・片側 p=0.875 ＝ **無し**
+        （さらに窓を 齢<=400日 まで詰めると n=4 対 22 で**符号が反転**します）
+
+    ＝ **長尺で通った3脚のうち、ショートで通るのは2脚だけ**で、いちばん強い脚
+    （チャンネルを止めた側）が**逆を向いています**。長尺の結論をショートへ
+    そのまま写すと、いちばん弱い根拠で 100% の供給を動かすことになります。
+
+    ショートは自分の出す本の 100% です（`data/uploaded.jsonl` の 109本 は
+    **全部 23.6〜32.6秒**・中央 29.0秒）。外の帯でこの窓に居るのは 162本中 7本（4.3%）で、
+    再生の上位15本には **0本** —— **「外と作りが違う」は帳面が言っています。
+    「長くすれば速くなる」は、この帳面では、まだ言えません。**
+
+    **だから、この関数は倍率を1つも返しません** —— 生・齢そろえ・チャンネル止めの
+    **3つとも**返し、印字は3つとも並べます。読む側が、どれで決めたかを言えるように。
+
+    ## 覆る条件
+
+    帳面が入れ替わって `rho` が 0 に近づいたら（`|rho| < 0.1`）、齢の窓は要らなくなります
+    —— そのときも消さないこと。**交絡が無いことを毎周 数えているのが、この行の値打ちです。**
+    組が 10組 を越えても `p` が 0.05 を割らないなら、その帯の差は**無い**と読むこと。
+    """
+    import statistics as _st
+    per = _corpus_per_day(form, path=path)
+    if not per:
+        return None
+    lo_b, hi_b = bands[0], bands[1]
+    lo = [p for p in per if lo_b[0] <= p["secs"] < lo_b[1]]
+    hi = [p for p in per if hi_b[0] <= p["secs"] < hi_b[1]]
+    out: dict = {"n": len(per),
+                 "rho": _spearman([p["secs"] for p in per], [p["age"] for p in per])}
+
+    # 齢をそろえた窓 —— 両帯の 10〜90%点の**重なり**。手で選ばないこと。
+    out["window"] = None
+    out["matched"] = None
+    if lo and hi:
+        def pct(xs: list[float], q: float) -> float:
+            s = sorted(xs)
+            return s[min(len(s) - 1, max(0, int(round(q * (len(s) - 1)))))]
+        a0, a1 = pct([p["age"] for p in lo], 0.1), pct([p["age"] for p in lo], 0.9)
+        b0, b1 = pct([p["age"] for p in hi], 0.1), pct([p["age"] for p in hi], 0.9)
+        w0, w1 = max(a0, b0), min(a1, b1)
+        if w1 > w0:
+            ml = [p["vpd"] for p in lo if w0 <= p["age"] <= w1]
+            mh = [p["vpd"] for p in hi if w0 <= p["age"] <= w1]
+            if ml and mh:
+                lv, hv = _st.median(ml), _st.median(mh)
+                out["window"] = (w0, w1)
+                # **窓に入れても、齢がそろったとは限りません。**そろったかどうかは
+                # 読む側が見分けられるように、窓の中の齢の中央も返します
+                # （実測 ショート: 窓 117〜3811日 ＝ ほぼ全部で、何も止まっていない）。
+                la = _st.median([p["age"] for p in lo if w0 <= p["age"] <= w1])
+                ha = _st.median([p["age"] for p in hi if w0 <= p["age"] <= w1])
+                out["matched"] = {"lo": (len(ml), lv), "hi": (len(mh), hv),
+                                  "x": (hv / lv) if lv > 0 else None,
+                                  "age": (la, ha)}
+
+    # チャンネルを止めた符号検定 —— 両帯を持つチャンネルの中だけで比べる
+    out["sign"] = None
+    byc: dict[str, dict[str, list[float]]] = defaultdict(lambda: {"lo": [], "hi": []})
+    for p in lo:
+        byc[p["ch"]]["lo"].append(p["vpd"])
+    for p in hi:
+        byc[p["ch"]]["hi"].append(p["vpd"])
+    pairs = [(_st.median(v["lo"]), _st.median(v["hi"]))
+             for v in byc.values() if v["lo"] and v["hi"]]
+    if pairs:
+        wins = sum(1 for a, b in pairs if b > a)
+        ratios = [b / a for a, b in pairs if a > 0]
+        out["sign"] = {"pairs": len(pairs), "wins": wins,
+                       "x": _st.median(ratios) if ratios else None,
+                       "p": _sign_p(wins, len(pairs))}
+    return out
+
+
+def _vpd(v: float) -> str:
+    """1日あたりの再生を、桁が落ちない字にする。
+
+    `{:,.0f}` だけだと、ショートの帯（中央 0.18回/日 対 0.90回/日）が
+    **「0回/日 対 1回/日」**になり、倍率と食い違って読めます（2026-09-05 07:2x に踏んだ）。
+    """
+    return f"{v:,.2f}" if abs(v) < 10 else f"{v:,.0f}"
+
+
+def length_control_lines(form: str = "long", bands: tuple = _LEN_BANDS,
+                         label: tuple = ("20〜25分", "25〜30分")) -> list[str]:
+    """`outside_length_controls()` を、決める側の画面の字にする（API 0単位）。
+
+    **生の倍率の隣に必ず出すこと。** 2026-09-05 07:1x まで、この位置には
+    09/04 23:5x の回が焼き付けた散文（「12件中 9件・中央 ×2.89・p=0.073」）が
+    在りました。**同じ帳面をこの回に数え直したら 7組中 5組・×1.33・p=0.227** で、
+    組の数も倍率も p も合っていません —— `outside_long_length_band` の docstring が
+    「べた書きは必ず古くなります」と書いた、その真下でした。
+    """
+    got = outside_length_controls(form, bands=bands)
+    if not got:
+        return []
+    lines: list[str] = []
+    rho = got.get("rho")
+    if rho is not None:
+        near = "**交絡は小さい**" if abs(rho) < 0.1 else "**長い本ほど新しい**"
+        if rho > 0.1:
+            near = "**長い本ほど古い**"
+        lines.append(
+            f"       [交絡] 齢と尺の相関 spearman(secs, age) = **{rho:+.3f}**"
+            f"（n={got['n']}・**この周に数えた**）→ {near}。"
+            f" **1日あたりは齢とともに落ちるので、生の倍率にはこのぶんが混ざっています。**")
+    m, w = got.get("matched"), got.get("window")
+    if m and w:
+        x = f"×{m['x']:.2f}" if m.get("x") else "（下の帯が 0本）"
+        la, ha = m.get("age") or (None, None)
+        # **窓に入れただけで「そろった」と言わないこと。**窓の中の齢の中央を並べて、
+        # まだ離れているなら、そう名乗る（実測 ショート: 窓が 117〜3811日 ＝ 効いていない）。
+        if la and ha:
+            far = max(la, ha) / max(min(la, ha), 1e-9)
+            note = (f"窓の中の齢の中央 {la:.0f}日 対 {ha:.0f}日"
+                    + ("・**まだそろっていません。この行を控えとして読まないこと**"
+                       if far >= 1.5 else "・**そろいました**"))
+        else:
+            note = "窓の中の齢を数えられませんでした"
+        lines.append(
+            f"       [齢をそろえた] 齢 {w[0]:.0f}〜{w[1]:.0f}日 の窓だけ"
+            f"（両帯の 10〜90%点の重なり・**この周に数えた**）: "
+            f"{label[0]} n={m['lo'][0]} {_vpd(m['lo'][1])}回/日 対 "
+            f"{label[1]} n={m['hi'][0]} {_vpd(m['hi'][1])}回/日（{x}・{note}）")
+    s = got.get("sign")
+    if s:
+        p = s.get("p")
+        verdict = ("**0.05 を割っています**" if p is not None and p < 0.05
+                   else "**0.05 を割っていません。目安**")
+        x = f"×{s['x']:.2f}" if s.get("x") else "—"
+        lines.append(
+            f"       [チャンネルを止めた] 両帯を持つ {s['pairs']}組 中 **{s['wins']}組** で"
+            f" {label[1]} が速く、組内の比の中央 {x}"
+            f"（符号検定 片側 p={p:.3f} ＝ {verdict}・**この周に数えた**）")
+    return lines
+
+
 def draft_length_lines(video_id: str) -> list[str]:
     """**その下書きの尺は、外の帯の切れ目のどちら側か。**（API 0単位）
 
@@ -3287,12 +3495,14 @@ def draft_length_lines(video_id: str) -> list[str]:
     else:
         lines.append("       外の長尺の帯を数えられませんでした"
                      "（`data/niche_corpus.jsonl` に `published` が読める長尺が 0本）")
-    # **符号検定のほうは 09/04 23:5x の1回きりの数です**（この周は数え直していません）。
-    #     n も窓も書いてあるので、引くときは撃ち直すこと。
-    lines.append(
-        "       チャンネルの大きさを止めた側（**09/04 23:5x の1回きり。この周は数え直していません**）:"
-        " 12件中 9件 で 25分以上が速く、中央 ×2.89"
-        "（符号検定 片側 p=0.073 ＝ **0.05 を割っていません。目安**）")
+    # **符号検定も、毎周 数え直します**（2026-09-05 07:1x）。ここは 09/04 23:5x の回が
+    #     焼き付けた散文で「12件中 9件・中央 ×2.89・片側 p=0.073」と刷っていました。
+    #     **同じ帳面をこの回に数え直したら 7組中 5組・×1.33・p=0.227** ——
+    #     組の数も倍率も p も合っていません。すぐ上の `outside_long_length_band` の
+    #     docstring が「べた書きは必ず古くなります」と書いた、その真下で同じことを
+    #     していました（**言っている所と、している所が別** —— この repo でいちばん多い壊れ方）。
+    #     あわせて、生の倍率から**齢**を抜いた数も並べます（`outside_length_controls`）。
+    lines.extend(length_control_lines("long"))
     return lines
 
 
