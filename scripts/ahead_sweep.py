@@ -757,6 +757,29 @@ def place_today(now: datetime | None = None, *, dry_run: bool = False) -> dict:
     except Exception as exc:                                   # noqa: BLE001
         print(f"[today] 焼き直しの予定を読めませんでした（置く側は止めません）: "
               f"{str(exc)[:120]}", flush=True)
+    # **前提のために枠を取りながら、入れる本が前提の処置になっていない場合**（0単位）。
+    #     `daily_pick.untreated_slot_block()` の註が実測ごと持っています ——
+    #     09-04 の枠に入った `1huadpEk6HY` は脚 3本 ✗ のまま公開され、齢6時間で 0回・
+    #     `treated_count("長尺")` は **(0, 36)** のまま。**枠だけ減って前提は 1件も進みません。**
+    #     `standing_pick_treatment()` は同じ穴を**刷りました**が、そのあと決めが 6回 あり
+    #     6回とも同じ形でした ＝ **印字は選び直しを止めません。**
+    #     ここは `rebake_pending` と同じ枝へ倒します（「焼き直しが先。置くのは後」）——
+    #     あの枝は枠まで `REBAKE_LEAD` を切れば自分で開くので、**置かれないままにはなりません。**
+    try:
+        from src import daily_pick as _dp                      # noqa: PLC0415
+        _cur = _dp.current(now.astimezone(JST).date()) if cand else None
+        # **決めと候補が同じ本のときだけ見ます**（池／下書きから来た本に、
+        #     別の本の決めの脚を当てないこと）。
+        if _cur and str(_cur.get("video_id") or "") != str(cand.get("video_id") or ""):
+            _cur = None
+        _blk = _dp.untreated_slot_block(_cur)
+    except Exception as exc:                                   # noqa: BLE001
+        _blk = ""
+        print(f"[today] 処置の門を読めませんでした（置く側は止めません）: "
+              f"{str(exc)[:120]}", flush=True)
+    if _blk and not rebake_pending:
+        rebake_pending = True
+        print(f"[today] 焼き直しが先: {_blk}", flush=True)
     plan = today_plan(now, count=count, cap=house_rule.cap(), candidate=cand, hour=hour,
                       # **`same_day_only()` を渡さないこと**（2026-09-04 17:39 に踏んだ）。
                       #     あれは「先の日付を禁じるか」で、この手の問いは

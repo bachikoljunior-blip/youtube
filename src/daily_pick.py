@@ -2532,5 +2532,71 @@ def main(argv: list[str] | None = None) -> int:
     return 0
 
 
+def untreated_slot_block(cur: dict | None, *, topics: list[dict] | None = None,
+                         queue: Path | None = None) -> str:
+    """**その決めの本を、きょうの枠へ入れて良いか。**良ければ `""`、駄目ならその理由の1行。
+    **API 0単位・実物の台本の控えだけ。**
+
+    ## なぜ要るか（2026-09-04 19:5x・最適化の回に数で踏んだ）
+
+    規則1 は 1日1本（`src/house_rule.py`）＝ **その日の枠は、その日の供給の 100%**。
+    前提「外の作り方を写した長尺」（`config/hypotheses.yaml`・期限 2026-09-07）は
+    その枠を **09-04 と 09-05 の 2日ぶん** 取っています。実物はこうでした ——
+
+        `daily_pick.treated_count("長尺")` → **(0, 36)**  処置ずみ 0本／測れた 36本
+        09-04 の枠に入った `1huadpEk6HY` の脚 → **(2) 章・締め／(4) 題・サムネ／(5) 間合い が ✗**
+                                                そのまま公開・齢6時間で **0回**
+
+    ＝ **前提のために枠を取りながら、入れた本が前提の処置になっていません。**
+    枠は減り（供給 100% が 1日 消える）、前提は 1件も進みません（分母は 0/36 のまま）。
+    そして分母が 0 のあいだ「**処置 n=0 の分母で処置は落とせない**」が成り立つので、
+    **次の回も同じ形を選び直します** —— 09-04 だけで決めが 14回、全部 長尺、
+    形は 1度も変わっていません（`data/daily_pick.jsonl`）。**自分で自分を養う輪**です。
+
+    `standing_pick_treatment()`（09-04 17:xx）は同じ穴を見つけて**刷りました**。
+    刷ったあと決めが 6回 あり、**6回とも 長尺のまま**でした。
+    ＝ **印字は選び直しを止めません。** ここは止める側です。
+
+    ## 止まりっぱなしにはなりません
+
+    返した理由は `scripts/ahead_sweep` が `rebake_pending` と同じ枝へ渡します
+    （「**焼き直しが先。置くのは後**」）。あの枝は枠まで `REBAKE_LEAD` を切ると
+    自分で開くので、**永久に置かれない は構造上 起きません** ——
+    直せば置く・直さなければ枠の直前に置く、のどちらかです。
+    要求は1つだけ: **枠までに、その本を処置にすること**
+    （＝ オーナーの固定「次の投稿予定までにそこで投稿する動画を改善し続ける」）。
+
+    ## 覆る条件
+
+    - 前提「外の作り方を写した長尺」が閉じたら、この門ごと落とすこと。
+    - `treated_count("長尺")` の処置ずみが 1本以上 になったら、
+      「前提のために枠を取りながら処置が 0本」は偽になります。**そのとき自分で黙ります**
+      （分母が出来たので、次の回は数で形を落とせる）。
+    - 脚が読めない（控えが無い）ときは**止めません**。読めないものを ✗ に数えないのは
+      `pick_legs` と同じ向きです。
+    """
+    if not cur:
+        return ""
+    topic = str(cur.get("topic") or "")
+    tops = {str(t.get("id")): str(t.get("style") or "")
+            for t in (topics if topics is not None else _topics())}
+    if tops.get(topic) != "outside_long":
+        return ""
+    vid = str(cur.get("video_id") or "").strip()
+    bad, why = pick_legs(vid, queue=queue)
+    if why or not bad:
+        return ""
+    try:
+        done, seen = treated_count("長尺")
+    except Exception:                                          # noqa: BLE001
+        return ""
+    if done:
+        return ""
+    return (f"`{vid}` は前提「外の作り方を写した長尺」の脚が {len(bad)}本 ✗"
+            f"（{'／'.join(bad)}）。処置ずみは {done}/{seen}本 なので、この本を入れると"
+            f"**枠は減って前提は進みません**（09-04 の `1huadpEk6HY` と同じ形・齢6時間で 0回）。"
+            f"枠までに脚を通してから置きます")
+
+
 if __name__ == "__main__":
     raise SystemExit(main())
