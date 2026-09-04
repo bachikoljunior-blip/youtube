@@ -3443,17 +3443,8 @@ def main(argv: list[str] | None = None) -> int:
         if _fk in ("fix", "improve"):
             try:
                 from src import daily_pick as _dps               # noqa: PLC0415
-                from src import next_slot as _nss                # noqa: PLC0415
 
-                _sday = None
-                try:
-                    _nv = _nss.next_video() or {}
-                    _sat = _nv.get("at") or _nv.get("publish_at")
-                    if _sat:
-                        _sday = _dps._parse(_sat).astimezone(_dps.JST).date()
-                except Exception:                                # noqa: BLE001
-                    _sday = None
-                _stale = _dps.standing_form_stale(_sday)
+                _stale = _dps.standing_form_stale_now()
             except Exception:                                    # noqa: BLE001
                 _stale = ""
             if _stale:

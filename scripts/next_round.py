@@ -747,6 +747,21 @@ def kinds_allowed() -> dict:
             out["ok"] = False
             out["blocked"] = ["fix"]
             tgt = dg.get("target") or slot.get("topic") or ""
+            # **その「枠の本」が、いまの門に落ちているなら、行き先はそこではありません**
+            # （2026-09-05 05:xx・最適化の回。`daily_pick.standing_form_stale` の註）。
+            # 前の版は、`path_form_hold` が形ごと止めている本を
+            # **`fix` の唯一の行き先として名指し**していました。
+            _sf = _safe(lambda: __import__(
+                "src.daily_pick", fromlist=["x"]).standing_form_stale_now(), "")
+            if _sf:
+                out["blocked"] = ["fix", "improve"]
+                out["lines"].append(
+                    f"  [!] {_sf}\n"
+                    "      **だから `fix` も `improve` も、差し替えるまで通りません**"
+                    "（`run_marker` が止めます・`verdict`/`upload`/`premise`/`means` は通る）。"
+                    "**いま決めること**: `python -m src.daily_pick --pick <門の指す形> <題材> "
+                    "--expected <回> --why \"<数字で1行>\"`")
+                return out
             out["lines"].append(
                 f"  [!] **`fix` は、きょうの枠の本 `{tgt}` を名乗らないかぎり通りません**"
                 f"（上限 連 {run_len}/{cap_run}・動いた ship から {since}/{cap_since}、"
@@ -827,9 +842,16 @@ def main() -> int:
         sys.path.insert(0, str(ROOT))
         from src import slot_cost as _sc                          # noqa: PLC0415
         _s = _sc.slot_value()
-        if _s.get("cost") is not None:
-            print(f"  枠の機会費用: **1枠 ＝ {_s['cost']:,.0f}回**（{_s['best']}・"
-                  f"規則の密度・齢{_sc.HOURS}時間）"
+        # **門が実際に使う床を刷ること**（2026-09-05 05:xx・最適化の回）。
+        # 前の版は `slot_value()["cost"]`（＝ 規則の密度の中央値 1,049回）を刷って
+        # いましたが、`record()` の門が掛けるのは `verdict()` の床です。
+        # 標本が化石のときは後者が**いまの中央値**に落ちる（`slot_cost.verdict` の註）ので、
+        # **周の頭が刷る数と、決めが実際に落ちる数が違っていました。**
+        _v = _sc.verdict(None)
+        _floor = _v.get("cost") if _v.get("cost") is not None else _s.get("cost")
+        if _floor is not None:
+            print(f"  枠の機会費用: **1枠 ＝ {_floor:,.0f}回**（{_s['best']}・"
+                  f"{_v.get('cost_src') or '規則の密度の中央値'}・齢{_sc.HOURS}時間）"
                   f"　← **これを下回る見込みの形は `daily_pick --pick` が通しません**"
                   "（`--anyway <数字を含む1行>` で越えれば控えに残ります）")
     except Exception as _exc:                                     # noqa: BLE001
@@ -863,9 +885,26 @@ def main() -> int:
             print(f"  **{_d} の枠はもう決まっています**: {_cur.get('form')} / "
                   f"{_cur.get('topic')} / {_cur.get('video_id') or '—'}"
                   f"（見込み {_cur.get('expected_48h')}回・同じ決めが すでに {_n}回）"
-                  f"　← **これを書き直す `--pick` は通りません**"
+                  f"　← **同じ決めの再掲は通りません**"
                   "（形・題材・動画ID か `--expected` を実際に変えるか、"
                   "**決めを触らず前提を1件 閉じること**。`--anyway` では越えられません）")
+            # **立っている決めを、いまの門に通し直して、その場で出す**
+            # （2026-09-05 05:xx・最適化の回。理由と実測は
+            #  `daily_pick.standing_form_stale` の註）。
+            # **すぐ上の行と矛盾していたのは、ここに再審が無かったから**です ——
+            # 「枠の機会費用 1,049回」を刷った 2行 下で「見込み 1.0回 の決めは
+            # 書き直せません」と刷っていました。**差し替えこそが手**の日が在ります。
+            try:
+                _st = _dp.standing_form_stale(_date.fromisoformat(_d), cur=_cur)
+            except Exception:                                     # noqa: BLE001
+                _st = ""
+            if _st:
+                print(f"  [!] {_st}")
+                print("      **`fix` と `improve` は、差し替えるまで `run_marker` が"
+                      "通しません**（`verdict`/`upload`/`premise`/`means` は通ります）。"
+                      "この回の手は差し替えです: "
+                      "`python -m src.daily_pick --pick <門の指す形> <題材> "
+                      "--expected <回> --why \"<数字で1行>\"`")
     except Exception as _exc:                                     # noqa: BLE001
         print(f"  [!] 立っている決めが出せません: {str(_exc)[:80]}")
     if d.get("live") is None:

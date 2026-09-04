@@ -1,0 +1,16 @@
+周の頭と `next_round` にも通し直しを出し、検査9件で固定した
+
+- `daily_pick.standing_form_stale_now()`: 規則3 の主語（予約に立っている本）の日で撃つ
+  （`for_day()` は「まだ決めていない次の日」で別物）
+- `next_round.py`: 枠の機会費用の行を、門が実際に使う床（`verdict()["cost"]` ＝ 164回）で刷る。
+  立っている決めが再審に落ちる日は、`fix` の行き先として枠の本を名指しせず、
+  差し替えを「いま決めること」として出す
+- `tests/test_standing_form_stale.py`（9件）: 通し直し・`carry` は見ない・`anyway` でも通し直す・
+  `fix`/`improve` だけを止める・床は化石のときだけ／下げる方向にしか動かない
+- `docs/JOURNAL.md`: 答え（いいえ）・数・名指し・覆る条件
+
+検査: pytest -k "next_round or run_marker or slot_cost or daily_pick or rule3 or dry_ledger" 146 passed
+      pytest tests/test_standing_form_stale.py 9 passed
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01AHfq4FUVAd5fxDM29yG1Cm

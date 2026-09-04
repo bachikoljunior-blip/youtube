@@ -2200,6 +2200,37 @@ def standing_form_stale(day=None, *, cur=None, now: datetime | None = None,
             f" **この回の手は、その本を直すことではなく、枠を差し替えることです。**")
 
 
+def standing_form_stale_now(*, now: datetime | None = None,
+                            next_call=None, **kw) -> str:
+    """**規則3 の主語（次の投稿予定に立っている本）の日**で `standing_form_stale()` を撃つ。
+
+    `for_day()` は「**まだ決めていない次の日**」で、**次に出る本の日ではありません**
+    （`run_marker.rule3_book` が 2026-09-05 01:4x に実物で踏んだ違い）。
+    規則3（オーナー固定・「次の投稿予定までにそこで投稿する動画を改善し続ける」）の
+    主語は**予約に立っている本**なので、通し直すのもその日です。
+
+    予約が読めない回は `for_day()` に落とします（**推測で止めないこと**）。
+    """
+    day = None
+    call = next_call
+    if call is None:
+        try:
+            from . import next_slot as _ns                        # noqa: PLC0415
+            call = _ns.next_video
+        except Exception:                                         # noqa: BLE001
+            call = None
+    if call is not None:
+        try:
+            row = call() or {}
+            at = row.get("at") or row.get("publish_at")
+            p = _parse(at) if at else None
+            if p is not None:
+                day = p.astimezone(JST).date()
+        except Exception:                                         # noqa: BLE001
+            day = None
+    return standing_form_stale(day, now=now, **kw)
+
+
 def _median_pair_line(a: str, b: str, *, median_call=None) -> str:
     """**2つの形の、齢48h の中央値を並べた1行**（`form_median_48h` の実物・API 0単位）。
 
