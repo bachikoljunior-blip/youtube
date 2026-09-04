@@ -24,7 +24,7 @@
 `_settled_view_rate()` が別の所から速さを引くようになったら、下の差し替え口を直すこと。
 """
 import sys
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 
 import pytest
@@ -35,18 +35,44 @@ import deadline_check as dc  # noqa: E402
 
 @pytest.fixture()
 def 速さ(monkeypatch):
-    """規則 1本/日 × 落ち着いた1本の中央値 129回 ＝ 129再生/日（2026-09-05 の実測）。"""
+    """規則 1本/日 × 落ち着いた1本の中央値 129回 ＝ 129再生/日（2026-09-05 の実測）。
+
+    銀行のぶんは **0再生**（下の `銀行` で差し替えます）。
+    """
     monkeypatch.setattr(dc, "_settled_view_rate", lambda: (205, 129.0, 129.0))
+    monkeypatch.setattr(dc, "_banked_views_since", lambda since: (0, 0.0))
 
 
 def test_書いた日が伸び率に追いつかなければ_後ろの日を返すこと(速さ):
-    """30,000再生 ÷ 129再生/日 ＝ 233日 → 2026-09-04 ＋ 233日 ＝ 2027-04-25。"""
+    """残り 30,000再生 ÷ 129再生/日 ＝ 233日 を、**今日から**数えます。"""
     need = {"views_target": 30000, "views_since": "2026-09-04"}
     ans = dc._written_date_gate(need, date(2027, 2, 28), "その日のデータ")
     assert ans is not None, "書いた日（02-28）より後になるはず"
-    assert ans.ready == date(2027, 4, 25)
+    assert ans.ready == date.today() + timedelta(days=233)
     assert "129再生/日" in ans.why
     assert "233日" in ans.why
+
+
+def test_銀行にあるぶんを引いてから割ること(monkeypatch):
+    """**丸ごと割ると遅らせすぎます。** 実測（2026-09-05・API 0単位）:
+    2026-08-29 以降は **47本 ／ 6,024再生**（6日 ＝ 7.8本/日 ＝ 貯めを引いた頃の供給）。
+    要件が 15,000再生 なら残りは 8,976 で **70日** —— 丸ごと割った 117日 とは **47日** 違います。"""
+    monkeypatch.setattr(dc, "_settled_view_rate", lambda: (205, 129.0, 129.0))
+    monkeypatch.setattr(dc, "_banked_views_since", lambda since: (47, 6024.0))
+    need = {"views_target": 15000, "views_since": "2026-08-29"}
+    ans = dc._written_date_gate(need, date(2026, 9, 5), "x")
+    assert ans is not None
+    assert ans.ready == date.today() + timedelta(days=70)
+    assert "6,024再生" in ans.why
+    assert "8,976再生" in ans.why
+
+
+def test_もう積み終わっている窓は何も言わないこと(monkeypatch):
+    """**この門は遅らせる向き専用です。** 届いている要件を遅らせてはいけません。"""
+    monkeypatch.setattr(dc, "_settled_view_rate", lambda: (205, 129.0, 129.0))
+    monkeypatch.setattr(dc, "_banked_views_since", lambda since: (200, 31000.0))
+    need = {"views_target": 30000, "views_since": "2026-09-04"}
+    assert dc._written_date_gate(need, date(2027, 2, 28), "x") is None
 
 
 def test_書いた日のほうが後なら_何も言わないこと(速さ):
