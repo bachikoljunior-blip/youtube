@@ -18,7 +18,24 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "scripts"))
 
+import pytest  # noqa: E402
+
 from src import daily_pick as dp  # noqa: E402
+from src import next_slot as ns  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def _no_schedule(monkeypatch):
+    """**予約を空にして、決めの側の脚だけを動かす台。**（2026-09-05 01:4x に足した）
+
+    `untreated_slot()` は `rule3_book()` 越しに引くようになりました ——
+    規則3 の主語は「**次の投稿予定に出る本**」なので、まず
+    `next_slot.next_video()` を見て、無いときだけ決め（`daily_pick.current`）へ
+    落ちます。この節が測っているのは**脚の側**なので、上流を空にして
+    決めの枝を通します（**空にしないと、実物の予約が入って `dp.current` の
+    差し替えが効かず、検査が理由も無く緑になります**）。
+    """
+    monkeypatch.setattr(ns, "next_video", lambda *a, **k: None)
 
 
 def _script(tmp: Path, vid: str, payload: dict) -> Path:

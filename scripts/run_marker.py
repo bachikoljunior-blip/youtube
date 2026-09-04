@@ -2120,6 +2120,83 @@ def _rule_dead_line() -> str:
             "どちらかで、そこも `verdict` の回になります。\n")
 
 
+def rule3_book(*, next_call=None, pick_call=None) -> dict | None:
+    """**規則3 が名指ししている本** ——「次の投稿予定**でそこで投稿する**動画」。**API 0単位。**
+
+    返り: `{"video_id", "topic", "src"}`（無ければ `None`）。
+
+    ## なぜ要るか（2026-09-05 01:4x に、この回が実物で踏んだ）
+
+    オーナーの固定（原文・`CLAUDE.md` 冒頭）はこうです ——
+    **「次の投稿予定までにそこで投稿する動画を改善し続ける」**。
+    主語は**次の投稿予定に出る本**です。ところが `untreated_slot()` は
+    こう引いていました::
+
+        _dp.current(_dp.for_day())
+
+    `for_day()` が返すのは「**まだ決めていない次の日**」です。**別のものです。**
+    実測（2026-09-05 01:4x にこの回が撃った数）::
+
+        next_slot.next_video()  → `GFvAcxvDmYM`（09/05 09:00 JST・**あと 7.5時間**）
+        daily_pick.for_day()    → 2026-09-06
+        _dp.current(那)         → `DtpnSVFDtAE`（09/06 の本・**あと 31時間**）
+
+    ＝ **規則3 の門が、あしたの本を名指ししていました。**
+    そして `dry_ledger_gate()` は、その名前を `--ship` に書いた回しか通しません
+    （台帳が空の日）。**きょう出る本を直した回は止められ、
+    あしたの本を名乗った回が通ります** —— 規則3 と逆向きです。
+
+    `for_day()` はそれ自体は正しく働いています（「**どの日がまだ決まっていないか**」）。
+    **その答えを「次に出る本はどれか」の答えとして使ったのが誤り**でした。
+
+    ## 順
+
+    1. **予約に立っている次の本**（`next_slot.next_video()`）—— これが規則3 の主語。
+    2. 無ければ、まだ決めていない日の決め（`daily_pick.current(for_day())`）——
+       **1本も予約が無い日は、これが唯一の名指しできる本**です。
+
+    ## 覆る条件
+
+    - 予約が「その日のぶんだけ」でなくなり、先の日付にも本が並ぶようになったら、
+      1. は「いちばん近い未来の本」を返し続けるので**そのまま正しい**です。
+    - `next_video()` が控え（`data/uploaded.jsonl`）ではなく実物を引くようになったら、
+      **API 0単位 ではなくなります** —— この関数を毎周 撃つ所から外すこと。
+    """
+    if next_call is None:
+        try:
+            from src import next_slot as _ns                       # noqa: PLC0415
+
+            next_call = _ns.next_video
+        except Exception:                                          # noqa: BLE001
+            next_call = lambda: None                               # noqa: E731
+    try:
+        row = next_call()
+    except Exception:                                              # noqa: BLE001
+        row = None
+    if row:
+        vid = str(row.get("video_id") or "").strip()
+        top = str(row.get("topic") or "").strip()
+        if vid or top:
+            return {"video_id": vid, "topic": top, "src": "next_slot.next_video"}
+    if pick_call is None:
+        try:
+            from src import daily_pick as _dp                      # noqa: PLC0415
+
+            def pick_call():
+                return _dp.current(_dp.for_day())
+        except Exception:                                          # noqa: BLE001
+            return None
+    try:
+        cur = pick_call()
+    except Exception:                                              # noqa: BLE001
+        return None
+    if not cur:
+        return None
+    out = dict(cur)
+    out["src"] = "daily_pick.current(for_day)"
+    return out
+
+
 def untreated_slot() -> dict:
     """**枠に立っている決めの本が、前提の脚を通っていないか。**（`data/` と台本の控えだけ・**API 0単位**）
 
@@ -2171,7 +2248,7 @@ def untreated_slot() -> dict:
         out["why"] = f"`src.daily_pick` が読めません（{str(exc)[:60]}）"
         return out
     try:
-        cur = _dp.current(_dp.for_day())
+        cur = rule3_book()
     except Exception as exc:                                       # noqa: BLE001
         out["why"] = f"決めが読めません（{str(exc)[:60]}）"
         return out
