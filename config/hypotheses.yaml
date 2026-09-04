@@ -6843,7 +6843,7 @@ hypotheses:
     #   08/16〜08/28 の他の12日は 0再生 が1本もありません。
     #   **処置が再生を落としているのではなく、08/27 の1日が丸ごと落ちています。**
     #   その日そのものは別の前提で立ててあります（この下の「08/27」の項）。
-    deadline: "2026-09-23"
+    deadline: "2026-09-22"
     lever: per_video                # engaged 比率
     side: content
     watch: 冒頭のstatの割り方-両群16本
@@ -8424,7 +8424,7 @@ hypotheses:
     # 期限を据え置くと `ready > deadline` ＝ **測る前から届かない期限**になります
     # （`tests/test_hypothesis_deadline_reachable.py` の存在理由そのもの）。
     # この前提の `falsified_if` も「6本 に満たなければ期限だけ延ばすこと」と書いています。
-    deadline: "2026-10-02"
+    deadline: "2026-09-13"
     lever: per_video
     side: dist
     # **数の門を書いたら、見張る先も書くこと**（2026-09-01・別のサブが足した）。
