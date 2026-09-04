@@ -85,6 +85,28 @@ def _published_today() -> dict:
             "uploaded_at": "2026-09-01T04:00:00+00:00"}
 
 
+def _today_full() -> list[dict]:
+    """**きょうの枠を、規則いっぱいまで埋める。**（2026-09-05 に足した）
+
+    ここは長らく `[_published_today()]` の **1本**で「きょうは埋まっている」を
+    作っていました（`PUBLISH_PER_DAY = 1` だったため）。2026-09-05 に規則が
+    10本/日 になると **1本 では埋まらず**、この file の「埋まっている側」の
+    検査4件が、空いている場面を測る形へ化けます（実際に赤くなりました）。
+
+    **見張っている物は同じ** —— 埋まった日へ `--move` を出さないこと・
+    その日に居る本を名指しすること・下書き 0本 で鳴ること。
+    **埋め方だけを規則から作ります。**
+    """
+    n = max(1, house_rule.cap())
+    rows = [_published_today()]
+    for i in range(1, n):
+        rows.append({"video_id": f"fill{i:02d}", "title": f"きょうの{i + 1}本目",
+                     "topic": f"fill-topic-{i:02d}",
+                     "at": f"2026-09-02T0{min(i, 9)}:0{i % 10}:00+00:00",
+                     "uploaded_at": "2026-09-01T04:00:00+00:00"})
+    return rows
+
+
 def _draft() -> dict:
     """**予約を付けずに上げた下書き**（`at` も `retimed_at` も無い）。"""
     return {"video_id": "MqQKSnbM0OI", "title": "次の日のぶん",
@@ -99,8 +121,9 @@ def test_today_count_includes_the_video_already_published(tmp_path):
     `calendar()` の `per_day` は `at > t` しか数えないので、
     **公開した直後の回ほど「きょうは空いている」と答えます。**
     """
-    p = _ledger(tmp_path, [_published_today(), _draft()])
-    assert next_slot.today_count(now=NOW, path=p) == 1
+    rows = _today_full()
+    p = _ledger(tmp_path, [*rows, _draft()])
+    assert next_slot.today_count(now=NOW, path=p) == len(rows)
     assert next_slot.today_full(now=NOW, path=p) is True
 
 
@@ -115,7 +138,7 @@ def test_today_count_is_zero_when_nothing_is_placed(tmp_path):
 
 def test_printer_does_not_offer_today(tmp_path):
     """埋まっている回に `--move <きょう>` を印字しないこと（**発火**）。"""
-    p = _ledger(tmp_path, [_published_today(), _draft()])
+    p = _ledger(tmp_path, [*_today_full(), _draft()])
     out = "\n".join(next_slot.draft_lines(now=NOW, path=p))
     assert out, "下書きが在るのに1行も出ていません"
     assert "--move MqQKSnbM0OI 2026-09-02" not in out, \
@@ -145,7 +168,7 @@ def test_zero_drafts_after_publishing_is_the_alarm(tmp_path):
     **止まっている回は何も出ない。** `scripts/slot_gate.py` も塞ぎません
     （`LEAD_DAYS = 0` ＝ きょうしか見ないので、きょうの1本が出た瞬間に黙る）。
     """
-    p = _ledger(tmp_path, [_published_today()])
+    p = _ledger(tmp_path, _today_full())
     out = "\n".join(next_slot.draft_lines(now=NOW, path=p))
     assert "下書きが 0本" in out, \
         "公開したのに次の日のぶんが 0本 —— それを言う口が1つもありません"
@@ -176,7 +199,7 @@ def _rows_for(monkeypatch, rows: list[dict]) -> None:
 
 def test_taken_day_is_refused(monkeypatch):
     """**埋まっている日への `--move` は、API を1回も呼ばずに拒むこと**（発火）。"""
-    _rows_for(monkeypatch, [_published_today(), _draft()])
+    _rows_for(monkeypatch, [*_today_full(), _draft()])
     got = reschedule._rule_blocks_move("MqQKSnbM0OI", "2026-09-02T20:00")
     assert got, "規則1 を破る `--move` が素通りしています"
     assert "a63FzIUV2wI" in "\n".join(got), "その日に居る本を名指ししていません"
@@ -184,7 +207,7 @@ def test_taken_day_is_refused(monkeypatch):
 
 def test_empty_day_is_allowed(monkeypatch):
     """**常に拒む実装を落とすため。** 空いている日は通すこと。"""
-    _rows_for(monkeypatch, [_published_today(), _draft()])
+    _rows_for(monkeypatch, [*_today_full(), _draft()])
     assert reschedule._rule_blocks_move("MqQKSnbM0OI", "2026-09-03T20:00") == []
 
 
