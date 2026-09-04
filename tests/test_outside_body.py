@@ -107,8 +107,31 @@ def test_章が書かれていない台本には何も言わない():
     assert all("章" not in h or "末尾" in h for h in hits)
 
 
+#: **(2d)「章ごとに判断を1つ」を 2026-09-04 16:3x に足したとき、実物で鳴った本**。
+#: 6本 中 2本（どちらも題材 `zaishoku-2026-62man`）の章「線の位置と賞与」が、
+#: 線の動き方の説明だけで、決める物を1つも持っていません（**真の当たり**。
+#: 同じ台本の別の章「月給を抑えるか・4人の例」は「次の判断は、月給を抑えるべきかです」と
+#: 言っており、この本が判断を書けない訳ではありません）。
+#:
+#: **直さずに、名前で記録しています。** `1huadpEk6HY` は 09/04 09:2x に公開ずみで、
+#: 台本を直すと焼き直しが起きて**齢が 0 に戻り**、前提「外の作り方を写した長尺」の
+#: 48h（09/06 09:00）が測れなくなります（`config/hypotheses.yaml`）。
+#:
+#: **覆る条件**: `1huadpEk6HY` の 48h が読めたら、この免除は要りません ——
+#: `data/scripts/zaishoku-2026-62man.script.json` の章「線の位置と賞与」に判断を1つ入れて、
+#: ここを空にすること。**空にできないなら、その回が理由をここへ書くこと。**
+_KNOWN_MISS = {
+    "1huadpEk6HY": "章「線の位置と賞与」に判断が1つも無い",
+    "6PKux5HNnUE": "章「線の位置と賞与」に判断が1つも無い",
+}
+
+
 def test_実物の_outside_long_3本が全部通る():
-    """**実物で撃つこと。** 落とすために足したのではないと、ここで言えます。"""
+    """**実物で撃つこと。** 落とすために足したのではないと、ここで言えます。
+
+    **【2026-09-04 16:3x】(2d) を足して、免除を2件 置きました**（すぐ上の `_KNOWN_MISS`）。
+    免除の外の本は、いまも 1件も鳴りません —— **09/05 に出る本 `O_lfBxB7S8Q` を含みます。**
+    """
     from src import config
 
     tops = {str(t.get("id")): t.get("style")
@@ -129,5 +152,14 @@ def test_実物の_outside_long_3本が全部通る():
             continue
         d = json.loads(script.read_text(encoding="utf-8"))
         seen += 1
-        assert sw.outside_body_problems(d) == [], f"{meta.stem} で鳴りました"
+        hits = sw.outside_body_problems(d)
+        known = _KNOWN_MISS.get(meta.stem)
+        if known:
+            # **免除は「鳴ってよい」ではなく「この1件だけ鳴る」です。**
+            assert [h for h in hits if not h.startswith(known)] == [], \
+                f"{meta.stem} で、記録に無い件が鳴りました: {hits}"
+            assert any(h.startswith(known) for h in hits), \
+                f"{meta.stem} は直ったようです。`_KNOWN_MISS` から外すこと"
+            continue
+        assert hits == [], f"{meta.stem} で鳴りました"
     assert seen >= 1, "outside_long の控えが1本も見つかりません"
