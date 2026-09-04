@@ -1477,30 +1477,107 @@ def rebake_plan(*, cur: dict | None, stash_text: str | None, draft_text: str | N
     return out
 
 
-def _rebake_rows(root: Path | None = None) -> list[dict]:
-    import json                                                # noqa: PLC0415
-    f = Path(root or config.ROOT) / REBAKE_LEDGER
-    rows: list[dict] = []
+def _shared_ledger(root: Path | None = None) -> Path | None:
+    """**器をまたぐ帳面の写し**（`<共通の .git>/rebake/ledger.jsonl`）。無ければ `None`。
+
+    ## なぜ要るか（2026-09-04 21:3x に実物で踏んだ）
+
+    錠（`rebake.lock`）は 09/03 に `.git` の共通の場所へ移り、**器をまたぎます**。
+    ところが**帳面（`data/rebake.jsonl`）は移っていません** —— `data/` は作業コピー
+    ごとに別なので、焼いた器だけが `done` を持ちます。実測 09/04:
+
+        20:02:48  器 `…af047fc9bb89058d6` が `e6sLHLmPhrk` の焼きを起こす（`start`）
+        21:31:36  同じ器に `done`・`new_id` **`GFvAcxvDmYM`**（5,323秒）
+        21:3x     **別の器**（`…ad5f11021d2d1cb89`）の `data/rebake.jsonl` は
+                  20:02 の `start` で止まったまま。`git` にも上がっていない
+                  （帳面は commit されて初めて渡るので、**焼いている間ずっと渡りません**）
+
+    そのあいだ、別の器の画面はこう言います —— **「手元の台本は4脚とも ○ なのに、
+    焼きが走っていません。起こすこと: `python scripts/ahead_sweep.py`」**
+    （`scripts/run_marker.untreated_slot`）。錠は空（焼きは終わっている）なので、
+    この行は**正しく**出ます。ところが**その器が名指ししている本 `e6sLHLmPhrk` は、
+    もう差し替えられています。** 起こせば、**superseded な本をもう一度 焼いて
+    上げます** ＝ `docs/trigger_main.md` が名指ししている
+    「**手で撃つと同じ本が2本 上がります**」が、手で撃たなくても起きる形でした。
+
+    `_baked_today()` の註は覆る条件でこう言っています ——「焼く側が別の器で走る
+    ようになったら、`rebake_busy()`（`flock`）は器をまたがないので『走っている1本』を
+    見落とします。**帳面の心拍で読むこと**」。**錠のほうは直りましたが、
+    その『帳面』自体が器ごとに別でした。**
+
+    ## どう直したか
+
+    書く側（`_rebake_note`）は `data/rebake.jsonl` と**この写しの両方**へ足し、
+    読む側（`_rebake_rows`）は**両方を合わせて**（同じ行は1つに畳んで `at` で並べて）
+    返します。行は append-only の JSON 行なので、合わせるのは何度やっても同じ結果です。
+
+    **`data/rebake.jsonl` は残します**（commit されて履歴に載る側・`ledger_holes` が見る）。
+    こちらは commit されない、器をまたぐだけの写しです。
+
+    ## 検査のための門
+
+    `config.ROOT` が実物の repo でない回（`tmp_path` へ差し替えた検査）では `None` を
+    返します —— **検査が機械ぜんぶの写しを汚さないため**。
+
+    **覆る条件**: 帳面そのものが `.git` の共通の場所へ移ったら、この写しは要りません。
+    """
     try:
-        for ln in f.read_text(encoding="utf-8").splitlines():
+        from src import history                                # noqa: PLC0415
+        if Path(root or config.ROOT).resolve() != Path(history._REPO).resolve():
+            return None                                        # 検査（`tmp_path`）
+        common = history._git_common_dir()
+    except Exception:                                          # noqa: BLE001
+        return None
+    return (common / "rebake" / "ledger.jsonl") if common else None
+
+
+def _rebake_rows(root: Path | None = None) -> list[dict]:
+    """**帳面の行**（`data/rebake.jsonl` ＋ 器をまたぐ写し）。同じ行は1つに畳み、`at` で並べる。"""
+    import json                                                # noqa: PLC0415
+    seen: set[str] = set()
+    rows: list[dict] = []
+    files = [Path(root or config.ROOT) / REBAKE_LEDGER]
+    shared = _shared_ledger(root)
+    if shared is not None:
+        files.append(shared)
+    for f in files:
+        try:
+            text = f.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        for ln in text.splitlines():
             try:
-                rows.append(json.loads(ln))
+                row = json.loads(ln)
             except Exception:                                  # noqa: BLE001
                 continue
-    except OSError:
-        pass
+            if not isinstance(row, dict):
+                continue
+            key = json.dumps(row, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+            if key in seen:
+                continue
+            seen.add(key)
+            rows.append(row)
+    # **並べ直すのは合わせたときだけ**（1つの file なら書いた順そのまま）。
+    if shared is not None:
+        rows.sort(key=lambda r: str(r.get("at") or ""))
     return rows
 
 
 def _rebake_note(row: dict, root: Path | None = None) -> None:
+    """帳面へ1行 足す。**器をまたぐ写しにも同じ行を足します**（`_shared_ledger` の註）。"""
     import json                                                # noqa: PLC0415
-    f = Path(root or config.ROOT) / REBAKE_LEDGER
-    try:
-        f.parent.mkdir(parents=True, exist_ok=True)
-        with f.open("a", encoding="utf-8") as fh:
-            fh.write(json.dumps(row, ensure_ascii=False) + "\n")
-    except OSError:
-        pass
+    line = json.dumps(row, ensure_ascii=False) + "\n"
+    targets = [Path(root or config.ROOT) / REBAKE_LEDGER]
+    shared = _shared_ledger(root)
+    if shared is not None:
+        targets.append(shared)
+    for f in targets:
+        try:
+            f.parent.mkdir(parents=True, exist_ok=True)
+            with f.open("a", encoding="utf-8") as fh:
+                fh.write(line)
+        except OSError:
+            continue
 
 
 #: 決めが在る先の日を、きょうの他に何日ぶん見るか（2026-09-03 05:xx・最適化の回）。
@@ -1626,21 +1703,16 @@ def bake_minutes() -> tuple[float | None, int]:
         return vals[len(vals) // 2]
 
     # 1. 本物の長さ（焼き始め → 終わり）。1件でも在ればこちらを使う。
+    #    **`_rebake_rows()` から読みます**（器をまたぐ写しを見落とさないため・
+    #    `_shared_ledger()` の註。別の器で焼いた `done` は commit されるまで
+    #    `data/rebake.jsonl` に来ません）。
     done: list[float] = []
-    try:
-        f = Path(config.ROOT) / REBAKE_LEDGER
-        for ln in f.read_text(encoding="utf-8").splitlines():
-            try:
-                row = json.loads(ln)
-            except Exception:                                  # noqa: BLE001
-                continue
-            if (row.get("kind") or row.get("event")) != "done":
-                continue
-            sec = row.get("seconds")
-            if isinstance(sec, (int, float)) and sec > 0:
-                done.append(float(sec))
-    except OSError:
-        done = []
+    for row in _rebake_rows():
+        if (row.get("kind") or row.get("event")) != "done":
+            continue
+        sec = row.get("seconds")
+        if isinstance(sec, (int, float)) and sec > 0:
+            done.append(float(sec))
     if done:
         # **5件 に届いたら上側（最大）**（上の註）。短い側へ外れた回だけが、
         # 差し替えの前に降ります。
