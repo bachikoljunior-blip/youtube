@@ -2837,6 +2837,11 @@ def lines(next_row: dict | None, now: datetime | None = None,
                            f"（{_e.get('form') or '?'}・門 {_e['win']:,.0f}回）: {_v['why']}"
                            f" —— **枠をこの試しに使う前に、門を機会費用まで上げるか、"
                            f"この試しを枠の外（既存本の差し替え）へ移すこと。**")
+                # **実際に枠を取った言い分に、その場で数で答えること**（`slot_cost.OVERRIDES`）。
+                #     09/04 の3回の決めは、この2つの言い分だけで枠を取っています
+                #     （`data/daily_pick.jsonl` の `why`）。門を置いても、
+                #     言い分に答えが無ければ次の回がまた同じ手で通します。
+                out.extend(slot_cost.override_notes(_e["win"], cmp=c))
     except Exception as exc:                                       # noqa: BLE001
         out.append(f"     （枠の機会費用の行は出せませんでした: {exc}）")
     # **門の数は前提ではないので、前提が閉じても消えない**（2026-09-03 夜・`gate_arithmetic` の註）。

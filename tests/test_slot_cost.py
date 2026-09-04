@@ -116,3 +116,23 @@ def test_daily_pick_prints_the_gate():
     from src import daily_pick as dp
     src = inspect.getsource(dp.lines)
     assert "slot_cost" in src, "daily_pick.lines() から枠の機会費用の行が外れています"
+
+
+def test_override_notes_answer_the_two_arguments_that_actually_took_the_slot():
+    """**実際に枠を取った2つの言い分に、数で答えが出ること。**
+
+    出典は `data/daily_pick.jsonl`（09/04 22:24／22:54／23:24 の `why`）——
+    (1)「既に使った枠が捨てになる」(2)「比べる相手の分母が処置0本」。
+    **門を置いても、言い分に答えが無ければ次の回が同じ手で通します。**
+    """
+    notes = slot_cost.override_notes(100.0, cmp=_cmp())
+    assert len(notes) == 2
+    joined = "\n".join(notes)
+    assert "捨てになる" in joined and "処置0本" in joined
+    assert "1,049" in joined and "100" in joined
+    # 沈んだ費用は次の枠の値を上げない、と明言していること
+    assert "次の枠の値を1回も上げません" in joined
+
+
+def test_override_notes_are_silent_without_a_threshold():
+    assert slot_cost.override_notes(None, cmp=_cmp()) == []

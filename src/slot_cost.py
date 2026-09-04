@@ -144,6 +144,33 @@ def lines(cmp: dict | None = None, *, now=None, win: float | None = None,
     return out
 
 
+#: **実際に枠を取った2つの言い分**（`data/daily_pick.jsonl`・09/04 22:24／22:54／23:24 の
+#: `why` から、この回に読んだ原文）。**どちらも門を通ったのではなく、門が無かったので通りました。**
+#: ここに残すのは、次の回が同じ言い分でまた枠を取れないようにするためです。
+OVERRIDES = (
+    ("既に使った枠が捨てになる",
+     "09/04 の枠はもう使い終わっています。**使い終わった枠は、次の枠の値を1回も上げません。**"
+     "決めるのは「09/05 の1枠を、いま何回 の見込みに使うか」だけ ——"
+     "**{cost:,.0f}回（規則の密度の中央値）か、当たっても {win:,.0f}回 か。**"),
+    ("比べる相手の分母が処置0本だから比べられない",
+     "枠の機会費用に処置は要りません。**{cost:,.0f}回 は、何も足していない普通のショートが"
+     "規則の密度の日に実際に出した数**（n={n}）です。"
+     "**その枠を捨てて買うものが {win:,.0f}回 なら、処置の有無に関係なく足りません。**"),
+)
+
+
+def override_notes(win: float | None, *, sv: dict | None = None,
+                   cmp: dict | None = None, now=None) -> list[str]:
+    """**枠を取るときに実際に使われた言い分に、数で答える行。** API 0単位。"""
+    s = sv if sv is not None else slot_value(cmp=cmp, now=now)
+    cost, best = s.get("cost"), s.get("best")
+    if win is None or cost in (None, 0):
+        return []
+    n = (s["forms"].get(best) or {}).get("n", 0)
+    return [f"       ・「{name}」→ " + body.format(cost=cost, win=win, n=n)
+            for name, body in OVERRIDES]
+
+
 def open_slot_experiments(path=None) -> list[dict]:
     """`config/hypotheses.yaml` の**枠を食う前提**を返す。API 0単位。
 
