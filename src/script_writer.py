@@ -749,6 +749,13 @@ def long_script_problems(script, topic_id: str = "") -> list[str]:
         # **(4) 題とサムネ も同じ理由で数えます**（2026-09-04 12:5x・`outside_title_problems`
         # の docstring）。**実測 3/3 で外れていた脚はここだけです。**
         problems += outside_title_problems(script)
+        # **(3) 尺（ナレーションの字数）も同じ理由で数えます**
+        # （2026-09-05 03:5x・`outside_length_problems` の docstring）。
+        # **前の回（02:1x）が `OUTSIDE_RULE_LEGS` に「数えるならここに足すこと ——
+        # この回は入れていない」と書いて置いていった宿題**です。数えていなかったあいだ、
+        # 09/05 の枠の本は 22.7分（切れ目 25分 の 2.3分 下）で、それでも
+        # `pick_legs()` は 4脚とも ○ を返していました。
+        problems += outside_length_problems(script)
         # **(5) 間合い（narration 2〜4文・章の頭の前提）も同じ理由で数えます**
         # （2026-09-04 13:4x・`outside_pacing_problems` の docstring）。
         #
@@ -1770,6 +1777,80 @@ OUTSIDE_RULE_UNIT_MIN = 4
 #: 数えないと決めた節に置く印（先頭がこれなら「口が無い」ではなく「置かないと決めた」）。
 OUTSIDE_LEG_NOT_COUNTED = "数えない: "
 
+
+def outside_length_chars_floor() -> int:
+    """**`style: outside_long` の台本が下回ってはいけないナレーション字数**（純関数・API 0単位）。
+
+    `daily_pick.OUTSIDE_LONG_KNEE_SEC`（25分）× `LONG_CHARS_PER_SECOND`（5.62字/秒）。
+    実測 2026-09-05: **8,430字**。
+
+    ## **床は「狙い」ではなく「切れ目」に置いてあります**（2026-09-05 03:5x）
+
+    規則の本文が命じているのは **8,800〜9,800字（26〜29分）** です。床をそこに置くと、
+    **8,430〜8,800字 の台本が書き直しの回数（3回・`generate()`）を食います。**
+    ところが外の帯を数え直すと、効いているのは **25分 の切れ目**のほうです
+    （`data/niche_corpus.jsonl` の長尺 335本・1日あたりの中央値）:
+
+        0〜20分   n=229      8回/日
+        20〜25分  n= 33    792回/日
+        25〜30分  n= 24  2,094回/日   ← 切れ目はここ（×2.6）
+        30〜35分  n= 13    969回/日
+        35〜60分  n= 28  2,519回/日
+
+    **狙いは 26〜29分 のまま、落とすのは 25分 を割った台本だけ**にします。
+    ＝ 帯が実際に罰している所だけで落とし、狙いとの差 370字 は書き手の余裕に残す。
+
+    **覆る条件**: 帯を数え直して切れ目が 25分 でなくなったら、
+    `daily_pick.OUTSIDE_LONG_KNEE_SEC` を動かすこと（この関数は自動で追随します）。
+    **ここに 8430 と直接 書かないこと。**
+    """
+    from .daily_pick import LONG_CHARS_PER_SECOND, OUTSIDE_LONG_KNEE_SEC  # noqa: PLC0415
+    return int(OUTSIDE_LONG_KNEE_SEC * LONG_CHARS_PER_SECOND)
+
+
+def outside_length_problems(script) -> list[str]:
+    """`style: outside_long` の台本が、**外の帯の切れ目（25分）を割っていないか。**
+
+    ## なぜ要ったか（2026-09-05 03:5x に足した。**前の回が自分で書いた宿題**）
+
+    `OUTSIDE_RULE_LEGS` の「ナレーションの合計を 8,800〜9,800文字にすること」には、
+    2026-09-05 02:1x の回がこう書いて置いていきました ——
+    「**字数の上限を落とす口はまだ在りません**（下限だけ `verify` の `min_minutes`）。
+    足りない字数で焼くと尺が帯の遅い側へ落ちるので、**数えるなら
+    `long_script_problems` に足すこと** —— この回は入れていない」。**その口です。**
+
+    入れていなかったあいだ、何が起きたか。09/05 の枠の `GFvAcxvDmYM` は
+    **台本 7,699字 ＝ 22.7分** で、外の帯の切れ目 25分 を **2.3分 下回っています**。
+    ところが `daily_pick.pick_legs()` は 4脚とも ○ を返すので、
+    **毎周の画面は「焼き直して得られる脚は 0本」と刷り続け**、
+    帯でいちばん大きく効いている軸（×2.6）が**どの回からも見えませんでした**。
+
+    **落とすのは `verify` ではなくここです。** `verify` で落とすと1本まるごと捨て
+    （`claude -p` ＋合成＋レンダリング）ですが、ここなら**同じセッションが
+    3回まで書き直せます**（`long_script_problems` の冒頭と同じ理由）。
+
+    ## 上を数えない理由
+
+    帯は 30〜35分 で 969回/日 まで落ち、35〜60分 で 2,519回/日 へ戻ります
+    ＝ **上側に罰は測れていません。** 上限で落とすと、書き直しの回数を
+    測っていない理由で食うだけになります。**下だけ数えます。**
+
+    **覆る条件**: 前提「外の作り方を写した長尺」が外れたら（48h で 100回 未満）、
+    `OUTSIDE_LONG_RULE` ごと落とすので、この検査も一緒に落とすこと。
+    """
+    segs = script.model_dump().get("segments") or []
+    chars = sum(len(str(x.get("narration") or "")) for x in segs if isinstance(x, dict))
+    floor = outside_length_chars_floor()
+    if chars >= floor:
+        return []
+    from .daily_pick import LONG_CHARS_PER_SECOND  # noqa: PLC0415
+    return [f"尺: ナレーションの合計が {chars:,}字 ＝ 約{chars / LONG_CHARS_PER_SECOND / 60:.1f}分 で、"
+            f"外の帯の切れ目 25分（{floor:,}字）を割っています。"
+            f"**狙いは 8,800〜9,800字（26〜29分）**。"
+            f"あと {floor - chars:,}字 以上 足りません —— "
+            f"**章を足して埋めること**（同じ話を繰り返して字数を作らない。"
+            f"足す判断が無いなら、字数ではなく題材を替える）"]
+
 #: 規則の節 → それを数える口（関数名）。**`OUTSIDE_LEG_NOT_COUNTED` で始まる値は、置かないと決めた節。**
 #: 見出しは本文の**部分文字列**です（本文を書き換えたら、ここも書き換わるまで赤のまま）。
 OUTSIDE_RULE_LEGS: tuple[tuple[str, str], ...] = (
@@ -1791,10 +1872,17 @@ OUTSIDE_RULE_LEGS: tuple[tuple[str, str], ...] = (
      OUTSIDE_LEG_NOT_COUNTED + "尺は台本だけでは決まらない（読み上げの速さ・図の尺）。"
      "`verify.check()` が焼いたあとの実物で見ている（`min_minutes`）。"
      "**狙いの帯に居るかは `daily_pick.draft_length_lines()` が毎周 印字する**"),
-    ("ナレーションの合計を 8,800〜9,800文字にすること",
-     OUTSIDE_LEG_NOT_COUNTED + "**字数の上限を落とす口はまだ在りません**（下限だけ "
-     "`verify` の `min_minutes`）。足りない字数で焼くと尺が帯の遅い側へ落ちるので、"
-     "**数えるなら `long_script_problems` に足すこと** —— この回は入れていない"),
+    # **2026-09-05 03:5x に、ここが「数えない」から「数える」へ変わりました。**
+    # 前の版はこう書いてありました ——「**字数の上限を落とす口はまだ在りません**
+    # （下限だけ `verify` の `min_minutes`）。足りない字数で焼くと尺が帯の遅い側へ
+    # 落ちるので、**数えるなら `long_script_problems` に足すこと** —— この回は入れていない」。
+    # **その宿題を、この行を書いた回の1時間半あとの回が果たしました**
+    # （`outside_length_problems`）。落とすのは**下だけ**・床は**狙い 26分 ではなく
+    # 帯の切れ目 25分**です（理由は同関数の docstring）。
+    # **番号は付けません。** 規則の (1)〜(5) は 冒頭／章／締め／題・サムネ／間合い で、
+    # 尺の節はその外の箇条書きです。ここに (3) と書くと「締め」を指してしまいます
+    # （`test_表が書いた脚の番号は_その口が本当に数えている番号か` が、この回に実際に赤で止めました）。
+    ("ナレーションの合計を 8,800〜9,800文字にすること", "outside_length_problems"),
     ("外の長尺 365本 の実測", OUTSIDE_LEG_NOT_COUNTED + "出どころの註"),
     ("尺は書き手から見えないので文字数で書いています",
      OUTSIDE_LEG_NOT_COUNTED + "なぜ文字数で命じるかの註。**命じている物は上の2節**で、ここは落とす条件を持たない"),
