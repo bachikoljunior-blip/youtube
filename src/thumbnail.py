@@ -327,6 +327,61 @@ def _create_outside(img: Image.Image, line1: str, line2: str, kicker: str | None
     return out_path
 
 
+#: 字を置く左端（`create()` の `(72, …)`）と、右に残す余白。
+#: **右の余白は、縁取り（`_draw_outlined` の `stroke=10`）が切れないぶん**です。
+TEXT_LEFT = 72
+TEXT_RIGHT_PAD = 40
+
+
+def _fit(draw: ImageDraw.ImageDraw, text: str, start: int, *, floor: int = 54):
+    """**枠に入る、いちばん大きい字**を返す（`start` で入るなら `start` のまま）。
+
+    ## なぜ要るか（2026-09-05 07:xx に、きょうの枠の本で見た）
+
+    `create()` は字の大きさを**文字数の2段**だけで決めていました::
+
+        size2 = 150 if len(line2) <= 7 else 120
+
+    **幅を1度も測っていません。** 120px の全角は約 120px 幅なので、
+    左端 72px から書き始めると **入るのは 10文字**（1280 − 72 − 40 ＝ 1,168px）。
+    **11文字目から先は、画面の外へ出て消えます。**
+
+    実物（この回に焼いて目で見た・きょうの枠の本 `qyVdpAoT_40`）::
+
+        line2 = 「小規模企業共済 241か月目」（13文字）
+        出来た絵 = 「小規模企業共済 241か」  ← **右端で切れている**
+
+    **切れていることは、どこにも印字されません**（例外も警告も出ない）。
+    `thumbnail.create` は 2026-08-31 に kicker を足したときも、
+    「本文の字を小さくせずに」と書いており、**幅は一度も測っていません。**
+
+    ## 何をするか
+
+    `start` から 6px ずつ下げて、**実際に描いたときの幅**（`textlength`）が
+    枠に入るまで探します。`floor` より小さくはしません ——
+    **小さすぎる字は、切れていないだけで、やはり読めない**からです
+    （そこまで小さくなる本は、字のほうを短くすること）。
+
+    **入る字は1ピクセルも変わりません** —— `start` で入るなら `start` を返します。
+    ＝ いまの控え 580枚 のうち、**切れていた本だけ**が変わります。
+
+    ## 覆る条件
+
+    - `TEXT_LEFT` か `_draw_outlined` の `stroke` を変えたら、`TEXT_RIGHT_PAD` も見直すこと。
+    - `_create_outside`（外の型）は別の関数で、ここは通りません。**あちらは
+      別に測ること** —— この回は触っていません（`style: outside_long` の本 1本）。
+    """
+    size = int(start)
+    font = _font(size)
+    if not text:
+        return font
+    limit = W - TEXT_LEFT - TEXT_RIGHT_PAD
+    while size > floor and draw.textlength(text, font=font) > limit:
+        size -= 6
+        font = _font(size)
+    return font
+
+
 def create(source: Path, line1: str, line2: str, out_path: Path, work: Path,
            accent: tuple[int, int, int] | None = None,
            kicker: str | None = None, style: str | None = None) -> Path:
@@ -365,7 +420,8 @@ def create(source: Path, line1: str, line2: str, out_path: Path, work: Path,
 
     size1 = 150 if len(line1) <= 7 else 120
     size2 = 150 if len(line2) <= 7 else 120
-    f1, f2 = _font(size1), _font(size2)
+    f1 = _fit(draw, line1, size1)
+    f2 = _fit(draw, line2, size2)
 
     h1 = draw.textbbox((0, 0), line1 or "　", font=f1)[3]
     h2 = draw.textbbox((0, 0), line2 or "　", font=f2)[3]
@@ -375,7 +431,8 @@ def create(source: Path, line1: str, line2: str, out_path: Path, work: Path,
     if kicker:
         # **本文より明らかに小さく。** 同じ大きさで3行 並べると、
         # どれが結論か分からなくなります（読む順が決まらない）。
-        fk = _font(KICKER_SIZE if len(kicker) <= 18 else KICKER_SIZE - 10)
+        fk = _fit(draw, kicker,
+                  KICKER_SIZE if len(kicker) <= 18 else KICKER_SIZE - 10, floor=34)
         hk = draw.textbbox((0, 0), kicker, font=fk)[3]
 
     block = h1 + h2 + gap + ((hk + KICKER_GAP) if hk else 0)

@@ -564,6 +564,100 @@ def push_missing(dry_run: bool = False, force: bool = False,
     return 0 if ok == len(rows) else 1
 
 
+def _thumb_text(video_id: str, topic: str, stash: Path) -> tuple[dict | None, str]:
+    """**サムネの2行と kicker を、在る所から拾う。**（`(字, 出どころ)`・**API 0単位**）
+
+    ## なぜ要るか（2026-09-05 07:xx に、きょうの枠の本で踏んだ）
+
+    `rebuild_stash()` は `<ID>.script.json` **だけ**を読んでいました。その控えを
+    残すようになったのは **2026-09-02**（`scripts/critique_queue.stash()` の註）で、
+    それより前に上げた本には在りません。**この回に数えた実物**::
+
+        控えの本            712本
+        `<ID>.script.json`   **14本**（2.0%）
+        `<ID>.plan.json`    672本
+        絵は在るのに焼き直せない本  **566本**
+
+    ＝ **`--rebuild` は、控えの 98% に対して「控えが足りません」と言って
+    何もしない道具**でした。`scripts/run_marker.py --write` が毎周 印字している
+
+        サムネは `refresh_thumbnail.py --rebuild <ID>` → `--missing --video <ID> --replace`
+
+    は、**ほとんどの本で1手目から落ちます。**
+
+    実際に踏んだ形（きょうの枠の本 `qyVdpAoT_40`・題材 `s-shokibo-241kagetsu-9man4500`）:
+    05:58 にきょうだいの回が題を「【小規模企業共済】240か月と241か月で税額はいくら違う？」へ
+    入れ替えました（帯でいちばん厚い特徴 `【】`×5.52・`？`×2.39）。**絵のほうは
+    2026-08-19 の控えのままで、`--rebuild` は「控えが足りません」で止まります。**
+    ＝ **題だけが動いて、絵が置いていかれる形が、道具の側で塞がっていませんでした。**
+
+    ## 拾う順（**上から、在った所で止まる**）
+
+        1. `data/critique_queue/<ID>.script.json`   ← 09-02 以降の本。**いちばん強い**
+        2. `data/scripts/<題材>.script.json`        ← 焼き直しが書き戻す所（`ahead_sweep`）
+        3. `data/critique_queue/<ID>.plan.json`     ← **08-17 以降の 672本**。下の組み立て
+
+    3 の組み立ては、**コマの実物からしか採りません**（推測を混ぜない）:
+
+        line1  最初の「数が入っているコマ」の `stat`（例 `9万4500円`）
+        line2  そのコマの `headline`（`　2/2` のような枝番は落とす）
+        kicker そのコマの `note`（前提。無ければ空）
+
+    **`stat` が1つも無い本は `None` を返します** —— 数の出ない絵を作るくらいなら、
+    **焼き直さないほうが正しい**（`thumbnail.create` は空の行でも絵を作ってしまう）。
+
+    ## 覆る条件
+
+    - `<ID>.script.json` が全部の本に揃ったら（＝ 09-02 より前の本を上げ直したら）、
+      2 と 3 は要らなくなります。**そのときは数を見て落とすこと**
+      （`ls data/critique_queue/*.script.json | wc -l` が控えの本数に届いたら）。
+    - `thumbnail.create` の引数（2行 ＋ kicker）が変わったら、3 の組み立ても一緒に。
+    - **3 で焼いた絵は、`<ID>.script.json` から焼いた絵と同じではありません** ——
+      元の絵の字は控えに残っていないので、**戻せません**。載せる前に
+      `data/critique_queue/<ID>.thumb.jpg` を目で見ること（`Read` で開ける）。
+    """
+    p = stash / f"{video_id}.script.json"
+    if p.exists():
+        try:
+            d = json.loads(p.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:                   # noqa: PERF203
+            return None, f"`{p.name}` が読めません（{str(exc)[:40]}）"
+        if d.get("thumbnail_line1"):
+            return d, f"`{p.name}`（台本の控え）"
+    if topic:
+        p2 = ROOT / "data" / "scripts" / f"{topic}.script.json"
+        if p2.exists():
+            try:
+                d = json.loads(p2.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                d = {}
+            if d.get("thumbnail_line1"):
+                return d, f"`data/scripts/{topic}.script.json`（手元の台本）"
+    p3 = stash / f"{video_id}.plan.json"
+    if not p3.exists():
+        return None, f"`{video_id}.script.json` も `{video_id}.plan.json` も在りません"
+    try:
+        plan = json.loads(p3.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        return None, f"`{p3.name}` が読めません（{str(exc)[:40]}）"
+    if not isinstance(plan, list):
+        return None, f"`{p3.name}` がコマの並びではありません"
+    for slide in plan:
+        if not isinstance(slide, dict):
+            continue
+        stat = str(slide.get("stat") or "").strip()
+        if not stat:
+            continue
+        head = str(slide.get("headline") or "").strip()
+        # `小規模企業共済 241か月目　2/2` のような枝番は、絵に入れない
+        head = head.split("　")[0].strip()
+        return ({"thumbnail_line1": stat,
+                 "thumbnail_line2": head,
+                 "thumbnail_kicker": str(slide.get("note") or "").strip() or None},
+                f"`{p3.name}`（コマの実物から組み立て・**元の字とは違います**）")
+    return None, f"`{p3.name}` に数の入ったコマが1枚もありません"
+
+
 def rebuild_stash(video_id: str, topic: str | None = None) -> int:
     """控えだけから絵を焼き直して、控えの `<ID>.thumb.jpg` を差し替える（**API 0単位**）。
 
@@ -577,13 +671,17 @@ def rebuild_stash(video_id: str, topic: str | None = None) -> int:
     stash = ROOT / "data" / "critique_queue"
     src_img, script_path = stash / f"{video_id}.jpg", stash / f"{video_id}.script.json"
     meta_path = stash / f"{video_id}.json"
-    if not (src_img.exists() and script_path.exists()):
-        print(f"[thumb] 控えが足りません: {src_img.name} / {script_path.name}")
+    if not src_img.exists():
+        print(f"[thumb] 控えのコマがありません: {src_img.name}")
         return 1
-    script = json.loads(script_path.read_text(encoding="utf-8"))
     if topic is None and meta_path.exists():
         topic = str(json.loads(meta_path.read_text(encoding="utf-8")).get("topic") or "")
     topic = topic or ""
+    script, where = _thumb_text(video_id, topic, stash)
+    if script is None:
+        print(f"[thumb] 絵の字が、どこからも取れません（{where}）")
+        return 1
+    print(f"[thumb] 絵の字の出どころ: {where}")
     work = ROOT / "build" / "_rebuild" / video_id
     work.mkdir(parents=True, exist_ok=True)
     theme = visuals.theme_for(topic, None)
