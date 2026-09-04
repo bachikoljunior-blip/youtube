@@ -54,6 +54,40 @@ def main(video_id: str, title: str) -> int:
     snippet = items[0]["snippet"]
     before = str(snippet.get("title") or "")
     print(f"  前: {before}")
+
+    from src import retitles                                    # noqa: PLC0415
+
+    # **実物ともう同じ字なら、撃たないこと**（2026-09-05 04:4x に数えて足した）。
+    #
+    # 50単位 を撃つ道具は4つあり、**3つは「もう同じ値か」を必ず見ています** ——
+    # `reschedule._update`（`report["reason"] == "same"`・2026-08-27 に足して
+    # **その日の枠の 6割**＝ 5,750単位 が同じ値の書き直しだったと数えている）、
+    # `sub_ask.apply_to_video`（`after == before` → 「既に入っています（0単位）」）、
+    # `refresh_thumbnail`（絵は控えから作り直してから押す）。
+    # **ここだけが、読んだ字と書く字を1度も比べていませんでした** ——
+    # `videos.list` で `before` を読んでいるのに、そのまま `update` を撃っています。
+    #
+    # **これは机上の穴ではありません。** `src/retitles.py` の註が実測を残しています ——
+    # 同じ本の題を **3つの回（23:04・00:07・00:2x）が追いかけた**。追いかけた側が
+    # 先の回と同じ字を打てば、その 50単位 は**1文字も変えずに**消えます。
+    #
+    # 止めても失うものがありません（**望んだ字は、もう実物に載っています**）。
+    if before == title:
+        print("[retitle] **実物はもうその字です。書きません**（`videos.update` 0単位）。")
+        # **控えのほうが古いなら、そこだけ直します**（`reschedule._update` の `"same"` の枝と
+        # `sub_ask` の `description_head/already` と同じ考え —— **実物が正本で、控えはその写し**）。
+        if retitles.latest().get(video_id) != before:
+            retitles.record(video_id, before, prev=retitles.latest().get(video_id) or "")
+            print("[retitle] 控え（`data/retitled.jsonl`）を実物へ寄せました（API 0単位）。")
+        return 0
+
+    # **前に名乗っていた字へ戻すのは、止めません。印字だけします**（`retitles.seen_before` の註）。
+    # `retitle.py` の存在理由は「誤解を与えるタイトルを今すぐ直す」ことなので、
+    # **戻す道を塞ぐと、この道具自身が塞がります。**
+    for row in retitles.seen_before(video_id, title):
+        print(f"[!] この字は {row.get('at')} にも名乗っています ——"
+              f" 戻すなら 50単位 です。**数を1つ持って来ること**")
+
     snippet["title"] = title
     # **計測のぶんを残して止める**（2026-08-28 の最適化の回・2枚目）。
     # `videos.update` は **50単位**。1本だけの道具ですが、門を外しておくと
@@ -80,8 +114,6 @@ def main(video_id: str, title: str) -> int:
     # `[次の枠]`（`src/next_slot.py`）はその帳面の `title` を刷るので、
     # **書かないと、その回がいちばん先に読む1行が古い題のままになります。**
     # 帳面は追記専用（`merge=union`）なので、行は書き換えず、別の帳面へ足して重ねます。
-    from src import retitles                                    # noqa: PLC0415
-
     retitles.record(video_id, title, prev=before)
     print(f"  後: {title}")
     return 0

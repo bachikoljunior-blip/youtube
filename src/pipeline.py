@@ -924,6 +924,52 @@ def main(argv: list[str] | None = None) -> int:
     # 次のコンテナで「同じ図」検査の比較対象がゼロになる（`src/bars.py`）。
     bars.record(topic["id"], video_id, script.model_dump())
 
+    # ---- **台本の控えを残す**（2026-09-05 05:0x に踏んで足した）
+    #
+    # `data/critique_queue/<ID>.script.json` は「**その動画に実際に入っている台本**」の
+    # 記録で、**この repo の判断のほとんどがここを読みます**::
+    #
+    #     daily_pick.pick_legs / treated_probe   ← その本が「処置」か（前提の判定に効く）
+    #     ahead_sweep.rebake_plan               ← 焼き直すか（控えと手元の台本の sha 比べ）
+    #     next_slot.rebake_input_lines          ← 焼き直しの手を刷るか
+    #     critique_queue                        ← 独立評価（M13）の材料
+    #
+    # **`pipeline` は投稿までやるのに、これを1度も残していませんでした。**
+    # 残していたのは `scripts/upload_only.py` だけで、＝ **控えが残るのは
+    # `pipeline --dry-run` → `upload_only.py` の2段を通った本だけ**でした。
+    # `python -m src.pipeline --topic <題材>` で上げた本は、控えが無いので
+    # `pick_legs` が「控えが読めません」を返し、**「処置」を名乗れません**
+    # （`treated_probe` は `"unknown"`）。前提「外の作り方を写した長尺」は
+    # 処置の本でしか閉じられないので、**その道で焼いた本では前提が1件も進みません。**
+    #
+    # 2026-09-05 04:5x に `next_slot.rebake_input_lines()` が
+    # 「台本の中身の脚が落ちているときは `python -m src.pipeline --topic <題材>`」と
+    # 刷るようになりました。**その手のとおりに撃つと、控えの無い本が出ます** ——
+    # 刷る側を直した回が、上げる側の穴に気づいた形です。ここで塞ぎます。
+    #
+    # 段は `upload_only` と同じ（contact sheet が無ければ作ってから残す）。
+    # **落ちても投稿は止めません**（投稿はもう済んでいる）が、黙って素通りもさせません。
+    #
+    # **覆る条件**: `upload_only.py` と `pipeline` の投稿後の段が1つに寄ったら、
+    # どちらか片方に置くこと。**2か所に置いたまま片方だけ直さないこと。**
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
+        import critique_queue as _cq                               # noqa: PLC0415
+        if not (work / "inspect.jpg").exists():
+            print("[queue] contact sheet が無いので、ここで作ります")
+            try:
+                import inspect_build as _ib                        # noqa: PLC0415
+                _ib.main(topic["id"])
+            except Exception as exc:                               # noqa: BLE001
+                print(f"[queue] contact sheet を作れませんでした（続行）: {str(exc)[:100]}")
+        _cq.stash(topic["id"], video_id, script.model_dump(), work,
+                  thumbnail_set=channel["publish"].get("thumbnail_set"))
+    except Exception as exc:                                       # noqa: BLE001
+        print(f"[queue] **台本の控えを残せませんでした: {str(exc)[:120]}**")
+        print("[queue] **投稿は済んでいます。** この本は `pick_legs` から見えません"
+              "（＝「処置」を名乗れず、焼き直しの判断にも入りません）。"
+              f"手で残すこと: `data/critique_queue/{video_id}.script.json`")
+
     refill_topics_if_low(posted | {topic["id"]})
     print("=== 完了 ===")
     return 0
