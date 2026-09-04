@@ -221,3 +221,36 @@ def test_型を持たない題材は処置に数えない(monkeypatch):
                         lambda *a, **k: [{"video_id": "V1", "form": "長尺", "topic": "t-plain"}])
     monkeypatch.setattr(daily_pick, "_topics", lambda: [{"id": "t-plain", "style": None}])
     assert daily_pick.treated_count("長尺") == (0, 1)
+
+
+# ----------------------------------------------------------------------
+# **枠の代金**（2026-09-04 23:5x・最適化の回）
+# 枠は 1日 1本 なので、試す本を1本 出すことは別の形を1本 出さないこと。
+# ところが前提の当たりの門（`OUTSIDE_48H_GATE` ＝ 100回）は「自分の記録の何倍か」
+# だけで置かれ、**譲る側の実測と並べた回が1度もありませんでした。**
+# 実測（この回に撃った）: `form_median_48h('ショート')` ＝ 164回 ＞ 門 100回
+# ＝ **当たっても、譲ったショートの中央値に届きません。**
+# ----------------------------------------------------------------------
+
+
+def test_当たりの門が譲る側の中央値より低いなら枠の代金を払えないと言う():
+    out = daily_pick.win_pays_for_slot(
+        "ショート", gate=100.0, median_call=lambda f: 164.0)
+    body = "\n".join(out)
+    assert "当たっても枠の代金を払えません" in body
+    assert "100回" in body and "164回" in body
+
+
+def test_門が譲る側より上なら1行も出さない():
+    """**当たれば代金を払える回は、この行は自分で消えること。**"""
+    assert daily_pick.win_pays_for_slot(
+        "ショート", gate=500.0, median_call=lambda f: 164.0) == []
+
+
+def test_譲る側が読めない回は推測で埋めない():
+    for bad in (None, 0, float("nan")):
+        assert daily_pick.win_pays_for_slot(
+            "ショート", gate=100.0, median_call=lambda f, b=bad: b) == []
+    assert daily_pick.win_pays_for_slot(
+        "ショート", gate=100.0,
+        median_call=lambda f: (_ for _ in ()).throw(RuntimeError("読めない"))) == []

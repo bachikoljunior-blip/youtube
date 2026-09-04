@@ -53,6 +53,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import re
 import statistics
@@ -1808,6 +1809,52 @@ def _median_pair_line(a: str, b: str, *, median_call=None) -> str:
     return "・".join(out)
 
 
+def win_pays_for_slot(give_up: str, *, gate: float = OUTSIDE_48H_GATE,
+                      median_call=None) -> list[str]:
+    """**その実験は、当たっても枠の代金を払えるか。**（API 0単位）
+
+    ## なぜ要るか（2026-09-04 23:5x・最適化の回。**2つ目の「いいえ」の理由**）
+
+    枠は 1日 1本（規則1）なので、**試す本を1本 出すことは、別の形を1本 出さないこと**です。
+    ところがこの repo は、前提の**当たりの門**を「自分の記録の何倍か」だけで置いてきました
+    —— `OUTSIDE_48H_GATE` は「いまの長尺の中央値 1回 の ×100」＝ **100回**。
+    **譲る側の実測と並べた回が、1度もありません。**
+
+    この回に撃った数: `form_median_48h('ショート')` ＝ **164回**。
+    ＝ **この前提は、当たっても（>100回）、譲ったショートの中央値（164回）に届きません。**
+    「作り方を写せば桁が動く」の最小の門としては正しくても、
+    **枠の値段としては、勝っても負けです。**
+
+    これは前提を落とす理由ではありません（門は緩めも締めもしない）。
+    **枠をどちらに使うかの理由**です —— 同じ実験は、**枠を食わない形**
+    （既に公開ずみの本で測る・門を譲る側の中央値の上に置き直す）でも立てられます。
+
+    **覆る条件**: 譲る側の中央値が門を下回ったら、この行は自分で消えます
+    （＝ 当たれば枠の代金を払える）。読めない回は**1行も出しません**（推測で埋めない）。
+    """
+    call = form_median_48h if median_call is None else median_call
+    try:
+        alt = call(give_up)
+    except Exception:                                              # noqa: BLE001
+        return []
+    # **`nan` は `<=` も `>` も False を返すので、大小だけの門を素通りします**
+    # （2026-09-04 23:5x に検査が拾った）。**有限であることを先に見ること。**
+    if not isinstance(alt, (int, float)) or isinstance(alt, bool):
+        return []
+    if not math.isfinite(alt) or alt <= 0:
+        return []
+    if gate is None or not math.isfinite(gate) or gate > alt:
+        return []
+    return [
+        f"     　 [数] **その前提は、当たっても枠の代金を払えません。**"
+        f" 当たりの門 **{gate:,.0f}回**（`src/daily_pick.OUTSIDE_48H_GATE`）＜"
+        f" 譲る {give_up} の齢{AGE_HOURS}h の中央値 **{alt:,.0f}回**"
+        f"（`form_median_48h`）—— **枠は 1日 1本 なので、試す本を出すことは"
+        f" {give_up} を1本 出さないこと**です。**当たりの門を、譲る側の実測の上に置き直すか、"
+        f"枠を食わない形（公開ずみの本で測る）にすること。**",
+    ]
+
+
 def standing_form_conflict(cur: dict | None, *, now: datetime | None = None,
                            uploaded_path: Path | None = None,
                            form_call=None, picks_path: Path | None = None,
@@ -1902,7 +1949,7 @@ def standing_form_conflict(cur: dict | None, *, now: datetime | None = None,
          f"     　 立っている決めの「理由」は**前の回の散文**です —— **根拠にしないこと**"
          f"（`data/daily_pick.jsonl` の `why` は前の決めを引く鎖で、いま {chain}回 連続で同じ形）。"
          f"**この回の数で決め直すか、門の算がなぜ外れているかを数で言うこと。**"),
-    ] + ([] if decided_this_round(cur) else [
+    ] + win_pays_for_slot(want) + ([] if decided_this_round(cur) else [
         "     　 決め直すなら（同じコマンドで上書き）:",
         f"       python -m src.daily_pick --pick {want} {topic} --why \"<いま撃った数で>\"",
     ])
@@ -2157,6 +2204,9 @@ def outside_long_readout(now: datetime | None = None, *, topics: list[dict] | No
             out.append(f"     外の作りの長尺 `{vid}` は {pub.astimezone(JST):%m/%d %H:%M} JST に出ます → "
                        f"24h の先読み（門 {OUTSIDE_24H_GATE}回）は {h24:%m/%d %H:%M} JST・"
                        f"48h の判定（門 {OUTSIDE_48H_GATE}回）は {h48:%m/%d %H:%M} JST")
+            # **その枠の代金**（2026-09-04 23:5x・最適化の回）。まだ出ていない本 ＝
+            # **枠がまだ動かせる**ので、当たっても譲る側に届かないなら、いま言うこと。
+            out += win_pays_for_slot("ショート")
             continue
         age = (t - pub).total_seconds() / 3600
         obs = _latest_obs(vid, views_path)

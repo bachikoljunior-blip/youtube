@@ -31,8 +31,12 @@ def test_その本を決めていれば命令の行は出ない(monkeypatch):
     # 実物の `data/scripts/<題材>.script.json` が在ると（2026-09-03 05:0x から在る）その行が足されて本数が動く。
     monkeypatch.setattr(daily_pick, "outside_opening_lines", lambda *a, **k: [])
     out = daily_pick.outside_long_lines(date(2026, 9, 4), cur, topics=TOPICS, drafts=drafts)
-    assert len(out) == 1
-    assert "これにすること" not in out[0]
+    # **本数ではなく、出ない物で見ること**（2026-09-04 23:5x・最適化の回に直した）。
+    # ここが `len(out) == 1` だったので、**秒読みの下に足した行が全部この検査を割る**
+    # 形になっていました —— 本数は「命令の行が出ないこと」を言っていません。
+    joined = "\n".join(out)
+    assert "これにすること" not in joined
+    assert "--pick 長尺" not in joined
 
 
 def test_下書きが無ければ作る手を出す(monkeypatch):
