@@ -9043,15 +9043,47 @@ def headline(pl: dict, prev: dict | None = None,
                   "日付は正しく、大きいのは印字だけです。**")
     if pl.get("lever_chosen_by") == "need_over_cap":
         _n, _noc = pl.get("lever_need"), pl.get("lever_need_over_cap")
+        # **名前は `lever_measured` から取ること**（2026-09-04 15:0x に踏んで直した）。
+        #
+        #     `lever_need` / `lever_need_over_cap` は、すぐ上の `_alive` の
+        #     `min(need_over_cap)` が選んだ腕（`lever_measured`）の数です。
+        #     ところが同じ日の 12:5x に `gate_arm_pick()` が入り、**軌跡が
+        #     出ない回は `lever_hint` を 門1'（登録者）の側へ上書き**するように
+        #     なりました（`c19d5792`）。この行は `lever_hint` を刷っていたので、
+        #     **腕の名前だけが入れ替わり、×N は別の腕のまま**になります。
+        #
+        #     実測 2026-09-04 14:5x の出力::
+        #
+        #         → **引けるのは `sub_rate` だけです。** 日付が出はじめるのは ×101.12、
+        #           いまの天井は **×4.54** —— …
+        #         （同じ出力の別の行: `sub_rate` の天井は **×6.21**・`per_video` が ×4.54）
+        #
+        #     ＝ **名前は `sub_rate`、数は `per_video`。** しかも行の末尾は
+        #     「この回に立てるべき前提は『その天井は天井ではない』」と命令形で、
+        #     **その 3行 下の `joint_cap` は逆を言っています** ——
+        #     「**抜いても動かない腕に前提を立てないこと。通る道が `per_video` である限り、
+        #     `sub_rate`／`rpm` の前提は燃料ではありません**」。
+        #     読む順は上からなので、**先に読まれるのは間違っているほう**です。
+        #
+        #     **覆る条件**: `gate_arm_pick()` が `lever_need` も門1' の側で
+        #     入れ替えるようになったら、この2つはまた同じ腕を指します
+        #     （そのとき `lever_measured` は `lever_hint` と等しくなり、下の但し書きは
+        #      自分で消えます）。検査 `tests/test_lever_need_arm.py`。
+        _arm = pl.get("lever_measured") or pl.get("lever_hint")
         out.append(
-            f"{bar}   → **引けるのは `{pl['lever_hint']}` だけです。**"
-            + (f" 日付が出はじめるのは **×{_n:.2f}**、いまの天井は"
+            f"{bar}   → **軌跡の中でいちばん近い腕は `{_arm}` です。**"
+            + (f" 日付が出はじめるのは **×{_n:.2f}**、`{_arm}` のいまの天井は"
                f" **×{(_n / _noc):.2f}** —— つまり"
                f" **天井そのものを ×{_noc:.2f} 上げないと、この腕でも出ません。**"
                if isinstance(_n, (int, float)) and isinstance(_noc, (int, float))
                   and _noc else "")
             + " ＝ **この回に立てるべき前提は「その天井は天井ではない」**"
-              "（`config/hypotheses.yaml`）。**腕の値を動かす手では出ません。**")
+              "（`config/hypotheses.yaml`）。**腕の値を動かす手では出ません。**"
+            + (f" [!] **頭の名指しは `{pl['lever_hint']}` で、この行の腕とは別です**"
+               f" —— 頭は 門1'（登録者）の日数から取っており（`gate_arm_pick()`）、"
+               f" 上の ×N は**軌跡の側の `{_arm}`** の数です。"
+               f" **前提を置く先は、すぐ下の `joint_cap` が『抜くと動く』と言っている腕のほう。**"
+               if pl.get("lever_hint") and pl["lever_hint"] != _arm else ""))
         # --- **その「天井ではない」を、外の実測で答える**（2026-09-02・最適化の回）---
         #     上の行はずっと「天井は天井ではない」と**書くだけ**でした。
         #     天井 `ceiling_at_rule()` は**自分の記録**から作った数なので、
