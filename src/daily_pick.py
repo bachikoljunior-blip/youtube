@@ -1176,11 +1176,20 @@ def pick_legs(video_id: str | None, *, queue: Path | None = None) -> tuple[list[
     vid = str(video_id or "").strip()
     if not vid:
         return [], "決めが本を名指していません（`video_id` が空）"
-    path = (queue or QUEUE) / f"{vid}.script.json"
+    return legs_of_path((queue or QUEUE) / f"{vid}.script.json", what="台本の控え")
+
+
+def legs_of_path(path: Path, *, what: str = "台本") -> tuple[list[str], str | None]:
+    """`(通らなかった脚, 読めなかった理由)`。**API 0単位・渡された台本だけ。**
+
+    `pick_legs`（控え＝**実物に入っている台本**）と `draft_legs`（手元の台本＝
+    **これから入る台本**）が、**同じ4つの口**を通るようにここに集めてあります。
+    片方だけ別の数え方になると、「直したのに門が言い続ける」の見分けが付きません。
+    """
     try:
-        script = json.loads(path.read_text(encoding="utf-8"))
+        script = json.loads(Path(path).read_text(encoding="utf-8"))
     except (OSError, ValueError) as exc:                           # noqa: BLE001
-        return [], f"台本の控えが読めません（`{path}`・{str(exc)[:60]}）"
+        return [], f"{what}が読めません（`{path}`・{str(exc)[:60]}）"
     try:
         from src import script_writer as _sw
     except Exception as exc:                                       # noqa: BLE001
@@ -1196,6 +1205,18 @@ def pick_legs(video_id: str | None, *, queue: Path | None = None) -> tuple[list[
         except Exception:                                          # noqa: BLE001
             continue
     return bad, None
+
+
+def draft_legs(topic: str | None) -> tuple[list[str], str | None]:
+    """**手元の台本**（`data/scripts/<題材>.script.json`）で測った脚。
+
+    控え（`pick_legs`）は「**いま実物に入っている台本**」で、こちらは
+    「**次の焼きで入る台本**」です。**2つは焼きの 55〜90分 ぶんずれます。**
+    """
+    t = str(topic or "").strip()
+    if not t:
+        return [], "決めが題材を名指していません"
+    return legs_of_path(ROOT / "data" / "scripts" / f"{t}.script.json", what="手元の台本")
 
 
 def standing_pick_treatment(cur: dict | None, *, topics: list[dict] | None = None,
