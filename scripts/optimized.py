@@ -76,6 +76,28 @@ def ships(days: int) -> list[str]:
     mv = collections.Counter(r.get("moves") for r in sh)
     nz = sum(v for k, v in mv.items() if k not in (0, None))
     out.append(f"  --moves: 0 が {mv.get(0, 0)}件・0 以外 {nz}件・未記入 {mv.get(None, 0)}件")
+    # **種別 × moves の掛け合わせ**（2026-09-04 昼・最適化の回に足した）。
+    #     上の2行は**別々に**出ていました（種別の分布と、moves の分布）。
+    #     **掛けた数は、この道具が読んでいるファイルの中に在るのに、
+    #     どこにも印字されていませんでした** —— だから回は「fix 71%」を見ても、
+    #     fix の歩留りが 1.1%・verdict が 56% だと知る手がありませんでした。
+    #     実測 2026-09-04: 258 ship のうち到達日を動かしたのは 11件、うち 9件 が
+    #     `verdict`。**結論はここに書きません**（`src/kind_yield.py` の冒頭）。
+    if sh:
+        moved = collections.Counter(str(r.get("ship_kind") or "?") for r in sh
+                                    if r.get("moves") not in (0, None))
+        rows_ = []
+        for k, v in kinds.most_common():
+            m = moved.get(k, 0)
+            rows_.append(f"{k} {v}回→{m}件（{m / v * 100:.1f}%）")
+        out.append(f"  **種別べつの歩留り（`moves` が 0 以外 ／ 回数）**: {' ／ '.join(rows_)}")
+        fol = [r for r in sh if r.get("lever_followed") is True]
+        if fol:
+            fz = sum(1 for r in fol if r.get("moves") in (0, None))
+            fk = collections.Counter(str(r.get("ship_kind")) for r in fol)
+            out.append(f"  **腕に従った印（`lever_followed=True`）**: {len(fol)}件・"
+                       f"うち `moves` 0 が {fz}件（{fz / len(fol) * 100:.0f}%）"
+                       f"・内訳 {' '.join(f'{k} {v}' for k, v in fk.most_common())}")
     optim = [r for r in sh if "最適化され" in str(r.get("what") or "")[:80]]
     if optim:
         out.append(f"  「最適化されてんの？」に答えた ship: {len(optim)}件"

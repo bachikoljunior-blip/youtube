@@ -8818,6 +8818,26 @@ def headline(pl: dict, prev: dict | None = None,
                + (f"（**軌跡が名指し**。床の名前は `{pl['lever_hint_binding']}` ですが、"
                   "それは診断であって、引いて何日縮むかは言っていません）"
                   if pl.get("lever_from") == "軌跡" and not _paused_gate else ""))
+    # --- **腕の次に、種別を名指しする**（2026-09-04 昼・最適化の回）---
+    #     **ここに置く理由**（実測で名指しした欠陥を1つ潰すために足しました）。
+    #     `CLAUDE.md`「毎回の実行で必ずやること」2 は**腕**だけを先に選ばせ、
+    #     **種別は誰にも選ばせていませんでした。** その結果、直近5日の実測で
+    #     `lever_followed=True`（腕に従った）の **118回 のうち 115回（97%）が
+    #     `moves` 0**、うち **70回 は `CLAUDE.md` 自身が「定義上 0日」と書いている
+    #     種別**（`upload`/`fix`/`means`）で合格の印を取っていました。
+    #     **門が測る物が違ったので、近づかない回が選ばれ続けた**、が実測の形です。
+    #
+    #     この行は結論を持ちません。**`data/runs.jsonl` を数えて出しています**
+    #     （`src/kind_yield.py`。名乗る条件と**覆る条件**はそちらの冒頭）。
+    #     `significant` が落ちれば、この行は種別を名指しせずにそう言います。
+    try:
+        from src import kind_yield as _ky
+
+        _kyl = _ky.headline()
+        if _kyl:
+            out.append(f"{bar}     {_kyl}")
+    except Exception as _e:  # pragma: no cover - 数が出ないだけで解は止めない
+        out.append(f"{bar}     （種別の名指しは出ませんでした: {_e}）")
     # --- **その腕の数が、いつの本で止まっているか**（2026-09-02 夕・最適化の回）---
     #     **ここに置く理由**（実測で名指しされた欠陥を1つ潰すために足しました）。
     #     `per_video` の値は `rule_per_video.estimate()['at_rule_mean']` ＝
