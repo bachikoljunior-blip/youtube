@@ -1464,6 +1464,93 @@ def _bake_stage_span_lines(root=None) -> list[str]:
             "（この 55〜90分 が、規則3 の焼き直しが 25回 中 1回 しか本にならない直の理由）"]
 
 
+def superseded_bake_lines(now: datetime | None = None) -> list[str]:
+    """**いま焼いている本が、その日の決めから外れていないか。**（**API 0単位**）
+
+    ## なぜ要るか（2026-09-05 06:2x・最適化の回。**実物で走っていました**）
+
+    焼き直しは `ahead_sweep.rebake_plan_for()` が `daily_pick.current(day)` を
+    読んで始めます —— **始めるときは、決めに従っています。**
+    見ていなかったのは**そのあと**です。実測（この関数を足した回）:
+
+        04:12 JST  hourly が `GFvAcxvDmYM`（長尺・09/05 の枠）の焼き直しを始める
+        05:09 JST  09/05 の決めが `DtpnSVFDtAE`（ショート）へ
+        05:11 JST  同 `OBJdXEr6gLg` へ
+        05:37 JST  同 `TfetZ_qhS-E` へ
+        06:18 JST  **長尺のほうは、まだ焼いている**（2時間・レンダリング中）
+
+    **決めが 30分 で3回 動くあいだ、2時間の焼きは古い決めに向かって走り続けます。**
+    そして焼き上がると、その本が枠に入ります —— **決めの側は、誰も見ていません。**
+
+    値段はその日の1本ぶんです（実測・`daily_pick` が同じ画面に出している数）:
+
+        ショート  齢48h 中央値 **164回**（n=216）
+        長尺      齢48h 中央値   **1回**（n=36）
+
+    **規則は1日1本**（`src/house_rule.py`）なので、**枠の形を1つ間違えると、
+    その日の取り分がまるごと 164 → 1 になります。**
+
+    ## 何を返すか
+
+    決めの本と、いま焼いている本が**違う**ときだけ行を返します。
+    同じなら、または焼いていなければ**空**（毎周 鳴る行を増やさない）。
+    **止めません** —— どちらを捨てるかは、それを読んだ回が決めること
+    （焼き上がった本は private で残るので、別の日の枠に使えます）。
+
+    ## 覆る条件
+
+    `rebake_plan_for()` が、走っている焼きを決めの変更で畳むようになったら
+    （＝ 焼く側が自分で気づくようになったら）、この関数は要りません。
+    """
+    t = now or datetime.now(timezone.utc)
+    try:
+        from src import daily_pick                              # noqa: PLC0415
+        import sys as _sys                                      # noqa: PLC0415
+        _sys.path.insert(0, str(ROOT / "scripts"))
+        import ahead_sweep                                      # noqa: PLC0415
+    except Exception:                                           # noqa: BLE001
+        return []
+    try:
+        day = t.astimezone(JST).date()
+        cur = daily_pick.current(day) or {}
+        decided = str(cur.get("video_id") or "")
+        rows = ahead_sweep._rebake_rows(None) or []
+    except Exception:                                           # noqa: BLE001
+        return []
+    if not decided or not rows:
+        return []
+    # **いちばん新しい鼓動**（`beat`）だけを見ます。`skip` は焼いていません。
+    live = None
+    for r in rows:
+        if str(r.get("kind") or "") not in ("beat", "start"):
+            continue
+        when = _parse(r.get("at"))
+        if when is None:
+            continue
+        # **12時間より古い鼓動は「いま焼いている」ではありません**（落ちた焼きの残り）。
+        if (t - when).total_seconds() > 12 * 3600:
+            continue
+        if live is None or when > _parse(live.get("at")):
+            live = r
+    if live is None:
+        return []
+    baking = str(live.get("video_id") or "")
+    if not baking or baking == decided:
+        return []
+    return [
+        f"  [!] **いま焼いているのは `{baking}` ですが、きょうの決めは "
+        f"`{decided}` です**（`data/rebake.jsonl` の最後の鼓動 "
+        f"{_parse(live.get('at')).astimezone(JST):%m/%d %H:%M} JST ／ "
+        f"`daily_pick.current()`）。",
+        "  **焼きは、始めた時の決めに向かって走ります** —— そのあと決めが動いても、"
+        "焼いている側は気づきません。**焼き上がった本がそのまま枠に入ります。**",
+        "  **規則は1日1本なので、枠の形を間違えるとその日の取り分がまるごと変わります**"
+        "（齢48h 中央値: ショート **164回**・n=216 ／ 長尺 **1回**・n=36）。"
+        "**どちらを枠に入れるか、この回が決めること**"
+        "（捨てるほうも private で残るので、別の日に使えます）。",
+    ]
+
+
 def machine_rebake_lines(video_id: str, now: datetime | None = None) -> list[str]:
     """**機械の側が、この本を焼き直すつもりか**（`ahead_sweep.rebake_plan_for()` の判定を写す）。
 
@@ -1733,6 +1820,8 @@ def lines(now: datetime | None = None) -> list[str]:
             out.extend(rebake_input_lines(str(v.get("video_id") or ""),
                                           str(v.get("topic") or "")))
         out.extend(mrl)
+        # **決めが、焼いている最中に動いていないか**（2026-09-05・superseded_bake_lines の註）。
+        out.extend(superseded_bake_lines(now))
         if machine_has_it:
             out.append("  → **この本の `improve` は、いま機械の側で進んでいます。**"
                        "終わったか（`**差し替えました**` の行）は `data/rebake.log` の末尾。"
