@@ -1,0 +1,15 @@
+[today] 09/04 18:28 JST きょうの1本は置きません —— きょう 2026-09-04 の枠は埋まっています（1本／規則 1本）
+[thumb-today] 09/04 18:28 JST 押しません —— きょう公開される本が無い（置いていない・控えにも無い）
+[comment] 09/04 18:28 JST **未処理 10本。公開ずみの本に最初のコメントを付けます**（1本 50単位）
+[sweep] $ /usr/local/bin/python scripts/post_pending_comments.py
+[sweep]   [+00:01] 付けたコメント: 0件
+[sweep] post_pending_comments rc=0（実測 0.0分）
+[comment] 付ける手を通しました（付いた本は控えに印）
+[sub-ask] 09/04 18:28 JST 再生の付いている本に登録の依頼が入っているかを見ます（読み 1単位・置く先があれば 1本 50単位）
+[sub_ask] 対象 30本（再生/日 0.5 以上・合計 83.6回/日）・予算 1200単位
+[sub_ask] 読めた 30本 ／ 既に入っている 30本 ／ 置く先 0本（1単位 使用）
+[sub_ask] 置いた 0本 ／ 1単位 ／ いまの再生/日 の 0% を覆いました
+[rebake] 09/04 18:28 JST 2026-09-04 は焼き直しません —— 枠 09/04 09:00 JST まで -569分 —— 焼き上がる前に出る（要る 150分）
+[rebake] 09/04 18:28 JST **焼き直します**（2026-09-05 の本）: `XwB8nxtN5D8`（nenkin-uketorikata-65-70-75-handan）—— 控え（上げたときの写し）と台本 `data/scripts/nenkin-uketorikata-65-70-75-handan.script.json` が違う（sha 9a02413e02bf・台本のほうが新しい）→ 焼き直して `XwB8nxtN5D8` を差し替える
+[rebake] 背景で起こしました（log は `data/rebake.log`・帳面は `data/rebake.jsonl`）
+[sweep] 09/04 18:28 JST 掃きません —— 規則5 が外れています（先の日付に置いてよい）
