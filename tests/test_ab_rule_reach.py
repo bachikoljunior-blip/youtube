@@ -41,18 +41,39 @@ def _outlook(need: dict[str, int], settle_by: date, today: date,
     )
 
 
+#: **足りない場面を、規則の本数から作ること**（2026-09-05 に書き替えた）。
+#:
+#: ここは `need` に **16+16 ＝ 32本** をべた書きし、「4日 × 1本 では足りない」を
+#: 見ていました。`PUBLISH_PER_DAY` が 10 になると **4日 × 10本 ＝ 40本 で足りて
+#: しまい**、この file の「届かない側」の検査が3件とも、届く場面を測る形へ化けます
+#: （＝ 見張っている物が消える。実際にこの回で3件 赤くなりました）。
+#:
+#: **算数はもともと `house_rule.cap()` を読んでいました。写しだったのは場面のほう**です。
+#: **覆る条件**: `Outlook` が「残り日数 × 上限」以外の式になったら、ここも作り直すこと。
+_DAYS_LEFT = 4
+_SHORT_BY = 8            # **わざと足りなくする本数**（規則の何倍かに依りません）
+
+
+def _need_pair() -> dict[str, int]:
+    """**規則の下で必ず `_SHORT_BY` 本 足りない**2群の要り数。"""
+    total = _DAYS_LEFT * house_rule.cap() + _SHORT_BY
+    half = total // 2
+    return {"早枠": half, "遅枠": total - half}
+
+
 def test_在庫がいくらあっても_残り日数が足りなければ届かない():
     """**これがこの検査の本体です。**
 
-    在庫 1,000本 でも、規則の下で公開できるのは `残り日数 × 1本` だけ。
+    在庫 1,000本 でも、規則の下で公開できるのは `残り日数 × 上限` だけ。
     """
-    o = _outlook({"早枠": 16, "遅枠": 16}, date(2026, 9, 4), date(2026, 8, 31),
+    need = _need_pair()
+    o = _outlook(need, date(2026, 9, 4), date(2026, 8, 31),
                  stock={"早枠": 500, "遅枠": 500})
     assert o.reachable is True, "在庫だけを見る古い判定は、そのまま残してあります"
     assert o.reachable_under_rule is False
-    assert o.days_left == 4
-    assert o.allowed_under_rule == 4 * house_rule.cap()
-    assert o.short_under_rule == 32 - 4 * house_rule.cap()
+    assert o.days_left == _DAYS_LEFT
+    assert o.allowed_under_rule == _DAYS_LEFT * house_rule.cap()
+    assert o.short_under_rule == _SHORT_BY
 
 
 def test_在庫が0でも_残り日数が足りれば届く():
@@ -76,8 +97,10 @@ def test_いちばん早く判定できる日を出す():
     あと N本 ＝ `ceil(N / cap)` 日 ＋ 落ち着き `SETTLE_DAYS` 日。
     """
     from datetime import timedelta
-    o = _outlook({"早枠": 16, "遅枠": 16}, date(2026, 9, 4), date(2026, 8, 31))
-    days = -(-32 // max(1, house_rule.cap()))
+    need = _need_pair()
+    o = _outlook(need, date(2026, 9, 4), date(2026, 8, 31))
+    total = sum(need.values())
+    days = -(-total // max(1, house_rule.cap()))
     assert o.earliest_under_rule == date(2026, 8, 31) + timedelta(days=days + SETTLE_DAYS)
     # **締切（09/04）より後ろになること** —— そうでなければ届かないと言う理由が無い
     assert o.earliest_under_rule > o.settle_by
@@ -87,16 +110,21 @@ def test_規則が外れたら自然に緩む(monkeypatch):
     """**`house_rule.cap()` を読んでいること。**
 
     定数を写していると、オーナーが規則を外した日にここだけ取り残されます。
+    **上限は、いまの値の何倍かで作ること**（2026-09-05）—— ここは 10 をべた書き
+    しており、規則そのものが 10 になった日に「緩める前」と「緩めた後」が
+    同じ数になって、この検査は何も見なくなりました。
     """
-    o = _outlook({"早枠": 16, "遅枠": 16}, date(2026, 9, 4), date(2026, 8, 31))
+    need = _need_pair()
+    o = _outlook(need, date(2026, 9, 4), date(2026, 8, 31))
     assert o.reachable_under_rule is False
-    monkeypatch.setattr(house_rule, "PUBLISH_PER_DAY", 10)
-    assert o.allowed_under_rule == 40
+    loosened = house_rule.cap() * 3
+    monkeypatch.setattr(house_rule, "PUBLISH_PER_DAY", loosened)
+    assert o.allowed_under_rule == _DAYS_LEFT * loosened
     assert o.reachable_under_rule is True
 
 
 def test_届かない実験は_その理由と日付を印字する():
-    o = _outlook({"早枠": 16, "遅枠": 16}, date(2026, 9, 4), date(2026, 8, 31))
+    o = _outlook(_need_pair(), date(2026, 9, 4), date(2026, 8, 31))
     text = "\n".join(o.rule_lines())
     assert "構造的に届きません" in text
     assert "いちばん早く判定できるのは" in text

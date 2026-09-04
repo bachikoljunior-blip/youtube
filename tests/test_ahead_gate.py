@@ -198,19 +198,32 @@ def test_きょうが上限どおりなら黙る(窓, monkeypatch):
     assert v["block"] is False
 
 
-def test_故障を注入すると発火する_きょうが2本(窓, monkeypatch):
-    """**注入する故障**: きょうに2本 置く（規則1 は 1本/日）。
+def _today_over_by_one() -> list[dict]:
+    """**きょうの上限を、ちょうど1本 超える控え**（`house_rule.cap()` から作る）。
+
+    ここは長らく「きょうに **2本**」をべた書きしていました（規則が 1本/日 だった
+    ため）。2026-09-05 に `PUBLISH_PER_DAY` が 10 になると **2本 は超過ではなく**、
+    この門の「発火する側」の検査が2件とも、発火しない場面を測る形へ化けます
+    （実際にこの回で赤くなりました）。**注入する故障は、上限から作ること。**
+    """
+    n = ahead_gate.house_rule.cap() + 1
+    return [_row(0, 6 + i, chr(ord("a") + i)) for i in range(n)]
+
+
+def test_故障を注入すると発火する_きょうが上限を1本超える(窓, monkeypatch):
+    """**注入する故障**: きょうに「上限＋1本」置く。
 
     09/02 の実物がこの形の一歩手前でした —— 13:00 に1本 公開したあと、
     `next_slot.draft_lines()` が `--move <次の本> 2026-09-02T20:00` と印字。
-    **撃てば その日が2本**（`tests/test_same_day_slot_taken.py`）。
+    **撃てば その日が上限超え**（`tests/test_same_day_slot_taken.py`）。
     """
     _quota(monkeypatch, True)
     ahead_gate.record(0, [], "videos.list", NOW - timedelta(minutes=1))
-    v = ahead_gate.verdict(NOW, [_row(0, 13, "a"), _row(0, 20, "b")])
+    rows = _today_over_by_one()
+    v = ahead_gate.verdict(NOW, rows)
     assert v["block"] is True
     assert v["over_today"] == 1
-    assert "きょうが 2本" in v["why"]
+    assert f"きょうが {len(rows)}本" in v["why"]
 
 
 def test_公開ずみも数える(窓, monkeypatch):
@@ -235,8 +248,9 @@ def test_きょうが多い回は_先の日付より先に言う(窓, monkeypatc
     いま外さなければ公開されます**（`pool_drain.today_rows()` の註）。
     """
     _quota(monkeypatch, True)
-    v = ahead_gate.verdict(NOW, [_row(0, 13, "a"), _row(0, 20, "b"), _row(5, 20, "c")])
-    assert "きょうが 2本" in v["why"]
+    rows = _today_over_by_one()
+    v = ahead_gate.verdict(NOW, [*rows, _row(5, 20, "z")])
+    assert f"きょうが {len(rows)}本" in v["why"]
 
 
 # ---------------------------------------------------------------- 実物の名簿
