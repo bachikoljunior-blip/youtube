@@ -8548,23 +8548,35 @@ def _sub_ask_uncovered() -> tuple[int, float, float] | None:
 
     `(本数, その再生/日, 全体に占める割合)`。API 0単位（`data/views.jsonl` と
     `data/sub_ask_sweep.jsonl` を読むだけ）。読めなければ None。
+
+    ## 数える母集団は `--sweep` と同じものです（2026-09-05 03:3x に直した）
+
+    ここは長いあいだ **`rank_by_traffic()` の全部（実測 250本）**を見ていました。
+    ところが下に刷る手 `python -m src.sub_ask --sweep` が実際に相手にするのは
+    **`sweep_targets()` の 23本**（再生/日 0.5 以上・上位 40本）だけです。
+    母集団が違うので、**eta は「1本 残っています」、同じ時刻の
+    `--sweep --dry-run` は「置く先 0本」**と、正面から食い違っていました。
+    割合の分母も 250本 の合計で、下の行が指している 23本 のものではありませんでした。
+
+    **控えの穴のほうが大きい欠陥でした** —— `src/sub_ask.apply_to_video()` が
+    `SWEEP_LOG` に何も書かなかったので、`--apply` で覆った本と、上げたときから
+    入っていた本は、控えの上では**永久に「未覆」**でした。そちらは `src/sub_ask.py`
+    側で直してあります（同じ回・`apply_to_video` の註）。ここは母集団だけを合わせます。
+
+    ## 覆る条件
+
+    `--sweep` の既定（`sub_ask.SWEEP_TOP` / `SWEEP_MIN_PER_DAY`）を変えた回は、
+    この行が自動で追随します。**手でここに 40 や 0.5 と書かないこと。**
     """
     try:
         from src import sub_ask                              # noqa: PLC0415
-        done = set()
-        f = ROOT / "data" / "sub_ask_sweep.jsonl"
-        if f.exists():
-            for line in f.read_text(encoding="utf-8").splitlines():
-                try:
-                    done.add(str(json.loads(line).get("id") or ""))
-                except Exception:                            # noqa: BLE001
-                    continue
-        ranked = sub_ask.rank_by_traffic()
+        done = sub_ask.swept_ids()
+        targets = sub_ask.sweep_targets()
     except Exception:                                        # noqa: BLE001
         return None
-    total = sum(v for v, _ in ranked)
-    miss = [(v, i) for v, i in ranked if i not in done and v > 0]
-    got = sum(v for v, _ in miss)
+    total = sum(d for d, _ in targets)
+    miss = [(d, v) for d, v in targets if v not in done and d > 0]
+    got = sum(d for d, _ in miss)
     if total <= 0:
         return None
     return len(miss), got, got / total

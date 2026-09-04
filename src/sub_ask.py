@@ -144,6 +144,28 @@ def apply_to_video(video_id: str, *, service=None, dry_run: bool = False) -> int
     """**すでに上がっている本**の説明欄の先頭へ依頼を置く（`videos.update` 50単位）。
 
     既に入っていれば **0単位で戻ります**（`videos.list` の 1単位だけ）。
+
+    ## 覆った本は、必ず `SWEEP_LOG` に書きます（2026-09-05 03:3x に直した）
+
+    ここは長いあいだ**控えに何も書きませんでした**。`--sweep` だけが `_note_sweep()`
+    を呼んでいたので、**`--apply` で覆った本・上げたときから入っていた本は、控えの上では
+    永久に「まだ入っていない」まま**でした。控えを唯一の根拠にしている
+    `scripts/eta.py` の `_sub_ask_uncovered()` は、そのぶんを毎周
+    「上がっている本に N本 残っています（`--sweep`・1本 50単位）」と刷り続けます。
+
+    実測 2026-09-05 03:2x: eta は「1本 残っています（0.8回/日）」、
+    同じ時刻の `python -m src.sub_ask --sweep --dry-run` は
+    「読めた 23本 ／ 既に入っている 23本 ／ **置く先 0本**」。
+    食い違っていた1本は `iwdNOasGYE4` で、**実物の説明欄には入っていました**。
+
+    **実物（説明欄）が正本で、控えはその写しです。** だから「置いた」ときだけでなく
+    **「既に入っていた」と読めたときも控えへ書きます** —— 写しを実物へ寄せるのが
+    この控えの仕事で、「この回が書いた行だけを残す」ことではありません。
+
+    ## 覆る条件
+
+    説明欄を実物から読み直す口が別に立って、`eta` がそれを見るようになったら、
+    この控えは要らなくなります（そのときは `_note_sweep()` の呼びを消してよい）。
     """
     from src import upload_cap
     from src.uploader import _service
@@ -158,6 +180,7 @@ def apply_to_video(video_id: str, *, service=None, dry_run: bool = False) -> int
     after = with_head(before)
     if after == before:
         print(f"[sub_ask] {video_id} には既に入っています（0単位）")
+        _note_sweep(video_id, _per_day_of(video_id), where="description_head/already")
         return 0
     print(f"[sub_ask] {video_id} 『{snippet.get('title','')}』の説明欄の先頭に置きます:")
     for ln in HEAD.splitlines():
@@ -173,6 +196,7 @@ def apply_to_video(video_id: str, *, service=None, dry_run: bool = False) -> int
     youtube.videos().update(part="snippet",
                             body={"id": video_id, "snippet": snippet}).execute()
     upload_cap.note_quota_ok(detail=f"videos.update {video_id}")
+    _note_sweep(video_id, _per_day_of(video_id))
     print(f"[sub_ask] 置きました（50単位）: {video_id}")
     return 0
 
@@ -187,6 +211,12 @@ SWEEP_LOG = Path(__file__).resolve().parents[1] / "data" / "sub_ask_sweep.jsonl"
 LIST_CHUNK = 50
 LIST_UNITS = 1
 UPDATE_UNITS = 50
+
+#: `--sweep` が実際に相手にする範囲。**`scripts/eta.py` が「まだ N本 残っています」を
+#: 数えるときも、ここを通します** —— 通さないと、eta の N と `--sweep` の「置く先」が
+#: 別の母集団になり、片方が 1本・片方が 0本 と言います（2026-09-05 に実測）。
+SWEEP_TOP = 40
+SWEEP_MIN_PER_DAY = 0.5
 
 
 def rank_by_traffic(path: Path | None = None, *, window_h: float = 24.0):
@@ -247,7 +277,18 @@ def rank_by_traffic(path: Path | None = None, *, window_h: float = 24.0):
     return out
 
 
-def sweep(*, top: int = 40, min_per_day: float = 0.5, budget: int = 3000,
+def sweep_targets(*, top: int = SWEEP_TOP,
+                  min_per_day: float = SWEEP_MIN_PER_DAY) -> list[tuple[float, str]]:
+    """`--sweep` が相手にする本（**API 0単位**）。`(再生/日, 動画ID)` の並び。
+
+    **`scripts/eta.py` もここを通します。** 通さないと、eta の「まだ N本 残っています」
+    が `--sweep` の「置く先 N本」と別の母集団になります（2026-09-05: eta 1本 対 sweep 0本）。
+    """
+    return [(d, v) for d, v in rank_by_traffic() if d >= min_per_day][:top]
+
+
+def sweep(*, top: int = SWEEP_TOP, min_per_day: float = SWEEP_MIN_PER_DAY,
+          budget: int = 3000,
           service=None, dry_run: bool = False) -> int:
     """再生の付いている順に、説明欄の先頭へ依頼を置いていく。
 
@@ -255,7 +296,7 @@ def sweep(*, top: int = 40, min_per_day: float = 0.5, budget: int = 3000,
     **入っていない本だけ**（`videos.update` 50単位）。`budget` は**単位**で、
     使い切ったらそこで止めます（他の仕事の枠を食い潰さないため）。
     """
-    ranked = [(d, v) for d, v in rank_by_traffic() if d >= min_per_day][:top]
+    ranked = sweep_targets(top=top, min_per_day=min_per_day)
     if not ranked:
         print("[sub_ask] 掃く本がありません（再生が動いている本が 0本）")
         return 0
@@ -287,9 +328,15 @@ def sweep(*, top: int = 40, min_per_day: float = 0.5, budget: int = 3000,
 
     missing = [v for v in ids if v in snippets and HEAD_MARK not in
                (snippets[v].get("description") or "")]
-    already = len(snippets) - len(missing)
-    print(f"[sub_ask] 読めた {len(snippets)}本 ／ 既に入っている {already}本 ／ "
+    already = [v for v in ids if v in snippets and v not in set(missing)]
+    print(f"[sub_ask] 読めた {len(snippets)}本 ／ 既に入っている {len(already)}本 ／ "
           f"置く先 {len(missing)}本（{used}単位 使用）")
+    # **読めた時点で控えを実物へ寄せます**（2026-09-05 に足した・`apply_to_video` の註）。
+    # ここを書かないと、上げたときから入っていた本が控えの上では永久に「未覆」になり、
+    # `scripts/eta.py` が毎周それを「まだ N本 残っています」と刷ります。
+    if not dry_run:
+        for vid in already:
+            _note_sweep(vid, per_day.get(vid, 0.0), where="description_head/already")
 
     done = 0
     covered = 0.0
@@ -333,9 +380,46 @@ def sweep(*, top: int = 40, min_per_day: float = 0.5, budget: int = 3000,
     return 0
 
 
-def _note_sweep(video_id: str, per_day: float) -> None:
-    """掃いた1本を控えへ（**次の回が「いつ掛かったか」を数えられるように**）。"""
+def _per_day_of(video_id: str) -> float:
+    """`rank_by_traffic()` が測れた本なら、その 再生/日。測れなければ 0.0（API 0単位）。"""
+    try:
+        for d, v in rank_by_traffic():
+            if v == video_id:
+                return float(d)
+    except Exception:                                        # noqa: BLE001
+        pass
+    return 0.0
+
+
+def swept_ids(path: Path | None = None) -> set[str]:
+    """控えに載っている（＝説明欄の先頭に依頼が在ると読めた）本の ID（**API 0単位**）。
+
+    `scripts/eta.py` と検査が同じ答えを見るための1か所。
+    """
+    out: set[str] = set()
+    f = path or SWEEP_LOG
+    if not f.exists():
+        return out
+    for line in f.read_text(encoding="utf-8").splitlines():
+        try:
+            vid = str(json.loads(line).get("id") or "")
+        except Exception:                                    # noqa: BLE001
+            continue
+        if vid:
+            out.add(vid)
+    return out
+
+
+def _note_sweep(video_id: str, per_day: float, *,
+                where: str = "description_head") -> None:
+    """掃いた1本を控えへ（**次の回が「いつ掛かったか」を数えられるように**）。
+
+    **同じ本を二度は書きません** —— この控えは「覆っているか」を数える台帳で、
+    撃った回数の台帳ではありません（二重に書くと、次の回の割合が狂います）。
+    """
     import datetime as _dt
+    if not video_id or video_id in swept_ids():
+        return
     try:
         SWEEP_LOG.parent.mkdir(parents=True, exist_ok=True)
         with SWEEP_LOG.open("a", encoding="utf-8") as fh:
@@ -343,7 +427,7 @@ def _note_sweep(video_id: str, per_day: float) -> None:
                 "at": _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
                 "id": video_id,
                 "views_per_day": round(float(per_day), 2),
-                "where": "description_head",
+                "where": where,
             }, ensure_ascii=False) + "\n")
     except Exception:
         pass
@@ -355,8 +439,9 @@ def main(argv: list[str] | None = None) -> int:
                     help="すでに上がっている本の説明欄の先頭に依頼を置く（50単位・冪等）")
     ap.add_argument("--sweep", action="store_true",
                     help="いま再生が付いている順に、まだ入っていない本へ置いていく")
-    ap.add_argument("--top", type=int, default=40, help="--sweep が見る本数（既定 40）")
-    ap.add_argument("--min-per-day", type=float, default=0.5,
+    ap.add_argument("--top", type=int, default=SWEEP_TOP,
+                    help=f"--sweep が見る本数（既定 {SWEEP_TOP}）")
+    ap.add_argument("--min-per-day", type=float, default=SWEEP_MIN_PER_DAY,
                     help="--sweep が相手にする最低の再生/日（既定 0.5）")
     ap.add_argument("--budget", type=int, default=3000,
                     help="--sweep が使ってよい単位（既定 3000 ＝ 約58本）")
