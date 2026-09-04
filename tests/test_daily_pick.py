@@ -120,6 +120,7 @@ def test_lines_show_the_decision_and_the_move_for_a_pool_video(tmp_path: Path) -
     picks = tmp_path / "picks.jsonl"
     day = daily_pick.for_day()
     daily_pick.record("ショート", "s-shokibo-1", "ショート 150回 対 長尺 2回", day=day,
+                      expected=150.0,
                       video_id="P1", path=picks)
     nxt = {"video_id": "L9", "topic": "kaigo-9", "duration_s": 300, "title": "x"}
     text = "\n".join(daily_pick.lines(nxt, cmp=_cmp(tmp_path), picks_path=picks,
@@ -137,8 +138,8 @@ def test_record_requires_a_number_and_current_reads_the_last(tmp_path: Path) -> 
         daily_pick.record("ショート", "s-x", "なんとなく", day=d, path=picks)
     with pytest.raises(ValueError):
         daily_pick.record("縦", "s-x", "1回", day=d, path=picks)
-    daily_pick.record("長尺", "x", "1回", day=d, path=picks)
-    daily_pick.record("ショート", "s-x", "150回", day=d, path=picks)
+    daily_pick.record("長尺", "x", "1回", day=d, path=picks, expected=1.0)
+    daily_pick.record("ショート", "s-x", "150回", day=d, path=picks, expected=150.0)
     cur = daily_pick.current(d, picks)
     assert cur and cur["form"] == "ショート" and cur["topic"] == "s-x"
     assert daily_pick.current(date(2026, 9, 4), picks) is None

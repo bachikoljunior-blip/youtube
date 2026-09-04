@@ -32,7 +32,7 @@ def test_写しは理由を1文字も変えない(tmp_path):
     p = tmp_path / "picks.jsonl"
     long_why = "この回の数で決め直した。門の AND は ショート ×106 対 長尺 ×314 で、" + "根拠の続き。" * 40
     assert len(long_why) > 140
-    dp.record("長尺", "topic-a", long_why, day=date(2026, 9, 5),
+    dp.record("長尺", "topic-a", long_why, day=date(2026, 9, 5), expected=1.0,
               now=datetime(2026, 9, 4, 16, 55, tzinfo=JST), path=p, video_id="OLD")
     dp.replace_video(["OLD"], "NEW", now=datetime(2026, 9, 4, 18, 6, tzinfo=JST), path=p)
     rows = _rows(p)
@@ -45,7 +45,8 @@ def test_写しは理由を1文字も変えない(tmp_path):
 
 def test_決めの行は決めとして残る(tmp_path):
     p = tmp_path / "picks.jsonl"
-    dp.record("ショート", "t", "数 12 で決めた", day=date(2026, 9, 5), path=p, video_id="A")
+    dp.record("ショート", "t", "数 12 で決めた", day=date(2026, 9, 5), path=p,
+              video_id="A", expected=12.0)
     rows = _rows(p)
     assert rows[0]["kind"] == dp.PICK_KIND_DECIDE
     assert dp.pick_kind(rows[0]) == dp.PICK_KIND_DECIDE
@@ -54,7 +55,8 @@ def test_決めの行は決めとして残る(tmp_path):
 def test_鎖は写しを数えない(tmp_path):
     p = tmp_path / "picks.jsonl"
     for i in range(3):
-        dp.record("長尺", "t", f"数 {i} で決めた", day=date(2026, 9, 3 + i), path=p, video_id=f"V{i}")
+        dp.record("長尺", "t", f"数 {i} で決めた", day=date(2026, 9, 3 + i), path=p,
+                  video_id=f"V{i}", expected=float(i))
         dp.replace_video([f"V{i}"], f"W{i}", path=p)
     assert len(_rows(p)) == 6
     assert dp._standing_chain_len(p) == 3      # 決めだけ
@@ -69,7 +71,8 @@ def test_欄の無い古い写しも写しとして読む():
 
 def test_last_decided_は写しを飛ばす(tmp_path):
     p = tmp_path / "picks.jsonl"
-    dp.record("長尺", "t", "決めの理由 1件", day=date(2026, 9, 5), path=p, video_id="A")
+    dp.record("長尺", "t", "決めの理由 1件", day=date(2026, 9, 5), path=p,
+              video_id="A", expected=1.0)
     dp.replace_video(["A"], "B", path=p)
     dec = dp.last_decided(_rows(p))
     assert dec["video_id"] == "A" and dec["why"] == "決めの理由 1件"
