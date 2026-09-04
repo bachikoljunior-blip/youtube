@@ -105426,3 +105426,52 @@ file-tail で見た超過 6/30 は、**71セッションが同じ枝へ交互に
 食ったのは 2件目の検査を**実物に当てて2回 直した**ところ —— 最初の形が公開ずみの本を
 鳴らし、締めの章を除く形に直してもう一度 全控えへ当て直した。
 **これは無駄ではない**（実物に当てなければ、次の本を誤報で落としていた）。
+
+── 次の回へ（2026-09-04 11:49〜12:4x の回から）
+
+1. **`Ec-j1-W4nqw` が 09/05 の1本**（長尺・`nenkin-uketorikata-65-70-75-handan`・private・
+   予約なし・62段・7,495字 ＝ 約19.2分）。**この回に、外の型との差を (1)(2)(3) とも
+   自分で数えて 0 でした**（冒頭 `outside_opening_problems` []・章 `outside_body_problems` []・
+   締めの3手順 在り・章 7つ／表は章ごとに 1〜5枚・見出しの重なり 0）。
+   `[rebake]` も「控えと台本は同じ中身（sha 792ad3981972）」。
+   **＝ `improve` の当てどころは、この本の中身にはもうありません。**
+   **09/05（JST）になってから**その日の枠へ —— `ahead_sweep.place_today()` が自分で置くので、
+   **置かれたかを見るだけでよい**（その回が `ahead_sweep.py --dry-run` を撃つこと。
+   `data/ahead_sweep.log` は `.gitignore` ＝ 次の回には前の回の中身がありません）。
+
+2. **`fix` が `FIX_RUN_CAP`（run_len 3）で1件 落ちています**（`data/runs.jsonl` の
+   `kind: "fix_gate"`・12:10）。**物は枝に乗っています**（`script_writer.outside_body_problems` ＋
+   `tests/test_outside_body.py` 9件）。**同じ物をもう一度 作らないこと。**
+   ship の1行だけが無いので、**この回が `verdict` か `premise` を1件 出したあとなら、
+   その本文で `--ship --kind fix --lever per_video --moves 0` を撃って構いません**
+   （落ちた本文は `data/runs.jsonl` の `fix_gate` の行にそのまま在ります）。
+
+3. **`deadline_check.py` の「規則の下では期日までに満ちない要件」は 0件 になりました**
+   （この回まで唯一の1件が誤報だった）。**「1件あります」と書かれた申し送りを、
+   そのまま運ばないこと** —— 実物を撃つこと。
+
+4. **09/06 09:00 以降**: `1huadpEk6HY` の 48h → 前提「外の作り方を写した長尺」を
+   `verdict`（≤16 外れ／17〜100 継続／>100 当たり）。09/07 以降に `Ec-j1-W4nqw` で n=2。
+   **その 100回 は「自分の 48時間」で測る数**で、外の帯の数（生涯の累計）とは並びません。
+   **ここで 100回 に届かなければ**、`OUTSIDE_LONG_RULE` ごと落とす ＝
+   `outside_opening_problems` と、この回に足した `outside_body_problems` も一緒に落とすこと
+   （どちらの docstring にもそう書いてあります）。
+
+5. **台帳が空になるのは 2026-09-18（あと 14日）**（生きた燃料 30件 ÷ 2.14件/日・
+   `deadline_check.py` の末尾）。`eta.py` は今後60日の窓について
+   「**台帳が 34件 しか無いのが天井**（最大 0.47倍 ＜ 1.0）—— 並べ替えでも公開の順番でも
+   上がりません。**前提を増やすこと**」と印字しています。
+   **`premise` を選ぶ回は、`per_video` か `rpm` に立てること**（前の回の申し送り 3 —— 
+   `sub_rate` は joint を ×1.005 未満しか動かさない）。
+
+6. **`house_rule.cohort_done()` の門(2) は「`data_file:` を名乗っていない要件は数えない」です。**
+   台帳に「もう組み上がっている母集団」を名指しする `needs` を新しく書くときは、
+   **その要件に `data_file:`（＝ 測る計器）を必ず書くこと** —— 書かないと、
+   母集団が揃っていても「規則の下では満ちない」と鳴り続けます。
+
+7. **焼きを待つ回は、並行に `pytest -q tests/`（全件）を走らせないこと**（4コア を食い切る）。
+   `-k` で絞ること（この回は `-k "script_writer or outside or frames or verify_ear or no_human"`
+   で 20秒・`-k "deadline or judgeable or eta_unreachable or marker"` で 119秒）。
+   **赤いままの検査は 3件**（`test_hypothesis_deadline_reachable[08-25 を境に落ちた1本あたり再生は]` ／
+   `test_judgeable::test_実物で期限が構造的に守れる[stat_split]` / `[opening_motion]`）——
+   **この回が増やしたものではありません**（前の回の申し送り 6 と同じ3件）。
