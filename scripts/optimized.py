@@ -76,6 +76,55 @@ def ships(days: int) -> list[str]:
     mv = collections.Counter(r.get("moves") for r in sh)
     nz = sum(v for k, v in mv.items() if k not in (0, None))
     out.append(f"  --moves: 0 が {mv.get(0, 0)}件・0 以外 {nz}件・未記入 {mv.get(None, 0)}件")
+    # --- **宣言と、測った数を分けて出すこと**（2026-09-04 22:5x・最適化の回）---
+    #
+    #     すぐ上の `--moves` は **`run_marker.py --moves` に手で打った数**です。
+    #     この回に実物で数えたところ、0以外の 7件 は**全部 手打ち**で、
+    #     差し引きから出た数は **1件も在りませんでした**。
+    #     そして台帳に積まれていた `eta_days` は 239件 **全部 10^9**（＝「出ません」）
+    #     —— `traj_days` が最後に有限だったのは 2026-08-31 07:58Z です。
+    #     **10^9 から 10^9 を引くと、どんな回も 0 になります。**
+    #     ＝ 「その回で近づいたか」を測っている数が、この道具の中に1つも
+    #     ありませんでした。**近づかない回が選ばれ続けたのは、選ぶ側に
+    #     物差しが無かったから**です。
+    #
+    #     09/04 22:5x から `run_marker` が `gate1p_days`（門1'・登録者 500人 まで
+    #     の日数。**有限で、登録の実測で動く**）と、直前の ship 行との差
+    #     `moves_measured` を積みます。ここはそれを、宣言の**隣に**出します。
+    #
+    #     **どちらかを消さないこと** —— 宣言と実測がずれた回こそ読む価値が在ります。
+    #     **覆る条件**: `traj_days` が有限に戻ったら、物差しは軌跡へ戻ります。
+    meas = [r for r in sh if isinstance(r.get("moves_measured"), (int, float))]
+    if not meas:
+        rulers = {r.get("eta_days") for r in sh if r.get("eta_days") is not None}
+        dead = bool(rulers) and all(
+            isinstance(v, (int, float)) and v >= 1e8 for v in rulers)
+        out.append("  **測った動き（`moves_measured`）: 0件** —— 上の `--moves` は"
+                   "すべて**回が自分で打った宣言**で、差し引きではありません。"
+                   + ("　`eta_days` はこの窓で **全件「出ません」（10^9）**"
+                      "＝ 引き算しても必ず 0 です（物差しが死んでいます）。"
+                      if dead else ""))
+    else:
+        g = [r["moves_measured"] for r in meas]
+        near = sum(1 for v in g if v < -0.5)
+        far = sum(1 for v in g if v > 0.5)
+        out.append(f"  **測った動き（門1'の日数の差・負 ＝ 近づいた）**: {len(meas)}件 ／ "
+                   f"近づいた {near}件・遠のいた {far}件・動かず "
+                   f"{len(meas) - near - far}件・合計 {sum(g):+.1f}日")
+        bykind: dict[str, list[float]] = {}
+        for r in meas:
+            bykind.setdefault(str(r.get("ship_kind") or "?"), []).append(
+                r["moves_measured"])
+        out.append("  **種別べつ（測った合計日数 ／ 回数）**: "
+                   + " ／ ".join(f"{k} {sum(v):+.1f}日／{len(v)}回"
+                                for k, v in sorted(bykind.items(),
+                                                   key=lambda x: sum(x[1]))))
+        liar = [r for r in meas
+                if (r.get("moves") not in (0, None)) and r["moves_measured"] > -0.5]
+        if liar:
+            out.append(f"  [!] **宣言と実測がずれた ship: {len(liar)}件**"
+                       f"（`--moves` で「動く」と言い、門1' は動いていない）"
+                       f"　最後 {liar[-1]['at'][5:16]}")
     # **種別 × moves の掛け合わせ**（2026-09-04 昼・最適化の回に足した）。
     #     上の2行は**別々に**出ていました（種別の分布と、moves の分布）。
     #     **掛けた数は、この道具が読んでいるファイルの中に在るのに、
