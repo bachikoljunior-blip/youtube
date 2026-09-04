@@ -3447,6 +3447,23 @@ def main(argv: list[str] | None = None) -> int:
                 _stale = _dps.standing_form_stale_now()
             except Exception:                                    # noqa: BLE001
                 _stale = ""
+            # **止めるのは「その本を名乗った」回だけ**（2026-09-05 05:xx に自分で踏んだ）。
+            # 最初の版は `fix`/`improve` を丸ごと止めました —— **この門を入れた回自身が
+            # 止められました。** 門を直す回まで止めるのは、`untreated_slot()` の註の
+            # 「門が自分の出口を塞がないこと」と同じ誤りです。
+            # **`dry_ledger_gate()` が `fix` の行き先を枠の本に絞っている以上、
+            # 名乗りのほうを止めれば、台帳が空の日の `fix` はそれで閉じます** ——
+            # 丸ごと止める必要はありません（改善の的だけを外します）。
+            if _stale:
+                try:
+                    _rb = rule3_book() or {}
+                except Exception:                                # noqa: BLE001
+                    _rb = {}
+                _names_it = bool(
+                    (_rb.get("video_id") and str(_rb["video_id"]) in args.ship)
+                    or (_rb.get("topic") and str(_rb["topic"]) in args.ship))
+                if not _names_it:
+                    _stale = ""
             if _stale:
                 ap.error(
                     _stale + "\n"

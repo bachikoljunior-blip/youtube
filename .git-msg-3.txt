@@ -1,0 +1,16 @@
+means: 通し直しの門を「その本を名乗った回だけ」に絞った（門が門を入れた回を止めた）
+
+最初の版は `fix`/`improve` を丸ごと止め、**この門を入れた回自身が止まりました**。
+`untreated_slot()` の註が既に書いている「門が自分の出口を塞がないこと」と同じ誤りです。
+`dry_ledger_gate()` が `fix` の行き先を枠の本に絞っている以上、名乗りのほうを止めれば
+台帳が空の日の `fix` はそれで閉じます —— 丸ごと止める必要はありません。
+
+- `scripts/run_marker.py`: `rule3_book()` の本を `--ship` が名乗った回だけ止める
+- `tests/test_standing_form_stale.py`: 10件（絞りの検査を追加）
+- `docs/JOURNAL.md`: 追記と「次の1周でどこが変わるか」
+
+次の1周で変わる所: きょうの枠の本 `GFvAcxvDmYM` を名乗った `fix`/`improve` は通らず、
+周の頭が「差し替えが今回の手」と出し、枠の床は 1,049回 ではなく 164回 になります。
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01AHfq4FUVAd5fxDM29yG1Cm
