@@ -8438,7 +8438,7 @@ hypotheses:
     # 期限を据え置くと `ready > deadline` ＝ **測る前から届かない期限**になります
     # （`tests/test_hypothesis_deadline_reachable.py` の存在理由そのもの）。
     # この前提の `falsified_if` も「6本 に満たなければ期限だけ延ばすこと」と書いています。
-    deadline: "2026-09-13"
+    deadline: "2026-09-14"
     lever: per_video
     side: dist
     # **数の門を書いたら、見張る先も書くこと**（2026-09-01・別のサブが足した）。
