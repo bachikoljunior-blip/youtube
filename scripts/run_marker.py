@@ -1287,6 +1287,87 @@ def fix_run_len(path: Path | None = None) -> int:
     return n
 
 
+#: **最後に到達日を動かした ship より後に、`fix` を何回まで通すか。**
+#:
+#: ## なぜ `fix_run_len()` では足りなかったか（2026-09-04 夕・最適化の回。実測はこの回に撃った数）
+#:
+#: `fix_run_len()` は **連**（末尾から数えて他の種別が出たら止まる）です。
+#: だから **`improve` を1件 挟むだけで 0 に戻ります。**
+#: 実測（`data/runs.jsonl` 直近5日・ship 253件）:
+#:
+#:     `improve`  34回 → `moves` が 0 以外 **0件（0.0%）**
+#:     `fix`     179回 → 1件（0.6%）
+#:     `verdict`  12回 → 7件（**58.3%**）
+#:
+#: **＝ リセットに使われている札そのものが、歩留り 0.0% の種別です。**
+#: 門は 2026-09-01 に立っていますが、`fix` 比は 09/01 80% → 09/04 66% で、
+#: **`fix` の実数は毎日 31件 前後のまま**動いていません。
+#:
+#: 同じ 179件 の `fix` を2つの物差しで数え直した（この回の実測）:
+#:
+#:     連（`fix_run_len`）が 2以上 だった `fix`            **81 / 179**
+#:     動いた ship から数えた数が 2以上 だった `fix`       **152 / 179**
+#:
+#: **＝ 門は 71件（40%）を、原理として見ていませんでした。**
+#: そして `data/runs.jsonl` の `fix_gate` 84行 のうち **止めた 42行**、
+#: そのうち **12行 は、同じ文言の `fix` が数分後に ship として通っています**
+#: （例: 09-04 12:10 止め → 12:16 通過・09-04 14:01 止め → 14:44 通過）。
+#: **間に別の種別を1件 出すと連が切れるからです。**
+#:
+#: ## なぜ 5 か（**帯ではなく、期待値の比較で置いた**）
+#:
+#: `fix` の歩留り 0.6% で 5回 続ければ、何も動かない確率は 97%。
+#: そのとき6回目の `fix` の期待値は **0.006日**、`verdict` は **0.58日** ＝ **約100倍**。
+#: 5 は「`fix` が悪い」ではなく「**この比が 100倍 開いたところ**」です。
+#:
+#: ## 覆る条件（**この定数を消してよい日**）
+#:
+#: 1. `verdict` の歩留りが `fix` と差が無くなったら（`src/kind_yield.measure()['significant']`
+#:    が False）。そのとき順位付けの根拠が落ちます。
+#: 2. `config/hypotheses.yaml` の未閉が 0件 になったら —— **判定できる前提が無い回に
+#:    この門が立つと、回は詰みます。** そのときは `premise` が律速です。
+#: 3. **止めた回の直後に、同じ文言が別の種別の札で通り始めたら**（＝ 語の書き換えで
+#:    抜ける道ができたら）。連の門はそれで壊れました。`fix_gate` の行と ship の
+#:    文言を突き合わせて数えること（この回がやったのと同じ数え方）。
+FIX_SINCE_MOVE_CAP = 5
+
+
+def fix_since_move(path: Path | None = None) -> int:
+    """**最後に到達日を動かした ship より後に、`fix` が何回 出たか。**
+
+    `fix_run_len()` と違い、**他の種別ではリセットされません。**
+    止まるのは次のどちらかが出たときだけ:
+
+    - `moves` が 0 以外 の ship（＝ その回が到達日を動かしたと名乗った）
+    - `ship_kind == "verdict"` の ship（＝ 腕が動く唯一の道を撃った回。
+      `moves` が 0 でも、前提を1件 閉じた回はここで数を切ります）
+
+    理由と実測は `FIX_SINCE_MOVE_CAP` の註。
+    """
+    p = path or MARKS
+    if not p.exists():
+        return 0
+    n = 0
+    for line in reversed(p.read_text(encoding="utf-8").splitlines()):
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            r = json.loads(line)
+        except Exception:
+            continue
+        if r.get("kind") != "ship":
+            continue
+        if r.get("ship_kind") == "verdict":
+            break
+        mv = r.get("moves")
+        if mv is not None and mv != 0:
+            break
+        if r.get("ship_kind") == "fix":
+            n += 1
+    return n
+
+
 #: **`verdict` が出ないまま続いた回の上限**（判定できる前提が在るときだけ効きます）。
 #:
 #: ## なぜ要るか（2026-09-04・最適化の回に足した。実測はこの回に撃った数）
@@ -2704,6 +2785,29 @@ def main(argv: list[str] | None = None) -> int:
                     "  **その本を直す `fix` も通ります** —— `--ship` に本の ID か題材を書くこと。")
 
             _run = fix_run_len()
+            # **連（`_run`）だけでは、`improve` を1件 挟むと 0 に戻ります**
+            # （2026-09-04 夕・最適化の回に実測で名指しした。理由は `FIX_SINCE_MOVE_CAP` の註）。
+            # **動いた ship から数えたほう（`_since`）は、種別ではリセットされません。**
+            _since = fix_since_move()
+            # **判定できる前提が1件も無い回に、この数で止めると回は詰みます**
+            # （`FIX_SINCE_MOVE_CAP` の覆る条件2）。台帳が空／読めないときは
+            # **連の門だけ**に戻します。
+            _open = near_deadlines()
+            _trip = (_run >= FIX_RUN_CAP) or (_since >= FIX_SINCE_MOVE_CAP and bool(_open))
+            # **その日の枠の本を直す `fix` は通します。** 規則3（オーナー原文・固定）は
+            # 「次の投稿予定までにそこで投稿する動画を改善し続ける」で、
+            # **その本の名前を名乗った `fix` は、門が言っている手そのもの**です
+            # （`untreated_slot()` の `_on_it` と同じ口。**通したことは残します**）。
+            _slot_fix = bool(
+                (_u["video_id"] and _u["video_id"] in args.ship)
+                or (_u["topic"] and _u["topic"] in args.ship))
+            if _trip and _run < FIX_RUN_CAP and _slot_fix:
+                note_fix_gate(args.ship, _since, waived=True)
+                print(f"[marker] **動いた ship から `fix` が {_since}回**"
+                      f"（上限 {FIX_SINCE_MOVE_CAP}）ですが、"
+                      f"**きょうの枠の本（`{_u['video_id'] or _u['topic']}`）を直す `fix` なので通します** —— "
+                      "規則3「次の投稿予定までにそこで投稿する動画を改善し続ける」。")
+                _trip = False
             # **枠が尽きている窓でも、撃てる手が残っていれば止めます**
             # （2026-09-01 に直した。理由と実測は `free_alternatives()` の註）。
             # 前の版は「門が名指しする4つはどれも枠の向こう側」を理由に
@@ -2712,7 +2816,7 @@ def main(argv: list[str] | None = None) -> int:
             # **通したことは残します。**
             _out, _qline = quota_is_out()
             _free = free_alternatives() if _out else []
-            if _run >= FIX_RUN_CAP and _out and not _free:
+            if _trip and _out and not _free:
                 note_fix_gate(args.ship, _run, waived=True)
                 print(f"[marker] **`fix` が {_run}回 続いています**（上限 {FIX_RUN_CAP}）が、"
                       f"**この窓は Data API の日枠が尽きているので通します** —— {_qline}")
@@ -2722,7 +2826,7 @@ def main(argv: list[str] | None = None) -> int:
                 print("[marker]   **その回の JOURNAL に「枠が尽きていた」と書くこと** —— "
                       "書かないと、次に `retro.py` を読んだ回が"
                       "「fix に偏っている」だけを見て、偏りの理由を「選び方が悪い」と読みます。")
-            elif _run >= FIX_RUN_CAP and cond4().get("fired"):
+            elif _trip and cond4().get("fired"):
                 # **門の自分の「覆る条件4」が立っているなら、門は通す**（2026-09-02 夜）。
                 #     `cond4()` は 09/02 夕に「既に立っていた」と実測され、`cond4_line()` は
                 #     止めた回に**毎回**「律速は `fix` ではありません。回の配合をこれ以上
@@ -2735,7 +2839,7 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"[marker] **`fix` が {_run}回 続いています**（上限 {FIX_RUN_CAP}）が、"
                       "**この門の覆る条件4 が立っているので通します** —— "
                       f"{cond4_line()}")
-            elif _run >= FIX_RUN_CAP:
+            elif _trip:
                 note_fix_gate(args.ship, _run)
                 _alt = near_deadlines()
                 _lines = "\n                     ".join(_alt) if _alt else "（`config/hypotheses.yaml` が読めませんでした）"
@@ -2750,11 +2854,19 @@ def main(argv: list[str] | None = None) -> int:
                         _freelines = ("\n  **この窓は日枠が尽きていますが、"
                                       "0単位 で撃てる手が残っています**:\n"
                                       f"                     {_joined}\n")
+                _why_trip = (
+                    f"**`fix` が {_run}回 続いています**（連の上限 {FIX_RUN_CAP}）。"
+                    if _run >= FIX_RUN_CAP else
+                    f"**最後に到達日を動かした回から、`fix` が {_since}回 出ています**"
+                    f"（上限 {FIX_SINCE_MOVE_CAP}・`scripts/run_marker.fix_since_move`）。"
+                    "**この数は種別ではリセットされません** —— "
+                    "`improve` は直近5日で 34回 中 0件（0.0%）しか到達日を動かしていないので、"
+                    "1件 挟んでも連だけが 0 に戻り、`fix` の実数は変わりませんでした。")
                 ap.error(
-                    f"**`fix` が {_run}回 続いています**（上限 {FIX_RUN_CAP}）。"
+                    _why_trip + " "
                     "`eta.py` は毎回「作る・出す・直すは軌跡の入力に入りません」と"
                     "印字しているので、**`fix` の回の `--moves` は定義上 0** です。"
-                    f"直前の {_run}回 は、どれも到達日を動かしていません。\n"
+                    f"直前の {max(_run, _since)}回 は、どれも到達日を動かしていません。\n"
                     "  **この1回は、到達日を動かしうる側に使うこと** —— "
                     "`verdict`（前提を1件 閉じる。**腕が動く唯一の道**）／"
                     "`upload`（規則は1日1本。今日の1本は出したか）／`means`。\n"
