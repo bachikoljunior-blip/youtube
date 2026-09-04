@@ -425,6 +425,9 @@ hypotheses:
     #   **`ready` は 09/06 → 09/11 になり、`earliest_pv_sample`（09/11）と一致しました。**
     #   ＝ 2つの道具が同じ日を指すようになったので、`deadline` はその日に置けます。
     # **`falsified_if` も `needs` も1字も変えていません**（動かしたのは数え方だけ）。
+    # **09-05 → 09-11 に戻しました**（2026-09-05）—— `deadline_check` が
+    # 09-11 → 09-05 へ引き寄せたのは、`count_expr` が広がった帯で 26日 と
+    # 答えていたからです（実物は 12日）。式を `what` に合わせたので、戻します。
     deadline: "2026-09-11"
     lever: per_video
     note: >
@@ -441,7 +444,15 @@ hypotheses:
     needs:
       - kind: accrual
         what: "帯（≤2本/日）に入った日が 19日（いま 12日）。**規則の下では 1日1点**しか増えません"
-        count_expr: "__import__('src.rule_per_video', fromlist=['x']).staleness()['sample_days']"
+        # **帯を `per_day=1` に留めること**（2026-09-05）—— すぐ上の `what` は
+        # 「帯（**≤2本/日**）に入った日」と書いていますが、`staleness()` を素で呼ぶと
+        # **いまの規則の帯**（`PUBLISH_PER_DAY × 2`）で数えます。規則が 1 → 10 に
+        # なった 2026-09-05、この式は **12 → 26** へ跳ね（新しい読みは 0本）、
+        # `deadline_check` が `deadline` を 09-11 → 09-05 へ引き寄せ、
+        # その回がこの前提を**誤って閉じかけました**（取り消し済み・日誌 2026-09-05）。
+        # **`need` も `what` も1字も変えていません。式を `what` に合わせただけです。**
+        # **覆る条件**: 帯の定義が規則から切り離されたら、`per_day` の固定は要りません。
+        count_expr: "__import__('src.rule_per_video', fromlist=['x']).staleness(__import__('src.rule_per_video', fromlist=['x']).estimate(per_day=1))['sample_days']"
         need: 19
         since: "2026-09-02"
         data_file: data/views.jsonl
