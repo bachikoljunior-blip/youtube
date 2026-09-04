@@ -2684,9 +2684,37 @@ def untreated_slot() -> dict:
     # **覆る条件**: 焼く側が回の器の外へ出て、焼きが回をまたいで生き残るように
     # なったら、ここは「焼きが走っている」ではなく「**未反映の直しが在る**」で
     # 足ります（そのとき 2. を `rebake_plan()['do']` に替えること）。
+    # **よその器が焼いている本は、手元の台本で判じられません**（2026-09-05 06:3x に直した）。
+    #
+    # 下の逃げ道は `draft_legs`（**手元の**台本が4脚とも ○）を要求します。
+    # ところが `data/scripts/` は**作業コピーごとに別**で、焼く側の書き直しは
+    # `done` まで commit されません ＝ **焼いている器の外から見ると、手元は
+    # いつまでも ✗** です。だから逃げ道は「焼いている本人」にしか開かず、
+    # **きょうだいの回は焼きの 2時間 ずっと `fix` を止められ**ていました。
+    #
+    # 実測 2026-09-05 06:3x: `GFvAcxvDmYM` の焼きは 04:12 に器
+    # `#agent-ac33135d0d5d9750b` が起こし、帳面の心拍は 05:46。同じ時刻に
+    # 別の器の `draft_legs` は `['尺']`（＝ 04:12 以前の古い写し）で、
+    # 焼く側の心拍は「台本が帯に入った・91段/8,857字 ＝ 26.3分」＝ **尺は通っている**。
+    # **✗ を出していたのは、焼かれている台本ではありませんでした。**
+    #
+    # だから**よその器の焼き**のときだけ、`draft_legs` を根拠にしません。
+    # **自分の器の焼き**は今までどおり2条件（手元 ○ ＋ 焼いている）——
+    # 手元が読めるのだから、読んで判じるほうが強いからです。
+    baking, baking_why = _slot_baking(vid)
+    if baking:
+        elsewhere = _bake_elsewhere(vid)
+        if elsewhere:
+            out["why"] = (f"`{vid}` の控えは {len(bad)}/4脚 ✗ ({'・'.join(bad)}) ですが、"
+                          f"**よその器がいま焼いています**（{baking_why}・{elsewhere}）——"
+                          " 手元の `data/scripts/` はその器の書き直しを持っていないので、"
+                          "**この ✗ は焼かれている台本の話ではありません**。"
+                          "**この回は焼き上がるまで居ること**（`data/rebake.jsonl` の `done`）。"
+                          "**起こし直さないこと** —— 錠を取らない焼き（`python -m src.pipeline`）"
+                          "なので、二重を止めるものが在りません")
+            return out
     draft_bad, draft_why = _dp.draft_legs(topic)
     if not draft_why and not draft_bad:
-        baking, baking_why = _slot_baking(vid)
         if baking:
             out["why"] = (f"`{vid}` の控えは {len(bad)}/4脚 ✗ ({'・'.join(bad)}) ですが、"
                           f"**手元の台本 `data/scripts/{topic}.script.json` は4脚とも ○**で、"
@@ -2703,12 +2731,62 @@ def untreated_slot() -> dict:
     return out
 
 
+#: **帳面の心拍が、これより古ければ「死んだ焼き」と読む**（分）。
+#:
+#: `docs/trigger_main.md` の**降りる線と同じ 120分**です（「焼き始めから 120分。
+#: そこまでで出なければ、`data/rebake.log` の末尾を申し送りに写して降りること」）。
+#: 焼きの下限は 37分・実測は 55〜90分 なので、**まだ生きている焼きをこの窓が
+#: 殺すことはありません**。`beat` は輪の節目ごと（実測 04:39・04:45・05:14・05:46 ＝
+#: 最大 29分 間隔）に落ちるので、120分 空くのは本当に止まったときだけです。
+SLOT_BAKE_STALE_MIN = 120.0
+
+
 def _slot_baking(vid: str) -> tuple[bool, str]:
     """**その本の焼きが、いま実際に走っているか。**（`(走っている, 理由)`）
 
-    見るのは**錠**（`ahead_sweep.rebake_busy()` の `flock`）と `data/rebake.jsonl` の
-    `start`。**`data/rebake.log` の末尾は見ません** —— 焼く側が死んでも log は
-    そのまま残るので、末尾で生死を判じると死んだ焼きを「走っている」と読みます。
+    見るのは**錠**（`ahead_sweep.rebake_busy()` の `flock`）と、**帳面の心拍**
+    （`data/rebake.jsonl` ＋ 器をまたぐ写しの `start` / `beat`）。
+    **`data/rebake.log` の末尾は見ません** —— 焼く側が死んでも log は
+    そのまま残るので、末尾で生死を判じると死んだ焼きを「走っている」と読みます
+    （標準出力は 8KB ずつたまるので、**生きていても 20分 動きません**）。
+
+    ## **錠だけで読むのをやめた理由**（2026-09-05 06:3x に実物で踏んだ）
+
+    錠を握るのは `ahead_sweep.rebake_run()` **だけ**です。ところが、
+    **`scripts/run_marker.py --write` 自身がその場で印字している焼き直しの1行**は::
+
+        **台本ごと書き下ろす焼き直し**（`claude -p`・6〜11分）:
+          python -m src.pipeline --topic nenkin-uketorikata-65-70-75-handan
+
+    ＝ **`pipeline` を直に起こす形で、錠を1度も取りません。**
+    実測 2026-09-05 06:3x（同じ画面の中の食い違い）::
+
+        ps            `python -m src.pipeline --topic nenkin-…-handan` が **2時間** 走っている
+        data/rebake.jsonl  04:12 `start` `GFvAcxvDmYM` ＋ `beat` 04:39 / 04:45 / 05:14 / 05:46
+        rebake_busy()  **False**（錠は空）
+        → `untreated_slot()` は「焼きが走っていません。起こすこと」と言い、
+          **全部の回の `fix` を止め続けていました。**
+
+    そのとき門が指す手は `upload_only.py --draft --replaces GFvAcxvDmYM` です ——
+    **走っている `pipeline` が投稿の直前に丸ごと書き戻す `build/` を、その前に上げる**
+    ことになり、`_shared_ledger()` の註が名指ししている
+    「**同じ本が2本 上がります**」が、手で撃たなくても起きます。
+    **錠が無いので、二重を止めるものも在りません。**
+
+    ## だから、正本は「錠 **または** 帳面の心拍」です
+
+    どちらかが立てば「焼いている」。**帳面は器をまたぎます**
+    （`ahead_sweep._shared_ledger()`・`<共通の .git>/rebake/ledger.jsonl`）。
+    心拍が `SLOT_BAKE_STALE_MIN` より古ければ **「死んだ焼き」** と読み、
+    門はそのまま鳴ります（＝ 起こし直す手が正しい回）。
+
+    ## 覆る条件
+
+    - 焼き直しの入口が `rebake_run()` **だけ**になり（`pipeline` を直に起こす道が
+      消え）、錠が必ず取られるようになったら、心拍の側は要らなくなります。
+      **先に外さないこと** —— 外すなら、`--write` が印字する1行も一緒に変えること。
+    - `beat` の間隔が 120分 を越えるようになったら、`SLOT_BAKE_STALE_MIN` を
+      その実測の上へ上げること（下げると、生きている焼きを殺します）。
     """
     try:
         sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -2716,11 +2794,10 @@ def _slot_baking(vid: str) -> tuple[bool, str]:
     except Exception as exc:                                       # noqa: BLE001
         return False, f"`scripts/ahead_sweep.py` が読めません（{str(exc)[:60]}）"
     try:
-        if not _as.rebake_busy():
-            return False, "錠（`rebake.lock`）が空 ＝ 誰も焼いていません"
-    except Exception as exc:                                       # noqa: BLE001
-        return False, f"錠が見られません（{str(exc)[:60]}）"
-    # 錠は握られている。**その本の焼きか**を帳面の最後の `start` で確かめる。
+        locked = bool(_as.rebake_busy())
+    except Exception:                                              # noqa: BLE001
+        locked = False
+    # **その本の焼きか**を帳面の最後の `start` で確かめる（錠は「誰か」しか言わない）。
     try:
         rows = _as._rebake_rows()
     except Exception:                                              # noqa: BLE001
@@ -2730,14 +2807,72 @@ def _slot_baking(vid: str) -> tuple[bool, str]:
         if r.get("kind") == "start":
             last = r
     if last is None:
-        return False, "帳面に `start` がありません"
+        return False, ("錠は握られていますが、帳面に `start` がありません"
+                       if locked else "錠が空で、帳面にも `start` がありません")
     if str(last.get("video_id") or "") != vid:
-        return False, (f"焼いているのは別の本です（`{last.get('video_id')}`）")
-    done = any(r.get("kind") == "done" and r.get("video_id") == last.get("video_id")
-               and r.get("sha") == last.get("sha") for r in rows)
-    if done:
+        return False, f"焼いているのは別の本です（`{last.get('video_id')}`）"
+    if any(r.get("kind") in ("done", "late") and r.get("video_id") == last.get("video_id")
+           and r.get("sha") == last.get("sha") for r in rows):
         return False, "最後の `start` には `done` が付いています ＝ その焼きは終わっています"
-    return True, f"`{vid}` を {str(last.get('at') or '')[11:19]} から（sha {last.get('sha')}）"
+    beat_at, mins = _last_beat(rows, vid, last)
+    if locked:
+        return True, (f"`{vid}` を {str(last.get('at') or '')[11:19]} から"
+                      f"（錠・sha {last.get('sha')}）")
+    if mins is None:
+        return False, "錠が空で、帳面の時刻が読めません"
+    if mins > SLOT_BAKE_STALE_MIN:
+        return False, (f"錠が空で、帳面の心拍も {mins:.0f}分 前（{beat_at[11:19]}）＝ "
+                       f"**{SLOT_BAKE_STALE_MIN:.0f}分 を越えた死んだ焼き**です")
+    return True, (f"`{vid}` を {str(last.get('at') or '')[11:19]} から"
+                  f"（**錠は空**＝`pipeline` を直に起こした形。帳面の心拍 {beat_at[11:19]}・"
+                  f"{mins:.0f}分 前・sha {last.get('sha')}）")
+
+
+def _bake_elsewhere(vid: str) -> str:
+    """**その焼きを起こしたのが、この回**でなければ、起こした器の名前（無ければ空）。
+
+    `data/rebake.jsonl` の `start` は `session`（`run_marker.actor_id()` と同じ字）を
+    持ちます。**`#` から後ろが作業コピーの名前**で、`data/scripts/` はそこにしか
+    在りません。**読めない回は「よそ」と読みます** —— 手元で判じられないほうへ
+    倒すのが、この関数の向きです（「測れない」を「通った」と読ませない）。
+    """
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        import ahead_sweep as _as                                  # noqa: PLC0415
+        rows = _as._rebake_rows()
+    except Exception:                                              # noqa: BLE001
+        return ""
+    last = None
+    for r in rows:
+        if r.get("kind") == "start" and str(r.get("video_id") or "") == vid:
+            last = r
+    if last is None:
+        return ""
+    who = str(last.get("session") or "")
+    if not who:
+        return "起こした器が帳面に書かれていません"
+    return "" if who == actor_id() else f"起こしたのは `{who.split('#')[-1]}`"
+
+
+def _last_beat(rows: list[dict], vid: str, start: dict) -> tuple[str, float | None]:
+    """その本の**いちばん新しい心拍**（`start` か `beat`）と、いまからの分。"""
+    newest = str(start.get("at") or "")
+    for r in rows:
+        if r.get("kind") not in ("start", "beat"):
+            continue
+        if str(r.get("video_id") or "") != vid:
+            continue
+        at = str(r.get("at") or "")
+        if at > newest:
+            newest = at
+    if not newest:
+        return "", None
+    try:
+        when = datetime.fromisoformat(newest)
+    except ValueError:
+        return newest, None
+    now = datetime.now(when.tzinfo) if when.tzinfo else datetime.now()
+    return newest, (now - when).total_seconds() / 60.0
 
 
 def note_fix_gate(what: str, run_len: int, waived: bool = False) -> None:

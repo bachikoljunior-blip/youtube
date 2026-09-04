@@ -92,15 +92,26 @@ def test_来る本だけで満ちるなら黙る(_uploaded, monkeypatch):
 
 
 def test_窓が閉じていて規則が許す本数に届かない待ちは永久に満ちないと言う(_uploaded, monkeypatch):
-    """1日1本 の下で、2日の窓に 5本 は入りません（`house_rule.cap()`）。"""
+    """**2日の窓に「規則が許すぶん＋1本」は入りません**（`house_rule.cap()`）。
+
+    **要る本数を規則から作ること**（2026-09-05 に書き替えた）—— ここは
+    `need=5` をべた書きし、1日1本 の下で「2日 ＝ 2本」と比べていました。
+    `PUBLISH_PER_DAY` が 10 になると 2日 ＝ 20本 なので、5本 は**入ってしまいます**
+    ＝ この検査は「永久に満ちない」の側を1つも見なくなります。
+    **見張る物は同じで、数だけ規則から作ります。**
+    """
+    from src import house_rule
+
+    days = 2
+    allowed = days * house_rule.cap()
     monkeypatch.setattr(watches, "_stockpile_ids",
                         lambda today=None: {"S1", "S2", "S3"})
     g = watches._k_published_count(
-        {"since": "2026-09-20", "until": "2026-09-21", "need": 5,
+        {"since": "2026-09-20", "until": "2026-09-21", "need": allowed + 1,
          "data_ready": True})
     note = g.note or ""
     assert "永久に満ちません" in note
-    assert "規則1 が許すのは **2本**" in note
+    assert f"規則1 が許すのは **{allowed}本**" in note
 
 
 def test_実物の控えでは未来の予約がすべて作り置きだった():
@@ -114,4 +125,9 @@ def test_実物の控えでは未来の予約がすべて作り置きだった()
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
     from src import house_rule
     assert house_rule.STOCKPILE_IS_SUPPLY is False
-    assert house_rule.PUBLISH_PER_DAY == 1
+    # **ここが見張るのは「作り置きを供給に数えないこと」であって、本数ではありません**
+    #     （2026-09-05 に `== 1` を外した ―― `PUBLISH_PER_DAY` は 10 になった。
+    #       理由と覆る条件は `src/house_rule.py` の同名の註）。
+    #     本数のほうは `tests/test_house_rule.py` と
+    #     `tests/test_density_rule_not_floor.py` が、旗と実測の上限で見ています。
+    assert house_rule.PUBLISH_PER_DAY >= 1

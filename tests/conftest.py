@@ -167,8 +167,36 @@ def _alerts_ledger_to_tmp(tmp_path_factory):
     # **`growth_per_day()` の回帰を汚す向き**なので、規律ではなく機械で外します。
     os.environ["YT_SKIP_REFLECT"] = "1"
 
+    # **`scripts/run_marker.py` の `MARKS` も、ここで tmp へ向けます**
+    # （2026-09-05 06:5x に踏んだ。**上の差し替えだけでは届いていませんでした**）。
+    #
+    # `alerts.RUNS` を tmp へ向けても、`run_marker` は**自分で持っている別の定数**
+    # （`MARKS = <repo>/data/runs.jsonl`・67行目）で読み書きします。だから
+    # `rm.ship()` / `rm.claim()` / `rm.mark()` を直接呼ぶ検査は、**本物の台帳へ
+    # 書いていました。**
+    #
+    # 実測（この回・`data/runs.jsonl` の窓 504行）: 検査が書いた行は
+    # `ship`「ふつうの回」6件・`fix_gate`「test」6件・`verdict_gate`「test」2件。
+    # **`src/ledger_holes.py` が毎周 鳴らしている「`lever` が空」は、これが全部です** ——
+    # ship 242件 中 空 6件 に対し、検査の行を外すと **236件 中 0件**。
+    # あの警告に「書く道を先に直すこと」と書いてあるのが、まさにここ。
+    #
+    # **意図は最初から在りました** —— `run_marker.py` の 143行目が
+    # 「**`MARKS` から辿らないこと。あちらは検査が tmp へ差し替えます**」と
+    # 書いています。**書いてあるのに、差し替える側が無かった**だけです。
+    #
+    # `MARKS` は読みにも書きにも使われる（`recent_claims` / `ship_kind_share` ほか）ので、
+    # 片側だけ向けると検査が自分の書いたものを読めなくなります。**両方ここで向きます。**
+    #
+    # **覆る条件**: `run_marker` が `alerts.RUNS` を見るようになったら、この段落は要りません。
+    import scripts.run_marker as _rm
+
+    keep_marks = _rm.MARKS
+    _rm.MARKS = d / "runs.jsonl"
+
     yield
     alerts.LEDGER, alerts.RUNS = keep
+    _rm.MARKS = keep_marks
 
 
 @pytest.fixture()

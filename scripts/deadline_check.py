@@ -2311,6 +2311,164 @@ def _outside_blocker(form: str) -> str:
             f" **脚 → 札 → 本の順**（`src/outside_short` の docstring）。")
 
 
+def _banked_views_since(since: date) -> tuple[int, float]:
+    """**その日以降に公開した本が、いままでに積んだ再生**（`(本数, 合計)`）。**API 0単位。**
+
+    `latest_views()`（`data/views.jsonl` の観測の最大）× `uploaded()` の公開日。
+    **予約（`at`）が在ればそれ、無ければ上げた日**で切ります。
+
+    ## なぜ要るか（2026-09-05 06:4x。**書いた直後に数えて、自分の門を直した**）
+
+    `_written_date_gate` の最初の版は `target ÷ 規則の速さ` を `views_since` から
+    足していました。**窓の中に、規則より速く公開した本がもう溜まっている場合、
+    その版は遅らせすぎます。** 実測（この回・API 0単位）::
+
+        2026-08-29 以降  **47本 ／ 6,024再生**（6日 ＝ 7.8本/日 ＝ 貯めを引いた頃の供給）
+        2026-09-04 以降  **1本 ／ 2再生**
+
+    前者の要件は「合計 15,000再生」なので、**残りは 8,976** で、
+    規則（129再生/日）なら **70日**。最初の版は 15,000 を丸ごと割って **117日** ——
+    **47日 遅らせすぎ**でした。**銀行にあるぶんを引いてから割ること。**
+    """
+    lv = latest_views()
+    n = 0
+    total = 0.0
+    for r in uploaded():
+        vid = str(r.get("video_id") or "")
+        if not vid:
+            continue
+        when = r.get("at") or r.get("uploaded_at")
+        if not when:
+            continue
+        try:
+            t = datetime.fromisoformat(str(when).replace("Z", "+00:00")).date()
+        except (TypeError, ValueError):
+            continue
+        if t < since:
+            continue
+        got = lv.get(vid)
+        if got is None:
+            continue
+        n += 1
+        total += float(got)
+    return n, total
+
+
+def _settled_view_rate() -> tuple[int, float, float] | None:
+    """**規則の下で、公開した本が1日に積む再生**（`(本数, 中央値, 再生/日)`）。**API 0単位。**
+
+    `1本/日`（`house_rule.PUBLISH_PER_DAY`）× 落ち着いた1本の中央値
+    （`eta._settled_median_views()`・齢168h 以上）。読めなければ `None`。
+    """
+    try:
+        sys.path.insert(0, str(ROOT / "scripts"))
+        import eta as _eta                                      # noqa: PLC0415
+        got = _eta._settled_median_views()
+    except Exception:                                           # noqa: BLE001
+        return None
+    if not got:
+        return None
+    n, med = got
+    try:
+        from src import house_rule                              # noqa: PLC0415
+        per_day = float(getattr(house_rule, "PUBLISH_PER_DAY", 1) or 1)
+    except Exception:                                           # noqa: BLE001
+        per_day = 1.0
+    rate = per_day * float(med)
+    if rate <= 0:
+        return None
+    return n, float(med), rate
+
+
+def _written_date_gate(need: dict, on: date, what: str) -> "Answer | None":
+    r"""**書いた日付を、いまの伸び率で数え直す。**（`Answer` を返したら、その日を採る）
+
+    ## なぜ要るか（2026-09-05 06:3x。**2つの道具が、同じ前提に正反対の指図を出していた**）
+
+    `kind: after` の `on_date` は、**立てた回が手で計算して書いた日**です。
+    この道具はそれを時計と突き合わせるだけなので、**書いた日が古くなっても気づきません。**
+
+    実例（`config/hypotheses.yaml`「登録の依頼を画面（全時間）にも置くと、登録率が上がる」）::
+
+        deadline_check  → 判定できるのは 03-03。**期限 03-04 はその帯の中です ——
+                          書き換えないこと**
+        eta.py          → 治療群は **64再生/日** → 片群 14,085再生 まで **218日**。
+                          期限まで 181日 しかないので **37日 足りません**
+                          ＝ **いまの配り方では、この A/B は何も見分けずに閉じます**
+
+    **同じ前提について、片方は「触るな」、片方は「閉じない」と言っています。**
+    そして「触るな」と言っているほう（この道具）が、**写しを読んでいました。**
+
+    書いた側の根拠は、その前提の `note:` に残っています ——
+    「2026-08-26 以降に公開した 228本 が溜めた再生は 合計 2,636回 ＝ **329.5再生/日（両群）**。
+    片群 30,000再生 に要るのは **182日**」。**228本／31日 ＝ 7.4本/日 の供給の上の数**です。
+    規則1 は **1日1本**（`src/house_rule.py`）なので、**その速さはもう出ません** ——
+    この道具が `kind: accrual` の側では既に当てている補正
+    （「伸び率を規則（1日1本）で押さえています」）が、`kind: after` には
+    当たっていませんでした。
+
+    ## 何を読むか（**推測しません**）
+
+    要件が **`views_target:`**（その日までに要る合計再生）を書いているときだけ数えます。
+    `views_since:` が在ればそこから、無ければ今日から。
+
+        残り ＝ `views_target` − **その窓でもう積んだぶん**（`_banked_views_since`）
+        日数 ＝ 残り ÷ `_settled_view_rate()`（規則の本数 × 落ち着いた1本の中央値）
+
+    **銀行にあるぶんを引くこと。** 窓の中に規則より速く公開した本が溜まっていると、
+    `views_target` を丸ごと割った版は遅らせすぎます（実測 47日・`_banked_views_since` の註）。
+    もう積み終わっている窓は `None`（この門は**遅らせる向き専用**です）。
+
+    **数え直した日が `on_date` より後なら、その日を返します。**
+    前でも同じでも `None`（書いた日のまま通す）—— **早める向きには使いません。**
+    書いた日は「余裕を見た日」であることがあり、縮めると早撃ちになります。
+
+    ## 覆る条件
+
+    - `_settled_view_rate()` が読めない回は `None`（**推測で遅らせないこと**）
+    - 規則1 が外れて 1日 2本以上 になったら、`PUBLISH_PER_DAY` 経由で自動で速くなります
+    - `views_target:` を書いていない `kind: after` は、いままでどおり時計だけです ——
+      **全件に足そうとしないこと。** 数えられるのは「再生が何回 たまるか」の要件だけで、
+      「その日にならないと出ない」要件（公開から48時間 など）は時計が正本です
+    """
+    try:
+        target = float(need.get("views_target"))
+    except (TypeError, ValueError):
+        return None
+    if target <= 0:
+        return None
+    got = _settled_view_rate()
+    if got is None:
+        return None
+    n, med, rate = got
+    try:
+        since = date.fromisoformat(str(need.get("views_since")))
+    except (TypeError, ValueError):
+        since = date.today()
+    # **銀行にあるぶんを先に引くこと**（`_banked_views_since` の註。
+    #     窓の中に規則より速く出した本が溜まっていると、丸ごと割れば遅らせすぎます）。
+    books, banked = _banked_views_since(since)
+    if banked >= target:
+        # **もう積み終わっています。** 遅らせる理由がありません（この門は遅らせる向き専用）。
+        return None
+    remain = target - banked
+    days = int(math.ceil(remain / rate))
+    derived = date.today() + timedelta(days=days)
+    if derived <= on:
+        return None
+    return Answer(
+        derived,
+        f"{what} —— **書いてある日（{on}）は、いまの伸び率では来ません。**"
+        f" {since} 以降に公開した **{books}本 が積んだのは {banked:,.0f}再生**"
+        f"（`data/views.jsonl` の観測の最大）→ **残り {remain:,.0f}再生**。"
+        f" 規則 {rate / max(med, 1e-9):.0f}本/日 × 落ち着いた1本の中央値 {med:.0f}回"
+        f"（齢168h 以上 n={n}）＝ **{rate:.0f}再生/日** なので、あと **{days}日** ＝ **{derived}**。"
+        f" **`on_date` は立てた回が手で計算した写しです**（`_written_date_gate` の註）——"
+        f" 書いた当時の供給は規則より速く、その速さはもう出ません。"
+        f" **期限を延ばすか、配り方を変えること**（`eta.py` の `sub_rate` の行が同じ数を出します）",
+    )
+
+
 def _ans_after(need: dict, lag: int) -> Answer:
     """**その日が来るのを待っているだけ**の要件。
 
@@ -2355,6 +2513,11 @@ def _ans_after(need: dict, lag: int) -> Answer:
     outside = _outside_supply(what)
     if outside is not None:
         return outside
+    # **書いた日付を、いまの伸び率で数え直す**（`views_target:` が在る要件だけ）。
+    # 理由・実測・覆る条件は `_written_date_gate` の註。
+    written = _written_date_gate(need, on, what)
+    if written is not None:
+        return written
     at = need.get("at_time_jst")
     if at:
         try:

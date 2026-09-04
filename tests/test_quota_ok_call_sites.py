@@ -44,7 +44,11 @@ ROOT = Path(__file__).resolve().parent.parent
 _FILES = {
     "src/uploader.py": 4,
     "scripts/reschedule.py": 1,
-    "scripts/post_pending_comments.py": 1,
+    # **2026-09-05 に増えた2件**（どちらも `videos.update` ＝ 書き込み。境目は動かない）:
+    #   `src/sub_ask.py` の登録の依頼を説明欄・コメントへ入れる2か所
+    #   `scripts/post_pending_comments.py` は包みが2か所になった
+    "scripts/post_pending_comments.py": 2,
+    "src/sub_ask.py": 2,
     "scripts/link_longform.py": 1,
     "scripts/playlists.py": 4,          # 包みの定義・中身・その呼び出し2
     "scripts/refresh_thumbnail.py": 2,

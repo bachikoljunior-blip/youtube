@@ -72,6 +72,18 @@ engaged の比を実際に取るのは `verdict()` で、そこだけ **Analytic
 - 前提が判定されたら、この道具は `config/hypotheses.yaml` から外れます。
   **そのときも消さないこと** —— 同じ形の穴（門は行を、手順は本を数える）は
   これで2件目で、次に立てる前提が3件目になります
+
+## 撃ち方（**`--help` はこの本文を刷ります**）
+
+    python -m src.reveal_hold           数える（比べられる本・対にできた日）。**API 0単位**
+    python -m src.reveal_hold --judge   **判定する**（両群が 16本 に満ちている回だけ）。
+                                        Analytics を1回 叩きます（**Data API の日枠とは別枠**
+                                        ＝ 403 の窓でも撃てます）
+    python -m src.reveal_hold --help    この本文
+
+**旗を増やしたら、この節にも足すこと** —— `tests/test_needs_refresh_runs.py` は
+`--help` の出力にその字が在るかで見ています（2026-09-05 に、`--judge` が
+**どこにも名乗られていない**まま `deadline_check` から毎周 名指しされていて落ちた）。
 """
 from __future__ import annotations
 
@@ -459,6 +471,23 @@ def main(argv: list[str] | None = None) -> None:  # pragma: no cover - 画面出
     import sys
 
     argv = list(sys.argv[1:] if argv is None else argv)
+    # **`--help` は、いちばん重い口を撃たずに、受け取る旗を出すこと**
+    # （2026-09-05 07:xx に `tests/test_needs_refresh_runs.py` が落ちて気づいた）。
+    #
+    # ここは `--help` を**素通り**させていたので、`python -m src.reveal_hold --help`
+    # は**丸ごとの報告**（`render()`・控え 868行 を読む）を刷って終わり、
+    # **`--judge` という旗が在ることは、どこにも出ませんでした。**
+    #
+    # `scripts/deadline_check.py` は毎周
+    # 「`python -m src.reveal_hold --judge` ← **いま撃てます。この回で撃つこと**」
+    # と名指ししています。**その旗を、道具自身が名乗らない**形でした
+    # ——「言っている所と、している所が別」の、この行ぶんです。
+    #
+    # 覆る条件: 旗が増えたら、この docstring（`__doc__` の `--judge` の行）も
+    # 一緒に増やすこと。**検査は `--help` の出力にその字が在るかで見ています。**
+    if "--help" in argv or "-h" in argv:
+        print(__doc__ or "")
+        return
     print(render())
     if "--judge" not in argv:
         return

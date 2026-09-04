@@ -167,7 +167,15 @@ DATA_API_TOOLS = (
 #: `scripts/reschedule.py` の `videos.update`、
 #: `scripts/post_pending_comments.py` の `commentThreads.insert`。
 #:
-#: **数を覚えるより、境目を覚えること** —— **6つとも書き込みで、
+#: **【2026-09-05 に数え直しました】** 口は増えています（一覧の正本はここ・
+#: 数は `tests/test_quota_ok_call_sites.py` の `_FILES` が毎回 数えます）:
+#: `src/uploader.py` 4 ／ `scripts/playlists.py` 4（薄い包み越し）／
+#: `scripts/refresh_thumbnail.py` 2 ／ **`src/sub_ask.py` 2**（`videos.update`）／
+#: **`scripts/post_pending_comments.py` 2**（包みが2か所）／
+#: `scripts/reschedule.py` 1 ／ `scripts/retitle.py` 1 ／
+#: `scripts/link_longform.py` 1。**増えた2件も書き込み**なので、下の境目は動きません。
+#:
+#: **数を覚えるより、境目を覚えること** —— **どれも書き込みで、
 #: 通った読みは1件も載りません。** 読みは 1〜100単位（`search.list` は 100）で、
 #: 尽きた窓では読みのほうが先に 403 を返します（実測 窓 08/28 の 403 の出どころ:
 #: `uploader.taken_publish_times` 30回・`status.py:main` 16回・

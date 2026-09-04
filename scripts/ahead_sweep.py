@@ -2494,6 +2494,99 @@ def rebake_busy() -> bool:
     return False
 
 
+def orphaned_bake(root: Path | None = None) -> tuple[str, str]:
+    r"""**焼く側の親が死に、`src.pipeline` だけが孤児で残っていないか。**
+
+    返すのは `(pid, topic)`。無ければ `("", "")`。**API 0単位・プロセス表を読むだけ。**
+
+    ## なぜ要るか（2026-09-05 06:5x に実測した。**この形が既定でした**）
+
+    `docs/spawn_prompt.md` は、焼き直しの生死を**この2つで見ろ**と書いていました::
+
+        pgrep -f "ahead_sweep.py --rebake-run"    # 在れば生きている（**これが正本**）
+        tail -2 data/rebake.jsonl                 # `done` か `late` の行が出たら終わり
+
+    **両方とも「走っていません」と答える状態が在ります。** この回の実測::
+
+        pgrep -f "ahead_sweep.py --rebake-run"  → **一致なし**
+        rebake_busy()                           → **False**（錠は空いている）
+        ps                                      → 10641  PPID **1**  02:38:08
+                                                  timeout 12000 python -m src.pipeline
+                                                    --topic nenkin-uketorikata-65-70-75-handan
+                                                    --visibility private
+
+    ＝ **`--rebake-run` の親だけが死に、`_run()` が起こした `src.pipeline` が
+    孤児（PPID 1）で生き残っています。** 錠は親が握っていたので、親が死んだ時点で
+    OS が外します。だから `rebake_busy()` も False。
+
+    ## これが効いてくる先（**3つとも実害**）
+
+    1. **`done` / `late` は永久に書かれません。** あれを書くのは
+       `rebake_run()` の末尾（`_rebake_note`）で、**その親はもう居ません。**
+       `data/rebake.jsonl` が長らく **start 22件 ／ done 0件** だったのは、
+       焼きが遅いからではなく **記録する側が先に死んでいた**からです。
+       ＝ 「`done` か `late` が出るまで居ること」に従うと、**出ないものを待ちます。**
+    2. **枠は引き継がれません。** `upload_only --draft --replaces` も
+       `reschedule --move` も、同じ死んだ親の中の行です。孤児の `src.pipeline` は
+       `--visibility private` で**自分の1本を上げて終わり**。
+       ＝ 焼き直しが走っていても、**その本が枠へ入ることはありません。**
+    3. **錠が空いているので、次の回の焼き直しは止まりません。** `flock` は
+       親が死ねば外れるので、`rebake_busy()` は False。2本目が普通に走り出し、
+       同じ題材の `src.pipeline` が2本 並びます（4コアの器で）。
+
+    ## なぜ `pgrep` の文字列を直すだけにしないか
+
+    `--rebake-run` の親は**本当に居ない**ので、どんな綴りでも一致しません。
+    見るべきは**孤児のほう**です。`--dry-run` を外すのは、
+    回が自分で焼いている下書き（`--dry-run` 付き）を「焼き直し」と読まないため。
+
+    **覆る条件**: 焼く側が器の外（別のサービス）で走るようになったら、
+    プロセス表にも出なくなります。そのときは `data/rebake.jsonl` の
+    `beat` の時刻（`_rebake_note`）で見ること —— **`beat` は孤児でも書かれません**
+    ので、そちらも同時に直すこと。
+    """
+    import subprocess                                          # noqa: PLC0415
+
+    try:
+        out = subprocess.run(                                  # noqa: S603
+            ["pgrep", "-af", "src.pipeline"],                  # noqa: S607
+            capture_output=True, text=True, timeout=20).stdout
+    except Exception:                                          # noqa: BLE001
+        return ("", "")
+    for ln in (out or "").splitlines():
+        if "--dry-run" in ln or "--topic" not in ln:
+            continue
+        # `pgrep -af` は「<pid> <cmdline>」。`bash -c` の写しは拾わない。
+        pid, _, cmd = ln.partition(" ")
+        if not pid.strip().isdigit() or "bash" in cmd or "eval " in cmd:
+            continue
+        parts = cmd.split()
+        try:
+            topic = parts[parts.index("--topic") + 1]
+        except (ValueError, IndexError):
+            continue
+        return (pid.strip(), topic)
+    return ("", "")
+
+
+def orphaned_bake_lines(root: Path | None = None) -> list[str]:
+    """`orphaned_bake()` を、回が読む1〜4行にする。無ければ空。**API 0単位。**"""
+    pid, topic = orphaned_bake(root)
+    if not pid:
+        return []
+    return [
+        f"  [!] **焼き直しの親が死に、`src.pipeline` だけが孤児で走っています**"
+        f"（pid {pid}・題材 `{topic}`・`ahead_sweep.orphaned_bake()`）",
+        "      ＝ `pgrep -f \"ahead_sweep.py --rebake-run\"` も `rebake_busy()` も"
+        "**「走っていません」と答えます**（錠は親が握っていたので、親が死んだ時に外れました）。",
+        "      **`done` / `late` は永久に書かれません**（書くのは死んだ親の末尾）。"
+        "**それを待たないこと。** そして**この本が枠へ入ることもありません**"
+        "（`--move` も同じ親の中）。孤児は private で1本 上げて終わります。",
+        "      **錠は空いているので、次の焼き直しは止まりません。** "
+        "撃つなら、この孤児と同じ題材でないことを確かめること（4コアの器で2本 並びます）。",
+    ]
+
+
 def same_topic_drafts(vid: str, topic: str, *, root: Path | None = None) -> list[str]:
     """**`--replaces` に渡す ID を全部そろえる**（いちばん新しい順・`vid` が先頭）。**API 0単位。**
 

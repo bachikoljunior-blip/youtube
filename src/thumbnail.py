@@ -263,7 +263,16 @@ def _draw_figure(img: Image.Image) -> None:
 
 
 def _fit_font(draw: ImageDraw.ImageDraw, text: str, start: int, max_w: int, floor: int = 90):
-    """`start` から下げて、幅 `max_w` に入る最大の字を返す。"""
+    """`start` から下げて、幅 `max_w` に入る最大の字を返す。
+
+    **呼ぶのは2つの型 両方です**（2026-09-05 に既定の型からも呼ぶようにした）——
+    `_create_outside`（外の型・2026-09-03 から）と `create`（既定・控えの 98%）。
+    **既定の側は、それまで幅を1度も測っていませんでした**（大きさは文字数の2段だけ）。
+
+    `floor` に当たったら、**そこで止めてその大きさを返します** ——
+    入りきらないまま返るので、**呼ぶ側は「短い字を渡す」ほうで直すこと**
+    （小さすぎる字は、切れていないだけで、やはり読めません）。
+    """
     size = start
     while size > floor:
         f = _font(size)
@@ -327,6 +336,23 @@ def _create_outside(img: Image.Image, line1: str, line2: str, kicker: str | None
     return out_path
 
 
+#: 本文を置く左端（`create()` の `(72, …)`）と、右に残す余白。
+#: **右の余白は、縁取り（`_draw_outlined` の `stroke=10`）が切れないぶん**です。
+TEXT_LEFT = 72
+TEXT_RIGHT_PAD = 40
+
+#: 本文と kicker を、これより小さくはしません。
+#: **切れていないだけの、読めない字を作らないため** —— ここまで小さくなる本は、
+#: 字のほうを短くすること（`_fit_font` は床に当たったらその大きさで返します）。
+TEXT_FLOOR = 54
+KICKER_FLOOR = 34
+
+
+def text_box() -> int:
+    """**本文が入る幅**（`create()` の既定の型）。`_fit_font` に渡す `max_w`。"""
+    return W - TEXT_LEFT - TEXT_RIGHT_PAD
+
+
 def create(source: Path, line1: str, line2: str, out_path: Path, work: Path,
            accent: tuple[int, int, int] | None = None,
            kicker: str | None = None, style: str | None = None) -> Path:
@@ -365,7 +391,18 @@ def create(source: Path, line1: str, line2: str, out_path: Path, work: Path,
 
     size1 = 150 if len(line1) <= 7 else 120
     size2 = 150 if len(line2) <= 7 else 120
-    f1, f2 = _font(size1), _font(size2)
+    # **幅を測ること。** ここは長らく上の2段（文字数）だけで決めており、
+    # **`textbbox` を1度も見ていませんでした** —— 120px の全角で入るのは 10文字
+    # （1280 − 72 − 40 ＝ 1,168px）で、**11文字目から先は画面の外へ消えます**
+    # （例外も警告も出ません）。実物 2026-09-05: `小規模企業共済 241か月目`（13文字）
+    # → 焼けた絵は `小規模企業共済 241か`。
+    #
+    # **測る関数は既に在りました** —— `_fit_font` は `_create_outside`（外の型）が
+    # 2026-09-03 から使っています。**既定の型（控えの 98%）だけが呼んでいなかった**
+    # ので、ここも同じ関数を呼びます（**同じ規則を2か所に書かない**）。
+    # 入る字は 1ピクセルも変わりません（`start` で入れば `start` を返す）。
+    f1 = _fit_font(draw, line1, size1, text_box(), floor=TEXT_FLOOR)
+    f2 = _fit_font(draw, line2, size2, text_box(), floor=TEXT_FLOOR)
 
     h1 = draw.textbbox((0, 0), line1 or "　", font=f1)[3]
     h2 = draw.textbbox((0, 0), line2 or "　", font=f2)[3]
@@ -375,7 +412,9 @@ def create(source: Path, line1: str, line2: str, out_path: Path, work: Path,
     if kicker:
         # **本文より明らかに小さく。** 同じ大きさで3行 並べると、
         # どれが結論か分からなくなります（読む順が決まらない）。
-        fk = _font(KICKER_SIZE if len(kicker) <= 18 else KICKER_SIZE - 10)
+        fk = _fit_font(draw, kicker,
+                       KICKER_SIZE if len(kicker) <= 18 else KICKER_SIZE - 10,
+                       text_box() - 40, floor=KICKER_FLOOR)
         hk = draw.textbbox((0, 0), kicker, font=fk)[3]
 
     block = h1 + h2 + gap + ((hk + KICKER_GAP) if hk else 0)

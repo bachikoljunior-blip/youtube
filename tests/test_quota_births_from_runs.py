@@ -134,8 +134,21 @@ def test_clamp_still_lets_the_house_rule_run():
     規則の1本は出せます。90分 にはこの根拠がありませんでした。
     """
     from src.house_rule import PUBLISH_PER_DAY
-    assert PUBLISH_PER_DAY == 1
+    # **規則の本数を読むこと。1 をべた書きしないこと**（2026-09-05 に書き替えた）——
+    #     ここは `== 1` を前提に「1日に最低2回 起きられれば足りる」と解いていました。
+    #     2026-09-05 に `PUBLISH_PER_DAY` は 10 になっています（床が外れたあと、
+    #     旗だけ動いて数が残っていたのを実測で合わせた）。**歯止めの役目は
+    #     「計器が壊れても規則ぶんを出せる」ことなので、要る起き数は本数に付いて動きます。**
+    #     **覆る条件**: 1回の起きで複数本 出せるようになったら（`batch_build` が
+    #     1周で N本 置ける）、要るのは `N+1` 回ではなくなります。そのとき書き直すこと。
+    #     **要る起き数は、本数に付いて動きません** —— `batch_build.cap_by_density()`
+    #     は1回の走りで**その日の上限ぶんまで**枠を残すので（`cap = density_cap()`）、
+    #     **1回 起きれば その日のぶんは置けます。** だから守る線は 2回 のままです。
+    #     **覆る条件**: 1回の走りで1本しか置けない形に戻したら、要る起き数は
+    #     `PUBLISH_PER_DAY + 1` になります。そのとき下の数を書き直すこと。
+    assert PUBLISH_PER_DAY >= 1
     wakes_per_day = 24 * 60 / quota.FLOOR_MAX_CLAMP
     assert wakes_per_day >= 2, (
         f"上限 {quota.FLOOR_MAX_CLAMP:.0f}分 では1日に "
-        f"{wakes_per_day:.1f}回 しか起きられません（1日1本 が出せない）")
+        f"{wakes_per_day:.1f}回 しか起きられません"
+        f"（規則の {PUBLISH_PER_DAY}本/日 が出せない）")
