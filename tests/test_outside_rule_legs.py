@@ -136,3 +136,123 @@ def test_表が書いた脚の番号は_その口が本当に数えている番�
         + "\n".join(f"  ・「{k}」→ {f} の ({n})" for k, f, n in ずれ)
         + "\n表の番号を直すか、その番号を実際に数えて docstring に足すこと。"
           "**表から番号を消して緑にしないこと。**")
+
+
+# ---------------------------------------------------------------------------
+# **数える口が「これから焼く台本」だけを見て、控えを見ていないか**
+# （2026-09-05 04:4x に足した。**上の2件が緑のまま、実物が素通りした**）
+#
+# 上の2件は「規則の本文 ↔ 数える口」の対応しか見ません。ところが口には**行き先が2つ**あります:
+#
+#     `script_writer.long_script_problems()`   ← **これから焼く台本**（`generate()` が3回まで書き直す）
+#     `daily_pick.OUTSIDE_LEGS`（`pick_legs`） ← **もう実物に入っている台本の控え**
+#                                                （＝ その本が「処置」かを決める側）
+#
+# `outside_length_problems` は 2026-09-05 03:5x に**前者にだけ**繋がりました。
+# 上の2件は両方 緑のままで、実物はこうなっていました（04:1x に撃った・API 0単位）::
+#
+#     pick_legs('GFvAcxvDmYM') → ([], None)      ← 4脚 全通と返る
+#     台本 7,699字 ＝ 22.8分・切れ目 25分 を **731字 割っている**
+#
+# その本は 09/05 09:00 に出て、前提「外の作り方を写した長尺」を 09/07 09:00 の齢48h で
+# 閉じる本です。**帯でいちばん大きく効いている軸（尺・×2.6）だけを外した本で閉じると、
+# 「外の作りを写しても効かない」という判定が、写していない軸のせいで出ます。**
+#
+# **赤になったときの直し方は2つだけ**（上と同じ形）:
+#   1. `daily_pick.OUTSIDE_LEGS` にその口を足す
+#   2. 控えでは数えられないと決めて、下の `KEIGAI_NOT_ON_QUEUE` に**理由つきで**書く
+
+#: **控え（`data/critique_queue/<ID>.script.json`）だけでは数えられない口。理由は必須。**
+KEIGAI_NOT_ON_QUEUE: dict[str, str] = {
+    "_check_not_repeat": (
+        "`verify._check_not_repeat(work, script)` は**焼いた作業ディレクトリ**（`work`）を要る。"
+        "控えは script.json 1枚なので、この口は控えに当てられない。"
+        "＝ 焼く側（`pipeline`）でだけ数える。**`script_writer` にも存在しない**ので、"
+        "`OUTSIDE_LEGS` に書くと `legs_of_path` が「口が在りません」を返し続ける"),
+}
+
+
+def test_数える口は控えの側にも繋がっている():
+    from src import daily_pick as dp
+
+    counted = {fn.split(" ")[0] for _, fn in sw.OUTSIDE_RULE_LEGS
+               if not fn.startswith(sw.OUTSIDE_LEG_NOT_COUNTED)}
+    on_queue = {fn for _, fn in dp.OUTSIDE_LEGS}
+    missing = sorted(counted - on_queue - set(KEIGAI_NOT_ON_QUEUE))
+    assert not missing, (
+        "規則を数える口が `daily_pick.OUTSIDE_LEGS` に繋がっていません: "
+        + "・".join(missing)
+        + "\n＝ **これから焼く台本は落ちるのに、もう実物に入っている台本は素通りします**"
+          "（`pick_legs` が 全通 を返し、その本が「処置」を名乗れてしまう）。\n"
+          "`OUTSIDE_LEGS` に足すか、`KEIGAI_NOT_ON_QUEUE` に**理由つきで**書くこと。")
+
+
+def test_控えで数えない口の言い訳は理由を持っている():
+    empty = [k for k, v in KEIGAI_NOT_ON_QUEUE.items() if not str(v).strip()]
+    assert not empty, f"理由の無い言い訳が在ります: {empty}"
+
+
+def test_控えの口はすべて控えの形_dict_を受ける():
+    """**口が転んでも「通った」になっていた穴**（2026-09-05 04:2x に踏んだ）。
+
+    `daily_pick.legs_of_path()` は控えを `json.loads` した **`dict`** を口に渡します。
+    ところが `outside_length_problems` は `script.model_dump()` だけで読む
+    **pydantic 専用**で、`dict` を渡すと毎回 `AttributeError`。
+    当時の `legs_of_path` は `except Exception: continue` でそれを飲んでいたので、
+    **この脚は静かに合格**になっていました。
+
+    ここは「転ばないこと」だけを見ます（**合否は見ません** —— 中身の判定は別の検査）。
+    """
+    from src import daily_pick as dp
+    from src import script_writer as _sw
+
+    mihon = {"title": "【60歳以上の方へ】仮の題",
+             "thumbnail_kicker": "仮", "thumbnail_line1": "仮", "thumbnail_line2": "仮",
+             "segments": [{"narration": "これは見本の一文です。",
+                           "visual": {"kind": "text", "headline": "見本"}}]}
+    koronda: list[str] = []
+    for label, fn in dp.OUTSIDE_LEGS:
+        f = getattr(_sw, fn, None)
+        if f is None:
+            koronda.append(f"{label}: 口 `{fn}` が `src.script_writer` に在りません")
+            continue
+        try:
+            f(mihon)
+        except Exception as exc:                                   # noqa: BLE001
+            koronda.append(f"{label}: `{fn}` が dict で転びました（{type(exc).__name__}: {exc}）")
+    assert not koronda, (
+        "控えの形（`dict`）で転ぶ口が在ります:\n" + "\n".join(f"  ・{t}" for t in koronda)
+        + "\nほかの口と同じ両対応で書くこと")
+
+
+def test_転んだ脚は通ったことにしない():
+    """`legs_of_path` は、口が転んだら **`why` を返す**（`bad` を空で返して合格にしない）。
+
+    前の版は `except Exception: continue` で、**転んだ脚は静かに合格**でした。
+    `pick_legs` の docstring は「**読めないものを『通った』に数えません**」と書いてあり、
+    書いてあってしていなかった所です。
+    """
+    import json
+    import tempfile
+    from pathlib import Path
+
+    from src import daily_pick as dp
+    from src import script_writer as _sw
+
+    def korobu(script):
+        raise RuntimeError("わざと転ぶ")
+
+    with tempfile.TemporaryDirectory() as d:
+        p = Path(d) / "x.script.json"
+        p.write_text(json.dumps({"segments": []}), encoding="utf-8")
+        na = "_wazato_korobu_kuchi"
+        setattr(_sw, na, korobu)
+        moto = dp.OUTSIDE_LEGS
+        try:
+            dp.OUTSIDE_LEGS = (("試し", na),)
+            bad, why = dp.legs_of_path(p, what="試しの台本")
+            assert why, "口が転んだのに `why` が空です（＝「通った」になっています）"
+            assert "試し" in why, why
+        finally:
+            dp.OUTSIDE_LEGS = moto
+            delattr(_sw, na)
