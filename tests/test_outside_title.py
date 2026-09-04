@@ -61,10 +61,39 @@ def test_か月と歳は金額として数えない():
 
 
 def test_サムネに判断の語が無いと鳴る():
+    """**2026-09-04 23:0x に、当てる語を帯で測り直しました**（`_OUTSIDE_DECIDE_RE` の註）。
+
+    前の版はここに「働く年金受給者」を置いて「1件 鳴る」と書いていました。
+    **帯 335本 で数えたら、その行こそが いちばん強い特徴**でした ——
+    相手の名指し（受給者・◯◯歳以上・の方へ）は 中央 525,475回 対 6,023回 ＝ **×87.2**。
+    いま鳴らすのは、**判断の語も 場面も 相手も 無い行**です。
+    """
     out = sw.outside_title_problems(
-        _script(thumbnail_line1="働く年金受給者", thumbnail_line2="年54万円増える"))
+        _script(thumbnail_line1="年金の受け取り方", thumbnail_line2="年54万円増える"))
     assert len(out) == 1
     assert "判断の語が無い" in out[0]
+
+
+def test_帯で強い特徴は判断の語として通る():
+    """**外の帯 335本 で測った2つ**（`_OUTSIDE_DECIDE_RE` の註に表）。
+
+        相手の名指し  中央 525,475回 対 6,023回 = ×87.2（n=26）
+        場面（年・改正） 中央 233,558回 対 8,421回 = ×27.7（n=47）
+
+    どちらも、前の版では「判断の語が無い」で落ちていました。
+    **落としていたのは、帯でいちばん取れている作りのほうです。**
+    """
+    assert sw.outside_title_problems(
+        _script(thumbnail_line1="働く年金受給者", thumbnail_line2="年54万円増える")) == []
+    assert sw.outside_title_problems(
+        _script(thumbnail_line1="2026年4月から", thumbnail_line2="年54万円増える")) == []
+
+
+def test_帯で当たらない語は広げていない():
+    """**緩めた向きは、測った2つだけ**（何でも通す口にしないこと）。"""
+    out = sw.outside_title_problems(
+        _script(thumbnail_line1="制度のしくみ", thumbnail_line2="年54万円増える"))
+    assert any("判断の語が無い" in p for p in out)
 
 
 def test_題が括弧で始まらないと鳴る():
@@ -114,18 +143,27 @@ def test_煽りの語は数えない():
 
 
 @pytest.mark.parametrize("vid", ["1huadpEk6HY", "6PKux5HNnUE"])
-def test_公開ずみのoutside_long2本は判断の語が無いまま(vid):
-    """**実物で数えた結果を、そのまま検査に残します。**
+def test_公開ずみのoutside_long2本は帯の特徴を持っている(vid):
+    """**この検査は 2026-09-04 23:0x に向きが変わりました。実測で変えています。**
 
-    この2本は公開ずみ（焼き直せない）なので、外れたままが正です。
-    ここが緑のまま `outside_title_problems` を緩めると、この口は黙ります。
+    前の版は「この2本は『判断の語が無い』で外れたままが正」と書いていました。
+    **帯 335本 を撃って数えたら、外していたほうが誤りでした** ——
+    2本のサムネは `働く年金受給者`（相手の名指し・**×87.2**）と
+    `2026年4月からルール変更`（場面・**×27.7**）で、
+    **帯でいちばん取れている2つの特徴を、どちらも持っています。**
+    落とした理由の「判断の語」は、帯 335本 の **6本（1.8%）**にしか在りません
+    （`_OUTSIDE_DECIDE_RE` の註に表と出どころ）。
+
+    **＝ この脚は、帯の強い側を落として、弱い側を通していました。**
+    ここが赤くなったら、`_OUTSIDE_DECIDE_RE` を帯で測り直すこと
+    （`niche_ceiling.corpus_rows("long")`・撃たずに読めます・0単位）。
     """
     f = ROOT / "data" / "critique_queue" / f"{vid}.script.json"
     if not f.exists():
         pytest.skip(f"控えがありません: {f}")
     out = sw.outside_title_problems(json.loads(f.read_text(encoding="utf-8")))
-    assert any("判断の語が無い" in p for p in out), \
-        f"{vid} は 2026-09-04 の時点で『判断の語が無い』で外れていました"
+    assert not any("判断の語が無い" in p for p in out), \
+        f"{vid} のサムネは 相手の名指し と 場面 を持っています（帯で ×87.2 と ×27.7）"
 
 
 def test_outside_longの枝から呼ばれている():
