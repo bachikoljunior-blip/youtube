@@ -1616,46 +1616,74 @@ def outside_body_problems(script) -> list[str]:
             if isinstance(i, int):
                 starts.append((i, str(lab or "")))
         starts.sort()
-        # 先頭の章は冒頭 90秒（`outside_opening_problems` が見ている所）なので数えない。
-        # **締めの章は数に入れます** —— 実測 `Ec-j1-W4nqw` は 冒頭＋6 で、
-        # その 6 が規則の「5〜7つ」に当たります（本題5＋締め1）。
-        n = len(starts) - 1
-        if not (OUTSIDE_CHAPTERS_LO <= n <= OUTSIDE_CHAPTERS_HI):
-            problems.append(f"冒頭を除く章が {n}つ（{OUTSIDE_CHAPTERS_LO}〜{OUTSIDE_CHAPTERS_HI}つ。"
-                            "外の上位4本を写した形 —— 章ごとに判断を1つ置くため）")
-        bounds = [i for i, _ in starts] + [len(segs)]
-        seen: dict[str, str] = {}
-        # **最後の章は締め**（規則 (3)「自分の場合の数字を出す手順を3つ」）なので、
-        # 表を求めません。**実測でここを踏みました**（2026-09-04）——
-        # `1huadpEk6HY` / `6PKux5HNnUE` の末尾の章「自分の数字に置き換える」は
-        # 手順だけの章で、表が無いのが正しい。**冒頭の章（`starts[0]`）は
-        # `outside_opening_problems` の持ち場**なので、こちらも求めません。
-        for k, (lo, lab) in enumerate(starts):
-            hi = bounds[k + 1]
-            if k == 0 or k == len(starts) - 1:
-                continue
-            heads = [str(_visual_of(s).get("headline") or "")
-                     for s in segs[lo:hi]
-                     if _visual_of(s).get("kind") in OUTSIDE_TABLE_KINDS]
-            if not heads:
-                problems.append(f"章「{lab}」に chart も table も無い"
-                                "（章ごとに、渡した表から別の表を1枚以上）")
-            for h in heads:
-                if not h:
+        # **`chapters` が在っても、1つも読めないことがあります**（2026-09-04 20:5x に踏んだ）。
+        #
+        # `starts` に入るのは `segment_index` が `int` の章だけです。別の形の章
+        # （たとえば `title` / `start` で書かれた章）は 1つも入らないので `starts` は空になり、
+        # すぐ下の `n = len(starts) - 1` が **-1** になります。実際に出る行::
+        #
+        #     冒頭を除く章が **-1つ**（5〜7つ。外の上位4本を写した形 …）
+        #
+        # **これは「章が -1つ ある」ではなく「章が1つも読めなかった」です。**
+        # この関数の docstring は「**`chapters` が無い台本は、何も言いません**
+        # （読めないものは通す —— `house_rule.needs_beyond_rule()` と同じ姿勢）」と
+        # 書いており、**読めない章も同じ側**です。すぐ上の `if chs:` は
+        # 「**無い**」しか見ていませんでした。
+        #
+        # 直さないと何が起きるか: 章の書き方が変わった日から、**全部の本が
+        # 永久に直せない指摘を1つ持ちます**（数は台本のせいではないので、
+        # 書き直しの輪は 3回 とも外して落ちます）。**負の個数を刷らないこと** ——
+        # 数が負なら、それは中身の話ではなく読み手の話です。
+        #
+        # **覆る条件**: 章に `segment_index` 以外の書き方を足すなら、ここで読むこと
+        # （読めるようにするのが本筋で、この枝は「読めなかったと言う」ためだけに在ります）。
+        if not starts:
+            problems.append(
+                f"章が {len(chs)}つ 在りますが、`segment_index` が読めるものが 1つもありません"
+                "（章の区切りが引けないので (2) は測っていません —— **守られていないのではありません**）")
+        # **`starts` が空なら、ここから下は何も数えません**（上で「読めなかった」と言ってあります）。
+        # 締め (3) は章に依らないので、この下の `tail` で今までどおり数えます。
+        if starts:
+            # 先頭の章は冒頭 90秒（`outside_opening_problems` が見ている所）なので数えない。
+            # **締めの章は数に入れます** —— 実測 `Ec-j1-W4nqw` は 冒頭＋6 で、
+            # その 6 が規則の「5〜7つ」に当たります（本題5＋締め1）。
+            n = len(starts) - 1
+            if not (OUTSIDE_CHAPTERS_LO <= n <= OUTSIDE_CHAPTERS_HI):
+                problems.append(f"冒頭を除く章が {n}つ（{OUTSIDE_CHAPTERS_LO}〜{OUTSIDE_CHAPTERS_HI}つ。"
+                                "外の上位4本を写した形 —— 章ごとに判断を1つ置くため）")
+            bounds = [i for i, _ in starts] + [len(segs)]
+            seen: dict[str, str] = {}
+            # **最後の章は締め**（規則 (3)「自分の場合の数字を出す手順を3つ」）なので、
+            # 表を求めません。**実測でここを踏みました**（2026-09-04）——
+            # `1huadpEk6HY` / `6PKux5HNnUE` の末尾の章「自分の数字に置き換える」は
+            # 手順だけの章で、表が無いのが正しい。**冒頭の章（`starts[0]`）は
+            # `outside_opening_problems` の持ち場**なので、こちらも求めません。
+            for k, (lo, lab) in enumerate(starts):
+                hi = bounds[k + 1]
+                if k == 0 or k == len(starts) - 1:
                     continue
-                if h in seen and seen[h] != lab:
-                    problems.append(f"表「{h}」を章「{seen[h]}」と章「{lab}」の2つで使っている"
-                                    "（同じ表を2つの章で使わない）")
-                seen.setdefault(h, lab)
-            # (2d) **章ごとに判断を1つ**（2026-09-04 16:3x に足した。下の `OUTSIDE_RULE_LEGS` の註）。
-            text = lab + "".join(
-                (s.get("narration") if isinstance(s, dict) else getattr(s, "narration", None)) or ""
-                for s in segs[lo:hi])
-            if not _OUTSIDE_CHAPTER_DECIDE_RE.search(text):
-                problems.append(f"章「{lab}」に判断が1つも無い"
-                                "（規則 (2)「章ごとに判断を1つ置く」——「…すべきか」「…かどうか」"
-                                "「65歳・70歳・75歳のどれか」の形で、その章で決める物を1つ言うこと。"
-                                "**この規則が写している外の上位は『計算1本』ではなく『判断1つ』の回です**）")
+                heads = [str(_visual_of(s).get("headline") or "")
+                         for s in segs[lo:hi]
+                         if _visual_of(s).get("kind") in OUTSIDE_TABLE_KINDS]
+                if not heads:
+                    problems.append(f"章「{lab}」に chart も table も無い"
+                                    "（章ごとに、渡した表から別の表を1枚以上）")
+                for h in heads:
+                    if not h:
+                        continue
+                    if h in seen and seen[h] != lab:
+                        problems.append(f"表「{h}」を章「{seen[h]}」と章「{lab}」の2つで使っている"
+                                        "（同じ表を2つの章で使わない）")
+                    seen.setdefault(h, lab)
+                # (2d) **章ごとに判断を1つ**（2026-09-04 16:3x に足した。下の `OUTSIDE_RULE_LEGS` の註）。
+                text = lab + "".join(
+                    (s.get("narration") if isinstance(s, dict) else getattr(s, "narration", None)) or ""
+                    for s in segs[lo:hi])
+                if not _OUTSIDE_CHAPTER_DECIDE_RE.search(text):
+                    problems.append(f"章「{lab}」に判断が1つも無い"
+                                    "（規則 (2)「章ごとに判断を1つ置く」——「…すべきか」「…かどうか」"
+                                    "「65歳・70歳・75歳のどれか」の形で、その章で決める物を1つ言うこと。"
+                                    "**この規則が写している外の上位は『計算1本』ではなく『判断1つ』の回です**）")
 
     tail = "".join(
         (s.get("narration") if isinstance(s, dict) else getattr(s, "narration", None)) or ""
