@@ -2091,6 +2091,83 @@ def draft_legs(topic: str | None) -> tuple[list[str], str | None]:
     return legs_of_path(ROOT / "data" / "scripts" / f"{t}.script.json", what="手元の台本")
 
 
+def standing_pick_title(cur: dict | None, *, uploaded_path: Path | None = None) -> list[str]:
+    r"""**立っている決めの本の題を、外の帯でいちばん厚い升と突き合わせた行。**（API 0単位）
+
+    ## なぜ要るか（2026-09-05 06:2x に、同じ回で2人が手で踏んだ）
+
+    `src/script_writer.short_title_problems` は 2026-09-05 に立った門で、
+    **これから焼く本**の題に `【 】` を要求します。外の帯のショート 132本 の実測で
+    `【】` が在る本は 1.46回/日・無い本は 0.26回/日 ＝ **×5.52**（n=55対77）——
+    9つの特徴のうち、両側の升が厚い（n≥20）2つのうちの大きいほうです。
+
+    **ところが、その日の枠へ入るのは「池の private 316本」であることが普通です。**
+    池の本はもう焼き上がっていて、**作る側の門は1本も通りません** ——
+    2026-09-05 に数えた自分のショート **552本 の題に `【】` は 0本**でした。
+    ＝ **門を足しても、明日 出る本には効きません。**
+
+    そして実際に、**同じ回のうちに2つのサブが別々に手で気づいて `retitle.py` を撃ちました**
+    （`data/retitled.jsonl` 09-05 20:58 `qyVdpAoT_40` ／ 21:02 `PhQ2KvuQASQ`・4分 差）。
+    **手で気づける形にしておくと、2人で気づきます**（08-31 の `src/descriptions.py` と同じ形）。
+    だから、決めが立った時点で機械が言います。
+
+    ## 何を見るか
+
+    **形が「ショート」の決めだけ**（疑問形は 長尺と ショート で符号が逆なので、
+    形をまたいで写さないこと ——`niche_ceiling.TITLE_FEATURES` の註）。
+    題は **`retitles.overlay()` を通してから**読みます。**`_latest_uploaded()` は
+    素の帳面です** —— あれは「上げたときの行」で、`scripts/retitle.py` が実物の題を
+    差し替えても1文字も変わりません（重ねているのは `pool_candidates()` の側だけ。
+    その関数の註に「`_latest_uploaded()` 自身が取り込むようになったら、ここの重ねは要らない」
+    と書いてあり、**まだ取り込んでいません**）。
+
+    **この関数の最初の版は、そこを踏みました** —— 書いた直後に自分で試したら、
+    **4分前に自分が `retitle.py` で直したばかりの `PhQ2KvuQASQ` に対して
+    「題に `【 】` が在りません」と言いました。** 素の帳面を読んでいたからです。
+    そのまま出していれば、次の回が同じ本にもう一度 50単位 を払います
+    ——**09-05 03:4x が 100単位 払ったのと、同じ形**です。
+
+    ## 覆る条件
+
+    - `niche_ceiling.title_features('short')` の `【】` の倍率が 1.0 を割ったら、この行ごと落とすこと
+    - 自分のショートで `【】` の在る本が 20本 たまったら、外の帯ではなく**自分の実測**
+      （`data/views.jsonl` の齢48h・規則の密度の日）で比べ直すこと
+    - **位置は言いません** —— 頭 n=36 ×3.15 ／ 末尾 n=19 ×22.8 で、強いほうが薄い升です
+    """
+    if not cur or str(cur.get("form") or "") != "ショート":
+        return []
+    vid = str(cur.get("video_id") or "")
+    if not vid:
+        return []
+    row = dict(_latest_uploaded(uploaded_path).get(vid) or {})
+    if not row:
+        return []
+    row.setdefault("video_id", vid)
+    try:
+        from . import retitles                                  # noqa: PLC0415
+        row = retitles.overlay([row])[0]
+    except Exception:                                           # noqa: BLE001
+        # **重ねられなければ、何も言わないこと。** 素の字で「無い」と言うと、
+        # もう直っている本へ 50単位 を撃たせます（上の docstring の実測）。
+        return []
+    title = str(row.get("title") or "")
+    if not title or ("【" in title and "】" in title):
+        return []
+    return [
+        f"     [!] **その本の題に `【 】` が1つも在りません**（`{title[:28]}`）——"
+        " 外の帯のショート 132本 の実測で `【】` が在る本は 1.46回/日・無い本は 0.26回/日"
+        " ＝ **×5.52**（n=55対77・`scripts/niche_ceiling.py --titles --form short`。"
+        "9つの特徴のうち**両側の升が厚い**のは2つだけで、その大きいほう）。"
+        " **自分のショートは 0本／552本**（2026-09-05 に数えた）。",
+        f'       python scripts/retitle.py {vid} "【<相手・場面・制度名>】<いまの題>"'
+        "   # 50単位・**焼き直し無し**（齢は 0 に戻りません）",
+        "     　 **中は題材そのものから採ること** —— 台本がしていない話を括弧に入れると"
+        "『誤解を与える内容』で、収益化されなければ再生が何回でも 0円 です（`CLAUDE.md`）。"
+        " **位置は問いません**（頭 n=36 ×3.15 ／ 末尾 n=19 ×22.8 ＝ 強いほうが薄い升）。"
+        " 焼く側の門は `script_writer.short_title_problems`（**池の本には当たりません**）。",
+    ]
+
+
 def standing_pick_treatment(cur: dict | None, *, topics: list[dict] | None = None,
                             queue: Path | None = None) -> list[str]:
     """**立っている決めの本を、いまの脚で測り直した行。**（API 0単位）
@@ -4034,6 +4111,9 @@ def lines(next_row: dict | None, now: datetime | None = None,
         # なっているかを**どこも数えておらず**、散文の名乗り（「5脚とも ○」）だけが
         # 引き継がれていました。実測でその名乗りは偽（(1) 冒頭 が ✗）。
         out.extend(standing_pick_treatment(cur))
+        # **題は焼き直さずに直せます**（池の本には作る側の門が当たりません）。
+        # 理由・実測・覆る条件は `standing_pick_title` の docstring。
+        out.extend(standing_pick_title(cur))
         # **宣言した見込みと実物を並べる**（2026-09-04 19:2x・`expected_lines()` の註）。
         # `expected_48h` は最初から書かれていて、**どこも読んでいませんでした**（実物 22行 全部 null）。
         out.extend(expected_lines(now=now, picks_path=picks_path))

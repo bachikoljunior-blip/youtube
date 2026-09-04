@@ -1193,7 +1193,8 @@ def move_blocked(now: datetime | None = None) -> frozenset[str]:
     return frozenset(v for v, n in moves_by_video(now).items() if n >= MOVE_CAP)
 
 
-def move_hold(video_id: str, now: datetime | None = None) -> str | None:
+def move_hold(video_id: str, now: datetime | None = None, *,
+              unschedule: bool = False) -> str | None:
     """**この本は、この窓でもう動かしたか**（API 0単位）。
 
     返りが文字列なら「止めた理由」。`None` なら撃ってよい。
@@ -1201,7 +1202,35 @@ def move_hold(video_id: str, now: datetime | None = None) -> str | None:
     （`reserve_hold` と違って、窓ぜんぶを止める話ではありません）。
 
     `YT_NO_MOVE_CAP=1` で外せます（**外した回は理由を JOURNAL に**）。
+
+    ## **予約を外す手は、この上限に数えません**（2026-09-05 06:1x に払って足した）
+
+    上限が止めているのは**振動**です —— 「1つの掃きが1か月 先へ、19分後の掃きが
+    1か月 手前へ引き戻す（中央値 30日）。**効くのは最後の1回だけ**なので
+    3つ目以降は定義上むだ」。**`publish_at=None`（予約を外して池へ戻す手）は、
+    その「置き直し」ではありません。** 置き先を選び直しているのではなく、
+    **その本を枠から降ろしている**ので、次の1回で上書きされる余地がありません。
+
+    実測 2026-09-05 06:1x（**この上限に 50単位 と1回の踏み外しを払って分かった**）::
+
+        05:24  この回が `DtpnSVFDtAE` を 09/06 19:00 へ入れた（＝ 2回目の移動）
+        05:40  きょうだいが「その題材は 09/03 に公開ずみ」と名指し
+               （`dupes.blocking`・その日の唯一の枠の取り分が **0**）
+        06:1x  外そうとしたら **`move_hold` が止めた**（「上限 2」）
+               → `YT_NO_MOVE_CAP=1` で越えるしかなかった
+
+    **＝ 上限が、上限の目的（むだを止める）と逆向きに働きました。**
+    止めた先に在ったのは 50単位 の節約ではなく、**枠1日ぶん**
+    （ショートの齢48h 中央値 164回／規則の密度の日なら 1,049回・`src/slot_cost.py`）です。
+
+    **覆る条件**: 外す手が振動の一部として使われ始めたら（外す→入れる→外す）、
+    ここは数え直すこと。判定は `moves_in_window()` の中身ではなく、
+    **呼ぶ側が「外す手か」を渡す**形にしてあります —— 数え方を変えずに戻せます。
+
+    検査は `tests/test_move_cap_unschedule.py`。
     """
+    if unschedule:
+        return None
     if os.environ.get("YT_NO_MOVE_CAP") or os.environ.get("YT_FORCE_UPDATE"):
         return None
     n = moves_in_window(video_id, now)

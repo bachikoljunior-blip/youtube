@@ -1021,6 +1021,34 @@ def _gate1p_now() -> float | None:
 #: それでも名指しを外すなら、この語を `--ship` の本文に入れること）。
 HINT_MISS_MARK = "名指し外し"
 
+#: **枠を押せなかったと言うときの印**（`slot_gate.SLOT_MISS_MARK` の写しではなく、
+#: そちらから読みます —— **判定も語も1か所**）。読めなければ既定に落ちます。
+SLOT_MISS_MARK = "枠そのまま"
+
+
+def _today_slot_block(lines: list[str] | None = None) -> list[str]:
+    """**きょう出る1本が、きょうの決めと違うなら、その行。**（`data/` だけ・**API 0単位**）
+
+    判定は `scripts/slot_gate.today_block()` の**1か所**で、ここは口だけです
+    （写しを持つと、2つの道具が別のことを言い出します —— この repo でいちばん多い壊れ方）。
+    `lines` を渡した回はそれをそのまま返します（**検査は時計を読みません**）。
+
+    読めなければ **空を返して黙ります** —— 門が自分の事故で回を止めないため。
+    """
+    global SLOT_MISS_MARK
+    if lines is not None:
+        return list(lines)
+    try:
+        # **`scripts.` を付けて引くこと。** 付けずに `import slot_gate` と書くと、
+        # `python scripts/run_marker.py` の側と `import scripts.run_marker` の側で
+        # **別の module 実体**になり、片方を差し替えても もう片方が動きません
+        # （この門の検査 `test_helper_never_raises` が、書いた回に落ちて見つけました）。
+        from scripts import slot_gate as _sg                      # noqa: PLC0415
+        SLOT_MISS_MARK = getattr(_sg, "SLOT_MISS_MARK", SLOT_MISS_MARK)
+        return list(_sg.today_block())
+    except Exception:                                            # noqa: BLE001
+        return []
+
 
 def hint_cover_rolled(path: Path | None = None, *, hint: str | None = None,
                       covered: str | None = None, today: str | None = None) -> dict | None:
@@ -2946,6 +2974,51 @@ def ship(what: str, closes: list[str] | None = None, lever: str | None = None,
         return 2
     if _rolled:
         rec["lever_cover_rolled"] = True
+
+    # --- **きょう出る1本が、きょうの決めと違うなら断る**（2026-09-05 06:0x・最適化の回）---
+    #
+    #     実測（この回・06:0x に `python scripts/slot_gate.py` を撃った）:
+    #
+    #         09/05（JST）は、決めと枠が食い違っています ——
+    #         決め `TfetZ_qhS-E`（ショート・見込み 齢48h **164回**）
+    #         ／ 枠に居るのは `GFvAcxvDmYM`（**22分42秒 の長尺**・同 **1回**）
+    #
+    #     公開まで **3時間8分**。**164 対 1** —— きょう出る唯一の1本です。
+    #     同じ日のうちに決めは **6回** 書き換わり、**枠は 0回** 動きました。
+    #
+    #     決めを書く側には門が6つ 立っています（`daily_pick.record()` の
+    #     `slot_cost` / `probe_hold` / `path_form_hold` / `anyway_pays_hold` /
+    #     `restated_pick_block` / `day_guard`）。**押す側には1つも在りませんでした。**
+    #     書くほうは 0単位・自分の手だけで終わり・commit になります。押すほうは
+    #     100単位 掛かり、相手が居ます。**門が片側にだけ生えたのは、その非対称のとおりです。**
+    #
+    #     `slot_gate.mismatch_lines()` は 05:4x に**印字**として入りました。
+    #     この file が自分の註に2度 書いているとおり ——
+    #     **「註や警告ではなく、通さないことだけが効いています」**。だから通さない側にしました。
+    #
+    #     **禁止ではありません。** 押せない回（日枠が尽きた・口が閉じている）は
+    #     `--ship` の本文に `SLOT_MISS_MARK` と**押せなかった理由**を書けば通ります。
+    #     通った回は `slot_miss=True` で残るので、次の回が数えられます。
+    #
+    #     **見るのはきょうだけです** —— 明日ぶんで止めると、まだ押せる時間が
+    #     残っている日の回まで全部 止まります（`today_block()` の註）。
+    #
+    #     **覆る条件**: `slot_gate.today_block()` の覆る条件と同じ2件。
+    _slot_miss = _today_slot_block()
+    if _slot_miss and SLOT_MISS_MARK not in (what or ""):
+        print(
+            "[marker] **断りました** —— きょう出る1本が、きょうの決めと違います。"
+            "\n[marker] " + "\n[marker] ".join(_slot_miss)
+            + "\n[marker] **決めを書き直しても、チャンネルは変わりません。**"
+            " この回が押すまで、きょうの公開は枠に入っているほうです。"
+            "\n[marker] 通す道は2つ: (1) 上の2行を撃って入れ替える"
+            "（`reschedule.py`・1本 50単位）。"
+            f" (2) 押せないなら、`--ship` の本文に **「{SLOT_MISS_MARK}」** と"
+            "**押せなかった理由**を書くこと（`slot_miss` で残ります）。")
+        return 2
+    if _slot_miss:
+        rec["slot_miss"] = True
+
     target, days, basis = _eta_target()
     if target is not None:
         rec["eta_target"] = target
