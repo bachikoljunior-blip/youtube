@@ -1,0 +1,41 @@
+[check] **下書き（予約なし）で上げます** —— その日になったら `scripts/reschedule.py --move` で予約すること
+[check] リポジトリへの言及なし
+[history] 控えから 3本 を足しました（**控えた後に上げた本だけ**。引き算はしません）
+[history] この窓のチャンネルの動画IDを再利用しました（403本・**API 0単位**）。 窓ごとに1回だけ読みます（`_VIDEO_IDS_CACHE` の註）。 読み直すなら `YT_NO_SCAN_CACHE=1`
+[check] 重なりを見られませんでした（続行）: <HttpError 403 when requesting https://youtube.googleapis.com/youtube/v3/videos?part=snippet%2Cstatu
+[upload] **予約を付けずに private の下書きとして上げます**（規則5・固定その4「現在の日付にしか予約しない」）
+[upload]   その日になったら `python scripts/reschedule.py --move <videoId> <時刻>` で予約すること
+[upload] 7%
+[upload] 14%
+[upload] 22%
+[upload] 29%
+[upload] 37%
+[upload] 44%
+[upload] 52%
+[upload] 59%
+[upload] 67%
+[upload] 74%
+[upload] 82%
+[upload] 89%
+[upload] 97%
+[upload] 完了: https://youtu.be/fMlY_uzHOMw
+[upload] 再生リストへの追加に失敗（動画は投稿済み）: <HttpError 403 when requesting https://youtube.googleapis.com/youtube/v3/playlists?part=snippet&mine=true&maxResults=50&alt=json returned "The request cannot be completed because you have exceeded your <a href="/youtube/v3/getting-started#quota">quota</a>.". Details: "[{'message': 'The request cannot be completed because you have exceeded your <a href="/youtube/v3/getting-started#quota">quota</a>.', 'domain': 'youtube.quota', 'reason': 'quotaExceeded'}]">
+[upload] **サムネイルは日枠（単位）切れで載りません**: <HttpError 403 when requesting https://youtube.googleapis.com/upload/youtube/v3/thumbnails/set?videoId=fMlY_uzHOMw&alt=j
+[upload] **投稿は続けます。** 控えに bytes は残るので、窓が変わった回に `refresh_thumbnail.py --missing` で押せます。
+[bars] nenkin-uketorikata-65-70-75-handan の chart 14枚を記録しました（published_bars.json）
+VIDEO_ID fMlY_uzHOMw
+[queue] contact sheet が無いので、ここで作ります（--dry-run の pipeline は焼きません）
+[inspect] クリップは 92本、枚数の指定は 18枚 —— **等間隔で抜きます**（1コマ1枚にはなりません）
+[inspect] 18枚を1枚にまとめました: build/nenkin-uketorikata-65-70-75-handan/inspect.jpg
+[inspect] **この sheet は 92コマ中 18枚しか見ていません。** 落ちたコマは採点されません（`inspect_build.py <ID> 92` で全部見えます）
+[inspect] Read で開いて、次を見ること:
+  ※ サムネイルは入れていません（縦のコマと並べると下が地の色で埋まり、**動画に無い『真っ黒な冒頭』**として採点されるため）。サムネイルを見るときは `--with-thumb` を付けること
+  - 図解と字幕が重なっていないか
+  - 字幕が数字の途中や句点だけで割れていないか
+  - 文字がはみ出したり折り返したりしていないか
+  - 図の形が動画の中で変化しているか（同じ絵が続いていないか）
+[queue] 独立評価の材料を残しました: /home/user/youtube/.claude/worktrees/agent-ac33135d0d5d9750b/data/critique_queue/fMlY_uzHOMw.jpg
+[queue] 絵を焼き直せる入力も残しました: /home/user/youtube/.claude/worktrees/agent-ac33135d0d5d9750b/data/critique_queue/fMlY_uzHOMw.plan.json
+[queue] **本を焼き直せる台本も残しました**: /home/user/youtube/.claude/worktrees/agent-ac33135d0d5d9750b/data/critique_queue/fMlY_uzHOMw.script.json　→ `python -m src.pipeline --script <その台本> --topic nenkin-uketorikata-65-70-75-handan`
+[queue] **サムネイルが YouTube に載っていません。** bytes は残したので、枠の戻った回に `python scripts/refresh_thumbnail.py --missing` で押し直せます
+[queue] push まで済み。**ここで死んでも、次の子が読めます。**
