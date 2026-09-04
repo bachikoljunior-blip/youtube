@@ -1274,15 +1274,62 @@ def rebake_input_lines(video_id: str, topic: str) -> list[str]:
     台本を残す口は同じ日に足してあります（`critique_queue.stash()`）。
     **それより前に焼いた本には在りません** —— ここはそれを黙らせないためです。
 
+    ## **控えの台本そのものが脚を落としているときは、`--script` は撃ってはいけません**
+
+    （2026-09-05 04:5x に踏んだ。**この行が指すとおりに撃つと 90分 を捨てます**）
+
+    `--script` は「**その台本のまま**焼き直す」ので、**台本の中身が原因の脚は1本も直りません。**
+    2026-09-05 の実物: 09/05 09:00 の枠の `GFvAcxvDmYM` は控えの台本が
+    **7,699字 ＝ 22.8分** で、外の帯の切れ目 25分 を **731字 割っています**
+    （`pick_legs` → `['尺']`）。ここが刷っていたのは::
+
+        python -m src.pipeline --script data/critique_queue/GFvAcxvDmYM.script.json --topic ...
+
+    **その台本をそのまま焼くので、出てくるのは同じ 22.8分 の本です。**
+    焼きは 55〜90分・差し替えは 100単位 かかって、脚は 1本も減りません。
+
+    だから、**控えの脚が「台本の中身」で落ちているときは `--topic` だけの形**を刷ります
+    （`claude -p` が書き下ろす ＝ 題・説明・一次コメントごと入れ替わる。
+    上の表のとおり値段は桁で違いますが、**直らない焼き直しの値段は 100%** です）。
+
+    **「台本の中身の脚」と「metadata の脚」の区別は既に在ります** ——
+    `daily_pick.METADATA_LEGS` / `metadata_only()`。metadata だけが落ちているなら
+    焼き直し自体が要らない（`METADATA_FIX_HOWTO`）ので、ここは
+    **metadata 以外の脚が落ちているか**だけを見ます。
+
     ## 覆る条件
 
-    `--script` が欠けた欄を自分で埋めるようになったら、この行は要らなくなります。
+    - `--script` が欠けた欄を自分で埋めるようになったら、この行は要らなくなります。
+    - 台本の一部だけを差し替えて焼き直す口（章を1つ足す等）ができたら、
+      落ちた脚に応じてそちらを刷ること。**いまは「全部書き直す」しか在りません。**
     """
     if not video_id:
         return []
     path = ROOT / "data" / "critique_queue" / f"{video_id}.script.json"
     if path.exists():
-        return [f"  **同じ本を焼き直せます**（控えに台本が在る）:",
+        # **控えの台本そのものが落としている脚が在るか**（docstring の理由）。
+        # 数えられなかった回（`why` が立つ回）は**黙って `--script` を刷らないこと** ——
+        # 読めていない控えを「直す所は無い」と読むのが、この repo が何度も踏んだ形です。
+        try:
+            from . import daily_pick as _dp                        # noqa: PLC0415
+            bad, why = _dp.pick_legs(video_id)
+            body = [b for b in bad if b not in _dp.METADATA_LEGS]
+        except Exception as exc:                                   # noqa: BLE001
+            bad, why, body = [], f"脚を数えられませんでした（{str(exc)[:60]}）", []
+        if body:
+            return ["  [!] **`--script` で焼き直しても、この脚は1本も減りません** —— "
+                    f"控えの台本そのものが落としています: **{'・'.join(body)}**。"
+                    "`--script` は『**その台本のまま**焼き直す』ので、出てくるのは同じ本です"
+                    "（焼き 55〜90分・差し替え 100単位 が、脚 0本 のために消えます）。",
+                    "  **台本ごと書き下ろす焼き直し**（`claude -p`・6〜11分。"
+                    "題・説明・一次コメントごと入れ替わります）:",
+                    f"       python -m src.pipeline --topic {topic}"]
+        if why:
+            return [f"  [!] **控えの脚を数えられませんでした** —— {why}。"
+                    "**数えられていない控えを『直す所は無い』と読まないこと。**"
+                    "焼き直す前に、まず数えられるようにすること"]
+        return [f"  **同じ本を焼き直せます**（控えに台本が在る・"
+                f"**控えの脚は全通**なので `--script` で直せる所は台本の外に在ります）:",
                 f"       python -m src.pipeline --script {path} --topic {topic}"]
     return ["  [!] **この本の台本は控えにありません** —— "
             "`python -m src.pipeline --topic ...` は**別の本を書き下ろします**"
