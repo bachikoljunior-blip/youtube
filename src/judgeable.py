@@ -270,8 +270,19 @@ class Floor:
             out.append(f"    {g:14s} 予約 {len(days):3d}本  {when}")
         r = self.ready
         if r is None:
-            need = ", ".join(f"{g} あと{n}本" for g, n in self.shortfall().items() if n)
-            out.append(f"    → **判定できる日が出ません**（{need}）。在庫を割り当てるか、条件の N を見直すこと")
+            short = {g: n for g, n in self.shortfall().items() if n}
+            need = ", ".join(f"{g} あと{n}本" for g, n in short.items())
+            # **その助言が効く群かどうか**を、実物から数えて名指しする
+            # （2026-09-04 23:4x。実測 2件中 2件で効きませんでした）。
+            # 診断が出た回は、**上の「在庫を割り当てるか」を出さない** ——
+            # 出すと、すぐ下の「割り当てても満ちません」と正面から食い違います。
+            why = {g: r for g, n in short.items()
+                   if (r := starved_arm_reason(self.key, g, n))}
+            tail = "" if why else "。在庫を割り当てるか、条件の N を見直すこと"
+            out.append(f"    → **判定できる日が出ません**（{need}）{tail}")
+            for g in short:
+                if g in why:
+                    out.append(f"       {g}: {why[g]}")
         elif r <= self.deadline:
             out.append(f"    → いちばん早い判定日 **{r:%m/%d}**（期限まで {(self.deadline - r).days}日の余裕）")
         else:
@@ -312,6 +323,137 @@ def _video_by_topic() -> dict[str, str]:
         for r in published()
         if r.get("publish") and r.get("topic")
     }
+
+
+#: `stat_split` の群を割る境目（`_members_by_landed` に渡す時刻）。
+#:
+#: **べた書きから定数へ出したのは 2026-09-04 23:4x。** 同じ日付を
+#: `starved_arm_reason()` が読みます —— **この群は「この時刻より前に作った本」で、
+#: これから作る本は 1本も入れません**（時刻は過ぎています）。診断の側が
+#: 別の日付を持つと、「まだ在庫が在る」と「もう作れない」が食い違います。
+STAT_SPLIT_LANDED = datetime(2026, 8, 15, 22, 3, 11, tzinfo=JST)
+
+
+def planned_books_per_day() -> tuple[int, int, int]:
+    """**これから1日に何本 公開するか**（規則）と、**そうなってから何日 続いたか**（実測）。
+
+    返りは `(規則の本数, 実測でその本数だった直近の連続日数, その連続の中の最大)`。
+
+    ## なぜ実測を「直近7日」で採らないか（2026-09-04 23:5x に踏んだ）
+
+    最初はここを `Counter(_publish_by_video().values())` の**直近7日の最大**で
+    書きました。**規則1 が効き始めたのは 09/01 で、7日 の窓は 08/29〜08/31 の
+    「17本/日」の日を掴みます** —— 実測 17本。**「同じ日に2本」は起きる、と読めて
+    しまい、凍っている群を凍っていないと言います。**
+
+    暦の日数を窓にすると、**規則が変わるたびに窓の幅を直す**ことになります。
+    だから窓ではなく **「いまの本数が何日 続いているか」** を数えます
+    （`house_rule.planned_publishes_per_day()` から後ろへ、外れた日で止める）。
+    **規則が正本で、実測はそれが現に効いているかの裏取りです。**
+    """
+    from collections import Counter
+
+    from src import house_rule
+
+    rule = house_rule.planned_publishes_per_day()
+    per_day = Counter(_publish_by_video().values())
+    run, peak = 0, 0
+    for d in reversed(sorted(per_day)):
+        n = per_day[d]
+        if n > rule:
+            break
+        run += 1
+        peak = max(peak, n)
+    return rule, run, peak
+
+
+def starved_arm_reason(key: str, group: str, short: int) -> str | None:
+    """**その群が満ちないのは「在庫が無い」からか、それとも「もう入れない」からか。**
+
+    ## なぜ要るか（2026-09-04 23:4x に実測して足した）
+
+    `Floor.lines()` は満ちない群に、いつも同じ1行を出していました ——
+    **「在庫を割り当てるか、条件の N を見直すこと」**。
+    ところが実物を数えると、**その助言が効かない群が 2件中 2件**でした:
+
+        `opening_motion` 対照(動きなし)  あと2本 —— `motion_groups.paired()` は
+            **同じ公開日に両群が居る本しか採りません**。共有日の最後は **08/31**。
+            これから出るのは **1本/日**（規則1・`house_rule.planned_publishes_per_day()`）で、
+            **1本の日は必ず片群だけ** ＝ 新しい対も永久にできません。
+            在庫を割り当てても、その本は `paired()` に捨てられます。
+
+        `stat_split` 対照(前)  あと10本 —— この群は
+            **`STAT_SPLIT_LANDED`（08/15 22:03）より前に作った本**です。
+            **これから作る本は1本も入れません。** 入れられるのは、
+            その前に作ってまだ公開していない本だけで、**実測 11本**（不足 10本）。
+            **在庫を割り当てる」は効きますが、余りは 1本しかありません。**
+
+    つまり、同じ1行が片方では**やっても無駄**、もう片方では**急がないと永久に閉じる**。
+    **区別が付かないまま、09/01 から 4日 出続けていました。**
+
+    ## 覆る条件
+
+    - `falsified_if` から「同じ日に交互」が外れたら、`opening_motion` の枝は要りません
+      （`_members_by_opening_motion` の 覆る条件 と同じ）。
+    - 規則1（1本/日）が外れて 1日に2本 出るようになったら、`opening_motion` は
+      自然に解けます。**この関数は日付を書き写さず、毎回 実物から数え直します。**
+    """
+    if short <= 0:
+        return None
+
+    if key == "opening_motion":
+        rule, run, peak = planned_books_per_day()
+        if rule <= 1:
+            from src import motion_groups
+
+            off, on = motion_groups.paired(*motion_groups.groups())
+            pub = _publish_by_video()
+            shared = sorted({pub[v] for v in off if v in pub}
+                            & {pub[v] for v in on if v in pub})
+            last = f"{shared[-1]:%m/%d}" if shared else "1日も在りません"
+            return (
+                "[!] **在庫を割り当てても満ちません。** この群は "
+                "`motion_groups.paired()` が **同じ公開日に両群が居る本だけ**を採ります。"
+                f" 共有日の最後は **{last}**、これから出るのは **{rule}本/日**"
+                f"（規則1・`src/house_rule.planned_publishes_per_day()`。実測でも"
+                f" 直近 {run}日 は 1日 最大 {peak}本）—— **1本の日は必ず片群だけ**なので"
+                "、これから出す本は何本でも対になりません。"
+                " **直すのは本数ではなく数え方の側**（`_members_by_opening_motion` の"
+                " 覆る条件）か、期限のほうです。"
+            )
+
+    if key == "stat_split" and group.startswith("対照"):
+        left = _prelanded_unpublished()
+        verdict = (
+            f"**残り {len(left)}本 ／ 不足 {short}本** —— "
+            + ("**余りは "
+               f"{len(left) - short}本 しかありません。**先に別の枠へ回すと、この前提は"
+               "**永久に**判定できなくなります。" if len(left) >= short
+               else "**もう足りません。** 期限ではなく `falsified_if` の側が"
+                    "測れない条件になっています。")
+        )
+        return (
+            "[!] **これから作る本は、この群に1本も入りません** —— 群の境目は "
+            f"`STAT_SPLIT_LANDED` {STAT_SPLIT_LANDED:%m/%d %H:%M}（**過去**）で、"
+            "入れられるのは*その前に作ってまだ公開していない本*だけ。 " + verdict
+        )
+    return None
+
+
+def _prelanded_unpublished() -> list[str]:
+    """`STAT_SPLIT_LANDED` より前に作って、**まだ公開日の付いていない**題材。
+
+    `published()` は控え（`data/uploaded.jsonl`）の行で、`publish` が空の行が
+    **池に在って枠へ `--move` できる本**です（`scripts/reschedule.py`）。
+    """
+    before = {t for t, v in build_times().items() if v and v < STAT_SPLIT_LANDED}
+    seen, out = set(), []
+    for row in published():
+        topic = row.get("topic")
+        if topic in before and topic not in seen and not row.get("publish"):
+            seen.add(topic)
+            out.append(topic)
+    return out
 
 
 def _publish_by_video() -> dict[str, date]:
@@ -778,7 +920,7 @@ MEMBER_SOURCES: dict[str, tuple[Callable[[], dict[str, list[Member]]], int]] = {
     # `_members_by_landed` は build_times() の実測時刻で割るだけなので、
     # 直すのはこの日付だけです（呼び出し側・検査は無傷）。
     "stat_split": (
-        lambda: _members_by_landed(datetime(2026, 8, 15, 22, 3, 11, tzinfo=JST)),
+        lambda: _members_by_landed(STAT_SPLIT_LANDED),
         MIN_PER_GROUP,
     ),
     # `falsified_if` の「対照 8本以上・動きあり 8本以上」がこの前提の N

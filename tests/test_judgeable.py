@@ -110,3 +110,57 @@ def test_実物で期限が構造的に守れる(f: J.Floor):
         f"期限 {f.deadline} までに判定できません（判定できるのは {when}"
         + ("・予約の実物" if f.ready is not None else "・規則の密度からの推定") + "）\n"
         + "\n".join(f.lines()))
+
+
+# --- 飢えた群が「在庫で満ちるのか」を言い分ける（2026-09-04 23:5x に足した） ---
+#
+# `Floor.lines()` は満ちない群に、いつも同じ1行を出していました ——
+# 「在庫を割り当てるか、条件の N を見直すこと」。**実物 2件中 2件で、その助言は
+# 効きませんでした**（`opening_motion` は同じ日に両群が要る＝規則1 の下では永久に
+# 対にならない ／ `stat_split` の対照は過去に作った本だけ＝これから作る本は入らない）。
+# ここが検査するのは **言い分けが付くこと**であって、その日の実物の数ではありません。
+
+
+def test_同じ日に両群が要る群は規則1の下で凍ると言う():
+    """`opening_motion` の対照は、在庫を割り当てても満ちません。"""
+    from src import judgeable
+
+    why = judgeable.starved_arm_reason("opening_motion", "対照(動きなし)", 2)
+    if judgeable.planned_books_per_day()[0] > 1:
+        # 規則が「1日に2本以上」へ動いたら、この群は自然に解けます（覆る条件）
+        assert why is None
+        return
+    assert why and "在庫を割り当てても満ちません" in why
+    assert "1本の日は必ず片群だけ" in why
+
+
+def test_過去で閉じた群は残りの在庫を数えて言う():
+    """`stat_split` の対照は、境目より前に作った未公開の本しか入りません。"""
+    from src import judgeable
+
+    why = judgeable.starved_arm_reason("stat_split", "対照(前)", 10)
+    assert why and "これから作る本は、この群に1本も入りません" in why
+    left = judgeable._prelanded_unpublished()
+    assert f"残り {len(left)}本" in why
+    # 数えているのは「境目より前に作って、まだ公開日の付いていない題材」
+    builds = judgeable.build_times()
+    for topic in left:
+        assert builds[topic] < judgeable.STAT_SPLIT_LANDED
+
+
+def test_満ちている群には診断を出さない():
+    from src import judgeable
+
+    assert judgeable.starved_arm_reason("stat_split", "対照(前)", 0) is None
+    assert judgeable.starved_arm_reason("title_form", "問い", 3) is None
+
+
+def test_診断が出た行に食い違う助言を並べない():
+    """診断（「割り当てても満ちません」）と助言（「在庫を割り当てるか」）は同時に出しません。"""
+    from src import judgeable
+
+    for floor in judgeable.floors():
+        text = "\n".join(floor.lines())
+        if "在庫を割り当てるか" in text:
+            assert "在庫を割り当てても満ちません" not in text
+            assert "この群に1本も入りません" not in text
