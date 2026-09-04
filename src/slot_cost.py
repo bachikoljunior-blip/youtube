@@ -59,6 +59,51 @@ HOURS = 48
 #: 落とすと「標本が無いから比べない」で、いままでどおり枠が黙って消えます。
 MIN_N = 10
 
+#: **標本の最後の1本が、これより古ければ「化石」と名指しします。**（2026-09-05 02:5x に足した）
+#:
+#: なぜ要ったか —— **この道具は 1,049回 を「いま何回 か」として出していましたが、
+#: その 15本 は 2026-08-05〜08-18 の本だけで、いちばん新しい1本が 18日前**でした
+#: （この回に `daily_pick.aged_views()` を撃って数えた。日付は
+#: 08-05/06/07/08/09/10/11/12(2本)/13/14/15(2本)/17/18）。
+#: **`scripts/eta.py` は同じ化石を `per_video` について毎周 名指ししています** ——
+#: 「`per_video` の標本は 2026-08-18 で止まっています（18日前・帯 ≤2本/日 の 12日）」。
+#: **同じ 12日 の同じ帯を、こちらは何も言わずに『いま』として印字していました。**
+#:
+#: 何が実際に壊れるか: `win_band()` の `paid` の境目が `cost` ＝ 1,049回 です。
+#: 化石が高いままなら、**どの試しも `paid` に届かず、形の判断は永久に動きません** ——
+#: 倒れない門は、測って倒す門ではありません（この道具自身の「覆る条件」がそう書いています）。
+#:
+#: **それでも `cost` は下げません。** 直近14日の中央値（ショート 129回・n=135）は
+#: **規則が禁じている 8本以上/日 の日の本に引かれていて**、こちらも「いまの1枠」ではない。
+#: **きれいで新しい数は、いまこの repo に1つも在りません。** 両方を並べて、
+#: どちらも『いま』ではないと名指しするところまでが、この回に測れたことです。
+STALE_DAYS = 7
+
+
+def sample_window(rows, form: str, *, max_per_day: int | None = None) -> dict:
+    """**その形の標本が、いつの本で出来ているか。**（API 0単位）
+
+    `daily_pick.compare()` の `rows`（`aged_views()` の行）から、`form` の
+    `max_per_day` 以下の日の本だけを拾い、`first` / `last`（公開日）と `n` を返します。
+    **中央値そのものは何も変えません** —— 数の**齢**を、数と同じ画面に出すためだけの手です。
+    """
+    first = last = None
+    n = 0
+    for r in rows or ():
+        if r.get("form") != form:
+            continue
+        if max_per_day is not None and r.get("day_count", 0) > max_per_day:
+            continue
+        pub = r.get("pub")
+        if pub is None:
+            continue
+        n += 1
+        if first is None or pub < first:
+            first = pub
+        if last is None or pub > last:
+            last = pub
+    return {"first": first, "last": last, "n": n}
+
 
 def slot_value(cmp: dict | None = None, *, now=None) -> dict:
     """**1枠は、いま何回 か。** 形ごとに「規則の密度の日だけ」の実測を返す。API 0単位。
@@ -68,26 +113,86 @@ def slot_value(cmp: dict | None = None, *, now=None) -> dict:
         ``best``   実測でいちばん中央値が高い形（＝ 枠をそこに使ったときの値）
         ``cost``   その中央値（＝ **枠の機会費用**）
         ``thin``   標本が薄い形の名（n < ``MIN_N``）。数は返すが、薄さを隠さない。
+        ``stale``  標本の最後の1本が ``STALE_DAYS`` より古い形の名（**化石**）。
+                   形ごとに ``last_pub`` / ``first_pub`` / ``sample_age_days`` と、
+                   同じ形の直近14日（`compare()` の ``recent``）を ``recent_*`` で持ちます。
     """
+    from datetime import date as _date, datetime as _dt, timezone as _tz
     from . import daily_pick as dp
     c = cmp if cmp is not None else dp.compare(now=now)
+    rows = c.get("rows") or []
+    t = (now or _dt.now(_tz.utc)).astimezone(dp.JST)
+    today: _date = t.date()
     forms: dict[str, dict] = {}
     for f in dp.FORMS:
         ru = dict(c.get("rule", {}).get(f) or {})
         al = dict(c.get("all", {}).get(f) or {})
+        re = dict(c.get("recent", {}).get(f) or {})
         ru["mixed_median"] = al.get("median")
         ru["mixed_n"] = al.get("n", 0)
+        ru["recent_median"] = re.get("median")
+        ru["recent_n"] = re.get("n", 0)
+        w = sample_window(rows, f, max_per_day=dp.RULE_BAND_MULT)
+        ru["first_pub"], ru["last_pub"] = w["first"], w["last"]
+        ru["sample_age_days"] = ((today - w["last"]).days
+                                 if isinstance(w["last"], _date) else None)
         forms[f] = ru
     live = {f: v for f, v in forms.items()
             if v.get("median") is not None and v.get("n", 0) > 0}
     best = max(live, key=lambda f: live[f]["median"]) if live else None
+    stale = sorted(f for f, v in forms.items()
+                   if isinstance(v.get("sample_age_days"), int)
+                   and v["sample_age_days"] > STALE_DAYS)
     return {
         "forms": forms,
         "best": best,
         "cost": (live[best]["median"] if best else None),
+        "cost_age_days": ((forms.get(best) or {}).get("sample_age_days") if best else None),
         "thin": sorted(f for f, v in forms.items() if 0 < v.get("n", 0) < MIN_N),
+        "stale": stale,
+        "stale_days": STALE_DAYS,
+        "recent_days": c.get("recent_days"),
         "hours": HOURS,
     }
+
+
+def stale_lines(sv: dict | None = None, *, cmp: dict | None = None, now=None) -> list[str]:
+    """**`cost` が化石なら、その齢と、同じ形の直近の数を並べる行。**（API 0単位）
+
+    **数は1つも書き換えません。** 出すのは「この 1,049回 は何日前の本で出来ているか」と
+    「同じ形の直近14日は何回か」の2つだけで、**どちらも『いまの1枠』ではない**と
+    言い切るところまでです（片方は古く、片方は規則の外の密度に引かれている）。
+
+    **覆る条件**: 規則の密度の日に ショート が1本 出れば、その本が標本の最後になり、
+    `sample_age_days` は 0〜2日 に落ちて、この行は自分で消えます。
+    ＝ **09/06 の枠（`DtpnSVFDtAE`・ショート）が出た時点で、この註は要らなくなります。**
+    """
+    s = sv if sv is not None else slot_value(cmp=cmp, now=now)
+    best, cost = s.get("best"), s.get("cost")
+    age = s.get("cost_age_days")
+    if best is None or cost is None or not isinstance(age, int) or age <= s.get("stale_days", STALE_DAYS):
+        return []
+    v = s["forms"].get(best) or {}
+    first, last = v.get("first_pub"), v.get("last_pub")
+    rn, rm = v.get("recent_n", 0), v.get("recent_median")
+    out = [f"       [数] **その {cost:,.0f}回 は「いま」ではありません** —— "
+           f"{best} の規則の密度の標本 n={v.get('n', 0)} は "
+           f"{first}〜{last} の本だけで、**いちばん新しい1本が {age}日前**です"
+           f"（`slot_cost.sample_window`・API 0単位）。"
+           f"`scripts/eta.py` が `per_video` について毎周 名指ししている化石"
+           f"（「標本は 2026-08-18 で止まっています」）と**同じ帯・同じ日付**です。"]
+    if rm is not None and rn:
+        out.append(f"       [数] 同じ形の**直近{s.get('recent_days', 14)}日**は n={rn} 中央値 "
+                   f"**{rm:,.0f}回**（{cost / rm:,.1f} 分の1）。"
+                   f"**ただしこちらも『いまの1枠』ではありません** —— "
+                   f"規則が禁じている 8本以上/日 の日の本に引かれています。"
+                   f"**きれいで新しい数は、いま1つも在りません。**")
+    out.append(f"       [数] **だから `win_band()` の `paid` の境目 {cost:,.0f}回 は、"
+               f"{age}日前の帯の高さです。** 倒れない門は測って倒す門ではないので、"
+               f"**この帯で `unpaid` が出ても「形は動かせない」と読み切らないこと** ——"
+               f"読めるのは「{age}日前の帯には届かなかった」までです。"
+               f"規則の密度の日に {best} を1本 出せば、この註は自分で消えます。")
+    return out
 
 
 def verdict(win: float | None, *, form: str | None = None, cmp: dict | None = None,
@@ -143,6 +248,7 @@ def lines(cmp: dict | None = None, *, now=None, win: float | None = None,
                    f"当たっても枠のぶんを払えません。**")
         out.append("       （混ぜた数は、規則がもう禁じている 8本以上/日 の日の本に引かれています。"
                    "**比べるのは規則の密度のほうです。**）")
+        out += stale_lines(sv=s)
     if win is not None:
         v = verdict(win, form=form, sv=s)
         out.append(f"       試しの当たりの門 {win:,.0f}回 → {v['why']}")
@@ -281,10 +387,15 @@ def win_band(v: float | None, *, gate: float, give_up: str = "ショート",
         return {"band": None, "gate": None, "cost": None, "give_up": give_up,
                 "may_move_form": False, "line": ""}
     s = sv if sv is not None else slot_value(cmp=cmp, now=now)
-    cost = (s.get("forms", {}).get(give_up) or {}).get("median")
+    give = s.get("forms", {}).get(give_up) or {}
+    cost = give.get("median")
     if not isinstance(cost, (int, float)) or isinstance(cost, bool) \
             or not math.isfinite(cost) or cost <= 0:
         cost = None
+    #: **`cost` の齢**（2026-09-05 02:5x に足した）。`paid` の境目がどれだけ古い帯の
+    #: 高さかを、帯と同じ行に出します。**境目そのものは動かしていません。**
+    cost_age = give.get("sample_age_days")
+    cost_stale = isinstance(cost_age, int) and cost_age > s.get("stale_days", STALE_DAYS)
     if v < gate:
         band = "miss"
         line = (f"**{v:,.0f}回 ＜ 前提の門 {gate:,.0f}回 → 外れ**"
@@ -308,5 +419,11 @@ def win_band(v: float | None, *, gate: float, give_up: str = "ショート",
         line = (f"**{v:,.0f}回 ≥ 前提の門 {gate:,.0f}回 かつ "
                 f"≥ 同じ枠の {give_up} の実測 {cost:,.0f}回 → 当たり、"
                 f"かつ枠のぶんを払えました ＝ 形の判断を動かしてよい**")
+    if cost is not None and cost_stale and band in ("unpaid", "paid"):
+        line += (f"　[!] **その {cost:,.0f}回 は {cost_age}日前の帯の高さです**"
+                 f"（{give_up} の規則の密度の標本は {give.get('first_pub')}〜"
+                 f"{give.get('last_pub')} の {give.get('n', 0)}本 で止まっています・"
+                 f"`slot_cost.stale_lines`）。**この境目で読み切らないこと。**")
     return {"band": band, "gate": gate, "cost": cost, "give_up": give_up,
+            "cost_age_days": cost_age, "cost_stale": cost_stale,
             "may_move_form": band == "paid", "line": line}

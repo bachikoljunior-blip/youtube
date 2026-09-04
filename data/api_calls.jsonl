@@ -10170,3 +10170,38 @@
 {"at": "2026-09-04T17:18:47+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "analytics.py:fetch_retention"}
 {"at": "2026-09-04T17:18:48+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "analytics.py:fetch_retention"}
 {"at": "2026-09-04T17:18:49+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "analytics.py:fetch_retention"}
+{"at": "2026-09-04T17:25:33+00:00", "api": "data", "method": "videos.list", "units": 1, "ok": true, "by": "post_pending_comments.py:main", "detail": "6GtzWaguZhg,6PKux5HNnUE,DfFyu8qZq3I,Ec-j1-W4nqw,GFvAcxvDmYM,OBJdXEr6gLg,O_lfBxB7S8Q,SD8zQU-x6y0,XwB8nxtN5D8,dRZnZrRy2Lw,"}
+{"at": "2026-09-04T17:25:33+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "analytics.py:fetch_retention"}
+{"at": "2026-09-04T17:25:35+00:00", "api": "data", "method": "videos.list", "units": 1, "ok": true, "by": "sub_ask.py:sweep", "detail": "2tAGEKVCgYQ,a63FzIUV2wI,_Mz5rg6jQ_A,h35ot6MqYso,drkKm9fHW2M,BzvH0iCzrzo,8hJnwkC8NU0,cFZd55jRxAw,FSAN9tjIX10,9zkfjEH48PY,"}
+{"at": "2026-09-04T17:25:35+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "analytics.py:fetch_retention"}
+{"at": "2026-09-04T17:25:36+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "analytics.py:fetch_retention"}
+{"at": "2026-09-04T17:25:37+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "analytics.py:fetch_retention"}
+{"at": "2026-09-04T17:25:38+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "analytics.py:fetch_retention"}
+{"at": "2026-09-04T17:25:40+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "analytics.py:fetch_retention"}
+{"at": "2026-09-04T17:26:02+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "analytics.py:fetch_retention"}
+{"at": "2026-09-04T17:26:03+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "analytics.py:fetch_retention"}
+{"at": "2026-09-04T17:26:05+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "analytics.py:fetch_retention"}
+{"at": "2026-09-04T17:26:06+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "analytics.py:fetch_retention"}
+{"at": "2026-09-04T17:26:07+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "analytics.py:fetch_retention"}
+{"at": "2026-09-04T17:26:08+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "analytics.py:fetch_retention"}
+{"at": "2026-09-04T17:26:44+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "eta.py:q"}
+{"at": "2026-09-04T17:26:47+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "eta.py:q"}
+{"at": "2026-09-04T17:26:47+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "eta.py:q"}
+{"at": "2026-09-04T17:26:47+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "eta.py:q"}
+{"at": "2026-09-04T17:26:48+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "eta.py:q"}
+{"at": "2026-09-04T17:26:49+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "eta.py:q"}
+{"at": "2026-09-04T17:26:50+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "eta.py:q"}
+{"at": "2026-09-04T17:30:17+00:00", "api": "data", "method": "videos.list", "units": 1, "ok": true, "by": "sub_ask.py:apply_to_video", "detail": "GFvAcxvDmYM"}
+{"at": "2026-09-04T17:30:24+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "analytics.py:fetch_retention"}
+{"at": "2026-09-04T17:30:25+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "analytics.py:fetch_retention"}
+{"at": "2026-09-04T17:30:26+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "analytics.py:fetch_retention"}
+{"at": "2026-09-04T17:30:27+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "analytics.py:fetch_retention"}
+{"at": "2026-09-04T17:30:29+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "analytics.py:fetch_retention"}
+{"at": "2026-09-04T17:30:30+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "analytics.py:fetch_retention"}
+{"at": "2026-09-04T17:31:17+00:00", "api": "data", "method": "videos.list", "units": 1, "ok": true, "by": "sub_ask.py:sweep", "detail": "2tAGEKVCgYQ,a63FzIUV2wI,_Mz5rg6jQ_A,h35ot6MqYso,drkKm9fHW2M,BzvH0iCzrzo,8hJnwkC8NU0,cFZd55jRxAw,FSAN9tjIX10,9zkfjEH48PY,"}
+{"at": "2026-09-04T17:37:57+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "analytics.py:fetch_retention"}
+{"at": "2026-09-04T17:37:59+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "analytics.py:fetch_retention"}
+{"at": "2026-09-04T17:38:00+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "analytics.py:fetch_retention"}
+{"at": "2026-09-04T17:38:01+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "analytics.py:fetch_retention"}
+{"at": "2026-09-04T17:38:02+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "analytics.py:fetch_retention"}
+{"at": "2026-09-04T17:38:04+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "analytics.py:fetch_retention"}
