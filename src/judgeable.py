@@ -440,6 +440,31 @@ def starved_arm_reason(key: str, group: str, short: int) -> str | None:
     return None
 
 
+def starved_arm_frozen(key: str, group: str, short: int) -> bool:
+    """**その群は「在庫を回せば満ちる」のか、「もう何をしても満ちない」のか。**
+
+    `starved_arm_reason()` は**どちらにも**理由を返します。**2つは別の物です**:
+
+        `opening_motion` 対照  —— **凍っている**。`paired()` が同じ公開日に両群を
+            要求し、規則1（1本/日）では片群だけの日しか作れない。
+            **本を何本 出しても満ちません** → `True`
+        `stat_split` 対照(前)  —— **凍っていない**。これから作る本は入らないが、
+            **境目より前に作った未公開の本が池に在る**（実測 11本／不足 10本）。
+            **枠へ回せば満ちます** → `False`（在庫が不足を割ったら `True`）
+
+    **区別しないと、`deadline_check` が `stat_split` に
+    「こちらの手では起こせません」（`Answer(unreachable=True)`）を付けます** ——
+    実際には 10本 回せば閉じられる前提で、**やれる手を「やれない」と書く**ことになります。
+
+    **覆る条件**: `starved_arm_reason()` が黙れば、ここも `False` を返します。
+    """
+    if not starved_arm_reason(key, group, short):
+        return False
+    if key == "stat_split" and group.startswith("対照"):
+        return len(_prelanded_unpublished()) < short
+    return True
+
+
 def _prelanded_unpublished() -> list[str]:
     """`STAT_SPLIT_LANDED` より前に作って、**まだ公開日の付いていない**題材。
 

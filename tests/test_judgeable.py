@@ -164,3 +164,18 @@ def test_診断が出た行に食い違う助言を並べない():
         if "在庫を割り当てるか" in text:
             assert "在庫を割り当てても満ちません" not in text
             assert "この群に1本も入りません" not in text
+
+
+def test_凍った群と在庫で満ちる群を言い分ける():
+    """`starved_arm_reason` はどちらにも理由を返すが、`frozen` は片方だけ。"""
+    from src import judgeable
+
+    # 同じ日に両群が要る群は、本を何本 出しても対にならない
+    if judgeable.planned_books_per_day()[0] <= 1:
+        assert judgeable.starved_arm_frozen("opening_motion", "対照(動きなし)", 2) is True
+    # 境目より前の未公開が不足を満たすうちは、枠へ回せば満ちる ＝ 凍っていない
+    left = len(judgeable._prelanded_unpublished())
+    assert judgeable.starved_arm_frozen("stat_split", "対照(前)", left) is False
+    assert judgeable.starved_arm_frozen("stat_split", "対照(前)", left + 1) is True
+    # 理由の無い群は、そもそも凍っていない
+    assert judgeable.starved_arm_frozen("title_form", "問い", 3) is False
