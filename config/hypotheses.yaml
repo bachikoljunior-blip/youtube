@@ -5965,6 +5965,9 @@ hypotheses:
     #     1日 後ろへずれた（`tests/test_deadline_check.py` の
     #     `test_期限が_判定できる日より前に置かれていない` が赤くして見つけた）。
     #     **この検査が落ちたら、延ばすのは期限だけ。条件は緩めないこと。**
+    # **2026-09-05 00:4x の併合で 09-15 と 09-23 がぶつかった。**「相手を残す」で 09-15 を
+    #     採ったら `test_期限が_判定できる日より前に置かれていない` が赤（判定できる日 09-23）。
+    #     **併合の作法より、検査の数のほうが強い。** 09-23（遅いほう）で緑。
     deadline: "2026-09-23"
     lever: per_video                # engaged 比率
     side: content
@@ -7703,6 +7706,40 @@ hypotheses:
         data_file: "data/views.jsonl"
         refresh: "python scripts/snapshot.py"
         what: "`data/views.jsonl` に 09/05 までの公開日が入っていること（`snapshot.py` で積む。Data API の日枠が要る）"
+      # --- **判定に要る標本を、散文から機械の読む欄へ写した**（2026-09-05・最適化の回）---
+      #
+      #     `falsified_if` は「**`n_scale` が 14日 に満たなければ判定できません**」と
+      #     書いていますが、その 14 は**散文の中にしか在りませんでした。**
+      #     `needs` の側は日付（09/05 以降）だけを持っていたので、
+      #     **機械は「きょう判定できる」と言い続け**、`arm_speed.next_close()` は
+      #     この前提を毎周「days 0」と印字し、`run_marker` の `verdict` の門は
+      #     それを根拠に他の種別を止めていました。**要件が満ちていないのに、です。**
+      #
+      #     この回に撃った数（`src.day_cap.day_total()`）: `n_scale` **12日**（要 14日）。
+      #
+      #     **そして 12 は、もう増えません。** `at_cap` は `n >= cap`（`cap` は
+      #     `day_cap.measure()` の実測で **10本/日**）の公開日だけで、
+      #     **12日 とも 08/31 以前**です。規則1（`house_rule.PUBLISH_PER_DAY = 1`）の下では
+      #     1日に 10本 出す日は二度と来ないので、**この統計量は 12 で凍っています。**
+      #     ＝ **期限を延ばしても、この前提は永久に判定できません。**
+      #
+      #     だから `deadline` を延ばす手（`judgeable.py` の作法）は、ここでは効きません。
+      #     **`falsified_if` は変えていません。** 変えたのは、その要件を
+      #     機械が読める形にしたことだけです。これで `unready_claims()` が拾い、
+      #     `next_close()` はこの件を「きょう閉じられる」から外します。
+      #
+      #     **この前提の畳み方**（次にここへ来た回へ）: `rho_scale` は捨てて、
+      #     **規則の密度（≤2本/日）で測れる統計量**で立て直すこと。
+      #     腕 `density` の重みは、それまで宙に浮いたままです。
+      #     **覆る条件**: オーナーが1日の本数を戻して `n >= 10` の日が 2日 増えたら、
+      #     `n_scale` は 14 に届き、この前提は元の `falsified_if` のまま判定できます。
+      - kind: accrual
+        what: "上限まで出した日（`n >= cap`・cap は実測 10本/日）が 14日。**いま 12日 で、規則1（1日1本）の下では二度と増えません**"
+        count_expr: "__import__('src.day_cap', fromlist=['x']).day_total()['n_scale']"
+        need: 14
+        since: "2026-08-28"
+        data_file: "data/views.jsonl"
+        refresh: "python scripts/snapshot.py"
     watch: "本数と合計-14日"      # 満ちたかは `src/watches.py` が毎周見ています
     falsified_if: |
       2026-09-06 に `python -c "from src import day_cap; print(day_cap.day_total())"` を撃ち、

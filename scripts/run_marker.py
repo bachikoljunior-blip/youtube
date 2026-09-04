@@ -1632,10 +1632,52 @@ def judgeable_now() -> dict:
     読めなければ **空を返して門を開けます**（`near_deadlines()` と同じ約束 ——
     **読めない道具で回を止めないこと**）。
     """
+    # --- **同じ門が、同じ問いに2つの答えを持っていました**（2026-09-05・最適化の回）---
+    #
+    #     **この回に実物で踏みました。** `--ship --kind fix` を撃つと、**1つの出力の中に**
+    #     こう出ます:
+    #
+    #         [marker] …… **きょう判定できる前提が 0件 なので通します**（`judgeable_today`）
+    #         error:   …… **そして、きょう閉じられる前提が実在します**（`next_close()`: days 0）
+    #
+    #     どちらも「きょう verdict を撃てるか」を答えていて、**逆のことを言っています。**
+    #     出どころが違うためです:
+    #
+    #         `judgeable_today()`  `deadline_check.ready_by_claim()` ＝ **データが揃ったか**
+    #         `judgeable_now()`    `arm_speed.next_close()`（引数なし）＝ **`deadline` だけ**
+    #
+    #     そして `deadline` は、`arm_speed.next_close()` の docstring が自分で書くとおり
+    #     **「置いた回の勘」**です。**厳しいほうが勝つので、回は「撃てない verdict」を
+    #     要求されて止まります。** `judgeable_today()` の docstring は、その先に何が
+    #     起きるかまで測って書いてあります —— **「止められた回に残るのは、語を書き換えて
+    #     同じ `fix` を通すことだけ（止め 42行 のうち 12行 は同じ文言が数分後に ship）」。**
+    #
+    #     実例（この回に名指しした2件のうち1件）: 前提「1日の再生の合計は、その日に出した
+    #     本数では動かない」の `falsified_if` は **「`n_scale` が 14日 に満たなければ
+    #     判定できません」**と書いていますが、実測 **`n_scale` は 12日**。
+    #     しかも `at_cap` は `n >= 10本/日` の公開日だけで **12日 とも 08/31 以前** ——
+    #     規則1（1日1本）の下では**二度と増えません。** ＝ **永久に判定できない前提を
+    #     根拠に、門が回を止めていました。**
+    #
+    #     **直したのは出どころを1つにしたことだけです。** 門そのものは残します ——
+    #     `verdict` の歩留りは実測 37〜56% で、他の種別（0〜1%）と桁が違うので、
+    #     **撃てる日に撃たせる門には価値があります。撃てない日に立つのが誤りでした。**
+    #
+    #     **覆る条件**: `judgeable_today()` が `None`（測れなかった）を返す回では、
+    #     いままでどおり `next_close()` だけで判断します（**読めない道具で回を止めない**
+    #     という `near_deadlines()` からの約束は、向きを変えていません）。
     try:
         from src import arm_speed                                # noqa: PLC0415
         r = arm_speed.next_close()
         if r.get("days") is None or int(r["days"]) > 0:
+            return {}
+        # **データの側にも訊くこと。** `deadline` は勘で、`ready` は実測です。
+        try:
+            ready_today = judgeable_today()
+        except Exception:                                        # noqa: BLE001
+            ready_today = None
+        if ready_today is not None and not ready_today:
+            # 測れていて、なお 0件 ＝ **きょうは撃てません。**門を開けます。
             return {}
         return r
     except Exception:
