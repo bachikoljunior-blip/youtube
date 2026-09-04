@@ -893,6 +893,32 @@ def theory_gap(cmp: dict, ledger: Path | None = None, now: datetime | None = Non
         ages_d = sorted(
             a for a in (nc.age_days(t, now) for t in (row.get("top") or [])
                         if t.get("form") == key) if a)
+        # --- **帯そのものを、齢で割った側**（2026-09-04 22:5x に足した）------
+        #     上の `rates` は `row["top"]` ＝ **形ごと 15本**、すぐ上の累計の行
+        #     （`x_p90` / `out_p90`）は `summary` ＝ **帯の全部（長尺 335本）**です。
+        #     **別々の母集団を、「同じものを1日あたりで」と書いて横に並べていました。**
+        #     この回に撃った実測（`niche_ceiling.corpus_rows`・API 0単位）::
+        #
+        #         ショート  top 15本 中央 18.5回/日  ／ 帯 132本 中央  0.7回/日  **×26.4**
+        #         長尺     top 15本 中央 10,533回/日 ／ 帯 334本 中央 31.6回/日  **×333.4**
+        #
+        #     ＝ 「長尺は 1日あたりで ×21,068 離れている」は **上位15本の産物**で、
+        #     帯そのものと比べると ×63 です。**どちらも消しません** —— 上位は
+        #     「その題の天井」、帯は「その帯の普通の本」。**n を書いて並べること。**
+        #     **覆る条件**: 帯の `published` の被覆が 90% を割ったら、帯の側は出しません
+        #     （`niche_ceiling.corpus_published_cover`。埋め方は `--fill-corpus-published`）。
+        band_rates: list[float] = []
+        band_ages: list[float] = []
+        cover = nc.corpus_published_cover().get(key) or {}
+        if cover.get("all", 0) >= 30 and cover["have"] / max(1, cover["all"]) >= 0.9:
+            for t in nc.corpus_rows(form=key):
+                a = nc.age_days(t, now)
+                v = int(t.get("views") or 0)
+                if a and v > 0:
+                    band_rates.append(v / a)
+                    band_ages.append(a)
+            band_rates.sort()
+            band_ages.sort()
         own_rate = own_div / 2.0                      # 自分の中央値は **48時間** の数
         d = {"own": own, "out_p90": s.get("p90"), "out_max": s.get("max"),
              "x_p90": float(s.get("p90") or 0) / own_div,
@@ -903,7 +929,12 @@ def theory_gap(cmp: dict, ledger: Path | None = None, now: datetime | None = Non
              "age_median": (ages_d[len(ages_d) // 2] if ages_d else None),
              "out_rate": (rates[len(rates) // 2] if len(rates) >= 3 else None),
              "own_rate": own_rate,
-             "x_day": ((rates[len(rates) // 2] / own_rate) if len(rates) >= 3 else None)}
+             "x_day": ((rates[len(rates) // 2] / own_rate) if len(rates) >= 3 else None),
+             "n_band": len(band_rates),
+             "band_age_median": (band_ages[len(band_ages) // 2] if band_ages else None),
+             "band_rate": (band_rates[len(band_rates) // 2] if len(band_rates) >= 30 else None),
+             "x_day_band": ((band_rates[len(band_rates) // 2] / own_rate)
+                            if len(band_rates) >= 30 and own_rate else None)}
         out[form] = d
         # **差（gap）** —— 「試す理由」としては正しい。**選ぶのには使わない**（上の註）。
         if d["x_p90"] > best_x:
@@ -1127,8 +1158,25 @@ def theory_lines(cmp: dict, ledger: Path | None = None, now: datetime | None = N
             f"{f} **×{g[f]['x_day']:,.2f}**（外の上位の中央 {g[f]['out_rate']:,.0f}回/日"
             f"・齢 中央 {g[f]['age_median']:,.0f}日・n={g[f]['n_dated']}"
             f" ÷ 自分 {g[f]['own_rate']:,.1f}回/日）" for f in day)
-        out.append("     **同じものを1日あたりで**（上の ×N は **外の生涯の累計 ÷ 自分の 48時間** ——"
-                   " 外の上位に 48時間 以内の本は 0本 です）: " + cols)
+        out.append("     **上位15本を1日あたりで**（上の ×N は **外の生涯の累計 ÷ 自分の 48時間** ——"
+                   " 外の上位に 48時間 以内の本は 0本 です。**上の累計の行と母集団が違います**"
+                   "・すぐ下の帯の行と並べて読むこと）: " + cols)
+        band = [f for f in forms if g[f].get("x_day_band")]
+        if band:
+            bcols = " ／ ".join(
+                f"{f} **×{g[f]['x_day_band']:,.4f}**（帯の中央 {g[f]['band_rate']:,.1f}回/日"
+                f"・齢 中央 {g[f]['band_age_median']:,.0f}日・n={g[f]['n_band']}"
+                f" ÷ 自分 {g[f]['own_rate']:,.1f}回/日）" for f in band)
+            out.append("     **同じ母集団（帯そのもの）を1日あたりで**"
+                       "（上の累計の行と同じ n・`niche_ceiling.corpus_rows`・API 0単位）: " + bcols)
+            gaps = "・".join(
+                f"{f} 上位15本 {g[f]['out_rate']:,.1f}回/日 対 帯 {g[f]['band_rate']:,.1f}回/日"
+                f"（**×{g[f]['out_rate'] / g[f]['band_rate']:,.1f}**）"
+                for f in band if g[f].get("out_rate"))
+            if gaps:
+                out.append("       [!] **上の2行は同じ数ではありません** —— " + gaps
+                           + "。**上位は「その題の天井」、帯は「その帯の普通の本」。"
+                             "どちらか片方を『外の帯』と呼ばないこと。**")
         near = min(day, key=lambda f: g[f]["x_day"])
         out.append(f"       → 1日あたりで見て、いちばん近い形は **{near}**"
                    f"（×{g[near]['x_day']:,.2f}）。**上の行と食い違ったら、"

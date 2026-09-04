@@ -153,3 +153,19 @@ def test_実物の題材に未着手の外の作りが1件は残っている():
     assert all(int(t.get("minutes") or 0) >= 15 for t in tops), "outside_long は minutes: 20 の口で作る"
     assert daily_pick._unbuilt_outside(tops), (
         "外の作りの題材が全部 上げずみ —— `go` が出ても作る題材が無い。`config/topics.yaml` に1件 足すこと")
+
+
+def test_上位15本と帯を同じ数として並べないこと():
+    """**累計の行は帯の全部・1日あたりの行は上位15本**でした（2026-09-04 22:5x）。
+
+    実測: ショート 上位 18.5回/日 対 帯 0.7回/日（×26.4）／
+          長尺   上位 10,533回/日 対 帯 31.6回/日（×333.4）。
+    **母集団が違うものを「同じものを1日あたりで」と書いて並べていた。**
+    """
+    out = "\n".join(daily_pick.theory_lines(daily_pick.compare()))
+    if "1日あたりで" not in out:
+        return
+    assert "同じものを1日あたりで" not in out, "母集団が違うのに『同じもの』と書かないこと"
+    assert "上位15本を1日あたりで" in out
+    if "帯の中央" in out:
+        assert "どちらか片方を『外の帯』と呼ばないこと" in out
