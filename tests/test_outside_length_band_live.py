@@ -106,3 +106,42 @@ def test_the_line_says_it_counted_this_round():
     assert "この周に数えた" in joined, "数え直した行が、そう名乗っていません"
     assert "この周は数え直していません" in joined, (
         "1回きりの数（符号検定）が、そう名乗っていません")
+
+
+def test_the_next_book_length_is_printed_on_the_main_screen():
+    """**規則3 が名指しする1本の尺が、`[きょうの1本]` に出ること。**
+
+    ## なぜ要るか（2026-09-05 04:0x に踏んだ）
+
+    `draft_length_lines()` は 09/04 23:5x から在ったのに、**この画面には1度も
+    出ていませんでした。** 呼び手は `outside_long_lines()` の `if have:` の中だけで、
+    `have` は**まだどの日にも決まっていない池の下書き**です。外の型の下書きが
+    全部ほかの日に決まった時点（実測 09/05: 7本すべて）で `have` は空になり、
+    **規則3 が名指ししている当の1本の尺は、どの回にも見えなくなりました。**
+
+    ＝ 毎周の画面はこの本について「焼き直して得られる脚は 0本」だけを刷り、
+    帯でいちばん大きく効いている軸（×2.6）が**決める側の目に1度も入っていなかった。**
+
+    **この repo でいちばん多い壊れ方（言っている所と、している所が別）**の、
+    印字の側です。`script_writer.OUTSIDE_RULE_LEGS` の尺の節は
+    「**狙いの帯に居るかは `daily_pick.draft_length_lines()` が毎周 印字する**」と
+    書いてありました —— **書いてあって、印字されていませんでした。**
+
+    **覆る条件**: 次に出る本が 長尺 でなくなったら、この行は出ません（切れ目は
+    外の長尺の帯から引いた数で、ショートには当たらない）。そのときはこの検査も黙ります。
+    """
+    src = (ROOT / "src" / "daily_pick.py").read_text(encoding="utf-8")
+    head = src.split('次に出る本 `{next_row.get(', 1)[1][:4000]
+    assert "draft_length_lines" in head, (
+        "`[きょうの1本]` の「次に出る本」の直後で尺を印字していません"
+        "（池の下書きにしか出ない形へ戻っています）")
+
+
+def test_the_screen_only_prints_the_length_for_long_form():
+    """切れ目は**外の長尺の帯**から引いた数 —— ショートに当てないこと。"""
+    src = (ROOT / "src" / "daily_pick.py").read_text(encoding="utf-8")
+    head = src.split('次に出る本 `{next_row.get(', 1)[1][:4000]
+    # **註のコメントにも関数名が出ます** —— 見るのは「呼んでいる所」の手前だけ。
+    guard = head.split("out.extend(draft_length_lines", 1)[0]
+    assert 'draft_form == "長尺"' in guard, (
+        "尺の行が、形で守られていません（ショートにも出ます）")

@@ -3546,6 +3546,23 @@ def lines(next_row: dict | None, now: datetime | None = None,
         draft_fam = family_of(next_row.get("topic"))
         out.append(f"     次に出る本 `{next_row.get('video_id')}` は **{draft_form}**"
                    f"（題材 `{next_row.get('topic')}`・族 `{draft_fam or '?'}`・形の決め方 {how}）")
+        # **次に出る本の「尺」を、ここで印字します**（2026-09-05 04:0x に踏んだ）。
+        #
+        # `draft_length_lines()` は在ったのに、**この画面には1度も出ていませんでした** ——
+        # 呼び手は `outside_long_lines()` の `if have:` の中だけで、`have` は
+        # **まだどの日にも決まっていない池の下書き**です。外の型の下書きが全部
+        # ほかの日に決まった時点（実測 09/05 04:0x = 7本すべて）で `have` は空になり、
+        # **規則3 が名指ししている当の1本の尺は、どの回にも見えなくなりました。**
+        #
+        # だから毎周の画面はこの本について「焼き直して得られる脚は 0本」だけを刷り、
+        # **帯でいちばん大きく効いている軸（20〜25分 792回/日 対 25〜30分 2,094回/日
+        # ＝ ×2.6）が、決める側の目に1度も入っていませんでした。**
+        # 実測: `GFvAcxvDmYM` は 22.7分 ＝ 切れ目 25分 の 2.3分 下。
+        #
+        # **長尺のときだけ出します**（切れ目は外の長尺の帯から引いた数で、
+        # ショートには当たりません）。**覆る条件**は `draft_length_lines` の docstring。
+        if draft_form == "長尺":
+            out.extend(draft_length_lines(str(next_row.get("video_id") or "")))
     rd = c.get("recent_days", 14)
     out.append(f"     齢 {AGE_HOURS}時間 でそろえた1本あたり再生（`data/views.jsonl`・API 0単位・"
                f"{c.get('n_rows', 0)}本）:")
