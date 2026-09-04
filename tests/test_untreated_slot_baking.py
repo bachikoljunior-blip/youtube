@@ -21,11 +21,19 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
 import run_marker as rm  # noqa: E402
 from src import daily_pick as dp  # noqa: E402
+from src import next_slot as ns  # noqa: E402
 
 
 @pytest.fixture
 def slot(monkeypatch):
-    """決めも題材の表も固定した、脚だけが動く台。"""
+    """決めも題材の表も固定した、脚だけが動く台。
+
+    **予約は空にします**（2026-09-05 01:4x）—— `untreated_slot()` は `rule3_book()`
+    越しに引くようになり、規則3 の主語は「**次の投稿予定に出る本**」なので
+    `next_slot.next_video()` が先に見られます。空にしないと実物の予約が入り、
+    下の `dp.current` の差し替えが効きません。
+    """
+    monkeypatch.setattr(ns, "next_video", lambda *a, **k: None)
     monkeypatch.setattr(dp, "current", lambda *a, **k: {"video_id": "VID", "topic": "TOPIC"})
     monkeypatch.setattr(dp, "for_day", lambda *a, **k: None)
     monkeypatch.setattr(dp, "_topics", lambda *a, **k: [{"id": "TOPIC", "style": "outside_long"}])

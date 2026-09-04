@@ -312,6 +312,65 @@ def stale_commits(since: datetime | None = None, limit: int = 6,
     return got[:limit] if limit else got
 
 
+def legs_under_current_code(video_id: str, *, legs_call=None) -> list[str]:
+    """**その本は、いまのコードでも脚を通るか。**（**API 0単位**・控えの台本だけ）
+
+    ## なぜ要るか（2026-09-05 01:5x に、この回が実物で踏んだ）
+
+    上の `[!]` は「焼いたあと、この本を焼くコードに N件 入っています ——
+    **その直しは、この本に入っていません**」と言い、下は
+    「→ **焼き直すのが `improve` の1手です**」と勧めます（**55〜90分**）。
+
+    **その勧めは、コミットが在ることしか見ていません。** `_MAKERS` には
+    `src/script_writer.py` が入っていて、そこには**焼く関数**と**脚を数える関数**が
+    同居しています。**数える側だけが変わった回**は、焼き直しても1フレームも変わりません。
+
+    実測（2026-09-05 01:2x にこの回が撃った数）::
+
+        57bb8b84 09/04 22:42  外の型の脚 (4d) を帯 335本 で測り直した   ← 数える側
+        daily_pick.pick_legs('GFvAcxvDmYM')  →  ([], None)             ← **新しい定義でも全通**
+
+    ＝ **この本を焼き直して得られる脚は 0本**です。それでも画面は
+    「その直しは、この本に入っていません」→「焼き直すのが `improve` の1手です」と
+    並べていました。**55〜90分 と、枠の本の差し替え 100単位 の勧めです。**
+
+    ここは**禁じません**（脚のほかにも焼き直す理由は在り得ます）——
+    **数を1つ足すだけ**です。「入っていない」の下に「**で、いま通るのか**」を置きます。
+
+    ## 覆る条件
+
+    - `pick_legs` が読めない回は**1行も出しません**（推測で埋めない）。
+    - 脚が落ちていれば、それはそのまま焼き直しの理由なので、そう印字します。
+    - `_MAKERS` から `src/script_writer.py` が外れる（数える側が別 file へ出る）と、
+      上の `[!]` はもう脚の話で鳴らなくなるので、**この行ごと畳むこと。**
+    """
+    vid = str(video_id or "").strip()
+    if not vid:
+        return []
+    if legs_call is None:
+        try:
+            from . import daily_pick as _dp                      # noqa: PLC0415
+
+            legs_call = _dp.pick_legs
+        except Exception:                                        # noqa: BLE001
+            return []
+    try:
+        bad, why = legs_call(vid)
+    except Exception:                                            # noqa: BLE001
+        return []
+    if why:
+        return []
+    if bad:
+        return [f"       [数] **いまのコードで数え直すと、この本は {len(bad)}脚 落ちています**"
+                f"（{'・'.join(bad)}）—— **焼き直す理由が在ります。**"]
+    return ["       [数] **ただし、いまのコードで数え直しても、この本は外の型の4脚を"
+            "全部 通っています**（`daily_pick.pick_legs` ＝ `[]`）—— "
+            "**焼き直して得られる脚は 0本**です。"
+            "`_MAKERS` の `src/script_writer.py` には**焼く関数**と**脚を数える関数**が"
+            "同居していて、上の N件 は**数える側だけ**かもしれません。"
+            "**脚のほかに焼き直す理由を1つ持って来ること**（55〜90分・差し替え 100単位）。"]
+
+
 def pending_thumbnail(video_id: str | None) -> bool:
     """**その本のサムネイルが、控えに在るのに YouTube へ載っていないか。**
 
@@ -1553,6 +1612,7 @@ def lines(now: datetime | None = None) -> list[str]:
                    f"　—— その直しは、この本に入っていません**")
         for ln in cm:
             out.append(f"       {ln[:118]}")
+        out.extend(legs_under_current_code(str(v.get("video_id") or "")))
         # **機械が焼く（か、いま焼いている）なら、手で撃つ1行を出さないこと**
         #     （2026-09-03 13:2x に実物で見た。この画面は
         #      「いま焼いています —— 手で撃たないこと。同じ本が2本 上がります」の**次の行**で
