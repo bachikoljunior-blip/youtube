@@ -102,10 +102,18 @@ def test_pickが8を割ったらM14の段が作れないと言う(patched, capsy
 
 
 def test_pickが8以上なら警告を出さない(patched, capsys):
-    """**警告が毎回出ていたら、警告ではありません。**"""
+    """**警告が毎回出ていたら、警告ではありません。**
+
+    **見るのはこの道具の行だけ**（2026-09-04 18:5x に直した）。ここは
+    `out` 全部に `[!]` が無いことを見ており、**別の部屋の警告で赤くなっていました** ——
+    実測: `[history] [!] **上限 400本 で切りました**（チャンネルはこれより多い）` が
+    チャンネルの本数が 400 を越えた日から毎回 混ざり、この検査は**在庫と関係なく**落ちます
+    （実測 425本）。`[history]` はテーマ在庫の話をしていません。
+    """
     patched({"a": ["=== x ==="] * 6}, n_pick=8)
     out = _run(capsys)
-    assert "[!]" not in out
+    mine = [ln for ln in out.splitlines() if not ln.lstrip().startswith("[history]")]
+    assert "[!]" not in "\n".join(mine)
 
 
 def test_未使用の節が0なら_calcに表を足せと名指しする(patched, capsys):
