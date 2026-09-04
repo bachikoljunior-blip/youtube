@@ -1891,7 +1891,11 @@ def outside_long_readout(now: datetime | None = None, *, topics: list[dict] | No
                 f"（いまの作り方の長尺は 齢20h で 1回・齢48h の中央値 1回）")
         if h < 24:
             line += (f" → 24h（{h24:%m/%d %H:%M} JST）の先読みの門 {OUTSIDE_24H_GATE}回 まで待つ。"
-                     f"**次の未決の日は、それまで決めないこと**")
+                     f"**次の未決の日は、それまで決めないこと** ——"
+                     f" これは散文ではなく、`record()` が実際に止めます（`daily_pick.probe_hold`）。"
+                     f"止まるのは**この本より後の日を長尺で決めるとき**だけで、"
+                     f"ショート・この本の日・齢24h 以降は通ります。"
+                     f"数字で越えるなら `--anyway \"<数字を含む理由>\"`")
         elif v >= OUTSIDE_24H_GATE:
             line += (f" **≥ 先読みの門 {OUTSIDE_24H_GATE}回 → 次の未決の日の1本も外の作りの長尺**"
                      f"（下書きが無ければ作る・下の行）")
