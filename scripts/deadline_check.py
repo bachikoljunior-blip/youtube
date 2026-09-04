@@ -2283,8 +2283,32 @@ def _outside_supply(what: str) -> "Answer | None":
         f"（`src/daily_pick.treated_count('{form}')`・実物の台本の控えで数えた）、"
         f"`config/topics.yaml` の `style: {tag}` の題材も **0件**（札すら無い）。"
         f"**{what}** は、こちらが1本 作らないかぎり来ません ——"
-        f"**期限を延ばしても1日も近づきません。**",
+        f"**期限を延ばしても1日も近づきません。**" + _outside_blocker(form),
         unreachable=True)
+
+
+def _outside_blocker(form: str) -> str:
+    """**「作れ」で終わらせないこと** —— *何が* 作らせていないかを、同じ行に数で並べる。
+
+    `CLAUDE.md`「**裸の『届きません』を出さないこと。何を固定したせいでそう出たのかを
+    同じ行に並べること**」。ショートの側は、いちばん重い脚（尺）が
+    `script_writer.SHORT_TOTAL_CHARS` の上限で**構造的に**塞がっています。
+    """
+    if form != "ショート":
+        return ""
+    try:
+        from src import outside_short, script_writer     # noqa: PLC0415
+        lo, hi = outside_short.total_chars_band()
+        cap = int(script_writer.SHORT_TOTAL_CHARS)
+        cps = float(script_writer.EFFECTIVE_CHARS_PER_SECOND)
+    except Exception:                                    # noqa: BLE001
+        return ""
+    return (f" **いちばん重い脚（尺）は、いまの作りでは出せません** ——"
+            f" 外の帯の速い升 {outside_short.LENGTH_BAND[0]}〜{outside_short.LENGTH_BAND[1]}秒"
+            f"（＝ {lo}〜{hi}字）に対し `script_writer.SHORT_TOTAL_CHARS` は"
+            f" **{cap}字 ＝ {cap / cps:.1f}秒** が上限"
+            f"（実測: 自分のショート 109本 が 109本とも 23.6〜32.6秒）。"
+            f" **脚 → 札 → 本の順**（`src/outside_short` の docstring）。")
 
 
 def _ans_after(need: dict, lag: int) -> Answer:
