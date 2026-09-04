@@ -111437,3 +111437,32 @@ fix+improve 191件（80.6%）の行き先はそこです。
    05:0x 時点で **beat が出ていて生きています**。`--script` ではなく `--topic` なので
    台本ごと書き換わります。**焼き上がったら `metadata_fix.py <新ID>` と
    `pick_legs('<新ID>')` を撃つこと**（§4 の註）。
+
+### 追記（05:0x）—— **`improve` は通ります。`next_round.py` の4行目と、印の門が食い違っています**
+
+`scripts/next_round.py` は「**`fix` と `improve` は、差し替えるまで `run_marker` が
+通しません**」と印字します。**実物は違いました** —— `--ship --kind fix` を実際に撃つと、
+断りの本文に
+
+    **`improve` / `upload` / `verdict` / `premise` / `means` は通ります。
+      止めているのは `fix` だけです。**
+    **その本を直す `fix` も通ります** —— `--ship` に本の ID か題材を書くこと。
+
+と出ます（`run_marker.untreated_slot`）。**止まっているのは `fix` だけで、
+しかも「その本を名乗れば通る」**。`next_round.py` の側だけが `improve` も止まると
+書いており、**この回はその1行を読んで `improve` を候補から外しました。**
+
+**次の回へ**: `next_round.py` の4行目を、`untreated_slot` の本文に合わせること
+（**印字を直すのは `next_round.py` の側**。門のほうは実物どおり動いています）。
+
+### 追記（05:0x）—— 赤が1件、この回の変更の前から在りました
+
+`tests/test_arm_speed.py::test_実在する幅で腕を止める_1日110525本を歩かない` が
+`arms["density"]["cap"] <= eta.UPLOAD_CAP_PER_DAY / 25`（92/25 ＝ 3.68）で赤。
+実測の `density` は **×10.00**。**25 は計画の公開密度が 25本/日 だった頃のべた書き**で、
+2026-08-31 の固定（1日1本）で `PLAN_PUBLISH_PER_DAY` が 25 → 1 になったとき
+**この分母だけが取り残されていました**。`eta.PLAN_PUBLISH_PER_DAY` に置き直して 15件 緑。
+**狙い（腕を 110,525本/日 まで歩かせない）は変えていません。**
+
+**この `fix` は `run_marker` が受け取りません**（きょうの枠の本を名乗っていないため）。
+commit だけ在ります —— **`data/runs.jsonl` には出ないので、次の回は git log で見ること。**
