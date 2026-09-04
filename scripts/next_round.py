@@ -834,6 +834,40 @@ def main() -> int:
                   "（`--anyway <数字を含む1行>` で越えれば控えに残ります）")
     except Exception as _exc:                                     # noqa: BLE001
         print(f"  [!] 枠の機会費用が出せません: {str(_exc)[:80]}")
+    # **すでに立っている決めを、周の頭で出す**（2026-09-05 02:2x・最適化の回）。
+    #     実測 `data/daily_pick.jsonl`: **09/05 の枠だけで決めが 24回、うち 14回 は
+    #     直前と 形・題材・動画ID が完全に同じ**。最後の 8回 は全部 同じ動画で、
+    #     変わったのは `why` の長さだけ（約200字 → 約600字）。
+    #     `restated_pick_block()`（09-05 02:0x）が `record()` の**門**になりましたが、
+    #     門は**書く段**に在ります —— ここに出さないと、回は長い `why` を**書き終えてから**
+    #     拒まれます（＝ 回は使い切って、決めは1文字も変わらない）。
+    #     **作りはじめる前に**出すのは、隣の「枠の機会費用」と同じ理由です。
+    #     **覆る条件**: 決めが変わればこの行はその日を出さなくなります（同じ決めの
+    #     再掲が 1回も無い日は、そもそも印字しません）。
+    try:
+        from datetime import date as _date                        # noqa: PLC0415
+        from src import daily_pick as _dp                         # noqa: PLC0415
+        _rows = [r for r in _dp._jsonl(_dp.PICKS)
+                 if _dp.pick_kind(r) == _dp.PICK_KIND_DECIDE and r.get("for_day")]
+        for _d in sorted({str(r["for_day"]) for r in _rows})[-3:]:
+            _cur = _dp.current(_date.fromisoformat(_d))
+            if not _cur or _dp.pick_kind(_cur) != _dp.PICK_KIND_DECIDE:
+                continue
+            _blk = _dp.restated_pick_block(
+                str(_cur.get("form") or ""), str(_cur.get("topic") or ""),
+                _cur.get("video_id"), _date.fromisoformat(_d),
+                expected=_cur.get("expected_48h"))
+            if not _blk:
+                continue
+            _n = _blk.split("すでに ")[-1].split("回")[0] if "すでに " in _blk else "?"
+            print(f"  **{_d} の枠はもう決まっています**: {_cur.get('form')} / "
+                  f"{_cur.get('topic')} / {_cur.get('video_id') or '—'}"
+                  f"（見込み {_cur.get('expected_48h')}回・同じ決めが すでに {_n}回）"
+                  f"　← **これを書き直す `--pick` は通りません**"
+                  "（形・題材・動画ID か `--expected` を実際に変えるか、"
+                  "**決めを触らず前提を1件 閉じること**。`--anyway` では越えられません）")
+    except Exception as _exc:                                     # noqa: BLE001
+        print(f"  [!] 立っている決めが出せません: {str(_exc)[:80]}")
     if d.get("live") is None:
         # **WAIT を印字しません。** 2026-09-02 21:2x、親は 0体 と数えたうえで
         #     `--live` を付けずに撃ち、出た WAIT をそのまま「（0体・WAIT 74分）」と
