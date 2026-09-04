@@ -125,3 +125,39 @@ def overlay(rows: list[dict], *, path: Path | None = None) -> list[dict]:
             r["title"] = new
         out.append(r)
     return out
+
+
+def history(video_id: str, *, path: Path | None = None) -> list[dict]:
+    """**その本の差し替えの跡**（古い順）。無ければ空の list。**API 0単位。**
+
+    `at` で並べます —— 帳面は追記専用（`merge=union`）なので、**併合で並びが崩れます**
+    （`latest()` が同じ理由で「最後の行 ＝ 最新」と読まないのと同じ）。
+    """
+    vid = str(video_id or "").strip()
+    if not vid:
+        return []
+    rows = [r for r in _rows(path) if str(r.get("video_id") or "").strip() == vid]
+    return sorted(rows, key=lambda r: str(r.get("at") or ""))
+
+
+def seen_before(video_id: str, title: str, *, path: Path | None = None) -> list[dict]:
+    """**その本が、その題を前にも名乗っていたか。** 名乗っていた行を古い順で返します。
+
+    ## なぜ要るか（2026-09-05 04:4x に数えた）
+
+    `data/retitled.jsonl` の実物::
+
+        18:12:17Z  DtpnSVFDtAE → 【小規模企業共済】11か月と12か月の境目で59万7200円動く
+        18:12:27Z  DtpnSVFDtAE → 【小規模企業共済】11か月と12か月でいくら違う？   ← **10秒前の字へ戻した**
+
+    **`videos.update` は1回 50単位**なので、この往復は **100単位 で差し引き 0** です
+    （`retitle.py` の全消費 350単位 の **29%**）。
+
+    **ここは止めません** —— 誤った題を戻す道を塞ぐと、`retitle.py` の存在理由
+    （「**誤解を与えるタイトルを今すぐ直す**」）そのものを塞ぎます。
+    **数を1つ持って来させるための印字**です。止めるのは「実物ともう同じ字」の側だけ
+    （そちらは、止めても直せなくなるものがありません）。
+    """
+    t = str(title or "")
+    return [r for r in history(video_id, path=path)
+            if str(r.get("title") or "") == t]
