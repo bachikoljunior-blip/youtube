@@ -205,25 +205,61 @@ def verdict(win: float | None, *, form: str | None = None, cmp: dict | None = No
     """
     s = sv if sv is not None else slot_value(cmp=cmp, now=now)
     cost = s.get("cost")
+    src = "規則の密度の中央値"
+    # **化石の床は、いまの1枠の値段ではありません**（2026-09-05 05:xx・最適化の回）。
+    #
+    # この回に撃った数（`slot_value()` と `daily_pick.form_median_48h()`）::
+    #
+    #     cost（規則の密度・ショート）  1,049回  ← 標本 n=15・**いちばん新しい1本が 18日前**
+    #     ショート のいまの中央値        164回  （n=216・`compare()["all"]`）
+    #     長尺   のいまの中央値            1回  （n=36）
+    #     この床に掛けた見込み          164回 → **✗**／368回 → **✗**／1,049回 → ○
+    #
+    # ＝ **床が高すぎて、機械が自分で指している形（ショート）を、その形の実測の
+    # 中央値で出しても通りません。** 1回 の長尺も 164回 のショートも、どちらも ✗ ——
+    # **この床は、いちばん効く軸（形）で 1 と 164 を区別できていませんでした。**
+    # 区別しない門の出口は `--anyway` だけで、実測 09-05T01:48 の `anyway` は
+    # そこを通って **長尺（見込み 1回）** を 09-05 の枠に立てています。
+    # `stale_lines()` は同じ回に「**きれいで新しい数は、いま1つも在りません**」と
+    # 印字していました —— **印字していた数を、床に使います。**
+    #
+    # **緩めではありません。** 床が初めて**当たる**ようになります（1/164 は ✗ のまま）。
+    #
+    # ## 覆る条件
+    #
+    # - 規則の密度の日にショートを1本 出せば `sample_age_days` は落ち、床は
+    #   自分で `cost`（規則の密度の中央値）に戻ります。**定数を持ちません。**
+    # - いまの中央値が規則の密度の中央値を**上回った**ら、こちらは使いません
+    #   （`< cost` のときだけ差し替え）—— **床を下げる方向にしか動きません。**
+    _bf = (s.get("forms") or {}).get(s.get("best")) or {}
+    _age, _mixed = _bf.get("sample_age_days"), _bf.get("mixed_median")
+    if (isinstance(_age, int) and _age > STALE_DAYS
+            and isinstance(_mixed, (int, float))
+            and cost not in (None, 0) and float(_mixed) < float(cost)):
+        src = (f"いまの中央値 n={_bf.get('mixed_n')}"
+               f"（規則の密度の {float(cost):,.0f}回 は標本が {_age}日前で止まっています"
+               f"・`slot_cost.stale_lines`）")
+        cost = float(_mixed)
     if win is None or cost in (None, 0):
         return {"ok": None, "cost": cost, "ratio": None, "best": s.get("best"),
-                "own_max": None, "why": "枠の機会費用が測れません（標本 0本）。"}
+                "own_max": None, "cost_src": src,
+                "why": "枠の機会費用が測れません（標本 0本）。"}
     ratio = float(win) / float(cost)
     own = (s["forms"].get(form) or {}) if form else {}
     own_max = own.get("max")
     ok = ratio >= 1.0
     if ok:
         why = (f"当たり {win:,.0f}回 ≥ 枠の機会費用 {cost:,.0f}回"
-               f"（{s.get('best')}・規則の密度の中央値）＝ **この試しは枠のぶんを払えます。**")
+               f"（{s.get('best')}・{src}）＝ **この試しは枠のぶんを払えます。**")
     else:
         why = (f"当たり {win:,.0f}回 は 枠の機会費用 {cost:,.0f}回"
-               f"（{s.get('best')}・規則の密度の中央値）の **1/{1 / ratio:,.0f}**"
+               f"（{s.get('best')}・{src}）の **1/{1 / ratio:,.0f}**"
                f" ＝ **全部うまくいっても、捨てた枠より小さい試しです。**")
     if own_max is not None and win > own_max:
         why += (f" なお {form} の規則の密度での最大は {own_max:,.0f}回 で、"
                 f"門はその **×{win / own_max:,.0f}**。")
     return {"ok": ok, "cost": cost, "ratio": ratio, "best": s.get("best"),
-            "own_max": own_max, "why": why}
+            "own_max": own_max, "cost_src": src, "why": why}
 
 
 def lines(cmp: dict | None = None, *, now=None, win: float | None = None,
