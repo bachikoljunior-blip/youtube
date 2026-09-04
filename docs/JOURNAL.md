@@ -110987,3 +110987,14 @@ commit と push は済んでおり、門が止めたのは記録の順番だけ�
 - `GFvAcxvDmYM` の `thumbnail_line2` が控えと実物で違う。**物差しがまだ無い**
   （どちらの字が多く見られるかを、この repo は1度も測っていない）。
   **差が在ることは 50単位 を使う理由になりません。**
+
+### （同じ回の追記）赤2件は、この回の変更とは無関係でした
+
+`tests/test_request_form.py::test_深い題ショートは群に入る` と
+`tests/test_request_form_excludes_long_form.py::test_split_counts_と_判定の群が_同じ本を数える`
+が赤です。**`src/daily_pick.py` を変更前（`6735c12a~1`）に戻して撃ち直しても
+同じ2件が同じ形で落ちました** —— どちらも `src/judgeable._short_topics()` が
+実物の台帳を読む依存で、`jidou-choushi-48kagetsu` と `sankyu-14nichi-michi-ga-nai`
+（`s-` で始まらない3分以下の本）が群から漏れています。**この回は触っていません。次の回へ。**
+（`tests/test_slot_cost.py::test_daily_pick_prints_the_gate` は単体では通ります ——
+並べて撃ったときだけ落ちたので、**順番か実物の依存**です。）
