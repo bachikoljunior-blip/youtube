@@ -751,8 +751,16 @@ def long_script_problems(script, topic_id: str = "") -> list[str]:
         problems += outside_title_problems(script)
         # **(5) 間合い（narration 2〜4文・章の頭の前提）も同じ理由で数えます**
         # （2026-09-04 13:4x・`outside_pacing_problems` の docstring）。
-        # **規則の脚は、これで全部 数えた側に入りました**（数えないと決めたのは
-        # 「尺は20分前後」と「断定・煽りの語」の2つで、どちらも理由が書いてあります）。
+        #
+        # **ここに「規則の脚は、これで全部 数えた側に入りました」と書いてありました。誤りです**
+        # （2026-09-04 16:3x に踏んだ）—— (2) の本文は3つ命じているのに
+        # （章5〜7つ／**章ごとに判断を1つ**／章ごとに別の表）、**判断のほうは
+        # どこも数えていませんでした。** 数え落とした脚は 09-03 から**5つ目**で、
+        # 毎回「本文を読み直した回」が1つずつ見つけています。
+        # **同じ形の穴を6回 続けないために、脚と数える口の対応を
+        # `OUTSIDE_RULE_LEGS` に置き、`tests/test_outside_rule_legs.py` が
+        # 規則の本文と突き合わせます** —— 本文に節を足して表に足さないと赤になります。
+        # **この行に「全部 数えた」と書き足さないこと。** 表とテストが言います。
         problems += outside_pacing_problems(script)
     # **入り方と締め方が、直近の本と揃っていないか**（2026-08-30・解除条件3）。
     # **長尺のほうが深刻でした** —— 134本のうち 113本（84%）が同じ4文字で始まり、
@@ -1578,6 +1586,10 @@ def outside_body_problems(script) -> list[str]:
         (2a) 本題の章が 5〜7つ（`chapters` の先頭は冒頭 90秒 の章なので数えない）
         (2b) どの章にも chart か table が 1枚以上
         (2c) 章をまたいで**同じ見出しの表を使い回していない**（「同じ表を2つの章で使わない」）
+        (2d) **どの章にも判断が1つ在る**（2026-09-04 16:3x に足した ——
+             (2) の本文は3つ命じているのに、数えていたのは (2a)(2b)(2c) だけでした。
+             規則が写している外の上位は「計算1本」ではなく「判断1つ」の回で、
+             **前提「外の作り方を写した長尺」の claim が名指ししている脚もここです**）
         (3)  末尾 4コマ に「手順（順に／順番）」＋「3つ（三つ）」が在る
 
     **`chapters` が無い台本は、何も言いません**（読めないものは通す ——
@@ -1635,6 +1647,15 @@ def outside_body_problems(script) -> list[str]:
                     problems.append(f"表「{h}」を章「{seen[h]}」と章「{lab}」の2つで使っている"
                                     "（同じ表を2つの章で使わない）")
                 seen.setdefault(h, lab)
+            # (2d) **章ごとに判断を1つ**（2026-09-04 16:3x に足した。下の `OUTSIDE_RULE_LEGS` の註）。
+            text = lab + "".join(
+                (s.get("narration") if isinstance(s, dict) else getattr(s, "narration", None)) or ""
+                for s in segs[lo:hi])
+            if not _OUTSIDE_CHAPTER_DECIDE_RE.search(text):
+                problems.append(f"章「{lab}」に判断が1つも無い"
+                                "（規則 (2)「章ごとに判断を1つ置く」——「…すべきか」「…かどうか」"
+                                "「65歳・70歳・75歳のどれか」の形で、その章で決める物を1つ言うこと。"
+                                "**この規則が写している外の上位は『計算1本』ではなく『判断1つ』の回です**）")
 
     tail = "".join(
         (s.get("narration") if isinstance(s, dict) else getattr(s, "narration", None)) or ""
@@ -1643,6 +1664,162 @@ def outside_body_problems(script) -> list[str]:
         problems.append(f"末尾 {OUTSIDE_CLOSING_SEGS}コマ に締めの手順が無い"
                         "（「自分の場合の数字を出す手順」を3つ、順に）")
     return problems
+
+
+# ----------------------------------------------------------------------
+# **規則の節と、数える口の対応表**（2026-09-04 16:3x に足した）
+#
+# ## なぜ要るか —— **同じ形の穴が5回 続きました**
+#
+# `OUTSIDE_LONG_RULE` は `generate()` へ渡る**文章の指示**です。
+# 「文章の指示は守られない（実測 2026-08-09）ので、数える」——
+# その数える口が、本文とは**別々に**足されてきました:
+#
+#     09-03 05:xx  (1) 冒頭            `outside_opening_problems`
+#     09-04 12:16  (2a)(2b)(2c) 章・(3) 締め  `outside_body_problems`
+#     09-04 12:55  (4) 題とサムネ      `outside_title_problems`
+#     09-04 13:4x  (5a)(5b) 間合い     `outside_pacing_problems`
+#     09-04 16:3x  (2d) 章ごとの判断   `outside_body_problems`   ← **5回目**
+#
+# 毎回「本文を読み直した回」が、数え落とされた節を**1つずつ**見つけています。
+# しかも 13:4x の回は「**規則の脚は、これで全部 数えた側に入りました**」と
+# 書き残しており、その文が在るせいで、次の回は本文を読み直しません。
+# **塞ぐべきは穴ではなく、穴を作っている側です**（`retro.py` の問い）——
+# 穴を作っているのは「本文と数える口が別々に育つ」ことのほうで、
+# 節を1つ数えるたびに直る物ではありません。
+#
+# ## 何をするか
+#
+# 本文を**文の単位**に切り（`outside_rule_units()`）、その全部が
+# この表のどれかに当たることを `tests/test_outside_rule_legs.py` が見ます。
+# **本文に文を1つ足して、この表に足さなければ赤になります。**
+# 数えないと決めた節は、`None` ではなく**理由の文字列**を置くこと ——
+# 「数え落とし」と「数えないと決めた」は、赤の外し方が違います。
+#
+# **行の単位ではなく文の単位で切っています。** (2d) を落としたときの本文は
+# 「`(2) 章を5〜7つ。**章ごとに判断を1つ**置く（…）。`」で、**同じ行**でした ——
+# 行で切ると、この5回目は捕まりません。
+#
+# **覆る条件**: 前提「外の作り方を写した長尺」が外れたら（48h で 100回 未満）、
+# `OUTSIDE_LONG_RULE` ごと使わないので、この表とテストも一緒に落とすこと。
+# ----------------------------------------------------------------------
+
+#: 節として数える最小の長さ（これ未満は折り返しの切れ端）。
+OUTSIDE_RULE_UNIT_MIN = 4
+
+#: 数えないと決めた節に置く印（先頭がこれなら「口が無い」ではなく「置かないと決めた」）。
+OUTSIDE_LEG_NOT_COUNTED = "数えない: "
+
+#: 規則の節 → それを数える口（関数名）。**`OUTSIDE_LEG_NOT_COUNTED` で始まる値は、置かないと決めた節。**
+#: 見出しは本文の**部分文字列**です（本文を書き換えたら、ここも書き換わるまで赤のまま）。
+OUTSIDE_RULE_LEGS: tuple[tuple[str, str], ...] = (
+    ("尺は20分前後",
+     OUTSIDE_LEG_NOT_COUNTED + "尺は台本だけでは決まらない（読み上げの速さ・図の尺）。"
+     "`verify.check()` が焼いたあとの実物で見ている（`min_minutes`）"),
+    ("計算を1本 見せる回ではなく", "outside_body_problems (2d)"),
+    ("見終わった人が", "outside_body_problems (2d)"),
+    ("- 構成:", OUTSIDE_LEG_NOT_COUNTED + "見出し。命じている物が無い"),
+    ("外の上位4本の冒頭の順をそのまま写す", "outside_opening_problems"),
+    ("`data/niche_thumbs/<id>.opening.txt`", OUTSIDE_LEG_NOT_COUNTED + "出どころの註"),
+    ("回の4本が同じ順", OUTSIDE_LEG_NOT_COUNTED + "出どころの註"),
+    ("a. 1文目", "outside_opening_problems (a)"),
+    ("b. 2文目", "outside_opening_problems (b)"),
+    ("冒頭 120文字以内に置く", "outside_opening_problems (b・位置)"),
+    ("位置まで数えます", OUTSIDE_LEG_NOT_COUNTED + "すぐ上の節の註"),
+    ("c. 名乗り", "outside_opening_problems (c)"),
+    ("〈チャンネル名〉です", "outside_opening_problems (c)"),
+    ("今回は…について解説します", "outside_opening_problems (c)"),
+    ("d. **視聴者への問いを2つ以上**", "outside_opening_problems (d)"),
+    ("をご存知でしょうか", "outside_opening_problems (d)"),
+    ("主語は「皆さん」「あなた」", "outside_opening_problems (d・2人称)"),
+    ("3人称の解説で始めない", "outside_opening_problems (d・2人称)"),
+    ("e. 見続ける約束", "outside_opening_problems (e)"),
+    ("機械の検査 `outside_opening_problems`", OUTSIDE_LEG_NOT_COUNTED + "数える口そのものの案内"),
+    ("**b の1文が冒頭 120文字以内**）", OUTSIDE_LEG_NOT_COUNTED + "数える口そのものの案内"),
+    ("前提つきの試算だと1文 添えるのは変えない",
+     OUTSIDE_LEG_NOT_COUNTED + "(d)(5a) の但し書き。命じているのは『増やしてよい』で、落とす条件が無い"),
+    ("章を5〜7つ", "outside_body_problems (2a)"),
+    ("**章ごとに判断を1つ**置く", "outside_body_problems (2d)"),
+    ("など渡した表に在るもの", "outside_body_problems (2d)"),
+    ("渡した表から**別の表**を1枚以上", "outside_body_problems (2b)"),
+    ("同じ表を2つの章で使わない", "outside_body_problems (2c)"),
+    ("(3) 締めは", "outside_body_problems (3)"),
+    ("narration は2〜4文", "outside_pacing_problems (5a)"),
+    ("章の頭で毎回 言い直す", "outside_pacing_problems (5b)"),
+    ("この回はこちらが優先", "outside_title_problems (4a)"),
+    ("外の上位の形を写す", OUTSIDE_LEG_NOT_COUNTED + "すぐ下の3つの節の見出し"),
+    ("先頭に【 】で相手か場面", "outside_title_problems (4a)"),
+    ("最後に判断の語", "outside_title_problems (4b)"),
+    ("全角45文字以内", "outside_title_problems (4c)"),
+    ("数字は計算出力に在る値だけ",
+     OUTSIDE_LEG_NOT_COUNTED + "計算出力との突き合わせは `verify._check_narrated_shown` の持ち場"),
+    ("断定・煽りの語は使わない",
+     OUTSIDE_LEG_NOT_COUNTED + "claim の本文（【緊急解説／知らないと損】）と正面から逆を向いている。"
+     "どちらへ倒すかは前提の判定で決める（`config/hypotheses.yaml` の註 2.）"),
+    ("サムネの2行は", "outside_title_problems (4d)"),
+)
+
+
+def outside_rule_units(text: str = None) -> list[str]:
+    """`OUTSIDE_LONG_RULE` の本文を**文の単位**に切って返す。**API 0単位・純関数。**
+
+    行ではなく文で切る理由は、上の表の註（5回目の数え落とし (2d) は
+    「章を5〜7つ。」と**同じ行**に在りました）。`#` で始まる行は見出しなので落とす。
+    """
+    import re as _re
+    src = OUTSIDE_LONG_RULE if text is None else text
+    out: list[str] = []
+    for raw in src.strip().splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        for part in _re.split(r"(?<=。)", line):
+            part = part.strip()
+            # 折り返しの切れ端（閉じ括弧だけ・強調の `**` だけ）は節ではありません。
+            # 実測 2026-09-04: 40文 のうち 2つ（`」` と `**`）がこれで、
+            # **短すぎて見出しを付けようがない**（どの見出しも当たってしまう）。
+            if len(part) >= OUTSIDE_RULE_UNIT_MIN:
+                out.append(part)
+    return out
+
+
+def outside_rule_uncounted() -> list[tuple[str, str]]:
+    """規則の節のうち、**どの口にも結び付いていないもの**を返す。空なら合格。
+
+    返るのは `(節, 理由)`。`理由` が空文字なら「表に無い」＝ **数え落とし**。
+    """
+    legs = OUTSIDE_RULE_LEGS
+    missing: list[tuple[str, str]] = []
+    for unit in outside_rule_units():
+        hit = [v for k, v in legs if k in unit]
+        if not hit:
+            missing.append((unit, ""))
+    return missing
+
+
+#: `OUTSIDE_LONG_RULE` (2) の3つ目の節「**章ごとに判断を1つ**置く」を数える正規表現
+#: （2026-09-04 16:3x に足した。**この節は 09-03〜09-04 の4回の追加で数え落とされていました** ——
+#: すぐ上の `outside_body_problems` は (2) から「章が5〜7つ」と「章ごとに別の表」だけを取り、
+#: 判断のほうは行 1613 の**理由の文**として引用されるだけでした）。
+#:
+#: **`_OUTSIDE_DECIDE_RE`（サムネの判断の語）を使い回していません。** 実測 2026-09-04:
+#: あちらの語（どれ／どちら／何歳／選ぶ／決める…）だけで実物2本の本題の章を数えると、
+#: `zaishoku-2026-62man` の章「月給を抑えるか・4人の例」が落ちます —— その章は
+#: 「**次の判断は、月給を抑えるべきかです**」「抑える意味があるかどうかは…で決まります」と
+#: 3回 言っており、**判断が無いのではなく、語が別**でした（`べきか` / `かどうか` / `判断`）。
+#: それを足した形で実物2本を数え直すと:
+#:     `nenkin-uketorikata-65-70-75-handan`（09/05 の1本）  本題 5章 / 落ちる 0章
+#:     `zaishoku-2026-62man`                                 本題 5章 / 落ちる 1章「線の位置と賞与」
+#: 後者は線の動き方の説明だけで、決める物が本当に無い章です（**真の当たり**）。
+#:
+#: **覆る条件**: 前提「外の作り方を写した長尺」が外れたら（48h で 100回 未満）、
+#: `OUTSIDE_LONG_RULE` ごと使わないので、この検査も一緒に落とすこと。
+_OUTSIDE_CHAPTER_DECIDE_RE = re.compile(
+    r"判断|べきか|かどうか|どうするか|どれ|どちら|どっち|何歳|いつから|いつまで"
+    r"|選ぶ|選び|決める|決めま|決め方|決まります|決まる|にするか|かを決め|得か|損か|ほうが得|ほうが損")
+#: **`決まって` は入れていません**（2026-09-04 に実測して外した）—— `zaishoku-2026-62man` の
+#: 章「線の位置と賞与」に「標準報酬月額には、いちばん上の等級が**決まっています**」が在り、
+#: `決ま` を丸ごと判断の語にすると、**判断の無い章がその1文で通ります。**
 
 
 #: `OUTSIDE_LONG_RULE` (4) 題・サムネ —— **この規則の4つ目の脚**（2026-09-04 12:5x に足した）。

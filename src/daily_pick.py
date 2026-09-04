@@ -64,6 +64,8 @@ ROOT = Path(__file__).resolve().parent.parent
 VIEWS = ROOT / "data" / "views.jsonl"
 UPLOADED = ROOT / "data" / "uploaded.jsonl"
 PICKS = ROOT / "data" / "daily_pick.jsonl"
+#: 焼いた本の台本の控え（`treated_count()` が「外の型を写したか」を実物で見る所）。
+QUEUE = ROOT / "data" / "critique_queue"
 JST = timezone(timedelta(hours=9))
 
 FORMS = ("ショート", "長尺")
@@ -598,11 +600,53 @@ def theory_gap(cmp: dict, ledger: Path | None = None, now: datetime | None = Non
     """**形ごとに「外の帯 ÷ 自分の中央値」を数える**（純関数寄り・API 0単位）。
 
     返り: {"ショート": {"own": …, "out_p90": …, "out_max": …, "x_p90": …, "x_max": …,
-                       "secs_median": …, "n": …, "age_days": …}, "長尺": {…}, "best": 形 or None}
-    `x_p90` は「外の p90 を自分の中央値で割った数」。**理論値がどの形に在るか**はこれで決まります。
+                       "secs_median": …, "n": …, "age_days": …}, "長尺": {…},
+           "gap_best": 形（差がいちばん大きい）, "ev_best": 形（実測の見込みがいちばん高い）,
+           "best": = `ev_best`}
+
+    `x_p90` は「外の p90 を自分の中央値で割った数」＝ **差**（どれだけ離れているか）。
     自分の中央値が 0 の形は、1回 として割ります（0 で割らない・向きは変わらない）。
+
+    ## **`best` を `x_p90` で選ばないこと**（2026-09-04 16:xx・最適化の回。実測でここを直した）
+
+    2026-09-03 02:03 まで、`best` は `argmax(x_p90)` でした。**その分母は自分の実測です。**
+    ＝ **その形が振るわないほど、この選び方はその形を強く推します。** 09/03 02:03 の決めは、
+    まさにその数（`外 p90 624,772回 ÷ 自分の長尺 中央値 1回 ＝ ×624,772`）で
+    **ショートの決めを上書き**し、以後 `data/daily_pick.jsonl` は **11回 連続で長尺**。
+    09/04 の決めも同じ比（`÷ 自分の長尺 中央値 1回 ＝ ×647,526`）で追認しています。
+
+    **その間に実際に起きたこと**（`data/eta.jsonl`・この回に撃った数）:
+
+        再生/日(7d)   08-25 **6,299** → 09-04 **943**（**-85%**）
+        登録/日        08-28 1.36 → 09-04 0.93
+
+    **形べつの実測**（`aged_views()`・この回に撃った数）:
+
+        齢 24h   ショート 中央 **153**（n=220）／ 長尺 中央 **1**（n=36）
+        齢 48h   ショート 中央 **164**（n=216）／ 長尺 中央 **1**（n=36・36本の合計が 165回）
+        齢168h   ショート 中央 **213**（n=173）／ 長尺 中央 **3**（n=23）
+
+    比の分母が自分の失敗なので、この選び方は**止まりません** —— 長尺が 0.1回 になれば
+    ×6,475,260 になり、**もっと強く推します。** 上の docstring が書いていた覆る条件
+    「自分の長尺の中央値が外の p90 の 1/100 を超えたら書き換える」は、
+    **降りる側へは一度も倒れない条件**でした。
+
+    ## だから、選ぶのは **`ev_best`**（実測の見込み ＝ 自分の中央値）です
+
+    1本の枠から実際に取れる数の、偏りのない推定は **自分の実測の中央値**です。
+    外の帯は「作り方を写せたら届きうる上」＝ **上振れ**で、その確率は測っていません。
+    **測っていない確率を 1.0 として掛けるのが、`x_p90` で選ぶということ**でした。
+
+    `x_p90` は消しません —— **差は「試す理由」としては正しい。**
+    ただし試す枠は**有限**で、そこは `explore_budget()` が持ちます
+    （規則は 1本/日 なので、**枠は1日1つしかありません**）。
+
+    **覆る条件**: 「外の作り方を写した長尺」が 48h で 100回 の門を越えたら、
+    その時点の `own`（長尺の中央値）が上がるので **`ev_best` が自分で長尺へ倒れます。**
+    ＝ この直しは長尺の禁止ではありません。**測った数で倒れるようにしただけ**です。
+    倒れないなら、それは「まだ写せていない」という測定結果のほうです。
     """
-    out: dict = {"best": None}
+    out: dict = {"best": None, "gap_best": None, "ev_best": None}
     try:
         import sys
         here = str(ROOT / "scripts")
@@ -612,6 +656,7 @@ def theory_gap(cmp: dict, ledger: Path | None = None, now: datetime | None = Non
     except Exception:                                          # noqa: BLE001
         return out
     best_x = 0.0
+    best_ev = -1.0
     for form, key in (("ショート", "short"), ("長尺", "long")):
         row = nc.latest(ledger, form=key)
         if not row:
@@ -662,8 +707,15 @@ def theory_gap(cmp: dict, ledger: Path | None = None, now: datetime | None = Non
              "own_rate": own_rate,
              "x_day": ((rates[len(rates) // 2] / own_rate) if len(rates) >= 3 else None)}
         out[form] = d
+        # **差（gap）** —— 「試す理由」としては正しい。**選ぶのには使わない**（上の註）。
         if d["x_p90"] > best_x:
-            best_x, out["best"] = d["x_p90"], form
+            best_x, out["gap_best"] = d["x_p90"], form
+        # **見込み（EV）** —— 1本の枠から実際に取れる数の、偏りのない推定。
+        #     `own` は 48時間 の中央値（`cmp`）。**測っていない上振れを掛けない。**
+        if d["own"] is not None and float(d["own"]) > best_ev:
+            best_ev, out["ev_best"] = float(d["own"]), form
+    # **`best` は EV のほう。** `x_p90` で選ぶと、振るわない形ほど強く推されます。
+    out["best"] = out["ev_best"] or out["gap_best"]
     return out
 
 
@@ -720,6 +772,86 @@ def own_long_secs(recent: int = OWN_LONG_RECENT, path: Path | None = None) -> di
             "recent_median": statistics.median(tail), "latest": secs[-1][1]}
 
 
+#: **試す形が取ってよい枠の数**（日）。規則は 1本/日 なので、枠は1日1つしかありません
+#: （`src/house_rule.py`）。48h の門を判定するのに要る本は 1〜2本 なので、既定は 2。
+EXPLORE_SLOT_CAP = 2
+
+
+def explore_budget(ev_best: str | None, gap_best: str | None, *,
+                   picks_path: Path | None = None,
+                   views_path: Path | None = None) -> list[str]:
+    """**試す形が、枠を何日ぶん取ったか**を数えて出す。0単位・`data/` だけ。
+
+    ## なぜ要るか（2026-09-04 16:xx・最適化の回。**この回に撃った数**）
+
+    `theory_gap()` が `best` を `argmax(外 p90 ÷ 自分の中央値)` で選んでいたので、
+    **いちばん振るわない形が毎回 選ばれ**、`data/daily_pick.jsonl` は
+    09-03T02:03 以降 **11回 連続で長尺**。規則は 1本/日 なので、
+    **これは「新しく出る本の 100%」がその形だったということ**です。
+
+    差（gap）は「試す理由」としては正しい。**正しくないのは、それが枠を全部 取ること**でした。
+    48h で 100回 の門を判定するのに要るのは 1〜2本 で、11日ぶんは要りません。
+
+    そのあいだの実測（`data/eta.jsonl`）: 再生/日(7d) 6,299（08-25）→ **943**（09-04）＝ **-85%**。
+
+    **覆る条件**: `ev_best` と `gap_best` が同じ形なら、試す形が既定と同じなので
+    **1行も出しません**（分ける意味がない）。また、この行は**枠を止めません** ——
+    止めるのは決める回のほうです。ここは**取った枠の数を出すだけ**。
+    数が要らなくなったら（＝ 前提が閉じたら）この関数ごと消すこと。
+    """
+    if not gap_best or not ev_best or gap_best == ev_best:
+        return []
+    rows = list(_jsonl(picks_path or PICKS))
+    if not rows:
+        return []
+    # **決めは日ごとに上書きされます**（同じ `for_day` に何度も書く）。
+    #     枠は日で数えること —— 決めの行数で数えると、焼き直した回数まで枠に見えます。
+    by_day: dict[str, dict] = {}
+    for r in rows:
+        d = str(r.get("for_day") or "")
+        if d:
+            by_day[d] = r
+    days = sorted(by_day)
+    streak = []
+    for d in reversed(days):
+        if str(by_day[d].get("form") or "") != gap_best:
+            break
+        streak.append(d)
+    if not streak:
+        return []
+    streak.reverse()
+    # **その枠から、判定に届いた本が何本 出たか。** 齢 48h の観測を持つ本だけを数えます。
+    ids = {str(by_day[d].get("video_id") or "") for d in streak} - {""}
+    measured = set()
+    for r in _jsonl(views_path or VIEWS):
+        if str(r.get("id") or "") in ids:
+            try:
+                if float(r.get("hours") or 0) >= 48.0:
+                    measured.add(str(r["id"]))
+            except (TypeError, ValueError):
+                continue
+    over = len(streak) > EXPLORE_SLOT_CAP
+    head = ("     [!!] " if over else "     ")
+    out = [
+        f"{head}**試す形（{gap_best}）が枠を {len(streak)}日ぶん 取っています**"
+        f"（{streak[0]}〜{streak[-1]}・既定の形は {ev_best}）。"
+        f" **規則は 1本/日 なので、これは新しく出る本の 100% です。**"
+        f" そこから 48h の判定に届いた本: **{len(measured)}本／{len(ids)}本**。",
+    ]
+    if over:
+        out.append(
+            f"       → **枠の目安 {EXPLORE_SLOT_CAP}日 を越えています。**"
+            f" 判定に要るのは 1〜2本 で、{len(streak)}日ぶんは要りません。"
+            f" **次の枠は既定の形（{ev_best}）へ戻すか、戻さない理由を"
+            f"「この形で測れていない数」で言うこと**（前の決めの散文は根拠になりません）。")
+    if ids and not measured:
+        out.append(
+            "       [!] **取った枠から、まだ 1本も 48h の観測が出ていません** ——"
+            " 枠だけ減って、前提は 1件も進んでいません。"
+            " **焼き直しで本を差し替えると齢が 0 に戻ります**（`data/views.jsonl` の `hours`）。")
+    return out
+
+
 def theory_lines(cmp: dict, ledger: Path | None = None, now: datetime | None = None,
                  need: float | None = None) -> list[str]:
     """**理論値がどの形に在るか**を、外の帯（0単位）÷ 自分の中央値 で毎周 出す。
@@ -753,14 +885,27 @@ def theory_lines(cmp: dict, ledger: Path | None = None, now: datetime | None = N
         parts.append(f"{f} ×{d['x_p90']:,.0f}（外の p90 {_fmt(d['out_p90'])} ÷ 自分の中央値 "
                      f"{_fmt(d['own'] if d['own'] is not None else 0)}・最大は ×{d['x_max']:,.0f}）")
     out = ["     **理論値の在りか**（外の帯 ÷ 自分・0単位・毎周 数え直し）: " + " ／ ".join(parts)]
-    best = g.get("best")
+    # **差（gap）で選ばないこと** —— 分母が自分の実測なので、振るわない形ほど強く推されます
+    #     （`theory_gap()` の註。2026-09-03 02:03 の上書きが、この比で起きました）。
+    gap_best = g.get("gap_best")
+    ev_best = g.get("ev_best")
+    if gap_best and ev_best and gap_best != ev_best:
+        out.append(
+            f"     [!] **上の ×N は「差」であって「見込み」ではありません** —— 分母は**自分の実測**です。"
+            f" 差がいちばん大きい形は **{gap_best}**（×{g[gap_best]['x_p90']:,.0f}）ですが、"
+            f"**それはその形がいちばん振るっていないという意味**でもあります"
+            f"（自分の中央値 {_fmt(g[gap_best]['own'] or 0)} 対 {_fmt(g[ev_best]['own'] or 0)}）。"
+            f" **枠は 1日1つ（`src/house_rule.py`）。埋めるなら実測の見込みで埋めること。**")
+    best = ev_best or gap_best
     if best:
         d = g[best]
-        ln = f"     → 理論値が在る形は **{best}**"
+        ln = (f"     → **1本の枠の見込み（実測の中央値・48h）がいちばん高い形は {best}**"
+              f"（{_fmt(d['own'] or 0)}）")
         if need:
             reach = [f for f in forms if g[f]["x_p90"] >= need]
-            ln += (f"。日付が出るのに要る ×{need:.1f} を外の p90 で越える形: "
-                   + ("・".join(reach) if reach else "**無し**"))
+            ln += (f"。〔差の側〕日付が出るのに要る ×{need:.1f} を外の p90 で越える形: "
+                   + ("・".join(reach) if reach else "**無し**")
+                   + "（**越えるのは差であって、届いた実績ではありません**）")
         if best == "長尺" and d.get("secs_median"):
             # **自分の側も数えること**（`own_long_secs()` の註。手で書いた「5分」は、
             # 写した本が出た日にいちばん先に古くなります）。
@@ -771,8 +916,10 @@ def theory_lines(cmp: dict, ledger: Path | None = None, now: datetime | None = N
                         f"直近{OWN_LONG_RECENT}本 **{own_s['recent_median'] / 60:.0f}分**）")
             ln += f"。外の上位の尺の中央 **{d['secs_median'] / 60:.0f}分**{mine}"
         out.append(ln)
-        out.append("       ＝ 形を自分の控え（ショート 対 長尺 の中央値）で決めないこと。**外の上位の題と尺を写した1本**を"
-                   "その形で出して、48時間の数をこの画面に入れる（前提は `config/hypotheses.yaml` の「外の作り方を写した長尺」）。")
+        out.append("       ＝ **既定はこの形です。** 外の作りを写した1本を別の形で試すのは"
+                   "「差」が理由として正しく、**枠が空いているときだけ**"
+                   "（前提は `config/hypotheses.yaml` の「外の作り方を写した長尺」）。")
+        out.extend(explore_budget(ev_best=ev_best, gap_best=gap_best))
     # **同じ画面に、齢で割った側も並べること**（`theory_gap` の註・2026-09-04）。
     #     上の ×N は 外の生涯の累計 ÷ 自分の 48時間 で、外の上位に 48時間 以内の本は 0本。
     #     **片方だけだと、窓の差が結論を作ります。**
@@ -1010,7 +1157,8 @@ def and_path_form(cmp: dict | None = None, *, snapshot: dict | None = None,
 
 def standing_form_conflict(cur: dict | None, *, now: datetime | None = None,
                            uploaded_path: Path | None = None,
-                           form_call=None, picks_path: Path | None = None) -> list[str]:
+                           form_call=None, picks_path: Path | None = None,
+                           treated_call=None) -> list[str]:
     """**すでに立っている決めの形と、いま測った門の算の形が食い違うなら、そう言う行。**（API 0単位）
 
     ## なぜ要るか（2026-09-04・最適化の回。**「最適化されてんの？」→ いいえ の理由を1つ潰した**）
@@ -1055,15 +1203,89 @@ def standing_form_conflict(cur: dict | None, *, now: datetime | None = None,
         return []
     topic = str(cur.get("topic") or "<題材>")
     chain = _standing_chain_len(picks_path)
+    # **どちらが正しいかは言えませんが、「門の算の分母が処置を測っているか」は数えられます。**
+    counter = treated_count if treated_call is None else treated_call
+    try:
+        treated, total = counter(have, uploaded_path=uploaded_path)
+    except Exception:                                              # noqa: BLE001
+        treated, total = 0, 0
+    if total and treated == 0:
+        base = (f"     　 [数] **その門の算は、立っている決めの形（{have}）の分母 {total}本 で解いています。"
+                f"そのうち、外の型を全部 写した本は 0本**（`src/daily_pick.treated_count`・実物の台本の控え）"
+                f" —— **その脚が測っているのは「いまの作り方」で、処置ではありません。**"
+                f" 前提「外の作り方を写した長尺」は、まさにその分母を測り直すために立っています"
+                f"（`config/hypotheses.yaml`）。**処置 n=0 の分母で処置を落とさないこと。**")
+    elif total:
+        base = (f"     　 [数] {have} の分母 {total}本 のうち、外の型を全部 写した本は **{treated}本**"
+                f"（`src/daily_pick.treated_count`）—— **分母は処置を測っています。"
+                f"門の算のほうを根拠にしてよい回です。**")
+    else:
+        base = (f"     　 [数] {have} の分母が数えられませんでした（0本）—— **推測で埋めないこと。**")
     return [
         f"     [!!] **立っている決め（{have}）と、いま測った門の算（{want}）が食い違います。**"
         f"　{why}",
+        base,
         f"     　 立っている決めの「理由」は**前の回の散文**です —— **根拠にしないこと**"
         f"（`data/daily_pick.jsonl` の `why` は前の決めを引く鎖で、いま {chain}回 連続で同じ形）。"
         f"**この回の数で決め直すか、門の算がなぜ外れているかを数で言うこと。**",
         "     　 決め直すなら（同じコマンドで上書き）:",
         f"       python -m src.daily_pick --pick {want} {topic} --why \"<いま撃った数で>\"",
     ]
+
+
+#: **その形の齢48h の分母のうち、外の型を「全部」写した本が何本か**（2026-09-04 16:4x に足した）。
+#: 見るのは `data/critique_queue/<video_id>.script.json`（その本を焼いた台本の控え）と、
+#: `src/script_writer` の4つの数える口（冒頭・章・題とサムネ・間合い）。**API 0単位・実物だけ。**
+def treated_count(form: str, *, hours: int = AGE_HOURS,
+                  views_path: Path | None = None,
+                  uploaded_path: Path | None = None,
+                  topics: list[dict] | None = None) -> tuple[int, int]:
+    """`(外の型を全部 写した本, その形の分母)` を返す。
+
+    ## なぜ要るか（2026-09-04 16:4x に踏んだ）
+
+    `[!!]`（立っている決めと門の算が食い違う）は、**どちらが正しいかを言いません。**
+    実際に 09/04 16:2x の回は、この行を読んでから **20分** かけて
+    `config/hypotheses.yaml` の5脚の表まで降りて、答えを出しました ——
+    **門の算の負けている側（長尺）の分母 36本 に、外の型を全部 写した本が 0本**。
+    ＝ その脚は「いまの作り方」を測っていて、**処置を1本も測っていません。**
+
+    **その 0本 は、機械が数えられます。** 降りなくても済むように、ここで数えて
+    `[!!]` の隣に出します（`data/daily_pick.jsonl` の `why` は 12回 続けて
+    同じ形を引く鎖になっており、**降りた回だけが鎖を切れる**形でした）。
+
+    **控えの読めない本を「写した」に数えません** —— 確かめられないものは外します
+    （`house_rule.needs_beyond_rule()` の「読めないものは通す」とは**逆向き**です。
+     こちらは「処置ずみ」を名乗る側なので、**証拠が要る**）。
+
+    **覆る条件**: 前提「外の作り方を写した長尺」が閉じて `OUTSIDE_LONG_RULE` を
+    使わなくなったら、この数は要りません（そのとき `[!!]` の [数] の行も落とすこと）。
+    """
+    rows = [r for r in aged_views(hours, views_path=views_path, uploaded_path=uploaded_path)
+            if r.get("form") == form]
+    total = len(rows)
+    if not total:
+        return 0, 0
+    tops = {str(t.get("id")): str(t.get("style") or "")
+            for t in (topics if topics is not None else _topics())}
+    try:
+        from src import script_writer as _sw
+    except Exception:                                              # noqa: BLE001
+        return 0, total
+    checks = (_sw.outside_opening_problems, _sw.outside_body_problems,
+              _sw.outside_title_problems, _sw.outside_pacing_problems)
+    treated = 0
+    for r in rows:
+        # **型を持たない題材は、写しようがありません**（処置の外）。
+        if tops.get(str(r.get("topic") or "")) != "outside_long":
+            continue
+        try:
+            script = json.loads((QUEUE / f"{r['video_id']}.script.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if all(not f(script) for f in checks):
+            treated += 1
+    return treated, total
 
 
 def _standing_chain_len(picks_path: Path | None = None) -> int:
