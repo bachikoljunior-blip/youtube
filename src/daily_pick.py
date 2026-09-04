@@ -948,6 +948,78 @@ def and_path_form(cmp: dict | None = None, *, snapshot: dict | None = None,
     return str(g["nearer"]), f"AND の道でいちばん遠い脚どうし: {body}"
 
 
+def standing_form_conflict(cur: dict | None, *, now: datetime | None = None,
+                           uploaded_path: Path | None = None,
+                           form_call=None, picks_path: Path | None = None) -> list[str]:
+    """**すでに立っている決めの形と、いま測った門の算の形が食い違うなら、そう言う行。**（API 0単位）
+
+    ## なぜ要るか（2026-09-04・最適化の回。**「最適化されてんの？」→ いいえ の理由を1つ潰した**）
+
+    `and_path_form()`（門の算・AND の道）は 2026-09-04 に足され、いま撃つと
+    **ショート**（道 ショート ×106 対 道 長尺 ×314）を返します。ところが呼ばれる場所は
+    `outside_long_readout()` が `"stop"` を返す枝の2か所だけで、その判定は
+    **外の作りの長尺が 24h の観測を持っていること**が要ります。実測（この回に撃った）:
+    6本（`6PKux5HNnUE` `1huadpEk6HY` `dRZnZrRy2Lw` `DfFyu8qZq3I` `Ec-j1-W4nqw` `O_lfBxB7S8Q`）
+    の**どれも `data/views.jsonl` に観測が 0件**で、`outside_long_readout()` の判定は `None`。
+    ＝ **門の算は、一度も印字されていません。**
+
+    そのあいだ毎周 印字されていたのは、立っている決めの `why` ——
+    つまり**前の回の散文**だけでした（`lines()` の「理由: …」）。実測:
+    `data/daily_pick.jsonl` の 09-03T02:03 以降 **11回 連続で長尺**、`why` は
+    「02:29 の決め…はそのまま」「04:38 の決めを…そのまま置く」「07:42 の決めを数字で追認」——
+    **前の決めを引いて再確認する鎖**です。その鎖の根は 09-03T02:03 の
+    「外の p90 624,772回 ÷ 自分の長尺の中央値 1回」で、これは
+    **自分がその形で 0 に近いほど大きくなる比**＝ **いちばん下手な形を必ず選ぶ量**です。
+    （09-03T00:31 の決めは、自分の実測でショートでした ——「48h 中央値 173回 対 1回」。
+    それが 90分後に上の比で上書きされ、以後 戻っていません。）
+    そのあいだの `data/eta.jsonl`: 再生/日(7d) 6,299（08-25）→ **943**（09-04）＝ **-85%**。
+
+    ここは**形を決め打ちしません。** 立っている形と `and_path_form()` の形が
+    **同じなら 1行も出しません**。違うときだけ、両方の数を並べて名指します。
+    長尺の脚が近づけば `and_path_form()` は自分で長尺を返し、この行は自分で消えます。
+
+    **覆る条件**: `and_path_form()` が `None`（門1 の脚が立たない）を返す回は、
+    比べる相手が無いので 1行も出しません。**推測で埋めないこと。**
+    """
+    if not cur:
+        return []
+    have = str(cur.get("form") or "")
+    if have not in FORMS:
+        return []
+    call = and_path_form if form_call is None else form_call
+    try:
+        want, why = call(now=now, uploaded_path=uploaded_path)
+    except Exception as exc:                                       # noqa: BLE001
+        return [f"     （門の算がこの回は出せませんでした: {str(exc)[:80]}）"]
+    if not want or want == have:
+        return []
+    topic = str(cur.get("topic") or "<題材>")
+    chain = _standing_chain_len(picks_path)
+    return [
+        f"     [!!] **立っている決め（{have}）と、いま測った門の算（{want}）が食い違います。**"
+        f"　{why}",
+        f"     　 立っている決めの「理由」は**前の回の散文**です —— **根拠にしないこと**"
+        f"（`data/daily_pick.jsonl` の `why` は前の決めを引く鎖で、いま {chain}回 連続で同じ形）。"
+        f"**この回の数で決め直すか、門の算がなぜ外れているかを数で言うこと。**",
+        "     　 決め直すなら（同じコマンドで上書き）:",
+        f"       python -m src.daily_pick --pick {want} {topic} --why \"<いま撃った数で>\"",
+    ]
+
+
+def _standing_chain_len(picks_path: Path | None = None) -> int:
+    """`data/daily_pick.jsonl` の後ろから、同じ形が続いている本数。0単位。"""
+    rows = list(_jsonl(picks_path or PICKS))
+    if not rows:
+        return 0
+    last = rows[-1].get("form")
+    n = 0
+    for r in reversed(rows):
+        if r.get("form") != last:
+            break
+        n += 1
+    return n
+
+
 def outside_long_readout(now: datetime | None = None, *, topics: list[dict] | None = None,
                          uploaded_path: Path | None = None,
                          views_path: Path | None = None) -> tuple[list[str], str | None]:
@@ -1724,9 +1796,15 @@ def lines(next_row: dict | None, now: datetime | None = None,
         vid = cur.get("video_id")
         out.append(f"     **{day:%m/%d} の1本: {cur.get('form')} `{cur.get('topic')}`"
                    f"{' ＝ `' + str(vid) + '`' if vid else ''}**"
-                   f"（{str(cur.get('at'))[11:16]} JST に決めた・理由: "
+                   f"（{str(cur.get('at'))[11:16]} JST に決めた・**前の回の散文**（根拠にしない）: "
                    f"{str(cur.get('why'))[:90]}）。**変えるなら、数字で上書きすること**"
                    f"（同じコマンドをもう一度）。")
+        # **立っている決めを、毎周 いまの門の算と突き合わせる**（2026-09-04・最適化の回・
+        # `standing_form_conflict()` の註）。ここまでは、立っている決めの `why`＝前の回の散文だけが
+        # 印字され、`and_path_form()` は `outside_long_readout()` が `"stop"` を返す枝でしか
+        # 呼ばれていませんでした（その判定はこの回 `None`＝長尺6本の観測が 0件）。
+        # ＝ **回は前の決めしか読めず、09-03T02:03 から 11回 連続で同じ形を追認した。**
+        out.extend(standing_form_conflict(cur, now=now, picks_path=picks_path))
         if vid:
             out.append(f"     → **{day:%m/%d}（JST）になってから**、この本を その日の枠へ"
                        f"（1本 50単位・先の日付には置かない）:")
