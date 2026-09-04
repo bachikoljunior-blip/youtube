@@ -102,3 +102,34 @@ def test_win_band_stays_silent_when_the_sample_is_fresh():
     r = S.win_band(101, gate=100, sv=S.slot_value(cmp=_cmp(rows), now=NOW))
     assert r["cost_stale"] is False
     assert "日前の帯の高さ" not in r["line"]
+
+
+# ---------------------------------------------------------------- 同じ言葉の2つの数
+# `daily_pick.win_pays_for_slot()` は「譲る ショート の齢48h の中央値」を
+# `form_median_48h`（**全部の日**・n=216 → 164回）で書き、**すぐ下**の
+# `slot_cost.win_band()` は同じ言葉の量を `slot_value()`（**規則の密度の日だけ**・
+# n=15 → 1,049回）で `paid` の境目にしていました。**6.4倍 ちがう2つが隣り合い、
+# どちらを拾うかで門 100回 の比が 1/1.6 にも 1/10 にもなります。**
+# 結論（門はどちらにも負ける）は同じなので、数も向きも変えず、**両方を名前つきで
+# 並べる**ようにしました。ここが赤になるのは、その並びが片方だけに戻ったときです。
+
+def test_the_slot_cost_line_names_both_populations():
+    from src import daily_pick as dp
+    out = dp.win_pays_for_slot("ショート")
+    assert out, "門が譲る側に負けているのに、行が1つも出ていない"
+    blob = out[0]
+    assert "form_median_48h" in blob and "全部の日" in blob
+    assert "win_band" in blob and "規則の密度" in blob
+    assert "結論はどちらで読んでも同じです" in blob
+
+
+def test_the_second_number_is_dropped_when_it_cannot_be_read():
+    from src import daily_pick as dp
+    real = S.slot_value
+    try:
+        S.slot_value = lambda *a, **k: {"forms": {}, "best": None, "cost": None}
+        out = dp.win_pays_for_slot("ショート")
+        assert out, "片方が読めないだけで、もとの行まで消してはいけない"
+        assert "win_band" not in out[0], "読めない数を、推測で並べている"
+    finally:
+        S.slot_value = real

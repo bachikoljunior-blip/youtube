@@ -2036,6 +2036,22 @@ def win_pays_for_slot(give_up: str, *, gate: float = OUTSIDE_48H_GATE,
 
     **覆る条件**: 譲る側の中央値が門を下回ったら、この行は自分で消えます
     （＝ 当たれば枠の代金を払える）。読めない回は**1行も出しません**（推測で埋めない）。
+
+    ## **同じ画面に、同じ言葉の別の数が並んでいました**（2026-09-05 03:0x に踏んだ）
+
+    この行は「譲る ショート の齢48h の中央値 **164回**」と書きます。**そのすぐ下**で
+    `slot_cost.win_band()` が、同じ「譲る ショート の実測」を **1,049回** として
+    `paid` の境目に使っています。**6.4倍 ちがう2つの数が、同じ言葉で隣り合っていました。**
+    読んだ回がどちらを拾うかで、門 100回 の比が **1/1.6** にも **1/10** にもなります。
+
+    **どちらも本物で、母集団が違うだけです** —— こちらは `form_median_48h`（**全部の日**・
+    n=216）、あちらは `slot_cost.slot_value()`（**規則の密度 ≤2本/日 の日だけ**・n=15）。
+    `src/slot_cost.py` の冒頭は既に「**枠の機会費用は 164回 ではなく 1,049回**」と
+    決めており、**この行だけが、決まる前の数を決まった言葉で出していました。**
+
+    **結論は変わりません**（門 100回 は両方に負けます）。だから門も文面の向きも
+    動かさず、**どちらの数で読んでも同じだと分かるように、2つとも名前つきで並べます。**
+    片方が読めない回は、読めたほうだけを出します（推測で埋めない）。
     """
     call = form_median_48h if median_call is None else median_call
     try:
@@ -2054,10 +2070,38 @@ def win_pays_for_slot(give_up: str, *, gate: float = OUTSIDE_48H_GATE,
         f"     　 [数] **その前提は、当たっても枠の代金を払えません。**"
         f" 当たりの門 **{gate:,.0f}回**（`src/daily_pick.OUTSIDE_48H_GATE`）＜"
         f" 譲る {give_up} の齢{AGE_HOURS}h の中央値 **{alt:,.0f}回**"
-        f"（`form_median_48h`）—— **枠は 1日 1本 なので、試す本を出すことは"
+        f"（`form_median_48h`・**全部の日**）—— **枠は 1日 1本 なので、試す本を出すことは"
         f" {give_up} を1本 出さないこと**です。**当たりの門を、譲る側の実測の上に置き直すか、"
-        f"枠を食わない形（公開ずみの本で測る）にすること。**",
+        f"枠を食わない形（公開ずみの本で測る）にすること。**" + _slot_cost_same_words(give_up),
     ]
+
+
+def _slot_cost_same_words(give_up: str) -> str:
+    """**すぐ下の `win_band` が同じ言葉で使っている数を、同じ行に並べる。**（API 0単位）
+
+    片方しか読めない回は**空文字**を返します（推測で埋めない）。数は1つも書き換えません
+    —— 出すのは母集団の名と、`slot_cost` 側の齢だけです（`slot_cost.slot_value()`）。
+    """
+    try:
+        from . import slot_cost as _sc                             # noqa: PLC0415
+        s = _sc.slot_value()
+        v = (s.get("forms", {}).get(give_up) or {})
+        rule_med, rule_n = v.get("median"), v.get("n", 0)
+        age = v.get("sample_age_days")
+    except Exception:                                              # noqa: BLE001
+        return ""
+    if not isinstance(rule_med, (int, float)) or isinstance(rule_med, bool):
+        return ""
+    if not math.isfinite(rule_med) or rule_med <= 0:
+        return ""
+    out = (f"　[数] **同じ「譲る {give_up} の実測」を、すぐ下の `slot_cost.win_band()` は"
+           f" {rule_med:,.0f}回 として `paid` の境目に使っています** ——"
+           f" 母集団が違うだけです（この行は**全部の日**・あちらは"
+           f"**規則の密度 ≤{RULE_BAND_MULT}本/日 の日だけ**・n={rule_n}）。"
+           f"**門 {OUTSIDE_48H_GATE:,.0f}回 はどちらにも負けるので、結論はどちらで読んでも同じです。**")
+    if isinstance(age, int) and age > getattr(_sc, "STALE_DAYS", 7):
+        out += f"（ただしあちらの標本は **{age}日前**で止まっています・`slot_cost.stale_lines`）"
+    return out
 
 
 def standing_form_conflict(cur: dict | None, *, now: datetime | None = None,
