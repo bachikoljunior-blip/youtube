@@ -215,6 +215,117 @@ def ruler(days: int = 5) -> dict:
             "usable": bool(n >= 2 and not frozen and not too_coarse), "note": note}
 
 
+#: **腕の名指しが積まれている file**（`scripts/eta.py _row()` の `lever_hint`）。
+#: **API 0単位**で読めます —— `eta.py --alloc` を撃ち直す必要はありません。
+HINT_FILE = ("data", "eta.jsonl")
+
+#: **名指しの割合と、実際に働いた割合の隔たり**が、これを超えたら名指しします。
+#: **2.0 は「名指しの半分も働いていない腕が在る」**という意味です。
+ARM_GAP_MIN = 2.0
+
+
+def arms(days: int = 5) -> dict:
+    """**名指しされた腕と、実際に働いた腕を、同じ窓で並べる。**（API 0単位・数十ms）
+
+    ## なぜ要ったか（2026-09-05 未明・最適化の回。**実測で名指しした欠陥を1つ潰した**）
+
+    `lever_followed=True` は直近5日で **100回** 立っています。**合格の印です。**
+    ところがこの回が同じ窓で数えたら、こうでした:
+
+        腕        名指し（`eta.py` の `lever_hint`）   働いた（`runs.jsonl` の `lever`）
+        per_video      359回（60.3%）                    158回（66.4%）
+        rpm            146回（24.5%）                      6回（ 2.5%）   ← **10倍 の隔たり**
+        sub_rate        90回（15.1%）                     14回（ 5.9%）   ←  2.6倍
+        （none）          -                               52回
+
+    **`lever_followed` が測っているのは「腕の名前を書いたか」であって、
+    「名指しされた腕を働いたか」ではありません。** だから印は 100回 合格のまま、
+    配分は 10倍 ずれていられました。**どの回もこの隔たりを見ていません** ——
+    名指しの側は `eta.py`（数分・API を叩く）にしか出ず、時間を切った回は読めない
+    からです。この関数は同じ数を **数十ms・API 0単位** で出します。
+
+    ## 返す物
+
+        named / worked   腕ごとの名指し回数・働いた回数
+        shares           腕ごとの (名指しの割合, 働いた割合)
+        worst            隔たりがいちばん大きい腕 (腕, 名指し%, 働いた%, 倍率)
+        gap              その倍率（名指し ÷ 働いた）。働いた 0 なら `inf`
+        note             上を1行にしたもの（`headline()` が使う）
+
+    ## 覆る条件（**この節を消してよい日**）
+
+    1. `worst` の倍率が `ARM_GAP_MIN` を下回り続けたら（配分が名指しに追いついた）。
+    2. `eta.py` が `lever_hint` を積まなくなったら、`named` が空になります ——
+       そのときは「隔たりが無い」ではなく「名指しが無い」です（`note` がそう言います）。
+    3. `run_marker` が `lever` を積まなくなったら、同じく `worked` が空になります。
+    """
+    import collections
+
+    cut = (datetime.now(JST) - timedelta(days=days)).date().isoformat()
+
+    named: collections.Counter = collections.Counter()
+    p = ROOT.joinpath(*HINT_FILE)
+    if p.exists():
+        for ln in p.read_text(encoding="utf-8").splitlines():
+            ln = ln.strip()
+            if not ln:
+                continue
+            try:
+                r = json.loads(ln)
+            except Exception:                                      # noqa: BLE001
+                continue
+            if not isinstance(r, dict):
+                continue
+            h = r.get("lever_hint")
+            if h and str(r.get("at", ""))[:10] >= cut:
+                named[str(h)] += 1
+
+    worked: collections.Counter = collections.Counter()
+    for r in _rows(days):
+        lv = r.get("lever")
+        #: **`none` は腕ではありません。**「腕を選ばなかった回」なので、
+        #: 働いた側の母数からは外し、`unlevered` として別に数えます。
+        if lv and str(lv) != "none":
+            worked[str(lv)] += 1
+    unlevered = sum(1 for r in _rows(days)
+                    if not r.get("lever") or str(r.get("lever")) == "none")
+
+    n_named = sum(named.values())
+    n_worked = sum(worked.values())
+
+    shares = {}
+    worst = None
+    for a in set(named) | set(worked):
+        sn = (named[a] / n_named) if n_named else 0.0
+        sw = (worked[a] / n_worked) if n_worked else 0.0
+        shares[a] = (sn, sw)
+        if sn <= 0:
+            continue
+        g = (sn / sw) if sw > 0 else float("inf")
+        if g > 1.0 and (worst is None or g > worst[3]):
+            worst = (a, sn, sw, g)
+
+    if not n_named:
+        note = "**腕の名指しが在りません**（`data/eta.jsonl` に `lever_hint` が無い窓）"
+    elif not n_worked:
+        note = "**腕を選んだ ship が在りません**（`lever` が全部 `none`）"
+    elif worst is None or worst[3] < ARM_GAP_MIN:
+        note = (f"**名指しと配分は合っています**（隔たりの最大 "
+                f"{(worst[3] if worst else 1.0):.1f}倍・上限 {ARM_GAP_MIN:g}倍）")
+    else:
+        a, sn, sw, g = worst
+        gs = "∞" if g == float("inf") else f"{g:.0f}倍"
+        note = (f"**腕 `{a}` は名指し {sn * 100:.0f}% に対し、働いたのは {sw * 100:.1f}%"
+                f"（{gs} の隔たり）** —— `lever_followed` は「腕の名前を書いたか」で、"
+                f"「名指しされた腕を働いたか」ではありません")
+
+    return {"days": days, "named": dict(named.most_common()),
+            "worked": dict(worked.most_common()), "unlevered": unlevered,
+            "n_named": n_named, "n_worked": n_worked,
+            "shares": shares, "worst": worst,
+            "gap": (worst[3] if worst else 1.0), "note": note}
+
+
 def measure(days: int = 5) -> dict:
     rows = _rows(days)
     by: dict[str, dict] = {}
@@ -257,6 +368,8 @@ def measure(days: int = 5) -> dict:
         #: **上の `by_kind` は `--moves`（回の宣言）で数えています。**
         #: 差し引きの側が使える物差しかどうかは、こちらを見ること（`ruler()` の冒頭）。
         "ruler": ruler(days),
+        #: **名指しされた腕と、実際に働いた腕の隔たり**（`arms()` の冒頭）。
+        "arms": arms(days),
     }
 
 
@@ -277,11 +390,31 @@ def headline(days: int = 5):
 
     c = m["closing"]
     parts = ", ".join(f"{k} {v['n']}回→{v['moved']}" for k, v in m["by_kind"].items())
+
+    #: **採点に使えない数から割合を作らない**（2026-09-05 未明・最適化の回に直した）。
+    #:
+    #: この行は 09/05 01:48 の「その日の1本」の決めに、**そのまま引用されました** ——
+    #: 「verdict 7回中3回(43%)、それ以外は 233回中3件(1.3%)」。その引用を根拠に、
+    #: 1日1枠の動画が **48h 見込み 1回**（形の実測中央値）の長尺へ回っています。
+    #: **引用された 2つの割合は、`significant` が False で、物差し（`ruler()`）も
+    #: 使えない窓の数です。** 名乗りは断っているのに、弾だけ配っていました。
+    #: **断ったときは、割合を印字しません**（回数はそのまま出します。数は隠しません）。
+    scoreable = bool(m["significant"] and (m.get("ruler") or {}).get("usable"))
+    if scoreable:
+        yields_ = (f"{CLOSING} {c['n']}回 中 {c['moved']}回 が到達日を動かし"
+                   f"（{c['rate'] * 100:.0f}%）、"
+                   f"**それ以外は {m['n'] - c['n']}回 中 {m['moved'] - c['moved']}回"
+                   f"（{m['rest_rate'] * 100:.1f}%）**（{parts}）")
+    else:
+        yields_ = (f"{CLOSING} {c['n']}回 中 {c['moved']}回、"
+                   f"それ以外は {m['n'] - c['n']}回 中 {m['moved'] - c['moved']}回"
+                   f"（{parts}）。**割合は出しません** —— "
+                   "採点に使えない数から作った割合は、引用されると根拠になります"
+                   "（09/05 01:48 の「その日の1本」の決めが、この行の割合を引きました）")
+
     line = (f"→ **その腕に届く種別は {pick}** —— 直近{m['days']}日の**申告**"
             "（`--moves`。**回が自分で打った数で、差し引きではありません**）: "
-            f"{CLOSING} {c['n']}回 中 {c['moved']}回 が到達日を動かし（{c['rate'] * 100:.0f}%）、"
-            f"**それ以外は {m['n'] - c['n']}回 中 {m['moved'] - c['moved']}回"
-            f"（{m['rest_rate'] * 100:.1f}%）**（{parts}）"
+            f"{yields_}"
             f"／**腕に届く種別へ行った回は {m['fed_share'] * 100:.0f}%**"
             f"（`run_marker.FIX_RUN_CAP` の天井は 67%。**門は効いていて、天井のほうが高い**）")
     if m["followed_n"]:
@@ -297,8 +430,19 @@ def headline(days: int = 5):
     #: —— 実物は「29件すべて同じ値」です（`ruler()` の冒頭）。
     rl = m.get("ruler") or {}
     if rl.get("n", 0) >= 2 and not rl.get("usable"):
-        line += (f"\n     [!] **上の歩留りは宣言です。差し引きは、まだ採点に使えません** —— "
+        line += (f"\n     [!] **上の数は宣言です。差し引きは、まだ採点に使えません** —— "
                  f"{rl['note']}")
+
+    #: **腕の配分の隔たりを、種別の名指しの隣に必ず出す**（2026-09-05 未明に足した）。
+    #: 名指しの側は `eta.py`（数分・API を叩く）にしか出ておらず、時間を切った回は
+    #: **1度も読めていません**。ここは API 0単位です（`arms()` の冒頭）。
+    am = m.get("arms") or {}
+    if am.get("n_named") and am.get("n_worked") and am.get("gap", 1.0) >= ARM_GAP_MIN:
+        _nm = "／".join(f"{k} {v}回" for k, v in list(am["named"].items())[:4])
+        _wk = "／".join(f"{k} {v}回" for k, v in list(am["worked"].items())[:4])
+        line += (f"\n     [!] {am['note']}。"
+                 f"名指し: {_nm}　働いた: {_wk}"
+                 + (f"（腕を選ばなかった回 {am['unlevered']}回）" if am.get("unlevered") else ""))
     return line
 
 
