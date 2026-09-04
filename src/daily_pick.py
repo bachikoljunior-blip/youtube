@@ -1490,16 +1490,25 @@ def expected_lines(now=None, *, picks_path=None, views_path=None,
     **覆る条件**: 宣言が 5件 たまっても、実物との差が形を1度も入れ替えないなら、
     この欄は形の判断に効いていません。そのときは畳んで `--moves` だけに戻すこと。
     """
-    rows = [r for r in _jsonl(picks_path or PICKS) if pick_kind(r) == PICK_KIND_DECIDE]
+    all_rows = list(_jsonl(picks_path or PICKS))
+    rows = [r for r in all_rows if pick_kind(r) == PICK_KIND_DECIDE]
     if not rows:
         return []
     last_by_day = {}
     for r in rows:
         if r.get("for_day"):
             last_by_day[str(r["for_day"])] = r
+    # **見込みは「決め」の行から、動画IDは「その日の最後の行」から**（2026-09-04 19:3x に直した）。
+    # 焼き直しは決めを触らずに ID だけ写します（`kind="carry"`）。決めの行の ID を
+    # そのまま引くと、**焼き直したあとは古い ID を探しにいって永久に「待ち」**になります
+    # —— この節を書いた同じ回に、走っている焼きが `XwB8nxtN5D8` を差し替える寸前でした。
+    now_id = {}
+    for r in all_rows:
+        if r.get("for_day") and r.get("video_id"):
+            now_id[str(r["for_day"])] = str(r["video_id"])
     said = {}
     for d, r in last_by_day.items():
-        if isinstance(r.get("expected_48h"), (int, float)) and r.get("video_id"):
+        if isinstance(r.get("expected_48h"), (int, float)) and now_id.get(d):
             said[d] = r
     if not said:
         n = len(last_by_day)
@@ -1518,7 +1527,7 @@ def expected_lines(now=None, *, picks_path=None, views_path=None,
     waiting = []
     for day_s in sorted(said):
         r = said[day_s]
-        vid = str(r.get("video_id"))
+        vid = now_id.get(day_s) or str(r.get("video_id"))
         exp = float(r.get("expected_48h"))
         got = aged.get(vid)
         if got is None:

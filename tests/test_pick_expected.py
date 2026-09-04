@@ -55,14 +55,24 @@ def test_同じ日の最後の決めだけを見る(tmp_path):
     assert "見込み 8回" in body and "1,000回" not in body
 
 
-def test_写しの行は見込みの持ち主にならない(tmp_path):
+def test_焼き直したら新しいIDの実物と並べる(tmp_path):
+    """見込みは「決め」の行から、実物は**その日の最後の行が名指ししている ID** から。
+
+    焼き直しは決めを触らずに動画IDだけ写す（`kind="carry"`）ので、
+    **決めの行の ID を引くと、焼き直したあとは古い ID を探して永久に「待ち」**になります。
+    実際に出るのは新しいほうの本です。
+    """
     p = tmp_path / "picks.jsonl"
     _pick(p, date(2026, 9, 5), "A", exp=8.0)
     dp.replace_video(["A"], "B", path=p)               # 焼き直しの写し
     aged = [{"video_id": "A", "views": 4}, {"video_id": "B", "views": 99}]
     body = "\n".join(dp.expected_lines(picks_path=p, aged_call=lambda *a, **k: aged))
-    # 決めが名指ししているのは A。写しの B ではない
-    assert "実物 4回" in body and "99回" not in body
+    assert "見込み 8回 → 実物 99回" in body            # 出るのは B のほう
+    assert "実物 4回" not in body
+    # 見込みそのものは決めの行のまま（写しは決めではない）
+    rows = [r for r in dp._jsonl(p)]
+    assert dp.pick_kind(rows[-1]) == dp.PICK_KIND_CARRY
+    assert rows[-1]["expected_48h"] == 8.0
 
 
 def test_CLI_に見込みの口が在る():
