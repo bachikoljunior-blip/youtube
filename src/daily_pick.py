@@ -688,9 +688,16 @@ def record(form: str, topic: str, why: str, *, day: date | None = None,
         raise ValueError("`--why` は数字を含む1行が要ります（次の回が実物と並べます）")
     # **先読みの門が開く前に「次の未決の日」まで試す形が取るのを止める**（`probe_hold` の註）。
     # `kind="carry"`（焼き直しの写し）は決めではないので通します。
+    #
+    # **上げの控えは、決めの控えと同じ並びから読みます** —— `path` を別に渡した回
+    # （試験・素振り）が、**本番の `data/uploaded.jsonl` で止められないため**。
+    # これを書く前は、`path=tmp/picks.jsonl` の試験 9本 が本番の上げ帳を読んで赤くなりました。
+    up = uploaded_path
+    if up is None and path is not None:
+        up = Path(path).parent / "uploaded.jsonl"
     if kind == PICK_KIND_DECIDE and not (anyway or "").strip():
         hold = probe_hold(form, day or for_day(now), now=now, topics=topics,
-                          uploaded_path=uploaded_path)
+                          uploaded_path=up)
         if hold:
             raise ValueError(hold)
     if (anyway or "").strip() and not re.search(r"\d", anyway):
