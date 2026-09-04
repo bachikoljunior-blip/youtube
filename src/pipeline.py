@@ -19,7 +19,7 @@ from . import (bars, config, history, sub_ask, subtitles, thumbnail, uploader,
                verify, visuals)
 from .renderer import build_narration, build_video, segment_timeline
 from .script_writer import (SHORT_SEGMENT_CHARS, VideoScript, generate,
-                            short_script_problems)
+                            outside_long_minutes, short_script_problems)
 from .tts import synthesize_segments
 from .util import fmt_timestamp
 
@@ -441,6 +441,16 @@ def hear_and_fix(script, channel: dict, work: Path, audios: list, topic: dict | 
     return state["audios"]
 
 
+def _topic_style_is_outside_long(topic: dict) -> bool:
+    """その題材が `style: outside_long` か。**`topic` の dict だけ**・API 0単位。
+
+    `script_writer._topic_style()` は題材IDから `config/topics.yaml` を引き直しますが、
+    `pipeline` はもう dict を手に持っています。引き直すと `--calc` で差し替えた
+    dict と食い違うので、ここは手元の dict を見ます。
+    """
+    return str((topic or {}).get("style") or "").strip() == "outside_long"
+
+
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     channel = config.load_channel()
@@ -525,6 +535,24 @@ def main(argv: list[str] | None = None) -> int:
         channel["video"]["max_minutes"] = round(want * 1.25, 1)
         print(f"[pipeline] 題材の尺で作ります: 目標 {want:g}分"
               f"（下限 {channel['video']['min_minutes']}分・上限 {channel['video']['max_minutes']}分）")
+    # **`style: outside_long` の本は、題材の `minutes:` ではなく規則の尺で作ること**
+    # （2026-09-05 04:3x・焼いている最中に踏んだ）。理由と3つの数の出どころは
+    # `outside_long_minutes()` の docstring。
+    #
+    # 短く言うと: `outside_length_problems()`（03:5x）が台本を **25分（8,430字）** で
+    # 落とすようになったのに、書き手に渡る尺は `topics.yaml` の `minutes: 20`
+    # （09-03 に手で書いた数・帯を数え直した 02:1x より前）のままでした。
+    # **命じる尺と落とす床が食い違うと、書き直しの3回を食い尽くして1本も出せません。**
+    # 実測 04:2x: `[pipeline] 題材の尺で作ります: 目標 20分（… 上限 25.0分）` を刷った焼きを止めた。
+    if not args.short and _topic_style_is_outside_long(topic):
+        lo, want, hi = outside_long_minutes()
+        channel["video"] = dict(channel["video"])
+        channel["video"]["target_minutes"] = want
+        channel["video"]["min_minutes"] = lo
+        channel["video"]["max_minutes"] = hi
+        print(f"[pipeline] 外の型の尺で作ります（規則が題材の minutes: を上書き）: "
+              f"目標 {want:g}分（下限 {lo}分・上限 {hi}分）"
+              f"—— 帯でいちばん速い升 25〜30分（n=24・2,094回/日）")
     print(f"=== テーマ: {topic['title_seed']} ({topic['id']}) ===")
     if not args.script and not topic.get("calc"):
         # 台本を生成させるのに計算が無いと、数字を発明させることになる。
