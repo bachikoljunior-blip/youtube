@@ -31,7 +31,7 @@ from src import script_writer as sw
 
 def _script(**over) -> dict:
     d = {
-        "title": "【年金の受け取り方】75歳までなら総額2052万円差 何歳から受け取るか",
+        "title": "【60歳以上の方へ】75歳までなら総額2052万円差 何歳から受け取るか",
         "thumbnail_line1": "差は2052万円",
         "thumbnail_line2": "何歳から受け取るか",
         "thumbnail_kicker": "年180万・75歳まで",

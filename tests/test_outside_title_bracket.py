@@ -103,8 +103,17 @@ def test_09_05の枠の本の題が脚を通る():
     p = Path(__file__).resolve().parent.parent / "data" / "scripts" / f"{本の題材}.script.json"
     if not p.exists():                      # 台本がまだ無い回では何も言わない
         return
-    題 = str(json.loads(p.read_text(encoding="utf-8")).get("title") or "")
+    d = json.loads(p.read_text(encoding="utf-8"))
+    題 = str(d.get("title") or "")
     assert not _bracket_problems(題), f"09/05 の枠の本の題が (4a2) を落としています: {題}"
+    # **別案も見ます**（2026-09-04 20:5x に足した）。`title_alternatives` は
+    # 「次に題を替えるときの候補」なので、**脚を落とす題をそこに残すと、
+    # 次の回がそれを拾って元に戻せます。** 実際、この回に直した
+    # `【年金の受け取り方】…` と `【年金】…` の2件が、そこに残っていました。
+    悪い別案 = [a for a in (d.get("title_alternatives") or []) if _bracket_problems(str(a))]
+    assert not 悪い別案, (
+        f"`title_alternatives` に (4a2) を落とす題が残っています: {悪い別案}。"
+        "**別案は「次に拾われる題」です** —— 落ちる題は残さないこと")
 
 
 #: **写す先の帯が、規則の2つの節をどれだけやっているか**（2026-09-04 20:4x に数えた）。
