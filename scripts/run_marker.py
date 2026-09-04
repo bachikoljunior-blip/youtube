@@ -1879,6 +1879,38 @@ def quota_is_out() -> tuple[bool, str]:
     return True, str(getattr(q, "line", "") or "**日枠が尽きています**")
 
 
+def _rule_dead_line() -> str:
+    """**「規則の下では永久に閉じない前提が別に在ります」を、在るときだけ言う。**
+
+    ここは長らく**散文で決め打ち**でした。2026-09-04 17:3x にオーナーが
+    「目標以外全部外して良いよ」と言い、同じ日の 17:5x に模型の側も直った結果、
+    **その束は空になりました**（`deadline_check` の「天井ではなく規則で止まっています」が
+    消え、燃料 30件 → 32件）。**それでもこの行は出続けます** ——
+    止められた回に「`deadline_check.py` の末尾を見ろ」と言い、
+    **見に行くと何も無い**という形です。
+
+    **この repo でいちばん多い壊れ方**（言っている所と、している所が別）なので、
+    数を撃ってから言うことにしました。0件 なら黙ります。
+
+    **覆る条件**: `levers.RULE_DEAD` の束の数え方が変わったら、ここも変えること。
+    """
+    try:
+        from src import levers as _lv                          # noqa: PLC0415
+
+        state = _lv.latest_arm_state(Path(__file__).resolve().parent.parent
+                                     / "data" / "eta.jsonl")
+        why = state.get("dead_why") or {}
+        stuck = [k for k, v in why.items() if str(v or "").startswith(_lv.RULE_DEAD)]
+    except Exception:                                          # noqa: BLE001
+        return ""
+    if not stuck:
+        return ""
+    return ("  **規則の下では永久に閉じない前提**が別に在ります"
+            f"（腕 {'・'.join(sorted(stuck))}）—— "
+            "`deadline_check.py` の末尾。**書き直すか、公開ずみの日で閉じるか**の"
+            "どちらかで、そこも `verdict` の回になります。\n")
+
+
 def untreated_slot() -> dict:
     """**枠に立っている決めの本が、前提の脚を通っていないか。**（`data/` と台本の控えだけ・**API 0単位**）
 
@@ -2879,9 +2911,7 @@ def main(argv: list[str] | None = None) -> int:
                     f"{_freelines}"
                     "  期限の近い前提（`python scripts/deadline_check.py` に全文）:\n"
                     f"                     {_lines}\n"
-                    "  **規則（1日1本）の下では永久に閉じない前提**が別に数件あります —— "
-                    "`deadline_check.py` の末尾。**書き直すか、公開ずみの日で閉じるか**の"
-                    "どちらかで、そこも `verdict` の回になります。\n"
+                    + _rule_dead_line() +
                     "  **直しが本当に要るなら、それは次の回でも要ります。** "
                     "順番だけの門です（`FIX_RUN_CAP` の「覆る条件」を読むこと）\n"
                     # **止めた回に、いまの比を見せること**（2026-09-01 夕）。
