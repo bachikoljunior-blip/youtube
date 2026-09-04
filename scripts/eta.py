@@ -8545,14 +8545,128 @@ def _sub_rate_move(bar: str) -> list[str]:
         except Exception:                                    # noqa: BLE001
             sh = 0.0
         if 0 < sh < 1:
-            out.append(f"{bar}       **残っている `sub_rate` の判断は「面」ではなく「配り方」です** —— "
-                       f"画面の札は A/B {sh:.0%} なので、**オーナー規則の 1本/日 では"
-                       f" 札の付く本が {sh:.1f}本/日 しか出ません。**"
-                       f" 判定に要る再生（`config/hypotheses.yaml`「登録の依頼を画面（全時間）にも置くと…」の"
-                       f" `needs`: 片群 14,085再生）に届く日を、`--lever sub_rate` の回はまず数えること。"
-                       f" **届かないなら、その A/B は学びではなく、治療の半分を捨てているだけです**"
-                       f"（`src/ab_split.SUBS_BADGE_SHARE` は動かせます。**動かす前に数えること** ——"
-                       f" 1.0 にすると比べる相手が消えます）。")
+            out.extend(_sub_rate_ab_power(bar, sh))
+    return out
+
+
+#: 画面の札の A/B が判定に要る片群の再生（`config/hypotheses.yaml` の `needs` の数）。
+#: **基準の登録率 0.0355% で、片群 14,085再生 でようやく期待 5.0人**（前提の本文にある計算）。
+SUBS_BADGE_NEED_VIEWS = 14_085
+
+
+def _settled_median_views(min_hours: float = 168.0) -> tuple[int, float] | None:
+    """**落ち着いた本 1本あたりの再生の中央値**（`data/views.jsonl`・API 0単位）。
+
+    齢 `min_hours` 以上の点を持つ本だけを、その本の**いちばん新しい点**で数えます。
+    `(本数, 中央値)`。読めなければ None。
+    """
+    f = ROOT / "data" / "views.jsonl"
+    if not f.exists():
+        return None
+    best: dict[str, tuple[float, float]] = {}
+    for line in f.read_text(encoding="utf-8").splitlines():
+        try:
+            d = json.loads(line)
+        except Exception:                                    # noqa: BLE001
+            continue
+        vid, h, vw = d.get("id"), d.get("hours"), d.get("views")
+        if not vid or h is None or vw is None:
+            continue
+        prev = best.get(str(vid))
+        if prev is None or float(h) > prev[0]:
+            best[str(vid)] = (float(h), float(vw))
+    vals = sorted(vw for h, vw in best.values() if h >= min_hours)
+    if not vals:
+        return None
+    mid = len(vals) // 2
+    med = vals[mid] if len(vals) % 2 else (vals[mid - 1] + vals[mid]) / 2
+    return len(vals), med
+
+
+def _subs_badge_deadline() -> str:
+    """画面の札の前提の期限（`config/hypotheses.yaml`）。読めなければ空。"""
+    try:
+        import yaml                                          # noqa: PLC0415
+        doc = yaml.safe_load((ROOT / "config" / "hypotheses.yaml").read_text(encoding="utf-8"))
+    except Exception:                                        # noqa: BLE001
+        return ""
+    for h in (doc or {}).get("hypotheses") or []:
+        if isinstance(h, dict) and "画面（全時間）" in str(h.get("claim") or ""):
+            return str(h.get("deadline") or "")
+    return ""
+
+
+def _sub_rate_ab_power(bar: str, share: float) -> list[str]:
+    """**その A/B は、期限までに何かを見分けられるのか**（API 0単位）。
+
+    ## なぜ、ここで数えきるか（2026-09-04・最適化の回）
+
+    ひとつ前の版のこの行は「`--lever sub_rate` の回はまず数えること」で終わっていました。
+    **それは宿題であって手ではありません。** この repo の実測では、宿題を書いた回の
+    `--moves` は 0 で、次の回は別の所を掘ります（`data/runs.jsonl`: 直近5日 256件 のうち
+    **245件 が `--moves 0`**）。数えるのに要るのは `data/views.jsonl` と
+    `config/hypotheses.yaml` だけ ＝ **0単位・数秒** なので、ここで数えきります。
+
+    ## 何と何を掛けているか
+
+    オーナー規則は **1本/日**（`src/house_rule.py`）。A/B の割り当ては
+    `ab_split.SUBS_BADGE_SHARE` なので、**札の付く本は `share` 本/日**しか出ません。
+    1本が生涯に運ぶ再生は、齢168時間 以上の本の中央値（`_settled_median_views()`）。
+    その積が「治療群の再生/日」で、`SUBS_BADGE_NEED_VIEWS` までの日数が出ます。
+
+    ## 覆る条件（この行がひっくり返る数）
+
+    中央値は**いまの corpus** の数です。corpus はほぼショートなので、
+    **その日の1本が長尺に替わると、この日数は使えません**
+    （齢48時間 の中央値は ショート 178回 対 長尺 1回・`python -m src.daily_pick`）。
+    だから下の行は、**足りないときに「A/B を畳め」とは言いません** ——
+    先に効くのは、`--lever sub_rate` ではなく**その日の1本の形**のほうだからです。
+    """
+    out: list[str] = []
+    got = _settled_median_views()
+    if not got:
+        return out
+    n, med = got
+    try:
+        from src import house_rule                           # noqa: PLC0415
+        # **名前は `PUBLISH_PER_DAY`**（`src/house_rule.py:55`）。オーナーが規則を
+        # 動かした日に、この行も一緒に動くように、定数から引くこと。
+        per_day = float(getattr(house_rule, "PUBLISH_PER_DAY", 1) or 1)
+    except Exception:                                        # noqa: BLE001
+        per_day = 1.0
+    treated = per_day * share * med
+    if treated <= 0:
+        return out
+    days = SUBS_BADGE_NEED_VIEWS / treated
+    dl = _subs_badge_deadline()
+    left = None
+    if dl:
+        try:
+            left = (datetime.fromisoformat(dl).date() - datetime.now(timezone.utc).date()).days
+        except Exception:                                    # noqa: BLE001
+            left = None
+    head = (f"{bar}       **残っている `sub_rate` の判断は「面」ではなく「配り方」です** —— "
+            f"画面の札は A/B {share:.0%}、規則は {per_day:.0f}本/日 なので"
+            f"**札の付く本は {per_day * share:.1f}本/日**。"
+            f" 落ち着いた1本の中央値 {med:.0f}回（齢168h 以上 n={n}・`data/views.jsonl`）を掛けると"
+            f" 治療群は **{treated:.0f}再生/日** → 判定に要る片群 {SUBS_BADGE_NEED_VIEWS:,}再生 まで"
+            f" **{days:.0f}日**。")
+    if left is None:
+        out.append(head + " 期限は `config/hypotheses.yaml` から読めませんでした。")
+        return out
+    if days <= left:
+        out.append(head + f" 期限 {dl} まで {left}日 なので **{left - days:.0f}日 の余りで届きます**"
+                          f" ＝ **この A/B は畳まなくてよい。**"
+                          f" `SUBS_BADGE_SHARE` を 1.0 にすると比べる相手が消えます（畳まないこと）。")
+    else:
+        out.append(head + f" 期限 {dl} まで {left}日 しかないので **{days - left:.0f}日 足りません**"
+                          f" ＝ **いまの配り方では、この A/B は何も見分けずに閉じます。**")
+        out.append(f"{bar}       **ただし先に効くのは A/B ではありません** —— "
+                   f"上の中央値は corpus（ほぼショート）の数で、"
+                   f"齢48時間 の中央値は **ショート 対 長尺 で二桁 違います**"
+                   f"（`python -m src.daily_pick`）。**その日の1本の形を先に決めること** ——"
+                   f" 形が足りていれば {SUBS_BADGE_NEED_VIEWS:,}再生 は自然に届きます。"
+                   f" `SUBS_BADGE_SHARE` を上げるのは、形を直しても届かないときだけ。")
     return out
 
 
