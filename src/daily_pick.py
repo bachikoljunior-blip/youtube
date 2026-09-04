@@ -967,6 +967,12 @@ def record(form: str, topic: str, why: str, *, day: date | None = None,
                           uploaded_path=up)
         if hold:
             raise ValueError(hold)
+    # **門の算が指す形と違う形で決めるのを止める**（`path_form_hold` の註・2026-09-05 02:xx）。
+    # `kind="carry"`（焼き直しの写し）は決めではないので通します。
+    if kind == PICK_KIND_DECIDE and not (anyway or "").strip():
+        _pf = path_form_hold(form, now=now, uploaded_path=up)
+        if _pf:
+            raise ValueError(_pf)
     # **同じ決めの再掲を止める**（`restated_pick_block` の註・2026-09-05 02:0x）。
     # `--anyway` では越えられません（越える理由に書ける数が存在しないため）。
     if kind == PICK_KIND_DECIDE:
@@ -1922,6 +1928,68 @@ def standing_pick_treatment(cur: dict | None, *, topics: list[dict] | None = Non
     out.append(f"       python scripts/upload_only.py {topic} --draft --replaces {vid}"
                f"   # 直したら焼き直して差し替える（旧 ID は private のまま残す）")
     return out
+
+
+def path_form_hold(form: str, *, now: datetime | None = None,
+                   uploaded_path: Path | None = None, form_call=None) -> str:
+    """**門の算（AND の道）が言う形と違う形で「その日の1本」を決めるのを、実際に止める。**
+    止めるなら理由の1行、止めないなら `""`。**API 0単位。**
+
+    ## なぜ要るか（2026-09-05 02:xx・最適化の回。「最適化されてんの？」→ **いいえ** の理由を1つ潰す）
+
+    この回が自分で撃った数:
+
+        and_path_form()              → **ショート**（道 ショート ×106・道 長尺 ×334）
+        data/daily_pick.jsonl の決め → 39件中 **31件が長尺**
+        その決めが自分で書いた見込み → 長尺 expected_48h の中央値 **8回**／ショート **368回**
+        齢48h の実測（data/views.jsonl）→ 長尺 中央値 **1回**（n=36）／ショート **168回**（n=216）
+        data/eta.jsonl 再生/日(7d)   → 6,299（08-25）→ **943**（09-04）＝ **-85%**
+
+    ＝ **門の算も、自分で書いた見込みも、実測の中央値も、3つとも同じ形（ショート）を
+    指しているのに、決めは長尺で立ち続けています。**
+
+    理由は 1つです。`standing_form_conflict()`（2026-09-04 に足された）は
+    **食い違いを印字するだけ**で、`record()` は CLI が渡した `form` を
+    そのまま控えに書きます。**印字は止めではありません。** 実測 —— その行が
+    印字されるようになった後の決め（09-05T00:38・01:17・01:48）は、**理由の中で
+    「道の最遠脚 ショート x106 / 長尺 x334」と自分で引用したうえで、長尺に据え置いて**います。
+
+    直前の最適化の回が足したものを並べると、`outside_long_readout`（散文）→
+    `and_path_form`（算・印字）→ `standing_form_conflict`（食い違いの印字）——
+    **3回とも「読み上げ」で、1度も `raise` していません。** ここが初めて止めます。
+
+    ## 通す口
+
+    数字で上書きするのは自由です（オーナーの「固定は目標の本文だけ」）——
+    `record(..., anyway="<数字を含む理由>")` ／ CLI は `--anyway "<理由>"`。
+    **止めは据え置きのたびに立ち直します** —— 31回 据え置くなら 31行 の `anyway` が
+    控えに残り、`scripts/optimized.py` がそれを実物と並べます。
+    （**1度 越えたら以後 黙る、にはしません。** 黙ると鎖はまた無料になります。）
+
+    ## 覆る条件
+
+    - `and_path_form()` が `None`（門1 の脚 `data/shorts_subs.json` が立たない）を返す回は
+      **止めません**。比べる相手が無いので、**推測で止めないこと。**
+    - 長尺の脚が近づけば `and_path_form()` は自分で長尺を返し、この止めは長尺を通して
+      ショートのほうを止めます。**形を決め打ちしていません。**
+    - `kind` が `decide` でない行（`carry` ＝ 焼き直しの写し）は決めではないので通します。
+    """
+    if str(form) not in FORMS:
+        return ""
+    call = and_path_form if form_call is None else form_call
+    try:
+        want, why = call(now=now, uploaded_path=uploaded_path)
+    except Exception:                                              # noqa: BLE001
+        return ""
+    if not want or str(want) == str(form):
+        return ""
+    return (f"門の算（AND の道）は **{want}** を指しています —— {why}。"
+            f" いま決めようとしている形は **{form}** です。"
+            f" 齢{AGE_HOURS}h の実測の中央値: {_median_pair_line(str(form), str(want))}。"
+            f" **印字ではなくここで止めています**（`standing_form_conflict` は"
+            f"食い違いを刷るだけで、控えには渡した形がそのまま入っていました）。"
+            f" 形を {want} にするか、`--anyway \"<数字を含む1行>\"` で越えること"
+            f"（越えた行は `anyway` として控えに残り、次の回が実物と並べます）。")
 
 
 def _median_pair_line(a: str, b: str, *, median_call=None) -> str:
