@@ -660,8 +660,14 @@ def _today_candidate(now: datetime) -> dict | None:
                f"族 {top.get('family')} 残差 ×{top.get('fam_res')}"
                f"（生 {top.get('fam_median')}回・n={top.get('fam_n')}）")
         try:
+            # **見込みは、いま選んだ形の実測 齢48h 中央値**（`record()` が数を要求します）。
+            # `st` は上でその形の統計を引いているので、**新しく測り直しません**。
+            exp = st.get("median")
+            if exp is None:
+                exp = daily_pick.form_median_48h(best_form, cmp=cmp)
             daily_pick.record(best_form, str(top.get("topic") or ""), why, day=day,
-                              now=now, video_id=top["video_id"])
+                              now=now, video_id=top["video_id"],
+                              expected=float(exp) if exp is not None else 0.0)
         except Exception:                                      # noqa: BLE001
             pass
         return {"video_id": top["video_id"], "why": why, "source": "pool"}
@@ -782,7 +788,11 @@ def place_by_insert(plan: dict, now: datetime) -> tuple[int, str | None]:
             f"{now.astimezone(JST).strftime('%H:%M')} 機械: 帳面の取り置き（日枠 10,000）で "
             f"`--move {vid}` が書けず、同じ台本を焼き直して `videos.insert`（日枠 0単位）で "
             f"{plan['when']} JST に置いた。{vid} は private の池",
-            day=now.astimezone(JST).date(), now=now, video_id=new_id)
+            day=now.astimezone(JST).date(), now=now, video_id=new_id,
+            # **機械が置き直した行も、数を1つ置きます**（`record()` の門）。
+            # 実測の中央値をそのまま宣言 ＝ 「この形の並みの本」という見込み。
+            expected=(lambda m: float(m) if m is not None else 0.0)(
+                daily_pick.form_median_48h(form)))
     except Exception as exc:                                   # noqa: BLE001
         print(f"[today] 決定を書き換えられませんでした（置けてはいます）: {str(exc)[:100]}",
               flush=True)

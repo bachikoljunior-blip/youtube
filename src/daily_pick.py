@@ -677,6 +677,25 @@ def probe_hold(form: str, day, *, now=None, topics: list[dict] | None = None,
             f"数字で上書きするなら `--anyway \"<数字を含む理由>\"`")
 
 
+#: **決めが言うべき数の既定値**（2026-09-04 22:5x・最適化の回）。
+#: `record(kind="decide")` は `expected` が無いと通りません。機械の口
+#: （`scripts/ahead_sweep`）は、選んだ形の**実測の齢48h 中央値**をそのまま宣言します。
+def form_median_48h(form: str, *, cmp: dict | None = None,
+                    rows: list[dict] | None = None) -> float | None:
+    """**その形の、実測 齢48h の中央値**（`data/views.jsonl` だけ・**API 0単位**）。
+
+    返りは `float`（測れなければ `None`）。`record()` の `expected` の既定と、
+    `record()` が断るときの文面で「相手の形は何回か」を出すのに使います。
+    """
+    try:
+        c = cmp if cmp is not None else compare(rows=rows)
+        st = (c.get("all") or {}).get(str(form)) or {}
+        m = st.get("median")
+        return float(m) if m is not None else None
+    except Exception:                                          # noqa: BLE001
+        return None
+
+
 def record(form: str, topic: str, why: str, *, day: date | None = None,
            now: datetime | None = None, path: Path | None = None,
            video_id: str | None = None, expected: float | None = None,
@@ -695,6 +714,32 @@ def record(form: str, topic: str, why: str, *, day: date | None = None,
         raise ValueError(f"形は {FORMS} のどれか: {form!r}")
     if not (why or "").strip() or not re.search(r"\d", why):
         raise ValueError("`--why` は数字を含む1行が要ります（次の回が実物と並べます）")
+    # **`--expected` は必須です**（2026-09-04 22:5x・最適化の回に門にした）。
+    #
+    # `expected_lines()` は 09-04 19:2x に「次に決める回は `--expected` を付けること」と
+    # **印字する**形で入りました。**その直後の決め（22:24・09-05 の長尺）も null です。**
+    # 実測 `data/daily_pick.jsonl` 31行 中 **`expected_48h` が入っているのは 4行**。
+    # `run_marker.py` が同じことを自分の註に書いています ——
+    # **「註や警告ではなく、通さないことだけが効いています」**。だから通さない側にしました。
+    #
+    # **なぜ、この欄だけ門にする価値があるか**（この回に撃って出た数）:
+    # 齢48h の中央値は **ショート 168回（n=216）／長尺 1回（n=36）** で二桁 違います。
+    # それでも 31件 の決めのうち **20件 が同じ（長尺・`nenkin-...-handan`）** で、
+    # その題材は 6本 焼かれて **1本も公開されていません**（全部 private・0回）。
+    # 数を言わない決めは**外れようがない**ので、散文だけで何度でも同じ形を選べます。
+    # **番号を1つ置かせれば、次の回が `expected_lines()` で実物と並べます。**
+    #
+    # **覆る条件**: 宣言が 5件 たまっても実物との差が形を1度も入れ替えないなら、
+    # この門は形の判断に効いていません（`expected_lines()` の覆る条件と同じ）。**そのときは外すこと。**
+    if kind == PICK_KIND_DECIDE and not isinstance(expected, (int, float)):
+        med = {f: form_median_48h(f) for f in FORMS}
+        seen = "／".join(f"{f} {('%s回' % f'{med[f]:,.0f}') if med[f] is not None else '—'}"
+                         for f in FORMS)
+        raise ValueError(
+            "`--expected <回>` が要ります（決めには 齢48h の見込みを数で置くこと）。"
+            f" 実測の 齢48h 中央値: {seen}。"
+            " **選んだ形が負けている側なら、その数を上回る見込みを、根拠と一緒に置くこと。**"
+            " 外れてよい数です（`--moves` と同じ）—— 次の回が `expected_lines()` で実物と並べます。")
     # **先読みの門が開く前に「次の未決の日」まで試す形が取るのを止める**（`probe_hold` の註）。
     # `kind="carry"`（焼き直しの写し）は決めではないので通します。
     #
