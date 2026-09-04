@@ -113046,3 +113046,51 @@ commit だけ在ります —— **`data/runs.jsonl` には出ないので、次
 **覆る条件**: `next_round.py` が自分で間隔を印字して本文へ差し込むようになったら、
 この註ごと要らなくなります（`run_marker.py --write` が「手順の読む順」を印字するようになって
 `grep` の節が縮んだのと同じ道）。
+
+### 焼き直しの生死を見る「正本」が、**走っているものを見落としていた**
+
+`docs/spawn_prompt.md` は生死をこの2つで見ろと書いていました ——
+`pgrep -f "ahead_sweep.py --rebake-run"`（「**これが正本**」）と
+`data/rebake.jsonl` の `done` / `late`。**両方が「走っていません」と答える状態**を踏みました::
+
+    pgrep -f "ahead_sweep.py --rebake-run"  → **一致なし**
+    ahead_sweep.rebake_busy()               → **False**（錠は空いている）
+    ps                                      → 10641  PPID **1**  02:38:08
+                                              timeout 12000 python -m src.pipeline
+                                                --topic nenkin-uketorikata-65-70-75-handan
+                                                --visibility private
+
+＝ **`--rebake-run` の親だけが死に、`_run()` が起こした `src.pipeline` が
+孤児（PPID 1）で生き残る形**です。錠は親が握っていたので、親が死んだ時に OS が外します。
+
+**これが、この repo の長年の謎の答えです** —— `data/rebake.jsonl` が
+**start 22件 ／ done 0件** だったのは、焼きが遅いからではありません。
+`done` / `late` を書くのは `rebake_run()` の**末尾**で、**その親が先に死んでいた**からです。
+（`docs/spawn_prompt.md` は「回が終われば器ごと止まります」と疑っていました。
+**形が分かりました: 止まるのは親だけで、`src.pipeline` は生き残ります。**）
+
+**実害は3つ**:
+
+1. **`done` / `late` は永久に来ない。** 「出るまで居ること」に従うと **120分 待って空振り**。
+2. **枠は引き継がれない。** `upload_only --draft --replaces` も `reschedule --move` も
+   同じ死んだ親の中の行。孤児は private で1本 上げて終わり ——
+   **焼き直しが走っていても、その本が枠へ入ることはありません。**
+   （この回にとっては朗報でした ＝ 09/05 の枠を、こちらの1本と取り合いません）
+3. **錠が空いているので、2本目は `skip` に落ちない。** 「錠が在るので即 skip」は
+   **親が生きている場合の話**でした。孤児のときは普通に走り出し、
+   同じ題材の `src.pipeline` が **4コアの器で2本** 並びます。
+
+足したもの::
+
+    scripts/ahead_sweep.orphaned_bake()        (pid, 題材) を返す。`--dry-run` は除く
+    scripts/ahead_sweep.orphaned_bake_lines()  回が読む4行
+    tests/test_orphaned_bake.py                6件（pgrep の出力を注入・プロセス表を読まない）
+    docs/spawn_prompt.md                       「生死はこの3つで見ること」に直し、
+                                               「pgrep が正本」を**取り消した**
+
+**`--dry-run` を除くのが要ります** —— 回が自分で焼いている下書き（この回の
+`s-shokibo-yamekata-3-46bai --short --dry-run`）を「焼き直し」と読まないため。
+実物で両方 走っている状態で確かめました（孤児だけを拾いました）。
+
+**覆る条件**: 焼く側が器の外で走るようになったら、プロセス表にも出なくなります。
+そのときは `beat` の時刻で見ること —— **`beat` も孤児では書かれません**ので、両方 直すこと。
