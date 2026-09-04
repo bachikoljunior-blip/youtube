@@ -35,6 +35,8 @@
 """
 from __future__ import annotations
 
+import pytest
+
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -51,6 +53,16 @@ JST = timezone(timedelta(hours=9))
 #: 2026-09-02 13:40 JST —— きょうの1本（22:00）はまだ公開されていない。
 NOW = datetime(2026, 9, 2, 13, 40, tzinfo=JST).astimezone(timezone.utc)
 
+@pytest.fixture(autouse=True)
+def _規則5が効いている側(same_day_rule_on):
+    """**この file が見ているのは「規則5 が効いている間」のふるまいです。**
+
+    2026-09-04 17:3x にオーナーが「目標以外全部外して良いよ」と言い、
+    `same_day_only()` は**既定で False** になりました。この file の検査は
+    regime を書かずに既定へぶら下がっていたので、その瞬間に赤くなります
+    （中身は1行も変わっていません）。**どちらを見ているかを、ここで言います。**
+    詳細は `tests/conftest.py` の `same_day_rule_on`。
+    """
 
 def _row(vid: str, when: str) -> dict:
     """`pool()` が返す形（`at` は tz つきの datetime）。"""

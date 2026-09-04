@@ -114,6 +114,35 @@ def _alerts_ledger_to_tmp(tmp_path_factory):
     alerts.LEDGER, alerts.RUNS = keep
 
 
+@pytest.fixture()
+def same_day_rule_on(monkeypatch):
+    """**規則5（当日しか予約しない）が効いている側に固定する。**（2026-09-04 17:4x に足した）
+
+    オーナーが「**目標以外全部外して良いよ**」と言い、
+    `house_rule.OWNER_FLOORS_LIFTED = True` が入りました。＝ `same_day_only()` は
+    **既定で False** です。**規則は床ではなく既定値になりました。**
+
+    ところが、**掃き（`ahead_sweep.reasons_to_skip`）・池化の keep・暦の警告**は
+    「規則5 が効いている間だけ在る手」で、その 13件 の検査は
+    **regime を書かずに既定へぶら下がって**いました。床が外れた瞬間に、
+    どれも1行目の「規則5 が外れています」で返って赤くなります ——
+    **中身は1行も変わっていません。**
+
+    だから、その検査は**自分がどちらの regime を見ているかを言う**こと。
+    これを使う file は「**規則5 が効いている間のふるまい**」を見ています。
+
+    **足りていないもの**（次に来た回へ）: 外れている側のふるまいは、
+    いま `test_規則5_が外れたら掃かない` と `test_falls_back_when_the_rule_is_lifted`
+    の 2件しかありません。**既定になったのは外れている側です。**
+    先の日付に置くのが本当に速いかを測る回は、そちらの検査を足すこと。
+    """
+    from src import house_rule
+
+    monkeypatch.setattr(house_rule, "OWNER_FLOORS_LIFTED", False)
+    monkeypatch.setattr(house_rule, "SAME_DAY_SCHEDULING_ONLY", True)
+    return house_rule
+
+
 @pytest.fixture(autouse=True, scope="session")
 def _content_caches_to_tmp(tmp_path_factory):
     """**音とクリップの控えを、この検査だけの場所へ向ける**（2026-09-04 17:2x に踏んで足した）。

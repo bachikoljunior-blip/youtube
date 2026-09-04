@@ -42,6 +42,16 @@ from src import next_slot  # noqa: E402
 JST = timezone(timedelta(hours=9))
 NOW = datetime(2026, 9, 1, 11, 0, tzinfo=timezone.utc)   # 09/01 20:00 JST
 
+@pytest.fixture(autouse=True)
+def _規則5が効いている側(same_day_rule_on):
+    """**この file が見ているのは「規則5 が効いている間」のふるまいです。**
+
+    2026-09-04 17:3x にオーナーが「目標以外全部外して良いよ」と言い、
+    `same_day_only()` は**既定で False** になりました。この file の検査は
+    regime を書かずに既定へぶら下がっていたので、その瞬間に赤くなります
+    （中身は1行も変わっていません）。**どちらを見ているかを、ここで言います。**
+    詳細は `tests/conftest.py` の `same_day_rule_on`。
+    """
 
 def _ledger(tmp_path, days: dict[str, int]) -> Path:
     """`YYYY-MM-DD -> 本数` から控えを作る（`at` は JST 09:00 を UTC で書く）。"""
