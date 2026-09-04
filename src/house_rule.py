@@ -46,6 +46,7 @@ from __future__ import annotations
 
 import math as _math
 import re as _re
+from functools import lru_cache as _lru_cache
 from datetime import date as _date, timedelta as _timedelta
 from pathlib import Path
 
@@ -432,6 +433,14 @@ _COUNT_PER_DAY = _re.compile(r"(\d+(?:\.\d+)?)\s*本\s*/\s*日")
 _COUNT = _re.compile(r"(\d+)\s*本")
 #: 要件が「**いつから**数えるか」を言っている形（`09/01 以降に公開した本が 20本`・
 #: `2026-09-01 以降`）。**この日付が読めた要件だけ、公開ずみの本を足して数えます。**
+#: 要件の本文が名指ししている**帳面**（`data/…jsonl`）。
+#: **すでに組み上がっている母集団**を、そこから数えます（`cohort_done()`）。
+_LEDGER = _re.compile(r"data/[A-Za-z0-9_.-]+\.jsonl")
+
+#: 帳面の行の中で「1件」を表す欄。**先に当たったものだけ**を使います
+#: （両方を足すと、同じ本が2件に化けます）。
+_COHORT_KEYS = ("video_id", "id")
+
 _SINCE = _re.compile(r"(?:(\d{4})[-/])?(\d{1,2})/(\d{1,2})\s*以降")
 _SINCE_ISO = _re.compile(r"(\d{4})-(\d{2})-(\d{2})\s*以降")
 
@@ -502,8 +511,130 @@ def published_since(since: _date, today: str | None = None, now=None,
     return len(seen)
 
 
+def _tracked(rel: str, root: Path | None = None) -> bool:
+    """`rel` が **枝に乗っている**か（`git ls-files --error-unmatch`）。
+
+    **`.gitignore` を自分で読み直しません。** `scripts/retro._is_ignored()` に
+    近似の実装が在りますが、あれは註のとおり**わざと狭く**してあり（否定行を
+    読まない・`*` は basename でしか当てない）、**ここで要るのは近似ではなく
+    「次の回のコンテナにも在るか」の実際**です。git に訊くのがその答えそのもの。
+
+    git が無い所（検査の tmp ディレクトリなど）では **False** を返します ——
+    数えないほうへ倒します（`cohort_done()` の註）。検査は `tracked=` で差し込むこと。
+    """
+    return _tracked_at(rel, str(root or ROOT))
+
+
+@_lru_cache(maxsize=64)
+def _tracked_at(rel: str, root: str) -> bool:
+    """`_tracked()` の実体。**同じ回のうちは1度しか外の道具を撃ちません**
+    （開いている前提 34件 ×`needs` を毎周 なめるので、素で撃つと十数回になる）。
+    """
+    import subprocess                                          # noqa: PLC0415
+
+    try:
+        rc = subprocess.run(["git", "-C", root, "ls-files", "--error-unmatch", rel],
+                            capture_output=True, timeout=10).returncode
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return rc == 0
+
+
+def cohort_done(what: str, data_file: str | None = None,
+                root: Path | None = None, tracked=None) -> int | None:
+    """要件が名指ししている帳面の中の、**別々の件数**（数えられなければ `None`）。
+
+    ## なぜ要るか（2026-09-04 12:xx に踏んで直した）
+
+    `needs_beyond_rule()` は本文の `N本` を**全部「これから公開する本」**と読みます。
+    ところが要件には、**もう組み上がっている母集団**を名指しするものがあります:
+
+        「**掃いた 36本**（`data/sub_ask_sweep.jsonl`・2026-09-04 に説明欄の
+          先頭だけを変えた本）の、掃いた後 14日 の合計再生が 3,000」
+
+    この 36本 は **09/04 03:2x に実際に掃き終わっている既存の本**で（帳面に
+    39件・`where: description_head`）、**新しく1本も公開しなくても揃っています。**
+    それを「規則 1日1本 では 09/18 までに 14本 しか出せない ＝ 22日 足りません」と
+    読んでいました。**実測 —— `deadline_check.py` の「規則の下では満ちない要件」は
+    この1件だけで、その1件が誤報でした。** その節は
+    「**ここが詰まると到達日が止まります**」と書いてあるので、
+    **誤報は、毎周 到達日が止まって見える**ということです（`lever: sub_rate`）。
+
+    ## どう数えるか（**門は2つ。どちらも狭い側へ倒してあります**）
+
+    本文から `data/….jsonl` を拾い、**枝に乗っているものだけ**（`_tracked()`）を
+    開いて、`video_id` か `id` の**別々の数**を返します。
+
+    **(1) 計器は母集団ではありません。** `needs[]` が `data_file:` で名乗っている
+    帳面（＝ **測る道具**）は数えません。**実測でここが分かれます** ——
+    台帳で本数と帳面の両方を書いている `needs` は 5件 で、
+    **4件は名指しの帳面が `data_file:` そのもの**（`data/views.jsonl` ＝ 全 257本 の
+    観測。ここを母集団と読むと「10本 連続公開する」のような**本物の警報を
+    黙らせます**）、**残る1件だけが別の帳面**（掃きの記録 `sub_ask_sweep.jsonl` に
+    対して計器は `shorts_subs.json`）でした。
+
+    **(2) `data_file:` を名乗っていない要件は、数えません。** どれが計器で
+    どれが母集団かを言える者がいないので、**警報を残す側**へ倒します
+    （`deadline_check.py` の「時計だけで『判定できる』と言っている要件」の
+    註が言う「推測で埋めないこと」と同じ姿勢）。
+
+    **枝に乗らない帳面は数えません**（`.gitignore` のものは次の回のコンテナに
+    在りません —— 在る回と無い回で `done` が入れ替わり、同じ前提が周ごとに
+    鳴ったり黙ったりします。`scripts/retro.ephemeral_paths()` が今朝
+    印を足したのと同じ穴）。
+
+    **見つからなければ `None`** ＝ 呼ぶ側は前のまま。この関数は
+    `done` を**増やす側にしか効きません**（`needs_beyond_rule()` は `max` で入れる）。
+
+    **覆る条件**: `needs[]` が「もう揃っている母集団」を構造化した欄
+    （`have_file:` のような）で持つようになったら、本文の正規表現をやめて
+    そちらを読むこと。`since_of()` の覆る条件と同じ形です。
+    """
+    import json                                                # noqa: PLC0415
+
+    if not what or not data_file:
+        return None                       # 門(2): 計器を名乗っていない要件は数えない
+    r = root or ROOT
+    instrument = str(data_file).strip().strip("`").lstrip("./")
+    # `tracked` は検査の差し込み口（`rel` を受けて真偽を返すもの・`published=` と同じ形）。
+    is_tracked = tracked if tracked is not None else (lambda rel: _tracked(rel, r))
+    best: int | None = None
+    for rel in dict.fromkeys(_LEDGER.findall(what)):
+        if rel == instrument:
+            continue                      # 門(1): 測る道具は母集団ではない
+        if not is_tracked(rel):
+            continue
+        f = r / rel
+        if not f.exists():
+            continue
+        seen: set = set()
+        try:
+            with f.open(encoding="utf-8") as fh:
+                for line in fh:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        row = json.loads(line)
+                    except ValueError:
+                        continue
+                    if not isinstance(row, dict):
+                        continue
+                    for k in _COHORT_KEYS:
+                        v = row.get(k)
+                        if v:
+                            seen.add(str(v))
+                            break
+        except OSError:
+            continue
+        if seen:
+            best = len(seen) if best is None else max(best, len(seen))
+    return best
+
+
 def needs_beyond_rule(what: str, on_date: str, today: str | None = None,
-                      published=None) -> dict | None:
+                      published=None, data_file: str | None = None,
+                      root: Path | None = None, tracked=None) -> dict | None:
     """**その要件は、規則の下でまだ満ちうるか。** 満ちないなら理由を返す。
 
     返すのは `{"named": 名指しされた本数, "allowed": 規則が許す本数, "kind": …}`。
@@ -554,6 +685,12 @@ def needs_beyond_rule(what: str, on_date: str, today: str | None = None,
         done = published_since(since, today=t)
     else:
         done = 0
+    # **すでに組み上がっている母集団も `done` です**（2026-09-04 に足した）。
+    # 上の3行が数えるのは「これから／すでに**公開した**本」だけで、
+    # 「もう掃き終わっている既存の本」を 0 に置いていました（`cohort_done()` の註）。
+    have = cohort_done(what, data_file=data_file, root=root, tracked=tracked)
+    if have is not None:
+        done = max(done, have)
     ahead = (d1 - d0).days * PUBLISH_PER_DAY
     allowed = done + ahead
     text = _COUNT_PER_DAY.sub("", what)          # 上で見た形は取り除く
@@ -592,8 +729,12 @@ def unreachable_needs(rows, today: str | None = None) -> list[dict]:
         if r.get("closed_on"):
             continue
         for n in (r.get("needs") or []):
+            # **`data_file:` も渡すこと**（2026-09-04 に足した）——
+            # `cohort_done()` は「その帳面は計器か、母集団か」をこれで見分けます。
+            # 渡さないと、**測る道具を母集団と読んで本物の警報を黙らせます**。
             hit = needs_beyond_rule(str(n.get("what") or ""),
-                                    str(n.get("on_date") or ""), today)
+                                    str(n.get("on_date") or ""), today,
+                                    data_file=n.get("data_file"))
             if hit:
                 # **`lever` も一緒に返します**（2026-09-01 に足した）。
                 # `scripts/run_marker._unreachable_premise_lines()` が
