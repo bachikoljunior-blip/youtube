@@ -7194,11 +7194,44 @@ def plan(m: dict, a: dict, density: int = PLAN_PUBLISH_PER_DAY,
     #     この欄は `data/eta.jsonl` に積まれ、`--reflect` が JSON へ書き戻します ——
     #     `TypeError: Object of type date is not JSON serializable` で
     #     **反映だけが落ち、ship は残る**という形で出ます（回は止まりません）。
+    #
+    #     [!] **この免除は `per_video` のものです。腕の名前ごと持つこと**
+    #     （2026-09-05 05:xx・最適化の回に踏んだ）。`_rc` の出どころは
+    #     `blocking["sample"]` ＝ `long_sample_forecast()` ＝ **長尺の1本あたり
+    #     再生の標本が n≥`LONG_SAMPLE_MIN` に届く日**です。`sub_rate` とも
+    #     `subs_badge` の A/B とも、一切 関係がありません。
+    #
+    #     ところが下の `gate_arm_pick()` は、この欄を積んだ**あとで**
+    #     `lever_hint` を門1' の腕（`sub_rate`）へ**書き換えます**。
+    #     画面（`headline()`）と台帳は `pl["lever_hint"]` を読むので、
+    #     **`per_video` の免除が `sub_rate` の名前で刷られていました**:
+    #
+    #         ### **その `sub_rate` の測定は、予約済みの本が 2026-09-06 に
+    #             答えます** → **この回は別の腕を引くこと。**
+    #
+    #     実測 `data/runs.jsonl`（2026-09-05 05:xx）: ship 239件 のうち
+    #     **90件（38%）**が `lever_hint="sub_rate"` かつ `lever_hint_covered`
+    #     を持って出ています。その 90件 が引いた腕は `per_video` 69 ／
+    #     `none` 12 ／ **`sub_rate` は 7件**。`moves` が 0 以外は **3件**。
+    #     そして `lever_followed=False` が **83件** —— **画面の指示どおりに
+    #     別の腕を引いた回が、名指しを外したとして採点されていました。**
+    #
+    #     同じ日の `scripts/eta.py` 自身の数では、門1' は据え置き **512日** に
+    #     対し `sub_rate` を天井（×6.22）まで引けば **83日**、`per_video`
+    #     （×4.54）で **113日** —— **いちばん大きい腕から回を追い出す1行**でした。
+    #     そして `scripts/ab_slots.py` の実測では `subs_badge` の A/B は
+    #     **両群とも「まだ1本も予約に在りません」** ＝ その日に答える本は
+    #     **0本**です。免除の中身も空でした。
+    #
+    #     **覆る条件**: `blocking["sample"]` が腕ごとに出るようになったら
+    #     （＝ `sub_rate` の側にも「予約済みの本で埋まる日」が立ったら）、
+    #     ここは `per_video` のべた書きをやめて、その腕の名前を入れること。
     _fc = ((out.get("blocking") or {}).get("sample")) or {}
     _rc = _fc.get("reaches")
     if _rc and out.get("lever_hint") == "per_video":
         out["lever_hint_covered"] = (_rc.isoformat() if hasattr(_rc, "isoformat")
                                      else str(_rc))
+        out["lever_hint_covered_arm"] = "per_video"
     # --- **門の日数を、頭の3行まで運ぶ**（2026-09-03・最適化の回）---
     #     `a`（門の辞書）は `headline()` に渡っていませんでした。到達日が
     #     出ない回は、腕を門1' の日数で測るしかないのに（`gate_arm_lines()`）、
@@ -9152,7 +9185,13 @@ def headline(pl: dict, prev: dict | None = None,
             " **`--lever` をこれに合わせないこと。**"
             " この回の `lever_followed` は意味を持ちません。")
     out.extend(_escape_lines(pl, bar))
-    if pl.get("lever_hint_covered"):
+    # **免除を刷る前に、それが「この腕のもの」か確かめること**（2026-09-05 05:xx）。
+    #     上流（`plan()`）で落としてありますが、名指しを書き換える口は
+    #     `gate_arm_pick()` / `resume_gate` の2つで、**3つめが増えたら
+    #     また同じ形で漏れます**。刷る側でも見ておくと、増えた口は黙って通らない。
+    #     **覆る条件**: `lever_hint_covered` が腕ごとの辞書になったら、ここは要りません。
+    if (pl.get("lever_hint_covered")
+            and pl.get("lever_hint_covered_arm", pl.get("lever_hint")) == pl.get("lever_hint")):
         out.append(f"{bar} **その `{pl['lever_hint']}` の測定は、予約済みの本が"
                    f" {pl['lever_hint_covered']} に答えます** →"
                    " **この回は別の腕を引くこと。**"
@@ -10951,6 +10990,16 @@ def solve(m: dict, points: list[dict], *, full: bool = True) -> dict:
         pl["lever_hint_binding"] = pl.get("lever_hint")
         pl["lever_hint"] = _gap["lever"]
         pl["lever_from"] = "門1'"
+        # **免除は、それを計算した腕から離れたら落とすこと**（2026-09-05 05:xx）。
+        #     すぐ下の `gate` の側は 2026-08-26 から同じことをしています
+        #     （「`lever_hint_covered` は消すこと」）。**こちらには無く**、
+        #     `per_video` の免除が `sub_rate` の名前で 90件 刷られました
+        #     （数と実害は `plan()` の `lever_hint_covered` の註）。
+        #     **`pop` ではなく名前で判定します** —— いつか `sub_rate` 側にも
+        #     免除が立ったとき、名前が合えばそのまま通ってほしいからです。
+        if pl.get("lever_hint_covered_arm") not in (None, pl["lever_hint"]):
+            pl.pop("lever_hint_covered", None)
+            pl.pop("lever_hint_covered_arm", None)
     if _gap is not None:
         pl["gate_arm"] = _gap
     # --- **止まっている間の名指しは `gate`**（2026-08-30・最適化の回が足した）---
@@ -10992,6 +11041,7 @@ def solve(m: dict, points: list[dict], *, full: bool = True) -> dict:
         # **`lever_hint_covered` は消すこと。** あれは「名指しの測定が予約済みの
         # 本で答えが返る」という意味で、`gate` には掛かりません（本が出ないので）。
         pl.pop("lever_hint_covered", None)
+        pl.pop("lever_hint_covered_arm", None)
     return {"a": a, "sup": sup, "pl": pl, "tr": tr,
             "row": _row(m, a, pl, tr, sup)}
 
@@ -11010,6 +11060,10 @@ def _row(m: dict, a: dict, pl: dict, tr: dict | None, sup: dict | None) -> dict:
     #     積まないと `run_marker.py` から見えず、`lever_followed` が
     #     道具の指示どおりに動いた回を「外した」と数えつづけます。
     row["lever_hint_covered"] = pl.get("lever_hint_covered")
+    # **免除がどの腕のものか**も積むこと（2026-09-05 05:xx）。積まないと、
+    #     次の回は「`sub_rate` の免除」と「`per_video` の免除」を台帳から
+    #     見分けられません（過去 90件 が見分けられませんでした）。
+    row["lever_hint_covered_arm"] = pl.get("lever_hint_covered_arm")
     # **`per_video` の標本の最終日**（2026-09-02 夜）。上の行は `a` の
     #     **数だけ**を拾うので、日付（文字列）はここで明示的に積みます
     #     （`pv_sample_days` / `pv_sample_age_days` / `pv_resid_*` は数なので、
