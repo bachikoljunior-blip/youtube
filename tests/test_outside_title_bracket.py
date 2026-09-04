@@ -105,3 +105,63 @@ def test_09_05の枠の本の題が脚を通る():
         return
     題 = str(json.loads(p.read_text(encoding="utf-8")).get("title") or "")
     assert not _bracket_problems(題), f"09/05 の枠の本の題が (4a2) を落としています: {題}"
+
+
+#: **写す先の帯が、規則の2つの節をどれだけやっているか**（2026-09-04 20:4x に数えた）。
+#: `data/niche_ceiling.jsonl` 2026-09-03 の長尺上位のうち 100万回超 **15本**::
+#:
+#:     題に金額（`_OUTSIDE_MONEY_RE`）                   **3/15 ＝ 20%**
+#:     題の末尾12文字に判断の語（`_OUTSIDE_DECIDE_RE`）   **1/15 ＝  7%**
+#:
+#: 規則の直前の行は「**外の上位の形を写す**」なので、**帯の 20% / 7% を全件の門にすると、
+#: 写すどころか帯から離れます。** だから `OUTSIDE_RULE_LEGS` では
+#: `OUTSIDE_LEG_NOT_COUNTED` にしてあります（「断定・煽りの語」と同じ扱い）。
+帯の実測_題に金額 = (3, 15)
+帯の実測_題の末尾に判断の語 = (1, 15)
+
+
+def test_題の金額と判断の語は門にしない():
+    """**この2つを門にしないこと。** 帯の 20% / 7% しかやっていない形です。
+
+    `OUTSIDE_RULE_LEGS` は 2026-09-04 20:4x まで、この2節を
+    `outside_title_problems (4b)` / `(4c)` に結び付けていました。**番号がずれており**、
+    code 側の (4b) は題の長さ・(4c) はサムネの金額です ——
+    ＝ **表は「数えている」と名乗り、どちらの節も数えられていませんでした。**
+    `test_outside_rule_legs` は「どこかの口に結び付いているか」しか見ないので緑のまま。
+
+    **倒す先は前提の判定**（`config/hypotheses.yaml`「外の作り方を写した長尺」）。
+    **覆る条件**: 帯を引き直して、どちらかが 100万回の帯で **半分を超えた**ら、
+    そのときは数える口を足して `OUTSIDE_RULE_LEGS` の行を差し替えること。
+    """
+    素 = "【60歳以上の方へ】年金のはなし"
+    assert sw.outside_title_problems({"title": 素}) == [], (
+        "題の金額／判断の語が門になっています。帯の実測は "
+        f"{帯の実測_題に金額[0]}/{帯の実測_題に金額[1]} と "
+        f"{帯の実測_題の末尾に判断の語[0]}/{帯の実測_題の末尾に判断の語[1]} です")
+    表 = dict(sw.OUTSIDE_RULE_LEGS)
+    for 節 in ("続けて計算出力の数字で", "最後に判断の語"):
+        assert 節 in 表, f"`OUTSIDE_RULE_LEGS` に「{節}」がありません"
+        assert 表[節].startswith(sw.OUTSIDE_LEG_NOT_COUNTED), (
+            f"「{節}」が数える口に結び付いています。門にするなら、"
+            "上の実測（帯の 20% / 7%）を先に覆すこと")
+
+
+def test_帯の実測は数え直せる():
+    """**写した数を、実物から数え直せること。** 引き直したら、この検査が先に赤くなります。
+
+    赤くなったら、直すのは上の2つの定数と `OUTSIDE_RULE_LEGS` の理由の文です
+    （**数だけ書き換えて理由を古いままにしないこと**）。
+    """
+    import json
+    from pathlib import Path
+    f = Path(__file__).resolve().parent.parent / "data" / "niche_ceiling.jsonl"
+    if not f.exists():
+        return
+    rows = [json.loads(l) for l in f.read_text(encoding="utf-8").splitlines() if l.strip()]
+    top = [t for t in (rows[-1].get("top") or []) if (t.get("views") or 0) >= 1_000_000]
+    if not top:
+        return
+    金額 = sum(1 for t in top if sw._OUTSIDE_MONEY_RE.search(t.get("title") or ""))
+    判断 = sum(1 for t in top if sw._OUTSIDE_DECIDE_RE.search((t.get("title") or "")[-12:]))
+    assert (金額, len(top)) == 帯の実測_題に金額, (金額, len(top))
+    assert (判断, len(top)) == 帯の実測_題の末尾に判断の語, (判断, len(top))

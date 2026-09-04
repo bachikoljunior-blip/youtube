@@ -1751,14 +1751,32 @@ OUTSIDE_RULE_LEGS: tuple[tuple[str, str], ...] = (
     ("先頭に【 】で相手か場面", "outside_title_problems (4a)（【 】が在るか）"
      "＋ (4a2)（**中が相手か場面か**・2026-09-04 20:2x）"),
     ("題材そのものは【 】に入れない", "outside_title_problems (4a2)"),
-    ("最後に判断の語", "outside_title_problems (4b)"),
-    ("全角45文字以内", "outside_title_problems (4c)"),
+    # **番号がずれていました**（2026-09-04 20:4x に見つけた）。
+    # ここは「最後に判断の語 → (4b)」「全角45文字以内 → (4c)」と書いていましたが、
+    # `outside_title_problems` の docstring の番号は
+    # **(4b) 題の長さ ／ (4c) サムネの金額 ／ (4d) サムネの判断の語** です。
+    # ＝ **表の (4b)(4c) は、実際には別の物を数える口を指していました。**
+    # `test_outside_rule_legs` は「どこかの口に結び付いているか」しか見ないので、
+    # **番号が違っても緑のまま**でした。**この表は番号を書く場所なので、合わせること。**
+    ("続けて計算出力の数字で", OUTSIDE_LEG_NOT_COUNTED
+     + "**写す先の帯がやっていない**（2026-09-04 20:4x に数えた・`data/niche_ceiling.jsonl` "
+       "2026-09-03 の長尺上位のうち 100万回超 15本）: 題に金額（`_OUTSIDE_MONEY_RE`）は "
+       "**3/15＝20%**。規則の直前の行は「**外の上位の形を写す**」なので、"
+       "帯の 20% を全件の門にすると、写すどころか帯から離れる。"
+       "**倒す先は前提の判定**（`config/hypotheses.yaml`「外の作り方を写した長尺」・"
+       "すぐ下の『断定・煽りの語』と同じ扱い）"),
+    ("最後に判断の語", OUTSIDE_LEG_NOT_COUNTED
+     + "**同じ回に同じ所で数えた**: 題の末尾12文字に判断の語（`_OUTSIDE_DECIDE_RE`）は "
+       "**1/15＝7%**（`【超改正】…年12万円の節税も` の1本だけ）。"
+       "**サムネの2行のほうは (4d) が数えています** —— 混ぜないこと。"
+       "こちらは題の話で、帯が 7% しかやっていない"),
+    ("全角45文字以内", "outside_title_problems (4b)"),
     ("数字は計算出力に在る値だけ",
      OUTSIDE_LEG_NOT_COUNTED + "計算出力との突き合わせは `verify._check_narrated_shown` の持ち場"),
     ("断定・煽りの語は使わない",
      OUTSIDE_LEG_NOT_COUNTED + "claim の本文（【緊急解説／知らないと損】）と正面から逆を向いている。"
      "どちらへ倒すかは前提の判定で決める（`config/hypotheses.yaml` の註 2.）"),
-    ("サムネの2行は", "outside_title_problems (4d)"),
+    ("サムネの2行は", "outside_title_problems (4c)（金額）＋ (4d)（判断の語）"),
     ("どの行も全角11文字以内", "outside_title_problems (4e)"),
     ("例:「75歳まで生きた場合", "outside_title_problems (4e) の逃げ道の実例（上限が満たせる数であることの証拠。`tests/test_outside_thumb_line_len.py::test_上限は満たせる数である`）"),
 )
