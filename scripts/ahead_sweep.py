@@ -208,7 +208,9 @@ def _run_out(argv: list[str], label: str, timeout: int = 1800) -> tuple[int, str
     間引くこと（何を落とすかは、そのとき何を読みたいかで決まる）。
     """
     import threading                                           # noqa: PLC0415
+    import time as _time                                       # noqa: PLC0415
     print(f"[sweep] $ {' '.join(argv)}", flush=True)
+    t0 = _time.monotonic()
     lines: list[str] = []
     # **子の側にも「ためるな」と言うこと**（2026-09-04 22:0x に踏んだ）。
     #     `bufsize=1` は**こちらの読み口**の話で、子の `stdout` は
@@ -244,14 +246,79 @@ def _run_out(argv: list[str], label: str, timeout: int = 1800) -> tuple[int, str
             for raw in proc.stdout:
                 line = raw.rstrip("\n")
                 lines.append(line)
-                print(f"[sweep]   {line}", flush=True)
+                # **1行ごとに、始めてから何分たったかを付ける**（2026-09-04 17:1x）。
+                #     この関数の docstring は 09-03 から
+                #     「**どの段が遅いか** …… いま誰も測れていません」と書いています。
+                #     **流すようにしても、時刻が無ければ段の長さは出ません** ——
+                #     25回 焼いて、`data/rebake.jsonl` に残っているのは総和の `seconds` だけで、
+                #     55分 の内訳を言えた回は **0回** です（この回が数えた）。
+                #     行に `[+MM:SS]` が付けば、`data/rebake.log` の
+                #     `[clarity]`／`[tts:google] i/N`／`[render] クリップ i/N` の
+                #     **差を引くだけで段の長さが出ます。**新しい帳面も道具も要りません。
+                #     ＝ **次に何を速くするかを、勘ではなく差で選べます**
+                #     （この回はクリップを 11.4分 と測って選びましたが、
+                #      分かりやすさの輪と読み照合の輪は**まだ 1度も測られていません**）。
+                el = _time.monotonic() - t0
+                print(f"[sweep]   [+{int(el // 60):02d}:{int(el % 60):02d}] {line}", flush=True)
         rc = proc.wait()
     finally:
         timer.cancel()
+    el = _time.monotonic() - t0
     if killed:
-        print(f"[sweep] [!] {label} が {timeout}秒 で切れました", flush=True)
+        print(f"[sweep] [!] {label} が {timeout}秒 で切れました（実測 {el / 60:.1f}分）", flush=True)
         return 124, "\n".join(lines)
+    print(f"[sweep] {label} rc={rc}（実測 {el / 60:.1f}分）", flush=True)
     return rc, "\n".join(lines)
+
+
+#: **段の見分け方**（`data/rebake.log` の1行の頭 → 段の名前）。
+#: `stage_spans()` が使います。**行の字が変わったらここも変えること** ——
+#: 変え忘れると、その段だけ「その他」に落ちます（黙って落ちるので、
+#: `tests/test_stage_spans.py` が実物の1行で当てています）。
+STAGE_MARKS: tuple[tuple[str, str], ...] = (
+    ("[clarity]", "分かりやすさの輪"),
+    ("[yomi", "読み照合の輪"),
+    ("[tts:", "音声合成"),
+    ("[render] クリップ", "クリップ"),
+    ("[render]", "字幕・合成"),
+    ("[verify]", "検査"),
+    ("[upload", "投稿"),
+    ("[pipeline]", "台本・下ごしらえ"),
+)
+
+
+def stage_spans(log_lines) -> list[tuple[str, float]]:
+    """**`[+MM:SS]` の付いた log から、段ごとの分数を出す。**（`(段の名前, 分)` の並び）
+
+    入力は `data/rebake.log` の行（`[sweep]   [+12:34] …` の形）。
+    **時刻の付いていない行は読み飛ばします** —— 09-04 17:1x より前の log は
+    全部そうなので、**古い log から段の長さが出ないのは正常**です。
+
+    数え方は「その段の行が出ていた**あいだ**」——
+    ある行の時刻から、**次に別の段の行が出た時刻**までを、その段に付けます。
+    ＝ 段が行き来しても（輪が2周すれば `[clarity]` は何度も出ます）合計で拾えます。
+    """
+    import re                                                  # noqa: PLC0415
+    pat = re.compile(r"\[\+(\d+):(\d\d)\]\s*(.*)$")
+    pts: list[tuple[float, str]] = []
+    for raw in log_lines:
+        m = pat.search(str(raw))
+        if not m:
+            continue
+        t = int(m.group(1)) * 60 + int(m.group(2))
+        body = m.group(3)
+        name = "その他"
+        for mark, label in STAGE_MARKS:
+            if body.startswith(mark):
+                name = label
+                break
+        pts.append((float(t), name))
+    if len(pts) < 2:
+        return []
+    total: dict[str, float] = {}
+    for (t, name), (t2, _) in zip(pts, pts[1:]):
+        total[name] = total.get(name, 0.0) + max(0.0, t2 - t)
+    return sorted(((k, v / 60.0) for k, v in total.items()), key=lambda kv: -kv[1])
 
 
 def reasons_to_skip(now: datetime | None = None) -> str:
