@@ -87,3 +87,57 @@ def test_実物の帯が空でないこと():
     if not nc.CORPUS.is_file():
         return
     assert len(nc.corpus_rows()) >= 31
+
+
+def test_空の_published_だけを埋める(tmp_path):
+    """**行は足さない・既に入っている日付は上書きしない**（`corpus_fill_published`）。"""
+    out = tmp_path / "corpus.jsonl"
+    nc.corpus_write([{"id": "a", "views": 9, "form": "long", "title": "x"},
+                     {"id": "b", "views": 8, "form": "long", "title": "y",
+                      "published": "2020-01-01T00:00:00Z"}],
+                    "2026-09-04T00:00:00+00:00", path=out)
+    asked: list[list[str]] = []
+
+    def fake(ids):
+        asked.append(list(ids))
+        return {"a": "2026-05-05T00:00:00Z", "b": "1999-01-01T00:00:00Z"}
+
+    res = nc.corpus_fill_published(path=out, fetch_many=fake)
+    assert asked == [["a"]], "既に日付の在る本を引きに行かないこと"
+    assert res["lines"] == 1
+    rows = {r["id"]: r for r in nc.corpus_rows(path=out)}
+    assert rows["a"]["published"] == "2026-05-05T00:00:00Z"
+    assert rows["b"]["published"] == "2020-01-01T00:00:00Z"
+    assert len(out.read_text(encoding="utf-8").strip().splitlines()) == 2
+
+
+def test_引けなければ_file_は変わらない(tmp_path):
+    out = tmp_path / "corpus.jsonl"
+    nc.corpus_write([{"id": "a", "views": 9, "form": "long", "title": "x"}],
+                    "2026-09-04T00:00:00+00:00", path=out)
+    before = out.read_text(encoding="utf-8")
+    res = nc.corpus_fill_published(path=out, fetch_many=lambda ids: {})
+    assert res["filled"] == 0 and res["lines"] == 0
+    assert out.read_text(encoding="utf-8") == before
+
+
+def test_帯の_published_の被覆(tmp_path):
+    out = tmp_path / "corpus.jsonl"
+    nc.corpus_write([{"id": "a", "views": 9, "form": "long", "title": "x"},
+                     {"id": "b", "views": 8, "form": "long", "title": "y",
+                      "published": "2020-01-01T00:00:00Z"}],
+                    "2026-09-04T00:00:00+00:00", path=out)
+    assert nc.corpus_published_cover(path=out)["long"] == {"have": 1, "all": 2}
+
+
+def test_実物の帯は齢で割れること():
+    """**齢で割った数が n=16 に落ちないこと**（2026-09-04 22:5x に 0/335 → 335/335）。
+
+    ここが割れると、readout の「1日あたり」は 15本 の標本に戻り、
+    帯の作りの差（相手の名指し・場面・煽り）が符号ごと裏返って見えます。
+    """
+    if not nc.CORPUS.is_file():
+        return
+    for form, d in nc.corpus_published_cover().items():
+        if d["all"] >= 100:
+            assert d["have"] / d["all"] >= 0.9, f"{form}: published {d['have']}/{d['all']}"
