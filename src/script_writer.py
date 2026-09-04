@@ -743,6 +743,9 @@ def long_script_problems(script, topic_id: str = "") -> list[str]:
     # `style: outside_long` の題材だけ。理由と覆る条件は `outside_opening_problems` の docstring。
     if topic_id and _topic_style(topic_id) == "outside_long":
         problems += outside_opening_problems(script)
+        # **規則は3つ命じているのに、数えていたのは (1) だけでした**（2026-09-04）。
+        # (2) 章・(3) 締め も同じ理由で数えます（`outside_body_problems` の docstring）。
+        problems += outside_body_problems(script)
     # **入り方と締め方が、直近の本と揃っていないか**（2026-08-30・解除条件3）。
     # **長尺のほうが深刻でした** —— 134本のうち 113本（84%）が同じ4文字で始まり、
     # 82本（61%）が同じ4文字で終わっています（`python -m src.frames`）。
@@ -1487,6 +1490,121 @@ def outside_opening_problems(script, first: int = OUTSIDE_OPENING_SEGS) -> list[
     if not _OUTSIDE_PROMISE_RE.search(head):
         problems.append(f"冒頭 {first}コマ に見続ける約束が無い（「最後まで見れば、自分の場合の数字が出せます」の1文。"
                         "外の上位4本は 4/4 に在る）")
+    return problems
+
+
+#: `OUTSIDE_LONG_RULE` (2)「章を5〜7つ」。**この2つが唯一の出どころ**（規則の本文と
+#: 数える側が別々の数を持つと、この repo でいちばん多い壊れ方になります）。
+OUTSIDE_CHAPTERS_LO = 5
+OUTSIDE_CHAPTERS_HI = 7
+#: (2)「章ごとに、渡した表から**別の表**を1枚以上 chart か table で出す」。
+OUTSIDE_TABLE_KINDS = ("chart", "table")
+#: (3)「締めは『自分の場合の数字を出す手順』を3つ、順に」を、末尾の何コマで探すか。
+OUTSIDE_CLOSING_SEGS = 4
+_OUTSIDE_STEPS_RE = re.compile(r"手順|順に|順番")
+_OUTSIDE_THREE_RE = re.compile(r"[3三]つ")
+
+
+def _visual_of(seg):
+    """コマの `visual`（`dict` でも pydantic でも同じ形で返す）。"""
+    v = seg.get("visual") if isinstance(seg, dict) else getattr(seg, "visual", None)
+    if v is None:
+        return {}
+    if isinstance(v, dict):
+        return v
+    return {"kind": getattr(v, "kind", None), "headline": getattr(v, "headline", None)}
+
+
+def outside_body_problems(script) -> list[str]:
+    """`style: outside_long` の台本の**本体**が `OUTSIDE_LONG_RULE` の (2)(3) になっているかを
+    **数えて**並べる。空なら合格。**API 0単位・純関数。**
+
+    ## なぜ要るか（2026-09-04 12:xx に踏んで足した）
+
+    **`OUTSIDE_LONG_RULE` は (1) 冒頭・(2) 章・(3) 締め の3つを命じているのに、
+    数えていたのは (1) だけでした**（`outside_opening_problems`）。
+    (2)(3) は**文章の指示のまま**で、`generate()` に渡って終わりです。
+
+    その `outside_opening_problems` の docstring 自身が、なぜ数えるかを書いています ——
+    **「文章の指示は守られない（`generate()` の実測 2026-08-09）ので、数える」**。
+    **同じ理由が (2)(3) にもそのまま当たります。** 片方だけ数えたのは、
+    (1) が外れた本（`6PKux5HNnUE`）を実際に見たからで、(2)(3) が守られている証拠が
+    在ったからではありません。
+
+    **実測（2026-09-04・`Ec-j1-W4nqw`＝09/05 に出る本）: (2)(3) とも守られています** ——
+    本題の章 6つ／全 7章 に chart か table が 1〜5枚・見出しの重なり 0／
+    末尾に「自分の場合の数字を出す手順は三つです」。**＝ この検査は、いま在る本を
+    落とすために足すのではありません。次の本が黙って落とすのを止めるためです。**
+
+    ## 何を数えるか
+
+        (2a) 本題の章が 5〜7つ（`chapters` の先頭は冒頭 90秒 の章なので数えない）
+        (2b) どの章にも chart か table が 1枚以上
+        (2c) 章をまたいで**同じ見出しの表を使い回していない**（「同じ表を2つの章で使わない」）
+        (3)  末尾 4コマ に「手順（順に／順番）」＋「3つ（三つ）」が在る
+
+    **`chapters` が無い台本は、何も言いません**（読めないものは通す ——
+    `house_rule.needs_beyond_rule()` と同じ姿勢）。章の区切りが引けないので、
+    (2) は測っていないのであって、守られていないのではありません。
+
+    **覆る条件**: 前提「外の作り方を写した長尺」が外れたら（48h で 100回 未満）、
+    `OUTSIDE_LONG_RULE` ごと使わないので、この検査も一緒に落とすこと
+    （`config/hypotheses.yaml` の `next_if_false`）。
+    """
+    segs = list(getattr(script, "segments", None)
+                or (script.get("segments") if isinstance(script, dict) else []) or [])
+    chs = list(getattr(script, "chapters", None)
+               or (script.get("chapters") if isinstance(script, dict) else []) or [])
+    if not segs:
+        return []
+    problems: list[str] = []
+
+    if chs:
+        starts = []
+        for c in chs:
+            i = c.get("segment_index") if isinstance(c, dict) else getattr(c, "segment_index", None)
+            lab = c.get("label") if isinstance(c, dict) else getattr(c, "label", None)
+            if isinstance(i, int):
+                starts.append((i, str(lab or "")))
+        starts.sort()
+        # 先頭の章は冒頭 90秒（`outside_opening_problems` が見ている所）なので数えない。
+        # **締めの章は数に入れます** —— 実測 `Ec-j1-W4nqw` は 冒頭＋6 で、
+        # その 6 が規則の「5〜7つ」に当たります（本題5＋締め1）。
+        n = len(starts) - 1
+        if not (OUTSIDE_CHAPTERS_LO <= n <= OUTSIDE_CHAPTERS_HI):
+            problems.append(f"冒頭を除く章が {n}つ（{OUTSIDE_CHAPTERS_LO}〜{OUTSIDE_CHAPTERS_HI}つ。"
+                            "外の上位4本を写した形 —— 章ごとに判断を1つ置くため）")
+        bounds = [i for i, _ in starts] + [len(segs)]
+        seen: dict[str, str] = {}
+        # **最後の章は締め**（規則 (3)「自分の場合の数字を出す手順を3つ」）なので、
+        # 表を求めません。**実測でここを踏みました**（2026-09-04）——
+        # `1huadpEk6HY` / `6PKux5HNnUE` の末尾の章「自分の数字に置き換える」は
+        # 手順だけの章で、表が無いのが正しい。**冒頭の章（`starts[0]`）は
+        # `outside_opening_problems` の持ち場**なので、こちらも求めません。
+        for k, (lo, lab) in enumerate(starts):
+            hi = bounds[k + 1]
+            if k == 0 or k == len(starts) - 1:
+                continue
+            heads = [str(_visual_of(s).get("headline") or "")
+                     for s in segs[lo:hi]
+                     if _visual_of(s).get("kind") in OUTSIDE_TABLE_KINDS]
+            if not heads:
+                problems.append(f"章「{lab}」に chart も table も無い"
+                                "（章ごとに、渡した表から別の表を1枚以上）")
+            for h in heads:
+                if not h:
+                    continue
+                if h in seen and seen[h] != lab:
+                    problems.append(f"表「{h}」を章「{seen[h]}」と章「{lab}」の2つで使っている"
+                                    "（同じ表を2つの章で使わない）")
+                seen.setdefault(h, lab)
+
+    tail = "".join(
+        (s.get("narration") if isinstance(s, dict) else getattr(s, "narration", None)) or ""
+        for s in segs[-OUTSIDE_CLOSING_SEGS:])
+    if not (_OUTSIDE_STEPS_RE.search(tail) and _OUTSIDE_THREE_RE.search(tail)):
+        problems.append(f"末尾 {OUTSIDE_CLOSING_SEGS}コマ に締めの手順が無い"
+                        "（「自分の場合の数字を出す手順」を3つ、順に）")
     return problems
 
 
