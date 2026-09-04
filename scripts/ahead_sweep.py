@@ -1677,6 +1677,28 @@ def rebake_died(vid: str, sha: str, *, now: datetime, root: Path | None = None) 
     return not rebake_running(vid, sha, root)
 
 
+#: `_run()` が時間切れで子を殺したときの返り値（`_run_out` の `return 124`）。
+REBAKE_TIMEOUT_RC = 124
+#: **時間切れで落ちた台本を、もう一度 焼いてよい回数**（2026-09-04 16:5x に足した）。
+#: これを超えたら「焼けない台本」と読み、印を残して次の回に台本の側を直させます。
+REBAKE_TIMEOUT_RETRIES = 2
+
+
+def rebake_timeouts(vid: str, sha: str, *, root: Path | None = None) -> int:
+    """**その台本が、時間切れで落ちた回数。** API 0単位。
+
+    帳面（`data/rebake.jsonl`）の `done` / `late` のうち、`rc` が
+    `REBAKE_TIMEOUT_RC` の行を数えます。
+    """
+    n = 0
+    for r in _rebake_rows(root):
+        if r.get("video_id") != vid or r.get("sha") != sha:
+            continue
+        if r.get("kind") in ("done", "late") and r.get("rc") == REBAKE_TIMEOUT_RC:
+            n += 1
+    return n
+
+
 def rebake_attempted(vid: str, sha: str, *, now: datetime, root: Path | None = None) -> bool:
     """**同じ台本（sha）を一度 焼いたか。** 印が在って、帳面に `done` が在る（rc を問わない）か、
     印が `REBAKE_MARK_STALE` より若い（＝いま焼いている）なら True。
@@ -1686,9 +1708,29 @@ def rebake_attempted(vid: str, sha: str, *, now: datetime, root: Path | None = N
     mark = _rebake_marks_dir() / f"{vid}-{sha}"
     if not mark.exists():
         return False
+    # **時間切れの `done` は「焼いた」ではありません**（2026-09-04 16:5x に踏んだ）。
+    #     実測: 09/04 15:09 に起きた `O_lfBxB7S8Q`（sha acbf24ae7bfd）の焼きが
+    #     5400秒 で切れ（rc=124・クリップ 5/83）、`rc` を問わず `done` と書かれました。
+    #     `done` が1行 在れば、**その台本は二度と焼かれません** ——
+    #     台本の側は 6脚とも ○ で、直す所が1つも無いのに、**焼けないまま枠に出ます。**
+    #     オーナーが固定した規則3（出る瞬間まで良くし続ける）と正面から食い違います。
+    #     時間切れは器の混み具合で起きるので（同じ台本が 09/04 14:42 には 3325秒 で
+    #     焼けています）、**`REBAKE_TIMEOUT_RETRIES` 回までは「焼いた」に数えません。**
+    #     それを超えたら「この台本はこの器では焼けない」と読み、印を残します。
+    timeouts = 0
     for r in _rebake_rows(root):
-        if r.get("kind") == "done" and r.get("video_id") == vid and r.get("sha") == sha:
-            return True
+        if r.get("kind") != "done" or r.get("video_id") != vid or r.get("sha") != sha:
+            continue
+        if r.get("rc") == REBAKE_TIMEOUT_RC:
+            timeouts += 1
+            continue
+        return True
+    if timeouts:
+        # **`done` / `late` が在る ＝ 焼く側はもう終わっています。** 印が若くても
+        #     「いま焼いている」ではありません（下の齢の判定へ落とさないこと ——
+        #     時間切れの印は落とすようにしましたが、**落とす前に書かれた行**が
+        #     この枝に来ます。実測 09/04 15:09 の `O_lfBxB7S8Q` がそれ）。
+        return timeouts >= REBAKE_TIMEOUT_RETRIES
     # **焼きかけで消えた回は「焼いた」ではありません**（印の齢 3時間 を待たない）。
     if rebake_died(vid, sha, now=now, root=root):
         return False
@@ -2046,6 +2088,22 @@ def rebake_run(vid: str, topic: str, sha: str, *, takeover: bool = False) -> int
             mark_t.unlink()
         except OSError:
             pass
+    # **時間切れも「間に合わなかった回」です**（2026-09-04 16:5x に踏んだ）。
+    #     `late` は、すぐ上の**枠の引き継ぎ**の枝でしか立ちませんでした
+    #     （＝ `rc == 0` で、焼き終えたのに枠が過ぎていた回だけ）。
+    #     ところが 09/04 15:09 の焼きは **5400秒 で切れて rc=124**、`late` は False のまま
+    #     `done` が残り、**台本が 6脚とも ○ なのに二度と焼けない**状態になりました。
+    #     すぐ下の註が「焼く価値は残っているのに」と言っているのは、この形です。
+    if rc == REBAKE_TIMEOUT_RC and not late:
+        tried = rebake_timeouts(vid, sha, root=root)
+        if tried < REBAKE_TIMEOUT_RETRIES - 1:
+            late = True
+            print(f"[rebake-run] [!] 時間切れ（{tried + 1}回目・上限 {REBAKE_TIMEOUT_RETRIES}）—— "
+                  f"**印を落とします。次の回がもう一度 焼けます**（台本は直さなくてよい）", flush=True)
+        else:
+            print(f"[rebake-run] [!] 時間切れが {tried + 1}回 続きました（上限 {REBAKE_TIMEOUT_RETRIES}）—— "
+                  f"**印は残します。** この台本はこの器では焼き切れません ——"
+                  f"コマ数を減らすか、`_run` の持ち時間を延ばすこと", flush=True)
     # **間に合わなかった回は `done` ではありません**（2026-09-04）。
     #     `rebake_attempted()` は rc を問わず `done` を「焼いた」と読むので、
     #     `done` を残すと**同じ台本は二度と焼かれません** —— 焼く価値は残っているのに。
@@ -2076,8 +2134,10 @@ def rebake_run(vid: str, topic: str, sha: str, *, takeover: bool = False) -> int
             print(f"[rebake-run] [!] 押せませんでした: {str(exc)[:160]} —— "
                   f"`git add data/daily_pick.jsonl data/critique_queue && git commit && git push` を手で", flush=True)
     else:
+        again = "**次の回がもう一度 焼きます**（印を落としました）" if late else \
+            "同じ台本は二度 焼きません —— 台本を直して commit すること"
         print(f"[rebake-run] [!] 焼き直せませんでした（rc={rc}・{time.time() - t0:.0f}秒）。"
-              f"同じ台本は二度 焼きません —— 台本を直して commit すること", flush=True)
+              f"{again}", flush=True)
     try:
         fcntl.flock(fh, fcntl.LOCK_UN)
         fh.close()
