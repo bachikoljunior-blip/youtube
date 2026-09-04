@@ -105876,3 +105876,26 @@ claim は「**題は【緊急解説／知らないと損】＋…**」と書い�
 `--ship` が `FIX_RUN_CAP`（`run_len 3`）で落ちました（`data/runs.jsonl` の `fix_gate`）。
 **種別は書き換えていません** —— `improve` を1件 挟んでから撃ち直します
 （12:16 の回が同じ形で `verdict` を挟んでいます）。**門は設計どおり効いています。**
+
+### 焼き直しは通りました（**この repo で 2回目**）
+
+    13:46 起こす → 14:42 差し替え  **3,325秒 ＝ 55.4分**（rc=0）
+    `Ec-j1-W4nqw`（62コマ）→ **`O_lfBxB7S8Q`（83コマ）**
+    同じ題材の下書き 3本（`Ec-j1-W4nqw` / `DfFyu8qZq3I` / `dRZnZrRy2Lw`）を外して差し替え
+    決め（`data/daily_pick.jsonl`）も新 ID へ自動で移りました
+
+**09/04 07:40 の 78.2分 より 23分 短い**のは、あの回が分かりやすさの輪を余分に回したためで、
+コマが 62 → 83 に増えても縮んでいます（TTS 83本 15分・render 83クリップ 10分）。
+**焼き直しの下限（`ahead_sweep.bake_minutes()` の 37分）は、いまも下限として正しい。**
+
+焼き上がった本は **5脚とも 0件**:
+
+    outside_opening_problems  []   outside_body_problems   []
+    outside_title_problems    []   outside_pacing_problems []
+
+**＝ 外の型との差 0 の1本目**が、09/05 09:00 の枠に出ます
+（枠へ置くのは **09/05 になってから** ——
+`python scripts/reschedule.py --move O_lfBxB7S8Q 2026-09-05T09:00`・50単位・固定その4）。
+
+**この回の ship 2件**: `fix`（5つ目の脚を数えた）／`improve`（間合いを型に合わせて差し替えた）。
+`fix` の2件目（`eta` の腕の名前と ×N）は `improve` を挟んでから撃ち直して通っています。
