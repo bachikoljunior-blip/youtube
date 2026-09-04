@@ -1331,13 +1331,27 @@ def _rebake_marks_dir() -> Path:
 #:   **ここには入れていません** —— 実測で輪を回していたのは上の2種だけで、
 #:   **測っていない欄をまとめて外すと、次に本当に必要な焼き直しを黙って落とします。**
 #:   外すなら、その回に実測を1つ添えること。
-RENDER_IGNORED_FIELDS: frozenset[str] = frozenset({
+#: **焼いても動画に入らないが、YouTube には出る欄。** 差があれば `metadata_fix.py`（50単位・数秒）。
+METADATA_FIELDS: frozenset[str] = frozenset({
     "title", "thumbnail_kicker", "thumbnail_line1", "thumbnail_line2",
-    # `title_alternatives` は**次に題を替えるときの候補**で、動画にも YouTube にも
-    # 1文字も出ません。**実測**: commit `abade351`（09-04 11:45）はこの欄**だけ**を
-    # 直しており、それだけで sha が変わり、20分の動画の焼き直し 55〜90分 が命じられました。
+})
+#: **動画にも YouTube にも1文字も出ない欄。** 差があっても**撃つ手はありません**。
+#:
+#: `title_alternatives` は**次に題を替えるときの候補**です。**実測**: commit `abade351`
+#: （09-04 11:45）はこの欄**だけ**を直しており、それだけで sha が変わり、
+#: 20分の動画の焼き直し 55〜90分 が命じられました。
+#:
+#: **この2つを分けたのは 2026-09-04 21:5x です**（実物で踏んだ）。1つの集合だったころ、
+#: `rebake_plan()` は「焼いても変わらない」と正しく言ったあとで、
+#: **差が `title_alternatives` だけの回にも**「**題かサムネだけが違います** ——
+#: `python scripts/metadata_fix.py <ID>`（50単位）」と命じていました。
+#: 実測 21:5x の `GFvAcxvDmYM`: 手元と控えの差は `title_alternatives` **1欄だけ**
+#: （題もサムネも一致）。そのとおり撃てば **50単位 使って、YouTube 側は1文字も変わりません。**
+LOCAL_ONLY_FIELDS: frozenset[str] = frozenset({
     "title_alternatives",
 })
+#: 焼き直しが要るかを決めるときに落とす欄（上の2つの和）。
+RENDER_IGNORED_FIELDS: frozenset[str] = METADATA_FIELDS | LOCAL_ONLY_FIELDS
 
 
 def _canon(text: str, *, render_only: bool = False) -> str:
@@ -1354,6 +1368,22 @@ def _canon(text: str, *, render_only: bool = False) -> str:
     if render_only and isinstance(obj, dict):
         obj = {k: v for k, v in obj.items() if k not in RENDER_IGNORED_FIELDS}
     return json.dumps(obj, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
+def _changed_fields(a: str, b: str) -> set[str]:
+    """**2つの台本で中身の違う最上位の欄**（読めなければ空・API 0単位）。
+
+    `rebake_plan()` が「焼き直しでは直らない差」を**種類で**分けるために使います
+    （`METADATA_FIELDS` は `metadata_fix.py` で直り、`LOCAL_ONLY_FIELDS` はどこにも出ません）。
+    """
+    import json                                                # noqa: PLC0415
+    try:
+        oa, ob = json.loads(a), json.loads(b)
+    except Exception:                                          # noqa: BLE001
+        return set()
+    if not isinstance(oa, dict) or not isinstance(ob, dict):
+        return set()
+    return {k for k in (set(oa) | set(ob)) if oa.get(k) != ob.get(k)}
 
 
 def script_sha(text: str, *, render_only: bool = False) -> str:
@@ -1426,10 +1456,21 @@ def rebake_plan(*, cur: dict | None, stash_text: str | None, draft_text: str | N
     if _canon(stash_text, render_only=True) == _canon(draft_text, render_only=True):
         out["why"] = f"控えと台本は同じ中身（sha {out['sha']}）—— 焼いても変わらない"
         if _canon(stash_text) != _canon(draft_text):
-            # **題かサムネだけが違う。**焼き直しでは直りません（1フレームも変わらない）。
-            out["why"] += ("　[!] **題かサムネだけが違います。焼き直しでは直りません** ——"
-                           f"`python scripts/metadata_fix.py {out['video_id']}`"
-                           "（`title` / `thumbnail_*` は metadata。50単位・数秒）")
+            # **焼き直しでは直らない差**（1フレームも変わらない）。ただし**2種類あります**
+            # （`METADATA_FIELDS` / `LOCAL_ONLY_FIELDS` の註・2026-09-04 21:5x に分けた）:
+            #   YouTube に出る欄が違う  → `metadata_fix.py`（50単位）
+            #   どこにも出ない欄だけ    → **撃つ手はありません**（撃てば 50単位 の丸損）
+            changed = _changed_fields(stash_text, draft_text)
+            meta = sorted(changed & METADATA_FIELDS)
+            if meta:
+                out["why"] += ("　[!] **題かサムネだけが違います。焼き直しでは直りません** ——"
+                               f"`python scripts/metadata_fix.py {out['video_id']}`"
+                               f"（違う欄: {'・'.join(meta)}。metadata。50単位・数秒）")
+            else:
+                out["why"] += ("　[!] **違うのは、動画にも YouTube にも出ない欄だけです**"
+                               f"（{'・'.join(sorted(changed)) or '欄を数えられません'}）——"
+                               " **撃つ手はありません。**"
+                               "`metadata_fix.py` を撃つと 50単位 使って1文字も変わりません")
         if stash_newer is True:
             # **同じ中身なのは、控えを後から書き換えたからかもしれません**（上の註）。
             out["why"] += ("　[!] **ただし控えは、この本を上げた後に commit されています** ——"
@@ -1531,35 +1572,59 @@ def _shared_ledger(root: Path | None = None) -> Path | None:
     return (common / "rebake" / "ledger.jsonl") if common else None
 
 
-def _rebake_rows(root: Path | None = None) -> list[dict]:
-    """**帳面の行**（`data/rebake.jsonl` ＋ 器をまたぐ写し）。同じ行は1つに畳み、`at` で並べる。"""
+def _read_ledger(path: Path) -> list[tuple[str, dict]]:
+    """1つの帳面の `(畳んだ字, 行)`。読めない行は落とす。"""
     import json                                                # noqa: PLC0415
-    seen: set[str] = set()
-    rows: list[dict] = []
-    files = [Path(root or config.ROOT) / REBAKE_LEDGER]
-    shared = _shared_ledger(root)
-    if shared is not None:
-        files.append(shared)
-    for f in files:
+    out: list[tuple[str, dict]] = []
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return out
+    for ln in text.splitlines():
         try:
-            text = f.read_text(encoding="utf-8")
-        except OSError:
+            row = json.loads(ln)
+        except Exception:                                      # noqa: BLE001
             continue
-        for ln in text.splitlines():
-            try:
-                row = json.loads(ln)
-            except Exception:                                  # noqa: BLE001
+        if isinstance(row, dict):
+            out.append((json.dumps(row, ensure_ascii=False, sort_keys=True,
+                                   separators=(",", ":")), row))
+    return out
+
+
+def _rebake_rows(root: Path | None = None) -> list[dict]:
+    """**帳面の行**（`data/rebake.jsonl` ＋ 器をまたぐ写し・`_shared_ledger()` の註）。
+
+    ## **まったく同じ行が2度 在るのは、事故ではありません**（2026-09-04 21:5x に検査に叱られた）
+
+    最初この関数は「同じ字は1つに畳む」で書きました。`tests/test_rebake_timeout_retry.py`
+    が即座に赤くしました —— **`rc=124`（時間切れ）が上限まで続いた**ことを数える検査は、
+    **同じ内容の `done` を 2行** 置きます。畳むと 2回 が 1回 になり、
+    `rebake_timeouts()` は「まだ1回目」と読んで**壊れた台本を焼き続けます。**
+
+    だから畳むのは**器のあいだの重なりだけ**です: 同じ字の**多重度は、file ごとに数えて
+    いちばん多い所を採ります**（写しは同じ行を持つので、足すと二重になる）。
+    **写しが無い回（＝ 検査）は、1文字も畳まず書いた順のまま返します。**
+    """
+    main = Path(root or config.ROOT) / REBAKE_LEDGER
+    shared = _shared_ledger(root)
+    if shared is None:
+        return [row for _, row in _read_ledger(main)]          # 畳まない・書いた順
+    import collections                                         # noqa: PLC0415
+    files = [_read_ledger(main), _read_ledger(shared)]
+    want: collections.Counter = collections.Counter()
+    for one in files:
+        for key, cnt in collections.Counter(k for k, _ in one).items():
+            if cnt > want[key]:
+                want[key] = cnt
+    taken: collections.Counter = collections.Counter()
+    rows: list[dict] = []
+    for one in files:
+        for key, row in one:
+            if taken[key] >= want[key]:
                 continue
-            if not isinstance(row, dict):
-                continue
-            key = json.dumps(row, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-            if key in seen:
-                continue
-            seen.add(key)
+            taken[key] += 1
             rows.append(row)
-    # **並べ直すのは合わせたときだけ**（1つの file なら書いた順そのまま）。
-    if shared is not None:
-        rows.sort(key=lambda r: str(r.get("at") or ""))
+    rows.sort(key=lambda r: str(r.get("at") or ""))
     return rows
 
 
