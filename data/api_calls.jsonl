@@ -10997,3 +10997,10 @@
 {"at": "2026-09-04T21:23:20+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "analytics.py:fetch_retention"}
 {"at": "2026-09-04T21:23:04+00:00", "api": "data", "method": "videos.list", "units": 1, "ok": true, "by": "reschedule.py:_update", "detail": "TfetZ_qhS-E"}
 {"at": "2026-09-04T21:23:04+00:00", "api": "data", "method": "videos.update", "units": 50, "ok": false, "by": "reschedule.py:_update", "detail": "TfetZ_qhS-E"}
+{"at": "2026-09-04T21:35:31+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "eta.py:q"}
+{"at": "2026-09-04T21:35:31+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "eta.py:q"}
+{"at": "2026-09-04T21:35:31+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "eta.py:q"}
+{"at": "2026-09-04T21:35:31+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "eta.py:q"}
+{"at": "2026-09-04T21:35:32+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "eta.py:q"}
+{"at": "2026-09-04T21:35:32+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "eta.py:q"}
+{"at": "2026-09-04T21:35:32+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "eta.py:q"}
