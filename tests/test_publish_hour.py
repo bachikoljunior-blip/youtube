@@ -78,14 +78,35 @@ def test_機械の既定と計器が同じ時刻を指していること():
 
     `config/channel.yaml` の `publish_hour_jst` は、実測で選べる回は
     `best_hour()` と一致していること。**選べない回（`None`）は問いません。**
+
+    ## **帯をそろえてから比べること**（2026-09-05 に踏んで書き足した）
+
+    `publish_hour.rule_band()` の帯は `PUBLISH_PER_DAY × RULE_BAND_MULT(2)` です。
+    **規則を動かすと、新しい読みが1本も来ていなくても帯の線が動きます**::
+
+        per_day=1（既定を決めた帯）   帯 17本 → best **9時**（＝ いまの config）
+        per_day=10（2026-09-05 の規則） 帯 164本 → best **10時**
+
+    増えた 147本 は 08/19〜08/31 の**密に出していた日**で、**新しい実測ではありません。**
+    そのまま比べると「実測が 10時 を指している」と読めますが、それは
+    **規則を動かした側が自分で作った数**です（同じ回に `config/hypotheses.yaml`
+    の前提を1件、同じ仕掛けで誤って閉じかけました。日誌 2026-09-05）。
+
+    **だから、いまの既定が決まった帯（`per_day=1`）でそろえて比べます。**
+    ここが赤くなったら、**それは本物のずれ**です。
+
+    **覆る条件**: 規則 10本/日 の下で公開した日が、帯（≤20本/日）の中で
+    **多数派になったら**（＝ 08月の密な日が薄まったら）、`per_day` の固定を外して
+    既定の時刻を決め直すこと。**それまでは、広げた帯の best を根拠にしないこと。**
     """
-    best = publish_hour.best_hour()
+    band = publish_hour.rule_band(per_day=1)
+    best = publish_hour.best_hour(band)
     if best is None:
         return
     cfg = publish_hour.config_hour()
     assert cfg == best, (
         f"`config/channel.yaml` の publish_hour_jst は {cfg}時、"
-        f"実測が指すのは {best}時 です。**機械が置く時刻と、"
+        f"実測（既定を決めた帯 ≤2本/日）が指すのは {best}時 です。**機械が置く時刻と、"
         "`scripts/eta.py` の per_video が乗っている帯がずれています。**"
         "（時刻を変える判断そのものは自由です —— そのときは"
         "`config/hypotheses.yaml` の前提と、この検査の期待を一緒に直すこと）")

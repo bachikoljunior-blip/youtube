@@ -860,8 +860,14 @@ def place_by_insert(plan: dict, now: datetime) -> tuple[int, str | None]:
 
 
 def place_today(now: datetime | None = None, *, dry_run: bool = False) -> dict:
-    """**きょうの1本を、回の意思と関係なく置く。** 返りは `today_plan()` の dict に
+    """**きょうの枠を、回の意思と関係なく埋める。** 返りは `today_plan()` の dict に
     `rc`（撃った結果。撃っていなければ `None`）を足したもの。
+
+    **1回の呼びで置くのは1本**ですが、**上限は `house_rule.cap()`**（下の
+    `count < house_rule.cap()`）です —— 2026-09-05 に規則が 1 → 10本/日 に
+    なったので、**1日に 10本 まで、1周に1本ずつ溜まっていきます**
+    （この口は毎周 `kick()` から撃たれるため）。**「きょうの1本」ではありません。**
+    印字の `[today]` も同じ数を読みます。
 
     置く道は2つ。`videos.update`（`reschedule --move`・50単位）が既定で、
     **日枠が尽きている／帳面の取り置きが止める窓**では `videos.insert`（`place_by_insert`・
