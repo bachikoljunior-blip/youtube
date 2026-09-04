@@ -1982,7 +1982,7 @@ def standing_pick_treatment(cur: dict | None, *, topics: list[dict] | None = Non
 def anyway_pays_hold(form: str, *, now: datetime | None = None,
                      uploaded_path: Path | None = None,
                      form_call=None, win_call=None) -> str:
-    """**`--anyway` で `path_form_hold` を越えるのを、「当たっても払えない枠」のときだけ止める。**
+    r"""**`--anyway` で `path_form_hold` を越えるのを、「当たっても払えない枠」のときだけ止める。**
     止めるなら理由の1行、止めないなら `""`。**API 0単位。**
 
     ## なぜ要るか（2026-09-05 04:xx・最適化の回。「最適化されてんの？」→ **いいえ** の理由を1つ潰す）
