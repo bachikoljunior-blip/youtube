@@ -2244,6 +2244,21 @@ def outside_long_readout(now: datetime | None = None, *, topics: list[dict] | No
             # **その枠の代金**（2026-09-04 23:5x・最適化の回）。まだ出ていない本 ＝
             # **枠がまだ動かせる**ので、当たっても譲る側に届かないなら、いま言うこと。
             out += win_pays_for_slot("ショート")
+            # 48h の数が返ってきたとき、**どこで意味が変わるか**を先に印字します。
+            # 出た後に読むと、もうその枠は動かせません。
+            try:
+                from . import slot_cost as _sc
+                _sv = _sc.slot_value()
+                _c = (_sv.get("forms", {}).get("ショート") or {}).get("median")
+            except Exception:                                       # noqa: BLE001
+                _c = None
+            if isinstance(_c, (int, float)) and not isinstance(_c, bool) and _c > 0:
+                out.append(
+                    f"     　 [数] **その 48h の数の読み方は、門2つで3帯です**（`slot_cost.win_band`）: "
+                    f"**＜{OUTSIDE_48H_GATE}回 ＝ 外れ** ／ "
+                    f"**{OUTSIDE_48H_GATE}〜{_c:,.0f}回 ＝ 作りは効いた／枠の代金は払えていない（この帯では形を長尺へ寄せないこと）** ／ "
+                    f"**≥{_c:,.0f}回 ＝ 当たり、かつ枠のぶんを払えた（ここで初めて形を動かしてよい）**。 "
+                    f"前提の門 {OUTSIDE_48H_GATE}回 は「いまの長尺の中央値 1回 の ×100」＝ **自分の記録だけの鏡**で、譲る側の数が入っていません")
             continue
         age = (t - pub).total_seconds() / 3600
         obs = _latest_obs(vid, views_path)
@@ -2303,7 +2318,19 @@ def outside_long_readout(now: datetime | None = None, *, topics: list[dict] | No
             if verdict_at is None or pub > verdict_at:
                 verdict, verdict_at = "stop", pub
         if h >= 48:
-            line += f"（48h を過ぎている: 前提の判定は `verdict`・門 {OUTSIDE_48H_GATE}回・`deadline_check`）"
+            line += (f"（48h を過ぎている: 前提の判定は `verdict`・門 {OUTSIDE_48H_GATE}回・`deadline_check`）")
+            # **門は2つ在ります**（2026-09-05 01:5x）—— 前提の門（100回・`falsified_if`）は
+            # 「作りが効いたか」だけを見ます。**枠を長尺へ寄せてよいか**は別の門で、
+            # そちらは**譲るショートの実測**（`slot_cost.slot_value()`）です。
+            # 100回 は「いまの長尺の中央値 1回 の ×100」＝ **自分の記録だけの鏡**で、
+            # 枠の値段が1度も入っていませんでした（`slot_cost.win_band` の註）。
+            try:
+                from . import slot_cost as _sc
+                _b = _sc.win_band(v, gate=OUTSIDE_48H_GATE, give_up="ショート")
+            except Exception:                                       # noqa: BLE001
+                _b = None
+            if _b and _b.get("line"):
+                line += f" [数] {_b['line']}"
         out.append(line)
     return out, verdict
 
