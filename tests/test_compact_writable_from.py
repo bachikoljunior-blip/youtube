@@ -108,10 +108,57 @@ def test_writable_from_を渡さなければ今までどおり():
     assert [p["new"] for p in plan][0] < BACK.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def _no_403(monkeypatch):
+    """**観測した 403 を無しに固定する。**
+
+    この file の他の検査は「帳面の引き算」の側を見ています。実物の
+    `data/day_quota.jsonl` を読ませると、**その窓に本物の 403 が在るかどうかで
+    結果が変わり**、検査が日付に依存します（`tests/test_tests_are_clockless.py`）。
+    """
+    from src import upload_cap
+    monkeypatch.setattr(upload_cap, "quota_hits_in_window", lambda now=None: [])
+    monkeypatch.setattr(upload_cap, "quota_ok_after_hits", lambda now=None: None)
+
+
 def test_writable_from_は日枠が尽きているときだけ返る(monkeypatch):
     from src import next_slot, quota_ledger
+    _no_403(monkeypatch)
     monkeypatch.setattr(quota_ledger, "spent",
                         lambda now=None: {"data": quota_ledger.DAY_UNITS + 1})
     assert next_slot.writable_from(NOW) is not None
     monkeypatch.setattr(quota_ledger, "spent", lambda now=None: {"data": 0})
+    assert next_slot.writable_from(NOW) is None
+
+
+def test_観測した403は帳面の引き算より強い(monkeypatch):
+    """**帳面が「まだ 6割 残っている」と言っても、403 を見たなら撃てません。**
+
+    実測 2026-09-04 21:10 UTC（この検査を足した回に、撃って踏んだ）——
+    `videos.update` が 403 quotaExceeded、そのあと **1単位の `videos.list` も 403**。
+    そのとき `quota_ledger.used_units()` は **3,805 / 10,000**、
+    `writable_from()` は **None（＝いま撃てる）** を返していました。
+
+    **控えは下限**です（載らない呼び出しが在る・`upload_cap.counted()` の註）。
+    だから「引き算が上限に届いていない」は「まだ撃てる」の根拠になりません。
+    """
+    from src import next_slot, quota_ledger, upload_cap
+    monkeypatch.setattr(quota_ledger, "spent", lambda now=None: {"data": 0})
+    monkeypatch.setattr(upload_cap, "quota_hits_in_window",
+                        lambda now=None: [{"at": "2026-09-01T15:10:00+00:00",
+                                           "detail": "videos.update X"}])
+    monkeypatch.setattr(upload_cap, "quota_ok_after_hits", lambda now=None: None)
+    assert next_slot.writable_from(NOW) == BACK
+
+
+def test_403のあとに通った呼び出しが在れば撃てるまま(monkeypatch):
+    """**日枠は窓の中で戻りません** —— 403 のあとに通ったなら、その 403 は
+    日枠ではありませんでした（`upload_cap.quota_ok_after_hits` の註）。"""
+    from src import next_slot, quota_ledger, upload_cap
+    monkeypatch.setattr(quota_ledger, "spent", lambda now=None: {"data": 0})
+    monkeypatch.setattr(upload_cap, "quota_hits_in_window",
+                        lambda now=None: [{"at": "2026-09-01T15:10:00+00:00",
+                                           "detail": "videos.update X"}])
+    monkeypatch.setattr(upload_cap, "quota_ok_after_hits",
+                        lambda now=None: {"at": "2026-09-01T15:20:00+00:00",
+                                          "ok": True})
     assert next_slot.writable_from(NOW) is None

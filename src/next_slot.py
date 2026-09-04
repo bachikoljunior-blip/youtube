@@ -544,9 +544,32 @@ def writable_from(now: datetime | None = None) -> datetime | None:
         used = int(quota_ledger.used_units(t))
         cap = int(quota_ledger.DAY_UNITS)
         back = upload_cap.window_end(t)
+        # **観測した 403 は、帳面の引き算より強い**（2026-09-05 未明・最適化の回に
+        #     撃って踏んだ）。この関数は長らく `used < cap` だけを見ていました ——
+        #     **帳面は下限**（`upload_cap.counted()` の註と同じ理由: 載らない
+        #     呼び出しが在る）なので、**尽きていても `used < cap` のままです。**
+        #
+        #     実測 2026-09-04 21:10 UTC（この行を足した回）:
+        #         `videos.update TfetZ_qhS-E` → **403 quotaExceeded**
+        #         そのあと `videos.list`（**1単位**）も **403**
+        #         `quota_ledger.used_units()` … **3,805 / 10,000**（枠の 62% が
+        #                                          残っていることになっていた）
+        #         `writable_from()` … **None ＝「いま撃てる」**
+        #
+        #     **この関数の仕事はこの場面そのもの**（上の註「枠が戻る時刻が床でなければ
+        #     案は腐る」）なのに、**その場面で嘘を答えていました。**
+        #     `upload_cap` は 403 を既に控えています（`note_quota_hit`）——
+        #     読んでいなかっただけです。**403 のあとに通った呼び出しが在れば
+        #     その 403 は日枠ではない**ので（`quota_ok_after_hits` の註）、
+        #     そこは今までどおり「撃てる」に倒します。
+        #
+        #     **覆る条件**: `used_units()` が載らない呼び出しまで数えられるように
+        #     なったら、この枝は `used < cap` に吸収してよい。
+        seen_403 = bool(upload_cap.quota_hits_in_window(t)) and (
+            upload_cap.quota_ok_after_hits(t) is None)
     except Exception:                                           # noqa: BLE001
         return None
-    if used < cap:
+    if used < cap and not seen_403:
         return None
     return back if back > t else None
 
