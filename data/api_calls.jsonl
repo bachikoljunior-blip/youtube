@@ -10988,3 +10988,9 @@
 {"at": "2026-09-04T21:03:54+00:00", "api": "data", "method": "videos.list", "units": 1, "ok": true, "by": "post_pending_comments.py:main", "detail": "1huadpEk6HY,9zkfjEH48PY,MqQKSnbM0OI,dg-5ml7GRZQ,8hJnwkC8NU0,ICmIBsZRYFE,HW0-QFAPl98,CLiJusPI7gY,aPz9Ys_wkeo,r9T2IwTyuz0,"}
 {"at": "2026-09-04T21:03:54+00:00", "api": "data", "method": "commentThreads.list", "units": 1, "ok": true, "by": "post_pending_comments.py:_mine_exists", "detail": "1huadpEk6HY"}
 {"at": "2026-09-04T21:03:56+00:00", "api": "data", "method": "videos.list", "units": 1, "ok": true, "by": "sub_ask.py:sweep", "detail": "a63FzIUV2wI,_Mz5rg6jQ_A,2tAGEKVCgYQ,h35ot6MqYso,drkKm9fHW2M,BzvH0iCzrzo,8hJnwkC8NU0,oqJ7WybRZDE,cFZd55jRxAw,FSAN9tjIX10,"}
+{"at": "2026-09-04T21:23:14+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "analytics.py:fetch_retention"}
+{"at": "2026-09-04T21:23:15+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "analytics.py:fetch_retention"}
+{"at": "2026-09-04T21:23:16+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "analytics.py:fetch_retention"}
+{"at": "2026-09-04T21:23:17+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "analytics.py:fetch_retention"}
+{"at": "2026-09-04T21:23:19+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "analytics.py:fetch_retention"}
+{"at": "2026-09-04T21:23:20+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "analytics.py:fetch_retention"}
