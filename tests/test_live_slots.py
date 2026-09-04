@@ -389,3 +389,29 @@ def test_規則5では1手も出さない():
         assert "reschedule.py --move" not in body, (make.__name__, body)
         assert "pool_drain.py --apply --keep 0" in body, (make.__name__, body)
     assert board.moves == [], board.moves
+
+
+def test_逃がす相手に長尺を入れない():
+    """**`live()` が形で外している本を、逃がす手の相手にしないこと。**
+
+    `day_cap.live_ids()` は既定で長尺を外します（`include_long=False`）。
+    `plan_all()` の `dead` は `v not in live` ＝ **その補集合**なので、
+    黙っていると**長尺が必ず入り**、どこへ動かしても `live()` には入りません。
+
+    実測 2026-09-05 06:0x（この検査の1つ上が赤で教えた）:
+    `GFvAcxvDmYM`（長尺 22.7分）を 09/06 09:00 へ逃がす手が出て、
+    **生きている本 136 → 136（+0本）／1手 50単位**。
+
+    **覆る条件**: `live_ids(include_long=True)` が既定になったら、この検査は
+    「長尺も入ってよい」へ書き換えること（そのときは `plan_all` の除きも外す）。
+    """
+    ls = pytest.importorskip("scripts.live_slots")
+    from src import day_cap
+
+    board = ls.Board(ls._rows())
+    ls.plan_all(board)
+    long_ids = day_cap._long_ids()
+    bad = [v for v, _ in board.moves if v in long_ids]
+    assert not bad, (
+        "**`live()` に入れない本を動かそうとしています**（1手 50単位・利得 0本）: "
+        + ", ".join(bad))
