@@ -1013,6 +1013,15 @@ def record(form: str, topic: str, why: str, *, day: date | None = None,
         _pf = path_form_hold(form, now=now, uploaded_path=up)
         if _pf:
             raise ValueError(_pf)
+    # **`--anyway` の口を、機械が自分で反証ずみのときだけ閉じる**
+    # （`anyway_pays_hold` の註・2026-09-05 04:xx）。**数字を1つ含む1行**という
+    # 条件は、`win_pays_for_slot()` が既に「当たっても払えない」と印字している
+    # 枠まで買えてしまいました（実物 09-05T01:48 の `anyway`）。
+    # `path_form_hold` と同じ切り分け（`decide` のみ・素振りは通す）。
+    if kind == PICK_KIND_DECIDE and path is None and (anyway or "").strip():
+        _ap = anyway_pays_hold(form, now=now, uploaded_path=up)
+        if _ap:
+            raise ValueError(_ap)
     # **同じ決めの再掲を止める**（`restated_pick_block` の註・2026-09-05 02:0x）。
     # `--anyway` では越えられません（越える理由に書ける数が存在しないため）。
     if kind == PICK_KIND_DECIDE:
@@ -1968,6 +1977,91 @@ def standing_pick_treatment(cur: dict | None, *, topics: list[dict] | None = Non
     out.append(f"       python scripts/upload_only.py {topic} --draft --replaces {vid}"
                f"   # 直したら焼き直して差し替える（旧 ID は private のまま残す）")
     return out
+
+
+def anyway_pays_hold(form: str, *, now: datetime | None = None,
+                     uploaded_path: Path | None = None,
+                     form_call=None, win_call=None) -> str:
+    """**`--anyway` で `path_form_hold` を越えるのを、「当たっても払えない枠」のときだけ止める。**
+    止めるなら理由の1行、止めないなら `""`。**API 0単位。**
+
+    ## なぜ要るか（2026-09-05 04:xx・最適化の回。「最適化されてんの？」→ **いいえ** の理由を1つ潰す）
+
+    この回が自分で撃った数（`src.daily_pick.gate_arithmetic` / `form_median_48h` / 実物の控え）:
+
+        and_path_form()                → **ショート**（道 ショート ×105.9・道 長尺 ×333.9）
+        gate_arithmetic().subs.forms   → 1本あたり登録 ショート **0.261人** / 長尺 **0.008人**（×33）
+        齢48h の実測の中央値           → ショート **164回** / 長尺 **1回**
+        齢24h の実測（自分で数えた）   → 長尺は **12本 12本とも 0〜3回**（3回 超えが1本も無い）
+        いま立っている 09/05 の決め    → **長尺** `GFvAcxvDmYM`（`data/daily_pick.jsonl` 01:48）
+
+    ＝ 門の算も、1本あたり登録も、実測の中央値も、24h の全数も、**4つとも同じ形
+    （ショート）を指しているのに、その日の1本は長尺で立っています。**
+
+    **止めは既に在ります**（`path_form_hold`・02:xx）。**越えられたのは `--anyway` です。**
+    その口の条件は `re.search(r"\d", anyway)` ——「**数字を1つ含む1行**」だけでした。
+    実物の 01:48 の行はこう書いて通っています::
+
+        anyway: 枠の機会費用 1,049回 を下回るのは承知の上。買っているのは再生ではなく前提
+
+    ところが **`win_pays_for_slot()` は、その「前提」の当たりの門そのものを既に否定して
+    印字しています** —— 当たりの門 `OUTSIDE_48H_GATE` **100回** ＜ 譲るショートの
+    齢48h の中央値 **164回**。つまり **「再生ではなく前提を買う」も払えません**。
+    **機械が自分で反証ずみの主張が、「1,049」という数字を含んでいたので通りました。**
+
+    この repo が同じ形で踏むのは **4度目**です（`outside_long_readout` 散文 →
+    `and_path_form` 印字 → `standing_form_conflict` 印字 → `win_pays_for_slot` 印字）。
+    **読み上げは止めではない**を3度 学んだあと、4度目は**止めの横の口**でした。
+
+    ## ここで止める条件（形は決め打ちしません）
+
+    `path_form_hold` が立つ形（＝門の算が指す形と違う形）で、かつ
+    `win_pays_for_slot(譲る形)` が **1行でも出る**とき ＝ **当たっても枠の代金を
+    払えないと機械が自分で計算しているとき**だけ止めます。そのとき
+    「いくらだから買う」と書ける数は**存在しません** —— 当たりの上限が、
+    譲る側の中央値より下だからです。
+
+    ## 通す口（2つとも、数を動かす道です）
+
+    1. **当たりの門を、譲る側の実測の上に置き直す**（`OUTSIDE_48H_GATE`）。
+       そうすれば `win_pays_for_slot` は自分で黙り、この止めも黙ります。
+    2. **枠を食わない形で実験する**（公開ずみの本で測る）＝ その日の1本は門の算の形にする。
+
+    ## 覆る条件
+
+    - 譲る側の齢48h の中央値が門を下回れば `win_pays_for_slot` は空を返し、
+      **この止めは自分で消えます**（＝ 当たれば枠の代金を払える実験になった）。
+    - `and_path_form()` が `None` を返す回（門1 の脚 `data/shorts_subs.json` が立たない）は
+      **止めません** —— 比べる相手が無いので、**推測で止めないこと。**
+    - 門の算が長尺を指す日が来れば、この止めは**ショートのほうを**止めます。
+      形の名前は 1つも持っていません。
+    """
+    if str(form) not in FORMS:
+        return ""
+    call = and_path_form if form_call is None else form_call
+    try:
+        want, why = call(now=now, uploaded_path=uploaded_path)
+    except Exception:                                              # noqa: BLE001
+        return ""
+    if not want or str(want) == str(form):
+        return ""
+    wcall = win_pays_for_slot if win_call is None else win_call
+    try:
+        lines = wcall(str(want))
+    except Exception:                                              # noqa: BLE001
+        return ""
+    if not lines:
+        return ""
+    return (f"**`--anyway` では越えられません。** 門の算は **{want}**（{why}）で、"
+            f"いま決めようとしている形は **{form}** です。"
+            f" そのうえで機械は**その実験が当たっても枠の代金を払えない**と自分で"
+            f"計算しています —— " + str(lines[0]).strip() +
+            f" **当たりの上限が、譲る側の中央値より下なので、「いくらだから買う」と"
+            f"書ける数は存在しません**（`--anyway` の条件は「数字を1つ含む1行」だけで、"
+            f"実物の 09-05T01:48 はこの反証を無視して通っています）。"
+            f" 通す道は2つ: (1) `OUTSIDE_48H_GATE` を譲る側の実測の上に置き直す"
+            f"（そうすれば `win_pays_for_slot` も、この止めも自分で黙ります）／"
+            f" (2) その日の1本を **{want}** にして、実験は枠を食わない形（公開ずみの本）で立てる。")
 
 
 def path_form_hold(form: str, *, now: datetime | None = None,

@@ -59,6 +59,11 @@ def _live(tmp_path, monkeypatch):
     monkeypatch.setattr(dp, "probe_hold", lambda *a, **k: "")
     monkeypatch.setattr(dp, "restated_pick_block", lambda *a, **k: "")
     monkeypatch.setattr(slot_cost, "verdict", lambda *a, **k: {"ok": True, "why": ""})
+    # **`--anyway` の口は「当たれば枠の代金を払える実験」のときだけ開きます**
+    # （`anyway_pays_hold`・2026-09-05 04:xx）。この file が試すのは
+    # `path_form_hold` の口なので、**払える側に置いてから**呼びます。
+    # 払えない側は `tests/test_anyway_pays_hold.py` が持ちます。
+    monkeypatch.setattr(dp, "win_pays_for_slot", lambda *a, **k: [])
     return p
 
 
