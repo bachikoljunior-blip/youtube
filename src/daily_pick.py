@@ -581,10 +581,99 @@ def current(day: date, path: Path | None = None) -> dict | None:
     return rows[-1] if rows else None
 
 
+def probe_hold(form: str, day, *, now=None, topics: list[dict] | None = None,
+               uploaded_path: Path | None = None) -> str:
+    """**先読みの門がまだ読めないうちに、試す形が「次の未決の日」まで取るのを止める。**
+    止めるなら理由の1行、止めないなら `""`。**API 0単位**（控えを読むだけ）。
+
+    ## なぜ要るか（2026-09-04 21:5x・最適化の回。「最適化されてんの？」→ **いいえ** の理由を1つ潰す）
+
+    `outside_long_readout()` は、試す本が 齢24h に届いていないとき、こう印字します ——
+    **「24h の先読みの門 30回 まで待つ。次の未決の日は、それまで決めないこと」。**
+    **散文です。誰も止めません。** 実測（`data/daily_pick.jsonl` を `at` で並べた）:
+
+        09-03 02:03 長尺 …… 09-04 21:26 長尺   ＝ **17回 連続で同じ形**
+        そのうち 09-05（＝ 次の未決の日）の決めは、試す本 `1huadpEk6HY` が
+        齢 9h（門は 齢24h）のときに書かれています —— **門が開く前に、次の枠が埋まった。**
+
+    同じ画面が、同じ回に、こうも印字していました:
+
+        **試す形（長尺）が枠を 2日ぶん 取っています**（09-04〜09-05・既定の形は ショート）
+        規則は 1本/日 なので、これは新しく出る本の **100%**
+        そこから 48h の判定に届いた本: **0本／2本**
+        [!] 取った枠から、まだ 1本も 48h の観測が出ていません —— **枠だけ減って、前提は 1件も進んでいません**
+
+    ＝ 前提は 1本 で判る（`falsified_if` は 48h・100回・n=1）のに、枠は 2本 取られ、
+    その 2本目 を取る根拠は「1本目 がまだ何も言っていないこと」でした。
+    **答えが出ていないことが、同じ手をもう一度 引く理由になる形**です。だから鎖は切れません。
+    実測の値: `data/eta.jsonl` の 再生/日(7d) は 6,299（08-25）→ **943**（09-04）＝ **-85%**。
+
+    **止めるのは「次の未決の日」だけです** —— 試す本そのもの（同じ日）も、
+    門が開いたあと（齢24h 以降）も、48h の判定も、**1つも動かしません**。
+    前提は n=1 で判るので、門が開くまで待っても 期限（09-07）には間に合います。
+
+    ## 通す口
+
+    数字で上書きするのは自由です（オーナーの「固定は目標の本文だけ」）——
+    `record(..., anyway="<数字を含む理由>")` ／ CLI は `--anyway "<理由>"`。
+    **その行は `data/daily_pick.jsonl` に `anyway` として残り、次の回が実物と並べます。**
+
+    ## 覆る条件
+
+    - 前提「外の作り方を写した長尺」が閉じたら（当たっても外れても）、
+      `style: outside_long` の本が出なくなるので、ここは自分で黙ります。
+    - 規則1（1日1本）が外れて枠が 1日 2本以上 になったら、**枠の取り合いではなくなる**ので
+      この止めは要りません（`house_rule` を見て落とすこと）。
+    - `config` の題材に `style` が読めない回は `""`（止めない）—— **推測で止めないこと。**
+    """
+    if str(form) != "長尺":
+        return ""
+    t = (now or datetime.now(timezone.utc)).astimezone(JST)
+    if isinstance(day, date):
+        want = day
+    else:
+        try:
+            want = date.fromisoformat(str(day))
+        except (TypeError, ValueError):
+            return ""
+    tops = {str(x.get("id")): str(x.get("style") or "")
+            for x in (topics if topics is not None else _topics())}
+    if not tops:
+        return ""
+    best: tuple[datetime, str] | None = None
+    for vid, r in _latest_uploaded(uploaded_path).items():
+        if tops.get(str(r.get("topic") or "")) != "outside_long":
+            continue
+        pub = _parse(r.get("at"))
+        if pub is None or pub > t:
+            continue
+        if (t - pub).total_seconds() / 3600 >= 24:   # 門は開いている（readout が読む）
+            continue
+        if want <= pub.astimezone(JST).date():
+            continue                                 # 試す本そのものの日 ＝ 止めない
+        if best is None or pub > best[0]:
+            best = (pub, str(vid))
+    if best is None:
+        return ""
+    pub, vid = best
+    opens = (pub + timedelta(hours=24)).astimezone(JST)
+    obs = _latest_obs(vid) or {}
+    seen = (f"齢 {float(obs.get('hours') or 0):.0f}h で {int(obs.get('views') or 0)}回"
+            if obs else "控えに観測なし")
+    return (f"{want} は「次の未決の日」で、試す形（長尺）の先読みの門がまだ読めません。"
+            f"試す本 `{vid}`（{seen}）の 24h の門（{OUTSIDE_24H_GATE}回）は "
+            f"{opens:%m/%d %H:%M} JST に開きます —— `outside_long_readout` の"
+            f"「次の未決の日は、それまで決めないこと」を、ここで実際に止めています。"
+            f"前提は n=1 で判ります（`falsified_if` 48h・{OUTSIDE_48H_GATE}回）。"
+            f"数字で上書きするなら `--anyway \"<数字を含む理由>\"`")
+
+
 def record(form: str, topic: str, why: str, *, day: date | None = None,
            now: datetime | None = None, path: Path | None = None,
            video_id: str | None = None, expected: float | None = None,
-           kind: str = PICK_KIND_DECIDE, rebaked_from: str = "") -> dict:
+           kind: str = PICK_KIND_DECIDE, rebaked_from: str = "",
+           anyway: str = "", topics: list[dict] | None = None,
+           uploaded_path: Path | None = None) -> dict:
     """その日の1本を決めて残す（追記・`merge=union`）。
 
     `kind` は **その行が「決め」か「写し」か**。既定は `"decide"`（回が数で決めた行）で、
@@ -597,6 +686,15 @@ def record(form: str, topic: str, why: str, *, day: date | None = None,
         raise ValueError(f"形は {FORMS} のどれか: {form!r}")
     if not (why or "").strip() or not re.search(r"\d", why):
         raise ValueError("`--why` は数字を含む1行が要ります（次の回が実物と並べます）")
+    # **先読みの門が開く前に「次の未決の日」まで試す形が取るのを止める**（`probe_hold` の註）。
+    # `kind="carry"`（焼き直しの写し）は決めではないので通します。
+    if kind == PICK_KIND_DECIDE and not (anyway or "").strip():
+        hold = probe_hold(form, day or for_day(now), now=now, topics=topics,
+                          uploaded_path=uploaded_path)
+        if hold:
+            raise ValueError(hold)
+    if (anyway or "").strip() and not re.search(r"\d", anyway):
+        raise ValueError("`--anyway` も数字を含む1行が要ります（止めを越える理由は数で）")
     t = (now or datetime.now(timezone.utc)).astimezone(JST)
     row = {
         "at": t.isoformat(timespec="seconds"),
@@ -605,6 +703,8 @@ def record(form: str, topic: str, why: str, *, day: date | None = None,
         "expected_48h": expected,
         "kind": kind if kind in PICK_KINDS else PICK_KIND_DECIDE,
         "rebaked_from": str(rebaked_from or ""),
+        #: 空でなければ **`probe_hold()` の止めを数字で越えた行**（次の回が実物と並べます）。
+        "anyway": str(anyway or "").strip(),
         "session": os.environ.get("CLAUDE_SESSION_ID") or "",
     }
     p = path or PICKS
@@ -2578,13 +2678,16 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--expected", type=float, default=None, metavar="回",
                     help="その形で見込む 齢48h の再生（次の回が実物と並べます。"
                          "`--moves` と同じ形 —— 外れてよい・言わないほうが困る）")
+    ap.add_argument("--anyway", default="", metavar="理由",
+                    help="`probe_hold()` の止め（先読みの門が開く前に次の未決の日を取る）を"
+                         "数字で越える。理由は行に残り、次の回が実物と並べます")
     args = ap.parse_args(argv)
     if args.pick:
         form, topic = args.pick
         day = date.fromisoformat(args.day) if args.day else None
         try:
             row = record(form, topic, args.why, day=day, video_id=args.video,
-                         expected=args.expected)
+                         expected=args.expected, anyway=args.anyway)
         except ValueError as exc:
             print(f"[daily_pick] {exc}")
             return 2
