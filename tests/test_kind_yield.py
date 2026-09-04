@@ -79,3 +79,83 @@ def test_実物でも落ちない():
     assert isinstance(m["n"], int)
     h = kind_yield.headline()
     assert h is None or isinstance(h, str)
+
+
+# ---------------------------------------------------------------------------
+# 2026-09-05 未明・最適化の回に足した2件。
+#
+# **守っているもの1**: 採点に使えない窓（`significant` が False、または物差しが
+# 使えない）で、`headline()` が**割合を印字しないこと**。09/05 01:48 の
+# 「その日の1本」の決めは、この行の「43% 対 1.3%」を引用して、1日1枠の動画を
+# 48h 見込み 1回 の長尺へ回しました。**名乗りを断りながら弾だけ配ると、
+# 断ったことは効きません。**
+#
+# **守っているもの2**: 名指しされた腕（`eta.py` の `lever_hint`）と、実際に
+# 働いた腕（`runs.jsonl` の `lever`）の隔たりが、`headline()` に出ること。
+# 実測 2026-09-05: `rpm` は名指し 25% に対し働いたのは 3.2%（8倍）。
+# ---------------------------------------------------------------------------
+
+
+def _write_eta(tmp_path, rows):
+    import json as _json
+    (tmp_path / "data").mkdir(parents=True, exist_ok=True)
+    p = tmp_path / "data" / "eta.jsonl"
+    p.write_text("\n".join(_json.dumps(r, ensure_ascii=False) for r in rows) + "\n",
+                 encoding="utf-8")
+    return p
+
+
+def test_採点に使えない窓では割合を出さない(monkeypatch, tmp_path):
+    import datetime as _dt
+    today = _dt.datetime.now(kind_yield.JST).date().isoformat()
+    # verdict が 5回中3回 動いた「ように見える」窓。物差し（gate1p_days）は無い。
+    rows = [_row(f"{today}T0{i}:00:00+09:00", "verdict", -1 if i < 4 else 0, True)
+            for i in range(1, 6)]
+    rows += [_row(f"{today}T1{i}:00:00+09:00", "fix", 0, True) for i in range(0, 9)]
+    _write(tmp_path, rows)
+    _patch_root(monkeypatch, tmp_path)
+
+    m = kind_yield.measure()
+    assert not m["ruler"]["usable"], "物差しが無い窓では usable は False"
+    line = kind_yield.headline()
+    assert "割合は出しません" in line
+    # **回数は隠しません。**数を伏せるのではなく、割合を作らないだけ。
+    assert "verdict 5回 中 3回" in line
+    assert "%" not in line.split("／**腕に届く種別へ行った回は")[0].split("直近")[1]
+
+
+def test_名指しされた腕と働いた腕の隔たりが出る(monkeypatch, tmp_path):
+    import datetime as _dt
+    today = _dt.datetime.now(kind_yield.JST).date().isoformat()
+    rows = []
+    for i in range(10):
+        r = _row(f"{today}T0{i}:00:00+09:00", "fix", 0, True)
+        r["lever"] = "per_video"
+        rows.append(r)
+    _write(tmp_path, rows)
+    # 名指しは半分が rpm。働いたのは 0回 ＝ 隔たりは ∞。
+    _write_eta(tmp_path, [{"at": f"{today}T0{i}:30:00+09:00",
+                           "lever_hint": "rpm" if i % 2 else "per_video"}
+                          for i in range(10)])
+    _patch_root(monkeypatch, tmp_path)
+
+    a = kind_yield.arms()
+    assert a["named"]["rpm"] == 5
+    assert "rpm" not in a["worked"]
+    assert a["gap"] == float("inf")
+    assert "`rpm`" in kind_yield.headline()
+
+
+def test_腕を選ばなかった回は働いた側の母数に入らない(monkeypatch, tmp_path):
+    import datetime as _dt
+    today = _dt.datetime.now(kind_yield.JST).date().isoformat()
+    rows = []
+    for i, lv in enumerate(["per_video", "none", None, "rpm"]):
+        r = _row(f"{today}T0{i}:00:00+09:00", "fix", 0, True)
+        if lv is not None:
+            r["lever"] = lv
+        rows.append(r)
+    _write(tmp_path, rows)
+    _patch_root(monkeypatch, tmp_path)
+    a = kind_yield.arms()
+    assert a["n_worked"] == 2 and a["unlevered"] == 2
