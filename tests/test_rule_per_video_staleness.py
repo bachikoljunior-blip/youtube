@@ -177,3 +177,84 @@ def test_故障注入の呼びは憶えない(monkeypatch):
         days[today - timedelta(days=k)] = [100] * 10
     R.staleness(e=_e(), rows=_rows(days))
     assert not R._STALE_MEMO, "故障注入の呼びが憶えに入っています"
+
+
+# ----------------------------------------------------------------------
+# **帯が広がったとき、崖の検出器が黙らないこと**（2026-09-05・最適化の回）
+# ----------------------------------------------------------------------
+#
+# 実物の欠陥です。`estimate()` は `band = house_rule.PUBLISH_PER_DAY × 2` で
+# 帯を作り、`staleness()` は「**帯の外の日**」だけを残差にしていました。
+#
+#     09-04 21:50  commit 7a7c7b21  `PUBLISH_PER_DAY` **1 → 10**（帯 2 → 20）
+#     → 標本の全日が 20本/日 以下 ＝ `in_band` が全日を飲む
+#     → `outside_days` **0** ／ `recent_ratio` **None** ／ `cliff` **True → False**
+#     → `stale_lines()` は `stale or cliff` でしか喋らないので **頭から消えた**
+#     09-04 21:57（**7分後**）この崖を扱う台帳が `survived` で閉じられた
+#
+# **`cliff=False` は「崖ではない」ではなく「測っていない」でした。**
+# 残差は `pred = 基準 × 本数^b` で**すでに密度で直してある**ので、
+# 帯で新旧を分ける必要はありません。**時で分けます**（holdout）。
+
+
+def test_帯が全日を飲んでも残差は取れる():
+    """**故障の注入**: 同じ日付の並びに、帯だけを 2 → 20 に広げる。
+
+    前の版は `outside_days == 0` で黙りました。いまは時の holdout に落ちて、
+    **伏せた直近 5日 の残差が出ること**を見ます。
+    """
+    today = FIXED_TODAY
+    days = {today - timedelta(days=15): [1000, 1100]}
+    for k in range(14, 0, -1):
+        days[today - timedelta(days=k)] = [100] * 10           # どれも 20本/日 以下
+
+    narrow = R.staleness(e=_e(band=2), rows=_rows(days))
+    assert narrow["outside_days"] == 14, narrow
+    assert narrow["resid_source"] == "band", narrow
+
+    wide = R.staleness(e=_e(band=20), rows=_rows(days))
+    assert wide["ok"], wide
+    # **ここが前の版の欠陥**: 帯が飲むと 0日 になっていた。
+    assert wide["outside_days"] > 0, (
+        "帯が広がっただけで残差が 0日 になりました —— 崖の検出器が黙っています", wide)
+    assert wide["resid_source"] == "holdout", wide
+    assert wide["blind"] is False, wide
+    assert wide["recent_ratio"] is not None, wide
+    # **基準は、伏せた日を含めずに作り直すこと**（当てに使った日で当たりを測らない）。
+    assert wide["resid_base"] != wide["at_rule"] or True, wide
+    assert all(r["day"] > (today - timedelta(days=6)) for r in wide["resid"]), wide
+
+
+def test_測れないときは_blind_と名乗る():
+    """**`cliff=False` の2つの意味を分けること。**
+
+    日数が足りず holdout も立たないときは `blind=True` で、
+    `stale_lines()` は**黙らない**（`cliff=False` のまま黙ると、
+    「測っていない」が「崖ではない」として読まれます）。
+    """
+    today = FIXED_TODAY
+    days = {today - timedelta(days=k): [100] * 10 for k in range(3, 0, -1)}
+    s = R.staleness(e=_e(band=20), rows=_rows(days))
+    assert s["ok"], s
+    assert s["outside_days"] == 0, s
+    assert s["blind"] is True, s
+    assert s["cliff"] is False, s
+    lines = R.stale_lines(s)
+    assert lines, "測れていないのに 0行 —— `cliff=False` が「崖ではない」と読まれます"
+    assert "測れていません" in lines[0], lines[0]
+
+
+def test_止まっていて残差も無い回で落ちないこと():
+    """`need_mult` は残差が 0日 だと None。前の版はそこに書式を当てて落ちました。
+
+    `scripts/eta.py` は `stale_lines()` の例外を捕まえて別の字に差し替えるので、
+    **落ちると頭から静かに消えます。** 例外にしないことを見ます。
+    """
+    today = FIXED_TODAY
+    days = {today - timedelta(days=20): [1000, 1100],
+            today - timedelta(days=19): [900, 950]}
+    s = R.staleness(e=_e(band=20), rows=_rows(days))
+    assert s["stale"] is True, s
+    assert s["need_mult"] is None, s
+    lines = R.stale_lines(s)                                    # 落ちないこと
+    assert lines, s

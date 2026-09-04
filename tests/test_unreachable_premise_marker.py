@@ -51,15 +51,20 @@ def test_満ちない前提があれば行が出る(monkeypatch):
     """台帳が汚れているときだけ鳴ること（きれいなら黙る）。"""
     from src import house_rule
 
+    # **超える数を、規則から作ること**（2026-09-05）—— 「2.0本/日」のべた書きは
+    # 規則が 10本/日 になった瞬間に規則の中へ収まり、この検査は拾わない場面を
+    # 測る形に化けます（実際に赤くなりました）。
+    per_day = float(house_rule.PUBLISH_PER_DAY) + 1.0
     fake = [{
         "claim": "長尺の面は、その日の長尺の公開本数で決まる",
         "deadline": "2099-01-01",
         "lever": "rpm",
         "needs": [{"kind": "after", "on_date": "2099-01-01",
-                   "what": "`data/reach.jsonl` の窓（長尺の予約 26本 ＝ 2.0本/日）"}],
+                   "what": f"`data/reach.jsonl` の窓（長尺の予約 26本 ＝ {per_day}本/日）"}],
     }]
     hit = house_rule.unreachable_needs(fake)
-    assert hit, "2.0本/日 は規則（1本/日）を超えているので、拾われなければならない"
+    assert hit, \
+        f"{per_day}本/日 は規則（{house_rule.PUBLISH_PER_DAY}本/日）を超えているので、拾われなければならない"
 
     monkeypatch.setattr(house_rule, "unreachable_needs", lambda rows, **kw: hit)
     lines = run_marker._unreachable_premise_lines()

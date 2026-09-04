@@ -2609,6 +2609,17 @@ def analyse(m: dict, points: list[dict] | None = None,
             a["pv_resid_recent"] = _st["recent_ratio"]
             a["pv_resid_b"] = (_st.get("fit") or {}).get("b")
             a["pv_resid_cliff"] = _st["cliff"]
+            # **残差をどこから取ったか・そもそも取れたか**（2026-09-05・最適化の回）。
+            #     `pv_resid_cliff` は False が2つの意味を持ちます ——
+            #     「測って、崖ではなかった」と「**1日も測っていない**」。
+            #     実測: 09-04 21:50 に `PUBLISH_PER_DAY` が 1→10 になり、
+            #     帯（`= per_day × 2`）が 2→20 に広がって標本の全日を飲み、
+            #     `pv_resid_recent` が **None**・`pv_resid_cliff` が **True→False** に
+            #     裏返りました（21:35 の点は True）。**その 7分後に、この崖を扱う
+            #     台帳が `survived` で閉じられています。** 台帳に区別が残っていないと、
+            #     次の回はどちらの False かを後から数えられません。
+            a["pv_resid_source"] = _st.get("resid_source")
+            a["pv_resid_blind"] = bool(_st.get("blind"))
     except Exception:                                  # pragma: no cover
         pass
 
@@ -11125,6 +11136,10 @@ def _row(m: dict, a: dict, pl: dict, tr: dict | None, sup: dict | None) -> dict:
     #      `08-25 を境に落ちた1本あたり再生は…`（期限 09-23）の
     #      「標本が動き出したか」を後から数えられません。**
     row["pv_sample_last"] = a.get("pv_sample_last")
+    # **残差の出どころ**（文字列なので、上の内包表記では拾えません）。
+    #     `"band"` ＝ 帯の外の日 ／ `"holdout"` ＝ 時で伏せた直近 k日。
+    #     `pv_resid_blind`（真偽）は上の内包表記が拾います。
+    row["pv_resid_source"] = a.get("pv_resid_source")
     # **供給の実測も積む**（次の回が「作る速さは上がったか」を測れる形にする）
     row["density_month"] = pl.get("density_month")
     row["make_rate_per_day"] = (sup or {}).get("rate_per_day")
