@@ -8339,6 +8339,83 @@ def revive_gate_arms(dead: list[str], *, all_dead: bool,
     return [k for k in dead if k not in GATE_ARMS], revived
 
 
+def gate_arm_pick(pl: dict, *, runs_path=None) -> dict | None:
+    """**到達日が出ない回の名指しを、軌跡ではなく「最初に落ちる門」から取る。**
+    （2026-09-04 12:5x・最適化の回。オーナー「最適化されてんの？」「過去の実行に対して聞いてんだからな」）
+
+    ## 実測（この回に自分で撃った数）
+
+    `python scripts/eta.py` の**頭の5行目**は、こう出していました::
+
+        縛っているのは **再生数が天井に当たっている** → **この回に引く腕は `per_video`**
+
+    その 14行 下（`gate_arm_lines()`）は、同じ出力の中でこう出していました::
+
+        最初に落ちる門は 門1'（登録者 500人・あと 475人）で **512日**（模型 0.93人/日）
+          `per_video` を天井 x4.54 まで引く → 門1' は **113日後**
+          `sub_rate`  を天井 x6.21 まで引く → 門1' は  **83日後**
+          2本とも天井まで → **19日後**（x28.2）。**積です**
+          直近 7日 の ship: `per_video` 134件 ／ `sub_rate` 14件
+
+    **頭は `per_video` を名指しし、門の側は `sub_rate` のほうが 30日 早いと出ています。**
+    そして実際に引かれたのは、頭が名指ししたほうでした —— **134 対 14。**
+
+    **なぜ頭が逆を向いたか**: `lever_hint` は `need_over_cap`（軌跡の中の量）で
+    選ばれます（`plan()` の `_alive` の `min`）。ところがこの回の軌跡は
+    **`target_date is None`（出ません）** です。**軌跡が届かない回は、どの腕を
+    無限大にしても「動いた日数」が定義上 0** で、その中の順位に意味がありません
+    （`gate_arm_lines()` の docstring が同じことを書いています）。
+    **意味の無い順位が、命令形で頭に出ていました。**
+
+    ## 直したこと
+
+    軌跡が出ない回にかぎり、名指しを **門1' の日数**（`残り人数 ÷ (subs_per_day x 天井)`）
+    のいちばん小さい腕へ倒します。**`gate`（審査の門）の上書きと同じ形・同じ場所**で、
+    模型の**外側**に掛かる項だからです（すぐ下の `resume_gate` の塊と同じ理由）。
+
+    ## 覆る条件
+
+    - `target_date` が出た回は、何もしません（軌跡の順位が本物に戻るので）。
+    - 門1' が開いた回（`fan_subs_remaining <= 0`）も、何もしません。
+    - `sub_rate` の天井が `per_video` より低くなったら、名指しは**自分で入れ替わります**
+      —— 定数を持たず、毎周 `lever_days` の `cap` を読みます。
+    - 審査の門（`AUTOMATION_PAUSED.md`）が開いている回は、**下の `gate` が後から勝ちます**
+      （そちらは「この回に1本も引けない」という別の話）。
+
+    >>> gate_arm_pick({"target_date": None,
+    ...                "gates": {"fan_subs_remaining": 475, "subs_per_day": 0.93},
+    ...                "lever_days": [{"lever": "per_video", "cap": 4.54},
+    ...                               {"lever": "sub_rate", "cap": 6.21}]})["lever"]
+    'sub_rate'
+    >>> gate_arm_pick({"target_date": date(2027, 1, 1)}) is None
+    True
+    """
+    if pl.get("target_date") is not None:
+        return None
+    g = pl.get("gates") or {}
+    remaining = g.get("fan_subs_remaining")
+    spd = float(g.get("subs_per_day") or 0.0)
+    if not remaining or remaining <= 0 or spd <= 0:
+        return None
+    caps: dict[str, float] = {}
+    for r in pl.get("lever_days") or []:
+        c = r.get("cap")
+        if r.get("lever") in GATE_ARMS and c and c > 1.0:
+            caps[r["lever"]] = float(c)
+    if not caps:
+        return None
+    base = remaining / spd
+    days = {k: base / c for k, c in caps.items()}
+    lever = min(days, key=lambda k: days[k])
+    ships = _ship_lever_counts(runs_path)
+    prod = 1.0
+    for c in caps.values():
+        prod *= c
+    return {"lever": lever, "days": days[lever], "base": base,
+            "caps": caps, "days_all": days, "both_days": base / prod,
+            "ships": {k: ships.get(k, 0) for k in GATE_ARMS}}
+
+
 def gate_arm_lines(pl: dict, *, runs_path: Path | None = None) -> list[str]:
     """**到達日が出ない回は、腕を「最初に落ちる門」の日数で測る。**（2026-09-03・最適化の回）
 
@@ -8818,6 +8895,28 @@ def headline(pl: dict, prev: dict | None = None,
                + (f"（**軌跡が名指し**。床の名前は `{pl['lever_hint_binding']}` ですが、"
                   "それは診断であって、引いて何日縮むかは言っていません）"
                   if pl.get("lever_from") == "軌跡" and not _paused_gate else ""))
+    # --- **名指しが門1' から来た回は、その根拠を同じ行に置く**（2026-09-04・最適化の回）---
+    #     名前だけを命令形で出すと、読む側は**なぜその腕か**を確かめずに従います。
+    #     実測: 頭が `per_video` と出していた 7日間 の ship は 134 対 14 で、
+    #     その下 14行 の「`sub_rate` のほうが 30日 早い」は**1回も効いていません**。
+    #     **だから根拠を、名前と同じ行に置きます。** 数は毎周 measured。
+    _ga = pl.get("gate_arm")
+    if _ga and pl.get("lever_from") == "門1'" and not _paused_gate:
+        _o = [k for k in _ga["days_all"] if k != _ga["lever"]]
+        _sh = _ga["ships"]
+        out.append(
+            f"{bar}     [!] **その名指しは軌跡ではなく 門1'（登録者）から取りました** ——"
+            f" この回の軌跡は **出ません** で、出ない回はどの腕を無限大にしても"
+            f" 動いた日数が定義上 0 です（順位に意味がありません）。"
+            f" **最初に落ちる門で測り直すと**: 据え置き **{_fmt_days(_ga['base'])}** →"
+            + "".join(f" `{k}` を天井 ×{_ga['caps'][k]:.2f} で {_fmt_days(v)}"
+                      for k, v in sorted(_ga["days_all"].items(), key=lambda kv: kv[1]))
+            + f" ／ 2本とも {_fmt_days(_ga['both_days'])}（**積**）。"
+            + (f" 直近 7日 の ship は "
+               + " ／ ".join(f"`{k}` {v}件" for k, v in _sh.items())
+               + ("　← **遅いほうだけが引かれていました。**"
+                  if _o and _sh.get(_o[0], 0) > _sh.get(_ga["lever"], 0) else "")
+               if _sh else ""))
     # --- **腕の次に、種別を名指しする**（2026-09-04 昼・最適化の回）---
     #     **ここに置く理由**（実測で名指しした欠陥を1つ潰すために足しました）。
     #     `CLAUDE.md`「毎回の実行で必ずやること」2 は**腕**だけを先に選ばせ、
@@ -10756,6 +10855,35 @@ def solve(m: dict, points: list[dict], *, full: bool = True) -> dict:
             pl["lever_hint_binding"] = pl["lever_hint"]
             pl["lever_hint"] = _top["lever"]
             pl["lever_from"] = "軌跡"
+    # --- **軌跡が出ない回の名指しは、最初に落ちる門（門1'）から取る** ---
+    #     （2026-09-04 12:5x・最適化の回。オーナー「最適化されてんの？
+    #      過去の実行に対して聞いてんだからな」に、過去の回を数えて答えた結果）
+    #
+    #     **実測（この回に撃った数）**: 頭の5行目は `per_video` を命令形で名指しし、
+    #     その 14行 下の `gate_arm_lines()` は「門1' は `sub_rate` のほうが 30日 早い
+    #     （83日 対 113日）」と出していました。**同じ出力が逆を向いていました。**
+    #     直近 7日 の ship は **`per_video` 134件 ／ `sub_rate` 14件** ——
+    #     引かれたのは頭が名指ししたほうです。**その間に再生/日 は 6,299 → 943（-85%）。**
+    #
+    #     上の `tr` の順位も、その下の `need_over_cap` も、**軌跡の中の量**です。
+    #     `target_date is None` の回は、どの腕を無限大にしても動いた日数が
+    #     定義上 0 —— **順位そのものに意味がありません**（`gate_arm_lines()` の
+    #     docstring が同じことを書いています）。意味の無い順位が命令形で頭に出て、
+    #     `run_marker` の `lever_followed` までそれで採点されていました。
+    #
+    #     **`plan()` の中でやらないこと。** 門1' は4本の腕の模型の**外側**の項なので、
+    #     すぐ下の `resume_gate`（審査の門）の上書きと**同じ形・同じ場所**に置きます。
+    #     順番も同じ理由で、審査の門はこれより**後**（あちらが勝つ）。
+    #
+    #     **覆る条件は `gate_arm_pick()` の docstring。** 天井が入れ替われば
+    #     名指しも自分で入れ替わります（定数を持たず、毎周 `cap` を読む）。
+    _gap = gate_arm_pick(pl)
+    if _gap is not None and _gap["lever"] != pl.get("lever_hint"):
+        pl["lever_hint_binding"] = pl.get("lever_hint")
+        pl["lever_hint"] = _gap["lever"]
+        pl["lever_from"] = "門1'"
+    if _gap is not None:
+        pl["gate_arm"] = _gap
     # --- **止まっている間の名指しは `gate`**（2026-08-30・最適化の回が足した）---
     #
     # ここまでで選ばれる4本（`per_video` / `rpm` / `density` / `sub_rate`）は、
