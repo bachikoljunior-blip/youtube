@@ -1537,8 +1537,23 @@ def lines(now: datetime | None = None) -> list[str]:
         if machine_has_it:
             out.append("  → **この本の `improve` は、いま機械の側で進んでいます。**"
                        "終わったか（`**差し替えました**` の行）は `data/rebake.log` の末尾。"
-                       "**この回が打つなら、本ではなく別の所へ**"
-                       "（絵・題・次の日の1本・道具）")
+                       "**触ってはいけないのは narration だけです**"
+                       "（音声がもう合わせて合成ずみ）。当てどころ: "
+                       "**題・説明・絵・次の日の1本・道具**")
+            # **題と説明は、いま焼いている本そのものに入ります**（2026-09-04 20:3x に実物で確かめた）。
+            # ここには「本ではなく別の所へ」しか無く、**焼いている間は本が変えられない**と
+            # 読めました。`scripts/upload_only.py:147` は投稿の直前に
+            # `build/<題材>/script.json` を読み直すので、台本の段を抜けたあと
+            # （`data/rebake.log` の末尾が `[tts:…]` 以降）にそこへ書いた題・説明は
+            # **その焼きが上げる本に入ります**（焼き直し 0回・API 0単位）。
+            # 手順と覆る条件は `docs/trigger_main.md` §4 の同じ見出しに。
+            out.append("     **題・説明は、いま焼いている本に入れられます**"
+                       "（`upload_only.py:147` は投稿の直前に "
+                       "`build/<題材>/script.json` を読み直す・焼き直し 0回・API 0単位）: "
+                       "`data/scripts/<題材>.script.json` を直し、同じ値を "
+                       "`build/<題材>/script.json` へ **`os.replace` で原子的に**入れて、"
+                       "`daily_pick.draft_legs()` で脚を数え直すこと。"
+                       "**narration・visual・chapters は入れないこと**（絵と音がずれます）")
         elif draft is None:
             out.append("  → **焼き直すのが `improve` の1手です**"
                        "（`python -m src.pipeline` で焼き直し、"
