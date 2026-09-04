@@ -816,6 +816,24 @@ def main() -> int:
     #     ここより下だと「数を渡した回」しか読めません。
     for _line in kinds_allowed()["lines"]:
         print(_line)
+    # **枠の機会費用を、周の頭で出す**（2026-09-05・最適化の回）。
+    #     `src/slot_cost.py` は 09-05 00:20 から この数を計算していましたが、
+    #     読めたのは `daily_pick.lines()` を撃った回だけで、**決めは 11回 連続で長尺**
+    #     （実測 `data/daily_pick.jsonl`・09-05T00:38 は `expected_48h` 8.0 で通っていた）。
+    #     09-05 から `daily_pick.record()` の**門**なので、**作りはじめる前に**出します
+    #     —— ここを読まずに負けている形で作ると、決める段で通りません。
+    #     **覆る条件**: `slot_value()` の勝者が入れ替われば、この行は自分でその形を指します。
+    try:
+        sys.path.insert(0, str(ROOT))
+        from src import slot_cost as _sc                          # noqa: PLC0415
+        _s = _sc.slot_value()
+        if _s.get("cost") is not None:
+            print(f"  枠の機会費用: **1枠 ＝ {_s['cost']:,.0f}回**（{_s['best']}・"
+                  f"規則の密度・齢{_sc.HOURS}時間）"
+                  f"　← **これを下回る見込みの形は `daily_pick --pick` が通しません**"
+                  "（`--anyway <数字を含む1行>` で越えれば控えに残ります）")
+    except Exception as _exc:                                     # noqa: BLE001
+        print(f"  [!] 枠の機会費用が出せません: {str(_exc)[:80]}")
     if d.get("live") is None:
         # **WAIT を印字しません。** 2026-09-02 21:2x、親は 0体 と数えたうえで
         #     `--live` を付けずに撃ち、出た WAIT をそのまま「（0体・WAIT 74分）」と
