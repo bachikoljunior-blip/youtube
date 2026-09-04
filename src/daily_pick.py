@@ -822,6 +822,43 @@ def record(form: str, topic: str, why: str, *, day: date | None = None,
             f" 実測の 齢48h 中央値: {seen}。"
             " **選んだ形が負けている側なら、その数を上回る見込みを、根拠と一緒に置くこと。**"
             " 外れてよい数です（`--moves` と同じ）—— 次の回が `expected_lines()` で実物と並べます。")
+    # **その見込みが、食う枠のぶんを払えるか**（2026-09-05・最適化の回に門にした）。
+    #
+    # `--expected` の門（すぐ上）は 09-04 22:5x に入りましたが、**数を1つ置かせるだけ**で、
+    # **その数が枠の機会費用に足りているかは、どこも見ていませんでした。**
+    # 実測（この回に `data/daily_pick.jsonl` を読んだ）——
+    # 09-05T00:38 の決めは **長尺・`expected_48h=8.0`・`anyway` 空**。
+    # 同じ時刻の `src/slot_cost.slot_value()` は **1枠 ＝ 1,049回**（ショート・規則の密度・
+    # 齢48h の中央値）。**8回 は その 1/131 です。** それでも門は通しました。
+    #
+    # `src/slot_cost.py` は 09-05 00:20 にこの比を計算して **印字**していました。
+    # `run_marker.py` が自分の註に書いているとおり ——
+    # **「註や警告ではなく、通さないことだけが効いています」**。だから通さない側にしました。
+    #
+    # **禁止ではありません。** `--anyway <数字を含む1行>` で越えられます（`probe_hold` と同じ口）。
+    # 越えた行は `anyway` に残り、次の回が実物と並べます。
+    #
+    # **素振り（`path` を渡した回）では立ちません** —— 本番の控えを守る門なので、
+    # `uploaded_path` の註と同じ切り分けにしています。CLI に `--path` はありません。
+    #
+    # **覆る条件**: どの形でも規則の密度の中央値が入れ替われば、`slot_value()` の勝者は
+    # 自分で入れ替わり、この門はその形を通します（**形の禁止ではありません**）。
+    # 標本が 0本 で機会費用が測れないときは、この門は立ちません。
+    if (kind == PICK_KIND_DECIDE and path is None
+            and not (anyway or "").strip()
+            and isinstance(expected, (int, float))):
+        try:
+            from . import slot_cost                              # noqa: PLC0415
+            _sv = slot_cost.verdict(float(expected), form=form, now=now)
+        except Exception:                                        # noqa: BLE001
+            _sv = None
+        if _sv is not None and _sv.get("ok") is False:
+            raise ValueError(
+                f"`--expected {float(expected):,.0f}回` では、この1枠のぶんを払えません。"
+                f" {_sv['why']}"
+                f" **形を {_sv.get('best')} にするか、"
+                f"`--anyway <数字を含む1行>` で越えること**"
+                "（越えた行は控えに残り、次の回が実物と並べます）。")
     # **先読みの門が開く前に「次の未決の日」まで試す形が取るのを止める**（`probe_hold` の註）。
     # `kind="carry"`（焼き直しの写し）は決めではないので通します。
     #
