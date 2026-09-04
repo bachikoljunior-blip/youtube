@@ -4293,6 +4293,90 @@ def ahead_move_note(day: date) -> str:
             f"（1本 50単位・先の日付には置かない）")
 
 
+def improve_window_lines(next_row: dict | None, now: datetime | None = None) -> list[str]:
+    """**規則3 の相手に、公開までに1文字でも書けるのか**（API 0単位）。
+
+    ## なぜ要るか（2026-09-05 07:2x に実測して足した）
+
+    規則3 は「**次の枠で出る1本を、出る瞬間まで良くし続ける**」です。
+    **その1本の題・説明・絵を変える道は `videos.update` の1つだけ**で、
+    それは日枠が尽きると 403 になり、**戻るのは翌 16:00 JST**（`next_slot.writable_from`）。
+
+    実測（この回・09/05 07:2x JST）:
+
+        次の枠の1本 `kzefG44_APU`   公開 **09/05 09:00 JST**
+        `videos.update` が戻るのは   **09/05 16:00 JST**（7時間 あと）
+        ＝ **この本には、公開までに1文字も書けません。**
+
+    **規則3 が名指しする相手が、構造上 手の届かない所に居ます。**
+    そして画面はそれを一言も言っていませんでした —— `writable_from()` は
+    `reschedule`（動かす側）と `slot_gate` からしか呼ばれておらず、
+    **「良くし続ける」と書いてある側からは1度も呼ばれていません。**
+
+    ＝ 回は「次の枠の1本を improve せよ」と読み、当てどころを探し、
+    **撃てないと分かるまでの時間を毎回 使います**（親の申し送りの
+    「直近5日の ship 276件 は fix 71%・`--moves 0` が 95%」の、少なくとも一部）。
+    **届かない相手を名指ししているあいだ、届く相手は名指しされません。**
+
+    ## 何を出すか
+
+    書けるなら、いつまで書けるかを1行。**書けないなら、届く相手を名指しします**:
+
+        1. **その次の日の1本**（まだ `videos.insert` していないので、台本ごと変えられる。
+           `videos.update` を1回も使いません）
+        2. **公開の後の差し替え**（16:00 以降・`metadata_fix.py`・50単位）
+        3. **道具**（0単位・いつでも）
+
+    ## 覆る条件
+
+    日枠が尽きていない回では、この関数は「いつまで書けるか」だけを出します。
+    `reschedule` が `videos.update` を使わない道を持ったら（差し替えが日枠の外に
+    出たら）、この行ごと要りません —— `next_slot.writable_from()` の覆る条件と
+    同じ日に発火します。
+    """
+    if not next_row:
+        return []
+    try:
+        from src import next_slot as _ns                        # noqa: PLC0415
+        wf = _ns.writable_from(now)
+    except Exception:                                           # noqa: BLE001
+        return []
+    at = next_row.get("_at")
+    if not isinstance(at, datetime):
+        at = _parse(str(next_row.get("at") or ""))
+    if not isinstance(at, datetime):
+        return []
+    vid = next_row.get("video_id") or "?"
+    if wf is None:
+        return [f"     [窓] `{vid}` は**いま書けます**"
+                f"（`videos.update` は撃てます・`next_slot.writable_from()` = None）。"
+                f" **公開 {_jst(at):%m/%d %H:%M} JST までが規則3 の持ち時間です。**"]
+    if wf < at:
+        return [f"     [窓] `{vid}` は**まだ書けませんが、公開には間に合います** ——"
+                f" `videos.update` が戻るのは **{_jst(wf):%m/%d %H:%M} JST**、"
+                f"公開は {_jst(at):%m/%d %H:%M} JST（差 "
+                f"{(at - wf).total_seconds() / 3600:.1f}時間）"]
+    return [
+        f"     [窓] [!] **`{vid}` には、公開までに1文字も書けません** ——"
+        f" 公開 **{_jst(at):%m/%d %H:%M} JST** に対して `videos.update` が戻るのは"
+        f" **{_jst(wf):%m/%d %H:%M} JST**（**{(wf - at).total_seconds() / 3600:.1f}時間 遅い**"
+        f"・`next_slot.writable_from`・API 0単位）。"
+        f" **規則3 の相手が、構造上 手の届かない所に居ます。**",
+        "        → 届く当てどころは この3つです:"
+        " **(1) その次の日の1本**（まだ `videos.insert` していないので"
+        "**台本ごと**変えられる ＝ `videos.update` を1回も使わない・いちばん大きい手）"
+        " ／ **(2) 公開の後の差し替え**"
+        f"（{_jst(wf):%H:%M} JST 以降・`scripts/metadata_fix.py`・50単位）"
+        " ／ **(3) 道具**（0単位）。"
+        " **この本の題・説明・絵を今から直そうとしないこと** —— 撃てば 403 です。",
+    ]
+
+
+def _jst(t: datetime) -> datetime:
+    """UTC の時刻を JST に直す（印字のためだけ）。"""
+    return t.astimezone(timezone(timedelta(hours=9)))
+
+
 def lines(next_row: dict | None, now: datetime | None = None,
           cmp: dict | None = None, picks_path: Path | None = None,
           topics: set[str] | None = None, cands: list[dict] | None = None,
@@ -4312,6 +4396,13 @@ def lines(next_row: dict | None, now: datetime | None = None,
         draft_fam = family_of(next_row.get("topic"))
         out.append(f"     次に出る本 `{next_row.get('video_id')}` は **{draft_form}**"
                    f"（題材 `{next_row.get('topic')}`・族 `{draft_fam or '?'}`・形の決め方 {how}）")
+        # **その本に、公開までに1文字でも書けるのか**（2026-09-05 07:2x に足した）。
+        # 規則3 の相手を名指しする行のすぐ下に置きます —— 実測 09/05: 次の枠の
+        # `kzefG44_APU` は 09:00 JST 公開で、`videos.update` が戻るのは 16:00 JST。
+        # **7時間 遅い ＝ 公開までに1文字も書けません。** 画面はそれを一言も
+        # 言っておらず（`writable_from()` は動かす側からしか呼ばれていなかった）、
+        # 回は毎回「当てどころを探して、撃てないと分かる」ぶんの時間を使っていました。
+        out.extend(improve_window_lines(next_row, now))
         # **次に出る本の「尺」を、ここで印字します**（2026-09-05 04:0x に踏んだ）。
         #
         # `draft_length_lines()` は在ったのに、**この画面には1度も出ていませんでした** ——
