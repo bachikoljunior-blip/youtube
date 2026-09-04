@@ -189,6 +189,46 @@ def _rule_blocks_move(vid: str, when: str) -> list[str]:
     - 入れ替え（2本の時刻を交換）は、先に `--unschedule` してから `--move` すること。
       実測 2026-09-02 の `queue_lag.py --plan` は **0手**なので、いま塞ぐものはありません。
     """
+    # **同じ字の本を枠へ入れないこと**（2026-09-05 05:5x・最適化の回）。
+    #
+    #     `dupes.blocking()` は同じことを見ますが、**投稿（`upload_only.py`）の側**に
+    #     立っています。**池から選ぶ道は、すでに上げてある本を使うので、その門を
+    #     通りません。** `--move` は枠へ入れる最後の1か所で、ここだけが素通りでした。
+    #
+    #     実測 2026-09-05 05:11 `data/daily_pick.jsonl`::
+    #
+    #         09/05 の1本 = OBJdXEr6gLg 「小規模企業共済を11か月でやめるといくらか #Shorts」
+    #         09/06 の1本 = DtpnSVFDtAE （同じ題材 s-shokibo-11-12kagetsu-59man）
+    #         09/03 に公開 = 9zkfjEH48PY 「小規模企業共済を11か月でやめるといくらか #Shorts」
+    #
+    #     **OBJ は 9zk の焼き直しの元**（規則の4「消さない」で池に残った兄弟）で、
+    #     題が1文字も違いません。規則1 は1日1本なので、**その日の取り分は 0** です。
+    #     しかも 09/05・09/06 の**2日つづけて**同じ題材が立っていました。
+    #
+    #     `src/daily_pick.pool_candidates()` の側も同じ回で塞いでいます（`published_topics`）。
+    #     **両方に置くのは、選ぶ側と入れる側が別だからです** ——
+    #     `src/house_rule.py` 冒頭「言っている所と、している所が別」。
+    #
+    #     **覆る条件**: 焼き直しが古い下書きを消すようになったら、池に兄弟は残らないので
+    #     この門は空振りしかしません（そのとき外してよい）。
+    try:
+        from src import daily_pick as _dp                      # noqa: PLC0415
+        _topic = str((_dp._latest_uploaded().get(vid) or {}).get("topic") or "")
+        if _topic and _topic in _dp.published_topics():
+            _sib = [i for i, r in _dp._latest_uploaded().items()
+                    if r.get("topic") == _topic and i != vid and i in _dp._observed_ids()]
+            return [
+                f"[reschedule] **`{vid}` の題材 `{_topic}` は、もう公開ずみです**"
+                f"（公開ずみの本: {' '.join(_sib[:4]) or '（控えに在り）'}）。**撃ちません。**",
+                "             規則3 の焼き直しは同じ題材の下書きを池に残します"
+                "（消さない・規則の4）。そのうち1本が公開されたら、**残りは二度と出せません**"
+                " —— 出せば同じ字の本が2本 並びます。",
+                "             規則1 は1日1本なので、**その枠を同じ字に使うと、その日の取り分は 0** です。",
+                "             別の題材を選ぶこと（`python -m src.daily_pick` の池の一覧は"
+                "この門と同じ規則で絞ってあります）。",
+            ]
+    except Exception:                                          # noqa: BLE001
+        pass                                                   # 読めない回は止めない（門は増やすが、道は塞がない）
     try:
         from src import house_rule as _h                       # noqa: PLC0415
         rule = max(1, int(_h.PUBLISH_PER_DAY))

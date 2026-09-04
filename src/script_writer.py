@@ -530,6 +530,48 @@ LONG_FIX_GUIDANCE = (
 )
 
 
+def short_total_band(topic_id: str = "") -> tuple[int, int, str]:
+    """そのショートの**ナレーション合計の帯**（下限, 上限, 理由の1文）。**API 0単位。**
+
+    ## なぜ帯なのか（2026-09-05 05:4x・サブの回）
+
+    既定は `(0, SHORT_TOTAL_CHARS, "")` ＝ **上限だけ**。いままでと1文字も変わりません
+    （実測: 自分のショート 109本 が 109本とも 23.6〜32.6秒）。
+
+    `style: outside_short` の題材だけ、`src/outside_short.LENGTH_BAND` の帯へ移します。
+    **外の帯 162本 を齢で割ると 140〜180秒 の升は 0〜60秒 の ×7.0**（n=46 対 n=20・
+    4升とも単調・`outside_short.band_lines()` で毎周 数え直せます）。
+
+    ## **上限を上げるのではなく、形を分けています**
+
+    30秒 のショートは、齢48h の中央値 **1,049回**（規則の密度の日・n=15）を出している側の
+    本です。**既定を動かすと、効いている 109本 の作りを、確かめずに捨てます。**
+    長尺が `style: outside_long` ＋ `minutes:` で既定を迂回しているのと同じ道です。
+
+    ## **札が無いうちは、この関数は何も変えません**
+
+    `config/topics.yaml` に `style: outside_short` の題材は **まだ 0件**
+    （`tests/test_outside_short.py` と `scripts/deadline_check._outside_supply` が
+    そこを見ています）。**先に札を置かないこと** —— 置いた瞬間、外の型を名乗る本が
+    作れるようになるので、**その回のうちに本を1本 作ること**。
+
+    **覆る条件**: 前提「外の帯の上位のショートの作り」が外れたら
+    （齢48h で 1,864回 未満 ＝ 自分の最大にも届かない）、`src/outside_short` ごと
+    落とすこと。この関数も既定だけに戻します。
+    """
+    if _topic_style(topic_id) != "outside_short":
+        return 0, SHORT_TOTAL_CHARS, ""
+    try:
+        from . import outside_short                              # noqa: PLC0415
+        lo, hi = outside_short.total_chars_band()
+        band = outside_short.LENGTH_BAND
+    except Exception:                                            # noqa: BLE001
+        return 0, SHORT_TOTAL_CHARS, ""
+    return lo, hi, (f"（`style: outside_short` の帯 {band[0]}〜{band[1]}秒 ＝ "
+                    f"{lo}〜{hi}字。既定の上限 {SHORT_TOTAL_CHARS}字 ではありません ——"
+                    f"`src/outside_short` の表が根拠）")
+
+
 def short_script_problems(script, topic_id: str = "") -> list[str]:
     """ショートの台本の不備を並べる。空なら合格。
 
@@ -572,13 +614,25 @@ def short_script_problems(script, topic_id: str = "") -> list[str]:
                     "（合計140文字は変わらないので、内容そのものを1つ落とすこと）"
                 )
     total = sum(len(s.narration) for s in script.segments)
-    if total > SHORT_TOTAL_CHARS:
+    lo_chars, hi_chars, band_why = short_total_band(topic_id)
+    if total > hi_chars:
         problems.append(
-            f"ナレーション合計が{total}文字（上限{SHORT_TOTAL_CHARS}）。"
+            f"ナレーション合計が{total}文字（上限{hi_chars}）。"
             f"動画の尺で約{total / EFFECTIVE_CHARS_PER_SECOND:.0f}秒"
             "（無音込みの実効 4.63文字/秒）でショートとして長すぎます。"
             "**セグメントを分けるのではなく、内容を1つに絞って削ること。**"
-            "1本＝1つの計算結果。派生は別の動画にする"
+            "1本＝1つの計算結果。派生は別の動画にする" + band_why
+        )
+    elif total < lo_chars:
+        # **下限は `style: outside_short` のときだけ立ちます**（既定は 0）。
+        # 長尺が 09/05 03:41〜04:15 に踏んだのは、この裏返し ——
+        # 「命じる尺 20分 と 落とす床 25分 が食い違い、外の型の長尺は
+        #  焼き直しても1本も出せなかった」。**同じ食い違いを、こちら側にも作らないこと。**
+        problems.append(
+            f"ナレーション合計が{total}文字（下限{lo_chars}）。"
+            f"動画の尺で約{total / EFFECTIVE_CHARS_PER_SECOND:.0f}秒 ——"
+            "**外の帯の速い升に届いていません。削るのではなく、中身を1つ足すこと。**"
+            + band_why
         )
 
     # **2枚目が「前提」だと、5秒で動画が再スタートして離脱する**（8/9 実測）。
