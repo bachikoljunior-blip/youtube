@@ -697,9 +697,16 @@ def record(form: str, topic: str, why: str, *, day: date | None = None,
         raise ValueError("`--why` は数字を含む1行が要ります（次の回が実物と並べます）")
     # **先読みの門が開く前に「次の未決の日」まで試す形が取るのを止める**（`probe_hold` の註）。
     # `kind="carry"`（焼き直しの写し）は決めではないので通します。
+    #
+    # **上げの控えは、決めの控えと同じ並びから読みます** —— `path` を別に渡した回
+    # （試験・素振り）が、**本番の `data/uploaded.jsonl` で止められないため**。
+    # これを書く前は、`path=tmp/picks.jsonl` の試験 9本 が本番の上げ帳を読んで赤くなりました。
+    up = uploaded_path
+    if up is None and path is not None:
+        up = Path(path).parent / "uploaded.jsonl"
     if kind == PICK_KIND_DECIDE and not (anyway or "").strip():
         hold = probe_hold(form, day or for_day(now), now=now, topics=topics,
-                          uploaded_path=uploaded_path)
+                          uploaded_path=up)
         if hold:
             raise ValueError(hold)
     if (anyway or "").strip() and not re.search(r"\d", anyway):
@@ -1964,7 +1971,11 @@ def outside_long_readout(now: datetime | None = None, *, topics: list[dict] | No
             continue
         if h < 24:
             line += (f" → 24h（{h24:%m/%d %H:%M} JST）の先読みの門 {OUTSIDE_24H_GATE}回 まで待つ。"
-                     f"**次の未決の日は、それまで決めないこと**")
+                     f"**次の未決の日は、それまで決めないこと** ——"
+                     f" これは散文ではなく、`record()` が実際に止めます（`daily_pick.probe_hold`）。"
+                     f"止まるのは**この本より後の日を長尺で決めるとき**だけで、"
+                     f"ショート・この本の日・齢24h 以降は通ります。"
+                     f"数字で越えるなら `--anyway \"<数字を含む理由>\"`")
         elif v >= OUTSIDE_24H_GATE:
             line += (f" **≥ 先読みの門 {OUTSIDE_24H_GATE}回 → 次の未決の日の1本も外の作りの長尺**"
                      f"（下書きが無ければ作る・下の行）")
