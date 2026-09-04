@@ -111,6 +111,23 @@ def ships(days: int) -> list[str]:
         out.append(f"  **測った動き（門1'の日数の差・負 ＝ 近づいた）**: {len(meas)}件 ／ "
                    f"近づいた {near}件・遠のいた {far}件・動かず "
                    f"{len(meas) - near - far}件・合計 {sum(g):+.1f}日")
+        #: **死に方の見張りを、ここにも当てる**（2026-09-05 未明・最適化の回）。
+        #:     すぐ上の `if not meas:` の枝は `10^9` の死に方を見張っていましたが、
+        #:     **標本が1件でも出るとこちらへ来て、見張りを通りません**でした。
+        #:     実測 2026-09-05: `gate1p_days` は **29件すべて 511.538**（3.5時間）＝
+        #:     `moves_measured` は**定数から定数を引いた 0.0**。それを「動かず 28件」と
+        #:     出すと、**測った結果 0 に読めます。**「その回が近づかなかった」ではありません。
+        #:     判定は `src/kind_yield.ruler()` の1か所（**写しを持たないこと**）。
+        #:     **覆る条件**: `ruler()['usable']` が True になったら、この行は出ません。
+        try:
+            from src import kind_yield as _ky
+
+            _rl = _ky.ruler(days)
+            if _rl.get("n", 0) >= 2 and not _rl.get("usable"):
+                out.append(f"  [!] **その {len(meas)}件 は、測って 0 ではありません** —— "
+                           f"{_rl['note']}")
+        except Exception:                                          # noqa: BLE001
+            pass
         bykind: dict[str, list[float]] = {}
         for r in meas:
             bykind.setdefault(str(r.get("ship_kind") or "?"), []).append(
