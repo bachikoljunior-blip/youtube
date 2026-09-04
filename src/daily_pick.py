@@ -618,6 +618,72 @@ def current(day: date, path: Path | None = None) -> dict | None:
     return rows[-1] if rows else None
 
 
+def claimed_elsewhere(day: date, *, path: Path | None = None,
+                      days: int = 14) -> set[str]:
+    r"""**ほかの日の決めが、もう名指している本の id。** `day` 自身の決めは入れません。**API 0単位。**
+
+    ## なぜ要るか（2026-09-05・最適化の回。**この回が自分で開けた穴を、同じ回で塞ぐ**）
+
+    `pool_candidates()` が池から外すのは **(1) 予約が入っている本**（`at`）と
+    **(2) 一度でも公開した本**（控えの観測）の2つだけです。
+    **「別の日の決めが名指しているだけの本」は、どちらにも当たりません** ——
+    決めは `data/daily_pick.jsonl` の行で、予約（`at`）ではないからです。
+
+    実測（この回・API 0単位）—— `ahead_sweep._today_candidate()` に
+    「立っている決めを門へ通し直す」を入れた直後に踏みました::
+
+        09/06 の決め   ショート `DtpnSVFDtAE`（00:38 に確定）
+        09/05 の決めが門で落ちる → 池へ落ちる
+        池の先頭        **`DtpnSVFDtAE`**（族 shokibo・残差 ×345.5 で 1位）
+        → **09/05 と 09/06 が同じ本を名指す**
+
+    **本は 1回しか出せません。** 09/05 に出た時点で 09/06 の決めは
+    「もう公開ずみの本」を指し、その日は `_today_candidate()` の池の枝まで
+    落ちて選び直します —— **つまり空きはしませんが、09/06 の決めに書いてある
+    理由と見込み（`expected_48h`）は、その瞬間に嘘になります。**
+    次の回はそれを「機械が数で決めた1本」として読みます。
+
+    ## なぜ `pool_candidates` の中ではなく外に置くか
+
+    `pool_candidates()` は「**池に何が在るか**」を答える口で、
+    `scripts/` の一覧や画面もこれを読みます。**そこから他日の決めを引くと、
+    池の中身そのものが日によって変わって見えます。** ここは
+    「**この枠に置いてよいか**」の側の問いなので、選ぶ側で引きます。
+
+    ## 覆る条件
+
+    - `data/daily_pick.jsonl` が「決めたら予約も入れる」形になったら、
+      `pool_candidates()` の `at` の除外がここも兼ねるので、**この口は要りません。**
+    - `days` は前後の窓（既定 14日）。決めは先の日にも立つので前後 両方を見ます。
+      窓の外の決めは無視します（古い決めが池を永久に痩せさせないため）。
+    """
+    lo, hi = day - timedelta(days=days), day + timedelta(days=days)
+    out: set[str] = set()
+    seen: dict[str, dict] = {}
+    for r in _jsonl(path or PICKS):
+        d = str(r.get("for_day") or "")
+        try:
+            dd = date.fromisoformat(d)
+        except ValueError:
+            continue
+        if dd == day or not (lo <= dd <= hi):
+            continue
+        # **その日の「最後の決め」だけ**（`current()` と同じ見方）。
+        prev = seen.get(d)
+        if prev is not None:
+            try:
+                if datetime.fromisoformat(str(r.get("at"))) < datetime.fromisoformat(str(prev.get("at"))):
+                    continue
+            except (TypeError, ValueError):
+                pass
+        seen[d] = r
+    for r in seen.values():
+        vid = str(r.get("video_id") or "")
+        if vid:
+            out.add(vid)
+    return out
+
+
 def probe_hold(form: str, day, *, now=None, topics: list[dict] | None = None,
                uploaded_path: Path | None = None) -> str:
     """**先読みの門がまだ読めないうちに、試す形が「次の未決の日」まで取るのを止める。**

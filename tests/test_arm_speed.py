@@ -193,7 +193,16 @@ def test_実在する幅で腕を止める_1日110525本を歩かない():
         assert caps["rpm"]["measured"] is False
         assert "まだ測っていません" in caps["rpm"]["why"]
     arms = eta._capped_arms(a0)
-    assert arms["density"]["cap"] <= eta.UPLOAD_CAP_PER_DAY / 25 + 1e-9
+    # **分母は `PLAN_PUBLISH_PER_DAY`（＝ `house_rule.PUBLISH_PER_DAY`）です**
+    # （2026-09-05 05:0x に直した）。ここは長らく **`/ 25` のべた書き**でした ——
+    # 25 は「計画の公開密度」が 25本/日 だった頃の数で、`density` の倍率は
+    # 「引ける上限 ÷ いまの密度」なので、**分母が動けばこの線も動きます。**
+    # 2026-08-31 の固定（1日1本）で `PLAN_PUBLISH_PER_DAY` が 25 → 1 になり、
+    # 倍率の上限は 92/25 ＝ 3.68 から 92/1 ＝ 92 へ上がりました。
+    # **べた書きの 25 だけが取り残され、実測 ×10.00 の `density` で赤になっていました**
+    # （この赤は 09-05 05:0x の回が `stash` して「変更の前から在る」ことを確かめています）。
+    # **狙いは変えていません** —— 「腕を 110,525本/日 まで歩かせない」の線です。
+    assert arms["density"]["cap"] <= eta.UPLOAD_CAP_PER_DAY / eta.PLAN_PUBLISH_PER_DAY + 1e-9
     for lever, a in arms.items():
         # **`> 1.0` から `>= 1.0` へ**（2026-08-21 16:2x）。
         #     ここは「腕を 110,525本/日 まで歩かせない」ための下限で、
