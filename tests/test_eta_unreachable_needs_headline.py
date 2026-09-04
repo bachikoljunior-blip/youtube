@@ -28,7 +28,17 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 
-from src import house_rule  # noqa: E402
+from src import house_rule
+
+#: **「規則では届かない本数」を、規則から作ること**（2026-09-05 に書き替えた）。
+#: 40本/12本/20本 のべた書きは、`PUBLISH_PER_DAY = 1` の下でだけ「届かない」でした。
+#: 規則が 10本/日 になると全部 届いてしまい、この file の「拾う側」の検査2件が
+#: 拾わない場面を測る形へ化けます（実際に赤くなりました）。
+_PD = house_rule.PUBLISH_PER_DAY
+_OVER_0903 = 3 * _PD + 2       # 2026-08-31 → 2026-09-03 ＝ 3日
+_OVER_0910 = 10 * _PD + 2      # → 2026-09-10 ＝ 10日
+_OVER_0920 = 20 * _PD + 2      # → 2026-09-20 ＝ 20日
+  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -41,14 +51,14 @@ def test_claim_を期日の順に重複なく返す(tmp_path):
         "    deadline: '2026-09-20'\n"
         "    needs:\n"
         "      - on_date: '2026-09-20'\n"
-        "        what: 09/20（40本 公開）の読み\n"
+        f"        what: 09/20（{_OVER_0920}本 公開）の読み\n"
         "  - claim: はやい\n"
         "    deadline: '2026-09-10'\n"
         "    needs:\n"
         "      - on_date: '2026-09-10'\n"
-        "        what: 09/10（12本 公開）の読み\n"
+        f"        what: 09/10（{_OVER_0910}本 公開）の読み\n"
         "      - on_date: '2026-09-10'\n"
-        "        what: 同じ日の 20本 の読み\n",
+        f"        what: 同じ日の {_OVER_0910}本 の読み\n",
         encoding="utf-8",
     )
     got = house_rule.unreachable_claims(today="2026-08-31", path=y)
@@ -98,11 +108,13 @@ def test_規則が外れたら黙る(tmp_path, monkeypatch):
         "    deadline: '2026-09-03'\n"
         "    needs:\n"
         "      - on_date: '2026-09-03'\n"
-        "        what: 09/03（12本 公開）の読み\n",
+        f"        what: 09/03（{_OVER_0903}本 公開）の読み\n",
         encoding="utf-8",
     )
     assert house_rule.unreachable_claims(today="2026-08-31", path=y) == ["おおい"]
-    monkeypatch.setattr(house_rule, "PUBLISH_PER_DAY", 25)
+    # **緩める先も、いまの規則から作ること**（25 のべた書きは、規則が 25 を
+    # 超えた日に「緩めたのに黙らない」で赤くなります）。
+    monkeypatch.setattr(house_rule, "PUBLISH_PER_DAY", _OVER_0903)
     assert house_rule.unreachable_claims(today="2026-08-31", path=y) == []
 
 
