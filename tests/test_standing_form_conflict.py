@@ -123,15 +123,57 @@ def test_lines_prints_the_conflict_when_a_pick_stands(monkeypatch, tmp_path):
 # ----------------------------------------------------------------------
 
 
-def test_処置が0本なら分母が処置を測っていないと言う():
+# **【2026-09-04 23:5x・最適化の回で、この検査は向きが変わりました】**
+# 下の検査は `treated_call` が**どちらの形にも (0, 36) を返す**ので、
+# 「立っている形の分母が処置 0本」と同時に「門の算の形の分母も処置 0本」です。
+# それでも `[数]` は**立っている形の側にだけ**「処置 n=0 の分母で処置を落とさないこと」を
+# 印字していました ＝ **同じ事実を、片側の逃げ道としてだけ配っていた。**
+# 実測（09/04 23:5x に撃った）: `treated_count('長尺')=(0,36)`・`('ショート')=(0,216)` で
+# **両方 0本**。そして `data/daily_pick.jsonl` の 33行 のうち **10行** が、
+# この印字の文言（「処置 n=0 の分母で処置は落とせない」）を `why` に写して
+# 門の算（ショート）を外し、09/05 は **21回 連続**で長尺に決め直されています。
+# そのあいだ `data/eta.jsonl` の 再生/日(7d) は 6,299（08-25）→ **943**（09-04）。
+# **いまは、両側とも 0本 の回は「この事実は形を選びません」と言い、
+# 残った測った量（齢48h の中央値）を並べます。**
+
+
+def test_両方の形とも処置0本なら片側の逃げ道にしない():
     out = daily_pick.standing_form_conflict(
         _cur("長尺", "nenkin"),
         form_call=lambda **k: ("ショート", "道 ショート ＝ ×106・道 長尺 ＝ ×314"),
         treated_call=lambda form, **k: (0, 36))
     body = "\n".join(out)
-    assert "36本" in body and "0本" in body
+    assert "両方の形が処置 0本" in body
+    assert "どちらの形も選びません" in body
+    # **片側だけの逃げ道の文言は、この枝では出ないこと**（出た瞬間に元の壊れ方に戻る）
+    assert "処置 n=0 の分母で処置を落とさないこと" not in body
+
+
+def test_相手側に処置が在るときだけ立っている形を守る():
+    """**非対称のときは、元どおり立っている形の側を守ること。**
+
+    `want`（門の算の形）の分母が処置を測れていて、`have` の側が 0本 なら、
+    「その脚は処置ではない」は**本当に片側だけの事実**なので、そう言ってよい回です。
+    """
+    def _treated(form, **k):
+        return (0, 36) if form == "長尺" else (9, 216)
+
+    out = daily_pick.standing_form_conflict(
+        _cur("長尺", "nenkin"),
+        form_call=lambda **k: ("ショート", "道 ショート ＝ ×106・道 長尺 ＝ ×314"),
+        treated_call=_treated)
+    body = "\n".join(out)
     assert "処置ではありません" in body
-    assert "処置 n=0 の分母で処置を落とさない" in body
+    assert "処置 n=0 の分母で処置を落とさないこと" in body
+    assert "**9本 が処置ずみ**" in body
+
+
+def test_中央値の対は測れない側を推測で埋めない():
+    line = daily_pick._median_pair_line(
+        "長尺", "ショート",
+        median_call=lambda f: 1.0 if f == "長尺" else None)
+    assert "長尺 1回" in line
+    assert "ショート 測れず" in line
 
 
 def test_処置が在るなら門の算を根拠にしてよいと言う():

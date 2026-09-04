@@ -1704,6 +1704,24 @@ def standing_pick_treatment(cur: dict | None, *, topics: list[dict] | None = Non
     return out
 
 
+def _median_pair_line(a: str, b: str, *, median_call=None) -> str:
+    """**2つの形の、齢48h の中央値を並べた1行**（`form_median_48h` の実物・API 0単位）。
+
+    `standing_form_conflict()` が「処置は両方 0本」と言う枝で使います。**そこでは
+    処置の有無が形を選ばないので、残る測った量はこれだけ**になります。読めない側は
+    「測れず」と書き、**推測で埋めません**（埋めると、比べている当の量が推測になる）。
+    """
+    call = form_median_48h if median_call is None else median_call
+    out = []
+    for f in (a, b):
+        try:
+            v = call(f)
+        except Exception:                                          # noqa: BLE001
+            v = None
+        out.append(f"{f} {v:,.0f}回" if isinstance(v, (int, float)) else f"{f} 測れず")
+    return "・".join(out)
+
+
 def standing_form_conflict(cur: dict | None, *, now: datetime | None = None,
                            uploaded_path: Path | None = None,
                            form_call=None, picks_path: Path | None = None,
@@ -1758,12 +1776,29 @@ def standing_form_conflict(cur: dict | None, *, now: datetime | None = None,
         treated, total = counter(have, uploaded_path=uploaded_path)
     except Exception:                                              # noqa: BLE001
         treated, total = 0, 0
-    if total and treated == 0:
+    # **相手側の分母も、同じ口で数えること**（2026-09-04 23:5x・最適化の回）。
+    # ここが片側だけだったので、「処置 n=0 だから落とせない」が
+    # **両形とも 0本 のときにも、立っている形の側にだけ**印字されていました。
+    try:
+        w_treated, w_total = counter(want, uploaded_path=uploaded_path)
+    except Exception:                                              # noqa: BLE001
+        w_treated, w_total = 0, 0
+    if total and treated == 0 and w_total and w_treated == 0:
+        base = (f"     　 [数] **「処置 n=0 の分母で処置は落とせない」は、この回は使えません"
+                f" —— 両方の形が処置 0本 です。**"
+                f" {have} ＝ 0本／{total}本・{want} ＝ 0本／{w_total}本"
+                f"（`src/daily_pick.treated_count`・実物の台本の控え）。"
+                f" **同じ事実が両側に立つので、この事実はどちらの形も選びません。**"
+                f" 処置ずみが 0本 どうしなら、いま2つの形を分けている測った量は"
+                f" **齢{AGE_HOURS}h の中央値だけ**です: {_median_pair_line(have, want)}。"
+                f" **片側にだけ「処置 n=0」を当てて門の算を外さないこと。**")
+    elif total and treated == 0:
         base = (f"     　 [数] **その門の算は、立っている決めの形（{have}）の分母 {total}本 で解いています。"
                 f"そのうち、外の型を全部 写した本は 0本**（`src/daily_pick.treated_count`・実物の台本の控え）"
                 f" —— **その脚が測っているのは「いまの作り方」で、処置ではありません。**"
-                f" 前提「外の作り方を写した長尺」は、まさにその分母を測り直すために立っています"
-                f"（`config/hypotheses.yaml`）。**処置 n=0 の分母で処置を落とさないこと。**")
+                f" 一方 {want} の分母は {w_total}本 中 **{w_treated}本 が処置ずみ** ＝"
+                f" **こちら側は処置を測っています**（`config/hypotheses.yaml`）。"
+                f"**処置 n=0 の分母で処置を落とさないこと。**")
     elif total:
         base = (f"     　 [数] {have} の分母 {total}本 のうち、外の型を全部 写した本は **{treated}本**"
                 f"（`src/daily_pick.treated_count`）—— **分母は処置を測っています。"
