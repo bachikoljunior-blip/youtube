@@ -1248,6 +1248,77 @@ OUTSIDE_LEGS: tuple[tuple[str, str], ...] = (
 )
 
 
+#: **焼き直さなくても直せる脚。**（2026-09-04 21:xx・最適化の回に実測で足した）
+#:
+#: ## なぜ要るか —— **輪が回り続けた理由は、ここ1つでした**
+#:
+#: 09-04 の ship は **65件**（`data/runs.jsonl`）。うち `fix` が **41件**、
+#: `--moves` が 0 以外 は **0件**。同じ日の決めは **14回、全部 長尺**、
+#: 焼き直しで動画IDが **4つ** 捨てられました
+#: （`Ec-j1-W4nqw` → `O_lfBxB7S8Q` → `XwB8nxtN5D8` → `e6sLHLmPhrk`）。
+#:
+#: **4本とも、落ちた脚は `(4) 題・サムネ` の同じ2件です**（実測・API 0単位）::
+#:
+#:     題   【年金の受け取り方】…   ← 【 】が題材（相手でも場面でもない）
+#:     kicker「75歳まで生きた場合・年180万円」全角17文字（門は11文字）
+#:
+#: 同じ時刻の**手元の台本**は `draft_legs()` = **[]**（4脚とも ○。題は
+#: 【60歳以上の方へ】に直っている）。**直っているのに、門は言い続けます。**
+#:
+#: ## 算がそう言っています（意見ではありません）
+#:
+#:     焼き 1回     **55〜90分**（`ahead_sweep` の `REBAKE_LEAD` の註）
+#:     直しが降る間隔  09-04 の commit で **21分 / 26分 / 30分 / 91分**
+#:
+#: **直しのほうが焼きより速いので、焼き上がった控えは必ず古い。**
+#: `untreated_slot_block()` は控え（`pick_legs`）を見て「置くな・焼き直せ」と言い、
+#: `ahead_sweep` はそれを `rebake_pending` に倒す。焼くあいだにまた直しが降る。
+#: **`pick_legs` は `draft_legs` に永久に追いつけません。** ＝ 自分で自分を養う輪で、
+#: 出口は「枠の直前に、直っていない本が落ちる」しかありませんでした
+#: （09-04 の `1huadpEk6HY` が実物: 脚3本 ✗ のまま公開・齢12時間で **2回**）。
+#:
+#: ## 出口 —— **題とサムネは、焼き直しでしか直せないものではありません**
+#:
+#: `(4) 題・サムネ` が見るのは `title` と `thumbnail_kicker` / `thumbnail_line*` ——
+#: **どれも動画の中身ではなく metadata** です。手は既に在りました::
+#:
+#:     python scripts/retitle.py <動画ID> "<題>"          50単位・数秒
+#:     python scripts/refresh_thumbnail.py --rebuild <動画ID>   **API 0単位**
+#:     python scripts/refresh_thumbnail.py --missing --video <動画ID>  50単位
+#:
+#: **20分の動画を4回 焼き直して直そうとしていたのは、題の文字列 1本 です。**
+#: だからここで脚を2つに割り、metadata だけが落ちているときは
+#: `untreated_slot_block()` は**焼き直しを命じません**（`ahead_sweep` の
+#: `rebake_pending` に倒れない）。命じるのは「その場で直せ」のほうです。
+#:
+#: ## 覆る条件
+#:
+#: - `outside_title_problems` が `segments`（＝焼かないと変わらない所）も見るように
+#:   なったら、`(4)` はここから外すこと。**いまは `title` と `thumbnail_*` だけです。**
+#: - 前提「外の作り方を写した長尺」が閉じて `OUTSIDE_LONG_RULE` を使わなくなったら、
+#:   `OUTSIDE_LEGS` ごと落とすこと（`config/hypotheses.yaml`）。
+METADATA_LEGS: frozenset[str] = frozenset({"(4) 題・サムネ"})
+
+
+def metadata_only(bad: list[str]) -> bool:
+    """落ちた脚が **metadata だけ**か（＝焼き直さずに直せるか）。API 0単位。
+
+    空（＝1本も落ちていない）は `False` —— 直すものが無いので「その場で直せ」でもない。
+    """
+    return bool(bad) and all(b in METADATA_LEGS for b in bad)
+
+
+#: **metadata が落ちているときに撃つ手**（`untreated_slot_block()` が刷る）。
+METADATA_FIX_HOWTO = (
+    "焼き直しは要りません（題とサムネは metadata）: "
+    "`python scripts/retitle.py <ID> \"<手元の台本の title>\"` と "
+    "`python scripts/refresh_thumbnail.py --rebuild <ID>` "
+    "→ 窓が戻ったら `--missing --video <ID>`。"
+    "**そのあと `data/critique_queue/<ID>.script.json` の `title` / `thumbnail_*` を"
+    "手元の台本に合わせること** —— 控えを直さないと門は言い続けます"
+)
+
+
 def pick_legs(video_id: str | None, *, queue: Path | None = None) -> tuple[list[str], str | None]:
     """`(通らなかった脚, 読めなかった理由)`。**API 0単位・実物の台本の控えだけ。**
 
