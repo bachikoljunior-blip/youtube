@@ -91,3 +91,15 @@ def test_床は下げる方向にしか動かない():
           "forms": {"ショート": {"sample_age_days": 30, "mixed_median": 500,
                               "mixed_n": 216, "max": 1777}}}
     assert sc.verdict(120.0, form="ショート", sv=sv)["cost"] == 100
+
+
+def test_止めるのは_その本を名乗った回だけ():
+    """**門が自分の出口を塞がないこと。** この門を入れた回自身が止められた
+    （2026-09-05 05:xx）—— 丸ごと止めると、門を直す回まで止まります。
+    `dry_ledger_gate()` が `fix` の行き先を枠の本に絞っている以上、
+    名乗りのほうを止めれば、台帳が空の日の `fix` はそれで閉じます。
+    """
+    src = (dp.Path(__file__).resolve().parents[1] / "scripts" / "run_marker.py"
+           ).read_text(encoding="utf-8")
+    assert "_names_it" in src
+    assert "if not _names_it:" in src
