@@ -2341,16 +2341,69 @@ def _unbuilt_outside(tops: list[dict], uploaded_path: Path | None = None) -> lis
     return [t for t in tops if str(t.get("id") or "") not in made]
 
 
+#: **長尺の読み上げの実効の速さ（字/秒）。台本の字数 ÷ 実物の尺 の実測。**
+#: 2026-09-05 01:5x に、`data/uploaded.jsonl` の `duration_s` を持つ本と
+#: `data/critique_queue/*.script.json` を突き合わせて数えた（**n=11・API 0単位**）:
+#:
+#:     XwB8nxtN5D8  7,749字  1,369.0秒  22.8分  5.66字/秒
+#:     GFvAcxvDmYM  7,699字  1,361.1秒  22.7分  5.66字/秒   ← 09/05 09:00 の枠
+#:     e6sLHLmPhrk  7,686字  1,357.6秒  22.6分  5.66
+#:     Ec-j1-W4nqw  7,495字  1,324.0秒  22.1分  5.66
+#:     O_lfBxB7S8Q  7,495字  1,331.3秒  22.2分  5.63
+#:     1huadpEk6HY  6,584字  1,192.0秒  19.9分  5.52
+#:     6PKux5HNnUE  6,480字  1,174.4秒  19.6分  5.52
+#:     DfFyu8qZq3I  6,458字  1,149.1秒  19.2分  5.62
+#:     dRZnZrRy2Lw  6,193字  1,104.7秒  18.4分  5.61
+#:     6GtzWaguZhg  1,688字    309.9秒   5.2分  5.45
+#:     SD8zQU-x6y0  1,638字    301.1秒   5.0分  5.44
+#:     中央 **5.62**・最小 5.44・最大 5.66（**幅 0.22 ＝ ほぼ一定**）
+#:
+#: **`src/pipeline.CHARS_PER_SECOND`（5.2）はここでは使いません。** 5.2 は
+#: 2026-08-09 の「465文字が89秒」＝ **読み上げそのものの速さ**で、動画の尺ではありません。
+#: 5.2 で割ると尺は **実物の 1.08倍**（8% 長く）出ます。
+#:
+#: **`script_writer.EFFECTIVE_CHARS_PER_SECOND`（4.63）も違います** —— あれは
+#: 2026-08-09 に**ショート1本**（184字 39.7秒）から取った数で、コマ数が多く無音の比率が
+#: 高いショート専用です（`SHORT_TOTAL_CHARS` を引くのにだけ使われています）。
+#: 長尺に当てると尺は実物の **1.21倍** に出ます。
+#:
+#: **覆る条件**: この表は 11本 です。長尺の作り（コマ数・間合い）を変えたら
+#: 数え直すこと —— 上の突き合わせは `data/uploaded.jsonl` の `duration_s` と
+#: 台本の字数を割るだけで、**API を1単位も使いません。**
+LONG_CHARS_PER_SECOND = 5.62
+
+
 def script_seconds(video_id: str) -> float | None:
-    """**控えの台本の見積り尺（秒）。**読めなければ `None`。API 0単位。
+    """**控えの台本から引いた尺（秒）。**読めなければ `None`。API 0単位。
 
-    **`src/pipeline.CHARS_PER_SECOND`（5.2字/秒）で割ります。**
-    2026-08-09 の実測「465文字が89秒」から来た数で、`src/clarity.py` も同じ値を使います。
+    ## 2026-09-05 01:5x に直した —— **この関数は「下限」ではありませんでした**
 
-    **コマの間合いは足していません**ので、実物はこれ以上になります（下限です）。
+    ここは `src/pipeline.CHARS_PER_SECOND`（**5.2字/秒**）で割って、
+    **「コマの間合いは足していないので、実物はこれ以上になります（下限です）」**
+    と書いてありました。**実物を測ったら、逆でした。**
+
+        `GFvAcxvDmYM`  台本 7,699字
+          5.2字/秒 で割った見積り  **1,481秒 ＝ 24.7分**
+          実物（`data/uploaded.jsonl` の `duration_s`）  **1,361.1秒 ＝ 22.7分**
+          ＝ 見積りは実物より **120秒 長い**（**下限ではなく上振れ**）
+
+    n=11 で数えると実効は **5.62字/秒**（最小 5.44・最大 5.66）で、5.2 ではありません。
+    **5.2 は読み上げそのものの速さで、動画の尺の速さではない** ——
+    無音を足せば遅くなるはずだ、という向きの推測が、そのまま「下限」と書かれていました。
+    **実測は逆を向いています**（コマの切り替えで読み上げが詰まるぶんが勝っている）。
+
+    ## なぜ 2分 が効くのか
+
+    `OUTSIDE_LONG_KNEE_SEC` ＝ **25分**。外の長尺 365本 の実測は
+    20〜25分 **823回/日** 対 25〜30分 **3,507回/日**（**×4.3**）。
+    24.7分 なら「切れ目の手前 0.3分 ＝ ほぼ境目」ですが、
+    **22.7分 は帯の真ん中**です。**この2分の違いは、09/07 の判定の読み方を変えます。**
+
+    **覆る条件**: `LONG_CHARS_PER_SECOND` の表を数え直して中央が動いたら、
+    この関数の数も一緒に動きます。**公開ずみの本は、見積りではなく
+    `data/uploaded.jsonl` の `duration_s`（実物）を見ること** ——
+    `measured_seconds()` がそれを返します。
     """
-    from src.pipeline import CHARS_PER_SECOND
-
     path = ROOT / "data" / "critique_queue" / f"{video_id}.script.json"
     try:
         d = json.loads(path.read_text(encoding="utf-8"))
@@ -2358,7 +2411,23 @@ def script_seconds(video_id: str) -> float | None:
         return None
     segs = d.get("segments") or []
     chars = sum(len(str(x.get("narration") or "")) for x in segs if isinstance(x, dict))
-    return chars / CHARS_PER_SECOND if chars else None
+    return chars / LONG_CHARS_PER_SECOND if chars else None
+
+
+def measured_seconds(video_id: str, uploaded_path: Path | None = None) -> float | None:
+    """**実物の尺（秒）。**`data/uploaded.jsonl` の `duration_s` の最後の行。API 0単位。
+
+    **見積り（`script_seconds`）より、こちらが在るならこちらを見ること。**
+    上げた後の本には必ず在ります（`duration_s` を持つ本は 2026-09-05 時点で 258本）。
+    """
+    out = None
+    for r in _jsonl(uploaded_path or (ROOT / "data" / "uploaded.jsonl")):
+        if r.get("video_id") == video_id and r.get("duration_s"):
+            try:
+                out = float(r["duration_s"])
+            except (TypeError, ValueError):
+                continue
+    return out
 
 
 #: 外の帯の長尺を、尺の帯ごとに「1日あたり再生の中央値」で並べた実測
@@ -2390,16 +2459,26 @@ def draft_length_lines(video_id: str) -> list[str]:
 
     **公開後は、この見積りではなく実物の `secs` を見ること**（間合いのぶん長くなります）。
     """
-    sec = script_seconds(video_id)
+    # **公開ずみなら、見積りではなく実物を見ること**（2026-09-05 01:5x に直した）。
+    # ここは 5.2字/秒 の見積りを「下限」と呼んでいましたが、実測は逆で
+    # **見積りのほうが 8% 長く出ます**（`LONG_CHARS_PER_SECOND` の表）。
+    real = measured_seconds(video_id)
+    sec = real if real else script_seconds(video_id)
     if not sec:
         return []
     knee = OUTSIDE_LONG_KNEE_SEC
     side = "**上（帯のいちばん速い側）**" if sec >= knee else "**下**"
     gap = abs(sec - knee) / 60.0
+    if real:
+        src_note = (f"{int(sec)}秒 ＝ **実物**（`data/uploaded.jsonl` の `duration_s`）。"
+                    f"**見積りではありません**")
+    else:
+        src_note = (f"{int(sec)}秒 ＝ 台本の字数 ÷ {LONG_CHARS_PER_SECOND}字/秒"
+                    f"・`daily_pick.LONG_CHARS_PER_SECOND`（実物 11本 から数えた中央）。"
+                    f"**`pipeline.CHARS_PER_SECOND`（5.2）で割ると 8% 長く出ます** ——"
+                    f"5.2 は読み上げの速さで、動画の尺の速さではありません")
     return [
-        f"     この下書きの**見積り尺 {sec / 60:.1f}分**"
-        f"（{int(sec)}秒 ＝ 台本の字数 ÷ {5.2}字/秒・`src/pipeline.CHARS_PER_SECOND`。"
-        f"**コマの間合いを足していないので下限**）——"
+        f"     この下書きの**尺 {sec / 60:.1f}分**（{src_note}）——"
         f" 外の帯の切れ目 {knee // 60}分 の {side}・差 {gap:.1f}分",
         f"       外の長尺 365本 を齢で割った実測: 20〜25分 n=37 **823回/日** 対"
         f" 25〜30分 n=34 **3,507回/日**（×4.3）。"
