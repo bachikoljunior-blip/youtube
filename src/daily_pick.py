@@ -778,6 +778,95 @@ def day_guard(video_id: str | None, day: date | None, *,
     )
 
 
+def restated_pick_block(form: str, topic: str, video_id: str | None, day: date,
+                        *, expected: float | None = None,
+                        path: Path | None = None) -> str:
+    """**すでに立っている決めを、1文字も変えずにもう一度書くのを止める。**
+    通れば `""`、止めるならその理由の1行。**API 0単位・`data/daily_pick.jsonl` だけ。**
+
+    ## なぜ要るか（2026-09-05 02:0x・最適化の回に数で踏んだ）
+
+    「最適化されてんの？（過去の実行に対して）」に、この回が実物で数えた ——
+
+        `data/daily_pick.jsonl` の **09/05 の枠だけで決めが 24回**。
+        うち **14回 は、直前の行と 形・題材・動画ID が完全に同じ**（＝ 何も変えていない）。
+        最後の 8回（09-04T21:31 → 09-05T01:48）は **全部 `GFvAcxvDmYM` のまま**で、
+        変わったのは `why` の長さだけ（約200字 → 約600字）。
+        同じ 5日で `data/runs.jsonl` の ship は 240件、**測れた動きは 26件・そのうち
+        到達日が動いたのは 0件**、再生/日(7d) は 6,299 → 943（**-85%**）。
+
+    ＝ **回は「決め直し」を仕事として選び続け、決めは1度も変わっていません。**
+    これは怠慢ではなく**構造**です: `--pick` は毎回 撃てて・安くて・長い `why` が付き・
+    commit になり・ship の印が立つ。**止める門が無い限り、いちばん通りやすい手**です。
+
+    既にある門は**中身**を見ます（`untreated_slot_block` は処置でない本を落とす、
+    `probe_hold` は先読みの前に取るのを止める）。**繰り返しを見る門はありませんでした** ——
+    実測: `untreated_slot_block`（09-04 19:5x）が入ったあとに、同じ本の決めが **8回** 書かれています。
+    その註が自分で書いたとおり「**印字は選び直しを止めません**」——
+    ここは**同じ決めの再掲**を止める側です。
+
+    ## 何を通すか
+
+    止めるのは「**決定も、反証できる数も、どちらも変わっていない**」行だけです。
+    - 形・題材・動画ID のどれかが変われば **通ります**（本物の決め直し）。
+    - それらが同じでも `--expected`（齢48h の見込み）が変われば **通ります** ——
+      実測 09-05T01:17 は 8.0 → 1.0 の正直な訂正で、**次の回が実物と並べる数**が変わっています。
+    - `kind="carry"`（焼き直しの写し）は決めではないので**見ません**。
+
+    ## `--anyway` では越えられません
+
+    `--anyway` は `probe_hold`（先読みの門）を数字で越えるための口です。
+    こちらは越えられません —— **再掲が買うものは定義上 0** で、
+    越える理由に書ける数が存在しないからです。理由が在るなら、それは
+    `--expected` の数か、決定そのものの変更として出るはずです。
+
+    ## 覆る条件
+
+    - `data/daily_pick.jsonl` が1日1行の上書きになったら、再掲は事故ではなく上書きなので、
+      この門は要りません。
+    - 決めの `why` だけを差し替える口（`--rewhy` のような）が出来たら、
+      「理由を直したい回」はそちらへ回るので、ここは決定と数だけを見れば足ります。
+    - `expected` を必須にしている門（`record` の中）が外れたら、
+      「数が変わったか」で通す判定が効かなくなります。そのときは決定だけを見ること。
+    """
+    cur = current(day, path)
+    if not cur or pick_kind(cur) != PICK_KIND_DECIDE:
+        return ""
+    same = (str(cur.get("form") or "") == str(form)
+            and str(cur.get("topic") or "") == str(topic)
+            and str(cur.get("video_id") or "") == str(video_id or ""))
+    if not same:
+        return ""
+    old_exp = cur.get("expected_48h")
+    if (old_exp is None) != (expected is None):
+        return ""
+    if old_exp is not None and expected is not None and abs(float(old_exp) - float(expected)) > 1e-9:
+        return ""
+    rows = [r for r in _by_at(list(_jsonl(path or PICKS)))
+            if str(r.get("for_day") or "") == day.isoformat()
+            and pick_kind(r) == PICK_KIND_DECIDE]
+    n = 0
+    for r in reversed(rows):
+        if (str(r.get("form") or "") == str(form)
+                and str(r.get("topic") or "") == str(topic)
+                and str(r.get("video_id") or "") == str(video_id or "")):
+            n += 1
+        else:
+            break
+    since = str((rows[len(rows) - n].get("at") if n and n <= len(rows) else cur.get("at")) or "")[:19]
+    return (f"**その決めはもう立っています —— 形・題材・動画ID・見込み が1つも変わっていません**"
+            f"（{day.isoformat()} = {form} / {topic} / {video_id or '—'} / 見込み {old_exp}。"
+            f"同じ決めが すでに {n}回・{since} から）。**この回の ship は決めではありません。**\n"
+            f"  実測（`scripts/optimized.py` 2026-09-05）: 直近5日の ship 240件 のうち"
+            f" 到達日が動いたのは **0件**、種別べつの歩留りは `verdict` 7回中3件(43%) 対"
+            f" それ以外 233回中3件(1.3%)。**決め直しは、この 1.3% の側です。**\n"
+            f"  通す道は3つだけ: (1) 形・題材・動画ID のどれかを実際に変える"
+            f"（＝ 本物の決め直し） (2) `--expected` を数で訂正する"
+            f"（次の回が実物と並べる数が変わる） (3) **決めを触らず、期日の来た前提を1件 閉じる**"
+            f"（`python scripts/deadline_check.py --fit` / `config/hypotheses.yaml`）。"
+            f"`--anyway` では越えられません（再掲が買うものは 0 なので、越える理由に書く数が在りません）。")
+
+
 def record(form: str, topic: str, why: str, *, day: date | None = None,
            now: datetime | None = None, path: Path | None = None,
            video_id: str | None = None, expected: float | None = None,
@@ -878,6 +967,13 @@ def record(form: str, topic: str, why: str, *, day: date | None = None,
                           uploaded_path=up)
         if hold:
             raise ValueError(hold)
+    # **同じ決めの再掲を止める**（`restated_pick_block` の註・2026-09-05 02:0x）。
+    # `--anyway` では越えられません（越える理由に書ける数が存在しないため）。
+    if kind == PICK_KIND_DECIDE:
+        _rs = restated_pick_block(form, topic, video_id, day or for_day(now),
+                                  expected=expected, path=path)
+        if _rs:
+            raise ValueError(_rs)
     if (anyway or "").strip() and not re.search(r"\d", anyway):
         raise ValueError("`--anyway` も数字を含む1行が要ります（止めを越える理由は数で）")
     t = (now or datetime.now(timezone.utc)).astimezone(JST)
