@@ -30,7 +30,21 @@ from __future__ import annotations
 import math
 from datetime import date, timedelta
 
+import pytest
+
 from src import house_rule, judgeable
+
+#: **時計を持たない日**（`judgeable._today_jst` を差し替えて使う）。
+#: 素の `date.today()` は**その器の時計**（この器は UTC）で、`ready_at_rule` が数える
+#: **JST** と JST 00:00〜09:00 のあいだ 1日 ずれます。**この輪はその時間に走ります。**
+#: 実測 2026-09-05 05:3x: `got 2026-09-22 <= latest 2026-09-21` で赤くなりました。
+FIXED_TODAY = date(2026, 9, 5)
+
+
+@pytest.fixture(autouse=True)
+def _fix_clock(monkeypatch):
+    """**この検査は時計を持ちません。** 器が UTC でも JST でも同じ結果になること。"""
+    monkeypatch.setattr(judgeable, "_today_jst", lambda: FIXED_TODAY)
 from src.ab_split import SETTLE_DAYS
 from src.judgeable import ANALYTICS_LAG_DAYS, Floor
 
@@ -64,10 +78,10 @@ def test_足りない群は今日から規則の密度で日が出る():
     assert got is not None
     cap = max(1.0, float(house_rule.cap()))
     days = math.ceil(10 / cap)          # 割合は実物の帳面から来るので、上限側で見ます
-    latest = (date.today() + timedelta(days=days)
+    latest = (FIXED_TODAY + timedelta(days=days)
               + timedelta(days=SETTLE_DAYS + ANALYTICS_LAG_DAYS))
     assert got <= latest, (got, latest)
-    assert got > date.today(), got
+    assert got > FIXED_TODAY, got
 
 
 def test_deadline_checkが規則の日をslipsに入れる():
