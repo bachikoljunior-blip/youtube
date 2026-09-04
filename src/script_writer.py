@@ -1838,8 +1838,17 @@ def outside_length_problems(script) -> list[str]:
     **覆る条件**: 前提「外の作り方を写した長尺」が外れたら（48h で 100回 未満）、
     `OUTSIDE_LONG_RULE` ごと落とすので、この検査も一緒に落とすこと。
     """
-    segs = script.model_dump().get("segments") or []
-    chars = sum(len(str(x.get("narration") or "")) for x in segs if isinstance(x, dict))
+    # **`script.model_dump()` だけで読んではいけません**（2026-09-05 04:2x に踏んだ）。
+    # この口は2つの側から呼ばれます —— `generate()` は **pydantic の `Script`** を渡し、
+    # `daily_pick.legs_of_path()` は控えの JSON を `json.loads` した **`dict`** を渡します。
+    # `dict` には `model_dump` が無いので `AttributeError` になり、`legs_of_path` の
+    # `except Exception: continue` がそれを飲んで、**この脚は「通った」になっていました。**
+    # ほかの4脚（`outside_opening_problems` ほか）は最初から下の両対応で書いてあります。
+    segs = list(getattr(script, "segments", None)
+                or (script.get("segments") if isinstance(script, dict) else []) or [])
+    chars = sum(len(str(getattr(x, "narration", None)
+                       if not isinstance(x, dict) else (x.get("narration") or "")) or "")
+                for x in segs)
     floor = outside_length_chars_floor()
     if chars >= floor:
         return []

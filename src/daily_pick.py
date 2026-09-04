@@ -1729,6 +1729,46 @@ OUTSIDE_LEGS: tuple[tuple[str, str], ...] = (
     ("(2) 章・締め", "outside_body_problems"),
     ("(4) 題・サムネ", "outside_title_problems"),
     ("(5) 間合い", "outside_pacing_problems"),
+    # **2026-09-05 04:1x に足した。番号は付けません**（規則の (1)〜(5) は
+    # 冒頭／章／締め／題・サムネ／間合い で、尺の節はその外の箇条書き。
+    # ここに (3) と書くと「締め」を指してしまいます）。
+    #
+    # ## なぜ要ったか —— **口は在ったのに、この表に繋がっていませんでした**
+    #
+    # `script_writer.outside_length_problems` は 2026-09-05 03:5x に入り、
+    # **これから焼く台本**（`long_script_problems` → `generate()` の書き直し）は
+    # その日から 25分 の切れ目で落ちるようになりました。
+    # ところが `pick_legs` が通す口はこの表で、**表に足されていませんでした。**
+    #
+    # 実測（2026-09-05 04:1x・API 0単位）——
+    # 09/05 09:00 の枠に入っている `GFvAcxvDmYM` は
+    # **ナレーション 7,699字 ＝ 22.8分**、切れ目 25分（8,430字）を **731字 割っています**。
+    # それでも `pick_legs('GFvAcxvDmYM')` は `([], None)` ＝ **4脚 全通**を返し、
+    # 毎周の画面は「**焼き直して得られる脚は 0本**」を刷り続けていました。
+    #
+    # ## それが何を壊していたか —— **判定する本が、判定する軸を外していた**
+    #
+    # この本は前提「外の作り方を写した長尺」（`config/hypotheses.yaml`・期限 09-07）の
+    # **処置 1本目**として 09/05 09:00 に出て、09/07 09:00 の齢48h で前提を閉じます。
+    # ところが帯（`data/niche_corpus.jsonl` の長尺 335本・1日あたりの中央値）で
+    # **いちばん大きく効いている軸は尺**です —— 20〜25分 **792回/日** 対
+    # 25〜30分 **2,094回/日**（**×2.6**）。**その軸だけを外した本で前提を閉じると、
+    # 「外の作りを写しても効かない」という判定が、写していない軸のせいで出ます。**
+    # `treated_probe()` が `"yes"` と答えるのも同じ表を見ているので、
+    # **札ではなく型で選ぶ**という `treated_probe` の狙いが、尺の分だけ抜けていました。
+    #
+    # ## 焼き直しを命じる側に置きます（`METADATA_LEGS` には入れません）
+    #
+    # 尺はナレーション本文なので、`retitle.py` / `refresh_thumbnail.py` では動きません。
+    # ＝ `metadata_only()` は False のまま ＝ `untreated_slot_block()` は
+    # 「焼き直しが先」を返し、`ahead_sweep` の `rebake_pending` へ倒れます。**それが正しい向きです。**
+    #
+    # ## 覆る条件
+    #
+    # - 帯を数え直して 25分 の切れ目が消えたら、`OUTSIDE_LONG_KNEE_SEC` を動かすこと
+    #   （`outside_length_chars_floor()` が自動で追随し、この脚も一緒に動きます）。
+    # - 前提「外の作り方を写した長尺」が閉じたら `OUTSIDE_LEGS` ごと落とすこと（上と同じ）。
+    ("尺", "outside_length_problems"),
 )
 
 
@@ -1887,16 +1927,38 @@ def legs_of_path(path: Path, *, what: str = "台本") -> tuple[list[str], str | 
         from src import script_writer as _sw
     except Exception as exc:                                       # noqa: BLE001
         return [], f"`src.script_writer` が読めません（{str(exc)[:60]}）"
+    # **数えられなかった脚を「通った」に数えません**（2026-09-05 04:2x に直した）。
+    #
+    # 前の版はこう書いてありました —— `except Exception: continue`。
+    # つまり**口が転んだ脚は、静かに合格**になります。実物で踏みました:
+    # `outside_length_problems` は `script.model_dump()` で読む口で、ここが渡すのは
+    # `json.loads` した `dict` です。`dict` に `model_dump` は無いので毎回 `AttributeError`、
+    # それを `continue` が飲み、**尺が 731字 足りない本が `([], None)` ＝ 全通**で返っていました。
+    # この関数の docstring と `pick_legs` の docstring は、どちらも
+    # **「読めないものを『通った』に数えません」**と書いてあります。書いてあって、していなかった。
+    #
+    # 転んだ脚は `bad` ではなく `why` へ返します。`bad` に入れると
+    # `metadata_only()` が False ＝ **焼き直せ**になりますが、焼き直しても
+    # コードの誤りは直りません。`why` に入れると `treated_probe()` は `"unknown"` を返し、
+    # その docstring どおり **止めは外れず、処置も名乗れません**（安全側）。
+    #
+    # **覆る条件**: 5脚すべてが `dict` と `Script` の両方を受けると測り直したら、
+    # ここは `bad` だけを返す形に戻してよい（そのときも `except` で飲まないこと）。
     bad: list[str] = []
+    broke: list[str] = []
     for label, fn in OUTSIDE_LEGS:
         f = getattr(_sw, fn, None)
         if f is None:
+            broke.append(f"{label}（口 `{fn}` が `src.script_writer` に在りません）")
             continue
         try:
             if f(script):
                 bad.append(label)
-        except Exception:                                          # noqa: BLE001
-            continue
+        except Exception as exc:                                   # noqa: BLE001
+            broke.append(f"{label}（`{fn}` が転びました: {type(exc).__name__} {str(exc)[:60]}）")
+    if broke:
+        return bad, (f"{what}で数えられなかった脚が {len(broke)}本 あります —— "
+                     f"{'・'.join(broke)}。**通ったことにはしません**")
     return bad, None
 
 
