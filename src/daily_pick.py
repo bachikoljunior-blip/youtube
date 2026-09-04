@@ -285,6 +285,15 @@ def aged_views(hours: int = AGE_HOURS, *, views_path: Path | None = None,
         })
     _attach_residual(out)
     out.sort(key=lambda x: (x["pub"], x["form"], x["video_id"]))
+    # **差し替え後の題を重ねること**（理由と実測は `pool_candidates()` の同じ重ねの註）。
+    # ここの行は「題の特徴」を数える側（`src/hold.title_feature_line`）へも流れるので、
+    # **上げたときの字で数えると、もう直した題をもう一度 直せと言います。**
+    # 重ねた行は `title_at_upload` に上げたときの字を残します（`retitles.overlay`）。
+    try:
+        from . import retitles                                  # noqa: PLC0415
+        out = retitles.overlay(out)
+    except Exception:                                           # noqa: BLE001
+        pass
     return out
 
 
@@ -502,6 +511,33 @@ def pool_candidates(form: str = "ショート", fams: list[dict] | None = None,
                     "fam_n": (st or {}).get("n", 0),
                     "draft": r.get("retimed_at") is None})
     out.sort(key=lambda x: (-(x["fam_res"] or -1), -x["fam_n"], x["video_id"]))
+    # **差し替え後の題を重ねること**（2026-09-05 03:4x に 100単位 払って踏んだ）。
+    #
+    # `data/uploaded.jsonl` は「**上げたときの行**」で、`scripts/retitle.py` が
+    # 実物の題を差し替えても **1文字も変わりません**（`scripts/retitle.py` の註）。
+    # 差し替えは `data/retitled.jsonl` に在り、`src/retitles.overlay()` が重ねます。
+    # `src/next_slot.py` は 09-05 00:2x にそれを入れましたが、**この池の一覧は
+    # 素の帳面のまま**でした —— そして池の一覧は、**次の枠の1本を選ぶ画面**です。
+    #
+    # **実測（この回・03:3x〜03:4x JST）**::
+    #
+    #     [marker] DtpnSVFDtAE  小規模企業共済 1か月で59万7200円動く #Shorts   ← ここが刷った字
+    #     実物                  【小規模企業共済】11か月と12か月でいくら違う？ #Shorts
+    #
+    # 刷られた字には `【】` が無いので、この回は「いちばん厚い升で空いている特徴は
+    # `【】`（×5.52・n=55対77）」と読み、`retitle.py` を撃ちました。**実物にはもう在り**、
+    # しかも実物は `【】` の中で ×11.29 の「いくら」と ×1.95 の疑問形も持っていました。
+    # ＝ **改善のつもりで、測れる範囲では劣る題へ差し替えた**（戻すのにもう1回）。
+    # **払ったのは `videos.update` ×2 ＝ 100単位**。
+    #
+    # **覆る条件**: `_latest_uploaded()` 自身が差し替えを取り込むようになったら、
+    # ここと `next_slot` の重ねは両方 要りません（そのとき `retitles.overlay` の
+    # 呼び出しを1つずつ消すこと。**先に消すと、また同じ 100単位 を払います**）。
+    try:
+        from . import retitles                                  # noqa: PLC0415
+        out = retitles.overlay(out)
+    except Exception:                                           # noqa: BLE001
+        pass
     return out
 
 
