@@ -37,7 +37,13 @@ def test_印は満ちない前提を数える関数を持っている():
 def test_writeがその関数を呼んでいる():
     """**呼び出しが外れたら赤。** 関数が在るだけでは、誰も読みません。"""
     src = (ROOT / "scripts" / "run_marker.py").read_text(encoding="utf-8")
-    body = src.split("def write()", 1)[1].split("\ndef ", 1)[0]
+    # **切る先を `SEEN_KIND` にしてあります**（2026-09-05 05:2x）。`write()` は
+    # 印字を `_write_body()` へ分けました（全文を一時置き場へ落とすため）。
+    # `"\ndef "` で切ると **`write()` の入口だけ**を見ることになり、
+    # **呼び出しが外れていなくても赤**になります。ここは「§1 の印字の道に
+    # 在るか」を見たいので、`tests/test_premise_subject_is_wired.py` と同じ切り方に
+    # そろえます（あちらは元からこの形）。
+    body = src.split("def write() -> int:", 1)[1].split("\nSEEN_KIND", 1)[0]
     assert "_unreachable_premise_lines()" in body
 
 

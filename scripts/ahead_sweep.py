@@ -638,7 +638,59 @@ def _today_candidate(now: datetime) -> dict | None:
         cur = daily_pick.current(day)
     except Exception:                                          # noqa: BLE001
         cur = None
+    # **立っている決めを、置く前に いまの門へ通し直す**（2026-09-05・最適化の回）。
+    #
+    # ## なぜ要るか —— **門はぜんぶ「書き門」で、枠を使う側は 1つも訊いていませんでした**
+    #
+    # `path_form_hold` / `anyway_pays_hold` / `slot_cost` / `probe_hold` は
+    # **`daily_pick.record()` の中**に在ります ＝ **決めを書く瞬間**しか見ません。
+    # ところが**枠を実際に使うのはここ**で、ここは `daily_pick.current(day)` を
+    # そのまま返していました。**＝ 1度 書けた決めは、以後どの門も触れません。**
+    #
+    # 実測（2026-09-05・API 0単位。この回が自分で撃った数）::
+    #
+    #     current(2026-09-05)        → **長尺** `GFvAcxvDmYM`（見込み **1回**）
+    #     and_path_form()            → **ショート**（道 ショート ×106・長尺 ×334）
+    #     gate_arithmetic().subs     → 1本あたり登録 ショート **0.261人** / 長尺 **0.008人**（**×33**）
+    #     form_median_48h            → ショート **164回** / 長尺 **1回**
+    #     standing_form_stale_now()  → **止める**（1行 返る）
+    #     path_form_hold("長尺")      → **止める**
+    #     anyway_pays_hold("長尺")    → **止める**（当たっても枠の代金を払えない）
+    #
+    # **止めは 3つとも既に在って、3つとも正しく、3つとも鳴っていました。**
+    # それでも枠は長尺のままです —— 決めは 09-05T01:48 に `--anyway` で書かれ、
+    # 門はそのあと（02:xx／04:xx／05:xx）に入ったからです。
+    # **この repo が同じ形で踏むのは 5度目**（散文 → 印字 → 印字 → 印字 → **書き門**）。
+    # 4度目までの学びは「読み上げは止めではない」でした。5度目は
+    # **「書き門は、書き終わったものを止められない」**です。
+    #
+    # ## どれだけ効くか（律速そのものです）
+    #
+    # 最初に落ちる門は 門1'（登録者・`scripts/eta.py`）で、その腕は
+    # **再生/日 × 登録率** の2本。**枠の形は、その2本 両方に同時に効く唯一の手**です。
+    # この1枠だけで 見込み **1回 → 164回**・登録 **0.008人 → 0.261人（×33）**。
+    # 規則は 1日1本（`src/house_rule.py`）＝ **枠は 1日に 1つしかない、いちばん高い資源**です。
+    #
+    # ## 空く日を作らないこと（`docs/GOAL.md` の4「投稿は途切れないか」）
+    #
+    # **落としたら、そのまま下の池の枝へ落ちます**（＝ 決めていない回と同じ道）。
+    # 池は この回の実測で **324本**（`pool_candidates("ショート")`）あり、
+    # そこで選び直した決めは `record()` を通る ＝ **書き門も全部 通ります。**
+    # 池が空の回は下で `None` に落ちますが、それは元から在る枝です。
+    #
+    # ## 覆る条件
+    #
+    # - `standing_form_stale()` が `""` を返す日は、ここは**何もしません**（素通り）。
+    #   門の算が長尺を指す日が来れば、止まるのは**ショートの据え置き**です。
+    #   **この手は形の名前を 1つも持っていません。**
+    # - `daily_pick` の門を畳むなら、ここも一緒に畳むこと。
+    _stale = ""
     if cur and cur.get("video_id"):
+        try:
+            _stale = daily_pick.standing_form_stale(day, cur=cur, now=now)
+        except Exception:                                      # noqa: BLE001
+            _stale = ""                                        # 推測で止めないこと
+    if cur and cur.get("video_id") and not _stale:
         return {"video_id": cur["video_id"], "why": f"[きょうの1本] {cur.get('form')} "
                 f"`{cur.get('topic')}`（{str(cur.get('why'))[:80]}）", "source": "pick"}
     # 決めていない → 形は**収益化の門に近い側**（`daily_pick.fallback_form`・2026-09-03 夜。
@@ -650,6 +702,14 @@ def _today_candidate(now: datetime) -> dict | None:
         forms = cmp["all"]
         best_form = daily_pick.fallback_form(cmp)
         pool = daily_pick.outside_first(daily_pick.pool_candidates(best_form, rows=cmp["rows"]))
+        # **ほかの日の決めが名指している本は、ここでは取らない**（`claimed_elsewhere` の註）。
+        # 池が外すのは「予約が入っている本」と「公開ずみの本」だけで、
+        # **決めに名指されているだけの本はどちらでもありません。**
+        # 取ると 2つの日が同じ本を指し、先に出たほうで もう片方の見込みが嘘になります。
+        # **全部が取られている回は引きません**（空きを作らない・元の並びに戻す）。
+        _claimed = daily_pick.claimed_elsewhere(day)
+        _free = [x for x in pool if x.get("video_id") not in _claimed]
+        pool = _free if _free else pool
     except Exception:                                          # noqa: BLE001
         pool, best_form, forms = [], None, {}
     if pool:

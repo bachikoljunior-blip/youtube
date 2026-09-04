@@ -206,6 +206,7 @@ def _pairs(chrono: list[dict]):
         cur = r.get("eta_target")
         nxt_row = next((c for c in chrono[i + 1:] if c.get("eta_target")), None)
         nxt = nxt_row.get("eta_target") if nxt_row else None
+        ruler = "軌跡"
         # **物差しの違う2点を引き算しないこと**（2026-08-20 18:xx に足した）。
         #     予測日は「腕を据え置いた線」から「軌跡」へ替わりました。
         #     替わった前後を引くと、**チャンネルは何も変わっていないのに
@@ -219,11 +220,43 @@ def _pairs(chrono: list[dict]):
                 act = (date.fromisoformat(str(nxt)) - date.fromisoformat(str(cur))).days
             except ValueError:
                 act = None
+        # --- **軌跡が出ない回は、門1' の物差しで測る**（2026-09-05 05:xx・最適化の回）---
+        #
+        #     `eta_target` は **2026-08-20 を最後に1度も出ていません**
+        #     （`data/eta.jsonl` の `target_date`・15日）。実測 `data/runs.jsonl`:
+        #     **ship 242件 のうち `eta_target` を持つのは 0件**。
+        #     ＝ 上の `act` は**全件 None**、`reconcile()` の合計は `hits==0` で
+        #     落ち、**「宣言と実際」の突き合わせは 15日 沈黙していました**
+        #     （`tests/test_levers_window.py::test_report_は7日の合計を渡す` が
+        #      その間ずっと赤。**赤いまま置かれた検査は、消えた機能と同じです**）。
+        #
+        #     **黙るのが困るのは、ここが「言ったより動いていない」を鳴らす唯一の口**
+        #     だからです。オーナー指示（原文3回目）「毎回達成日時を早めることを
+        #     考えてから進めるようにして」を、外から確かめる場所がここしかありません。
+        #
+        #     `run_marker.py` は同じ行に **`gate1p_days`（門1'・登録者500人まで）**と
+        #     **`moves_measured`（前の ship からの差）**を既に積んでいます。
+        #     軌跡が出ない回は、そちらを使います。
+        #
+        #     [!] **2つの物差しを足さないこと。** すぐ上の `same_basis` と同じ理由です
+        #     —— だから `ruler` を一緒に返し、`reconcile()` は**物差しごとに**合計します。
+        #     `moves_measured` は「**すぐ前の ship** からの差」なので、
+        #     **飛ばさずに `chrono[i + 1]` だけ**を見ること（間に ship を挟むと、
+        #     その回のぶんまでこの行に付きます）。
+        #
+        #     **覆る条件**: 軌跡が日付を出すようになったら、`cur`/`nxt` の側が
+        #     先に通るので、ここは自分で黙ります。手で消さないこと。
+        if act is None:
+            _nx = chrono[i + 1] if i + 1 < len(chrono) else None
+            _mm = _nx.get("moves_measured") if _nx else None
+            if _mm is not None:
+                act = int(round(float(_mm)))
+                ruler = "門1'"
         why = ""
         if act is None:
             why = ("次の ship がまだ" if nxt is None or not cur
                    else "**物差しが替わった**（据え置きの線 → 軌跡）")
-        yield r, act, why
+        yield r, act, why, ruler
 
 
 def reconcile(rows: list[dict], totals: list[dict] | None = None) -> list[str]:
@@ -248,14 +281,18 @@ def reconcile(rows: list[dict], totals: list[dict] | None = None) -> list[str]:
     """
     chrono = list(reversed(rows))  # 古い順
     lines: list[str] = []
-    for r, act, why in _pairs(chrono):
+    for r, act, why, ruler in _pairs(chrono):
         mv = r["moves"]
         when = str(r.get("at", ""))[5:16].replace("T", " ")
         if act is None:
             lines.append(f"    {when}  {r.get('lever', '?'):<9} 宣言 {mv:+3d}日   実際 —（{why}）")
         else:
             mark = "" if mv == act else ("  ← **外した**" if abs(act - mv) >= 3 else "")
-            lines.append(f"    {when}  {r.get('lever', '?'):<9} 宣言 {mv:+3d}日   実際 {act:+3d}日{mark}")
+            # **どの物差しで測ったかを、その行に書くこと。** 書かないと
+            #     軌跡の日数と門1' の日数が同じ列に並び、読む側が足します。
+            tag = "" if ruler == "軌跡" else f"（{ruler}）"
+            lines.append(f"    {when}  {r.get('lever', '?'):<9} 宣言 {mv:+3d}日"
+                         f"   実際 {act:+3d}日{tag}{mark}")
     if not lines:
         return ["", "  （`--moves` つきの ship がまだありません。"
                 "**次の ship から、宣言と実際が並びます**）"]
@@ -279,16 +316,39 @@ def reconcile(rows: list[dict], totals: list[dict] | None = None) -> list[str]:
     else:
         span = totals
         label = f"直近 {TOTAL_DAYS}日・{len(totals)}件"
-    sum_declared = sum_actual = hits = 0
-    for r, act, _ in _pairs(span):
+    # **物差しごとに合計すること**（2026-09-05 05:xx）。軌跡の日数と 門1' の
+    #     日数は別の量です —— 足すと、すぐ上の `same_basis` が禁じている
+    #     「物差しの違う2点の引き算」を、合計の側でやることになります。
+    by_ruler: dict[str, list[int]] = {}
+    for r, act, _why, ruler in _pairs(span):
         if act is None:
             continue
-        sum_declared += r["moves"]
-        sum_actual += act
-        hits += 1
-    if hits:
+        by_ruler.setdefault(ruler, [0, 0, 0])
+        agg = by_ruler[ruler]
+        agg[0] += r["moves"]
+        agg[1] += act
+        agg[2] += 1
+    # **軌跡を先に出すこと。** 出ている回はそちらが本筋で、門1' は代替です。
+    for ruler in sorted(by_ruler, key=lambda k: (k != "軌跡", k)):
+        sum_declared, sum_actual, hits = by_ruler[ruler]
+        rl = "" if ruler == "軌跡" else f"・**物差しは {ruler}**（軌跡が出ない回）"
         out.append(f"    → **{label}**の 宣言の合計 {sum_declared:+d}日 ／"
-                   f" **実際の合計 {sum_actual:+d}日**（{hits}件）")
+                   f" **実際の合計 {sum_actual:+d}日**（{hits}件{rl}）")
+        if ruler != "軌跡":
+            # **段の高さを、同じ行に書くこと**（2026-09-05 05:xx に実測）。
+            #     門1' の日数は `475人 ÷ 直近14日の登録者の増分（整数）` なので、
+            #     **1人 増えるまで動かない階段**です。実測 `data/runs.jsonl`:
+            #     `gate1p_days` を持つ 52件 は **52件とも 511.538**。
+            #     **「実際 +0日」を「その回が近づかなかった」と読まないこと。**
+            # **`[!]` を付けないこと。** `eta.flagged()` は `[!]` の行だけを
+            #     尾へ運ぶので、毎周 必ず出るこの断りに付けると、
+            #     **尾が断りで埋まって、本当の警告が押し出されます。**
+            out.append("      （**この物差しは階段です** —— 門1' の日数は"
+                       " `475人 ÷ 直近14日の登録者の増分（整数）` なので、"
+                       "**登録者が1人 増えるまで動きません**。実測: `gate1p_days` を"
+                       "持つ 52件 は 52件とも 511.538 ＝ 段の高さ 約36日。"
+                       "**`実際 +0日` は「測れていない」であって"
+                       "「近づかなかった」ではありません**）")
         if sum_actual > sum_declared + 2:
             # **数を、この行そのものに入れること**（2026-08-30・最適化の回）。
             #     `eta.flagged()` が尾へ運ぶのは **`[!]` の付いた行だけ**で、
@@ -298,7 +358,15 @@ def reconcile(rows: list[dict], totals: list[dict] | None = None) -> list[str]:
             #     「印字されていない数字は、無い数字と同じ」——
             #     実測 2026-08-30: 尾には「言ったより遠のいています」だけが並び、
             #     **宣言 -63日 ／ 実際 +3日（360件）という差は本文の 151行目**にありました。
-            out.append(f"      [!] **言ったより {sum_actual - sum_declared:+d}日 遠のいています**"
+            # **物差しで言い方を変えること**（2026-09-05 05:xx）。
+            #     門1' の側は段の高さ 約36日 の階段なので、「遠のいた」とは
+            #     **言えません**（測れていないだけかもしれない）。言えるのは
+            #     「**その物差しには1つも現れていない**」ことだけです。
+            head = (f"**言ったより {sum_actual - sum_declared:+d}日 遠のいています**"
+                    if ruler == "軌跡" else
+                    f"**宣言 {sum_declared:+d}日 が、この物差しには1つも"
+                    f"現れていません**（{ruler}・段の高さ 約36日）")
+            out.append(f"      [!] {head}"
                        f"（{label}: 宣言 **{sum_declared:+d}日** ／ "
                        f"実際 **{sum_actual:+d}日**・{hits}件）。"
                        "選んでいる腕が効いていないか、"
@@ -689,6 +757,23 @@ def arm_state(eta_row: dict | None) -> dict:
             #     `eta.py` が「予約済みの本が答えを返すので別の腕を引け」と
             #     言っている回は、名指しを外すのが**正しい**です。
             "hint_covered": row.get("lever_hint_covered"),
+            # **その免除は、どの腕のものか**（2026-09-05 05:xx・最適化の回）。
+            #     `lever_hint_covered` の出どころは `eta.plan()` の
+            #     `blocking["sample"]` ＝ **長尺の1本あたり再生の標本が埋まる日**で、
+            #     **`per_video` の免除**です。ところが `eta.solve()` の
+            #     `gate_arm_pick()` は、そのあとで名指しを門1' の腕（`sub_rate`）へ
+            #     書き換えます。**免除だけが名前を替えて生き残る**形で、
+            #     実測 `data/runs.jsonl` の ship 239件 中 **90件（38%）**が
+            #     そのまま出ていました（うち `sub_rate` を引いたのは 7件）。
+            #
+            #     **古い行には この欄が在りません。** そのときは
+            #     **その行自身の名指し**を免除の持ち主と読みます —— 免除は
+            #     必ず「その行の `lever_hint`」に対して書かれたからです。
+            #     `latest_arm_state()` は `hint` を**別の行**から拾うので、
+            #     ここが無いと**行をまたいだ取り違え**が同じ形で残ります。
+            "hint_covered_arm": (row.get("lever_hint_covered_arm")
+                                 or (row.get("lever_hint")
+                                     if row.get("lever_hint_covered") else None)),
             "caps": caps, "reaches": reaches,
             # **「その腕を凍らせたら軌跡は何日 遠のくか」**（2026-08-26）。
             #     `reaches=False`（＝この腕だけを天井まで引いても届かない）は
@@ -868,6 +953,13 @@ def lever_notes(lever: str | None, state: dict) -> list[str]:
     if hint and hint in LEVERS and hint != lever:
         why = state.get("binding") or "（床の名前が読めません）"
         covered = state.get("hint_covered")
+        # **免除は、それを計算した腕のものか**（2026-09-05 05:xx）。
+        #     腕が違うなら免除ではありません —— 下の `else` が出て、
+        #     「`{lever}` を選んだ理由を JOURNAL に1行書くこと」に戻ります。
+        #     **覆る条件**: `lever_hint_covered` が腕ごとの辞書になったら要りません。
+        _carm = state.get("hint_covered_arm")
+        if _carm is not None and _carm != hint:
+            covered = None
         if covered:
             # **道具の指示どおりに動いた回を、叱らないこと**（2026-08-26）。
             #     `eta.py` は同じ回に「引く腕は `per_video`」と
@@ -921,12 +1013,27 @@ def latest_arm_state(path: Path) -> dict:
             inf_row = row
         if caps_row and hint_row and inf_row:
             break
+    # **免除は、それを積んだ行の腕と一緒に運ぶこと**（2026-09-05 05:xx）。
+    #     `hint` は `hint_row` から、`hint_covered` は `caps_row` から来ます ——
+    #     **別の行です。** 腕の名前を付けずに混ぜると、`caps_row` の
+    #     `per_video` の免除が、`hint_row` の `sub_rate` の名前で通ります
+    #     （`scripts/eta.py` 側で 90件 踏んだのと**同じ形**が、ここにも在りました）。
+    #     `arm_state()` が `caps_row` から `hint_covered_arm` を組みます。
     return arm_state({**caps_row,
                       # **新しいほうが勝つこと。** `caps_row` に古い
                       # `arm_dead_at_inf` が入っていても、こちらで上書きします。
                       **{k: v for k, v in inf_row.items()
                          if k in ("arm_dead_at_inf", "arm_need_over_cap",
                                   "lever_hint_measured")},
+                      # **腕の名前は、`caps_row` の側で先に確定させること。**
+                      #     下の `lever_hint` の上書きより**前**に置かないと、
+                      #     `arm_state()` の「欄が無ければ その行の名指し」の
+                      #     取り落としが、`hint_row` の名指しを拾ってしまい、
+                      #     **必ず一致して黙る**（＝ 直した意味が無くなる）。
+                      "lever_hint_covered_arm": (
+                          caps_row.get("lever_hint_covered_arm")
+                          or (caps_row.get("lever_hint")
+                              if caps_row.get("lever_hint_covered") else None)),
                       "lever_hint": hint_row.get("lever_hint"),
                       "binding": hint_row.get("binding")})
 

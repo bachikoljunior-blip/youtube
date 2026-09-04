@@ -46,6 +46,7 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import os
 import sys
@@ -692,34 +693,142 @@ def _next_slot_lines() -> list[str]:
         return [f"[marker] （次の枠を読めませんでした: {exc}）"]
 
 
+#: **同じ回の `--write` を「もう1周」と数えないための窓**（2026-09-05 05:2x に足した）。
+#: 1周は 10〜140分（`quota.py --pace`）。半日 取れば、同じ俳優の2度目は必ず入ります。
+RESTART_WINDOW_H = 12
+
+
+def start_row(me: str | None = None, *, now: datetime | None = None) -> dict:
+    """**この俳優の `start` が、もう `data/runs.jsonl` に載っているか。** 無ければ空の dict。
+
+    直近 `RESTART_WINDOW_H` 時間のぶんだけ見ます（**推測で古い行を拾わないこと**）。
+    """
+    who = me or actor_id() or "(不明)"
+    cur = now or datetime.now(JST)
+    for rec in reversed(_records()):
+        if rec.get("kind") != "start" or rec.get("session") != who:
+            continue
+        try:
+            at = datetime.fromisoformat(str(rec.get("at") or ""))
+        except ValueError:
+            continue
+        if at.tzinfo is None:
+            at = at.replace(tzinfo=JST)
+        if (cur - at).total_seconds() <= RESTART_WINDOW_H * 3600:
+            return rec
+    return {}
+
+
+class _Tee:
+    """**画面へ出しながら、同じ字をファイルにも落とす。**（`write()` の註）"""
+
+    def __init__(self, *streams):
+        self._streams = streams
+
+    def write(self, text: str) -> int:
+        for st in self._streams:
+            try:
+                st.write(text)
+            except Exception:                                   # noqa: BLE001
+                pass
+        return len(text)
+
+    def flush(self) -> None:
+        for st in self._streams:
+            try:
+                st.flush()
+            except Exception:                                   # noqa: BLE001
+                pass
+
+
 def write() -> int:
+    """§1 の印。**全文を一時置き場にも落として、撃ち直さずに頭が読めるようにします。**
+
+    ## なぜ要るか（2026-09-05 05:1x に、この回が実際に踏んだ）
+
+    この印の出力は **30.3KB・250行 を超えます**。回はそれを `| tail -120` で読み、
+    **頭（`_premise_subject_lines` / `_m4_lines` / `_unreachable_premise_lines` /
+    `ledger_holes` / §4 の表）が丸ごと消えます。** 末尾の「頭の写し」（2026-09-03）は
+    一時置き場と読む順しか写していないので、**決めるための数は写っていません。**
+
+    そこで撃ち直すと、**`data/runs.jsonl` に2行目の `start` が載ります。** これは
+    ただの重複ではありません ——
+
+      * `docs/spawn_prompt.md` が言う「立ってから 60分」は **`start` から**数えます。
+        2行目が載ると、**その線が撃ち直した時刻へ動きます**（＝ 回が自分で延命できる）
+      * `retro.py` / `drift.py` / `sibling_check.py` は `start` の数で周を数えます
+
+    だから **(1)** 全文を `<一時置き場>/marker.txt` へ落とし、**(2)** 同じ俳優の
+    `start` が直近 12時間 に在れば **2行目を載せません**（画面はそのまま出します）。
+    ＝ **撃ち直しても、数える側は何も動きません。**
+
+    ## 覆る条件
+
+    印が 120行 を切ったら、(1) は要らなくなります（`tail` で全部 読める）。
+    一時置き場が掘れない回では (1) は黙って飛ばします（(2) だけ効きます）。
+    """
+    scratch = scratch_dir()
+    fh = None
+    if scratch:
+        try:
+            fh = (Path(scratch) / "marker.txt").open("w", encoding="utf-8")
+        except OSError:
+            fh = None
+    if fh is None:
+        return _write_body(None)
+    try:
+        with contextlib.redirect_stdout(_Tee(sys.stdout, fh)):
+            return _write_body(str(Path(scratch) / "marker.txt"))
+    finally:
+        fh.close()
+
+
+def _write_body(full_path: str | None) -> int:
     me = actor_id() or "(不明)"
     if is_parent():
         print("[marker] **親からは印を付けません。**"
               " 親が周を回すのは設計の否定なので、平常の心音として数えません。")
         return 0
-    line = _append({
-        "at": datetime.now(JST).isoformat(timespec="seconds"),
-        "session": me,
-        "kind": "start",
-    })
-    print(f"[marker] 走った印を付けました: {line}")
+    prev = start_row(me)
+    rerun = bool(prev)
+    if prev:
+        print(f"[marker] **この回の印はもう付いています**（{prev.get('at')}）——"
+              " **2行目は載せません。** 撃ち直しても、`data/runs.jsonl` の `start` から"
+              "数える線（`docs/spawn_prompt.md` の「立ってから 60分」）は動きません。")
+    else:
+        line = _append({
+            "at": datetime.now(JST).isoformat(timespec="seconds"),
+            "session": me,
+            "kind": "start",
+        })
+        print(f"[marker] 走った印を付けました: {line}")
     # **きょうの1本を置く手（＋先の日付の掃き）を、ここから起こす**（2026-09-02 夜）。
     #     ここは毎周 必ず最初に撃たれる唯一の口です（§1）。SessionStart フックは
     #     サブでは起きません（`scripts/ahead_sweep.kick()` の註）。背景・数秒。
-    try:
-        import ahead_sweep as _sweep                            # noqa: PLC0415
-        print(f"[marker] きょうの1本: {_sweep.kick()}")
-    except Exception as exc:                                   # noqa: BLE001
-        print(f"[marker] きょうの1本: 起こせませんでした（{str(exc)[:80]}）")
+    # **撃ち直しの回では起こしません**（2026-09-05 05:2x）。`kick()` は焼き直しを
+    # 背景へ投げます。錠（`flock`）が2本目を `skip` で落としますが、**その回は
+    # 「焼いた」と数えられて上限（1日 2回）だけ減ります**（`docs/spawn_prompt.md` の註）。
+    # ＝ 頭を読み直すためのもう1回で、その日の焼き直しの枠が1つ消えます。
+    if rerun:
+        print("[marker] きょうの1本: **撃ち直しなので起こしません**"
+              "（`ahead_sweep.kick()` は焼き直しの上限（1日 2回）を減らします）")
+    else:
+        try:
+            import ahead_sweep as _sweep                            # noqa: PLC0415
+            print(f"[marker] きょうの1本: {_sweep.kick()}")
+        except Exception as exc:                                   # noqa: BLE001
+            print(f"[marker] きょうの1本: 起こせませんでした（{str(exc)[:80]}）")
     # **外の帯を、毎日 出している形（ショート）で撃つ手も、ここから起こす**（2026-09-02 深夜）。
     #     `[きょうの1本]` が印字する手は選ばれなければ撃たれません。帳面にショートが
     #     7日以内に無く、印が 6時間 より古い周だけ背景で撃ちます（`niche_ceiling.kick()` の註）。
-    try:
-        import niche_ceiling as _nc                             # noqa: PLC0415
-        print(f"[marker] 外の帯: {_nc.kick()}")
-    except Exception as exc:                                   # noqa: BLE001
-        print(f"[marker] 外の帯: 起こせませんでした（{str(exc)[:80]}）")
+    if rerun:
+        print("[marker] 外の帯: **撃ち直しなので起こしません**")
+    else:
+        try:
+            import niche_ceiling as _nc                             # noqa: PLC0415
+            print(f"[marker] 外の帯: {_nc.kick()}")
+        except Exception as exc:                                   # noqa: BLE001
+            print(f"[marker] 外の帯: 起こせませんでした（{str(exc)[:80]}）")
     # **この回だけの一時置き場を、ここで掘って見せること**（2026-08-29 に足した）。
     # 共有の直下へ書くと、きょうだいが同じ名前で上書きします
     # （実測: `status.py` の出力 266行 → 24行）。`scratch_dir()` の註。
@@ -779,6 +888,11 @@ def write() -> int:
     print("[marker] ―― 頭の写し（`tail` で読む回のため。上と同じ字）――")
     if scratch:
         print(f"[marker] **この回の一時置き場: {scratch}**")
+    if full_path:
+        print(f"[marker] **この画面の全文: {full_path}**"
+              f" —— `sed -n '1,80p' -- {full_path}` で頭が読めます。"
+              " **撃ち直しても、数える側は何も動きません**"
+              "（`start` の2行目は載らず、背景の起こしも走りません）")
     for ln in _doc_index_lines():
         print(ln)
     return 0
