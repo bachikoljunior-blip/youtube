@@ -96,11 +96,12 @@ def pick_kind(row: dict) -> str:
 
 
 def last_decided(rows: list[dict]) -> dict | None:
-    """後ろから見て、**最初の「決め」の行**（写しを飛ばす）。無ければ None。"""
-    for r in reversed(list(rows or [])):
-        if pick_kind(r) == PICK_KIND_DECIDE:
-            return r
-    return None
+    """**`at` がいちばん新しい「決め」の行**（写しを飛ばす）。無ければ None。
+
+    ファイルの並びで見ないこと —— `_by_at()` の註（併合で行が入れ替わります）。
+    """
+    dec = _by_at([r for r in (rows or []) if pick_kind(r) == PICK_KIND_DECIDE])
+    return dec[-1] if dec else None
 
 #: 同じ齢でそろえる時間。ショートは 48時間 で伸びきる（`src/settle.py` 実測 96%）。
 #: 長尺は伸びきりませんが（同 25%）、**比べるのに使うのは「同じ齢」**です ——
@@ -540,13 +541,44 @@ def for_day(now: datetime | None = None) -> date:
     return (t + timedelta(days=1)).date() if full else t.date()
 
 
+def _by_at(rows):
+    """`at` の古い順に並べる（読めない `at` はファイルの並びのまま後ろへ）。**安定**。
+
+    ## なぜ要るか（2026-09-04 19:3x に踏んだ。**その日の1本が古い本に戻っていました**）
+
+    `data/daily_pick.jsonl` は `merge=union` で、**同じ枝を複数の回が同時に走ります**。
+    併合すると **行はファイルの中で時刻順に並びません。** 実測（この回の 19:3x）::
+
+        19:30:50  carry   e6sLHLmPhrk   ← 焼き直しが差し替えた新しい本
+        19:24:02  decide  XwB8nxtN5D8   ← 別の回が 6分前に書いた行（併合で後ろに来た）
+
+    `current()` は「ファイルの最後の行」を返していたので、**差し替えたはずの
+    古い本 `XwB8nxtN5D8` を「09/05 の1本」として返していました** ——
+    `ahead_sweep._today_candidate` はその ID をそのまま枠へ置くので、
+    **62分 かけて焼いた新しい本は池に眠り、直す前の本が公開されます。**
+    これは `replace_video()` が塞いだはずの穴が、**併合の並びから開き直したもの**です。
+
+    **覆る条件**: `data/daily_pick.jsonl` を1行1日の上書き（union ではない）にしたら、
+    この並べ替えは要りません。
+    """
+    def key(pair):
+        i, r = pair
+        try:
+            return (0, datetime.fromisoformat(str(r.get("at"))), i)
+        except (TypeError, ValueError):
+            return (1, datetime.min.replace(tzinfo=JST), i)
+    return [r for _, r in sorted(enumerate(rows), key=key)]
+
+
 def current(day: date, path: Path | None = None) -> dict | None:
-    """その日の1本として**最後に**残した決定。無ければ `None`。"""
-    last = None
-    for r in _jsonl(path or PICKS):
-        if r.get("for_day") == day.isoformat():
-            last = r
-    return last
+    """その日の1本として**最後に**残した決定。無ければ `None`。
+
+    **「最後」は `at` の新しさで見ます**（ファイルの並びではありません）——
+    `_by_at()` の註。併合で行が入れ替わると、ファイルの最後は最新とはかぎりません。
+    """
+    rows = _by_at([r for r in _jsonl(path or PICKS)
+                   if r.get("for_day") == day.isoformat()])
+    return rows[-1] if rows else None
 
 
 def record(form: str, topic: str, why: str, *, day: date | None = None,
@@ -604,7 +636,7 @@ def replace_video(old_ids, new_id: str, *, why_note: str = "",
     if not olds or not new_id or new_id in olds:
         return []
     p = path or PICKS
-    rows = _jsonl(p)
+    rows = _by_at(list(_jsonl(p)))
     last_by_day: dict[str, dict] = {}
     for r in rows:
         if r.get("for_day"):
@@ -1500,7 +1532,7 @@ def expected_lines(now=None, *, picks_path=None, views_path=None,
     if not rows:
         return []
     last_by_day = {}
-    for r in rows:
+    for r in _by_at(rows):
         if r.get("for_day"):
             last_by_day[str(r["for_day"])] = r
     # **見込みは「決め」の行から、動画IDは「その日の最後の行」から**（2026-09-04 19:3x に直した）。
@@ -1508,13 +1540,24 @@ def expected_lines(now=None, *, picks_path=None, views_path=None,
     # そのまま引くと、**焼き直したあとは古い ID を探しにいって永久に「待ち」**になります
     # —— この節を書いた同じ回に、走っている焼きが `XwB8nxtN5D8` を差し替える寸前でした。
     now_id = {}
-    for r in all_rows:
+    for r in _by_at(all_rows):
         if r.get("for_day") and r.get("video_id"):
             now_id[str(r["for_day"])] = str(r["video_id"])
+    # **あとの決めが黙っても、宣言は消えません**（2026-09-04 19:4x に、検査が拾った）。
+    # `last_by_day`（その日のいちばん新しい決め）だけを見ると、**`--expected` を付けずに
+    # 決め直した回が、前の回の宣言を黙って消せます** —— 実測 09-04: 18:39 に 8回 を宣言した
+    # 決めを、19:24 の別の回が `--expected` 無しで上書きしました。
+    # **数を消せるのは、別の数だけ**（`--moves` と同じ）。
+    # ただし**形が変わったら、その宣言はもう別の話**なので落とします。
     said = {}
-    for d, r in last_by_day.items():
-        if isinstance(r.get("expected_48h"), (int, float)) and now_id.get(d):
+    for r in _by_at(rows):
+        d = str(r.get("for_day") or "")
+        if not d or not now_id.get(d):
+            continue
+        if isinstance(r.get("expected_48h"), (int, float)):
             said[d] = r
+        elif d in said and str(r.get("form") or "") != str(said[d].get("form") or ""):
+            said.pop(d)                      # 形を変えた決めは、前の見込みを引き継がない
     if not said:
         n = len(last_by_day)
         return [f"     [!] **決めが 齢48h の見込みを1件も言っていません**（{n}日 ぶん・"
@@ -1612,7 +1655,8 @@ def _standing_chain_len(picks_path: Path | None = None) -> int:
     （＝ 画面の「15回 連続」は、決めの数では 11回）。
     **鎖の長さは「回が何回 追認したか」を言う数**なので、機械の写しは入りません。
     """
-    rows = [r for r in _jsonl(picks_path or PICKS) if pick_kind(r) == PICK_KIND_DECIDE]
+    rows = _by_at([r for r in _jsonl(picks_path or PICKS)
+                   if pick_kind(r) == PICK_KIND_DECIDE])
     if not rows:
         return 0
     last = rows[-1].get("form")
