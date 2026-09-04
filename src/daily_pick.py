@@ -64,6 +64,8 @@ ROOT = Path(__file__).resolve().parent.parent
 VIEWS = ROOT / "data" / "views.jsonl"
 UPLOADED = ROOT / "data" / "uploaded.jsonl"
 PICKS = ROOT / "data" / "daily_pick.jsonl"
+#: 焼いた本の台本の控え（`treated_count()` が「外の型を写したか」を実物で見る所）。
+QUEUE = ROOT / "data" / "critique_queue"
 JST = timezone(timedelta(hours=9))
 
 FORMS = ("ショート", "長尺")
@@ -1155,7 +1157,8 @@ def and_path_form(cmp: dict | None = None, *, snapshot: dict | None = None,
 
 def standing_form_conflict(cur: dict | None, *, now: datetime | None = None,
                            uploaded_path: Path | None = None,
-                           form_call=None, picks_path: Path | None = None) -> list[str]:
+                           form_call=None, picks_path: Path | None = None,
+                           treated_call=None) -> list[str]:
     """**すでに立っている決めの形と、いま測った門の算の形が食い違うなら、そう言う行。**（API 0単位）
 
     ## なぜ要るか（2026-09-04・最適化の回。**「最適化されてんの？」→ いいえ の理由を1つ潰した**）
@@ -1200,15 +1203,89 @@ def standing_form_conflict(cur: dict | None, *, now: datetime | None = None,
         return []
     topic = str(cur.get("topic") or "<題材>")
     chain = _standing_chain_len(picks_path)
+    # **どちらが正しいかは言えませんが、「門の算の分母が処置を測っているか」は数えられます。**
+    counter = treated_count if treated_call is None else treated_call
+    try:
+        treated, total = counter(have, uploaded_path=uploaded_path)
+    except Exception:                                              # noqa: BLE001
+        treated, total = 0, 0
+    if total and treated == 0:
+        base = (f"     　 [数] **その門の算は、立っている決めの形（{have}）の分母 {total}本 で解いています。"
+                f"そのうち、外の型を全部 写した本は 0本**（`src/daily_pick.treated_count`・実物の台本の控え）"
+                f" —— **その脚が測っているのは「いまの作り方」で、処置ではありません。**"
+                f" 前提「外の作り方を写した長尺」は、まさにその分母を測り直すために立っています"
+                f"（`config/hypotheses.yaml`）。**処置 n=0 の分母で処置を落とさないこと。**")
+    elif total:
+        base = (f"     　 [数] {have} の分母 {total}本 のうち、外の型を全部 写した本は **{treated}本**"
+                f"（`src/daily_pick.treated_count`）—— **分母は処置を測っています。"
+                f"門の算のほうを根拠にしてよい回です。**")
+    else:
+        base = (f"     　 [数] {have} の分母が数えられませんでした（0本）—— **推測で埋めないこと。**")
     return [
         f"     [!!] **立っている決め（{have}）と、いま測った門の算（{want}）が食い違います。**"
         f"　{why}",
+        base,
         f"     　 立っている決めの「理由」は**前の回の散文**です —— **根拠にしないこと**"
         f"（`data/daily_pick.jsonl` の `why` は前の決めを引く鎖で、いま {chain}回 連続で同じ形）。"
         f"**この回の数で決め直すか、門の算がなぜ外れているかを数で言うこと。**",
         "     　 決め直すなら（同じコマンドで上書き）:",
         f"       python -m src.daily_pick --pick {want} {topic} --why \"<いま撃った数で>\"",
     ]
+
+
+#: **その形の齢48h の分母のうち、外の型を「全部」写した本が何本か**（2026-09-04 16:4x に足した）。
+#: 見るのは `data/critique_queue/<video_id>.script.json`（その本を焼いた台本の控え）と、
+#: `src/script_writer` の4つの数える口（冒頭・章・題とサムネ・間合い）。**API 0単位・実物だけ。**
+def treated_count(form: str, *, hours: int = AGE_HOURS,
+                  views_path: Path | None = None,
+                  uploaded_path: Path | None = None,
+                  topics: list[dict] | None = None) -> tuple[int, int]:
+    """`(外の型を全部 写した本, その形の分母)` を返す。
+
+    ## なぜ要るか（2026-09-04 16:4x に踏んだ）
+
+    `[!!]`（立っている決めと門の算が食い違う）は、**どちらが正しいかを言いません。**
+    実際に 09/04 16:2x の回は、この行を読んでから **20分** かけて
+    `config/hypotheses.yaml` の5脚の表まで降りて、答えを出しました ——
+    **門の算の負けている側（長尺）の分母 36本 に、外の型を全部 写した本が 0本**。
+    ＝ その脚は「いまの作り方」を測っていて、**処置を1本も測っていません。**
+
+    **その 0本 は、機械が数えられます。** 降りなくても済むように、ここで数えて
+    `[!!]` の隣に出します（`data/daily_pick.jsonl` の `why` は 12回 続けて
+    同じ形を引く鎖になっており、**降りた回だけが鎖を切れる**形でした）。
+
+    **控えの読めない本を「写した」に数えません** —— 確かめられないものは外します
+    （`house_rule.needs_beyond_rule()` の「読めないものは通す」とは**逆向き**です。
+     こちらは「処置ずみ」を名乗る側なので、**証拠が要る**）。
+
+    **覆る条件**: 前提「外の作り方を写した長尺」が閉じて `OUTSIDE_LONG_RULE` を
+    使わなくなったら、この数は要りません（そのとき `[!!]` の [数] の行も落とすこと）。
+    """
+    rows = [r for r in aged_views(hours, views_path=views_path, uploaded_path=uploaded_path)
+            if r.get("form") == form]
+    total = len(rows)
+    if not total:
+        return 0, 0
+    tops = {str(t.get("id")): str(t.get("style") or "")
+            for t in (topics if topics is not None else _topics())}
+    try:
+        from src import script_writer as _sw
+    except Exception:                                              # noqa: BLE001
+        return 0, total
+    checks = (_sw.outside_opening_problems, _sw.outside_body_problems,
+              _sw.outside_title_problems, _sw.outside_pacing_problems)
+    treated = 0
+    for r in rows:
+        # **型を持たない題材は、写しようがありません**（処置の外）。
+        if tops.get(str(r.get("topic") or "")) != "outside_long":
+            continue
+        try:
+            script = json.loads((QUEUE / f"{r['video_id']}.script.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if all(not f(script) for f in checks):
+            treated += 1
+    return treated, total
 
 
 def _standing_chain_len(picks_path: Path | None = None) -> int:

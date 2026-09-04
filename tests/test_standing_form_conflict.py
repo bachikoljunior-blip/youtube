@@ -111,3 +111,71 @@ def test_lines_prints_the_conflict_when_a_pick_stands(monkeypatch, tmp_path):
     assert "×106" in body
     # 立っている `why` は「前の回の散文」と札を貼って出すこと
     assert "前の回の散文" in body
+
+
+# ----------------------------------------------------------------------
+# **[数] の行**（2026-09-04 16:4x に足した）
+#
+# `[!!]` は「どちらが正しいか」を言いません。実測 09/04 16:2x の回は、この行を読んでから
+# **20分** かけて `config/hypotheses.yaml` の5脚の表まで降りて答えを出しました ——
+# **門の算の負けている側（長尺）の分母 36本 に、外の型を全部 写した本が 0本**。
+# **その 0本 は機械が数えられる**ので、`[!!]` の隣に出します。
+# ----------------------------------------------------------------------
+
+
+def test_処置が0本なら分母が処置を測っていないと言う():
+    out = daily_pick.standing_form_conflict(
+        _cur("長尺", "nenkin"),
+        form_call=lambda **k: ("ショート", "道 ショート ＝ ×106・道 長尺 ＝ ×314"),
+        treated_call=lambda form, **k: (0, 36))
+    body = "\n".join(out)
+    assert "36本" in body and "0本" in body
+    assert "処置ではありません" in body
+    assert "処置 n=0 の分母で処置を落とさない" in body
+
+
+def test_処置が在るなら門の算を根拠にしてよいと言う():
+    """**逆向きも出ること。** 片方しか出ないと、この行は「長尺を守る札」になります。"""
+    out = daily_pick.standing_form_conflict(
+        _cur("長尺", "nenkin"),
+        form_call=lambda **k: ("ショート", "x"),
+        treated_call=lambda form, **k: (7, 36))
+    body = "\n".join(out)
+    assert "**7本**" in body
+    assert "門の算のほうを根拠にしてよい" in body
+
+
+def test_数えられない回は推測で埋めない():
+    out = daily_pick.standing_form_conflict(
+        _cur("長尺", "nenkin"),
+        form_call=lambda **k: ("ショート", "x"),
+        treated_call=lambda form, **k: (0, 0))
+    assert "推測で埋めないこと" in "\n".join(out)
+
+
+def test_数えるほうが飛んでも回の印字を落とさない():
+    def boom(form, **k):
+        raise RuntimeError("控えが読めません")
+    out = daily_pick.standing_form_conflict(
+        _cur("長尺", "nenkin"),
+        form_call=lambda **k: ("ショート", "x"), treated_call=boom)
+    assert "食い違います" in "\n".join(out)
+
+
+def test_treated_count_は実物で数える():
+    """**実物で撃つこと。** 2026-09-04 の実測は 長尺 (0, 36) ／ ショート (0, 216)。
+
+    ここが見るのは「分母が 0 でないこと」と「写した本が分母を超えないこと」だけ ——
+    数そのものは毎日 動きます（**写さないこと**）。
+    """
+    treated, total = daily_pick.treated_count("長尺")
+    assert total > 0
+    assert 0 <= treated <= total
+
+
+def test_型を持たない題材は処置に数えない(monkeypatch):
+    """`style: outside_long` でない題材は、写しようがないので処置の外。"""
+    monkeypatch.setattr(daily_pick, "aged_views",
+                        lambda *a, **k: [{"video_id": "V1", "form": "長尺", "topic": "t-plain"}])
+    monkeypatch.setattr(daily_pick, "_topics", lambda: [{"id": "t-plain", "style": None}])
+    assert daily_pick.treated_count("長尺") == (0, 1)
