@@ -1741,6 +1741,126 @@ def premise_opened_today() -> dict:
 PREMISE_COVER_MIN = 0.8
 
 
+def premise_lead_days() -> int:
+    """**きょう立てた前提が、いちばん早くても何日後まで閉じられないか。**（API 0単位）
+
+    `src/judgeable.SETTLE_DAYS`（本が伸びきるまで **4日**）
+    ＋ `ANALYTICS_LAG_DAYS`（実データが着くまで **4日**）。**どちらも実測**
+    （`python -m src.settle`）。読めなければ 8（同じ和）。
+
+    **これは「立てた前提が熟すまでの日数」の下限**です。上ではありません ——
+    新しい前提は普通この日数より長くかかります（群がそろう日を待つものは
+    `scripts/deadline_check.py` の `ready` が出します）。**下限で足りるのは、
+    この門が「速いほう」を選ばせるためだけに使うから**です。
+    """
+    try:
+        from src import judgeable as _j                          # noqa: PLC0415
+        return int(_j.SETTLE_DAYS) + int(_j.ANALYTICS_LAG_DAYS)
+    except Exception:                                            # noqa: BLE001
+        return 8
+
+
+def ledger_days(as_of=None, window: int = 7) -> dict:
+    """**台帳にいま何日ぶんの `verdict` の燃料が在るか。**（`config/hypotheses.yaml` だけ・API 0単位）
+
+    返す: `{"live": 生きた燃料の件数, "rate": 閉じる速さ(件/日), "days": 残り日数,
+    "by_lever": {腕: 件数}}`。**読めなければ空**（＝門を開ける。
+    `premise_opened_today()` と同じ約束 —— 読めない道具で回を止めないこと）。
+
+    ## なぜ要ったか（2026-09-05・最適化の回。**過去の回を数えて名指しした欠陥**）
+
+    この回に `python scripts/optimized.py` を撃って出た数（`data/runs.jsonl`
+    直近5日・**241 ship**）:
+
+        種別            回数    `--moves` が 0 以外   門1' で**実際に**動いた
+        fix             149          2                    0
+        improve          48          0                    0
+        **premise**      25          0                    **0**
+        verdict           7          3                    0
+        upload            6          0                    0
+        means             6          1                    0
+        ------------------------------------------------------------
+        **測れた 23件 ／ 近づいた 0件 ／ 合計 +0.0日**
+
+    同じ5日で `data/eta.jsonl` の **再生/日(7d) は 6,299（08-25）→ 943（09-04）＝ −85%**。
+    **241回 出して、目標に効く唯一の数は 85% 落ちています。**
+
+    **`premise` が、そのうちいちばん確実に 0 です。** `scripts/eta.py` の頭が毎周
+    印字しているとおり —— **「軌跡の腕が動くのは、前提を1件 *閉じた* ときだけ」**。
+    **立てる**のは定義上どこも動かしません。それでも `docs/GOAL.md` は
+    `premise` を **「0単位・いつでも撃てる」**と書いており、
+    `fix` の門（`FIX_RUN_CAP` / `untreated_slot()`）は
+    **「`improve` / `upload` / `verdict` / `premise` / `means` は通ります」**と
+    自分で逃げ道に名指ししています。**＝ `fix` を止めた分が `premise` へ流れます。**
+
+    ## この門が使う数（この回に自分で撃った）
+
+        開いている前提            36件（`verdict`/`closed_on`/`outcome` の鍵が無いもの）
+        うち腕の付いた**生きた燃料** **34件**
+        閉じる速さ（直近7日）      16件 ÷ 7 ＝ **2.29件/日**
+        → **残り 14.9日ぶん**
+        きょう立てた前提が熟すまで  **8日**（`premise_lead_days()`）
+
+    **＝ 台帳には 14.9日ぶんの燃料が在り、新しい1件は 8日 後まで使えません。**
+    どちらを先に撃っても、**次の `verdict` は台帳から出ます。**
+    だから、この状態で `premise` を撃つ回は、**次の判定を1日も早めません。**
+
+    ## **禁止ではありません**
+
+    腕（`--lever`）に**開いている前提が1件も無い**なら通します ——
+    そこは「台帳から出る」が成り立たない唯一の場所だからです。
+    実測 2026-09-05 の内訳: `per_video` 20 ／ `sub_rate` 8 ／ `rpm` 4 ／
+    `density` 2 ／ 腕なし 2。**いまは全部の生きた腕が埋まっています。**
+
+    **覆る条件**（どれか1つで畳むこと）:
+
+    1. `days < premise_lead_days()` になったら —— 台帳が薄く、
+       立てるほうが速い。**この門は自分で開きます**（定数を持ちません）。
+    2. この門を置いてから7日で `verdict` の実数が増えないなら、
+       律速は `premise` の多さではありません（`FIX_RUN_CAP` の覆る条件4 と同じ形）。
+    3. `optimized.py` の「測った動き」に `premise` の回が現れたら、
+       上の「定義上 0」が誤りだったということ。**そのときは外すこと。**
+    """
+    from datetime import date as _date                           # noqa: PLC0415
+    try:
+        import yaml                                              # noqa: PLC0415
+        doc = yaml.safe_load(
+            (Path(__file__).resolve().parents[1]
+             / "config" / "hypotheses.yaml").read_text(encoding="utf-8"))
+        rows = doc["hypotheses"] if isinstance(doc, dict) else doc
+        rows = [r for r in rows if isinstance(r, dict)]
+    except Exception:                                            # noqa: BLE001
+        return {}
+    if not rows:
+        return {}
+    today = as_of or datetime.now(JST).date()
+    # **閉じた印は鍵の有無で見ます**（`scripts/drift.overdue()` と同じ約束）——
+    # `verdict: false` は「外れた＝閉じた」で、Python の偽値と衝突します。
+    open_ = [h for h in rows
+             if not any(k in h for k in ("verdict", "closed_on", "outcome"))]
+    by_lever: dict[str, int] = {}
+    for h in open_:
+        by_lever[str(h.get("lever") or "none")] = by_lever.get(
+            str(h.get("lever") or "none"), 0) + 1
+    live = [h for h in open_ if str(h.get("lever") or "none") not in ("none", "")]
+    closed_recent = 0
+    for h in rows:
+        raw = str(h.get("closed_on") or "")[:10]
+        if not raw:
+            continue
+        try:
+            d = _date.fromisoformat(raw)
+        except ValueError:
+            continue
+        if 0 <= (today - d).days < window:
+            closed_recent += 1
+    rate = closed_recent / float(window)
+    return {"open": len(open_), "live": len(live), "closed_recent": closed_recent,
+            "rate": rate, "window": window,
+            "days": (len(live) / rate) if rate else None,
+            "by_lever": by_lever}
+
+
 def note_premise_gate(what: str, cover: float) -> None:
     """**止めたことを残す**（`note_fix_gate()` と同じ理由・同じ約束）。"""
     try:
@@ -3336,6 +3456,52 @@ def main(argv: list[str] | None = None) -> int:
                     "  **覆る条件**: 被覆が "
                     f"{PREMISE_COVER_MIN:.0%} を超えたら、この門は仕事を終えています —— "
                     "そのときは数を見て畳むこと（`premise_opened_today()` の註）。")
+
+            # **台帳がまだ厚い間は、注ぎ足す回に枠を使わせない**
+            # （2026-09-05・最適化の回。実測と**覆る条件**は `ledger_days()` の註）。
+            #
+            # `premise` は `docs/GOAL.md` に「0単位・いつでも撃てる」と書いてあり、
+            # `fix` の門が自分で逃げ道に名指ししています（「`premise` は通ります」）。
+            # 実測（この回・`optimized.py`・直近5日 241 ship）:
+            # **`premise` 25件 → 門1' が動いた回 0件。**
+            # `eta.py` の頭のとおり、**動くのは「閉じた」ときだけ**なので、
+            # これは運ではなく**定義**です。
+            #
+            # **止めるのは「台帳のほうが速いとき」だけ**です。
+            _ld = ledger_days()
+            _lead = premise_lead_days()
+            _arm = str(args.lever or "none")
+            _have = int((_ld.get("by_lever") or {}).get(_arm, 0))
+            if (_ld.get("days") is not None and _ld["days"] >= _lead and _have > 0):
+                note_premise_gate(args.ship, float(_ld["days"]))
+                _bl = "／".join(f"{k} {v}件" for k, v in
+                               sorted((_ld.get("by_lever") or {}).items(),
+                                      key=lambda kv: -kv[1]))
+                ap.error(
+                    "**台帳には、まだ "
+                    f"{_ld['days']:.1f}日ぶん の燃料が在ります** —— 生きた前提 "
+                    f"{_ld['live']}件 ÷ 閉じる速さ {_ld['rate']:.2f}件/日"
+                    f"（直近{_ld['window']}日に {_ld['closed_recent']}件）。"
+                    f"きょう立てる前提が熟すのは **{_lead}日 後**"
+                    "（`premise_lead_days()` ＝ 落ち着き4日 ＋ 実データの遅れ4日・実測）。\n"
+                    "  ＝ **次の `verdict` は、どちらにしても台帳から出ます。**"
+                    "いま1件 立てても、判定は1日も早まりません。\n"
+                    "  実測（この回の `python scripts/optimized.py`・直近5日 241 ship）: "
+                    "**`premise` 25件 → 門1' が動いた回 0件**。"
+                    "`eta.py` の頭が毎周 印字しているとおり、"
+                    "**腕が動くのは前提を『閉じた』ときだけ**です。\n"
+                    f"  **腕 `{_arm}` には、開いている前提が {_have}件 あります**"
+                    f"（内訳 {_bl}）。**この回は、そのうち1件を閉じること**:\n"
+                    "    python scripts/deadline_check.py     # ready の来ている前提\n"
+                    "    python scripts/run_marker.py --ship \"verdict: ...\" "
+                    f"--kind verdict --lever {_arm} --moves <日数>\n"
+                    "  **`improve` / `upload` / `verdict` / `means` は通ります。"
+                    "止めているのは `premise` だけ**です。\n"
+                    "  **禁止ではありません** —— 開いている前提が 0件 の腕を "
+                    "`--lever` に名乗れば通ります（そこだけは台帳から出ません）。\n"
+                    "  **覆る条件**: 台帳の残りが "
+                    f"{_lead}日 を切ったら、この門は自分で開きます"
+                    "（定数を持ちません。`ledger_days()` の覆る条件1）。")
 
         return ship(args.ship, args.closes, args.lever, args.moves,
                     reflect=not args.no_reflect, kind=args.kind)
