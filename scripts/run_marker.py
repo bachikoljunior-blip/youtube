@@ -1081,6 +1081,15 @@ def fix_share_line(path: Path | None = None) -> str:
 #: `eta.py` の定義では、**軌跡の腕が動くのは前提を1件 閉じたときだけ**なので、
 #: 本当に日付を持っているのは `verdict` と `premise` の2つです
 #: （`upload` / `improve` / `means` は「出した」の側で、`--moves` は定義上 0）。
+#:
+#: [!] **「定義上 0」を「実測 0%」と読まないこと**（2026-09-04 19:xx・最適化の回）。
+#: この行の下では、`improve` の `moves` は**測られていません** ——
+#: 軌跡の入力に入らないので、**何をしても 0 が記録されます。**
+#: 実測でも `premise` は 21回→**0件** で、この tuple に入っているのに動かしていません。
+#: 動かした実測が在るのは `verdict` だけ（12回→7件・58%）。
+#: **この tuple は「歩留りの高い種別」ではなく「軌跡の入力に入る種別」です。**
+#: 歩留りで種別を捨てるときは `src/kind_yield.py` の側を読むこと ——
+#: あちらは `moves` を数えるので、**定義上 0 の種別には使えません。**
 MOVING_KINDS = ("verdict", "premise")
 
 
@@ -1383,12 +1392,26 @@ def judgeable_today() -> list[str] | None:
         `ready` を持つ claim                        29件（＝ 1日あたり およそ 1件 ずつ届く）
 
     ＝ **`fix` を止めて「`verdict` を撃て」と言っても、きょうは撃てません。**
-    止められた回に残るのは `improve`（直近5日 34回・`moves` が 0 以外 **0件**）か、
-    **語を書き換えて同じ `fix` を通すこと**だけ —— 実測で後者が起きています
-    （`fix_gate` の止め 42行 のうち **12行** は、同じ文言が数分後に ship）。
+    止められた回に残るのは、**語を書き換えて同じ `fix` を通すこと**だけ ——
+    実測でそれが起きています（`fix_gate` の止め 42行 のうち **12行** は、
+    同じ文言が数分後に ship）。
 
     **だから門は「判定できる前提が、きょう在るとき」だけ立てます。**
     在るのに `fix` を積んだ回だけが、順番を間違えた回です。
+
+    ## [!] **この免除は「何をしてもよい」ではありません**（2026-09-04 19:xx に絞った）
+
+    **前の版は、ここに `improve` も捨てる理由を書いていました** ——
+    「残るのは `improve`（`moves` が 0 以外 **0件**）」。**この引用は誤りです。**
+    `improve` の `moves` は `MOVING_KINDS` の註が自分で書いているとおり
+    **定義上 0** で（`eta.py` の頭も「作る・出す・直すは、軌跡の入力に
+    入りません」と印字する）、**定義で 0 にした数は、腕を捨てる根拠になりません。**
+    その円のせいで、**免除が立つ日は「計器を直す日」**になっていました
+    （実測 直近5日: `scripts/eta.py` 69 commits ／ `src/script_writer.py` 8）。
+
+    **免除の行き先は `dry_ledger_gate()` が絞ります** —— 台帳が空の日に通る
+    `fix` は、**きょうの枠の本を名乗ったものだけ**（規則3・オーナー原文・固定）。
+    `improve` はいつでも通ります。**そちらの註を先に読むこと。**
 
     ## 覆る条件
 
@@ -1404,6 +1427,66 @@ def judgeable_today() -> list[str] | None:
         return sorted(c for c, d in _dc.ready_by_claim().items() if d <= today)
     except Exception:                                              # noqa: BLE001
         return None
+
+
+def dry_ledger_gate(ship: str, ready: list[str] | None, slot: dict,
+                    over: bool) -> dict:
+    """**台帳が空の日に通す `fix` を、きょうの枠の本に絞る。**（純関数・**API 0単位**）
+
+    返り: `{"dry", "can_name", "slot_fix", "trip", "target"}`。
+    `trip` が真なら**止めます**（＝ 計器だけを直す `fix` を、台帳が空の日に通さない）。
+
+    ## なぜ要るか（2026-09-04 19:xx・最適化の回に撃って数えた）
+
+    `judgeable_today()` は「きょう判定できる前提が 0件 なら `fix` を通す」と
+    決めています。**その免除の理由が循環していました** ——
+    あちらの註は「止めても残るのは**歩留り 0.0% の `improve`**」と書きますが、
+    `improve` の `moves` は `MOVING_KINDS` の註が自分で書いているとおり
+    **定義上 0** です（`eta.py` の頭も「作る・出す・直すは、軌跡の入力に
+    入りません」と印字する）。**定義で 0 にした数を「実測 0%」と読んで、
+    その腕を捨てていました。**
+
+    **この回に撃って数えた実物**（`data/runs.jsonl` 直近5日・247 ship）::
+
+        moves が 0 以外        7件（2.8%）—— 全部 `verdict`
+        fix                  174件（70%）→ 0件
+        improve               33件（13%）→ 0件（**定義上 0**）
+        きょう判定できる前提    0件（`deadline_check`・いちばん早い ready は 09-05）
+        いちばん触った file    `scripts/eta.py` 69 commits ／ `src/script_writer.py` 8
+
+    ＝ **免除が立つ日は「計器を直す日」**になっていました。同じ回の `eta.py` は
+    「外の最大は自分の天井の **×1189.3**・要る ×22.28 ＝ 4,284回 は帯の天井ではなく
+    **この作り方の天井**。**次の手は `improve`**」と印字します ——
+    **門が捨てている腕を、計器が名指ししていました。**
+
+    **免除は残します**（撃てない `verdict` は要求しない）。**絞るのは行き先だけ**で、
+    通るのは**きょうの枠の本を名乗った `fix`** です（規則3・オーナー原文・固定:
+    「次の投稿予定までにそこで投稿する動画を改善し続ける」）。
+
+    **詰みません** —— 枠の本はいつでも在り、`improve` も本の名前を `--ship` に
+    書けば通ります。**撃てない `verdict` を求める門とは、ここが違います。**
+
+    ## 覆る条件
+
+    - **枠の本が名乗れない**（`slot` に `video_id` も `topic` も無い）なら、
+      名指しできる行き先が無いので `trip` は偽 ＝ **免除はそのまま**。
+    - `ready` が `None`（測れなかった）なら `trip` は偽。
+      **「測れない」を「立っている」と読ませないこと。**
+    - `ready` が空でない（きょう撃てる `verdict` が在る）日は、こちらは働きません
+      —— その日は `judgeable_today()` の門のほうが立ちます。
+    - **`improve` の `moves` が 0 以外を出しはじめたら**（＝ 作る側が軌跡の
+      入力に入ったら）、上の「定義上 0」が消えます。**この註を書き直すこと。**
+    """
+    dry = bool(over) and ready is not None and not ready
+    vid = (slot or {}).get("video_id") or ""
+    top = (slot or {}).get("topic") or ""
+    can_name = bool(vid or top)
+    slot_fix = bool((vid and vid in ship) or (top and top in ship))
+    return {
+        "dry": dry, "can_name": can_name, "slot_fix": slot_fix,
+        "trip": bool(dry and can_name and not slot_fix),
+        "target": vid or top,
+    }
 
 
 #: **`verdict` が出ないまま続いた回の上限**（判定できる前提が在るときだけ効きます）。
@@ -2872,23 +2955,84 @@ def main(argv: list[str] | None = None) -> int:
             _over = (_run >= FIX_RUN_CAP) or (_since >= FIX_SINCE_MOVE_CAP)
             _ready: list[str] | None = judgeable_today() if _over else None
             _trip = _over and bool(_ready)
-            if _over and not _trip:
-                # **止めなかったことも残します**（`waived` ＝ 次の回が数えられる）。
-                note_fix_gate(args.ship, max(_run, _since), waived=True)
-                _n = "0件" if _ready is not None else "測れませんでした"
-                print(f"[marker] **`fix` が 連{_run}回／動いた回から {_since}回** ですが、"
-                      f"**きょう判定できる前提が {_n} なので通します** —— "
-                      "`verdict` が撃てない日に止めると、残るのは歩留り 0.0% の "
-                      "`improve` か、語を書き換えて同じ `fix` を通すことだけです"
-                      "（`scripts/run_marker.judgeable_today`）。"
-                      "  **いちばん早い ready は `python scripts/deadline_check.py` の [OK] 行**です。")
-            # **その日の枠の本を直す `fix` は通します。** 規則3（オーナー原文・固定）は
+            # **その日の枠の本を直す `fix`。** 規則3（オーナー原文・固定）は
             # 「次の投稿予定までにそこで投稿する動画を改善し続ける」で、
             # **その本の名前を名乗った `fix` は、門が言っている手そのもの**です
-            # （`untreated_slot()` の `_on_it` と同じ口。**通したことは残します**）。
+            # （`untreated_slot()` の `_on_it` と同じ口）。
             _slot_fix = bool(
                 (_u["video_id"] and _u["video_id"] in args.ship)
                 or (_u["topic"] and _u["topic"] in args.ship))
+            # --- **台帳が空の日の免除を、枠の本に絞る**（2026-09-04 19:xx・最適化の回）---
+            #
+            # **ここが、近づかない回が選ばれ続けた口です。** 前の版は
+            # 「きょう判定できる前提が 0件」なら **どんな `fix` でも通し**ていました。
+            # その免除の理由が **「残るのは歩留り 0.0% の `improve`」** です ——
+            # ところが `improve` の `moves` は、すぐ上の `MOVING_KINDS` の註が
+            # 自分で書いているとおり **定義上 0** です（`eta.py` の頭も
+            # 「作る・出す・直すは、軌跡の入力に入りません」と印字する）。
+            # **定義で 0 にした数を「実測 0%」と読んで、その腕を捨てていました。**
+            # 円を描いているので、抜けません。
+            #
+            # **この回に撃って数えた実物**（`data/runs.jsonl` 直近5日・247 ship）::
+            #
+            #     moves が 0 以外        7件（2.8%）—— 全部 `verdict`
+            #     fix                  174件（70%）→ 0件
+            #     improve               33件（13%）→ 0件（**定義上 0**）
+            #     きょう判定できる前提    0件（`deadline_check`・いちばん早い ready は 09-05）
+            #     いちばん触った file    `scripts/eta.py` 69 commits ／ `src/script_writer.py` 8
+            #
+            # ＝ **免除が立つ日は「計器を直す日」になっていました。**
+            # そして `eta.py` の頭は同じ回に
+            # 「外の最大は自分の天井の **×1189.3**・要る ×22.28 ＝ 4,284回 は帯の天井ではなく
+            # **この作り方の天井**。**次の手は `improve`**」と印字しています。
+            # **門が捨てている腕を、計器が名指ししていました。**
+            #
+            # **だから免除は残します**（撃てない `verdict` は要求しない）が、
+            # **行き先を規則3 に絞ります** —— 台帳が空の日に通る `fix` は
+            # **きょうの枠の本を名乗ったものだけ**。計器だけを直す `fix` は止めます。
+            # **詰みません**: 枠の本はいつでも在り、`improve` も `--ship` に本の名前を
+            # 書けば通ります（撃てない `verdict` を求める門とは、ここが違います）。
+            #
+            # ## 覆る条件
+            #
+            # - **枠の本が名乗れない**（`untreated_slot()` が `video_id` も `topic` も
+            #   返さない）なら、名指しできる行き先が無いので **免除はそのまま**です。
+            # - `improve` の `moves` が 0 以外を出しはじめたら（＝ 作る側が軌跡の入力に
+            #   入ったら）、この註の前提が消えるので **書き直すこと**。
+            # - `judgeable_today()` が `None`（測れなかった）なら、ここは立てません。
+            _dg = dry_ledger_gate(args.ship, _ready, _u, _over)
+            _dry = _dg["dry"]
+            if _dg["trip"]:
+                _trip = True
+                note_fix_gate(args.ship, max(_run, _since))
+                print(f"[marker] **止めました。** `fix` が 連{_run}回／動いた回から {_since}回、"
+                      "**きょう判定できる前提は 0件** です。"
+                      "  **`verdict` は要求しません**（きょうは撃てない）。"
+                      "  **要求するのは規則3 のほう** ——"
+                      f" 「次の投稿予定までにそこで投稿する動画を改善し続ける」＝ `{_u['video_id'] or _u['topic']}`。\n"
+                      "  この `--ship` は、きょうの枠の本を名乗っていません"
+                      "（＝ 台帳が空の日に、計器だけを直しています）。\n"
+                      "  **通る手**（どれも きょう 撃てます）:\n"
+                      f"    --kind improve  枠の本の作り方を変える（`{_u['topic'] or _u['video_id']}` を `--ship` に書く）\n"
+                      f"    --kind fix      枠の本を直す（同上）\n"
+                      "    --kind premise  『その天井は天井ではない』を置く"
+                      "（`eta.py`: 外の最大は自分の天井の ×1189.3・要る ×22.28）\n"
+                      "  **なぜ `improve` を捨てないか**: `improve` の `moves` は"
+                      "**定義上 0** です（`MOVING_KINDS` の註／`eta.py`「作る・出す・直すは"
+                      "軌跡の入力に入りません」）。**定義で 0 にした数は、腕を捨てる根拠になりません。**")
+            elif _over and not _trip:
+                # **止めなかったことも残します**（`waived` ＝ 次の回が数えられる）。
+                note_fix_gate(args.ship, max(_run, _since), waived=True)
+                _n = "0件" if _ready is not None else "測れませんでした"
+                _why = ("きょうの枠の本を名乗っているので通します"
+                        if _dry and _slot_fix else
+                        f"きょう判定できる前提が {_n} なので通します")
+                print(f"[marker] **`fix` が 連{_run}回／動いた回から {_since}回** ですが、"
+                      f"**{_why}** —— "
+                      "`verdict` が撃てない日に、撃てない `verdict` を要求しても"
+                      "遅れと言い換えが増えるだけです"
+                      "（`scripts/run_marker.judgeable_today`）。"
+                      "  **いちばん早い ready は `python scripts/deadline_check.py` の [OK] 行**です。")
             if _trip and _run < FIX_RUN_CAP and _slot_fix:
                 note_fix_gate(args.ship, _since, waived=True)
                 print(f"[marker] **動いた ship から `fix` が {_since}回**"
