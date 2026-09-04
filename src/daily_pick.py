@@ -3811,6 +3811,44 @@ def outside_first(pool: list[dict], topics: list[dict] | None = None) -> list[di
     return sorted(pool, key=lambda p: 0 if str(p.get("topic") or "") in tops else 1)
 
 
+def ahead_move_note(day: date) -> str:
+    """**`--move` の1行の頭**（「いつ置くか」）。**規則5 の本文を写さないこと。**
+
+    ## なぜ関数にしたか（2026-09-05 05:2x に踏んだ・実測）
+
+    ここは長らく、こうべた書きしていました ——
+    「**{day}（JST）になってから**、この本を その日の枠へ（1本 50単位・
+    **先の日付には置かない**）」。それは規則5 の**写し**で、条件を持ちません。
+
+    規則5 の出どころは `house_rule.may_schedule_ahead()` **1か所**です。
+    2026-09-04 17:3x のオーナー指示（「目標以外全部外して良いよ」＝
+    `OWNER_FLOORS_LIFTED = True`）で規則5 は **外れました**。ところが写しは
+    そのままなので、**外れた後も「明日になってから置け」と言い続けます。**
+
+        09/05 05:2x  `scripts/slot_gate.py`  「09/06・09/07 が 0本 ＝
+                                              **その日は投稿が途切れます**」（いま置け）
+        09/05 05:2x  この行                  「**09/06（JST）になってから**」（待て）
+        09/05 05:2x  `house_rule.refuse_future_publish('2026-09-06T…')` → **空**（断らない）
+
+    **回が最初に読むほう（`run_marker.py --write` の画面）が「待て」と言っていました。**
+    `scripts/slot_gate.py` の冒頭が「**同じ与件で2つの道具が別のことを言うのが、
+    この repo でいちばん多い壊れ方**」と名指ししている形そのものです。
+
+    ## 覆る条件
+
+    オーナーが床を戻したら（`OWNER_FLOORS_LIFTED = False`）、ここは何も直さずに
+    元の「その日になってから」へ戻ります。**写しを1つも残していないから**です。
+
+    検査は `tests/test_ahead_note_follows_rule5.py`。
+    """
+    from src import house_rule                                  # noqa: PLC0415
+    if house_rule.may_schedule_ahead():
+        return (f"この本を {day:%m/%d} の枠へ（**いま置けます** —— 規則5 は外れています・"
+                f"`house_rule.may_schedule_ahead()`・1本 50単位）")
+    return (f"**{day:%m/%d}（JST）になってから**、この本を その日の枠へ"
+            f"（1本 50単位・先の日付には置かない）")
+
+
 def lines(next_row: dict | None, now: datetime | None = None,
           cmp: dict | None = None, picks_path: Path | None = None,
           topics: set[str] | None = None, cands: list[dict] | None = None,
@@ -4000,8 +4038,7 @@ def lines(next_row: dict | None, now: datetime | None = None,
         # `expected_48h` は最初から書かれていて、**どこも読んでいませんでした**（実物 22行 全部 null）。
         out.extend(expected_lines(now=now, picks_path=picks_path))
         if vid:
-            out.append(f"     → **{day:%m/%d}（JST）になってから**、この本を その日の枠へ"
-                       f"（1本 50単位・先の日付には置かない）:")
+            out.append(f"     → {ahead_move_note(day)}:")
             out.append(f"       python scripts/reschedule.py --move {vid} {day:%Y-%m-%d}T{hour:02d}:00")
             if next_row and next_row.get("video_id") and next_row.get("video_id") != vid:
                 out.append(f"     　 次に出る本 `{next_row.get('video_id')}` は**消さない**"
