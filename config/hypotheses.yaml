@@ -8181,7 +8181,7 @@ hypotheses:
 
   - claim: "検索面は、per_video を動かす大きさになる —— 長尺の検索再生は 09/14 までに 7日窓で 100再生 に届く（いま 10・基準値 1）"
     opened_on: "2026-09-01"
-    deadline: "2026-09-30"
+    deadline: "2026-09-15"
     lever: per_video
     side: dist
     watch: "検索-長尺-100再生"
@@ -8829,7 +8829,7 @@ hypotheses:
   # --- 2026-09-04 15:2x に立てた（定期の回）。**その日に入れた門の、自分の数での裏取り** ---
   - claim: "外の作りを写した長尺で、冒頭 120文字以内に「知らない側がどうなるか」の1文を置くと、48時間の再生が上がる"
     opened_on: "2026-09-04"
-    deadline: "2026-09-15"
+    deadline: "2026-09-13"
     lever: "per_video"
     side: "content"
     effect: 1.0
