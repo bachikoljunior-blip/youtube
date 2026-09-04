@@ -1394,6 +1394,78 @@ def judgeable_now() -> dict:
         return {}
 
 
+def premise_opened_today() -> dict:
+    """**この回が `config/hypotheses.yaml` に `opened_on:` 付きで前提を足したか。**（API 0単位）
+
+    返す: `{"today": 件数, "cover": 被覆, "total": 全件}`。
+    **読めなければ空を返して門を開けます**（`judgeable_now()` と同じ約束 ——
+    **読めない道具で回を止めないこと**）。
+
+    ## なぜ要るか（2026-09-04・最適化の回に、その場で数えて足した）
+
+    `scripts/deadline_check.py --fit` は、台帳の「立てる速さ」と「閉じる速さ」を
+    引き算して印字します。**その2つは同じ精度で測れていませんでした** ——
+    実測（この回）:
+
+        `closed_on:`  ほぼ全件（`verdict` の回が必ず書く）
+        `opened_on:`  **15/67 件＝22%**（09-01:7／09-02:6／09-03:2／**09-04:0**）
+
+    22% の分子と 100% の分子を引けば、差は**必ず負**に出ます。だから 09-04 の
+    `--fit` は「**注ぎ口より漏れのほうが速い。台帳は 2026-09-16 に空になる**」と
+    印字していました。**それは偽です** —— 同じ台帳の開き数は 09-01 の 21件 から
+    この回の 33件 へ**増えて**おり、`data/runs.jsonl` の `premise` は
+    直近7日で 20件（2.86件/日）＝ 閉じる 2.29件/日 を**上回って**います。
+
+    **回はこの偽の警報を読んで手を選びます。** `deadline_check` の側は同じ回に
+    直しました（偏った対では判定しない）が、**印字を直しても欄は増えません** ——
+    2026-09-01 に「欄が要る」と書いた回の実測がそれで、3日で 22% までしか進まず、
+    **09-04 は 0件**でした。
+
+    **この file が 3度 測っている結論はひとつです** —— `--lever`・`--kind`・
+    `FIX_RUN_CAP` のどれも、**註と警告では戻り、「無いと通らない」にしたときだけ
+    効きました。** だから欄も門にします。
+
+    **覆る条件**: `opened_on:` の被覆が 80% を超えたら（`deadline_check` の
+    `_OPEN_COVER_MIN`）、台帳の側だけで速さが出ます。**そのときこの門は畳むこと。**
+    """
+    try:
+        import yaml                                            # noqa: PLC0415
+        doc = yaml.safe_load(
+            (Path(__file__).resolve().parents[1]
+             / "config" / "hypotheses.yaml").read_text(encoding="utf-8"))
+        rows = doc["hypotheses"] if isinstance(doc, dict) else doc
+        rows = [r for r in rows if isinstance(r, dict)]
+    except Exception:                                          # noqa: BLE001
+        return {}
+    if not rows:
+        return {}
+    today = datetime.now(JST).date().isoformat()
+    n = sum(1 for r in rows if str(r.get("opened_on") or "")[:10] == today)
+    dated = sum(1 for r in rows if r.get("opened_on"))
+    return {"today": n, "cover": dated / float(len(rows)), "total": len(rows),
+            "dated": dated}
+
+
+#: `premise` の回に `opened_on:` を書かせる門を切る被覆（`premise_opened_today()`）。
+#: `deadline_check._OPEN_COVER_MIN` と同じ数にすること。
+PREMISE_COVER_MIN = 0.8
+
+
+def note_premise_gate(what: str, cover: float) -> None:
+    """**止めたことを残す**（`note_fix_gate()` と同じ理由・同じ約束）。"""
+    try:
+        with MARKS.open("a", encoding="utf-8") as f:
+            f.write(json.dumps({
+                "at": datetime.now(JST).isoformat(timespec="seconds"),
+                "session": actor_id() or "(不明)",
+                "kind": "premise_gate",
+                "cover": round(cover, 4),
+                "what": what[:200],
+            }, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+
+
 def note_verdict_gate(what: str, run_len: int) -> None:
     """**止めたことを残す**（`note_fix_gate()` と同じ理由・同じ約束）。
 
@@ -2562,6 +2634,38 @@ def main(argv: list[str] | None = None) -> int:
                         "**期限だけを延ばすこと。`falsified_if` は変えないこと。** "
                         "直せば `on` が先へ動くので、**門は自分で開きます。**\n"
                         "  **その直しが本当に要るなら、次の回でも要ります。順番だけの門です。**")
+
+        # **`premise` の側の門**（2026-09-04。理由と実測は `premise_opened_today()` の註）。
+        #
+        # `premise` と名乗る回は、**その回のうちに `opened_on:` を書くこと。**
+        # 書かないと `deadline_check --fit` の「立てる速さ」が 22% の分子のまま
+        # 100% の分子と引き算され、**偽の「燃料が尽きる」が回の入力になります。**
+        #
+        # **止めるのは `premise` の回だけ**です（他の種別は素通り）。
+        # **直しは yaml の1行**なので、この門は次の回まで持ち越しません。
+        if _fk == "premise":
+            _po = premise_opened_today()
+            if _po and _po.get("cover", 1.0) < PREMISE_COVER_MIN and not _po.get("today"):
+                note_premise_gate(args.ship, float(_po.get("cover") or 0.0))
+                ap.error(
+                    "**`premise` と名乗っていますが、`config/hypotheses.yaml` に"
+                    "きょうの `opened_on:` が 1件もありません**"
+                    f"（被覆 {_po['cover']:.0%} ＝ {_po['dated']}/{_po['total']}件）。\n"
+                    "  `deadline_check.py --fit` は「立てた速さ」を **この欄からしか"
+                    "数えられません。** 一方「閉じた速さ」は `closed_on:` がほぼ全件に"
+                    "付くので**ほぼ正確**です。**被覆の違う分子どうしを引けば、差は"
+                    "必ず負に出ます** —— 実測 09-04 の `--fit` は"
+                    "「注ぎ口より漏れのほうが速い／台帳は 2026-09-16 に空になる」と"
+                    "印字していましたが、同じ台帳の開き数は 09-01 の 21件 から"
+                    "**33件 へ増えています。偽の警報でした。**\n"
+                    "  **直しは1行です** —— いま立てた（または書き直した）前提に"
+                    f"`opened_on: {datetime.now(JST).date().isoformat()}` を足して、"
+                    "もう一度この印を撃つこと。\n"
+                    "  **古い分を推測で埋めないこと。** 埋めるのは"
+                    "**この回が触った前提だけ**です（`ledger_drain()` の註）。\n"
+                    "  **覆る条件**: 被覆が "
+                    f"{PREMISE_COVER_MIN:.0%} を超えたら、この門は仕事を終えています —— "
+                    "そのときは数を見て畳むこと（`premise_opened_today()` の註）。")
 
         return ship(args.ship, args.closes, args.lever, args.moves,
                     reflect=not args.no_reflect, kind=args.kind)
