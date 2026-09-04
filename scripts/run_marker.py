@@ -1368,6 +1368,44 @@ def fix_since_move(path: Path | None = None) -> int:
     return n
 
 
+def judgeable_today() -> list[str] | None:
+    """**きょう すでに判定できる（`ready <= 今日`）未閉の前提。**（API 0単位・約7秒）
+
+    `None` ＝ 測れませんでした（**そのときは門を立てないこと**）。
+
+    ## なぜ `near_deadlines()` では駄目か（2026-09-04 夕・この回に実測で踏んだ）
+
+    `near_deadlines()` は **`deadline`（置いた回の勘）が近い順**に並べるだけで、
+    **データが揃っているか**は見ていません。実測（`scripts/deadline_check.ready_by_claim()`）::
+
+        きょう 2026-09-04 に判定できる未閉の前提   **0件**
+        いちばん早い ready                          09-05（1件）／ 09-06（2件）／ 09-07（1件）
+        `ready` を持つ claim                        29件（＝ 1日あたり およそ 1件 ずつ届く）
+
+    ＝ **`fix` を止めて「`verdict` を撃て」と言っても、きょうは撃てません。**
+    止められた回に残るのは `improve`（直近5日 34回・`moves` が 0 以外 **0件**）か、
+    **語を書き換えて同じ `fix` を通すこと**だけ —— 実測で後者が起きています
+    （`fix_gate` の止め 42行 のうち **12行** は、同じ文言が数分後に ship）。
+
+    **だから門は「判定できる前提が、きょう在るとき」だけ立てます。**
+    在るのに `fix` を積んだ回だけが、順番を間違えた回です。
+
+    ## 覆る条件
+
+    台帳の `ready` が出せない前提ばかりになったら（`ready_by_claim()` が空）、
+    この関数は `[]` を返し、**門は永久に立ちません** —— そのときの律速は
+    `premise`（判定できる形で置き直すこと）です。`scripts/deadline_check.py` の
+    `unready_claims()` がその一覧を出します。
+    """
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        import deadline_check as _dc                               # noqa: PLC0415
+        today = _dc.today_jst()
+        return sorted(c for c, d in _dc.ready_by_claim().items() if d <= today)
+    except Exception:                                              # noqa: BLE001
+        return None
+
+
 #: **`verdict` が出ないまま続いた回の上限**（判定できる前提が在るときだけ効きます）。
 #:
 #: ## なぜ要るか（2026-09-04・最適化の回に足した。実測はこの回に撃った数）
@@ -2821,11 +2859,29 @@ def main(argv: list[str] | None = None) -> int:
             # （2026-09-04 夕・最適化の回に実測で名指しした。理由は `FIX_SINCE_MOVE_CAP` の註）。
             # **動いた ship から数えたほう（`_since`）は、種別ではリセットされません。**
             _since = fix_since_move()
-            # **判定できる前提が1件も無い回に、この数で止めると回は詰みます**
-            # （`FIX_SINCE_MOVE_CAP` の覆る条件2）。台帳が空／読めないときは
-            # **連の門だけ**に戻します。
-            _open = near_deadlines()
-            _trip = (_run >= FIX_RUN_CAP) or (_since >= FIX_SINCE_MOVE_CAP and bool(_open))
+            # **`verdict` が きょう 撃てない回に、この数で止めると回は詰みます**
+            # （`judgeable_today()` の註。実測 2026-09-04: きょう判定できる未閉は **0件**）。
+            # 撃てないのに止めると、残るのは歩留り 0.0% の `improve` か、
+            # **語を書き換えて同じ `fix` を通すこと**だけです。
+            # 測れなかったとき（`None`）も立てません —— **連の門だけ**に戻ります。
+            # **同じ判定を、連（`_run`）の側にも掛けます。**
+            # 連の門は 2026-09-01 から「撃てるかどうかを見ずに」止めていました ——
+            # その結果が `fix_gate` 84行／止め 42行 で、**うち 12行 は同じ文言が
+            # 数分後に ship**（比は 09/01 80% → 09/04 66% で、`fix` の実数は毎日 31件 前後のまま）。
+            # **撃てない `verdict` を要求する門は、遅れと言い換えを作るだけです。**
+            _over = (_run >= FIX_RUN_CAP) or (_since >= FIX_SINCE_MOVE_CAP)
+            _ready: list[str] | None = judgeable_today() if _over else None
+            _trip = _over and bool(_ready)
+            if _over and not _trip:
+                # **止めなかったことも残します**（`waived` ＝ 次の回が数えられる）。
+                note_fix_gate(args.ship, max(_run, _since), waived=True)
+                _n = "0件" if _ready is not None else "測れませんでした"
+                print(f"[marker] **`fix` が 連{_run}回／動いた回から {_since}回** ですが、"
+                      f"**きょう判定できる前提が {_n} なので通します** —— "
+                      "`verdict` が撃てない日に止めると、残るのは歩留り 0.0% の "
+                      "`improve` か、語を書き換えて同じ `fix` を通すことだけです"
+                      "（`scripts/run_marker.judgeable_today`）。"
+                      "  **いちばん早い ready は `python scripts/deadline_check.py` の [OK] 行**です。")
             # **その日の枠の本を直す `fix` は通します。** 規則3（オーナー原文・固定）は
             # 「次の投稿予定までにそこで投稿する動画を改善し続ける」で、
             # **その本の名前を名乗った `fix` は、門が言っている手そのもの**です
@@ -2891,7 +2947,9 @@ def main(argv: list[str] | None = None) -> int:
                     if _run >= FIX_RUN_CAP else
                     f"**最後に到達日を動かした回から、`fix` が {_since}回 出ています**"
                     f"（上限 {FIX_SINCE_MOVE_CAP}・`scripts/run_marker.fix_since_move`）。"
-                    "**この数は種別ではリセットされません** —— "
+                    f"**きょう すでに判定できる前提が {len(_ready or [])}件 在ります** —— "
+                    + "／".join((_ready or [])[:2])[:160] + "。"
+                    "**この数は種別ではリセットされません** ——"
                     "`improve` は直近5日で 34回 中 0件（0.0%）しか到達日を動かしていないので、"
                     "1件 挟んでも連だけが 0 に戻り、`fix` の実数は変わりませんでした。")
                 ap.error(

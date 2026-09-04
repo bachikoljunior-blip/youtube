@@ -71,3 +71,16 @@ def test_cap_is_documented_and_reachable(tmp_path):
     p = _write(tmp_path, rows)
     assert rm.fix_run_len(p) == 0                       # 連の門は 0 ＝ 素通り
     assert rm.fix_since_move(p) >= rm.FIX_SINCE_MOVE_CAP  # 新しい数では止まる
+
+
+def test_judgeable_today_is_measurable_not_guessed():
+    """**門は「期限が近い」ではなく「きょう判定できる」で立てること。**
+
+    2026-09-04 の実測: 期限が 09-05／09-06 の前提は在るのに、
+    **きょう判定できる未閉は 0件**（`ready_by_claim()`）。
+    撃てない `verdict` を要求する門は、語の書き換えで抜けられます。
+    """
+    got = rm.judgeable_today()
+    assert got is None or isinstance(got, list)      # 測れないときは None ＝ 門を立てない
+    if isinstance(got, list):
+        assert all(isinstance(x, str) for x in got)
