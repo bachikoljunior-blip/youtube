@@ -836,6 +836,97 @@ def ship_summary(n: int) -> tuple[Counter, list[str]]:
     return kinds, recent
 
 
+#: **申し送りが「これを読め」と書いても、次の回には無いファイル**
+#: （2026-09-04 に足した。**実測 —— 0回 の持ち越し 5件 のうち 2件がこれでした**）。
+#:
+#: `tool_suspect()` は「言及 N回 に対して実物に当たった M回 が伸びない語は、
+#: 道具の側を疑え」と言います。**そこに、3つ目の理由が抜けていました。**
+#:
+#:     `tail -5 data/rebake.log`   5周 運ばれて 実物に当たった **0回**
+#:     `data/ahead_sweep.log`      5周 運ばれて 実物に当たった **0回**
+#:
+#: **どちらも `.gitignore` に載っています。** ＝ **枝には乗らないので、次の回の
+#: コンテナには存在しません。** `data/rebake.log` は実測でこの回の頭に
+#: **ファイルそのものが在りませんでした**（焼きが走っていない間は誰も書かない）。
+#: `data/ahead_sweep.log` は `SessionStart` が書き直すので在りますが、
+#: **前の回の行は1行も入っていません。**
+#:
+#: **つまり道具は正しく、申し送りのほうが実行不能でした。** 5周 とも
+#: 「いちばん先に `tail -5 data/rebake.log`」と書かれ、5周 とも読めていません。
+#: これは「難しくて潰せない」でも「道具が間違っている」でもなく、
+#: **書いた回にしか読めないものを、次の回への指示にしていた**という第3の形です。
+#:
+#: **だから印は「道具を疑え」ではありません** —— 申し送りの書き方のほうです:
+#: **中身を読ませるのではなく、読んだ結論をその場で写すこと。**
+#: （`data/rebake.jsonl` のように**枝に乗る**帳面が在るなら、そちらを名指しすること。
+#:   `.gitignore` の註が、まさにその使い分けを書いています）
+#:
+#: **門は狭くしてあります**（見落とすほうへ倒す）。`.gitignore` の否定行（`!`）は
+#: 読まず、`*` を含む型は**basename でしか**当てません。＝ ここに出る語は
+#: **必ず `.gitignore` に載っています**が、載っているもの全部が出るとは限りません。
+#:
+#: **覆る条件**: `.gitignore` から外れて枝に乗るようになったファイルは、
+#: 次の回から自動でこの印が消えます（毎回 `.gitignore` を読み直しています）。
+#: 逆に、**この印が付いた語を申し送りに書き続ける回が2回 出たら**、
+#: 印では足りないので `docs/trigger_main.md` §6 の申し送りの節に規則として書くこと。
+_PATH_IN_TOKEN = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_./-]*\.[A-Za-z0-9_]+")
+
+
+@lru_cache(maxsize=1)
+def _ignore_patterns() -> tuple[str, ...]:
+    """`.gitignore` の**素の型**だけ（註・空行・否定行 `!` は落とす）。"""
+    try:
+        raw = (ROOT / ".gitignore").read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return ()
+    out = []
+    for ln in raw:
+        ln = ln.strip()
+        if not ln or ln.startswith("#") or ln.startswith("!"):
+            continue
+        out.append(ln.lstrip("/"))
+    return tuple(out)
+
+
+def _is_ignored(rel: str, patterns: tuple[str, ...] | None = None) -> bool:
+    """`rel`（repo からの相対パス）が `.gitignore` の型に当たるか。**近似です**（上の註）。"""
+    import fnmatch                                            # noqa: PLC0415
+
+    pats = _ignore_patterns() if patterns is None else patterns
+    base = rel.rsplit("/", 1)[-1]
+    for pat in pats:
+        if pat.endswith("/"):
+            d = pat[:-1]
+            if rel == d or rel.startswith(d + "/"):
+                return True
+        elif "*" in pat or "?" in pat:
+            if fnmatch.fnmatch(base, pat):
+                return True
+        elif rel == pat or rel.startswith(pat + "/"):
+            return True
+    return False
+
+
+def ephemeral_paths(tok: str, patterns: tuple[str, ...] | None = None,
+                    root: Path | None = None) -> list[tuple[str, bool]]:
+    """その語が名指ししているパスのうち、**枝に乗らないもの**（`_PATH_IN_TOKEN` の註）。
+
+    返りは `(パス, いま在るか)` の一覧。**在っても、それは「この回が作った」だけ**で、
+    前の回の中身ではありません（`data/ahead_sweep.log` が実測でそれ）。
+    """
+    r = root or ROOT
+    out: list[tuple[str, bool]] = []
+    for m in _PATH_IN_TOKEN.findall(tok):
+        rel = m.strip("./")
+        if not rel or "/" not in rel:
+            continue                      # 単独の `foo.py` は語であってパスとは限らない
+        if not _is_ignored(rel, patterns):
+            continue
+        if rel not in [p for p, _ in out]:
+            out.append((rel, (r / rel).exists()))
+    return out
+
+
 def carry_over(n: int = 8) -> tuple[dict[str, list[str]], dict[str, list[str]]]:
     """**いま持ち越しに出ている語**と、**物の名前として外した語**を返す。
 
@@ -1343,9 +1434,23 @@ def main() -> int:
                 tail += (f"  ← **いまは潰せません**（申し送りが時刻を指定。"
                          f"あと {clocked[tok]:.1f} 時間）")
             n_touch = touched.get(tok, 0)
+            # **枝に乗らないファイルを名指ししている語**（`_PATH_IN_TOKEN` の註）。
+            # ここの M は構造的に 0 です —— 道具ではなく、申し送りが実行不能。
+            eph = ephemeral_paths(tok)
+            if eph:
+                where = " / ".join(
+                    f"`{p}`（" + ("いま在るのはこの回が作ったぶんだけ" if ok
+                                  else "**いま在りません**") + "）"
+                    for p, ok in eph)
+                tail += (f"  ← **次の回には残りません**: {where} は `.gitignore` ＝ "
+                         "**枝に乗らないので、次のコンテナには前の回の中身がありません。** "
+                         "**中身を読ませず、読んだ結論をその場で写すこと**"
+                         "（枝に乗る帳面が在るならそちらを名指しする）")
             # **塞がっている語には印を当てないこと**（`tool_suspect()` の `sunk` の註）。
             # 同じ行が3語 上で「いまは潰せません（単位枠）」と言っています。
-            if tool_suspect(len(dates), n_touch, sunk=_sinks(tok)):
+            # **枝に乗らないファイルの語も同じ扱い**（2026-09-04）—— そちらの M/N には
+            # 情報が1ビットも入っていません（読めないので、必ず 0 になります）。
+            if tool_suspect(len(dates), n_touch, sunk=_sinks(tok) or bool(eph)):
                 tail += (f"  ← **{len(dates)}周 運ばれて、実物に当たったのは {n_touch}回** —— "
                          "**その語を出している道具の側を先に疑うこと**")
             print(f"  {len(dates)}回  {tok}{tail}")
