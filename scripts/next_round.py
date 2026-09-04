@@ -734,12 +734,32 @@ def kinds_allowed() -> dict:
             "`improve` / `upload` / `verdict` / `premise` / `means` のどれで出すか。"
             "**終わってから言い換えないこと** —— 止めた 56回のうち 12回が"
             "同じ文面を +6分 で通しています（`kinds_allowed` の註）")
-    elif over and not ready:
-        out["lines"].append(
-            f"  [!] `fix` は上限（連 {run_len}/{cap_run}・{since}/{cap_since}）に着いていますが、"
-            "**きょう判定できる前提が 0件** なので門は立ちません。"
-            "**通るからといって、`fix` が近づける手だという意味ではありません** ——"
-            "実測の歩留りは `fix` 0.6%（157回→1件）対 `verdict` 44.4%（9回→4件）")
+    elif over:
+        # **台帳が空の日でも、門は立ちます。** ここを「立ちません」と印字した版を
+        # 2026-09-04 23:5x に出し、**その回の `--ship` が自分の印字どおりに撃って
+        # 止められました**（この関数を足したのと同じ回）。免除は 09-04 19:xx に
+        # **枠の本を名乗る `fix` だけ**へ絞られています（`run_marker.dry_ledger_gate`）。
+        # **述語を写さずに、その純関数へ空の `--ship` を渡して訊くこと** ——
+        # 頭の時点では本文がまだ無いので、空 ＝「名乗っていない場合」の答えが返ります。
+        dg = _safe(lambda: rm.dry_ledger_gate("", ready, slot, over),
+                   {"trip": False, "target": slot.get("topic") or ""})
+        if dg.get("trip"):
+            out["ok"] = False
+            out["blocked"] = ["fix"]
+            tgt = dg.get("target") or slot.get("topic") or ""
+            out["lines"].append(
+                f"  [!] **`fix` は、きょうの枠の本 `{tgt}` を名乗らないかぎり通りません**"
+                f"（上限 連 {run_len}/{cap_run}・動いた ship から {since}/{cap_since}、"
+                "きょう判定できる前提 0件 の日の免除は**規則3 に絞られています**"
+                "・`run_marker.dry_ledger_gate`）。\n"
+                f"      **いま決めること**（作りはじめる前に）: `--ship` に `{tgt}` を書いて"
+                " `improve` か `fix` で出すか、`premise` / `verdict` / `upload` / `means` にするか。"
+                "**計器だけを直す `fix` は、終わってから言い換えても通りません**")
+        else:
+            out["lines"].append(
+                f"  [!] `fix` は上限（連 {run_len}/{cap_run}・{since}/{cap_since}）に着いています。"
+                "**通るからといって、`fix` が近づける手だという意味ではありません** ——"
+                "実測の歩留りは `fix` 0.6%（157回→1件）対 `verdict` 44.4%（9回→4件）")
     return out
 
 
