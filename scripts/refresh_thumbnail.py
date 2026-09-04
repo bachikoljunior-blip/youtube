@@ -4,8 +4,12 @@
         **控えに残した bytes を、載っていない本すべてに押す**（2026-08-17 に追加）。
         `build/` は要りません。ふつうはこちらです
 
-    python scripts/refresh_thumbnail.py --missing --video <動画ID>
+    python scripts/refresh_thumbnail.py --missing --video <動画ID> [--replace]
         **その1本だけ押す**（50単位。2026-08-31 に追加）。
+        **`--replace` は「絵が既に載っている本」を差し替える**（2026-09-05 に追加）——
+        `--missing` の一覧は `thumbnail_set is False` の本しか返さないので、
+        **焼き上がって絵まで載った本（＝規則3 が良くし続けろと言う次の枠の1本）は
+        `--replace` 無しでは押せません。**
         `--missing` は実測 158本 ＝ 7,900単位 で、1日の枠のほとんどを持っていき、
         **池化（`pool_drain`）と取り合います。** いちばん急ぐのはいつも1本
         ——**次に公開される本**——なので、そこだけ押せる道を分けてあります
@@ -271,8 +275,35 @@ def _long_form_ids(video_ids: list[str]) -> set[str]:
     return out
 
 
+def stash_row(video_id: str) -> dict | None:
+    """**控えに在る絵を、`missing_thumbnail()` を通さずに1本ぶん返す**（**API 0単位**）。
+    無ければ `None`。返す形は `missing_thumbnail()` の1行と同じ。
+
+    `missing_thumbnail()` は `thumbnail_set is False` の本しか返しません
+    ——「まだ載っていない本を押す」ための一覧だからです。
+    **既に載っている本の絵を差し替える道が、そこには在りません。**
+    """
+    import critique_queue                                       # noqa: PLC0415
+    vid = str(video_id or "").strip()
+    if not vid:
+        return None
+    thumb = critique_queue.STASH / f"{vid}.thumb.jpg"
+    if not thumb.exists():
+        return None
+    meta = {}
+    meta_path = critique_queue.STASH / f"{vid}.json"
+    if meta_path.exists():
+        try:
+            meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            meta = {}
+    return {"video_id": vid, "topic": meta.get("topic"),
+            "thumb": thumb, "stashed_at": meta.get("stashed_at")}
+
+
 def push_missing(dry_run: bool = False, force: bool = False,
-                 only_long: bool = False, only_video: str = "") -> int:
+                 only_long: bool = False, only_video: str = "",
+                 replace: bool = False) -> int:
     """控えに残した bytes を、載っていない本すべてに押す。**`build/` は要りません。**
 
     **予約に0本の日があるあいだは押しません**（2026-08-19。理由は
@@ -290,7 +321,52 @@ def push_missing(dry_run: bool = False, force: bool = False,
     import critique_queue
 
     rows = critique_queue.missing_thumbnail()
+    # **既に載っている絵を、控えの新しい絵で差し替える道**（2026-09-05 に足した）。
+    #
+    # `rebuild_stash()`（`--rebuild`）の註は「載せるのは窓が戻った回の
+    # `--missing --video <ID>`」と名指ししています。**その1行は、絵が既に
+    # 載っている本には効きません** —— `missing_thumbnail()` が返すのは
+    # `thumbnail_set is False` の本だけなので、**焼き上がって絵まで載った本
+    # （＝ まさに規則3 が「次の枠まで良くし続けろ」と言っている本）は
+    # 一覧に出ず、`--missing --video <ID>` は「控えにありません」で 1 を返します。**
+    # 実測 2026-09-05 00:5x: 09/05 09:00 に出る `GFvAcxvDmYM` の 2行目を
+    # 帯の実測（相手の名指し ×54〜68・n=32〜34）に合わせて差し替え、
+    # `--rebuild` で控えの絵を焼き直したところで、載せる道が無かった。
+    #
+    # ＝ **手順が名指ししている1行が、その相手には実行できない。**
+    # この repo でいちばん多い壊れ方（言っている所と、している所が別）です。
+    #
+    # `--replace --video <ID>` は `missing_thumbnail()` を通さず、控えの
+    # `<ID>.thumb.jpg` を1本ぶん押します。**門は1つも外しません**
+    # （`day_quota` / `reserve_hold`・`only_video` の枝をそのまま通る）。
+    # **束には渡しません** —— `--video` が要ります。
+    #
+    # **覆る条件**: `missing_thumbnail()` が「載っているが控えのほうが新しい」を
+    # 返すようになったら、この枝は要りません（そのとき `--replace` を消すこと）。
+    if replace:
+        if not only_video:
+            print("[thumb] `--replace` には `--video <動画ID>` が要ります"
+                  "（束には渡しません）")
+            return 2
+        if not any(r["video_id"] == only_video for r in rows):
+            row = stash_row(only_video)
+            if row is None:
+                print(f"[thumb] **{only_video} の絵が控えにありません**"
+                      f"（`data/critique_queue/{only_video}.thumb.jpg`）。"
+                      " 先に `--rebuild` で焼き直すこと")
+                return 1
+            print(f"[thumb] **{only_video} は既に絵が載っています** —— "
+                  "控えの新しい絵で**差し替え**ます（50単位）")
+            rows = rows + [row]
     if not rows:
+        # **`--video` を指して空だったときは、そう言うこと**（2026-09-05）。
+        # 「載っていない本はありません」と 0 を返すと、**押せたのか押していないのかが
+        # 呼んだ側から区別できません**（`--replace` を忘れた回がここに落ちます）。
+        if only_video:
+            print(f"[thumb] **{only_video} は控えにありません**"
+                  "（サムネイルは載っている／控えが在庫に無い、のどちらか）。"
+                  " **既に載っている絵を差し替えるなら `--replace` を付けること**")
+            return 1
         print("[thumb] サムネイルの載っていない本はありません")
         return 0
 
@@ -541,6 +617,7 @@ if __name__ == "__main__":
                 raise SystemExit(2)
             _only = sys.argv[_i + 1]
         raise SystemExit(push_missing(dry_run="--dry-run" in sys.argv,
+                                      replace="--replace" in sys.argv,
                                       force="--force" in sys.argv,
                                       only_long="--long" in sys.argv,
                                       only_video=_only))
