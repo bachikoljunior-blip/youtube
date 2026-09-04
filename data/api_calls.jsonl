@@ -10621,3 +10621,9 @@
 {"at": "2026-09-04T20:03:12+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "eta.py:q"}
 {"at": "2026-09-04T20:03:12+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "eta.py:q"}
 {"at": "2026-09-04T20:03:13+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "eta.py:q"}
+{"at": "2026-09-04T19:59:45+00:00", "api": "data", "method": "videos.list", "units": 1, "ok": true, "by": "post_pending_comments.py:main", "detail": "6GtzWaguZhg,6PKux5HNnUE,DfFyu8qZq3I,Ec-j1-W4nqw,GFvAcxvDmYM,OBJdXEr6gLg,O_lfBxB7S8Q,SD8zQU-x6y0,XwB8nxtN5D8,dRZnZrRy2Lw,"}
+{"at": "2026-09-04T19:59:45+00:00", "api": "data", "method": "channels.list", "units": 1, "ok": true, "by": "post_pending_comments.py:main"}
+{"at": "2026-09-04T19:59:46+00:00", "api": "data", "method": "playlistItems.list", "units": 1, "ok": true, "by": "post_pending_comments.py:main", "detail": "UUhTXZzwkIJHqyL7L_fEtuqQ"}
+{"at": "2026-09-04T19:59:46+00:00", "api": "data", "method": "videos.list", "units": 1, "ok": true, "by": "post_pending_comments.py:main", "detail": "1huadpEk6HY,9zkfjEH48PY,MqQKSnbM0OI,dg-5ml7GRZQ,8hJnwkC8NU0,ICmIBsZRYFE,HW0-QFAPl98,CLiJusPI7gY,aPz9Ys_wkeo,r9T2IwTyuz0,"}
+{"at": "2026-09-04T19:59:46+00:00", "api": "data", "method": "commentThreads.list", "units": 1, "ok": true, "by": "post_pending_comments.py:_mine_exists", "detail": "1huadpEk6HY"}
+{"at": "2026-09-04T19:59:48+00:00", "api": "data", "method": "videos.list", "units": 1, "ok": true, "by": "sub_ask.py:sweep", "detail": "_Mz5rg6jQ_A,2tAGEKVCgYQ,a63FzIUV2wI,h35ot6MqYso,drkKm9fHW2M,BzvH0iCzrzo,8hJnwkC8NU0,cFZd55jRxAw,FSAN9tjIX10,to_gWbvDhrU,"}
