@@ -1469,6 +1469,80 @@ def treated_count(form: str, *, hours: int = AGE_HOURS,
     return treated, total
 
 
+def expected_lines(now=None, *, picks_path=None, views_path=None,
+                   uploaded_path=None, aged_call=None) -> list:
+    """**決めが宣言した 齢48h の見込みを、実物と並べる**（0単位）。
+
+    ## なぜ要るか（2026-09-04 19:2x に踏んだ）
+
+    `record()` は最初から `expected_48h` という欄を書いています。**どこも読んでいませんでした**
+    —— `grep expected` の当たりは `record()` の引数・書く行・`replace_video()` が写す行の
+    **3か所だけ**で、実物と並べる口が1つもない。実測 `data/daily_pick.jsonl` 22行 の
+    `expected_48h` は **全部 null** です。
+    ＝ **欄の名前だけが「見込みを立てて後で答え合わせする」と言っていて、誰もしていませんでした。**
+    この repo でいちばん多い壊れ方（言っている所と、している所が別）の、この欄ぶんです。
+
+    形の決めは、いま「前の回の散文」の鎖になっています（`standing_form_conflict()` の註）。
+    **鎖を切るのは新しい言葉ではなく、外れたと分かる数**です —— `CLAUDE.md` の `--moves` が
+    同じ形で置かれています（「**先に言って、次の回が実際の差と並べます。外れてよい。
+    外れたと分かるほうが、何も言わずに進むより速い**」）。
+
+    **覆る条件**: 宣言が 5件 たまっても、実物との差が形を1度も入れ替えないなら、
+    この欄は形の判断に効いていません。そのときは畳んで `--moves` だけに戻すこと。
+    """
+    rows = [r for r in _jsonl(picks_path or PICKS) if pick_kind(r) == PICK_KIND_DECIDE]
+    if not rows:
+        return []
+    last_by_day = {}
+    for r in rows:
+        if r.get("for_day"):
+            last_by_day[str(r["for_day"])] = r
+    said = {}
+    for d, r in last_by_day.items():
+        if isinstance(r.get("expected_48h"), (int, float)) and r.get("video_id"):
+            said[d] = r
+    if not said:
+        n = len(last_by_day)
+        return [f"     [!] **決めが 齢48h の見込みを1件も言っていません**（{n}日 ぶん・"
+                f"`expected_48h` は全部 null）—— **`--moves` と同じで、外れてよい数です。**"
+                f" 次に決める回は `--expected <回>` を付けること —— "
+                f"付けないと、形の決めは実物と並べられず、**散文の鎖のまま**になります。"]
+    call = aged_views if aged_call is None else aged_call
+    try:
+        got_rows = call(AGE_HOURS, views_path=views_path, uploaded_path=uploaded_path)
+        aged = {str(x.get("video_id")): x for x in got_rows}
+    except Exception as exc:                                   # noqa: BLE001
+        return [f"     （見込みと実物を並べられませんでした: {str(exc)[:70]}）"]
+    out = []
+    scored = []
+    waiting = []
+    for day_s in sorted(said):
+        r = said[day_s]
+        vid = str(r.get("video_id"))
+        exp = float(r.get("expected_48h"))
+        got = aged.get(vid)
+        if got is None:
+            waiting.append(f"{day_s} {r.get('form')} 見込み {exp:,.0f}回"
+                           f"（`{vid}` はまだ 齢48h ではありません）")
+            continue
+        real = int(got.get("views") or 0)
+        scored.append((day_s, exp, real, (real / exp) if exp else 0.0))
+    if scored:
+        out.append(f"     **決めの見込みと実物（齢48h・{len(scored)}件）**"
+                   f" —— **外れてよい。外れたと分かるほうが速い**（`--moves` と同じ形）:")
+        for day_s, exp, real, ratio in scored:
+            r = said[day_s]
+            out.append(f"       {day_s} {r.get('form')} `{r.get('topic')}`"
+                       f"  見込み {exp:,.0f}回 → 実物 {real:,}回  ＝ **×{ratio:.2f}**")
+        med = sorted(x[3] for x in scored)[len(scored) // 2]
+        tail = ("**見込みのほうが高い**（形の選びが甘い側へ寄っています）" if med < 1
+                else "**実物のほうが高い**（見込みが辛い側へ寄っています）")
+        out.append(f"       中央 **×{med:.2f}** —— {tail}")
+    for w in waiting:
+        out.append(f"     　 待ち: {w}")
+    return out
+
+
 def _standing_chain_len(picks_path: Path | None = None) -> int:
     """`data/daily_pick.jsonl` の後ろから、同じ形が続いている**決め**の数。0単位。
 
@@ -2291,6 +2365,9 @@ def lines(next_row: dict | None, now: datetime | None = None,
         # なっているかを**どこも数えておらず**、散文の名乗り（「5脚とも ○」）だけが
         # 引き継がれていました。実測でその名乗りは偽（(1) 冒頭 が ✗）。
         out.extend(standing_pick_treatment(cur))
+        # **宣言した見込みと実物を並べる**（2026-09-04 19:2x・`expected_lines()` の註）。
+        # `expected_48h` は最初から書かれていて、**どこも読んでいませんでした**（実物 22行 全部 null）。
+        out.extend(expected_lines(now=now, picks_path=picks_path))
         if vid:
             out.append(f"     → **{day:%m/%d}（JST）になってから**、この本を その日の枠へ"
                        f"（1本 50単位・先の日付には置かない）:")
@@ -2322,12 +2399,16 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--video", default=None, help="池に在る本を使うなら、その動画ID")
     ap.add_argument("--why", default="", help="理由（数字で1行。--pick に必須）")
     ap.add_argument("--day", default=None, help="YYYY-MM-DD（省略時は for_day()）")
+    ap.add_argument("--expected", type=float, default=None, metavar="回",
+                    help="その形で見込む 齢48h の再生（次の回が実物と並べます。"
+                         "`--moves` と同じ形 —— 外れてよい・言わないほうが困る）")
     args = ap.parse_args(argv)
     if args.pick:
         form, topic = args.pick
         day = date.fromisoformat(args.day) if args.day else None
         try:
-            row = record(form, topic, args.why, day=day, video_id=args.video)
+            row = record(form, topic, args.why, day=day, video_id=args.video,
+                         expected=args.expected)
         except ValueError as exc:
             print(f"[daily_pick] {exc}")
             return 2
