@@ -43,9 +43,35 @@ from src import house_rule  # noqa: E402
 
 # --- 1. 1日に2本以上 置けないこと ------------------------------------------
 
-def test_規則は1日1本である():
-    assert house_rule.PUBLISH_PER_DAY == 1
-    assert house_rule.cap() == 1
+def test_上限は床なら1本_外れていれば観測の中():
+    """**旗を読むこと。数をべた書きしないこと。**（2026-09-05 に書き替えた）
+
+    ここは長らく `PUBLISH_PER_DAY == 1` をべた書きしていました。
+    オーナーが 2026-09-04 17:3x に床を外した（原文「目標以外全部外して良いよ」）あと、
+    **床が外れているのに「1本であること」を守り続ける検査**になっていました ——
+    `tests/test_eta_house_rule.py` が同じ所で先に踏んで、こう書いています:
+    **「規則の効き方そのものが旗で切り替わる作りになったら、検査も旗を読むこと。」**
+
+    **どちらの側も緩めていません**:
+
+        床が立っている  規則そのもの ＝ **1本/日**
+        床が外れている  **1 以上、かつ「再生が付く上限」を超えないこと**
+                        （`src/day_cap.py` の実測 10本/日。**出しても再生が
+                          付かない本数まで歩いたら、実在しない世界です**）
+
+    **覆る条件**: `publish_per_day_is_floor()` が消えたら、この分岐は要らなくなります。
+    """
+    from src import day_cap
+
+    n = house_rule.PUBLISH_PER_DAY
+    assert n == house_rule.cap()
+    if house_rule.publish_per_day_is_floor():
+        assert n == 1, f"床が立っているのに {n}本/日 です"
+    else:
+        assert n >= 1, n
+        assert n <= day_cap.cap(), (
+            f"{n}本/日 は、再生が付く上限 {day_cap.cap()}本/日 を超えています"
+            "（出しても再生が付かない本数まで歩いています）")
     assert house_rule.STOCKPILE_ALLOWED is False
 
 
@@ -54,25 +80,36 @@ def test_機械の上限が規則から来ている():
     assert density_cap() == house_rule.PUBLISH_PER_DAY
 
 
-def test_同じ日に2本目を置こうとしたら落とす():
+#: **この3件は「1日1本」ではなく「規則の本数を超えないこと」を見ます**
+#: （2026-09-05 に書き替えた。`PUBLISH_PER_DAY` が 1 → 10 になったため）。
+#: **見張っている物は1つも減っていません** —— 超過を落とすこと・控えを足して
+#: 数えること・時刻の種類で数えること。**変わったのは、上限を規則から読む所だけ**です。
+#: べた書きの 1 に戻すと、次に本数が動いた回にまた全部 赤くなります。
+
+
+def test_同じ日に上限を超えるぶんは落とす():
     """`cap=` を渡さない ＝ **機械が実際に使う上限**で数えます。"""
-    when = [f"2026-09-01@{h}" for h in range(9, 14)]     # 5本 とも同じ日
+    cap = house_rule.cap()
+    when = [f"2026-09-01@{h}" for h in range(6, 6 + cap + 3)]   # 上限＋3本 とも同じ日
     keep, notes = cap_by_density(when, ledger={})
-    assert len(keep) == 1, "1日に2本以上 置けてしまいます"
+    assert len(keep) == cap, f"1日に {cap}本 を超えて置けてしまいます"
     assert notes
 
 
-def test_その日に既に1本_控えがあれば1本も通さない():
-    ledger = {"2026-09-01": {20 * 60}}                   # 帯の外でも1本は1本
-    keep, _ = cap_by_density([f"2026-09-01@{h}" for h in range(9, 14)],
+def test_その日に既に上限ぶん控えがあれば1本も通さない():
+    cap = house_rule.cap()
+    # 帯の外の時刻でも1本は1本（`cap_by_density` は控えを足して数えます）
+    ledger = {"2026-09-01": {(20 + i) * 60 for i in range(cap)}}
+    keep, _ = cap_by_density([f"2026-09-01@{h}" for h in range(6, 6 + cap + 3)],
                              ledger=ledger)
     assert keep == []
 
 
-def test_時刻の種類が2つ以上なら同じ日に着くぶんを落とす():
+def test_時刻の種類が上限を超えたら同じ日に着くぶんを落とす():
     """日を名指ししない指定（長尺の `ring`）も、**時刻の種類ぶんは同じ日に着きます。**"""
-    keep, notes = cap_by_density([str(h) for h in range(18, 23)], ledger={})
-    assert len(keep) == 1
+    cap = house_rule.cap()
+    keep, notes = cap_by_density([str(h) for h in range(0, cap + 2)], ledger={})
+    assert len(keep) == cap
     assert notes
 
 
