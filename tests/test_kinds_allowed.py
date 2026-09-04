@@ -58,3 +58,41 @@ def test_周の頭で撃たれている():
     call = main.index("kinds_allowed()")
     count = main.index('print("COUNT")')
     assert call < count, "種別の下読みが COUNT の枝より後ろに落ちています"
+
+
+def test_下読みは門と食い違わない():
+    """**この検査は、実際に踏んだ食い違いから来ています**（2026-09-04 23:5x）。
+
+    最初の版は台帳が空の日に「**門は立ちません**」と印字しました。
+    **その回の `--ship` が、自分の印字どおりに撃って止められました** ——
+    免除は 09-04 19:xx に `dry_ledger_gate` で**枠の本を名乗る `fix` だけ**へ
+    絞られており、下読みはその関数を読んでいませんでした。
+
+    **下読みが「通る」と言った日に門が止めたら、下読みは害です**
+    （周の頭で嘘を渡すぶん、終わりで止める門より悪い）。ここで縛ります。
+    """
+    import run_marker as rm
+
+    got = next_round.kinds_allowed()
+    slot = rm.untreated_slot()
+    over = (rm.fix_run_len() >= rm.FIX_RUN_CAP
+            or rm.fix_since_move() >= rm.FIX_SINCE_MOVE_CAP)
+    ready = rm.judgeable_today()
+    # 門の側の答え（本文を名乗らない `fix` ＝ 空の `--ship`）
+    gate_trips = slot["fired"] or (over and bool(ready)) or (
+        over and rm.dry_ledger_gate("", ready, slot, over)["trip"])
+    said_blocked = "fix" in got["blocked"]
+    assert said_blocked == bool(gate_trips), (
+        f"下読み（fix 止め={said_blocked}）と門（止め={gate_trips}）が食い違っています")
+
+
+def test_止まるなら枠の本を名指しする():
+    """止めるなら、**通る手**を必ず名指しすること（出口を塞がない門にしない）。"""
+    got = next_round.kinds_allowed()
+    if "fix" in got["blocked"]:
+        body = "\n".join(got["lines"])
+        import run_marker as rm
+        slot = rm.untreated_slot()
+        tgt = slot.get("video_id") or slot.get("topic")
+        if tgt:
+            assert tgt in body, f"止めたのに枠の本 {tgt} を名指ししていません"
