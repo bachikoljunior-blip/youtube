@@ -2026,7 +2026,8 @@ def treated_probe(video_id: str | None, *, queue: Path | None = None) -> tuple[s
         return "unknown", why
     if bad:
         return "no", f"外の型の脚が {len(bad)}本 通っていません（{'・'.join(bad)}）"
-    return "yes", "外の型の脚は 4本とも通っています"
+    # **本数はここに書かないこと** —— `OUTSIDE_LEGS` は増えます（2026-09-05 に尺で5本目）。
+    return "yes", f"外の型の脚は {len(OUTSIDE_LEGS)}本とも通っています"
 
 
 def legs_of_path(path: Path, *, what: str = "台本") -> tuple[list[str], str | None]:
