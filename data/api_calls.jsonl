@@ -9783,6 +9783,21 @@
 {"at": "2026-09-04T12:53:55+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "analytics.py:fetch_retention"}
 {"at": "2026-09-04T13:19:34+00:00", "api": "data", "method": "videos.list", "units": 1, "ok": true, "by": "post_pending_comments.py:main", "detail": "6GtzWaguZhg,6PKux5HNnUE,DfFyu8qZq3I,Ec-j1-W4nqw,GFvAcxvDmYM,OBJdXEr6gLg,O_lfBxB7S8Q,SD8zQU-x6y0,XwB8nxtN5D8,dRZnZrRy2Lw,"}
 {"at": "2026-09-04T13:19:36+00:00", "api": "data", "method": "videos.list", "units": 1, "ok": true, "by": "sub_ask.py:sweep", "detail": "2tAGEKVCgYQ,_Mz5rg6jQ_A,drkKm9fHW2M,BzvH0iCzrzo,cFZd55jRxAw,FSAN9tjIX10,9zkfjEH48PY,to_gWbvDhrU,sCr8CcUtpN4,m_q1G_GNgY8,"}
+{"at": "2026-09-04T13:24:18+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "eta.py:q"}
+{"at": "2026-09-04T13:24:19+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "eta.py:q"}
+{"at": "2026-09-04T13:24:19+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "eta.py:q"}
+{"at": "2026-09-04T13:24:19+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "eta.py:q"}
+{"at": "2026-09-04T13:24:20+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "eta.py:q"}
+{"at": "2026-09-04T13:24:20+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "eta.py:q"}
+{"at": "2026-09-04T13:24:20+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "eta.py:q"}
+{"at": "2026-09-04T13:22:39+00:00", "api": "data", "method": "videos.list", "units": 1, "ok": true, "by": "post_pending_comments.py:main", "detail": "6GtzWaguZhg,6PKux5HNnUE,DfFyu8qZq3I,Ec-j1-W4nqw,GFvAcxvDmYM,OBJdXEr6gLg,O_lfBxB7S8Q,SD8zQU-x6y0,XwB8nxtN5D8,dRZnZrRy2Lw,"}
+{"at": "2026-09-04T13:22:40+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "analytics.py:fetch_retention"}
+{"at": "2026-09-04T13:22:41+00:00", "api": "data", "method": "videos.list", "units": 1, "ok": true, "by": "sub_ask.py:sweep", "detail": "2tAGEKVCgYQ,_Mz5rg6jQ_A,drkKm9fHW2M,BzvH0iCzrzo,cFZd55jRxAw,FSAN9tjIX10,9zkfjEH48PY,to_gWbvDhrU,sCr8CcUtpN4,m_q1G_GNgY8,"}
+{"at": "2026-09-04T13:22:41+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "analytics.py:fetch_retention"}
+{"at": "2026-09-04T13:22:42+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "analytics.py:fetch_retention"}
+{"at": "2026-09-04T13:22:44+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "analytics.py:fetch_retention"}
+{"at": "2026-09-04T13:22:45+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "analytics.py:fetch_retention"}
+{"at": "2026-09-04T13:22:47+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "analytics.py:fetch_retention"}
 {"at": "2026-09-04T13:21:29+00:00", "api": "data", "method": "videos.list", "units": 1, "ok": true, "by": "post_pending_comments.py:main", "detail": "6GtzWaguZhg,6PKux5HNnUE,DfFyu8qZq3I,Ec-j1-W4nqw,GFvAcxvDmYM,OBJdXEr6gLg,O_lfBxB7S8Q,SD8zQU-x6y0,XwB8nxtN5D8,dRZnZrRy2Lw,"}
 {"at": "2026-09-04T13:21:30+00:00", "api": "data", "method": "channels.list", "units": 1, "ok": true, "by": "post_pending_comments.py:main"}
 {"at": "2026-09-04T13:21:30+00:00", "api": "data", "method": "playlistItems.list", "units": 1, "ok": true, "by": "post_pending_comments.py:main", "detail": "UUhTXZzwkIJHqyL7L_fEtuqQ"}
@@ -9791,3 +9806,4 @@
 {"at": "2026-09-04T13:21:32+00:00", "api": "data", "method": "videos.list", "units": 1, "ok": true, "by": "sub_ask.py:sweep", "detail": "2tAGEKVCgYQ,_Mz5rg6jQ_A,drkKm9fHW2M,BzvH0iCzrzo,cFZd55jRxAw,FSAN9tjIX10,9zkfjEH48PY,to_gWbvDhrU,sCr8CcUtpN4,m_q1G_GNgY8,"}
 {"at": "2026-09-04T13:26:38+00:00", "api": "data", "method": "videos.list", "units": 1, "ok": true, "detail": "GFvAcxvDmYM"}
 {"at": "2026-09-04T13:27:23+00:00", "api": "data", "method": "videos.list", "units": 1, "ok": true, "by": "hourly:manual live-title check", "detail": "GFvAcxvDmYM live title 確認（uploaded.jsonl と食い違うか）"}
+{"at": "2026-09-04T13:33:33+00:00", "api": "data", "method": "videos.list", "units": 1, "ok": true, "by": "niche_ceiling.py:_fetch_upload_dates", "detail": "hejVQfCWQFY,IMVvPG8EKpE,1JLNJYVxeRM,ErydAlGrbh8,gs-Obfg81RI,vB6VOKnZxyQ,9kged7sPsOs,ECE2jJf10Mg,ui91ySHEIdM,as-vXFJIcf4,"}

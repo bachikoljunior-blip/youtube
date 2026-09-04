@@ -878,6 +878,52 @@ def _eta_target() -> tuple[str | None, float | None, str]:
     return row.get("target_date"), row.get("days_to_target"), "据え置き"
 
 
+def _gate1p_now() -> float | None:
+    """**いま生きている物差し** —— 門1'（登録者 500人）までの日数。
+
+    `data/eta.jsonl` の**新しいほうから**、有限な `gate1p_days` を1つ拾います。
+    無ければ `None`（＝この回は測れない。回は止めません）。
+
+    **なぜ最後の1行ではなく「新しいほうから探す」か**: `eta.py` は撃ち方に
+    よってこの欄を積まない行も書きます（`gate1p_days` が入っているのは
+    実測で 1,334行 中 101行）。最後の1行だけを見ると、**在るのに無いと
+    言う回**が出ます。
+    """
+    try:
+        lines = [ln for ln in ETA_LOG.read_text(encoding="utf-8").splitlines() if ln.strip()]
+    except OSError:
+        return None
+    for ln in reversed(lines[-400:]):
+        try:
+            g = json.loads(ln).get("gate1p_days")
+        except json.JSONDecodeError:
+            continue
+        if isinstance(g, (int, float)) and 0 < float(g) < 1e8:
+            return round(float(g), 3)
+    return None
+
+
+def _last_ship_gate1p() -> float | None:
+    """**直前の ship 行が積んだ門1'の日数。** 無ければ `None`。
+
+    差を取る相手です。**ship 行どうしで引く**こと —— `eta.jsonl` は1周に
+    何度も書かれるので、そちらで引くと「回と回のあいだ」ではなく
+    「印字と印字のあいだ」を測ってしまいます。
+    """
+    try:
+        lines = [ln for ln in MARKS.read_text(encoding="utf-8").splitlines() if ln.strip()]
+    except OSError:
+        return None
+    for ln in reversed(lines[-400:]):
+        try:
+            g = json.loads(ln).get("gate1p_days")
+        except json.JSONDecodeError:
+            continue
+        if isinstance(g, (int, float)):
+            return float(g)
+    return None
+
+
 #: `CLAUDE.md` §「毎回の実行で必ずやること」が「出した」と呼ぶ5つ。
 #: **`scripts/drift.py` の `KINDS` と同じ並びです**（片方だけ変えないこと）。
 #:
@@ -2396,6 +2442,40 @@ def ship(what: str, closes: list[str] | None = None, lever: str | None = None,
         rec["eta_basis"] = basis
     if days is not None:
         rec["eta_days"] = days
+    # --- **物差しを1本、生きているほうも積むこと**（2026-09-04 22:5x・最適化の回）---
+    #
+    #     この回に実物で数えた（`data/runs.jsonl` 239件・`data/eta.jsonl` 1,334件）:
+    #
+    #         `eta_days`   239件 **全部** 10^9（＝「出ません」）。`traj_days` が
+    #                      最後に有限だったのは **2026-08-31 07:58Z**。以後 4日、
+    #                      570行 すべて 10^9。
+    #         `moves`      0 が 232件・0以外 7件。**そしてその 7件 は全部
+    #                      `--moves` に手で打った数**です（差し引きではない）。
+    #
+    #     ＝ **「その回で目標に近づいたか」を測っている数が、1つもありませんでした。**
+    #     近づかない回が選ばれ続けた理由はサボりではなく、**選ぶ側に物差しが
+    #     無かったこと**です。10^9 から 10^9 を引くと、どんな回も 0 です。
+    #
+    #     `fix_gate()` は 09/03 にここを半分だけ直しました —— 判定のときだけ
+    #     門1'（`gate1p_days`）へ落ちる枝です。**けれど台帳に積むのは今も
+    #     軌跡だけ**なので、`optimized.py` が「過去の回は最適だったか」を
+    #     数えるときには、その生きている数がどこにも在りません。
+    #     **判定で使う物差しは、記録にも残すこと。**
+    #
+    #     `gate1p_days` は 登録者 500人 までの日数で、登録の実測で動きます
+    #     （実測: 09/03 **532.0日** → 09/04 **511.5日**）。**有限**です。
+    #     `moves_measured` は**直前の ship 行との差**（負 ＝ 近づいた）。
+    #     **宣言（`--moves`）は消しません** —— 並べて置いて、次の回が
+    #     「言った」と「動いた」を突き合わせられるようにします。
+    #
+    #     **覆る条件**: `traj_days` が有限に戻ったら、そちらを正本に戻すこと
+    #     （そのときは `eta_days` の差が使えます。この欄は残しても害はありません）。
+    _g1p = _gate1p_now()
+    if _g1p is not None:
+        rec["gate1p_days"] = _g1p
+        _prev = _last_ship_gate1p()
+        if _prev is not None:
+            rec["moves_measured"] = round(_g1p - _prev, 3)
     closes = [c.strip() for c in (closes or []) if c.strip()]
     # **語彙は、書き込む前に読むこと**（2026-08-17。**入れた直後に自分で踏みました**）。
     # `carry_over()` は `recorded_closures()` を読むので、先に `_append` すると
@@ -2409,6 +2489,24 @@ def ship(what: str, closes: list[str] | None = None, lever: str | None = None,
         rec["journal_lines"] = journal_lines()
     line = _append(rec)
     print(f"[marker] 出したものを記録しました: {line}")
+    # --- **その回に、動いた数のほうを返すこと**（2026-09-04 22:5x・最適化の回）---
+    #
+    #     ここは長らく `--moves`（**宣言**）だけを刷り返していました。
+    #     実測（この回・`data/runs.jsonl` 239件）: 0以外の 7件 は全部 手打ち、
+    #     `eta_days` は 239件 全部 10^9。**回は、自分が言った数を読み返して
+    #     いただけで、動いた数を1度も見ていません。**
+    #     `gate1p_days`（門1'・登録者 500人 まで）は有限で毎日 動く数です。
+    #     **前の回との差を、その回のうちに返します。**
+    if rec.get("gate1p_days") is not None:
+        _mm = rec.get("moves_measured")
+        if _mm is None:
+            print(f"[marker] 物差し（門1'・登録者500人まで）: **{rec['gate1p_days']:.1f}日**"
+                  " —— 比べる前の ship がまだ在りません。**次の回から差が出ます。**")
+        else:
+            _dir = "近づいた" if _mm < -0.5 else ("遠のいた" if _mm > 0.5 else "動かず")
+            print(f"[marker] 物差し（門1'・登録者500人まで）: **{rec['gate1p_days']:.1f}日**"
+                  f"・前の ship から **{_mm:+.1f}日**（{_dir}）"
+                  " —— これは**宣言ではなく差し引き**です。")
     if closes:
         print(f"[marker] **潰した宣言を {len(closes)} 件、構造で残しました**"
               f"（{' / '.join(closes)}）。")

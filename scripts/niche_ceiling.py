@@ -120,6 +120,34 @@ TOP_KEEP = 15
 
 LEDGER = ROOT / "data" / "niche_ceiling.jsonl"
 
+#: **帯そのもの**（撃った本を1本残らず）。`LEDGER` の `top` とは別の file です。
+#:
+#: ## なぜ要るか（2026-09-04 22:4x に測って足した）
+#:
+#: `[きょうの1本]` の readout は、中身の側に残った**唯一の**手をこう名指しします ——
+#: 「**外の帯の上位（`niche_ceiling.py --form long`）と作りが違う点を1つ、次の1本に入れる**」。
+#: その手を実際に撃つには「上位」と「残り」を**比べる**必要がありますが、
+#: 比べる相手は書き出す所で捨てていました:
+#:
+#:     撃って測った本      long **334本** / short **131本**（`summary.n`・2026-09-03 の1発）
+#:     帳面に残った本      `top_rows()` の **形ごと 15本**
+#:     手元に在る実物      long **16本** / short **15本**（重複を除いた実数）
+#:
+#: **実測（2026-09-04 22:4x・この 16本 で撃った）**: 題に損得の方向語
+#: （損・得・失う・増える・上乗せ…）が在る本の中央値 2,265,650回 対 無い本 1,596,753回
+#: ＝ **×1.42（n=9 対 7）**。**この n では何も言えません** —— 帯は 334本 測ってあり、
+#: そのうち 318本 を、題ごと捨てていました。**捨てているのは「上位と残りの差」そのものです。**
+#:
+#: 残す代金は 0単位・約 70KB/発（`fill_published` は今までどおり `top` にしか当てないので、
+#: `videos.list` の単位も増えません）。**読む側は `corpus_rows()`。**
+#:
+#: **覆る条件**: この file が読まれないまま 30日 育ったら（`corpus_rows()` の呼び手が
+#: `retro._CALL_RE` で 0件のまま）、書くのをやめること。
+CORPUS = ROOT / "data" / "niche_corpus.jsonl"
+
+#: `CORPUS` に残す欄。**`top_rows()` と同じ**（読む側が形を覚え直さなくて済む）。
+CORPUS_FIELDS = ("id", "views", "secs", "form", "channel", "title", "published", "q")
+
 #: **外の上位の絵**（`https://i.ytimg.com/vi/<id>/hqdefault.jpg`・API 0単位・1枚 約50KB）。
 #: 2026-09-03 02:4x の回が「外の帯の上位と**作りが違う点**を1つ、次の1本に入れる」を
 #: やろうとして、**題と尺は帳面に在るのに、絵はどこにも無かった**（curl で4枚 取って
@@ -456,6 +484,60 @@ def top_rows(rows: list[dict], keep: int = TOP_KEEP) -> list[dict]:
         out.extend({k: r.get(k) for k in ("id", "views", "secs", "form", "channel", "title",
                                           "published", "q")} for r in top)
     return out
+
+
+def corpus_write(rows: list[dict], at: str, *, path: Path | None = None) -> int:
+    """撃った本を**1本残らず** `CORPUS` へ足す。**API 0単位。**足した行数を返す。
+
+    `top_rows()` が形ごと 15本 しか残さないので、「上位と残りの差」を後から
+    測れませんでした（`CORPUS` の註に実測）。ここは**測った全部**を残します。
+
+    重複は**この file の中では取りません** —— 同じ本が別の日に別の再生数で
+    入るのは、その本の伸びの記録です。読む側（`corpus_rows()`）が畳みます。
+    """
+    p = path or CORPUS
+    keep = [r for r in rows if r.get("id")]
+    if not keep:
+        return 0
+    p.parent.mkdir(parents=True, exist_ok=True)
+    with p.open("a", encoding="utf-8") as fh:
+        for r in keep:
+            fh.write(json.dumps({"at": at, **{k: r.get(k) for k in CORPUS_FIELDS}},
+                                ensure_ascii=False) + "\n")
+    return len(keep)
+
+
+def corpus_rows(form: str | None = None, *, path: Path | None = None) -> list[dict]:
+    """`CORPUS` の本を**1本1行**で返す（**撃ちません・API 0単位**）。
+
+    同じ `id` が何度も入っていたら、**いちばん新しい `at` の行**を残します
+    （再生は増える一方なので、古い行で中央値を出すと帯が実物より低く出ます）。
+    `form` を渡すとその形だけ。
+
+    **この関数が、上の readout の「上位と作りが違う点」を測る所です。**
+    `top` （形ごと 15本）で測らないこと —— 上位どうしを比べても差は出ません。
+    """
+    p = path or CORPUS
+    best: dict[str, dict] = {}
+    try:
+        with p.open(encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    r = json.loads(line)
+                except ValueError:
+                    continue
+                vid = str(r.get("id") or "")
+                if not vid or (form and r.get("form") != form):
+                    continue
+                prev = best.get(vid)
+                if prev is None or str(r.get("at") or "") >= str(prev.get("at") or ""):
+                    best[vid] = r
+    except OSError:
+        return []
+    return sorted(best.values(), key=lambda r: -int(r.get("views") or 0))
 
 
 def summarize(rows: list[dict]) -> dict:
@@ -1204,15 +1286,20 @@ def main(argv: list[str] | None = None) -> int:
     filled = fill_published(top)
     if filled:
         print(f"[niche] 公開日を {filled}本 埋めました（`videos.list` 50本で 1単位）")
+    at = datetime.now(timezone.utc).isoformat(timespec="seconds")
     LEDGER.parent.mkdir(parents=True, exist_ok=True)
     with LEDGER.open("a", encoding="utf-8") as fh:
         fh.write(json.dumps({
-            "at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "at": at,
             "queries": qs, "days": a.days, "n": len(res["rows"]), "form": a.form,
             "source": a.source,
             "summary": summarize(res["rows"]), "own_ceiling": own_ceiling(),
             "top": top,
         }, ensure_ascii=False) + "\n")
+    # **帯そのものを残す**（`CORPUS` の註・**API 0単位**）。`top` は形ごと 15本 なので、
+    # 「上位と残りで作りがどう違うか」は `top` からは測れません。
+    wrote = corpus_write(res["rows"], at)
+    print(f"[niche] 帯を {wrote}本 残しました → {CORPUS.name}（0単位・読む側は `corpus_rows()`）")
     if a.thumbs > 0:
         got = fetch_thumbs(top, keep=a.thumbs,
                            form=None if a.form == "any" else a.form)
