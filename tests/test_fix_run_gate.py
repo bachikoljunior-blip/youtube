@@ -118,9 +118,19 @@ def test_上限の1つ手前なら_fixは通る(tmp_path: Path, monkeypatch) -> 
 
 @pytest.mark.parametrize("kind", ["verdict", "upload", "means", "improve"])
 def test_連が長くても_到達日を動かしうる種別は通る(kind, tmp_path, monkeypatch) -> None:
-    """**逃げ場のない門にしないこと。** 規則（1日1本）は毎日 `upload` を要求している。"""
+    """**逃げ場のない門にしないこと。** 規則は毎日 `upload` を要求している。
+
+    **`judgeable_today()` を固定すること**（2026-09-05 に踏んだ）—— この検査は
+    そこだけ実物の `config/hypotheses.yaml` を読んでいたので、**きょう判定できる
+    前提が1件でも開いた日に赤**になりました（同じ file の下の検査が
+    `free_alternatives` について「実物のままにすると、repo の予約表しだいで
+    色が変わります」と書いているのと、同じ穴です）。
+    **見張っているのは「連が長くても、動かしうる種別は通る」ことだけ**なので、
+    台帳の日々の中身とは無関係に固定します。
+    """
     p = _write(tmp_path, ["fix"] * 20)
     monkeypatch.setattr(rm, "MARKS", p)
+    monkeypatch.setattr(rm, "judgeable_today", lambda: [])
     calls: list = []
     monkeypatch.setattr(rm, "ship", lambda *a, **k: calls.append((a, k)) or 0)
     rm.main(["--ship", f"{kind}: 通る", "--kind", kind,
@@ -185,6 +195,9 @@ def test_枠が尽きている窓では_連の門は止めない(tmp_path: Path,
     # **次の枠の1本が無い窓**（＝ 0単位 で撃てる手も残っていない）。
     # ここを実物のままにすると、この検査は repo の予約表しだいで色が変わります。
     monkeypatch.setattr(rm, "free_alternatives", lambda: [])
+    # **同じ理由で `judgeable_today()` も固定する**（2026-09-05）——
+    # ここだけ実物の台帳を読んでおり、きょう判定できる前提が開いた日に赤でした。
+    monkeypatch.setattr(rm, "judgeable_today", lambda: [])
     calls: list = []
     monkeypatch.setattr(rm, "ship", lambda *a, **k: calls.append((a, k)) or 0)
     rm.main(["--ship", "fix: 枠が尽きた窓なので通る", "--kind", "fix",
