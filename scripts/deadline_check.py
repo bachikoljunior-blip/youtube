@@ -2539,6 +2539,9 @@ class Verdict:
     unchecked: bool = False
     #: 元の `needs:`（`note` を横に出すため）
     needs: list[dict] | None = None
+    #: `ready` が **群の足りぶん ÷ 規則の密度**から来たか（`judgeable.Floor.ready_at_rule`）。
+    #: **予約に在る本から出した日ではありません** —— 出どころを画面で断るために持ちます。
+    ready_from_rule: bool = False
 
     @property
     def ready_at(self) -> datetime | None:
@@ -3017,6 +3020,25 @@ def dead_ledger(items: list[dict], state: dict | None = None,
                + (f"（この回の名指しは **`{hint}`**）" if hint else ""))
     return out
 
+def _ready_at_rule(key: str) -> date | None:
+    """`judgeable.Floor.ready_at_rule` を引くだけ（**数え方は向こうが1か所**）。
+
+    床が無い前提・道具が落ちた回は `None`。**ここで代わりに数えないこと** ——
+    数え方が2か所になると、片方だけ直る形になります（この repo の通算11回の形）。
+    """
+    if not key:
+        return None
+    try:
+        from src import judgeable as _j  # noqa: PLC0415
+
+        for f in _j.floors():
+            if f.key == key:
+                return f.ready_at_rule
+    except Exception:                    # noqa: BLE001
+        return None
+    return None
+
+
 def check(items: list[dict], as_of: date | None = None, lag: int | None = None) -> list[Verdict]:
     as_of = as_of or today_jst()
     lag = analytics_lag_days(as_of) if lag is None else lag
@@ -3035,7 +3057,25 @@ def check(items: list[dict], as_of: date | None = None, lag: int | None = None) 
         ans = [answer(n, as_of, lag) for n in needs]
         # **判定できる日は、いちばん遅い要件で決まります。** 1つでも出せなければ出ません。
         ready = None if any(a.ready is None for a in ans) else max(a.ready for a in ans)
-        out.append(Verdict(str(h.get("claim") or ""), dl, ready, ans, needs=list(needs)))
+        # --- **群が足りなくて日が出ない床は、規則の密度で日を作る**（2026-09-04 19:3x）---
+        #     `ready` が `None` のままだと `warming` ＝「まだ数えはじめたところ・
+        #     この回は何もしないのが正解」に化け、**`--extend` が `slips` に入れません。**
+        #     ところが `scripts/queue_lag.py` は同じ `judgeable` から
+        #     「1本/日 なら最後の1本は 09-14 → 公開の締切 08-31 → **14日 越えます**」を
+        #     出していました（実測 `stat_split`）。**同じ数を、2つの道具が別の顔で出していた**
+        #     —— こちらだけが「何もしないのが正解」と言い、期限 09-07 が立ち続けます。
+        #     立ち続けると、片群 6本／床 16本 のまま期限が来て、`falsified_if` の
+        #     「上回らなければ外れ（同点も外れ）」が**見分けられなかっただけの実験を
+        #     『外れ』で閉じます**（`judgeable.Floor.ready` の註が名指ししている形）。
+        #     **数え方は `judgeable.Floor.ready_at_rule` が正本です。ここに写しません。**
+        #     **覆る条件**: 群が埋まれば `ready_at_rule` は `None` に戻り、この枝は黙ります。
+        from_rule = False
+        if ready is None:
+            got = _ready_at_rule(str(h.get("key") or ""))
+            if got is not None:
+                ready, from_rule = got, True
+        out.append(Verdict(str(h.get("claim") or ""), dl, ready, ans,
+                           needs=list(needs), ready_from_rule=from_rule))
     return out
 
 
@@ -3110,7 +3150,12 @@ def lines(vs: list[Verdict], lag: int) -> list[str]:
             gap = (v.ready - v.deadline).days           # type: ignore[operator]
             out.append(f"         → **判定できるのは {v.ready:%m-%d}。期限は {gap}日 早すぎます。**"
                        f"  `deadline: \"{v.ready}\"` へ延ばすこと"
-                       "（**`falsified_if` は緩めないこと** —— 動かすのは期限だけ）")
+                       "（**`falsified_if` は緩めないこと** —— 動かすのは期限だけ）"
+                       + ("　**この日は予約の実物ではなく、群の足りぶん ÷ 規則の密度"
+                          "（`judgeable.Floor.ready_at_rule`）から出しています** ——"
+                          " 本を作っても日数は動きません（1本/日 が与件）。"
+                          "手は**期限を延ばす**か**群を畳む**かの2つで、**床は下げないこと**"
+                          if v.ready_from_rule else ""))
         elif v.waits:
             # **緑の行にしないこと。** ここが「もう判定できるのに待っている」側です。
             out.append(f"         → 判定できるのは {v.ready:%m-%d} なのに、"

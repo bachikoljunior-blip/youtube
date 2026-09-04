@@ -71,6 +71,11 @@ JST = timezone(timedelta(hours=9))
 ANALYTICS_LAG_DAYS = settle.analytics_lag_days()
 
 
+def _today_jst() -> date:
+    """きょう（JST）。**`Floor.ready_at_rule` が「今日から何日」を数えるのに要ります。**"""
+    return datetime.now(JST).date()
+
+
 @dataclass
 class Floor:
     """1つの前提の「いちばん早く判定できる日」。"""
@@ -129,6 +134,72 @@ class Floor:
         except Exception:  # 走査が無い環境では、元の式のまま
             return base
         return base if got is None else max(base, got[0])
+
+    @property
+    def ready_at_rule(self) -> date | None:
+        """**群がそろっていない床の、規則（1日N本）の下で判定できる最早の日。**
+
+        `ready` は「N本目がもう予約に在る」床にしか日を出しません。**足りない群が
+        1つでもあると `None`** ——「まだ数えはじめたところ」と同じ顔になります。
+
+        ## なぜ要るか（2026-09-04 19:3x に踏んだ。**同じ数を2つの道具が別の顔で出していた**）
+
+        実測 `stat_split`（期限 2026-09-07・対照(前) あと10本）:
+
+            scripts/queue_lag.py     「1本/日 なら最後の1本は 2026-09-14 →
+                                      公開の締切 2026-08-31 → **14日 越えます**」
+            scripts/deadline_check.py「**まだ数えはじめたところです。
+                                      この回は何もしないのが正解です**」
+
+        **どちらも同じ `judgeable` を読んでいます。** 違うのは、queue_lag が
+        **足りない本数 ÷ 規則の密度**で日を作っているのに対し、`ready` は
+        「予約に在る本」しか見ないところだけです。`deadline_check.py --extend`
+        は `ready` が `None` の床を `slips` に入れないので、**構造的に届かない期限が
+        そのまま立ち続けます。**
+
+        立ち続けると何が起きるか。`stat_split` の `falsified_if` は
+        「上回らなければ外れ（同点も外れ）」なので、**片群 6本／床 16本 のまま
+        期限の日が来て、見分けられなかっただけの実験が『外れ』で閉じます** ——
+        この repo が `Floor.ready` の註（2026-09-01）と `shortfall_in_time()` の註
+        （2026-08-26）で、すでに2回 名指ししている形です。しかもその腕は
+        `per_video` ＝ `scripts/eta.py` が「引けるのはこれだけ」と言う1本。
+
+        ## 数え方（`queue_lag.rate_lines()` と同じ式。**写していません。ここが正本です**）
+
+            足りない本数 ＝ この床の `shortfall()` の合計
+              （**前提をまたいで足しません** —— 1本は1つの前提の中では
+                どちらか片方の群にしか入らない。`queue_lag._need_videos()` の註）
+            日数         ＝ ceil(足りない本数 ÷ (規則の1日N本 × その群に入る割合))
+            判定できる日 ＝ 今日 ＋ 日数 ＋ SETTLE_DAYS ＋ ANALYTICS_LAG_DAYS
+
+        **`ready` が出ている床では `None` を返します**（そちらが実物で、こちらは推定）。
+
+        **覆る条件**: 足りない群が埋まれば `shortfall()` が全部 0 になり、
+        ここは自動で `None` に戻って `ready` が引き継ぎます。
+        **この関数の側に期限も本数も書き写さないこと。**
+        """
+        if self.ready is not None:
+            return None
+        need = sum(self.shortfall().values())
+        if need <= 0:
+            return None                      # 本数ではなく日付が縛っている床
+        try:
+            from src import house_rule       # noqa: PLC0415
+
+            cap = float(house_rule.cap())
+        except Exception:                    # noqa: BLE001
+            cap = 1.0
+        if cap <= 0:
+            return None                      # 出さない日は、日数が定義できません
+        rate = 1.0
+        got = starved_share([self.key])
+        if got and got[1] > 0:
+            rate = max(0.05, got[0] / got[1])
+        import math                          # noqa: PLC0415
+
+        days = math.ceil(need / (cap * rate))
+        fill = _today_jst() + timedelta(days=days)
+        return fill + timedelta(days=SETTLE_DAYS + ANALYTICS_LAG_DAYS)
 
     @property
     def ok(self) -> bool:
