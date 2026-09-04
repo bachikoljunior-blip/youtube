@@ -715,7 +715,14 @@ def _update(svc, video_id: str, publish_at: str | None,
     # 3つ目以降は定義上むだ。実測で 8,900単位（ほぼ1日ぶんの枠）。
     # `src.upload_cap.MOVE_CAP` に、なぜ 1 ではなく 2 かと覆る条件。
     # **止めるのはこの1本だけ**です（窓を止める `reserve_hold` とは別物）。
-    cap = upload_cap.move_hold(video_id)
+    # **外す手（`publish_at=None`）は、この上限に数えません**（2026-09-05 06:1x）。
+    #     上限が止めているのは「置き直しの振動」で、**枠から降ろす手はその形では
+    #     ありません**。実測: 同じ題材が 09/03 に公開ずみと分かって 09/06 の予約を
+    #     外そうとしたら、この上限が止めました（`YT_NO_MOVE_CAP=1` で越えるしかなかった）。
+    #     止めた先に在ったのは 50単位 ではなく **枠1日ぶん**でした。
+    #     理由と覆る条件は `upload_cap.move_hold()` の docstring（**写さないこと**）。
+    cap = upload_cap.move_hold(video_id,
+                               unschedule=status.get("publishAt") is None)
     if cap:
         print(f"[reschedule] {cap}", flush=True)
         if report is not None:

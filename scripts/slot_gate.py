@@ -273,7 +273,7 @@ def _hour_lines(day=None) -> list[str]:
 
 
 def mismatch_lines(rows: list[dict] | None = None, today=None,
-                   picked=None, published=None) -> list[str]:
+                   picked=None, published=None, days: int | None = None) -> list[str]:
     """**枠に入っている本と、その日の決めが食い違っていたら、その行**（合っていれば空）。
 
     ## なぜ要るか（2026-09-05 05:4x・最適化の回。**実物で踏んだ**）
@@ -323,6 +323,7 @@ def mismatch_lines(rows: list[dict] | None = None, today=None,
             published = _dp.published_topics()
         except Exception:                                      # noqa: BLE001
             published = set()
+    horizon = LEAD_DAYS if days is None else max(0, int(days) - 1)
     held: dict = {}
     for r in rows:
         if not r.get("at"):
@@ -333,7 +334,7 @@ def mismatch_lines(rows: list[dict] | None = None, today=None,
             continue
         held.setdefault(d, []).append(r)
     out: list[str] = []
-    for i in range(LEAD_DAYS + 1):
+    for i in range(horizon + 1):
         d = today + timedelta(days=i)
         here = held.get(d) or []
         if not here:
@@ -366,6 +367,52 @@ def mismatch_lines(rows: list[dict] | None = None, today=None,
                 + f"{(_hour_for(d) or 9):02d}:00`",
             ]
     return out
+
+
+#: **`--ship` の本文に書けば、`today_block()` を1回だけ越えられる印。**
+#: `run_marker.HINT_MISS_MARK` と同じ口 —— **禁止ではなく、理由を残させる門**です。
+SLOT_MISS_MARK = "枠そのまま"
+
+
+def today_block(rows: list[dict] | None = None, today=None,
+                picked=None, published=None) -> list[str]:
+    """**きょう公開される1本が、きょうの決めと違うなら、その行**（合っていれば空）。
+
+    ## なぜ要るか（2026-09-05 06:0x・最適化の回。**この回に実測した**）
+
+    `mismatch_lines()` は 05:4x に**印字**として入りました。その 12分後、
+    この回が `python scripts/slot_gate.py` を撃つと、こう出ています::
+
+        09/05（JST）は、決めと枠が食い違っています ——
+        決め `TfetZ_qhS-E`（ショート・見込み 齢48h 164回） ／ 枠に居るのは `GFvAcxvDmYM`
+
+    枠の `GFvAcxvDmYM` は **22分42秒 の長尺**で、同じ控えが付けた見込みは **齢48h 1回**。
+    公開まで **3時間8分**でした。**164 対 1** —— きょうチャンネルが出す唯一の1本です。
+
+    そして決めのほうは、同じ日のうちに **6回** 書き換わっています
+    （00:38 長尺 → 01:17 → 01:48 → 05:09 ショート → 05:11 → 05:37）。
+    **枠は 0回。** 決めを書く側には門が6つ 立っているのに
+    （`daily_pick.record()` の `slot_cost` / `probe_hold` / `path_form_hold` /
+    `anyway_pays_hold` / `restated_pick_block` / `day_guard`）、
+    **押す側には1つも立っていませんでした。**
+
+    書くほうは API 0単位・自分の手だけで終わり・commit になります。
+    押すほうは 100単位 掛かり、チャンネルという相手が居ます。
+    **門が片側にだけ生えたのは、その非対称のとおりです** ——
+    だから「食い違いを印字する」を6回 通過して、枠は 1度も動きませんでした。
+
+    この関数は `mismatch_lines(days=1)` そのもの（**判定の写しを持ちません**）。
+    違うのは**きょうの日だけ**を見ることです —— 明日ぶんで回を止めると、
+    まだ押せる時間が残っている日の回まで全部 止まります。
+
+    ## 覆る条件（**この門を外してよい日**）
+
+    1. `ahead_sweep.today_plan()` が枠の中身まで見て入れ替えるようになったら
+       （`mismatch_lines()` の覆る条件と同じ）。**先に外さないこと。**
+    2. `data/runs.jsonl` の `slot_miss` が 7日 続けて 0件 なら、
+       この門は空振りしかしていません（そのとき外してよい）。
+    """
+    return mismatch_lines(rows, today, picked, published, days=1)
 
 
 def lines(rows: list[dict] | None = None, today=None) -> list[str]:
