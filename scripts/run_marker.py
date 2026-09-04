@@ -1874,9 +1874,87 @@ def untreated_slot() -> dict:
     if not bad:
         out["why"] = f"`{vid}` は脚を全部 通っています"
         return out
+    # **控えは「いま実物に入っている台本」で、焼きの 55〜90分 ぶん古い**
+    # （2026-09-04 17:1x に実物で踏んだ）。
+    #
+    #     控え `O_lfBxB7S8Q.script.json`   (1) 冒頭 ✗
+    #     手元 `…handan.script.json`        **4脚とも ○**（16:41 の回が直した）
+    #     `data/rebake.jsonl`               16:44:22 に `start`・錠は握られたまま
+    #
+    # ＝ **直した台本が、いま焼かれている最中**でした。それでもこの門は
+    # 「その脚を通すことに使え」と言って `fix` を止めます。**通す手はもう撃たれていて、
+    # 残っている正しい手は「焼き上がるまで居ること」だけ**（`docs/trigger_main.md` の
+    # 降りる線・焼き 55〜90分）。**回は 30〜60分** なので、この門は
+    # **焼いている間ずっと、全部の回の `fix` を止め続けます。**
+    #
+    # **門を緩めてはいません。** 逃がすのは、次の2つが**同時に**立つときだけ:
+    #
+    #   1. **手元の台本が4脚とも ○**（`draft_legs` —— 控えと同じ4つの口）
+    #   2. **その本の焼きが実際に走っている**（`ahead_sweep.rebake_busy()` の
+    #      `flock`。**`data/rebake.log` の末尾で判定しないこと** ——
+    #      正本は錠と `data/rebake.jsonl`）
+    #
+    # 手元が ○ でも焼きが走っていなければ**止めたまま**です（そのときの正しい手は
+    # 「焼き直しを起こす」で、それは `improve` として通ります）。
+    # **1. だけで逃がすと、直しただけで一度も本に入らない台本が門を素通りします。**
+    #
+    # **覆る条件**: 焼く側が回の器の外へ出て、焼きが回をまたいで生き残るように
+    # なったら、ここは「焼きが走っている」ではなく「**未反映の直しが在る**」で
+    # 足ります（そのとき 2. を `rebake_plan()['do']` に替えること）。
+    draft_bad, draft_why = _dp.draft_legs(topic)
+    if not draft_why and not draft_bad:
+        baking, baking_why = _slot_baking(vid)
+        if baking:
+            out["why"] = (f"`{vid}` の控えは {len(bad)}/4脚 ✗ ({'・'.join(bad)}) ですが、"
+                          f"**手元の台本 `data/scripts/{topic}.script.json` は4脚とも ○**で、"
+                          f"**いま焼いています**（{baking_why}）—— 通す手はもう撃たれています。"
+                          "**この回は焼き上がるまで居ること**（`data/rebake.jsonl` の `done`）")
+            return out
+        out["fired"], out["bad"] = True, bad
+        out["why"] = (f"`{vid}`（題材 `{topic}`）の控えが {len(bad)}/4脚 ✗: {'・'.join(bad)}。"
+                      f"**手元の台本は4脚とも ○ なのに、焼きが走っていません**（{baking_why}）"
+                      " —— 起こすこと: `python scripts/ahead_sweep.py`")
+        return out
     out["fired"], out["bad"] = True, bad
     out["why"] = (f"`{vid}`（題材 `{topic}`）が {len(bad)}/4脚 ✗: {'・'.join(bad)}")
     return out
+
+
+def _slot_baking(vid: str) -> tuple[bool, str]:
+    """**その本の焼きが、いま実際に走っているか。**（`(走っている, 理由)`）
+
+    見るのは**錠**（`ahead_sweep.rebake_busy()` の `flock`）と `data/rebake.jsonl` の
+    `start`。**`data/rebake.log` の末尾は見ません** —— 焼く側が死んでも log は
+    そのまま残るので、末尾で生死を判じると死んだ焼きを「走っている」と読みます。
+    """
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        import ahead_sweep as _as                                  # noqa: PLC0415
+    except Exception as exc:                                       # noqa: BLE001
+        return False, f"`scripts/ahead_sweep.py` が読めません（{str(exc)[:60]}）"
+    try:
+        if not _as.rebake_busy():
+            return False, "錠（`rebake.lock`）が空 ＝ 誰も焼いていません"
+    except Exception as exc:                                       # noqa: BLE001
+        return False, f"錠が見られません（{str(exc)[:60]}）"
+    # 錠は握られている。**その本の焼きか**を帳面の最後の `start` で確かめる。
+    try:
+        rows = _as._rebake_rows()
+    except Exception:                                              # noqa: BLE001
+        rows = []
+    last = None
+    for r in rows:
+        if r.get("kind") == "start":
+            last = r
+    if last is None:
+        return False, "帳面に `start` がありません"
+    if str(last.get("video_id") or "") != vid:
+        return False, (f"焼いているのは別の本です（`{last.get('video_id')}`）")
+    done = any(r.get("kind") == "done" and r.get("video_id") == last.get("video_id")
+               and r.get("sha") == last.get("sha") for r in rows)
+    if done:
+        return False, "最後の `start` には `done` が付いています ＝ その焼きは終わっています"
+    return True, f"`{vid}` を {str(last.get('at') or '')[11:19]} から（sha {last.get('sha')}）"
 
 
 def note_fix_gate(what: str, run_len: int, waived: bool = False) -> None:

@@ -6,10 +6,14 @@
 """
 from __future__ import annotations
 
+import hashlib
+import inspect
 import os
+import shutil
 
 from pathlib import Path
 
+from . import config
 from .util import require, run
 
 SILENCE_SECONDS = 0.35
@@ -17,6 +21,162 @@ V_ARGS = [
     "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
     "-pix_fmt", "yuv420p", "-profile:v", "high", "-level", "4.1",
 ]
+
+# ---------------------------------------------------------------- クリップの控え
+#
+# **焼き直しが 25回 起きて、本になったのは 1回 です**（2026-09-04 17:0x に数えた・
+# `data/rebake.jsonl`: `start` 25件 ／ `done` 3件（rc=0 は 1件）／
+# **`done` が1行も無い `start` が 13件**）。`1huadpEk6HY` ひとつで
+# 09/03 11:41〜23:28 に **11回** 起きて、**1回も焼き上がっていません。**
+#
+# 死因は分かっています —— 焼く側は回（`create_session` の子）の器の中の背景プロセスで、
+# **回が畳まれると道連れ**です。焼きは実測 55〜90分、回は 30〜60分。**構造的に届きません。**
+#
+# ここまでは、直近の回が何度も直してきました。**ただし直したのは帳面の読み方だけです**
+# （時間切れの `done` を「焼いた」に数えない／日の上限が別の本まで数える／
+#  殺す秒数と `REBAKE_LEAD` の食い違い —— 09/04 だけで 4件）。
+# **どれも「死んだことを正しく読む」直しで、死ぬと何が失われるかは誰も変えていません。**
+#
+# 失われるものはこれです。`src/pipeline.py` は毎回いちばん最初に
+#
+#     if work.exists(): shutil.rmtree(work)
+#
+# を撃ちます。＝ **前の焼きが作ったクリップは、次の焼きの1行目で全部 消えます。**
+# 途中で死んだ焼きが 40/83 まで進んでいても、次は 0/83 から焼き直します。
+#
+# クリップは**純粋な関数**です —— 絵（PNG の中身）と 秒数・fps・寸法・冒頭かどうか、
+# それに焼き方（`_clip_from_slide` の中身と `V_ARGS`）だけで決まります。
+# だから中身で名前を付けて `build/.clip_cache/` に置けば、
+#
+#   * 途中で死んだ焼きの成果が、次の焼きに**そのまま残る**（0/83 から始まらない）
+#   * 規則3 の焼き直し（毎回いじるのは数コマ）で、**残りの数十コマを焼き直さない**
+#
+# 実測（2026-09-04 17:0x・遊んでいる器で1コマ）: 13秒のコマ 1本 = **8.2秒**
+# → 83コマ = **11.4分**。焼き 55分 のうち **21%** がこれです。
+# 器が混んでいるとここが伸びます（09/04 15:09 の焼きは 5400秒 で
+# **クリップ 5/83** までしか行かずに殺されました ＝ 1コマ 17分）。
+#
+# **置き場所は `build/` の直下**です（`build/<題材>/` の**外**）。`rmtree` が消すのは
+# `build/<題材>` なので、ここは残ります。`build/` は `.gitignore` 済み（commit されません）。
+# 器の外に出す必要はありません —— 実測、器のファイルは回をまたいで残ります
+# （`build/zaishoku-2026-62man/` に 09/03 23:32 JST の物が在りました）。
+#
+# **焼き方を変えたら控えは自動で無効になります** —— 鍵に `_clip_recipe_sha()`
+# （`_clip_from_slide` の**中身の写し** ＋ `V_ARGS` ＋ 冒頭の動かし方の定数）が入るので、
+# `_clip_from_slide` を1文字でも直せば、次の焼きは全部 焼き直します。
+# **「その直しは、この本に入っていません」を控えの側で起こさないための鍵です。**
+#
+# **覆る条件**: 焼く側が回の器の外へ出て（回が畳まれても生き残るように）、
+# `data/rebake.jsonl` の `done`/`start` が 8割 を超えたら、
+# 「途中で死ぬ」ぶんの理由は消えます。**そのときも規則3 のぶん（毎回 数コマだけ直す）は
+# 残る**ので、この控えを外す理由にはなりません。
+#: **既定の置き場**。`CLIP_CACHE_DIR` は検査が差し替えるので
+#: （`tests/conftest.py` の `_content_caches_to_tmp`）、
+#: 「`rmtree` の外に在るか」を見る検査はこちらを読むこと。
+DEFAULT_CLIP_CACHE_DIR = config.BUILD_DIR / ".clip_cache"
+CLIP_CACHE_DIR = DEFAULT_CLIP_CACHE_DIR
+#: 控えの合計の上限。超えたら古い順（mtime）に捨てる。
+#: 18分の本 1本ぶんが 83コマ × 0.8MB ≒ 66MB なので、3GB は **45本ぶん**。
+#: 器の空きは実測 22GB（2026-09-04）。
+CLIP_CACHE_CAP_BYTES = 3 * 1024 ** 3
+
+_RECIPE_SHA: str | None = None
+
+
+def _clip_recipe_sha() -> str:
+    """**焼き方の写し。** これが変われば控えは全部 無効になる（上の註）。"""
+    global _RECIPE_SHA
+    if _RECIPE_SHA is None:
+        try:
+            src = inspect.getsource(_clip_from_slide)
+        except OSError:                                        # pragma: no cover
+            src = "?"
+        h = hashlib.sha256()
+        h.update(src.encode("utf-8"))
+        h.update(repr(V_ARGS).encode("utf-8"))
+        h.update(f"{SILENCE_SECONDS}|{OPENING_ZOOM}|{OPENING_SETTLE_SECONDS}".encode())
+        _RECIPE_SHA = h.hexdigest()[:12]
+    return _RECIPE_SHA
+
+
+def clip_cache_key(src: Path, duration: float, fps: int, w: int, h: int,
+                   opening: bool) -> str:
+    """**そのクリップの中身の名前。** 絵の中身と、焼くときに渡す全部から作る。
+
+    `duration` は `-t` に渡す字（小数3桁）でそろえること —— 丸めが違うと
+    同じクリップに別の名前が付き、控えが効かなくなります。
+    """
+    d = hashlib.sha256()
+    d.update(Path(src).read_bytes())
+    d.update(f"|{duration:.3f}|{fps}|{w}x{h}|{int(bool(opening))}|".encode())
+    d.update(_clip_recipe_sha().encode("utf-8"))
+    return d.hexdigest()
+
+
+def prune_clip_cache(cap: int = CLIP_CACHE_CAP_BYTES,
+                     cache_dir: Path | None = None) -> int:
+    """控えが `cap` を超えていたら、古い順（mtime）に捨てる。捨てた数を返す。"""
+    d = Path(cache_dir or CLIP_CACHE_DIR)
+    if not d.is_dir():
+        return 0
+    files: list[tuple[float, int, Path]] = []
+    total = 0
+    for p in d.glob("*.mp4"):
+        try:
+            st = p.stat()
+        except OSError:
+            continue
+        files.append((st.st_mtime, st.st_size, p))
+        total += st.st_size
+    if total <= cap:
+        return 0
+    dropped = 0
+    for _, size, p in sorted(files):
+        if total <= cap:
+            break
+        try:
+            p.unlink()
+        except OSError:
+            continue
+        total -= size
+        dropped += 1
+    return dropped
+
+
+def _clip_cache_get(key: str, dest: Path, cache_dir: Path) -> bool:
+    """控えに在れば `dest` に置いて True。**同じ器の中なのでハードリンク**（0バイト）。"""
+    src = cache_dir / f"{key}.mp4"
+    try:
+        if not src.is_file() or src.stat().st_size == 0:
+            return False
+    except OSError:
+        return False
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.unlink(missing_ok=True)
+    try:
+        os.link(src, dest)
+    except OSError:
+        try:
+            shutil.copy2(src, dest)
+        except OSError:
+            return False
+    os.utime(src, None)                                        # 使ったので新しくする（prune 用）
+    return True
+
+
+def _clip_cache_put(key: str, made: Path, cache_dir: Path) -> None:
+    """焼き上がったクリップを控えに入れる（**入らなくても焼きは止めない**）。"""
+    try:
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        tmp = cache_dir / f".{key}.{os.getpid()}.tmp"
+        tmp.unlink(missing_ok=True)
+        try:
+            os.link(made, tmp)
+        except OSError:
+            shutil.copy2(made, tmp)
+        os.replace(tmp, cache_dir / f"{key}.mp4")
+    except OSError:
+        pass
 
 
 def build_narration(segment_audios: list[Path], work: Path, sample_rate: int = 24000) -> Path:
@@ -170,14 +330,30 @@ def build_video(
     clips_dir = work / "clips"
     clips_dir.mkdir(parents=True, exist_ok=True)
 
+    cache_dir = CLIP_CACHE_DIR
     clips: list[Path] = []
+    reused = 0
     for i, (slide, duration) in enumerate(zip(slides, durations)):
         # 無音の分だけクリップを伸ばして、カットの切れ目と発話の切れ目をずらす
         dest = clips_dir / f"clip_{i:03d}.mp4"
-        _clip_from_slide(slide, duration + SILENCE_SECONDS, dest, fps, width, height,
-                         opening=(i == 0 and opening_motion_on()))
+        span = duration + SILENCE_SECONDS
+        opening = (i == 0 and opening_motion_on())
+        # **同じ中身のクリップは焼き直さない**（`CLIP_CACHE_DIR` の註）。
+        #     鍵は絵の中身と焼き方だけなので、**題材も本もまたいで**効きます。
+        key = clip_cache_key(slide, span, fps, width, height, opening)
+        if _clip_cache_get(key, dest, cache_dir):
+            clips.append(dest)
+            reused += 1
+            print(f"[render] クリップ {i + 1}/{len(slides)}（控えから・焼いていません）")
+            continue
+        _clip_from_slide(slide, span, dest, fps, width, height, opening=opening)
+        _clip_cache_put(key, dest, cache_dir)
         clips.append(dest)
         print(f"[render] クリップ {i + 1}/{len(slides)}")
+    if reused:
+        print(f"[render] **控えから {reused}/{len(slides)}コマ**（焼いたのは "
+              f"{len(slides) - reused}コマ・1コマ 約8秒）")
+    prune_clip_cache(cache_dir=cache_dir)
 
     listing = work / "video_concat.txt"
     listing.write_text(

@@ -1226,6 +1226,46 @@ def rebake_input_lines(video_id: str, topic: str) -> list[str]:
             "（`critique_queue.stash()`）—— **次に焼く本からは在ります。**"]
 
 
+#: 段の内訳を数えるのに読む log の末尾の行数（`data/rebake.log` は追記だけ）。
+#: いまの焼き 1本ぶんは 83コマ × 数行 ＝ 400行 前後なので、2,000行 あれば足ります。
+BAKE_LOG_TAIL_LINES = 2000
+
+
+def _bake_stage_span_lines(root=None) -> list[str]:
+    """**いま焼いている本の、段ごとの分。**（`data/rebake.log` の `[+MM:SS]` から）
+
+    **時刻の付いていない行しか無ければ、何も出しません** ——
+    2026-09-04 17:1x より前の log は全部そうです（**推測で埋めないこと**）。
+    """
+    try:
+        from scripts import ahead_sweep                        # noqa: PLC0415
+    except Exception:                                          # noqa: BLE001
+        return []
+    raw: list[str] = []
+    try:
+        # **log が無い回もあります**（`data/rebake.log` は `.gitignore` 済みなので、
+        #     枝を clone しただけの作業場には在りません）。**そこで黙らないこと** ——
+        #     黙ると、この行が「出す作りになっているのに何も出ない」形になり、
+        #     次の回は配線が死んでいるのか、まだ焼いていないのかを区別できません。
+        path = Path(root or ROOT) / ahead_sweep.REBAKE_LOG
+        raw = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        raw = []
+    try:
+        spans = ahead_sweep.stage_spans(raw[-BAKE_LOG_TAIL_LINES:])
+    except Exception:                                          # noqa: BLE001
+        spans = []
+    if not spans:
+        return ["       段ごとの分は**まだ出せません**（`data/rebake.log` の行に"
+                " `[+MM:SS]` が付くのは 09/04 17:1x 以降の焼きから）"]
+    body = " ／ ".join(f"**{k}** {v:.1f}分" for k, v in spans[:5])
+    head = spans[0]
+    return [f"       段ごとの分（log の `[+MM:SS]` の差・API 0単位）: {body}",
+            f"       → **いちばん長いのは「{head[0]}」{head[1]:.1f}分**。"
+            "**次に何を速くするかは、勘ではなくこの行で選ぶこと**"
+            "（この 55〜90分 が、規則3 の焼き直しが 25回 中 1回 しか本にならない直の理由）"]
+
+
 def machine_rebake_lines(video_id: str, now: datetime | None = None) -> list[str]:
     """**機械の側が、この本を焼き直すつもりか**（`ahead_sweep.rebake_plan_for()` の判定を写す）。
 
@@ -1322,6 +1362,13 @@ def machine_rebake_lines(video_id: str, now: datetime | None = None) -> list[str
                 out += [f"       いまの段: {stage}",
                         "       **`data/rebake.log` が動いていないのを「死んだ」と読まないこと** ——"
                         " 子は 8KB ためるので末尾は最大 20分 古い。生死は `ps -o time= -p <pid>`（CPU 時間）で"]
+            # **段ごとの分を出すこと**（2026-09-04 17:1x に足した）。
+            #     `_run_out` の docstring は 09-03 から「**どの段が遅いか** …… いま誰も
+            #     測れていません」と書いており、**25回 焼いても内訳を言えた回は 0回**でした。
+            #     いま log の1行には `[+MM:SS]` が付くので、差を引けば段が出ます。
+            #     **ここに出さないと、また誰も見ません**（この repo の
+            #     「どこからも撃たれていない道具」の形）。
+            out += _bake_stage_span_lines()
             # **待つ長さは、`done` が出たあとも出し続けること**（2026-09-04 08:2x に踏んだ）。
             #     この枝は長らく `dones == 0` の間だけ「何分 待てばいいか」を出し、
             #     `done` が 1件 出た瞬間に**一行の脚註へ落ちて**いました。

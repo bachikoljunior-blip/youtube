@@ -34,7 +34,33 @@ def test_実測の最長より長いこと() -> None:
 
 
 def test_焼く側がその数を使っていること() -> None:
-    """**定数を足しても、呼ぶ側が直の数のままなら1ミリも変わりません。**"""
+    """**定数を足しても、呼ぶ側が直の数のままなら1ミリも変わりません。**
+
+    ## 数えるのは**コードだけ**です（2026-09-04 17:2x に直した）
+
+    ここは長らく `"5400" not in src` で、**註の字まで数えて**いました。
+    同じ日の 16:42 の回が、`rebake_run` の中に
+
+        #     ところが 09/04 15:09 の焼きは **5400秒 で切れて rc=124**、…
+
+    という**経緯の1行**を足した瞬間に、この検査は赤になりました ——
+    **直っているのに落ちる**（`REBAKE_RUN_TIMEOUT` は 09000秒 で、
+    直の 5400 はコードに1つもありません）。
+
+    **経緯を書くと落ちる検査は、経緯を消させます。** この repo は
+    「なぜそうしたか」を註に残す作りなので、そちらを削るほうが高くつきます。
+    だから**註と文字列を落としてから**数えます（`tokenize`）。
+    **守っているものは1つも減っていません** —— 直の `5400` を
+    コードに書き戻せば、いまも赤くなります。
+    """
+    import io                                                  # noqa: PLC0415
+    import tokenize                                            # noqa: PLC0415
     src = inspect.getsource(ahead_sweep.rebake_run)
     assert "REBAKE_RUN_TIMEOUT" in src
-    assert "5400" not in src
+    code = []
+    for tok in tokenize.generate_tokens(io.StringIO(src).readline):
+        if tok.type in (tokenize.COMMENT, tokenize.STRING):
+            continue
+        code.append(tok.string)
+    body = " ".join(code)
+    assert "5400" not in body, f"直の 5400 がコードに残っています: {body[:200]}"
