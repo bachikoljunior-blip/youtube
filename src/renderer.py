@@ -70,7 +70,11 @@ V_ARGS = [
 # `data/rebake.jsonl` の `done`/`start` が 8割 を超えたら、
 # 「途中で死ぬ」ぶんの理由は消えます。**そのときも規則3 のぶん（毎回 数コマだけ直す）は
 # 残る**ので、この控えを外す理由にはなりません。
-CLIP_CACHE_DIR = config.BUILD_DIR / ".clip_cache"
+#: **既定の置き場**。`CLIP_CACHE_DIR` は検査が差し替えるので
+#: （`tests/conftest.py` の `_content_caches_to_tmp`）、
+#: 「`rmtree` の外に在るか」を見る検査はこちらを読むこと。
+DEFAULT_CLIP_CACHE_DIR = config.BUILD_DIR / ".clip_cache"
+CLIP_CACHE_DIR = DEFAULT_CLIP_CACHE_DIR
 #: 控えの合計の上限。超えたら古い順（mtime）に捨てる。
 #: 18分の本 1本ぶんが 83コマ × 0.8MB ≒ 66MB なので、3GB は **45本ぶん**。
 #: 器の空きは実測 22GB（2026-09-04）。

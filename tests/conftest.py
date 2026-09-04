@@ -115,6 +115,34 @@ def _alerts_ledger_to_tmp(tmp_path_factory):
 
 
 @pytest.fixture(autouse=True, scope="session")
+def _content_caches_to_tmp(tmp_path_factory):
+    """**音とクリップの控えを、この検査だけの場所へ向ける**（2026-09-04 17:2x に踏んで足した）。
+
+    控え（`src/tts.TTS_CACHE_DIR` / `src/renderer.CLIP_CACHE_DIR`）は
+    **中身で名前を付けた、器をまたいで残る置き場**です。向けておかないと
+    **検査が本物の控えに書き**、次の検査がそれを引きます。
+
+    実測（足した当日）: `tests/test_tts_no_fallback.py::test_default_still_falls_back` が
+    赤くなりました。あの検査は `_google` を**わざと落として** open-jtalk へ倒れることを
+    見ますが、**前の走りで偽の `_google` が書いた 4バイトの wav** が控えに残っており、
+    2度目は控えから返って**落ちる所まで行きません**。
+    ＝ **検査の結果が、前の走りの残りかすで変わる**形でした。
+
+    `_alerts_ledger_to_tmp` と同じ理由で、**呼ぶ側に約束させず**モジュールの属性を
+    差し替えます（「検査では `cache_dir=` を渡す」を約束にすると、
+    控えを足した回が必ず片方だけ忘れます）。
+    """
+    d = tmp_path_factory.mktemp("content_cache")
+    from src import renderer, tts
+
+    keep = (tts.TTS_CACHE_DIR, renderer.CLIP_CACHE_DIR)
+    tts.TTS_CACHE_DIR = d / "tts"
+    renderer.CLIP_CACHE_DIR = d / "clips"
+    yield
+    tts.TTS_CACHE_DIR, renderer.CLIP_CACHE_DIR = keep
+
+
+@pytest.fixture(autouse=True, scope="session")
 def _measure_window_dynamic_off():
     """**`measure_window` の動的な窓を、検査のあいだ止める**（2026-08-27 に足した）。
 

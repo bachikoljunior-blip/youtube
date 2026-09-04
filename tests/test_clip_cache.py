@@ -67,7 +67,7 @@ def test_焼き方を変えたら控えは全部無効になる(tmp_path, monkey
 def test_控えは題材の作業場の外に在る():
     """`src/pipeline.py` は毎回 `rmtree(config.BUILD_DIR / topic_id)` を撃ちます。
     控えがその下に在ると、**1行目で消えます。**"""
-    cache = renderer.CLIP_CACHE_DIR.resolve()
+    cache = renderer.DEFAULT_CLIP_CACHE_DIR.resolve()
     assert cache.parent == Path(config.BUILD_DIR).resolve(), \
         "控えは build/ の直下に置くこと（build/<題材>/ の中は rmtree で消えます）"
     # `build/<題材>` として使われうる名前でないこと（先頭が `.` なら題材にならない）
