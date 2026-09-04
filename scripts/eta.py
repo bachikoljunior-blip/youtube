@@ -8419,11 +8419,140 @@ def gate_arm_lines(pl: dict, *, runs_path: Path | None = None) -> list[str]:
     if pl.get("lever_gate_revived"):
         out.append(f"{bar}     この回から `--lever {'／'.join(pl['lever_gate_revived'])}` は台帳に書けます"
                    "（`arm_dead_at_inf` から外した。届かない軌跡の 0日 は、門の側の根拠になりません）。")
-    out.append(f"{bar}     `sub_rate` の手は 0単位です: 登録の依頼はいま**最後のセグメントの音声1文**だけ"
-               f"（`src/script_writer.py`）＝ 最後まで見た人にしか届きません。"
-               f" 画面（全時間）・`first_comment`・説明欄の先頭に同じ依頼を置くのは、"
-               f" 次の1本で試せて、`data/shorts_subs.json` で 48時間 後に測れます"
-               f"（`src/verdict_power.py` の n を先に見ること）。")
+    out.extend(_sub_rate_move(bar))
+    return out
+
+
+#: `sub_rate` の依頼を置ける面。**ここは実物から引くこと** ——
+#: 2026-09-03 21:00 JST に3面とも入ったのに、この行は 2026-09-04 まで
+#: 「いま音声1文だけ」と刷り続けていました（下の註）。
+def _sub_rate_surfaces() -> list[tuple[str, bool, str]]:
+    """登録の依頼が、いまどの面に**実際に**乗っているか（API 0単位・実物を読む）。
+
+    返すのは `(面の名, 乗っているか, どこで)` の並び。**定数を読むだけ**なので、
+    面を消したい回が `HEAD = ""` と書けば、この行も自動で「空いている」に戻ります。
+    """
+    out: list[tuple[str, bool, str]] = []
+    try:
+        from src import sub_ask                              # noqa: PLC0415
+        out.append(("説明欄の先頭", bool(sub_ask.HEAD.strip()), "`src/sub_ask.HEAD`"))
+        out.append(("`first_comment`", bool(sub_ask.COMMENT_TAIL.strip()),
+                    "`src/sub_ask.COMMENT_TAIL`"))
+    except Exception:                                        # noqa: BLE001
+        pass
+    try:
+        from src import ab_split, visuals                    # noqa: PLC0415
+        on = bool(visuals.SUBS_BADGE_TEXT.strip()) and ab_split.SUBS_BADGE_SHARE > 0
+        out.append((f"画面（全時間・A/B {ab_split.SUBS_BADGE_SHARE:.0%}）", on,
+                    "`src/visuals.SUBS_BADGE_TEXT`"))
+    except Exception:                                        # noqa: BLE001
+        pass
+    return out
+
+
+def _sub_ask_uncovered() -> tuple[int, float, float] | None:
+    """**すでに上がっている本**のうち、依頼がまだ入っていない側が運んでいる再生/日。
+
+    `(本数, その再生/日, 全体に占める割合)`。API 0単位（`data/views.jsonl` と
+    `data/sub_ask_sweep.jsonl` を読むだけ）。読めなければ None。
+    """
+    try:
+        from src import sub_ask                              # noqa: PLC0415
+        done = set()
+        f = ROOT / "data" / "sub_ask_sweep.jsonl"
+        if f.exists():
+            for line in f.read_text(encoding="utf-8").splitlines():
+                try:
+                    done.add(str(json.loads(line).get("id") or ""))
+                except Exception:                            # noqa: BLE001
+                    continue
+        ranked = sub_ask.rank_by_traffic()
+    except Exception:                                        # noqa: BLE001
+        return None
+    total = sum(v for v, _ in ranked)
+    miss = [(v, i) for v, i in ranked if i not in done and v > 0]
+    got = sum(v for v, _ in miss)
+    if total <= 0:
+        return None
+    return len(miss), got, got / total
+
+
+def _sub_rate_move(bar: str) -> list[str]:
+    """**`sub_rate` の次の1手を、実物から出す**（API 0単位）。
+
+    ## なぜ実物から出すか（2026-09-04・最適化の回に数えて直した）
+
+    ここは長いあいだ**べた書きの1文**でした ——
+    「登録の依頼はいま**最後のセグメントの音声1文**だけ（`src/script_writer.py`）。
+    画面（全時間）・`first_comment`・説明欄の先頭に同じ依頼を置くのは、次の1本で試せて…」。
+
+    **その3面は 2026-09-03 21:00 JST に全部 入りました**
+    （`src/sub_ask.py` の HEAD と COMMENT_TAIL、`src/visuals.SUBS_BADGE_TEXT`）。
+    さらに**上がっている本への後追い**（`sub_ask --sweep`）も 09-03 21:52 に走り、
+    この回に数え直すと**再生が動いている本の 100%** が済んでいました。
+    それでも上の1文は、**1文字も変わらずに毎周 刷られ続けていました。**
+
+    効き目はこうです —— **`eta.py` は、回がその周に引く腕を決めるために最初に読む画面**です。
+    その画面が `sub_rate` の手として**済んだ仕事**を名指ししていると、回は
+    (a) もう在る物を作り直すか、(b) 見に行って「済んでいる ＝ この腕に手は無い」と読んで
+    `per_video` へ戻るかの、どちらかになります。**どちらも `sub_rate` の ship は増えません。**
+    実測はそのとおりで、**2行 上のこの同じ画面**が毎周こう出していました ——
+    「直近 7日 の ship: `per_video` 130件 ／ `sub_rate` 13件
+    ← 門を動かす2本のうち、片方しか引かれていません」。
+    **自分で嘆いている偏りを、自分の3行下で作っていました。**
+
+    だからここは**定数を持ちません。** 面が乗っているかは `src/sub_ask.py` と
+    `src/visuals.py` の値を読み、後追いの残りは `data/` を数えます。
+    面を1つ消した回は、この行が自動でそれを「空いている」と言い直します。
+
+    ## 覆る条件
+
+    3面とも乗っていて後追いも 0本 のとき、この行は「面はもう無い」と言い切ります。
+    **4つ目の面（終了画面・カード・固定コメント）を足した回は、ここに追記すること** ——
+    追記しないと、次の回からその面は「無い」ことになります。
+    """
+    out: list[str] = []
+    surf = _sub_rate_surfaces()
+    if not surf:
+        return out
+    live = [n for n, ok, _ in surf if ok]
+    dead = [(n, w) for n, ok, w in surf if not ok]
+    if dead:
+        out.append(f"{bar}     **`sub_rate` の 0単位 の手が {len(dead)}面 空いています**: "
+                   + "／".join(f"{n}（{w}）" for n, w in dead)
+                   + "。次の1本で置けて、`data/shorts_subs.json` で 48時間 後に測れます"
+                   "（`src/verdict_power.py` の n を先に見ること）。")
+    else:
+        out.append(f"{bar}     [!] **`sub_rate` の『依頼を置く面』は、もう空いていません** —— "
+                   + "／".join(live)
+                   + " は全部 乗っています（`src/sub_ask.py`・`src/visuals.py` を、この回に読んだ）。"
+                   " **ここに『音声1文だけ』と書いてある画面を読んだら、それは古い写しです。**")
+    cov = _sub_ask_uncovered()
+    if cov is not None:
+        n, per_day, share = cov
+        if n <= 0:
+            out.append(f"{bar}       上がっている本への後追い（`python -m src.sub_ask --sweep`）も"
+                       f" **再生が動いている本は 100% 済み**（残り 0本・`data/sub_ask_sweep.jsonl`）。")
+        else:
+            out.append(f"{bar}       ただし**上がっている本**に {n}本 残っています"
+                       f"（いまの再生/日 の {share:.0%} ＝ {per_day:.1f}回/日）。"
+                       f" `python -m src.sub_ask --sweep`（1本 50単位）。"
+                       f" **再生はほとんど既存の本が運んでいるので、こちらのほうが新しい1本より大きい。**")
+    if not dead:
+        try:
+            from src import ab_split                         # noqa: PLC0415
+            sh = float(ab_split.SUBS_BADGE_SHARE)
+        except Exception:                                    # noqa: BLE001
+            sh = 0.0
+        if 0 < sh < 1:
+            out.append(f"{bar}       **残っている `sub_rate` の判断は「面」ではなく「配り方」です** —— "
+                       f"画面の札は A/B {sh:.0%} なので、**オーナー規則の 1本/日 では"
+                       f" 札の付く本が {sh:.1f}本/日 しか出ません。**"
+                       f" 判定に要る再生（`config/hypotheses.yaml`「登録の依頼を画面（全時間）にも置くと…」の"
+                       f" `needs`: 片群 14,085再生）に届く日を、`--lever sub_rate` の回はまず数えること。"
+                       f" **届かないなら、その A/B は学びではなく、治療の半分を捨てているだけです**"
+                       f"（`src/ab_split.SUBS_BADGE_SHARE` は動かせます。**動かす前に数えること** ——"
+                       f" 1.0 にすると比べる相手が消えます）。")
     return out
 
 
