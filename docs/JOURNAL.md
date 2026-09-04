@@ -110012,3 +110012,24 @@ git は同じ5日で 2,028 commits（data 3,033／docs 563／tests 547／scripts
 **`premise` を選ぼうとした回が `run_marker.py` で止まり、
 残り 17.0日ぶんの台帳と、その腕に開いている 20件 を名指しされて、
 `verdict` か 09/05 の枠の本の `improve` に回ります。**
+
+### 追記（同じ回・02:0x JST）—— **この回の `--ship` の印は、`fix` の門に止められています**
+
+置いた門の効きを、自分の回で受けました。`--kind fix --lever none` は
+`dry_ledger_gate()`（台帳が空の日の `fix` は、きょうの枠の本を名乗ったものだけ）と
+`FIX_SINCE_MOVE_CAP`（動いた回から `fix` 7回 ＞ 上限 5）に止められています。
+**門は正しく効いています** —— この回の変更は `GFvAcxvDmYM` を直したものではありません。
+
+**嘘の種別で通しませんでした。** 枠の本を名乗る `improve` も撃てません ——
+このサブは worktree に隔離されており `build/` を持たず、
+題・サムネ・説明はいま hourly の役と `sub_ask` の A/B が触っている最中で、
+**入ると走っている実験を壊します**（`data/sub_ask_sweep.jsonl`）。
+代わりに `run_marker.py --claim` に残しました。**成果は commit と、この節にあります。**
+
+**次に来た回への1件（`premise` の門の副作用）**: 台帳が厚い日の
+`dry_ledger_gate()` の「通る手」は、これで **2つ**（枠の本の `improve` と `fix`）に
+なりました。**枠の本に手が届かない役**（worktree のサブ）は、その日 `--ship` を
+記録できません。**覆る条件**: 記録できない回が3回 続いたら、
+`dry_ledger_gate()` の側に「計器そのもの（`run_marker`/`eta`/`daily_pick`）を直した
+`fix`」の口を開けること —— **ただし、開けた瞬間に元の逃げ道が戻ります。**
+先に数えること（`data/runs.jsonl` の `fix_gate` の行）。
