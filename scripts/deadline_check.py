@@ -2509,6 +2509,33 @@ def _ans_group_key(need: dict, as_of: date) -> Answer:
         # 嘘になります（推定の入力である「作る速さ」が 0 だからです）。
         short_all = sum(n - len(floor.groups[g]) for g in floor.groups
                         if floor.nth[g] is None)
+        # **凍った群に、作る速さから日を当てないこと**（2026-09-04 23:5x に踏んだ）。
+        #
+        # 下の `_project_nth` は「作る速さ × 公開までの遅れ」で N本目の日を当てます。
+        # **その式は「作れば増える」を前提にしています。** 増えない群だと、
+        # 当たるはずのない日が出て、**しかも `[OK]` が付きます**（日が出た＝守れる）。
+        #
+        # 実測（この回）: `opening_motion` 対照(動きなし) は
+        # `motion_groups.paired()` が「同じ公開日に両群が居る本」だけを採るので、
+        # **規則1（1本/日）の下では何本 作っても対になりません**。それでもここは
+        # 「0.50本/日 → 8本目 09/13」と当て、**期限 09/17 に [OK] を付けていました。**
+        # `src/judgeable.py` の側は同じ群を「そろいません」と言っており、
+        # **同じ問いに2つの答えが出ていた**（この道具の 2456行 の docstring が
+        # 「向こうが正しい」と決めたのと同じ形の、2件目）。
+        #
+        # **覆る条件**: 規則1 が外れて 1日に2本 出るなら `starved_arm_reason()` が
+        # 黙るので、ここも自動で元に戻ります。**日付をここに書き写さないこと。**
+        for g in sorted(floor.groups):
+            if floor.nth[g] is not None:
+                continue
+            why = SJ.starved_arm_reason(key, g, n - len(floor.groups[g]))
+            if why:
+                # **`unreachable=True`** —— `warming`（待てば来る）ではありません。
+                # 付けないと `Verdict.warming` が立ち、札は `[..]`＋
+                # 「まだ数えはじめたところです。伸び率が出れば日が出ます ——
+                # **この回は何もしないのが正解**」になります。
+                # **その群は、待っても伸び率が出ません**（増えないので）。
+                return Answer(None, body + f" → {why}", unreachable=True)
         paused = _paused_supply(body, short_all)
         if paused is not None:
             return paused
