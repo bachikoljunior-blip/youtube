@@ -1123,8 +1123,28 @@ def draft_newer_than(draft: Path, uploaded_at: str | None, root: Path | None = N
 def rebake_plan(*, cur: dict | None, stash_text: str | None, draft_text: str | None,
                 draft_newer: bool | None, attempted: bool, scheduled: bool,
                 slot_at: datetime | None, now: datetime, baked_today: int = 0,
-                lead: timedelta = REBAKE_LEAD, max_per_day: int = REBAKE_MAX_PER_DAY) -> dict:
-    """**焼き直すかを決める（純関数・API 0単位）。** 返りは `{do, why, sha, video_id, topic}`。"""
+                lead: timedelta = REBAKE_LEAD, max_per_day: int = REBAKE_MAX_PER_DAY,
+                stash_newer: bool | None = None) -> dict:
+    """**焼き直すかを決める（純関数・API 0単位）。** 返りは `{do, why, sha, video_id, topic}`。
+
+    ## `stash_newer` —— **控えを、上げた後に書き換えた回がありました**（2026-09-04 15:3x）
+
+    控え（`data/critique_queue/<ID>.script.json`）は「**その動画に実際に入っている台本**」の
+    記録で、この関数はそれと手元の台本の差で焼き直しを決めます。ところが 09/04 04:46 の回
+    （commit `69fe5244`）は、手元の台本と**控えの両方**を手で書き換えました。起きることは2つ:
+
+        1. 控えと台本が同じ中身になるので、この関数は「**焼いても変わらない**」と言う
+           ＝ **直したものが動画に入らないまま、誰も気づかない**
+        2. 控えを読む側（`src/clarity.books()`・`src/frames.py`・
+           `daily_pick` の外の型の読み・前提の群分け）が、**実物と違う字**を数える
+
+    実測: `Ec-j1-W4nqw`（07:42 に上げた 62コマ の本）の控えは **83コマ** になっていました。
+
+    **控えを手で書き換えないこと。** 直すのは `data/scripts/<題材>.script.json` だけで、
+    控えは焼き直しが**上げたときに**書きます（`scripts/critique_queue.stash()`）。
+    ここでは、控えが上げた後に commit されていたら（`stash_newer`）**そう言います** ——
+    止めはしません（読み違いのほうが高い）。
+    """
     out = {"do": False, "why": "", "sha": "", "video_id": str((cur or {}).get("video_id") or ""),
            "topic": str((cur or {}).get("topic") or ""), "takeover": bool(scheduled)}
     if not cur or not out["video_id"] or not out["topic"]:
@@ -1139,6 +1159,12 @@ def rebake_plan(*, cur: dict | None, stash_text: str | None, draft_text: str | N
     out["sha"] = script_sha(draft_text)
     if _canon(stash_text) == _canon(draft_text):
         out["why"] = f"控えと台本は同じ中身（sha {out['sha']}）—— 焼いても変わらない"
+        if stash_newer is True:
+            # **同じ中身なのは、控えを後から書き換えたからかもしれません**（上の註）。
+            out["why"] += ("　[!] **ただし控えは、この本を上げた後に commit されています** ——"
+                           "控えは『実物に入っている台本』の記録なので、"
+                           "**手で書き換えると、直したものが動画に入らないまま同じ中身に見えます**。"
+                           "`git log -1 -- data/critique_queue/<ID>.script.json` を見ること")
         return out
     # **予約が付いていても焼き直します**（2026-09-04 06:5x。**ここが規則3 の最大の手を塞いでいました**）
     #
@@ -1164,7 +1190,7 @@ def rebake_plan(*, cur: dict | None, stash_text: str | None, draft_text: str | N
         out["why"] = f"同じ台本（sha {out['sha']}）は一度 焼いた（印 `_rebake_marks_dir()`）—— verify の赤なら台本を直すこと"
         return out
     if baked_today >= max_per_day:
-        out["why"] = f"きょう既に {baked_today}回 焼いた（上限 {max_per_day}）"
+        out["why"] = f"この本はきょう既に {baked_today}回 焼いた（1本あたりの上限 {max_per_day}）"
         return out
     if slot_at is None:
         out["why"] = "きょうの中に置ける枠が残っていない"
@@ -1445,8 +1471,10 @@ def _drop_mark(vid: str, sha: str) -> None:
         pass
 
 
-def _baked_today(rows: list[dict], today_s: str, *, busy: bool | None = None) -> int:
+def _baked_today(rows: list[dict], today_s: str, *, busy: bool | None = None,
+                 video_id: str | None = None) -> int:
     """**きょう実際に焼いた回数**（上限 `REBAKE_MAX_PER_DAY` の分子）。
+    `video_id` を渡すと、**その本のぶんだけ**数えます（下の「本ごとに数える」）。
 
     数えるのは **`done` の在る `start`** だけ。それに、**いま走っている1本**
     （錠を誰かが握っていて、`done` の無い `start` が残っている）を足します。
@@ -1469,6 +1497,40 @@ def _baked_today(rows: list[dict], today_s: str, *, busy: bool | None = None) ->
     `done` を書くので、壊れた台本が無限に焼き直されることはありません。
     食わないのは「器ごと消えた回」だけです。
 
+    ## **同じ本を何度も起こした日は、その回数ぶん食っていました**（2026-09-04 15:0x に実測）
+
+    上の直しは「`done` の在る `start`」に絞りましたが、**`start` の行を数えて**いました。
+    器が回収されるたび、次の周が**同じ台本（同じ `sha`）**でもう一度 起こすので、
+    `start` は同じ鍵で何行でも並びます。そのうち1回でも `done` を残すと、
+    **並んだ `start` が全部 分子に入ります**。実測 09/04:
+
+        01:01〜06:22  `DfFyu8qZq3I`（sha 7fe81c38a757）の `start` が **8行**（器の回収）
+        07:40         その sha の `done` が **1行**（rc=1）
+        13:46 / 14:42 `Ec-j1-W4nqw`（sha ff6f012e56da）の `start` と `done`
+        15:04         `_baked_today` は **9** ＝「きょう既に 9回 焼いた（上限 2）」
+                      → **実際に焼いたのは 2本。** その日の焼き直しが全部 止まり、
+                        規則3 の当てどころ（次の枠の1本）が、翌日まで焼けなくなる
+
+    だから数えるのは **鍵（本 × sha）の異なり数**です。同じ sha を2度 焼くことは
+    印（`_rebake_marks_dir()`）が別に止めるので、これで緩みません。
+
+    ## **本ごとに数えます**（同じ回に直した。上限の言葉どおりに読む）
+
+    `REBAKE_MAX_PER_DAY` の註は「**同じ日に焼き直す上限**」で、覆る条件は
+    「1日に 2回 以上 焼いた日が続くなら、**台本を小刻みに commit する回のほう**」——
+    どちらも **1本を何度も焼き直す回**を戒めています。ところが数えるほうは
+    **その日の全部の本**を足していたので、**別の本の焼きが、次の日の本を塞ぎます**。
+    実測 09/04: 09/04 の本（`DfFyu8qZq3I`・rc=1）と 09/05 の本（`Ec-j1-W4nqw`）で
+    ちょうど 2回。**09/05 の本は、その日じゅう二度と焼けません** ——
+    規則3（次の枠で出る1本を、出る瞬間まで良くし続ける）の当てどころは
+    **09/05 の本**なので、これは規則3 を1日ぶん止めます。
+
+    費用は本ごとに掛かるもの（TTS・`videos.insert`・器の 78分）なので、
+    **本ごとに 2回**で読みます（同時に在る本は 1〜2本 ＝ 1日 最大 4回）。
+
+    **覆る条件**: 1日の焼きの合計が 4回 を超える日が続いたら、
+    そのときは**機械ぜんぶの上限**（本をまたぐ数）をここへ足すこと。
+
     **覆る条件**: 焼く側が別の器で走るようになったら、`rebake_busy()`（`flock`）は
     器をまたがないので「走っている1本」を見落とします。帳面の心拍で読むこと。
     """
@@ -1481,15 +1543,20 @@ def _baked_today(rows: list[dict], today_s: str, *, busy: bool | None = None) ->
     done: set[tuple[str, str]] = {
         _key(r) for r in rows if r.get("kind") == "done" and _day(r) == today_s
     }
-    n = 0
+    # **数えるのは「焼いた本」であって、「起こした回数」ではありません**
+    # （2026-09-04 15:0x に踏んだ。すぐ下の実測）。
+    baked: set[tuple[str, str]] = set()
     in_flight = False
     for r in rows:
         if r.get("kind") != "start" or _day(r) != today_s:
             continue
+        if video_id and str(r.get("video_id") or "") != video_id:
+            continue
         if _key(r) in done:
-            n += 1
+            baked.add(_key(r))
         else:
             in_flight = True
+    n = len(baked)
     if in_flight:
         alive = rebake_busy() if busy is None else busy
         if alive:
@@ -1640,7 +1707,8 @@ def rebake_plan_for(day, now: datetime, *, root: Path | None = None) -> dict:
     sha = script_sha(draft_text) if draft_text else ""
     attempted = rebake_attempted(vid, sha, now=now, root=root)
     today_s = now.astimezone(JST).date().isoformat()
-    baked_today = _baked_today(_rebake_rows(root), today_s)
+    # **その本のぶんだけ数えます**（`_baked_today()` の「本ごとに数えます」）。
+    baked_today = _baked_today(_rebake_rows(root), today_s, video_id=vid or None)
     t = now.astimezone(JST)
     if booked is not None:
         # **もう予約が付いている本の締切は、その予約そのもの**（2026-09-04）。
@@ -1651,9 +1719,12 @@ def rebake_plan_for(day, now: datetime, *, root: Path | None = None) -> dict:
         slot_at = today_slot(now, place_hour(day))
     else:
         slot_at = datetime(day.year, day.month, day.day, place_hour(day), tzinfo=JST)
+    # **控えが、上げた後に commit されていないか**（`rebake_plan` の `stash_newer` の註）。
+    stash_newer = (draft_newer_than(stash, (up or {}).get("uploaded_at"), root)
+                   if (stash and up) else None)
     plan = rebake_plan(cur=cur, stash_text=stash_text, draft_text=draft_text, draft_newer=newer,
                        attempted=attempted, scheduled=scheduled, slot_at=slot_at, now=now,
-                       baked_today=baked_today)
+                       baked_today=baked_today, stash_newer=stash_newer)
     plan["for_day"] = day.isoformat()
     plan["decided"] = bool(cur)
     return plan

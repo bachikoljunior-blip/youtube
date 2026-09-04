@@ -667,6 +667,59 @@ def theory_gap(cmp: dict, ledger: Path | None = None, now: datetime | None = Non
     return out
 
 
+#: 「自分の長尺は何分か」を、控え（`data/uploaded.jsonl` の `duration_s`）から数える窓。
+OWN_LONG_RECENT = 3
+
+
+def own_long_secs(recent: int = OWN_LONG_RECENT, path: Path | None = None) -> dict:
+    """**自分の長尺の尺**（秒）を控えから数える。`{n, median, recent_median, latest}`。API 0単位。
+
+    ## なぜ要るか（2026-09-04 15:2x に踏んだ）
+
+    すぐ下の行は、外の尺の中央（**測った数**）の隣に
+    **「自分の長尺は 5分・計算1本・題に数字」と手で書いた字**を並べていました。
+    この行の仕事は「だから外の作りを写す価値がある」と言うことなので、
+    **写した結果が出たら、いちばん先に古くなる字**です。実測 09/04（`data/uploaded.jsonl`）:
+
+        長尺 236本 の中央   **312.9秒（5.2分）**   ← 「5分」はこの数のこと。正しい
+        直近の長尺 6本      1,104〜1,331秒（**18〜22分**） ← 外の作りを写した本。**もう 5分 ではない**
+
+    ＝ 手で書いた字のほうは正しいのに、**画面が言おうとしている「差」はもう無い**。
+    数えれば、次に来た回が「どこまで写せたか」をその場で読めます。
+
+    **覆る条件**: 控えに `duration_s` が無い本しか無ければ（2026-08-25 より前の本）
+    `n` は 0 で、呼ぶ側はこの括弧ごと出しません（**推測の数を出さない**）。
+    """
+    from .forms import SHORT_MAX_SECONDS                       # noqa: PLC0415
+    p = path or UPLOADED
+    secs: list[tuple[str, float]] = []
+    try:
+        for ln in p.read_text(encoding="utf-8").splitlines():
+            if not ln.strip():
+                continue
+            try:
+                r = json.loads(ln)
+            except Exception:                                  # noqa: BLE001
+                continue
+            d = r.get("duration_s")
+            if d is None:
+                continue
+            try:
+                d = float(d)
+            except (TypeError, ValueError):
+                continue
+            if d > SHORT_MAX_SECONDS:
+                secs.append((str(r.get("uploaded_at") or ""), d))
+    except OSError:
+        return {"n": 0, "median": None, "recent_median": None, "latest": None}
+    if not secs:
+        return {"n": 0, "median": None, "recent_median": None, "latest": None}
+    vals = [d for _at, d in secs]
+    tail = [d for _at, d in secs[-max(1, recent):]]
+    return {"n": len(vals), "median": statistics.median(vals),
+            "recent_median": statistics.median(tail), "latest": secs[-1][1]}
+
+
 def theory_lines(cmp: dict, ledger: Path | None = None, now: datetime | None = None,
                  need: float | None = None) -> list[str]:
     """**理論値がどの形に在るか**を、外の帯（0単位）÷ 自分の中央値 で毎周 出す。
@@ -709,7 +762,14 @@ def theory_lines(cmp: dict, ledger: Path | None = None, now: datetime | None = N
             ln += (f"。日付が出るのに要る ×{need:.1f} を外の p90 で越える形: "
                    + ("・".join(reach) if reach else "**無し**"))
         if best == "長尺" and d.get("secs_median"):
-            ln += (f"。外の上位の尺の中央 **{d['secs_median'] / 60:.0f}分**（自分の長尺は 5分・計算1本・題に数字）")
+            # **自分の側も数えること**（`own_long_secs()` の註。手で書いた「5分」は、
+            # 写した本が出た日にいちばん先に古くなります）。
+            own_s = own_long_secs()
+            mine = ""
+            if own_s.get("median"):
+                mine = (f"（自分の長尺は 中央 **{own_s['median'] / 60:.0f}分**・{own_s['n']}本 ／ "
+                        f"直近{OWN_LONG_RECENT}本 **{own_s['recent_median'] / 60:.0f}分**）")
+            ln += f"。外の上位の尺の中央 **{d['secs_median'] / 60:.0f}分**{mine}"
         out.append(ln)
         out.append("       ＝ 形を自分の控え（ショート 対 長尺 の中央値）で決めないこと。**外の上位の題と尺を写した1本**を"
                    "その形で出して、48時間の数をこの画面に入れる（前提は `config/hypotheses.yaml` の「外の作り方を写した長尺」）。")
