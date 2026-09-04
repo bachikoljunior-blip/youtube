@@ -19,7 +19,10 @@
 落ちるのは**外のどの本よりも長い行**だけです。
 
 **短くするために前提を落とさないこと**（`CLAUDE.md`「制度や金額には必ず適用条件を添える」）。
-入らないなら行を割るか、条件を `thumbnail_line1` へ移すこと。
+`src/thumbnail._create_outside` はこの行を**1行で**刷る（折り返さない・`_fit_font` が
+字を縮めるだけ）ので、逃げ道は「書き方を詰める」か「条件を `thumbnail_line1` へ移す」の2つ。
+実物で確かめた例:「75歳まで生きた場合・年180万円」17 →「年180万・75歳まで」11 ＝
+**年額と存命年齢の2つとも残ります。上限は満たせない数ではありません。**
 """
 from __future__ import annotations
 
@@ -64,3 +67,17 @@ def test_規則の本文にこの脚が書いてある():
     """**本文と数える口をずらさないこと**（`tests/test_outside_rule_legs.py` と対）。"""
     assert "どの行も全角11文字以内" in sw.OUTSIDE_LONG_RULE
     assert "thumbnail_kicker" in sw.OUTSIDE_LONG_RULE
+
+
+def test_上限は満たせる数である():
+    """**満たせない上限を置かないこと。** この本の前提は 11文字 に収まります。
+
+    「75歳まで生きた場合・年180万円」(17) → 「年180万・75歳まで」(11) ＝
+    **年額（180万）と存命年齢（75歳まで）の2つとも残ります。**
+    落ちたのは「生きた場合」「円」という、無くても意味の変わらない字だけ。
+    """
+    kicker = "年180万・75歳まで"
+    assert len(kicker) == sw.OUTSIDE_THUMB_LINE_MAX
+    assert "180万" in kicker and "75歳" in kicker
+    assert not [p for p in sw.outside_title_problems(_script(thumbnail_kicker=kicker))
+                if "文字以内" in p]
