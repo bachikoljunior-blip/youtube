@@ -45,7 +45,7 @@ def _draw():
 
 
 def _limit() -> float:
-    return th.W - th.TEXT_LEFT - th.TEXT_RIGHT_PAD
+    return th.text_box()
 
 
 # ------------------------------------------------------------------ 幅
@@ -53,7 +53,7 @@ def _limit() -> float:
 def test_short_text_keeps_its_size():
     """**入る字は1ピクセルも変わらない**こと（控えの 16本 が該当）。"""
     d = _draw()
-    assert th._fit(d, "9万4500円", 150).size == 150
+    assert th._fit_font(d, "9万4500円", 150, th.text_box(), floor=th.TEXT_FLOOR).size == 150
 
 
 def test_long_text_is_shrunk_until_it_fits():
@@ -61,7 +61,7 @@ def test_long_text_is_shrunk_until_it_fits():
     d = _draw()
     long = "小規模企業共済 241か月目"
     assert d.textlength(long, font=th._font(120)) > _limit(), "前提が崩れています"
-    f = th._fit(d, long, 120)
+    f = th._fit_font(d, long, 120, th.text_box(), floor=th.TEXT_FLOOR)
     assert f.size < 120, "小さくしていません"
     assert d.textlength(long, font=f) <= _limit(), "小さくしても、まだはみ出しています"
 
@@ -69,13 +69,13 @@ def test_long_text_is_shrunk_until_it_fits():
 def test_it_never_goes_below_the_floor():
     """**床より小さくしない**こと —— 切れていないだけの、読めない字を作らない。"""
     d = _draw()
-    f = th._fit(d, "あ" * 200, 150, floor=54)
-    assert f.size == 54
+    f = th._fit_font(d, "あ" * 200, 150, th.text_box(), floor=th.TEXT_FLOOR)
+    assert f.size == th.TEXT_FLOOR
 
 
 def test_empty_text_is_safe():
     d = _draw()
-    assert th._fit(d, "", 150).size == 150
+    assert th._fit_font(d, "", 150, th.text_box(), floor=th.TEXT_FLOOR).size == 150
 
 
 def test_create_draws_the_whole_line(tmp_path):
@@ -86,7 +86,7 @@ def test_create_draws_the_whole_line(tmp_path):
                     tmp_path / "out.jpg", tmp_path, kicker="掛金累計1680万円の場合")
     assert out.exists() and out.stat().st_size > 0
     d = _draw()
-    f2 = th._fit(d, "小規模企業共済 241か月目", 120)
+    f2 = th._fit_font(d, "小規模企業共済 241か月目", 120, th.text_box(), floor=th.TEXT_FLOOR)
     assert d.textlength("小規模企業共済 241か月目", font=f2) <= _limit()
 
 

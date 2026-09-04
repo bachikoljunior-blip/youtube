@@ -2311,6 +2311,49 @@ def _outside_blocker(form: str) -> str:
             f" **脚 → 札 → 本の順**（`src/outside_short` の docstring）。")
 
 
+def _banked_views_since(since: date) -> tuple[int, float]:
+    """**その日以降に公開した本が、いままでに積んだ再生**（`(本数, 合計)`）。**API 0単位。**
+
+    `latest_views()`（`data/views.jsonl` の観測の最大）× `uploaded()` の公開日。
+    **予約（`at`）が在ればそれ、無ければ上げた日**で切ります。
+
+    ## なぜ要るか（2026-09-05 06:4x。**書いた直後に数えて、自分の門を直した**）
+
+    `_written_date_gate` の最初の版は `target ÷ 規則の速さ` を `views_since` から
+    足していました。**窓の中に、規則より速く公開した本がもう溜まっている場合、
+    その版は遅らせすぎます。** 実測（この回・API 0単位）::
+
+        2026-08-29 以降  **47本 ／ 6,024再生**（6日 ＝ 7.8本/日 ＝ 貯めを引いた頃の供給）
+        2026-09-04 以降  **1本 ／ 2再生**
+
+    前者の要件は「合計 15,000再生」なので、**残りは 8,976** で、
+    規則（129再生/日）なら **70日**。最初の版は 15,000 を丸ごと割って **117日** ——
+    **47日 遅らせすぎ**でした。**銀行にあるぶんを引いてから割ること。**
+    """
+    lv = latest_views()
+    n = 0
+    total = 0.0
+    for r in uploaded():
+        vid = str(r.get("video_id") or "")
+        if not vid:
+            continue
+        when = r.get("at") or r.get("uploaded_at")
+        if not when:
+            continue
+        try:
+            t = datetime.fromisoformat(str(when).replace("Z", "+00:00")).date()
+        except (TypeError, ValueError):
+            continue
+        if t < since:
+            continue
+        got = lv.get(vid)
+        if got is None:
+            continue
+        n += 1
+        total += float(got)
+    return n, total
+
+
 def _settled_view_rate() -> tuple[int, float, float] | None:
     """**規則の下で、公開した本が1日に積む再生**（`(本数, 中央値, 再生/日)`）。**API 0単位。**
 
@@ -2367,8 +2410,14 @@ def _written_date_gate(need: dict, on: date, what: str) -> "Answer | None":
     ## 何を読むか（**推測しません**）
 
     要件が **`views_target:`**（その日までに要る合計再生）を書いているときだけ数えます。
-    `views_since:` が在ればそこから、無ければ `on_date` から遡らずに今日から。
-    速さは `_settled_view_rate()`（規則の本数 × 落ち着いた1本の中央値）。
+    `views_since:` が在ればそこから、無ければ今日から。
+
+        残り ＝ `views_target` − **その窓でもう積んだぶん**（`_banked_views_since`）
+        日数 ＝ 残り ÷ `_settled_view_rate()`（規則の本数 × 落ち着いた1本の中央値）
+
+    **銀行にあるぶんを引くこと。** 窓の中に規則より速く公開した本が溜まっていると、
+    `views_target` を丸ごと割った版は遅らせすぎます（実測 47日・`_banked_views_since` の註）。
+    もう積み終わっている窓は `None`（この門は**遅らせる向き専用**です）。
 
     **数え直した日が `on_date` より後なら、その日を返します。**
     前でも同じでも `None`（書いた日のまま通す）—— **早める向きには使いません。**
@@ -2396,16 +2445,24 @@ def _written_date_gate(need: dict, on: date, what: str) -> "Answer | None":
         since = date.fromisoformat(str(need.get("views_since")))
     except (TypeError, ValueError):
         since = date.today()
-    days = int(math.ceil(target / rate))
-    derived = since + timedelta(days=days)
+    # **銀行にあるぶんを先に引くこと**（`_banked_views_since` の註。
+    #     窓の中に規則より速く出した本が溜まっていると、丸ごと割れば遅らせすぎます）。
+    books, banked = _banked_views_since(since)
+    if banked >= target:
+        # **もう積み終わっています。** 遅らせる理由がありません（この門は遅らせる向き専用）。
+        return None
+    remain = target - banked
+    days = int(math.ceil(remain / rate))
+    derived = date.today() + timedelta(days=days)
     if derived <= on:
         return None
     return Answer(
         derived,
         f"{what} —— **書いてある日（{on}）は、いまの伸び率では来ません。**"
+        f" {since} 以降に公開した **{books}本 が積んだのは {banked:,.0f}再生**"
+        f"（`data/views.jsonl` の観測の最大）→ **残り {remain:,.0f}再生**。"
         f" 規則 {rate / max(med, 1e-9):.0f}本/日 × 落ち着いた1本の中央値 {med:.0f}回"
-        f"（齢168h 以上 n={n}・`data/views.jsonl`）＝ **{rate:.0f}再生/日** なので、"
-        f" {since} から {target:,.0f}再生 に **{days}日** ＝ **{derived}**。"
+        f"（齢168h 以上 n={n}）＝ **{rate:.0f}再生/日** なので、あと **{days}日** ＝ **{derived}**。"
         f" **`on_date` は立てた回が手で計算した写しです**（`_written_date_gate` の註）——"
         f" 書いた当時の供給は規則より速く、その速さはもう出ません。"
         f" **期限を延ばすか、配り方を変えること**（`eta.py` の `sub_rate` の行が同じ数を出します）",
