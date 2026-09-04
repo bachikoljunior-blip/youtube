@@ -129,7 +129,13 @@ def test_差し替えたら決めが新IDへ写る(tmp_path):
     cur = daily_pick.current(date(2026, 9, 4), p)
     assert cur["video_id"] == "NEW00000001"
     assert cur["form"] == "長尺" and cur["topic"] == "zaishoku-2026-62man"
-    assert "OLD00000001" in cur["why"] and "NEW00000001" in cur["why"]
+    # **理由は1文字も変えない**（2026-09-04 19:0x に直した）。旧IDは別の欄に残る ——
+    # 前は `why` を「焼き直し: 旧→新。前の決め: <前140字>」へ書き直しており、
+    # 回が数で書いた理由が切られて「前の回の散文」に化けていた
+    # （実測 data/daily_pick.jsonl 09-04T18:06「…処置を落と」で切断）。
+    assert cur["why"] == "外の p90 624,772回"
+    assert cur["rebaked_from"] == "OLD00000001"
+    assert cur["kind"] == daily_pick.PICK_KIND_CARRY
     # 別の日の決めは触らない
     assert daily_pick.current(date(2026, 9, 5), p)["video_id"] == "OTHER000001"
 
