@@ -8748,9 +8748,33 @@ def _sub_rate_ab_power(bar: str, share: float) -> list[str]:
     ## 何と何を掛けているか
 
     オーナー規則は **1本/日**（`src/house_rule.py`）。A/B の割り当ては
-    `ab_split.SUBS_BADGE_SHARE` なので、**札の付く本は `share` 本/日**しか出ません。
+    `ab_split.SUBS_BADGE_SHARE` なので、**札の付く本は `share` 本/日**、
+    **札の付かない本は `1 - share` 本/日**です。
     1本が生涯に運ぶ再生は、齢168時間 以上の本の中央値（`_settled_median_views()`）。
-    その積が「治療群の再生/日」で、`SUBS_BADGE_NEED_VIEWS` までの日数が出ます。
+
+    ## **数えるのは、遅いほうの群です**（2026-09-05 06:2x に直した。**ここが逆でした**）
+
+    ひとつ前の版は `days = 要る再生 ÷ (per_day × share × med)` ——
+    **治療群だけ**で日数を出し、最後にこう書いていました:
+
+        `SUBS_BADGE_SHARE` を上げるのは、形を直しても届かないときだけ。
+
+    **これは、必ず遅くなるほうへ回を送ります。** 判定は2群の比較なので、
+    **両方が要る再生に届いてから**しか出ません ＝ 決めるのは
+    **`min(share, 1 - share)` の側**です。`share` を 0.5 から上げると
+    治療群は速くなりますが、**対照群がそれ以上に遅くなります**:
+
+        share 0.5 → 遅いほうは 0.5本/日  （**いちばん速い配り方**）
+        share 0.7 → 遅いほうは 0.3本/日  （**1.67倍 遅い**）
+        share 0.9 → 遅いほうは 0.1本/日  （**5倍 遅い**）
+
+    **0.5 が最速です**（2群・総本数が固定なら、差の分散 1/n₁ + 1/n₂ は
+    n₁ = n₂ で最小）。つまり **`share` を動かして日数を買うことはできません。**
+    足りないときに動かせるのは `per_day`（規則1）と `med`（その日の1本の形）だけです。
+
+    ひとつ前の版は `share` が 0.5 のときだけ**たまたま**正しい数を出していました
+    （0.5 では `share` と `1 - share` が同じ）。**0.5 から動かした瞬間に、
+    日数は楽観側へ外れます** —— 例えば 0.7 なら、印字は 155日 でも実物は 363日 です。
 
     ## 覆る条件（この行がひっくり返る数）
 
@@ -8759,6 +8783,10 @@ def _sub_rate_ab_power(bar: str, share: float) -> list[str]:
     （齢48時間 の中央値は ショート 178回 対 長尺 1回・`python -m src.daily_pick`）。
     だから下の行は、**足りないときに「A/B を畳め」とは言いません** ——
     先に効くのは、`--lever sub_rate` ではなく**その日の1本の形**のほうだからです。
+
+    もう1つ: 割り当てが**本ごと**ではなく**再生ごと**（同じ本の中で出し分ける）に
+    変われば、上の「遅いほうの群」は本数ではなく再生で決まります。そのときは
+    `per_day * binding` を、その配り方の実測に置き換えること。
     """
     out: list[str] = []
     got = _settled_median_views()
@@ -8772,10 +8800,15 @@ def _sub_rate_ab_power(bar: str, share: float) -> list[str]:
         per_day = float(getattr(house_rule, "PUBLISH_PER_DAY", 1) or 1)
     except Exception:                                        # noqa: BLE001
         per_day = 1.0
+    # **判定は遅いほうの群で決まります。** `share` ではなく `min(share, 1-share)`。
+    binding = min(share, 1.0 - share)
     treated = per_day * share * med
-    if treated <= 0:
+    control = per_day * (1.0 - share) * med
+    slow = per_day * binding * med
+    if slow <= 0:
         return out
-    days = SUBS_BADGE_NEED_VIEWS / treated
+    days = SUBS_BADGE_NEED_VIEWS / slow
+    best = SUBS_BADGE_NEED_VIEWS / (per_day * 0.5 * med) if med > 0 else None
     dl = _subs_badge_deadline()
     left = None
     if dl:
@@ -8783,28 +8816,49 @@ def _sub_rate_ab_power(bar: str, share: float) -> list[str]:
             left = (datetime.fromisoformat(dl).date() - datetime.now(timezone.utc).date()).days
         except Exception:                                    # noqa: BLE001
             left = None
+    slow_name = "治療群" if share <= 0.5 else "対照群"
     head = (f"{bar}       **残っている `sub_rate` の判断は「面」ではなく「配り方」です** —— "
             f"画面の札は A/B {share:.0%}、規則は {per_day:.0f}本/日 なので"
-            f"**札の付く本は {per_day * share:.1f}本/日**。"
+            f"**札の付く本は {per_day * share:.1f}本/日・付かない本は {per_day * (1 - share):.1f}本/日**。"
             f" 落ち着いた1本の中央値 {med:.0f}回（齢168h 以上 n={n}・`data/views.jsonl`）を掛けると"
-            f" 治療群は **{treated:.0f}再生/日** → 判定に要る片群 {SUBS_BADGE_NEED_VIEWS:,}再生 まで"
-            f" **{days:.0f}日**。")
+            f" 治療群 {treated:.0f}再生/日 ／ 対照群 {control:.0f}再生/日 →"
+            f" **判定は遅いほう（{slow_name}・{slow:.0f}再生/日）で決まります**"
+            f" ＝ 片群 {SUBS_BADGE_NEED_VIEWS:,}再生 まで **{days:.0f}日**。")
+    # **`share` を動かしても日数は買えません。** 0.5 が最速（2群・総本数が固定）。
+    alloc = (f"{bar}       **`SUBS_BADGE_SHARE` を動かして、この日数は買えません** —— "
+             f"2群の判定は遅いほうの群で決まるので、いちばん速い配り方は **50%**"
+             f"（そのときの日数は {best:.0f}日）。"
+             if best is not None else "")
+    if best is not None and abs(share - 0.5) >= 1e-9:
+        thin = "札の付く本" if share < 0.5 else "札の付かない本"
+        alloc += (f" いまは {share:.0%} なので、**50% に戻すだけで {days - best:.0f}日 縮みます**"
+                  f"（{thin}が足りていません）。")
+    elif abs(share - 0.5) < 1e-9 and best is not None:
+        alloc += (" いまが 50% ＝ **もう最速で、上げても下げても遅くなるだけです**"
+                  "（0.7 なら 1.67倍・0.9 なら 5倍）。")
     if left is None:
         out.append(head + " 期限は `config/hypotheses.yaml` から読めませんでした。")
+        if alloc:
+            out.append(alloc)
         return out
     if days <= left:
         out.append(head + f" 期限 {dl} まで {left}日 なので **{left - days:.0f}日 の余りで届きます**"
                           f" ＝ **この A/B は畳まなくてよい。**"
                           f" `SUBS_BADGE_SHARE` を 1.0 にすると比べる相手が消えます（畳まないこと）。")
+        if alloc:
+            out.append(alloc)
     else:
         out.append(head + f" 期限 {dl} まで {left}日 しかないので **{days - left:.0f}日 足りません**"
                           f" ＝ **いまの配り方では、この A/B は何も見分けずに閉じます。**")
-        out.append(f"{bar}       **ただし先に効くのは A/B ではありません** —— "
+        if alloc:
+            out.append(alloc)
+        out.append(f"{bar}       **だから、動かすのは配り方ではありません** —— "
                    f"上の中央値は corpus（ほぼショート）の数で、"
                    f"齢48時間 の中央値は **ショート 対 長尺 で二桁 違います**"
                    f"（`python -m src.daily_pick`）。**その日の1本の形を先に決めること** ——"
                    f" 形が足りていれば {SUBS_BADGE_NEED_VIEWS:,}再生 は自然に届きます。"
-                   f" `SUBS_BADGE_SHARE` を上げるのは、形を直しても届かないときだけ。")
+                   f" 残る手は `per_day`（規則1）と `med`（形）の2つだけで、"
+                   f"**`share` はどちらでもありません。**")
     return out
 
 

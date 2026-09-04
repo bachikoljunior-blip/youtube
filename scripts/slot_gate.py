@@ -272,6 +272,54 @@ def _hour_lines(day=None) -> list[str]:
     return out + [""]
 
 
+def quota_lines(now=None) -> list[str]:
+    """**いま、どの道が開いているか。**（**API 0単位**）
+
+    ## なぜ要るか（2026-09-05 未明・最適化の回。**この回に撃って踏んだ**）
+
+    この門の最後の行は、長らくこうでした ——
+
+        **撃てないなら**（Data API の日枠 ＝ JST 16:00 に戻る）、
+        **その理由を `docs/JOURNAL.md` に書いてから終わること。**
+
+    **「撃てないなら」は、回に判定を任せています。** そして回はそれを
+    判定できませんでした（`next_slot.writable_from()` が、403 を見た窓で
+    **None ＝「撃てる」**を返していたため。同じ回に直した）。
+
+    **そして、日枠は道ごとに別々に閉じます** —— `videos.update`（50単位）が
+    403 でも、`videos.insert`（1600単位）は通ります
+    （`reschedule._update` の 403 の本文が、そう名指ししています。
+      実測 8/17 05:2x にも同じ割れ方）。**安いほうが先に閉じます。**
+
+    ＝ **枠が 0本 の日に「撃てない」と読んで終わるのは、たいてい誤りです。**
+    閉じているのは差し替えの側で、**新しく上げて予約を付ける道は開いています。**
+
+    この回の実物: 09/05 の枠を空けたあと `--move` が 403。
+    **`upload_only.py`（insert）なら、その同じ窓で埋められます。**
+
+    ## 覆る条件
+
+    差し替えが日枠の外に出たら（`next_slot.writable_from` の覆る条件と同じ日）、
+    この関数は1行も出しません。
+    """
+    try:
+        from src import next_slot                              # noqa: PLC0415
+        back = next_slot.writable_from(now)
+    except Exception:                                          # noqa: BLE001
+        return []
+    if back is None:
+        return []
+    return [
+        f"  [!] **`videos.update`（差し替え・50単位）は、いま 403 です** —— "
+        f"戻るのは **{back.astimezone(JST):%m/%d %H:%M} JST**"
+        "（`src/next_slot.writable_from`・**403 の観測で答えています**）。"
+        "＝ **`reschedule.py --move` / `--unschedule` は、いま通りません。**",
+        "  **それでも枠は埋められます** —— `videos.insert`（`upload_only.py`・1600単位）は"
+        "**日枠が切れていても通ります**（`scripts/reschedule.py` の 403 の本文。"
+        "**安いほうが先に閉じます**）。**「日枠だから何もできない」と読まないこと。**",
+    ]
+
+
 def mismatch_lines(rows: list[dict] | None = None, today=None,
                    picked=None, published=None, days: int | None = None) -> list[str]:
     """**枠に入っている本と、その日の決めが食い違っていたら、その行**（合っていれば空）。
@@ -482,7 +530,7 @@ def lines(rows: list[dict] | None = None, today=None) -> list[str]:
             "作るのは前の日から、**予約だけが当日**です"
             "（`python scripts/upload_only.py <名前> --draft` で予約を付けずに上げられます）。",
             "",
-        ] + _hour_lines(gap[0]) + [
+        ] + _hour_lines(gap[0]) + quota_lines() + [
             "**撃てないなら**（Data API の日枠 ＝ JST 16:00 に戻る）、"
             "**その理由を `docs/JOURNAL.md` に書いてから終わること。**",
         ]
@@ -496,7 +544,7 @@ def lines(rows: list[dict] | None = None, today=None) -> list[str]:
         f"    python scripts/upload_only.py s-<名前> \"\" {_hour_arg(gap[0])}",
         "    python scripts/inspect_build.py s-<名前>          # **投稿前に必ず目で見る**",
         "",
-    ] + _hour_lines(gap[0]) + [
+    ] + _hour_lines(gap[0]) + quota_lines() + [
         "**撃てないなら**（Data API の日枠 ＝ JST 16:00 に戻る／`AUTOMATION_PAUSED.md`）、"
         "**その理由を `docs/JOURNAL.md` に書いてから終わること。**",
     ]
