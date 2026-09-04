@@ -483,6 +483,45 @@ confirmed:
 """
 
 
+def test_暦の日を数える式は_1日1つより速い伸び率を名乗らない():
+    """**日は、1日に1つより速くは増えません**（`deadline_check._counts_days` の註）。
+
+    2026-09-04 22:3x に実物で踏んだ形 —— 前提「08-25 を境に落ちた1本あたり再生は…」の
+    `count_expr` は `staleness()['sample_days']` ＝ **帯に入った「日」の数**で、
+    `needs.what` が自分で「**規則の下では 1日1点**しか増えません」と書いています。
+    ところが押さえ（`_counts_videos`）は**本を数える式にしか掛からず**、
+    `deadline_check` は **6.00/日** を名乗って「あと2日」＝ 09/06 と出していました
+    （`earliest_pv_sample` は 09/11。**5日 ちがう日を2つの道具が同時に印字**）。
+
+    偽の `ready` に合わせて期限が手前へ縮むと、標本が届かないまま判定に入り、
+    「上回っていない＝外れ」で前提が倒れます ——
+    `test_遅すぎる期限が残っていないこと` の docstring が
+    「**検査が、台帳の禁じている行為を要求していた**」と呼んでいる形そのものです。
+    """
+    assert J._counts_days("__import__('src.rule_per_video', fromlist=['x'])"
+                          ".staleness()['sample_days']")
+    # **本を数える式は、こちらでは押さえません**（あちらは `_counts_videos` の担当）
+    assert not J._counts_days("len({r['video_id'] for r in rows('views')})")
+    assert not J._counts_days("clarity_books()")
+
+
+def test_暦の日の押さえが_実物の前提に効いていること(_real_world):
+    """**実物の台帳で、`ready` が `earliest_pv_sample` と同じ日を指すこと。**
+
+    2つの道具が別々の日を出していると、片方に合わせて期限を動かすたびに
+    もう片方が赤くなります（09-04 09:0x の回は「両方を満たす日はありません」と
+    台帳の註に書いて、**日付のほうを諦めていました**）。
+    """
+    vs = [v for v in J.check(_open_items()) if "08-25 を境に落ちた" in v.claim]
+    if not vs:                      # 閉じたら、この検査は仕事を終えています
+        pytest.skip("前提『08-25 を境に落ちた1本あたり再生は…』は閉じています")
+    v = vs[0]
+    assert v.ready is not None, "伸び率が出せていません"
+    why = " ".join(a.why for a in v.answers)
+    assert "1.00/日" in why or "暦で押さえています" in why, (
+        f"暦の日を数える式が 1日1つ より速い伸び率を名乗っています: {why}")
+
+
 def test_shrink_は_期限だけを縮めて_註を残すこと(tmp_path):
     """**`yaml.dump` で書き戻したら、3,300行の註が全部 消えます。**
 
