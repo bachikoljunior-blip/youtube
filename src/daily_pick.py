@@ -3580,6 +3580,153 @@ def outside_opening_lines(vid: str, topic: str, root: Path | None = None,
     return out
 
 
+#: ショートを尺で割る所（秒）。**外の帯から「速いほう」を測って決めた数ではありません** ——
+#: YouTube がショートを切る線（60秒）そのものです。長尺の `OUTSIDE_LONG_KNEE_SEC` は
+#: 「どちらの帯が速いか」を測って置いた切れ目でしたが、**ショートでその測定は通っていません**
+#: （`outside_length_controls("short")` のいちばん強い脚が逆を向く）。
+#: ＝ この線は**「自分がどこに居るか」を数えるための線**であって、狙いの帯ではありません。
+OUTSIDE_SHORT_KNEE_SEC = 60
+
+
+def own_short_lengths(uploaded_path: Path | None = None,
+                      max_sec: float = 200.0) -> dict | None:
+    """**自分のショートの尺は、どこに固まっているか**（`data/uploaded.jsonl`・API 0単位）。
+
+    返り: `{"n": 本数, "median": 中央, "min": 最小, "max": 最大, "over": 切れ目以上の本数}`。
+
+    `duration_s` が `max_sec` 以下の本をショートとみなします（長尺は 20分 以上なので、
+    200秒 で割れば取り違えません）。
+    """
+    import statistics as _st
+    secs: list[float] = []
+    for r in _jsonl(uploaded_path or (ROOT / "data" / "uploaded.jsonl")):
+        d = r.get("duration_s")
+        if not d:
+            continue
+        try:
+            v = float(d)
+        except (TypeError, ValueError):
+            continue
+        if 0 < v <= max_sec:
+            secs.append(v)
+    if not secs:
+        return None
+    return {"n": len(secs), "median": _st.median(secs), "min": min(secs),
+            "max": max(secs), "over": sum(1 for s in secs if s >= OUTSIDE_SHORT_KNEE_SEC)}
+
+
+def outside_window_share(lo: float, hi: float, form: str = "short",
+                         path: Path | None = None, top: int = 15) -> dict | None:
+    """**外の帯のうち、`lo`〜`hi` 秒 に居るのは何本か**（API 0単位）。
+
+    返り: `{"n": 帯の総数, "inside": その窓の本数, "share": 割合,
+            "top_n": 上位の本数, "top_inside": 上位のうち窓に居る数,
+            "top_median_sec": 上位の尺の中央}`。
+
+    **倍率ではありません。**「自分が居る所に、外はどれだけ居るか」だけを数えます ——
+    速い遅いは `outside_length_controls()` の3脚が言うことで、この関数は**占有**を見ます。
+    """
+    import statistics as _st
+    per = _corpus_per_day(form, path=path)
+    if not per:
+        return None
+    rows = _corpus_rows_raw(form, path=path)
+    inside = [p for p in per if lo <= p["secs"] <= hi]
+    out = {"n": len(per), "inside": len(inside),
+           "share": len(inside) / len(per) if per else 0.0}
+    if rows:
+        top_rows = sorted(rows, key=lambda r: -(r.get("views") or 0))[:top]
+        secs = [int(r["secs"]) for r in top_rows if r.get("secs")]
+        out["top_n"] = len(secs)
+        out["top_inside"] = sum(1 for s in secs if lo <= s <= hi)
+        out["top_median_sec"] = _st.median(secs) if secs else None
+    return out
+
+
+def _corpus_rows_raw(form: str, path: Path | None = None) -> list[dict]:
+    """帳面の行をそのまま返す（`views` で並べ替えたいときのため）。"""
+    try:
+        import sys
+        here = str(ROOT / "scripts")
+        if here not in sys.path:
+            sys.path.insert(0, here)
+        import niche_ceiling as nc                              # noqa: PLC0415
+        return list(nc.corpus_rows(form, path=path) if path else nc.corpus_rows(form))
+    except Exception:                                           # noqa: BLE001
+        return []
+
+
+def short_length_lines(video_id: str = "") -> list[str]:
+    """**ショートの尺を、決める側の画面に出す**（API 0単位）。
+
+    ## なぜ要るか（2026-09-05 07:3x に足した）
+
+    `lines()` は `if draft_form == "長尺":` の中でだけ尺を印字していました。
+    註にはこう書いてありました ——「**長尺のときだけ出します**（切れ目は外の長尺の
+    帯から引いた数で、ショートには当たりません）」。**切れ目は当たりませんが、
+    尺そのものは当たります。** そして:
+
+        `[きょうの1本]` が名指しする形は **ショート**（門1＋門2 の AND で近いほう）
+        `data/uploaded.jsonl` の実物 109本 は **全部 23.6〜32.6秒**（中央 29.0秒）
+        外の帯のショート 162本 で その窓（23〜33秒）に居るのは **7本（4.3%）**
+        再生の上位15本で その窓に居るのは **0本**（上位の尺 中央 99秒）
+
+    ＝ **供給の 100% を占める形の、いちばん大きい作りの違いが、どの回の目にも
+    入っていませんでした。** 長尺には 04:0x に同じ穴が見つかって塞がれています
+    （`draft_length_lines` の呼び手）。**同じ穴が、もう一方の形に開いたままでした。**
+
+    ## この行は「長くしろ」と言っていません
+
+    `outside_length_controls("short")` の3脚のうち、いちばん強い脚
+    （チャンネルを止めた符号検定）は **3組中 1組・×0.75・p=0.875 ＝ 逆向き**です。
+    だから印字は**占有**（自分がどこに居るか）と**3脚**を並べるだけで、
+    狙いの帯を名指ししません。**名指しできるようになる条件は、3脚がそろうこと。**
+
+    ## 覆る条件
+
+    3脚がそろって同じ向きになったら、`OUTSIDE_SHORT_KNEE_SEC` を「速いほうの帯の
+    切れ目」に置き直し、`config/hypotheses.yaml` に尺の前提を立てること
+    （**台帳が薄いときだけ**。`run_marker.ledger_days()`）。
+    自分のショートが窓の外へ出はじめたら（`over` が 0本 でなくなったら）、
+    この行は「固まっている」ではなく「散らばっている」を出すこと。
+    """
+    lines: list[str] = []
+    own = own_short_lengths()
+    if not own:
+        return lines
+    sec = measured_seconds(video_id) if video_id else None
+    knee = OUTSIDE_SHORT_KNEE_SEC
+    if sec:
+        side = "**上**" if sec >= knee else "**下**"
+        lines.append(
+            f"     この本の**尺 {sec:.0f}秒**（**実物**・`data/uploaded.jsonl` の"
+            f" `duration_s`）—— 外がショートを切る線 {knee}秒 の {side}")
+    lines.append(
+        f"       自分のショート {own['n']}本 の尺: 中央 **{own['median']:.0f}秒**"
+        f"・{own['min']:.0f}〜{own['max']:.0f}秒 の中に全部・{knee}秒 以上は"
+        f" **{own['over']}本**（`daily_pick.own_short_lengths`・**この周に数えた**）")
+    share = outside_window_share(own["min"], own["max"])
+    if share:
+        top = ""
+        if share.get("top_n"):
+            top = (f"／ 再生の上位{share['top_n']}本 では **{share['top_inside']}本**"
+                   f"（上位の尺 中央 {share['top_median_sec']:.0f}秒）")
+        lines.append(
+            f"       その窓（{own['min']:.0f}〜{own['max']:.0f}秒）に居る外の本:"
+            f" {share['n']}本 中 **{share['inside']}本（{share['share']*100:.1f}%）**"
+            f" {top} —— **作りが違うのは本当です**（`daily_pick.outside_window_share`）")
+    lines.extend(length_control_lines(
+        "short", bands=((0, knee), (knee, 10 ** 9)),
+        label=(f"{knee}秒 未満", f"{knee}秒 以上")))
+    lines.append(
+        "       [!] **この行は「長くしろ」と言っていません** —— 上の3脚のうち"
+        " いちばん強い脚（チャンネルを止めた側）が**逆を向いています**。"
+        " 読めるのは「外と作りが違う」までで、「長くすれば速くなる」ではありません。"
+        " **3脚がそろった回に、はじめて尺の前提を立てること**"
+        "（`daily_pick.short_length_lines` の覆る条件）。")
+    return lines
+
+
 def outside_long_lines(day: date, cur: dict | None, now: datetime | None = None,
                        topics: list[dict] | None = None,
                        drafts: list[dict] | None = None,
@@ -4168,10 +4315,22 @@ def lines(next_row: dict | None, now: datetime | None = None,
         # ＝ ×2.6）が、決める側の目に1度も入っていませんでした。**
         # 実測: `GFvAcxvDmYM` は 22.7分 ＝ 切れ目 25分 の 2.3分 下。
         #
-        # **長尺のときだけ出します**（切れ目は外の長尺の帯から引いた数で、
-        # ショートには当たりません）。**覆る条件**は `draft_length_lines` の docstring。
+        # **形ごとに、別の尺の行を出します**（2026-09-05 07:3x に直した）。
+        #
+        # ここは 07:3x まで `if draft_form == "長尺":` だけで、註にこう書いてありました ——
+        # 「**長尺のときだけ出します**（切れ目は外の長尺の帯から引いた数で、
+        # ショートには当たりません）」。**切れ目は当たりませんが、尺そのものは当たります。**
+        #
+        # そのあいだ、`[きょうの1本]` が名指しする形（門1＋門2 の AND では **ショート**）の
+        # 尺は、**どの回の目にも入っていませんでした** —— 実測: 自分のショート 109本 は
+        # 全部 24〜33秒、外の帯のショート 132本 で その窓に居るのは **6本（4.5%）**、
+        # 再生の上位15本では **0本**（上位の尺 中央 126秒）。
+        # **供給の 100% を占める形の、いちばん大きい作りの違い**です。
+        # 04:0x に長尺で塞がれたのと**同じ穴**が、もう一方の形に開いたままでした。
         if draft_form == "長尺":
             out.extend(draft_length_lines(str(next_row.get("video_id") or "")))
+        elif draft_form == "ショート":
+            out.extend(short_length_lines(str(next_row.get("video_id") or "")))
     rd = c.get("recent_days", 14)
     out.append(f"     齢 {AGE_HOURS}時間 でそろえた1本あたり再生（`data/views.jsonl`・API 0単位・"
                f"{c.get('n_rows', 0)}本）:")
