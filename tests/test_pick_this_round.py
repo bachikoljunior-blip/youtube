@@ -60,6 +60,7 @@ def test_食い違いの行は_決めた回には_やり直せと言わない(tm
     picks = tmp_path / "picks.jsonl"
     runs = _runs(tmp_path, "2026-09-04T18:16:49+09:00")
     dp.record("長尺", "t", "数 314 で決めた", day=date(2026, 9, 5), path=picks, video_id="A",
+              expected=314.0,
               now=datetime(2026, 9, 4, 18, 20, tzinfo=JST))
     cur = list(dp._jsonl(picks))[-1]
     monkeypatch.setattr(dp, "RUNS", runs)
@@ -77,6 +78,7 @@ def test_前の回の決めなら_やり直す口を出す(tmp_path, monkeypatch
     picks = tmp_path / "picks.jsonl"
     runs = _runs(tmp_path, "2026-09-04T18:16:49+09:00")
     dp.record("長尺", "t", "数 314 で決めた", day=date(2026, 9, 5), path=picks, video_id="A",
+              expected=314.0,
               now=datetime(2026, 9, 4, 16, 55, tzinfo=JST))
     cur = list(dp._jsonl(picks))[-1]
     monkeypatch.setattr(dp, "RUNS", runs)

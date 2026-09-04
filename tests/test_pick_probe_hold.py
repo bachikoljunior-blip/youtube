@@ -43,7 +43,7 @@ def test_門が開く前は次の未決の日を長尺で取れない(tmp_path):
     assert msg, "門が開く前の『次の未決の日』は止まること"
     assert "PROBE1" in msg and "09/05 09:00" in msg, msg
     with pytest.raises(ValueError):
-        daily_pick.record("長尺", "long-probe", "18本目 2回", day=date(2026, 9, 6),
+        daily_pick.record("長尺", "long-probe", "18本目 2回", day=date(2026, 9, 6), expected=2.0,
                           now=now, path=tmp_path / "picks.jsonl",
                           topics=TOPICS, uploaded_path=up)
 
@@ -54,7 +54,7 @@ def test_試す本そのものの日は止めない(tmp_path):
     now = datetime(2026, 9, 4, 12, 0, tzinfo=timezone.utc)
     assert daily_pick.probe_hold("長尺", date(2026, 9, 4), now=now,
                                  topics=TOPICS, uploaded_path=up) == ""
-    row = daily_pick.record("長尺", "long-probe", "きょうの1本 2回", day=date(2026, 9, 4),
+    row = daily_pick.record("長尺", "long-probe", "きょうの1本 2回", day=date(2026, 9, 4), expected=2.0,
                             now=now, path=tmp_path / "picks.jsonl",
                             topics=TOPICS, uploaded_path=up)
     assert row["form"] == "長尺"
@@ -70,7 +70,7 @@ def test_門が開いたあとは止めない_ショートも止めない(tmp_pa
     early = datetime(2026, 9, 4, 12, 0, tzinfo=timezone.utc)
     assert daily_pick.probe_hold("ショート", date(2026, 9, 6), now=early,
                                  topics=TOPICS, uploaded_path=up) == ""
-    daily_pick.record("ショート", "s-plain", "既定の形 1049回", day=date(2026, 9, 6),
+    daily_pick.record("ショート", "s-plain", "既定の形 1049回", day=date(2026, 9, 6), expected=1049.0,
                       now=early, path=tmp_path / "picks.jsonl",
                       topics=TOPICS, uploaded_path=up)
 
@@ -81,9 +81,9 @@ def test_数字で上書きできる_行に残る(tmp_path):
     now = datetime(2026, 9, 4, 12, 0, tzinfo=timezone.utc)
     p = tmp_path / "picks.jsonl"
     with pytest.raises(ValueError):        # 数字の無い言い訳は通さない
-        daily_pick.record("長尺", "long-probe", "理由 1件", day=date(2026, 9, 6), now=now,
+        daily_pick.record("長尺", "long-probe", "理由 1件", day=date(2026, 9, 6), now=now, expected=1.0,
                           path=p, anyway="なんとなく", topics=TOPICS, uploaded_path=up)
-    row = daily_pick.record("長尺", "long-probe", "理由 1件", day=date(2026, 9, 6), now=now,
+    row = daily_pick.record("長尺", "long-probe", "理由 1件", day=date(2026, 9, 6), now=now, expected=1.0,
                             path=p, anyway="外の p90 647,526回 を取りに行く",
                             topics=TOPICS, uploaded_path=up)
     assert row["anyway"] and "647,526" in row["anyway"]
@@ -94,7 +94,7 @@ def test_写しは決めではないので止めない(tmp_path):
     ここで止めると、**焼き直しが決めを新しい ID へ写せなくなります**。"""
     up = _uploaded(tmp_path, "2026-09-04T00:00:00Z")
     now = datetime(2026, 9, 4, 12, 0, tzinfo=timezone.utc)
-    row = daily_pick.record("長尺", "long-probe", "焼き直し: 1本", day=date(2026, 9, 6),
+    row = daily_pick.record("長尺", "long-probe", "焼き直し: 1本", day=date(2026, 9, 6), expected=1.0,
                             now=now, path=tmp_path / "picks.jsonl",
                             kind=daily_pick.PICK_KIND_CARRY,
                             topics=TOPICS, uploaded_path=up)
@@ -120,7 +120,7 @@ def test_処置でない本は次の未決の日を止めない(tmp_path, monkey
                         lambda vid, **kw: ("no", "外の型の脚が 3本 通っていません"))
     assert daily_pick.probe_hold("長尺", date(2026, 9, 6), now=now,
                                  topics=TOPICS, uploaded_path=up) == ""
-    row = daily_pick.record("長尺", "long-probe", "処置は 0本／36本", day=date(2026, 9, 6),
+    row = daily_pick.record("長尺", "long-probe", "処置は 0本／36本", day=date(2026, 9, 6), expected=1.0,
                             now=now, path=tmp_path / "picks.jsonl",
                             topics=TOPICS, uploaded_path=up)
     assert row["form"] == "長尺"
