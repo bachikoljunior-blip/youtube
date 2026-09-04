@@ -1475,6 +1475,41 @@ def judgeable_today() -> list[str] | None:
         return None
 
 
+def _premise_hand_line() -> str:
+    """**この案内が `premise` を「通る手」に数えてよいか。**（`ledger_days()` だけ・API 0単位）
+
+    ## なぜ要るか（2026-09-05・最適化の回。**この回が自分で踏んだ**）
+
+    `dry_ledger_gate()` の止めの文は、通る手を3つ名指しします ——
+    `improve` ／ 枠の本の `fix` ／ **`premise`**。同じ回に足した台帳の門
+    （`ledger_days()`・すぐ下の `premise` の門）は、台帳が厚い間 `premise` を
+    **通しません。** **＝ 2つの門が、同じ回に正反対のことを言います。**
+
+    実測（この回・自分で撃った）: 案内どおり `--kind premise --lever per_video` を
+    撃つと、次の門が「台帳には まだ 17.0日ぶん の燃料が在ります」で止めます。
+    **回は、案内された手を撃って、もう1回 止められます。**
+
+    `run_marker.py` 自身が3度 測っている結論はこれです ——
+    **「註と警告では戻り、通さないことだけが効いた」。** 裏返すと、
+    **通らない手を案内する門は、その回を1回 捨てさせます。**
+
+    だから、この行は台帳を見てから書きます。**覆る条件**: `premise` の門
+    （`ledger_days()`）を畳んだら、この関数も一緒に畳むこと（片方だけ残すと、
+    今度は「通る手」を隠す側でずれます）。
+    """
+    try:
+        _ld = ledger_days()
+        _lead = premise_lead_days()
+    except Exception:                                            # noqa: BLE001
+        _ld, _lead = {}, 0
+    if _ld.get("days") is not None and _ld["days"] >= _lead:
+        return ("    （`--kind premise` は **いま通りません** —— 台帳に "
+                f"{_ld['days']:.1f}日ぶん の燃料が在り、きょう立てる1件が熟すのは "
+                f"{_lead}日 後です。`run_marker.ledger_days()`）\n")
+    return ("    --kind premise  『その天井は天井ではない』を置く"
+            "（`eta.py`: 外の最大は自分の天井の ×1189.3・要る ×22.28）\n")
+
+
 def dry_ledger_gate(ship: str, ready: list[str] | None, slot: dict,
                     over: bool) -> dict:
     """**台帳が空の日に通す `fix` を、きょうの枠の本に絞る。**（純関数・**API 0単位**）
@@ -3352,9 +3387,8 @@ def main(argv: list[str] | None = None) -> int:
                       "  **通る手**（どれも きょう 撃てます）:\n"
                       f"    --kind improve  枠の本の作り方を変える（`{_u['topic'] or _u['video_id']}` を `--ship` に書く）\n"
                       f"    --kind fix      枠の本を直す（同上）\n"
-                      "    --kind premise  『その天井は天井ではない』を置く"
-                      "（`eta.py`: 外の最大は自分の天井の ×1189.3・要る ×22.28）\n"
-                      "  **なぜ `improve` を捨てないか**: `improve` の `moves` は"
+                      + _premise_hand_line()
+                      + "  **なぜ `improve` を捨てないか**: `improve` の `moves` は"
                       "**定義上 0** です（`MOVING_KINDS` の註／`eta.py`「作る・出す・直すは"
                       "軌跡の入力に入りません」）。**定義で 0 にした数は、腕を捨てる根拠になりません。**")
             elif _over and not _trip:

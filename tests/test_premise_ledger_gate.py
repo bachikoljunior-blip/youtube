@@ -160,3 +160,35 @@ def test_other_kinds_are_not_blocked(monkeypatch, _ship_stub):
     assert run_marker.main(
         ["--ship", "improve: 09/05 の枠の本を1か所 直した（1件）",
          "--kind", "improve", "--lever", "per_video", "--moves", "0"]) == 0
+
+
+# --- 2つの門が同じことを言うこと ------------------------------------------
+
+def test_dry_ledger_menu_does_not_offer_a_hand_that_is_closed(monkeypatch):
+    """**通らない手を「通る手」に並べないこと**（`_premise_hand_line()` の註）。
+
+    `dry_ledger_gate()` の止めの文は `premise` を通る手に名指ししていました。
+    同じ回に足した台帳の門は、台帳が厚い間 `premise` を通しません ——
+    **案内どおり撃った回が、次の門でもう1回 止められます。**
+    """
+    monkeypatch.setattr(run_marker, "ledger_days", lambda *a, **k: {
+        "days": 17.0, "live": 34, "rate": 2.0, "closed_recent": 14,
+        "window": 7, "open": 36, "by_lever": {"per_video": 20}})
+    line = run_marker._premise_hand_line()
+    assert "いま通りません" in line
+    assert "--kind premise  『" not in line
+
+    # **薄くなったら、案内も戻ること**（片方だけ残さない）。
+    monkeypatch.setattr(run_marker, "ledger_days", lambda *a, **k: {
+        "days": 1.0, "live": 2, "rate": 2.0, "closed_recent": 14,
+        "window": 7, "open": 4, "by_lever": {"per_video": 2}})
+    assert "--kind premise" in run_marker._premise_hand_line()
+    assert "いま通りません" not in run_marker._premise_hand_line()
+
+
+def test_premise_hand_line_survives_an_unreadable_ledger(monkeypatch):
+    """読めなければ、案内は元の（通る手として並べる）側に戻ること。"""
+    def boom(*a, **k):
+        raise OSError("no")
+    monkeypatch.setattr(run_marker, "ledger_days", boom)
+    assert "--kind premise" in run_marker._premise_hand_line()
