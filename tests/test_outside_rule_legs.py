@@ -88,3 +88,51 @@ def test_べきか_も判断の語として数える():
     assert sw._OUTSIDE_CHAPTER_DECIDE_RE.search("次の判断は、月給を抑えるべきかです")
     assert sw._OUTSIDE_CHAPTER_DECIDE_RE.search("抑える意味があるかどうかは、その範囲のどこにいるかで決まります")
     assert not sw._OUTSIDE_CHAPTER_DECIDE_RE.search("年金が多い人ほど、線は左にあります")
+
+
+def test_表が書いた脚の番号は_その口が本当に数えている番号か():
+    """**番号のずれを見る。** 2026-09-04 20:4x に実物で踏んで足しました。
+
+    それまで表はこう書いていました::
+
+        ("最後に判断の語", "outside_title_problems (4b)")
+        ("全角45文字以内", "outside_title_problems (4c)")
+
+    ところが `outside_title_problems` が数えている番号は
+    **(4b) 題の長さ ／ (4c) サムネの金額** です ——
+    **表の2行は、別の物を数える口を指していました。**
+
+    上の `test_規則の節はすべて数える口か理由に結び付いている` は
+    「**どこかの口**に結び付いているか」しか見ないので、**番号が違っても緑**でした。
+    実際、題の金額も題の末尾の判断の語も、**どちらも門になっていません**でした
+    （`outside_title_problems({'title': '【緊急解説】まったく数字のない題です'}) == []`）。
+
+    ＝ この検査は「数え落とし」ではなく「**数えていると名乗る所**」を見ます。
+    上の module docstring の「穴ではなく、穴を作っている側を塞ぐ」の、番号の側です。
+
+    **赤になったときの直し方**（表から番号を消して緑にしないこと）:
+
+      1. その番号を、その口の docstring の「何を数えるか」に足す（＝ 実際に数える）
+      2. 表の番号を、その口が本当に数えている番号へ直す
+      3. 数えないと決めたなら `OUTSIDE_LEG_NOT_COUNTED + "<なぜ>"` へ（**理由は必須**）
+    """
+    import inspect
+    import re
+    ずれ = []
+    for 節, 値 in sw.OUTSIDE_RULE_LEGS:
+        if 値.startswith(sw.OUTSIDE_LEG_NOT_COUNTED):
+            continue
+        口 = re.findall(r"(outside_\w+_problems)", 値)
+        番号 = re.findall(r"\((\d[a-z0-9]*)\)", 値)
+        if not 口 or not 番号:
+            continue                      # 番号を持たない脚（冒頭の a〜e）はここでは見ない
+        fn = getattr(sw, 口[0], None)
+        doc = inspect.getdoc(fn) or ""
+        for n in 番号:
+            if f"({n})" not in doc:
+                ずれ.append((節, 口[0], n))
+    assert not ずれ, (
+        "`OUTSIDE_RULE_LEGS` の番号が、その口が数えている番号に在りません:\n"
+        + "\n".join(f"  ・「{k}」→ {f} の ({n})" for k, f, n in ずれ)
+        + "\n表の番号を直すか、その番号を実際に数えて docstring に足すこと。"
+          "**表から番号を消して緑にしないこと。**")
