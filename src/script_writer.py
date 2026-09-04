@@ -1808,6 +1808,48 @@ def outside_length_chars_floor() -> int:
     return int(OUTSIDE_LONG_KNEE_SEC * LONG_CHARS_PER_SECOND)
 
 
+def outside_long_minutes() -> tuple[float, float, float]:
+    """`style: outside_long` の本を作るときの **(下限, 目標, 上限) 分**。純関数・API 0単位。
+
+    ## なぜ要ったか（2026-09-05 04:3x に、焼いている最中に踏んだ）
+
+    `outside_length_problems()`（03:5x）は台本を **8,430字 ＝ 25分** で落とすようになりました。
+    ところが**書き手に渡す尺**は、そこから来ていませんでした ——
+    `config/topics.yaml` の `minutes: 20` を `pipeline` がそのまま使い、実測でこう刷ります::
+
+        [pipeline] 題材の尺で作ります: 目標 20分（下限 16.0分・上限 25.0分）
+
+    **命じる尺 20分 と、落とす床 25分 が正面から食い違っています。**
+    この形で焼くと、`generate()` は「20分で書け」と言われた台本を書き、
+    `long_script_problems` が「25分に足りない」で落とし、**書き直しの3回を食い尽くして
+    1本も出せません**（`claude -p` 約250秒 × 3）。2026-09-05 04:2x にこの焼きを
+    実際に立ち上げ、上の行を読んで**止めました**（`data/rebake_d9750b.log`）。
+
+    `minutes: 20` は 2026-09-03 に書かれた数で、**帯を数え直した 02:1x より前**です。
+    題材ごとの `minutes:` の口は残しますが、**`style: outside_long` の本だけは
+    規則の側が勝ちます** —— 規則は帯の実測から来ており、題材の数は手書きだからです。
+
+    ## 3つの数の出どころ（**べた書きしません**）
+
+        下限 24.0分   `verify` に渡る側。**切れ目より少し下**に置きます。
+                      台本の床（`outside_length_chars_floor` ＝ 8,430字）ちょうどの台本は
+                      速さの幅（5.44〜5.66字/秒）の速い側で 24.8分 に落ちます。
+                      ここを 25.0 にすると、**丸めだけで1本まるごと捨て**になります
+                      （`verify` で落とすと `claude -p` ＋合成＋レンダリングが全部 無駄。
+                      `outside_length_problems` の docstring と同じ理由で、落とすのは台本の側）。
+        目標 27.5分   帯でいちばん速い升 **25〜30分**（n=24・**2,094回/日**）の**まん中**。
+        上限 30.0分   同じ升の上。**上側に罰は測れていません**（30〜35分 969回/日 →
+                      35〜60分 2,519回/日）ので、上限は升の外へ出さないためだけに置きます。
+
+    **覆る条件**: 帯を数え直して切れ目が 25分 でなくなったら
+    `daily_pick.OUTSIDE_LONG_KNEE_SEC` を動かすこと —— 下限はそこから引くので自動で追随します。
+    いちばん速い升が 25〜30分 でなくなったら、目標と上限の `+2.5` / `+5.0` を数え直すこと。
+    """
+    from .daily_pick import OUTSIDE_LONG_KNEE_SEC                  # noqa: PLC0415
+    knee = OUTSIDE_LONG_KNEE_SEC / 60.0                            # 25.0分
+    return round(knee - 1.0, 1), round(knee + 2.5, 1), round(knee + 5.0, 1)
+
+
 def outside_length_problems(script) -> list[str]:
     """`style: outside_long` の台本が、**外の帯の切れ目（25分）を割っていないか。**
 
