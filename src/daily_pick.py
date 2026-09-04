@@ -480,6 +480,51 @@ def other_form_topic(topic: str | None, topics: set[str] | None = None,
     return cand
 
 
+def published_topics(uploaded: dict | None = None,
+                     observed: set[str] | None = None,
+                     uploaded_path=None, views_path=None) -> set[str]:
+    """**もう公開ずみの題材**（その題材の本が1本でも公開されている）。
+
+    ## なぜ要るか（2026-09-05 05:5x・最適化の回。**その日の1本がこれで決まりかけていました**）
+
+    規則3 の焼き直しは、**同じ題材の下書きを池に置いていきます**（消さない・規則の4）。
+    そのうち1本が公開されると、**残りの下書きは二度と出せません** ——
+    出せば、同じ題の本が2本 並びます。
+
+    `pool_candidates()` は「その本自身が公開されたか」（`_observed_ids`）しか見て
+    いなかったので、**公開された本の兄弟**は池に残り、族の中央値の高い順の先頭に
+    立ちます。実測（2026-09-05 05:11 の `data/daily_pick.jsonl`）::
+
+        09/05 の1本 ＝ OBJdXEr6gLg  「小規模企業共済を11か月でやめるといくらか #Shorts」
+        09/03 に公開 ＝ 9zkfjEH48PY 「小規模企業共済を11か月でやめるといくらか #Shorts」  ← **同じ字**
+
+    OBJ は 09-02 11:37 に上げた下書きで、9zk（09-02 15:09）は**その焼き直し**です。
+    焼き直しのほうが公開され、**元の下書きが「あすの1本」に選ばれました。**
+    規則は「公開は1日1本」なので、**その日の枠は1つしかありません** ——
+    枠を同じ字の焼き直しに使うと、その日の取り分は 0 です。
+
+    実測（この回）: 池 ショート 324本 のうち **8本**・長尺 160本 のうち **3本** が
+    公開ずみの題材で、**うち5本は題が1文字も違いません**。
+
+    `unposted_topics()` は新しい題材の側で**同じ規則をすでに掛けています**
+    （`tid in posted`）。片側だけ掛かっていなかった、というのがこの穴の形です。
+
+    `dupes.blocking()` は同じことを見ますが、**投稿（`upload_only.py`）の側**に
+    立っています。池から選ぶ道は**すでに上げてある本**を使うので、その門を通りません。
+
+    **覆る条件**: 焼き直しが古い下書きを消すようになったら（規則の4 が変わったら）、
+    池に兄弟は残らないので、ここは要りません。
+    """
+    up = _latest_uploaded(uploaded_path) if uploaded is None else uploaded
+    obs = _observed_ids(views_path) if observed is None else observed
+    out = set()
+    for vid in obs:
+        r = up.get(vid)
+        if r and r.get("topic"):
+            out.add(r["topic"])
+    return out
+
+
 def pool_candidates(form: str = "ショート", fams: list[dict] | None = None,
                     uploaded_path: Path | None = None, rows: list[dict] | None = None,
                     exclude: str | None = None, by_id: dict[str, str] | None = None,
@@ -492,12 +537,18 @@ def pool_candidates(form: str = "ショート", fams: list[dict] | None = None,
     fams = fams if fams is not None else by_family(aged_views() if rows is None else rows, form)
     # **一度でも公開した本は除く**（齢 48時間 に届かずに池へ戻った本も。控えの観測が
     #     1行でも在れば公開したことがある —— 実測 `Z0tBNDpr60o`: 5行・149再生・private）。
-    seen = {r["video_id"] for r in (rows or [])} | _observed_ids(views_path)
+    _obs = _observed_ids(views_path)
+    seen = {r["video_id"] for r in (rows or [])} | _obs
+    # **公開ずみの題材の下書きも外すこと**（`published_topics()` の註）。
+    #     その本自身が公開されていなくても、**兄弟が公開されていれば同じ字**です。
+    _done = published_topics(up, _obs)
     by_id = _topic_calc_map() if by_id is None else by_id
     known = _known_calcs() if known is None else known
     out = []
     for vid, r in up.items():
         if vid == exclude or r.get("at") or not r.get("uploaded_at") or vid in seen:
+            continue
+        if r.get("topic") in _done:
             continue
         f, _ = _form_of(r, fm)
         if f != form:
@@ -3760,6 +3811,44 @@ def outside_first(pool: list[dict], topics: list[dict] | None = None) -> list[di
     return sorted(pool, key=lambda p: 0 if str(p.get("topic") or "") in tops else 1)
 
 
+def ahead_move_note(day: date) -> str:
+    """**`--move` の1行の頭**（「いつ置くか」）。**規則5 の本文を写さないこと。**
+
+    ## なぜ関数にしたか（2026-09-05 05:2x に踏んだ・実測）
+
+    ここは長らく、こうべた書きしていました ——
+    「**{day}（JST）になってから**、この本を その日の枠へ（1本 50単位・
+    **先の日付には置かない**）」。それは規則5 の**写し**で、条件を持ちません。
+
+    規則5 の出どころは `house_rule.may_schedule_ahead()` **1か所**です。
+    2026-09-04 17:3x のオーナー指示（「目標以外全部外して良いよ」＝
+    `OWNER_FLOORS_LIFTED = True`）で規則5 は **外れました**。ところが写しは
+    そのままなので、**外れた後も「明日になってから置け」と言い続けます。**
+
+        09/05 05:2x  `scripts/slot_gate.py`  「09/06・09/07 が 0本 ＝
+                                              **その日は投稿が途切れます**」（いま置け）
+        09/05 05:2x  この行                  「**09/06（JST）になってから**」（待て）
+        09/05 05:2x  `house_rule.refuse_future_publish('2026-09-06T…')` → **空**（断らない）
+
+    **回が最初に読むほう（`run_marker.py --write` の画面）が「待て」と言っていました。**
+    `scripts/slot_gate.py` の冒頭が「**同じ与件で2つの道具が別のことを言うのが、
+    この repo でいちばん多い壊れ方**」と名指ししている形そのものです。
+
+    ## 覆る条件
+
+    オーナーが床を戻したら（`OWNER_FLOORS_LIFTED = False`）、ここは何も直さずに
+    元の「その日になってから」へ戻ります。**写しを1つも残していないから**です。
+
+    検査は `tests/test_ahead_note_follows_rule5.py`。
+    """
+    from src import house_rule                                  # noqa: PLC0415
+    if house_rule.may_schedule_ahead():
+        return (f"この本を {day:%m/%d} の枠へ（**いま置けます** —— 規則5 は外れています・"
+                f"`house_rule.may_schedule_ahead()`・1本 50単位）")
+    return (f"**{day:%m/%d}（JST）になってから**、この本を その日の枠へ"
+            f"（1本 50単位・先の日付には置かない）")
+
+
 def lines(next_row: dict | None, now: datetime | None = None,
           cmp: dict | None = None, picks_path: Path | None = None,
           topics: set[str] | None = None, cands: list[dict] | None = None,
@@ -3949,8 +4038,7 @@ def lines(next_row: dict | None, now: datetime | None = None,
         # `expected_48h` は最初から書かれていて、**どこも読んでいませんでした**（実物 22行 全部 null）。
         out.extend(expected_lines(now=now, picks_path=picks_path))
         if vid:
-            out.append(f"     → **{day:%m/%d}（JST）になってから**、この本を その日の枠へ"
-                       f"（1本 50単位・先の日付には置かない）:")
+            out.append(f"     → {ahead_move_note(day)}:")
             out.append(f"       python scripts/reschedule.py --move {vid} {day:%Y-%m-%d}T{hour:02d}:00")
             if next_row and next_row.get("video_id") and next_row.get("video_id") != vid:
                 out.append(f"     　 次に出る本 `{next_row.get('video_id')}` は**消さない**"

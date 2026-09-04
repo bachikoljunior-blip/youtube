@@ -2192,6 +2192,125 @@ def _after_tail(need: dict, on: date, what: str, lag: int) -> Answer:
     return Answer(on, f"{what} は {on:%m/%d} に出ます")
 
 
+#: `外の作りを写した<形>が1本 公開されて 48時間` の `what` から**形**を取る。
+#: `外の作り方を写した`（長尺の側の言い回し）も同じ意味なので、両方 受けます。
+_OUTSIDE_WHAT = re.compile(r"外の作り(?:方)?を写した(ショート|長尺)が1本\s*公開されて")
+
+#: 形 → `config/topics.yaml` の `style:` の札（＝「この型で作るつもり」の印）
+_OUTSIDE_STYLE = {"長尺": "outside_long", "ショート": "outside_short"}
+
+
+def _outside_style_topics(tag: str) -> int:
+    """`config/topics.yaml` に `style: <tag>` の題材が何件 在るか。**API 0単位・純関数。**"""
+    try:
+        rows = yaml.safe_load((ROOT / "config" / "topics.yaml").read_text(encoding="utf-8"))
+    except (OSError, yaml.YAMLError):
+        return 0
+    if isinstance(rows, dict):
+        rows = rows.get("topics") or []
+    return sum(1 for r in (rows or [])
+               if isinstance(r, dict) and str(r.get("style") or "") == tag)
+
+
+def _outside_supply(what: str) -> "Answer | None":
+    """**その型の本が、どこにも1本も無いなら、その日は来ない。**（`Answer` を返したら打ち切る）
+
+    ## なぜ要るか（2026-09-05 05:2x・サブの回が、前の回の申し送り 2. を撃って確かめた）
+
+    `kind: after` は **時計だけ**で日を出します。`data_file:` を書いても見るのは
+    「その計器が新しいか」で、**その要件が数えている本が在るか**は誰も見ていません。
+
+    実測（この回に撃った数・API 0単位）::
+
+        daily_pick.treated_count('ショート') = (0, 216)   ← 処置は **1本も公開されていない**
+        grep 'style: outside_short' config/topics.yaml  = **0件**  ← 札すら無い
+        09/06 の枠の本 `DtpnSVFDtAE` は既存の池のショート
+          （`treated_probe` は `unknown` ＝ 台本の控えが無い）
+
+    それでも `deadline_check.py` は
+
+        [OK] 09-08  外の帯の上位の**ショート**の作り…
+               外の作りを写したショートが1本 公開されて 48時間 は 09/08 に出ます
+               → 判定できるのは 09-08。**期限とちょうど同じ**です
+
+    と印字していました。**判定できる本が、この世に1本も無い日付**です。
+    `arm_speed.forward()` の θ はこれを「09-08 に閉じる前提」として数えるので、
+    **腕 `per_video` の見込みに、来ない1件が乗っていました。**
+
+    **長尺の側は同じ穴を 2日 かけて踏んでいます** —— `treated_probe` の註
+    （「札だけの本が処置として枠を食う」）と、`config/hypotheses.yaml` 611行 の
+    【2026-09-04 22:3x 訂正】。**ショートの側は、札すら無いまま同じ位置に居ました。**
+
+    ## 何を見て、何を返すか
+
+    **公開ずみの処置が 0本**（`daily_pick.treated_count`）**かつ**
+    **`config/topics.yaml` にその札の題材が 0件**なら、`unreachable=True` を返します。
+    片方でも在れば通します —— 長尺は `style: outside_long` が **3件** 在るので、
+    **この門は長尺を止めません**（`GFvAcxvDmYM` は、この回に焼き直している最中です）。
+
+    `_paused_supply()` と同じ形です（「こちらが動かないかぎり来ない」）。
+    `warming`（待てば来る）ではありません。**待っても来ません。**
+
+    ## **これは「遅らせる」変更です**
+
+    台帳の「判定できる日が出せない」が 1件 → 2件 になります。**それが実測です。**
+    消すには**日付を書き換えるのではなく、その型の本を1本 作る**こと ——
+    ショートなら `config/topics.yaml` に `style: outside_short` の題材を1件 置き、
+    `src/script_writer` にその型の脚を足す（長尺の `OUTSIDE_LONG_RULE` と同じ位置）。
+
+    **覆る条件**: `style:` の札ではなく実物の台本で数える口
+    （`daily_pick.treated_probe` の形）が下書きにも通ったら、`_outside_style_topics()` は
+    そちらに置き換えること —— 札だけの本を「在る」と数えるのは、長尺が踏んだ穴そのものです。
+    """
+    m = _OUTSIDE_WHAT.search(what)
+    if m is None:
+        return None
+    form = m.group(1)
+    tag = _OUTSIDE_STYLE[form]
+    try:
+        from src import daily_pick  # noqa: PLC0415  （重いので、この道でだけ読む）
+        done, total = daily_pick.treated_count(form)
+    except Exception:                                    # noqa: BLE001
+        return None                                      # 数えられないなら止めない
+    if done > 0:
+        return None
+    drafts = _outside_style_topics(tag)
+    if drafts > 0:
+        return None
+    return Answer(
+        None,
+        f"**その型の本が1本も在りません** —— 公開ずみの処置 **0本／{total}本**"
+        f"（`src/daily_pick.treated_count('{form}')`・実物の台本の控えで数えた）、"
+        f"`config/topics.yaml` の `style: {tag}` の題材も **0件**（札すら無い）。"
+        f"**{what}** は、こちらが1本 作らないかぎり来ません ——"
+        f"**期限を延ばしても1日も近づきません。**" + _outside_blocker(form),
+        unreachable=True)
+
+
+def _outside_blocker(form: str) -> str:
+    """**「作れ」で終わらせないこと** —— *何が* 作らせていないかを、同じ行に数で並べる。
+
+    `CLAUDE.md`「**裸の『届きません』を出さないこと。何を固定したせいでそう出たのかを
+    同じ行に並べること**」。ショートの側は、いちばん重い脚（尺）が
+    `script_writer.SHORT_TOTAL_CHARS` の上限で**構造的に**塞がっています。
+    """
+    if form != "ショート":
+        return ""
+    try:
+        from src import outside_short, script_writer     # noqa: PLC0415
+        lo, hi = outside_short.total_chars_band()
+        cap = int(script_writer.SHORT_TOTAL_CHARS)
+        cps = float(script_writer.EFFECTIVE_CHARS_PER_SECOND)
+    except Exception:                                    # noqa: BLE001
+        return ""
+    return (f" **いちばん重い脚（尺）は、いまの作りでは出せません** ——"
+            f" 外の帯の速い升 {outside_short.LENGTH_BAND[0]}〜{outside_short.LENGTH_BAND[1]}秒"
+            f"（＝ {lo}〜{hi}字）に対し `script_writer.SHORT_TOTAL_CHARS` は"
+            f" **{cap}字 ＝ {cap / cps:.1f}秒** が上限"
+            f"（実測: 自分のショート 109本 が 109本とも 23.6〜32.6秒）。"
+            f" **脚 → 札 → 本の順**（`src/outside_short` の docstring）。")
+
+
 def _ans_after(need: dict, lag: int) -> Answer:
     """**その日が来るのを待っているだけ**の要件。
 
@@ -2230,6 +2349,12 @@ def _ans_after(need: dict, lag: int) -> Answer:
     except (TypeError, ValueError):
         return Answer(None, f"**`on_date` が読めません**: {need.get('on_date')!r}")
     what = str(need.get("what") or "その日のデータ")
+    # **時計より先に、その型の本が在るかを見ること**（`_outside_supply` の註）。
+    # 「こちらが作らないかぎり来ない」は**そのものの性質**なので、
+    # 何日 待っても、どの計器を取り直しても変わりません（`zero_means_never` と同じ扱い）。
+    outside = _outside_supply(what)
+    if outside is not None:
+        return outside
     at = need.get("at_time_jst")
     if at:
         try:

@@ -457,8 +457,31 @@ def plan_all(board: Board) -> list[str]:
     out = ["", "=== 0再生の枠に居る本を、上限の余っている日へ逃がす"
                 "（**新しい本は1本も要りません**）==="]
     was = board.live()
+    # **`live()` が形で外している本を、逃がす相手にしないこと**（2026-09-05 06:0x に数えた）。
+    #
+    # `day_cap.live_ids()` は既定で **長尺を外します**（`include_long=False`・
+    # 「測っているのがショートの面で、長尺は SHORTS_FEED の枠を1つも使わない」）。
+    # ここの `dead` は `v not in was`＝**その集合の補集合**を取るので、
+    # **長尺は必ず入ります。そしてどこへ動かしても `live()` には入りません。**
+    #
+    # 実測 2026-09-05 06:0x（`tests/test_live_slots.py` が赤で教えた）::
+    #
+    #     GFvAcxvDmYM（長尺 22.7分・09/05 09:00）を 09/06 09:00 へ逃がす手を出した
+    #     → 生きている本 **136 → 136**（**+0本**）／1手 50単位
+    #     → 末尾に自分で「[!] 増えていません。**撃たないこと**」
+    #
+    # **同じ模組の中に、正しい形がすでに2つ在ります** —— `_swap_candidates` も
+    # `band_stray` も `vid in live` を要求するので、長尺は自然に外れます
+    # （`day_cap.live_ids` の docstring「**長尺は入れ替えの対象から外れます**」）。
+    # **補集合を取っているこの1か所だけが、外していませんでした。**
+    #
+    # **覆る条件**: `live_ids(include_long=True)` が既定になったら（＝ 長尺も
+    # ショートの帯を食うと測り直されたら）、この除きは要らなくなります。
+    # 判定は `day_cap._long_ids()` の1か所（**形の一覧をここへ写さないこと**）。
+    long_ids = day_cap._long_ids()
     dead = sorted((v for v, w in board.at.items()
-                   if v not in was and w > board.now and board.movable(v)),
+                   if v not in was and v not in long_ids
+                   and w > board.now and board.movable(v)),
                   key=lambda v: board.at[v])
     for vid in dead:
         before = board.at[vid]

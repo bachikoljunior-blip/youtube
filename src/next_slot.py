@@ -124,6 +124,20 @@ _NOT_MAKERS = ("src/analytics.py", "src/history.py",
                "src/uploader.py", "src/verify.py")
 
 
+def _ahead_ok() -> bool:
+    """**先の日付へ「いま」置けるか**（規則5）。**この文言を写さないこと。**
+
+    出どころは `house_rule.may_schedule_ahead()` **1か所**です。ここまで、この
+    ファイルは規則5 の本文を日本語で **4か所** 写していました（「明日になってから」
+    「先の日付を書かないこと」…）。オーナーが床を外した 2026-09-04 17:3x のあとも
+    写しは条件を持たないので **「待て」と言い続け**、`scripts/slot_gate.py` の
+    「その日は投稿が途切れます ＝ いま置け」と正面から食い違っていました
+    （実測 2026-09-05 05:2x・09/06 と 09/07 の予約が 0本）。
+    """
+    from src import house_rule                                  # noqa: PLC0415
+    return house_rule.may_schedule_ahead()
+
+
 def _rows(path: Path | None = None) -> list[dict]:
     p = path or LEDGER
     if not p.exists():
@@ -1217,9 +1231,18 @@ def draft_lines(now: datetime | None = None,
             "  python scripts/upload_only.py <名前> --draft    # **予約は付けない**"
             "（`videos.insert` は日枠を使わないので 403 の窓でも通ります）",
             "",
-            f"     そして**明日（{(t + timedelta(days=1)):%m/%d}）になってから**"
-            "、その日の枠へ `reschedule.py --move`。"
-            "**先の日付には置かないこと**（規則5）。",
+            # **規則5 の写しを持たないこと**（2026-09-05 05:3x に直した）。
+            #     出どころは `house_rule.may_schedule_ahead()` 1か所。
+            #     オーナーが床を外した（`OWNER_FLOORS_LIFTED`）あとも、ここは
+            #     「明日になってから」と言い続けていました（`slot_gate.py` の
+            #     「その日は投稿が途切れます」と正面から食い違う）。
+            (f"     そして**明日（{(t + timedelta(days=1)):%m/%d}）の枠へ**"
+             " `reschedule.py --move`。**いま置けます**"
+             "（規則5 は外れています・`house_rule.may_schedule_ahead()`）。"
+             if _ahead_ok() else
+             f"     そして**明日（{(t + timedelta(days=1)):%m/%d}）になってから**"
+             "、その日の枠へ `reschedule.py --move`。"
+             "**先の日付には置かないこと**（規則5）。"),
             "     それまでの時間は規則3 の対象です —— 次の枠で出る1本を、"
             "出る瞬間まで良くし続けること。",
         ]
@@ -1238,18 +1261,32 @@ def draft_lines(now: datetime | None = None,
         out.append("     → **この下書きは、きょうのぶんではありません。**"
                    "公開したら次の日の1本を作り始める（規則5「1日の回り方」）ので、"
                    "**これは明日のぶん**です。")
-        out.append("     **きょうは予約しないこと。** 先の日付にも置かないこと（規則5）。"
-                   "**きょうやるのは `improve` のほう**です —— "
-                   "規則3「次の枠で出る1本を、出る瞬間まで良くし続ける」。")
-        out.append(f"     **明日（{(t.astimezone(JST) + timedelta(days=1)):%m/%d} JST）に"
-                   "なってから**、その日の枠へ（1本 50単位）:")
-        out.extend(_move_lines(got, (t.astimezone(JST) + timedelta(days=1)).date(),
-                               note="   # **明日になってから撃つこと**"))
+        if _ahead_ok():
+            out.append("     **きょうは予約しないこと**（規則1 ＝ 1日1本）。"
+                       "**明日の枠へは、いま置けます**（規則5 は外れています・"
+                       "`house_rule.may_schedule_ahead()`）—— "
+                       "置いたら残りは規則3「次の枠で出る1本を、出る瞬間まで良くし続ける」。")
+            out.append(f"     **明日（{(t.astimezone(JST) + timedelta(days=1)):%m/%d} JST）"
+                       "の枠へ**（1本 50単位）:")
+            out.extend(_move_lines(got, (t.astimezone(JST) + timedelta(days=1)).date()))
+        else:
+            out.append("     **きょうは予約しないこと。** 先の日付にも置かないこと（規則5）。"
+                       "**きょうやるのは `improve` のほう**です —— "
+                       "規則3「次の枠で出る1本を、出る瞬間まで良くし続ける」。")
+            out.append(f"     **明日（{(t.astimezone(JST) + timedelta(days=1)):%m/%d} JST）に"
+                       "なってから**、その日の枠へ（1本 50単位）:")
+            out.extend(_move_lines(got, (t.astimezone(JST) + timedelta(days=1)).date(),
+                                   note="   # **明日になってから撃つこと**"))
         return out
-    out.append("     **その日になったら、その日の枠へ入れること**（1本 50単位）:")
+    out.append("     **その日の枠へ入れること**（1本 50単位）:")
     out.extend(_move_lines(got, t.date()))
     out.append("     **先の日付を書かないこと。** それまでは規則3 の対象です"
-               "（次の枠で出る1本を、出る瞬間まで良くし続ける）")
+               "（次の枠で出る1本を、出る瞬間まで良くし続ける）"
+               if not _ahead_ok() else
+               "     残りは規則3 の対象です"
+               "（次の枠で出る1本を、出る瞬間まで良くし続ける）。"
+               "**先の日付にも置けます**（規則5 は外れています・"
+               "`house_rule.may_schedule_ahead()`）")
     return out
 
 
@@ -1711,7 +1748,9 @@ def lines(now: datetime | None = None) -> list[str]:
                        "（`python -m src.pipeline` で焼き直し → "
                        "`python scripts/upload_only.py <題材> --draft`）。"
                        "**`--unschedule` は要りません**（この本には外す枠がありません）。"
-                       "予約は**その日になってから** `--move` で。")
+                       + ("予約は `--move` で（**先の日付にも置けます** ——"
+                          " 規則5 は外れています）。" if _ahead_ok()
+                          else "予約は**その日になってから** `--move` で。"))
     if pending_thumbnail(str(v.get("video_id") or "") or None):
         out.append("  [!] **サムネイルの bytes は控えに在りますが、YouTube に"
                    "載っていません**（`thumbnail_set: false`）。"

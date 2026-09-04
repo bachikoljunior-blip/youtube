@@ -272,6 +272,102 @@ def _hour_lines(day=None) -> list[str]:
     return out + [""]
 
 
+def mismatch_lines(rows: list[dict] | None = None, today=None,
+                   picked=None, published=None) -> list[str]:
+    """**枠に入っている本と、その日の決めが食い違っていたら、その行**（合っていれば空）。
+
+    ## なぜ要るか（2026-09-05 05:4x・最適化の回。**実物で踏んだ**）
+
+    `data/daily_pick.jsonl` は**書く先で、押す先ではありません。** 09/05 のあいだに
+    決めは **6回** 書き換わり（00:38 長尺 → 01:17 → 01:48 → 05:09 ショート → 05:11 →
+    この回 05:37）、**チャンネルの予約は1度も変わりませんでした** ——
+    09/05 09:00 は 00:38 より前から `GFvAcxvDmYM`（長尺・見込み 齢48h **1回**）のままで、
+    決めのほうは ショート（同 **164回**）です。
+
+    押されない理由は `ahead_sweep.today_plan()` の1行で::
+
+        if count >= max(1, cap):   →  「きょうの枠は埋まっています（1本／規則 1本）」
+
+    **どの本が入っているかを見ていません。** `place_today()` はその手前で
+    `if count < house_rule.cap()` のときしか候補を読まないので、
+    **食い違いは構造上 見えません。**
+
+    この門は 0単位 で見えるようにします（読むのは控えと `data/daily_pick.jsonl` だけ）。
+    もう1つ、**公開ずみの題材の本が枠に入っている**回もここで鳴らします ——
+    その日の取り分は 0 になるからです（`scripts/reschedule._rule_blocks_move` の註）。
+
+    **覆る条件**: `today_plan()` が枠の中身まで見て入れ替えるようになったら、
+    この門は空振りしかしません（そのとき外してよい）。**先に外さないこと。**
+    """
+    today = today or datetime.now(JST).date()
+    if rows is None:
+        try:
+            from src import dupes                              # noqa: PLC0415
+            rows = dupes.ledger_rows()
+        except Exception:                                      # noqa: BLE001
+            return []
+    if picked is None:
+        try:
+            from src import daily_pick as _dp                  # noqa: PLC0415
+            picked = {}
+            for i in range(LEAD_DAYS + 1):
+                d = today + timedelta(days=i)
+                cur = _dp.current(d)
+                if cur and cur.get("video_id"):
+                    picked[d] = cur
+        except Exception:                                      # noqa: BLE001
+            picked = {}
+    if published is None:
+        try:
+            from src import daily_pick as _dp                  # noqa: PLC0415
+            published = _dp.published_topics()
+        except Exception:                                      # noqa: BLE001
+            published = set()
+    held: dict = {}
+    for r in rows:
+        if not r.get("at"):
+            continue
+        try:
+            d = datetime.fromisoformat(str(r["at"]).replace("Z", "+00:00")).astimezone(JST).date()
+        except (TypeError, ValueError):
+            continue
+        held.setdefault(d, []).append(r)
+    out: list[str] = []
+    for i in range(LEAD_DAYS + 1):
+        d = today + timedelta(days=i)
+        here = held.get(d) or []
+        if not here:
+            continue                                           # 空の日は `lines()` の担当
+        cur = picked.get(d) or {}
+        want = str(cur.get("video_id") or "")
+        for r in here:
+            if r.get("topic") and r["topic"] in published:
+                out += [
+                    f"**{d:%m/%d}（JST）の枠に、公開ずみの題材の本が入っています: "
+                    f"`{r['id']}`（`{r['topic']}`）**",
+                    f"  題: {r.get('title') or ''}",
+                    "  規則1 は1日1本なので、**その日の取り分は 0** です"
+                    "（同じ字の本が2本 並びます）。",
+                    f"  外して決めの本を入れること: `python scripts/reschedule.py "
+                    f"--unschedule {r['id']}`",
+                ]
+        if want and all(str(r["id"]) != want for r in here):
+            got = " ".join(str(r["id"]) for r in here[:3])
+            exp = cur.get("expected_48h")
+            out += [
+                f"**{d:%m/%d}（JST）は、決めと枠が食い違っています** —— "
+                f"決め `{want}`（{cur.get('form') or '?'}"
+                + (f"・見込み 齢48h {exp:.0f}回" if isinstance(exp, (int, float)) else "")
+                + f"） ／ 枠に居るのは `{got}`",
+                "  `data/daily_pick.jsonl` は**書く先で、押す先ではありません** ——"
+                "決めを書いても、押さなければチャンネルは変わりません。",
+                f"  入れ替え: `python scripts/reschedule.py --unschedule {here[0]['id']}` "
+                f"→ `python scripts/reschedule.py --move {want} {d}T"
+                + f"{(_hour_for(d) or 9):02d}:00`",
+            ]
+    return out
+
+
 def lines(rows: list[dict] | None = None, today=None) -> list[str]:
     """門が印字する行。**空いていなければ空リスト。**"""
     today = today or datetime.now(JST).date()
@@ -363,11 +459,21 @@ def lines(rows: list[dict] | None = None, today=None) -> list[str]:
 def main(argv: list[str]) -> int:
     gate = "--gate" in argv
     out = lines()
-    if not out:
+    # **食い違いも同じ門で鳴らすこと**（`mismatch_lines()` の註）。
+    #     空の日（`lines()`）と食い違い（`mismatch_lines()`）は別の壊れ方で、
+    #     **後者は「埋まっている」ので前者からは見えません。**
+    try:
+        mis = mismatch_lines()
+    except Exception as exc:                                   # noqa: BLE001
+        mis = []
+        print(f"[slot_gate] 食い違いを読めませんでした（門は止めません）: "
+              f"{str(exc)[:120]}")
+    if not out and not mis:
         if not gate:
-            print(f"予約が0本の日は、今日から{LEAD_DAYS}日 のうちにありません。")
+            print(f"予約が0本の日は、今日から{LEAD_DAYS}日 のうちにありません。"
+                  "決めと枠の食い違いもありません。")
         return 0
-    print("\n".join(out))
+    print("\n".join(out + (["", *mis] if out and mis else mis)))
     return 2 if gate else 0
 
 
