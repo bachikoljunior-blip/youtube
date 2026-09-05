@@ -114153,7 +114153,7 @@ log は scratch `d0a087/bake.log`）。印字で確かめた: 「命じる 648�
 
 ### 3件目・`improve`（次の日の1本）—— 外の型のショートの 2本目（`s-juminzei-tsuchisho-furusato-kojo-yomikata`）
 
-前提「外の帯の上位のショートの作り」は 09/06 の 1本（n=1）で 09/08 に判る。**n を 2 にする本を、この回の残りで焼いた**（13:47 JST 開始・
+前提「外の帯の上位のショートの作り」は 09/06 の 1本（n=1）で 09/08 に判る。**n を 2 にする本を、この回の残りで焼いた**（13:16 JST 開始・
 `python -m src.pipeline --topic s-juminzei-tsuchisho-furusato-kojo-yomikata --short --visibility private`・log は scratch `77b159/bake.log`）。
 型の出どころは外の帯のショート4位「How to check your hometown tax donation deductions.」（76,726回・99秒）＝ **届いた住民税決定通知書の摘要欄を開けて、
 ふるさと納税が本当に引かれたかを読む本**。`src/calc/furusato.py` に節「住民税決定通知書の摘要欄に載る額（上限ちょうど寄付したとき）」を足した ——

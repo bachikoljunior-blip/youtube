@@ -282,6 +282,20 @@ def title_feature_line(next_row: dict | None, form: str = "ショート") -> lis
     if not feats:
         return []
     title = str(next_row.get("title") or "")
+    # **待ち行列の題があれば、そちらを測る**（2026-09-05 13:5x）。閉じた窓で決めた題は
+    # `src.retitles.queue()` に落ち、窓が戻った掃きが書きます（`ahead_sweep.retitle_pending`）。
+    # ここが帳面の古い題を測り続けると、次の回が同じ「無し ← 打てる」を読んで
+    # **もう決まっている題を、もう一度 決めます**（同じ本の題を3つの回が追いかけた跡・`retitles` の註）。
+    queued = ""
+    try:
+        from src import retitles as _rt                         # noqa: PLC0415
+        for r in _rt.pending():
+            if str(r.get("video_id") or "") == str(next_row.get("video_id") or ""):
+                queued = str(r.get("title") or "")
+    except Exception:                                           # noqa: BLE001
+        queued = ""
+    if queued:
+        title = queued
     top = [d for d in feats if (d["ratio"] or 0) > 1.0][:TITLE_FEATURE_TOP]
     if not top:
         return []
@@ -298,6 +312,10 @@ def title_feature_line(next_row: dict | None, form: str = "ショート") -> lis
         return f"{d['name']} ×{d['ratio']:.2f}(n={d['n_yes']}対{d['n_no']}{thin}) {tag}"
     out = [f"     **題の特徴の実測（{form}・1日あたり・`niche_ceiling.py --titles`・API 0単位）**: "
            + " ／ ".join(_mark(d) for d in top)]
+    if queued:
+        out.append(f"     [題の待ち] 『{queued}』が `data/retitle_pending.jsonl` に在ります（上の印はこの字で測った）"
+                   " —— **窓が戻った掃きが `retitle.py` で書きます**（`ahead_sweep.retitle_pending`・50単位）。"
+                   "**手で打ち直さないこと**（同じ字は `retitle.py` が 0単位 で止めますが、別の字なら 50単位 が往復します）")
     open_ = [d for d in top if title and not _re.search(nc.TITLE_FEATURES[d["name"]], title)
              and not d["thin"] and d["name"] not in TITLE_FEATURES_FORBIDDEN]
     if open_:

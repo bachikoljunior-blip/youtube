@@ -74,3 +74,15 @@ def test_sweep_is_silent_and_free_when_nothing_is_pending() -> None:
     line = sweep.retitle_pending(NOW, pending=[], quota_open=None,
                                  run=lambda a: calls.append(a) or 0)
     assert calls == [] and "0単位" in line
+
+
+def test_hold_title_line_measures_the_queued_title(monkeypatch) -> None:
+    """`[きょうの1本]` は帳面の古い題ではなく、待ち行列の題で特徴を測り、待ちが在ると言う。"""
+    from src import hold
+    monkeypatch.setattr(retitles, "pending",
+                        lambda **_k: [{"video_id": "vq", "title": "【定期便】届いたら？"}])
+    out = "\n".join(hold.title_feature_line({"video_id": "vq", "title": "古い題", "duration_s": 150.0},
+                                            "ショート"))
+    if not out:                       # 帯の実測（niche_corpus）が無い作業場では何も出ない
+        return
+    assert "[題の待ち]" in out and "【定期便】届いたら？" in out
