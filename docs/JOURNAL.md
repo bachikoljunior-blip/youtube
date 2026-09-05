@@ -114188,3 +114188,32 @@ verify 合格 **2.5分（153秒）**・1080x1920・chart 3枚 → 投稿（**焼
 サムネ・再生リスト・コメントは 403（16:00 JST 以降の `refresh_thumbnail.py --missing` ほか）。`--kind upload`・`--moves 0`・`--closes carry_over`
 （「`--move <新ID> 2026-09-06T19:00`」は要らない: `3gZ38lfsJpY` は 09/06 09:00 に置かれ、規則は 10本/日 なので `qyVdpAoT_40` 19:00 を外す理由が無い）。
 **処置 n=2**（09/06 `3gZ38lfsJpY`・09/08 `vmAll8GDkU8`）。09/08 の判定は 09/06 の本で、09/08 の本は 09/10 に 48h。
+
+## 2026-09-05 14:54〜 JST（毎時の回・サブ `agent-affc6101f63f8dd8e`・模型 fable）—— 次の枠の1本（09/06 `3gZ38lfsJpY`）に長尺の物差しを当てていた読み口を1か所に集め、16:00 の窓で サムネ・入れ替えを撃つ
+
+### 選んだ順（§4）
+
+`[暦]` 鳴らず（予約 4本／3日・10本/日 の内側）。`eta.py` に「期日の来た前提」の行 **無し**（到達日は「出ません」・腕は `per_video`・
+「次の手は `improve`（1本の作り方を変える）」）。`[きょうの1本]` は 09/05（`a23e696j0f8`・07:20 決め・10:00 公開ずみ）・09/06（`3gZ38lfsJpY`）・
+09/08（`vmAll8GDkU8`）まで決まっている ＝ この回に `--pick` は要らない。きょうの予約 ≠ 0。**4' が鳴っている**（`slot_gate.py`: 09/05 の枠に
+`s-shokibo-yamekata-3-46bai` が 2本・外す `kzefG44_APU`）が **日枠が尽きていて `videos.update` が通らない**（戻るのは 16:00 JST）。
+→ 5（`improve`／`fix`）で 0単位 の手を先に、**16:00 まで居て 4' と 次の枠のサムネを撃つ**（親の本文「1件目を押したら次の枠の1本を良くし続ける」・(b) 60分 は 15:54。
+窓が 6分 先なので越える。理由はこの段落）。
+
+### 1件目・`fix`（`src/daily_pick.py` / `src/next_slot.py`）—— 同じ物差しの「もう1つの読み口」が 4つ 残っていた
+
+`python -m src.next_slot` の実物（15:0x）が、次の枠 `3gZ38lfsJpY`（156秒・`outside_short.probe` ＝ `yes`）について::
+
+    [数] いまのコードで数え直すと、この本は 5脚 落ちています（(1) 冒頭・(2) 章・締め・(4) 題・サムネ・(5) 間合い・尺）—— 焼き直す理由が在ります。
+    → 焼き直すのが improve の1手です（差し替えの2手は 100単位）
+
+と刷っていた。12:55 の回が `next_slot._stash_legs` を型で分けたが（`c8746fa0`）、`daily_pick.pick_legs` 自体は長尺の `OUTSIDE_LEGS` のままで、
+それを読む口が `legs_under_current_code` / `treated_probe` / `metadata_fix.py` / `ahead_sweep._probe_candidate` / `draft_legs` の 5つ。
+**物差しの選択を `legs_of_path(style=…)` の1か所へ**: `outside_short` は `src/outside_short.legs_of_script` の hard 脚（尺）だけを `bad` に、
+soft（題・中身）は入れない。`pick_legs(video_id, topic=…)` は `topic` が無ければ控えの `<ID>.json` から題材を引く。`_stash_legs` は覆る条件どおり
+`pick_legs` を呼ぶだけに戻した。実測（直後）: `pick_legs('3gZ38lfsJpY')` ＝ `([], None)`・`vmAll8GDkU8` ＝ `([], None)`・`GFvAcxvDmYM` ＝ `(['尺'], None)`（長尺は変わらず）・
+`legs_under_current_code('3gZ38lfsJpY')` ＝「焼き直して得られる脚は 0本」。検査 5件 `tests/test_pick_legs_by_style.py`、関連 131件 緑。`--moves 0`。
+ship は 1回 断られた（枠と決めの食い違い ＝ 4'）ので「枠そのまま・16:00 に撃つ」を本文に書いて通した。
+
+**覆る条件**: `outside_short` の脚が `OUTSIDE_LEGS` と同じ表に並ぶ（型ごとの表を `script_writer` が持つ）なら、この分岐は表の選択に縮む。
+前提「外の帯の上位のショートの作り」が外れて `src/outside_short` を落とすなら一緒に落とす。
