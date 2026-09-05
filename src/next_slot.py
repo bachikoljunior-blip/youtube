@@ -1505,7 +1505,7 @@ def _bake_stage_span_lines(root=None) -> list[str]:
             "（この 55〜90分 が、規則3 の焼き直しが 25回 中 1回 しか本にならない直の理由）"]
 
 
-def superseded_bake_lines(now: datetime | None = None) -> list[str]:
+def superseded_bake_lines(now: datetime | None = None, *, busy_call=None) -> list[str]:
     """**いま焼いている本が、その日の決めから外れていないか。**（**API 0単位**）
 
     ## なぜ要るか（2026-09-05 06:2x・最適化の回。**実物で走っていました**）
@@ -1575,6 +1575,26 @@ def superseded_bake_lines(now: datetime | None = None) -> list[str]:
             live = r
     if live is None:
         return []
+    # **鼓動のあとに `done` / `skip` が書かれていたら、それは「もう焼いた」です**
+    #     （2026-09-05 15:1x・毎時の回に実測）。`GFvAcxvDmYM` は 06:18 の `beat` の
+    #     あと 07:58 に `done`（`fMlY_uzHOMw`）を残していたのに、この行は 15:0x の画面で
+    #     まだ「いま焼いているのは `GFvAcxvDmYM`」と刷っていました（8時間 前の鼓動）。
+    #     鼓動は 12時間 生きるので、焼き上がった後の半日、毎周 嘘の警告が出ます。
+    #     **錠（`flock`）が直接の証拠**（`rebake_busy()` の註）なので、そちらも見ます。
+    live_at = _parse(live.get("at"))
+    for r in rows:
+        if str(r.get("kind") or "") not in ("done", "skip", "late"):
+            continue
+        if str(r.get("video_id") or "") != str(live.get("video_id") or ""):
+            continue
+        when = _parse(r.get("at"))
+        if when is not None and live_at is not None and when >= live_at:
+            return []
+    try:
+        if busy_call is not None and not busy_call():
+            return []
+    except Exception:                                           # noqa: BLE001
+        pass
     baking = str(live.get("video_id") or "")
     if not baking or baking == decided:
         return []
@@ -1862,7 +1882,12 @@ def lines(now: datetime | None = None) -> list[str]:
                                           str(v.get("topic") or "")))
         out.extend(mrl)
         # **決めが、焼いている最中に動いていないか**（2026-09-05・superseded_bake_lines の註）。
-        out.extend(superseded_bake_lines(now))
+        try:
+            import ahead_sweep as _asw                          # noqa: PLC0415
+            _busy = _asw.rebake_busy
+        except Exception:                                       # noqa: BLE001
+            _busy = None
+        out.extend(superseded_bake_lines(now, busy_call=_busy))
         if machine_has_it:
             out.append("  → **この本の `improve` は、いま機械の側で進んでいます。**"
                        "終わったか（`**差し替えました**` の行）は `data/rebake.log` の末尾。"
