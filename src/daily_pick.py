@@ -1960,17 +1960,41 @@ METADATA_FIX_HOWTO = (
 )
 
 
-def pick_legs(video_id: str | None, *, queue: Path | None = None) -> tuple[list[str], str | None]:
+def topic_style(topic: str | None, *, topics: list[dict] | None = None) -> str:
+    """題材の `style`（`outside_long` / `outside_short` / 空）。**API 0単位。**"""
+    t = str(topic or "").strip()
+    if not t:
+        return ""
+    try:
+        return {str(x.get("id")): str(x.get("style") or "")
+                for x in (topics if topics is not None else _topics())}.get(t, "")
+    except Exception:                                              # noqa: BLE001
+        return ""
+
+
+def stash_topic(video_id: str, *, queue: Path | None = None) -> str:
+    """控えの `<ID>.json` が名指す題材（無ければ空）。**API 0単位。**"""
+    try:
+        meta = json.loads(((queue or QUEUE) / f"{video_id}.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return ""
+    return str(meta.get("topic") or "")
+
+
+def pick_legs(video_id: str | None, *, queue: Path | None = None,
+              topic: str | None = None) -> tuple[list[str], str | None]:
     """`(通らなかった脚, 読めなかった理由)`。**API 0単位・実物の台本の控えだけ。**
 
-    `data/critique_queue/<video_id>.script.json` を `src/script_writer` の
-    4つの数える口に通します。控えが読めなければ `([], 理由)` ——
+    `data/critique_queue/<video_id>.script.json` を、**その本の型の物差し**に通します
+    （`legs_of_path` の註 —— 型は題材の `style`。`topic` を渡さなければ控えの
+    `<ID>.json` から引きます）。控えが読めなければ `([], 理由)` ——
     **読めないものを「通った」に数えません**（`treated_count` と同じ向き）。
     """
     vid = str(video_id or "").strip()
     if not vid:
         return [], "決めが本を名指していません（`video_id` が空）"
-    return legs_of_path((queue or QUEUE) / f"{vid}.script.json", what="台本の控え")
+    style = topic_style(topic if topic is not None else stash_topic(vid, queue=queue))
+    return legs_of_path((queue or QUEUE) / f"{vid}.script.json", what="台本の控え", style=style)
 
 
 def treated_probe(video_id: str | None, *, queue: Path | None = None) -> tuple[str, str]:
@@ -2030,17 +2054,46 @@ def treated_probe(video_id: str | None, *, queue: Path | None = None) -> tuple[s
     return "yes", f"外の型の脚は {len(OUTSIDE_LEGS)}本とも通っています"
 
 
-def legs_of_path(path: Path, *, what: str = "台本") -> tuple[list[str], str | None]:
+def legs_of_path(path: Path, *, what: str = "台本", style: str = "") -> tuple[list[str], str | None]:
     """`(通らなかった脚, 読めなかった理由)`。**API 0単位・渡された台本だけ。**
 
     `pick_legs`（控え＝**実物に入っている台本**）と `draft_legs`（手元の台本＝
-    **これから入る台本**）が、**同じ4つの口**を通るようにここに集めてあります。
+    **これから入る台本**）が、**同じ口**を通るようにここに集めてあります。
     片方だけ別の数え方になると、「直したのに門が言い続ける」の見分けが付きません。
+
+    ## 物差しは型で選びます（2026-09-05 15:0x・毎時の回に実測して足した）
+
+    `style == "outside_short"` の題材は **`src/outside_short` の脚**（hard は尺だけ。
+    soft の題・中身は薄い升なので `bad` に入れません）。それ以外は `OUTSIDE_LEGS`
+    （長尺の外の型・尺 20分〜）——これまでどおり。
+
+    **なぜ**: 09/06 の枠 `3gZ38lfsJpY`（156秒・`outside_short.probe` ＝ `yes`）に
+    ここが長尺の5脚を当て、`next_slot.legs_under_current_code()` が
+    「**いまのコードで数え直すと 5脚 落ちています —— 焼き直す理由が在ります**」
+    → 「**焼き直すのが `improve` の1手です**（差し替え 100単位）」と刷っていました
+    （`python -m src.next_slot` の実物・15:0x）。`next_slot._stash_legs` は 13:1x に
+    自分の側だけ型で分けましたが、`pick_legs` を読む口は他に 5つ在り
+    （`legs_under_current_code` / `treated_probe` / `metadata_fix.py` / `ahead_sweep._probe_candidate` /
+    `draft_legs`）、**「同じ物差しの、もう1つの読み口」がまだ4つ残っていました。**
+    物差しを1か所で選べば、読み口は増えても食い違いません。
+
+    **覆る条件**: `outside_short` の脚が `OUTSIDE_LEGS` と同じ表に並ぶ日が来たら
+    （型ごとの表を `script_writer` が持つ）、この分岐は表の選択に縮む。
+    前提「外の帯の上位のショートの作り」が外れて `src/outside_short` を落とすなら、
+    この分岐も一緒に落とすこと。
     """
     try:
         script = json.loads(Path(path).read_text(encoding="utf-8"))
     except (OSError, ValueError) as exc:                           # noqa: BLE001
         return [], f"{what}が読めません（`{path}`・{str(exc)[:60]}）"
+    if style == "outside_short":
+        try:
+            from . import outside_short as _osh                    # noqa: PLC0415
+            legs = _osh.legs_of_script(script)
+            hard = {name for name, w in _osh.LEGS if w == "hard"}
+        except Exception as exc:                                   # noqa: BLE001
+            return [], f"`src.outside_short` の脚が数えられません（{type(exc).__name__} {str(exc)[:60]}）"
+        return [n for n, ok, _why in legs if not ok and n in hard], None
     try:
         from src import script_writer as _sw
     except Exception as exc:                                       # noqa: BLE001
@@ -2089,7 +2142,8 @@ def draft_legs(topic: str | None) -> tuple[list[str], str | None]:
     t = str(topic or "").strip()
     if not t:
         return [], "決めが題材を名指していません"
-    return legs_of_path(ROOT / "data" / "scripts" / f"{t}.script.json", what="手元の台本")
+    return legs_of_path(ROOT / "data" / "scripts" / f"{t}.script.json", what="手元の台本",
+                        style=topic_style(t))
 
 
 def standing_pick_title(cur: dict | None, *, uploaded_path: Path | None = None) -> list[str]:
