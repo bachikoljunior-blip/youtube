@@ -114022,3 +114022,31 @@ log は scratch `d0a087/bake.log`）。印字で確かめた: 「命じる 648�
 
 **次に主実行が1周したとき、どこが変わるか（1行）**: 16:00 JST に日枠が戻った最初の周で、`ahead_sweep.py` が
 `[today]` に「置きました」を **1行ではなく 17〜23時 のぶん並べる**（池 316本 から・正時は散らす）。1行なら効いていない。
+
+### 同じ回・焼き上がり（11:36 JST）と、もう1つの `fix`（`pipeline` が控えを書いていなかった）
+
+**焼けた**: `3gZ38lfsJpY`（https://youtu.be/3gZ38lfsJpY）。初稿 26セグメント／778字（帯 648〜796）→ 書き直し2回（同じ図の棒）→
+分かりやすさ 1周・読み照合 誤読 0件 → verify 合格 **2.6分（156.2秒）**・1080x1920 → 投稿（**焼き始め 11:05 → 完了 11:36 ＝ 31分**）。
+`outside_short.probe('3gZ38lfsJpY')` ＝ **`yes`**（尺の hard 脚 通過・薄い升の (2) 題だけ落ち: 題は「ねんきん定期便【開ける順】42万3700円が無い #Shorts」で
+『届いた／来ました』型の語が無い。**外の1位の題の型は n=3 の薄い升なので、単独の根拠にはしていない**）。
+＝ **`treated_count('ショート')` の分子 1本目**（この回の直しで数えられるようになった）。
+`uploader` は `publishAt 2026-09-06T00:00:00Z`（**09/06 09:00 JST**）を付けた —— `same_day_only()` が False（床が外れた日）なので
+`refuse_future_publish` は通す。09/06 の枠には `qyVdpAoT_40`（19:00）も居るので、**09/06 は 2本**。決めは `--pick` で `3gZ38lfsJpY` に書いた
+（`--expected 1865` ＝ 前提の「継続」の下限）。サムネ・再生リスト・コメントは 403（16:00 JST 以降の `refresh_thumbnail.py --missing` ほか）。
+
+**もう1つの `fix`**: `grep 3gZ38lfsJpY data/uploaded.jsonl` が **0件** —— `dupes.remember()` を呼ぶのは `scripts/upload_only.py` だけで、
+`python -m src.pipeline --topic` の道は投稿しても控えに 1行も書かない（04:37 の「台本の控え」と同じ穴の、もう1つの欄）。
+控えが無い本は slot_gate・placed_at・sibling_check・upload_cap・forms の**どれからも見えない**（実測: `slot_gate.py` が 09/06 を
+「決め `3gZ38lfsJpY` ／ 枠に居るのは `qyVdpAoT_40`」と言い、09:00 の予約を知らない）。`pipeline` の投稿後の段に `dupes.remember()` を足し
+（`upload_only.py` と同じ引数・落ちても投稿は止めない）、`3gZ38lfsJpY` の行は手で埋めた（at `2026-09-06T00:00:00Z`・156.2秒）。
+検査 `tests/test_pipeline_ledger.py`。`--moves 0`。
+
+### 次の回へ（**16:00 JST に日枠が戻ってから**。上の3行に足す）
+
+    python scripts/reschedule.py --unschedule qyVdpAoT_40           # 09/06 の 2本目（30秒・同じ作り ×1）を外す。決めは 3gZ38lfsJpY
+    # 3gZ38lfsJpY は 09/06 09:00 JST に予約ずみ（uploader が付けた）。19:00 へ動かすなら --move 3gZ38lfsJpY 2026-09-06T19:00（50単位・publish_hour の掃きに任せてよい）
+    python scripts/refresh_thumbnail.py --missing                    # 3gZ38lfsJpY / a23e696j0f8 / kzefG44_APU のサムネ（各 50単位）
+
+- 判定は **09/08**（48h）: `python -m src.daily_pick` の ショート の行 ＝ ≤1,864 外れ／1,865〜10,000 継続／>10,000 当たり。
+  **`3gZ38lfsJpY` が 09/06 に公開されていなければ判定できない**（`falsified_if`）—— 外れていたら、なぜかを1行。
+- `outside_short.band_lines()` を毎周 見ること（`LENGTH_BAND` が速い升のままか）。

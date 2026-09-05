@@ -983,6 +983,34 @@ def main(argv: list[str] | None = None) -> int:
               "（＝「処置」を名乗れず、焼き直しの判断にも入りません）。"
               f"手で残すこと: `data/critique_queue/{video_id}.script.json`")
 
+    # ---- **自分が上げたものを、自分で控える**（2026-09-05 11:5x・サブの回が踏んで足した）
+    #
+    # 上の「台本の控え」と同じ穴の、もう1つの欄です。`data/uploaded.jsonl` を書くのは
+    # `dupes.remember()` で、呼んでいたのは **`scripts/upload_only.py` だけ**でした。
+    # `python -m src.pipeline --topic <題材>` で上げた本は控えに 1行も入らない ——
+    # 実測（この回・`3gZ38lfsJpY`）: 投稿は通り、`[queue]` は残ったのに、
+    # `grep 3gZ38lfsJpY data/uploaded.jsonl` は **0件**。その本は
+    #     slot_gate（枠と決めの食い違い・同じ題材が2本）／daily_pick.placed_at（もう枠に在るか）
+    #     sibling_check（在庫）／upload_cap（1日の投稿本数）／forms（秒数 → ショートか長尺か）
+    # の**どれからも見えません**。門は「上げたときの控え」でしか答えを出せない（`uploader.py` 65行）。
+    # 段は `upload_only.py` と同じ（**落ちても投稿は止めない**・秒数は測れなくても通す）。
+    # **覆る条件**: 上の stash と同じ —— 投稿後の段が1か所に寄ったら、そちらへ。
+    try:
+        from . import dupes as _dupes                              # noqa: PLC0415
+        _dur = None
+        try:
+            _dur = float(verify._probe(work / "final.mp4")
+                         .get("format", {}).get("duration") or 0) or None
+        except Exception as exc:                                   # noqa: BLE001
+            print(f"[dupes] 秒数を測れませんでした（続行）: {str(exc)[:60]}")
+        _dupes.remember(video_id, topic["id"], script.title,
+                        channel["publish"].get("publish_at") or None, duration_s=_dur)
+        print(f"[dupes] 控えました: data/uploaded.jsonl（{video_id}・"
+              f"at {channel['publish'].get('publish_at') or 'なし（下書き）'}）")
+    except Exception as exc:                                       # noqa: BLE001
+        print(f"[dupes] **控えを残せませんでした: {str(exc)[:80]}**"
+              "（投稿は済んでいます。門からは見えない本になります）")
+
     refill_topics_if_low(posted | {topic["id"]})
     print("=== 完了 ===")
     return 0
