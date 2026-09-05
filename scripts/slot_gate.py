@@ -64,6 +64,8 @@
 
 - **オーナーが規則1を外したら**、分母（1日1本）の意味が変わります。
   そのときは「0本の日」ではなく「上限に足りない日」を数えること。
+  → **2026-09-05 に立ちました**（`house_rule.PUBLISH_PER_DAY` 1 → 10）。
+  「上限に足りない分」は `room_lines()` が印字します（0本の門はそのまま）。
 - `data/uploaded.jsonl` は**上限側の見積り**です（取り消した本も残る）。
   つまりこの門は**空を見落とす側**に外れます —— 鳴ったら本物です。
   逆に「鳴っていないから埋まっている」は言えません。
@@ -450,8 +452,7 @@ def mismatch_lines(rows: list[dict] | None = None, today=None,
                     f"**{d:%m/%d}（JST）の枠に、公開ずみの題材の本が入っています: "
                     f"`{r['id']}`（`{r['topic']}`）**",
                     f"  題: {r.get('title') or ''}",
-                    "  規則1 は1日1本なので、**その日の取り分は 0** です"
-                    "（同じ字の本が2本 並びます）。",
+                    f"  同じ字の本が2本 並びます（上限 {_cap()}本/日 の枠を1本 無駄にします）。",
                     f"  外して決めの本を入れること: `python scripts/reschedule.py "
                     f"--unschedule {r['id']}`",
                 ]
@@ -532,7 +533,7 @@ def lines(rows: list[dict] | None = None, today=None) -> list[str]:
         out = [
             f"**きょう（{gap[0]:%m/%d} JST）の1本が、予約にも実績にもありません。**"
             "（規則5・固定その4「現在の日付にしか予約しない」）",
-            f"  きょう: {cells}   （規則1 ＝ **1日1本**・`src/house_rule.py`）",
+            f"  きょう: {cells}   （上限 **{_cap()}本/日**・`src/house_rule.py`）",
             "  **きょうは投稿が途切れます。**「途切れるのが最大の損失」（`CLAUDE.md`）。",
             "  **明日から先が空なのは正常です** —— この門は今日しか見ていません",
         ]
@@ -540,7 +541,7 @@ def lines(rows: list[dict] | None = None, today=None) -> list[str]:
         out = [
             f"**予約が0本の日が、今日から{LEAD_DAYS}日 のうちに {len(gap)}日 あります: "
             + " ".join(f"{d:%m/%d}" for d in gap) + "**",
-            f"  今日から{LEAD_DAYS + 1}日: {cells}   （規則1 ＝ **1日1本**・`src/house_rule.py`）",
+            f"  今日から{LEAD_DAYS + 1}日: {cells}   （上限 **{_cap()}本/日**・`src/house_rule.py`）",
             "  **その日は投稿が途切れます。**「途切れるのが最大の損失」（`CLAUDE.md`）。",
         ]
     tail = tail_days(rows, today)
@@ -606,9 +607,74 @@ def lines(rows: list[dict] | None = None, today=None) -> list[str]:
     return out
 
 
+def _cap() -> int:
+    """`house_rule.cap()`（規則1 の上限。読めない回は 1）。"""
+    try:
+        from src import house_rule                             # noqa: PLC0415
+        return max(1, int(house_rule.cap()))
+    except Exception:                                          # noqa: BLE001
+        return 1
+
+
+def room_lines(rows: list[dict] | None = None, today=None, cap: int | None = None) -> list[str]:
+    """**きょうの枠に、上限までまだ何本 置けるか**（上限が 1 なら黙る。**API 0単位**）。
+
+    ## なぜ要るか（2026-09-05 15:5x・最適化の回。**数えて出た**）
+
+    `src/house_rule.PUBLISH_PER_DAY` は 09/05 に **1 → 10** へ動きました。
+    ところが、この門も `docs/trigger_main.md` §4 の1番目も「**きょうの予約が 0本 → upload**」
+    のままでした。**1本 入った瞬間に満たされる条件**なので、その日の残りの回は
+    全部 §4 の5番目（`improve` / `fix`）へ落ちます。実測（`data/runs.jsonl`・09/04 12:00 〜 09/05 14:00）:
+    **ship 315件・upload 7件・うち別題材は 3件**（残りは同じ本の焼き直し）。
+    同じ 26時間で `fix` は 63件、`improve` 48件、`means` 31件。
+    再生/日(7d) は 6,299（08/25）→ 787（09/05）。
+    チャンネルで 1,000回 を越えた 39本は**全部 08/15〜08/18 のショート**で、
+    その4日は 41〜150本/日 出していた日です（`data/uploaded.jsonl`・`data/views.jsonl`）。
+    上限を 10 にした根拠（`house_rule.PUBLISH_PER_DAY` の註・`src/day_cap.py`「生きるのは 10本/日」）は
+    そのまま —— **ここは、数を機械が読む形にするだけ**です。
+
+    この行が出ている回は、§4 の1番目（`upload`・**新しい題材**の1本）です。
+    同じ題材の焼き直しは `upload` に数えません（`same_topic_twice()` が鳴らす側）。
+
+    **覆る条件**:
+    - `house_rule.cap()` が 1 に戻ったら（オーナーが再び固定したら）この行は自動で消えます。
+    - 10本/日 に近づいた日の「再生/日 の合計」が 1本/日 の日を下回ったら
+      （`house_rule` の覆る条件2）、上限のほうを戻すこと。この関数は触らない。
+    - 2日 たっても別題材のショートが 1日 2本 以下なら、印字では足りていません ——
+      `main()` の `--gate` で exit 2 にすること（`scripts/stop_check.sh` が止める側へ）。
+    """
+    today = today or datetime.now(JST).date()
+    n_cap = _cap() if cap is None else max(1, int(cap))
+    if n_cap <= 1:
+        return []
+    per = per_day(rows, now=_floor(today))
+    count = int((per or {}).get(today, 0))
+    if count >= n_cap:
+        return []
+    room = n_cap - count
+    return [
+        f"**きょう（{today:%m/%d} JST）の枠: {count}本／上限 {n_cap}本 ＝ あと {room}本 置けます**"
+        "（`src/house_rule.PUBLISH_PER_DAY`）。",
+        "  → §4 の1番目は **`upload`（新しい題材のショートを1本 焼いて、きょうの枠へ）**。"
+        "同じ題材の焼き直しは数に入りません。",
+        "  `videos.insert` は日枠を使いません（403 の窓でも通ります）。"
+        "焼きは 1本 25分（09/05 実測）。",
+    ]
+
+
 def main(argv: list[str]) -> int:
     gate = "--gate" in argv
     out = lines()
+    # **上限まで空いている分も同じ門で印字する**（`room_lines()` の註）。
+    #     0本（`lines()`）は止める側（exit 2）、上限に足りない分は印字だけ。
+    try:
+        room = room_lines()
+    except Exception as exc:                                   # noqa: BLE001
+        room = []
+        print(f"[slot_gate] 上限までの空きを読めませんでした（門は止めません）: "
+              f"{str(exc)[:120]}")
+    if room:
+        print("\n".join(room))
     # **食い違いも同じ門で鳴らすこと**（`mismatch_lines()` の註）。
     #     空の日（`lines()`）と食い違い（`mismatch_lines()`）は別の壊れ方で、
     #     **後者は「埋まっている」ので前者からは見えません。**
