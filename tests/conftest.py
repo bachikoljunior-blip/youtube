@@ -21,6 +21,7 @@
 （通算7回踏んだ形）。**`conftest.py` は全部の検査に自動で掛かります。**
 """
 from __future__ import annotations
+from pathlib import Path
 
 import os
 import re
@@ -75,9 +76,24 @@ def _bake_is_live() -> str:
         except Exception:                                        # noqa: BLE001
             continue
         pids = [x for x in (out.stdout or "").split() if x.strip()]
+        # **`pgrep -f` は、その字を引数に持つ bash の殻にも当たります**（2026-09-05 11:4x に踏んだ）。
+        # 実測: 4〜6時間 前に焼きを起こした `/bin/bash -c … src.pipeline --topic …` の殻 4つ
+        # （CPU 0%・焼きはとうに終わっている）に当たり、焼いていない回の検査が `nice 19` で走った。
+        # 焼いているのは **python の本体**だけなので、`/proc/<pid>/cmdline` の先頭が python の行に絞る。
+        pids = [x for x in pids if _is_python(x)]
         if pids:
             return f"`{pat}`（pid {' '.join(pids[:4])}）"
     return ""
+
+
+def _is_python(pid: str) -> bool:
+    """その pid の argv[0] が python か（`/proc` が無い環境では、絞らずに通す）。"""
+    try:
+        argv0 = Path(f"/proc/{pid}/cmdline").read_bytes().split(b"\0", 1)[0]
+    except OSError:
+        return True
+    import os as _os                                             # noqa: PLC0415
+    return _os.path.basename(argv0.decode("utf-8", "replace")).startswith("python")
 
 
 def pytest_configure(config):
