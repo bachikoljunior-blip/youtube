@@ -113868,3 +113868,11 @@ bytes は控えに在ります。**枠が戻る 16:00 JST 以降**に:
 - 親の checkout（`/home/user/youtube`・PID 4269）で走っていた `place_by_insert`（a23e696j0f8 の焼き直し）は、
   予約ずみなので `--replaces` が断る側 ＝ 3本目は載らないはず。載っていたら `same_topic_twice` が 3本と数え、2本 外す。
 - `kzefG44_APU` を外したあと、`daily_pick` の 09/05 の決めは `a23e696j0f8` のまま（変えない）。
+
+### 同じ回・4件目（09:2x JST・`improve` の配信の側・0単位）—— 画面が予約ずみの本に `--move` を勧めていた
+
+`[きょうの1本]` は `a23e696j0f8`（10:00 JST に予約ずみ）に毎周「→ この本を 09/05 の枠へ（いま置けます）:
+`reschedule.py --move a23e696j0f8 2026-09-05T10:00`」を出していた（撃てば同じ時刻に 50単位）。
+`daily_pick.placed_at(vid, day)`（`next_slot.latest_rows` ＝ 置く側 `ahead_sweep.placed_today` と同じ床）で見て、
+在る本には「もう枠に在ります（HH:MM JST）」を出す。実物の画面で確かめた（99行目）。検査 `tests/test_pick_placed_note.py`。
+**覆る条件**: 置く側が控えではなく実物（API）で見るようになったら、ここも同じ口へ。
