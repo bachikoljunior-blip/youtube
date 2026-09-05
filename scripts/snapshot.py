@@ -89,13 +89,25 @@ def print_curves(ids: list[str], titles: dict[str, str]) -> None:
 # その日の最後の本が 齢 `MIN_AGE_H`（6時間）を過ぎた後に1回 撃てば、
 # `day_cap.window()` が (A)/(B) を決めます。
 def _ids_from_ledger() -> list[str]:
-    """`data/uploaded.jsonl` の video_id（**Data API 0単位**）。"""
+    """`data/uploaded.jsonl` の video_id（**Data API 0単位**）。**新しい本から順**。
+
+    ## なぜ新しい順か（2026-09-05 13:xx JST・最適化の回。**実物で踏んだ**）
+
+    ここは長らく台帳の順（＝ 古い順）でした。`main()` は 50本 ずつ `videos.list`
+    を撃ち、**日枠が尽きた日は 1組目で 403 → break** します。実測 09/05 03:59Z:
+    「50本 読んだ / 33本 積んだ」——**その 33本 は 8月中旬の本**で、
+    きょう出した本（a23e696j0f8・3gZ38lfsJpY・kzefG44_APU）は
+    **`data/views.jsonl` に 1行 も在りません**。回が出した本ほど測れない向きです。
+    **1組目が取れるなら、それは新しい 50本 であるべき**です
+    （`src/live_views.py` の「いま出ている再生/日」もこの順に依ります）。
+    **覆る条件**: 日枠に余裕が在る回は全組 取れるので、順は結果に効きません。
+    """
     led = LOG.parent / "uploaded.jsonl"
     if not led.exists():
         return []
     out: list[str] = []
     seen: set[str] = set()
-    for line in led.read_text(encoding="utf-8").splitlines():
+    for line in reversed(led.read_text(encoding="utf-8").splitlines()):
         if not line.strip():
             continue
         try:

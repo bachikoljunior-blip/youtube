@@ -11111,6 +11111,38 @@ def solve(m: dict, points: list[dict], *, full: bool = True) -> dict:
             "row": _row(m, a, pl, tr, sup)}
 
 
+#: 門1' の物差しの「再生/日」が 0 のときに畳む日数（100年）。**10^9 にしないこと**
+#: （`run_marker._gate1p_now()` が `< 1e8` で捨て、物差しが「無い」に戻ります）。
+GATE1P_LIVE_CAP_DAYS = 36_500.0
+
+
+def _gate1p_live(m: dict, a: dict) -> tuple[str, float | None, float | None]:
+    """門1'（登録者 500人）までの日数を、**自分の計器の再生/日** で出す。
+
+    返すのは `(basis, days, views_24h)`。`basis` は `"live24h"` か `"analytics7d"`
+    （計器が止まっている／薄いときの落ち先）。**差を取るときは basis が同じ行どうし**
+    で引くこと（`reflect()`／`run_marker` がそうしています）—— 違う basis を引くと、
+    式の差を「その回の動き」と読みます。
+    """
+    need = float(a.get("fan_subs_remaining") or 0.0)
+    rate = float(a.get("sub_rate") or 0.0)
+    try:
+        from src import live_views as _lv
+        lv = _lv.views_per_day()
+    except Exception:                                              # noqa: BLE001
+        lv = {"ok": False, "views_24h": None}
+    if lv.get("ok") and lv.get("views_24h") is not None:
+        basis, vpd, v24 = "live24h", float(lv["views_24h"]), float(lv["views_24h"])
+    else:
+        basis, vpd, v24 = "analytics7d", float(a.get("views_per_day_7d") or 0.0), None
+    if need <= 0:
+        return basis, 0.0, v24
+    per_day = vpd * rate
+    if per_day <= 0:
+        return basis, GATE1P_LIVE_CAP_DAYS, v24
+    return basis, min(GATE1P_LIVE_CAP_DAYS, need / per_day), v24
+
+
 def _row(m: dict, a: dict, pl: dict, tr: dict | None, sup: dict | None) -> dict:
     """`data/eta.jsonl` に積む1行を組む。**`solve()` と同じ理由でここに出しています。**"""
     row = {**m, **{k: v for k, v in a.items() if isinstance(v, (int, float))}}
@@ -11153,7 +11185,27 @@ def _row(m: dict, a: dict, pl: dict, tr: dict | None, sup: dict | None) -> dict:
     #     その日数は登録の実測で毎日動きます（`gate_arm_lines()` が測る側）。
     #     ここに積むと、`cond4()` は**到達日が出ない回でも**動く数で判定できます。
     #     **覆る条件**: `traj_days` が有限に戻ったら、`cond4()` は自分でそちらを読みます。
-    row["gate1p_days"] = (pl.get("gates") or {}).get("days_fan_subs")
+    row["gate1p_days_28d"] = (pl.get("gates") or {}).get("days_fan_subs")
+    # --- **物差しは、自分の計器で動かす**（2026-09-05 13:xx JST・最適化の回）---
+    #     上の `days_fan_subs` は `475 ÷ (max(7d/7, 28d/28) × 登録率28d)` で、
+    #     落ちている最中は 28日 の平均が勝ち、登録率も 28日 の箱です。
+    #     実測（この回に数えた）: **102行 すべて 511.538**（`optimized.py`）。
+    #     同じ 5日 に、自分の計器（`data/views.jsonl`）の再生/日 は
+    #     **356 → 171 → 62 → 0**（09/02→09/05）でした。**物差しが動かない
+    #     ので、どの ship も「動かず」で通り、fix が 48% を占めた**——
+    #     近づかない回が選ばれ続けた理由は、近づいていないと分かる数が
+    #     回に届かなかったことです。
+    #     直し: `gate1p_days` の分子の「再生/日」を、**直近 24時間 の実測の差**
+    #     （`src/live_views.py`・API 0単位・毎回の `status.py` で更新）にする。
+    #     登録率は 28日 のまま（係数。速く動く因子は再生/日 のほう）。
+    #     0再生/日 でも **有限**（100年 に畳む）——`run_marker` は 10^9 を
+    #     捨てるので、10^9 にすると「測れない」に戻って fix の門が免除されます。
+    #     古い式は `gate1p_days_28d` に残します（消しません。比べる相手）。
+    #     **覆る条件**: `live_views.views_per_day()['ok']` が偽（計器が 36時間
+    #     止まっている／差が 5本 未満）のときは、Analytics の **7d/7**（28d では
+    #     ない）へ落ちます。`traj_days` が有限に戻ったら `run_marker` は
+    #     自分でそちらを読みます（この欄は残しても害はありません）。
+    row["gate1p_basis"], row["gate1p_days"], row["views_24h_live"] = _gate1p_live(m, a)
     # --- **`density` の天井は、面ごとに割れている**（2026-08-26。3回続けて申し送られた）---
     #     `arm_caps["density"]` はショートの面の数だけです。**長尺の面は別**で、
     #     しかも**未測定**なので `LEVERS` には入れていません（軌跡に歩かせない）。
@@ -11521,7 +11573,15 @@ def reflect(note: str | None = None, *, record: bool = True) -> tuple[int, dict]
         "traj_date_before": t_before, "traj_date": t_after, "traj_delta_days": t_delta,
         "target_date_before": s_before, "target_date": s_after, "target_delta_days": s_delta,
         "traj_days_before": base.get("traj_days"), "traj_days": row.get("traj_days"),
-        "gate1p_days_before": base.get("gate1p_days"), "gate1p_days": row.get("gate1p_days"),
+        # **basis が違う行とは引かない**（2026-09-05・物差しを live24h にした回）。
+        #     前の行が `gate1p_basis` を持たない（＝ 28日 の式）か、違う basis なら
+        #     `before` は None ——式の差を「その回の動き」と読ませないため。
+        "gate1p_days_before": (base.get("gate1p_days")
+                               if base.get("gate1p_basis") == row.get("gate1p_basis")
+                               else None),
+        "gate1p_days": row.get("gate1p_days"),
+        "gate1p_basis": row.get("gate1p_basis"),
+        "views_24h_live": row.get("views_24h_live"),
         "days_to_target_before": base.get("days_to_target"),
         "days_to_target": row.get("days_to_target"),
         "binding": row.get("binding"), "lever_hint": row.get("lever_hint"),

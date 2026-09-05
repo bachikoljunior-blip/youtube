@@ -1007,13 +1007,29 @@ def _gate1p_now() -> float | None:
         lines = [ln for ln in ETA_LOG.read_text(encoding="utf-8").splitlines() if ln.strip()]
     except OSError:
         return None
+    row = _gate1p_now_row()
+    return None if row is None else round(float(row["gate1p_days"]), 3)
+
+
+def _gate1p_now_row() -> dict | None:
+    """`_gate1p_now()` の行ごと版 —— `gate1p_days` に加えて `gate1p_basis`
+    （`"live24h"` ／ `"analytics7d"` ／ 無ければ `None` ＝ 28日 の式）と
+    `views_24h_live` を返す。**差は basis が同じ行どうしで引くこと**
+    （2026-09-05・物差しを自分の計器へ移した回。`scripts/eta._gate1p_live()`）。
+    """
+    try:
+        lines = [ln for ln in ETA_LOG.read_text(encoding="utf-8").splitlines() if ln.strip()]
+    except OSError:
+        return None
     for ln in reversed(lines[-400:]):
         try:
-            g = json.loads(ln).get("gate1p_days")
+            r = json.loads(ln)
         except json.JSONDecodeError:
             continue
+        g = r.get("gate1p_days")
         if isinstance(g, (int, float)) and 0 < float(g) < 1e8:
-            return round(float(g), 3)
+            return {"gate1p_days": float(g), "gate1p_basis": r.get("gate1p_basis"),
+                    "views_24h_live": r.get("views_24h_live")}
     return None
 
 
@@ -1132,12 +1148,16 @@ def hint_cover_rolled(path: Path | None = None, *, hint: str | None = None,
     return {"prev": prev, "prev_at": prev_at, "now": covered, "streak": streak}
 
 
-def _last_ship_gate1p() -> float | None:
+def _last_ship_gate1p(basis: str | None = None) -> float | None:
     """**直前の ship 行が積んだ門1'の日数。** 無ければ `None`。
 
     差を取る相手です。**ship 行どうしで引く**こと —— `eta.jsonl` は1周に
     何度も書かれるので、そちらで引くと「回と回のあいだ」ではなく
     「印字と印字のあいだ」を測ってしまいます。
+
+    `basis` を渡したら、**同じ `gate1p_basis` の ship 行だけ**を相手にします
+    （2026-09-05・物差しを `live24h` に移した回。28日 の式の行（basis 無し）と
+    引くと、式の差を「その回の動き」と読みます）。`None` なら basis を見ません。
     """
     try:
         lines = [ln for ln in MARKS.read_text(encoding="utf-8").splitlines() if ln.strip()]
@@ -1145,10 +1165,13 @@ def _last_ship_gate1p() -> float | None:
         return None
     for ln in reversed(lines[-400:]):
         try:
-            g = json.loads(ln).get("gate1p_days")
+            r = json.loads(ln)
         except json.JSONDecodeError:
             continue
+        g = r.get("gate1p_days")
         if isinstance(g, (int, float)):
+            if basis is not None and r.get("gate1p_basis") != basis:
+                continue
             return float(g)
     return None
 
@@ -1454,6 +1477,7 @@ def cond4(path: Path | None = None, eta_path: Path | None = None,
     #     **大きい数 ＝ 遠い**の向きでそのまま比べられます。
     tb = ta = None
     gb = ga = None      # 門1'（登録者 500人）の日数。`eta.py _row()` の `gate1p_days`
+    gb_basis = ga_basis = None
     try:
         rows = [json.loads(ln) for ln in
                 (eta_path or ETA_LOG).read_text(encoding="utf-8").splitlines() if ln.strip()]
@@ -1468,9 +1492,14 @@ def cond4(path: Path | None = None, eta_path: Path | None = None,
             g = r.get("gate1p_days")
             if isinstance(g, (int, float)) and g < 1e8:
                 if side_before:
-                    gb = float(g)
+                    gb, gb_basis = float(g), r.get("gate1p_basis")
                 else:
-                    ga = float(g)
+                    ga, ga_basis = float(g), r.get("gate1p_basis")
+        # **basis が違う行どうしは引かない**（2026-09-05・物差しを live24h へ移した回）。
+        #     28日 の式（basis 無し）と自分の計器の式を引くと、式の差を
+        #     「その回の動き」と読みます。片側だけ無い扱いにして `None` に落とす。
+        if gb is not None and ga is not None and gb_basis != ga_basis:
+            gb = ga = None
     except (OSError, json.JSONDecodeError, ValueError):
         tb = ta = gb = ga = None
 
@@ -3192,10 +3221,16 @@ def ship(what: str, closes: list[str] | None = None, lever: str | None = None,
     #
     #     **覆る条件**: `traj_days` が有限に戻ったら、そちらを正本に戻すこと
     #     （そのときは `eta_days` の差が使えます。この欄は残しても害はありません）。
-    _g1p = _gate1p_now()
+    _g1p_row = _gate1p_now_row()
+    _g1p = None if _g1p_row is None else round(float(_g1p_row["gate1p_days"]), 3)
     if _g1p is not None:
         rec["gate1p_days"] = _g1p
-        _prev = _last_ship_gate1p()
+        # **物差しの出どころも積む**（2026-09-05）。`live24h` ＝ 自分の計器の
+        #     直近 24時間 の再生の差（`src/live_views.py`）。差は同じ basis どうし。
+        rec["gate1p_basis"] = _g1p_row.get("gate1p_basis")
+        if _g1p_row.get("views_24h_live") is not None:
+            rec["views_24h_live"] = _g1p_row["views_24h_live"]
+        _prev = _last_ship_gate1p(rec["gate1p_basis"])
         if _prev is not None:
             rec["moves_measured"] = round(_g1p - _prev, 3)
     closes = [c.strip() for c in (closes or []) if c.strip()]
@@ -3221,13 +3256,17 @@ def ship(what: str, closes: list[str] | None = None, lever: str | None = None,
     #     **前の回との差を、その回のうちに返します。**
     if rec.get("gate1p_days") is not None:
         _mm = rec.get("moves_measured")
+        _live = rec.get("views_24h_live")
+        _src = (f"・いま **{_live:,.0f}再生/日**（自分の計器・直近24h の差）"
+                if isinstance(_live, (int, float)) else
+                f"・出どころ {rec.get('gate1p_basis') or '28日の式'}")
         if _mm is None:
-            print(f"[marker] 物差し（門1'・登録者500人まで）: **{rec['gate1p_days']:.1f}日**"
+            print(f"[marker] 物差し（門1'・登録者500人まで）: **{rec['gate1p_days']:,.1f}日**{_src}"
                   " —— 比べる前の ship がまだ在りません。**次の回から差が出ます。**")
         else:
             _dir = "近づいた" if _mm < -0.5 else ("遠のいた" if _mm > 0.5 else "動かず")
-            print(f"[marker] 物差し（門1'・登録者500人まで）: **{rec['gate1p_days']:.1f}日**"
-                  f"・前の ship から **{_mm:+.1f}日**（{_dir}）"
+            print(f"[marker] 物差し（門1'・登録者500人まで）: **{rec['gate1p_days']:,.1f}日**{_src}"
+                  f"・前の ship から **{_mm:+,.1f}日**（{_dir}）"
                   " —— これは**宣言ではなく差し引き**です。")
     if closes:
         print(f"[marker] **潰した宣言を {len(closes)} 件、構造で残しました**"
