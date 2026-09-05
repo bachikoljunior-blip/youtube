@@ -114003,3 +114003,22 @@ log は scratch `d0a087/bake.log`）。印字で確かめた: 「命じる 648�
   `generate()` の上端（3分 − 8秒）はそのまま。
 - 前提が外れたら（齢48h で 1,864回 未満）、`src/outside_short` ごと落とす —— `generate()`・`pipeline`・`verify`・`treated_count` の
   4か所の分岐も一緒に（それぞれの註に書いた）。
+### 同じ回・台帳の腕（11:2x JST）
+
+`run_marker.py --lever density` は門に断られた（「暦を詰めて規則の密度へ戻す手は天井を上げていない → `per_video`」・
+`drift.dead_arm_report` は台帳の `lever:` しか数えない）。**出したものは同じまま、腕だけ `per_video` で通した。**
+`--kind fix` も `FIX_RUN_CAP` の門で断られたので `improve`（配信の側）で通した —— 種別の名前で中身は変わりません。
+`--moves -400` は **再生/日 ×5.6 の前提**（10本/日 × 443回/本）で、模型 `gate1p_days` が density を入力に持たないなら
+次の回の差し引きは 0 と出ます。**それは「効かなかった」ではなく「模型が数えない」**なので、
+効いたかは `data/ahead_sweep.log` の `[today] 置きました` の行数と、09/06 以降の `data/views.jsonl` の日合計で見ること。
+
+### 同じ回・検査の実測（11:3x JST・終わり方）
+
+`pytest -k "ahead or today or slot or place or sweep or pick"`（625件・7分）: **この回の直しに赤は 0**。赤は 1件で、
+`tests/test_next_slot.py::test_pipeline_imports_are_classified` —— `src/pipeline.py` が import する `outside_short`
+（毎時の回 `d5ce1c0d`・09/05 11:09 JST）が `next_slot._MAKERS` にも `_NOT_MAKERS` にも無い。**毎時の回が いま触っている所**
+（`src/pipeline.py`・`src/next_slot.py`）なので、この回は触らない。`tests/test_slot_cost.py::test_daily_pick_prints_the_gate` は
+`-x` の走りで赤・単独で緑（順序依存）。置く側（`scripts/ahead_sweep.py`）の検査 56件は merge 後も緑。
+
+**次に主実行が1周したとき、どこが変わるか（1行）**: 16:00 JST に日枠が戻った最初の周で、`ahead_sweep.py` が
+`[today]` に「置きました」を **1行ではなく 17〜23時 のぶん並べる**（池 316本 から・正時は散らす）。1行なら効いていない。
