@@ -15,3 +15,19 @@
 {"at": "2026-09-05T17:17:46+09:00", "id": "2026-09-06-zaishoku-62man", "event": "critique", "understand": 3, "n_real": 1, "done": false}
 {"at": "2026-09-05T17:18:17+09:00", "id": "2026-09-06-zaishoku-62man", "event": "built", "seconds": 84.6, "image": false, "chars": 439}
 {"at": "2026-09-05T17:18:18+09:00", "id": "2026-09-06-zaishoku-62man", "event": "heard", "mismatched": 1, "model": "small"}
+{"at": "2026-09-05T17:19:00+09:00", "id": "2026-09-06-zaishoku-62man", "event": "built", "seconds": 83.9, "image": false, "chars": 441}
+{"at": "2026-09-05T17:19:42+09:00", "id": "2026-09-06-zaishoku-62man", "event": "critique", "understand": 3, "n_real": 6, "done": false}
+{"at": "2026-09-05T17:19:48+09:00", "id": "2026-09-06-zaishoku-62man", "event": "heard", "mismatched": 1, "model": "small"}
+{"at": "2026-09-05T17:20:25+09:00", "id": "2026-09-06-zaishoku-62man", "event": "built", "seconds": 82.1, "image": false, "chars": 436}
+{"at": "2026-09-05T17:21:10+09:00", "id": "2026-09-06-zaishoku-62man", "event": "heard", "mismatched": 1, "model": "small"}
+{"at": "2026-09-05T17:22:04+09:00", "id": "2026-09-06-zaishoku-62man", "event": "built", "seconds": 82.2, "image": false, "chars": 446}
+{"at": "2026-09-05T17:22:51+09:00", "id": "2026-09-06-zaishoku-62man", "event": "heard", "mismatched": 0, "model": "small"}
+{"at": "2026-09-05T17:23:03+09:00", "id": "2026-09-06-zaishoku-62man", "event": "critique", "understand": 3, "n_real": 1, "done": false}
+{"at": "2026-09-05T17:23:59+09:00", "id": "2026-09-06-zaishoku-62man", "event": "built", "seconds": 83.7, "image": false, "chars": 442}
+{"at": "2026-09-05T17:24:27+09:00", "id": "2026-09-06-zaishoku-62man", "event": "critique", "understand": 3, "n_real": 4, "done": false}
+{"at": "2026-09-05T17:24:48+09:00", "id": "2026-09-06-zaishoku-62man", "event": "heard", "mismatched": 1, "model": "small"}
+{"at": "2026-09-05T17:25:23+09:00", "id": "2026-09-06-zaishoku-62man", "event": "built", "seconds": 84.9, "image": false, "chars": 446}
+{"at": "2026-09-05T17:26:10+09:00", "id": "2026-09-06-zaishoku-62man", "event": "heard", "mismatched": 1, "model": "small"}
+{"at": "2026-09-05T17:26:51+09:00", "id": "2026-09-06-zaishoku-62man", "event": "built", "seconds": 84.4, "image": false, "chars": 447}
+{"at": "2026-09-05T17:27:39+09:00", "id": "2026-09-06-zaishoku-62man", "event": "heard", "mismatched": 0, "model": "small"}
+{"at": "2026-09-05T17:28:04+09:00", "id": "2026-09-06-zaishoku-62man", "event": "cold_read", "takeaway": "65歳以上で働きながら年金を受け取る場合、給料と厚生年金の合計が月62万円を超えると、超えた分の半分が年金から減らされ、その基準が今年4月に51万円から62万円に上がったので確認が必要。", "unclear": ["「国民年金」と「厚生年金」の具体的な違いは何か", "「ねんきん定期便」とは何か", "なぜ「超えた分の半分」という計算になるのか", "「土台」「上乗せ」という表現の意味", "「あとでまとめてもらえない」ことの実際の影響"]}
