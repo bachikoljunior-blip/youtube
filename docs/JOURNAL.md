@@ -113929,3 +113929,77 @@ bytes は控えに在ります。**枠が戻る 16:00 JST 以降**に:
 - **08/25 の per_video の落ち（同じ 10本/日 で 1,000 → 100〜200）は密度で説明が付いていません。** 08/24〜26 に動画の中身へ入った変更は
   `6f5fb7bb`（08/24 登録の依頼を開け直す）・`bc34de6d`（08/26 途中にも依頼を1回）。**依頼の有無で 齢24h を割って数えること**（`data/views.jsonl` × `MID_REQUEST_RULE` の群）。
 - 日枠が戻る 16:00 JST の最初の周で、`data/ahead_sweep.log` の `[today]` に「置きました」が **何行 並ぶか**を見ること（8行 ＝ 17〜23時 + 既存 2本 で 9〜10本）。1行なら、この直しは効いていない。
+
+## 2026-09-05 10:5x〜 JST（毎時の回・サブ `agent-acd18a40268d0a087`・模型 fable）—— 外の型のショートを、札 → 尺 → 床 → 上限 → 数え方 まで一本に通して、1本目を焼いた
+
+### 選んだ順（§4）
+
+1. `[暦]` 鳴らず。2. `eta.py` 期日の来た前提 0件（到達日「出ません」・腕 `per_video`）。3. きょうの決め `a23e696j0f8` 在り。
+4. きょうの予約 在り。4'. `slot_gate.py` は「同じ題材が 2本（`kzefG44_APU`／`a23e696j0f8`）」で鳴っているが、
+`--unschedule` は 50単位 で **日枠は 16:00 JST まで 403**（`quota_ledger`: 403 ×14）。前の回が `ahead_sweep.dedupe_today()` に
+持たせてあるので、窓が戻った掃きに任せた（手で撃っても同じ 403）。→ 5. `improve`（次の枠の1本）。
+
+### 次の枠の1本を「同じ作りで磨く」のではなく「作りを変える」ほうへ
+
+`run_marker --write` の `[きょうの1本]` はこう言っている ——「維持率は門の下・族も雑音 ＝ **中身の側に、次の1本の再生を当てる
+数字がありません**。読みの直し・題の言い換え・段の説明を足す `improve` は、どの数字も動かしません。**作りを変えた1本だけが
+×10 を試せる**」。次の枠（09/06 19:00 JST）の `qyVdpAoT_40` は 08/19 焼きの 30秒 ショートで、控えが無く「1か所だけ直して焼き直す」も
+できない。**同じ作りで焼き直しても ×1。**
+
+いっぽう前提「外の帯の上位の**ショート**の作り」（期限 09-08・腕 `per_video`）は、05:3x〜06:0x の回が **脚**（`src/outside_short`・
+`short_total_band`・題の規則）まで入れて、**札（`config/topics.yaml` の `style: outside_short`）は 0件・本は 0本** のまま止まっていた
+（`deadline_check._outside_supply`: 「その型の本が1本も在りません —— 期限を延ばしても1日も近づきません」）。
+09/06 の枠に載せて 48h ＝ 09/08 が期限ちょうど。**この回で本を1本 焼かないと、前提は期限に判定できない。**
+
+### 焼く前に読んで見つけた食い違い（長尺が 09/05 03:4x に踏んだ形と同じ）
+
+札を置いて `--short` で焼くと、床（`short_total_band` ＝ 648〜833字）は帯へ移るのに、
+
+- `script_writer.generate()` は `max_minutes 0.60` → **命じる字数 90〜178字・セグメント 5〜6** のまま → 書き手は 140字 で書き、床が
+  「下限 648字」で落とし、書き直し3回を食い尽くす（**命じる尺と落とす床の食い違い**）。
+- `verify._check_short_pace` の上限 **70秒** → 帯の本（140〜180秒）は**焼き上がってから必ず落ちる**。
+- `daily_pick.treated_count('ショート')` は `outside_long` しか見ない → **本を出しても処置 0本** のまま（門が開かない）。
+
+**直した**（`d5ce1c0d`）: `generate()` は `outside_short` なら `is_short` のまま字数を `outside_short.total_chars_band()` から引き
+（上端は 3分 の 8秒 手前 ＝ 796字。YouTube のショートの区切りと帯の上端が同じ 180秒 なので、寄せた本は 1秒 溢れて長尺になる）、
+`OUTSIDE_SHORT_RULE` を prompt へ。`pipeline` は目標・上限の分を帯へ（`min_minutes` は 0.25 のまま —— 床は字数の側）。
+`verify` は札の本だけ `forms.SHORT_MAX_SECONDS`（180秒）。`treated_count` はショートを `outside_short.probe`（尺が hard 脚）で数える。
+検査 `tests/test_outside_short.py` に 3件 足し、`tests/test_outside_supply.py` は「札を置いた回に `>= 1` へ直す」の指示どおり直した。
+
+### 札と本
+
+`config/topics.yaml` に `s-teikibin-todoita-kakyu-ni-nai`（calc `kakyu`・`style: outside_short`・score 2.0）。型の出どころは外の帯の
+ショート1位「年金通知書！遂に来ました！公開します！」（220,121回・147秒）と長尺2位「申請しないと大損！ねんきん定期便に載らない年金4選」（440万回）。
+**実物の写真は使わない・「私に届いた」とは言わない**（`OUTSIDE_SHORT_RULE` (3)・誤解を与える内容にしない）——「届いたら、この順に開けます」の形で、
+定期便の欄と同じ並びの表を出して行を読み、**どの行にも加給年金 年423,700円 が載っていない**ことと、総額を決めるのは年齢差だけ（表）を読む。
+焼き: 11:3x JST に `python -m src.pipeline --topic s-teikibin-todoita-kakyu-ni-nai --short --visibility private`（pid 21667・
+log は scratch `d0a087/bake.log`）。印字で確かめた: 「命じる 648〜796字・床 648〜833字・セグメント 19〜32」「作り: outside_short」。
+
+### 同じ回・`fix`（`tests/conftest.py`）
+
+`_bake_is_live()` の `pgrep -f "src.pipeline --topic"` が、**4〜6時間 前に焼きを起こした bash の殻**（CPU 0%）4つに当たり、
+焼いていない回の検査が `nice 19` で走っていた。`/proc/<pid>/cmdline` の argv[0] が python の pid だけに絞る（`783eca5a` の手前）。
+`--moves 0`。
+
+### 腕と種別
+
+`improve`・`--lever per_video`。**到達日（軌跡）は動かない**（腕は前提を1件 閉じたときだけ動く）。動くのは 09/08 の `verdict` で、
+この本が 09/06 の枠に載って初めて判定できる。`--moves 0`（正直に）。
+
+### 次の回へ
+
+1. **焼き上がった本（`data/uploaded.jsonl` の題材 `s-teikibin-todoita-kakyu-ni-nai` の最後の行）を 09/06 の枠へ**:
+   `python -m src.daily_pick --pick ショート s-teikibin-todoita-kakyu-ni-nai --video <新ID> --day 2026-09-06 --why "..."` は
+   この回が撃つ（0単位）。`--move` は 16:00 JST に日枠が戻ってから（`scripts/reschedule.py --unschedule qyVdpAoT_40` →
+   `--move <新ID> 2026-09-06T19:00`・100単位）。**09/06 に載らなければ、前提の期限 09-08 は判定できない**（`falsified_if`:
+   「延ばす前に、なぜ枠が回らなかったかを1行で」）。
+2. 焼き上がりの確かめ: `python -c "from src import outside_short as o; print(o.probe('<新ID>'))"` が `yes` で初めて処置
+   （`treated_count('ショート')` の分子）。`no` なら尺の脚（648字 未満）—— 書き手が帯に届かなかった。
+3. 上の `dedupe_today`／`fMlY_uzHOMw` の置き／サムネの 3行 は前の回の申し送りのまま（16:00 JST 以降の掃き）。
+
+### 覆る条件
+
+- `outside_short.band_lines()` が「食い違っています」を出したら（速い升が 140〜180秒 でなくなった）、`LENGTH_BAND` を動かし、
+  `generate()` の上端（3分 − 8秒）はそのまま。
+- 前提が外れたら（齢48h で 1,864回 未満）、`src/outside_short` ごと落とす —— `generate()`・`pipeline`・`verify`・`treated_count` の
+  4か所の分岐も一緒に（それぞれの註に書いた）。
