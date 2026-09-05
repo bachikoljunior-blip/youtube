@@ -137,3 +137,51 @@ def test_札が付くと_帯は外の升へ移る(monkeypatch):
     assert short and "下限" in short[0]
     # **帯に入っていれば何も言わない**
     assert _totals(_Script((lo + hi) // 2), "x", sw) == []
+
+
+
+# --- 札を置いた回に、命じる尺・落とす床・焼き上がりの上限が同じ帯を向いていること ---------
+#
+# 2026-09-05 11:xx・サブの回。長尺が 09/05 03:4x に踏んだ「命じる尺と落とす床が食い違い、
+# 書き直しの3回を食い尽くして1本も出せない」を、ショート側で**焼く前に**塞ぐ。
+
+
+def test_実物の札の題材は_床が外の帯へ移る():
+    """`config/topics.yaml` の `style: outside_short` の題材で、`short_total_band` が帯を返すこと。"""
+    from src import script_writer as sw
+    lo, hi, why = sw.short_total_band("s-teikibin-todoita-kakyu-ni-nai")
+    assert (lo, hi) == osh.total_chars_band()
+    assert "outside_short" in why
+
+
+def test_焼き上がりの尺の上限は_札の本だけ_3分():
+    """`verify._check_short_pace` の上限 70秒 のままだと、帯（140〜180秒）の本は**必ず落ちる**。"""
+    from src import forms, verify
+    assert verify._short_seconds_limit({"style": "outside_short"}) == forms.SHORT_MAX_SECONDS
+    assert verify._short_seconds_limit({"style": ""}) == verify.MAX_SHORT_SECONDS
+    assert verify._short_seconds_limit(None) == verify.MAX_SHORT_SECONDS
+    # 既定の本は今までどおり 70秒 で落ちる／札の本は 150秒 でも通る
+    script = {"segments": [{"narration": "あ"}] * 20}
+    assert verify._check_short_pace(script, 150.0)                 # 既定: 落ちる
+    assert not verify._check_short_pace(script, 150.0, forms.SHORT_MAX_SECONDS)
+
+
+def test_ショートの処置は_控えの尺で数える(tmp_path, monkeypatch):
+    """`daily_pick.treated_count('ショート')` は、札 ＋ `outside_short.probe == yes` で数える
+    （それまでは `outside_long` しか見ず、ショートは**必ず 0本**だった）。"""
+    from src import daily_pick as dp
+    q = tmp_path / "critique_queue"
+    q.mkdir()
+    lo, hi = osh.total_chars_band()
+    (q / "OK1.script.json").write_text(json.dumps(_script((lo + hi) // 2)), encoding="utf-8")
+    (q / "NG1.script.json").write_text(json.dumps(_script(140)), encoding="utf-8")
+    monkeypatch.setattr(dp, "QUEUE", q)
+    rows = [
+        {"form": "ショート", "topic": "t-out", "video_id": "OK1"},
+        {"form": "ショート", "topic": "t-out", "video_id": "NG1"},     # 尺が落ちる ＝ 処置ではない
+        {"form": "ショート", "topic": "t-out", "video_id": "NONE"},    # 控えが無い ＝ unknown
+        {"form": "ショート", "topic": "t-plain", "video_id": "OK1"},   # 札が無い
+    ]
+    monkeypatch.setattr(dp, "aged_views", lambda *a, **k: rows)
+    topics = [{"id": "t-out", "style": "outside_short"}, {"id": "t-plain"}]
+    assert dp.treated_count("ショート", topics=topics) == (1, 4)

@@ -2740,7 +2740,23 @@ def treated_count(form: str, *, hours: int = AGE_HOURS,
     treated = 0
     for r in rows:
         # **型を持たない題材は、写しようがありません**（処置の外）。
-        if tops.get(str(r.get("topic") or "")) != "outside_long":
+        style = tops.get(str(r.get("topic") or ""))
+        if form == "ショート":
+            # **ショートの処置は `src/outside_short.probe`（実物の台本の控え・尺が hard 脚）で数える**
+            # （2026-09-05 11:xx・サブの回）。それまでこの関数は `outside_long` しか見ておらず、
+            # ショートは札が在っても **必ず 0本** でした ＝ `deadline_check._outside_supply` の門が、
+            # 本を出しても開かない形。読めない控えは `unknown` で、通ったにも落ちたにも数えません。
+            if style != "outside_short":
+                continue
+            try:
+                from src import outside_short as _osh                # noqa: PLC0415
+                state, _why = _osh.probe(str(r.get("video_id") or ""), queue=QUEUE)
+            except Exception:                                          # noqa: BLE001
+                continue
+            if state == "yes":
+                treated += 1
+            continue
+        if style != "outside_long":
             continue
         try:
             script = json.loads((QUEUE / f"{r['video_id']}.script.json").read_text(encoding="utf-8"))

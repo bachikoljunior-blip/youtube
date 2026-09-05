@@ -3070,6 +3070,25 @@ def generate(channel: dict, topic: dict) -> VideoScript:
     # 別々に持つと、片方だけ直したときに静かにずれます。
     is_short = max_minutes <= 1.5
     seg_lo, seg_hi = segment_range(min_chars, max_chars, is_short)
+    # **`style: outside_short`（外の帯の上位のショートの型）は、尺だけ別の帯です**
+    # （2026-09-05 11:xx・サブの回）。`short_total_band()` が **落とす床** を
+    # 140〜180秒 の帯へ移すのに、ここで **命じる尺** が 0.5分（140字）のままだと、
+    # 長尺が 09/05 03:4x に踏んだ「命じる尺と落とす床が食い違い、書き直しの3回を
+    # 食い尽くして1本も出せない」を、そのままショート側で繰り返します。
+    # **床と同じ関数から引く**（`outside_short.total_chars_band()`）。
+    # 上端だけ 8秒 手前で止めます —— YouTube のショートの区切りは 3分（`forms.SHORT_MAX_SECONDS`）で、
+    # 帯の上端 180秒 と同じ数なので、そこへ寄せた本は 1秒 溢れただけで長尺になります。
+    outside_short_style = str(topic.get("style") or "") == "outside_short"
+    if outside_short_style:
+        from . import outside_short as _osh                       # noqa: PLC0415
+        is_short = True
+        min_chars, band_hi = _osh.total_chars_band()
+        max_chars = min(band_hi, int((_osh.LENGTH_BAND[1] - 8) * EFFECTIVE_CHARS_PER_SECOND))
+        seg_lo = math.ceil(min_chars / SHORT_SEGMENT_CHARS)
+        seg_hi = math.ceil(max_chars / 25)
+        print(f"[script] 作り: outside_short —— 尺は外の帯 {_osh.LENGTH_BAND[0]}〜{_osh.LENGTH_BAND[1]}秒"
+              f"（命じる {min_chars}〜{max_chars}字・床 {min_chars}〜{band_hi}字・"
+              f"セグメント {seg_lo}〜{seg_hi}）。ROLE の『上限140文字』はこの本に当てません")
     if is_short:
         print(f"[script] セグメント数の目安: {seg_lo}〜{seg_hi}"
               f" / 1文 {SHORT_SEGMENT_CHARS}文字まで"
@@ -3107,6 +3126,11 @@ def generate(channel: dict, topic: dict) -> VideoScript:
     if not is_short and str(topic.get("style") or "") == "outside_long":
         prompt += OUTSIDE_LONG_RULE
         print("[script] 作り: outside_long（外の帯の上位の長尺の形を写す）")
+    # **ショート側の同じ口**（`src/outside_short.OUTSIDE_SHORT_RULE`・脚は `legs_of_script`）。
+    # 上の `outside_short_style` の節で尺は帯へ移してあります。ここは**型の本文**だけ。
+    if is_short and outside_short_style:
+        prompt += _osh.rule_text()
+        print("[script] 作り: outside_short（外の帯の上位のショートの形を写す）")
 
     form = title_form(topic.get("id", ""))
     if form == "問い":

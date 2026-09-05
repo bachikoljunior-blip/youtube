@@ -553,6 +553,19 @@ def main(argv: list[str] | None = None) -> int:
         print(f"[pipeline] 外の型の尺で作ります（規則が題材の minutes: を上書き）: "
               f"目標 {want:g}分（下限 {lo}分・上限 {hi}分）"
               f"—— 帯でいちばん速い升 25〜30分（n=24・2,094回/日）")
+    # **ショート側の同じ口**（`style: outside_short`・2026-09-05 11:xx・サブの回）。
+    # 命じる尺の正本は `script_writer.generate()`（`outside_short.total_chars_band()` から引く）で、
+    # ここは `channel["video"]` の目標・上限を帯へ寄せて、印字を残すだけ。
+    # `min_minutes` は 0.25 のまま（`verify.check` の「下限 未満」は秒で見るので、
+    # 帯の下端 140秒 を床にすると、字数で帯に届いた本が数秒の差で落ちます。床は字数の側）。
+    if args.short and str(topic.get("style") or "") == "outside_short":
+        from . import outside_short as _osh                       # noqa: PLC0415
+        lo_s, hi_s = _osh.LENGTH_BAND
+        channel["video"] = dict(channel["video"])
+        channel["video"]["target_minutes"] = round((lo_s + hi_s) / 120, 2)
+        channel["video"]["max_minutes"] = round(hi_s / 60, 2)
+        print(f"[pipeline] 外の型のショートで作ります: 尺 {lo_s}〜{hi_s}秒"
+              f"（`src/outside_short.LENGTH_BAND`・外の帯でいちばん速い升・0〜60秒 の ×7.0）")
     print(f"=== テーマ: {topic['title_seed']} ({topic['id']}) ===")
     if not args.script and not topic.get("calc"):
         # 台本を生成させるのに計算が無いと、数字を発明させることになる。

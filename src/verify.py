@@ -266,7 +266,23 @@ def _check_reveal_hold(work: Path) -> list[str]:
     ]
 
 
-def _check_short_pace(script: dict | None, duration: float) -> list[str]:
+def _short_seconds_limit(topic: dict | None) -> float:
+    """そのショートの尺の上限（秒）。**`style: outside_short` だけ、YouTube の区切り（3分）まで。**
+
+    既定は `MAX_SHORT_SECONDS`（70秒）のまま —— 30秒の作りの本は1文字も変わりません。
+    外の帯の上位のショートの型（`src/outside_short.LENGTH_BAND` 140〜180秒）は、
+    この上限では**焼き上がってから必ず落ちる**ので（2026-09-05 11:xx・サブの回・
+    焼く前に読んで見つけた）、その札の本だけ `forms.SHORT_MAX_SECONDS` で見ます。
+    **覆る条件**: 前提「外の帯の上位のショートの作り」が外れたら `src/outside_short` ごと落とすので、
+    この分岐も一緒に落とすこと。
+    """
+    if str((topic or {}).get("style") or "") == "outside_short":
+        return float(forms.SHORT_MAX_SECONDS)
+    return MAX_SHORT_SECONDS
+
+
+def _check_short_pace(script: dict | None, duration: float,
+                      limit: float = MAX_SHORT_SECONDS) -> list[str]:
     """ショートで同じ絵が長く止まりすぎていないか。
 
     **枚数ではなく「1枚あたり何秒か」で見る。** 枚数の下限を置くと尺が変わった
@@ -281,10 +297,10 @@ def _check_short_pace(script: dict | None, duration: float) -> list[str]:
     if not segments:
         return []
     problems = []
-    if duration > MAX_SHORT_SECONDS:
+    if duration > limit:
         problems.append(
             f"ショートが {duration:.0f}秒 で長すぎる"
-            f"（上限 {MAX_SHORT_SECONDS:.0f}秒）。**1本＝1つの計算結果に絞ること**"
+            f"（上限 {limit:.0f}秒）。**1本＝1つの計算結果に絞ること**"
         )
     per = duration / len(segments)
     if per > MAX_SECONDS_PER_SLIDE:
@@ -2681,7 +2697,7 @@ def check(path: Path, video_cfg: dict, min_minutes: float, work: Path,
     problems += script_only_problems(script, portrait)
     if portrait:
         problems += _check_headline_from_calc(work, script)
-        problems += _check_short_pace(script, duration)
+        problems += _check_short_pace(script, duration, _short_seconds_limit(topic))
         problems += _check_slide_hold(work, duration)
         # **上限と下限は必ず並べて置くこと**（2026-08-27）。
         # 片方だけだと、検査そのものが速いほうへ押します（`_check_reveal_hold`）。

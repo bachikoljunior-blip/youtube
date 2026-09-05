@@ -77,11 +77,12 @@ def test_関係のない_what_は素通りする(counts):
     assert dc._outside_supply("`data/views.jsonl` に 09/05 までの公開日が入っていること") is None
 
 
-def test_実物の_topics_yaml_に_outside_long_が在り_outside_short_は無い():
+def test_実物の_topics_yaml_に_outside_long_も_outside_short_も在る():
     """**この検査は実物を読みます** —— 札を足したら、ここが最初に教えます。
 
-    `outside_short` が 1件 以上になったら、上の `[!!]` は自分で消えます
-    （そのときこの行を `>= 1` へ直すこと。**先に直さないこと**）。
+    2026-09-05 11:xx まで `outside_short` は `== 0` でした（「札を足したら `>= 1` へ直すこと。
+    **先に直さないこと**」）。同じ回に `s-teikibin-todoita-kakyu-ni-nai` を置いて直しました ——
+    脚（`src/outside_short`・05:3x）→ 札（この回）→ 本（同じ回に焼く）の順。
     """
     assert dc._outside_style_topics("outside_long") >= 1
-    assert dc._outside_style_topics("outside_short") == 0
+    assert dc._outside_style_topics("outside_short") >= 1
