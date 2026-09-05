@@ -114253,3 +114253,29 @@ ship は 1回 断られた（枠と決めの食い違い ＝ 4'）ので「枠�
 - 2日 たっても別題材のショートが 1日 2本 以下なら、印字では足りていない → `slot_gate.main()` の `--gate` で exit 2（`stop_check.sh` が止める側）へ格上げ。
 - 上限を使う前に `per_video` の前提（外の型のショート・09/08 判定）が当たったら、増やす本はその型で（上限の話と型の話は独立）。
 - オーナーが「1日1本」を再び固定と言ったら `OWNER_FLOORS_LIFTED = False`。
+### 2件目・`fix`（`src/next_slot.py`）—— 焼き上がった焼きを「いま焼いている」と 8時間 刷っていた
+
+同じ画面（15:0x）の `[!] いま焼いているのは GFvAcxvDmYM ですが、きょうの決めは a23e696j0f8 です（最後の鼓動 06:18 JST）` ——
+`data/rebake.jsonl` は 06:18 の `beat` のあと **07:58 に `done`（`fMlY_uzHOMw`・rc 0・12,600秒）** を残していた。`superseded_bake_lines` は 12時間 以内の
+いちばん新しい `beat`/`start` しか見ず、後続の `done` を読まない ＝ 焼き上がってから半日、毎周「枠の形を間違えると 164 → 1」の警告が嘘で出る。
+同じ本の後続の `done`/`skip`/`late` で消し、呼ぶ側は `ahead_sweep.rebake_busy`（`flock`・直接の証拠）も渡す。実測（直後）: その行は 0行。検査 2件 `tests/test_superseded_bake.py`。`--moves 0`。
+**覆る条件**: `rebake_run()` が `beat` を `done` で上書きする（追記ではなく状態を持つ）形になったら、後続の行を探す分岐は要らない。
+
+### この回で撃たなかったこと（数）
+
+- **09/07 の決め**: 枠は `PhQ2KvuQASQ`（30秒・族 ikuji・見込み 164回）。`vmAll8GDkU8`（09/08・外の型 2本目）を 09/07 へ寄せれば n=2 の判定が **1日** 早まる（09/10 → 09/09）が、
+  50単位 の上に `daily_pick.jsonl` の 09/08 の決めと実物が食い違い、`placed_at`／`current()` を読む画面が毎周 それを言う（追記のみで消せない）。**1日 の値段に見合わない**ので置いたまま。
+  09/06 の回が「その日の投稿の後は次の日の作成」で 09/07 の本を決める。
+- 親の本文の「16:00 まで居る」は、親の側から「止まって見える」と言われたので **降りる**（14:54 起点・60分 は 15:54 で、窓 16:00 の 6分 前）。
+  窓の手は下へ。**次の回が 16:50 JST 前後に立つ**（間隔 114分）ので、公開 09/06 09:00 には間に合う。
+
+### 次の回へ（**16:00 JST に日枠が戻ってから・全部 50単位 前後**）
+
+    python scripts/ahead_sweep.py                                  # dedupe（kzefG44_APU を外す）・retitle（3gZ38lfsJpY の題）・comment・sub-ask を一度に
+    python scripts/refresh_thumbnail.py --missing --video 3gZ38lfsJpY   # 次の枠（控えに bytes 在り・thumbnail_set False）
+    python scripts/refresh_thumbnail.py --missing --video a23e696j0f8   # きょう 10:00 公開ずみ・同じく未搭載
+    python scripts/refresh_thumbnail.py --missing --video vmAll8GDkU8   # 09/08
+    python scripts/niche_ceiling.py --backfill-published 2         # 帳面の穴（09/05 04:04 の short 2行・top 30本 全部 published 空・videos.list 1単位）
+    python scripts/reschedule.py --list                             # 控えを実物へ合わせる
+
+確かめ方: `tail -5 data/ahead_sweep.log` に `[dedupe] … 外しました` と `[retitle] … 1本 を書きました`。`python -m src.next_slot` の「サムネイルの bytes は控えに在りますが」が消えること。
