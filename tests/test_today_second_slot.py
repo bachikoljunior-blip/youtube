@@ -93,16 +93,62 @@ def test_決めの本が枠に在れば_二度返さない_2本目は前提の�
     assert c["source"] == "probe" and c["update_only"] is True
 
 
-def test_札だけの本は処置ではない(monkeypatch):
+def _wire_pool(monkeypatch, pool):
+    """池を差し替える（3本目からの枝。2026-09-05 11:xx に足した）。`record` は呼ばれないこと。"""
+    calls = []
+    monkeypatch.setattr(daily_pick, "compare", lambda now: {"all": {"ショート": {"median": 164, "n": 216}},
+                                                            "rows": []})
+    monkeypatch.setattr(daily_pick, "fallback_form", lambda cmp: "ショート")
+    monkeypatch.setattr(daily_pick, "pool_candidates", lambda form, rows=None: list(pool))
+    monkeypatch.setattr(daily_pick, "outside_first", lambda pool, topics=None: list(pool))
+    monkeypatch.setattr(daily_pick, "claimed_elsewhere", lambda day: {"CLAIMED"})
+    monkeypatch.setattr(daily_pick, "record", lambda *a, **k: calls.append((a, k)))
+    return calls
+
+
+POOL = [{"video_id": "CLAIMED", "topic": "s-x", "family": "x", "fam_res": 400, "fam_median": 400, "fam_n": 3},
+        {"video_id": "a23e696j0f8", "topic": "s-shokibo", "family": "shokibo", "fam_res": 345, "fam_median": 1035, "fam_n": 4},
+        {"video_id": "POOL1", "topic": "s-ikuji", "family": "ikuji", "fam_res": 108, "fam_median": 621, "fam_n": 4}]
+
+
+def test_札だけの本は処置ではない_3本目は池から(monkeypatch):
+    """処置が無ければ `None` で止まっていた（規則 10本/日 で候補は最大 2本）。3本目からは池。
+    他日の決めが名指す本（CLAIMED）と、きょう置いた本（a23e696j0f8）は外す。決めは書き換えない。"""
     _wire(monkeypatch, rows=_rows(with_probe=False),
           legs={"GFvAcxvDmYM": (["(2) 章・締め"], None)})
-    assert sweep._today_candidate(NOW) is None
+    calls = _wire_pool(monkeypatch, POOL)
+    c = sweep._today_candidate(NOW)
+    assert c["video_id"] == "POOL1" and c["source"] == "pool"
+    assert "3本目" in c["why"] and calls == []
 
 
-def test_処置がもう予約ずみなら出さない(monkeypatch):
+def test_処置がもう予約ずみなら池へ(monkeypatch):
     _wire(monkeypatch, rows=_rows(probe_at="2026-09-05T08:00:00Z"),
           legs={"GFvAcxvDmYM": (["(4) 題・サムネ"], None)})
+    _wire_pool(monkeypatch, POOL)
+    c = sweep._today_candidate(NOW)
+    assert c["video_id"] == "POOL1" and c["source"] == "pool"
+
+
+def test_池も空なら_None(monkeypatch):
+    _wire(monkeypatch, rows=_rows(with_probe=False),
+          legs={"GFvAcxvDmYM": (["(2) 章・締め"], None)})
+    _wire_pool(monkeypatch, [])
+    monkeypatch.setattr(next_slot, "next_video", lambda now: None)
+    monkeypatch.setattr(next_slot, "drafts", lambda now: [])
     assert sweep._today_candidate(NOW) is None
+
+
+def test_置いた正時は飛ばす():
+    """`today_slot(occupied=)`: 09:00・10:00 に本が在れば、9時 を頼まれても 11:00。"""
+    assert sweep.today_slot(NOW, 9, occupied={9, 10}).hour == 11
+    assert sweep.today_slot(NOW, 9, occupied=set()).hour == 10       # 09:05 + 20分 → 10:00
+    assert sweep.today_slot(NOW, 9, occupied=set(range(10, 24))) is None
+
+
+def test_きょうの正時を数える(monkeypatch):
+    _wire(monkeypatch)
+    assert sweep.today_hours(NOW) == {9, 10}
 
 
 def test_床が効いている日は2本目を出さない(monkeypatch):

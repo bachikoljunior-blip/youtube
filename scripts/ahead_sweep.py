@@ -505,14 +505,27 @@ JST = timezone(timedelta(hours=9))
 
 
 def today_slot(now: datetime, hour: int, *, lead_min: int = TODAY_LEAD_MIN,
-               last_hour: int = TODAY_LAST_HOUR) -> datetime | None:
+               last_hour: int = TODAY_LAST_HOUR,
+               occupied: set[int] | None = None) -> datetime | None:
     """**きょう置ける時刻（JST）。** 既定の時刻がまだ先ならそれ。過ぎていれば次の正時。
-    きょうの中に残っていなければ `None`。**API 0単位・純関数。**"""
+    きょうの中に残っていなければ `None`。**API 0単位・純関数。**
+
+    `occupied` は **きょうの枠に、もう本が入っている正時（JST の時）**。その時は飛ばして
+    次の正時へ（2026-09-05 11:xx・最適化の回）。規則が 10本/日 になった日から
+    `place_today()` は1周に何本も置きますが、時刻は `place_hour()` の1点しか無く、
+    **2本目からは全部 同じ正時**に積む形でした（09/05 の実測: 09:00 と 10:00 ＝ 隣の正時に
+    たまたま散ったのは、置いた周が別だったから）。同じ正時に 10本 は Shorts のフィードに
+    まとめて出す形で、1本ずつ試される機会（実測: 同じ日でも 1〜3回 と 1,000回 に割れる）を
+    自分で潰します。**覆る条件**: 同じ正時に置いた本と散らした本で 齢24h の再生に差が
+    無いと出たら（`data/views.jsonl`）、散らす必要はありません。"""
     t = now.astimezone(JST)
     edge = t + timedelta(minutes=lead_min)
     slot = t.replace(hour=int(hour), minute=0, second=0, microsecond=0)
     if slot < edge:
         slot = edge.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
+    taken = {int(h) for h in (occupied or ())}
+    while slot.date() == t.date() and slot.hour <= last_hour and slot.hour in taken:
+        slot = slot + timedelta(hours=1)
     if slot.date() != t.date() or slot.hour > last_hour:
         return None
     return slot
@@ -568,7 +581,8 @@ def place_hour(day, *, sweep=None, config=None) -> int:
 def today_plan(now: datetime, *, count: int, cap: int, candidate: dict | None,
                hour: int, quota_open: bool, rule_on: bool = True,
                paused: str = "", insert_ok: bool = False,
-               rebake_pending: bool = False, takeover_pending: bool = False) -> dict:
+               rebake_pending: bool = False, takeover_pending: bool = False,
+               occupied: set[int] | None = None) -> dict:
     """**置くか・何を・いつ**を決める（**API 0単位・純関数**）。
 
     返り: `{"do": bool, "why": str, "video_id": str|None, "when": "YYYY-MM-DDTHH:00"|None,
@@ -611,7 +625,7 @@ def today_plan(now: datetime, *, count: int, cap: int, candidate: dict | None,
         return {"do": False, "why": "日枠が尽きています（この窓では `videos.update` が通りません。"
                 "台本の控えも無いので `videos.insert` でも置き直せません）",
                 "video_id": None, "when": None}
-    slot = today_slot(now, hour)
+    slot = today_slot(now, hour, occupied=occupied)
     if slot is None:
         return {"do": False, "why": f"きょう {day} に置ける正時が残っていません"
                 f"（{TODAY_LAST_HOUR}時 まで・いまから {TODAY_LEAD_MIN}分 より先）",
@@ -717,6 +731,7 @@ def _today_candidate(now: datetime) -> dict | None:
     #   **この手は形の名前を 1つも持っていません。**
     # - `daily_pick` の門を畳むなら、ここも一緒に畳むこと。
     _stale = ""
+    pick_stood = False                      # 決めの本が立っていて、もう枠に在る
     if cur and cur.get("video_id"):
         try:
             _stale = daily_pick.standing_form_stale(day, cur=cur, now=now)
@@ -752,7 +767,17 @@ def _today_candidate(now: datetime) -> dict | None:
         # 立っている決めが毎周 動きます。**覆る条件**: 10本/日 で回した日の
         # 「再生/日 の合計」が 1本/日 の日を上回る実測が出たら（`house_rule` の覆る条件2 の逆）、
         # 池で埋める枝を `record()` を通さない形で足すこと。
-        return _probe_candidate(now, placed=placed_today(now))
+        _probe = _probe_candidate(now, placed=placed_today(now))
+        if _probe:
+            return _probe
+        if house_rule.cap() <= 1:
+            return None                     # 床が効いている日: 枠は決めの本のもの
+        # **3本目からは池**（2026-09-05 11:xx・最適化の回）。規則が 10本/日 になった
+        #     09/04 17:3x から、ここは「決め → 処置 → `None`」で止まっていました ＝
+        #     `cap()` が 10 でも候補は最大 2本。09/05 の実測: 枠 2本・09/06 1本・09/07 1本、
+        #     池には private が 316本。**上限を上げた回が、入れる口を上げていなかった。**
+        #     決めの本の日の決定（`daily_pick.jsonl`）は書き換えません（下の `record` を飛ばす）。
+        pick_stood = True
     # 決めていない → 形は**収益化の門に近い側**（`daily_pick.fallback_form`・2026-09-03 夜。
     #     それまで「齢48h の中央値の大きい形」で選んでいた ＝ 毎日ショート。ショートの視聴時間は
     #     4,000時間 の門に 0 入る —— `daily_pick.gate_arithmetic` の註）。同じ形の中では
@@ -768,26 +793,34 @@ def _today_candidate(now: datetime) -> dict | None:
         # 取ると 2つの日が同じ本を指し、先に出たほうで もう片方の見込みが嘘になります。
         # **全部が取られている回は引きません**（空きを作らない・元の並びに戻す）。
         _claimed = daily_pick.claimed_elsewhere(day)
-        _free = [x for x in pool if x.get("video_id") not in _claimed]
+        _placed = placed_today(now)
+        _free = [x for x in pool
+                 if x.get("video_id") not in _claimed and x.get("video_id") not in _placed]
+        if pick_stood:
+            pool = _free                    # 決めの本の日は、他日の決め・置いた本を必ず外す
         pool = _free if _free else pool
     except Exception:                                          # noqa: BLE001
         pool, best_form, forms = [], None, {}
     if pool:
         top = pool[0]
         st = forms.get(best_form) or {}
-        why = (f"決めた本が無かったので機械が数で選んだ: 形 {best_form}"
-               f"（収益化の門に近い側・`daily_pick.gate_arithmetic`／齢48h 中央値 {st.get('median')}回・n={st.get('n')}）・"
-               f"族 {top.get('family')} 残差 ×{top.get('fam_res')}"
-               f"（生 {top.get('fam_median')}回・n={top.get('fam_n')}）")
+        _head = (f"きょうの {len(placed_today(now)) + 1}本目: 池から（規則 {house_rule.cap()}本/日）: 形 {best_form}"
+                 if pick_stood else
+                 f"決めた本が無かったので機械が数で選んだ: 形 {best_form}")
+        why = (_head
+               + f"（収益化の門に近い側・`daily_pick.gate_arithmetic`／齢48h 中央値 {st.get('median')}回・n={st.get('n')}）・"
+               + f"族 {top.get('family')} 残差 ×{top.get('fam_res')}"
+               + f"（生 {top.get('fam_median')}回・n={top.get('fam_n')}）")
         try:
             # **見込みは、いま選んだ形の実測 齢48h 中央値**（`record()` が数を要求します）。
             # `st` は上でその形の統計を引いているので、**新しく測り直しません**。
             exp = st.get("median")
             if exp is None:
                 exp = daily_pick.form_median_48h(best_form, cmp=cmp)
-            daily_pick.record(best_form, str(top.get("topic") or ""), why, day=day,
-                              now=now, video_id=top["video_id"],
-                              expected=float(exp) if exp is not None else 0.0)
+            if not pick_stood:
+                daily_pick.record(best_form, str(top.get("topic") or ""), why, day=day,
+                                  now=now, video_id=top["video_id"],
+                                  expected=float(exp) if exp is not None else 0.0)
         except Exception:                                      # noqa: BLE001
             pass
         return {"video_id": top["video_id"], "why": why, "source": "pool"}
@@ -873,6 +906,18 @@ def dedupe_today(now: datetime | None = None, *, dry_run: bool = False,
             d.setdefault("rc", {})[vid] = rc
             print(f"[dedupe]   `{vid}` → rc={rc}", flush=True)
     return plans
+
+
+def today_hours(now: datetime, path: Path | None = None) -> set[int]:
+    """**きょう（JST）の枠で、もう本が入っている正時（JST の時）。**（`placed_today` と同じ床・0単位）"""
+    from src import next_slot                                  # noqa: PLC0415
+    day = now.astimezone(JST).date()
+    out: set[int] = set()
+    for r in next_slot.latest_rows(path).values():
+        at = next_slot._parse(r.get("at"))
+        if at and at.astimezone(JST).date() == day:
+            out.add(int(at.astimezone(JST).hour))
+    return out
 
 
 def placed_today(now: datetime, path: Path | None = None) -> set[str]:
@@ -1070,6 +1115,7 @@ def place_today(now: datetime | None = None, *, dry_run: bool = False) -> dict:
     except Exception:                                          # noqa: BLE001
         quota_open = True
     hour = place_hour(now.astimezone(JST).date())
+    occupied = today_hours(now)
     cand = None
     if count < house_rule.cap():
         # **日枠が尽きていても候補は読む**（0単位）—— `videos.insert` の道が在るかは
@@ -1134,6 +1180,7 @@ def place_today(now: datetime | None = None, *, dry_run: bool = False) -> dict:
         rebake_pending = True
         print(f"[today] 焼き直しが先: {_blk}", flush=True)
     plan = today_plan(now, count=count, cap=house_rule.cap(), candidate=cand, hour=hour,
+                      occupied=occupied,
                       # **`same_day_only()` を渡さないこと**（2026-09-04 17:39 に踏んだ）。
                       #     あれは「先の日付を禁じるか」で、この手の問いは
                       #     「**その日の枠に本を入れるか**」です。オーナーが床を外した
@@ -3090,6 +3137,23 @@ def main(argv: list[str] | None = None) -> int:
         plan = None
         try:
             plan = place_today(now, dry_run=args.dry_run)
+            # **1周で `cap()` まで置く**（2026-09-05 11:xx・最適化の回）。前は1周に1本で、
+            #     周は 2時間 に1回・日枠は 16:00 JST まで閉じている ＝ 10本/日 の規則の下で
+            #     実際に置けるのは 3〜4本/日 でした。置けた（rc=0）あいだだけ続け、
+            #     置けない理由が出たら止まる。**同じ本を2度 置く形は `placed_today()` が外す。**
+            _seen = {str(plan.get("video_id") or "")} if isinstance(plan, dict) else set()
+            for _ in range(max(0, int(house_rule.cap()) - 1)):
+                if args.dry_run or not (isinstance(plan, dict) and plan.get("do")
+                                        and plan.get("rc") == 0):
+                    break
+                now = datetime.now(timezone.utc)
+                nxt = place_today(now, dry_run=args.dry_run)
+                vid = str((nxt or {}).get("video_id") or "") if isinstance(nxt, dict) else ""
+                if not vid or vid in _seen:
+                    plan = nxt if isinstance(nxt, dict) else plan
+                    break
+                _seen.add(vid)
+                plan = nxt
         except Exception as exc:                               # noqa: BLE001
             print(f"[today] [!] 置く手が落ちました: {str(exc)[:200]}", flush=True)
         # **同じ題材が きょうの枠に 2本 以上なら、2本目から先を外す**（`dedupe_today` の註）。
