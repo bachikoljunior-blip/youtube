@@ -1424,6 +1424,72 @@ def sub_ask_pending(now: datetime | None = None, *, dry_run: bool = False,
     return "見ました"
 
 
+def retitle_pending(now: datetime | None = None, *, dry_run: bool = False,
+                    pending=None, quota_open=None, run=None) -> str:
+    """**日枠の閉じた窓で決めた題を、窓が戻った周に書く**（1本 50単位）。返りは1行の理由。
+
+    ## なぜここに在るか（2026-09-05 13:4x・毎時の回）
+
+    09/06 09:00 JST の枠の `3gZ38lfsJpY` は 11:36 JST に上がり、`[きょうの1本]` は同じ周に
+    「いちばん厚い升で、まだ空いている特徴: 「？」（×2.39・n=35対97）→ `retitle.py`」と
+    刷っていました。書けるのは 16:00 JST（`videos.update` の窓）で、その回はもう居ません。
+    `comment_pending` と同じ理由です —— **「16:00 以降に撃つ」を回が憶えておく形は 6周で 0本。**
+    決めた題は `src.retitles.queue()` へ落とし（0単位）、ここが `kick()` から 20分ごとに通します。
+    待ちが無ければ **API 0単位**（`pending` が空なら何も撃ちません）。
+
+    `pending`／`quota_open`／`run` は検査のための差し替え口（省略時は実物:
+    `retitles.pending()`／`upload_cap.day_quota().open`／`_run([... scripts/retitle.py ...])`）。
+    済みの印は持ちません —— `retitle.py` が通ると `retitles.record()` が帳面に足し、
+    `pending()` はその字を「済み」と読みます。
+    """
+    now = now or datetime.now(timezone.utc)
+    stamp = now.astimezone(JST).strftime("%m/%d %H:%M JST")
+    if pending is None:
+        try:
+            from src import retitles as _rt                     # noqa: PLC0415
+            pending = _rt.pending()
+        except Exception as exc:                               # noqa: BLE001
+            pending = []
+            print(f"[retitle] 待ちを読めませんでした: {str(exc)[:100]}", flush=True)
+    if not pending:
+        line = "待っている題はありません（API 0単位）"
+        print(f"[retitle] {stamp} 書きません —— {line}", flush=True)
+        return line
+    if quota_open is None:
+        try:
+            from src import upload_cap                          # noqa: PLC0415
+            quota_open = bool(upload_cap.day_quota(now).open)
+        except Exception:                                      # noqa: BLE001
+            quota_open = True
+    if not quota_open:
+        line = f"待ち {len(pending)}本 あるが、日枠が尽きている（次の窓の周が書く）"
+        print(f"[retitle] {stamp} 書きません —— {line}", flush=True)
+        return line
+    if run is None:
+        run = lambda a: _run(a, "retitle", 120)                # noqa: E731
+    py = sys.executable or "python3"
+    ok = 0
+    for row in pending:
+        vid = str(row.get("video_id") or "")
+        title = str(row.get("title") or "")
+        print(f"[retitle] {stamp} `{vid}` → 『{title}』（50単位"
+              f"{'・`--dry-run` なので撃ちません' if dry_run else ''}）", flush=True)
+        if dry_run:
+            continue
+        try:
+            rc = int(run([py, "scripts/retitle.py", vid, title]))
+        except Exception as exc:                               # noqa: BLE001
+            print(f"[retitle] [!] `{vid}` 書く手が落ちました: {str(exc)[:120]}", flush=True)
+            continue
+        if rc == 0:
+            ok += 1
+        else:
+            print(f"[retitle] [!] `{vid}` rc={rc}（待ちは残る。次の周がもう一度 通す）", flush=True)
+    line = f"待ち {len(pending)}本 のうち {ok}本 を書きました"
+    print(f"[retitle] {line}", flush=True)
+    return line
+
+
 def comment_pending(now: datetime | None = None, *, dry_run: bool = False,
                     pending=None, quota_open=None, run=None) -> str:
     """**公開ずみで最初のコメントの無い本に、コメントを付ける**（1本 50単位）。返りは1行の理由。
@@ -3173,6 +3239,11 @@ def main(argv: list[str] | None = None) -> int:
             comment_pending(now, dry_run=args.dry_run)
         except Exception as exc:                               # noqa: BLE001
             print(f"[comment] [!] 付ける手が落ちました: {str(exc)[:200]}", flush=True)
+        # **閉じた窓で決めた題を、戻った窓で書く**（`retitle_pending` の註・1本 50単位）。
+        try:
+            retitle_pending(now, dry_run=args.dry_run)
+        except Exception as exc:                               # noqa: BLE001
+            print(f"[retitle] [!] 書く手が落ちました: {str(exc)[:200]}", flush=True)
         # **再生の付いている既存の本に、登録の依頼が入っているか**（`sub_ask_pending` の註。
         # 門1' を動かす積のうち `sub_rate` の側。置く先が無ければ 1単位）。
         try:

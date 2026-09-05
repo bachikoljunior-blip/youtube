@@ -45,6 +45,10 @@ from src import config
 
 LEDGER = Path(config.ROOT) / "data" / "retitled.jsonl"
 
+#: **日枠の閉じている窓で決めた題の、待ち行列**（追記のみ・`merge=union`）。
+#: 適用は `scripts/ahead_sweep.retitle_pending()`（窓が戻った掃き・1本 50単位）。
+PENDING = Path(config.ROOT) / "data" / "retitle_pending.jsonl"
+
 
 def _rows(path: Path | None = None) -> list[dict]:
     p = Path(path or LEDGER)
@@ -161,3 +165,60 @@ def seen_before(video_id: str, title: str, *, path: Path | None = None) -> list[
     t = str(title or "")
     return [r for r in history(video_id, path=path)
             if str(r.get("title") or "") == t]
+
+
+# ---------------------------------------------------------------- 待ち行列（2026-09-05 13:4x）
+#
+# ## なぜ要るか
+#
+# 題を決めるのは 0単位 で、いつでもできます。書くのは `videos.update` 50単位 で、
+# 日枠が閉じている窓（実測 09/05 は 16:00 JST まで 403 ×14）では通りません。
+# それまでこの repo は「16:00 以降の回で `retitle.py` を撃て」を申し送りで運んでいました ——
+# 最初のコメントで同じ形を 6周 運んで実物 0本（`ahead_sweep.comment_pending` の註）。
+# **回が憶えておく形は撃たれません。** 決めた題はここへ落とし、掃きが窓の戻った周に書きます。
+#
+# 「もう書いたか」は別の帳面を持ちません —— `retitle.py` が通ると `record()` が
+# `data/retitled.jsonl` へ足すので、**`latest()` がその字なら済み**です（`pending()`）。
+#
+# ## 覆る条件
+#
+# - `videos.update` が日枠の外へ出たら（`videos.insert` と同じ扱いになったら）、待つ理由が
+#   無いので `retitle.py` を直に撃つこと。この行列は要りません。
+def queue(video_id: str, title: str, *, why: str = "", at: datetime | None = None,
+          path: Path | None = None) -> dict:
+    """**題を待ち行列へ1行 足す**（追記のみ・API 0単位）。返りは足した行。"""
+    vid = str(video_id or "").strip()
+    if not vid or not str(title or "").strip():
+        raise ValueError("video_id と title が要ります")
+    row = {
+        "at": (at or datetime.now(timezone.utc)).astimezone(timezone.utc)
+              .isoformat().replace("+00:00", "Z"),
+        "video_id": vid,
+        "title": str(title).strip(),
+        "why": str(why or ""),
+    }
+    p = Path(path or PENDING)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    with p.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(row, ensure_ascii=False) + "\n")
+    return row
+
+
+def pending(*, path: Path | None = None, ledger: Path | None = None) -> list[dict]:
+    """**まだ実物に書かれていない待ち**（本ごとに、いちばん新しい `at` の1行）。API 0単位。
+
+    済みの判定は `latest(ledger)` —— `retitle.py` が通った本はそこがその字になります
+    （実物がもう同じ字だった回も `retitle.py` が控えを寄せるので、同じく消えます）。
+    """
+    best: dict[str, dict] = {}
+    for r in _rows(Path(path or PENDING)):
+        vid = str(r.get("video_id") or "").strip()
+        title = str(r.get("title") or "").strip()
+        if not vid or not title:
+            continue
+        cur = best.get(vid)
+        if cur is None or str(r.get("at") or "") >= str(cur.get("at") or ""):
+            best[vid] = r
+    done = latest(ledger)
+    return [r for vid, r in sorted(best.items())
+            if done.get(vid) != str(r.get("title") or "").strip()]
