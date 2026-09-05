@@ -114113,3 +114113,68 @@ log は scratch `d0a087/bake.log`）。印字で確かめた: 「命じる 648�
   10本/日 へ開けている最中（同じ周・同じ枝なので、この回は触っていない）。
 - `optimized.py` の「測った動き」の節は、これから `moves_measured` に本物の差が入る。
   **basis 混在の窓（09/05 13:xx を跨ぐ）では、前後で引かないこと**（`gate1p_basis` を見る）。
+
+## 2026-09-05 12:55〜 JST（毎時の回・サブ `agent-a2c2cdaef6b77b159`・模型 fable）—— 次の枠の1本（09/06 `3gZ38lfsJpY`）を 0単位 で磨き、外の型のショートの 2本目 を焼いた
+
+### 選んだ順（§4）
+
+1. `[暦]` 鳴らず（予約 3本／今後 2日・10本/日 の規則どおり）。2. `eta.py` に「期日の来た前提があります」の行 0件（到達日「出ません」・腕 `per_video`）。
+3. 09/06 の決めは 11:38 の回が `3gZ38lfsJpY`（ショート・`outside_short`）で書いている ＝ 決まっている。4. きょうの予約 在り。
+4'. `slot_gate.py` は「同じ題材 2本（`kzefG44_APU`／`a23e696j0f8`）」で鳴っているが `--unschedule` は 50単位 で **日枠は 16:00 JST まで 403** ——
+窓が戻った掃きの `dedupe_today()` に任せた（前の2回と同じ判断。`--ship` は「枠そのまま」で通した）。→ 5. `improve`（次の枠の1本）。
+
+### 1件目・`fix`（`src/next_slot.py`）—— ショートに長尺の物差し
+
+`next_slot.rebake_input_lines('3gZ38lfsJpY', …)` が刷っていた実物::
+
+    [!] `--script` で焼き直しても、この脚は1本も減りません —— 控えの台本そのものが落としています: (1) 冒頭・(2) 章・締め・(5) 間合い・尺
+    台本ごと書き下ろす焼き直し: python -m src.pipeline --topic s-teikibin-todoita-kakyu-ni-nai
+
+**156秒 のショート（`outside_short.probe` ＝ `yes`・hard 脚 通過）に、長尺の外の型の 5脚（尺 20分〜）を当てていた。**
+`daily_pick.treated_count()` は 11:xx の回にショートを `outside_short.probe` で数える形へ直ったが、**同じ物差しのもう1つの読み口**（ここ）は直っていなかった
+（この repo の「言っている所と、している所が別」の、もう1欄）。従うと `claude -p` の書き下ろし ＋ 焼き 31分 で、**同じ作りの別の本**が出る。
+`_stash_legs()` を足し、題材の `style` が `outside_short` なら `src/outside_short` の hard 脚（尺）だけで数える（soft の題・中身は薄い升なので焼き直しの理由にしない）。
+ついでに `tests/test_next_slot.py::test_pipeline_imports_are_classified` の赤（11:3x の最適化の回が「毎時の回の所」と残したもの）:
+`outside_short` → `_MAKERS`（`LENGTH_BAND` が動けば書かれる台本の長さが変わる）、`dupes` → `_NOT_MAKERS`（上げた後の帳面）。検査 3件 `tests/test_rebake_input_short_legs.py`。`--moves 0`。
+
+### 2件目・`improve`（次の枠の1本・題）—— 決めるのは 0単位、書けるのは 16:00。**憶えておく形をやめて、待ち行列にした**
+
+`[きょうの1本]` の題の特徴の実測（short・1日あたり）: 【】 ×5.52（n=55対77）**在り** ／ 「？」 ×2.39（n=35対97）**無し ← 打てる** ／ 場面 ×2.31（n=5対127・薄い升）。
+台本の最後の段が問いかけ（「あなたの定期便、配偶者の欄はありましたか？」）なので、「？」は台本に在る話。`outside_short` の soft 脚 (2) 題（『届いた』型・n=3）も添えた:
+
+    ねんきん定期便【開ける順】42万3700円が無い #Shorts
+    → ねんきん定期便【届いたら開ける順】年42万3700円が無いのはなぜ？ #Shorts   （42字・`short_title_problems` 空）
+
+書けるのは 16:00 JST（`videos.update` の窓）で、この回はもう居ない。**「16:00 以降の回で `retitle.py`」を申し送りで運ぶ形は、最初のコメントで 6周 運んで実物 0本**
+（`comment_pending` の註）。だから同じ形にした —— `src.retitles.queue()`（`data/retitle_pending.jsonl`・追記のみ・0単位）→ `ahead_sweep.retitle_pending()`
+（`kick()` から 20分ごと・窓が戻った周に `scripts/retitle.py` を撃つ・1本 50単位）。済みの印は持たない: `retitle.py` が通ると `retitles.record()` が
+`data/retitled.jsonl` へ足すので、`pending()` は `latest()` がその字なら消す。検査 5件 `tests/test_retitle_pending.py`。`--moves 0`。
+**確かめ方**: 16:00 以降の `data/ahead_sweep.log` に `[retitle] … 1本 を書きました` が出ること。出なければ `data/retitle_pending.jsonl` を見る。
+
+### 3件目・`improve`（次の日の1本）—— 外の型のショートの 2本目（`s-juminzei-tsuchisho-furusato-kojo-yomikata`）
+
+前提「外の帯の上位のショートの作り」は 09/06 の 1本（n=1）で 09/08 に判る。**n を 2 にする本を、この回の残りで焼いた**（13:47 JST 開始・
+`python -m src.pipeline --topic s-juminzei-tsuchisho-furusato-kojo-yomikata --short --visibility private`・log は scratch `77b159/bake.log`）。
+型の出どころは外の帯のショート4位「How to check your hometown tax donation deductions.」（76,726回・99秒）＝ **届いた住民税決定通知書の摘要欄を開けて、
+ふるさと納税が本当に引かれたかを読む本**。`src/calc/furusato.py` に節「住民税決定通知書の摘要欄に載る額（上限ちょうど寄付したとき）」を足した ——
+通知書に載るのは住民税の2階ぶんだけ（年収600万: 基本分 7,595円 ＋ 特例分 60,600円 ＝ **68,195円**）、寄付額−2,000円 の 75,949円 と合わないのは
+所得税ぶん 7,754円 が確定申告の還付で別に戻っているから（ワンストップ特例なら申告特例控除で住民税へ移り 75,949円）。**各階を円で丸めてから足す**
+（所得税ぶんは残りで取る）ので、台本が写す和が `numbers_backed` で必ず通る。
+予約時刻は `uploader.next_publish_at()` の自動探索（09:00 JST・09/06 と 09/07 は埋まっている）なので **09/08 09:00 JST に落ちる見込み** ——
+09/07 へ寄せたければ、窓が戻った回が `reschedule.py --move <新ID> 2026-09-07T10:00`（50単位）。動かさなくても 09/08 の1本として立つ。
+
+### 覆る条件
+
+- `rebake_input_lines` の分岐: `pick_legs()` 自身が題材の `style` で物差しを選ぶようになったら `_stash_legs` は要らない（`treated_count` の分岐も一緒に）。
+- 題の待ち行列: `videos.update` が日枠の外へ出たら（`videos.insert` と同じ扱い）、待つ理由が無いので `retitle.py` を直に撃つ。行列は落とす。
+- 2本目の札: 前提が外れたら（09/06 の本が 齢48h で 1,864回 未満）、`src/outside_short` ごと落とす（`generate()`・`pipeline`・`verify`・`treated_count`・
+  `next_slot._stash_legs` の 5か所の分岐も一緒に）。
+
+### 次の回へ（**16:00 JST に日枠が戻ってから**）
+
+    tail -3 data/ahead_sweep.log | grep retitle          # `[retitle] … 1本 を書きました` が出ているか（3gZ38lfsJpY の題）
+    python scripts/reschedule.py --unschedule kzefG44_APU  # dedupe_today() が撃っていなければ（09/05 の同じ題材 2本目）
+    python scripts/refresh_thumbnail.py --missing           # 3gZ38lfsJpY / a23e696j0f8 / kzefG44_APU / <2本目の新ID>
+
+- 2本目の焼き上がり: `grep s-juminzei-tsuchisho data/uploaded.jsonl` の最後の行 → `python -c "from src import outside_short as o; print(o.probe('<新ID>'))"` が `yes` で処置。
+- 判定は **09/08**（48h）: `python -m src.daily_pick` の ショート の行 ＝ ≤1,864 外れ／1,865〜10,000 継続／>10,000 当たり。
