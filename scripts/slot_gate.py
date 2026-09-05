@@ -320,6 +320,51 @@ def quota_lines(now=None) -> list[str]:
     ]
 
 
+def same_topic_twice(rows: list[dict], today=None, picked=None,
+                     days: int | None = None) -> list[dict]:
+    """**同じ題材の本が、同じ日の枠に 2本 以上 入っている日**（0単位・控えだけ）。
+
+    返り: `[{"day": date, "topic": str, "keep": id, "drop": [id, …]}, …]`。
+    残すのは **その日の決めが名指す本**、決めが無ければ**いちばん早い時刻の本**。
+
+    ## なぜ要るか（2026-09-05 09:0x に実測で踏んだ）
+
+    09/05 は `kzefG44_APU`（09:00）と `a23e696j0f8`（10:00）が**同じ台本・同じ題**で
+    両方 枠に入っていた。07:20 の置く手が `--move` を帳面の取り置きで止められ、
+    同じ台本を焼き直して `videos.insert` で置いた（旧 ID を外す `videos.update` も同じ窓で
+    撃てない）。**同じ字の本が 1時間 差で 2本 公開される** ＝ 再生は割れ、
+    「繰り返し／量産」の判定材料をこちらから出す形（`CLAUDE.md` の根幹の節）。
+    `mismatch_lines()` の「公開ずみの題材」の枝は**その日より前に公開された題材**しか
+    見ないので、**同じ日の 2本 は見えていなかった。**
+
+    **覆る条件**: `place_by_insert` が旧 ID を外せない窓では置かなくなったら、ここは空振りしかしない。
+    """
+    today = today or datetime.now(JST).date()
+    horizon = LEAD_DAYS if days is None else max(0, int(days) - 1)
+    held: dict = {}
+    for r in rows:
+        if not r.get("at") or not r.get("topic"):
+            continue
+        try:
+            at = datetime.fromisoformat(str(r["at"]).replace("Z", "+00:00"))
+        except (TypeError, ValueError):
+            continue
+        d = at.astimezone(JST).date()
+        if d < today or d > today + timedelta(days=horizon):
+            continue
+        held.setdefault((d, str(r["topic"])), []).append((at, str(r.get("id") or "")))
+    out: list[dict] = []
+    for (d, topic), items in sorted(held.items()):
+        ids = [i for _, i in sorted(items) if i]
+        if len(ids) < 2:
+            continue
+        want = str(((picked or {}).get(d) or {}).get("video_id") or "")
+        keep = want if want in ids else ids[0]
+        out.append({"day": d, "topic": topic, "keep": keep,
+                    "drop": [i for i in ids if i != keep]})
+    return out
+
+
 def mismatch_lines(rows: list[dict] | None = None, today=None,
                    picked=None, published=None, days: int | None = None) -> list[str]:
     """**枠に入っている本と、その日の決めが食い違っていたら、その行**（合っていれば空）。
@@ -382,6 +427,16 @@ def mismatch_lines(rows: list[dict] | None = None, today=None,
             continue
         held.setdefault(d, []).append(r)
     out: list[str] = []
+    for dup in same_topic_twice(rows, today=today, picked=picked, days=days):
+        out += [
+            f"**{dup['day']:%m/%d}（JST）の枠に、同じ題材 `{dup['topic']}` の本が "
+            f"{1 + len(dup['drop'])}本 入っています**（残す `{dup['keep']}`・"
+            f"外す {' '.join('`' + i + '`' for i in dup['drop'])}）",
+            "  同じ字の本が同じ日に並びます ＝ 再生が割れ、「繰り返し／量産」の材料をこちらから出す形。",
+            "  外すこと（公開ずみでも private に戻ります・1本 50単位）: "
+            + " → ".join(f"`python scripts/reschedule.py --unschedule {i}`" for i in dup["drop"]),
+            "  （日枠が閉じている窓では `ahead_sweep.dedupe_today()` が、窓が戻った掃きで同じ手を撃ちます）",
+        ]
     for i in range(horizon + 1):
         d = today + timedelta(days=i)
         here = held.get(d) or []

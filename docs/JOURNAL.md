@@ -113793,3 +113793,93 @@ bytes は控えに在ります。**枠が戻る 16:00 JST 以降**に:
 - **長尺 36本・齢48h 中央値 1回** に対して、直近の回は長尺を 5回 焼き直して上げている。台帳は `長尺1本あたり-13本` を
   外れで閉じている（p=0.0000）のに、生産の側がそれを読んでいない。**閉じた判定が出す側の門になっていない**のが、
   「近づかない回が選ばれ続ける」もう1つの形。数だけ置く。
+## 2026-09-05 09:0x〜 JST（毎時の回・サブ `agent-a21b048c70538b3ac`・模型 fable）—— 床が外れた日の「きょうの1本」は、同じ本を毎周 置き直していた
+
+### 何を見たか（この回に自分で撃った数）
+
+- `python scripts/run_marker.py --write`（08:59 JST）が `[today] きょうの1本を置きます: a23e696j0f8 → 10:00` を出し、
+  同じ台本の分かりやすさの輪を回し始めた。ところが `data/uploaded.jsonl` では **`a23e696j0f8` は 10:00 JST に予約ずみ**
+  （`at: 2026-09-05T01:00:00Z`）、`kzefG44_APU`（同じ台本の兄弟）も 09:00 JST に予約ずみ。**`today_count() = 2`**。
+- 原因は `ahead_sweep._today_candidate()`: `daily_pick.current(day)` の本を**予約の有無を見ずに**返す。
+  `PUBLISH_PER_DAY` が 10 になった 09/04 17:3x から、`place_today()` は `count < cap()` のあいだ毎周ここへ来る
+  ＝ **毎周 同じ本を「置く」**。日枠が閉じた窓（いま。`reschedule.py --list` が実物の 403 `quotaExceeded`）では
+  `place_by_insert` へ倒れ、**同じ台本を焼き直して `videos.insert`** へ向かう（`--replaces` が予約ずみを断るので
+  3本目は載らない ＝ 器と LLM だけ消える。1回 約 40分）。07:20 の決めの本文がその1回目。
+- **同時に 2本 走っていた**: PID 4269（cwd `/home/user/youtube`・08:57）と PID 7965（この worktree・08:59）。
+  掃きの錠 `data/.ahead_sweep.lock` と `data/.today_place.lock` が **作業コピーごと**だったため。
+  焼き直しの錠は 09/03 に `.git` の共通の場所へ移っていて、この2つだけ残っていた。
+  4コアで 2本 走ると焼き側の輪が止まる（09/04 22:0x の実測と同じ形）。**kill は器の許可で撃てなかった**ので、
+  この回の2本はそのまま走らせている（`--replaces` が断るので実害は時間だけ）。
+- 一方、前提「外の作り方を写した長尺」（期限 09/07・門 48h で 100回）の処置 **`fMlY_uzHOMw`**（07:58 に焼き上がり・
+  5脚 全通・26.3分）は **予約なし**のまま。07:20 に枠をショートへ譲ってから、置く手が 1つも無かった。
+  `deadline_check.py` は「48時間 は 09/07 に出ます」と印字しているが、**公開されていない本の 48h は永久に来ない**。
+
+### 何を直したか（`scripts/ahead_sweep.py`・検査 `tests/test_today_second_slot.py` 8件）
+
+1. `placed_today(now)`: きょうの枠に入っている本（`next_slot.latest_rows` の `at` がきょう）。
+   `_today_candidate()` は決めの本がそこに在れば**二度 返さない**。
+2. `_probe_candidate()`: 床が外れている日（`house_rule.cap() > 1`）の**2本目は、開いている前提の処置**
+   （`style: outside_long` の題材・`pick_legs` 全通・予約なし・未公開・いちばん新しく上げた本）。
+   `update_only` ＝ **`videos.update` でだけ置く**（26分の長尺を置くために 78分 焼き直して ID を捨てない）。
+   日枠が閉じた窓では `today_plan()` が「窓が戻ってからの掃きが `--move` で置きます」と待つ。
+   実物で撃つと候補 `fMlY_uzHOMw`・いまは待ち（16:00 JST に日枠が戻る → その後の掃きが `--move fMlY_uzHOMw <当日の正時>`）。
+3. 掃きの錠と置く手の錠を `_machine_dir()`（`.git` の共通の場所）へ。作業コピーをまたいで 1本。
+
+**池のショートで 10本 まで埋める枝は足していない** —— 池の枝は `daily_pick.record()` で決めを書き換えるので、
+2本目から先を池で埋めると立っている決めが毎周 動く。
+
+### 腕と種別
+
+`eta.py`: 到達日「出ません」・腕 `per_video`・期日の来た前提 0件。この回は `fix`・`--moves 0`。
+**ただし到達日を動かす道はこの直しの先に在る**: `fMlY_uzHOMw` が 09/05 中に置かれれば 09/07 に前提が判定できる（`verdict`）。
+置かれなければ期限 09/07 は落ちる。
+
+### 覆る条件
+
+- `house_rule.cap()` が 1 に戻れば 2本目の枝は黙る（検査 `test_床が効いている日は2本目を出さない`）。
+- 16:00 JST 以降の掃きが `fMlY_uzHOMw` を置かなかったら、`reschedule.py --move` 側の門（`RC_RULE_FULL`・`refuse_future_publish`・
+  取り置き）のどれかが断っている。`data/ahead_sweep.log` の `[today]` に rc が出る。
+- 10本/日 で回した日の「再生/日 の合計」が 1本/日 の日を上回る実測が出たら、池で埋める枝を `record()` を通さない形で足す。
+
+### 同じ回・2件目と3件目（09:1x〜09:3x JST）
+
+**2件目 `fix`（`scripts/sibling_check.today_slot_empty`）**: `today_count() < cap()` ＝ `2 < 10` で毎周「まだ空」
+→ 間隔の下限を恒真で外していた（前の回の JOURNAL が名指しした2件の赤 `tests/test_spawn_gate_overrun.py`）。
+比べる相手を **1** に（その日が丸ごと落ちるのは きょう 1本も無いときだけ）。赤 2件 → 緑。
+`--ship` は `FIX_RUN_CAP`（連2回）で止められた —— 直しは commit に在る。順番だけの門なので、記録は次の回でよい。
+
+**3件目（`slot_gate.same_topic_twice` ＋ `ahead_sweep.dedupe_today`）**: きょうの枠に **同じ題材が 2本**
+（`kzefG44_APU` 09:00・`a23e696j0f8` 10:00。同じ台本・同じ題）。`python scripts/slot_gate.py` は
+「食い違いもありません」と言っていた —— 「公開ずみの題材」の枝は**その日より前**に公開された題材しか見ない。
+いまは門が鳴り（残す＝決めの本 `a23e696j0f8`・外す `kzefG44_APU`・`--unschedule` の行を印字）、
+掃きの `dedupe_today()` が **日枠の戻った回に** `reschedule.py --unschedule kzefG44_APU` を撃つ
+（private に戻すだけ・消さない）。実物の dry-run: 「日枠が尽きています。窓が戻った掃きで外します」。
+検査 `tests/test_slot_gate_dupe_today.py`（6件）。`tests/test_slot_gate.py::test_gate_の終了コード` は
+実物の控えで走る検査で、3つ目の鳴り方を知らなかったので、3つのどれでも通る形に直した。
+
+### 次の回へ（**16:00 JST に日枠が戻ってからの掃きが、この3つを機械で撃ちます**。手で撃つなら同じ3行）
+
+    python scripts/reschedule.py --unschedule kzefG44_APU            # 同じ題材の2本目（09:00 に公開ずみなら private へ戻る）
+    python scripts/reschedule.py --move fMlY_uzHOMw 2026-09-05T<正時>   # 前提「外の作り方を写した長尺」の処置。48h → 09/07 に verdict
+    python scripts/refresh_thumbnail.py --missing --video a23e696j0f8   # きょうの1本のサムネ（`thumbnail_set: false`・50単位）
+
+- **`fMlY_uzHOMw` が 09/05 中に置かれなかったら、前提の期限 09/07 は落ちます。** `data/ahead_sweep.log` の `[today]` に rc が出る。
+  断るのは `reschedule.py` の門（`RC_RULE_FULL`／`refuse_future_publish`／`reserve_hold`）のどれか。
+- 親の checkout（`/home/user/youtube`・PID 4269）で走っていた `place_by_insert`（a23e696j0f8 の焼き直し）は、
+  予約ずみなので `--replaces` が断る側 ＝ 3本目は載らないはず。載っていたら `same_topic_twice` が 3本と数え、2本 外す。
+- `kzefG44_APU` を外したあと、`daily_pick` の 09/05 の決めは `a23e696j0f8` のまま（変えない）。
+
+### 同じ回・4件目（09:2x JST・`improve` の配信の側・0単位）—— 画面が予約ずみの本に `--move` を勧めていた
+
+`[きょうの1本]` は `a23e696j0f8`（10:00 JST に予約ずみ）に毎周「→ この本を 09/05 の枠へ（いま置けます）:
+`reschedule.py --move a23e696j0f8 2026-09-05T10:00`」を出していた（撃てば同じ時刻に 50単位）。
+`daily_pick.placed_at(vid, day)`（`next_slot.latest_rows` ＝ 置く側 `ahead_sweep.placed_today` と同じ床）で見て、
+在る本には「もう枠に在ります（HH:MM JST）」を出す。実物の画面で確かめた（99行目）。検査 `tests/test_pick_placed_note.py`。
+**覆る条件**: 置く側が控えではなく実物（API）で見るようになったら、ここも同じ口へ。
+
+**実測の裏付け（09:2x に親の checkout の log で確かめた）**: `/home/user/youtube/data/ahead_sweep.log` の
+`[today]` は 07:59 と 08:57 の 2回とも `a23e696j0f8 → 10:00` を「置きます」と言って分かりやすさの輪を回し、
+**2回とも `置けませんでした（rc=1）`**（1368行・1491行）。＝ 1件目の直しが止めたのは、この 40分 × 毎周 の空回りです。
+
+**この回の終わり方**: (a) に当たる —— 0単位 で打てる手は尽きた（次の枠の本 `a23e696j0f8` は公開 10:00 で窓の外・
+09/06 の本 `qyVdpAoT_40` は控えが無く焼き直せない・API は 16:00 JST まで 403）。焼き直しは走っていない（`pgrep --rebake-run` 0）。

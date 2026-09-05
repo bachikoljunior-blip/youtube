@@ -132,7 +132,10 @@ def test_gate_の終了コード():
                        cwd=ROOT, capture_output=True, text=True, timeout=120)
     assert r.returncode in (0, 2), r.stderr[-400:]
     if r.returncode == 2:
-        assert "予約が0本の日" in r.stdout
+        # 2 で返る理由は 3つ（空の日・決めと枠の食い違い・同じ題材が同じ日に2本）。
+        # 実物の控えで走るので、どれで鳴ったかはその日による（2026-09-05 に3つ目で赤くなった）。
+        assert ("予約が0本の日" in r.stdout or "食い違って" in r.stdout
+                or "同じ題材" in r.stdout), r.stdout[-400:]
 
 
 def test_門が_stop_check_に配線されている():

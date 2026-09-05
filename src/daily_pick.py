@@ -4256,6 +4256,36 @@ def outside_first(pool: list[dict], topics: list[dict] | None = None) -> list[di
     return sorted(pool, key=lambda p: 0 if str(p.get("topic") or "") in tops else 1)
 
 
+def placed_at(video_id: str | None, day: date, path: Path | None = None) -> str | None:
+    """**その本が、その日の枠にもう入っているか**（控え `data/uploaded.jsonl`・API 0単位）。
+    入っていれば `"HH:MM"`（JST）、いなければ `None`。
+
+    ## なぜ要るか（2026-09-05 09:2x に実測で踏んだ）
+
+    `[きょうの1本]` は決めの本 `a23e696j0f8` が **10:00 JST に予約ずみ**なのに
+    「→ この本を 09/05 の枠へ（いま置けます）: `reschedule.py --move a23e696j0f8 2026-09-05T10:00`」
+    を毎周 印字していた。読んだ回が撃てば 50単位 の空振り（同じ時刻）。
+    置く側（`ahead_sweep._today_candidate`）は同じ日に `placed_today()` で見るようになったので、
+    **印字の側も同じ床で見る**（言っている所と、している所を揃える）。
+
+    行の勝ち方は `next_slot.latest_rows()`（`retimed_at` がいちばん新しい行）に合わせる ——
+    `_latest_uploaded()` の「最後の行が勝つ」は予約の写しでは外れる（`next_slot.latest_rows` の註）。
+    """
+    vid = str(video_id or "").strip()
+    if not vid:
+        return None
+    try:
+        from . import next_slot                                # noqa: PLC0415
+        row = next_slot.latest_rows(path).get(vid) or {}
+        at = next_slot._parse(row.get("at"))
+    except Exception:                                          # noqa: BLE001
+        return None
+    if at is None:
+        return None
+    at_jst = at.astimezone(JST)
+    return at_jst.strftime("%H:%M") if at_jst.date() == day else None
+
+
 def ahead_move_note(day: date) -> str:
     """**`--move` の1行の頭**（「いつ置くか」）。**規則5 の本文を写さないこと。**
 
@@ -4588,7 +4618,11 @@ def lines(next_row: dict | None, now: datetime | None = None,
         # **宣言した見込みと実物を並べる**（2026-09-04 19:2x・`expected_lines()` の註）。
         # `expected_48h` は最初から書かれていて、**どこも読んでいませんでした**（実物 22行 全部 null）。
         out.extend(expected_lines(now=now, picks_path=picks_path))
-        if vid:
+        _placed = placed_at(vid, day) if vid else None
+        if vid and _placed:
+            out.append(f"     → **もう {day:%m/%d} の枠に在ります**（{_placed} JST・控え）。"
+                       f"`--move` は要りません（撃てば同じ時刻に 50単位）。")
+        elif vid:
             out.append(f"     → {ahead_move_note(day)}:")
             out.append(f"       python scripts/reschedule.py --move {vid} {day:%Y-%m-%d}T{hour:02d}:00")
             if next_row and next_row.get("video_id") and next_row.get("video_id") != vid:
