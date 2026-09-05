@@ -113740,6 +113740,59 @@ bytes は控えに在ります。**枠が戻る 16:00 JST 以降**に:
 戻らないなら、上の候補のどちらかを撃つこと。**赤のまま放置しないこと** ——
 次の回が全部この赤で始まり、「自分が壊した」と読みます。
 
+
+## 2026-09-05 09:1x JST  最適化の回（session_01AHfq4FUVAd5fxDM29yG1Cm・並走サブ）
+
+### オーナー「最適化されてんの？（過去の実行に対して）」への答え: **いいえ**
+
+根拠は、この回に自分で撃った数だけ（`scripts/optimized.py`・`scripts/status.py`・`data/*.jsonl`・`git log`）:
+
+- ship 245件／5日、`--moves` 0 以外は 6件。物差し `gate1p_days` は **95件すべて 511.538** で1度も動いていない
+  ＝ 良い回と悪い回を**区別できる計器が無いまま** 245回 出した。
+- 実物のほうは: 再生/日(7d) **6,299（08/25）→ 972（09/04）・-85%**。登録 25人・0.93人/日。到達日は 08/20 から出ていない。
+- commit 2,329件／5日。触った場所: data 3,431・tests 632・docs 631・scripts 425・src 388・**assets 7**。
+  `docs/JOURNAL.md` 8.0MB・`scripts/eta.py` 788KB（1回 120秒 超）・`docs/trigger_main.md` 388KB・`CLAUDE.md` 89KB。
+  **手は動画にではなく、道具と文書に流れている。**
+- 直近8本の投稿: 同じ題の長尺の焼き直しが **4本**（XwB8nxtN5D8／e6sLHLmPhrk／GFvAcxvDmYM／fMlY_uzHOMw）＋同じ短尺 **2本**。
+  長尺は 齢48h の再生 **中央値 1回**（n=36）。ショートは 168回（n=216）。
+
+### なぜ近づかない回が選ばれ続けたか（名指し1件）—— **いちばん高い API の1手が帳面に無かった**
+
+`src/quota_ledger.py` は `HttpRequest.execute` を包んで単価を積むが、`src/uploader.py` の投稿は
+`MediaFileUpload(resumable=True)` → `request.next_chunk()` で **`execute` を1度も通らない**。
+実測 09/04 の窓: 帳面 **4,439単位**、`videos.insert` **0行**。同じ窓の `data/uploaded.jsonl` は **6本 ＝ 9,600単位**。
+合計 ≈14,000 > 10,000 で 403（22:40 `thumbnails.set` から）。`src/next_slot.py:555` の註も
+「`used_units()` 3,805 で 403・`writable_from()` は None＝撃てる」と同じ嘘を踏んでいる。
+
+帰結: 焼き直して上げ直す手が**枠の上ではタダに見える**ので、回は同じ題を4回 上げ直し、そのたびに
+読みの側（`views.jsonl`・`thumbnails.set`・`status.py`）が先に死ぬ。読めないと「その本が伸びたか」が取れず、
+回は道具と文書の fix に流れる（fix 48%）。**計器が壊れている所では、何を出しても採点されない。**
+
+### 変えたこと
+
+- `src/quota_ledger.install()` が **`HttpRequest.next_chunk` も包む**（`_wrap_next_chunk`）。
+  1つの request につき最初の chunk で1回だけ `videos.insert` 1,600 を書く。落ちても `ok=False` で残す。
+  `tests/test_quota_ledger.py` に2件（chunk 3回でも 1,600 は1回／落ちても本体を止めない）。33件 緑。
+- これで `upload_cap.reserve_hold()` と `next_slot.writable_from()`（どちらも `quota_ledger.used_units()` を読む）が、
+  **投稿ぶんを含めた実数**で止める・撃てるを言うようになる。
+
+### 次に主実行が1周したとき、どこが変わるか（1行）
+
+**投稿を1本上げた直後から、帳面が 1,600 増え、`reserve_hold()`／`writable_from()` が「まだ撃てる」と嘘を言わなくなる**
+＝ 同じ題の焼き直しを 4本 上げて読みの側を殺す形が、枠の上で見えるようになる。
+
+### 覆る条件
+
+- 次の窓（09/05 16:00 JST〜）で、`data/api_calls.jsonl` の `videos.insert` の行数が `data/uploaded.jsonl` の投稿数と
+  一致しなければ、この包みは効いていない（`googleapiclient` が `next_chunk` の名前を変えた等）。
+- 帳面の累計が 10,000 に届く前に 403 が来る／届いても来ないなら、単価表（`quota_ledger.COST`）か `DAY_UNITS` を実測で直すこと。
+- `src/next_slot.py:566` の「覆る条件」が成立したので、あちらの `seen_403` の枝は `used < cap` に吸収してよい（この回は触っていない）。
+
+### この回が触っていないこと（次の回への数）
+
+- **長尺 36本・齢48h 中央値 1回** に対して、直近の回は長尺を 5回 焼き直して上げている。台帳は `長尺1本あたり-13本` を
+  外れで閉じている（p=0.0000）のに、生産の側がそれを読んでいない。**閉じた判定が出す側の門になっていない**のが、
+  「近づかない回が選ばれ続ける」もう1つの形。数だけ置く。
 ## 2026-09-05 09:0x〜 JST（毎時の回・サブ `agent-a21b048c70538b3ac`・模型 fable）—— 床が外れた日の「きょうの1本」は、同じ本を毎周 置き直していた
 
 ### 何を見たか（この回に自分で撃った数）

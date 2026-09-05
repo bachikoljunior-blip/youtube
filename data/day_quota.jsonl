@@ -6054,3 +6054,6 @@
 {"at": "2026-09-04T22:40:02+00:00", "detail": "scheduled_publish_times", "by": "uploader.py:taken_publish_times"}
 {"at": "2026-09-04T22:40:04+00:00", "detail": "playlistItems.insert", "by": "uploader.py:_post_actions"}
 {"at": "2026-09-04T22:40:04+00:00", "detail": "thumbnails.set a23e696j0f8", "by": "uploader.py:_set_thumbnail"}
+{"at": "2026-09-05T00:03:32+00:00", "detail": "status: Data API 読み", "by": "status.py:main"}
+{"at": "2026-09-05T00:03:33+00:00", "detail": "videos.list snapshot", "by": "snapshot.py:main"}
+{"at": "2026-09-04T23:21:56+00:00", "detail": "scheduled_publish_times", "by": "uploader.py:taken_publish_times"}
