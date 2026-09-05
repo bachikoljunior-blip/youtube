@@ -55,7 +55,14 @@ def _four(v: int) -> str:
     return s
 
 
+# whisper が声の「かける」「わる」「たす」を記号で書く（実測 09/06 03:3x: 「15万円かける60か月」→「15万円×60か月」で !!）。
+# TTS は正しく言っていたので、記号を両側で同じ読みに戻す。声の側に記号は無いので、当たるのは聞いた側だけ。
+_SYMBOL_YOMI = {"×": "かける", "✕": "かける", "÷": "わる", "＋": "たす", "+": "たす"}
+
+
 def to_kana(text: str) -> str:
+    for k, v in _SYMBOL_YOMI.items():
+        text = text.replace(k, v)
     text = re.sub(r"[0-9][0-9,]*(?:\.[0-9]+)?", lambda m: num_to_kanji(m.group()), text)
     text = text.replace("％", "パーセント").replace("%", "パーセント")
     kana = "".join(w["hira"] for w in _kks.convert(text))

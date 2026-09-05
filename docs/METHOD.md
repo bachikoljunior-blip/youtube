@@ -164,10 +164,10 @@ critique の物差し（`studio/critic.py`）: real ＝ そこで話を見失う
 |---|---|---|
 | `script.py` | 台本の形（pydantic）と検査 | `src/script_writer.py`（3,251行）は「冒頭で数字を言い切る」「毎回 未公開の数字」を ROLE に書いており、それが「何言ってるかわかんない」の出どころ。**持ち込まない** |
 | `tts.py` | Chirp3-HD・`customPronunciations`（読みの固定）・コマごとに wav | `src/tts.py` は Neural2-D と仮名置換。Chirp3-HD の読み固定 API のほうが確実（実測: 厚生年金 → こうせいねんきん で 10/10） |
-| `hear.py` | faster-whisper で聞き取り → pykakasi で両側を仮名にして照合 | `src/yomi_hear.py` と同じ狙い。数字の読み・同音の別漢字を仮名で吸収する形で書き直した |
+| `hear.py` | faster-whisper で聞き取り → pykakasi で両側を仮名にして照合。聞いた側にも `yomi` を当てる（額面→ひたいめん・09/05）・記号を読みに戻す（×→かける・÷→わる・09/06。whisper が「15万円かける60か月」を「15万円×60か月」と書いた） | `src/yomi_hear.py` と同じ狙い。数字の読み・同音の別漢字を仮名で吸収する形で書き直した |
 | `slides.py` | PIL で 1080×1920。大きい字は幅に収まるまで縮める（語の途中で折らない） | `src/visuals.py`（1,296行・図解の型）は量産の印そのもの。**持ち込まない** |
 | `render.py` | ffmpeg concat（静止画 + wav）→ mp4・sheet.png | `src/renderer.py` は playwright。静止画なら要らない |
-| `yt.py` | 認証・一覧・upload（private + publishAt）・サムネ・private 戻し | `src/auth.py`/`uploader.py` の欄（categoryId 27・selfDeclaredMadeForKids false・license youtube）は実績があるので同じ値 |
+| `yt.py` | 認証・一覧・upload（private + publishAt）・サムネ・private 戻し・**予約は全本から拾う** `scheduled_all()`（09/06 02:1x: 新しい 60本 しか見ていなかったので、旧道具が 08/16〜19 上げの private 8本 に きょうの publishAt を打っても `status` は「きょうの枠: 空」と出た。752本 で約 32単位） | `src/auth.py`/`uploader.py` の欄（categoryId 27・selfDeclaredMadeForKids false・license youtube）は実績があるので同じ値 |
 | `critic.py` | `claude -p`（Haiku/Sonnet）で冷読と批判 | `src/claude_cli.py` の「cwd を repo の外に」は正しい（CLAUDE.md が混ざる）。同じにした |
 | `cli.py` | `status/lint/build/hear/read/critique/order-image/schedule/measure` | — |
 | `common.py` | JST・台帳・work/ | — |
@@ -199,6 +199,8 @@ critique の物差し（`studio/critic.py`）: real ＝ そこで話を見失う
 そのまま使う —— 立てる周期の道具であって、本の作り方ではない。
 `docs/spawn_prompt.md` の `kind: hourly` / `kind: optimizer` は、この文書を読ませる本文に差し替えた。
 
+**旧道具が「使わない」のに勝手に動いていた口を 2026-09-06 02:1x に外した**（optimizer・Fable）: `scripts/next_round.py main()` の `ahead_sweep.kick()` と `.claude/settings.json` の SessionStart `ahead_sweep.sh`。実測: 親が毎周 撃つ `next_round.py` から旧 `ahead_sweep.py` が背景で起き、09/06 00:01 JST（日付が変わった直後）に `place_today()` が **08/16〜08/19 上げの旧作りの本 8本 に 06:00〜14:00 JST の publishAt を打った**（`data/uploaded.jsonl` の diff・`139506ee`〜`724af5af`）。02:1x に残っていた 2本（`uhR8msMW9k4`・`hKCwPvuqviw`）を private へ戻した（台帳 `unscheduled`・消していない）。同じ経路で `post_pending_comments.py` も毎時 走っていた（コメントの自動投稿。これも止まる）。**「使わない」は文書に書くだけでは止まらない —— 起こす口を全部 外すこと。** 残っている旧道具の口: `scripts/stop_check.sh`（Stop フック。`src.watches`・`drift.py` を撃つが、`data/runs.jsonl` に印の無い回では止めない）。**覆る条件**: 旧道具を使う判断が METHOD に書かれたとき（そのときも kick ではなく手順から呼ぶ）。
+
 ## 9. 最初の1本（2026-09-06・`2026-09-06-zaishoku-62man`）
 
 **09/06 02:1x JST: 予約した。** `s3hb9Tl1jLw`・公開 09/06 10:00 JST・private。手順は §4 のとおり: 本人の読み直しで コマ8「今年は5万円」→「今は5万円」（4月より前も同じ年なので「今年」は境目を言えていない）→ lint → build 92.8秒（work/ は再起動で消えていたので TTS から。約1分）→ hear 11/11（small）→ sheet.png 目視（数字の折れ・重なり無し）→ `schedule --at 10:00`。冷読（Haiku）は takeaway と一致。critique は回さなかった（09/05 21:1x に逆向きで閉じている。変えたのは1語）。
@@ -221,3 +223,13 @@ mp4 は `work/2026-09-06-zaishoku-62man/`（gitignore。無ければ `build` で
 **09/06 00:00 JST を過ぎた回が `schedule --at 10:00` で置く。**
 旧作りの先の日付の予約 2本（3gZ38lfsJpY 09/06・vmAll8GDkU8 09/08）は 09/05 17:1x に private へ戻した
 （消していない。台帳 `unscheduled`）。先の日付は空が正しい（オーナー「現在の日付にしか予約しない」）。
+
+## 10. 2本目（2026-09-07・`2026-09-07-kurisage-81sai-11kagetsu`）—— optimizer が 09/06 02:3x〜03:4x JST に書いた
+
+**題**: 年金の繰下げ。1か月 0.7%・70歳で 42%・**待った分を取り戻すのは 81歳11か月**（額によらない）。旧作りで伸びた題（`fLENot-5oKM` 1,857回・`7NtIDFiPrsw` 1,312回・`m74wgCTi2n0` 1,258回）。
+**状態**: 11コマ・480字・92.1秒・critique 5周（real 3→1→3→2→3）・冷読 5/5 一致・hear 11/11（small）・背景画像は注文ずみ（`2026-09-07-kurisage-81sai-11kagetsu-bg`・pending）。**予約は 09/07 の回が当日に**（`schedule --at 10:00`）。
+**輪の閉じ方（実測 3回目）**: critic は コマ9（手取りの分岐）を 2周目「数年あとでは曖昧・年齢を出せ」→ 4周目「84〜86歳の根拠を出せ」→ 5周目 同じ、と**同じ1か所を往復**した。
+根拠を声で出すには税・国保の計算が要り 90秒 に入らない（notes と説明欄に置いた）。**「出せ」と「出したものの根拠を出せ」の往復も、§4 の逆向きと同じ扱いで閉じる。**
+閉じる前に拾ったのは コマ5 の比較の軸（「65歳からもらう人なら受け取る900万円」）と コマ8 の札（「計算上は…税金を引く前」）。
+**hear の外れ 3つは全部 whisper 側**（「あと」→「後（のち）」・「かける」→「×」）。TTS の誤読は 0。→ `hear.py` に記号の正規化、コマ1 を「もっと先に」へ。
+**09/07 の回（hourly）への申し送り**: 画像が届いていたら build し直す（届いていなければ単色のまま出す）。critique を回すなら コマ9 を触らない（往復の記録が上）。磨く所があれば コマ4（「月15万円」が例だと分かる一言）。

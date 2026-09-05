@@ -114336,3 +114336,26 @@ ship は 1回 断られた（枠と決めの食い違い ＝ 4'）ので「枠�
 - `studio/hear.py`: 聞いた側にも `yomi` を当てる。whisper が「額面」と漢字で書き、pykakasi が「ひたいめん」と読んで `!!`（TTS は「がくめん」と正しく言っていた）。docstring の「両側を同じ関数で仮名にする」どおりにした。
 - `docs/METHOD.md` §5「同じ周に2体 走るときの持ち場」: **次に出る1本の台本は `hourly` のもの**。`optimizer` はきょうの枠が公開ずみならあすの台本に触らない（measure・§7・道具・画像・親の手続き）。`docs/spawn_prompt.md` kind: optimizer を同じ形に。
 - **覆る条件**: `hourly` が輪を閉じ切れず締切で予約する本が続き、`optimizer` が公開後に何もしない周が 3周 続いたら、分け方を時間に変える（METHOD §5 に書いた）。
+
+## 2026-09-06 02:0x〜03:4x JST —— あすの1本の回（optimizer・Fable 5.1）: 旧道具が親の周から起きて旧作りの本 8本 に きょうの予約を打っていた
+
+### 撃った数
+- `status`（02:04）: きょうの枠 空・予約 空 と印字。**しかし全本（752本）を `videos.list` で引くと、private の旧作りの本 2本 に きょうの publishAt**（`uhR8msMW9k4` 06:00 JST・`hKCwPvuqviw` 08:00 JST）。
+- 出どころ: `data/uploaded.jsonl` の diff（`139506ee`〜`724af5af`・09/06 00:01 JST）に **8本** の `reschedule.py:_update`（06:00〜14:00 JST に1本ずつ）。書いたのは `scripts/ahead_sweep.py place_today()`。起こしたのは **親が毎周 撃つ `scripts/next_round.py main()` の `ahead_sweep.kick()`**（親の見た pid 1616）。残り 6本 は 02:04 の時点で publishAt が消えていた（誰が外したかは台帳に無い）。
+- 同じ経路で `scripts/post_pending_comments.py` が 16:00・16:39・17:01 UTC に走っていた（`data/api_calls.jsonl`）。
+- `measure` 25本（fMlY_uzHOMw 0回・a23e696j0f8/kzefG44_APU 191回・09/04 1huadpEk6HY 3回）。
+- 09/06 の本 `s3hb9Tl1jLw` は hourly が 02:1x に 10:00 へ予約（相手の持ち場。触っていない）。
+
+### 直した
+1. **旧道具の起こし口を外した**: `scripts/next_round.py` の `ahead_sweep.kick()`（理由を同じ場所に註で）と `.claude/settings.json` SessionStart の `ahead_sweep.sh`。METHOD §8「使わない」は文書だけで、起こす口が2つ生きていた。
+2. **2本 を private へ**（`yt.make_private`・台帳 `unscheduled`・消していない）。オーナー「現在の日付にしか予約しない」「1日1本」。
+3. **`studio/yt.py scheduled_all()`**: 予約はチャンネルの全本から拾う。`today_lineup()`（`schedule` の「1日1本」の門）と `status` の「予約（あす以降）」がこれを使う。`recent_videos(60)` は新しい 60本 しか見ないので、旧道具が古い private に打った予約が見えなかった。約 32単位/回。
+4. **`.gitattributes`** に `data/studio/ledger.jsonl merge=union`（`data/*.jsonl` は下の階層に当たらない。2体が同じ周に台帳へ追記するので毎回 衝突していた）。
+5. **`studio/hear.py`**: 記号の正規化（×→かける・÷→わる・＋→たす）。whisper が「15万円かける60か月」を「15万円×60か月」と書き、TTS は正しかったのに `!!` が出た。
+6. **あすの台本 `2026-09-07-kurisage-81sai-11kagetsu`**（§5 の (f): きょうの枠がまだ公開前）。11コマ・480字・92.1秒・critique 5周・冷読 5/5 一致・hear 11/11・画像 注文ずみ。輪の閉じ方と申し送りは METHOD §10。
+
+### 覆る条件
+- `scheduled_all()` の 32単位 が日枠を圧すようになったら（1日 100回 以上 status を撃つようになったら）、playlistItems を `publishedAfter` で切る。いまは 10回/日 程度。
+- critic の「同じ1か所の往復」で閉じる判断は、その本の 48時間 再生が 09/06 の本より下なら疑う（コマ9 の手取りの数字を落として 81歳11か月 だけにする案が対案）。
+- 旧道具の起こし口を戻すのは、METHOD が旧道具を使うと書いたときだけ。
+
