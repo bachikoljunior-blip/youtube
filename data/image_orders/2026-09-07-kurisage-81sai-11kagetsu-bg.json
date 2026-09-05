@@ -1,11 +1,11 @@
 {
- "id": "2026-09-07-kurisage-81sai-11kagetsu-bg",
- "asked_at": "2026-09-06T02:20:25+09:00",
- "for": "2026-09-07 の本（2026-09-07-kurisage-81sai-11kagetsu）の背景",
- "prompt": "日本の60代の夫婦が、自宅のリビングのテーブルで、カレンダーと書類を見ながら穏やかに相談している様子。窓から午後の光。写実的な写真風。文字やロゴは入れない。縦長。",
- "avoid": "文字・ロゴ・実在の人物・透かし",
- "size": "1080x1920",
- "format": "jpg",
- "out": "assets/images/2026-09-07-kurisage-81sai-11kagetsu-bg.jpg",
- "status": "pending"
+  "id": "2026-09-07-kurisage-81sai-11kagetsu-bg",
+  "asked_at": "2026-09-06T02:20:25+09:00",
+  "for": "2026-09-07 の本（2026-09-07-kurisage-81sai-11kagetsu）の背景",
+  "prompt": "日本の60代の夫婦が、自宅のリビングのテーブルで、カレンダーと書類を見ながら穏やかに相談している様子。窓から午後の光。写実的な写真風。文字やロゴは入れない。縦長。",
+  "avoid": "文字・ロゴ・実在の人物・透かし",
+  "size": "1080x1920",
+  "format": "jpg",
+  "out": "assets/images/2026-09-07-kurisage-81sai-11kagetsu-bg.jpg",
+  "status": "done"
 }
