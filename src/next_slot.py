@@ -1346,22 +1346,12 @@ def _stash_legs(video_id: str, topic: str, queue: Path, _dp) -> tuple[list[str],
 
     **覆る条件**: `pick_legs()` 自身が題材の `style` で物差しを選ぶようになったら、
     ここは `pick_legs` を呼ぶだけに戻すこと（そのとき `treated_count` の分岐も一緒に）。
+
+    **→ 2026-09-05 15:0x に発火しました。** 物差しの選択は `daily_pick.legs_of_path(style=…)`
+    1か所にあり、ここは `pick_legs(video_id, topic=…)` を呼ぶだけです（上の実測は残します ——
+    同じ形の「もう1つの読み口」が `legs_under_current_code` にも在ったので）。
     """
-    style = ""
-    try:
-        style = {str(t.get("id")): str(t.get("style") or "")
-                 for t in _dp._topics()}.get(str(topic or ""), "")
-    except Exception:                                              # noqa: BLE001
-        style = ""
-    if style == "outside_short":
-        from . import outside_short as _osh                        # noqa: PLC0415
-        state, why_s = _osh.probe(video_id, queue=queue)
-        if state == "unknown":
-            return [], why_s, []
-        if state == "no":
-            return ["(1) 尺"], None, ["(1) 尺"]
-        return [], None, []
-    bad, why = _dp.pick_legs(video_id)
+    bad, why = _dp.pick_legs(video_id, queue=queue, topic=str(topic or ""))
     return bad, why, [b for b in bad if b not in _dp.METADATA_LEGS]
 
 
