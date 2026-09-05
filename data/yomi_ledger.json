@@ -1,5 +1,5 @@
 {
- "at": "2026-09-04T22:04:18+0000",
+ "at": "2026-09-05T04:34:49+0000",
  "cut": 0.3729,
  "median": 0.2661,
  "mad": 0.0356,
@@ -487,6 +487,16 @@
    "verdict": "misread",
    "correct": "アトオシ",
    "heard": "ワトーシ",
+   "settled": true,
+   "by": "hear"
+  },
+  "年収": {
+   "word": "年収",
+   "kana": "ネンシュー",
+   "sentence": "年収や扶養で上限が動くので、あなたの通知書の額もここから動きます。",
+   "verdict": "misread",
+   "correct": "ネンシュー",
+   "heard": "レンシュー",
    "settled": true,
    "by": "hear"
   }

@@ -114178,3 +114178,13 @@ log は scratch `d0a087/bake.log`）。印字で確かめた: 「命じる 648�
 
 - 2本目の焼き上がり: `grep s-juminzei-tsuchisho data/uploaded.jsonl` の最後の行 → `python -c "from src import outside_short as o; print(o.probe('<新ID>'))"` が `yes` で処置。
 - 判定は **09/08**（48h）: `python -m src.daily_pick` の ショート の行 ＝ ≤1,864 外れ／1,865〜10,000 継続／>10,000 当たり。
+
+### 同じ回・焼き上がり（13:41 JST）—— `vmAll8GDkU8`
+
+**焼けた**: `vmAll8GDkU8`（https://youtu.be/vmAll8GDkU8）。初稿 27セグメント／767字（帯 648〜796）→ 分かりやすさ 1周・読み照合 誤読 0件 →
+verify 合格 **2.5分（153秒）**・1080x1920・chart 3枚 → 投稿（**焼き始め 13:16 → 完了 13:41 ＝ 25分**）。`outside_short.probe('vmAll8GDkU8')` ＝ **`yes`（3脚 全通）**
+—— 題「【住民税決定通知書】開けて読む 68,195円 #Shorts」は『開けて』で soft 脚 (2) も通った。`data/uploaded.jsonl` に行が在る（11:4x の `dupes.remember()` の fix が効いた）。
+`uploader` は `publishAt 2026-09-08T00:00:00Z`（**09/08 09:00 JST**・09/06・09/07 の 09:00 は埋まっていた）。決めは `--pick` で 09/08 に書いた（`--expected 1865`）。
+サムネ・再生リスト・コメントは 403（16:00 JST 以降の `refresh_thumbnail.py --missing` ほか）。`--kind upload`・`--moves 0`・`--closes carry_over`
+（「`--move <新ID> 2026-09-06T19:00`」は要らない: `3gZ38lfsJpY` は 09/06 09:00 に置かれ、規則は 10本/日 なので `qyVdpAoT_40` 19:00 を外す理由が無い）。
+**処置 n=2**（09/06 `3gZ38lfsJpY`・09/08 `vmAll8GDkU8`）。09/08 の判定は 09/06 の本で、09/08 の本は 09/10 に 48h。
