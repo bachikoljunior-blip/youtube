@@ -142,7 +142,7 @@ critique の物差し（`studio/critic.py`）: real ＝ そこで話を見失う
 | 役 | 持つもの | 触らないもの |
 |---|---|---|
 | `hourly` | **次に出る1本の台本** `data/studio/scripts/<次の枠の日付>-*.json`（きょうの枠が空ならきょうの本、公開ずみならあすの本）・その build/hear/sheet/schedule・`studio/` の、その本を出すのに要る直し | — |
-| `optimizer` | `measure`・§7 の判定と `docs/METHOD.md` の書き換え・台帳から見つけた道具の欠陥（hear の照合・slides の折れ など、**その本を出すのに今すぐ要らないもの**）・画像の注文の確認・親の手続き（`docs/spawn_prompt.md`・`scripts/next_round.py`）・**あすの台本は、きょうの枠がまだ公開前のときだけ**（そのとき `hourly` はきょうの本を持っている） | きょうの枠が公開ずみのときの、あすの台本 |
+| `optimizer` | `measure`・§7 の判定と `docs/METHOD.md` の書き換え・台帳から見つけた道具の欠陥（hear の照合・slides の折れ など、**その本を出すのに今すぐ要らないもの**）・画像の注文の確認・親の手続き（`docs/spawn_prompt.md`・`scripts/next_round.py`）・**あすの台本は、きょうの枠がまだ公開前のときだけ**（そのとき `hourly` はきょうの本を持っている。§4 の (1) だけでなく (2) build → hear・(3) sheet.png まで回してよい —— 同じファイルに2体は乗らない。実測 09/06 02:3x〜03:4x: 1本ぶん 5周＋hear 3回で約 70分） | きょうの枠が公開ずみのときの、あすの台本 |
 
 `optimizer` が持ち場に何も無ければ、**短く終わってよい**（Fable の枠を使わない）。
 **覆る条件**: `hourly` が 1回で輪を閉じ切れず（枠 60分 前の締切で予約した本が続く）、`optimizer` が
