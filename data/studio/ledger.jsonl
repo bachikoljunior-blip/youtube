@@ -149,3 +149,8 @@
 {"at": "2026-09-06T02:31:44+09:00", "id": "2026-09-07-kurisage-81sai-11kagetsu", "event": "heard", "mismatched": 3, "model": "small"}
 {"at": "2026-09-06T02:35:29+09:00", "id": "2026-09-07-kurisage-81sai-11kagetsu", "event": "built", "seconds": 92.1, "image": false, "chars": 480}
 {"at": "2026-09-06T02:36:14+09:00", "id": "2026-09-07-kurisage-81sai-11kagetsu", "event": "heard", "mismatched": 0, "model": "small"}
+{"at": "2026-09-06T08:14:36+09:00", "id": "2026-09-06-zaishoku-62man", "event": "built", "seconds": 90.8, "image": true, "chars": 480}
+{"at": "2026-09-06T08:14:52+09:00", "id": "2026-09-06-zaishoku-62man", "event": "cold_read", "takeaway": "65歳以上で働きながら年金をもらう場合、給料と年金の合計が月62万円（2026年4月から）を超えると、超えた分の半分だけ年金の支給が停止される仕組みの説明。", "unclear": ["「国民年金」と「厚生年金」の具体的な違いと役割", "「年金に足される」「減るのも足すのも」の正確な計算メカニズム", "「止まった分はあとでもらえません」の意味（完全に失うのか、後で別の形で受け取るのか）", "「毎年10月に年金に足される」働いて払った保険料がどのような形で加算されるのか", "「月給とボーナスの12分の1を足す」の具体的な計算例"]}
+{"at": "2026-09-06T08:15:54+09:00", "id": "2026-09-06-zaishoku-62man", "event": "critique", "understand": 2, "n_real": 6, "done": false}
+{"at": "2026-09-06T08:17:09+09:00", "id": "2026-09-06-zaishoku-62man", "event": "heard", "mismatched": 0, "model": "small"}
+{"at": "2026-09-06T10:00+09:00", "id": "2026-09-06-zaishoku-62man", "event": "scheduled", "video_id": "EkNqtkK49Bw", "replaced": "s3hb9Tl1jLw", "title": "働きながら年金をもらう人へ 減る境目が62万円に【2026年4月から】 #Shorts"}
