@@ -100,3 +100,5 @@
 {"at": "2026-09-05T20:30:32+09:00", "id": "2026-09-06-zaishoku-62man", "event": "built", "seconds": 92.4, "image": true, "chars": 479}
 {"at": "2026-09-05T20:31:23+09:00", "id": "2026-09-06-zaishoku-62man", "event": "heard", "mismatched": 0, "model": "small"}
 {"at": "2026-09-05T20:31:31+09:00", "id": "2026-09-06-zaishoku-62man", "event": "critique", "understand": 2, "n_real": 5, "done": false}
+{"at": "2026-09-05T20:34:36+09:00", "id": "2026-09-06-zaishoku-62man", "event": "built", "seconds": 90.6, "image": true, "chars": 479}
+{"at": "2026-09-05T20:35:26+09:00", "id": "2026-09-06-zaishoku-62man", "event": "heard", "mismatched": 0, "model": "small"}
