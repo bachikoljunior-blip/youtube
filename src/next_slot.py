@@ -114,14 +114,20 @@ _MAKERS = (
     # `pipeline` が `image_orders.place()` で注文を置き、届いた絵が本に入る
     # （`docs/IMAGE_ORDERS.md`）。**入る絵が変われば出来上がりが変わります。**
     "src/image_orders.py",
+    # **外の帯の上位のショートの型は、命じる字数の帯（648〜796字）と尺の上限を決めます**
+    # （2026-09-05 11:xx `d5ce1c0d`・`generate()` と `pipeline` と `verify` が読む）。
+    # `LENGTH_BAND` が動けば、書かれる台本の長さ ＝ 出来上がりが変わります。
+    "src/outside_short.py",
 )
 
 #: **出来上がりを変えないので、上から外してあるもの**（検査が突き合わせます）。
 #: `src/uploader.py` は**焼いたあとの運び方**で、出来上がりを作りません。
 #: `src/analytics.py` は `pipeline._refill_topics()` の**題材の補充**だけ
 #: （`analytics.optimize(posted)`）。**題材が決まったあとの中身は変えません。**
+#: `src/dupes.py` は**上げた本の帳面**（`data/uploaded.jsonl` へ `remember()`・2026-09-05 11:4x に
+#: `pipeline` の投稿後の段へ足した）。**上げた後の記録**で、出来上がりを作りません。
 _NOT_MAKERS = ("src/analytics.py", "src/history.py",
-               "src/uploader.py", "src/verify.py")
+               "src/uploader.py", "src/verify.py", "src/dupes.py")
 
 
 def _ahead_ok() -> bool:
@@ -1313,6 +1319,52 @@ def draft_lines(now: datetime | None = None,
     return out
 
 
+def _stash_legs(video_id: str, topic: str, queue: Path, _dp) -> tuple[list[str], str | None, list[str]]:
+    """**控えの台本が落としている脚を、その本の型の物差しで数える。**（API 0単位）
+
+    返りは `(落ちた脚, 数えられなかった理由, うち台本の中身の脚)`。
+
+    ## なぜ型で分けるか（2026-09-05 13:1x に実測して足した）
+
+    `daily_pick.pick_legs()` は **長尺の外の型（`OUTSIDE_LEGS`・冒頭／章・締め／題・サムネ／
+    間合い／尺 20分〜）** の物差しです。09/06 の枠の `3gZ38lfsJpY` は
+    `style: outside_short` のショート（156秒・`outside_short.probe` ＝ `yes`）ですが、
+    ここは長尺の物差しをそのまま当てて::
+
+        [!] `--script` で焼き直しても、この脚は1本も減りません —— 控えの台本そのものが
+            落としています: (1) 冒頭・(2) 章・締め・(5) 間合い・尺
+        台本ごと書き下ろす焼き直し: python -m src.pipeline --topic s-teikibin-todoita-kakyu-ni-nai
+
+    と刷っていました。**156秒 のショートに「20分 に届いていない」と言い、書き下ろし
+    （`claude -p` ＋ 焼き 31分・題も説明も入れ替わる）を勧める行**です。
+    `daily_pick.treated_count()` は 2026-09-05 11:xx にショートを `outside_short.probe` で
+    数える形へ直りましたが、**ここは直っていませんでした**（同じ物差しの、もう1つの読み口）。
+
+    ショート（`style: outside_short`）は `src/outside_short` の脚で数えます —— hard は尺だけ
+    （落ちれば「台本の中身」＝ 書き下ろし）、soft（題・中身）は薄い升なので焼き直しの
+    理由にしません。型の無い題材（`style` が空）は `pick_legs` のまま —— これまでどおり。
+
+    **覆る条件**: `pick_legs()` 自身が題材の `style` で物差しを選ぶようになったら、
+    ここは `pick_legs` を呼ぶだけに戻すこと（そのとき `treated_count` の分岐も一緒に）。
+    """
+    style = ""
+    try:
+        style = {str(t.get("id")): str(t.get("style") or "")
+                 for t in _dp._topics()}.get(str(topic or ""), "")
+    except Exception:                                              # noqa: BLE001
+        style = ""
+    if style == "outside_short":
+        from . import outside_short as _osh                        # noqa: PLC0415
+        state, why_s = _osh.probe(video_id, queue=queue)
+        if state == "unknown":
+            return [], why_s, []
+        if state == "no":
+            return ["(1) 尺"], None, ["(1) 尺"]
+        return [], None, []
+    bad, why = _dp.pick_legs(video_id)
+    return bad, why, [b for b in bad if b not in _dp.METADATA_LEGS]
+
+
 def rebake_input_lines(video_id: str, topic: str) -> list[str]:
     """**同じ本を、1か所だけ変えて焼き直せるか。**（**API 0単位**）
 
@@ -1372,8 +1424,7 @@ def rebake_input_lines(video_id: str, topic: str) -> list[str]:
         # 読めていない控えを「直す所は無い」と読むのが、この repo が何度も踏んだ形です。
         try:
             from . import daily_pick as _dp                        # noqa: PLC0415
-            bad, why = _dp.pick_legs(video_id)
-            body = [b for b in bad if b not in _dp.METADATA_LEGS]
+            bad, why, body = _stash_legs(video_id, topic, path.parent, _dp)
         except Exception as exc:                                   # noqa: BLE001
             bad, why, body = [], f"脚を数えられませんでした（{str(exc)[:60]}）", []
         if body:
