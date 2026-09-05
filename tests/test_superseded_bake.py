@@ -83,3 +83,20 @@ def test_skip_の行は焼いていない(monkeypatch):
              "kind": "skip", "video_id": "LONG_B"}]
     _patch(monkeypatch, "SHORT_A", rows)
     assert next_slot.superseded_bake_lines(NOW) == []
+
+
+def test_鼓動のあとに_done_が在れば_もう焼いた(monkeypatch):
+    """2026-09-05 15:1x に実測: `GFvAcxvDmYM` は 06:18 の `beat` のあと 07:58 に `done` を
+    残していたのに、15:0x の画面がまだ「いま焼いているのは `GFvAcxvDmYM`」と刷っていた。"""
+    rows = [_beat("LONG_B", NOW - timedelta(hours=8)),
+            {"at": (NOW - timedelta(hours=6)).isoformat(), "kind": "done",
+             "video_id": "LONG_B", "new_id": "LONG_C", "rc": 0}]
+    _patch(monkeypatch, "SHORT_A", rows)
+    assert next_slot.superseded_bake_lines(NOW) == []
+
+
+def test_錠が空いていれば焼いていない(monkeypatch):
+    """`flock` が直接の証拠（`rebake_busy()` の註）。鼓動だけで鳴らさない。"""
+    _patch(monkeypatch, "SHORT_A", [_beat("LONG_B", NOW - timedelta(minutes=12))])
+    assert next_slot.superseded_bake_lines(NOW, busy_call=lambda: False) == []
+    assert "LONG_B" in "\n".join(next_slot.superseded_bake_lines(NOW, busy_call=lambda: True))
