@@ -1,2 +1,6 @@
 {"at": "2026-09-05T17:04:21+09:00", "id": "2026-09-06-zaishoku-62man", "event": "built", "seconds": 76.1, "image": false, "chars": 375}
 {"at": "2026-09-05T17:04:24+09:00", "id": "2026-09-06-zaishoku-62man", "event": "image_ordered", "order": "2026-09-06-zaishoku-62man-bg"}
+{"at": "2026-09-05T17:04:55+09:00", "id": "2026-09-06-zaishoku-62man", "event": "cold_read", "takeaway": "65歳以上で働きながら年金をもらう場合、月給と厚生年金の合計が月62万円を超えると、超過分の半分が年金から減額される。", "unclear": ["厚生年金と国民年金の違い", "標準報酬月額が給与明細のどこに記載されているか", "ねんきん定期便とは何か"]}
+{"at": "2026-09-05T17:05:25+09:00", "id": "2026-09-06-zaishoku-62man", "event": "heard", "mismatched": 0, "model": "small"}
+{"at": "2026-09-05T17:05:52+09:00", "id": "2026-09-06-zaishoku-62man", "event": "critique", "understand": 3, "n_real": 5, "done": false}
+{"at": "2026-09-05T17:06:27+09:00", "id": "2026-09-06-zaishoku-62man", "event": "built", "seconds": 74.7, "image": false, "chars": 378}

@@ -82,15 +82,22 @@ def slide(show: str, sub: str, say: str, i: int, n: int, image: Path | None, out
     if progress and n > 1:
         d.rectangle([60, 70, W - 60, 82], fill=(255, 255, 255, 70))
         d.rectangle([60, 70, 60 + int((W - 120) * i / n), 82], fill=(255, 210, 60, 255))
-    # 大きい字
+    # 大きい字（行は書き手の \n で決まる。幅に収まるまで字を小さくする。語の途中で折らない）
     if show:
-        size = 120 if len(show) <= 8 else 96
-        lines = wrap(show, 8 if size == 120 else 10)
+        lines = show.split("\n")
+        size = 124
+        while size > 64:
+            fnt = font(FONT_BLACK, size)
+            if max(d.textbbox((0, 0), ln, font=fnt)[2] for ln in lines) <= W - 140:
+                break
+            size -= 8
         fnt = font(FONT_BLACK, size)
-        top = 520 - int(len(lines) * size * 1.25 / 2)
+        block_h = int(len(lines) * size * 1.25) + (int(56 * 1.25 * len(wrap(sub, 16))) + 20 if sub else 0)
+        top = 700 - block_h // 2
+        d.rounded_rectangle([40, top - 50, W - 40, top + block_h + 40], radius=30, fill=(0, 0, 0, 110))
         y = draw_text_block(d, lines, fnt, top, (255, 255, 255), stroke_w=6)
         if sub:
-            y = draw_text_block(d, wrap(sub, 14), font(FONT_BOLD, 56), y + 20, (255, 225, 120), stroke_w=4)
+            y = draw_text_block(d, wrap(sub, 16), font(FONT_BOLD, 56), y + 20, (255, 225, 120), stroke_w=4)
     # 字幕
     if say:
         lines = wrap(say, SUB_CHARS)[:4]
