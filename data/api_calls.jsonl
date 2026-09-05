@@ -11276,3 +11276,9 @@
 {"at": "2026-09-05T06:07:08+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "analytics.py:fetch_retention"}
 {"at": "2026-09-05T06:07:09+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "analytics.py:fetch_retention"}
 {"at": "2026-09-05T06:07:10+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "analytics.py:fetch_retention"}
+{"at": "2026-09-05T07:01:03+00:00", "api": "data", "method": "videos.list", "units": 1, "ok": true, "by": "reschedule.py:_update", "detail": "fMlY_uzHOMw"}
+{"at": "2026-09-05T07:01:05+00:00", "api": "data", "method": "videos.update", "units": 50, "ok": true, "by": "reschedule.py:_update", "detail": "fMlY_uzHOMw"}
+{"at": "2026-09-05T07:01:10+00:00", "api": "data", "method": "videos.list", "units": 1, "ok": true, "by": "reschedule.py:_update", "detail": "TfetZ_qhS-E"}
+{"at": "2026-09-05T07:01:10+00:00", "api": "data", "method": "videos.update", "units": 50, "ok": true, "by": "reschedule.py:_update", "detail": "TfetZ_qhS-E"}
+{"at": "2026-09-05T07:01:14+00:00", "api": "data", "method": "videos.list", "units": 1, "ok": true, "by": "reschedule.py:_update", "detail": "cQ-gLLQ8onQ"}
+{"at": "2026-09-05T07:01:15+00:00", "api": "data", "method": "videos.update", "units": 50, "ok": true, "by": "reschedule.py:_update", "detail": "cQ-gLLQ8onQ"}
