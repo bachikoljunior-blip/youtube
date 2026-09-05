@@ -16,3 +16,4 @@
 # **覆る条件**: `data/` に「上書きが正しい」ファイルが入ったとき
 # （そのときは、そのファイルだけを下に書いて外すこと）。
 data/*.jsonl merge=union
+data/studio/ledger.jsonl merge=union

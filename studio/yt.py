@@ -61,12 +61,40 @@ def when(v: dict) -> dt.datetime:
     return dt.datetime.fromisoformat(s.replace("Z", "+00:00")).astimezone(JST)
 
 
+def scheduled_all() -> list[dict]:
+    """**チャンネルの全本**のうち、publishAt が付いていて まだ public でない本（＝予約）。新しい順。
+
+    `recent_videos(60)` だけを見ていると見えない: 実測 2026-09-06 00:01 JST、旧 `ahead_sweep.py` が
+    08/16〜08/19 に上げた private の本 8本（uploads の 690番目あたり）に きょうの publishAt を打ち、
+    `status` は「きょうの枠: 空」と印字した。752本 で playlistItems 16 + videos.list 16 ＝ 約 32単位。
+    """
+    up = channel()["uploads"]
+    ids, tok = [], None
+    while True:
+        r = svc().playlistItems().list(part="contentDetails", playlistId=up, maxResults=50, pageToken=tok).execute()
+        ids += [i["contentDetails"]["videoId"] for i in r["items"]]
+        tok = r.get("nextPageToken")
+        if not tok:
+            break
+    out = []
+    for i in range(0, len(ids), 50):
+        r = svc().videos().list(part="snippet,status", id=",".join(ids[i:i + 50])).execute()
+        for v in r["items"]:
+            st = v["status"]
+            if st.get("publishAt") and st["privacyStatus"] != "public":
+                out.append({"id": v["id"], "title": v["snippet"]["title"], "privacy": st["privacyStatus"],
+                            "publish_at": st["publishAt"], "published_at": v["snippet"]["publishedAt"],
+                            "duration": "", "views": 0, "likes": 0})
+    return out
+
+
 def today_lineup(videos: list[dict] | None = None) -> list[dict]:
-    """きょう（JST）に公開ずみ・公開予定の本。"""
+    """きょう（JST）に公開ずみ・公開予定の本。公開ずみは新しい順の一覧から、予約は**全本**から拾う。"""
     videos = videos if videos is not None else recent_videos()
     d = now_jst().date()
-    rows = [v for v in videos if v["privacy"] != "unlisted" and when(v).date() == d
-            and (v["privacy"] == "public" or v["publish_at"])]
+    rows = [v for v in videos if v["privacy"] == "public" and when(v).date() == d]
+    seen = {v["id"] for v in rows}
+    rows += [v for v in scheduled_all() if v["id"] not in seen and when(v).date() == d]
     return sorted(rows, key=when)
 
 

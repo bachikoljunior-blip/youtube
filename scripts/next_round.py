@@ -799,11 +799,14 @@ def main() -> int:
     #     SessionStart フックは、このコンテナでは一度も起きていません（`ahead_sweep.kick()`
     #     の註）。親が毎周 撃つのはこの道具だけなので、ここから起こします。
     #     背景・数秒・親の画面には1行も出しません（白名簿）。
-    try:
-        import ahead_sweep as _sweep                            # noqa: PLC0415
-        _sweep.kick()
-    except Exception:                                          # noqa: BLE001
-        pass
+    #     **2026-09-06 02:1x JST に外した**（optimizer・Fable）。手法は 09/05 に `studio/` で
+    #     ゼロから組み直し（`docs/METHOD.md`）、旧 `ahead_sweep.py` は「使わない・前提にしない」
+    #     （§8）のはずが、**ここから毎周 起きていた**。実測: 09/06 00:01 JST に `place_today()` が
+    #     08/16〜08/19 上げの旧作りの本 8本 に 06:00〜14:00 JST の publishAt を打った
+    #     （`data/uploaded.jsonl` の diff・`139506ee`〜`724af5af`）。`studio.cli status` は新しい 60本
+    #     しか見ておらず 0本 に見えた。02:1x に 2本 を private へ戻した（台帳 `unscheduled`）。
+    #     **覆る条件**: 旧道具を使う判断が METHOD に書かれたとき（そのときは kick ではなく METHOD の手順で）。
+    #     `.claude/settings.json` の SessionStart `ahead_sweep.sh` も同じ理由で外した。
 
     if args.live_set is not None:
         row = live_write(args.live_set)

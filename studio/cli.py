@@ -43,8 +43,8 @@ def cmd_status(a):
     for v in yt.today_lineup(vids):
         print(f"  {yt.when(v):%H:%M} {v['privacy']:8s} {v['id']} {v['views']:5d}回 {v['title'][:40]}")
     print("予約（あす以降）:")
-    for v in vids:
-        if v["publish_at"] and yt.when(v).date() > now_jst().date():
+    for v in yt.scheduled_all():
+        if yt.when(v).date() > now_jst().date():
             print(f"  {yt.when(v):%m/%d %H:%M} {v['id']} {v['title'][:40]}")
     print("直近 公開 10本:")
     pub = [v for v in vids if v["privacy"] == "public"][:10]

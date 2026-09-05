@@ -12,11 +12,6 @@
             "type": "command",
             "command": "bash scripts/env_guard.sh",
             "timeout": 300
-          },
-          {
-            "type": "command",
-            "command": "bash scripts/ahead_sweep.sh",
-            "timeout": 15
           }
         ]
       }
