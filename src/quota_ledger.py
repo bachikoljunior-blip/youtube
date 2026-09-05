@@ -29,6 +29,17 @@
 **これが「投稿0本の日に枠が消える」の候補の筆頭ですが、
 帳面が無いので候補のままです。だから帳面を先に置きます。**
 
+## `videos.insert` は `execute` を通りません（2026-09-05 に踏んだ）
+
+**帳面が 4,439単位 と言った窓（09/04）で、枠は 403 で尽きていました。**
+同じ窓の `data/uploaded.jsonl` は **6本**（同じ題の長尺の焼き直し 4本＋同じ短尺 2本）
+＝ **6 × 1,600 ＝ 9,600単位** で、帳面には **`videos.insert` が 0行**。
+`src/uploader.py` の投稿は `MediaFileUpload(resumable=True)` → **`request.next_chunk()`**
+で、**`HttpRequest.execute` を1度も通りません。** いちばん高い1手だけが
+帳面に無かったので、焼き直して上げ直す手が**枠の上ではタダに見え**、
+上げ直すたびに読み（`views.jsonl`・`thumbnails.set`）の側が先に死んでいました。
+だから `next_chunk` も包みます（**1つの request につき最初の chunk で1回だけ**）。
+
 ## どこに置くか ——「呼ぶ側で気をつける」にしない
 
 Data API を叩く場所は `src/` と `scripts/` に **30か所以上**あり、
@@ -284,6 +295,7 @@ def install() -> bool:
     except Exception:                                          # noqa: BLE001
         return False
     if getattr(HttpRequest.execute, "_quota_ledger", False):
+        _wrap_next_chunk(HttpRequest)
         _installed = True
         return True
     original = HttpRequest.execute
@@ -320,8 +332,57 @@ def install() -> bool:
 
     execute._quota_ledger = True                               # noqa: SLF001
     HttpRequest.execute = execute
+    _wrap_next_chunk(HttpRequest)
     _installed = True
     return True
+
+
+def _wrap_next_chunk(HttpRequest) -> None:                     # noqa: N803
+    """分割アップロード（`resumable=True`）の `next_chunk` を包む。
+
+    **`videos.insert`（1,600単位）はここしか通りません**（上の「踏んだ」）。
+    1つの request は chunk の数だけ `next_chunk` を呼ぶので、
+    **最初の1回だけ**書きます（Google が引くのは insert 1回ぶん）。
+    落ちたときも `ok=False` で残します。**本体は止めません。**
+    """
+    original = getattr(HttpRequest, "next_chunk", None)
+    if original is None or getattr(original, "_quota_ledger", False):
+        return
+
+    def next_chunk(self, *args, **kwargs):                     # noqa: ANN001
+        first = not getattr(self, "_quota_ledger_noted", False)
+        api = method = by = target = ""
+        units = 0
+        if first:
+            try:
+                self._quota_ledger_noted = True                # noqa: SLF001
+                api, method = method_of(getattr(self, "uri", ""),
+                                        getattr(self, "method", "POST"))
+                units = cost_of(api, method, getattr(self, "method", "POST"))
+                by = _by()
+                target = target_of(getattr(self, "uri", ""), getattr(self, "body", None))
+            except Exception:                                  # noqa: BLE001
+                pass
+        try:
+            out = original(self, *args, **kwargs)
+        except Exception:
+            if first:
+                try:
+                    note(api or "other", method or "?", units, ok=False, by=by,
+                         detail=target)
+                except Exception:                              # noqa: BLE001
+                    pass
+            raise
+        if first:
+            try:
+                note(api or "other", method or "?", units, ok=True, by=by,
+                     detail=target)
+            except Exception:                                  # noqa: BLE001
+                pass
+        return out
+
+    next_chunk._quota_ledger = True                            # noqa: SLF001
+    HttpRequest.next_chunk = next_chunk
 
 
 # ---------------------------------------------------------------- 読む側

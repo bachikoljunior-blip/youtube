@@ -168,3 +168,54 @@ def test_認証が帳面のせいで落ちないこと(monkeypatch) -> None:
 def test_帳面は本物の台帳を指していたら書かないこと() -> None:
     """`upload_cap._write_path` の門を**そのまま**使っていること。"""
     assert upload_cap._write_path(quota_ledger.LEDGER) is None
+
+
+# ---------------------------------------------------------------- 分割アップロードの側（2026-09-05 に踏んだ）
+
+UPLOAD = ("https://youtube.googleapis.com/upload/youtube/v3/videos"
+          "?uploadType=resumable&part=snippet%2Cstatus")
+
+
+def _wrap_chunk(monkeypatch: pytest.MonkeyPatch, inner):
+    """本物の `next_chunk` を差し替えてから `install()` を掛ける。"""
+    from googleapiclient.http import HttpRequest
+
+    monkeypatch.setattr(HttpRequest, "execute", lambda self, *a, **k: None, raising=False)
+    monkeypatch.setattr(HttpRequest, "next_chunk", inner, raising=False)
+    monkeypatch.setattr(quota_ledger, "_installed", False, raising=False)
+    assert quota_ledger.install() is True
+    return HttpRequest
+
+
+def test_分割アップロードの_videos_insert_が帳面に1回だけ残ること(ledger, monkeypatch) -> None:
+    """**09/04 の窓: 帳面 4,439単位 で 403。** 同じ窓の投稿 6本 ＝ 9,600単位 が
+    `next_chunk` 経由で **0行** だった。いちばん高い1手が帳面に無いと、
+    上げ直しがタダに見える。chunk が3つでも **1,600 を1回**。"""
+    calls = {"n": 0}
+
+    def chunk(self, *a, **k):
+        calls["n"] += 1
+        return (None, {"id": "vid"} if calls["n"] >= 3 else None)
+
+    cls = _wrap_chunk(monkeypatch, chunk)
+    req = _Req(UPLOAD, "POST")
+    resp = None
+    while resp is None:
+        _p, resp = cls.next_chunk(req)
+    rows = ledger()
+    assert calls["n"] == 3
+    assert len(rows) == 1, rows
+    assert rows[0]["method"] == "videos.insert"
+    assert rows[0]["units"] == 1600
+    assert rows[0]["ok"] is True
+
+
+def test_分割アップロードが落ちても残り本体も止めないこと(ledger, monkeypatch) -> None:
+    def boom(self, *a, **k):
+        raise RuntimeError("403")
+
+    cls = _wrap_chunk(monkeypatch, boom)
+    with pytest.raises(RuntimeError):
+        cls.next_chunk(_Req(UPLOAD, "POST"))
+    rows = ledger()
+    assert len(rows) == 1 and rows[0]["ok"] is False and rows[0]["units"] == 1600, rows
