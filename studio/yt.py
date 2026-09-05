@@ -30,7 +30,7 @@ def svc():
 def channel() -> dict:
     ch = svc().channels().list(part="snippet,statistics,contentDetails", mine=True).execute()["items"][0]
     return {"title": ch["snippet"]["title"], "uploads": ch["contentDetails"]["relatedPlaylists"]["uploads"],
-            **{k: int(v) for k, v in ch["statistics"].items() if v.isdigit()}}
+            **{k: int(v) for k, v in ch["statistics"].items() if isinstance(v, str) and v.isdigit()}}
 
 
 def recent_videos(limit: int = 60) -> list[dict]:

@@ -163,6 +163,9 @@ def cmd_schedule(a):
         for v in others:
             print(f"  {yt.when(v):%H:%M} {v['privacy']} {v['id']} {v['title'][:40]}")
         return 1
+    if a.dry_run:
+        print(f"[dry-run] 上げる: {mp4.name} → 公開 {at:%m/%d %H:%M} JST・差し替え {a.replace or '無し'}・題「{s.title}」")
+        return 0
     vid = yt.upload(mp4, s.title, s.description, s.tags, at)
     print("上げた:", vid, f"公開 {at:%m/%d %H:%M} JST")
     first = workdir(a.id) / "slide-01.png"
@@ -197,6 +200,7 @@ def main(argv=None):
     h = sub.add_parser("hear"); h.add_argument("id"); h.add_argument("--medium", action="store_true")
     sc = sub.add_parser("schedule"); sc.add_argument("id"); sc.add_argument("--at", required=True)
     sc.add_argument("--replace", default=""); sc.add_argument("--force", action="store_true")
+    sc.add_argument("--dry-run", action="store_true")
     sub.add_parser("measure")
     a = ap.parse_args(argv)
     fn = globals()["cmd_" + a.cmd.replace("-", "_")]

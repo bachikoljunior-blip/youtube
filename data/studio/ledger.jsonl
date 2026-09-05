@@ -4,3 +4,7 @@
 {"at": "2026-09-05T17:05:25+09:00", "id": "2026-09-06-zaishoku-62man", "event": "heard", "mismatched": 0, "model": "small"}
 {"at": "2026-09-05T17:05:52+09:00", "id": "2026-09-06-zaishoku-62man", "event": "critique", "understand": 3, "n_real": 5, "done": false}
 {"at": "2026-09-05T17:06:27+09:00", "id": "2026-09-06-zaishoku-62man", "event": "built", "seconds": 74.7, "image": false, "chars": 378}
+{"at": "2026-09-05T17:12:04+09:00", "id": "2026-09-06-zaishoku-62man", "event": "built", "seconds": 84.6, "image": false, "chars": 428}
+{"at": "2026-09-05T17:12:19+09:00", "id": "2026-09-06-zaishoku-62man", "event": "critique", "understand": 3, "n_real": 7, "done": false}
+{"at": "2026-09-05T17:12:47+09:00", "id": "3gZ38lfsJpY", "event": "unscheduled", "why": "旧作りの先の日付の予約（09/06 09:00・09/08 09:00）。METHOD §9: 当日に新しい本で置き直す。消していない"}
+{"at": "2026-09-05T17:12:48+09:00", "id": "vmAll8GDkU8", "event": "unscheduled", "why": "旧作りの先の日付の予約（09/06 09:00・09/08 09:00）。METHOD §9: 当日に新しい本で置き直す。消していない"}
