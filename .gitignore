@@ -71,3 +71,6 @@ data/parent_wake.json
 #
 # **覆る条件**: 焼く側が器の外（別のジョブ）へ出たら、log も別の口で配ること。
 data/rebake.log
+
+# studio の生成物（2026-09-05）
+work/
