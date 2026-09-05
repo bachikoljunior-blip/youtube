@@ -804,6 +804,77 @@ def _today_candidate(now: datetime) -> dict | None:
     return None
 
 
+def dedupe_plan(now: datetime, rows: list[dict] | None = None,
+                picked: dict | None = None) -> list[dict]:
+    """**きょうの枠に同じ題材が 2本 以上なら、外す本**（純関数・0単位）。`slot_gate.same_topic_twice` の きょうぶん。"""
+    import importlib.util                                      # noqa: PLC0415
+    spec = importlib.util.spec_from_file_location(
+        "_slot_gate_for_sweep", Path(__file__).resolve().parent / "slot_gate.py")
+    sg = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(sg)
+    day = now.astimezone(JST).date()
+    if rows is None:
+        from src import dupes                                  # noqa: PLC0415
+        rows = dupes.ledger_rows()
+    if picked is None:
+        try:
+            from src import daily_pick                         # noqa: PLC0415
+            cur = daily_pick.current(day)
+            picked = {day: cur} if cur else {}
+        except Exception:                                      # noqa: BLE001
+            picked = {}
+    return [d for d in sg.same_topic_twice(rows, today=day, picked=picked, days=1)
+            if d["day"] == day]
+
+
+def dedupe_today(now: datetime | None = None, *, dry_run: bool = False,
+                 quota_open: bool | None = None) -> list[dict]:
+    """**きょうの枠の、同じ題材の 2本目から先を外す**（`reschedule.py --unschedule`・1本 50単位）。
+
+    ## なぜ要るか（2026-09-05 09:0x に実測で踏んだ）
+
+    09/05: `kzefG44_APU`（09:00）と `a23e696j0f8`（10:00）が同じ台本で両方 枠に。
+    07:20 の置く手は `--move` を帳面の取り置きで止められ、`place_by_insert` で新しい ID を
+    置いたが、**旧 ID を外す `videos.update` は同じ窓で撃てない**。＝ 日枠が閉じた窓の
+    `insert` は、構造上 同じ本を 2本 並べます。ここは窓が戻った掃きで、その後始末をします。
+    残す本は決めが名指す本（無ければ早いほう）。**消しません**（private に戻るだけ）。
+
+    **覆る条件**: `place_by_insert` が旧 ID を外せない窓では置かなくなったら、ここは空振りしかしない。
+    """
+    now = now or datetime.now(timezone.utc)
+    stamp = now.astimezone(JST).strftime("%m/%d %H:%M JST")
+    try:
+        plans = dedupe_plan(now)
+    except Exception as exc:                                   # noqa: BLE001
+        print(f"[dedupe] 読めませんでした: {str(exc)[:120]}", flush=True)
+        return []
+    if not plans:
+        return []
+    if quota_open is None:
+        from src import upload_cap                             # noqa: PLC0415
+        try:
+            quota_open = bool(upload_cap.day_quota(now).open)
+        except Exception:                                      # noqa: BLE001
+            quota_open = True
+    for d in plans:
+        print(f"[dedupe] {stamp} きょうの枠に同じ題材 `{d['topic']}` が {1 + len(d['drop'])}本: "
+              f"残す `{d['keep']}`・外す {' '.join(d['drop'])}", flush=True)
+        if not quota_open:
+            print("[dedupe]   日枠が尽きています（`videos.update` が通らない）。窓が戻った掃きで外します",
+                  flush=True)
+            continue
+        if dry_run:
+            print("[dedupe]   **外していません**（`--dry-run`）", flush=True)
+            continue
+        py = sys.executable or "python3"
+        for vid in d["drop"]:
+            rc = _run([py, "scripts/reschedule.py", "--unschedule", vid],
+                      "reschedule --unschedule（同じ題材の2本目）", 300)
+            d.setdefault("rc", {})[vid] = rc
+            print(f"[dedupe]   `{vid}` → rc={rc}", flush=True)
+    return plans
+
+
 def placed_today(now: datetime, path: Path | None = None) -> set[str]:
     """**きょう（JST）の枠に、もう入っている本**（予約ずみ・公開ずみ。**API 0単位**・控えだけ）。
     `next_slot.today_count()` と同じ床（同じ行・同じ日付の切り方）。"""
@@ -3021,6 +3092,11 @@ def main(argv: list[str] | None = None) -> int:
             plan = place_today(now, dry_run=args.dry_run)
         except Exception as exc:                               # noqa: BLE001
             print(f"[today] [!] 置く手が落ちました: {str(exc)[:200]}", flush=True)
+        # **同じ題材が きょうの枠に 2本 以上なら、2本目から先を外す**（`dedupe_today` の註）。
+        try:
+            dedupe_today(now, dry_run=args.dry_run)
+        except Exception as exc:                               # noqa: BLE001
+            print(f"[dedupe] [!] 外す手が落ちました: {str(exc)[:200]}", flush=True)
         # **置いたら、その本のサムネイル**（`thumb_today` の註。50単位・きょうの1本だけ）。
         try:
             thumb_today(now, plan=plan if isinstance(plan, dict) else None,

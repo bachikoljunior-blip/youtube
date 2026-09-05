@@ -113840,3 +113840,31 @@ bytes は控えに在ります。**枠が戻る 16:00 JST 以降**に:
 - 16:00 JST 以降の掃きが `fMlY_uzHOMw` を置かなかったら、`reschedule.py --move` 側の門（`RC_RULE_FULL`・`refuse_future_publish`・
   取り置き）のどれかが断っている。`data/ahead_sweep.log` の `[today]` に rc が出る。
 - 10本/日 で回した日の「再生/日 の合計」が 1本/日 の日を上回る実測が出たら、池で埋める枝を `record()` を通さない形で足す。
+
+### 同じ回・2件目と3件目（09:1x〜09:3x JST）
+
+**2件目 `fix`（`scripts/sibling_check.today_slot_empty`）**: `today_count() < cap()` ＝ `2 < 10` で毎周「まだ空」
+→ 間隔の下限を恒真で外していた（前の回の JOURNAL が名指しした2件の赤 `tests/test_spawn_gate_overrun.py`）。
+比べる相手を **1** に（その日が丸ごと落ちるのは きょう 1本も無いときだけ）。赤 2件 → 緑。
+`--ship` は `FIX_RUN_CAP`（連2回）で止められた —— 直しは commit に在る。順番だけの門なので、記録は次の回でよい。
+
+**3件目（`slot_gate.same_topic_twice` ＋ `ahead_sweep.dedupe_today`）**: きょうの枠に **同じ題材が 2本**
+（`kzefG44_APU` 09:00・`a23e696j0f8` 10:00。同じ台本・同じ題）。`python scripts/slot_gate.py` は
+「食い違いもありません」と言っていた —— 「公開ずみの題材」の枝は**その日より前**に公開された題材しか見ない。
+いまは門が鳴り（残す＝決めの本 `a23e696j0f8`・外す `kzefG44_APU`・`--unschedule` の行を印字）、
+掃きの `dedupe_today()` が **日枠の戻った回に** `reschedule.py --unschedule kzefG44_APU` を撃つ
+（private に戻すだけ・消さない）。実物の dry-run: 「日枠が尽きています。窓が戻った掃きで外します」。
+検査 `tests/test_slot_gate_dupe_today.py`（6件）。`tests/test_slot_gate.py::test_gate_の終了コード` は
+実物の控えで走る検査で、3つ目の鳴り方を知らなかったので、3つのどれでも通る形に直した。
+
+### 次の回へ（**16:00 JST に日枠が戻ってからの掃きが、この3つを機械で撃ちます**。手で撃つなら同じ3行）
+
+    python scripts/reschedule.py --unschedule kzefG44_APU            # 同じ題材の2本目（09:00 に公開ずみなら private へ戻る）
+    python scripts/reschedule.py --move fMlY_uzHOMw 2026-09-05T<正時>   # 前提「外の作り方を写した長尺」の処置。48h → 09/07 に verdict
+    python scripts/refresh_thumbnail.py --missing --video a23e696j0f8   # きょうの1本のサムネ（`thumbnail_set: false`・50単位）
+
+- **`fMlY_uzHOMw` が 09/05 中に置かれなかったら、前提の期限 09/07 は落ちます。** `data/ahead_sweep.log` の `[today]` に rc が出る。
+  断るのは `reschedule.py` の門（`RC_RULE_FULL`／`refuse_future_publish`／`reserve_hold`）のどれか。
+- 親の checkout（`/home/user/youtube`・PID 4269）で走っていた `place_by_insert`（a23e696j0f8 の焼き直し）は、
+  予約ずみなので `--replaces` が断る側 ＝ 3本目は載らないはず。載っていたら `same_topic_twice` が 3本と数え、2本 外す。
+- `kzefG44_APU` を外したあと、`daily_pick` の 09/05 の決めは `a23e696j0f8` のまま（変えない）。
