@@ -8362,8 +8362,14 @@ def _ship_lever_counts(path: Path | None = None, days: int = 7) -> dict[str, int
     return out
 
 
-#: 門1'（登録者）を動かす腕。`subs_per_day = views_day × sub_rate` の2つの因子。
-GATE_ARMS = ("per_video", "sub_rate")
+#: 門1'（登録者）を動かす腕。`subs_per_day = views_day × sub_rate` の因子で、
+#: `views_day = density × per_video`。**`density` は 2026-09-05 に足した** ——
+#: `house_rule.PUBLISH_PER_DAY` が 1 → 10 に動き（同ファイルの註: 弾力性 -0.663 で
+#: 合計は N^0.337・門1' 511日 → 284日）、床（`RULE_DEAD`）は外れたのに、
+#: 届かない軌跡の `dead_at_inf` だけが `--lever density` を台帳から締め出していた
+#: （`run_marker` が 15:5x の ship を断った実測）。`sub_rate` と同じ理由で外す。
+#: **覆る条件**: `house_rule.cap()` が 1 に戻ったら `RULE_DEAD` が先に勝つので、ここに在っても通りません。
+GATE_ARMS = ("per_video", "sub_rate", "density")
 
 
 def revive_gate_arms(dead: list[str], *, all_dead: bool,
@@ -8537,15 +8543,15 @@ def gate_arm_lines(pl: dict, *, runs_path: Path | None = None) -> list[str]:
         f" `views/day × sub_rate` の2本です。**門1' で腕を測ると**:"
     ]
     prod = 1.0
-    for lever in ("per_video", "sub_rate"):
+    for lever in GATE_ARMS:
         c = caps.get(lever)
         if not c:
             continue
         prod *= c
         out.append(f"{bar}     `{lever}` を天井 ×{c:.2f} まで引く → 門1' は"
                    f" {_fmt_days(base / c)}（{c:.1f}倍 早い）")
-    if len(caps) == 2:
-        out.append(f"{bar}     2本とも天井まで → {_fmt_days(base / prod)}"
+    if len(caps) >= 2:
+        out.append(f"{bar}     {len(caps)}本とも天井まで → {_fmt_days(base / prod)}"
                    f"（×{prod:.1f}）。**積です** —— 片方だけ引いても、もう片方の分は残ります。")
     counts = _ship_lever_counts(runs_path)
     if counts:
