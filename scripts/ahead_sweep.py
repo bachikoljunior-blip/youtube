@@ -40,7 +40,7 @@
 
     日枠が尽きている            `upload_cap.day_quota()` に自分で訊く
     先の日付が 0本              掃くものが無い
-    もう別の掃きが走っている    ロック（`data/.ahead_sweep.lock`）
+    もう別の掃きが走っている    ロック（`.git/.ahead_sweep.lock`・機械にひとつ・`_machine_dir()`）
     `.owner-pause` が在る       `src.pause_guard`（**人だけが置ける印**）
     規則5 が外れている          `house_rule.same_day_only()` が `False`
 
@@ -72,15 +72,41 @@ import ahead_gate  # noqa: E402
 from src import config, house_rule  # noqa: E402
 
 #: **同じ掃きが2つ走らないための印。** 中身は `{pid} {開始時刻}`。
-LOCK = "data/.ahead_sweep.lock"
+LOCK = ".ahead_sweep.lock"
 
 #: 印が**この時間より古ければ、死んだ掃きの置き土産**として奪います。
 #: 107本 ＝ 約 5,500単位・1本 2〜3秒 なので、1回の掃きは長くて 10分ほど。
 STALE = timedelta(minutes=45)
 
 
+def _machine_dir() -> Path:
+    """**機械にひとつの印の置き場**（作業コピーをまたぐ）。`.git` の共通の場所
+    （`src/history._git_common_dir`）、取れなければ `data/`。
+
+    ## なぜ要るか（2026-09-05 09:0x に実測して足した）
+
+    掃きの錠と「きょうの1本を置く手」の錠は `config.ROOT/data/` に在りました ＝
+    **作業コピーごとに別の錠**。サブは worktree で走るので、親の checkout と
+    サブの worktree で **同じ掃きが 2本 走りました**（PID 4269 cwd `/home/user/youtube`
+    08:57 JST・PID 7965 cwd `.claude/worktrees/agent-…` 08:59 JST。どちらも
+    `[today] きょうの1本を置きます: a23e696j0f8` → 同じ台本の分かりやすさの輪 ×2）。
+    4コアの器で 2本 走ると、焼き側の 3周目が 30分 進まなかった実測（09/04 22:0x）と同じ形。
+    焼き直しの錠（`rebake.lock`）は 09/03 に `.git` の共通の場所へ移っていて、
+    **この2つだけが残っていました。**
+
+    **覆る条件**: 親とサブが別の器で走るようになったら、この錠は器をまたがない
+    （`flock` と同じ）。そのときは印の中身（pid・時刻）で読むこと。
+    """
+    try:
+        from src import history                                # noqa: PLC0415
+        common = history._git_common_dir()
+    except Exception:                                          # noqa: BLE001
+        common = None
+    return common or (Path(config.ROOT) / "data")
+
+
 def _lock_path() -> Path:
-    return Path(config.ROOT) / LOCK
+    return _machine_dir() / LOCK
 
 
 def take_lock(now: datetime | None = None, path: Path | None = None,
@@ -462,7 +488,8 @@ def reasons_to_skip(now: datetime | None = None) -> str:
 # - オーナーが「先の日付にも置いてよい」と言ったら、掃きと一緒に黙ります。
 
 #: **きょうの1本を置く手の印**（掃きの印とは別。掃きは数分、こちらは数秒）。
-TODAY_LOCK = "data/.today_place.lock"
+#: 置き場は `_machine_dir()`（作業コピーをまたぐ・掃きの錠と同じ）。
+TODAY_LOCK = ".today_place.lock"
 #: 30分 —— `videos.insert` の道（`place_by_insert`: 焼き直し 約1分 ＋ 上げ 数分）が
 #: 10分 を超えることがあるため（2026-09-03 に 10分 → 30分）。
 TODAY_STALE = timedelta(minutes=30)
@@ -576,6 +603,11 @@ def today_plan(now: datetime, *, count: int, cap: int, candidate: dict | None,
         return {"do": False, "why": f"きょう {day} の枠は埋まっています（{count}本／規則 {cap}本）",
                 "video_id": None, "when": None}
     if not quota_open and not insert_ok:
+        if (candidate or {}).get("update_only"):
+            return {"do": False, "why": "日枠が尽きています（この窓では `videos.update` が通りません。"
+                    f"`{(candidate or {}).get('video_id')}` は前提の処置なので焼き直して "
+                    "`videos.insert` はしません —— 窓が戻ってからの掃きが `--move` で置きます）",
+                    "video_id": None, "when": None}
         return {"do": False, "why": "日枠が尽きています（この窓では `videos.update` が通りません。"
                 "台本の控えも無いので `videos.insert` でも置き直せません）",
                 "video_id": None, "when": None}
@@ -691,8 +723,36 @@ def _today_candidate(now: datetime) -> dict | None:
         except Exception:                                      # noqa: BLE001
             _stale = ""                                        # 推測で止めないこと
     if cur and cur.get("video_id") and not _stale:
-        return {"video_id": cur["video_id"], "why": f"[きょうの1本] {cur.get('form')} "
-                f"`{cur.get('topic')}`（{str(cur.get('why'))[:80]}）", "source": "pick"}
+        vid = str(cur["video_id"])
+        if vid not in placed_today(now):
+            return {"video_id": vid, "why": f"[きょうの1本] {cur.get('form')} "
+                    f"`{cur.get('topic')}`（{str(cur.get('why'))[:80]}）", "source": "pick"}
+        # **決めの本は、もう きょうの枠に在る（予約ずみ／公開ずみ）。同じ本を二度 置かない。**
+        #
+        # ## なぜ要るか（2026-09-05 09:0x に実測して足した）
+        #
+        # `PUBLISH_PER_DAY` が 1 → 10 になった日（09/04 17:3x）から、`place_today()` は
+        # `count < cap()` のあいだ毎周 ここへ来ます。ここは決めの本を**予約の有無を見ずに**
+        # 返していたので、09/05 は 09:00 `kzefG44_APU`・10:00 `a23e696j0f8`（同じ台本）が
+        # もう枠に在るのに、毎周 `a23e696j0f8` を返し、日枠が閉じている窓では
+        # `place_by_insert` が **同じ台本の分かりやすさの輪（40分・LLM）を回して
+        # `videos.insert`** に向かっていました（07:20 の決めの本文がその1回目。
+        # 08:57 と 08:59 に 2本 同時に、が 2回目・3回目）。
+        # 予約ずみの本は `--replaces` が断るので 3本目は載りませんが、**毎周 40分の
+        # 器と LLM は消えます**（4コア・焼き側の輪が 30分 止まる実測と同じ形）。
+        #
+        # **2本目の枠は、開いている前提の処置へ**（`_probe_candidate`）。
+        # `verdict` が到達日を動かす唯一の種別（`scripts/eta.py`）で、その処置
+        # （09/05 実物: `fMlY_uzHOMw`・5脚 全通・26.3分・予約なし）は 07:20 に
+        # 枠をショートへ譲ってから、置く手がひとつも無くなっていました。
+        # 床が外れた日は **両方 置けます**（`house_rule.cap()` が 1 より大きい）。
+        #
+        # 池のショートで 10本 まで埋める枝は**ここでは足しません** —— 下の池の枝は
+        # `daily_pick.record()` で決めを書き換えるので、2本目から先を池で埋めると
+        # 立っている決めが毎周 動きます。**覆る条件**: 10本/日 で回した日の
+        # 「再生/日 の合計」が 1本/日 の日を上回る実測が出たら（`house_rule` の覆る条件2 の逆）、
+        # 池で埋める枝を `record()` を通さない形で足すこと。
+        return _probe_candidate(now, placed=placed_today(now))
     # 決めていない → 形は**収益化の門に近い側**（`daily_pick.fallback_form`・2026-09-03 夜。
     #     それまで「齢48h の中央値の大きい形」で選んでいた ＝ 毎日ショート。ショートの視聴時間は
     #     4,000時間 の門に 0 入る —— `daily_pick.gate_arithmetic` の註）。同じ形の中では
@@ -742,6 +802,61 @@ def _today_candidate(now: datetime) -> dict | None:
         return {"video_id": nxt["video_id"],
                 "why": f"池が空なので次に出る下書き `{nxt.get('topic')}`", "source": "draft"}
     return None
+
+
+def placed_today(now: datetime, path: Path | None = None) -> set[str]:
+    """**きょう（JST）の枠に、もう入っている本**（予約ずみ・公開ずみ。**API 0単位**・控えだけ）。
+    `next_slot.today_count()` と同じ床（同じ行・同じ日付の切り方）。"""
+    from src import next_slot                                  # noqa: PLC0415
+    day = now.astimezone(JST).date()
+    out: set[str] = set()
+    for vid, r in next_slot.latest_rows(path).items():
+        at = next_slot._parse(r.get("at"))
+        if at and at.astimezone(JST).date() == day:
+            out.add(str(vid))
+    return out
+
+
+def _probe_candidate(now: datetime, *, placed: set[str] | None = None,
+                     path: Path | None = None) -> dict | None:
+    """**きょうの2本目 —— 開いている前提の処置**（`style: outside_long` の題材の下書きで、
+    `daily_pick.pick_legs()` が全通・予約なし・未公開）。無ければ `None`。**API 0単位。**
+
+    - 規則1 の床が効いている日（`house_rule.cap() <= 1`）は返しません（枠は決めの本のもの）
+    - 置く道は **`videos.update` だけ**（`update_only`）。26分の長尺を置くためだけに
+      焼き直す（78分・新しい動画ID）のは損です。日枠が閉じている窓では次の掃きへ回します
+    - 同じ題材の下書きが複数なら、**いちばん新しく上げた本**（焼き直しの兄弟のうち最新）
+    """
+    if house_rule.cap() <= 1:
+        return None
+    from src import daily_pick, next_slot                      # noqa: PLC0415
+    placed = placed if placed is not None else placed_today(now, path)
+    tops = {str(t.get("id")): t for t in daily_pick._topics()
+            if str(t.get("style") or "") == "outside_long"}
+    if not tops:
+        return None
+    try:
+        seen = set(daily_pick._observed_ids())
+    except Exception:                                          # noqa: BLE001
+        seen = set()
+    best: tuple[str, str] | None = None
+    for vid, r in next_slot.latest_rows(path).items():
+        vid = str(vid)
+        topic = str(r.get("topic") or "")
+        if topic not in tops or r.get("at") or vid in placed or vid in seen:
+            continue
+        legs, why = daily_pick.pick_legs(vid)
+        if legs or why:
+            continue                                            # 札だけの本は処置ではない
+        key = str(r.get("uploaded_at") or "")
+        if best is None or key > best[0]:
+            best = (key, vid)
+            best_topic = topic
+    if best is None:
+        return None
+    return {"video_id": best[1], "update_only": True, "source": "probe",
+            "why": f"きょうの2本目: 前提「外の作り方を写した長尺」の処置 `{best_topic}`"
+                   f"（`pick_legs` 全通・予約なし・床は外れている cap={house_rule.cap()}）"}
 
 
 STASH = "data/critique_queue"
@@ -892,7 +1007,8 @@ def place_today(now: datetime | None = None, *, dry_run: bool = False) -> dict:
             cand = _today_candidate(now)
         except Exception as exc:                               # noqa: BLE001
             print(f"[today] 候補を読めませんでした: {str(exc)[:120]}", flush=True)
-    insert_ok = stash_script(str((cand or {}).get("video_id") or "")) is not None
+    insert_ok = (stash_script(str((cand or {}).get("video_id") or "")) is not None
+                 and not bool((cand or {}).get("update_only")))
     # **この本は、いま焼き直せば良くなるか**（0単位・読むだけ）。`today_plan()` の
     #     「焼き直しが先。置くのは後」の枝へ渡します。**ここへ来るのは枠が空の日だけ**
     #     （埋まっていれば `today_plan()` が上で帰る）ので、予約つきの本は当たりません。
@@ -977,7 +1093,7 @@ def place_today(now: datetime | None = None, *, dry_run: bool = False) -> dict:
     if dry_run:
         print("[today] **置いていません**（`--dry-run`）", flush=True)
         return plan
-    lock = Path(config.ROOT) / TODAY_LOCK
+    lock = _machine_dir() / TODAY_LOCK
     if not take_lock(now, path=lock, stale=TODAY_STALE):
         print(f"[today] もう別の手が置きに行っています（印: `{TODAY_LOCK}`）", flush=True)
         return plan
