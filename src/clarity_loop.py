@@ -79,6 +79,25 @@
 渡して、`REWRITE_FIX_TRIES` 回まで書き直させる。それでも増えるなら、
 その周を捨てて止めます（**分かりやすくして検査に落ちるのは、退化**）。
 
+### **捨てるのは、増やしたコマだけ**（2026-09-05 に実測して足した）
+
+「その周を捨てる」は **8コマ ぶんを全部 捨てて**いました。実測（`data/clarity_loop.jsonl`・22本）:
+**5本 が「機械の検査が 0件 → 1件 に増えた」で 1コマも直さずに出て行った**（`changed: false`）——
+09/05 の 2本（`3gZ38lfsJpY`・`vmAll8GDkU8`）は **2回 独立に「耳では分からない」と言われた所が
+26件・27件 在ったまま、直し 0 で音になった。** 増やしたのはいつも **1件**で、原因はほぼ
+ショートの冒頭の上限（1枚目 22文字・2枚目 26文字。実物は 21/22・25/26 で**天井に貼りついている**）——
+主語を1語 足せば必ず越える。**1コマの退化で、残り7コマの直しまで捨てる理由は無い。**
+いまは `salvage()` が**1コマずつ**当て直し、増やさないコマだけを残す（`row["salvaged"]` / `row["dropped"]`）。
+**0コマも残らないときだけ、その周を捨てる**（前と同じ）。
+
+### **主語を声で言わせる**（同じ回に足した）
+
+`script_writer._subject_missing` は **画面に**制度名が在るかしか見ない（声は「（声では言っています）」と
+添えるだけ）。実物 `vmAll8GDkU8` は 27コマ の読み上げに「ふるさと納税」が **1度も無い**（画面の見出しには在る）。
+評価者は「耳だけ」で聞くので、これは毎周 先頭に挙がる。書き直しの指示に `subject_note()`（その本の
+`SUBJECT_WORDS` の先頭の語）を添え、**最初の 3コマ の声に無ければ、挙げられたコマの中で1度 言わせる**
+（語であって数ではないので、足してよい）。
+
 ## 止め方（上限と、直らないときの出口）
 
     1. 門A を通った指摘が 0件                     → 終わり（言いがかりしか無い）
@@ -224,6 +243,10 @@ FIX_PROMPT = """次の読み上げの、下に挙げるコマが**耳だけで�
   いま5個 以上 入っているコマは、**その数のまま**（増やさない）。
 - 画面（図・表）は書き直しません。だから**画面に無い値を新しく言わないこと。**
 - 1文を短く切るのは良い。指す先を名詞で言い直すのも良い。
+- **普通に説明してよい**（オーナー 2026-09-05「普通に説明するのじゃダメだったん？」）。
+  何の話か・誰の・何が起きるかを、**数字の前に普通の言葉で言い足す**のは「言い換え」に入る
+  （足してはいけないのは**数**であって、言葉ではない）。数字を読み上げるだけの文は、
+  その数字が**何の数字か**を先に言う文に直すこと。
 - **挙げられたコマだけ**を出すこと。触っていないコマは出さない。
 - 文字数は元の ±25% に収めること（尺が動くので）。
 {extra}"""
@@ -235,6 +258,40 @@ RETRY_NOTE = """
 
 上の決まりを守ったまま、**同じコマをもう一度**出し直してください。
 """
+
+
+SUBJECT_NOTE = """
+## この本の主語は「{word}」です
+
+最初の {within}コマ の**読み上げ（声）**に「{word}」が1度も出ていません。
+耳だけの人には、何の話か最後まで分かりません。**挙げられたコマのうち、いちばん前のコマの
+言い換えに「{word}」を1度 入れること**（語であって数ではないので、足してよい。
+ただし1枚目は {first}文字・2枚目は {second}文字 を越えないこと —— 越える分は数ではなく飾りを削る）。
+"""
+
+
+def subject_note(topic_id: str, text_lines: list[str]) -> str:
+    """**主語が声に出ていなければ**、書き直しに添える1段（上の「主語を声で言わせる」）。
+
+    語を持たない題材・声に出ている本は空文字（何も添えない）。
+    """
+    if not topic_id:
+        return ""
+    try:
+        from .script_writer import (SHORT_FIRST_SEGMENT_CHARS,  # noqa: PLC0415
+                                    SHORT_SECOND_SEGMENT_CHARS, SUBJECT_WITHIN_SLIDES,
+                                    SUBJECT_WORDS)
+        topic = next((t for t in config.load_topics()["topics"] if t["id"] == topic_id), None)
+    except Exception:                                          # noqa: BLE001
+        return ""
+    words = SUBJECT_WORDS.get((topic or {}).get("calc") or "")
+    if not words:
+        return ""
+    said = "".join(text_lines[:SUBJECT_WITHIN_SLIDES])
+    if any(w in said for w in words):
+        return ""
+    return SUBJECT_NOTE.format(word=words[0], within=SUBJECT_WITHIN_SLIDES,
+                               first=SHORT_FIRST_SEGMENT_CHARS, second=SHORT_SECOND_SEGMENT_CHARS)
 
 
 # ---------------------------------------------------------------- 本文
@@ -360,6 +417,27 @@ def mech_problems(script: dict, topic_id: str, portrait: bool) -> list[str]:
     return out
 
 
+def salvage(script: dict, text_lines: list[str], fixed: dict[int, str], base: list[str],
+            topic_id: str, portrait: bool) -> dict[int, str]:
+    """**増やしたコマだけを落とす**（上の「捨てるのは、増やしたコマだけ」）。
+
+    `fixed` を1コマずつ積み上げ、積んだ時点で機械の検査が `base` より増えるコマは外す。
+    返るのは残ったコマ（空なら、その周は前と同じく捨て）。**模型は叩かない。**
+    """
+    kept: dict[int, str] = {}
+    for i in sorted(fixed):
+        trial = json.loads(json.dumps(script))
+        for j, text in list(kept.items()) + [(i, fixed[i])]:
+            trial["segments"][j]["narration"] = text
+        try:
+            n = len(mech_problems(trial, topic_id, portrait))
+        except Exception:                                      # noqa: BLE001
+            continue
+        if n <= len(base):
+            kept[i] = fixed[i]
+    return kept
+
+
 # ---------------------------------------------------------------- 輪
 
 def loop(script: dict, topic_id: str, work: Path | None = None, *,
@@ -447,7 +525,8 @@ def loop(script: dict, topic_id: str, work: Path | None = None, *,
         # **1周で全部を直させないこと**（上の節。27件 を1回に乗せて周ごと捨てた実測）。
         take = hits[:FIX_PER_ROUND]
         row["asked"] = len(take)
-        extra = ""
+        extra = subject_note(topic_id, text_lines)
+        row["subject_asked"] = bool(extra)
         fixed: dict[int, str] = {}
         after = list(text_lines)
         grew = base
@@ -481,11 +560,27 @@ def loop(script: dict, topic_id: str, work: Path | None = None, *,
             log(f"[clarity] 書き直しが検査を増やしました（{len(base)}→{len(grew)}件）"
                 f"。落ちた事実を渡して直させます（{attempt + 1}/{REWRITE_FIX_TRIES}）")
             if attempt >= REWRITE_FIX_TRIES:
-                # **分かりやすくして検査に落ちるのは退化。** その周は捨てる。
+                # **増やしたコマだけを落とす**（2026-09-05）。残りの直しは活かす。
+                kept = salvage(script, text_lines, fixed, base, topic_id, portrait)
+                if kept:
+                    row["salvaged"] = sorted(i + 1 for i in kept)
+                    row["dropped"] = sorted(i + 1 for i in set(fixed) - set(kept))
+                    log(f"[clarity] 増やしたコマ {row['dropped']} だけ落として、"
+                        f"{len(kept)}コマ を残します")
+                    fixed = kept
+                    after = list(text_lines)
+                    for i, text in fixed.items():
+                        after[i] = text
+                    trial = json.loads(json.dumps(script))
+                    for i, text in fixed.items():
+                        trial["segments"][i]["narration"] = text
+                    grew = mech_problems(trial, topic_id, portrait)
+                    break
+                # **分かりやすくして検査に落ちるのは退化。** 1コマも残らなければ、その周は捨てる。
                 row["stop"] = f"書き直しで機械の検査が {len(base)}件 → {len(grew)}件 に増えた"
                 fixed = {}
                 break
-            extra = RETRY_NOTE.format(
+            extra = subject_note(topic_id, text_lines) + RETRY_NOTE.format(
                 problems="\n".join(f"- {p}" for p in grew[len(base):] or grew[:3]))
         if not fixed:
             report["reason"] = row.get("stop") or "書き直しが通らなかった"
@@ -528,7 +623,13 @@ def record(report: dict) -> None:
            # **いつ・何秒 かかったか**（2026-09-03 16:1x に足した）。
            #     これが無いので「上限 4周 は重すぎないか」を誰も判定できませんでした。
            "at": report.get("at", ""), "seconds": report.get("seconds", 0),
-           "round_seconds": [x.get("seconds", 0) for x in rows]}
+           "round_seconds": [x.get("seconds", 0) for x in rows],
+           # **何が直しを捨てさせたか**（2026-09-05 に足した）。これが無いので
+           # 「0件 → 1件」の 1件 が何だったかを、5本ぶん 誰も言えませんでした。
+           "broke": [str(b)[:80] for x in rows for b in (x.get("broke") or [])][:3],
+           "salvaged": sum(len(x.get("salvaged") or []) for x in rows),
+           "dropped": sum(len(x.get("dropped") or []) for x in rows),
+           "confirmed_last": int((rows[-1].get("confirmed") or 0) if rows else 0)}
     try:
         LEDGER.parent.mkdir(parents=True, exist_ok=True)
         with LEDGER.open("a", encoding="utf-8") as f:

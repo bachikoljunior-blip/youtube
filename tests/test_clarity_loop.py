@@ -358,3 +358,97 @@ def test_秒の欄が無い控えでも落ちない(tmp_path, monkeypatch) -> No
               "reason": "", "changed": False})
     row = json.loads(ledger.read_text(encoding="utf-8").strip())
     assert row["at"] == "" and row["seconds"] == 0 and row["round_seconds"] == [0]
+
+
+# ---------------------------------------------------------------- 捨てるのは、増やしたコマだけ（2026-09-05）
+
+def test_検査を増やしたコマだけ落として_残りの直しは活かす(monkeypatch):
+    """**8コマ ぶんを全部 捨てない。** 実測 22本 中 5本 が「0件 → 1件」で 1コマも直さず出ていた。"""
+    script = script_of(LINES)
+    # コマ3 の書き直しだけが検査を増やす（コマ1 の書き直しは無害）
+    monkeypatch.setattr(C, "mech_problems",
+                        lambda s, t, p: (["1枚目が 22文字 を越えた"]
+                                         if "新しい数" in s["segments"][2]["narration"] else []))
+    n = {"read": 0}
+
+    def reader(ls):
+        n["read"] += 1
+        if n["read"] <= 2:
+            return [f(3, "先ほどの線は、そちらの帯の左端"), f(1, "六十五歳から受け取ると")]
+        return []                       # 直ったら、もう挙がらない
+
+    rep = C.loop(script, "t", None, reader=reader,
+                 rewriter=lambda ls, h, e="": {0: "六十五歳の年金を受け取ると、基準の額のままです。",
+                                               2: "新しい数 12万3000円 を足した文。"},
+                 log=lambda *a: None)
+    row = rep["rounds"][0]
+    assert row["salvaged"] == [1] and row["dropped"] == [3]
+    assert script["segments"][0]["narration"].startswith("六十五歳の年金")
+    assert script["segments"][2]["narration"] == LINES[2], "増やしたコマが台本に入っている"
+    assert rep["fixed"] == 1 and rep["changed"] is True
+    assert "増えた" not in rep["reason"], "1コマ 残ったのに、周ごと捨てている"
+
+
+def test_1コマも残らなければ前と同じく周を捨てる(monkeypatch):
+    script = script_of(LINES)
+    monkeypatch.setattr(C, "mech_problems",
+                        lambda s, t, p: ([] if s["segments"][2]["narration"] == LINES[2]
+                                         else ["画面に無い数を言っている"]))
+    rep = C.loop(script, "t", None,
+                 reader=lambda ls: [f(3, "先ほどの線は、そちらの帯の左端")],
+                 rewriter=lambda ls, h, e="": {2: "新しい数 12万3000円 を足した文。"},
+                 log=lambda *a: None)
+    assert "増えた" in rep["reason"] and rep["changed"] is False
+    assert "salvaged" not in rep["rounds"][0]
+
+
+def test_帳面に何が増えたかと残した数が入る(tmp_path, monkeypatch):
+    monkeypatch.setattr(C, "mech_problems",
+                        lambda s, t, p: (["1枚目が 22文字 を越えた"]
+                                         if "新しい数" in s["segments"][2]["narration"] else []))
+    n = {"read": 0}
+
+    def reader(ls):
+        n["read"] += 1
+        return ([f(3, "先ほどの線は、そちらの帯の左端"), f(1, "六十五歳から受け取ると")]
+                if n["read"] <= 2 else [])
+
+    C.loop(script_of(LINES), "t", None, reader=reader,
+           rewriter=lambda ls, h, e="": {0: "六十五歳の年金を受け取ると、基準の額のままです。",
+                                         2: "新しい数 12万3000円 を足した文。"},
+           log=lambda *a: None)
+    row = json.loads(C.LEDGER.read_text(encoding="utf-8").splitlines()[-1])
+    assert row["broke"] == ["1枚目が 22文字 を越えた"]
+    assert row["salvaged"] == 1 and row["dropped"] == 1
+    assert row["confirmed_last"] == 0
+
+
+# ---------------------------------------------------------------- 主語を声で言わせる（2026-09-05）
+
+def test_主語が最初の3コマの声に無ければ書き直しに添える(monkeypatch):
+    """実物 `vmAll8GDkU8`: 27コマ の読み上げに「ふるさと納税」が1度も無い（画面には在る）。"""
+    monkeypatch.setattr(C.config, "load_topics",
+                        lambda: {"topics": [{"id": "s-x", "calc": "furusato"}]})
+    silent = ["通知書の額は、寄付額より小さくても正常です。".replace("寄付", "きふ"),
+              "内訳は基本分と特例分です。", "合計。これが通知書に載る額です。"]
+    note = C.subject_note("s-x", silent)
+    assert "ふるさと納税" in note and "22文字" in note
+    assert C.subject_note("s-x", ["ふるさと納税をした人の通知書です。"] + silent[1:]) == ""
+    assert C.subject_note("", silent) == ""
+    assert C.subject_note("s-unknown", silent) == ""
+
+
+def test_主語の段は書き直しの指示に乗る(monkeypatch):
+    monkeypatch.setattr(C.config, "load_topics",
+                        lambda: {"topics": [{"id": "s-x", "calc": "furusato"}]})
+    got = {}
+
+    def rewriter(ls, hits, extra=""):
+        got["extra"] = extra
+        return {}
+
+    rep = C.loop(script_of(LINES), "s-x", None,
+                 reader=lambda ls: [f(1, "六十五歳から受け取ると")],
+                 rewriter=rewriter, log=lambda *a: None)
+    assert "ふるさと納税" in got["extra"]
+    assert rep["rounds"][0]["subject_asked"] is True
