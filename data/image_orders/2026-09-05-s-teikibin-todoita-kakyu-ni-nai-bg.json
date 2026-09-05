@@ -1,0 +1,11 @@
+{
+ "id": "2026-09-05-s-teikibin-todoita-kakyu-ni-nai-bg",
+ "asked_at": "2026-09-05T11:33:28+09:00",
+ "for": "s-teikibin-todoita-kakyu-ni-nai の動画内の背景",
+ "prompt": "s-teikibin-todoita-kakyu-ni-nai の解説動画の背景。抽象的で落ち着いた幾何学模様。暗めで、上に白い文字を載せても読める濃さ。",
+ "avoid": "文字・ロゴ・実在の人物・透かし・図表・グラフ",
+ "size": "1080x1920",
+ "format": "jpg",
+ "out": "assets/images/2026-09-05-s-teikibin-todoita-kakyu-ni-nai-bg.jpg",
+ "status": "pending"
+}
