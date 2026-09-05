@@ -61,6 +61,10 @@ _SYMBOL_YOMI = {"×": "かける", "✕": "かける", "÷": "わる", "＋": "�
 
 
 def to_kana(text: str) -> str:
+    # whisper は語のあいだに空白を入れることがある（実測 09/06 08:3x: 「65 歳 から 月 15 万 円 …」）。
+    # 空白があると pykakasi が「歳」を1語で読んで「とし」、「七十」を「しち」と読み、TTS は正しかったのに !! が出た。
+    # 日本語の声に空白は無いので、両側とも先に消す。
+    text = re.sub(r"\s+", "", text)
     for k, v in _SYMBOL_YOMI.items():
         text = text.replace(k, v)
     text = re.sub(r"[0-9][0-9,]*(?:\.[0-9]+)?", lambda m: num_to_kanji(m.group()), text)
