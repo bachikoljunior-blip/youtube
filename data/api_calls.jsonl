@@ -11117,3 +11117,6 @@
 {"at": "2026-09-05T00:03:39+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "status.py:pull"}
 {"at": "2026-09-05T00:03:39+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "status.py:pull"}
 {"at": "2026-09-05T00:03:39+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "status.py:pull"}
+{"at": "2026-09-04T23:21:55+00:00", "api": "data", "method": "channels.list", "units": 1, "ok": true, "by": "upload_only.py:main"}
+{"at": "2026-09-04T23:21:55+00:00", "api": "data", "method": "videos.list", "units": 1, "ok": false, "by": "upload_only.py:main", "detail": "a23e696j0f8,kzefG44_APU,fMlY_uzHOMw,GFvAcxvDmYM,e6sLHLmPhrk,XwB8nxtN5D8,O_lfBxB7S8Q,1huadpEk6HY,Ec-j1-W4nqw,9zkfjEH48PY,"}
+{"at": "2026-09-04T23:21:56+00:00", "api": "data", "method": "channels.list", "units": 1, "ok": false, "by": "uploader.py:scheduled_publish_times"}
