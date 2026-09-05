@@ -11166,3 +11166,32 @@
 {"at": "2026-09-05T02:36:04+00:00", "api": "data", "method": "playlists.list", "units": 1, "ok": false, "by": "uploader.py:_find_or_create_playlist"}
 {"at": "2026-09-05T02:36:04+00:00", "api": "data", "method": "commentThreads.insert", "units": 50, "ok": false, "by": "uploader.py:_post_actions"}
 {"at": "2026-09-05T02:36:05+00:00", "api": "data", "method": "thumbnails.set", "units": 50, "ok": false, "by": "uploader.py:_set_thumbnail", "detail": "3gZ38lfsJpY"}
+{"at": "2026-09-05T03:57:32+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "eta.py:q"}
+{"at": "2026-09-05T03:57:32+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "eta.py:q"}
+{"at": "2026-09-05T03:57:32+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "eta.py:q"}
+{"at": "2026-09-05T03:57:32+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "eta.py:q"}
+{"at": "2026-09-05T03:57:33+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "eta.py:q"}
+{"at": "2026-09-05T03:57:33+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "eta.py:q"}
+{"at": "2026-09-05T03:57:33+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "eta.py:q"}
+{"at": "2026-09-05T03:59:02+00:00", "api": "data", "method": "channels.list", "units": 1, "ok": false, "by": "status.py:_channel_main"}
+{"at": "2026-09-05T03:59:03+00:00", "api": "data", "method": "videos.list", "units": 1, "ok": true, "by": "snapshot.py:main", "detail": "Prw6AB9hOsY,PEUAJTyDVDY,YhHeqMKql7U,tbIjpTBIln4,nK2SRMIqEF8,lIQxDg4OlAo,IkGaQv1fQQA,2sEAxqibFIM,SRtQOjPm858,nPzWa_yhoQ0,"}
+{"at": "2026-09-05T03:59:03+00:00", "api": "data", "method": "videos.list", "units": 1, "ok": false, "by": "snapshot.py:main", "detail": "eDhsTuVyVAw,gPusj-Y2404,G3VqIFpBwKo,drkKm9fHW2M,m_q1G_GNgY8,7NtIDFiPrsw,YHiigJ3Zpj4,UI5P9jvchc4,hiTMix1eNxc,Z9gy1rw9TOA,"}
+{"at": "2026-09-05T03:59:04+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "analytics.py:fetch_traffic"}
+{"at": "2026-09-05T03:59:05+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "analytics.py:fetch_report"}
+{"at": "2026-09-05T03:59:06+00:00", "api": "data", "method": "videos.list", "units": 1, "ok": true, "by": "analytics.py:fetch_report", "detail": "NHKylqsNfTw,fLENot-5oKM,gPusj-Y2404,x9idbNKZpqw,ZUO6bFJRsRY,2FSAM7FYftY,pMHDwK5tB2E,CdX2oIb7BG8,Ty4w6q-tBMo,ZjBu0fEDy_E,"}
+{"at": "2026-09-05T03:59:08+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "analytics.py:fetch_retention"}
+{"at": "2026-09-05T03:59:09+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "analytics.py:fetch_retention"}
+{"at": "2026-09-05T03:59:10+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "analytics.py:fetch_retention"}
+{"at": "2026-09-05T03:59:12+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "analytics.py:fetch_retention"}
+{"at": "2026-09-05T03:59:13+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "status.py:print_channel_signals"}
+{"at": "2026-09-05T03:59:14+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "status.py:pull"}
+{"at": "2026-09-05T03:59:14+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "status.py:pull"}
+{"at": "2026-09-05T03:59:14+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "status.py:pull"}
+{"at": "2026-09-05T03:59:14+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "status.py:print_where_watched"}
+{"at": "2026-09-05T04:10:56+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "eta.py:q"}
+{"at": "2026-09-05T04:10:56+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "eta.py:q"}
+{"at": "2026-09-05T04:10:56+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "eta.py:q"}
+{"at": "2026-09-05T04:10:57+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "eta.py:q"}
+{"at": "2026-09-05T04:10:57+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "eta.py:q"}
+{"at": "2026-09-05T04:10:57+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "eta.py:q"}
+{"at": "2026-09-05T04:10:57+00:00", "api": "analytics", "method": "reports.query", "units": 0, "ok": true, "by": "eta.py:q"}
