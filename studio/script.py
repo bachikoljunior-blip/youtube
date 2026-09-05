@@ -17,7 +17,7 @@ SCRIPTS = DATA / "scripts"
 # 画面の字幕は 1行 16字 × 3行 に収める。声の1コマは 70字 まで（約 12秒）。
 MAX_SAY = 70
 MAX_SHOW = 16
-MAX_TOTAL_CHARS = 440   # Chirp3-HD rate 1.15 で約 4.9字/秒 → 90秒 以内（実物の秒数は build が測る）
+MAX_TOTAL_CHARS = 460   # rate 1.2 で約 5.1字/秒 → 95秒 以内（実物の秒数は build が測る）
 
 # 書き手が人間のふりをする言い方（収益化ポリシー: AI が人間の専門家を装って sensitive topic を語る形）
 HUMAN_CLAIM = re.compile(r"(私は|わたしは)?(元|現役の)?(税理士|社労士|社会保険労務士|FP|ファイナンシャルプランナー|経理|人事)(として|です|でした|を[0-9０-９]+年)")

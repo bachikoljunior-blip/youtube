@@ -100,9 +100,11 @@ def slide(show: str, sub: str, say: str, i: int, n: int, image: Path | None, out
             y = draw_text_block(d, wrap(sub, 16), font(FONT_BOLD, 56), y + 20, (255, 225, 120), stroke_w=4)
     # 字幕
     if say:
-        lines = wrap(say, SUB_CHARS)[:4]
-        fnt = font(FONT_BOLD, 54)
-        lh = int(54 * 1.35)
+        # 64字 までは 16字×4行・54px。それ以上は 18字×4行・48px（say の上限 70字 が収まる）
+        chars, px = (SUB_CHARS, 54) if len(say) <= SUB_CHARS * 4 else (18, 48)
+        lines = wrap(say, chars)[:4]
+        fnt = font(FONT_BOLD, px)
+        lh = int(px * 1.35)
         box_h = lh * len(lines) + 50
         top = SUB_BOTTOM - box_h
         d.rounded_rectangle([50, top, W - 50, SUB_BOTTOM], radius=24, fill=(0, 0, 0, 165))

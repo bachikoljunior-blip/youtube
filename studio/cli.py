@@ -23,7 +23,7 @@ from .common import JST, ROOT, ledger, ledger_rows, now_jst, today_jst, workdir
 
 IMAGES = ROOT / "assets" / "images"
 ORDERS = ROOT / "data" / "image_orders"
-MAX_SECONDS = 90.0   # Shorts は 3分 まで。分かる説明に要る長さを優先し、実測で締める（docs/METHOD.md）
+MAX_SECONDS = 95.0   # Shorts は 3分 まで。分かる説明に要る長さを優先し、実測で締める（docs/METHOD.md）
 
 
 def image_for(vid: str) -> Path | None:
