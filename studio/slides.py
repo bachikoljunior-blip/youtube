@@ -6,6 +6,7 @@
 """
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
@@ -22,14 +23,32 @@ def font(path: str, size: int) -> ImageFont.FreeTypeFont:
     return ImageFont.truetype(path, size, index=0)
 
 
+# 数字のかたまり（「10万円」「5万5千円」「12か月」）は行の途中で折らない。
+# 実測 09/05: 18字×4行 の字幕で「1\n0万円」「10万\n円」が出た（sheet.png）。
+_NUM = re.compile(r"[0-9０-９][0-9０-９,，.]*(?:[万千億][0-9０-９]*)*(?:か月|カ月|ヶ月|円|人|歳|日|回|割|％|%|倍|年)?")
+
+
+def _tokens(text: str) -> list[str]:
+    out, i = [], 0
+    while i < len(text):
+        m = _NUM.match(text, i)
+        if m and m.end() > i:
+            out.append(m.group()); i = m.end()
+        else:
+            out.append(text[i]); i += 1
+    return out
+
+
 def wrap(text: str, n: int) -> list[str]:
     if "\n" in text:
         return [ln for part in text.split("\n") for ln in wrap(part, n)]
     lines, cur = [], ""
-    for ch in text:
-        cur += ch
+    for tok in _tokens(text):
+        if len(cur) + len(tok) > n and cur:
+            lines.append(cur)
+            cur = ""
+        cur += tok
         if len(cur) >= n:
-            # 行頭に句読点が来ないように
             lines.append(cur)
             cur = ""
     if cur:
