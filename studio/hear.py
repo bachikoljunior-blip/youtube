@@ -97,6 +97,8 @@ def check(s: Script, wavs: list[Path], size: str = "small") -> list[dict]:
     rows = []
     for i, (seg, wav) in enumerate(zip(s.segments, wavs), 1):
         heard = h.transcribe(wav)
-        exp, got = expected_kana(seg.say, s.yomi), to_kana(heard)
+        # 聞いた側にも yomi を当てる: whisper が漢字で書いた「額面」を pykakasi が「ひたいめん」と読み、
+        # TTS は正しく「がくめん」と言っていたのに !! が出た（09/05 20:3x）。差が出るのは音が違った所だけ、にする
+        exp, got = expected_kana(seg.say, s.yomi), expected_kana(heard, s.yomi)
         rows.append({"i": i, "say": seg.say, "heard": heard, "diffs": diff_spans(exp, got)})
     return rows
