@@ -482,11 +482,22 @@ def today_slot_empty(now: datetime | None = None) -> bool | None:
 
     **API 0単位**（`src/next_slot.py` の控えを読むだけ）。この検査は鎖の途中で走るので、
     ここで口を叩くと 429 の回に鎖が止まります（`runway_days()` と同じ理由）。
+
+    **比べる相手は 1 であって `house_rule.cap()` ではありません**（2026-09-05 09:3x に直した）。
+    09/04 17:3x に `PUBLISH_PER_DAY` が 1 → 10 になった日から、ここは
+    `today_count() < cap()` ＝ `2 < 10` で毎周 **「まだ空です」**を返し、
+    間隔の下限（`quota.effective_floor_minutes()`）を**恒真で外していました**
+    （`RUNWAY_FLOOR_DAYS` の註が 09/04 に直した「毎周 必ず当たる線」と同じ形の2件目。
+    `tests/test_spawn_gate_overrun.py` の2件が赤で捕まえていた）。
+    下限より重いのは「**その日が丸ごと落ちる**」ことで、それは **きょう 1本も無い**ときだけです。
+    2本目から先が空いていても、その日の公開は続きます。
+
+    **覆る条件**: `PUBLISH_PER_DAY` が 1 に戻っても、この式はそのまま正しい（1 と比べている）。
     """
     try:
         sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-        from src import house_rule, next_slot                  # noqa: PLC0415
-        return int(next_slot.today_count(now)) < max(1, int(house_rule.cap()))
+        from src import next_slot                              # noqa: PLC0415
+        return int(next_slot.today_count(now)) < 1
     except Exception:                                          # noqa: BLE001
         return None
 
