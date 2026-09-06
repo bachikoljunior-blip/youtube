@@ -28,6 +28,11 @@
             "type": "command",
             "command": "bash scripts/goal_reminder.sh",
             "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "bash scripts/parent_reminder.sh",
+            "timeout": 10
           }
         ]
       }
