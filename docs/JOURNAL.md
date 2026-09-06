@@ -114477,3 +114477,22 @@ ship は 1回 断られた（枠と決めの食い違い ＝ 4'）ので「枠�
 - 同じ周の `hourly` が `spawn_prompt --siblings` の既定（毎周「いません」を渡していた・`77e80663`）を直していた。この回も同じ食い違いに気づいていたが、fetch で先に見えたので触っていない（§5「申し送りに書いた欠陥は書いた側の物」の逆 —— 先に押した側の物）。
 - 旧道具の検査: `pytest tests`（`test_spawn_prompt.py`・`test_ahead_sweep.py` を除く）は **`timeout 500` で終わらない**（2回。1回目は `-x` で 232件 68秒 通ったあと `test_ahead_sweep` で止めた分）。`pytest -v` を file へ直に書いて見ると、止まるのではなく**遅い**: 590秒 で **27%**（`test_eta_headline_alloc_hand.py` の途中）。旧道具の落ち 3件（`test_bake_stage`・`test_deadline_check`・`test_endcard_verdict`。どれも `studio/`・`spawn_prompt` に触れていない）。全部 走らせる価値は無い —— 変えた所の検査だけ撃つ。`studio/` の検査 25件 と `spawn_prompt` の検査 19件 は通る。
 - **覆る条件**: `main_gap` の行が「数えられなかった」を 2周 続けて出したら、親の checkout に `origin/main` の写しが無い（fetch していない）—— そのときは数える前に `git fetch origin main` を `main_gap` の中で撃つ。
+
+## 2026-09-07 00:4x〜01:3x JST —— あすの1本の回（optimizer・Fable 5.1）: 09/08 の台本を書いた（繰上げ 80歳10か月）。hear の聞き直しに medium＋prompt の段を足した
+
+### 撃った数
+- `measure` 26本（1本目 `EkNqtkK49Bw` 14.8h で 127回・likes 0 ＝ 9.6h から +0。§7 の途中経過は METHOD に）。画像の注文 10件 全部 done。09/08 の注文を 00:5x に置いた。
+- あすの本 `2026-09-08-kuriage-80sai-10kagetsu`: 11コマ・450字・91.9秒。critique 5周（real 3→1→3→5→0）・冷読 5/5 一致・hear 9/11（TTS 誤読 0）・sheet.png 目視。中身は METHOD §11。
+- hear の実測: コマ5（数が密）を small も medium も数字の帯に崩し、medium＋prompt だけが 0差 → `hear.check` に段を足した。検査 `tests/test_studio_hear.py` +2（13件 通る）。
+- `origin/main` を枝の先頭へ早送り（3 commit 後ろ → 61d554d7。数秒）。
+
+### 決めたこと
+- 題材は 09/07 の繰下げの対（繰上げ）。理由: 同じ例の人・同じ組み立てで、critique の往復が構造に集中し（2人の比較）、題材の説明に散らない。数字が全部 整数で通る。覆る条件: §7 の 7本 で「同じ組み立て2本」が他より落ちたら、対にするのをやめる。
+- 字数の天井は 450字（短い文で割った本）。456字・461字 で 94.4〜94.5秒 だった。§2 の ±3% を見込むと 95秒 の上限に 450字 が当たる。
+
+### 見送った
+- コマ3 の「0.4%」（critic 4周目・5周目の1番目）: 小数の壁（§3-11）。コマ9「そこより」→「80歳10か月より」: 申し送りに書いた（字数の余りが 1〜2秒 しか無い）。
+- `slides` の折れ: この本では 0 だったので触っていない。
+
+### 覆る条件
+- hear の medium＋prompt の段が、7本で 1度も採られなければ（台帳 `heard` の `how` に `medium+prompt` が出ない）、段を外して速さを戻す（1コマ 10秒）。逆に prompt が **TTS の誤読を隠した**（prompt で 0差 なのにオーナーの耳で誤読）が 1件 出たら、prompt の段は「差が減った」ではなく「差が 0」のときだけ採る。

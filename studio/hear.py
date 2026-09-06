@@ -316,12 +316,25 @@ def check(s: Script, wavs: list[Path], size: str = "small", escalate: bool = Tru
         diffs = diff_spans(loose(exp), loose(got))
         if diffs and escalate and size != "medium" and how != "medium":
             h2 = h2 or Hearer("medium")
-            heard2 = h2.transcribe(wav)
-            got2 = heard_kana(heard2, s.yomi)
-            diffs2 = diff_spans(loose(exp), loose(got2))
-            if len(diffs2) < len(diffs) or (len(diffs2) == len(diffs) and not degenerate(heard2, exp)
-                                            and sum(map(len, map("".join, diffs2))) < sum(map(len, map("".join, diffs)))):
-                heard, got, diffs, how = heard2, got2, diffs2, f"{size}→medium"
+            # medium でも差が残ったら medium＋prompt も試す（09/07 01:xx optimizer 実測: コマ5「60歳から64歳の5年で…684万円」を
+            # small が「60 〇〇から 64 〃の 5 〉で … 680 4」・medium が「60~64の5で…684,000」と数字の帯に崩し（差 5・7）、
+            # medium＋prompt だけが 0差。数が密なコマで whisper が助数詞を捨てる型。TTS の誤読なら prompt でも同じ差が残る）
+            for prompt, label in ((None, f"{size}→medium"), (_PROMPT, f"{size}→medium+prompt")):
+                heard2 = h2.transcribe(wav, prompt)
+                got2 = heard_kana(heard2, s.yomi)
+                diffs2 = diff_spans(loose(exp), loose(got2))
+                if _fewer(diffs2, heard2, diffs, exp):
+                    heard, got, diffs, how = heard2, got2, diffs2, label
+                if not diffs:
+                    break
         rows.append({"i": i, "say": seg.say, "heard": heard, "how": how,
                      "exp": loose(exp), "got": loose(got), "diffs": diffs})
     return rows
+
+
+def _fewer(new: list, heard_new: str, old: list, exp: str) -> bool:
+    """聞き直しの結果を採るか: 差の数が減った／同数なら崩れておらず差の字数が短い。"""
+    if len(new) < len(old):
+        return True
+    return (len(new) == len(old) and not degenerate(heard_new, exp)
+            and sum(map(len, map("".join, new))) < sum(map(len, map("".join, old))))

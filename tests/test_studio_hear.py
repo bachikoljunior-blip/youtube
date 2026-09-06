@@ -111,3 +111,50 @@ def test_禁じるトークンは漢字とハングル():
         def get_vocab(self):
             return {enc("年"): 1, enc("년"): 2, enc("ねん"): 3, enc("abc"): 4, enc("〇"): 5, enc("〆"): 6, enc("、"): 7}
     assert hear.kanji_token_ids(Tok2()) == [1, 2, 5, 6]
+
+
+def test_聞き直しは_medium_の次に_medium_prompt_も試す(monkeypatch):
+    """09/07 01:xx 実測: 数が密なコマを small も medium も数字の帯に崩し、medium＋prompt だけが 0差 だった。"""
+    from studio import script as sc
+    say = "60歳から64歳の5年で、11万4千円かける60か月で684万円です。"
+    s = sc.Script(id="t", date="2026-09-08", title="t #Shorts", takeaway="t", segments=[sc.Segment(say=say)])
+    calls = []
+
+    class Fake:
+        def __init__(self, size):
+            self.size = size
+
+        def transcribe(self, wav, prompt=None):
+            calls.append((self.size, prompt is not None))
+            if self.size == "medium" and prompt:
+                return "60さいから64さいの5ねんで、114,000えんかける60かげつで684まんえんです。"
+            if self.size == "medium":
+                return "60~64の5で114,000~60かげつで684,000です。"
+            return "60 〇〇から 64 〃の 5 〉で 11 マン 4000 イエン かける 60 カゲツ で 680 4 マー イ エン です"
+
+    monkeypatch.setattr(hear, "Hearer", Fake)
+    rows = hear.check(s, ["x.wav"], "small")
+    assert rows[0]["diffs"] == []
+    assert rows[0]["how"] == "small→medium+prompt"
+    assert calls == [("small", False), ("medium", False), ("medium", True)]
+
+
+def test_聞き直しは_medium_で消えたら_prompt_を撃たない(monkeypatch):
+    from studio import script as sc
+    say = "年金は一生続きます。"
+    s = sc.Script(id="t", date="2026-09-08", title="t #Shorts", takeaway="t", yomi={"年金": "ねんきん", "一生": "いっしょう"},
+                  segments=[sc.Segment(say=say)])
+    calls = []
+
+    class Fake:
+        def __init__(self, size):
+            self.size = size
+
+        def transcribe(self, wav, prompt=None):
+            calls.append((self.size, prompt is not None))
+            return "ねんきんはいっしょうつづきます" if self.size == "medium" else "ねんきんはたぶんつづきます"
+
+    monkeypatch.setattr(hear, "Hearer", Fake)
+    rows = hear.check(s, ["x.wav"], "small")
+    assert rows[0]["diffs"] == [] and rows[0]["how"] == "small→medium"
+    assert calls == [("small", False), ("medium", False)]
