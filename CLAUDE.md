@@ -75,9 +75,11 @@
                   **Opus／Sonnet／Haiku で足りる所はそれでよい**（上の原文）—— どこがそれかは、
                   その回が決めて `docs/JOURNAL.md` に書く。画面が来たら `--fable <%>` も一緒に積む
                   **役ごとに違う模型が出る**（09/03 09:4x・原文 07:3x を機械に入れた）: GO の行は
-                  `model（kind: hourly）` と `model（kind: optimizer）` の2行。`hourly`（実測 fix 71%・
-                  moves 0 95% ＝ 定型側）は「Fable のみ」推定が予備の線 `quota.FABLE_RESERVE_PCT`（90%）
-                  以上で Opus、`optimizer`（前提の判定・設計）は 100% まで Fable。選んだ理由は
+                  `model（kind: hourly）` と `model（kind: optimizer）` の2行。**09/07 08:1x に組み替えた**
+                  （オーナー 08:04「他モデル活用しないの？」）: `hourly`（台本を持つ側）は「Fable のみ」100% の
+                  1体手前まで Fable、`optimizer`（measure・道具・親の手続き・公開前の build/hear）は Fable の目盛りに
+                  関係なく **Opus**（他モデルの半分を Fable と同時に使う。Fable だけでは「すべて」は 50% ぶんしか動かず
+                  74% で枠が戻る —— `quota.ROLE_TIER` の註の数）。選んだ理由は
                   `data/model_choice.jsonl`（`quota.record_model_choice`）。覆る条件は `quota.py` の註
     働き手        Agent ツールのサブ（`isolation: "worktree"`・`run_in_background: true`）。
                   **Workflow ツールは既定では使わない**（ウルトラコードが切れた。オーナーが

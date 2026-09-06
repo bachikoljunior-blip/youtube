@@ -1,9 +1,9 @@
 """役ごとの模型に、09/03 09:5x の optimizer が重ねた2点（`quota.role_model` の註）:
 
-    高レバレッジ（optimizer）  1体ぶん（`fable_cost_per_sub`）を足して 100% に届くなら Opus
+    高レバレッジ（09/07 08:1x から `hourly` ＝ 台本を持つ側）  1体ぶん（`fable_cost_per_sub`）を足して 100% に届くなら Opus
     軽い役（owner-record）     Fable の残りに関係なく `LIGHT_MODEL`（sonnet）
 
-本体の線（定型の役は予備の線 90%）は `tests/test_model_by_role.py`。
+本体の線（定型の役は予備の線 90%・optimizer は Opus）は `tests/test_model_by_role.py`。
 **覆る条件**: `quota.ROLE_TIER` の註。
 """
 from datetime import datetime, timezone
@@ -21,20 +21,20 @@ def _fe(est: float):
 def test_leverage_role_stops_one_sub_short_of_100(monkeypatch):
     monkeypatch.setattr(quota, "fable_estimate", lambda now=None, **kw: _fe(99.0))
     monkeypatch.setattr(quota, "fable_cost_per_sub", lambda now=None: 1.8)
-    m, why = quota.sub_model(role="optimizer")
+    m, why = quota.sub_model(role="hourly")
     assert m == "opus" and "100% を越えて落とさない" in why
 
 
 def test_leverage_role_keeps_fable_when_one_sub_fits(monkeypatch):
     monkeypatch.setattr(quota, "fable_estimate", lambda now=None, **kw: _fe(97.0))
     monkeypatch.setattr(quota, "fable_cost_per_sub", lambda now=None: 1.8)
-    assert quota.sub_model(role="optimizer")[0] == "fable"
+    assert quota.sub_model(role="hourly")[0] == "fable"
 
 
 def test_unknown_cost_does_not_block(monkeypatch):
     monkeypatch.setattr(quota, "fable_estimate", lambda now=None, **kw: _fe(99.0))
     monkeypatch.setattr(quota, "fable_cost_per_sub", lambda now=None: None)
-    assert quota.sub_model(role="optimizer")[0] == "fable"
+    assert quota.sub_model(role="hourly")[0] == "fable"
 
 
 def test_record_role_is_light(monkeypatch):

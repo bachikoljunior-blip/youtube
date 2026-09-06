@@ -1120,14 +1120,51 @@ def _fable_rate_words(fe: dict) -> str:
 # Opus と変わらなければ、予備は要らない（線を 100 に戻す）。
 # --------------------------------------------------------------------------
 FABLE_RESERVE_PCT = 90.0
+# --------------------------------------------------------------------------
+# **2026-09-07 08:1x JST（optimizer・Fable）に段を組み替えた。** オーナー原文（受け取り帳 `ef27930d`）:
+#
+# > **「他モデル活用しないの？」**（09/07 08:04 JST。09/06 16:4x の「全てのモデルも使い切る予定なの？」の続き）
+#
+# 撃った数（`data/usage.jsonl` × `data/model_choice.jsonl`・同じ枠の2点の Δ ÷ 立てた数）:
+#   fable 期 09/06 16:41→09/07 08:04: fable 14体 で「すべて」+7・「Fable のみ」+13 ＝ **0.5%/体（全）・0.93%/体（Fable）**
+#   opus 期  09/03 18:22→09/04 15:40: opus 22体 で「すべて」+9 ＝ **0.41%/体**
+#   09/05 以降の 34体 は全部 fable（sonnet/haiku は critic の `claude -p` だけ）。
+# 公式の内訳（`docs/OWNER_MODEL_BUDGET.md`）: Fable が動かせる「すべてのモデル」は 50% ぶんまで。
+# だから 08:04 の 25% から Fable だけで進むと、Fable 100%（09/10 05:53 の見込み）で「すべて」は 54.5%、
+# そこから残り 49時間 を opus 2体/周 で走っても **74% で枠が戻る**（26 ポイント ＝ opus 50体ぶん が使われない）。
+# 他モデルは **Fable と同時に** 走らないと「すべて」は 100% に届かない ＝ オーナーの問いの当のもの。
+#
+# 組み替え（役はファイルで分かれている —— `docs/METHOD.md` §5 の表。同じ周に同じファイルを2体で持たない）:
+#   `hourly`    → **leverage**: 次に出る1本の台本を持つ（題材・台本・直し ＝ 効き目の当のもの・オーナーの不満
+#                 「何言ってるかわかんない」「文脈が追えない」の出どころ）→ Fable を 100% の1体手前まで
+#   `optimizer` → **other**: measure・§7 の数え・道具（`studio/`）の欠陥・親の手続き・画像の注文・公開前の
+#                 build/hear/sheet と説明欄の事実の読み直し ＝ **Opus で足りる所**（原文 09/02「opus sonnet haiku で
+#                 十分なところはそれ使ってもいい」）→ Fable の目盛りに関係なく **Opus**（他モデルの半分を使う側）
+#   09/03 09:4x の分け方（hourly＝定型・optimizer＝高レバレッジ）は旧道具の ship 統計（fix 71%・moves 0 95%）が
+#   根拠で、いまの手法（`docs/METHOD.md`・09/05 白紙）では hourly が台本を持つ → 根拠のほうが古くなっていた。
+# 見込み: 親の間隔は `pace()` が 1周の重さを実測で運ぶ（09/07 08:1x: 1周 1.229% → 119分）ので、1体が opus に
+#   なれば 1周 ≈ 0.95% → 間隔 ≈ 92分 → Fable 0.93%/体 × 0.65周/時 ≈ 0.6%/時 → 100% は 09/11 09:xx（枠が戻る 22時間前）
+#   → そこから2体とも opus。「すべて」は 0.62%/時 で枠が戻る 09/12 07:00 に ≈ 100%。**両方 100% で終わる形はこれ。**
+#
+# **覆る条件**:
+#   (1) 次の目盛りで「すべて」が線（08:04 の 25% から 0.62%/時）より 5 ポイント 下 → Opus の1体の重さ（0.41%）を
+#       疑う（いまの手法の Opus は測っていない。旧道具の 11分/件 の回の数）→ `pace()` の間隔で追うので放置でよいが、
+#       それでも下なら役を1つ足す（3体目。**そのときも同じファイルを2体で持たない**）。
+#   (2) 台本の質: `hourly`（Fable）が閉じた輪を、公開前の `optimizer`（Opus）が開け直して say を書き直す回が
+#       2回 続いたら、公開前の optimizer の持ち場を (0)(2)(3) だけに締める（METHOD §5 の表に書いた）。
+#   (3) §7 の 7本 の判定（形を変えるかどうか）は台本を持つ `hourly`（Fable）が下す。optimizer は数を並べるだけ。
+#   (4) オーナーが数を言い直したとき。
+# --------------------------------------------------------------------------
 ROLE_TIER: dict[str, str] = {
-    "hourly": "routine",      # 記録・定型検査・機械的修正が実測の大半
-    "optimizer": "leverage",  # 前提の判定・手順の設計・題材の型
+    "hourly": "leverage",     # 次に出る1本の台本を持つ（METHOD §5）→ Fable を 100% の1体手前まで
+    "optimizer": "other",     # measure・道具・親の手続き・公開前の build/hear → Opus（他モデルの半分）
     "owner-full": "routine",  # 記録 ＋ 1周（定型側）
     "owner-record": "light",  # 単純な記録だけ → sonnet（Fable の残りに関係なく）
 }
 #: 軽い段に渡す模型。
 LIGHT_MODEL = "sonnet"
+#: 「他モデルの半分」の段に渡す模型（09/07 08:1x）。
+OTHER_MODEL = "opus"
 MODEL_CHOICE_FILE = ROOT / "data" / "model_choice.jsonl"
 
 
@@ -1159,6 +1196,10 @@ def role_model(model: str, why: str, est_pct: float | None, role: str | None) ->
     tier = ROLE_TIER.get(role or "", None)
     if tier == "light":
         return LIGHT_MODEL, f"役 `{role}` は単純な記録 → 軽い模型（オーナー 09/03 07:3x）"
+    if tier == "other":
+        return OTHER_MODEL, (f"役 `{role}` は measure・道具・親の手続き・公開前の build/hear ＝ Opus で足りる所 → "
+                             f"**Opus**（他モデルの半分を Fable と同時に使う。オーナー 09/07 08:04「他モデル活用しないの？」・"
+                             f"`quota.ROLE_TIER` の註）")
     if model != "fable" or tier != "routine" or est_pct is None:
         if tier == "leverage" and model == "fable":
             # **100% を越える形では立てない**（同時に入った 09:2x の optimizer の線。
@@ -1198,8 +1239,10 @@ def record_model_choice(role: str, model: str, why: str,
         "all_models_week_pct": (round(float(p["used_now"]), 1)
                                 if p.get("used_now") is not None else None),
         "fable_only_pct": (round(float(fe["est"]), 1) if fe.get("est") is not None else None),
-        "expected_goal_effect": ("到達日を動かす前提の判定・手順の設計（高）" if tier == "leverage"
-                                 else "1件 出す（実測 fix 71%・moves 0 95%・低）"),
+        "expected_goal_effect": (
+            "次に出る1本の台本を持つ（題材・台本・直し ＝ 効き目の当のもの・高）" if tier == "leverage"
+            else "measure・道具・親の手続き・公開前の build/hear（Opus で足りる所・他モデルの半分）" if tier == "other"
+            else "1件 出す（実測 fix 71%・moves 0 95%・低）"),
         "why": why,
     }
     MODEL_CHOICE_FILE.parent.mkdir(parents=True, exist_ok=True)
