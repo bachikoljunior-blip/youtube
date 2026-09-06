@@ -20,6 +20,10 @@ MAX_SHOW = 16
 MAX_TOTAL_CHARS = 480   # rate 1.2 で実測 5.16字/秒（09/05・458字→88.8秒）→ 93秒。上限は build が測る秒数（MAX_SECONDS）
 
 # 書き手が人間のふりをする言い方（収益化ポリシー: AI が人間の専門家を装って sensitive topic を語る形）
+# 声で「てん」と読まれる小数（オーナー 09/06「ナレーションが点って言ってるとこ」）。止めない。lint が [?] で出す
+DECIMAL = re.compile(r"[0-9]+\.[0-9]+")
+# 裸の「年」＋数字（「年66万円」）。Chirp3-HD は「とし」と読む（実測 09/05・09/06）
+BARE_YEAR = re.compile(r"(?<![0-9０-９一-龥])年(?=[0-9０-９])")   # 「毎年10月」は違う（janome が まいとし と読む）
 HUMAN_CLAIM = re.compile(r"(私は|わたしは)?(元|現役の)?(税理士|社労士|社会保険労務士|FP|ファイナンシャルプランナー|経理|人事)(として|です|でした|を[0-9０-９]+年)")
 
 
@@ -73,6 +77,21 @@ class Script(BaseModel):
                 out.append(f"yomi「{k}」の読みがひらがなでない: {v}")
         if not self.takeaway:
             out.append("takeaway が空")
+        return out
+
+    def warnings(self) -> list[str]:
+        """止めない。書き手（Fable）が読んで決める材料（オーナー 09/06「点って言ってるとこ」「漢字の読み変なのいっぱい」）。"""
+        out = []
+        for i, s in enumerate(self.segments, 1):
+            for m in DECIMAL.findall(s.say):
+                out.append(f"コマ{i} 小数「{m}」: 声は「てん」と読む（オーナー 09/06 が名指し）。"
+                           "整数で言える形があるか考える（0.7%×10か月＝7%・1.42倍＝4割2分増し）")
+            if "点" in s.say:
+                out.append(f"コマ{i} 声に「点」: {s.say[:30]}（分岐点・時点・弱点 …。ふつうの話し言葉に）")
+            if "点" in s.show:
+                out.append(f"コマ{i} 画面に「点」: {s.show!r}")
+            if BARE_YEAR.search(s.say):
+                out.append(f"コマ{i} 裸の「年」＋数字: TTS が「とし」と読む（実測 09/05・09/06）。「1年で」「年に」に")
         return out
 
 

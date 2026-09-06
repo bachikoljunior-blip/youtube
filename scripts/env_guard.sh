@@ -16,7 +16,8 @@ set -uo pipefail
 cd "$(dirname "$0")/.."
 
 PY_OK='from google.oauth2.credentials import Credentials
-import googleapiclient.discovery, yaml, pydantic, numpy, pytest'
+import googleapiclient.discovery, yaml, pydantic, numpy, pytest
+import janome, jaconv, pykakasi, faster_whisper'
 
 if python3 -c "$PY_OK" 2>/dev/null; then
   :

@@ -62,6 +62,8 @@ def cmd_lint(a):
     print(f"{s.id}: {len(s.segments)}コマ・{s.total_chars()}字")
     for p in ps:
         print("  [!]", p)
+    for w in s.warnings():
+        print("  [?]", w)
     return 1 if ps else 0
 
 
@@ -71,6 +73,8 @@ def cmd_build(a):
     if ps:
         print("台本の形が通らない:", *ps, sep="\n  ")
         return 1
+    for w in s.warnings():
+        print("  [?]", w)
     img = image_for(a.id)
     r = render.build(s, img)
     print(f"mp4: {r['mp4']}  {r['total']:.1f}秒  背景: {img.name if img else '無し（単色）'}")
@@ -92,11 +96,19 @@ def cmd_hear(a):
     bad = [r for r in rows if r["diffs"]]
     for r in rows:
         mark = "OK " if not r["diffs"] else "!! "
-        print(f"{mark}コマ{r['i']}: {r['heard']}")
-        for e, g in r["diffs"]:
-            print(f"      予定「{e}」 聞こえた「{g}」")
+        print(f"{mark}コマ{r['i']} ({r['how']}): {r['heard']}")
+        if r["diffs"]:
+            print(f"      台本: {r['say']}")
+            print(f"      予定: {r['exp']}")
+            print(f"      音  : {r['got']}")
+            for e, g in r["diffs"]:
+                print(f"      予定「{e}」 聞こえた「{g}」")
     print(f"一致 {len(rows) - len(bad)}/{len(rows)}")
-    ledger("heard", a.id, mismatched=len(bad), model="medium" if a.medium else "small")
+    if bad:
+        print("差の読み方: TTS の誤読なら yomi か言い換え（yomi は効かない語がある → 直したら hear をやり直す）。"
+              "whisper の聞き違い（ねんきん→めんきん・4がつ→4かつ 型）なら通してよい。決めるのは Fable。")
+    ledger("heard", a.id, mismatched=len(bad), model="medium" if a.medium else "small", mode="kana",
+           diffs=[{"i": r["i"], "d": r["diffs"]} for r in bad])
     return 1 if bad else 0
 
 

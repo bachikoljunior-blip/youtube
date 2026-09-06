@@ -24,3 +24,8 @@ yt-dlp>=2026.8.19
 # （鍵が TTS に絞ってある。鍵を広げるのはオーナーの手が要る）。
 # faster-whisper は鍵が要らず、模型は初回に自動で降りてくる（medium で 1.5GB・CPU で音の 0.63倍）。
 faster-whisper>=1.1.0
+# `studio/hear.py`（読みの門・2026-09-06 に書き直し）: 予定の読みは janome（文脈つき）、仮名の正規化は jaconv、
+# janome が読めない語の予備が pykakasi。whisper に漢字を禁じて音の仮名を取る（faster-whisper は上）。
+janome>=0.5.0
+jaconv>=0.3
+pykakasi>=2.2
