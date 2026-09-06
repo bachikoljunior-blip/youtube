@@ -175,6 +175,17 @@ critique の物差し（`studio/critic.py`）: real ＝ そこで話を見失う
 公開後の 14時間 に何もしていない周が 3周 続いたら —— 分け方を「時間」に変える（例: 公開後 6時間 は optimizer が台本、
 その後は hourly）。そのときも**同じ周に同じファイルを2体で持たない**ことは変えない。
 
+### 親の周の速さ（2026-09-06 17:xx JST・optimizer・Fable。数字で見た）
+
+オーナー 09/06 16:4x「全てのモデルも使い切る予定なの？」「Fableのみも全てのモデルも100％になる予定？」「そこも含めて実行してるんでしょ？」
+
+実測: 目盛り 09/05 17:37 → 09/06 16:41 JST で 14% → 18%（**0.173 %/時**）。許される速さは 0.61 %/時 ＝ **3.5倍 遅い**。
+このままなら 100% はリセット（09/12 07:00）の 2週間 後（`quota.py --pace`）。周は 02:03・08:06・14:12・17:02 JST の 4回 ＝ **6時間 間隔 ×2**。
+原因は `quota.pace()` が、目盛りの後を「78分 の区間の %/時 × 経過時間」で運んでいたこと —— 15:05 JST に **used_now 47%**（実物 18%）→ 間隔 431分 → `next_round.IDLE_WAIT_MAX_MIN` の 360分 で親が起こしを置いて待った（`scripts/quota.py` の `pace()` の註に再現）。
+**直し**: 目盛りの後は **立った周の数 × 1周の重さ** で運ぶ（周が 0 なら増えない）。いまの間隔は **150分**（1周 1.5%・許される 0.60 %/時）。
+**この先の見込み**（この形で回れば）: 全モデルは 1周 1.5% × 150分 ＝ 0.6 %/時 → **リセットで 100%**。「Fable のみ」は同じ窓で 0.35 %/時（全モデルの 2倍 の速さで動く目盛り）なので **先に 100% に届く**（09/08〜09 ごろ）→ そこから `next_round_owner.py` が役を opus に切り替える（`quota.FABLE_CAP_PCT`）→ 全モデルは Fable の後も進む。**両方 100% で終わる形はこれ**。
+**覆る条件**: 次の目盛りで、周で運んだ推定が実物から ±5 ポイント 外れたら、1周の重さ（`per_lap`・いま 1.5%）を疑う（区間の 1.0% に寄せるか、`QUANT_FULL_PCT` を下げる）。周が 150分 より開いている（`data/rounds.jsonl` の差）のに目盛りが線の下なら、親の起こし（`send_later`）が届いていない側を見る。
+
 **台本は `data/studio/scripts/` に commit する**（次の回が磨き続けるため）。
 **「出した」とは、この台帳 `data/studio/ledger.jsonl` に event が1行 足されること**:
 `built`・`heard`・`cold_read`・`critique`・`scheduled`・`measured`・`image_ordered`。
@@ -225,7 +236,7 @@ critique の物差し（`studio/critic.py`）: real ＝ そこで話を見失う
 そのまま使う —— 立てる周期の道具であって、本の作り方ではない。
 `docs/spawn_prompt.md` の `kind: hourly` / `kind: optimizer` は、この文書を読ませる本文に差し替えた。
 
-**旧道具が「使わない」のに勝手に動いていた口を 2026-09-06 02:1x に外した**（optimizer・Fable）: `scripts/next_round.py main()` の `ahead_sweep.kick()` と `.claude/settings.json` の SessionStart `ahead_sweep.sh`。実測: 親が毎周 撃つ `next_round.py` から旧 `ahead_sweep.py` が背景で起き、09/06 00:01 JST（日付が変わった直後）に `place_today()` が **08/16〜08/19 上げの旧作りの本 8本 に 06:00〜14:00 JST の publishAt を打った**（`data/uploaded.jsonl` の diff・`139506ee`〜`724af5af`）。02:1x に残っていた 2本（`uhR8msMW9k4`・`hKCwPvuqviw`）を private へ戻した（台帳 `unscheduled`・消していない）。同じ経路で `post_pending_comments.py` も毎時 走っていた（コメントの自動投稿。これも止まる）。**「使わない」は文書に書くだけでは止まらない —— 起こす口を全部 外すこと。** 残っている旧道具の口: `scripts/stop_check.sh`（Stop フック。`src.watches`・`drift.py` を撃つが、`data/runs.jsonl` に印の無い回では止めない）。**覆る条件**: 旧道具を使う判断が METHOD に書かれたとき（そのときも kick ではなく手順から呼ぶ）。
+**旧道具が「使わない」のに勝手に動いていた口を 2026-09-06 02:1x に外した**（optimizer・Fable）: `scripts/next_round.py main()` の `ahead_sweep.kick()` と `.claude/settings.json` の SessionStart `ahead_sweep.sh`。実測: 親が毎周 撃つ `next_round.py` から旧 `ahead_sweep.py` が背景で起き、09/06 00:01 JST（日付が変わった直後）に `place_today()` が **08/16〜08/19 上げの旧作りの本 8本 に 06:00〜14:00 JST の publishAt を打った**（`data/uploaded.jsonl` の diff・`139506ee`〜`724af5af`）。02:1x に残っていた 2本（`uhR8msMW9k4`・`hKCwPvuqviw`）を private へ戻した（台帳 `unscheduled`・消していない）。同じ経路で `post_pending_comments.py` も毎時 走っていた（コメントの自動投稿。これも止まる）。**「使わない」は文書に書くだけでは止まらない —— 起こす口を全部 外すこと。** **09/06 17:xx にもう1つ外した**（optimizer・Fable）: `scripts/next_round.py main()` が毎周 印字していた旧道具の読み出し3つ（`run_marker` の「種別の下読み」・`slot_cost` の「枠の機会費用」・`daily_pick` の「枠はもう決まっています」）。実測 17:02 JST: 「2026-09-06 の枠はもう決まっています: 3gZ38lfsJpY」「09/07 … PhQ2KvuQASQ」「09/08 … vmAll8GDkU8」—— 全部 09/05 に private へ戻した旧作りの本。親は印字を写すだけなので、嘘の決めがサブの本文の土台になる口だった。関数は残し、呼ばない（検査 `tests/test_kinds_allowed.py`）。 残っている旧道具の口: `scripts/stop_check.sh`（Stop フック。`src.watches`・`drift.py` を撃つが、`data/runs.jsonl` に印の無い回では止めない）。**覆る条件**: 旧道具を使う判断が METHOD に書かれたとき（そのときも kick ではなく手順から呼ぶ）。
 
 ## 9. 最初の1本（2026-09-06・`2026-09-06-zaishoku-62man`）
 

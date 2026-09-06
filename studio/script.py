@@ -134,6 +134,15 @@ class Script(BaseModel):
 
 
 def path_for(vid: str) -> Path:
+    """id → 台本のファイル。**ファイルの道をそのまま渡されても通す**（2026-09-06）。
+
+    実測: `python -m studio.cli lint data/studio/scripts/<id>.json` が
+    `data/studio/scripts/data/studio/scripts/<id>.json.json` を開こうとして落ちた。
+    id で呼ぶのが正だが、道で呼んだ回を落とす理由は無い。
+    """
+    vid = str(vid)
+    if vid.endswith(".json") or "/" in vid:
+        return Path(vid)
     return SCRIPTS / f"{vid}.json"
 
 

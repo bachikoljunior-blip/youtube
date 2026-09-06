@@ -50,14 +50,20 @@ def test_門と同じ述語を読んでいる():
     assert "FIX_RUN_CAP" in body and "getattr" in body
 
 
-def test_周の頭で撃たれている():
-    """**COUNT の枝より前に置くこと** —— 親は COUNT で撃ち直すので、
-    後ろに置くと「数を渡した回」しか読めません。"""
+def test_周の頭では撃たれていない():
+    """**2026-09-06 に反転した。** それまでは「COUNT の枝より前に置くこと」だった。
+
+    手法は 09/05 に `studio/` でゼロから組み直し（`docs/METHOD.md` §8）、`run_marker` の門も
+    `daily_pick` の決めも、いまの回は撃たない。**親が毎周 撃つ `next_round.py` が旧道具の判定を
+    印字し続けていた**（09/06 17:02 JST の実測: private に戻した旧作りの本を「枠はもう決まっています」
+    と出していた）。関数 `kinds_allowed()` は残すが、`main()` からは呼ばない。
+    **覆る条件**: METHOD に旧道具を使う判断が書かれたとき。
+    """
     src = (ROOT / "scripts" / "next_round.py").read_text()
     main = src.split("def main()")[1]
-    call = main.index("kinds_allowed()")
-    count = main.index('print("COUNT")')
-    assert call < count, "種別の下読みが COUNT の枝より後ろに落ちています"
+    assert "kinds_allowed()" not in main, "旧道具の下読みが親の周の頭に戻っています"
+    assert "from src import slot_cost" not in main, "旧道具（slot_cost）の読み出しが親の周に戻っています"
+    assert "from src import daily_pick" not in main, "旧道具（daily_pick）の読み出しが親の周に戻っています"
 
 
 def test_下読みは門と食い違わない():

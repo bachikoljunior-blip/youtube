@@ -850,6 +850,15 @@ def _laps_between(start: datetime, end: datetime) -> int:
     return len(seen)
 
 
+def _laps_since(after: datetime, end: datetime) -> int:
+    """`after` より**後**（同時刻は含まない）〜 `end` に立った周の数。
+
+    目盛りと同じ瞬間に記録された周は、その目盛りの %に**もう入っている**ので数えない
+    （`_laps_between` は両端を含む。`pace()` が目盛りの後を運ぶときはこちら）。
+    """
+    return max(0, _laps_between(after, end) - _laps_between(after, after))
+
+
 def _births_from_runs(start: datetime, end: datetime) -> int:
     """`data/runs.jsonl` に**実際に印を残した**セッションの数。
 
@@ -1311,6 +1320,43 @@ def pace(now: datetime | None = None) -> dict | None:
     # **古い目盛りから出した『許される速さ』も同じだけ古い**とは書いていません。
     carry_rate = seg["rate"] if seg else rate      # 区間があれば直近の速さで運ぶ
 
+    # --- 1周いくらか（区間へ寄せる。寄せる量は Δ% の大きさで決める） -----
+    # （2026-09-06 に `used_now` より前へ動かした —— 運ぶのに 1周の重さが要る。式は変えていない）
+    weight, per_lap = 0.0, per_lap_cum
+    if seg and seg["per_lap"] and per_lap_cum:
+        weight = max(0.0, min(1.0, seg["used"] / QUANT_FULL_PCT))
+        per_lap = weight * seg["per_lap"] + (1.0 - weight) * per_lap_cum
+
+    # --- **枠が戻った直後は、この数は下限にしかなりません** ---------------
+    # リセットの瞬間は (1つ前の点, いまの点] のどこかで、`start` はその**下限**。
+    # ＝ 窓をいちばん広く取っている ＝ 周をいちばん多く数えている ＝
+    # `per_lap` は**最小**に出ます。**1周の重さは枠が戻っても軽くなりません**ので、
+    # リセット前に測れていた数のほうが大きければ、そちらを採ること。
+    per_lap_raw, per_lap_floored = per_lap, False
+    if pre and (per_lap is None or pre["per_lap"] > per_lap):
+        per_lap, per_lap_floored = pre["per_lap"], True
+
+    # --- **目盛りからいままでを、時間ではなく「立った周の数」で運ぶ**（2026-09-06 17:xx JST・optimizer・Fable） ---
+    # 目盛りは人手でしか入らないので古くなる。古いぶんをどう埋めるかで、間隔がまるごと変わる。
+    # 08/21 からここは「直近の区間の %/時 × 経過時間」で運んでいた。**それが正しいのは、鎖が
+    # 区間のときと同じ密度で回り続けているとき**だけで、いまの鎖は違う（0体 なら起こしを置いて
+    # 間隔ぶん待つ・サブは 30〜60分 で終わる ＝ 回っていない時間のほうが長い）。
+    #
+    # 実測 09/05 17:37 → 09/06 16:41 JST（目盛り 14% → 18%・23.1時間）:
+    #     区間の速さ 1.538 %/時（09/05 16:19→17:37 の 78分・+2%・±1% なので幅 [0.77, 2.31]）を
+    #     21時間 運んで **used_now 47%** と出し、許される速さ 0.39 %/時 → 間隔 **431分**（`IDLE_WAIT_MAX_MIN`
+    #     の 360分 に切られた）。親はそのとおり **6時間 待った × 2回**（周 02:03・08:06・14:12 JST）。
+    #     実物は 18% ＝ 0.173 %/時。**29 ポイント 上に外れ、鎖は 2.5倍 遅い側で回った。**
+    #     オーナー 09/06 16:4x「全てのモデルも使い切る予定なの？」「Fableのみも全てのモデルも100％になる予定？」
+    #     —— このままなら 100% はリセットの 2週間 後（`--pace` の印字）。
+    #
+    # 枠を食うのは周（サブ）であって時計ではない。だから **目盛りの後に立った周の数 × 1周の重さ** で運ぶ。
+    # 周が 0 なら増えない（親の心拍は 1周より軽い）。周が立てば、立てたぶんだけ増える。
+    # **覆る条件**: (a) `rounds.jsonl` に周が記録されていない枠（`laps_in_window == 0`）では、
+    # 周で運べないので**従来どおり時間で運ぶ**（検査 `tests/test_pace.py` の 08/21 の形はこちら）。
+    # (b) 次の目盛りで、周で運んだ推定が実物から ±5 ポイント 以上 外れたら、1周の重さ（`per_lap`）のほうを疑う。
+    laps_in_window = _laps_between(start, at)
+
     # --- **目盛りの枠が、もう閉じていることがある**（2026-08-22 07:2x に踏んだ） ---
     # 目盛りは人手でしか入らないので、**枠のリセットをまたいでも古いまま残ります。**
     # ここは長らく「目盛りの枠 ＝ いまの枠」を前提にしていて、
@@ -1335,13 +1381,24 @@ def pace(now: datetime | None = None) -> dict | None:
     while win_reset <= now:
         win_start, win_reset = win_reset, win_reset + span
         rolled += 1
+    carried_laps, carry_mode = 0, "hours"
     if rolled:
         # 新しい枠の中には目盛りが1つも無い。頭を 0% として運ぶ。
         elapsed = max(0.0, (now - win_start).total_seconds() / 3600)
-        used_now = min(100.0, elapsed * carry_rate)
+        carried_laps = _laps_since(win_start, now)
+        if laps_in_window and per_lap:
+            carry_mode = "laps"
+            used_now = min(100.0, carried_laps * per_lap)
+        else:
+            used_now = min(100.0, elapsed * carry_rate)
     else:
         elapsed = max(0.0, (now - at).total_seconds() / 3600)
-        used_now = min(100.0, used + elapsed * carry_rate)
+        carried_laps = _laps_since(at, now)
+        if laps_in_window and per_lap:
+            carry_mode = "laps"
+            used_now = min(100.0, used + carried_laps * per_lap)
+        else:
+            used_now = min(100.0, used + elapsed * carry_rate)
     left_hours = (win_reset - now).total_seconds() / 3600
     forward_rate = ((100.0 - used_now) / left_hours) if left_hours > 0 else 0.0
     # **オーナーの上限**（2026-09-02「今までの最高速度の二分の一の速度でやって」）。
@@ -1350,21 +1407,6 @@ def pace(now: datetime | None = None) -> dict | None:
     forward_capped = bool(rate_cap is not None and forward_rate > rate_cap)
     if forward_capped:
         forward_rate = rate_cap
-
-    # --- 1周いくらか（区間へ寄せる。寄せる量は Δ% の大きさで決める） -----
-    weight, per_lap = 0.0, per_lap_cum
-    if seg and seg["per_lap"] and per_lap_cum:
-        weight = max(0.0, min(1.0, seg["used"] / QUANT_FULL_PCT))
-        per_lap = weight * seg["per_lap"] + (1.0 - weight) * per_lap_cum
-
-    # --- **枠が戻った直後は、この数は下限にしかなりません** ---------------
-    # リセットの瞬間は (1つ前の点, いまの点] のどこかで、`start` はその**下限**。
-    # ＝ 窓をいちばん広く取っている ＝ 周をいちばん多く数えている ＝
-    # `per_lap` は**最小**に出ます。**1周の重さは枠が戻っても軽くなりません**ので、
-    # リセット前に測れていた数のほうが大きければ、そちらを採ること。
-    per_lap_raw, per_lap_floored = per_lap, False
-    if pre and (per_lap is None or pre["per_lap"] > per_lap):
-        per_lap, per_lap_floored = pre["per_lap"], True
 
     # **切られたことを、呼ぶ側へ渡すこと**（2026-09-01）。
     #     長らくここは歯止めを掛けた数だけを返し、`next_round.py` はそれを
@@ -1406,6 +1448,10 @@ def pace(now: datetime | None = None) -> dict | None:
         "forward_rate_raw": forward_rate_raw, "rate_cap": rate_cap,
         "forward_capped": forward_capped, "rate_max": max_measured_rate(anchors),
         "used_now": used_now, "carry_rate": carry_rate, "carried_hours": elapsed,
+        # **何で運んだか**（2026-09-06）: "laps" ＝ 目盛りの後に立った周 × 1周の重さ／
+        #     "hours" ＝ 直近の %/時 × 経過時間（周が記録されていない枠だけ）。
+        "carry_mode": carry_mode, "carried_laps": carried_laps,
+        "laps_in_window": laps_in_window,
         "floor_min": floor,
         # **歯止めを掛ける前の数と、掛かったかどうか。**
         #     `floor_clipped == "max"` は「この計器は、返した数より
@@ -1549,7 +1595,15 @@ def pace_report(now: datetime | None = None) -> None:
               f"{'**この幅では通算と区別がつきません**' if seg['rate_lo'] <= p['rate'] <= seg['rate_hi'] else '通算とは別の値です'}")
     else:
         print("    **区間が引けません**（同じ枠の中に2点目がない）。通算だけで決めています")
-    if p["carried_hours"] >= 0.1:
+    if p["carried_hours"] >= 0.1 and p.get("carry_mode") == "laps":
+        head = "**いまの枠の頭 0%**" if p["rolled"] else f"目盛りの {p['anchor_used']:.0f}%"
+        print(f"    いま（推定）: **{p['used_now']:.1f}%** "
+              f"＝ {head} に、目盛りの後に立った周 **{p['carried_laps']}件** × 1周 "
+              f"{p['per_lap']:.3f}% を足したもの（{p['carried_hours']:.1f}時間ぶん）")
+        print(f"      **時間では運びません**（2026-09-06）。区間の %/時 × 経過時間 は、鎖が待っている時間も"
+              f"食っている扱いになり、09/05→06 に 29 ポイント 上へ外れて親が 6時間×2回 待った。"
+              f"枠を食うのは周。周が 0 なら増えない")
+    elif p["carried_hours"] >= 0.1:
         if p["rolled"]:
             print(f"    いま（推定）: **{p['used_now']:.1f}%** "
                   f"＝ **いまの枠の頭 0%** を {p['carry_rate']:.3f} %/時で "
