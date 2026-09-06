@@ -51,3 +51,17 @@ def test_本文に数の行が入る():
     text = spawn_prompt.build("optimizer")
     assert "最初の1手" in text
     assert "origin/main" in text and "<<main_gap>>" not in text
+
+
+def test_写しには数を焼き込まない(tmp_path, monkeypatch):
+    """写しは commit される静的な生成物。数を焼くと commit のたびに変わり、写しの検査が永久に赤になる
+    （09/06 13:40〜09/07 03:1x に実際に赤・「写しを焼き直し」の commit 7件）。`_clock_block` と同じ扱い。"""
+    monkeypatch.setattr(spawn_prompt, "RENDERED", tmp_path / "r.md")
+    spawn_prompt.write_rendered()
+    got = (tmp_path / "r.md").read_text(encoding="utf-8")
+    assert "commit** 後ろ" not in got and "枝の先頭と同じ" not in got
+    assert "git rev-list --count origin/main..HEAD" in got
+    assert "<<branch>>" not in got
+    # 立てる瞬間の本文（CLI）には数えた行が入ること
+    live = spawn_prompt.build("hourly")
+    assert "この checkout の origin の写しで数えた" in live or "数えられなかった" in live

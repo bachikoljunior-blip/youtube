@@ -110,7 +110,8 @@ def cmd_hear(a):
               "whisper の聞き違い（ねんきん→めんきん・4がつ→4かつ 型）なら通してよい。決めるのは Fable。")
     ledger("heard", a.id, mismatched=len(bad), model="medium" if a.medium else "small", mode="kana",
            diffs=[{"i": r["i"], "d": r["diffs"]} for r in bad],
-           escalated=[r["i"] for r in rows if "→" in r["how"]])   # small で差が出て medium が予定どおりに聞いたコマ
+           escalated=[r["i"] for r in rows if "→" in r["how"]],   # small で差が出て medium が予定どおりに聞いたコマ
+           how=hear.escalations(rows))   # どの段で通ったか（medium／medium+prompt）。§7 の「prompt の段が採られたか」を台帳で数えるため
     return 1 if bad else 0
 
 

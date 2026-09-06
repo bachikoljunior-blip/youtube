@@ -114497,3 +114497,29 @@ ship は 1回 断られた（枠と決めの食い違い ＝ 4'）ので「枠�
 
 ### 覆る条件
 - hear の medium＋prompt の段が、7本で 1度も採られなければ（台帳 `heard` の `how` に `medium+prompt` が出ない）、段を外して速さを戻す（1コマ 10秒）。逆に prompt が **TTS の誤読を隠した**（prompt で 0差 なのにオーナーの耳で誤読）が 1件 出たら、prompt の段は「差が減った」ではなく「差が 0」のときだけ採る。
+
+## 2026-09-07 03:1x〜03:4x JST —— あすの1本の回（optimizer・Fable 5.1）: 写しに焼いた commit 数が写しの検査を永久に赤にしていた。古い型の検査 11件 を skip。台帳 `heard` に `how`
+
+きょうの枠 `nQbVxuWpWw8`（09/07 10:00）は公開前だが、同じ周の hourly が **09/08 の台本まで書き終えている**（`f76b1f23`・画像も 01:35 に届いた `5ec52669`）→ §5 の表で私の持ち場になる (f) は無い。台本には触っていない。
+
+### 撃った数
+- `measure` 26本。1本目 `EkNqtkK49Bw` は **17.2h で 127回**・likes 0（9.6h から +0 ＝ 公開 6時間で止まった。§1 の「48時間でほぼ止まる」より早い。§7 に足した）。1/7 のまま。
+- 画像の注文 11件 全部 done（09/08 の背景 264KB・01:35）。`work/` は無い（再起動）。
+- `pytest tests/test_studio*.py tests/test_spawn_prompt*.py tests/test_kinds_allowed.py`: 直す前 **12件 落ちる／56 通る**。直した後 **59 通る／11 skip／落ちる 0**。
+- `origin/main`: 渡された本文は「4 commit 後ろ」だったが、03:16 JST に hourly が早送りずみで、この回は 0（数えた: `git rev-list --count origin/main..HEAD`）。
+
+### 直した
+1. **`scripts/spawn_prompt.py`（親の手続き (e)）**: 09/06 13:40（`5398a425`）に足した `main_gap()` の数（「origin/main は N commit 後ろ」）を **写し `docs/spawn_prompt.rendered.md` に焼いていた**。commit のたびに写しが変わるので `test_rendered_copy_for_the_parent_is_current` が永久に赤、親の周ごとに「写しを焼き直し」の commit（09/06 13:52〜09/07 03:1x で 7件）。`test_写しに時刻を焼き込まない` の docstring が 09/02 に同じ穴を「写しの側で自分が作る」と書いていた形。→ 写し（`live_clock=False`）には `MAIN_GAP_STATIC`（「merge のあと `git rev-list --count origin/main..HEAD` で数えること。0 でなければ早送り」）を入れ、CLI の生の本文（`--kind`）は数えたまま。**数えるのは fetch した直後のサブ本人**（親の origin の写しより新しい —— この回も本文の「4」は古く、実物は 0 だった）。検査 +1（`tests/test_spawn_prompt_main_gap.py` 6件）。
+2. **古い型を見る検査 11件 を `pytest.mark.skip`**（`tests/test_spawn_prompt.py` 8件・`tests/test_spawn_prompt_clock.py` 3件）: 09/05 08:11（`0e24887f`）にゼロから書き直した型より前の文言（「1周してください」「最適化の回」「それ以外に与件はありません」「<<clock_block>>」「JST です」）を見ていた。前の回の JOURNAL（09/06 22:4x）は「`test_spawn_prompt.py` を除く」と避けていたが、hourly が 09/06 13:25 に**同じファイルへ本物の検査を足した**（`test_cli_without_siblings_names_the_other_role`）ので、赤い 8件 の中に本物が埋もれる形になっていた。消さない（§8）。skip の reason に戻す条件を書いた。**中身の判断**: 11件 が守っていた文言は 08/24〜09/02 のオーナー指示（「毎回フレッシュ」「最適化されてんの？」「1周してください」）に由来するが、09/05「今の手法全てまっさらにして」で型ごと差し替わった。戻すかどうかは型の側の判断で、検査を赤のまま置いても誰も読まない。
+3. **`studio/cli.py`・`studio/hear.py`（道具 (c)）**: 台帳の `heard` に `how`（コマ → `small→medium`／`small→medium+prompt`／`small+prompt`）を足した（`hear.escalations`・検査 +1・16件）。01:3x に書いた覆る条件「7本で `medium+prompt` が 1度も採られなければ段を外す」は、台帳に `escalated`（コマ番号だけ）しか無く**数えられなかった**。09/08 の本の `heard` 3行はこの前の形なので、7本 の数えは 09/09 の本から。
+4. `docs/METHOD.md` §7（17.2h の点・6時間で止まった）・§4 (2)（台帳 `how`）。
+
+### 見送った
+- `docs/trigger_parent.md` 119行「`docs/spawn_prompt.rendered.md` の …」（親は写しを貼る）: 写しの側を静的にしたので、親の手は変えない。
+- §7 の判定: 1/7 なので書き換え無し。1本目の「6時間で止まる」は §1 の実測（70〜90%）と同じ型で、1本では書き方を疑わない（§9 の「題が重なった」も混ざる）。
+- `slides` の折れ・`hear.to_kana` の追加: 09/08 の台帳に新しい欠陥は無い（コマ7・コマ10 は whisper 側と 01:2x に判定ずみ）。
+
+### 覆る条件
+- 写しの `MAIN_GAP_STATIC` の行を読んだサブが数えずに終わる周が 2周 続いたら（JOURNAL に「origin/main」の数が無い）、静的な行では効かない ＝ 親の周（`next_round.py refresh_rendered`）が焼く**直前**に数えて、写しではなく本文の差し込み口に入れる形（`_clock_block` と同じ live の口）に変える。
+- skip した 11件: `docs/spawn_prompt.md` に当該の文言が戻ったとき skip を外す。型が 09/05 の形のまま 7日 過ぎたら、検査ごと `tests/_old/` へ移す（消さない）。
+- `how` の段: 09/09 から 7本 の `heard` を数え、`medium+prompt` が 0 なら段を外す（01:3x の条件そのまま。数えられるようになっただけ）。

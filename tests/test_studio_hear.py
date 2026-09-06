@@ -170,3 +170,9 @@ def test_聞いた側の桁区切りの欠けは3桁に埋める():
     """medium が 6万3千円 を「63,00 エーン」と書いた（09/07 00:5x hourly の申し送り）。213,000 のような正しい区切りはそのまま。"""
     assert hear.heard_kana("63,00 エーン", {}).startswith("ろくまんさんぜん")
     assert hear.heard_kana("213,000 エン", {}) == "にじゅういちまんさんぜんえん"
+
+
+def test_台帳に書く段はコマごと():
+    rows = [{"i": 1, "how": "small"}, {"i": 5, "how": "small→medium+prompt"},
+            {"i": 7, "how": "small→medium"}, {"i": 9, "how": "small+prompt"}]
+    assert hear.escalations(rows) == {"5": "small→medium+prompt", "7": "small→medium", "9": "small+prompt"}

@@ -125,6 +125,16 @@ FIRST_MOVE = """
 """
 
 
+#: **写し（`docs/spawn_prompt.rendered.md`）に入れる側**（2026-09-07 03:3x・optimizer）。
+#: `main_gap()` の数を写しに焼くと commit のたびに写しが変わり、`test_rendered_copy_for_the_parent_is_current` が
+#: 永久に赤・親の周ごとに「写しを焼き直し」の commit が積まれた（09/06 13:40〜09/07 03:1x で 7件）。
+#: `_clock_block()` を写しから外したのと同じ理由。数えるのは、fetch した直後のサブ本人（親の origin の写しより新しい）。
+MAIN_GAP_STATIC = (
+    "merge のあと `git rev-list --count origin/main..HEAD` で `origin/main` が何 commit 後ろかを数えること。"
+    " 0 でなければ早送り1回 `git push origin origin/<<branch>>:main`（09/06 22:5x 実測: 237 commit ぶんで数秒。"
+    "`docs/trigger_parent.md`「承認を求めないこと」の当のもの）。数えずに「進めてある」と思わないこと（08/26 の決め打ちが 12日 残った）。")
+
+
 def main_gap(root: Path | None, branch: str) -> str:
     """`origin/main` が枝の先頭から何 commit 後ろかを、この checkout の origin の写しで数えて1行にする。
 
@@ -565,7 +575,9 @@ def build(kind: str, note: str = "", siblings: list[str] | None = None,
         "note": note,
         "only": only,
         "note_block": note_block,
-        "first_move": FIRST_MOVE.strip().replace("<<main_gap>>", main_gap(root, branch)),
+        # 写し（live_clock=False）には数を焼かない: MAIN_GAP_STATIC の註
+        "first_move": FIRST_MOVE.strip().replace(
+            "<<main_gap>>", main_gap(root, branch) if live_clock else MAIN_GAP_STATIC),
         "siblings_block": _siblings_block(list(siblings or [])),
         "clock_block": _clock_block(live=live_clock),
         "lead": (tpl["lead-only"].replace("<<only>>", only) if only

@@ -337,6 +337,13 @@ def check(s: Script, wavs: list[Path], size: str = "small", escalate: bool = Tru
     return rows
 
 
+def escalations(rows: list[dict]) -> dict[str, str]:
+    """台帳に書く「コマ → 通った段」（既定の模型で通ったコマは書かない）。
+    09/07 01:3x の覆る条件「7本で `medium+prompt` が 1度も採られなければ段を外す」は、台帳の `heard` に段が無いと数えられなかった
+    （`escalated` はコマ番号だけ）。"""
+    return {str(r["i"]): r["how"] for r in rows if "→" in r["how"] or "+prompt" in r["how"]}
+
+
 def _fewer(new: list, heard_new: str, old: list, exp: str) -> bool:
     """聞き直しの結果を採るか: 差の数が減った／同数なら崩れておらず差の字数が短い。"""
     if len(new) < len(old):
