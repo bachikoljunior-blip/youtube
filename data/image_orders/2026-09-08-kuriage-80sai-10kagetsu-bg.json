@@ -1,0 +1,11 @@
+{
+ "id": "2026-09-08-kuriage-80sai-10kagetsu-bg",
+ "asked_at": "2026-09-07T00:54:45+09:00",
+ "for": "2026-09-08 の本（2026-09-08-kuriage-80sai-10kagetsu）の背景",
+ "prompt": "日本の60歳くらいの男性が、朝の明るいキッチンでコーヒーカップを持ち、窓の外を眺めて静かに考えている様子。やわらかい朝の光。写実的な写真風。文字やロゴは入れない。縦長。",
+ "avoid": "文字・ロゴ・実在の人物・透かし",
+ "size": "1080x1920",
+ "format": "jpg",
+ "out": "assets/images/2026-09-08-kuriage-80sai-10kagetsu-bg.jpg",
+ "status": "pending"
+}
