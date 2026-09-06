@@ -228,3 +228,19 @@
 {"at": "2026-09-06T14:41:26+09:00", "id": "2026-09-07-kurisage-81sai-11kagetsu", "event": "built", "seconds": 92.7, "image": true, "chars": 480}
 {"at": "2026-09-06T14:44:46+09:00", "id": "2026-09-07-kurisage-81sai-11kagetsu", "event": "built", "seconds": 93.8, "image": true, "chars": 478}
 {"at": "2026-09-06T14:45:44+09:00", "id": "2026-09-07-kurisage-81sai-11kagetsu", "event": "heard", "mismatched": 0, "model": "small"}
+{"at": "2026-09-06T17:07:02+09:00", "id": "2026-09-07-kurisage-81sai-11kagetsu", "event": "built", "seconds": 93.0, "image": true, "chars": 480}
+{"at": "2026-09-06T17:08:44+09:00", "id": "2026-09-07-kurisage-81sai-11kagetsu", "event": "heard", "mismatched": 3, "model": "small", "mode": "kana", "diffs": [{"i": 3, "d": [["ばい", ""]]}, {"i": 8, "d": [["はなしです", ""]]}, {"i": 9, "d": [["さいから", ""]]}]}
+{"at": "2026-09-06T17:14:11+09:00", "id": "2026-09-07-kurisage-81sai-11kagetsu", "event": "built", "seconds": 93.0, "image": true, "chars": 480}
+{"at": "2026-09-06T17:14:26+09:00", "id": "2026-09-07-kurisage-81sai-11kagetsu", "event": "cold_read", "takeaway": "年金を65歳からもらうか70歳まで遅らせるかは、82～86歳を目安に生きられるかで判断すると良い。", "unclear": ["「10か月で7%」の増加率がどういう仕組み・ルールなのか", "「ねんきん定期便」が具体的にどの書類を指すのか", "税金と健康保険料がどれくらい引かれて、実際にはいつ頃元が取れるのか"]}
+{"at": "2026-09-06T17:15:27+09:00", "id": "2026-09-07-kurisage-81sai-11kagetsu", "event": "critique", "understand": 3, "n_real": 2, "done": false}
+{"at": "2026-09-06T17:17:56+09:00", "id": "2026-09-07-kurisage-81sai-11kagetsu", "event": "built", "seconds": 94.2, "image": true, "chars": 480}
+{"at": "2026-09-06T17:18:12+09:00", "id": "2026-09-07-kurisage-81sai-11kagetsu", "event": "cold_read", "takeaway": "年金受給を70歳に遅らせると毎月の受取額は42%増えるが、5年間受け取らない損失を回収し、さらに得になるには84～86歳以上まで生きる必要がある。", "unclear": ["「10か月で7%増える」という増加率の具体的な根拠や計算式", "「ねんきん定期便」とは何か（年金関連の専門用語）", "増えた年金に対して「健康保険料が多くかかる」理由やメカニズム", "税金と健康保険料を引いた場合の具体的な計算プロセス"]}
+{"at": "2026-09-06T17:19:18+09:00", "id": "2026-09-07-kurisage-81sai-11kagetsu", "event": "critique", "understand": 3, "n_real": 3, "done": false}
+{"at": "2026-09-06T17:21:29+09:00", "id": "2026-09-07-kurisage-81sai-11kagetsu", "event": "built", "seconds": 89.9, "image": true, "chars": 470}
+{"at": "2026-09-06T17:21:45+09:00", "id": "2026-09-07-kurisage-81sai-11kagetsu", "event": "cold_read", "takeaway": "年金の受け取りを65歳から70歳まで5年遅延させると42%増えるが、その間の900万円のロスを取り戻すには約11年11か月かかり、税金などを考慮すると84～86歳以上まで生きることで初めて得になる。", "unclear": ["ねんきん定期便（毎年届く書類の詳しい説明がないため、何かは文脈から推測できるが、正式名称や詳細は不明）"]}
+{"at": "2026-09-06T17:22:44+09:00", "id": "2026-09-07-kurisage-81sai-11kagetsu", "event": "critique", "understand": 3, "n_real": 2, "done": false}
+{"at": "2026-09-06T17:24:22+09:00", "id": "2026-09-07-kurisage-81sai-11kagetsu", "event": "built", "seconds": 91.6, "image": true, "chars": 480}
+{"at": "2026-09-06T17:25:12+09:00", "id": "2026-09-07-kurisage-81sai-11kagetsu", "event": "cold_read", "takeaway": "年金の受給を70歳まで延期すると42%増えるが、税金と保険料を考えると84～86歳まで生きて初めて損得が同じになり、それ以上長く生きれば得になる。", "unclear": ["ねんきん定期便"]}
+{"at": "2026-09-06T17:25:25+09:00", "id": "2026-09-07-kurisage-81sai-11kagetsu", "event": "heard", "mismatched": 3, "model": "small", "mode": "kana", "diffs": [{"i": 2, "d": [["げつ", "けず"]]}, {"i": 7, "d": [["ねん", "いね"]]}, {"i": 9, "d": [["さいから", ""]]}]}
+{"at": "2026-09-06T17:26:16+09:00", "id": "2026-09-07-kurisage-81sai-11kagetsu", "event": "critique", "understand": 3, "n_real": 2, "done": false}
+{"at": "2026-09-06T17:28:05+09:00", "id": "2026-09-07-kurisage-81sai-11kagetsu", "event": "heard_judged", "mismatched": 3, "tts_misread": 0, "note": "3つとも whisper 側（1か月→1かけず・11年→11イネ・84歳から86歳→84~86）。medium の漢字ありで 1ヶ月・11年・84歳から86歳 と聞こえた。TTS の誤読 0"}
