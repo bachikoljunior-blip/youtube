@@ -829,87 +829,19 @@ def main() -> int:
 
     d = decide(live=args.live)
     print(f"[next_round] 間隔 {d['floor_min']:.0f}分（{d['source']}）")
-    # **種別の下読みを、周の頭で出す**（`kinds_allowed()` の註に実測）。
-    #     COUNT の枝より前に置くこと —— 親は COUNT で撃ち直すので、
-    #     ここより下だと「数を渡した回」しか読めません。
-    for _line in kinds_allowed()["lines"]:
-        print(_line)
-    # **枠の機会費用を、周の頭で出す**（2026-09-05・最適化の回）。
-    #     `src/slot_cost.py` は 09-05 00:20 から この数を計算していましたが、
-    #     読めたのは `daily_pick.lines()` を撃った回だけで、**決めは 11回 連続で長尺**
-    #     （実測 `data/daily_pick.jsonl`・09-05T00:38 は `expected_48h` 8.0 で通っていた）。
-    #     09-05 から `daily_pick.record()` の**門**なので、**作りはじめる前に**出します
-    #     —— ここを読まずに負けている形で作ると、決める段で通りません。
-    #     **覆る条件**: `slot_value()` の勝者が入れ替われば、この行は自分でその形を指します。
-    try:
-        sys.path.insert(0, str(ROOT))
-        from src import slot_cost as _sc                          # noqa: PLC0415
-        _s = _sc.slot_value()
-        # **門が実際に使う床を刷ること**（2026-09-05 05:xx・最適化の回）。
-        # 前の版は `slot_value()["cost"]`（＝ 規則の密度の中央値 1,049回）を刷って
-        # いましたが、`record()` の門が掛けるのは `verdict()` の床です。
-        # 標本が化石のときは後者が**いまの中央値**に落ちる（`slot_cost.verdict` の註）ので、
-        # **周の頭が刷る数と、決めが実際に落ちる数が違っていました。**
-        _v = _sc.verdict(None)
-        _floor = _v.get("cost") if _v.get("cost") is not None else _s.get("cost")
-        if _floor is not None:
-            print(f"  枠の機会費用: **1枠 ＝ {_floor:,.0f}回**（{_s['best']}・"
-                  f"{_v.get('cost_src') or '規則の密度の中央値'}・齢{_sc.HOURS}時間）"
-                  f"　← **これを下回る見込みの形は `daily_pick --pick` が通しません**"
-                  "（`--anyway <数字を含む1行>` で越えれば控えに残ります）")
-    except Exception as _exc:                                     # noqa: BLE001
-        print(f"  [!] 枠の機会費用が出せません: {str(_exc)[:80]}")
-    # **すでに立っている決めを、周の頭で出す**（2026-09-05 02:2x・最適化の回）。
-    #     実測 `data/daily_pick.jsonl`: **09/05 の枠だけで決めが 24回、うち 14回 は
-    #     直前と 形・題材・動画ID が完全に同じ**。最後の 8回 は全部 同じ動画で、
-    #     変わったのは `why` の長さだけ（約200字 → 約600字）。
-    #     `restated_pick_block()`（09-05 02:0x）が `record()` の**門**になりましたが、
-    #     門は**書く段**に在ります —— ここに出さないと、回は長い `why` を**書き終えてから**
-    #     拒まれます（＝ 回は使い切って、決めは1文字も変わらない）。
-    #     **作りはじめる前に**出すのは、隣の「枠の機会費用」と同じ理由です。
-    #     **覆る条件**: 決めが変わればこの行はその日を出さなくなります（同じ決めの
-    #     再掲が 1回も無い日は、そもそも印字しません）。
-    try:
-        from datetime import date as _date                        # noqa: PLC0415
-        from src import daily_pick as _dp                         # noqa: PLC0415
-        _rows = [r for r in _dp._jsonl(_dp.PICKS)
-                 if _dp.pick_kind(r) == _dp.PICK_KIND_DECIDE and r.get("for_day")]
-        for _d in sorted({str(r["for_day"]) for r in _rows})[-3:]:
-            _cur = _dp.current(_date.fromisoformat(_d))
-            if not _cur or _dp.pick_kind(_cur) != _dp.PICK_KIND_DECIDE:
-                continue
-            _blk = _dp.restated_pick_block(
-                str(_cur.get("form") or ""), str(_cur.get("topic") or ""),
-                _cur.get("video_id"), _date.fromisoformat(_d),
-                expected=_cur.get("expected_48h"))
-            if not _blk:
-                continue
-            _n = _blk.split("すでに ")[-1].split("回")[0] if "すでに " in _blk else "?"
-            print(f"  **{_d} の枠はもう決まっています**: {_cur.get('form')} / "
-                  f"{_cur.get('topic')} / {_cur.get('video_id') or '—'}"
-                  f"（見込み {_cur.get('expected_48h')}回・同じ決めが すでに {_n}回）"
-                  f"　← **同じ決めの再掲は通りません**"
-                  "（形・題材・動画ID か `--expected` を実際に変えるか、"
-                  "**決めを触らず前提を1件 閉じること**。`--anyway` では越えられません）")
-            # **立っている決めを、いまの門に通し直して、その場で出す**
-            # （2026-09-05 05:xx・最適化の回。理由と実測は
-            #  `daily_pick.standing_form_stale` の註）。
-            # **すぐ上の行と矛盾していたのは、ここに再審が無かったから**です ——
-            # 「枠の機会費用 1,049回」を刷った 2行 下で「見込み 1.0回 の決めは
-            # 書き直せません」と刷っていました。**差し替えこそが手**の日が在ります。
-            try:
-                _st = _dp.standing_form_stale(_date.fromisoformat(_d), cur=_cur)
-            except Exception:                                     # noqa: BLE001
-                _st = ""
-            if _st:
-                print(f"  [!] {_st}")
-                print("      **`fix` と `improve` は、差し替えるまで `run_marker` が"
-                      "通しません**（`verdict`/`upload`/`premise`/`means` は通ります）。"
-                      "この回の手は差し替えです: "
-                      "`python -m src.daily_pick --pick <門の指す形> <題材> "
-                      "--expected <回> --why \"<数字で1行>\"`")
-    except Exception as _exc:                                     # noqa: BLE001
-        print(f"  [!] 立っている決めが出せません: {str(_exc)[:80]}")
+    # **旧道具の読み出し（種別の下読み・枠の機会費用・立っている決め）は、ここから出さない**
+    #     （2026-09-06 17:xx JST・optimizer・Fable）。09/04〜05 にここへ足した3つの塊は
+    #     `src/run_marker`・`src/slot_cost`・`src/daily_pick` を読んで印字していた。手法は 09/05 に
+    #     `studio/` でゼロから組み直し（`docs/METHOD.md` §8「使わないもの」）、旧道具は「使わない・
+    #     前提にしない」のはずが、**親が毎周 撃つこの道具が、旧道具の判定を毎周 印字していた**。
+    #     実測 09/06 17:02 JST の印字: 「**2026-09-06 の枠はもう決まっています**: ショート /
+    #     s-teikibin-todoita-kakyu-ni-nai / 3gZ38lfsJpY」「2026-09-07 … PhQ2KvuQASQ」「2026-09-08 …
+    #     vmAll8GDkU8」—— どれも 09/05 17:1x に private へ戻した旧作りの本で、いまの枠は
+    #     `EkNqtkK49Bw`（`studio.cli status`）。「`fix` は `qyVdpAoT_40` を名乗らないかぎり通りません」も
+    #     `run_marker` の門で、いまの回は `run_marker` を撃たない。**親は印字を写すだけ**なので、
+    #     嘘の決めがそのままサブの本文の土台になる口だった。
+    #     関数 `kinds_allowed` 自体は残す（消さない・オーナー 08/31）。呼ばないだけ。
+    #     **覆る条件**: METHOD に旧道具を使う判断が書かれたとき（そのときも「読み出し」ではなく手順から）。
     if d.get("live") is None:
         # **WAIT を印字しません。** 2026-09-02 21:2x、親は 0体 と数えたうえで
         #     `--live` を付けずに撃ち、出た WAIT をそのまま「（0体・WAIT 74分）」と
