@@ -85,6 +85,7 @@ _PRE = [
     (r"(?<![0-9０-９一-龥])月(?=[0-9０-９])", "つき"),   # 月5万円（毎月6万円 は janome に任せる）
     (r"(?<![0-9０-９一-龥])年(?=[0-9０-９])", "とし"),   # 裸の「年66万円」は TTS が「とし」と読む（実測 09/05・09/06）。lint が [?] を出す
     (r"([1-9])つ", lambda m: _COUNT_TSU[m.group(1)]),   # 2つ → ふたつ
+    (r"(?<=[何数])千", "ぜん"),                          # 何千円・数千円（janome は せん。TTS は ぜん）
 ]
 # janome（ipadic）が外す語（実測 09/06）。TTS は正しかった
 _JANOME_FIX = {"割る": "わる", "割れ": "われ"}
@@ -120,9 +121,29 @@ def _kana_by_janome(text: str) -> str:
     return "".join(out)
 
 
+# 「3千円」「8千円」「1千万円」「3百円」: janome は 千・百 を別の語に切り「さんせん」「はちせん」「いちせん」「さんひゃく」と読む。
+# TTS は さんぜん・はっせん・いっせん・さんびゃく と正しく言うので、予定の側だけが外れて `!!` になっていた
+# （実測 09/06 19:5x・あすの本 コマ6「6万3千円」。hourly の申し送り）。数字に畳んで `num_to_kana` に渡す（連濁はそこに在る）。
+_D = r"[0-9０-９]+"
+_KANJI_UNITS = [   # 大きい単位から。3千5百20 → 3520・21万3千 → 21万3000・1千万 → 1000万・3百 → 300
+    (re.compile(rf"(?<![0-9０-９])({_D})千(?:({_D})百)?(?:({_D})十)?({_D})?(?![0-9０-９]*[千百十])"), (1000, 100, 10, 1)),
+    (re.compile(rf"(?<![0-9０-９])({_D})百(?:({_D})十)?({_D})?(?![0-9０-９]*[百十])"), (100, 10, 1)),
+    (re.compile(rf"(?<![0-9０-９])({_D})十({_D})?(?![0-9０-９]*十)"), (10, 1)),
+]
+
+
+def _fold_kanji_units(text: str) -> str:
+    for pat, weights in _KANJI_UNITS:
+        def rep(m: re.Match, weights=weights) -> str:
+            return str(sum(int(jaconv.z2h(g, digit=True)) * w for g, w in zip(m.groups(), weights) if g))
+        text = pat.sub(rep, text)
+    return text
+
+
 def to_kana(text: str) -> str:
     """字（漢字・数字・記号まじり）→ ひらがなだけ。予定側と、whisper が漢字を混ぜた聞いた側の両方に使う。"""
     text = re.sub(r"\s+", "", text)
+    text = _fold_kanji_units(text)
     # whisper は「か月」を「ヶ月」「ケ月」「カ月」「箇月」と書く（09/06 14:4x: 「10ヶ月」で pykakasi が「ゖ」を出して !!）
     text = re.sub(r"[ヶケカヵ箇]月", "か月", text)
     for k, v in _SYMBOL_YOMI.items():
@@ -143,13 +164,18 @@ def expected_kana(say: str, yomi: dict[str, str]) -> str:
 # ---------- ゆるい照合 ----------
 
 # 音は同じ（か、音として区別しない）で仮名が揺れる所。両側に当てる。実測 09/06 の whisper の書き方から
-_LOOSE = [("ー", ""), ("っ", ""), ("を", "お"), ("づ", "ず"), ("ぢ", "じ"), ("ぉ", "お"), ("ぇ", "え"), ("ぃ", "い"),
+_LOOSE = [# ゔ は小さい母音より先に（後だと ゔぃ → ゔい → ぶい。実測 09/06 22:xx「テーキヴィン」）
+          ("ゔぁ", "ば"), ("ゔぃ", "び"), ("ゔぇ", "べ"), ("ゔぉ", "ぼ"), ("ゔ", "ぶ"), ("ゑ", "え"), ("ゐ", "い"),
+          ("ー", ""), ("っ", ""), ("を", "お"), ("づ", "ず"), ("ぢ", "じ"), ("ぉ", "お"), ("ぇ", "え"), ("ぃ", "い"),
           ("いぇ", "え"), ("やん", "えん"), ("いえん", "えん"), ("ゅう", "ゅ"), ("しち", "なな"), ("ぜろ", "れい")]
 # whisper が決まって書き違える語（音は正しい。実測 09/06 で 22コマ中 8コマ）。聞いた側だけに当てる
 _WHISPER_ISMS = [("めんきん", "ねんきん"), ("れんきん", "ねんきん"), ("でんきん", "ねんきん"),
-                 ("ねんきぃ", "ねんきん"), ("ねんきい", "ねんきん")]
+                 ("ねんきぃ", "ねんきん"), ("ねんきい", "ねんきん"),
+                 ("ゑう", "ゅう")]   # 「よんじゅう」を medium が「よんじゑう」と書いた（実測 09/06 19:5x）。予定の側に ゑ は出ない
 # 「万円」を whisper は マンイェン・マンゲン・マヨン・マイエム … と書く（実測 09/06・6コマ）。音は全部「まんえん」
 _MANEN = re.compile(r"ま[んいーう]{0,2}(?:い?[えぇ]ん|げん|ぐえん|やん|よん|あん|えむ|いえむ)")
+# 「3千円」を whisper は「3000ゲン」と書く（実測 09/06 22:xx・コマ6）。万円 の外の「円」も同じ癖なので 千・百 の後だけ吸う
+_YEN_AFTER_UNIT = re.compile(r"(せん|ぜん|ひゃく|びゃく|ぴゃく)げん")
 
 
 def loose(k: str) -> str:
@@ -174,13 +200,14 @@ def _range_sub(m: re.Match) -> str:
 
 
 def heard_kana(heard: str, yomi: dict[str, str]) -> str:
-    heard = re.sub(r"[（(]\d+[)）]", "", heard)   # whisper が付ける「(4)」の番号（実測 09/06 コマ10）
+    heard = re.sub(r"[（(\[［]\d+[)）\]］]", "", heard)   # whisper が付ける「(4)」「[1]」の番号（実測 09/06 コマ10。[1] は「いち」に読まれていた）
     heard = _TIMES_X.sub("ばい", heard)
     heard = _RANGE.sub(_range_sub, heard)
     k = expected_kana(heard, yomi)   # whisper が漢字を混ぜても同じ道で仮名にする
     for a, b in _WHISPER_ISMS:
         k = k.replace(a, b)
     k = _MANEN.sub("まんえん", k)
+    k = _YEN_AFTER_UNIT.sub(r"\1えん", k)
     return k
 
 
@@ -222,16 +249,17 @@ _U2B = {v: k for k, v in _bytes_to_unicode().items()}
 
 
 def kanji_token_ids(tok) -> list[int]:
-    """語彙のうち、UTF-8 の先頭バイト E4〜E9（U+4000〜U+9FFF ＝ 漢字）を含むトークン。whisper に禁じる。
-    実測 09/06: 文字で見ると 1,487個 しか無く、whisper はバイト片から「燃筋」「豪傾」を組み立てた。バイトで見ると 1,680個 で止まる。"""
+    """語彙のうち、UTF-8 の先頭バイト E4〜E9（U+4000〜U+9FFF ＝ 漢字）と EA〜ED（U+A000〜U+D7FF ＝ ハングルなど。仮名は E3）を含むトークン。whisper に禁じる。
+    実測 09/06: 文字で見ると 1,487個 しか無く、whisper はバイト片から「燃筋」「豪傾」を組み立てた。バイトで見ると 1,680個 で止まる。
+    09/06 22:xx: 漢字を禁じた small が「5年」を「5 년」（ハングル）と書いた（あすの本 コマ3）。ハングルの帯も禁じる。"""
     out = []
     for s, i in tok.get_vocab().items():
         try:
             b = bytes(_U2B[c] for c in s)
         except KeyError:
             continue
-        if any(0xE4 <= x <= 0xE9 for x in b):
-            out.append(i)
+        if any(0xE4 <= x <= 0xED for x in b) or b"\xe3\x80\x85" in b or b"\xe3\x80\x86" in b or b"\xe3\x80\x87" in b:
+            out.append(i)   # 々〆〇（U+3005〜3007）は仮名と同じ先頭バイト E3 なので3バイトで見る。ハングルを禁じた small が次に「〇〇」「〆」を書いた（09/06 22:xx）
     return sorted(out)
 
 

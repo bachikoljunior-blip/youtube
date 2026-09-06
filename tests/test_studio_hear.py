@@ -73,3 +73,41 @@ def test_聞いた側の範囲と倍の書き方():
     assert hear.heard_kana("84〜86 くらい", {}) == "はちじゅうよんからはちじゅうろくくらい"
     assert hear.heard_kana("6x おおく", {}) == "ろくばいおおく"
     assert hear.heard_kana("15まんえん×60かげつ", {}) == "じゅうごまんえんかけるろくじゅうかげつ"   # × は かける のまま
+
+
+def test_千と百は数字に畳んで連濁を出す():
+    # 09/06 19:5x（hourly の申し送り）: 「6万3千円」の予定が「さんせん」で、TTS の「さんぜん」（正しい）と `!!` になっていた。
+    # janome は 千・百 を別の語に切る。数字に畳めば num_to_kana の連濁（さんぜん・はっせん・さんびゃく）が出る
+    assert hear.expected_kana("6万3千円多く", {}) == "ろくまんさんぜんえんおおく"
+    assert hear.expected_kana("8千円", {}) == "はっせんえん"
+    assert hear.expected_kana("1千万円", {}) == "せんまんえん"
+    assert hear.expected_kana("3百円", {}) == "さんびゃくえん"
+    assert hear.expected_kana("3千5百20円", {}) == "さんぜんごひゃくにじゅうえん"
+    assert hear.expected_kana("何千円", {}) == "なんぜんえん"
+    assert hear.expected_kana("五十", {}) == "ごじゅう"   # 漢数字だけの語は janome のまま
+
+
+def test_ゆるい照合は旧仮名とゔを落とす():
+    # 09/06 19:5x〜22:xx の実測: medium「よんじゑう」・small「テーキヴィン」
+    assert hear.loose(hear.heard_kana("よんじゑう", {})) == hear.loose("よんじゅう")
+    assert hear.loose("てーきゔぃん") == hear.loose("ていきびん")
+
+
+def test_聞いた側の番号と千円のげん():
+    # small が コマの頭に「[1]」を付け、「いち」に読まれていた（実測 09/06 22:xx コマ10）。「3000ゲン」は 円
+    assert hear.heard_kana("[1] マイトシとどく", {}) == "まいとしとどく"
+    assert hear.heard_kana("21 マン 3000 ゲン ひく", {}) == "にじゅういちまんさんぜんえんひく"
+
+
+def test_禁じるトークンは漢字とハングル():
+    # 09/06 22:xx: 漢字を禁じた small が「5年」を「5 년」と書いた。仮名（E3）は残す
+    class Tok:
+        def get_vocab(self):
+            return {"年": 1, "년": 2, "ねん": 3, "abc": 4, "Ġ": 5}
+    # _U2B は byte→unicode の逆写像。語彙の文字列をそのまま UTF-8 バイト列で表した形にして渡す
+    def enc(s):
+        return "".join(hear._bytes_to_unicode()[b] for b in s.encode())
+    class Tok2:
+        def get_vocab(self):
+            return {enc("年"): 1, enc("년"): 2, enc("ねん"): 3, enc("abc"): 4, enc("〇"): 5, enc("〆"): 6, enc("、"): 7}
+    assert hear.kanji_token_ids(Tok2()) == [1, 2, 5, 6]

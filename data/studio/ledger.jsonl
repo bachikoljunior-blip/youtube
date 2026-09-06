@@ -307,3 +307,29 @@
 {"at": "2026-09-06T19:49:46+09:00", "id": "2026-09-07-kurisage-81sai-11kagetsu", "event": "built", "seconds": 94.5, "image": true, "chars": 466}
 {"at": "2026-09-06T19:50:36+09:00", "id": "2026-09-07-kurisage-81sai-11kagetsu", "event": "heard", "mismatched": 5, "model": "small", "mode": "kana", "diffs": [{"i": 2, "d": [["げつ", "けず"]]}, {"i": 4, "d": [["さんせ", "ちゃんぜ"]]}, {"i": 6, "d": [["せんえ", "ぜんげ"], ["せんえんおおく", "ぜんげんぶ"]]}, {"i": 7, "d": [["せん", "ぜんう"]]}, {"i": 9, "d": [["いたあ", "た"]]}]}
 {"at": "2026-09-06T19:51:56+09:00", "id": "2026-09-07-kurisage-81sai-11kagetsu", "event": "heard", "mismatched": 2, "model": "medium", "mode": "kana", "diffs": [{"i": 7, "d": [["ねんじゅいちかげつでとりもどせます", ""]]}, {"i": 10, "d": [["ゅ", "ゑう"]]}]}
+{"at": "2026-09-06T22:11:56+09:00", "id": "EkNqtkK49Bw", "event": "measured", "views": 127, "likes": 0, "age_h": 12.2, "title": "働きながら年金をもらう人へ 減る境目が62万円に【2026年4月から】 #Sho"}
+{"at": "2026-09-06T22:11:56+09:00", "id": "fMlY_uzHOMw", "event": "measured", "views": 0, "likes": 0, "age_h": 29.2, "title": "【65歳の前に】年180万円の年金 開始年齢で247万6950円変わる 何歳で受"}
+{"at": "2026-09-06T22:11:56+09:00", "id": "a23e696j0f8", "event": "measured", "views": 191, "likes": 0, "age_h": 36.2, "title": "小規模企業共済 840万円【税額が3.46倍】 #Shorts"}
+{"at": "2026-09-06T22:11:56+09:00", "id": "kzefG44_APU", "event": "measured", "views": 189, "likes": 0, "age_h": 37.2, "title": "小規模企業共済 840万円【税額が3.46倍】 #Shorts"}
+{"at": "2026-09-06T22:11:56+09:00", "id": "1huadpEk6HY", "event": "measured", "views": 3, "likes": 0, "age_h": 61.2, "title": "【知らないと損】2026年4月 働く年金受給者は年54万円増える"}
+{"at": "2026-09-06T22:11:56+09:00", "id": "9zkfjEH48PY", "event": "measured", "views": 60, "likes": 0, "age_h": 85.2, "title": "小規模企業共済を11か月でやめるといくらか #Shorts"}
+{"at": "2026-09-06T22:11:56+09:00", "id": "dg-5ml7GRZQ", "event": "measured", "views": 15, "likes": 0, "age_h": 105.7, "title": "雇用保険料率 会社は労働者の1.636倍 #Shorts"}
+{"at": "2026-09-06T22:11:56+09:00", "id": "8hJnwkC8NU0", "event": "measured", "views": 5, "likes": 0, "age_h": 107.7, "title": "ふるさと納税の上限が医療費控除30万円で7520円下がる"}
+{"at": "2026-09-06T22:11:56+09:00", "id": "ICmIBsZRYFE", "event": "measured", "views": 6, "likes": 0, "age_h": 120.2, "title": "変動金利の5年ルール 総支払額は5,716,767円多い"}
+{"at": "2026-09-06T22:11:56+09:00", "id": "4woC2YuX7ig", "event": "measured", "views": 197, "likes": 0, "age_h": 152.7, "title": "7割軽減の線 5人世帯は年金収入141万6000円"}
+{"at": "2026-09-06T22:11:56+09:00", "id": "bGwW9Xp1Fiw", "event": "measured", "views": 84, "likes": 0, "age_h": 153.2, "title": "医療費控除 総所得10万円増で還付755円減る #Shorts"}
+{"at": "2026-09-06T22:11:56+09:00", "id": "1Nyl3aLUOgo", "event": "measured", "views": 32, "likes": 0, "age_h": 154.7, "title": "遺族年金 妻35歳で末子が1歳ちがうと総額はどう変わるか"}
+{"at": "2026-09-06T22:11:56+09:00", "id": "t8sUIqnv7o8", "event": "measured", "views": 234, "likes": 0, "age_h": 155.2, "title": "年金78万円の手取りは何円になるか #Shorts"}
+{"at": "2026-09-06T22:11:56+09:00", "id": "R6H23zZ8f-Y", "event": "measured", "views": 200, "likes": 1, "age_h": 155.7, "title": "標準報酬10万円で傷病手当金は何日止まるか #Shorts"}
+{"at": "2026-09-06T22:11:56+09:00", "id": "m_uUwS0Tsy0", "event": "measured", "views": 122, "likes": 0, "age_h": 156.2, "title": "個人事業税は複式簿記の45万円でどこまで変わるか"}
+{"at": "2026-09-06T22:11:56+09:00", "id": "n6vbjM1xQGk", "event": "measured", "views": 120, "likes": 0, "age_h": 156.7, "title": "配当100万円 総合課税と分離課税どちらが安いか"}
+{"at": "2026-09-06T22:11:56+09:00", "id": "5oActL0uzuQ", "event": "measured", "views": 2, "likes": 1, "age_h": 170.2, "title": "総所得500万 雑損控除と災害減免法どちらが得 #Shorts"}
+{"at": "2026-09-06T22:11:56+09:00", "id": "75KVaJ_na4I", "event": "measured", "views": 3, "likes": 1, "age_h": 176.7, "title": "自動車税13年目の増額 4400円と16600円 #Shorts"}
+{"at": "2026-09-06T22:11:56+09:00", "id": "jSNrwSJO_Oo", "event": "measured", "views": 131, "likes": 0, "age_h": 177.2, "title": "勤続1年で解雇の上乗せは何日に変わる #Shorts"}
+{"at": "2026-09-06T22:11:56+09:00", "id": "mQ017S6275o", "event": "measured", "views": 192, "likes": 0, "age_h": 178.2, "title": "ふるさと納税 年収300万・扶養4人で枠は何円か #Shorts"}
+{"at": "2026-09-06T22:11:56+09:00", "id": "O9lRBzCLAAI", "event": "measured", "views": 97, "likes": 0, "age_h": 178.7, "title": "雑損控除の繰越3年 交差点は0円しか動かない #Shorts"}
+{"at": "2026-09-06T22:11:56+09:00", "id": "bpdCgOhmGzo", "event": "measured", "views": 83, "likes": 0, "age_h": 179.2, "title": "高額療養費 医療費100万円で何か月目に並ぶか"}
+{"at": "2026-09-06T22:11:56+09:00", "id": "178_WLomK4Y", "event": "measured", "views": 149, "likes": 0, "age_h": 179.7, "title": "予定納税15万円の崖は課税所得いくらか #Shorts"}
+{"at": "2026-09-06T22:11:56+09:00", "id": "CVXm-NyIhMA", "event": "measured", "views": 209, "likes": 0, "age_h": 180.2, "title": "マイホーム売却 取得費4,000万円で税額はいくらか #Shorts"}
+{"at": "2026-09-06T22:11:56+09:00", "id": "9WWpJUWjs4E", "event": "measured", "views": 260, "likes": 0, "age_h": 180.7, "title": "介護の上限140100円 3割でも届かない #Shorts"}
+{"at": "2026-09-06T22:11:56+09:00", "id": "a21yvpWHuRM", "event": "measured", "views": 92, "likes": 0, "age_h": 181.2, "title": "配当控除は1000万円で6.505ポイント差 #Shorts"}
