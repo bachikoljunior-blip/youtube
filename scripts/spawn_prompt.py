@@ -680,6 +680,16 @@ def main(argv: list[str] | None = None) -> int:
         print(f"書きました: {write_rendered().relative_to(ROOT)}")
         return 0
     sibs = [s.strip() for s in args.siblings.split(",") if s.strip()]
+    if not args.siblings.strip():
+        # **`--siblings` を省いた CLI も、写しと同じ既定で名指しする**（2026-09-06 22:3x・hourly）。
+        # `docs/trigger_body.md` は親に「`spawn_prompt.py --kind hourly` で出し、一字一句そのまま」と
+        # 言っていて、この口の既定が `[]` だったので、`--write-rendered` が 09/03 から名指ししていても
+        # 親が実際に渡す本文は毎周「立てた時点ではいません」だった（実測 09/06 22:10 JST: `rounds.jsonl` に
+        # hourly と optimizer が同じ秒で立っているのに、hourly の本文は「いません」）。
+        # 「いない」と明示したいときは `--siblings ""` ではなく `--siblings -` を渡す。
+        sibs = list(SAME_ROUND_SIBLINGS.get(args.kind, []))
+    elif args.siblings.strip() == "-":
+        sibs = []
     kw = {"note": args.note, "siblings": sibs, "only": args.only}
     if args.json:
         print(json.dumps(create_session_args(args.kind, **kw),

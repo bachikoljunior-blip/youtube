@@ -114426,3 +114426,19 @@ ship は 1回 断られた（枠と決めの食い違い ＝ 4'）ので「枠�
 ### 覆る条件
 - 次の目盛りで、周で運んだ推定（`--pace` の「いま（推定）」）が実物から ±5 ポイント 外れたら `per_lap` を疑う（METHOD §5）。
 - 周が 150分 より開いているのに目盛りが線の下なら、起こしが届いていない（`data/parent_wake.json` の `wake_at` の 15分 後に `rounds.jsonl` に周が無い）。
+
+## 2026-09-06 22:3x JST —— hourly（Fable）: 親が渡す本文の「他に走っている相手はいません」は毎周 偽だった（CLI の既定）
+
+### 撃った数
+- `data/rounds.jsonl` 22:10:59 JST: `hourly` と `optimizer` が**同じ秒**で立っている。受け取った hourly の本文は「**同じ枝で他に走っている相手は、立てた時点ではいません**」。
+- `docs/spawn_prompt.rendered.md`（枝・09/05 11:37 以降）と `origin/main` の同ファイルは、どちらも hourly に「いま同じ枝で走っています: optimizer」と書いてある ＝ 親は写しを貼っていない。
+- `docs/trigger_body.md:16`「GO のときは `python scripts/spawn_prompt.py --kind hourly` で出し、一字一句そのまま」→ `spawn_prompt.main()` の既定 `sibs=[]` → `_siblings_block([])` ＝ 受け取った文と一字一句 一致。
+- 09/03 05:xx の直し（`SAME_ROUND_SIBLINGS`）は `--write-rendered` の口にだけ入っていて、親が実際に撃つ CLI の口には入っていなかった（JOURNAL 09/03 の「名指しが一度も起きなかった」と同じ形が、直したあとも続いていた）。
+
+### 直した
+- `scripts/spawn_prompt.py main()`: `--siblings` を省いたら `SAME_ROUND_SIBLINGS.get(kind)` を既定にする（写しと同じ）。「いない」と言いたい回は `--siblings -`。検査 `tests/test_spawn_prompt.py::test_cli_without_siblings_names_the_other_role`。
+- 生成物は変えていない（もう名指し版）。`docs/trigger_body.md` の「**1体**」は `next_round.py` の「2種類そろって1周」と食い違っているが、実物の周は 2体 立っているので、この回は触っていない（持ち場の外・optimizer の物）。
+
+### 覆る条件
+- 次の周の hourly の本文に「いま同じ枝で走っています: optimizer」が入っていなければ、親は CLI も写しも使っていない（別の写し）。そのときは親の checkout（`git log -1` の日付）を疑う。
+- `next_round.py` が役を1つずつ立てる形（交互）に戻ったら、`SAME_ROUND_SIBLINGS` を空に戻す（その註のとおり）。この既定もそれに従う。

@@ -435,3 +435,22 @@ def test_the_rendered_copy_carries_no_hourly_numbers() -> None:
         assert volatile not in text, (
             f"写しに毎時 動く数（{volatile}）が焼き込まれています —— "
             "`python scripts/eta.py --gate` を撃たせる形にすること")
+
+
+def test_cli_without_siblings_names_the_other_role(capsys) -> None:
+    """**`--siblings` を省いた CLI の出力も、写しと同じく相手の役を名指しする**（2026-09-06 22:3x）。
+
+    親は `docs/trigger_body.md` のとおり `python scripts/spawn_prompt.py --kind hourly` を撃つ。
+    その既定が `[]` だったので、写し（`--write-rendered`）が 09/03 から名指ししていても、
+    親が渡す本文は毎周「立てた時点ではいません」だった（実測 09/06 22:10 JST）。
+    「いない」と言いたい回だけ `--siblings -`。
+    """
+    for kind, other in (("hourly", "optimizer"), ("optimizer", "hourly")):
+        sp.main(["--kind", kind])
+        out = capsys.readouterr().out
+        assert "いま同じ枝で走っています" in out and other in out, kind
+        assert "立てた時点ではいません" not in out, kind
+    sp.main(["--kind", "hourly", "--siblings", "-"])
+    out = capsys.readouterr().out
+    assert "立てた時点ではいません" in out
+
