@@ -129,19 +129,24 @@ def _hang(lines: list[str]) -> list[str]:
 
 
 def _wrap_chars(text: str, n: int) -> list[str]:
-    """字で折る（前の形。数字のかたまりだけ守る）。語で折ると行が足りないときの逃げ道。"""
-    lines, cur = [], ""
+    """字で折る（前の形。数字のかたまりだけ守る）。語で折ると行が足りないときの逃げ道。
+    句読点が行頭に来る所は、前の行の最後の1語（数字のかたまりなら丸ごと）を句読点と一緒に次の行へ送る
+    （09/06 19:5x・optimizer: 旧の `_hang` は句読点を前の行に足して n+1 字の行を作っていた。実測 60字 の字幕で 17字）。"""
+    lines: list[list[str]] = []
+    cur: list[str] = []
     for tok in _tokens(text):
-        if len(cur) + len(tok) > n and cur:
-            lines.append(cur)
-            cur = ""
-        cur += tok
-        if len(cur) >= n:
-            lines.append(cur)
-            cur = ""
+        if sum(map(len, cur)) + len(tok) > n and cur:
+            if tok[0] in "、。」）" and len(cur) > 1:
+                carry = cur.pop()
+                lines.append(cur)
+                cur = [carry]
+            else:
+                lines.append(cur)
+                cur = []
+        cur.append(tok)
     if cur:
         lines.append(cur)
-    return _hang(lines)
+    return _hang(["".join(ln) for ln in lines])
 
 
 def background(image: Path | None) -> Image.Image:

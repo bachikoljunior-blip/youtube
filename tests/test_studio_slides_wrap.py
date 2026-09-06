@@ -47,3 +47,14 @@ def test_もらい続けたは1語():
 def test_長すぎるかたまりは字で折る():
     lines = _no_loss("あ" * 40, 16)
     assert len(lines) == 3
+
+
+def test_字で折るときも句読点で行が_n字を越えない():
+    # 09/06 19:5x（optimizer）: 旧の _hang は行頭の「。」を前の行に足して 17字 の行を作っていた（60字 の字幕）
+    say = "4月より前の51万円なら、同じ人は月10万5千円減っていました。今は5万円です。違いは月5万5千円、1年で66万円です。"
+    for n in (16, 18):
+        lines = slides._wrap_chars(say, n)
+        assert "".join(lines) == say
+        assert all(len(ln) <= n for ln in lines), lines
+        assert all(ln[0] not in "、。" for ln in lines), lines
+        assert all(ln[0] not in "、。" for ln in slides.wrap(say, n))

@@ -108,7 +108,8 @@ def cmd_hear(a):
         print("差の読み方: TTS の誤読なら yomi か言い換え（yomi は効かない語がある → 直したら hear をやり直す）。"
               "whisper の聞き違い（ねんきん→めんきん・4がつ→4かつ 型）なら通してよい。決めるのは Fable。")
     ledger("heard", a.id, mismatched=len(bad), model="medium" if a.medium else "small", mode="kana",
-           diffs=[{"i": r["i"], "d": r["diffs"]} for r in bad])
+           diffs=[{"i": r["i"], "d": r["diffs"]} for r in bad],
+           escalated=[r["i"] for r in rows if "→" in r["how"]])   # small で差が出て medium が予定どおりに聞いたコマ
     return 1 if bad else 0
 
 
