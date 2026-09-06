@@ -93,6 +93,10 @@ _NUM = re.compile(r"[0-9][0-9,]*(?:\.[0-9]+)?")
 _SYMBOL_YOMI = {"×": "かける", "✕": "かける", "÷": "わる", "＋": "たす", "+": "たす", "−": "ひく", "－": "ひく", "％": "ぱーせんと", "%": "ぱーせんと"}
 
 
+# 09/06 14:4x（hourly）の「後」→「あと」の置換は入れていない: 聞く側は漢字を禁じたので whisper は「後」を書かず、
+# 予定の側は「後」を yomi で固定する（script.py の lint）。両側に当てると「午後」が「ごあと」になる。
+
+
 def _kana_by_janome(text: str) -> str:
     out = []
     buf = ""
@@ -119,6 +123,8 @@ def _kana_by_janome(text: str) -> str:
 def to_kana(text: str) -> str:
     """字（漢字・数字・記号まじり）→ ひらがなだけ。予定側と、whisper が漢字を混ぜた聞いた側の両方に使う。"""
     text = re.sub(r"\s+", "", text)
+    # whisper は「か月」を「ヶ月」「ケ月」「カ月」「箇月」と書く（09/06 14:4x: 「10ヶ月」で pykakasi が「ゖ」を出して !!）
+    text = re.sub(r"[ヶケカヵ箇]月", "か月", text)
     for k, v in _SYMBOL_YOMI.items():
         text = text.replace(k, v)
     kana = _kana_by_janome(text)
