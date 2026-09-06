@@ -117,6 +117,14 @@ def set_thumbnail(video_id: str, png: Path) -> None:
     svc().thumbnails().set(videoId=video_id, media_body=MediaFileUpload(str(png), mimetype="image/png")).execute()
 
 
+def update_meta(video_id: str, title: str, description: str, tags: list[str]) -> None:
+    """題・説明欄・tags だけを直す（videos.update 50単位。本は上げ直さない・予約もそのまま）。
+    09/07 05:5x（hourly）: 予約ずみの本の説明欄の1文（実の誤り）を、ID を変えずに直すために足した。"""
+    svc().videos().update(part="snippet", body={"id": video_id, "snippet": {
+        "title": title, "description": description, "tags": [t[:30] for t in tags][:15],
+        "categoryId": "27", "defaultLanguage": "ja", "defaultAudioLanguage": "ja"}}).execute()
+
+
 def make_private(video_id: str) -> None:
     """予約を外して private のまま残す（消さない。オーナー「消さなくて良いよ」）。"""
     svc().videos().update(part="status", body={"id": video_id, "status": {
