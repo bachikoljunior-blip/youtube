@@ -160,8 +160,23 @@ def loose(k: str) -> str:
     return k
 
 
+# whisper が範囲を「84~86さい」「84〜86」と圧縮して書く（実測 09/06 17:2x: 「84歳から86歳」→「84~86」で `!!`）。
+# 単位が後ろに付いていれば前の数にも配る（84さいから86さい）。付いていなければ「から」だけ足す
+_RANGE_UNIT = r"さい|ねん|かげつ|まんえん|えん|ぱーせんと|かい|にん|にち|ばい|わり"
+_RANGE = re.compile(r"([0-9０-９][0-9０-９,]*)\s*[~〜～\-ー]\s*([0-9０-９][0-9０-９,]*)(" + _RANGE_UNIT + r")?")
+# 「6倍」を whisper は「6x」と書く（実測 09/06 15:xx）。× は「かける」のまま（_SYMBOL_YOMI）
+_TIMES_X = re.compile(r"(?<=[0-9０-９])\s*[xXｘＸ](?![a-zA-Z])")
+
+
+def _range_sub(m: re.Match) -> str:
+    a, b, u = m.group(1), m.group(2), m.group(3) or ""
+    return f"{a}{u}から{b}{u}"
+
+
 def heard_kana(heard: str, yomi: dict[str, str]) -> str:
     heard = re.sub(r"[（(]\d+[)）]", "", heard)   # whisper が付ける「(4)」の番号（実測 09/06 コマ10）
+    heard = _TIMES_X.sub("ばい", heard)
+    heard = _RANGE.sub(_range_sub, heard)
     k = expected_kana(heard, yomi)   # whisper が漢字を混ぜても同じ道で仮名にする
     for a, b in _WHISPER_ISMS:
         k = k.replace(a, b)
@@ -250,9 +265,15 @@ def degenerate(heard: str, exp: str) -> bool:
 _PROMPT = "ひらがなだけでかきます。すうじもひらがなでかきます。"
 
 
-def check(s: Script, wavs: list[Path], size: str = "small") -> list[dict]:
-    """コマごとに {i, say, heard, exp, got, diffs}。diffs が空なら一致。"""
+def check(s: Script, wavs: list[Path], size: str = "small", escalate: bool = True) -> list[dict]:
+    """コマごとに {i, say, heard, exp, got, diffs}。diffs が空なら一致。
+
+    small で差が出たコマだけ medium で聞き直し、差が少ないほうを採る（`escalate`）。
+    実測 09/06 17:xx（hourly）: small の `!!` 3/11 は全部 whisper 側で、medium は 3つとも予定どおりに聞いた
+    （末尾の1語の欠落・1か月→1かけず・11年→11イネ）。TTS の誤読なら medium でも同じ差が残るので、隠れない。
+    medium を全コマの既定にしない理由: 2.5倍 遅く、`!!` は減らなかった（6/11。§4 (2)）。"""
     h = Hearer(size)
+    h2: Hearer | None = None
     rows = []
     for i, (seg, wav) in enumerate(zip(s.segments, wavs), 1):
         exp = expected_kana(seg.say, s.yomi)
@@ -261,8 +282,18 @@ def check(s: Script, wavs: list[Path], size: str = "small") -> list[dict]:
         if degenerate(heard, exp):
             heard, how = h.transcribe(wav, _PROMPT), size + "+prompt"
         if degenerate(heard, exp) and size != "medium":
-            heard, how = Hearer("medium").transcribe(wav), "medium"
+            h2 = h2 or Hearer("medium")
+            heard, how = h2.transcribe(wav), "medium"
         got = heard_kana(heard, s.yomi)
+        diffs = diff_spans(loose(exp), loose(got))
+        if diffs and escalate and size != "medium" and how != "medium":
+            h2 = h2 or Hearer("medium")
+            heard2 = h2.transcribe(wav)
+            got2 = heard_kana(heard2, s.yomi)
+            diffs2 = diff_spans(loose(exp), loose(got2))
+            if len(diffs2) < len(diffs) or (len(diffs2) == len(diffs) and not degenerate(heard2, exp)
+                                            and sum(map(len, map("".join, diffs2))) < sum(map(len, map("".join, diffs)))):
+                heard, got, diffs, how = heard2, got2, diffs2, f"{size}→medium"
         rows.append({"i": i, "say": seg.say, "heard": heard, "how": how,
-                     "exp": loose(exp), "got": loose(got), "diffs": diff_spans(loose(exp), loose(got))})
+                     "exp": loose(exp), "got": loose(got), "diffs": diffs})
     return rows

@@ -40,29 +40,74 @@ def _tokens(text: str) -> list[str]:
     return out
 
 
-def wrap(text: str, n: int) -> list[str]:
+_PUNCT = "、。」）"
+
+
+def _breaks(text: str) -> tuple[set[int], set[int]]:
+    """(折ってよい位置, 数字のかたまりの中の位置)。折ってよいのは janome の語の頭のうち、助詞・助動詞・非自立・接尾・
+    複合名詞の続き・句読点の前でない所と、数字のかたまりの両端。
+    実測 09/06 17:3x（hourly）: 字幕「国の決\nまりで」が語の途中で折れた（読めるので置いた）。"""
+    from janome.tokenizer import Tokenizer
+    global _tok
+    if _tok is None:
+        _tok = Tokenizer()
+    ok: set[int] = set()
+    pos = 0
+    prev = ("記号", "")
+    for tk in _tok.tokenize(text):
+        j = text.find(tk.surface, pos)
+        if j < 0:
+            break
+        pos = j + len(tk.surface)
+        p1, p2 = (tk.part_of_speech.split(",") + ["", ""])[:2]
+        glued = (p1 in ("助詞", "助動詞", "記号")          # 助詞・助動詞は前の語につく（国の|決まり ではなく 国の決まり）
+                 or p2 in ("非自立", "接尾")               # もらい続けた・教えてください・定期便
+                 or (p1 == "名詞" and prev[0] == "名詞")   # 複合名詞（健康保険料・ねんきん定期便）
+                 or prev == ("助詞", "終助詞"))            # janome が「ねんきん」を ねん(終助詞)+きん に割る
+        if j and not glued:
+            ok.add(j)
+        prev = (p1, p2)
+    inside: set[int] = set()
+    for m in _NUM.finditer(text):
+        ok.add(m.start()); ok.add(m.end())
+        inside.update(range(m.start() + 1, m.end()))
+    return {p for p in ok if p not in inside and 0 < p < len(text) and text[p] not in _PUNCT}, inside
+
+
+_tok = None
+
+
+def wrap_words(text: str, n: int, slack: int = 8) -> list[str]:
+    """語の切れ目で折る。切れ目が遠すぎて行が n-slack より短くなるときだけ、字で折る（数字のかたまりと句読点は守る）。"""
     if "\n" in text:
-        return [ln for part in text.split("\n") for ln in wrap(part, n)]
-    lines, cur = [], ""
-    for tok in _tokens(text):
-        if len(cur) + len(tok) > n and cur:
-            lines.append(cur)
-            cur = ""
-        cur += tok
-        if len(cur) >= n:
-            lines.append(cur)
-            cur = ""
-    if cur:
-        lines.append(cur)
-    # ぶら下がり: 行頭の「、。」を前の行へ
-    fixed: list[str] = []
-    for ln in lines:
-        if fixed and ln and ln[0] in "、。」）":
-            fixed[-1] += ln[0]
-            ln = ln[1:]
-        if ln:
-            fixed.append(ln)
-    return fixed
+        return [ln for part in text.split("\n") for ln in wrap_words(part, n, slack)]
+    brk, inside = _breaks(text)
+    lines, i = [], 0
+    while len(text) - i > n:
+        cands = [p for p in brk if i < p <= i + n]
+        p = max(cands) if cands else 0
+        if p - i < n - slack:
+            p = i + n
+            while p > i + 1 and (p in inside or text[p] in _PUNCT):
+                p -= 1
+        lines.append(text[i:p]); i = p
+    if i < len(text):
+        lines.append(text[i:])
+    return [ln for ln in lines if ln]
+
+
+def wrap(text: str, n: int, max_lines: int | None = None) -> list[str]:
+    """字幕・小さい字の折り返し。まず語の切れ目で折り、行数が `max_lines` を越えるときだけ字で折る（旧 09/05 の形）。"""
+    ws = wrap_words(text, n)
+    if all(len(ln) <= n for ln in ws) and (max_lines is None or len(ws) <= max_lines):
+        return ws
+    return wrap_chars(text, n)
+
+
+def wrap_chars(text: str, n: int) -> list[str]:
+    """字で折る（数字のかたまりは守る・句読点は行頭に置かない）。09/05 の形。旧の「行頭の句読点を前の行へ足す」は
+    行が n+1 字になっていた（実測 09/06 19:5x: 60字 の字幕で 17字 の行）。"""
+    return wrap_words(text, n, slack=0)
 
 
 def background(image: Path | None) -> Image.Image:
@@ -121,8 +166,16 @@ def slide(show: str, sub: str, say: str, i: int, n: int, image: Path | None, out
     # 字幕
     if say:
         # 64字 までは 16字×4行・54px。それ以上は 18字×4行・48px（say の上限 70字 が収まる）
-        chars, px = (SUB_CHARS, 54) if len(say) <= SUB_CHARS * 4 else (18, 48)
-        lines = wrap(say, chars)[:4]
+        # 16字×4行・54px に語で折って入るならそれ。入らなければ 18字×4行・48px（say の上限 70字 が収まる）。
+        # それでも 5行 になるなら字で折る（09/05 の形）。前は 64字 を越えた say だけ 18字 だった
+        chars, px = SUB_CHARS, 54
+        lines = wrap_words(say, chars)
+        if len(lines) > 4:
+            chars, px = 18, 48
+            lines = wrap_words(say, chars)
+        if len(lines) > 4:
+            lines = wrap_chars(say, chars)
+        lines = lines[:4]
         fnt = font(FONT_BOLD, px)
         lh = int(px * 1.35)
         box_h = lh * len(lines) + 50
