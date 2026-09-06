@@ -333,3 +333,6 @@
 {"at": "2026-09-06T22:11:56+09:00", "id": "CVXm-NyIhMA", "event": "measured", "views": 209, "likes": 0, "age_h": 180.2, "title": "マイホーム売却 取得費4,000万円で税額はいくらか #Shorts"}
 {"at": "2026-09-06T22:11:56+09:00", "id": "9WWpJUWjs4E", "event": "measured", "views": 260, "likes": 0, "age_h": 180.7, "title": "介護の上限140100円 3割でも届かない #Shorts"}
 {"at": "2026-09-06T22:11:56+09:00", "id": "a21yvpWHuRM", "event": "measured", "views": 92, "likes": 0, "age_h": 181.2, "title": "配当控除は1000万円で6.505ポイント差 #Shorts"}
+{"at": "2026-09-06T22:15:28+09:00", "id": "2026-09-07-kurisage-81sai-11kagetsu", "event": "built", "seconds": 92.0, "image": true, "chars": 473}
+{"at": "2026-09-06T22:20:03+09:00", "id": "2026-09-07-kurisage-81sai-11kagetsu", "event": "heard", "mismatched": 0, "model": "small", "mode": "kana", "diffs": [], "escalated": [7, 9]}
+{"at": "2026-09-06T22:20:35+09:00", "id": "2026-09-07-kurisage-81sai-11kagetsu", "event": "cold_read", "takeaway": "この動画は、年金受取を65歳から70歳に5年遅延させた場合、42%の増額が生涯続くメリットと、その損失分を回収するのに必要な年齢を計算している。", "unclear": ["ねんきん定期便とは何か（どのような書類か）", "税金と健康保険料がどの程度引かれるのか、具体的な金額", "42%という増額率がなぜその数字に設定されているのか", "この計算が全ての年金受給者に適用されるのか、条件があるのか"]}
