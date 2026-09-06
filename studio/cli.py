@@ -83,7 +83,8 @@ def cmd_build(a):
     ok = r["total"] <= MAX_SECONDS
     if not ok:
         print(f"  [!] {r['total']:.1f}秒 > {MAX_SECONDS}秒。say を削ること")
-    ledger("built", a.id, seconds=round(r["total"], 1), image=bool(img), chars=s.total_chars())
+    ledger("built", a.id, seconds=round(r["total"], 1), image=bool(img), chars=s.total_chars(),
+           scenes=[round(d, 1) for d in r["durations"]])   # 同じ本文でも焼くたびに ±3% 揺れる（09/06 22:1x 実測）。コマ単位で比べるため
     return 0 if ok else 1
 
 
