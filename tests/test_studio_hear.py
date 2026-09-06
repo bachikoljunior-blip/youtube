@@ -158,3 +158,15 @@ def test_聞き直しは_medium_で消えたら_prompt_を撃たない(monkeypat
     rows = hear.check(s, ["x.wav"], "small")
     assert rows[0]["diffs"] == [] and rows[0]["how"] == "small→medium"
     assert calls == [("small", False), ("medium", False)]
+
+
+def test_聞いた側の万よんは数字のときは畳まない():
+    """「11万4千円」→「114,000えん」を まんえんせん に畳んでいた（09/07 01:xx）。「まんよん」単独は 万円 の聞き違いのまま。"""
+    assert hear.heard_kana("114,000えん", {}) == "じゅういちまんよんせんえん"
+    assert hear.heard_kana("15まんよん", {}) == "じゅうごまんえん"
+
+
+def test_聞いた側の桁区切りの欠けは3桁に埋める():
+    """medium が 6万3千円 を「63,00 エーン」と書いた（09/07 00:5x hourly の申し送り）。213,000 のような正しい区切りはそのまま。"""
+    assert hear.heard_kana("63,00 エーン", {}).startswith("ろくまんさんぜん")
+    assert hear.heard_kana("213,000 エン", {}) == "にじゅういちまんさんぜんえん"

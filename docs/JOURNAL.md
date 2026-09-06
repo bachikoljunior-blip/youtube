@@ -114484,6 +114484,7 @@ ship は 1回 断られた（枠と決めの食い違い ＝ 4'）ので「枠�
 - `measure` 26本（1本目 `EkNqtkK49Bw` 14.8h で 127回・likes 0 ＝ 9.6h から +0。§7 の途中経過は METHOD に）。画像の注文 10件 全部 done。09/08 の注文を 00:5x に置いた。
 - あすの本 `2026-09-08-kuriage-80sai-10kagetsu`: 11コマ・450字・91.9秒。critique 5周（real 3→1→3→5→0）・冷読 5/5 一致・hear 9/11（TTS 誤読 0）・sheet.png 目視。中身は METHOD §11。
 - hear の実測: コマ5（数が密）を small も medium も数字の帯に崩し、medium＋prompt だけが 0差 → `hear.check` に段を足した。検査 `tests/test_studio_hear.py` +2（13件 通る）。
+- `heard_kana` の欠陥 2つ（merge のあと・01:3x）: `_MANEN` が「114,000えん」の「まんよん」を まんえん に畳んでいた（TTS が「4千」を落としても見えない穴 → 千・百・十 の前の「よん」は畳まない）。hourly の申し送り「63,00」（桁区切りの欠け）→ 3桁に埋める。検査 +2（15件）。hourly が同じ周に予約した 09/07 の本（`nQbVxuWpWw8`）の記録は merge で残した（METHOD §10 の末尾 → §11 の順）。
 - `origin/main` を枝の先頭へ早送り（3 commit 後ろ → 61d554d7。数秒）。
 
 ### 決めたこと
