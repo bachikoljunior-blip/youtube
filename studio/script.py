@@ -42,6 +42,11 @@ KANJI_RUN = re.compile(r"[一-龥々]+")
 # 小数（0.7・1.42）も声では「れいてんなな」になるので、声と画面に書かない —— 整数で言い換える
 # （1か月 0.7% → 10か月で 7%・1.42倍 → 42% 増）。説明欄には書いてよい。
 TEN = re.compile(r"点|[0-9０-９]\.[0-9０-９]")
+# `yomi`（customPronunciations）を Chirp3-HD が**無視した**語（実測 09/06 15:xx・optimizer。API は 200 で受けて既定の読みのまま）。
+# 既定の読みが正しくない・割れる語だけ挙げる: 裸の「額」→ ひたい（08/16 にオーナーが耳で見つけた）・額面 → ひたいめん・市場（いちば/しじょう）・
+# 辛い（からい/つらい）・十分（じゅっぷん/じゅうぶん）。yomi で守れないので **本文の語を変える**（額 → 金額・十分 → じゅうぶん）。
+# 「金額」「年額」「月額」のような熟語は辞書にあり正しく読む（09/06 17:xx の本で 金額 → きんがく を hear で確認）。
+YOMI_IGNORED = re.compile(r"(?<![一-龥])額(?![一-龥])|額面|市場|辛い|十分")
 
 
 def uncovered_kanji(say: str, yomi: dict[str, str]) -> list[str]:
@@ -130,6 +135,9 @@ class Script(BaseModel):
             # 「点」と小数は problems() の TEN が止める（hourly 09/06 14:4x）。ここは読みの側だけ
             if BARE_YEAR.search(s.say):
                 out.append(f"コマ{i} 裸の「年」＋数字: TTS が「とし」と読む（実測 09/05・09/06）。「1年で」「年に」に")
+            m = YOMI_IGNORED.search(s.say)
+            if m:
+                out.append(f"コマ{i} 「{m.group()}」は yomi を TTS が無視する語（実測 09/06）。金額・じゅうぶん のように語を変える")
         return out
 
 
