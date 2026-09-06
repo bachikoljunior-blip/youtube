@@ -40,9 +40,96 @@ def _tokens(text: str) -> list[str]:
     return out
 
 
+_GLUE_POS = ("助詞", "助動詞", "記号")     # 前の語にくっつける（行頭に来ない）
+_GLUE_SUB = ("非自立", "接尾")             # 2つ目の札がこれなら前の語にくっつける（もらい続けた・定期便）
+_GLUE_NEXT = ("接頭詞",)                   # 次の語にくっつける（約・毎）
+# janome が割る仮名まじりの1語（「ねんきん」→ ねん＋きん）。数字のかたまりと同じく1語として持つ
+_ATOM = re.compile(r"ねんきん定期便|ねんきんネット|ねんきん")
+_tok = None
+
+
+def _chunks(text: str) -> list[str]:
+    """語のかたまり（語＋助詞＋句読点）。行の途中で折らない単位。
+    実測 09/06 17:3x: 「国の決\nまりで」（16字で機械的に折ると語の途中で折れる）→ janome で語を切り、
+    助詞・助動詞・句読点は前の語に、接頭詞（約）は次の語にくっつける。数字のかたまりは _NUM のまま。"""
+    global _tok
+    if _tok is None:
+        from janome.tokenizer import Tokenizer
+        _tok = Tokenizer()
+    out: list[str] = []
+    pend = ""
+    # 数字のかたまりと、そのあいだの文字列（janome にかける）に分ける
+    runs: list[tuple[bool, str]] = []
+    i = 0
+    while i < len(text):
+        m = _NUM.match(text, i) or _ATOM.match(text, i)
+        if m and m.end() > i:
+            runs.append((True, m.group())); i = m.end()
+            continue
+        if runs and not runs[-1][0]:
+            runs[-1] = (False, runs[-1][1] + text[i])
+        else:
+            runs.append((False, text[i]))
+        i += 1
+    for k, (is_num, piece) in enumerate(runs):
+        if is_num:
+            out.append(pend + piece); pend = ""
+            continue
+        toks = [(t.surface, *t.part_of_speech.split(",")[:2]) for t in _tok.tokenize(piece)]
+        if k and runs[k - 1][0]:
+            # 数字の直後の助詞は、文脈が無いと接続詞に見える（「で」「なら」）。仮の数字を前に置いて切り、捨てる
+            toks = [(t.surface, *t.part_of_speech.split(",")[:2]) for t in _tok.tokenize("3" + piece)]
+            if toks and toks[0][0] == "3":
+                toks = toks[1:]
+            elif toks and toks[0][0].startswith("3"):    # 仮の数字が次の語とくっついた（3多く など）
+                toks[0] = (toks[0][0][1:], toks[0][1], toks[0][2])
+        for surface, pos, sub in toks:
+            if pos in _GLUE_NEXT:
+                pend += surface
+            elif (pos in _GLUE_POS or sub in _GLUE_SUB) and out and not pend:
+                out[-1] += surface
+            else:
+                out.append(pend + surface); pend = ""
+    if pend:
+        out.append(pend)
+    return out
+
+
 def wrap(text: str, n: int) -> list[str]:
+    """語の途中で折らない。長さ n を越えるかたまりだけ字で折る。"""
     if "\n" in text:
         return [ln for part in text.split("\n") for ln in wrap(part, n)]
+    lines, cur = [], ""
+    for ch in _chunks(text):
+        if len(ch) > n:
+            if cur:
+                lines.append(cur); cur = ""
+            lines.extend(_wrap_chars(ch, n)[:-1])
+            cur = _wrap_chars(ch, n)[-1]
+            continue
+        if len(cur) + len(ch) > n and cur:
+            lines.append(cur)
+            cur = ""
+        cur += ch
+    if cur:
+        lines.append(cur)
+    return _hang(lines)
+
+
+def _hang(lines: list[str]) -> list[str]:
+    # ぶら下がり: 行頭の「、。」を前の行へ
+    fixed: list[str] = []
+    for ln in lines:
+        if fixed and ln and ln[0] in "、。」）":
+            fixed[-1] += ln[0]
+            ln = ln[1:]
+        if ln:
+            fixed.append(ln)
+    return fixed
+
+
+def _wrap_chars(text: str, n: int) -> list[str]:
+    """字で折る（前の形。数字のかたまりだけ守る）。語で折ると行が足りないときの逃げ道。"""
     lines, cur = [], ""
     for tok in _tokens(text):
         if len(cur) + len(tok) > n and cur:
@@ -54,15 +141,7 @@ def wrap(text: str, n: int) -> list[str]:
             cur = ""
     if cur:
         lines.append(cur)
-    # ぶら下がり: 行頭の「、。」を前の行へ
-    fixed: list[str] = []
-    for ln in lines:
-        if fixed and ln and ln[0] in "、。」）":
-            fixed[-1] += ln[0]
-            ln = ln[1:]
-        if ln:
-            fixed.append(ln)
-    return fixed
+    return _hang(lines)
 
 
 def background(image: Path | None) -> Image.Image:
@@ -121,8 +200,14 @@ def slide(show: str, sub: str, say: str, i: int, n: int, image: Path | None, out
     # 字幕
     if say:
         # 64字 までは 16字×4行・54px。それ以上は 18字×4行・48px（say の上限 70字 が収まる）
-        chars, px = (SUB_CHARS, 54) if len(say) <= SUB_CHARS * 4 else (18, 48)
-        lines = wrap(say, chars)[:4]
+        # 語で折ると行が増えるので、4行に収まる字数まで 16 → 18 → 20 と広げ、それでも溢れたら字で折る
+        for chars, px in ((SUB_CHARS, 54), (18, 48), (20, 44)):
+            lines = wrap(say, chars)
+            if len(lines) <= 4:
+                break
+        else:
+            chars, px = (SUB_CHARS, 54) if len(say) <= SUB_CHARS * 4 else (18, 48)
+            lines = _wrap_chars(say, chars)[:4]
         fnt = font(FONT_BOLD, px)
         lh = int(px * 1.35)
         box_h = lh * len(lines) + 50
