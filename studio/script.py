@@ -22,6 +22,44 @@ MAX_TOTAL_CHARS = 480   # rate 1.2 で実測 5.16字/秒（09/05・458字→88.8
 # 書き手が人間のふりをする言い方（収益化ポリシー: AI が人間の専門家を装って sensitive topic を語る形）
 HUMAN_CLAIM = re.compile(r"(私は|わたしは)?(元|現役の)?(税理士|社労士|社会保険労務士|FP|ファイナンシャルプランナー|経理|人事)(として|です|でした|を[0-9０-９]+年)")
 
+# 読みの守り（オーナー 09/06「漢字の読み変なのいっぱいだよ。今後一個も出ないように考えて」）。
+# hear（whisper → pykakasi）は、TTS が誤読しても whisper がその漢字を書けば両側が同じ仮名になり **見えない**
+# （hear.py の冒頭に書いてある盲点。実測: hear 11/11 の本をオーナーが聞いて「読み変なのいっぱい」）。
+# だから守りは TTS の側に置く: **声の中の漢字の並びは、全部 `yomi` で読みを固定する**（customPronunciations）。
+# 例外は (a) 数字の直後の助数詞（65歳・15万円・5年・60か月）、(b) 送り仮名つきの動詞・形容詞の語幹（増える・待つ・多く）。
+# (b) は送り仮名で読みが決まるので固定しなくてよい（固定できない —— TTS が送り仮名つきの phrase を拒む）。
+# 語幹はここに足す（足すときは、その送り仮名で読みが1つに決まる字だけ。「先に」「後で」「月に」「得か」「額は」は
+# 送り仮名ではなく助詞なので、ここに入れない —— それらは yomi か、ひらがな）。
+COUNTER_RUN = re.compile(r"(?<=[0-9０-９])(万円|千円|万|千|百|円|歳|年|倍|日|回|人|か月)")
+VERB_STEMS = {"増", "待", "多", "割", "足", "続", "迷", "教", "生", "追", "受", "取", "戻", "同", "引", "決", "遅",
+              "少", "長", "高", "安", "早", "働", "払", "見", "知", "言", "考", "選", "始", "終", "変", "違",
+              "使", "出", "入", "作", "持", "買", "売", "上", "下", "減", "残", "確", "亡", "住", "越", "超",
+              "比", "調", "書", "読", "聞", "思", "立", "止", "届", "落", "抜", "払", "貸", "借", "返"}
+KANJI_RUN = re.compile(r"[一-龥々]+")
+# 「点」（オーナー 09/05〜06「ナレーションが点って言ってるとこだよ」「点って漢字で動画に出てる」）。
+# 小数（0.7・1.42）も声では「れいてんなな」になるので、声と画面に書かない —— 整数で言い換える
+# （1か月 0.7% → 10か月で 7%・1.42倍 → 42% 増）。説明欄には書いてよい。
+TEN = re.compile(r"点|[0-9０-９]\.[0-9０-９]")
+
+
+def uncovered_kanji(say: str, yomi: dict[str, str]) -> list[str]:
+    """yomi でも助数詞でも語幹でもない漢字の並びを返す（空なら、声の漢字は全部 読みが決まっている）。"""
+    keys = sorted((k for k in yomi if re.fullmatch(r"[一-龥々]+", k)), key=len, reverse=True)
+    text = COUNTER_RUN.sub(lambda m: "　" * len(m.group()), say)   # 助数詞を消す（幅を保つ）
+    bad = []
+    for m in KANJI_RUN.finditer(text):
+        run = m.group()
+        rest = run
+        for k in keys:
+            rest = rest.replace(k, "")
+        if not rest:
+            continue
+        stem_ok = (len(rest) == 1 and rest in VERB_STEMS and run.endswith(rest)
+                   and m.end() < len(text) and re.match(r"[ぁ-ゖ]", text[m.end()]))
+        if not stem_ok:
+            bad.append(run)
+    return bad
+
 
 class Segment(BaseModel):
     say: str = Field(..., description="声で読む文。ふつうの話し言葉。")
@@ -59,6 +97,12 @@ class Script(BaseModel):
                 out.append(f"コマ{i} show が {len(s.show)}字（{MAX_SHOW}まで）")
             if HUMAN_CLAIM.search(s.say):
                 out.append(f"コマ{i} 人間の専門家を名乗っている: {s.say[:30]}")
+            for run in uncovered_kanji(s.say, self.yomi):
+                out.append(f"コマ{i} 「{run}」の読みが固定されていない（yomi に足すか、ひらがなで書く）")
+            for field in ("say", "show", "sub"):
+                m = TEN.search(getattr(s, field))
+                if m:
+                    out.append(f"コマ{i} {field} に「{m.group()}」（点・小数）。整数で言い換える")
         if self.total_chars() > MAX_TOTAL_CHARS:
             out.append(f"合計 {self.total_chars()}字（{MAX_TOTAL_CHARS}まで。60秒に収まらない）")
         if "#Shorts" not in self.title and "#shorts" not in self.title:
@@ -71,6 +115,8 @@ class Script(BaseModel):
                 out.append(f"yomi の語「{k}」が本文に無い")
             if not re.fullmatch(r"[ぁ-ゖー]+", v):
                 out.append(f"yomi「{k}」の読みがひらがなでない: {v}")
+            if not re.fullmatch(r"[一-龥々]+", k):
+                out.append(f"yomi の語「{k}」に仮名が混ざっている（TTS が拒むので送られない ＝ 固定されていない）。本文をひらがなに")
         if not self.takeaway:
             out.append("takeaway が空")
         return out
