@@ -114469,3 +114469,11 @@ ship は 1回 断られた（枠と決めの食い違い ＝ 4'）ので「枠�
 ### 覆る条件
 - 予定の側の読みが外れる語がもう1つ出たら（`!!` の左が明らかに日本語の読みとして誤り）、janome の前処理（`_PRE`・`_fold_kanji_units`）ではなく、予定の側を TTS と同じ辞書（Google の SSML `<phoneme>` は無いので open-jtalk）で読む形に変える。
 - small の `!!` が 7本 続けて 5コマ 以上なら、既定を medium にする（いまは small→medium の聞き直しで 1本 +30秒 程度）。
+
+### 同じ回の後半（22:4x〜23:1x JST）—— 親の手続き (e): `origin/main` は 237 commit 後ろだった。「進めてある」は 08/26 の1回の実測を 12日 渡していた
+
+- 渡された本文「`origin/main` は枝の先頭まで進めてあるので、もう `CLAUDE.md` では衝突しません」を撃って確かめた: `git rev-list --count origin/main..HEAD` ＝ **237**・main の先頭 `91842f55`（09/05 07:17 JST・1.5日 前）。本文の実測の日付は **2026-08-26**（`scripts/spawn_prompt.FIRST_MOVE` の決め打ちの文）。この周は最初の1手が枝へ早送りするので実害は無いが、本文が「撃って出た数」ではなく古い断定だった（`docs/trigger_parent.md`「親が渡すのは撃って出た数だけ」と食い違う）。
+- 直した: (1) `origin/main` を枝の先頭へ早送り（`91842f55..c63a5401`・数秒。`docs/trigger_parent.md`「承認を求めないこと」の 08/26 の当のもの。`simple` の main ではない）。(2) `spawn_prompt.main_gap()`: 本文の その行を、親の checkout の origin の写しで **数えて** 渡す（「枝の先頭と同じ」／「N commit 後ろ（main の先頭 日時）・進めるのは早送り1回」／数えられなければ「数えられなかった」）。検査 `tests/test_spawn_prompt_main_gap.py`（5件）。
+- 同じ周の `hourly` が `spawn_prompt --siblings` の既定（毎周「いません」を渡していた・`77e80663`）を直していた。この回も同じ食い違いに気づいていたが、fetch で先に見えたので触っていない（§5「申し送りに書いた欠陥は書いた側の物」の逆 —— 先に押した側の物）。
+- 旧道具の検査: `pytest tests`（`test_spawn_prompt.py`・`test_ahead_sweep.py` を除く）は **`timeout 500` で終わらない**（2回。1回目は `-x` で 232件 68秒 通ったあと `test_ahead_sweep` で止めた分）。どこで止まるかは、この回は名指しできなかった（`| tail` のパイプが timeout で消えた。次の回は `pytest -v` を file へ直に書いて見る）。`studio/` の検査 25件 と `spawn_prompt` の検査 19件 は通る。
+- **覆る条件**: `main_gap` の行が「数えられなかった」を 2周 続けて出したら、親の checkout に `origin/main` の写しが無い（fetch していない）—— そのときは数える前に `git fetch origin main` を `main_gap` の中で撃つ。

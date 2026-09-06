@@ -120,11 +120,36 @@ AUTHORITY = """
 FIRST_MOVE = """
 
 **最初の1手: `git fetch origin` → `git merge origin/<<branch>>`**（早送りで終わるはずです・数秒）。
-`origin/main` は枝の先頭まで進めてあるので、**もう `CLAUDE.md` では衝突しません。**
-それでも撃つのは、空振りが数秒なのに対し、**外していたときは読む手順そのものが古くなる**から ——
-実測 2026-08-26 06:02 のサブは、`docs/trigger_main.md` が**無い**所から始まっています
-（`main` を進めたのは、その45分 後）。競合したら **merge で相手の作業を残すこと。捨てないこと。**
+<<main_gap>>
+競合したら **merge で相手の作業を残すこと。捨てないこと。**
 """
+
+
+def main_gap(root: Path | None, branch: str) -> str:
+    """`origin/main` が枝の先頭から何 commit 後ろかを、この checkout の origin の写しで数えて1行にする。
+
+    09/06 22:5x（optimizer）まで、ここは「`origin/main` は枝の先頭まで進めてあるので、もう `CLAUDE.md` では
+    衝突しません」と**決め打ちで**言っていた。実物は 09/05 07:17 JST の `91842f55` で、枝の先頭から **237 commit** 後ろ
+    （1.5日）。08/26 の1回の実測を 12日 そのまま渡していた。親が渡すのは撃って出た数だけ（`docs/trigger_parent.md`）なので、
+    数えて渡す。数えられなければ「数えられなかった」と言う（無言で古い断定に戻さない）。"""
+    import os
+    import subprocess
+    try:
+        kw = {"cwd": str(root)} if root else {}
+        n = subprocess.run(["git", "rev-list", "--count", f"origin/main..origin/{branch}"],
+                           capture_output=True, text=True, check=True, timeout=20, **kw).stdout.strip()
+        when = subprocess.run(["git", "log", "-1", "--format=%cd", "--date=format-local:%m/%d %H:%M", "origin/main"],
+                              capture_output=True, text=True, check=True, timeout=20,
+                              env={**os.environ, "TZ": "Asia/Tokyo"}, **kw).stdout.strip()
+    except Exception:  # noqa: BLE001
+        return ("`origin/main` が枝の先頭から何 commit 後ろかは、この checkout では数えられなかった"
+                "（`git rev-list --count origin/main..origin/<<branch>>` が失敗）。")
+    n = int(n or 0)
+    if n == 0:
+        return f"`origin/main` は枝の先頭と同じ（main の先頭 {when} JST・この checkout の origin の写しで数えた）。"
+    return (f"`origin/main` は枝の先頭から **{n} commit** 後ろ（main の先頭 {when} JST・この checkout の origin の写しで数えた）。"
+            f" 進めるのは早送り1回 `git push origin origin/<<branch>>:main`（09/06 22:5x 実測: 237 commit ぶんで数秒。"
+            f"`docs/trigger_parent.md`「承認を求めないこと」の当のもの）。")
 
 
 #: **停止中に渡す先頭の段**（2026-08-30。オーナーが `origin/main` へ直接 push した8件）。
@@ -540,7 +565,7 @@ def build(kind: str, note: str = "", siblings: list[str] | None = None,
         "note": note,
         "only": only,
         "note_block": note_block,
-        "first_move": FIRST_MOVE.strip(),
+        "first_move": FIRST_MOVE.strip().replace("<<main_gap>>", main_gap(root, branch)),
         "siblings_block": _siblings_block(list(siblings or [])),
         "clock_block": _clock_block(live=live_clock),
         "lead": (tpl["lead-only"].replace("<<only>>", only) if only
@@ -567,7 +592,7 @@ def build(kind: str, note: str = "", siblings: list[str] | None = None,
     # `<<lead>>` の中へ置いた瞬間、上の行ごとの置換を通らなくなり、
     # 出来上がった本文に `<<first_move>>` の6文字がそのまま残りました。
     # **段まるごと差し込む口の中に置いた差し込み口は、全部ここで当て直すこと。**
-    text = text.replace("<<first_move>>", FIRST_MOVE.strip())
+    text = text.replace("<<first_move>>", filled["first_move"])
     text = text.replace("<<branch>>", branch)      # FIRST_MOVE の中にも枝名がある
     # **停止中は、それを本文のいちばん先頭へ。** 型の途中だと後ろ回しになります。
     text = _pause_block(root) + text

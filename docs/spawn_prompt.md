@@ -2,6 +2,7 @@
 
 `python scripts/spawn_prompt.py --kind <役>` がこの型を組み立てる。**文言はここにだけ持つ。**
 `<<first_move>>`（枝を合わせる1手）と `<<siblings_block>>`（同じ周に走る相手）は道具が埋める。
+`<<first_move>>` の中の `origin/main` の行は、親の checkout で **数えて** 埋める（`spawn_prompt.main_gap()`。09/06 22:5x まで「進めてある」の決め打ちで、実物は 237 commit 後ろだった —— `docs/JOURNAL.md` 同時刻）。
 
 手順の正本は **`docs/METHOD.md`**。ここには「それを読め」と、役の違いだけを書く。
 
