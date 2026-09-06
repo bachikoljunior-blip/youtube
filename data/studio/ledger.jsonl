@@ -196,3 +196,5 @@
 {"at": "2026-09-06T14:37:27+09:00", "id": "2026-09-07-kurisage-81sai-11kagetsu", "event": "cold_read", "takeaway": "年金を65歳からもらい始めるか70歳まで遅延させるかは、84～86歳以上まで生きるかどうかで、どちらが得かが決まる。", "unclear": ["ねんきん定期便", "10か月おくらせるごとに7%増える仕組みの詳細", "税金と保険料の具体的な計算方法"]}
 {"at": "2026-09-06T14:38:38+09:00", "id": "2026-09-07-kurisage-81sai-11kagetsu", "event": "critique", "understand": 3, "n_real": 3, "done": false}
 {"at": "2026-09-06T14:41:26+09:00", "id": "2026-09-07-kurisage-81sai-11kagetsu", "event": "built", "seconds": 92.7, "image": true, "chars": 480}
+{"at": "2026-09-06T14:44:46+09:00", "id": "2026-09-07-kurisage-81sai-11kagetsu", "event": "built", "seconds": 93.8, "image": true, "chars": 478}
+{"at": "2026-09-06T14:45:44+09:00", "id": "2026-09-07-kurisage-81sai-11kagetsu", "event": "heard", "mismatched": 0, "model": "small"}
