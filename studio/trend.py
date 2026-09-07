@@ -60,6 +60,50 @@ def _growth(pts: list[dict]) -> str:
     return f"   [直近 {dv:+d}回 / {dh:.1f}h]"
 
 
+#: **再生が1度も増えていない時間帯**（2026-09-08 04:4x JST・optimizer・Opus に台帳から数えた）。
+#:
+#: §7 は 10:2x・14:2x・16:3x・00:5x と、平らな点から「止まった／絞られている」を繰り返し引いてきた。
+#: `_growth()` は「直近の2点」を出すだけなので、**その2点がどの時間帯に落ちたか**は見えていない。
+#: 台帳の `measured` の連続する2点 549組 を刻で分けた実測:
+#:
+#:     02:00〜10:00 JST に落ちた2点目   伸びた **0組** ／ 平ら 178組（**178/178**）
+#:     それ以外                          伸びた 15組 ／ 平ら 356組
+#:
+#: **＝ この帯で測った回は、何を見ても平らです。** 04:4x のこの回も 15本 全部 +0 だった。
+#:
+#: **交絡を先に書く（これを書かずに引くのが §7 の踏んだ形そのもの）**: このチャンネルは
+#: **10:00 JST に公開する**ので、「2点目が 02〜10時」は「その本の齢が 16〜19h か 40〜43h か 64〜67h」と
+#: **完全に重なっています**。齢 10h 未満の本がこの帯で測られたことは1度も無い ＝
+#: **刻のせいなのか齢のせいなのかは、この台帳からは分けられません。**
+#: 分けるには公開の刻を変えた本が要る（§7 の「時刻 10:00」の行）。
+#:
+#: **それでも手は決まります**: 原因がどちらでも、**この帯の回は伸びを読めない**。
+#: だから数を並べるだけにして、「止まった」と書かないこと。
+#: **覆る条件**: この帯で伸びた組が 1つでも出たら、この註の 178/178 は破れる（数は毎回 台帳から数え直すので、
+#: 印字のほうは自動で追随する）。公開の刻を変えた本が出たら、交絡が解けるので分けて数え直すこと。
+DEAD_START, DEAD_END = 2, 10
+
+
+def dead_window(rows: list[dict]) -> tuple[int, int, int, int]:
+    """`measured` の連続する2点を、2点目の刻で「02〜10時 JST」と「それ以外」に分け、
+    それぞれ（伸びた組, 全体の組）を数える。**写しを持たず、毎回 台帳から数える。**"""
+    ser = series(rows)
+    nm = nt = om = ot = 0
+    for pts in ser.values():
+        for a, b in zip(pts, pts[1:]):
+            va, vb = a.get("views"), b.get("views")
+            if va is None or vb is None:
+                continue
+            moved = int(vb) - int(va) > 0
+            if DEAD_START <= _at(b).hour < DEAD_END:
+                nt += 1
+                nm += moved
+            else:
+                ot += 1
+                om += moved
+    return nm, nt, om, ot
+
+
 def lines(rows: list[dict], within_h: float = 24 * 3, now: dt.datetime | None = None) -> list[str]:
     now = now or now_jst()
     mine = ours(rows)
@@ -81,6 +125,14 @@ def lines(rows: list[dict], within_h: float = 24 * 3, now: dt.datetime | None = 
     if not out:
         out.append("（台帳に、この日数のうちに公開された本の measured がありません）")
     out.append("平らは「止まった」ではない —— 実測は studio/trend.py の註。齢の浅い1点で本を比べないこと。")
+    if DEAD_START <= now.hour < DEAD_END:
+        nm, nt, om, ot = dead_window(rows)
+        out.append(
+            f"**いまは {DEAD_START:02d}:00〜{DEAD_END:02d}:00 JST ＝ この台帳で再生が伸びたことのない帯です**"
+            f"（この帯の2点組 {nm}/{nt} が伸びた・それ以外は {om}/{ot}）。"
+            "**この回の「平ら」からは、止まったかどうかを読めません。**"
+            "数を並べるだけにして、判定は帯の外の回へ渡すこと（交絡は studio/trend.py の註 —— "
+            "公開が 10:00 JST なので、この帯は「齢 16〜19h／40〜43h」と重なっており、刻と齢を分けられません）。")
     return out
 
 

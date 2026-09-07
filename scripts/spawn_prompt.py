@@ -168,8 +168,15 @@ def main_gap(root: Path | None, branch: str) -> str:
     if n == 0:
         return f"`origin/main` は枝の先頭と同じ（main の先頭 {when} JST・この checkout の origin の写しで数えた）。"
     return (f"`origin/main` は枝の先頭から **{n} commit** 後ろ（main の先頭 {when} JST・この checkout の origin の写しで数えた）。"
-            f" 進めるのは早送り1回 `git push origin origin/<<branch>>:main`（09/06 22:5x 実測: 237 commit ぶんで数秒。"
-            f"`docs/trigger_parent.md`「承認を求めないこと」の当のもの）。")
+            f" **この数は「立てた瞬間」のもので、あなたが読むころには古いことがあります** —— "
+            f"実測 2026-09-08 04:4x: 親は **1** と数えて渡したが、サブが最初の merge のあとに数え直したら **0** だった"
+            f"（相手のサブが周の 3分後 に main まで押していた）。"
+            f" → **merge のあと `git rev-list --count origin/main..HEAD` で数え直すこと。0 でなければ** "
+            f"早送り1回 `git push origin origin/<<branch>>:main`（09/06 22:5x 実測: 237 commit ぶんで数秒。"
+            f"`docs/trigger_parent.md`「承認を求めないこと」の当のもの）。**0 なら押さない。**"
+            f" これは 12:4x に外した `merge-base --is-ancestor` とは**別**で、あちらは同じ古い ref に同じ問いを訊き直す"
+            f"（必ず同じ答え）のに対し、こちらは**あなたが fetch した後の `origin/main`** ＝ 親の写しより新しい別の物を見ます"
+            f"（実際に 1 対 0 と答えが割れました）。")
 
 
 #: **停止中に渡す先頭の段**（2026-08-30。オーナーが `origin/main` へ直接 push した8件）。

@@ -121,12 +121,41 @@ def test_出口が2つ以上ある():
     assert len(clarity.OUTCOMES) >= 2
 
 
-def test_報告は_n_を必ず添える():
+def test_報告は_n_を必ず添える(tmp_path, monkeypatch):
+    """**`LEDGER` を借り物に差し替えてから撃つこと**（2026-09-08 04:4x・optimizer・Opus に踏んだ）。
+
+    `report_lines()` は中で `record()` を呼び、**本物の `data/clarity.jsonl` に1行 足します。**
+    差し替えないと、**検査を走らせた回が、判定の台帳に観測を1つ積みます** ——
+    しかも `streak()` が数えているのは「**n の増えた別々の回**」なので、
+    検査の実行が `PROMOTE_STREAK`（2）を進め、**物差しを `script_writer` へ昇格させる側に効きます。**
+    実測: この回に `pytest tests/` を撃ったら `data/clarity.jsonl` に
+    `{"at": "2026-09-07T19:53:22+00:00", "n": 116, ...}` が生えた（過去にも 09/02・09/04 の 2行。
+    どちらも門は越えていなかったので昇格には至っていない）。**検査が正本を書き換えないこと。**
+
+    **覆る条件**: `record()` の呼び出しが `report_lines()` から出て、撃つ側が明示で呼ぶ形になったら、
+    この差し替えは要らなくなる（そのときは `src/clarity.py` の註と一緒に外す）。
+    """
+    monkeypatch.setattr(clarity, "LEDGER", tmp_path / "clarity.jsonl")
     lines = "\n".join(clarity.report_lines())
     assert "本" in lines
     # 数が出る回は、必ず陽性対照と門も出る
     if "陽性対照" in lines:
         assert "rho" in lines
+
+
+def test_検査は判定の台帳を書き換えない(tmp_path, monkeypatch):
+    """**本物の `data/clarity.jsonl` が、この検査ファイルを走らせても1行も増えないこと。**
+
+    上の註の当のもの。`report_lines()` を借り物の `LEDGER` で撃ち、
+    **本物の行数が前後で変わらない**ことを見る（差し替えを外すと、ここが落ちる）。
+    """
+    real = ROOT / "data" / "clarity.jsonl"
+    before = real.read_text(encoding="utf-8") if real.exists() else ""
+    fake = tmp_path / "clarity.jsonl"
+    monkeypatch.setattr(clarity, "LEDGER", fake)
+    clarity.report_lines()
+    after = real.read_text(encoding="utf-8") if real.exists() else ""
+    assert after == before, "検査が判定の台帳を書き換えた（`LEDGER` の差し替えが効いていない）"
 
 
 def test_陽性対照が生きている():

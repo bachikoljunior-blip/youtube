@@ -65,3 +65,33 @@ def test_写しには数を焼き込まない(tmp_path, monkeypatch):
     # 立てる瞬間の本文（CLI）には数えた行が入ること
     live = spawn_prompt.build("hourly")
     assert "この checkout の origin の写しで数えた" in live or "数えられなかった" in live
+
+
+def test_数を渡すときは数え直させる(monkeypatch):
+    """**親が数えた数は、サブが読むころには古い**（2026-09-08 04:4x・optimizer・Opus に実測）。
+
+    親は立てる瞬間に自分の checkout で `origin/main..origin/<枝>` を数え、その数を本文へ焼く。
+    しかしサブが本文を読むのは **その後**で、そのあいだに**相手のサブ**が周の 3分後 に押す
+    （§5「相手のその回の最初の押しは周の 3分後」）。実測: 親は **1 commit 後ろ**と渡したが、
+    サブが最初の merge のあとに数え直したら **0**（`origin/main` は `906ed2d2`＝相手のサブの押しで先に進んでいた）。
+    それでも本文は「進めるのは早送り1回 `push`」と**無条件で**言っていたので、サブは押す物が無いのに押しにいく。
+
+    **これは 2026-09-07 12:4x に外した `merge-base --is-ancestor` の逆**である。
+    あちらは `merge` と**同じ古い ref に同じ述語**を訊き直すので必ず同じ答えを返した（確かめる力が無い）。
+    こちらは**サブが fetch した後の `origin/main`** ＝ 親の写しとは別の、より新しい物を見るので、
+    **実際に答えが割れた**（1 対 0）。「確かめる手を足すときは、それが元の手と違う物を見ているかを先に撃つ」
+    （§5 の教訓の形）を撃った上で足している。
+
+    **覆る条件**: 親が「サブが最初の fetch を終えたあと」に数を渡せる形になったら
+    （いまは立てる瞬間にしか渡せない）、数え直しは要らなくなるのでこの検査を消してよい。
+    """
+    monkeypatch.setattr(subprocess, "run", lambda cmd, **kw: subprocess.CompletedProcess(
+        cmd, 0, stdout="1\n" if "rev-list" in cmd else "09/08 03:09\n", stderr=""))
+    line = spawn_prompt.main_gap(ROOT, "claude/x")
+    # 数はそのまま渡す（親が渡すのは撃って出た数だけ）
+    assert "1 commit" in line
+    # が、押す前に数え直させること
+    assert "rev-list --count origin/main..HEAD" in line
+    assert "0 でなければ" in line and "0 なら押さない" in line
+    # 「無条件に押せ」に戻っていないこと
+    assert "進めるのは早送り1回" not in line
