@@ -33,27 +33,66 @@ def channel() -> dict:
             **{k: int(v) for k, v in ch["statistics"].items() if isinstance(v, str) and v.isdigit()}}
 
 
-def recent_videos(limit: int = 60) -> list[dict]:
-    """新しい順。status（private/public・publishAt）と再生数つき。"""
+def _row(v: dict) -> dict:
+    st = v["status"]
+    return {"id": v["id"], "title": v["snippet"]["title"], "privacy": st["privacyStatus"],
+            "publish_at": st.get("publishAt"), "published_at": v["snippet"]["publishedAt"],
+            "duration": v.get("contentDetails", {}).get("duration", ""),
+            "views": int(v.get("statistics", {}).get("viewCount", 0)),
+            "likes": int(v.get("statistics", {}).get("likeCount", 0))}
+
+
+_ALL: list[dict] | None = None
+
+
+def all_videos(refresh: bool = False) -> list[dict]:
+    """**チャンネルの全本**（新しく上げた順・ID で重複を落とす）。同じ回では1度だけ引く。
+
+    755本 で playlistItems 16 + videos.list 16 ＝ **約 32単位**（日枠 10,000）。
+
+    **なぜ「上げた順の先頭 N本」では駄目か**（2026-09-07 16:4x・optimizer・Opus が実測）:
+    uploads の並びは**上げた順**で、**公開した順ではない**。08/16〜08/19 に上げて private のまま
+    置いてあった旧作りの本に、あとから publishAt が付いて公開されると、その本は
+    uploads の 690番目あたりに居るので `recent_videos(60)` には**永久に入らない**。
+    実測: 09/05 に 5本・09/06 に 8本・09/07 に 1本（`PhQ2KvuQASQ` 09:00・73回）が
+    こうして公開されていたのに、`status` の「きょうの枠」にも「直近 公開 10本」にも
+    出ず、`measure` は 1行も台帳に書いていなかった（6本 とも measured 0行）。
+    §6 の `scheduled_all()` は 09/06 02:1x に同じ穴を private 側だけ塞いだもので、
+    **public 側は空いたままだった。**
+    """
+    global _ALL
+    if _ALL is not None and not refresh:
+        return _ALL
     up = channel()["uploads"]
-    ids, tok = [], None
-    while len(ids) < limit:
+    ids, seen, tok = [], set(), None
+    while True:
         r = svc().playlistItems().list(part="contentDetails", playlistId=up, maxResults=50, pageToken=tok).execute()
-        ids += [i["contentDetails"]["videoId"] for i in r["items"]]
+        for i in r["items"]:
+            vid = i["contentDetails"]["videoId"]
+            if vid not in seen:
+                seen.add(vid)
+                ids.append(vid)
         tok = r.get("nextPageToken")
         if not tok:
             break
     out = []
     for i in range(0, len(ids), 50):
         r = svc().videos().list(part="snippet,status,statistics,contentDetails", id=",".join(ids[i:i + 50])).execute()
-        for v in r["items"]:
-            st = v["status"]
-            out.append({"id": v["id"], "title": v["snippet"]["title"], "privacy": st["privacyStatus"],
-                        "publish_at": st.get("publishAt"), "published_at": v["snippet"]["publishedAt"],
-                        "duration": v["contentDetails"]["duration"],
-                        "views": int(v["statistics"].get("viewCount", 0)),
-                        "likes": int(v["statistics"].get("likeCount", 0))})
+        out += [_row(v) for v in r["items"]]
+    _ALL = out
     return out
+
+
+def published(within_h: float | None = None) -> list[dict]:
+    """**公開ずみの本を、公開した順（新しい順）に**。`within_h` を渡すと その齢までに絞る。
+
+    「直近 公開 N本」も `measure` も、**上げた順ではなくこの順で選ぶこと**（上の註）。
+    """
+    rows = [v for v in all_videos() if v["privacy"] == "public"]
+    rows.sort(key=when, reverse=True)
+    if within_h is None:
+        return rows
+    return [v for v in rows if (now_jst() - when(v)).total_seconds() / 3600 <= within_h]
 
 
 def when(v: dict) -> dt.datetime:
@@ -64,33 +103,23 @@ def when(v: dict) -> dt.datetime:
 def scheduled_all() -> list[dict]:
     """**チャンネルの全本**のうち、publishAt が付いていて まだ public でない本（＝予約）。新しい順。
 
-    `recent_videos(60)` だけを見ていると見えない: 実測 2026-09-06 00:01 JST、旧 `ahead_sweep.py` が
+    上げた順の先頭 N本 だけを見ていると見えない: 実測 2026-09-06 00:01 JST、旧 `ahead_sweep.py` が
     08/16〜08/19 に上げた private の本 8本（uploads の 690番目あたり）に きょうの publishAt を打ち、
-    `status` は「きょうの枠: 空」と印字した。752本 で playlistItems 16 + videos.list 16 ＝ 約 32単位。
+    `status` は「きょうの枠: 空」と印字した。→ `all_videos()`（全本・約 32単位・同じ回では1度だけ）。
     """
-    up = channel()["uploads"]
-    ids, tok = [], None
-    while True:
-        r = svc().playlistItems().list(part="contentDetails", playlistId=up, maxResults=50, pageToken=tok).execute()
-        ids += [i["contentDetails"]["videoId"] for i in r["items"]]
-        tok = r.get("nextPageToken")
-        if not tok:
-            break
-    out = []
-    for i in range(0, len(ids), 50):
-        r = svc().videos().list(part="snippet,status", id=",".join(ids[i:i + 50])).execute()
-        for v in r["items"]:
-            st = v["status"]
-            if st.get("publishAt") and st["privacyStatus"] != "public":
-                out.append({"id": v["id"], "title": v["snippet"]["title"], "privacy": st["privacyStatus"],
-                            "publish_at": st["publishAt"], "published_at": v["snippet"]["publishedAt"],
-                            "duration": "", "views": 0, "likes": 0})
-    return out
+    return [v for v in all_videos() if v["publish_at"] and v["privacy"] != "public"]
 
 
 def today_lineup(videos: list[dict] | None = None) -> list[dict]:
-    """きょう（JST）に公開ずみ・公開予定の本。公開ずみは新しい順の一覧から、予約は**全本**から拾う。"""
-    videos = videos if videos is not None else recent_videos()
+    """きょう（JST）に公開ずみ・公開予定の本。**公開ずみも予約も、全本から拾う。**
+
+    2026-09-07 16:4x（optimizer・Opus）に public 側を全本に変えた。それまで公開ずみは
+    「上げた順の先頭 60本」から拾っていたので、08月に上げて きょう公開された旧作りの本が
+    **1本も見えなかった** —— 実測 09/07 09:00 の `PhQ2KvuQASQ`（73回）は「きょうの枠」に出ず、
+    その1時間あとに `schedule` の「1日1本」の門（`cmd_schedule` が この関数で数える）も
+    素通りして、きょうは 2本 出ている。`all_videos()` は1度しか引かないので単位は増えない。
+    """
+    videos = videos if videos is not None else all_videos()
     d = now_jst().date()
     rows = [v for v in videos if v["privacy"] == "public" and when(v).date() == d]
     seen = {v["id"] for v in rows}

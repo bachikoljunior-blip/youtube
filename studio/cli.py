@@ -36,7 +36,7 @@ def image_for(vid: str) -> Path | None:
 
 def cmd_status(a):
     ch = yt.channel()
-    vids = yt.recent_videos(60)
+    vids = yt.all_videos()
     print(f"チャンネル: 登録 {ch['subscriberCount']}・総再生 {ch['viewCount']}・本数 {ch['videoCount']}")
     print(f"いま {now_jst():%m/%d %H:%M} JST")
     print("きょうの枠:")
@@ -47,8 +47,7 @@ def cmd_status(a):
         if yt.when(v).date() > now_jst().date():
             print(f"  {yt.when(v):%m/%d %H:%M} {v['id']} {v['title'][:40]}")
     print("直近 公開 10本:")
-    pub = [v for v in vids if v["privacy"] == "public"][:10]
-    for v in pub:
+    for v in yt.published()[:10]:
         age = (now_jst() - yt.when(v)).total_seconds() / 3600
         print(f"  {yt.when(v):%m/%d %H:%M} {v['id']} {v['views']:5d}回 いいね{v['likes']:3d} 齢{age:5.0f}h {v['title'][:36]}")
     print("台帳 直近 5行:")
@@ -197,13 +196,18 @@ def cmd_schedule(a):
     return 0
 
 
+# 台帳に載せる本の齢の上限（時間）。§1 は「48時間でほぼ止まる」だが、同じ日に出た本どうしを
+# 並べるには数日ぶん要る（§7 の判定）。**上げた順の先頭 N本 で選ばないこと** —— 2026-09-07 16:4x に
+# それで 09/05〜09/07 に公開された旧作りの本 14本 を 1行も台帳に書いていなかった（`yt.all_videos` の註）。
+MEASURE_WITHIN_H = 24 * 7
+
+
 def cmd_measure(a):
-    vids = yt.recent_videos(40)
-    for v in vids:
-        if v["privacy"] == "public":
-            age = (now_jst() - yt.when(v)).total_seconds() / 3600
-            ledger("measured", v["id"], views=v["views"], likes=v["likes"], age_h=round(age, 1), title=v["title"][:40])
-    print("記した:", sum(1 for v in vids if v["privacy"] == "public"), "本")
+    pub = yt.published(MEASURE_WITHIN_H)
+    for v in pub:
+        age = (now_jst() - yt.when(v)).total_seconds() / 3600
+        ledger("measured", v["id"], views=v["views"], likes=v["likes"], age_h=round(age, 1), title=v["title"][:40])
+    print("記した:", len(pub), f"本（公開から {MEASURE_WITHIN_H / 24:.0f}日 以内）")
     return 0
 
 
