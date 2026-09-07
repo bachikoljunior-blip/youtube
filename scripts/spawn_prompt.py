@@ -125,8 +125,16 @@ FIRST_MOVE = """
 **`Already up to date.` は「枝の先頭に追いついた」とは限りません** —— 親はサブを立てた**あと**に
 周を記録して押すので（`docs/trigger_parent.md` 第1節の順）、最初の fetch がその押しに間に合わないことがあります。
 実測 2026-09-07 10:19 JST（optimizer）: merge は `Already up to date.`、しかし origin の先頭 `613ac913` は
-10:18:55 に在り、撃ち直したら早送りになりました。`git merge-base --is-ancestor origin/<<branch>> HEAD` が
-通れば追いついています（API 0単位・数秒）。
+10:18:55 に在り、撃ち直したら早送りになりました。
+**効くのは「もう一度 `git fetch`」だけです。`git merge-base --is-ancestor` は効きません** ——
+それは merge と**同じ問い**を、**同じ古い `origin/<<branch>>`** に訊き直すだけなので、
+merge と必ず同じ答えを返します（`git merge X` の `Already up to date.` は
+「X は HEAD の祖先」そのもの ＝ 二つは同じ述語）。
+2026-09-07 12:4x（optimizer）に撃って確かめた: fetch していない clone で merge は `Already up to date.`・
+merge-base も「通った」・そのとき origin の先頭はもう1つ先に居ました。
+だから確かめる手は**時計のほう**にあります —— `git fetch origin && git merge origin/<<branch>>` を、
+下の「窓」の2回目（**共有ファイルに書き始める直前**）と一緒にもう一度 撃つこと。
+そこで早送りが起きたら、それが親のこの周の押しです（API 0単位・数秒）。
 """
 
 

@@ -112,8 +112,21 @@ def test_最初の合流は_追いついたかを確かめる手つき():
 
     実測 2026-09-07 10:19: merge は `Already up to date.`・origin の先頭 `613ac913` は
     10:18:55 に在り、撃ち直しで早送りになりました。
+
+    **2026-09-07 12:4x（optimizer・Opus）に、確かめる手を merge-base から「撃ち直し」へ替えた。**
+    `git merge-base --is-ancestor origin/<枝> HEAD` は merge と**同じ述語を同じ古い ref に**訊くので、
+    merge が `Already up to date.` と言った回は必ず「通った」と言います ＝ 何も確かめていません。
+    撃って確かめた（fetch していない clone・上流はその後に1つ進んでいる）:
+    merge `Already up to date.` / merge-base 通った / ほんとの origin は先。**二つは同じ答え**。
+    効くのは fetch のやり直しだけで、それは既に「窓は2回」の2回目が撃っています。
+
+    **覆る条件**: 親が「サブを立てる前」に周を記録して押す順に変わったら
+    （`docs/trigger_parent.md` 第1節）、この段落ごと要らなくなる。
     """
     text = sp.build("optimizer", siblings=["016bZbYd"])
     assert "Already up to date." in text, text[:400]
-    assert "merge-base --is-ancestor" in text, (
-        "追いついたかを**確かめる手**が渡っていません（数秒・API 0単位）\n" + text[:400])
+    assert "もう一度 `git fetch`" in text, (
+        "追いついたかを**確かめる手**（fetch の撃ち直し）が渡っていません\n" + text[:400])
+    assert "merge-base" not in text or "は効きません" in text, (
+        "merge-base を『確かめる手』として渡すと、merge と同じ答えしか返らないので嘘になります\n"
+        + text[:400])
