@@ -718,3 +718,4 @@
 {"understand": 3, "n_real": 4, "done": false, "at": "2026-09-08T00:59:51+09:00", "id": "2026-09-09-kakyu-nenkin-42man3700", "event": "critique"}
 {"order": "2026-09-09-kakyu-nenkin-42man3700-bg", "at": "2026-09-08T01:00:50+09:00", "id": "2026-09-09-kakyu-nenkin-42man3700", "event": "image_ordered"}
 {"event": "heard_judged", "id": "2026-09-08-kuriage-80sai-10kagetsu", "at": "2026-09-08T00:54:50+09:00", "ok": 10, "n": 11, "judged_pass": [7], "note": "コマ7: 仮名の門(small→medium+prompt)で「ぴゃ→ぷや」と途中「を3万6千円」・末尾「190か月、15年10か月です」が欠落。漢字ありの medium は台本と同文(wav 13.69秒)。漢字を禁じた whisper の崩れ＝whisper側。TTS の誤読 0。"}
+{"video_id": "lQHX9LJ80Sg", "publish_at": "2026-09-08T10:00+09:00", "upload": "processed", "processing": "succeeded", "duration": "PT1M34S", "meta_same": true, "note": "02:4x hourly: 読み直し 1回 → 直す所 0。YouTube 側の処理 済・題/説明欄 同文・tags 同じ 9語。yt.readiness を status に足した", "at": "2026-09-08T02:46:38+09:00", "id": "2026-09-08-kuriage-80sai-10kagetsu", "event": "ready_checked"}

@@ -44,6 +44,11 @@ def cmd_status(a):
     print("きょうの枠:")
     for v in yt.today_lineup(vids):
         print(f"  {yt.when(v):%H:%M} {v['privacy']:8s} {v['id']} {v['views']:5d}回 {v['title'][:40]}")
+        if v["privacy"] != "public":
+            # 公開前の本だけ、YouTube 側の処理が終わっているかを添える（1単位。`yt.readiness` の註）。
+            rd = yt.readiness(v["id"])
+            mark = "処理 済" if rd["ok"] else f"!! 処理 {rd['upload']}/{rd['processing']} 失敗 {rd['failure'] or rd['rejection']}"
+            print(f"           {mark}（upload {rd['upload']}・processing {rd['processing']}）")
     print("予約（あす以降）:")
     for v in yt.scheduled_all():
         if yt.when(v).date() > now_jst().date():

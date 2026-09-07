@@ -169,6 +169,25 @@ def reschedule(video_id: str, publish_at: dt.datetime) -> None:
         "publishAt": publish_at.astimezone(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")}}).execute()
 
 
+def readiness(video_id: str) -> dict:
+    """予約ずみの本が **10:00 に本当に出る状態か**（2026-09-08 02:5x・hourly・Fable）。
+
+    `status` の「きょうの枠」は privacy しか見ていなかった。YouTube 側の処理
+    （uploadStatus / processingStatus）が失敗していても private のまま黙って出ないので、
+    公開前の周がそれを見られるように 1単位 で引く。
+    実測 09/08 02:4x `lQHX9LJ80Sg`: upload=processed・processing=succeeded・失敗 None。
+    """
+    r = svc().videos().list(part="status,processingDetails", id=video_id).execute()
+    if not r.get("items"):
+        return {"upload": "missing", "processing": "missing", "failure": None, "rejection": None, "ok": False}
+    v = r["items"][0]
+    st, pd = v.get("status", {}), v.get("processingDetails", {})
+    up, pr = st.get("uploadStatus"), pd.get("processingStatus")
+    fail, rej = st.get("failureReason"), st.get("rejectionReason")
+    ok = up == "processed" and pr in ("succeeded", None) and not fail and not rej
+    return {"upload": up, "processing": pr, "failure": fail, "rejection": rej, "ok": ok}
+
+
 def stats(video_ids: list[str]) -> dict[str, dict]:
     out = {}
     for i in range(0, len(video_ids), 50):
