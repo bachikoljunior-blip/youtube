@@ -9,6 +9,7 @@
     python -m studio.cli order-image <id>       # 背景画像を注文（外の ChatGPT セッションが焼く）
     python -m studio.cli schedule <id> --at 10:00 [--replace <videoId>]   # きょうの枠へ予約（当日だけ）
     python -m studio.cli measure                # 公開ずみの本の再生・高評価を台帳へ
+    python -m studio.cli trend [--days 3]       # 台帳から「齢 → 再生」の並び（API 0単位・§7 の判定はこれで）
 """
 from __future__ import annotations
 
@@ -18,7 +19,7 @@ import json
 import sys
 from pathlib import Path
 
-from . import critic, hear, render, script, yt
+from . import critic, hear, render, script, trend, yt
 from .common import JST, ROOT, ledger, ledger_rows, now_jst, today_jst, workdir
 
 IMAGES = ROOT / "assets" / "images"
@@ -211,6 +212,13 @@ def cmd_measure(a):
     return 0
 
 
+def cmd_trend(a):
+    # 1点で本を比べないための道具（studio/trend.py の註）。台帳しか読まないので API は 0単位。
+    for line in trend.report(within_h=24 * a.days):
+        print(line)
+    return 0
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser()
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -222,6 +230,7 @@ def main(argv=None):
     sc.add_argument("--replace", default=""); sc.add_argument("--force", action="store_true")
     sc.add_argument("--dry-run", action="store_true")
     sub.add_parser("measure")
+    tr = sub.add_parser("trend"); tr.add_argument("--days", type=float, default=3)
     a = ap.parse_args(argv)
     fn = globals()["cmd_" + a.cmd.replace("-", "_")]
     return fn(a) or 0
