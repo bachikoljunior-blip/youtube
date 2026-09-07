@@ -92,3 +92,28 @@ def test_組み上げた本文で_枝名が実体に置き換わる():
 def test_兄弟の段は_どの種別でも本文に入る(kind):
     text = sp.build(kind, siblings=["016bZbYd"])
     assert "いま同じ枝で走っています" in text
+
+
+def test_窓が古くなることと_撃ち直す所が本文に在る():
+    """**開始時の窓には、相手のその回の押しが出ません**（実測 3分・直近5周のうち4周）。
+
+    2026-09-07 10:19 の窓に hourly の 10:21（`docs/METHOD.md`）は出ておらず、
+    その窓だけで担当を決めていれば §11 でぶつかっていました。
+    渡す手は「担当を決めるとき」と「共有ファイルに書き始める直前」の2回。
+    """
+    out = sp._siblings_block(["016bZbYd"])
+    assert "3分" in out, ("窓が何分で古くなるかの数が落ちています\n" + out)
+    assert "書き始める直前" in out, (
+        "**2回目に撃つ所**が書かれていないと、窓は1回きりの手に戻ります\n" + out)
+
+
+def test_最初の合流は_追いついたかを確かめる手つき():
+    """`Already up to date.` は「枝の先頭」とは限りません（親は立てた**あと**に周を押す）。
+
+    実測 2026-09-07 10:19: merge は `Already up to date.`・origin の先頭 `613ac913` は
+    10:18:55 に在り、撃ち直しで早送りになりました。
+    """
+    text = sp.build("optimizer", siblings=["016bZbYd"])
+    assert "Already up to date." in text, text[:400]
+    assert "merge-base --is-ancestor" in text, (
+        "追いついたかを**確かめる手**が渡っていません（数秒・API 0単位）\n" + text[:400])
