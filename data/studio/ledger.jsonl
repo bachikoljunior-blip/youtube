@@ -522,3 +522,6 @@
 {"at": "2026-09-07T12:23:05+09:00", "id": "CVXm-NyIhMA", "event": "measured", "views": 209, "likes": 0, "age_h": 194.4, "title": "マイホーム売却 取得費4,000万円で税額はいくらか #Shorts"}
 {"at": "2026-09-07T12:23:05+09:00", "id": "9WWpJUWjs4E", "event": "measured", "views": 260, "likes": 0, "age_h": 194.9, "title": "介護の上限140100円 3割でも届かない #Shorts"}
 {"at": "2026-09-07T12:23:05+09:00", "id": "a21yvpWHuRM", "event": "measured", "views": 92, "likes": 0, "age_h": 195.4, "title": "配当控除は1000万円で6.505ポイント差 #Shorts"}
+{"seconds": 93.3, "image": true, "chars": 450, "scenes": [8.6, 4.9, 5.4, 9.4, 8.3, 8.8, 13.7, 9.1, 9.0, 10.0, 6.0], "at": "2026-09-07T14:32:58+09:00", "id": "2026-09-08-kuriage-80sai-10kagetsu", "event": "built"}
+{"mismatched": 1, "model": "small", "mode": "kana", "diffs": [{"i": 7, "d": [["ぴゃ", "ぺ"], ["のさは", "どさわ"]]}], "escalated": [4, 5, 7], "how": {"4": "small→medium", "5": "small→medium+prompt", "7": "small→medium"}, "at": "2026-09-07T14:36:45+09:00", "id": "2026-09-08-kuriage-80sai-10kagetsu", "event": "heard"}
+{"mismatched": 1, "tts_misread": 0, "voice": "ja-JP-Neural2-D", "rate": 1.08, "note": "声を Neural2-D・1.08 に戻して build 93.3秒 → hear 10/11。コマ7（ろっぴゃく→ろっぺく・のさは→どさわ）は 1〜2音の揺れ ＝ whisper 側（Chirp のときも同じコマが同じ型）。Neural2-D は yomi 16語を置換なしで全部 正しく読んだ ＝ kana_in_voice は空", "at": "2026-09-07T14:37:19+09:00", "id": "2026-09-08-kuriage-80sai-10kagetsu", "event": "heard_judged"}

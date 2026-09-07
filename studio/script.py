@@ -17,7 +17,8 @@ SCRIPTS = DATA / "scripts"
 # 画面の字幕は 1行 16字 × 3行 に収める。声の1コマは 70字 まで（約 12秒）。
 MAX_SAY = 70
 MAX_SHOW = 16
-MAX_TOTAL_CHARS = 480   # rate 1.2 で実測 5.16字/秒（09/05・458字→88.8秒）→ 93秒。上限は build が測る秒数（MAX_SECONDS）
+MAX_TOTAL_CHARS = 480   # Chirp3-HD 1.2 で実測 5.16字/秒（09/05・458字→88.8秒）→ 93秒。Neural2-D 1.08 は 450字→93.3秒（09/07・4.82字/秒 ＝ 同じ帯）。
+                        # 上限は build が測る秒数（MAX_SECONDS）。455字 が 95秒 に当たる域（METHOD §11）
 
 # 書き手が人間のふりをする言い方（収益化ポリシー: AI が人間の専門家を装って sensitive topic を語る形）
 # 裸の「年」＋数字（「年66万円」）。Chirp3-HD は「とし」と読む（実測 09/05・09/06）
@@ -81,9 +82,12 @@ class Script(BaseModel):
     takeaway: str                   # 視聴者が言い返せるはずの1文（冷読テストの正解）
     description: str = ""
     tags: list[str] = []
-    voice: str = "ja-JP-Chirp3-HD-Charon"
-    rate: float = 1.1
+    # 09/07 14:3x に Neural2-D・1.08 へ戻した（オーナー 13:3x「ナレーション前の音声の方が良かった」＝ 09/04 までの 24本の声）。
+    # Chirp3-HD-Charon は 09/05〜09/07 の3本だけ。yomi の効き方が声で違う（tts.py 冒頭）。
+    voice: str = "ja-JP-Neural2-D"
+    rate: float = 1.08
     yomi: dict[str, str] = {}       # 読みを固定する語 → ひらがな（TTS と聞き取り検算の両方が使う）
+    kana_in_voice: list[str] = []   # Neural2 系のとき、TTS に渡す文の中で仮名に置き換える語（yomi の語。hear で TTS の誤読が出た語だけ）
     image_prompt: str = ""          # 背景画像の注文文（GPT Image 2.0。文字を入れない）
     segments: list[Segment]
     notes: str = ""                 # 出典・前提・計算の根拠（人が読む）
