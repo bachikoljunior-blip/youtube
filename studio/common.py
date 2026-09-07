@@ -41,7 +41,10 @@ def probe_duration(path: Path) -> float:
 def ledger(event: str, vid: str, **detail) -> None:
     """何をしたかを1行 足す。「出した」の定義はこの台帳の event 名で決まる（docs/METHOD.md §記録）。"""
     DATA.mkdir(parents=True, exist_ok=True)
-    row = {"at": now_jst().isoformat(timespec="seconds"), "id": vid, "event": event, **detail}
+    # 予約は "at" を「公開の時刻」の意味で渡していたので、**detail が「いつやったか」を上書きしていた
+    # （09/07 12:3x・optimizer が実測。3行とも公開時刻・09/06 の2行は元と差し替えが同じ刻で見分けられない）。
+    # 予約された "at"/"id"/"event" は行の骨なので、detail に同じ名前が来ても骨を勝たせる。
+    row = {**detail, "at": now_jst().isoformat(timespec="seconds"), "id": vid, "event": event}
     with LEDGER.open("a", encoding="utf-8") as f:
         f.write(json.dumps(row, ensure_ascii=False) + "\n")
 

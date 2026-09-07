@@ -191,7 +191,8 @@ def cmd_schedule(a):
     if a.replace:
         yt.make_private(a.replace)
         print("差し替え: 前の", a.replace, "を private に戻した（消していない）")
-    ledger("scheduled", a.id, video_id=vid, at=at.isoformat(timespec="minutes"), replaced=a.replace or None,
+    # 公開の時刻は publish_at（"at" は「いつやったか」。unscheduled の was_at と同じ向き）
+    ledger("scheduled", a.id, video_id=vid, publish_at=at.isoformat(timespec="minutes"), replaced=a.replace or None,
            title=s.title)
     return 0
 
