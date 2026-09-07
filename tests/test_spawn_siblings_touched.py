@@ -120,13 +120,26 @@ def test_最初の合流は_追いついたかを確かめる手つき():
     merge `Already up to date.` / merge-base 通った / ほんとの origin は先。**二つは同じ答え**。
     効くのは fetch のやり直しだけで、それは既に「窓は2回」の2回目が撃っています。
 
-    **覆る条件**: 親が「サブを立てる前」に周を記録して押す順に変わったら
-    （`docs/trigger_parent.md` 第1節）、この段落ごと要らなくなる。
+    **その覆る条件を 2026-09-07 22:4x（optimizer・Opus）に引きました。**
+    親の順は「**記録して押す → そのあと立てる**」に入れ替わっています
+    （`docs/trigger_parent.md` 第1節・`scripts/next_round.py` の GO の枝・
+    検査 `tests/test_parent_record_before_spawn.py`）。**だから確かめる手はもう要りません** ——
+    最初の `Already up to date.` は、親のこの周の押しについては本当のことです。
+    入れ替えの直前に 22:39 でもう一度 踏んでおり（2日で2回目）、原因は毎回おなじ順でした。
+
+    **この検査が いま守っているのは2つ**: (a) 新しい順が本文に書いてあること
+    （書いていないと、次のサブは「立てたあとに押す」前提の古い註を読んで、また確かめる手を足す）。
+    (b) **merge-base を「確かめる手」として渡さないこと**（12:4x の実測。順が変わっても
+    「同じ述語を同じ古い ref に訊く」ことは変わらないので、この禁は残る）。
+
+    **覆る条件**: 親の順が「立てる → 押す」に戻ったら、確かめる手（fetch の撃ち直し）を
+    本文へ戻すこと —— そのときは `tests/test_parent_record_before_spawn.py` も一緒に落ちます。
     """
     text = sp.build("optimizer", siblings=["016bZbYd"])
     assert "Already up to date." in text, text[:400]
-    assert "もう一度 `git fetch`" in text, (
-        "追いついたかを**確かめる手**（fetch の撃ち直し）が渡っていません\n" + text[:400])
-    assert "merge-base" not in text or "は効きません" in text, (
+    assert "立てる前に周を記録して押します" in text, (
+        "親の新しい順（記録して押す → そのあと立てる）が渡っていません。\n"
+        "書いていないと、次のサブは古い前提で『確かめる手』を足し直します\n" + text[:400])
+    assert "merge-base" not in text or "外しました" in text, (
         "merge-base を『確かめる手』として渡すと、merge と同じ答えしか返らないので嘘になります\n"
         + text[:400])

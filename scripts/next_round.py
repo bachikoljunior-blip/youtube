@@ -862,7 +862,26 @@ def main() -> int:
     if d["go"]:
         print("GO " + " ".join(roles))
         print(f"  理由: {d['why']}")
-        print(f"  **この{len(roles)}つを立てること。** 1周は"
+        # **記録と押しは、立てるより先**（2026-09-07 22:4x・optimizer・Opus が入れ替えた）。
+        #     それまでは最後に「立てたら: --record」と印字しており、親は
+        #     「立てる → 記録 → 押す」の順で回していた。**その順は2つ壊していた**:
+        #     (1) サブの最初の fetch/merge が、親のこの周の押しに間に合わず
+        #         `Already up to date.` と出る（実測 09/07 10:19 と 22:39 の2回）。
+        #         サブは「追いついた」と読めないので、確かめの手を足しては外す回が続いた
+        #         （01:3x に merge-base を足し、12:4x に撃って外した）。
+        #     (2) **周が押されない窓が、サブを立てているあいだ丸ごと開く。**
+        #         その窓で別の親が起きると rounds.jsonl は空のままなので、両方が GO を読む
+        #         ——「なんでサブ増えてんの？」（08-25）の当のもの。
+        #     先に記録して押せば、窓は「記録 → 押す」の数秒だけになり、
+        #     サブの worktree は最初から周を含む（＝ 最初の merge が本当のことを言う）。
+        #     覆る条件: 記録したのに立てられなかった回（429 など）が続いたら、
+        #     失うのは1周ぶんなので、そのときは順を戻すのではなく **立て直す**こと。
+        print(f"  **先に記録して押すこと（立てる前）**: "
+              f"python scripts/next_round.py --record {','.join(roles)}"
+              " → 周の台帳を commit して push")
+        print("  （この順でないと、サブの最初の fetch がこの周の押しに間に合わず、"
+              "立てているあいだ 周が押されない窓が開きます）")
+        print(f"  **そのあと、この{len(roles)}つを立てること。** 1周は"
               f"{len(ROLES)}種類そろって1周です"
               "（片方だけで終わると、その周は片肺）")
         for role in roles:
@@ -888,7 +907,6 @@ def main() -> int:
                 pass
             print(f"  **model（`kind: {role}`）: \"{_m}\"**（{_why}。"
                   "上限は `quota.FABLE_CAP_PCT`・予備は `quota.FABLE_RESERVE_PCT`）")
-        print(f"  立てたら: python scripts/next_round.py --record {','.join(roles)}")
         return 0
     print(f"WAIT {d['wait_min']:.0f}")
     print(f"  理由: {d['why']}")

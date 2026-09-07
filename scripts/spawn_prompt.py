@@ -122,19 +122,16 @@ FIRST_MOVE = """
 **最初の1手: `git fetch origin` → `git merge origin/<<branch>>`**（早送りで終わるはずです・数秒）。
 <<main_gap>>
 競合したら **merge で相手の作業を残すこと。捨てないこと。**
-**`Already up to date.` は「枝の先頭に追いついた」とは限りません** —— 親はサブを立てた**あと**に
-周を記録して押すので（`docs/trigger_parent.md` 第1節の順）、最初の fetch がその押しに間に合わないことがあります。
-実測 2026-09-07 10:19 JST（optimizer）: merge は `Already up to date.`、しかし origin の先頭 `613ac913` は
-10:18:55 に在り、撃ち直したら早送りになりました。
-**効くのは「もう一度 `git fetch`」だけです。`git merge-base --is-ancestor` は効きません** ——
-それは merge と**同じ問い**を、**同じ古い `origin/<<branch>>`** に訊き直すだけなので、
-merge と必ず同じ答えを返します（`git merge X` の `Already up to date.` は
-「X は HEAD の祖先」そのもの ＝ 二つは同じ述語）。
-2026-09-07 12:4x（optimizer）に撃って確かめた: fetch していない clone で merge は `Already up to date.`・
-merge-base も「通った」・そのとき origin の先頭はもう1つ先に居ました。
-だから確かめる手は**時計のほう**にあります —— `git fetch origin && git merge origin/<<branch>>` を、
-下の「窓」の2回目（**共有ファイルに書き始める直前**）と一緒にもう一度 撃つこと。
-そこで早送りが起きたら、それが親のこの周の押しです（API 0単位・数秒）。
+**親は 2026-09-07 22:4x から、サブを立てる前に周を記録して押します**（`docs/trigger_parent.md` 第1節・
+`scripts/next_round.py` の GO の枝・検査 `tests/test_parent_record_before_spawn.py`）。
+だから、この最初の `Already up to date.` は**親のこの周の押しについては本当のこと**です。
+それまでは順が逆で、最初の fetch がその押しに間に合わず、2日で2回 踏んでいます
+（09/07 10:19 と 22:39・どちらも 2度目の fetch で早送りになった）。
+**この段落を読んで、確かめる手を足さないこと** —— 01:3x の回が `git merge-base --is-ancestor` を足し、
+12:4x の回が撃って外しました。それは merge と**同じ問い**を**同じ古い `origin/<<branch>>`** に訊き直すだけで、
+merge と必ず同じ答えを返します（`git merge X` の `Already up to date.` は「X は HEAD の祖先」そのもの ＝ 同じ述語）。
+**それでも「窓」は2回 撃つこと**（下）——2回目が見ているのは**相手のサブ**の押しで、
+そちらは周の 3分後 に来るので、親の順とは関係がありません（API 0単位・数秒）。
 """
 
 
