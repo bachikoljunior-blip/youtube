@@ -15,6 +15,8 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
@@ -92,6 +94,14 @@ def test_下読みは門と食い違わない():
         f"下読み（fix 止め={said_blocked}）と門（止め={gate_trips}）が食い違っています")
 
 
+@pytest.mark.xfail(
+    strict=True,
+    reason="旧道具（`scripts/run_marker.py` の枠の本）の側。名指しできない `vmAll8GDkU8` は "
+           "2026-09-05 に private へ戻した旧作りの本（`docs/METHOD.md` §8/§9）。"
+           "当てにしている前提のほうを捨てたので、直す先が無い。**消さない**（§8）。"
+           "strict なので、旧道具が戻って**通るようになったら赤**になり、そこで気づける。"
+           "生きている信号は `python -m pytest -m live -q`（`studio/livetests.py`）",
+)
 def test_止まるなら枠の本を名指しする():
     """止めるなら、**通る手**を必ず名指しすること（出口を塞がない門にしない）。"""
     got = next_round.kinds_allowed()

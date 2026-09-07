@@ -809,26 +809,32 @@ def _write_body(full_path: str | None) -> int:
     # 背景へ投げます。錠（`flock`）が2本目を `skip` で落としますが、**その回は
     # 「焼いた」と数えられて上限（1日 2回）だけ減ります**（`docs/spawn_prompt.md` の註）。
     # ＝ 頭を読み直すためのもう1回で、その日の焼き直しの枠が1つ消えます。
-    if rerun:
-        print("[marker] きょうの1本: **撃ち直しなので起こしません**"
-              "（`ahead_sweep.kick()` は焼き直しの上限（1日 2回）を減らします）")
-    else:
-        try:
-            import ahead_sweep as _sweep                            # noqa: PLC0415
-            print(f"[marker] きょうの1本: {_sweep.kick()}")
-        except Exception as exc:                                   # noqa: BLE001
-            print(f"[marker] きょうの1本: 起こせませんでした（{str(exc)[:80]}）")
-    # **外の帯を、毎日 出している形（ショート）で撃つ手も、ここから起こす**（2026-09-02 深夜）。
-    #     `[きょうの1本]` が印字する手は選ばれなければ撃たれません。帳面にショートが
-    #     7日以内に無く、印が 6時間 より古い周だけ背景で撃ちます（`niche_ceiling.kick()` の註）。
-    if rerun:
-        print("[marker] 外の帯: **撃ち直しなので起こしません**")
-    else:
-        try:
-            import niche_ceiling as _nc                             # noqa: PLC0415
-            print(f"[marker] 外の帯: {_nc.kick()}")
-        except Exception as exc:                                   # noqa: BLE001
-            print(f"[marker] 外の帯: 起こせませんでした（{str(exc)[:80]}）")
+    # **2026-09-08 06:5x（optimizer・Opus）に、この2つの kick を外しました。**
+    #
+    # `docs/METHOD.md` §8 は 09/06 に `next_round.py main()` と SessionStart の
+    # `ahead_sweep.kick()` を外し、**「『使わない』は文書に書くだけでは止まらない ——
+    # 起こす口を全部 外すこと」**と書きました。**その「全部」から、ここが漏れていました。**
+    #
+    # 実測（この回・`data/niche_ceiling.log` に残っている**唯一の**行）:
+    #   `python -m pytest tests/ -q` を撃っただけで、06:57:51 JST に
+    #   `niche_ceiling.kick()` が背景（`start_new_session=True`）で走り、
+    #   yt-dlp で外の本を漁って **`data/niche_corpus.jsonl` に 468行**・
+    #   `data/niche_ceiling.jsonl` に 1行・`data/sub_ask_sweep.jsonl` に 8行 を足し、
+    #   絵 16枚 と字幕 4本 を落とし、**`videos.list` を 1単位** 使いました
+    #   （「0単位」と註にあるのは検索の側だけで、公開日を埋める所は API を撃ちます）。
+    #   実物の証拠: `data/niche_corpus.jsonl` の `J6i7L0QSRSQ` が
+    #   09/04 の 5,124,861回 → この回 5,379,678回 ＝ **生きた引き直し**。
+    #
+    # **`ahead_sweep` の側は、もっと悪い**: それは 09/06 00:01 に
+    # **08/16〜08/19 上げの旧作りの本 8本 に publishAt を打った**当のものです（§8）。
+    # 検査を撃っただけで動く口に、それを繋いだままにはできません。
+    #
+    # **関数は残します**（§8「消さない」）。呼ばないだけ。
+    # 旧道具を使う判断が METHOD に書かれたら、そのときは kick ではなく手順から呼ぶこと。
+    # 見張り: `tests/test_no_background_kick.py`
+    if not rerun:
+        print("[marker] きょうの1本 / 外の帯: **背景の kick は 2026-09-08 に外しました**"
+              "（`docs/METHOD.md` §8。検査を撃っただけで走っていた）")
     # **この回だけの一時置き場を、ここで掘って見せること**（2026-08-29 に足した）。
     # 共有の直下へ書くと、きょうだいが同じ名前で上書きします
     # （実測: `status.py` の出力 266行 → 24行）。`scratch_dir()` の註。

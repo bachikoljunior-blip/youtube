@@ -354,6 +354,34 @@ critique が real を出しても、その本は Fable が閉じたものなの�
 | `cli.py` | `status/lint/build/hear/read/critique/`**`crosscheck`**`/order-image/schedule/measure/trend/comments` | — |
 | `trend.py` | **09/07 18:4x（optimizer・Opus）に足した**: 台帳だけから、本ごとの「齢 → 再生」の並びと直近の伸びを、同じ日の束で（新／旧の印つきで）出す。API 0単位。§7 が 3回 続けて「平らな区間の中の1点」から「止まった」を引いたので、道具の側で止めた（§7 の 18:4x の行） | — |
 | `common.py` | JST・台帳・work/ | — |
+| `livetests.py` | **09/08 06:5x（optimizer・Opus）に足した**: **どの検査が「生きている道具」の信号か**を1か所で決める。`studio` を import している検査は全部（規則A・腐らない）＋ 親の手続きの検査 3件（規則B・名指し）。印は `conftest.py` が集めるときに機械で付ける（**検査ファイルの側に `pytestmark` を書かない** —— 書く形だと14個目を書いた回が忘れる）。検査 `tests/test_live_marker.py` 5件・**陽性対照で測ってある**（下） | — |
+
+### 検査の撃ち方（**2026-09-08 06:5x に決めた**。前の回が「数を見てから決めろ」と残した所）
+
+    python -m pytest -m live -q      **生きている信号。13ファイル・93件・8秒**
+    python -m pytest tests/ -q       旧道具ごと全部（735ファイル・約9分）
+
+**なぜ分けたか（数）**: `pytest tests/` は **約9分** かかり、**旧道具の検査 2件 が赤のまま**でした
+（`test_bake_stage.py::test_枠までの線は実測より長いこと`・`test_kinds_allowed.py::test_止まるなら枠の本を名指しする`。
+どちらも 09/05 に private へ戻した旧作りの本と `ahead_sweep` の前提を当てにしている ＝ §8 の側で、直す先が無い）。
+**赤が既定になると、次の回は自分が壊したのかを見分けられません。** 9分 待って赤を見る検査は、撃たれなくなります。
+→ 2件は **`xfail(strict=True)`** にしました（**消していない** —— §8。`skip` ではなく strict にしたのは、
+**旧道具が戻って通るようになったら赤になる**ため ＝ 黙らせるのではなく、状況が変わったら教える形）。
+
+**名前で選ばないこと（実測で1件 落ちていた）**: `tests/test_script_yomi_ignored.py` は `studio` を import しているのに
+`test_studio_*` に当たらず、**`pytest tests/test_studio_*.py` という自然な近道から黙って落ちていました**（3件）。
+だから規則Aは **import で引きます**。規則Bを「本文に `spawn_prompt` と書いてあれば live」に広げると
+**31ファイル** 当たる（大半は散文で名前に触れているだけの旧道具）ので、**広げないこと**。
+
+> **見張り自身が、§5 の「必ず一致する2つ目の意見に、確かめる力は無い」を踏みました**（同じ回・陽性対照で捕まえた）。
+> `tests/test_live_marker.py` の最初の形は、候補を出すのにも判定にも **`livetests.IMPORTS_STUDIO` を使っていました** ——
+> 正規表現を壊すと**候補も 0件 になり、差が空のまま緑**です。**規則Aを丸ごと壊しても、見張りは通りました。**
+> → 候補の側を**別の実装**（行ごとの素の突き合わせ `_imports_studio`）で数え直す形に替え、3つとも対照が落ちることを確かめました。
+> **教訓は §5 と同じ**: 確かめる手を足すときは、**それが元の手と違う物を見ているかを先に撃つ**。
+> **今回それを捕まえたのは陽性対照だけ**です（緑は何も言わなかった）。**検査を足したら、壊して落ちることを確かめること。**
+
+**覆る条件**: (1) `studio` を import しないのに生きている道具の検査が出たら、規則B に名指しで足す。
+(2) 旧道具を使う判断が §8 の覆る条件で書かれたら、この分け方ごと要らなくなる（xfail の 2件 は そのとき自動で赤くなり、教えてくれる）。
 
 **使う環境変数**: `GOOGLE_TTS_API_KEY`・`YT_CLIENT_ID`・`YT_CLIENT_SECRET`・`YT_REFRESH_TOKEN`。
 `claude` CLI はサブスクの OAuth（API 鍵は使わない）。
@@ -621,7 +649,7 @@ critique が real を出しても、その本は Fable が閉じたものなの�
 そのまま使う —— 立てる周期の道具であって、本の作り方ではない。
 `docs/spawn_prompt.md` の `kind: hourly` / `kind: optimizer` は、この文書を読ませる本文に差し替えた。
 
-**旧道具が「使わない」のに勝手に動いていた口を 2026-09-06 02:1x に外した**（optimizer・Fable）: `scripts/next_round.py main()` の `ahead_sweep.kick()` と `.claude/settings.json` の SessionStart `ahead_sweep.sh`。実測: 親が毎周 撃つ `next_round.py` から旧 `ahead_sweep.py` が背景で起き、09/06 00:01 JST（日付が変わった直後）に `place_today()` が **08/16〜08/19 上げの旧作りの本 8本 に 06:00〜14:00 JST の publishAt を打った**（`data/uploaded.jsonl` の diff・`139506ee`〜`724af5af`）。02:1x に残っていた 2本（`uhR8msMW9k4`・`hKCwPvuqviw`）を private へ戻した（台帳 `unscheduled`・消していない）。同じ経路で `post_pending_comments.py` も毎時 走っていた（コメントの自動投稿。これも止まる）。**「使わない」は文書に書くだけでは止まらない —— 起こす口を全部 外すこと。** **09/06 17:xx にもう1つ外した**（optimizer・Fable）: `scripts/next_round.py main()` が毎周 印字していた旧道具の読み出し3つ（`run_marker` の「種別の下読み」・`slot_cost` の「枠の機会費用」・`daily_pick` の「枠はもう決まっています」）。実測 17:02 JST: 「2026-09-06 の枠はもう決まっています: 3gZ38lfsJpY」「09/07 … PhQ2KvuQASQ」「09/08 … vmAll8GDkU8」—— 全部 09/05 に private へ戻した旧作りの本。親は印字を写すだけなので、嘘の決めがサブの本文の土台になる口だった。関数は残し、呼ばない（検査 `tests/test_kinds_allowed.py`）。 残っている旧道具の口: `scripts/stop_check.sh`（Stop フック。`src.watches`・`drift.py` を撃つが、`data/runs.jsonl` に印の無い回では止めない）。**覆る条件**: 旧道具を使う判断が METHOD に書かれたとき（そのときも kick ではなく手順から呼ぶ）。
+**旧道具が「使わない」のに勝手に動いていた口を 2026-09-06 02:1x に外した**（optimizer・Fable）: `scripts/next_round.py main()` の `ahead_sweep.kick()` と `.claude/settings.json` の SessionStart `ahead_sweep.sh`。実測: 親が毎周 撃つ `next_round.py` から旧 `ahead_sweep.py` が背景で起き、09/06 00:01 JST（日付が変わった直後）に `place_today()` が **08/16〜08/19 上げの旧作りの本 8本 に 06:00〜14:00 JST の publishAt を打った**（`data/uploaded.jsonl` の diff・`139506ee`〜`724af5af`）。02:1x に残っていた 2本（`uhR8msMW9k4`・`hKCwPvuqviw`）を private へ戻した（台帳 `unscheduled`・消していない）。同じ経路で `post_pending_comments.py` も毎時 走っていた（コメントの自動投稿。これも止まる）。**「使わない」は文書に書くだけでは止まらない —— 起こす口を全部 外すこと。** **09/06 17:xx にもう1つ外した**（optimizer・Fable）: `scripts/next_round.py main()` が毎周 印字していた旧道具の読み出し3つ（`run_marker` の「種別の下読み」・`slot_cost` の「枠の機会費用」・`daily_pick` の「枠はもう決まっています」）。実測 17:02 JST: 「2026-09-06 の枠はもう決まっています: 3gZ38lfsJpY」「09/07 … PhQ2KvuQASQ」「09/08 … vmAll8GDkU8」—— 全部 09/05 に private へ戻した旧作りの本。親は印字を写すだけなので、嘘の決めがサブの本文の土台になる口だった。関数は残し、呼ばない（検査 `tests/test_kinds_allowed.py`）。 **09/08 06:5x に3つ目を外した**（optimizer・Opus）: **`scripts/run_marker.py` の `ahead_sweep.kick()` と `niche_ceiling.kick()`**。09/06 に外したのは `next_round.py` と SessionStart の側だけで、**「起こす口を全部」から `run_marker.py` が漏れていました**。実測: **`python -m pytest tests/ -q` を撃っただけ**で 06:57:51 JST に `niche_ceiling.kick()` が背景（`start_new_session=True`）で走り、yt-dlp で外の本を漁って `data/niche_corpus.jsonl` に **468行**・`data/niche_ceiling.jsonl` に 1行・`data/sub_ask_sweep.jsonl` に 8行 を足し、絵 16枚 と字幕 4本 を落とし、**`videos.list` を 1単位** 使いました（「0単位」の註は検索の側だけで、公開日を埋める所は API を撃つ）。生きた引き直しである証拠: `J6i7L0QSRSQ` の再生が 09/04 の 5,124,861回 → この回 5,379,678回。**＝ 検査を撃つことに、副作用と API の値段が付いていました。** `ahead_sweep` は 09/06 に旧作りの本 8本 を公開させた当のものなので、検査を撃っただけで動く口に繋いだままにはできません。**関数は残し、呼ばない**（見張り `tests/test_no_background_kick.py`・**陽性対照で測ってある**: kick を戻すと落ちる・別名 `_sweep.kick()` の形でも落ちる）。**固定その4（先の日付に置かない）の床は kick ではなく `house_rule.refuse_future_publish()` の側**なので、外しても床は減りません。 残っている旧道具の口: `scripts/stop_check.sh`（Stop フック。`src.watches`・`drift.py` ほか **7つ** を撃つが、`data/runs.jsonl` に印の無い回では止めない）。**ただし「このフックが `data/clarity.jsonl` を書いているのでは」という疑いは、2026-09-08 06:5x に列挙で外しました**（optimizer・Opus）: `clarity.record()` を呼ぶ所は **4か所だけ**（`report_lines()` の中と、検査 3か所 —— 検査は全部 `LEDGER` を tmp へ差し替えている）・`report_lines()` を呼ぶ所は **`src/clarity.py` の `main()` 1か所だけ**・`python -m src.clarity` を撃つ所は **0か所**。**＝ 本物の控えへ書ける口は「人が手で撃つ」1つだけ**で、フックの 7つ はどれも届きません（`deadline_check.py` は `clarity.books()` を**読む**だけ）。実物も末尾 09/04 のまま・`git status` clean。**前の回が予定していた「末尾を1行 削って周を回す」実験は要りません** —— 呼ぶ側を数え上げるほうが速く、答えが割れない（実験は Stop のときしか撃たれず、出なかったときに「口が無い」のか「その回は通らなかった」のかを分けられない）。**覆る条件**: `grep -rn 'report_lines\|\.record(' src/ scripts/` の当たりが増えたら数え直すこと（数秒）。**覆る条件**: 旧道具を使う判断が METHOD に書かれたとき（そのときも kick ではなく手順から呼ぶ）。
 
 ## 9. 最初の1本（2026-09-06・`2026-09-06-zaishoku-62man`）
 

@@ -98,6 +98,14 @@ def test_どちらも無ければ何も返さない(tmp_path, monkeypatch) -> No
 BAKE_UPLOAD_MARGIN_MIN = 20.0
 
 
+@pytest.mark.xfail(
+    strict=True,
+    reason="旧道具（`scripts/ahead_sweep.py`）の側。線 150分 対 実測 210分。"
+           "`docs/METHOD.md` §8 で 2026-09-05 に使わないと決めた道具の前提を当てにしているので、"
+           "直す先が無い。**消さない**（§8）。"
+           "strict なので、旧道具が戻って**通るようになったら赤**になり、そこで気づける。"
+           "生きている信号は `python -m pytest -m live -q`（`studio/livetests.py`）",
+)
 def test_枠までの線は実測より長いこと() -> None:
     """**`REBAKE_LEAD` は「1回の焼きの長さ ＋ 上げ」より長くなければ意味がありません。**
 

@@ -136,11 +136,24 @@ def test_全文が一時置き場に落ちる(rm, tmp_path, monkeypatch):
 
 
 def test_撃ち直しでは_背景の起こしを走らせない(rm, tmp_path, monkeypatch, capsys):
-    """**`ahead_sweep.kick()` は焼き直しの上限（1日 2回）を減らします。**
+    """**2026-09-08 に、これは「撃ち直しでは」から「1度も」へ強くなりました。**
 
-    錠（`flock`）が2本目を `skip` で落としても、その回は「焼いた」と数えられます
-    （`docs/spawn_prompt.md` の註）。＝ 頭を読み直すためのもう1回で、その日の
-    焼き直しの枠が1つ消えていました。
+    元の形（2026-09-05）はこう書いていました:
+
+        **`ahead_sweep.kick()` は焼き直しの上限（1日 2回）を減らします。**
+        錠（`flock`）が2本目を `skip` で落としても、その回は「焼いた」と数えられます
+        （`docs/spawn_prompt.md` の註）。＝ 頭を読み直すためのもう1回で、その日の
+        焼き直しの枠が1つ消えていました。
+
+    ＝ **1周目は起こすのが正しい**という前提でした。**その前提が落ちています。**
+    `docs/METHOD.md` §8 は旧道具を「使わない」と決め、`ahead_sweep` は
+    09/06 00:01 に**旧作りの本 8本 に publishAt を打った**当のものです。
+    実測 2026-09-08 06:57:51: **`pytest tests/` を撃っただけ**で `niche_ceiling.kick()` が
+    背景で走り、外の本を漁って data/ の 3ファイルに 477行 を足し、`videos.list` を 1単位 使いました。
+
+    → `run_marker.py` の kick を 2つとも外しました（**関数は消していない** —— §8）。
+    **いまは 1周目でも起こしません。** 見張りの本体は `tests/test_no_background_kick.py`。
+    **覆る条件**: 旧道具を使う判断が METHOD に書かれたら、kick ではなく手順から呼ぶこと。
     """
     monkeypatch.setattr(rm, "actor_id", lambda: "私")
     monkeypatch.setattr(rm, "is_parent", lambda: False)
@@ -162,7 +175,7 @@ def test_撃ち直しでは_背景の起こしを走らせない(rm, tmp_path, m
     monkeypatch.setitem(sys.modules, "niche_ceiling", _Fake)
 
     rm.write()
-    assert len(kicked) == 2                 # 1周目は起こす（きょうの1本・外の帯）
+    assert kicked == [], "1周目で背景の kick が走っています（`docs/METHOD.md` §8）"
     rm.write()
-    assert len(kicked) == 2                 # **撃ち直しでは起こさない**
-    assert "撃ち直しなので起こしません" in capsys.readouterr().out
+    assert kicked == [], "撃ち直しで背景の kick が走っています"
+    assert "背景の kick は 2026-09-08 に外しました" in capsys.readouterr().out
