@@ -6,6 +6,7 @@
     python -m studio.cli hear <id> [--medium]   # 完成音声を聞き取り、予定の読みと照合
     python -m studio.cli read <id>              # 冷読（Haiku）: 1文で言い返せるか
     python -m studio.cli critique <id>          # 分かりやすさの批判（Sonnet）
+    python -m studio.cli crosscheck <id>        # 声と 説明欄・notes の食い違い（Sonnet・§4 (0)）
     python -m studio.cli order-image <id>       # 背景画像を注文（外の ChatGPT セッションが焼く）
     python -m studio.cli schedule <id> --at 10:00 [--replace <videoId>]   # きょうの枠へ予約（当日だけ）
     python -m studio.cli measure                # 公開ずみの本の再生・高評価を台帳へ
@@ -156,6 +157,22 @@ def cmd_critique(a):
     return 0 if done else 1
 
 
+def cmd_crosscheck(a):
+    """§4 (0)。critique は say/show/sub しか読まないので、声が説明欄・notes と割れていても素通りする
+    （実測 2回: 09/07 05:4x は説明欄の側が誤り・09/08 02:5x は声の側が誤り）。ここはその1点だけを見る。"""
+    s = script.load(a.id)
+    c = critic.crosscheck(s)
+    items = c.get("items") or []
+    for it in items:
+        print(f"  [{it.get('kind')}] {it.get('where')}")
+        print(f"        声  : {it.get('say')}")
+        print(f"        文書: {it.get('doc')}")
+        print(f"        → {it.get('why')}")
+    print("食い違い:", len(items), "件" if items else "件（無し）")
+    ledger("crosscheck", a.id, n=len(items), kinds=[it.get("kind") for it in items])
+    return 0 if not items else 1
+
+
 def cmd_order_image(a):
     s = script.load(a.id)
     ORDERS.mkdir(parents=True, exist_ok=True)
@@ -265,7 +282,7 @@ def main(argv=None):
     ap = argparse.ArgumentParser()
     sub = ap.add_subparsers(dest="cmd", required=True)
     sub.add_parser("status")
-    for c in ("lint", "build", "read", "critique", "order-image"):
+    for c in ("lint", "build", "read", "critique", "crosscheck", "order-image"):
         sub.add_parser(c).add_argument("id")
     h = sub.add_parser("hear"); h.add_argument("id"); h.add_argument("--medium", action="store_true")
     sc = sub.add_parser("schedule"); sc.add_argument("id"); sc.add_argument("--at", required=True)
