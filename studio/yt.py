@@ -28,8 +28,9 @@ def svc():
 
 
 def channel() -> dict:
-    ch = svc().channels().list(part="snippet,statistics,contentDetails", mine=True).execute()["items"][0]
-    return {"title": ch["snippet"]["title"], "uploads": ch["contentDetails"]["relatedPlaylists"]["uploads"],
+    ch = svc().channels().list(part="id,snippet,statistics,contentDetails", mine=True).execute()["items"][0]
+    return {"id": ch["id"], "title": ch["snippet"]["title"],
+            "uploads": ch["contentDetails"]["relatedPlaylists"]["uploads"],
             **{k: int(v) for k, v in ch["statistics"].items() if isinstance(v, str) and v.isdigit()}}
 
 
@@ -39,7 +40,9 @@ def _row(v: dict) -> dict:
             "publish_at": st.get("publishAt"), "published_at": v["snippet"]["publishedAt"],
             "duration": v.get("contentDetails", {}).get("duration", ""),
             "views": int(v.get("statistics", {}).get("viewCount", 0)),
-            "likes": int(v.get("statistics", {}).get("likeCount", 0))}
+            "likes": int(v.get("statistics", {}).get("likeCount", 0)),
+            # コメント数。2026-09-07 20:4x まで、道具はこれを1度も見ていなかった（`viewer_comments()` の註）。
+            "comments": int(v.get("statistics", {}).get("commentCount", 0))}
 
 
 _ALL: list[dict] | None = None
@@ -173,3 +176,46 @@ def stats(video_ids: list[str]) -> dict[str, dict]:
         for v in r["items"]:
             out[v["id"]] = {k: int(x) for k, x in v["statistics"].items() if str(x).isdigit()}
     return out
+
+
+def viewer_comments() -> list[dict]:
+    """**視聴者が書いたコメント**を、新しい順に。自分のチャンネルが書いた分は落とす。
+
+    `commentThreads.list(allThreadsRelatedToChannelId=...)` は**チャンネル全部**を1度に引く
+    （1ページ 100件・実測 21件 ＝ **1単位**。本ごとに引くと 227単位 かかる）。
+
+    **なぜ要るか（2026-09-07 20:4x JST・optimizer・Opus が実測して足した）**:
+    §1 は「高評価 1,441回の本で 0」、§7 は「likes 合計 0・登録 +0 なら…」と、
+    **押された数だけ**で視聴者の反応を測ってきた。**コメントは1度も数えていない。**
+    実測（この回に初めて引いた）: チャンネル全部で 21スレッド。うち **18 は自分**
+    （旧 `src/` の pipeline が上げる時に自動で置いていた「この計算は毎日1本ずつ出しています」）。
+    **視聴者が書いたのは 3件だけ**で、そのうち中身のある1件は:
+
+        2026-08-29 10:08  DSZfGUQ_NyQ（962回）  「ＡＩナレーショングダグダ」（同じ人が2回）
+
+    ＝ **このチャンネルが受け取った唯一の批評は「ナレーションがグダグダ」で、9日間 誰も読んでいなかった。**
+    オーナーの 09/07 13:3x「ナレーション前の音声の方が良かった」と**同じ所**を指している
+    （別々の人が、別々の日に、声について言っている ＝ n=2 の一致）。
+    likes は 0/1 しか動かないので分解能が無いが、コメントは文で来る。**数えること。**
+
+    自分の分を落とすのは `authorChannelId` == 自分のチャンネル ID（表示名では見ない）。
+    **覆る条件**: スパムや無関係なコメントが視聴者側に混ざり始めたら、ここで選り分けず
+    そのまま出して、読む側（次の回）が判断する（いまは 3件なので選り分けは要らない）。
+    """
+    cid = channel()["id"]
+    out, tok = [], None
+    while True:
+        r = svc().commentThreads().list(part="snippet", allThreadsRelatedToChannelId=cid,
+                                        maxResults=100, pageToken=tok, textFormat="plainText").execute()
+        for t in r.get("items", []):
+            s = t["snippet"]["topLevelComment"]["snippet"]
+            if s.get("authorChannelId", {}).get("value") == cid:
+                continue
+            out.append({"id": t["id"], "video_id": t["snippet"].get("videoId", ""),
+                        "author": s.get("authorDisplayName", ""),
+                        "at": s.get("publishedAt", ""), "likes": int(s.get("likeCount", 0)),
+                        "text": (s.get("textDisplay") or "").strip()})
+        tok = r.get("nextPageToken")
+        if not tok:
+            break
+    return sorted(out, key=lambda c: c["at"], reverse=True)

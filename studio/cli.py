@@ -10,6 +10,7 @@
     python -m studio.cli schedule <id> --at 10:00 [--replace <videoId>]   # きょうの枠へ予約（当日だけ）
     python -m studio.cli measure                # 公開ずみの本の再生・高評価を台帳へ
     python -m studio.cli trend [--days 3]       # 台帳から「齢 → 再生」の並び（API 0単位・§7 の判定はこれで）
+    python -m studio.cli comments               # 視聴者が書いたコメント（自分の自動コメントは除く。API 1単位）
 """
 from __future__ import annotations
 
@@ -51,6 +52,18 @@ def cmd_status(a):
     for v in yt.published()[:10]:
         age = (now_jst() - yt.when(v)).total_seconds() / 3600
         print(f"  {yt.when(v):%m/%d %H:%M} {v['id']} {v['views']:5d}回 いいね{v['likes']:3d} 齢{age:5.0f}h {v['title'][:36]}")
+    # 視聴者のコメントは 2026-09-07 20:4x まで1度も見ていなかった（`yt.viewer_comments()` の註）。
+    # 唯一の批評「ＡＩナレーショングダグダ」は 9日間 読まれていない。**ここに出し続けること。**
+    try:
+        cs = yt.viewer_comments()
+        seen = {r.get("comment_id") for r in ledger_rows() if r.get("event") == "viewer_comment"}
+        fresh = [c for c in cs if c["id"] not in seen]
+        print(f"視聴者コメント: {len(cs)}件（台帳に無い新着 {len(fresh)}件）")
+        for c in cs[:3]:
+            mark = "★新" if c["id"] in {f["id"] for f in fresh} else "  "
+            print(f"  {mark} {c['at'][:16]} {c['video_id']} {c['author']}: {c['text'][:60]}")
+    except Exception as e:  # noqa: BLE001
+        print("視聴者コメントは引けなかった:", str(e)[:100])
     print("台帳 直近 5行:")
     for r in ledger_rows()[-5:]:
         print("  " + json.dumps(r, ensure_ascii=False)[:160])
@@ -207,8 +220,32 @@ def cmd_measure(a):
     pub = yt.published(MEASURE_WITHIN_H)
     for v in pub:
         age = (now_jst() - yt.when(v)).total_seconds() / 3600
-        ledger("measured", v["id"], views=v["views"], likes=v["likes"], age_h=round(age, 1), title=v["title"][:40])
+        ledger("measured", v["id"], views=v["views"], likes=v["likes"],
+               comments=v.get("comments", 0), age_h=round(age, 1), title=v["title"][:40])
     print("記した:", len(pub), f"本（公開から {MEASURE_WITHIN_H / 24:.0f}日 以内）")
+    return 0
+
+
+def cmd_comments(a):
+    """視聴者が書いたコメントを全部 出し、台帳にまだ無いものを `viewer_comment` として1行 足す。
+
+    **コメントは「押された数」に出ない唯一の文の反応**（`yt.viewer_comments()` の註）。
+    台帳へ書くのは、次の回が「もう読んだ／新着」を見分けられるようにするため
+    （読んだ回が居なくなっても、台帳に残る）。
+    """
+    cs = yt.viewer_comments()
+    seen = {r.get("comment_id") for r in ledger_rows() if r.get("event") == "viewer_comment"}
+    if not cs:
+        print("視聴者コメントは 0件")
+        return 0
+    for c in cs:
+        new = c["id"] not in seen
+        print(f"{'★新着' if new else '     '} {c['at'][:16]} {c['video_id']} いいね{c['likes']} "
+              f"{c['author']}\n       {c['text'][:400]}")
+        if new:
+            ledger("viewer_comment", c["video_id"], comment_id=c["id"], author=c["author"],
+                   posted_at=c["at"], text=c["text"][:500])
+    print(f"—— {len(cs)}件（うち台帳に無かった新着 {sum(1 for c in cs if c['id'] not in seen)}件）")
     return 0
 
 
@@ -231,6 +268,7 @@ def main(argv=None):
     sc.add_argument("--dry-run", action="store_true")
     sub.add_parser("measure")
     tr = sub.add_parser("trend"); tr.add_argument("--days", type=float, default=3)
+    sub.add_parser("comments")
     a = ap.parse_args(argv)
     fn = globals()["cmd_" + a.cmd.replace("-", "_")]
     return fn(a) or 0
